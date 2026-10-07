@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 27 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 28 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2697 |
-| differs | 293 |
+| match | 2701 |
+| differs | 289 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -25,7 +25,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| avx | 433 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx | 434 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+novlx | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -43,7 +43,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | cmov+fpu | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | dqi | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 0 | 0 |
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
-| fc16 | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
 | fpu | 21 | 109 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
@@ -52,7 +52,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 |
 | rtm | 0 | 0 | 0 | 1 | 4 | 4 | 0 | 0 | 0 |
 | sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| sse1 | 88 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse1 | 89 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse2 | 247 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
@@ -189,7 +189,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `cvtps2pi mm0, qword ptr [rsi]` (sse1, differs, 6/6): iter 0: st(0) differs; 
 - `pmaddubsw mm1, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0002 (fsw mask FFFF); st(1) differs; 
 - `pabsb mm1, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(1) differs; 
-- `minps xmm0, xmmword ptr [rsi]` (sse1, differs, 1/6): iter 3: ymm0 differs; 
 - `punpcklbw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
 - `punpcklbw mm0, dword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
 - `punpcklwd mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
@@ -360,7 +359,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `ptwrite dword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `ptwrite rax` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `ptwrite qword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vminss xmm0, xmm1, dword ptr [rsi]` (avx, differs, 1/6): iter 3: ymm0 differs; 
 - `vrsqrtps xmm0, xmm0` (avx, differs, 1/6): iter 5: ymm0 differs; 
 - `vrcpps xmm0, xmmword ptr [rsi]` (avx, differs, 1/6): iter 3: ymm0 differs; 
 - `vrsqrtps ymm0, ymmword ptr [rsi]` (avx, differs, 1/6): iter 2: ymm0[255:128] differs; 
@@ -369,8 +367,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `vgf2p8mulb xmm0, xmm1, xmmword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `vgf2p8mulb ymm0, ymm1, ymm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `vgf2p8mulb ymm0, ymm1, ymmword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vcvtph2ps xmm0, xmm0` (fc16, differs, 1/6): iter 3: mxcsr hw=1F80 uc=1F82; 
-- `vcvtph2ps ymm0, xmmword ptr [rsi]` (fc16, differs, 1/6): iter 2: mxcsr hw=1F80 uc=1F82; 
 - `vpclmulqdq ymm0, ymm1, ymm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `vpclmulqdq ymm0, ymm1, ymmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `vgf2p8affineqb xmm0, xmm1, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6

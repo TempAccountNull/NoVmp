@@ -12,6 +12,7 @@
 //   R6  MXCSR rules of XRSTOR/XSAVE (RFBM[1]/RFBM[2]) and the reserved-bit #GP, vs hardware.
 //   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
 //   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
+//   R9  MIN/MAX (SSE/AVX, scalar/packed) and F16C conversions under DAZ/FTZ, vs hardware.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -23,6 +24,8 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <iterator>
+#include <xmmintrin.h>
 
 static int g_failures = 0;
 
@@ -812,6 +815,125 @@ static void test_r8()
 	}
 }
 
+// ── R9: MIN/MAX and F16C conversions under DAZ/FTZ (plan 1.10.4) ────────────────────────────────
+//
+// SDM Vol2 MINPS/MAXPS...: MIN(a,b) = b when both are 0.0, when either is NaN, else the smaller;
+// Vol1 Table 14-11/14-12: VCVTPH2PS on a denormal half input leaves DE unchanged, VCVTPS2PH sets DE
+// and ignores FTZ. Each op runs as `op xmm0, xmm1` on the host and in Unicorn for every value pair x
+// MXCSR {default, DAZ, FTZ, DAZ+FTZ}; the full XMM0 and the MXCSR flags must match.
+// Thunk ABI: rcx = in { u32 mxcsr, pad[12], xmm0[16], xmm1[16] }, rdx = out { xmm0[16], u32 mxcsr, u32 host }.
+
+struct r9_result { int fault; uint8_t x[ 16 ]; uint32_t mxcsr; };
+
+static const char* r9_frame = "stmxcsr dword ptr [rdx + 20]\nldmxcsr dword ptr [rcx]\nmovups xmm0, xmmword ptr [rcx + 16]\n"
+							  "movups xmm1, xmmword ptr [rcx + 32]\n%s\nstmxcsr dword ptr [rdx + 16]\nmovups xmmword ptr [rdx], xmm0\n"
+							  "ldmxcsr dword ptr [rdx + 20]\nret\n";
+
+static r9_result r9_native( const std::vector<uint8_t>& code, const uint8_t in[ 48 ], uint32_t host_mx )
+{
+	r9_result r{ -1, {}, 0 };
+	uint8_t out[ 24 ] = {};
+	void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	__try { ( ( void( * )( const uint8_t*, uint8_t* ) ) mem )( in, out ); std::memcpy( r.x, out, 16 ); std::memcpy( &r.mxcsr, out + 16, 4 ); }
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		DWORD c = GetExceptionCode();
+		r.fault = ( c >= 0xC000008D && c <= 0xC0000093 ) || c == 0xC00002B4 || c == 0xC00002B5 ? 19 : c == EXCEPTION_ILLEGAL_INSTRUCTION ? 6 : 13;
+		_mm_setcsr( host_mx );
+	}
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static r9_result r9_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 48 ], uint32_t host_mx )
+{
+	r9_result r{ -1, {}, 0 };
+	const uint64_t R9_CODE = 0x1000, R9_IN = 0x10000, R9_OUTP = 0x11000, R9_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_mem_map( uc, R9_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R9_IN, 0x2000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R9_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R9_CODE, code.data(), code.size() );
+	uc_mem_write( uc, R9_IN, in, 48 );
+	uint64_t rcx = R9_IN, rdx = R9_OUTP, rsp = R9_STACK + 0x8000, mx = host_mx, xcr0 = 0x7;
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_MXCSR, &mx );
+	uc_reg_write( uc, UC_X86_REG_XCR0, &xcr0 );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R9_CODE, R9_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	if ( e ) std::printf( "    uc_emu_start: %s\n", uc_strerror( e ) );
+	if ( !log.seen.empty() ) r.fault = int( log.seen[ 0 ] );
+	else { uint8_t out[ 24 ] = {}; uc_mem_read( uc, R9_OUTP, out, sizeof( out ) ); std::memcpy( r.x, out, 16 ); std::memcpy( &r.mxcsr, out + 16, 4 ); }
+	uc_close( uc );
+	return r;
+}
+
+static void test_r9()
+{
+	std::printf( "R9  MIN/MAX and F16C under DAZ/FTZ: SSE/AVX scalar+packed vs hardware\n" );
+	const uint32_t host_mx = _mm_getcsr();
+	const uint32_t f32[] = { 0x00000000, 0x80000000, 0x00000001, 0x80000001, 0x007FFFFF, 0x00800000, 0x3F800000, 0xBF800000,
+							 0x7FC00001, 0x7F800001, 0xFFC00000, 0x7F800000 };
+	const uint64_t f64[] = { 0, 0x8000000000000000ull, 1, 0x8000000000000001ull, 0x000FFFFFFFFFFFFFull, 0x0010000000000000ull,
+							 0x3FF0000000000000ull, 0xBFF0000000000000ull, 0x7FF8000000000001ull, 0x7FF0000000000001ull,
+							 0xFFF8000000000000ull, 0x7FF0000000000000ull };
+	const uint16_t f16[] = { 0x0000, 0x8000, 0x0001, 0x8001, 0x03FF, 0x0400, 0x3C00, 0x7C01, 0x7E00, 0xFC00 };
+	const uint32_t mxcsrs[] = { 0x1F80, 0x1FC0, 0x9F80, 0x9FC0 };
+	struct op { const char* text; int kind; };     // kind: 0 = f32 pairs, 1 = f64 pairs, 2 = f16 source, 3 = f32 source (to half)
+	const op ops[] = {
+		{ "minss xmm0, xmm1", 0 }, { "maxss xmm0, xmm1", 0 }, { "minps xmm0, xmm1", 0 }, { "maxps xmm0, xmm1", 0 },
+		{ "vminss xmm0, xmm0, xmm1", 0 }, { "vmaxps xmm0, xmm0, xmm1", 0 },
+		{ "minsd xmm0, xmm1", 1 }, { "maxsd xmm0, xmm1", 1 }, { "minpd xmm0, xmm1", 1 }, { "maxpd xmm0, xmm1", 1 },
+		{ "vminpd xmm0, xmm0, xmm1", 1 }, { "vmaxsd xmm0, xmm0, xmm1", 1 },
+		{ "vcvtph2ps xmm0, xmm1", 2 }, { "vcvtps2ph xmm0, xmm1, 4", 3 }, { "vcvtps2ph xmm0, xmm1, 0", 3 },
+	};
+	for ( const op& o : ops )
+	{
+		char text[ 512 ];
+		std::snprintf( text, sizeof( text ), r9_frame, o.text );
+		std::vector<uint8_t> code = assemble( text );
+		CHECK( !code.empty(), "%s: assembly", o.text );
+		if ( code.empty() ) continue;
+		int cases = 0, diffs = 0, shown = 0;
+		size_t n = o.kind == 0 || o.kind == 3 ? std::size( f32 ) : o.kind == 1 ? std::size( f64 ) : std::size( f16 );
+		for ( uint32_t mx : mxcsrs )
+			for ( size_t a = 0; a < n; ++a )
+				for ( size_t b = 0; b < ( o.kind >= 2 ? 1 : n ); ++b )
+				{
+					uint8_t in[ 48 ] = {};
+					std::memcpy( in, &mx, 4 );
+					for ( int lane = 0; lane < 4; ++lane )     // the same pair in every lane
+					{
+						if ( o.kind == 0 ) { std::memcpy( in + 16 + lane * 4, &f32[ a ], 4 ); std::memcpy( in + 32 + lane * 4, &f32[ b ], 4 ); }
+						if ( o.kind == 1 && lane < 2 ) { std::memcpy( in + 16 + lane * 8, &f64[ a ], 8 ); std::memcpy( in + 32 + lane * 8, &f64[ b ], 8 ); }
+						if ( o.kind == 2 ) std::memcpy( in + 32 + lane * 2, &f16[ a ], 2 );
+						if ( o.kind == 3 ) std::memcpy( in + 32 + lane * 4, &f32[ a ], 4 );
+					}
+					r9_result hw = r9_native( code, in, host_mx ), uc = r9_unicorn( code, in, host_mx );
+					bool same = hw.fault == uc.fault && ( hw.fault >= 0 || ( !std::memcmp( hw.x, uc.x, 16 ) && hw.mxcsr == uc.mxcsr ) );
+					++cases;
+					if ( same ) continue;
+					++diffs;
+					if ( shown++ >= 6 ) continue;
+					uint64_t av = o.kind == 1 ? f64[ a ] : o.kind == 2 ? f16[ a ] : f32[ a ], bv = o.kind == 1 ? f64[ b ] : o.kind == 0 ? f32[ b ] : 0;
+					uint64_t h0, u0;
+					std::memcpy( &h0, hw.x, 8 ); std::memcpy( &u0, uc.x, 8 );
+					std::printf( "    %-24s mxcsr=%04X a=%llX b=%llX  hw: %s lo=%016llX mxcsr=%04X   uc: %s lo=%016llX mxcsr=%04X\n", o.text, mx,
+								 ( unsigned long long ) av, ( unsigned long long ) bv, hw.fault >= 0 ? "fault" : "ok", ( unsigned long long ) h0, hw.mxcsr,
+								 uc.fault >= 0 ? "fault" : "ok", ( unsigned long long ) u0, uc.mxcsr );
+				}
+		std::printf( "    %-24s %4d cases, %d differ\n", o.text, cases, diffs );
+		CHECK( diffs == 0, "%s: %d of %d cases differ from hardware", o.text, diffs, cases );
+	}
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -833,6 +955,8 @@ int main()
 	test_r7();
 	std::printf( "\n" );
 	test_r8();
+	std::printf( "\n" );
+	test_r9();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
