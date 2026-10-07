@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 28 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 27 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2701 |
-| differs | 289 |
+| match | 2868 |
+| differs | 122 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -33,7 +33,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 |
-| base | 1115 | 32 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
+| base | 1147 | 0 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
@@ -47,13 +47,13 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
 | fpu | 21 | 109 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| mmx | 8 | 125 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 |
 | rtm | 0 | 0 | 0 | 1 | 4 | 4 | 0 | 0 | 0 |
 | sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| sse1 | 89 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sse2 | 247 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse1 | 93 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse2 | 253 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | sse42 | 10 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
@@ -183,178 +183,11 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `fbstp tbyte ptr [rsi]` (fpu, differs, 3/6): iter 2: x87 fcw/fsw/ftw hw=037F/0A20/2003 uc=037F/0820/2003 (fsw mask BAFF); 
 - `fistp qword ptr [rsi]` (fpu, differs, 2/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF0B uc=037F/0820/FF0B (fsw mask BAFF); 
 - `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
-- `cvttps2pi mm0, xmm0` (sse1, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/080A uc=037F/0000/0808 (fsw mask FFFF); st(0) differs; 
-- `cvttps2pi mm0, qword ptr [rsi]` (sse1, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `cvtps2pi mm0, xmm0` (sse1, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2082 uc=037F/0000/2080 (fsw mask FFFF); st(0) differs; 
-- `cvtps2pi mm0, qword ptr [rsi]` (sse1, differs, 6/6): iter 0: st(0) differs; 
-- `pmaddubsw mm1, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0002 (fsw mask FFFF); st(1) differs; 
-- `pabsb mm1, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(1) differs; 
-- `punpcklbw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `punpcklbw mm0, dword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `punpcklwd mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `punpcklwd mm0, dword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `punpckldq mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `punpckldq mm0, dword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `packsswb mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `packsswb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `pcmpgtb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpgtb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpgtw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpgtw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpgtd mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpgtd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `packuswb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `packuswb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/202A uc=037F/0000/2028 (fsw mask FFFF); st(0) differs; 
-- `punpckhbw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `punpckhbw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `punpckhwd mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2022 uc=037F/0000/2020 (fsw mask FFFF); st(0) differs; 
-- `punpckhwd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0008 (fsw mask FFFF); st(0) differs; 
-- `punpckhdq mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `punpckhdq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `packssdw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `packssdw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `movd mm0, eax` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `movd mm0, dword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `movq mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `movq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pshufw mm0, mm0, 0x5b` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pshufw mm0, qword ptr [rsi], 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrlw mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psraw mm0, 0x5b` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `psllw mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrld mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrad mm0, 0x5b` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8002 uc=037F/0000/8000 (fsw mask FFFF); st(0) differs; 
-- `pslld mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrlq mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psllq mm0, 0x5b` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpeqb mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `pcmpeqb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpeqw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `pcmpeqw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pcmpeqd mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/A002 uc=037F/0000/A000 (fsw mask FFFF); st(0) differs; 
-- `pcmpeqd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pinsrw mm0, eax, 0x5b` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `pinsrw mm0, word ptr [rsi], 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
 - `xsavec ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `psrlw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrlw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrld mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrld mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrlq mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psrlq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `paddq mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0008 (fsw mask FFFF); st(0) differs; 
-- `paddq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmullw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0A22 uc=037F/0000/0A20 (fsw mask FFFF); st(0) differs; 
-- `pmullw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2802 uc=037F/0000/2800 (fsw mask FFFF); st(0) differs; 
-- `psubusb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubusb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/A002 uc=037F/0000/A000 (fsw mask FFFF); st(0) differs; 
-- `psubusw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubusw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0008 (fsw mask FFFF); st(0) differs; 
-- `pminub mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0822 uc=037F/0000/0820 (fsw mask FFFF); st(0) differs; 
-- `pminub mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pand mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pand mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `paddusb mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `paddusb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8202 uc=037F/0000/8200 (fsw mask FFFF); st(0) differs; 
-- `paddusw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `paddusw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8202 uc=037F/0000/8200 (fsw mask FFFF); st(0) differs; 
-- `pmaxub mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/008A uc=037F/0000/0088 (fsw mask FFFF); st(0) differs; 
-- `pmaxub mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/020A uc=037F/0000/0208 (fsw mask FFFF); st(0) differs; 
-- `pandn mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pandn mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pavgb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pavgb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `psraw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/A00A uc=037F/0000/A008 (fsw mask FFFF); st(0) differs; 
-- `psraw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2082 uc=037F/0000/2080 (fsw mask FFFF); st(0) differs; 
-- `psrad mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `psrad mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pavgw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2202 uc=037F/0000/2200 (fsw mask FFFF); st(0) differs; 
-- `pavgw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pmulhuw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/202A uc=037F/0000/2028 (fsw mask FFFF); st(0) differs; 
-- `pmulhuw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2202 uc=037F/0000/2200 (fsw mask FFFF); st(0) differs; 
-- `pmulhw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmulhw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubsb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubsb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
-- `psubsw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubsw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pminsw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0022 uc=037F/0000/0020 (fsw mask FFFF); st(0) differs; 
-- `pminsw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `por mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `por mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0222 uc=037F/0000/0220 (fsw mask FFFF); st(0) differs; 
-- `paddsb mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `paddsb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `paddsw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `paddsw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmaxsw mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2082 uc=037F/0000/2080 (fsw mask FFFF); st(0) differs; 
-- `pmaxsw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `pxor mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pxor mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `psllw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psllw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pslld mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pslld mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psllq mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psllq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmuludq mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmuludq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmaddwd mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `pmaddwd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psadbw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psadbw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubb mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubd mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubq mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `psubq mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `paddb mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0A82 uc=037F/0000/0A80 (fsw mask FFFF); st(0) differs; 
-- `paddb mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8022 uc=037F/0000/8020 (fsw mask FFFF); st(0) differs; 
-- `paddw mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `paddw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8002 uc=037F/0000/8000 (fsw mask FFFF); st(0) differs; 
-- `paddd mm0, mm0` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `paddd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/00A2 uc=037F/0000/00A0 (fsw mask FFFF); st(0) differs; 
-- `pshufb mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pshufb mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `phaddw mm0, mm0` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `phaddw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `phaddd mm0, mm0` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `phaddd mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `phaddsw mm0, mm0` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `phaddsw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pmaddubsw mm0, mm0` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/2002 uc=037F/0000/2000 (fsw mask FFFF); st(0) differs; 
-- `phsubw mm0, mm0` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `phsubw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0282 uc=037F/0000/0280 (fsw mask FFFF); st(0) differs; 
-- `phsubd mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `phsubsw mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `phsubsw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `psignb mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `psignb mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `psignw mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `psignw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/000A uc=037F/0000/0008 (fsw mask FFFF); st(0) differs; 
-- `psignd mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `psignd mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pmulhrsw mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pmulhrsw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0002 uc=037F/0000/0000 (fsw mask FFFF); st(0) differs; 
-- `pabsb mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pabsw mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pabsw mm0, qword ptr [rsi]` (base, differs, 6/6): iter 0: st(0) differs; 
-- `pabsd mm0, mm0` (base, differs, 6/6): iter 0: st(0) differs; 
-- `palignr mm0, mm0, 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
-- `palignr mm0, qword ptr [rsi], 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
-- `movq mm0, rax` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
 - `xsavec64 ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `cvtpi2pd xmm0, qword ptr [rsi]` (sse2, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF08 uc=037F/0000/8208 (fsw mask FFFF); 
-- `cvttpd2pi mm0, xmm0` (sse2, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `cvttpd2pi mm0, xmmword ptr [rsi]` (sse2, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/8002 uc=037F/0000/8000 (fsw mask FFFF); st(0) differs; 
-- `cvtpd2pi mm0, xmm0` (sse2, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
-- `cvtpd2pi mm0, xmmword ptr [rsi]` (sse2, differs, 6/6): iter 0: st(0) differs; 
 - `gf2p8mulb xmm0, xmm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `gf2p8affineqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `gf2p8affineinvqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `movdq2q mm0, xmm0` (sse2, differs, 6/6): iter 0: st(0) differs; 
 - `ptwrite eax` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `ptwrite dword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `ptwrite rax` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6

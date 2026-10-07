@@ -13,6 +13,7 @@
 //   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
 //   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
 //   R9  MIN/MAX (SSE/AVX, scalar/packed) and F16C conversions under DAZ/FTZ, vs hardware.
+//   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), manual default and hardware quirks.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -934,6 +935,133 @@ static void test_r9()
 	}
 }
 
+// ── R10: MMX <-> x87 aliasing (plan 1.10.5) ─────────────────────────────────────────────────────
+//
+// SDM Vol1 9.5.2: an MMX instruction (not EMMS) sets TOP=0 and all tags valid, and an MMX register
+// write sets bits 79:64 of the aliased x87 register to all ones. CVTPI2PD xmm, m64 makes no transition
+// (Vol2 CVTPI2PD); the CVTPI2PS page does not exempt its m64 form, the i5-13600K does (hardware quirk).
+// The x87 stack is made deterministic first (all registers 0.0, then 1.0/0.0/pi pushed: TOP=5), the
+// op runs, then FNSTENV + FXSAVE capture FCW/FSW/FTW, the abridged tags, ST0-7 (80 bits) and XMM0.
+// Thunk ABI: rcx = in { m64 at +0, xmm source at +16 }, rdx = out (64-aligned: fnstenv at +0, fxsave
+// at +64), r8 = 64-aligned backup the host x87/SSE state is restored from.
+
+struct r10_result { int fault; uint8_t env[ 28 ]; uint8_t fx[ 512 ]; };
+
+static std::string r10_thunk( const char* op )
+{
+	std::string s = "fxsave [r8]\nfninit\n";
+	for ( int i = 0; i < 8; ++i ) s += "fldz\n";
+	s += "fninit\nfld1\nfldz\nfldpi\n";
+	s += op;
+	s += "\nfnstenv [rdx]\nfxsave [rdx + 64]\nfxrstor [r8]\nret\n";
+	return s;
+}
+
+static r10_result r10_native( const std::vector<uint8_t>& code, const uint8_t in[ 32 ] )
+{
+	r10_result r{ -1, {}, {} };
+	alignas( 64 ) static uint8_t backup[ 512 ], out[ 64 + 512 ];
+	void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	std::memset( out, 0, sizeof( out ) );
+	__try
+	{
+		( ( void( * )( const uint8_t*, uint8_t*, void* ) ) mem )( in, out, backup );
+		std::memcpy( r.env, out, 28 );
+		std::memcpy( r.fx, out + 64, 512 );
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER ) { r.fault = 1; }
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static r10_result r10_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 32 ], uint32_t quirks )
+{
+	r10_result r{ -1, {}, {} };
+	const uint64_t R10_CODE = 0x1000, R10_IN = 0x10000, R10_OUTP = 0x11000, R10_BACKUP = 0x12000, R10_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_ctl_set_x86_hw_quirks( uc, quirks );
+	uc_mem_map( uc, R10_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R10_IN, 0x4000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R10_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R10_CODE, code.data(), code.size() );
+	uc_mem_write( uc, R10_IN, in, 32 );
+	uint64_t rcx = R10_IN, rdx = R10_OUTP, r8 = R10_BACKUP, rsp = R10_STACK + 0x8000;
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_RSP, &rsp );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R10_CODE, R10_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	if ( e ) std::printf( "    uc_emu_start: %s\n", uc_strerror( e ) );
+	if ( !log.seen.empty() ) r.fault = int( log.seen[ 0 ] );
+	else { uc_mem_read( uc, R10_OUTP, r.env, 28 ); uc_mem_read( uc, R10_OUTP + 64, r.fx, 512 ); }
+	uc_close( uc );
+	return r;
+}
+
+// FCW, FSW, FTW of the FNSTENV image; abridged FTW, ST0-7 (10 bytes each) and XMM0 of the FXSAVE image
+static std::string r10_diff( const r10_result& a, const r10_result& b )
+{
+	char buf[ 160 ];
+	if ( a.fault != b.fault ) { std::snprintf( buf, sizeof( buf ), "fault %d vs %d", a.fault, b.fault ); return buf; }
+	if ( a.fault >= 0 ) return "";
+	auto w = [ & ]( const uint8_t* p, int o ) { return unsigned( p[ o ] | ( p[ o + 1 ] << 8 ) ); };
+	for ( int o : { 0, 4, 8 } )
+		if ( w( a.env, o ) != w( b.env, o ) )
+		{
+			std::snprintf( buf, sizeof( buf ), "%s %04X vs %04X", o == 0 ? "fcw" : o == 4 ? "fsw" : "ftw", w( a.env, o ), w( b.env, o ) );
+			return buf;
+		}
+	if ( a.fx[ 4 ] != b.fx[ 4 ] ) { std::snprintf( buf, sizeof( buf ), "abridged ftw %02X vs %02X", a.fx[ 4 ], b.fx[ 4 ] ); return buf; }
+	for ( int i = 0; i < 8; ++i )
+		if ( std::memcmp( a.fx + 32 + i * 16, b.fx + 32 + i * 16, 10 ) )
+		{
+			std::snprintf( buf, sizeof( buf ), "st(%d) exp %04X mant %016llX vs exp %04X mant %016llX", i, w( a.fx, 32 + i * 16 + 8 ),
+						   *( const unsigned long long* ) ( a.fx + 32 + i * 16 ), w( b.fx, 32 + i * 16 + 8 ), *( const unsigned long long* ) ( b.fx + 32 + i * 16 ) );
+			return buf;
+		}
+	if ( std::memcmp( a.fx + 160, b.fx + 160, 16 ) ) return "xmm0";
+	return "";
+}
+
+static void test_r10()
+{
+	std::printf( "R10 MMX <-> x87 aliasing: TOP/tags, ST(i) bits 79:64, CVTPI2Px m64 transition vs hardware\n" );
+	struct c { const char* op; bool manual_differs; };     // manual_differs: the SDM text disagrees with the i5-13600K
+	const c cases[] = {
+		{ "movq mm0, qword ptr [rcx]", false }, { "movd mm0, dword ptr [rcx]", false }, { "paddb mm0, qword ptr [rcx]", false },
+		{ "pinsrw mm0, word ptr [rcx], 1", false }, { "movups xmm1, xmmword ptr [rcx + 16]\ncvtps2pi mm0, xmm1", false },
+		{ "movups xmm1, xmmword ptr [rcx + 16]\nmovdq2q mm0, xmm1", false }, { "pshufw mm0, qword ptr [rcx], 0x1b", false },
+		{ "cvtpi2ps xmm0, qword ptr [rcx]", true }, { "cvtpi2pd xmm0, qword ptr [rcx]", false },
+		{ "cvtpi2ps xmm0, mm2", false }, { "cvtpi2pd xmm0, mm2", false }, { "paddb mm0, qword ptr [rcx]\nemms", false },
+		{ "movq mm3, qword ptr [rcx]\nmovq mm4, mm3", false }, { "pxor mm5, mm5", false }, { "movq2dq xmm0, mm2", false },
+		{ "pmovmskb eax, mm2", false }, { "pabsb mm1, qword ptr [rcx]", false },
+	};
+	uint8_t in[ 32 ];
+	for ( int i = 0; i < 32; ++i ) in[ i ] = uint8_t( 0x11 * ( i + 1 ) );
+	const uint32_t hw_quirks = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87;
+	for ( const c& k : cases )
+	{
+		std::vector<uint8_t> code = assemble( r10_thunk( k.op ) );
+		CHECK( !code.empty(), "%s: assembly", k.op );
+		if ( code.empty() ) continue;
+		r10_result hw = r10_native( code, in ), man = r10_unicorn( code, in, 0 ), q = r10_unicorn( code, in, hw_quirks );
+		std::string d_man = r10_diff( hw, man ), d_q = r10_diff( hw, q );
+		std::string name = k.op;
+		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
+		std::printf( "    %-58s hw ftw=%04X  manual: %-40s quirks: %s\n", name.c_str(), unsigned( hw.env[ 8 ] | ( hw.env[ 9 ] << 8 ) ),
+					 d_man.empty() ? "= hw" : ( k.manual_differs ? ( "SDM differs: " + d_man ) : d_man ).c_str(), d_q.empty() ? "= hw" : d_q.c_str() );
+		CHECK( d_q.empty(), "%s: Unicorn with hardware quirks differs from hardware (%s)", k.op, d_q.c_str() );
+		CHECK( k.manual_differs ? !d_man.empty() : d_man.empty(), "%s: Unicorn default (manual) %s", k.op,
+			   k.manual_differs ? "should follow the SDM, not hardware" : ( "differs from hardware: " + d_man ).c_str() );
+	}
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -957,6 +1085,8 @@ int main()
 	test_r8();
 	std::printf( "\n" );
 	test_r9();
+	std::printf( "\n" );
+	test_r10();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
