@@ -15,6 +15,7 @@
 //   R9  MIN/MAX (SSE/AVX, scalar/packed) and F16C conversions under DAZ/FTZ, vs hardware.
 //   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), manual default and hardware quirks.
 //   R11 x87 C1 rounding direction, precision control and stack overflow/underflow, every form vs hardware.
+//   R12 state after uc_open = SDM RESET state (FCW/FSW/FTW, MXCSR, DR6/DR7).
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -1280,6 +1281,45 @@ static void test_r11()
 	CHECK( total_diff == 0, "%d of %d x87 cases differ from hardware", total_diff, total );
 }
 
+// ── R12: RESET state (plan 1.10.6e) ─────────────────────────────────────────────────────────────
+//
+// SDM Vol3 Table 11-1 (power-up / RESET): FCW 0040H, FSW 0000H, FTW 5555H (all valid +0.0),
+// MXCSR 1F80H, DR6 FFFF0FF0H, DR7 00000400H. FNSTENV's full tag word reports 5555H for the zeros.
+
+static void test_r12()
+{
+	std::printf( "R12 Unicorn state after uc_open vs SDM Vol3 Table 11-1 (RESET)\n" );
+	std::vector<uint8_t> code = assemble( "fnstenv [rax]\nstmxcsr dword ptr [rax + 32]\n" );
+	CHECK( !code.empty(), "assembly" );
+	if ( code.empty() ) return;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uint64_t fpcw = 0, fpsw = 0, mxcsr = 0, dr6 = 0, dr7 = 0;
+	uc_reg_read( uc, UC_X86_REG_FPCW, &fpcw );
+	uc_reg_read( uc, UC_X86_REG_FPSW, &fpsw );
+	uc_reg_read( uc, UC_X86_REG_MXCSR, &mxcsr );
+	uc_reg_read( uc, UC_X86_REG_DR6, &dr6 );
+	uc_reg_read( uc, UC_X86_REG_DR7, &dr7 );
+	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, 0x2000, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, 0x1000, code.data(), code.size() );
+	uint64_t rax = 0x2000;
+	uc_reg_write( uc, UC_X86_REG_RAX, &rax );
+	uc_err e = uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 0 );
+	uint8_t env[ 36 ] = {};
+	uc_mem_read( uc, 0x2000, env, sizeof( env ) );
+	uc_close( uc );
+	unsigned ftw = env[ 8 ] | ( env[ 9 ] << 8 ), mx2 = env[ 32 ] | ( env[ 33 ] << 8 );
+	std::printf( "    FCW=%04llX FSW=%04llX MXCSR=%04llX DR6=%08llX DR7=%08llX  FNSTENV FTW=%04X STMXCSR=%04X (%s)\n",
+				 ( unsigned long long ) fpcw, ( unsigned long long ) fpsw, ( unsigned long long ) mxcsr, ( unsigned long long ) dr6,
+				 ( unsigned long long ) dr7, ftw, mx2, e ? uc_strerror( e ) : "ok" );
+	CHECK( fpcw == 0x0040, "FCW %04llX, SDM 0040H", ( unsigned long long ) fpcw );
+	CHECK( ( fpsw & 0xFFFF ) == 0, "FSW %04llX, SDM 0000H", ( unsigned long long ) fpsw );
+	CHECK( mxcsr == 0x1F80 && mx2 == 0x1F80, "MXCSR %04llX / %04X, SDM 1F80H", ( unsigned long long ) mxcsr, mx2 );
+	CHECK( dr6 == 0xFFFF0FF0 && dr7 == 0x400, "DR6/DR7 %llX/%llX", ( unsigned long long ) dr6, ( unsigned long long ) dr7 );
+	CHECK( ftw == 0x5555, "FTW %04X, SDM 5555H", ftw );
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -1307,6 +1347,8 @@ int main()
 	test_r10();
 	std::printf( "\n" );
 	test_r11();
+	std::printf( "\n" );
+	test_r12();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
