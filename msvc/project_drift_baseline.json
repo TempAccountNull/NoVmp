@@ -13,5 +13,44 @@
   "unicorn/qemu/tcg/tcg-pool.inc.c",
   "unicorn/qemu/util/oslib-posix.c",
   "unicorn/qemu/util/qemu-thread-posix.c"
+ ],
+ "unicorn-test_ctl": [
+  "unicorn/tests/unit/test_arm.c",
+  "unicorn/tests/unit/test_arm64.c",
+  "unicorn/tests/unit/test_m68k.c",
+  "unicorn/tests/unit/test_mem.c",
+  "unicorn/tests/unit/test_mips.c",
+  "unicorn/tests/unit/test_ppc.c",
+  "unicorn/tests/unit/test_riscv.c",
+  "unicorn/tests/unit/test_s390x.c",
+  "unicorn/tests/unit/test_sparc.c",
+  "unicorn/tests/unit/test_tricore.c",
+  "unicorn/tests/unit/test_x86.c"
+ ],
+ "unicorn-test_mem": [
+  "unicorn/tests/unit/test_arm.c",
+  "unicorn/tests/unit/test_arm64.c",
+  "unicorn/tests/unit/test_ctl.c",
+  "unicorn/tests/unit/test_m68k.c",
+  "unicorn/tests/unit/test_mips.c",
+  "unicorn/tests/unit/test_ppc.c",
+  "unicorn/tests/unit/test_riscv.c",
+  "unicorn/tests/unit/test_s390x.c",
+  "unicorn/tests/unit/test_sparc.c",
+  "unicorn/tests/unit/test_tricore.c",
+  "unicorn/tests/unit/test_x86.c"
+ ],
+ "unicorn-test_x86": [
+  "unicorn/tests/unit/test_arm.c",
+  "unicorn/tests/unit/test_arm64.c",
+  "unicorn/tests/unit/test_ctl.c",
+  "unicorn/tests/unit/test_m68k.c",
+  "unicorn/tests/unit/test_mem.c",
+  "unicorn/tests/unit/test_mips.c",
+  "unicorn/tests/unit/test_ppc.c",
+  "unicorn/tests/unit/test_riscv.c",
+  "unicorn/tests/unit/test_s390x.c",
+  "unicorn/tests/unit/test_sparc.c",
+  "unicorn/tests/unit/test_tricore.c"
  ]
 }
