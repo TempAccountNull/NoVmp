@@ -2430,9 +2430,68 @@ static void test_r18()
 	CHECK( failed == 0, "%ld x87 cases differ from the hardware", failed );
 }
 
+// Logical processors of the P-cores (highest efficiency class) or E-cores (class 0) of a hybrid CPU
+// (i5-13600K: 6 Raptor Cove P-cores with 2 threads each, 8 Gracemont E-cores).
+static DWORD_PTR x87_core_mask( bool performance )
+{
+	DWORD len = 0;
+	GetLogicalProcessorInformationEx( RelationProcessorCore, nullptr, &len );
+	std::vector<uint8_t> buf( len );
+	if ( !GetLogicalProcessorInformationEx( RelationProcessorCore, ( PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ) buf.data(), &len ) ) return 0;
+	BYTE maxc = 0;
+	for ( DWORD off = 0; off < len; )
+	{
+		auto* p = ( PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ) ( buf.data() + off );
+		maxc = p->Processor.EfficiencyClass > maxc ? p->Processor.EfficiencyClass : maxc;
+		off += p->Size;
+	}
+	DWORD_PTR mask = 0;
+	for ( DWORD off = 0; off < len; )
+	{
+		auto* p = ( PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ) ( buf.data() + off );
+		if ( p->Processor.EfficiencyClass == ( performance ? maxc : 0 ) && p->Processor.GroupMask[ 0 ].Group == 0 )
+			mask |= p->Processor.GroupMask[ 0 ].Mask;
+		off += p->Size;
+	}
+	return mask;
+}
+
 int main( int argc, char** argv )
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
+	// `--cpu-map`: per logical processor, CPUID.1A core type (0x40 Core = P, 0x20 Atom = E) and the
+	// hypervisor bit (CPUID.1:ECX[31])
+	if ( argc >= 2 && std::strcmp( argv[ 1 ], "--cpu-map" ) == 0 )
+	{
+		DWORD n = GetActiveProcessorCount( 0 );
+		for ( DWORD i = 0; i < n && i < 64; ++i )
+		{
+			SetThreadAffinityMask( GetCurrentThread(), DWORD_PTR( 1 ) << i );
+			Sleep( 1 );
+			int r1[ 4 ], r1a[ 4 ], r0[ 4 ];
+			__cpuid( r0, 0 );
+			__cpuid( r1, 1 );
+			__cpuidex( r1a, 0x1A, 0 );
+			unsigned type = unsigned( r1a[ 0 ] ) >> 24;
+			std::printf( "LP %2lu: max leaf %#x  CPUID.1 EAX=%08X ECX.hypervisor=%d  CPUID.1A EAX=%08X core type %#x (%s)\n", i, r0[ 0 ],
+						 unsigned( r1[ 0 ] ), ( unsigned( r1[ 2 ] ) >> 31 ) & 1, unsigned( r1a[ 0 ] ), type,
+						 type == 0x40 ? "P-core" : type == 0x20 ? "E-core" : "not reported" );
+		}
+		return 0;
+	}
+	// `--core P|E` (first argument): pin the native reference runs to the P-cores or the E-cores
+	if ( argc >= 3 && std::strcmp( argv[ 1 ], "--core" ) == 0 )
+	{
+		bool perf = argv[ 2 ][ 0 ] == 'P' || argv[ 2 ][ 0 ] == 'p';
+		// or an explicit affinity mask: `--core 0x4`
+		DWORD_PTR mask = argv[ 2 ][ 0 ] == '0' ? DWORD_PTR( std::strtoull( argv[ 2 ], nullptr, 16 ) ) : x87_core_mask( perf );
+		DWORD_PTR prev = mask ? SetThreadAffinityMask( GetCurrentThread(), mask ) : 0;
+		std::printf( "pinned to %s: affinity mask %llX (%s)\n", argv[ 2 ][ 0 ] == '0' ? "the given mask" : perf ? "the P-cores" : "the E-cores",
+					 ( unsigned long long ) mask, prev ? "ok" : "FAILED" );
+		if ( !prev ) return 2;
+		argc -= 2;
+		argv += 2;
+	}
 	if ( argc >= 3 && std::strcmp( argv[ 1 ], "--x87-dump" ) == 0 )
 	{
 		x87_dump( argv[ 2 ], argc >= 4 && std::strcmp( argv[ 3 ], "--uc" ) == 0 );
