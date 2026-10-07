@@ -97,6 +97,11 @@ namespace bp
 		uc_mode mode = UC_MODE_64;   // UC_MODE_16/32 cases are SDM-checked only (Unicorn-only run)
 		std::function<bool( const result& uc, std::string& why )> expect;   // SDM expectation
 		bool expect_mismatch = false;   // negative control: passes only if the engines differ
+		// checked separately on each engine's result (for values that legitimately differ between
+		// engines, e.g. anything derived from the TEB address)
+		std::function<bool( const result&, std::string& why )> check_each;
+		std::function<void( uc_engine* )> uc_setup;                       // extra Unicorn setup (e.g. GS base)
+		std::function<std::vector<uint8_t>( uint64_t addr )> gen_bytes;   // position-dependent snippet bytes
 	};
 
 	// ── assembling ──────────────────────────────────────────────────────────────────────────
@@ -182,7 +187,7 @@ namespace bp
 		program p;
 		std::vector<uint8_t> pro = assemble( prologue(), CODE, &p.err );
 		if ( pro.empty() ) return p;
-		std::vector<uint8_t> snip = tc.bytes;
+		std::vector<uint8_t> snip = tc.gen_bytes ? tc.gen_bytes( CODE + pro.size() ) : tc.bytes;
 		if ( snip.empty() && !tc.asm_text.empty() )
 		{
 			snip = assemble( tc.asm_text, CODE + pro.size(), &p.err );
@@ -336,7 +341,41 @@ namespace bp
 			uc_emu_stop( uc );
 	}
 
-	inline result run_unicorn( const program& p, const state& in, uc_cpu_x86 model, uc_mode mode = UC_MODE_64 )
+	// Real-mode (UC_MODE_16) runner for SDM-checked cases: the snippet runs at 0000:1000 with the GPRs
+	// (low 32 bits) and RFLAGS from the state; the scratch block is mapped at linear 0x2000.
+	constexpr uint64_t R16_CODE = 0x1000, R16_SCRATCH = 0x2000;
+	inline result run_unicorn16( const std::vector<uint8_t>& code, const state& in, uc_cpu_x86 model )
+	{
+		result r;
+		uc_engine* uc = nullptr;
+		uc_err e = uc_open( UC_ARCH_X86, UC_MODE_16, &uc );
+		if ( e ) { r.err = std::string( "uc_open(16): " ) + uc_strerror( e ); return r; }
+		uc_ctl_set_cpu_model( uc, int( model ) );
+		uc_mem_map( uc, 0, 0x100000, UC_PROT_ALL );
+		uc_mem_write( uc, R16_CODE, code.data(), code.size() );
+		uc_mem_write( uc, R16_SCRATCH, in.scratch, sizeof( in.scratch ) );
+		const int ids[ 8 ] = { UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX, UC_X86_REG_ESP, UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI };
+		for ( int i = 0; i < 8; ++i ) { uint64_t v = in.gpr[ i ] & 0xFFFFFFFF; uc_reg_write( uc, ids[ i ], &v ); }
+		uint64_t fl = in.rflags; uc_reg_write( uc, UC_X86_REG_EFLAGS, &fl );
+		uc_ctx ctx{ nullptr, &r };
+		uc_hook h;
+		uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) +[]( uc_engine* u, uint32_t intno, void* user ) {
+			auto* c = ( uc_ctx* ) user;
+			if ( !c->r->faulted ) { c->r->faulted = true; c->r->vector = int( intno ); }
+			uc_emu_stop( u );
+		}, &ctx, 1, 0 );
+		e = uc_emu_start( uc, R16_CODE, R16_CODE + code.size(), 0, 0 );
+		if ( e ) r.err = std::string( "uc_emu_start(16): " ) + uc_strerror( e );
+		for ( int i = 0; i < 8; ++i ) { uint64_t v = 0; uc_reg_read( uc, ids[ i ], &v ); r.s.gpr[ i ] = v & 0xFFFFFFFF; }
+		uint64_t f = 0; uc_reg_read( uc, UC_X86_REG_EFLAGS, &f ); r.s.rflags = f;
+		uc_mem_read( uc, R16_SCRATCH, r.s.scratch, sizeof( r.s.scratch ) );
+		r.ran = !e;
+		uc_close( uc );
+		return r;
+	}
+
+	inline result run_unicorn( const program& p, const state& in, uc_cpu_x86 model, uc_mode mode = UC_MODE_64,
+							   const std::function<void( uc_engine* )>& setup = {} )
 	{
 		result r;
 		uc_engine* uc = nullptr;
@@ -352,6 +391,7 @@ namespace bp
 		uc_mem_write( uc, DATA, data.data(), data.size() );
 		uint64_t rsp = HOST + 0x800;     // the thunk switches stacks itself; this only covers the final ret
 		uc_reg_write( uc, UC_X86_REG_RSP, &rsp );
+		if ( setup ) setup( uc );
 		uc_ctx ctx{ &p, &r };
 		uc_hook h, hm;
 		uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &ctx, 1, 0 );
@@ -453,9 +493,24 @@ namespace bp
 		state in{};
 		default_state( in );
 		if ( tc.init ) tc.init( in );
+		if ( tc.mode == UC_MODE_16 )
+		{
+			std::vector<uint8_t> code = tc.bytes;
+			std::string err;
+			if ( code.empty() ) code = assemble( tc.asm_text, R16_CODE, &err, KS_MODE_16 );
+			result uc16 = run_unicorn16( code, in, tc.model );
+			std::string why;
+			bool ok16 = uc16.ran && tc.expect && tc.expect( uc16, why );
+			std::printf( "    SDM-checked, Unicorn real mode: %s%s\n", uc16.faulted ? ( "fault vector " + std::to_string( uc16.vector ) ).c_str() : "completed",
+						 uc16.err.empty() ? "" : ( " (" + uc16.err + ")" ).c_str() );
+			if ( !ok16 ) std::printf( "    DIFF %s\n", why.empty() ? "expectation not met" : why.c_str() );
+			std::printf( "    -> %s\n", ok16 ? "PASS" : "FAIL" );
+			if ( ok16 ) ++sum.pass; else { ++sum.fail; sum.failed.push_back( tc.name ); }
+			return;
+		}
 		program p = build( tc );
 		if ( p.code.empty() ) { std::printf( "    ERROR building thunk: %s\n", p.err.c_str() ); ++sum.error; sum.failed.push_back( tc.name ); return; }
-		result uc = run_unicorn( p, in, tc.model, tc.mode );
+		result uc = run_unicorn( p, in, tc.model, tc.mode, tc.uc_setup );
 		if ( !uc.err.empty() && !uc.ran ) { std::printf( "    ERROR unicorn: %s\n", uc.err.c_str() ); ++sum.error; sum.failed.push_back( tc.name ); return; }
 		std::vector<std::string> diffs;
 		bool ok;
@@ -467,6 +522,13 @@ namespace bp
 						 hw.faulted ? ( "fault vector " + std::to_string( hw.vector ) ).c_str() : "completed",
 						 uc.faulted ? ( "fault vector " + std::to_string( uc.vector ) ).c_str() : "completed" );
 			ok = compare( tc, hw, uc, diffs );
+			if ( tc.check_each )
+			{
+				std::string why;
+				if ( !tc.check_each( hw, why ) ) { ok = false; diffs.push_back( "hw: " + why ); }
+				why.clear();
+				if ( !tc.check_each( uc, why ) ) { ok = false; diffs.push_back( "uc: " + why ); }
+			}
 			if ( tc.expect_mismatch )
 			{
 				std::printf( "    negative control: %zu difference(s) detected (expected > 0)\n", diffs.size() );
