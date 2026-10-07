@@ -21,6 +21,8 @@
 //   R15 CR0.TS/EM, CR4.OSFXSR on x87/MMX/MMX-state SSE forms and the CVTPI2PS m64 #MF, vs the SDM.
 //   R16 branches to a non-canonical target fault on the branch (RIP, RSP), vs hardware and the SDM.
 //   R17 x87 transcendentals (special / random / exponent-sweep operands, every mask and RC) vs hardware.
+//   R18 x87 arithmetic, compares, loads and stores (every form, special operands, unmasked exceptions,
+//       FSW preset) vs hardware, bit-exact: the SDM Vol1 8.5 responses.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -33,6 +35,7 @@
 #include <vector>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <xmmintrin.h>
 
 static int g_failures = 0;
@@ -1979,6 +1982,71 @@ static void x87_list( const char* inpath, const char* path, bool use_uc )
 	std::printf( "x87-list: %ld rows -> %s (%s)\n", rows, path, use_uc ? "Unicorn" : "hardware" );
 }
 
+// `emu-uc72-risk --x87-list2 <in.tsv> <out.csv> [--uc]`: one case per line, tab separated:
+//   instruction text, fcw, fsw, st0, st1, memory operand (16 bytes as 32 hex digits, byte 0 first)
+// The memory operand sits at [rcx + 192] (m16..m80). Output: the inputs, then fsw, ftw, st0, st1,
+// the memory operand after the instruction and AH (LAHF: SF ZF AF PF CF) - FST/FIST/FBSTP, FCOMI.
+static void x87_list2( const char* inpath, const char* path, bool use_uc )
+{
+	FILE* in = nullptr;
+	FILE* f = nullptr;
+	if ( fopen_s( &in, inpath, "r" ) || !in ) { std::printf( "cannot open %s\n", inpath ); return; }
+	if ( fopen_s( &f, path, "w" ) || !f ) { std::printf( "cannot open %s\n", path ); std::fclose( in ); return; }
+	std::fprintf( f, "op,fcw,fsw_in,st0_in,st1_in,mem_in,fsw,ftw,st0_out,st1_out,mem_out,ah\n" );
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	std::string cur_op;
+	std::vector<uint8_t> code;
+	char line[ 512 ];
+	long rows = 0;
+	while ( std::fgets( line, sizeof( line ), in ) )
+	{
+		char* ctx = nullptr;
+		const char* fld[ 6 ] = {};
+		int n = 0;
+		for ( char* tok = strtok_s( line, "\t\r\n", &ctx ); tok && n < 6; tok = strtok_s( nullptr, "\t\r\n", &ctx ) ) fld[ n++ ] = tok;
+		if ( n != 6 ) continue;
+		unsigned fcw = 0, fsw = 0, se0 = 0, se1 = 0;
+		unsigned long long m0 = 0, m1 = 0;
+		std::sscanf( fld[ 1 ], "%x", &fcw );
+		std::sscanf( fld[ 2 ], "%x", &fsw );
+		std::sscanf( fld[ 3 ], "%x:%llx", &se0, &m0 );
+		std::sscanf( fld[ 4 ], "%x:%llx", &se1, &m1 );
+		if ( cur_op != fld[ 0 ] ) { cur_op = fld[ 0 ]; code = assemble( r11_thunk( fld[ 0 ] ) ); }
+		if ( code.empty() ) { std::printf( "assembly failed: %s\n", fld[ 0 ] ); continue; }
+		uint8_t buf[ 208 ] = {};
+		for ( int i = 0; i < 8; ++i ) put( buf + 32 + i * 16, 0x3FFF, 1ull << 63 );
+		put( buf + 32 + 7 * 16, uint16_t( se0 ), m0 );
+		put( buf + 32 + 6 * 16, uint16_t( se1 ), m1 );
+		for ( int i = 0; i < 16 && fld[ 5 ][ 2 * i ] && fld[ 5 ][ 2 * i + 1 ]; ++i )
+		{
+			unsigned v = 0;
+			std::sscanf( fld[ 5 ] + 2 * i, "%2x", &v );
+			buf[ 192 + i ] = uint8_t( v );
+		}
+		uint16_t fc = uint16_t( fcw ), fs = uint16_t( fsw ), ftw = 0xC000;     // ST(7) empty: pushes possible
+		std::memcpy( buf + 0, &fc, 2 ); std::memcpy( buf + 4, &fs, 2 ); std::memcpy( buf + 8, &ftw, 2 );
+		r11_result res = use_uc ? r11_unicorn( code, buf, X87_HW_QUIRKS ) : r11_native( code, buf );
+		if ( res.fault >= 0 )
+		{
+			std::fprintf( f, "%s,%04X,%04X,%04X:%016llX,%04X:%016llX,%s,fault %d,,,,,\n", fld[ 0 ], fcw, fsw, se0, m0, se1, m1, fld[ 5 ], res.fault );
+			++rows;
+			continue;
+		}
+		uint64_t o0, o1; uint16_t x0, x1;
+		std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
+		std::memcpy( &o1, res.fx + 48, 8 ); std::memcpy( &x1, res.fx + 56, 2 );
+		char mem[ 33 ] = {};
+		for ( int i = 0; i < 16; ++i ) std::snprintf( mem + 2 * i, 3, "%02X", res.mem[ i ] );
+		std::fprintf( f, "%s,%04X,%04X,%04X:%016llX,%04X:%016llX,%s,%04X,%04X,%04X:%016llX,%04X:%016llX,%s,%02X\n", fld[ 0 ], fcw, fsw, se0, m0,
+					  se1, m1, fld[ 5 ], unsigned( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) ), unsigned( res.env[ 8 ] | ( res.env[ 9 ] << 8 ) ), x0,
+					  ( unsigned long long ) o0, x1, ( unsigned long long ) o1, mem, res.ah );
+		++rows;
+	}
+	std::fclose( in );
+	std::fclose( f );
+	std::printf( "x87-list2: %ld rows -> %s (%s)\n", rows, path, use_uc ? "Unicorn" : "hardware" );
+}
+
 // ── R17: x87 transcendentals vs hardware (plan 1.12) ─────────────────────────────────────────
 //
 // F2XM1, FYL2X, FYL2XP1, FPTAN, FPATAN, FSIN, FCOS and FSINCOS over three operand sets, natively
@@ -2188,6 +2256,180 @@ static void test_r17()
 	}
 }
 
+// ── R18: x87 arithmetic, loads, stores, compares vs hardware (plan 1.13) ──────────────────────
+//
+// Every x87 arithmetic/compare/load/store/stack form (register, popping, m16/m32/m64/m80 and
+// integer operands) over special operands (zeros, denormals, pseudo-denormal, unnormal, NaNs,
+// infinities, range and rounding edges), with FCW = all masked in two RC/PC settings and
+// IE/DE/ZE/OE/UE unmasked (one at a time and all), FSW = 0 or C0-C3 preset, natively and in
+// Unicorn. Required bit-exact: FSW, FTW, ST0, ST1, the memory operand and EFLAGS (FCOMI); the
+// SDM Vol1 8.5 responses (unmasked #IA/#D/#Z: nothing stored, no pop; unmasked #O/#U: biased
+// register result or no memory store) included. The transcendentals ride along with FSW preset
+// and are held to R17's rule (FSW identical but C1, values within 1 ulp).
+
+struct x87_case2 { std::string op; uint16_t fcw, fsw, se0, se1; uint64_t m0, m1; uint8_t mem[ 16 ]; bool tolerant; };
+
+static std::vector<x87_case2> x87_r18_cases()
+{
+	struct v80 { uint16_t se; uint64_t m; };
+	const v80 st[] = {
+		{ 0x0000, 0 }, { 0x8000, 0 }, { 0x0000, 1 }, { 0x8000, 0x4000000000000000ull }, { 0x0000, 0x8000000000000000ull },
+		{ 0x0001, 0x8000000000000000ull }, { 0x3FBF, 0x8000000000000000ull }, { 0xBFC0, 0xC000000000000000ull },
+		{ 0x3FFE, 0x8000000000000000ull }, { 0x3FFF, 0x8000000000000000ull }, { 0xBFFF, 0x8000000000000000ull },
+		{ 0x3FFE, 0xFFFFFFFFFFFFFFFFull }, { 0x3FFF, 0x8000000000000001ull }, { 0x3FFF, 0xC000000000000000ull },
+		{ 0x4000, 0xC90FDAA22168C235ull }, { 0x403D, 0xFFFFFFFFFFFFFFFFull }, { 0x403E, 0x8000000000000000ull },
+		{ 0x7FFE, 0xFFFFFFFFFFFFFFFFull }, { 0xFFFE, 0xFFFFFFFFFFFFFFFFull }, { 0x7FFF, 0x8000000000000000ull },
+		{ 0xFFFF, 0x8000000000000000ull }, { 0x7FFF, 0xC000000000000000ull }, { 0x7FFF, 0xA000000000000000ull },
+		{ 0x3FFB, 0xCCCCCCCCCCCCCCCDull }, { 0x3FFF, 0x0000000000000000ull }, { 0x40D0, 0x9000000000000000ull },
+		{ 0x0000, 0x7FFFFFFFFFFFFFFFull }, { 0x7FFE, 0x8000000000000001ull },
+		// store-range edges: beyond single/double max, single/double denormal range, 2^15/2^31/2^63, 10^18
+		{ 0x407F, 0xFFFFFF8000000000ull }, { 0x43FE, 0xFFFFFFFFFFFFF800ull }, { 0x3F81, 0x8000000000000000ull },
+		{ 0x3C01, 0x8000000000000000ull }, { 0x3F6A, 0x8000000000000000ull }, { 0x3BCD, 0x8000000000000000ull },
+		{ 0x400E, 0x8000000000000000ull }, { 0xC00E, 0x8000000000000000ull }, { 0x401E, 0x8000000000000000ull },
+		{ 0x403C, 0xDE0B6B3A763FFFF0ull }, { 0x403C, 0xDE0B6B3A76400000ull }, { 0xBFFE, 0xC000000000000000ull },
+	};
+	const v80 st1[] = {
+		{ 0x0000, 0 }, { 0x0000, 1 }, { 0x0001, 0x8000000000000000ull }, { 0x3FFF, 0x8000000000000000ull },
+		{ 0xBFFF, 0xC000000000000000ull }, { 0x7FFE, 0xFFFFFFFFFFFFFFFFull }, { 0x7FFF, 0x8000000000000000ull },
+		{ 0xFFFF, 0x8000000000000000ull }, { 0x7FFF, 0xC000000000000000ull }, { 0x7FFF, 0xA000000000000000ull },
+		{ 0x3FFF, 0x0000000000000000ull }, { 0x3FBF, 0x8000000000000000ull },
+	};
+	const uint16_t fcws[] = { 0x037F, 0x0F7F, 0x007F, 0x0A7F, 0x037E, 0x037D, 0x037B, 0x0377, 0x036F, 0x0340 };
+	const uint32_t m32[] = { 0, 0x80000000u, 1, 0x007FFFFFu, 0x3F800000u, 0x7F7FFFFFu, 0x7F800000u, 0x7FC00000u, 0x7FA00000u, 0x3EAAAAABu };
+	const uint64_t m64[] = { 0, 1, 0x000FFFFFFFFFFFFFull, 0x3FF0000000000000ull, 0x7FF0000000000000ull, 0x7FF4000000000000ull };
+	const int64_t ints[] = { 0, 1, -1, 32767, -32768, 2147483647, -2147483647 - 1 };
+	std::vector<x87_case2> out;
+	auto add = [ & ]( const std::string& op, const v80& a, const v80& b, const uint8_t* mem, size_t mlen, bool tol ) {
+		for ( uint16_t fcw : fcws )
+			for ( uint16_t fsw : { uint16_t( 0 ), uint16_t( 0x4700 ) } )
+			{
+				x87_case2 c{ op, fcw, fsw, a.se, b.se, a.m, b.m, {}, tol };
+				std::memset( c.mem, 0xAA, 16 );
+				if ( mem ) std::memcpy( c.mem, mem, mlen );
+				out.push_back( c );
+			}
+	};
+	const v80 one{ 0x3FFF, 0x8000000000000000ull };
+	for ( const char* op : { "fadd st(0), st(1)", "fsub st(0), st(1)", "fsubr st(0), st(1)", "fmul st(0), st(1)", "fdiv st(0), st(1)",
+							 "fdivr st(0), st(1)", "faddp st(1), st(0)", "fsubp st(1), st(0)", "fsubrp st(1), st(0)", "fmulp st(1), st(0)",
+							 "fdivp st(1), st(0)", "fdivrp st(1), st(0)", "fscale", "fprem", "fprem1", "fcom st(1)", "fcomp st(1)", "fcompp",
+							 "fucom st(1)", "fucompp", "fcomi st(0), st(1)", "fcomip st(0), st(1)", "fucomip st(0), st(1)", "fxch st(1)" } )
+		for ( const v80& a : st )
+			for ( const v80& b : st1 ) add( op, a, b, nullptr, 0, false );
+	for ( const char* op : { "fyl2x", "fyl2xp1", "fpatan" } )
+		for ( const v80& a : st )
+			for ( const v80& b : st1 ) add( op, a, b, nullptr, 0, true );
+	for ( const char* op : { "fsqrt", "fxtract", "frndint", "fabs", "fchs", "ftst", "fxam", "fincstp", "fdecstp", "ffree st(1)", "fld st(1)",
+							 "fst st(1)", "fstp st(1)", "fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2", "fldln2" } )
+		for ( const v80& a : st ) add( op, a, one, nullptr, 0, false );
+	for ( const char* op : { "f2xm1", "fptan", "fsin", "fcos", "fsincos" } )
+		for ( const v80& a : st ) add( op, a, one, nullptr, 0, true );
+	for ( const char* o : { "fadd", "fmul", "fsub", "fsubr", "fdiv", "fdivr", "fcom", "fcomp" } )
+		for ( const v80& a : st )
+		{
+			for ( uint32_t v : m32 ) add( std::string( o ) + " dword ptr [rcx + 192]", a, one, ( const uint8_t* ) &v, 4, false );
+			for ( uint64_t v : m64 ) add( std::string( o ) + " qword ptr [rcx + 192]", a, one, ( const uint8_t* ) &v, 8, false );
+		}
+	for ( const char* o : { "fiadd", "fimul", "fisub", "fisubr", "fidiv", "fidivr", "ficom", "ficomp" } )
+		for ( size_t ai = 0; ai < std::size( st ); ai += 2 )
+			for ( int64_t v : ints )
+			{
+				int16_t w = int16_t( v );
+				int32_t d = int32_t( v );
+				add( std::string( o ) + " word ptr [rcx + 192]", st[ ai ], one, ( const uint8_t* ) &w, 2, false );
+				add( std::string( o ) + " dword ptr [rcx + 192]", st[ ai ], one, ( const uint8_t* ) &d, 4, false );
+			}
+	for ( uint32_t v : m32 ) add( "fld dword ptr [rcx + 192]", one, one, ( const uint8_t* ) &v, 4, false );
+	for ( uint64_t v : m64 ) add( "fld qword ptr [rcx + 192]", one, one, ( const uint8_t* ) &v, 8, false );
+	for ( const v80& a : st )
+	{
+		uint8_t t[ 10 ];
+		std::memcpy( t, &a.m, 8 ); std::memcpy( t + 8, &a.se, 2 );
+		add( "fld tbyte ptr [rcx + 192]", one, one, t, 10, false );
+	}
+	for ( int64_t v : ints )
+	{
+		int16_t w = int16_t( v );
+		int32_t d = int32_t( v );
+		add( "fild word ptr [rcx + 192]", one, one, ( const uint8_t* ) &w, 2, false );
+		add( "fild dword ptr [rcx + 192]", one, one, ( const uint8_t* ) &d, 4, false );
+		add( "fild qword ptr [rcx + 192]", one, one, ( const uint8_t* ) &v, 8, false );
+	}
+	for ( const char* op : { "fst dword ptr [rcx + 192]", "fstp dword ptr [rcx + 192]", "fst qword ptr [rcx + 192]", "fstp qword ptr [rcx + 192]",
+							 "fstp tbyte ptr [rcx + 192]", "fist word ptr [rcx + 192]", "fistp word ptr [rcx + 192]", "fist dword ptr [rcx + 192]",
+							 "fistp dword ptr [rcx + 192]", "fistp qword ptr [rcx + 192]", "fisttp word ptr [rcx + 192]",
+							 "fisttp dword ptr [rcx + 192]", "fisttp qword ptr [rcx + 192]", "fbstp tbyte ptr [rcx + 192]" } )
+		for ( const v80& a : st ) add( op, a, one, nullptr, 0, false );
+	return out;
+}
+
+static void test_r18()
+{
+	std::printf( "R18 x87 arithmetic / compares / loads / stores vs hardware: bit-exact (SDM Vol1 8.5 responses)\n" );
+	std::vector<x87_case2> cases = x87_r18_cases();
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	struct stat_t { long n = 0, bad = 0; };
+	std::map<std::string, stat_t> stats;
+	std::map<std::string, std::vector<uint8_t>> codes;
+	long total = 0, failed = 0;
+	for ( const x87_case2& c : cases )
+	{
+		auto ci = codes.find( c.op );
+		if ( ci == codes.end() )
+		{
+			ci = codes.emplace( c.op, assemble( r11_thunk( c.op.c_str() ) ) ).first;
+			CHECK( !ci->second.empty(), "%s: assembly", c.op.c_str() );
+		}
+		const std::vector<uint8_t>& code = ci->second;
+		if ( code.empty() ) continue;
+		uint8_t in[ 208 ] = {};
+		for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 1ull << 63 );
+		put( in + 32 + 7 * 16, c.se0, c.m0 );
+		put( in + 32 + 6 * 16, c.se1, c.m1 );
+		std::memcpy( in + 192, c.mem, 16 );
+		uint16_t ftw = 0xC000;                          // ST(7) empty: pushes possible
+		std::memcpy( in + 0, &c.fcw, 2 ); std::memcpy( in + 4, &c.fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+		r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, X87_HW_QUIRKS );
+		stat_t& s = stats[ c.op ];
+		++s.n;
+		++total;
+		bool ok;
+		if ( hw.fault >= 0 || uc.fault >= 0 )
+			ok = hw.fault == uc.fault;
+		else
+		{
+			uint16_t fh = uint16_t( hw.env[ 4 ] | ( hw.env[ 5 ] << 8 ) ), fu = uint16_t( uc.env[ 4 ] | ( uc.env[ 5 ] << 8 ) );
+			bool same_tw = hw.env[ 8 ] == uc.env[ 8 ] && hw.env[ 9 ] == uc.env[ 9 ];
+			bool same_mem = !std::memcmp( hw.mem, uc.mem, 16 ) && hw.ah == uc.ah;
+			if ( !c.tolerant )
+				ok = fh == fu && same_tw && same_mem && !std::memcmp( hw.fx + 32, uc.fx + 32, 10 ) && !std::memcmp( hw.fx + 48, uc.fx + 48, 10 );
+			else
+			{
+				uint64_t h0, h1, u0, u1; uint16_t hx0, hx1, ux0, ux1;
+				std::memcpy( &h0, hw.fx + 32, 8 ); std::memcpy( &hx0, hw.fx + 40, 2 ); std::memcpy( &h1, hw.fx + 48, 8 ); std::memcpy( &hx1, hw.fx + 56, 2 );
+				std::memcpy( &u0, uc.fx + 32, 8 ); std::memcpy( &ux0, uc.fx + 40, 2 ); std::memcpy( &u1, uc.fx + 48, 8 ); std::memcpy( &ux1, uc.fx + 56, 2 );
+				ok = ( ( fh ^ fu ) & ~0x0200 ) == 0 && same_tw && same_mem && x87_within_1ulp( hx0, h0, ux0, u0 ) &&
+					 x87_within_1ulp( hx1, h1, ux1, u1 );
+			}
+		}
+		if ( !ok )
+		{
+			++failed;
+			if ( s.bad++ < 2 )
+				std::printf( "    FAIL: %s fcw=%04X fsw=%04X x=%04X:%016llX y=%04X:%016llX: hw fsw=%04X ftw=%02X%02X | uc fsw=%04X ftw=%02X%02X\n",
+							 c.op.c_str(), c.fcw, c.fsw, c.se0, ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1,
+							 unsigned( hw.env[ 4 ] | ( hw.env[ 5 ] << 8 ) ), hw.env[ 9 ], hw.env[ 8 ], unsigned( uc.env[ 4 ] | ( uc.env[ 5 ] << 8 ) ),
+							 uc.env[ 9 ], uc.env[ 8 ] );
+		}
+	}
+	long clean = 0;
+	for ( auto& kv : stats ) clean += kv.second.bad == 0;
+	std::printf( "    %ld cases, %zu instruction forms: %ld bit-exact forms, %ld mismatching cases\n", total, stats.size(), clean, failed );
+	for ( auto& kv : stats )
+		if ( kv.second.bad ) std::printf( "      %-34s %ld / %ld\n", kv.first.c_str(), kv.second.bad, kv.second.n );
+	CHECK( failed == 0, "%ld x87 cases differ from the hardware", failed );
+}
+
 int main( int argc, char** argv )
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -2199,6 +2441,11 @@ int main( int argc, char** argv )
 	if ( argc >= 4 && std::strcmp( argv[ 1 ], "--x87-list" ) == 0 )
 	{
 		x87_list( argv[ 2 ], argv[ 3 ], argc >= 5 && std::strcmp( argv[ 4 ], "--uc" ) == 0 );
+		return 0;
+	}
+	if ( argc >= 4 && std::strcmp( argv[ 1 ], "--x87-list2" ) == 0 )
+	{
+		x87_list2( argv[ 2 ], argv[ 3 ], argc >= 5 && std::strcmp( argv[ 4 ], "--uc" ) == 0 );
 		return 0;
 	}
 	if ( argc >= 3 && std::strcmp( argv[ 1 ], "--x87-special" ) == 0 )
@@ -2247,6 +2494,8 @@ int main( int argc, char** argv )
 	test_r16();
 	std::printf( "\n" );
 	test_r17();
+	std::printf( "\n" );
+	test_r18();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
