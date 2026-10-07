@@ -803,9 +803,10 @@ static void test_r8()
 		{ "mov rax, [rcx]        0x0000800000030000", "mov rax, qword ptr [rcx]\nret\n", 0x0000800000030000ull, 13 },
 		{ "mov [rcx], rax        0x8000000000030000", "mov qword ptr [rcx], rax\nret\n", 0x8000000000030000ull, 13 },
 		{ "bts [rcx], rax        rcx+(1<<62)/8     ", "mov rax, 0x4000000000000000\nbts qword ptr [rcx], rax\nret\n", 0x30000, 13 },
-		// explicit SS override instead of an RBP base: the thunk must not touch RSP/RBP, because a
-		// fault inside it is unwound as a leaf function (no unwind info for generated code)
-		{ "mov rax, ss:[rcx]     0x0000800000030000", "mov rax, qword ptr ss:[rcx]\nret\n", 0x0000800000030000ull, 12 },
+		// the thunk must not change RSP/RBP (a fault inside it is unwound as a leaf function), so the
+		// stack reference is [rsp + rcx]; an SS override on a non-stack register is ignored (SDM 3.3.7.1)
+		{ "mov rax, ss:[rcx]     0x0000800000030000", "mov rax, qword ptr ss:[rcx]\nret\n", 0x0000800000030000ull, 13 },
+		{ "mov rax, [rsp + rcx]  rcx=8000000000000000", "mov rax, qword ptr [rsp + rcx]\nret\n", 0x8000000000000000ull, 12 },
 		{ "mov rax, [rcx] canon. 0x00007FFFFFFFF000", "mov rax, qword ptr [rcx]\nret\n", 0x00007FFFFFFFF000ull, 14 },
 	};
 	for ( const c& k : cases )
@@ -822,8 +823,60 @@ static void test_r8()
 					 touched ? " (mapped page modified!)" : "", k.sdm_vector );
 		CHECK( hw.faulted, "%s: hardware did not fault", k.what );
 		CHECK( !touched, "%s: Unicorn aliased the address into mapped memory", k.what );
-		if ( k.sdm_vector == 13 ) CHECK( v == 13, "%s: Unicorn vector %d, SDM #GP(0)", k.what, v );
-		if ( k.sdm_vector == 12 ) CHECK( v == 13 || v == 12, "%s: Unicorn vector %d (SDM #SS(0); #GP accepted until 1.10.3b)", k.what, v );
+		if ( k.sdm_vector != 14 ) CHECK( v == k.sdm_vector, "%s: Unicorn vector %d, SDM %d", k.what, v, k.sdm_vector );
+	}
+
+	// Unicorn only (a non-canonical RSP/RBP cannot be run natively): SDM Vol1 3.3.7.1 - implied stack
+	// references and RSP/RBP bases -> #SS(0); FS/GS override on them -> #GP(0); CS/DS/ES/SS overrides ignored.
+	std::printf( "    -- Unicorn vs SDM (bad = 8000000000001000) --\n" );
+	struct u { const char* text; bool bad_rsp, bad_rbp, bad_rcx, bad_r13; int sdm_vector; };
+	const u ucases[] = {
+		{ "push rax", true, false, false, false, 12 },
+		{ "call l1\nl1:", true, false, false, false, 12 },
+		{ "ret", true, false, false, false, 12 },
+		{ "pushfq", true, false, false, false, 12 },
+		{ "leave", false, true, false, false, 12 },
+		{ "mov rax, qword ptr [rbp + 8]", false, true, false, false, 12 },
+		{ "fxsave [rbp]", false, true, false, false, 12 },
+		{ "vmovdqu ymm0, ymmword ptr [rsp + rcx]", false, false, true, false, 12 },
+		{ "mov rax, qword ptr ds:[rsp + rcx]", false, false, true, false, 12 },
+		{ "mov rax, qword ptr fs:[rsp + rcx]", false, false, true, false, 13 },
+		{ "push qword ptr [rsp + rcx]", false, false, true, false, 12 },
+		{ "push qword ptr [rcx]", false, false, true, false, 13 },
+		{ "pop qword ptr [rcx]", false, false, true, false, 13 },
+		{ "call qword ptr [rcx]", false, false, true, false, 13 },
+		{ "mov rax, qword ptr [r13]", false, false, false, true, 13 },
+		{ "mov rax, qword ptr [rcx]", false, false, true, false, 13 },
+	};
+	for ( const u& k : ucases )
+	{
+		std::vector<uint8_t> code = assemble( k.text );
+		CHECK( !code.empty(), "%s: assembly", k.text );
+		if ( code.empty() ) continue;
+		const uint64_t bad = 0x8000000000001000ull;
+		uc_engine* uc = nullptr;
+		uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+		uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+		uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+		uc_mem_map( uc, 0x100000, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+		uc_mem_write( uc, 0x1000, code.data(), code.size() );
+		uint64_t good = 0x108000, rsp = k.bad_rsp ? bad : good, rbp = k.bad_rbp ? bad : good,
+				 rcx = k.bad_rcx ? ( std::strstr( k.text, "rsp + rcx" ) ? 0x8000000000000000ull : bad ) : good, r13 = k.bad_r13 ? bad : good;
+		uint64_t pushed = 0x1000;     // ret / pop targets stay mapped
+		uc_mem_write( uc, good, &pushed, 8 );
+		uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_RBP, &rbp );
+		uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_R13, &r13 );
+		intr_log log;
+		uc_hook h;
+		uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+		uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 1 );
+		uc_close( uc );
+		int v = log.seen.empty() ? -1 : int( log.seen[ 0 ] );
+		std::string name = k.text;
+		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
+		std::printf( "    %-40s SDM #%s  uc %s\n", name.c_str(), k.sdm_vector == 12 ? "SS" : "GP",
+					 v == 12 ? "#SS" : v == 13 ? "#GP" : ( "vector " + std::to_string( v ) ).c_str() );
+		CHECK( v == k.sdm_vector, "%s: Unicorn vector %d, SDM %d", name.c_str(), v, k.sdm_vector );
 	}
 }
 
