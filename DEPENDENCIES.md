@@ -16,11 +16,11 @@ Build rules:
 | `.` (root) | **our fork** of NoVmp | https://github.com/can1357/NoVmp | `novmp-emu` | branch HEAD (see `git log`; gates are tagged `gate-N`) | — | `master` 6c23c9a (2021-05-05) |
 | `VTIL-Core` | **our fork** of VTIL | https://github.com/vtil-project/VTIL-Core | `novmp-emu` | `ec9e26a` | 2026-10-07 | `master` 9ebee8e (2026-07-27) |
 | `linux-pe` | **our fork** (header-only) | https://github.com/can1357/linux-pe | `novmp-emu` | `3e8e37a` | 2026-10-07 | `master` 1fcb057 (2025-04-24) |
-| `unicorn` | third party, **ledgered changes only** (D0/D9) | https://github.com/unicorn-engine/unicorn | `novmp/qemu72` | `5bab3af6` (**QEMU 7.2.22**) | 2026-10-07 | `pr2349-rebased` 3706716d (2026-08-28), 0 behind |
+| `unicorn` | third party, **ledgered changes only** (D0/D9) | https://github.com/unicorn-engine/unicorn | `novmp/qemu72` | `1514d5be` (**QEMU 7.2.22**) | 2026-10-07 | `pr2349-rebased` 3706716d (2026-08-28), 0 behind |
 | `VTIL-Core\Dependencies\capstone` | third party, pristine | https://github.com/capstone-engine/capstone | `next` | `992e6d7f` (6.0.0-Alpha11-14) | 2026-10-04 | same |
 | `VTIL-Core\Dependencies\keystone` | third party, pristine | https://github.com/keystone-engine/keystone | `master` | `0d9567f` (0.9.2-39) | 2026-07-18 | same |
 
-Unicorn (plan Phase 1, decisions D0/D9): local branch `novmp/qemu72` = upstream `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) + the two missing `dev` commits (`09bd8e4f` -> `7968e7ae`, `938efd13` -> `5bab3af6`). Next come the recorded QEMU 11.1 backports (see `CHANGES_LEDGER.md`). This is the only third-party dependency we change. The previous pin was `dev` `938efd13` (QEMU 5.0.1).
+Unicorn (plan Phase 1, decisions D0/D9): local branch `novmp/qemu72` = upstream `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) + the two missing `dev` commits (`09bd8e4f` -> `7968e7ae`, `938efd13` -> `5bab3af6`) + our bug fix `1514d5be` (old_exception / spurious #DF, ledger U4). Next come the recorded QEMU 11.1 backports (see `CHANGES_LEDGER.md`). This is the only third-party dependency we change. The previous pin was `dev` `938efd13` (QEMU 5.0.1).
 
 ## Project files (ours)
 

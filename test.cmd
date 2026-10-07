@@ -30,6 +30,9 @@ rem test_mem_read_and_write_large_memory_block opens UC_ARCH_ARM64; our unicorn.
 rem for the x86_64 target only, so that one upstream test cannot apply (skipped by name).
 echo [test] skip unicorn-test_mem:test_mem_read_and_write_large_memory_block (needs UC_ARCH_ARM64; x86_64-only build)
 call :suite unicorn-test_mem --skip test_mem_read_and_write_large_memory_block
+rem plan 1.5: QEMU 7.2 branch risks (long AVX2/FMA/VSIB blocks vs hardware, uc_context round
+rem trip, old_exception / spurious #DF). Hardware reference runs self-generated code only.
+call :suite emu-uc72-risk
 
 echo.
 if !FAILED! NEQ 0 (

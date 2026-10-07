@@ -33,12 +33,13 @@ Status values: **in** = committed and verified · **planned** = in the plan, not
 | N7 | `msvc\unicorn.vcxproj`: + `qemu/accel/tcg/tb-maint.c` (per-target), `qemu/crypto/sm4.c`, `qemu/util/int128.c` (common); `LanguageStandard_C` = `stdc11` | ours (file list and C standard taken from the branch's upstream build as reference) | the QEMU 7.2.22 branch adds these sources, and its softfloat uses C11 `_Generic` (101 C2275 errors without it) | `4c741d4` | upstream-vs-project list diff: 0 missing, 0 extra; `build.cmd --release` 0 errors | in |
 | N5 | Hard-coded image base `0x100000000` (`subroutines.cpp:471`) replaced by the real image base | ours | correctness | — | plan 7.3 | planned |
 
-## unicorn (third party; only planned change, decisions D0/D9)
+## unicorn (third party; decisions D0/D9; D0 amended 2026-10-07: genuine Unicorn bugs found by our tests may be fixed directly, each with a reproducing test)
 
 | # | Change | Origin | Why | Commit | Proof | Status |
 |---|---|---|---|---|---|---|
 | U1 | Local branch `novmp/qemu72` from `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) | upstream Unicorn branch | AVX/AVX2/FMA/F16C/VAES execution, K0-K7 access | base `3706716d`, root `4c741d4` | builds (0 errors); `test.cmd`: test_x86 97/97, test_ctl 12/12, test_mem 20/20 (+1 ARM64-only test skipped by name) | in |
 | U2 | Cherry-pick `09bd8e4f` -> `7968e7ae` (binding constants; 5 conflicts resolved by keeping both sides: +`UC_CTL_UC_PREALLOC` per file, the branch's own constants kept) and `938efd13` -> `5bab3af6` (UC_HOOK_BLOCK_ICOUNT; clean merge, reviewed against the 7.2 translator) | upstream Unicorn `dev` | missing from the 7.2 branch | `7968e7ae`, `5bab3af6` | builds; `test_add_block_icount_hook` passes (test_ctl 12/12) | in |
+| U4 | `qemu/accel/tcg/cpu-exec.c`: reset `env->old_exception = -1` when a `UC_HOOK_INTR` hook handles an x86 exception | **ours** (Unicorn bug fix, allowed by the amended D0) | Unicorn skips `x86_cpu_do_interrupt()` (the only place that clears `old_exception` after delivery), so the 2nd independent contributory fault became #DF | `1514d5be` | `emu-uc72-risk` R3: #DE,#DE / #GP,#GP / mixed now `0,0` / `13,13` / `0,13` / `13,0` (before: `x,8`); Unicorn unit tests unchanged (97/97, 12/12, 20/20) | in |
 | U3… | QEMU 11.1 backports (plan 1.6, one entry per QEMU commit) | upstream QEMU `3377670ee9` | ISA (SHA-NI, CMPccXADD, RDSEED/RDPID) and correctness fixes | — | one difftest case each | planned |
 
 capstone and keystone: **no changes**, pristine upstream.
