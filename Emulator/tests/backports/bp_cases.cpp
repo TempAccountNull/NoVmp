@@ -579,7 +579,129 @@ namespace bp
 		for ( auto& c : wc ) v.push_back( hwb( "e000687f12", c.n, c.b, w_init ) );
 		return v;
 	}
-	std::vector<test_case> x87_cases() { return {}; }
+	// ── x87 / MXCSR / softfloat (agent analysis: scratchpad\bp\x87.md) ───────────────────────
+	// Data table at rbx = SCRATCH (offsets from the analysis):
+	static void x87_data( state& s )
+	{
+		auto q = [ & ]( int off, uint64_t v ) { std::memcpy( s.scratch + off, &v, 8 ); };
+		auto d = [ & ]( int off, uint32_t v ) { std::memcpy( s.scratch + off, &v, 4 ); };
+		auto w = [ & ]( int off, uint16_t v ) { std::memcpy( s.scratch + off, &v, 2 ); };
+		std::memset( s.scratch, 0, 0x100 );
+		d( 0x00, 0x00000001 );                                   // den32
+		q( 0x08, 0x0000000000000001ull );                        // den64
+		q( 0x10, 0x0000000000000001ull ); w( 0x18, 0x0000 );     // den80 (true extended denormal)
+		q( 0x20, 0x0000000000000001ull ); w( 0x28, 0x7FFF );     // pseudo-NaN (J=0): unsupported format
+		q( 0x30, 0x8000000000000001ull ); w( 0x38, 0x7FFF );     // SNaN80
+		q( 0x40, 0xC000000000001234ull ); w( 0x48, 0x7FFF );     // QNaN80
+		q( 0x50, 0x4000000000000000ull );                        // 2.0
+		q( 0x58, 0xBFF0000000000000ull );                        // -1.0
+		d( 0x60, 0x3F800000 );                                   // 1.0f
+		d( 0x64, 2 );                                            // int 2
+		d( 0x68, 0x1F80 ); d( 0x6C, 0x1FC0 ); d( 0x70, 0x9F80 ); // mxcsr: default, DAZ, FTZ
+		q( 0x78, 0x3FEFFFFFFFFFFFFEull );                        // 1-2^-52
+		q( 0x80, 0x0010000000000001ull );                        // DBL_MIN*(1+2^-52)
+		q( 0x88, 0x3FDFFFFFFFFFFFFFull ); q( 0x90, 0x001FFFFFFFFFFFFFull ); q( 0x98, 0x801FFFFFFFFFFFFFull );
+		q( 0xA0, 0x8008000000000000ull ); q( 0xA8, 0x7FF0000000000000ull );   // -denormal64, +inf64
+		q( 0xB0, 0x7FF800000000AAAAull ); q( 0xB8, 0x7FF000000000AAAAull );   // QNaN64, SNaN64
+		q( 0xC0, 0 ); q( 0xC8, 0x3CC8000000000000ull ); q( 0xD0, 0x3FF0000000000000ull );
+		s.gpr[ RBX ] = SCRATCH;
+	}
+
+	std::vector<test_case> x87_cases()
+	{
+		std::vector<test_case> v;
+		auto add = [ & ]( const char* commit, const char* name, const char* text, uint64_t flag_mask = 0x8D5 ) {
+			test_case t{ commit, name, text };
+			t.init = x87_data;
+			t.compare = C_ALL | C_FTW_FULL;
+			t.flag_mask = flag_mask;
+			v.push_back( t );
+		};
+		// 57df511180 (+ P01 397ef415ca, P02/P03 softfloat): x87 FSW.DE and MXCSR.DE wired correctly
+		add( "57df511180", "D1 fld m32 denormal -> DE", "fld dword ptr [rbx]\n" );
+		add( "57df511180", "D2 fld m64 denormal -> DE", "fld qword ptr [rbx + 0x08]\n" );
+		add( "57df511180", "D3 fld m80 denormal -> no DE", "fld tbyte ptr [rbx + 0x10]\n" );
+		add( "57df511180", "D4 fadd with an extended denormal -> DE+PE", "fld tbyte ptr [rbx + 0x10]\nfld1\nfnclex\nfadd st(0), st(1)\n" );
+		add( "57df511180", "D5 QNaN + denormal -> no DE", "fld tbyte ptr [rbx + 0x10]\nfld tbyte ptr [rbx + 0x40]\nfadd st(0), st(1)\n" );
+		add( "57df511180", "D6 denormal / 0 -> ZE only", "fldz\nfld tbyte ptr [rbx + 0x10]\nfdiv st(0), st(1)\n" );
+		add( "57df511180", "D7 fst m64 of a denormal -> UE+PE, no DE (P06b)", "fld tbyte ptr [rbx + 0x10]\nfst qword ptr [rbx + 0x210]\n" );
+		add( "57df511180", "D8 fxtract of a denormal -> DE (P06)", "fld tbyte ptr [rbx + 0x10]\nfxtract\n" );
+		add( "57df511180", "D9 fcom with a denormal -> DE", "fld tbyte ptr [rbx + 0x10]\nfld1\nfcom st(1)\n" );
+		add( "57df511180", "D10 frndint of a denormal -> DE+PE (P06b)", "fld tbyte ptr [rbx + 0x10]\nfrndint\n" );
+		add( "57df511180", "S1 addss with a denormal -> MXCSR DE+PE", "movss xmm0, dword ptr [rbx + 0x60]\naddss xmm0, dword ptr [rbx]\n" );
+		add( "57df511180", "S2 addss with a denormal under DAZ -> no DE", "ldmxcsr dword ptr [rbx + 0x6C]\nmovss xmm0, dword ptr [rbx + 0x60]\naddss xmm0, dword ptr [rbx]\n" );
+		add( "57df511180", "S3 comiss with a denormal -> DE", "movss xmm0, dword ptr [rbx]\ncomiss xmm0, dword ptr [rbx + 0x60]\n" );
+		add( "57df511180", "S4 cvtss2si of a denormal -> PE, no DE", "cvtss2si eax, dword ptr [rbx]\n" );
+		add( "57df511180", "S5 cvtss2sd of a denormal -> DE", "cvtss2sd xmm0, dword ptr [rbx]\n" );
+		add( "57df511180", "S6 rcpss of a denormal -> no DE", "movss xmm1, dword ptr [rbx]\nrcpss xmm0, xmm1\n" );
+		add( "57df511180", "S7 DE from addss survives rcpss (needs P01)", "movss xmm0, dword ptr [rbx + 0x60]\naddss xmm0, dword ptr [rbx]\nrcpss xmm1, xmm0\n" );
+		// rcpss's value is a ~12-bit hardware approximation (QEMU computes 1/x exactly) - a separate
+		// known gap (plan Phase 5); this case is about MXCSR.DE surviving, so XMM is not compared.
+		v.back().compare &= ~C_XMM;
+		add( "57df511180", "vdpps with denormal products -> DE", "mov rax, rbx\nvdpps xmm0, xmm1, xmmword ptr [rax + 0x100], 0xFF\n" );
+		// 28f13bccbe + bc40e4fe62: FTZ is applied after rounding
+		add( "bc40e4fe62", "F1 mulsd rounds up to DBL_MIN under FTZ -> not flushed, PE only", "ldmxcsr dword ptr [rbx + 0x70]\nmovsd xmm0, qword ptr [rbx + 0x78]\nmulsd xmm0, qword ptr [rbx + 0x80]\n" );
+		add( "bc40e4fe62", "F1 control without FTZ", "movsd xmm0, qword ptr [rbx + 0x78]\nmulsd xmm0, qword ptr [rbx + 0x80]\n" );
+		add( "bc40e4fe62", "F2 vfmadd231sd (upstream fma.c vector) under FTZ", "ldmxcsr dword ptr [rbx + 0x70]\nmovsd xmm0, qword ptr [rbx + 0x98]\nmovsd xmm1, qword ptr [rbx + 0x90]\nmovsd xmm2, qword ptr [rbx + 0x88]\nvfmadd231sd xmm0, xmm2, xmm1\n" );
+		add( "bc40e4fe62", "F2 control without FTZ", "movsd xmm0, qword ptr [rbx + 0x98]\nmovsd xmm1, qword ptr [rbx + 0x90]\nmovsd xmm2, qword ptr [rbx + 0x88]\nvfmadd231sd xmm0, xmm2, xmm1\n" );
+		add( "bc40e4fe62", "F3 FTZ with a consumed denormal", "ldmxcsr dword ptr [rbx + 0x70]\nmovsd xmm0, qword ptr [rbx + 0xA0]\naddsd xmm0, qword ptr [rbx + 0xC0]\n" );
+		// cf10af6c70: pseudo-NaN operands of FPATAN/FYL2X/FYL2XP1 give the QNaN indefinite
+		for ( const char* op : { "fpatan", "fyl2x", "fyl2xp1" } )
+		{
+			static std::deque<std::string> keep;
+			keep.push_back( std::string( "fld1\nfld tbyte ptr [rbx + 0x20]\n" ) + op + "\n" );
+			static std::deque<std::string> nm;
+			nm.push_back( std::string( op ) + ": ST0 pseudo-NaN -> QNaN indefinite + IE" );
+			add( "cf10af6c70", nm.back().c_str(), keep.back().c_str() );
+			keep.push_back( std::string( "fld tbyte ptr [rbx + 0x20]\nfld tbyte ptr [rbx + 0x30]\n" ) + op + "\n" );
+			nm.push_back( std::string( op ) + ": ST1 pseudo-NaN, ST0 SNaN -> QNaN indefinite" );
+			add( "cf10af6c70", nm.back().c_str(), keep.back().c_str() );
+		}
+		// 2b3bfbb21b (analysed NOT-APPLICABLE): 0 * Inf + QNaN raises no Invalid - regression check
+		add( "2b3bfbb21b", "vfmadd231sd 0*Inf+QNaN -> QNaN, no IE", "movsd xmm0, qword ptr [rbx + 0xB0]\nmovsd xmm1, qword ptr [rbx + 0xA8]\nmovsd xmm2, qword ptr [rbx + 0xC0]\nvfmadd231sd xmm0, xmm2, xmm1\n" );
+		add( "2b3bfbb21b", "vfmadd231sd 0*Inf+SNaN -> QNaN, IE", "movsd xmm0, qword ptr [rbx + 0xB8]\nmovsd xmm1, qword ptr [rbx + 0xA8]\nmovsd xmm2, qword ptr [rbx + 0xC0]\nvfmadd231sd xmm0, xmm2, xmm1\n" );
+		// 0924d9d3db: FCOMI/FUCOMI clear OF/SF/AF
+		add( "0924d9d3db", "fcomi clears OF/SF/AF", "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nmov al, 0x7F\nadd al, 1\nfcomi st(0), st(1)\n" );
+		add( "0924d9d3db", "fucomi clears OF/SF/AF", "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nmov al, 0x7F\nadd al, 1\nfucomi st(0), st(1)\n" );
+		// 6802a4b239 + c7cc09c85b: compares and FXCH clear C1 (FXAM leaves C1 = sign = 1 first)
+		add( "6802a4b239", "fcom clears C1", "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nfxam\nfcom st(1)\n" );
+		add( "6802a4b239", "fucom clears C1", "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nfxam\nfucom st(1)\n" );
+		add( "6802a4b239", "ficom clears C1", "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nfxam\nficom dword ptr [rbx + 0x64]\n" );
+		{
+			// C0/C2/C3 are undefined after FCOMI/FXCH: compare FSW & 0xBAFF via a per-engine view
+			for ( const char* tail : { "fcomi st(0), st(1)\n", "fxch st(1)\n" } )
+			{
+				static std::deque<std::string> keep, nm;
+				keep.push_back( std::string( "fld qword ptr [rbx + 0x50]\nfld qword ptr [rbx + 0x58]\nfxam\n" ) + tail );
+				nm.push_back( std::string( tail[ 1 ] == 'c' ? "fcomi" : "fxch" ) + " clears C1 (C0/C2/C3 masked)" );
+				test_case t{ tail[ 1 ] == 'c' ? "6802a4b239" : "c7cc09c85b", nm.back().c_str(), keep.back() };
+				t.init = x87_data;
+				t.compare = ( C_ALL | C_FTW_FULL ) & ~C_X87 & ~C_FLAGS;
+				auto c1_clear = [ ]( const result& r, std::string& why ) {
+					if ( ( r.s.fsw() & 0xBAFF ) == 0x3000 ) return true;
+					why = "fsw & 0xBAFF = " + hx( r.s.fsw() & 0xBAFF ) + ", expected 0x3000"; return false;
+				};
+				if ( tail[ 1 ] == 'c' )
+				{
+					// SDM (FCOMI/FCOMIP/FUCOMI/FUCOMIP, "FPU Flags Affected"): C1 set to 0. The i5-13600K
+					// leaves C1 set here; per the project rule the manual wins, so this is SDM-checked.
+					t.hardware = false;
+					t.expect = c1_clear;
+				}
+				else
+					t.check_each = c1_clear;           // FXCH: manual and hardware agree (C1 = 0)
+				v.push_back( t );
+			}
+		}
+		// 994fb6c218 / f2357fdcd9 / a9dbd71f03: tag word after FXTRACT, FSTP/FST ST(i), FXCH
+		add( "f2357fdcd9", "fldpi; fstp st(1) -> destination tag valid", "fldpi\nfstp st(1)\n" );
+		add( "f2357fdcd9", "fldpi; fst st(1) -> destination tag valid", "fldpi\nfst st(1)\n" );
+		add( "a9dbd71f03", "fldpi; fld1; fxch st(1) -> tags swap with the values", "fldpi\nfld1\nfxch st(1)\n" );
+		add( "a9dbd71f03", "fldz; fldpi; fxch st(1) (zero/valid tags)", "fldz\nfldpi\nfxch st(1)\n" );
+		add( "994fb6c218", "fldpi; fxtract -> both tags valid", "fldpi\nfxtract\n" );
+		add( "994fb6c218", "fldz; fxtract (zero -> -inf exponent, ZE)", "fldz\nfxtract\n" );
+		return v;
+	}
 	// ── exceptions (agent analysis: scratchpad\bp\exceptions.md) ─────────────────────────────
 	// 60efba3c1b / 69cb498c56 / 6dd7d8c649 fix IDT-delivery code that Unicorn never reaches (it hands
 	// every exception to UC_HOOK_INTR), so they are recorded as unreachable; the analysis surfaced
