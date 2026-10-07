@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 26 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 27 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2695 |
-| differs | 295 |
+| match | 2697 |
+| differs | 293 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -33,7 +33,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 |
-| base | 1113 | 34 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
+| base | 1115 | 32 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
@@ -346,8 +346,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `palignr mm0, mm0, 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
 - `palignr mm0, qword ptr [rsi], 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
 - `movq mm0, rax` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 
-- `bts qword ptr [rsi], rax` (base, differs, 1/6): iter 4: outcome hw=vector 13 uc=ok
-- `btr qword ptr [rsi], rax` (base, differs, 1/6): iter 4: outcome hw=vector 13 uc=ok
 - `xsavec64 ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `cvtpi2pd xmm0, qword ptr [rsi]` (sse2, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF08 uc=037F/0000/8208 (fsw mask FFFF); 
 - `cvttpd2pi mm0, xmm0` (sse2, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0802 uc=037F/0000/0800 (fsw mask FFFF); st(0) differs; 

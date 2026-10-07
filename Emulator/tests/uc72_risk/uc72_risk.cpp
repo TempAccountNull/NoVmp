@@ -11,6 +11,7 @@
 //   R5  hardware-quirk switch (FCOMI/FUCOMI C1).
 //   R6  MXCSR rules of XRSTOR/XSAVE (RFBM[1]/RFBM[2]) and the reserved-bit #GP, vs hardware.
 //   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
+//   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -724,8 +725,96 @@ static void test_r7()
 	}
 }
 
+// ── R8: non-canonical data references (plan 1.10.3) ─────────────────────────────────────────────
+//
+// SDM Vol1 3.3.7.1 / Vol3 6.15: in 64-bit mode a non-canonical memory reference is #GP(0), or
+// #SS(0) when it references the SS segment (RSP/RBP base, PUSH/POP). Raw Unicorn runs IA-32e with
+// paging off and aliased such addresses into mapped memory. Natively, Windows reports both as an
+// access violation; the record (code, info[0], info[1]) is printed so Phase 6 can map it.
+
+struct r8_native_result { DWORD code; ULONG_PTR info0, info1; bool faulted; };
+
+static r8_native_result r8_native( const std::vector<uint8_t>& code, uint64_t addr )
+{
+	r8_native_result r{ 0, 0, 0, false };
+	void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	EXCEPTION_RECORD rec{};
+	__try { ( ( void( * )( uint64_t ) ) mem )( addr ); }
+	__except ( rec = *GetExceptionInformation()->ExceptionRecord, EXCEPTION_EXECUTE_HANDLER )
+	{
+		r.faulted = true;
+		r.code = rec.ExceptionCode;
+		r.info0 = rec.NumberParameters > 0 ? rec.ExceptionInformation[ 0 ] : 0;
+		r.info1 = rec.NumberParameters > 1 ? rec.ExceptionInformation[ 1 ] : 0;
+	}
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static int r8_unicorn( const std::vector<uint8_t>& code, uint64_t addr, bool& touched )
+{
+	const uint64_t R8_CODE = 0x1000, R8_DATA = 0x30000, R8_STACK = 0x100000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_mem_map( uc, R8_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R8_DATA, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R8_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R8_CODE, code.data(), code.size() );
+	uint64_t rcx = addr, rsp = R8_STACK + 0x8000, marker = 0x1122334455667788ull;
+	uc_mem_write( uc, R8_DATA, &marker, 8 );
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx );
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R8_CODE, R8_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	uint64_t now = 0;
+	uc_mem_read( uc, R8_DATA, &now, 8 );
+	touched = now != marker;
+	uc_close( uc );
+	if ( !log.seen.empty() ) return int( log.seen[ 0 ] );
+	return e ? -2 : -1;
+}
+
+static void test_r8()
+{
+	std::printf( "R8  non-canonical data references in 64-bit mode (SDM: #GP(0), #SS(0) for SS references)\n" );
+	struct c { const char* what; const char* text; uint64_t addr; int sdm_vector; };
+	// aliases of the mapped page 0x30000 (high bits set): raw Unicorn used to read/write the page
+	const c cases[] = {
+		{ "mov rax, [rcx]        0x0000800000030000", "mov rax, qword ptr [rcx]\nret\n", 0x0000800000030000ull, 13 },
+		{ "mov [rcx], rax        0x8000000000030000", "mov qword ptr [rcx], rax\nret\n", 0x8000000000030000ull, 13 },
+		{ "bts [rcx], rax        rcx+(1<<62)/8     ", "mov rax, 0x4000000000000000\nbts qword ptr [rcx], rax\nret\n", 0x30000, 13 },
+		// explicit SS override instead of an RBP base: the thunk must not touch RSP/RBP, because a
+		// fault inside it is unwound as a leaf function (no unwind info for generated code)
+		{ "mov rax, ss:[rcx]     0x0000800000030000", "mov rax, qword ptr ss:[rcx]\nret\n", 0x0000800000030000ull, 12 },
+		{ "mov rax, [rcx] canon. 0x00007FFFFFFFF000", "mov rax, qword ptr [rcx]\nret\n", 0x00007FFFFFFFF000ull, 14 },
+	};
+	for ( const c& k : cases )
+	{
+		std::vector<uint8_t> code = assemble( k.text );
+		CHECK( !code.empty(), "%s: assembly", k.what );
+		if ( code.empty() ) continue;
+		r8_native_result hw = r8_native( code, k.addr );
+		bool touched = false;
+		int v = r8_unicorn( code, k.addr, touched );
+		std::printf( "    %s  hw: %s code=%08lX info=%llX/%llX   uc: %s%s   SDM vector %d\n", k.what, hw.faulted ? "fault" : "ok   ",
+					 hw.code, ( unsigned long long ) hw.info0, ( unsigned long long ) hw.info1,
+					 v >= 0 ? ( "vector " + std::to_string( v ) ).c_str() : v == -2 ? "uc error (unmapped)" : "no fault",
+					 touched ? " (mapped page modified!)" : "", k.sdm_vector );
+		CHECK( hw.faulted, "%s: hardware did not fault", k.what );
+		CHECK( !touched, "%s: Unicorn aliased the address into mapped memory", k.what );
+		if ( k.sdm_vector == 13 ) CHECK( v == 13, "%s: Unicorn vector %d, SDM #GP(0)", k.what, v );
+		if ( k.sdm_vector == 12 ) CHECK( v == 13 || v == 12, "%s: Unicorn vector %d (SDM #SS(0); #GP accepted until 1.10.3b)", k.what, v );
+	}
+}
+
 int main()
 {
+	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
 	unsigned maj = 0, min = 0;
 	uc_version( &maj, &min );
 	std::printf( "uc72_risk: Unicorn %u.%u, QEMU 7.2.22 branch (plan 1.5)\n\n", maj, min );
@@ -742,6 +831,8 @@ int main()
 	test_r6();
 	std::printf( "\n" );
 	test_r7();
+	std::printf( "\n" );
+	test_r8();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
