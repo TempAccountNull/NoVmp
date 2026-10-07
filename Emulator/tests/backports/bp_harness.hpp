@@ -103,6 +103,9 @@ namespace bp
 		std::function<bool( const result&, std::string& why )> check_each;
 		std::function<void( uc_engine* )> uc_setup;                       // extra Unicorn setup (e.g. GS base)
 		std::function<std::vector<uint8_t>( uint64_t addr )> gen_bytes;   // position-dependent snippet bytes
+		// extra memory regions (page-aligned address, contents; size rounded up to pages), mapped RW
+		// identically in both engines - e.g. a page followed by an unmapped page, or a fixed low address
+		std::vector<std::pair<uint64_t, std::vector<uint8_t>>> extra_mem;
 	};
 
 	// ── assembling ──────────────────────────────────────────────────────────────────────────
@@ -287,10 +290,27 @@ namespace bp
 		}
 	}
 
-	inline result run_native( const program& p, const state& in )
+	inline size_t page_round( size_t n ) { return ( n + 0xFFF ) & ~size_t( 0xFFF ); }
+
+	inline result run_native( const program& p, const state& in, const std::vector<std::pair<uint64_t, std::vector<uint8_t>>>& extra = {} )
 	{
 		using namespace native_detail;
 		result r;
+		std::vector<void*> extra_alloc;
+		for ( auto& [ addr, bytes ] : extra )
+		{
+			void* m = VirtualAlloc( ( void* ) addr, page_round( bytes.size() ), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+			if ( m != ( void* ) addr )
+			{
+				r.err = "VirtualAlloc of extra region " + hx( addr ) + " failed";
+				for ( void* x : extra_alloc ) VirtualFree( x, 0, MEM_RELEASE );
+				if ( m ) VirtualFree( m, 0, MEM_RELEASE );
+				return r;
+			}
+			std::memcpy( m, bytes.data(), bytes.size() );
+			extra_alloc.push_back( m );
+		}
+		struct cleanup { std::vector<void*>& v; ~cleanup() { for ( void* x : v ) VirtualFree( x, 0, MEM_RELEASE ); } } guard{ extra_alloc };
 		uint8_t* code = ( uint8_t* ) VirtualAlloc( ( void* ) CODE, CODE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE );
 		uint8_t* data = ( uint8_t* ) VirtualAlloc( ( void* ) DATA, DATA_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
 		if ( code != ( void* ) CODE || data != ( void* ) DATA )
@@ -377,7 +397,8 @@ namespace bp
 	}
 
 	inline result run_unicorn( const program& p, const state& in, uc_cpu_x86 model, uc_mode mode = UC_MODE_64,
-							   const std::function<void( uc_engine* )>& setup = {} )
+							   const std::function<void( uc_engine* )>& setup = {},
+							   const std::vector<std::pair<uint64_t, std::vector<uint8_t>>>& extra = {} )
 	{
 		result r;
 		uc_engine* uc = nullptr;
@@ -391,6 +412,11 @@ namespace bp
 		write_state_blocks( data.data(), in );
 		uc_mem_write( uc, CODE, p.code.data(), p.code.size() );
 		uc_mem_write( uc, DATA, data.data(), data.size() );
+		for ( auto& [ addr, bytes ] : extra )
+		{
+			uc_mem_map( uc, addr, page_round( bytes.size() ), UC_PROT_READ | UC_PROT_WRITE );
+			uc_mem_write( uc, addr, bytes.data(), bytes.size() );
+		}
 		uint64_t rsp = HOST + 0x800;     // the thunk switches stacks itself; this only covers the final ret
 		uc_reg_write( uc, UC_X86_REG_RSP, &rsp );
 		if ( setup ) setup( uc );
@@ -512,13 +538,13 @@ namespace bp
 		}
 		program p = build( tc );
 		if ( p.code.empty() ) { std::printf( "    ERROR building thunk: %s\n", p.err.c_str() ); ++sum.error; sum.failed.push_back( tc.name ); return; }
-		result uc = run_unicorn( p, in, tc.model, tc.mode, tc.uc_setup );
+		result uc = run_unicorn( p, in, tc.model, tc.mode, tc.uc_setup, tc.extra_mem );
 		if ( !uc.err.empty() && !uc.ran ) { std::printf( "    ERROR unicorn: %s\n", uc.err.c_str() ); ++sum.error; sum.failed.push_back( tc.name ); return; }
 		std::vector<std::string> diffs;
 		bool ok;
 		if ( tc.hardware )
 		{
-			result hw = run_native( p, in );
+			result hw = run_native( p, in, tc.extra_mem );
 			if ( !hw.ran ) { std::printf( "    ERROR native: %s\n", hw.err.c_str() ); ++sum.error; sum.failed.push_back( tc.name ); return; }
 			std::printf( "    hw: %s   uc: %s\n",
 						 hw.faulted ? ( "fault vector " + std::to_string( hw.vector ) ).c_str() : "completed",
