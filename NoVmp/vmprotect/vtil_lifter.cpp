@@ -119,7 +119,7 @@ namespace vmp
 				if ( !new_block )
 				{
 					std::lock_guard g( block->owner->mutex );
-					block = block->owner->explored_blocks[ entry_vip ];
+					block = block->owner->explored_blocks[ entry_vip ].get();
 					fassert( block );
 					// TODO: Trace possible exits once more ?.
 					//

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="common"><UniqueIdentifier>{2CEB17F2-E8F4-59B5-84EF-17815F265F32}</UniqueIdentifier></Filter>
+    <Filter Include="optimizer"><UniqueIdentifier>{CAE9C542-2301-5AFF-AF64-0EC60E322C24}</UniqueIdentifier></Filter>
+    <Filter Include="validation"><UniqueIdentifier>{06EE96EE-AE17-5137-9238-940CD597D945}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\common\auxiliaries.cpp"><Filter>common</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\bblock_extension_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\bblock_thunk_removal_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\branch_correction_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\dead_code_elimination_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\fast_dead_code_elimination_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\fast_propagation_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\istack_ref_substitution_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\mov_propagation_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\register_renaming_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\stack_pinning_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\stack_propagation_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\optimizer\symbolic_rewrite_pass.cpp"><Filter>optimizer</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\validation\pass_validation.cpp"><Filter>validation</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Compiler\validation\test1.cpp"><Filter>validation</Filter></ClCompile>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\common\apply_all.hpp"><Filter>common</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\common\auxiliaries.hpp"><Filter>common</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\common\interface.hpp"><Filter>common</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\bblock_extension_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\bblock_thunk_removal_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\branch_correction_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\dead_code_elimination_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\fast_dead_code_elimination_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\fast_propagation_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\istack_ref_substitution_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\mov_propagation_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\register_renaming_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\stack_pinning_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\stack_propagation_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\optimizer\symbolic_rewrite_pass.hpp"><Filter>optimizer</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\validation\pass_validation.hpp"><Filter>validation</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\validation\test1.hpp"><Filter>validation</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\validation\test1.vtil.hpp"><Filter>validation</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Compiler\validation\unit_test.hpp"><Filter>validation</Filter></ClInclude>
+  </ItemGroup>
+</Project>

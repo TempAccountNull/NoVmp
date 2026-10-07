@@ -764,7 +764,7 @@ namespace vtil
 
 				// If entry point, skip the first instruction.
 				//
-				if ( block == rtn->entry_point && it.is_begin() )
+				if ( block.get() == rtn->entry_point && it.is_begin() )
 					continue;
 				
 				// If instruction does not access target skip.
@@ -1260,7 +1260,7 @@ namespace vtil
 					std::string cc = state->ref_rhs( it->operands[ 0 ] );
 					state->assemble( "test %s, %s", cc, cc );
 					state->assemble( "!jnz %s", state->ref_label( dst_1.imm().u64 ) );
-					compile( it.block->owner->explored_blocks[ dst_2.imm().u64 ], state );
+					compile( it.block->owner->explored_blocks[ dst_2.imm().u64 ].get(), state );
 				}
 				else if ( !state->compiled.contains( dst_1.imm().u64 ) )
 				{
@@ -1269,7 +1269,7 @@ namespace vtil
 					std::string cc = state->ref_rhs( it->operands[ 0 ] );
 					state->assemble( "test %s, %s", cc, cc );
 					state->assemble( "!jz %s", state->ref_label( dst_1.imm().u64 ) );
-					compile( it.block->owner->explored_blocks[ dst_2.imm().u64 ], state );
+					compile( it.block->owner->explored_blocks[ dst_2.imm().u64 ].get(), state );
 				}
 				else
 				{
@@ -1611,7 +1611,7 @@ namespace vtil
 			{
 				// Update backup.
 				//
-				backup.reset( rtn->clone() );
+				backup = rtn->clone();
 				frame_size = new_frame_size;
 				ins_cnt = new_ins_cnt;
 

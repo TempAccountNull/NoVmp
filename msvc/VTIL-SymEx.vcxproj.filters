@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="directives"><UniqueIdentifier>{E3469A80-ADDF-5C89-9A07-276A9F75BBD5}</UniqueIdentifier></Filter>
+    <Filter Include="expressions"><UniqueIdentifier>{0191F2CB-F36A-5778-8CC6-C69EEEFC6628}</UniqueIdentifier></Filter>
+    <Filter Include="simplifier"><UniqueIdentifier>{071110A9-AF43-59E0-80F3-0F3A79E451C9}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\directives\directive.cpp"><Filter>directives</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\directives\expression_signature.cpp"><Filter>directives</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\directives\transformer.cpp"><Filter>directives</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\expressions\expression.cpp"><Filter>expressions</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\expressions\unique_identifier.cpp"><Filter>expressions</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\simplifier\boolean_directives.cpp"><Filter>simplifier</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-SymEx\simplifier\simplifier.cpp"><Filter>simplifier</Filter></ClCompile>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\directives\directive.hpp"><Filter>directives</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\directives\expression_signature.hpp"><Filter>directives</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\directives\fast_matcher.hpp"><Filter>directives</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\directives\transformer.hpp"><Filter>directives</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\expressions\expression.hpp"><Filter>expressions</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\expressions\fwd.hpp"><Filter>expressions</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\expressions\unique_identifier.hpp"><Filter>expressions</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\simplifier\boolean_directives.hpp"><Filter>simplifier</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\simplifier\directives.hpp"><Filter>simplifier</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-SymEx\simplifier\simplifier.hpp"><Filter>simplifier</Filter></ClInclude>
+  </ItemGroup>
+</Project>

@@ -4,3 +4,7 @@
 [submodule "linux-pe"]
 	path = linux-pe
 	url = https://github.com/can1357/linux-pe
+[submodule "unicorn"]
+	path = unicorn
+	url = https://github.com/unicorn-engine/unicorn
+	branch = dev

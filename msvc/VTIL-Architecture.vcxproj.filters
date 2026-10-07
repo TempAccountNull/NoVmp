@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="arch"><UniqueIdentifier>{2914C891-7BCD-5CFE-B5F4-1FF0B8E43B0B}</UniqueIdentifier></Filter>
+    <Filter Include="misc"><UniqueIdentifier>{17349D8E-7CBF-5A02-920F-0FCC1D8B707D}</UniqueIdentifier></Filter>
+    <Filter Include="routine"><UniqueIdentifier>{88FEAAF0-6A8F-55B5-8FEF-F5A6A1E8730E}</UniqueIdentifier></Filter>
+    <Filter Include="symex"><UniqueIdentifier>{B986C8C8-178D-5B7B-89AA-913A5E1275DB}</UniqueIdentifier></Filter>
+    <Filter Include="trace"><UniqueIdentifier>{4A1281AB-C9AB-5090-B4D7-BA2C8E056F3D}</UniqueIdentifier></Filter>
+    <Filter Include="vm"><UniqueIdentifier>{E0C15AA9-E400-5AA3-9A4C-CCB34255F18E}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\arch\instruction_desc.cpp"><Filter>arch</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\routine\basic_block.cpp"><Filter>routine</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\routine\instruction.cpp"><Filter>routine</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\routine\routine.cpp"><Filter>routine</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\routine\serialization.cpp"><Filter>routine</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\symex\context.cpp"><Filter>symex</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\symex\memory.cpp"><Filter>symex</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\symex\pointer.cpp"><Filter>symex</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\symex\variable.cpp"><Filter>symex</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\trace\cached_tracer.cpp"><Filter>trace</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\trace\tracer.cpp"><Filter>trace</Filter></ClCompile>
+    <ClCompile Include="..\VTIL-Core\VTIL-Architecture\vm\interface.cpp"><Filter>vm</Filter></ClCompile>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\arch\identifier.hpp"><Filter>arch</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\arch\instruction_desc.hpp"><Filter>arch</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\arch\instruction_set.hpp"><Filter>arch</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\arch\operands.hpp"><Filter>arch</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\arch\register_desc.hpp"><Filter>arch</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\misc\debug.hpp"><Filter>misc</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\basic_block.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\call_convention.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\fwd.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\instruction.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\routine.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\routine_helpers.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\routine\serialization.hpp"><Filter>routine</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\batch_translator.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\context.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\memory.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\pointer.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\translation.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\symex\variable.hpp"><Filter>symex</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\trace\cached_tracer.hpp"><Filter>trace</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\trace\tracer.hpp"><Filter>trace</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\vm\interface.hpp"><Filter>vm</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\vm\lambda.hpp"><Filter>vm</Filter></ClInclude>
+    <ClInclude Include="..\VTIL-Core\VTIL-Architecture\vm\symbolic.hpp"><Filter>vm</Filter></ClInclude>
+  </ItemGroup>
+</Project>
