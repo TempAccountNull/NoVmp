@@ -8,8 +8,8 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 
 | bucket | forms |
 |---|---|
-| match | 2977 |
-| differs | 13 |
+| match | 2978 |
+| differs | 12 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -45,7 +45,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
 | fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 122 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 123 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -69,7 +69,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `fyl2x` (fpu, differs, 1/6): iter 1: x87 fcw/fsw/ftw hw=037F/0820/FF03 uc=037F/0A20/FF03 (fsw mask BAFF); st(0) differs; 
 - `fptan` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/3820/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(1) differs; 
 - `fpatan` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/0820/2003 uc=037F/0A20/2003 (fsw mask BAFF); 
-- `fprem1` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/4100/8000 uc=037F/0000/8000 (fsw mask FFFF); 
 - `fsincos` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/3A20/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(0) differs; 
 - `fsin` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0001/FF02 uc=037F/0000/FF02 (fsw mask BEFF); 
 - `fcos` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF20 uc=037F/0000/FF20 (fsw mask BEFF); st(0) differs; 

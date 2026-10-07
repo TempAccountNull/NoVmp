@@ -287,7 +287,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "differs",x87,"fpu","fptan","D9 F2 ",ok,ok,6,4,"iter 0: x87 fcw/fsw/ftw hw=037F/3820/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(1) differs; "
 "differs",x87,"fpu","fpatan","D9 F3 ",ok,ok,6,1,"iter 2: x87 fcw/fsw/ftw hw=037F/0820/2003 uc=037F/0A20/2003 (fsw mask BAFF); "
 "match",x87,"fpu","fxtract","D9 F4 ",ok,ok,6,0,""
-"differs",x87,"fpu","fprem1","D9 F5 ",ok,ok,6,1,"iter 2: x87 fcw/fsw/ftw hw=037F/4100/8000 uc=037F/0000/8000 (fsw mask FFFF); "
+"match",x87,"fpu","fprem1","D9 F5 ",ok,ok,6,0,""
 "match",x87,"fpu","fdecstp","D9 F6 ",ok,ok,6,0,""
 "match",x87,"fpu","fincstp","D9 F7 ",ok,ok,6,0,""
 "match",x87,"fpu","fnstenv [rsi]","D9 36 ",ok,ok,6,0,""

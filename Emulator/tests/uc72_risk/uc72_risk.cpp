@@ -1320,6 +1320,61 @@ static void test_r12()
 	CHECK( ftw == 0x5555, "FTW %04X, SDM 5555H", ftw );
 }
 
+// ── R13: FPREM / FPREM1 over random operands (plan 1.10.6f) ────────────────────────────────────
+//
+// ST0 = dividend, ST1 = divisor, random 80-bit encodings: exponent differences 0..90 (beyond 63 the
+// result is a partial remainder, C2 = 1), both signs, plus zero / denormal / infinity operands. The
+// quotient bits Q2,Q1,Q0 go to C0,C3,C1 (SDM Vol2 FPREM/FPREM1). Same thunk and compare as R11.
+
+static void test_r13()
+{
+	std::printf( "R13 FPREM/FPREM1 quotient bits and remainders over random operands vs hardware\n" );
+	rng r{ 0xF00DFACE12345678ull };
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t mant ) { std::memcpy( p, &mant, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	int total = 0, diffs = 0;
+	for ( const char* op : { "fprem", "fprem1" } )
+	{
+		std::vector<uint8_t> code = assemble( r11_thunk( op ) );
+		CHECK( !code.empty(), "%s: assembly", op );
+		if ( code.empty() ) continue;
+		int shown = 0, n_op = 0, d_op = 0;
+		for ( int k = 0; k < 600; ++k )
+		{
+			uint8_t in[ 208 ] = {};
+			for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 0x8000000000000000ull );     // 1.0 elsewhere
+			uint16_t e1 = uint16_t( 0x3FFF + int( r.below( 40 ) ) - 20 );                               // divisor
+			uint16_t e0 = uint16_t( e1 + int( r.below( 91 ) ) - ( k % 4 == 0 ? 10 : 0 ) );              // dividend
+			uint64_t m0 = ( 1ull << 63 ) | ( uint64_t( r.next() ) << 32 ) | r.next(), m1 = ( 1ull << 63 ) | ( uint64_t( r.next() ) << 32 ) | r.next();
+			if ( k % 3 == 0 ) m1 &= ~0xFFFFFFFFull;                                                    // short divisors too
+			uint16_t s0 = r.below( 2 ) ? 0x8000 : 0, s1 = r.below( 2 ) ? 0x8000 : 0;
+			switch ( k % 50 )
+			{
+				case 1: e0 = 0; m0 = 0; break;                                          // 0 rem x
+				case 2: e1 = 0; m1 = 0; break;                                          // x rem 0  -> #IA
+				case 3: e0 = 0x7FFF; m0 = 1ull << 63; break;                           // inf rem x -> #IA
+				case 4: e1 = 0x7FFF; m1 = 1ull << 63; break;                           // x rem inf
+				case 5: e0 = 0; m0 >>= 5; break;                                        // denormal dividend
+				case 6: e1 = 0; m1 >>= 7; break;                                        // denormal divisor
+				default: break;
+			}
+			put( in + 32 + 7 * 16, uint16_t( s0 | e0 ), m0 );     // ST0 (last pushed)
+			put( in + 32 + 6 * 16, uint16_t( s1 | e1 ), m1 );     // ST1
+			uint16_t fcw = 0x037F, fsw = 0, ftw = 0;
+			std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, 0 );
+			std::string d = r11_diff( hw, uc, false );
+			++total; ++n_op;
+			if ( d.empty() ) continue;
+			++diffs; ++d_op;
+			if ( shown++ < 8 )
+				std::printf( "    %-6s st0=%04X:%016llX st1=%04X:%016llX  hw/uc: %s\n", op, unsigned( s0 | e0 ), ( unsigned long long ) m0,
+							 unsigned( s1 | e1 ), ( unsigned long long ) m1, d.c_str() );
+		}
+		std::printf( "    %-6s %d cases, %d differ\n", op, n_op, d_op );
+	}
+	CHECK( diffs == 0, "%d of %d FPREM/FPREM1 cases differ from hardware", diffs, total );
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -1349,6 +1404,8 @@ int main()
 	test_r11();
 	std::printf( "\n" );
 	test_r12();
+	std::printf( "\n" );
+	test_r13();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
