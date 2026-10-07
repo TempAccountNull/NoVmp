@@ -33,8 +33,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{6D6705D5
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-uc72-risk", "Emulator\tests\uc72_risk\emu-uc72-risk.vcxproj", "{A507753A-1304-4182-81FF-8B5424BD7838}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-backports", "Emulator\tests\backports\emu-backports.vcxproj", "{AF066548-2EEB-4C0E-BCDA-943966D468BB}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -89,10 +87,6 @@ Global
 		{A507753A-1304-4182-81FF-8B5424BD7838}.Debug|x64.Build.0 = Debug|x64
 		{A507753A-1304-4182-81FF-8B5424BD7838}.Release|x64.ActiveCfg = Release|x64
 		{A507753A-1304-4182-81FF-8B5424BD7838}.Release|x64.Build.0 = Release|x64
-		{AF066548-2EEB-4C0E-BCDA-943966D468BB}.Debug|x64.ActiveCfg = Debug|x64
-		{AF066548-2EEB-4C0E-BCDA-943966D468BB}.Debug|x64.Build.0 = Debug|x64
-		{AF066548-2EEB-4C0E-BCDA-943966D468BB}.Release|x64.ActiveCfg = Release|x64
-		{AF066548-2EEB-4C0E-BCDA-943966D468BB}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -109,7 +103,6 @@ Global
 		{EE70A69D-E4EB-4B38-9BD4-E6972315318C} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{C4D57C0D-0E94-4E38-BCDE-8D132109F629} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{A507753A-1304-4182-81FF-8B5424BD7838} = {6D6705D5-B7A9-4922-A499-776CB8835031}
-		{AF066548-2EEB-4C0E-BCDA-943966D468BB} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {43AEF470-2FF3-5242-923F-C62C32A8EAE1}
