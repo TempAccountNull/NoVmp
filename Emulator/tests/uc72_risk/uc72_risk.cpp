@@ -20,6 +20,7 @@
 //   R14 pending unmasked x87 exception: which instructions take #MF first, vs hardware.
 //   R15 CR0.TS/EM, CR4.OSFXSR on x87/MMX/MMX-state SSE forms and the CVTPI2PS m64 #MF, vs the SDM.
 //   R16 branches to a non-canonical target fault on the branch (RIP, RSP), vs hardware and the SDM.
+//   R17 x87 transcendentals (special / random / exponent-sweep operands, every mask and RC) vs hardware.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -1187,6 +1188,10 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 	return r;
 }
 
+// every documented i5-13600K deviation from the SDM, for the hardware comparisons
+static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
+                                         UC_X86_QUIRK_FYL2XP1_BELOW_M1;
+
 static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
 {
 	r11_result r{ -1, {}, {}, {}, 0 };
@@ -1315,7 +1320,7 @@ static void test_r11()
 			std::memcpy( buf, in, 208 );
 			std::memset( buf, 0, 28 );
 			std::memcpy( buf + 0, &sc.fcw, 2 ); std::memcpy( buf + 4, &sc.fsw, 2 ); std::memcpy( buf + 8, &sc.ftw, 2 );
-			r11_result hw = r11_native( code, buf ), uc = r11_unicorn( code, buf, UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 );
+			r11_result hw = r11_native( code, buf ), uc = r11_unicorn( code, buf, X87_HW_QUIRKS );
 			std::string d = r11_diff( hw, uc, flags );
 			++total;
 			if ( d.empty() ) continue;
@@ -1478,7 +1483,7 @@ static int r14_unicorn( const std::vector<uint8_t>& code, const uint8_t* in, uin
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
 	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
-	uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 );
+	uc_ctl_set_x86_hw_quirks( uc, X87_HW_QUIRKS );
 	uc_mem_map( uc, R14_CODE, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, R14_IN, 0x8000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_map( uc, R14_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
@@ -1763,9 +1768,449 @@ static void test_r16()
 	}
 }
 
-int main()
+// ── x87 transcendental ground truth (plan 1.12) ─────────────────────────────────────────────────
+//
+// `emu-uc72-risk --x87-dump <csv> [--uc]`: runs F2XM1, FYL2X, FYL2XP1, FPTAN, FPATAN, FSIN, FCOS and
+// FSINCOS on a structured + random operand set in all four rounding modes, natively (self-generated
+// thunk only) or with --uc in Unicorn, and writes one CSV row per case:
+//   op,fcw,st0_in,st1_in,fsw,st0_out,st1_out      (80-bit values as SEXP:MANTISSA hex)
+// Uses the R11 thunk: 8 x FLD m80 then FLDENV, so ST0 = slot 7 and ST1 = slot 6 of the input.
+
+static void x87_dump( const char* path, bool use_uc )
+{
+	FILE* f = nullptr;
+	if ( fopen_s( &f, path, "w" ) || !f ) { std::printf( "cannot open %s\n", path ); return; }
+	std::fprintf( f, "op,fcw,st0_in,st1_in,fsw,st0_out,st1_out\n" );
+	const char* ops[] = { "f2xm1", "fyl2x", "fyl2xp1", "fptan", "fpatan", "fsin", "fcos", "fsincos" };
+	rng r{ 0x5EED5EED12345678ull };
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	auto rnd_mant = [ & ]() { return ( 1ull << 63 ) | ( uint64_t( r.next() ) << 32 ) | r.next(); };
+	long rows = 0;
+	for ( int oi = 0; oi < int( std::size( ops ) ); ++oi )
+	{
+		const char* op = ops[ oi ];
+		std::vector<uint8_t> code = assemble( r11_thunk( op ) );
+		if ( code.empty() ) { std::printf( "assembly failed: %s\n", op ); continue; }
+		for ( int k = 0; k < 4000; ++k )
+		{
+			// operand choice per function (exponents unbiased; 0x3FFF = 2^0)
+			uint16_t s0 = r.below( 2 ) ? 0x8000 : 0, s1 = r.below( 2 ) ? 0x8000 : 0;
+			int e0 = 0, e1 = 0;
+			uint64_t m0 = rnd_mant(), m1 = rnd_mant();
+			switch ( oi )
+			{
+				case 0: e0 = -int( r.below( 70 ) ) - 1; if ( k % 8 == 0 ) e0 = 0, m0 = ( 1ull << 63 ) | ( m0 >> 10 ); break;   // |x| < 1
+				case 1: s0 = 0; e0 = int( r.below( 120 ) ) - 60; e1 = int( r.below( 40 ) ) - 20; break;                      // x > 0
+				case 2: e0 = -int( r.below( 66 ) ) - 2; e1 = int( r.below( 40 ) ) - 20; break;                               // |x| < 0.25
+				case 3: case 5: case 6: case 7: e0 = int( r.below( 90 ) ) - 66; if ( k % 5 == 0 ) e0 = int( r.below( 4 ) ); break;
+				case 4: e0 = int( r.below( 80 ) ) - 40; e1 = int( r.below( 80 ) ) - 40; break;                               // y = ST1, x = ST0
+			}
+			uint8_t in[ 208 ] = {};
+			for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 1ull << 63 );
+			put( in + 32 + 7 * 16, uint16_t( s0 | ( 0x3FFF + e0 ) ), m0 );     // ST0
+			put( in + 32 + 6 * 16, uint16_t( s1 | ( 0x3FFF + e1 ) ), m1 );     // ST1
+			for ( uint16_t rc = 0; rc < 4; ++rc )
+			{
+				// ST(7) empty so FPTAN/FSINCOS can push; all exceptions masked; PC = 64 bits
+				uint16_t fcw = uint16_t( 0x037F | ( rc << 10 ) ), fsw = 0, ftw = 0xC000;
+				std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+				r11_result res = use_uc ? r11_unicorn( code, in, X87_HW_QUIRKS )
+										: r11_native( code, in );
+				if ( res.fault >= 0 ) continue;
+				uint16_t fsw_out = uint16_t( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) );
+				int top = ( fsw_out >> 11 ) & 7;
+				// FXSAVE stores ST(i) in stack order at +32 + 16*i
+				uint64_t o0, o1; uint16_t x0, x1;
+				std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
+				std::memcpy( &o1, res.fx + 48, 8 ); std::memcpy( &x1, res.fx + 56, 2 );
+				( void ) top;
+				std::fprintf( f, "%s,%04X,%04X:%016llX,%04X:%016llX,%04X,%04X:%016llX,%04X:%016llX\n", op, fcw, unsigned( s0 | ( 0x3FFF + e0 ) ),
+							  ( unsigned long long ) m0, unsigned( s1 | ( 0x3FFF + e1 ) ), ( unsigned long long ) m1, fsw_out, x0,
+							  ( unsigned long long ) o0, x1, ( unsigned long long ) o1 );
+				++rows;
+			}
+		}
+	}
+	std::fclose( f );
+	std::printf( "x87-dump: %ld rows -> %s (%s)\n", rows, path, use_uc ? "Unicorn" : "hardware" );
+}
+
+// `emu-uc72-risk --x87-probe <op> <st0 SEXP:MANT> <st1 SEXP:MANT> <step> <count> <csv>`: ST0 = st0 + k*step
+// (mantissa units), k = 0..count-1, all four rounding modes, natively; same CSV format as --x87-dump.
+static void x87_probe( const char* op, const char* st0, const char* st1, long long step, long count, const char* path )
+{
+	FILE* f = nullptr;
+	if ( fopen_s( &f, path, "w" ) || !f ) { std::printf( "cannot open %s\n", path ); return; }
+	std::fprintf( f, "op,fcw,st0_in,st1_in,fsw,st0_out,st1_out\n" );
+	std::vector<uint8_t> code = assemble( r11_thunk( op ) );
+	if ( code.empty() ) { std::printf( "assembly failed: %s\n", op ); std::fclose( f ); return; }
+	unsigned se0 = 0, se1 = 0;
+	unsigned long long m0 = 0, m1 = 0;
+	std::sscanf( st0, "%x:%llx", &se0, &m0 );
+	std::sscanf( st1, "%x:%llx", &se1, &m1 );
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	for ( long k = 0; k < count; ++k )
+	{
+		uint64_t mk = m0 + uint64_t( k ) * uint64_t( step );
+		uint8_t in[ 208 ] = {};
+		for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 1ull << 63 );
+		put( in + 32 + 7 * 16, uint16_t( se0 ), mk );
+		put( in + 32 + 6 * 16, uint16_t( se1 ), m1 );
+		for ( uint16_t rc = 0; rc < 4; ++rc )
+		{
+			uint16_t fcw = uint16_t( 0x037F | ( rc << 10 ) ), fsw = 0, ftw = 0xC000;
+			std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+			r11_result res = r11_native( code, in );
+			if ( res.fault >= 0 ) continue;
+			uint64_t o0, o1; uint16_t x0, x1;
+			std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
+			std::memcpy( &o1, res.fx + 48, 8 ); std::memcpy( &x1, res.fx + 56, 2 );
+			std::fprintf( f, "%s,%04X,%04X:%016llX,%04X:%016llX,%04X,%04X:%016llX,%04X:%016llX\n", op, fcw, se0, ( unsigned long long ) mk,
+						  se1, ( unsigned long long ) m1, unsigned( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) ), x0, ( unsigned long long ) o0, x1,
+						  ( unsigned long long ) o1 );
+		}
+	}
+	std::fclose( f );
+	std::printf( "x87-probe: %ld points -> %s\n", count, path );
+}
+
+// `emu-uc72-risk --x87-special <csv> [--uc]`: every transcendental over special / edge operands (both operand
+// slots for the two-operand forms), all four rounding modes, IM masked and unmasked. Same CSV format.
+static void x87_special( const char* path, bool use_uc )
+{
+	FILE* f = nullptr;
+	if ( fopen_s( &f, path, "w" ) || !f ) { std::printf( "cannot open %s\n", path ); return; }
+	std::fprintf( f, "op,fcw,st0_in,st1_in,fsw,st0_out,st1_out\n" );
+	struct v80 { uint16_t se; uint64_t m; };
+	const v80 vals[] = {
+		{ 0x0000, 0 }, { 0x8000, 0 },                                        // +-0
+		{ 0x0000, 0x0000000000000001ull }, { 0x8000, 0x4000000000000000ull }, // denormals
+		{ 0x0001, 0x8000000000000000ull },                                   // smallest normal
+		{ 0x3FBF, 0x8000000000000000ull }, { 0xBFC0, 0xC000000000000000ull }, // tiny 2^-64, -1.5*2^-63
+		{ 0x3FFE, 0x8000000000000000ull }, { 0xBFFE, 0x8000000000000000ull }, // +-0.5
+		{ 0x3FFF, 0x8000000000000000ull }, { 0xBFFF, 0x8000000000000000ull }, // +-1
+		{ 0x3FFE, 0xFFFFFFFFFFFFFFFFull }, { 0x3FFF, 0x8000000000000001ull }, // 1-ulp, 1+ulp
+		{ 0x3FFF, 0xC000000000000000ull }, { 0xBFFF, 0xC000000000000000ull }, // +-1.5
+		{ 0x3FFD, 0x95F619980C4336F7ull }, { 0xBFFD, 0x95F619980C4336F7ull }, // +-(1 - sqrt(2)/2)
+		{ 0x3FFD, 0x95F619980C4336F8ull }, { 0xBFFD, 0x95F619980C4336F8ull }, // just beyond
+		{ 0x4000, 0xC90FDAA22168C235ull }, { 0x3FFF, 0xC90FDAA22168C235ull }, // ~pi, ~pi/2
+		{ 0x403D, 0xFFFFFFFFFFFFFFFFull }, { 0x403E, 0x8000000000000000ull }, // 2^63 - 1 ulp, 2^63
+		{ 0xC03E, 0x8000000000000000ull }, { 0x403F, 0x8000000000000000ull }, // -2^63, 2^64
+		{ 0x7FFE, 0xFFFFFFFFFFFFFFFFull },                                   // max
+		{ 0x7FFF, 0x8000000000000000ull }, { 0xFFFF, 0x8000000000000000ull }, // +-inf
+		{ 0x7FFF, 0xC000000000000000ull }, { 0x7FFF, 0xA000000000000000ull }, // QNaN, SNaN
+		{ 0x4002, 0xA000000000000000ull }, { 0x3FFB, 0xCCCCCCCCCCCCCCCDull }, // 10, 0.1
+	};
+	const char* ops[] = { "f2xm1", "fyl2x", "fyl2xp1", "fptan", "fpatan", "fsin", "fcos", "fsincos" };
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	long rows = 0;
+	for ( const char* op : ops )
+	{
+		bool two = !std::strcmp( op, "fyl2x" ) || !std::strcmp( op, "fyl2xp1" ) || !std::strcmp( op, "fpatan" );
+		std::vector<uint8_t> code = assemble( r11_thunk( op ) );
+		if ( code.empty() ) continue;
+		for ( const v80& a : vals )
+			for ( size_t j = 0; j < ( two ? std::size( vals ) : 1 ); ++j )
+			{
+				const v80 b = two ? vals[ j ] : v80{ 0x3FFF, 0x8000000000000000ull };
+				uint8_t in[ 208 ] = {};
+				for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 1ull << 63 );
+				put( in + 32 + 7 * 16, a.se, a.m );
+				put( in + 32 + 6 * 16, b.se, b.m );
+				for ( uint16_t im = 0; im < 2; ++im )
+					for ( uint16_t rc = 0; rc < 4; ++rc )
+					{
+						uint16_t fcw = uint16_t( ( im ? 0x037F : 0x037E ) | ( rc << 10 ) ), fsw = 0, ftw = 0xC000;
+						std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+						r11_result res = use_uc ? r11_unicorn( code, in, X87_HW_QUIRKS )
+												: r11_native( code, in );
+						if ( res.fault >= 0 ) continue;
+						uint64_t o0, o1; uint16_t x0, x1;
+						std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
+						std::memcpy( &o1, res.fx + 48, 8 ); std::memcpy( &x1, res.fx + 56, 2 );
+						std::fprintf( f, "%s,%04X,%04X:%016llX,%04X:%016llX,%04X,%04X:%016llX,%04X:%016llX\n", op, fcw, a.se, ( unsigned long long ) a.m,
+									  b.se, ( unsigned long long ) b.m, unsigned( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) ), x0, ( unsigned long long ) o0, x1,
+									  ( unsigned long long ) o1 );
+						++rows;
+					}
+			}
+	}
+	std::fclose( f );
+	std::printf( "x87-special: %ld rows -> %s (%s)\n", rows, path, use_uc ? "Unicorn" : "hardware" );
+}
+
+// `emu-uc72-risk --x87-list <in.txt> <out.csv> [--uc]`: one case per input line "op fcw st0 st1"
+// (SEXP:MANT hex), natively or in Unicorn; same CSV format as --x87-dump.
+static void x87_list( const char* inpath, const char* path, bool use_uc )
+{
+	FILE* in = nullptr;
+	FILE* f = nullptr;
+	if ( fopen_s( &in, inpath, "r" ) || !in ) { std::printf( "cannot open %s\n", inpath ); return; }
+	if ( fopen_s( &f, path, "w" ) || !f ) { std::printf( "cannot open %s\n", path ); std::fclose( in ); return; }
+	std::fprintf( f, "op,fcw,st0_in,st1_in,fsw,st0_out,st1_out\n" );
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	std::string cur_op;
+	std::vector<uint8_t> code;
+	char op[ 32 ];
+	unsigned fcw = 0, se0 = 0, se1 = 0;
+	unsigned long long m0 = 0, m1 = 0;
+	long rows = 0;
+	while ( std::fscanf( in, "%31s %x %x:%llx %x:%llx", op, &fcw, &se0, &m0, &se1, &m1 ) == 6 )
+	{
+		if ( cur_op != op ) { cur_op = op; code = assemble( r11_thunk( op ) ); }
+		if ( code.empty() ) continue;
+		uint8_t buf[ 208 ] = {};
+		for ( int i = 0; i < 8; ++i ) put( buf + 32 + i * 16, 0x3FFF, 1ull << 63 );
+		put( buf + 32 + 7 * 16, uint16_t( se0 ), m0 );
+		put( buf + 32 + 6 * 16, uint16_t( se1 ), m1 );
+		uint16_t fc = uint16_t( fcw ), fsw = 0, ftw = 0xC000;
+		std::memcpy( buf + 0, &fc, 2 ); std::memcpy( buf + 4, &fsw, 2 ); std::memcpy( buf + 8, &ftw, 2 );
+		r11_result res = use_uc ? r11_unicorn( code, buf, X87_HW_QUIRKS ) : r11_native( code, buf );
+		if ( res.fault >= 0 ) continue;
+		uint64_t o0, o1; uint16_t x0, x1;
+		std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
+		std::memcpy( &o1, res.fx + 48, 8 ); std::memcpy( &x1, res.fx + 56, 2 );
+		std::fprintf( f, "%s,%04X,%04X:%016llX,%04X:%016llX,%04X,%04X:%016llX,%04X:%016llX\n", op, fcw, se0, m0, se1, m1,
+					  unsigned( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) ), x0, ( unsigned long long ) o0, x1, ( unsigned long long ) o1 );
+		++rows;
+	}
+	std::fclose( in );
+	std::fclose( f );
+	std::printf( "x87-list: %ld rows -> %s (%s)\n", rows, path, use_uc ? "Unicorn" : "hardware" );
+}
+
+// ── R17: x87 transcendentals vs hardware (plan 1.12) ─────────────────────────────────────────
+//
+// F2XM1, FYL2X, FYL2XP1, FPTAN, FPATAN, FSIN, FCOS and FSINCOS over three operand sets, natively
+// (the R11 thunk) and in Unicorn with the hardware quirks:
+//   special  edge operands (zeros, denormals, a pseudo-denormal, tiny, +-1, the FYL2XP1 domain
+//            border, ~pi, 2^63, 2^64, +-max, infinities, NaNs) in both operand slots; IM masked and
+//            unmasked x 4 RC, then DE/ZE/OE/UE/PE unmasked one at a time (OE/UE/PE in every RC) and
+//            everything unmasked;
+//   random   1000 operands per function (the --x87-dump distribution) x 4 RC;
+//   sweep    every 97th exponent, both signs, significands 1.0 / all-ones / ~pi, x 4 RC.
+// Required: the FSW is identical except C1 (every exception flag, ES/B, C0/C2/C3, TOP) and every
+// result is within 1 ulp. The bit-exact share (value and C1) is reported per function and must
+// not fall below its floor: the remaining +-1 ulp come from Intel's internal approximations
+// (ledger U53: the exact value with a measured relative bias per function).
+
+struct x87_case { const char* op; uint16_t fcw, se0, se1; uint64_t m0, m1; };
+
+static const char* const X87_TRANS_OPS[] = { "f2xm1", "fyl2x", "fyl2xp1", "fptan", "fpatan", "fsin", "fcos", "fsincos" };
+
+static bool x87_two_operand( const char* op )
+{
+	return !std::strcmp( op, "fyl2x" ) || !std::strcmp( op, "fyl2xp1" ) || !std::strcmp( op, "fpatan" );
+}
+
+static std::vector<x87_case> x87_special_cases()
+{
+	struct v80 { uint16_t se; uint64_t m; };
+	const v80 vals[] = {
+		{ 0x0000, 0 }, { 0x8000, 0 }, { 0x0000, 0x0000000000000001ull }, { 0x8000, 0x4000000000000000ull },
+		{ 0x0000, 0x8000000000000000ull }, { 0x0001, 0x8000000000000000ull }, { 0x3FBF, 0x8000000000000000ull },
+		{ 0x3FC0, 0x8000000000000000ull }, { 0xBFC0, 0xC000000000000000ull }, { 0x3FFE, 0x8000000000000000ull },
+		{ 0xBFFE, 0x8000000000000000ull }, { 0x3FFF, 0x8000000000000000ull }, { 0xBFFF, 0x8000000000000000ull },
+		{ 0x3FFE, 0xFFFFFFFFFFFFFFFFull }, { 0x3FFF, 0x8000000000000001ull }, { 0x3FFF, 0xC000000000000000ull },
+		{ 0xBFFF, 0xC000000000000000ull }, { 0x3FFD, 0x95F619980C4336F7ull }, { 0xBFFD, 0x95F619980C4336F7ull },
+		{ 0x3FFD, 0x95F619980C4336F8ull }, { 0xBFFD, 0x95F619980C4336F8ull }, { 0x4000, 0xC90FDAA22168C235ull },
+		{ 0x3FFF, 0xC90FDAA22168C235ull }, { 0x403D, 0xFFFFFFFFFFFFFFFFull }, { 0x403E, 0x8000000000000000ull },
+		{ 0xC03E, 0x8000000000000000ull }, { 0x403F, 0x8000000000000000ull }, { 0x7FFE, 0xFFFFFFFFFFFFFFFFull },
+		{ 0xFFFE, 0xFFFFFFFFFFFFFFFFull }, { 0x7FFF, 0x8000000000000000ull }, { 0xFFFF, 0x8000000000000000ull },
+		{ 0x7FFF, 0xC000000000000000ull }, { 0x7FFF, 0xA000000000000000ull }, { 0x4002, 0xA000000000000000ull },
+		{ 0x3FFB, 0xCCCCCCCCCCCCCCCDull },
+	};
+	std::vector<uint16_t> fcws;
+	for ( uint16_t rc = 0; rc < 4; ++rc ) fcws.push_back( uint16_t( 0x037E | ( rc << 10 ) ) ), fcws.push_back( uint16_t( 0x037F | ( rc << 10 ) ) );
+	fcws.push_back( 0x037D ); fcws.push_back( 0x037B );
+	for ( uint16_t rc = 0; rc < 4; ++rc )
+		for ( uint16_t m : { 0x0377, 0x036F, 0x035F } ) fcws.push_back( uint16_t( m | ( rc << 10 ) ) );
+	fcws.push_back( 0x0340 ); fcws.push_back( 0x0B40 );
+	std::vector<x87_case> out;
+	for ( const char* op : X87_TRANS_OPS )
+		for ( const v80& a : vals )
+			for ( size_t j = 0; j < ( x87_two_operand( op ) ? std::size( vals ) : 1 ); ++j )
+			{
+				const v80 b = x87_two_operand( op ) ? vals[ j ] : v80{ 0x3FFF, 0x8000000000000000ull };
+				for ( uint16_t fcw : fcws ) out.push_back( { op, fcw, a.se, b.se, a.m, b.m } );
+			}
+	return out;
+}
+
+static std::vector<x87_case> x87_random_cases( int per_op, uint64_t seed )
+{
+	std::vector<x87_case> out;
+	rng r{ seed };
+	auto rnd_mant = [ & ]() { return ( 1ull << 63 ) | ( uint64_t( r.next() ) << 32 ) | r.next(); };
+	for ( int oi = 0; oi < int( std::size( X87_TRANS_OPS ) ); ++oi )
+		for ( int k = 0; k < per_op; ++k )
+		{
+			// operand choice per function (exponents unbiased; 0 = 2^0), as --x87-dump
+			uint16_t s0 = r.below( 2 ) ? 0x8000 : 0, s1 = r.below( 2 ) ? 0x8000 : 0;
+			int e0 = 0, e1 = 0;
+			uint64_t m0 = rnd_mant(), m1 = rnd_mant();
+			switch ( oi )
+			{
+				case 0: e0 = -int( r.below( 70 ) ) - 1; if ( k % 8 == 0 ) e0 = 0, m0 = ( 1ull << 63 ) | ( m0 >> 10 ); break;   // |x| < 1
+				case 1: s0 = 0; e0 = int( r.below( 120 ) ) - 60; e1 = int( r.below( 40 ) ) - 20; break;                      // x > 0
+				case 2: e0 = -int( r.below( 66 ) ) - 2; e1 = int( r.below( 40 ) ) - 20; break;                               // |x| < 0.25
+				case 3: case 5: case 6: case 7: e0 = int( r.below( 90 ) ) - 66; if ( k % 5 == 0 ) e0 = int( r.below( 4 ) ); break;
+				case 4: e0 = int( r.below( 80 ) ) - 40; e1 = int( r.below( 80 ) ) - 40; break;                               // y = ST1, x = ST0
+			}
+			for ( uint16_t rc = 0; rc < 4; ++rc )
+				out.push_back( { X87_TRANS_OPS[ oi ], uint16_t( 0x037F | ( rc << 10 ) ), uint16_t( s0 | ( 0x3FFF + e0 ) ),
+								 uint16_t( s1 | ( 0x3FFF + e1 ) ), m0, m1 } );
+		}
+	return out;
+}
+
+static std::vector<x87_case> x87_sweep_cases()
+{
+	std::vector<x87_case> out;
+	const uint64_t mants[] = { 0x8000000000000000ull, 0xFFFFFFFFFFFFFFFFull, 0xC90FDAA22168C235ull };
+	rng r{ 0x5EEDC0DE87654321ull };
+	for ( const char* op : X87_TRANS_OPS )
+		for ( uint16_t e = 0x0001; e < 0x4040; e = uint16_t( e + 97 ) )
+			for ( uint16_t sg : { uint16_t( 0 ), uint16_t( 0x8000 ) } )
+				for ( uint64_t m : mants )
+				{
+					// the other operand of the two-operand forms: a fresh value in [1, 2) per point
+					uint64_t pm = ( 1ull << 63 ) | ( uint64_t( r.next() ) << 32 ) | r.next();
+					for ( uint16_t rc = 0; rc < 4; ++rc )
+					{
+						uint16_t fcw = uint16_t( 0x037F | ( rc << 10 ) );
+						if ( !std::strcmp( op, "f2xm1" ) && e >= 0x3FFF ) continue;          // documented |x| < 1
+						if ( !std::strcmp( op, "fyl2x" ) && sg ) continue;                    // x > 0
+						if ( !std::strcmp( op, "fyl2xp1" ) && e >= 0x3FFD ) continue;        // documented |x| < 1 - sqrt(2)/2
+						if ( x87_two_operand( op ) )
+						{
+							out.push_back( { op, fcw, uint16_t( sg | e ), 0x3FFF, m, pm } );     // x = ST0 swept
+							out.push_back( { op, fcw, 0x3FFF, uint16_t( sg | e ), pm, m } );     // y = ST1 swept
+						}
+						else
+							out.push_back( { op, fcw, uint16_t( sg | e ), 0x3FFF, m, 0x8000000000000000ull } );
+					}
+				}
+	return out;
+}
+
+// |a - b| <= 1 ulp (same sign, finite), or bit-identical
+static bool x87_within_1ulp( uint16_t a_se, uint64_t a_m, uint16_t b_se, uint64_t b_m )
+{
+	if ( a_se == b_se && a_m == b_m ) return true;
+	if ( ( a_se ^ b_se ) & 0x8000 ) return false;
+	int ea = a_se & 0x7FFF, eb = b_se & 0x7FFF;
+	if ( ea == 0x7FFF || eb == 0x7FFF ) return false;
+	if ( ea == 0 ) ea = 1;                                  // denormal: same scale as the smallest normal
+	if ( eb == 0 ) eb = 1;
+	if ( ea == eb ) return ( a_m > b_m ? a_m - b_m : b_m - a_m ) == 1;
+	if ( ea + 1 == eb ) return a_m == ~0ull && b_m == 0x8000000000000000ull;
+	if ( eb + 1 == ea ) return b_m == ~0ull && a_m == 0x8000000000000000ull;
+	return false;
+}
+
+static void test_r17()
+{
+	std::printf( "R17 x87 transcendentals vs hardware: FSW (all but C1) identical, results within 1 ulp\n" );
+	struct set_t { const char* name; std::vector<x87_case> cases; double floor; };
+	set_t sets[] = {
+		{ "special", x87_special_cases(), 0.0 },
+		{ "random", x87_random_cases( 1000, 0x5EED5EED12345678ull ), 0.0 },
+		{ "sweep", x87_sweep_cases(), 0.0 },
+	};
+	// minimum bit-exact share per function (value and C1), per set: measured with ledger U53, minus 1%
+	const double floors[ 3 ][ 8 ] = {
+		/* special */ { 0.94, 0.95, 0.89, 0.81, 0.97, 0.96, 0.99, 0.96 },
+		/* random  */ { 0.95, 0.94, 0.89, 0.93, 0.95, 0.97, 0.97, 0.96 },
+		/* sweep   */ { 0.98, 0.91, 0.89, 0.98, 0.96, 0.99, 0.99, 0.99 },
+	};
+	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
+	for ( int si = 0; si < 3; ++si )
+	{
+		const set_t& st = sets[ si ];
+		struct stat_t { long n = 0, exact = 0, fsw = 0, ulp = 0; } stat[ 8 ];
+		std::string cur;
+		std::vector<uint8_t> code;
+		int oi = 0;
+		for ( const x87_case& c : st.cases )
+		{
+			if ( cur != c.op )
+			{
+				cur = c.op;
+				code = assemble( r11_thunk( c.op ) );
+				CHECK( !code.empty(), "%s: assembly", c.op );
+				for ( oi = 0; std::strcmp( X87_TRANS_OPS[ oi ], c.op ); ++oi ) {}
+			}
+			if ( code.empty() ) continue;
+			uint8_t in[ 208 ] = {};
+			for ( int i = 0; i < 8; ++i ) put( in + 32 + i * 16, 0x3FFF, 1ull << 63 );
+			put( in + 32 + 7 * 16, c.se0, c.m0 );       // ST0
+			put( in + 32 + 6 * 16, c.se1, c.m1 );       // ST1
+			uint16_t fsw = 0, ftw = 0xC000;             // ST(7) empty so FPTAN/FSINCOS can push
+			std::memcpy( in + 0, &c.fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
+			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, X87_HW_QUIRKS );
+			if ( hw.fault >= 0 || uc.fault >= 0 )
+			{
+				CHECK( hw.fault == uc.fault, "%s fcw=%04X x=%04X:%016llX y=%04X:%016llX: fault hw %d uc %d", c.op, c.fcw, c.se0,
+					   ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1, hw.fault, uc.fault );
+				continue;
+			}
+			stat_t& s = stat[ oi ];
+			++s.n;
+			uint16_t fh = uint16_t( hw.env[ 4 ] | ( hw.env[ 5 ] << 8 ) ), fu = uint16_t( uc.env[ 4 ] | ( uc.env[ 5 ] << 8 ) );
+			uint64_t h0, h1, u0, u1; uint16_t hx0, hx1, ux0, ux1;
+			std::memcpy( &h0, hw.fx + 32, 8 ); std::memcpy( &hx0, hw.fx + 40, 2 ); std::memcpy( &h1, hw.fx + 48, 8 ); std::memcpy( &hx1, hw.fx + 56, 2 );
+			std::memcpy( &u0, uc.fx + 32, 8 ); std::memcpy( &ux0, uc.fx + 40, 2 ); std::memcpy( &u1, uc.fx + 48, 8 ); std::memcpy( &ux1, uc.fx + 56, 2 );
+			bool fsw_ok = ( ( fh ^ fu ) & ~0x0200 ) == 0;
+			bool ulp_ok = x87_within_1ulp( hx0, h0, ux0, u0 ) && x87_within_1ulp( hx1, h1, ux1, u1 );
+			if ( fh == fu && h0 == u0 && hx0 == ux0 && h1 == u1 && hx1 == ux1 ) ++s.exact;
+			if ( !fsw_ok && s.fsw++ < 3 )
+				std::printf( "    FAIL: %s fcw=%04X x=%04X:%016llX y=%04X:%016llX: fsw hw %04X uc %04X\n", c.op, c.fcw, c.se0,
+							 ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1, fh, fu );
+			if ( !ulp_ok && s.ulp++ < 3 )
+				std::printf( "    FAIL: %s fcw=%04X x=%04X:%016llX y=%04X:%016llX: hw %04X:%016llX %04X:%016llX uc %04X:%016llX %04X:%016llX\n",
+							 c.op, c.fcw, c.se0, ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1, hx0, ( unsigned long long ) h0,
+							 hx1, ( unsigned long long ) h1, ux0, ( unsigned long long ) u0, ux1, ( unsigned long long ) u1 );
+		}
+		std::printf( "    %-8s %zu cases\n", st.name, st.cases.size() );
+		for ( int i = 0; i < 8; ++i )
+		{
+			const stat_t& s = stat[ i ];
+			if ( !s.n ) continue;
+			double share = double( s.exact ) / double( s.n );
+			std::printf( "      %-8s n=%-6ld bit-exact %6.2f%% (floor %.0f%%)  FSW-mismatch %ld  >1ulp %ld\n", X87_TRANS_OPS[ i ], s.n,
+						 100.0 * share, 100.0 * floors[ si ][ i ], s.fsw, s.ulp );
+			CHECK( s.fsw == 0, "%s/%s: %ld FSW mismatches (other than C1)", st.name, X87_TRANS_OPS[ i ], s.fsw );
+			CHECK( s.ulp == 0, "%s/%s: %ld results off by more than 1 ulp", st.name, X87_TRANS_OPS[ i ], s.ulp );
+			CHECK( share >= floors[ si ][ i ], "%s/%s: bit-exact share %.2f%% below the floor %.0f%%", st.name, X87_TRANS_OPS[ i ],
+				   100.0 * share, 100.0 * floors[ si ][ i ] );
+		}
+	}
+}
+
+int main( int argc, char** argv )
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
+	if ( argc >= 3 && std::strcmp( argv[ 1 ], "--x87-dump" ) == 0 )
+	{
+		x87_dump( argv[ 2 ], argc >= 4 && std::strcmp( argv[ 3 ], "--uc" ) == 0 );
+		return 0;
+	}
+	if ( argc >= 4 && std::strcmp( argv[ 1 ], "--x87-list" ) == 0 )
+	{
+		x87_list( argv[ 2 ], argv[ 3 ], argc >= 5 && std::strcmp( argv[ 4 ], "--uc" ) == 0 );
+		return 0;
+	}
+	if ( argc >= 3 && std::strcmp( argv[ 1 ], "--x87-special" ) == 0 )
+	{
+		x87_special( argv[ 2 ], argc >= 4 && std::strcmp( argv[ 3 ], "--uc" ) == 0 );
+		return 0;
+	}
+	if ( argc >= 8 && std::strcmp( argv[ 1 ], "--x87-probe" ) == 0 )
+	{
+		x87_probe( argv[ 2 ], argv[ 3 ], argv[ 4 ], std::atoll( argv[ 5 ] ), std::atol( argv[ 6 ] ), argv[ 7 ] );
+		return 0;
+	}
 	unsigned maj = 0, min = 0;
 	uc_version( &maj, &min );
 	std::printf( "uc72_risk: Unicorn %u.%u, QEMU 7.2.22 branch (plan 1.5)\n\n", maj, min );
@@ -1800,6 +2245,8 @@ int main()
 	test_r15();
 	std::printf( "\n" );
 	test_r16();
+	std::printf( "\n" );
+	test_r17();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
