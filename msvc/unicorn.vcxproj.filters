@@ -39,6 +39,7 @@
     <ClCompile Include="..\unicorn\qemu\accel\tcg\tcg-runtime-gvec.c"><Filter>qemu\accel\tcg</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\accel\tcg\translate-all.c"><Filter>qemu\accel\tcg</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\accel\tcg\translator.c"><Filter>qemu\accel\tcg</Filter></ClCompile>
+    <ClCompile Include="..\unicorn\qemu\accel\tcg\tb-maint.c"><Filter>qemu\accel\tcg</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\softmmu\unicorn_vtlb.c"><Filter>qemu\softmmu</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\hw\i386\x86.c"><Filter>qemu\hw\i386</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\target\i386\arch_memory_mapping.c"><Filter>qemu\target\i386</Filter></ClCompile>
@@ -88,6 +89,8 @@
     <ClCompile Include="..\unicorn\qemu\util\pagesize.c"><Filter>qemu\util</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\util\cacheinfo.c"><Filter>qemu\util</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\crypto\aes.c"><Filter>qemu\crypto</Filter></ClCompile>
+    <ClCompile Include="..\unicorn\qemu\crypto\sm4.c"><Filter>qemu\crypto</Filter></ClCompile>
+    <ClCompile Include="..\unicorn\qemu\util\int128.c"><Filter>qemu\util</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\util\oslib-win32.c"><Filter>qemu\util</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\util\qemu-thread-win32.c"><Filter>qemu\util</Filter></ClCompile>
     <ClInclude Include="..\unicorn\include\unicorn\arm.h"><Filter>include\unicorn</Filter></ClInclude>

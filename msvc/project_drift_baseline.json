@@ -8,7 +8,6 @@
  "keystone": [],
  "unicorn": [
   "unicorn/qemu/crypto/init.c",
-  "unicorn/qemu/fpu/softfloat-specialize.inc.c",
   "unicorn/qemu/memory_ldst.inc.c",
   "unicorn/qemu/tcg/tcg-ldst.inc.c",
   "unicorn/qemu/tcg/tcg-pool.inc.c",

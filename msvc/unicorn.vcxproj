@@ -44,6 +44,7 @@
       <WarningLevel>Level3</WarningLevel>
       <DisableSpecificWarnings>4018;4098;4244;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <SDLCheck>false</SDLCheck>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
       <PreprocessorDefinitions>inline=__inline;__func__=__FUNCTION__;_CRT_SECURE_NO_WARNINGS;WIN32_LEAN_AND_MEAN;__x86_64__;WIN32_ENABLE_VEH;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\unicorn\msvc;..\unicorn\glib_compat;..\unicorn\qemu;..\unicorn\qemu\include;..\unicorn\include;..\unicorn\qemu\tcg;..\unicorn\qemu\tcg\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -57,6 +58,7 @@
       <WarningLevel>Level3</WarningLevel>
       <DisableSpecificWarnings>4018;4098;4244;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <SDLCheck>false</SDLCheck>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
       <PreprocessorDefinitions>inline=__inline;__func__=__FUNCTION__;_CRT_SECURE_NO_WARNINGS;WIN32_LEAN_AND_MEAN;__x86_64__;WIN32_ENABLE_VEH;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\unicorn\msvc;..\unicorn\glib_compat;..\unicorn\qemu;..\unicorn\qemu\include;..\unicorn\include;..\unicorn\qemu\tcg;..\unicorn\qemu\tcg\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -184,6 +186,12 @@
     </ClCompile>
     <ClCompile Include="..\unicorn\qemu\accel\tcg\translator.c">
       <ObjectFileName>$(IntDir)unicorn_qemu_accel_tcg_translator.obj</ObjectFileName>
+      <PreprocessorDefinitions>NEED_CPU_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\unicorn\msvc\x86_64-softmmu;..\unicorn\qemu\target\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ForcedIncludeFiles>x86_64.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="..\unicorn\qemu\accel\tcg\tb-maint.c">
+      <ObjectFileName>$(IntDir)unicorn_qemu_accel_tcg_tb-maint.obj</ObjectFileName>
       <PreprocessorDefinitions>NEED_CPU_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\unicorn\msvc\x86_64-softmmu;..\unicorn\qemu\target\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>x86_64.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
@@ -422,6 +430,14 @@
     </ClCompile>
     <ClCompile Include="..\unicorn\qemu\crypto\aes.c">
       <ObjectFileName>$(IntDir)unicorn_qemu_crypto_aes.obj</ObjectFileName>
+      <PreprocessorDefinitions>UNICORN_HAS_X86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\unicorn\qemu\crypto\sm4.c">
+      <ObjectFileName>$(IntDir)unicorn_qemu_crypto_sm4.obj</ObjectFileName>
+      <PreprocessorDefinitions>UNICORN_HAS_X86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\unicorn\qemu\util\int128.c">
+      <ObjectFileName>$(IntDir)unicorn_qemu_util_int128.obj</ObjectFileName>
       <PreprocessorDefinitions>UNICORN_HAS_X86;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="..\unicorn\qemu\util\oslib-win32.c">

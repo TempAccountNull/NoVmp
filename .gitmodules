@@ -7,4 +7,4 @@
 [submodule "unicorn"]
 	path = unicorn
 	url = https://github.com/unicorn-engine/unicorn
-	branch = dev
+	branch = pr2349-rebased

@@ -28,7 +28,7 @@ REPOS = [
     (".", "fork", "master", None),
     ("VTIL-Core", "fork", "master", "."),
     ("linux-pe", "fork", "master", "."),
-    ("unicorn", "dep", "dev", "."),
+    ("unicorn", "dep", "pr2349-rebased", "."),  # local branch novmp/qemu72 = QEMU 7.2.22 + ledger U2
     ("VTIL-Core/Dependencies/capstone", "dep", "next", "VTIL-Core"),
     ("VTIL-Core/Dependencies/keystone", "dep", "master", "VTIL-Core"),
 ]
