@@ -10,6 +10,7 @@
 //   R4  CPUID consistency of the CPU models (leaf 7 levels, XSAVE components).
 //   R5  hardware-quirk switch (FCOMI/FUCOMI C1).
 //   R6  MXCSR rules of XRSTOR/XSAVE (RFBM[1]/RFBM[2]) and the reserved-bit #GP, vs hardware.
+//   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -563,6 +564,166 @@ static void test_r6()
 	}
 }
 
+// ── R7: x87 control/status word loads (plan 1.10.2b) ───────────────────────────────────────────
+//
+// FLDCW, FLDENV, FRSTOR, FXRSTOR and XRSTOR(x87) load FCW (and FSW) from memory; hardware
+// normalizes the reserved FCW bits and derives FSW.ES/B, the SDM only calls the bits "reserved"
+// and defines ES as "one or more unmasked exceptions" (Vol1 8.1.3, 8.4). Each case runs the same
+// self-generated thunk natively and in Unicorn and compares FNSTCW/FNSTSW right after the load.
+// Thunk ABI: rcx = in { u16 fcw, u16 fsw, u16 fldcw_after, u16 do_fldcw }, rdx = out { u16 fcw,
+// u16 fsw }, r8 = 64-aligned backup (the host x87/SSE state is restored from it), r9 = 64-aligned
+// image. Only no-wait x87 instructions follow the load, so a pending unmasked exception cannot fire.
+
+struct r7_result { int fault; uint16_t fcw, fsw; };
+
+// 0 until plan 1.10.2c makes Unicorn raise pending x87 exceptions (#MF) on waiting instructions.
+#define R7_PENDING_MF 0
+
+static std::string r7_thunk( int kind )
+{
+	std::string s = "mov r10, rdx\nfxsave [r8]\nfninit\n";
+	const char* patch_fxsave = "mov ax, word ptr [rcx]\nmov word ptr [r9], ax\nmov ax, word ptr [rcx + 2]\nmov word ptr [r9 + 2], ax\n";
+	const char* patch_env = "mov ax, word ptr [rcx]\nmov word ptr [r9], ax\nmov ax, word ptr [rcx + 2]\nmov word ptr [r9 + 4], ax\n";
+	switch ( kind )
+	{
+		case 0: s += "fldcw word ptr [rcx]\n"; break;
+		case 1: s += std::string( "fnstenv [r9]\n" ) + patch_env + "fldenv [r9]\n"; break;
+		case 2: s += std::string( "fnsave [r9]\n" ) + patch_env + "frstor [r9]\n"; break;
+		case 3: s += std::string( "fxsave [r9]\n" ) + patch_fxsave + "fxrstor [r9]\n"; break;
+		default:
+			s += std::string( "mov eax, 1\nxor edx, edx\nxsave [r9]\n" ) + patch_fxsave +
+				 "or byte ptr [r9 + 512], 1\nmov eax, 1\nxor edx, edx\nxrstor [r9]\n";
+			break;
+	}
+	s += "cmp word ptr [rcx + 6], 0\nje r7_skip\nfldcw word ptr [rcx + 4]\nr7_skip:\n";
+	s += "fnstcw word ptr [r10]\nfnstsw word ptr [r10 + 2]\nfxrstor [r8]\nret\n";
+	return s;
+}
+
+static r7_result r7_native( const std::vector<uint8_t>& code, const std::vector<uint8_t>& restore, const uint16_t in[ 4 ] )
+{
+	r7_result r{ -1, 0, 0 };
+	alignas( 64 ) static uint8_t backup[ 4096 ], image[ 4096 ];
+	std::memset( image, 0, sizeof( image ) );
+	uint16_t out[ 2 ] = {};
+	void* mem = VirtualAlloc( nullptr, 0x2000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	std::memcpy( ( uint8_t* ) mem + 0x1000, restore.data(), restore.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, 0x2000 );
+	using fn_t = void( * )( const uint16_t*, uint16_t*, void*, void* );
+	__try { ( ( fn_t ) mem )( in, out, backup, image ); r.fcw = out[ 0 ]; r.fsw = out[ 1 ]; }
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		// vector numbers so they compare with Unicorn's UC_HOOK_INTR: float status codes are #MF (16)
+		DWORD code = GetExceptionCode();
+		r.fault = ( code >= 0xC000008D && code <= 0xC0000093 ) || code == 0xC00002B4 || code == 0xC00002B5 ? 16
+				: code == EXCEPTION_ILLEGAL_INSTRUCTION ? 6 : 13;
+		( ( void( * )( void* ) ) ( ( uint8_t* ) mem + 0x1000 ) )( backup );     // fnclex; fxrstor [rcx]
+	}
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static r7_result r7_unicorn( const std::vector<uint8_t>& code, const uint16_t in[ 4 ], uint32_t host_mxcsr )
+{
+	r7_result r{ -1, 0, 0 };
+	const uint64_t R7_CODE = 0x1000, R7_IN = 0x10000, R7_OUTP = 0x11000, R7_BACKUP = 0x12000, R7_IMAGE = 0x14000, R7_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_mem_map( uc, R7_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R7_IN, 0x8000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R7_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R7_CODE, code.data(), code.size() );
+	uc_mem_write( uc, R7_IN, in, 8 );
+	uint64_t rcx = R7_IN, rdx = R7_OUTP, r8 = R7_BACKUP, r9 = R7_IMAGE, rsp = R7_STACK + 0x8000, mx = host_mxcsr, xcr0 = 0x7;
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_R9, &r9 );
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_MXCSR, &mx );
+	uc_reg_write( uc, UC_X86_REG_XCR0, &xcr0 );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R7_CODE, R7_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	if ( e ) std::printf( "    uc_emu_start: %s\n", uc_strerror( e ) );
+	if ( !log.seen.empty() ) r.fault = int( log.seen[ 0 ] );
+	else { uint16_t out[ 2 ] = {}; uc_mem_read( uc, R7_OUTP, out, sizeof( out ) ); r.fcw = out[ 0 ]; r.fsw = out[ 1 ]; }
+	uc_close( uc );
+	return r;
+}
+
+static void test_r7()
+{
+	std::printf( "R7  x87 FCW/FSW loads: FLDCW, FLDENV, FRSTOR, FXRSTOR, XRSTOR(x87) vs hardware\n" );
+	const char* names[] = { "fldcw", "fldenv", "frstor", "fxrstor", "xrstor" };
+	std::vector<uint8_t> restore = assemble( "fnclex\nfxrstor [rcx]\nret\n" );
+	uint32_t host_mx = 0x1F80;
+	{
+		std::vector<uint8_t> probe = assemble( "stmxcsr dword ptr [rcx]\nret\n" );
+		void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+		if ( mem && !probe.empty() )
+		{
+			std::memcpy( mem, probe.data(), probe.size() );
+			( ( void( * )( uint32_t* ) ) mem )( &host_mx );
+			VirtualFree( mem, 0, MEM_RELEASE );
+		}
+	}
+	const uint16_t fcws[] = { 0x0000, 0xFFFF, 0x037F, 0x0040, 0x0080, 0xE000, 0x1000, 0x0C00, 0x7A6F, 0xCDE5 };
+	const uint16_t fsws[] = { 0x0000, 0x8080, 0x0001, 0x0020, 0x0041, 0x0002, 0x3800, 0x4700, 0xFFFF, 0x0B70, 0x5E38, 0x0040, 0x00C0 };
+	for ( int kind = 0; kind < 5; ++kind )
+	{
+		std::vector<uint8_t> code = assemble( r7_thunk( kind ) );
+		CHECK( !code.empty() && !restore.empty(), "%s: assembly", names[ kind ] );
+		if ( code.empty() || restore.empty() ) continue;
+		int cases = 0, diffs = 0, shown = 0, pending_mf = 0;
+		auto run = [ & ]( uint16_t fcw, uint16_t fsw, uint16_t after, uint16_t do_after ) {
+			const uint16_t in[ 4 ] = { fcw, fsw, after, do_after };
+			r7_result hw = r7_native( code, restore, in ), uc = r7_unicorn( code, in, host_mx );
+			bool same = hw.fault == uc.fault && ( hw.fault >= 0 || ( hw.fcw == uc.fcw && hw.fsw == uc.fsw ) );
+			++cases;
+			if ( !same && hw.fault == 16 && uc.fault < 0 && !R7_PENDING_MF )
+			{
+				// FLDCW is a waiting instruction: with FSW.ES=1 hardware raises #MF before it loads.
+				// Unicorn does not raise pending x87 exceptions yet -> plan 1.10.2c flips this on.
+				++pending_mf;
+				return hw;
+			}
+			if ( !same )
+			{
+				++diffs;
+				if ( shown++ < 12 )
+					std::printf( "    %-7s in fcw=%04X fsw=%04X%s  hw: %s fcw=%04X fsw=%04X   uc: %s fcw=%04X fsw=%04X\n", names[ kind ], fcw, fsw,
+								 do_after ? ( " +fldcw " + std::to_string( after ) ).c_str() : "", hw.fault >= 0 ? "fault" : "ok", hw.fcw, hw.fsw,
+								 uc.fault >= 0 ? "fault" : "ok", uc.fcw, uc.fsw );
+			}
+			return hw;
+		};
+		for ( uint16_t fcw : fcws )
+		{
+			if ( kind == 0 ) { run( fcw, 0, 0, 0 ); continue; }
+			for ( uint16_t fsw : fsws ) run( fcw, fsw, 0, 0 );
+		}
+		if ( kind == 1 )
+		{
+			// flags pending under a fully masked FCW, then FLDCW unmasks them: does ES/B follow at once?
+			// and the reverse: flags pending and unmasked (ES=1), then FLDCW masks them again.
+			for ( uint16_t fcw0 : { uint16_t( 0x037F ), uint16_t( 0x0340 ) } )
+				for ( uint16_t fsw : { uint16_t( 0x0001 ), uint16_t( 0x0020 ), uint16_t( 0x0004 ), uint16_t( 0x0000 ) } )
+					for ( uint16_t after : { uint16_t( 0x0340 ), uint16_t( 0x037E ), uint16_t( 0x035F ), uint16_t( 0x037F ) } )
+					{
+						r7_result hw = run( fcw0, fsw, after, 1 );
+						std::printf( "    fldenv fcw=%04X fsw=%04X then fldcw %04X: hw %s fsw=%04X fcw=%04X\n", fcw0, fsw, after,
+									 hw.fault >= 0 ? ( "fault " + std::to_string( hw.fault ) ).c_str() : "ok", hw.fsw, hw.fcw );
+					}
+		}
+		std::printf( "    %-7s %3d cases, %d differ", names[ kind ], cases, diffs );
+		if ( pending_mf ) std::printf( ", %d hardware #MF on a waiting instruction not raised by Unicorn yet (plan 1.10.2c)", pending_mf );
+		std::printf( "\n" );
+		CHECK( diffs == 0, "%s: %d of %d cases differ from hardware", names[ kind ], diffs, cases );
+	}
+}
+
 int main()
 {
 	unsigned maj = 0, min = 0;
@@ -579,6 +740,8 @@ int main()
 	test_r5();
 	std::printf( "\n" );
 	test_r6();
+	std::printf( "\n" );
+	test_r7();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }

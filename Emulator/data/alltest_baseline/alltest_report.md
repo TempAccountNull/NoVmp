@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 27 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 26 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2691 |
-| differs | 299 |
+| match | 2695 |
+| differs | 295 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -33,7 +33,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 |
-| base | 1112 | 35 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
+| base | 1113 | 34 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
@@ -45,7 +45,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
 | fc16 | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 18 | 112 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 21 | 109 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | mmx | 8 | 125 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -89,7 +89,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `fchs` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
 - `fabs` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
 - `ftst` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/0000/FFFF (fsw mask FFFF); 
-- `fldenv [rsi]` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=0379/A7F6/0000 uc=23B9/A7F6/0000 (fsw mask FFFF); 
 - `fld1` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8080 uc=037F/3800/0080 (fsw mask BAFF); st(0) differs; 
 - `fldl2t` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8000 uc=037F/3800/0000 (fsw mask BAFF); st(0) differs; 
 - `fldl2e` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8008 uc=037F/3800/0008 (fsw mask BAFF); st(0) differs; 
@@ -97,7 +96,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `fldlg2` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/A800 uc=037F/3800/2800 (fsw mask BAFF); st(0) differs; 
 - `fldln2` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/820A uc=037F/3800/020A (fsw mask BAFF); st(0) differs; 
 - `fldz` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8000 uc=037F/3800/4000 (fsw mask BAFF); st(0) differs; 
-- `fldcw word ptr [rsi]` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=1A6F/0000/FF00 uc=7A6F/0000/FF00 (fsw mask BAFF); 
 - `f2xm1` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF80 uc=037F/0001/FF82 (fsw mask BAFF); st(0) differs; 
 - `fyl2x` (fpu, differs, 3/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF03 uc=037F/0820/FF03 (fsw mask BAFF); 
 - `fptan` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/3820/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(1) differs; 
@@ -158,7 +156,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `fstp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); st(7) differs; 
 - `fstp qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0830/FFFF (fsw mask BAFF); mem[+0x8006] hw=F8 uc=00; 
 - `fucom st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/4000/FFFF (fsw mask FFFF); 
-- `frstor dword ptr [rsi]` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=0040/D7A5/C8FE uc=0000/D7A5/C8FE (fsw mask FFFF); 
 - `fucomp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/4800/FFFF (fsw mask FFFF); 
 - `faddp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0801/FFFF (fsw mask BAFF); 
 - `fiadd word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0001/FFFF (fsw mask BAFF); 
@@ -237,7 +234,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `pcmpeqw mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
 - `pcmpeqd mm0, mm0` (mmx, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/A002 uc=037F/0000/A000 (fsw mask FFFF); st(0) differs; 
 - `pcmpeqd mm0, qword ptr [rsi]` (mmx, differs, 6/6): iter 0: st(0) differs; 
-- `fxrstor [rsi]` (base, differs, 1/6): iter 1: x87 fcw/fsw/ftw hw=066B/8BF0/EBBF uc=E62B/0B70/EBBF (fsw mask FFFF); 
 - `pinsrw mm0, eax, 0x5b` (base, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0082 uc=037F/0000/0080 (fsw mask FFFF); st(0) differs; 
 - `pinsrw mm0, word ptr [rsi], 0x5b` (base, differs, 6/6): iter 0: st(0) differs; 
 - `xsavec ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
