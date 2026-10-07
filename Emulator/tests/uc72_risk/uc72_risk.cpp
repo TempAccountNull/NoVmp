@@ -7,6 +7,9 @@
 //   R2  uc_context save/restore carries YMM0-15, ZMM0-31 (if writable), K0-K7, MXCSR, XCR0.
 //   R3  QEMU's CPUX86State.old_exception: two independent contributory faults in successive
 //       uc_emu_start calls must each arrive as themselves (#DE=0 / #GP=13), not as #DF=8.
+//   R4  CPUID consistency of the CPU models (leaf 7 levels, XSAVE components).
+//   R5  hardware-quirk switch (FCOMI/FUCOMI C1).
+//   R6  MXCSR rules of XRSTOR/XSAVE (RFBM[1]/RFBM[2]) and the reserved-bit #GP, vs hardware.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -457,6 +460,109 @@ static void test_r5()
 	CHECK( rb == UC_X86_QUIRK_FCOMI_KEEPS_C1, "uc_ctl round trip %u", rb );
 }
 
+// ── R6: MXCSR load/store rules of XRSTOR / XSAVE / LDMXCSR (plan 1.10.2) ───────────────────────
+//
+// SDM Vol1 13.7 / 13.8.1: the standard forms of XSAVE and XRSTOR handle MXCSR whenever RFBM[1] or
+// RFBM[2] is set; Vol2 LDMXCSR/FXRSTOR/XRSTOR: writing a reserved MXCSR bit (outside MXCSR_MASK)
+// is #GP(0) and nothing is loaded. Each case runs the same self-generated thunk on the host and in
+// Unicorn. Thunk ABI: rcx = 64-byte aligned XSAVE area, rdx = RFBM, r8d = MXCSR value, r9 = out.
+// The XRSTOR thunk first XSAVEs the live state so restoring it changes nothing but MXCSR.
+
+struct r6_result { int fault; uint32_t out[ 4 ]; };
+
+static const char* r6_xrstor = "stmxcsr dword ptr [r9]\n"
+							   "mov r10, rdx\nmov eax, 7\nxor edx, edx\nxsave [rcx]\n"
+							   "mov dword ptr [rcx + 24], r8d\n"
+							   "mov eax, r10d\nxor edx, edx\nxrstor [rcx]\n"
+							   "stmxcsr dword ptr [r9 + 4]\nldmxcsr dword ptr [r9]\nret\n";
+static const char* r6_xsave = "mov dword ptr [rcx + 24], 0xDEADBEEF\nmov dword ptr [rcx + 28], 0xDEADBEEF\n"
+							  "mov eax, edx\nxor edx, edx\nxsave [rcx]\n"
+							  "mov eax, dword ptr [rcx + 24]\nmov dword ptr [r9 + 8], eax\n"
+							  "mov eax, dword ptr [rcx + 28]\nmov dword ptr [r9 + 12], eax\nret\n";
+static const char* r6_ldmxcsr = "stmxcsr dword ptr [r9]\nmov dword ptr [r9 + 8], r8d\nldmxcsr dword ptr [r9 + 8]\n"
+								"stmxcsr dword ptr [r9 + 4]\nldmxcsr dword ptr [r9]\nret\n";
+
+static r6_result r6_native( const std::vector<uint8_t>& code, uint64_t rfbm, uint32_t mxcsr )
+{
+	r6_result r{ -1, { 0, 0, 0, 0 } };
+	alignas( 64 ) static uint8_t area[ 4096 ];
+	std::memset( area, 0, sizeof( area ) );
+	void* mem = VirtualAlloc( nullptr, code.size(), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	using fn_t = void( * )( void*, uint64_t, uint64_t, uint32_t* );
+	__try { ( ( fn_t ) mem )( area, rfbm, mxcsr, r.out ); }
+	__except ( GetExceptionCode() == EXCEPTION_PRIV_INSTRUCTION || GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+				   ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) { r.fault = 13; }
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static r6_result r6_unicorn( const std::vector<uint8_t>& code, uint64_t rfbm, uint32_t mxcsr, uint32_t host_mxcsr )
+{
+	r6_result r{ -1, { 0, 0, 0, 0 } };
+	const uint64_t R6_CODE = 0x1000, R6_AREA = 0x10000, R6_OUT = 0x20000, R6_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_mem_map( uc, R6_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R6_AREA, 0x2000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R6_OUT, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R6_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R6_CODE, code.data(), code.size() );
+	uint64_t rcx = R6_AREA, rdx = rfbm, r8 = mxcsr, r9 = R6_OUT, rsp = R6_STACK + 0x8000, mx = host_mxcsr, xcr0 = 0x7;     // host runs with x87|SSE|AVX enabled
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_R9, &r9 );
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_MXCSR, &mx );
+	uc_reg_write( uc, UC_X86_REG_XCR0, &xcr0 );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R6_CODE, R6_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	if ( e ) std::printf( "    uc_emu_start: %s\n", uc_strerror( e ) );
+	if ( !log.seen.empty() ) r.fault = int( log.seen[ 0 ] );
+	else uc_mem_read( uc, R6_OUT, r.out, sizeof( r.out ) );
+	uc_close( uc );
+	return r;
+}
+
+static void test_r6()
+{
+	std::printf( "R6  MXCSR rules: XRSTOR/XSAVE with RFBM[1]/RFBM[2], reserved-bit #GP (SDM Vol1 13.7/13.8.1)\n" );
+	std::vector<uint8_t> xr = assemble( r6_xrstor ), xs = assemble( r6_xsave ), ld = assemble( r6_ldmxcsr );
+	CHECK( !xr.empty() && !xs.empty() && !ld.empty(), "assembly" );
+	if ( xr.empty() || xs.empty() || ld.empty() ) return;
+	uint32_t host_mx = 0;
+	{
+		r6_result probe = r6_native( ld, 0, 0x1F80 );      // also proves the thunk runs natively
+		host_mx = probe.out[ 0 ];
+	}
+	struct c { const char* what; const std::vector<uint8_t>* code; uint64_t rfbm; uint32_t mx; };
+	const c cases[] = {
+		{ "xrstor rfbm=2 mxcsr=5F80 ", &xr, 2, 0x5F80 },  { "xrstor rfbm=4 mxcsr=5F80 ", &xr, 4, 0x5F80 },
+		{ "xrstor rfbm=1 mxcsr=5F80 ", &xr, 1, 0x5F80 },  { "xrstor rfbm=2 mxcsr=11F80", &xr, 2, 0x11F80 },
+		{ "xrstor rfbm=4 mxcsr=11F80", &xr, 4, 0x11F80 }, { "xrstor rfbm=1 mxcsr=11F80", &xr, 1, 0x11F80 },
+		{ "xsave  rfbm=4            ", &xs, 4, 0 },       { "xsave  rfbm=2            ", &xs, 2, 0 },
+		{ "xsave  rfbm=1            ", &xs, 1, 0 },       { "ldmxcsr 1FC0 (DAZ)       ", &ld, 0, 0x1FC0 },
+		{ "ldmxcsr 11F80            ", &ld, 0, 0x11F80 }, { "ldmxcsr 80001F80         ", &ld, 0, 0x80001F80u },
+	};
+	for ( const c& k : cases )
+	{
+		r6_result hw = r6_native( *k.code, k.rfbm, k.mx ), uc = r6_unicorn( *k.code, k.rfbm, k.mx, host_mx );
+		// out[0] = MXCSR before (host-specific, not compared), out[1] = after, out[2..3] = XSAVE mxcsr/mask fields
+		bool same = hw.fault == uc.fault && ( hw.fault >= 0 || ( hw.out[ 1 ] == uc.out[ 1 ] && hw.out[ 2 ] == uc.out[ 2 ] && hw.out[ 3 ] == uc.out[ 3 ] ) );
+		auto show = [ & ]( const r6_result& r ) {
+			char b[ 64 ];
+			if ( r.fault >= 0 ) std::snprintf( b, sizeof( b ), "vector %d", r.fault );
+			else std::snprintf( b, sizeof( b ), "mxcsr=%04X xs=%08X/%08X", r.out[ 1 ], r.out[ 2 ], r.out[ 3 ] );
+			return std::string( b );
+		};
+		std::printf( "    %s hw: %-34s uc: %-34s %s\n", k.what, show( hw ).c_str(), show( uc ).c_str(), same ? "ok" : "DIFFERS" );
+		CHECK( same, "%s", k.what );
+	}
+}
+
 int main()
 {
 	unsigned maj = 0, min = 0;
@@ -471,6 +577,8 @@ int main()
 	test_r4();
 	std::printf( "\n" );
 	test_r5();
+	std::printf( "\n" );
+	test_r6();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
