@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 27 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 26 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2868 |
-| differs | 122 |
+| match | 2977 |
+| differs | 13 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -39,13 +39,13 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
 | bwi+vlx | 0 | 0 | 0 | 292 | 0 | 0 | 0 | 0 | 0 |
 | cdi | 0 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
-| cmov | 96 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| cmov+fpu | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cmov | 97 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cmov+fpu | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | dqi | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 0 | 0 |
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
 | fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 21 | 109 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 122 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -65,123 +65,14 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 
 ## Differences (first iteration that differs)
 
-- `fadd st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fadd dword ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0020/FFFF (fsw mask BAFF); st(0) differs; 
-- `fmul st(0)` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fmul dword ptr [rsi]` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fcom st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/4000/FFFF (fsw mask FFFF); 
-- `fcom dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/0100/FFFF (fsw mask FFFF); 
-- `fcomp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/4800/FFFF (fsw mask FFFF); 
-- `fcomp dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/0900/FFFF (fsw mask FFFF); 
-- `fsub st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fsub dword ptr [rsi]` (fpu, differs, 4/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fsubr st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0001/FFFF (fsw mask BAFF); 
-- `fsubr dword ptr [rsi]` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fdiv st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdiv dword ptr [rsi]` (fpu, differs, 2/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fdivr st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdivr dword ptr [rsi]` (fpu, differs, 3/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fld st(0)` (fpu, differs, 2/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8200 uc=037F/3800/0200 (fsw mask BAFF); st(0) differs; 
-- `fld dword ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8022 uc=037F/3800/0022 (fsw mask BAFF); st(0) differs; 
-- `fxch st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFC (fsw mask BAFF); st(0) differs; 
-- `fst dword ptr [rsi]` (fpu, differs, 2/6): iter 2: x87 fcw/fsw/ftw hw=037F/0220/8000 uc=037F/0020/8000 (fsw mask BAFF); 
-- `fstp dword ptr [rsi]` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF03 uc=037F/0820/FF03 (fsw mask BAFF); 
-- `fchs` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fabs` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `ftst` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/0000/FFFF (fsw mask FFFF); 
-- `fld1` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8080 uc=037F/3800/0080 (fsw mask BAFF); st(0) differs; 
-- `fldl2t` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8000 uc=037F/3800/0000 (fsw mask BAFF); st(0) differs; 
-- `fldl2e` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8008 uc=037F/3800/0008 (fsw mask BAFF); st(0) differs; 
-- `fldpi` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/A000 uc=037F/3800/2000 (fsw mask BAFF); st(0) differs; 
-- `fldlg2` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/A800 uc=037F/3800/2800 (fsw mask BAFF); st(0) differs; 
-- `fldln2` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/820A uc=037F/3800/020A (fsw mask BAFF); st(0) differs; 
-- `fldz` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8000 uc=037F/3800/4000 (fsw mask BAFF); st(0) differs; 
-- `f2xm1` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF80 uc=037F/0001/FF82 (fsw mask BAFF); st(0) differs; 
-- `fyl2x` (fpu, differs, 3/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF03 uc=037F/0820/FF03 (fsw mask BAFF); 
-- `fptan` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/3820/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(1) differs; 
-- `fpatan` (fpu, differs, 3/6): iter 1: x87 fcw/fsw/ftw hw=037F/0A20/FF03 uc=037F/0820/FF03 (fsw mask BAFF); 
-- `fxtract` (fpu, differs, 2/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8082 uc=037F/3801/8082 (fsw mask BAFF); 
-- `fprem1` (fpu, differs, 2/6): iter 2: x87 fcw/fsw/ftw hw=037F/4100/8000 uc=037F/0000/8000 (fsw mask FFFF); 
-- `fprem` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask FFFF); st(0) differs; 
-- `fyl2xp1` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFB uc=037F/0801/FFFF (fsw mask BAFF); 
-- `fsqrt` (fpu, differs, 2/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF20 uc=037F/0020/FF20 (fsw mask BAFF); 
-- `fsincos` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/3A20/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(0) differs; 
-- `frndint` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fscale` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fsin` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0001/FF02 uc=037F/0000/FF02 (fsw mask BEFF); 
-- `fcos` (fpu, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF20 uc=037F/0000/FF20 (fsw mask BEFF); st(0) differs; 
-- `fcmovb st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fiadd dword ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0020/FFFF (fsw mask BAFF); st(0) differs; 
-- `fcmove st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fimul dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0020/FFFF (fsw mask BAFF); st(0) differs; 
-- `fcmovbe st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `ficom dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/4501/FFFF (fsw mask FFFF); 
-- `fcmovu st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `ficomp dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/0900/FFFF (fsw mask FFFF); 
-- `fisub dword ptr [rsi]` (fpu, differs, 4/6): iter 2: x87 fcw/fsw/ftw hw=037F/0220/0020 uc=037F/0020/0020 (fsw mask BAFF); 
-- `fucompp` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/5541/FFFF uc=037F/5501/FFFF (fsw mask FFFF); 
-- `fisubr dword ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0001/FFFF (fsw mask BAFF); 
-- `fidiv dword ptr [rsi]` (fpu, differs, 3/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF20 uc=037F/0020/FF20 (fsw mask BAFF); 
-- `fidivr dword ptr [rsi]` (fpu, differs, 3/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fcmovnb st(0), st(0)` (cmov, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fild dword ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8280 uc=037F/3800/0280 (fsw mask BAFF); st(0) differs; 
-- `fcmovne st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fisttp dword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0801/FFFF (fsw mask BAFF); 
-- `fcmovnbe st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fist dword ptr [rsi]` (fpu, differs, 3/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFF uc=037F/0020/FFFF (fsw mask BAFF); mem[+0x8000] hw=00 uc=D9; 
-- `fcmovnu st(0), st(0)` (cmov+fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fistp dword ptr [rsi]` (fpu, differs, 3/6): iter 1: x87 fcw/fsw/ftw hw=037F/0A20/FF23 uc=037F/0820/FF23 (fsw mask BAFF); 
-- `fucomi st(0)` (fpu, differs, 1/6): iter 3: rflags hw=247 uc=242 mask=CD5; x87 fcw/fsw/ftw hw=037F/0041/FFFF uc=037F/0000/FFFF (fsw mask FFFF); 
-- `fld xword ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8020 uc=037F/3800/0020 (fsw mask BAFF); st(0) differs; 
-- `fcomi st(0)` (fpu, differs, 1/6): iter 3: rflags hw=247 uc=242 mask=CD5; x87 fcw/fsw/ftw hw=037F/0041/FFFF uc=037F/0000/FFFF (fsw mask FFFF); 
-- `fstp xword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); mem[+0x8000] hw=00 uc=B5; 
-- `fadd st(0), st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fadd qword ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fmul st(0), st(0)` (fpu, differs, 3/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF88 uc=037F/0020/FF88 (fsw mask BAFF); 
-- `fmul qword ptr [rsi]` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fcom qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/0000/FFFF (fsw mask FFFF); 
-- `fcomp qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/4D01/FFFF (fsw mask FFFF); 
-- `fsubr st(0), st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fsub qword ptr [rsi]` (fpu, differs, 2/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fsub st(0), st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fsubr qword ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdivr st(0), st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdiv qword ptr [rsi]` (fpu, differs, 4/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fdiv st(0), st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdivr qword ptr [rsi]` (fpu, differs, 2/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fld qword ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8008 uc=037F/3800/0008 (fsw mask BAFF); st(0) differs; 
-- `fisttp qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0820/FFFF (fsw mask BAFF); mem[+0x8000] hw=00 uc=F4; 
-- `fst st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFC (fsw mask BAFF); st(0) differs; 
-- `fst qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFF uc=037F/0000/FFFF (fsw mask BAFF); mem[+0x8000] hw=00 uc=F1; 
-- `fstp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); st(7) differs; 
-- `fstp qword ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0830/FFFF (fsw mask BAFF); mem[+0x8006] hw=F8 uc=00; 
-- `fucom st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/4000/FFFF (fsw mask FFFF); 
-- `fucomp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/4800/FFFF (fsw mask FFFF); 
-- `faddp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0801/FFFF (fsw mask BAFF); 
-- `fiadd word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0001/FFFF (fsw mask BAFF); 
-- `fmulp st(0)` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF23 uc=037F/0820/FF23 (fsw mask BAFF); 
-- `fimul word ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0020/FFFF (fsw mask BAFF); st(0) differs; 
-- `ficom word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4541/FFFF uc=037F/4501/FFFF (fsw mask FFFF); 
-- `fcompp` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/5541/FFFF uc=037F/5501/FFFF (fsw mask FFFF); 
-- `ficomp word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/4D41/FFFF uc=037F/0800/FFFF (fsw mask FFFF); 
-- `fsubrp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0801/FFFF (fsw mask BAFF); 
-- `fisub word ptr [rsi]` (fpu, differs, 2/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fsubp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); st(7) differs; 
-- `fisubr word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0000/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdivrp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); st(7) differs; 
-- `fidiv word ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0041/FFFE uc=037F/0020/FFFF (fsw mask BAFF); st(0) differs; 
-- `fdivp st(0)` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask BAFF); st(7) differs; 
-- `fidivr word ptr [rsi]` (fpu, differs, 2/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fild word ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8288 uc=037F/3800/0288 (fsw mask BAFF); st(0) differs; 
-- `fisttp word ptr [rsi]` (fpu, differs, 1/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0820/FFFF (fsw mask BAFF); mem[+0x8001] hw=80 uc=00; 
-- `fist word ptr [rsi]` (fpu, differs, 2/6): iter 0: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BAFF); 
-- `fistp word ptr [rsi]` (fpu, differs, 2/6): iter 3: x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0820/FFFF (fsw mask BAFF); mem[+0x8000] hw=00 uc=45; 
-- `fbld tbyte ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8080 uc=037F/3800/0080 (fsw mask BAFF); st(0) differs; 
-- `fucompi st(0)` (fpu, differs, 1/6): iter 3: rflags hw=647 uc=642 mask=CD5; x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask FFFF); 
-- `fild qword ptr [rsi]` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/3A41/8000 uc=037F/3800/0000 (fsw mask BAFF); st(0) differs; 
-- `fcompi st(0)` (fpu, differs, 1/6): iter 3: rflags hw=247 uc=242 mask=CD5; x87 fcw/fsw/ftw hw=037F/0841/FFFF uc=037F/0800/FFFF (fsw mask FFFF); 
-- `fbstp tbyte ptr [rsi]` (fpu, differs, 3/6): iter 2: x87 fcw/fsw/ftw hw=037F/0A20/2003 uc=037F/0820/2003 (fsw mask BAFF); 
-- `fistp qword ptr [rsi]` (fpu, differs, 2/6): iter 0: x87 fcw/fsw/ftw hw=037F/0A20/FF0B uc=037F/0820/FF0B (fsw mask BAFF); 
+- `f2xm1` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF80 uc=037F/0001/FF82 (fsw mask BAFF); st(0) differs; 
+- `fyl2x` (fpu, differs, 1/6): iter 1: x87 fcw/fsw/ftw hw=037F/0820/FF03 uc=037F/0A20/FF03 (fsw mask BAFF); st(0) differs; 
+- `fptan` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/3820/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(1) differs; 
+- `fpatan` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/0820/2003 uc=037F/0A20/2003 (fsw mask BAFF); 
+- `fprem1` (fpu, differs, 1/6): iter 2: x87 fcw/fsw/ftw hw=037F/4100/8000 uc=037F/0000/8000 (fsw mask FFFF); 
+- `fsincos` (fpu, differs, 4/6): iter 0: x87 fcw/fsw/ftw hw=037F/3A20/3F00 uc=037F/3800/3F00 (fsw mask BEFF); st(0) differs; 
+- `fsin` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0001/FF02 uc=037F/0000/FF02 (fsw mask BEFF); 
+- `fcos` (fpu, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0020/FF20 uc=037F/0000/FF20 (fsw mask BEFF); st(0) differs; 
 - `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
 - `xsavec ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `xsavec64 ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6

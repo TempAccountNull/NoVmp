@@ -14,6 +14,7 @@
 //   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
 //   R9  MIN/MAX (SSE/AVX, scalar/packed) and F16C conversions under DAZ/FTZ, vs hardware.
 //   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), manual default and hardware quirks.
+//   R11 x87 C1 rounding direction, precision control and stack overflow/underflow, every form vs hardware.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -424,7 +425,9 @@ static void test_r4()
 static uint16_t fcomi_c1_run( bool quirk, bool fucomi, uint32_t* readback )
 {
 	// ST1 = 2.0, ST0 = -1.0; fxam sets C1 = sign(ST0) = 1; then fcomi/fucomi st(0), st(1)
-	std::vector<uint8_t> code = assemble( std::string( "fld qword ptr [rax]\nfld qword ptr [rax + 8]\nfxam\n" ) +
+	// fninit first: the RESET x87 state (SDM Vol3 Table 11-1: all eight registers valid +0.0) makes the
+	// first FLD a stack overflow
+	std::vector<uint8_t> code = assemble( std::string( "fninit\nfld qword ptr [rax]\nfld qword ptr [rax + 8]\nfxam\n" ) +
 										  ( fucomi ? "fucomi st(0), st(1)\n" : "fcomi st(0), st(1)\n" ) );
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
@@ -1062,6 +1065,221 @@ static void test_r10()
 	}
 }
 
+// ── R11: x87 rounding (C1) and stack faults (plan 1.10.6 / 1.10.7) ──────────────────────────────
+//
+// Every x87 form runs on a stack built natively-identically on both sides: FNINIT, eight FLD m80
+// (all physical registers defined, TOP=0), then FLDENV sets FCW (RC/PC/masks), FSW (TOP, C1 preset)
+// and the tag word (empty registers). Scenarios: all valid x RC{4} x PC{24,53,64} x C1{0,1}; ST(7)
+// empty (a push is legal); all empty with IM masked / unmasked (stack underflow; a push into a full
+// stack is the overflow case of the all-valid scenarios). Compared: FCW/FSW/FTW (FNSTENV), ST0-7
+// (FXSAVE), the 16-byte memory operand and SF/ZF/AF/PF/CF (LAHF). Only no-wait instructions follow
+// the op, so a pending unmasked exception cannot fire. Thunk ABI: rcx = in { fldenv image[28] at +0,
+// 8 x m80 at +32, memory operand[16] at +192 }, rdx = out (64-aligned: fnstenv +0, fxsave +64,
+// memory +576, AH +592), r8 = 64-aligned host backup.
+
+struct r11_result { int fault; uint8_t env[ 28 ]; uint8_t fx[ 512 ]; uint8_t mem[ 16 ]; uint8_t ah; };
+
+static void r11_put_m80( uint8_t* p, double d )
+{
+	uint64_t bits;
+	std::memcpy( &bits, &d, 8 );
+	uint16_t sign = uint16_t( bits >> 63 ) << 15;
+	int e = int( ( bits >> 52 ) & 0x7FF );
+	uint64_t frac = bits & 0xFFFFFFFFFFFFFull, mant = 0;
+	uint16_t se = sign;
+	if ( e == 0 && frac == 0 ) { mant = 0; }
+	else { mant = ( 1ull << 63 ) | ( frac << 11 ); se |= uint16_t( e - 1023 + 16383 ); }     // normals only in the table
+	std::memcpy( p, &mant, 8 );
+	std::memcpy( p + 8, &se, 2 );
+}
+
+static std::string r11_thunk( const char* op )
+{
+	std::string s = "fxsave [r8]\nfninit\n";
+	for ( int i = 0; i < 8; ++i ) s += "fld tbyte ptr [rcx + " + std::to_string( 32 + i * 16 ) + "]\n";
+	s += "fldenv [rcx]\n";
+	s += op;
+	s += "\nlahf\nmov byte ptr [rdx + 592], ah\nfnstenv [rdx]\nfxsave [rdx + 64]\n"
+		 "mov rax, qword ptr [rcx + 192]\nmov qword ptr [rdx + 576], rax\nmov rax, qword ptr [rcx + 200]\nmov qword ptr [rdx + 584], rax\n"
+		 "fxrstor [r8]\nret\n";
+	return s;
+}
+
+static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in[ 208 ] )
+{
+	r11_result r{ -1, {}, {}, {}, 0 };
+	alignas( 64 ) static uint8_t backup[ 512 ], out[ 640 ], inbuf[ 256 ];
+	std::memcpy( inbuf, in, 208 );
+	void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	std::memset( out, 0, sizeof( out ) );
+	__try
+	{
+		( ( void( * )( uint8_t*, uint8_t*, void* ) ) mem )( inbuf, out, backup );
+		std::memcpy( r.env, out, 28 ); std::memcpy( r.fx, out + 64, 512 ); std::memcpy( r.mem, out + 576, 16 ); r.ah = out[ 592 ];
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER ) { r.fault = 1; }
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
+{
+	r11_result r{ -1, {}, {}, {}, 0 };
+	const uint64_t R11_CODE = 0x1000, R11_IN = 0x10000, R11_OUTP = 0x11000, R11_BACKUP = 0x12000, R11_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_ctl_set_x86_hw_quirks( uc, quirks );
+	uc_mem_map( uc, R11_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R11_IN, 0x4000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R11_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R11_CODE, code.data(), code.size() );
+	uc_mem_write( uc, R11_IN, in, 208 );
+	uint64_t rcx = R11_IN, rdx = R11_OUTP, r8 = R11_BACKUP, rsp = R11_STACK + 0x8000;
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_RSP, &rsp );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R11_CODE, R11_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	if ( e ) std::printf( "    uc_emu_start: %s\n", uc_strerror( e ) );
+	if ( !log.seen.empty() ) r.fault = int( log.seen[ 0 ] );
+	else
+	{
+		uint8_t out[ 640 ];
+		uc_mem_read( uc, R11_OUTP, out, sizeof( out ) );
+		std::memcpy( r.env, out, 28 ); std::memcpy( r.fx, out + 64, 512 ); std::memcpy( r.mem, out + 576, 16 ); r.ah = out[ 592 ];
+	}
+	uc_close( uc );
+	return r;
+}
+
+static std::string r11_diff( const r11_result& a, const r11_result& b, bool flags )
+{
+	char buf[ 200 ];
+	if ( a.fault != b.fault ) { std::snprintf( buf, sizeof( buf ), "fault %d vs %d", a.fault, b.fault ); return buf; }
+	if ( a.fault >= 0 ) return "";
+	auto w = [ & ]( const uint8_t* p, int o ) { return unsigned( p[ o ] | ( p[ o + 1 ] << 8 ) ); };
+	std::string d;
+	for ( int o : { 0, 4, 8 } )
+		if ( w( a.env, o ) != w( b.env, o ) )
+		{
+			std::snprintf( buf, sizeof( buf ), "%s %04X/%04X ", o == 0 ? "fcw" : o == 4 ? "fsw" : "ftw", w( a.env, o ), w( b.env, o ) );
+			d += buf;
+		}
+	for ( int i = 0; i < 8; ++i )
+		if ( std::memcmp( a.fx + 32 + i * 16, b.fx + 32 + i * 16, 10 ) )
+		{
+			std::snprintf( buf, sizeof( buf ), "st%d %04X:%016llX/%04X:%016llX ", i, w( a.fx, 40 + i * 16 ), *( const unsigned long long* ) ( a.fx + 32 + i * 16 ),
+						   w( b.fx, 40 + i * 16 ), *( const unsigned long long* ) ( b.fx + 32 + i * 16 ) );
+			d += buf;
+			break;
+		}
+	if ( std::memcmp( a.mem, b.mem, 16 ) )
+	{
+		std::snprintf( buf, sizeof( buf ), "mem %016llX/%016llX ", *( const unsigned long long* ) a.mem, *( const unsigned long long* ) b.mem );
+		d += buf;
+	}
+	if ( flags && ( a.ah & 0xD5 ) != ( b.ah & 0xD5 ) ) { std::snprintf( buf, sizeof( buf ), "ah %02X/%02X ", a.ah, b.ah ); d += buf; }
+	return d;
+}
+
+static void test_r11()
+{
+	std::printf( "R11 x87 C1 rounding + stack underflow/overflow: every form x RC x PC x C1 vs hardware\n" );
+	const char* ops[] = {
+		"fadd st(0), st(1)", "fadd st(1), st(0)", "faddp st(1), st(0)", "fadd dword ptr [rcx + 192]", "fadd qword ptr [rcx + 192]",
+		"fiadd dword ptr [rcx + 192]", "fiadd word ptr [rcx + 192]",
+		"fsub st(0), st(1)", "fsubp st(1), st(0)", "fsub qword ptr [rcx + 192]", "fsubr st(0), st(1)", "fsubr dword ptr [rcx + 192]",
+		"fisub dword ptr [rcx + 192]", "fisubr word ptr [rcx + 192]",
+		"fmul st(0), st(1)", "fmul st(2), st(0)", "fmulp st(1), st(0)", "fmul qword ptr [rcx + 192]", "fimul dword ptr [rcx + 192]",
+		"fdiv st(0), st(1)", "fdiv st(1), st(0)", "fdivp st(1), st(0)", "fdiv dword ptr [rcx + 192]", "fidiv word ptr [rcx + 192]",
+		"fdivr st(0), st(1)", "fdivrp st(1), st(0)", "fdivr qword ptr [rcx + 192]", "fidivr dword ptr [rcx + 192]",
+		"fsqrt", "frndint", "fscale", "fxtract", "fprem", "fprem1", "f2xm1", "fyl2x", "fyl2xp1", "fptan", "fpatan", "fsin", "fcos", "fsincos",
+		"fld st(1)", "fld dword ptr [rcx + 192]", "fld qword ptr [rcx + 192]", "fld tbyte ptr [rcx + 192]",
+		"fild word ptr [rcx + 192]", "fild dword ptr [rcx + 192]", "fild qword ptr [rcx + 192]", "fbld tbyte ptr [rcx + 192]",
+		"fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2", "fldln2",
+		"fst dword ptr [rcx + 192]", "fst qword ptr [rcx + 192]", "fstp tbyte ptr [rcx + 192]", "fst st(2)", "fstp st(2)",
+		"fist word ptr [rcx + 192]", "fist dword ptr [rcx + 192]", "fistp qword ptr [rcx + 192]", "fisttp dword ptr [rcx + 192]",
+		"fisttp qword ptr [rcx + 192]", "fbstp tbyte ptr [rcx + 192]",
+		"fxch st(1)", "fchs", "fabs", "ftst", "fxam",
+		"fcom st(1)", "fcomp st(1)", "fcompp", "fucom st(1)", "fucomp st(1)", "fucompp", "fcom dword ptr [rcx + 192]",
+		"ficom word ptr [rcx + 192]", "fcomi st(0), st(1)", "fucomip st(0), st(1)",
+		"stc\nfcmovb st(0), st(1)", "stc\nfcmovnb st(0), st(1)", "ffree st(1)", "fincstp", "fdecstp",
+		// undocumented aliases: D9 D8+i (FSTP1, "fstpnce"), DF D0+i (FSTP8), DF D8+i (FSTP9), DD C8+i (FXCH4),
+		// DF C8+i (FXCH7), DC D0+i (FCOM2), DC D8+i (FCOMP3), DE D0+i (FCOMP5), DF C0+i (FFREEP)
+		".byte 0xd9, 0xd9", ".byte 0xdf, 0xd1", ".byte 0xdf, 0xd9", ".byte 0xdd, 0xc9", ".byte 0xdf, 0xc9",
+		".byte 0xdc, 0xd1", ".byte 0xdc, 0xd9", ".byte 0xde, 0xd1", ".byte 0xdf, 0xc1",
+	};
+	const double vals[ 8 ] = { 1.0 / 3.0, 2.0, 10.0, -7.5, 0.1, 1e10, 3.0, 0.7 };
+	uint8_t in[ 208 ] = {};
+	for ( int i = 0; i < 8; ++i ) r11_put_m80( in + 32 + i * 16, vals[ i ] );
+	r11_put_m80( in + 192, 1.0 / 3.0 );
+	struct scen { uint16_t fcw, fsw, ftw; const char* name; };
+	std::vector<scen> scens;
+	for ( uint16_t rc = 0; rc < 4; ++rc )
+		for ( uint16_t pc : { uint16_t( 0 ), uint16_t( 2 ), uint16_t( 3 ) } )
+			for ( uint16_t c1 = 0; c1 < 2; ++c1 )
+				scens.push_back( { uint16_t( 0x007F | ( pc << 8 ) | ( rc << 10 ) ), uint16_t( c1 << 9 ), 0x0000, "valid" } );
+	scens.push_back( { 0x037F, 0x0000, 0xC000, "st(7) empty" } );
+	scens.push_back( { 0x037F, 0x0200, 0xC000, "st(7) empty, C1=1" } );
+	scens.push_back( { 0x007F, 0x0000, 0xC000, "st(7) empty, PC24" } );     // PC must not touch loads (SDM 8.1.5.2)
+	scens.push_back( { 0x027F, 0x0000, 0xC000, "st(7) empty, PC53" } );
+	scens.push_back( { 0x037E, 0x0000, 0x0000, "all valid, IM unmasked" } );
+	scens.push_back( { 0x037F, 0x0200, 0xFFFF, "all empty, IM masked" } );
+	scens.push_back( { 0x037E, 0x0000, 0xFFFF, "all empty, IM unmasked" } );
+	int total = 0, total_diff = 0, forms_diff = 0, staged = 0;
+	// Plan 1.10.6d / Phase 5 (D5, own softfloat): the transcendental results are Intel-microcode specific
+	// (FSIN/FCOS/FPTAN/FSINCOS still go through host doubles, FYL2XP1 outside its SDM range is "undefined",
+	// F2XM1/FYL2X/FPATAN differ by an ulp / in C1). Their value differences are staged; their stack-fault
+	// responses (hardware FSW.SF = 1) must match like every other form.
+	const char* transcendental[] = { "f2xm1", "fyl2x", "fyl2xp1", "fptan", "fpatan", "fsin", "fcos", "fsincos" };
+	char dump_path[ 512 ] = {};
+	FILE* dump = nullptr;
+	if ( GetEnvironmentVariableA( "UC72_R11_DUMP", dump_path, sizeof( dump_path ) ) ) fopen_s( &dump, dump_path, "w" );     // every difference, for analysis
+	for ( const char* op : ops )
+	{
+		std::vector<uint8_t> code = assemble( r11_thunk( op ) );
+		CHECK( !code.empty(), "%s: assembly", op );
+		if ( code.empty() ) continue;
+		bool flags = std::strstr( op, "fcomi" ) || std::strstr( op, "fucomi" );
+		int diffs = 0, shown = 0;
+		for ( const scen& sc : scens )
+		{
+			uint8_t buf[ 208 ];
+			std::memcpy( buf, in, 208 );
+			std::memset( buf, 0, 28 );
+			std::memcpy( buf + 0, &sc.fcw, 2 ); std::memcpy( buf + 4, &sc.fsw, 2 ); std::memcpy( buf + 8, &sc.ftw, 2 );
+			r11_result hw = r11_native( code, buf ), uc = r11_unicorn( code, buf, UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 );
+			std::string d = r11_diff( hw, uc, flags );
+			++total;
+			if ( d.empty() ) continue;
+			std::string name = op;
+			for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
+			bool is_trans = false;
+			for ( const char* t : transcendental ) is_trans |= name == t;
+			if ( is_trans && hw.fault < 0 && !( hw.env[ 4 ] & 0x40 ) )
+			{
+				++staged;
+				if ( dump ) std::fprintf( dump, "%s|%s|%04X|%04X|%04X|STAGED %s\n", name.c_str(), sc.name, sc.fcw, sc.fsw, sc.ftw, d.c_str() );
+				continue;
+			}
+			++diffs; ++total_diff;
+			if ( dump ) std::fprintf( dump, "%s|%s|%04X|%04X|%04X|%s\n", name.c_str(), sc.name, sc.fcw, sc.fsw, sc.ftw, d.c_str() );
+			if ( shown++ < 3 )
+				std::printf( "    %-30s %-22s fcw=%04X fsw=%04X ftw=%04X  hw/uc: %s\n", name.c_str(), sc.name, sc.fcw, sc.fsw, sc.ftw, d.c_str() );
+		}
+		if ( diffs ) ++forms_diff;
+	}
+	if ( dump ) std::fclose( dump );
+	std::printf( "    %d forms x %zu scenarios = %d cases, %d differ in %d forms; %d transcendental value differences staged (plan 1.10.6d)\n",
+				 int( std::size( ops ) ), scens.size(), total, total_diff, forms_diff, staged );
+	CHECK( total_diff == 0, "%d of %d x87 cases differ from hardware", total_diff, total );
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -1087,6 +1305,8 @@ int main()
 	test_r9();
 	std::printf( "\n" );
 	test_r10();
+	std::printf( "\n" );
+	test_r11();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
