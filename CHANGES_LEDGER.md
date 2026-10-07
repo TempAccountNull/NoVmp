@@ -77,6 +77,7 @@ Status values: **in** = committed and verified · **planned** = in the plan, not
 | U36 | FXCH swaps tags | upstream QEMU `a9dbd71f03` | tags not swapped | `79e04241` | emu-backports x87/MXCSR group: 46 cases vs host (29 failed before the series), all pass | in |
 | — | Not applicable: `2b3bfbb21b` 0*Inf+QNaN Invalid (7.2's pickNaNMulAdd never raised it; upstream broke it later in `8adcff4ae7`) | upstream QEMU | — | — | emu-backports: QNaN no IE / SNaN IE equal hardware before and after | n/a |
 | — | Known gaps left for Phase 4/5 (not backports): x87 stack overflow/underflow (IE+SF) is not modelled by QEMU at all; RCPSS/RSQRTSS return exact values where hardware returns its ~12-bit approximation; PAUSE+TF trap position (`3718523d01`) to verify with the Phase 4 TF tests | — | — | — | — | open |
+| U37 | XSAVE components recomputed after feature filtering (all models); `full_cpuid_auto_level` for UC_CPU_X86_MAX | **ours** (bugs found by the 1.8 re-audit; the first one affects stock Icelake/Skylake-Server models too) | CPUID 0xD and XSETBV advertised/accepted AVX-512 state TCG cannot save; MAX's leaf 7.0 EAX was 0 | see unicorn log | emu-uc72-risk R4: before 5 failures, after 0 (leaf 7.0 EAX=1, 0xD.0 EAX MAX 0x21F / Icelake 0x207, xsetbv 0xE7 -> #GP) | in |
 | U3 | (placeholder for the 1.6 backports - all now listed individually as U5-U36) | upstream QEMU `3377670ee9` | — | — | — | done |
 
 capstone and keystone: **no changes**, pristine upstream.

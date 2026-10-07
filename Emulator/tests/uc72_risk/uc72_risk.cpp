@@ -343,6 +343,73 @@ static void test_r3()
 	}
 }
 
+// ── R4: CPUID consistency of the CPU models (plan 1.8 re-audit) ──────────────────────────────
+
+struct cpuid_out { uint32_t eax, ebx, ecx, edx; uc_err err; int fault; };
+
+static cpuid_out run_cpuid( int model, uint32_t leaf, uint32_t sub )
+{
+	cpuid_out o{ 0, 0, 0, 0, UC_ERR_OK, -1 };
+	std::vector<uint8_t> code = assemble( "cpuid" );
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, model );
+	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+	uc_mem_write( uc, 0x1000, code.data(), code.size() );
+	uint64_t a = leaf, c = sub;
+	uc_reg_write( uc, UC_X86_REG_RAX, &a );
+	uc_reg_write( uc, UC_X86_REG_RCX, &c );
+	o.err = uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 1 );
+	uint64_t r[ 4 ] = {};
+	uc_reg_read( uc, UC_X86_REG_RAX, &r[ 0 ] ); uc_reg_read( uc, UC_X86_REG_RBX, &r[ 1 ] );
+	uc_reg_read( uc, UC_X86_REG_RCX, &r[ 2 ] ); uc_reg_read( uc, UC_X86_REG_RDX, &r[ 3 ] );
+	o.eax = uint32_t( r[ 0 ] ); o.ebx = uint32_t( r[ 1 ] ); o.ecx = uint32_t( r[ 2 ] ); o.edx = uint32_t( r[ 3 ] );
+	uc_close( uc );
+	return o;
+}
+
+static int run_xsetbv( int model, uint64_t xcr0 )
+{
+	std::vector<uint8_t> code = assemble( "xsetbv" );
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, model );
+	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+	uc_mem_write( uc, 0x1000, code.data(), code.size() );
+	uint64_t a = xcr0 & 0xFFFFFFFF, d = xcr0 >> 32, c = 0;
+	uc_reg_write( uc, UC_X86_REG_RAX, &a );
+	uc_reg_write( uc, UC_X86_REG_RDX, &d );
+	uc_reg_write( uc, UC_X86_REG_RCX, &c );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 1 );
+	uc_close( uc );
+	return log.seen.empty() ? -1 : int( log.seen[ 0 ] );
+}
+
+static void test_r4()
+{
+	std::printf( "R4  CPUID consistency: UC_CPU_X86_MAX leaf 7 levels and XSAVE components (leaf 0xD, XSETBV)\n" );
+	cpuid_out l7 = run_cpuid( UC_CPU_X86_MAX, 7, 0 ), l71 = run_cpuid( UC_CPU_X86_MAX, 7, 1 );
+	std::printf( "    MAX  leaf 7.0: eax(max sub-leaf)=%u ebx=%08X ecx=%08X   leaf 7.1 eax=%08X\n", l7.eax, l7.ebx, l7.ecx, l71.eax );
+	CHECK( l7.eax >= 1, "CPUID.7.0:EAX (max sub-leaf) is %u - leaf 7.1 unreachable", l7.eax );
+	CHECK( ( l71.eax >> 7 ) & 1, "CPUID.7.1:EAX lacks CMPCCXADD" );
+	for ( int model : { int( UC_CPU_X86_MAX ), int( UC_CPU_X86_ICELAKE_SERVER ) } )
+	{
+		cpuid_out d0 = run_cpuid( model, 0xD, 0 );
+		const char* nm = model == UC_CPU_X86_MAX ? "MAX" : "Icelake-Server";
+		std::printf( "    %-14s leaf 0xD.0: xcr0 components eax=%08X edx=%08X, max size ecx=%u\n", nm, d0.eax, d0.edx, d0.ecx );
+		CHECK( ( d0.eax & 0x7 ) == 0x7, "%s: x87/SSE/AVX components missing (%08X)", nm, d0.eax );
+		CHECK( ( d0.eax & 0xE0 ) == 0, "%s: advertises AVX-512 XSAVE components TCG cannot save (%08X)", nm, d0.eax );
+		int ok7 = run_xsetbv( model, 0x7 ), bad = run_xsetbv( model, 0xE7 );
+		std::printf( "    %-14s xsetbv 0x7 -> %s, xsetbv 0xE7 -> %s\n", nm, ok7 < 0 ? "ok" : ( "vector " + std::to_string( ok7 ) ).c_str(),
+					 bad < 0 ? "accepted" : ( "vector " + std::to_string( bad ) ).c_str() );
+		CHECK( ok7 < 0, "%s: xsetbv XCR0=7 faulted (vector %d)", nm, ok7 );
+		CHECK( bad == 13, "%s: xsetbv with AVX-512 components did not #GP (%d)", nm, bad );
+	}
+}
+
 int main()
 {
 	unsigned maj = 0, min = 0;
@@ -353,6 +420,8 @@ int main()
 	test_r2();
 	std::printf( "\n" );
 	test_r3();
+	std::printf( "\n" );
+	test_r4();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
