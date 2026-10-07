@@ -1,0 +1,18 @@
+{
+ "NoVmp": [],
+ "VTIL-Architecture": [],
+ "VTIL-Common": [],
+ "VTIL-Compiler": [],
+ "VTIL-SymEx": [],
+ "capstone": [],
+ "keystone": [],
+ "unicorn": [
+  "unicorn/qemu/crypto/init.c",
+  "unicorn/qemu/fpu/softfloat-specialize.inc.c",
+  "unicorn/qemu/memory_ldst.inc.c",
+  "unicorn/qemu/tcg/tcg-ldst.inc.c",
+  "unicorn/qemu/tcg/tcg-pool.inc.c",
+  "unicorn/qemu/util/oslib-posix.c",
+  "unicorn/qemu/util/qemu-thread-posix.c"
+ ]
+}
