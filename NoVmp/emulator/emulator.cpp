@@ -125,6 +125,15 @@ void emulator::invoke( const void* routine_pointer )
     //
     __rip = routine_pointer;
 
+	// Native execution is disabled: the routine is code taken from the target image (rolling-key /
+	// VIP decryption slices) and target-derived code must never run on the host CPU. The Emulator
+	// library's snippet executor replaces this path (plan Phase 7, CHANGES_LEDGER N4/N6).
+	//
+	vtil::logger::error(
+		"emulator::invoke: native execution of target code is disabled (routine at %p). "
+		"NoVmp cannot lift until the emulated snippet executor replaces this path (plan Phase 7).",
+		routine_pointer );
+
 	// Invoke shellcode.
 	//
 	( ( void( __stdcall* )( emulator* ) )emulator_shellcode.data() )( this );

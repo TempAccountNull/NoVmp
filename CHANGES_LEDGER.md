@@ -29,6 +29,7 @@ Status values: **in** = committed and verified · **planned** = in the plan, not
 | N2 | `demo_compiler.hpp`: `.get()` on `explored_blocks` entries; `backup = rtn->clone()` | ours | VTIL master holds `unique_ptr<basic_block>`, and `clone()` returns `unique_ptr<routine>` | `d550ec2` | NoVmp compiles and links | in |
 | N3 | `vtil_lifter.cpp`: `explored_blocks[ entry_vip ].get()` | ours | same API change | `d550ec2` | NoVmp compiles and links | in |
 | N4 | Native executor (`emulator\emulator.cpp`, `rwx_allocator.cpp`) replaced by the Emulator lib's `snippet_executor` | ours | Never execute target-derived code natively | — | plan 7.4 equivalence test | planned |
+| N6 | `emulator::invoke` refuses with `logger::error` (`[[noreturn]]`; NoVmp's hook throws) before the native shellcode call | ours | Safety guard until N4: target-derived code must never run on the host CPU | see `[0.4]` commit | build 0 errors; `logger::error` is `[[noreturn]]` and the hook throws, so the shellcode line is unreachable | in |
 | N5 | Hard-coded image base `0x100000000` (`subroutines.cpp:471`) replaced by the real image base | ours | correctness | — | plan 7.3 | planned |
 
 ## unicorn (third party; only planned change, decisions D0/D9)
