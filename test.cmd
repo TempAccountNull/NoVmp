@@ -33,6 +33,10 @@ call :suite unicorn-test_mem --skip test_mem_read_and_write_large_memory_block
 rem plan 1.5: QEMU 7.2 branch risks (long AVX2/FMA/VSIB blocks vs hardware, uc_context round
 rem trip, old_exception / spurious #DF). Hardware reference runs self-generated code only.
 call :suite emu-uc72-risk
+rem plan 1.9: emu-alltest quick run (every 7th form of the full x86-64 universe, host CPU vs Unicorn
+rem UC_CPU_X86_MAX). Differences are the Phase 4/5 work list, reported in build\x64\Release\tests\alltest;
+rem only harness errors fail. Full run: emu-alltest --full (baseline in Emulator\data\alltest_baseline).
+call :suite emu-alltest
 
 echo.
 if !FAILED! NEQ 0 (
