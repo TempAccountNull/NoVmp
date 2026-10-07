@@ -13,14 +13,14 @@ Build rules:
 
 | Path | Role | Upstream | Branch we're on | Pinned commit | Date | Upstream base |
 |---|---|---|---|---|---|---|
-| `.` (root) | **our fork** of NoVmp | https://github.com/can1357/NoVmp | `novmp-emu` | `9b401e6` | 2026-10-07 | `master` 6c23c9a (2021-05-05) |
+| `.` (root) | **our fork** of NoVmp | https://github.com/can1357/NoVmp | `novmp-emu` | branch HEAD (see `git log`; gates are tagged `gate-N`) | — | `master` 6c23c9a (2021-05-05) |
 | `VTIL-Core` | **our fork** of VTIL | https://github.com/vtil-project/VTIL-Core | `novmp-emu` | `ec9e26a` | 2026-10-07 | `master` 9ebee8e (2026-07-27) |
 | `linux-pe` | **our fork** (header-only) | https://github.com/can1357/linux-pe | `novmp-emu` | `3e8e37a` | 2026-10-07 | `master` 1fcb057 (2025-04-24) |
-| `unicorn` | third party, pristine | https://github.com/unicorn-engine/unicorn | `dev` | `938efd13` (2.1.4-33, **QEMU 5.0.1**) | 2026-08-28 | same |
+| `unicorn` | third party, **ledgered changes only** (D0/D9) | https://github.com/unicorn-engine/unicorn | `novmp/qemu72` | `5bab3af6` (**QEMU 7.2.22**) | 2026-10-07 | `pr2349-rebased` 3706716d (2026-08-28), 0 behind |
 | `VTIL-Core\Dependencies\capstone` | third party, pristine | https://github.com/capstone-engine/capstone | `next` | `992e6d7f` (6.0.0-Alpha11-14) | 2026-10-04 | same |
 | `VTIL-Core\Dependencies\keystone` | third party, pristine | https://github.com/keystone-engine/keystone | `master` | `0d9567f` (0.9.2-39) | 2026-07-18 | same |
 
-Planned change (plan Phase 1, decisions D0/D9): `unicorn` moves to a local branch `novmp/qemu72` built on `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator, 2026-08-28). On top of it go the dev commits `938efd13` + `09bd8e4f` and the recorded QEMU 11.1 backports (see `CHANGES_LEDGER.md`). This is the only planned change to a third-party dependency.
+Unicorn (plan Phase 1, decisions D0/D9): local branch `novmp/qemu72` = upstream `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) + the two missing `dev` commits (`09bd8e4f` -> `7968e7ae`, `938efd13` -> `5bab3af6`). Next come the recorded QEMU 11.1 backports (see `CHANGES_LEDGER.md`). This is the only third-party dependency we change. The previous pin was `dev` `938efd13` (QEMU 5.0.1).
 
 ## Project files (ours)
 
@@ -30,7 +30,7 @@ Planned change (plan Phase 1, decisions D0/D9): `unicorn` moves to a local branc
 | `NoVmp\NoVmp.vcxproj` | NoVmp.exe |
 | `msvc\capstone.vcxproj` | capstone static lib (all architectures, as VTIL needs) |
 | `msvc\keystone.vcxproj` | keystone static lib (all LLVM targets present) |
-| `msvc\unicorn.vcxproj` | unicorn static lib, **x86_64 target only** |
+| `msvc\unicorn.vcxproj` | unicorn static lib, **x86_64 target only**, C11 (`stdc11`, needed for QEMU 7.2's `_Generic`) |
 | `msvc\VTIL-*.vcxproj` | the four VTIL static libs |
 | `msvc\generated\keystone\include\llvm\Config\{AsmParsers,Targets}.def` | static files LLVM would otherwise configure |
 | `VTIL-Core\Dependencies\keystone_config\include\llvm\...` | VTIL's pre-generated LLVM config headers |

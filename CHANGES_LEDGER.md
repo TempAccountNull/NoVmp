@@ -30,14 +30,15 @@ Status values: **in** = committed and verified · **planned** = in the plan, not
 | N3 | `vtil_lifter.cpp`: `explored_blocks[ entry_vip ].get()` | ours | same API change | `d550ec2` | NoVmp compiles and links | in |
 | N4 | Native executor (`emulator\emulator.cpp`, `rwx_allocator.cpp`) replaced by the Emulator lib's `snippet_executor` | ours | Never execute target-derived code natively | — | plan 7.4 equivalence test | planned |
 | N6 | `emulator::invoke` refuses with `logger::error` (`[[noreturn]]`; NoVmp's hook throws) before the native shellcode call | ours | Safety guard until N4: target-derived code must never run on the host CPU | see `[0.4]` commit | build 0 errors; `logger::error` is `[[noreturn]]` and the hook throws, so the shellcode line is unreachable | in |
+| N7 | `msvc\unicorn.vcxproj`: + `qemu/accel/tcg/tb-maint.c` (per-target), `qemu/crypto/sm4.c`, `qemu/util/int128.c` (common); `LanguageStandard_C` = `stdc11` | ours (file list and C standard taken from the branch's upstream build as reference) | the QEMU 7.2.22 branch adds these sources, and its softfloat uses C11 `_Generic` (101 C2275 errors without it) | `4c741d4` | upstream-vs-project list diff: 0 missing, 0 extra; `build.cmd --release` 0 errors | in |
 | N5 | Hard-coded image base `0x100000000` (`subroutines.cpp:471`) replaced by the real image base | ours | correctness | — | plan 7.3 | planned |
 
 ## unicorn (third party; only planned change, decisions D0/D9)
 
 | # | Change | Origin | Why | Commit | Proof | Status |
 |---|---|---|---|---|---|---|
-| U1 | Local branch `novmp/qemu72` from `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) | upstream Unicorn branch | AVX/AVX2/FMA/F16C/VAES execution, K0-K7 access | — | Unicorn x86 unit tests (95) pass | planned |
-| U2 | Cherry-pick `938efd13` (UC_HOOK_BLOCK_ICOUNT) and `09bd8e4f` (binding constants) | upstream Unicorn `dev` | missing from the 7.2 branch | — | unit tests + `emu-oep` uses BLOCK_ICOUNT | planned |
+| U1 | Local branch `novmp/qemu72` from `origin/pr2349-rebased` (`3706716d`, QEMU 7.2.22 x86 translator) | upstream Unicorn branch | AVX/AVX2/FMA/F16C/VAES execution, K0-K7 access | base `3706716d`, root `4c741d4` | builds (0 errors); unit tests in plan 1.4 | in (tests pending) |
+| U2 | Cherry-pick `09bd8e4f` -> `7968e7ae` (binding constants; 5 conflicts resolved by keeping both sides: +`UC_CTL_UC_PREALLOC` per file, the branch's own constants kept) and `938efd13` -> `5bab3af6` (UC_HOOK_BLOCK_ICOUNT; clean merge, reviewed against the 7.2 translator) | upstream Unicorn `dev` | missing from the 7.2 branch | `7968e7ae`, `5bab3af6` | builds; `test_ctl` block-icount test in plan 1.4 | in (tests pending) |
 | U3… | QEMU 11.1 backports (plan 1.6, one entry per QEMU commit) | upstream QEMU `3377670ee9` | ISA (SHA-NI, CMPccXADD, RDSEED/RDPID) and correctness fixes | — | one difftest case each | planned |
 
 capstone and keystone: **no changes**, pristine upstream.
