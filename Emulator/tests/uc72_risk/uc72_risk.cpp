@@ -16,6 +16,9 @@
 //   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), manual default and hardware quirks.
 //   R11 x87 C1 rounding direction, precision control and stack overflow/underflow, every form vs hardware.
 //   R12 state after uc_open = SDM RESET state (FCW/FSW/FTW, MXCSR, DR6/DR7).
+//   R13 FPREM/FPREM1 quotient bits and remainders over random operands vs hardware.
+//   R14 pending unmasked x87 exception: which instructions take #MF first, vs hardware.
+//   R15 CR0.TS/EM, CR4.OSFXSR on x87/MMX/MMX-state SSE forms and the CVTPI2PS m64 #MF, vs the SDM.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -585,8 +588,8 @@ static void test_r6()
 
 struct r7_result { int fault; uint16_t fcw, fsw; };
 
-// 0 until plan 1.10.2c makes Unicorn raise pending x87 exceptions (#MF) on waiting instructions.
-#define R7_PENDING_MF 0
+// plan 1.10.2c (ledger U50): Unicorn raises pending x87 exceptions (#MF) on waiting instructions.
+#define R7_PENDING_MF 1
 
 static std::string r7_thunk( int kind )
 {
@@ -646,6 +649,10 @@ static r7_result r7_unicorn( const std::vector<uint8_t>& code, const uint16_t in
 	uc_mem_map( uc, R7_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_write( uc, R7_CODE, code.data(), code.size() );
 	uc_mem_write( uc, R7_IN, in, 8 );
+	uint64_t cr0 = 0;
+	uc_reg_read( uc, UC_X86_REG_CR0, &cr0 );
+	cr0 |= 0x20;     // CR0.NE: native #MF (Windows), not FERR#
+	uc_reg_write( uc, UC_X86_REG_CR0, &cr0 );
 	uint64_t rcx = R7_IN, rdx = R7_OUTP, r8 = R7_BACKUP, r9 = R7_IMAGE, rsp = R7_STACK + 0x8000, mx = host_mxcsr, xcr0 = 0x7;
 	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
 	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_R9, &r9 );
@@ -1375,6 +1382,203 @@ static void test_r13()
 	CHECK( diffs == 0, "%d of %d FPREM/FPREM1 cases differ from hardware", diffs, total );
 }
 
+// ── R14: pending x87 exceptions -> #MF on waiting instructions (plan 1.10.2c) ──────────────────
+//
+// FLDENV with FCW.IM = 0 and FSW.IE = 1 leaves FSW.ES = 1 (an unmasked exception pending). The next
+// "waiting" x87 instruction, WAIT/FWAIT and any MMX instruction raise #MF before they execute; the
+// FN* control instructions, FXSAVE/FXRSTOR and XSAVE do not (SDM Vol1 8.3.12/8.7.1/9.6.7, Vol3
+// Interrupt 16). Unicorn needs CR0.NE = 1 (Windows runs with it) for #MF instead of FERR#/IRQ13.
+// Thunk ABI: rcx = in { fldenv image at +0, memory operand at +64, scratch at +128 }, rdx = out
+// (u32 marker, written only if the op completed), r8 = 64-aligned host backup, r9 = 64-aligned scratch.
+
+static std::string r14_thunk( const char* op )
+{
+	return std::string( "mov r10, rdx\nfxsave [r8]\nfninit\nfldenv [rcx]\n" ) + op +
+		   "\nmov dword ptr [r10], 0x600D\nfnclex\nfxrstor [r8]\nret\n";
+}
+
+static int r14_native( const std::vector<uint8_t>& code, const std::vector<uint8_t>& restore, uint8_t* in )
+{
+	alignas( 64 ) static uint8_t backup[ 4096 ], scratch[ 4096 ];
+	uint32_t out = 0;
+	int fault = -1;
+	void* mem = VirtualAlloc( nullptr, 0x2000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return -2;
+	std::memcpy( mem, code.data(), code.size() );
+	std::memcpy( ( uint8_t* ) mem + 0x1000, restore.data(), restore.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, 0x2000 );
+	__try { ( ( void( * )( uint8_t*, uint32_t*, void*, void* ) ) mem )( in, &out, backup, scratch ); }
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		DWORD c = GetExceptionCode();
+		fault = ( c >= 0xC000008D && c <= 0xC0000093 ) || c == 0xC00002B4 || c == 0xC00002B5 ? 16 : c == EXCEPTION_ILLEGAL_INSTRUCTION ? 6 : 13;
+		( ( void( * )( void* ) ) ( ( uint8_t* ) mem + 0x1000 ) )( backup );     // fnclex; fxrstor [rcx]
+	}
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return fault >= 0 ? fault : out == 0x600D ? -1 : -3;
+}
+
+static int r14_unicorn( const std::vector<uint8_t>& code, const uint8_t* in, uint32_t host_mx )
+{
+	const uint64_t R14_CODE = 0x1000, R14_IN = 0x10000, R14_OUTP = 0x11000, R14_BACKUP = 0x12000, R14_SCRATCH = 0x14000, R14_STACK = 0x30000;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 );
+	uc_mem_map( uc, R14_CODE, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, R14_IN, 0x8000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_map( uc, R14_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, R14_CODE, code.data(), code.size() );
+	uc_mem_write( uc, R14_IN, in, 256 );
+	uint64_t cr0 = 0;
+	uc_reg_read( uc, UC_X86_REG_CR0, &cr0 );
+	cr0 |= 0x20;     // CR0.NE: native #MF
+	uc_reg_write( uc, UC_X86_REG_CR0, &cr0 );
+	uint64_t rcx = R14_IN, rdx = R14_OUTP, r8 = R14_BACKUP, r9 = R14_SCRATCH, rsp = R14_STACK + 0x8000, mx = host_mx, xcr0 = 0x7, rax = 0;
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	uc_reg_write( uc, UC_X86_REG_R8, &r8 );   uc_reg_write( uc, UC_X86_REG_R9, &r9 );
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_MXCSR, &mx );
+	uc_reg_write( uc, UC_X86_REG_XCR0, &xcr0 ); uc_reg_write( uc, UC_X86_REG_RAX, &rax );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, R14_CODE, R14_CODE + code.size() - 1, 0, 0 );     // stop before the final `ret`
+	uint32_t out = 0;
+	uc_mem_read( uc, R14_OUTP, &out, 4 );
+	uc_close( uc );
+	if ( !log.seen.empty() ) return int( log.seen[ 0 ] );
+	if ( e ) return -4;
+	return out == 0x600D ? -1 : -3;
+}
+
+static void test_r14()
+{
+	std::printf( "R14 pending unmasked x87 exception: which instructions take #MF first (vs hardware)\n" );
+	const char* ops[] = {
+		// x87 waiting forms (expected #MF)
+		"fld1", "fadd st(0), st(1)", "fld dword ptr [rcx + 64]", "fst dword ptr [rcx + 64]", "fxch st(1)", "fchs", "fabs",
+		"fxam", "ftst", "fnop", "ffree st(1)", "fincstp", "fdecstp", "fldcw word ptr [rcx + 64]", "fldenv [rcx]",
+		"frstor [rcx + 128]", "fcomi st(0), st(1)", "stc\nfcmovb st(0), st(1)", "fwait", "fsin", "fprem", "fbld tbyte ptr [rcx + 64]",
+		// no-wait forms
+		"fnstenv [rcx + 128]", "fnstcw word ptr [rcx + 64]", "fnsave [rcx + 128]", "fnstsw word ptr [rcx + 64]", "fnstsw ax",
+		"fnclex", "fninit", "fxsave [r9]", "fxrstor [r8]", "mov eax, 1\nxor edx, edx\nxsave [r9]",
+		".byte 0xdb, 0xe0", ".byte 0xdb, 0xe1", ".byte 0xdb, 0xe4",     // FNENI, FNDISI, FNSETPM (SDM silent)
+		// MMX and MMX-state SSE forms
+		"movq mm0, mm1", "paddb mm0, mm1", "emms", "movd mm0, eax", "movd eax, mm0", "pshufw mm0, mm1, 0", "pinsrw mm0, eax, 1",
+		"pmovmskb eax, mm0", "movntq qword ptr [rcx + 64], mm0", "cvtpi2ps xmm0, mm1", "cvtpi2ps xmm0, qword ptr [rcx + 64]",
+		"cvtpi2pd xmm0, mm1", "cvtpi2pd xmm0, qword ptr [rcx + 64]", "cvtps2pi mm0, xmm1", "cvttpd2pi mm0, xmm1",
+		"movq2dq xmm0, mm1", "movdq2q mm0, xmm1", "pabsb mm0, mm1", "pshufb mm0, qword ptr [rcx + 64]",
+		// SSE (expected: no #MF)
+		"addps xmm0, xmm1", "movq xmm0, xmm1",
+	};
+	uint8_t in[ 256 ] = {};
+	const uint16_t fcw = 0x037E, fsw = 0x0001;     // IM unmasked, IE set -> ES = 1
+	std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 );
+	uint16_t ftw = 0xFFFF;
+	std::memcpy( in + 8, &ftw, 2 );
+	std::vector<uint8_t> restore = assemble( "fnclex\nfxrstor [rcx]\nret\n" );
+	uint32_t host_mx = _mm_getcsr();
+	int diffs = 0, staged = 0;
+	auto name_of = [ & ]( int v ) { return v == 16 ? std::string( "#MF" ) : v == -1 ? std::string( "runs" ) : "v" + std::to_string( v ); };
+	for ( const char* op : ops )
+	{
+		std::vector<uint8_t> code = assemble( r14_thunk( op ) );
+		CHECK( !code.empty(), "%s: assembly", op );
+		if ( code.empty() || restore.empty() ) continue;
+		uint8_t buf[ 256 ];
+		std::memcpy( buf, in, sizeof( buf ) );
+		int hw = r14_native( code, restore, buf );
+		std::memcpy( buf, in, sizeof( buf ) );
+		int uc = r14_unicorn( code, buf, host_mx );
+		std::string name = op;
+		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
+		bool same = hw == uc;
+		std::printf( "    %-40s hw: %-5s uc: %-5s %s\n", name.c_str(), name_of( hw ).c_str(), name_of( uc ).c_str(), same ? "ok" : "DIFFERS" );
+		if ( !same ) ++diffs;
+	}
+	CHECK( diffs == 0, "%d instructions differ in pending-#MF behaviour", diffs );
+	( void ) staged;
+}
+
+// ── R15: CR0.TS / CR0.EM / CR4.OSFXSR on x87, MMX and MMX-state SSE forms (plan 1.10.2c) ──────
+//
+// Unicorn only (user mode cannot set CR0/CR4 natively), expectations from the SDM Vol2 exception
+// tables: x87 with TS or EM -> #NM; MMX and the MMX-state SSE forms with TS -> #NM, with EM -> #UD;
+// the SSE side (CVT*PI*, MOVQ2DQ, MOVDQ2Q) with OSFXSR = 0 -> #UD, EMMS unaffected. Also the
+// manual-default #MF of CVTPI2PS xmm, m64 (no hardware quirk).
+
+static int r15_run( const char* text, uint64_t cr0_set, uint64_t cr0_clr, uint64_t cr4_clr, bool pending_mf, uint32_t quirks )
+{
+	std::vector<uint8_t> code = assemble( text );
+	if ( code.empty() ) return -9;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_ctl_set_x86_hw_quirks( uc, quirks );
+	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, 0x10000, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, 0x1000, code.data(), code.size() );
+	if ( pending_mf )
+	{
+		// FCW: IM unmasked, FSW: IE set -> ES = 1, through FLDCW/FLDENV-free register writes
+		uint64_t fcw = 0x037E, fsw = 0x0081;
+		uc_reg_write( uc, UC_X86_REG_FPCW, &fcw );
+		uc_reg_write( uc, UC_X86_REG_FPSW, &fsw );
+	}
+	uint64_t cr0 = 0, cr4 = 0, rcx = 0x10000;
+	uc_reg_read( uc, UC_X86_REG_CR0, &cr0 );
+	uc_reg_read( uc, UC_X86_REG_CR4, &cr4 );
+	cr0 = ( cr0 | cr0_set | 0x20 ) & ~cr0_clr;
+	cr4 &= ~cr4_clr;
+	uc_reg_write( uc, UC_X86_REG_CR0, &cr0 );
+	uc_reg_write( uc, UC_X86_REG_CR4, &cr4 );
+	uc_reg_write( uc, UC_X86_REG_RCX, &rcx );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_err e = uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 1 );
+	uc_close( uc );
+	if ( !log.seen.empty() ) return int( log.seen[ 0 ] );
+	if ( e == UC_ERR_INSN_INVALID ) return 6;
+	return e ? -2 : -1;
+}
+
+static void test_r15()
+{
+	std::printf( "R15 CR0.TS/EM, CR4.OSFXSR and CVTPI2PS m64 #MF (manual default): Unicorn vs SDM\n" );
+	const uint64_t TS = 0x8, EM = 0x4, MP = 0x2, OSFXSR = 1ull << 9;
+	struct c { const char* text; uint64_t set, clr, cr4clr; bool mf; uint32_t quirks; int expect; const char* why; };
+	const c cases[] = {
+		{ "fadd st(0), st(1)", TS, 0, 0, false, 0, 7, "x87, CR0.TS" },
+		{ "fadd st(0), st(1)", EM, 0, 0, false, 0, 7, "x87, CR0.EM" },
+		{ "paddb mm0, mm1", TS, 0, 0, false, 0, 7, "MMX, CR0.TS" },
+		{ "paddb mm0, mm1", EM, 0, 0, false, 0, 6, "MMX, CR0.EM" },
+		{ "emms", TS, 0, 0, false, 0, 7, "EMMS, CR0.TS" },
+		{ "emms", EM, 0, 0, false, 0, 6, "EMMS, CR0.EM" },
+		{ "emms", 0, 0, OSFXSR, false, 0, -1, "EMMS, OSFXSR=0 runs" },
+		{ "cvtpi2ps xmm0, mm1", TS, 0, 0, false, 0, 7, "CVTPI2PS, CR0.TS" },
+		{ "cvtpi2ps xmm0, mm1", EM, 0, 0, false, 0, 6, "CVTPI2PS, CR0.EM" },
+		{ "cvtpi2ps xmm0, mm1", 0, 0, OSFXSR, false, 0, 6, "CVTPI2PS, OSFXSR=0" },
+		{ "cvtps2pi mm0, xmm1", TS, 0, 0, false, 0, 7, "CVTPS2PI, CR0.TS" },
+		{ "cvttpd2pi mm0, xmm1", EM, 0, 0, false, 0, 6, "CVTTPD2PI, CR0.EM" },
+		{ "movq2dq xmm0, mm1", TS, 0, 0, false, 0, 7, "MOVQ2DQ, CR0.TS" },
+		{ "movdq2q mm0, xmm1", 0, 0, OSFXSR, false, 0, 6, "MOVDQ2Q, OSFXSR=0" },
+		{ "fwait", TS | MP, 0, 0, false, 0, 7, "WAIT, CR0.MP+TS" },
+		{ "fwait", TS, 0, 0, false, 0, -1, "WAIT, CR0.TS only runs" },
+		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, 16, "CVTPI2PS m64, pending, manual: #MF" },
+		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 2, -1, "CVTPI2PS m64, pending, hw quirk: runs" },
+		{ "cvtpi2pd xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, -1, "CVTPI2PD m64, pending: runs (SDM)" },
+	};
+	for ( const c& k : cases )
+	{
+		int v = r15_run( k.text, k.set, k.clr, k.cr4clr, k.mf, k.quirks );
+		auto nm = [ & ]( int x ) { return x == -1 ? std::string( "runs" ) : x == 6 ? std::string( "#UD" ) : x == 7 ? std::string( "#NM" ) :
+										  x == 16 ? std::string( "#MF" ) : "v" + std::to_string( x ); };
+		std::printf( "    %-36s %-44s SDM %-5s uc %-5s %s\n", k.text, k.why, nm( k.expect ).c_str(), nm( v ).c_str(), v == k.expect ? "ok" : "WRONG" );
+		CHECK( v == k.expect, "%s (%s): got %d, SDM %d", k.text, k.why, v, k.expect );
+	}
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -1406,6 +1610,10 @@ int main()
 	test_r12();
 	std::printf( "\n" );
 	test_r13();
+	std::printf( "\n" );
+	test_r14();
+	std::printf( "\n" );
+	test_r15();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
