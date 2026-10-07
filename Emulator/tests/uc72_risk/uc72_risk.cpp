@@ -19,6 +19,7 @@
 //   R13 FPREM/FPREM1 quotient bits and remainders over random operands vs hardware.
 //   R14 pending unmasked x87 exception: which instructions take #MF first, vs hardware.
 //   R15 CR0.TS/EM, CR4.OSFXSR on x87/MMX/MMX-state SSE forms and the CVTPI2PS m64 #MF, vs the SDM.
+//   R16 branches to a non-canonical target fault on the branch (RIP, RSP), vs hardware and the SDM.
 //
 // Only self-generated test code runs natively here (hardware reference). Nothing from the sample.
 #include <unicorn/unicorn.h>
@@ -1632,6 +1633,136 @@ static void test_r15()
 	}
 }
 
+// ── R16: branches to a non-canonical target (plan 1.11) ─────────────────────────────────────────
+//
+// SDM Vol2 JMP/CALL/RET: "IF tempRIP is not canonical THEN #GP(0)" before the push / RIP update, so
+// the fault is on the branch (RIP = branch, RSP unchanged). Native forms keep RSP valid (leaf unwind);
+// RET and direct branches across the canonical boundary are Unicorn-only (SDM expectation).
+
+struct r16_native_result { bool faulted; DWORD code; ULONG_PTR info0, info1; int64_t rip_off, rsp_delta; };
+
+static r16_native_result r16_native( const std::vector<uint8_t>& code, uint64_t rcx )
+{
+	r16_native_result r{ false, 0, 0, 0, -1, 0 };
+	void* mem = VirtualAlloc( nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE );
+	if ( !mem ) return r;
+	std::memcpy( mem, code.data(), code.size() );
+	FlushInstructionCache( GetCurrentProcess(), mem, code.size() );
+	EXCEPTION_RECORD rec{};
+	CONTEXT ctx{};
+	uint64_t rsp_at_entry = 0;
+	__try
+	{
+		// rdx receives RSP at thunk entry (first instruction: mov [rdx], rsp)
+		( ( void( * )( uint64_t, uint64_t* ) ) mem )( rcx, &rsp_at_entry );
+	}
+	__except ( rec = *GetExceptionInformation()->ExceptionRecord, ctx = *GetExceptionInformation()->ContextRecord, EXCEPTION_EXECUTE_HANDLER )
+	{
+		r.faulted = true;
+		r.code = rec.ExceptionCode;
+		r.info0 = rec.NumberParameters > 0 ? rec.ExceptionInformation[ 0 ] : 0;
+		r.info1 = rec.NumberParameters > 1 ? rec.ExceptionInformation[ 1 ] : 0;
+		r.rip_off = int64_t( ctx.Rip ) - int64_t( uintptr_t( mem ) );
+		r.rsp_delta = int64_t( ctx.Rsp ) - int64_t( rsp_at_entry );
+	}
+	VirtualFree( mem, 0, MEM_RELEASE );
+	return r;
+}
+
+static int r16_unicorn( const std::vector<uint8_t>& code, uint64_t base, uint64_t rcx, uint64_t stack_value,
+						int64_t& rip_off, int64_t& rsp_delta )
+{
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
+	uc_mem_map( uc, base, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, 0x100000, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
+	uc_mem_write( uc, base, code.data(), code.size() );
+	uint64_t rsp = 0x108000, rdx = 0x10F000;
+	uc_mem_write( uc, rsp, &stack_value, 8 );
+	uc_mem_write( uc, 0x101000, &stack_value, 8 );     // [rcx] for jmp qword ptr [rcx]
+	uc_reg_write( uc, UC_X86_REG_RSP, &rsp ); uc_reg_write( uc, UC_X86_REG_RCX, &rcx ); uc_reg_write( uc, UC_X86_REG_RDX, &rdx );
+	intr_log log;
+	uc_hook h;
+	uc_hook_add( uc, &h, UC_HOOK_INTR, ( void* ) on_intr, &log, 1, 0 );
+	uc_emu_start( uc, base, base + code.size(), 0, 8 );
+	uint64_t rip = 0, rsp_now = 0;
+	uc_reg_read( uc, UC_X86_REG_RIP, &rip );
+	uc_reg_read( uc, UC_X86_REG_RSP, &rsp_now );
+	uc_close( uc );
+	rip_off = int64_t( rip - base );
+	rsp_delta = int64_t( rsp_now - rsp );
+	return log.seen.empty() ? -1 : int( log.seen[ 0 ] );
+}
+
+static void test_r16()
+{
+	std::printf( "R16 branch to a non-canonical target: #GP(0) on the branch, nothing pushed/popped\n" );
+	const uint64_t bad = 0x0000800000000000ull;
+	struct n { const char* what; const char* text; uint64_t rcx; };
+	const n natives[] = {
+		{ "jmp rcx", "mov [rdx], rsp\njmp rcx\n", bad },
+		{ "call rcx", "mov [rdx], rsp\ncall rcx\n", bad },
+		{ "jmp qword ptr [rcx]", "mov [rdx], rsp\nmov rax, 0x0000800000000000\nmov [rsp - 16], rax\nlea rcx, [rsp - 16]\njmp qword ptr [rcx]\n", 0 },
+	};
+	for ( const n& k : natives )
+	{
+		std::vector<uint8_t> code = assemble( k.text );
+		CHECK( !code.empty(), "%s: assembly", k.what );
+		if ( code.empty() ) continue;
+		r16_native_result hw = r16_native( code, k.rcx );
+		int64_t rip_off = 0, rsp_delta = 0;
+		uint64_t ucrcx = std::strstr( k.text, "lea rcx" ) ? 0 : k.rcx;
+		int v = r16_unicorn( code, 0x1000, ucrcx, bad, rip_off, rsp_delta );
+		// the branch is the last instruction: its offset = code size - its length
+		std::printf( "    %-22s hw: %s code=%08lX info=%llX/%llX rip+%lld rsp%+lld   uc: vector %d rip+%lld rsp%+lld\n", k.what,
+					 hw.faulted ? "fault" : "ok   ", hw.code, ( unsigned long long ) hw.info0, ( unsigned long long ) hw.info1,
+					 ( long long ) hw.rip_off, ( long long ) hw.rsp_delta, v, ( long long ) rip_off, ( long long ) rsp_delta );
+		CHECK( hw.faulted, "%s: hardware did not fault", k.what );
+		CHECK( v == 13, "%s: Unicorn vector %d, SDM #GP(0)", k.what, v );
+		CHECK( rip_off == hw.rip_off, "%s: fault RIP offset uc %lld hw %lld", k.what, ( long long ) rip_off, ( long long ) hw.rip_off );
+		CHECK( rsp_delta == hw.rsp_delta, "%s: RSP delta uc %lld hw %lld", k.what, ( long long ) rsp_delta, ( long long ) hw.rsp_delta );
+	}
+	std::printf( "    -- Unicorn vs SDM --\n" );
+	struct u { const char* what; const char* text; uint64_t base; int64_t expect_rip; int64_t expect_rsp; };
+	const uint64_t top = 0x00007FFFFFFFF000ull;
+	const u ucases[] = {
+		{ "ret ([rsp] = 0x800000000000)", "ret\n", 0x1000, 0, 0 },
+		{ "ret 16", "ret 16\n", 0x1000, 0, 0 },
+		{ "push rcx; ret", "push rcx\nret\n", 0x1000, 1, -8 },
+		{ "jmp rel32 across 2^47", "jmp 0x00007FFFFFFFF000 + 0x2000\n", top, 0, 0 },
+		{ "call rel32 across 2^47", "call 0x00007FFFFFFFF000 + 0x2000\n", top, 0, 0 },
+		{ "jz rel32 taken across 2^47", "xor eax, eax\njz 0x00007FFFFFFFF000 + 0x2000\n", top, 2, 0 },
+		{ "jnz rel32 not taken", "xor eax, eax\njnz 0x00007FFFFFFFF000 + 0x2000\nnop\n", top, -1, 0 },
+	};
+	for ( const u& k : ucases )
+	{
+		ks_engine* ks = nullptr;
+		ks_open( KS_ARCH_X86, KS_MODE_64, &ks );
+		unsigned char* enc = nullptr;
+		size_t size = 0, count = 0;
+		std::vector<uint8_t> code;
+		if ( ks_asm( ks, k.text, k.base, &enc, &size, &count ) == KS_ERR_OK ) code.assign( enc, enc + size );
+		if ( enc ) ks_free( enc );
+		ks_close( ks );
+		CHECK( !code.empty(), "%s: assembly", k.what );
+		if ( code.empty() ) continue;
+		int64_t rip_off = 0, rsp_delta = 0;
+		int v = r16_unicorn( code, k.base, bad, bad, rip_off, rsp_delta );
+		bool expect_fault = k.expect_rip >= 0;
+		std::printf( "    %-30s uc: vector %-3d rip+%lld rsp%+lld   SDM: %s\n", k.what, v, ( long long ) rip_off, ( long long ) rsp_delta,
+					 expect_fault ? "#GP(0) on the branch" : "falls through" );
+		if ( expect_fault )
+		{
+			CHECK( v == 13, "%s: vector %d", k.what, v );
+			CHECK( rip_off == k.expect_rip, "%s: RIP offset %lld, expected %lld", k.what, ( long long ) rip_off, ( long long ) k.expect_rip );
+			CHECK( rsp_delta == k.expect_rsp, "%s: RSP delta %lld, expected %lld", k.what, ( long long ) rsp_delta, ( long long ) k.expect_rsp );
+		}
+		else
+			CHECK( v < 0, "%s: faulted (vector %d)", k.what, v );
+	}
+}
+
 int main()
 {
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );     // a crash must not swallow buffered output
@@ -1667,6 +1798,8 @@ int main()
 	test_r14();
 	std::printf( "\n" );
 	test_r15();
+	std::printf( "\n" );
+	test_r16();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
