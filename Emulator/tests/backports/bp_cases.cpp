@@ -3,6 +3,7 @@
 // where the case shows the bug (otherwise the commit is recorded as not applicable, with the
 // passing case as proof).
 #include "bp_harness.hpp"
+#include <deque>
 
 namespace bp
 {
@@ -19,9 +20,46 @@ namespace bp
 		for ( size_t i = 0; i < 64; i += 8 ) { uint64_t v = next(); std::memcpy( s.scratch + i, &v, 8 ); }
 	}
 
+	struct cmpcc_vec
+	{
+		const char* cas; const char* mn; int width; std::vector<uint8_t> bytes;
+		uint64_t mem0, rcx, rdx, rcx_after, flags, mem_after;
+	};
+	static const cmpcc_vec k_cmpcc[] = {
+#include "bp_cmpccxadd.inc"
+	};
+
+	static bool fault_is( const result& r, int vec, std::string& why )
+	{
+		if ( r.faulted && r.vector == vec ) return true;
+		why = r.faulted ? "vector " + std::to_string( r.vector ) + ", expected " + std::to_string( vec ) : "no fault, expected vector " + std::to_string( vec );
+		return false;
+	}
+
 	std::vector<test_case> isa_cases()
 	{
 		std::vector<test_case> v;
+		const uc_cpu_x86 MAX = UC_CPU_X86_MAX;   // QEMU "max": every feature the TCG translator implements
+
+		// UC_CPU_X86_MAX must enumerate the backported features (CPUID.7.0:EBX SHA[29] RDSEED[18],
+		// ECX RDPID[22]; CPUID.7.1:EAX CMPCCXADD[7]) besides the 7.2 ones (AVX2[5] BMI1[3] BMI2[8] ADX[19])
+		{
+			test_case t{ "UC_CPU_X86_MAX", "CPUID leaf 7 enumerates SHA/RDSEED/RDPID/CMPccXADD + AVX2/BMI/ADX",
+						 "mov eax, 7\nxor ecx, ecx\ncpuid\nmov r8, rbx\nmov r9, rcx\nmov eax, 7\nmov ecx, 1\ncpuid\nmov r10, rax\n" };
+			t.hardware = false;
+			t.model = MAX;
+			t.expect = [ ]( const result& r, std::string& why ) {
+				uint32_t ebx = uint32_t( r.s.gpr[ R8 ] ), ecx = uint32_t( r.s.gpr[ R9 ] ), eax1 = uint32_t( r.s.gpr[ R10 ] );
+				struct { const char* n; uint32_t reg; int bit; } need[] = {
+					{ "AVX2", ebx, 5 }, { "BMI1", ebx, 3 }, { "BMI2", ebx, 8 }, { "ADX", ebx, 19 },
+					{ "RDSEED", ebx, 18 }, { "SHA", ebx, 29 }, { "RDPID", ecx, 22 }, { "CMPCCXADD", eax1, 7 } };
+				for ( auto& n : need )
+					if ( !( ( n.reg >> n.bit ) & 1 ) ) { why = std::string( n.n ) + " missing (leaf7 ebx=" + hx( ebx ) + " ecx=" + hx( ecx ) + " 7.1.eax=" + hx( eax1 ) + ")"; return false; }
+				return true;
+			};
+			v.push_back( t );
+		}
+
 		// e582b629f0 target/i386: implement SHA instructions (host 13600K has SHA-NI)
 		struct { const char* name; const char* text; } sha[] = {
 			{ "sha1rnds4 imm 0..3", "sha1rnds4 xmm1, xmm2, 0\nsha1rnds4 xmm3, xmm4, 1\nsha1rnds4 xmm5, xmm6, 2\nsha1rnds4 xmm7, xmm1, 3\n" },
@@ -36,7 +74,7 @@ namespace bp
 		{
 			test_case t{ "e582b629f0", c.name, c.text };
 			t.init = sha_state;
-			t.model = UC_CPU_X86_ICELAKE_SERVER;
+			t.model = MAX;
 			v.push_back( t );
 		}
 		{
@@ -44,20 +82,131 @@ namespace bp
 			t.asm_text = "mov rax, " + hx( SCRATCH ) + "\nsha1msg1 xmm1, xmmword ptr [rax]\nsha256msg2 xmm2, xmmword ptr [rax + 16]\n"
 						 "sha1rnds4 xmm3, xmmword ptr [rax + 32], 2\nsha256rnds2 xmm4, xmmword ptr [rax + 48], xmm0\n";
 			t.init = sha_state;
-			t.model = UC_CPU_X86_ICELAKE_SERVER;
+			t.model = MAX;
 			v.push_back( t );
 		}
 		{
-			// a full SHA-256 compression-style chain: rounds + message schedule interleaved
+			test_case t{ "e582b629f0", "SHA misaligned memory operand -> #GP", "" };
+			t.asm_text = "mov rax, " + hx( SCRATCH + 8 ) + "\nsha1msg1 xmm1, xmmword ptr [rax]\n";
+			t.init = sha_state;
+			t.model = MAX;
+			v.push_back( t );
+		}
+		{
 			test_case t{ "e582b629f0", "SHA-256 round/schedule chain (16 ops)", "" };
 			std::string s;
 			for ( int i = 0; i < 4; ++i )
 				s += "sha256msg1 xmm4, xmm5\nsha256msg2 xmm4, xmm6\nsha256rnds2 xmm2, xmm1, xmm0\nsha256rnds2 xmm1, xmm2, xmm0\n";
 			t.asm_text = s;
 			t.init = sha_state;
-			t.model = UC_CPU_X86_ICELAKE_SERVER;
+			t.model = MAX;
 			v.push_back( t );
 		}
+		{
+			test_case t{ "e582b629f0", "SHA with a 66 prefix -> #UD (no legacy prefixes allowed)", "" };
+			t.bytes = { 0x66, 0x0F, 0x38, 0xC9, 0xCA };           // 66 sha1msg1 xmm1, xmm2
+			t.init = sha_state;
+			t.model = MAX;
+			v.push_back( t );
+		}
+
+		// 691925e5a3 (+ f9e0dbae78) RDSEED: retry until CF=1; compare flags and register width
+		auto seed_loop = [ ]( const char* reg ) { return std::string( "retry_" ) + reg + ":\nrdseed " + reg + "\njnc retry_" + reg + "\n"; };
+		{
+			test_case t{ "691925e5a3", "rdseed eax / ax / rax: CF=1, other flags 0, operand width", "" };
+			t.asm_text = seed_loop( "eax" ) + "mov r8, rax\n" + seed_loop( "bx" ) + seed_loop( "rcx" );
+			t.init = [ ]( state& s ) { s.gpr[ RAX ] = ~0ull; s.gpr[ RBX ] = ~0ull; s.rflags = 0x8D7; };
+			t.model = MAX;
+			t.compare = C_ALL & ~C_GPR;
+			t.check_each = [ ]( const result& r, std::string& why ) {
+				if ( r.s.gpr[ R8 ] >> 32 ) { why = "rdseed eax left upper bits: " + hx( r.s.gpr[ R8 ] ); return false; }
+				if ( ( r.s.gpr[ RBX ] >> 16 ) != 0xFFFFFFFFFFFFull ) { why = "rdseed bx clobbered bits 63:16: " + hx( r.s.gpr[ RBX ] ); return false; }
+				if ( ( r.s.rflags & 0x8D5 ) != 0x1 ) { why = "flags " + hx( r.s.rflags & 0x8D5 ) + ", expected CF only"; return false; }
+				return true;
+			};
+			v.push_back( t );
+		}
+		{
+			test_case t{ "691925e5a3", "rdseed on a model without RDSEED (Haswell) -> #UD", "rdseed eax\n" };
+			t.hardware = false;
+			t.model = UC_CPU_X86_HASWELL;
+			t.expect = [ ]( const result& r, std::string& why ) { return fault_is( r, 6, why ); };
+			v.push_back( t );
+		}
+
+		// 6750485bf4 (+ f2c04bede3) RDPID: TSC_AUX into the full register; 66/REX.W ignored
+		{
+			test_case t{ "6750485bf4", "rdpid rax / 66 rdpid: full-register write (host TSC_AUX = processor id)", "" };
+			t.bytes = { 0xF3, 0x0F, 0xC7, 0xF8, 0x49, 0x89, 0xC0, 0x48, 0x83, 0xC8, 0xFF, 0x66, 0xF3, 0x0F, 0xC7, 0xF8 };   // rdpid rax; mov r8,rax; or rax,-1; 66 rdpid rax
+			t.init = [ ]( state& s ) { s.gpr[ RAX ] = ~0ull; };
+			t.model = MAX;
+			t.compare = C_ALL & ~C_GPR & ~C_FLAGS;
+			t.check_each = [ ]( const result& r, std::string& why ) {
+				if ( r.s.gpr[ R8 ] > 0xFFF || r.s.gpr[ RAX ] > 0xFFF ) { why = "upper bits not cleared: r8 " + hx( r.s.gpr[ R8 ] ) + " rax " + hx( r.s.gpr[ RAX ] ); return false; }
+				if ( r.s.gpr[ R8 ] != r.s.gpr[ RAX ] ) { why = "66 form differs: " + hx( r.s.gpr[ RAX ] ) + " vs " + hx( r.s.gpr[ R8 ] ); return false; }
+				return true;
+			};
+			v.push_back( t );
+		}
+		{
+			test_case t{ "6750485bf4", "rdpid returns TSC_AUX (0x12345)", "" };
+			t.bytes = { 0xF3, 0x0F, 0xC7, 0xF8 };
+			t.init = [ ]( state& s ) { s.gpr[ RAX ] = ~0ull; };
+			t.hardware = false;
+			t.model = MAX;
+			t.uc_setup = [ ]( uc_engine* uc ) { uc_x86_msr m{ 0xC0000103, 0x12345 }; uc_reg_write( uc, UC_X86_REG_MSR, &m ); };
+			t.expect = [ ]( const result& r, std::string& why ) {
+				if ( r.faulted ) { why = "faulted, vector " + std::to_string( r.vector ); return false; }
+				if ( r.s.gpr[ RAX ] == 0x12345 ) return true;
+				why = "rax " + hx( r.s.gpr[ RAX ] ); return false;
+			};
+			v.push_back( t );
+		}
+		{
+			test_case t{ "6750485bf4", "rdpid with a memory operand -> #UD", "" };
+			t.bytes = { 0xF3, 0x0F, 0xC7, 0x38 };                 // F3 0F C7 /7 with mod=00
+			t.init = [ ]( state& s ) { s.gpr[ RAX ] = SCRATCH; };
+			t.model = MAX;
+			v.push_back( t );
+		}
+
+		// 405c7c0708 (+ a9ce107fd0) CMPccXADD: host 13600K lacks it -> SDM vectors (96)
+		for ( const auto& c : k_cmpcc )
+		{
+			static std::deque<std::string> names;   // stable addresses: test_case keeps name as const char*
+			names.push_back( std::string( "case " ) + c.cas + " " + c.mn + ( c.width == 64 ? " qword" : " dword" ) );
+			test_case t{ "405c7c0708", names.back().c_str(), "" };
+			t.bytes = c.bytes;
+			t.hardware = false;
+			t.model = MAX;
+			t.init = [ c ]( state& s ) {
+				s.gpr[ RAX ] = SCRATCH; s.gpr[ RCX ] = c.rcx; s.gpr[ RDX ] = c.rdx;
+				std::memcpy( s.scratch, &c.mem0, c.width / 8 );
+			};
+			t.expect = [ c ]( const result& r, std::string& why ) {
+				if ( r.faulted ) { why = "faulted, vector " + std::to_string( r.vector ); return false; }
+				uint64_t mem = 0;
+				std::memcpy( &mem, r.s.scratch, c.width / 8 );
+				if ( r.s.gpr[ RCX ] != c.rcx_after ) { why = "rcx " + hx( r.s.gpr[ RCX ] ) + ", expected " + hx( c.rcx_after ); return false; }
+				if ( ( r.s.rflags & 0x8D5 ) != c.flags ) { why = "flags " + hx( r.s.rflags & 0x8D5 ) + ", expected " + hx( c.flags ); return false; }
+				if ( mem != c.mem_after ) { why = "[rax] " + hx( mem ) + ", expected " + hx( c.mem_after ); return false; }
+				if ( r.s.gpr[ RDX ] != c.rdx ) { why = "rdx changed"; return false; }
+				return true;
+			};
+			v.push_back( t );
+		}
+		auto cmpcc_ud = [ & ]( const char* name, std::vector<uint8_t> b, uc_cpu_x86 model ) {
+			test_case t{ "405c7c0708", name, "" };
+			t.bytes = std::move( b );
+			t.hardware = false;
+			t.model = model;
+			t.init = [ ]( state& s ) { s.gpr[ RAX ] = SCRATCH; };
+			t.expect = [ ]( const result& r, std::string& why ) { return fault_is( r, 6, why ); };
+			v.push_back( t );
+		};
+		cmpcc_ud( "cmpzxadd with a register operand (mod=11) -> #UD", { 0xC4, 0xE2, 0x69, 0xE4, 0xC8 }, MAX );
+		cmpcc_ud( "cmpzxadd with VEX.L=1 -> #UD", { 0xC4, 0xE2, 0x6D, 0xE4, 0x08 }, MAX );
+		cmpcc_ud( "cmpzxadd on a model without CMPccXADD (Haswell) -> #UD", { 0xC4, 0xE2, 0x69, 0xE4, 0x08 }, UC_CPU_X86_HASWELL );
 		return v;
 	}
 
@@ -228,5 +377,19 @@ namespace bp
 	}
 	std::vector<test_case> avx_cases() { return {}; }
 	std::vector<test_case> x87_cases() { return {}; }
-	std::vector<test_case> exception_cases() { return {}; }
+	// ── exceptions (agent analysis: scratchpad\bp\exceptions.md) ─────────────────────────────
+	// 60efba3c1b / 69cb498c56 / 6dd7d8c649 fix IDT-delivery code that Unicorn never reaches (it hands
+	// every exception to UC_HOOK_INTR), so they are recorded as unreachable; the analysis surfaced
+	// ICEBP instead, which is reachable and wrong.
+	std::vector<test_case> exception_cases()
+	{
+		std::vector<test_case> v;
+		// 73fb7b3c49: ICEBP / INT1 (F1) is a trap-like #DB: RIP after the instruction, no #UD
+		{
+			test_case t{ "73fb7b3c49", "icebp (F1) -> trap-like #DB, rip after the instruction", "" };
+			t.bytes = { 0x48, 0xFF, 0xC0, 0xF1, 0x48, 0xFF, 0xC0 };       // inc rax; icebp; inc rax
+			v.push_back( t );
+		}
+		return v;
+	}
 }

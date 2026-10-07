@@ -51,6 +51,7 @@ namespace bp
 int main( int argc, char** argv )
 {
 	using namespace bp;
+	std::setvbuf( stdout, nullptr, _IONBF, 0 );   // a crash must not swallow buffered output
 	const char* filter = argc > 1 ? argv[ 1 ] : nullptr;
 	unsigned maj = 0, min = 0;
 	uc_version( &maj, &min );
@@ -67,6 +68,10 @@ int main( int argc, char** argv )
 		{ "exceptions / RF / TF", exception_cases() },
 	};
 	summary sum;
+	// BP_REPEAT=N: run the selected cases N times (to expose host-side corruption that builds up)
+	int repeat = 1;
+	if ( const char* rp = std::getenv( "BP_REPEAT" ) ) repeat = std::max( 1, std::atoi( rp ) );
+	for ( int pass = 0; pass < repeat; ++pass )
 	for ( auto& g : groups )
 	{
 		bool header = false;

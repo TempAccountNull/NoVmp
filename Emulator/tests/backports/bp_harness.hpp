@@ -79,6 +79,7 @@ namespace bp
 		bool ran = false;
 		bool faulted = false;
 		int vector = -1;           // x86 vector (Unicorn exact; native mapped from the NTSTATUS)
+		const char* via = "";      // Unicorn: which hook delivered the fault
 		uint64_t fault_rip = 0;
 		std::string err;
 	};
@@ -331,6 +332,7 @@ namespace bp
 			c->r->faulted = true;
 			c->r->vector = int( intno );
 			c->r->fault_rip = rip;
+			c->r->via = "(UC_HOOK_INTR)";
 		}
 		if ( rip >= c->p->snippet_begin && rip < c->p->snippet_end )
 		{
@@ -410,7 +412,7 @@ namespace bp
 			auto* c = ( uc_ctx* ) user;
 			uint64_t rip = 0;
 			uc_reg_read( u, UC_X86_REG_RIP, &rip );
-			if ( !c->r->faulted ) { c->r->faulted = true; c->r->vector = 6; c->r->fault_rip = rip; }
+			if ( !c->r->faulted ) { c->r->faulted = true; c->r->vector = 6; c->r->fault_rip = rip; c->r->via = "(UC_HOOK_INSN_INVALID)"; }
 			if ( rip < c->p->snippet_begin || rip >= c->p->snippet_end ) return false;
 			uint64_t resume = c->p->epilogue_at;
 			uc_reg_write( u, UC_X86_REG_RIP, &resume );
@@ -541,7 +543,8 @@ namespace bp
 		{
 			std::string why;
 			ok = tc.expect && tc.expect( uc, why );
-			std::printf( "    SDM-checked (host CPU lacks it / Unicorn-only mode): uc %s\n", uc.faulted ? ( "fault vector " + std::to_string( uc.vector ) ).c_str() : "completed" );
+			std::printf( "    SDM-checked (host CPU lacks it / Unicorn-only mode): uc %s %s at %s\n", uc.faulted ? ( "fault vector " + std::to_string( uc.vector ) ).c_str() : "completed",
+						 uc.via, hx( uc.fault_rip ).c_str() );
 			if ( !ok ) diffs.push_back( why.empty() ? "expectation not met" : why );
 		}
 		for ( auto& d : diffs ) std::printf( "    DIFF %s\n", d.c_str() );
