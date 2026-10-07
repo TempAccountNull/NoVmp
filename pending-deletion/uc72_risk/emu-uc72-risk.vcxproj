@@ -32,8 +32,8 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup>
-    <OutDir>$(MSBuildThisFileDirectory)..\..\..\build\$(Platform)\$(Configuration)\tests\</OutDir>
-    <IntDir>$(MSBuildThisFileDirectory)..\..\..\build\$(Platform)\$(Configuration)\obj\$(ProjectName)\</IntDir>
+    <OutDir>$(MSBuildThisFileDirectory)..\..\build\$(Platform)\$(Configuration)\tests\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\..\build\$(Platform)\$(Configuration)\obj\$(ProjectName)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -42,7 +42,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <PreprocessorDefinitions>KEYSTONE_STATIC;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\..\unicorn\include;..\..\..\VTIL-Core\Dependencies\keystone\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\unicorn\include;..\..\VTIL-Core\Dependencies\keystone\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
@@ -75,8 +75,8 @@
     <ClCompile Include="uc72_risk.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>
-    <ProjectReference Include="..\..\..\msvc\keystone.vcxproj"><Project>{86818791-A27D-5702-86E3-EFE9C61E7EC8}</Project></ProjectReference>
+    <ProjectReference Include="..\..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>
+    <ProjectReference Include="..\..\msvc\keystone.vcxproj"><Project>{86818791-A27D-5702-86E3-EFE9C61E7EC8}</Project></ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
