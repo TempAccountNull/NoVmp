@@ -1770,7 +1770,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "match",legacy,"aes","aesenclast xmm0, xmm0","66 0F 38 DD C0 ",ok,ok,6,0,""
 "match",legacy,"aes","aesdec xmm0, xmm0","66 0F 38 DE C0 ",ok,ok,6,0,""
 "match",legacy,"aes","aesdeclast xmm0, xmm0","66 0F 38 DF C0 ",ok,ok,6,0,""
-"differs",legacy,"adx","adcx eax, eax","66 0F 38 F6 C0 ",ok,ok,6,3,"iter 1: rflags hw=607 uc=EBF mask=CD5; "
+"match",legacy,"adx","adcx eax, eax","66 0F 38 F6 C0 ",ok,ok,6,0,""
 "match",legacy,"sse41","roundps xmm0, xmm0, 0x5b","66 0F 3A 08 C0 5B ",ok,ok,6,0,""
 "match",legacy,"sse41","roundps xmm0, xmmword ptr [rsi], 0x5b","66 0F 3A 08 06 5B ",ok,ok,6,0,""
 "match",legacy,"sse41","roundpd xmm0, xmm0, 0x5b","66 0F 3A 09 C0 5B ",ok,ok,6,0,""

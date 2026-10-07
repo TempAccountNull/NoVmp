@@ -8,8 +8,8 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 
 | bucket | forms |
 |---|---|
-| match | 2687 |
-| differs | 303 |
+| match | 2688 |
+| differs | 302 |
 | unicorn-#UD (hw runs it) | 23 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
@@ -23,7 +23,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error |
 |---|---|---|---|---|---|---|---|---|---|
 | 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| adx | 3 | 1 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 | avx | 432 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -361,7 +361,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 - `cvtpd2pi mm0, xmm0` (sse2, differs, 6/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/0202 uc=037F/0000/0200 (fsw mask FFFF); st(0) differs; 
 - `cvtpd2pi mm0, xmmword ptr [rsi]` (sse2, differs, 6/6): iter 0: st(0) differs; 
 - `gf2p8mulb xmm0, xmm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `adcx eax, eax` (adx, differs, 3/6): iter 1: rflags hw=607 uc=EBF mask=CD5; 
 - `gf2p8affineqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `gf2p8affineinvqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 - `movdq2q mm0, xmm0` (sse2, differs, 6/6): iter 0: st(0) differs; 
