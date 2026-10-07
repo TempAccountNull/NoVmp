@@ -410,6 +410,53 @@ static void test_r4()
 	}
 }
 
+// ── R5: hardware-quirk switch (plan 1.9.1) ──────────────────────────────────────────────────
+
+static uint16_t fcomi_c1_run( bool quirk, bool fucomi, uint32_t* readback )
+{
+	// ST1 = 2.0, ST0 = -1.0; fxam sets C1 = sign(ST0) = 1; then fcomi/fucomi st(0), st(1)
+	std::vector<uint8_t> code = assemble( std::string( "fld qword ptr [rax]\nfld qword ptr [rax + 8]\nfxam\n" ) +
+										  ( fucomi ? "fucomi st(0), st(1)\n" : "fcomi st(0), st(1)\n" ) );
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	if ( quirk ) uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 );
+	if ( readback ) uc_ctl_get_x86_hw_quirks( uc, readback );
+	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
+	uc_mem_map( uc, 0x2000, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
+	double vals[ 2 ] = { 2.0, -1.0 };
+	uc_mem_write( uc, 0x2000, vals, sizeof( vals ) );
+	uc_mem_write( uc, 0x1000, code.data(), code.size() );
+	uint64_t rax = 0x2000;
+	uc_reg_write( uc, UC_X86_REG_RAX, &rax );
+	uc_emu_start( uc, 0x1000, 0x1000 + code.size(), 0, 0 );
+	uint64_t fsw = 0;
+	uc_reg_read( uc, UC_X86_REG_FPSW, &fsw );
+	uc_close( uc );
+	return uint16_t( fsw );
+}
+
+static void test_r5()
+{
+	std::printf( "R5  hardware-quirk switch: FCOMI/FUCOMI C1 (SDM: cleared; i5-13600K: unchanged)\n" );
+	for ( bool fu : { false, true } )
+	{
+		uint32_t rb = 0xFFFF;
+		uint16_t sdm = fcomi_c1_run( false, fu, &rb ), hw = fcomi_c1_run( true, fu, nullptr );
+		std::printf( "    %-7s default (manual): fsw=%04X C1=%d (quirks=%u)   UC_X86_QUIRK_FCOMI_KEEPS_C1: fsw=%04X C1=%d\n",
+					 fu ? "fucomi" : "fcomi", sdm, ( sdm >> 9 ) & 1, rb, hw, ( hw >> 9 ) & 1 );
+		CHECK( rb == 0, "default quirks %u, expected 0", rb );
+		CHECK( ( ( sdm >> 9 ) & 1 ) == 0, "%s: default must clear C1 (SDM)", fu ? "fucomi" : "fcomi" );
+		CHECK( ( ( hw >> 9 ) & 1 ) == 1, "%s: quirk must keep C1 (hardware)", fu ? "fucomi" : "fcomi" );
+	}
+	uint32_t rb = 0;
+	uc_engine* uc = nullptr;
+	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
+	uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 );
+	uc_ctl_get_x86_hw_quirks( uc, &rb );
+	uc_close( uc );
+	CHECK( rb == UC_X86_QUIRK_FCOMI_KEEPS_C1, "uc_ctl round trip %u", rb );
+}
+
 int main()
 {
 	unsigned maj = 0, min = 0;
@@ -422,6 +469,8 @@ int main()
 	test_r3();
 	std::printf( "\n" );
 	test_r4();
+	std::printf( "\n" );
+	test_r5();
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }
