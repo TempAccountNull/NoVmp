@@ -1967,6 +1967,11 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x59] = X86_OP_GROUP0(EVEX_0F59),
     [0x5c] = X86_OP_GROUP0(EVEX_0F5C),
 #endif /* __Use_Original_Qemu (U151) */
+#if __Use_Original_Qemu != 1 /* ours (U152) */
+    /* VPCMPEQD k1{k2}, H, W/m32bcst (66 W0); E4 */
+    [0x76] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U152) */
 #if __Use_Original_Qemu != 1 /* ours (U149) */
     [0xd4] = X86_OP_ENTRY3(PADDQ, V,x, H,x, W,x, EV_INT(W1)),  /* vpaddq */
     [0xfa] = X86_OP_ENTRY3(PSUBD, V,x, H,x, W,x, EV_INT(W0)),  /* vpsubd */
@@ -1983,9 +1988,21 @@ static const X86OpEntry opcodes_evex_0F[256] = {
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U152) */
+    /* VPCMPEQQ k1{k2}, H, W/m64bcst (66 W1); E4 */
+    [0x29] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U152) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U152) */
+    /* NoVmp (ledger U152): VPCMPUD/UQ (1E), VPCMPD/Q (1F) k1{k2}, H, W/mbcst, imm8; E4 */
+    [0x1e] = X86_OP_ENTRY4(EVEX_VPCMPU, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
+    [0x1f] = X86_OP_ENTRY4(EVEX_VPCMP, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U152) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT

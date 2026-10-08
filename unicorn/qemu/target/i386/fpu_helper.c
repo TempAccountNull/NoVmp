@@ -6673,3 +6673,61 @@ void helper_evex_rc_end(CPUX86State *env)
     set_float_rounding_mode(env->evex_saved_rmode, &env->sse_status);
 }
 #endif /* __Use_Original_Qemu (U147) */
+#if __Use_Original_Qemu != 1 /* ours (U152) */
+
+/*
+ * NoVmp (ledger U152): VPCMP[U]B/W/D/Q, VPCMPEQx into a mask: bit j = (a[j] OP b[j]) for
+ * the n elements, OP = desc bits 18:16 (0 EQ, 1 LT, 2 LE, 3 FALSE, 4 NEQ, 5 NLT, 6 NLE,
+ * 7 TRUE), signed when desc bit 19 is set; bits n..63 are 0 (DEST[MAX_KL-1:KL] := 0).
+ */
+uint64_t helper_evex_pcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), pred = (desc >> 16) & 7, i;
+    bool sign = (desc >> 19) & 1;
+    int bits = 8 << esz;
+    uint64_t r = 0;
+
+    for (i = 0; i < n; i++) {
+        uint64_t x = evex_get_elem(a, esz, i), y = evex_get_elem(b, esz, i);
+        bool lt, eq = x == y, c;
+
+        if (sign) {
+            int64_t sx = (int64_t)(x << (64 - bits)) >> (64 - bits);
+            int64_t sy = (int64_t)(y << (64 - bits)) >> (64 - bits);
+            lt = sx < sy;
+        } else {
+            lt = x < y;
+        }
+        switch (pred) {
+        case 0:
+            c = eq;
+            break;
+        case 1:
+            c = lt;
+            break;
+        case 2:
+            c = lt || eq;
+            break;
+        case 3:
+            c = false;
+            break;
+        case 4:
+            c = !eq;
+            break;
+        case 5:
+            c = !lt;
+            break;
+        case 6:
+            c = !(lt || eq);
+            break;
+        default:
+            c = true;
+            break;
+        }
+        if (c) {
+            r |= 1ull << i;
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U152) */

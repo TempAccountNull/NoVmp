@@ -696,6 +696,42 @@ EVEX_FP_PACKED(VADD, add)
 EVEX_FP_PACKED(VSUB, sub)
 EVEX_FP_PACKED(VMUL, mul)
 #endif /* __Use_Original_Qemu (U151) */
+#if __Use_Original_Qemu != 1 /* ours (U152) */
+
+/*
+ * NoVmp (ledger U152): VPCMPEQD/Q, VPCMPD/Q, VPCMPUD/UQ into an opmask register
+ * (helper_evex_pcmp: one bit per element, bits above the element count 0); the AND with
+ * k2 is done by gen_evex_insn. SRC1 (vvvv) OP SRC2 (r/m) with imm8[2:0]: 0 EQ, 1 LT,
+ * 2 LE, 3 FALSE, 4 NEQ, 5 NLT, 6 NLE, 7 TRUE; imm8[7:3] reserved (SDM Vol2C VPCMPD/VPCMPUD,
+ * VPCMPQ/VPCMPUQ, Table 5-19); VPCMPEQD/Q = predicate 0.
+ */
+#define EVEX_PCMP_SIGNED (1u << 19)
+
+static void gen_evex_pcmp(DisasContext *s, X86DecodedInsn *decode, int pred, bool sign)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(pred & 7) << 16) | (sign ? EVEX_PCMP_SIGNED : 0);
+
+    gen_helper_evex_pcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+
+static void gen_EVEX_VPCMPEQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pcmp(s, decode, 0, true);
+}
+
+static void gen_EVEX_VPCMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pcmp(s, decode, decode->immediate, true);
+}
+
+static void gen_EVEX_VPCMPU(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pcmp(s, decode, decode->immediate, false);
+}
+#endif /* __Use_Original_Qemu (U152) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
