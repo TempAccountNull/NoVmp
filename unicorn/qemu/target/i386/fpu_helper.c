@@ -7501,3 +7501,147 @@ void helper_evex_range(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg
     }
 }
 #endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+
+/*
+ * NoVmp (ledger U294): VREDUCEPS/PD (U296: SS/SD), SDM Vol2C ReduceArgumentSP/DP:
+ * DEST = SRC - 2^-M * ROUND(2^M * SRC) with M = imm8[7:4], ROUND to an integer under
+ * imm8[1:0] (00 RNE, 01 RD, 10 RU, 11 RZ) or MXCSR.RC when imm8[2] = 1, the subtraction
+ * rounded under the same control; PE from the inexact ROUND unless imm8[3] (SPE) = 1. NaN:
+ * quietened, IE for an SNaN; +-INF: +0.0; a zero result: +0.0, -0.0 when rounding down
+ * (Table 5-27). Exact integer arithmetic: SRC = mant * 2^ex, 2^M * SRC = q + r / 2^shift.
+ * The pseudocode has no DAZ/FTZ/DE/UE step (exceptions: Invalid, Precision only).
+ */
+static uint64_t evex_fp_pack(int sign, uint64_t c, int ex, int fb, int eb)
+{
+    int bias = (1 << (eb - 1)) - 1, len = 64 - clz64(c);
+    int e = ex + (len - 1) + bias;
+    uint64_t sb = (uint64_t)sign << (fb + eb);
+
+    if (e >= 1) {
+        c = len <= fb + 1 ? c << (fb + 1 - len) : c >> (len - fb - 1);
+        return sb | ((uint64_t)e << fb) | (c & ((1ull << fb) - 1));
+    }
+    return sb | (c << (ex - (1 - bias - fb)));      /* denormal, exact */
+}
+
+static uint64_t evex_reduce1(CPUX86State *env, uint64_t x, bool dbl, int imm)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8, p = fb + 1;
+    int bias = (1 << (eb - 1)) - 1;
+    uint64_t sbit = 1ull << (fb + eb), emaxv = (1ull << eb) - 1, qbit = 1ull << (fb - 1);
+    int sign = (x >> (fb + eb)) & 1;
+    uint64_t e = (x >> fb) & emaxv, m = x & ((1ull << fb) - 1);
+    int rc = (imm & 4) ? (int)((env->mxcsr >> 13) & 3) : (imm & 3);
+    int M = (imm >> 4) & 15, ex, shift, k, cmp = 0, rsign;
+    uint64_t zero = rc == 1 ? sbit : 0, mant, q, r, rh, rl, kept;
+    bool inc, up = false;
+
+    if (e == emaxv) {
+        if (m == 0) {
+            return 0;                           /* +-INF -> +0.0 */
+        }
+        if (!(m & qbit)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | qbit;
+    }
+    if (e == 0 && m == 0) {
+        return zero;
+    }
+    mant = e ? m | (1ull << fb) : m;
+    ex = (e ? (int)e : 1) - bias - fb;          /* SRC = mant * 2^ex */
+    shift = -(ex + M);                          /* fraction bits of 2^M * SRC */
+    if (shift <= 0) {
+        return zero;                            /* integral: SRC - SRC */
+    }
+    if (shift < 64) {
+        q = mant >> shift;
+        r = mant & ((1ull << shift) - 1);
+    } else {
+        q = 0;
+        r = mant;
+    }
+    if (r == 0) {
+        return zero;
+    }
+    if (!(imm & 8)) {
+        float_raise(float_flag_inexact, &env->sse_status);
+    }
+    switch (rc) {
+    case 0:
+        inc = shift <= 64 && (r > (1ull << (shift - 1)) ||
+                              (r == (1ull << (shift - 1)) && (q & 1)));
+        break;
+    case 1:
+        inc = sign;
+        break;
+    case 2:
+        inc = !sign;
+        break;
+    default:
+        inc = false;
+        break;
+    }
+    if (!inc) {
+        return evex_fp_pack(sign, r, ex, fb, eb);   /* SRC - trunc: r * 2^ex, exact */
+    }
+    /* SRC - TMP = -(2^shift - r) * 2^ex (sign of SRC), rounded to p bits under rc */
+    rsign = !sign;
+    if (shift <= p) {
+        return evex_fp_pack(rsign, (1ull << shift) - r, ex, fb, eb);
+    }
+    k = shift - p;                              /* low bits dropped */
+    rh = k < 64 ? r >> k : 0;
+    rl = k < 64 ? r & ((1ull << k) - 1) : r;
+    if (rl == 0) {
+        kept = (1ull << p) - rh;
+    } else {
+        kept = (1ull << p) - rh - 1;            /* remainder 2^k - rl */
+        if (k > 64) {
+            cmp = 1;                            /* rl < 2^p < 2^(k-1): above half */
+        } else {
+            uint64_t half = 1ull << (k - 1);
+            cmp = rl < half ? 1 : rl == half ? 0 : -1;
+        }
+        switch (rc) {
+        case 0:
+            up = cmp > 0 || (cmp == 0 && (kept & 1));
+            break;
+        case 1:
+            up = rsign;
+            break;
+        case 2:
+            up = !rsign;
+            break;
+        default:
+            break;
+        }
+    }
+    if (up && ++kept == (1ull << p)) {
+        kept >>= 1;
+        k++;
+    }
+    return evex_fp_pack(rsign, kept, ex + k, fb, eb);
+}
+
+/* d: result (scratch), s: source (masking copy), u: the SRC1 register (scalar) */
+void helper_evex_reduce(CPUX86State *env, ZMMReg *d, ZMMReg *s, ZMMReg *u, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    ZMMReg r;
+
+    if (desc & EVEX_DQ_SCALAR) {
+        r = *u;                                 /* DEST[127:esz] := SRC1[127:esz] (U296) */
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_reduce1(env, evex_get_elem(s, esz, i), esz == MO_64, imm));
+    }
+    if (desc & EVEX_DQ_SCALAR) {
+        memcpy(d, &r, 16);
+    } else {
+        memcpy(d, &r, (size_t)n << esz);
+    }
+}
+#endif /* __Use_Original_Qemu (U294) */

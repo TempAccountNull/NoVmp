@@ -253,6 +253,9 @@ DEF_HELPER_3(evex_fpclass, i64, env, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U293) */
 DEF_HELPER_6(evex_range, void, env, ptr, ptr, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+DEF_HELPER_5(evex_reduce, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U294) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */

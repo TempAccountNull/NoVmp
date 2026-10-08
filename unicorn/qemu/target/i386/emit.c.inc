@@ -2134,6 +2134,33 @@ static void gen_EVEX_VRANGE(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
                           tcg_constant_i32(tcg_ctx, desc));
 }
 #endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+
+/*
+ * NoVmp (ledger U294): VREDUCEPS/PD, source = r/m (op[1]); helper_evex_reduce (desc =
+ * EVEX_DESC | imm8 << 16), flags IE/PE. U296: VREDUCESS/SD, source = op[2], DEST[127:esz]
+ * from the SRC1 register (op[1]).
+ */
+static void gen_EVEX_VREDUCE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 0xff) << 16);
+
+#if __Use_Original_Qemu != 1 /* ours (U296) */
+    if (decode->e.evex_vl & X86_EVEX_LIG) {
+        TCGv_ptr pu = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+        gen_helper_evex_reduce(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2, pu,
+                               tcg_constant_i32(tcg_ctx, desc | EVEX_DQ_SCALAR));
+        tcg_temp_free_ptr(tcg_ctx, pu);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U296) */
+    gen_helper_evex_reduce(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR1,
+                           tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U294) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

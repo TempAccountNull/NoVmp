@@ -2875,6 +2875,15 @@ static void decode_EVEX_0F3A_51(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = opcodes_EVEX_0F3A_51[s->vex_w];
 }
 #endif /* __Use_Original_Qemu (U295) */
+#if __Use_Original_Qemu != 1 /* ours (U296) */
+static void decode_EVEX_0F3A_57(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F3A_57[2] = {
+        EV_DQS(EVEX_VREDUCE, ss, W0), EV_DQS(EVEX_VREDUCE, sd, W1),
+    };
+    *entry = opcodes_EVEX_0F3A_57[s->vex_w];
+}
+#endif /* __Use_Original_Qemu (U296) */
 #if __Use_Original_Qemu != 1 /* ours (U295) */
 #undef EV_DQS
 #endif /* __Use_Original_Qemu (U295) */
@@ -3392,6 +3401,17 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U295) */
     [0x51] = X86_OP_GROUP0(EVEX_0F3A_51),
 #endif /* __Use_Original_Qemu (U295) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+    /*
+     * NoVmp (ledger U294): VREDUCEPS/PD (66 56 W0/W1) x1 {k1}{z}, x2/m/{1toN}{sae}, imm8:
+     * Full tuple, AVX512DQ; E2 (IE, PE); vvvv must be 1111b. 57: VREDUCESS/SD (U296).
+     */
+    [0x56] = X86_OP_ENTRY3(EVEX_VREDUCE, V,x, W,x, I,b, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_rc(SAE) ev_w(WSEL) ev_es(W) ev_fp p_66),
+#endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U296) */
+    [0x57] = X86_OP_GROUP0(EVEX_0F3A_57),
+#endif /* __Use_Original_Qemu (U296) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
