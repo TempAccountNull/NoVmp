@@ -8798,3 +8798,42 @@ void helper_avx10b_cvt_fp8(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2,
     *d = r;
 }
 #endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+
+/*
+ * NoVmp (ledger U403): VCVTHF82PH, convert_hf8_to_fp16 of the AVX10.2 spec 5.1 (exact: an
+ * HF8 denormal becomes a normal FP16, S.1111.111 becomes the FP16 NaN S.11111.1110000000);
+ * d may alias s. The opmask and the zeroing above VL are applied by the EVEX engine.
+ */
+static uint16_t avx10b_hf8_to_fp16(uint8_t in)
+{
+    uint32_t s = (uint32_t)(in & 0x80) << 8, e = (in & 0x78) >> 3, m = in & 0x07;
+    uint32_t e_norm = e + (15 - 7);
+
+    if (e == 0 && m != 0) {
+        uint32_t lz = 2;
+        lz = m > 0x1 ? 1 : lz;
+        lz = m > 0x3 ? 0 : lz;
+        e_norm -= lz;
+        m = (m << (lz + 1)) & 0x07;
+    } else if (e == 0 && m == 0) {
+        e_norm = 0;
+    } else if (e == 0xf && m == 0x7) {
+        e_norm = 0x1f;
+    }
+    return (e_norm << 10) | (m << 7) | s;
+}
+
+void helper_avx10b_cvthf82ph(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t vl)
+{
+    ZMMReg r;
+    int i;
+
+    for (i = 0; i < (int)vl / 2; i++) {
+        r.ZMM_W(i) = avx10b_hf8_to_fp16(s->ZMM_B(i));
+    }
+    for (i = 0; i < (int)vl / 2; i++) {
+        d->ZMM_W(i) = r.ZMM_W(i);
+    }
+}
+#endif /* __Use_Original_Qemu (U403) */

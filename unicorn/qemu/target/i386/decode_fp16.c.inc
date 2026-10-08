@@ -417,6 +417,9 @@ static const X86OpEntry opcodes_evex_map5[256] = {
     [0x6e] = X86_OP_GROUP0(FP16_M5_6E),
     [0x7e] = X86_OP_GROUP0(FP16_M5_7E),
 #endif /* __Use_Original_Qemu (U339) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+    [0x1e] = X86_OP_GROUP0(EVEX_MAP5_1E),
+#endif /* __Use_Original_Qemu (U403) */
 };
 
 static const X86OpEntry opcodes_evex_map6[256] = {

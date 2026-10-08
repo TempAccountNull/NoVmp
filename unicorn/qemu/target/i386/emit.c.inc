@@ -2534,6 +2534,17 @@ static void gen_EVEX_VCVTBIASPH2F8(DisasContext *s, CPUX86State *env, X86Decoded
     gen_avx10b_cvt_fp8(s, decode, 2);
 }
 #endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+
+/* NoVmp (ledger U403): VCVTHF82PH: VL/2 E4M3 bytes -> FP16 words; masking by gen_evex_insn */
+static void gen_EVEX_VCVTHF82PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_avx10b_cvthf82ph(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                                tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U403) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

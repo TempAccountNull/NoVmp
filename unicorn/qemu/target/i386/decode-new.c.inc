@@ -3352,6 +3352,21 @@ static void decode_EVEX_A10_FP8(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_by_prefix(s, opcodes_avx10b_fp8);
 }
 #endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+/*
+ * NoVmp (ledger U403): MAP5 1E: F2 = VCVTHF82PH (AVX10.2 spec 9.4), EVEX.W0, Half Mem
+ * tuple (no broadcast), {k1}{z}, class E4 (fault suppression): one FP16 result per opmask bit.
+ */
+static void decode_EVEX_MAP5_1E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_MAP5_1E[4] = {
+        {}, {}, {},
+        X86_OP_ENTRY3(EVEX_VCVTHF82PH, V,x, None,None, W,xh, cpuid(AVX10_V1_AUX)
+                      ev_vl(EV_VLALL) ev_tt(HALF_MEM) ev_mask(MZ) ev_w(W0) ev_es(16)),
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_MAP5_1E);
+}
+#endif /* __Use_Original_Qemu (U403) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
