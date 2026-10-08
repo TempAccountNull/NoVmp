@@ -2142,6 +2142,33 @@ static void decode_EVEX_0F73(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = opcodes_EVEX_0F73[(get_modrm(s, env) >> 3) & 7];
 }
 #endif /* __Use_Original_Qemu (U158) */
+#if __Use_Original_Qemu != 1 /* ours (U196) */
+/*
+ * NoVmp (ledger U196): 0F 2E VUCOMISS (NP W0) / VUCOMISD (66 W1), 0F 2F VCOMISS / VCOMISD:
+ * xmm1, xmm2/m32/m64{sae}; EVEX.LLIG, Tuple1 Scalar, no masking (aaa and z 0), vvvv
+ * reserved, class E3NF (no fault suppression).
+ */
+#define EV_COMI(op, w, sz) X86_OP_ENTRY3(op, None,None, V,sz, W,sz, cpuid(AVX512F)          \
+                               ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(NONE) ev_rc(SAE)      \
+                               ev_w(w) ev_es(W) ev_fp ev_nf)
+
+static void decode_EVEX_0F2E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F2E[4] = {
+        EV_COMI(EVEX_VUCOMI, W0, ss), EV_COMI(EVEX_VUCOMI, W1, sd), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F2E);
+}
+
+static void decode_EVEX_0F2F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F2F[4] = {
+        EV_COMI(EVEX_VCOMI, W0, ss), EV_COMI(EVEX_VCOMI, W1, sd), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F2F);
+}
+#undef EV_COMI
+#endif /* __Use_Original_Qemu (U196) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2194,6 +2221,10 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     /* VPMULUDQ (66 W1 F4): unsigned dword x dword -> qword */
     [0xf4] = X86_OP_ENTRY3(EVEX_PMULUDQ, V,x, H,x, W,x, EV_INT(W1)),
 #endif /* __Use_Original_Qemu (U155) */
+#if __Use_Original_Qemu != 1 /* ours (U196) */
+    [0x2e] = X86_OP_GROUP0(EVEX_0F2E),
+    [0x2f] = X86_OP_GROUP0(EVEX_0F2F),
+#endif /* __Use_Original_Qemu (U196) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {

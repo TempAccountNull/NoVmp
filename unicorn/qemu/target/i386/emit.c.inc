@@ -1191,6 +1191,31 @@ static void gen_EVEX_VMOVS(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     }
 }
 #endif /* __Use_Original_Qemu (U195) */
+#if __Use_Original_Qemu != 1 /* ours (U196) */
+
+/*
+ * NoVmp (ledger U196): VCOMISS/SD (signalling: #IA on any NaN) and VUCOMISS/SD (#IA on an
+ * SNaN only) into ZF/PF/CF, OF/SF/AF cleared (SDM Vol2A COMISS/COMISD, Vol2B UCOMISS/
+ * UCOMISD; E3NF); {sae} suppresses the flags and #XM (gen_evex_insn).
+ */
+static void gen_EVEX_VCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_epp fn = (s->prefix & PREFIX_DATA) ? gen_helper_comisd : gen_helper_comiss;
+
+    fn(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2);
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+static void gen_EVEX_VUCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_epp fn = (s->prefix & PREFIX_DATA) ? gen_helper_ucomisd : gen_helper_ucomiss;
+
+    fn(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2);
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+#endif /* __Use_Original_Qemu (U196) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
