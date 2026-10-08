@@ -1557,6 +1557,71 @@ static void gen_INSERTQ_r(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     gen_helper_insertq_r(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U130) */
+/*
+ * NoVmp (ledger U130): VEX opmask logic/arithmetic (SDM Vol2A KADD, KAND, KANDN, KNOT,
+ * KOR, KUNPCK, KXNOR, KXOR). gen_load delivers SRC1 (VEX.vvvv) in T0 and SRC2 (r/m) in
+ * T1, each SRC[w-1:0] zero-extended (X86_OP_KREG, U129); the KREG writeback keeps
+ * DEST[w-1:0] and zeroes DEST[MAX_KL-1:w] (KADD's carry out of bit w-1 is dropped).
+ */
+static void gen_KADD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_add_tl(tcg_ctx, s->T0, s->T0, s->T1);
+}
+
+static void gen_KAND(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_and_tl(tcg_ctx, s->T0, s->T0, s->T1);
+}
+
+/* DEST := (BITWISE NOT SRC1) BITWISE AND SRC2 */
+static void gen_KANDN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_andc_tl(tcg_ctx, s->T0, s->T1, s->T0);
+}
+
+/* KNOT k1, k2: the source is the r/m operand (T1) */
+static void gen_KNOT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_not_tl(tcg_ctx, s->T0, s->T1);
+}
+
+static void gen_KOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_or_tl(tcg_ctx, s->T0, s->T0, s->T1);
+}
+
+/*
+ * KUNPCKBW/WD/DQ: DEST[w-1:0] := SRC2[w-1:0], DEST[2w-1:w] := SRC1[w-1:0] with w the
+ * source size (8/16/32); the destination is 2w bits.
+ */
+static void gen_KUNPCK(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int w = 8 << decode->op[2].ot;
+
+    tcg_gen_deposit_tl(tcg_ctx, s->T0, s->T1, s->T0, w, w);
+}
+
+/* DEST := NOT (SRC1 BITWISE XOR SRC2) */
+static void gen_KXNOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_eqv_tl(tcg_ctx, s->T0, s->T0, s->T1);
+}
+
+static void gen_KXOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_xor_tl(tcg_ctx, s->T0, s->T0, s->T1);
+}
+#endif /* __Use_Original_Qemu (U130) */
+
 static void gen_LDMXCSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

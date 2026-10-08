@@ -1315,6 +1315,75 @@ static void decode_0FE6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
     *entry = *decode_by_prefix(s, opcodes_0FE6);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U130) */
+/*
+ * NoVmp (ledger U130): VEX-encoded opmask instructions (SDM Vol2A KADD..KXOR). Only VEX
+ * reaches these slots (legacy 0F 41-4B / 90-99 are CMOVcc / SETcc in the old decoder).
+ * The width comes from pp and VEX.W: entries[] = { W0: NP, 66, F3, F2, W1: NP, 66,
+ * F3, F2 }; an empty slot (gen == NULL) is #UD. Operand sizes: b/w/d/q = 8/16/32/64.
+ */
+static void decode_K_pp_w(DisasContext *s, X86OpEntry *entry, const X86OpEntry entries[8],
+                          bool w)
+{
+    int pp = s->prefix & PREFIX_REPNZ ? 3 : s->prefix & PREFIX_REPZ ? 2 :
+             s->prefix & PREFIX_DATA ? 1 : 0;
+
+    if (!(s->prefix & PREFIX_VEX)) {
+        memset(entry, 0, sizeof(*entry));
+        return;
+    }
+    *entry = entries[(w ? 4 : 0) + pp];
+}
+
+/* RVR, VEX.L1: NP.W0 = W (featw), 66.W0 = B (DQ), NP.W1 = Q (BW), 66.W1 = D (BW) */
+#define K3_ENTRY(op, sz, feat)                                                        \
+    X86_OP_ENTRY3(op, K,sz, KH,sz, KU,sz, vex20 chk(VEX256) cpuid(feat))
+#define K3_WBQD(op, featw) {                                                          \
+    K3_ENTRY(op, w, featw), K3_ENTRY(op, b, AVX512DQ), X86_OP_NONE X86_OP_NONE        \
+    K3_ENTRY(op, q, AVX512BW), K3_ENTRY(op, d, AVX512BW), X86_OP_NONE X86_OP_NONE }
+/* RR, VEX.L0, vvvv 1111b: same widths; op0 None for KTEST/KORTEST (flags only) */
+#define K2_ENTRY(op, t0, t1, sz, feat)                                                \
+    X86_OP_ENTRY3(op, t0,sz, t1,sz, KU,sz, vex20 chk(VEX128) cpuid(feat))
+#define K2_WBQD(op, t0, t1, featw) {                                                  \
+    K2_ENTRY(op, t0, t1, w, featw), K2_ENTRY(op, t0, t1, b, AVX512DQ),                \
+    X86_OP_NONE X86_OP_NONE                                                           \
+    K2_ENTRY(op, t0, t1, q, AVX512BW), K2_ENTRY(op, t0, t1, d, AVX512BW),             \
+    X86_OP_NONE X86_OP_NONE }
+
+/* KAND 41, KANDN 42, KNOT 44, KOR 45, KXNOR 46, KXOR 47, KADD 4A, KUNPCK 4B */
+static void decode_0F_K(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry k41[8] = K3_WBQD(KAND, AVX512F);
+    static const X86OpEntry k42[8] = K3_WBQD(KANDN, AVX512F);
+    static const X86OpEntry k44[8] = K2_WBQD(KNOT, K, None, AVX512F);
+    static const X86OpEntry k45[8] = K3_WBQD(KOR, AVX512F);
+    static const X86OpEntry k46[8] = K3_WBQD(KXNOR, AVX512F);
+    static const X86OpEntry k47[8] = K3_WBQD(KXOR, AVX512F);
+    static const X86OpEntry k4a[8] = K3_WBQD(KADD, AVX512DQ);    /* KADDW: DQ */
+    /* KUNPCKBW 66.W0 (F), KUNPCKWD NP.W0 (BW), KUNPCKDQ NP.W1 (BW); 66.W1 #UD */
+    static const X86OpEntry k4b[8] = {
+        X86_OP_ENTRY3(KUNPCK, K,d, KH,w, KU,w, vex20 chk(VEX256) cpuid(AVX512BW)),
+        X86_OP_ENTRY3(KUNPCK, K,w, KH,b, KU,b, vex20 chk(VEX256) cpuid(AVX512F)),
+        X86_OP_NONE X86_OP_NONE
+        X86_OP_ENTRY3(KUNPCK, K,q, KH,d, KU,d, vex20 chk(VEX256) cpuid(AVX512BW)),
+        X86_OP_NONE X86_OP_NONE X86_OP_NONE
+    };
+    const X86OpEntry *t;
+
+    switch (*b) {
+    case 0x41: t = k41; break;
+    case 0x42: t = k42; break;
+    case 0x44: t = k44; break;
+    case 0x45: t = k45; break;
+    case 0x46: t = k46; break;
+    case 0x47: t = k47; break;
+    case 0x4a: t = k4a; break;
+    default:   t = k4b; break;
+    }
+    decode_K_pp_w(s, entry, t, s->vex_w);
+}
+#endif /* __Use_Original_Qemu (U130) */
+
 static const X86OpEntry opcodes_0F[256] = {
     [0x0E] = X86_OP_ENTRY0(EMMS,                              cpuid(3DNOW)), /* femms */
     /*
@@ -1381,6 +1450,18 @@ static const X86OpEntry opcodes_0F[256] = {
     [0x38] = X86_OP_GROUP0(0F38_esc),
     [0x3a] = X86_OP_GROUP0(0F3A_esc),
 #endif /* __Use_Original_Qemu (U79) */
+#if __Use_Original_Qemu != 1 /* ours (U130) */
+
+    /* VEX opmask: KAND, KANDN, KNOT, KOR, KXNOR, KXOR, KADD, KUNPCK (U130) */
+    [0x41] = X86_OP_GROUP0(0F_K),
+    [0x42] = X86_OP_GROUP0(0F_K),
+    [0x44] = X86_OP_GROUP0(0F_K),
+    [0x45] = X86_OP_GROUP0(0F_K),
+    [0x46] = X86_OP_GROUP0(0F_K),
+    [0x47] = X86_OP_GROUP0(0F_K),
+    [0x4a] = X86_OP_GROUP0(0F_K),
+    [0x4b] = X86_OP_GROUP0(0F_K),
+#endif /* __Use_Original_Qemu (U130) */
 
     [0x58] = X86_OP_ENTRY3(VADD,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
     [0x59] = X86_OP_ENTRY3(VMUL,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
