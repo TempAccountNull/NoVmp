@@ -1920,6 +1920,38 @@ static void decode_EVEX_0F7F(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 /* NoVmp (ledger U149): Full tuple integer forms, 66 only, {k1}{z}, {1toN}; E4 */
 #define EV_INT(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(w) ev_es(W) p_66
 #endif /* __Use_Original_Qemu (U149) */
+#if __Use_Original_Qemu != 1 /* ours (U151) */
+/*
+ * NoVmp (ledger U151): 0F 58/59/5C VADDPS/VMULPS/VSUBPS (NP W0), VADDPD/VMULPD/VSUBPD
+ * (66 W1): Full tuple, {k1}{z}, {1toN}, {er}; E2 (#XM). F3/F2 = scalar forms (not yet).
+ */
+#define EV_FP3(op, w) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL) \
+                          ev_tt(FULL) ev_mask(MZ) ev_rc(ER) ev_w(w) ev_es(W) ev_fp)
+
+static void decode_EVEX_0F58(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F58[4] = {
+        EV_FP3(EVEX_VADD, W0), EV_FP3(EVEX_VADD, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F58);
+}
+
+static void decode_EVEX_0F59(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F59[4] = {
+        EV_FP3(EVEX_VMUL, W0), EV_FP3(EVEX_VMUL, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F59);
+}
+
+static void decode_EVEX_0F5C(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F5C[4] = {
+        EV_FP3(EVEX_VSUB, W0), EV_FP3(EVEX_VSUB, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F5C);
+}
+#endif /* __Use_Original_Qemu (U151) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -1930,6 +1962,11 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x6f] = X86_OP_GROUP0(EVEX_0F6F),
     [0x7f] = X86_OP_GROUP0(EVEX_0F7F),
 #endif /* __Use_Original_Qemu (U148) */
+#if __Use_Original_Qemu != 1 /* ours (U151) */
+    [0x58] = X86_OP_GROUP0(EVEX_0F58),
+    [0x59] = X86_OP_GROUP0(EVEX_0F59),
+    [0x5c] = X86_OP_GROUP0(EVEX_0F5C),
+#endif /* __Use_Original_Qemu (U151) */
 #if __Use_Original_Qemu != 1 /* ours (U149) */
     [0xd4] = X86_OP_ENTRY3(PADDQ, V,x, H,x, W,x, EV_INT(W1)),  /* vpaddq */
     [0xfa] = X86_OP_ENTRY3(PSUBD, V,x, H,x, W,x, EV_INT(W0)),  /* vpsubd */
@@ -1953,6 +1990,9 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
 #endif /* __Use_Original_Qemu (U149) */
+#if __Use_Original_Qemu != 1 /* ours (U151) */
+#undef EV_FP3
+#endif /* __Use_Original_Qemu (U151) */
 #if __Use_Original_Qemu != 1 /* ours (U148) */
 #undef EV_MOV
 #undef EV_VLALL

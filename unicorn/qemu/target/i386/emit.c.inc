@@ -676,6 +676,26 @@ static void gen_EVEX_MOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     tcg_gen_gvec_mov(tcg_ctx, MO_64, decode->op[0].offset, decode->op[2].offset, vl, vl);
 }
 #endif /* __Use_Original_Qemu (U148) */
+#if __Use_Original_Qemu != 1 /* ours (U151) */
+
+/*
+ * NoVmp (ledger U151): VADDPS/PD, VSUBPS/PD, VMULPS/PD on 128/256/512 bits (SSE_FN3:
+ * the SHIFT 1/2/3 helpers of ops_sse.h, same MXCSR/DAZ/FTZ rules as SSE/AVX); masking,
+ * {1toN} and {er} come from gen_evex_insn.
+ */
+#define EVEX_FP_PACKED(uname, lname)                                                 \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+    SSEFunc_0_eppp fn = (s->prefix & PREFIX_DATA) ? SSE_FN3(s, decode, lname##pd)    \
+                                                  : SSE_FN3(s, decode, lname##ps);   \
+                                                                                     \
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);                                 \
+}
+EVEX_FP_PACKED(VADD, add)
+EVEX_FP_PACKED(VSUB, sub)
+EVEX_FP_PACKED(VMUL, mul)
+#endif /* __Use_Original_Qemu (U151) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
