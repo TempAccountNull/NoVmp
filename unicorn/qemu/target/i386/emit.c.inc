@@ -1465,6 +1465,41 @@ static void gen_EVEX_VSHUFP(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     gen_evex_perm(s, decode, (s->prefix & PREFIX_DATA) ? EVEX_PERM_SHUFPD : EVEX_PERM_SHUFPS, 0);
 }
 #endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+
+/*
+ * NoVmp (ledger U212): VPMOVZX/VPMOVSX (66 0F38 21-25 / 31-35) and the narrowing
+ * VPMOVUS* / VPMOVS* / VPMOV* (F3 0F38 11-15 / 21-25 / 31-35). Opcode low nibble: 1 DB / BD,
+ * 2 QB / BQ, 3 DW / WD, 4 QW / WQ, 5 QD / DQ. The table gives the destination element
+ * size (evex_es); the source / destination of a narrowing VPMOV is narrower than VL
+ * (Half/Quarter/Eighth Mem) and gen_evex_insn masks per destination element.
+ */
+static void gen_EVEX_PMOVX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    static const uint8_t src_esz[6] = { 0, MO_8, MO_8, MO_16, MO_16, MO_32 };
+
+    gen_evex_perm(s, decode, (decode->b >> 4) == 2 ? EVEX_PERM_PMOVSX : EVEX_PERM_PMOVZX,
+                  src_esz[decode->b & 7]);
+}
+
+static void gen_EVEX_PMOVN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    static const uint8_t src_esz[6] = { 0, MO_32, MO_64, MO_32, MO_64, MO_64 };
+    static const uint8_t ops[4] = {
+        0, EVEX_PERM_PMOVUSAT, EVEX_PERM_PMOVSSAT, EVEX_PERM_PMOVTRUNC
+    };
+    TCGv_ptr pc = evex_env_ptr(s, ZMM_OFFSET(0));
+
+    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pc, OP_PTR2, pc,
+                         tcg_constant_i32(tcg_ctx,
+                                          EVEX_PERM_DESC(ops[(decode->b >> 4) & 3], 0,
+                                                         vector_len(s, decode),
+                                                         src_esz[decode->b & 7],
+                                                         s->evex_esz)));
+    tcg_temp_free_ptr(tcg_ctx, pc);
+}
+#endif /* __Use_Original_Qemu (U212) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

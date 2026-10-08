@@ -7029,6 +7029,14 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
     ZMMReg r;
     int j;
 
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+    int aux = (desc >> 20) & 3;
+
+    if (op >= EVEX_PERM_PMOVTRUNC && op <= EVEX_PERM_PMOVUSAT) {
+        oesz = aux;                         /* narrowing: KL source elements */
+        obytes = n << aux;
+    }
+#endif /* __Use_Original_Qemu (U212) */
     memset(&r, 0, sizeof(r));
     for (j = 0; j < n; j++) {
         int l0 = j & ~(lane - 1), k = j & (lane - 1);
@@ -7089,6 +7097,39 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
                 v = evex_get_elem(ch < 2 ? a : b, esz, sel * lane + k);
             }
             break;
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+        /*
+         * VPMOVZX/VPMOVSX: ZeroExtend / SignExtend of SRC element j (Vol2B PMOVZX/PMOVSX);
+         * VPMOV: TruncateXToY; VPMOVS: SaturateSignedXToSignedY; VPMOVUS:
+         * SaturateUnsignedXToUnsignedY (the source is unsigned) (Vol2C VPMOVDB/VPMOVSDB/...)
+         */
+        case EVEX_PERM_PMOVZX:
+            v = evex_get_elem(b, aux, j);
+            break;
+        case EVEX_PERM_PMOVSX: {
+            int sh = 64 - (8 << aux);
+
+            v = (uint64_t)((int64_t)(evex_get_elem(b, aux, j) << sh) >> sh);
+            break;
+        }
+        case EVEX_PERM_PMOVTRUNC:
+            v = evex_get_elem(b, esz, j);
+            break;
+        case EVEX_PERM_PMOVSSAT: {
+            int sh = 64 - (8 << esz), db = 8 << aux;
+            int64_t x = (int64_t)(evex_get_elem(b, esz, j) << sh) >> sh;
+            int64_t hi = ((int64_t)1 << (db - 1)) - 1, lo = -hi - 1;
+
+            v = (uint64_t)(x > hi ? hi : x < lo ? lo : x);
+            break;
+        }
+        case EVEX_PERM_PMOVUSAT: {
+            uint64_t x = evex_get_elem(b, esz, j), hi = (1ull << (8 << aux)) - 1;
+
+            v = x > hi ? hi : x;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U212) */
         default:
             g_assert_not_reached();
         }

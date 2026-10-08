@@ -2770,6 +2770,17 @@ enum {
     EVEX_PERM_SHUF128,      /* VSHUFF32X4/F64X2/I32X4/I64X2 */
 };
 #endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+/*
+ * NoVmp (ledger U212): VPMOVZX/VPMOVSX (esz = destination element size, aux = source) and
+ * the narrowing VPMOV/VPMOVS/VPMOVUS (esz = source element size, aux = destination).
+ */
+#define EVEX_PERM_PMOVZX    32
+#define EVEX_PERM_PMOVSX    33
+#define EVEX_PERM_PMOVTRUNC 34
+#define EVEX_PERM_PMOVSSAT  35
+#define EVEX_PERM_PMOVUSAT  36
+#endif /* __Use_Original_Qemu (U212) */
 
 int uc_check_cpu_x86_load_seg(CPUX86State *env, int seg_reg, int sel);
 X86CPU *cpu_x86_init(struct uc_struct *uc);

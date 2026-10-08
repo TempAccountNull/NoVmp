@@ -2241,6 +2241,55 @@ static void decode_EVEX_0FC6(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0FC6);
 }
 #endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+/*
+ * NoVmp (ledger U212): 0F38 10-15 / 20-25 / 30-35.
+ * 66 21-25 / 31-35: VPMOVSX / VPMOVZX BD, BQ, WD, WQ, DQ (Quarter/Eighth/Half Mem source,
+ *   W ignored except DQ W0; E5: masked-off source elements are not read).
+ * F3 11-15 / 21-25 / 31-35: VPMOVUS / VPMOVS / VPMOV DB, QB, DW, QW, QD (W0; Quarter/
+ *   Eighth/Half Mem destination, register or memory; E6: masked-off elements not written).
+ * The byte/word forms (x0: VPMOVZXBW, VPMOVWB, ...) are AVX512BW, 66 10-15 other
+ * instructions (VPSRLVW, VCVTPH2PS, VPRORVD, ...): not here.
+ */
+#define EV_PMX(sz, tt, es, w) X86_OP_ENTRY3(EVEX_PMOVX, V,x, None,None, W,sz, cpuid(AVX512F) \
+                          ev_vl(EV_VLALL) ev_tt(tt) ev_mask(MZ) ev_w(w) ev_es(es))
+#define EV_PMN(sz, tt, es) X86_OP_ENTRY3(EVEX_PMOVN, W,sz, None,None, V,x, cpuid(AVX512F) \
+                          ev_vl(EV_VLALL) ev_tt(tt) ev_mask(MZ) ev_w(W0) ev_es(es))
+
+static void decode_EVEX_0F38_PMOV(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                                  uint8_t *b)
+{
+    static const X86OpEntry pmovx[6] = {
+        {},
+        EV_PMX(xq, QUARTER_MEM, 32, WIG),   /* x1 BD */
+        EV_PMX(xo, EIGHTH_MEM, 64, WIG),    /* x2 BQ */
+        EV_PMX(xh, HALF_MEM, 32, WIG),      /* x3 WD */
+        EV_PMX(xq, QUARTER_MEM, 64, WIG),   /* x4 WQ */
+        EV_PMX(xh, HALF_MEM, 64, W0),       /* x5 DQ */
+    };
+    static const X86OpEntry pmovn[6] = {
+        {},
+        EV_PMN(xq, QUARTER_MEM, 8),         /* x1 DB */
+        EV_PMN(xo, EIGHTH_MEM, 8),          /* x2 QB */
+        EV_PMN(xh, HALF_MEM, 16),           /* x3 DW */
+        EV_PMN(xq, QUARTER_MEM, 16),        /* x4 QW */
+        EV_PMN(xh, HALF_MEM, 32),           /* x5 QD */
+    };
+    int lo = *b & 15;
+
+    memset(entry, 0, sizeof(*entry));
+    if (lo < 1 || lo > 5) {
+        return;
+    }
+    if (s->prefix & PREFIX_REPZ) {
+        *entry = pmovn[lo];
+    } else if ((s->prefix & PREFIX_DATA) && (*b >> 4) != 1) {
+        *entry = pmovx[lo];
+    }
+}
+#undef EV_PMX
+#undef EV_PMN
+#endif /* __Use_Original_Qemu (U212) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2447,6 +2496,24 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x7e] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, p_66),
     [0x7f] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, p_66),
 #endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+    /* NoVmp (ledger U212): VPMOVZX/SX (66), VPMOV/VPMOVS/VPMOVUS (F3), decode_EVEX_0F38_PMOV */
+    [0x11] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x12] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x13] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x14] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x15] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x21] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x22] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x23] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x24] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x25] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x31] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x32] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x33] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x34] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+    [0x35] = X86_OP_GROUP0(EVEX_0F38_PMOV),
+#endif /* __Use_Original_Qemu (U212) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
