@@ -692,6 +692,9 @@ static CPUCacheInfo legacy_l3_cache = {
 #else /* ours (U74) */
 #define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | CPUID_7_0_EDX_UINTR /* U104 */ | \
           CPUID_7_0_EDX_TSX_LDTRK /* U110 */ | CPUID_7_0_EDX_RTM_ALWAYS_ABORT /* U110 */)
+#define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | \
+          CPUID_7_0_EDX_TSX_LDTRK /* U110 */ | CPUID_7_0_EDX_RTM_ALWAYS_ABORT /* U110 */ | \
+          CPUID_7_0_EDX_CET_IBT /* U116 */)
 #endif /* __Use_Original_Qemu (U74) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U71) */
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD

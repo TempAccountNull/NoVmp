@@ -7196,13 +7196,13 @@ static void test_x86_cet_shadow_stack(void)
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xe8"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\xae\x32"));
 
-    /* WRMSR IA32_S_CET: reserved bit 6 and (no CET_IBT) ENDBR_EN #GP(0); SH_STK_EN | WR_SHSTK_EN ok */
+    /* WRMSR IA32_S_CET: reserved bits 6 and 9 #GP(0) (bits 5:2 need CET_IBT, see U116); SH_STK_EN | WR_SHSTK_EN ok */
     nv_set(&r, UC_X86_REG_RCX, 0x6a2);
     nv_set(&r, UC_X86_REG_RDX, 0);
     nv_set(&r, UC_X86_REG_RAX, 0x41);
     OK(nv_run(&r, "\x0f\x30"));
     TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
-    nv_set(&r, UC_X86_REG_RAX, 0x5);
+    nv_set(&r, UC_X86_REG_RAX, 0x201);
     OK(nv_run(&r, "\x0f\x30"));
     TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
     nv_set(&r, UC_X86_REG_RAX, 0x3);
@@ -7555,6 +7555,184 @@ static void test_x86_cet_call_ret(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * NoVmp U116: CET indirect branch tracking (SDM Vol1 18.3; Vol2 CALL, JMP,
+ * ENDBR32/64). Branch target slots are at code_start + 0x3000 + n * 0x40.
+ */
+static uint64_t nv_ibt_target(NvRun *r, int n, const char *code, size_t len)
+{
+    uint64_t a = code_start + 0x3000 + (uint64_t)n * 0x40;
+
+    OK(uc_mem_write(r->uc, a, code, len));
+    return a;
+}
+
+static uc_err nv_run3_to(NvRun *r, const char *code, size_t len, uint64_t until)
+{
+    char stub[] = "\x6a\x23\x68\x00\x1f\x20\x00\x9c\x6a\x2b\x68\x00\x00\x00\x00\x48\xcf";
+    uint64_t sa = r->next, ca = r->next + 0x40;
+    uint32_t ca32 = (uint32_t)ca;
+
+    nv_gdt(r);
+    memcpy(stub + 11, &ca32, 4);
+    r->next += 0x40 + ((len + 0x3f) & ~(uint64_t)0x3f);
+    nv_set(r, UC_X86_REG_RSP, 0x201e00);
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = ca;
+    OK(uc_mem_write(r->uc, sa, stub, sizeof(stub) - 1));
+    OK(uc_mem_write(r->uc, ca, code, len));
+    return uc_emu_start(r->uc, sa, until, 0, 0);
+}
+
+static void test_x86_cet_ibt(void)
+{
+    NvRun r;
+    uint64_t t_endbr, t_plain, t_endbr32, t_int3, farp[2];
+    uint8_t bitmap;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_mem_map(r.uc, 0x300000, 0x2000, UC_PROT_ALL));
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) & (1u << 20));
+    nv_cet_on(&r);
+
+    /* targets: endbr64; inc rbx | inc rbx | endbr32; inc rbx | int3 */
+    t_endbr = nv_ibt_target(&r, 0, "\xf3\x0f\x1e\xfa\x48\xff\xc3", 7);
+    t_plain = nv_ibt_target(&r, 1, "\x48\xff\xc3", 3);
+    t_endbr32 = nv_ibt_target(&r, 2, "\xf3\x0f\x1e\xfb\x48\xff\xc3", 7);
+    t_int3 = nv_ibt_target(&r, 3, "\xcc", 1);
+
+    /* IA32_S_CET: TRACKER and SUPPRESS together are refused (#GP(0) via WRMSR) */
+    nv_set(&r, UC_X86_REG_RCX, 0x6a2);
+    nv_set(&r, UC_X86_REG_RAX, 0xc04);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_wrmsr(&r, 0x6a2, 0x4);                       /* ENDBR_EN */
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x4);
+
+    /* jmp rax to ENDBR64: fine, tracker back to IDLE */
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    nv_set(&r, UC_X86_REG_RAX, t_endbr);
+    OK(uc_mem_write(r.uc, code_start + 0x2000, "\xff\xe0", 2));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2000, t_endbr + 7, 0, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RBX) == 1);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x4);
+
+    /* jmp rax to a target without ENDBR: #CP(ENDBRANCH) at the target, tracker waits */
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2000, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == t_plain);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RBX) == 0);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x804);
+    /* still waiting: the next instruction must be ENDBR64; ENDBR32 does not count in 64-bit mode */
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, t_endbr32, t_endbr32 + 7, 0, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    /* INT3 at the target: #BP first, tracker unchanged */
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, t_int3, t_int3 + 1, 0, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 3);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x804);
+    /* ENDBR64 clears it */
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, t_endbr, t_endbr + 7, 0, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a2) == 0x4);
+
+    /* call rax: tracked as well */
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    OK(nv_run(&r, "\xff\xd0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    nv_wrmsr(&r, 0x6a2, 0x4);
+
+    /* NOTRACK (3E) jmp: tracked while NO_TRACK_EN = 0, untracked with NO_TRACK_EN = 1 */
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    OK(nv_run(&r, "\x3e\xff\xe0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    nv_wrmsr(&r, 0x6a2, 0x14);                      /* ENDBR_EN | NO_TRACK_EN */
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    OK(uc_mem_write(r.uc, code_start + 0x2100, "\x3e\xff\xe0", 3));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2100, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RBX) == 1);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x14);
+    /* ... but not with a 64H/65H prefix in 64-bit mode */
+    OK(nv_run(&r, "\x3e\x64\xff\xe0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    nv_wrmsr(&r, 0x6a2, 0x14);
+
+    /*
+     * legacy compatibility (LEG_IW_EN, bitmap at 300000h): an allowed legacy page
+     * makes the tracker IDLE and suppressed (SUPPRESS_DIS = 0); while suppressed,
+     * indirect branches are not tracked; ENDBR64 unsuppresses.
+     */
+    bitmap = (uint8_t)(1u << ((t_plain >> 12) & 7));
+    OK(uc_mem_write(r.uc, 0x300000 + (t_plain >> 15), &bitmap, 1));
+    nv_wrmsr(&r, 0x6a2, 0x300000 | 0xc);            /* base | LEG_IW_EN | ENDBR_EN */
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    OK(uc_mem_write(r.uc, code_start + 0x2140, "\xff\xe0", 2));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2140, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RBX) == 1);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == (0x300000 | 0x40c));
+    OK(uc_emu_start(r.uc, code_start + 0x2140, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a2) == (0x300000 | 0x40c));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, t_endbr, t_endbr + 7, 0, 0));
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == (0x300000 | 0xc));
+    /* page not in the bitmap: #CP(ENDBRANCH) */
+    bitmap = 0;
+    OK(uc_mem_write(r.uc, 0x300000 + (t_plain >> 15), &bitmap, 1));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2140, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    nv_wrmsr(&r, 0x6a2, 0x4);
+
+    /* far JMP m16:64 (to selector 08h, CPL0): WAIT_FOR_ENDBRANCH */
+    nv_gdt(&r);
+    farp[0] = t_plain;
+    farp[1] = 0x08;
+    OK(uc_mem_write(r.uc, 0x200800, farp, 10));
+    nv_set(&r, UC_X86_REG_RAX, 0x200800);
+    OK(nv_run(&r, "\x48\xff\x28"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == t_plain);
+    nv_wrmsr(&r, 0x6a2, 0x4);
+
+    /* CPL3 uses IA32_U_CET: off there, so untracked; on, tracked */
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    OK(nv_run3_to(&r, "\xff\xe0", 2, t_plain + 3));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0 && nv_get(&r, UC_X86_REG_RBX) == 1);
+    nv_wrmsr(&r, 0x6a0, 0x4);
+    OK(nv_run3_to(&r, "\xff\xe0", 2, t_plain + 3));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 1 && r.cap.intno == 21);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 0x804);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x4);
+    OK(uc_close(r.uc));
+
+    /* strict profile without CET_IBT: no tracking, ENDBR64 a NOP */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_cet_on(&r);
+    nv_wrmsr(&r, 0x6a2, 0x4);
+    nv_profile7(&r, 0, 1u << 7, 0);
+    t_plain = nv_ibt_target(&r, 1, "\x48\xff\xc3", 3);
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    OK(uc_mem_write(r.uc, code_start + 0x2000, "\xff\xe0", 2));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2000, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 0);
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7698,4 +7876,5 @@ TEST_LIST = {
     {"test_x86_cet_shadow_stack", test_x86_cet_shadow_stack},
     {"test_x86_cet_shadow_stack_32", test_x86_cet_shadow_stack_32},
     {"test_x86_cet_call_ret", test_x86_cet_call_ret},
+    {"test_x86_cet_ibt", test_x86_cet_ibt},
     {NULL, NULL}};

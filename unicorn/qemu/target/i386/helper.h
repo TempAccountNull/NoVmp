@@ -116,6 +116,12 @@ DEF_HELPER_2(clrssbsy, void, env, tl)
 DEF_HELPER_2(ss_call, void, env, tl)
 DEF_HELPER_2(ss_ret, void, env, tl)
 #endif /* __Use_Original_Qemu (U115) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+DEF_HELPER_2(ibt_branch, void, env, i32)
+DEF_HELPER_1(ibt_far, void, env)
+DEF_HELPER_1(ibt_idle, void, env)
+DEF_HELPER_3(ibt_check, void, env, tl, i32)
+#endif /* __Use_Original_Qemu (U116) */
 DEF_HELPER_1(single_step, void, env)
 DEF_HELPER_1(rechecking_single_step, void, env)
 DEF_HELPER_1(cpuid, void, env)

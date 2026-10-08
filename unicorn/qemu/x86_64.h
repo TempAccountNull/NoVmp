@@ -2691,6 +2691,12 @@
 #define helper_ss_call helper_ss_call_x86_64
 #define helper_ss_ret helper_ss_ret_x86_64
 #endif /* __Use_Original_Qemu (U115) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+#define helper_ibt_branch helper_ibt_branch_x86_64
+#define helper_ibt_far helper_ibt_far_x86_64
+#define helper_ibt_idle helper_ibt_idle_x86_64
+#define helper_ibt_check helper_ibt_check_x86_64
+#endif /* __Use_Original_Qemu (U116) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

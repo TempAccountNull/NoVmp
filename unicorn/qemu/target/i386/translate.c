@@ -2903,7 +2903,8 @@ static void gen_push_call(DisasContext *s, TCGv val, bool ss)
     int size = 1 << d_ot;
     TCGv new_esp = s->A0;
 
-    if (!ss || !(s->flags & HF_CET_SS_MASK)) {
+    if (!ss || !(s->flags & HF_CET_SS_MASK)
+        || !(s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)) {
         gen_push_v(s, val);
         return;
     }
@@ -3579,6 +3580,78 @@ static TCGLabel *gen_x87_pre(DisasContext *s, uint32_t desc, TCGv a0)
 
 /* convert one instruction. s->base.is_jmp is set if the translation must
    be stopped. Return the next pc value */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+/*
+ * NoVmp (ledger U116): CET behaviour of non-CET instructions (CALL/RET/JMP and
+ * TB starts) needs both the CPUID feature as the translator sees it (a strict
+ * profile can hide it) and the enable state at the CPL (hflags).
+ */
+#define CET_SS_ON(s)  (((s)->flags & HF_CET_SS_MASK) && \
+                       ((s)->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK))
+#define CET_IBT_ON(s) (((s)->flags & HF_CET_IBT_MASK) && \
+                       ((s)->cpuid_7_0_edx_features & CPUID_7_0_EDX_CET_IBT))
+
+/*
+ * NoVmp (ledger U116): kind of the instruction at s->base.pc_next for the IBT
+ * check of a TB's first instruction: 1 = ENDBR64 (64-bit mode) / ENDBR32
+ * (otherwise), i.e. F3 0F 1E FA/FB with F3 the last F2/F3 prefix; 2 = INT3 (CC)
+ * or INT1 (F1); 0 = anything else. Reads only bytes the decoder reads too.
+ */
+static int ibt_kind(CPUX86State *env, DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    target_ulong pc = s->base.pc_next;
+    int b, mand = 0, n;
+
+    for (n = 0; n < 14; n++) {
+        b = translator_ldub(tcg_ctx, env, pc++);
+        if (b == 0xf2 || b == 0xf3) {
+            mand = b;
+        } else if (b == 0xf0 || b == 0x2e || b == 0x36 || b == 0x3e || b == 0x26 ||
+                   b == 0x64 || b == 0x65 || b == 0x66 || b == 0x67 ||
+                   (CODE64(s) && (b & 0xf0) == 0x40)) {
+            continue;
+        } else {
+            break;
+        }
+    }
+    if (b == 0xcc || b == 0xf1) {
+        return 2;
+    }
+    if (b == 0x0f && mand == 0xf3 && translator_ldub(tcg_ctx, env, pc) == 0x1e &&
+        translator_ldub(tcg_ctx, env, pc + 1) == (CODE64(s) ? 0xfa : 0xfb)) {
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * NoVmp (ledger U116): 3EH as the no-track prefix of a near indirect CALL/JMP
+ * (SDM Vol1 18.3.1): in 64-bit mode if there is no 64H/65H prefix, otherwise
+ * if it is the last group-2 (segment) prefix.
+ */
+static bool ibt_notrack(CPUX86State *env, DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    target_ulong pc = s->base.pc_next;
+    int b, last = 0;
+    bool has3e = false, fsgs = false;
+
+    for (;;) {
+        b = translator_ldub(tcg_ctx, env, pc++);
+        if (b == 0x2e || b == 0x36 || b == 0x3e || b == 0x26 || b == 0x64 || b == 0x65) {
+            last = b;
+            has3e |= b == 0x3e;
+            fsgs |= b == 0x64 || b == 0x65;
+        } else if (!(b == 0xf0 || b == 0xf2 || b == 0xf3 || b == 0x66 || b == 0x67 ||
+                     (CODE64(s) && (b & 0xf0) == 0x40))) {
+            break;
+        }
+    }
+    return CODE64(s) ? (has3e && !fsgs) : last == 0x3e;
+}
+
+#endif /* __Use_Original_Qemu (U116) */
 static bool disas_insn(DisasContext *s, CPUState *cpu)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -3642,6 +3715,18 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         g_assert_not_reached();
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+    /*
+     * NoVmp (ledger U116): indirect-branch tracking. A tracked branch ends its
+     * TB, so its target is always the first instruction of a TB: check the
+     * tracker there, before the instruction's own faults (#CP(ENDBRANCH) is
+     * above #UD/#NM, below code fetch faults; SDM Vol1 18.3).
+     */
+    if (CET_IBT_ON(s) && s->base.num_insns == 1) {
+        gen_helper_ibt_check(tcg_ctx, cpu_env, tcg_constant_tl(tcg_ctx, pc_start),
+                             tcg_constant_i32(tcg_ctx, ibt_kind(env, s)));
+    }
+#endif /* __Use_Original_Qemu (U116) */
     prefixes = 0;
 
  next_byte:
@@ -4200,6 +4285,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #else /* ours (U115) */
             gen_push_call(s, eip_next_tl(s), true);  /* shadow stack (U115) */
 #endif /* __Use_Original_Qemu (U115) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+            if (CET_IBT_ON(s)) {
+                gen_helper_ibt_branch(tcg_ctx, cpu_env,
+                                      tcg_constant_i32(tcg_ctx, ibt_notrack(env, s)));
+            }
+#endif /* __Use_Original_Qemu (U116) */
             gen_op_jmp_v(s, s->T0);
             gen_bnd_jmp(s);
             s->base.is_jmp = DISAS_JUMP;
@@ -4217,6 +4308,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_helper_lcall_protected(tcg_ctx, cpu_env, s->tmp2_i32, s->T1,
                                            tcg_constant_i32(tcg_ctx, dflag - 1),
                                            eip_next_tl(s));
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+                /* far CALL: WAIT_FOR_ENDBRANCH at the new CPL (U116) */
+                if (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_CET_IBT) {
+                    gen_helper_ibt_far(tcg_ctx, cpu_env);
+                }
+#endif /* __Use_Original_Qemu (U116) */
             } else {
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
                 gen_helper_lcall_real(tcg_ctx, cpu_env, s->tmp2_i32, s->T1,
@@ -4232,6 +4329,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U52) */
             gen_check_canonical_ip(s, s->T0);       /* U52 */
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+            if (CET_IBT_ON(s)) {
+                gen_helper_ibt_branch(tcg_ctx, cpu_env,
+                                      tcg_constant_i32(tcg_ctx, ibt_notrack(env, s)));
+            }
+#endif /* __Use_Original_Qemu (U116) */
             gen_op_jmp_v(s, s->T0);
             gen_bnd_jmp(s);
             s->base.is_jmp = DISAS_JUMP;
@@ -4248,6 +4351,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
                 gen_helper_ljmp_protected(tcg_ctx, cpu_env, s->tmp2_i32, s->T1,
                                           eip_next_tl(s));
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+                /* far JMP: WAIT_FOR_ENDBRANCH at the new CPL (U116) */
+                if (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_CET_IBT) {
+                    gen_helper_ibt_far(tcg_ctx, cpu_env);
+                }
+#endif /* __Use_Original_Qemu (U116) */
             } else {
                 gen_op_movl_seg_T0_vm(s, R_CS);
                 gen_op_jmp_v(s, s->T1);
@@ -4755,6 +4864,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 }
                 tcg_gen_movi_tl(tcg_ctx, s->T0, 0);
                 gen_op_mov_reg_v(s, MO_32, R_EAX, s->T0);
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+                /* an RTM abort leaves the IBT tracker IDLE, not suppressed (Vol1 18.3.7.1) */
+                if (CET_IBT_ON(s)) {
+                    gen_helper_ibt_idle(tcg_ctx, cpu_env);
+                }
+#endif /* __Use_Original_Qemu (U116) */
                 gen_jmp_rel(s, MO_32, rel, 0);
             }
             break;
@@ -6046,7 +6161,8 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_check_canonical_ip(s, s->T0);           /* before RSP moves (U52) */
 #endif /* __Use_Original_Qemu (U52) */
 #if __Use_Original_Qemu != 1 /* ours (U115) */
-        if (s->flags & HF_CET_SS_MASK) {
+        if ((s->flags & HF_CET_SS_MASK)
+            && (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)) {
             gen_helper_ss_ret(tcg_ctx, cpu_env, s->T0);   /* #CP(NEAR-RET) (U115) */
         }
 #endif /* __Use_Original_Qemu (U115) */
@@ -6062,7 +6178,8 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_check_canonical_ip(s, s->T0);           /* before RSP moves (U52) */
 #endif /* __Use_Original_Qemu (U52) */
 #if __Use_Original_Qemu != 1 /* ours (U115) */
-        if (s->flags & HF_CET_SS_MASK) {
+        if ((s->flags & HF_CET_SS_MASK)
+            && (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)) {
             gen_helper_ss_ret(tcg_ctx, cpu_env, s->T0);   /* #CP(NEAR-RET) (U115) */
         }
 #endif /* __Use_Original_Qemu (U115) */
@@ -7717,6 +7834,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             break;
         }
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+        /*
+         * NoVmp (ledger U116): F3 0F 1E FA ENDBR64 (64-bit mode) / F3 0F 1E FB
+         * ENDBR32 (otherwise): with EndbranchEnabled(CPL) the tracker becomes
+         * IDLE and unsuppressed; else, and in the other mode, a NOP (SDM Vol2
+         * ENDBR32/ENDBR64). LOCK: #UD.
+         */
+        if (b == 0x11e && (prefixes & PREFIX_REPZ)
+            && modrm == (CODE64(s) ? 0xfa : 0xfb) && CET_IBT_ON(s)) {
+            if (prefixes & PREFIX_LOCK) {
+                goto illegal_op;
+            }
+            gen_helper_ibt_idle(tcg_ctx, cpu_env);
+            break;
+        }
+#endif /* __Use_Original_Qemu (U116) */
         gen_nop_modrm(env, s, modrm);
         break;
 

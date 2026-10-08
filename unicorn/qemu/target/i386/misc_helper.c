@@ -1489,6 +1489,100 @@ void helper_ss_ret(CPUX86State *env, target_ulong ret_ip)
 }
 
 #endif /* __Use_Original_Qemu (U115) */
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+/*
+ * NoVmp (ledger U116): CET indirect branch tracking (SDM Vol1 18.3; Vol2 CALL,
+ * JMP, ENDBR32/64). The tracker (TRACKER/SUPPRESS) lives in IA32_U_CET (CPL 3)
+ * or IA32_S_CET (CPL < 3). The translator calls these only with HF_CET_IBT
+ * (EndbranchEnabled(CPL)) set.
+ */
+static uint64_t *cet_ibt_msr(CPUX86State *env)
+{
+    return (env->hflags & HF_CPL_MASK) == 3 ? &env->u_cet : &env->s_cet;
+}
+
+static bool cet_ibt_enabled(CPUX86State *env)
+{
+    return (env->cr[4] & CR4_CET_MASK) && (env->cr[0] & CR0_PE_MASK) &&
+           !(env->eflags & VM_MASK) && (*cet_ibt_msr(env) & CET_ENDBR_EN);
+}
+
+/* near indirect CALL/JMP: WAIT_FOR_ENDBRANCH unless suppressed or NOTRACK honoured */
+void helper_ibt_branch(CPUX86State *env, uint32_t notrack)
+{
+    uint64_t *cet = cet_ibt_msr(env);
+
+    if (cet_ibt_enabled(env) && !(*cet & CET_SUPPRESS) &&
+        !(notrack && (*cet & CET_NO_TRACK_EN))) {
+        *cet |= CET_TRACKER;
+    }
+}
+
+/* far CALL/JMP (protected mode, at the new CPL): WAIT_FOR_ENDBRANCH, unsuppressed */
+void helper_ibt_far(CPUX86State *env)
+{
+    uint64_t *cet = cet_ibt_msr(env);
+
+    if (cet_ibt_enabled(env)) {
+        *cet = (*cet & ~CET_SUPPRESS) | CET_TRACKER;
+    }
+}
+
+/* ENDBR32 / ENDBR64 in their mode, or an RTM abort: TRACKER = IDLE, SUPPRESS = 0 */
+void helper_ibt_idle(CPUX86State *env)
+{
+    if (cet_ibt_enabled(env)) {
+        *cet_ibt_msr(env) &= ~(CET_TRACKER | CET_SUPPRESS);
+    }
+}
+
+/*
+ * The first instruction of a TB (the only place a branch target can be): in
+ * WAIT_FOR_ENDBRANCH it must be the ENDBR of the mode (kind 1), which makes the
+ * tracker IDLE; INT3/INT1 (kind 2) deliver their trap first and keep the state
+ * (18.3.5). Anything else is the CET state-machine violation: with LEG_IW_EN
+ * the legacy code page bitmap (18.3.6) may allow it (TRACKER = IDLE, SUPPRESS =
+ * !SUPPRESS_DIS, the instruction runs), else #CP(ENDBRANCH) at the target,
+ * with the tracker still waiting. la = linear address of the instruction.
+ */
+void helper_ibt_check(CPUX86State *env, target_ulong la, uint32_t kind)
+{
+    uintptr_t ra = GETPC();
+    uint64_t *cet = cet_ibt_msr(env);
+
+    if (!(*cet & CET_TRACKER) || kind == 2) {
+        return;
+    }
+    if (kind == 1) {
+        *cet &= ~(CET_TRACKER | CET_SUPPRESS);
+        return;
+    }
+    if (*cet & CET_LEG_IW_EN) {
+        uint64_t base = *cet & CET_EB_LEG_BITMAP_BASE, idx, a;
+        uint8_t byte;
+
+        if (!(env->hflags & HF_CS64_MASK)) {
+            idx = (uint32_t)la >> 15;
+        } else if (!(env->cr[4] & CR4_LA57_MASK)) {
+            idx = (la & ((1ull << 48) - 1)) >> 15;
+        } else {
+            idx = (la & ((1ull << 57) - 1)) >> 15;
+        }
+        a = base + idx;
+        if (!(env->hflags & HF_LMA_MASK)) {
+            a = (uint32_t)a;
+        }
+        byte = cpu_ldub_data_ra(env, a, ra);
+        if (byte & (1u << ((la >> 12) & 7))) {
+            *cet = (*cet & ~(CET_TRACKER | CET_SUPPRESS)) |
+                   ((*cet & CET_SUPPRESS_DIS) ? 0 : CET_SUPPRESS);
+            return;
+        }
+    }
+    raise_exception_err_ra(env, EXCP15_CP, CP_ENDBRANCH, ra);
+}
+
+#endif /* __Use_Original_Qemu (U116) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {

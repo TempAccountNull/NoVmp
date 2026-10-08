@@ -98,6 +98,14 @@ void cpu_sync_cet_hflags(CPUX86State *env)
         !(env->eflags & VM_MASK) && (cet & CET_SH_STK_EN)) {
         env->hflags |= HF_CET_SS_MASK;
     }
+#if __Use_Original_Qemu != 1 /* ours (U116) */
+    /* HF_CET_IBT = EndbranchEnabled(CPL) (SDM Vol1 18.3.2): the same, with ENDBR_EN */
+    env->hflags &= ~HF_CET_IBT_MASK;
+    if ((env->cr[4] & CR4_CET_MASK) && (env->cr[0] & CR0_PE_MASK) &&
+        !(env->eflags & VM_MASK) && (cet & CET_ENDBR_EN)) {
+        env->hflags |= HF_CET_IBT_MASK;
+    }
+#endif /* __Use_Original_Qemu (U116) */
 }
 
 #endif /* __Use_Original_Qemu (U114) */
