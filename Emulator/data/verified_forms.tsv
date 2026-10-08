@@ -56,27 +56,27 @@ vpgatherdd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid
 vpgatherdq	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
 vpgatherqd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
 vpgatherqq	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
-vpmadd52huq	vex	ud	the i5-13600K lacks AVX-IFMA: #UD in both
-vpmadd52luq	vex	ud	the i5-13600K lacks AVX-IFMA: #UD in both
-vbcstnebf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vbcstnesh2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vcvtneebf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vcvtneeph2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vcvtneobf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vcvtneoph2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vcvtneps2bf16	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
-vpdpwsud	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpwsuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpwusd	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpwusds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpwuud	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpwuuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
-vpdpbssd	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
-vpdpbssds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
-vpdpbsud	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
-vpdpbsuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
-vpdpbuud	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
-vpdpbuuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpmadd52huq	vex	sdm	U87 AVX-IFMA (VEX): independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpmadd52luq	vex	sdm	U87 AVX-IFMA (VEX): independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vbcstnebf162ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vbcstnesh2ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vcvtneebf162ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vcvtneeph2ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vcvtneobf162ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vcvtneoph2ps	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vcvtneps2bf16	vex	sdm	U88 AVX-NE-CONVERT: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwsud	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwsuds	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwusd	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwusds	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwuud	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpwuuds	vex	sdm	U86 AVX-VNNI-INT16: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbssd	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbssds	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbsud	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbsuds	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbuud	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
+vpdpbuuds	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
 clrssbsy	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
 incsspd	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
 incsspq	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
