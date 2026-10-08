@@ -1113,6 +1113,113 @@ static void test_x86_vpclmulqdq_tcg_mask(void)
     OK(uc_close(uc));
 }
 
+/*
+ * NoVmp U85-U88: AVX-VNNI-INT8, AVX-VNNI-INT16, AVX-IFMA, AVX-NE-CONVERT.
+ * Expected values come from the independent SDM model
+ * Emulator/tools/isa/ref_vnni_ifma_ne.py (x86_vnni_ifma_ne_vectors.inc).
+ */
+#include "x86_vnni_ifma_ne_vectors.inc"
+
+#define TEST_X86_VNNI_DATA 0x200000
+
+static void test_x86_vnni_ifma_ne_cpuid(void)
+{
+    uc_engine *uc;
+    char code[] = "\x0f\xa2";
+    uint32_t eax = 7, ebx = 0, ecx = 1, edx = 0;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_reg_write(uc, UC_X86_REG_EAX, &eax));
+    OK(uc_reg_write(uc, UC_X86_REG_ECX, &ecx));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_EAX, &eax));
+    OK(uc_reg_read(uc, UC_X86_REG_EBX, &ebx));
+    OK(uc_reg_read(uc, UC_X86_REG_EDX, &edx));
+    OK(uc_close(uc));
+
+    /* CPUID.(7,1): EAX[4] AVX-VNNI (U71), EAX[23] AVX-IFMA (U87) */
+    TEST_CHECK((eax & (1U << 4)) != 0);
+    TEST_CHECK((eax & (1U << 23)) != 0);
+    /* EDX[4] AVX-VNNI-INT8 (U85), EDX[5] AVX-NE-CONVERT (U88), EDX[10] AVX-VNNI-INT16 (U86) */
+    TEST_CHECK((edx & (1U << 4)) != 0);
+    TEST_CHECK((edx & (1U << 5)) != 0);
+    TEST_CHECK((edx & (1U << 10)) != 0);
+    TEST_CHECK(ebx == 0);
+}
+
+/* Run one vector on 'model'; returns the uc_emu_start result, ymm0 in 'out'. */
+static uc_err test_x86_vnni_run(const struct x86_vnni_vec *t, uc_cpu_x86 model,
+                                uint8_t out[32])
+{
+    uc_engine *uc;
+    uc_err err;
+    uint8_t y0[32], y1[32], y2[32];
+    uint64_t rsi = TEST_X86_VNNI_DATA;
+
+    memcpy(y0, t->ymm0, 32);
+    memcpy(y1, t->ymm1, 32);
+    memcpy(y2, t->ymm2, 32);
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, TEST_X86_VNNI_DATA, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, t->code, t->code_len));
+    OK(uc_mem_write(uc, TEST_X86_VNNI_DATA, t->mem, sizeof(t->mem)));
+    OK(uc_reg_write(uc, UC_X86_REG_YMM0, y0));
+    OK(uc_reg_write(uc, UC_X86_REG_YMM1, y1));
+    OK(uc_reg_write(uc, UC_X86_REG_YMM2, y2));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    err = uc_emu_start(uc, code_start, code_start + t->code_len, 0, 0);
+    OK(uc_reg_read(uc, UC_X86_REG_YMM0, out));
+    OK(uc_close(uc));
+    return err;
+}
+
+static void test_x86_vnni_ifma_ne_vectors(void)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_vnni_vecs) / sizeof(x86_vnni_vecs[0]); i++) {
+        const struct x86_vnni_vec *t = &x86_vnni_vecs[i];
+        uint8_t y0[32];
+
+        TEST_CHECK_(test_x86_vnni_run(t, UC_CPU_X86_MAX, y0) == UC_ERR_OK,
+                    "%s executes", t->name);
+        TEST_CHECK_(memcmp(y0, t->expect, 32) == 0, "%s ymm0 == SDM model",
+                    t->name);
+    }
+}
+
+static void test_x86_vnni_ifma_ne_ud(void)
+{
+    size_t i;
+
+    /* reserved encodings (W, vvvv, register ModRM on memory-only forms, F2 D2/D3, legacy) */
+    for (i = 0; i < sizeof(x86_vnni_uds) / sizeof(x86_vnni_uds[0]); i++) {
+        const struct x86_vnni_ud *u = &x86_vnni_uds[i];
+        struct x86_vnni_vec t;
+        uint8_t y0[32];
+
+        memset(&t, 0, sizeof(t));
+        memcpy(t.code, u->code, sizeof(t.code));
+        t.code_len = u->code_len;
+        TEST_CHECK_(test_x86_vnni_run(&t, UC_CPU_X86_MAX, y0) ==
+                        UC_ERR_INSN_INVALID,
+                    "#UD: %s", u->name);
+    }
+    /* Haswell has none of the four extensions: every valid form #UDs */
+    for (i = 0; i < sizeof(x86_vnni_vecs) / sizeof(x86_vnni_vecs[0]); i++) {
+        uint8_t y0[32];
+
+        TEST_CHECK_(test_x86_vnni_run(&x86_vnni_vecs[i], UC_CPU_X86_HASWELL,
+                                      y0) == UC_ERR_INSN_INVALID,
+                    "#UD on Haswell: %s", x86_vnni_vecs[i].name);
+    }
+}
+
 static void test_x86_relative_jump(void)
 {
     uc_engine *uc;
@@ -4833,6 +4940,9 @@ TEST_LIST = {
     {"test_x86_avx512_tcg_mask", test_x86_avx512_tcg_mask},
     {"test_x86_vaes_vex_gating", test_x86_vaes_vex_gating},
     {"test_x86_vpclmulqdq_tcg_mask", test_x86_vpclmulqdq_tcg_mask},
+    {"test_x86_vnni_ifma_ne_cpuid", test_x86_vnni_ifma_ne_cpuid},
+    {"test_x86_vnni_ifma_ne_vectors", test_x86_vnni_ifma_ne_vectors},
+    {"test_x86_vnni_ifma_ne_ud", test_x86_vnni_ifma_ne_ud},
     {"test_x86_ptwrite_quirk", test_x86_ptwrite_quirk},
     {"test_x86_vsha512", test_x86_vsha512},
     {"test_x86_vsm3", test_x86_vsm3},
