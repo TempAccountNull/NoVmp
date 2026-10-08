@@ -1,7 +1,9 @@
 """NoVmp update checker (plan step 0.3). Run through update.cmd.
 
 Reads and reports; never overwrites our files.
-  * every repo: git fetch, branch, behind/ahead vs upstream, upstream log
+  * the NoVmp repo: git fetch, branch, behind/ahead vs upstream, upstream log; the former
+    submodules (VTIL-Core, linux-pe, unicorn, capstone, keystone) are plain tracked folders
+    since 2026-10-07 and are only listed
   * our forks (root, VTIL-Core, linux-pe): upstream changes are only shown, never merged
   * pristine dependencies (unicorn, capstone, keystone): fast-forwarded only with --apply,
     and only when we have no local commits on them
@@ -52,6 +54,10 @@ def report_repos(fetch, apply, max_log):
     log("=" * 100)
     pending = []
     for path, kind, branch, parent in REPOS:
+        if path != "." and not os.path.exists(os.path.join(ROOT, path, ".git")):
+            # flattened 2026-10-07: tracked as plain folders of NoVmp, history in emulatorundles
+            log("%-36s flattened into NoVmp (no own repo); upstream changes come in as patches" % path)
+            continue
         if fetch:
             git(path, "fetch", "-q", "origin")
         cur = git(path, "branch", "--show-current") or "(detached)"
