@@ -6676,6 +6676,77 @@ void helper_evex_neutral(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, 
     }
 }
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U250) */
+
+/*
+ * NoVmp (ledger U250): EVEX gathers (exception class E12; SDM Vol2C VPGATHERDD/DQ,
+ * VPGATHERQD/QQ, VGATHERDPS/DPD, VGATHERQPS/QPD "Operation"). desc: emit.c.inc
+ * gen_evex_vsib. a0 = BASE + DISP, seg = the segment base.
+ * FOR j := 0 TO KL-1: IF k1[j] THEN element j := MEM[ADDR(j)]; k1[j] := 0. The elements
+ * are processed in element order and k1[j] is cleared as soon as element j is written,
+ * so a fault (or a Unicorn unmapped access without a mapping hook, which leaves through
+ * cpu_loop_exit_restore with RIP at the instruction) leaves exactly the elements below the
+ * faulting one completed and their mask bits clear: the restart gathers only the rest
+ * ("faults are delivered in a right-to-left manner"). Only on completion k1[MAX_KL-1:KL]
+ * := 0 (k1 is 0 then) and DEST[MAXVL-1:KL*data size] := 0 (VL, VL/2 for QD/QPS); a fault
+ * leaves those parts unchanged, which the SDM allows ("may update ... even if").
+ */
+#define EVEX_VSIB_K(d)      ((d) & 7)
+#define EVEX_VSIB_DQ        (1u << 3)
+#define EVEX_VSIB_IQ        (1u << 4)
+#define EVEX_VSIB_KL(d)     (((d) >> 8) & 0xff)
+#define EVEX_VSIB_SCALE(d)  (((d) >> 16) & 3)
+#define EVEX_VSIB_A64       (1u << 18)
+#define EVEX_VSIB_L32       (1u << 19)
+
+/*
+ * ADDR(j) = BASE + SignExtend(VINDEX[j]) * SCALE + DISP; "the most significant bits beyond
+ * the number of address bits are ignored": truncated to the address size, then the
+ * segment base is added (linear addresses wrap at 32 bits outside 64-bit mode)
+ */
+static target_ulong evex_vsib_addr(ZMMReg *v, uint32_t desc, int j, target_ulong a0,
+                                   target_ulong seg)
+{
+    target_ulong idx = (desc & EVEX_VSIB_IQ) ? (target_ulong)(int64_t)v->ZMM_Q(j)
+                                             : (target_ulong)(int64_t)(int32_t)v->ZMM_L(j);
+    target_ulong ea = a0 + (idx << EVEX_VSIB_SCALE(desc));
+
+    if (!(desc & EVEX_VSIB_A64)) {
+        ea = (uint32_t)ea;
+    }
+    ea += seg;
+    if (desc & EVEX_VSIB_L32) {
+        ea = (uint32_t)ea;
+    }
+    return ea;
+}
+
+void helper_evex_gather(CPUX86State *env, ZMMReg *d, ZMMReg *v, target_ulong a0,
+                        target_ulong seg, uint32_t desc)
+{
+    uintptr_t ra = GETPC();
+    uint64_t *k = &env->opmask_regs[EVEX_VSIB_K(desc)];
+    bool q = desc & EVEX_VSIB_DQ;
+    int kl = EVEX_VSIB_KL(desc), j;
+
+    for (j = 0; j < kl; j++) {
+        if (*k & (1ull << j)) {
+            target_ulong addr = evex_vsib_addr(v, desc, j, a0, seg);
+
+            if (q) {
+                d->ZMM_Q(j) = cpu_ldq_data_ra(env, addr, ra);
+            } else {
+                d->ZMM_L(j) = cpu_ldl_data_ra(env, addr, ra);
+            }
+            *k &= ~(1ull << j);
+        }
+    }
+    *k = 0;
+    for (j = (kl << (q ? 3 : 2)) / 8; j < 8; j++) {
+        d->ZMM_Q(j) = 0;
+    }
+}
+#endif /* __Use_Original_Qemu (U250) */
 #if __Use_Original_Qemu != 1 /* ours (U147) */
 
 /*

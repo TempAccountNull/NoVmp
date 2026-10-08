@@ -2153,6 +2153,23 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x29] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
                            ev_tt(FULL) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U152) */
+#if __Use_Original_Qemu != 1 /* ours (U250) */
+    /*
+     * NoVmp (ledger U250): gathers, 66 0F38 90 VPGATHERDD/DQ, 91 VPGATHERQD/QQ, 92 VGATHERDPS/
+     * DPD, 93 VGATHERQPS/QPD (EVEX.W: dword/qword data; opcode bit 0: qword indices). VSIB
+     * memory operand (vex_class 12: EVEX.V' extends the index), k1 required and no {z},
+     * Tuple1 Scalar: disp8*N with N = the data element size (the M,x operand makes
+     * evex_disp8_scale use the EVEX.W element size). Exception class E12.
+     */
+    [0x90] = X86_OP_ENTRY3(EVEX_VGATHER, V,x, None,None, M,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0x91] = X86_OP_ENTRY3(EVEX_VGATHER, V,x, None,None, M,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0x92] = X86_OP_ENTRY3(EVEX_VGATHER, V,x, None,None, M,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0x93] = X86_OP_ENTRY3(EVEX_VGATHER, V,x, None,None, M,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U250) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -3351,6 +3368,23 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
         }
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U250) */
+    /*
+     * NoVmp (ledger U250): exception class E12 (SDM Vol2A 2.8.11 Table 2-63): #UD if the
+     * address size is 16 bits, if ModRM.rm != 100b (no VSIB byte; ModRM.mod = 11b fails in
+     * decode_op), and for a gather if the destination is the index register (all 32
+     * registers: ModRM.reg with EVEX.R/R' vs SIB.index with EVEX.X/V'). The mask is a k
+     * register, so the VEX "mask == destination/index" rules do not apply.
+     */
+    if (e->vex_class == 12) {
+        if ((s->modrm & 7) != 4 || s->aflag == MO_16) {
+            goto illegal;
+        }
+        if (e->op0 == X86_TYPE_V && decode->op[0].n == decode->mem.index) {
+            goto illegal;
+        }
+    }
+#endif /* __Use_Original_Qemu (U250) */
     if (s->flags & HF_TS_MASK) {
         gen_NM_exception(s);
         return false;

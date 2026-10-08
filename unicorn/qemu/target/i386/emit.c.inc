@@ -550,6 +550,16 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     bool to_scratch = false;
     int i;
 
+#if __Use_Original_Qemu != 1 /* ours (U250) */
+    /*
+     * NoVmp (ledger U250): gathers/scatters (VSIB, class E12) do their own addressing,
+     * element-wise memory access and opmask update (gen_evex_vsib).
+     */
+    if (e->vex_class == 12) {
+        e->gen(s, env, decode);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U250) */
     if (has_mem) {
         gen_load_ea(s, &decode->mem, e->vex_class == 12);
         if (e->evex_align) {
@@ -945,6 +955,54 @@ static void gen_EVEX_VPBROADCAST_R(DisasContext *s, CPUX86State *env, X86Decoded
     tcg_temp_free_i64(tcg_ctx, t);
 }
 #endif /* __Use_Original_Qemu (U153) */
+#if __Use_Original_Qemu != 1 /* ours (U250) */
+
+/*
+ * NoVmp (ledger U250): EVEX gathers and scatters, exception class E12 (SDM Vol2A 2.8.11;
+ * Vol2C VPGATHERDD/DQ, VPGATHERQD/QQ, VGATHERDPS/DPD, VGATHERQPS/QPD, VPSCATTER*, VSCATTER*).
+ * The helper walks the elements in element order under k1 = EVEX.aaa (never k0,
+ * validate_evex) and clears k1[j] as element j completes, so a fault leaves the completed
+ * elements done and their mask bits clear, with RIP at the instruction (restartable).
+ * Element j's address: (BASE + DISP + SignExtend(VINDEX[j]) << SCALE) truncated to the
+ * address size, plus the segment base by the rules of every memory operand (gen_lea_v_seg
+ * of 0 gives that base), truncated to 32 bits outside 64-bit mode.
+ * desc (fpu_helper.c EVEX_VSIB_*): bits 2:0 aaa, bit 3 qword data (EVEX.W), bit 4 qword
+ * indices (opcode bit 0), bits 15:8 KL = VL / max(data size, index size), bits 17:16
+ * SIB.scale, bit 18 64-bit address size, bit 19 32-bit linear addresses.
+ */
+typedef void (*EvexVsibHelper)(TCGContext *tcg_ctx, TCGv_ptr env, TCGv_ptr reg,
+                               TCGv_ptr index, TCGv a0, TCGv seg, TCGv_i32 desc);
+
+static void gen_evex_vsib(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp *vreg,
+                          EvexVsibHelper helper)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool qidx = decode->b & 1;
+    int dsz = s->vex_w ? 8 : 4, isz = qidx ? 8 : 4;
+    int kl = s->evex_vl / (dsz > isz ? dsz : isz);
+    uint32_t desc = s->evex_aaa | (s->vex_w ? 8u : 0) | (qidx ? 16u : 0) | ((uint32_t)kl << 8) |
+                    ((uint32_t)decode->mem.scale << 16) |
+                    (s->aflag == MO_64 ? 1u << 18 : 0) | (CODE64(s) ? 0 : 1u << 19);
+    TCGv ea = tcg_temp_new(tcg_ctx);
+    TCGv zero = tcg_constant_tl(tcg_ctx, 0);
+    TCGv_ptr preg = evex_env_ptr(s, ZMM_OFFSET(vreg->n));
+    TCGv_ptr pidx = evex_env_ptr(s, ZMM_OFFSET(decode->mem.index));
+
+    tcg_gen_mov_tl(tcg_ctx, ea, gen_lea_modrm_1(s, decode->mem, true));   /* BASE + DISP */
+    gen_lea_v_seg(s, s->aflag, zero, decode->mem.def_seg, s->override);   /* A0 = seg base */
+    helper(tcg_ctx, cpu_env, preg, pidx, ea, s->A0, tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, preg);
+    tcg_temp_free_ptr(tcg_ctx, pidx);
+    tcg_temp_free(tcg_ctx, zero);    /* tcg_constant_* is a tcg_const_* shim here */
+    tcg_temp_free(tcg_ctx, ea);
+}
+
+/* gathers: destination ModRM.reg (op0), DEST[MAXVL-1:KL*data size] := 0 on completion */
+static void gen_EVEX_VGATHER(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vsib(s, decode, &decode->op[0], gen_helper_evex_gather);
+}
+#endif /* __Use_Original_Qemu (U250) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
