@@ -113,6 +113,51 @@ void helper_rao(CPUX86State *env, target_ulong a0, target_ulong src, uint32_t de
 }
 
 #endif /* __Use_Original_Qemu (U101) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+/*
+ * NoVmp (ledger U112): ENQCMD / ENQCMDS m512 to ES:[r] (SDM Vol2 ENQCMD,
+ * ENQCMDS). ENQCMD: #GP(0) if IA32_PASID[31] (valid) = 0; ENQCMDS: #GP(0) if
+ * CPL > 0. #GP(0) if the destination is not 64-byte aligned. The 64 source
+ * bytes are read with ordinary loads (any alignment); #GP(0) if source bits
+ * 31:0 (ENQCMD) / 30:20 (ENQCMDS) are not zero. The command would be
+ * (ENQCMD) source[511:32] : 0 (bit 31, user) : 0 (30:20) : IA32_PASID[19:0],
+ * (ENQCMDS) source with bits 30:20 = 0. No device implements an enqueue
+ * register in this emulator, so every destination - memory or nothing - is
+ * "not an enqueue register": the store is dropped (written neither to MMIO nor
+ * to memory) and the retry status is returned, ZF = 1; CF/PF/AF/SF/OF = 0.
+ * With paging enabled the destination is still translated for a write
+ * (#PF); without paging there is nothing to translate.
+ */
+void helper_enqcmd(CPUX86State *env, target_ulong dst, target_ulong src,
+                   uint32_t supervisor)
+{
+    uintptr_t ra = GETPC();
+    uint64_t buf[8];
+    int i;
+
+    if (supervisor) {
+        if ((env->hflags & HF_CPL_MASK) != 0) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+    } else if (!(env->pasid & (1ull << 31))) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (dst & 63) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    for (i = 0; i < 8; i++) {
+        buf[i] = cpu_ldq_data_ra(env, src + 8 * i, ra);
+    }
+    if (supervisor ? (buf[0] & 0x7ff00000u) : (uint32_t)buf[0]) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (env->cr[0] & CR0_PG_MASK) {
+        probe_write(env, dst, 64, cpu_mmu_index(env, false), ra);
+    }
+    CC_SRC = CC_Z;
+}
+
+#endif /* __Use_Original_Qemu (U112) */
 void helper_cmpxchg8b(CPUX86State *env, target_ulong a0)
 {
 #ifdef CONFIG_ATOMIC64

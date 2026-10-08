@@ -396,6 +396,9 @@ typedef enum X86Seg {
 #define MSR_IA32_TSX_CTRL		0x122
 #define MSR_IA32_TSCDEADLINE            0x6e0
 #define MSR_IA32_PKRS                   0x6e1
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+#define MSR_IA32_PASID                  0xd93
+#endif /* __Use_Original_Qemu (U112) */
 #define MSR_ARCH_LBR_CTL                0x000014ce
 #define MSR_ARCH_LBR_DEPTH              0x000014cf
 #define MSR_ARCH_LBR_FROM_0             0x00001500
@@ -866,6 +869,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define NOVMP_CPUID_19_EBX (CPUID_19_EBX_AESKLE | CPUID_19_EBX_AES_WIDE)
 #define NOVMP_CPUID_19_ECX CPUID_19_ECX_NOBACKUP
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+/* Enqueue Stores (ENQCMD/ENQCMDS, IA32_PASID) */
+#define CPUID_7_0_ECX_ENQCMD            (1U << 29)
+#endif /* __Use_Original_Qemu (U112) */
 /* Protection Keys for Supervisor-mode Pages */
 #define CPUID_7_0_ECX_PKS               (1U << 31)
 
@@ -1901,6 +1908,9 @@ typedef struct CPUX86State {
      */
     uint8_t msr_api;
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+    uint64_t pasid;   /* IA32_PASID (D93H): 19:0 PASID, 31 valid */
+#endif /* __Use_Original_Qemu (U112) */
 
     TPRAccess tpr_access_type;
 

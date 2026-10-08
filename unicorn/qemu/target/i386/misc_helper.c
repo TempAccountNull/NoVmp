@@ -614,6 +614,25 @@ void helper_wrmsr(CPUX86State *env)
         env->umwait = (uint32_t)val;
         break;
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+    case MSR_IA32_PASID:
+        /*
+         * NoVmp (ledger U112): IA32_PASID (D93H, ENQCMD): 19:0 PASID, 31
+         * valid, 30:20 and 63:32 reserved (#GP(0)). Without ENQCMD it is an
+         * unknown MSR (ignored, as before).
+         */
+        if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_ENQCMD)) {
+            break;
+        }
+        if (val & ~0x800fffffull) {
+            if (env->msr_api) {
+                break;
+            }
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        env->pasid = val;
+        break;
+#endif /* __Use_Original_Qemu (U112) */
     case MSR_IA32_BNDCFGS:
         /* FIXME: #GP if reserved bits are set.  */
         /* FIXME: Extend highest implemented bit of linear address.  */
@@ -826,6 +845,11 @@ void helper_rdmsr(CPUX86State *env)
         val = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_WAITPKG) ? env->umwait : 0;
         break;
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+    case MSR_IA32_PASID:
+        val = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_ENQCMD) ? env->pasid : 0;
+        break;
+#endif /* __Use_Original_Qemu (U112) */
     case MSR_IA32_XSS:
         val = env->xss;
         break;

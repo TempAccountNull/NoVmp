@@ -772,7 +772,7 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
     },
 #if __Use_Original_Qemu != 1 /* ours (U72) */
 #if __Use_Original_Qemu != 1 /* ours (U73) */
-    /* MOVDIR64B r16/r32/r64, m512: 66 0F 38 F8 (U73) */
+    /* MOVDIR64B r16/r32/r64, m512: 66 0F 38 F8 (U73); F3 ENQCMDS, F2 ENQCMD (U112) */
     [8] = {
         {},
         X86_OP_ENTRY3(MOVDIR64B, None,None, G,y, M,b, cpuid(MOVDIR64B)),
@@ -788,6 +788,8 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
         X86_OP_ENTRY3(UWRMSR, None,None, G,q, R,q, cpuid(USER_MSR) o64),
         X86_OP_ENTRY3(URDMSR, R,q, G,q, None,None, cpuid(USER_MSR) o64),
 #endif /* __Use_Original_Qemu (U103) */
+        X86_OP_ENTRY3(ENQCMDS, None,None, G,y, M,b, cpuid(ENQCMD)),
+        X86_OP_ENTRY3(ENQCMD, None,None, G,y, M,b, cpuid(ENQCMD)),
         {},
     },
 #endif /* __Use_Original_Qemu (U73) */
@@ -1987,6 +1989,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_USER_MSR:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_USER_MSR);
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+    case X86_FEAT_ENQCMD:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_ENQCMD);
+#endif /* __Use_Original_Qemu (U112) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

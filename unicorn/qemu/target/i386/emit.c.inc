@@ -1723,6 +1723,36 @@ static void gen_UWRMSR_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+/*
+ * NoVmp (ledger U112): ENQCMD (F2 0F 38 F8) / ENQCMDS (F3 0F 38 F8) r, m512.
+ * Source: the memory operand (any alignment, overrides apply); destination:
+ * ES:[register] at the address size, no override (SDM Vol2 ENQCMD/ENQCMDS);
+ * the enqueue store itself is helper_enqcmd.
+ */
+static void gen_ENQCMD_common(DisasContext *s, X86DecodedInsn *decode, int sup)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv src = tcg_temp_new(tcg_ctx);
+
+    tcg_gen_mov_tl(tcg_ctx, src, s->A0);
+    gen_lea_v_seg(s, s->aflag, cpu_regs[decode->op[1].n], R_ES, -1);
+    gen_helper_enqcmd(tcg_ctx, cpu_env, s->A0, src, tcg_constant_i32(tcg_ctx, sup));
+    set_cc_op(s, CC_OP_EFLAGS);
+    tcg_temp_free(tcg_ctx, src);
+}
+
+static void gen_ENQCMD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ENQCMD_common(s, decode, 0);
+}
+
+static void gen_ENQCMDS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ENQCMD_common(s, decode, 1);
+}
+
+#endif /* __Use_Original_Qemu (U112) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

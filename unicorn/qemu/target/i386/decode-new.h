@@ -164,6 +164,9 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U103) */
     X86_FEAT_USER_MSR,
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U112) */
+    X86_FEAT_ENQCMD,
+#endif /* __Use_Original_Qemu (U112) */
 } X86CPUIDFeature;
 
 /* Execution flags */

@@ -6953,6 +6953,106 @@ static void test_x86_waitpkg(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * NoVmp U112: ENQCMD / ENQCMDS (SDM Vol2). No enqueue register exists, so a
+ * well-formed command returns the retry status ZF = 1 (other flags 0) and the
+ * destination is not written; #GP(0) for an invalid IA32_PASID (ENQCMD), CPL > 0
+ * (ENQCMDS), an unaligned destination, or reserved source bits.
+ */
+static void test_x86_enqcmd(void)
+{
+    NvRun r;
+    uint8_t pat[64], mem[64];
+    uint64_t src0;
+
+    memset(pat, 0xa5, sizeof(pat));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) & (1u << 29));
+
+    /* source at 200000h (bits 31:0 zero), destination 200400h */
+    src0 = 0x1122334400000000ull;
+    OK(uc_mem_write(r.uc, 0x200000, &src0, 8));
+    OK(uc_mem_write(r.uc, 0x200400, pat, sizeof(pat)));
+    nv_set(&r, UC_X86_REG_RSI, 0x200000);
+
+    /* IA32_PASID invalid (reset value 0): ENQCMD #GP(0) */
+    nv_set(&r, UC_X86_REG_RAX, 0x200400);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /* WRMSR IA32_PASID: reserved bit 20 #GP(0), then valid PASID 12345h */
+    nv_set(&r, UC_X86_REG_RCX, 0xd93);
+    nv_set(&r, UC_X86_REG_RAX, 0x80100000);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0x80012345);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0xd93) == 0x80012345);
+
+    /* ENQCMD rax, [rsi]: retry status, nothing written */
+    nv_set(&r, UC_X86_REG_RAX, 0x200400);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7 & ~0x40);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x042);
+    OK(uc_mem_read(r.uc, 0x200400, mem, sizeof(mem)));
+    TEST_CHECK(memcmp(mem, pat, sizeof(mem)) == 0);
+
+    /* destination with no memory behind it: also "not an enqueue register" */
+    nv_set(&r, UC_X86_REG_RAX, 0x900000);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x2);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 0 && (nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x042);
+
+    /* unaligned destination: #GP(0); source bits 31:0 not zero: #GP(0) */
+    nv_set(&r, UC_X86_REG_RAX, 0x200408);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0x200400);
+    nv_set(&r, UC_X86_REG_RSI, 0x200001);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    /* ... unless the low dword is zero at the unaligned source */
+    OK(uc_mem_write(r.uc, 0x200040, "\x00\x00\x00\x00\x00\x00\x00\x00", 8));
+    nv_set(&r, UC_X86_REG_RSI, 0x200041);
+    OK(nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 0);
+
+    /* ENQCMDS at CPL0: source bits 30:20 must be 0; bit 31 / PASID bits pass */
+    src0 = 0x0000000080054321ull;
+    OK(uc_mem_write(r.uc, 0x200000, &src0, 8));
+    nv_set(&r, UC_X86_REG_RSI, 0x200000);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7 & ~0x40);
+    OK(nv_run(&r, "\xf3\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x042);
+    src0 = 0x0000000000100000ull;
+    OK(uc_mem_write(r.uc, 0x200000, &src0, 8));
+    OK(nv_run(&r, "\xf3\x0f\x38\xf8\x06"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /* CPL3: ENQCMDS #GP(0), ENQCMD allowed */
+    src0 = 0;
+    OK(uc_mem_write(r.uc, 0x200000, &src0, 8));
+    OK(nv_run3(&r, "\xf3\x0f\x38\xf8\x06"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 1 && r.cap.intno == 13);
+    OK(nv_run3(&r, "\xf2\x0f\x38\xf8\x06"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RFLAGS) & 0x40);
+
+    /* register form, LOCK: #UD; strict profile without ENQCMD: #UD */
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x38\xf8\xc6"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\xf2\x0f\x38\xf8\x06"));
+    nv_profile7(&r, 0, 0, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x38\xf8\x06"));
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7091,4 +7191,5 @@ TEST_LIST = {
     {"test_x86_uintr_senduipi", test_x86_uintr_senduipi},
     {"test_x86_uintr_delivery", test_x86_uintr_delivery},
     {"test_x86_waitpkg", test_x86_waitpkg},
+    {"test_x86_enqcmd", test_x86_enqcmd},
     {NULL, NULL}};
