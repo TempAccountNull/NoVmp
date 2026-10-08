@@ -125,16 +125,16 @@ udb	legacy	ok	D6 (UDB): #UD in 64-bit mode
 ibhf	legacy	ok	F3 [REX.W] 0F 1E F8: hint NOP
 prefetchit0	legacy	ok	0F 18 /7: NOP without PREFETCHI (RIP-relative and other memory forms)
 prefetchit1	legacy	ok	0F 18 /6: NOP without PREFETCHI
-aesdec128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesdec256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesenc128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesenc256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-encodekey128	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-encodekey256	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesdecwide128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesdecwide256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesencwide128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
-aesencwide256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesdec128kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesdec256kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesenc128kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesenc256kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+encodekey128	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+encodekey256	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesdecwide128kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesdecwide256kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesencwide128kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aesencwide256kl	legacy	sdm	U100 Key Locker: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 llwpcb	xop	oos	AMD LWP
 lwpins	xop	oos	AMD LWP
 lwpval	xop	oos	AMD LWP
@@ -142,7 +142,7 @@ slwpcb	xop	oos	AMD LWP
 mcommit	legacy	oos	AMD MCOMMIT
 monitorx	legacy	oos	AMD MONITORX
 mwaitx	legacy	oos	AMD MONITORX
-movrs	legacy	ud	the i5-13600K lacks MOVRS: #UD in both
+movrs	legacy	sdm	U102 MOVRS: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 prefetchrst2	legacy	ok	0F 18 /4: NOP without MOVRS
 pconfig	legacy	ud	the i5-13600K lacks PCONFIG: #UD in both
 rdpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
@@ -150,10 +150,10 @@ wrpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
 ud1	legacy	ok	0F B9 /r: #UD (its defined behaviour)
 ud2	legacy	ok	0F 0B: #UD (its defined behaviour)
 ud0	legacy	ok	0F FF /r: #UD (its defined behaviour)
-aadd	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
-aand	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
-aor	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
-axor	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
+aadd	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aand	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+aor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+axor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 rdpru	legacy	oos	AMD RDPRU
 xabort	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
 xbegin	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
@@ -182,15 +182,15 @@ t1mskc	xop	oos	AMD TBM
 tzmsk	xop	oos	AMD TBM
 xresldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
 xsusldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
-clui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
-senduipi	legacy	ud	the i5-13600K lacks UINTR: #UD in both
-stui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
-testui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
-uiret	legacy	ud	the i5-13600K lacks UINTR: #UD in both
-urdmsr	legacy	ud	the i5-13600K lacks USER_MSR: #UD in both
-urdmsr	vex	ud	the i5-13600K lacks USER_MSR: #UD in both
-uwrmsr	legacy	ud	the i5-13600K lacks USER_MSR: #UD in both
-uwrmsr	vex	ud	the i5-13600K lacks USER_MSR: #UD in both
+clui	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+senduipi	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+stui	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+testui	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+uiret	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+urdmsr	legacy	sdm	U103 USER_MSR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+urdmsr	vex	sdm	U103 USER_MSR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+uwrmsr	legacy	sdm	U103 USER_MSR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
+uwrmsr	vex	sdm	U103 USER_MSR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 xcryptcbc	legacy	oos	VIA PadLock
 xcryptcfb	legacy	oos	VIA PadLock
 xcryptctr	legacy	oos	VIA PadLock
