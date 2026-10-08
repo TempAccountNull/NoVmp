@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-08 01:45 (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX opmask instructions; HF_OPMASK_EN at hflags bit 2)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-08 02:29 (HEAD `60cee24 U94: uc_mem_write invalidates translated code it overwrites (stale #UD after rewrite)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -17,14 +17,13 @@ _Generated 2026-10-08 01:45 (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX op
   - ⏳ 1.15d EVEX / AVX-512 — design done (`emulator\EVEX_DESIGN.md`, 2026-10-08): 2537 EVEX forms (AVX512F 1071, BW 250, DQ 126, CD 18, FP16 359, AVX10.2 ~410, others ~130) + 51 opmask forms; state (ZMM 32x512, k0–7) already in CPUX86State.
       - ⬜ M0 leftovers: Haswell-class models without XSAVEC still report non-zero 0DH.1 EBX (SDM: 0) — kept for an existing test, revisit; profile 0DH.1 EBX stays as captured (capture machine IA32_XSS share unknown).
       - ⬜ K leftovers / M1 notes: (1) 32-bit VEX.B leak: disas_insn_new sets rex_b from VEX.B in every mode (SDM: ignored outside 64-bit) — fix globally in the prefix parser; (2) VEX in 16-bit protected mode is not recognised (upstream: protected, non-VM86); (3) vvvv is 4 bits outside 64-bit — validate_evex must decide per operand; (4) check bits: only 16384/32768 left in the 16-bit check field → separate EVEX check field; (5) hflags: bit 31 was the last free in the high range — 2 used now; (6) AVX10.1 also enables the opmask forms (M5); (7) CD/VL need new UC_CTL_X86_AVX512 bits (M3); (8) no #AC anywhere in the fork (KMOV at CPL3 unaligned); (9) U121 comment in helper.c still says E3h/E7h "left to K".
-    - ⬜ M1: EVEX prefix (62), 32 registers, disp8*N, masking/zeroing, masked memory (fault suppression), broadcast, {er}/{sae}, validate_evex, SHIFT 3 helpers, asmjit-driven EVEX table generator, first instructions (VMOVDQU/A32/64, VMOVUPS/APS, VPADDD/Q, VPANDD/Q, VADDPS/PD, VPCMPD→k, VPBROADCASTD).
+    - ⏳ M1 [agent, wt/evex_m1, U140–U169, started 2026-10-08]: EVEX prefix (62), 32 registers, disp8*N, masking/zeroing, masked memory (fault suppression), broadcast, {er}/{sae}, validate_evex, SHIFT 3 helpers, asmjit-driven EVEX table generator, first instructions (VMOVDQU/A32/64, VMOVUPS/APS, VPADDD/Q, VPANDD/Q, VADDPS/PD, VPCMPD→k, VPBROADCASTD).
       - ⬜ M1 notes from M0: gate EVEX on env->features AVX512F (set by UC_CTL_X86_AVX512) masked by the strict profile; extend UC_CTL_X86_AVX512 to a bitmask for CD/BW/DQ/VL (M3); EVEX sets PREFIX_VEX so U126 zeroing covers EVEX.128/256 register destinations, masking must merge before writeback; emu-alltest `--avx512` + `xcr0=` key.
     - ⬜ M2: rest of AVX512F (FP, FMA, conversions, permutes, compress/expand, gather/scatter, ternlog, getexp/getmant/scalef/fixupimm/rndscale/rcp14/rsqrt14).
     - ⬜ M3: AVX512VL gate, BW, DQ, CD.
     - ⬜ M4: VBMI/VBMI2, VNNI, BITALG, VPOPCNTDQ, IFMA, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16, FP16.
     - ⬜ M5: AVX10 (CPUID leaf 0x24, AVX10.2 instructions).
-  - ⬜ 1.15e AVX10.x, AMX, APX.
-  - ⏳ Agent wrap-up (your instruction 2026-10-07): when an agent finishes, it reports what it implemented and what is left to implement → merged here as plan steps; its worktree is then moved (`git worktree move`) to `NoVmp\pending-deletion\wt_<name>` for you to delete manually (then `git worktree prune`). Ready to delete now: wt_harness, wt_reach, wt_sha_sm, wt_vnni_ifma, wt_evex_m0, wt_keylocker, wt_tsx_cet, wt_evex_gen.
+  - ⏳ 1.15e AVX10.x, AMX, APX — AMX started 2026-10-08 [agent, wt/amx, U170–U189]: tile state + TILECFG, XSAVE comps 17/18, XFD, CPUID 1DH/1EH, VEX AMX-TILE/INT8/BF16/FP16/COMPLEX instructions (EVEX AMX-AVX512 / APX forms after M1); AVX10 after M1–M4; APX after the EVEX decoder.
   - ⬜ 1.15f AMD/VIA-only forms (XOP, FMA4, TBM, 3DNow!, SSE4A, LWP, CLZERO, MONITORX, RDPRU, MCOMMIT, INVLPGB/TLBSYNC, VIA PadLock/ACE) — your decision 2026-10-07: implement, but only AFTER every Intel instruction (1.15a–e) is done; the host is Intel so these are tested against the AMD/VIA manuals only.
     - ⬜ New switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set, like `__Use_Original_Qemu`): AMD/VIA-only instructions decode only when it is 1; with 0 they are #UD as on Intel (also re-gates what QEMU already has, e.g. 3DNow!, SSE4A, FEMMS).
     - ⬜ You download the handbooks into `emulator\Amd Handbooks\` (list given 2026-10-07): AMD APM Vol 2 #24593, Vol 3 #24594, Vol 4 #26568, Vol 5 #26569, LWP spec #43724, VIA PadLock Programming Guide (+ ACE/RNG/PHE docs).
@@ -32,13 +31,12 @@ _Generated 2026-10-08 01:45 (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX op
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
-      - ⬜ Found, not fixed: LOCK on the multi-byte NOP opcodes 0F 19 / 0F 1C–0F 1F runs in Unicorn but #UD on the i5-13600K (same fix as U105).
-      - ⬜ Investigate: after some #UD stops, rewriting code at an address that already ran made the next uc_emu_start report the old #UD once (stale TB?).
+      - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
       - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 117 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 121 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 01:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX opmask instructions; HF_OPMASK_EN at hflags bit 2)`). Do not edit by hand._
+_Generated 2026-10-08 02:29 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `60cee24 U94: uc_mem_write invalidates translated code it overwrites (stale #UD after rewrite)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so every row is ❌ NOT SUPPORTED on our CPU.
 
