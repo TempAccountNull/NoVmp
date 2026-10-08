@@ -34,8 +34,10 @@ void cpu_sync_avx_hflag(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U121) */
     /*
      * NoVmp (ledger U121): AVX-512 instructions execute only if CR4.OSXSAVE = 1 and
-     * XCR0[7:5] = 111b (SDM Vol1 13.3; XSETBV keeps 2:1 = 11b then). Opmask-only
-     * instructions use the same flag (XCR0 & E7h, EVEX_DESIGN.md 2.9). Every
+     * XCR0[7:5] = 111b (SDM Vol1 13.3; XSETBV keeps 2:1 = 11b then); SDM Vol2
+     * Table 2-39: EVEX needs XCR0 111xx111b. VEX opmask instructions need only
+     * 111xxx11b (E3h); that differs only for an XCR0 written through the Unicorn
+     * API without YMM, and is left to the K milestone (own flag or this one). Every
      * caller of this function (CR4 updates, XSETBV, Unicorn XCR0 register writes,
      * the U120 profile hook) refreshes it; consumed by the K and M1 decoders.
      */
