@@ -2811,5 +2811,8 @@ X86CPU *cpu_x86_init(struct uc_struct *uc);
 #define EVEX_UNOP_LZCNT     1   /* VPLZCNTD/Q */
 #define EVEX_UNOP_CONFLICT  2   /* VPCONFLICTD/Q */
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+#define EVEX_UNOP_POPCNT    3   /* VPOPCNTB/W/D/Q (U323, U324) */
+#endif /* __Use_Original_Qemu (U323) */
 
 #endif /* I386_CPU_H */

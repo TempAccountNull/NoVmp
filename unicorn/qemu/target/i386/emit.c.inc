@@ -5302,3 +5302,11 @@ static void gen_EVEX_VPMADD52HUQ(DisasContext *s, CPUX86State *env, X86DecodedIn
     gen_evex_madd52(s, decode, true);
 }
 #endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+
+/* NoVmp (ledger U323): VPOPCNTD/Q (and U324 VPOPCNTB/W): bits set per element */
+static void gen_EVEX_VPOPCNT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_POPCNT);
+}
+#endif /* __Use_Original_Qemu (U323) */

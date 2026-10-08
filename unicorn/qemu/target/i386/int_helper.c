@@ -567,6 +567,11 @@ void helper_evex_elem_unop(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc
                 }
             }
             break;
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+        case EVEX_UNOP_POPCNT:      /* VPOPCNTB/W/D/Q: bits set in the element */
+            r = ctpop64(src[i]);
+            break;
+#endif /* __Use_Original_Qemu (U323) */
         default:
             g_assert_not_reached();
         }

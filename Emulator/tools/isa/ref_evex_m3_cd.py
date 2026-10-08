@@ -16,6 +16,8 @@ pseudocode), not from any C implementation:
   AVX512_IFMA (U322):
   VPMADD52LUQ/HUQ EVEX.128/256/512.66.0F38.W1 B4/B5 /r   Full tuple, {1to8}, E4; DEST is the
                                                           accumulator
+  AVX512_VPOPCNTDQ (U323):
+  VPOPCNTD/Q      EVEX.128/256/512.66.0F38.W0/W1 55 /r   Full tuple, {1toN}, E4
 
 CPUID: AVX512CD (EVEX.512) and AVX512VL AND AVX512CD (EVEX.128/256), likewise for every
 extension; emu-alltest --avx512 enables all the UC_X86_AVX512_* bits. EVEX.vvvv is
@@ -437,8 +439,19 @@ EXT_FORMS = {
         dict(name="VPMADD52HUQ", pp=1, opc=0xB5, w=1, layout="rvm", mesz=8, besz=8, fs=True,
              dsrc=True, fn=qmap(lambda d, a, b: madd52(d, a, b, True))),
     ],
+    "VPOPCNTDQ": [
+        dict(name="VPOPCNTD", pp=1, opc=0x55, w=0, layout="rm", mesz=4, besz=4, fs=True,
+             fn=lambda d, a, b, vl: pack([popcnt(x) for x in elems(b, 4)], 4)),
+        dict(name="VPOPCNTQ", pp=1, opc=0x55, w=1, layout="rm", mesz=8, besz=8, fs=True,
+             fn=lambda d, a, b, vl: pack([popcnt(x) for x in elems(b, 8)], 8)),
+    ],
 }
-EXT_ORDER = ["IFMA"]
+EXT_ORDER = ["IFMA", "VPOPCNTDQ"]
+
+
+def popcnt(x):
+    """VPOPCNT (Vol2C): POPCNT(element), the number of bits set to 1"""
+    return bin(x).count("1")
 
 
 def ext_vals(sp, n_bytes):
@@ -540,8 +553,10 @@ def gen_ext(ext):
         c.k[1] = (1 << nlo) - 1
         emit(fs_case(sp, c, base))
         # #UD
-        uds = [("EVEX.b on a register form", dict(b=1)), ("wrong EVEX.W", dict(w=1 - sp["w"])),
-               ("L'L = 11b", dict(ll=3))]
+        uds = [("EVEX.b on a register form", dict(b=1)), ("L'L = 11b", dict(ll=3))]
+        if not any(o["opc"] == sp["opc"] and o["pp"] == sp["pp"] and o["w"] != sp["w"]
+                   for e in EXT_FORMS.values() for o in e):
+            uds.append(("wrong EVEX.W", dict(w=1 - sp["w"])))
         if kd:
             uds.append(("{z} (k destination)", dict(z=1, aaa=1)))
         if lay == "rm":
@@ -626,6 +641,9 @@ def selftest():
     chk("madd52 hi", madd52(5, 1 << 51, 1 << 51, True), 5 + (1 << 50))
     chk("madd52 ignore 63:52", madd52(0, (0xFFF << 52) | 3, (1 << 63) | 7, False), 21)
     chk("madd52 wrap", madd52(M64, 1, 1, False), 0)
+    # U323: VPOPCNTQ zmm1, zmm3 = 62 F2 FD 48 55 CB
+    chk("enc vpopcntq", evex(2, 1, 1, 0x55, 1, 3, ll=2), bytes([0x62, 0xF2, 0xFD, 0x48, 0x55, 0xCB]))
+    chk("popcnt", [popcnt(0), popcnt(M64), popcnt(0x80000001)], [0, 64, 2])
     return ok
 
 
@@ -657,7 +675,12 @@ def hwcheck_gen(out, expect_path):
                 out.write("lzcnt eax, ecx | rcx=0x%X\n" % x)
             else:
                 out.write("lzcnt rax, rcx | rcx=0x%X\n" % x)
-            exp.append({"bits": 8 * esz, "x": x, "count": lzcnt(x, 8 * esz)})
+            exp.append({"op": "lzcnt", "bits": 8 * esz, "x": x, "count": lzcnt(x, 8 * esz)})
+    # U323/U324: the VPOPCNT element model vs the host's POPCNT r32 / r64 on the same values
+    for esz, vals in sorted(hw_values().items()):
+        for x in vals:
+            out.write("popcnt %s | rcx=0x%X\n" % ("eax, ecx" if esz == 4 else "rax, rcx", x))
+            exp.append({"op": "popcnt", "bits": 8 * esz, "x": x, "count": popcnt(x)})
     json.dump(exp, open(expect_path, "w"))
 
 
@@ -665,10 +688,11 @@ def hwcheck_cmp(log_path, expect_path):
     import json
     import re
     exp = json.load(open(expect_path))
-    cur, bad, seen, uc_bad = None, 0, {32: 0, 64: 0}, 0
+    cur, bad, uc_bad = None, 0, 0
+    seen = {("lzcnt", 32): 0, ("lzcnt", 64): 0, ("popcnt", 32): 0, ("popcnt", 64): 0}
     for line in open(log_path, encoding="utf-8-sig", errors="replace"):
         line = line.rstrip("\r\n")
-        m = re.match(r"^\[(\d+)\] (SAME|DIFF) lzcnt", line)
+        m = re.match(r"^\[(\d+)\] (SAME|DIFF) (lzcnt|popcnt)", line)
         if m:
             cur = int(m.group(1))
             if m.group(2) != "SAME":
@@ -680,15 +704,16 @@ def hwcheck_cmp(log_path, expect_path):
             got = int(kv.get("rax", "0"), 16) if kv.get("rax", "0").lower().startswith("0x") \
                 else int(kv.get("rax", "0"), 0)
             e = exp[cur]
-            seen[e["bits"]] += 1
+            seen[(e["op"], e["bits"])] += 1
             if got != e["count"] or "fault" in m.group(1):
                 bad += 1
                 if bad <= 20:
-                    print("[%d] lzcnt r%d 0x%X: hw %d, model %d" % (cur, e["bits"], e["x"], got, e["count"]))
+                    print("[%d] %s r%d 0x%X: hw %d, model %d" % (cur, e["op"], e["bits"], e["x"], got, e["count"]))
             cur = None
-    print("hwcheck: LZCNT r32 %d values, r64 %d values compared with the VPLZCNTD/Q element model: "
-          "%d differ (Unicorn vs hw DIFF lines: %d)" % (seen[32], seen[64], bad, uc_bad))
-    return bad == 0 and seen[32] + seen[64] == len(exp)
+    print("hwcheck: LZCNT r32 %d / r64 %d values (VPLZCNTD/Q element model), POPCNT r32 %d / r64 %d "
+          "values (VPOPCNT element model): %d differ (Unicorn vs hw DIFF lines: %d)"
+          % (seen[("lzcnt", 32)], seen[("lzcnt", 64)], seen[("popcnt", 32)], seen[("popcnt", 64)], bad, uc_bad))
+    return bad == 0 and sum(seen.values()) == len(exp)
 
 
 def gen_all():

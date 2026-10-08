@@ -11443,6 +11443,8 @@ static const struct {
 } cdx_bits[] = {
     /* U322 AVX512_IFMA: VPMADD52LUQ zmm1, zmm2, zmm3 */
     {UC_X86_AVX512_IFMA, 1, 1u << 21, "\x62\xf2\xed\x48\xb4\xcb"},
+    /* U323 AVX512_VPOPCNTDQ: VPOPCNTD zmm1, zmm3 */
+    {UC_X86_AVX512_VPOPCNTDQ, 2, 1u << 14, "\x62\xf2\x7d\x48\x55\xcb"},
 };
 
 static void test_x86_avx512_m4_bits(void)

@@ -5415,6 +5415,12 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512IFMA;
     }
 #endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+    /* NoVmp (ledger U323): UC_X86_AVX512_VPOPCNTDQ adds CPUID.(EAX=7,ECX=0):ECX[14] */
+    if (uc->x86_avx512 & UC_X86_AVX512_VPOPCNTDQ) {
+        env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_AVX512_VPOPCNTDQ;
+    }
+#endif /* __Use_Original_Qemu (U323) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

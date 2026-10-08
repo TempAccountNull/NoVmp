@@ -3325,6 +3325,14 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xb5] = X86_OP_ENTRY3(EVEX_VPMADD52HUQ, V,x, H,x, W,x, cpuid(AVX512_IFMA)
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(W) ev_dsrc p_66),
 #endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+    /*
+     * NoVmp (ledger U323): AVX512_VPOPCNTDQ VPOPCNTD/Q zmm1{k1}{z}, zmm2/m/{1toN} (SDM Vol2C
+     * VPOPCNT): 66 W0/W1 55, Full tuple, class E4, EVEX.vvvv reserved.
+     */
+    [0x55] = X86_OP_ENTRY3(EVEX_VPOPCNT, V,x, None,None, W,x, cpuid(AVX512_VPOPCNTDQ)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U323) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -4338,6 +4346,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512_IFMA:
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512IFMA);
 #endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+    case X86_FEAT_AVX512_VPOPCNTDQ:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512_VPOPCNTDQ);
+#endif /* __Use_Original_Qemu (U323) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
