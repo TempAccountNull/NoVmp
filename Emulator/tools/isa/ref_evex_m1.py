@@ -310,6 +310,136 @@ def fp_binop(op, a, b, f, mxcsr, rc=None):
     return r, flags | fl
 
 
+def fp_div(a, b, f, mxcsr, rc=None):
+    """DIVPS/DIVPD element: SRC1 / SRC2 (Vol1 4.9.1.3 #Z, Table 4-7 NaNs)."""
+    if rc is None:
+        rc = (mxcsr >> 13) & 3
+    daz, ftz = bool(mxcsr & DAZ), bool(mxcsr & FTZ)
+    ca, sa, va = classify(a, f)
+    cb, sb, vb = classify(b, f)
+    flags = 0
+    if ca in ("snan", "qnan") or cb in ("snan", "qnan"):
+        if ca == "snan" or cb == "snan":
+            flags |= IE
+        return (quiet(a, f) if ca in ("snan", "qnan") else quiet(b, f)), flags
+    if daz:
+        if ca == "denorm":
+            ca, va = "zero", Fraction(0)
+        if cb == "denorm":
+            cb, vb = "zero", Fraction(0)
+    elif (ca == "denorm" or cb == "denorm") and not (ca == "denorm" and cb == "zero"):
+        # divide-by-zero (priority 3) is above the denormal operand (priority 4, Vol1 4.9.2):
+        # denormal / 0 sets ZE only (i5-13600K DIVPS/DIVPD hardware cases)
+        flags |= DE
+    signbit = 1 << (f.bits - 1)
+    inf_bits = ((1 << f.ebits) - 1) << f.fbits
+    sgn = signbit if sa ^ sb else 0
+    if ca == "inf" and cb == "inf" or ca == "zero" and cb == "zero":
+        return f.qnan_indef, flags | IE
+    if ca == "inf":
+        return sgn | inf_bits, flags
+    if cb == "inf" or ca == "zero":
+        return sgn, flags
+    if cb == "zero":
+        return sgn | inf_bits, flags | ZE
+    r, fl = encode_value(va / vb, f, rc, ftz)
+    return r, flags | fl
+
+
+def isqrt(n):
+    if n < 2:
+        return n
+    x = 1 << ((n.bit_length() + 1) // 2)
+    while True:
+        y = (x + n // x) // 2
+        if y >= x:
+            return x
+        x = y
+
+
+def fp_sqrt(a, f, mxcsr, rc=None):
+    """SQRTPS/SQRTPD element (Vol1 4.8.3.7: sqrt(-0) = -0, negative -> #IA indefinite)."""
+    if rc is None:
+        rc = (mxcsr >> 13) & 3
+    daz = bool(mxcsr & DAZ)
+    ca, sa, va = classify(a, f)
+    signbit = 1 << (f.bits - 1)
+    if ca in ("snan", "qnan"):
+        return quiet(a, f), (IE if ca == "snan" else 0)
+    flags = 0
+    if ca == "denorm":
+        if daz:
+            return (signbit if sa else 0), 0
+        flags |= DE
+    if ca == "zero":
+        return a, flags
+    if sa:
+        # invalid takes precedence over the denormal operand (i5-13600K: SQRTPD of a
+        # negative denormal sets IE only)
+        return f.qnan_indef, IE
+    if ca == "inf":
+        return a, flags
+    # va = n / d with d a power of two; sqrt rounded to p bits (never tiny, never overflows)
+    e = floor_log2(va)
+    E = e // 2                                    # 2^E <= sqrt(va) < 2^(E+1)
+    F = 2 * (f.p + 8) - 2 * E                     # even: sqrt(va * 2^F) = sqrt(va) * 2^(F/2)
+    yf = va * Fraction(2) ** F
+    assert yf.denominator == 1
+    Y = yf.numerator
+    s = isqrt(Y)
+    inexact_sqrt = s * s != Y
+    sh = F // 2 + E - f.fbits                      # sqrt(Y) / 2^sh = significand count
+    c = s >> sh
+    r = s - (c << sh)
+    half = 1 << (sh - 1)
+    if rc == 0:
+        up = r > half or (r == half and (inexact_sqrt or c & 1))
+    elif rc == 2:
+        up = r > 0 or inexact_sqrt
+    else:
+        up = False
+    inexact = r > 0 or inexact_sqrt
+    if up:
+        c += 1
+    if c == 1 << (f.fbits + 1):
+        c >>= 1
+        E += 1
+    return ((E + f.bias) << f.fbits) | (c - (1 << f.fbits)), (flags | PE) if inexact else flags
+
+
+def fp_minmax(op, a, b, f, mxcsr):
+    """MINPS/MAXPS element (SDM pseudocode): (0, 0) or a NaN -> SRC2; IE for any NaN."""
+    daz = bool(mxcsr & DAZ)
+    ca, sa, va = classify(a, f)
+    cb, sb, vb = classify(b, f)
+    flags = 0
+    # DAZ first: with a NaN SRC1, a denormal SRC2 is returned as a signed zero (i5-13600K)
+    if daz:
+        if ca == "denorm":
+            a, ca, va = (a & (1 << (f.bits - 1))), "zero", Fraction(0)
+        if cb == "denorm":
+            b, cb, vb = (b & (1 << (f.bits - 1))), "zero", Fraction(0)
+    if ca in ("snan", "qnan") or cb in ("snan", "qnan"):
+        # a NaN operand: IE only, no DE for a denormal other operand (i5-13600K)
+        return b, IE
+    if not daz and (ca == "denorm" or cb == "denorm"):
+        flags |= DE
+
+    def key(c, s, v):
+        """total order of the non-NaN values: -inf < finite < +inf"""
+        if c == "inf":
+            return (-1, 0) if s else (1, 0)
+        return (0, v)
+
+    if ca == "zero" and cb == "zero":
+        return b, flags
+    ka, kb = key(ca, sa, va), key(cb, sb, vb)
+    lt, gt = ka < kb, ka > kb
+    if op == "min":
+        return (a if lt else b), flags
+    return (a if gt else b), flags
+
+
 # ---------------------------------------------------------------------------------------
 # a test case: input state, instruction bytes, expected changes
 # ---------------------------------------------------------------------------------------
@@ -705,6 +835,19 @@ FP_FORMS = [("VADDPS", 0x58, "add", 0), ("VADDPD", 0x58, "add", 1),
             ("VSUBPS", 0x5C, "sub", 0), ("VSUBPD", 0x5C, "sub", 1)]
 
 
+def is_nan(x, f):
+    return classify(x, f)[0] in ("snan", "qnan")
+
+
+def no_nan_pairs(av, bv, f):
+    """Lanes where both sources are NaN are left out of the EVEX cases (SRC1 becomes 1.0):
+    the fork's SSE NaN propagation (QEMU float_2nan_prop_x87 on sse_status, see QEMU's own
+    TODO) returns the QNaN / larger significand, the SDM (Vol1 4.8.3.5, Table 4-7) and the
+    i5-13600K return SRC1. Known deviation of the shared SSE helpers, outside milestone M1."""
+    one = 0x3FF0000000000000 if f is F64 else 0x3F800000
+    return [one if is_nan(x, f) and is_nan(y, f) else x for x, y in zip(av, bv)] + av[len(bv):]
+
+
 def fp_vector(op, w, a, b, kmask, mxcsr, rc=None, sae=False):
     """per element op on the active lanes; returns (results list or None lanes, flags)"""
     f = F64 if w else F32
@@ -729,21 +872,21 @@ def gen_fp_case(name, opc, op, w, vl, dst, s1, s2, kreg=0, kval=None, z=0, mem=N
     c = Case("%s %s" % (name, title))
     if avals is None:
         avals = [rnd_fp(f) for _ in range(n)]
+    if bvals is None:
+        bvals = [rnd_fp(f) for _ in range(1 if (mem is not None and bcst) else n)]
+    if not (mem is None and s2 == s1):
+        avals = no_nan_pairs(avals, bvals * n if (mem is not None and bcst) else bvals, f)
     regs = {}
     regs[s1] = pack(avals, esz) + rnd_bytes(64 - vl)
     if dst not in regs:
         regs[dst] = rnd_bytes(64)
     if mem is None:
-        if bvals is None:
-            bvals = [rnd_fp(f) for _ in range(n)]
         if s2 == s1:
             bvals = avals
         else:
             regs[s2] = pack(bvals, esz) + rnd_bytes(64 - vl)
         rm, nn = s2, 1
     else:
-        if bvals is None:
-            bvals = [rnd_fp(f) for _ in range(1 if bcst else n)]
         data = pack(bvals, esz)
         mem_case(c, mem.disp, data)
         if bcst:
@@ -1032,6 +1175,318 @@ def gen_ud():
 
 
 # ---------------------------------------------------------------------------------------
+# further AVX512F forms (ledger U154-U159): one generic generator per operand layout
+#   rvm  zmm1{k}{z}, zmm2 (vvvv), zmm3/m/{1toN}      rm   zmm1{k}{z}, zmm2/m/{1toN}
+#   vmi  zmm1 (vvvv){k}{z}, zmm2/m/{1toN}, imm8       kvm  k1{k2}, zmm2 (vvvv), zmm3/m/{1toN}
+#   rvmi zmm1{k}{z}, zmm2 (vvvv), zmm3/m/{1toN}, imm8 (VPTERNLOG: DEST is also a source)
+# ---------------------------------------------------------------------------------------
+def u(v, esz):
+    return v & ((1 << (8 * esz)) - 1)
+
+
+def elem_int(op, a, b, esz, imm=0, d=0):
+    bits = 8 * esz
+    sa, sb = signed(a, esz), signed(b, esz)
+    if op == "mins":
+        return u(min(sa, sb), esz)
+    if op == "minu":
+        return min(a, b)
+    if op == "maxs":
+        return u(max(sa, sb), esz)
+    if op == "maxu":
+        return max(a, b)
+    if op == "mulld":
+        return u(a * b, esz)
+    if op == "muludq":
+        return (a & 0xFFFFFFFF) * (b & 0xFFFFFFFF)
+    if op == "muldq":
+        return u(signed(a & 0xFFFFFFFF, 4) * signed(b & 0xFFFFFFFF, 4), 8)
+    if op == "abs":
+        return u(abs(sb), esz)
+    if op == "sllv":
+        return u(a << b, esz) if b < bits else 0
+    if op == "srlv":
+        return a >> b if b < bits else 0
+    if op == "srav":
+        return u(sa >> min(b, bits - 1), esz)
+    if op == "slli":
+        return u(b << imm, esz) if imm < bits else 0
+    if op == "srli":
+        return b >> imm if imm < bits else 0
+    if op == "srai":
+        return u(sb >> min(imm, bits - 1), esz)
+    if op == "roli":
+        c = imm % bits
+        return u((b << c) | (b >> (bits - c)), esz) if c else b
+    if op == "rori":
+        c = imm % bits
+        return u((b >> c) | (b << (bits - c)), esz) if c else b
+    if op == "ternlog":
+        r = 0
+        for i in range(bits):
+            idx = (((d >> i) & 1) << 2) | (((a >> i) & 1) << 1) | ((b >> i) & 1)
+            r |= ((imm >> idx) & 1) << i
+        return r
+    raise ValueError(op)
+
+
+def elem_kcmp(op, a, b, esz):
+    if op == "gt":
+        return signed(a, esz) > signed(b, esz)
+    if op == "testm":
+        return (a & b) != 0
+    if op == "testnm":
+        return (a & b) == 0
+    raise ValueError(op)
+
+
+def rnd_elem(esz, fp=False):
+    if fp:
+        return rnd_fp(F64 if esz == 8 else F32)
+    bits = 8 * esz
+    return RNG.choice([RNG.getrandbits(bits), 0, 1, (1 << bits) - 1, 1 << (bits - 1),
+                       (1 << (bits - 1)) - 1, RNG.getrandbits(6), RNG.getrandbits(bits)])
+
+
+def gen_generic(sp, vl, variant, dst=1, s1=2, s2=3, kreg=0, kval=None, z=0, imm=None,
+                avals=None, bvals=None, mxcsr=MXCSR_DEFAULT, rc=None, sae=False, ll=None):
+    """one case of the form described by sp (dict: name mmm pp opc w layout op kind fp reg)"""
+    w, esz = sp["w"], 8 if sp["w"] else 4
+    n = vl // esz
+    lay, fp = sp["layout"], sp.get("fp", False)
+    c = Case("%s VL%d %s" % (sp["name"], vl * 8, variant))
+    if imm is None and lay in ("vmi", "rvmi"):
+        imm = RNG.getrandbits(8)
+    mem = variant in ("mem", "bcst")
+    bcst = variant == "bcst"
+    if avals is None:
+        avals = [rnd_elem(esz, fp) for _ in range(n)]
+    if bvals is None:
+        bvals = [rnd_elem(esz, fp) for _ in range(1 if bcst else n)]
+    if fp and lay == "rvm" and sp["op"] in ("add", "sub", "mul", "div") and (mem or s1 != s2):
+        avals = no_nan_pairs(avals, bvals * n if bcst else bvals, F64 if w else F32)
+    regs = {}
+    # register numbers per layout: dst / src1 (vvvv) / src2 (r/m)
+    if lay in ("rvm", "kvm", "rvmi"):
+        regs[s1] = pack(avals, esz) + rnd_bytes(64 - vl)
+    if not mem:
+        if s2 in regs:
+            bvals = elems(regs[s2][:vl], esz)
+        else:
+            regs[s2] = pack(bvals, esz) + rnd_bytes(64 - vl)
+    if lay != "kvm" and dst not in regs:
+        regs[dst] = rnd_bytes(64)
+    for r, img in regs.items():
+        c.set_zmm(r, img)
+    if lay in ("rvm", "kvm", "rvmi") and s1 in regs:
+        avals = elems(regs[s1][:vl], esz)
+    if mem:
+        mem_case(c, 0x40, pack(bvals, esz))
+        rm = Mem(RSI, 0x40)
+        nn = esz if bcst else vl
+        if bcst:
+            bvals = bvals * n
+    else:
+        rm, nn = s2, 1
+    if kreg:
+        c.k[kreg] = kval
+    if mxcsr != MXCSR_DEFAULT:
+        c.mxcsr = mxcsr
+    kmask = kval if kreg else None
+    old = regs.get(dst, bytes(64)) if lay != "kvm" else None
+    dvals = elems(old[:vl], esz) if old is not None else None
+    # operation
+    flags, unm = 0, 0
+    if lay == "kvm":
+        r = 0
+        for j in range(n):
+            if (kmask is None or (kmask >> j) & 1) and elem_kcmp(sp["op"], avals[j], bvals[j], esz):
+                r |= 1 << j
+        c.k.setdefault(dst, RNG.getrandbits(64))
+        c.exp.append("k%d=0x%X" % (dst, r))
+    else:
+        if fp:
+            res, flags, unm = model_vec(sp["op"], w, avals if lay == "rvm" else bvals, bvals, mxcsr,
+                                        kmask, rc)
+            if sae:
+                flags, unm = 0, 0
+        else:
+            res = []
+            for j in range(n):
+                if kmask is not None and not (kmask >> j) & 1:
+                    res.append(None)
+                elif lay == "rm":
+                    res.append(elem_int(sp["op"], 0, bvals[j], esz))
+                elif lay == "vmi":
+                    res.append(elem_int(sp["op"], 0, bvals[j], esz, imm))
+                elif lay == "rvmi":
+                    res.append(elem_int(sp["op"], avals[j], bvals[j], esz, imm, dvals[j]))
+                else:
+                    res.append(elem_int(sp["op"], avals[j], bvals[j], esz))
+        if unm:
+            c.fault = "#XM"
+        else:
+            out = pack([(0 if z else dvals[j]) if res[j] is None else res[j] for j in range(n)], esz)
+            c.exp.append("zmm%d=%s" % (dst, hexs(out + bytes(64 - vl))))
+        if (mxcsr | flags) != mxcsr:
+            c.exp.append("mxcsr=0x%X" % (mxcsr | flags))
+    # encoding
+    if ll is None:
+        ll = rc if rc is not None else VL_LL[vl]
+    b = 1 if (bcst or rc is not None or sae) else 0
+    if lay == "vmi":
+        c.code = evex(sp["mmm"], sp["pp"], w, sp["opc"], sp["reg"], rm, vvvv=dst, ll=ll, b=b, z=z,
+                      aaa=kreg, imm=imm, n=nn)
+    elif lay == "rm":
+        c.code = evex(sp["mmm"], sp["pp"], w, sp["opc"], dst, rm, ll=ll, b=b, z=z, aaa=kreg, n=nn)
+    else:
+        c.code = evex(sp["mmm"], sp["pp"], w, sp["opc"], dst, rm, vvvv=s1, ll=ll, b=b, z=z, aaa=kreg,
+                      imm=imm, n=nn)
+    return c
+
+
+EXT_FORMS = [
+    # U154: k destinations
+    dict(name="VPCMPGTD", mmm=1, pp=1, opc=0x66, w=0, layout="kvm", op="gt"),
+    dict(name="VPCMPGTQ", mmm=2, pp=1, opc=0x37, w=1, layout="kvm", op="gt"),
+    dict(name="VPTESTMD", mmm=2, pp=1, opc=0x27, w=0, layout="kvm", op="testm"),
+    dict(name="VPTESTMQ", mmm=2, pp=1, opc=0x27, w=1, layout="kvm", op="testm"),
+    dict(name="VPTESTNMD", mmm=2, pp=2, opc=0x27, w=0, layout="kvm", op="testnm"),
+    dict(name="VPTESTNMQ", mmm=2, pp=2, opc=0x27, w=1, layout="kvm", op="testnm"),
+    # U155: integer
+    dict(name="VPABSD", mmm=2, pp=1, opc=0x1E, w=0, layout="rm", op="abs"),
+    dict(name="VPABSQ", mmm=2, pp=1, opc=0x1F, w=1, layout="rm", op="abs"),
+    dict(name="VPMULDQ", mmm=2, pp=1, opc=0x28, w=1, layout="rvm", op="muldq"),
+    dict(name="VPMINSD", mmm=2, pp=1, opc=0x39, w=0, layout="rvm", op="mins"),
+    dict(name="VPMINSQ", mmm=2, pp=1, opc=0x39, w=1, layout="rvm", op="mins"),
+    dict(name="VPMINUD", mmm=2, pp=1, opc=0x3B, w=0, layout="rvm", op="minu"),
+    dict(name="VPMINUQ", mmm=2, pp=1, opc=0x3B, w=1, layout="rvm", op="minu"),
+    dict(name="VPMAXSD", mmm=2, pp=1, opc=0x3D, w=0, layout="rvm", op="maxs"),
+    dict(name="VPMAXSQ", mmm=2, pp=1, opc=0x3D, w=1, layout="rvm", op="maxs"),
+    dict(name="VPMAXUD", mmm=2, pp=1, opc=0x3F, w=0, layout="rvm", op="maxu"),
+    dict(name="VPMAXUQ", mmm=2, pp=1, opc=0x3F, w=1, layout="rvm", op="maxu"),
+    dict(name="VPMULLD", mmm=2, pp=1, opc=0x40, w=0, layout="rvm", op="mulld"),
+    dict(name="VPMULUDQ", mmm=1, pp=1, opc=0xF4, w=1, layout="rvm", op="muludq"),
+    # U156: floating point
+    dict(name="VSQRTPS", mmm=1, pp=0, opc=0x51, w=0, layout="rm", op="sqrt", fp=True, rcform="er"),
+    dict(name="VSQRTPD", mmm=1, pp=1, opc=0x51, w=1, layout="rm", op="sqrt", fp=True, rcform="er"),
+    dict(name="VMINPS", mmm=1, pp=0, opc=0x5D, w=0, layout="rvm", op="min", fp=True, rcform="sae"),
+    dict(name="VMINPD", mmm=1, pp=1, opc=0x5D, w=1, layout="rvm", op="min", fp=True, rcform="sae"),
+    dict(name="VDIVPS", mmm=1, pp=0, opc=0x5E, w=0, layout="rvm", op="div", fp=True, rcform="er"),
+    dict(name="VDIVPD", mmm=1, pp=1, opc=0x5E, w=1, layout="rvm", op="div", fp=True, rcform="er"),
+    dict(name="VMAXPS", mmm=1, pp=0, opc=0x5F, w=0, layout="rvm", op="max", fp=True, rcform="sae"),
+    dict(name="VMAXPD", mmm=1, pp=1, opc=0x5F, w=1, layout="rvm", op="max", fp=True, rcform="sae"),
+    # U157: variable shifts
+    dict(name="VPSRLVD", mmm=2, pp=1, opc=0x45, w=0, layout="rvm", op="srlv"),
+    dict(name="VPSRLVQ", mmm=2, pp=1, opc=0x45, w=1, layout="rvm", op="srlv"),
+    dict(name="VPSRAVD", mmm=2, pp=1, opc=0x46, w=0, layout="rvm", op="srav"),
+    dict(name="VPSRAVQ", mmm=2, pp=1, opc=0x46, w=1, layout="rvm", op="srav"),
+    dict(name="VPSLLVD", mmm=2, pp=1, opc=0x47, w=0, layout="rvm", op="sllv"),
+    dict(name="VPSLLVQ", mmm=2, pp=1, opc=0x47, w=1, layout="rvm", op="sllv"),
+    # U158: shifts / rotates by imm8 (ModRM.reg = opcode extension)
+    dict(name="VPRORD", mmm=1, pp=1, opc=0x72, reg=0, w=0, layout="vmi", op="rori"),
+    dict(name="VPRORQ", mmm=1, pp=1, opc=0x72, reg=0, w=1, layout="vmi", op="rori"),
+    dict(name="VPROLD", mmm=1, pp=1, opc=0x72, reg=1, w=0, layout="vmi", op="roli"),
+    dict(name="VPROLQ", mmm=1, pp=1, opc=0x72, reg=1, w=1, layout="vmi", op="roli"),
+    dict(name="VPSRLD", mmm=1, pp=1, opc=0x72, reg=2, w=0, layout="vmi", op="srli"),
+    dict(name="VPSRAD", mmm=1, pp=1, opc=0x72, reg=4, w=0, layout="vmi", op="srai"),
+    dict(name="VPSRAQ", mmm=1, pp=1, opc=0x72, reg=4, w=1, layout="vmi", op="srai"),
+    dict(name="VPSLLD", mmm=1, pp=1, opc=0x72, reg=6, w=0, layout="vmi", op="slli"),
+    dict(name="VPSRLQ", mmm=1, pp=1, opc=0x73, reg=2, w=1, layout="vmi", op="srli"),
+    dict(name="VPSLLQ", mmm=1, pp=1, opc=0x73, reg=6, w=1, layout="vmi", op="slli"),
+    # U159
+    dict(name="VPTERNLOGD", mmm=3, pp=1, opc=0x25, w=0, layout="rvmi", op="ternlog"),
+    dict(name="VPTERNLOGQ", mmm=3, pp=1, opc=0x25, w=1, layout="rvmi", op="ternlog"),
+]
+
+
+def gen_ext():
+    comment("--- further AVX512F forms (U154-U159), same generic EVEX machinery")
+    for sp in EXT_FORMS:
+        esz = 8 if sp["w"] else 4
+        comment("%s (EVEX.%s.%s.W%d %02X%s)" % (sp["name"], ["NP", "66", "F3", "F2"][sp["pp"]],
+                ["", "0F", "0F38", "0F3A"][sp["mmm"]], sp["w"], sp["opc"],
+                (" /%d" % sp["reg"]) if "reg" in sp else ""))
+        kd = sp["layout"] == "kvm"
+        for vl in (16, 32, 64):
+            n = vl // esz
+            emit(gen_generic(sp, vl, "nomask", dst=1, s1=2, s2=3))
+            emit(gen_generic(sp, vl, "merge", dst=(5 if kd else 20), s1=22, s2=7, kreg=3,
+                             kval=RNG.getrandbits(64)))
+            if not kd:
+                emit(gen_generic(sp, vl, "zero", dst=4, s1=5, s2=26, kreg=6, kval=RNG.getrandbits(64), z=1))
+            emit(gen_generic(sp, vl, "mem", dst=6, s1=8, s2=0))
+            emit(gen_generic(sp, vl, "bcst", dst=7, s1=9, s2=0, kreg=2, kval=RNG.getrandbits(64)))
+        if sp["layout"] == "vmi":
+            # counts 0, 1, width-1, width, width+1, 0xFF
+            for cnt in (0, 1, 8 * esz - 1, 8 * esz, 8 * esz + 1, 0xFF):
+                emit(gen_generic(sp, 64, "imm=%d" % cnt, dst=10, s2=11, imm=cnt))
+        if sp["op"] in ("sllv", "srlv", "srav"):
+            n = 64 // esz
+            counts = [0, 1, 8 * esz - 1, 8 * esz, 8 * esz + 1, (1 << (8 * esz)) - 1, 1 << (8 * esz - 1), 5]
+            counts = (counts * 2)[:n]
+            emit(gen_generic(sp, 64, "counts 0..>=width", dst=12, s1=13, s2=14, bvals=counts))
+        if sp["layout"] == "rvmi":
+            for imm in (0x00, 0xFF, 0x96, 0xE8, 0xCA, 0xF0, 0xCC, 0xAA):
+                emit(gen_generic(sp, 64, "imm=%02X" % imm, dst=15, s1=16, s2=17, imm=imm))
+            emit(gen_generic(sp, 64, "dst=src2 merge", dst=18, s1=18, s2=19, imm=0x96, kreg=4,
+                             kval=0xA5A5))
+        if not kd:
+            emit(gen_generic(sp, 64, "dst=src1", dst=21, s1=21, s2=23, kreg=5, kval=RNG.getrandbits(64),
+                             imm=0x6A if sp["layout"] in ("vmi", "rvmi") else None))
+        if sp.get("fp"):
+            f = F64 if sp["w"] else F32
+            spl = SPECIAL64 if sp["w"] else SPECIAL32
+            n = 64 // esz
+            a = [spl[(i * 3) % len(spl)] for i in range(n)]
+            b = [spl[(i * 5 + 1) % len(spl)] for i in range(n)]
+            emit(gen_generic(sp, 64, "specials", dst=24, s1=25, s2=27, avals=a, bvals=b))
+            emit(gen_generic(sp, 64, "specials swapped", dst=24, s1=25, s2=27, avals=b, bvals=a))
+            for mx in (0x3F80, 0x5F80, 0x7F80, MXCSR_DEFAULT | DAZ, MXCSR_DEFAULT | FTZ):
+                a = [rnd_fp(f) for _ in range(n)]
+                b = [rnd_fp(f) for _ in range(n)]
+                a[0], b[0] = (0x00400001, 0x00400003) if f is F32 else (0x0008000000000001, 0x0008000000000003)
+                emit(gen_generic(sp, 64, "mxcsr=%X" % mx, dst=28, s1=29, s2=30, avals=a, bvals=b, mxcsr=mx))
+            # {er} / {sae}: flags suppressed, no #XM even with unmasked MXCSR and SNaN operands
+            a = [rnd_fp(f) for _ in range(n)]
+            b = [rnd_fp(f) for _ in range(n)]
+            b[1] = spl[7]
+            if sp["rcform"] == "er":
+                for rc in range(4):
+                    emit(gen_generic(sp, 64, "{er} rc=%d" % rc, dst=31, s1=2, s2=3, avals=a, bvals=b,
+                                     rc=rc, mxcsr=0x1F00))
+            else:
+                for ll in (0, 2, 3):
+                    emit(gen_generic(sp, 64, "{sae} L'L=%d (ignored, VL 512)" % ll, dst=31, s1=2, s2=3,
+                                     avals=a, bvals=b, sae=True, mxcsr=0x1F00, ll=ll))
+            # #XM: unmasked invalid in an active lane
+            a = [rnd_fp(f) for _ in range(n)]
+            b = [rnd_fp(f) for _ in range(n)]
+            b[2] = spl[7]
+            emit(gen_generic(sp, 64, "SNaN active, IM=0 -> #XM", dst=4, s1=5, s2=6, avals=a, bvals=b,
+                             mxcsr=0x1F00))
+            emit(gen_generic(sp, 64, "SNaN masked off, IM=0", dst=4, s1=5, s2=6, avals=a, bvals=b,
+                             mxcsr=0x1F00, kreg=1, kval=~4 & 0xFFFF))
+        else:
+            # EVEX.b on a register form of an integer instruction: #UD
+            c = Case("%s EVEX.b on a register form #UD" % sp["name"])
+            if sp["layout"] == "vmi":
+                c.code = evex(sp["mmm"], sp["pp"], sp["w"], sp["opc"], sp["reg"], 3, vvvv=1, ll=2, b=1, imm=1)
+            elif sp["layout"] == "rm":
+                c.code = evex(sp["mmm"], sp["pp"], sp["w"], sp["opc"], 1, 3, ll=2, b=1)
+            else:
+                c.code = evex(sp["mmm"], sp["pp"], sp["w"], sp["opc"], 1, 3, vvvv=2, ll=2, b=1,
+                              imm=0 if sp["layout"] == "rvmi" else None)
+            c.fault = "#UD"
+            emit(c)
+        if sp["layout"] == "rm":
+            c = Case("%s vvvv != 1111b #UD" % sp["name"])
+            c.code = evex(sp["mmm"], sp["pp"], sp["w"], sp["opc"], 1, 3, vvvv=4, ll=2)
+            c.fault = "#UD"
+            emit(c)
+
+
+# ---------------------------------------------------------------------------------------
 # self test (hand-derived values from the SDM rules)
 # ---------------------------------------------------------------------------------------
 def selftest():
@@ -1081,7 +1536,137 @@ def selftest():
     return ok
 
 
+# ---------------------------------------------------------------------------------------
+# validation of the floating-point model against the host CPU: the legacy SSE forms of the
+# same operations (the i5-13600K has SSE but no AVX-512) run as emu-alltest *hardware* cases
+# (self-generated snippets); --hwcmp compares the host's results ("hw:" lines) with the model
+# ---------------------------------------------------------------------------------------
+HW_OPS = [("addps", "add", 0), ("addpd", "add", 1), ("subps", "sub", 0), ("subpd", "sub", 1),
+          ("mulps", "mul", 0), ("mulpd", "mul", 1), ("divps", "div", 0), ("divpd", "div", 1),
+          ("minps", "min", 0), ("minpd", "min", 1), ("maxps", "max", 0), ("maxpd", "max", 1),
+          ("sqrtps", "sqrt", 0), ("sqrtpd", "sqrt", 1)]
+HW_MXCSR = [0x1F80, 0x3F80, 0x5F80, 0x7F80, 0x1FC0, 0x9F80, 0x9FC0, 0x1F80 & ~0x80]
+
+
+def model_elem(op, a, b, f, mxcsr, rc=None):
+    if op in ("add", "sub", "mul"):
+        return fp_binop(op, a, b, f, mxcsr, rc)
+    if op == "div":
+        return fp_div(a, b, f, mxcsr, rc)
+    if op == "sqrt":
+        return fp_sqrt(b, f, mxcsr, rc)
+    return fp_minmax(op, a, b, f, mxcsr)
+
+
+def model_vec(op, w, av, bv, mxcsr, kmask=None, rc=None):
+    """(results or None per lane, flags, unmasked) of one packed operation"""
+    f = F64 if w else F32
+    res, flags = [], 0
+    for j, (x, y) in enumerate(zip(av, bv)):
+        if kmask is not None and not (kmask >> j) & 1:
+            res.append(None)
+            continue
+        r, fl = model_elem(op, x, y, f, mxcsr, rc)
+        res.append(r)
+        flags |= fl
+    if rc is not None:
+        return res, 0, 0
+    unmasked = flags & ~(mxcsr >> 7) & 0x3F
+    if unmasked & (IE | DE | ZE):
+        flags &= ~(OE | UE | PE)
+    return res, flags, unmasked
+
+
+def hw_values(f):
+    sp = SPECIAL64 if f is F64 else SPECIAL32
+    vals = list(sp)
+    for _ in range(24):
+        vals.append(rnd_fp(f))
+    if f is F32:
+        vals += [0x00400001, 0x80000003, 0x00800001, 0x7F7FFFFE, 0x40000000, 0x3F7FFFFE,
+                 0x00FFFFFF, 0x3F800001, 0xC0490FDB]
+    else:
+        vals += [0x0008000000000001, 0x8000000000000003, 0x0010000000000001, 0x7FEFFFFFFFFFFFFE,
+                 0x4000000000000000, 0x3FEFFFFFFFFFFFFE, 0x001FFFFFFFFFFFFF, 0x3FF0000000000001]
+    return vals
+
+
+def hwcheck_gen(out, expect_path):
+    import json
+    exp = []
+    for name, op, w in HW_OPS:
+        f = F64 if w else F32
+        esz = 8 if w else 4
+        n = 16 // esz
+        vals = hw_values(f)
+        sp = SPECIAL64 if w else SPECIAL32
+        # every ordered pair of the special values, then mixed / random lanes
+        pairs = [(x, y) for x in sp for y in sp]
+        for mx in HW_MXCSR:
+            for t in range(len(pairs) // n + len(vals) // n + 2):
+                if t < len(pairs) // n:
+                    av = [pairs[t * n + j][0] for j in range(n)]
+                    bv = [pairs[t * n + j][1] for j in range(n)]
+                else:
+                    t2 = t - len(pairs) // n
+                    av = [vals[(t2 * n + j) % len(vals)] for j in range(n)]
+                    bv = [vals[(t2 * n * 7 + j * 3 + 5) % len(vals)] for j in range(n)]
+                    if t2 % 3 == 1:
+                        bv = [rnd_fp(f) for _ in range(n)]
+                res, flags, unm = model_vec(op, w, av, bv, mx)
+                xa, xb = pack(av, esz), pack(bv, esz)
+                out.write("%s xmm0, xmm1 | xmm0=%s xmm1=%s mxcsr=0x%X\n" % (name, hexs(xa), hexs(xb), mx))
+                if unm:
+                    exp.append({"fault": 19, "mxcsr": mx | flags, "xmm0": hexs(xa)})
+                else:
+                    exp.append({"fault": -1, "mxcsr": mx | flags, "xmm0": hexs(pack(res, esz))})
+    json.dump(exp, open(expect_path, "w"))
+
+
+def hwcheck_cmp(log_path, expect_path):
+    import json
+    import re
+    exp = json.load(open(expect_path))
+    cur, bad, seen = None, 0, 0
+    inp = {}
+    for line in open(log_path, encoding="utf-8-sig", errors="replace"):
+        line = line.rstrip("\r\n")
+        m = re.match(r"^\[(\d+)\] \S+ (\S+) xmm0, xmm1 \| xmm0=(\S+) xmm1=(\S+) mxcsr=(\S+)", line)
+        if m:
+            cur = int(m.group(1))
+            inp = {"xmm0": m.group(3), "mxcsr": int(m.group(5), 16), "op": m.group(2),
+                   "xmm1": m.group(4)}
+            continue
+        m = re.match(r"^\s+hw:\s*(.*)$", line)
+        if m and cur is not None:
+            fields = m.group(1)
+            fault = -1
+            fm = re.match(r"fault #(\d+)\s*(.*)$", fields)
+            if fm:
+                fault, fields = int(fm.group(1)), fm.group(2)
+            kv = dict(x.split("=", 1) for x in fields.split() if "=" in x)
+            got_x = kv.get("xmm0", inp["xmm0"])
+            got_m = int(kv["mxcsr"], 16) if "mxcsr" in kv else inp["mxcsr"]
+            e = exp[cur]
+            seen += 1
+            if got_x.upper() != e["xmm0"].upper() or got_m != e["mxcsr"] or fault != e["fault"]:
+                bad += 1
+                if bad <= 20:
+                    print("[%d] %s a=%s b=%s mxcsr=%X: hw xmm0=%s mxcsr=%X fault=%d | model xmm0=%s mxcsr=%X fault=%d"
+                          % (cur, inp["op"], inp["xmm0"], inp["xmm1"], inp["mxcsr"], got_x, got_m, fault,
+                             e["xmm0"], e["mxcsr"], e["fault"]))
+            cur = None
+    print("hwcheck: %d cases compared, %d differ from the model" % (seen, bad))
+    return bad == 0
+
+
 def main():
+    if "--hwgen" in sys.argv:
+        hwcheck_gen(sys.stdout, sys.argv[sys.argv.index("--hwgen") + 1])
+        return
+    if "--hwcmp" in sys.argv:
+        i = sys.argv.index("--hwcmp")
+        sys.exit(0 if hwcheck_cmp(sys.argv[i + 1], sys.argv[i + 2]) else 1)
     if "--selftest" in sys.argv:
         ok = selftest()
         print("selftest %s" % ("passed" if ok else "FAILED"))
@@ -1095,6 +1680,7 @@ def main():
         gen_disp8()
         gen_fault_suppression()
         gen_ud()
+        gen_ext()
         out = sys.stdout
         out.write("# EVEX milestone M1 (ledger U141-U153): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m1.py --cases (regenerate, do not edit). The i5-13600K has no\n")

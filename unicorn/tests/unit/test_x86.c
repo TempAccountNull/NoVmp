@@ -10148,6 +10148,45 @@ static void test_x86_evex_masked_memory(void)
     (void)i;
 }
 
+static void ev_code_cb(uc_engine *uc, uint64_t addr, uint32_t size, void *user)
+{
+    *(uint32_t *)user = size;
+}
+
+/* RIP-relative EVEX memory operand with an imm8 after it; UC_HOOK_CODE size of EVEX */
+static void test_x86_evex_riprel(void)
+{
+    /* VPCMPD k1, zmm2, [rip + disp32], 1 (LT, signed) */
+    char code[] = "\x62\xf3\x6d\x48\x1f\x0d\x00\x00\x00\x00\x01";
+    int32_t m[16], z[16], disp;
+    uint64_t k = 0, want = 0;
+    uint32_t size = 0;
+    EvCtx c;
+    uc_hook h;
+    int i;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 16; i++) {
+        z[i] = (i & 1) ? -i : i * 3;
+        m[i] = (i % 3) ? i : -100;
+        if (z[i] < m[i]) {
+            want |= 1ULL << i;
+        }
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, z));
+    OK(uc_mem_write(c.uc, EV_DATA, m, sizeof(m)));
+    disp = (int32_t)(EV_DATA - (c.pc + 11));
+    memcpy(code + 6, &disp, 4);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_CODE, ev_code_cb, &size, c.pc, c.pc));
+    TEST_CHECK(ev_run(&c, code, 11) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(k == want);
+    TEST_MSG("k1 = %llx, want %llx", (unsigned long long)k, (unsigned long long)want);
+    TEST_CHECK(size == 11);
+    TEST_MSG("UC_HOOK_CODE size %u", size);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -10315,4 +10354,5 @@ TEST_LIST = {
     {"test_x86_evex_32bit_fields", test_x86_evex_32bit_fields},
     {"test_x86_evex_state", test_x86_evex_state},
     {"test_x86_evex_masked_memory", test_x86_evex_masked_memory},
+    {"test_x86_evex_riprel", test_x86_evex_riprel},
     {NULL, NULL}};
