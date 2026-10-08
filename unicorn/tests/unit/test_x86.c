@@ -10765,6 +10765,134 @@ static void test_x86_f16c_vcvtps2ph_ftz(void)
     }
 }
 /* ---- end U440-U442 (hc_) ---- */
+/* ---- qk_ block begin (NoVmp U98/U99/U430-U439: hardware quirk bits) ---- */
+/*
+ * NoVmp U99 (+U98, U430-U439): every UC_CTL_X86_HW_QUIRKS bit, off and on. With
+ * quirks 0 the result is the Intel SDM's; with the bit set it is the i5-13600K's.
+ * Each qk_ case runs one snippet on a fresh engine with only that bit (or none).
+ * Data at QK_DATA: 2.0, -1.0, 1.0, -2.0 (doubles); RAX = QK_DATA.
+ */
+#define QK_DATA 0x200000
+
+static uc_engine *qk_run(const char *code, size_t len, uint32_t quirks,
+                         uc_err want)
+{
+    static const double data[4] = {2.0, -1.0, 1.0, -2.0};
+    uint64_t rax = QK_DATA;
+    uint32_t rb = 0xFFFFFFFFu;
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_x86_hw_quirks(uc, quirks));
+    OK(uc_ctl_get_x86_hw_quirks(uc, &rb));
+    TEST_CHECK(rb == quirks);
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    OK(uc_mem_map(uc, QK_DATA, 0x1000, UC_PROT_READ | UC_PROT_WRITE));
+    OK(uc_mem_write(uc, QK_DATA, data, sizeof(data)));
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
+    uc_assert_err(want, uc_emu_start(uc, code_start, code_start + len, 0, 0));
+    return uc;
+}
+
+static uint16_t qk_fsw(uc_engine *uc)
+{
+    uint16_t fsw = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_FPSW, &fsw));
+    return fsw;
+}
+
+/* bit 0: fninit; fld [rax] (2.0); fld [rax+8] (-1.0); fxam (C1 = 1); fcomi st0, st1 */
+static void qk_fcomi(uint32_t q, int want_c1)
+{
+    static const char code[] = "\xdb\xe3\xdd\x00\xdd\x40\x08\xd9\xe5\xdb\xf1";
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uint16_t fsw = qk_fsw(uc);
+    TEST_CHECK(((fsw >> 9) & 1) == want_c1);
+    TEST_MSG("quirks %x: fsw %04x, C1 want %d", q, fsw, want_c1);
+    OK(uc_close(uc));
+}
+
+/* bit 1: fninit; fld1 (TOP 7); cvtpi2ps xmm0, qword [rax] (SDM: x87 -> MMX, TOP 0) */
+static void qk_cvtpi2ps(uint32_t q, int want_top)
+{
+    static const char code[] = "\xdb\xe3\xd9\xe8\x0f\x2a\x00";
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uint16_t fsw = qk_fsw(uc);
+    TEST_CHECK(((fsw >> 11) & 7) == want_top);
+    TEST_MSG("quirks %x: fsw %04x, TOP want %d", q, fsw, want_top);
+    OK(uc_close(uc));
+}
+
+/* bit 2: fninit; fld [rax+16] (y = 1.0); fld [rax+24] (x = -2.0); fyl2xp1 */
+static void qk_fyl2xp1(uint32_t q, uint16_t want_sexp, uint64_t want_mant,
+                       uint16_t want_flag)
+{
+    static const char code[] = "\xdb\xe3\xdd\x40\x10\xdd\x40\x18\xd9\xf9";
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uint8_t st0[10];
+    uint64_t mant;
+    uint16_t sexp, fsw = qk_fsw(uc);
+    OK(uc_reg_read(uc, UC_X86_REG_ST0, st0));
+    memcpy(&mant, st0, 8);
+    memcpy(&sexp, st0 + 8, 2);
+    TEST_CHECK(sexp == want_sexp && mant == want_mant);
+    TEST_CHECK((fsw & want_flag) != 0);
+    TEST_MSG("quirks %x: st0 %04x:%016llx fsw %04x", q, sexp,
+             (unsigned long long)mant, fsw);
+    OK(uc_close(uc));
+}
+
+/* bit 3: ptwrite dword [rax] (CPUID.14.0:EBX[4] = 0) */
+static void qk_ptwrite(uint32_t q, uc_err want)
+{
+    static const char code[] = "\xf3\x0f\xae\x20";
+    OK(uc_close(qk_run(code, sizeof(code) - 1, q, want)));
+}
+
+/* bit 4: dppd xmm0, xmm1, 0x33 with two NaN products (xmm0 = QNaN a0, QNaN a1) */
+static void qk_dppd(uint32_t q, uint64_t want1)
+{
+    static const char code[] = "\x66\x0f\x3a\x41\xc1\x33";
+    uint64_t x0[2] = {0x7FF8000000000A01ULL, 0x7FF8000000000A02ULL};
+    uint64_t x1[2] = {0x3FF0000000000000ULL, 0x3FF0000000000000ULL};
+    uint64_t r[2];
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_x86_hw_quirks(uc, q));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0, x0));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM1, x1));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0, r));
+    TEST_CHECK(r[0] == x0[0] && r[1] == want1);
+    TEST_MSG("quirks %x: xmm0 %016llx %016llx", q, (unsigned long long)r[0],
+             (unsigned long long)r[1]);
+    OK(uc_close(uc));
+}
+
+static void test_x86_hw_quirk_bits(void)
+{
+    /* bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 = 1 */
+    qk_fcomi(0, 0);
+    qk_fcomi(UC_X86_QUIRK_FCOMI_KEEPS_C1, 1);
+    /* bit 1 CVTPI2PS_M64_KEEPS_X87: SDM TOP = 0, hardware keeps TOP = 7 */
+    qk_cvtpi2ps(0, 0);
+    qk_cvtpi2ps(UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87, 7);
+    /* bit 2 FYL2XP1_BELOW_M1: SDM #IA (masked: indefinite, IE); hardware ST0 = x, PE */
+    qk_fyl2xp1(0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
+    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 0xC000, 0x8000000000000000ULL,
+               0x0020);
+    /* bit 3 PTWRITE_NOP: SDM #UD, hardware reads the operand and goes on */
+    qk_ptwrite(0, UC_ERR_INSN_INVALID);
+    qk_ptwrite(UC_X86_QUIRK_PTWRITE_NOP, UC_ERR_OK);
+    /* bit 4 DPPD_NAN_ORDER: SDM p0 + p1 in both elements, hardware p1 + p0 in element 1 */
+    qk_dppd(0, 0x7FF8000000000A01ULL);
+    qk_dppd(UC_X86_QUIRK_DPPD_NAN_ORDER, 0x7FF8000000000A02ULL);
+}
+/* ---- qk_ block end ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -10940,4 +11068,5 @@ TEST_LIST = {
     {"test_x86_evex_scatter_order", test_x86_evex_scatter_order},
     {"test_x86_evex_vsib_modes", test_x86_evex_vsib_modes},
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
+    {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
     {NULL, NULL}};

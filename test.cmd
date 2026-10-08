@@ -61,6 +61,9 @@ rem (ledger U82-U105), quirks 0.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_keylocker.txt" --expect-only --quirks 0
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_sha_sm.txt" --expect-only --quirks 0
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_vnni_ifma.txt" --expect-only --quirks 0
+rem ledger U98: DPPS/DPPD with two or more NaN products vs the SDM pseudocode (gen_cases_nan.py --dp-sdm),
+rem quirks 0: the first NaN product in the order p0..p3 lands in every selected element.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_dp_nan_sdm.txt" --expect-only --quirks 0
 rem The same rules on the host CPU: legacy SSE, VEX AVX/FMA and x87 hardware cases (self-generated
 rem snippets, gen_cases_nan.py --hw) must all match the i5-13600K with its quirk set.
 call :hw_zero cases_nan
@@ -73,6 +76,9 @@ rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
 rem unmasked exceptions; must be 0 differing against the i5-13600K.
 call :hw_zero cases_f16c
+rem ledger U98: DPPD with two NaN products on the host CPU (gen_cases_nan.py --dp-hw) must match with
+rem the i5-13600K quirk set (UC_X86_QUIRK_DPPD_NAN_ORDER).
+call :hw_zero cases_dp_nan
 
 echo.
 if !FAILED! NEQ 0 (
