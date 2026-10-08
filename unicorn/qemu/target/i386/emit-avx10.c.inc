@@ -151,3 +151,25 @@ static void gen_VMINMAXSx(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     gen_avx10_minmax(s, decode, s->vex_w ? AVX10_FMT_FP64 : AVX10_FMT_FP32, true);
 }
 
+/* ---- VCOMX / VUCOMX (spec ch.8; U375) ---- */
+static void gen_avx10_vcomx(DisasContext *s, X86DecodedInsn *decode, int fmt, uint32_t sig)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_avx10_vcomx(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, AVX10_DESC(fmt, 0, 1, 0) | sig));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+#define AVX10_VCOMX_GEN(name, fmt, sig) \
+static void gen_##name(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{ \
+    gen_avx10_vcomx(s, decode, fmt, sig); \
+}
+AVX10_VCOMX_GEN(VCOMXSS, AVX10_FMT_FP32, AVX10_VCOMX_SIGNALING)
+AVX10_VCOMX_GEN(VCOMXSD, AVX10_FMT_FP64, AVX10_VCOMX_SIGNALING)
+AVX10_VCOMX_GEN(VCOMXSH, AVX10_FMT_FP16, AVX10_VCOMX_SIGNALING)
+AVX10_VCOMX_GEN(VUCOMXSS, AVX10_FMT_FP32, 0)
+AVX10_VCOMX_GEN(VUCOMXSD, AVX10_FMT_FP64, 0)
+AVX10_VCOMX_GEN(VUCOMXSH, AVX10_FMT_FP16, 0)
+#undef AVX10_VCOMX_GEN

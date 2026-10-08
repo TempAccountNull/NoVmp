@@ -70,9 +70,15 @@ static void decode_A10_MAP5_2F(DisasContext *s, CPUX86State *env, X86OpEntry *en
                                uint8_t *b)
 {
     static const X86OpEntry opcodes_A10_MAP5_2F[4] = {
-        {}, A10_VCOMISBF16, {}, {},
+        {}, A10_VCOMISBF16,
+        /* U375: F3 W0 VCOMXSH (NP: VCOMISH, AVX512-FP16) */
+        X86_OP_ENTRY3(VCOMXSH, None,None, V,x, W,w, A10_CX(16) ev_w(W0)),
+        {},
     };
     *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2F);
+    if (s->evex_ll && (s->prefix & PREFIX_REPZ)) {
+        memset(entry, 0, sizeof(*entry));               /* VCOMXSH: EVEX.LL != 00b #UD */
+    }
 }
 
 /* ---- U374: MINMAX (spec ch.11) ---- */
@@ -104,8 +110,55 @@ static void decode_A10_0F3A_53(DisasContext *s, CPUX86State *env, X86OpEntry *en
     }
 }
 
+/* ---- U375: VCOMX / VUCOMX (spec ch.8): LLIG but "#UD if EVEX.LL != 00b" (8.1.2) ---- */
+
+/* 0F 2E/2F: F3 W0 VUCOMXSS/VCOMXSS, F2 W1 VUCOMXSD/VCOMXSD (NP/66: VUCOMISS/D, VCOMISS/D) */
+static void decode_A10_0F_2E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_A10_0F_2E[4] = {
+        {}, {},
+        X86_OP_ENTRY3(VUCOMXSS, None,None, V,x, W,d, A10_CX(32) ev_w(W0)),
+        X86_OP_ENTRY3(VUCOMXSD, None,None, V,x, W,q, A10_CX(64) ev_w(W1)),
+    };
+    *entry = *decode_by_prefix(s, opcodes_A10_0F_2E);
+    if (s->evex_ll) {
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
+static void decode_A10_0F_2F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_A10_0F_2F[4] = {
+        {}, {},
+        X86_OP_ENTRY3(VCOMXSS, None,None, V,x, W,d, A10_CX(32) ev_w(W0)),
+        X86_OP_ENTRY3(VCOMXSD, None,None, V,x, W,q, A10_CX(64) ev_w(W1)),
+    };
+    *entry = *decode_by_prefix(s, opcodes_A10_0F_2F);
+    if (s->evex_ll) {
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
+/* MAP5 2E: F3 W0 VUCOMXSH (NP: VUCOMISH, AVX512-FP16) */
+static void decode_A10_MAP5_2E(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                               uint8_t *b)
+{
+    static const X86OpEntry opcodes_A10_MAP5_2E[4] = {
+        {}, {},
+        X86_OP_ENTRY3(VUCOMXSH, None,None, V,x, W,w, A10_CX(16) ev_w(W0)),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2E);
+    if (s->evex_ll && entry->gen) {
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+
 /* ---- tables ---- */
 static const X86OpEntry opcodes_avx10_0F[256] = {
+    /* U375 */
+    [0x2e] = X86_OP_GROUP0(A10_0F_2E),
+    [0x2f] = X86_OP_GROUP0(A10_0F_2F),
 };
 
 static const X86OpEntry opcodes_avx10_0F3A[256] = {
@@ -121,7 +174,7 @@ static const X86OpEntry opcodes_avx10_0F3A[256] = {
 };
 
 static const X86OpEntry opcodes_avx10_map5[256] = {
-    /* U373 */
+    /* U373 (0x2f: VCOMISBF16; VCOMXSH from U375) */
     [0x2f] = X86_OP_GROUP0(A10_MAP5_2F),
     [0x51] = X86_OP_GROUP0(A10_MAP5_51),
     [0x58] = X86_OP_GROUP0(A10_MAP5_58),
@@ -130,6 +183,8 @@ static const X86OpEntry opcodes_avx10_map5[256] = {
     [0x5d] = X86_OP_GROUP0(A10_MAP5_5D),
     [0x5e] = X86_OP_GROUP0(A10_MAP5_5E),
     [0x5f] = X86_OP_GROUP0(A10_MAP5_5F),
+    /* U375 */
+    [0x2e] = X86_OP_GROUP0(A10_MAP5_2E),
 };
 
 static const X86OpEntry opcodes_avx10_map6[256] = {

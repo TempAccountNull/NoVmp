@@ -695,4 +695,46 @@ void helper_avx10_minmax(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2, ZM
     }
 }
 
+/* ---- VCOMX / VUCOMX SS, SD, SH (chapter 8; U375) ---- */
+/*
+ * OrderedCompare of the low elements; OF,SF,ZF,PF,CF := UNORDERED 11011, GREATER 00000,
+ * LESS 10001, EQUAL 11100; AF := 0. IE: VCOMX* on any NaN, VUCOMX* on an SNaN; DE: a
+ * denormal operand and no NaN. SS/SD honour MXCSR.DAZ (no DE then), SH never does.
+ */
+void helper_avx10_vcomx(CPUX86State *env, ZMMReg *s1, ZMMReg *s2, uint32_t desc)
+{
+    int fmt = AVX10_DESC_OP(desc);
+    const Avx10Fmt *f = &avx10_fmt[fmt];
+    bool signaling = desc & AVX10_VCOMX_SIGNALING;
+    uint64_t a = avx10_get(s1, f->bytes, 0), b = avx10_get(s2, f->bytes, 0);
+    uint32_t fl;
+
+    if (fmt != AVX10_FMT_FP16 && (env->mxcsr & 0x40)) {
+        if (fmt_denormal(f, a)) {
+            a &= fmt_sign(f);
+        }
+        if (fmt_denormal(f, b)) {
+            b &= fmt_sign(f);
+        }
+    }
+    if (fmt_nan(f, a) || fmt_nan(f, b)) {
+        if (signaling || fmt_snan(f, a) || fmt_snan(f, b)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        fl = CC_O | CC_S | CC_P | CC_C;
+    } else {
+        if (fmt_denormal(f, a) || fmt_denormal(f, b)) {
+            float_raise(float_flag_input_denormal_used, &env->sse_status);
+        }
+        if (fmt_lt(f, b, a)) {
+            fl = 0;
+        } else if (fmt_lt(f, a, b)) {
+            fl = CC_O | CC_C;
+        } else {
+            fl = CC_O | CC_S | CC_Z;
+        }
+    }
+    env->cc_src = fl;
+}
+
 #endif /* __Use_Original_Qemu (U372-U399) */

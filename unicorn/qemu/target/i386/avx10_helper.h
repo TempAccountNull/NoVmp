@@ -47,5 +47,8 @@ enum {
 };
 #define AVX10_MINMAX_SCALAR   (1u << 24)  /* VMINMAXSH/SS/SD: bits 127:esz from SRC1 */
 
+/* helper_avx10_vcomx flags (desc bits 31:24; U375) */
+#define AVX10_VCOMX_SIGNALING (1u << 24)  /* VCOMX* (IE on any NaN), not VUCOMX* */
+
 #endif /* __Use_Original_Qemu (U372-U399) */
 #endif /* NOVMP_AVX10_HELPER_H */
