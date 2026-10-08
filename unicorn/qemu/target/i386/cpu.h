@@ -2781,6 +2781,11 @@ enum {
 #define EVEX_PERM_PMOVSSAT  35
 #define EVEX_PERM_PMOVUSAT  36
 #endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U214) */
+/* NoVmp (ledger U214): VMOVSLDUP / VMOVDDUP (even elements), VMOVSHDUP (odd elements) */
+#define EVEX_PERM_DUP_EVEN  40
+#define EVEX_PERM_DUP_ODD   41
+#endif /* __Use_Original_Qemu (U214) */
 
 int uc_check_cpu_x86_load_seg(CPUX86State *env, int seg_reg, int sel);
 X86CPU *cpu_x86_init(struct uc_struct *uc);

@@ -1580,6 +1580,138 @@ static void gen_EVEX_PMOVN(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     tcg_temp_free_ptr(tcg_ctx, pc);
 }
 #endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U214) */
+
+/*
+ * NoVmp (ledger U214): VMOVSLDUP / VMOVDDUP (F3 / F2 0F 12) and VMOVSHDUP (F3 0F 16)
+ * (SDM Vol2B MOVSLDUP/MOVDDUP/MOVSHDUP: element 2i and 2i+1 both from SRC[2i] / SRC[2i+1]).
+ */
+static void gen_EVEX_DUP_EVEN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_DUP_EVEN, 0);
+}
+
+static void gen_EVEX_DUP_ODD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_DUP_ODD, 0);
+}
+
+/*
+ * NoVmp (ledger U214): 128-bit qword moves, no masking (E9NF / E7NM.128), DEST[MAXVL-1:128]
+ * := 0 by gen_evex_insn. Both qwords are read before the destination is written.
+ *   VMOVLPS/VMOVLPD xmm2, xmm1, m64: DEST = m64 : SRC1[127:64]   (q0 from op2, q1 from op1)
+ *   VMOVHPS/VMOVHPD xmm2, xmm1, m64: DEST = SRC1[63:0] : m64     (q0 from op1, q1 from op2)
+ *   VMOVHLPS xmm1, xmm2, xmm3:       DEST = SRC2[127:64] : SRC1[127:64]
+ *   VMOVLHPS xmm1, xmm2, xmm3:       DEST = SRC1[63:0] : SRC2[63:0]
+ */
+static void gen_evex_q2(DisasContext *s, X86DecodedInsn *decode, int op_lo, int q_lo,
+                        int op_hi, int q_hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 lo = tcg_temp_new_i64(tcg_ctx), hi = tcg_temp_new_i64(tcg_ctx);
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_ld_i64(tcg_ctx, lo, cpu_env,
+                   vector_reg_offset(&decode->op[op_lo]) + offsetof(ZMMReg, ZMM_Q(q_lo)));
+    tcg_gen_ld_i64(tcg_ctx, hi, cpu_env,
+                   vector_reg_offset(&decode->op[op_hi]) + offsetof(ZMMReg, ZMM_Q(q_hi)));
+    tcg_gen_st_i64(tcg_ctx, lo, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_st_i64(tcg_ctx, hi, cpu_env, d + offsetof(ZMMReg, ZMM_Q(1)));
+    tcg_temp_free_i64(tcg_ctx, lo);
+    tcg_temp_free_i64(tcg_ctx, hi);
+}
+
+static void gen_EVEX_MOVLP_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 2, 0, 1, 1);
+}
+
+static void gen_EVEX_MOVHP_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 1, 0, 2, 0);
+}
+
+static void gen_EVEX_MOVHLPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 2, 1, 1, 1);
+}
+
+static void gen_EVEX_MOVLHPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 1, 0, 2, 0);
+}
+
+/*
+ * VMOVLPS/VMOVLPD m64, xmm1 (0F 13): SRC[63:0]; VMOVHPS/VMOVHPD m64, xmm1 (0F 17):
+ * SRC[127:64]; VMOVQ xmm1/m64, xmm2 (66 0F D6 W1) and VMOVQ xmm1, xmm2/m64 (F3 0F 7E W1):
+ * SRC[63:0] (a register destination is zeroed above bit 63: a destination narrower than VL
+ * for D6, op[0] = 128 bits with the upper qword zeroed here for 7E).
+ */
+static void gen_evex_movq_from(DisasContext *s, X86DecodedInsn *decode, int q, bool zero_hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_ld_i64(tcg_ctx, t, cpu_env,
+                   vector_reg_offset(&decode->op[2]) + offsetof(ZMMReg, ZMM_Q(q)));
+    tcg_gen_st_i64(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    if (zero_hi) {
+        tcg_gen_st_i64(tcg_ctx, tcg_constant_i64(tcg_ctx, 0), cpu_env,
+                       d + offsetof(ZMMReg, ZMM_Q(1)));
+    }
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+static void gen_EVEX_MOVLP_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 0, false);
+}
+
+static void gen_EVEX_MOVHP_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 1, false);
+}
+
+static void gen_EVEX_MOVQ_XX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 0, decode->op[0].ot >= MO_128);
+}
+
+/*
+ * VMOVD xmm1, r32/m32 / VMOVQ xmm1, r64/m64 (66 0F 6E): DEST[31:0 / 63:0] := SRC,
+ * DEST[MAXVL-1:32 / 64] := 0. The GPR / memory value is in T1 (gen_evex_insn).
+ */
+static void gen_EVEX_MOVD_TO(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int d = vector_reg_offset(&decode->op[0]);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    if (decode->op[2].ot == MO_64) {
+        tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    } else {
+        tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+        tcg_gen_ext32u_i64(tcg_ctx, t, t);
+    }
+    tcg_gen_st_i64(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_st_i64(tcg_ctx, tcg_constant_i64(tcg_ctx, 0), cpu_env, d + offsetof(ZMMReg, ZMM_Q(1)));
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+/* VMOVD r32/m32, xmm1 / VMOVQ r64/m64, xmm1 (66 0F 7E): SRC[31:0 / 63:0] into T0 */
+static void gen_EVEX_MOVD_FROM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int src = vector_reg_offset(&decode->op[2]);
+
+    if (decode->op[0].ot == MO_64) {
+        tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, src + offsetof(ZMMReg, ZMM_Q(0)));
+    } else {
+        tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env, src + offsetof(ZMMReg, ZMM_L(0)));
+    }
+}
+#endif /* __Use_Original_Qemu (U214) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

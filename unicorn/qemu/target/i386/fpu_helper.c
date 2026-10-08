@@ -7130,6 +7130,14 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
             break;
         }
 #endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U214) */
+        case EVEX_PERM_DUP_EVEN:    /* VMOVSLDUP, VMOVDDUP: SRC[j AND NOT 1] */
+            v = evex_get_elem(b, esz, j & ~1);
+            break;
+        case EVEX_PERM_DUP_ODD:     /* VMOVSHDUP: SRC[j OR 1] */
+            v = evex_get_elem(b, esz, j | 1);
+            break;
+#endif /* __Use_Original_Qemu (U214) */
         default:
             g_assert_not_reached();
         }
