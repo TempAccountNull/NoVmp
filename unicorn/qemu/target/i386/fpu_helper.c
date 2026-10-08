@@ -8221,3 +8221,133 @@ void helper_evex_fp1s(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s, uint32_
     evex_set_elem(d, esz, 0, r);
 }
 #endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+
+/*
+ * NoVmp (ledger U239): VSCALEFPS/PD/SS/SD (SDM Vol2C: DEST := SRC1 * 2^floor(SRC2), Tables
+ * 5-37/5-38): DAZ applies to both sources; DE only for a denormal SRC1 (not reported for
+ * SRC2, and not with a NaN SRC2); the result is rounded once (MXCSR.RC / {er}) with the
+ * usual overflow / underflow / FTZ responses (softfloat scalbn). NaN and infinity cases
+ * from Table 5-37 (incl. QNaN SRC1 with SRC2 = +inf -> +inf, -inf -> +0).
+ * desc: bits 7:4 element size, 15:8 element count, bit 24 scalar (bits 127:elem from SRC1).
+ */
+static uint64_t evex_scalef_elem(CPUX86State *env, const EvFmt *f, uint64_t a, uint64_t b)
+{
+    bool daz = env->mxcsr & 0x40;
+    uint64_t sa = a & f->sign;
+    int64_t n;
+
+    if (daz && evf_isdenorm(f, a)) {
+        a = sa;
+    }
+    if (daz && evf_isdenorm(f, b)) {
+        b &= f->sign;
+    }
+    if (evf_isnan(f, a) || evf_isnan(f, b)) {
+        if (evf_issnan(f, a) || evf_issnan(f, b)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        if (evf_isnan(f, a)) {
+            if (!evf_issnan(f, a) && b == f->emask) {
+                return f->emask;                                    /* QNaN, +inf: +inf */
+            }
+            if (!evf_issnan(f, a) && b == (f->sign | f->emask)) {
+                return 0;                                           /* QNaN, -inf: +0 */
+            }
+            return a | f->quiet;
+        }
+        return b | f->quiet;
+    }
+    if (evf_isdenorm(f, a)) {
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+    }
+    if (evf_isinf(f, b)) {
+        bool binf_neg = b & f->sign;
+
+        if (evf_isinf(f, a)) {
+            if (binf_neg) {
+                float_raise(float_flag_invalid, &env->sse_status);
+                return f->indef;
+            }
+            return a;
+        }
+        if (!(a & ~f->sign)) {
+            if (!binf_neg) {
+                float_raise(float_flag_invalid, &env->sse_status);
+                return f->indef;
+            }
+            return a;
+        }
+        return binf_neg ? sa : (sa | f->emask);
+    }
+    if (evf_isinf(f, a) || !(a & ~f->sign)) {
+        return a;
+    }
+    /* n = floor(b), clamped (|n| > 2^16 over- / underflows every finite source anyway) */
+    {
+        uint64_t ex = (b & f->emask) >> f->fbits, mant;
+        int e2 = (int)ex - f->bias - f->fbits;
+        bool neg = b & f->sign;
+
+        if (!(b & ~f->sign)) {
+            n = 0;
+        } else if (!ex || e2 < -f->fbits) {                         /* |b| < 1 */
+            n = neg ? -1 : 0;
+        } else if (e2 >= 0) {
+            n = (ex - f->bias) > 20 ? 0x20000 : ((int64_t)((b & f->fmask) | (f->fmask + 1)) << e2);
+            n = neg ? -n : n;
+        } else {
+            mant = (b & f->fmask) | (f->fmask + 1);
+            n = (int64_t)(mant >> -e2);
+            if (neg) {
+                n = -n - ((mant & ((1ull << -e2) - 1)) ? 1 : 0);
+            }
+        }
+        n = n > 0x20000 ? 0x20000 : n < -0x20000 ? -0x20000 : n;
+    }
+    {
+        float_status *fs = &env->sse_status;
+        int flags = get_float_exception_flags(fs);
+        uint64_t r;
+
+        /* inputs already DAZ-processed; a denormal SRC1 must not be flushed again */
+        set_float_exception_flags(0, fs);
+        if (f->bits == 64) {
+            r = float64_scalbn(a, (int)n, fs);
+        } else {
+            r = float32_scalbn(a, (int)n, fs);
+        }
+        set_float_exception_flags(flags | (get_float_exception_flags(fs) &
+                                           ~(float_flag_input_denormal |
+                                             float_flag_input_denormal_used)), fs);
+        return r;
+    }
+}
+
+/* v: the SRC1 register itself (scalar form: bits 127:elem; a may be a neutral copy) */
+void helper_evex_scalef(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *a, ZMMReg *b,
+                        uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, i;
+    const EvFmt *f = evfmt(esz);
+    ZMMReg r;
+
+    if (desc & (1u << 24)) {
+        r.ZMM_Q(0) = v->ZMM_Q(0);
+        r.ZMM_Q(1) = v->ZMM_Q(1);
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_scalef_elem(env, f, evex_get_elem(a, esz, i),
+                                                   evex_get_elem(b, esz, i)));
+    }
+    if (desc & (1u << 24)) {
+        d->ZMM_Q(0) = r.ZMM_Q(0);
+        d->ZMM_Q(1) = r.ZMM_Q(1);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U239) */

@@ -2415,6 +2415,22 @@ static void gen_EVEX_VGETMANT(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_fp1(s, decode, 3, 1, decode->immediate);
 }
 #endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+
+/* NoVmp (ledger U239): VSCALEFPS/PD/SS/SD */
+static void gen_EVEX_VSCALEF(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool scalar = decode->e.evex_vl & X86_EVEX_LIG;
+    TCGv_ptr v = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+    gen_helper_evex_scalef(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                     (evex_nelem(s, decode) << 8) |
+                                                     (scalar ? 1u << 24 : 0)));
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+#endif /* __Use_Original_Qemu (U239) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

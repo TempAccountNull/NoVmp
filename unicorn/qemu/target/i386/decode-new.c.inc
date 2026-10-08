@@ -3214,6 +3214,11 @@ EV_SCALAR_W(0F3A_27,
             X86_OP_ENTRY4(EVEX_VGETMANT, V,x, H,x, W,ss, EV_FPS(W0, SAE, ev_fp)),
             X86_OP_ENTRY4(EVEX_VGETMANT, V,x, H,x, W,sd, EV_FPS(W1, SAE, ev_fp)))
 #endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+EV_SCALAR_W(0F38_2D,
+            X86_OP_ENTRY3(EVEX_VSCALEF, V,x, H,x, W,ss, EV_FPS(W0, ER, ev_fp)),
+            X86_OP_ENTRY3(EVEX_VSCALEF, V,x, H,x, W,sd, EV_FPS(W1, ER, ev_fp)))
+#endif /* __Use_Original_Qemu (U239) */
 #if __Use_Original_Qemu != 1 /* ours (U234) */
 /* NoVmp (ledger U234): shifts by xmm3/m128 (Mem128 tuple, E4NF.nb: no fault suppression) */
 #define EV_SHX(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(MEM128) ev_mask(MZ) ev_w(w) ev_es(W) \
@@ -3723,6 +3728,11 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x42] = X86_OP_ENTRY3(EVEX_VGETEXP, V,x, None,None, W,x, EV_FPX(SAE, ev_fp)),
     [0x43] = X86_OP_GROUP0(EVEX_0F38_43),
 #endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+    /* VSCALEFPS/PD (2C), VSCALEFSS/SD (2D): {er}; E2 / E3 */
+    [0x2c] = X86_OP_ENTRY3(EVEX_VSCALEF, V,x, H,x, W,x, EV_FPX(ER, ev_fp)),
+    [0x2d] = X86_OP_GROUP0(EVEX_0F38_2D),
+#endif /* __Use_Original_Qemu (U239) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
