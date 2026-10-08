@@ -2796,6 +2796,50 @@ static void decode_EVEX_0F38_40(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = opcodes_EVEX_0F38_40[s->vex_w];
 }
 #endif /* __Use_Original_Qemu (U290) */
+#if __Use_Original_Qemu != 1 /* ours (U291) */
+/*
+ * NoVmp (ledger U291): 0F 54/55/56/57 VANDPS/VANDNPS/VORPS/VXORPS (NP W0) and VANDPD/
+ * VANDNPD/VORPD/VXORPD (66 W1), AVX512DQ: bitwise on the whole vector (SDM Vol2A ANDPS ..
+ * XORPD "EVEX encoded versions"; VANDN: DEST := NOT(SRC1) AND SRC2); the element size
+ * (EVEX.W) gives the masking granularity and {1toN}. Full tuple, {k1}{z}; E4, no MXCSR
+ * flags. NP W1 and 66 W0 are #UD.
+ */
+#define EV_LOGP(op, w) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(AVX512DQ) ev_vl(EV_VLALL) \
+                          ev_tt(FULL) ev_mask(MZ) ev_w(w) ev_es(W))
+
+static void decode_EVEX_0F54(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F54[4] = {
+        EV_LOGP(PAND, W0), EV_LOGP(PAND, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F54);
+}
+
+static void decode_EVEX_0F55(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F55[4] = {
+        EV_LOGP(PANDN, W0), EV_LOGP(PANDN, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F55);
+}
+
+static void decode_EVEX_0F56(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F56[4] = {
+        EV_LOGP(POR, W0), EV_LOGP(POR, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F56);
+}
+
+static void decode_EVEX_0F57(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F57[4] = {
+        EV_LOGP(PXOR, W0), EV_LOGP(PXOR, W1), {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F57);
+}
+#undef EV_LOGP
+#endif /* __Use_Original_Qemu (U291) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2960,6 +3004,12 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xc5] = X86_OP_ENTRY3(PEXTRW, G,d, U,dq, I,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
                            ev_mask(NONE) ev_w(WIG) ev_es(16) p_66),
 #endif /* __Use_Original_Qemu (U267) */
+#if __Use_Original_Qemu != 1 /* ours (U291) */
+    [0x54] = X86_OP_GROUP0(EVEX_0F54),  /* vandps / vandpd */
+    [0x55] = X86_OP_GROUP0(EVEX_0F55),  /* vandnps / vandnpd */
+    [0x56] = X86_OP_GROUP0(EVEX_0F56),  /* vorps / vorpd */
+    [0x57] = X86_OP_GROUP0(EVEX_0F57),  /* vxorps / vxorpd */
+#endif /* __Use_Original_Qemu (U291) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
