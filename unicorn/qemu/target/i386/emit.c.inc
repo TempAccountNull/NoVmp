@@ -278,6 +278,23 @@ static void gen_load(DisasContext *s, X86DecodedInsn *decode, int opn, TCGv v)
         }
         break;
 
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    case X86_OP_KREG:
+        /*
+         * NoVmp (ledger U129): an opmask operand of op->ot (MO_8..MO_64) bits. Memory
+         * reads exactly that size (KMOV k, m8/m16/m32/m64); a k register is read as
+         * SRC[ot-1:0] zero-extended (SDM Vol2A KADD..KXOR operate on SRC[w-1:0]).
+         * opmask_regs[] are 64-bit; target_ulong is 64-bit (x86_64 target only).
+         */
+        if (op->has_ea) {
+            gen_op_ld_v(s, op->ot, v, s->A0);
+        } else {
+            tcg_gen_ld_tl(tcg_ctx, v, cpu_env, offsetof(CPUX86State, opmask_regs[op->n]));
+            gen_extu(tcg_ctx, op->ot, v);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U129) */
+
     default:
         g_assert_not_reached();
     }
@@ -342,6 +359,21 @@ static void gen_writeback(DisasContext *s, X86DecodedInsn *decode, int opn, TCGv
         }
 #endif /* __Use_Original_Qemu (U126) */
         break;
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    case X86_OP_KREG:
+        /*
+         * NoVmp (ledger U129): KMOV m8/m16/m32/m64 stores exactly op->ot; a k register
+         * destination is DEST[ot-1:0] zero-extended to MAX_KL = 64 bits (SDM Vol2A:
+         * "DEST[MAX_KL-1:w] := 0" in every opmask instruction).
+         */
+        if (op->has_ea) {
+            gen_op_st_v(s, op->ot, v, s->A0);
+        } else {
+            gen_extu(tcg_ctx, op->ot, v);
+            tcg_gen_st_tl(tcg_ctx, v, cpu_env, offsetof(CPUX86State, opmask_regs[op->n]));
+        }
+        break;
+#endif /* __Use_Original_Qemu (U129) */
     case X86_OP_CR:
     case X86_OP_DR:
     default:

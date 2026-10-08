@@ -114,6 +114,11 @@
 #define vex11 .vex_class = 11,
 #define vex12 .vex_class = 12,
 #define vex13 .vex_class = 13,
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+/* VEX opmask instructions: SDM Vol2A 2.9 exception types K20 (no memory) / K21 */
+#define vex20 .vex_class = 20,
+#define vex21 .vex_class = 21,
+#endif /* __Use_Original_Qemu (U129) */
 
 #define avx2_256 .vex_special = X86_VEX_AVX2_256,
 #define sse4_novex .vex_class = 4, .vex_special = X86_VEX_NoVEX,
@@ -1498,6 +1503,10 @@ static const X86OpEntry opcodes_root[256] = {
 #undef vex11
 #undef vex12
 #undef vex13
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+#undef vex20
+#undef vex21
+#endif /* __Use_Original_Qemu (U129) */
 #undef chk
 
 /*
@@ -1799,6 +1808,42 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
         op->n = type - X86_TYPE_ES;
         op->unit = X86_OP_SEG;
         break;
+
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    /*
+     * NoVmp (ledger U129): opmask registers k0-k7 (SDM Vol2A 2.9, Tables 2-41/2-42).
+     * Only 3 bits select a k register: ModRM.reg with VEX.R = 0 and VEX.vvvv[3] = 1
+     * in 64-bit mode #UD in validate_vex (K20/K21); vvvv[3] is ignored outside 64-bit
+     * mode; VEX.B/X are ignored for a k register in ModRM.r/m.
+     */
+    case X86_TYPE_K:  /* REG in the modrm byte selects an opmask register */
+        op->unit = X86_OP_KREG;
+        op->n = (get_modrm(s, env) >> 3) & 7;
+        break;
+
+    case X86_TYPE_KH: /* VEX.vvvv selects an opmask register */
+        op->unit = X86_OP_KREG;
+        op->n = s->vex_v & 7;
+        break;
+
+    case X86_TYPE_KU: /* R/M selects an opmask register; mod != 11b #UD (K20) */
+    case X86_TYPE_KW: /* opmask register or memory */
+    case X86_TYPE_KM: /* memory only; mod = 11b #UD (KMOV m, k) */
+        op->unit = X86_OP_KREG;
+        modrm = get_modrm(s, env);
+        if ((modrm >> 6) == 3) {
+            if (type == X86_TYPE_KM) {
+                return false;
+            }
+            op->n = modrm & 7;
+        } else {
+            if (type == X86_TYPE_KU) {
+                return false;
+            }
+            decode_modrm(s, env, decode, op, type);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U129) */
     }
 
     return true;
@@ -2024,6 +2069,14 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_CET_SS:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK);
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    case X86_FEAT_AVX512F:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F);
+    case X86_FEAT_AVX512DQ:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512DQ);
+    case X86_FEAT_AVX512BW:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512BW);
+#endif /* __Use_Original_Qemu (U129) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
@@ -2188,6 +2241,54 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
             goto illegal;
         }
         break;
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    case 20:
+    case 21:
+        /*
+         * NoVmp (ledger U129): VEX-encoded opmask instructions, SDM Vol2A 2.9 Tables
+         * 2-65 (K20, no memory operand) / 2-66 (K21). The CPUID feature, LOCK/66/F2/F3/
+         * REX before VEX and ModRM.mod (X86_TYPE_KU/KM/R) are checked by the decoder.
+         * #UD: CR4.OSXSAVE = 0 or XCR0 not 111xxx11b (Table 2-39, HF_OPMASK_EN, U127);
+         * VEX.L other than the form's; ModRM.reg encoding a k register with VEX.R = 0
+         * (Table 2-41); VEX.vvvv: as a k register 0xxxb in 64-bit mode (Table 2-42,
+         * ignored elsewhere), unused != 1111b (Table 2-41). Then #NM if CR0.TS = 1.
+         * CR0.EM is not a K20/K21 condition.
+         */
+        if (!(s->prefix & PREFIX_VEX)) {
+            goto illegal;
+        }
+        if (!(s->flags & HF_OPMASK_EN_MASK)) {
+            goto illegal;
+        }
+        if (((e->check & X86_CHECK_VEX128) && s->vex_l) ||
+            ((e->check & X86_CHECK_VEX256) && !s->vex_l)) {
+            goto illegal;
+        }
+        if ((e->op0 == X86_TYPE_K || e->op1 == X86_TYPE_K || e->op2 == X86_TYPE_K) &&
+            REX_R(s)) {
+            goto illegal;
+        }
+        if (e->op1 == X86_TYPE_KH) {
+            if (CODE64(s) && (s->vex_v & 8)) {
+                goto illegal;
+            }
+        } else if (s->vex_v != 0) {
+            goto illegal;
+        }
+        if (!CODE64(s)) {
+            /* VEX.B is ignored outside 64-bit mode (SDM 2.3.5.4): KMOV's GPR r/m */
+            int i;
+            for (i = 0; i < 3; i++) {
+                if (decode->op[i].unit == X86_OP_INT && !decode->op[i].has_ea) {
+                    decode->op[i].n &= 7;
+                }
+            }
+        }
+        if (s->flags & HF_TS_MASK) {
+            goto nm_exception;
+        }
+        return true;
+#endif /* __Use_Original_Qemu (U129) */
     case 13:
         if (!(s->prefix & PREFIX_VEX)) {
             goto illegal;

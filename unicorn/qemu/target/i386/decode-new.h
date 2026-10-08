@@ -64,6 +64,15 @@ typedef enum X86OpType {
     X86_TYPE_DS,
     X86_TYPE_FS,
     X86_TYPE_GS,
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+
+    /* Opmask registers k0-k7 (VEX opmask instructions, exception types K20/K21) */
+    X86_TYPE_K,  /* REG in the modrm byte selects an opmask register */
+    X86_TYPE_KH, /* VEX.vvvv selects an opmask register */
+    X86_TYPE_KU, /* R/M in the modrm byte selects an opmask register (mod = 11b) */
+    X86_TYPE_KW, /* opmask register or memory operand (R/M) */
+    X86_TYPE_KM, /* memory operand (R/M, mod != 11b) moved from/to an opmask register */
+#endif /* __Use_Original_Qemu (U129) */
 } X86OpType;
 
 typedef enum X86OpSize {
@@ -170,6 +179,11 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     X86_FEAT_CET_SS,
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    X86_FEAT_AVX512F,
+    X86_FEAT_AVX512DQ,
+    X86_FEAT_AVX512BW,
+#endif /* __Use_Original_Qemu (U129) */
 } X86CPUIDFeature;
 
 /* Execution flags */
@@ -183,6 +197,9 @@ typedef enum X86OpUnit {
     X86_OP_IMM,     /* immediate */
     X86_OP_SSE,     /* address in either s->ptrX or s->A0 depending on has_ea */
     X86_OP_MMX,     /* address in either s->ptrX or s->A0 depending on has_ea */
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    X86_OP_KREG,    /* opmask register env->opmask_regs[n], or memory at s->A0 if has_ea */
+#endif /* __Use_Original_Qemu (U129) */
 } X86OpUnit;
 
 /*
@@ -205,6 +222,13 @@ typedef enum X86InsnCheck {
     /* Fault if VEX.L=1 (upstream QEMU 8.2 value) (U79) */
     X86_CHECK_VEX128 = 64,
 #endif /* __Use_Original_Qemu (U79) */
+#if __Use_Original_Qemu != 1 /* ours (U129) */
+    /*
+     * Fault if VEX.L=0 (the VEX.L1 opmask forms) (U129). 8192 is clear of the
+     * upstream QEMU 11.1 values (up to X86_CHECK_o64_intel = 4096) and U70's 512/1024.
+     */
+    X86_CHECK_VEX256 = 8192,
+#endif /* __Use_Original_Qemu (U129) */
 } X86InsnCheck;
 
 typedef enum X86InsnSpecial {
