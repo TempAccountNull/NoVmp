@@ -12240,6 +12240,263 @@ static void test_x86_fp16_cvt_gpr(void)
 }
 /* ===== end of NoVmp U330-U369 (AVX512-FP16) unit tests ===== */
 
+/*
+ * ---- NoVmp U370-U371: Intel AVX10 enumeration and gating ----
+ * UC_CTL_X86_AVX10 (CPUID.(7,1):EDX[19], leaf 24H, XSAVE components 5-7, reset XCR0) and the
+ * AVX10.1 rule "AVX512x OR AVX10.1": AVX10 alone runs the EVEX AVX-512 forms at every vector
+ * length and the VEX opmask instructions; neither -> #UD. AVX10.2 spec 361050-007 3.1.
+ */
+#define A10_DATA 0x200000
+
+typedef struct A10Ctx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} A10Ctx;
+
+static void a10_open(A10Ctx *c, uc_mode mode, int avx512, int avx10, const uc_x86_cpuid *prof,
+                     size_t nprof, int strict)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+    }
+    if (strict) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, A10_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* run one snippet from a fresh address: the exception vector (6 #UD, 13 #GP), or -1 */
+static int a10_run(A10Ctx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void a10_cpuid(A10Ctx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    uint64_t v;
+
+    v = leaf;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = sub;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(a10_run(c, "\x0f\xa2", 2) == -1);
+    OK(uc_reg_read(c->uc, UC_X86_REG_RAX, &v));
+    r[0] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RBX, &v));
+    r[1] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RCX, &v));
+    r[2] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RDX, &v));
+    r[3] = (uint32_t)v;
+}
+
+static uint64_t a10_xcr0(A10Ctx *c)
+{
+    uint64_t v = 0;
+    OK(uc_reg_read(c->uc, UC_X86_REG_XCR0, &v));
+    return v;
+}
+
+/* VPADDD zmm1/ymm1/xmm1, 2, 3 (EVEX.512/256/128.66.0F.W0 FE) and KANDW/KANDB/KANDD k1, k2, k3 */
+#define A10_VPADDD_Z "\x62\xf1\x6d\x48\xfe\xcb"
+#define A10_VPADDD_Y "\x62\xf1\x6d\x28\xfe\xcb"
+#define A10_VPADDD_X "\x62\xf1\x6d\x08\xfe\xcb"
+#define A10_VPADDD_U0 "\x62\xf1\x69\x48\xfe\xcb"     /* EVEX.U (P1 bit 2) = 0 */
+#define A10_KANDW "\xc5\xec\x41\xcb"
+#define A10_KANDB "\xc5\xed\x41\xcb"
+#define A10_KANDD "\xc4\xe1\xed\x41\xcb"
+
+/* zmm1 = zmm2 + zmm3 over vl bytes, upper bytes zero (EVEX writes zero MAXVL-1:VL) */
+static int a10_vpaddd_ok(A10Ctx *c, const char *code, int vl)
+{
+    uint32_t a[16], b[16], d[16];
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        a[i] = 0x10000000u + 0x01010101u * (uint32_t)i;
+        b[i] = 0x00300000u + (uint32_t)i * 7u;
+        d[i] = 0xdeadbeefu;
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM3, b));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM1, d));
+    if (a10_run(c, code, 6) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM1, d));
+    for (i = 0; i < 16; i++) {
+        if (d[i] != (i < vl / 4 ? a[i] + b[i] : 0)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void test_x86_avx10_optin(void)
+{
+    A10Ctx c;
+    uint32_t r[4];
+    int v = -1;
+
+    /* default: off - no CPUID.(7,1):EDX.AVX10, AVX-512 state not enabled */
+    a10_open(&c, UC_MODE_64, 0, 0, NULL, 0, 0);
+    OK(uc_ctl_get_x86_avx10(c.uc, &v));
+    TEST_CHECK(v == 0);
+    a10_cpuid(&c, 7, 1, r);
+    TEST_CHECK((r[3] & (1u << 19)) == 0);
+    TEST_CHECK((a10_xcr0(&c) & 0xe0) == 0);
+    TEST_CHECK(a10_run(&c, A10_VPADDD_Z, 6) == 6);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, UC_X86_AVX10_1)); /* after init */
+    OK(uc_close(c.uc));
+
+    /* values: version 1 or 2, optionally | V1_AUX; anything else refused */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, 3));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, UC_X86_AVX10_V1_AUX));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, 0x200 | UC_X86_AVX10_1));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, -1));
+    OK(uc_ctl_set_x86_avx10(c.uc, UC_X86_AVX10_1 | UC_X86_AVX10_V1_AUX));
+    OK(uc_ctl_get_x86_avx10(c.uc, &v));
+    TEST_CHECK(v == (UC_X86_AVX10_1 | UC_X86_AVX10_V1_AUX));
+    OK(uc_ctl_set_x86_avx10(c.uc, 0));
+    OK(uc_ctl_get_x86_avx10(c.uc, &v));
+    TEST_CHECK(v == 0);
+    OK(uc_close(c.uc));
+
+    /* AVX10.1: 7.1:EDX[19], 24H.0 = (0, 70001h), 24H.1 = 0, state 5-7 in 0DH and reset XCR0 */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0, 0);
+    a10_cpuid(&c, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x24);
+    a10_cpuid(&c, 7, 0, r);
+    TEST_CHECK(r[0] >= 1);
+    TEST_CHECK((r[1] & ((1u << 16) | (1u << 31))) == 0); /* AVX512F/VL bits stay as set */
+    a10_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[3] & (1u << 19));
+    a10_cpuid(&c, 0x24, 0, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0x70001 && r[2] == 0 && r[3] == 0);
+    TEST_MSG("24H.0 = %x %x %x %x", r[0], r[1], r[2], r[3]);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    a10_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0xe7) == 0xe7);
+    a10_cpuid(&c, 0xd, 6, r);
+    TEST_CHECK(r[0] == 0x200 && r[1] == 0x480);          /* ZMM_Hi256: 200h @ 480h */
+    TEST_CHECK((a10_xcr0(&c) & 0xe7) == 0xe7);
+    OK(uc_close(c.uc));
+
+    /* AVX10.2: 24H.0 = (1, 70002h), 24H.1:ECX.AVX10_V1_AUX[2] */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0, 0);
+    a10_cpuid(&c, 0x24, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 0x70002 && r[2] == 0 && r[3] == 0);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 4 && r[3] == 0);
+    a10_cpuid(&c, 0x24, 2, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    OK(uc_close(c.uc));
+
+    /* AVX10.1 + V1_AUX */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1 | UC_X86_AVX10_V1_AUX, NULL, 0, 0);
+    a10_cpuid(&c, 0x24, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 0x70001);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[2] == 4);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_avx10_gating(void)
+{
+    /* a strict profile with AVX10.1 (no AVX512* bits), and the same without 7.1:EDX[19] */
+    static const uc_x86_cpuid prof_on[] = {
+        {0x0, 0, 0x24, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x000b0671, 0, (1u << 26) | (1u << 28), 0},
+        {0x7, 0, 1, 0, 0, 0},
+        {0x7, 1, 0, 0, 0, 1u << 19},
+        {0xd, 0, 0xe7, 0, 0, 0},
+        {0x24, 0, 0, 0x70001, 0, 0},
+    };
+    static const uc_x86_cpuid prof_off[] = {
+        {0x0, 0, 0x24, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x000b0671, 0, (1u << 26) | (1u << 28), 0},
+        {0x7, 0, 1, 0, 0, 0},
+        {0x7, 1, 0, 0, 0, 0},
+        {0xd, 0, 0xe7, 0, 0, 0},
+    };
+    A10Ctx c;
+
+    /* neither AVX-512 nor AVX10: EVEX and the opmask instructions #UD */
+    a10_open(&c, UC_MODE_64, 0, 0, NULL, 0, 0);
+    TEST_CHECK(a10_run(&c, A10_VPADDD_Z, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_VPADDD_X, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_KANDW, 4) == 6);
+    OK(uc_close(c.uc));
+
+    /* AVX-512 off, AVX10.1 on: AVX512F at 512/256/128 bits (no AVX512VL bit), opmask W/B/D */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0, 0);
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Y, 32));
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_X, 16));
+    TEST_CHECK(a10_run(&c, A10_KANDW, 4) == -1);
+    TEST_CHECK(a10_run(&c, A10_KANDB, 4) == -1);       /* AVX512DQ OR AVX10.1 */
+    TEST_CHECK(a10_run(&c, A10_KANDD, 5) == -1);       /* AVX512BW OR AVX10.1 */
+    /* EVEX.U = 0 stays #UD (AVX10.2 rev 4.0 removed the YMM embedded-rounding use) */
+    TEST_CHECK(a10_run(&c, A10_VPADDD_U0, 6) == 6);
+    OK(uc_close(c.uc));
+
+    /* AVX10.2 in 32-bit protected mode: EVEX (P0[7:6] = 11b) instead of BOUND */
+    a10_open(&c, UC_MODE_32, 0, UC_X86_AVX10_2, NULL, 0, 0);
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
+    OK(uc_close(c.uc));
+
+    /* AVX-512 behaviour unchanged without AVX10: AVX512F alone has no EVEX.128/256 */
+    a10_open(&c, UC_MODE_64, UC_X86_AVX512_F, 0, NULL, 0, 0);
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
+    TEST_CHECK(a10_run(&c, A10_VPADDD_X, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_KANDB, 4) == 6);        /* no AVX512DQ */
+    OK(uc_close(c.uc));
+
+    /* strict profiles: AVX10 needs 7.1:EDX[19] in the profile; then its version applies */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, prof_on, 6, 1);
+    TEST_CHECK((a10_xcr0(&c) & 0xe7) == 0xe7);
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_X, 16));
+    TEST_CHECK(a10_run(&c, A10_KANDD, 5) == -1);
+    OK(uc_close(c.uc));
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, prof_off, 5, 1);
+    TEST_CHECK(a10_run(&c, A10_VPADDD_Z, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_KANDW, 4) == 6);
+    OK(uc_close(c.uc));
+    /* the same profile without strict mode: only the CPUID bit is hidden */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, prof_off, 5, 0);
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
+    OK(uc_close(c.uc));
+}
+/* ---- end NoVmp U370-U371 (a10_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -12437,4 +12694,6 @@ TEST_LIST = {
     {"test_x86_fp16_xm", test_x86_fp16_xm},
     {"test_x86_fp16_complex", test_x86_fp16_complex},
     {"test_x86_fp16_cvt_gpr", test_x86_fp16_cvt_gpr},
+    {"test_x86_avx10_optin", test_x86_avx10_optin},
+    {"test_x86_avx10_gating", test_x86_avx10_gating},
     {NULL, NULL}};
