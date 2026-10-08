@@ -1988,6 +1988,51 @@ static void gen_EVEX_VPMOVM2(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     tcg_temp_free_i64(tcg_ctx, k);
 }
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U268) */
+
+/*
+ * NoVmp (ledger U268): VPMOVZXBW / VPMOVSXBW (word destination from VL/2 source bytes,
+ * ops_sse.h pmovzxbw/pmovsxbw of the vector length) and VPMOVWB / VPMOVSWB / VPMOVUSWB
+ * (VL/2 destination bytes from the source words, helper_evex_pmovwb; the masking and the
+ * zeroing of DEST[MAXVL-1:VL/2] use evex_narrow = 1, U260).
+ */
+static void gen_EVEX_PMOVZXBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmovzxbw)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+
+static void gen_EVEX_PMOVSXBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmovsxbw)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+
+static void gen_evex_pmovwb(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pmovwb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, kind | ((s->evex_vl / 2) << 8)));
+}
+
+static void gen_EVEX_VPMOVWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 0);
+}
+
+static void gen_EVEX_VPMOVSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 1);
+}
+
+static void gen_EVEX_VPMOVUSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U268) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

@@ -7299,3 +7299,35 @@ void helper_evex_movm2v(CPUX86State *env, ZMMReg *d, uint64_t k, uint32_t desc)
     }
 }
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U268) */
+
+/*
+ * NoVmp (ledger U268): VPMOVWB / VPMOVSWB / VPMOVUSWB (SDM Vol2C): n words of s to n bytes
+ * of d: truncation (kind 0), signed saturation (1: SaturateSignedWordToByte) or unsigned
+ * saturation of the unsigned word (2: SaturateUnsignedWordToByte). desc = kind | n << 8.
+ */
+void helper_evex_pmovwb(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int kind = desc & 0xff, n = desc >> 8, i;
+    uint8_t r[32];
+
+    for (i = 0; i < n; i++) {
+        uint16_t x = s->ZMM_W(i);
+
+        switch (kind) {
+        case 0:
+            r[i] = (uint8_t)x;
+            break;
+        case 1:
+            r[i] = (int16_t)x > 127 ? 0x7f : (int16_t)x < -128 ? 0x80 : (uint8_t)x;
+            break;
+        default:
+            r[i] = x > 255 ? 0xff : (uint8_t)x;
+            break;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = r[i];
+    }
+}
+#endif /* __Use_Original_Qemu (U268) */
