@@ -662,6 +662,8 @@ void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
      * the exception flags go back.
      */
     float_status st = env->sse_status;
+    int flags = get_float_exception_flags(&st);
+    const bool um = !(env->mxcsr & (1 << 11));  /* MXCSR.UM = 0: underflow unmasked */
     int i;
 
     if (!(mode & (1 << 2))) {
@@ -669,12 +671,29 @@ void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
     }
     set_flush_to_zero(false, &st);
     for (i = 0; i < 2 << SHIFT; i++) {
-        d->ZMM_H(i) = float32_to_float16(s->ZMM_S(i), true, &st);
+        float16 r;
+        int f;
+
+        set_float_exception_flags(0, &st);
+        r = float32_to_float16(s->ZMM_S(i), true, &st);
+        f = get_float_exception_flags(&st);
+        /*
+         * NoVmp (ledger U441): with the underflow exception unmasked, #U is
+         * reported for every non-zero tiny result, exact or not (Vol1 4.9.1.5,
+         * 11.5.2.5; Table 14-12 unmasked: "#UE=1"); softfloat only raises it
+         * for tiny and inexact (the masked rule). An exact tiny result is a
+         * non-zero FP16 denormal.
+         */
+        if (um && !(f & float_flag_inexact) && (r & 0x7c00) == 0 && (r & 0x03ff) != 0) {
+            f |= float_flag_underflow;
+        }
+        flags |= f;
+        d->ZMM_H(i) = r;
     }
     for (i >>= 2; i < 1 << SHIFT; i++) {
         d->Q(i) = 0;
     }
-    env->sse_status.float_exception_flags = st.float_exception_flags;
+    set_float_exception_flags(flags, &env->sse_status);
 #endif /* __Use_Original_Qemu (U440) */
 }
 #endif
