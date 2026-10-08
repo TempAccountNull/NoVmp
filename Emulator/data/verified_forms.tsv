@@ -322,27 +322,27 @@ vpshlb	xop	oos	AMD XOP
 vpshld	xop	oos	AMD XOP
 vpshlq	xop	oos	AMD XOP
 vpshlw	xop	oos	AMD XOP
-tdpbf16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
-tcmmimfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
-tcmmrlfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
-tdpfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbf16ps	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tcmmimfp16ps	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tcmmrlfp16ps	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tdpfp16ps	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
 tdpbf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
 tdpbhf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
 tdphbf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
 tdphf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
-tdpbssd	vex	ud	the i5-13600K lacks AMX: #UD in both
-tdpbsud	vex	ud	the i5-13600K lacks AMX: #UD in both
-tdpbusd	vex	ud	the i5-13600K lacks AMX: #UD in both
-tdpbuud	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbssd	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tdpbsud	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tdpbusd	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tdpbuud	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
 tileloaddrs	vex	ud	the i5-13600K lacks AMX: #UD in both
 tileloaddrst1	vex	ud	the i5-13600K lacks AMX: #UD in both
-tileloadd	vex	ud	the i5-13600K lacks AMX: #UD in both
-tileloaddt1	vex	ud	the i5-13600K lacks AMX: #UD in both
-tilestored	vex	ud	the i5-13600K lacks AMX: #UD in both
-ldtilecfg	vex	ud	the i5-13600K lacks AMX: #UD in both
-sttilecfg	vex	ud	the i5-13600K lacks AMX: #UD in both
-tilerelease	vex	ud	the i5-13600K lacks AMX: #UD in both
-tilezero	vex	ud	the i5-13600K lacks AMX: #UD in both
+tileloadd	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tileloaddt1	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tilestored	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+ldtilecfg	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+sttilecfg	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tilerelease	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
+tilezero	vex	sdm	U175-U180 Intel AMX (VEX, UC_CTL_X86_AMX opt-in): independent SDM-pseudocode model (ref_amx.py) + unit tests + cases_amx.txt "=>"; the i5-13600K lacks AMX: #UD in both by default
 jmpabs	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
 popp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
 pushp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
