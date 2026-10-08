@@ -660,7 +660,8 @@ static CPUCacheInfo legacy_l3_cache = {
           /* CPUID_7_0_ECX_OSPKE is dynamic */ \
           CPUID_7_0_ECX_LA57 | CPUID_7_0_ECX_PKS | CPUID_7_0_ECX_VAES | \
           CPUID_7_0_ECX_RDPID | CPUID_7_0_ECX_VPCLMULQDQ /* U69 */ | \
-          CPUID_7_0_ECX_GFNI /* U70 */ | CPUID_7_0_ECX_MOVDIRI /* U72 */)
+          CPUID_7_0_ECX_GFNI /* U70 */ | CPUID_7_0_ECX_MOVDIRI /* U72 */ | \
+          CPUID_7_0_ECX_MOVDIR64B /* U73 */)
 #endif /* __Use_Original_Qemu (U69) */
 #define TCG_7_0_EDX_FEATURES 0
 #if __Use_Original_Qemu == 1 /* original QEMU (U71) */

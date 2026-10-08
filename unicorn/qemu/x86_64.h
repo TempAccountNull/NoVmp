@@ -2590,6 +2590,9 @@
 #define helper_cmpxchg8b helper_cmpxchg8b_x86_64
 #define helper_cmpxchg16b_unlocked helper_cmpxchg16b_unlocked_x86_64
 #define helper_cmpxchg16b helper_cmpxchg16b_x86_64
+#if __Use_Original_Qemu != 1 /* ours (U73) */
+#define helper_movdir64b helper_movdir64b_x86_64
+#endif /* __Use_Original_Qemu (U73) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

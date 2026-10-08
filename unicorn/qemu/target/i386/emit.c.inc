@@ -1498,6 +1498,24 @@ static void gen_MOVDIRI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 }
 
 #endif /* __Use_Original_Qemu (U72) */
+#if __Use_Original_Qemu != 1 /* ours (U73) */
+/*
+ * NoVmp (ledger U73): MOVDIR64B r, m512. Source: the memory operand (any
+ * alignment, segment overrides apply); destination: ES:[register] at the
+ * address size, 64-byte aligned or #GP (SDM Vol2 MOVDIR64B).
+ */
+static void gen_MOVDIR64B(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv src = tcg_temp_new(tcg_ctx);
+
+    tcg_gen_mov_tl(tcg_ctx, src, s->A0);
+    gen_lea_v_seg(s, s->aflag, cpu_regs[decode->op[1].n], R_ES, -1);
+    gen_helper_movdir64b(tcg_ctx, cpu_env, s->A0, src);
+    tcg_temp_free(tcg_ctx, src);
+}
+
+#endif /* __Use_Original_Qemu (U73) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

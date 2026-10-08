@@ -53,6 +53,26 @@ void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)
     CC_SRC = eflags;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U73) */
+/* NoVmp (ledger U73): MOVDIR64B, see gen_MOVDIR64B; all 64 bytes are read first */
+void helper_movdir64b(CPUX86State *env, target_ulong dst, target_ulong src)
+{
+    uintptr_t ra = GETPC();
+    uint64_t buf[8];
+    int i;
+
+    if (dst & 63) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    for (i = 0; i < 8; i++) {
+        buf[i] = cpu_ldq_data_ra(env, src + 8 * i, ra);
+    }
+    for (i = 0; i < 8; i++) {
+        cpu_stq_data_ra(env, dst + 8 * i, buf[i], ra);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U73) */
 void helper_cmpxchg8b(CPUX86State *env, target_ulong a0)
 {
 #ifdef CONFIG_ATOMIC64
