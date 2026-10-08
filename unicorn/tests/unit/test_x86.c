@@ -6398,8 +6398,9 @@ static void test_x86_user_msr(void)
     TEST_CHECK(nk_fault(uc, &intr, "\xf3\x45\x0f\x38\xf8\xca", 6) == 13);
     nk_setreg(uc, UC_X86_REG_RDI, 2);
     TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7a\xf8\xc7\x01\x1b\x00\x00", 9) == 13);
-    /* #UD: memory form, VEX.L1, VEX.W1, ModRM.reg != 0, vvvv != 1111b, LOCK */
-    TEST_CHECK(nk_fault(uc, &intr, "\xf2\x0f\x38\xf8\x0b", 5) == 6);
+    /* memory form is ENQCMD since U112: IA32_PASID[31] = 0 -> #GP(0) (SDM ENQCMD) */
+    TEST_CHECK(nk_fault(uc, &intr, "\xf2\x0f\x38\xf8\x0b", 5) == 13);
+    /* #UD: VEX.L1, VEX.W1, ModRM.reg != 0, vvvv != 1111b, LOCK */
     TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7f\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
     TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\xfb\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
     TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7b\xf8\xca\x01\x1b\x00\x00", 9) == 6);

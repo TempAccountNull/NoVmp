@@ -721,6 +721,26 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xef] = X86_OP_ENTRY3(CMPccXADD,   M,y, G,y, B,y,  vex13 cpuid(CMPCCXADD) p_66),
 };
 
+#if __Use_Original_Qemu != 1 /* ours (U103, U112) */
+/* F3 0F 38 F8: 11:rrr:bbb UWRMSR r64, r64 (U103); memory ENQCMDS r, m512 (U112) */
+static void decode_0F38_F8_F3(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry uwrmsr = X86_OP_ENTRY3(UWRMSR, None,None, G,q, R,q, cpuid(USER_MSR) o64);
+    static const X86OpEntry enqcmds = X86_OP_ENTRY3(ENQCMDS, None,None, G,y, M,b, cpuid(ENQCMD));
+
+    *entry = ((get_modrm(s, env) >> 6) == 3) ? uwrmsr : enqcmds;
+}
+
+/* F2 0F 38 F8: 11:rrr:bbb URDMSR r64, r64 (U103); memory ENQCMD r, m512 (U112) */
+static void decode_0F38_F8_F2(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry urdmsr = X86_OP_ENTRY3(URDMSR, R,q, G,q, None,None, cpuid(USER_MSR) o64);
+    static const X86OpEntry enqcmd = X86_OP_ENTRY3(ENQCMD, None,None, G,y, M,b, cpuid(ENQCMD));
+
+    *entry = ((get_modrm(s, env) >> 6) == 3) ? urdmsr : enqcmd;
+}
+#endif /* __Use_Original_Qemu (U103, U112) */
+
 /* five rows for no prefix, 66, F3, F2, 66+F2  */
 static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
     /*
@@ -791,20 +811,12 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
     [8] = {
         {},
         X86_OP_ENTRY3(MOVDIR64B, None,None, G,y, M,b, cpuid(MOVDIR64B)),
-#if __Use_Original_Qemu == 1 /* original QEMU (U103) */
-        {},
-        {},
-#else /* ours (U103) */
         /*
-         * UWRMSR r64, r64: F3 0F 38 F8 11:rrr:bbb (MSR[rrr] := bbb);
-         * URDMSR r64, r64: F2 0F 38 F8 11:rrr:bbb (bbb := MSR[rrr]).
-         * The memory forms (ENQCMDS / ENQCMD) are not implemented: #UD.
+         * F3 / F2 split on ModRM.mod (U103 + U112): 11 = UWRMSR / URDMSR r64, r64,
+         * memory = ENQCMDS / ENQCMD r, m512 (SDM Vol2).
          */
-        X86_OP_ENTRY3(UWRMSR, None,None, G,q, R,q, cpuid(USER_MSR) o64),
-        X86_OP_ENTRY3(URDMSR, R,q, G,q, None,None, cpuid(USER_MSR) o64),
-#endif /* __Use_Original_Qemu (U103) */
-        X86_OP_ENTRY3(ENQCMDS, None,None, G,y, M,b, cpuid(ENQCMD)),
-        X86_OP_ENTRY3(ENQCMD, None,None, G,y, M,b, cpuid(ENQCMD)),
+        X86_OP_GROUP0(0F38_F8_F3),
+        X86_OP_GROUP0(0F38_F8_F2),
         {},
     },
 #endif /* __Use_Original_Qemu (U73) */
