@@ -320,6 +320,63 @@ static void decode_FP16_M6_D7(DisasContext *s, CPUX86State *env, X86OpEntry *ent
     decode_FP16_cplx(s, env, entry, tab);
 }
 #endif /* __Use_Original_Qemu (U338) */
+#if __Use_Original_Qemu != 1 /* ours (U339) */
+/*
+ * NoVmp (ledger U339): VMOVSH (map 5 F3 10/11; memory forms E5 class, the store {k1}
+ * merging only) and VMOVW (map 5 66 6E/7E, EVEX.128 WIG, no masking, E9NF).
+ */
+static void decode_FP16_M5_10(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry ld = X86_OP_ENTRY3(FP16_MOVSH_LD, V,x, None,None, W,w, EV16S(NONE));
+    static const X86OpEntry rr = X86_OP_ENTRY3(FP16_MOVSH, V,x, H,x, W,x,
+                                               cpuid(AVX512_FP16) ev_vl(X86_EVEX_LIG)
+                                               ev_mask(MZ) ev_w(W0) ev_es(16));
+
+    if (!(s->prefix & PREFIX_REPZ)) {
+        memset(entry, 0, sizeof(*entry));
+    } else {
+        *entry = (get_modrm(s, env) >> 6) == 3 ? rr : ld;
+    }
+}
+
+static void decode_FP16_M5_11(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry st = X86_OP_ENTRY3(FP16_MOVSH_ST, W,w, None,None, V,x,
+                                               cpuid(AVX512_FP16) ev_vl(X86_EVEX_LIG)
+                                               ev_tt(T1S) ev_mask(M) ev_w(W0) ev_es(16));
+    static const X86OpEntry rr = X86_OP_ENTRY3(FP16_MOVSH, W,x, H,x, V,x,
+                                               cpuid(AVX512_FP16) ev_vl(X86_EVEX_LIG)
+                                               ev_mask(MZ) ev_w(W0) ev_es(16));
+
+    if (!(s->prefix & PREFIX_REPZ)) {
+        memset(entry, 0, sizeof(*entry));
+    } else {
+        *entry = (get_modrm(s, env) >> 6) == 3 ? rr : st;
+    }
+}
+
+static void decode_FP16_M5_6E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = {
+        {},
+        X86_OP_ENTRY3(FP16_VMOVW_LD, V,x, None,None, E,w, cpuid(AVX512_FP16)
+                      ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16)),
+        {}, {},
+    };
+    decode_FP16_by_prefix(s, entry, tab);
+}
+
+static void decode_FP16_M5_7E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = {
+        {},
+        X86_OP_ENTRY3(FP16_VMOVW_ST, E,w, None,None, V,x, zext0 cpuid(AVX512_FP16)
+                      ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16)),
+        {}, {},
+    };
+    decode_FP16_by_prefix(s, entry, tab);
+}
+#endif /* __Use_Original_Qemu (U339) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 
 static const X86OpEntry opcodes_evex_map5[256] = {
@@ -348,6 +405,12 @@ static const X86OpEntry opcodes_evex_map5[256] = {
     [0x2e] = X86_OP_GROUP0(FP16_M5_2E),
     [0x2f] = X86_OP_GROUP0(FP16_M5_2F),
 #endif /* __Use_Original_Qemu (U336) */
+#if __Use_Original_Qemu != 1 /* ours (U339) */
+    [0x10] = X86_OP_GROUP0(FP16_M5_10),
+    [0x11] = X86_OP_GROUP0(FP16_M5_11),
+    [0x6e] = X86_OP_GROUP0(FP16_M5_6E),
+    [0x7e] = X86_OP_GROUP0(FP16_M5_7E),
+#endif /* __Use_Original_Qemu (U339) */
 };
 
 static const X86OpEntry opcodes_evex_map6[256] = {

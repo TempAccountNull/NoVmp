@@ -277,3 +277,38 @@ FP16_GEN(CMULC, FP16_OP_CMULC)
 FP16_GEN(CFMA, FP16_OP_CFMA)
 FP16_GEN(CFMAC, FP16_OP_CFMAC)
 #endif /* __Use_Original_Qemu (U338) */
+#if __Use_Original_Qemu != 1 /* ours (U339) */
+
+/* NoVmp (ledger U339): VMOVSH, VMOVW */
+FP16_GEN(MOVSH, FP16_OP_MOVSH)
+FP16_GEN(MOVSH_LD, FP16_OP_MOVSH_LD)
+
+/* VMOVSH m16{k1}, xmm1: the word goes to evex_t1, gen_evex_insn stores it under k1 */
+static void gen_FP16_MOVSH_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, vector_reg_offset(&decode->op[2]));
+    tcg_gen_st16_i32(tcg_ctx, t, cpu_env, vector_reg_offset(&decode->op[0]));
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+
+/* VMOVW xmm1, r/m16: DEST[15:0] = SRC, DEST[MAXVL-1:16] = 0 (bits 511:128 by gen_evex_insn) */
+static void gen_FP16_VMOVW_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, d, 16, 16, 0);
+    tcg_gen_st16_tl(tcg_ctx, s->T1, cpu_env, d);
+}
+
+/* VMOVW r32/m16, xmm1: a GPR gets the word zero-extended (zext0: 32-bit write) */
+static void gen_FP16_VMOVW_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    tcg_gen_ld16u_tl(tcg_ctx, s->T0, cpu_env, vector_reg_offset(&decode->op[2]));
+}
+#endif /* __Use_Original_Qemu (U339) */
