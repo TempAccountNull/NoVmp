@@ -2171,6 +2171,24 @@ static void decode_EVEX_0F72(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 
 static void decode_EVEX_0F73(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+    /*
+     * NoVmp (ledger U265): /3 VPSRLDQ, /7 VPSLLDQ zmm1(vvvv), zmm2/m512, imm8 (AVX512BW,
+     * Full Mem, no writemask, E4NF)
+     */
+    static const X86OpEntry bytesh[2] = {
+        X86_OP_ENTRY4(EVEX_VPSRLDQ, H,x, W,x, None,None, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(8) ev_nf p_66),
+        X86_OP_ENTRY4(EVEX_VPSLLDQ, H,x, W,x, None,None, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(8) ev_nf p_66),
+    };
+    int ext = (get_modrm(s, env) >> 3) & 7;
+
+    if (ext == 3 || ext == 7) {
+        *entry = bytesh[ext == 7];
+        return;
+    }
+#endif /* __Use_Original_Qemu (U265) */
     static const X86OpEntry opcodes_EVEX_0F73[8] = {
         {}, {},
         EV_SHI(EVEX_VPSRLI, W1),
@@ -2314,6 +2332,13 @@ static void decode_EVEX_0F38_PMOV(DisasContext *s, CPUX86State *env, X86OpEntry 
         EV_PMN(xq, QUARTER_MEM, 16),        /* x4 QW */
         EV_PMN(xh, HALF_MEM, 32),           /* x5 QD */
     };
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+    /* 66 0F38 11 / 12 (W1): VPSRAVW / VPSLLVW, AVX512BW, Full Mem, E4 (U265) */
+    static const X86OpEntry vpshiftvw[2] = {
+        X86_OP_ENTRY3(EVEX_VPSRAVW, V,x, H,x, W,x, EV_BW(W1, 16) p_66),
+        X86_OP_ENTRY3(EVEX_VPSLLVW, V,x, H,x, W,x, EV_BW(W1, 16) p_66),
+    };
+#endif /* __Use_Original_Qemu (U265) */
     int lo = *b & 15;
 
     memset(entry, 0, sizeof(*entry));
@@ -2325,6 +2350,11 @@ static void decode_EVEX_0F38_PMOV(DisasContext *s, CPUX86State *env, X86OpEntry 
     } else if ((s->prefix & PREFIX_DATA) && (*b >> 4) != 1) {
         *entry = pmovx[lo];
     }
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+    else if ((s->prefix & PREFIX_DATA) && (*b == 0x11 || *b == 0x12)) {
+        *entry = vpshiftvw[*b - 0x11];
+    }
+#endif /* __Use_Original_Qemu (U265) */
 }
 #undef EV_PMX
 #undef EV_PMN
@@ -2551,6 +2581,29 @@ static void decode_EVEX_0F70(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F70);
 }
 #endif /* __Use_Original_Qemu (U264) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+/*
+ * NoVmp (ledger U265): 66 0F 71: /2 VPSRLW, /4 VPSRAW, /6 VPSLLW zmm1(vvvv){k1}{z},
+ * zmm2/m512, imm8 (AVX512BW, Full Mem, word writemask, E4NF)
+ */
+#define EV_SHW(op) X86_OP_ENTRY4(op, H,x, W,x, None,None, EV_BW(WIG, 16) ev_nf p_66)
+
+static void decode_EVEX_0F71(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F71[8] = {
+        {},
+        {},
+        EV_SHW(EVEX_VPSRLI),
+        {},
+        EV_SHW(EVEX_VPSRAI),
+        {},
+        EV_SHW(EVEX_VPSLLI),
+        {},
+    };
+    *entry = opcodes_EVEX_0F71[(get_modrm(s, env) >> 3) & 7];
+}
+#undef EV_SHW
+#endif /* __Use_Original_Qemu (U265) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2684,6 +2737,19 @@ static const X86OpEntry opcodes_evex_0F[256] = {
                            ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
     [0x70] = X86_OP_GROUP0(EVEX_0F70),
 #endif /* __Use_Original_Qemu (U264) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+    /*
+     * NoVmp (ledger U265): 71 /2 /4 /6 word shifts by imm8; D1/E1/F1 VPSRLW/VPSRAW/VPSLLW
+     * zmm1{k1}{z}, zmm2, xmm3/m128 (Mem128 tuple: disp8*N = 16 at every VL, E4NF)
+     */
+    [0x71] = X86_OP_GROUP0(EVEX_0F71),
+    [0xd1] = X86_OP_ENTRY3(EVEX_PSRLW_r, V,x, H,x, W,dq, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(MEM128) ev_mask(MZ) ev_w(WIG) ev_es(16) ev_nf p_66),
+    [0xe1] = X86_OP_ENTRY3(EVEX_PSRAW_r, V,x, H,x, W,dq, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(MEM128) ev_mask(MZ) ev_w(WIG) ev_es(16) ev_nf p_66),
+    [0xf1] = X86_OP_ENTRY3(EVEX_PSLLW_r, V,x, H,x, W,dq, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(MEM128) ev_mask(MZ) ev_w(WIG) ev_es(16) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U265) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -2887,6 +2953,11 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x2b] = X86_OP_ENTRY3(EVEX_PACKUSDW, V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
                            ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
 #endif /* __Use_Original_Qemu (U264) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+    /* NoVmp (ledger U265): VPSRLVW 10, VPSRAVW 11, VPSLLVW 12 (66.0F38.W1, Full Mem, E4) */
+    [0x10] = X86_OP_ENTRY3(EVEX_VPSRLVW, V,x, H,x, W,x, EV_BW(W1, 16) p_66),
+    /* 0x11 / 0x12 (66): VPSRAVW / VPSLLVW in decode_EVEX_0F38_PMOV (F3: VPMOVUSDB/QB, U212) */
+#endif /* __Use_Original_Qemu (U265) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

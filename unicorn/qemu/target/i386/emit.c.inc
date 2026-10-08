@@ -1896,6 +1896,68 @@ static void gen_EVEX_PALIGNR(DisasContext *s, CPUX86State *env, X86DecodedInsn *
                                 tcg_constant8u_i32(tcg_ctx, decode->immediate));
 }
 #endif /* __Use_Original_Qemu (U264) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+
+/*
+ * NoVmp (ledger U265): word shifts (SDM Vol2B PSLLW/PSRAW/PSRLW, PSLLDQ, PSRLDQ; Vol2C
+ * VPSLLVW/VPSRAVW/VPSRLVW). By imm8 (71 /2 /4 /6, vvvv = destination): gen_evex_shift_imm
+ * (U158) with 16-bit elements. By xmm3/m128 (D1/E1/F1): count = bits 63:0, above 15 the
+ * result is 0 / the sign (ops_sse.h helpers). By a word count per element: helper_evex_
+ * pshiftvw. VPSLLDQ/VPSRLDQ (73 /7 /3): each 128-bit lane by imm8 bytes (> 15: 0).
+ */
+EVEX_SSE3(PSRLW_r, psrlw)
+EVEX_SSE3(PSRAW_r, psraw)
+EVEX_SSE3(PSLLW_r, psllw)
+
+static void gen_evex_pshiftvw(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pshiftvw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, kind | (vector_len(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPSLLVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 0);
+}
+
+static void gen_EVEX_VPSRLVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 1);
+}
+
+static void gen_EVEX_VPSRAVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 2);
+}
+
+/* byte shift count in evex_s2.L(0) (xmm_t0 may hold the memory source) */
+static void gen_evex_bytesh(DisasContext *s, X86DecodedInsn *decode, bool left)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr cnt = evex_env_ptr(s, offsetof(CPUX86State, evex_s2));
+
+    tcg_gen_st_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, decode->immediate & 0xff), cpu_env,
+                   offsetof(CPUX86State, evex_s2.ZMM_L(0)));
+    if (left) {
+        SSE_FN3(s, decode, pslldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, cnt);
+    } else {
+        SSE_FN3(s, decode, psrldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, cnt);
+    }
+    tcg_temp_free_ptr(tcg_ctx, cnt);
+}
+
+static void gen_EVEX_VPSLLDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_bytesh(s, decode, true);
+}
+
+static void gen_EVEX_VPSRLDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_bytesh(s, decode, false);
+}
+#endif /* __Use_Original_Qemu (U265) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

@@ -7255,3 +7255,32 @@ void helper_evex_dbpsadbw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uin
     }
 }
 #endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+
+/*
+ * NoVmp (ledger U265): VPSLLVW / VPSRLVW / VPSRAVW (SDM Vol2C): each word of a shifted by
+ * the unsigned word count in the same position of b; a count above 15 gives 0 (logical)
+ * or the sign (arithmetic). desc = kind (0 left, 1 logical right, 2 arithmetic right) |
+ * vector length in bytes << 8. d may be a or b.
+ */
+void helper_evex_pshiftvw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int kind = desc & 0xff, n = (desc >> 8) / 2, i;
+
+    for (i = 0; i < n; i++) {
+        uint16_t x = a->ZMM_W(i), c = b->ZMM_W(i);
+
+        switch (kind) {
+        case 0:
+            d->ZMM_W(i) = c < 16 ? (uint16_t)(x << c) : 0;
+            break;
+        case 1:
+            d->ZMM_W(i) = c < 16 ? x >> c : 0;
+            break;
+        default:
+            d->ZMM_W(i) = (uint16_t)((int16_t)x >> (c < 16 ? c : 15));
+            break;
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U265) */
