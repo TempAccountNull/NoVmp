@@ -114,6 +114,9 @@ DEF_HELPER_5(amx_tileload, void, env, tl, tl, tl, i32)
 DEF_HELPER_5(amx_tilestore, void, env, tl, tl, tl, i32)
 DEF_HELPER_2(amx_tilezero, void, env, i32)
 #endif /* __Use_Original_Qemu (U176) */
+#if __Use_Original_Qemu != 1 /* ours (U177) */
+DEF_HELPER_2(amx_tmul, void, env, i32)
+#endif /* __Use_Original_Qemu (U177) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 DEF_HELPER_3(incssp, void, env, tl, i32)
 DEF_HELPER_1(saveprevssp, void, env)

@@ -3399,6 +3399,42 @@ static void gen_TILEZERO(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
 }
 #endif /* __Use_Original_Qemu (U176) */
 
+#if __Use_Original_Qemu != 1 /* ours (U177) */
+/*
+ * TMUL tsrcdest, tsrc1, tsrc2 (ModRM 11:rrr:bbb): tsrcdest = ModRM.reg | VEX.R, tsrc1 =
+ * ModRM.r/m | VEX.B, tsrc2 = VEX.vvvv; op numbers as in fpu_helper.c (AMX_TDPBSSD..).
+ */
+static void gen_amx_tmul(DisasContext *s, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t d = ((s->modrm >> 3) & 7) | REX_R(s);
+    uint32_t s1 = (s->modrm & 7) | REX_B(s);
+
+    gen_helper_amx_tmul(tcg_ctx, cpu_env,
+                        tcg_constant_i32(tcg_ctx, op | d << 4 | s1 << 8 | s->vex_v << 12));
+}
+
+/* TDPBSSD/TDPBSUD/TDPBUSD/TDPBUUD: VEX.128.{F2,F3,66,NP}.0F38.W0 5E 11:rrr:bbb */
+static void gen_TDPBSSD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 0);
+}
+
+static void gen_TDPBSUD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 1);
+}
+
+static void gen_TDPBUSD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 2);
+}
+
+static void gen_TDPBUUD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 3);
+}
+#endif /* __Use_Original_Qemu (U177) */
 
 
 

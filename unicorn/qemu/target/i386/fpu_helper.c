@@ -5851,10 +5851,108 @@ void helper_amx_tilezero(CPUX86State *env, uint32_t t)
 }
 #endif /* __Use_Original_Qemu (U176) */
 
+#if __Use_Original_Qemu != 1 /* ours (U177) */
+/*
+ * NoVmp (ledger U177..U180): the TMUL instructions, tsrcdest = ModRM.reg | VEX.R, tsrc1 =
+ * ModRM.r/m | VEX.B, tsrc2 = VEX.vvvv (0..15). C[M][N] += A[M][K] * B[K][N] with
+ * M = tsrcdest.rows, K = tsrc1.colsb / 4 = tsrc2.rows, N = tsrcdest.colsb / 4.
+ */
+enum {
+    AMX_TDPBSSD, AMX_TDPBSUD, AMX_TDPBUSD, AMX_TDPBUUD,     /* U177 */
+    AMX_TDPBF16PS,                                          /* U178 */
+    AMX_TDPFP16PS,                                          /* U179 */
+    AMX_TCMMIMFP16PS, AMX_TCMMRLFP16PS,                     /* U180 */
+};
+
+/* AMX-E4 (SDM Vol2A 2.10) after amx_check_enabled; then the result tile is d */
+static void amx_check_e4(CPUX86State *env, unsigned d, unsigned s1, unsigned s2,
+                         uintptr_t ra)
+{
+    if (d == s1 || s1 == s2 || d == s2) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    amx_check_tiledata(env, ra);                /* #NM (XFD), TILES_CONFIGURED */
+    if (!amx_tile_valid(env, d) || !amx_tile_valid(env, s1) || !amx_tile_valid(env, s2) ||
+        (AMX_COLSB(env, d) & 3) || (AMX_COLSB(env, s1) & 3) || (AMX_COLSB(env, s2) & 3) ||
+        AMX_COLSB(env, d) != AMX_COLSB(env, s2) ||
+        AMX_ROWS(env, d) != AMX_ROWS(env, s1) ||
+        AMX_COLSB(env, s1) / 4 != AMX_ROWS(env, s2) ||
+        AMX_COLSB(env, d) > 64 || AMX_COLSB(env, s2) > 64 ||    /* tmul_maxn (1EH) */
+        AMX_COLSB(env, s1) / 4 > 16 || AMX_ROWS(env, s2) > 16) { /* tmul_maxk (1EH) */
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+/* the tail of every TMUL operation: zero_upper_rows(tsrcdest, rows), zero_tilecfg_start */
+static void amx_tmul_finish(CPUX86State *env, unsigned d)
+{
+    amx_zero_upper_rows(env, d, AMX_ROWS(env, d));
+    AMX_START_ROW(env) = 0;
+}
+
+/*
+ * TDPBSSD / TDPBSUD / TDPBUSD / TDPBUUD (SDM Vol2B): DPBD(c, x, y) adds the four products
+ * extend_src1(x.byte[i]) * extend_src2(y.byte[i]) to the dword c (wrapping); the first
+ * letter is tsrc1's signedness, the second tsrc2's. Row m starts from the whole
+ * tsrcdest.row[m] (tmp := tsrcdest.row[m]) and is written back with write_row_and_zero.
+ */
+static void amx_tmul_int8(CPUX86State *env, int op, unsigned d, unsigned s1, unsigned s2)
+{
+    bool sx1 = op == AMX_TDPBSSD || op == AMX_TDPBSUD;
+    bool sx2 = op == AMX_TDPBSSD || op == AMX_TDPBUSD;
+    unsigned rows = AMX_ROWS(env, d), kk = AMX_COLSB(env, s1) / 4;
+    unsigned nn = AMX_COLSB(env, d) / 4, m, k, n, i;
+
+    for (m = 0; m < rows; m++) {
+        uint32_t tmp[16];
+        for (n = 0; n < 16; n++) {
+            tmp[n] = ldl_le_p(AMX_ROW(env, d, m) + 4 * n);
+        }
+        for (k = 0; k < kk; k++) {
+            const uint8_t *x = AMX_ROW(env, s1, m) + 4 * k;
+            for (n = 0; n < nn; n++) {
+                const uint8_t *y = AMX_ROW(env, s2, k) + 4 * n;
+                for (i = 0; i < 4; i++) {
+                    int32_t a = sx1 ? (int8_t)x[i] : (int32_t)x[i];
+                    int32_t b = sx2 ? (int8_t)y[i] : (int32_t)y[i];
+                    tmp[n] += (uint32_t)(a * b);
+                }
+            }
+        }
+        for (n = 0; n < nn; n++) {
+            stl_le_p(AMX_ROW(env, d, m) + 4 * n, tmp[n]);
+        }
+        memset(AMX_ROW(env, d, m) + 4 * nn, 0, AMX_P1_BYTES_PER_ROW - 4 * nn);
+    }
+    amx_tmul_finish(env, d);
+}
+#endif /* __Use_Original_Qemu (U177) */
 
 
 
 
+#if __Use_Original_Qemu != 1 /* ours (U177) */
+/* info = op | tsrcdest << 4 | tsrc1 << 8 | tsrc2 << 12 (each 0..15) */
+void helper_amx_tmul(CPUX86State *env, uint32_t info)
+{
+    uintptr_t ra = GETPC();
+    int op = info & 15;
+    unsigned d = (info >> 4) & 15, s1 = (info >> 8) & 15, s2 = (info >> 12) & 15;
+
+    amx_check_enabled(env, ra);
+    amx_check_e4(env, d, s1, s2, ra);
+    switch (op) {
+    case AMX_TDPBSSD:
+    case AMX_TDPBSUD:
+    case AMX_TDPBUSD:
+    case AMX_TDPBUUD:
+        amx_tmul_int8(env, op, d, s1, s2);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+#endif /* __Use_Original_Qemu (U177) */
 
 /* MMX/SSE */
 /* XXX: optimize by storing fptt and fptags in the static cpu state */
