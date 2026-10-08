@@ -442,3 +442,10 @@ DEF_HELPER_4(evex_shufbitqmb, i64, env, ptr, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U325) */
 DEF_HELPER_6(evex_permb, void, env, ptr, ptr, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U373-U399) */
+/* NoVmp: Intel AVX10.2 instructions (avx10_helper.c) */
+DEF_HELPER_5(avx10_bf16, void, env, ptr, ptr, ptr, i32)
+DEF_HELPER_6(avx10_bf16_fma, void, env, ptr, ptr, ptr, ptr, i32)
+DEF_HELPER_4(avx10_bf16_k, i64, env, ptr, ptr, i32)
+DEF_HELPER_3(avx10_vcomisbf16, void, env, ptr, ptr)
+#endif /* __Use_Original_Qemu (U373-U399) */

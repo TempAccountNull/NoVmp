@@ -28,17 +28,96 @@ static void decode_##name(DisasContext *s, CPUX86State *env, X86OpEntry *entry, 
     *entry = *decode_by_prefix(s, opcodes_##name);                                      \
 }
 
+/* ---- U373: BF16 instructions (spec ch.7) ---- */
+A10_SLOT(A10_MAP5_51, {}, A10_BF16_2(VSQRTBF16), {}, {})
+A10_SLOT(A10_MAP5_58, {}, A10_BF16_3(VADDBF16), {}, {})
+A10_SLOT(A10_MAP5_59, {}, A10_BF16_3(VMULBF16), {}, {})
+A10_SLOT(A10_MAP5_5C, {}, A10_BF16_3(VSUBBF16), {}, {})
+A10_SLOT(A10_MAP5_5D, {}, A10_BF16_3(VMINBF16), {}, {})
+A10_SLOT(A10_MAP5_5E, {}, A10_BF16_3(VDIVBF16), {}, {})
+A10_SLOT(A10_MAP5_5F, {}, A10_BF16_3(VMAXBF16), {}, {})
+A10_SLOT(A10_MAP6_2C, A10_BF16_3(VSCALEFBF16), {}, {}, {})
+A10_SLOT(A10_MAP6_42, A10_BF16_2(VGETEXPBF16), {}, {}, {})
+A10_SLOT(A10_MAP6_4C, A10_BF16_2(VRCPBF16), {}, {}, {})
+A10_SLOT(A10_MAP6_4E, A10_BF16_2(VRSQRTBF16), {}, {}, {})
+A10_SLOT(A10_MAP6_98, A10_BF16_3(VFMADD132BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_9A, A10_BF16_3(VFMSUB132BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_9C, A10_BF16_3(VFNMADD132BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_9E, A10_BF16_3(VFNMSUB132BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_A8, A10_BF16_3(VFMADD213BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_AA, A10_BF16_3(VFMSUB213BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_AC, A10_BF16_3(VFNMADD213BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_AE, A10_BF16_3(VFNMSUB213BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_B8, A10_BF16_3(VFMADD231BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_BA, A10_BF16_3(VFMSUB231BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_BC, A10_BF16_3(VFNMADD231BF16), {}, {}, {})
+A10_SLOT(A10_MAP6_BE, A10_BF16_3(VFNMSUB231BF16), {}, {}, {})
+A10_SLOT(A10_0F3A_08, {}, {}, {}, A10_BF16_2I(VRNDSCALEBF16))
+A10_SLOT(A10_0F3A_26, {}, {}, {}, A10_BF16_2I(VGETMANTBF16))
+A10_SLOT(A10_0F3A_56, {}, {}, {}, A10_BF16_2I(VREDUCEBF16))
+
+/* BF16 compares (spec 7.2, 7.3, 7.6) */
+A10_SLOT(A10_0F3A_66, {}, {}, {},
+         X86_OP_ENTRY4(VFPCLASSBF16, K,q, None,None, W,x, A10_BF16_K))
+A10_SLOT(A10_0F3A_C2, {}, {}, {},
+         X86_OP_ENTRY4(VCMPBF16, K,q, H,x, W,x, A10_BF16_K))
+/* VCOMISBF16 xmm1, xmm2/m16: LLIG, Tuple1 Scalar, no masking, E10NF */
+#define A10_VCOMISBF16 X86_OP_ENTRY3(VCOMISBF16, None,None, V,x, W,w, cpuid(AVX10_2)    \
+                           ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(NONE) ev_w(W0) ev_es(16) \
+                           .evex_nofs = 1,)
+
+static void decode_A10_MAP5_2F(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                               uint8_t *b)
+{
+    static const X86OpEntry opcodes_A10_MAP5_2F[4] = {
+        {}, A10_VCOMISBF16, {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2F);
+}
+
 /* ---- tables ---- */
 static const X86OpEntry opcodes_avx10_0F[256] = {
 };
 
 static const X86OpEntry opcodes_avx10_0F3A[256] = {
+    /* U373 */
+    [0x08] = X86_OP_GROUP0(A10_0F3A_08),
+    [0x26] = X86_OP_GROUP0(A10_0F3A_26),
+    [0x56] = X86_OP_GROUP0(A10_0F3A_56),
+    [0x66] = X86_OP_GROUP0(A10_0F3A_66),
+    [0xc2] = X86_OP_GROUP0(A10_0F3A_C2),
 };
 
 static const X86OpEntry opcodes_avx10_map5[256] = {
+    /* U373 */
+    [0x2f] = X86_OP_GROUP0(A10_MAP5_2F),
+    [0x51] = X86_OP_GROUP0(A10_MAP5_51),
+    [0x58] = X86_OP_GROUP0(A10_MAP5_58),
+    [0x59] = X86_OP_GROUP0(A10_MAP5_59),
+    [0x5c] = X86_OP_GROUP0(A10_MAP5_5C),
+    [0x5d] = X86_OP_GROUP0(A10_MAP5_5D),
+    [0x5e] = X86_OP_GROUP0(A10_MAP5_5E),
+    [0x5f] = X86_OP_GROUP0(A10_MAP5_5F),
 };
 
 static const X86OpEntry opcodes_avx10_map6[256] = {
+    /* U373 */
+    [0x2c] = X86_OP_GROUP0(A10_MAP6_2C),
+    [0x42] = X86_OP_GROUP0(A10_MAP6_42),
+    [0x4c] = X86_OP_GROUP0(A10_MAP6_4C),
+    [0x4e] = X86_OP_GROUP0(A10_MAP6_4E),
+    [0x98] = X86_OP_GROUP0(A10_MAP6_98),
+    [0x9a] = X86_OP_GROUP0(A10_MAP6_9A),
+    [0x9c] = X86_OP_GROUP0(A10_MAP6_9C),
+    [0x9e] = X86_OP_GROUP0(A10_MAP6_9E),
+    [0xa8] = X86_OP_GROUP0(A10_MAP6_A8),
+    [0xaa] = X86_OP_GROUP0(A10_MAP6_AA),
+    [0xac] = X86_OP_GROUP0(A10_MAP6_AC),
+    [0xae] = X86_OP_GROUP0(A10_MAP6_AE),
+    [0xb8] = X86_OP_GROUP0(A10_MAP6_B8),
+    [0xba] = X86_OP_GROUP0(A10_MAP6_BA),
+    [0xbc] = X86_OP_GROUP0(A10_MAP6_BC),
+    [0xbe] = X86_OP_GROUP0(A10_MAP6_BE),
 };
 
 /*

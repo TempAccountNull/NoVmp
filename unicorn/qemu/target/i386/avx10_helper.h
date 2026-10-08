@@ -14,5 +14,29 @@
 #define AVX10_DESC_N(d)    (((d) >> 16) & 0xff)
 #define AVX10_DESC_FL(d)   (((d) >> 24) & 0xff)
 
+/* helper_avx10_bf16 / helper_avx10_bf16_k operations (U373) */
+enum {
+    AVX10_BF16_ADD,
+    AVX10_BF16_SUB,
+    AVX10_BF16_MUL,
+    AVX10_BF16_DIV,
+    AVX10_BF16_MIN,
+    AVX10_BF16_MAX,
+    AVX10_BF16_SCALEF,
+    AVX10_BF16_SQRT,
+    AVX10_BF16_RCP,
+    AVX10_BF16_RSQRT,
+    AVX10_BF16_GETEXP,
+    AVX10_BF16_GETMANT,
+    AVX10_BF16_REDUCE,
+    AVX10_BF16_RNDSCALE,
+    AVX10_BF16_CMP,
+    AVX10_BF16_FPCLASS,
+};
+
+/* helper_avx10_bf16_fma flags (desc bits 31:24) */
+#define AVX10_FMA_NEG (1u << 24)    /* a := -a (VFNM*) */
+#define AVX10_FMA_SUB (2u << 24)    /* a * b - c (VF*MSUB) */
+
 #endif /* __Use_Original_Qemu (U372-U399) */
 #endif /* NOVMP_AVX10_HELPER_H */
