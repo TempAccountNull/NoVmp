@@ -218,6 +218,121 @@ def status_from(b):
     return '⏳', 'partial: ' + ', '.join(parts)
 
 
+# ---- CPU support: does the i5-13600K (our CPU) execute the instruction? -------------------------
+# Evaluated against the captured CPUID profile (Emulator/data/cpuid_i5-13600k.txt), SDM Vol2 CPUID
+# bit numbering. Rows of an unsupported family are marked a cross (never a checkmark), whatever the
+# emulator does; the row text still says whether the emulator implements it per the manual.
+ALWAYS = {'I86', 'I186', 'I286PROTECTED', 'I286REAL', 'I386', 'I486', 'I486REAL', 'PENTIUMREAL', 'PPRO',
+          'PPRO_UD0_LONG', 'PPRO_UD0_SHORT', 'LONGMODE', 'FAT_NOP', 'PAUSE', 'PREFETCH_NOP', 'RDPMC', '?'}
+CPUID_BIT = {
+    # family: (leaf, subleaf, reg 0=eax 1=ebx 2=ecx 3=edx, bit)
+    'X87': (1, 0, 3, 0), 'FCOMI': (1, 0, 3, 15), 'FCMOV': (1, 0, 3, 15), 'CMOV': (1, 0, 3, 15),
+    'SEP': (1, 0, 3, 11), 'CLFSH': (1, 0, 3, 19), 'PENTIUMMMX': (1, 0, 3, 23), 'FXSAVE': (1, 0, 3, 24),
+    'FXSAVE64': (1, 0, 3, 24), 'SSE': (1, 0, 3, 25), 'SSEMXCSR': (1, 0, 3, 25), 'SSE_PREFETCH': (1, 0, 3, 25),
+    'SSE2': (1, 0, 3, 26), 'SSE2MMX': (1, 0, 3, 26),
+    'SSE3': (1, 0, 2, 0), 'SSE3X87': (1, 0, 2, 0), 'PCLMULQDQ': (1, 0, 2, 1), 'MONITOR': (1, 0, 2, 3),
+    'VTX': (1, 0, 2, 5), 'VMFUNC': (1, 0, 2, 5), 'SMX': (1, 0, 2, 6), 'SSSE3': (1, 0, 2, 9), 'SSSE3MMX': (1, 0, 2, 9),
+    'FMA': (1, 0, 2, 12), 'CMPXCHG16B': (1, 0, 2, 13), 'SSE4': (1, 0, 2, 19), 'SSE42': (1, 0, 2, 20),
+    'MOVBE': (1, 0, 2, 22), 'POPCNT': (1, 0, 2, 23), 'AES': (1, 0, 2, 25), 'XSAVE': (1, 0, 2, 26),
+    'AVX': (1, 0, 2, 28), 'AVXAES': (1, 0, 2, 25), 'F16C': (1, 0, 2, 29), 'RDRAND': (1, 0, 2, 30),
+    'RDWRFSGS': (7, 0, 1, 0), 'SGX': (7, 0, 1, 2), 'SGX_ENCLV': (7, 0, 1, 2), 'BMI1': (7, 0, 1, 3), 'HLE': (7, 0, 1, 4),
+    'AVX2': (7, 0, 1, 5), 'AVX2GATHER': (7, 0, 1, 5), 'BMI2': (7, 0, 1, 8), 'INVPCID': (7, 0, 1, 10),
+    'RTM': (7, 0, 1, 11), 'MPX': (7, 0, 1, 14), 'AVX512F': (7, 0, 1, 16), 'AVX512DQ': (7, 0, 1, 17),
+    'RDSEED': (7, 0, 1, 18), 'ADOX_ADCX': (7, 0, 1, 19), 'SMAP': (7, 0, 1, 20), 'AVX512_IFMA': (7, 0, 1, 21),
+    'CLFLUSHOPT': (7, 0, 1, 23), 'CLWB': (7, 0, 1, 24), 'AVX512PF': (7, 0, 1, 26), 'AVX512ER': (7, 0, 1, 27),
+    'AVX512CD': (7, 0, 1, 28), 'SHA': (7, 0, 1, 29), 'AVX512BW': (7, 0, 1, 30),
+    'PREFETCHWT1': (7, 0, 2, 0), 'AVX512_VBMI': (7, 0, 2, 1), 'WAITPKG': (7, 0, 2, 5),
+    'AVX512_VBMI2': (7, 0, 2, 6), 'CET': (7, 0, 2, 7), 'GFNI': (7, 0, 2, 8), 'AVX_GFNI': (7, 0, 2, 8),
+    'VAES': (7, 0, 2, 9), 'VPCLMULQDQ': (7, 0, 2, 10), 'AVX512_VNNI': (7, 0, 2, 11), 'AVX512_BITALG': (7, 0, 2, 12),
+    'AVX512_VPOPCNTDQ': (7, 0, 2, 14), 'RDPID': (7, 0, 2, 22), 'KEYLOCKER': (7, 0, 2, 23),
+    'CLDEMOTE': (7, 0, 2, 25), 'MOVDIRI': (7, 0, 2, 27), 'MOVDIR64B': (7, 0, 2, 28), 'ENQCMD': (7, 0, 2, 29),
+    'AVX512_4VNNIW': (7, 0, 3, 2), 'AVX512_4FMAPS': (7, 0, 3, 3), 'UINTR': (7, 0, 3, 5),
+    'AVX512_VP2INTERSECT': (7, 0, 3, 8), 'SERIALIZE': (7, 0, 3, 14), 'TSX_LDTRK': (7, 0, 3, 16),
+    'PCONFIG': (7, 0, 3, 18), 'AMX_BF16': (7, 0, 3, 22), 'AVX512_FP16': (7, 0, 3, 23), 'AMX_TILE': (7, 0, 3, 24),
+    'AMX_INT8': (7, 0, 3, 25),
+    'SHA512': (7, 1, 0, 0), 'SM3': (7, 1, 0, 1), 'SM4': (7, 1, 0, 2), 'RAO_INT': (7, 1, 0, 3),
+    'AVX_VNNI': (7, 1, 0, 4), 'AVX512_BF16': (7, 1, 0, 5), 'CMPCCXADD': (7, 1, 0, 7), 'FRED': (7, 1, 0, 17),
+    'LKGS': (7, 1, 0, 18), 'WRMSRNS': (7, 1, 0, 19), 'AMX_FP16': (7, 1, 0, 21), 'HRESET': (7, 1, 0, 22),
+    'AVX_IFMA': (7, 1, 0, 23), 'MSRLIST': (7, 1, 0, 27), 'MOVRS': (7, 1, 0, 31),
+    'PBNDKB': (7, 1, 1, 1), 'MSR_IMM': (7, 1, 2, 5),
+    'AVX_VNNI_INT8': (7, 1, 3, 4), 'AVX_NE_CONVERT': (7, 1, 3, 5), 'AMX_COMPLEX': (7, 1, 3, 8),
+    'AVX_VNNI_INT16': (7, 1, 3, 10), 'ICACHE_PREFETCH': (7, 1, 3, 14), 'USER_MSR': (7, 1, 3, 15),
+    'XSAVEOPT': (0xd, 1, 0, 0), 'XSAVEC': (0xd, 1, 0, 1), 'XSAVES': (0xd, 1, 0, 3),
+    'PTWRITE': (0x14, 0, 1, 4), 'KEYLOCKER_WIDE': (0x19, 0, 1, 2),
+    'LAHF': (0x80000001, 0, 2, 0), 'LZCNT': (0x80000001, 0, 2, 5), 'RDTSCP': (0x80000001, 0, 3, 27),
+    'WBNOINVD': (0x80000008, 0, 1, 9),
+}
+CPU_FIXED = {
+    'PTWRITE': (True, 'CPUID.14H reports it absent, but the CPU executes it (U80 quirk)'),
+}
+CPU_NOT = {
+    '3DNOW': 'AMD 3DNow!', 'SSE4a': 'AMD SSE4a', 'XOP': 'AMD XOP', 'FMA4': 'AMD FMA4', 'TBM': 'AMD TBM',
+    'LWP': 'AMD LWP', 'CLZERO': 'AMD CLZERO', 'MONITORX': 'AMD MONITORX', 'RDPRU': 'AMD RDPRU',
+    'MCOMMIT': 'AMD MCOMMIT', 'AMD': 'AMD-only', 'AMD_INVLPGB': 'AMD INVLPGB', 'SVM': 'AMD SVM',
+    'SNP': 'AMD SEV-SNP', 'VIA_PADLOCK_AES': 'VIA PadLock', 'VIA_PADLOCK_SHA': 'VIA PadLock',
+    'VIA_PADLOCK_RNG': 'VIA PadLock', 'VIA_PADLOCK_MONTMUL': 'VIA PadLock', 'ACE_1': 'VIA/Zhaoxin ACE',
+    'TDX': 'Intel TDX (server, VMX root only)', 'IBHF': 'not reported by this CPU',
+}
+OS_OFF = {
+    'PKU': 'the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode',
+}
+CET_USER_OK = {'endbr32', 'endbr64', 'rdsspd', 'rdsspq'}
+
+
+def load_cpuid(path):
+    regs = {}
+    try:
+        for line in open(path, encoding='utf-8'):
+            t = line.split()
+            if len(t) == 6 and len(t[0]) == 8 and all(len(x) == 8 for x in t[2:6]):
+                regs[(int(t[0], 16), int(t[1], 16))] = [int(x, 16) for x in t[2:6]]
+    except OSError:
+        pass
+    return regs
+
+
+def family_on_cpu(fam, cpuid):
+    if fam in CPU_FIXED:
+        return CPU_FIXED[fam]
+    if fam in ALWAYS:
+        return True, ''
+    if fam in CPU_NOT:
+        return False, CPU_NOT[fam]
+    if fam in OS_OFF:
+        return False, OS_OFF[fam]
+    bit = CPUID_BIT.get(fam)
+    if bit is None:
+        best = None
+        for k in CPUID_BIT:
+            if fam.startswith(k + '_') and (best is None or len(k) > len(best)):
+                best = k
+        bit = CPUID_BIT.get(best) if best else None
+    if bit is None:
+        return False, '%s not reported by this CPU' % fam
+    leaf, sub, reg, b = bit
+    v = cpuid.get((leaf, sub))
+    if v and (v[reg] >> b) & 1:
+        return True, ''
+    return False, 'CPUID.%XH%s:%s[%d] = 0 on this CPU' % (leaf, ('.%d' % sub) if sub else '',
+                                                           ['EAX', 'EBX', 'ECX', 'EDX'][reg], b)
+
+
+def row_on_cpu(mn, isas, cpuid):
+    fams = set()
+    for isa in isas:
+        for f in isa.split('+'):
+            fams.add(family(f))
+    reasons = []
+    for f in sorted(fams):
+        ok, why = family_on_cpu(f, cpuid)
+        if ok:
+            if f == 'CET' and mn not in CET_USER_OK:
+                return False, 'the CPU has CET but Windows does not enable shadow stacks for our process: #UD/#GP in user mode'
+            return True, why
+        reasons.append(why)
+    return False, '; '.join(r for r in reasons if r)
+
+
 def main():
     sweep = load_sweep(sys.argv[1])
     vpath = sys.argv[4] if len(sys.argv) > 4 else os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])),
@@ -243,6 +358,8 @@ def main():
 
     by_family = defaultdict(list)
     totals = defaultdict(int)
+    cpuid = load_cpuid(os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])), 'cpuid_i5-13600k.txt'))
+    impl_unsup = defaultdict(int)
     for (mn, enc), r in rows.items():
         fam = family(sorted(r['isa'])[0])
         swept_enc = 'vex' if enc == 'xop' else enc
@@ -267,6 +384,14 @@ def main():
             vst, vnote = verified[(mn, enc)]
             st, note = VERIFIED_STATUS[vst][0], VERIFIED_STATUS[vst][1] + (': ' + vnote if vnote else '')
             vcount[vst] += 1
+        on_cpu, why = row_on_cpu(mn, r['isa'], cpuid)
+        if not on_cpu:
+            impl = {'✅': 'implemented per the manual (SDM-vector verified)',
+                    '⏳': 'implemented per the manual, open item',
+                    '⬜': 'not implemented yet'}[st]
+            impl_unsup[st] += 1
+            note = '**NOT SUPPORTED on our i5-13600K** (%s) — %s: %s' % (why or 'not reported by this CPU', impl, note)
+            st = '❌'
         totals[st] += 1
         vl = '/'.join(sorted(r['vl'], key=lambda v: int(v) if v.isdigit() else 0)) or '-'
         by_family[fam].append((mn, enc, vl, '+'.join(sorted(r['isa'])), st, note))
@@ -279,8 +404,9 @@ def main():
                'reachable yet. Generated by `NoVmp\\Emulator\\tools\\isa\\gen_instruction_table.py` from the full '
                'emu-alltest run (`--full`, 13,504 Capstone forms vs the CPU) plus the ledger; regenerate after every '
                'fix.\n')
-    out.append('- ✅ %d  ·  ⏳ %d  ·  ⬜ %d  (of %d mnemonic/encoding rows)\n' % (
-        totals['✅'], totals['⏳'], totals['⬜'], sum(totals.values())))
+    out.append('**Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, the emulator has an open item · ⬜ runs on our CPU (or is reachable) but not implemented / not verified yet · **❌ NOT SUPPORTED on our i5-13600K**: the CPU does not execute it (CPUID bit clear, AMD/VIA-only, or OS-disabled), so it can never be checked against our hardware; it is still implemented from the manual where possible, and the row says whether it is implemented (SDM-vector verified) or not yet.\n')
+    out.append('- ✅ %d  ·  ⏳ %d  ·  ⬜ %d  ·  ❌ %d not supported on our CPU (implemented per the manual: %d, open item: %d, not implemented yet: %d) — %d mnemonic/encoding rows\n' % (
+        totals['✅'], totals['⏳'], totals['⬜'], totals['❌'], impl_unsup['✅'], impl_unsup['⏳'], impl_unsup['⬜'], sum(totals.values())))
     if verified:
         out.append('- Rows the sweep cannot reach, verified one by one against the i5-13600K '
                    '(`Emulator\\data\\cases_reach.txt` → `Emulator\\data\\verified_forms.tsv`): '
@@ -301,14 +427,14 @@ def main():
         c = defaultdict(int)
         for it in items:
             c[it[4]] += 1
-        out.append('### %s — ✅ %d · ⏳ %d · ⬜ %d\n' % (fam, c['✅'], c['⏳'], c['⬜']))
+        out.append('### %s — ✅ %d · ⏳ %d · ⬜ %d · ❌ %d\n' % (fam, c['✅'], c['⏳'], c['⬜'], c['❌']))
         out.append('| | instruction | encoding | vector bits | ISA | status |')
         out.append('|---|---|---|---|---|---|')
         for mn, enc, vl, isa, st, note in items:
             out.append('| %s | %s | %s | %s | %s | %s |' % (st, mn.upper(), enc, vl, isa, note))
         out.append('')
     open(sys.argv[3], 'w', encoding='utf-8').write('\n'.join(out) + '\n')
-    print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount))
+    print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount), 'unsupported', dict(impl_unsup))
 
 
 MICROCODE = [
