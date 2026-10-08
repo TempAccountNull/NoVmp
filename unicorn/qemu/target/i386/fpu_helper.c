@@ -6624,6 +6624,18 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
     int bytes = 1 << esz;
     struct uc_struct *uc = env->uc;
 
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+    /*
+     * NoVmp (ledger U193): exception classes E*NF ("no fault suppression", SDM Vol2A 2.8,
+     * Table 2-44): a fault on a masked-off element is reported as well, so every element of
+     * the operand is probed; only the active ones are written.
+     */
+    if (desc & (1 << 18)) {
+        for (i = 0; i < n; i++) {
+            evex_probe_write(env, a0 + i * bytes, bytes, ra);
+        }
+    }
+#endif /* __Use_Original_Qemu (U193) */
     for (i = 0; i < n; i++) {
         if (mask & (1ull << i)) {
             evex_probe_write(env, a0 + i * bytes, bytes, ra);

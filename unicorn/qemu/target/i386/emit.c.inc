@@ -436,6 +436,9 @@ static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
 #define EVEX_DESC(esz, n)   ((uint32_t)(esz) | ((uint32_t)(n) << 8))
 #define EVEX_DESC_Z         (1u << 16)
 #define EVEX_DESC_ANY       (1u << 17)
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+#define EVEX_DESC_NOFS      (1u << 18)  /* E*NF masked store: probe every element (U193) */
+#endif /* __Use_Original_Qemu (U193) */
 
 static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
 {
@@ -718,10 +721,16 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
             int bytes = evex_mem_bytes(op0);
             int n = (e->evex_vl & X86_EVEX_LIG) ? 1 : nelem;
             TCGv_ptr p = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+            uint32_t desc = EVEX_DESC(ctz32(bytes / n), n);
 
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+            if (e->evex_nofs) {
+                desc |= EVEX_DESC_NOFS;     /* E*NF: every element probed (U193) */
+            }
+#endif /* __Use_Original_Qemu (U193) */
             gen_helper_evex_mstore(tcg_ctx, cpu_env, p, s->A0,
                                    kmask ? kmask : tcg_constant_i64(tcg_ctx, -1),
-                                   tcg_constant_i32(tcg_ctx, EVEX_DESC(ctz32(bytes / n), n)));
+                                   tcg_constant_i32(tcg_ctx, desc));
             tcg_temp_free_ptr(tcg_ctx, p);
         } else {
             int dst = ZMM_OFFSET(op0->n);

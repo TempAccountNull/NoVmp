@@ -1843,6 +1843,10 @@ static const X86OpEntry opcodes_root[256] = {
 #define ev_e1        .evex_align = 1,
 #define ev_fp        .evex_fp = 1,
 #define ev_w32       .evex_w32 = 1,
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+/* E*NF classes: memory operands without fault suppression (U193) */
+#define ev_nf        .evex_nofs = 1,
+#endif /* __Use_Original_Qemu (U193) */
 #if __Use_Original_Qemu != 1 /* ours (U190) */
 #define ev_dsrc      .evex_dsrc = 1,    /* destination is also a source (U190) */
 #endif /* __Use_Original_Qemu (U190) */
@@ -2231,6 +2235,9 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #undef ev_e1
 #undef ev_fp
 #undef ev_w32
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+#undef ev_nf
+#endif /* __Use_Original_Qemu (U193) */
 #if __Use_Original_Qemu != 1 /* ours (U190) */
 #undef ev_dsrc
 #endif /* __Use_Original_Qemu (U190) */
