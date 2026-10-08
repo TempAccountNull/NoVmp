@@ -436,6 +436,9 @@ static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
 #define EVEX_DESC(esz, n)   ((uint32_t)(esz) | ((uint32_t)(n) << 8))
 #define EVEX_DESC_Z         (1u << 16)
 #define EVEX_DESC_ANY       (1u << 17)
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+#define EVEX_DESC_NOFS      (1u << 18)  /* E*NF masked store: probe every element (U193) */
+#endif /* __Use_Original_Qemu (U193) */
 
 static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
 {
@@ -446,15 +449,47 @@ static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
     return p;
 }
 
-/* elements of the instruction that the opmask controls (scalar forms: element 0 only) */
-static int evex_nelem(DisasContext *s, X86DecodedInsn *decode)
-{
-    return (decode->e.evex_vl & X86_EVEX_LIG) ? 1 : s->evex_vl >> s->evex_esz;
-}
-
 static int evex_mem_bytes(X86DecodedOp *op)
 {
     return op->ot <= MO_64 ? 1 << op->ot : 16 << (op->ot - MO_128);
+}
+
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+/*
+ * NoVmp (ledger U210): bytes of the vector destination. A form whose register / memory
+ * destination is narrower than VL (VPMOVDB xmm1/m128 from zmm2, VEXTRACTF32X4 xmm1/m128,
+ * VMOVQ xmm1/m64, ...) is masked per destination element - KL = destination bytes /
+ * element size (the forms give the destination element size as evex_es) - and zeroes
+ * DEST[MAXVL-1:destination bytes] (SDM Vol2C VPMOVDB "DEST[MAXVL-1:VL/4] := 0",
+ * VEXTRACTF32X4 "DEST[MAXVL-1:128] := 0"). Scalar (LIG) forms are not concerned.
+ */
+static int evex_dest_bytes(DisasContext *s, X86DecodedInsn *decode)
+{
+    X86DecodedOp *op0 = &decode->op[0];
+
+    if (!(decode->e.evex_vl & X86_EVEX_LIG) && op0->unit == X86_OP_SSE &&
+        evex_mem_bytes(op0) < s->evex_vl) {
+        return evex_mem_bytes(op0);
+    }
+    return s->evex_vl;
+}
+#endif /* __Use_Original_Qemu (U210) */
+
+/*
+ * elements of the instruction that the opmask controls (scalar forms: element 0 only):
+ * KL = destination bytes (U210) / destination element size (U230 evex_dsz: the writemask
+ * element size, U260's evex_kes merged into it); up to 64 (byte elements of a ZMM).
+ * Conversions: VCVTPD2PS zmm -> ymm: 32 bytes / 4 = 8; VCVTPS2PD ymm -> zmm: 64 / 8 = 8
+ * (U230's "VL >> max(source, destination size)" gives the same count).
+ */
+static int evex_nelem(DisasContext *s, X86DecodedInsn *decode)
+{
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+    if (!(decode->e.evex_vl & X86_EVEX_LIG)) {
+        return evex_dest_bytes(s, decode) >> s->evex_dsz;   /* U230: evex_dsz */
+    }
+#endif /* __Use_Original_Qemu (U210) */
+    return (decode->e.evex_vl & X86_EVEX_LIG) ? 1 : s->evex_vl >> s->evex_esz;
 }
 
 /* load the memory source operand op into xmm_t0 (op->offset points there already) */
@@ -494,6 +529,35 @@ static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp 
         gen_load_sse(s, s->tmp4, op->ot, op->offset, false);
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+    /*
+     * NoVmp (ledger U210): Tuple2/4/8 with fault suppression (E6 VBROADCASTF32X2/F32X4/
+     * F64X2/F32X8/F64X4/I...: lane j uses element j mod g of the g-element group, SDM Vol2C
+     * VBROADCAST "n := (j modulo 4) * 32"): group element i is read only when a lane that
+     * uses it is active - the mask folded modulo g (Vol1 15.6.1 "memory faults are
+     * suppressed for elements with a mask bit of 0").
+     */
+    if (e->evex_tt == X86_EVEX_TT_T2 || e->evex_tt == X86_EVEX_TT_T4 ||
+        e->evex_tt == X86_EVEX_TT_T8) {
+        int g = bytes >> s->evex_esz, c;
+        TCGv_i64 fm = tcg_temp_new_i64(tcg_ctx);
+        TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+        tcg_gen_andi_i64(tcg_ctx, fm, kmask, (1ull << g) - 1);
+        for (c = 1; c < nelem / g; c++) {
+            tcg_gen_shri_i64(tcg_ctx, t, kmask, c * g);
+            tcg_gen_andi_i64(tcg_ctx, t, t, (1ull << g) - 1);
+            tcg_gen_or_i64(tcg_ctx, fm, fm, t);
+        }
+        p = evex_env_ptr(s, op->offset - xmm_offset(op->ot));
+        gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, fm,
+                              tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz, g)));
+        tcg_temp_free_ptr(tcg_ctx, p);
+        tcg_temp_free_i64(tcg_ctx, t);
+        tcg_temp_free_i64(tcg_ctx, fm);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U210) */
     if (e->evex_tt == X86_EVEX_TT_T1S || e->evex_tt == X86_EVEX_TT_T1F) {
         /* one element used by every lane: read when any lane is active */
         desc = EVEX_DESC(op->ot <= MO_64 ? op->ot : MO_64, nelem) | EVEX_DESC_ANY;
@@ -537,17 +601,202 @@ static void gen_evex_fp_end(DisasContext *s)
     gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, 0),
                           tcg_constant_i32(tcg_ctx, 0));
 }
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+
+/*
+ * NoVmp (ledger U192): scalar forms (EVEX.LLIG) with a vector register destination (SDM
+ * Vol2A 2.7.13 "Scalar Instructions" and every EVEX scalar page, exception classes E3, E5,
+ * E10): only element 0 is computed and masked with k1[0]; DEST[127:esz] := SRC1[127:esz]
+ * (SRC1 = EVEX.vvvv), or DEST[127:esz] unchanged when the destination is itself the first
+ * source (FMA: "DEST[127:32] := DEST[127:32]"), or 0 for a form without SRC1 (VMOVSS/SD
+ * xmm1, m: "DEST[MAXVL-1:32] := 0"); DEST[MAXVL-1:128] := 0 (writeback). Those bits are put
+ * into the result scratch register evex_t1 here, before the destination is written, so a
+ * destination that is also SRC1 reads its old value.
+ */
+static void gen_evex_scalar_upper(DisasContext *s, X86DecodedInsn *decode, int esz)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86DecodedOp *op1 = &decode->op[1];
+    int t1 = offsetof(CPUX86State, evex_t1), src = -1, ofs, sz;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    if (decode->e.evex_dsrc) {
+        src = ZMM_OFFSET(decode->op[0].n);
+    } else if (op1->unit == X86_OP_SSE && !op1->has_ea) {
+        src = ZMM_OFFSET(op1->n);
+    }
+    for (ofs = 1 << esz; ofs < 16; ofs += sz) {
+        sz = (ofs & 7) == 0 ? 8 : (ofs & 3) == 0 ? 4 : (ofs & 1) == 0 ? 2 : 1;
+        if (src < 0) {
+            tcg_gen_movi_i64(tcg_ctx, t, 0);
+        } else if (sz == 8) {
+            tcg_gen_ld_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else if (sz == 4) {
+            tcg_gen_ld32u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else if (sz == 2) {
+            tcg_gen_ld16u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else {
+            tcg_gen_ld8u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        }
+        if (sz == 8) {
+            tcg_gen_st_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else if (sz == 4) {
+            tcg_gen_st32_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else if (sz == 2) {
+            tcg_gen_st16_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else {
+            tcg_gen_st8_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        }
+    }
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U192) */
+
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+/* NoVmp (ledger U210): copy / zero env bytes for destinations of 2..64 bytes */
+static void gen_evex_copy(DisasContext *s, int dst, int src, int bytes)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (bytes >= 8) {
+        tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, src, bytes, bytes);
+    } else {
+        TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+        if (bytes == 4) {
+            tcg_gen_ld_i32(tcg_ctx, t, cpu_env, src);
+            tcg_gen_st_i32(tcg_ctx, t, cpu_env, dst);
+        } else {
+            tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, src);
+            tcg_gen_st16_i32(tcg_ctx, t, cpu_env, dst);
+        }
+        tcg_temp_free_i32(tcg_ctx, t);
+    }
+}
+
+/* DEST[MAXVL-1:from] := 0 for a destination register at env offset dst; from = 2..64 */
+static void gen_evex_zero_from(DisasContext *s, int dst, int from)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 z = tcg_constant_i64(tcg_ctx, 0);
+
+    while (from < 16) {
+        switch (from) {
+        case 2:
+            tcg_gen_st16_i64(tcg_ctx, z, cpu_env, dst + 2);
+            break;
+        case 4:
+            tcg_gen_st32_i64(tcg_ctx, z, cpu_env, dst + 4);
+            break;
+        default:
+            tcg_gen_st_i64(tcg_ctx, z, cpu_env, dst + 8);
+            break;
+        }
+        from *= 2;
+    }
+    if (from < (int)sizeof(ZMMReg)) {
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst + from, sizeof(ZMMReg) - from,
+                             sizeof(ZMMReg) - from, 0);
+    }
+}
+#endif /* __Use_Original_Qemu (U210) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+
+/*
+ * NoVmp (ledger U213): expand / compress (VPEXPANDD/Q, VEXPANDPS/PD, VPCOMPRESSD/Q,
+ * VCOMPRESSPS/PD; Tuple1 Scalar memory, E4.nb). The memory side is contiguous: only its
+ * first popcount(k1) elements (all KL without a writemask) are read / written, so a masked
+ * access never touches - or faults on - the elements beyond them. Expand masks the
+ * destination per element; compress merges / zeroes the tail of a register destination.
+ */
+static void gen_evex_cx(DisasContext *s, X86DecodedInsn *decode, TCGv_i64 kmask)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86DecodedOp *dst = &decode->op[0], *src = &decode->op[2];
+    int vl = s->evex_vl, esz = s->evex_esz, n = vl >> esz;
+    uint32_t desc = EVEX_DESC(esz, n);
+    TCGv_i64 m = kmask ? kmask : tcg_constant_i64(tcg_ctx, -1);
+    TCGv_i64 lm = NULL;
+    TCGv_ptr pd, ps;
+
+    if (dst->has_ea || src->has_ea) {
+        /* the first popcount(k1 & (2^KL - 1)) elements of the memory operand */
+        lm = tcg_temp_new_i64(tcg_ctx);
+        tcg_gen_andi_i64(tcg_ctx, lm, m, (1ull << n) - 1);
+        tcg_gen_ctpop_i64(tcg_ctx, lm, lm);
+        tcg_gen_shl_i64(tcg_ctx, lm, tcg_constant_i64(tcg_ctx, 1), lm);
+        tcg_gen_subi_i64(tcg_ctx, lm, lm, 1);
+    }
+    if (decode->e.evex_cx == X86_EVEX_CX_EXPAND) {
+        int sofs = src->has_ea ? offsetof(CPUX86State, xmm_t0) : ZMM_OFFSET(src->n);
+
+        if (src->has_ea) {
+            ps = evex_env_ptr(s, sofs);
+            gen_helper_evex_mload(tcg_ctx, cpu_env, ps, s->A0, lm,
+                                  tcg_constant_i32(tcg_ctx, desc));
+            tcg_temp_free_ptr(tcg_ctx, ps);
+        }
+        pd = evex_env_ptr(s, ZMM_OFFSET(dst->n));
+        ps = evex_env_ptr(s, sofs);
+        gen_helper_evex_expand(tcg_ctx, cpu_env, pd, ps, m,
+                               tcg_constant_i32(tcg_ctx, desc | (s->evex_z ? EVEX_DESC_Z : 0)));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+        gen_evex_zero_from(s, ZMM_OFFSET(dst->n), vl);
+    } else if (dst->has_ea) {
+        pd = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+        ps = evex_env_ptr(s, ZMM_OFFSET(src->n));
+        gen_helper_evex_compress(tcg_ctx, cpu_env, pd, ps, m,
+                                 tcg_constant_i32(tcg_ctx, desc | EVEX_DESC_Z));
+        gen_helper_evex_mstore(tcg_ctx, cpu_env, pd, s->A0, lm,
+                               tcg_constant_i32(tcg_ctx, desc));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+    } else {
+        pd = evex_env_ptr(s, ZMM_OFFSET(dst->n));
+        ps = evex_env_ptr(s, ZMM_OFFSET(src->n));
+        gen_helper_evex_compress(tcg_ctx, cpu_env, pd, ps, m,
+                                 tcg_constant_i32(tcg_ctx, desc | (s->evex_z ? EVEX_DESC_Z : 0)));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+        gen_evex_zero_from(s, ZMM_OFFSET(dst->n), vl);
+    }
+    if (lm) {
+        tcg_temp_free_i64(tcg_ctx, lm);
+    }
+}
+
+/* the gen function of the expand / compress forms: everything is done by gen_evex_cx */
+static void gen_EVEX_CX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+#endif /* __Use_Original_Qemu (U213) */
 
 static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     X86OpEntry *e = &decode->e;
     X86DecodedOp *op0 = &decode->op[0];
-    int vl = s->evex_vl, esz = s->evex_esz, nelem = evex_nelem(s, decode);
+    /*
+     * esz: element size of the sources (neutral lanes of a masked FP source); U230: dsz =
+     * element size of the destination and of the writemask (blend, scalar merge, DEST as a
+     * source; = esz unless X86OpEntry.evex_ds: conversions, and U260's VPACKSSDW/VPACKUSDW
+     * word writemask). A destination narrower than VL (VPMOVWB: VL/2, VCVTPD2PS: VL/2) comes
+     * from evex_dest_bytes (U210); vl stays the vector length.
+     */
+    int vl = s->evex_vl, esz = s->evex_esz;
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    int dsz = s->evex_dsz;
+#endif /* __Use_Original_Qemu (U230) */
+    int nelem = evex_nelem(s, decode);
     bool fp = e->evex_fp;
     bool has_mem = op0->has_ea || decode->op[1].has_ea || decode->op[2].has_ea;
     TCGv_i64 kmask = NULL;
     bool to_scratch = false;
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+    /* scalar form with a vector register destination (gen_evex_scalar_upper) */
+    bool scalar = (e->evex_vl & X86_EVEX_LIG) && op0->unit == X86_OP_SSE && !op0->has_ea;
+#endif /* __Use_Original_Qemu (U192) */
     int i;
 
 #if __Use_Original_Qemu != 1 /* ours (U250) */
@@ -571,6 +820,15 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
         tcg_gen_ld_i64(tcg_ctx, kmask, cpu_env,
                        offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
     }
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+    if (e->evex_cx) {
+        gen_evex_cx(s, decode, kmask);
+        if (kmask) {
+            tcg_temp_free_i64(tcg_ctx, kmask);
+        }
+        return;
+    }
+#endif /* __Use_Original_Qemu (U213) */
 
     /* sources */
     for (i = 1; i < 3; i++) {
@@ -590,10 +848,41 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     if (op0->unit == X86_OP_SSE) {
         compute_xmm_offset(op0);
         to_scratch = op0->has_ea || kmask || fp;
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+        to_scratch |= e->evex_dsrc;
+#endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+        to_scratch |= scalar;
+#endif /* __Use_Original_Qemu (U192) */
         if (to_scratch) {
             op0->offset = offsetof(CPUX86State, evex_t1) + xmm_offset(op0->ot);
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+
+    /*
+     * NoVmp (ledger U190): a destination that is also a source (FMA "DEST := DEST*SRC3 +
+     * SRC2" ...; SDM Vol2C, merging-masking keeps DEST) is read through the result scratch
+     * register: evex_t1 := DEST, with +1.0 in the masked-off lanes of an FP form (no MXCSR
+     * flag, no #XM from them, as for the other sources), so the gen function computes in
+     * place and the masking below merges with the old destination register.
+     */
+    if (e->evex_dsrc && op0->unit == X86_OP_SSE && !op0->has_ea) {
+        int t1 = offsetof(CPUX86State, evex_t1);
+
+        if (fp && kmask) {
+            TCGv_ptr pd = evex_env_ptr(s, t1);
+            TCGv_ptr ps = evex_env_ptr(s, ZMM_OFFSET(op0->n));
+
+            gen_helper_evex_neutral(tcg_ctx, cpu_env, pd, ps, kmask,
+                                    tcg_constant_i32(tcg_ctx, EVEX_DESC(dsz, nelem)));
+            tcg_temp_free_ptr(tcg_ctx, pd);
+            tcg_temp_free_ptr(tcg_ctx, ps);
+        } else {
+            tcg_gen_gvec_mov(tcg_ctx, MO_64, t1, ZMM_OFFSET(op0->n), vl, vl);
+        }
+    }
+#endif /* __Use_Original_Qemu (U190) */
 
     /* floating point with a mask: neutral (1.0) masked-off lanes in copies of the sources */
     if (fp && kmask) {
@@ -633,30 +922,83 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
             int bytes = evex_mem_bytes(op0);
             int n = (e->evex_vl & X86_EVEX_LIG) ? 1 : nelem;
             TCGv_ptr p = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+            uint32_t desc = EVEX_DESC(ctz32(bytes / n), n);
 
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+            /*
+             * NoVmp (ledger U193; U210 merged in): a masked store without fault suppression
+             * (E*NF, e.g. E6NF VEXTRACTF32X4 m128{k1}): the whole operand faults like an
+             * unmasked one (SDM Vol2A Table 2-56 "#PF: For a page fault"), only the active
+             * elements are written (helper_evex_mstore, EVEX_DESC_NOFS). Without a mask
+             * every element is probed and written anyway.
+             */
+            if (kmask && e->evex_nofs) {
+                desc |= EVEX_DESC_NOFS;
+            }
+#endif /* __Use_Original_Qemu (U193) */
             gen_helper_evex_mstore(tcg_ctx, cpu_env, p, s->A0,
                                    kmask ? kmask : tcg_constant_i64(tcg_ctx, -1),
-                                   tcg_constant_i32(tcg_ctx, EVEX_DESC(ctz32(bytes / n), n)));
+                                   tcg_constant_i32(tcg_ctx, desc));
             tcg_temp_free_ptr(tcg_ctx, p);
         } else {
             int dst = ZMM_OFFSET(op0->n);
+            /* a destination narrower than VL (U210): its own length, zeroed above it */
+            int dbytes = evex_dest_bytes(s, decode);
 
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+            if (scalar) {
+                gen_evex_scalar_upper(s, decode, dsz);   /* U230: destination size */
+            }
+#endif /* __Use_Original_Qemu (U192) */
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+            /*
+             * NoVmp (ledger U191): VPBLENDMD/Q, VBLENDMPS/PD (SDM Vol2C): a masked-off lane
+             * takes SRC1[j] under merging-masking ("ELSE IF *merging-masking* THEN DEST :=
+             * SRC1"), 0 under zeroing-masking; no mask (aaa = 000b) selects SRC2 everywhere.
+             * The gen function left SRC2 in evex_t1, so DEST := SRC1 first, then the blend.
+             */
+            if (e->evex_msrc1 && kmask && !s->evex_z) {
+                tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, ZMM_OFFSET(decode->op[1].n), vl, vl);
+            }
+#endif /* __Use_Original_Qemu (U191) */
             if (kmask) {
                 TCGv_ptr pd = evex_env_ptr(s, dst);
                 TCGv_ptr ps = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
 
                 gen_helper_evex_blend(tcg_ctx, cpu_env, pd, ps, kmask,
-                                      tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem) |
+                                      tcg_constant_i32(tcg_ctx, EVEX_DESC(dsz, nelem) |
                                                        (s->evex_z ? EVEX_DESC_Z : 0)));
                 tcg_temp_free_ptr(tcg_ctx, pd);
                 tcg_temp_free_ptr(tcg_ctx, ps);
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+                if (scalar) {
+                    /* element 0 blended; DEST[127:dsz] from the scratch register (U230) */
+                    tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                   offsetof(CPUX86State, evex_t1) + 8);
+                    tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 8);
+                    if (dsz < MO_64) {
+                        tcg_gen_ld32u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                          offsetof(CPUX86State, evex_t1) + 4);
+                        tcg_gen_st32_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 4);
+                    }
+                    if (dsz < MO_32) {
+                        tcg_gen_ld16u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                          offsetof(CPUX86State, evex_t1) + 2);
+                        tcg_gen_st16_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 2);
+                    }
+                    if (dsz < MO_16) {
+                        tcg_gen_ld8u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                         offsetof(CPUX86State, evex_t1) + 1);
+                        tcg_gen_st8_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 1);
+                    }
+                }
+#endif /* __Use_Original_Qemu (U192) */
             } else if (to_scratch) {
-                tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, offsetof(CPUX86State, evex_t1), vl, vl);
+                /* U210: dbytes (was vl) */
+                gen_evex_copy(s, dst, offsetof(CPUX86State, evex_t1), dbytes);
             }
-            if (vl < (int)sizeof(ZMMReg)) {
-                tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst + vl, sizeof(ZMMReg) - vl,
-                                     sizeof(ZMMReg) - vl, 0);
-            }
+            /* U210: DEST[MAXVL-1:dbytes] := 0 (was: from vl) */
+            gen_evex_zero_from(s, dst, dbytes);
         }
         break;
     case X86_OP_KREG:
@@ -1011,6 +1353,1120 @@ static void gen_EVEX_VSCATTER(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_vsib(s, decode, &decode->op[2], gen_helper_evex_scatter);
 }
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U194) */
+
+/*
+ * NoVmp (ledger U194): VADDSS/SD, VSUBSS/SD, VMULSS/SD, VDIVSS/SD ({er}), VMINSS/SD,
+ * VMAXSS/SD ({sae}), VSQRTSS/SD ({er}): element 0 by the SSE scalar helpers (same MXCSR,
+ * DAZ/FTZ, NaN and #XM rules as SSE/AVX); F3 = single, F2 = double. k1[0] masking,
+ * DEST[127:esz] := SRC1[127:esz] and the zeroing above bit 127 come from gen_evex_insn.
+ */
+#define EVEX_FP_SCALAR(uname, lname)                                                 \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+    SSEFunc_0_eppp fn = (s->prefix & PREFIX_REPNZ) ? gen_helper_##lname##sd          \
+                                                   : gen_helper_##lname##ss;         \
+                                                                                     \
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);                                 \
+}
+EVEX_FP_SCALAR(VADDS, add)
+EVEX_FP_SCALAR(VSUBS, sub)
+EVEX_FP_SCALAR(VMULS, mul)
+EVEX_FP_SCALAR(VDIVS, div)
+EVEX_FP_SCALAR(VMINS, min)
+EVEX_FP_SCALAR(VMAXS, max)
+EVEX_FP_SCALAR(VSQRTS, sqrt)
+#undef EVEX_FP_SCALAR
+#endif /* __Use_Original_Qemu (U194) */
+#if __Use_Original_Qemu != 1 /* ours (U195) */
+
+/*
+ * NoVmp (ledger U195): VMOVSS/VMOVSD (SDM Vol2B MOVSS/MOVSD, class E10): element 0 of the
+ * source (register, or memory read only when k1[0] = 1 / no mask) into element 0 of the
+ * destination; the register forms take DEST[127:esz] from SRC1 (EVEX.vvvv), the load form
+ * zeroes it (gen_evex_insn), the store form writes m32/m64 only when k1[0] = 1.
+ */
+static void gen_EVEX_VMOVS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (s->evex_esz == MO_64) {
+        tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[2].offset);
+        tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[0].offset);
+    } else {
+        tcg_gen_ld32u_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[2].offset);
+        tcg_gen_st32_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[0].offset);
+    }
+}
+#endif /* __Use_Original_Qemu (U195) */
+#if __Use_Original_Qemu != 1 /* ours (U196) */
+
+/*
+ * NoVmp (ledger U196): VCOMISS/SD (signalling: #IA on any NaN) and VUCOMISS/SD (#IA on an
+ * SNaN only) into ZF/PF/CF, OF/SF/AF cleared (SDM Vol2A COMISS/COMISD, Vol2B UCOMISS/
+ * UCOMISD; E3NF); {sae} suppresses the flags and #XM (gen_evex_insn).
+ */
+static void gen_EVEX_VCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_epp fn = (s->prefix & PREFIX_DATA) ? gen_helper_comisd : gen_helper_comiss;
+
+    fn(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2);
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+static void gen_EVEX_VUCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_epp fn = (s->prefix & PREFIX_DATA) ? gen_helper_ucomisd : gen_helper_ucomiss;
+
+    fn(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2);
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+#endif /* __Use_Original_Qemu (U196) */
+#if __Use_Original_Qemu != 1 /* ours (U197) */
+
+/*
+ * NoVmp (ledger U197): VCMPPS/PD (U197) and VCMPSS/SD (U198) into an opmask register:
+ * helper_evex_fcmp with the predicate imm8[4:0] (imm8[7:5] reserved, ignored as in the
+ * VEX forms); the AND with k2 and DEST[MAX_KL-1:KL] := 0 are done by gen_evex_insn.
+ */
+static void gen_EVEX_VCMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 31) << 16);
+
+    gen_helper_evex_fcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U199) */
+
+/*
+ * NoVmp (ledger U199): EVEX FMA, packed (0F38 96-98/9A/9C/9E, A6-A8/AA/AC/AE, B6-B8/BA/BC/
+ * BE; U199) and scalar (99/9B/9D/9F, A9/.., B9/..; U200). Opcode bits 7:4 = operand order
+ * (9: 132 DEST*SRC3 op SRC2, A: 213 SRC2*DEST op SRC3, B: 231 SRC2*SRC3 op DEST), bits 3:0
+ * = operation (6 FMADDSUB, 7 FMSUBADD, 8/9 FMADD, A/B FMSUB, C/D FNMADD, E/F FNMSUB). One
+ * rounding of the infinitely precise x*y+z (softfloat muladd, SDM Vol1 14.5.2); NaN result
+ * Q(x), Q(y), Q(z) in that order, 0*inf+QNaN returns Q(z) without #IA (Table 14-17), the
+ * negations do not apply to a NaN. DEST is read from the scratch copy made by
+ * gen_evex_insn (X86OpEntry.evex_dsrc), so OP_PTR0 is both a source and the result.
+ */
+static void gen_evex_fma_args(DisasContext *s, X86DecodedInsn *decode, TCGv_ptr *a,
+                              TCGv_ptr *b, TCGv_ptr *c, int *even, int *odd)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr p0 = OP_PTR0, p1 = OP_PTR1, p2 = OP_PTR2;
+
+    switch (decode->b >> 4) {
+    case 0x9:       /* 132: DEST * SRC3 + SRC2 */
+        *a = p0, *b = p2, *c = p1;
+        break;
+    case 0xa:       /* 213: SRC2 * DEST + SRC3 */
+        *a = p1, *b = p0, *c = p2;
+        break;
+    default:        /* 231: SRC2 * SRC3 + DEST */
+        *a = p1, *b = p2, *c = p0;
+        break;
+    }
+    switch (decode->b & 0xe) {
+    case 0x6:       /* FMADDSUB: even elements subtract, odd add */
+        *even = (decode->b & 1) ? 0 : float_muladd_negate_c;
+        *odd = (decode->b & 1) ? float_muladd_negate_c : 0;
+        break;
+    case 0x8:       /* FMADD */
+        *even = *odd = 0;
+        break;
+    case 0xa:       /* FMSUB */
+        *even = *odd = float_muladd_negate_c;
+        break;
+    case 0xc:       /* FNMADD */
+        *even = *odd = float_muladd_negate_product;
+        break;
+    default:        /* 0xe: FNMSUB */
+        *even = *odd = float_muladd_negate_c | float_muladd_negate_product;
+        break;
+    }
+}
+
+static void gen_EVEX_VFMAP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppppii fn = s->vex_w ? SSE_FN3(s, decode, fma4pd) : SSE_FN3(s, decode, fma4ps);
+    TCGv_ptr a, b, c;
+    int even, odd;
+
+    gen_evex_fma_args(s, decode, &a, &b, &c, &even, &odd);
+    fn(tcg_ctx, cpu_env, OP_PTR0, a, b, c, tcg_constant_i32(tcg_ctx, even),
+       tcg_constant_i32(tcg_ctx, even ^ odd));
+}
+#endif /* __Use_Original_Qemu (U199) */
+#if __Use_Original_Qemu != 1 /* ours (U200) */
+
+static void gen_EVEX_VFMAS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppppi fn = s->vex_w ? gen_helper_fma4sd : gen_helper_fma4ss;
+    TCGv_ptr a, b, c;
+    int even, odd;
+
+    gen_evex_fma_args(s, decode, &a, &b, &c, &even, &odd);
+    fn(tcg_ctx, cpu_env, OP_PTR0, a, b, c, tcg_constant_i32(tcg_ctx, even));
+}
+#endif /* __Use_Original_Qemu (U200) */
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+
+/*
+ * NoVmp (ledger U211): EVEX permutes / shuffles / unpacks through helper_evex_perm: op[0]
+ * the destination (or the masking scratch), op[1] SRC1 = EVEX.vvvv (absent in the
+ * two-operand forms), op[2] SRC2 = r/m ({1toN} replicated by gen_evex_load); the
+ * destination register as it was before the instruction is passed for VPERMI2/VPERMT2.
+ */
+static void gen_evex_perm(DisasContext *s, X86DecodedInsn *decode, int op, int aux)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pc = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n >= 0 ? decode->op[0].n : 0));
+    TCGv_ptr pa = decode->op[1].unit == X86_OP_SSE ? OP_PTR1 : pc;
+
+    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR2, pc,
+                         tcg_constant_i32(tcg_ctx,
+                                          EVEX_PERM_DESC(op, decode->immediate,
+                                                         vector_len(s, decode),
+                                                         s->evex_esz, aux)));
+    tcg_temp_free_ptr(tcg_ctx, pc);
+}
+
+#define EVEX_PERM_GEN(uname, opc)                                                     \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_perm(s, decode, opc, 0);                                                \
+}
+EVEX_PERM_GEN(UNPCKL, EVEX_PERM_UNPCKL)
+EVEX_PERM_GEN(UNPCKH, EVEX_PERM_UNPCKH)
+EVEX_PERM_GEN(VPSHUFD, EVEX_PERM_PSHUFD)
+EVEX_PERM_GEN(VPERMILPD_I, EVEX_PERM_PERMILPD_I)
+EVEX_PERM_GEN(VPERMILPS_V, EVEX_PERM_PERMILPS_V)
+EVEX_PERM_GEN(VPERMILPD_V, EVEX_PERM_PERMILPD_V)
+EVEX_PERM_GEN(VPERM, EVEX_PERM_PERM)
+EVEX_PERM_GEN(VPERMQ_I, EVEX_PERM_PERMQ_I)
+EVEX_PERM_GEN(VPERMI2, EVEX_PERM_PERMI2)
+EVEX_PERM_GEN(VPERMT2, EVEX_PERM_PERMT2)
+EVEX_PERM_GEN(VALIGN, EVEX_PERM_ALIGN)
+EVEX_PERM_GEN(VSHUF128, EVEX_PERM_SHUF128)
+
+/* VSHUFPS (NP) / VSHUFPD (66) */
+static void gen_EVEX_VSHUFP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, (s->prefix & PREFIX_DATA) ? EVEX_PERM_SHUFPD : EVEX_PERM_SHUFPS, 0);
+}
+#endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+
+/*
+ * NoVmp (ledger U212): VPMOVZX/VPMOVSX (66 0F38 21-25 / 31-35) and the narrowing
+ * VPMOVUS* / VPMOVS* / VPMOV* (F3 0F38 11-15 / 21-25 / 31-35). Opcode low nibble: 1 DB / BD,
+ * 2 QB / BQ, 3 DW / WD, 4 QW / WQ, 5 QD / DQ. The table gives the destination element
+ * size (evex_es); the source / destination of a narrowing VPMOV is narrower than VL
+ * (Half/Quarter/Eighth Mem) and gen_evex_insn masks per destination element.
+ */
+static void gen_EVEX_PMOVX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    static const uint8_t src_esz[6] = { 0, MO_8, MO_8, MO_16, MO_16, MO_32 };
+
+    gen_evex_perm(s, decode, (decode->b >> 4) == 2 ? EVEX_PERM_PMOVSX : EVEX_PERM_PMOVZX,
+                  src_esz[decode->b & 7]);
+}
+
+static void gen_EVEX_PMOVN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    static const uint8_t src_esz[6] = { 0, MO_32, MO_64, MO_32, MO_64, MO_64 };
+    static const uint8_t ops[4] = {
+        0, EVEX_PERM_PMOVUSAT, EVEX_PERM_PMOVSSAT, EVEX_PERM_PMOVTRUNC
+    };
+    TCGv_ptr pc = evex_env_ptr(s, ZMM_OFFSET(0));
+
+    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pc, OP_PTR2, pc,
+                         tcg_constant_i32(tcg_ctx,
+                                          EVEX_PERM_DESC(ops[(decode->b >> 4) & 3], 0,
+                                                         vector_len(s, decode),
+                                                         src_esz[decode->b & 7],
+                                                         s->evex_esz)));
+    tcg_temp_free_ptr(tcg_ctx, pc);
+}
+#endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U214) */
+
+/*
+ * NoVmp (ledger U214): VMOVSLDUP / VMOVDDUP (F3 / F2 0F 12) and VMOVSHDUP (F3 0F 16)
+ * (SDM Vol2B MOVSLDUP/MOVDDUP/MOVSHDUP: element 2i and 2i+1 both from SRC[2i] / SRC[2i+1]).
+ */
+static void gen_EVEX_DUP_EVEN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_DUP_EVEN, 0);
+}
+
+static void gen_EVEX_DUP_ODD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_DUP_ODD, 0);
+}
+
+/*
+ * NoVmp (ledger U214): 128-bit qword moves, no masking (E9NF / E7NM.128), DEST[MAXVL-1:128]
+ * := 0 by gen_evex_insn. Both qwords are read before the destination is written.
+ *   VMOVLPS/VMOVLPD xmm2, xmm1, m64: DEST = m64 : SRC1[127:64]   (q0 from op2, q1 from op1)
+ *   VMOVHPS/VMOVHPD xmm2, xmm1, m64: DEST = SRC1[63:0] : m64     (q0 from op1, q1 from op2)
+ *   VMOVHLPS xmm1, xmm2, xmm3:       DEST = SRC2[127:64] : SRC1[127:64]
+ *   VMOVLHPS xmm1, xmm2, xmm3:       DEST = SRC1[63:0] : SRC2[63:0]
+ */
+static void gen_evex_q2(DisasContext *s, X86DecodedInsn *decode, int op_lo, int q_lo,
+                        int op_hi, int q_hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 lo = tcg_temp_new_i64(tcg_ctx), hi = tcg_temp_new_i64(tcg_ctx);
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_ld_i64(tcg_ctx, lo, cpu_env,
+                   vector_reg_offset(&decode->op[op_lo]) + offsetof(ZMMReg, ZMM_Q(q_lo)));
+    tcg_gen_ld_i64(tcg_ctx, hi, cpu_env,
+                   vector_reg_offset(&decode->op[op_hi]) + offsetof(ZMMReg, ZMM_Q(q_hi)));
+    tcg_gen_st_i64(tcg_ctx, lo, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_st_i64(tcg_ctx, hi, cpu_env, d + offsetof(ZMMReg, ZMM_Q(1)));
+    tcg_temp_free_i64(tcg_ctx, lo);
+    tcg_temp_free_i64(tcg_ctx, hi);
+}
+
+static void gen_EVEX_MOVLP_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 2, 0, 1, 1);
+}
+
+static void gen_EVEX_MOVHP_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 1, 0, 2, 0);
+}
+
+static void gen_EVEX_MOVHLPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 2, 1, 1, 1);
+}
+
+static void gen_EVEX_MOVLHPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_q2(s, decode, 1, 0, 2, 0);
+}
+
+/*
+ * VMOVLPS/VMOVLPD m64, xmm1 (0F 13): SRC[63:0]; VMOVHPS/VMOVHPD m64, xmm1 (0F 17):
+ * SRC[127:64]; VMOVQ xmm1/m64, xmm2 (66 0F D6 W1) and VMOVQ xmm1, xmm2/m64 (F3 0F 7E W1):
+ * SRC[63:0] (a register destination is zeroed above bit 63: a destination narrower than VL
+ * for D6, op[0] = 128 bits with the upper qword zeroed here for 7E).
+ */
+static void gen_evex_movq_from(DisasContext *s, X86DecodedInsn *decode, int q, bool zero_hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_ld_i64(tcg_ctx, t, cpu_env,
+                   vector_reg_offset(&decode->op[2]) + offsetof(ZMMReg, ZMM_Q(q)));
+    tcg_gen_st_i64(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    if (zero_hi) {
+        tcg_gen_st_i64(tcg_ctx, tcg_constant_i64(tcg_ctx, 0), cpu_env,
+                       d + offsetof(ZMMReg, ZMM_Q(1)));
+    }
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+static void gen_EVEX_MOVLP_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 0, false);
+}
+
+static void gen_EVEX_MOVHP_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 1, false);
+}
+
+static void gen_EVEX_MOVQ_XX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_movq_from(s, decode, 0, decode->op[0].ot >= MO_128);
+}
+
+/*
+ * VMOVD xmm1, r32/m32 / VMOVQ xmm1, r64/m64 (66 0F 6E): DEST[31:0 / 63:0] := SRC,
+ * DEST[MAXVL-1:32 / 64] := 0. The GPR / memory value is in T1 (gen_evex_insn).
+ */
+static void gen_EVEX_MOVD_TO(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int d = vector_reg_offset(&decode->op[0]);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    if (decode->op[2].ot == MO_64) {
+        tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    } else {
+        tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+        tcg_gen_ext32u_i64(tcg_ctx, t, t);
+    }
+    tcg_gen_st_i64(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_st_i64(tcg_ctx, tcg_constant_i64(tcg_ctx, 0), cpu_env, d + offsetof(ZMMReg, ZMM_Q(1)));
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+/* VMOVD r32/m32, xmm1 / VMOVQ r64/m64, xmm1 (66 0F 7E): SRC[31:0 / 63:0] into T0 */
+static void gen_EVEX_MOVD_FROM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int src = vector_reg_offset(&decode->op[2]);
+
+    if (decode->op[0].ot == MO_64) {
+        tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, src + offsetof(ZMMReg, ZMM_Q(0)));
+    } else {
+        tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env, src + offsetof(ZMMReg, ZMM_L(0)));
+    }
+}
+#endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+
+/*
+ * NoVmp (ledger U215): VINSERTF32X4/F64X2/F32X8/F64X4, VINSERTI..., VEXTRACTF/I...,
+ * VBROADCASTF/I32X2/32X4/64X2/32X8/64X4 (helper_evex_perm; the chunk / group size in bytes
+ * is the size of the r/m operand, or of the destination for VEXTRACT). A register source of
+ * VBROADCASTx32X2 uses its low 64 bits.
+ */
+static void gen_EVEX_VINSERT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_INSERT, ctz32(evex_mem_bytes(&decode->op[2])));
+}
+
+static void gen_EVEX_VEXTRACT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_EXTRACT, ctz32(evex_mem_bytes(&decode->op[0])));
+}
+
+static void gen_EVEX_VBCASTX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_BCAST, ctz32(evex_mem_bytes(&decode->op[2])));
+}
+
+/* VPINSRD/VPINSRQ xmm1, xmm2, r/m, imm8: SRC1 with dword/qword imm8[1:0]/[0] := r/m (T1) */
+static void gen_EVEX_VPINSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_gvec_mov(tcg_ctx, MO_64, d, vector_reg_offset(&decode->op[1]), 16, 16);
+    if (decode->op[2].ot == MO_64) {
+        tcg_gen_st_tl(tcg_ctx, s->T1, cpu_env,
+                      d + offsetof(ZMMReg, ZMM_Q(decode->immediate & 1)));
+    } else {
+        tcg_gen_st32_tl(tcg_ctx, s->T1, cpu_env,
+                        d + offsetof(ZMMReg, ZMM_L(decode->immediate & 3)));
+    }
+}
+
+/* VPEXTRD/VPEXTRQ r/m, xmm2, imm8 and VEXTRACTPS r/m32, xmm1, imm8: the element into T0 */
+static void gen_EVEX_VPEXTR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int src = vector_reg_offset(&decode->op[2]);
+
+    if (decode->op[0].ot == MO_64) {
+        tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env,
+                      src + offsetof(ZMMReg, ZMM_Q(decode->immediate & 1)));
+    } else {
+        tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env,
+                         src + offsetof(ZMMReg, ZMM_L(decode->immediate & 3)));
+    }
+}
+
+/*
+ * VINSERTPS xmm1, xmm2, xmm3/m32, imm8 (SDM Vol2A INSERTPS): TMP := register source
+ * dword imm8[7:6] (memory: m32); DEST := SRC1 with dword imm8[5:4] := TMP; then the dwords
+ * selected by imm8[3:0] are zeroed; DEST[MAXVL-1:128] := 0 (gen_evex_insn).
+ */
+static void gen_EVEX_VINSERTPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int imm = decode->immediate & 0xff, d = vector_reg_offset(&decode->op[0]), i;
+    int count_s = decode->op[2].has_ea ? 0 : (imm >> 6) & 3;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    tcg_gen_ld_i32(tcg_ctx, t, cpu_env,
+                   vector_reg_offset(&decode->op[2]) + offsetof(ZMMReg, ZMM_L(count_s)));
+    tcg_gen_gvec_mov(tcg_ctx, MO_64, d, vector_reg_offset(&decode->op[1]), 16, 16);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_L((imm >> 4) & 3)));
+    for (i = 0; i < 4; i++) {
+        if (imm & (1 << i)) {
+            tcg_gen_st_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
+                           d + offsetof(ZMMReg, ZMM_L(i)));
+        }
+    }
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U215) */
+#if __Use_Original_Qemu != 1 /* ours (U262) */
+
+/*
+ * NoVmp (ledger U262): AVX512BW byte/word arithmetic. The gvec forms (VPADDB/W, VPADDS*,
+ * VPADDUS*, VPSUB*, VPMINS/U B/W, VPMAXS/U B/W, VPABSB/W, VPMULLW) reuse the VEX gen
+ * functions (vector_len() = the EVEX vector length); the ops_sse.h forms take the SHIFT
+ * 1/2/3 helper by vector length (SSE_FN3): DEST = op(SRC1 = vvvv, SRC2 = r/m).
+ */
+#define EVEX_SSE3(uname, lname)                                                      \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+                                                                                     \
+    SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);          \
+}
+EVEX_SSE3(PAVGB, pavgb)
+EVEX_SSE3(PAVGW, pavgw)
+EVEX_SSE3(PMULHUW, pmulhuw)
+EVEX_SSE3(PMULHW, pmulhw)
+EVEX_SSE3(PMULHRSW, pmulhrsw)
+#endif /* __Use_Original_Qemu (U262) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+
+/*
+ * NoVmp (ledger U263): VPMADDWD (dword writemask), VPMADDUBSW (SRC1 unsigned bytes, SRC2
+ * signed bytes, signed word saturation), VPSADBW (no writemask): ops_sse.h helpers by
+ * vector length; VDBPSADBW: helper_evex_dbpsadbw (imm8 | VL << 8).
+ */
+EVEX_SSE3(PMADDWD, pmaddwd)
+EVEX_SSE3(PMADDUBSW, pmaddubsw)
+EVEX_SSE3(PSADBW, psadbw)
+
+static void gen_EVEX_VDBPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_dbpsadbw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, (decode->immediate & 0xff) |
+                                                       (vector_len(s, decode) << 8)));
+}
+#endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+
+/*
+ * NoVmp (ledger U264): byte/word shuffles, unpacks and packs, all within 128-bit lanes
+ * (SDM Vol2B PSHUFB, PSHUFHW, PSHUFLW, PALIGNR, PUNPCKLBW/WD, PUNPCKHBW/WD, PACKSSWB/
+ * SSDW, PACKUSWB, PACKUSDW): the ops_sse.h helper of the vector length (SHIFT 3 for 512).
+ */
+EVEX_SSE3(PSHUFB, pshufb)
+EVEX_SSE3(PUNPCKLBW, punpcklbw)
+EVEX_SSE3(PUNPCKHBW, punpckhbw)
+EVEX_SSE3(PUNPCKLWD, punpcklwd)
+EVEX_SSE3(PUNPCKHWD, punpckhwd)
+EVEX_SSE3(PACKSSWB, packsswb)
+EVEX_SSE3(PACKUSWB, packuswb)
+EVEX_SSE3(PACKSSDW, packssdw)
+EVEX_SSE3(PACKUSDW, packusdw)
+
+/* VPSHUFHW / VPSHUFLW zmm1{k1}{z}, zmm2/m512, imm8: op[1] = r/m source */
+static void gen_EVEX_PSHUFHW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pshufhw)(tcg_ctx, OP_PTR0, OP_PTR1,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+
+static void gen_EVEX_PSHUFLW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pshuflw)(tcg_ctx, OP_PTR0, OP_PTR1,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+
+/* VPALIGNR: per lane (SRC1:SRC2) >> imm8 * 8, 0 for imm8 >= 32 */
+static void gen_EVEX_PALIGNR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, palignr)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+#endif /* __Use_Original_Qemu (U264) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+
+/*
+ * NoVmp (ledger U265): word shifts (SDM Vol2B PSLLW/PSRAW/PSRLW, PSLLDQ, PSRLDQ; Vol2C
+ * VPSLLVW/VPSRAVW/VPSRLVW). By imm8 (71 /2 /4 /6, vvvv = destination): gen_evex_shift_imm
+ * (U158) with 16-bit elements. By xmm3/m128 (D1/E1/F1): count = bits 63:0, above 15 the
+ * result is 0 / the sign (ops_sse.h helpers). By a word count per element: helper_evex_
+ * pshiftvw. VPSLLDQ/VPSRLDQ (73 /7 /3): each 128-bit lane by imm8 bytes (> 15: 0).
+ */
+EVEX_SSE3(PSRLW_r, psrlw)
+EVEX_SSE3(PSRAW_r, psraw)
+EVEX_SSE3(PSLLW_r, psllw)
+
+static void gen_evex_pshiftvw(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pshiftvw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, kind | (vector_len(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPSLLVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 0);
+}
+
+static void gen_EVEX_VPSRLVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 1);
+}
+
+static void gen_EVEX_VPSRAVW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshiftvw(s, decode, 2);
+}
+
+/* byte shift count in evex_s2.L(0) (xmm_t0 may hold the memory source) */
+static void gen_evex_bytesh(DisasContext *s, X86DecodedInsn *decode, bool left)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr cnt = evex_env_ptr(s, offsetof(CPUX86State, evex_s2));
+
+    tcg_gen_st_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, decode->immediate & 0xff), cpu_env,
+                   offsetof(CPUX86State, evex_s2.ZMM_L(0)));
+    if (left) {
+        SSE_FN3(s, decode, pslldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, cnt);
+    } else {
+        SSE_FN3(s, decode, psrldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, cnt);
+    }
+    tcg_temp_free_ptr(tcg_ctx, cnt);
+}
+
+static void gen_EVEX_VPSLLDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_bytesh(s, decode, true);
+}
+
+static void gen_EVEX_VPSRLDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_bytesh(s, decode, false);
+}
+#endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U266) */
+
+/*
+ * NoVmp (ledger U266): VPCMP[U]B/W, VPCMPEQB/W, VPCMPGTB/W, VPTESTMB/W, VPTESTNMB/W reuse
+ * the U152/U154 gen functions with 8/16-bit elements (up to 64 result bits, ANDed with k2
+ * by gen_evex_insn). VPMOVB2M / VPMOVW2M: bit j = the sign bit of element j ((SRC AND
+ * SRC) < 0, signed, helper_evex_pcmp). VPMOVM2B / VPMOVM2W: helper_evex_movm2v.
+ */
+static void gen_EVEX_VPMOV2M(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) | (1u << 16) |
+                    EVEX_PCMP_SIGNED | EVEX_PCMP_TEST;
+
+    gen_helper_evex_pcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR2, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+
+static void gen_EVEX_VPMOVM2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, k, s->T1);
+    gen_helper_evex_movm2v(tcg_ctx, cpu_env, OP_PTR0, k,
+                           tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz,
+                                                               evex_nelem(s, decode))));
+    tcg_temp_free_i64(tcg_ctx, k);
+}
+#endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U268) */
+
+/*
+ * NoVmp (ledger U268): VPMOVZXBW / VPMOVSXBW (word destination from VL/2 source bytes,
+ * ops_sse.h pmovzxbw/pmovsxbw of the vector length) and VPMOVWB / VPMOVSWB / VPMOVUSWB
+ * (VL/2 destination bytes from the source words, helper_evex_pmovwb; the masking and the
+ * zeroing of DEST[MAXVL-1:VL/2] use evex_narrow = 1, U260).
+ */
+static void gen_EVEX_PMOVZXBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmovzxbw)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+
+static void gen_EVEX_PMOVSXBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmovsxbw)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+
+static void gen_evex_pmovwb(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pmovwb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, kind | ((s->evex_vl / 2) << 8)));
+}
+
+static void gen_EVEX_VPMOVWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 0);
+}
+
+static void gen_EVEX_VPMOVSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 1);
+}
+
+static void gen_EVEX_VPMOVUSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pmovwb(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+
+/*
+ * NoVmp (ledger U269): word permutes (helper_evex_vpermw, desc = VL | mode << 8).
+ * VPERMW: indices SRC1 (vvvv), table SRC2. VPERMI2W: indices = the destination before the
+ * instruction, tables SRC1 / SRC2. VPERMT2W: indices SRC1, tables = the destination before
+ * the instruction / SRC2. The old destination is read from the register itself (op0
+ * may be the masking scratch register).
+ */
+static void gen_EVEX_VPERMW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode)));
+}
+
+static void gen_EVEX_VPERMI2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+static void gen_EVEX_VPERMT2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, pd, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+/*
+ * VPBLENDMB / VPBLENDMW (SDM Vol2C VPBLENDMB/VPBLENDMW): active elements (or all without
+ * a writemask) = SRC2, masked-off elements = SRC1 with merging, 0 with zeroing: gen_EVEX_MOV
+ * with X86OpEntry.evex_msrc1 (U191), as VPBLENDMD/Q (U201).
+ */
+#endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U290) */
+
+/* NoVmp (ledger U290): VPMULLQ: the low 64 bits of every 64 x 64-bit product */
+static void gen_EVEX_PMULLQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+
+    tcg_gen_gvec_mul(tcg_ctx, MO_64, decode->op[0].offset, decode->op[1].offset,
+                     decode->op[2].offset, vl, vl);
+}
+#endif /* __Use_Original_Qemu (U290) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+
+/*
+ * NoVmp (ledger U292): VFPCLASSPS/PD/SS/SD: one bit per element (helper_evex_fpclass,
+ * desc = EVEX_DESC | imm8 << 16) left in tmp1_i64; gen_evex_insn ANDs it with k1.
+ */
+static void gen_EVEX_VFPCLASS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 0xff) << 16);
+
+    gen_helper_evex_fpclass(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1,
+                            tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U293) */
+
+/*
+ * NoVmp (ledger U293): VRANGEPS/PD (helper_evex_range: desc = EVEX_DESC | imm8 << 16;
+ * MXCSR flags IE/DE and #XM through gen_evex_insn's sse_fp_begin/end or {sae}).
+ * U295: the scalar forms VRANGESS/SD compute element 0 and take DEST[127:esz] from SRC1,
+ * the register itself (its masking copy only holds element 0).
+ */
+#define EVEX_DQ_SCALAR (1u << 24)
+
+static void gen_EVEX_VRANGE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 0xff) << 16);
+
+#if __Use_Original_Qemu != 1 /* ours (U295) */
+    if (decode->e.evex_vl & X86_EVEX_LIG) {
+        TCGv_ptr pu = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+        gen_helper_evex_range(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, pu,
+                              tcg_constant_i32(tcg_ctx, desc | EVEX_DQ_SCALAR));
+        tcg_temp_free_ptr(tcg_ctx, pu);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U295) */
+    gen_helper_evex_range(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, OP_PTR1,
+                          tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+
+/*
+ * NoVmp (ledger U294): VREDUCEPS/PD, source = r/m (op[1]); helper_evex_reduce (desc =
+ * EVEX_DESC | imm8 << 16), flags IE/PE. U296: VREDUCESS/SD, source = op[2], DEST[127:esz]
+ * from the SRC1 register (op[1]).
+ */
+static void gen_EVEX_VREDUCE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 0xff) << 16);
+
+#if __Use_Original_Qemu != 1 /* ours (U296) */
+    if (decode->e.evex_vl & X86_EVEX_LIG) {
+        TCGv_ptr pu = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+        gen_helper_evex_reduce(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2, pu,
+                               tcg_constant_i32(tcg_ctx, desc | EVEX_DQ_SCALAR));
+        tcg_temp_free_ptr(tcg_ctx, pu);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U296) */
+    gen_helper_evex_reduce(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR1,
+                           tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U231) */
+
+/*
+ * NoVmp (ledger U231): EVEX packed conversions (helper_evex_cvt, one element per opmask
+ * bit; source and destination element sizes may differ, U230). Types as fpu_helper.c
+ * EVCVT_*: 0 i32, 1 u32, 2 i64, 3 u64, 4 f16, 5 f32, 6 f64.
+ */
+#define EVCVT_DESC(st, dt, tr, n) ((uint32_t)(st) | ((uint32_t)(dt) << 4) | \
+                                   ((uint32_t)(tr) << 8) | ((uint32_t)(n) << 9))
+
+static void gen_evex_cvt(DisasContext *s, X86DecodedInsn *decode, int st, int dt, bool trunc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                        tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, trunc,
+                                                             evex_nelem(s, decode))));
+}
+
+#define EVEX_CVT(uname, st, dt, tr)                                                  \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_cvt(s, decode, st, dt, tr);                                             \
+}
+EVEX_CVT(VCVTDQ2PS, 0, 5, 0)
+EVEX_CVT(VCVTUDQ2PS, 1, 5, 0)
+EVEX_CVT(VCVTPS2DQ, 5, 0, 0)
+EVEX_CVT(VCVTPS2UDQ, 5, 1, 0)
+EVEX_CVT(VCVTTPS2DQ, 5, 0, 1)
+EVEX_CVT(VCVTTPS2UDQ, 5, 1, 1)
+EVEX_CVT(VCVTPD2DQ, 6, 0, 0)
+EVEX_CVT(VCVTPD2UDQ, 6, 1, 0)
+EVEX_CVT(VCVTTPD2DQ, 6, 0, 1)
+EVEX_CVT(VCVTTPD2UDQ, 6, 1, 1)
+EVEX_CVT(VCVTDQ2PD, 0, 6, 0)
+EVEX_CVT(VCVTUDQ2PD, 1, 6, 0)
+EVEX_CVT(VCVTPS2PD, 5, 6, 0)
+EVEX_CVT(VCVTPD2PS, 6, 5, 0)
+EVEX_CVT(VCVTPH2PS, 4, 5, 0)
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+/* NoVmp (ledger U233): AVX512DQ quadword conversions */
+EVEX_CVT(VCVTQQ2PS, 2, 5, 0)
+EVEX_CVT(VCVTUQQ2PS, 3, 5, 0)
+EVEX_CVT(VCVTQQ2PD, 2, 6, 0)
+EVEX_CVT(VCVTUQQ2PD, 3, 6, 0)
+EVEX_CVT(VCVTPS2QQ, 5, 2, 0)
+EVEX_CVT(VCVTPS2UQQ, 5, 3, 0)
+EVEX_CVT(VCVTPD2QQ, 6, 2, 0)
+EVEX_CVT(VCVTPD2UQQ, 6, 3, 0)
+EVEX_CVT(VCVTTPS2QQ, 5, 2, 1)
+EVEX_CVT(VCVTTPS2UQQ, 5, 3, 1)
+EVEX_CVT(VCVTTPD2QQ, 6, 2, 1)
+EVEX_CVT(VCVTTPD2UQQ, 6, 3, 1)
+#endif /* __Use_Original_Qemu (U233) */
+
+/* VCVTPS2PH: destination = ModRM.r/m (op0), source = ModRM.reg (op1), imm8 rounding */
+static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1,
+                        tcg_constant_i32(tcg_ctx, EVCVT_DESC(5, 4, 0, evex_nelem(s, decode)) |
+                                                  ((decode->immediate & 0xff) << 16) |
+                                                  (1u << 24)));
+}
+#endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+
+/*
+ * NoVmp (ledger U232): scalar EVEX conversions. SRC1 (vvvv) is passed as the register
+ * itself (bits 127:element of the result), SRC2 as the operand (neutral copy under a mask).
+ */
+static TCGv_ptr gen_evex_src1_reg(DisasContext *s, X86DecodedInsn *decode)
+{
+    return evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+}
+
+static void gen_evex_cvt_ss(DisasContext *s, X86DecodedInsn *decode, int st, int dt)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr v = gen_evex_src1_reg(s, decode);
+
+    gen_helper_evex_cvt_s(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, 0, 1)));
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+
+static void gen_EVEX_VCVTSS2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_ss(s, decode, 5, 6);
+}
+
+static void gen_EVEX_VCVTSD2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_ss(s, decode, 6, 5);
+}
+
+/* VCVT[U]SI2SS/SD xmm1, xmm2, r/m32/64: the integer is in T1 (op2) */
+static void gen_evex_cvt_i2f(DisasContext *s, X86DecodedInsn *decode, bool uns, int dt)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr v = gen_evex_src1_reg(s, decode);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+    int st = (decode->op[2].ot == MO_64 ? 2 : 0) + uns;
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    gen_helper_evex_cvt_i2f(tcg_ctx, cpu_env, OP_PTR0, v, t,
+                            tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, 0, 1)));
+    tcg_temp_free_i64(tcg_ctx, t);
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+
+static void gen_EVEX_VCVTSI2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, false, 5);
+}
+
+static void gen_EVEX_VCVTSI2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, false, 6);
+}
+
+static void gen_EVEX_VCVTUSI2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, true, 5);
+}
+
+static void gen_EVEX_VCVTUSI2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, true, 6);
+}
+
+/* VCVT[T]SS/SD2[U]SI r32/r64, xmm/m: result in T0, written back by gen_evex_insn */
+static void gen_evex_cvt_f2i(DisasContext *s, X86DecodedInsn *decode, int st, bool uns,
+                             bool trunc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int dt = (decode->op[0].ot == MO_64 ? 2 : 0) + uns;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    gen_helper_evex_cvt_f2i(tcg_ctx, t, cpu_env, OP_PTR2,
+                            tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, trunc, 1)));
+    tcg_gen_trunc_i64_tl(tcg_ctx, s->T0, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+#define EVEX_CVT_F2I(uname, st, uns, tr)                                             \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_cvt_f2i(s, decode, st, uns, tr);                                        \
+}
+EVEX_CVT_F2I(VCVTSS2SI, 5, false, false)
+EVEX_CVT_F2I(VCVTSD2SI, 6, false, false)
+EVEX_CVT_F2I(VCVTTSS2SI, 5, false, true)
+EVEX_CVT_F2I(VCVTTSD2SI, 6, false, true)
+EVEX_CVT_F2I(VCVTSS2USI, 5, true, false)
+EVEX_CVT_F2I(VCVTSD2USI, 6, true, false)
+EVEX_CVT_F2I(VCVTTSS2USI, 5, true, true)
+EVEX_CVT_F2I(VCVTTSD2USI, 6, true, true)
+#endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+
+/* NoVmp (ledger U234): VPSLLD/Q, VPSRLD/Q, VPSRAD/Q by the count in xmm3/m128 */
+static void gen_evex_pshift(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pshift(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, kind | (s->evex_esz << 4) |
+                                                     (evex_nelem(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPSLL_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 0);
+}
+
+static void gen_EVEX_VPSRL_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 1);
+}
+
+static void gen_EVEX_VPSRA_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+
+/* NoVmp (ledger U235): VPROLVD/Q, VPRORVD/Q */
+static void gen_EVEX_VPROLV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_prolv(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                    (evex_nelem(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPRORV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_prolv(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, 1 | (s->evex_esz << 4) |
+                                                    (evex_nelem(s, decode) << 8)));
+}
+#endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * NoVmp (ledger U236-U241): one-source element operations (helper_evex_fp1/_fp1s): 0
+ * VRCP14, 1 VRSQRT14, 2 VGETEXP, 3 VGETMANT, 4 VRNDSCALE. Packed forms read the source from
+ * op src (op2 for the rm forms, op1 for the rm+imm8 forms); scalar forms are xmm1, xmm2
+ * (vvvv: bits 127:elem), xmm3/m (element 0).
+ */
+static void gen_evex_fp1(DisasContext *s, X86DecodedInsn *decode, int op, int src, int imm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = op | (s->evex_esz << 4) | (evex_nelem(s, decode) << 8) | ((imm & 0xff) << 16);
+
+    if (decode->e.evex_vl & X86_EVEX_LIG) {
+        TCGv_ptr v = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+        gen_helper_evex_fp1s(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, desc));
+        tcg_temp_free_ptr(tcg_ctx, v);
+    } else {
+        gen_helper_evex_fp1(tcg_ctx, cpu_env, OP_PTR0, src == 1 ? OP_PTR1 : OP_PTR2,
+                            tcg_constant_i32(tcg_ctx, desc));
+    }
+}
+
+static void gen_EVEX_VRCP14(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 0, 2, 0);
+}
+
+static void gen_EVEX_VRSQRT14(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 1, 2, 0);
+}
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+
+static void gen_EVEX_VGETEXP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 2, 2, 0);
+}
+#endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+
+/* packed: V, W, I (source op1); scalar: V, H, W, I */
+static void gen_EVEX_VGETMANT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 3, 1, decode->immediate);
+}
+#endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+
+static void gen_EVEX_VRNDSCALE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 4, 1, decode->immediate);
+}
+#endif /* __Use_Original_Qemu (U241) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+
+/* NoVmp (ledger U239): VSCALEFPS/PD/SS/SD */
+static void gen_EVEX_VSCALEF(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool scalar = decode->e.evex_vl & X86_EVEX_LIG;
+    TCGv_ptr v = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+    gen_helper_evex_scalef(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                     (evex_nelem(s, decode) << 8) |
+                                                     (scalar ? 1u << 24 : 0)));
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+#endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U240) */
+
+/*
+ * NoVmp (ledger U240): VFIXUPIMMPS/PD/SS/SD: DEST is an input (read from the register also
+ * when the result goes to the scratch register for masking); the opmask is passed so that
+ * only active elements report ZE/IE; not an evex_fp form (MXCSR masks ignored, no #XM).
+ */
+static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool scalar = decode->e.evex_vl & X86_EVEX_LIG;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    if (s->evex_aaa) {
+        tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    } else {
+        tcg_gen_movi_i64(tcg_ctx, k, -1);
+    }
+    gen_helper_evex_fixupimm(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2, k,
+                             tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                       (evex_nelem(s, decode) << 8) |
+                                                       ((decode->immediate & 0xff) << 16) |
+                                                       (scalar ? 1u << 24 : 0) |
+                                                       (s->evex_rc == -2 ? 1u << 25 : 0)));
+    tcg_temp_free_i64(tcg_ctx, k);
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+#endif /* __Use_Original_Qemu (U240) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
@@ -4086,3 +5542,121 @@ static void gen_TCMMRLFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_amx_tmul(s, 7);
 }
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+
+/*
+ * NoVmp (ledger U321): AVX512CD. VPLZCNTD/Q and VPCONFLICTD/Q compute every element of the
+ * source (r/m or {1toN}) with helper_evex_elem_unop; masking, fault suppression (VPLZCNT,
+ * E4) / whole-operand loads (VPCONFLICT, E4NF) and DEST[MAXVL-1:VL] := 0 come from
+ * gen_evex_insn. VPBROADCASTMB2Q / VPBROADCASTMW2D: the low byte / word of k1 (already
+ * zero-extended by the KU,b / KU,w operand load) in every qword / dword.
+ */
+static void gen_evex_elem_unop(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_elem_unop(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, EVEX_UNOP_DESC(op, s->evex_esz,
+                                                                      vector_len(s, decode))));
+}
+
+static void gen_EVEX_VPLZCNT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_LZCNT);
+}
+
+static void gen_EVEX_VPCONFLICT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_CONFLICT);
+}
+
+static void gen_EVEX_VPBROADCASTM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    tcg_gen_gvec_dup_i64(tcg_ctx, s->evex_esz, decode->op[0].offset, vl, vl, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U322) */
+
+/*
+ * NoVmp (ledger U322): EVEX VPMADD52LUQ/HUQ with the U87 ops_sse.h helpers (SHIFT 1/2/3).
+ * DEST is also the accumulator: X86OpEntry.evex_dsrc (U190) makes gen_evex_insn copy the
+ * destination register into the result scratch register before this runs (OP_PTR0 is both
+ * the accumulator and the result); the masked-off lanes come from the destination by the
+ * blend.
+ */
+static void gen_evex_madd52(DisasContext *s, X86DecodedInsn *decode, bool hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppp fn = hi ? SSE_FN3(s, decode, vpmadd52huq) : SSE_FN3(s, decode, vpmadd52luq);
+
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_VPMADD52LUQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_madd52(s, decode, false);
+}
+
+static void gen_EVEX_VPMADD52HUQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_madd52(s, decode, true);
+}
+#endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+
+/* NoVmp (ledger U323): VPOPCNTD/Q (and U324 VPOPCNTB/W): bits set per element */
+static void gen_EVEX_VPOPCNT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_POPCNT);
+}
+#endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+
+/* NoVmp (ledger U324): VPSHUFBITQMB: the mask goes to tmp1_i64, ANDed with k2 by gen_evex_insn */
+static void gen_EVEX_VPSHUFBITQMB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_shufbitqmb(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                               tcg_constant_i32(tcg_ctx, vector_len(s, decode)));
+}
+#endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+
+/*
+ * NoVmp (ledger U325): VPERMB / VPERMI2B / VPERMT2B (helper_evex_permb). The destination
+ * register before the instruction (index of VPERMI2B, table of VPERMT2B) is passed
+ * separately: with a mask the result goes to gen_evex_insn's scratch register.
+ */
+static void gen_evex_permb(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = tcg_temp_new_ptr(tcg_ctx);
+
+    tcg_gen_addi_ptr(tcg_ctx, pd, cpu_env, ZMM_OFFSET(decode->op[0].n));
+    gen_helper_evex_permb(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, op | (vector_len(s, decode) << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+static void gen_EVEX_VPERMB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 0);
+}
+
+static void gen_EVEX_VPERMI2B(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 1);
+}
+
+static void gen_EVEX_VPERMT2B(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U325) */

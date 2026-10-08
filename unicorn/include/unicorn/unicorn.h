@@ -689,6 +689,16 @@ typedef enum uc_control_type {
     // that hides a bit still #UDs that bit's instructions.
     // NoVmp U140: UC_X86_AVX512_VL adds CPUID.(EAX=7,ECX=0):EBX.AVX512VL (EVEX.128/256
     // forms of the AVX512F/DQ/BW instructions).
+    // NoVmp U320: UC_X86_AVX512_CD adds CPUID.(EAX=7,ECX=0):EBX.AVX512CD (VPCONFLICTD/Q,
+    // VPLZCNTD/Q, VPBROADCASTMB2Q, VPBROADCASTMW2D).
+    // NoVmp U322: UC_X86_AVX512_IFMA adds CPUID.(EAX=7,ECX=0):EBX.AVX512_IFMA[21] (EVEX
+    // VPMADD52LUQ/HUQ).
+    // NoVmp U323: UC_X86_AVX512_VPOPCNTDQ adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VPOPCNTDQ[14]
+    // (EVEX VPOPCNTD/Q).
+    // NoVmp U324: UC_X86_AVX512_BITALG adds CPUID.(EAX=7,ECX=0):ECX.AVX512_BITALG[12]
+    // (VPOPCNTB/W, VPSHUFBITQMB).
+    // NoVmp U325: UC_X86_AVX512_VBMI adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VBMI[1] (VPERMB,
+    // VPERMI2B, VPERMT2B; VPMULTISHIFTQB is not implemented yet and stays #UD).
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -709,6 +719,11 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_DQ 2 // + AVX512DQ (opmask B forms, KADDW, KTESTW)
 #define UC_X86_AVX512_BW 4 // + AVX512BW (opmask D/Q forms, KUNPCKWD/DQ)
 #define UC_X86_AVX512_VL 8 // + AVX512VL (EVEX.128 / EVEX.256 vector lengths) (NoVmp U140)
+#define UC_X86_AVX512_CD 16 // + AVX512CD (conflict detection, CPUID.7.0:EBX[28]) (NoVmp U320)
+#define UC_X86_AVX512_IFMA 32 // + AVX512_IFMA (CPUID.7.0:EBX[21]) (NoVmp U322)
+#define UC_X86_AVX512_VPOPCNTDQ 128 // + AVX512_VPOPCNTDQ (CPUID.7.0:ECX[14]) (NoVmp U323)
+#define UC_X86_AVX512_BITALG 256 // + AVX512_BITALG (CPUID.7.0:ECX[12]) (NoVmp U324)
+#define UC_X86_AVX512_VBMI 64 // + AVX512_VBMI (CPUID.7.0:ECX[1]) (NoVmp U325)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

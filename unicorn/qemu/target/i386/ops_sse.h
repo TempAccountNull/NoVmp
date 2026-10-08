@@ -1796,7 +1796,16 @@ void glue(helper_packusdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
     uint16_t r[8];
     int i, j, k;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U260) */
     for (i = 0, j = 0; i <= 2 << SHIFT; i += 8, j += 4) {
+#else /* ours (U260) */
+    /*
+     * NoVmp (ledger U260): one 128-bit lane (8 words) per iteration over the 4 << SHIFT
+     * words; "i <= 2 << SHIFT" covered 1 / 2 lanes for SHIFT 1 / 2 (same as now) but only
+     * 3 of the 4 lanes of the SHIFT 3 (_zmm, EVEX.512 VPACKUSDW) helper.
+     */
+    for (i = 0, j = 0; i < 4 << SHIFT; i += 8, j += 4) {
+#endif /* __Use_Original_Qemu (U260) */
         r[0] = satuw(v->L(j));
         r[1] = satuw(v->L(j + 1));
         r[2] = satuw(v->L(j + 2));

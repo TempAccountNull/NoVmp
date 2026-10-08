@@ -502,3 +502,146 @@ target_ulong HELPER(rdrand)(CPUX86State *env)
     env->cc_src = CC_C;
     return ret;
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+/*
+ * NoVmp (ledger U321): one element-wise EVEX operation over the vector length (no masking:
+ * gen_evex_insn merges / zeroes afterwards). desc = EVEX_UNOP_DESC(op, esz, vl); d may be
+ * s (every source element is read before any result is written).
+ * - EVEX_UNOP_LZCNT (VPLZCNTD/Q, SDM Vol2C): leading zero bits; the element width for 0.
+ * - EVEX_UNOP_CONFLICT (VPCONFLICTD/Q): bit k of element j = (SRC[j] = SRC[k]) for k < j,
+ *   bits j and up 0.
+ */
+static uint64_t evex_unop_get(const ZMMReg *r, int esz, int i)
+{
+    switch (esz) {
+    case MO_8:
+        return r->ZMM_B(i);
+    case MO_16:
+        return r->ZMM_W(i);
+    case MO_32:
+        return r->ZMM_L(i);
+    default:
+        return r->ZMM_Q(i);
+    }
+}
+
+static void evex_unop_set(ZMMReg *r, int esz, int i, uint64_t v)
+{
+    switch (esz) {
+    case MO_8:
+        r->ZMM_B(i) = (uint8_t)v;
+        break;
+    case MO_16:
+        r->ZMM_W(i) = (uint16_t)v;
+        break;
+    case MO_32:
+        r->ZMM_L(i) = (uint32_t)v;
+        break;
+    default:
+        r->ZMM_Q(i) = v;
+        break;
+    }
+}
+
+void helper_evex_elem_unop(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int op = desc & 0xff, esz = (desc >> 8) & 3, vl = desc >> 16;
+    int n = vl >> esz, bits = 8 << esz, i, k;
+    uint64_t src[64];
+
+    for (i = 0; i < n; i++) {
+        src[i] = evex_unop_get(s, esz, i);
+    }
+    for (i = 0; i < n; i++) {
+        uint64_t r = 0;
+
+        switch (op) {
+        case EVEX_UNOP_LZCNT:
+            r = src[i] ? (uint64_t)(clz64(src[i]) - (64 - bits)) : (uint64_t)bits;
+            break;
+        case EVEX_UNOP_CONFLICT:
+            for (k = 0; k < i; k++) {
+                if (src[i] == src[k]) {
+                    r |= 1ULL << k;
+                }
+            }
+            break;
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+        case EVEX_UNOP_POPCNT:      /* VPOPCNTB/W/D/Q: bits set in the element */
+            r = ctpop64(src[i]);
+            break;
+#endif /* __Use_Original_Qemu (U323) */
+        default:
+            g_assert_not_reached();
+        }
+        evex_unop_set(d, esz, i, r);
+    }
+}
+#endif /* __Use_Original_Qemu (U321) */
+
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+/*
+ * NoVmp (ledger U324): VPSHUFBITQMB (SDM Vol2C): k1[i*8+j] := SRC1.qword[i].bit[SRC2.qword[i].
+ * byte[j] & 0x3F] for the vl / 8 qwords; bits vl and up are 0 (k2 is applied by the caller).
+ */
+uint64_t helper_evex_shufbitqmb(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    uint64_t r = 0;
+    int i, j;
+
+    for (i = 0; i < (int)vl / 8; i++) {
+        uint64_t q = a->ZMM_Q(i);
+
+        for (j = 0; j < 8; j++) {
+            r |= ((q >> (b->ZMM_B(i * 8 + j) & 0x3f)) & 1) << (i * 8 + j);
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U324) */
+
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+/*
+ * NoVmp (ledger U325): byte permutes (SDM Vol2C), desc = op | VL bytes << 8, n = VL - 1:
+ * op 0 VPERMB:   DEST.byte[j] := SRC2.byte[SRC1.byte[j] & n]
+ * op 1 VPERMI2B: i := DEST.byte[j]; DEST.byte[j] := (i & VL) ? SRC2.byte[i & n] : SRC1.byte[i & n]
+ *                (the Operation box writes "off := 8*SRC1[...]" but selects the table with
+ *                TMP_DEST and the Description names the destination as the index operand)
+ * op 2 VPERMT2B: i := SRC1.byte[j]; DEST.byte[j] := (i & VL) ? SRC2.byte[i & n] : DEST.byte[i & n]
+ * d is the result (maybe a scratch register), old the destination register before the
+ * instruction; every source byte is read before any result byte is written.
+ */
+void helper_evex_permb(CPUX86State *env, ZMMReg *d, ZMMReg *old, ZMMReg *a, ZMMReg *b,
+                       uint32_t desc)
+{
+    int op = desc & 0xff, vl = desc >> 8, n = vl - 1, j;
+    uint8_t o[64], s1[64], s2[64], r[64];
+
+    for (j = 0; j < vl; j++) {
+        o[j] = old->ZMM_B(j);
+        s1[j] = a->ZMM_B(j);
+        s2[j] = b->ZMM_B(j);
+    }
+    for (j = 0; j < vl; j++) {
+        uint8_t i;
+
+        switch (op) {
+        case 0:
+            r[j] = s2[s1[j] & n];
+            break;
+        case 1:
+            i = o[j];
+            r[j] = (i & vl) ? s2[i & n] : s1[i & n];
+            break;
+        default:
+            i = s1[j];
+            r[j] = (i & vl) ? s2[i & n] : o[i & n];
+            break;
+        }
+    }
+    for (j = 0; j < vl; j++) {
+        d->ZMM_B(j) = r[j];
+    }
+}
+#endif /* __Use_Original_Qemu (U325) */

@@ -55,8 +55,9 @@
 // configure Unicorn for both kinds of case. UC_CTL_X86_HW_QUIRKS (U99): hardware cases run with
 // the host CPU's quirk set (QUIRKS_I5_13600K), expected-value cases with 0 (strictly the SDM);
 // --quirks N|cpu|sdm sets both. --avx512 opts Unicorn in to AVX-512
-// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL, before the engine is initialised; reset XCR0 then has
-// 7:5 set) for opmask/EVEX expected-value cases, e.g. Emulator\data\cases_opmask.txt. --amx
+// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI, before the engine is
+// initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
+// Emulator\data\cases_opmask.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory).
 // Output: "[n] SAME|DIFF <line>", the engines' lines, then "cases: N, differing: M" over both kinds;

@@ -225,6 +225,64 @@ DEF_HELPER_6(evex_gather, void, env, ptr, ptr, tl, tl, i32)
 #if __Use_Original_Qemu != 1 /* ours (U251) */
 DEF_HELPER_6(evex_scatter, void, env, ptr, ptr, tl, tl, i32)
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U197) */
+DEF_HELPER_4(evex_fcmp, i64, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+DEF_HELPER_6(evex_perm, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+DEF_HELPER_5(evex_expand, void, env, ptr, ptr, i64, i32)
+DEF_HELPER_5(evex_compress, void, env, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+DEF_HELPER_5(evex_dbpsadbw, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+DEF_HELPER_5(evex_pshiftvw, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U266) */
+DEF_HELPER_4(evex_movm2v, void, env, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U268) */
+DEF_HELPER_4(evex_pmovwb, void, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+DEF_HELPER_6(evex_vpermw, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+DEF_HELPER_3(evex_fpclass, i64, env, ptr, i32)
+#endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U293) */
+DEF_HELPER_6(evex_range, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+DEF_HELPER_5(evex_reduce, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U231) */
+DEF_HELPER_4(evex_cvt, void, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+DEF_HELPER_5(evex_cvt_s, void, env, ptr, ptr, ptr, i32)
+DEF_HELPER_5(evex_cvt_i2f, void, env, ptr, ptr, i64, i32)
+DEF_HELPER_3(evex_cvt_f2i, i64, env, ptr, i32)
+#endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+DEF_HELPER_5(evex_pshift, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+DEF_HELPER_5(evex_prolv, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+DEF_HELPER_4(evex_fp1, void, env, ptr, ptr, i32)
+DEF_HELPER_5(evex_fp1s, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+DEF_HELPER_6(evex_scalef, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U240) */
+DEF_HELPER_7(evex_fixupimm, void, env, ptr, ptr, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U240) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */
@@ -367,3 +425,12 @@ DEF_HELPER_3(rcrq, tl, env, tl, tl)
 #endif
 
 DEF_HELPER_1(rdrand, tl, env)
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+DEF_HELPER_4(evex_elem_unop, void, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+DEF_HELPER_4(evex_shufbitqmb, i64, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+DEF_HELPER_6(evex_permb, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U325) */

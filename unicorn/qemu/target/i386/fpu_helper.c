@@ -6697,6 +6697,29 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
     int bytes = 1 << esz;
     struct uc_struct *uc = env->uc;
 
+#if __Use_Original_Qemu != 1 /* ours (U193) */
+    /*
+     * NoVmp (ledger U193): exception classes E*NF ("no fault suppression", SDM Vol2A 2.8,
+     * Table 2-44): a fault on a masked-off element is reported as well, so every byte of
+     * the operand is probed for a write (#PF) before anything is written; only the active
+     * elements are written. U210 (merged here): a page that Unicorn has not mapped is
+     * reported through a one-byte read of it (UC_HOOK_MEM_UNMAPPED / #PF in emu-alltest), so
+     * that a masked-off element on it is never skipped silently; if a hook maps the page the
+     * instruction goes on. The operand is at most 64 bytes: its first and last byte cover
+     * every page it touches.
+     */
+    if (desc & (1 << 18)) {
+        target_ulong last = a0 + n * bytes - 1;
+
+        evex_probe_write(env, a0, n * bytes, ra);
+        if (!evex_mapped(env, a0) || !evex_mapped(env, last)) {
+            (void)cpu_ldub_data_ra(env, evex_mapped(env, a0) ? last : a0, ra);
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+        }
+    }
+#endif /* __Use_Original_Qemu (U193) */
     for (i = 0; i < n; i++) {
         if (mask & (1ull << i)) {
             evex_probe_write(env, a0 + i * bytes, bytes, ra);
@@ -7002,3 +7025,1602 @@ void helper_evex_pternlog(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMM
     }
 }
 #endif /* __Use_Original_Qemu (U159) */
+#if __Use_Original_Qemu != 1 /* ours (U197) */
+
+/*
+ * NoVmp (ledger U197): VCMPPS/PD/SS/SD into an opmask register (SDM Vol2A CMPPS/CMPPD,
+ * Table 3-8 "Comparison Predicate for CMPPD and CMPPS Instructions"): bit j = SRC1[j] OP5
+ * SRC2[j] for the n elements (desc bits 15:8; size log2 in bits 1:0), OP5 = imm8[4:0] in
+ * desc bits 20:16. Predicates 0-15 give the true relations among {A > B, A < B, A = B,
+ * unordered}; predicate p + 16 has the same relations with the opposite signalling
+ * behaviour. A signalling predicate raises #IA for a QNaN operand as well (else only for
+ * an SNaN); denormal operands set DE unless DAZ. Bits n..63 of the result are 0.
+ */
+uint64_t helper_evex_fcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    /* bit 0: A > B, bit 1: A < B, bit 2: A = B, bit 3: unordered (Table 3-8, rows 0H-FH) */
+    static const uint8_t rel[16] = {
+        0x4, 0x2, 0x6, 0x8, 0xb, 0xd, 0x9, 0x7,
+        0xc, 0xa, 0xe, 0x0, 0x3, 0x5, 0x1, 0xf,
+    };
+    /* signalling ("Signals #IA on QNAN" = Yes) among predicates 0-15: 1, 2, 5, 6, 9, A, D, E */
+    static const uint16_t sig16 = 0x6666;
+    int esz = desc & 3, n = (desc >> 8) & 0xff, pred = (desc >> 16) & 31, i;
+    bool sig = ((sig16 >> (pred & 15)) & 1) ^ (pred >> 4);
+    uint64_t r = 0;
+
+    for (i = 0; i < n; i++) {
+        FloatRelation fr;
+        int bit;
+
+        if (esz == MO_64) {
+            fr = sig ? float64_compare(a->ZMM_D(i), b->ZMM_D(i), &env->sse_status)
+                     : float64_compare_quiet(a->ZMM_D(i), b->ZMM_D(i), &env->sse_status);
+        } else {
+            fr = sig ? float32_compare(a->ZMM_S(i), b->ZMM_S(i), &env->sse_status)
+                     : float32_compare_quiet(a->ZMM_S(i), b->ZMM_S(i), &env->sse_status);
+        }
+        switch (fr) {
+        case float_relation_greater:
+            bit = 1;
+            break;
+        case float_relation_less:
+            bit = 2;
+            break;
+        case float_relation_equal:
+            bit = 4;
+            break;
+        default:
+            bit = 8;
+            break;
+        }
+        if (rel[pred & 15] & bit) {
+            r |= 1ull << i;
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+
+/*
+ * NoVmp (ledger U211): EVEX permutes, shuffles and unpacks, element by element as in the
+ * SDM pseudocode (Vol2B PUNPCKLDQ/PUNPCKHDQ/PSHUFD/SHUFPS/SHUFPD/UNPCKLPS/UNPCKHPS, Vol2C
+ * VPERMD/VPERMQ/VPERMPS/VPERMPD/VPERMI2x/VPERMT2x/VPERMILPS/VPERMILPD/VALIGND/VALIGNQ/
+ * VSHUFF32x4). desc: EVEX_PERM_DESC (cpu.h). d = destination (register or scratch),
+ * a = SRC1 (EVEX.vvvv), b = SRC2 (ModRM.r/m; {1toN} already replicated), c = the destination
+ * register before the instruction (VPERMI2 indices, VPERMT2 table 1). The result is built
+ * in a temporary: d may be any of the sources. Only the VL bytes of d are written.
+ */
+void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg *c,
+                      uint32_t desc)
+{
+    int imm = desc & 0xff, vl = (desc >> 8) & 0x7f, esz = (desc >> 16) & 3;
+    int op = (desc >> 24) & 0xff;
+    int n = vl >> esz, lane = 16 >> esz;    /* KL, elements per 128-bit lane */
+    int oesz = esz, obytes = vl;            /* result element size / bytes written */
+    ZMMReg r;
+    int j;
+
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+    int aux = (desc >> 20) & 3;
+
+    if (op >= EVEX_PERM_PMOVTRUNC && op <= EVEX_PERM_PMOVUSAT) {
+        oesz = aux;                         /* narrowing: KL source elements */
+        obytes = n << aux;
+    }
+#endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+    int cel = (1 << ((desc >> 20) & 15)) >> esz;    /* elements per chunk / group */
+    int csel = imm & ((vl >> ((desc >> 20) & 15)) - 1);
+
+    if (op == EVEX_PERM_EXTRACT) {
+        n = cel;                            /* the chunk: a destination narrower than VL */
+        obytes = n << esz;
+    }
+#endif /* __Use_Original_Qemu (U215) */
+    memset(&r, 0, sizeof(r));
+    for (j = 0; j < n; j++) {
+        int l0 = j & ~(lane - 1), k = j & (lane - 1);
+        uint64_t v, id;
+        int sel, ch;
+
+        switch (op) {
+        case EVEX_PERM_UNPCKL:      /* per lane: a0 b0 a1 b1 ... (low half) */
+            v = evex_get_elem((k & 1) ? b : a, esz, l0 + k / 2);
+            break;
+        case EVEX_PERM_UNPCKH:      /* per lane: high half */
+            v = evex_get_elem((k & 1) ? b : a, esz, l0 + lane / 2 + k / 2);
+            break;
+        case EVEX_PERM_SHUFPS:      /* lane dwords 0,1 from SRC1, 2,3 from SRC2 */
+            sel = (imm >> (2 * k)) & 3;
+            v = evex_get_elem(k < 2 ? a : b, esz, l0 + sel);
+            break;
+        case EVEX_PERM_SHUFPD:      /* even qwords from SRC1, odd from SRC2; imm8[j] */
+            v = evex_get_elem((j & 1) ? b : a, esz, (j & ~1) + ((imm >> j) & 1));
+            break;
+        case EVEX_PERM_PSHUFD:      /* Select4(SRC[lane], imm8[2k+1:2k]) */
+            v = evex_get_elem(b, esz, l0 + ((imm >> (2 * k)) & 3));
+            break;
+        case EVEX_PERM_PERMILPD_I:  /* imm8[j] selects the qword of the lane */
+            v = evex_get_elem(b, esz, (j & ~1) + ((imm >> j) & 1));
+            break;
+        case EVEX_PERM_PERMILPS_V:  /* Select4(SRC1[lane], SRC2[j][1:0]) */
+            v = evex_get_elem(a, esz, l0 + (evex_get_elem(b, esz, j) & 3));
+            break;
+        case EVEX_PERM_PERMILPD_V:  /* SRC2[j][1] selects the qword of the lane */
+            v = evex_get_elem(a, esz, (j & ~1) + ((evex_get_elem(b, esz, j) >> 1) & 1));
+            break;
+        case EVEX_PERM_PERM:        /* SRC2[SRC1[j] mod KL] */
+            v = evex_get_elem(b, esz, evex_get_elem(a, esz, j) & (n - 1));
+            break;
+        case EVEX_PERM_PERMQ_I:     /* per 256 bits: imm8[2(j mod 4)+1:2(j mod 4)] */
+            v = evex_get_elem(b, esz, (j & ~3) + ((imm >> (2 * (j & 3))) & 3));
+            break;
+        case EVEX_PERM_PERMI2:      /* DEST[j] bit log2(KL): SRC2, else SRC1 */
+            id = evex_get_elem(c, esz, j);
+            v = evex_get_elem((id & n) ? b : a, esz, id & (n - 1));
+            break;
+        case EVEX_PERM_PERMT2:      /* SRC1[j] bit log2(KL): SRC2, else DEST */
+            id = evex_get_elem(a, esz, j);
+            v = evex_get_elem((id & n) ? b : c, esz, id & (n - 1));
+            break;
+        case EVEX_PERM_ALIGN:       /* (SRC1:SRC2) >> (imm8 mod KL) elements */
+            sel = j + (imm & (n - 1));
+            v = sel < n ? evex_get_elem(b, esz, sel) : evex_get_elem(a, esz, sel - n);
+            break;
+        case EVEX_PERM_SHUF128:     /* 128-bit chunks: low half of the result from SRC1 */
+            ch = j / lane;
+            if (vl == 32) {
+                sel = (imm >> ch) & 1;
+                v = evex_get_elem(ch == 0 ? a : b, esz, sel * lane + k);
+            } else {
+                sel = (imm >> (2 * ch)) & 3;
+                v = evex_get_elem(ch < 2 ? a : b, esz, sel * lane + k);
+            }
+            break;
+#if __Use_Original_Qemu != 1 /* ours (U212) */
+        /*
+         * VPMOVZX/VPMOVSX: ZeroExtend / SignExtend of SRC element j (Vol2B PMOVZX/PMOVSX);
+         * VPMOV: TruncateXToY; VPMOVS: SaturateSignedXToSignedY; VPMOVUS:
+         * SaturateUnsignedXToUnsignedY (the source is unsigned) (Vol2C VPMOVDB/VPMOVSDB/...)
+         */
+        case EVEX_PERM_PMOVZX:
+            v = evex_get_elem(b, aux, j);
+            break;
+        case EVEX_PERM_PMOVSX: {
+            int sh = 64 - (8 << aux);
+
+            v = (uint64_t)((int64_t)(evex_get_elem(b, aux, j) << sh) >> sh);
+            break;
+        }
+        case EVEX_PERM_PMOVTRUNC:
+            v = evex_get_elem(b, esz, j);
+            break;
+        case EVEX_PERM_PMOVSSAT: {
+            int sh = 64 - (8 << esz), db = 8 << aux;
+            int64_t x = (int64_t)(evex_get_elem(b, esz, j) << sh) >> sh;
+            int64_t hi = ((int64_t)1 << (db - 1)) - 1, lo = -hi - 1;
+
+            v = (uint64_t)(x > hi ? hi : x < lo ? lo : x);
+            break;
+        }
+        case EVEX_PERM_PMOVUSAT: {
+            uint64_t x = evex_get_elem(b, esz, j), hi = (1ull << (8 << aux)) - 1;
+
+            v = x > hi ? hi : x;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U214) */
+        case EVEX_PERM_DUP_EVEN:    /* VMOVSLDUP, VMOVDDUP: SRC[j AND NOT 1] */
+            v = evex_get_elem(b, esz, j & ~1);
+            break;
+        case EVEX_PERM_DUP_ODD:     /* VMOVSHDUP: SRC[j OR 1] */
+            v = evex_get_elem(b, esz, j | 1);
+            break;
+#endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+        case EVEX_PERM_INSERT:      /* TMP := SRC1; TMP[chunk imm8] := SRC2[chunk-1:0] */
+            if (j >= csel * cel && j < (csel + 1) * cel) {
+                v = evex_get_elem(b, esz, j - csel * cel);
+            } else {
+                v = evex_get_elem(a, esz, j);
+            }
+            break;
+        case EVEX_PERM_EXTRACT:     /* SRC2[chunk imm8] */
+            v = evex_get_elem(b, esz, csel * cel + j);
+            break;
+        case EVEX_PERM_BCAST:       /* SRC2[j modulo group] */
+            v = evex_get_elem(b, esz, j % cel);
+            break;
+#endif /* __Use_Original_Qemu (U215) */
+        default:
+            g_assert_not_reached();
+        }
+        evex_set_elem(&r, oesz, j, v);
+    }
+    memcpy(d, &r, obytes);
+}
+#endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+
+/*
+ * NoVmp (ledger U213): VPEXPANDD/Q, VEXPANDPS/PD (SDM Vol2C): "k := 0; FOR j: IF k1[j] OR
+ * *no writemask* THEN DEST[j] := SRC[k]; k := k + 1 ELSE merging / zeroing". s holds the
+ * source elements contiguously (the register, or the popcount(k1) elements read from
+ * memory); desc = EVEX_DESC(esz, KL) | EVEX_DESC_Z. Only the KL elements of d are written.
+ */
+void helper_evex_expand(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i, k = 0;
+    ZMMReg src = *s, r = *d;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_set_elem(&r, esz, i, evex_get_elem(&src, esz, k++));
+        } else if (desc & EVEX_DESC_Z) {
+            evex_set_elem(&r, esz, i, 0);
+        }
+    }
+    memcpy(d, &r, n << esz);
+}
+
+/*
+ * NoVmp (ledger U213): VPCOMPRESSD/Q, VCOMPRESSPS/PD (SDM Vol2C): "k := 0; FOR j: IF k1[j]
+ * OR *no writemask* THEN DEST[k] := SRC[j]; k := k + 1; IF *merging-masking* THEN
+ * *DEST[VL-1:k] remains unchanged* ELSE DEST[VL-1:k] := 0". The memory form packs into
+ * the scratch register (zeroing) and stores only the first k elements (gen_evex_cx).
+ */
+void helper_evex_compress(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i, k = 0;
+    ZMMReg src = *s, r = *d;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_set_elem(&r, esz, k++, evex_get_elem(&src, esz, i));
+        }
+    }
+    if (desc & EVEX_DESC_Z) {
+        for (; k < n; k++) {
+            evex_set_elem(&r, esz, k, 0);
+        }
+    }
+    memcpy(d, &r, n << esz);
+}
+#endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+
+/*
+ * NoVmp (ledger U263): VDBPSADBW (SDM Vol2C): per 128-bit lane TMP1 dword i = SRC2 dword
+ * imm8[2i+1:2i] of the lane; per 64-bit block of TMP1 four word SADs between unsigned
+ * bytes: SRC1 bytes 0-3 with TMP1 bytes 0-3 and 1-4, SRC1 bytes 4-7 with TMP1 bytes 2-5 and
+ * 3-6 (byte offsets within the block). desc = imm8 | vector length in bytes << 8.
+ */
+void helper_evex_dbpsadbw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int imm = desc & 0xff, vl = desc >> 8, ln, blk, w, i;
+    ZMMReg r;
+
+    for (ln = 0; ln < vl / 16; ln++) {
+        uint8_t t[16];
+
+        for (i = 0; i < 16; i++) {
+            t[i] = b->ZMM_B(ln * 16 + 4 * ((imm >> (2 * (i / 4))) & 3) + (i & 3));
+        }
+        for (blk = 0; blk < 2; blk++) {
+            for (w = 0; w < 4; w++) {
+                int so = ln * 16 + blk * 8 + (w < 2 ? 0 : 4), to = blk * 8 + w;
+                int sum = 0;
+
+                for (i = 0; i < 4; i++) {
+                    int dlt = (int)a->ZMM_B(so + i) - (int)t[to + i];
+
+                    sum += dlt < 0 ? -dlt : dlt;
+                }
+                r.ZMM_W(ln * 8 + blk * 4 + w) = sum;
+            }
+        }
+    }
+    for (i = 0; i < vl / 2; i++) {
+        d->ZMM_W(i) = r.ZMM_W(i);
+    }
+}
+#endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U265) */
+
+/*
+ * NoVmp (ledger U265): VPSLLVW / VPSRLVW / VPSRAVW (SDM Vol2C): each word of a shifted by
+ * the unsigned word count in the same position of b; a count above 15 gives 0 (logical)
+ * or the sign (arithmetic). desc = kind (0 left, 1 logical right, 2 arithmetic right) |
+ * vector length in bytes << 8. d may be a or b.
+ */
+void helper_evex_pshiftvw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int kind = desc & 0xff, n = (desc >> 8) / 2, i;
+
+    for (i = 0; i < n; i++) {
+        uint16_t x = a->ZMM_W(i), c = b->ZMM_W(i);
+
+        switch (kind) {
+        case 0:
+            d->ZMM_W(i) = c < 16 ? (uint16_t)(x << c) : 0;
+            break;
+        case 1:
+            d->ZMM_W(i) = c < 16 ? x >> c : 0;
+            break;
+        default:
+            d->ZMM_W(i) = (uint16_t)((int16_t)x >> (c < 16 ? c : 15));
+            break;
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U266) */
+
+/*
+ * NoVmp (ledger U266): VPMOVM2B / VPMOVM2W: element i = all ones if k[i] is set, else 0
+ * (SDM Vol2C VPMOVM2B/VPMOVM2W/VPMOVM2D/VPMOVM2Q). desc = EVEX_DESC(esz, n).
+ */
+void helper_evex_movm2v(CPUX86State *env, ZMMReg *d, uint64_t k, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, ((k >> i) & 1) ? ~0ull : 0);
+    }
+}
+#endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U268) */
+
+/*
+ * NoVmp (ledger U268): VPMOVWB / VPMOVSWB / VPMOVUSWB (SDM Vol2C): n words of s to n bytes
+ * of d: truncation (kind 0), signed saturation (1: SaturateSignedWordToByte) or unsigned
+ * saturation of the unsigned word (2: SaturateUnsignedWordToByte). desc = kind | n << 8.
+ */
+void helper_evex_pmovwb(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int kind = desc & 0xff, n = desc >> 8, i;
+    uint8_t r[32];
+
+    for (i = 0; i < n; i++) {
+        uint16_t x = s->ZMM_W(i);
+
+        switch (kind) {
+        case 0:
+            r[i] = (uint8_t)x;
+            break;
+        case 1:
+            r[i] = (int16_t)x > 127 ? 0x7f : (int16_t)x < -128 ? 0x80 : (uint8_t)x;
+            break;
+        default:
+            r[i] = x > 255 ? 0xff : (uint8_t)x;
+            break;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = r[i];
+    }
+}
+#endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+
+/*
+ * NoVmp (ledger U269): word permutes (SDM Vol2C VPERMW, VPERMI2W, VPERMT2W). n = VL / 2
+ * words; mode 0 (VPERMW): d[j] = ta[idx[j] mod n]; mode 1 (two tables): d[j] = (idx[j]
+ * bit log2(n) ? tb : ta)[idx[j] mod n]. Index bits above are ignored. desc = VL in bytes |
+ * mode << 8. d may be any of the sources.
+ */
+void helper_evex_vpermw(CPUX86State *env, ZMMReg *d, ZMMReg *idx, ZMMReg *ta, ZMMReg *tb,
+                        uint32_t desc)
+{
+    int n = (desc & 0xff) / 2, mode = (desc >> 8) & 1, j;
+    ZMMReg r;
+
+    for (j = 0; j < n; j++) {
+        int x = idx->ZMM_W(j);
+        ZMMReg *t = (mode && (x & n)) ? tb : ta;
+
+        r.ZMM_W(j) = t->ZMM_W(x & (n - 1));
+    }
+    for (j = 0; j < n; j++) {
+        d->ZMM_W(j) = r.ZMM_W(j);
+    }
+}
+#endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+
+/*
+ * NoVmp (ledger U292): AVX512DQ VFPCLASSPS/PD/SS/SD (SDM Vol2C, CheckFPClassSP/DP): bit j of
+ * the result = OR of the imm8-selected categories of element j - imm8[0] QNaN, [1] +0,
+ * [2] -0, [3] +INF, [4] -INF, [5] denormal, [6] finite negative, [7] SNaN. With MXCSR.DAZ a
+ * denormal counts as a zero ("IF (ExpAllZeros AND MXCSR.DAZ) THEN MantAllZeros := 1").
+ * desc = element size log2 | count << 8 | imm8 << 16; bits count..63 are 0. No MXCSR flag.
+ */
+#define EVEX_DQ_IMM(d)     (((d) >> 16) & 0xff)
+#define EVEX_DQ_SCALAR     (1u << 24)
+
+static bool evex_fpclass1(uint64_t x, bool dbl, int imm, bool daz)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8;
+    uint64_t emax = (1ull << eb) - 1;
+    bool neg = (x >> (fb + eb)) & 1;
+    uint64_t e = (x >> fb) & emax, m = x & ((1ull << fb) - 1);
+    bool ones = e == emax, zeros = e == 0;
+    bool mzero = (zeros && daz) || m == 0;
+    bool zero = zeros && mzero;
+    bool sig = (m >> (fb - 1)) & 1;
+
+    return ((imm & 0x01) && ones && !mzero && sig) ||      /* QNaN */
+           ((imm & 0x02) && !neg && zero) ||               /* +0 */
+           ((imm & 0x04) && neg && zero) ||                /* -0 */
+           ((imm & 0x08) && !neg && ones && mzero) ||      /* +INF */
+           ((imm & 0x10) && neg && ones && mzero) ||       /* -INF */
+           ((imm & 0x20) && zeros && !mzero) ||            /* denormal */
+           ((imm & 0x40) && neg && !ones && !zero) ||      /* finite negative */
+           ((imm & 0x80) && ones && !mzero && !sig);       /* SNaN */
+}
+
+uint64_t helper_evex_fpclass(CPUX86State *env, ZMMReg *s, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    bool daz = (env->mxcsr & SSE_DAZ) != 0;
+    uint64_t r = 0;
+
+    for (i = 0; i < n; i++) {
+        if (evex_fpclass1(evex_get_elem(s, esz, i), esz == MO_64, imm, daz)) {
+            r |= 1ull << i;
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U293) */
+
+/*
+ * NoVmp (ledger U293): VRANGEPS/PD (U295: SS/SD), SDM Vol2C RangeSP/RangeDP: an SNaN
+ * operand (SRC1 first) returns that NaN quietened with IE; a denormal is a signed zero
+ * under DAZ, else DE unless the other operand is a QNaN; a QNaN SRC2 returns SRC1, a QNaN
+ * SRC1 returns SRC2; opposite-signed zeros give -0 (MIN, MIN_ABS) / +0 (MAX, MAX_ABS)
+ * (Table 5-22); equal magnitudes of opposite sign give the negative (MIN_ABS) / positive
+ * (MAX_ABS) one (Table 5-23); else imm8[1:0] 00 MIN, 01 MAX, 10 MIN_ABS, 11 MAX_ABS with
+ * "SRC1 <= SRC2 ? ..." as written; then imm8[3:2] sign: 00 SRC1's, 01 the compare
+ * result's, 10 cleared, 11 set. imm8[7:4] are not used. Flags go to sse_status.
+ */
+static uint64_t evex_range1(CPUX86State *env, uint64_t a, uint64_t b, bool dbl, int imm,
+                            bool daz)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8, op = imm & 3;
+    uint64_t sbit = 1ull << (fb + eb), mag = sbit - 1, qbit = 1ull << (fb - 1);
+    uint64_t emax = ((1ull << eb) - 1) << fb, fmask = (1ull << fb) - 1;
+    bool a_nan = (a & emax) == emax && (a & fmask), b_nan = (b & emax) == emax && (b & fmask);
+    bool a_q = a_nan && (a & qbit), b_q = b_nan && (b & qbit);
+    bool as = (a & sbit) != 0, bs = (b & sbit) != 0;
+    uint64_t t;
+
+    if (a_nan && !a_q) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return a | qbit;
+    }
+    if (b_nan && !b_q) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return b | qbit;
+    }
+    if (!(a & emax) && (a & fmask)) {
+        if (daz) {
+            a &= sbit;
+        } else if (!b_q) {
+            float_raise(float_flag_input_denormal_used, &env->sse_status);
+        }
+    }
+    if (!(b & emax) && (b & fmask)) {
+        if (daz) {
+            b &= sbit;
+        } else if (!a_q) {
+            float_raise(float_flag_input_denormal_used, &env->sse_status);
+        }
+    }
+    if (b_q) {
+        t = a;
+    } else if (a_q) {
+        t = b;
+    } else if (!(a & mag) && !(b & mag) && as != bs) {
+        t = (op & 1) ? 0 : sbit;                            /* Table 5-22 */
+    } else if ((a & mag) == (b & mag) && as != bs && op > 1) {
+        t = (op == 2) == as ? a : b;                        /* Table 5-23 */
+    } else if (op < 2) {
+        /* SRC1 <= SRC2 (no NaN; opposite-signed zeros handled above) */
+        bool le = as != bs ? as : as ? (a & mag) >= (b & mag) : (a & mag) <= (b & mag);
+
+        t = (op == 0) == le ? a : b;
+    } else {
+        bool le = (a & mag) <= (b & mag);
+
+        t = (op == 2) == le ? a : b;
+    }
+    switch ((imm >> 2) & 3) {
+    case 0:
+        return (t & mag) | (as ? sbit : 0);
+    case 1:
+        return t;
+    case 2:
+        return t & mag;
+    default:
+        return t | sbit;
+    }
+}
+
+/* d: result (scratch), a/b: SRC1/SRC2 (masking copies), u: the SRC1 register (scalar) */
+void helper_evex_range(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg *u,
+                       uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    bool daz = (env->mxcsr & SSE_DAZ) != 0;
+    ZMMReg r;
+
+    if (desc & EVEX_DQ_SCALAR) {
+        r = *u;                                 /* DEST[127:esz] := SRC1[127:esz] (U295) */
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_range1(env, evex_get_elem(a, esz, i),
+                                              evex_get_elem(b, esz, i), esz == MO_64, imm, daz));
+    }
+    if (desc & EVEX_DQ_SCALAR) {
+        memcpy(d, &r, 16);
+    } else {
+        memcpy(d, &r, (size_t)n << esz);
+    }
+}
+#endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U294) */
+
+/*
+ * NoVmp (ledger U294): VREDUCEPS/PD (U296: SS/SD), SDM Vol2C ReduceArgumentSP/DP:
+ * DEST = SRC - 2^-M * ROUND(2^M * SRC) with M = imm8[7:4], ROUND to an integer under
+ * imm8[1:0] (00 RNE, 01 RD, 10 RU, 11 RZ) or MXCSR.RC when imm8[2] = 1, the subtraction
+ * rounded under the same control; PE from the inexact ROUND unless imm8[3] (SPE) = 1. NaN:
+ * quietened, IE for an SNaN; +-INF: +0.0; a zero result: +0.0, -0.0 when rounding down
+ * (Table 5-27). Exact integer arithmetic: SRC = mant * 2^ex, 2^M * SRC = q + r / 2^shift.
+ * The pseudocode has no DAZ/FTZ/DE/UE step (exceptions: Invalid, Precision only).
+ */
+static uint64_t evex_fp_pack(int sign, uint64_t c, int ex, int fb, int eb)
+{
+    int bias = (1 << (eb - 1)) - 1, len = 64 - clz64(c);
+    int e = ex + (len - 1) + bias;
+    uint64_t sb = (uint64_t)sign << (fb + eb);
+
+    if (e >= 1) {
+        c = len <= fb + 1 ? c << (fb + 1 - len) : c >> (len - fb - 1);
+        return sb | ((uint64_t)e << fb) | (c & ((1ull << fb) - 1));
+    }
+    return sb | (c << (ex - (1 - bias - fb)));      /* denormal, exact */
+}
+
+static uint64_t evex_reduce1(CPUX86State *env, uint64_t x, bool dbl, int imm)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8, p = fb + 1;
+    int bias = (1 << (eb - 1)) - 1;
+    uint64_t sbit = 1ull << (fb + eb), emaxv = (1ull << eb) - 1, qbit = 1ull << (fb - 1);
+    int sign = (x >> (fb + eb)) & 1;
+    uint64_t e = (x >> fb) & emaxv, m = x & ((1ull << fb) - 1);
+    int rc = (imm & 4) ? (int)((env->mxcsr >> 13) & 3) : (imm & 3);
+    int M = (imm >> 4) & 15, ex, shift, k, cmp = 0, rsign;
+    uint64_t zero = rc == 1 ? sbit : 0, mant, q, r, rh, rl, kept;
+    bool inc, up = false;
+
+    if (e == emaxv) {
+        if (m == 0) {
+            return 0;                           /* +-INF -> +0.0 */
+        }
+        if (!(m & qbit)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | qbit;
+    }
+    if (e == 0 && m == 0) {
+        return zero;
+    }
+    mant = e ? m | (1ull << fb) : m;
+    ex = (e ? (int)e : 1) - bias - fb;          /* SRC = mant * 2^ex */
+    shift = -(ex + M);                          /* fraction bits of 2^M * SRC */
+    if (shift <= 0) {
+        return zero;                            /* integral: SRC - SRC */
+    }
+    if (shift < 64) {
+        q = mant >> shift;
+        r = mant & ((1ull << shift) - 1);
+    } else {
+        q = 0;
+        r = mant;
+    }
+    if (r == 0) {
+        return zero;
+    }
+    if (!(imm & 8)) {
+        float_raise(float_flag_inexact, &env->sse_status);
+    }
+    switch (rc) {
+    case 0:
+        inc = shift <= 64 && (r > (1ull << (shift - 1)) ||
+                              (r == (1ull << (shift - 1)) && (q & 1)));
+        break;
+    case 1:
+        inc = sign;
+        break;
+    case 2:
+        inc = !sign;
+        break;
+    default:
+        inc = false;
+        break;
+    }
+    if (!inc) {
+        return evex_fp_pack(sign, r, ex, fb, eb);   /* SRC - trunc: r * 2^ex, exact */
+    }
+    /* SRC - TMP = -(2^shift - r) * 2^ex (sign of SRC), rounded to p bits under rc */
+    rsign = !sign;
+    if (shift <= p) {
+        return evex_fp_pack(rsign, (1ull << shift) - r, ex, fb, eb);
+    }
+    k = shift - p;                              /* low bits dropped */
+    rh = k < 64 ? r >> k : 0;
+    rl = k < 64 ? r & ((1ull << k) - 1) : r;
+    if (rl == 0) {
+        kept = (1ull << p) - rh;
+    } else {
+        kept = (1ull << p) - rh - 1;            /* remainder 2^k - rl */
+        if (k > 64) {
+            cmp = 1;                            /* rl < 2^p < 2^(k-1): above half */
+        } else {
+            uint64_t half = 1ull << (k - 1);
+            cmp = rl < half ? 1 : rl == half ? 0 : -1;
+        }
+        switch (rc) {
+        case 0:
+            up = cmp > 0 || (cmp == 0 && (kept & 1));
+            break;
+        case 1:
+            up = rsign;
+            break;
+        case 2:
+            up = !rsign;
+            break;
+        default:
+            break;
+        }
+    }
+    if (up && ++kept == (1ull << p)) {
+        kept >>= 1;
+        k++;
+    }
+    return evex_fp_pack(rsign, kept, ex + k, fb, eb);
+}
+
+/* d: result (scratch), s: source (masking copy), u: the SRC1 register (scalar) */
+void helper_evex_reduce(CPUX86State *env, ZMMReg *d, ZMMReg *s, ZMMReg *u, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    ZMMReg r;
+
+    if (desc & EVEX_DQ_SCALAR) {
+        r = *u;                                 /* DEST[127:esz] := SRC1[127:esz] (U296) */
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_reduce1(env, evex_get_elem(s, esz, i), esz == MO_64, imm));
+    }
+    if (desc & EVEX_DQ_SCALAR) {
+        memcpy(d, &r, 16);
+    } else {
+        memcpy(d, &r, (size_t)n << esz);
+    }
+}
+#endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U231) */
+
+/*
+ * NoVmp (ledger U231): EVEX conversions between integer and floating-point elements
+ * (SDM Vol2A CVTDQ2PS, CVTPS2DQ, CVTTPS2DQ, CVTPD2DQ, CVTTPD2DQ, CVTDQ2PD, CVTPS2PD,
+ * CVTPD2PS; Vol2C VCVTUDQ2PS, VCVTPS2UDQ, VCVTTPS2UDQ, VCVTPD2UDQ, VCVTTPD2UDQ,
+ * VCVTUDQ2PD, VCVTPH2PS, VCVTPS2PH, and the AVX512DQ QQ forms of U233).
+ * - Floating point -> integer: rounding by MXCSR.RC / {er}, or truncation (VCVTT*); a NaN,
+ *   an infinity or a value out of range is invalid (IE) and returns the integer indefinite
+ *   value (signed: the most negative integer; unsigned: 2^w - 1); IE replaces PE; a
+ *   negative value that rounds to 0 is 0 for the unsigned forms (PE only). DAZ: a
+ *   denormal source is 0 (exact); no DE (not in the forms' exception lists).
+ * - Integer -> floating point: rounded by MXCSR.RC / {er} (PE).
+ * - VCVTPS2PD/VCVTPD2PS: as the SSE forms (IE on SNaN, DE, OE/UE/PE, DAZ, FTZ).
+ * - VCVTPH2PS: exact, SNaN quietened (IE); DAZ ignored, no DE (SDM VCVTPH2PS: "MXCSR.DAZ
+ *   is ignored ... No denormal exception is reported", as U43 for the VEX form).
+ * - VCVTPS2PH: rounding from imm8[1:0] unless imm8[2] = 1 (MXCSR.RC); MXCSR.FTZ is ignored
+ *   (tiny results are converted to denormals); a denormal source sets DE (and the tiny
+ *   inexact result UE/PE), as the SDM describes.
+ * desc: bits 2:0 source type, 6:4 destination type (EVCVT_*), bit 8 truncation, bits
+ * 15:9 element count, bits 23:16 imm8, bit 24 imm8 present (VCVTPS2PH).
+ */
+enum { EVCVT_I32, EVCVT_U32, EVCVT_I64, EVCVT_U64, EVCVT_F16, EVCVT_F32, EVCVT_F64 };
+
+static const uint8_t evcvt_esz[] = { MO_32, MO_32, MO_64, MO_64, MO_16, MO_32, MO_64 };
+
+/* floating point (f32/f64 in x) to a 32/64-bit signed/unsigned integer */
+static uint64_t evex_cvt_f2i_one(CPUX86State *env, uint64_t x, int st, int dt, bool trunc)
+{
+    float_status *fs = &env->sse_status;
+    int old = get_float_exception_flags(fs);
+    uint64_t r, indef;
+
+    set_float_exception_flags(0, fs);
+    switch (dt) {
+    case EVCVT_I32:
+        indef = 0x80000000u;
+        if (st == EVCVT_F32) {
+            r = (uint32_t)(trunc ? float32_to_int32_round_to_zero(x, fs) : float32_to_int32(x, fs));
+        } else {
+            r = (uint32_t)(trunc ? float64_to_int32_round_to_zero(x, fs) : float64_to_int32(x, fs));
+        }
+        break;
+    case EVCVT_U32:
+        indef = 0xffffffffu;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_uint32_round_to_zero(x, fs) : float32_to_uint32(x, fs);
+        } else {
+            r = trunc ? float64_to_uint32_round_to_zero(x, fs) : float64_to_uint32(x, fs);
+        }
+        break;
+    case EVCVT_I64:
+        indef = 0x8000000000000000ull;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_int64_round_to_zero(x, fs) : float32_to_int64(x, fs);
+        } else {
+            r = trunc ? float64_to_int64_round_to_zero(x, fs) : float64_to_int64(x, fs);
+        }
+        break;
+    default:
+        indef = ~0ull;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_uint64_round_to_zero(x, fs) : float32_to_uint64(x, fs);
+        } else {
+            r = trunc ? float64_to_uint64_round_to_zero(x, fs) : float64_to_uint64(x, fs);
+        }
+        break;
+    }
+    if (get_float_exception_flags(fs) & float_flag_invalid) {
+        r = indef;
+    }
+    set_float_exception_flags(old | get_float_exception_flags(fs), fs);
+    return r;
+}
+
+/* integer (i32/u32/i64/u64 in x) to f32/f64 */
+static uint64_t evex_cvt_i2f_one(CPUX86State *env, uint64_t x, int st, int dt)
+{
+    float_status *fs = &env->sse_status;
+
+    if (dt == EVCVT_F32) {
+        switch (st) {
+        case EVCVT_I32:
+            return int32_to_float32((int32_t)x, fs);
+        case EVCVT_U32:
+            return uint32_to_float32((uint32_t)x, fs);
+        case EVCVT_I64:
+            return int64_to_float32((int64_t)x, fs);
+        default:
+            return uint64_to_float32(x, fs);
+        }
+    }
+    switch (st) {
+    case EVCVT_I32:
+        return int32_to_float64((int32_t)x, fs);
+    case EVCVT_U32:
+        return uint32_to_float64((uint32_t)x, fs);
+    case EVCVT_I64:
+        return int64_to_float64((int64_t)x, fs);
+    default:
+        return uint64_to_float64(x, fs);
+    }
+}
+
+/* one element of any EVEX conversion; imm8 >= 0: VCVTPS2PH rounding control */
+static uint64_t evex_cvt_one(CPUX86State *env, uint64_t x, int st, int dt, bool trunc, int imm)
+{
+    float_status *fs = &env->sse_status;
+
+    if (st <= EVCVT_U64) {
+        return evex_cvt_i2f_one(env, x, st, dt);
+    }
+    if (dt <= EVCVT_U64) {
+        return evex_cvt_f2i_one(env, x, st, dt, trunc);
+    }
+    if (st == EVCVT_F32 && dt == EVCVT_F64) {
+        return float32_to_float64(x, fs);
+    }
+    if (st == EVCVT_F64 && dt == EVCVT_F32) {
+        return float64_to_float32(x, fs);
+    }
+    if (st == EVCVT_F16) {
+        float_status st16 = *fs;
+        uint32_t r;
+
+        set_flush_inputs_to_zero(false, &st16);
+        set_float_exception_flags(0, &st16);
+        r = float16_to_float32(x, true, &st16);
+        float_raise(get_float_exception_flags(&st16) &
+                    ~(float_flag_input_denormal | float_flag_input_denormal_used), fs);
+        return r;
+    } else {
+        float_status st16 = *fs;
+        uint16_t r;
+
+        set_flush_to_zero(false, &st16);
+        if (imm >= 0 && !(imm & 4)) {
+            set_x86_rounding_mode(imm & 3, &st16);
+        }
+        set_float_exception_flags(0, &st16);
+        r = float32_to_float16(x, true, &st16);
+        float_raise(get_float_exception_flags(&st16), fs);
+        return r;
+    }
+}
+
+void helper_evex_cvt(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7, n = (desc >> 9) & 0x7f, i;
+    int imm = (desc & (1u << 24)) ? (int)((desc >> 16) & 0xff) : -1;
+    bool trunc = (desc >> 8) & 1;
+    ZMMReg r;
+
+    memset(&r, 0, sizeof(r));
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, evcvt_esz[dt], i,
+                      evex_cvt_one(env, evex_get_elem(s, evcvt_esz[st], i), st, dt, trunc, imm));
+    }
+    *d = r;
+}
+#endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+
+/*
+ * NoVmp (ledger U232): scalar EVEX conversions (same element rules as U231). v is the
+ * SRC1 register (vvvv) itself, so bits 127:element are its own also when the engine
+ * substituted neutral lanes into a copy for masking.
+ * - VCVTSS2SD / VCVTSD2SS: DEST[elem] := convert(SRC2[elem 0]), DEST[127:elem] := SRC1.
+ * - VCVT[U]SI2SS/SD: the same with an integer (r/m32, or r/m64 with EVEX.W1 in 64-bit mode).
+ * - VCVT[T]SS2[U]SI / VCVT[T]SD2[U]SI: 32/64-bit integer result for the GPR destination.
+ */
+void helper_evex_cvt_s(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+    ZMMReg r;
+
+    r.ZMM_Q(0) = v->ZMM_Q(0);
+    r.ZMM_Q(1) = v->ZMM_Q(1);
+    evex_set_elem(&r, evcvt_esz[dt], 0,
+                  evex_cvt_one(env, evex_get_elem(s, evcvt_esz[st], 0), st, dt, false, -1));
+    d->ZMM_Q(0) = r.ZMM_Q(0);
+    d->ZMM_Q(1) = r.ZMM_Q(1);
+}
+
+void helper_evex_cvt_i2f(CPUX86State *env, ZMMReg *d, ZMMReg *v, uint64_t val, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+    uint64_t q0 = v->ZMM_Q(0), q1 = v->ZMM_Q(1);
+    uint64_t f = evex_cvt_i2f_one(env, val, st, dt);
+
+    d->ZMM_Q(0) = q0;
+    d->ZMM_Q(1) = q1;
+    evex_set_elem(d, evcvt_esz[dt], 0, f);
+}
+
+uint64_t helper_evex_cvt_f2i(CPUX86State *env, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+
+    return evex_cvt_f2i_one(env, evex_get_elem(s, evcvt_esz[st], 0), st, dt, (desc >> 8) & 1);
+}
+#endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+
+/*
+ * NoVmp (ledger U234): VPSLLD/Q, VPSRLD/Q, VPSRAD/Q (VPSRAQ) by xmm3/m128 (SDM Vol2B PSLLW/
+ * PSLLD/PSLLQ, PSRLW/PSRLD/PSRLQ, PSRAW/PSRAD/PSRAQ "LOGICAL_LEFT_SHIFT_DWORDS ... (SRC2)"):
+ * the count is the unsigned 64-bit COUNT = SRC2[63:0] for every element; COUNT > width - 1
+ * gives 0 (logical) or the sign in every bit (arithmetic). desc: bits 1:0 kind (0 left,
+ * 1 logical right, 2 arithmetic right), bits 7:4 element size (MO_32/MO_64), 15:8 count.
+ */
+void helper_evex_pshift(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *c, uint32_t desc)
+{
+    int kind = desc & 3, esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, bits = 8 << esz, i;
+    uint64_t cnt = c->ZMM_Q(0);
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        uint64_t x = evex_get_elem(a, esz, i), y;
+
+        if (kind == 2) {
+            int64_t sx = (int64_t)(x << (64 - bits)) >> (64 - bits);
+
+            y = (uint64_t)(sx >> (cnt > (uint64_t)bits - 1 ? bits - 1 : (int)cnt));
+        } else if (cnt > (uint64_t)bits - 1) {
+            y = 0;
+        } else {
+            y = kind == 0 ? x << cnt : x >> cnt;
+        }
+        evex_set_elem(&r, esz, i, y);
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+
+/*
+ * NoVmp (ledger U235): VPROLVD/Q, VPRORVD/Q (SDM Vol2C PROLD/PROLVD/PROLQ/PROLVQ, PRORD/
+ * PRORVD/PRORQ/PRORVQ): each element rotated by its own count modulo the width.
+ * desc: bit 0 right, bits 7:4 element size, 15:8 count of elements.
+ */
+void helper_evex_prolv(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int right = desc & 1, esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, bits = 8 << esz, i;
+    uint64_t m = bits == 64 ? ~0ull : (1ull << bits) - 1;
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        uint64_t x = evex_get_elem(a, esz, i);
+        int c = (int)(evex_get_elem(b, esz, i) & (bits - 1));
+
+        if (right && c) {
+            c = bits - c;
+        }
+        evex_set_elem(&r, esz, i, c ? ((x << c) | (x >> (bits - c))) & m : x);
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * NoVmp (ledger U236..U241): AVX-512 floating-point element operations on binary32 /
+ * binary64 bit patterns (esz MO_32 / MO_64). EVFMT describes the format.
+ */
+typedef struct EvFmt {
+    int bits, fbits, bias;
+    uint64_t sign, emask, fmask, quiet, one, indef, maxf;
+} EvFmt;
+
+static const EvFmt evfmt32 = { 32, 23, 127, 0x80000000u, 0x7f800000u, 0x007fffffu, 0x00400000u,
+                               0x3f800000u, 0xffc00000u, 0x7f7fffffu };
+static const EvFmt evfmt64 = { 64, 52, 1023, 0x8000000000000000ull, 0x7ff0000000000000ull,
+                               0x000fffffffffffffull, 0x0008000000000000ull,
+                               0x3ff0000000000000ull, 0xfff8000000000000ull,
+                               0x7fefffffffffffffull };
+
+static inline const EvFmt *evfmt(int esz)
+{
+    return esz == MO_64 ? &evfmt64 : &evfmt32;
+}
+
+static inline bool evf_isnan(const EvFmt *f, uint64_t x)
+{
+    return (x & f->emask) == f->emask && (x & f->fmask);
+}
+
+static inline bool evf_issnan(const EvFmt *f, uint64_t x)
+{
+    return evf_isnan(f, x) && !(x & f->quiet);
+}
+
+static inline bool evf_isinf(const EvFmt *f, uint64_t x)
+{
+    return (x & ~f->sign) == f->emask;
+}
+
+/* exponent field 0: zero or denormal */
+static inline bool evf_expzero(const EvFmt *f, uint64_t x)
+{
+    return !(x & f->emask);
+}
+
+static inline bool evf_isdenorm(const EvFmt *f, uint64_t x)
+{
+    return evf_expzero(f, x) && (x & f->fmask);
+}
+
+/* an integer value (|v| < 2^53) as binary32/64 (exact) */
+static uint64_t evf_from_int(const EvFmt *f, int64_t v)
+{
+    uint64_t m = v < 0 ? (uint64_t)-v : (uint64_t)v, s = v < 0 ? f->sign : 0;
+    int l;
+
+    if (!m) {
+        return s;
+    }
+    l = 63 - clz64(m);                  /* m = 1.xxx * 2^l */
+    m <<= f->fbits - l;                 /* l <= fbits here */
+    return s | ((uint64_t)(l + f->bias) << f->fbits) | (m & f->fmask);
+}
+
+/*
+ * NoVmp (ledger U236): VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (SDM Vol2C). The SDM gives
+ * the error bound (relative error < 2^-14), the special cases (Tables 5-24..5-27) and the
+ * DAZ/FTZ rules, but not the exact approximation (Intel's reference RECIP14.c is not part of
+ * the SDM and not available here). Implemented stand-in (well inside the bound; NOT
+ * necessarily the silicon's bits): the exact 1/x (1/sqrt(x)) rounded to nearest even to the
+ * destination precision with an unbounded exponent; overflow -> inf; a tiny VRCP14 result is
+ * then denormalized (nearest even at the denormal quantum: the SDM's "mantissa shifted right
+ * by one or two bits") or, with FTZ, a zero of the source's sign. MXCSR.RC ignored, no MXCSR
+ * flag, no #XM; DAZ: a denormal source is a zero of its sign; 0 -> inf (sign kept), inf -> 0
+ * (sign kept), SNaN -> QNaN, QNaN -> itself; RSQRT14: -0 -> -inf, any other negative -> QNaN
+ * indefinite. 1/x is formed in the next wider format (float64 / float128): the binary
+ * expansion of 1/m (m < 2^p) has no run of p + 1 equal bits, so that rounding cannot meet a
+ * p-bit midpoint and the result is the correctly rounded one.
+ */
+
+/*
+ * round sig (normalised: bit 63 set; value = sig * 2^(e - 63), sticky = bits below) to the
+ * format's precision (RNE, unbounded exponent), then overflow / denormalize / FTZ
+ */
+static uint64_t evf_round_rcp(const EvFmt *f, uint64_t sign, int e, uint64_t sig, bool sticky,
+                              bool ftz)
+{
+    int sh = 63 - f->fbits;
+    uint64_t r = sig >> sh, rem = sig & ((1ull << sh) - 1), half = 1ull << (sh - 1);
+
+    if (rem > half || (rem == half && (sticky || (r & 1)))) {
+        r++;
+        if (r >> (f->fbits + 1)) {
+            r >>= 1;
+            e++;
+        }
+    }
+    if (e > f->bias) {
+        return sign | f->emask;
+    }
+    if (e < 1 - f->bias) {
+        int s2 = 1 - f->bias - e;
+        uint64_t r2, rem2, half2;
+
+        if (ftz || s2 > f->fbits + 1) {
+            return sign;                /* FTZ, or below half the smallest denormal */
+        }
+        r2 = r >> s2;
+        rem2 = r & ((1ull << s2) - 1);
+        half2 = 1ull << (s2 - 1);
+        if (rem2 > half2 || (rem2 == half2 && (r2 & 1))) {
+            r2++;                       /* 2^fbits: the smallest normal, same bits */
+        }
+        return sign | r2;
+    }
+    return sign | ((uint64_t)(e + f->bias) << f->fbits) | (r & f->fmask);
+}
+
+static uint64_t evex_rcp14(CPUX86State *env, const EvFmt *f, uint64_t x, bool rsqrt)
+{
+    float_status st = env->sse_status;
+    uint64_t s = x & f->sign;
+
+    set_float_rounding_mode(float_round_nearest_even, &st);
+    set_float_exception_flags(0, &st);
+    if (evf_isnan(f, x)) {
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x) && (!(x & f->fmask) || (env->mxcsr & 0x40))) {
+        return s | f->emask;                                        /* +-0 -> +-inf */
+    }
+    if (evf_isinf(f, x)) {
+        return rsqrt && s ? f->indef : s;                           /* +-inf -> +-0 */
+    }
+    if (rsqrt) {
+        float128 q, one = int32_to_float128(1, &st);
+
+        if (s) {
+            return f->indef;
+        }
+        set_flush_inputs_to_zero(false, &st);
+        q = f->bits == 64 ? float64_to_float128(x, &st) : float32_to_float128(x, &st);
+        q = float128_div(one, float128_sqrt(q, &st), &st);
+        return f->bits == 64 ? float128_to_float64(q, &st) : float128_to_float32(q, &st);
+    }
+    set_flush_inputs_to_zero(false, &st);
+    set_flush_to_zero(false, &st);
+    if (f->bits == 64) {
+        float128 q = float128_div(int32_to_float128(1, &st), float64_to_float128(x, &st), &st);
+        uint64_t sig = (1ull << 63) | ((q.high & 0xffffffffffffull) << 15) | (q.low >> 49);
+
+        return evf_round_rcp(f, s, (int)((q.high >> 48) & 0x7fff) - 16383, sig,
+                             (q.low & ((1ull << 49) - 1)) != 0, env->mxcsr & 0x8000);
+    } else {
+        uint64_t q = float64_div(float64_one, float32_to_float64(x, &st), &st);
+
+        return evf_round_rcp(f, s, (int)((q >> 52) & 0x7ff) - 1023,
+                             ((q & 0xfffffffffffffull) | (1ull << 52)) << 11, false,
+                             env->mxcsr & 0x8000);
+    }
+}
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+
+/*
+ * NoVmp (ledger U237): VGETEXPPS/PD/SS/SD (SDM Vol2C, Table 5-13 and the pseudocode
+ * ConvertExpDPFP / NormalizeExpTinyDPFP): floor(log2(|x|)) as a floating-point value
+ * (exact); NaN -> QNaN(SRC) (IE for SNaN), +-inf -> +inf, +-0 (and a denormal with DAZ)
+ * -> -inf; a denormal (DAZ = 0) gives its true exponent and sets DE. Exceptions: IE, DE.
+ */
+static uint64_t evex_getexp(CPUX86State *env, const EvFmt *f, uint64_t x)
+{
+    uint64_t fr = x & f->fmask;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_isinf(f, x)) {
+        return f->emask;
+    }
+    if (evf_expzero(f, x)) {
+        if (!fr || (env->mxcsr & 0x40)) {
+            return f->sign | f->emask;
+        }
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+        /* fr = 1.xxx * 2^(63 - clz): value = fr * 2^(1 - bias - fbits) */
+        return evf_from_int(f, (int64_t)(63 - clz64(fr)) + 1 - f->bias - f->fbits);
+    }
+    return evf_from_int(f, (int64_t)((x & f->emask) >> f->fbits) - f->bias);
+}
+#endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+
+/*
+ * NoVmp (ledger U238): VGETMANTPS/PD/SS/SD (SDM Vol2C pseudocode getmant_fp64, Table 5-16,
+ * Figure 5-15): imm8[1:0] interval ([1,2), [1/2,2), [1/2,1), [3/4,3/2)), imm8[3:2] sign
+ * control (SC[0]: positive result; SC[1]: a negative source gives QNaN indefinite and IE).
+ * The result is exact (no PE). Exceptions: IE, DE.
+ */
+static uint64_t evex_getmant(CPUX86State *env, const EvFmt *f, uint64_t x, int imm)
+{
+    bool sc0 = imm & 4, sc1 = imm & 8, neg = x & f->sign;
+    uint64_t one = f->one, fr = x & f->fmask, sign = sc0 ? 0 : (x & f->sign);
+    uint64_t signed_one = sc0 ? one : (one | f->sign);
+    int64_t uexp;
+    int e;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x) && (!fr || (env->mxcsr & 0x40))) {        /* zero */
+        return neg ? signed_one : one;
+    }
+    if (evf_isinf(f, x)) {
+        if (!neg) {
+            return one;
+        }
+        if (sc1) {
+            float_raise(float_flag_invalid, &env->sse_status);
+            return f->indef;
+        }
+        return signed_one;
+    }
+    if (neg && sc1) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return f->indef;
+    }
+    if (evf_expzero(f, x)) {                                        /* denormal, DAZ = 0 */
+        int sh = f->fbits - (63 - clz64(fr));                       /* shifts to the J bit */
+
+        fr = (fr << sh) & f->fmask;
+        uexp = -sh;
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+    } else {
+        uexp = (int64_t)((x & f->emask) >> f->fbits) - f->bias;
+    }
+    switch (imm & 3) {
+    case 0:
+        e = f->bias;
+        break;
+    case 1:
+        e = (uexp & 1) ? f->bias - 1 : f->bias;
+        break;
+    case 2:
+        e = f->bias - 1;
+        break;
+    default:
+        e = (fr & (f->fmask ^ (f->fmask >> 1))) ? f->bias - 1 : f->bias;
+        break;
+    }
+    return sign | ((uint64_t)e << f->fbits) | fr;
+}
+#endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+
+/*
+ * NoVmp (ledger U241): VRNDSCALEPS/PD/SS/SD (SDM Vol2C RoundToIntegerDP, Table 5-29, Figure
+ * 5-29): 2^-M * round_to_int(2^M * x) with M = imm8[7:4], rounding imm8[1:0] or MXCSR.RC
+ * (imm8[2] = 1); exact integer arithmetic (2^M * x never overflows). Sign kept (also of
+ * zero); NaN -> QNaN (IE for SNaN), inf and 0 unchanged; DAZ: a denormal is a zero of its
+ * sign first. PE when the result differs from the source unless imm8[3] = 1 (SPE). No DE.
+ */
+static uint64_t evex_rndscale(CPUX86State *env, const EvFmt *f, uint64_t x, int imm)
+{
+    uint64_t s = x & f->sign, ex = (x & f->emask) >> f->fbits, mant, q, rem, half;
+    int rc = (imm & 4) ? (env->mxcsr >> 13) & 3 : imm & 3, m = (imm >> 4) & 15;
+    int e2, sh, l;
+    bool up;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_isinf(f, x) || !(x & ~f->sign)) {
+        return x;
+    }
+    if (!ex) {
+        if (env->mxcsr & 0x40) {
+            return s;
+        }
+        mant = x & f->fmask;
+        e2 = 1 - f->bias - f->fbits;
+    } else {
+        mant = (x & f->fmask) | (f->fmask + 1);
+        e2 = (int)ex - f->bias - f->fbits;
+    }
+    /* value = mant * 2^e2; quantum 2^-m */
+    if (e2 >= -m) {
+        return x;
+    }
+    sh = -m - e2;
+    if (sh > 62) {
+        q = 0;
+        rem = mant;
+        half = 0;                       /* rem < 2^(sh-1): below half, not zero */
+    } else {
+        q = mant >> sh;
+        rem = mant & ((1ull << sh) - 1);
+        half = 1ull << (sh - 1);
+    }
+    if (!rem) {
+        return x;
+    }
+    switch (rc) {
+    case 0:
+        up = half && (rem > half || (rem == half && (q & 1)));
+        break;
+    case 1:
+        up = s != 0;
+        break;
+    case 2:
+        up = s == 0;
+        break;
+    default:
+        up = false;
+        break;
+    }
+    q += up;
+    if (!(imm & 8)) {
+        float_raise(float_flag_inexact, &env->sse_status);
+    }
+    if (!q) {
+        return s;
+    }
+    /* q * 2^-m, q < 2^(fbits + 2): normalise */
+    l = 63 - clz64(q);
+    q = l > f->fbits ? q >> (l - f->fbits) : q << (f->fbits - l);
+    return s | ((uint64_t)(l - m + f->bias) << f->fbits) | (q & f->fmask);
+}
+#endif /* __Use_Original_Qemu (U241) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * desc (U236-U241): bits 3:0 operation (0 VRCP14, 1 VRSQRT14, 2 VGETEXP, 3 VGETMANT,
+ * 4 VRNDSCALE), bits 7:4 element size, bits 15:8 element count, bits 23:16 imm8.
+ */
+static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
+{
+    const EvFmt *f = evfmt((desc >> 4) & 0xf);
+    int imm = (desc >> 16) & 0xff;
+
+    switch (desc & 0xf) {
+    case 0:
+        return evex_rcp14(env, f, x, false);
+    case 1:
+        return evex_rcp14(env, f, x, true);
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+    case 2:
+        return evex_getexp(env, f, x);
+#endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+    case 3:
+        return evex_getmant(env, f, x, imm);
+#endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+    case 4:
+        return evex_rndscale(env, f, x, imm);
+#endif /* __Use_Original_Qemu (U241) */
+    default:
+        g_assert_not_reached();
+    }
+    return 0;
+}
+
+void helper_evex_fp1(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, i;
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_fp1_elem(env, desc, evex_get_elem(s, esz, i)));
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+
+/* scalar form: DEST[elem 0] := op(SRC2[elem 0]), DEST[127:elem] := SRC1 (v: the register) */
+void helper_evex_fp1s(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf;
+    uint64_t q0 = v->ZMM_Q(0), q1 = v->ZMM_Q(1);
+    uint64_t r = evex_fp1_elem(env, desc, evex_get_elem(s, esz, 0));
+
+    d->ZMM_Q(0) = q0;
+    d->ZMM_Q(1) = q1;
+    evex_set_elem(d, esz, 0, r);
+}
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U239) */
+
+/*
+ * NoVmp (ledger U239): VSCALEFPS/PD/SS/SD (SDM Vol2C: DEST := SRC1 * 2^floor(SRC2), Tables
+ * 5-37/5-38): DAZ applies to both sources; DE only for a denormal SRC1 (not reported for
+ * SRC2, and not with a NaN SRC2); the result is rounded once (MXCSR.RC / {er}) with the
+ * usual overflow / underflow / FTZ responses (softfloat scalbn). NaN and infinity cases
+ * from Table 5-37 (incl. QNaN SRC1 with SRC2 = +inf -> +inf, -inf -> +0).
+ * desc: bits 7:4 element size, 15:8 element count, bit 24 scalar (bits 127:elem from SRC1).
+ */
+static uint64_t evex_scalef_elem(CPUX86State *env, const EvFmt *f, uint64_t a, uint64_t b)
+{
+    bool daz = env->mxcsr & 0x40;
+    uint64_t sa = a & f->sign;
+    int64_t n;
+
+    if (daz && evf_isdenorm(f, a)) {
+        a = sa;
+    }
+    if (daz && evf_isdenorm(f, b)) {
+        b &= f->sign;
+    }
+    if (evf_isnan(f, a) || evf_isnan(f, b)) {
+        if (evf_issnan(f, a) || evf_issnan(f, b)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        if (evf_isnan(f, a)) {
+            if (!evf_issnan(f, a) && b == f->emask) {
+                return f->emask;                                    /* QNaN, +inf: +inf */
+            }
+            if (!evf_issnan(f, a) && b == (f->sign | f->emask)) {
+                return 0;                                           /* QNaN, -inf: +0 */
+            }
+            return a | f->quiet;
+        }
+        return b | f->quiet;
+    }
+    if (evf_isdenorm(f, a)) {
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+    }
+    if (evf_isinf(f, b)) {
+        bool binf_neg = b & f->sign;
+
+        if (evf_isinf(f, a)) {
+            if (binf_neg) {
+                float_raise(float_flag_invalid, &env->sse_status);
+                return f->indef;
+            }
+            return a;
+        }
+        if (!(a & ~f->sign)) {
+            if (!binf_neg) {
+                float_raise(float_flag_invalid, &env->sse_status);
+                return f->indef;
+            }
+            return a;
+        }
+        return binf_neg ? sa : (sa | f->emask);
+    }
+    if (evf_isinf(f, a) || !(a & ~f->sign)) {
+        return a;
+    }
+    /* n = floor(b), clamped (|n| > 2^16 over- / underflows every finite source anyway) */
+    {
+        uint64_t ex = (b & f->emask) >> f->fbits, mant;
+        int e2 = (int)ex - f->bias - f->fbits;
+        bool neg = b & f->sign;
+
+        if (!(b & ~f->sign)) {
+            n = 0;
+        } else if (!ex || e2 < -f->fbits) {                         /* |b| < 1 */
+            n = neg ? -1 : 0;
+        } else if (e2 >= 0) {
+            n = (ex - f->bias) > 20 ? 0x20000 : ((int64_t)((b & f->fmask) | (f->fmask + 1)) << e2);
+            n = neg ? -n : n;
+        } else {
+            mant = (b & f->fmask) | (f->fmask + 1);
+            n = (int64_t)(mant >> -e2);
+            if (neg) {
+                n = -n - ((mant & ((1ull << -e2) - 1)) ? 1 : 0);
+            }
+        }
+        n = n > 0x20000 ? 0x20000 : n < -0x20000 ? -0x20000 : n;
+    }
+    {
+        float_status *fs = &env->sse_status;
+        int flags = get_float_exception_flags(fs);
+        uint64_t r;
+
+        /* inputs already DAZ-processed; a denormal SRC1 must not be flushed again */
+        set_float_exception_flags(0, fs);
+        if (f->bits == 64) {
+            r = float64_scalbn(a, (int)n, fs);
+        } else {
+            r = float32_scalbn(a, (int)n, fs);
+        }
+        set_float_exception_flags(flags | (get_float_exception_flags(fs) &
+                                           ~(float_flag_input_denormal |
+                                             float_flag_input_denormal_used)), fs);
+        return r;
+    }
+}
+
+/* v: the SRC1 register itself (scalar form: bits 127:elem; a may be a neutral copy) */
+void helper_evex_scalef(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *a, ZMMReg *b,
+                        uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, i;
+    const EvFmt *f = evfmt(esz);
+    ZMMReg r;
+
+    if (desc & (1u << 24)) {
+        r.ZMM_Q(0) = v->ZMM_Q(0);
+        r.ZMM_Q(1) = v->ZMM_Q(1);
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_scalef_elem(env, f, evex_get_elem(a, esz, i),
+                                                   evex_get_elem(b, esz, i)));
+    }
+    if (desc & (1u << 24)) {
+        d->ZMM_Q(0) = r.ZMM_Q(0);
+        d->ZMM_Q(1) = r.ZMM_Q(1);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U240) */
+
+/*
+ * NoVmp (ledger U240): VFIXUPIMMPS/PD/SS/SD (SDM Vol2C FIXUPIMM_DP / FIXUPIMM_SP). Token of
+ * tsrc (SRC1; with DAZ a denormal is a zero of its sign, Vol1 10.2.3.4): 0 QNaN,
+ * 1 SNaN, 2 zero, 3 +1.0, 4 -inf, 5 +inf, 6 negative, 7 positive; response = SRC2 bits
+ * [4j+3:4j] (0 keep DEST, 1 tsrc, 2 QNaN(tsrc) (tsrc with exponent all ones and the quiet
+ * bit), 3 QNaN indefinite, 4 -inf, 5 +inf, 6 inf with tsrc's sign, 7 -0, 8 +0, 9 -1, A +1,
+ * B 1/2, C 90.0, D pi/2, E max normal, F -max normal). imm8 selects ZE/IE reports; MXCSR
+ * masks are ignored (never #XM), {sae} suppresses the flags; only active elements report.
+ * desc: bits 7:4 element size, 15:8 element count, 23:16 imm8, bit 24 scalar, bit 25 {sae}.
+ */
+static uint64_t evex_fixupimm_elem(CPUX86State *env, const EvFmt *f, uint64_t dst, uint64_t a,
+                                   uint64_t tbl, int imm, bool report)
+{
+    static const uint64_t c32[] = { 0xbf800000u, 0x3f800000u, 0x3f000000u, 0x42b40000u,
+                                    0x3fc90fdbu };
+    static const uint64_t c64[] = { 0xbff0000000000000ull, 0x3ff0000000000000ull,
+                                    0x3fe0000000000000ull, 0x4056800000000000ull,
+                                    0x3ff921fb54442d18ull };
+    const uint64_t *c = f->bits == 64 ? c64 : c32;
+    uint64_t t = (evf_expzero(f, a) && (env->mxcsr & 0x40)) ? (a & f->sign) : a;
+    int j, flags = 0;
+
+    if (evf_isnan(f, t)) {
+        j = (t & f->quiet) ? 0 : 1;
+    } else if (!(t & ~f->sign)) {
+        j = 2;
+    } else if (t == f->one) {
+        j = 3;
+    } else if (t == (f->sign | f->emask)) {
+        j = 4;
+    } else if (t == f->emask) {
+        j = 5;
+    } else {
+        j = (t & f->sign) ? 6 : 7;
+    }
+    switch (j) {
+    case 2:
+        flags |= ((imm & 1) ? float_flag_divbyzero : 0) | ((imm & 2) ? float_flag_invalid : 0);
+        break;
+    case 3:
+        flags |= ((imm & 4) ? float_flag_divbyzero : 0) | ((imm & 8) ? float_flag_invalid : 0);
+        break;
+    case 1:
+        flags |= (imm & 0x10) ? float_flag_invalid : 0;
+        break;
+    case 4:
+        flags |= (imm & 0x20) ? float_flag_invalid : 0;
+        break;
+    case 6:
+        flags |= (imm & 0x40) ? float_flag_invalid : 0;
+        break;
+    case 5:
+        flags |= (imm & 0x80) ? float_flag_invalid : 0;
+        break;
+    }
+    if (report && flags) {
+        float_raise(flags, &env->sse_status);
+    }
+    switch ((tbl >> (4 * j)) & 0xf) {
+    case 0x0:
+        return dst;
+    case 0x1:
+        return t;
+    case 0x2:
+        return t | f->emask | f->quiet;
+    case 0x3:
+        return f->indef;
+    case 0x4:
+        return f->sign | f->emask;
+    case 0x5:
+        return f->emask;
+    case 0x6:
+        return (t & f->sign) | f->emask;
+    case 0x7:
+        return f->sign;
+    case 0x8:
+        return 0;
+    case 0xe:
+        return f->maxf;
+    case 0xf:
+        return f->sign | f->maxf;
+    default:
+        return c[((tbl >> (4 * j)) & 0xf) - 9];
+    }
+}
+
+void helper_evex_fixupimm(CPUX86State *env, ZMMReg *d, ZMMReg *dold, ZMMReg *a, ZMMReg *b,
+                          uint64_t kmask, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, imm = (desc >> 16) & 0xff, i;
+    bool scalar = desc & (1u << 24), sae = desc & (1u << 25);
+    const EvFmt *f = evfmt(esz);
+    ZMMReg r;
+
+    if (scalar) {
+        r.ZMM_Q(0) = a->ZMM_Q(0);
+        r.ZMM_Q(1) = a->ZMM_Q(1);
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i,
+                      evex_fixupimm_elem(env, f, evex_get_elem(dold, esz, i),
+                                         evex_get_elem(a, esz, i), evex_get_elem(b, esz, i),
+                                         imm, !sae && ((kmask >> i) & 1)));
+    }
+    if (scalar) {
+        d->ZMM_Q(0) = r.ZMM_Q(0);
+        d->ZMM_Q(1) = r.ZMM_Q(1);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U240) */

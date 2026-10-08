@@ -8147,7 +8147,8 @@ static void test_x86_opmask_optin(void)
         OK(uc_close(uc));
     }
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 16)); /* U140: 8 = VL is valid */
+    /* U140: 8 = VL, U320: 16 = CD, U322..: further feature bits; bit 30 is unknown */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 1 << 30));
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, -1));
     OK(uc_ctl_get_x86_avx512(uc, &on));
     TEST_CHECK(on == 0);
@@ -10647,6 +10648,1039 @@ static void test_x86_evex_vsib_modes(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U190-U201: EVEX milestone M2 engine (scalar forms, FMA, compares, blends) ----
+ * Unicorn-visible behaviour the expected-value cases cannot show: masked scalar memory
+ * operands seen by the memory hooks (k1[0] = 0: no access at all), fault suppression on
+ * memory Unicorn has not mapped, and (U)COMISS EFLAGS after a lazily evaluated CMP, also when
+ * #XM leaves them unchanged. Results: Emulator/data/cases_evex_m2_engine.txt
+ * (ref_evex_m2_engine.py, independent SDM model).
+ */
+static void eg_set_k1(EvCtx *c, uint64_t k)
+{
+    OK(uc_reg_write(c->uc, UC_X86_REG_K1, &k));
+}
+
+static void eg_log_reset(EvMemLog *l)
+{
+    memset(l, 0, sizeof(*l));
+}
+
+static void test_x86_evex_scalar_memory(void)
+{
+    /* VMOVSS xmm1{k1}, [rsi] / VMOVSD [rsi]{k1}, xmm1 / VADDSD xmm1{k1}, xmm2, [rsi] */
+    static const char ldss[] = "\x62\xf1\x7e\x09\x10\x0e";
+    static const char stsd[] = "\x62\xf1\xff\x09\x11\x0e";
+    static const char addsd[] = "\x62\xf1\xef\x09\x58\x0e";
+    /* VFMADD231PS zmm1{k1}, zmm2, [rsi] */
+    static const char fma[] = "\x62\xf2\x6d\x49\xb8\x0e";
+    const uint64_t rsi = EV_DATA + 0x100, end = EV_DATA + 0x4000;
+    static const float one[16] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+    uint32_t z[16];
+    EvMemLog log;
+    EvCtx c;
+    uc_hook hr, hw;
+    int i, ok;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_mem_write(c.uc, rsi, one, sizeof(one)));
+    ev_set(&c, UC_X86_REG_RSI, rsi);
+    OK(uc_hook_add(c.uc, &hr, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    OK(uc_hook_add(c.uc, &hw, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+
+    /* k1[0] = 0: the m32 is not read; DEST[31:0] kept (merging), DEST[MAXVL-1:32] := 0 */
+    ev_put_zmm(&c, 1, 0x11223344);
+    eg_set_k1(&c, 0xfe);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    ev_get_zmm(&c, 1, z);
+    for (ok = z[0] == 0x11223344, i = 1; i < 16; i++) {
+        ok &= z[i] == 0;
+    }
+    TEST_CHECK(ok);
+    /* k1[0] = 1: one 4-byte read */
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 4);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x3f800000 && z[1] == 0);
+
+    /* VADDSD: masked-off element 0 reads nothing; active: one 8-byte read */
+    eg_set_k1(&c, 0);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 8);
+
+    /* VMOVSD store: k1[0] = 0 writes nothing (k1[1] is not looked at), k1[0] = 1 one qword */
+    eg_set_k1(&c, 2);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 8);
+
+    /* packed FMA with a memory source: exactly the active elements are read */
+    eg_set_k1(&c, 0x8101);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, fma, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_CHECK(log.addr[0] == rsi && log.addr[1] == rsi + 0x20 && log.addr[2] == rsi + 0x3c);
+    OK(uc_hook_del(c.uc, hr));
+    OK(uc_hook_del(c.uc, hw));
+
+    /* fault suppression on memory Unicorn has not mapped (EV_DATA + 0x4000) */
+    ev_set(&c, UC_X86_REG_RSI, end);
+    eg_set_k1(&c, 0);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    eg_set_k1(&c, 1);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_evex_comis_eflags(void)
+{
+    /* mov eax, 1; cmp eax, eax; VCOMISS xmm1, xmm2 / VUCOMISS xmm1, xmm2 {sae} */
+    static const char comis[] = "\xb8\x01\x00\x00\x00\x39\xc0\x62\xf1\x7c\x08\x2f\xca";
+    static const char ucomis_sae[] = "\xb8\x01\x00\x00\x00\x39\xc0\x62\xf1\x7c\x18\x2e\xca";
+    const uint64_t arith = 0x8d5;           /* OF SF ZF AF PF CF */
+    uint32_t x1[4] = { 0x3f800000, 0, 0, 0 }, x2[4] = { 0x40000000, 0, 0, 0 };
+    uint64_t fl, cr4;
+    uint32_t mxcsr;
+    EvCtx c;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_reg_read(c.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1ULL << 10;                      /* CR4.OSXMMEXCPT: #XM, not #UD */
+    OK(uc_reg_write(c.uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM1, x1));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
+    /* 1.0 < 2.0: CF = 1, ZF = PF = 0, OF SF AF cleared (the CMP's ZF and PF replaced) */
+    TEST_CHECK(ev_run(&c, comis, 13) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x1);
+    TEST_MSG("eflags %llx", (unsigned long long)fl);
+    /* SNaN with IM = 0: #XM, EFLAGS still those of the CMP (ZF PF), MXCSR.IE set */
+    x2[0] = 0x7fa00000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
+    mxcsr = 0x1f00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, comis, 13) == 19);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x44);
+    TEST_MSG("eflags %llx", (unsigned long long)fl);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(mxcsr == 0x1f01);
+    /* {sae}: no #XM, no MXCSR flag; unordered: ZF PF CF */
+    mxcsr = 0x1f00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, ucomis_sae, 13) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x45);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(mxcsr == 0x1f00);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * ---- NoVmp U210-U215: EVEX M2 permutes / moves (pm_) ----
+ * Memory accesses of the narrowing stores, compress/expand and Tuple4 broadcasts (only the
+ * selected elements, seen through Unicorn memory hooks), the feature gates (AVX512VL only
+ * for forms with a 512-bit length, AVX512DQ forms) and EVEX.W outside 64-bit mode.
+ * Instruction results: Emulator/data/cases_evex_m2_perm.txt (ref_evex_m2_perm.py).
+ */
+static int pm_log_has(EvMemLog *l, uint64_t addr, int size)
+{
+    int i;
+    for (i = 0; i < l->n && i < 64; i++) {
+        if (l->addr[i] == addr && l->size[i] == size) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* memory hooks see only the elements the mask / popcount selects */
+static void test_x86_evex_m2_memory(void)
+{
+    /* VPCOMPRESSD [rsi]{k1}, zmm1 / VPEXPANDD zmm2{k1}{z}, [rsi] */
+    static const char cmp[] = "\x62\xf2\x7d\x49\x8b\x0e";
+    static const char exp[] = "\x62\xf2\x7d\xc9\x89\x16";
+    /* VPMOVQB [rsi]{k1}, zmm1 / VBROADCASTF32X4 zmm2{k1}, [rsi] */
+    static const char pmov[] = "\x62\xf2\x7e\x49\x32\x0e";
+    static const char bc4[] = "\x62\xf2\x7d\x49\x1a\x16";
+    const uint64_t end = EV_DATA + 0x4000;
+    uint32_t z[16], z2[16], m[4] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444 };
+    uint8_t buf[16];
+    EvMemLog log;
+    EvCtx c;
+    uc_hook h;
+    uint64_t k;
+    int i, ok, mapped = 0;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    ev_put_zmm(&c, 1, 0x10203040);
+    ev_get_zmm(&c, 1, z);
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x200);
+    /* compress: 3 selected elements -> 3 contiguous dword writes */
+    k = 0x8401;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_MSG("compress writes: %d", log.n);
+    TEST_CHECK(pm_log_has(&log, EV_DATA + 0x200, 4) && pm_log_has(&log, EV_DATA + 0x204, 4) &&
+               pm_log_has(&log, EV_DATA + 0x208, 4));
+    OK(uc_mem_read(c.uc, EV_DATA + 0x200, buf, 12));
+    TEST_CHECK(memcmp(buf, &z[0], 4) == 0 && memcmp(buf + 4, &z[10], 4) == 0 &&
+               memcmp(buf + 8, &z[15], 4) == 0);
+    OK(uc_hook_del(c.uc, h));
+    /* expand: 3 contiguous dword reads */
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, exp, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_MSG("expand reads: %d", log.n);
+    ev_get_zmm(&c, 2, z2);
+    for (ok = 1, i = 0; i < 16; i++) {
+        uint32_t want = i == 0 ? z[0] : i == 10 ? z[10] : i == 15 ? z[15] : 0;
+        ok &= z2[i] == want;
+    }
+    TEST_CHECK(ok);
+    OK(uc_hook_del(c.uc, h));
+    /* VPMOVQB: bytes 0 and 7 only */
+    k = 0x81;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, pmov, 6) == -1);
+    TEST_CHECK(log.n == 2 && pm_log_has(&log, EV_DATA + 0x200, 1) &&
+               pm_log_has(&log, EV_DATA + 0x207, 1));
+    TEST_MSG("vpmovqb writes: %d", log.n);
+    OK(uc_hook_del(c.uc, h));
+    /* VBROADCASTF32X4 with lanes 1 and 6 active: group dwords 1 and 2 are read */
+    OK(uc_mem_write(c.uc, EV_DATA + 0x300, m, sizeof(m)));
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x300);
+    k = 0x42;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    ev_put_zmm(&c, 2, 0);
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, bc4, 6) == -1);
+    TEST_CHECK(log.n == 2 && pm_log_has(&log, EV_DATA + 0x304, 4) &&
+               pm_log_has(&log, EV_DATA + 0x308, 4));
+    TEST_MSG("vbroadcastf32x4 reads: %d", log.n);
+    ev_get_zmm(&c, 2, z2);
+    TEST_CHECK(z2[1] == m[1] && z2[6] == m[2] && z2[0] == 0 && z2[5] == 0x05050505 &&
+               z2[2] == 0x02020202);
+    OK(uc_hook_del(c.uc, h));
+    /* compress next to the unmapped page: 4 selected dwords fit, the full vector would not */
+    ev_set(&c, UC_X86_REG_RSI, end - 16);
+    k = 0xf000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    OK(uc_mem_read(c.uc, end - 16, buf, 16));
+    TEST_CHECK(memcmp(buf, &z[12], 16) == 0);
+    /* one more: UC_ERR_WRITE_UNMAPPED, nothing written */
+    memset(buf, 0x5a, sizeof(buf));
+    OK(uc_mem_write(c.uc, end - 16, buf, 16));
+    k = 0xf800;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    OK(uc_mem_read(c.uc, end - 16, buf, 16));
+    for (ok = 1, i = 0; i < 16; i++) {
+        ok &= buf[i] == 0x5a;
+    }
+    TEST_CHECK(ok);
+    /* a hook that maps the page: the compress store completes */
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE_UNMAPPED, ev_map_cb, &mapped, 1, 0));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    TEST_CHECK(mapped == 1);
+    OK(uc_close(c.uc));
+}
+
+/* AVX512VL gates only forms with a 512-bit length; DQ forms; EVEX.W outside 64-bit mode */
+static void test_x86_evex_m2_features(void)
+{
+    static const char vmovd[] = "\x62\xf1\x7d\x08\x6e\xc8";         /* vmovd xmm1, eax */
+    static const char vpermd256[] = "\x62\xf2\x6d\x28\x36\xcb";     /* vpermd ymm1, ymm2, ymm3 */
+    static const char vpermd512[] = "\x62\xf2\x6d\x48\x36\xcb";
+    static const char vpextrd[] = "\x62\xf3\x7d\x08\x16\xd0\x03";   /* vpextrd eax, xmm2, 3 */
+    static const char vpextrq[] = "\x62\xf3\xfd\x08\x16\xd0\x01";   /* vpextrq rax, xmm2, 1 */
+    static const char vmovq7e[] = "\x62\xf1\xfd\x08\x7e\xd0";       /* vmovq rax, xmm2 */
+    static const char vins32x4[] = "\x62\xf3\x6d\x48\x18\xcb\x01";  /* vinsertf32x4 zmm1,zmm2,xmm3,1 */
+    static const char vins64x2[] = "\x62\xf3\xed\x48\x18\xcb\x01";  /* vinsertf64x2 */
+    uint32_t z[16];
+    EvCtx c;
+
+    /* AVX512F only */
+    ev_open(&c, UC_MODE_64, UC_X86_AVX512_F);
+    ev_put_zmm(&c, 2, 0x10203040);
+    ev_set(&c, UC_X86_REG_RAX, 0x1122334455667788ULL);
+    TEST_CHECK(ev_run(&c, vmovd, 6) == -1);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x55667788 && z[1] == 0 && z[15] == 0);
+    TEST_CHECK(ev_run(&c, vpermd256, 6) == 6);
+    TEST_CHECK(ev_run(&c, vpermd512, 6) == -1);
+    TEST_CHECK(ev_run(&c, vpextrd, 7) == 6);                    /* AVX512DQ */
+    TEST_CHECK(ev_run(&c, vins32x4, 7) == -1);
+    TEST_CHECK(ev_run(&c, vins64x2, 7) == 6);                   /* AVX512DQ */
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: EVEX.W1 of VPEXTRQ / VMOVQ r64 is ignored (VPEXTRD / VMOVD) */
+    ev_open(&c, UC_MODE_32, EV_ALL);
+    ev_put_zmm(&c, 2, 0x10203040);
+    ev_get_zmm(&c, 2, z);
+    ev_set(&c, UC_X86_REG_EAX, 0);
+    TEST_CHECK(ev_run(&c, vpextrq, 7) == -1);
+    TEST_CHECK(ev_get(&c, UC_X86_REG_EAX) == z[1]);
+    TEST_CHECK(ev_run(&c, vmovq7e, 6) == -1);
+    TEST_CHECK(ev_get(&c, UC_X86_REG_EAX) == z[0]);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * ---- NoVmp U260-U269: AVX512BW (milestone M3, byte/word elements) ----
+ * CPUID gating (AVX512BW, AVX512VL below 512 bits, none for the EVEX.128-only E9NF forms),
+ * byte-granular masked memory (Unicorn memory hooks see only the active bytes; fault
+ * suppression per byte), 64-bit opmask from 64 byte compares. Instruction results are
+ * covered by Emulator/data/cases_evex_m3_bw.txt (ref_evex_m3_bw.py, independent SDM model).
+ */
+/* VPADDB zmm1, zmm2, zmm3 / VPADDB xmm1, xmm2, xmm3 */
+#define BW_VPADDB_Z "\x62\xf1\x6d\x48\xfc\xcb"
+#define BW_VPADDB_X "\x62\xf1\x6d\x08\xfc\xcb"
+/* VPINSRB xmm1, xmm2, eax, 3 / VPEXTRB ecx, xmm1, 3 / VPEXTRW edx, xmm1, 1 (0F C5) */
+#define BW_VPINSRB "\x62\xf3\x6d\x08\x20\xc8\x03"
+#define BW_VPEXTRB "\x62\xf3\x7d\x08\x14\xc9\x03"
+#define BW_VPEXTRW_C5 "\x62\xf1\x7d\x08\xc5\xd1\x01"
+/* VPINSRB with L'L = 01b: #UD (Table 2-45 note 4) */
+#define BW_VPINSRB_L1 "\x62\xf3\x6d\x28\x20\xc8\x03"
+
+static void test_x86_evex_bw_cpuid(void)
+{
+    static const struct {
+        int avx512;
+        int z, x, ins, ext, ins_l1;
+    } t[] = {
+        {UC_X86_AVX512_F, 6, 6, 6, 6, 6},                                   /* no AVX512BW */
+        {UC_X86_AVX512_F | UC_X86_AVX512_VL, 6, 6, 6, 6, 6},
+        {UC_X86_AVX512_F | UC_X86_AVX512_BW, -1, 6, -1, -1, 6},              /* no AVX512VL */
+        {EV_ALL, -1, -1, -1, -1, 6},
+    };
+    EvCtx c;
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        ev_open(&c, UC_MODE_64, t[i].avx512);
+        ev_set(&c, UC_X86_REG_RAX, 0x5a);
+        TEST_CHECK(ev_run(&c, BW_VPADDB_Z, 6) == t[i].z);
+        TEST_MSG("avx512 mask %x: VPADDB zmm", t[i].avx512);
+        TEST_CHECK(ev_run(&c, BW_VPADDB_X, 6) == t[i].x);
+        TEST_MSG("avx512 mask %x: VPADDB xmm", t[i].avx512);
+        TEST_CHECK(ev_run(&c, BW_VPINSRB, 7) == t[i].ins);
+        TEST_MSG("avx512 mask %x: VPINSRB", t[i].avx512);
+        TEST_CHECK(ev_run(&c, BW_VPEXTRB, 7) == t[i].ext);
+        TEST_CHECK(ev_run(&c, BW_VPINSRB_L1, 7) == t[i].ins_l1);
+        if (t[i].ext == -1) {
+            TEST_CHECK(ev_get(&c, UC_X86_REG_RCX) == 0x5a);
+            TEST_CHECK(ev_run(&c, BW_VPEXTRW_C5, 7) == -1);
+            TEST_CHECK(ev_get(&c, UC_X86_REG_RDX) == 0x5a00);
+        }
+        OK(uc_close(c.uc));
+    }
+}
+
+/* byte elements: the hooks see one 1-byte access per active element, nothing else */
+static void test_x86_evex_bw_masked_bytes(void)
+{
+    /* VMOVDQU8 zmm1{k1}{z}, [rsi] / VMOVDQU8 [rsi]{k1}, zmm1 */
+    static const char ld[] = "\x62\xf1\x7f\xc9\x6f\x0e";
+    static const char st[] = "\x62\xf1\x7f\x49\x7f\x0e";
+    /* VPMOVWB [rsi]{k1}, zmm2 (32 bytes) */
+    static const char wb[] = "\x62\xf2\x7e\x49\x30\x16";
+    const uint64_t end = EV_DATA + 0x4000;
+    uint8_t m[64], z[64], buf[64];
+    uint16_t w[32];
+    EvCtx c;
+    EvMemLog log;
+    uc_hook h;
+    uint64_t k;
+    int i, ok;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 64; i++) {
+        m[i] = (uint8_t)(0x40 + i);
+    }
+    OK(uc_mem_write(c.uc, EV_DATA + 0x200, m, sizeof(m)));
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x200);
+    k = 0x8000000100000005ULL;              /* bytes 0, 2, 32, 63 */
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, ld, 6) == -1);
+    TEST_CHECK(log.n == 4);
+    TEST_MSG("reads: %d", log.n);
+    TEST_CHECK(log.addr[0] == EV_DATA + 0x200 && log.size[0] == 1);
+    TEST_CHECK(log.addr[1] == EV_DATA + 0x202 && log.size[1] == 1);
+    TEST_CHECK(log.addr[2] == EV_DATA + 0x220 && log.size[2] == 1);
+    TEST_CHECK(log.addr[3] == EV_DATA + 0x23f && log.size[3] == 1);
+    OK(uc_hook_del(c.uc, h));
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (ok = 1, i = 0; i < 64; i++) {
+        ok &= z[i] == (((k >> i) & 1) ? m[i] : 0);
+    }
+    TEST_CHECK(ok);
+    /* store: 4 one-byte writes */
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x300);
+    TEST_CHECK(ev_run(&c, st, 6) == -1);
+    TEST_CHECK(log.n == 4 && log.size[0] == 1 && log.addr[3] == EV_DATA + 0x33f);
+    TEST_MSG("writes: %d", log.n);
+    OK(uc_hook_del(c.uc, h));
+    /* fault suppression per byte: the last mapped byte is active, the next is not */
+    ev_set(&c, UC_X86_REG_RSI, end - 32);
+    k = 1ULL << 31;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, ld, 6) == -1);
+    TEST_CHECK(ev_run(&c, st, 6) == -1);
+    k = 1ULL << 32;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, ld, 6) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    /* narrowing store: byte j of the 32-byte destination under k1[j] */
+    for (i = 0; i < 32; i++) {
+        w[i] = (uint16_t)(0x1100 + i);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, w));
+    memset(buf, 0xee, sizeof(buf));
+    OK(uc_mem_write(c.uc, end - 16, buf, 16));
+    ev_set(&c, UC_X86_REG_RSI, end - 16);
+    k = 0xffff;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, wb, 6) == -1);
+    OK(uc_mem_read(c.uc, end - 16, buf, 16));
+    for (ok = 1, i = 0; i < 16; i++) {
+        ok &= buf[i] == (uint8_t)i;
+    }
+    TEST_CHECK(ok);
+    k = 0x10000;                            /* byte 16 lies on the unmapped page */
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, wb, 6) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    OK(uc_close(c.uc));
+}
+
+/* 64 byte compares into a 64-bit opmask; KMOVQ / KORTESTQ see all 64 bits */
+static void test_x86_evex_bw_kmask64(void)
+{
+    /* VPCMPEQB k2, zmm1, zmm2; KMOVQ rax, k2; VPMOVM2B zmm3, k2 */
+    static const char code[] = "\x62\xf1\x75\x48\x74\xd2" "\xc4\xe1\xfb\x93\xc2"
+                               "\x62\xf2\x7e\x48\x28\xda";
+    uint8_t a[64], b[64], z[64];
+    uint64_t want = 0, k;
+    EvCtx c;
+    int i, ok;
+
+    for (i = 0; i < 64; i++) {
+        a[i] = (uint8_t)(i * 7);
+        b[i] = (i % 3) ? a[i] : (uint8_t)~a[i];
+        if (a[i] == b[i]) {
+            want |= 1ULL << i;
+        }
+    }
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, b));
+    TEST_CHECK(ev_run(&c, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(ev_get(&c, UC_X86_REG_RAX) == want);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K2, &k));
+    TEST_CHECK(k == want);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM3, z));
+    for (ok = 1, i = 0; i < 64; i++) {
+        ok &= z[i] == (((want >> i) & 1) ? 0xff : 0);
+    }
+    TEST_CHECK(ok);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * ---- NoVmp U290-U296: AVX512DQ (milestone M3) ----
+ * CPUID gating of the AVX512DQ EVEX forms (UC_X86_AVX512_DQ; AVX512VL for EVEX.128/256,
+ * not for the LIG scalar forms) and value checks of VPMULLQ, VFPCLASSPD and VRANGESD.
+ * Results in detail: Emulator/data/cases_evex_m3_dq.txt (ref_evex_m3_dq.py, SDM model).
+ */
+#define DQ_VPMULLQ_Z    "\x62\xf2\xed\x48\x40\xcb"          /* vpmullq zmm1, zmm2, zmm3 */
+#define DQ_VPMULLD_Z    "\x62\xf2\x6d\x48\x40\xcb"          /* vpmulld zmm1, zmm2, zmm3 */
+#define DQ_VPMULLQ_X    "\x62\xf2\xed\x08\x40\xcb"          /* vpmullq xmm1, xmm2, xmm3 */
+#define DQ_VANDPS_Z     "\x62\xf1\x6c\x48\x54\xcb"          /* vandps zmm1, zmm2, zmm3 */
+#define DQ_VFPCLASSPS_Z "\x62\xf3\x7d\x48\x66\xcb\x81"      /* vfpclassps k1, zmm3, 0x81 */
+#define DQ_VFPCLASSPS_X "\x62\xf3\x7d\x08\x66\xcb\x81"      /* vfpclassps k1, xmm3, 0x81 */
+#define DQ_VFPCLASSPD_Z "\x62\xf3\xfd\x48\x66\xcb\x81"      /* vfpclasspd k1, zmm3, 0x81 */
+#define DQ_VFPCLASSSS   "\x62\xf3\x7d\x08\x67\xcb\x81"      /* vfpclassss k1, xmm3, 0x81 */
+#define DQ_VRANGEPS_Z   "\x62\xf3\x6d\x48\x50\xcb\x05"      /* vrangeps zmm1, zmm2, zmm3, 5 */
+#define DQ_VREDUCEPS_Z  "\x62\xf3\x7d\x48\x56\xcb\x00"      /* vreduceps zmm1, zmm3, 0 */
+#define DQ_VRANGESD     "\x62\xf3\xed\x08\x51\xcb\x05"      /* vrangesd xmm1, xmm2, xmm3, 5 */
+
+/* run one snippet on a fresh engine with the given UC_X86_AVX512_* features */
+static int dq_run1(int features, const char *code, size_t len)
+{
+    EvCtx c;
+    int r;
+
+    ev_open(&c, UC_MODE_64, features);
+    r = ev_run(&c, code, len);
+    OK(uc_close(c.uc));
+    return r;
+}
+
+static void test_x86_avx512dq_gating(void)
+{
+    const int fvl = UC_X86_AVX512_F | UC_X86_AVX512_VL;
+    const int fdq = UC_X86_AVX512_F | UC_X86_AVX512_DQ;
+
+    /* no AVX512DQ: every DQ form #UD; VPMULLD (same opcode, W0, AVX512F) runs */
+    TEST_CHECK(dq_run1(fvl, DQ_VPMULLQ_Z, 6) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VPMULLD_Z, 6) == -1);
+    TEST_CHECK(dq_run1(fvl, DQ_VANDPS_Z, 6) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VFPCLASSPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VFPCLASSSS, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VRANGEPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VREDUCEPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VRANGESD, 7) == 6);
+    /* AVX512DQ without AVX512VL: EVEX.512 and the scalar (LIG) forms only */
+    TEST_CHECK(dq_run1(fdq, DQ_VPMULLQ_Z, 6) == -1);
+    TEST_CHECK(dq_run1(fdq, DQ_VPMULLQ_X, 6) == 6);
+    TEST_CHECK(dq_run1(fdq, DQ_VFPCLASSPS_X, 7) == 6);
+    TEST_CHECK(dq_run1(fdq, DQ_VFPCLASSSS, 7) == -1);
+    TEST_CHECK(dq_run1(fdq, DQ_VRANGESD, 7) == -1);
+    /* everything */
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VPMULLQ_X, 6) == -1);
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VFPCLASSPS_X, 7) == -1);
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VANDPS_Z, 6) == -1);
+}
+
+static void test_x86_avx512dq_values(void)
+{
+    uint64_t a[8], b[8], r[8], k = 0;
+    EvCtx c;
+    int i, ok = 1;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    /* VPMULLQ: low 64 bits of every product */
+    for (i = 0; i < 8; i++) {
+        a[i] = 0x9E3779B97F4A7C15ULL * (uint64_t)(i + 1);
+        b[i] = 0xC2B2AE3D27D4EB4FULL ^ ((uint64_t)i << 60);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VPMULLQ_Z, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    for (i = 0; i < 8; i++) {
+        ok &= r[i] == a[i] * b[i];
+    }
+    TEST_CHECK(ok);
+    /* VFPCLASSPD k1, zmm3, 0x81: QNaN or SNaN -> lanes 0, 1, 4 */
+    memset(b, 0, sizeof(b));
+    b[0] = 0x7FF8000000000000ULL;       /* QNaN */
+    b[1] = 0x7FF4000000000000ULL;       /* SNaN */
+    b[2] = 0x3FF0000000000000ULL;       /* 1.0 */
+    b[3] = 0xFFF0000000000000ULL;       /* -INF */
+    b[4] = 0xFFF8000000000001ULL;       /* negative QNaN */
+    b[5] = 0x0000000000000001ULL;       /* denormal */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VFPCLASSPD_Z, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(k == 0x13);
+    TEST_MSG("k1 = %llx", (unsigned long long)k);
+    /* VRANGESD xmm1, xmm2, xmm3, 5: MAX(-3.0, 2.0) = 2.0, bits 127:64 from xmm2, 511:128 = 0 */
+    memset(a, 0xA5, sizeof(a));
+    a[0] = 0xC008000000000000ULL;
+    a[1] = 0x1122334455667788ULL;
+    b[0] = 0x4000000000000000ULL;
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VRANGESD, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    TEST_CHECK(r[0] == 0x4000000000000000ULL && r[1] == 0x1122334455667788ULL);
+    ok = 1;
+    for (i = 2; i < 8; i++) {
+        ok &= r[i] == 0;
+    }
+    TEST_CHECK(ok);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * ---- NoVmp U320-U329: AVX512CD and further UC_CTL_X86_AVX512 feature bits ----
+ * Mask read-back, CPUID.(EAX=7,ECX=0) bits, strict CPUID profiles hiding / showing a bit.
+ * Instruction results: Emulator/data/cases_evex_m3_cd.txt (ref_evex_m3_cd.py).
+ */
+#define CDX_DATA 0x200000
+#define CDX_BASE (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+#define CDX_EBX_CD (1u << 28)
+
+typedef struct CdxCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} CdxCtx;
+
+static void cdx_open(CdxCtx *c, int avx512, const uc_x86_cpuid *prof, size_t nprof, int strict)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        if (strict) {
+            OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+        }
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, CDX_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the vector (6 #UD) or -1 */
+static int cdx_run(CdxCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void cdx_cpuid7(CdxCtx *c, uint32_t r[4])
+{
+    uint64_t v = 7;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(cdx_run(c, "\x0f\xa2", 2) == -1);
+    OK(uc_reg_read(c->uc, UC_X86_REG_EAX, &r[0]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_EBX, &r[1]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_ECX, &r[2]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_EDX, &r[3]));
+}
+
+/* U320: UC_X86_AVX512_CD (16): read-back, CPUID.(7,0):EBX.AVX512CD[28], default off */
+static void test_x86_avx512cd_optin(void)
+{
+    static const struct {
+        int set, get, cd;
+    } m[] = {
+        {0, 0, 0},
+        {UC_X86_AVX512_F, UC_X86_AVX512_F, 0},
+        {CDX_BASE, CDX_BASE, 0},
+        {UC_X86_AVX512_CD, UC_X86_AVX512_F | UC_X86_AVX512_CD, 1},
+        {CDX_BASE | UC_X86_AVX512_CD, CDX_BASE | UC_X86_AVX512_CD, 1},
+    };
+    /* a profile without AVX512CD (CPUID.7.0:EBX = AVX512F|DQ|BW|VL ...) */
+    static const uc_x86_cpuid prof_nocd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    CdxCtx c;
+    uint32_t r[4];
+    size_t i;
+    int on = -1, strict;
+
+    for (i = 0; i < sizeof(m) / sizeof(m[0]); i++) {
+        cdx_open(&c, m[i].set, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK_(on == m[i].get, "mask %d: read back %d", m[i].set, on);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(!!(r[1] & CDX_EBX_CD) == m[i].cd, "mask %d: CPUID.7.0:EBX = %08x",
+                    m[i].set, r[1]);
+        OK(uc_close(c.uc));
+    }
+    /* the default (UC_CPU_X86_MAX, no opt-in) has no AVX512CD */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_get_x86_avx512(c.uc, &on));
+    TEST_CHECK(on == 0);
+    OK(uc_close(c.uc));
+    /* a CPUID profile without the bit hides it from CPUID, strict or not */
+    for (strict = 0; strict < 2; strict++) {
+        cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, strict);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(r[1] == 0xc0030020, "profile, strict %d: CPUID.7.0:EBX = %08x", strict, r[1]);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* VPLZCNTD zmm1, zmm2 (EVEX.512.66.0F38.W0 44 /r): runs and gives the leading-zero counts */
+#define CDX_VPLZCNTD_512 "\x62\xf2\x7d\x48\x44\xca"
+#define CDX_VPLZCNTD_256 "\x62\xf2\x7d\x28\x44\xca"
+/* VPBROADCASTMW2D zmm1, k2 (EVEX.512.F3.0F38.W0 3A /r) */
+#define CDX_VPBCSTMW2D_512 "\x62\xf2\x7e\x48\x3a\xca"
+
+static int cdx_lzcnt_ok(CdxCtx *c)
+{
+    uint32_t z[16], r[16];
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        z[i] = i == 0 ? 0 : 0x80000000u >> (i * 2 - 1);
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, z));
+    if (cdx_run(c, CDX_VPLZCNTD_512, 6) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM1, r));
+    for (i = 0; i < 16; i++) {
+        if (r[i] != (i == 0 ? 32u : (uint32_t)(i * 2 - 1))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * U321: AVX512CD gating (SDM Vol2C CPUID columns "AVX512CD" / "(AVX512VL AND AVX512CD)"):
+ * the mask bit, AVX512VL for EVEX.256, a strict CPUID profile hiding / showing AVX512CD;
+ * VPBROADCASTMW2D with the register operand only.
+ */
+static void test_x86_avx512cd_gating(void)
+{
+    static const uc_x86_cpuid prof_nocd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    static const uc_x86_cpuid prof_cd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xd0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    CdxCtx c;
+    uint32_t z[16];
+    uint64_t k;
+    int i, ok;
+
+    /* without UC_X86_AVX512_CD: #UD */
+    cdx_open(&c, CDX_BASE, NULL, 0, 0);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    TEST_CHECK(cdx_run(&c, CDX_VPBCSTMW2D_512, 6) == 6);
+    OK(uc_close(c.uc));
+    /* with it */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, NULL, 0, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == -1);
+    k = 0x123456789abcdef0ULL;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K2, &k));
+    TEST_CHECK(cdx_run(&c, CDX_VPBCSTMW2D_512, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (ok = 1, i = 0; i < 16; i++) {
+        ok &= z[i] == 0xdef0;
+    }
+    TEST_CHECK(ok);
+    /* register-only: VPBROADCASTMW2D zmm1, [rsi] (mod = 00b) #UD; with aaa = 001b #UD */
+    TEST_CHECK(cdx_run(&c, "\x62\xf2\x7e\x48\x3a\x0e", 6) == 6);
+    TEST_CHECK(cdx_run(&c, "\x62\xf2\x7e\x49\x3a\xca", 6) == 6);
+    OK(uc_close(c.uc));
+    /* AVX512CD without AVX512VL: EVEX.512 runs, EVEX.256 #UD */
+    cdx_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_CD, NULL, 0, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == 6);
+    OK(uc_close(c.uc));
+    /* a profile without AVX512CD: hidden (#UD) only when strict */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    OK(uc_close(c.uc));
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, 1);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    OK(uc_close(c.uc));
+    /* a strict profile with AVX512CD shows it */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_cd, 4, 1);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == -1);
+    OK(uc_close(c.uc));
+    /* ... but not without the opt-in: the profile bit alone does not add the instructions */
+    cdx_open(&c, CDX_BASE, prof_cd, 4, 1);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U322-U325: further UC_CTL_X86_AVX512 feature bits: read-back, the CPUID.(7,0) bit only
+ * with the opt-in, and a first instruction of the extension #UD without / running with it.
+ */
+static const struct {
+    int bit;
+    int reg;            /* CPUID.(7,0) register: 1 = EBX, 2 = ECX */
+    uint32_t cpuid;
+    const char *code;   /* an EVEX.512 form of the extension (zmm registers only) */
+} cdx_bits[] = {
+    /* U322 AVX512_IFMA: VPMADD52LUQ zmm1, zmm2, zmm3 */
+    {UC_X86_AVX512_IFMA, 1, 1u << 21, "\x62\xf2\xed\x48\xb4\xcb"},
+    /* U323 AVX512_VPOPCNTDQ: VPOPCNTD zmm1, zmm3 */
+    {UC_X86_AVX512_VPOPCNTDQ, 2, 1u << 14, "\x62\xf2\x7d\x48\x55\xcb"},
+    /* U324 AVX512_BITALG: VPOPCNTB zmm1, zmm3 */
+    {UC_X86_AVX512_BITALG, 2, 1u << 12, "\x62\xf2\x7d\x48\x54\xcb"},
+    /* U325 AVX512_VBMI: VPERMB zmm1, zmm2, zmm3 */
+    {UC_X86_AVX512_VBMI, 2, 1u << 1, "\x62\xf2\x6d\x48\x8d\xcb"},
+};
+
+static void test_x86_avx512_m4_bits(void)
+{
+    CdxCtx c;
+    uint32_t r[4];
+    size_t i;
+    int on;
+
+    for (i = 0; i < sizeof(cdx_bits) / sizeof(cdx_bits[0]); i++) {
+        cdx_open(&c, CDX_BASE, NULL, 0, 0);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(!(r[cdx_bits[i].reg] & cdx_bits[i].cpuid), "bit %d off: %08x", cdx_bits[i].bit,
+                    r[cdx_bits[i].reg]);
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == 6, "bit %d off: #UD", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+        cdx_open(&c, CDX_BASE | cdx_bits[i].bit, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (CDX_BASE | cdx_bits[i].bit));
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_((r[cdx_bits[i].reg] & cdx_bits[i].cpuid) != 0, "bit %d on: %08x",
+                    cdx_bits[i].bit, r[cdx_bits[i].reg]);
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == -1, "bit %d on: runs", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+        /* alone: implies AVX512F, EVEX.512 needs no AVX512VL */
+        cdx_open(&c, cdx_bits[i].bit, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (UC_X86_AVX512_F | cdx_bits[i].bit));
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == -1, "bit %d alone: runs", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * ---- NoVmp U230-U241: EVEX milestone M2 conversions / FP specials (prefix cv_) ----
+ * Engine paths around them (U230: opmask per destination element when source and
+ * destination element sizes differ, destination narrower than VL, scalar merge under a
+ * mask; masked 16-bit stores; EVEX.W of GPR forms outside 64-bit mode; #XM). Values are
+ * covered by Emulator/data/cases_evex_m2_cvt.txt (ref_evex_m2_cvt.py, independent model).
+ */
+static uint32_t cv_f32(float v)
+{
+    uint32_t u;
+    memcpy(&u, &v, 4);
+    return u;
+}
+
+static uint64_t cv_f64(double v)
+{
+    uint64_t u;
+    memcpy(&u, &v, 8);
+    return u;
+}
+
+/* VCVTPD2PS ymm1{k1}{z}, zmm2: one opmask bit per dword result, bits 511:256 zeroed */
+static void test_x86_evex_cvt_narrow(void)
+{
+    static const char merge[] = "\x62\xf1\xfd\x49\x5a\xca";
+    static const char zero[] = "\x62\xf1\xfd\xc9\x5a\xca";
+    uint64_t src[8], k = 0xA5;
+    uint32_t init[16], z[16];
+    EvCtx c;
+    int i, pass, ok;
+
+    for (pass = 0; pass < 2; pass++) {
+        ev_open(&c, UC_MODE_64, EV_ALL);
+        for (i = 0; i < 8; i++) {
+            src[i] = cv_f64((double)(i + 1));
+        }
+        for (i = 0; i < 16; i++) {
+            init[i] = 0x11111111u;
+        }
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, src));
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, init));
+        OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+        TEST_CHECK(ev_run(&c, pass ? zero : merge, 6) == -1);
+        ev_get_zmm(&c, 1, z);
+        ok = 1;
+        for (i = 0; i < 16; i++) {
+            uint32_t want = i >= 8 ? 0 : ((k >> i) & 1) ? cv_f32((float)(i + 1))
+                                                        : (pass ? 0 : 0x11111111u);
+            ok &= z[i] == want;
+        }
+        TEST_CHECK(ok);
+        TEST_MSG("pass %d: z[0..3] = %08x %08x %08x %08x z[8] = %08x", pass, z[0], z[1], z[2],
+                 z[3], z[8]);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* VCVTPS2PH [rax]{k1}, zmm2, 0: 16-bit elements stored per mask bit, fault suppression */
+static void test_x86_evex_cvt_ph_store(void)
+{
+    static const char code[] = "\x62\xf3\x7d\x49\x1d\x10\x00";
+    static const uint16_t half[8] = { 0x3C00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600, 0x4700,
+                                      0x4800 };
+    uint64_t base = EV_DATA + 0x4000 - 16, k;
+    uint32_t src[16];
+    uint16_t m[8], fill[8];
+    EvCtx c;
+    int i, r;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 16; i++) {
+        src[i] = cv_f32((float)(i + 1));
+    }
+    for (i = 0; i < 8; i++) {
+        fill[i] = 0xEEEE;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, src));
+    ev_set(&c, UC_X86_REG_RAX, base);
+    /* elements 0..7 mapped, 8..15 on the unmapped page: masked off, no fault */
+    OK(uc_mem_write(c.uc, base, fill, sizeof(fill)));
+    k = 0xB5;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, code, 7) == -1);
+    OK(uc_mem_read(c.uc, base, m, sizeof(m)));
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m[i] == (((k >> i) & 1) ? half[i] : 0xEEEE));
+        TEST_MSG("word %d = %04x", i, m[i]);
+    }
+    /* an active element on the unmapped page: fault, nothing written */
+    OK(uc_mem_write(c.uc, base, fill, sizeof(fill)));
+    k = 0x1FF;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    r = ev_run(&c, code, 7);
+    TEST_CHECK(r <= -2);
+    TEST_MSG("run = %d", r);
+    OK(uc_mem_read(c.uc, base, m, sizeof(m)));
+    TEST_CHECK(memcmp(m, fill, sizeof(m)) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* VCVTSS2SD xmm1{k1}{z}, xmm2, xmm3: bits 127:64 from xmm2 also under the mask */
+static void test_x86_evex_cvt_scalar_merge(void)
+{
+    static const char code[] = "\x62\xf1\x6e\x89\x5a\xcb";
+    uint64_t z[8], k;
+    uint32_t s3[16];
+    EvCtx c;
+    int i, pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        ev_open(&c, UC_MODE_64, EV_ALL);
+        ev_put_zmm(&c, 1, 0x11111111);
+        ev_put_zmm(&c, 2, 0x22222222);
+        for (i = 0; i < 16; i++) {
+            s3[i] = cv_f32(1.5f);
+        }
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, s3));
+        k = pass;
+        OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+        TEST_CHECK(ev_run(&c, code, 6) == -1);
+        OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+        TEST_CHECK(z[0] == (pass ? cv_f64(1.5) : 0));
+        TEST_CHECK(z[1] == 0x2525252524242424ull);      /* dwords 2, 3 of ev_put_zmm(2) */
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+        TEST_MSG("pass %d: %016llx %016llx", pass, (unsigned long long)z[0],
+                 (unsigned long long)z[1]);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* EVEX.W of the GPR scalar conversions is ignored outside 64-bit mode */
+static void test_x86_evex_cvt_gpr_w(void)
+{
+    static const char ss2si_w1[] = "\x62\xf1\xfe\x08\x2d\xc2";   /* vcvtss2si eax/rax, xmm2 */
+    static const char si2sd_w1[] = "\x62\xf1\xef\x08\x2a\xc8";   /* vcvtsi2sd xmm1, xmm2, eax/rax */
+    static const char si2sd_w1_b[] = "\x62\xf1\xef\x18\x2a\xc8"; /* the same with EVEX.b */
+    uint32_t s2[16];
+    uint64_t z[8];
+    EvCtx c;
+    int i, mode, ax_reg;
+
+    for (i = 0; i < 16; i++) {
+        s2[i] = cv_f32(1099511627776.0f);                      /* 2^40 */
+    }
+    for (mode = 0; mode < 2; mode++) {
+        ev_open(&c, mode ? UC_MODE_64 : UC_MODE_32, EV_ALL);
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, s2));
+        ax_reg = mode ? UC_X86_REG_RAX : UC_X86_REG_EAX;
+        ev_set(&c, ax_reg, 0x1234);
+        TEST_CHECK(ev_run(&c, ss2si_w1, 6) == -1);
+        /* 32-bit: r32, 2^40 out of range -> integer indefinite; 64-bit: r64 = 2^40 */
+        TEST_CHECK(ev_get(&c, ax_reg) == (mode ? 0x10000000000ull : 0x80000000ull));
+        TEST_MSG("mode %d: eax = %llx", mode, (unsigned long long)ev_get(&c, ax_reg));
+        ev_set(&c, ax_reg, mode ? 0xFFFFFFFF00000005ull : 0xFFFFFFFBu);
+        TEST_CHECK(ev_run(&c, si2sd_w1, 6) == -1);
+        OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+        TEST_CHECK(z[0] == (mode ? cv_f64(-4294967291.0) : cv_f64(-5.0)));
+        /* EVEX.b: {er} only for the W1 (r/m64) form, which does not exist outside 64-bit mode */
+        TEST_CHECK(ev_run(&c, si2sd_w1_b, 6) == (mode ? -1 : 6));
+        OK(uc_close(c.uc));
+    }
+}
+
+/* VCVTPS2DQ zmm1, zmm2 with MXCSR.IM = 0: #XM for an active SNaN lane, none when masked off */
+static void test_x86_evex_cvt_xm(void)
+{
+    static const char plain[] = "\x62\xf1\x7d\x48\x5b\xca";
+    static const char masked[] = "\x62\xf1\x7d\x49\x5b\xca";    /* {k1} */
+    uint32_t s2[16], z[16], mxcsr = 0x1F00, mx = 0;
+    uint64_t k = ~(1ull << 3);
+    EvCtx c;
+    int i;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 16; i++) {
+        s2[i] = cv_f32((float)i);
+    }
+    s2[3] = 0x7FA00000u;                                         /* SNaN */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, s2));
+    ev_put_zmm(&c, 1, 0x11111111);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, plain, 6) == 19);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x11111111u && z[15] == 0x11111111u + 15 * 0x01010101u);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK((mx & 0x3F) == 1);
+    TEST_MSG("mxcsr = %x", mx);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, masked, 6) == -1);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[2] == 2 && z[3] == 0x11111111u + 3 * 0x01010101u && z[15] == 15);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK((mx & 0x3F) == 0);
+    OK(uc_close(c.uc));
+}
+
 /* ---- U440-U442: F16C VCVTPS2PH FTZ / underflow / precision (prefix hc_) ---- */
 typedef struct {
     int count;
@@ -11161,6 +12195,23 @@ TEST_LIST = {
     {"test_x86_evex_scatter_restart", test_x86_evex_scatter_restart},
     {"test_x86_evex_scatter_order", test_x86_evex_scatter_order},
     {"test_x86_evex_vsib_modes", test_x86_evex_vsib_modes},
+    {"test_x86_evex_scalar_memory", test_x86_evex_scalar_memory},
+    {"test_x86_evex_comis_eflags", test_x86_evex_comis_eflags},
+    {"test_x86_evex_m2_memory", test_x86_evex_m2_memory},
+    {"test_x86_evex_m2_features", test_x86_evex_m2_features},
+    {"test_x86_evex_bw_cpuid", test_x86_evex_bw_cpuid},
+    {"test_x86_evex_bw_masked_bytes", test_x86_evex_bw_masked_bytes},
+    {"test_x86_evex_bw_kmask64", test_x86_evex_bw_kmask64},
+    {"test_x86_avx512dq_gating", test_x86_avx512dq_gating},
+    {"test_x86_avx512dq_values", test_x86_avx512dq_values},
+    {"test_x86_avx512cd_optin", test_x86_avx512cd_optin},
+    {"test_x86_avx512cd_gating", test_x86_avx512cd_gating},
+    {"test_x86_avx512_m4_bits", test_x86_avx512_m4_bits},
+    {"test_x86_evex_cvt_narrow", test_x86_evex_cvt_narrow},
+    {"test_x86_evex_cvt_ph_store", test_x86_evex_cvt_ph_store},
+    {"test_x86_evex_cvt_scalar_merge", test_x86_evex_cvt_scalar_merge},
+    {"test_x86_evex_cvt_gpr_w", test_x86_evex_cvt_gpr_w},
+    {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
     {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
     {NULL, NULL}};

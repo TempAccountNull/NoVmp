@@ -102,6 +102,11 @@ typedef enum X86OpSize {
     X86_SIZE_d64,
     X86_SIZE_f64,
     X86_SIZE_xh, /* SSE/AVX packed half register */
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+    /* EVEX Quarter Mem / Eighth Mem operands: VL/4 and VL/8 bits (SDM Vol2A Table 2-37) */
+    X86_SIZE_xq, /* EVEX packed quarter register */
+    X86_SIZE_xo, /* EVEX packed eighth register */
+#endif /* __Use_Original_Qemu (U210) */
 } X86OpSize;
 
 typedef enum X86CPUIDFeature {
@@ -191,6 +196,21 @@ typedef enum X86CPUIDFeature {
     X86_FEAT_AMX_FP16,      /* CPUID.(07H,1):EAX[21] */
     X86_FEAT_AMX_COMPLEX,   /* CPUID.(07H,1):EDX[8] */
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+    X86_FEAT_AVX512CD,      /* CPUID.(07H,0):EBX[28] */
+#endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U322) */
+    X86_FEAT_AVX512_IFMA,   /* CPUID.(07H,0):EBX[21] */
+#endif /* __Use_Original_Qemu (U322) */
+#if __Use_Original_Qemu != 1 /* ours (U323) */
+    X86_FEAT_AVX512_VPOPCNTDQ, /* CPUID.(07H,0):ECX[14] */
+#endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+    X86_FEAT_AVX512_BITALG, /* CPUID.(07H,0):ECX[12] */
+#endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+    X86_FEAT_AVX512_VBMI,   /* CPUID.(07H,0):ECX[1] */
+#endif /* __Use_Original_Qemu (U325) */
 } X86CPUIDFeature;
 
 /* Execution flags */
@@ -365,6 +385,11 @@ typedef enum X86EvexRC {
 #define X86_EVEX_ES_32 3
 #define X86_EVEX_ES_64 4
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+/* X86OpEntry.evex_cx: the source (expand) or destination (compress) is contiguous */
+#define X86_EVEX_CX_EXPAND   1
+#define X86_EVEX_CX_COMPRESS 2
+#endif /* __Use_Original_Qemu (U213) */
 
 typedef struct X86OpEntry  X86OpEntry;
 typedef struct X86DecodedInsn X86DecodedInsn;
@@ -411,7 +436,35 @@ struct X86OpEntry {
     unsigned     evex_fp:1;     /* SIMD floating point: MXCSR flags, #XM (E2/E3) */
     unsigned     evex_w32:1;    /* EVEX.W ignored outside 64-bit mode (behaves as W0) */
     unsigned     evex_nofs:1;   /* no memory fault suppression (E*NF classes) */
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+    /*
+     * the destination register is also a source (FMA, VPERMI2x/VPERMT2x, ...): gen_evex_insn
+     * copies it to the result scratch register (op[0].offset) before the gen function runs,
+     * with +1.0 in the masked-off lanes of an FP form; merging-masking keeps the old value
+     */
+    unsigned     evex_dsrc:1;
+#endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+    /* merging-masking takes SRC1 (EVEX.vvvv) for masked-off lanes (VPBLENDMx, VBLENDMPx) */
+    unsigned     evex_msrc1:1;
+#endif /* __Use_Original_Qemu (U191) */
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+    /* X86_EVEX_CX_*: VPEXPAND/VEXPAND, VPCOMPRESS/VCOMPRESS (gen_evex_cx) */
+    unsigned     evex_cx:2;
+#endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    /*
+     * NoVmp (ledger U230): element size of the destination (= of the opmask bits) when it
+     * differs from the source element size evex_es (conversions such as VCVTPD2PS,
+     * VCVTPS2PD, VCVTPH2PS, VCVTPS2PH; U260's evex_kes merged in: VPACKSSDW/VPACKUSDW,
+     * m32bcst {1toN} and disp8*N by dwords, word writemask): X86_EVEX_ES_8..64, 0 = same as
+     * evex_es; DisasContext.evex_dsz. A destination narrower than the vector length
+     * (VPMOVWB, VCVTPD2PS: VL/2 bytes) is taken from the size of operand 0 (U210
+     * evex_dest_bytes; U260's evex_narrow field merged into it).
+     */
+    unsigned     evex_ds:3;
+#endif /* __Use_Original_Qemu (U230) */
 };
 typedef struct X86DecodedOp {
     int8_t n;
