@@ -13,6 +13,7 @@ Each bit is checked at run time (in a helper), so changing the mask also takes e
 | 4 | `UC_X86_QUIRK_DPPD_NAN_ORDER` | DPPD with two NaN products: p0 + p1 in both elements, so both get the first NaN, p0 (DPPD Operation, Vol1 Table 4-8) | element i := p[i] + p[i^1], so element 1 gets p1 | U98 |
 | 5 | `UC_X86_QUIRK_REP_ZERO_COUNT_ZX` | 67h REP MOVS/STOS/LODS/CMPS/SCAS in 64-bit mode with ECX = 0 writes no register (REP Operation: `WHILE CountReg ≠ 0`) | zero-extends RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS) | U60/U430 |
 | 6 | `UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC` | FCOM/FCOMP/FCOMPP/FUCOM*/FCOMI*/FUCOMI* with an unmasked #IA leave C3/C2/C0 (ZF/PF/CF) unchanged ("set only if the exception is masked") | sets them to "unordered" (111) anyway | U54/U431 |
+| 7 | `UC_X86_QUIRK_DPPS_PARALLEL_STEPS` | (V)DPPS unmasked SIMD FP exceptions: DP_Primitive on each 128-bit half in turn, #XM checked after the products, after Temp2, after Temp3 and after Temp4 (DPPS Operation + Exceptions) | checks after all products, after Temp2 and Temp3 together, and after Temp4, each step covering both halves of VDPPS ymm (so flags of steps the SDM would not reach yet are set) | U446 |
 
 All bits the i5-13600K needs are bits 0–6 = `0x7F`.
 
