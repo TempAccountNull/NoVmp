@@ -24,11 +24,11 @@ LEDGER = os.path.join(ROOT, 'CHANGES_LEDGER.md')
 DOCS = os.path.join(ROOT, 'docs')
 BEGIN, END = '<!-- NOVMP-STATUS:BEGIN -->', '<!-- NOVMP-STATUS:END -->'
 
-LEGEND = ('**Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, '
-          'the emulator has an open item · ⬜ not implemented / not verified yet · **❌ NOT SUPPORTED on our '
-          'i5-13600K** (the CPU cannot execute it, so it can never be checked against our hardware; it is still '
-          'implemented from the manual where possible — the row says "implemented per the manual" or '
-          '"not implemented yet").')
+LEGEND = ('**How to read the tables.** Two separate questions per instruction: **"your i5-13600K"** = can '
+          'your CPU execute it at all (✅ runs / ❌ **cannot run** — CPUID bit clear, AMD/VIA-only, or disabled by '
+          'Windows; these can never be checked against your hardware) and **"emulator"** = what the emulator does '
+          '(✅ identical to the CPU, or implemented per the manual and verified against SDM-pseudocode vectors when '
+          'the CPU cannot run it · ⏳ open item · ⬜ not implemented yet).')
 
 
 def git(*args):
@@ -55,11 +55,37 @@ def impl_kind(row):
     return '❌ (not implemented yet)'
 
 
+def cpu_cell(row):
+    """'✅ runs' or '❌ cannot run (reason)' for our i5-13600K"""
+    if row['status'] != '❌':
+        return '✅ runs'
+    n = re.sub(r'\*\*', '', row['note'])
+    m = re.search(r'NOT SUPPORTED on our i5-13600K \((.*?)\) —', n)
+    why = m.group(1) if m else 'not reported by this CPU'
+    return '❌ **cannot run** (%s)' % why.replace('|', '/')
+
+
+def emu_cell(row):
+    """emulator status without the CPU part"""
+    n = re.sub(r'\*\*', '', row['note'])
+    if row['status'] != '❌':
+        return '%s %s' % (row['status'], short(n))
+    rest = n.split(' — ', 1)[1] if ' — ' in n else n
+    k = impl_kind(row)
+    tag = {'❌ (implemented per manual)': '✅ implemented per the manual (SDM-vector verified)',
+           '❌ (implemented, open item)': '⏳ implemented per the manual, open item',
+           '❌ (not implemented yet)': '⬜ not implemented yet'}[k]
+    detail = rest.split(': ', 1)[1] if ': ' in rest else ''
+    return tag + (' — ' + short(detail, 140) if detail else '')
+
+
 def family_table(rows):
     fams = {}
     for r in rows:
-        f = fams.setdefault(r['family'], {'n': 0, '✅': 0, '⏳': 0, '⬜': 0, 'xi': 0, 'xo': 0, 'xn': 0})
+        f = fams.setdefault(r['family'], {'n': 0, 'cpu': 0, '✅': 0, '⏳': 0, '⬜': 0, 'xi': 0, 'xo': 0, 'xn': 0})
         f['n'] += 1
+        if r['status'] != '❌':
+            f['cpu'] += 1
         k = impl_kind(r)
         if k == '❌ (implemented per manual)':
             f['xi'] += 1
@@ -69,12 +95,19 @@ def family_table(rows):
             f['xn'] += 1
         else:
             f[k] += 1
-    out = ['| family | forms | ✅ | ⏳ | ⬜ | ❌ implemented per manual | ❌ open item | ❌ not implemented yet |',
-           '|---|---|---|---|---|---|---|---|']
+    out = ['| family | forms | **runs on your i5-13600K?** | ✅ identical to the CPU | ⏳ open item | ⬜ not done | '
+           '❌→ implemented per manual | ❌→ open item | ❌→ not implemented yet |',
+           '|---|---|---|---|---|---|---|---|---|']
     for name in sorted(fams, key=lambda x: (x.startswith(('AVX512', 'AVX10', 'APX', 'AMX')), x)):
         f = fams[name]
-        out.append('| %s | %d | %d | %d | %d | %d | %d | %d |' % (name, f['n'], f['✅'], f['⏳'], f['⬜'],
-                                                                f['xi'], f['xo'], f['xn']))
+        if f['cpu'] == f['n']:
+            runs = '✅ yes'
+        elif f['cpu'] == 0:
+            runs = '❌ **no — cannot be supported on this CPU**'
+        else:
+            runs = '⚠️ partly (%d of %d forms)' % (f['cpu'], f['n'])
+        out.append('| %s | %d | %s | %d | %d | %d | %d | %d | %d |' % (
+            name, f['n'], runs, f['✅'], f['⏳'], f['⬜'], f['xi'], f['xo'], f['xn']))
     return out
 
 
@@ -86,11 +119,11 @@ def details(rows):
     for name in sorted(by, key=lambda x: (x.startswith(('AVX512', 'AVX10', 'APX', 'AMX')), x)):
         rs = by[name]
         out.append('<details><summary><b>%s</b> (%d forms)</summary>\n' % (name, len(rs)))
-        out.append('| | instruction | encoding | vector bits | status |')
+        out.append('| instruction | encoding | vector bits | **your i5-13600K** | emulator |')
         out.append('|---|---|---|---|---|')
         for r in rs:
-            out.append('| %s | %s | %s | %s | %s |' % (r['status'], r['mnemonic'].upper(), r['encoding'], r['vl'],
-                                                      short(r['note'])))
+            out.append('| %s | %s | %s | %s | %s |' % (r['mnemonic'].upper(), r['encoding'], r['vl'],
+                                                      cpu_cell(r), emu_cell(r)))
         out.append('\n</details>\n')
     return out
 
