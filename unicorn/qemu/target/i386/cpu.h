@@ -168,6 +168,9 @@ typedef enum X86Seg {
 #define HF_MPX_IU_SHIFT     26 /* BND registers in-use */
 #define HF_UMIP_SHIFT       27 /* CR4.UMIP */
 #define HF_AVX_EN_SHIFT     28 /* AVX Enabled (CR4+XCR0) */
+#if __Use_Original_Qemu != 1 /* ours (U121) */
+#define HF_AVX512_EN_SHIFT  29 /* AVX-512 Enabled (CR4.OSXSAVE + XCR0[7:5,2:1]) */
+#endif /* __Use_Original_Qemu (U121) */
 
 #define HF_CPL_MASK          (3 << HF_CPL_SHIFT)
 #define HF_INHIBIT_IRQ_MASK  (1 << HF_INHIBIT_IRQ_SHIFT)
@@ -195,6 +198,9 @@ typedef enum X86Seg {
 #define HF_MPX_IU_MASK       (1 << HF_MPX_IU_SHIFT)
 #define HF_UMIP_MASK         (1 << HF_UMIP_SHIFT)
 #define HF_AVX_EN_MASK       (1 << HF_AVX_EN_SHIFT)
+#if __Use_Original_Qemu != 1 /* ours (U121) */
+#define HF_AVX512_EN_MASK    (1 << HF_AVX512_EN_SHIFT)
+#endif /* __Use_Original_Qemu (U121) */
 
 /* hflags2 */
 
