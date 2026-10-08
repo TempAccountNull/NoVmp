@@ -269,6 +269,13 @@ namespace at
 	};
 
 	// ── Unicorn ─────────────────────────────────────────────────────────────────────────────
+	// UC_CTL_X86_HW_QUIRKS (ledger U99): Unicorn's default (0) is strictly the Intel SDM. The
+	// hardware comparisons run against the host i5-13600K, so they enable every quirk bit this
+	// CPU needs (emu-alltest --quirks cpu, the default for hardware runs); expected-value (SDM
+	// model) cases run with 0 (--quirks sdm, the default for "=>" lines). docs\quirks.md.
+	constexpr uint32_t QUIRKS_I5_13600K = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
+										  UC_X86_QUIRK_FYL2XP1_BELOW_M1 | UC_X86_QUIRK_PTWRITE_NOP;
+
 	class unicorn_engine
 	{
 	public:
