@@ -1473,6 +1473,9 @@ static void do_fninit(CPUX86State *env)
     env->fpds = 0;
     env->fpip = 0;
     env->fpdp = 0;
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+    env->fpop = 0;
+#endif /* __Use_Original_Qemu (U64) */
     cpu_set_fpuc(env, 0x37f);
     env->fptags[0] = 1;
     env->fptags[1] = 1;
@@ -4133,7 +4136,8 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
         cpu_stl_data_ra(env, ptr + 4, 0xffff0000u | fpus, retaddr);
         cpu_stl_data_ra(env, ptr + 8, 0xffff0000u | fptag, retaddr);
         cpu_stl_data_ra(env, ptr + 12, env->fpip, retaddr); /* fpip */
-        cpu_stl_data_ra(env, ptr + 16, env->fpcs, retaddr); /* fpcs */
+        /* FOP in bits 26:16 next to FCS (U64) */
+        cpu_stl_data_ra(env, ptr + 16, ((uint32_t)(env->fpop & 0x7ff) << 16) | env->fpcs, retaddr);
         cpu_stl_data_ra(env, ptr + 20, env->fpdp, retaddr); /* fpoo */
         cpu_stl_data_ra(env, ptr + 24, 0xffff0000u | env->fpds, retaddr); /* fpos */
 #endif /* __Use_Original_Qemu (U62) */
@@ -4148,6 +4152,26 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
         cpu_stw_data_ra(env, ptr + 12, env->fpds, retaddr);
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+/*
+ * NoVmp (ledger U64): after a non-control x87 instruction. This CPU sets
+ * CPUID.(EAX=7,ECX=0):EBX[6] (FDP_EXCPTN_ONLY) and EBX[13] (FCS/FDS
+ * deprecated): FOP and FDP change only when the instruction took an unmasked
+ * exception (ES set afterwards); a register form keeps FDP (i5-13600K:
+ * FDIV m32 by 0 with ZE unmasked -> FOP 0B6h, FDP = operand; masked -> both
+ * unchanged; FDIVP ST(1),ST(0) unmasked -> FOP 6F9h).
+ */
+void helper_x87_ptrs(CPUX86State *env, uint32_t fop, target_ulong fdp, uint32_t mem)
+{
+    if (env->fpus & FPUS_SE) {
+        env->fpop = fop & 0x7ff;
+        if (mem) {
+            env->fpdp = fdp;
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U64) */
 
 void helper_fstenv(CPUX86State *env, target_ulong ptr, int data32)
 {
@@ -4203,6 +4227,22 @@ static void do_fldenv(CPUX86State *env, target_ulong ptr, int data32,
         env->fptags[i] = ((fptag & 3) == 3);
         fptag >>= 2;
     }
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+    /*
+     * NoVmp (ledger U64): the instruction / data pointers and FOP come from the
+     * image too; FCS/FDS are deprecated on this CPU and read as 0 (i5-13600K)
+     */
+    if (data32) {
+        env->fpip = cpu_ldl_data_ra(env, ptr + 12, retaddr);
+        env->fpop = (cpu_ldl_data_ra(env, ptr + 16, retaddr) >> 16) & 0x7ff;
+        env->fpdp = cpu_ldl_data_ra(env, ptr + 20, retaddr);
+    } else {
+        env->fpip = cpu_lduw_data_ra(env, ptr + 6, retaddr);
+        env->fpop = cpu_lduw_data_ra(env, ptr + 8, retaddr) & 0x7ff;
+        env->fpdp = cpu_lduw_data_ra(env, ptr + 10, retaddr);
+    }
+    env->fpcs = env->fpds = 0;
+#endif /* __Use_Original_Qemu (U64) */
 }
 
 void helper_fldenv(CPUX86State *env, target_ulong ptr, int data32)
@@ -4298,9 +4338,26 @@ static void do_xsave_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
     cpu_stw_data_ra(env, ptr + XO(legacy.fsw), fpus, ra);
     cpu_stw_data_ra(env, ptr + XO(legacy.ftw), fptag ^ 0xff, ra);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U64) */
     /* In 32-bit mode this is eip, sel; in 64-bit mode this is rip. */
     cpu_stq_data_ra(env, ptr + XO(legacy.fpip), env->fpip, ra);
     cpu_stq_data_ra(env, ptr + XO(legacy.fpdp), 0, ra); /* edp+sel; rdp */
+#else /* ours (U64) */
+    /*
+     * NoVmp (ledger U64): FOP, FIP and FDP as the i5-13600K stores them; REX.W
+     * gives 64-bit pointers, otherwise 32-bit offset + selector (0, deprecated)
+     */
+    cpu_stw_data_ra(env, ptr + XO(legacy.fpop), env->fpop & 0x7ff, ra);
+    if (env->x87_fx64) {
+        cpu_stq_data_ra(env, ptr + XO(legacy.fpip), env->fpip, ra);
+        cpu_stq_data_ra(env, ptr + XO(legacy.fpdp), env->fpdp, ra);
+    } else {
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpip), (uint32_t)env->fpip, ra);
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpip) + 4, env->fpcs, ra);
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpdp), (uint32_t)env->fpdp, ra);
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpdp) + 4, env->fpds, ra);
+    }
+#endif /* __Use_Original_Qemu (U64) */
 
     addr = ptr + XO(legacy.fpregs);
     for (i = 0; i < 8; i++) {
@@ -4501,6 +4558,18 @@ static void do_xrstor_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
     for (i = 0; i < 8; i++) {
         env->fptags[i] = ((fptag >> i) & 1);
     }
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+    /* NoVmp (ledger U64): FOP, FIP, FDP restored (REX.W: 64-bit pointers) */
+    env->fpop = cpu_lduw_data_ra(env, ptr + XO(legacy.fpop), ra) & 0x7ff;
+    if (env->x87_fx64) {
+        env->fpip = cpu_ldq_data_ra(env, ptr + XO(legacy.fpip), ra);
+        env->fpdp = cpu_ldq_data_ra(env, ptr + XO(legacy.fpdp), ra);
+    } else {
+        env->fpip = cpu_ldl_data_ra(env, ptr + XO(legacy.fpip), ra);
+        env->fpdp = cpu_ldl_data_ra(env, ptr + XO(legacy.fpdp), ra);
+    }
+    env->fpcs = env->fpds = 0;
+#endif /* __Use_Original_Qemu (U64) */
 
     addr = ptr + XO(legacy.fpregs);
     for (i = 0; i < 8; i++) {

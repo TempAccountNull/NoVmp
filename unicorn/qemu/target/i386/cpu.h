@@ -1570,6 +1570,10 @@ typedef struct CPUX86State {
     /* NoVmp (U54): FT0 holds a denormal m32fp/m64fp (its #D is reported by the operation) */
     uint8_t ft0_den;
 #endif /* __Use_Original_Qemu (U54) */
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+    /* NoVmp (U64): the current FXSAVE/FXRSTOR/XSAVE/XRSTOR has REX.W (64-bit FIP/FDP) */
+    uint8_t x87_fx64;
+#endif /* __Use_Original_Qemu (U64) */
 
     float_status mmx_status; /* for 3DNow! float ops */
     float_status sse_status;

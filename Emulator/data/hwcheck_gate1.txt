@@ -90,3 +90,7 @@ fldenv [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F030000000000FFFFFF000078563412230
 fldenv [rsi]; fxsave [rsi+0x200] | m+0x8000=7F030000000000FFFFFF0000785634122301AA00F0DEBC9A55660000
 # --- FRSTOR with REX.W reads the 108-byte layout too
 fld1; fnsave [rsi]; .byte 0x48, 0xdd, 0x26; fstp qword ptr [rsi+0x300]
+# --- FXSAVE (no REX.W) after an unmasked exception; FXRSTOR / FXRSTOR64 restore the pointers
+fld1; fdiv dword ptr [rsi+0x100]; fxsave [rsi] | fcw=0x037B
+fxrstor [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
+.byte 0x48, 0x0f, 0xae, 0x0e; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000

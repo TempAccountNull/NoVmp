@@ -1530,6 +1530,16 @@ static unsigned gen_string_regs(void (*fn)(DisasContext *s, MemOp ot))
 }
 #endif /* __Use_Original_Qemu (U60) */
 
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+/* NoVmp (U64): REX.W selects the 64-bit FIP/FDP format of the FXSAVE/XSAVE image */
+static void gen_x87_fx64(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, REX_W(s) ? 1 : 0), cpu_env,
+                    offsetof(CPUX86State, x87_fx64));
+}
+#endif /* __Use_Original_Qemu (U64) */
+
 /* Generate jumps to current or next instruction */
 static void gen_repz(DisasContext *s, MemOp ot,
                      void (*fn)(DisasContext *s, MemOp ot))
@@ -5307,6 +5317,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U46/U50/U54) */
 
                 if (update_fdp) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U64) */
                     int last_seg = s->override >= 0 ? s->override : a.def_seg;
 
                     tcg_gen_ld_i32(tcg_ctx, s->tmp2_i32, cpu_env,
@@ -5316,6 +5327,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                      offsetof(CPUX86State, fpds));
                     tcg_gen_st_tl(tcg_ctx, last_addr, cpu_env,
                                   offsetof(CPUX86State, fpdp));
+#else /* ours (U64) */
+                    /* FOP/FDP only on an unmasked exception, FDS = 0 (U64) */
+                    gen_helper_x87_ptrs(tcg_ctx, cpu_env,
+                                        tcg_constant_i32(tcg_ctx, ((b & 7) << 8) | modrm),
+                                        last_addr, tcg_constant_i32(tcg_ctx, 1));
+#endif /* __Use_Original_Qemu (U64) */
                 }
                 tcg_temp_free(tcg_ctx, last_addr);
             } else {
@@ -5656,12 +5673,25 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
 
             if (update_fip) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U64) */
                 tcg_gen_ld_i32(tcg_ctx, s->tmp2_i32, cpu_env,
                                offsetof(CPUX86State, segs[R_CS].selector));
                 tcg_gen_st16_i32(tcg_ctx, s->tmp2_i32, cpu_env,
                                  offsetof(CPUX86State, fpcs));
                 tcg_gen_st_tl(tcg_ctx, eip_cur_tl(s),
                               cpu_env, offsetof(CPUX86State, fpip));
+#else /* ours (U64) */
+                /* FIP always, FCS = 0 (deprecated on this CPU); FOP on exception (U64) */
+                tcg_gen_st16_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
+                                 offsetof(CPUX86State, fpcs));
+                tcg_gen_st_tl(tcg_ctx, eip_cur_tl(s),
+                              cpu_env, offsetof(CPUX86State, fpip));
+                if (mod == 3) {
+                    gen_helper_x87_ptrs(tcg_ctx, cpu_env,
+                                        tcg_constant_i32(tcg_ctx, ((b & 7) << 8) | modrm),
+                                        tcg_constant_tl(tcg_ctx, 0), tcg_constant_i32(tcg_ctx, 0));
+                }
+#endif /* __Use_Original_Qemu (U64) */
             }
         }
         break;
@@ -7393,6 +7423,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+            gen_x87_fx64(s);
+#endif /* __Use_Original_Qemu (U64) */
             gen_helper_fxsave(tcg_ctx, cpu_env, s->A0);
             break;
 
@@ -7406,6 +7439,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+            gen_x87_fx64(s);
+#endif /* __Use_Original_Qemu (U64) */
             gen_helper_fxrstor(tcg_ctx, cpu_env, s->A0);
             break;
 
@@ -7445,6 +7481,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+            gen_x87_fx64(s);
+#endif /* __Use_Original_Qemu (U64) */
             gen_helper_xsave(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
             break;
 
@@ -7457,6 +7496,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+            gen_x87_fx64(s);
+#endif /* __Use_Original_Qemu (U64) */
             gen_helper_xrstor(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
             /* XRSTOR is how MPX is enabled, which changes how
                we translate.  Thus we need to end the TB.  */
@@ -7483,6 +7525,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_lea_modrm(env, s, modrm);
                 tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                       cpu_regs[R_EDX]);
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+                gen_x87_fx64(s);
+#endif /* __Use_Original_Qemu (U64) */
                 gen_helper_xsaveopt(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
             }
             break;

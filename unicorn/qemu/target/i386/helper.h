@@ -142,6 +142,9 @@ DEF_HELPER_2(fstt_ST0, void, env, tl)
 DEF_HELPER_1(fpush, void, env)
 #if __Use_Original_Qemu != 1 /* ours (U46) */
 DEF_HELPER_3(x87_pre, i32, env, i32, tl)
+#if __Use_Original_Qemu != 1 /* ours (U64) */
+DEF_HELPER_4(x87_ptrs, void, env, i32, tl, i32)
+#endif /* __Use_Original_Qemu (U64) */
 #endif /* __Use_Original_Qemu (U46) */
 DEF_HELPER_1(fpop, void, env)
 DEF_HELPER_1(fdecstp, void, env)
