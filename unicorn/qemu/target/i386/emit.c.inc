@@ -1233,6 +1233,67 @@ static void gen_EVEX_VCMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
                          tcg_constant_i32(tcg_ctx, desc));
 }
 #endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U199) */
+
+/*
+ * NoVmp (ledger U199): EVEX FMA, packed (0F38 96-98/9A/9C/9E, A6-A8/AA/AC/AE, B6-B8/BA/BC/
+ * BE; U199) and scalar (99/9B/9D/9F, A9/.., B9/..; U200). Opcode bits 7:4 = operand order
+ * (9: 132 DEST*SRC3 op SRC2, A: 213 SRC2*DEST op SRC3, B: 231 SRC2*SRC3 op DEST), bits 3:0
+ * = operation (6 FMADDSUB, 7 FMSUBADD, 8/9 FMADD, A/B FMSUB, C/D FNMADD, E/F FNMSUB). One
+ * rounding of the infinitely precise x*y+z (softfloat muladd, SDM Vol1 14.5.2); NaN result
+ * Q(x), Q(y), Q(z) in that order, 0*inf+QNaN returns Q(z) without #IA (Table 14-17), the
+ * negations do not apply to a NaN. DEST is read from the scratch copy made by
+ * gen_evex_insn (X86OpEntry.evex_dsrc), so OP_PTR0 is both a source and the result.
+ */
+static void gen_evex_fma_args(DisasContext *s, X86DecodedInsn *decode, TCGv_ptr *a,
+                              TCGv_ptr *b, TCGv_ptr *c, int *even, int *odd)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr p0 = OP_PTR0, p1 = OP_PTR1, p2 = OP_PTR2;
+
+    switch (decode->b >> 4) {
+    case 0x9:       /* 132: DEST * SRC3 + SRC2 */
+        *a = p0, *b = p2, *c = p1;
+        break;
+    case 0xa:       /* 213: SRC2 * DEST + SRC3 */
+        *a = p1, *b = p0, *c = p2;
+        break;
+    default:        /* 231: SRC2 * SRC3 + DEST */
+        *a = p1, *b = p2, *c = p0;
+        break;
+    }
+    switch (decode->b & 0xe) {
+    case 0x6:       /* FMADDSUB: even elements subtract, odd add */
+        *even = (decode->b & 1) ? 0 : float_muladd_negate_c;
+        *odd = (decode->b & 1) ? float_muladd_negate_c : 0;
+        break;
+    case 0x8:       /* FMADD */
+        *even = *odd = 0;
+        break;
+    case 0xa:       /* FMSUB */
+        *even = *odd = float_muladd_negate_c;
+        break;
+    case 0xc:       /* FNMADD */
+        *even = *odd = float_muladd_negate_product;
+        break;
+    default:        /* 0xe: FNMSUB */
+        *even = *odd = float_muladd_negate_c | float_muladd_negate_product;
+        break;
+    }
+}
+
+static void gen_EVEX_VFMAP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppppii fn = s->vex_w ? SSE_FN3(s, decode, fma4pd) : SSE_FN3(s, decode, fma4ps);
+    TCGv_ptr a, b, c;
+    int even, odd;
+
+    gen_evex_fma_args(s, decode, &a, &b, &c, &even, &odd);
+    fn(tcg_ctx, cpu_env, OP_PTR0, a, b, c, tcg_constant_i32(tcg_ctx, even),
+       tcg_constant_i32(tcg_ctx, even ^ odd));
+}
+#endif /* __Use_Original_Qemu (U199) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

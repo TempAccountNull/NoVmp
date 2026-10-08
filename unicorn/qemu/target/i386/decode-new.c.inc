@@ -2336,6 +2336,21 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xa3] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
                            ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U199) */
+    /*
+     * NoVmp (ledger U199): packed FMA zmm1{k1}{z}, zmm2 (vvvv), zmm3/m/{1toN}{er}: 66, W0 =
+     * PS, W1 = PD, Full tuple, class E2; DEST is the first source (evex_dsrc).
+     */
+#define EV_FMAP X86_OP_ENTRY3(EVEX_VFMAP, V,x, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL) \
+                    ev_tt(FULL) ev_mask(MZ) ev_rc(ER) ev_w(WSEL) ev_es(W) ev_fp ev_dsrc p_66)
+    [0x96] = EV_FMAP, [0x97] = EV_FMAP, [0x98] = EV_FMAP, [0x9a] = EV_FMAP,
+    [0x9c] = EV_FMAP, [0x9e] = EV_FMAP,
+    [0xa6] = EV_FMAP, [0xa7] = EV_FMAP, [0xa8] = EV_FMAP, [0xaa] = EV_FMAP,
+    [0xac] = EV_FMAP, [0xae] = EV_FMAP,
+    [0xb6] = EV_FMAP, [0xb7] = EV_FMAP, [0xb8] = EV_FMAP, [0xba] = EV_FMAP,
+    [0xbc] = EV_FMAP, [0xbe] = EV_FMAP,
+#undef EV_FMAP
+#endif /* __Use_Original_Qemu (U199) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
