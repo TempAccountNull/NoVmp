@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <ProjectGuid>{EC6B8F7F-730C-4086-B143-4664CC16DF8F}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>VTILCommon</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <IncludePath>$(ProjectDir)..\Capstone\include;$(ProjectDir)..\Keystone\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)..\Keystone\build\llvm\lib\x64\Debug;$(ProjectDir)..\Capstone\msvc\x64\Debug;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)$(PlatformTarget)\$(Configuration)\</OutDir>
+    <IntDir>$(PlatformTarget)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+    <IncludePath>$(ProjectDir)..\Capstone\include;$(ProjectDir)..\Keystone\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)..\Keystone\build\llvm\lib\Debug;$(ProjectDir)..\Capstone\msvc\Debug;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)$(PlatformTarget)\$(Configuration)\</OutDir>
+    <IntDir>$(PlatformTarget)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(ProjectDir)..\Capstone\include;$(ProjectDir)..\Keystone\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)..\Keystone\build\llvm\lib\x64\Release;$(ProjectDir)..\Capstone\msvc\x64\Release;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)$(PlatformTarget)\$(Configuration)\</OutDir>
+    <IntDir>$(PlatformTarget)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+    <IncludePath>$(ProjectDir)..\Capstone\include;$(ProjectDir)..\Keystone\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)..\Keystone\build\llvm\lib\Release;$(ProjectDir)..\Capstone\msvc\Release;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)$(PlatformTarget)\$(Configuration)\</OutDir>
+    <IntDir>$(PlatformTarget)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>
+      </SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <CCppSupport>
+      </CCppSupport>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Lib>
+      <AdditionalDependencies>keystone.lib;capstone.lib;</AdditionalDependencies>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>
+      </SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <CCppSupport>
+      </CCppSupport>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Lib>
+      <AdditionalDependencies>keystone.lib;capstone.lib;</AdditionalDependencies>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>
+      </SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <CCppSupport>
+      </CCppSupport>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <Optimization>Full</Optimization>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Lib>
+      <AdditionalDependencies>keystone.lib;capstone.lib;</AdditionalDependencies>
+      <LinkTimeCodeGeneration>true</LinkTimeCodeGeneration>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>
+      </SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <CCppSupport>
+      </CCppSupport>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <Optimization>Full</Optimization>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Lib>
+      <AdditionalDependencies>keystone.lib;capstone.lib;</AdditionalDependencies>
+      <LinkTimeCodeGeneration>true</LinkTimeCodeGeneration>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="arch\arch_size.hpp" />
+    <ClInclude Include="arch\x86\x86_assembler.hpp" />
+    <ClInclude Include="arch\x86\x86_disassembler.hpp" />
+    <ClInclude Include="arch\x86\x86_register_details.hpp" />
+    <ClInclude Include="formats\image_descriptor.hpp" />
+    <ClInclude Include="formats\winpe.hpp" />
+    <ClInclude Include="arch\amd64\amd64_assembler.hpp" />
+    <ClInclude Include="arch\amd64\amd64_disassembler.hpp" />
+    <ClInclude Include="arch\amd64\amd64_register_details.hpp" />
+    <ClInclude Include="arch\arm64\arm64_assembler.hpp" />
+    <ClInclude Include="arch\arm64\arm64_disassembler.hpp" />
+    <ClInclude Include="arch\arm64\arm64_register_details.hpp" />
+    <ClInclude Include="arch\register_mapping.hpp" />
+    <ClInclude Include="includes\vtil\common" />
+    <ClInclude Include="includes\vtil\formats" />
+    <ClInclude Include="includes\vtil\io" />
+    <ClInclude Include="includes\vtil\math" />
+    <ClInclude Include="includes\vtil\amd64" />
+    <ClInclude Include="includes\vtil\utility" />
+    <ClInclude Include="io\asserts.hpp" />
+    <ClInclude Include="io\enum_name.hpp" />
+    <ClInclude Include="io\fileio.hpp" />
+    <ClInclude Include="io\formatting.hpp" />
+    <ClInclude Include="io\logger.hpp" />
+    <ClInclude Include="io\strong_formatting.hpp" />
+    <ClInclude Include="io\table_view.hpp" />
+    <ClInclude Include="math\bitwise.hpp" />
+    <ClInclude Include="math\operable.hpp" />
+    <ClInclude Include="math\operators.hpp" />
+    <ClInclude Include="util\bitmap.hpp" />
+    <ClInclude Include="util\copy_on_write.hpp" />
+    <ClInclude Include="util\deferred_value.hpp" />
+    <ClInclude Include="util\detached_queue.hpp" />
+    <ClInclude Include="util\enumerator.hpp" />
+    <ClInclude Include="util\finally.hpp" />
+    <ClInclude Include="util\function_view.hpp" />
+    <ClInclude Include="util\literals.hpp" />
+    <ClInclude Include="util\task.hpp" />
+    <ClInclude Include="util\transform_parallel.hpp" />
+    <ClInclude Include="util\relaxed_atomics.hpp" />
+    <ClInclude Include="util\time.hpp" />
+    <ClInclude Include="util\trilean.hpp" />
+    <ClInclude Include="util\type_helpers.hpp" />
+    <ClInclude Include="util\random.hpp" />
+    <ClInclude Include="util\static_warning.hpp" />
+    <ClInclude Include="util\thread_identifier.hpp" />
+    <ClInclude Include="util\multivariate.hpp" />
+    <ClInclude Include="util\conditional_lock.hpp" />
+    <ClInclude Include="util\lt_typeid.hpp" />
+    <ClInclude Include="util\fnv64.hpp" />
+    <ClInclude Include="util\hashable.hpp" />
+    <ClInclude Include="util\intrinsics.hpp" />
+    <ClInclude Include="util\numeric_iterator.hpp" />
+    <ClInclude Include="util\object_pool.hpp" />
+    <ClInclude Include="util\optional_reference.hpp" />
+    <ClInclude Include="util\range.hpp" />
+    <ClInclude Include="util\reducable.hpp" />
+    <ClInclude Include="util\reverse_iterator.hpp" />
+    <ClInclude Include="util\stack_container.hpp" />
+    <ClInclude Include="util\vtype_traits.hpp" />
+    <ClInclude Include="util\zip.hpp" />
+    <ClInclude Include="util\variant.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="arch\x86\x86_assembler.cpp" />
+    <ClCompile Include="arch\x86\x86_disassembler.cpp" />
+    <ClCompile Include="formats\winpe.cpp" />
+    <ClCompile Include="arch\amd64\amd64_assembler.cpp" />
+    <ClCompile Include="arch\amd64\amd64_disassembler.cpp" />
+    <ClCompile Include="arch\arm64\arm64_assembler.cpp" />
+    <ClCompile Include="arch\arm64\arm64_disassembler.cpp" />
+    <ClCompile Include="io\logger.cpp" />
+    <ClCompile Include="util\thread_identifier.cpp" />
+    <ClCompile Include="util\variant.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="includes\vtil\arm64" />
+    <None Include="VTIL-Common.licenseheader" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

@@ -1,0 +1,262 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Includes">
+      <UniqueIdentifier>{14333603-a637-4356-854a-db631a744d42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="I/O">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Math">
+      <UniqueIdentifier>{e5d9bf65-c2c0-4dcf-aa87-65a7059e4e90}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Utility">
+      <UniqueIdentifier>{226c5e44-6592-44d0-adb0-31369963cb86}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Formats">
+      <UniqueIdentifier>{7f12883a-3282-4d93-b13f-879b436bfd64}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Architecture">
+      <UniqueIdentifier>{8925c2a1-a825-414d-84b4-a0aedd0926c9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Architecture\amd64">
+      <UniqueIdentifier>{0a79bb7f-b784-44bd-8f02-ec198f2d8f61}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Architecture\arm64">
+      <UniqueIdentifier>{cee1cbfd-3d49-43f8-9efc-77d85f117d5f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Architecture\x86">
+      <UniqueIdentifier>{2dec2b36-ec87-4086-807e-95bd714f0f00}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="io\asserts.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="io\formatting.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="io\logger.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\amd64">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\common">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\io">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="math\operable.hpp">
+      <Filter>Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\operators.hpp">
+      <Filter>Math</Filter>
+    </ClInclude>
+    <ClInclude Include="math\bitwise.hpp">
+      <Filter>Math</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\math">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\utility">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="util\copy_on_write.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\variant.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\hashable.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\stack_container.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\fnv64.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\reducable.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\optional_reference.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\lt_typeid.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\zip.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\range.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\reverse_iterator.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\conditional_lock.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\numeric_iterator.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\multivariate.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="formats\winpe.hpp">
+      <Filter>Formats</Filter>
+    </ClInclude>
+    <ClInclude Include="formats\image_descriptor.hpp">
+      <Filter>Formats</Filter>
+    </ClInclude>
+    <ClInclude Include="includes\vtil\formats">
+      <Filter>Includes</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\amd64\amd64_assembler.hpp">
+      <Filter>Architecture\amd64</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\amd64\amd64_disassembler.hpp">
+      <Filter>Architecture\amd64</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\amd64\amd64_register_details.hpp">
+      <Filter>Architecture\amd64</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\register_mapping.hpp">
+      <Filter>Architecture</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\arm64\arm64_assembler.hpp">
+      <Filter>Architecture\arm64</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\arm64\arm64_disassembler.hpp">
+      <Filter>Architecture\arm64</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\arm64\arm64_register_details.hpp">
+      <Filter>Architecture\arm64</Filter>
+    </ClInclude>
+    <ClInclude Include="util\object_pool.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\thread_identifier.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\static_warning.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\random.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\bitmap.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\enumerator.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\type_helpers.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\deferred_value.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\trilean.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\intrinsics.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\detached_queue.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\relaxed_atomics.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="io\enum_name.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="util\vtype_traits.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\function_view.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="io\fileio.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="util\literals.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\time.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\transform_parallel.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\finally.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="util\task.hpp">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="io\strong_formatting.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="io\table_view.hpp">
+      <Filter>I/O</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\x86\x86_assembler.hpp">
+      <Filter>Architecture\x86</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\x86\x86_disassembler.hpp">
+      <Filter>Architecture\x86</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\x86\x86_register_details.hpp">
+      <Filter>Architecture\x86</Filter>
+    </ClInclude>
+    <ClInclude Include="arch\arch_size.hpp">
+      <Filter>Architecture</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="io\logger.cpp">
+      <Filter>I/O</Filter>
+    </ClCompile>
+    <ClCompile Include="util\variant.cpp">
+      <Filter>Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\amd64\amd64_assembler.cpp">
+      <Filter>Architecture\amd64</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\amd64\amd64_disassembler.cpp">
+      <Filter>Architecture\amd64</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\arm64\arm64_assembler.cpp">
+      <Filter>Architecture\arm64</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\arm64\arm64_disassembler.cpp">
+      <Filter>Architecture\arm64</Filter>
+    </ClCompile>
+    <ClCompile Include="formats\winpe.cpp">
+      <Filter>Formats</Filter>
+    </ClCompile>
+    <ClCompile Include="util\thread_identifier.cpp">
+      <Filter>Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\x86\x86_assembler.cpp">
+      <Filter>Architecture\x86</Filter>
+    </ClCompile>
+    <ClCompile Include="arch\x86\x86_disassembler.cpp">
+      <Filter>Architecture\x86</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="VTIL-Common.licenseheader" />
+    <None Include="includes\vtil\arm64">
+      <Filter>Includes</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
+  </ItemGroup>
+</Project>
