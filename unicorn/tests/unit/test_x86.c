@@ -1330,8 +1330,14 @@ static void test_x86_x87_fnstenv_callback(uc_engine *uc, uint64_t address,
 
         OK(uc_reg_read(uc, UC_X86_REG_EAX, &r_eax));
         OK(uc_mem_read(uc, r_eax, fnstenv, sizeof(fnstenv)));
+#if __Use_Original_Qemu == 1 /* original QEMU (U90) */
         // Don't update FCS:FIP for fnop.
         TEST_CHECK(fnstenv[3] == 0);
+#else /* ours (U90) */
+        /* NoVmp U90: FNOP is not in the SDM's x87 control list (Vol1 8.1.8),
+           FIP = the FNOP like on the i5-13600K */
+        TEST_CHECK(LEINT32(fnstenv[3]) == code_start);
+#endif /* __Use_Original_Qemu (U90) */
     }
 }
 

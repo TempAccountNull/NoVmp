@@ -5423,7 +5423,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #else /* ours (U50) */
                         /* pending exceptions: checked above for every waiting form */
 #endif /* __Use_Original_Qemu (U50) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U90) */
                         update_fip = false;
+#else /* ours (U90) */
+                        /* FNOP is not an FPU control instruction (SDM Vol1 8.1.8):
+                           FIP is updated, as on the i5-13600K (U90) */
+#endif /* __Use_Original_Qemu (U90) */
                         break;
                     default:
                         goto unknown_op;
@@ -5588,8 +5593,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 case 0x1c:
                     switch (rm) {
                     case 0: /* feni (287 only, just do nop here) */
+#if __Use_Original_Qemu != 1 /* ours (U90) */
+                        /* DB E0/E1/E4 execute as control no-ops: no FIP update (U90) */
+                        update_fip = false;
+#endif /* __Use_Original_Qemu (U90) */
                         break;
                     case 1: /* fdisi (287 only, just do nop here) */
+#if __Use_Original_Qemu != 1 /* ours (U90) */
+                        update_fip = false;
+#endif /* __Use_Original_Qemu (U90) */
                         break;
                     case 2: /* fclex */
                         gen_helper_fclex(tcg_ctx, cpu_env);
@@ -5600,6 +5612,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                         update_fip = false;
                         break;
                     case 4: /* fsetpm (287 only, just do nop here) */
+#if __Use_Original_Qemu != 1 /* ours (U90) */
+                        update_fip = false;
+#endif /* __Use_Original_Qemu (U90) */
                         break;
                     default:
                         goto unknown_op;
@@ -5667,6 +5682,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                         gen_helper_fnstsw(tcg_ctx, s->tmp2_i32, cpu_env);
                         tcg_gen_extu_i32_tl(tcg_ctx, s->T0, s->tmp2_i32);
                         gen_op_mov_reg_v(s, MO_16, R_EAX, s->T0);
+#if __Use_Original_Qemu != 1 /* ours (U90) */
+                        /* FNSTSW AX is an FPU control instruction: no FIP update (U90) */
+                        update_fip = false;
+#endif /* __Use_Original_Qemu (U90) */
                         break;
                     default:
                         goto unknown_op;
