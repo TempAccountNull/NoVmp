@@ -2665,6 +2665,9 @@
 #if __Use_Original_Qemu != 1 /* ours (U101) */
 #define helper_rao helper_rao_x86_64
 #endif /* __Use_Original_Qemu (U101) */
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+#define helper_xbegin_check helper_xbegin_check_x86_64
+#endif /* __Use_Original_Qemu (U110) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

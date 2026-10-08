@@ -877,6 +877,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_EDX_FSRM              (1U << 4)
 /* AVX512 VP2INTERSECT instructions */
 #define CPUID_7_0_EDX_AVX512_VP2INTERSECT (1U << 8)
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+/* XBEGIN always aborts to the fallback address (ISE 319433 CPUID leaf 7.0 EDX[11]) */
+#define CPUID_7_0_EDX_RTM_ALWAYS_ABORT  (1U << 11)
+#endif /* __Use_Original_Qemu (U110) */
 /* SERIALIZE instruction */
 #define CPUID_7_0_EDX_SERIALIZE         (1U << 14)
 #if __Use_Original_Qemu != 1 /* ours (U104) */

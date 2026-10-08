@@ -981,6 +981,29 @@ void helper_ptwrite(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U80) */
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+/*
+ * NoVmp (ledger U110): XBEGIN outside 64-bit mode, #GP(0) if the fallback EIP
+ * is beyond the CS limit; in real-address and virtual-8086 mode if it is outside
+ * 0000H-FFFFH (SDM Vol2 XBEGIN exceptions). Raised before any state changes.
+ * Raw Unicorn starts UC_MODE_32 with an all-zero CS cache (no descriptor ever
+ * loaded, P = 0, which a real CS cannot be); then there is no limit to check.
+ */
+void helper_xbegin_check(CPUX86State *env, target_ulong fallback_eip)
+{
+    uint32_t limit = env->segs[R_CS].limit;
+
+    if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK)) {
+        limit = 0xffff;
+    } else if (!(env->segs[R_CS].flags & DESC_P_MASK)) {
+        return;
+    }
+    if (fallback_eip > limit) {
+        raise_exception_ra(env, EXCP0D_GPF, GETPC());
+    }
+}
+
+#endif /* __Use_Original_Qemu (U110) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {

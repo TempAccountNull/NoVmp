@@ -5845,19 +5845,19 @@ static void test_x86_vex_zero_maxvl(void)
  * FIPS-197 Appendix C, the Key Locker spec zero-IWKey vector (page 45) and
  * Emulator/tools/isa/ref_keylocker_misc.py (independent reference).
  */
-#define NV_DATA 0x50000000ULL     /* GDT at +0, handles at +0x4000, stack at +0x8000 */
-#define NV_DATA_SIZE 0x10000
-#define NV_HANDLE (NV_DATA + 0x4000)
-#define NV_STACK (NV_DATA + 0x8000)
+#define NK_DATA 0x50000000ULL     /* GDT at +0, handles at +0x4000, stack at +0x8000 */
+#define NK_DATA_SIZE 0x10000
+#define NK_HANDLE (NK_DATA + 0x4000)
+#define NK_STACK (NK_DATA + 0x8000)
 
 typedef struct {
     int count;
     uint32_t intno;
-} nv_intr_t;
+} nk_intr_t;
 
-static void nv_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
+static void nk_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
 {
-    nv_intr_t *r = (nv_intr_t *)user_data;
+    nk_intr_t *r = (nk_intr_t *)user_data;
 
     if (r->count++ == 0) {
         r->intno = intno;
@@ -5865,58 +5865,58 @@ static void nv_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
     uc_emu_stop(uc);
 }
 
-static uc_engine *nv_open(const char *code, size_t len, nv_intr_t *intr)
+static uc_engine *nk_open(const char *code, size_t len, nk_intr_t *intr)
 {
     uc_engine *uc;
     uc_hook h;
-    uint64_t rsp = NV_STACK, rsi = NV_HANDLE;
+    uint64_t rsp = NK_STACK, rsi = NK_HANDLE;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, len));
-    OK(uc_mem_map(uc, NV_DATA, NV_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_mem_map(uc, NK_DATA, NK_DATA_SIZE, UC_PROT_ALL));
     OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
     OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
     memset(intr, 0, sizeof(*intr));
-    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nv_hook_intr, intr, 1, 0));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, intr, 1, 0));
     return uc;
 }
 
-static uc_err nv_run(uc_engine *uc, size_t len)
+static uc_err nk_run(uc_engine *uc, size_t len)
 {
     return uc_emu_start(uc, code_start, code_start + len, 0, 0);
 }
 
-static int nv_fault(uc_engine *uc, nv_intr_t *intr, const char *code, size_t len);
+static int nk_fault(uc_engine *uc, nk_intr_t *intr, const char *code, size_t len);
 
 /*
  * runs code from its own 64-byte slot of the code page: code that already ran is never
  * rewritten in place (a later run at the same address may reuse a stale translation)
  */
-static uint64_t nv_slot(void)
+static uint64_t nk_slot(void)
 {
     static unsigned slot;
 
     return code_start + 0x1000 + 0x40 * (slot++ % 0xc0);
 }
 
-static uc_err nv_exec(uc_engine *uc, const char *code, size_t len)
+static uc_err nk_exec(uc_engine *uc, const char *code, size_t len)
 {
-    uint64_t at = nv_slot();
+    uint64_t at = nk_slot();
 
     OK(uc_mem_write(uc, at, code, len));
     return uc_emu_start(uc, at, at + len, 0, 0);
 }
 
-static void nv_setxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
+static void nk_setxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
 {
     uint64_t v[2] = {lo, hi};
 
     OK(uc_reg_write(uc, UC_X86_REG_XMM0 + i, v));
 }
 
-static void nv_chkxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
+static void nk_chkxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
 {
     uint64_t v[2];
 
@@ -5926,12 +5926,12 @@ static void nv_chkxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
              i, v[1], v[0], hi, lo);
 }
 
-static void nv_setreg(uc_engine *uc, int reg, uint64_t v)
+static void nk_setreg(uc_engine *uc, int reg, uint64_t v)
 {
     OK(uc_reg_write(uc, reg, &v));
 }
 
-static uint64_t nv_reg(uc_engine *uc, int reg)
+static uint64_t nk_reg(uc_engine *uc, int reg)
 {
     uint64_t v = 0;
 
@@ -5942,16 +5942,16 @@ static uint64_t nv_reg(uc_engine *uc, int reg)
 /*
  * CPL3 for the code after a leading IRETQ (48 CF): GDT with a DPL3 data
  * (0x10) and DPL3 64-bit code (0x18) descriptor; the IRETQ frame returns to
- * code_start + 2 with CS = 0x1B, SS = 0x13, RSP = NV_STACK.
+ * code_start + 2 with CS = 0x1B, SS = 0x13, RSP = NK_STACK.
  */
-static void nv_setup_cpl3(uc_engine *uc)
+static void nk_setup_cpl3(uc_engine *uc)
 {
     uint64_t gdt[4] = {0, 0, 0x00CFF2000000FFFFULL, 0x00AFFA000000FFFFULL};
-    uint64_t frame[5] = {code_start + 2, 0x1B, 0x202, NV_STACK, 0x13};
-    uc_x86_mmr gdtr = {0, NV_DATA, sizeof(gdt) - 1, 0};
-    uint64_t rsp = NV_STACK - 0x100;
+    uint64_t frame[5] = {code_start + 2, 0x1B, 0x202, NK_STACK, 0x13};
+    uc_x86_mmr gdtr = {0, NK_DATA, sizeof(gdt) - 1, 0};
+    uint64_t rsp = NK_STACK - 0x100;
 
-    OK(uc_mem_write(uc, NV_DATA, gdt, sizeof(gdt)));
+    OK(uc_mem_write(uc, NK_DATA, gdt, sizeof(gdt)));
     OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
     OK(uc_mem_write(uc, rsp, frame, sizeof(frame)));
     OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
@@ -5960,9 +5960,9 @@ static void nv_setup_cpl3(uc_engine *uc)
 /* LOADIWKEY inputs used by the tests (also in ref_keylocker_misc.py) */
 static void kl_set_iwkey_inputs(uc_engine *uc)
 {
-    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);    /* integrity key */
-    nv_setxmm(uc, 1, 0x2726252423222120ULL, 0x2f2e2d2c2b2a2928ULL);    /* EncryptionKey[255:128] */
-    nv_setxmm(uc, 2, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);    /* EncryptionKey[127:0] */
+    nk_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);    /* integrity key */
+    nk_setxmm(uc, 1, 0x2726252423222120ULL, 0x2f2e2d2c2b2a2928ULL);    /* EncryptionKey[255:128] */
+    nk_setxmm(uc, 2, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);    /* EncryptionKey[127:0] */
 }
 
 #define KL_LOADIWKEY_X1_X2 "\xf3\x0f\x38\xdc\xca"
@@ -5970,8 +5970,8 @@ static void kl_set_iwkey_inputs(uc_engine *uc)
 #define KL_ENCODEKEY256_EAX_ECX "\xf3\x0f\x38\xfb\xc1"
 #define KL_STORE_HANDLE3 "\xf3\x0f\x7f\x06\xf3\x0f\x7f\x4e\x10\xf3\x0f\x7f\x56\x20"
 #define KL_STORE_HANDLE4 KL_STORE_HANDLE3 "\xf3\x0f\x7f\x5e\x30"
-#define NV_SETZ_R8B "\x41\x0f\x94\xc0"
-#define NV_SETZ_R9B "\x41\x0f\x94\xc1"
+#define NK_SETZ_R8B "\x41\x0f\x94\xc0"
+#define NK_SETZ_R9B "\x41\x0f\x94\xc1"
 /* FIPS-197 C.1 / C.3: plaintext, AES-128 and AES-256 ciphertexts */
 #define FIPS_PT_LO 0x7766554433221100ULL
 #define FIPS_PT_HI 0xffeeddccbbaa9988ULL
@@ -5987,23 +5987,23 @@ static void test_x86_keylocker_cpuid(void)
     const char code[] = "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2\x41\x89\xc8"
                         "\xb8\x19\x00\x00\x00\x31\xc9\x0f\xa2";
     const char enc[] = KL_ENCODEKEY128_EAX_ECX;
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
     uint64_t cr4;
 
-    cr4 = nv_reg(uc, UC_X86_REG_CR4);
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
     TEST_CHECK(cr4 & (1ULL << 19));
-    OK(nv_run(uc, sizeof(code) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) & (1u << 23));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 7);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 5);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RCX) == 1);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 0);
+    OK(nk_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) & (1u << 23));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 7);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == 5);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RCX) == 1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RDX) == 0);
     /* CR4.KL = 0: AESKLE reads 0 and every Key Locker instruction #UDs */
-    nv_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 19));
-    OK(nv_run(uc, sizeof(code) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 4);
-    TEST_CHECK(nv_fault(uc, &intr, enc, sizeof(enc) - 1) == 6);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 19));
+    OK(nk_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == 4);
+    TEST_CHECK(nk_fault(uc, &intr, enc, sizeof(enc) - 1) == 6);
     OK(uc_close(uc));
 }
 
@@ -6011,26 +6011,26 @@ static void test_x86_keylocker_cpuid(void)
 static void test_x86_keylocker_zero_iwkey_vector(void)
 {
     const char code[] = "\xf3\x0f\x38\xfa\xc0"; /* encodekey128 eax, eax */
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
     int i;
 
-    nv_setreg(uc, UC_X86_REG_RAX, 0xffffffff00000000ULL);
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
-    nv_setxmm(uc, 3, 0x33, 0x33);
+    nk_setreg(uc, UC_X86_REG_RAX, 0xffffffff00000000ULL);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    nk_setxmm(uc, 3, 0x33, 0x33);
     for (i = 4; i <= 6; i++) {
-        nv_setxmm(uc, i, ~0ULL, ~0ULL);
+        nk_setxmm(uc, i, ~0ULL, ~0ULL);
     }
-    OK(nv_run(uc, sizeof(code) - 1));
-    nv_chkxmm(uc, 0, 0, 0);                                         /* AAD */
-    nv_chkxmm(uc, 1, 0x898940a278c095dcULL, 0x8720849214a248adULL); /* tag */
-    nv_chkxmm(uc, 2, 0x3382228c8474c308ULL, 0xd3e9d22b334fb3c2ULL); /* ciphertext */
-    nv_chkxmm(uc, 3, 0x33, 0x33);
+    OK(nk_run(uc, sizeof(code) - 1));
+    nk_chkxmm(uc, 0, 0, 0);                                         /* AAD */
+    nk_chkxmm(uc, 1, 0x898940a278c095dcULL, 0x8720849214a248adULL); /* tag */
+    nk_chkxmm(uc, 2, 0x3382228c8474c308ULL, 0xd3e9d22b334fb3c2ULL); /* ciphertext */
+    nk_chkxmm(uc, 3, 0x33, 0x33);
     for (i = 4; i <= 6; i++) {
-        nv_chkxmm(uc, i, 0, 0);
+        nk_chkxmm(uc, i, 0, 0);
     }
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 0); /* NoBackup 0, KeySource 0, r32 zero-extended */
-    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d5) == 0);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0); /* NoBackup 0, KeySource 0, r32 zero-extended */
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_EFLAGS) & 0x8d5) == 0);
     OK(uc_close(uc));
 }
 
@@ -6040,26 +6040,26 @@ static void test_x86_keylocker_aes128(void)
     const char code[] = KL_LOADIWKEY_X1_X2 "\x66\x0f\x6f\xc3" KL_ENCODEKEY128_EAX_ECX
                         KL_STORE_HANDLE3
                         "\xf3\x0f\x38\xdc\x3e"     /* aesenc128kl xmm7, [rsi] */
-                        NV_SETZ_R8B
+                        NK_SETZ_R8B
                         "\x66\x0f\x6f\xef"         /* movdqa xmm5, xmm7 */
                         "\xf3\x0f\x38\xdd\x3e"     /* aesdec128kl xmm7, [rsi] */
-                        NV_SETZ_R9B;
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+                        NK_SETZ_R9B;
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
 
     kl_set_iwkey_inputs(uc);
-    nv_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.1 key */
-    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    nv_setreg(uc, UC_X86_REG_RAX, 0);
-    nv_setreg(uc, UC_X86_REG_RCX, 0);
-    OK(nv_run(uc, sizeof(code) - 1));
+    nk_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.1 key */
+    nk_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nk_setreg(uc, UC_X86_REG_RAX, 0);
+    nk_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nk_run(uc, sizeof(code) - 1));
     TEST_CHECK(intr.count == 0);
-    nv_chkxmm(uc, 0, 0, 0);
-    nv_chkxmm(uc, 1, 0x634224a78ec0fc82ULL, 0xf011afe7aa419640ULL);
-    nv_chkxmm(uc, 2, 0x07d7a1ff305028f3ULL, 0xfcd0b2449592ab3fULL);
-    nv_chkxmm(uc, 5, FIPS128_CT_LO, FIPS128_CT_HI);
-    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0 && nv_reg(uc, UC_X86_REG_R9) == 0);
+    nk_chkxmm(uc, 0, 0, 0);
+    nk_chkxmm(uc, 1, 0x634224a78ec0fc82ULL, 0xf011afe7aa419640ULL);
+    nk_chkxmm(uc, 2, 0x07d7a1ff305028f3ULL, 0xfcd0b2449592ab3fULL);
+    nk_chkxmm(uc, 5, FIPS128_CT_LO, FIPS128_CT_HI);
+    nk_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0 && nk_reg(uc, UC_X86_REG_R9) == 0);
     OK(uc_close(uc));
 }
 
@@ -6070,10 +6070,10 @@ static void test_x86_keylocker_wide256(void)
     size_t n = 0;
     const char head[] = KL_LOADIWKEY_X1_X2 "\x66\x0f\x6f\xc3" "\x66\x0f\x6f\xcc"
                         KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4;
-    const char wide_enc[] = "\xf3\x0f\x38\xd8\x16" NV_SETZ_R8B;   /* aesencwide256kl [rsi] */
-    const char wide_dec[] = "\xf3\x0f\x38\xd8\x1e" NV_SETZ_R9B;   /* aesdecwide256kl [rsi] */
+    const char wide_enc[] = "\xf3\x0f\x38\xd8\x16" NK_SETZ_R8B;   /* aesencwide256kl [rsi] */
+    const char wide_dec[] = "\xf3\x0f\x38\xd8\x1e" NK_SETZ_R9B;   /* aesdecwide256kl [rsi] */
     uint64_t pt[2] = {FIPS_PT_LO, FIPS_PT_HI}, hnd[8];
-    nv_intr_t intr;
+    nk_intr_t intr;
     uc_engine *uc;
     int i;
 
@@ -6087,45 +6087,45 @@ static void test_x86_keylocker_wide256(void)
     }
     memcpy(code + n, wide_enc, sizeof(wide_enc) - 1);
     n += sizeof(wide_enc) - 1;
-    uc = nv_open(code, n, &intr);
+    uc = nk_open(code, n, &intr);
     kl_set_iwkey_inputs(uc);
-    nv_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.3 key */
-    nv_setxmm(uc, 4, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
-    nv_setreg(uc, UC_X86_REG_RCX, 5); /* CPL0-only + no-decrypt (CPL 0 here) */
-    OK(uc_mem_write(uc, NV_HANDLE + 0x100, pt, sizeof(pt)));
-    OK(nv_run(uc, n));
+    nk_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.3 key */
+    nk_setxmm(uc, 4, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
+    nk_setreg(uc, UC_X86_REG_RCX, 5); /* CPL0-only + no-decrypt (CPL 0 here) */
+    OK(uc_mem_write(uc, NK_HANDLE + 0x100, pt, sizeof(pt)));
+    OK(nk_run(uc, n));
     TEST_CHECK(intr.count == 0);
-    OK(uc_mem_read(uc, NV_HANDLE, hnd, sizeof(hnd)));
+    OK(uc_mem_read(uc, NK_HANDLE, hnd, sizeof(hnd)));
     TEST_CHECK(hnd[0] == 0x0000000001000005ULL && hnd[1] == 0);
     TEST_CHECK(hnd[2] == 0x01e20cd8b6763808ULL && hnd[3] == 0x7813f6924c30cb0eULL);
     TEST_CHECK(hnd[4] == 0x2ff383ae0a96b9afULL && hnd[5] == 0x43b14021c4e562ecULL);
     TEST_CHECK(hnd[6] == 0xddea96a39ab8e43fULL && hnd[7] == 0x47614f4794c81039ULL);
     for (i = 0; i < 8; i++) {
-        nv_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+        nk_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0);
     /* the no-decrypt handle refuses AESDECWIDE256KL: ZF = 1, XMM0-7 unchanged */
-    OK(nv_exec(uc, wide_dec, sizeof(wide_dec) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 1);
+    OK(nk_exec(uc, wide_dec, sizeof(wide_dec) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R9) == 1);
     for (i = 0; i < 8; i++) {
-        nv_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+        nk_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
     /* a handle without restrictions decrypts XMM0-7 back */
     for (i = 0; i < 8; i++) {
-        nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+        nk_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
-    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
-    nv_setxmm(uc, 1, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
-    nv_setreg(uc, UC_X86_REG_RCX, 0);
-    OK(nv_exec(uc, KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4,
+    nk_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nk_setxmm(uc, 1, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
+    nk_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nk_exec(uc, KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4,
                sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
     for (i = 0; i < 8; i++) {
-        nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+        nk_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
-    OK(nv_exec(uc, wide_dec, sizeof(wide_dec) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 0);
+    OK(nk_exec(uc, wide_dec, sizeof(wide_dec) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R9) == 0);
     for (i = 0; i < 8; i++) {
-        nv_chkxmm(uc, i, FIPS_PT_LO, FIPS_PT_HI);
+        nk_chkxmm(uc, i, FIPS_PT_LO, FIPS_PT_HI);
     }
     OK(uc_close(uc));
 }
@@ -6134,11 +6134,11 @@ static void test_x86_keylocker_wide256(void)
 static void test_x86_keylocker_faults(void)
 {
     const char make[] = KL_ENCODEKEY128_EAX_ECX KL_STORE_HANDLE3;
-    const char enc[] = "\xf3\x0f\x38\xdc\x3e" NV_SETZ_R8B;
-    const char dec[] = "\xf3\x0f\x38\xdd\x3e" NV_SETZ_R8B;
-    const char e256[] = "\xf3\x0f\x38\xdf\x3e" NV_SETZ_R8B;   /* AES-128 handle, AESDEC256KL */
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(KL_LOADIWKEY_X1_X2, 5, &intr);
+    const char enc[] = "\xf3\x0f\x38\xdc\x3e" NK_SETZ_R8B;
+    const char dec[] = "\xf3\x0f\x38\xdd\x3e" NK_SETZ_R8B;
+    const char e256[] = "\xf3\x0f\x38\xdf\x3e" NK_SETZ_R8B;   /* AES-128 handle, AESDEC256KL */
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(KL_LOADIWKEY_X1_X2, 5, &intr);
     uint8_t b;
 
     /*
@@ -6146,77 +6146,77 @@ static void test_x86_keylocker_faults(void)
      * check cannot detect a changed ciphertext (Key Locker spec page 45)
      */
     kl_set_iwkey_inputs(uc);
-    OK(nv_run(uc, 5));
+    OK(nk_run(uc, 5));
     /* no-encrypt handle (SRC = 2) */
-    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
-    nv_setreg(uc, UC_X86_REG_RCX, 2);
-    OK(nv_exec(uc, make, sizeof(make) - 1));
-    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    OK(nv_exec(uc, enc, sizeof(enc) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
-    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    nv_setxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
-    OK(nv_exec(uc, dec, sizeof(dec) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
-    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    OK(nv_exec(uc, e256, sizeof(e256) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
+    nk_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nk_setreg(uc, UC_X86_REG_RCX, 2);
+    OK(nk_exec(uc, make, sizeof(make) - 1));
+    nk_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(nk_exec(uc, enc, sizeof(enc) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 1);
+    nk_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nk_setxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
+    OK(nk_exec(uc, dec, sizeof(dec) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0);
+    nk_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(nk_exec(uc, e256, sizeof(e256) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 1);
     /* integrity: one ciphertext bit flipped */
-    OK(uc_mem_read(uc, NV_HANDLE + 40, &b, 1));
+    OK(uc_mem_read(uc, NK_HANDLE + 40, &b, 1));
     b ^= 0x10;
-    OK(uc_mem_write(uc, NV_HANDLE + 40, &b, 1));
-    OK(nv_exec(uc, dec, sizeof(dec) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
-    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(uc_mem_write(uc, NK_HANDLE + 40, &b, 1));
+    OK(nk_exec(uc, dec, sizeof(dec) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 1);
+    nk_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
     /* ENCODEKEY128: reserved SRC bit 3 -> #GP */
-    nv_setreg(uc, UC_X86_REG_RCX, 8);
-    OK(nv_exec(uc, make, sizeof(make) - 1));
+    nk_setreg(uc, UC_X86_REG_RCX, 8);
+    OK(nk_exec(uc, make, sizeof(make) - 1));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* LOADIWKEY: KeySource 1 (not enumerated) -> #GP */
     memset(&intr, 0, sizeof(intr));
-    nv_setreg(uc, UC_X86_REG_RAX, 2);
-    OK(nv_exec(uc, KL_LOADIWKEY_X1_X2, 5));
+    nk_setreg(uc, UC_X86_REG_RAX, 2);
+    OK(nk_exec(uc, KL_LOADIWKEY_X1_X2, 5));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* memory form of ENCODEKEY128, LOCK, register form of AESDEC128KL, D8 /4 -> #UD */
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xfa\x06", 5) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\x38\xfa\xc1", 6) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xdd\xc1", 5) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xd8\x26", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x38\xfa\x06", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x38\xfa\xc1", 6) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x38\xdd\xc1", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x38\xd8\x26", 5) == 6);
     OK(uc_close(uc));
 }
 
 /* U100: CPL 3: LOADIWKEY #GP; a CPL0-only handle sets ZF; ENCODEKEY works */
 static void test_x86_keylocker_cpl3(void)
 {
-    const char code[] = "\x48\xcf" "\xf3\x0f\x38\xfa\xc1" KL_STORE_HANDLE3 "\xf3\x0f\x38\xdc\x3e" NV_SETZ_R8B;
+    const char code[] = "\x48\xcf" "\xf3\x0f\x38\xfa\xc1" KL_STORE_HANDLE3 "\xf3\x0f\x38\xdc\x3e" NK_SETZ_R8B;
     const char load[] = "\x48\xcf" KL_LOADIWKEY_X1_X2;
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
 
-    nv_setup_cpl3(uc);
-    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
-    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    nv_setreg(uc, UC_X86_REG_RCX, 1);
-    OK(nv_run(uc, sizeof(code) - 1));
+    nk_setup_cpl3(uc);
+    nk_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nk_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nk_setreg(uc, UC_X86_REG_RCX, 1);
+    OK(nk_run(uc, sizeof(code) - 1));
     TEST_CHECK(intr.count == 0);
-    TEST_CHECK((nv_reg(uc, UC_X86_REG_CS) & 3) == 3);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
-    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 3) == 3);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 1);
+    nk_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
     OK(uc_close(uc));
 
-    uc = nv_open(code, sizeof(code) - 1, &intr);
-    nv_setup_cpl3(uc);
-    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
-    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    nv_setreg(uc, UC_X86_REG_RCX, 0);
-    OK(nv_run(uc, sizeof(code) - 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
-    nv_chkxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
+    uc = nk_open(code, sizeof(code) - 1, &intr);
+    nk_setup_cpl3(uc);
+    nk_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nk_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nk_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nk_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0);
+    nk_chkxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
     OK(uc_close(uc));
 
-    uc = nv_open(load, sizeof(load) - 1, &intr);
-    nv_setup_cpl3(uc);
-    OK(nv_run(uc, sizeof(load) - 1));
+    uc = nk_open(load, sizeof(load) - 1, &intr);
+    nk_setup_cpl3(uc);
+    OK(nk_run(uc, sizeof(load) - 1));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     OK(uc_close(uc));
 }
@@ -6237,33 +6237,33 @@ static void test_x86_rao_int(void)
                              0xf0f0f0f0ffffffffULL, 0xfff0fff0ffffffffULL,
                              0xf0f0f0f0fffffffeULL, 0xff00ff00fffffffeULL};
     uint64_t mem[8];
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
     int i;
 
     for (i = 0; i < 8; i++) {
         mem[i] = 0xf0f0f0f0ffffffffULL;
     }
-    OK(uc_mem_write(uc, NV_HANDLE, mem, sizeof(mem)));
-    nv_setreg(uc, UC_X86_REG_RAX, 0x0ff00ff000000001ULL);
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
-    OK(nv_run(uc, sizeof(code) - 1));
+    OK(uc_mem_write(uc, NK_HANDLE, mem, sizeof(mem)));
+    nk_setreg(uc, UC_X86_REG_RAX, 0x0ff00ff000000001ULL);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    OK(nk_run(uc, sizeof(code) - 1));
     TEST_CHECK(intr.count == 0);
-    OK(uc_mem_read(uc, NV_HANDLE, mem, sizeof(mem)));
+    OK(uc_mem_read(uc, NK_HANDLE, mem, sizeof(mem)));
     for (i = 0; i < 8; i++) {
         TEST_CHECK(mem[i] == exp[i]);
         TEST_MSG("slot %d: %016" PRIx64 " expected %016" PRIx64, i, mem[i], exp[i]);
     }
-    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
     /* misaligned: m32 at +2, m64 at +4 -> #GP */
-    OK(nv_exec(uc, "\x0f\x38\xfc\x46\x02", 5));
+    OK(nk_exec(uc, "\x0f\x38\xfc\x46\x02", 5));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     memset(&intr, 0, sizeof(intr));
-    OK(nv_exec(uc, "\xf3\x48\x0f\x38\xfc\x46\x04", 7));
+    OK(nk_exec(uc, "\xf3\x48\x0f\x38\xfc\x46\x04", 7));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* register form, LOCK -> #UD */
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x38\xfc\xc0", 4) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf0\x0f\x38\xfc\x06", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x38\xfc\xc0", 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x0f\x38\xfc\x06", 5) == 6);
     OK(uc_close(uc));
 }
 
@@ -6281,27 +6281,27 @@ static void test_x86_movrs_prefetchrst2(void)
     const char *bad[] = {"\xf3\x0f\x38\x8b\x06", "\xf2\x0f\x38\x8a\x06", "\xf0\x0f\x38\x8b\x06",
                          "\x0f\x38\x8b\xc0\x90", "\xf0\x0f\x18\x26\x90"};
     uint64_t m = 0x8877665544332211ULL;
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
     int i;
 
-    OK(uc_mem_write(uc, NV_HANDLE, &m, 8));
-    nv_setreg(uc, UC_X86_REG_RAX, ~0ULL);
-    nv_setreg(uc, UC_X86_REG_RCX, ~0ULL);
-    nv_setreg(uc, UC_X86_REG_RDX, ~0ULL);
-    nv_setreg(uc, UC_X86_REG_R8, ~0ULL);
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
-    OK(nv_run(uc, sizeof(code) - 1));
+    OK(uc_mem_write(uc, NK_HANDLE, &m, 8));
+    nk_setreg(uc, UC_X86_REG_RAX, ~0ULL);
+    nk_setreg(uc, UC_X86_REG_RCX, ~0ULL);
+    nk_setreg(uc, UC_X86_REG_RDX, ~0ULL);
+    nk_setreg(uc, UC_X86_REG_R8, ~0ULL);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    OK(nk_run(uc, sizeof(code) - 1));
     TEST_CHECK(intr.count == 0);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 0x44331111ULL);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == m);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RCX) == 0xffffffffffff2211ULL);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 0xffffffffffffff11ULL);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0xffffffffffffff11ULL);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R15) == m);
-    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x44331111ULL);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == m);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RCX) == 0xffffffffffff2211ULL);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RDX) == 0xffffffffffffff11ULL);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0xffffffffffffff11ULL);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R15) == m);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
     for (i = 0; i < 5; i++) {
-        TEST_CHECK(nv_fault(uc, &intr, bad[i], 5) == 6);
+        TEST_CHECK(nk_fault(uc, &intr, bad[i], 5) == 6);
         TEST_MSG("case %d", i);
     }
     OK(uc_close(uc));
@@ -6315,14 +6315,14 @@ static void test_x86_movrs_prefetchrst2(void)
     OK(uc_close(uc));
 }
 
-static void nv_wrmsr(uc_engine *uc, uint32_t msr, uint64_t value)
+static void nk_wrmsr(uc_engine *uc, uint32_t msr, uint64_t value)
 {
     uc_x86_msr m = {msr, value};
 
     OK(uc_reg_write(uc, UC_X86_REG_MSR, &m));
 }
 
-static uint64_t nv_rdmsr(uc_engine *uc, uint32_t msr)
+static uint64_t nk_rdmsr(uc_engine *uc, uint32_t msr)
 {
     uc_x86_msr m = {msr, 0};
 
@@ -6334,9 +6334,9 @@ static uint64_t nv_rdmsr(uc_engine *uc, uint32_t msr)
  * runs code from its own 64-byte slot of the code page (never rewriting code
  * that already ran); returns the fault vector, -1 none, 6 for #UD
  */
-static int nv_fault(uc_engine *uc, nv_intr_t *intr, const char *code, size_t len)
+static int nk_fault(uc_engine *uc, nk_intr_t *intr, const char *code, size_t len)
 {
-    uint64_t at = nv_slot();
+    uint64_t at = nk_slot();
     uc_err e;
 
     memset(intr, 0, sizeof(*intr));
@@ -6358,62 +6358,62 @@ static void test_x86_user_msr(void)
                         "\xf3\x45\x0f\x38\xf8\xca"                 /* uwrmsr r9, r10 */
                         "\xf2\x45\x0f\x38\xf8\xcb"                 /* urdmsr r11, r9 */
                         "\xb8\x07\x00\x00\x00\xb9\x01\x00\x00\x00\x0f\xa2"; /* cpuid 7.1 */
-    const uint64_t ctl = (NV_DATA + 0x2000) | 1;
+    const uint64_t ctl = (NK_DATA + 0x2000) | 1;
     uint8_t bits = 0x10;
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
 
     /* ENABLE = 0 (reset): #UD */
-    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
-    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 6);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    TEST_CHECK(nk_fault(uc, &intr, code, 5) == 6);
     /* bitmap: read 1CH and 1B01H, write 1B01H */
-    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 3, &bits, 1));
+    OK(uc_mem_write(uc, NK_DATA + 0x2000 + 3, &bits, 1));
     bits = 0x02;
-    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0x360, &bits, 1));
-    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0xb60, &bits, 1));
-    nv_wrmsr(uc, 0x1c, ctl);
-    TEST_CHECK(nv_rdmsr(uc, 0x1c) == ctl);
-    nv_setreg(uc, UC_X86_REG_RDI, 1);
-    nv_setreg(uc, UC_X86_REG_R9, 0x1b01);
-    nv_setreg(uc, UC_X86_REG_R10, 0);
-    nv_setreg(uc, UC_X86_REG_R11, ~0ULL);
-    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
-    TEST_CHECK(nv_fault(uc, &intr, code, sizeof(code) - 1) == -1);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) & (1u << 15));    /* CPUID.(07H,01H):EDX.USER_MSR */
+    OK(uc_mem_write(uc, NK_DATA + 0x2000 + 0x360, &bits, 1));
+    OK(uc_mem_write(uc, NK_DATA + 0x2000 + 0xb60, &bits, 1));
+    nk_wrmsr(uc, 0x1c, ctl);
+    TEST_CHECK(nk_rdmsr(uc, 0x1c) == ctl);
+    nk_setreg(uc, UC_X86_REG_RDI, 1);
+    nk_setreg(uc, UC_X86_REG_R9, 0x1b01);
+    nk_setreg(uc, UC_X86_REG_R10, 0);
+    nk_setreg(uc, UC_X86_REG_R11, ~0ULL);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    TEST_CHECK(nk_fault(uc, &intr, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RDX) & (1u << 15));    /* CPUID.(07H,01H):EDX.USER_MSR */
     OK(uc_mem_write(uc, code_start, code, 5 + 9 + 9 + 6 + 6));
-    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
-    OK(nv_run(uc, 5 + 9 + 9 + 6 + 6));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == ctl);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 1);             /* DOITM written by the imm form */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R11) == 0);             /* cleared by the register form */
-    TEST_CHECK(nv_rdmsr(uc, 0x1b01) == 0);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    OK(nk_run(uc, 5 + 9 + 9 + 6 + 6));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == ctl);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RDX) == 1);             /* DOITM written by the imm form */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R11) == 0);             /* cleared by the register form */
+    TEST_CHECK(nk_rdmsr(uc, 0x1b01) == 0);
     /* #GP: bitmap bit clear, address >= 4000H, UWRMSR of an MSR other than 1B01H, reserved DOITM bits */
-    nv_setreg(uc, UC_X86_REG_RCX, 0x10);
-    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 13);
-    nv_setreg(uc, UC_X86_REG_RCX, 0x4000);
-    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 13);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x10);
+    TEST_CHECK(nk_fault(uc, &intr, code, 5) == 13);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x4000);
+    TEST_CHECK(nk_fault(uc, &intr, code, 5) == 13);
     bits = 0x10;
-    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0x803, &bits, 1));
-    nv_setreg(uc, UC_X86_REG_R9, 0x1c);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x45\x0f\x38\xf8\xca", 6) == 13);
-    nv_setreg(uc, UC_X86_REG_RDI, 2);
-    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7a\xf8\xc7\x01\x1b\x00\x00", 9) == 13);
+    OK(uc_mem_write(uc, NK_DATA + 0x2000 + 0x803, &bits, 1));
+    nk_setreg(uc, UC_X86_REG_R9, 0x1c);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x45\x0f\x38\xf8\xca", 6) == 13);
+    nk_setreg(uc, UC_X86_REG_RDI, 2);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7a\xf8\xc7\x01\x1b\x00\x00", 9) == 13);
     /* #UD: memory form, VEX.L1, VEX.W1, ModRM.reg != 0, vvvv != 1111b, LOCK */
-    TEST_CHECK(nv_fault(uc, &intr, "\xf2\x0f\x38\xf8\x0b", 5) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7f\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\xfb\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7b\xf8\xca\x01\x1b\x00\x00", 9) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x73\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf2\x0f\x38\xf8\xcb", 6) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf2\x0f\x38\xf8\x0b", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7f\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\xfb\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x7b\xf8\xca\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe7\x73\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf2\x0f\x38\xf8\xcb", 6) == 6);
     /* WRMSR IA32_USER_MSR_CTL: reserved bit 1 / non-canonical bitmap address -> #GP */
-    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
-    nv_setreg(uc, UC_X86_REG_RAX, 2);
-    nv_setreg(uc, UC_X86_REG_RDX, 0);
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
-    nv_setreg(uc, UC_X86_REG_RAX, 1);
-    nv_setreg(uc, UC_X86_REG_RDX, 0x10000000);
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
-    TEST_CHECK(nv_rdmsr(uc, 0x1c) == ctl);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    nk_setreg(uc, UC_X86_REG_RAX, 2);
+    nk_setreg(uc, UC_X86_REG_RDX, 0);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nk_setreg(uc, UC_X86_REG_RAX, 1);
+    nk_setreg(uc, UC_X86_REG_RDX, 0x10000000);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    TEST_CHECK(nk_rdmsr(uc, 0x1c) == ctl);
     OK(uc_close(uc));
 }
 
@@ -6428,28 +6428,28 @@ static void test_x86_uintr_uif(void)
                         "\xf3\x0f\x01\xef\xf3\x0f\x01\xed"     /* stui; testui */
                         "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2\x41\x89\xd3"     /* cpuid 7.0 -> r11d = edx */
                         "\xb8\x07\x00\x00\x00\xb9\x01\x00\x00\x00\x0f\xa2"; /* cpuid 7.1 */
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
-    uint64_t cr4 = nv_reg(uc, UC_X86_REG_CR4);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(code, sizeof(code) - 1, &intr);
+    uint64_t cr4 = nk_reg(uc, UC_X86_REG_CR4);
 
     TEST_CHECK(cr4 & (1ULL << 25));
-    TEST_CHECK(nv_fault(uc, &intr, code, sizeof(code) - 1) == -1);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 1);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R10) == 0);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R11) & (1u << 5));       /* CPUID.(07H,0):EDX.UINTR */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) & (1u << 17));      /* CPUID.(07H,01H):EDX.UIRET_UIF */
+    TEST_CHECK(nk_fault(uc, &intr, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R8) == 0);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R9) == 1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R10) == 0);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R11) & (1u << 5));       /* CPUID.(07H,0):EDX.UINTR */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RDX) & (1u << 17));      /* CPUID.(07H,01H):EDX.UIRET_UIF */
     /* TESTUI: CF := UIF, ZF AF OF PF SF := 0 */
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0xad7);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xed", 4) == -1);
-    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0xfff) == 0x203);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0xad7);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x01\xed", 4) == -1);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_EFLAGS) & 0xfff) == 0x203);
     /* LOCK, 66 -> #UD; CR4.UINTR = 0 -> #UD */
-    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\x01\xed", 5) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\x66\xf3\x0f\x01\xee", 5) == 6);
-    nv_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 25));
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xef", 4) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xec", 4) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\xc7\xf0", 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x01\xed", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\x66\xf3\x0f\x01\xee", 5) == 6);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 25));
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x01\xef", 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x01\xec", 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\xc7\xf0", 4) == 6);
     OK(uc_close(uc));
 
     /* not recognized outside 64-bit mode */
@@ -6461,22 +6461,22 @@ static void test_x86_uintr_uif(void)
     OK(uc_close(uc));
 }
 
-#define NV_UITT (NV_DATA + 0x3000)
-#define NV_UPID (NV_DATA + 0x3100)
-#define NV_UPID2 (NV_DATA + 0x3140)
+#define NK_UITT (NK_DATA + 0x3000)
+#define NK_UPID (NK_DATA + 0x3100)
+#define NK_UPID2 (NK_DATA + 0x3140)
 
 static void uintr_setup_tables(uc_engine *uc, uint64_t upid_lo)
 {
-    uint64_t uitt[4] = {1 | (5 << 8), NV_UPID, 1 | (7 << 8), NV_UPID2};
+    uint64_t uitt[4] = {1 | (5 << 8), NK_UPID, 1 | (7 << 8), NK_UPID2};
     uint64_t upid[2] = {upid_lo, 0};
     uint64_t upid2[2] = {0xecULL << 16, 0};
 
-    OK(uc_mem_write(uc, NV_UITT, uitt, sizeof(uitt)));
-    OK(uc_mem_write(uc, NV_UPID, upid, sizeof(upid)));
-    OK(uc_mem_write(uc, NV_UPID2, upid2, sizeof(upid2)));
-    nv_wrmsr(uc, 0x98a, NV_UITT | 1);           /* IA32_UINTR_TT: UITTADDR, SENDUIPI enable */
-    nv_wrmsr(uc, 0x988, 1 | (0x40ULL << 32));   /* IA32_UINTR_MISC: UITTSZ 1, UINV 40H */
-    nv_wrmsr(uc, 0x989, NV_UPID);               /* IA32_UINTR_PD */
+    OK(uc_mem_write(uc, NK_UITT, uitt, sizeof(uitt)));
+    OK(uc_mem_write(uc, NK_UPID, upid, sizeof(upid)));
+    OK(uc_mem_write(uc, NK_UPID2, upid2, sizeof(upid2)));
+    nk_wrmsr(uc, 0x98a, NK_UITT | 1);           /* IA32_UINTR_TT: UITTADDR, SENDUIPI enable */
+    nk_wrmsr(uc, 0x988, 1 | (0x40ULL << 32));   /* IA32_UINTR_MISC: UITTSZ 1, UINV 40H */
+    nk_wrmsr(uc, 0x989, NK_UPID);               /* IA32_UINTR_PD */
 }
 
 /* U104: SENDUIPI posting, self notification (NV = UINV) and its #GP / #UD conditions */
@@ -6485,63 +6485,63 @@ static void test_x86_uintr_senduipi(void)
     const char send_rax[] = "\xf3\x0f\xc7\xf0";
     const char send_rcx[] = "\x66\xf3\x0f\xc7\xf1";  /* 66 is ignored */
     uint64_t u[2];
-    nv_intr_t intr;
-    uc_engine *uc = nv_open(send_rax, 4, &intr);
+    nk_intr_t intr;
+    uc_engine *uc = nk_open(send_rax, 4, &intr);
 
     /* SENDUIPI #UD while IA32_UINTR_TT[0] = 0 */
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 6);
     uintr_setup_tables(uc, 0x40ULL << 16);      /* NV = UINV, NDST = 0 (own APIC ID) */
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x202);
-    nv_setreg(uc, UC_X86_REG_RAX, 0);
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == -1);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0x202);
+    nk_setreg(uc, UC_X86_REG_RAX, 0);
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == -1);
     /* posted (PIR[5], ON) then processed as a notification: ON := 0, PIR -> UIRR */
-    OK(uc_mem_read(uc, NV_UPID, u, sizeof(u)));
+    OK(uc_mem_read(uc, NK_UPID, u, sizeof(u)));
     TEST_CHECK(u[0] == (0x40ULL << 16) && u[1] == 0);
-    TEST_CHECK(nv_rdmsr(uc, 0x985) == (1ULL << 5));
+    TEST_CHECK(nk_rdmsr(uc, 0x985) == (1ULL << 5));
     /* NV != UINV: posted, ON set, the IPI is not a notification (dropped) */
-    nv_setreg(uc, UC_X86_REG_RCX, 1);
-    TEST_CHECK(nv_fault(uc, &intr, send_rcx, 5) == -1);
-    OK(uc_mem_read(uc, NV_UPID2, u, sizeof(u)));
+    nk_setreg(uc, UC_X86_REG_RCX, 1);
+    TEST_CHECK(nk_fault(uc, &intr, send_rcx, 5) == -1);
+    OK(uc_mem_read(uc, NK_UPID2, u, sizeof(u)));
     TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == (1ULL << 7));
-    TEST_CHECK(nv_rdmsr(uc, 0x985) == (1ULL << 5));
+    TEST_CHECK(nk_rdmsr(uc, 0x985) == (1ULL << 5));
     /* ON already set: only PIR is updated */
-    OK(uc_mem_write(uc, NV_UITT + 16, "\x01\x09", 2));          /* UV = 9 */
-    TEST_CHECK(nv_fault(uc, &intr, send_rcx, 5) == -1);
-    OK(uc_mem_read(uc, NV_UPID2, u, sizeof(u)));
+    OK(uc_mem_write(uc, NK_UITT + 16, "\x01\x09", 2));          /* UV = 9 */
+    TEST_CHECK(nk_fault(uc, &intr, send_rcx, 5) == -1);
+    OK(uc_mem_read(uc, NK_UPID2, u, sizeof(u)));
     TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == ((1ULL << 7) | (1ULL << 9)));
     /* self notification while RFLAGS.IF = 0: posted, ON stays 1, UIRR unchanged */
-    nv_wrmsr(uc, 0x985, 0);
-    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x2);
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == -1);
-    OK(uc_mem_read(uc, NV_UPID, u, sizeof(u)));
+    nk_wrmsr(uc, 0x985, 0);
+    nk_setreg(uc, UC_X86_REG_EFLAGS, 0x2);
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == -1);
+    OK(uc_mem_read(uc, NK_UPID, u, sizeof(u)));
     TEST_CHECK(u[0] == ((0x40ULL << 16) | 1) && u[1] == (1ULL << 5));
-    TEST_CHECK(nv_rdmsr(uc, 0x985) == 0);
+    TEST_CHECK(nk_rdmsr(uc, 0x985) == 0);
     /* #GP: index > UITTSZ, invalid UITTE, reserved UPID bits */
-    nv_setreg(uc, UC_X86_REG_RAX, 2);
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
-    nv_setreg(uc, UC_X86_REG_RAX, 0);
-    OK(uc_mem_write(uc, NV_UITT, "\x00", 1));                  /* V = 0 */
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
-    OK(uc_mem_write(uc, NV_UITT, "\x01\x45", 2));              /* UV = 45H: bit 14 set */
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
-    OK(uc_mem_write(uc, NV_UITT, "\x01\x05", 2));
-    OK(uc_mem_write(uc, NV_UPID, "\x04", 1));                  /* UPID bit 2 */
-    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
+    nk_setreg(uc, UC_X86_REG_RAX, 2);
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 13);
+    nk_setreg(uc, UC_X86_REG_RAX, 0);
+    OK(uc_mem_write(uc, NK_UITT, "\x00", 1));                  /* V = 0 */
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 13);
+    OK(uc_mem_write(uc, NK_UITT, "\x01\x45", 2));              /* UV = 45H: bit 14 set */
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 13);
+    OK(uc_mem_write(uc, NK_UITT, "\x01\x05", 2));
+    OK(uc_mem_write(uc, NK_UPID, "\x04", 1));                  /* UPID bit 2 */
+    TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 13);
     /* LOCK #UD; F3 0F C7 /6 with a memory operand (VMXON) #UD */
-    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\xc7\xf0", 5) == 6);
-    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\xc7\x36", 4) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\xc7\xf0", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\xc7\x36", 4) == 6);
     /* WRMSR #GP: IA32_UINTR_MISC[63:40], IA32_UINTR_PD[5:0], IA32_UINTR_TT[3:1] */
-    nv_setreg(uc, UC_X86_REG_RCX, 0x988);
-    nv_setreg(uc, UC_X86_REG_RAX, 0);
-    nv_setreg(uc, UC_X86_REG_RDX, 0x100);
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
-    nv_setreg(uc, UC_X86_REG_RCX, 0x989);
-    nv_setreg(uc, UC_X86_REG_RAX, 0x20);
-    nv_setreg(uc, UC_X86_REG_RDX, 0);
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
-    nv_setreg(uc, UC_X86_REG_RCX, 0x98a);
-    nv_setreg(uc, UC_X86_REG_RAX, 0x3);
-    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x988);
+    nk_setreg(uc, UC_X86_REG_RAX, 0);
+    nk_setreg(uc, UC_X86_REG_RDX, 0x100);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x989);
+    nk_setreg(uc, UC_X86_REG_RAX, 0x20);
+    nk_setreg(uc, UC_X86_REG_RDX, 0);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x98a);
+    nk_setreg(uc, UC_X86_REG_RAX, 0x3);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x30", 2) == 13);
     OK(uc_close(uc));
 }
 
@@ -6554,7 +6554,7 @@ static void uintr_delivery_run(bool clear_uif_bit)
     char code[96];
     size_t n = 0, jmp_at, handler, end;
     uint64_t frame[4];
-    nv_intr_t intr;
+    nk_intr_t intr;
     uc_engine *uc;
 
 #define EMIT(s) do { memcpy(code + n, s, sizeof(s) - 1); n += sizeof(s) - 1; } while (0)
@@ -6577,27 +6577,27 @@ static void uintr_delivery_run(bool clear_uif_bit)
     code[jmp_at + 1] = (char)(end - handler);
 #undef EMIT
 
-    uc = nv_open(code, n, &intr);
-    nv_setup_cpl3(uc);
+    uc = nk_open(code, n, &intr);
+    nk_setup_cpl3(uc);
     uintr_setup_tables(uc, 0x40ULL << 16);
-    nv_wrmsr(uc, 0x986, code_start + handler);  /* UIHANDLER */
-    nv_wrmsr(uc, 0x987, 0x80);                  /* UISTACKADJUST: RSP -= 80H */
-    nv_setreg(uc, UC_X86_REG_RAX, 0);
-    nv_setreg(uc, UC_X86_REG_R13, 0x55);
+    nk_wrmsr(uc, 0x986, code_start + handler);  /* UIHANDLER */
+    nk_wrmsr(uc, 0x987, 0x80);                  /* UISTACKADJUST: RSP -= 80H */
+    nk_setreg(uc, UC_X86_REG_RAX, 0);
+    nk_setreg(uc, UC_X86_REG_R13, 0x55);
     OK(uc_emu_start(uc, code_start, code_start + end, 0, 0));
     TEST_CHECK(intr.count == 0);
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 5);             /* UIRRV */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R13) == 0);             /* UIF = 0 in the handler */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R15) == 1);             /* returned after SENDUIPI */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_R14) == (clear_uif_bit ? 0 : 1));
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RSP) == NV_STACK);      /* restored by UIRET */
-    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBP) == NV_STACK - 0x80 - 24);
-    OK(uc_mem_read(uc, NV_STACK - 0x80 - 32, frame, sizeof(frame)));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBX) == 5);             /* UIRRV */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R13) == 0);             /* UIF = 0 in the handler */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R15) == 1);             /* returned after SENDUIPI */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_R14) == (clear_uif_bit ? 0 : 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RSP) == NK_STACK);      /* restored by UIRET */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RBP) == NK_STACK - 0x80 - 24);
+    OK(uc_mem_read(uc, NK_STACK - 0x80 - 32, frame, sizeof(frame)));
     TEST_CHECK(frame[0] == 5);
     TEST_CHECK(frame[1] == code_start + 10);                 /* RIP after SENDUIPI */
     TEST_CHECK((frame[2] & ~2ULL) == 0x200);                 /* RFLAGS (IF) */
-    TEST_CHECK(frame[3] == NV_STACK);                        /* old RSP */
-    TEST_CHECK(nv_rdmsr(uc, 0x985) == 0);                    /* UIRR[5] cleared */
+    TEST_CHECK(frame[3] == NK_STACK);                        /* old RSP */
+    TEST_CHECK(nk_rdmsr(uc, 0x985) == 0);                    /* UIRR[5] cleared */
     OK(uc_close(uc));
 }
 
@@ -6605,6 +6605,204 @@ static void test_x86_uintr_delivery(void)
 {
     uintr_delivery_run(false);
     uintr_delivery_run(true);
+}
+
+/*
+ * NoVmp U110-U117 test helpers: one engine with code at code_start, data at
+ * 0x200000 (8 KiB) and an interrupt hook that records the vector and stops.
+ * Raw Unicorn reports #UD as UC_ERR_INSN_INVALID; other exceptions reach the
+ * hook (count/intno) with RIP at the faulting instruction.
+ */
+typedef struct NvRun {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t next, last; /* snippet slots: a fresh address per run (no stale TBs) */
+} NvRun;
+
+static void nv_open(NvRun *r, uc_mode mode, int model)
+{
+    memset(r, 0, sizeof(*r));
+    OK(uc_open(UC_ARCH_X86, mode, &r->uc));
+    if (model >= 0) {
+        OK(uc_ctl_set_cpu_model(r->uc, model));
+    }
+    OK(uc_mem_map(r->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x200000, 0x2000, UC_PROT_ALL));
+    OK(uc_hook_add(r->uc, &r->hook, UC_HOOK_INTR, test_x86_intr_capture_cb,
+                   &r->cap, 1, 0));
+    r->next = code_start;
+}
+
+static uc_err nv_run_at(NvRun *r, uint64_t addr, const char *code, size_t len)
+{
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = addr;
+    OK(uc_mem_write(r->uc, addr, code, len));
+    return uc_emu_start(r->uc, addr, addr + len, 0, 0);
+}
+
+static uc_err nv_run_n(NvRun *r, const char *code, size_t len)
+{
+    uint64_t addr = r->next;
+
+    r->next += (len + 0x3f) & ~(uint64_t)0x3f;
+    return nv_run_at(r, addr, code, len);
+}
+
+#define nv_run(r, code) nv_run_n((r), (code), sizeof(code) - 1)
+
+static uint64_t nv_get(NvRun *r, int reg)
+{
+    uint64_t v = 0;
+    OK(uc_reg_read(r->uc, reg, &v));
+    return v;
+}
+
+static void nv_set(NvRun *r, int reg, uint64_t v)
+{
+    OK(uc_reg_write(r->uc, reg, &v));
+}
+
+/* CPUID profile: max basic leaf 7, leaf 7.0 = (ebx, ecx, edx), strict #UD on hidden features */
+static void nv_profile7(NvRun *r, uint32_t ebx, uint32_t ecx, uint32_t edx)
+{
+    uc_x86_cpuid p[2] = {
+        {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {7, 0, 0, 0, 0, 0},
+    };
+
+    p[1].ebx = ebx;
+    p[1].ecx = ecx;
+    p[1].edx = edx;
+    OK(uc_ctl_set_x86_cpuid(r->uc, p, 2));
+    OK(uc_ctl_set_x86_cpuid_strict(r->uc, 1));
+}
+
+/*
+ * NoVmp U110: RTM with every transaction aborting at XBEGIN (RTM_ALWAYS_ABORT),
+ * HLE hints ignored, TSXLDTRK NOPs (SDM Vol2 XBEGIN/XABORT/XEND/XTEST/
+ * XSUSLDTRK/XRESLDTRK/XACQUIRE-XRELEASE; Vol1 17.3.5).
+ */
+static void test_x86_tsx_rtm_always_abort(void)
+{
+    NvRun r;
+    uint32_t m0 = 0, m1 = 0;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+
+    /* CPUID.7.0: EBX HLE[4] RTM[11], EDX RTM_ALWAYS_ABORT[11] TSXLDTRK[16] */
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RBX) & 0x810) == 0x810);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RDX) & 0x10800) == 0x10800);
+
+    /* xbegin +2 (rel32); inc ebx; inc rcx: aborts, EAX = 0 (RAX[63:32] = 0), at the fallback */
+    nv_set(&r, UC_X86_REG_RAX, 0xffffffff12345678ull);
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x897);
+    OK(nv_run(&r, "\xc7\xf8\x02\x00\x00\x00\xff\xc3\x48\xff\xc1"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RBX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 1);
+    TEST_CHECK(r.cap.count == 0);
+
+    /* 66 xbegin rel16 high in memory: the fallback address is not truncated to 16 bits */
+    nv_set(&r, UC_X86_REG_RAX, 0x55);
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(uc_mem_map(r.uc, 0x7ffffffff000ull, 0x1000, UC_PROT_ALL));
+    OK(nv_run_at(&r, 0x7ffffffff000ull,
+                 "\x66\xc7\xf8\x02\x00\xff\xc3\x48\xff\xc1", 10));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RBX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 1);
+
+    /* non-canonical fallback: #GP(0), EAX and RIP unchanged */
+    nv_set(&r, UC_X86_REG_RAX, 0x55);
+    OK(nv_run_at(&r, 0x7ffffffff100ull, "\xc7\xf8\x00\x00\x10\x00", 6));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x55);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == 0x7ffffffff100ull);
+
+    /* LOCK xbegin: #UD */
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\xc7\xf8\x00\x00\x00\x00"));
+
+    /* xabort 0x55 outside a transaction: NOP */
+    nv_set(&r, UC_X86_REG_RAX, 0x1234);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\xc6\xf8\x55\x48\xff\xc1"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1234);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 1);
+
+    /* xend outside a transaction: #GP(0) at the XEND; 66 xend: #UD */
+    OK(nv_run(&r, "\x0f\x01\xd5"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == r.last);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\x01\xd5"));
+
+    /* xtest: ZF = 1, CF/OF/SF/PF/AF = 0 */
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x897);
+    OK(nv_run(&r, "\x0f\x01\xd6"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x042);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xd6"));
+
+    /* xsusldtrk; xresldtrk; inc rcx: NOPs outside a transaction */
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\xf2\x0f\x01\xe8\xf2\x0f\x01\xe9\x48\xff\xc1"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 1);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\xf2\x0f\x01\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xe9"));
+
+    /* xacquire lock add [rdx], eax; xrelease mov [rdx+4], eax: plain instructions */
+    nv_set(&r, UC_X86_REG_RAX, 5);
+    nv_set(&r, UC_X86_REG_RDX, 0x200000);
+    OK(uc_mem_write(r.uc, 0x200000, "\x01\x00\x00\x00\x00\x00\x00\x00", 8));
+    OK(nv_run(&r, "\xf2\xf0\x01\x02\xf3\x89\x42\x04"));
+    OK(uc_mem_read(r.uc, 0x200000, &m0, 4));
+    OK(uc_mem_read(r.uc, 0x200004, &m1, 4));
+    TEST_CHECK(m0 == 6 && m1 == 5);
+
+    /* strict profile with HLE only: XTEST runs, XBEGIN/XABORT/XEND/XSUSLDTRK #UD */
+    nv_profile7(&r, 1u << 4, 0, 0);
+    OK(nv_run(&r, "\x0f\x01\xd6"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xc7\xf8\x00\x00\x00\x00"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xc6\xf8\x00"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xd5"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x01\xe8"));
+    /* i5-13600K-like profile (no HLE/RTM/TSXLDTRK): XTEST #UD */
+    nv_profile7(&r, 0, 0, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xd6"));
+    OK(uc_close(r.uc));
+
+    /* 32-bit mode: 66 xbegin rel16 above 64 KiB, fallback EIP not truncated */
+    nv_open(&r, UC_MODE_32, UC_CPU_X86_MAX);
+    nv_set(&r, UC_X86_REG_EAX, 0x55);
+    nv_set(&r, UC_X86_REG_EBX, 0);
+    nv_set(&r, UC_X86_REG_ECX, 0);
+    OK(uc_mem_map(r.uc, 0x10000, 0x1000, UC_PROT_ALL));
+    OK(nv_run_at(&r, 0x10ff0, "\x66\xc7\xf8\x02\x00\x43\x43\x41", 8));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_EAX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_EBX) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_ECX) == 1);
+    OK(uc_close(r.uc));
+
+    /* real-address mode: a fallback beyond 0FFFFh is #GP(0), EAX unchanged */
+    nv_open(&r, UC_MODE_16, UC_CPU_X86_MAX);
+    nv_set(&r, UC_X86_REG_EAX, 0x55);
+    nv_set(&r, UC_X86_REG_ECX, 0);
+    OK(uc_mem_map(r.uc, 0xf000, 0x1000, UC_PROT_ALL));
+    OK(nv_run_at(&r, 0xff00, "\xc7\xf8\x00\x01", 4));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    TEST_CHECK((uint16_t)nv_get(&r, UC_X86_REG_AX) == 0x55);
+    /* ... and within it the abort reaches the fallback */
+    OK(nv_run_at(&r, 0xfe00, "\xc7\xf8\x01\x00\x43\x41", 6));
+    TEST_CHECK((uint16_t)nv_get(&r, UC_X86_REG_AX) == 0);
+    TEST_CHECK((uint16_t)nv_get(&r, UC_X86_REG_CX) == 1);
+    OK(uc_close(r.uc));
 }
 
 TEST_LIST = {
@@ -6632,6 +6830,7 @@ TEST_LIST = {
     {"test_x86_vsha512", test_x86_vsha512},
     {"test_x86_vsm3", test_x86_vsm3},
     {"test_x86_vsm4", test_x86_vsm4},
+    {"test_x86_tsx_rtm_always_abort", test_x86_tsx_rtm_always_abort},
     {"test_x86_relative_jump", test_x86_relative_jump},
     {"test_x86_loop", test_x86_loop},
     {"test_x86_invalid_mem_read", test_x86_invalid_mem_read},

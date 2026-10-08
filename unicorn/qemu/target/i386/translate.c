@@ -4674,6 +4674,50 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         ot = mo_b_d(b, dflag);
         modrm = x86_ldub_code(env, s);
         mod = (modrm >> 6) & 3;
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+        /*
+         * NoVmp (ledger U110): XABORT imm8 (C6 F8 ib) and XBEGIN rel16/rel32
+         * (C7 F8 cw/cd), RTM (SDM Vol2 XABORT, XBEGIN; Vol1 17.3). Model: every
+         * transaction aborts at once, as CPUID.7.0:EDX.RTM_ALWAYS_ABORT[11]
+         * (reported) documents. XBEGIN computes the fallback address from the
+         * next instruction (rel16 is not truncated to 16 bits), #GP(0) if it
+         * is non-canonical (64-bit mode) or beyond the CS limit (0FFFFh in
+         * real/virtual-8086 mode), then aborts: abort status EAX = 0 (Vol1
+         * 17.3.5 "The value of EAX can be 0 following an RTM abort"), no other
+         * state changes, execution continues at the fallback address. Hence
+         * RTM_ACTIVE is never 1 after an instruction and XABORT is a NOP.
+         * #UD without CPUID.7.0:EBX.RTM[11] or with LOCK.
+         */
+        if (modrm == 0xf8) {
+            if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_RTM)
+                || (s->prefix & PREFIX_LOCK)) {
+                goto illegal_op;
+            }
+            if (b == 0xc6) {
+                x86_ldub_code(env, s);  /* imm8, only reported inside an RTM region */
+                break;
+            }
+            {
+                target_long rel = insn_get_signed(env, s,
+                                                  dflag == MO_16 ? MO_16 : MO_32);
+
+                if (CODE64(s)) {
+                    if (!x86_target_is_canonical(s, s->pc + rel)) {
+                        gen_exception_gpf(s);
+                        break;
+                    }
+                } else {
+                    gen_helper_xbegin_check(tcg_ctx, cpu_env,
+                        tcg_constant_tl(tcg_ctx,
+                                        (uint32_t)(s->pc - s->cs_base + rel)));
+                }
+                tcg_gen_movi_tl(tcg_ctx, s->T0, 0);
+                gen_op_mov_reg_v(s, MO_32, R_EAX, s->T0);
+                gen_jmp_rel(s, MO_32, rel, 0);
+            }
+            break;
+        }
+#endif /* __Use_Original_Qemu (U110) */
 #if __Use_Original_Qemu != 1 /* ours (U78) */
         /*
          * NoVmp (ledger U78): group 11 defines only /0 (MOV) and the F8
@@ -7042,6 +7086,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * CPUID/IRET). 66/F2/F3/LOCK #UD; #UD without CPUID.7.0.EDX[14].
          */
         case 0xe8: /* serialize */
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+            /*
+             * NoVmp (ledger U110): F2 0F 01 E8 XSUSLDTRK (TSXLDTRK). Outside a
+             * transaction (always, see XBEGIN) it is a NOP (SDM Vol2 XSUSLDTRK).
+             * #UD without CPUID.7.0:EDX.TSXLDTRK[16], with LOCK or 66h.
+             */
+            if (s->prefix & PREFIX_REPNZ) {
+                if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_TSX_LDTRK)
+                    || (s->prefix & (PREFIX_LOCK | PREFIX_DATA))) {
+                    goto illegal_op;
+                }
+                break;
+            }
+#endif /* __Use_Original_Qemu (U110) */
             if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_SERIALIZE)
                 || (s->prefix & (PREFIX_LOCK | PREFIX_DATA
                                  | PREFIX_REPZ | PREFIX_REPNZ))) {
@@ -7050,6 +7108,44 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             s->base.is_jmp = DISAS_EOB_NEXT;
             break;
 #endif /* __Use_Original_Qemu (U74) */
+#if __Use_Original_Qemu != 1 /* ours (U110) */
+        /*
+         * NoVmp (ledger U110): F2 0F 01 E9 XRESLDTRK, a NOP outside a
+         * transaction; NP 0F 01 D5 XEND, #GP(0) outside a transaction; NP
+         * 0F 01 D6 XTEST, ZF = 1 (not transactional), CF/OF/SF/PF/AF = 0.
+         * With every RTM region aborted at XBEGIN and every HLE elision
+         * failing (the XACQUIRE/XRELEASE hints are ignored), the processor
+         * is never transactional after an instruction (SDM Vol2 XRESLDTRK,
+         * XEND, XTEST). #UD without the CPUID bit (XTEST: HLE or RTM) or
+         * with LOCK; XEND/XTEST also with 66/F2/F3, XRESLDTRK with 66.
+         */
+        case 0xe9: /* xresldtrk */
+            if (!(s->prefix & PREFIX_REPNZ)
+                || !(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_TSX_LDTRK)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA))) {
+                goto illegal_op;
+            }
+            break;
+        case 0xd5: /* xend */
+            if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_RTM)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA
+                                 | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_exception_gpf(s);
+            break;
+        case 0xd6: /* xtest */
+            if (!(s->cpuid_7_0_ebx_features
+                  & (CPUID_7_0_EBX_RTM | CPUID_7_0_EBX_HLE))
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA
+                                 | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            tcg_gen_movi_tl(tcg_ctx, cpu_cc_src, CC_Z);
+            set_cc_op(s, CC_OP_EFLAGS);
+            break;
+#endif /* __Use_Original_Qemu (U110) */
         case 0xee: /* rdpkru */
             if (s->prefix & (PREFIX_LOCK | PREFIX_DATA
                              | PREFIX_REPZ | PREFIX_REPNZ)) {

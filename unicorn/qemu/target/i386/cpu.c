@@ -640,12 +640,23 @@ static CPUCacheInfo legacy_l3_cache = {
 #define TCG_SVM_FEATURES (CPUID_SVM_NPT | CPUID_SVM_VGIF | \
           CPUID_SVM_SVME_ADDR_CHK)
 #define TCG_KVM_FEATURES 0
+#if __Use_Original_Qemu == 1 /* original QEMU (U110) */
 #define TCG_7_0_EBX_FEATURES (CPUID_7_0_EBX_SMEP | CPUID_7_0_EBX_SMAP | \
           CPUID_7_0_EBX_BMI1 | CPUID_7_0_EBX_BMI2 | CPUID_7_0_EBX_ADX | \
           CPUID_7_0_EBX_PCOMMIT | CPUID_7_0_EBX_CLFLUSHOPT |            \
           CPUID_7_0_EBX_CLWB | CPUID_7_0_EBX_MPX | CPUID_7_0_EBX_FSGSBASE | \
           CPUID_7_0_EBX_ERMS | CPUID_7_0_EBX_AVX2 | CPUID_7_0_EBX_RDSEED | \
           CPUID_7_0_EBX_SHA_NI)
+#else /* ours (U110) */
+/* NoVmp (ledger U110): HLE and RTM (every transaction aborts at once, RTM_ALWAYS_ABORT) */
+#define TCG_7_0_EBX_FEATURES (CPUID_7_0_EBX_SMEP | CPUID_7_0_EBX_SMAP | \
+          CPUID_7_0_EBX_BMI1 | CPUID_7_0_EBX_BMI2 | CPUID_7_0_EBX_ADX | \
+          CPUID_7_0_EBX_PCOMMIT | CPUID_7_0_EBX_CLFLUSHOPT |            \
+          CPUID_7_0_EBX_CLWB | CPUID_7_0_EBX_MPX | CPUID_7_0_EBX_FSGSBASE | \
+          CPUID_7_0_EBX_ERMS | CPUID_7_0_EBX_AVX2 | CPUID_7_0_EBX_RDSEED | \
+          CPUID_7_0_EBX_SHA_NI | CPUID_7_0_EBX_HLE /* U110 */ | \
+          CPUID_7_0_EBX_RTM /* U110 */)
+#endif /* __Use_Original_Qemu (U110) */
           /* missing:
           CPUID_7_0_EBX_HLE
           CPUID_7_0_EBX_INVPCID, CPUID_7_0_EBX_RTM */
@@ -666,7 +677,8 @@ static CPUCacheInfo legacy_l3_cache = {
 #if __Use_Original_Qemu == 1 /* original QEMU (U74) */
 #define TCG_7_0_EDX_FEATURES 0
 #else /* ours (U74) */
-#define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | CPUID_7_0_EDX_UINTR /* U104 */)
+#define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | CPUID_7_0_EDX_UINTR /* U104 */ | \
+          CPUID_7_0_EDX_TSX_LDTRK /* U110 */ | CPUID_7_0_EDX_RTM_ALWAYS_ABORT /* U110 */)
 #endif /* __Use_Original_Qemu (U74) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U71) */
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD
