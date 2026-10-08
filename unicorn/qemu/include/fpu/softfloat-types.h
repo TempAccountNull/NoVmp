@@ -233,6 +233,18 @@ typedef struct float_status {
     bool rebias_overflow;
     /* should underflowed results add re_bias to its exponent? */
     bool rebias_underflow;
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+    /*
+     * NoVmp (ledger U445): x86 SSE/AVX with MXCSR.UM = 0 / MXCSR.OM = 0 (SDM Vol1
+     * 4.9.1.5, 4.9.1.6, 10.2.3.3). unmasked_underflow: every non-zero tiny result
+     * raises underflow (exact or not), flush_to_zero is ignored, and inexact is
+     * that of the rounding with an unbounded exponent. unmasked_overflow:
+     * inexact is that of the rounding with an unbounded exponent. The rounded
+     * value is the masked one (an unmasked exception does not store it).
+     */
+    bool unmasked_underflow;
+    bool unmasked_overflow;
+#endif /* __Use_Original_Qemu (U445) */
 } float_status;
 
 #endif /* SOFTFLOAT_TYPES_H */
