@@ -3176,6 +3176,34 @@ static void decode_EVEX_0F3A_1D(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_1D);
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+/*
+ * NoVmp (ledger U236-U241): VRCP14/VRSQRT14 (E4/E5, no MXCSR flags: not evex_fp), VGETEXP,
+ * VGETMANT, VRNDSCALE, VSCALEF (evex_fp), VFIXUPIMM (flags without #XM: not evex_fp). 66 only.
+ * Packed: Full tuple, {k1}{z}, {1toN}, EVEX.W = element size; scalar: LIG, Tuple1 Scalar,
+ * {k1}{z}, xmm1, xmm2 (vvvv), xmm3/m32 (W0) or m64 (W1).
+ */
+#define EV_FPX(rc, fp) cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_rc(rc) \
+                       ev_w(WSEL) ev_es(W) fp p_66
+#define EV_FPS(w, rc, fp) cpuid(AVX512F) ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(MZ) ev_rc(rc) \
+                       ev_w(w) ev_es(W) fp p_66
+#define EV_NOFP
+
+/* [W] = W0 (ss) / W1 (sd) scalar entry of a WSEL opcode */
+#define EV_SCALAR_W(name, entry0, entry1)                                                     \
+static void decode_EVEX_##name(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b) \
+{                                                                                           \
+    static const X86OpEntry opcodes[2] = { entry0, entry1 };                               \
+    *entry = opcodes[s->vex_w];                                                             \
+}
+
+EV_SCALAR_W(0F38_4D,
+            X86_OP_ENTRY3(EVEX_VRCP14, V,x, H,x, W,ss, EV_FPS(W0, NONE, EV_NOFP)),
+            X86_OP_ENTRY3(EVEX_VRCP14, V,x, H,x, W,sd, EV_FPS(W1, NONE, EV_NOFP)))
+EV_SCALAR_W(0F38_4F,
+            X86_OP_ENTRY3(EVEX_VRSQRT14, V,x, H,x, W,ss, EV_FPS(W0, NONE, EV_NOFP)),
+            X86_OP_ENTRY3(EVEX_VRSQRT14, V,x, H,x, W,sd, EV_FPS(W1, NONE, EV_NOFP)))
+#endif /* __Use_Original_Qemu (U236) */
 #if __Use_Original_Qemu != 1 /* ours (U234) */
 /* NoVmp (ledger U234): shifts by xmm3/m128 (Mem128 tuple, E4NF.nb: no fault suppression) */
 #define EV_SHX(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(MEM128) ev_mask(MZ) ev_w(w) ev_es(W) \
@@ -3673,6 +3701,13 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
      * overlay in decode_EVEX_0F38_PMOV, [0x14]/[0x15] stay EVEX_0F38_PMOV.
      */
 #endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+    /* VRCP14PS/PD (4C), VRSQRT14PS/PD (4E): E4, no {er}/{sae}; SS/SD (4D/4F): E5 */
+    [0x4c] = X86_OP_ENTRY3(EVEX_VRCP14, V,x, None,None, W,x, EV_FPX(NONE, EV_NOFP)),
+    [0x4d] = X86_OP_GROUP0(EVEX_0F38_4D),
+    [0x4e] = X86_OP_ENTRY3(EVEX_VRSQRT14, V,x, None,None, W,x, EV_FPX(NONE, EV_NOFP)),
+    [0x4f] = X86_OP_GROUP0(EVEX_0F38_4F),
+#endif /* __Use_Original_Qemu (U236) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -3873,6 +3908,12 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U234) */
 #undef EV_SHX
 #endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+#undef EV_FPX
+#undef EV_FPS
+#undef EV_NOFP
+#undef EV_SCALAR_W
+#endif /* __Use_Original_Qemu (U236) */
 #if __Use_Original_Qemu != 1 /* ours (U148) */
 #undef EV_MOV
 #undef EV_VLALL

@@ -7908,3 +7908,211 @@ void helper_evex_prolv(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32
     }
 }
 #endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * NoVmp (ledger U236..U241): AVX-512 floating-point element operations on binary32 /
+ * binary64 bit patterns (esz MO_32 / MO_64). EVFMT describes the format.
+ */
+typedef struct EvFmt {
+    int bits, fbits, bias;
+    uint64_t sign, emask, fmask, quiet, one, indef, maxf;
+} EvFmt;
+
+static const EvFmt evfmt32 = { 32, 23, 127, 0x80000000u, 0x7f800000u, 0x007fffffu, 0x00400000u,
+                               0x3f800000u, 0xffc00000u, 0x7f7fffffu };
+static const EvFmt evfmt64 = { 64, 52, 1023, 0x8000000000000000ull, 0x7ff0000000000000ull,
+                               0x000fffffffffffffull, 0x0008000000000000ull,
+                               0x3ff0000000000000ull, 0xfff8000000000000ull,
+                               0x7fefffffffffffffull };
+
+static inline const EvFmt *evfmt(int esz)
+{
+    return esz == MO_64 ? &evfmt64 : &evfmt32;
+}
+
+static inline bool evf_isnan(const EvFmt *f, uint64_t x)
+{
+    return (x & f->emask) == f->emask && (x & f->fmask);
+}
+
+static inline bool evf_issnan(const EvFmt *f, uint64_t x)
+{
+    return evf_isnan(f, x) && !(x & f->quiet);
+}
+
+static inline bool evf_isinf(const EvFmt *f, uint64_t x)
+{
+    return (x & ~f->sign) == f->emask;
+}
+
+/* exponent field 0: zero or denormal */
+static inline bool evf_expzero(const EvFmt *f, uint64_t x)
+{
+    return !(x & f->emask);
+}
+
+static inline bool evf_isdenorm(const EvFmt *f, uint64_t x)
+{
+    return evf_expzero(f, x) && (x & f->fmask);
+}
+
+/* an integer value (|v| < 2^53) as binary32/64 (exact) */
+static uint64_t evf_from_int(const EvFmt *f, int64_t v)
+{
+    uint64_t m = v < 0 ? (uint64_t)-v : (uint64_t)v, s = v < 0 ? f->sign : 0;
+    int l;
+
+    if (!m) {
+        return s;
+    }
+    l = 63 - clz64(m);                  /* m = 1.xxx * 2^l */
+    m <<= f->fbits - l;                 /* l <= fbits here */
+    return s | ((uint64_t)(l + f->bias) << f->fbits) | (m & f->fmask);
+}
+
+/*
+ * NoVmp (ledger U236): VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (SDM Vol2C). The SDM gives
+ * the error bound (relative error < 2^-14), the special cases (Tables 5-24..5-27) and the
+ * DAZ/FTZ rules, but not the exact approximation (Intel's reference RECIP14.c is not part of
+ * the SDM and not available here). Implemented stand-in (well inside the bound; NOT
+ * necessarily the silicon's bits): the exact 1/x (1/sqrt(x)) rounded to nearest even to the
+ * destination precision with an unbounded exponent; overflow -> inf; a tiny VRCP14 result is
+ * then denormalized (nearest even at the denormal quantum: the SDM's "mantissa shifted right
+ * by one or two bits") or, with FTZ, a zero of the source's sign. MXCSR.RC ignored, no MXCSR
+ * flag, no #XM; DAZ: a denormal source is a zero of its sign; 0 -> inf (sign kept), inf -> 0
+ * (sign kept), SNaN -> QNaN, QNaN -> itself; RSQRT14: -0 -> -inf, any other negative -> QNaN
+ * indefinite. 1/x is formed in the next wider format (float64 / float128): the binary
+ * expansion of 1/m (m < 2^p) has no run of p + 1 equal bits, so that rounding cannot meet a
+ * p-bit midpoint and the result is the correctly rounded one.
+ */
+
+/*
+ * round sig (normalised: bit 63 set; value = sig * 2^(e - 63), sticky = bits below) to the
+ * format's precision (RNE, unbounded exponent), then overflow / denormalize / FTZ
+ */
+static uint64_t evf_round_rcp(const EvFmt *f, uint64_t sign, int e, uint64_t sig, bool sticky,
+                              bool ftz)
+{
+    int sh = 63 - f->fbits;
+    uint64_t r = sig >> sh, rem = sig & ((1ull << sh) - 1), half = 1ull << (sh - 1);
+
+    if (rem > half || (rem == half && (sticky || (r & 1)))) {
+        r++;
+        if (r >> (f->fbits + 1)) {
+            r >>= 1;
+            e++;
+        }
+    }
+    if (e > f->bias) {
+        return sign | f->emask;
+    }
+    if (e < 1 - f->bias) {
+        int s2 = 1 - f->bias - e;
+        uint64_t r2, rem2, half2;
+
+        if (ftz || s2 > f->fbits + 1) {
+            return sign;                /* FTZ, or below half the smallest denormal */
+        }
+        r2 = r >> s2;
+        rem2 = r & ((1ull << s2) - 1);
+        half2 = 1ull << (s2 - 1);
+        if (rem2 > half2 || (rem2 == half2 && (r2 & 1))) {
+            r2++;                       /* 2^fbits: the smallest normal, same bits */
+        }
+        return sign | r2;
+    }
+    return sign | ((uint64_t)(e + f->bias) << f->fbits) | (r & f->fmask);
+}
+
+static uint64_t evex_rcp14(CPUX86State *env, const EvFmt *f, uint64_t x, bool rsqrt)
+{
+    float_status st = env->sse_status;
+    uint64_t s = x & f->sign;
+
+    set_float_rounding_mode(float_round_nearest_even, &st);
+    set_float_exception_flags(0, &st);
+    if (evf_isnan(f, x)) {
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x) && (!(x & f->fmask) || (env->mxcsr & 0x40))) {
+        return s | f->emask;                                        /* +-0 -> +-inf */
+    }
+    if (evf_isinf(f, x)) {
+        return rsqrt && s ? f->indef : s;                           /* +-inf -> +-0 */
+    }
+    if (rsqrt) {
+        float128 q, one = int32_to_float128(1, &st);
+
+        if (s) {
+            return f->indef;
+        }
+        set_flush_inputs_to_zero(false, &st);
+        q = f->bits == 64 ? float64_to_float128(x, &st) : float32_to_float128(x, &st);
+        q = float128_div(one, float128_sqrt(q, &st), &st);
+        return f->bits == 64 ? float128_to_float64(q, &st) : float128_to_float32(q, &st);
+    }
+    set_flush_inputs_to_zero(false, &st);
+    set_flush_to_zero(false, &st);
+    if (f->bits == 64) {
+        float128 q = float128_div(int32_to_float128(1, &st), float64_to_float128(x, &st), &st);
+        uint64_t sig = (1ull << 63) | ((q.high & 0xffffffffffffull) << 15) | (q.low >> 49);
+
+        return evf_round_rcp(f, s, (int)((q.high >> 48) & 0x7fff) - 16383, sig,
+                             (q.low & ((1ull << 49) - 1)) != 0, env->mxcsr & 0x8000);
+    } else {
+        uint64_t q = float64_div(float64_one, float32_to_float64(x, &st), &st);
+
+        return evf_round_rcp(f, s, (int)((q >> 52) & 0x7ff) - 1023,
+                             ((q & 0xfffffffffffffull) | (1ull << 52)) << 11, false,
+                             env->mxcsr & 0x8000);
+    }
+}
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * desc (U236-U241): bits 3:0 operation (0 VRCP14, 1 VRSQRT14, 2 VGETEXP, 3 VGETMANT,
+ * 4 VRNDSCALE), bits 7:4 element size, bits 15:8 element count, bits 23:16 imm8.
+ */
+static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
+{
+    const EvFmt *f = evfmt((desc >> 4) & 0xf);
+    int imm = (desc >> 16) & 0xff;
+
+    switch (desc & 0xf) {
+    case 0:
+        return evex_rcp14(env, f, x, false);
+    case 1:
+        return evex_rcp14(env, f, x, true);
+    default:
+        g_assert_not_reached();
+    }
+    return 0;
+}
+
+void helper_evex_fp1(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, i;
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_fp1_elem(env, desc, evex_get_elem(s, esz, i)));
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+
+/* scalar form: DEST[elem 0] := op(SRC2[elem 0]), DEST[127:elem] := SRC1 (v: the register) */
+void helper_evex_fp1s(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf;
+    uint64_t q0 = v->ZMM_Q(0), q1 = v->ZMM_Q(1);
+    uint64_t r = evex_fp1_elem(env, desc, evex_get_elem(s, esz, 0));
+
+    d->ZMM_Q(0) = q0;
+    d->ZMM_Q(1) = q1;
+    evex_set_elem(d, esz, 0, r);
+}
+#endif /* __Use_Original_Qemu (U236) */

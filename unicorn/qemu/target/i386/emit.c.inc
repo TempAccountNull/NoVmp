@@ -2365,6 +2365,41 @@ static void gen_EVEX_VPRORV(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
                                                     (evex_nelem(s, decode) << 8)));
 }
 #endif /* __Use_Original_Qemu (U235) */
+#if __Use_Original_Qemu != 1 /* ours (U236) */
+
+/*
+ * NoVmp (ledger U236-U241): one-source element operations (helper_evex_fp1/_fp1s): 0
+ * VRCP14, 1 VRSQRT14, 2 VGETEXP, 3 VGETMANT, 4 VRNDSCALE. Packed forms read the source from
+ * op src (op2 for the rm forms, op1 for the rm+imm8 forms); scalar forms are xmm1, xmm2
+ * (vvvv: bits 127:elem), xmm3/m (element 0).
+ */
+static void gen_evex_fp1(DisasContext *s, X86DecodedInsn *decode, int op, int src, int imm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = op | (s->evex_esz << 4) | (evex_nelem(s, decode) << 8) | ((imm & 0xff) << 16);
+
+    if (decode->e.evex_vl & X86_EVEX_LIG) {
+        TCGv_ptr v = evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+
+        gen_helper_evex_fp1s(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, desc));
+        tcg_temp_free_ptr(tcg_ctx, v);
+    } else {
+        gen_helper_evex_fp1(tcg_ctx, cpu_env, OP_PTR0, src == 1 ? OP_PTR1 : OP_PTR2,
+                            tcg_constant_i32(tcg_ctx, desc));
+    }
+}
+
+static void gen_EVEX_VRCP14(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 0, 2, 0);
+}
+
+static void gen_EVEX_VRSQRT14(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 1, 2, 0);
+}
+#endif /* __Use_Original_Qemu (U236) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
