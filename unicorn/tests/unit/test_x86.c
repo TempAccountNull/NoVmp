@@ -6312,6 +6312,109 @@ static void test_x86_movrs_prefetchrst2(void)
     OK(uc_close(uc));
 }
 
+static void nv_wrmsr(uc_engine *uc, uint32_t msr, uint64_t value)
+{
+    uc_x86_msr m = {msr, value};
+
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &m));
+}
+
+static uint64_t nv_rdmsr(uc_engine *uc, uint32_t msr)
+{
+    uc_x86_msr m = {msr, 0};
+
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+/*
+ * runs code from its own 64-byte slot of the code page (never rewriting code
+ * that already ran); returns the fault vector, -1 none, 6 for #UD
+ */
+static int nv_fault(uc_engine *uc, nv_intr_t *intr, const char *code, size_t len)
+{
+    static unsigned slot;
+    uint64_t at = code_start + 0x1000 + 0x40 * (slot++ % 0x80);
+    uc_err e;
+
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_mem_write(uc, at, code, len));
+    e = uc_emu_start(uc, at, at + len, 0, 0);
+    if (e == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(e);
+    return intr->count ? (int)intr->intno : -1;
+}
+
+/* U103: URDMSR / UWRMSR, IA32_USER_MSR_CTL bitmap, IA32_UARCH_MISC_CTL */
+static void test_x86_user_msr(void)
+{
+    const char code[] = "\xf2\x0f\x38\xf8\xcb"                     /* urdmsr rbx, rcx */
+                        "\xc4\xe7\x7a\xf8\xc7\x01\x1b\x00\x00"     /* uwrmsr 0x1b01, rdi */
+                        "\xc4\xe7\x7b\xf8\xc2\x01\x1b\x00\x00"     /* urdmsr rdx, 0x1b01 */
+                        "\xf3\x45\x0f\x38\xf8\xca"                 /* uwrmsr r9, r10 */
+                        "\xf2\x45\x0f\x38\xf8\xcb"                 /* urdmsr r11, r9 */
+                        "\xb8\x07\x00\x00\x00\xb9\x01\x00\x00\x00\x0f\xa2"; /* cpuid 7.1 */
+    const uint64_t ctl = (NV_DATA + 0x2000) | 1;
+    uint8_t bits = 0x10;
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+
+    /* ENABLE = 0 (reset): #UD */
+    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 6);
+    /* bitmap: read 1CH and 1B01H, write 1B01H */
+    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 3, &bits, 1));
+    bits = 0x02;
+    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0x360, &bits, 1));
+    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0xb60, &bits, 1));
+    nv_wrmsr(uc, 0x1c, ctl);
+    TEST_CHECK(nv_rdmsr(uc, 0x1c) == ctl);
+    nv_setreg(uc, UC_X86_REG_RDI, 1);
+    nv_setreg(uc, UC_X86_REG_R9, 0x1b01);
+    nv_setreg(uc, UC_X86_REG_R10, 0);
+    nv_setreg(uc, UC_X86_REG_R11, ~0ULL);
+    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    TEST_CHECK(nv_fault(uc, &intr, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) & (1u << 15));    /* CPUID.(07H,01H):EDX.USER_MSR */
+    OK(uc_mem_write(uc, code_start, code, 5 + 9 + 9 + 6 + 6));
+    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    OK(nv_run(uc, 5 + 9 + 9 + 6 + 6));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == ctl);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 1);             /* DOITM written by the imm form */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R11) == 0);             /* cleared by the register form */
+    TEST_CHECK(nv_rdmsr(uc, 0x1b01) == 0);
+    /* #GP: bitmap bit clear, address >= 4000H, UWRMSR of an MSR other than 1B01H, reserved DOITM bits */
+    nv_setreg(uc, UC_X86_REG_RCX, 0x10);
+    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 13);
+    nv_setreg(uc, UC_X86_REG_RCX, 0x4000);
+    TEST_CHECK(nv_fault(uc, &intr, code, 5) == 13);
+    bits = 0x10;
+    OK(uc_mem_write(uc, NV_DATA + 0x2000 + 0x803, &bits, 1));
+    nv_setreg(uc, UC_X86_REG_R9, 0x1c);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x45\x0f\x38\xf8\xca", 6) == 13);
+    nv_setreg(uc, UC_X86_REG_RDI, 2);
+    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7a\xf8\xc7\x01\x1b\x00\x00", 9) == 13);
+    /* #UD: memory form, VEX.L1, VEX.W1, ModRM.reg != 0, vvvv != 1111b, LOCK */
+    TEST_CHECK(nv_fault(uc, &intr, "\xf2\x0f\x38\xf8\x0b", 5) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7f\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\xfb\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x7b\xf8\xca\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xc4\xe7\x73\xf8\xc2\x01\x1b\x00\x00", 9) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf2\x0f\x38\xf8\xcb", 6) == 6);
+    /* WRMSR IA32_USER_MSR_CTL: reserved bit 1 / non-canonical bitmap address -> #GP */
+    nv_setreg(uc, UC_X86_REG_RCX, 0x1c);
+    nv_setreg(uc, UC_X86_REG_RAX, 2);
+    nv_setreg(uc, UC_X86_REG_RDX, 0);
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nv_setreg(uc, UC_X86_REG_RAX, 1);
+    nv_setreg(uc, UC_X86_REG_RDX, 0x10000000);
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    TEST_CHECK(nv_rdmsr(uc, 0x1c) == ctl);
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -6444,4 +6547,5 @@ TEST_LIST = {
     {"test_x86_keylocker_cpl3", test_x86_keylocker_cpl3},
     {"test_x86_rao_int", test_x86_rao_int},
     {"test_x86_movrs_prefetchrst2", test_x86_movrs_prefetchrst2},
+    {"test_x86_user_msr", test_x86_user_msr},
     {NULL, NULL}};

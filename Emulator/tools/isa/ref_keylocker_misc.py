@@ -770,7 +770,7 @@ def write_cases(path):
     a('%s | rax=0x%x rcx=0x1c m+0x8003=10 => rbx=0x%x' % (byt(wr, urd_rbx_rcx), MEM_PTR | 1, MEM_PTR | 1))
     a('# bitmap bit clear -> #GP; address >= 4000H -> #GP')
     a('%s | rax=0x%x rcx=0x1c => #GP' % (byt(wr, urd_rbx_rcx), MEM_PTR | 1))
-    a('%s | rax=0x%x rcx=0x1c rdx=0 r8=0x4000 m+0x8003=10 => #GP' % (byt(wr, [0xF2, 0x41, 0x0F, 0x38, 0xF8, 0xC3]),
+    a('%s | rax=0x%x rcx=0x1c rdx=0 r8=0x4000 m+0x8003=10 => #GP' % (byt(wr, [0xF2, 0x44, 0x0F, 0x38, 0xF8, 0xC3]),
                                                                       MEM_PTR | 1))
     a('# UWRMSR 1B01H (IA32_UARCH_MISC_CTL, DOITM) via the VEX imm32 forms, then URDMSR back')
     uwr_imm_rbx = [0xC4, 0xE7, 0x7A, 0xF8, 0xC3, 0x01, 0x1B, 0x00, 0x00]

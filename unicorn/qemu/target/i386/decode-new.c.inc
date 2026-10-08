@@ -776,8 +776,18 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
     [8] = {
         {},
         X86_OP_ENTRY3(MOVDIR64B, None,None, G,y, M,b, cpuid(MOVDIR64B)),
+#if __Use_Original_Qemu == 1 /* original QEMU (U103) */
         {},
         {},
+#else /* ours (U103) */
+        /*
+         * UWRMSR r64, r64: F3 0F 38 F8 11:rrr:bbb (MSR[rrr] := bbb);
+         * URDMSR r64, r64: F2 0F 38 F8 11:rrr:bbb (bbb := MSR[rrr]).
+         * The memory forms (ENQCMDS / ENQCMD) are not implemented: #UD.
+         */
+        X86_OP_ENTRY3(UWRMSR, None,None, G,q, R,q, cpuid(USER_MSR) o64),
+        X86_OP_ENTRY3(URDMSR, R,q, G,q, None,None, cpuid(USER_MSR) o64),
+#endif /* __Use_Original_Qemu (U103) */
         {},
     },
 #endif /* __Use_Original_Qemu (U73) */
@@ -975,6 +985,34 @@ static const X86OpEntry opcodes_0F3A[256] = {
     [0xF0] = X86_OP_ENTRY3(RORX, G,y, E,y, I,b, vex13 cpuid(BMI2) p_f2),
 };
 
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/*
+ * NoVmp (ledger U103): VEX map 7 (3-byte VEX, m-mmmm = 00111): only F8,
+ * VEX.128.F2.W0 F8 11:000:bbb id URDMSR r64, imm32 and VEX.128.F3.W0 F8
+ * 11:000:bbb id UWRMSR imm32, r64 (SDM Vol2). VEX.L1 and VEX.vvvv other than
+ * 1111b #UD in validate_vex (class 13); W1, reg other than 0, other opcodes
+ * and other prefixes #UD here.
+ */
+static void decode_MAP7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry urdmsr_i =
+        X86_OP_ENTRY3(URDMSR_i, R,q, None,None, I,d, vex13 cpuid(USER_MSR) o64);
+    static const X86OpEntry uwrmsr_i =
+        X86_OP_ENTRY3(UWRMSR_i, None,None, R,q, I,d, vex13 cpuid(USER_MSR) o64);
+
+    *b = x86_ldub_code(env, s);
+    memset(entry, 0, sizeof(*entry));
+    if (*b != 0xf8 || s->vex_w || ((get_modrm(s, env) >> 3) & 7) != 0) {
+        return;
+    }
+    if (s->prefix & PREFIX_REPNZ) {
+        *entry = urdmsr_i;
+    } else if (s->prefix & PREFIX_REPZ) {
+        *entry = uwrmsr_i;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U103) */
 #if __Use_Original_Qemu != 1 /* ours (U79) */
 /*
  * NoVmp (ledger U79): reached from the 0F map table, i.e. legacy 0F 38 / 0F 3A.
@@ -1945,6 +1983,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_MOVRS:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_MOVRS);
 #endif /* __Use_Original_Qemu (U102) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+    case X86_FEAT_USER_MSR:
+        return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_USER_MSR);
+#endif /* __Use_Original_Qemu (U103) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
@@ -2313,6 +2355,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                 case 0x03: /* Implied 0f 3a leading opcode bytes.  */
                     decode_func = decode_0F3A;
                     break;
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+                case 0x07: /* map 7: URDMSR / UWRMSR imm32 (U103) */
+                    decode_func = decode_MAP7;
+                    break;
+#endif /* __Use_Original_Qemu (U103) */
                 default:   /* Reserved for future use.  */
                     goto unknown_op;
                 }

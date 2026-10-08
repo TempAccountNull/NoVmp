@@ -243,6 +243,11 @@ DEF_HELPER_3(loadiwkey, void, env, i32, i32)
 DEF_HELPER_3(encodekey, tl, env, tl, i32)
 DEF_HELPER_4(aeskl, void, env, tl, i32, i32)
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/* URDMSR / UWRMSR (they run helper_rdmsr / helper_wrmsr, which may call hooks) */
+DEF_HELPER_2(urdmsr, tl, env, tl)
+DEF_HELPER_3(uwrmsr, void, env, tl, tl)
+#endif /* __Use_Original_Qemu (U103) */
 
 DEF_HELPER_FLAGS_2(pdep, TCG_CALL_NO_RWG_SE, tl, tl, tl)
 DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)

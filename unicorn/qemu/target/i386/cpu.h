@@ -372,6 +372,10 @@ typedef enum X86Seg {
 #define MSR_VIRT_SSBD                   0xc001011f
 #define MSR_IA32_PRED_CMD               0x49
 #define MSR_IA32_UCODE_REV              0x8b
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+#define MSR_IA32_USER_MSR_CTL           0x1c    /* SDM Vol4: URDMSR/UWRMSR enable + bitmap */
+#define MSR_IA32_UARCH_MISC_CTL         0x1b01  /* SDM Vol4: bit 0 DOITM */
+#endif /* __Use_Original_Qemu (U103) */
 #define MSR_IA32_CORE_CAPABILITY        0xcf
 
 #define MSR_IA32_ARCH_CAPABILITIES      0x10a
@@ -926,6 +930,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* MOVRS and PREFETCHRST2 (read-shared hints) */
 #define CPUID_7_1_EAX_MOVRS             (1U << 31)
 #endif /* __Use_Original_Qemu (U102) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/* URDMSR and UWRMSR */
+#define CPUID_7_1_EDX_USER_MSR          (1U << 15)
+#endif /* __Use_Original_Qemu (U103) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
@@ -1736,6 +1744,10 @@ typedef struct CPUX86State {
     uint8_t kl_iwkey_nobackup;
     uint8_t kl_iwkey_keysource;
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+    uint64_t msr_user_msr_ctl;      /* IA32_USER_MSR_CTL (1CH) */
+    uint64_t msr_uarch_misc_ctl;    /* IA32_UARCH_MISC_CTL (1B01H) */
+#endif /* __Use_Original_Qemu (U103) */
 
     /* End of state preserved by INIT (dummy marker).  */
     int end_init_save;

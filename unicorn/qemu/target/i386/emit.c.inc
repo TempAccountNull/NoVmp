@@ -1687,6 +1687,42 @@ static void gen_MOVRS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 }
 
 #endif /* __Use_Original_Qemu (U102) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/*
+ * NoVmp (ledger U103): URDMSR / UWRMSR (helpers in misc_helper.c). The MSR
+ * address is a 64-bit register or the zero-extended imm32.
+ */
+static void gen_URDMSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_urdmsr(tcg_ctx, s->T0, cpu_env, s->T0);
+}
+
+static void gen_URDMSR_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_urdmsr(tcg_ctx, s->T0, cpu_env,
+                      tcg_constant_tl(tcg_ctx, (uint32_t)decode->immediate));
+}
+
+static void gen_UWRMSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_uwrmsr(tcg_ctx, cpu_env, s->T0, s->T1);
+}
+
+static void gen_UWRMSR_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_uwrmsr(tcg_ctx, cpu_env, tcg_constant_tl(tcg_ctx, (uint32_t)decode->immediate),
+                      s->T0);
+}
+
+#endif /* __Use_Original_Qemu (U103) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

@@ -2696,6 +2696,10 @@
 #define helper_encodekey helper_encodekey_x86_64
 #define helper_aeskl helper_aeskl_x86_64
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+#define helper_urdmsr helper_urdmsr_x86_64
+#define helper_uwrmsr helper_uwrmsr_x86_64
+#endif /* __Use_Original_Qemu (U103) */
 #define helper_bndck helper_bndck_x86_64
 #define helper_bndldx64 helper_bndldx64_x86_64
 #define helper_bndldx32 helper_bndldx32_x86_64

@@ -325,6 +325,16 @@ void helper_rdpmc(CPUX86State *env)
     raise_exception_err(env, EXCP06_ILLOP, 0);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/* canonical relative to the maximum linear-address width (CPUID.80000008H:EAX[15:8]) */
+static bool novmp_canonical(CPUX86State *env, uint64_t addr)
+{
+    int shift = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 64 - 57 : 64 - 48;
+
+    return (uint64_t)((int64_t)(addr << shift) >> shift) == addr;
+}
+
+#endif /* __Use_Original_Qemu (U103) */
 void helper_wrmsr(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);
@@ -519,6 +529,26 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_MISC_ENABLE:
         env->msr_ia32_misc_enable = val;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+    case MSR_IA32_USER_MSR_CTL:
+        /* SDM Vol4: bit 0 enable, 11:1 reserved, 63:12 canonical bitmap address */
+        if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
+            if ((val & 0xffe) || !novmp_canonical(env, val)) {
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
+            env->msr_user_msr_ctl = val;
+        }
+        break;
+    case MSR_IA32_UARCH_MISC_CTL:
+        /* SDM Vol4: bit 0 DOITM, 63:1 reserved (modelled with USER_MSR, U103) */
+        if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
+            if (val & ~1ULL) {
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
+            env->msr_uarch_misc_ctl = val;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U103) */
     case MSR_IA32_BNDCFGS:
         /* FIXME: #GP if reserved bits are set.  */
         /* FIXME: Extend highest implemented bit of linear address.  */
@@ -747,6 +777,14 @@ void helper_rdmsr(CPUX86State *env)
     case MSR_IA32_UCODE_REV:
         val = x86_cpu->ucode_rev;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+    case MSR_IA32_USER_MSR_CTL:
+        val = env->msr_user_msr_ctl;
+        break;
+    case MSR_IA32_UARCH_MISC_CTL:
+        val = env->msr_uarch_misc_ctl;
+        break;
+#endif /* __Use_Original_Qemu (U103) */
     default:
         if ((uint32_t)env->regs[R_ECX] >= MSR_ARCH_LBR_FROM_0 &&
             (uint32_t)env->regs[R_ECX] <
@@ -1210,3 +1248,64 @@ void helper_aeskl(CPUX86State *env, target_ulong a0, uint32_t reg, uint32_t op)
     CC_SRC = 0;
 }
 #endif /* __Use_Original_Qemu (U100) */
+
+#if __Use_Original_Qemu != 1 /* ours (U103) */
+/*
+ * NoVmp (ledger U103): URDMSR / UWRMSR (SDM Vol2; Vol4 IA32_USER_MSR_CTL).
+ * #UD while IA32_USER_MSR_CTL.ENABLE = 0; #GP if MSR address[63:14] != 0 or
+ * its bit in the user-MSR bitmap (low 2 KB: URDMSR, high 2 KB: UWRMSR, at
+ * IA32_USER_MSR_CTL[63:12], implicit supervisor-mode reads) is 0. (The SDM
+ * Vol2 exception list prints the URDMSR bitmap case under #UD with the range
+ * 0-3FFH; its Description says #GP and 0H-3FFFH, which is modelled.) The
+ * access itself is RDMSR / WRMSR (same semantics, same hooks); UWRMSR
+ * accepts only IA32_UARCH_MISC_CTL (1B01H) and #GPs on its reserved bits.
+ */
+static void user_msr_check(CPUX86State *env, target_ulong msr, bool write, uintptr_t ra)
+{
+    target_ulong byte;
+
+    if (!(env->msr_user_msr_ctl & 1)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (msr >> 14) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    byte = (env->msr_user_msr_ctl & ~(target_ulong)0xfff) + (write ? 2048 : 0) + (msr >> 3);
+    if (!((cpu_ldub_mmuidx_ra(env, byte, cpu_mmu_index_kernel(env), ra) >> (msr & 7)) & 1)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+}
+
+target_ulong helper_urdmsr(CPUX86State *env, target_ulong msr)
+{
+    target_ulong rax = env->regs[R_EAX], rcx = env->regs[R_ECX], rdx = env->regs[R_EDX];
+    uint64_t val;
+
+    user_msr_check(env, msr, false, GETPC());
+    env->regs[R_ECX] = (uint32_t)msr;
+    helper_rdmsr(env);
+    val = (uint32_t)env->regs[R_EAX] | ((uint64_t)(uint32_t)env->regs[R_EDX] << 32);
+    env->regs[R_EAX] = rax;
+    env->regs[R_ECX] = rcx;
+    env->regs[R_EDX] = rdx;
+    return val;
+}
+
+void helper_uwrmsr(CPUX86State *env, target_ulong msr, target_ulong val)
+{
+    uintptr_t ra = GETPC();
+    target_ulong rax = env->regs[R_EAX], rcx = env->regs[R_ECX], rdx = env->regs[R_EDX];
+
+    user_msr_check(env, msr, true, ra);
+    if (msr != MSR_IA32_UARCH_MISC_CTL || (val & ~(target_ulong)1)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    env->regs[R_ECX] = (uint32_t)msr;
+    env->regs[R_EAX] = (uint32_t)val;
+    env->regs[R_EDX] = (uint32_t)((uint64_t)val >> 32);
+    helper_wrmsr(env);
+    env->regs[R_EAX] = rax;
+    env->regs[R_ECX] = rcx;
+    env->regs[R_EDX] = rdx;
+}
+#endif /* __Use_Original_Qemu (U103) */

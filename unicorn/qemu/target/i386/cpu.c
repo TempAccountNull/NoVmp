@@ -679,7 +679,8 @@ static CPUCacheInfo legacy_l3_cache = {
 #if __Use_Original_Qemu != 1 /* ours (U85) */
 #define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8 | \
           CPUID_7_1_EDX_AVX_VNNI_INT16 /* U86 */ | \
-          CPUID_7_1_EDX_AVX_NE_CONVERT /* U88 */)
+          CPUID_7_1_EDX_AVX_NE_CONVERT /* U88 */ | \
+          CPUID_7_1_EDX_USER_MSR /* U103 */)
 #endif /* __Use_Original_Qemu (U85) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
@@ -950,7 +951,7 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
             NULL, NULL, NULL, NULL,
             "avx-vnni-int8", "avx-ne-convert" /* U88 */, NULL, NULL,
             NULL, NULL, "avx-vnni-int16" /* U86 */, NULL,
-            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, "user-msr" /* U103 */,
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
