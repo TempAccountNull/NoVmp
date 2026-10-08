@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-08 12:56 (HEAD `0dd41fa Tests for U440-U442: cases_f16c.txt (i5-13600K), gen_cases_f16c.py, unit test, test.cmd`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-08 14:00 (HEAD `c878490 Docs: docs/quirks.md (quirk bits, harness, SDM audit); x86.h quirk comments`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -58,7 +58,7 @@ _Generated 2026-10-08 12:56 (HEAD `0dd41fa Tests for U440-U442: cases_f16c.txt (
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 160 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 167 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

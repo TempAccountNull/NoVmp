@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-08 12:56 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `0dd41fa Tests for U440-U442: cases_f16c.txt (i5-13600K), gen_cases_f16c.py, unit test, test.cmd`). Do not edit by hand._
+_Generated 2026-10-08 14:00 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `c878490 Docs: docs/quirks.md (quirk bits, harness, SDM audit); x86.h quirk comments`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 

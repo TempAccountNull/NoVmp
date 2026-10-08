@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 12:56 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `0dd41fa Tests for U440-U442: cases_f16c.txt (i5-13600K), gen_cases_f16c.py, unit test, test.cmd`). Do not edit by hand._
+_Generated 2026-10-08 14:00 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `c878490 Docs: docs/quirks.md (quirk bits, harness, SDM audit); x86.h quirk comments`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
