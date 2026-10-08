@@ -1089,6 +1089,42 @@ void helper_waitpkg(CPUX86State *env, uint32_t src)
 }
 
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+/*
+ * NoVmp (ledger U113): GETSEC (SDM Vol2 chapter 7) on a platform without an
+ * Intel TXT-capable chipset. #UD if CR4.SMXE = 0. GETSEC[CAPABILITIES] (EAX = 0)
+ * may run at any CPL: EAX = 0 for every EBX index (bit 0 chipset not present,
+ * bits 1-30 no GETSEC leaf available, bit 31 no extended leaves). Every other
+ * leaf is "not reported as supported by GETSEC[CAPABILITIES]": #UD, before any
+ * CPL/mode #GP condition of that leaf.
+ */
+void helper_getsec(CPUX86State *env)
+{
+    if (!(env->cr[4] & CR4_SMXE_MASK) || (uint32_t)env->regs[R_EAX] != 0) {
+        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+    }
+    env->regs[R_EAX] = 0;
+}
+
+/*
+ * NoVmp (ledger U113): PCONFIG at CPL0 (the translator raised #UD before).
+ * CPUID leaf 1BH enumerates no PCONFIG target, so every leaf faults: in
+ * real-address mode the TSE leaves (EAX = 1, 2) are #UD ("not supported in
+ * real-address mode"); otherwise #GP(0) - MKTME_KEY_PROGRAM (0) without the
+ * TME-MK target, TSE_KEY_PROGRAM(_WRAPPED) (1, 2) without the TSE target, any
+ * other EAX an unsupported leaf (SDM Vol2 PCONFIG exceptions).
+ */
+void helper_pconfig(CPUX86State *env)
+{
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    if (!(env->cr[0] & CR0_PE_MASK) && (leaf == 1 || leaf == 2)) {
+        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+    }
+    raise_exception_ra(env, EXCP0D_GPF, GETPC());
+}
+
+#endif /* __Use_Original_Qemu (U113) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {

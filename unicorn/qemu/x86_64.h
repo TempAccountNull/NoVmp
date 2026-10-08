@@ -2674,6 +2674,10 @@
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 #define helper_enqcmd helper_enqcmd_x86_64
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+#define helper_getsec helper_getsec_x86_64
+#define helper_pconfig helper_pconfig_x86_64
+#endif /* __Use_Original_Qemu (U113) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

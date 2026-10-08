@@ -7053,6 +7053,80 @@ static void test_x86_enqcmd(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * NoVmp U113: GETSEC (SMX without a TXT chipset), PCONFIG and SGX faults
+ * (SDM Vol2 chapter 7, PCONFIG; Vol3D 41 ENCLS/ENCLU).
+ */
+static void test_x86_smx_pconfig_sgx(void)
+{
+    NvRun r;
+    uint64_t cr4;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) & (1u << 6));
+
+    /* CR4.SMXE = 0: GETSEC #UD */
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
+
+    /* mov rax, cr4; bts rax, 14; mov cr4, rax: allowed with SMX */
+    OK(nv_run(&r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x0e\x0f\x22\xe0"));
+    TEST_CHECK(r.cap.count == 0);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    TEST_CHECK(cr4 & 0x4000);
+
+    /* GETSEC[CAPABILITIES]: EAX = 0 (no chipset, no leaves), RAX[63:32] cleared */
+    nv_set(&r, UC_X86_REG_RAX, 0xffffffff00000000ull);
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    OK(nv_run(&r, "\x0f\x37"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0);
+    nv_set(&r, UC_X86_REG_RBX, 1);
+    OK(nv_run(&r, "\x48\x0f\x37"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0);
+    /* ... also at CPL3 */
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    OK(nv_run3(&r, "\x0f\x37\x90"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    /* leaves not reported by CAPABILITIES (PARAMETERS 6, SENTER 4): #UD at any CPL */
+    nv_set(&r, UC_X86_REG_RAX, 6);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
+    nv_set(&r, UC_X86_REG_RAX, 4);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x37"));
+    /* 66/F3/LOCK GETSEC: #UD */
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\x37"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x37"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\x0f\x37"));
+
+    /* PCONFIG (not reported), ENCLS/ENCLU/ENCLV (no SGX, no VMX): #UD at CPL0 and CPL3 */
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xc5"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xc5"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xcf"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xcf"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xd7"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xd7"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xc0"));
+
+    /* strict profile hiding SMX (leaf 1 not listed): GETSEC #UD although CR4.SMXE = 1 */
+    nv_profile7(&r, 0, 0, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
+    OK(uc_close(r.uc));
+
+    /* a model without SMX (Haswell): MOV CR4 with SMXE is #GP(0); GETSEC #UD even if
+       CR4.SMXE is forced through uc_reg_write (raw register write) */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_HASWELL);
+    OK(nv_run(&r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x0e\x0f\x22\xe0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 0x4000;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7192,4 +7266,5 @@ TEST_LIST = {
     {"test_x86_uintr_delivery", test_x86_uintr_delivery},
     {"test_x86_waitpkg", test_x86_waitpkg},
     {"test_x86_enqcmd", test_x86_enqcmd},
+    {"test_x86_smx_pconfig_sgx", test_x86_smx_pconfig_sgx},
     {NULL, NULL}};

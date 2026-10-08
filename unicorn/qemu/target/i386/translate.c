@@ -6664,6 +6664,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_helper_rdpmc(tcg_ctx, cpu_env);
         s->base.is_jmp = DISAS_NORETURN;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+    /*
+     * NoVmp (ledger U113): GETSEC, NP 0F 37 (SDM Vol2 chapter 7). #UD without
+     * CPUID.1:ECX.SMX[6] and with LOCK/66/F2/F3 (REX and segment/address-size
+     * overrides ignored); CR4.SMXE and the leaf in EAX are checked at run time
+     * by helper_getsec.
+     */
+    case 0x137: /* getsec */
+        if (!(s->cpuid_ext_features & CPUID_EXT_SMX)
+            || (prefixes & (PREFIX_LOCK | PREFIX_DATA
+                            | PREFIX_REPZ | PREFIX_REPNZ))) {
+            goto illegal_op;
+        }
+        gen_helper_getsec(tcg_ctx, cpu_env);
+        break;
+#endif /* __Use_Original_Qemu (U113) */
     case 0x134: /* sysenter */
         /* For Intel SYSENTER is valid on 64-bit */
         if (CODE64(s) && env->cpuid_vendor1 != CPUID_VENDOR_INTEL_1)
@@ -7108,6 +7124,27 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             s->base.is_jmp = DISAS_EOB_NEXT;
             break;
 #endif /* __Use_Original_Qemu (U74) */
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+        /*
+         * NoVmp (ledger U113): PCONFIG, NP 0F 01 C5 (SDM Vol2 PCONFIG). #UD if
+         * CPUID.7.0:EDX.PCONFIG[18] = 0 or CPL > 0 (also virtual-8086 mode),
+         * with LOCK or 66/F2/F3. No CPU model TCG builds reports PCONFIG (it
+         * would need CPUID leaf 1BH); the run-time part is helper_pconfig.
+         * ENCLS (0F 01 CF), ENCLU (0F 01 D7) and ENCLV (0F 01 C0) stay #UD:
+         * no model reports SGX (CPUID.7.0:EBX[2] / 12H.0:EAX.SGX1 = 0), the
+         * first check of each, and ENCLV also needs VMX operation.
+         */
+        case 0xc5: /* pconfig */
+            if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_PCONFIG)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA
+                                 | PREFIX_REPZ | PREFIX_REPNZ))
+                || CPL(s) != 0) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_helper_pconfig(tcg_ctx, cpu_env);
+            break;
+#endif /* __Use_Original_Qemu (U113) */
 #if __Use_Original_Qemu != 1 /* ours (U110) */
         /*
          * NoVmp (ledger U110): F2 0F 01 E9 XRESLDTRK, a NOP outside a

@@ -896,6 +896,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #endif /* __Use_Original_Qemu (U104) */
 /* TSX suspend load address tracking instruction */
 #define CPUID_7_0_EDX_TSX_LDTRK         (1U << 16)
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+/* PCONFIG instruction (targets enumerated by CPUID leaf 1BH) */
+#define CPUID_7_0_EDX_PCONFIG           (1U << 18)
+#endif /* __Use_Original_Qemu (U113) */
 /* Architectural Last Branch Records */
 #define CPUID_7_0_EDX_ARCH_LBR          (1U << 19)
 /* AVX512 FP16 instruction */
@@ -2599,6 +2603,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~(uint64_t)CR4_UINTR_MASK;
     }
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U113) */
+    /* CR4.SMXE (bit 14) can be set only with CPUID.1:ECX.SMX (SDM Vol2 7.2.1) */
+    if (env->features[FEAT_1_ECX] & CPUID_EXT_SMX) {
+        reserved_bits &= ~(uint64_t)CR4_SMXE_MASK;
+    }
+#endif /* __Use_Original_Qemu (U113) */
     return reserved_bits;
 }
 
