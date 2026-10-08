@@ -703,6 +703,16 @@ static inline void gen_ternary_sse(DisasContext *s, CPUX86State *env, X86Decoded
     SSEFunc_0_epppp fn = s->vex_l ? ymm : xmm;
     TCGv_ptr ptr3 = tcg_temp_new_ptr(tcg_ctx);
 
+#if __Use_Original_Qemu != 1 /* ours (U93) */
+    /*
+     * NoVmp (ledger U93): /is4 selects the register with imm8[7:4] in 64-bit mode
+     * and imm8[6:4] in 32-bit mode (SDM Vol2A 3.1.1.2; VBLENDVPS/VBLENDVPD/
+     * VPBLENDVB "In 32-bit mode, imm8[7] is ignored").
+     */
+    if (!CODE64(s)) {
+        op3 &= 7;
+    }
+#endif /* __Use_Original_Qemu (U93) */
     /* The format of the fourth input is Lx */
     tcg_gen_addi_ptr(tcg_ctx, ptr3, cpu_env, ZMM_OFFSET(op3));
     fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, ptr3);
@@ -2070,7 +2080,13 @@ static void gen_MULX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
         tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp3_i32, s->T1);
         tcg_gen_mulu2_i32(tcg_ctx, s->tmp2_i32, s->tmp3_i32,
                           s->tmp2_i32, s->tmp3_i32);
+#if __Use_Original_Qemu == 1 /* original QEMU (U93) */
         tcg_gen_extu_i32_tl(tcg_ctx, cpu_regs[s->vex_v], s->tmp2_i32);
+#else /* ours (U93) */
+        /* NoVmp (ledger U93): vvvv[3] ignored outside 64-bit mode (X86_TYPE_B) */
+        tcg_gen_extu_i32_tl(tcg_ctx, cpu_regs[s->vex_v & (CODE64(s) ? 0xf : 7)],
+                            s->tmp2_i32);
+#endif /* __Use_Original_Qemu (U93) */
         tcg_gen_extu_i32_tl(tcg_ctx, s->T0, s->tmp3_i32);
         break;
 #ifdef TARGET_X86_64

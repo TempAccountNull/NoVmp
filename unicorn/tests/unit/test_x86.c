@@ -8294,6 +8294,174 @@ static void test_x86_mpx_modrm_length(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U93: outside 64-bit mode VEX.B is ignored (SDM Vol2A 2.3.5.4 "In 32-bit modes, this
+ * bit is ignored"; Figure 2-9 "Ignored in 32-bit mode"), VEX.vvvv[3] (3-byte VEX byte 2
+ * bit 6) is ignored where vvvv names a register (2.3.5.6; Table 2-41 "P[14] ignored";
+ * XED XMM_N_32 / VGPR32_N_32) but an unused vvvv must still be 1111b (Table 2-41), and
+ * /is4 uses imm8[6:4] (VBLENDVPS "In 32-bit mode, imm8[7] is ignored"). VEX.R / VEX.X
+ * (and VEX.R / vvvv[3] of C5) must be 1 there, else the bytes are LES / LDS. Each
+ * instruction runs once with the bit set and once clear (which would select r8-r15 /
+ * xmm8-xmm15 in 64-bit mode); both must give the same result.
+ */
+static uc_engine *vb_open(uc_mode mode, nk_intr_t *intr)
+{
+    uc_engine *uc;
+    uc_hook h;
+
+    OK(uc_open(UC_ARCH_X86, mode, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, NK_DATA, NK_DATA_SIZE, UC_PROT_ALL));
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, intr, 1, 0));
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_XCR0, 7);
+    return uc;
+}
+
+static void vb_xmm(uc_engine *uc, int i, uint64_t v[2])
+{
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0 + i, v));
+}
+
+/* state before every run (32-bit mode): XMM1/2/10, EAX/EBX/ECX/ESI, memory */
+static void vb_reset32(uc_engine *uc)
+{
+    static const uint32_t mem[8] = {0x01010101, 0x02020202, 0x03030303, 0x04040404,
+                                    0x50505050, 0x60606060, 0x70707070, 0x80808080};
+    uint64_t z[2] = {0, 0}, x1[2] = {0x0000000200000001ULL, 0x0000000400000003ULL},
+             x2[2] = {0x000000140000000aULL, 0x000000280000001eULL},
+             x3[2] = {0x0000000080000000ULL, 0x0000000080000000ULL};
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        OK(uc_reg_write(uc, UC_X86_REG_XMM0 + i, z));
+    }
+    OK(uc_reg_write(uc, UC_X86_REG_XMM1, x1));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM2, x2));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM3, x3));
+    OK(uc_mem_write(uc, NK_DATA, mem, sizeof(mem)));
+    nk_setreg(uc, UC_X86_REG_EAX, 0x11223344);
+    nk_setreg(uc, UC_X86_REG_EBX, 0x0000ff0f);
+    nk_setreg(uc, UC_X86_REG_ECX, 0x12345678);
+    nk_setreg(uc, UC_X86_REG_EDX, 3);
+    nk_setreg(uc, UC_X86_REG_ESI, NK_DATA);
+    nk_setreg(uc, UC_X86_REG_EDI, 0x10);
+}
+
+static void test_x86_vex_b_32(void)
+{
+    static const struct {
+        const char *name;
+        const char *set, *clr;  /* the same instruction: bit set / bit clear */
+        size_t len, clen;       /* lengths of set / clr */
+        int xmm;                /* result register: XMM index, -1 = EAX, -2 = EBX */
+        uint64_t lo, hi;        /* expected result */
+    } t[] = {
+        /* vpaddd xmm0, xmm1, xmm2 (VEX.B: rm = xmm2, not xmm10) */
+        {"vpaddd rm", "\xc4\xe1\x71\xfe\xc2", "\xc4\xc1\x71\xfe\xc2", 5, 5, 0,
+         0x000000160000000bULL, 0x0000002c00000021ULL},
+        /* vpaddd xmm0, xmm1, xmm2 with VEX.vvvv[3] = 1 (byte 2 bit 6 = 0): vvvv = xmm1 */
+        {"vpaddd vvvv3", "\xc4\xe1\x71\xfe\xc2", "\xc4\xe1\x31\xfe\xc2", 5, 5, 0,
+         0x000000160000000bULL, 0x0000002c00000021ULL},
+        /* vmovdqu xmm3, [esi] (VEX.B: base esi, not r14) */
+        {"vmovdqu [esi]", "\xc4\xe1\x7a\x6f\x1e", "\xc4\xc1\x7a\x6f\x1e", 5, 5, 3,
+         0x0202020201010101ULL, 0x0404040403030303ULL},
+        /* vmovdqu xmm4, [esi+edi*1] (SIB base esi) */
+        {"vmovdqu sib", "\xc4\xe1\x7a\x6f\x24\x3e", "\xc4\xc1\x7a\x6f\x24\x3e", 6, 6, 4,
+         0x6060606050505050ULL, 0x8080808070707070ULL},
+        /* vmovd xmm5, eax (VEX.B: eax, not r8d) */
+        {"vmovd eax", "\xc4\xe1\x79\x6e\xe8", "\xc4\xc1\x79\x6e\xe8", 5, 5, 5,
+         0x11223344ULL, 0},
+        /* andn eax, ebx, ecx: ~ebx & ecx (VEX.B: ecx, not r9d) */
+        {"andn rm", "\xc4\xe2\x60\xf2\xc1", "\xc4\xc2\x60\xf2\xc1", 5, 5, -1,
+         0x12340070ULL, 0},
+        /* andn eax, ebx, ecx with vvvv[3] = 1: vvvv = ebx, not r11d */
+        {"andn vvvv3", "\xc4\xe2\x60\xf2\xc1", "\xc4\xe2\x20\xf2\xc1", 5, 5, -1,
+         0x12340070ULL, 0},
+        /* andn eax, ebx, [esi] */
+        {"andn [esi]", "\xc4\xe2\x60\xf2\x06", "\xc4\xc2\x60\xf2\x06", 5, 5, -1,
+         0x01010000ULL, 0},
+        /* mulx ecx, ebx, eax: EBX = low half of EDX * EAX (vvvv[3] = 1: ebx, not r11d) */
+        {"mulx vvvv3", "\xc4\xe2\x63\xf6\xc8", "\xc4\xe2\x23\xf6\xc8", 5, 5, -2,
+         0x336699ccULL, 0},
+        /* vblendvps xmm0, xmm1, xmm2, xmm3: /is4 imm8[7] ignored (0xb0 = xmm3, not xmm11) */
+        {"vblendvps is4", "\xc4\xe3\x71\x4a\xc2\x30", "\xc4\xe3\x71\x4a\xc2\xb0", 6, 6, 0,
+         0x000000020000000aULL, 0x000000040000001eULL},
+        /* 2-byte form vpaddd xmm0, xmm1, xmm2 vs the 3-byte one (no B/X bits in C5) */
+        {"c5 vpaddd", "\xc5\xf1\xfe\xc2", "\xc4\xc1\x71\xfe\xc2", 4, 5, 0,
+         0x000000160000000bULL, 0x0000002c00000021ULL},
+    };
+    nk_intr_t intr;
+    uc_engine *uc = vb_open(UC_MODE_32, &intr);
+    uint64_t v[2];
+    size_t i;
+    int k;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        for (k = 0; k < 2; k++) {
+            const char *c = k ? t[i].clr : t[i].set;
+            size_t len = k ? t[i].clen : t[i].len;
+
+            int f;
+
+            vb_reset32(uc);
+            f = nk_fault(uc, &intr, c, len);
+            TEST_CHECK(f == -1);
+            TEST_MSG("%s (%s): fault %d", t[i].name, k ? "bit clear" : "bit set", f);
+            if (t[i].xmm >= 0) {
+                vb_xmm(uc, t[i].xmm, v);
+            } else {
+                v[0] = nk_reg(uc, t[i].xmm == -1 ? UC_X86_REG_EAX : UC_X86_REG_EBX);
+                v[1] = 0;
+            }
+            TEST_CHECK(v[0] == t[i].lo && v[1] == t[i].hi);
+            TEST_MSG("%s (%s): %016" PRIx64 "%016" PRIx64 ", expected %016" PRIx64
+                     "%016" PRIx64, t[i].name, k ? "bit clear" : "bit set", v[1], v[0],
+                     t[i].hi, t[i].lo);
+        }
+    }
+    /*
+     * vvvv not used: it must be 1111b in every mode (Table 2-41 "Otherwise: If !=
+     * 1111b", XED NOVSR = VEXDEST3=1 VEXDEST210=111): vmovdqu xmm3, [esi] with
+     * vvvv = 0111b is #UD in 32-bit mode too
+     */
+    vb_reset32(uc);
+    TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe1\x3a\x6f\x1e", 5) == 6);
+    /* C5 with byte 1 bit 7 (R) or bit 6 (vvvv[3]) clear is LDS: c5 31 = lds esi, [ecx] */
+    vb_reset32(uc);
+    nk_setreg(uc, UC_X86_REG_ECX, NK_DATA + 0x100);
+    OK(uc_mem_write(uc, NK_DATA + 0x100, "\x78\x56\x34\x12\x7b\x00", 6));
+    TEST_CHECK(nk_fault(uc, &intr, "\xc5\x31", 2) != 6);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_ESI) == 0x12345678 || intr.count);
+    OK(uc_close(uc));
+
+    /* 64-bit mode: the same bits select xmm10 / r14 / r9 */
+    uc = vb_open(UC_MODE_64, &intr);
+    {
+        uint64_t x1[2] = {1, 0}, x10[2] = {0x100, 0}, x2[2] = {0x20, 0};
+
+        OK(uc_reg_write(uc, UC_X86_REG_XMM1, x1));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM2, x2));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM10, x10));
+        TEST_CHECK(nk_fault(uc, &intr, "\xc4\xc1\x71\xfe\xc2", 5) == -1);
+        vb_xmm(uc, 0, v);
+        TEST_CHECK(v[0] == 0x101 && v[1] == 0);
+        /* vblendvps xmm0, xmm1, xmm2, xmm11 (imm8 0xb0): dword 0 from xmm2 */
+        x10[0] = 0x80000000ULL;
+        OK(uc_reg_write(uc, UC_X86_REG_XMM11, x10));
+        TEST_CHECK(nk_fault(uc, &intr, "\xc4\xe3\x71\x4a\xc2\xb0", 6) == -1);
+        vb_xmm(uc, 0, v);
+        TEST_CHECK(v[0] == 0x20 && v[1] == 0);
+        nk_setreg(uc, UC_X86_REG_RBX, 0xff0f);
+        nk_setreg(uc, UC_X86_REG_R9, 0x5555);
+        TEST_CHECK(nk_fault(uc, &intr, "\xc4\xc2\x60\xf2\xc1", 5) == -1);
+        TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x50);
+    }
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -8446,4 +8614,5 @@ TEST_LIST = {
     {"test_x86_opmask_state", test_x86_opmask_state},
     {"test_x86_lock_hint_nops", test_x86_lock_hint_nops},
     {"test_x86_mpx_modrm_length", test_x86_mpx_modrm_length},
+    {"test_x86_vex_b_32", test_x86_vex_b_32},
     {NULL, NULL}};

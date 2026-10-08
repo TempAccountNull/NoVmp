@@ -1854,7 +1854,17 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
 
     case X86_TYPE_B:  /* VEX.vvvv selects a GPR */
         op->unit = X86_OP_INT;
+#if __Use_Original_Qemu == 1 /* original QEMU (U93) */
         op->n = s->vex_v;
+#else /* ours (U93) */
+        /*
+         * NoVmp (ledger U93): outside 64-bit mode a register named by VEX.vvvv uses
+         * vvvv[2:0]; vvvv[3] (3-byte VEX byte 2 bit 6) is ignored (SDM Vol2A
+         * 2.3.5.6, Table 2-41 "P[14] ignored"; XED VGPR32_N_32 / XMM_N_32). An
+         * unused vvvv still has to be 1111b (Table 2-41), so s->vex_v keeps 4 bits.
+         */
+        op->n = s->vex_v & (CODE64(s) ? 0xf : 7);
+#endif /* __Use_Original_Qemu (U93) */
         break;
 
     case X86_TYPE_C:  /* REG in the modrm byte selects a control register */
@@ -1957,7 +1967,12 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
     case X86_TYPE_H:  /* For AVX, VEX.vvvv selects an XMM/YMM register */
         if ((s->prefix & PREFIX_VEX)) {
             op->unit = X86_OP_SSE;
+#if __Use_Original_Qemu == 1 /* original QEMU (U93) */
             op->n = s->vex_v;
+#else /* ours (U93) */
+            /* NoVmp (ledger U93): vvvv[3] ignored outside 64-bit mode (see X86_TYPE_B) */
+            op->n = s->vex_v & (CODE64(s) ? 0xf : 7);
+#endif /* __Use_Original_Qemu (U93) */
             break;
         }
         if (op == &decode->op[0]) {
@@ -2695,7 +2710,17 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                 vex3 = x86_ldub_code(env, s);
 #ifdef TARGET_X86_64
                 s->rex_x = (~vex2 >> 3) & 8;
+#if __Use_Original_Qemu == 1 /* original QEMU (U93) */
                 s->rex_b = (~vex2 >> 2) & 8;
+#else /* ours (U93) */
+                /*
+                 * NoVmp (ledger U93): VEX.B extends ModRM.rm / SIB.base only in
+                 * 64-bit mode; "In 32-bit modes, this bit is ignored" (SDM Vol2A
+                 * 2.3.5.4). VEX.R / VEX.X are 1 here (else LES/LDS, checked above),
+                 * so rex_r / rex_x are 0 already.
+                 */
+                s->rex_b = CODE64(s) ? (~vex2 >> 2) & 8 : 0;
+#endif /* __Use_Original_Qemu (U93) */
 #endif
                 s->vex_w = (vex3 >> 7) & 1;
                 switch (vex2 & 0x1f) {
