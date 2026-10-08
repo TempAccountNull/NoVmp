@@ -434,6 +434,16 @@ def main():
             out.append('| %s | %s | %s | %s | %s | %s |' % (st, mn.upper(), enc, vl, isa, note))
         out.append('')
     open(sys.argv[3], 'w', encoding='utf-8').write('\n'.join(out) + '\n')
+    # machine-readable copy for gen_status_docs.py (README / docs)
+    import json
+    rows_json = []
+    for fam in fam_order:
+        for mn, enc, vl, isa, st, note in sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9))):
+            rows_json.append({'family': fam, 'mnemonic': mn, 'encoding': enc, 'vl': vl, 'isa': isa,
+                              'status': st, 'note': note,
+                              'vendor': CPU_NOT.get(fam, '') if fam in CPU_NOT and fam != 'TDX' and fam != 'IBHF' else ''})
+    json.dump({'totals': dict(totals), 'unsupported_impl': dict(impl_unsup), 'rows': rows_json},
+              open(os.path.splitext(sys.argv[3])[0] + '.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount), 'unsupported', dict(impl_unsup))
 
 
