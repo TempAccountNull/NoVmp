@@ -2471,6 +2471,9 @@ static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn
 /* NoVmp (ledgers U333-U339): AVX512-FP16 */
 #include "emit_fp16.c.inc"
 #endif /* __Use_Original_Qemu (U333) */
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+#include "emit-avx10.c.inc"
+#endif /* __Use_Original_Qemu (U372) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

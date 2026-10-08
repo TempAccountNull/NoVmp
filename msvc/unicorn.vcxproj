@@ -249,6 +249,12 @@
       <AdditionalIncludeDirectories>..\unicorn\msvc\x86_64-softmmu;..\unicorn\qemu\target\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>x86_64.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
+    <ClCompile Include="..\unicorn\qemu\target\i386\avx10_helper.c">
+      <ObjectFileName>$(IntDir)unicorn_qemu_target_i386_avx10_helper.obj</ObjectFileName>
+      <PreprocessorDefinitions>NEED_CPU_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\unicorn\msvc\x86_64-softmmu;..\unicorn\qemu\target\i386;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ForcedIncludeFiles>x86_64.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
     <ClCompile Include="..\unicorn\qemu\target\i386\helper.c">
       <ObjectFileName>$(IntDir)unicorn_qemu_target_i386_helper.obj</ObjectFileName>
       <PreprocessorDefinitions>NEED_CPU_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>

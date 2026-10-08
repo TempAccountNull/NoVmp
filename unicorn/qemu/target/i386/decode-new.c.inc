@@ -4007,6 +4007,9 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 };
 #undef EV_VBMI
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+#include "decode-avx10.c.inc"
+#endif /* __Use_Original_Qemu (U372) */
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
 #endif /* __Use_Original_Qemu (U149) */
@@ -4097,6 +4100,9 @@ static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 {
     *b = x86_ldub_code(env, s);
     *entry = opcodes_evex_0F[*b];
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+    decode_avx10_override(s, env, entry, b, opcodes_avx10_0F);
+#endif /* __Use_Original_Qemu (U372) */
 }
 
 static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -4121,7 +4127,31 @@ static void decode_evex_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 {
     *b = x86_ldub_code(env, s);
     *entry = opcodes_evex_0F3A[*b];
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+    decode_avx10_override(s, env, entry, b, opcodes_avx10_0F3A);
+#endif /* __Use_Original_Qemu (U372) */
 }
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+
+/*
+ * NoVmp (ledgers U333, U372): EVEX maps 5 and 6 (EVEX.mmm = 101b/110b, SDM Vol2A 2.7.1,
+ * Table 2-40): the AVX512-FP16 tables opcodes_evex_map5/6 (decode_fp16.c.inc), then the
+ * AVX10.2 forms of the same slot and prefix (decode_avx10_override). Empty slots #UD.
+ */
+static void decode_evex_map5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *b = x86_ldub_code(env, s);
+    *entry = opcodes_evex_map5[*b];
+    decode_avx10_override(s, env, entry, b, opcodes_avx10_map5);
+}
+
+static void decode_evex_map6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *b = x86_ldub_code(env, s);
+    *entry = opcodes_evex_map6[*b];
+    decode_avx10_override(s, env, entry, b, opcodes_avx10_map6);
+}
+#endif /* __Use_Original_Qemu (U372) */
 #endif /* __Use_Original_Qemu (U141) */
 
 #undef mmx
@@ -4955,6 +4985,11 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512_FP16:
         return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_FP16);
 #endif /* __Use_Original_Qemu (U330) */
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+    case X86_FEAT_AVX10_2:
+        /* AVX10.2 spec 361050-007 chapter 2: AVX10[19] and version >= 2 (U371) */
+        return s->avx10_version >= 2;
+#endif /* __Use_Original_Qemu (U372) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
@@ -5543,7 +5578,7 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
          * P2 = z L' L b V' a a a (SDM Vol2A 2.7.1, Table 2-32). disas_insn routes 62h here
          * only when it is not BOUND (64-bit mode, or P0[7:6] = 11b in protected mode).
          * #UD: LOCK/66/F2/F3/REX before EVEX (Table 2-46); P[3] != 0, P[10] != 1, map 0/4/7
-         * (Table 2-40). Maps 5/6 are the AVX512-FP16 maps (U333). Outside 64-bit
+         * (Table 2-40). Maps 5/6: AVX512-FP16 (U333) and AVX10.2 (U372). Outside 64-bit
          * mode EVEX.R/X/B/R' select nothing (Table 2-34: 8 registers; R and X are 1 there,
          * B and R' are ignored) and vvvv[3] is ignored (Table 2-41); V' is checked in
          * validate_evex.

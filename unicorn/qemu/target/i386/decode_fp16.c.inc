@@ -455,18 +455,7 @@ static const X86OpEntry opcodes_evex_map6[256] = {
     [0xd7] = X86_OP_GROUP0(FP16_M6_D7),
 #endif /* __Use_Original_Qemu (U338) */
 };
-
-static void decode_evex_map5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
-{
-    *b = x86_ldub_code(env, s);
-    *entry = opcodes_evex_map5[*b];
-}
-
-static void decode_evex_map6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
-{
-    *b = x86_ldub_code(env, s);
-    *entry = opcodes_evex_map6[*b];
-}
+/* decode_evex_map5/6 (decode-new.c.inc, after the AVX10.2 tables) start from these tables */
 
 #undef FP16_M5_ARITH
 #undef FP16_PS
