@@ -122,6 +122,10 @@ call :hw_zero cases_dp_nan
 rem ledger U434: one hardware case per UC_X86_QUIRK_* behaviour (cases_quirks.txt): all match the
 rem i5-13600K with --quirks cpu (each one differs with --quirks 0, i.e. the SDM).
 call :hw_zero cases_quirks
+rem Decoder tables: no X86OpEntry table of decode-new.c.inc (with its included decode*.c.inc)
+rem names an element twice ([0x42] = A, ..., [0x42] = B compiles silently, the later one wins)
+rem in either build (__Use_Original_Qemu = 0 and = 1): Emulator\tools\check_decode_dups.py.
+call :py_check "%ROOT%Emulator\tools\check_decode_dups.py" "%ROOT%unicorn\qemu\target\i386"
 
 echo.
 if !FAILED! NEQ 0 (
@@ -149,6 +153,25 @@ if errorlevel 1 (
     set /a FAILED+=1
 ) else (
     echo [test] !SUITE! passed
+)
+exit /b 0
+
+:py_check
+rem %1 = python script, %2 = its argument; python must be on PATH
+echo.
+echo [test] ===== python %~nx1
+where python >nul 2>nul
+if errorlevel 1 (
+    echo [test] python not found - %~nx1 cannot run
+    set /a FAILED+=1
+    exit /b 0
+)
+python -I %1 %2
+if errorlevel 1 (
+    echo [test] %~nx1 FAILED
+    set /a FAILED+=1
+) else (
+    echo [test] %~nx1 passed
 )
 exit /b 0
 
