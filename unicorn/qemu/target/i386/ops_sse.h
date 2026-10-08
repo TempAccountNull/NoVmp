@@ -637,6 +637,7 @@ void glue(helper_cvtph2ps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 
 void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U440) */
     int i;
     FloatRoundMode prev_rounding_mode = env->sse_status.float_rounding_mode;
     if (!(mode & (1 << 2))) {
@@ -651,6 +652,30 @@ void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
     }
 
     env->sse_status.float_rounding_mode = prev_rounding_mode;
+#else /* ours (U440) */
+    /*
+     * NoVmp (ledger U440): SDM Vol2C VCVTPS2PH "Underflow results (i.e., tiny
+     * results) are converted to denormals. MXCSR.FTZ is ignored." (Vol1 Table
+     * 14-12 note 2: "the processor behaves as if MXCSR.FTZ = 0"). MXCSR.DAZ
+     * still applies to the FP32 source ("Denormal (if MXCSR.DAZ=0)"). The
+     * conversion runs on a copy of sse_status (imm8 rounding, FTZ off); only
+     * the exception flags go back.
+     */
+    float_status st = env->sse_status;
+    int i;
+
+    if (!(mode & (1 << 2))) {
+        set_x86_rounding_mode(mode & 3, &st);
+    }
+    set_flush_to_zero(false, &st);
+    for (i = 0; i < 2 << SHIFT; i++) {
+        d->ZMM_H(i) = float32_to_float16(s->ZMM_S(i), true, &st);
+    }
+    for (i >>= 2; i < 1 << SHIFT; i++) {
+        d->Q(i) = 0;
+    }
+    env->sse_status.float_exception_flags = st.float_exception_flags;
+#endif /* __Use_Original_Qemu (U440) */
 }
 #endif
 
