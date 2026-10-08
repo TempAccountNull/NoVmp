@@ -468,6 +468,28 @@ static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp 
     TCGv_ptr p;
     uint32_t desc;
 
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    /*
+     * NoVmp (ledger U147): embedded broadcast {1toN} (EVEX.b with a memory operand of a
+     * Full/Half tuple form, SDM Vol2A 2.7.7): one element of the operation's size is read
+     * (with a mask: only when an element is active) and replicated over the vector.
+     */
+    if (s->evex_b) {
+        int base = op->offset - xmm_offset(op->ot);
+
+        if (kmask && !e->evex_nofs) {
+            p = evex_env_ptr(s, base);
+            gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, kmask,
+                                  tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz, nelem) |
+                                                   EVEX_DESC_ANY));
+            tcg_temp_free_ptr(tcg_ctx, p);
+        } else {
+            gen_load_sse(s, s->tmp4, s->evex_esz, base, false);
+        }
+        tcg_gen_gvec_dup_mem(tcg_ctx, s->evex_esz, base, base, s->evex_vl, s->evex_vl);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U147) */
     if (!kmask || e->evex_nofs) {
         gen_load_sse(s, s->tmp4, op->ot, op->offset, false);
         return;
@@ -487,6 +509,17 @@ static void gen_evex_fp_begin(DisasContext *s)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    /*
+     * NoVmp (ledger U147): {er} / {sae} on a register-register form (SDM Vol2A 2.7.8,
+     * 2.7.9): static rounding overriding MXCSR.RC, all exceptions suppressed - the
+     * instruction behaves as if every MXCSR mask were set and sets no MXCSR flag (no #XM).
+     */
+    if (s->evex_rc != -1) {
+        gen_helper_evex_rc_begin(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, s->evex_rc));
+        return;
+    }
+#endif /* __Use_Original_Qemu (U147) */
     gen_helper_sse_fp_begin(tcg_ctx, cpu_env);
 }
 
@@ -494,6 +527,12 @@ static void gen_evex_fp_end(DisasContext *s)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    if (s->evex_rc != -1) {
+        gen_helper_evex_rc_end(tcg_ctx, cpu_env);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U147) */
     /* the destination is not written yet: nothing to restore on #XM */
     gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, 0),
                           tcg_constant_i32(tcg_ctx, 0));

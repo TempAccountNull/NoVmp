@@ -1805,6 +1805,11 @@ typedef struct CPUX86State {
     QEMU_ALIGN(16, ZMMReg evex_s1);
     QEMU_ALIGN(16, ZMMReg evex_s2);
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    /* NoVmp (U147): {er}/{sae}: MXCSR flags and rounding mode saved by evex_rc_begin */
+    int evex_saved_flags;
+    int evex_saved_rmode;
+#endif /* __Use_Original_Qemu (U147) */
 
     /*
      * YMM is not supported by QEMU at all

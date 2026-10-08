@@ -6649,3 +6649,27 @@ void helper_evex_neutral(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, 
     }
 }
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+
+/*
+ * NoVmp (ledger U147): {er} / {sae} (SDM Vol2A 2.7.8, 2.7.9, Table 2-38). rc = EVEX.L'L
+ * as the rounding control (00 RNE, 01 RD, 10 RU, 11 RZ, the MXCSR.RC encoding) or -2 for
+ * {sae}. Suppress all exceptions: masked responses (softfloat's default) and no MXCSR
+ * flag set by the instruction; DAZ/FTZ stay in effect.
+ */
+void helper_evex_rc_begin(CPUX86State *env, int32_t rc)
+{
+    env->evex_saved_flags = get_float_exception_flags(&env->sse_status);
+    env->evex_saved_rmode = get_float_rounding_mode(&env->sse_status);
+    if (rc >= 0) {
+        set_x86_rounding_mode(rc & 3, &env->sse_status);
+    }
+    set_float_exception_flags(0, &env->sse_status);
+}
+
+void helper_evex_rc_end(CPUX86State *env)
+{
+    set_float_exception_flags(env->evex_saved_flags, &env->sse_status);
+    set_float_rounding_mode(env->evex_saved_rmode, &env->sse_status);
+}
+#endif /* __Use_Original_Qemu (U147) */

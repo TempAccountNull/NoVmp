@@ -206,6 +206,10 @@ DEF_HELPER_5(evex_mstore, void, env, ptr, tl, i64, i32)
 DEF_HELPER_5(evex_blend, void, env, ptr, ptr, i64, i32)
 DEF_HELPER_5(evex_neutral, void, env, ptr, ptr, i64, i32)
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+DEF_HELPER_2(evex_rc_begin, void, env, s32)
+DEF_HELPER_1(evex_rc_end, void, env)
+#endif /* __Use_Original_Qemu (U147) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */
