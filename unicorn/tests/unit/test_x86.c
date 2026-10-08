@@ -11112,6 +11112,113 @@ static void test_x86_evex_bw_kmask64(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U290-U296: AVX512DQ (milestone M3) ----
+ * CPUID gating of the AVX512DQ EVEX forms (UC_X86_AVX512_DQ; AVX512VL for EVEX.128/256,
+ * not for the LIG scalar forms) and value checks of VPMULLQ, VFPCLASSPD and VRANGESD.
+ * Results in detail: Emulator/data/cases_evex_m3_dq.txt (ref_evex_m3_dq.py, SDM model).
+ */
+#define DQ_VPMULLQ_Z    "\x62\xf2\xed\x48\x40\xcb"          /* vpmullq zmm1, zmm2, zmm3 */
+#define DQ_VPMULLD_Z    "\x62\xf2\x6d\x48\x40\xcb"          /* vpmulld zmm1, zmm2, zmm3 */
+#define DQ_VPMULLQ_X    "\x62\xf2\xed\x08\x40\xcb"          /* vpmullq xmm1, xmm2, xmm3 */
+#define DQ_VANDPS_Z     "\x62\xf1\x6c\x48\x54\xcb"          /* vandps zmm1, zmm2, zmm3 */
+#define DQ_VFPCLASSPS_Z "\x62\xf3\x7d\x48\x66\xcb\x81"      /* vfpclassps k1, zmm3, 0x81 */
+#define DQ_VFPCLASSPS_X "\x62\xf3\x7d\x08\x66\xcb\x81"      /* vfpclassps k1, xmm3, 0x81 */
+#define DQ_VFPCLASSPD_Z "\x62\xf3\xfd\x48\x66\xcb\x81"      /* vfpclasspd k1, zmm3, 0x81 */
+#define DQ_VFPCLASSSS   "\x62\xf3\x7d\x08\x67\xcb\x81"      /* vfpclassss k1, xmm3, 0x81 */
+#define DQ_VRANGEPS_Z   "\x62\xf3\x6d\x48\x50\xcb\x05"      /* vrangeps zmm1, zmm2, zmm3, 5 */
+#define DQ_VREDUCEPS_Z  "\x62\xf3\x7d\x48\x56\xcb\x00"      /* vreduceps zmm1, zmm3, 0 */
+#define DQ_VRANGESD     "\x62\xf3\xed\x08\x51\xcb\x05"      /* vrangesd xmm1, xmm2, xmm3, 5 */
+
+/* run one snippet on a fresh engine with the given UC_X86_AVX512_* features */
+static int dq_run1(int features, const char *code, size_t len)
+{
+    EvCtx c;
+    int r;
+
+    ev_open(&c, UC_MODE_64, features);
+    r = ev_run(&c, code, len);
+    OK(uc_close(c.uc));
+    return r;
+}
+
+static void test_x86_avx512dq_gating(void)
+{
+    const int fvl = UC_X86_AVX512_F | UC_X86_AVX512_VL;
+    const int fdq = UC_X86_AVX512_F | UC_X86_AVX512_DQ;
+
+    /* no AVX512DQ: every DQ form #UD; VPMULLD (same opcode, W0, AVX512F) runs */
+    TEST_CHECK(dq_run1(fvl, DQ_VPMULLQ_Z, 6) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VPMULLD_Z, 6) == -1);
+    TEST_CHECK(dq_run1(fvl, DQ_VANDPS_Z, 6) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VFPCLASSPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VFPCLASSSS, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VRANGEPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VREDUCEPS_Z, 7) == 6);
+    TEST_CHECK(dq_run1(fvl, DQ_VRANGESD, 7) == 6);
+    /* AVX512DQ without AVX512VL: EVEX.512 and the scalar (LIG) forms only */
+    TEST_CHECK(dq_run1(fdq, DQ_VPMULLQ_Z, 6) == -1);
+    TEST_CHECK(dq_run1(fdq, DQ_VPMULLQ_X, 6) == 6);
+    TEST_CHECK(dq_run1(fdq, DQ_VFPCLASSPS_X, 7) == 6);
+    TEST_CHECK(dq_run1(fdq, DQ_VFPCLASSSS, 7) == -1);
+    TEST_CHECK(dq_run1(fdq, DQ_VRANGESD, 7) == -1);
+    /* everything */
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VPMULLQ_X, 6) == -1);
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VFPCLASSPS_X, 7) == -1);
+    TEST_CHECK(dq_run1(EV_ALL, DQ_VANDPS_Z, 6) == -1);
+}
+
+static void test_x86_avx512dq_values(void)
+{
+    uint64_t a[8], b[8], r[8], k = 0;
+    EvCtx c;
+    int i, ok = 1;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    /* VPMULLQ: low 64 bits of every product */
+    for (i = 0; i < 8; i++) {
+        a[i] = 0x9E3779B97F4A7C15ULL * (uint64_t)(i + 1);
+        b[i] = 0xC2B2AE3D27D4EB4FULL ^ ((uint64_t)i << 60);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VPMULLQ_Z, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    for (i = 0; i < 8; i++) {
+        ok &= r[i] == a[i] * b[i];
+    }
+    TEST_CHECK(ok);
+    /* VFPCLASSPD k1, zmm3, 0x81: QNaN or SNaN -> lanes 0, 1, 4 */
+    memset(b, 0, sizeof(b));
+    b[0] = 0x7FF8000000000000ULL;       /* QNaN */
+    b[1] = 0x7FF4000000000000ULL;       /* SNaN */
+    b[2] = 0x3FF0000000000000ULL;       /* 1.0 */
+    b[3] = 0xFFF0000000000000ULL;       /* -INF */
+    b[4] = 0xFFF8000000000001ULL;       /* negative QNaN */
+    b[5] = 0x0000000000000001ULL;       /* denormal */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VFPCLASSPD_Z, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(k == 0x13);
+    TEST_MSG("k1 = %llx", (unsigned long long)k);
+    /* VRANGESD xmm1, xmm2, xmm3, 5: MAX(-3.0, 2.0) = 2.0, bits 127:64 from xmm2, 511:128 = 0 */
+    memset(a, 0xA5, sizeof(a));
+    a[0] = 0xC008000000000000ULL;
+    a[1] = 0x1122334455667788ULL;
+    b[0] = 0x4000000000000000ULL;
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, DQ_VRANGESD, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    TEST_CHECK(r[0] == 0x4000000000000000ULL && r[1] == 0x1122334455667788ULL);
+    ok = 1;
+    for (i = 2; i < 8; i++) {
+        ok &= r[i] == 0;
+    }
+    TEST_CHECK(ok);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11292,4 +11399,6 @@ TEST_LIST = {
     {"test_x86_evex_bw_cpuid", test_x86_evex_bw_cpuid},
     {"test_x86_evex_bw_masked_bytes", test_x86_evex_bw_masked_bytes},
     {"test_x86_evex_bw_kmask64", test_x86_evex_bw_kmask64},
+    {"test_x86_avx512dq_gating", test_x86_avx512dq_gating},
+    {"test_x86_avx512dq_values", test_x86_avx512dq_values},
     {NULL, NULL}};

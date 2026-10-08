@@ -73,6 +73,9 @@ rem plan 1.15d milestone M3 BW (ledger U260-U269): AVX512BW byte/word instructio
 rem writemasks, masking / fault suppression per byte and word, narrowing stores, disp8*N of every
 rem byte/word tuple, #UD) vs the SDM model ref_evex_m3_bw.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_bw.txt" --avx512 --xcr0 0xE7
+rem plan 1.15d milestone M3 (AVX512DQ, ledger U290-U296): VPMULLQ, VANDPS..VXORPD, VFPCLASS,
+rem VRANGE, VREDUCE vs the SDM model ref_evex_m3_dq.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
