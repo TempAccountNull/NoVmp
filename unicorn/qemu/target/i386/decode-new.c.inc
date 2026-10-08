@@ -1856,8 +1856,50 @@ static const X86OpEntry opcodes_root[256] = {
 #define EV_VLALL     (X86_EVEX_VL128 | X86_EVEX_VL256 | X86_EVEX_VL512)
 /* vector moves: Full Mem tuple, {k1}{z}, element size from EVEX.W, no EVEX.b */
 #define EV_MOV(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(MZ) ev_w(w) ev_es(W)
+#if __Use_Original_Qemu != 1 /* ours (U195) */
 
-/* 0F 10/11: VMOVUPS (NP W0), VMOVUPD (66 W1); E4.nb. F3/F2 = VMOVSS/VMOVSD (not yet) */
+/*
+ * NoVmp (ledger U195): F3/F2 0F 10/11 VMOVSS (W0) / VMOVSD (W1), EVEX.LLIG, class E10 (SDM
+ * Vol2B MOVSS/MOVSD): 10 mod != 11b: xmm1{k1}{z}, m32/m64 (Tuple1 Scalar); 10 mod = 11b:
+ * xmm1{k1}{z}, xmm2 (vvvv), xmm3 (r/m); 11 mod = 11b: xmm1 (r/m){k1}{z}, xmm2 (vvvv), xmm3
+ * (reg); 11 mod != 11b: m32/m64{k1}, xmm1 - merging only ({z} #UD, Table 2-42), vvvv
+ * reserved (1111b) in both memory forms.
+ */
+#define EV_MOVS(w)   cpuid(AVX512F) ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_w(w) ev_es(W)
+
+static void decode_EVEX_movs(DisasContext *s, CPUX86State *env, X86OpEntry *entry, bool store)
+{
+    /* [store][mod = 11b][VMOVSD] */
+    static const X86OpEntry opcodes_EVEX_movs[2][2][2] = {
+        {
+            {
+                X86_OP_ENTRY3(EVEX_VMOVS, V,x, None,None, W,ss, EV_MOVS(W0) ev_mask(MZ)),
+                X86_OP_ENTRY3(EVEX_VMOVS, V,x, None,None, W,sd, EV_MOVS(W1) ev_mask(MZ)),
+            },
+            {
+                X86_OP_ENTRY3(EVEX_VMOVS, V,x, H,x, W,ss, EV_MOVS(W0) ev_mask(MZ)),
+                X86_OP_ENTRY3(EVEX_VMOVS, V,x, H,x, W,sd, EV_MOVS(W1) ev_mask(MZ)),
+            },
+        },
+        {
+            {
+                X86_OP_ENTRY3(EVEX_VMOVS, W,ss, None,None, V,ss, EV_MOVS(W0) ev_mask(M)),
+                X86_OP_ENTRY3(EVEX_VMOVS, W,sd, None,None, V,sd, EV_MOVS(W1) ev_mask(M)),
+            },
+            {
+                X86_OP_ENTRY3(EVEX_VMOVS, W,x, H,x, V,ss, EV_MOVS(W0) ev_mask(MZ)),
+                X86_OP_ENTRY3(EVEX_VMOVS, W,x, H,x, V,sd, EV_MOVS(W1) ev_mask(MZ)),
+            },
+        },
+    };
+    bool reg = (get_modrm(s, env) >> 6) == 3;
+
+    *entry = opcodes_EVEX_movs[store][reg][(s->prefix & PREFIX_REPNZ) != 0];
+}
+#undef EV_MOVS
+#endif /* __Use_Original_Qemu (U195) */
+
+/* 0F 10/11: VMOVUPS (NP W0), VMOVUPD (66 W1); E4.nb. F3/F2 = VMOVSS/VMOVSD (U195) */
 static void decode_EVEX_0F10(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     static const X86OpEntry opcodes_EVEX_0F10[4] = {
@@ -1866,6 +1908,12 @@ static void decode_EVEX_0F10(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         {},
         {},
     };
+#if __Use_Original_Qemu != 1 /* ours (U195) */
+    if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) {
+        decode_EVEX_movs(s, env, entry, false);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U195) */
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F10);
 }
 
@@ -1877,6 +1925,12 @@ static void decode_EVEX_0F11(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         {},
         {},
     };
+#if __Use_Original_Qemu != 1 /* ours (U195) */
+    if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) {
+        decode_EVEX_movs(s, env, entry, true);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U195) */
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F11);
 }
 

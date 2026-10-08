@@ -1170,6 +1170,27 @@ EVEX_FP_SCALAR(VMAXS, max)
 EVEX_FP_SCALAR(VSQRTS, sqrt)
 #undef EVEX_FP_SCALAR
 #endif /* __Use_Original_Qemu (U194) */
+#if __Use_Original_Qemu != 1 /* ours (U195) */
+
+/*
+ * NoVmp (ledger U195): VMOVSS/VMOVSD (SDM Vol2B MOVSS/MOVSD, class E10): element 0 of the
+ * source (register, or memory read only when k1[0] = 1 / no mask) into element 0 of the
+ * destination; the register forms take DEST[127:esz] from SRC1 (EVEX.vvvv), the load form
+ * zeroes it (gen_evex_insn), the store form writes m32/m64 only when k1[0] = 1.
+ */
+static void gen_EVEX_VMOVS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (s->evex_esz == MO_64) {
+        tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[2].offset);
+        tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[0].offset);
+    } else {
+        tcg_gen_ld32u_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[2].offset);
+        tcg_gen_st32_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[0].offset);
+    }
+}
+#endif /* __Use_Original_Qemu (U195) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
