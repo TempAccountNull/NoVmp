@@ -2020,25 +2020,6 @@ void glue(helper_dppd, SUFFIX)(CPUX86State *env,
         prod2 = float64_zero;
     }
     temp2 = float64_add(prod1, prod2, &env->sse_status);
-#if __Use_Original_Qemu != 1 /* ours (U98) */
-    /*
-     * SDM DPPD Operation: Temp2 := Temp1[63:0] + Temp1[127:64] goes to both selected
-     * elements, so with two NaN products (SSE rule: first source operand, Vol1 4.8.3.5
-     * Table 4-8) both elements get product 0 (the default above).
-     * UC_X86_QUIRK_DPPD_NAN_ORDER: the i5-13600K adds per destination element with that
-     * element's own product as the first addend: element i := p[i] + p[i^1]. Only the NaN
-     * choice differs (the sum of two numbers is commutative; flags are identical), so
-     * element 1 is recomputed as p1 + p0 only when both products are NaN.
-     */
-    if ((env->uc->x86_hw_quirks & UC_X86_QUIRK_DPPD_NAN_ORDER) &&
-        float64_is_any_nan(prod1) && float64_is_any_nan(prod2) &&
-        (mask & (1 << 1))) {
-        float_status st = env->sse_status;   /* flags already raised by the p0 + p1 sum */
-        d->ZMM_D(0) = (mask & (1 << 0)) ? temp2 : float64_zero;
-        d->ZMM_D(1) = float64_add(prod2, prod1, &st);
-        return;
-    }
-#endif /* __Use_Original_Qemu (U98) */
     d->ZMM_D(0) = (mask & (1 << 0)) ? temp2 : float64_zero;
     d->ZMM_D(1) = (mask & (1 << 1)) ? temp2 : float64_zero;
 }
@@ -2129,6 +2110,22 @@ void glue(helper_dppd, SUFFIX)(CPUX86State *env,
     set_float_exception_flags(acc, &env->sse_status);
     d->ZMM_D(0) = (mask & (1 << 0)) ? temp2 : float64_zero;
     d->ZMM_D(1) = (mask & (1 << 1)) ? temp2 : float64_zero;
+    /*
+     * NoVmp (ledger U98): SDM DPPD Operation: Temp2 := Temp1[63:0] + Temp1[127:64] goes to
+     * both selected elements, so with two NaN products (SSE rule: first source operand,
+     * Vol1 4.8.3.5 Table 4-8) both elements get product 0 (above).
+     * UC_X86_QUIRK_DPPD_NAN_ORDER: the i5-13600K adds per destination element with that
+     * element's own product as the first addend: element i := p[i] + p[i^1]. Only the NaN
+     * choice differs (the sum is commutative; flags are identical and already raised by
+     * the p0 + p1 sum), so element 1 is recomputed as p1 + p0 on a status copy only when
+     * both products are NaN.
+     */
+    if ((env->uc->x86_hw_quirks & UC_X86_QUIRK_DPPD_NAN_ORDER) &&
+        float64_is_any_nan(prod1) && float64_is_any_nan(prod2) &&
+        (mask & (1 << 1))) {
+        float_status st = env->sse_status;
+        d->ZMM_D(1) = float64_add(prod2, prod1, &st);
+    }
 }
 #endif
 #undef DP_STEP
