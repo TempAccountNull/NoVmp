@@ -21,6 +21,8 @@
 //                    VPOPCNTDQ|BITALG|VBMI|FP16, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
+//   --avx10 N        with --cases: Unicorn opts in to Intel AVX10 version N (UC_CTL_X86_AVX10 = N,
+//                    1 or 2; the AVX512* CPUID bits stay off) for the AVX10 expected-value cases
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -320,7 +322,8 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI |
 												  UC_X86_AVX512_FP16; /* U330: + FP16 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--expect-only]]\n" ); return 2; }
+		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
 	}
 	// --cases: hardware lines use the host CPU's quirk set, expected-value lines the SDM (0),
 	// unless --quirks sets both

@@ -59,7 +59,9 @@
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
 // Emulator\data\cases_opmask.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
-// state itself is not a checked field (the cases store their results to memory).
+// state itself is not a checked field (the cases store their results to memory). --avx10 N opts in
+// to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; AVX-512 CPUID bits stay off unless
+// --avx512 is given too) for Emulator\data\cases_avx10_a.txt.
 // Output: "[n] SAME|DIFF <line>", the engines' lines, then "cases: N, differing: M" over both kinds;
 // when the file has expected-value cases (or --expect-only skipped lines) a second summary line
 // "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Exit status 1 when an
@@ -285,7 +287,7 @@ namespace at
 
 	// cr0: Unicorn's CR0 for the cases (0 = Unicorn default, PE only). Windows x64 runs with NE = 1:
 	// pending unmasked x87 exceptions raise #MF, not FERR#; use 0x33 (PE|MP|ET|NE), never PG (flat map)
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; };
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
 	static int fault_vector( const std::string& t )
@@ -400,6 +402,7 @@ namespace at
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
 			uc.avx512 = opt.avx512;
 			uc.amx = opt.amx;
+			uc.avx10 = opt.avx10;
 			uc.ext_regs = expect;
 			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
