@@ -1,0 +1,36 @@
+# UC_CTL_X86_HW_QUIRKS (ledger U99, U98, U430-U432): one or more hardware cases per quirk bit,
+# every case one where the Intel SDM and the i5-13600K differ. Hand-written; only these
+# self-generated snippets run natively. With the CPU's quirk set every case matches:
+#   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu
+# with --quirks 0 (strictly the SDM) every case differs from the hardware. docs\quirks.md.
+#
+# bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 (= 1 here)
+fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
+fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
+fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
+# bit 1 CVTPI2PS_M64_KEEPS_X87: SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
+fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000
+# bit 2 FYL2XP1_BELOW_M1: x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf
+fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000
+fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000
+fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000
+fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000
+fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000
+# bit 3 PTWRITE_NOP: SDM #UD (CPUID.14.0:EBX[4] = 0), hardware reads the operand and goes on
+.byte 0xf3, 0x0f, 0xae, 0x26
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234
+# bit 4 DPPD_NAN_ORDER: two NaN products; SDM p0 in both elements, hardware p1 in element 1
+dppd xmm0, xmm1, 0x33 | xmm0=010A00000000F87F020A00000000F87F xmm1=000000000000F03F000000000000F03F
+vdppd xmm2, xmm0, xmm1, 0x32 | xmm0=000000000000F03F030A00000000F07F xmm1=040B00000000F8FF000000000000F03F
+# bit 5 REP_ZERO_COUNT_ZX: 67h REP string, ECX = 0. SDM writes nothing, hardware zero-extends
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xaa | rcx=0x5555555500000000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xae | rcx=0x7777777700000000 rdi=0x2222222230029000
+# bit 6 X87_CMP_UNMASKED_IA_SETS_CC: #IA unmasked (FCW.IM = 0). SDM C3/C2/C0 (ZF/PF/CF) unchanged,
+# hardware "unordered"
+fcom st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000
+fcomp st(1) | fcw=0x037E st0=3FFF:8000000000000000 st1=7FFF:C000000000000000
+fucompp | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000
+fcom qword ptr [rsi] | fcw=0x037E st0=3FFF:8000000000000000 m+0x8000=010000000000F87F
+fcomi st(0), st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000
+fucomip st(0), st(1) | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000
