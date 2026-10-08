@@ -590,10 +590,38 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     if (op0->unit == X86_OP_SSE) {
         compute_xmm_offset(op0);
         to_scratch = op0->has_ea || kmask || fp;
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+        to_scratch |= e->evex_dsrc;
+#endif /* __Use_Original_Qemu (U190) */
         if (to_scratch) {
             op0->offset = offsetof(CPUX86State, evex_t1) + xmm_offset(op0->ot);
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+
+    /*
+     * NoVmp (ledger U190): a destination that is also a source (FMA "DEST := DEST*SRC3 +
+     * SRC2" ...; SDM Vol2C, merging-masking keeps DEST) is read through the result scratch
+     * register: evex_t1 := DEST, with +1.0 in the masked-off lanes of an FP form (no MXCSR
+     * flag, no #XM from them, as for the other sources), so the gen function computes in
+     * place and the masking below merges with the old destination register.
+     */
+    if (e->evex_dsrc && op0->unit == X86_OP_SSE && !op0->has_ea) {
+        int t1 = offsetof(CPUX86State, evex_t1);
+
+        if (fp && kmask) {
+            TCGv_ptr pd = evex_env_ptr(s, t1);
+            TCGv_ptr ps = evex_env_ptr(s, ZMM_OFFSET(op0->n));
+
+            gen_helper_evex_neutral(tcg_ctx, cpu_env, pd, ps, kmask,
+                                    tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem)));
+            tcg_temp_free_ptr(tcg_ctx, pd);
+            tcg_temp_free_ptr(tcg_ctx, ps);
+        } else {
+            tcg_gen_gvec_mov(tcg_ctx, MO_64, t1, ZMM_OFFSET(op0->n), vl, vl);
+        }
+    }
+#endif /* __Use_Original_Qemu (U190) */
 
     /* floating point with a mask: neutral (1.0) masked-off lanes in copies of the sources */
     if (fp && kmask) {

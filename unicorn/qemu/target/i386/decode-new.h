@@ -411,6 +411,14 @@ struct X86OpEntry {
     unsigned     evex_fp:1;     /* SIMD floating point: MXCSR flags, #XM (E2/E3) */
     unsigned     evex_w32:1;    /* EVEX.W ignored outside 64-bit mode (behaves as W0) */
     unsigned     evex_nofs:1;   /* no memory fault suppression (E*NF classes) */
+#if __Use_Original_Qemu != 1 /* ours (U190) */
+    /*
+     * the destination register is also a source (FMA, VPERMI2x/VPERMT2x, ...): gen_evex_insn
+     * copies it to the result scratch register (op[0].offset) before the gen function runs,
+     * with +1.0 in the masked-off lanes of an FP form; merging-masking keeps the old value
+     */
+    unsigned     evex_dsrc:1;
+#endif /* __Use_Original_Qemu (U190) */
 #endif /* __Use_Original_Qemu (U141) */
 };
 typedef struct X86DecodedOp {
