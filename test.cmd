@@ -62,6 +62,11 @@ rem completion at an unmapped element, overlapping scatter indices, E12 #UD) vs 
 rem ref_evex_m2_gather.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_gather.txt" --avx512 --xcr0 0xE7 --expect-only
 
+rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
+rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
+rem unmasked exceptions; must be 0 differing against the i5-13600K.
+call :hw_f16c
+
 echo.
 if !FAILED! NEQ 0 (
     echo [test] FAILED: !FAILED! suite^(s^) failed
@@ -137,6 +142,32 @@ if errorlevel 1 (
     set /a FAILED+=1
 ) else (
     echo [test] cases_nan passed
+)
+exit /b 0
+
+:hw_f16c
+rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary
+set "EXE=%TESTS%\emu-alltest.exe"
+set "F16LOG=%TESTS%\cases_f16c.log"
+echo.
+echo [test] ===== emu-alltest --cases cases_f16c.txt --strict --xcr0 7 ^(host CPU, must be 0 differing^)
+if not exist "%EXE%" (
+    echo [test] missing %EXE% - run build.cmd first
+    set /a FAILED+=1
+    exit /b 0
+)
+"%EXE%" --cases "%ROOT%Emulator\data\cases_f16c.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --strict --xcr0 7 > "%F16LOG%"
+set "RC=!errorlevel!"
+findstr /R /B /C:"cases: [0-9]*, differing: 0$" "%F16LOG%"
+if errorlevel 1 (
+    findstr /B /C:"cases:" "%F16LOG%"
+    echo [test] cases_f16c FAILED: hardware and Unicorn differ, see %F16LOG%
+    set /a FAILED+=1
+) else if not "!RC!"=="0" (
+    echo [test] cases_f16c FAILED: exit status !RC!
+    set /a FAILED+=1
+) else (
+    echo [test] cases_f16c passed
 )
 exit /b 0
 
