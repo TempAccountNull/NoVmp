@@ -35,11 +35,22 @@
 #define W(n) ZMM_W(n)
 #define L(n) ZMM_L(n)
 #define Q(n) ZMM_Q(n)
+#if __Use_Original_Qemu == 1 /* original QEMU (U143) */
 #if SHIFT == 1
 #define SUFFIX _xmm
 #else
 #define SUFFIX _ymm
 #endif
+#else /* ours (U143) */
+/* NoVmp (ledger U143): SHIFT 3 = EVEX.512 helpers (_zmm), 16 floats / 8 doubles */
+#if SHIFT == 1
+#define SUFFIX _xmm
+#elif SHIFT == 2
+#define SUFFIX _ymm
+#else
+#define SUFFIX _zmm
+#endif
+#endif /* __Use_Original_Qemu (U143) */
 #endif
 
 #define LANE_WIDTH (SHIFT ? 16 : 8)
@@ -2887,7 +2898,13 @@ void glue(helper_vpgatherqq, SUFFIX)(CPUX86State *env,
 }
 #endif
 
-#if SHIFT >= 2
+#if __Use_Original_Qemu == 1 /* original QEMU (U143) */
+#define SSE_YMM_FIXED_NAMES (SHIFT >= 2)
+#else /* ours (U143) */
+/* NoVmp (ledger U143): fixed _ymm names, not instantiated again for SHIFT 3 */
+#define SSE_YMM_FIXED_NAMES (SHIFT == 2)
+#endif /* __Use_Original_Qemu (U143) */
+#if SSE_YMM_FIXED_NAMES
 void helper_vpermdq_ymm(Reg *d, Reg *v, Reg *s, uint32_t order)
 {
     uint64_t r0, r1, r2, r3;
@@ -2968,6 +2985,11 @@ void helper_vpermd_ymm(Reg *d, Reg *v, Reg *s)
     }
 }
 #endif
+#if __Use_Original_Qemu == 1 /* original QEMU (U143) */
+#undef SSE_YMM_FIXED_NAMES
+#else /* ours (U143) */
+#undef SSE_YMM_FIXED_NAMES
+#endif /* __Use_Original_Qemu (U143) */
 
 /* FMA3 op helpers */
 #if SHIFT == 1

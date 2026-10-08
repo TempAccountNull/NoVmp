@@ -404,6 +404,18 @@ static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
     return s->vex_l ? 32 : 16;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U143) */
+/*
+ * NoVmp (ledger U143): 3-way selection of an ops_sse.h helper by vector length: SHIFT 1
+ * (_xmm, 16 bytes), SHIFT 2 (_ymm, 32) or SHIFT 3 (_zmm, 64 bytes: EVEX.512).
+ */
+#define SSE_FN3(s, decode, name)                                   \
+    (vector_len(s, decode) == 64 ? gen_helper_##name##_zmm :       \
+     vector_len(s, decode) == 32 ? gen_helper_##name##_ymm :       \
+     gen_helper_##name##_xmm)
+#endif /* __Use_Original_Qemu (U143) */
+
+
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

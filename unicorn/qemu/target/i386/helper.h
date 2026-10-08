@@ -321,6 +321,10 @@ DEF_HELPER_3(movq, void, env, ptr, ptr)
 #include "ops_sse_header.h"
 #define SHIFT 2
 #include "ops_sse_header.h"
+#if __Use_Original_Qemu != 1 /* ours (U143) */
+#define SHIFT 3
+#include "ops_sse_header.h"
+#endif /* __Use_Original_Qemu (U143) */
 
 DEF_HELPER_3(rclb, tl, env, tl, tl)
 DEF_HELPER_3(rclw, tl, env, tl, tl)

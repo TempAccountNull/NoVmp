@@ -21,11 +21,22 @@
 #define SUFFIX _mmx
 #else
 #define Reg ZMMReg
+#if __Use_Original_Qemu == 1 /* original QEMU (U143) */
 #if SHIFT == 1
 #define SUFFIX _xmm
 #else
 #define SUFFIX _ymm
 #endif
+#else /* ours (U143) */
+/* NoVmp (ledger U143): SHIFT 3 = EVEX.512 helpers (_zmm), 16 floats / 8 doubles */
+#if SHIFT == 1
+#define SUFFIX _xmm
+#elif SHIFT == 2
+#define SUFFIX _ymm
+#else
+#define SUFFIX _zmm
+#endif
+#endif /* __Use_Original_Qemu (U143) */
 #endif
 
 #define dh_alias_Reg ptr

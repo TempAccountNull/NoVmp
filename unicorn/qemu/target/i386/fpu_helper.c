@@ -6437,3 +6437,8 @@ static uint32_t x86_rsqrt12(uint32_t x)
 
 #define SHIFT 2
 #include "ops_sse.h"
+#if __Use_Original_Qemu != 1 /* ours (U143) */
+
+#define SHIFT 3
+#include "ops_sse.h"
+#endif /* __Use_Original_Qemu (U143) */
