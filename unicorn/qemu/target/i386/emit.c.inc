@@ -2568,6 +2568,46 @@ static void gen_EVEX_VCVT2PS2PHX(DisasContext *s, CPUX86State *env, X86DecodedIn
     decode->op[0].unit = X86_OP_SKIP;
 }
 #endif /* __Use_Original_Qemu (U404) */
+#if __Use_Original_Qemu != 1 /* ours (U405) */
+
+/*
+ * NoVmp (ledger U405, U406): EVEX VPDPB[SS,SU,UU]D[S], VPDPW[SU,US,UU]D[S]: the ops_sse.h
+ * helpers of the VEX forms (U85, U86) at 128/256/512 bits (SSE_FN3). They accumulate into
+ * DEST: with masking gen_evex_insn sends the result to evex_t1, which then starts as DEST.
+ */
+static void gen_avx10b_acc_dest(DisasContext *s, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode), dst = ZMM_OFFSET(decode->op[0].n);
+
+    if (decode->op[0].offset != dst) {
+        tcg_gen_gvec_mov(tcg_ctx, MO_64, decode->op[0].offset, dst, vl, vl);
+    }
+}
+
+#define AVX10B_VNNI(uname, lname)                                                    \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+                                                                                     \
+    gen_avx10b_acc_dest(s, decode);                                                  \
+    SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);          \
+}
+AVX10B_VNNI(VPDPBSSD, vpdpbssd)
+AVX10B_VNNI(VPDPBSSDS, vpdpbssds)
+AVX10B_VNNI(VPDPBSUD, vpdpbsud)
+AVX10B_VNNI(VPDPBSUDS, vpdpbsuds)
+AVX10B_VNNI(VPDPBUUD, vpdpbuud)
+AVX10B_VNNI(VPDPBUUDS, vpdpbuuds)
+#endif /* __Use_Original_Qemu (U405) */
+#if __Use_Original_Qemu != 1 /* ours (U406) */
+AVX10B_VNNI(VPDPWSUD, vpdpwsud)
+AVX10B_VNNI(VPDPWSUDS, vpdpwsuds)
+AVX10B_VNNI(VPDPWUSD, vpdpwusd)
+AVX10B_VNNI(VPDPWUSDS, vpdpwusds)
+AVX10B_VNNI(VPDPWUUD, vpdpwuud)
+AVX10B_VNNI(VPDPWUUDS, vpdpwuuds)
+#endif /* __Use_Original_Qemu (U406) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
