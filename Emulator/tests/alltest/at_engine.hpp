@@ -299,7 +299,8 @@ namespace at
 			if ( quirks_ ) uc_ctl_set_x86_hw_quirks( uc_, quirks_ );
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
-			if ( strict ) uc_ctl_set_x86_cpuid_strict( uc_, 1 );
+			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
+			if ( strict >= 0 ) uc_ctl_set_x86_cpuid_strict( uc_, strict );
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
 			if ( cr0 ) uc_reg_write( uc_, UC_X86_REG_CR0, &cr0 );
 			uc_mem_map( uc_, CODE, CODE_SIZE, UC_PROT_ALL );
@@ -433,7 +434,7 @@ namespace at
 		const state* in_ = nullptr;
 	public:
 		std::vector<uc_x86_cpuid> cpuid;
-		int strict = 0;
+		int strict = -1;         // UC_CTL_X86_CPUID_STRICT: -1 = not written (U435), 0 / 1 = explicit
 		uint64_t xcr0 = 0;
 		uint64_t cr0 = 0;
 		int avx512 = 0;          // UC_CTL_X86_AVX512 mask (0 = off, the default)

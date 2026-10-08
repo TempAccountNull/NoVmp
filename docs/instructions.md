@@ -51,7 +51,7 @@ _Generated 2026-10-08 18:33 (HEAD `c6be68b Merge integ/avx10: AVX512-FP16, AVX10
       - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
       - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
-      - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
+      - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs). U435: Unicorn now makes a CPUID profile strict by default, so `--cpuid` alone is strict (`--no-strict` for the old behaviour).
 
 ## Latest ledger entries (`CHANGES_LEDGER.md`, 255 rows)
 

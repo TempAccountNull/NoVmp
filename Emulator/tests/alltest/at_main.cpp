@@ -13,9 +13,12 @@
 //   --rebuild        re-sweep the opcode space instead of using the cached universe
 //   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp); a line
 //                    with "=> expectations" is an expected-value case (Unicorn only, vs the SDM)
-//                    [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] (Unicorn CPUID profile, strict
-//                    #UD, XCR0, CR0; --cr0 0x33 = PE|MP|ET|NE as under Windows x64, so pending
-//                    x87 exceptions raise #MF; PG must stay clear: flat Unicorn memory)
+//                    [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] (Unicorn CPUID
+//                    profile, strict #UD, XCR0, CR0; --cr0 0x33 = PE|MP|ET|NE as under Windows
+//                    x64, so pending x87 exceptions raise #MF; PG must stay clear: flat Unicorn
+//                    memory). U435: with --cpuid, strict #UD is the default (Unicorn turns
+//                    UC_CTL_X86_CPUID_STRICT on while a profile is installed); --no-strict writes
+//                    0 (hidden features still execute), --strict writes 1 explicitly
 //   --expect-only    with --cases: run only the expected-value ("=>") lines
 //   --avx512         with --cases: Unicorn opts in to AVX-512 (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|
 //                    VPOPCNTDQ|BITALG|VBMI|FP16, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
@@ -314,6 +317,7 @@ int main( int argc, char** argv )
 		else if ( a == "--cases" ) cases = val();
 		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
 		else if ( a == "--strict" ) copt.strict = 1;
+		else if ( a == "--no-strict" ) copt.strict = 0;   // U435: explicit UC_CTL_X86_CPUID_STRICT = 0
 		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--cr0" ) copt.cr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--expect-only" ) copt.expect_only = true;
@@ -323,7 +327,7 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_FP16; /* U330: + FP16 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
 	}
 	// --cases: hardware lines use the host CPU's quirk set, expected-value lines the SDM (0),
 	// unless --quirks sets both

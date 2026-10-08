@@ -4953,6 +4953,9 @@ static void m0_open(M0 *m, uc_mode mode, int avx512, const uc_x86_cpuid *prof,
     }
     if (nprof) {
         OK(uc_ctl_set_x86_cpuid(m->uc, prof, nprof));
+        /* U435: a profile is strict by default; these partial profiles (leaf 0DH without
+           leaf 1) test XCR0 / CPUID only, so the model's XSAVE stays usable */
+        OK(uc_ctl_set_x86_cpuid_strict(m->uc, 0));
     }
     OK(uc_mem_map(m->uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_map(m->uc, M0_DATA, 0x4000, UC_PROT_ALL));
@@ -7884,8 +7887,9 @@ static int kt_run(const struct x86_kvec *t, const KtCfg *cfg, struct x86_kvec *o
     if (cfg->nprof) {
         OK(uc_ctl_set_x86_cpuid(uc, cfg->prof, cfg->nprof));
     }
-    if (cfg->strict) {
-        OK(uc_ctl_set_x86_cpuid_strict(uc, 1));
+    if (cfg->nprof || cfg->strict) {
+        /* explicit (U435: a profile alone is strict), so strict 0 stays non-strict */
+        OK(uc_ctl_set_x86_cpuid_strict(uc, cfg->strict));
     }
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_map(uc, KT_DATA, 0x1000, UC_PROT_ALL));
@@ -8541,6 +8545,9 @@ static void ax_open(AmxT *a, uc_mode mode, int mask, const uc_x86_cpuid *prof, s
     }
     if (nprof) {
         OK(uc_ctl_set_x86_cpuid(a->uc, prof, nprof));
+        /* U435: a profile is strict by default; this partial profile (leaf 0DH without
+           leaf 1) tests XCR0 only, so the model's XSAVE stays usable */
+        OK(uc_ctl_set_x86_cpuid_strict(a->uc, 0));
     }
     OK(uc_mem_map(a->uc, AX_CODE, AX_CODE_SIZE, UC_PROT_ALL));
     OK(uc_mem_map(a->uc, AX_DATA, AX_DATA_SIZE, UC_PROT_ALL));
@@ -10032,11 +10039,14 @@ static void test_x86_evex_state(void)
     TEST_CHECK(ev_run(&c, "\x62\xf1\x6c\x18\x58\xcb", 6) == -1);   /* L'L = 00b, b = 1 */
     OK(uc_close(c.uc));
 
-    /* a strict CPUID profile without AVX512F: #UD; non-strict: the CPU still has it */
+    /* a CPUID profile without AVX512F: strict by default (U435) -> #UD; explicitly
+       non-strict: the CPU still has it; explicitly strict: #UD */
     ev_open(&c, UC_MODE_64, EV_ALL);
     OK(uc_ctl_set_x86_cpuid(c.uc, prof_noavx512, 4));
     v = 0xe7;
     OK(uc_reg_write(c.uc, UC_X86_REG_XCR0, &v));
+    TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == 6);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
     TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == -1);
     OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
     TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == 6);
@@ -11249,9 +11259,8 @@ static void cdx_open(CdxCtx *c, int avx512, const uc_x86_cpuid *prof, size_t npr
         uint64_t xcr0 = 0xe7;
         OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
         OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
-        if (strict) {
-            OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
-        }
+        /* explicit (U435: a profile alone is strict), so strict 0 stays non-strict */
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, strict));
     }
     OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_map(c->uc, CDX_DATA, 0x4000, UC_PROT_ALL));
@@ -12964,6 +12973,154 @@ static void test_x86_mxcsr_api(void)
 }
 /* ---- end U445-U447 (sx_) ---- */
 
+/* ---- sd_ block begin (NoVmp U435-U439: strict CPUID default, DPPS NaN order bit) ---- */
+/*
+ * NoVmp U435: UC_CTL_X86_CPUID_STRICT defaults to ON while a UC_CTL_X86_CPUID profile is
+ * installed, OFF without one; an explicit 0/1 wins in either order, a negative value
+ * returns to the default. sd_prof: the i5-13600K leaves 0, 1, 7.0, 7.1, 0DH.1
+ * (Emulator/data/cpuid_i5-13600k.txt) with leaf 0DH.0 widened to the AVX-512 components so
+ * XCR0 = E7h is allowed: AVX512F (7.0:EBX[16]) and SHA512 (7.1:EAX[0]) stay hidden, AVX2 is
+ * shown. The model is UC_CPU_X86_MAX with the AVX512F opt-in (it has both features).
+ */
+static const uc_x86_cpuid sd_prof[] = {
+    {0x0, 0, 0x20, 0x756E6547, 0x6C65746E, 0x49656E69},
+    {0x1, 0, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+    {0x7, 0, 0x2, 0x219C27EB, 0x9840078C, 0xBC004410},
+    {0x7, 1, 0x810, 0, 0, 0},
+    {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    {0xd, 1, 0xf, 0x350, 0x1800, 0},
+};
+
+#define sd_NOT_WRITTEN (-100)
+
+typedef struct SdCtx {
+    uc_engine *uc;
+    uint64_t pc;
+} SdCtx;
+
+static void sd_open(SdCtx *c)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(c->uc, UC_X86_AVX512_F));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+}
+
+static void sd_profile(SdCtx *c, int on)
+{
+    if (on) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, sd_prof, sizeof(sd_prof) / sizeof(sd_prof[0])));
+    } else {
+        OK(uc_ctl_set_x86_cpuid(c->uc, NULL, 0));
+    }
+}
+
+static void sd_strict(SdCtx *c, int v)
+{
+    if (v != sd_NOT_WRITTEN) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, v));
+    }
+}
+
+/* one snippet at a fresh address: 6 for #UD, -1 when it runs */
+static int sd_run(SdCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc, xcr0 = 0xe7;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(c->pc <= code_start + code_len);
+    OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return -1;
+}
+
+/* reads back 'strict'; AVX2 always runs, AVX-512 / SHA512 are #UD exactly when 'hidden' */
+static void sd_check(SdCtx *c, const char *what, int strict, int hidden)
+{
+    int on = -1, r;
+
+    OK(uc_ctl_get_x86_cpuid_strict(c->uc, &on));
+    TEST_CHECK_(on == strict, "%s: UC_CTL_X86_CPUID_STRICT reads %d, want %d", what, on, strict);
+    r = sd_run(c, "\xc5\xed\xfe\xcb", 4);                 /* vpaddd ymm1, ymm2, ymm3 */
+    TEST_CHECK_(r == -1, "%s: AVX2 vpaddd ymm -> %d", what, r);
+    r = sd_run(c, "\x62\xf1\x6d\x48\xfe\xcb", 6);         /* vpaddd zmm1, zmm2, zmm3 */
+    TEST_CHECK_(r == (hidden ? 6 : -1), "%s: AVX-512 vpaddd zmm -> %d", what, r);
+    r = sd_run(c, "\xc4\xe2\x7f\xcc\xc1", 5);             /* vsha512msg1 ymm0, xmm1 */
+    TEST_CHECK_(r == (hidden ? 6 : -1), "%s: SHA512 vsha512msg1 -> %d", what, r);
+}
+
+static void test_x86_cpuid_strict_default(void)
+{
+    /* strict written before the profile / after it; sd_NOT_WRITTEN = never written */
+    static const struct {
+        const char *what;
+        int before, profile, after, strict, hidden;
+    } t[] = {
+        {"no profile, not written", sd_NOT_WRITTEN, 0, sd_NOT_WRITTEN, 0, 0},
+        {"profile, not written (default on)", sd_NOT_WRITTEN, 1, sd_NOT_WRITTEN, 1, 1},
+        {"0 before the profile", 0, 1, sd_NOT_WRITTEN, 0, 0},
+        {"0 after the profile", sd_NOT_WRITTEN, 1, 0, 0, 0},
+        {"1 before the profile", 1, 1, sd_NOT_WRITTEN, 1, 1},
+        {"1 after the profile", sd_NOT_WRITTEN, 1, 1, 1, 1},
+        {"1 without a profile (nothing hidden)", 1, 0, sd_NOT_WRITTEN, 1, 0},
+        {"0 then -1 (default again), profile", 0, 1, -1, 1, 1},
+        {"profile, 0, then -1", sd_NOT_WRITTEN, 1, -1, 1, 1},
+        {"-1 without a profile", -1, 0, sd_NOT_WRITTEN, 0, 0},
+    };
+    SdCtx c;
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        sd_open(&c);
+        sd_strict(&c, t[i].before);
+        if (t[i].profile) {
+            sd_profile(&c, 1);
+        }
+        if (i == 8) {
+            sd_strict(&c, 0);
+        }
+        sd_strict(&c, t[i].after);
+        sd_check(&c, t[i].what, t[i].strict, t[i].hidden);
+        OK(uc_close(c.uc));
+    }
+
+    /* not written: removing the profile turns strict off, installing it again on */
+    sd_open(&c);
+    sd_profile(&c, 1);
+    sd_check(&c, "profile installed", 1, 1);
+    sd_profile(&c, 0);
+    sd_check(&c, "profile removed", 0, 0);
+    sd_profile(&c, 1);
+    sd_check(&c, "profile installed again", 1, 1);
+    /* after init: an explicit 0 takes effect at once (translation cache flushed) ... */
+    sd_strict(&c, 0);
+    sd_check(&c, "explicit 0 after a run", 0, 0);
+    /* ... and survives replacing / removing / reinstalling the profile */
+    sd_profile(&c, 0);
+    sd_check(&c, "explicit 0, profile removed", 0, 0);
+    sd_profile(&c, 1);
+    sd_check(&c, "explicit 0, profile reinstalled", 0, 0);
+    sd_strict(&c, 1);
+    sd_check(&c, "explicit 1 after a run", 1, 1);
+    sd_profile(&c, 0);
+    sd_check(&c, "explicit 1, profile removed", 1, 0);
+    sd_strict(&c, -1);
+    sd_check(&c, "-1, no profile", 0, 0);
+    sd_profile(&c, 1);
+    sd_check(&c, "-1, profile installed", 1, 1);
+    OK(uc_close(c.uc));
+}
+
+/* ---- sd_ block end ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -13171,4 +13328,5 @@ TEST_LIST = {
     {"test_x86_sse_unmasked_ou", test_x86_sse_unmasked_ou},
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
+    {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
     {NULL, NULL}};

@@ -51,8 +51,9 @@
 //     rdrand rax =>! rflags=0x203
 //   An empty expectation ("nop =>") means: no fault, nothing changed.
 //
-// Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --xcr0 V
-// configure Unicorn for both kinds of case. UC_CTL_X86_HW_QUIRKS (U99): hardware cases run with
+// Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --no-strict /
+// --xcr0 V configure Unicorn for both kinds of case (U435: a --cpuid profile is strict by
+// default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0). UC_CTL_X86_HW_QUIRKS (U99): hardware cases run with
 // the host CPU's quirk set (QUIRKS_I5_13600K), expected-value cases with 0 (strictly the SDM);
 // --quirks N|cpu|sdm sets both. --avx512 opts Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16, before the engine is
@@ -287,7 +288,9 @@ namespace at
 
 	// cr0: Unicorn's CR0 for the cases (0 = Unicorn default, PE only). Windows x64 runs with NE = 1:
 	// pending unmasked x87 exceptions raise #MF, not FERR#; use 0x33 (PE|MP|ET|NE), never PG (flat map)
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; };
+	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
+	// 0 = --no-strict, 1 = --strict
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
 	static int fault_vector( const std::string& t )
@@ -449,6 +452,11 @@ namespace at
 		}
 		std::printf( "cases: %d, differing: %d\n", n, differ );
 		std::printf( "quirks: hardware cases 0x%X, expected-value cases 0x%X\n", hw_quirks, exp_quirks );
+		// U435: the CPUID profile and the strict setting Unicorn used
+		if ( opt.cpuid.empty() )
+			std::printf( "cpuid: model (no profile), strict %s\n", opt.strict < 0 ? "off (default)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );
+		else
+			std::printf( "cpuid: profile (%zu entries), strict %s\n", opt.cpuid.size(), opt.strict < 0 ? "on (default with a profile)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );
 		if ( exp_n || exp_errors || skipped )
 			std::printf( "expected-value cases: %d, differing: %d, errors: %d, skipped (no \"=>\"): %d\n", exp_n, exp_differ, exp_errors, skipped );
 		return ( exp_differ || exp_errors ) ? 1 : 0;

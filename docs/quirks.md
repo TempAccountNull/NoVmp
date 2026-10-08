@@ -24,6 +24,11 @@ All bits the i5-13600K needs are bits 0–6 = `0x7F`.
   - hardware comparisons use `cpu`: the quick and `--full` runs, and `--cases` lines without `=>`;
   - expected-value (`=>`) lines use 0.
   - `--quirks` sets both. The `--cases` summary prints the quirks it used.
+- CPUID profile and strict #UD (U435, user decision 2026-10-08 "strict when profile set"): installing a profile (`UC_CTL_X86_CPUID`, `emu-alltest --cpuid FILE`) turns `UC_CTL_X86_CPUID_STRICT` on, so every feature the profile hides is #UD as the SDM requires for a CPU without it. The exact rule:
+  - until `UC_CTL_X86_CPUID_STRICT` is written, strict = "a profile is installed" (removing the profile turns it off again);
+  - writing 0 or non-zero is explicit and wins from then on, written before or after the profile (installing, replacing or removing a profile no longer changes it);
+  - writing a negative value drops the explicit setting (back to the default); reading returns the effective 0/1.
+  - `emu-alltest --cpuid FILE` is therefore strict without `--strict`; `--no-strict` writes 0 (hidden features execute, the old default), `--strict` writes 1. The `--cases` summary prints `cpuid: profile (N entries), strict on (default with a profile)` (test.cmd checks it). No profile: unchanged (strict off).
 - `test.cmd`:
   - every SDM-model file runs with `--quirks 0`: expect_selftest, cases_opmask, cases_amx, cases_evex_m1, cases_nan_evex, cases_keylocker, cases_sha_sm, cases_vnni_ifma, cases_dp_nan_sdm;
   - the hardware files run with `--quirks cpu`: cases_nan, cases_dp_nan, cases_quirks;

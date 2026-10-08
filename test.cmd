@@ -214,16 +214,18 @@ exit /b 0
 :hw_zero
 rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary.
 rem %1 = case file name without .txt; runs with the i5-13600K quirk set (--quirks cpu).
+rem ledger U435: no --strict: a CPUID profile is strict by default (features it hides #UD);
+rem the summary must say so.
 set "EXE=%TESTS%\emu-alltest.exe"
 set "NANLOG=%TESTS%\%~1.log"
 echo.
-echo [test] ===== emu-alltest --cases %~1.txt --strict --xcr0 7 --quirks cpu ^(host CPU, must be 0 differing^)
+echo [test] ===== emu-alltest --cases %~1.txt --cpuid i5-13600k --xcr0 7 --quirks cpu ^(host CPU, must be 0 differing^)
 if not exist "%EXE%" (
     echo [test] missing %EXE% - run build.cmd first
     set /a FAILED+=1
     exit /b 0
 )
-"%EXE%" --cases "%ROOT%Emulator\data\%~1.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --strict --xcr0 7 --quirks cpu > "%NANLOG%"
+"%EXE%" --cases "%ROOT%Emulator\data\%~1.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --xcr0 7 --quirks cpu > "%NANLOG%"
 set "RC=!errorlevel!"
 findstr /R /B /C:"cases: [0-9]*, differing: 0$" "%NANLOG%"
 if errorlevel 1 (
@@ -234,7 +236,13 @@ if errorlevel 1 (
     echo [test] %~1 FAILED: exit status !RC!
     set /a FAILED+=1
 ) else (
-    echo [test] %~1 passed
+    findstr /B /C:"cpuid: profile" "%NANLOG%" | findstr /C:"strict on (default with a profile)" >nul
+    if errorlevel 1 (
+        echo [test] %~1 FAILED: the CPUID profile was not strict by default ^(U435^)
+        set /a FAILED+=1
+    ) else (
+        echo [test] %~1 passed
+    )
 )
 exit /b 0
 

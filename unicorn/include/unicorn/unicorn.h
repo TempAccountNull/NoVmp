@@ -671,10 +671,19 @@ typedef enum uc_control_type {
     // CR4); a leaf above the profile's maximum returns the highest basic leaf (SDM).
     // Write: @args = (const uc_x86_cpuid *entries, size_t count), count 0 = model values
     // Read: @args = (size_t *count)
+    // NoVmp U435: an installed profile also turns UC_CTL_X86_CPUID_STRICT on unless that
+    // was written explicitly (see below): features the profile hides are #UD by default.
     UC_CTL_X86_CPUID,
     // x86 only (NoVmp U68): 1 = instructions of features the CPUID profile hides raise
-    // #UD (QEMU style); 0 (default) = they still execute, as on hardware where only
-    // the CPUID bit is hidden. Write: @args = (int); Read: @args = (int *)
+    // #UD (QEMU style, as the SDM requires for a CPU without the feature); 0 = they still
+    // execute, as on hardware where only the CPUID bit is hidden.
+    // NoVmp U435, the exact rule: until UC_CTL_X86_CPUID_STRICT is written, strict is ON
+    // while a UC_CTL_X86_CPUID profile is installed (count != 0) and OFF without one
+    // (removing the profile turns it off again). Writing 0 or non-zero is an explicit
+    // setting that wins from then on, whether it was written before or after the profile
+    // (installing, replacing or removing a profile no longer changes it). Writing a negative
+    // value drops the explicit setting (back to the profile default). Reading returns the
+    // effective value (0/1). Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists

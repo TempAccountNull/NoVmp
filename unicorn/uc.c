@@ -3249,6 +3249,11 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                 uc->x86_cpuid = g_memdup(entries, count * sizeof(*entries));
                 uc->x86_cpuid_count = count;
             }
+            /* NoVmp U435: without an explicit UC_CTL_X86_CPUID_STRICT, strict #UD follows the
+               profile: on while one is installed, off without one */
+            if (!uc->x86_cpuid_strict_set) {
+                uc->x86_cpuid_strict = uc->x86_cpuid_count != 0;
+            }
             if (uc->init_done) {
                 if (uc->x86_cpuid_changed) {
                     uc->x86_cpuid_changed(uc);  /* XCR0 within the new leaf 0DH (U120) */
@@ -3352,7 +3357,12 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             int *on = va_arg(args, int *);
             *on = uc->x86_cpuid_strict;
         } else if (rw == UC_CTL_IO_WRITE) {
-            uc->x86_cpuid_strict = va_arg(args, int) != 0;
+            /* NoVmp U435: 0 / non-zero is an explicit setting that wins over the profile
+               default in either order; a negative value returns to the default (on while a
+               profile is installed) */
+            int on = va_arg(args, int);
+            uc->x86_cpuid_strict_set = on >= 0;
+            uc->x86_cpuid_strict = on >= 0 ? on != 0 : uc->x86_cpuid_count != 0;
             if (uc->init_done) {
                 uc->tb_flush(uc);
             }

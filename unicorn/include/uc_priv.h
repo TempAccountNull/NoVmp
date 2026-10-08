@@ -434,7 +434,8 @@ struct uc_struct {
     uint32_t x86_hw_quirks;   // UC_X86_QUIRK_* (UC_CTL_X86_HW_QUIRKS); 0 = follow the SDM
     struct uc_x86_cpuid *x86_cpuid;   // UC_CTL_X86_CPUID profile (NoVmp U68), NULL = model
     size_t x86_cpuid_count;
-    int x86_cpuid_strict;     // UC_CTL_X86_CPUID_STRICT
+    int x86_cpuid_strict;     // UC_CTL_X86_CPUID_STRICT (effective value)
+    int x86_cpuid_strict_set; // NoVmp U435: 1 = written explicitly (wins over the profile default)
     int x86_avx512;           // UC_CTL_X86_AVX512 mask (NoVmp U120/U128), 0 = no AVX-512 state
     int x86_amx;              // UC_CTL_X86_AMX mask (NoVmp U170), 0 = no AMX
     int x86_avx10;            // UC_CTL_X86_AVX10 (NoVmp U370): version | V1_AUX, 0 = none
