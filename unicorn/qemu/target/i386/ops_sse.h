@@ -2481,6 +2481,110 @@ IFMA52(vpmadd52luq, 0)
 IFMA52(vpmadd52huq, 1)
 #undef IFMA52
 #endif /* __Use_Original_Qemu (U87) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+/*
+ * NoVmp (ledger U88): AVX-NE-CONVERT (SDM Vol2 VBCSTNEBF162PS, VBCSTNESH2PS,
+ * VCVTNEEBF162PS, VCVTNEEPH2PS, VCVTNEOBF162PS, VCVTNEOPH2PS, VCVTNEPS2BF16).
+ * None of them consults or updates MXCSR and none raises an exception, so
+ * they are integer bit operations here (sse_status is never touched):
+ *  - make_fp32(bf16): the BF16 bits become FP32[31:16], exact.
+ *  - convert_fp16_to_fp32: exact; FP16 denormals become normal FP32 (never
+ *    DAZ), signed zero/infinity kept, NaN payload << 13 with a signaling NaN
+ *    quieted (FP32 bit 22), as the F16C conversion, flags suppressed (//SAE).
+ *  - convert_fp32_to_bfloat16 (SDM pseudocode): zero/denormal -> signed zero
+ *    (DAZ/FTZ regardless of MXCSR), infinity -> x[31:16], NaN -> x[31:16]
+ *    with bit 6 set, normal -> (x + 7FFFh + x[16]) >> 16 (round to nearest
+ *    even, rounding past the top gives infinity).
+ */
+#if SHIFT == 1
+static uint32_t ne_bf16_to_fp32(uint16_t x)
+{
+    return (uint32_t)x << 16;
+}
+
+static uint32_t ne_fp16_to_fp32(uint16_t h)
+{
+    uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t man = h & 0x3ff;
+
+    if (exp == 0) {
+        if (man == 0) {
+            return sign;
+        }
+        /* denormal m * 2^-24: normalise; 2^-14 is FP32 exponent 113 */
+        exp = 127 - 15 + 1;
+        while (!(man & 0x400)) {
+            man <<= 1;
+            exp--;
+        }
+        return sign | (exp << 23) | ((man & 0x3ff) << 13);
+    }
+    if (exp == 0x1f) {
+        return sign | 0x7f800000 | (man ? 0x00400000 | (man << 13) : 0);
+    }
+    return sign | ((exp - 15 + 127) << 23) | (man << 13);
+}
+
+static uint16_t ne_fp32_to_bf16(uint32_t x)
+{
+    uint32_t exp = (x >> 23) & 0xff;
+
+    if (exp == 0) {
+        return (x >> 16) & 0x8000;
+    }
+    if (exp == 0xff) {
+        return (x & 0x7fffff) ? (uint16_t)((x >> 16) | 0x40) : (uint16_t)(x >> 16);
+    }
+    return (uint16_t)((x + 0x7fff + ((x >> 16) & 1)) >> 16);
+}
+#endif
+
+#define NE_BCST(name, cvt)                                                        \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)               \
+{                                                                                 \
+    uint32_t f = cvt(s->W(0));                                                    \
+    int i;                                                                        \
+                                                                                  \
+    for (i = 0; i < 2 << SHIFT; i++) {                                            \
+        d->L(i) = f;                                                              \
+    }                                                                             \
+}
+
+#define NE_EVEN_ODD(name, cvt, odd)                                               \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)               \
+{                                                                                 \
+    Reg r;                                                                        \
+    int i;                                                                        \
+                                                                                  \
+    for (i = 0; i < 2 << SHIFT; i++) {                                            \
+        r.L(i) = cvt(s->W(2 * i + odd));                                          \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+NE_BCST(vbcstnebf162ps, ne_bf16_to_fp32)
+NE_BCST(vbcstnesh2ps, ne_fp16_to_fp32)
+NE_EVEN_ODD(vcvtneebf162ps, ne_bf16_to_fp32, 0)
+NE_EVEN_ODD(vcvtneeph2ps, ne_fp16_to_fp32, 0)
+NE_EVEN_ODD(vcvtneobf162ps, ne_bf16_to_fp32, 1)
+NE_EVEN_ODD(vcvtneoph2ps, ne_fp16_to_fp32, 1)
+#undef NE_BCST
+#undef NE_EVEN_ODD
+
+/* VEX.128: 4 BF16 in bits 63:0; VEX.256: 8 BF16 in bits 127:0; rest zero */
+void glue(helper_vcvtneps2bf16, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    Reg r;
+    int i;
+
+    memset(&r, 0, sizeof(r));
+    for (i = 0; i < 2 << SHIFT; i++) {
+        r.W(i) = ne_fp32_to_bf16(s->L(i));
+    }
+    memcpy(d, &r, 8 << SHIFT);
+}
+#endif /* __Use_Original_Qemu (U88) */
 
 void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {

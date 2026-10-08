@@ -2583,6 +2583,22 @@
 #define helper_vpmadd52huq_xmm helper_vpmadd52huq_xmm_x86_64
 #define helper_vpmadd52huq_ymm helper_vpmadd52huq_ymm_x86_64
 #endif /* __Use_Original_Qemu (U87) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+#define helper_vbcstnebf162ps_xmm helper_vbcstnebf162ps_xmm_x86_64
+#define helper_vbcstnebf162ps_ymm helper_vbcstnebf162ps_ymm_x86_64
+#define helper_vbcstnesh2ps_xmm helper_vbcstnesh2ps_xmm_x86_64
+#define helper_vbcstnesh2ps_ymm helper_vbcstnesh2ps_ymm_x86_64
+#define helper_vcvtneebf162ps_xmm helper_vcvtneebf162ps_xmm_x86_64
+#define helper_vcvtneebf162ps_ymm helper_vcvtneebf162ps_ymm_x86_64
+#define helper_vcvtneeph2ps_xmm helper_vcvtneeph2ps_xmm_x86_64
+#define helper_vcvtneeph2ps_ymm helper_vcvtneeph2ps_ymm_x86_64
+#define helper_vcvtneobf162ps_xmm helper_vcvtneobf162ps_xmm_x86_64
+#define helper_vcvtneobf162ps_ymm helper_vcvtneobf162ps_ymm_x86_64
+#define helper_vcvtneoph2ps_xmm helper_vcvtneoph2ps_xmm_x86_64
+#define helper_vcvtneoph2ps_ymm helper_vcvtneoph2ps_ymm_x86_64
+#define helper_vcvtneps2bf16_xmm helper_vcvtneps2bf16_xmm_x86_64
+#define helper_vcvtneps2bf16_ymm helper_vcvtneps2bf16_ymm_x86_64
+#endif /* __Use_Original_Qemu (U88) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

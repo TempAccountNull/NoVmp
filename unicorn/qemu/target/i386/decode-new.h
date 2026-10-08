@@ -132,6 +132,9 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U87) */
     X86_FEAT_AVX_IFMA,
 #endif /* __Use_Original_Qemu (U87) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+    X86_FEAT_AVX_NE_CONVERT,
+#endif /* __Use_Original_Qemu (U88) */
 #if __Use_Original_Qemu != 1 /* ours (U72) */
     X86_FEAT_MOVDIRI,
 #endif /* __Use_Original_Qemu (U72) */

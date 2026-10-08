@@ -385,6 +385,15 @@ DEF_HELPER_4(glue(vpdpwuuds, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpmadd52luq, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpmadd52huq, SUFFIX), void, env, Reg, Reg, Reg)
 #endif /* __Use_Original_Qemu (U87) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+DEF_HELPER_3(glue(vbcstnebf162ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vbcstnesh2ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vcvtneebf162ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vcvtneeph2ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vcvtneobf162ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vcvtneoph2ps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vcvtneps2bf16, SUFFIX), void, env, Reg, Reg)
+#endif /* __Use_Original_Qemu (U88) */
 #endif
 
 /* F16C helpers */

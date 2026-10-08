@@ -410,6 +410,36 @@ static void decode_0F38_D3(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 }
 #endif /* __Use_Original_Qemu (U86) */
 
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+/*
+ * NoVmp (ledger U88): AVX-NE-CONVERT, VEX.0F38.W0 B0/B1 by prefix (SDM Vol2):
+ * B0 NP = VCVTNEOPH2PS, 66 = VCVTNEEPH2PS, F3 = VCVTNEEBF162PS,
+ * F2 = VCVTNEOBF162PS (m128/m256); B1 66 = VBCSTNESH2PS, F3 = VBCSTNEBF162PS
+ * (m16). All memory only (!(11):rrr:bbb), VEX only, VEX.vvvv = 1111b.
+ */
+static void decode_0F38_B0(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_0F38_B0[4] = {
+        X86_OP_ENTRY3(VCVTNEOPH2PS,   V,x, None,None, WM,x, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_00),
+        X86_OP_ENTRY3(VCVTNEEPH2PS,   V,x, None,None, WM,x, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_66),
+        X86_OP_ENTRY3(VCVTNEEBF162PS, V,x, None,None, WM,x, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_f3),
+        X86_OP_ENTRY3(VCVTNEOBF162PS, V,x, None,None, WM,x, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_f2),
+    };
+    *entry = *decode_by_prefix(s, opcodes_0F38_B0);
+}
+
+static void decode_0F38_B1(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_0F38_B1[4] = {
+        {},
+        X86_OP_ENTRY3(VBCSTNESH2PS,   V,x, None,None, WM,w, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_66),
+        X86_OP_ENTRY3(VBCSTNEBF162PS, V,x, None,None, WM,w, vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_f3),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_0F38_B1);
+}
+#endif /* __Use_Original_Qemu (U88) */
+
 static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x00] = X86_OP_ENTRY3(PSHUFB,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
     [0x01] = X86_OP_ENTRY3(PHADDW,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
@@ -522,6 +552,13 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x59] = X86_OP_ENTRY3(VPBROADCASTQ,   V,x,  None,None, W,q,  vex6 chk(W0) cpuid(AVX2) p_66),
     [0x5a] = X86_OP_ENTRY3(VBROADCASTx128, V,qq, None,None, WM,dq,vex6 chk(W0) cpuid(AVX2) p_66),
 
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+    /*
+     * VCVTNEPS2BF16 (U88): VEX.F3.0F38.W0 72, xmm1 <- xmm2/m128 (L0) or
+     * ymm2/m256 (L1); the helper writes the whole YMM (upper half zero).
+     */
+    [0x72] = X86_OP_ENTRY3(VCVTNEPS2BF16,  V,x,  None,None, W,x,  vex6 chk(W0) cpuid(AVX_NE_CONVERT) p_f3),
+#endif /* __Use_Original_Qemu (U88) */
     [0x78] = X86_OP_ENTRY3(VPBROADCASTB,   V,x,  None,None, W,b,  vex6 chk(W0) cpuid(AVX2) p_66),
     [0x79] = X86_OP_ENTRY3(VPBROADCASTW,   V,x,  None,None, W,w,  vex6 chk(W0) cpuid(AVX2) p_66),
 
@@ -547,6 +584,11 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xae] = X86_OP_ENTRY3(VFNMSUB213Px, V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
     [0xaf] = X86_OP_ENTRY3(VFNMSUB213Sx, V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
 
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+    /* AVX-NE-CONVERT (U88): B0/B1 by prefix, memory only */
+    [0xb0] = X86_OP_GROUP0(0F38_B0),
+    [0xb1] = X86_OP_GROUP0(0F38_B1),
+#endif /* __Use_Original_Qemu (U88) */
 #if __Use_Original_Qemu != 1 /* ours (U87) */
     /* AVX-IFMA (U87): VEX.66.0F38.W1 B4/B5, VEX only (EVEX is AVX512-IFMA) */
     [0xb4] = X86_OP_ENTRY3(VPMADD52LUQ,  V,x,  H,x, W,x,  vex6 chk(W1) cpuid(AVX_IFMA) p_66),
@@ -1766,6 +1808,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX_IFMA:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AVX_IFMA);
 #endif /* __Use_Original_Qemu (U87) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+    case X86_FEAT_AVX_NE_CONVERT:
+        return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AVX_NE_CONVERT);
+#endif /* __Use_Original_Qemu (U88) */
 #if __Use_Original_Qemu != 1 /* ours (U72) */
     case X86_FEAT_MOVDIRI:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_MOVDIRI);

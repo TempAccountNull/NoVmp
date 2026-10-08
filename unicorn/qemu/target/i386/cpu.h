@@ -878,6 +878,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* Support for VPDPB[SU,UU,SS]D[,S] (AVX-VNNI-INT8) */
 #define CPUID_7_1_EDX_AVX_VNNI_INT8     (1U << 4)
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+/* AVX NE CONVERT Instructions */
+#define CPUID_7_1_EDX_AVX_NE_CONVERT    (1U << 5)
+#endif /* __Use_Original_Qemu (U88) */
 #if __Use_Original_Qemu != 1 /* ours (U86) */
 /* Support for VPDPW[SU,US,UU]D[,S] (AVX-VNNI-INT16) */
 #define CPUID_7_1_EDX_AVX_VNNI_INT16    (1U << 10)

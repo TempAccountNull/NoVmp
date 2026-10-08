@@ -996,6 +996,15 @@ UNARY_INT_SSE(VCVTDQ2PS, cvtdq2ps)
 UNARY_INT_SSE(VCVTPS2DQ, cvtps2dq)
 UNARY_INT_SSE(VCVTTPS2DQ, cvttps2dq)
 UNARY_INT_SSE(VCVTPH2PS, cvtph2ps)
+#if __Use_Original_Qemu != 1 /* ours (U88) */
+UNARY_INT_SSE(VBCSTNEBF162PS, vbcstnebf162ps)
+UNARY_INT_SSE(VBCSTNESH2PS,   vbcstnesh2ps)
+UNARY_INT_SSE(VCVTNEEBF162PS, vcvtneebf162ps)
+UNARY_INT_SSE(VCVTNEEPH2PS,   vcvtneeph2ps)
+UNARY_INT_SSE(VCVTNEOBF162PS, vcvtneobf162ps)
+UNARY_INT_SSE(VCVTNEOPH2PS,   vcvtneoph2ps)
+UNARY_INT_SSE(VCVTNEPS2BF16,  vcvtneps2bf16)
+#endif /* __Use_Original_Qemu (U88) */
 
 
 static inline void gen_unary_imm_sse(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
