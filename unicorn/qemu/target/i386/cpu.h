@@ -2786,6 +2786,16 @@ enum {
 #define EVEX_PERM_DUP_EVEN  40
 #define EVEX_PERM_DUP_ODD   41
 #endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+/*
+ * NoVmp (ledger U215): 128/256-bit chunks, aux = log2(chunk bytes): VINSERTx (SRC1 with the
+ * chunk imm8 replaced by SRC2), VEXTRACTx (chunk imm8 of SRC2), VBROADCASTx (the group of
+ * SRC2 repeated; also VBROADCASTx32X2 with 8-byte groups).
+ */
+#define EVEX_PERM_INSERT    48
+#define EVEX_PERM_EXTRACT   49
+#define EVEX_PERM_BCAST     50
+#endif /* __Use_Original_Qemu (U215) */
 
 int uc_check_cpu_x86_load_seg(CPUX86State *env, int seg_reg, int sel);
 X86CPU *cpu_x86_init(struct uc_struct *uc);

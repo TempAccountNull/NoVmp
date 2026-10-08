@@ -1712,6 +1712,85 @@ static void gen_EVEX_MOVD_FROM(DisasContext *s, CPUX86State *env, X86DecodedInsn
     }
 }
 #endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+
+/*
+ * NoVmp (ledger U215): VINSERTF32X4/F64X2/F32X8/F64X4, VINSERTI..., VEXTRACTF/I...,
+ * VBROADCASTF/I32X2/32X4/64X2/32X8/64X4 (helper_evex_perm; the chunk / group size in bytes
+ * is the size of the r/m operand, or of the destination for VEXTRACT). A register source of
+ * VBROADCASTx32X2 uses its low 64 bits.
+ */
+static void gen_EVEX_VINSERT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_INSERT, ctz32(evex_mem_bytes(&decode->op[2])));
+}
+
+static void gen_EVEX_VEXTRACT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_EXTRACT, ctz32(evex_mem_bytes(&decode->op[0])));
+}
+
+static void gen_EVEX_VBCASTX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, EVEX_PERM_BCAST, ctz32(evex_mem_bytes(&decode->op[2])));
+}
+
+/* VPINSRD/VPINSRQ xmm1, xmm2, r/m, imm8: SRC1 with dword/qword imm8[1:0]/[0] := r/m (T1) */
+static void gen_EVEX_VPINSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int d = vector_reg_offset(&decode->op[0]);
+
+    tcg_gen_gvec_mov(tcg_ctx, MO_64, d, vector_reg_offset(&decode->op[1]), 16, 16);
+    if (decode->op[2].ot == MO_64) {
+        tcg_gen_st_tl(tcg_ctx, s->T1, cpu_env,
+                      d + offsetof(ZMMReg, ZMM_Q(decode->immediate & 1)));
+    } else {
+        tcg_gen_st32_tl(tcg_ctx, s->T1, cpu_env,
+                        d + offsetof(ZMMReg, ZMM_L(decode->immediate & 3)));
+    }
+}
+
+/* VPEXTRD/VPEXTRQ r/m, xmm2, imm8 and VEXTRACTPS r/m32, xmm1, imm8: the element into T0 */
+static void gen_EVEX_VPEXTR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int src = vector_reg_offset(&decode->op[2]);
+
+    if (decode->op[0].ot == MO_64) {
+        tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env,
+                      src + offsetof(ZMMReg, ZMM_Q(decode->immediate & 1)));
+    } else {
+        tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env,
+                         src + offsetof(ZMMReg, ZMM_L(decode->immediate & 3)));
+    }
+}
+
+/*
+ * VINSERTPS xmm1, xmm2, xmm3/m32, imm8 (SDM Vol2A INSERTPS): TMP := register source
+ * dword imm8[7:6] (memory: m32); DEST := SRC1 with dword imm8[5:4] := TMP; then the dwords
+ * selected by imm8[3:0] are zeroed; DEST[MAXVL-1:128] := 0 (gen_evex_insn).
+ */
+static void gen_EVEX_VINSERTPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int imm = decode->immediate & 0xff, d = vector_reg_offset(&decode->op[0]), i;
+    int count_s = decode->op[2].has_ea ? 0 : (imm >> 6) & 3;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    tcg_gen_ld_i32(tcg_ctx, t, cpu_env,
+                   vector_reg_offset(&decode->op[2]) + offsetof(ZMMReg, ZMM_L(count_s)));
+    tcg_gen_gvec_mov(tcg_ctx, MO_64, d, vector_reg_offset(&decode->op[1]), 16, 16);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, d + offsetof(ZMMReg, ZMM_L((imm >> 4) & 3)));
+    for (i = 0; i < 4; i++) {
+        if (imm & (1 << i)) {
+            tcg_gen_st_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
+                           d + offsetof(ZMMReg, ZMM_L(i)));
+        }
+    }
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U215) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

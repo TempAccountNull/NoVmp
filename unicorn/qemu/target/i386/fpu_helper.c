@@ -7037,6 +7037,15 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
         obytes = n << aux;
     }
 #endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+    int cel = (1 << ((desc >> 20) & 15)) >> esz;    /* elements per chunk / group */
+    int csel = imm & ((vl >> ((desc >> 20) & 15)) - 1);
+
+    if (op == EVEX_PERM_EXTRACT) {
+        n = cel;                            /* the chunk: a destination narrower than VL */
+        obytes = n << esz;
+    }
+#endif /* __Use_Original_Qemu (U215) */
     memset(&r, 0, sizeof(r));
     for (j = 0; j < n; j++) {
         int l0 = j & ~(lane - 1), k = j & (lane - 1);
@@ -7138,6 +7147,21 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
             v = evex_get_elem(b, esz, j | 1);
             break;
 #endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U215) */
+        case EVEX_PERM_INSERT:      /* TMP := SRC1; TMP[chunk imm8] := SRC2[chunk-1:0] */
+            if (j >= csel * cel && j < (csel + 1) * cel) {
+                v = evex_get_elem(b, esz, j - csel * cel);
+            } else {
+                v = evex_get_elem(a, esz, j);
+            }
+            break;
+        case EVEX_PERM_EXTRACT:     /* SRC2[chunk imm8] */
+            v = evex_get_elem(b, esz, csel * cel + j);
+            break;
+        case EVEX_PERM_BCAST:       /* SRC2[j modulo group] */
+            v = evex_get_elem(b, esz, j % cel);
+            break;
+#endif /* __Use_Original_Qemu (U215) */
         default:
             g_assert_not_reached();
         }
