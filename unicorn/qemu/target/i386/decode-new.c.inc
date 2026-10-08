@@ -3043,7 +3043,8 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
 #if __Use_Original_Qemu != 1 /* ours (U210) */
         /*
          * NoVmp (ledger U210): an EVEX dq operand is 128 bits whatever the vector length
-         * (VINSERTF32X4 xmm3/m128, VEXTRACTF32X4 xmm1/m128, VBROADCASTF32X4 m128): the
+         * (VINSERTF32X4 xmm3/m128, VEXTRACTF32X4 xmm1/m128, VBROADCASTF32X4 m128; U260: the
+         * xmm3/m128 count of VPSLLW/VPSRLW/VPSRAW, Mem128 tuple, same rule): the
          * allowed lengths are in the form's evex_vl (decode_evex_vl).
          */
         if (s->prefix & PREFIX_EVEX) {
@@ -4031,7 +4032,8 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
      * NoVmp (ledger U210, was: every non-LIG length < 512): AVX512VL gates the 128/256-bit lengths of a form that also has a
      * 512-bit length; forms that exist only at 128 bits (E9NF: VMOVD/VMOVQ, VPINSRD,
      * VINSERTPS, VMOVHPS, ...; E7NM.128: VMOVHLPS/VMOVLHPS) need only their own feature
-     * (SDM opcode tables: "AVX512F" without "AVX512VL").
+     * (SDM opcode tables: "AVX512F" without "AVX512VL"). U260 (merged here): the
+     * EVEX.128-only AVX512BW forms (VPEXTRB/W, VPINSRB/W) likewise need no AVX512VL.
      */
     if (!(e->evex_vl & X86_EVEX_LIG) && (e->evex_vl & X86_EVEX_VL512) && s->evex_vl < 64 &&
         !(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512VL)) {

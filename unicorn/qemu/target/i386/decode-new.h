@@ -438,6 +438,15 @@ struct X86OpEntry {
     /* X86_EVEX_CX_*: VPEXPAND/VEXPAND, VPCOMPRESS/VCOMPRESS (gen_evex_cx) */
     unsigned     evex_cx:2;
 #endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U260) */
+    /*
+     * NoVmp (ledger U260): forms whose writemask granularity differs from evex_es (the
+     * element size of {1toN} and disp8*N), e.g. VPACKSSDW (m32bcst, word writemask). A
+     * destination narrower than the vector length (VPMOVWB: VL/2 bytes) is taken from the
+     * size of operand 0 (U210 evex_dest_bytes; U260's evex_narrow field merged into it).
+     */
+    unsigned     evex_kes:3;    /* X86_EVEX_ES_8..64 of the writemask; 0 = evex_es */
+#endif /* __Use_Original_Qemu (U260) */
 };
 typedef struct X86DecodedOp {
     int8_t n;

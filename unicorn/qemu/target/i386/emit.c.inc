@@ -449,7 +449,18 @@ static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
     return p;
 }
 
-/* elements of the instruction that the opmask controls (scalar forms: element 0 only) */
+#if __Use_Original_Qemu != 1 /* ours (U260) */
+/*
+ * NoVmp (ledger U260): element size of the writemask (MO_8..MO_64): evex_kes when the
+ * form sets it (VPACKSSDW/VPACKUSDW: m32bcst {1toN} and disp8*N by dwords, writemask by
+ * words), else the element size of the form.
+ */
+static int evex_kesz(DisasContext *s, X86DecodedInsn *decode)
+{
+    return decode->e.evex_kes ? decode->e.evex_kes - X86_EVEX_ES_8 + MO_8 : s->evex_esz;
+}
+#endif /* __Use_Original_Qemu (U260) */
+
 static int evex_mem_bytes(X86DecodedOp *op)
 {
     return op->ot <= MO_64 ? 1 << op->ot : 16 << (op->ot - MO_128);
@@ -476,11 +487,16 @@ static int evex_dest_bytes(DisasContext *s, X86DecodedInsn *decode)
 }
 #endif /* __Use_Original_Qemu (U210) */
 
+/*
+ * elements of the instruction that the opmask controls (scalar forms: element 0 only):
+ * KL = destination bytes (U210) / writemask element size (U260); up to 64 (byte elements
+ * of a ZMM)
+ */
 static int evex_nelem(DisasContext *s, X86DecodedInsn *decode)
 {
 #if __Use_Original_Qemu != 1 /* ours (U210) */
     if (!(decode->e.evex_vl & X86_EVEX_LIG)) {
-        return evex_dest_bytes(s, decode) >> s->evex_esz;
+        return evex_dest_bytes(s, decode) >> evex_kesz(s, decode);   /* U260: evex_kesz */
     }
 #endif /* __Use_Original_Qemu (U210) */
     return (decode->e.evex_vl & X86_EVEX_LIG) ? 1 : s->evex_vl >> s->evex_esz;
@@ -771,7 +787,12 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     X86OpEntry *e = &decode->e;
     X86DecodedOp *op0 = &decode->op[0];
-    int vl = s->evex_vl, esz = s->evex_esz, nelem = evex_nelem(s, decode);
+    /*
+     * U260: esz = writemask element size; a destination narrower than VL (VPMOVWB: VL/2)
+     * comes from evex_dest_bytes (U210), vl stays the vector length
+     */
+    int vl = s->evex_vl, esz = evex_kesz(s, decode);
+    int nelem = evex_nelem(s, decode);
     bool fp = e->evex_fp;
     bool has_mem = op0->has_ea || decode->op[1].has_ea || decode->op[2].has_ea;
     TCGv_i64 kmask = NULL;
