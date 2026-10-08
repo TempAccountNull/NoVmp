@@ -353,6 +353,13 @@ typedef enum X86EvexTuple {
     X86_EVEX_TT_EIGHTH_MEM,  /* N = VL/8 */
     X86_EVEX_TT_MEM128,      /* N = 16 */
     X86_EVEX_TT_MOVDDUP,     /* N = 8 (VL 128), VL otherwise */
+#if __Use_Original_Qemu != 1 /* ours (U332) */
+    /*
+     * AVX512-FP16 "Quarter" tuple (SDM Vol2A Table 2-34, VCVTPH2PD/QQ/UQQ): N = VL/4, the
+     * element size with EVEX.b ({1toN} allowed, unlike Quarter Mem of U210)
+     */
+    X86_EVEX_TT_QUARTER,
+#endif /* __Use_Original_Qemu (U332) */
 } X86EvexTuple;
 
 typedef enum X86EvexMask {

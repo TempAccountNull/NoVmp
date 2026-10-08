@@ -4086,6 +4086,10 @@ static int evex_disp8_scale(DisasContext *s, X86OpEntry *e, X86DecodedOp *op)
         return 16;
     case X86_EVEX_TT_MOVDDUP:
         return vl == 16 ? 8 : vl;
+#if __Use_Original_Qemu != 1 /* ours (U332) */
+    case X86_EVEX_TT_QUARTER:
+        return s->evex_b ? esz : vl / 4;
+#endif /* __Use_Original_Qemu (U332) */
     default:
         return 1;
     }
@@ -4570,9 +4574,17 @@ static bool decode_evex_vl(DisasContext *s, CPUX86State *env, X86OpEntry *e)
         s->evex_rc = e->evex_rc == X86_EVEX_RC_ER ? s->evex_ll : -2;
         vl = (e->evex_vl & X86_EVEX_LIG) ? 16 : 64;
     } else {
+#if __Use_Original_Qemu == 1 /* original QEMU (U332) */
         if (s->evex_b && e->evex_tt != X86_EVEX_TT_FULL && e->evex_tt != X86_EVEX_TT_HALF) {
             return false;
         }
+#else /* ours (U332) */
+        /* U332: also the FP16 Quarter tuple (m16bcst of VCVTPH2PD/QQ/UQQ) */
+        if (s->evex_b && e->evex_tt != X86_EVEX_TT_FULL && e->evex_tt != X86_EVEX_TT_HALF &&
+            e->evex_tt != X86_EVEX_TT_QUARTER) {
+            return false;
+        }
+#endif /* __Use_Original_Qemu (U332) */
         if (e->evex_vl & X86_EVEX_LIG) {
             vl = 16;
         } else if (s->evex_ll == 3 || !(e->evex_vl & (1 << s->evex_ll))) {
