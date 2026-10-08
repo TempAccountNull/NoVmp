@@ -1384,6 +1384,70 @@ static void decode_0F_K(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 }
 #endif /* __Use_Original_Qemu (U130) */
 
+#if __Use_Original_Qemu != 1 /* ours (U131) */
+/*
+ * NoVmp (ledger U131): KMOVW/KMOVB/KMOVQ/KMOVD (SDM Vol2A), VEX.L0, vvvv 1111b.
+ * 90 k1, k2/m (RM, K21) and 91 m, k1 (MR, K21; mod = 11b #UD): NP.W0 = W (AVX512F),
+ * 66.W0 = B (DQ), NP.W1 = Q (BW), 66.W1 = D (BW); memory is exactly 8/16/32/64 bits.
+ * 92 k1, r32/r64 and 93 r32/r64, k1 (RR, K20; mod != 11b #UD): NP.W0 = W, 66.W0 = B,
+ * F2.W0 = D, F2.W1 = Q (r64); NP/66.W1 and F3 #UD. "VEX.W can only be used to modify the
+ * size of the GPR operand in 64b mode" (KMOVQ k, r64 / r64, k are V/I): outside 64-bit
+ * mode F2.W1 is KMOVD. A GPR destination is ZeroExtension(SRC[w-1:0]) (G,d writes
+ * zero-extend to 64 bits in 64-bit mode); a k destination is zero-extended to 64.
+ */
+static void decode_0F_KMOV(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry k90[8] = {
+        X86_OP_ENTRY3(KMOV, K,w, None,None, KW,w, vex21 chk(VEX128) cpuid(AVX512F)),
+        X86_OP_ENTRY3(KMOV, K,b, None,None, KW,b, vex21 chk(VEX128) cpuid(AVX512DQ)),
+        X86_OP_NONE X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, K,q, None,None, KW,q, vex21 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_ENTRY3(KMOV, K,d, None,None, KW,d, vex21 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry k91[8] = {
+        X86_OP_ENTRY3(KMOV, KM,w, None,None, K,w, vex21 chk(VEX128) cpuid(AVX512F)),
+        X86_OP_ENTRY3(KMOV, KM,b, None,None, K,b, vex21 chk(VEX128) cpuid(AVX512DQ)),
+        X86_OP_NONE X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, KM,q, None,None, K,q, vex21 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_ENTRY3(KMOV, KM,d, None,None, K,d, vex21 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry k92[8] = {
+        X86_OP_ENTRY3(KMOV, K,w, None,None, R,d, vex20 chk(VEX128) cpuid(AVX512F)),
+        X86_OP_ENTRY3(KMOV, K,b, None,None, R,d, vex20 chk(VEX128) cpuid(AVX512DQ)),
+        X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, K,d, None,None, R,d, vex20 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_NONE X86_OP_NONE X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, K,q, None,None, R,q, vex20 chk(VEX128) cpuid(AVX512BW)),
+    };
+    static const X86OpEntry k93[8] = {
+        X86_OP_ENTRY3(KMOV, G,d, None,None, KU,w, vex20 chk(VEX128) cpuid(AVX512F)),
+        X86_OP_ENTRY3(KMOV, G,d, None,None, KU,b, vex20 chk(VEX128) cpuid(AVX512DQ)),
+        X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, G,d, None,None, KU,d, vex20 chk(VEX128) cpuid(AVX512BW)),
+        X86_OP_NONE X86_OP_NONE X86_OP_NONE
+        X86_OP_ENTRY3(KMOV, G,q, None,None, KU,q, vex20 chk(VEX128) cpuid(AVX512BW)),
+    };
+    bool w = s->vex_w;
+
+    switch (*b) {
+    case 0x90:
+        decode_K_pp_w(s, entry, k90, w);
+        break;
+    case 0x91:
+        decode_K_pp_w(s, entry, k91, w);
+        break;
+    default:
+        if (!CODE64(s) && (s->prefix & PREFIX_REPNZ)) {
+            w = false;   /* F2.W1 outside 64-bit mode: KMOVD */
+        }
+        decode_K_pp_w(s, entry, *b == 0x92 ? k92 : k93, w);
+        break;
+    }
+}
+#endif /* __Use_Original_Qemu (U131) */
+
 static const X86OpEntry opcodes_0F[256] = {
     [0x0E] = X86_OP_ENTRY0(EMMS,                              cpuid(3DNOW)), /* femms */
     /*
@@ -1462,6 +1526,13 @@ static const X86OpEntry opcodes_0F[256] = {
     [0x4a] = X86_OP_GROUP0(0F_K),
     [0x4b] = X86_OP_GROUP0(0F_K),
 #endif /* __Use_Original_Qemu (U130) */
+#if __Use_Original_Qemu != 1 /* ours (U131) */
+    /* VEX opmask: KMOV k, k/m; m, k; k, r; r, k (U131) */
+    [0x90] = X86_OP_GROUP0(0F_KMOV),
+    [0x91] = X86_OP_GROUP0(0F_KMOV),
+    [0x92] = X86_OP_GROUP0(0F_KMOV),
+    [0x93] = X86_OP_GROUP0(0F_KMOV),
+#endif /* __Use_Original_Qemu (U131) */
 
     [0x58] = X86_OP_ENTRY3(VADD,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
     [0x59] = X86_OP_ENTRY3(VMUL,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),

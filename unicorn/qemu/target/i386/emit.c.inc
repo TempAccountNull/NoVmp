@@ -1622,6 +1622,20 @@ static void gen_KXOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 }
 #endif /* __Use_Original_Qemu (U130) */
 
+#if __Use_Original_Qemu != 1 /* ours (U131) */
+/*
+ * NoVmp (ledger U131): KMOV k/m/r <- k/m/r. The source (op 2) is already SRC[w-1:0]
+ * (k register or exactly w bits of memory) or the GPR; the writeback stores exactly w
+ * bits to memory, zero-extends a k register to 64 bits, or writes the GPR at its size
+ * (r32 zero-extends in 64-bit mode).
+ */
+static void gen_KMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    tcg_gen_mov_tl(tcg_ctx, s->T0, s->T1);
+}
+#endif /* __Use_Original_Qemu (U131) */
+
 static void gen_LDMXCSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
