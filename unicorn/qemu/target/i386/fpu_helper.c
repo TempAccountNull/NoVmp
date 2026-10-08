@@ -4544,6 +4544,75 @@ void helper_xsaveopt(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
     do_xsave(env, ptr, rfbm, inuse, inuse, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U66) */
+/*
+ * NoVmp (ledger U66): XSAVEC and the compacted form of XRSTOR (SDM Vol2
+ * XSAVEC/XRSTOR "Operation", Vol1 13.4.3/13.8.2/13.10; QEMU 7.2 and 11.1
+ * have neither; i5-13600K: XSAVEC with EDX:EAX = 3 writes XSTATE_BV = 3,
+ * XCOMP_BV = 8000000000000003h). Components 2..62 are packed from offset 576
+ * in bit order (none of the components implemented here requires 64-byte
+ * alignment, CPUID.(EAX=0DH,ECX=i):ECX[1] = 0). XINUSE as for XSAVE.
+ */
+static uint64_t xsave_comp_size(int i)
+{
+    return i >= 2 && i < XSAVE_STATE_AREA_COUNT ? x86_ext_save_areas[i].size : 0;
+}
+
+static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra)
+{
+    switch (i) {
+    case XSTATE_YMM_BIT:     do_xsave_ymmh(env, at, ra); break;
+    case XSTATE_BNDREGS_BIT: do_xsave_bndregs(env, at, ra); break;
+    case XSTATE_BNDCSR_BIT:  do_xsave_bndcsr(env, at, ra); break;
+    case XSTATE_PKRU_BIT:    do_xsave_pkru(env, at, ra); break;
+    default:                 break;
+    }
+}
+
+static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
+                      uint64_t inuse, uintptr_t ra)
+{
+    uint64_t save;
+    target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
+    int i;
+
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (ptr & 63) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    rfbm &= env->xcr0;
+    save = rfbm & inuse;
+    if ((rfbm & XSTATE_SSE_MASK) && env->mxcsr != 0x1f80) {
+        save |= XSTATE_SSE_MASK;
+    }
+    if (save & XSTATE_FP_MASK) {
+        do_xsave_fpu(env, ptr, ra);
+    }
+    if (save & XSTATE_SSE_MASK) {
+        /* SSE state: XMM registers, MXCSR and MXCSR_MASK */
+        do_xsave_mxcsr(env, ptr, ra);
+        do_xsave_sse(env, ptr, ra);
+    }
+    for (i = 2; i < 63; i++) {
+        if (rfbm & (1ULL << i)) {
+            if (save & (1ULL << i)) {
+                do_xsave_comp(env, i, ptr + next, ra);
+            }
+            next += xsave_comp_size(i);
+        }
+    }
+    cpu_stq_data_ra(env, ptr + XO(header.xstate_bv), save, ra);
+    cpu_stq_data_ra(env, ptr + XO(header.xcomp_bv), rfbm | (1ULL << 63), ra);
+}
+
+void helper_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
+{
+    do_xsavec(env, ptr, rfbm, get_xinuse(env), GETPC());
+}
+#endif /* __Use_Original_Qemu (U66) */
+
 static void do_xrstor_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
     int i, fpuc, fpus, fptag;
@@ -4708,6 +4777,105 @@ void helper_fxrstor(CPUX86State *env, target_ulong ptr)
     do_fxrstor(env, ptr, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U66) */
+/* NoVmp (ledger U66): the compacted form of XRSTOR, see do_xsavec */
+static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
+                              uint64_t xstate_bv, uintptr_t ra)
+{
+    uint64_t xcomp_bv = cpu_ldq_data_ra(env, ptr + XO(header.xcomp_bv), ra);
+    uint64_t format = xcomp_bv & ~(1ULL << 63), restore, init;
+    target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
+    int i;
+
+    if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVEC)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);        /* compacted form not supported */
+    }
+    /* SDM Vol1 13.8.2: XCOMP_BV[62:0] within XCR0, XSTATE_BV within XCOMP_BV[62:0],
+       bytes 63:16 of the header zero; all checked before any state is loaded */
+    if ((format & ~env->xcr0) || (xstate_bv & ~format)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    for (i = 16; i < 64; i += 8) {
+        if (cpu_ldq_data_ra(env, ptr + sizeof(X86LegacyXSaveArea) + i, ra)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+    }
+    restore = format & rfbm & xstate_bv;
+    init = (rfbm & ~xstate_bv) | (rfbm & ~format);
+    if (restore & XSTATE_SSE_MASK) {
+        check_mxcsr(env, cpu_ldl_data_ra(env, ptr + XO(legacy.mxcsr), ra), ra);
+    }
+
+    if (restore & XSTATE_FP_MASK) {
+        do_xrstor_fpu(env, ptr, ra);
+    } else if (init & XSTATE_FP_MASK) {
+        do_fninit(env);
+        memset(env->fpregs, 0, sizeof(env->fpregs));
+    }
+    if (restore & XSTATE_SSE_MASK) {
+        do_xrstor_mxcsr(env, ptr, ra);
+        do_xrstor_sse(env, ptr, ra);
+    } else if (init & XSTATE_SSE_MASK) {
+        do_clear_sse(env);
+        cpu_set_mxcsr(env, 0x1f80);
+    }
+    for (i = 2; i < 63; i++) {
+        uint64_t bit = 1ULL << i;
+        if (format & bit) {
+            if (restore & bit) {
+                switch (i) {
+                case XSTATE_YMM_BIT:
+                    do_xrstor_ymmh(env, ptr + next, ra);
+                    break;
+                case XSTATE_BNDREGS_BIT:
+                    do_xrstor_bndregs(env, ptr + next, ra);
+                    env->hflags |= HF_MPX_IU_MASK;
+                    break;
+                case XSTATE_BNDCSR_BIT:
+                    do_xrstor_bndcsr(env, ptr + next, ra);
+                    cpu_sync_bndcs_hflags(env);
+                    break;
+                case XSTATE_PKRU_BIT: {
+                    uint64_t old_pkru = env->pkru;
+                    do_xrstor_pkru(env, ptr + next, ra);
+                    if (env->pkru != old_pkru) {
+                        tlb_flush(env_cpu(env));
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+            next += xsave_comp_size(i);
+        }
+        if (init & bit) {
+            switch (i) {
+            case XSTATE_YMM_BIT:
+                do_clear_ymmh(env);
+                break;
+            case XSTATE_BNDREGS_BIT:
+                memset(env->bnd_regs, 0, sizeof(env->bnd_regs));
+                env->hflags &= ~HF_MPX_IU_MASK;
+                break;
+            case XSTATE_BNDCSR_BIT:
+                memset(&env->bndcs_regs, 0, sizeof(env->bndcs_regs));
+                cpu_sync_bndcs_hflags(env);
+                break;
+            case XSTATE_PKRU_BIT:
+                if (env->pkru) {
+                    env->pkru = 0;
+                    tlb_flush(env_cpu(env));
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U66) */
+
 static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr_t ra)
 {
     uint64_t xstate_bv, xcomp_bv, reserve0;
@@ -4726,10 +4894,18 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
 
     xstate_bv = cpu_ldq_data_ra(env, ptr + XO(header.xstate_bv), ra);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U66) */
     if ((int64_t)xstate_bv < 0) {
         /* FIXME: Compact form.  */
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
+#else /* ours (U66) */
+    /* XCOMP_BV[63] selects the compacted form (U66) */
+    if ((int64_t)cpu_ldq_data_ra(env, ptr + XO(header.xcomp_bv), ra) < 0) {
+        do_xrstor_compact(env, ptr, rfbm, xstate_bv, ra);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U66) */
 
     /* Standard form.  */
 

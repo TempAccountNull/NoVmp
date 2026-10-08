@@ -97,3 +97,9 @@ fxrstor [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0
 # --- RDRAND/RDSEED: upper bits populated, CF=1 (values differ by nature; check width)
 rdrand rax; mov rbx, rax; shr rbx, 47
 rdrand eax; mov ebx, eax; shr ebx, 15
+# --- XSAVEC / compacted XRSTOR round trip and #GP rules
+mov eax, 7; xor edx, edx; xsavec [rsi]; xorps xmm3, xmm3; vxorps ymm4, ymm4, ymm4; fninit; xrstor [rsi] | xmm3=11111111111111111111111111111111 st0=3FFF:8000000000000000 mxcsr=0x1FC0
+mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x210], 1; xrstor [rsi]
+mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x200], 4; xrstor [rsi]
+mov eax, 3; xor edx, edx; xsavec [rsi]; mov dword ptr [rsi+24], 0x11f80; xrstor [rsi]
+mov eax, 2; xor edx, edx; xsavec [rsi]; mov eax, 3; xrstor [rsi] | st0=3FFF:8000000000000000 xmm2=22222222222222222222222222222222

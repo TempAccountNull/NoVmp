@@ -4451,6 +4451,25 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             set_cc_op(s, CC_OP_EFLAGS);
             break;
 
+#if __Use_Original_Qemu != 1 /* ours (U66) */
+        case 4: /* XSAVEC (U66) */
+            if (mod == 3
+                || (s->cpuid_xsave_features & CPUID_XSAVE_XSAVEC) == 0
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            if (s->flags & HF_TS_MASK) {
+                gen_exception(s, EXCP07_PREX);
+                break;
+            }
+            gen_lea_modrm(env, s, modrm);
+            tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
+                                  cpu_regs[R_EDX]);
+            gen_x87_fx64(s);
+            gen_helper_xsavec(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
+            break;
+
+#endif /* __Use_Original_Qemu (U66) */
         case 7: /* RDSEED, RDPID with f3 prefix */
             if (mod != 3 ||
                 (s->prefix & (PREFIX_LOCK | PREFIX_REPNZ))) {
