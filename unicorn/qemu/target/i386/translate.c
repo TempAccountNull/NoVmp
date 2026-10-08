@@ -176,6 +176,9 @@ typedef struct DisasContext {
     int cpuid_ext3_features;
     int cpuid_7_0_ebx_features;
     int cpuid_7_0_ecx_features;
+#if __Use_Original_Qemu != 1 /* ours (U74) */
+    int cpuid_7_0_edx_features;
+#endif /* __Use_Original_Qemu (U74) */
     int cpuid_7_1_eax_features;
     int cpuid_xsave_features;
     struct uc_struct *uc;
@@ -6925,6 +6928,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             ot = (mod != 3 ? MO_16 : s->dflag);
             gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 1);
             break;
+#if __Use_Original_Qemu != 1 /* ours (U74) */
+        /*
+         * NoVmp (ledger U74): SERIALIZE, NP 0F 01 E8 (SDM Vol2 SERIALIZE).
+         * Architecturally a no-op that serialises instruction execution;
+         * end the TB so the next instruction is fetched afresh (as after
+         * CPUID/IRET). 66/F2/F3/LOCK #UD; #UD without CPUID.7.0.EDX[14].
+         */
+        case 0xe8: /* serialize */
+            if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_SERIALIZE)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA
+                                 | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+#endif /* __Use_Original_Qemu (U74) */
         case 0xee: /* rdpkru */
             if (s->prefix & (PREFIX_LOCK | PREFIX_DATA
                              | PREFIX_REPZ | PREFIX_REPNZ)) {
@@ -7847,6 +7866,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cpuid_ext3_features = env->features[FEAT_8000_0001_ECX];
     dc->cpuid_7_0_ebx_features = env->features[FEAT_7_0_EBX];
     dc->cpuid_7_0_ecx_features = env->features[FEAT_7_0_ECX];
+#if __Use_Original_Qemu != 1 /* ours (U74) */
+    dc->cpuid_7_0_edx_features = env->features[FEAT_7_0_EDX];
+#endif /* __Use_Original_Qemu (U74) */
     dc->cpuid_7_1_eax_features = env->features[FEAT_7_1_EAX];
     dc->cpuid_7_1_eax_features = env->features[FEAT_7_1_EAX];
     dc->cpuid_xsave_features = env->features[FEAT_XSAVE];
@@ -7859,6 +7881,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cpuid_7_0_ebx_features &= x86_cpuid_profile_mask(env, 7, 0, 1);
     dc->cpuid_7_0_ecx_features &= x86_cpuid_profile_mask(env, 7, 0, 2) | CPUID_7_0_ECX_OSPKE;
     dc->cpuid_7_1_eax_features &= x86_cpuid_profile_mask(env, 7, 1, 0);
+    dc->cpuid_7_0_edx_features &= x86_cpuid_profile_mask(env, 7, 0, 3); /* U74 */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
     dc->jmp_opt = !(flags & (HF_RF_MASK | HF_TF_MASK | HF_INHIBIT_IRQ_MASK));
