@@ -2771,6 +2771,58 @@ static void test_x86_sse_aligned_access(void)
     OK(uc_close(uc));
 }
 
+/*
+ * NoVmp U80: PTWRITE is #UD by default (SDM, CPUID.14.0:EBX[4] = 0) and, with
+ * UC_X86_QUIRK_PTWRITE_NOP, reads its operand and does nothing else (i5-13600K).
+ * The quirk is checked at run time: toggling it over the same translated block
+ * must change the behaviour.
+ */
+static void test_x86_ptwrite_quirk(void)
+{
+    /* ptwrite qword [rax]; inc rbx */
+    static const char code[] = "\xf3\x48\x0f\xae\x20\x48\xff\xc3";
+    X86IntrCapture capture = { 0 };
+    uc_engine *uc;
+    uc_hook hook;
+    uint64_t rax = 0x200000, rbx = 0;
+    uint32_t quirks;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_mem_map(uc, 0x200000, 0x1000, UC_PROT_ALL));
+    OK(uc_hook_add(uc, &hook, UC_HOOK_INTR, test_x86_intr_capture_cb,
+                   &capture, 1, 0));
+
+    /* default: #UD (raw Unicorn reports it as UC_ERR_INSN_INVALID), RBX untouched */
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
+    OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
+    uc_assert_err(UC_ERR_INSN_INVALID,
+                  uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
+    TEST_CHECK(rbx == 0);
+
+    /* quirk on, same code: runs, RBX incremented */
+    OK(uc_ctl_set_x86_hw_quirks(uc, UC_X86_QUIRK_PTWRITE_NOP));
+    OK(uc_ctl_get_x86_hw_quirks(uc, &quirks));
+    TEST_CHECK(quirks == UC_X86_QUIRK_PTWRITE_NOP);
+    capture.count = 0;
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
+    TEST_CHECK(capture.count == 0);
+    TEST_CHECK(rbx == 1);
+
+    /* quirk on: the operand is read, an unmapped one faults */
+    rax = 0x300000;
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
+    uc_assert_err(UC_ERR_READ_UNMAPPED,
+                  uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
+    TEST_CHECK(rbx == 1);
+
+    OK(uc_close(uc));
+}
+
 static void test_x86_data_watchpoint(void)
 {
     const uint64_t data_addr = 0x200000;
@@ -4036,6 +4088,7 @@ TEST_LIST = {
     {"test_x86_avx512_tcg_mask", test_x86_avx512_tcg_mask},
     {"test_x86_vaes_vex_gating", test_x86_vaes_vex_gating},
     {"test_x86_vpclmulqdq_tcg_mask", test_x86_vpclmulqdq_tcg_mask},
+    {"test_x86_ptwrite_quirk", test_x86_ptwrite_quirk},
     {"test_x86_relative_jump", test_x86_relative_jump},
     {"test_x86_loop", test_x86_loop},
     {"test_x86_invalid_mem_read", test_x86_invalid_mem_read},

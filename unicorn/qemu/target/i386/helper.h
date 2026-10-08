@@ -84,6 +84,9 @@ DEF_HELPER_2(cmpxchg16b, void, env, tl)
 #if __Use_Original_Qemu != 1 /* ours (U73) */
 DEF_HELPER_3(movdir64b, void, env, tl, tl)
 #endif /* __Use_Original_Qemu (U73) */
+#if __Use_Original_Qemu != 1 /* ours (U80) */
+DEF_HELPER_1(ptwrite, void, env)
+#endif /* __Use_Original_Qemu (U80) */
 #endif
 DEF_HELPER_1(single_step, void, env)
 DEF_HELPER_1(rechecking_single_step, void, env)
