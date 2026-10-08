@@ -6740,3 +6740,27 @@ uint64_t helper_evex_pcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
     return r;
 }
 #endif /* __Use_Original_Qemu (U152) */
+#if __Use_Original_Qemu != 1 /* ours (U159) */
+
+/*
+ * NoVmp (ledger U159): VPTERNLOGD/Q: every result bit is imm8[(a << 2) | (b << 1) | c] of
+ * the bits of a (the destination before the instruction), b (EVEX.vvvv), c (r/m); desc =
+ * imm8 | vector length in bytes << 8. d may be any of the sources.
+ */
+void helper_evex_pternlog(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg *c,
+                          uint32_t desc)
+{
+    int imm = desc & 0xff, words = (desc >> 8) / 8, i, k;
+
+    for (i = 0; i < words; i++) {
+        uint64_t x = a->ZMM_Q(i), y = b->ZMM_Q(i), z = c->ZMM_Q(i), r = 0;
+
+        for (k = 0; k < 8; k++) {
+            if ((imm >> k) & 1) {
+                r |= ((k & 4) ? x : ~x) & ((k & 2) ? y : ~y) & ((k & 1) ? z : ~z);
+            }
+        }
+        d->ZMM_Q(i) = r;
+    }
+}
+#endif /* __Use_Original_Qemu (U159) */

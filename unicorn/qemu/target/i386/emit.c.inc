@@ -912,6 +912,25 @@ static void gen_EVEX_VPRORI(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     gen_evex_shift_imm(s, decode, 4);
 }
 #endif /* __Use_Original_Qemu (U158) */
+#if __Use_Original_Qemu != 1 /* ours (U159) */
+
+/*
+ * NoVmp (ledger U159): VPTERNLOGD/Q: bit = imm8[(DEST << 2) | (SRC2 << 1) | SRC3] with
+ * DEST the destination register before the instruction (also when the result goes to the
+ * scratch register for masking), SRC2 = EVEX.vvvv, SRC3 = r/m / {1toN}.
+ */
+static void gen_EVEX_VPTERNLOG(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pa = tcg_temp_new_ptr(tcg_ctx);
+
+    tcg_gen_addi_ptr(tcg_ctx, pa, cpu_env, ZMM_OFFSET(decode->op[0].n));
+    gen_helper_evex_pternlog(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR1, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, (decode->immediate & 0xff) |
+                                                       (vector_len(s, decode) << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pa);
+}
+#endif /* __Use_Original_Qemu (U159) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */

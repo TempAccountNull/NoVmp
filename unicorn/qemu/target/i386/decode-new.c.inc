@@ -2163,6 +2163,11 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x1f] = X86_OP_ENTRY4(EVEX_VPCMP, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
                            ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U152) */
+#if __Use_Original_Qemu != 1 /* ours (U159) */
+    /* NoVmp (ledger U159): VPTERNLOGD/Q (66 25 ib, W0/W1): Full, {k1}{z}, {1toN}; E4 */
+    [0x25] = X86_OP_ENTRY4(EVEX_VPTERNLOG, V,x, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U159) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
