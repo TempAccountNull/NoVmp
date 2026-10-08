@@ -600,3 +600,48 @@ uint64_t helper_evex_shufbitqmb(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t
     return r;
 }
 #endif /* __Use_Original_Qemu (U324) */
+
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+/*
+ * NoVmp (ledger U325): byte permutes (SDM Vol2C), desc = op | VL bytes << 8, n = VL - 1:
+ * op 0 VPERMB:   DEST.byte[j] := SRC2.byte[SRC1.byte[j] & n]
+ * op 1 VPERMI2B: i := DEST.byte[j]; DEST.byte[j] := (i & VL) ? SRC2.byte[i & n] : SRC1.byte[i & n]
+ *                (the Operation box writes "off := 8*SRC1[...]" but selects the table with
+ *                TMP_DEST and the Description names the destination as the index operand)
+ * op 2 VPERMT2B: i := SRC1.byte[j]; DEST.byte[j] := (i & VL) ? SRC2.byte[i & n] : DEST.byte[i & n]
+ * d is the result (maybe a scratch register), old the destination register before the
+ * instruction; every source byte is read before any result byte is written.
+ */
+void helper_evex_permb(CPUX86State *env, ZMMReg *d, ZMMReg *old, ZMMReg *a, ZMMReg *b,
+                       uint32_t desc)
+{
+    int op = desc & 0xff, vl = desc >> 8, n = vl - 1, j;
+    uint8_t o[64], s1[64], s2[64], r[64];
+
+    for (j = 0; j < vl; j++) {
+        o[j] = old->ZMM_B(j);
+        s1[j] = a->ZMM_B(j);
+        s2[j] = b->ZMM_B(j);
+    }
+    for (j = 0; j < vl; j++) {
+        uint8_t i;
+
+        switch (op) {
+        case 0:
+            r[j] = s2[s1[j] & n];
+            break;
+        case 1:
+            i = o[j];
+            r[j] = (i & vl) ? s2[i & n] : s1[i & n];
+            break;
+        default:
+            i = s1[j];
+            r[j] = (i & vl) ? s2[i & n] : o[i & n];
+            break;
+        }
+    }
+    for (j = 0; j < vl; j++) {
+        d->ZMM_B(j) = r[j];
+    }
+}
+#endif /* __Use_Original_Qemu (U325) */

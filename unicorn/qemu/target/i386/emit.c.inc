@@ -5321,3 +5321,36 @@ static void gen_EVEX_VPSHUFBITQMB(DisasContext *s, CPUX86State *env, X86DecodedI
                                tcg_constant_i32(tcg_ctx, vector_len(s, decode)));
 }
 #endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+
+/*
+ * NoVmp (ledger U325): VPERMB / VPERMI2B / VPERMT2B (helper_evex_permb). The destination
+ * register before the instruction (index of VPERMI2B, table of VPERMT2B) is passed
+ * separately: with a mask the result goes to gen_evex_insn's scratch register.
+ */
+static void gen_evex_permb(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = tcg_temp_new_ptr(tcg_ctx);
+
+    tcg_gen_addi_ptr(tcg_ctx, pd, cpu_env, ZMM_OFFSET(decode->op[0].n));
+    gen_helper_evex_permb(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, op | (vector_len(s, decode) << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+static void gen_EVEX_VPERMB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 0);
+}
+
+static void gen_EVEX_VPERMI2B(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 1);
+}
+
+static void gen_EVEX_VPERMT2B(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_permb(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U325) */

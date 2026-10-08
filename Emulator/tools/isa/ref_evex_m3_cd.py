@@ -21,6 +21,10 @@ pseudocode), not from any C implementation:
   AVX512_BITALG (U324):
   VPOPCNTB/W      EVEX.128/256/512.66.0F38.W0/W1 54 /r   Full Mem tuple (no {1toN}), E4
   VPSHUFBITQMB    EVEX.128/256/512.66.0F38.W0 8F /r      k1{k2}, Full Mem tuple, E4
+  AVX512_VBMI (U325; VPMULTISHIFTQB not modelled - not implemented yet):
+  VPERMB          EVEX.128/256/512.66.0F38.W0 8D /r      Full Mem tuple, E4NF.nb
+  VPERMI2B        EVEX.128/256/512.66.0F38.W0 75 /r      Full Mem tuple, E4NF.nb (index = DEST)
+  VPERMT2B        EVEX.128/256/512.66.0F38.W0 7D /r      Full Mem tuple, E4NF.nb (table = DEST)
 
 CPUID: AVX512CD (EVEX.512) and AVX512VL AND AVX512CD (EVEX.128/256), likewise for every
 extension; emu-alltest --avx512 enables all the UC_X86_AVX512_* bits. EVEX.vvvv is
@@ -457,7 +461,43 @@ EXT_FORMS = {
              fn=lambda d, a, b, vl: shufbitqmb(a, b, vl)),
     ],
 }
-EXT_ORDER = ["IFMA", "VPOPCNTDQ", "BITALG"]
+EXT_FORMS["VBMI"] = [
+    dict(name="VPERMB", pp=1, opc=0x8D, w=0, layout="rvm", mesz=1, besz=None, fs=False, wsib=True,
+         fn=lambda d, a, b, vl: permb(a, b, vl)),
+    dict(name="VPERMI2B", pp=1, opc=0x75, w=0, layout="rvm", mesz=1, besz=None, fs=False, wsib=True,
+         dsrc=True, fn=lambda d, a, b, vl: permi2b(d, a, b, vl)),
+    dict(name="VPERMT2B", pp=1, opc=0x7D, w=0, layout="rvm", mesz=1, besz=None, fs=False, wsib=True,
+         dsrc=True, fn=lambda d, a, b, vl: permt2b(d, a, b, vl)),
+]
+EXT_ORDER = ["IFMA", "VPOPCNTDQ", "BITALG", "VBMI"]
+
+
+def permb(idx, table, vl):
+    """VPERMB (Vol2C): id := SRC1[j*8+n:j*8] (n = 3/4/5 for VL 128/256/512);
+    DEST.byte[j] := SRC2.byte[id]"""
+    return bytes(table[idx[j] & (vl - 1)] for j in range(vl))
+
+
+def permi2b(dest_idx, src1, src2, vl):
+    """VPERMI2B (Vol2C): the index is the destination (Description: "using the byte indices in
+    the first operand (the destination operand)"; the Operation box selects the table with
+    TMP_DEST[j*8+id+1] but writes 'off := 8*SRC1[...]', which would make SRC1 both index and
+    table - read as TMP_DEST); bit id+1 = log2(VL) selects SRC2 (1) or SRC1 (0)"""
+    out = []
+    for j in range(vl):
+        i = dest_idx[j]
+        out.append(src2[i & (vl - 1)] if i & vl else src1[i & (vl - 1)])
+    return bytes(out)
+
+
+def permt2b(dest_tab, idx, src2, vl):
+    """VPERMT2B (Vol2C): off := SRC1.byte[j] & (VL-1);
+    DEST.byte[j] := SRC1[j*8+id+1] ? SRC2.byte[off] : TMP_DEST.byte[off]"""
+    out = []
+    for j in range(vl):
+        i = idx[j]
+        out.append(src2[i & (vl - 1)] if i & vl else dest_tab[i & (vl - 1)])
+    return bytes(out)
 
 
 def shufbitqmb(src1, src2, vl):
@@ -578,8 +618,9 @@ def gen_ext(ext):
         emit(fs_case(sp, c, base))
         # #UD
         uds = [("EVEX.b on a register form", dict(b=1)), ("L'L = 11b", dict(ll=3))]
-        if not any(o["opc"] == sp["opc"] and o["pp"] == sp["pp"] and o["w"] != sp["w"]
-                   for e in EXT_FORMS.values() for o in e):
+        # (wsib: the other EVEX.W is an AVX512BW form - VPERMW, VPERMI2W, VPERMT2W)
+        if not sp.get("wsib") and not any(o["opc"] == sp["opc"] and o["pp"] == sp["pp"] and
+                                          o["w"] != sp["w"] for e in EXT_FORMS.values() for o in e):
             uds.append(("wrong EVEX.W", dict(w=1 - sp["w"])))
         if kd:
             uds.append(("{z} (k destination)", dict(z=1, aaa=1)))
@@ -672,6 +713,12 @@ def selftest():
     chk("enc vpshufbitqmb", evex(2, 1, 0, 0x8F, 1, 3, vvvv=2, ll=2), bytes([0x62, 0xF2, 0x6D, 0x48, 0x8F, 0xCB]))
     chk("shufbitqmb", shufbitqmb((0b10100101).to_bytes(8, "little") + bytes(8),
                                  bytes([0, 1, 2, 64, 66, 5, 6, 7]) + bytes([0] * 8), 16), 0b10111101)
+    # U325: VPERMB zmm1, zmm2, zmm3 = 62 F2 6D 48 8D CB; VL 128: index bits 3:0, bit 4 = table
+    chk("enc vpermb", evex(2, 1, 0, 0x8D, 1, 3, vvvv=2, ll=2), bytes([0x62, 0xF2, 0x6D, 0x48, 0x8D, 0xCB]))
+    t1, t2 = bytes(range(16)), bytes(range(100, 116))
+    chk("permb", permb(bytes([15, 0x10, 0xF3] + [0] * 13), t2, 16)[:3], bytes([115, 100, 103]))
+    chk("permi2b", permi2b(bytes([0x11, 0x01, 0xFF] + [0] * 13), t1, t2, 16)[:3], bytes([101, 1, 115]))
+    chk("permt2b", permt2b(t1, bytes([0x11, 0x01, 0xEF] + [0] * 13), t2, 16)[:3], bytes([101, 1, 15]))
     return ok
 
 

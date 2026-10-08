@@ -2741,7 +2741,8 @@ static void decode_EVEX_0F38_30(DisasContext *s, CPUX86State *env, X86OpEntry *e
 /*
  * NoVmp (ledger U269): 66.0F38 66 VPBLENDMB (W0) / VPBLENDMW (W1) (Full Mem, E4); 75 / 7D
  * / 8D W1 VPERMI2W / VPERMT2W / VPERMW (Full Mem, word writemask, E4NF); their W0 forms
- * are VPERMI2B / VPERMT2B / VPERMB (AVX512_VBMI, not implemented: #UD).
+ * are VPERMI2B / VPERMT2B / VPERMB (AVX512_VBMI, U325: opcodes_evex_0F38_66W0, taken by
+ * decode_evex_0F38 before these groups, so their W0 slots stay empty).
  */
 static void decode_EVEX_0F38_66(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
@@ -3484,6 +3485,24 @@ static const X86OpEntry opcodes_evex_0F38_F3[256] = {
                            ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W0) ev_es(32) p_f3),
 };
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+/*
+ * NoVmp (ledger U325): EVEX.66.0F38.W0 forms whose opcode byte holds an AVX512BW W1 form in
+ * opcodes_evex_0F38 (75 VPERMI2W, 7D VPERMT2W, 8D VPERMW); decode_evex_0F38 takes them
+ * first. AVX512_VBMI (SDM Vol2C VPERMB, VPERMI2B, VPERMT2B): zmm1{k1}{z}, zmm2 (vvvv),
+ * zmm3/m, Full Mem tuple (no {1toN}), byte masking, class E4NF.nb (the whole memory operand
+ * is read). VPERMI2B: index = DEST, tables SRC1/SRC2; VPERMT2B: index = SRC1, tables
+ * DEST/SRC2; the table-select bit is bit 4/5/6 (VL 128/256/512) of the index byte.
+ */
+#define EV_VBMI(op) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(AVX512_VBMI) ev_vl(EV_VLALL) \
+                        ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) .evex_nofs = 1, p_66)
+static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
+    [0x75] = EV_VBMI(EVEX_VPERMI2B),
+    [0x7d] = EV_VBMI(EVEX_VPERMT2B),
+    [0x8d] = EV_VBMI(EVEX_VPERMB),
+};
+#undef EV_VBMI
+#endif /* __Use_Original_Qemu (U325) */
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
 #endif /* __Use_Original_Qemu (U149) */
@@ -3564,6 +3583,12 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         return;
     }
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+    if ((s->prefix & PREFIX_DATA) && !s->vex_w && opcodes_evex_0F38_66W0[*b].gen) {
+        *entry = opcodes_evex_0F38_66W0[*b];
+        return;
+    }
+#endif /* __Use_Original_Qemu (U325) */
     *entry = opcodes_evex_0F38[*b];
 }
 
@@ -4380,6 +4405,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512_BITALG:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512BITALG);
 #endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+    case X86_FEAT_AVX512_VBMI:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512_VBMI);
+#endif /* __Use_Original_Qemu (U325) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

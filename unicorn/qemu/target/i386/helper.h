@@ -401,3 +401,6 @@ DEF_HELPER_4(evex_elem_unop, void, env, ptr, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U324) */
 DEF_HELPER_4(evex_shufbitqmb, i64, env, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U324) */
+#if __Use_Original_Qemu != 1 /* ours (U325) */
+DEF_HELPER_6(evex_permb, void, env, ptr, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U325) */
