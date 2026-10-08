@@ -1003,6 +1003,14 @@ static void gen_EVEX_VGATHER(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_evex_vsib(s, decode, &decode->op[0], gen_helper_evex_gather);
 }
 #endif /* __Use_Original_Qemu (U250) */
+#if __Use_Original_Qemu != 1 /* ours (U251) */
+
+/* NoVmp (ledger U251): scatters: source ModRM.reg (op2), written in element order */
+static void gen_EVEX_VSCATTER(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vsib(s, decode, &decode->op[2], gen_helper_evex_scatter);
+}
+#endif /* __Use_Original_Qemu (U251) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

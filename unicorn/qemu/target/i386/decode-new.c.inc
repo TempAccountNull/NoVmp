@@ -2170,6 +2170,21 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x93] = X86_OP_ENTRY3(EVEX_VGATHER, V,x, None,None, M,x, vex12 cpuid(AVX512F)
                            ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U250) */
+#if __Use_Original_Qemu != 1 /* ours (U251) */
+    /*
+     * NoVmp (ledger U251): scatters, 66 0F38 A0 VPSCATTERDD/DQ, A1 VPSCATTERQD/QQ, A2
+     * VSCATTERDPS/DPD, A3 VSCATTERQPS/QPD: VSIB destination (op0), source ModRM.reg (op2);
+     * as the gathers (k1 required, no {z}, T1S, E12) but the source may be the index.
+     */
+    [0xa0] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0xa1] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0xa2] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+    [0xa3] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U251) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
