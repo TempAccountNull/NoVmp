@@ -109,6 +109,13 @@ rem ledger U434: one hardware case per UC_X86_QUIRK_* behaviour (cases_quirks.tx
 rem i5-13600K with --quirks cpu (each one differs with --quirks 0, i.e. the SDM).
 call :hw_zero cases_quirks
 
+rem ledger U445-U447: SSE/AVX/FMA post-computation exceptions (gen_cases_sse_exc.py): ADD/SUB/MUL/DIV/
+rem SQRT, HADD/HSUB/ADDSUB, DPPS/DPPD, all 60 FMA3 forms, CVT*, ROUND, RCP/RSQRT, MIN/MAX/CMP x {masked,
+rem OM=0, UM=0, PM=0, DM=0, all unmasked} x RC x FTZ/DAZ: exact/inexact tiny, rounds-to-normal,
+rem overflow per RC, exact overflow, denormal sources; must be 0 differing against the i5-13600K
+rem with the i5-13600K quirk set (incl. UC_X86_QUIRK_DPPS_PARALLEL_STEPS, bit 7) for the DPPS step order.
+call :hw_zero cases_sse_exc
+
 echo.
 if !FAILED! NEQ 0 (
     echo [test] FAILED: !FAILED! suite^(s^) failed

@@ -12022,6 +12022,215 @@ static void test_x86_hw_quirk_bits(void)
 }
 /* ---- qk_ block end ---- */
 
+/* ---- U445-U447: SSE/AVX/FMA unmasked #O/#U, DPPS steps, MXCSR API (prefix sx_) ---- */
+typedef struct {
+    int count;
+    uint32_t intno;
+} sx_intr_t;
+
+static void sx_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    sx_intr_t *r = (sx_intr_t *)user_data;
+
+    if (r->count++ == 0) {
+        r->intno = intno;
+    }
+    uc_emu_stop(uc);
+}
+
+typedef struct {
+    const char *name;
+    uint8_t code[8];
+    uint8_t len;
+    uint32_t x0[4], x1[4], x2[4];   /* XMM0..2 inputs (lane 0 first) */
+    uint32_t mxcsr_in;
+    uint32_t quirks;
+    int fault;                      /* -1 none, 19 = #XM */
+    uint32_t mxcsr_out;             /* uc_reg_read(UC_X86_REG_MXCSR) afterwards */
+    int dst;                        /* destination register 0 or 1 */
+    uint32_t lane0;                 /* destination lane 0 when no fault */
+} sx_case;
+
+/*
+ * Runs one instruction with XMM0..2 preset; MXCSR afterwards comes from the API
+ * register read (U447 folds the pending flags). Returns the fault vector (-1 =
+ * none); *d = the destination register afterwards.
+ */
+static int sx_run(const sx_case *t, uint32_t d[4], uint32_t *mx)
+{
+    uint64_t cr4, xcr0 = 7;
+    sx_intr_t intr = {0, 0};
+    uc_engine *uc;
+    uc_hook h;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (t->quirks) {
+        OK(uc_ctl_set_x86_hw_quirks(uc, t->quirks));
+    }
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, t->code, t->len));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, sx_hook_intr, &intr, 1, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1ULL << 18; /* OSXSAVE */
+    OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(uc, UC_X86_REG_XCR0, &xcr0));
+    OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &t->mxcsr_in));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0, t->x0));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM1, t->x1));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM2, t->x2));
+    OK(uc_emu_start(uc, code_start, code_start + t->len, 0, 0));
+    OK(uc_reg_read(uc, t->dst ? UC_X86_REG_XMM1 : UC_X86_REG_XMM0, d));
+    OK(uc_reg_read(uc, UC_X86_REG_MXCSR, mx));
+    OK(uc_close(uc));
+    return intr.count ? (int)intr.intno : -1;
+}
+
+static void sx_check(const sx_case *t, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        uint32_t d[4], mx;
+        const uint32_t *in = t[i].dst ? t[i].x1 : t[i].x0;
+        int f = sx_run(&t[i], d, &mx);
+
+        TEST_CHECK(f == t[i].fault);
+        TEST_MSG("%s: fault %d, expected %d", t[i].name, f, t[i].fault);
+        TEST_CHECK(mx == t[i].mxcsr_out);
+        TEST_MSG("%s: mxcsr %04x, expected %04x", t[i].name, mx, t[i].mxcsr_out);
+        if (t[i].fault < 0) {
+            TEST_CHECK(d[0] == t[i].lane0);
+            TEST_MSG("%s: lane 0 %08x, expected %08x", t[i].name, d[0], t[i].lane0);
+        } else {
+            TEST_CHECK(memcmp(d, in, 16) == 0);
+            TEST_MSG("%s: destination written on #XM: %08x", t[i].name, d[0]);
+        }
+    }
+}
+
+#define SX_MULSS  {0xf3, 0x0f, 0x59, 0xca}, 4             /* mulss xmm1, xmm2 */
+#define SX_VMULSS {0xc5, 0xf2, 0x59, 0xc2}, 4             /* vmulss xmm0, xmm1, xmm2 */
+#define SX_FMA231 {0xc4, 0xe2, 0x71, 0xb9, 0xc2}, 5       /* vfmadd231ss xmm0, xmm1, xmm2 */
+#define SX_CVTSD2SS {0xf2, 0x0f, 0x5a, 0xca}, 4           /* cvtsd2ss xmm1, xmm2 */
+#define SX_ADDSS  {0xf3, 0x0f, 0x58, 0xca}, 4             /* addss xmm1, xmm2 */
+#define SX_DPPS   {0x66, 0x0f, 0x3a, 0x40, 0xca, 0xf1}, 6 /* dpps xmm1, xmm2, 0xf1 */
+#define SX_ONE    0x3f800000
+#define SX_J      {0xa5a5a5a5, 0xa5a5a5a5, 0xa5a5a5a5, 0xa5a5a5a5}
+
+/* U445: unmasked #U on exact tiny results, FTZ ignored, PE from the unbounded-exponent rounding */
+static void test_x86_sse_unmasked_ou(void)
+{
+    static const sx_case t[] = {
+        {"mulss 2^-100*2^-30 UM=0", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
+         0x1780, 0, 19, 0x1790, 1, 0},
+        {"mulss 2^-100*2^-30 UM=0 FTZ", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
+         0x9780, 0, 19, 0x9790, 1, 0},
+        {"mulss 2^-100*2^-30 masked", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
+         0x1f80, 0, -1, 0x1f80, 1, 0x00080000},
+        {"mulss 2^-100*2^-30 masked FTZ", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
+         0x9f80, 0, -1, 0x9fb0, 1, 0},
+        {"mulss tiny unbounded-exact UM=0", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800000, SX_ONE},
+         0x1780, 0, 19, 0x1790, 1, 0},
+        {"mulss tiny unbounded-exact masked", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800000, SX_ONE},
+         0x1f80, 0, -1, 0x1fb0, 1, 0x00080000},
+        {"mulss tiny inexact UM=0", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800001, SX_ONE},
+         0x1780, 0, 19, 0x17b0, 1, 0},
+        {"mulss 2^127*2 OM=0", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
+         0x1b80, 0, 19, 0x1b88, 1, 0},
+        {"mulss MAX*MAX OM=0", SX_MULSS, SX_J, {0x7f7fffff, SX_ONE}, {0x7f7fffff, SX_ONE},
+         0x1b80, 0, 19, 0x1ba8, 1, 0},
+        {"mulss 2^127*2 masked", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
+         0x1f80, 0, -1, 0x1fa8, 1, 0x7f800000},
+        {"mulss 2^127*2 RZ OM=0", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
+         0x7b80, 0, 19, 0x7b88, 1, 0},
+        /* tininess after rounding: (1+u)minN*(1-u) rounds to minN at RN, not at RZ */
+        {"mulss rounds to minN RN", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
+         0x1f80, 0, -1, 0x1fa0, 1, 0x00800000},
+        {"mulss rounds to minN RN UM=0", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
+         0x1780, 0, -1, 0x17a0, 1, 0x00800000},
+        {"mulss tiny at RZ", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
+         0x7f80, 0, -1, 0x7fb0, 1, 0x007fffff},
+        {"vmulss 2^-100*2^-30 UM=0", SX_VMULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
+         0x1780, 0, 19, 0x1790, 0, 0},
+        {"vfmadd231ss 2^-100*2^-30+0 UM=0", SX_FMA231, {0, SX_ONE}, {0x0d800000, SX_ONE},
+         {0x30800000, SX_ONE}, 0x1780, 0, 19, 0x1790, 0, 0},
+        {"vfmadd231ss MAX*2-MAX OM=0 (no overflow)", SX_FMA231, {0xff7fffff, SX_ONE},
+         {0x7f7fffff, SX_ONE}, {0x40000000, SX_ONE}, 0x1b80, 0, -1, 0x1b80, 0, 0x7f7fffff},
+        {"cvtsd2ss 2^-130 UM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x37d00000}, 0x1780, 0,
+         19, 0x1790, 1, 0},
+        {"cvtsd2ss 2^128 OM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x47f00000}, 0x1b80, 0,
+         19, 0x1b88, 1, 0},
+    };
+
+    sx_check(t, sizeof(t) / sizeof(t[0]));
+}
+
+/* U446: DPPS steps (SDM default) vs UC_X86_QUIRK_DPPS_PARALLEL_STEPS (i5-13600K) */
+static void test_x86_sse_dpps_steps(void)
+{
+    static const sx_case t[] = {
+        /* Temp2 = 1.5minN - minN exact tiny (#U), Temp3 = 1 + 2^-24 inexact */
+        {"dpps Temp2 tiny UM=0 (SDM)", SX_DPPS, SX_J, {0x00c00000, 0x80800000, SX_ONE, 0x33800000},
+         {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, 0, 19, 0x1790, 1, 0},
+        {"dpps Temp2 tiny UM=0 (quirk)", SX_DPPS, SX_J, {0x00c00000, 0x80800000, SX_ONE, 0x33800000},
+         {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, UC_X86_QUIRK_DPPS_PARALLEL_STEPS, 19, 0x17b0, 1, 0},
+        /* products MAX*2 and -MAX*2 overflow (#O): stop before inf - inf */
+        {"dpps product overflow OM=0", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
+         {0x40000000, 0x40000000, 0, 0}, 0x1b80, 0, 19, 0x1b88, 1, 0},
+        {"dpps product overflow OM=0 (quirk)", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
+         {0x40000000, 0x40000000, 0, 0}, 0x1b80, UC_X86_QUIRK_DPPS_PARALLEL_STEPS, 19, 0x1b88, 1, 0},
+        {"dpps product overflow masked", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
+         {0x40000000, 0x40000000, 0, 0}, 0x1f80, 0, -1, 0x1fa9, 1, 0xffc00000},
+        /* tiny inexact product (masked U, P), then the add of that denormal with DM = 0 */
+        {"dpps denormal intermediate DM=0", SX_DPPS, SX_J, {0x0d800001, 0, 0, 0},
+         {0x30800001, 0, 0, 0}, 0x1e80, 0, 19, 0x1eb2, 1, 0},
+    };
+
+    sx_check(t, sizeof(t) / sizeof(t[0]));
+}
+
+/* U447: uc_reg_read(MXCSR) folds pending flags; uc_reg_write(MXCSR) sets RC, FTZ, DAZ, flags */
+static void test_x86_mxcsr_api(void)
+{
+    static const sx_case t[] = {
+        {"addss 1+2^-30 PE visible", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
+         0x1f80, 0, -1, 0x1fa0, 1, SX_ONE},
+        {"addss 1+2^-30 RU", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
+         0x5f80, 0, -1, 0x5fa0, 1, 0x3f800001},
+        {"addss 1+2^-30 RD", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
+         0x3f80, 0, -1, 0x3fa0, 1, SX_ONE},
+        {"addss flags preset stay", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {SX_ONE, SX_ONE},
+         0x1f81, 0, -1, 0x1f81, 1, 0x40000000},
+        {"addss minD+0 DAZ", SX_ADDSS, SX_J, {0x00000001, SX_ONE}, {0, SX_ONE},
+         0x1fc0, 0, -1, 0x1fc0, 1, 0},
+        {"addss minD+0 no DAZ", SX_ADDSS, SX_J, {0x00000001, SX_ONE}, {0, SX_ONE},
+         0x1f80, 0, -1, 0x1f82, 1, 0x00000001},
+        {"mulss tiny FTZ", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800001, SX_ONE},
+         0x9f80, 0, -1, 0x9fb0, 1, 0},
+        {"addss two QNaNs -> src1 (U96)", SX_ADDSS, SX_J, {0x7fc11111, SX_ONE}, {0x7fc22222, SX_ONE},
+         0x1f80, 0, -1, 0x1f80, 1, 0x7fc11111},
+    };
+    uc_engine *uc;
+    uint32_t mx;
+
+    sx_check(t, sizeof(t) / sizeof(t[0]));
+
+    /* uc_reg_write clears the flags in sse_status too: the next read shows only new ones */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    mx = 0x1fbf;
+    OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &mx));
+    mx = 0x1f80;
+    OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &mx));
+    mx = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK(mx == 0x1f80);
+    TEST_MSG("MXCSR after clearing write: %04x", mx);
+    OK(uc_close(uc));
+}
+/* ---- end U445-U447 (sx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -12214,4 +12423,7 @@ TEST_LIST = {
     {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
     {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
+    {"test_x86_sse_unmasked_ou", test_x86_sse_unmasked_ou},
+    {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
+    {"test_x86_mxcsr_api", test_x86_mxcsr_api},
     {NULL, NULL}};
