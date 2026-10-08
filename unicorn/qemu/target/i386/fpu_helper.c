@@ -5328,6 +5328,15 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
         }
     }
 #endif /* __Use_Original_Qemu (U122) */
+#if __Use_Original_Qemu != 1 /* ours (U171) */
+    /*
+     * NoVmp (ledger U171): SDM Vol1 13.3 - XSETBV #GP if ECX = 0 and EAX[17] != EAX[18]
+     * (TILECFG and TILEDATA must be enabled together; XCR0[18:17] is 00b or 11b).
+     */
+    if (((mask >> XSTATE_XTILE_CFG_BIT) ^ (mask >> XSTATE_XTILE_DATA_BIT)) & 1) {
+        goto do_gpf;
+    }
+#endif /* __Use_Original_Qemu (U171) */
 
     env->xcr0 = mask;
     cpu_sync_bndcs_hflags(env);
