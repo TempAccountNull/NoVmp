@@ -79,6 +79,9 @@ call :hw_zero cases_f16c
 rem ledger U98: DPPD with two NaN products on the host CPU (gen_cases_nan.py --dp-hw) must match with
 rem the i5-13600K quirk set (UC_X86_QUIRK_DPPD_NAN_ORDER).
 call :hw_zero cases_dp_nan
+rem ledger U434: one hardware case per UC_X86_QUIRK_* behaviour (cases_quirks.txt): all match the
+rem i5-13600K with --quirks cpu (each one differs with --quirks 0, i.e. the SDM).
+call :hw_zero cases_quirks
 
 echo.
 if !FAILED! NEQ 0 (
