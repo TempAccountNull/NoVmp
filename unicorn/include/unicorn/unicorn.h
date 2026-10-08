@@ -699,6 +699,10 @@ typedef enum uc_control_type {
     // (VPOPCNTB/W, VPSHUFBITQMB).
     // NoVmp U325: UC_X86_AVX512_VBMI adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VBMI[1] (VPERMB,
     // VPERMI2B, VPERMT2B; VPMULTISHIFTQB is not implemented yet and stays #UD).
+    // NoVmp U330: UC_X86_AVX512_FP16 adds CPUID.(EAX=7,ECX=0):EDX.AVX512_FP16[23] (the EVEX
+    // map 5 / map 6 FP16 instructions); it implies UC_X86_AVX512_BW (SDM Vol1 15.2.2: the
+    // AVX512-FP16 extensions require AVX512BW). Default off: UC_CPU_X86_MAX and the
+    // i5-13600K profile are unchanged.
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -724,6 +728,7 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_VPOPCNTDQ 128 // + AVX512_VPOPCNTDQ (CPUID.7.0:ECX[14]) (NoVmp U323)
 #define UC_X86_AVX512_BITALG 256 // + AVX512_BITALG (CPUID.7.0:ECX[12]) (NoVmp U324)
 #define UC_X86_AVX512_VBMI 64 // + AVX512_VBMI (CPUID.7.0:ECX[1]) (NoVmp U325)
+#define UC_X86_AVX512_FP16 0x200 // + AVX512_FP16 (CPUID.7.0:EDX[23], implies BW) (NoVmp U330)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

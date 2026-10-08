@@ -5444,6 +5444,16 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_AVX512_VBMI;
     }
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U330) */
+    /*
+     * NoVmp (ledger U330): UC_X86_AVX512_FP16 adds CPUID.(EAX=7,ECX=0):EDX.AVX512_FP16[23]
+     * (EVEX maps 5 and 6, SDM Vol2C VADDPH..VUCOMISH; uc_ctl already added AVX512BW, which
+     * the FP16 extensions require, SDM Vol1 15.2.2). A strict profile narrows it like DQ/BW.
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_FP16) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_FP16;
+    }
+#endif /* __Use_Original_Qemu (U330) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

@@ -18,7 +18,7 @@
 //                    x87 exceptions raise #MF; PG must stay clear: flat Unicorn memory)
 //   --expect-only    with --cases: run only the expected-value ("=>") lines
 //   --avx512         with --cases: Unicorn opts in to AVX-512 (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|
-//                    VPOPCNTDQ|BITALG|VBMI, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
+//                    VPOPCNTDQ|BITALG|VBMI|FP16, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
 //
@@ -317,7 +317,8 @@ int main( int argc, char** argv )
 		else if ( a == "--expect-only" ) copt.expect_only = true;
 		else if ( a == "--avx512" ) copt.avx512 = UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_CD |
 												  UC_X86_AVX512_IFMA |
-												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI;
+												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI |
+												  UC_X86_AVX512_FP16; /* U330: + FP16 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--expect-only]]\n" ); return 2; }
 	}

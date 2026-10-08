@@ -3272,6 +3272,7 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             /* U128: mask of UC_X86_AVX512_F/DQ/BW; non-zero implies F; U140: + VL;
              * U320: + CD; U322: + IFMA; U323: + VPOPCNTDQ; U324: + BITALG;
              * U325: + VBMI */
+#if __Use_Original_Qemu == 1 /* original QEMU (U330) */
             if (uc->init_done ||
                 (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
                         UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
@@ -3281,6 +3282,21 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             } else {
                 uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
             }
+#else /* ours (U330) */
+            /* U330: + FP16 (implies BW: SDM Vol1 15.2.2) */
+            if (uc->init_done ||
+                (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
+                        UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
+                        UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG |
+                        UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16))) {
+                err = UC_ERR_ARG;
+            } else {
+                if (on & UC_X86_AVX512_FP16) {
+                    on |= UC_X86_AVX512_BW;
+                }
+                uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
+            }
+#endif /* __Use_Original_Qemu (U330) */
         } else {
             err = UC_ERR_ARG;
         }

@@ -4835,6 +4835,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512_VBMI:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512_VBMI);
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U330) */
+    case X86_FEAT_AVX512_FP16:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_FP16);
+#endif /* __Use_Original_Qemu (U330) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

@@ -12022,6 +12022,107 @@ static void test_x86_hw_quirk_bits(void)
 }
 /* ---- qk_ block end ---- */
 
+/* ===== NoVmp U330-U369 (AVX512-FP16) unit tests: helper prefix fh_ ===== */
+#define FH_DATA 0x200000
+#define FH_ALL (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | \
+                UC_X86_AVX512_FP16)
+#define FH_CPUID_7_0_EDX_AVX512_FP16 (1U << 23)
+#define FH_CPUID_7_0_EBX_AVX512BW (1U << 30)
+
+typedef struct FhCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} FhCtx;
+
+static void fh_open(FhCtx *c, uc_mode mode, int avx512)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, FH_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* run one snippet from a fresh address: the exception vector (6 #UD, 19 #XM) or -1 */
+static int fh_run(FhCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (err != UC_ERR_OK) {
+        return -2 - (int)err;
+    }
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void fh_cpuid7(FhCtx *c, uint32_t r[4])
+{
+    uint64_t v;
+    v = 7;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(fh_run(c, "\x0f\xa2", 2) == -1);
+    OK(uc_reg_read(c->uc, UC_X86_REG_RAX, &v));
+    r[0] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RBX, &v));
+    r[1] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RCX, &v));
+    r[2] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RDX, &v));
+    r[3] = (uint32_t)v;
+}
+
+/* U330: UC_X86_AVX512_FP16 (0x200) opt-in: CPUID.7.0:EDX[23], implies BW (and F); default off */
+static void test_x86_fp16_optin(void)
+{
+    uc_engine *uc;
+    uint32_t r[4];
+    int on = -1;
+    FhCtx c;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_FP16));
+    OK(uc_ctl_get_x86_avx512(uc, &on));
+    TEST_CHECK(on == (UC_X86_AVX512_FP16 | UC_X86_AVX512_BW | UC_X86_AVX512_F));
+    TEST_MSG("mask %d", on);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 0x400));
+    OK(uc_close(uc));
+
+    /* default (no opt-in) and AVX-512 without FP16: no AVX512_FP16 bit */
+    fh_open(&c, UC_MODE_64, 0);
+    fh_cpuid7(&c, r);
+    TEST_CHECK((r[3] & FH_CPUID_7_0_EDX_AVX512_FP16) == 0);
+    OK(uc_close(c.uc));
+    fh_open(&c, UC_MODE_64, FH_ALL & ~UC_X86_AVX512_FP16);
+    fh_cpuid7(&c, r);
+    TEST_CHECK((r[3] & FH_CPUID_7_0_EDX_AVX512_FP16) == 0);
+    OK(uc_close(c.uc));
+    /* FP16 alone: FP16 and BW */
+    fh_open(&c, UC_MODE_64, UC_X86_AVX512_FP16);
+    fh_cpuid7(&c, r);
+    TEST_CHECK((r[3] & FH_CPUID_7_0_EDX_AVX512_FP16) != 0);
+    TEST_CHECK((r[1] & FH_CPUID_7_0_EBX_AVX512BW) != 0);
+    TEST_MSG("CPUID.7.0: EBX %08x EDX %08x", r[1], r[3]);
+    OK(uc_close(c.uc));
+}
+/* ===== end of NoVmp U330-U369 (AVX512-FP16) unit tests ===== */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -12214,4 +12315,5 @@ TEST_LIST = {
     {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
     {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
+    {"test_x86_fp16_optin", test_x86_fp16_optin},
     {NULL, NULL}};
