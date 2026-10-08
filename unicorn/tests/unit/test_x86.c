@@ -12241,7 +12241,7 @@ static void test_x86_fp16_cvt_gpr(void)
 /* ===== end of NoVmp U330-U369 (AVX512-FP16) unit tests ===== */
 
 /*
- * ---- NoVmp U370-U371: Intel AVX10 enumeration and gating ----
+ * ---- NoVmp U370-U376: Intel AVX10 enumeration and gating, AVX10.2 decoding ----
  * UC_CTL_X86_AVX10 (CPUID.(7,1):EDX[19], leaf 24H, XSAVE components 5-7, reset XCR0) and the
  * AVX10.1 rule "AVX512x OR AVX10.1": AVX10 alone runs the EVEX AVX-512 forms at every vector
  * length and the VEX opmask instructions; neither -> #UD. AVX10.2 spec 361050-007 3.1.
@@ -12495,7 +12495,56 @@ static void test_x86_avx10_gating(void)
     TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
     OK(uc_close(c.uc));
 }
-/* ---- end NoVmp U370-U371 (a10_) ---- */
+
+/*
+ * AVX10.2 instructions (U372-U376) need CPUID.(24H,0):EBX[7:0] >= 2: #UD with AVX10.1 or with
+ * every AVX-512 bit but no AVX10; EVEX maps 5/6 decode (empty slots #UD), EVEX.W1 on a W0
+ * form #UD. Values: Emulator/data/cases_avx10_a.txt (ref_avx10_a.py).
+ */
+#define A10_VADDBF16_Z "\x62\xf5\x6d\x48\x58\xcb"       /* VADDBF16 zmm1, zmm2, zmm3 */
+#define A10_VADDBF16_W1 "\x62\xf5\xed\x48\x58\xcb"
+#define A10_VMINMAXPS_Z "\x62\xf3\x6d\x48\x52\xcb\x00"  /* VMINMAXPS zmm1, zmm2, zmm3, 0 */
+#define A10_VCOMXSS "\x62\xf1\x7e\x08\x2f\xcb"          /* VCOMXSS xmm1, xmm3 */
+#define A10_MAP5_00 "\x62\xf5\x6d\x48\x00\xcb"          /* EVEX map 5, empty slot 00h */
+
+static void test_x86_avx10_2_gating(void)
+{
+    uint16_t a[32], b[32], d[32];
+    A10Ctx c;
+    int i;
+
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0, 0);
+    TEST_CHECK(a10_run(&c, A10_VADDBF16_Z, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_VMINMAXPS_Z, 7) == 6);
+    TEST_CHECK(a10_run(&c, A10_VCOMXSS, 6) == 6);
+    OK(uc_close(c.uc));
+
+    a10_open(&c, UC_MODE_64,
+             UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL, 0,
+             NULL, 0, 0);
+    TEST_CHECK(a10_run(&c, A10_VADDBF16_Z, 6) == 6);
+    OK(uc_close(c.uc));
+
+    /* AVX10.2: 1.0 + 2.0 = 3.0 in every BF16 lane */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0, 0);
+    for (i = 0; i < 32; i++) {
+        a[i] = 0x3f80;
+        b[i] = 0x4000;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(a10_run(&c, A10_VADDBF16_Z, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, d));
+    for (i = 0; i < 32; i++) {
+        TEST_CHECK(d[i] == 0x4040);
+    }
+    TEST_CHECK(a10_run(&c, A10_VADDBF16_W1, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_MAP5_00, 6) == 6);
+    TEST_CHECK(a10_run(&c, A10_VMINMAXPS_Z, 7) == -1);
+    TEST_CHECK(a10_run(&c, A10_VCOMXSS, 6) == -1);
+    OK(uc_close(c.uc));
+}
+/* ---- end NoVmp U370-U376 (a10_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -12696,4 +12745,5 @@ TEST_LIST = {
     {"test_x86_fp16_cvt_gpr", test_x86_fp16_cvt_gpr},
     {"test_x86_avx10_optin", test_x86_avx10_optin},
     {"test_x86_avx10_gating", test_x86_avx10_gating},
+    {"test_x86_avx10_2_gating", test_x86_avx10_2_gating},
     {NULL, NULL}};

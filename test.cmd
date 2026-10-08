@@ -100,6 +100,13 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq_post.txt" 
 rem AVX512-FP16 (ledger U330-U339): EVEX maps 5/6 and the FP16 forms of map 3 vs the independent
 rem SDM model ref_evex_fp16.py, Unicorn only with the AVX-512 opt-in (incl. UC_X86_AVX512_FP16).
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_fp16.txt" --avx512 --xcr0 0xE7 --expect-only --quirks 0
+rem Intel AVX10 (ledger U370-U376): AVX10.2 alone (no AVX512* CPUID bits) runs the AVX-512 forms
+rem and the AVX10.2 BF16 / MINMAX / VCOMX / saturating-conversion instructions vs the spec model
+rem ref_avx10_a.py (AVX10.2 spec 361050-007), Unicorn only. AVX10.1 alone (U371) runs the M1 EVEX
+rem and VEX opmask files at every vector length.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_a.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m1.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_opmask.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
 
 rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
@@ -121,6 +128,8 @@ echo [test] OK: all suites passed
 exit /b 0
 
 :suite
+rem %1 = test executable, up to 9 arguments after it (shifted below)
+set "SUITE=%~1"
 set "EXE=%TESTS%\%~1.exe"
 echo.
 echo [test] ===== %~1
@@ -129,12 +138,13 @@ if not exist "%EXE%" (
     set /a FAILED+=1
     exit /b 0
 )
-"%EXE%" %2 %3 %4 %5 %6 %7 %8 %9
+shift
+"%EXE%" %1 %2 %3 %4 %5 %6 %7 %8 %9
 if errorlevel 1 (
-    echo [test] %~1 FAILED
+    echo [test] !SUITE! FAILED
     set /a FAILED+=1
 ) else (
-    echo [test] %~1 passed
+    echo [test] !SUITE! passed
 )
 exit /b 0
 
