@@ -3457,6 +3457,32 @@ static void decode_EVEX_0F3A_42(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_42);
 }
 #endif /* __Use_Original_Qemu (U408) */
+#if __Use_Original_Qemu != 1 /* ours (U409) */
+/*
+ * NoVmp (ledger U409): MAP5 6F, memory source only: F2 W0/W1 = VMOVRSB/VMOVRSW, F3 W0/W1 =
+ * VMOVRSD/VMOVRSQ (ISE 319433-062 MOVRS), "AVX10 and MOVRS", 64-bit mode only (V/N.E.),
+ * Full Mem tuple, {k1}{z} per element, class E4. A plain (read-shared hint) vector load.
+ */
+#define EV_A10MOVRS(es) cpuid(AVX10_MOVRS) ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(MZ) \
+                        ev_es(es) o64
+static void decode_EVEX_MAP5_6F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_MAP5_6F[2][4] = {
+        {
+            {}, {},
+            X86_OP_ENTRY3(EVEX_MOV, V,x, None,None, WM,x, EV_A10MOVRS(W) ev_w(W0)), /* d */
+            X86_OP_ENTRY3(EVEX_MOV, V,x, None,None, WM,x, EV_A10MOVRS(8) ev_w(W0)), /* b */
+        },
+        {
+            {}, {},
+            X86_OP_ENTRY3(EVEX_MOV, V,x, None,None, WM,x, EV_A10MOVRS(W) ev_w(W1)), /* q */
+            X86_OP_ENTRY3(EVEX_MOV, V,x, None,None, WM,x, EV_A10MOVRS(16) ev_w(W1)), /* w */
+        },
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_MAP5_6F[s->vex_w]);
+}
+#undef EV_A10MOVRS
+#endif /* __Use_Original_Qemu (U409) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"

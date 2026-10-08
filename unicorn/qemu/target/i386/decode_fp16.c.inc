@@ -420,6 +420,9 @@ static const X86OpEntry opcodes_evex_map5[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U403) */
     [0x1e] = X86_OP_GROUP0(EVEX_MAP5_1E),
 #endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U409) */
+    [0x6f] = X86_OP_GROUP0(EVEX_MAP5_6F),
+#endif /* __Use_Original_Qemu (U409) */
 };
 
 static const X86OpEntry opcodes_evex_map6[256] = {
