@@ -2844,6 +2844,17 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x74] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, EV_BWK(WIG, 8) p_66),
     [0x75] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, EV_BWK(WIG, 16) p_66),
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U267) */
+    /*
+     * NoVmp (ledger U267): VPINSRW xmm1, xmm2, r32/m16, imm8 (C4) and VPEXTRW r32, xmm1,
+     * imm8 (C5, register only): EVEX.128.66.0F.WIG, E9NF (no writemask, L'L != 00b #UD, no
+     * AVX512VL needed), Tuple1 Scalar (disp8*N = 2). The VEX gen functions do the work.
+     */
+    [0xc4] = X86_OP_ENTRY4(PINSRW, V,dq, H,dq, E,w, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
+                           ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16) ev_nf p_66),
+    [0xc5] = X86_OP_ENTRY3(PEXTRW, G,d, U,dq, I,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
+                           ev_mask(NONE) ev_w(WIG) ev_es(16) p_66),
+#endif /* __Use_Original_Qemu (U267) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -3058,6 +3069,21 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U266) */
     [0x26] = X86_OP_GROUP0(EVEX_0F38_26),   /* VPTESTMB/W (66), VPTESTNMB/W (F3) */
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U267) */
+    /*
+     * NoVmp (ledger U267): VPBROADCASTB/W zmm1{k1}{z}, xmm2/m8 / xmm2/m16 (78/79, Tuple1
+     * Scalar, E6: the element is read when any lane is active) and from a GPR (7A/7B, r32,
+     * E7NM); 66.0F38.W0
+     */
+    [0x78] = X86_OP_ENTRY3(VPBROADCASTB, V,x, None,None, W,b, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W0) ev_es(8) p_66),
+    [0x79] = X86_OP_ENTRY3(VPBROADCASTW, V,x, None,None, W,w, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W0) ev_es(16) p_66),
+    [0x7a] = X86_OP_ENTRY3(EVEX_VPBROADCAST_R, V,x, None,None, R,d, cpuid(AVX512BW)
+                           ev_vl(EV_VLALL) ev_mask(MZ) ev_w(W0) ev_es(8) p_66),
+    [0x7b] = X86_OP_ENTRY3(EVEX_VPBROADCAST_R, V,x, None,None, R,d, cpuid(AVX512BW)
+                           ev_vl(EV_VLALL) ev_mask(MZ) ev_w(W0) ev_es(16) p_66),
+#endif /* __Use_Original_Qemu (U267) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -3126,6 +3152,19 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x3e] = X86_OP_GROUP0(EVEX_0F3A_3E),   /* VPCMPUB/UW k1{k2}, ..., imm8 */
     [0x3f] = X86_OP_GROUP0(EVEX_0F3A_3F),   /* VPCMPB/W k1{k2}, ..., imm8 */
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U267) */
+    /*
+     * NoVmp (ledger U267): VPEXTRB reg/m8 (14), VPEXTRW reg/m16 (15), VPINSRB xmm1, xmm2,
+     * r32/m8 (20): EVEX.128.66.0F3A.WIG, E9NF, Tuple1 Scalar; a GPR destination is
+     * zero-extended
+     */
+    [0x14] = X86_OP_ENTRY3(PEXTRB, E,b, V,dq, I,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
+                           ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(8) ev_nf zext0 p_66),
+    [0x15] = X86_OP_ENTRY3(PEXTRW, E,w, V,dq, I,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
+                           ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16) ev_nf zext0 p_66),
+    [0x20] = X86_OP_ENTRY4(PINSRB, V,dq, H,dq, E,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
+                           ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(8) ev_nf zext2 p_66),
+#endif /* __Use_Original_Qemu (U267) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
