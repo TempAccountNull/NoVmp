@@ -2400,6 +2400,13 @@ static void gen_EVEX_VRSQRT14(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_fp1(s, decode, 1, 2, 0);
 }
 #endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+
+static void gen_EVEX_VGETEXP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 2, 2, 0);
+}
+#endif /* __Use_Original_Qemu (U237) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

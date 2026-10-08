@@ -8069,6 +8069,38 @@ static uint64_t evex_rcp14(CPUX86State *env, const EvFmt *f, uint64_t x, bool rs
     }
 }
 #endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+
+/*
+ * NoVmp (ledger U237): VGETEXPPS/PD/SS/SD (SDM Vol2C, Table 5-13 and the pseudocode
+ * ConvertExpDPFP / NormalizeExpTinyDPFP): floor(log2(|x|)) as a floating-point value
+ * (exact); NaN -> QNaN(SRC) (IE for SNaN), +-inf -> +inf, +-0 (and a denormal with DAZ)
+ * -> -inf; a denormal (DAZ = 0) gives its true exponent and sets DE. Exceptions: IE, DE.
+ */
+static uint64_t evex_getexp(CPUX86State *env, const EvFmt *f, uint64_t x)
+{
+    uint64_t fr = x & f->fmask;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_isinf(f, x)) {
+        return f->emask;
+    }
+    if (evf_expzero(f, x)) {
+        if (!fr || (env->mxcsr & 0x40)) {
+            return f->sign | f->emask;
+        }
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+        /* fr = 1.xxx * 2^(63 - clz): value = fr * 2^(1 - bias - fbits) */
+        return evf_from_int(f, (int64_t)(63 - clz64(fr)) + 1 - f->bias - f->fbits);
+    }
+    return evf_from_int(f, (int64_t)((x & f->emask) >> f->fbits) - f->bias);
+}
+#endif /* __Use_Original_Qemu (U237) */
 #if __Use_Original_Qemu != 1 /* ours (U236) */
 
 /*
@@ -8085,6 +8117,10 @@ static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
         return evex_rcp14(env, f, x, false);
     case 1:
         return evex_rcp14(env, f, x, true);
+#if __Use_Original_Qemu != 1 /* ours (U237) */
+    case 2:
+        return evex_getexp(env, f, x);
+#endif /* __Use_Original_Qemu (U237) */
     default:
         g_assert_not_reached();
     }
