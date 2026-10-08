@@ -8462,6 +8462,45 @@ static void test_x86_vex_b_32(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U94: uc_mem_write over code that already ran drops its translation. Before, only
+ * TBs covering the end address - 1 were dropped (exit cleanup), so a TB that stopped
+ * earlier (#UD before the end, instruction count limit) ran again from the cache.
+ * Each case runs at code_start, rewrites the same bytes in place and runs again.
+ */
+static uc_err mw_run(uc_engine *uc, const char *code, size_t len, size_t count)
+{
+    OK(uc_mem_write(uc, code_start, code, len));
+    return uc_emu_start(uc, code_start, code_start + len, 0, count);
+}
+
+static void test_x86_mem_write_invalidates_tb(void)
+{
+    nk_intr_t intr;
+    uc_engine *uc = nk_open("\x90", 1, &intr);
+
+    /* #UD in the first instruction (decoder #UD, TB shorter than the snippet) */
+    uc_assert_err(UC_ERR_INSN_INVALID, mw_run(uc, "\x0f\x38\x8b\xc0\x90", 5, 0));
+    OK(mw_run(uc, "\xb8\x11\x00\x00\x00", 5, 0)); /* mov eax, 0x11 */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x11);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RIP) == code_start + 5);
+    /* #UD in the middle of a TB (UD2 at +2) */
+    uc_assert_err(UC_ERR_INSN_INVALID, mw_run(uc, "\x90\x90\x0f\x0b\x90", 5, 0));
+    OK(mw_run(uc, "\x90\x90\x90\x90\x90", 5, 0));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RIP) == code_start + 5);
+    /* F3 MOVRS #UD, then the same length with a valid instruction */
+    uc_assert_err(UC_ERR_INSN_INVALID, mw_run(uc, "\xf3\x0f\x38\x8b\x06", 5, 0));
+    OK(mw_run(uc, "\xb8\x22\x00\x00\x00", 5, 0)); /* mov eax, 0x22 */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x22);
+    /* instruction count limit: the first run stops after one instruction */
+    OK(mw_run(uc, "\xb8\x33\x00\x00\x00\xb8\x44\x00\x00\x00", 10, 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x33);
+    OK(mw_run(uc, "\xb8\x55\x00\x00\x00\xb8\x66\x00\x00\x00", 10, 1));
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x55);
+    TEST_MSG("rax = %" PRIx64, nk_reg(uc, UC_X86_REG_RAX));
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -8615,4 +8654,5 @@ TEST_LIST = {
     {"test_x86_lock_hint_nops", test_x86_lock_hint_nops},
     {"test_x86_mpx_modrm_length", test_x86_mpx_modrm_length},
     {"test_x86_vex_b_32", test_x86_vex_b_32},
+    {"test_x86_mem_write_invalidates_tb", test_x86_mem_write_invalidates_tb},
     {NULL, NULL}};

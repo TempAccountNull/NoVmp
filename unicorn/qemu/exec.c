@@ -1604,6 +1604,24 @@ static void memory_map_init(struct uc_struct *uc)
 static void invalidate_and_set_dirty(MemoryRegion *mr, hwaddr addr,
                                      hwaddr length)
 {
+#if __Use_Original_Qemu != 1 /* ours (U94) */
+    /*
+     * NoVmp (ledger U94): drop the translated blocks that cover written RAM, as
+     * upstream QEMU does here (DIRTY_MEMORY_CODE -> tb_invalidate_phys_range).
+     * Unicorn left this empty and dropped the call from flatview_write_continue,
+     * so uc_mem_write over code that already ran kept the old translation
+     * whenever its TB had not reached the emulation end address (the exit
+     * cleanup in resume_all_vcpus only drops TBs covering exit - 1): e.g. a
+     * #UD (or any stop) before the end reported the old #UD again on the next
+     * uc_emu_start. addr is the offset in mr (flatview_translate); TBs are
+     * keyed by ram_addr. Pages without TBs return early (page_find).
+     */
+    ram_addr_t ramaddr = memory_region_get_ram_addr(mr);
+
+    if (ramaddr != RAM_ADDR_INVALID && length != 0) {
+        tb_invalidate_phys_range(mr->uc, ramaddr + addr, ramaddr + addr + length);
+    }
+#endif /* __Use_Original_Qemu (U94) */
 }
 
 static int memory_access_size(MemoryRegion *mr, unsigned l, hwaddr addr)
@@ -1668,6 +1686,10 @@ static MemTxResult flatview_write_continue(struct uc_struct *uc, FlatView *fv, h
             /* RAM case */
             ram_ptr = qemu_ram_ptr_length(fv->root->uc, mr->ram_block, addr1, &l, false);
             memcpy(ram_ptr, buf, l);
+#if __Use_Original_Qemu != 1 /* ours (U94) */
+            /* NoVmp (ledger U94): upstream QEMU invalidates here (see above) */
+            invalidate_and_set_dirty(mr, addr1, l);
+#endif /* __Use_Original_Qemu (U94) */
         }
 
         if (release_lock) {
