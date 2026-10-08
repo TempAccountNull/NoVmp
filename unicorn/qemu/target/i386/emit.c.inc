@@ -321,11 +321,26 @@ static void gen_writeback(DisasContext *s, X86DecodedInsn *decode, int opn, TCGv
     case X86_OP_MMX:
         break;
     case X86_OP_SSE:
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
         if (!op->has_ea && (s->prefix & PREFIX_VEX) && op->ot <= MO_128) {
             tcg_gen_gvec_dup_imm(tcg_ctx, MO_64,
                                  offsetof(CPUX86State, xmm_regs[op->n].ZMM_X(1)),
                                  16, 16, 0);
         }
+#else /* ours (U126) */
+        /*
+         * NoVmp (ledger U126): a VEX.128/256 register destination has bits
+         * MAXVL-1:VL zeroed with MAXVL = 512 (SDM Vol1 15.5: VEX.128 zeroes the
+         * upper 384 bits of the ZMM register, VEX.256 the upper 256), not only
+         * 255:128. Legacy SSE (no VEX) keeps bits MAXVL-1:128. Visible once ZMM
+         * bits 511:256 are non-zero.
+         */
+        if (!op->has_ea && (s->prefix & PREFIX_VEX) && op->ot <= MO_256) {
+            int vl = op->ot == MO_256 ? 32 : 16;
+            tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, ZMM_OFFSET(op->n) + vl,
+                                 sizeof(ZMMReg) - vl, sizeof(ZMMReg) - vl, 0);
+        }
+#endif /* __Use_Original_Qemu (U126) */
         break;
     case X86_OP_CR:
     case X86_OP_DR:
@@ -1100,6 +1115,7 @@ static inline void gen_vsib_avx(DisasContext *s, CPUX86State *env, X86DecodedIns
     tcg_gen_addi_ptr(tcg_ctx, index, cpu_env, ZMM_OFFSET(decode->mem.index));
     fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, index, s->A0, scale, amask);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
     /*
      * There are two output operands, so zero OP1's high 128 bits
      * in the VEX.128 case.
@@ -1108,6 +1124,18 @@ static inline void gen_vsib_avx(DisasContext *s, CPUX86State *env, X86DecodedIns
         int ymmh_ofs = vector_elem_offset(&decode->op[1], MO_128, 1);
         tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, ymmh_ofs, 16, 16, 0);
     }
+#else /* ours (U126) */
+    /*
+     * NoVmp (ledger U126): the mask (OP1) is the second output; like the
+     * destination (gen_writeback) its bits MAXVL-1:VL are zeroed (SDM VPGATHERDD
+     * etc.: MASK[MAXVL-1:128] or MASK[MAXVL-1:256] := 0).
+     */
+    {
+        int vl = s->vex_l ? 32 : 16;
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, vector_reg_offset(&decode->op[1]) + vl,
+                             sizeof(ZMMReg) - vl, sizeof(ZMMReg) - vl, 0);
+    }
+#endif /* __Use_Original_Qemu (U126) */
     tcg_temp_free(tcg_ctx, amask);   /* tcg_constant_* is a tcg_const_* shim here */
     tcg_temp_free_i32(tcg_ctx, scale);
     tcg_temp_free_ptr(tcg_ctx, index);
@@ -1720,8 +1748,14 @@ static void gen_PCMPESTRM(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     gen_helper_pcmpestrm_xmm(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, imm);
     set_cc_op(s, CC_OP_EFLAGS);
     if ((s->prefix & PREFIX_VEX) && !s->vex_l) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
         tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offsetof(CPUX86State, xmm_regs[0].ZMM_X(1)),
                              16, 16, 0);
+#else /* ours (U126) */
+        /* SDM: in VEX.128 encoded versions bits (MAXVL-1:128) of XMM0 are zeroed */
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offsetof(CPUX86State, xmm_regs[0].ZMM_X(1)),
+                             48, 48, 0);
+#endif /* __Use_Original_Qemu (U126) */
     }
 }
 
@@ -1740,8 +1774,14 @@ static void gen_PCMPISTRM(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     gen_helper_pcmpistrm_xmm(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, imm);
     set_cc_op(s, CC_OP_EFLAGS);
     if ((s->prefix & PREFIX_VEX) && !s->vex_l) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
         tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offsetof(CPUX86State, xmm_regs[0].ZMM_X(1)),
                              16, 16, 0);
+#else /* ours (U126) */
+        /* SDM: in VEX.128 encoded versions bits (MAXVL-1:128) of XMM0 are zeroed */
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offsetof(CPUX86State, xmm_regs[0].ZMM_X(1)),
+                             48, 48, 0);
+#endif /* __Use_Original_Qemu (U126) */
     }
 }
 
@@ -2824,8 +2864,15 @@ static void gen_VZEROALL(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     TCGv_ptr ptr = tcg_temp_new_ptr(tcg_ctx);
 
     tcg_gen_addi_ptr(tcg_ctx, ptr, cpu_env, offsetof(CPUX86State, xmm_regs));
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
     gen_helper_memset(tcg_ctx, ptr, ptr, tcg_constant_i32(tcg_ctx, 0),
                       tcg_constant_ptr(tcg_ctx, CPU_NB_REGS * sizeof(ZMMReg)));
+#else /* ours (U126) */
+    /* NoVmp (ledger U126): SDM VZEROALL - ZMM0-15 (64-bit mode) or ZMM0-7
+       (otherwise) MAXVL-1:0 := 0; ZMM16-31 are not modified */
+    gen_helper_memset(tcg_ctx, ptr, ptr, tcg_constant_i32(tcg_ctx, 0),
+                      tcg_constant_ptr(tcg_ctx, (CODE64(s) ? 16 : 8) * sizeof(ZMMReg)));
+#endif /* __Use_Original_Qemu (U126) */
     tcg_temp_free_ptr(tcg_ctx, ptr);
 }
 
@@ -2834,8 +2881,17 @@ static void gen_VZEROUPPER(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int i;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U126) */
     for (i = 0; i < CPU_NB_REGS; i++) {
         int offset = offsetof(CPUX86State, xmm_regs[i].ZMM_X(1));
         tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offset, 16, 16, 0);
     }
+#else /* ours (U126) */
+    /* NoVmp (ledger U126): SDM VZEROUPPER - ZMM0-15 (64-bit mode) or ZMM0-7
+       (otherwise) MAXVL-1:128 := 0; ZMM16-31 are not modified */
+    for (i = 0; i < (CODE64(s) ? 16 : 8); i++) {
+        int offset = offsetof(CPUX86State, xmm_regs[i].ZMM_X(1));
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offset, 48, 48, 0);
+    }
+#endif /* __Use_Original_Qemu (U126) */
 }

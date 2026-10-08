@@ -5668,6 +5668,174 @@ static void test_x86_avx512_cpuid(void)
     m0_close(&m);
 }
 
+/* NoVmp U126: VEX.128/256 register writes zero bits 511:VL; legacy SSE keeps 511:128 */
+static void test_x86_vex_zero_maxvl(void)
+{
+    int on;
+
+    for (on = 0; on < 2; on++) {
+        M0 m;
+        uint64_t p2[8], p3[8], z[8];
+        unsigned i;
+
+        m0_open(&m, UC_MODE_64, on, NULL, 0);
+
+        /* vpxor xmm1, xmm2, xmm3 (VEX.128): 127:0 result, 511:128 zero */
+        m0_put_state(&m, 0x11, 32);
+        m0_zmm_pattern(p2, 2, 0x11);
+        m0_zmm_pattern(p3, 3, 0x11);
+        TEST_CHECK(m0_run(&m, "\xc5\xe9\xef\xcb", 4) == -1);
+        m0_zmm(&m, 1, z);
+        TEST_CHECK(z[0] == (p2[0] ^ p3[0]) && z[1] == (p2[1] ^ p3[1]));
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+
+        /* vpxor ymm1, ymm2, ymm3 (VEX.256): 255:0 result, 511:256 zero */
+        m0_put_state(&m, 0x11, 32);
+        TEST_CHECK(m0_run(&m, "\xc5\xed\xef\xcb", 4) == -1);
+        m0_zmm(&m, 1, z);
+        for (i = 0; i < 4; i++) {
+            TEST_CHECK(z[i] == (p2[i] ^ p3[i]));
+        }
+        for (i = 4; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+
+        /* pxor xmm1, xmm3 (legacy SSE): bits 511:128 kept */
+        m0_put_state(&m, 0x11, 32);
+        TEST_CHECK(m0_run(&m, "\x66\x0f\xef\xcb", 4) == -1);
+        {
+            uint64_t p1[8];
+            m0_zmm_pattern(p1, 1, 0x11);
+            m0_zmm(&m, 1, z);
+            TEST_CHECK(z[0] == (p1[0] ^ p3[0]) && z[1] == (p1[1] ^ p3[1]));
+            for (i = 2; i < 8; i++) {
+                TEST_CHECK(z[i] == p1[i]);
+            }
+        }
+
+        /* vaddss xmm1, xmm2, xmm3 (VEX scalar): 127:32 from xmm2, 511:128 zero */
+        m0_put_state(&m, 0x11, 32);
+        TEST_CHECK(m0_run(&m, "\xc5\xea\x58\xcb", 4) == -1);
+        m0_zmm(&m, 1, z);
+        TEST_CHECK(z[1] == p2[1] && (z[0] >> 32) == (p2[0] >> 32));
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+
+        /* vmovups ymm4, ymm5 (VEX.256 store form, register destination) */
+        m0_put_state(&m, 0x11, 32);
+        TEST_CHECK(m0_run(&m, "\xc5\xfc\x11\xec", 4) == -1);
+        {
+            uint64_t p5[8];
+            m0_zmm_pattern(p5, 5, 0x11);
+            m0_zmm(&m, 4, z);
+            TEST_CHECK(z[0] == p5[0] && z[3] == p5[3] && z[4] == 0 && z[7] == 0);
+        }
+
+        /* vzeroupper: ZMM0-15 bits 511:128 zero, ZMM16-31 untouched */
+        m0_put_state(&m, 0x22, 32);
+        TEST_CHECK(m0_run(&m, "\xc5\xf8\x77", 3) == -1);
+        for (i = 0; i < 16; i++) {
+            TEST_CHECK(m0_zmm_is(&m, i, 0x22, 0, 2, 0));
+        }
+        for (i = 16; i < 32; i++) {
+            TEST_CHECK(m0_zmm_is(&m, i, 0x22, 0, 8, 0));
+        }
+
+        /* vzeroall: ZMM0-15 zero, ZMM16-31 untouched */
+        m0_put_state(&m, 0x22, 32);
+        TEST_CHECK(m0_run(&m, "\xc5\xfc\x77", 3) == -1);
+        for (i = 0; i < 16; i++) {
+            TEST_CHECK(m0_zmm_is(&m, i, 0, 0, 0, 0));
+        }
+        for (i = 16; i < 32; i++) {
+            TEST_CHECK(m0_zmm_is(&m, i, 0x22, 0, 8, 0));
+        }
+
+        /* vpgatherdd xmm1, [rax + xmm2*4], xmm3 and the ymm form: destination and
+           mask both have bits 511:VL zeroed */
+        for (i = 0; i < 2; i++) {
+            static const char g128[] = "\xc4\xe2\x61\x90\x0c\x90";
+            static const char g256[] = "\xc4\xe2\x65\x90\x0c\x90";
+            uint64_t idx[8] = {0x0000000100000000ULL, 0x0000000300000002ULL,
+                               0x0000000500000004ULL, 0x0000000700000006ULL, 0, 0, 0, 0};
+            uint32_t mem[8] = {0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7};
+            unsigned vlq = i ? 4 : 2, j;
+
+            m0_put_state(&m, 0x33, 32);
+            m0_zmm_pattern(z, 3, 0x33);
+            for (j = 0; j < vlq; j++) {
+                z[j] = ~0ULL;                       /* gather every element */
+            }
+            OK(uc_reg_write(m.uc, UC_X86_REG_ZMM3, z));
+            m0_zmm_pattern(z, 2, 0x33);
+            memcpy(z, idx, 32);
+            OK(uc_reg_write(m.uc, UC_X86_REG_ZMM2, z));
+            OK(uc_mem_write(m.uc, M0_DATA, mem, sizeof(mem)));
+            m0_set(&m, UC_X86_REG_RAX, M0_DATA);
+            TEST_CHECK(m0_run(&m, i ? g256 : g128, 6) == -1);
+            m0_zmm(&m, 1, z);
+            TEST_CHECK(z[0] == 0x000000a1000000a0ULL && z[vlq - 1] != 0);
+            for (j = vlq; j < 8; j++) {
+                TEST_CHECK(z[j] == 0);
+            }
+            m0_zmm(&m, 3, z);
+            for (j = 0; j < 8; j++) {
+                TEST_CHECK(z[j] == 0);
+            }
+        }
+
+        /* vpcmpistrm xmm1, xmm2, 0 (VEX.128): XMM0 bits 511:128 zero */
+        m0_put_state(&m, 0x44, 32);
+        TEST_CHECK(m0_run(&m, "\xc4\xe3\x79\x62\xca\x00", 6) == -1);
+        m0_zmm(&m, 0, z);
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+
+        /* vdivps ymm1, ymm2, ymm3 with ZM unmasked: #XM, ZMM1 entirely unchanged */
+        {
+            uint64_t ones[8], zero[8] = {0};
+            uint32_t mxcsr = 0x1f80 & ~0x200u;
+            for (i = 0; i < 8; i++) {
+                ones[i] = 0x3f8000003f800000ULL;
+            }
+            m0_put_state(&m, 0x55, 32);
+            OK(uc_reg_write(m.uc, UC_X86_REG_ZMM2, ones));
+            OK(uc_reg_write(m.uc, UC_X86_REG_ZMM3, zero));
+            OK(uc_reg_write(m.uc, UC_X86_REG_MXCSR, &mxcsr));
+            TEST_CHECK(m0_run(&m, "\xc5\xec\x5e\xcb", 4) == 19);
+            TEST_CHECK(m0_zmm_is(&m, 1, 0x55, 0, 8, 0));
+            mxcsr = 0x1f80;
+            OK(uc_reg_write(m.uc, UC_X86_REG_MXCSR, &mxcsr));
+        }
+        m0_close(&m);
+    }
+
+    /* 32-bit mode: VEX.128 and VZEROUPPER zero ZMM0-7 up to bit 511 */
+    {
+        M0 m;
+        unsigned i;
+        uint64_t z[8];
+
+        m0_open(&m, UC_MODE_32, 1, NULL, 0);
+        m0_put_state(&m, 0x66, 8);
+        TEST_CHECK(m0_run(&m, "\xc5\xe9\xef\xcb", 4) == -1);
+        m0_zmm(&m, 1, z);
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+        m0_put_state(&m, 0x66, 8);
+        TEST_CHECK(m0_run(&m, "\xc5\xf8\x77", 3) == -1);
+        for (i = 0; i < 8; i++) {
+            TEST_CHECK(m0_zmm_is(&m, i, 0x66, 0, 2, 0));
+        }
+        m0_close(&m);
+    }
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5791,4 +5959,5 @@ TEST_LIST = {
     {"test_x86_avx512_xsavec", test_x86_avx512_xsavec},
     {"test_x86_avx512_xsave_32", test_x86_avx512_xsave_32},
     {"test_x86_avx512_cpuid", test_x86_avx512_cpuid},
+    {"test_x86_vex_zero_maxvl", test_x86_vex_zero_maxvl},
     {NULL, NULL}};

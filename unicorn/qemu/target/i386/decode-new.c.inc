@@ -2376,7 +2376,8 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             if (xm && !decode.op[0].has_ea &&
                 (decode.op[0].unit == X86_OP_SSE || decode.op[0].unit == X86_OP_MMX)) {
                 xm_ofs = vector_reg_offset(&decode.op[0]);
-                xm_len = decode.op[0].unit == X86_OP_SSE ? 32 : 8;
+                /* U126: the whole ZMM register (MAXVL = 512); xm_save is a ZMMReg */
+                xm_len = decode.op[0].unit == X86_OP_SSE ? (int)sizeof(ZMMReg) : 8;
                 tcg_gen_gvec_mov(tcg_ctx, MO_64, offsetof(CPUX86State, xm_save), xm_ofs,
                                  xm_len, xm_len);
             }
