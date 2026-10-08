@@ -7806,3 +7806,44 @@ void helper_evex_cvt(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
     *d = r;
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+
+/*
+ * NoVmp (ledger U232): scalar EVEX conversions (same element rules as U231). v is the
+ * SRC1 register (vvvv) itself, so bits 127:element are its own also when the engine
+ * substituted neutral lanes into a copy for masking.
+ * - VCVTSS2SD / VCVTSD2SS: DEST[elem] := convert(SRC2[elem 0]), DEST[127:elem] := SRC1.
+ * - VCVT[U]SI2SS/SD: the same with an integer (r/m32, or r/m64 with EVEX.W1 in 64-bit mode).
+ * - VCVT[T]SS2[U]SI / VCVT[T]SD2[U]SI: 32/64-bit integer result for the GPR destination.
+ */
+void helper_evex_cvt_s(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+    ZMMReg r;
+
+    r.ZMM_Q(0) = v->ZMM_Q(0);
+    r.ZMM_Q(1) = v->ZMM_Q(1);
+    evex_set_elem(&r, evcvt_esz[dt], 0,
+                  evex_cvt_one(env, evex_get_elem(s, evcvt_esz[st], 0), st, dt, false, -1));
+    d->ZMM_Q(0) = r.ZMM_Q(0);
+    d->ZMM_Q(1) = r.ZMM_Q(1);
+}
+
+void helper_evex_cvt_i2f(CPUX86State *env, ZMMReg *d, ZMMReg *v, uint64_t val, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+    uint64_t q0 = v->ZMM_Q(0), q1 = v->ZMM_Q(1);
+    uint64_t f = evex_cvt_i2f_one(env, val, st, dt);
+
+    d->ZMM_Q(0) = q0;
+    d->ZMM_Q(1) = q1;
+    evex_set_elem(d, evcvt_esz[dt], 0, f);
+}
+
+uint64_t helper_evex_cvt_f2i(CPUX86State *env, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7;
+
+    return evex_cvt_f2i_one(env, evex_get_elem(s, evcvt_esz[st], 0), st, dt, (desc >> 8) & 1);
+}
+#endif /* __Use_Original_Qemu (U232) */

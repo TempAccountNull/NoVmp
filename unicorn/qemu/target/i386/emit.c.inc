@@ -2208,6 +2208,100 @@ static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn
                                                   (1u << 24)));
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+
+/*
+ * NoVmp (ledger U232): scalar EVEX conversions. SRC1 (vvvv) is passed as the register
+ * itself (bits 127:element of the result), SRC2 as the operand (neutral copy under a mask).
+ */
+static TCGv_ptr gen_evex_src1_reg(DisasContext *s, X86DecodedInsn *decode)
+{
+    return evex_env_ptr(s, ZMM_OFFSET(decode->op[1].n));
+}
+
+static void gen_evex_cvt_ss(DisasContext *s, X86DecodedInsn *decode, int st, int dt)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr v = gen_evex_src1_reg(s, decode);
+
+    gen_helper_evex_cvt_s(tcg_ctx, cpu_env, OP_PTR0, v, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, 0, 1)));
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+
+static void gen_EVEX_VCVTSS2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_ss(s, decode, 5, 6);
+}
+
+static void gen_EVEX_VCVTSD2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_ss(s, decode, 6, 5);
+}
+
+/* VCVT[U]SI2SS/SD xmm1, xmm2, r/m32/64: the integer is in T1 (op2) */
+static void gen_evex_cvt_i2f(DisasContext *s, X86DecodedInsn *decode, bool uns, int dt)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr v = gen_evex_src1_reg(s, decode);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+    int st = (decode->op[2].ot == MO_64 ? 2 : 0) + uns;
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    gen_helper_evex_cvt_i2f(tcg_ctx, cpu_env, OP_PTR0, v, t,
+                            tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, 0, 1)));
+    tcg_temp_free_i64(tcg_ctx, t);
+    tcg_temp_free_ptr(tcg_ctx, v);
+}
+
+static void gen_EVEX_VCVTSI2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, false, 5);
+}
+
+static void gen_EVEX_VCVTSI2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, false, 6);
+}
+
+static void gen_EVEX_VCVTUSI2SS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, true, 5);
+}
+
+static void gen_EVEX_VCVTUSI2SD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_cvt_i2f(s, decode, true, 6);
+}
+
+/* VCVT[T]SS/SD2[U]SI r32/r64, xmm/m: result in T0, written back by gen_evex_insn */
+static void gen_evex_cvt_f2i(DisasContext *s, X86DecodedInsn *decode, int st, bool uns,
+                             bool trunc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int dt = (decode->op[0].ot == MO_64 ? 2 : 0) + uns;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    gen_helper_evex_cvt_f2i(tcg_ctx, t, cpu_env, OP_PTR2,
+                            tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, trunc, 1)));
+    tcg_gen_trunc_i64_tl(tcg_ctx, s->T0, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+#define EVEX_CVT_F2I(uname, st, uns, tr)                                             \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_cvt_f2i(s, decode, st, uns, tr);                                        \
+}
+EVEX_CVT_F2I(VCVTSS2SI, 5, false, false)
+EVEX_CVT_F2I(VCVTSD2SI, 6, false, false)
+EVEX_CVT_F2I(VCVTTSS2SI, 5, false, true)
+EVEX_CVT_F2I(VCVTTSD2SI, 6, false, true)
+EVEX_CVT_F2I(VCVTSS2USI, 5, true, false)
+EVEX_CVT_F2I(VCVTSD2USI, 6, true, false)
+EVEX_CVT_F2I(VCVTTSS2USI, 5, true, true)
+EVEX_CVT_F2I(VCVTTSD2USI, 6, true, true)
+#endif /* __Use_Original_Qemu (U232) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

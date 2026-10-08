@@ -2940,6 +2940,56 @@ static bool evex_cvt_w(DisasContext *s)
     return (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) ? evex_gpr_w(s) : s->vex_w;
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+/*
+ * NoVmp (ledger U232): scalar conversions, LIG, no masking except VCVTSS2SD/VCVTSD2SS.
+ * GPR forms: EVEX.W1 = r/m64 / r64 in 64-bit mode; outside 64-bit mode EVEX.W is ignored
+ * (W0 behaviour, also for VCVT[U]SI2SD whose W1 form alone has {er}). T1S (int -> FP),
+ * T1F (FP -> int); E3NF / E10NF.
+ */
+#define EV_SI2F(op, w, rc, es) X86_OP_ENTRY3(op, V,x, H,x, E,y, cpuid(AVX512F)                \
+                          ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(NONE) ev_rc(rc) ev_w(w)         \
+                          ev_es(es) ev_w32 ev_fp)
+#define EV_F2SI(op, sz, rc, es) X86_OP_ENTRY3(op, G,y, None,None, W,sz, cpuid(AVX512F)        \
+                          ev_vl(X86_EVEX_LIG) ev_tt(T1F) ev_mask(NONE) ev_rc(rc) ev_w(WSEL)      \
+                          ev_es(es) ev_w32 ev_fp)
+
+/* 0F 2A: VCVTSI2SS (F3, {er}), VCVTSI2SD (F2; W0 r/m32 exact, no {er}; W1 r/m64 {er}) */
+static void decode_EVEX_0F2A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F2A[4][2] = {
+        [2][0] = EV_SI2F(EVEX_VCVTSI2SS, W0, ER, 32),
+        [2][1] = EV_SI2F(EVEX_VCVTSI2SS, W1, ER, 32),
+        [3][0] = EV_SI2F(EVEX_VCVTSI2SD, W0, NONE, 64),
+        [3][1] = EV_SI2F(EVEX_VCVTSI2SD, W1, ER, 64),
+    };
+    *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F2A, evex_gpr_w(s));
+}
+
+/* 0F 2C: VCVTTSS2SI (F3), VCVTTSD2SI (F2) r32/r64, {sae} */
+static void decode_EVEX_0F2C(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F2C[4][2] = {
+        [2][0] = EV_F2SI(EVEX_VCVTTSS2SI, ss, SAE, 32),
+        [2][1] = EV_F2SI(EVEX_VCVTTSS2SI, ss, SAE, 32),
+        [3][0] = EV_F2SI(EVEX_VCVTTSD2SI, sd, SAE, 64),
+        [3][1] = EV_F2SI(EVEX_VCVTTSD2SI, sd, SAE, 64),
+    };
+    *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F2C, evex_gpr_w(s));
+}
+
+/* 0F 2D: VCVTSS2SI (F3), VCVTSD2SI (F2) r32/r64, {er} */
+static void decode_EVEX_0F2D(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F2D[4][2] = {
+        [2][0] = EV_F2SI(EVEX_VCVTSS2SI, ss, ER, 32),
+        [2][1] = EV_F2SI(EVEX_VCVTSS2SI, ss, ER, 32),
+        [3][0] = EV_F2SI(EVEX_VCVTSD2SI, sd, ER, 64),
+        [3][1] = EV_F2SI(EVEX_VCVTSD2SI, sd, ER, 64),
+    };
+    *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F2D, evex_gpr_w(s));
+}
+#endif /* __Use_Original_Qemu (U232) */
 #if __Use_Original_Qemu != 1 /* ours (U231) */
 
 /*
@@ -2951,6 +3001,13 @@ static void decode_EVEX_0F5A(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     static const X86OpEntry opcodes_EVEX_0F5A[4] = {
         [0] = EV_CVT(EVEX_VCVTPS2PD, x, xh, W0, HALF, SAE, W, 64),
         [1] = EV_CVT(EVEX_VCVTPD2PS, xh, x, W1, FULL, ER, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+        /* xmm1{k1}{z}, xmm2, xmm3/m32 (m64): T1S, E3 */
+        [2] = X86_OP_ENTRY3(EVEX_VCVTSS2SD, V,x, H,x, W,ss, cpuid(AVX512F) ev_vl(X86_EVEX_LIG)
+                            ev_tt(T1S) ev_mask(MZ) ev_rc(SAE) ev_w(W0) ev_es(32) ev_ds(64) ev_fp),
+        [3] = X86_OP_ENTRY3(EVEX_VCVTSD2SS, V,x, H,x, W,sd, cpuid(AVX512F) ev_vl(X86_EVEX_LIG)
+                            ev_tt(T1S) ev_mask(MZ) ev_rc(ER) ev_w(W1) ev_es(64) ev_ds(32) ev_fp),
+#endif /* __Use_Original_Qemu (U232) */
     };
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F5A);
 }
@@ -2978,6 +3035,12 @@ static void decode_EVEX_0F78(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     static const X86OpEntry opcodes_EVEX_0F78[4][2] = {
         [0][0] = EV_CVT(EVEX_VCVTTPS2UDQ, x, x, W0, FULL, SAE, W, 32),
         [0][1] = EV_CVT(EVEX_VCVTTPD2UDQ, xh, x, W1, FULL, SAE, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+        [2][0] = EV_F2SI(EVEX_VCVTTSS2USI, ss, SAE, 32),
+        [2][1] = EV_F2SI(EVEX_VCVTTSS2USI, ss, SAE, 32),
+        [3][0] = EV_F2SI(EVEX_VCVTTSD2USI, sd, SAE, 64),
+        [3][1] = EV_F2SI(EVEX_VCVTTSD2USI, sd, SAE, 64),
+#endif /* __Use_Original_Qemu (U232) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F78, evex_cvt_w(s));
 }
@@ -2991,6 +3054,12 @@ static void decode_EVEX_0F79(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     static const X86OpEntry opcodes_EVEX_0F79[4][2] = {
         [0][0] = EV_CVT(EVEX_VCVTPS2UDQ, x, x, W0, FULL, ER, W, 32),
         [0][1] = EV_CVT(EVEX_VCVTPD2UDQ, xh, x, W1, FULL, ER, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+        [2][0] = EV_F2SI(EVEX_VCVTSS2USI, ss, ER, 32),
+        [2][1] = EV_F2SI(EVEX_VCVTSS2USI, ss, ER, 32),
+        [3][0] = EV_F2SI(EVEX_VCVTSD2USI, sd, ER, 64),
+        [3][1] = EV_F2SI(EVEX_VCVTSD2USI, sd, ER, 64),
+#endif /* __Use_Original_Qemu (U232) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F79, evex_cvt_w(s));
 }
@@ -3014,6 +3083,12 @@ static void decode_EVEX_0F7A(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 static void decode_EVEX_0F7B(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     static const X86OpEntry opcodes_EVEX_0F7B[4][2] = {
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+        [2][0] = EV_SI2F(EVEX_VCVTUSI2SS, W0, ER, 32),
+        [2][1] = EV_SI2F(EVEX_VCVTUSI2SS, W1, ER, 32),
+        [3][0] = EV_SI2F(EVEX_VCVTUSI2SD, W0, NONE, 64),
+        [3][1] = EV_SI2F(EVEX_VCVTUSI2SD, W1, ER, 64),
+#endif /* __Use_Original_Qemu (U232) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F7B, evex_cvt_w(s));
 }
@@ -3238,6 +3313,11 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x7b] = X86_OP_GROUP0(EVEX_0F7B),
     [0xe6] = X86_OP_GROUP0(EVEX_0FE6),
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+    [0x2a] = X86_OP_GROUP0(EVEX_0F2A),
+    [0x2c] = X86_OP_GROUP0(EVEX_0F2C),
+    [0x2d] = X86_OP_GROUP0(EVEX_0F2D),
+#endif /* __Use_Original_Qemu (U232) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -3714,6 +3794,10 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U266) */
 #undef EV_BWK
 #endif /* __Use_Original_Qemu (U266) */
+#if __Use_Original_Qemu != 1 /* ours (U232) */
+#undef EV_SI2F
+#undef EV_F2SI
+#endif /* __Use_Original_Qemu (U232) */
 #if __Use_Original_Qemu != 1 /* ours (U231) */
 #undef EV_CVT
 #endif /* __Use_Original_Qemu (U231) */
