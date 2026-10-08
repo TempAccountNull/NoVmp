@@ -732,6 +732,20 @@ static void gen_EVEX_VPCMPU(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     gen_evex_pcmp(s, decode, decode->immediate, false);
 }
 #endif /* __Use_Original_Qemu (U152) */
+#if __Use_Original_Qemu != 1 /* ours (U153) */
+
+/* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */
+static void gen_EVEX_VPBROADCAST_R(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    tcg_gen_gvec_dup_i64(tcg_ctx, s->evex_esz, decode->op[0].offset, vl, vl, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U153) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

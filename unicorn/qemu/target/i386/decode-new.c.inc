@@ -1988,6 +1988,24 @@ static const X86OpEntry opcodes_evex_0F[256] = {
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U153) */
+    /*
+     * NoVmp (ledger U153): broadcasts, Tuple1 Scalar memory operand, {k1}{z}; E6 (E7NM for
+     * the GPR source). VBROADCASTSD has no EVEX.128 form; VPBROADCASTQ r64 outside 64-bit
+     * mode behaves as VPBROADCASTD r32 (EVEX.W ignored).
+     */
+    [0x18] = X86_OP_ENTRY3(VPBROADCASTD, V,x, None,None, W,d, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W0) ev_es(W) p_66), /* vbroadcastss */
+    [0x19] = X86_OP_ENTRY3(VPBROADCASTQ, V,x, None,None, W,q, cpuid(AVX512F)
+                           ev_vl(X86_EVEX_VL256 | X86_EVEX_VL512)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W1) ev_es(W) p_66), /* vbroadcastsd */
+    [0x58] = X86_OP_ENTRY3(VPBROADCASTD, V,x, None,None, W,d, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W0) ev_es(W) p_66),
+    [0x59] = X86_OP_ENTRY3(VPBROADCASTQ, V,x, None,None, W,q, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(W1) ev_es(W) p_66),
+    [0x7c] = X86_OP_ENTRY3(EVEX_VPBROADCAST_R, V,x, None,None, R,y, cpuid(AVX512F)
+                           ev_vl(EV_VLALL) ev_mask(MZ) ev_w(WSEL) ev_es(W) ev_w32 p_66),
+#endif /* __Use_Original_Qemu (U153) */
 #if __Use_Original_Qemu != 1 /* ours (U152) */
     /* VPCMPEQQ k1{k2}, H, W/m64bcst (66 W1); E4 */
     [0x29] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
