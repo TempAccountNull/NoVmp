@@ -1936,6 +1936,13 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xfb] = X86_OP_ENTRY3(PSUBQ, V,x, H,x, W,x, EV_INT(W1)),  /* vpsubq */
     [0xfe] = X86_OP_ENTRY3(PADDD, V,x, H,x, W,x, EV_INT(W0)),  /* vpaddd */
 #endif /* __Use_Original_Qemu (U149) */
+#if __Use_Original_Qemu != 1 /* ours (U150) */
+    /* NoVmp (ledger U150): bitwise logic; EVEX.W selects D/Q (masking granularity, {1toN}) */
+    [0xdb] = X86_OP_ENTRY3(PAND,  V,x, H,x, W,x, EV_INT(WSEL)), /* vpandd/q */
+    [0xdf] = X86_OP_ENTRY3(PANDN, V,x, H,x, W,x, EV_INT(WSEL)), /* vpandnd/q */
+    [0xeb] = X86_OP_ENTRY3(POR,   V,x, H,x, W,x, EV_INT(WSEL)), /* vpord/q */
+    [0xef] = X86_OP_ENTRY3(PXOR,  V,x, H,x, W,x, EV_INT(WSEL)), /* vpxord/q */
+#endif /* __Use_Original_Qemu (U150) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
