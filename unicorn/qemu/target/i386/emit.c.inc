@@ -2640,7 +2640,7 @@ static void gen_MULX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
         tcg_gen_extu_i32_tl(tcg_ctx, cpu_regs[s->vex_v], s->tmp2_i32);
 #else /* ours (U93) */
         /* NoVmp (ledger U93): vvvv[3] ignored outside 64-bit mode (X86_TYPE_B) */
-        tcg_gen_extu_i32_tl(tcg_ctx, cpu_regs[s->vex_v & (CODE64(s) ? 0xf : 7)],
+        tcg_gen_extu_i32_tl(tcg_ctx, cpu_regs[(CODE64(s) ? s->vex_v : (s->vex_v & 7))],
                             s->tmp2_i32);
 #endif /* __Use_Original_Qemu (U93) */
         tcg_gen_extu_i32_tl(tcg_ctx, s->T0, s->tmp3_i32);

@@ -2438,8 +2438,10 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
          * vvvv[2:0]; vvvv[3] (3-byte VEX byte 2 bit 6) is ignored (SDM Vol2A
          * 2.3.5.6, Table 2-41 "P[14] ignored"; XED VGPR32_N_32 / XMM_N_32). An
          * unused vvvv still has to be 1111b (Table 2-41), so s->vex_v keeps 4 bits.
+         * U95: in 64-bit mode the whole s->vex_v is used, so EVEX.V' (bit 4,
+         * U141, registers 16-31) is kept; only outside 64-bit mode is it cut to 3 bits.
          */
-        op->n = s->vex_v & (CODE64(s) ? 0xf : 7);
+        op->n = (CODE64(s) ? s->vex_v : (s->vex_v & 7));
 #endif /* __Use_Original_Qemu (U93) */
         break;
 
@@ -2553,7 +2555,7 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
             op->n = s->vex_v;
 #else /* ours (U93) */
             /* NoVmp (ledger U93): vvvv[3] ignored outside 64-bit mode (see X86_TYPE_B) */
-            op->n = s->vex_v & (CODE64(s) ? 0xf : 7);
+            op->n = (CODE64(s) ? s->vex_v : (s->vex_v & 7));
 #endif /* __Use_Original_Qemu (U93) */
             break;
         }
