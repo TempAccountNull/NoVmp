@@ -112,3 +112,42 @@ static void gen_VCOMISBF16(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     set_cc_op(s, CC_OP_EFLAGS);
 }
 
+/* ---- MINMAX (spec ch.11; U374) ---- */
+static void gen_avx10_minmax(DisasContext *s, X86DecodedInsn *decode, int fmt, bool scalar)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr s1reg = tcg_temp_new_ptr(tcg_ctx);
+    uint32_t desc = AVX10_DESC(fmt, decode->immediate, scalar ? 1 : evex_nelem(s, decode), 0) |
+                    (scalar ? AVX10_MINMAX_SCALAR : 0);
+
+    tcg_gen_addi_ptr(tcg_ctx, s1reg, cpu_env, ZMM_OFFSET(decode->op[1].n));
+    gen_helper_avx10_minmax(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, s1reg,
+                            tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, s1reg);
+}
+
+static void gen_VMINMAXBF16(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_minmax(s, decode, AVX10_FMT_BF16, false);
+}
+
+static void gen_VMINMAXPH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_minmax(s, decode, AVX10_FMT_FP16, false);
+}
+
+static void gen_VMINMAXPx(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_minmax(s, decode, s->vex_w ? AVX10_FMT_FP64 : AVX10_FMT_FP32, false);
+}
+
+static void gen_VMINMAXSH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_minmax(s, decode, AVX10_FMT_FP16, true);
+}
+
+static void gen_VMINMAXSx(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_minmax(s, decode, s->vex_w ? AVX10_FMT_FP64 : AVX10_FMT_FP32, true);
+}
+

@@ -448,4 +448,251 @@ void helper_avx10_vcomisbf16(CPUX86State *env, ZMMReg *s1, ZMMReg *s2)
     bf16_status(env, &st);
     env->cc_src = fl[bf16_relation(s1->ZMM_W(0), s2->ZMM_W(0), &st)];
 }
+
+/* ---------------------------------------------------------------------------------------
+ * Bit-level views of the four element formats (BF16, FP16, FP32, FP64) for MINMAX (spec
+ * 5.2) and VCOMX (chapter 8): AVX10_FMT_* = desc operation of those helpers.
+ * --------------------------------------------------------------------------------------- */
+typedef struct Avx10Fmt {
+    int ebits, fbits, bytes;
+} Avx10Fmt;
+
+static const Avx10Fmt avx10_fmt[4] = {
+    { 8, 7, 2 },        /* AVX10_FMT_BF16 */
+    { 5, 10, 2 },       /* AVX10_FMT_FP16 */
+    { 8, 23, 4 },       /* AVX10_FMT_FP32 */
+    { 11, 52, 8 },      /* AVX10_FMT_FP64 */
+};
+
+static inline uint64_t fmt_sign(const Avx10Fmt *f)
+{
+    return 1ull << (f->ebits + f->fbits);
+}
+
+static inline uint64_t fmt_mag(const Avx10Fmt *f, uint64_t x)
+{
+    return x & (fmt_sign(f) - 1);
+}
+
+static inline uint64_t fmt_exp(const Avx10Fmt *f, uint64_t x)
+{
+    return (x >> f->fbits) & ((1ull << f->ebits) - 1);
+}
+
+static inline uint64_t fmt_frac(const Avx10Fmt *f, uint64_t x)
+{
+    return x & ((1ull << f->fbits) - 1);
+}
+
+static inline bool fmt_nan(const Avx10Fmt *f, uint64_t x)
+{
+    return fmt_exp(f, x) == (1ull << f->ebits) - 1 && fmt_frac(f, x);
+}
+
+static inline bool fmt_snan(const Avx10Fmt *f, uint64_t x)
+{
+    return fmt_nan(f, x) && !((x >> (f->fbits - 1)) & 1);
+}
+
+static inline bool fmt_qnan(const Avx10Fmt *f, uint64_t x)
+{
+    return fmt_nan(f, x) && ((x >> (f->fbits - 1)) & 1);
+}
+
+static inline bool fmt_denormal(const Avx10Fmt *f, uint64_t x)
+{
+    return fmt_exp(f, x) == 0 && fmt_frac(f, x);
+}
+
+static inline bool fmt_zero(const Avx10Fmt *f, uint64_t x)
+{
+    return fmt_mag(f, x) == 0;
+}
+
+static inline uint64_t fmt_quiet(const Avx10Fmt *f, uint64_t x)
+{
+    return x | (1ull << (f->fbits - 1));
+}
+
+/* a <= b / a < b for numbers (no NaN); +0 and -0 compare equal */
+static bool fmt_le(const Avx10Fmt *f, uint64_t a, uint64_t b)
+{
+    bool sa = a & fmt_sign(f), sb = b & fmt_sign(f);
+    uint64_t ma = fmt_mag(f, a), mb = fmt_mag(f, b);
+
+    if (ma == 0 && mb == 0) {
+        return true;
+    }
+    if (sa != sb) {
+        return sa;
+    }
+    return sa ? ma >= mb : ma <= mb;
+}
+
+static bool fmt_lt(const Avx10Fmt *f, uint64_t a, uint64_t b)
+{
+    return !fmt_le(f, b, a);
+}
+
+static uint64_t avx10_get(ZMMReg *r, int bytes, int i)
+{
+    switch (bytes) {
+    case 2:
+        return r->ZMM_W(i);
+    case 4:
+        return r->ZMM_L(i);
+    default:
+        return r->ZMM_Q(i);
+    }
+}
+
+static void avx10_set(ZMMReg *r, int bytes, int i, uint64_t v)
+{
+    switch (bytes) {
+    case 2:
+        r->ZMM_W(i) = v;
+        break;
+    case 4:
+        r->ZMM_L(i) = v;
+        break;
+    default:
+        r->ZMM_Q(i) = v;
+        break;
+    }
+}
+
+/* ---- MINMAX (spec 5.2, Figures 5.1-5.9; chapter 11; U374) ---- */
+static uint64_t mm_minimum(const Avx10Fmt *f, uint64_t a, uint64_t b)
+{
+    if (fmt_snan(f, a) || (fmt_qnan(f, a) && !fmt_snan(f, b))) {
+        return fmt_quiet(f, a);
+    }
+    if (fmt_nan(f, b)) {
+        return fmt_quiet(f, b);
+    }
+    if (fmt_zero(f, a) && fmt_zero(f, b) && ((a ^ b) & fmt_sign(f))) {
+        return fmt_sign(f);                             /* -0.0 */
+    }
+    return fmt_le(f, a, b) ? a : b;
+}
+
+static uint64_t mm_maximum(const Avx10Fmt *f, uint64_t a, uint64_t b)
+{
+    if (fmt_snan(f, a) || (fmt_qnan(f, a) && !fmt_snan(f, b))) {
+        return fmt_quiet(f, a);
+    }
+    if (fmt_nan(f, b)) {
+        return fmt_quiet(f, b);
+    }
+    if (fmt_zero(f, a) && fmt_zero(f, b) && ((a ^ b) & fmt_sign(f))) {
+        return 0;                                       /* +0.0 */
+    }
+    return fmt_le(f, b, a) ? a : b;                     /* a >= b */
+}
+
+/* the "Number" variants: both NaN -> QNAN(a) (QNAN(b) if only b is signaling), one NaN ->
+   the other operand, else the plain operation */
+static bool mm_number_nan(const Avx10Fmt *f, uint64_t a, uint64_t b, uint64_t *r)
+{
+    if (fmt_nan(f, a) && fmt_nan(f, b)) {
+        *r = (fmt_snan(f, a) || (fmt_qnan(f, a) && fmt_qnan(f, b))) ? fmt_quiet(f, a)
+                                                                  : fmt_quiet(f, b);
+        return true;
+    }
+    if (fmt_nan(f, a)) {
+        *r = b;
+        return true;
+    }
+    if (fmt_nan(f, b)) {
+        *r = a;
+        return true;
+    }
+    return false;
+}
+
+static uint64_t mm_minmax(const Avx10Fmt *f, uint64_t a, uint64_t b, int imm, bool daz,
+                          bool except, float_status *st)
+{
+    int op = imm & 3, sc = (imm >> 2) & 3;
+    bool number = imm & 0x10;
+    uint64_t t;
+
+    if (daz) {
+        if (fmt_denormal(f, a)) {
+            a &= fmt_sign(f);                           /* a.fraction := 0 */
+        }
+        if (fmt_denormal(f, b)) {
+            b &= fmt_sign(f);
+        }
+    }
+    if (except) {
+        if (fmt_snan(f, a) || fmt_snan(f, b)) {
+            float_raise(float_flag_invalid, st);
+        } else if (fmt_qnan(f, a) || fmt_qnan(f, b)) {
+            /* a QNaN prevents the lower-priority exceptions (SDM Vol3A Table 6-8) */
+        } else if (fmt_denormal(f, a) || fmt_denormal(f, b)) {
+            float_raise(float_flag_input_denormal_used, st);
+        }
+    }
+
+    if (number && mm_number_nan(f, a, b, &t)) {
+        /* minimumNumber & co. with a NaN operand */
+    } else if (op == 0) {
+        t = mm_minimum(f, a, b);
+    } else if (op == 1) {
+        t = mm_maximum(f, a, b);
+    } else if (fmt_nan(f, a) || fmt_nan(f, b)) {
+        t = mm_minimum(f, a, b);                        /* the NaN paths of the magnitude ops */
+    } else if (fmt_mag(f, a) != fmt_mag(f, b)) {
+        bool a_smaller = fmt_mag(f, a) < fmt_mag(f, b);
+        t = (op == 2) == a_smaller ? a : b;
+    } else {
+        t = op == 2 ? mm_minimum(f, a, b) : mm_maximum(f, a, b);
+    }
+
+    if (!fmt_nan(f, t)) {
+        if (sc == 3) {
+            t |= fmt_sign(f);
+        } else if (sc == 2) {
+            t &= ~fmt_sign(f);
+        } else if (sc == 0 && !fmt_nan(f, a)) {
+            t = (t & ~fmt_sign(f)) | (a & fmt_sign(f));
+        }
+    }
+    return t;
+}
+
+/*
+ * VMINMAXBF16/PH/PS/PD and VMINMAXSH/SS/SD (chapter 11): minmax(src1, src2, imm8, daz,
+ * except) per element; BF16 daz = true, except = false (no MXCSR); PH/SH daz = false;
+ * PS/PD/SS/SD daz = MXCSR.DAZ; IE/DE go to the MXCSR flags of the engine's #XM frame.
+ * Scalar forms (AVX10_MINMAX_SCALAR): bits 127:esz from SRC1, taken from the register
+ * itself (s1reg; s1 may be the engine's neutral-lane copy).
+ */
+void helper_avx10_minmax(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2, ZMMReg *s1reg,
+                         uint32_t desc)
+{
+    int fmt = AVX10_DESC_OP(desc), imm = AVX10_DESC_IMM(desc), n = AVX10_DESC_N(desc), i;
+    const Avx10Fmt *f = &avx10_fmt[fmt];
+    bool except = fmt != AVX10_FMT_BF16;
+    bool daz = fmt == AVX10_FMT_BF16 ||
+               (fmt != AVX10_FMT_FP16 && (env->mxcsr & 0x40));
+    ZMMReg r;
+
+    if (desc & AVX10_MINMAX_SCALAR) {
+        r = *s1reg;
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        avx10_set(&r, f->bytes, i,
+                  mm_minmax(f, avx10_get(s1, f->bytes, i), avx10_get(s2, f->bytes, i), imm,
+                            daz, except, &env->sse_status));
+    }
+    if (desc & AVX10_MINMAX_SCALAR) {
+        memcpy(d, &r, 16);
+    } else {
+        memcpy(d, &r, (size_t)n * f->bytes);
+    }
+}
+
 #endif /* __Use_Original_Qemu (U372-U399) */

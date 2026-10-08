@@ -75,6 +75,35 @@ static void decode_A10_MAP5_2F(DisasContext *s, CPUX86State *env, X86OpEntry *en
     *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2F);
 }
 
+/* ---- U374: MINMAX (spec ch.11) ---- */
+/* packed PH/PS/PD: Full tuple, {k1}{z}, {1toN}, {sae} (512-bit reg-reg), class E2 */
+/* scalar SH/SS/SD: LLIG, Tuple1 Scalar, {k1}{z}, {sae}, class E3 */
+A10_SLOT(A10_0F3A_52,
+         X86_OP_ENTRY4(VMINMAXPH, V,x, H,x, W,x, A10_FP(16) ev_w(W0)),
+         X86_OP_ENTRY4(VMINMAXPx, V,x, H,x, W,x, A10_FP(W) ev_w(WSEL)),
+         {},
+         X86_OP_ENTRY4(VMINMAXBF16, V,x, H,x, W,x, A10_BF16))
+
+/* 0F3A 53: NP W0 VMINMAXSH, 66 W0 VMINMAXSS, 66 W1 VMINMAXSD */
+static void decode_A10_0F3A_53(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                               uint8_t *b)
+{
+    static const X86OpEntry sh =
+        X86_OP_ENTRY4(VMINMAXSH, V,x, H,x, W,w, A10_FS(16) ev_w(W0));
+    static const X86OpEntry ss =
+        X86_OP_ENTRY4(VMINMAXSx, V,x, H,x, W,d, A10_FS(32) ev_w(W0));
+    static const X86OpEntry sd =
+        X86_OP_ENTRY4(VMINMAXSx, V,x, H,x, W,q, A10_FS(64) ev_w(W1));
+
+    if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) {
+        memset(entry, 0, sizeof(*entry));
+    } else if (s->prefix & PREFIX_DATA) {
+        *entry = s->vex_w ? sd : ss;
+    } else {
+        *entry = sh;
+    }
+}
+
 /* ---- tables ---- */
 static const X86OpEntry opcodes_avx10_0F[256] = {
 };
@@ -86,6 +115,9 @@ static const X86OpEntry opcodes_avx10_0F3A[256] = {
     [0x56] = X86_OP_GROUP0(A10_0F3A_56),
     [0x66] = X86_OP_GROUP0(A10_0F3A_66),
     [0xc2] = X86_OP_GROUP0(A10_0F3A_C2),
+    /* U374 */
+    [0x52] = X86_OP_GROUP0(A10_0F3A_52),
+    [0x53] = X86_OP_GROUP0(A10_0F3A_53),
 };
 
 static const X86OpEntry opcodes_avx10_map5[256] = {

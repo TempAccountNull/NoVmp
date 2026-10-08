@@ -38,5 +38,14 @@ enum {
 #define AVX10_FMA_NEG (1u << 24)    /* a := -a (VFNM*) */
 #define AVX10_FMA_SUB (2u << 24)    /* a * b - c (VF*MSUB) */
 
+/* element formats of helper_avx10_minmax / helper_avx10_vcomx (desc operation; U374) */
+enum {
+    AVX10_FMT_BF16,
+    AVX10_FMT_FP16,
+    AVX10_FMT_FP32,
+    AVX10_FMT_FP64,
+};
+#define AVX10_MINMAX_SCALAR   (1u << 24)  /* VMINMAXSH/SS/SD: bits 127:esz from SRC1 */
+
 #endif /* __Use_Original_Qemu (U372-U399) */
 #endif /* NOVMP_AVX10_HELPER_H */
