@@ -7160,8 +7160,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         case 1: /* prefetchnt0 */
         case 2: /* prefetchnt0 */
         case 3: /* prefetchnt0 */
+#if __Use_Original_Qemu == 1 /* original QEMU (U77) */
             if (mod == 3)
                 goto illegal_op;
+#else /* ours (U77) */
+            /* mod=3: Reserved NOP (SDM Table A-6 group 16; i5-13600K) (U77) */
+#endif /* __Use_Original_Qemu (U77) */
             gen_nop_modrm(env, s, modrm);
             /* nothing more to do */
             break;
@@ -7458,6 +7462,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x1c3: /* MOVNTI reg, mem */
         if (!(s->cpuid_features & CPUID_SSE2))
             goto illegal_op;
+#if __Use_Original_Qemu != 1 /* ours (U77) */
+        /* NP 0F C3: 66/F2/F3 #UD (SDM Vol2 MOVNTI; i5-13600K) (U77) */
+        if (prefixes & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ)) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U77) */
         ot = mo_64_32(dflag);
         modrm = x86_ldub_code(env, s);
         mod = (modrm >> 6) & 3;
@@ -7710,8 +7720,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x10d: /* 3DNow! prefetch(w) */
         modrm = x86_ldub_code(env, s);
         mod = (modrm >> 6) & 3;
+#if __Use_Original_Qemu == 1 /* original QEMU (U77) */
         if (mod == 3)
             goto illegal_op;
+#else /* ours (U77) */
+        /* Ev: the register form is a NOP too (SDM Table A-3; i5-13600K) (U77) */
+#endif /* __Use_Original_Qemu (U77) */
         gen_nop_modrm(env, s, modrm);
         break;
     case 0x1aa: /* rsm */

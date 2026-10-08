@@ -263,6 +263,12 @@ static void decode_0F77(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 {
     if (!(s->prefix & PREFIX_VEX)) {
         entry->gen = gen_EMMS;
+#if __Use_Original_Qemu != 1 /* ours (U77) */
+        /* NP 0F 77: 66/F2/F3 #UD (SDM Vol2 EMMS; i5-13600K) (U77) */
+        if (s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ)) {
+            entry->gen = NULL;
+        }
+#endif /* __Use_Original_Qemu (U77) */
     } else if (!s->vex_l) {
         entry->gen = gen_VZEROUPPER;
         entry->vex_class = 8;
@@ -1049,7 +1055,12 @@ static const X86OpEntry opcodes_0F[256] = {
     [0xe4] = X86_OP_ENTRY3(PMULHUW,   V,x, H,x, W,x,        vex4 mmx avx2_256 p_00_66),
     [0xe5] = X86_OP_ENTRY3(PMULHW,    V,x, H,x, W,x,        vex4 mmx avx2_256 p_00_66),
     [0xe6] = X86_OP_GROUP0(0FE6),
+#if __Use_Original_Qemu == 1 /* original QEMU (U77) */
     [0xe7] = X86_OP_ENTRY3(MOVDQ,     W,x, None,None, V,x,  vex1 mmx p_00_66), /* MOVNTQ/MOVNTDQ */
+#else /* ours (U77) */
+    /* m64/m128 destination only, register form #UD (SDM Vol2 MOVNTQ/MOVNTDQ) (U77) */
+    [0xe7] = X86_OP_ENTRY3(MOVDQ,     M,x, None,None, V,x,  vex1 mmx p_00_66), /* MOVNTQ/MOVNTDQ */
+#endif /* __Use_Original_Qemu (U77) */
 
     [0xf0] = X86_OP_ENTRY3(MOVDQ,    V,x, None,None, WM,x,  vex4_unal cpuid(SSE3) p_f2), /* LDDQU */
     [0xf1] = X86_OP_ENTRY3(PSLLW_r,  V,x, H,x, W,x,         vex7 mmx avx2_256 p_00_66),
