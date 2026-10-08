@@ -83,6 +83,10 @@ typedef enum uc_cpu_x86 {
 // the SDM (REP Operation: WHILE CountReg != 0) writes no register; the i5-13600K zero-extends
 // RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS).
 #define UC_X86_QUIRK_REP_ZERO_COUNT_ZX (1u << 5)
+// FCOM/FCOMP/FCOMPP/FUCOM/FUCOMP/FUCOMPP and FCOMI/FCOMIP/FUCOMI/FUCOMIP raising an unmasked
+// #IA (FCW.IM = 0): the SDM leaves C3/C2/C0 (EFLAGS ZF/PF/CF) unchanged; the i5-13600K sets
+// them to "unordered" (111) anyway. FTST/FICOM always set "unordered" (SDM).
+#define UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC (1u << 6)
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h

@@ -242,6 +242,9 @@ DEF_HELPER_2(fmov_ST0_STN, void, env, int)
 DEF_HELPER_2(fmov_STN_ST0, void, env, int)
 DEF_HELPER_2(fxchg_ST0_STN, void, env, int)
 DEF_HELPER_1(fcom_ST0_FT0, void, env)
+#if __Use_Original_Qemu != 1 /* ours (U431) */
+DEF_HELPER_1(fcom_unord_ST0_FT0, void, env)
+#endif /* __Use_Original_Qemu (U431) */
 DEF_HELPER_1(fucom_ST0_FT0, void, env)
 DEF_HELPER_1(fcomi_ST0_FT0, void, env)
 DEF_HELPER_1(fucomi_ST0_FT0, void, env)

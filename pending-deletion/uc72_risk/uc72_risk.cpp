@@ -1195,7 +1195,7 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 
 // every documented i5-13600K deviation from the SDM, for the hardware comparisons
 static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
-                                         UC_X86_QUIRK_FYL2XP1_BELOW_M1;
+                                         UC_X86_QUIRK_FYL2XP1_BELOW_M1 | UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC;
 
 static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
 {
