@@ -7284,3 +7284,18 @@ void helper_evex_pshiftvw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uin
     }
 }
 #endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U266) */
+
+/*
+ * NoVmp (ledger U266): VPMOVM2B / VPMOVM2W: element i = all ones if k[i] is set, else 0
+ * (SDM Vol2C VPMOVM2B/VPMOVM2W/VPMOVM2D/VPMOVM2Q). desc = EVEX_DESC(esz, n).
+ */
+void helper_evex_movm2v(CPUX86State *env, ZMMReg *d, uint64_t k, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, ((k >> i) & 1) ? ~0ull : 0);
+    }
+}
+#endif /* __Use_Original_Qemu (U266) */

@@ -1958,6 +1958,36 @@ static void gen_EVEX_VPSRLDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_evex_bytesh(s, decode, false);
 }
 #endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U266) */
+
+/*
+ * NoVmp (ledger U266): VPCMP[U]B/W, VPCMPEQB/W, VPCMPGTB/W, VPTESTMB/W, VPTESTNMB/W reuse
+ * the U152/U154 gen functions with 8/16-bit elements (up to 64 result bits, ANDed with k2
+ * by gen_evex_insn). VPMOVB2M / VPMOVW2M: bit j = the sign bit of element j ((SRC AND
+ * SRC) < 0, signed, helper_evex_pcmp). VPMOVM2B / VPMOVM2W: helper_evex_movm2v.
+ */
+static void gen_EVEX_VPMOV2M(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) | (1u << 16) |
+                    EVEX_PCMP_SIGNED | EVEX_PCMP_TEST;
+
+    gen_helper_evex_pcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR2, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+
+static void gen_EVEX_VPMOVM2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, k, s->T1);
+    gen_helper_evex_movm2v(tcg_ctx, cpu_env, OP_PTR0, k,
+                           tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz,
+                                                               evex_nelem(s, decode))));
+    tcg_temp_free_i64(tcg_ctx, k);
+}
+#endif /* __Use_Original_Qemu (U266) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
