@@ -4945,6 +4945,7 @@ static void m0_open(M0 *m, uc_mode mode, int avx512, const uc_x86_cpuid *prof,
     m->mode = mode;
     m->pc = code_start;
     OK(uc_open(UC_ARCH_X86, mode, &m->uc));
+    OK(uc_ctl_set_cpu_model(m->uc, UC_CPU_X86_MAX));   /* as NoVmp and emu-alltest */
     if (avx512) {
         OK(uc_ctl_set_x86_avx512(m->uc, 1));
     }
@@ -5206,6 +5207,380 @@ static void test_x86_zmm_api_32(void)
     }
 }
 
+static uint64_t m0_kpat(unsigned i, unsigned salt)
+{
+    return 0x0123456789abcdefULL * (i + 1) ^ ((uint64_t)salt << 8);
+}
+
+/* ZMM0..nzmm-1 and k0-7 from the patterns */
+static void m0_put_state(M0 *m, unsigned salt, unsigned nzmm)
+{
+    unsigned n;
+    for (n = 0; n < nzmm; n++) {
+        uint64_t z[8];
+        m0_zmm_pattern(z, n, salt);
+        OK(uc_reg_write(m->uc, UC_X86_REG_ZMM0 + n, z));
+    }
+    for (n = 0; n < 8; n++) {
+        uint64_t k = m0_kpat(n, salt);
+        OK(uc_reg_write(m->uc, UC_X86_REG_K0 + n, &k));
+    }
+}
+
+static void m0_zmm(M0 *m, unsigned n, uint64_t z[8])
+{
+    OK(uc_reg_read(m->uc, UC_X86_REG_ZMM0 + n, z));
+}
+
+static uint64_t m0_k(M0 *m, unsigned n)
+{
+    uint64_t k;
+    OK(uc_reg_read(m->uc, UC_X86_REG_K0 + n, &k));
+    return k;
+}
+
+/* quadwords [lo, hi) of ZMMn equal the pattern (salt), the others equal `other` */
+static int m0_zmm_is(M0 *m, unsigned n, unsigned salt, int lo, int hi, uint64_t other)
+{
+    uint64_t z[8], p[8];
+    int i;
+    m0_zmm(m, n, z);
+    m0_zmm_pattern(p, n, salt);
+    for (i = 0; i < 8; i++) {
+        if (z[i] != ((i >= lo && i < hi) ? p[i] : other)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static uint64_t m0_rd64(const uint8_t *a, size_t o)
+{
+    uint64_t v;
+    memcpy(&v, a + o, 8);
+    return v;
+}
+
+static int m0_all_bytes(const uint8_t *a, size_t o, size_t len, uint8_t b)
+{
+    size_t i;
+    for (i = 0; i < len; i++) {
+        if (a[o + i] != b) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* XSAVE-area image at M0_DATA: 0xCC everywhere except a zero header */
+static void m0_area_reset(M0 *m)
+{
+    uint8_t buf[0xb00];
+    memset(buf, 0xcc, sizeof(buf));
+    memset(buf + 512, 0, 64);
+    OK(uc_mem_write(m->uc, M0_DATA, buf, sizeof(buf)));
+}
+
+/* run an XSAVE-family instruction on [rSI] = M0_DATA with EDX:EAX = rfbm */
+static int m0_xop(M0 *m, const char *code, size_t len, uint64_t rfbm)
+{
+    m0_set(m, UC_X86_REG_ESI, M0_DATA);
+    if (m->mode == UC_MODE_64) {
+        m0_set(m, UC_X86_REG_RSI, M0_DATA);
+    }
+    m0_set(m, UC_X86_REG_EAX, (uint32_t)rfbm);
+    m0_set(m, UC_X86_REG_EDX, (uint32_t)(rfbm >> 32));
+    return m0_run(m, code, len);
+}
+
+#define M0_XSAVE "\x0f\xae\x26"
+#define M0_XRSTOR "\x0f\xae\x2e"
+#define M0_XSAVEOPT "\x0f\xae\x36"
+#define M0_XSAVEC "\x0f\xc7\x26"
+
+/* the standard-form sections of components 5-7 hold the pattern (64-bit mode) */
+static void m0_check_std_sections(const uint8_t *a, unsigned salt, unsigned nhi256, int hi16)
+{
+    unsigned i, j;
+    uint64_t p[8];
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_rd64(a, 0x440 + 8 * i) == m0_kpat(i, salt));
+    }
+    for (i = 0; i < nhi256; i++) {
+        m0_zmm_pattern(p, i, salt);
+        for (j = 0; j < 4; j++) {
+            TEST_CHECK(m0_rd64(a, 0x480 + 32 * i + 8 * j) == p[4 + j]);
+        }
+    }
+    for (i = 16; hi16 && i < 32; i++) {
+        m0_zmm_pattern(p, i, salt);
+        for (j = 0; j < 8; j++) {
+            TEST_CHECK(m0_rd64(a, 0x680 + 64 * (i - 16) + 8 * j) == p[j]);
+        }
+    }
+}
+
+/* NoVmp U124: XSAVE / XSAVEOPT / XRSTOR (standard form), components 5-7, 64-bit */
+static void test_x86_avx512_xsave(void)
+{
+    uint8_t a[0xb00];
+    uint64_t z[8];
+    M0 m;
+    unsigned i;
+
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
+    TEST_CHECK(m0_xsetbv(&m, 0, M0_XCR0_AVX512) == -1);
+    m0_put_state(&m, 0x5a, 32);
+
+    /* XSAVE: XSTATE_BV = E7h, XCOMP_BV = 0, sections at 440h/480h/680h */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVE, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0xe7);
+    TEST_CHECK(m0_rd64(a, 520) == 0);
+    m0_check_std_sections(a, 0x5a, 16, 1);
+    for (i = 0; i < 16; i++) {          /* low halves in the legacy / AVX sections */
+        uint64_t p[8];
+        m0_zmm_pattern(p, i, 0x5a);
+        TEST_CHECK(m0_rd64(a, 160 + 16 * i) == p[0] && m0_rd64(a, 0x240 + 16 * i + 8) == p[3]);
+    }
+    TEST_CHECK(m0_all_bytes(a, 0xa80, 0x80, 0xcc));   /* nothing past Hi16_ZMM */
+
+    /* scribble, XRSTOR: everything back */
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 8, 0));
+        TEST_MSG("zmm%u", i);
+    }
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == m0_kpat(i, 0x5a));
+    }
+
+    /* XSTATE_BV[7:5] = 0: k0-7, ZMM0-15 bits 511:256 and ZMM16-31 initialised */
+    {
+        uint64_t bv = 0x07;
+        OK(uc_mem_write(m.uc, M0_DATA + 512, &bv, 8));
+    }
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == 0);
+    }
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 4, 0));
+    }
+    for (i = 16; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0, 0, 0, 0));
+    }
+
+    /* RFBM = opmask only: only k0-7 reloaded */
+    {
+        uint64_t bv = 0xe7;
+        OK(uc_mem_write(m.uc, M0_DATA + 512, &bv, 8));
+    }
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, 0x20) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == m0_kpat(i, 0x5a));
+    }
+    for (i = 0; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0xa5, 0, 8, 0));
+    }
+
+    /* XINUSE (value-based for 5-7): all AVX-512 state zero -> XSTATE_BV[7:5] = 0 */
+    memset(z, 0, sizeof(z));
+    for (i = 0; i < 32; i++) {
+        OK(uc_reg_write(m.uc, UC_X86_REG_ZMM0 + i, z));
+    }
+    for (i = 0; i < 8; i++) {
+        OK(uc_reg_write(m.uc, UC_X86_REG_K0 + i, &z[0]));
+    }
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVE, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0x07);
+    TEST_CHECK(m0_all_bytes(a, 0x440, 0x640, 0));  /* XSAVE still writes the sections */
+    TEST_CHECK(m0_xgetbv(&m, 1) == 0x07);           /* XINUSE & XCR0 */
+    /* XSAVEOPT leaves sections of components not in use alone */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEOPT, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0x07);
+    TEST_CHECK(m0_all_bytes(a, 0x440, 0x640, 0xcc));
+    /* only k3 != 0 -> opmask in use; one ZMM_H quadword -> ZMM_Hi256; ZMM31 -> Hi16_ZMM */
+    z[0] = 1;
+    OK(uc_reg_write(m.uc, UC_X86_REG_K3, &z[0]));
+    TEST_CHECK(m0_xgetbv(&m, 1) == 0x27);
+    z[0] = 0;
+    z[7] = 0x8000000000000000ULL;
+    OK(uc_reg_write(m.uc, UC_X86_REG_ZMM15, z));
+    TEST_CHECK(m0_xgetbv(&m, 1) == 0x67);
+    OK(uc_reg_write(m.uc, UC_X86_REG_ZMM31, z));
+    TEST_CHECK(m0_xgetbv(&m, 1) == 0xe7);
+    m0_close(&m);
+}
+
+/* NoVmp U124: XSAVEC and the compacted XRSTOR with components 5-7, 64-bit */
+static void test_x86_avx512_xsavec(void)
+{
+    uint8_t a[0xb00];
+    uint64_t p[8];
+    M0 m;
+    unsigned i, j;
+
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
+    TEST_CHECK(m0_xsetbv(&m, 0, M0_XCR0_AVX512) == -1);
+    m0_put_state(&m, 0x5a, 32);
+
+    /* RFBM = all: AVX 240h, opmask 340h, ZMM_Hi256 380h, Hi16_ZMM 580h..980h */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEC, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0xe7);
+    TEST_CHECK(m0_rd64(a, 520) == 0x80000000000000e7ULL);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_rd64(a, 0x340 + 8 * i) == m0_kpat(i, 0x5a));
+    }
+    for (i = 0; i < 16; i++) {
+        m0_zmm_pattern(p, i, 0x5a);
+        TEST_CHECK(m0_rd64(a, 0x240 + 16 * i) == p[2]);
+        for (j = 0; j < 4; j++) {
+            TEST_CHECK(m0_rd64(a, 0x380 + 32 * i + 8 * j) == p[4 + j]);
+        }
+    }
+    for (i = 16; i < 32; i++) {
+        m0_zmm_pattern(p, i, 0x5a);
+        for (j = 0; j < 8; j++) {
+            TEST_CHECK(m0_rd64(a, 0x580 + 64 * (i - 16) + 8 * j) == p[j]);
+        }
+    }
+    TEST_CHECK(m0_all_bytes(a, 0x980, 0x180, 0xcc));
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 8, 0));
+    }
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == m0_kpat(i, 0x5a));
+    }
+
+    /* RFBM = A1h (x87, opmask, Hi16_ZMM): opmask at 240h, Hi16_ZMM at 280h */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEC, 3, 0xa1) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0xa1);
+    TEST_CHECK(m0_rd64(a, 520) == 0x80000000000000a1ULL);
+    TEST_CHECK(m0_rd64(a, 0x240) == m0_kpat(0, 0x5a) && m0_rd64(a, 0x278) == m0_kpat(7, 0x5a));
+    m0_zmm_pattern(p, 16, 0x5a);
+    TEST_CHECK(m0_rd64(a, 0x280) == p[0]);
+    m0_zmm_pattern(p, 31, 0x5a);
+    TEST_CHECK(m0_rd64(a, 0x280 + 0x3c0 + 56) == p[7]);
+    TEST_CHECK(m0_all_bytes(a, 0x680, 0x480, 0xcc));
+    /* XRSTOR with RFBM = all: components outside XCOMP_BV are initialised */
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0, 0, 0, 0));    /* SSE, AVX, ZMM_Hi256 init */
+    }
+    for (i = 16; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 8, 0));
+    }
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == m0_kpat(i, 0x5a));
+    }
+
+    /* compacted, XSTATE_BV[7:5] = 0 with XCOMP_BV[7:5] = 1: init */
+    m0_put_state(&m, 0x5a, 32);
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEC, 3, ~0ULL) == -1);
+    {
+        uint64_t bv = 0x07;
+        OK(uc_mem_write(m.uc, M0_DATA + 512, &bv, 8));
+    }
+    m0_put_state(&m, 0xa5, 32);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_k(&m, i) == 0);
+    }
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 4, 0));
+    }
+    for (i = 16; i < 32; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0, 0, 0, 0));
+    }
+
+    /* XSAVEC with AVX-512 state in its initial configuration: XSTATE_BV[7:5] = 0,
+       the sections are not written but still occupy their compacted space */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEC, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0x07);
+    TEST_CHECK(m0_rd64(a, 520) == 0x80000000000000e7ULL);
+    TEST_CHECK(m0_all_bytes(a, 0x340, 0x640, 0xcc));
+    m0_close(&m);
+}
+
+/* NoVmp U124: outside 64-bit mode only ZMM0_H-ZMM7_H; Hi16_ZMM neither saved nor loaded */
+static void test_x86_avx512_xsave_32(void)
+{
+    uint8_t a[0xb00];
+    M0 m;
+    unsigned i;
+
+    m0_open(&m, UC_MODE_32, 1, NULL, 0);
+    TEST_CHECK(m0_xsetbv(&m, 0, M0_XCR0_AVX512) == -1);
+    m0_put_state(&m, 0x5a, 8);
+
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVE, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0x67);       /* Hi16_ZMM always initial here */
+    m0_check_std_sections(a, 0x5a, 8, 0);
+    TEST_CHECK(m0_all_bytes(a, 0x480 + 256, 256, 0xcc));
+    TEST_CHECK(m0_all_bytes(a, 0x680, 0x400, 0xcc));
+    TEST_CHECK(m0_all_bytes(a, 160 + 128, 128, 0xcc));   /* XMM8-15 slots */
+
+    m0_put_state(&m, 0xa5, 8);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 8, 0));
+        TEST_CHECK(m0_k(&m, i) == m0_kpat(i, 0x5a));
+    }
+
+    /* compacted: same offsets as in 64-bit mode, upper half of ZMM_Hi256 untouched */
+    m0_area_reset(&m);
+    TEST_CHECK(m0_xop(&m, M0_XSAVEC, 3, ~0ULL) == -1);
+    OK(uc_mem_read(m.uc, M0_DATA, a, sizeof(a)));
+    TEST_CHECK(m0_rd64(a, 512) == 0x67);
+    TEST_CHECK(m0_rd64(a, 520) == 0x80000000000000e7ULL);
+    TEST_CHECK(m0_rd64(a, 0x340) == m0_kpat(0, 0x5a));
+    {
+        uint64_t p[8];
+        m0_zmm_pattern(p, 7, 0x5a);
+        TEST_CHECK(m0_rd64(a, 0x380 + 32 * 7 + 24) == p[7]);
+    }
+    TEST_CHECK(m0_all_bytes(a, 0x380 + 256, 256, 0xcc));
+    TEST_CHECK(m0_all_bytes(a, 0x580, 0x400, 0xcc));
+    m0_put_state(&m, 0xa5, 8);
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 8, 0));
+    }
+
+    /* init: XSTATE_BV = 7 -> k and ZMM0-7_H zero */
+    {
+        uint64_t bv = 0x07;
+        OK(uc_mem_write(m.uc, M0_DATA + 512, &bv, 8));
+    }
+    TEST_CHECK(m0_xop(&m, M0_XRSTOR, 3, ~0ULL) == -1);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m0_zmm_is(&m, i, 0x5a, 0, 4, 0));
+        TEST_CHECK(m0_k(&m, i) == 0);
+    }
+    m0_close(&m);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5325,4 +5700,7 @@ TEST_LIST = {
     {"test_x86_avx512_optin", test_x86_avx512_optin},
     {"test_x86_avx512_xsetbv", test_x86_avx512_xsetbv},
     {"test_x86_zmm_api_32", test_x86_zmm_api_32},
+    {"test_x86_avx512_xsave", test_x86_avx512_xsave},
+    {"test_x86_avx512_xsavec", test_x86_avx512_xsavec},
+    {"test_x86_avx512_xsave_32", test_x86_avx512_xsave_32},
     {NULL, NULL}};

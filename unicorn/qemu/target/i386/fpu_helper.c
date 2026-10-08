@@ -4440,6 +4440,153 @@ static void do_xsave_pkru(CPUX86State *env, target_ulong ptr, uintptr_t ra)
     cpu_stq_data_ra(env, ptr, env->pkru, ra);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+/*
+ * NoVmp (ledger U124): AVX-512 state components (SDM Vol1 13.5.5, 13.13).
+ *   5 opmask    (64 B): bytes 8i+7:8i = k[i].
+ *   6 ZMM_Hi256 (512 B): bytes 32i+31:32i = ZMM[i] bits 511:256, i = 0..15; outside
+ *                64-bit mode only ZMM0_H-ZMM7_H (bytes 255:0) are written / loaded.
+ *   7 Hi16_ZMM  (1024 B): bytes 64(i-16)+63:64(i-16) = ZMM[i], i = 16..31; accessed
+ *                only in 64-bit mode (outside it the section is neither written nor
+ *                loaded and the registers are not initialised).
+ */
+static int xsave_nb_zmm_hi256(CPUX86State *env)
+{
+    return (env->hflags & HF_CS64_MASK) ? 16 : 8;
+}
+
+static void do_xsave_opmask(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < NB_OPMASK_REGS; i++) {
+        cpu_stq_data_ra(env, ptr + 8 * i, env->opmask_regs[i], ra);
+    }
+}
+
+static void do_xsave_zmm_hi256(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i, j, n = xsave_nb_zmm_hi256(env);
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < 4; j++) {
+            cpu_stq_data_ra(env, ptr + 32 * i + 8 * j, env->xmm_regs[i].ZMM_Q(4 + j), ra);
+        }
+    }
+}
+
+static void do_xsave_hi16_zmm(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i, j;
+
+    if (!(env->hflags & HF_CS64_MASK)) {
+        return;
+    }
+    for (i = 16; i < 32; i++) {
+        for (j = 0; j < 8; j++) {
+            cpu_stq_data_ra(env, ptr + 64 * (i - 16) + 8 * j, env->xmm_regs[i].ZMM_Q(j), ra);
+        }
+    }
+}
+
+static void do_xrstor_opmask(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < NB_OPMASK_REGS; i++) {
+        env->opmask_regs[i] = cpu_ldq_data_ra(env, ptr + 8 * i, ra);
+    }
+}
+
+static void do_xrstor_zmm_hi256(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i, j, n = xsave_nb_zmm_hi256(env);
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < 4; j++) {
+            env->xmm_regs[i].ZMM_Q(4 + j) = cpu_ldq_data_ra(env, ptr + 32 * i + 8 * j, ra);
+        }
+    }
+}
+
+static void do_xrstor_hi16_zmm(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i, j;
+
+    if (!(env->hflags & HF_CS64_MASK)) {
+        return;
+    }
+    for (i = 16; i < 32; i++) {
+        for (j = 0; j < 8; j++) {
+            env->xmm_regs[i].ZMM_Q(j) = cpu_ldq_data_ra(env, ptr + 64 * (i - 16) + 8 * j, ra);
+        }
+    }
+}
+
+/* the initial configuration of each component is all zeroes */
+static void do_clear_opmask(CPUX86State *env)
+{
+    memset(env->opmask_regs, 0, sizeof(env->opmask_regs));
+}
+
+static void do_clear_zmm_hi256(CPUX86State *env)
+{
+    int i, j, n = xsave_nb_zmm_hi256(env);
+
+    for (i = 0; i < n; i++) {
+        for (j = 4; j < 8; j++) {
+            env->xmm_regs[i].ZMM_Q(j) = 0;
+        }
+    }
+}
+
+static void do_clear_hi16_zmm(CPUX86State *env)
+{
+    if (env->hflags & HF_CS64_MASK) {
+        memset(&env->xmm_regs[16], 0, 16 * sizeof(ZMMReg));
+    }
+}
+
+/*
+ * XINUSE policy for components 5-7 (SDM Vol1 13.6 allows XINUSE[i] = 1 in the initial
+ * configuration; we choose the value-based form): opmask in use iff some k[i] != 0;
+ * ZMM_Hi256 iff some ZMM_H of the registers the mode accesses != 0; Hi16_ZMM iff in
+ * 64-bit mode and some ZMM16-31 != 0 ("outside 64-bit mode, Hi16_ZMM state is always
+ * in its initial configuration"). Components 0-2 keep QEMU's "always in use".
+ */
+static uint64_t get_xinuse_avx512(CPUX86State *env)
+{
+    uint64_t inuse = 0, acc = 0;
+    int i, j, n = xsave_nb_zmm_hi256(env);
+
+    for (i = 0; i < NB_OPMASK_REGS; i++) {
+        acc |= env->opmask_regs[i];
+    }
+    if (acc) {
+        inuse |= XSTATE_OPMASK_MASK;
+    }
+    for (acc = 0, i = 0; i < n; i++) {
+        for (j = 4; j < 8; j++) {
+            acc |= env->xmm_regs[i].ZMM_Q(j);
+        }
+    }
+    if (acc) {
+        inuse |= XSTATE_ZMM_Hi256_MASK;
+    }
+    if (env->hflags & HF_CS64_MASK) {
+        for (acc = 0, i = 16; i < 32; i++) {
+            for (j = 0; j < 8; j++) {
+                acc |= env->xmm_regs[i].ZMM_Q(j);
+            }
+        }
+        if (acc) {
+            inuse |= XSTATE_Hi16_ZMM_MASK;
+        }
+    }
+    return inuse;
+}
+#endif /* __Use_Original_Qemu (U124) */
+
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
     /* The operand must be 16 byte aligned */
@@ -4476,6 +4623,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     if ((env->hflags & HF_MPX_IU_MASK) == 0) {
        inuse &= ~XSTATE_BNDREGS_MASK;
     }
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+    /* AVX-512 components: value-based (see get_xinuse_avx512) */
+    inuse &= ~(XSTATE_OPMASK_MASK | XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK);
+    inuse |= get_xinuse_avx512(env);
+#endif /* __Use_Original_Qemu (U124) */
     return inuse;
 }
 
@@ -4526,6 +4678,17 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     if (opt & XSTATE_BNDCSR_MASK) {
         do_xsave_bndcsr(env, ptr + XO(bndcsr_state), ra);
     }
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+    if (opt & XSTATE_OPMASK_MASK) {
+        do_xsave_opmask(env, ptr + XO(opmask_state), ra);
+    }
+    if (opt & XSTATE_ZMM_Hi256_MASK) {
+        do_xsave_zmm_hi256(env, ptr + XO(zmm_hi256_state), ra);
+    }
+    if (opt & XSTATE_Hi16_ZMM_MASK) {
+        do_xsave_hi16_zmm(env, ptr + XO(hi16_zmm_state), ra);
+    }
+#endif /* __Use_Original_Qemu (U124) */
     if (opt & XSTATE_PKRU_MASK) {
         do_xsave_pkru(env, ptr + XO(pkru_state), ra);
     }
@@ -4568,6 +4731,11 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
     case XSTATE_BNDREGS_BIT: do_xsave_bndregs(env, at, ra); break;
     case XSTATE_BNDCSR_BIT:  do_xsave_bndcsr(env, at, ra); break;
     case XSTATE_PKRU_BIT:    do_xsave_pkru(env, at, ra); break;
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+    case XSTATE_OPMASK_BIT:    do_xsave_opmask(env, at, ra); break;
+    case XSTATE_ZMM_Hi256_BIT: do_xsave_zmm_hi256(env, at, ra); break;
+    case XSTATE_Hi16_ZMM_BIT:  do_xsave_hi16_zmm(env, at, ra); break;
+#endif /* __Use_Original_Qemu (U124) */
     default:                 break;
     }
 }
@@ -4846,6 +5014,17 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     }
                     break;
                 }
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+                case XSTATE_OPMASK_BIT:
+                    do_xrstor_opmask(env, ptr + next, ra);
+                    break;
+                case XSTATE_ZMM_Hi256_BIT:
+                    do_xrstor_zmm_hi256(env, ptr + next, ra);
+                    break;
+                case XSTATE_Hi16_ZMM_BIT:
+                    do_xrstor_hi16_zmm(env, ptr + next, ra);
+                    break;
+#endif /* __Use_Original_Qemu (U124) */
                 default:
                     break;
                 }
@@ -4871,6 +5050,17 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     tlb_flush(env_cpu(env));
                 }
                 break;
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+            case XSTATE_OPMASK_BIT:
+                do_clear_opmask(env);
+                break;
+            case XSTATE_ZMM_Hi256_BIT:
+                do_clear_zmm_hi256(env);
+                break;
+            case XSTATE_Hi16_ZMM_BIT:
+                do_clear_hi16_zmm(env);
+                break;
+#endif /* __Use_Original_Qemu (U124) */
             default:
                 break;
             }
@@ -4992,6 +5182,29 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
         }
         cpu_sync_bndcs_hflags(env);
     }
+#if __Use_Original_Qemu != 1 /* ours (U124) */
+    if (rfbm & XSTATE_OPMASK_MASK) {
+        if (xstate_bv & XSTATE_OPMASK_MASK) {
+            do_xrstor_opmask(env, ptr + XO(opmask_state), ra);
+        } else {
+            do_clear_opmask(env);
+        }
+    }
+    if (rfbm & XSTATE_ZMM_Hi256_MASK) {
+        if (xstate_bv & XSTATE_ZMM_Hi256_MASK) {
+            do_xrstor_zmm_hi256(env, ptr + XO(zmm_hi256_state), ra);
+        } else {
+            do_clear_zmm_hi256(env);
+        }
+    }
+    if (rfbm & XSTATE_Hi16_ZMM_MASK) {
+        if (xstate_bv & XSTATE_Hi16_ZMM_MASK) {
+            do_xrstor_hi16_zmm(env, ptr + XO(hi16_zmm_state), ra);
+        } else {
+            do_clear_hi16_zmm(env);
+        }
+    }
+#endif /* __Use_Original_Qemu (U124) */
     if (rfbm & XSTATE_PKRU_MASK) {
         uint64_t old_pkru = env->pkru;
         if (xstate_bv & XSTATE_PKRU_MASK) {
