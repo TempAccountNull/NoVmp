@@ -4218,7 +4218,12 @@ static void do_fsave(CPUX86State *env, target_ulong ptr, int data32,
 
     do_fstenv(env, ptr, data32, retaddr);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U63) */
     ptr += (target_ulong)14 << data32;
+#else /* ours (U63) */
+    /* NoVmp (ledger U63): REX.W (data32 = 2) keeps the 108-byte layout (i5-13600K) */
+    ptr += data32 ? 28 : 14;
+#endif /* __Use_Original_Qemu (U63) */
     for (i = 0; i < 8; i++) {
         tmp = ST(i);
         do_fstt(env, tmp, ptr, retaddr);
@@ -4240,7 +4245,11 @@ static void do_frstor(CPUX86State *env, target_ulong ptr, int data32,
     int i;
 
     do_fldenv(env, ptr, data32, retaddr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U63) */
     ptr += (target_ulong)14 << data32;
+#else /* ours (U63) */
+    ptr += data32 ? 28 : 14;
+#endif /* __Use_Original_Qemu (U63) */
 
     for (i = 0; i < 8; i++) {
         tmp = do_fldt(env, ptr, retaddr);
