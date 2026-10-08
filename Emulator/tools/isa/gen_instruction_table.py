@@ -480,7 +480,7 @@ MICROCODE = [
     '- ✅ CPUID — i5-13600K profile (94 rows), override table + strict #UD switch (U68).',
     '- ✅ #XM — unmasked SSE exceptions with CR4.OSXMMEXCPT (U67).',
     '- ✅ RCPPS / RSQRTPS / RCPSS / RSQRTSS (+ VEX) — F10 solved (U81): RN(1/midpoint) over the top 11 mantissa bits, RN(1/sqrt(midpoint)) over the top 10 bits + exponent parity, 12 fraction bits, exact integer arithmetic; all 2^32 inputs x 6 MXCSR settings identical to the CPU.',
-    '- ✅ Decided manual-vs-hardware quirks (UC_CTL_X86_HW_QUIRKS, default = manual): bit 0 FCOMI keeps C1, bit 1 CVTPI2PS m64 keeps x87, bit 2 FYL2XP1 below −1, bit 3 PTWRITE executes (U80).',
+    '- ✅ Decided manual-vs-hardware quirks (UC_CTL_X86_HW_QUIRKS, default = manual): bit 0 FCOMI keeps C1, bit 1 CVTPI2PS m64 keeps x87, bit 2 FYL2XP1 below −1, bit 3 PTWRITE executes (U80), bit 4 DPPD two-NaN element order (U98), bit 5 REP 67h ECX=0 zero-extension (U430), bit 6 x87 compare unmasked #IA sets CC (U431); emu-alltest --quirks cpu = all, docs/quirks.md.',
     '- ⏳ RDTSC / RDTSCP determinism hook — Phase 2 (emulator side).',
     '- ⬜ Microcode-assisted CPL0 paths (VMX, SMX, SGX, SMM) — exact CPL3 faults only (D6), Phase 2/5.',
 ]
