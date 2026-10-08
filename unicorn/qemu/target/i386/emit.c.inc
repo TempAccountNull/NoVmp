@@ -2620,6 +2620,39 @@ static void gen_EVEX_VDPPHPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *
                               tcg_constant_i32(tcg_ctx, s->evex_vl));
 }
 #endif /* __Use_Original_Qemu (U407) */
+#if __Use_Original_Qemu != 1 /* ours (U408) */
+
+/*
+ * NoVmp (ledger U408): EVEX VMPSADBW: the ops_sse.h mpsadbw helpers per 128-bit lane pair
+ * (imm8[2:0] for lanes 0/2, imm8[5:3] for lanes 1/3: the 512-bit form replicates the
+ * control of the lower two lanes to the upper two, spec 10.2); masking per word by
+ * gen_evex_insn.
+ */
+static void gen_EVEX_VMPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 imm = tcg_constant_i32(tcg_ctx, decode->immediate & 0xff);
+
+    if (s->evex_vl == 16) {
+        gen_helper_mpsadbw_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, imm);
+    } else {
+        gen_helper_mpsadbw_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, imm);
+        if (s->evex_vl == 64) {
+            TCGv_ptr d = tcg_temp_new_ptr(tcg_ctx);
+            TCGv_ptr v = tcg_temp_new_ptr(tcg_ctx);
+            TCGv_ptr w = tcg_temp_new_ptr(tcg_ctx);
+
+            tcg_gen_addi_ptr(tcg_ctx, d, OP_PTR0, 32);
+            tcg_gen_addi_ptr(tcg_ctx, v, OP_PTR1, 32);
+            tcg_gen_addi_ptr(tcg_ctx, w, OP_PTR2, 32);
+            gen_helper_mpsadbw_ymm(tcg_ctx, cpu_env, d, v, w, imm);
+            tcg_temp_free_ptr(tcg_ctx, d);
+            tcg_temp_free_ptr(tcg_ctx, v);
+            tcg_temp_free_ptr(tcg_ctx, w);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U408) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

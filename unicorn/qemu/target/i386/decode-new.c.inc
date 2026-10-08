@@ -3439,6 +3439,24 @@ static void decode_EVEX_0F38_52(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F38_52);
 }
 #endif /* __Use_Original_Qemu (U407) */
+#if __Use_Original_Qemu != 1 /* ours (U408) */
+/*
+ * NoVmp (ledger U408): 0F3A 42: F3 = VMPSADBW (spec 10.2), AVX10.2, EVEX.W0, Full Mem
+ * tuple, {k1}{z} per word, imm8, class E4NF; 66 W0 = VDBPSADBW (AVX512BW, U263): one decoder
+ * for the slot.
+ */
+static void decode_EVEX_0F3A_42(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F3A_42[4] = {
+        {},
+        X86_OP_ENTRY4(EVEX_VDBPSADBW, V,x, H,x, W,x, EV_BW(W0, 16) ev_nf p_66),
+        X86_OP_ENTRY4(EVEX_VMPSADBW, V,x, H,x, W,x, cpuid(AVX10_2) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(16) .evex_nofs = 1,),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_42);
+}
+#endif /* __Use_Original_Qemu (U408) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
@@ -4033,8 +4051,9 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x3b] = X86_OP_GROUP0(EVEX_0F3A_1B),
 #endif /* __Use_Original_Qemu (U215) */
 #if __Use_Original_Qemu != 1 /* ours (U263) */
-    /* NoVmp (ledger U263): VDBPSADBW (66.0F3A.W0 42 ib): Full Mem, word writemask, E4NF */
-    [0x42] = X86_OP_ENTRY4(EVEX_VDBPSADBW, V,x, H,x, W,x, EV_BW(W0, 16) ev_nf p_66),
+    /* NoVmp (ledger U263): VDBPSADBW (66.0F3A.W0 42 ib): Full Mem, word writemask, E4NF;
+       U408: decode_EVEX_0F3A_42 also has F3 VMPSADBW (AVX10.2) */
+    [0x42] = X86_OP_GROUP0(EVEX_0F3A_42),
 #endif /* __Use_Original_Qemu (U263) */
 #if __Use_Original_Qemu != 1 /* ours (U264) */
     /* NoVmp (ledger U264): VPALIGNR (66.0F3A.WIG 0F ib): Full Mem, byte writemask, E4NF */
