@@ -279,6 +279,7 @@ namespace at
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			if ( strict ) uc_ctl_set_x86_cpuid_strict( uc_, 1 );
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
+			if ( cr0 ) uc_reg_write( uc_, UC_X86_REG_CR0, &cr0 );
 			uc_mem_map( uc_, CODE, CODE_SIZE, UC_PROT_ALL );
 			uc_mem_map( uc_, DATA, DATA_SIZE, UC_PROT_READ | UC_PROT_WRITE );
 			uc_mem_map( uc_, MEM, MEM_SIZE, UC_PROT_READ | UC_PROT_WRITE );
@@ -359,6 +360,7 @@ namespace at
 		std::vector<uc_x86_cpuid> cpuid;
 		int strict = 0;
 		uint64_t xcr0 = 0;
+		uint64_t cr0 = 0;
 	private:
 		int model_;
 		uint32_t quirks_;

@@ -9,6 +9,9 @@
 //   --quirks N       UC_CTL_X86_HW_QUIRKS bitmask for Unicorn (default 0 = follow the manual)
 //   --rebuild        re-sweep the opcode space instead of using the cached universe
 //   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp)
+//                    [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] (Unicorn CPUID profile, strict
+//                    #UD, XCR0, CR0; --cr0 0x33 = PE|MP|ET|NE as under Windows x64, so pending
+//                    x87 exceptions raise #MF; PG must stay clear: flat Unicorn memory)
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -293,7 +296,8 @@ int main( int argc, char** argv )
 		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
 		else if ( a == "--strict" ) copt.strict = 1;
 		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V]]\n" ); return 2; }
+		else if ( a == "--cr0" ) copt.cr0 = std::stoull( val(), nullptr, 0 );
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V]]\n" ); return 2; }
 	}
 	if ( !cases.empty() ) return at::run_cases( cases, quirks, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;

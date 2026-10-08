@@ -168,7 +168,9 @@ namespace at
 		return v;
 	}
 
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; };
+	// cr0: Unicorn's CR0 for the cases (0 = Unicorn default, PE only). Windows x64 runs with NE = 1:
+	// pending unmasked x87 exceptions raise #MF, not FERR#; use 0x33 (PE|MP|ET|NE), never PG (flat map)
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; };
 
 	static int run_cases( const std::string& path, uint32_t quirks, const case_opts& opt = {} )
 	{
@@ -201,7 +203,7 @@ namespace at
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); continue; }
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX, quirks );
-			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0;
+			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
 			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); continue; }
 			uc.run( *st_in, u );
 			hw.run( p, *st_in, h );
