@@ -7356,3 +7356,50 @@ void helper_evex_vpermw(CPUX86State *env, ZMMReg *d, ZMMReg *idx, ZMMReg *ta, ZM
     }
 }
 #endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+
+/*
+ * NoVmp (ledger U292): AVX512DQ VFPCLASSPS/PD/SS/SD (SDM Vol2C, CheckFPClassSP/DP): bit j of
+ * the result = OR of the imm8-selected categories of element j - imm8[0] QNaN, [1] +0,
+ * [2] -0, [3] +INF, [4] -INF, [5] denormal, [6] finite negative, [7] SNaN. With MXCSR.DAZ a
+ * denormal counts as a zero ("IF (ExpAllZeros AND MXCSR.DAZ) THEN MantAllZeros := 1").
+ * desc = element size log2 | count << 8 | imm8 << 16; bits count..63 are 0. No MXCSR flag.
+ */
+#define EVEX_DQ_IMM(d)     (((d) >> 16) & 0xff)
+#define EVEX_DQ_SCALAR     (1u << 24)
+
+static bool evex_fpclass1(uint64_t x, bool dbl, int imm, bool daz)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8;
+    uint64_t emax = (1ull << eb) - 1;
+    bool neg = (x >> (fb + eb)) & 1;
+    uint64_t e = (x >> fb) & emax, m = x & ((1ull << fb) - 1);
+    bool ones = e == emax, zeros = e == 0;
+    bool mzero = (zeros && daz) || m == 0;
+    bool zero = zeros && mzero;
+    bool sig = (m >> (fb - 1)) & 1;
+
+    return ((imm & 0x01) && ones && !mzero && sig) ||      /* QNaN */
+           ((imm & 0x02) && !neg && zero) ||               /* +0 */
+           ((imm & 0x04) && neg && zero) ||                /* -0 */
+           ((imm & 0x08) && !neg && ones && mzero) ||      /* +INF */
+           ((imm & 0x10) && neg && ones && mzero) ||       /* -INF */
+           ((imm & 0x20) && zeros && !mzero) ||            /* denormal */
+           ((imm & 0x40) && neg && !ones && !zero) ||      /* finite negative */
+           ((imm & 0x80) && ones && !mzero && !sig);       /* SNaN */
+}
+
+uint64_t helper_evex_fpclass(CPUX86State *env, ZMMReg *s, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    bool daz = (env->mxcsr & SSE_DAZ) != 0;
+    uint64_t r = 0;
+
+    for (i = 0; i < n; i++) {
+        if (evex_fpclass1(evex_get_elem(s, esz, i), esz == MO_64, imm, daz)) {
+            r |= 1ull << i;
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U292) */

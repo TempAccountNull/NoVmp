@@ -2088,6 +2088,22 @@ static void gen_EVEX_PMULLQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
                      decode->op[2].offset, vl, vl);
 }
 #endif /* __Use_Original_Qemu (U290) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+
+/*
+ * NoVmp (ledger U292): VFPCLASSPS/PD/SS/SD: one bit per element (helper_evex_fpclass,
+ * desc = EVEX_DESC | imm8 << 16) left in tmp1_i64; gen_evex_insn ANDs it with k1.
+ */
+static void gen_EVEX_VFPCLASS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 0xff) << 16);
+
+    gen_helper_evex_fpclass(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1,
+                            tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U292) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

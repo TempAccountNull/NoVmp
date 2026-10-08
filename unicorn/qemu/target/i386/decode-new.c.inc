@@ -2840,6 +2840,24 @@ static void decode_EVEX_0F57(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 }
 #undef EV_LOGP
 #endif /* __Use_Original_Qemu (U291) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+/*
+ * NoVmp (ledger U292): 66 0F3A 66 VFPCLASSPS (W0) / VFPCLASSPD (W1) k2 {k1}, x/m/{1toN},
+ * imm8 (Full tuple, E4) and 66 0F3A 67 VFPCLASSSS (W0) / VFPCLASSSD (W1) k2 {k1}, xmm/m32
+ * (m64), imm8 (LIG, Tuple1 Scalar, E6), AVX512DQ (SDM Vol2C VFPCLASSPD .. VFPCLASSSS).
+ * No MXCSR flag; EVEX.vvvv must be 1111b (validate_evex).
+ */
+static void decode_EVEX_0F3A_67(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F3A_67[2] = {
+        X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,ss, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
+                      ev_tt(T1S) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
+        X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,sd, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
+                      ev_tt(T1S) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
+    };
+    *entry = opcodes_EVEX_0F3A_67[s->vex_w];
+}
+#endif /* __Use_Original_Qemu (U292) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -3337,6 +3355,12 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x20] = X86_OP_ENTRY4(PINSRB, V,dq, H,dq, E,b, cpuid(AVX512BW) ev_vl(X86_EVEX_VL128)
                            ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(8) ev_nf zext2 p_66),
 #endif /* __Use_Original_Qemu (U267) */
+#if __Use_Original_Qemu != 1 /* ours (U292) */
+    /* VFPCLASSPS/PD k2 {k1}, x/m/{1toN}, imm8 (66 W0/W1): Full, E4; 67: SS/SD (U292) */
+    [0x66] = X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,x, I,b, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
+    [0x67] = X86_OP_GROUP0(EVEX_0F3A_67),
+#endif /* __Use_Original_Qemu (U292) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
