@@ -1829,6 +1829,7 @@ static const X86OpEntry opcodes_root[256] = {
  * the VEX/legacy tables: 29 VEX/EVEX slots hold a different instruction and EVEX.W is
  * mostly an opcode extension (Emulator/data/evex_forms_summary.txt). An empty slot is #UD.
  */
+
 static const X86OpEntry opcodes_evex_0F[256] = {
 };
 
@@ -1886,6 +1887,49 @@ static void decode_root(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 }
 
 
+#if __Use_Original_Qemu != 1 /* ours (U144) */
+/*
+ * NoVmp (ledger U144): compressed displacement disp8*N of an EVEX memory operand (SDM
+ * Vol2A 2.7.5, Tables 2-36/2-37; also with 16-bit addressing). N from the tuple type, the
+ * vector length, the element size (EVEX.W / the form) and EVEX.b (embedded broadcast);
+ * Tuple1 Scalar/Fixed use the size of the memory operand itself.
+ */
+static int evex_disp8_scale(DisasContext *s, X86OpEntry *e, X86DecodedOp *op)
+{
+    int vl = s->evex_vl, esz = 1 << s->evex_esz;
+
+    switch (e->evex_tt) {
+    case X86_EVEX_TT_FULL:
+        return s->evex_b ? esz : vl;
+    case X86_EVEX_TT_HALF:
+        return s->evex_b ? esz : vl / 2;
+    case X86_EVEX_TT_FULL_MEM:
+        return vl;
+    case X86_EVEX_TT_T1S:
+    case X86_EVEX_TT_T1F:
+        return op->ot <= MO_64 ? 1 << op->ot : esz;
+    case X86_EVEX_TT_T2:
+        return 2 * esz;
+    case X86_EVEX_TT_T4:
+        return 4 * esz;
+    case X86_EVEX_TT_T8:
+        return 8 * esz;
+    case X86_EVEX_TT_HALF_MEM:
+        return vl / 2;
+    case X86_EVEX_TT_QUARTER_MEM:
+        return vl / 4;
+    case X86_EVEX_TT_EIGHTH_MEM:
+        return vl / 8;
+    case X86_EVEX_TT_MEM128:
+        return 16;
+    case X86_EVEX_TT_MOVDDUP:
+        return vl == 16 ? 8 : vl;
+    default:
+        return 1;
+    }
+}
+#endif /* __Use_Original_Qemu (U144) */
+
 static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
                         X86DecodedOp *op, X86OpType type)
 {
@@ -1908,6 +1952,11 @@ static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     } else {
         op->has_ea = true;
         op->n = -1;
+#if __Use_Original_Qemu != 1 /* ours (U144) */
+        if (s->prefix & PREFIX_EVEX) {
+            s->evex_n = evex_disp8_scale(s, &decode->e, op);
+        }
+#endif /* __Use_Original_Qemu (U144) */
         decode->mem = gen_lea_modrm_0(env, s, modrm,
                                       decode->e.vex_class == 12);
     }
@@ -2859,6 +2908,7 @@ illegal:
     gen_illegal_opcode(s);
     return false;
 }
+
 
 static void decode_temp_free(TCGContext *tcg_ctx, X86DecodedOp *op)
 {

@@ -2511,6 +2511,12 @@ static AddressParts gen_lea_modrm_0(CPUX86State *env, DisasContext *s,
             int code = x86_ldub_code(env, s);
             scale = (code >> 6) & 3;
             index = ((code >> 3) & 7) | REX_X(s);
+#if __Use_Original_Qemu != 1 /* ours (U144) */
+            /* EVEX.V' selects VSIB index registers 16-31 (SDM Vol2A Table 2-33; U144) */
+            if (is_vsib) {
+                index |= s->evex_v4;
+            }
+#endif /* __Use_Original_Qemu (U144) */
             if (index == 4 && !is_vsib) {
                 index = -1;  /* no index */
             }
@@ -2530,7 +2536,12 @@ static AddressParts gen_lea_modrm_0(CPUX86State *env, DisasContext *s,
             }
             break;
         case 1:
+#if __Use_Original_Qemu == 1 /* original QEMU (U144) */
             disp = (int8_t)x86_ldub_code(env, s);
+#else /* ours (U144) */
+            /* EVEX compressed displacement disp8*N (SDM Vol2A 2.7.5); evex_n = 1 otherwise */
+            disp = (int8_t)x86_ldub_code(env, s) * (target_long)s->evex_n;
+#endif /* __Use_Original_Qemu (U144) */
             break;
         default:
         case 2:
@@ -2555,7 +2566,12 @@ static AddressParts gen_lea_modrm_0(CPUX86State *env, DisasContext *s,
                 break;
             }
         } else if (mod == 1) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U144) */
             disp = (int8_t)x86_ldub_code(env, s);
+#else /* ours (U144) */
+            /* disp8*N also with 16-bit addressing (SDM Vol2A 2.7.5) */
+            disp = (int8_t)x86_ldub_code(env, s) * (target_long)s->evex_n;
+#endif /* __Use_Original_Qemu (U144) */
         } else {
             disp = (int16_t)x86_lduw_code(env, s);
         }
