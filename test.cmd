@@ -69,6 +69,10 @@ rem EVEX milestone M2 permutes / moves (ledger U210-U215: unpack/shuffle/permute
 rem narrowing VPMOV*, compress/expand, VMOVNT/DUP/MOVD/MOVQ/MOVHPS.., insert/extract/broadcast x2..x8)
 rem vs the SDM model ref_evex_m2_perm.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_perm.txt" --avx512 --xcr0 0xE7
+rem plan 1.15d milestone M3 BW (ledger U260-U269): AVX512BW byte/word instructions (64-bit
+rem writemasks, masking / fault suppression per byte and word, narrowing stores, disp8*N of every
+rem byte/word tuple, #UD) vs the SDM model ref_evex_m3_bw.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_bw.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
