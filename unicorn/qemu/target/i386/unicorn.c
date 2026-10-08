@@ -693,7 +693,17 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);
+#if __Use_Original_Qemu == 1 /* original QEMU (U447) */
             *(uint32_t *)value = env->mxcsr;
+#else /* ours (U447) */
+            /*
+             * NoVmp (ledger U447): SSE/AVX instructions leave their new
+             * exception flags in sse_status; fold them in as STMXCSR /
+             * FXSAVE / XSAVE do, or the API shows stale MXCSR flags.
+             */
+            update_mxcsr_from_sse_status(env);
+            *(uint32_t *)value = env->mxcsr;
+#endif /* __Use_Original_Qemu (U447) */
             break;
         case UC_X86_REG_FS_BASE:
             CHECK_REG_TYPE(uint32_t);
@@ -1081,7 +1091,17 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);
+#if __Use_Original_Qemu == 1 /* original QEMU (U447) */
             *(uint32_t *)value = env->mxcsr;
+#else /* ours (U447) */
+            /*
+             * NoVmp (ledger U447): SSE/AVX instructions leave their new
+             * exception flags in sse_status; fold them in as STMXCSR /
+             * FXSAVE / XSAVE do, or the API shows stale MXCSR flags.
+             */
+            update_mxcsr_from_sse_status(env);
+            *(uint32_t *)value = env->mxcsr;
+#endif /* __Use_Original_Qemu (U447) */
             break;
         case UC_X86_REG_XMM8:
         case UC_X86_REG_XMM9:
