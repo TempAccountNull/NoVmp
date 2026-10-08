@@ -87,6 +87,9 @@ DEF_HELPER_3(movdir64b, void, env, tl, tl)
 #if __Use_Original_Qemu != 1 /* ours (U80) */
 DEF_HELPER_1(ptwrite, void, env)
 #endif /* __Use_Original_Qemu (U80) */
+#if __Use_Original_Qemu != 1 /* ours (U430) */
+DEF_HELPER_2(rep_zero_count_zx, void, env, i32)
+#endif /* __Use_Original_Qemu (U430) */
 #endif
 #if __Use_Original_Qemu != 1 /* ours (U101) */
 DEF_HELPER_FLAGS_4(rao, TCG_CALL_NO_WG, void, env, tl, tl, i32)

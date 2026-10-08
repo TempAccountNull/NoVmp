@@ -1426,28 +1426,27 @@ static TCGLabel *gen_jz_ecx_string(DisasContext *s)
 }
 #else /* ours (U60) */
 /*
- * NoVmp (ledger U60): a REP string instruction with a 32-bit address size in
- * 64-bit mode writes its registers back at that width even when ECX = 0
- * (i5-13600K, emu-alltest --cases hwcheck_gate1: MOVS -> RCX/RSI/RDI,
- * STOS -> RCX/RDI, LODS/CMPS/SCAS -> RCX zero-extended; Goldmont MSROM
- * U045c-e). 'zx' is the mask of registers (1 << R_*) written back on exit;
- * on the other exits they were already written at that width.
+ * NoVmp (ledger U60, U430): a REP string instruction with a 32-bit address size
+ * in 64-bit mode and ECX = 0. SDM REP Operation: WHILE CountReg != 0 ... OD, so
+ * nothing is executed and no register is written (the default). The i5-13600K
+ * writes its registers back at that width (emu-alltest --cases hwcheck_gate1:
+ * MOVS -> RCX/RSI/RDI, STOS -> RCX/RDI, LODS/CMPS/SCAS -> RCX zero-extended;
+ * Goldmont MSROM U045c-e): UC_X86_QUIRK_REP_ZERO_COUNT_ZX, checked at run time by
+ * helper_rep_zero_count_zx. 'zx' is the mask of registers (1 << R_*) written back
+ * on that exit; on the other exits they were already written at that width.
  */
 static TCGLabel *gen_jz_ecx_string(DisasContext *s, unsigned zx)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     TCGLabel *l1 = gen_new_label(tcg_ctx);
     TCGLabel *l2 = gen_new_label(tcg_ctx);
-    int r;
     gen_op_jnz_ecx(s, l1);
     gen_set_label(tcg_ctx, l2);
-    if (CODE64(s) && s->aflag == MO_32) {
-        for (r = 0; r < 8; r++) {
-            if (zx & (1u << r)) {
-                tcg_gen_ext32u_tl(tcg_ctx, cpu_regs[r], cpu_regs[r]);
-            }
-        }
+#ifdef TARGET_X86_64
+    if (CODE64(s) && s->aflag == MO_32 && zx) {
+        gen_helper_rep_zero_count_zx(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, zx));
     }
+#endif
     gen_jmp_rel_csize(s, 0, 1);
     gen_set_label(tcg_ctx, l1);
     return l2;
