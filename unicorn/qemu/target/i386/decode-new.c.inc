@@ -4990,6 +4990,13 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         /* AVX10.2 spec 361050-007 chapter 2: AVX10[19] and version >= 2 (U371) */
         return s->avx10_version >= 2;
 #endif /* __Use_Original_Qemu (U372) */
+#if __Use_Original_Qemu != 1 /* ours (U400) */
+    case X86_FEAT_AVX10_V1_AUX:
+        /* "AVX10.2 OR AVX10_V1_AUX": the U371 avx10_v1_aux copy (24H.1:ECX[2]) or version >= 2 */
+        return s->avx10_v1_aux || s->avx10_version >= 2;
+    case X86_FEAT_AVX10_MOVRS:
+        return s->avx10_version >= 1 && (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_MOVRS);
+#endif /* __Use_Original_Qemu (U400) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

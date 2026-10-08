@@ -217,6 +217,15 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U372) */
     X86_FEAT_AVX10_2,       /* CPUID.(07H,1):EDX.AVX10[19] and CPUID.(24H,0):EBX[7:0] >= 2 */
 #endif /* __Use_Original_Qemu (U372) */
+#if __Use_Original_Qemu != 1 /* ours (U400) */
+    /*
+     * "AVX10.2 OR AVX10_V1_AUX" (AVX10.2 spec 361050-007 ch.2; CPUID.(24H,1):ECX[2], U370)
+     * and VMOVRS* = "AVX10 and MOVRS" (ISE 319433-062): AVX10 version >= 1 plus CPUID.(07H,1):
+     * EAX.MOVRS[31]
+     */
+    X86_FEAT_AVX10_V1_AUX,
+    X86_FEAT_AVX10_MOVRS,
+#endif /* __Use_Original_Qemu (U400) */
 } X86CPUIDFeature;
 
 /* Execution flags */
