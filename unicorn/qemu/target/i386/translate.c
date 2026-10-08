@@ -185,6 +185,10 @@ typedef struct DisasContext {
     int8_t evex_rc;
     uint8_t evex_n;
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    /* NoVmp (ledger U230): destination / opmask element size (MemOp), see X86OpEntry.evex_ds */
+    uint8_t evex_dsz;
+#endif /* __Use_Original_Qemu (U230) */
     bool jmp_opt; /* use direct block chaining for direct jumps */
     bool repz_opt; /* optimize jumps within repz instructions */
     bool cc_op_dirty;
@@ -3759,6 +3763,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     s->evex_rc = -1;
     s->evex_n = 1;
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    s->evex_dsz = MO_32;
+#endif /* __Use_Original_Qemu (U230) */
     switch (sigsetjmp(s->jmpbuf, 0)) {
     case 0:
         break;

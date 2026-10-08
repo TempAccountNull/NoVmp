@@ -1853,6 +1853,10 @@ static const X86OpEntry opcodes_root[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U191) */
 #define ev_msrc1     .evex_msrc1 = 1,   /* masked-off lanes take SRC1 (U191) */
 #endif /* __Use_Original_Qemu (U191) */
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+/* destination / writemask element size when it differs from ev_es (U230; U260 merged) */
+#define ev_ds(d)     .evex_ds = X86_EVEX_ES_##d,
+#endif /* __Use_Original_Qemu (U230) */
 #define EV_VLALL     (X86_EVEX_VL128 | X86_EVEX_VL256 | X86_EVEX_VL512)
 /* vector moves: Full Mem tuple, {k1}{z}, element size from EVEX.W, no EVEX.b */
 #define EV_MOV(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(MZ) ev_w(w) ev_es(W)
@@ -1863,7 +1867,6 @@ static const X86OpEntry opcodes_root[256] = {
  * to 64 bits. EV_BW: Full Mem tuple, {k1}{z}, no {1toN}. ev_nf: exception class E4NF /
  * E9NF (the whole memory operand is read whatever the mask, no fault suppression).
  */
-#define bw_kes(e)    .evex_kes = X86_EVEX_ES_##e,
 #define EV_BW(w, es) cpuid(AVX512BW) ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(MZ) ev_w(w) ev_es(es)
 
 /* EVEX.W as an opcode extension: entries[0] = W0, entries[1] = W1 */
@@ -3034,7 +3037,7 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x68] = X86_OP_ENTRY3(EVEX_PUNPCKHBW, V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
     [0x69] = X86_OP_ENTRY3(EVEX_PUNPCKHWD, V,x, H,x, W,x, EV_BW(WIG, 16) ev_nf p_66),
     [0x6b] = X86_OP_ENTRY3(EVEX_PACKSSDW,  V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
-                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
+                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) ev_ds(16) ev_nf p_66),
     [0x70] = X86_OP_GROUP0(EVEX_0F70),
 #endif /* __Use_Original_Qemu (U264) */
 #if __Use_Original_Qemu != 1 /* ours (U265) */
@@ -3283,7 +3286,7 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     /* NoVmp (ledger U264): VPSHUFB (00), VPACKUSDW (2B W0: Full, m32bcst, word writemask) */
     [0x00] = X86_OP_ENTRY3(EVEX_PSHUFB,   V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
     [0x2b] = X86_OP_ENTRY3(EVEX_PACKUSDW, V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
-                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
+                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) ev_ds(16) ev_nf p_66),
 #endif /* __Use_Original_Qemu (U264) */
 #if __Use_Original_Qemu != 1 /* ours (U265) */
     /* NoVmp (ledger U265): VPSRLVW 10, VPSRAVW 11, VPSLLVW 12 (66.0F38.W1, Full Mem, E4) */
@@ -3521,7 +3524,6 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #endif /* __Use_Original_Qemu (U158) */
 #if __Use_Original_Qemu != 1 /* ours (U261) */
 #undef EV_BW
-#undef bw_kes
 #endif /* __Use_Original_Qemu (U261) */
 #if __Use_Original_Qemu != 1 /* ours (U215) */
 #undef EV_VL512
@@ -3566,6 +3568,9 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U191) */
 #undef ev_msrc1
 #endif /* __Use_Original_Qemu (U191) */
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+#undef ev_ds
+#endif /* __Use_Original_Qemu (U230) */
 #endif /* __Use_Original_Qemu (U148) */
 
 static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -4136,6 +4141,10 @@ static bool decode_evex_vl(DisasContext *s, CPUX86State *env, X86OpEntry *e)
         return false;
     }
     s->evex_esz = e->evex_es == X86_EVEX_ES_W ? (s->vex_w ? MO_64 : MO_32) : es_ot[e->evex_es];
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    /* destination / opmask element size (U230): differs from the source on conversions */
+    s->evex_dsz = e->evex_ds ? es_ot[e->evex_ds] : s->evex_esz;
+#endif /* __Use_Original_Qemu (U230) */
 
     if (s->evex_b && reg) {
         if (e->evex_rc == X86_EVEX_RC_NONE) {

@@ -449,18 +449,6 @@ static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
     return p;
 }
 
-#if __Use_Original_Qemu != 1 /* ours (U260) */
-/*
- * NoVmp (ledger U260): element size of the writemask (MO_8..MO_64): evex_kes when the
- * form sets it (VPACKSSDW/VPACKUSDW: m32bcst {1toN} and disp8*N by dwords, writemask by
- * words), else the element size of the form.
- */
-static int evex_kesz(DisasContext *s, X86DecodedInsn *decode)
-{
-    return decode->e.evex_kes ? decode->e.evex_kes - X86_EVEX_ES_8 + MO_8 : s->evex_esz;
-}
-#endif /* __Use_Original_Qemu (U260) */
-
 static int evex_mem_bytes(X86DecodedOp *op)
 {
     return op->ot <= MO_64 ? 1 << op->ot : 16 << (op->ot - MO_128);
@@ -489,14 +477,16 @@ static int evex_dest_bytes(DisasContext *s, X86DecodedInsn *decode)
 
 /*
  * elements of the instruction that the opmask controls (scalar forms: element 0 only):
- * KL = destination bytes (U210) / writemask element size (U260); up to 64 (byte elements
- * of a ZMM)
+ * KL = destination bytes (U210) / destination element size (U230 evex_dsz: the writemask
+ * element size, U260's evex_kes merged into it); up to 64 (byte elements of a ZMM).
+ * Conversions: VCVTPD2PS zmm -> ymm: 32 bytes / 4 = 8; VCVTPS2PD ymm -> zmm: 64 / 8 = 8
+ * (U230's "VL >> max(source, destination size)" gives the same count).
  */
 static int evex_nelem(DisasContext *s, X86DecodedInsn *decode)
 {
 #if __Use_Original_Qemu != 1 /* ours (U210) */
     if (!(decode->e.evex_vl & X86_EVEX_LIG)) {
-        return evex_dest_bytes(s, decode) >> evex_kesz(s, decode);   /* U260: evex_kesz */
+        return evex_dest_bytes(s, decode) >> s->evex_dsz;   /* U230: evex_dsz */
     }
 #endif /* __Use_Original_Qemu (U210) */
     return (decode->e.evex_vl & X86_EVEX_LIG) ? 1 : s->evex_vl >> s->evex_esz;
@@ -788,10 +778,16 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     X86OpEntry *e = &decode->e;
     X86DecodedOp *op0 = &decode->op[0];
     /*
-     * U260: esz = writemask element size; a destination narrower than VL (VPMOVWB: VL/2)
-     * comes from evex_dest_bytes (U210), vl stays the vector length
+     * esz: element size of the sources (neutral lanes of a masked FP source); U230: dsz =
+     * element size of the destination and of the writemask (blend, scalar merge, DEST as a
+     * source; = esz unless X86OpEntry.evex_ds: conversions, and U260's VPACKSSDW/VPACKUSDW
+     * word writemask). A destination narrower than VL (VPMOVWB: VL/2, VCVTPD2PS: VL/2) comes
+     * from evex_dest_bytes (U210); vl stays the vector length.
      */
-    int vl = s->evex_vl, esz = evex_kesz(s, decode);
+    int vl = s->evex_vl, esz = s->evex_esz;
+#if __Use_Original_Qemu != 1 /* ours (U230) */
+    int dsz = s->evex_dsz;
+#endif /* __Use_Original_Qemu (U230) */
     int nelem = evex_nelem(s, decode);
     bool fp = e->evex_fp;
     bool has_mem = op0->has_ea || decode->op[1].has_ea || decode->op[2].has_ea;
@@ -879,7 +875,7 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
             TCGv_ptr ps = evex_env_ptr(s, ZMM_OFFSET(op0->n));
 
             gen_helper_evex_neutral(tcg_ctx, cpu_env, pd, ps, kmask,
-                                    tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem)));
+                                    tcg_constant_i32(tcg_ctx, EVEX_DESC(dsz, nelem)));
             tcg_temp_free_ptr(tcg_ctx, pd);
             tcg_temp_free_ptr(tcg_ctx, ps);
         } else {
@@ -951,7 +947,7 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 
 #if __Use_Original_Qemu != 1 /* ours (U192) */
             if (scalar) {
-                gen_evex_scalar_upper(s, decode, esz);
+                gen_evex_scalar_upper(s, decode, dsz);   /* U230: destination size */
             }
 #endif /* __Use_Original_Qemu (U192) */
 #if __Use_Original_Qemu != 1 /* ours (U191) */
@@ -970,27 +966,27 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
                 TCGv_ptr ps = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
 
                 gen_helper_evex_blend(tcg_ctx, cpu_env, pd, ps, kmask,
-                                      tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem) |
+                                      tcg_constant_i32(tcg_ctx, EVEX_DESC(dsz, nelem) |
                                                        (s->evex_z ? EVEX_DESC_Z : 0)));
                 tcg_temp_free_ptr(tcg_ctx, pd);
                 tcg_temp_free_ptr(tcg_ctx, ps);
 #if __Use_Original_Qemu != 1 /* ours (U192) */
                 if (scalar) {
-                    /* element 0 blended; DEST[127:esz] from the scratch register */
+                    /* element 0 blended; DEST[127:dsz] from the scratch register (U230) */
                     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env,
                                    offsetof(CPUX86State, evex_t1) + 8);
                     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 8);
-                    if (esz < MO_64) {
+                    if (dsz < MO_64) {
                         tcg_gen_ld32u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
                                           offsetof(CPUX86State, evex_t1) + 4);
                         tcg_gen_st32_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 4);
                     }
-                    if (esz < MO_32) {
+                    if (dsz < MO_32) {
                         tcg_gen_ld16u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
                                           offsetof(CPUX86State, evex_t1) + 2);
                         tcg_gen_st16_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 2);
                     }
-                    if (esz < MO_16) {
+                    if (dsz < MO_16) {
                         tcg_gen_ld8u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
                                          offsetof(CPUX86State, evex_t1) + 1);
                         tcg_gen_st8_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 1);
