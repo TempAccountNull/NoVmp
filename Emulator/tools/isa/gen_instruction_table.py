@@ -91,6 +91,35 @@ OVERRIDES = {
     'smsw': ('⏳', 'CR0 value: Phase 2 environment'),
 }
 
+
+CC_SYN = {'z': 'e', 'nz': 'ne', 'nbe': 'a', 'nb': 'ae', 'nae': 'b', 'c': 'b', 'nc': 'ae', 'na': 'be',
+          'nle': 'g', 'nl': 'ge', 'nge': 'l', 'ng': 'le', 'pe': 'p', 'po': 'np'}
+CC_PREFIX = ('fcmov', 'cmov', 'set', 'j')
+
+# Not encodable in 64-bit mode: #UD there (one-byte-map sweep, identical to the CPU); the
+# sample is x64, so 16/32-bit-mode semantics are out of scope.
+INVALID_64 = {'aaa', 'aad', 'aam', 'aas', 'daa', 'das', 'bound', 'into', 'arpl', 'salc', 'lds', 'les',
+              'pusha', 'pushaw', 'pushal', 'pushad', 'popa', 'popaw', 'popal', 'popad',
+              'pushfd', 'pushfl', 'popfd', 'popfl', 'jcxz', 'callf_ptr', 'jmpf_ptr'}
+
+
+def resolve(sweep, mn, enc):
+    """sweep buckets for (mn, enc), trying XED -> Capstone name aliases; returns (buckets, alias)"""
+    b = sweep.get((mn, enc))
+    if b:
+        return b, None
+    m = re.fullmatch(r'(v?cmp)([a-z_]+?)(ps|pd|ss|sd)', mn)
+    if m and m.group(2) not in ('', 'x'):
+        base = m.group(1) + m.group(3)
+        if (base, enc) in sweep:
+            return sweep[(base, enc)], '%s imm8 predicate alias' % base.upper()
+    for pre in CC_PREFIX:
+        if mn.startswith(pre) and mn[len(pre):] in CC_SYN:
+            alt = pre + CC_SYN[mn[len(pre):]]
+            if (alt, enc) in sweep:
+                return sweep[(alt, enc)], 'same opcode as %s' % alt.upper()
+    return None, None
+
 ENC_ORDER = {'legacy': 0, 'vex': 1, 'xop': 2, 'evex': 3}
 
 
@@ -171,8 +200,10 @@ def main():
     for (mn, enc), r in rows.items():
         fam = family(sorted(r['isa'])[0])
         swept_enc = 'vex' if enc == 'xop' else enc
-        b = sweep.get((mn, swept_enc))
-        if re.fullmatch(r'cmpn?[a-z]{1,2}xadd', mn) and enc == 'vex' and 'APX' not in ''.join(r['isa']):
+        b, alias = resolve(sweep, mn, swept_enc)
+        if mn in INVALID_64 and enc == 'legacy':
+            st, note = '✅', '#UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample)'
+        elif re.fullmatch(r'cmpn?[a-z]{1,2}xadd', mn) and enc == 'vex' and 'APX' not in ''.join(r['isa']):
             st, note = '⏳', 'implemented (QEMU 7.2 CMPccXADD + U14 port fixes); not on the i5-13600K and no Capstone form: SDM-vector test pending (Phase 3/5)'
         elif mn in OVERRIDES and enc == 'evex' and (not b or all(k == 'host lacks + unicorn #UD' for k in b)):
             st, note = '⬜', 'EVEX form not implemented (the i5-13600K lacks AVX-512)'
@@ -184,6 +215,8 @@ def main():
             st, note = '⏳', 'CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6)'
         else:
             st, note = '⬜', 'not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b)'
+        if alias and st != '⬜':
+            note += ' — ' + alias
         totals[st] += 1
         vl = '/'.join(sorted(r['vl'], key=lambda v: int(v) if v.isdigit() else 0)) or '-'
         by_family[fam].append((mn, enc, vl, '+'.join(sorted(r['isa'])), st, note))
