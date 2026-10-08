@@ -37,9 +37,10 @@ void cpu_sync_avx_hflag(CPUX86State *env)
      * XCR0[7:5] = 111b (SDM Vol1 13.3; XSETBV keeps 2:1 = 11b then); SDM Vol2
      * Table 2-39: EVEX needs XCR0 111xx111b. VEX opmask instructions need only
      * 111xxx11b (E3h); that differs only for an XCR0 written through the Unicorn
-     * API without YMM, and is left to the K milestone (own flag or this one). Every
-     * caller of this function (CR4 updates, XSETBV, Unicorn XCR0 register writes,
-     * the U120 profile hook) refreshes it; consumed by the K and M1 decoders.
+     * API without YMM and is handled by HF_OPMASK_EN (U127, hflags bit 2, below),
+     * which the opmask decoder checks instead of this flag. Every caller of this
+     * function (CR4 updates, XSETBV, Unicorn XCR0 register writes, the U120
+     * profile hook) refreshes it; for the EVEX (M1) decoder.
      */
     if ((env->cr[4] & CR4_OSXSAVE_MASK)
         && (env->xcr0 & (XSTATE_SSE_MASK | XSTATE_YMM_MASK | XSTATE_OPMASK_MASK |
@@ -57,7 +58,7 @@ void cpu_sync_avx_hflag(CPUX86State *env)
      * need CR4.OSXSAVE = 1 and XCR0 = 111xxx11b (SDM Vol2A Table 2-39; Tables 2-65/
      * 2-66: #UD otherwise), i.e. (XCR0 & E3h) = E3h. XCR0[2] is not required: with
      * XSETBV's rules E3h implies E7h, but an XCR0 written through the Unicorn API
-     * may hold E3h, so this is its own flag (bit 30, free like 29) rather than
+     * may hold E3h, so this is its own flag (hflags bit 2, see cpu.h) rather than
      * HF_AVX512_EN. Refreshed by every caller of this function (see U121).
      */
     if ((env->cr[4] & CR4_OSXSAVE_MASK)
