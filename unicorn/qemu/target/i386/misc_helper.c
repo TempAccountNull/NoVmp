@@ -549,6 +549,51 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    /* user-interrupt MSRs (SDM Vol3A 9.3.2), present with CPUID.(07H,0):EDX.UINTR */
+    case MSR_IA32_UINTR_RR:
+        if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
+            env->uintr_rr = val;
+            x86_uintr_update_request(env);
+        }
+        break;
+    case MSR_IA32_UINTR_HANDLER:
+    case MSR_IA32_UINTR_STACKADJUST:
+    case MSR_IA32_UINTR_MISC:
+    case MSR_IA32_UINTR_PD:
+    case MSR_IA32_UINTR_TT:
+        if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
+            uint32_t msr = (uint32_t)env->regs[R_ECX];
+            bool gp = false;
+
+            switch (msr) {
+            case MSR_IA32_UINTR_HANDLER:
+                gp = !novmp_canonical(env, val);
+                env->uintr_handler = gp ? env->uintr_handler : val;
+                break;
+            case MSR_IA32_UINTR_STACKADJUST:
+                gp = !novmp_canonical(env, val);
+                env->uintr_stackadjust = gp ? env->uintr_stackadjust : val;
+                break;
+            case MSR_IA32_UINTR_MISC:
+                gp = (val >> 40) != 0;
+                env->uintr_misc = gp ? env->uintr_misc : val;
+                break;
+            case MSR_IA32_UINTR_PD:
+                gp = !novmp_canonical(env, val) || (val & 0x3f);
+                env->uintr_pd = gp ? env->uintr_pd : val;
+                break;
+            default:
+                gp = !novmp_canonical(env, val & ~0xfULL) || (val & 0xe);
+                env->uintr_tt = gp ? env->uintr_tt : val;
+                break;
+            }
+            if (gp) {
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
+        }
+        break;
+#endif /* __Use_Original_Qemu (U104) */
     case MSR_IA32_BNDCFGS:
         /* FIXME: #GP if reserved bits are set.  */
         /* FIXME: Extend highest implemented bit of linear address.  */
@@ -785,6 +830,26 @@ void helper_rdmsr(CPUX86State *env)
         val = env->msr_uarch_misc_ctl;
         break;
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    case MSR_IA32_UINTR_RR:
+        val = env->uintr_rr;
+        break;
+    case MSR_IA32_UINTR_HANDLER:
+        val = env->uintr_handler;
+        break;
+    case MSR_IA32_UINTR_STACKADJUST:
+        val = env->uintr_stackadjust;
+        break;
+    case MSR_IA32_UINTR_MISC:
+        val = env->uintr_misc;
+        break;
+    case MSR_IA32_UINTR_PD:
+        val = env->uintr_pd;
+        break;
+    case MSR_IA32_UINTR_TT:
+        val = env->uintr_tt;
+        break;
+#endif /* __Use_Original_Qemu (U104) */
     default:
         if ((uint32_t)env->regs[R_ECX] >= MSR_ARCH_LBR_FROM_0 &&
             (uint32_t)env->regs[R_ECX] <

@@ -666,7 +666,7 @@ static CPUCacheInfo legacy_l3_cache = {
 #if __Use_Original_Qemu == 1 /* original QEMU (U74) */
 #define TCG_7_0_EDX_FEATURES 0
 #else /* ours (U74) */
-#define TCG_7_0_EDX_FEATURES CPUID_7_0_EDX_SERIALIZE
+#define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | CPUID_7_0_EDX_UINTR /* U104 */)
 #endif /* __Use_Original_Qemu (U74) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U71) */
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD
@@ -680,7 +680,8 @@ static CPUCacheInfo legacy_l3_cache = {
 #define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8 | \
           CPUID_7_1_EDX_AVX_VNNI_INT16 /* U86 */ | \
           CPUID_7_1_EDX_AVX_NE_CONVERT /* U88 */ | \
-          CPUID_7_1_EDX_USER_MSR /* U103 */)
+          CPUID_7_1_EDX_USER_MSR /* U103 */ | \
+          CPUID_7_1_EDX_UIRET_UIF /* U104 */)
 #endif /* __Use_Original_Qemu (U85) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
@@ -5400,6 +5401,12 @@ int x86_cpu_pending_interrupt(CPUState *cs, int interrupt_request)
             return CPU_INTERRUPT_VIRQ;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    /* user-interrupt delivery: priority just below ordinary interrupts (SDM Vol3A 9.4.2) */
+    if ((interrupt_request & CPU_INTERRUPT_UINTR) && x86_uintr_deliverable(env)) {
+        return CPU_INTERRUPT_UINTR;
+    }
+#endif /* __Use_Original_Qemu (U104) */
 
     return 0;
 }

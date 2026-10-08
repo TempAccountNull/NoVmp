@@ -261,6 +261,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U100) */
 #define CR4_KL_MASK    (1U << 19) /* Key Locker (Key Locker spec 1.3) */
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+#define CR4_UINTR_MASK (1U << 25) /* user interrupts (SDM Vol3A 9.2) */
+#endif /* __Use_Original_Qemu (U104) */
 
 #define CR4_RESERVED_MASK \
     (~(target_ulong)(CR4_VME_MASK | CR4_PVI_MASK | CR4_TSD_MASK | \
@@ -376,6 +379,15 @@ typedef enum X86Seg {
 #define MSR_IA32_USER_MSR_CTL           0x1c    /* SDM Vol4: URDMSR/UWRMSR enable + bitmap */
 #define MSR_IA32_UARCH_MISC_CTL         0x1b01  /* SDM Vol4: bit 0 DOITM */
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/* user-interrupt MSRs (SDM Vol3A 9.3.2) */
+#define MSR_IA32_UINTR_RR               0x985
+#define MSR_IA32_UINTR_HANDLER          0x986
+#define MSR_IA32_UINTR_STACKADJUST      0x987
+#define MSR_IA32_UINTR_MISC             0x988   /* UITTSZ [31:0], UINV [39:32] */
+#define MSR_IA32_UINTR_PD               0x989
+#define MSR_IA32_UINTR_TT               0x98a   /* UITTADDR [63:4], SENDUIPI enable [0] */
+#endif /* __Use_Original_Qemu (U104) */
 #define MSR_IA32_CORE_CAPABILITY        0xcf
 
 #define MSR_IA32_ARCH_CAPABILITIES      0x10a
@@ -867,6 +879,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_EDX_AVX512_VP2INTERSECT (1U << 8)
 /* SERIALIZE instruction */
 #define CPUID_7_0_EDX_SERIALIZE         (1U << 14)
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/* User interrupts (UIRET, TESTUI, CLUI, STUI, SENDUIPI, CR4.UINTR) */
+#define CPUID_7_0_EDX_UINTR             (1U << 5)
+#endif /* __Use_Original_Qemu (U104) */
 /* TSX suspend load address tracking instruction */
 #define CPUID_7_0_EDX_TSX_LDTRK         (1U << 16)
 /* Architectural Last Branch Records */
@@ -934,6 +950,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* URDMSR and UWRMSR */
 #define CPUID_7_1_EDX_USER_MSR          (1U << 15)
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/* UIRET loads UIF from RFLAGS[1] of its stack image (SDM Vol3A 9.7) */
+#define CPUID_7_1_EDX_UIRET_UIF         (1U << 17)
+#endif /* __Use_Original_Qemu (U104) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
@@ -1168,6 +1188,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPU_INTERRUPT_VIRQ      CPU_INTERRUPT_TGT_INT_0
 #define CPU_INTERRUPT_SIPI      CPU_INTERRUPT_TGT_INT_1
 #define CPU_INTERRUPT_TPR       CPU_INTERRUPT_TGT_INT_2
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/* a user interrupt is recognized (UIRR != 0); delivered when deliverable (U104) */
+#define CPU_INTERRUPT_UINTR     CPU_INTERRUPT_TGT_EXT_0
+#endif /* __Use_Original_Qemu (U104) */
 
 /* Use a clearer name for this.  */
 #define CPU_INTERRUPT_INIT      CPU_INTERRUPT_RESET
@@ -1748,6 +1772,16 @@ typedef struct CPUX86State {
     uint64_t msr_user_msr_ctl;      /* IA32_USER_MSR_CTL (1CH) */
     uint64_t msr_uarch_misc_ctl;    /* IA32_UARCH_MISC_CTL (1B01H) */
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    /* NoVmp (ledger U104): user-interrupt state (SDM Vol3A 9.3.1), cleared by reset */
+    uint64_t uintr_rr;              /* UIRR */
+    uint64_t uintr_handler;         /* UIHANDLER */
+    uint64_t uintr_stackadjust;     /* UISTACKADJUST */
+    uint64_t uintr_misc;            /* UITTSZ | UINV << 32 */
+    uint64_t uintr_pd;              /* UPIDADDR */
+    uint64_t uintr_tt;              /* UITTADDR | SENDUIPI enable */
+    uint8_t uintr_uif;              /* UIF */
+#endif /* __Use_Original_Qemu (U104) */
 
     /* End of state preserved by INIT (dummy marker).  */
     int end_init_save;
@@ -2120,6 +2154,12 @@ int cpu_x86_signal_handler(int host_signum, void *pinfo,
 /* cpu.c */
 #if __Use_Original_Qemu != 1 /* ours (U68) */
 uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, int reg);
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/* seg_helper.c: user interrupts */
+void x86_uintr_update_request(CPUX86State *env);
+bool x86_uintr_deliverable(CPUX86State *env);
+void x86_uintr_deliver(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
@@ -2531,6 +2571,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~(uint64_t)CR4_KL_MASK;
     }
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    /* CR4.UINTR exists if CPUID.(07H,0):EDX.UINTR = 1 (SDM Vol3A 9.2) */
+    if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
+        reserved_bits &= ~(uint64_t)CR4_UINTR_MASK;
+    }
+#endif /* __Use_Original_Qemu (U104) */
     return reserved_bits;
 }
 

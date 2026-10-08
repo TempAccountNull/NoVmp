@@ -4523,6 +4523,23 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             goto do_rdrand;
 
         case 6: /* RDRAND */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+            /*
+             * NoVmp (ledger U104): SENDUIPI reg, F3 0F C7 /6 (mod = 3): the
+             * register operand is always 64 bits (66 ignored); 64-bit mode
+             * only; LOCK #UD. F3 with a memory operand (VMXON) stays #UD.
+             */
+            if ((s->prefix & PREFIX_REPZ) && mod == 3) {
+                if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_UINTR) || !CODE64(s) ||
+                    (s->prefix & PREFIX_LOCK)) {
+                    goto illegal_op;
+                }
+                gen_update_cc_op(s);
+                gen_helper_senduipi(tcg_ctx, cpu_env, cpu_regs[(modrm & 7) | REX_B(s)]);
+                s->base.is_jmp = DISAS_EOB_NEXT;
+                break;
+            }
+#endif /* __Use_Original_Qemu (U104) */
             if (mod != 3 ||
                 (s->prefix & (PREFIX_LOCK | PREFIX_REPZ | PREFIX_REPNZ)) ||
                 !(s->cpuid_ext_features & CPUID_EXT_RDRAND)) {
@@ -6735,6 +6752,40 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 
     case 0x101:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+        /*
+         * NoVmp (ledger U104): user interrupts, F3 0F 01 EC UIRET, ED TESTUI,
+         * EE CLUI, EF STUI (SDM Vol2; Vol3A chapter 9). 64-bit mode only;
+         * LOCK / 66 #UD; CR4.UINTR = 0 #UD in the helpers. STUI and UIRET end
+         * the TB so a pending user interrupt is delivered on the next boundary.
+         */
+        if ((s->prefix & PREFIX_REPZ) && modrm >= 0xec && modrm <= 0xef) {
+            if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_UINTR) || !CODE64(s) ||
+                (s->prefix & (PREFIX_LOCK | PREFIX_DATA))) {
+                goto illegal_op;
+            }
+            switch (modrm) {
+            case 0xec: /* uiret */
+                gen_update_cc_op(s);
+                gen_helper_uiret(tcg_ctx, cpu_env);
+                set_cc_op(s, CC_OP_EFLAGS);
+                s->base.is_jmp = DISAS_EOB_ONLY;
+                break;
+            case 0xed: /* testui */
+                gen_helper_testui(tcg_ctx, cpu_env);
+                set_cc_op(s, CC_OP_EFLAGS);
+                break;
+            case 0xee: /* clui */
+                gen_helper_clui(tcg_ctx, cpu_env);
+                break;
+            default: /* stui */
+                gen_helper_stui(tcg_ctx, cpu_env);
+                s->base.is_jmp = DISAS_EOB_NEXT;
+                break;
+            }
+            break;
+        }
+#endif /* __Use_Original_Qemu (U104) */
         switch (modrm) {
         CASE_MODRM_MEM_OP(0): /* sgdt */
             if (s->flags & HF_UMIP_MASK && !check_cpl0(s)) {

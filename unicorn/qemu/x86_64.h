@@ -2700,6 +2700,13 @@
 #define helper_urdmsr helper_urdmsr_x86_64
 #define helper_uwrmsr helper_uwrmsr_x86_64
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+#define helper_clui helper_clui_x86_64
+#define helper_stui helper_stui_x86_64
+#define helper_testui helper_testui_x86_64
+#define helper_uiret helper_uiret_x86_64
+#define helper_senduipi helper_senduipi_x86_64
+#endif /* __Use_Original_Qemu (U104) */
 #define helper_bndck helper_bndck_x86_64
 #define helper_bndldx64 helper_bndldx64_x86_64
 #define helper_bndldx32 helper_bndldx32_x86_64

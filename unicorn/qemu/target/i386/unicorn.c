@@ -214,6 +214,12 @@ static void reg_reset(struct uc_struct *uc)
             cr4 |= CR4_KL_MASK;
         }
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+        /* likewise CR4.UINTR on a CPU with user interrupts (SDM Vol3A 9.2) */
+        if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
+            cr4 |= CR4_UINTR_MASK;
+        }
+#endif /* __Use_Original_Qemu (U104) */
 
         cpu_x86_update_cr0(env, CR0_PE_MASK); // protected mode
         cpu_x86_update_cr4(env, cr4);

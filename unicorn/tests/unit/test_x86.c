@@ -6417,6 +6417,196 @@ static void test_x86_user_msr(void)
     OK(uc_close(uc));
 }
 
+/* U104: CLUI / STUI / TESTUI, CR4.UINTR, CPUID bits */
+static void test_x86_uintr_uif(void)
+{
+    const char code[] = "\xf3\x0f\x01\xed\x41\x0f\x92\xc0"     /* testui; setc r8b */
+                        "\xf3\x0f\x01\xef"                     /* stui */
+                        "\xf3\x0f\x01\xed\x41\x0f\x92\xc1"     /* testui; setc r9b */
+                        "\xf3\x0f\x01\xee"                     /* clui */
+                        "\xf3\x0f\x01\xed\x41\x0f\x92\xc2"     /* testui; setc r10b */
+                        "\xf3\x0f\x01\xef\xf3\x0f\x01\xed"     /* stui; testui */
+                        "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2\x41\x89\xd3"     /* cpuid 7.0 -> r11d = edx */
+                        "\xb8\x07\x00\x00\x00\xb9\x01\x00\x00\x00\x0f\xa2"; /* cpuid 7.1 */
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    uint64_t cr4 = nv_reg(uc, UC_X86_REG_CR4);
+
+    TEST_CHECK(cr4 & (1ULL << 25));
+    TEST_CHECK(nv_fault(uc, &intr, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 1);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R10) == 0);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R11) & (1u << 5));       /* CPUID.(07H,0):EDX.UINTR */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) & (1u << 17));      /* CPUID.(07H,01H):EDX.UIRET_UIF */
+    /* TESTUI: CF := UIF, ZF AF OF PF SF := 0 */
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0xad7);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xed", 4) == -1);
+    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0xfff) == 0x203);
+    /* LOCK, 66 -> #UD; CR4.UINTR = 0 -> #UD */
+    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\x01\xed", 5) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\x66\xf3\x0f\x01\xee", 5) == 6);
+    nv_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 25));
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xef", 4) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x01\xec", 4) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\xc7\xf0", 4) == 6);
+    OK(uc_close(uc));
+
+    /* not recognized outside 64-bit mode */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x01\xed", 4));
+    uc_assert_err(UC_ERR_INSN_INVALID, uc_emu_start(uc, code_start, code_start + 4, 0, 0));
+    OK(uc_close(uc));
+}
+
+#define NV_UITT (NV_DATA + 0x3000)
+#define NV_UPID (NV_DATA + 0x3100)
+#define NV_UPID2 (NV_DATA + 0x3140)
+
+static void uintr_setup_tables(uc_engine *uc, uint64_t upid_lo)
+{
+    uint64_t uitt[4] = {1 | (5 << 8), NV_UPID, 1 | (7 << 8), NV_UPID2};
+    uint64_t upid[2] = {upid_lo, 0};
+    uint64_t upid2[2] = {0xecULL << 16, 0};
+
+    OK(uc_mem_write(uc, NV_UITT, uitt, sizeof(uitt)));
+    OK(uc_mem_write(uc, NV_UPID, upid, sizeof(upid)));
+    OK(uc_mem_write(uc, NV_UPID2, upid2, sizeof(upid2)));
+    nv_wrmsr(uc, 0x98a, NV_UITT | 1);           /* IA32_UINTR_TT: UITTADDR, SENDUIPI enable */
+    nv_wrmsr(uc, 0x988, 1 | (0x40ULL << 32));   /* IA32_UINTR_MISC: UITTSZ 1, UINV 40H */
+    nv_wrmsr(uc, 0x989, NV_UPID);               /* IA32_UINTR_PD */
+}
+
+/* U104: SENDUIPI posting, self notification (NV = UINV) and its #GP / #UD conditions */
+static void test_x86_uintr_senduipi(void)
+{
+    const char send_rax[] = "\xf3\x0f\xc7\xf0";
+    const char send_rcx[] = "\x66\xf3\x0f\xc7\xf1";  /* 66 is ignored */
+    uint64_t u[2];
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(send_rax, 4, &intr);
+
+    /* SENDUIPI #UD while IA32_UINTR_TT[0] = 0 */
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 6);
+    uintr_setup_tables(uc, 0x40ULL << 16);      /* NV = UINV, NDST = 0 (own APIC ID) */
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x202);
+    nv_setreg(uc, UC_X86_REG_RAX, 0);
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == -1);
+    /* posted (PIR[5], ON) then processed as a notification: ON := 0, PIR -> UIRR */
+    OK(uc_mem_read(uc, NV_UPID, u, sizeof(u)));
+    TEST_CHECK(u[0] == (0x40ULL << 16) && u[1] == 0);
+    TEST_CHECK(nv_rdmsr(uc, 0x985) == (1ULL << 5));
+    /* NV != UINV: posted, ON set, the IPI is not a notification (dropped) */
+    nv_setreg(uc, UC_X86_REG_RCX, 1);
+    TEST_CHECK(nv_fault(uc, &intr, send_rcx, 5) == -1);
+    OK(uc_mem_read(uc, NV_UPID2, u, sizeof(u)));
+    TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == (1ULL << 7));
+    TEST_CHECK(nv_rdmsr(uc, 0x985) == (1ULL << 5));
+    /* ON already set: only PIR is updated */
+    OK(uc_mem_write(uc, NV_UITT + 16, "\x01\x09", 2));          /* UV = 9 */
+    TEST_CHECK(nv_fault(uc, &intr, send_rcx, 5) == -1);
+    OK(uc_mem_read(uc, NV_UPID2, u, sizeof(u)));
+    TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == ((1ULL << 7) | (1ULL << 9)));
+    /* self notification while RFLAGS.IF = 0: posted, ON stays 1, UIRR unchanged */
+    nv_wrmsr(uc, 0x985, 0);
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x2);
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == -1);
+    OK(uc_mem_read(uc, NV_UPID, u, sizeof(u)));
+    TEST_CHECK(u[0] == ((0x40ULL << 16) | 1) && u[1] == (1ULL << 5));
+    TEST_CHECK(nv_rdmsr(uc, 0x985) == 0);
+    /* #GP: index > UITTSZ, invalid UITTE, reserved UPID bits */
+    nv_setreg(uc, UC_X86_REG_RAX, 2);
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
+    nv_setreg(uc, UC_X86_REG_RAX, 0);
+    OK(uc_mem_write(uc, NV_UITT, "\x00", 1));                  /* V = 0 */
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
+    OK(uc_mem_write(uc, NV_UITT, "\x01\x45", 2));              /* UV = 45H: bit 14 set */
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
+    OK(uc_mem_write(uc, NV_UITT, "\x01\x05", 2));
+    OK(uc_mem_write(uc, NV_UPID, "\x04", 1));                  /* UPID bit 2 */
+    TEST_CHECK(nv_fault(uc, &intr, send_rax, 4) == 13);
+    /* LOCK #UD; F3 0F C7 /6 with a memory operand (VMXON) #UD */
+    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\xc7\xf0", 5) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\xc7\x36", 4) == 6);
+    /* WRMSR #GP: IA32_UINTR_MISC[63:40], IA32_UINTR_PD[5:0], IA32_UINTR_TT[3:1] */
+    nv_setreg(uc, UC_X86_REG_RCX, 0x988);
+    nv_setreg(uc, UC_X86_REG_RAX, 0);
+    nv_setreg(uc, UC_X86_REG_RDX, 0x100);
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nv_setreg(uc, UC_X86_REG_RCX, 0x989);
+    nv_setreg(uc, UC_X86_REG_RAX, 0x20);
+    nv_setreg(uc, UC_X86_REG_RDX, 0);
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    nv_setreg(uc, UC_X86_REG_RCX, 0x98a);
+    nv_setreg(uc, UC_X86_REG_RAX, 0x3);
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x30", 2) == 13);
+    OK(uc_close(uc));
+}
+
+/*
+ * U104: user-interrupt delivery at CPL 3 after a self-SENDUIPI, the handler's
+ * stack frame, UIF, UIRET (with and without RFLAGS[1] cleared in the frame)
+ */
+static void uintr_delivery_run(bool clear_uif_bit)
+{
+    char code[96];
+    size_t n = 0, jmp_at, handler, end;
+    uint64_t frame[4];
+    nv_intr_t intr;
+    uc_engine *uc;
+
+#define EMIT(s) do { memcpy(code + n, s, sizeof(s) - 1); n += sizeof(s) - 1; } while (0)
+    EMIT("\x48\xcf");                           /* iretq -> CPL 3 */
+    EMIT("\xf3\x0f\x01\xef");                   /* stui */
+    EMIT("\xf3\x0f\xc7\xf0");                   /* senduipi rax */
+    EMIT("\x41\xbf\x01\x00\x00\x00");           /* mov r15d, 1 (after UIRET) */
+    EMIT("\xf3\x0f\x01\xed\x41\x0f\x92\xc6");   /* testui; setc r14b */
+    jmp_at = n;
+    EMIT("\xeb\x00");                           /* jmp end */
+    handler = n;
+    EMIT("\x5b");                               /* pop rbx (vector) */
+    EMIT("\xf3\x0f\x01\xed\x41\x0f\x92\xc5");   /* testui; setc r13b */
+    EMIT("\x48\x89\xe5");                       /* mov rbp, rsp */
+    if (clear_uif_bit) {
+        EMIT("\x48\x83\x64\x24\x08\xfd");       /* and qword ptr [rsp+8], -3 */
+    }
+    EMIT("\xf3\x0f\x01\xec");                   /* uiret */
+    end = n;
+    code[jmp_at + 1] = (char)(end - handler);
+#undef EMIT
+
+    uc = nv_open(code, n, &intr);
+    nv_setup_cpl3(uc);
+    uintr_setup_tables(uc, 0x40ULL << 16);
+    nv_wrmsr(uc, 0x986, code_start + handler);  /* UIHANDLER */
+    nv_wrmsr(uc, 0x987, 0x80);                  /* UISTACKADJUST: RSP -= 80H */
+    nv_setreg(uc, UC_X86_REG_RAX, 0);
+    nv_setreg(uc, UC_X86_REG_R13, 0x55);
+    OK(uc_emu_start(uc, code_start, code_start + end, 0, 0));
+    TEST_CHECK(intr.count == 0);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 5);             /* UIRRV */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R13) == 0);             /* UIF = 0 in the handler */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R15) == 1);             /* returned after SENDUIPI */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R14) == (clear_uif_bit ? 0 : 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RSP) == NV_STACK);      /* restored by UIRET */
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBP) == NV_STACK - 0x80 - 24);
+    OK(uc_mem_read(uc, NV_STACK - 0x80 - 32, frame, sizeof(frame)));
+    TEST_CHECK(frame[0] == 5);
+    TEST_CHECK(frame[1] == code_start + 10);                 /* RIP after SENDUIPI */
+    TEST_CHECK((frame[2] & ~2ULL) == 0x200);                 /* RFLAGS (IF) */
+    TEST_CHECK(frame[3] == NV_STACK);                        /* old RSP */
+    TEST_CHECK(nv_rdmsr(uc, 0x985) == 0);                    /* UIRR[5] cleared */
+    OK(uc_close(uc));
+}
+
+static void test_x86_uintr_delivery(void)
+{
+    uintr_delivery_run(false);
+    uintr_delivery_run(true);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -6550,4 +6740,7 @@ TEST_LIST = {
     {"test_x86_rao_int", test_x86_rao_int},
     {"test_x86_movrs_prefetchrst2", test_x86_movrs_prefetchrst2},
     {"test_x86_user_msr", test_x86_user_msr},
+    {"test_x86_uintr_uif", test_x86_uintr_uif},
+    {"test_x86_uintr_senduipi", test_x86_uintr_senduipi},
+    {"test_x86_uintr_delivery", test_x86_uintr_delivery},
     {NULL, NULL}};

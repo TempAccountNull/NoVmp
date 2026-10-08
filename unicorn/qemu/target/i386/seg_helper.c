@@ -1281,6 +1281,11 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         do_interrupt_x86_hardirq(env, intno, 1);
         cs->interrupt_request &= ~CPU_INTERRUPT_VIRQ;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    case CPU_INTERRUPT_UINTR:
+        x86_uintr_deliver(env);
+        break;
+#endif /* __Use_Original_Qemu (U104) */
     }
 
     /* Ensure that no TB jump will be modified as the program flow was changed.  */
@@ -2677,3 +2682,182 @@ void helper_check_io(CPUX86State *env, uint32_t addr, uint32_t size)
 {
     check_io(env, addr, size, GETPC());
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+/*
+ * NoVmp (ledger U104): user interrupts (SDM Vol2 CLUI, STUI, TESTUI, UIRET,
+ * SENDUIPI; Vol3A chapter 9). State: CPUX86State.uintr_*. A recognized user
+ * interrupt (UIRR != 0) keeps CPU_INTERRUPT_UINTR requested; it is delivered
+ * at an instruction boundary where x86_uintr_deliverable() holds (checked by
+ * x86_cpu_pending_interrupt whenever the CPU loop looks at interrupts, which
+ * includes every TB that ends with STUI, UIRET, SENDUIPI, WRMSR, MOV CR4,
+ * IRET/SYSRET and the like).
+ * Not modelled: the local APIC (an IPI that SENDUIPI sends to another APIC
+ * ID, with a vector other than UINV, or while RFLAGS.IF = 0 is dropped),
+ * external user-interrupt notifications, the XSAVES user-interrupt state
+ * component, CET shadow-stack / IBT effects, MOV SS vs STI blocking (both
+ * block here), enclaves, TSX aborts, and the WB / canonical checks of the
+ * stack accesses (QEMU does not model those for any instruction).
+ */
+static bool uintr_canonical(CPUX86State *env, uint64_t addr)
+{
+    int shift = (env->cr[4] & CR4_LA57_MASK) ? 64 - 57 : 64 - 48;
+
+    return (uint64_t)((int64_t)(addr << shift) >> shift) == addr;
+}
+
+void x86_uintr_update_request(CPUX86State *env)
+{
+    if (env->uintr_rr) {
+        cpu_interrupt(env_cpu(env), CPU_INTERRUPT_UINTR);
+    } else {
+        cpu_reset_interrupt(env_cpu(env), CPU_INTERRUPT_UINTR);
+    }
+}
+
+/* SDM Vol3A 9.4.2: CR4.UINTR, UIF, no MOV SS / POP SS blocking, CPL 3, 64-bit mode */
+bool x86_uintr_deliverable(CPUX86State *env)
+{
+    return env->uintr_rr != 0 && (env->cr[4] & CR4_UINTR_MASK) && env->uintr_uif &&
+           !(env->hflags & HF_INHIBIT_IRQ_MASK) && (env->hflags & HF_CPL_MASK) == 3 &&
+           (env->hflags & HF_CS64_MASK);
+}
+
+/* user-interrupt delivery (SDM Vol3A 9.4.2 pseudocode); faults leave UIRR, UIF and RSP */
+void x86_uintr_deliver(CPUX86State *env)
+{
+    uint64_t hold = env->regs[R_ESP], rsp;
+    int v = 63 - clz64(env->uintr_rr);
+
+    if (!uintr_canonical(env, env->uintr_handler)) {
+        raise_exception_err(env, EXCP0D_GPF, 0);
+    }
+    rsp = (env->uintr_stackadjust & 1) ? env->uintr_stackadjust
+                                       : hold - env->uintr_stackadjust;
+    rsp &= ~0xfULL;
+    cpu_stq_data_ra(env, rsp - 8, hold, 0);
+    cpu_stq_data_ra(env, rsp - 16, cpu_compute_eflags(env), 0);
+    cpu_stq_data_ra(env, rsp - 24, env->eip, 0);
+    cpu_stq_data_ra(env, rsp - 32, (uint64_t)v, 0);   /* UIRRV, 64-bit push */
+    env->regs[R_ESP] = rsp - 32;
+    env->uintr_rr &= ~(1ULL << v);
+    x86_uintr_update_request(env);
+    env->uintr_uif = 0;
+    env->eflags &= ~(TF_MASK | RF_MASK);
+    env->eip = env->uintr_handler;
+}
+
+static void uintr_check_cr4(CPUX86State *env, uintptr_t ra)
+{
+    if (!(env->cr[4] & CR4_UINTR_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+void helper_clui(CPUX86State *env)
+{
+    uintr_check_cr4(env, GETPC());
+    env->uintr_uif = 0;
+}
+
+void helper_stui(CPUX86State *env)
+{
+    uintr_check_cr4(env, GETPC());
+    env->uintr_uif = 1;
+    x86_uintr_update_request(env);
+}
+
+void helper_testui(CPUX86State *env)
+{
+    uintr_check_cr4(env, GETPC());
+    CC_SRC = env->uintr_uif ? CC_C : 0;     /* CF := UIF; ZF, AF, OF, PF, SF := 0 */
+}
+
+void helper_uiret(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint64_t sp = env->regs[R_ESP], rip, rflags, rsp;
+
+    uintr_check_cr4(env, ra);
+    rip = cpu_ldq_data_ra(env, env->segs[R_SS].base + sp, ra);
+    rflags = cpu_ldq_data_ra(env, env->segs[R_SS].base + sp + 8, ra);
+    rsp = cpu_ldq_data_ra(env, env->segs[R_SS].base + sp + 16, ra);
+    if (!uintr_canonical(env, rip)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    env->eip = rip;
+    /* only CF, PF, AF, ZF, SF, TF, DF, OF, NT, RF, AC and ID */
+    cpu_load_eflags(env, (uint32_t)rflags, 0x254dd5);
+    env->regs[R_ESP] = rsp;
+    /* CPUID.(07H,01H):EDX.UIRET_UIF = 1 in this model: UIF := tempRFLAGS[1] */
+    env->uintr_uif = (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_UIRET_UIF)
+                     ? (rflags >> 1) & 1 : 1;
+    x86_uintr_update_request(env);
+}
+
+/* user-interrupt notification processing (SDM Vol3A 9.5.2), supervisor accesses */
+static void uintr_notification(CPUX86State *env, uintptr_t ra)
+{
+    int idx = cpu_mmu_index_kernel(env);
+    uint64_t upid = env->uintr_pd, pir;
+
+    cpu_stq_mmuidx_ra(env, upid, cpu_ldq_mmuidx_ra(env, upid, idx, ra) & ~1ULL, idx, ra);
+    pir = cpu_ldq_mmuidx_ra(env, upid + 8, idx, ra);
+    cpu_stq_mmuidx_ra(env, upid + 8, 0, idx, ra);
+    if (pir) {
+        env->uintr_rr |= pir;
+        x86_uintr_update_request(env);
+    }
+}
+
+void helper_senduipi(CPUX86State *env, target_ulong reg)
+{
+    uintptr_t ra = GETPC();
+    int idx = cpu_mmu_index_kernel(env);
+    uint64_t uitte_lo, uitte_hi, upid_lo, upid_hi, upid;
+    unsigned uv;
+
+    uintr_check_cr4(env, ra);
+    if (!(env->uintr_tt & 1)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if ((uint64_t)reg > (uint32_t)env->uintr_misc) {          /* reg > UITTSZ */
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    uitte_lo = cpu_ldq_mmuidx_ra(env, (env->uintr_tt & ~0xfULL) + reg * 16, idx, ra);
+    uitte_hi = cpu_ldq_mmuidx_ra(env, (env->uintr_tt & ~0xfULL) + reg * 16 + 8, idx, ra);
+    /* V = 1; bits 7:1, 15:14 (UV < 64), 63:16 and 69:64 (64-byte aligned UPID) zero */
+    if (!(uitte_lo & 1) || (uitte_lo & 0xffffffffffffc0feULL) || (uitte_hi & 0x3f) ||
+        !uintr_canonical(env, uitte_hi)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    uv = (uitte_lo >> 8) & 0x3f;
+    upid = uitte_hi;
+    upid_lo = cpu_ldq_mmuidx_ra(env, upid, idx, ra);
+    upid_hi = cpu_ldq_mmuidx_ra(env, upid + 8, idx, ra);
+    if (upid_lo & 0xff00fffcULL) {                               /* bits 15:2, 31:24 */
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    upid_hi |= 1ULL << uv;                                       /* PIR[UV] := 1 */
+    if (!(upid_lo & 3)) {                                        /* SN = ON = 0 */
+        upid_lo |= 1;                                            /* ON := 1, notify */
+        cpu_stq_mmuidx_ra(env, upid, upid_lo, idx, ra);
+        cpu_stq_mmuidx_ra(env, upid + 8, upid_hi, idx, ra);
+        /*
+         * Ordinary IPI, vector NV, to xAPIC ID NDST[15:8] (this fork has no
+         * x2APIC). Only a self-IPI that is a user-interrupt notification
+         * (NV = UINV, CR4.UINTR = IA32_EFER.LMA = 1) and that the CPU accepts
+         * at once (RFLAGS.IF = 1) is modelled; any other IPI is dropped.
+         */
+        if (((upid_lo >> 40) & 0xff) == (env_archcpu(env)->apic_id & 0xff) &&
+            ((upid_lo >> 16) & 0xff) == ((env->uintr_misc >> 32) & 0xff) &&
+            (env->efer & MSR_EFER_LMA) && (env->eflags & IF_MASK) &&
+            !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
+            uintr_notification(env, ra);
+        }
+    } else {
+        cpu_stq_mmuidx_ra(env, upid, upid_lo, idx, ra);
+        cpu_stq_mmuidx_ra(env, upid + 8, upid_hi, idx, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U104) */

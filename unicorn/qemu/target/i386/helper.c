@@ -233,6 +233,11 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
         new_cr4 &= ~CR4_KL_MASK;
     }
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U104) */
+    if (!(env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR)) {
+        new_cr4 &= ~CR4_UINTR_MASK;
+    }
+#endif /* __Use_Original_Qemu (U104) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;
