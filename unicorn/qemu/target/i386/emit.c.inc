@@ -694,6 +694,77 @@ static void gen_evex_zero_from(DisasContext *s, int dst, int from)
     }
 }
 #endif /* __Use_Original_Qemu (U210) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+
+/*
+ * NoVmp (ledger U213): expand / compress (VPEXPANDD/Q, VEXPANDPS/PD, VPCOMPRESSD/Q,
+ * VCOMPRESSPS/PD; Tuple1 Scalar memory, E4.nb). The memory side is contiguous: only its
+ * first popcount(k1) elements (all KL without a writemask) are read / written, so a masked
+ * access never touches - or faults on - the elements beyond them. Expand masks the
+ * destination per element; compress merges / zeroes the tail of a register destination.
+ */
+static void gen_evex_cx(DisasContext *s, X86DecodedInsn *decode, TCGv_i64 kmask)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86DecodedOp *dst = &decode->op[0], *src = &decode->op[2];
+    int vl = s->evex_vl, esz = s->evex_esz, n = vl >> esz;
+    uint32_t desc = EVEX_DESC(esz, n);
+    TCGv_i64 m = kmask ? kmask : tcg_constant_i64(tcg_ctx, -1);
+    TCGv_i64 lm = NULL;
+    TCGv_ptr pd, ps;
+
+    if (dst->has_ea || src->has_ea) {
+        /* the first popcount(k1 & (2^KL - 1)) elements of the memory operand */
+        lm = tcg_temp_new_i64(tcg_ctx);
+        tcg_gen_andi_i64(tcg_ctx, lm, m, (1ull << n) - 1);
+        tcg_gen_ctpop_i64(tcg_ctx, lm, lm);
+        tcg_gen_shl_i64(tcg_ctx, lm, tcg_constant_i64(tcg_ctx, 1), lm);
+        tcg_gen_subi_i64(tcg_ctx, lm, lm, 1);
+    }
+    if (decode->e.evex_cx == X86_EVEX_CX_EXPAND) {
+        int sofs = src->has_ea ? offsetof(CPUX86State, xmm_t0) : ZMM_OFFSET(src->n);
+
+        if (src->has_ea) {
+            ps = evex_env_ptr(s, sofs);
+            gen_helper_evex_mload(tcg_ctx, cpu_env, ps, s->A0, lm,
+                                  tcg_constant_i32(tcg_ctx, desc));
+            tcg_temp_free_ptr(tcg_ctx, ps);
+        }
+        pd = evex_env_ptr(s, ZMM_OFFSET(dst->n));
+        ps = evex_env_ptr(s, sofs);
+        gen_helper_evex_expand(tcg_ctx, cpu_env, pd, ps, m,
+                               tcg_constant_i32(tcg_ctx, desc | (s->evex_z ? EVEX_DESC_Z : 0)));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+        gen_evex_zero_from(s, ZMM_OFFSET(dst->n), vl);
+    } else if (dst->has_ea) {
+        pd = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+        ps = evex_env_ptr(s, ZMM_OFFSET(src->n));
+        gen_helper_evex_compress(tcg_ctx, cpu_env, pd, ps, m,
+                                 tcg_constant_i32(tcg_ctx, desc | EVEX_DESC_Z));
+        gen_helper_evex_mstore(tcg_ctx, cpu_env, pd, s->A0, lm,
+                               tcg_constant_i32(tcg_ctx, desc));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+    } else {
+        pd = evex_env_ptr(s, ZMM_OFFSET(dst->n));
+        ps = evex_env_ptr(s, ZMM_OFFSET(src->n));
+        gen_helper_evex_compress(tcg_ctx, cpu_env, pd, ps, m,
+                                 tcg_constant_i32(tcg_ctx, desc | (s->evex_z ? EVEX_DESC_Z : 0)));
+        tcg_temp_free_ptr(tcg_ctx, pd);
+        tcg_temp_free_ptr(tcg_ctx, ps);
+        gen_evex_zero_from(s, ZMM_OFFSET(dst->n), vl);
+    }
+    if (lm) {
+        tcg_temp_free_i64(tcg_ctx, lm);
+    }
+}
+
+/* the gen function of the expand / compress forms: everything is done by gen_evex_cx */
+static void gen_EVEX_CX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+#endif /* __Use_Original_Qemu (U213) */
 
 static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
@@ -732,6 +803,15 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
         tcg_gen_ld_i64(tcg_ctx, kmask, cpu_env,
                        offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
     }
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+    if (e->evex_cx) {
+        gen_evex_cx(s, decode, kmask);
+        if (kmask) {
+            tcg_temp_free_i64(tcg_ctx, kmask);
+        }
+        return;
+    }
+#endif /* __Use_Original_Qemu (U213) */
 
     /* sources */
     for (i = 1; i < 3; i++) {

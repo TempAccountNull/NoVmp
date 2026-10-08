@@ -2514,6 +2514,25 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x34] = X86_OP_GROUP0(EVEX_0F38_PMOV),
     [0x35] = X86_OP_GROUP0(EVEX_0F38_PMOV),
 #endif /* __Use_Original_Qemu (U212) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+    /*
+     * NoVmp (ledger U213): VEXPANDPS/PD (88), VPEXPANDD/Q (89), VCOMPRESSPS/PD (8A),
+     * VPCOMPRESSD/Q (8B): 66, W selects the element size, Tuple1 Scalar (N = element size),
+     * {k1}{z} (z with a memory destination #UD), E4.nb (fault suppression, no {1toN}).
+     */
+    [0x88] = X86_OP_ENTRY3(EVEX_CX, V,x, None,None, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66
+                           .evex_cx = X86_EVEX_CX_EXPAND),
+    [0x89] = X86_OP_ENTRY3(EVEX_CX, V,x, None,None, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66
+                           .evex_cx = X86_EVEX_CX_EXPAND),
+    [0x8a] = X86_OP_ENTRY3(EVEX_CX, W,x, None,None, V,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66
+                           .evex_cx = X86_EVEX_CX_COMPRESS),
+    [0x8b] = X86_OP_ENTRY3(EVEX_CX, W,x, None,None, V,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(T1S) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66
+                           .evex_cx = X86_EVEX_CX_COMPRESS),
+#endif /* __Use_Original_Qemu (U213) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

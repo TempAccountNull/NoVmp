@@ -7138,3 +7138,50 @@ void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg 
     memcpy(d, &r, obytes);
 }
 #endif /* __Use_Original_Qemu (U211) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+
+/*
+ * NoVmp (ledger U213): VPEXPANDD/Q, VEXPANDPS/PD (SDM Vol2C): "k := 0; FOR j: IF k1[j] OR
+ * *no writemask* THEN DEST[j] := SRC[k]; k := k + 1 ELSE merging / zeroing". s holds the
+ * source elements contiguously (the register, or the popcount(k1) elements read from
+ * memory); desc = EVEX_DESC(esz, KL) | EVEX_DESC_Z. Only the KL elements of d are written.
+ */
+void helper_evex_expand(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i, k = 0;
+    ZMMReg src = *s, r = *d;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_set_elem(&r, esz, i, evex_get_elem(&src, esz, k++));
+        } else if (desc & EVEX_DESC_Z) {
+            evex_set_elem(&r, esz, i, 0);
+        }
+    }
+    memcpy(d, &r, n << esz);
+}
+
+/*
+ * NoVmp (ledger U213): VPCOMPRESSD/Q, VCOMPRESSPS/PD (SDM Vol2C): "k := 0; FOR j: IF k1[j]
+ * OR *no writemask* THEN DEST[k] := SRC[j]; k := k + 1; IF *merging-masking* THEN
+ * *DEST[VL-1:k] remains unchanged* ELSE DEST[VL-1:k] := 0". The memory form packs into
+ * the scratch register (zeroing) and stores only the first k elements (gen_evex_cx).
+ */
+void helper_evex_compress(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i, k = 0;
+    ZMMReg src = *s, r = *d;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_set_elem(&r, esz, k++, evex_get_elem(&src, esz, i));
+        }
+    }
+    if (desc & EVEX_DESC_Z) {
+        for (; k < n; k++) {
+            evex_set_elem(&r, esz, k, 0);
+        }
+    }
+    memcpy(d, &r, n << esz);
+}
+#endif /* __Use_Original_Qemu (U213) */

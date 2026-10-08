@@ -370,6 +370,11 @@ typedef enum X86EvexRC {
 #define X86_EVEX_ES_32 3
 #define X86_EVEX_ES_64 4
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+/* X86OpEntry.evex_cx: the source (expand) or destination (compress) is contiguous */
+#define X86_EVEX_CX_EXPAND   1
+#define X86_EVEX_CX_COMPRESS 2
+#endif /* __Use_Original_Qemu (U213) */
 
 typedef struct X86OpEntry  X86OpEntry;
 typedef struct X86DecodedInsn X86DecodedInsn;
@@ -429,6 +434,10 @@ struct X86OpEntry {
     unsigned     evex_msrc1:1;
 #endif /* __Use_Original_Qemu (U191) */
 #endif /* __Use_Original_Qemu (U141) */
+#if __Use_Original_Qemu != 1 /* ours (U213) */
+    /* X86_EVEX_CX_*: VPEXPAND/VEXPAND, VPCOMPRESS/VCOMPRESS (gen_evex_cx) */
+    unsigned     evex_cx:2;
+#endif /* __Use_Original_Qemu (U213) */
 };
 typedef struct X86DecodedOp {
     int8_t n;
