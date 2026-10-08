@@ -502,3 +502,75 @@ target_ulong HELPER(rdrand)(CPUX86State *env)
     env->cc_src = CC_C;
     return ret;
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+/*
+ * NoVmp (ledger U321): one element-wise EVEX operation over the vector length (no masking:
+ * gen_evex_insn merges / zeroes afterwards). desc = EVEX_UNOP_DESC(op, esz, vl); d may be
+ * s (every source element is read before any result is written).
+ * - EVEX_UNOP_LZCNT (VPLZCNTD/Q, SDM Vol2C): leading zero bits; the element width for 0.
+ * - EVEX_UNOP_CONFLICT (VPCONFLICTD/Q): bit k of element j = (SRC[j] = SRC[k]) for k < j,
+ *   bits j and up 0.
+ */
+static uint64_t evex_unop_get(const ZMMReg *r, int esz, int i)
+{
+    switch (esz) {
+    case MO_8:
+        return r->ZMM_B(i);
+    case MO_16:
+        return r->ZMM_W(i);
+    case MO_32:
+        return r->ZMM_L(i);
+    default:
+        return r->ZMM_Q(i);
+    }
+}
+
+static void evex_unop_set(ZMMReg *r, int esz, int i, uint64_t v)
+{
+    switch (esz) {
+    case MO_8:
+        r->ZMM_B(i) = (uint8_t)v;
+        break;
+    case MO_16:
+        r->ZMM_W(i) = (uint16_t)v;
+        break;
+    case MO_32:
+        r->ZMM_L(i) = (uint32_t)v;
+        break;
+    default:
+        r->ZMM_Q(i) = v;
+        break;
+    }
+}
+
+void helper_evex_elem_unop(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int op = desc & 0xff, esz = (desc >> 8) & 3, vl = desc >> 16;
+    int n = vl >> esz, bits = 8 << esz, i, k;
+    uint64_t src[64];
+
+    for (i = 0; i < n; i++) {
+        src[i] = evex_unop_get(s, esz, i);
+    }
+    for (i = 0; i < n; i++) {
+        uint64_t r = 0;
+
+        switch (op) {
+        case EVEX_UNOP_LZCNT:
+            r = src[i] ? (uint64_t)(clz64(src[i]) - (64 - bits)) : (uint64_t)bits;
+            break;
+        case EVEX_UNOP_CONFLICT:
+            for (k = 0; k < i; k++) {
+                if (src[i] == src[k]) {
+                    r |= 1ULL << k;
+                }
+            }
+            break;
+        default:
+            g_assert_not_reached();
+        }
+        evex_unop_set(d, esz, i, r);
+    }
+}
+#endif /* __Use_Original_Qemu (U321) */

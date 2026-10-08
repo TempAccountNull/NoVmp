@@ -5236,3 +5236,42 @@ static void gen_TCMMRLFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_amx_tmul(s, 7);
 }
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+
+/*
+ * NoVmp (ledger U321): AVX512CD. VPLZCNTD/Q and VPCONFLICTD/Q compute every element of the
+ * source (r/m or {1toN}) with helper_evex_elem_unop; masking, fault suppression (VPLZCNT,
+ * E4) / whole-operand loads (VPCONFLICT, E4NF) and DEST[MAXVL-1:VL] := 0 come from
+ * gen_evex_insn. VPBROADCASTMB2Q / VPBROADCASTMW2D: the low byte / word of k1 (already
+ * zero-extended by the KU,b / KU,w operand load) in every qword / dword.
+ */
+static void gen_evex_elem_unop(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_elem_unop(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, EVEX_UNOP_DESC(op, s->evex_esz,
+                                                                      vector_len(s, decode))));
+}
+
+static void gen_EVEX_VPLZCNT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_LZCNT);
+}
+
+static void gen_EVEX_VPCONFLICT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_elem_unop(s, decode, EVEX_UNOP_CONFLICT);
+}
+
+static void gen_EVEX_VPBROADCASTM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    tcg_gen_gvec_dup_i64(tcg_ctx, s->evex_esz, decode->op[0].offset, vl, vl, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U321) */

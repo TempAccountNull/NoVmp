@@ -196,6 +196,9 @@ typedef enum X86CPUIDFeature {
     X86_FEAT_AMX_FP16,      /* CPUID.(07H,1):EAX[21] */
     X86_FEAT_AMX_COMPLEX,   /* CPUID.(07H,1):EDX[8] */
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+    X86_FEAT_AVX512CD,      /* CPUID.(07H,0):EBX[28] */
+#endif /* __Use_Original_Qemu (U321) */
 } X86CPUIDFeature;
 
 /* Execution flags */

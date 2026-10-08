@@ -3303,6 +3303,18 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x7d] = X86_OP_GROUP0(EVEX_0F38_7D),   /* VPERMT2W (W1) */
     [0x8d] = X86_OP_GROUP0(EVEX_0F38_8D),   /* VPERMW (W1) */
 #endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+    /*
+     * NoVmp (ledger U321): AVX512CD (SDM Vol2C VPLZCNTD/Q, VPCONFLICTD/Q): zmm1{k1}{z},
+     * zmm2/m/{1toN}, EVEX.vvvv reserved; Full tuple, W selects D/Q. VPLZCNT is class E4
+     * (fault suppression), VPCONFLICT E4NF (the whole memory operand is read).
+     */
+    [0x44] = X86_OP_ENTRY3(EVEX_VPLZCNT, V,x, None,None, W,x, cpuid(AVX512CD) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66),
+    [0xc4] = X86_OP_ENTRY3(EVEX_VPCONFLICT, V,x, None,None, W,x, cpuid(AVX512CD)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W)
+                           .evex_nofs = 1, p_66),
+#endif /* __Use_Original_Qemu (U321) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -3413,6 +3425,21 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x57] = X86_OP_GROUP0(EVEX_0F3A_57),
 #endif /* __Use_Original_Qemu (U296) */
 };
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+/*
+ * NoVmp (ledger U321): EVEX.F3.0F38 forms whose opcode byte also holds a 66 form in
+ * opcodes_evex_0F38 (2A: VMOVNTDQA, 3A: VPMINUW); decode_evex_0F38 takes them first.
+ * VPBROADCASTMB2Q zmm1, k1 (W1 2A) / VPBROADCASTMW2D zmm1, k1 (W0 3A), AVX512CD: no
+ * masking (Table 2-42 note 1: aaa != 000b #UD), k1 in ModRM.r/m (mod != 11b #UD, EVEX.B/X
+ * ignored), EVEX.vvvv reserved, EVEX.b #UD; class E6NF.
+ */
+static const X86OpEntry opcodes_evex_0F38_F3[256] = {
+    [0x2a] = X86_OP_ENTRY3(EVEX_VPBROADCASTM, V,x, None,None, KU,b, cpuid(AVX512CD)
+                           ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W1) ev_es(64) p_f3),
+    [0x3a] = X86_OP_ENTRY3(EVEX_VPBROADCASTM, V,x, None,None, KU,w, cpuid(AVX512CD)
+                           ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W0) ev_es(32) p_f3),
+};
+#endif /* __Use_Original_Qemu (U321) */
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
 #endif /* __Use_Original_Qemu (U149) */
@@ -3487,6 +3514,12 @@ static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+    if ((s->prefix & PREFIX_REPZ) && opcodes_evex_0F38_F3[*b].gen) {
+        *entry = opcodes_evex_0F38_F3[*b];
+        return;
+    }
+#endif /* __Use_Original_Qemu (U321) */
     *entry = opcodes_evex_0F38[*b];
 }
 
@@ -4287,6 +4320,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AMX_COMPLEX:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AMX_COMPLEX);
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U321) */
+    case X86_FEAT_AVX512CD:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512CD);
+#endif /* __Use_Original_Qemu (U321) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
