@@ -7720,7 +7720,19 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_set_hflag(s, HF_MPX_IU_MASK);
             }
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U92) */
         gen_nop_modrm(env, s, modrm);
+#else /* ours (U92) */
+        /*
+         * NoVmp (ledger U92): with MPX enabled every path above has already
+         * decoded the ModRM address (SIB / displacement bytes) or has mod = 3;
+         * decoding it again consumed those bytes twice (instruction too long).
+         * QEMU 11.1 decodes the ModRM once (decode-new) and has no such call.
+         */
+        if (!(s->flags & HF_MPX_EN_MASK)) {
+            gen_nop_modrm(env, s, modrm);
+        }
+#endif /* __Use_Original_Qemu (U92) */
         break;
     case 0x11b:
         modrm = x86_ldub_code(env, s);
@@ -7836,7 +7848,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 }
             }
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U92) */
         gen_nop_modrm(env, s, modrm);
+#else /* ours (U92) */
+        /* NoVmp (ledger U92): see 0F 1A; BNDMK already left with break */
+        if (!(s->flags & HF_MPX_EN_MASK)) {
+            gen_nop_modrm(env, s, modrm);
+        }
+#endif /* __Use_Original_Qemu (U92) */
         break;
     case 0x119: case 0x11c: case 0x11d: case 0x11e: case 0x11f: /* nop (multi byte) */
         modrm = x86_ldub_code(env, s);

@@ -8249,6 +8249,51 @@ static void test_x86_lock_hint_nops(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U92: with MPX enabled, the 0F 1A / 0F 1B MPX forms decode their ModRM address
+ * once: SIB and disp8/disp32 bytes are not consumed a second time. Every form with
+ * a SIB and/or displacement, followed by MOV EAX, imm32 (the marker decodes only
+ * if each length is right). BNDCFGS = 1: bound directory at 0 (BNDCFG[63:12]),
+ * BDE for base 0x100 at address 0, bound table at NK_DATA + 0xC000.
+ */
+static void test_x86_mpx_modrm_length(void)
+{
+    const char code[] =
+        "\xf3\x0f\x1b\x44\x1e\x10"                 /* bndmk  bnd0, [rsi+rbx+0x10] */
+        "\xf3\x0f\x1a\x86\x00\x01\x00\x00"         /* bndcl  bnd0, [rsi+0x100] */
+        "\xf2\x0f\x1a\x46\x08"                     /* bndcu  bnd0, [rsi+8] */
+        "\xf2\x0f\x1b\x44\x1e\x08"                 /* bndcn  bnd0, [rsi+rbx+8] */
+        "\x66\x0f\x1b\x46\x40"                     /* bndmov [rsi+0x40], bnd0 */
+        "\x66\x0f\x1a\x4c\x1e\x40"                 /* bndmov bnd1, [rsi+rbx+0x40] */
+        "\x0f\x1b\x8c\x0b\x00\x01\x00\x00"         /* bndstx [rbx+rcx+0x100], bnd1 */
+        "\x0f\x1a\x94\x0b\x00\x01\x00\x00"         /* bndldx bnd2, [rbx+rcx+0x100] */
+        "\x66\x0f\x1b\x96\x00\x02\x00\x00"         /* bndmov [rsi+0x200], bnd2 */
+        "\xb8\x78\x56\x34\x12";                    /* mov eax, 0x12345678 */
+    const uint64_t bt = NK_DATA + 0xC000, bde = bt | 1;
+    nk_intr_t intr;
+    uc_engine *uc = nk_open("\x90", 1, &intr);
+    uint64_t v[3];
+
+    OK(uc_mem_map(uc, 0, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, 0, &bde, 8));
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_XCR0, 0x1b);
+    nk_wrmsr(uc, 0xd90, 1);
+    nk_setreg(uc, UC_X86_REG_RBX, 0);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x777);
+    TEST_CHECK(nk_fault(uc, &intr, code, sizeof(code) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x12345678);
+    TEST_MSG("rax = %016" PRIx64, nk_reg(uc, UC_X86_REG_RAX));
+    OK(uc_mem_read(uc, NK_HANDLE + 0x40, v, 16));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10));
+    OK(uc_mem_read(uc, NK_HANDLE + 0x200, v, 16));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10));
+    /* BTE = BT + (base[19:3] << 5) = BT + 0x400: LB, UB, pointer (RCX) */
+    OK(uc_mem_read(uc, bt + 0x400, v, 24));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10) && v[2] == 0x777);
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -8400,4 +8445,5 @@ TEST_LIST = {
     {"test_x86_opmask_features", test_x86_opmask_features},
     {"test_x86_opmask_state", test_x86_opmask_state},
     {"test_x86_lock_hint_nops", test_x86_lock_hint_nops},
+    {"test_x86_mpx_modrm_length", test_x86_mpx_modrm_length},
     {NULL, NULL}};
