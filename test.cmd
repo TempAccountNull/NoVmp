@@ -65,6 +65,10 @@ rem plan 1.15d milestone M2 engine (ledger U190-U201): EVEX scalar FP (SS/SD ari
 rem (U)COMISS/SD), VCMPPS/PD/SS/SD into k, FMA (dest as source under masking), VPBLENDMx/VBLENDMPx
 rem vs the SDM model ref_evex_m2_engine.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_engine.txt" --avx512 --xcr0 0xE7
+rem EVEX milestone M2 permutes / moves (ledger U210-U215: unpack/shuffle/permute, VPMOVZX/SX and
+rem narrowing VPMOV*, compress/expand, VMOVNT/DUP/MOVD/MOVQ/MOVHPS.., insert/extract/broadcast x2..x8)
+rem vs the SDM model ref_evex_m2_perm.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_perm.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (

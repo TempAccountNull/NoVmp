@@ -10791,6 +10791,164 @@ static void test_x86_evex_comis_eflags(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U210-U215: EVEX M2 permutes / moves (pm_) ----
+ * Memory accesses of the narrowing stores, compress/expand and Tuple4 broadcasts (only the
+ * selected elements, seen through Unicorn memory hooks), the feature gates (AVX512VL only
+ * for forms with a 512-bit length, AVX512DQ forms) and EVEX.W outside 64-bit mode.
+ * Instruction results: Emulator/data/cases_evex_m2_perm.txt (ref_evex_m2_perm.py).
+ */
+static int pm_log_has(EvMemLog *l, uint64_t addr, int size)
+{
+    int i;
+    for (i = 0; i < l->n && i < 64; i++) {
+        if (l->addr[i] == addr && l->size[i] == size) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* memory hooks see only the elements the mask / popcount selects */
+static void test_x86_evex_m2_memory(void)
+{
+    /* VPCOMPRESSD [rsi]{k1}, zmm1 / VPEXPANDD zmm2{k1}{z}, [rsi] */
+    static const char cmp[] = "\x62\xf2\x7d\x49\x8b\x0e";
+    static const char exp[] = "\x62\xf2\x7d\xc9\x89\x16";
+    /* VPMOVQB [rsi]{k1}, zmm1 / VBROADCASTF32X4 zmm2{k1}, [rsi] */
+    static const char pmov[] = "\x62\xf2\x7e\x49\x32\x0e";
+    static const char bc4[] = "\x62\xf2\x7d\x49\x1a\x16";
+    const uint64_t end = EV_DATA + 0x4000;
+    uint32_t z[16], z2[16], m[4] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444 };
+    uint8_t buf[16];
+    EvMemLog log;
+    EvCtx c;
+    uc_hook h;
+    uint64_t k;
+    int i, ok, mapped = 0;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    ev_put_zmm(&c, 1, 0x10203040);
+    ev_get_zmm(&c, 1, z);
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x200);
+    /* compress: 3 selected elements -> 3 contiguous dword writes */
+    k = 0x8401;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_MSG("compress writes: %d", log.n);
+    TEST_CHECK(pm_log_has(&log, EV_DATA + 0x200, 4) && pm_log_has(&log, EV_DATA + 0x204, 4) &&
+               pm_log_has(&log, EV_DATA + 0x208, 4));
+    OK(uc_mem_read(c.uc, EV_DATA + 0x200, buf, 12));
+    TEST_CHECK(memcmp(buf, &z[0], 4) == 0 && memcmp(buf + 4, &z[10], 4) == 0 &&
+               memcmp(buf + 8, &z[15], 4) == 0);
+    OK(uc_hook_del(c.uc, h));
+    /* expand: 3 contiguous dword reads */
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, exp, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_MSG("expand reads: %d", log.n);
+    ev_get_zmm(&c, 2, z2);
+    for (ok = 1, i = 0; i < 16; i++) {
+        uint32_t want = i == 0 ? z[0] : i == 10 ? z[10] : i == 15 ? z[15] : 0;
+        ok &= z2[i] == want;
+    }
+    TEST_CHECK(ok);
+    OK(uc_hook_del(c.uc, h));
+    /* VPMOVQB: bytes 0 and 7 only */
+    k = 0x81;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, pmov, 6) == -1);
+    TEST_CHECK(log.n == 2 && pm_log_has(&log, EV_DATA + 0x200, 1) &&
+               pm_log_has(&log, EV_DATA + 0x207, 1));
+    TEST_MSG("vpmovqb writes: %d", log.n);
+    OK(uc_hook_del(c.uc, h));
+    /* VBROADCASTF32X4 with lanes 1 and 6 active: group dwords 1 and 2 are read */
+    OK(uc_mem_write(c.uc, EV_DATA + 0x300, m, sizeof(m)));
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x300);
+    k = 0x42;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    ev_put_zmm(&c, 2, 0);
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    TEST_CHECK(ev_run(&c, bc4, 6) == -1);
+    TEST_CHECK(log.n == 2 && pm_log_has(&log, EV_DATA + 0x304, 4) &&
+               pm_log_has(&log, EV_DATA + 0x308, 4));
+    TEST_MSG("vbroadcastf32x4 reads: %d", log.n);
+    ev_get_zmm(&c, 2, z2);
+    TEST_CHECK(z2[1] == m[1] && z2[6] == m[2] && z2[0] == 0 && z2[5] == 0x05050505 &&
+               z2[2] == 0x02020202);
+    OK(uc_hook_del(c.uc, h));
+    /* compress next to the unmapped page: 4 selected dwords fit, the full vector would not */
+    ev_set(&c, UC_X86_REG_RSI, end - 16);
+    k = 0xf000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    OK(uc_mem_read(c.uc, end - 16, buf, 16));
+    TEST_CHECK(memcmp(buf, &z[12], 16) == 0);
+    /* one more: UC_ERR_WRITE_UNMAPPED, nothing written */
+    memset(buf, 0x5a, sizeof(buf));
+    OK(uc_mem_write(c.uc, end - 16, buf, 16));
+    k = 0xf800;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    OK(uc_mem_read(c.uc, end - 16, buf, 16));
+    for (ok = 1, i = 0; i < 16; i++) {
+        ok &= buf[i] == 0x5a;
+    }
+    TEST_CHECK(ok);
+    /* a hook that maps the page: the compress store completes */
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE_UNMAPPED, ev_map_cb, &mapped, 1, 0));
+    TEST_CHECK(ev_run(&c, cmp, 6) == -1);
+    TEST_CHECK(mapped == 1);
+    OK(uc_close(c.uc));
+}
+
+/* AVX512VL gates only forms with a 512-bit length; DQ forms; EVEX.W outside 64-bit mode */
+static void test_x86_evex_m2_features(void)
+{
+    static const char vmovd[] = "\x62\xf1\x7d\x08\x6e\xc8";         /* vmovd xmm1, eax */
+    static const char vpermd256[] = "\x62\xf2\x6d\x28\x36\xcb";     /* vpermd ymm1, ymm2, ymm3 */
+    static const char vpermd512[] = "\x62\xf2\x6d\x48\x36\xcb";
+    static const char vpextrd[] = "\x62\xf3\x7d\x08\x16\xd0\x03";   /* vpextrd eax, xmm2, 3 */
+    static const char vpextrq[] = "\x62\xf3\xfd\x08\x16\xd0\x01";   /* vpextrq rax, xmm2, 1 */
+    static const char vmovq7e[] = "\x62\xf1\xfd\x08\x7e\xd0";       /* vmovq rax, xmm2 */
+    static const char vins32x4[] = "\x62\xf3\x6d\x48\x18\xcb\x01";  /* vinsertf32x4 zmm1,zmm2,xmm3,1 */
+    static const char vins64x2[] = "\x62\xf3\xed\x48\x18\xcb\x01";  /* vinsertf64x2 */
+    uint32_t z[16];
+    EvCtx c;
+
+    /* AVX512F only */
+    ev_open(&c, UC_MODE_64, UC_X86_AVX512_F);
+    ev_put_zmm(&c, 2, 0x10203040);
+    ev_set(&c, UC_X86_REG_RAX, 0x1122334455667788ULL);
+    TEST_CHECK(ev_run(&c, vmovd, 6) == -1);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x55667788 && z[1] == 0 && z[15] == 0);
+    TEST_CHECK(ev_run(&c, vpermd256, 6) == 6);
+    TEST_CHECK(ev_run(&c, vpermd512, 6) == -1);
+    TEST_CHECK(ev_run(&c, vpextrd, 7) == 6);                    /* AVX512DQ */
+    TEST_CHECK(ev_run(&c, vins32x4, 7) == -1);
+    TEST_CHECK(ev_run(&c, vins64x2, 7) == 6);                   /* AVX512DQ */
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: EVEX.W1 of VPEXTRQ / VMOVQ r64 is ignored (VPEXTRD / VMOVD) */
+    ev_open(&c, UC_MODE_32, EV_ALL);
+    ev_put_zmm(&c, 2, 0x10203040);
+    ev_get_zmm(&c, 2, z);
+    ev_set(&c, UC_X86_REG_EAX, 0);
+    TEST_CHECK(ev_run(&c, vpextrq, 7) == -1);
+    TEST_CHECK(ev_get(&c, UC_X86_REG_EAX) == z[1]);
+    TEST_CHECK(ev_run(&c, vmovq7e, 6) == -1);
+    TEST_CHECK(ev_get(&c, UC_X86_REG_EAX) == z[0]);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -10966,4 +11124,6 @@ TEST_LIST = {
     {"test_x86_evex_vsib_modes", test_x86_evex_vsib_modes},
     {"test_x86_evex_scalar_memory", test_x86_evex_scalar_memory},
     {"test_x86_evex_comis_eflags", test_x86_evex_comis_eflags},
+    {"test_x86_evex_m2_memory", test_x86_evex_m2_memory},
+    {"test_x86_evex_m2_features", test_x86_evex_m2_features},
     {NULL, NULL}};
