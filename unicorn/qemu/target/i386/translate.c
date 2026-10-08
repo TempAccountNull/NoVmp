@@ -2888,6 +2888,44 @@ static void gen_push_v(DisasContext *s, TCGv val)
     gen_op_mov_reg_v(s, a_ot, R_ESP, new_esp);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U115) */
+/*
+ * NoVmp (ledger U115): the return-address push of a near CALL. With shadow
+ * stacks enabled at the CPL (HF_CET_SS) and ss set, helper_ss_call pushes the
+ * address on the shadow stack between the data-stack store and the RSP update,
+ * so a fault in either push leaves RSP and SSP unchanged (SDM Vol2 CALL).
+ */
+static void gen_push_call(DisasContext *s, TCGv val, bool ss)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    MemOp d_ot = mo_pushpop(s, s->dflag);
+    MemOp a_ot = mo_stacksize(s);
+    int size = 1 << d_ot;
+    TCGv new_esp = s->A0;
+
+    if (!ss || !(s->flags & HF_CET_SS_MASK)) {
+        gen_push_v(s, val);
+        return;
+    }
+    tcg_gen_subi_tl(tcg_ctx, s->A0, cpu_regs[R_ESP], size);
+    if (!CODE64(s)) {
+        if (ADDSEG(s)) {
+            new_esp = s->tmp4;
+            tcg_gen_mov_tl(tcg_ctx, new_esp, s->A0);
+        }
+        gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
+    }
+    gen_op_st_v(s, d_ot, val, s->A0);
+    if (new_esp == s->A0) {
+        new_esp = s->tmp4;
+        tcg_gen_subi_tl(tcg_ctx, new_esp, cpu_regs[R_ESP], size);
+    }
+    gen_helper_ss_call(tcg_ctx, cpu_env, val);
+    gen_op_mov_reg_v(s, a_ot, R_ESP, new_esp);
+}
+
+#endif /* __Use_Original_Qemu (U115) */
+
 /* two step pop is necessary for precise exceptions */
 static MemOp gen_pop_T0(DisasContext *s)
 {
@@ -4157,7 +4195,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U52) */
             gen_check_canonical_ip(s, s->T0);       /* before the push (U52) */
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U115) */
             gen_push_v(s, eip_next_tl(s));
+#else /* ours (U115) */
+            gen_push_call(s, eip_next_tl(s), true);  /* shadow stack (U115) */
+#endif /* __Use_Original_Qemu (U115) */
             gen_op_jmp_v(s, s->T0);
             gen_bnd_jmp(s);
             s->base.is_jmp = DISAS_JUMP;
@@ -6003,6 +6045,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U52) */
         gen_check_canonical_ip(s, s->T0);           /* before RSP moves (U52) */
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu != 1 /* ours (U115) */
+        if (s->flags & HF_CET_SS_MASK) {
+            gen_helper_ss_ret(tcg_ctx, cpu_env, s->T0);   /* #CP(NEAR-RET) (U115) */
+        }
+#endif /* __Use_Original_Qemu (U115) */
         gen_stack_update(s, val + (1 << ot));
         /* Note that gen_pop_T0 uses a zero-extending load.  */
         gen_op_jmp_v(s, s->T0);
@@ -6014,6 +6061,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U52) */
         gen_check_canonical_ip(s, s->T0);           /* before RSP moves (U52) */
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu != 1 /* ours (U115) */
+        if (s->flags & HF_CET_SS_MASK) {
+            gen_helper_ss_ret(tcg_ctx, cpu_env, s->T0);   /* #CP(NEAR-RET) (U115) */
+        }
+#endif /* __Use_Original_Qemu (U115) */
         gen_pop_update(s, ot);
         /* Note that gen_pop_T0 uses a zero-extending load.  */
         gen_op_jmp_v(s, s->T0);
@@ -6073,7 +6125,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U115) */
             gen_push_v(s, eip_next_tl(s));
+#else /* ours (U115) */
+            /* no shadow-stack push for a zero displacement ("DEST != 0", U115) */
+            gen_push_call(s, eip_next_tl(s), diff != 0);
+#endif /* __Use_Original_Qemu (U115) */
             gen_bnd_jmp(s);
             gen_jmp_rel(s, dflag, diff, 0);
         }

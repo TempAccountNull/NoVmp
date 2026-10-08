@@ -2687,6 +2687,10 @@
 #define helper_clrssbsy helper_clrssbsy_x86_64
 #define cpu_sync_cet_hflags cpu_sync_cet_hflags_x86_64
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U115) */
+#define helper_ss_call helper_ss_call_x86_64
+#define helper_ss_ret helper_ss_ret_x86_64
+#endif /* __Use_Original_Qemu (U115) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

@@ -1259,24 +1259,37 @@ static int cet_ss_idx(CPUX86State *env, bool user)
     return (user || (env->hflags & HF_CPL_MASK) == 3) ? MMU_USER_IDX : MMU_KNOSMAP_IDX;
 }
 
+/*
+ * The linear address of a shadow-stack access. It is not an SS-segment (stack)
+ * reference, so a non-canonical one is #GP(0), never #SS (U51 classifies the
+ * faulting instruction, e.g. a CALL, as a stack user).
+ */
+static target_ulong ss_addr(CPUX86State *env, uint64_t a, uintptr_t ra)
+{
+    if (cet_lm(env) && !cet_canonical(env, a)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    return cet_la(env, a);
+}
+
 static uint64_t ss_ld8(CPUX86State *env, uint64_t a, bool user, uintptr_t ra)
 {
-    return cpu_ldq_mmuidx_ra(env, cet_la(env, a), cet_ss_idx(env, user), ra);
+    return cpu_ldq_mmuidx_ra(env, ss_addr(env, a, ra), cet_ss_idx(env, user), ra);
 }
 
 static uint32_t ss_ld4(CPUX86State *env, uint64_t a, bool user, uintptr_t ra)
 {
-    return cpu_ldl_mmuidx_ra(env, cet_la(env, a), cet_ss_idx(env, user), ra);
+    return cpu_ldl_mmuidx_ra(env, ss_addr(env, a, ra), cet_ss_idx(env, user), ra);
 }
 
 static void ss_st8(CPUX86State *env, uint64_t a, uint64_t v, bool user, uintptr_t ra)
 {
-    cpu_stq_mmuidx_ra(env, cet_la(env, a), v, cet_ss_idx(env, user), ra);
+    cpu_stq_mmuidx_ra(env, ss_addr(env, a, ra), v, cet_ss_idx(env, user), ra);
 }
 
 static void ss_st4(CPUX86State *env, uint64_t a, uint32_t v, bool user, uintptr_t ra)
 {
-    cpu_stl_mmuidx_ra(env, cet_la(env, a), v, cet_ss_idx(env, user), ra);
+    cpu_stl_mmuidx_ra(env, ss_addr(env, a, ra), v, cet_ss_idx(env, user), ra);
 }
 
 static void cet_set_ssp(CPUX86State *env, uint64_t v)
@@ -1433,6 +1446,49 @@ void helper_clrssbsy(CPUX86State *env, target_ulong addr)
 }
 
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U115) */
+/*
+ * NoVmp (ledger U115): near CALL / near RET with shadow stacks enabled at the
+ * CPL (SDM Vol2 CALL, RET). The translator calls these only when HF_CET_SS is
+ * set. CALL: after the data-stack store and before RSP moves, ShadowStackPush8B
+ * (RIP) in 64-bit mode, else ShadowStackPush4B(EIP, or IP zero-extended); a
+ * fault leaves RSP and SSP unchanged. RET: after the data-stack load, the
+ * return address is popped from the shadow stack and compared (8 bytes in
+ * 64-bit mode, else 4); a mismatch is #CP(NEAR-RET) with RSP and SSP unchanged.
+ */
+void helper_ss_call(CPUX86State *env, target_ulong ret_ip)
+{
+    uintptr_t ra = GETPC();
+    uint64_t ssp = env->ssp;
+
+    if (cet_lm(env)) {
+        ss_st8(env, ssp - 8, ret_ip, false, ra);
+        cet_set_ssp(env, ssp - 8);
+    } else {
+        ss_st4(env, ssp - 4, (uint32_t)ret_ip, false, ra);
+        cet_set_ssp(env, ssp - 4);
+    }
+}
+
+void helper_ss_ret(CPUX86State *env, target_ulong ret_ip)
+{
+    uintptr_t ra = GETPC();
+    uint64_t ssp = env->ssp;
+
+    if (cet_lm(env)) {
+        if (ss_ld8(env, ssp, false, ra) != (uint64_t)ret_ip) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_NEAR_RET, ra);
+        }
+        cet_set_ssp(env, ssp + 8);
+    } else {
+        if (ss_ld4(env, ssp, false, ra) != (uint32_t)ret_ip) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_NEAR_RET, ra);
+        }
+        cet_set_ssp(env, ssp + 4);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U115) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {
