@@ -732,6 +732,37 @@ static void gen_EVEX_VPCMPU(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     gen_evex_pcmp(s, decode, decode->immediate, false);
 }
 #endif /* __Use_Original_Qemu (U152) */
+#if __Use_Original_Qemu != 1 /* ours (U154) */
+
+/*
+ * NoVmp (ledger U154): VPCMPGTD/Q (signed NLE), VPTESTMD/Q (SRC1 AND SRC2 != 0) and
+ * VPTESTNMD/Q (SRC1 AND SRC2 = 0) into an opmask register (helper_evex_pcmp, U152).
+ */
+#define EVEX_PCMP_TEST (1u << 20)
+
+static void gen_EVEX_VPCMPGT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pcmp(s, decode, 6, true);
+}
+
+static void gen_EVEX_VPTESTM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) | (4u << 16) | EVEX_PCMP_TEST;
+
+    gen_helper_evex_pcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+
+static void gen_EVEX_VPTESTNM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) | EVEX_PCMP_TEST;
+
+    gen_helper_evex_pcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U154) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */

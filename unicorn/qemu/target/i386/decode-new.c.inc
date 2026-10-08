@@ -1952,6 +1952,21 @@ static void decode_EVEX_0F5C(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F5C);
 }
 #endif /* __Use_Original_Qemu (U151) */
+#if __Use_Original_Qemu != 1 /* ours (U154) */
+/* NoVmp (ledger U154): 0F38 27: VPTESTMD/Q (66), VPTESTNMD/Q (F3); k1 {k2}, Full, E4 */
+static void decode_EVEX_0F38_27(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F38_27[4] = {
+        {},
+        X86_OP_ENTRY3(EVEX_VPTESTM,  K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                      ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W)),
+        X86_OP_ENTRY3(EVEX_VPTESTNM, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                      ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W)),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F38_27);
+}
+#endif /* __Use_Original_Qemu (U154) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -1967,6 +1982,11 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x59] = X86_OP_GROUP0(EVEX_0F59),
     [0x5c] = X86_OP_GROUP0(EVEX_0F5C),
 #endif /* __Use_Original_Qemu (U151) */
+#if __Use_Original_Qemu != 1 /* ours (U154) */
+    /* VPCMPGTD k1{k2}, H, W/m32bcst (66 W0); E4 */
+    [0x66] = X86_OP_ENTRY3(EVEX_VPCMPGT, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U154) */
 #if __Use_Original_Qemu != 1 /* ours (U152) */
     /* VPCMPEQD k1{k2}, H, W/m32bcst (66 W0); E4 */
     [0x76] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
@@ -1988,6 +2008,12 @@ static const X86OpEntry opcodes_evex_0F[256] = {
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U154) */
+    [0x27] = X86_OP_GROUP0(EVEX_0F38_27),
+    /* VPCMPGTQ k1{k2}, H, W/m64bcst (66 W1); E4 */
+    [0x37] = X86_OP_ENTRY3(EVEX_VPCMPGT, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
+#endif /* __Use_Original_Qemu (U154) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
     /*
      * NoVmp (ledger U153): broadcasts, Tuple1 Scalar memory operand, {k1}{z}; E6 (E7NM for

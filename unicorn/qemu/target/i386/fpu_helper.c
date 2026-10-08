@@ -6689,7 +6689,16 @@ uint64_t helper_evex_pcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
 
     for (i = 0; i < n; i++) {
         uint64_t x = evex_get_elem(a, esz, i), y = evex_get_elem(b, esz, i);
-        bool lt, eq = x == y, c;
+        bool lt, eq, c;
+
+#if __Use_Original_Qemu != 1 /* ours (U154) */
+        /* VPTESTM/VPTESTNM (U154): compare SRC1 AND SRC2 with 0 (pred NEQ / EQ) */
+        if (desc & (1u << 20)) {
+            x &= y;
+            y = 0;
+        }
+#endif /* __Use_Original_Qemu (U154) */
+        eq = x == y;
 
         if (sign) {
             int64_t sx = (int64_t)(x << (64 - bits)) >> (64 - bits);
