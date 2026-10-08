@@ -5836,6 +5836,8 @@ static void test_x86_vex_zero_maxvl(void)
         }
         m0_close(&m);
     }
+}
+
 /* ---- NoVmp U100-U104 tests ---- */
 /*
  * NoVmp (ledger U100-U104): Key Locker, RAO-INT, MOVRS, USER_MSR and UINTR on
