@@ -3315,6 +3315,16 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W)
                            .evex_nofs = 1, p_66),
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U322) */
+    /*
+     * NoVmp (ledger U322): AVX512_IFMA (SDM Vol2C VPMADD52LUQ/HUQ, EVEX forms) zmm1{k1}{z},
+     * zmm2, zmm3/m/{1to8}: 66 W1, Full tuple, class E4; the destination is the accumulator (ev_dsrc, U190).
+     */
+    [0xb4] = X86_OP_ENTRY3(EVEX_VPMADD52LUQ, V,x, H,x, W,x, cpuid(AVX512_IFMA)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(W) ev_dsrc p_66),
+    [0xb5] = X86_OP_ENTRY3(EVEX_VPMADD52HUQ, V,x, H,x, W,x, cpuid(AVX512_IFMA)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(W) ev_dsrc p_66),
+#endif /* __Use_Original_Qemu (U322) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -4324,6 +4334,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512CD:
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512CD);
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U322) */
+    case X86_FEAT_AVX512_IFMA:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512IFMA);
+#endif /* __Use_Original_Qemu (U322) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

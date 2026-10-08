@@ -5275,3 +5275,30 @@ static void gen_EVEX_VPBROADCASTM(DisasContext *s, CPUX86State *env, X86DecodedI
     tcg_temp_free_i64(tcg_ctx, t);
 }
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U322) */
+
+/*
+ * NoVmp (ledger U322): EVEX VPMADD52LUQ/HUQ with the U87 ops_sse.h helpers (SHIFT 1/2/3).
+ * DEST is also the accumulator: X86OpEntry.evex_dsrc (U190) makes gen_evex_insn copy the
+ * destination register into the result scratch register before this runs (OP_PTR0 is both
+ * the accumulator and the result); the masked-off lanes come from the destination by the
+ * blend.
+ */
+static void gen_evex_madd52(DisasContext *s, X86DecodedInsn *decode, bool hi)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppp fn = hi ? SSE_FN3(s, decode, vpmadd52huq) : SSE_FN3(s, decode, vpmadd52luq);
+
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_VPMADD52LUQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_madd52(s, decode, false);
+}
+
+static void gen_EVEX_VPMADD52HUQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_madd52(s, decode, true);
+}
+#endif /* __Use_Original_Qemu (U322) */

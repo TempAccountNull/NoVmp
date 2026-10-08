@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 ref_evex_m3_cd.py -- independent reference model (Python 3 stdlib only) of the EVEX
-AVX512CD instructions (ledger U320-U321) and generator of the expected-value case file
-Emulator/data/cases_evex_m3_cd.txt.
+AVX512CD instructions (ledger U320-U321) and of further AVX-512 extensions (U322-U325),
+and generator of the expected-value case file Emulator/data/cases_evex_m3_cd.txt.
 
 Written from the Intel SDM text only (Vol2A 2.7 "Intel AVX-512 encoding", Tables 2-36 ..
 2-45, 2.8 exception classes E4 / E4NF / E6NF; Vol2C instruction pages, "Operation"
@@ -13,9 +13,13 @@ pseudocode), not from any C implementation:
   VPLZCNTD/Q      EVEX.128/256/512.66.0F38.W0/W1 44 /r   Full tuple, {k1}{z}, {1toN}, E4
   VPBROADCASTMB2Q EVEX.128/256/512.F3.0F38.W1 2A /r      zmm1, k1 (register only), E6NF
   VPBROADCASTMW2D EVEX.128/256/512.F3.0F38.W0 3A /r      zmm1, k1 (register only), E6NF
+  AVX512_IFMA (U322):
+  VPMADD52LUQ/HUQ EVEX.128/256/512.66.0F38.W1 B4/B5 /r   Full tuple, {1to8}, E4; DEST is the
+                                                          accumulator
 
-CPUID: AVX512CD (EVEX.512) and AVX512VL AND AVX512CD (EVEX.128/256); emu-alltest --avx512
-enables both. EVEX.vvvv is reserved (1111b, V' = 1) for all four.
+CPUID: AVX512CD (EVEX.512) and AVX512VL AND AVX512CD (EVEX.128/256), likewise for every
+extension; emu-alltest --avx512 enables all the UC_X86_AVX512_* bits. EVEX.vvvv is
+reserved (1111b, V' = 1) for the four AVX512CD instructions.
 
 Generic EVEX wrappers (SDM pseudocode of every page):
   MASK     FOR j := 0 TO KL-1: IF k1[j] OR *no writemask* THEN DEST[j] := op ELSE
@@ -401,6 +405,197 @@ def gen_broadcastm():
 
 
 # ---------------------------------------------------------------------------------------
+# further AVX-512 extensions (ledger U322-U325), one generic generator:
+#   rvm  zmm1{k}{z}, zmm2 (vvvv), zmm3/m/{1toN}     rm  zmm1{k}{z}, zmm2/m/{1toN}
+#   kvm  k1{k2}, zmm2 (vvvv), zmm3/m                 (DEST read: "dsrc" forms)
+# form keys: name pp opc w layout fn mesz (mask element bytes) besz ({1toN} element bytes,
+# None = Full Mem tuple, no broadcast) fs (fault suppression: class E4, else E4NF)
+# fn(d, a, b, vl) -> result bytes (rvm/rm) or mask bits (kvm); d / a / b: vl-byte images
+# ---------------------------------------------------------------------------------------
+M52 = (1 << 52) - 1
+M64 = (1 << 64) - 1
+
+
+def madd52(d, a, b, hi):
+    """VPMADD52LUQ/HUQ (Vol2C, EVEX Operation): Temp128 := ZX64(src1[51:0]) * ZX64(tsrc2[51:0]);
+    DEST := DEST + ZX64(Temp128[51:0]) (LUQ) or ZX64(Temp128[103:52]) (HUQ), mod 2^64"""
+    t = (a & M52) * (b & M52)
+    return (d + ((t >> 52) & M52 if hi else t & M52)) & M64
+
+
+def qmap(fn):
+    """element function on qwords -> vector function"""
+    def vec(d, a, b, vl):
+        return pack([fn(x, y, z) for x, y, z in zip(elems(d, 8), elems(a, 8), elems(b, 8))], 8)
+    return vec
+
+
+EXT_FORMS = {
+    "IFMA": [
+        dict(name="VPMADD52LUQ", pp=1, opc=0xB4, w=1, layout="rvm", mesz=8, besz=8, fs=True,
+             dsrc=True, fn=qmap(lambda d, a, b: madd52(d, a, b, False))),
+        dict(name="VPMADD52HUQ", pp=1, opc=0xB5, w=1, layout="rvm", mesz=8, besz=8, fs=True,
+             dsrc=True, fn=qmap(lambda d, a, b: madd52(d, a, b, True))),
+    ],
+}
+EXT_ORDER = ["IFMA"]
+
+
+def ext_vals(sp, n_bytes):
+    """random operand bytes, with edge patterns now and then"""
+    r = RNG.random()
+    if r < 0.15:
+        return bytes([0xFF]) * n_bytes
+    if r < 0.25:
+        return bytes(n_bytes)
+    return rnd_bytes(n_bytes)
+
+
+def gen_ext_case(sp, vl, title, dst, s1, s2, kreg=0, kval=None, z=0, mem=None, bcst=0,
+                 aimg=None, bimg=None, dimg=None):
+    lay = sp["layout"]
+    c = Case("%s VL%d %s" % (sp["name"], vl * 8, title))
+    regs = {}
+    if lay in ("rvm", "kvm"):
+        regs[s1] = (aimg if aimg is not None else ext_vals(sp, vl)) + rnd_bytes(64 - vl)
+    if mem is None:
+        if s2 not in regs:
+            regs[s2] = (bimg if bimg is not None else ext_vals(sp, vl)) + rnd_bytes(64 - vl)
+        b = regs[s2][:vl]
+        rm, nn = s2, 1
+    else:
+        data = bimg if bimg is not None else ext_vals(sp, sp["besz"] if bcst else vl)
+        c.mem[MEM_RSI + mem.disp] = data
+        b = data * (vl // len(data)) if bcst else data
+        rm, nn = mem, (sp["besz"] if bcst else vl)
+    if lay != "kvm" and dst not in regs:
+        regs[dst] = (dimg if dimg is not None else rnd_bytes(vl)) + rnd_bytes(64 - vl)
+    c.zmm.update(regs)
+    a = regs[s1][:vl] if lay in ("rvm", "kvm") else bytes(vl)
+    if kreg:
+        c.k[kreg] = kval
+    kmask = kval if kreg else None
+    if lay == "kvm":
+        r = sp["fn"](None, a, b, vl)
+        if kmask is not None:
+            r &= kmask
+        r &= (1 << (vl // sp["mesz"])) - 1
+        c.k.setdefault(dst, RNG.getrandbits(64))
+        c.exp.append("k%d=0x%X" % (dst, r))
+    else:
+        d = regs[dst][:vl]
+        res = elems(sp["fn"](d, a, b, vl), sp["mesz"])
+        out = mask_merge(regs[dst], res, sp["mesz"], vl, kmask, z)
+        c.exp.append("zmm%d=%s" % (dst, hexs(out)))
+    vvvv = s1 if lay in ("rvm", "kvm") else None
+    c.code = evex(2, sp["pp"], sp["w"], sp["opc"], dst, rm, vvvv=vvvv, ll=VL_LL[vl], b=bcst, z=z,
+                  aaa=kreg, n=nn)
+    return c
+
+
+def gen_ext(ext):
+    for sp in EXT_FORMS[ext]:
+        lay = sp["layout"]
+        kd = lay == "kvm"
+        mb = 64 // sp["mesz"]
+        comment("%s (EVEX.%s.0F38.W%d %02X /r), %s" % (sp["name"], ["NP", "66", "F3", "F2"][sp["pp"]],
+                sp["w"], sp["opc"], "E4" if sp["fs"] else "E4NF"))
+        for vl in (16, 32, 64):
+            emit(gen_ext_case(sp, vl, "nomask", 1, 2, 3))
+            emit(gen_ext_case(sp, vl, "merge zmm16+", 5 if kd else 17, 30, 9, kreg=3,
+                              kval=RNG.getrandbits(64)))
+            if not kd:
+                emit(gen_ext_case(sp, vl, "zero", 4, 25, 26, kreg=7, kval=RNG.getrandbits(64), z=1))
+            emit(gen_ext_case(sp, vl, "mem", 6, 8, 0, mem=Mem(RSI, 0x40)))
+            emit(gen_ext_case(sp, vl, "mem masked", 7, 8, 0, mem=Mem(RSI, 0x40), kreg=5,
+                              kval=RNG.getrandbits(64)))
+            if sp["besz"]:
+                emit(gen_ext_case(sp, vl, "bcst merge", 10, 11, 0, kreg=2, kval=RNG.getrandbits(64),
+                                  mem=Mem(RSI, 0x40), bcst=1))
+                emit(gen_ext_case(sp, vl, "bcst nomask", 12, 13, 0, mem=Mem(RSI, -0x40), bcst=1))
+        # destination = each source (the destination is read by some forms)
+        if not kd:
+            emit(gen_ext_case(sp, 64, "dst=src2 merge", 14, 15, 14, kreg=1, kval=RNG.getrandbits(64)))
+            if lay == "rvm":
+                emit(gen_ext_case(sp, 64, "dst=src1 zero", 16, 16, 18, kreg=6, kval=RNG.getrandbits(64), z=1))
+                emit(gen_ext_case(sp, 64, "dst=src1=src2", 19, 19, 19))
+        else:
+            emit(gen_ext_case(sp, 64, "src1=src2", 2, 20, 20))
+        # disp8*N
+        for vl in (16, 32, 64):
+            for bcst in ((0, 1) if sp["besz"] else (0,)):
+                nn = sp["besz"] if bcst else vl
+                for d8 in (1, -1, 127, -127):
+                    emit(gen_ext_case(sp, vl, "disp8=%d N=%d" % (d8, nn), 21, 22, 0,
+                                      mem=Mem(RSI, d8 * nn), bcst=bcst))
+        # memory operand next to the unmapped page: E4 suppresses faults of masked-off
+        # elements, E4NF reads the whole operand
+        base = 0x10000 - MEM_RSI - 32
+        nlo = 32 // sp["mesz"]
+        c = Case("%s VL512 [end-32] {k: mapped elements only} %s" % (sp["name"],
+                 "no fault" if sp["fs"] else "#PF"))
+        c.zmm[3] = rnd_bytes(64)
+        if lay != "rm":
+            c.zmm[4] = rnd_bytes(64)
+        c.k[1] = (1 << nlo) - 1
+        emit(fs_case(sp, c, base))
+        # #UD
+        uds = [("EVEX.b on a register form", dict(b=1)), ("wrong EVEX.W", dict(w=1 - sp["w"])),
+               ("L'L = 11b", dict(ll=3))]
+        if kd:
+            uds.append(("{z} (k destination)", dict(z=1, aaa=1)))
+        if lay == "rm":
+            uds += [("vvvv != 1111b", dict(vvvv=5)), ("V' = 0 (vvvv unused)", dict(p2_vp=0))]
+        for title, kw in uds:
+            c = Case("%s %s #UD" % (sp["name"], title))
+            w = kw.pop("w", sp["w"])
+            ll = kw.pop("ll", 2)
+            if lay != "rm":
+                kw.setdefault("vvvv", 2)
+            c.code = evex(2, sp["pp"], w, sp["opc"], 1, 3, ll=ll, **kw)
+            c.fault = "#UD"
+            emit(c)
+        if not sp["besz"]:
+            c = Case("%s EVEX.b with memory (Full Mem tuple) #UD" % sp["name"])
+            c.code = evex(2, sp["pp"], sp["w"], sp["opc"], 1, Mem(RSI, 0x40), vvvv=2 if lay != "rm" else None,
+                          ll=2, b=1)
+            c.fault = "#UD"
+            emit(c)
+
+
+def fs_case(sp, c, base):
+    """rebuild a fault-suppression case: 32 mapped bytes, the upper half unmapped"""
+    lay = sp["layout"]
+    c2 = Case(c.title)
+    c2.zmm, c2.k = dict(c.zmm), dict(c.k)
+    data = rnd_bytes(32)
+    c2.mem[MEM_RSI + base] = data
+    c2.code = evex(2, sp["pp"], sp["w"], sp["opc"], 3, Mem(RSI, base, disp32=True),
+                   vvvv=4 if lay != "rm" else None, ll=2, aaa=1)
+    if not sp["fs"]:
+        c2.fault = "#PF"
+        return c2
+    vl = 64
+    kval = c.k[1]
+    b = data + bytes(32)                # masked-off elements: never read (their value is unused)
+    a = c2.zmm[4][:vl] if lay != "rm" else bytes(vl)
+    if lay == "kvm":
+        r = sp["fn"](None, a, b, vl) & kval
+        c2.k.setdefault(3, RNG.getrandbits(64))
+        c2.exp.append("k3=0x%X" % r)
+    else:
+        res = elems(sp["fn"](c2.zmm[3][:vl], a, b, vl), sp["mesz"])
+        c2.exp.append("zmm3=%s" % hexs(mask_merge(c2.zmm[3], res, sp["mesz"], vl, kval, 0)))
+    return c2
+
+
+def gen_exts():
+    for ext in EXT_ORDER:
+        comment("--- AVX512_%s (ledger U322-U325), F|DQ|BW|VL + the extension's UC_X86_AVX512_* bit" % ext)
+        gen_ext(ext)
+
+
+# ---------------------------------------------------------------------------------------
 def selftest():
     ok = True
 
@@ -424,6 +619,13 @@ def selftest():
     chk("conflict", [conflict([5, 3, 5, 5], j) for j in range(4)], [0, 0, 1, 0b101])
     chk("bcstm b", broadcastm(0x1234, 8), 0x34)
     chk("bcstm w", broadcastm(0x51234, 4), 0x1234)
+    # U322: VPMADD52LUQ zmm1, zmm2, zmm3 = 62 F2 ED 48 B4 CB; 2^51 * 2^51 = 2^102: low 52
+    # bits 0, bits 103:52 = 2^50; bits 63:52 of the sources are ignored; DEST wraps mod 2^64
+    chk("enc vpmadd52luq", evex(2, 1, 1, 0xB4, 1, 3, vvvv=2, ll=2), bytes([0x62, 0xF2, 0xED, 0x48, 0xB4, 0xCB]))
+    chk("madd52 lo", madd52(5, 1 << 51, 1 << 51, False), 5)
+    chk("madd52 hi", madd52(5, 1 << 51, 1 << 51, True), 5 + (1 << 50))
+    chk("madd52 ignore 63:52", madd52(0, (0xFFF << 52) | 3, (1 << 63) | 7, False), 21)
+    chk("madd52 wrap", madd52(M64, 1, 1, False), 0)
     return ok
 
 
@@ -497,6 +699,7 @@ def gen_all():
     gen_cd_vector()
     gen_fault_suppression()
     gen_broadcastm()
+    gen_exts()
 
 
 def main():
@@ -513,9 +716,10 @@ def main():
     if "--cases" in sys.argv:
         gen_all()
         out = sys.stdout
-        out.write("# AVX512CD (ledger U320-U321): expected values from the independent SDM model\n")
+        out.write("# AVX512CD (ledger U320-U321) and further AVX-512 extensions (U322-U325, sections\n")
+        out.write("# '--- AVX512_*'): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m3_cd.py --cases (regenerate, do not edit). The i5-13600K has\n")
-        out.write("# no AVX-512: expected-value cases only, run with AVX-512 enabled (F|DQ|BW|VL|CD):\n")
+        out.write("# no AVX-512: expected-value cases only, run with AVX-512 enabled (every bit):\n")
         out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m3_cd.txt --avx512 --xcr0 0xE7 --expect-only\n")
         out.write("# RSI = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         for l in out_lines:

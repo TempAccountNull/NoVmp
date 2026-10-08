@@ -8147,7 +8147,8 @@ static void test_x86_opmask_optin(void)
         OK(uc_close(uc));
     }
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 32)); /* U140: 8 = VL, U320: 16 = CD */
+    /* U140: 8 = VL, U320: 16 = CD, U322..: further feature bits; bit 30 is unknown */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 1 << 30));
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, -1));
     OK(uc_ctl_get_x86_avx512(uc, &on));
     TEST_CHECK(on == 0);
@@ -11430,6 +11431,51 @@ static void test_x86_avx512cd_gating(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U322-U325: further UC_CTL_X86_AVX512 feature bits: read-back, the CPUID.(7,0) bit only
+ * with the opt-in, and a first instruction of the extension #UD without / running with it.
+ */
+static const struct {
+    int bit;
+    int reg;            /* CPUID.(7,0) register: 1 = EBX, 2 = ECX */
+    uint32_t cpuid;
+    const char *code;   /* an EVEX.512 form of the extension (zmm registers only) */
+} cdx_bits[] = {
+    /* U322 AVX512_IFMA: VPMADD52LUQ zmm1, zmm2, zmm3 */
+    {UC_X86_AVX512_IFMA, 1, 1u << 21, "\x62\xf2\xed\x48\xb4\xcb"},
+};
+
+static void test_x86_avx512_m4_bits(void)
+{
+    CdxCtx c;
+    uint32_t r[4];
+    size_t i;
+    int on;
+
+    for (i = 0; i < sizeof(cdx_bits) / sizeof(cdx_bits[0]); i++) {
+        cdx_open(&c, CDX_BASE, NULL, 0, 0);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(!(r[cdx_bits[i].reg] & cdx_bits[i].cpuid), "bit %d off: %08x", cdx_bits[i].bit,
+                    r[cdx_bits[i].reg]);
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == 6, "bit %d off: #UD", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+        cdx_open(&c, CDX_BASE | cdx_bits[i].bit, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (CDX_BASE | cdx_bits[i].bit));
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_((r[cdx_bits[i].reg] & cdx_bits[i].cpuid) != 0, "bit %d on: %08x",
+                    cdx_bits[i].bit, r[cdx_bits[i].reg]);
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == -1, "bit %d on: runs", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+        /* alone: implies AVX512F, EVEX.512 needs no AVX512VL */
+        cdx_open(&c, cdx_bits[i].bit, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (UC_X86_AVX512_F | cdx_bits[i].bit));
+        TEST_CHECK_(cdx_run(&c, cdx_bits[i].code, 6) == -1, "bit %d alone: runs", cdx_bits[i].bit);
+        OK(uc_close(c.uc));
+    }
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11614,4 +11660,5 @@ TEST_LIST = {
     {"test_x86_avx512dq_values", test_x86_avx512dq_values},
     {"test_x86_avx512cd_optin", test_x86_avx512cd_optin},
     {"test_x86_avx512cd_gating", test_x86_avx512cd_gating},
+    {"test_x86_avx512_m4_bits", test_x86_avx512_m4_bits},
     {NULL, NULL}};
