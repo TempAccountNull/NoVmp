@@ -1068,8 +1068,9 @@ static void test_x86_vpclmulqdq_tcg_mask(void)
 
     TEST_CHECK((test_x86_cpuid_7_0_ecx(UC_CPU_X86_HASWELL) &
                 TEST_X86_CPUID_7_0_ECX_VPCLMULQDQ) == 0);
+    /* NoVmp U69: TCG implements VPCLMULQDQ, so models that list it keep it */
     TEST_CHECK((test_x86_cpuid_7_0_ecx(UC_CPU_X86_ICELAKE_CLIENT) &
-                TEST_X86_CPUID_7_0_ECX_VPCLMULQDQ) == 0);
+                TEST_X86_CPUID_7_0_ECX_VPCLMULQDQ) != 0);
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_HASWELL));
@@ -1087,9 +1088,27 @@ static void test_x86_vpclmulqdq_tcg_mask(void)
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_ICELAKE_CLIENT));
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, pclmul_ymm, sizeof(pclmul_ymm) - 1));
-    uc_assert_err(UC_ERR_INSN_INVALID,
-                  uc_emu_start(uc, code_start,
-                               code_start + sizeof(pclmul_ymm) - 1, 0, 0));
+    {
+        /* both 128-bit lanes: clmul(high qwords) per lane (SDM VPCLMULQDQ, imm 11h) */
+        static const uint8_t expected_ymm[32] = {
+            0xb8, 0xfc, 0xa8, 0x02, 0x00, 0xff, 0x10, 0x01,
+            0xa8, 0xfd, 0xb8, 0x03, 0x10, 0xfe, 0x00, 0x00,
+            0x33, 0xf9, 0xa9, 0x26, 0x51, 0x89, 0xaf, 0x7e,
+            0x13, 0xd9, 0xa9, 0x26, 0x71, 0xa9, 0xaf, 0x7e,
+        };
+        uint8_t y0[32], y1[32];
+        memcpy(y0, (uint8_t[32]){
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+            0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 32);
+        memcpy(y1, ymm1, 32);
+        OK(uc_reg_write(uc, UC_X86_REG_YMM0, &y0));
+        OK(uc_reg_write(uc, UC_X86_REG_YMM1, &y1));
+        OK(uc_emu_start(uc, code_start, code_start + sizeof(pclmul_ymm) - 1, 0, 0));
+        OK(uc_reg_read(uc, UC_X86_REG_YMM0, &y0));
+        TEST_CHECK(memcmp(y0, expected_ymm, sizeof(y0)) == 0);
+    }
 
     OK(uc_close(uc));
 }

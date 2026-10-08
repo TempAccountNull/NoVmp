@@ -58,6 +58,13 @@ namespace at
 			s.fx[ 4 ] |= uint8_t( 1u << i );
 			return true;
 		}
+		if ( k.rfind( "ymmh", 0 ) == 0 )
+		{
+			int i = std::stoi( k.substr( 4 ) );
+			if ( i < 0 || i > 15 ) { err = "bad ymmh"; return false; }
+			hexbytes( s.ymmh[ i ], 16 );
+			return true;
+		}
 		if ( k.rfind( "xmm", 0 ) == 0 )
 		{
 			int i = std::stoi( k.substr( 3 ) );
@@ -102,6 +109,13 @@ namespace at
 				os << " xmm" << r << "=";
 				char b[ 4 ];
 				for ( int k = 0; k < 16; k++ ) { std::snprintf( b, sizeof( b ), "%02X", o.xmm( r )[ k ] ); os << b; }
+			}
+		for ( int r = 0; r < 16; r++ )
+			if ( std::memcmp( i.ymmh[ r ], o.ymmh[ r ], 16 ) )
+			{
+				os << " ymmh" << r << "=";
+				char b[ 4 ];
+				for ( int k = 0; k < 16; k++ ) { std::snprintf( b, sizeof( b ), "%02X", o.ymmh[ r ][ k ] ); os << b; }
 			}
 		// the rest of the FXSAVE header (FOP, FIP, FDP, MXCSR_MASK) as raw bytes
 		for ( int k : { 6, 8, 16, 28 } )

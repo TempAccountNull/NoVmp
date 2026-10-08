@@ -649,10 +649,18 @@ static CPUCacheInfo legacy_l3_cache = {
           /* missing:
           CPUID_7_0_EBX_HLE
           CPUID_7_0_EBX_INVPCID, CPUID_7_0_EBX_RTM */
+#if __Use_Original_Qemu == 1 /* original QEMU (U69) */
 #define TCG_7_0_ECX_FEATURES (CPUID_7_0_ECX_UMIP | CPUID_7_0_ECX_PKU | \
           /* CPUID_7_0_ECX_OSPKE is dynamic */ \
           CPUID_7_0_ECX_LA57 | CPUID_7_0_ECX_PKS | CPUID_7_0_ECX_VAES | \
           CPUID_7_0_ECX_RDPID)
+#else /* ours (U69) */
+/* NoVmp: each NoVmp-implemented feature is added by its own ledger entry */
+#define TCG_7_0_ECX_FEATURES (CPUID_7_0_ECX_UMIP | CPUID_7_0_ECX_PKU | \
+          /* CPUID_7_0_ECX_OSPKE is dynamic */ \
+          CPUID_7_0_ECX_LA57 | CPUID_7_0_ECX_PKS | CPUID_7_0_ECX_VAES | \
+          CPUID_7_0_ECX_RDPID | CPUID_7_0_ECX_VPCLMULQDQ /* U69 */)
+#endif /* __Use_Original_Qemu (U69) */
 #define TCG_7_0_EDX_FEATURES 0
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD
 #define TCG_APM_FEATURES 0

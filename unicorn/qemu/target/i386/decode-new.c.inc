@@ -625,7 +625,12 @@ static const X86OpEntry opcodes_0F3A[256] = {
     [0x40] = X86_OP_ENTRY4(VDPPS,      V,x,  H,x,  W,x,  vex2 cpuid(SSE41) p_66),
     [0x41] = X86_OP_ENTRY4(VDPPD,      V,dq, H,dq, W,dq, vex2 cpuid(SSE41) p_66),
     [0x42] = X86_OP_ENTRY4(VMPSADBW,   V,x,  H,x,  W,x,  vex2 cpuid(SSE41) avx2_256 p_66),
+#if __Use_Original_Qemu == 1 /* original QEMU (U69) */
     [0x44] = X86_OP_ENTRY4(PCLMULQDQ,  V,dq, H,dq, W,dq, vex4 cpuid(PCLMULQDQ) p_66),
+#else /* ours (U69) */
+    /* VEX.256 VPCLMULQDQ: two lanes (CPUID.7.0:ECX.VPCLMULQDQ, U69) */
+    [0x44] = X86_OP_ENTRY4(PCLMULQDQ,  V,x, H,x, W,x, vex4 cpuid(PCLMULQDQ) p_66),
+#endif /* __Use_Original_Qemu (U69) */
     [0x46] = X86_OP_ENTRY4(VPERM2x128, V,qq, H,qq, W,qq, vex6 chk(W0) cpuid(AVX2) p_66),
 
     [0x60] = X86_OP_ENTRY4(PCMPESTRM,  None,None, V,dq, W,dq, vex4_unal cpuid(SSE42) p_66),
@@ -1482,7 +1487,15 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_MOVBE:
         return (s->cpuid_ext_features & CPUID_EXT_MOVBE);
     case X86_FEAT_PCLMULQDQ:
+#if __Use_Original_Qemu == 1 /* original QEMU (U69) */
         return (s->cpuid_ext_features & CPUID_EXT_PCLMULQDQ);
+#else /* ours (U69) */
+        if (!(s->cpuid_ext_features & CPUID_EXT_PCLMULQDQ)) {
+            return false;
+        }
+        /* 256-bit form: VPCLMULQDQ (SDM Vol2 PCLMULQDQ) */
+        return !s->vex_l || (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_VPCLMULQDQ);
+#endif /* __Use_Original_Qemu (U69) */
     case X86_FEAT_SSE:
         return (s->cpuid_features & CPUID_SSE);
     case X86_FEAT_SSE2:
