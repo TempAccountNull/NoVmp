@@ -2011,6 +2011,43 @@ static void decode_EVEX_0F5F(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F5F);
 }
 #endif /* __Use_Original_Qemu (U156) */
+#if __Use_Original_Qemu != 1 /* ours (U158) */
+/*
+ * NoVmp (ledger U158): 66 0F 72/73 groups, EVEX.vvvv = destination, r/m = source (register,
+ * memory or {1toN}: Full tuple), imm8; ModRM.reg is the opcode extension; E4.
+ * 72: /0 VPRORD/Q, /1 VPROLD/Q, /2 VPSRLD, /4 VPSRAD/Q, /6 VPSLLD; 73: /2 VPSRLQ, /6 VPSLLQ
+ * (73 /3, /7 VPSRLDQ/VPSLLDQ are AVX512BW, not yet).
+ */
+#define EV_SHI(op, w) X86_OP_ENTRY4(op, H,x, W,x, None,None, cpuid(AVX512F) ev_vl(EV_VLALL) \
+                          ev_tt(FULL) ev_mask(MZ) ev_w(w) ev_es(W) p_66)
+
+static void decode_EVEX_0F72(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F72[8] = {
+        EV_SHI(EVEX_VPRORI, WSEL),
+        EV_SHI(EVEX_VPROLI, WSEL),
+        EV_SHI(EVEX_VPSRLI, W0),
+        {},
+        EV_SHI(EVEX_VPSRAI, WSEL),
+        {},
+        EV_SHI(EVEX_VPSLLI, W0),
+        {},
+    };
+    *entry = opcodes_EVEX_0F72[(get_modrm(s, env) >> 3) & 7];
+}
+
+static void decode_EVEX_0F73(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F73[8] = {
+        {}, {},
+        EV_SHI(EVEX_VPSRLI, W1),
+        {}, {}, {},
+        EV_SHI(EVEX_VPSLLI, W1),
+        {},
+    };
+    *entry = opcodes_EVEX_0F73[(get_modrm(s, env) >> 3) & 7];
+}
+#endif /* __Use_Original_Qemu (U158) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2037,6 +2074,10 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x66] = X86_OP_ENTRY3(EVEX_VPCMPGT, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
                            ev_tt(FULL) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U154) */
+#if __Use_Original_Qemu != 1 /* ours (U158) */
+    [0x72] = X86_OP_GROUP0(EVEX_0F72),
+    [0x73] = X86_OP_GROUP0(EVEX_0F73),
+#endif /* __Use_Original_Qemu (U158) */
 #if __Use_Original_Qemu != 1 /* ours (U152) */
     /* VPCMPEQD k1{k2}, H, W/m32bcst (66 W0); E4 */
     [0x76] = X86_OP_ENTRY3(EVEX_VPCMPEQ, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
@@ -2132,6 +2173,9 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U156) */
 #undef EV_FPR
 #endif /* __Use_Original_Qemu (U156) */
+#if __Use_Original_Qemu != 1 /* ours (U158) */
+#undef EV_SHI
+#endif /* __Use_Original_Qemu (U158) */
 #if __Use_Original_Qemu != 1 /* ours (U148) */
 #undef EV_MOV
 #undef EV_VLALL

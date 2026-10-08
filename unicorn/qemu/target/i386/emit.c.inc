@@ -840,6 +840,78 @@ EVEX_VSHIFT(VPSLLV, vpsllv)
 EVEX_VSHIFT(VPSRLV, vpsrlv)
 EVEX_VSHIFT(VPSRAV, vpsrav)
 #endif /* __Use_Original_Qemu (U157) */
+#if __Use_Original_Qemu != 1 /* ours (U158) */
+
+/*
+ * NoVmp (ledger U158): shifts and rotates by imm8 (destination = EVEX.vvvv = op[0], source
+ * op[1]): a count >= the element width gives 0 (logical) or the sign (arithmetic); rotates
+ * use the count modulo the width (SDM Vol2B PSLLW/PSLLD/PSLLQ, PSRAW/PSRAD/PSRAQ,
+ * PSRLW/PSRLD/PSRLQ; Vol2C PROLD/PROLQ/PRORD/PRORQ).
+ */
+static void gen_evex_shift_imm(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode), esz = s->evex_esz, bits = 8 << esz;
+    int d = decode->op[0].offset, a = decode->op[1].offset;
+    unsigned cnt = decode->immediate & 0xff;
+
+    switch (kind) {
+    case 0: /* left */
+    case 1: /* logical right */
+        if (cnt >= (unsigned)bits) {
+            tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, d, vl, vl, 0);
+        } else if (kind == 0) {
+            tcg_gen_gvec_shli(tcg_ctx, esz, d, a, cnt, vl, vl);
+        } else {
+            tcg_gen_gvec_shri(tcg_ctx, esz, d, a, cnt, vl, vl);
+        }
+        break;
+    case 2: /* arithmetic right */
+        tcg_gen_gvec_sari(tcg_ctx, esz, d, a, cnt >= (unsigned)bits ? bits - 1 : cnt, vl, vl);
+        break;
+    default: /* 3: rotate left, 4: rotate right */
+        cnt &= bits - 1;
+        if (kind == 4) {
+            cnt = (bits - cnt) & (bits - 1);
+        }
+        if (cnt == 0) {
+            tcg_gen_gvec_mov(tcg_ctx, MO_64, d, a, vl, vl);
+        } else {
+            int t = offsetof(CPUX86State, evex_s2);
+
+            tcg_gen_gvec_shri(tcg_ctx, esz, t, a, bits - cnt, vl, vl);
+            tcg_gen_gvec_shli(tcg_ctx, esz, d, a, cnt, vl, vl);
+            tcg_gen_gvec_or(tcg_ctx, MO_64, d, d, t, vl, vl);
+        }
+        break;
+    }
+}
+
+static void gen_EVEX_VPSLLI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_shift_imm(s, decode, 0);
+}
+
+static void gen_EVEX_VPSRLI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_shift_imm(s, decode, 1);
+}
+
+static void gen_EVEX_VPSRAI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_shift_imm(s, decode, 2);
+}
+
+static void gen_EVEX_VPROLI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_shift_imm(s, decode, 3);
+}
+
+static void gen_EVEX_VPRORI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_shift_imm(s, decode, 4);
+}
+#endif /* __Use_Original_Qemu (U158) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */
