@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 11:49 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `54e2dcc U96/U97: SSE/AVX/AVX-512 NaN propagation = SRC1 (SDM Table 4-8); x87 NaN tie`). Do not edit by hand._
+_Generated 2026-10-08 12:03 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `6bc735a verified_forms: the 16 EVEX gather/scatter mnemonics are 'sdm' (U250-U251)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
