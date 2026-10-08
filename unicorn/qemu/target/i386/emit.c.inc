@@ -537,6 +537,56 @@ static void gen_evex_fp_end(DisasContext *s)
     gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, 0),
                           tcg_constant_i32(tcg_ctx, 0));
 }
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+
+/*
+ * NoVmp (ledger U192): scalar forms (EVEX.LLIG) with a vector register destination (SDM
+ * Vol2A 2.7.13 "Scalar Instructions" and every EVEX scalar page, exception classes E3, E5,
+ * E10): only element 0 is computed and masked with k1[0]; DEST[127:esz] := SRC1[127:esz]
+ * (SRC1 = EVEX.vvvv), or DEST[127:esz] unchanged when the destination is itself the first
+ * source (FMA: "DEST[127:32] := DEST[127:32]"), or 0 for a form without SRC1 (VMOVSS/SD
+ * xmm1, m: "DEST[MAXVL-1:32] := 0"); DEST[MAXVL-1:128] := 0 (writeback). Those bits are put
+ * into the result scratch register evex_t1 here, before the destination is written, so a
+ * destination that is also SRC1 reads its old value.
+ */
+static void gen_evex_scalar_upper(DisasContext *s, X86DecodedInsn *decode, int esz)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86DecodedOp *op1 = &decode->op[1];
+    int t1 = offsetof(CPUX86State, evex_t1), src = -1, ofs, sz;
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    if (decode->e.evex_dsrc) {
+        src = ZMM_OFFSET(decode->op[0].n);
+    } else if (op1->unit == X86_OP_SSE && !op1->has_ea) {
+        src = ZMM_OFFSET(op1->n);
+    }
+    for (ofs = 1 << esz; ofs < 16; ofs += sz) {
+        sz = (ofs & 7) == 0 ? 8 : (ofs & 3) == 0 ? 4 : (ofs & 1) == 0 ? 2 : 1;
+        if (src < 0) {
+            tcg_gen_movi_i64(tcg_ctx, t, 0);
+        } else if (sz == 8) {
+            tcg_gen_ld_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else if (sz == 4) {
+            tcg_gen_ld32u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else if (sz == 2) {
+            tcg_gen_ld16u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        } else {
+            tcg_gen_ld8u_i64(tcg_ctx, t, cpu_env, src + ofs);
+        }
+        if (sz == 8) {
+            tcg_gen_st_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else if (sz == 4) {
+            tcg_gen_st32_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else if (sz == 2) {
+            tcg_gen_st16_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        } else {
+            tcg_gen_st8_i64(tcg_ctx, t, cpu_env, t1 + ofs);
+        }
+    }
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U192) */
 
 static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
@@ -548,6 +598,10 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     bool has_mem = op0->has_ea || decode->op[1].has_ea || decode->op[2].has_ea;
     TCGv_i64 kmask = NULL;
     bool to_scratch = false;
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+    /* scalar form with a vector register destination (gen_evex_scalar_upper) */
+    bool scalar = (e->evex_vl & X86_EVEX_LIG) && op0->unit == X86_OP_SSE && !op0->has_ea;
+#endif /* __Use_Original_Qemu (U192) */
     int i;
 
 #if __Use_Original_Qemu != 1 /* ours (U250) */
@@ -593,6 +647,9 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 #if __Use_Original_Qemu != 1 /* ours (U190) */
         to_scratch |= e->evex_dsrc;
 #endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+        to_scratch |= scalar;
+#endif /* __Use_Original_Qemu (U192) */
         if (to_scratch) {
             op0->offset = offsetof(CPUX86State, evex_t1) + xmm_offset(op0->ot);
         }
@@ -669,6 +726,11 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
         } else {
             int dst = ZMM_OFFSET(op0->n);
 
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+            if (scalar) {
+                gen_evex_scalar_upper(s, decode, esz);
+            }
+#endif /* __Use_Original_Qemu (U192) */
 #if __Use_Original_Qemu != 1 /* ours (U191) */
             /*
              * NoVmp (ledger U191): VPBLENDMD/Q, VBLENDMPS/PD (SDM Vol2C): a masked-off lane
@@ -689,6 +751,29 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
                                                        (s->evex_z ? EVEX_DESC_Z : 0)));
                 tcg_temp_free_ptr(tcg_ctx, pd);
                 tcg_temp_free_ptr(tcg_ctx, ps);
+#if __Use_Original_Qemu != 1 /* ours (U192) */
+                if (scalar) {
+                    /* element 0 blended; DEST[127:esz] from the scratch register */
+                    tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                   offsetof(CPUX86State, evex_t1) + 8);
+                    tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 8);
+                    if (esz < MO_64) {
+                        tcg_gen_ld32u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                          offsetof(CPUX86State, evex_t1) + 4);
+                        tcg_gen_st32_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 4);
+                    }
+                    if (esz < MO_32) {
+                        tcg_gen_ld16u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                          offsetof(CPUX86State, evex_t1) + 2);
+                        tcg_gen_st16_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 2);
+                    }
+                    if (esz < MO_16) {
+                        tcg_gen_ld8u_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                                         offsetof(CPUX86State, evex_t1) + 1);
+                        tcg_gen_st8_i64(tcg_ctx, s->tmp1_i64, cpu_env, dst + 1);
+                    }
+                }
+#endif /* __Use_Original_Qemu (U192) */
             } else if (to_scratch) {
                 tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, offsetof(CPUX86State, evex_t1), vl, vl);
             }
