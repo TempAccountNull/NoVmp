@@ -665,6 +665,17 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     }
 }
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U148) */
+
+/* NoVmp (ledger U148): EVEX vector moves; gen_evex_insn does the masking and the memory */
+static void gen_EVEX_MOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+
+    tcg_gen_gvec_mov(tcg_ctx, MO_64, decode->op[0].offset, decode->op[2].offset, vl, vl);
+}
+#endif /* __Use_Original_Qemu (U148) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
