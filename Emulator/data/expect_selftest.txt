@@ -1,0 +1,30 @@
+# Expected-value ("SDM vector") self-test for emu-alltest --cases (plan 1.15a); run by test.cmd as
+#   emu-alltest --cases Emulator\data\expect_selftest.txt --expect-only
+# Every line runs on Unicorn only; the values after "=>" are worked out from the SDM by hand.
+# Syntax: Emulator\tests\alltest\at_cases.hpp. Must report "differing: 0".
+#
+# --- register result (MOV r64, imm64)
+mov rax, 0x1122334455667788 => rax=0x1122334455667788
+# --- 32-bit destination zero-extends; flags: 0 - 1 = FFFFFFFFh: CF (borrow), PF (FFh: 8 ones), AF (borrow from bit 4), SF
+sub eax, 1 | rax=0xAAAAAAAA00000000 => rax=0xFFFFFFFF rflags=0x297
+# --- flags result: FFFF..FF + 1 = 0: CF, PF, AF, ZF set, SF/OF clear
+add rax, rcx | rax=0xFFFFFFFFFFFFFFFF rcx=1 => rax=0 rflags=0x257
+# --- signed overflow: 7FFFFFFFFFFFFFFF + 1: OF, SF, AF, PF (00h low byte: even parity)
+add rax, rcx | rax=0x7FFFFFFFFFFFFFFF rcx=1 => rax=0x8000000000000000 rflags=0xA96
+# --- memory result (little-endian store at RSI + 8 = MEM + 0x8008)
+mov qword ptr [rsi+8], rax | rax=0x0807060504030201 => m+0x8008=0102030405060708
+# --- memory read-modify-write: INC dword [rsi]: FFFFFFFFh + 1 = 0, CF unchanged (input CF = 1)
+inc dword ptr [rsi] | m+0x8000=FFFFFFFF rflags=0x203 => m+0x8000=00000000 rflags=0x257
+# --- vector result (PADDD, four dword lanes)
+paddd xmm0, xmm1 | xmm0=01000000020000000300000004000000 xmm1=10000000200000003000000040000000 => xmm0=11000000220000003300000044000000
+# --- faults: state saved at the faulting instruction, nothing changed
+.byte 0x0f, 0x0b => #UD
+div rcx | rax=5 rcx=0 => #DE
+mov rax, qword ptr [rcx] | rcx=0x1000 => #PF
+ldmxcsr [rsi] | m+0x8000=801F0100 => #GP
+# --- loose expectation: RDRAND's value is random, only CF = 1 (others 0) is checked
+rdrand rax =>! rflags=0x203
+# --- legacy SSE keeps the upper bits of the destination register (YMM/ZMM bits above 127)
+movaps xmm2, xmm3 | xmm3=00112233445566778899AABBCCDDEEFF ymmh2=0102030405060708090A0B0C0D0E0F10 zmmh2=1112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F30 => xmm2=00112233445566778899AABBCCDDEEFF
+# --- ZMM/opmask plumbing: values pass through untouched (NOP), XMM16-31 and K registers
+nop | zmm17=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F k3=0x5555 zmmh2=FFEEDDCCBBAA99887766554433221100FFEEDDCCBBAA99887766554433221100 =>

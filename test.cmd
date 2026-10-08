@@ -37,6 +37,10 @@ rem plan 1.9: emu-alltest quick run (every 7th form of the full x86-64 universe,
 rem UC_CPU_X86_MAX). Differences are the Phase 4/5 work list, reported in build\x64\Release\tests\alltest;
 rem only harness errors fail. Full run: emu-alltest --full (baseline in Emulator\data\alltest_baseline).
 call :suite emu-alltest
+rem plan 1.15a: expected-value ("SDM vector") cases - Unicorn only, compared to hand-derived SDM
+rem results; any difference or unparsable line fails. The deliberately wrong file must be caught.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\expect_selftest.txt" --expect-only
+call :expect_bad
 
 echo.
 if !FAILED! NEQ 0 (
@@ -61,6 +65,32 @@ if errorlevel 1 (
     set /a FAILED+=1
 ) else (
     echo [test] %~1 passed
+)
+exit /b 0
+
+:expect_bad
+rem every line of expect_selftest_bad.txt has a wrong expectation: all 6 must be reported, exit 1
+set "EXE=%TESTS%\emu-alltest.exe"
+set "BADLOG=%TESTS%\expect_selftest_bad.log"
+echo.
+echo [test] ===== emu-alltest --cases expect_selftest_bad.txt --expect-only ^(must detect 6 of 6^)
+if not exist "%EXE%" (
+    echo [test] missing %EXE% - run build.cmd first
+    set /a FAILED+=1
+    exit /b 0
+)
+"%EXE%" --cases "%ROOT%Emulator\data\expect_selftest_bad.txt" --expect-only > "%BADLOG%"
+set "RC=!errorlevel!"
+type "%BADLOG%"
+findstr /B /C:"cases: 6, differing: 6" "%BADLOG%" >nul
+if errorlevel 1 (
+    echo [test] expect_selftest_bad FAILED: wrong expectations not all detected
+    set /a FAILED+=1
+) else if not "!RC!"=="1" (
+    echo [test] expect_selftest_bad FAILED: exit status !RC!, expected 1
+    set /a FAILED+=1
+) else (
+    echo [test] expect_selftest_bad passed: every wrong expectation reported
 )
 exit /b 0
 

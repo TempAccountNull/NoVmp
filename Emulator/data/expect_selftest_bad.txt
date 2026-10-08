@@ -1,0 +1,16 @@
+# Deliberately WRONG expectations (plan 1.15a): every line must be reported DIFF, proving that the
+# expected-value mode detects each kind of mismatch. test.cmd requires "cases: 6, differing: 6".
+#   emu-alltest --cases Emulator\data\expect_selftest_bad.txt --expect-only
+#
+# wrong register value (right: rax=0x1122334455667788)
+mov rax, 0x1122334455667788 => rax=0x1122334455667789
+# wrong flags (right: rflags=0x257)
+add rax, rcx | rax=0xFFFFFFFFFFFFFFFF rcx=1 => rax=0 rflags=0x256
+# wrong memory (right: m+0x8008=0102030405060708)
+mov qword ptr [rsi+8], rax | rax=0x0807060504030201 => m+0x8008=0102030405060709
+# wrong fault (right: #UD)
+.byte 0x0f, 0x0b => #GP
+# fault expected, none happens
+nop => #UD
+# strict mode: an unlisted change (RCX) is a difference
+mov rcx, 1 | rax=0 =>
