@@ -716,6 +716,23 @@ typedef enum uc_control_type {
     // (like every supported component, U120); IA32_XFD resets to 0. Only before the
     // engine is initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_AMX,
+    // x86 only (NoVmp U370): Intel AVX10 in the CPU model (AVX10.2 spec 361050-007 3.1.2,
+    // Table 3.1). The value is the AVX10 version, UC_X86_AVX10_1 or UC_X86_AVX10_2, plus
+    // optionally UC_X86_AVX10_V1_AUX; 0 (default) = no AVX10 (UC_CPU_X86_MAX and the
+    // i5-13600K profile are unchanged). Non-zero sets CPUID.(EAX=7,ECX=1):EDX.AVX10[19]
+    // and leaf 24H: (24H,0) EAX = maximum sub-leaf (1 for AVX10.2 or with V1_AUX, else
+    // 0), EBX = version | 70000h (bits 18:16 "reserved at 1", the former VL128/256/512
+    // bits); (24H,1) ECX.AVX10_V1_AUX[2] for AVX10.2 ("Intel CPUs which support AVX10.2
+    // will include an enumeration for AVX10_V1_AUX") or when UC_X86_AVX10_V1_AUX is
+    // given. AVX10 implies the AVX-512 state (components 5-7 for XCR0, CPUID 0DH, the
+    // XSAVE family; reset XCR0 enables them) and every AVX-512 family of AVX10.1 (Table
+    // 3.2: F, CD, BW, DQ, VBMI, IFMA, VNNI, BF16, VPOPCNTDQ, VBMI2, BITALG, FP16) at all
+    // vector lengths, whatever UC_CTL_X86_AVX512 says (the AVX512* CPUID bits themselves
+    // stay as UC_CTL_X86_AVX512 sets them). VAES/GFNI/VPCLMULQDQ EVEX forms still need
+    // their own bits. A strict CPUID profile without 7.1:EDX[19] hides AVX10; its 24H.0
+    // EBX[7:0] caps the version. Other values -> UC_ERR_ARG. Only before the engine is
+    // initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_AVX10,
 } uc_control_type;
 
 // UC_CTL_X86_AVX512 values (NoVmp U128)
@@ -737,6 +754,12 @@ typedef enum uc_control_type {
 #define UC_X86_AMX_FP16 8     // + AMX-FP16: TDPFP16PS
 #define UC_X86_AMX_COMPLEX 16 // + AMX-COMPLEX: TCMMIMFP16PS, TCMMRLFP16PS
 #define UC_X86_AMX_ALL 31
+
+// UC_CTL_X86_AVX10 values (NoVmp U370)
+#define UC_X86_AVX10_1 1           // AVX10.1: the AVX-512 instruction set (Table 3.2)
+#define UC_X86_AVX10_2 2           // AVX10.2: + the AVX10.2 instructions; implies V1_AUX
+#define UC_X86_AVX10_VERSION 0xff  // bits 7:0 = version
+#define UC_X86_AVX10_V1_AUX 0x100  // CPUID.(24H,1):ECX.AVX10_V1_AUX[2] (with version >= 1)
 
 /*
 
@@ -849,6 +872,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AMX, 1), (mask))
 #define uc_ctl_get_x86_amx(uc, mask)                                           \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AMX, 1), (mask))
+#define uc_ctl_set_x86_avx10(uc, version)                                      \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AVX10, 1), (version))
+#define uc_ctl_get_x86_avx10(uc, version)                                      \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AVX10, 1), (version))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;
