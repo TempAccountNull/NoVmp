@@ -2642,6 +2642,15 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xfc] = X86_OP_ENTRY3(PADDB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
     [0xfd] = X86_OP_ENTRY3(PADDW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
 #endif /* __Use_Original_Qemu (U262) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+    /*
+     * NoVmp (ledger U263): VPMADDWD (dword writemask), VPSADBW (no writemask): Full Mem,
+     * E4NF (no fault suppression)
+     */
+    [0xf5] = X86_OP_ENTRY3(EVEX_PMADDWD, V,x, H,x, W,x, EV_BW(WIG, 32) ev_nf p_66),
+    [0xf6] = X86_OP_ENTRY3(EVEX_PSADBW,  V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(64) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U263) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -2835,6 +2844,10 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x3c] = X86_OP_ENTRY3(PMAXSB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
     [0x3e] = X86_OP_ENTRY3(PMAXUW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
 #endif /* __Use_Original_Qemu (U262) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+    /* NoVmp (ledger U263): VPMADDUBSW (66.0F38.WIG 04): Full Mem, word writemask, E4NF */
+    [0x04] = X86_OP_ENTRY3(EVEX_PMADDUBSW, V,x, H,x, W,x, EV_BW(WIG, 16) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U263) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -2891,6 +2904,10 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x3a] = X86_OP_GROUP0(EVEX_0F3A_1A),
     [0x3b] = X86_OP_GROUP0(EVEX_0F3A_1B),
 #endif /* __Use_Original_Qemu (U215) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+    /* NoVmp (ledger U263): VDBPSADBW (66.0F3A.W0 42 ib): Full Mem, word writemask, E4NF */
+    [0x42] = X86_OP_ENTRY4(EVEX_VDBPSADBW, V,x, H,x, W,x, EV_BW(W0, 16) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U263) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT

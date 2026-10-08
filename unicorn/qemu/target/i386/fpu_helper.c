@@ -7217,3 +7217,41 @@ void helper_evex_compress(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask,
     memcpy(d, &r, n << esz);
 }
 #endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+
+/*
+ * NoVmp (ledger U263): VDBPSADBW (SDM Vol2C): per 128-bit lane TMP1 dword i = SRC2 dword
+ * imm8[2i+1:2i] of the lane; per 64-bit block of TMP1 four word SADs between unsigned
+ * bytes: SRC1 bytes 0-3 with TMP1 bytes 0-3 and 1-4, SRC1 bytes 4-7 with TMP1 bytes 2-5 and
+ * 3-6 (byte offsets within the block). desc = imm8 | vector length in bytes << 8.
+ */
+void helper_evex_dbpsadbw(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int imm = desc & 0xff, vl = desc >> 8, ln, blk, w, i;
+    ZMMReg r;
+
+    for (ln = 0; ln < vl / 16; ln++) {
+        uint8_t t[16];
+
+        for (i = 0; i < 16; i++) {
+            t[i] = b->ZMM_B(ln * 16 + 4 * ((imm >> (2 * (i / 4))) & 3) + (i & 3));
+        }
+        for (blk = 0; blk < 2; blk++) {
+            for (w = 0; w < 4; w++) {
+                int so = ln * 16 + blk * 8 + (w < 2 ? 0 : 4), to = blk * 8 + w;
+                int sum = 0;
+
+                for (i = 0; i < 4; i++) {
+                    int dlt = (int)a->ZMM_B(so + i) - (int)t[to + i];
+
+                    sum += dlt < 0 ? -dlt : dlt;
+                }
+                r.ZMM_W(ln * 8 + blk * 4 + w) = sum;
+            }
+        }
+    }
+    for (i = 0; i < vl / 2; i++) {
+        d->ZMM_W(i) = r.ZMM_W(i);
+    }
+}
+#endif /* __Use_Original_Qemu (U263) */

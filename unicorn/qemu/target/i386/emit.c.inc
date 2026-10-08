@@ -1833,6 +1833,26 @@ EVEX_SSE3(PMULHUW, pmulhuw)
 EVEX_SSE3(PMULHW, pmulhw)
 EVEX_SSE3(PMULHRSW, pmulhrsw)
 #endif /* __Use_Original_Qemu (U262) */
+#if __Use_Original_Qemu != 1 /* ours (U263) */
+
+/*
+ * NoVmp (ledger U263): VPMADDWD (dword writemask), VPMADDUBSW (SRC1 unsigned bytes, SRC2
+ * signed bytes, signed word saturation), VPSADBW (no writemask): ops_sse.h helpers by
+ * vector length; VDBPSADBW: helper_evex_dbpsadbw (imm8 | VL << 8).
+ */
+EVEX_SSE3(PMADDWD, pmaddwd)
+EVEX_SSE3(PMADDUBSW, pmaddubsw)
+EVEX_SSE3(PSADBW, psadbw)
+
+static void gen_EVEX_VDBPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_dbpsadbw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                             tcg_constant_i32(tcg_ctx, (decode->immediate & 0xff) |
+                                                       (vector_len(s, decode) << 8)));
+}
+#endif /* __Use_Original_Qemu (U263) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
