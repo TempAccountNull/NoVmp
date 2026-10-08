@@ -2284,6 +2284,10 @@ void x86_uintr_deliver(CPUX86State *env);
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+/* fpu_helper.c: LDTILECFG's consistency checks on a 64-byte TILECFG image */
+bool x86_amx_tilecfg_ok(const uint8_t *buf, uint64_t xcr0);
+#endif /* __Use_Original_Qemu (U172) */
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx);

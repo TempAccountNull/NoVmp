@@ -4587,6 +4587,145 @@ static uint64_t get_xinuse_avx512(CPUX86State *env)
 }
 #endif /* __Use_Original_Qemu (U124) */
 
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+/*
+ * NoVmp (ledger U172): AMX state components (SDM Vol1 13.5.14, 19.4; Vol2A LDTILECFG).
+ *   17 TILECFG  (64 B): env->xtilecfg, the LDTILECFG/STTILECFG memory layout - byte 0
+ *                palette_id, 1 start_row, 16+2n colsb[n] (word), 48+n rows[n], the rest
+ *                zero. All zero is the INIT state (TILES_CONFIGURED = 0); any other value
+ *                held here passed amx_tilecfg_valid with palette_id 1.
+ *   18 TILEDATA (8 KB): env->xtiledata, TMMn row r byte j at 1024n + 64r + j.
+ * XSAVE* always save all 8 KB of TILEDATA and XRSTOR* always load all 8 KB, whatever
+ * TILECFG says; XRSTOR* initialise TILECFG instead of faulting when the image is not a
+ * configuration LDTILECFG would accept, and never touch TILEDATA when only TILECFG is
+ * loaded.
+ */
+#define AMX_P1_MAX_NAMES     8      /* palette 1 (CPUID.(1DH,1)) */
+#define AMX_P1_BYTES_PER_ROW 64
+#define AMX_P1_MAX_ROWS      16
+
+/* LDTILECFG's consistency checks on a 64-byte image (true = it would not #GP) */
+bool x86_amx_tilecfg_ok(const uint8_t *buf, uint64_t xcr0)
+{
+    int n;
+
+    if (buf[0] > 1) {                       /* palette_id > max_palette (1DH.0:EAX) */
+        return false;
+    }
+    if (buf[0] == 1 && (xcr0 & XSTATE_AMX_MASK) != XSTATE_AMX_MASK) {
+        return false;                       /* not xcr0_supports_palette(1) */
+    }
+    if (buf[0] == 0) {
+        return true;                        /* INIT: the other bytes are not examined */
+    }
+    for (n = 2; n < 16; n++) {
+        if (buf[n]) {
+            return false;
+        }
+    }
+    for (n = 0; n < AMX_P1_MAX_NAMES; n++) {
+        if (lduw_le_p(buf + 16 + 2 * n) > AMX_P1_BYTES_PER_ROW) {
+            return false;
+        }
+    }
+    for (n = 16 + 2 * AMX_P1_MAX_NAMES; n < 48; n++) {
+        if (buf[n]) {
+            return false;
+        }
+    }
+    for (n = 0; n < AMX_P1_MAX_NAMES; n++) {
+        if (buf[48 + n] > AMX_P1_MAX_ROWS) {
+            return false;
+        }
+    }
+    for (n = 48 + AMX_P1_MAX_NAMES; n < 64; n++) {
+        if (buf[n]) {
+            return false;
+        }
+    }
+    for (n = 0; n < AMX_P1_MAX_NAMES; n++) {
+        /* a tile is valid with rows and colsb both non-zero, unused with both zero */
+        if ((buf[48 + n] == 0) != (lduw_le_p(buf + 16 + 2 * n) == 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void do_xsave_tilecfg(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 64; i += 8) {
+        cpu_stq_data_ra(env, ptr + i, ldq_le_p(env->xtilecfg + i), ra);
+    }
+}
+
+static void do_xsave_tiledata(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < (int)sizeof(env->xtiledata); i += 8) {
+        cpu_stq_data_ra(env, ptr + i, ldq_le_p(env->xtiledata + i), ra);
+    }
+}
+
+static void do_xrstor_tilecfg(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    uint8_t buf[64];
+    int i;
+
+    for (i = 0; i < 64; i += 8) {
+        stq_le_p(buf + i, cpu_ldq_data_ra(env, ptr + i, ra));
+    }
+    if (buf[0] != 0 && x86_amx_tilecfg_ok(buf, env->xcr0)) {
+        memcpy(env->xtilecfg, buf, sizeof(env->xtilecfg));
+    } else {
+        memset(env->xtilecfg, 0, sizeof(env->xtilecfg));   /* TILES_CONFIGURED = 0 */
+    }
+}
+
+static void do_xrstor_tiledata(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < (int)sizeof(env->xtiledata); i += 8) {
+        stq_le_p(env->xtiledata + i, cpu_ldq_data_ra(env, ptr + i, ra));
+    }
+}
+
+static void do_clear_tilecfg(CPUX86State *env)
+{
+    memset(env->xtilecfg, 0, sizeof(env->xtilecfg));
+}
+
+static void do_clear_tiledata(CPUX86State *env)
+{
+    memset(env->xtiledata, 0, sizeof(env->xtiledata));
+}
+
+/*
+ * XINUSE for components 17-18, value-based like U124 (SDM Vol1 13.6): TILECFG in use iff
+ * TILES_CONFIGURED, TILEDATA iff some byte of it is non-zero.
+ */
+static uint64_t get_xinuse_amx(CPUX86State *env)
+{
+    uint64_t inuse = 0;
+    size_t i;
+
+    if (env->xtilecfg[0]) {
+        inuse |= XSTATE_XTILE_CFG_MASK;
+    }
+    for (i = 0; i < sizeof(env->xtiledata); i += 8) {
+        if (ldq_le_p(env->xtiledata + i)) {
+            inuse |= XSTATE_XTILE_DATA_MASK;
+            break;
+        }
+    }
+    return inuse;
+}
+#endif /* __Use_Original_Qemu (U172) */
+
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
     /* The operand must be 16 byte aligned */
@@ -4628,6 +4767,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     inuse &= ~(XSTATE_OPMASK_MASK | XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK);
     inuse |= get_xinuse_avx512(env);
 #endif /* __Use_Original_Qemu (U124) */
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+    /* AMX components: value-based (see get_xinuse_amx) */
+    inuse &= ~XSTATE_AMX_MASK;
+    inuse |= get_xinuse_amx(env);
+#endif /* __Use_Original_Qemu (U172) */
     return inuse;
 }
 
@@ -4692,6 +4836,14 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     if (opt & XSTATE_PKRU_MASK) {
         do_xsave_pkru(env, ptr + XO(pkru_state), ra);
     }
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+    if (opt & XSTATE_XTILE_CFG_MASK) {
+        do_xsave_tilecfg(env, ptr + x86_ext_save_areas[XSTATE_XTILE_CFG_BIT].offset, ra);
+    }
+    if (opt & XSTATE_XTILE_DATA_MASK) {
+        do_xsave_tiledata(env, ptr + x86_ext_save_areas[XSTATE_XTILE_DATA_BIT].offset, ra);
+    }
+#endif /* __Use_Original_Qemu (U172) */
 
     /* Update the XSTATE_BV field.  */
     old_bv = cpu_ldq_data_ra(env, ptr + XO(header.xstate_bv), ra);
@@ -4736,9 +4888,28 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
     case XSTATE_ZMM_Hi256_BIT: do_xsave_zmm_hi256(env, at, ra); break;
     case XSTATE_Hi16_ZMM_BIT:  do_xsave_hi16_zmm(env, at, ra); break;
 #endif /* __Use_Original_Qemu (U124) */
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+    case XSTATE_XTILE_CFG_BIT:  do_xsave_tilecfg(env, at, ra); break;
+    case XSTATE_XTILE_DATA_BIT: do_xsave_tiledata(env, at, ra); break;
+#endif /* __Use_Original_Qemu (U172) */
     default:                 break;
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+/*
+ * Compacted format (SDM Vol1 13.4.3): a component with CPUID.(EAX=0DH,ECX=i):ECX[1] = 1
+ * starts on the next 64-byte boundary after the preceding one (the AMX components, U170).
+ */
+static target_ulong xsave_comp_align(int i, target_ulong next)
+{
+    if (i < XSAVE_STATE_AREA_COUNT &&
+        (x86_ext_save_areas[i].ecx & ESA_FEATURE_ALIGN64_MASK)) {
+        next = QEMU_ALIGN_UP(next, 64);
+    }
+    return next;
+}
+#endif /* __Use_Original_Qemu (U172) */
 
 static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                       uint64_t inuse, uintptr_t ra)
@@ -4768,6 +4939,9 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     }
     for (i = 2; i < 63; i++) {
         if (rfbm & (1ULL << i)) {
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+            next = xsave_comp_align(i, next);
+#endif /* __Use_Original_Qemu (U172) */
             if (save & (1ULL << i)) {
                 do_xsave_comp(env, i, ptr + next, ra);
             }
@@ -4993,6 +5167,9 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     for (i = 2; i < 63; i++) {
         uint64_t bit = 1ULL << i;
         if (format & bit) {
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+            next = xsave_comp_align(i, next);
+#endif /* __Use_Original_Qemu (U172) */
             if (restore & bit) {
                 switch (i) {
                 case XSTATE_YMM_BIT:
@@ -5025,6 +5202,14 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     do_xrstor_hi16_zmm(env, ptr + next, ra);
                     break;
 #endif /* __Use_Original_Qemu (U124) */
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+                case XSTATE_XTILE_CFG_BIT:
+                    do_xrstor_tilecfg(env, ptr + next, ra);
+                    break;
+                case XSTATE_XTILE_DATA_BIT:
+                    do_xrstor_tiledata(env, ptr + next, ra);
+                    break;
+#endif /* __Use_Original_Qemu (U172) */
                 default:
                     break;
                 }
@@ -5033,6 +5218,14 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         }
         if (init & bit) {
             switch (i) {
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+            case XSTATE_XTILE_CFG_BIT:
+                do_clear_tilecfg(env);
+                break;
+            case XSTATE_XTILE_DATA_BIT:
+                do_clear_tiledata(env);
+                break;
+#endif /* __Use_Original_Qemu (U172) */
             case XSTATE_YMM_BIT:
                 do_clear_ymmh(env);
                 break;
@@ -5217,6 +5410,22 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
             tlb_flush(cs);
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U172) */
+    if (rfbm & XSTATE_XTILE_CFG_MASK) {
+        if (xstate_bv & XSTATE_XTILE_CFG_MASK) {
+            do_xrstor_tilecfg(env, ptr + x86_ext_save_areas[XSTATE_XTILE_CFG_BIT].offset, ra);
+        } else {
+            do_clear_tilecfg(env);
+        }
+    }
+    if (rfbm & XSTATE_XTILE_DATA_MASK) {
+        if (xstate_bv & XSTATE_XTILE_DATA_MASK) {
+            do_xrstor_tiledata(env, ptr + x86_ext_save_areas[XSTATE_XTILE_DATA_BIT].offset, ra);
+        } else {
+            do_clear_tiledata(env);
+        }
+    }
+#endif /* __Use_Original_Qemu (U172) */
 }
 
 #undef XO
