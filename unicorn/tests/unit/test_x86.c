@@ -3097,14 +3097,16 @@ static void test_x86_cpuid_regs(int model, uint32_t leaf, uint32_t sub, uint32_t
  */
 static void test_x86_vec_strict(const X86VecCase *c, uint32_t feature, uint32_t keep)
 {
-    uc_x86_cpuid p[4];
+    uc_x86_cpuid p[6];
     uint32_t r[4];
     uint8_t out[32], expect[32];
     uc_err err;
     int i;
 
-    static const uint32_t leaves[4][2] = { { 0, 0 }, { 1, 0 }, { 7, 0 }, { 7, 1 } };
-    for (i = 0; i < 4; i++) {
+    /* leaf 0DH too: since U120 the reset XCR0 stays within the profile's 0DH.0 */
+    static const uint32_t leaves[6][2] = { { 0, 0 }, { 1, 0 }, { 7, 0 }, { 7, 1 },
+                                           { 0xd, 0 }, { 0xd, 1 } };
+    for (i = 0; i < 6; i++) {
         test_x86_cpuid_regs(UC_CPU_X86_MAX, leaves[i][0], leaves[i][1], r);
         p[i].leaf = leaves[i][0];
         p[i].subleaf = leaves[i][1];
@@ -3116,7 +3118,7 @@ static void test_x86_vec_strict(const X86VecCase *c, uint32_t feature, uint32_t 
     TEST_CHECK((p[3].eax & feature) != 0); /* MAX advertises it (TCG feature) */
     p[3].eax = keep;
 
-    err = test_x86_vec_run(c, UC_CPU_X86_MAX, p, 4, out);
+    err = test_x86_vec_run(c, UC_CPU_X86_MAX, p, 6, out);
     if ((keep & feature) != 0) {
         TEST_CHECK_(err == UC_ERR_OK, "%s: strict profile with the bit (%s)", c->name,
                     uc_strerror(err));
