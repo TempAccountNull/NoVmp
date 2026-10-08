@@ -2455,6 +2455,32 @@ VNNI_INT16(vpdpwuud,  0, 0, 0)
 VNNI_INT16(vpdpwuuds, 0, 0, 1)
 #undef VNNI_INT16
 #endif /* __Use_Original_Qemu (U86) */
+#if __Use_Original_Qemu != 1 /* ours (U87) */
+/*
+ * NoVmp (ledger U87): AVX-IFMA (SDM Vol2 VPMADD52LUQ/VPMADD52HUQ, VEX forms).
+ * Per qword: temp128 := ZX(src1[51:0]) * ZX(src2[51:0]); srcdest += ZX of
+ * temp128[51:0] (LUQ) or temp128[103:52] (HUQ), modulo 2^64. Bits 63:52 of
+ * both sources are ignored.
+ */
+#define IFMA52(name, hi)                                                          \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)       \
+{                                                                                 \
+    const uint64_t m52 = (1ULL << 52) - 1;                                        \
+    Reg r;                                                                        \
+    int i;                                                                        \
+                                                                                  \
+    for (i = 0; i < 1 << SHIFT; i++) {                                            \
+        uint64_t lo, h;                                                           \
+        mulu64(&lo, &h, v->Q(i) & m52, s->Q(i) & m52);                            \
+        r.Q(i) = d->Q(i) + (hi ? ((lo >> 52) | (h << 12)) & m52 : lo & m52);      \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+IFMA52(vpmadd52luq, 0)
+IFMA52(vpmadd52huq, 1)
+#undef IFMA52
+#endif /* __Use_Original_Qemu (U87) */
 
 void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {

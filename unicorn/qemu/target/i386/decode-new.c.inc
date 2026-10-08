@@ -547,6 +547,11 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xae] = X86_OP_ENTRY3(VFNMSUB213Px, V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
     [0xaf] = X86_OP_ENTRY3(VFNMSUB213Sx, V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
 
+#if __Use_Original_Qemu != 1 /* ours (U87) */
+    /* AVX-IFMA (U87): VEX.66.0F38.W1 B4/B5, VEX only (EVEX is AVX512-IFMA) */
+    [0xb4] = X86_OP_ENTRY3(VPMADD52LUQ,  V,x,  H,x, W,x,  vex6 chk(W1) cpuid(AVX_IFMA) p_66),
+    [0xb5] = X86_OP_ENTRY3(VPMADD52HUQ,  V,x,  H,x, W,x,  vex6 chk(W1) cpuid(AVX_IFMA) p_66),
+#endif /* __Use_Original_Qemu (U87) */
     [0xb8] = X86_OP_ENTRY3(VFMADD231Px,  V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
     [0xb9] = X86_OP_ENTRY3(VFMADD231Sx,  V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
     [0xba] = X86_OP_ENTRY3(VFMSUB231Px,  V,x,  H,x, W,x,  vex6 cpuid(FMA) p_66),
@@ -1757,6 +1762,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX_VNNI_INT16:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AVX_VNNI_INT16);
 #endif /* __Use_Original_Qemu (U86) */
+#if __Use_Original_Qemu != 1 /* ours (U87) */
+    case X86_FEAT_AVX_IFMA:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AVX_IFMA);
+#endif /* __Use_Original_Qemu (U87) */
 #if __Use_Original_Qemu != 1 /* ours (U72) */
     case X86_FEAT_MOVDIRI:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_MOVDIRI);

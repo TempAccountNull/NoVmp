@@ -673,7 +673,7 @@ static CPUCacheInfo legacy_l3_cache = {
 #else /* ours (U71) */
 #define TCG_7_1_EAX_FEATURES (CPUID_7_1_EAX_CMPCCXADD | CPUID_7_1_EAX_AVX_VNNI | \
           CPUID_7_1_EAX_SHA512 /* U82 */ | CPUID_7_1_EAX_SM3 /* U83 */ | \
-          CPUID_7_1_EAX_SM4 /* U84 */)
+          CPUID_7_1_EAX_SM4 /* U84 */ | CPUID_7_1_EAX_AVX_IFMA /* U87 */)
 #endif /* __Use_Original_Qemu (U71) */
 #if __Use_Original_Qemu != 1 /* ours (U85) */
 #define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8 | \
@@ -926,7 +926,11 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
+#if __Use_Original_Qemu == 1 /* original QEMU (U87) */
             NULL, NULL, NULL, NULL,
+#else /* ours (U87) */
+            NULL, NULL, NULL, "avx-ifma",
+#endif /* __Use_Original_Qemu (U87) */
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
         },

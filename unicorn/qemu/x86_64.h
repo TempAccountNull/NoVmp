@@ -2577,6 +2577,12 @@
 #define helper_vpdpwuuds_xmm helper_vpdpwuuds_xmm_x86_64
 #define helper_vpdpwuuds_ymm helper_vpdpwuuds_ymm_x86_64
 #endif /* __Use_Original_Qemu (U86) */
+#if __Use_Original_Qemu != 1 /* ours (U87) */
+#define helper_vpmadd52luq_xmm helper_vpmadd52luq_xmm_x86_64
+#define helper_vpmadd52luq_ymm helper_vpmadd52luq_ymm_x86_64
+#define helper_vpmadd52huq_xmm helper_vpmadd52huq_xmm_x86_64
+#define helper_vpmadd52huq_ymm helper_vpmadd52huq_ymm_x86_64
+#endif /* __Use_Original_Qemu (U87) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

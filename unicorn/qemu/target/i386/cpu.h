@@ -870,6 +870,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_1_EAX_AVX512_BF16       (1U << 5)
 /* CMPCCXADD Instructions */
 #define CPUID_7_1_EAX_CMPCCXADD         (1U << 7)
+#if __Use_Original_Qemu != 1 /* ours (U87) */
+/* Support for VPMADD52[H,L]UQ (VEX, AVX-IFMA) */
+#define CPUID_7_1_EAX_AVX_IFMA          (1U << 23)
+#endif /* __Use_Original_Qemu (U87) */
 #if __Use_Original_Qemu != 1 /* ours (U85) */
 /* Support for VPDPB[SU,UU,SS]D[,S] (AVX-VNNI-INT8) */
 #define CPUID_7_1_EDX_AVX_VNNI_INT8     (1U << 4)
