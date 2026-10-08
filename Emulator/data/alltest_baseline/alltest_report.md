@@ -1,20 +1,20 @@
 # emu-alltest report
 
-Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0x0.
+Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0xff.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 25 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 29 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 2983 |
-| differs | 7 |
-| unicorn-#UD (hw runs it) | 23 |
+| match | 3013 |
+| differs | 0 |
+| unicorn-#UD (hw runs it) | 0 |
 | host lacks + unicorn #UD | 10170 |
 | host lacks, unicorn runs (needs SDM check) | 16 |
-| not native-safe, unicorn runs (needs SDM check) | 193 |
-| not native-safe, unicorn #UD | 12 |
+| not native-safe, unicorn runs (needs SDM check) | 199 |
+| not native-safe, unicorn #UD | 6 |
 | privileged (CPL0 in raw unicorn; Phase 2 CPL3) | 100 |
 | harness error | 0 |
 
@@ -25,7 +25,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| avx | 434 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx | 438 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+novlx | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -33,7 +33,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 |
-| base | 1147 | 0 | 23 | 7342 | 5 | 159 | 12 | 76 | 0 |
+| base | 1170 | 0 | 0 | 7343 | 4 | 165 | 6 | 76 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
@@ -45,14 +45,14 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
 | fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 128 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 130 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 |
-| rtm | 0 | 0 | 0 | 1 | 4 | 4 | 0 | 0 | 0 |
+| rtm | 0 | 0 | 0 | 0 | 5 | 4 | 0 | 0 | 0 |
 | sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| sse1 | 93 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse1 | 94 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse2 | 253 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
@@ -65,36 +65,6 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 
 ## Differences (first iteration that differs)
 
-- `fyl2x` (fpu, differs, 1/6): iter 1: x87 fcw/fsw/ftw hw=037F/0820/FF03 uc=037F/0A20/FF03 (fsw mask BAFF); st(0) differs; 
-- `fsin` (fpu, differs, 1/6): iter 1: x87 fcw/fsw/ftw hw=037F/0220/FF00 uc=037F/0020/FF00 (fsw mask BEFF); st(0) differs; 
-- `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, differs, 5/6): iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
-- `xsavec ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `xsavec64 ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `gf2p8mulb xmm0, xmm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `gf2p8affineqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `gf2p8affineinvqb xmm0, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `ptwrite eax` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `ptwrite dword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `ptwrite rax` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `ptwrite qword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vrsqrtps xmm0, xmm0` (avx, differs, 1/6): iter 5: ymm0 differs; 
-- `vrcpps xmm0, xmmword ptr [rsi]` (avx, differs, 1/6): iter 3: ymm0 differs; 
-- `vrsqrtps ymm0, ymmword ptr [rsi]` (avx, differs, 1/6): iter 2: ymm0[255:128] differs; 
-- `vrcpps ymm0, ymm0` (avx, differs, 1/6): iter 4: ymm0 differs; 
-- `vgf2p8mulb xmm0, xmm1, xmm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8mulb xmm0, xmm1, xmmword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8mulb ymm0, ymm1, ymm0` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8mulb ymm0, ymm1, ymmword ptr [rsi]` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vpclmulqdq ymm0, ymm1, ymm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vpclmulqdq ymm0, ymm1, ymmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineqb xmm0, xmm1, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineqb xmm0, xmm1, xmmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineinvqb xmm0, xmm1, xmm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineinvqb xmm0, xmm1, xmmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineqb ymm0, ymm1, ymm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineqb ymm0, ymm1, ymmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineinvqb ymm0, ymm1, ymm0, 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
-- `vgf2p8affineinvqb ymm0, ymm1, ymmword ptr [rsi], 0x5b` (base, unicorn-#UD (hw runs it), 6/6): iter 0: outcome hw=ok uc=vector 6
 
 ## Manual forms not reachable by the sweep yet
 
