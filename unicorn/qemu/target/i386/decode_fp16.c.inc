@@ -72,6 +72,27 @@ static const X86OpEntry opcodes_evex_map5[256] = {
 };
 
 static const X86OpEntry opcodes_evex_map6[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U334) */
+    /*
+     * NoVmp (ledger U334): 66 96..BF VF[N]MADD/VF[N]MSUB 132/213/231 PH (even opcodes
+     * 98..9E, A8..AE, B8..BE) and SH (odd ones), VFMADDSUB/VFMSUBADD 132/213/231 PH (x6/x7)
+     */
+    /*
+     * ev_dsrc (U190): the destination is a source; for the SH forms the engine's scalar
+     * merge (U192) then keeps DEST[127:16] (SDM "DEST[127:16] remains unchanged"), as the
+     * helper does (it reads the old destination through its dst pointer).
+     */
+#define FP16_FP(b_) [b_] = X86_OP_ENTRY3(FP16_FMA, V,x, H,x, W,x, EV16P(ER) ev_dsrc p_66)
+#define FP16_FS(b_) [b_] = X86_OP_ENTRY3(FP16_FMA, V,x, H,x, W,w, EV16S(ER) ev_dsrc p_66)
+    FP16_FP(0x96), FP16_FP(0x97), FP16_FP(0x98), FP16_FS(0x99), FP16_FP(0x9a), FP16_FS(0x9b),
+    FP16_FP(0x9c), FP16_FS(0x9d), FP16_FP(0x9e), FP16_FS(0x9f),
+    FP16_FP(0xa6), FP16_FP(0xa7), FP16_FP(0xa8), FP16_FS(0xa9), FP16_FP(0xaa), FP16_FS(0xab),
+    FP16_FP(0xac), FP16_FS(0xad), FP16_FP(0xae), FP16_FS(0xaf),
+    FP16_FP(0xb6), FP16_FP(0xb7), FP16_FP(0xb8), FP16_FS(0xb9), FP16_FP(0xba), FP16_FS(0xbb),
+    FP16_FP(0xbc), FP16_FS(0xbd), FP16_FP(0xbe), FP16_FS(0xbf),
+#undef FP16_FP
+#undef FP16_FS
+#endif /* __Use_Original_Qemu (U334) */
 };
 
 static void decode_evex_map5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)

@@ -89,3 +89,39 @@ FP16_GEN(MIN, FP16_OP_MIN)
 FP16_GEN(MAX, FP16_OP_MAX)
 FP16_GEN(SQRT, FP16_OP_SQRT)
 #endif /* __Use_Original_Qemu (U333) */
+#if __Use_Original_Qemu != 1 /* ours (U334) */
+
+/*
+ * NoVmp (ledger U334): VF[N]MADD/VF[N]MSUB 132/213/231 PH/SH, VFMADDSUB/VFMSUBADD PH (map 6
+ * 66 96..BF): the high opcode nibble is the operand order (9: 132, A: 213, B: 231), the
+ * low one the operation (6 MADDSUB, 7 MSUBADD, 8/9 MADD, A/B MSUB, C/D NMADD, E/F NMSUB).
+ */
+static void gen_FP16_FMA(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    int b = decode->b, op = FP16_OP_FMA, imm = (b >> 4) - 9;
+
+    switch (b & 15) {
+    case 6:
+        op = FP16_OP_FMADDSUB;
+        break;
+    case 7:
+        op = FP16_OP_FMSUBADD;
+        break;
+    case 0xa:
+    case 0xb:
+        imm |= FP16_FMA_NEGC;
+        break;
+    case 0xc:
+    case 0xd:
+        imm |= FP16_FMA_NEGP;
+        break;
+    case 0xe:
+    case 0xf:
+        imm |= FP16_FMA_NEGP | FP16_FMA_NEGC;
+        break;
+    default:
+        break;
+    }
+    gen_fp16_call(s, decode, op, imm, 0);
+}
+#endif /* __Use_Original_Qemu (U334) */
