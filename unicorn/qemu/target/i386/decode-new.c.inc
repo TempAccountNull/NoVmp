@@ -433,6 +433,9 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
 #if __Use_Original_Qemu != 1 /* ours (U178) */
     static const X86OpEntry amx_5c_reg[4] = {
         [2] = X86_OP_ENTRY0(TDPBF16PS,    vex22 cpuid(AMX_BF16) p_f3),
+#if __Use_Original_Qemu != 1 /* ours (U179) */
+        [3] = X86_OP_ENTRY0(TDPFP16PS,    vex22 cpuid(AMX_FP16) p_f2),
+#endif /* __Use_Original_Qemu (U179) */
     };
 #endif /* __Use_Original_Qemu (U178) */
     int mod = get_modrm(s, env) >> 6;

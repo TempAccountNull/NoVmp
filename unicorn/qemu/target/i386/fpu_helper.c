@@ -6067,6 +6067,36 @@ static void amx_pair_dot(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
 }
 #endif /* __Use_Original_Qemu (U178) */
 
+#if __Use_Original_Qemu != 1 /* ours (U179) */
+/*
+ * NoVmp (ledger U179): cvt_fp16_to_fp32 of TDPFP16PS / TCMM*FP16PS - exact; "Input FP16
+ * denormals are always handled and not treated as zero" (they become normal FP32 values,
+ * so the FP32 DAZ of fma32 never sees them); a NaN keeps sign and payload (quieted by
+ * fma32's NaN rule).
+ */
+static float32 amx_cvt_fp16(uint16_t h)
+{
+    uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+    int exp = (h >> 10) & 0x1f;
+    uint32_t frac = h & 0x3ff;
+
+    if (exp == 0x1f) {
+        return make_float32(sign | 0x7f800000u | (frac << 13));
+    }
+    if (exp == 0) {
+        if (frac == 0) {
+            return make_float32(sign);
+        }
+        exp = 1;
+        while (!(frac & 0x400)) {               /* normalise the FP16 denormal */
+            frac <<= 1;
+            exp--;
+        }
+        frac &= 0x3ff;
+    }
+    return make_float32(sign | ((uint32_t)(exp - 15 + 127) << 23) | (frac << 13));
+}
+#endif /* __Use_Original_Qemu (U179) */
 
 
 #if __Use_Original_Qemu != 1 /* ours (U177) */
@@ -6091,6 +6121,11 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
         amx_tmul_fp(env, d, s1, s2, amx_cvt_bf16, amx_pair_dot);
         break;
 #endif /* __Use_Original_Qemu (U178) */
+#if __Use_Original_Qemu != 1 /* ours (U179) */
+    case AMX_TDPFP16PS:
+        amx_tmul_fp(env, d, s1, s2, amx_cvt_fp16, amx_pair_dot);
+        break;
+#endif /* __Use_Original_Qemu (U179) */
     default:
         g_assert_not_reached();
     }

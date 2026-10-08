@@ -3444,4 +3444,11 @@ static void gen_TDPBF16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 #endif /* __Use_Original_Qemu (U178) */
 
+#if __Use_Original_Qemu != 1 /* ours (U179) */
+/* TDPFP16PS: VEX.128.F2.0F38.W0 5C 11:rrr:bbb */
+static void gen_TDPFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 5);
+}
+#endif /* __Use_Original_Qemu (U179) */
 
