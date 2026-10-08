@@ -376,6 +376,26 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
         dst[3] = reg->ZMM_Q(3);
         return ret;
     }
+#if __Use_Original_Qemu != 1 /* ours (U123) */
+    /* NoVmp (ledger U123): ZMM0-7 exist in every mode, like XMM0-7 and YMM0-7 */
+    case UC_X86_REG_ZMM0:
+    case UC_X86_REG_ZMM1:
+    case UC_X86_REG_ZMM2:
+    case UC_X86_REG_ZMM3:
+    case UC_X86_REG_ZMM4:
+    case UC_X86_REG_ZMM5:
+    case UC_X86_REG_ZMM6:
+    case UC_X86_REG_ZMM7: {
+        CHECK_REG_TYPE(uint64_t[8]);
+        uint64_t *dst = (uint64_t *)value;
+        const ZMMReg *const reg = &env->xmm_regs[regid - UC_X86_REG_ZMM0];
+        int i;
+        for (i = 0; i < 8; i++) {
+            dst[i] = reg->ZMM_Q(i);
+        }
+        return ret;
+    }
+#endif /* __Use_Original_Qemu (U123) */
 
     case UC_X86_REG_FIP:
         CHECK_REG_TYPE(uint64_t);
@@ -1242,6 +1262,26 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         reg->ZMM_Q(3) = src[3];
         return ret;
     }
+#if __Use_Original_Qemu != 1 /* ours (U123) */
+    /* NoVmp (ledger U123): ZMM0-7 exist in every mode, like XMM0-7 and YMM0-7 */
+    case UC_X86_REG_ZMM0:
+    case UC_X86_REG_ZMM1:
+    case UC_X86_REG_ZMM2:
+    case UC_X86_REG_ZMM3:
+    case UC_X86_REG_ZMM4:
+    case UC_X86_REG_ZMM5:
+    case UC_X86_REG_ZMM6:
+    case UC_X86_REG_ZMM7: {
+        CHECK_REG_TYPE(uint64_t[8]);
+        const uint64_t *src = (const uint64_t *)value;
+        ZMMReg *reg = &env->xmm_regs[regid - UC_X86_REG_ZMM0];
+        int i;
+        for (i = 0; i < 8; i++) {
+            reg->ZMM_Q(i) = src[i];
+        }
+        return ret;
+    }
+#endif /* __Use_Original_Qemu (U123) */
 
     case UC_X86_REG_FIP:
         CHECK_REG_TYPE(uint64_t);

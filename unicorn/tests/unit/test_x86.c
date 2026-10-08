@@ -5164,6 +5164,48 @@ static void test_x86_avx512_xsetbv(void)
     m0_close(&m);
 }
 
+static void m0_zmm_pattern(uint64_t z[8], unsigned n, unsigned salt)
+{
+    unsigned i;
+    for (i = 0; i < 8; i++) {
+        z[i] = 0x0101010101010101ULL * (n + 1) ^ ((uint64_t)(i + 1) << 56) ^
+               ((uint64_t)salt << 40) ^ (0x1000 + i);
+    }
+}
+
+/* NoVmp U123: UC_X86_REG_ZMM0..7 in 32-bit (and 16-bit) mode */
+static void test_x86_zmm_api_32(void)
+{
+    static const uc_mode modes[] = {UC_MODE_16, UC_MODE_32, UC_MODE_64};
+    size_t k;
+
+    for (k = 0; k < 3; k++) {
+        uc_engine *uc;
+        unsigned n;
+
+        OK(uc_open(UC_ARCH_X86, modes[k], &uc));
+        for (n = 0; n < 8; n++) {
+            uint64_t z[8], out[8], y[4], x[2];
+            m0_zmm_pattern(z, n, 0x5a);
+            OK(uc_reg_write(uc, UC_X86_REG_ZMM0 + n, z));
+            memset(out, 0, sizeof(out));
+            OK(uc_reg_read(uc, UC_X86_REG_ZMM0 + n, out));
+            TEST_CHECK(memcmp(out, z, sizeof(z)) == 0);
+            OK(uc_reg_read(uc, UC_X86_REG_YMM0 + n, y));
+            TEST_CHECK(memcmp(y, z, sizeof(y)) == 0);
+            OK(uc_reg_read(uc, UC_X86_REG_XMM0 + n, x));
+            TEST_CHECK(memcmp(x, z, sizeof(x)) == 0);
+            /* a YMM write keeps bits 511:256 */
+            y[0] = ~y[0];
+            y[3] = ~y[3];
+            OK(uc_reg_write(uc, UC_X86_REG_YMM0 + n, y));
+            OK(uc_reg_read(uc, UC_X86_REG_ZMM0 + n, out));
+            TEST_CHECK(out[0] == ~z[0] && out[3] == ~z[3] && out[4] == z[4] && out[7] == z[7]);
+        }
+        OK(uc_close(uc));
+    }
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5282,4 +5324,5 @@ TEST_LIST = {
     {"test_x86_lock_btc_reg", test_x86_lock_btc_reg},
     {"test_x86_avx512_optin", test_x86_avx512_optin},
     {"test_x86_avx512_xsetbv", test_x86_avx512_xsetbv},
+    {"test_x86_zmm_api_32", test_x86_zmm_api_32},
     {NULL, NULL}};
