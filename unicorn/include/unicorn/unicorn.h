@@ -688,12 +688,32 @@ typedef enum uc_control_type {
     // the mask (1 stays "AVX512F only"). A strict CPUID profile (UC_CTL_X86_CPUID_STRICT)
     // that hides a bit still #UDs that bit's instructions.
     UC_CTL_X86_AVX512,
+    // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
+    // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
+    // (TILECFG, TILEDATA) for XCR0 / CPUID.(EAX=0DH) / the XSAVE family, CPUID leaves
+    // 1DH (palette 1) and 1EH (TMUL), extended feature disable (CPUID.(0DH,1):EAX.XFD,
+    // IA32_XFD / IA32_XFD_ERR for TILEDATA) and the tile instructions; INT8 / BF16 /
+    // FP16 / COMPLEX add AMX_INT8 (7.0:EDX[25]), AMX_BF16 (7.0:EDX[22]), AMX_FP16
+    // (7.1:EAX[21]), AMX_COMPLEX (7.1:EDX[8]) and the CPUID.(1EH,1):EAX aliases. Any
+    // non-zero value implies UC_X86_AMX_TILE; other bits -> UC_ERR_ARG. Default 0
+    // (UC_CPU_X86_MAX and the i5-13600K profile have no AMX). Reset XCR0 enables 18:17
+    // (like every supported component, U120); IA32_XFD resets to 0. Only before the
+    // engine is initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_AMX,
 } uc_control_type;
 
 // UC_CTL_X86_AVX512 values (NoVmp U128)
 #define UC_X86_AVX512_F 1  // AVX512F (state components 5-7, opmask W forms)
 #define UC_X86_AVX512_DQ 2 // + AVX512DQ (opmask B forms, KADDW, KTESTW)
 #define UC_X86_AVX512_BW 4 // + AVX512BW (opmask D/Q forms, KUNPCKWD/DQ)
+
+// UC_CTL_X86_AMX values (NoVmp U170)
+#define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO
+#define UC_X86_AMX_INT8 2     // + AMX-INT8: TDPBSSD, TDPBSUD, TDPBUSD, TDPBUUD
+#define UC_X86_AMX_BF16 4     // + AMX-BF16: TDPBF16PS
+#define UC_X86_AMX_FP16 8     // + AMX-FP16: TDPFP16PS
+#define UC_X86_AMX_COMPLEX 16 // + AMX-COMPLEX: TCMMIMFP16PS, TCMMRLFP16PS
+#define UC_X86_AMX_ALL 31
 
 /*
 
@@ -802,6 +822,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AVX512, 1), (on))
 #define uc_ctl_get_x86_avx512(uc, on)                                          \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AVX512, 1), (on))
+#define uc_ctl_set_x86_amx(uc, mask)                                           \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AMX, 1), (mask))
+#define uc_ctl_get_x86_amx(uc, mask)                                           \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AMX, 1), (mask))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

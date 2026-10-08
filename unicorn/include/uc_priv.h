@@ -436,6 +436,7 @@ struct uc_struct {
     size_t x86_cpuid_count;
     int x86_cpuid_strict;     // UC_CTL_X86_CPUID_STRICT
     int x86_avx512;           // UC_CTL_X86_AVX512 mask (NoVmp U120/U128), 0 = no AVX-512 state
+    int x86_amx;              // UC_CTL_X86_AMX mask (NoVmp U170), 0 = no AMX
     uc_args_uc_t x86_cpuid_changed; // clamps XCR0 to a new CPUID profile (NoVmp U120)
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of

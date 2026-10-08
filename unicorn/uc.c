@@ -3281,6 +3281,26 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
+    case UC_CTL_X86_AMX:
+        /* NoVmp U170: AMX in the CPU model (mask of UC_X86_AMX_*); fixed once the CPU
+           exists; any non-zero value implies UC_X86_AMX_TILE */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mask = va_arg(args, int *);
+            *mask = uc->x86_amx;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mask = va_arg(args, int);
+            if (uc->init_done || (mask & ~UC_X86_AMX_ALL)) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_amx = mask ? (mask | UC_X86_AMX_TILE) : 0;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

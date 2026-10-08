@@ -1374,6 +1374,7 @@ ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT] = {
         .offset = 0,
         .size = sizeof(XSavesArchLBR),
     },
+#if __Use_Original_Qemu == 1 /* original QEMU (U170) */
     [XSTATE_XTILE_CFG_BIT] = {
         .feature = FEAT_7_0_EDX, .bits = CPUID_7_0_EDX_AMX_TILE,
         .offset = 0xac0,
@@ -1384,6 +1385,26 @@ ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT] = {
         .offset = 0xb00,
         .size = sizeof(XSaveXTILEDATA),
     },
+#else /* ours (U170) */
+    /*
+     * NoVmp (ledger U170): CPUID.(EAX=0DH,ECX=17/18):ECX (SDM Vol1 13.2) - both AMX
+     * components start on a 64-byte boundary in the compacted format (ECX[1]); XFD is
+     * supported for TILEDATA only (ECX[2]; SDM Vol1 19.2: "The first processors
+     * implementing Intel AMX will support setting IA32_XFD[18] but not IA32_XFD[17]").
+     */
+    [XSTATE_XTILE_CFG_BIT] = {
+        .feature = FEAT_7_0_EDX, .bits = CPUID_7_0_EDX_AMX_TILE,
+        .offset = 0xac0,
+        .size = sizeof(XSaveXTILECFG),
+        .ecx = ESA_FEATURE_ALIGN64_MASK,
+    },
+    [XSTATE_XTILE_DATA_BIT] = {
+        .feature = FEAT_7_0_EDX, .bits = CPUID_7_0_EDX_AMX_TILE,
+        .offset = 0xb00,
+        .size = sizeof(XSaveXTILEDATA),
+        .ecx = ESA_FEATURE_ALIGN64_MASK | ESA_FEATURE_XFD_MASK,
+    },
+#endif /* __Use_Original_Qemu (U170) */
 };
 
 uint32_t xsave_area_size(uint64_t mask, bool compacted)
@@ -1395,6 +1416,12 @@ uint32_t xsave_area_size(uint64_t mask, bool compacted)
         const ExtSaveArea *esa = &x86_ext_save_areas[i];
         if ((mask >> i) & 1) {
             uint32_t offset = compacted ? ret : esa->offset;
+#if __Use_Original_Qemu != 1 /* ours (U170) */
+            /* compacted format: ECX[1] components start on the next 64-byte boundary */
+            if (compacted && (esa->ecx & ESA_FEATURE_ALIGN64_MASK)) {
+                offset = QEMU_ALIGN_UP(offset, 64);
+            }
+#endif /* __Use_Original_Qemu (U170) */
             ret = MAX(ret, offset + esa->size);
         }
     }
@@ -4281,6 +4308,12 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
         (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) {
         xcr0 &= ~avx512;
     }
+#if __Use_Original_Qemu != 1 /* ours (U170) */
+    /* AMX: TILECFG and TILEDATA both or neither (SDM Vol1 13.3) */
+    if ((xcr0 & XSTATE_AMX_MASK) != XSTATE_AMX_MASK) {
+        xcr0 &= ~XSTATE_AMX_MASK;
+    }
+#endif /* __Use_Original_Qemu (U170) */
     return xcr0;
 }
 #endif /* __Use_Original_Qemu (U120) */
@@ -4651,9 +4684,34 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             break;
         }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U170) */
         if (count == 0) {
             *ebx = INTEL_AMX_TMUL_MAX_K | (INTEL_AMX_TMUL_MAX_N << 8);
         }
+#else /* ours (U170) */
+        /*
+         * NoVmp (ledger U170): ISE 319433 Table 1-3 - 1EH.0: EAX = highest sub-leaf (1),
+         * EBX = tmul_maxk 16 | tmul_maxn 64 << 8; 1EH.1: EAX = the AMX computation
+         * features again (INT8 0, BF16 1, COMPLEX 2, FP16 3; "enumerated in both").
+         */
+        if (count == 0) {
+            *eax = 1;
+            *ebx = INTEL_AMX_TMUL_MAX_K | (INTEL_AMX_TMUL_MAX_N << 8);
+        } else if (count == 1) {
+            if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_AMX_INT8) {
+                *eax |= CPUID_1E_1_EAX_AMX_INT8;
+            }
+            if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_AMX_BF16) {
+                *eax |= CPUID_1E_1_EAX_AMX_BF16;
+            }
+            if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AMX_COMPLEX) {
+                *eax |= CPUID_1E_1_EAX_AMX_COMPLEX;
+            }
+            if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_AMX_FP16) {
+                *eax |= CPUID_1E_1_EAX_AMX_FP16;
+            }
+        }
+#endif /* __Use_Original_Qemu (U170) */
         break;
     }
     case 0x40000000:
@@ -5264,6 +5322,35 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512BW;
     }
 #endif /* __Use_Original_Qemu (U128) */
+#if __Use_Original_Qemu != 1 /* ours (U170) */
+    /*
+     * NoVmp (ledger U170): UC_CTL_X86_AMX opts in to Intel AMX after the TCG filter:
+     * AMX_TILE (and the requested AMX_INT8/BF16/FP16/COMPLEX bits), so the U37
+     * recomputation below derives XSAVE components 17-18 (TILECFG, TILEDATA); XFD
+     * (CPUID.(EAX=0DH,ECX=1):EAX[4], SDM Vol1 13.14) for TILEDATA; leaves 1DH/1EH
+     * need a basic level of at least 1EH (leaf 7 subleaf 1 for AMX_FP16/COMPLEX).
+     */
+    if (uc->x86_amx) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AMX_TILE;
+        if (uc->x86_amx & UC_X86_AMX_INT8) {
+            env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AMX_INT8;
+        }
+        if (uc->x86_amx & UC_X86_AMX_BF16) {
+            env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AMX_BF16;
+        }
+        if (uc->x86_amx & UC_X86_AMX_FP16) {
+            env->features[FEAT_7_1_EAX] |= CPUID_7_1_EAX_AMX_FP16;
+        }
+        if (uc->x86_amx & UC_X86_AMX_COMPLEX) {
+            env->features[FEAT_7_1_EDX] |= CPUID_7_1_EDX_AMX_COMPLEX;
+        }
+        if (uc->x86_amx & (UC_X86_AMX_FP16 | UC_X86_AMX_COMPLEX)) {
+            env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+        }
+        env->features[FEAT_XSAVE] |= CPUID_D_1_EAX_XFD;
+        env->cpuid_level = MAX(env->cpuid_level, 0x1e);
+    }
+#endif /* __Use_Original_Qemu (U170) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

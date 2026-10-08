@@ -964,6 +964,23 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_EDX_AVX512_FP16       (1U << 23)
 /* AMX tile state */
 #define CPUID_7_0_EDX_AMX_TILE          (1U << 24)
+#if __Use_Original_Qemu != 1 /* ours (U170) */
+/* AMX tile computations on bfloat16 numbers (TDPBF16PS) */
+#define CPUID_7_0_EDX_AMX_BF16          (1U << 22)
+/* AMX tile computations on 8-bit integers (TDPB[SU,US,SS,UU]D) */
+#define CPUID_7_0_EDX_AMX_INT8          (1U << 25)
+/* AMX tile computations on FP16 numbers (TDPFP16PS), CPUID.(7,1):EAX[21] */
+#define CPUID_7_1_EAX_AMX_FP16          (1U << 21)
+/* AMX-COMPLEX (TCMMIMFP16PS, TCMMRLFP16PS), CPUID.(7,1):EDX[8] */
+#define CPUID_7_1_EDX_AMX_COMPLEX       (1U << 8)
+/* CPUID.(1EH,1):EAX aliases of the AMX computation features (ISE 319433 Table 1-3) */
+#define CPUID_1E_1_EAX_AMX_INT8         (1U << 0)
+#define CPUID_1E_1_EAX_AMX_BF16         (1U << 1)
+#define CPUID_1E_1_EAX_AMX_COMPLEX      (1U << 2)
+#define CPUID_1E_1_EAX_AMX_FP16         (1U << 3)
+/* AMX state components 17 (TILECFG) and 18 (TILEDATA): enabled together or not at all */
+#define XSTATE_AMX_MASK                 (XSTATE_XTILE_CFG_MASK | XSTATE_XTILE_DATA_MASK)
+#endif /* __Use_Original_Qemu (U170) */
 /* Speculation Control */
 #define CPUID_7_0_EDX_SPEC_CTRL         (1U << 26)
 /* Single Thread Indirect Branch Predictors */
