@@ -2549,6 +2549,20 @@
 #define helper_vsm4rnds4_xmm helper_vsm4rnds4_xmm_x86_64
 #define helper_vsm4rnds4_ymm helper_vsm4rnds4_ymm_x86_64
 #endif /* __Use_Original_Qemu (U84) */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+#define helper_vpdpbssd_xmm helper_vpdpbssd_xmm_x86_64
+#define helper_vpdpbssd_ymm helper_vpdpbssd_ymm_x86_64
+#define helper_vpdpbssds_xmm helper_vpdpbssds_xmm_x86_64
+#define helper_vpdpbssds_ymm helper_vpdpbssds_ymm_x86_64
+#define helper_vpdpbsud_xmm helper_vpdpbsud_xmm_x86_64
+#define helper_vpdpbsud_ymm helper_vpdpbsud_ymm_x86_64
+#define helper_vpdpbsuds_xmm helper_vpdpbsuds_xmm_x86_64
+#define helper_vpdpbsuds_ymm helper_vpdpbsuds_ymm_x86_64
+#define helper_vpdpbuud_xmm helper_vpdpbuud_xmm_x86_64
+#define helper_vpdpbuud_ymm helper_vpdpbuud_ymm_x86_64
+#define helper_vpdpbuuds_xmm helper_vpdpbuuds_xmm_x86_64
+#define helper_vpdpbuuds_ymm helper_vpdpbuuds_ymm_x86_64
+#endif /* __Use_Original_Qemu (U85) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

@@ -879,6 +879,37 @@ BINARY_INT_SSE(VPDPBUSDS,  vpdpbusds)
 BINARY_INT_SSE(VPDPWSSD,   vpdpwssd)
 BINARY_INT_SSE(VPDPWSSDS,  vpdpwssds)
 #endif /* __Use_Original_Qemu (U71) */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+/*
+ * VEX-only three-operand integer ops whose prefix (NP/F3/F2) is an opcode
+ * extension: gen_binary_int_sse treats "no 66" as MMX, so pick by VEX.L only.
+ */
+static inline void gen_binary_int_vex(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
+                                      SSEFunc_0_eppp xmm, SSEFunc_0_eppp ymm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    if (!s->vex_l) {
+        xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    } else {
+        ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    }
+}
+
+#define BINARY_INT_VEX(uname, lname)                                               \
+static void gen_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                  \
+    gen_binary_int_vex(s, env, decode,                                             \
+                       gen_helper_##lname##_xmm,                                   \
+                       gen_helper_##lname##_ymm);                                  \
+}
+
+BINARY_INT_VEX(VPDPBSSD,   vpdpbssd)
+BINARY_INT_VEX(VPDPBSSDS,  vpdpbssds)
+BINARY_INT_VEX(VPDPBSUD,   vpdpbsud)
+BINARY_INT_VEX(VPDPBSUDS,  vpdpbsuds)
+BINARY_INT_VEX(VPDPBUUD,   vpdpbuud)
+BINARY_INT_VEX(VPDPBUUDS,  vpdpbuuds)
+#endif /* __Use_Original_Qemu (U85) */
 BINARY_INT_SSE(PUNPCKLQDQ, punpcklqdq)
 BINARY_INT_SSE(PUNPCKHQDQ, punpckhqdq)
 BINARY_INT_SSE(VPACKUSDW,  packusdw)

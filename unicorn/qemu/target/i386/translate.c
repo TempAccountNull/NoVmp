@@ -180,6 +180,9 @@ typedef struct DisasContext {
     int cpuid_7_0_edx_features;
 #endif /* __Use_Original_Qemu (U74) */
     int cpuid_7_1_eax_features;
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+    int cpuid_7_1_edx_features;
+#endif /* __Use_Original_Qemu (U85) */
     int cpuid_xsave_features;
     struct uc_struct *uc;
 
@@ -7980,6 +7983,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U74) */
     dc->cpuid_7_1_eax_features = env->features[FEAT_7_1_EAX];
     dc->cpuid_7_1_eax_features = env->features[FEAT_7_1_EAX];
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+    dc->cpuid_7_1_edx_features = env->features[FEAT_7_1_EDX];
+#endif /* __Use_Original_Qemu (U85) */
     dc->cpuid_xsave_features = env->features[FEAT_XSAVE];
 #if __Use_Original_Qemu != 1 /* ours (U68) */
     /* strict CPUID profile: hidden features #UD (UC_CTL_X86_CPUID_STRICT, U68) */
@@ -7991,6 +7997,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cpuid_7_0_ecx_features &= x86_cpuid_profile_mask(env, 7, 0, 2) | CPUID_7_0_ECX_OSPKE;
     dc->cpuid_7_1_eax_features &= x86_cpuid_profile_mask(env, 7, 1, 0);
     dc->cpuid_7_0_edx_features &= x86_cpuid_profile_mask(env, 7, 0, 3); /* U74 */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+    dc->cpuid_7_1_edx_features &= x86_cpuid_profile_mask(env, 7, 1, 3);
+#endif /* __Use_Original_Qemu (U85) */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
     dc->jmp_opt = !(flags & (HF_RF_MASK | HF_TF_MASK | HF_INHIBIT_IRQ_MASK));

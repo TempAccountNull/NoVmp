@@ -675,6 +675,9 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_1_EAX_SHA512 /* U82 */ | CPUID_7_1_EAX_SM3 /* U83 */ | \
           CPUID_7_1_EAX_SM4 /* U84 */)
 #endif /* __Use_Original_Qemu (U71) */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+#define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8)
+#endif /* __Use_Original_Qemu (U85) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
 #if __Use_Original_Qemu == 1 /* original QEMU (U66) */
@@ -933,6 +936,27 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         },
         .tcg_features = TCG_7_1_EAX_FEATURES,
     },
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+    [FEAT_7_1_EDX] = {
+        .type = CPUID_FEATURE_WORD,
+        .feat_names = {
+            NULL, NULL, NULL, NULL,
+            "avx-vnni-int8", NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+        },
+        .cpuid = {
+            .eax = 7,
+            .needs_ecx = true, .ecx = 1,
+            .reg = R_EDX,
+        },
+        .tcg_features = TCG_7_1_EDX_FEATURES,
+    },
+#endif /* __Use_Original_Qemu (U85) */
     [FEAT_8000_0007_EDX] = {
         .type = CPUID_FEATURE_WORD,
         .feat_names = {
@@ -4310,7 +4334,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             *eax = env->features[FEAT_7_1_EAX];
             *ebx = 0;
             *ecx = 0;
+#if __Use_Original_Qemu == 1 /* original QEMU (U85) */
             *edx = 0;
+#else /* ours (U85) */
+            *edx = env->features[FEAT_7_1_EDX];
+#endif /* __Use_Original_Qemu (U85) */
         } else {
             *eax = 0;
             *ebx = 0;
@@ -4967,6 +4995,9 @@ static void x86_cpu_expand_features(X86CPU *cpu)
         x86_cpu_adjust_feat_level(cpu, FEAT_6_EAX);
         x86_cpu_adjust_feat_level(cpu, FEAT_7_0_ECX);
         x86_cpu_adjust_feat_level(cpu, FEAT_7_1_EAX);
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+        x86_cpu_adjust_feat_level(cpu, FEAT_7_1_EDX);
+#endif /* __Use_Original_Qemu (U85) */
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0001_EDX);
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0001_ECX);
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0007_EDX);

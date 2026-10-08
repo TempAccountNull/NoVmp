@@ -365,6 +365,14 @@ DEF_HELPER_4(glue(vpdpbusds, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpdpwssd, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpdpwssds, SUFFIX), void, env, Reg, Reg, Reg)
 #endif /* __Use_Original_Qemu (U71) */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+DEF_HELPER_4(glue(vpdpbssd, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vpdpbssds, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vpdpbsud, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vpdpbsuds, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vpdpbuud, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vpdpbuuds, SUFFIX), void, env, Reg, Reg, Reg)
+#endif /* __Use_Original_Qemu (U85) */
 #endif
 
 /* F16C helpers */

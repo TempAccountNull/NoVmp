@@ -554,6 +554,9 @@ typedef enum FeatureWord {
     FEAT_7_0_ECX,       /* CPUID[EAX=7,ECX=0].ECX */
     FEAT_7_0_EDX,       /* CPUID[EAX=7,ECX=0].EDX */
     FEAT_7_1_EAX,       /* CPUID[EAX=7,ECX=1].EAX */
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+    FEAT_7_1_EDX,       /* CPUID[EAX=7,ECX=1].EDX */
+#endif /* __Use_Original_Qemu (U85) */
     FEAT_8000_0001_EDX, /* CPUID[8000_0001].EDX */
     FEAT_8000_0001_ECX, /* CPUID[8000_0001].ECX */
     FEAT_8000_0007_EDX, /* CPUID[8000_0007].EDX */
@@ -867,6 +870,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_1_EAX_AVX512_BF16       (1U << 5)
 /* CMPCCXADD Instructions */
 #define CPUID_7_1_EAX_CMPCCXADD         (1U << 7)
+#if __Use_Original_Qemu != 1 /* ours (U85) */
+/* Support for VPDPB[SU,UU,SS]D[,S] (AVX-VNNI-INT8) */
+#define CPUID_7_1_EDX_AVX_VNNI_INT8     (1U << 4)
+#endif /* __Use_Original_Qemu (U85) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
