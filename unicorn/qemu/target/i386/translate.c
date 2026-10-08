@@ -3721,6 +3721,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U76) */
+    /*
+     * NoVmp (ledger U76): SDM Vol2 2.2.1.7 / CALL / Jcc / JMP: in 64-bit mode
+     * the operand size of near branches is forced to 64 bits, so Intel
+     * ignores 66h on them (rel32 displacement, 8-byte push/pop, no 16-bit
+     * RIP truncation). QEMU followed AMD (rel16, 2-byte push/pop, IP
+     * masked to 16 bits). FF /2 and FF /4 are forced in the group 5 code.
+     */
+    if (CODE64(s) &&
+        ((b >= 0x70 && b <= 0x7f) || (b >= 0x180 && b <= 0x18f) ||
+         (b >= 0xe0 && b <= 0xe3) || b == 0xc2 || b == 0xc3 ||
+         b == 0xe8 || b == 0xe9 || b == 0xeb)) {
+        dflag = MO_64;
+    }
+#endif /* __Use_Original_Qemu (U76) */
     s->prefix = prefixes;
     s->aflag = aflag;
     s->dflag = dflag;
@@ -4094,6 +4109,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             if (op == 2 || op == 4) {
                 /* operand size for jumps is 64 bit */
                 ot = MO_64;
+#if __Use_Original_Qemu != 1 /* ours (U76) */
+                /* also for the push and the target: 66h is ignored (U76) */
+                s->dflag = dflag = MO_64;
+#endif /* __Use_Original_Qemu (U76) */
             } else if (op == 3 || op == 5) {
                 ot = dflag != MO_16 ? MO_32 + REX_W(s) : MO_16;
             } else if (op == 6) {
