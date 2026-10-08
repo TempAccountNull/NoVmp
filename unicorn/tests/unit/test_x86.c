@@ -5085,6 +5085,85 @@ static void test_x86_avx512_optin(void)
     m0_close(&m);
 }
 
+/* XSETBV XCR0 (ECX = 0) = v; returns the exception vector or -1 */
+static int m0_xsetbv(M0 *m, uint32_t ecx, uint64_t v)
+{
+    m0_set(m, UC_X86_REG_ECX, ecx);
+    m0_set(m, UC_X86_REG_EAX, (uint32_t)v);
+    m0_set(m, UC_X86_REG_EDX, (uint32_t)(v >> 32));
+    return m0_run(m, "\x0f\x01\xd1", 3);
+}
+
+static uint64_t m0_xgetbv(M0 *m, uint32_t ecx)
+{
+    m0_set(m, UC_X86_REG_ECX, ecx);
+    TEST_CHECK(m0_run(m, "\x0f\x01\xd0", 3) == -1);
+    return (m0_get(m, UC_X86_REG_EAX) & 0xffffffffULL) |
+           (m0_get(m, UC_X86_REG_EDX) << 32);
+}
+
+/* NoVmp U122: XSETBV rules for XCR0[7:5] (SDM Vol1 13.3) and the supported mask */
+static void test_x86_avx512_xsetbv(void)
+{
+    static const struct {
+        uint64_t xcr0;
+        int ok;
+    } avx512_on[] = {
+        {0xe7, 1}, {0x07, 1}, {0x03, 1}, {0x01, 1},
+        {0x27, 0}, {0x47, 0}, {0x87, 0}, {0x67, 0}, {0xa7, 0}, {0xc7, 0}, /* 7:5 partial */
+        {0xe3, 0}, {0xe5, 0}, {0xe1, 0},          /* 7:5 without 2:1 = 11b */
+        {0xe6, 0}, {0x00, 0}, {0x05, 0},          /* bit 0 clear, YMM without SSE */
+        {0x1e7, 0},                               /* bit 8 (PT) is not an XCR0 bit */
+        {0xe7, 1}, {0x07, 1},                     /* still fine after the faults */
+    };
+    static const uc_x86_cpuid prof207[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x207, 0x340, 0xa88, 0},
+    };
+    static const uc_x86_cpuid prof2e7[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x2e7, 0xa88, 0xa88, 0},
+    };
+    M0 m;
+    size_t i;
+    int v;
+
+    for (i = 0; i < 2; i++) {
+        size_t j;
+        m0_open(&m, i ? UC_MODE_32 : UC_MODE_64, 1, NULL, 0);
+        for (j = 0; j < sizeof(avx512_on) / sizeof(avx512_on[0]); j++) {
+            uint64_t before = m0_xcr0(&m);
+            v = m0_xsetbv(&m, 0, avx512_on[j].xcr0);
+            TEST_CHECK(v == (avx512_on[j].ok ? -1 : 13));
+            TEST_MSG("mode %d xcr0 %llx -> %d", (int)i, (unsigned long long)avx512_on[j].xcr0, v);
+            TEST_CHECK(m0_xgetbv(&m, 0) == (avx512_on[j].ok ? avx512_on[j].xcr0 : before));
+        }
+        /* only XCR0 exists */
+        TEST_CHECK(m0_xsetbv(&m, 1, 0xe7) == 13);
+        m0_close(&m);
+    }
+
+    /* AVX-512 off: 7:5 are unsupported */
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0xe7) == 13);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0x07) == -1);
+    m0_close(&m);
+
+    /* model with AVX-512, profile without (i5-13600K leaf 0DH): #GP */
+    m0_open(&m, UC_MODE_64, 1, prof207, 2);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0xe7) == 13);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0x207) == -1);
+    m0_close(&m);
+
+    /* the supported mask is the profile's leaf 0DH: 7:5 with 2:1 accepted, partial not */
+    m0_open(&m, UC_MODE_64, 1, prof2e7, 2);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0x2e7) == -1);
+    TEST_CHECK(m0_xgetbv(&m, 0) == 0x2e7);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0x267) == 13);
+    TEST_CHECK(m0_xgetbv(&m, 0) == 0x2e7);
+    m0_close(&m);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5202,4 +5281,5 @@ TEST_LIST = {
     {"test_x86_lock_btc_mem", test_x86_lock_btc_mem},
     {"test_x86_lock_btc_reg", test_x86_lock_btc_reg},
     {"test_x86_avx512_optin", test_x86_avx512_optin},
+    {"test_x86_avx512_xsetbv", test_x86_avx512_xsetbv},
     {NULL, NULL}};

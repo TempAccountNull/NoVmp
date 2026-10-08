@@ -5097,6 +5097,25 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
         goto do_gpf;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U122) */
+    /*
+     * NoVmp (ledger U122): SDM Vol1 13.3 - XSETBV #GP if EAX[7:5] is not 000b and any
+     * bit is clear in EAX[2:1] or EAX[7:5] (AVX-512 state only all together and only
+     * with SSE and AVX state). The supported mask is the CPUID check above (the
+     * active UC_CTL_X86_CPUID profile, else the model).
+     */
+    {
+        const uint64_t avx512 = XSTATE_OPMASK_MASK | XSTATE_ZMM_Hi256_MASK |
+                                XSTATE_Hi16_ZMM_MASK;
+
+        if ((mask & avx512) &&
+            (mask & (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) !=
+                (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) {
+            goto do_gpf;
+        }
+    }
+#endif /* __Use_Original_Qemu (U122) */
+
     env->xcr0 = mask;
     cpu_sync_bndcs_hflags(env);
     cpu_sync_avx_hflag(env);
