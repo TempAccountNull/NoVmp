@@ -265,6 +265,14 @@ static void decode_FP16_0F3A_C2(DisasContext *s, CPUX86State *env, X86OpEntry *e
     decode_FP16_by_prefix(s, entry, tab);
 }
 #endif /* __Use_Original_Qemu (U336) */
+#if __Use_Original_Qemu != 1 /* ours (U337) */
+/*
+ * NoVmp (ledger U337): map 6 (66) VSCALEFPH/SH, VGETEXPPH/SH, VRCPPH/SH, VRSQRTPH/SH (in the
+ * map 6 table below). The 0F3A NP imm8 forms VRNDSCALEPH/SH (08/0A), VGETMANTPH/SH (26/27)
+ * and VREDUCEPH/SH (56/57), {sae}, are decoded with the 66 forms of their slots
+ * (decode_EVEX_0F3A_08 .. _57 in decode-new.c.inc).
+ */
+#endif /* __Use_Original_Qemu (U337) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 
 static const X86OpEntry opcodes_evex_map5[256] = {
@@ -320,6 +328,16 @@ static const X86OpEntry opcodes_evex_map6[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U335) */
     [0x13] = X86_OP_GROUP0(FP16_M6_13),
 #endif /* __Use_Original_Qemu (U335) */
+#if __Use_Original_Qemu != 1 /* ours (U337) */
+    [0x2c] = X86_OP_ENTRY3(FP16_SCALEF, V,x, H,x, W,x, EV16P(ER) p_66),
+    [0x2d] = X86_OP_ENTRY3(FP16_SCALEF, V,x, H,x, W,w, EV16S(ER) p_66),
+    [0x42] = X86_OP_ENTRY3(FP16_GETEXP, V,x, None,None, W,x, EV16P(SAE) p_66),
+    [0x43] = X86_OP_ENTRY3(FP16_GETEXP, V,x, H,x, W,w, EV16S(SAE) p_66),
+    [0x4c] = X86_OP_ENTRY3(FP16_RCP, V,x, None,None, W,x, EV16P(NONE) p_66),
+    [0x4d] = X86_OP_ENTRY3(FP16_RCP, V,x, H,x, W,w, EV16S(NONE) p_66),
+    [0x4e] = X86_OP_ENTRY3(FP16_RSQRT, V,x, None,None, W,x, EV16P(NONE) p_66),
+    [0x4f] = X86_OP_ENTRY3(FP16_RSQRT, V,x, H,x, W,w, EV16S(NONE) p_66),
+#endif /* __Use_Original_Qemu (U337) */
 };
 
 static void decode_evex_map5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)

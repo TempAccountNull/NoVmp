@@ -258,3 +258,14 @@ static void gen_FP16_UCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     gen_fp16_comi(s, decode, false);
 }
 #endif /* __Use_Original_Qemu (U336) */
+#if __Use_Original_Qemu != 1 /* ours (U337) */
+
+/* NoVmp (ledger U337): VRCP, VRSQRT, VSCALEF, VGETEXP, VGETMANT, VREDUCE, VRNDSCALE PH/SH */
+FP16_GEN(RCP, FP16_OP_RCP)
+FP16_GEN(RSQRT, FP16_OP_RSQRT)
+FP16_GEN(SCALEF, FP16_OP_SCALEF)
+FP16_GEN(GETEXP, FP16_OP_GETEXP)
+FP16_GEN_IMM(GETMANT, FP16_OP_GETMANT)
+FP16_GEN_IMM(REDUCE, FP16_OP_REDUCE)
+FP16_GEN_IMM(RNDSCALE, FP16_OP_RNDSCALE)
+#endif /* __Use_Original_Qemu (U337) */
