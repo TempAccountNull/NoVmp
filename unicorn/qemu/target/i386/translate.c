@@ -4651,6 +4651,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         ot = mo_b_d(b, dflag);
         modrm = x86_ldub_code(env, s);
         mod = (modrm >> 6) & 3;
+#if __Use_Original_Qemu != 1 /* ours (U78) */
+        /*
+         * NoVmp (ledger U78): group 11 defines only /0 (MOV) and the F8
+         * encodings XABORT/XBEGIN, which need RTM (not implemented by TCG,
+         * not on the i5-13600K). Every other reg field is #UD (SDM Vol2
+         * Table A-6 group 11; hardware agrees); QEMU ran them as MOV.
+         */
+        if ((modrm >> 3) & 7) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U78) */
         if (mod != 3) {
             s->rip_offset = insn_const_size(ot);
             gen_lea_modrm(env, s, modrm);
