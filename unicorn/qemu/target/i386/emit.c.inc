@@ -3452,3 +3452,15 @@ static void gen_TDPFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 #endif /* __Use_Original_Qemu (U179) */
 
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+/* TCMMIMFP16PS: VEX.128.66.0F38.W0 6C 11:rrr:bbb; TCMMRLFP16PS: VEX.128.NP.0F38.W0 6C */
+static void gen_TCMMIMFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 6);
+}
+
+static void gen_TCMMRLFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 7);
+}
+#endif /* __Use_Original_Qemu (U180) */

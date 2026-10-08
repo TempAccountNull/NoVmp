@@ -438,6 +438,12 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
 #endif /* __Use_Original_Qemu (U179) */
     };
 #endif /* __Use_Original_Qemu (U178) */
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+    static const X86OpEntry amx_6c_reg[4] = {
+        [0] = X86_OP_ENTRY0(TCMMRLFP16PS, vex22 cpuid(AMX_COMPLEX) p_00),
+        [1] = X86_OP_ENTRY0(TCMMIMFP16PS, vex22 cpuid(AMX_COMPLEX) p_66),
+    };
+#endif /* __Use_Original_Qemu (U180) */
     int mod = get_modrm(s, env) >> 6;
 
     memset(entry, 0, sizeof(*entry));
@@ -469,6 +475,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         }
         break;
 #endif /* __Use_Original_Qemu (U178) */
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+    case 0x6c:
+        if (mod == 3) {
+            *entry = *decode_by_prefix(s, amx_6c_reg);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U180) */
     default:
         break;
     }
@@ -648,6 +661,9 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
 #if __Use_Original_Qemu != 1 /* ours (U177) */
     [0x5e] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U177) */
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+    [0x6c] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U180) */
 
     [0x90] = X86_OP_ENTRY3(VPGATHERD, V,x,  H,x,  M,d,  vex12 cpuid(AVX2) p_66), /* vpgatherdd/q */
     [0x91] = X86_OP_ENTRY3(VPGATHERQ, V,x,  H,x,  M,q,  vex12 cpuid(AVX2) p_66), /* vpgatherqd/q */

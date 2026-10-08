@@ -6098,6 +6098,32 @@ static float32 amx_cvt_fp16(uint16_t h)
 }
 #endif /* __Use_Original_Qemu (U179) */
 
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+/*
+ * NoVmp (ledger U180): AMX-COMPLEX - every dword is a complex number, FP16 real part in
+ * bits 15:0 (fp16[2k]) and FP16 imaginary part in bits 31:16 (fp16[2k+1]). SDM Vol2B:
+ *   TCMMIMFP16PS: temp1[2n] += A.im * B.re; temp1[2n+1] += A.re * B.im
+ *   TCMMRLFP16PS: temp1[2n] += A.re * B.re; temp1[2n+1] += (-A.im) * B.im
+ * ("-" negates the FP16 value, i.e. flips its sign bit, before cvt_fp16_to_fp32).
+ */
+static void amx_pair_cmm_im(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
+                            uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy)
+{
+    *ex = a1;
+    *ey = b0;
+    *ox = a0;
+    *oy = b1;
+}
+
+static void amx_pair_cmm_rl(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
+                            uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy)
+{
+    *ex = a0;
+    *ey = b0;
+    *ox = a1 ^ 0x8000;
+    *oy = b1;
+}
+#endif /* __Use_Original_Qemu (U180) */
 
 #if __Use_Original_Qemu != 1 /* ours (U177) */
 /* info = op | tsrcdest << 4 | tsrc1 << 8 | tsrc2 << 12 (each 0..15) */
@@ -6126,6 +6152,14 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
         amx_tmul_fp(env, d, s1, s2, amx_cvt_fp16, amx_pair_dot);
         break;
 #endif /* __Use_Original_Qemu (U179) */
+#if __Use_Original_Qemu != 1 /* ours (U180) */
+    case AMX_TCMMIMFP16PS:
+        amx_tmul_fp(env, d, s1, s2, amx_cvt_fp16, amx_pair_cmm_im);
+        break;
+    case AMX_TCMMRLFP16PS:
+        amx_tmul_fp(env, d, s1, s2, amx_cvt_fp16, amx_pair_cmm_rl);
+        break;
+#endif /* __Use_Original_Qemu (U180) */
     default:
         g_assert_not_reached();
     }
