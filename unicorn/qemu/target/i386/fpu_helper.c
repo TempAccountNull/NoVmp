@@ -8351,3 +8351,120 @@ void helper_evex_scalef(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *a, ZMMRe
     }
 }
 #endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U240) */
+
+/*
+ * NoVmp (ledger U240): VFIXUPIMMPS/PD/SS/SD (SDM Vol2C FIXUPIMM_DP / FIXUPIMM_SP). Token of
+ * tsrc (SRC1; with DAZ a denormal is a zero of its sign, Vol1 10.2.3.4): 0 QNaN,
+ * 1 SNaN, 2 zero, 3 +1.0, 4 -inf, 5 +inf, 6 negative, 7 positive; response = SRC2 bits
+ * [4j+3:4j] (0 keep DEST, 1 tsrc, 2 QNaN(tsrc) (tsrc with exponent all ones and the quiet
+ * bit), 3 QNaN indefinite, 4 -inf, 5 +inf, 6 inf with tsrc's sign, 7 -0, 8 +0, 9 -1, A +1,
+ * B 1/2, C 90.0, D pi/2, E max normal, F -max normal). imm8 selects ZE/IE reports; MXCSR
+ * masks are ignored (never #XM), {sae} suppresses the flags; only active elements report.
+ * desc: bits 7:4 element size, 15:8 element count, 23:16 imm8, bit 24 scalar, bit 25 {sae}.
+ */
+static uint64_t evex_fixupimm_elem(CPUX86State *env, const EvFmt *f, uint64_t dst, uint64_t a,
+                                   uint64_t tbl, int imm, bool report)
+{
+    static const uint64_t c32[] = { 0xbf800000u, 0x3f800000u, 0x3f000000u, 0x42b40000u,
+                                    0x3fc90fdbu };
+    static const uint64_t c64[] = { 0xbff0000000000000ull, 0x3ff0000000000000ull,
+                                    0x3fe0000000000000ull, 0x4056800000000000ull,
+                                    0x3ff921fb54442d18ull };
+    const uint64_t *c = f->bits == 64 ? c64 : c32;
+    uint64_t t = (evf_expzero(f, a) && (env->mxcsr & 0x40)) ? (a & f->sign) : a;
+    int j, flags = 0;
+
+    if (evf_isnan(f, t)) {
+        j = (t & f->quiet) ? 0 : 1;
+    } else if (!(t & ~f->sign)) {
+        j = 2;
+    } else if (t == f->one) {
+        j = 3;
+    } else if (t == (f->sign | f->emask)) {
+        j = 4;
+    } else if (t == f->emask) {
+        j = 5;
+    } else {
+        j = (t & f->sign) ? 6 : 7;
+    }
+    switch (j) {
+    case 2:
+        flags |= ((imm & 1) ? float_flag_divbyzero : 0) | ((imm & 2) ? float_flag_invalid : 0);
+        break;
+    case 3:
+        flags |= ((imm & 4) ? float_flag_divbyzero : 0) | ((imm & 8) ? float_flag_invalid : 0);
+        break;
+    case 1:
+        flags |= (imm & 0x10) ? float_flag_invalid : 0;
+        break;
+    case 4:
+        flags |= (imm & 0x20) ? float_flag_invalid : 0;
+        break;
+    case 6:
+        flags |= (imm & 0x40) ? float_flag_invalid : 0;
+        break;
+    case 5:
+        flags |= (imm & 0x80) ? float_flag_invalid : 0;
+        break;
+    }
+    if (report && flags) {
+        float_raise(flags, &env->sse_status);
+    }
+    switch ((tbl >> (4 * j)) & 0xf) {
+    case 0x0:
+        return dst;
+    case 0x1:
+        return t;
+    case 0x2:
+        return t | f->emask | f->quiet;
+    case 0x3:
+        return f->indef;
+    case 0x4:
+        return f->sign | f->emask;
+    case 0x5:
+        return f->emask;
+    case 0x6:
+        return (t & f->sign) | f->emask;
+    case 0x7:
+        return f->sign;
+    case 0x8:
+        return 0;
+    case 0xe:
+        return f->maxf;
+    case 0xf:
+        return f->sign | f->maxf;
+    default:
+        return c[((tbl >> (4 * j)) & 0xf) - 9];
+    }
+}
+
+void helper_evex_fixupimm(CPUX86State *env, ZMMReg *d, ZMMReg *dold, ZMMReg *a, ZMMReg *b,
+                          uint64_t kmask, uint32_t desc)
+{
+    int esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, imm = (desc >> 16) & 0xff, i;
+    bool scalar = desc & (1u << 24), sae = desc & (1u << 25);
+    const EvFmt *f = evfmt(esz);
+    ZMMReg r;
+
+    if (scalar) {
+        r.ZMM_Q(0) = a->ZMM_Q(0);
+        r.ZMM_Q(1) = a->ZMM_Q(1);
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i,
+                      evex_fixupimm_elem(env, f, evex_get_elem(dold, esz, i),
+                                         evex_get_elem(a, esz, i), evex_get_elem(b, esz, i),
+                                         imm, !sae && ((kmask >> i) & 1)));
+    }
+    if (scalar) {
+        d->ZMM_Q(0) = r.ZMM_Q(0);
+        d->ZMM_Q(1) = r.ZMM_Q(1);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U240) */

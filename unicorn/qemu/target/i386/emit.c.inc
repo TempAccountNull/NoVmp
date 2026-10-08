@@ -2431,6 +2431,35 @@ static void gen_EVEX_VSCALEF(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     tcg_temp_free_ptr(tcg_ctx, v);
 }
 #endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U240) */
+
+/*
+ * NoVmp (ledger U240): VFIXUPIMMPS/PD/SS/SD: DEST is an input (read from the register also
+ * when the result goes to the scratch register for masking); the opmask is passed so that
+ * only active elements report ZE/IE; not an evex_fp form (MXCSR masks ignored, no #XM).
+ */
+static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool scalar = decode->e.evex_vl & X86_EVEX_LIG;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    if (s->evex_aaa) {
+        tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    } else {
+        tcg_gen_movi_i64(tcg_ctx, k, -1);
+    }
+    gen_helper_evex_fixupimm(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2, k,
+                             tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                       (evex_nelem(s, decode) << 8) |
+                                                       ((decode->immediate & 0xff) << 16) |
+                                                       (scalar ? 1u << 24 : 0) |
+                                                       (s->evex_rc == -2 ? 1u << 25 : 0)));
+    tcg_temp_free_i64(tcg_ctx, k);
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+#endif /* __Use_Original_Qemu (U240) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
