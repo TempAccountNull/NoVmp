@@ -11335,6 +11335,101 @@ static void test_x86_avx512cd_optin(void)
     }
 }
 
+/* VPLZCNTD zmm1, zmm2 (EVEX.512.66.0F38.W0 44 /r): runs and gives the leading-zero counts */
+#define CDX_VPLZCNTD_512 "\x62\xf2\x7d\x48\x44\xca"
+#define CDX_VPLZCNTD_256 "\x62\xf2\x7d\x28\x44\xca"
+/* VPBROADCASTMW2D zmm1, k2 (EVEX.512.F3.0F38.W0 3A /r) */
+#define CDX_VPBCSTMW2D_512 "\x62\xf2\x7e\x48\x3a\xca"
+
+static int cdx_lzcnt_ok(CdxCtx *c)
+{
+    uint32_t z[16], r[16];
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        z[i] = i == 0 ? 0 : 0x80000000u >> (i * 2 - 1);
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, z));
+    if (cdx_run(c, CDX_VPLZCNTD_512, 6) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM1, r));
+    for (i = 0; i < 16; i++) {
+        if (r[i] != (i == 0 ? 32u : (uint32_t)(i * 2 - 1))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * U321: AVX512CD gating (SDM Vol2C CPUID columns "AVX512CD" / "(AVX512VL AND AVX512CD)"):
+ * the mask bit, AVX512VL for EVEX.256, a strict CPUID profile hiding / showing AVX512CD;
+ * VPBROADCASTMW2D with the register operand only.
+ */
+static void test_x86_avx512cd_gating(void)
+{
+    static const uc_x86_cpuid prof_nocd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    static const uc_x86_cpuid prof_cd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xd0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    CdxCtx c;
+    uint32_t z[16];
+    uint64_t k;
+    int i, ok;
+
+    /* without UC_X86_AVX512_CD: #UD */
+    cdx_open(&c, CDX_BASE, NULL, 0, 0);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    TEST_CHECK(cdx_run(&c, CDX_VPBCSTMW2D_512, 6) == 6);
+    OK(uc_close(c.uc));
+    /* with it */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, NULL, 0, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == -1);
+    k = 0x123456789abcdef0ULL;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K2, &k));
+    TEST_CHECK(cdx_run(&c, CDX_VPBCSTMW2D_512, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (ok = 1, i = 0; i < 16; i++) {
+        ok &= z[i] == 0xdef0;
+    }
+    TEST_CHECK(ok);
+    /* register-only: VPBROADCASTMW2D zmm1, [rsi] (mod = 00b) #UD; with aaa = 001b #UD */
+    TEST_CHECK(cdx_run(&c, "\x62\xf2\x7e\x48\x3a\x0e", 6) == 6);
+    TEST_CHECK(cdx_run(&c, "\x62\xf2\x7e\x49\x3a\xca", 6) == 6);
+    OK(uc_close(c.uc));
+    /* AVX512CD without AVX512VL: EVEX.512 runs, EVEX.256 #UD */
+    cdx_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_CD, NULL, 0, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == 6);
+    OK(uc_close(c.uc));
+    /* a profile without AVX512CD: hidden (#UD) only when strict */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, 0);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    OK(uc_close(c.uc));
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, 1);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    OK(uc_close(c.uc));
+    /* a strict profile with AVX512CD shows it */
+    cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_cd, 4, 1);
+    TEST_CHECK(cdx_lzcnt_ok(&c));
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_256, 6) == -1);
+    OK(uc_close(c.uc));
+    /* ... but not without the opt-in: the profile bit alone does not add the instructions */
+    cdx_open(&c, CDX_BASE, prof_cd, 4, 1);
+    TEST_CHECK(cdx_run(&c, CDX_VPLZCNTD_512, 6) == 6);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11518,4 +11613,5 @@ TEST_LIST = {
     {"test_x86_avx512dq_gating", test_x86_avx512dq_gating},
     {"test_x86_avx512dq_values", test_x86_avx512dq_values},
     {"test_x86_avx512cd_optin", test_x86_avx512cd_optin},
+    {"test_x86_avx512cd_gating", test_x86_avx512cd_gating},
     {NULL, NULL}};

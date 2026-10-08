@@ -76,6 +76,9 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_bw.txt" --avx
 rem plan 1.15d milestone M3 (AVX512DQ, ledger U290-U296): VPMULLQ, VANDPS..VXORPD, VFPCLASS,
 rem VRANGE, VREDUCE vs the SDM model ref_evex_m3_dq.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq.txt" --avx512 --xcr0 0xE7
+rem AVX512CD (ledger U320-U321): VPCONFLICTD/Q, VPLZCNTD/Q, VPBROADCASTMB2Q/MW2D vs the SDM
+rem model ref_evex_m3_cd.py, Unicorn only with the AVX-512 opt-in (F|DQ|BW|VL|CD).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_cd.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
