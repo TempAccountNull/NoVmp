@@ -11861,12 +11861,14 @@ static void qk_cvtpi2ps(uint32_t q, int want_top)
     OK(uc_close(uc));
 }
 
-/* bit 2: fninit; fld [rax+16] (y = 1.0); fld [rax+24] (x = -2.0); fyl2xp1 */
-static void qk_fyl2xp1(uint32_t q, uint16_t want_sexp, uint64_t want_mant,
-                       uint16_t want_flag)
+/* bit 2: fninit; fld [rax+16] (y = 1.0) or fldz; fld [rax+24] (x = -2.0); fyl2xp1 */
+static void qk_fyl2xp1(uint32_t q, int yzero, uint16_t want_sexp,
+                       uint64_t want_mant, uint16_t want_flag)
 {
-    static const char code[] = "\xdb\xe3\xdd\x40\x10\xdd\x40\x18\xd9\xf9";
-    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    static const char code1[] = "\xdb\xe3\xdd\x40\x10\xdd\x40\x18\xd9\xf9";
+    static const char code0[] = "\xdb\xe3\xd9\xee\x90\xdd\x40\x18\xd9\xf9";
+    uc_engine *uc =
+        qk_run(yzero ? code0 : code1, sizeof(code1) - 1, q, UC_ERR_OK);
     uint8_t st0[10];
     uint64_t mant;
     uint16_t sexp, fsw = qk_fsw(uc);
@@ -11874,7 +11876,7 @@ static void qk_fyl2xp1(uint32_t q, uint16_t want_sexp, uint64_t want_mant,
     memcpy(&mant, st0, 8);
     memcpy(&sexp, st0 + 8, 2);
     TEST_CHECK(sexp == want_sexp && mant == want_mant);
-    TEST_CHECK((fsw & want_flag) != 0);
+    TEST_CHECK(want_flag == 0 ? (fsw & 0x3F) == 0 : (fsw & want_flag) != 0);
     TEST_MSG("quirks %x: st0 %04x:%016llx fsw %04x", q, sexp,
              (unsigned long long)mant, fsw);
     OK(uc_close(uc));
@@ -11978,9 +11980,12 @@ static void test_x86_hw_quirk_bits(void)
     qk_cvtpi2ps(0, 0);
     qk_cvtpi2ps(UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87, 7);
     /* bit 2 FYL2XP1_BELOW_M1: SDM #IA (masked: indefinite, IE); hardware ST0 = x, PE */
-    qk_fyl2xp1(0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 0xC000, 0x8000000000000000ULL,
+    qk_fyl2xp1(0, 0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
+    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 0, 0xC000, 0x8000000000000000ULL,
                0x0020);
+    /* ... also with y = +0 (U432): SDM #IA; hardware -0 without an exception */
+    qk_fyl2xp1(0, 1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
+    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 1, 0x8000, 0, 0);
     /* bit 3 PTWRITE_NOP: SDM #UD, hardware reads the operand and goes on */
     qk_ptwrite(0, UC_ERR_INSN_INVALID);
     qk_ptwrite(UC_X86_QUIRK_PTWRITE_NOP, UC_ERR_OK);

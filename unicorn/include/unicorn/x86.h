@@ -69,7 +69,8 @@ typedef enum uc_cpu_x86 {
 // m64 is exempt); Intel hardware (i5-13600K) leaves the x87 state unchanged for m64.
 #define UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 (1u << 1)
 // FYL2XP1 with a finite ST0 < -1: the SDM (Vol1 Table 8-10) makes it #IA with the QNaN
-// indefinite; Intel hardware (i5-13600K) stores ST0 itself as the result and sets PE.
+// indefinite; Intel hardware (i5-13600K) stores ST0 itself as the result and sets PE
+// (with ST1 = +-0 / +-inf it returns +-0 / +-inf, sign of x XOR y, no #IA).
 #define UC_X86_QUIRK_FYL2XP1_BELOW_M1 (1u << 2)
 // PTWRITE (F3 0F AE /4) with CPUID.14.0:EBX[4] = 0: the SDM makes it #UD; Intel hardware
 // (i5-13600K, leaf 0x14 all zero) executes it with tracing off: the r/m32/r/m64 operand is

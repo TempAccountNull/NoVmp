@@ -2678,9 +2678,24 @@ void helper_fyl2xp1(CPUX86State *env)
         fpop(env);
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U432) */
+    /*
+     * NoVmp (ledger U432): a finite x < -1 is #IA whatever y is (SDM Vol1 Table
+     * 8-10 "FYL2XP1: operand more negative than -1"), so y = +-inf / +-0 do not
+     * escape it unless UC_X86_QUIRK_FYL2XP1_BELOW_M1 (below).
+     */
+    if ((ky == X87K_INF || ky == X87K_ZERO) && xneg &&
+        extractFloatx80Exp(x) >= 0x3fff &&
+        (extractFloatx80Exp(x) > 0x3fff ||
+         extractFloatx80Frac(x) != 0x8000000000000000ULL) &&
+        !(env->uc->x86_hw_quirks & UC_X86_QUIRK_FYL2XP1_BELOW_M1)) {
+        goto invalid;
+    }
+#endif /* __Use_Original_Qemu (U432) */
     /*
      * y = +-inf / +-0 come before the x <= -1 rule: the hardware treats
-     * log2(1 + x) as negative there (x <= -1 included)
+     * log2(1 + x) as negative there (x <= -1 included; for x < -1 only with
+     * UC_X86_QUIRK_FYL2XP1_BELOW_M1, U432)
      */
     if (ky == X87K_INF) {
         if (!x87_de2(env, kx, ky)) {
