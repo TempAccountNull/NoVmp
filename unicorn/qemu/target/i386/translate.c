@@ -7240,6 +7240,16 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x118:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U105) */
+        /*
+         * NoVmp (ledger U105): LOCK is #UD on every 0F 18 form: PREFETCHh,
+         * PREFETCHRST2 (/4, ISE 319433-062 "#UD If the LOCK prefix is used")
+         * and the reserved-NOP hints (LOCK on a non-lockable instruction).
+         */
+        if (prefixes & PREFIX_LOCK) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U105) */
         mod = (modrm >> 6) & 3;
         op = (modrm >> 3) & 7;
         switch(op) {

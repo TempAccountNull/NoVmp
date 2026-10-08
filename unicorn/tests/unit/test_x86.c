@@ -5888,6 +5888,27 @@ static uc_err nv_run(uc_engine *uc, size_t len)
     return uc_emu_start(uc, code_start, code_start + len, 0, 0);
 }
 
+static int nv_fault(uc_engine *uc, nv_intr_t *intr, const char *code, size_t len);
+
+/*
+ * runs code from its own 64-byte slot of the code page: code that already ran is never
+ * rewritten in place (a later run at the same address may reuse a stale translation)
+ */
+static uint64_t nv_slot(void)
+{
+    static unsigned slot;
+
+    return code_start + 0x1000 + 0x40 * (slot++ % 0xc0);
+}
+
+static uc_err nv_exec(uc_engine *uc, const char *code, size_t len)
+{
+    uint64_t at = nv_slot();
+
+    OK(uc_mem_write(uc, at, code, len));
+    return uc_emu_start(uc, at, at + len, 0, 0);
+}
+
 static void nv_setxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
 {
     uint64_t v[2] = {lo, hi};
@@ -5982,8 +6003,7 @@ static void test_x86_keylocker_cpuid(void)
     nv_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 19));
     OK(nv_run(uc, sizeof(code) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 4);
-    OK(uc_mem_write(uc, code_start, enc, sizeof(enc) - 1));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, sizeof(enc) - 1));
+    TEST_CHECK(nv_fault(uc, &intr, enc, sizeof(enc) - 1) == 6);
     OK(uc_close(uc));
 }
 
@@ -6085,27 +6105,24 @@ static void test_x86_keylocker_wide256(void)
     }
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
     /* the no-decrypt handle refuses AESDECWIDE256KL: ZF = 1, XMM0-7 unchanged */
-    OK(uc_mem_write(uc, code_start, wide_dec, sizeof(wide_dec) - 1));
-    OK(nv_run(uc, sizeof(wide_dec) - 1));
+    OK(nv_exec(uc, wide_dec, sizeof(wide_dec) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 1);
     for (i = 0; i < 8; i++) {
         nv_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
     /* a handle without restrictions decrypts XMM0-7 back */
-    OK(uc_mem_write(uc, code_start, KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4,
-                    sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
     for (i = 0; i < 8; i++) {
         nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
     nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
     nv_setxmm(uc, 1, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
     nv_setreg(uc, UC_X86_REG_RCX, 0);
-    OK(nv_run(uc, sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
+    OK(nv_exec(uc, KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4,
+               sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
     for (i = 0; i < 8; i++) {
         nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
     }
-    OK(uc_mem_write(uc, code_start, wide_dec, sizeof(wide_dec) - 1));
-    OK(nv_run(uc, sizeof(wide_dec) - 1));
+    OK(nv_exec(uc, wide_dec, sizeof(wide_dec) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 0);
     for (i = 0; i < 8; i++) {
         nv_chkxmm(uc, i, FIPS_PT_LO, FIPS_PT_HI);
@@ -6130,52 +6147,41 @@ static void test_x86_keylocker_faults(void)
      */
     kl_set_iwkey_inputs(uc);
     OK(nv_run(uc, 5));
-    OK(uc_mem_write(uc, code_start, make, sizeof(make) - 1));
     /* no-encrypt handle (SRC = 2) */
     nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
     nv_setreg(uc, UC_X86_REG_RCX, 2);
-    OK(nv_run(uc, sizeof(make) - 1));
+    OK(nv_exec(uc, make, sizeof(make) - 1));
     nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    OK(uc_mem_write(uc, code_start, enc, sizeof(enc) - 1));
-    OK(nv_run(uc, sizeof(enc) - 1));
+    OK(nv_exec(uc, enc, sizeof(enc) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
     nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
     nv_setxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
-    OK(uc_mem_write(uc, code_start, dec, sizeof(dec) - 1));
-    OK(nv_run(uc, sizeof(dec) - 1));
+    OK(nv_exec(uc, dec, sizeof(dec) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
     nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
-    OK(uc_mem_write(uc, code_start, e256, sizeof(e256) - 1));
-    OK(nv_run(uc, sizeof(e256) - 1));
+    OK(nv_exec(uc, e256, sizeof(e256) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
     /* integrity: one ciphertext bit flipped */
     OK(uc_mem_read(uc, NV_HANDLE + 40, &b, 1));
     b ^= 0x10;
     OK(uc_mem_write(uc, NV_HANDLE + 40, &b, 1));
-    OK(uc_mem_write(uc, code_start, dec, sizeof(dec) - 1));
-    OK(nv_run(uc, sizeof(dec) - 1));
+    OK(nv_exec(uc, dec, sizeof(dec) - 1));
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
     nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
     /* ENCODEKEY128: reserved SRC bit 3 -> #GP */
     nv_setreg(uc, UC_X86_REG_RCX, 8);
-    OK(uc_mem_write(uc, code_start, make, sizeof(make) - 1));
-    OK(nv_run(uc, sizeof(make) - 1));
+    OK(nv_exec(uc, make, sizeof(make) - 1));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* LOADIWKEY: KeySource 1 (not enumerated) -> #GP */
     memset(&intr, 0, sizeof(intr));
     nv_setreg(uc, UC_X86_REG_RAX, 2);
-    OK(uc_mem_write(uc, code_start, KL_LOADIWKEY_X1_X2, 5));
-    OK(nv_run(uc, 5));
+    OK(nv_exec(uc, KL_LOADIWKEY_X1_X2, 5));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* memory form of ENCODEKEY128, LOCK, register form of AESDEC128KL, D8 /4 -> #UD */
-    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xfa\x06", 5));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
-    OK(uc_mem_write(uc, code_start, "\xf0\xf3\x0f\x38\xfa\xc1", 6));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 6));
-    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xdd\xc1", 5));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
-    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xd8\x26", 5));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xfa\x06", 5) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf0\xf3\x0f\x38\xfa\xc1", 6) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xdd\xc1", 5) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf3\x0f\x38\xd8\x26", 5) == 6);
     OK(uc_close(uc));
 }
 
@@ -6250,18 +6256,14 @@ static void test_x86_rao_int(void)
     }
     TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
     /* misaligned: m32 at +2, m64 at +4 -> #GP */
-    OK(uc_mem_write(uc, code_start, "\x0f\x38\xfc\x46\x02", 5));
-    OK(nv_run(uc, 5));
+    OK(nv_exec(uc, "\x0f\x38\xfc\x46\x02", 5));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     memset(&intr, 0, sizeof(intr));
-    OK(uc_mem_write(uc, code_start, "\xf3\x48\x0f\x38\xfc\x46\x04", 7));
-    OK(nv_run(uc, 7));
+    OK(nv_exec(uc, "\xf3\x48\x0f\x38\xfc\x46\x04", 7));
     TEST_CHECK(intr.count == 1 && intr.intno == 13);
     /* register form, LOCK -> #UD */
-    OK(uc_mem_write(uc, code_start, "\x0f\x38\xfc\xc0", 4));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 4));
-    OK(uc_mem_write(uc, code_start, "\xf0\x0f\x38\xfc\x06", 5));
-    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    TEST_CHECK(nv_fault(uc, &intr, "\x0f\x38\xfc\xc0", 4) == 6);
+    TEST_CHECK(nv_fault(uc, &intr, "\xf0\x0f\x38\xfc\x06", 5) == 6);
     OK(uc_close(uc));
 }
 
@@ -6299,8 +6301,7 @@ static void test_x86_movrs_prefetchrst2(void)
     TEST_CHECK(nv_reg(uc, UC_X86_REG_R15) == m);
     TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
     for (i = 0; i < 5; i++) {
-        OK(uc_mem_write(uc, code_start, bad[i], 5));
-        uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+        TEST_CHECK(nv_fault(uc, &intr, bad[i], 5) == 6);
         TEST_MSG("case %d", i);
     }
     OK(uc_close(uc));
@@ -6335,8 +6336,7 @@ static uint64_t nv_rdmsr(uc_engine *uc, uint32_t msr)
  */
 static int nv_fault(uc_engine *uc, nv_intr_t *intr, const char *code, size_t len)
 {
-    static unsigned slot;
-    uint64_t at = code_start + 0x1000 + 0x40 * (slot++ % 0x80);
+    uint64_t at = nv_slot();
     uc_err e;
 
     memset(intr, 0, sizeof(*intr));
