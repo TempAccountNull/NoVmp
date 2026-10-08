@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-08 03:06 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `f89a4fa verified_forms: the 15 VEX AMX mnemonics are 'sdm' (U175-U180)`). Do not edit by hand._
+_Generated 2026-10-08 03:53 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `25fd878 U95: keep EVEX.V' in 64-bit mode (U93 cut VEX.vvvv to 4 bits in every mode)`). Do not edit by hand._
 
 **Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, the emulator has an open item · ⬜ not implemented / not verified yet · **❌ NOT SUPPORTED on our i5-13600K** (the CPU cannot execute it, so it can never be checked against our hardware; it is still implemented from the manual where possible — the row says "implemented per the manual" or "not implemented yet").
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 147, open item 57, not implemented yet 1176) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 222, open item 57, not implemented yet 1101) — 2682 forms
 
 ## Currently being added
 
@@ -16,7 +16,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
   - ⏳ 1.15d EVEX / AVX-512 — design done (`emulator\EVEX_DESIGN.md`, 2026-10-08): 2537 EVEX forms (AVX512F 1071, BW 250, DQ 126, CD 18, FP16 359, AVX10.2 ~410, others ~130) + 51 opmask forms; state (ZMM 32x512, k0–7) already in CPUX86State.
       - ⬜ M0 leftovers: Haswell-class models without XSAVEC still report non-zero 0DH.1 EBX (SDM: 0) — kept for an existing test, revisit; profile 0DH.1 EBX stays as captured (capture machine IA32_XSS share unknown).
       - ⬜ K leftovers / M1 notes: (1) 32-bit VEX.B leak: disas_insn_new sets rex_b from VEX.B in every mode (SDM: ignored outside 64-bit) — fix globally in the prefix parser; (2) VEX in 16-bit protected mode is not recognised (upstream: protected, non-VM86); (3) vvvv is 4 bits outside 64-bit — validate_evex must decide per operand; (4) check bits: only 16384/32768 left in the 16-bit check field → separate EVEX check field; (5) hflags: bit 31 was the last free in the high range — 2 used now; (6) AVX10.1 also enables the opmask forms (M5); (7) CD/VL need new UC_CTL_X86_AVX512 bits (M3); (8) no #AC anywhere in the fork (KMOV at CPL3 unaligned); (9) U121 comment in helper.c still says E3h/E7h "left to K".
-    - ⏳ M1 [agent, wt/evex_m1, U140–U169, started 2026-10-08]: EVEX prefix (62), 32 registers, disp8*N, masking/zeroing, masked memory (fault suppression), broadcast, {er}/{sae}, validate_evex, SHIFT 3 helpers, asmjit-driven EVEX table generator, first instructions (VMOVDQU/A32/64, VMOVUPS/APS, VPADDD/Q, VPANDD/Q, VADDPS/PD, VPCMPD→k, VPBROADCASTD).
+      - ⬜ Decision for you (found by M1): legacy SSE NaN propagation — when both sources are NaN the fork returns the QNaN / larger significand; the SDM (Vol1 4.8.3.5) and the i5-13600K return SRC1 quieted (56 of 12992 hardware cases, SNaN in SRC1 + QNaN in SRC2). Fixing changes legacy SSE results (QEMU 11.1: float_2nan_prop_ab). EVEX inherits it; its cases avoid both-NaN lanes.
+      - ⬜ Unicorn plain stores to a partly unmapped range write the mapped part (only the exit is requested); EVEX masked stores now probe first, VEX/legacy stores do not.
+      - ⬜ M2 engine work: scalar merge from SRC1 (E3/E10), "masked lanes take SRC1" (VPBLENDM/VBLENDMP), FMA with dest as source under masking, T2/T4/T8 and Half/Quarter/Eighth-Mem masked loads, E*NF no-fault-suppression, gathers/scatters (VSIB, k cleared per element, E12 overlap over 32 regs), narrowing stores (VPMOV*), {sae} on compares into k.
+      - ⬜ M2 instructions (rest of AVX512F): scalar FP (VADD…VSQRT SS/SD, VMOVSS/SD, VCOMIS/VUCOMIS, VCMPSS/SD), VCMPPS/PD → k, all FMA, conversions (DQ/UDQ/QQ↔PS/PD, CVTT*, PS↔PD, PH↔PS, SI/USI scalar, SS↔SD), shifts by xmm count, VPROLV/VPRORV, unpack/shuffle/permute (VPUNPCK*, VPSHUFD, VSHUFP*, VUNPCK*, VPERM*, VPERMI2/T2, VALIGND/Q, VPERMILP*, VSHUFF/I32X4/64X2), VPMOVZX/SX, VPMOV* narrowing, VPBLENDM*/VBLENDMP*, compress/expand, gathers/scatters, VMOVNT*/NTDQA/DDUP/SHDUP/SLDUP/D/Q/HLPS/LHPS/H/LPS/PD, VPINSR/EXTR D/Q, VINSERTPS/VEXTRACTPS, VINSERT/EXTRACT/BROADCAST F/I 32X4/64X4, VRCP14/VRSQRT14, VGETEXP/VGETMANT/VSCALEF/VFIXUPIMM/VRNDSCALE.
+      - ⬜ EVEX outside 64-bit: decided EVEX is taken in 16-bit protected mode too (SDM exception tables cover protected mode); R'/B ignored, V'=0 #UD outside 64-bit.
       - ⬜ M1 notes from M0: gate EVEX on env->features AVX512F (set by UC_CTL_X86_AVX512) masked by the strict profile; extend UC_CTL_X86_AVX512 to a bitmask for CD/BW/DQ/VL (M3); EVEX sets PREFIX_VEX so U126 zeroing covers EVEX.128/256 register destinations, masking must merge before writeback; emu-alltest `--avx512` + `xcr0=` key.
     - ⬜ M2: rest of AVX512F (FP, FMA, conversions, permutes, compress/expand, gather/scatter, ternlog, getexp/getmant/scalef/fixupimm/rndscale/rcp14/rsqrt14).
     - ⬜ M3: AVX512VL gate, BW, DQ, CD.
@@ -190,7 +194,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AVX512CD | 6 | 0 | 0 | 0 | 0 | 0 | 6 |
 | AVX512DQ | 69 | 0 | 0 | 0 | 14 | 0 | 55 |
 | AVX512ER | 10 | 0 | 0 | 0 | 0 | 0 | 10 |
-| AVX512F | 479 | 0 | 0 | 0 | 11 | 0 | 468 |
+| AVX512F | 479 | 0 | 0 | 0 | 86 | 0 | 393 |
 | AVX512PF | 16 | 0 | 0 | 0 | 0 | 0 | 16 |
 | AVX512_4FMAPS | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
 | AVX512_4VNNIW | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
@@ -3186,8 +3190,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | KUNPCKBW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | KXNORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | KXORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
-| ❌ | VADDPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VADDPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VADDPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VADDPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VADDSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VADDSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VALIGND | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
@@ -3198,8 +3202,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VBROADCASTF64X4 | evex | 512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
 | ❌ | VBROADCASTI32X4 | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (6 forms #UD; the i5-13600K lacks it) |
 | ❌ | VBROADCASTI64X4 | evex | 512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
-| ❌ | VBROADCASTSD | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (12 forms #UD; the i5-13600K lacks it) |
-| ❌ | VBROADCASTSS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
+| ❌ | VBROADCASTSD | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VBROADCASTSS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VCMPEQ_OSPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (7 forms #UD; the i5-13600K lacks it) |
 | ❌ | VCMPEQ_OSPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (7 forms #UD; the i5-13600K lacks it) |
 | ❌ | VCMPEQ_OSSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
@@ -3366,8 +3370,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VCVTUDQ2PS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
 | ❌ | VCVTUSI2SD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (5 forms #UD; the i5-13600K lacks it) |
 | ❌ | VCVTUSI2SS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (6 forms #UD; the i5-13600K lacks it) |
-| ❌ | VDIVPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VDIVPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VDIVPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VDIVPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VDIVSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VDIVSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VEXPANDPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
@@ -3458,22 +3462,22 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VINSERTI32X4 | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (12 forms #UD; the i5-13600K lacks it) |
 | ❌ | VINSERTI64X4 | evex | 512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (6 forms #UD; the i5-13600K lacks it) |
 | ❌ | VINSERTPS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (2 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMAXPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMAXPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VMAXPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMAXPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VMAXSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMAXSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMINPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMINPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VMINPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMINPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VMINSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMINSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVAPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVAPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
+| ❌ | VMOVAPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMOVAPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VMOVD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) — not implemented yet: not implemented (4 forms #UD; the i5-136… |
 | ❌ | VMOVDDUP | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVDQA32 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVDQA64 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVDQU32 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVDQU64 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
+| ❌ | VMOVDQA32 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMOVDQA64 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMOVDQU32 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMOVDQU64 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VMOVHLPS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (1 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVHPD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (2 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVHPS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (2 forms #UD; the i5-13600K lacks it) |
@@ -3489,32 +3493,32 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VMOVSHDUP | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVSLDUP | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (8 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVUPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMOVUPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMULPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VMULPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VMOVUPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMOVUPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMULPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VMULPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VMULSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMULSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPABSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPABSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPADDD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPADDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPANDD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPANDND | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPANDNQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPANDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPABSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPABSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPADDD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPADDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPANDD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPANDND | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPANDNQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPANDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPBLENDMD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPBLENDMQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPBROADCASTD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPBROADCASTQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPEQD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPEQQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPGTD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPGTQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPCMPUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPBROADCASTD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPBROADCASTQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPEQD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPEQQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPGTD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPGTQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPCMPUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPCOMPRESSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (15 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPCOMPRESSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (15 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPERMD | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
@@ -3537,14 +3541,14 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VPGATHERDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPGATHERQD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPGATHERQQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMAXSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMAXSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMAXUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMAXUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMINSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMINSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMINUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMINUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPMAXSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMAXSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMAXUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMAXUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMINSD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMINSQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMINUD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMINUQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPMOVDB | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (15 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPMOVDW | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (15 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPMOVQB | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (15 forms #UD; the i5-13600K lacks it) |
@@ -3570,17 +3574,17 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VPMOVZXDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPMOVZXWD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPMOVZXWQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMULDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMULLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPMULUDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPROLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPROLQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPMULDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMULLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPMULUDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPROLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPROLQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPROLVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPROLVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPRORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPRORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPRORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPRORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPRORVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPRORVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPSCATTERDD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |
@@ -3590,30 +3594,30 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VPSHUFD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPSLLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPSLLQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSLLVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSLLVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPSLLVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPSLLVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPSRAD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPSRAQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSRAVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSRAVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPSRAVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPSRAVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPSRLD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPSRLQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (45 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSRLVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSRLVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSUBD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPSUBQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTERNLOGD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTERNLOGQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTESTMD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTESTMQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTESTNMD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPTESTNMQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPSRLVD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPSRLVQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPSUBD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPSUBQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTERNLOGD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTERNLOGQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTESTMD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTESTMQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTESTNMD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPTESTNMQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VPUNPCKHDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPUNPCKHQDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPUNPCKLDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VPUNPCKLQDQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPXORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VPXORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
+| ❌ | VPXORD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VPXORQ | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VRCP14PD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VRCP14PS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VRCP14SD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (6 forms #UD; the i5-13600K lacks it) |
@@ -3640,12 +3644,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ❌ | VSHUFI64X2 | evex | 256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VSHUFPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VSHUFPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
-| ❌ | VSQRTPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VSQRTPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VSQRTPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VSQRTPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VSQRTSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VSQRTSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
-| ❌ | VSUBPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
-| ❌ | VSUBPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
+| ❌ | VSUBPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | VSUBPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VSUBSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VSUBSS | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
 | ❌ | VUCOMISD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (3 forms #UD; the i5-13600K lacks it) |

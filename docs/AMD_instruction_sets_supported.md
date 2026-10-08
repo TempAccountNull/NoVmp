@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 03:06 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `f89a4fa verified_forms: the 15 VEX AMX mnemonics are 'sdm' (U175-U180)`). Do not edit by hand._
+_Generated 2026-10-08 03:53 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `25fd878 U95: keep EVEX.V' in 64-bit mode (U93 cut VEX.vvvv to 4 bits in every mode)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so every row is ❌ NOT SUPPORTED on our CPU.
 
