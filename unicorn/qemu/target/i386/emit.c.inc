@@ -1294,6 +1294,19 @@ static void gen_EVEX_VFMAP(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
        tcg_constant_i32(tcg_ctx, even ^ odd));
 }
 #endif /* __Use_Original_Qemu (U199) */
+#if __Use_Original_Qemu != 1 /* ours (U200) */
+
+static void gen_EVEX_VFMAS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_eppppi fn = s->vex_w ? gen_helper_fma4sd : gen_helper_fma4ss;
+    TCGv_ptr a, b, c;
+    int even, odd;
+
+    gen_evex_fma_args(s, decode, &a, &b, &c, &even, &odd);
+    fn(tcg_ctx, cpu_env, OP_PTR0, a, b, c, tcg_constant_i32(tcg_ctx, even));
+}
+#endif /* __Use_Original_Qemu (U200) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

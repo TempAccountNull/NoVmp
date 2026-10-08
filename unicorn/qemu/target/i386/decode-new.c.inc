@@ -2192,6 +2192,17 @@ static void decode_EVEX_0FC2(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0FC2);
 }
 #endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U200) */
+/*
+ * NoVmp (ledger U200): scalar FMA (66 0F38 99/9B/9D/9F, A9/AB/AD/AF, B9/BB/BD/BF): W0 = SS
+ * (m32), W1 = SD (m64); the memory operand size follows EVEX.W.
+ */
+static void decode_EVEX_FMAS(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    entry->s2 = s->vex_w ? X86_SIZE_sd : X86_SIZE_ss;
+    entry->gen = gen_EVEX_VFMAS;
+}
+#endif /* __Use_Original_Qemu (U200) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2351,6 +2362,18 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xbc] = EV_FMAP, [0xbe] = EV_FMAP,
 #undef EV_FMAP
 #endif /* __Use_Original_Qemu (U199) */
+#if __Use_Original_Qemu != 1 /* ours (U200) */
+    /*
+     * NoVmp (ledger U200): scalar FMA xmm1{k1}{z}, xmm2 (vvvv), xmm3/m32/m64{er}: 66,
+     * EVEX.LLIG, Tuple1 Scalar, class E3; DEST is the first source (evex_dsrc).
+     */
+#define EV_FMAS X86_OP_GROUP3(EVEX_FMAS, V,x, H,x, W,ss, cpuid(AVX512F) ev_vl(X86_EVEX_LIG) \
+                    ev_tt(T1S) ev_mask(MZ) ev_rc(ER) ev_w(WSEL) ev_es(W) ev_fp ev_dsrc p_66)
+    [0x99] = EV_FMAS, [0x9b] = EV_FMAS, [0x9d] = EV_FMAS, [0x9f] = EV_FMAS,
+    [0xa9] = EV_FMAS, [0xab] = EV_FMAS, [0xad] = EV_FMAS, [0xaf] = EV_FMAS,
+    [0xb9] = EV_FMAS, [0xbb] = EV_FMAS, [0xbd] = EV_FMAS, [0xbf] = EV_FMAS,
+#undef EV_FMAS
+#endif /* __Use_Original_Qemu (U200) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
