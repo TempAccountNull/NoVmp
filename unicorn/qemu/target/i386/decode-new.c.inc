@@ -1846,6 +1846,9 @@ static const X86OpEntry opcodes_root[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U190) */
 #define ev_dsrc      .evex_dsrc = 1,    /* destination is also a source (U190) */
 #endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+#define ev_msrc1     .evex_msrc1 = 1,   /* masked-off lanes take SRC1 (U191) */
+#endif /* __Use_Original_Qemu (U191) */
 #define EV_VLALL     (X86_EVEX_VL128 | X86_EVEX_VL256 | X86_EVEX_VL512)
 /* vector moves: Full Mem tuple, {k1}{z}, element size from EVEX.W, no EVEX.b */
 #define EV_MOV(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(MZ) ev_w(w) ev_es(W)
@@ -2231,6 +2234,9 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U190) */
 #undef ev_dsrc
 #endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+#undef ev_msrc1
+#endif /* __Use_Original_Qemu (U191) */
 #endif /* __Use_Original_Qemu (U148) */
 
 static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)

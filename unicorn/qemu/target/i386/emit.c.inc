@@ -669,6 +669,17 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
         } else {
             int dst = ZMM_OFFSET(op0->n);
 
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+            /*
+             * NoVmp (ledger U191): VPBLENDMD/Q, VBLENDMPS/PD (SDM Vol2C): a masked-off lane
+             * takes SRC1[j] under merging-masking ("ELSE IF *merging-masking* THEN DEST :=
+             * SRC1"), 0 under zeroing-masking; no mask (aaa = 000b) selects SRC2 everywhere.
+             * The gen function left SRC2 in evex_t1, so DEST := SRC1 first, then the blend.
+             */
+            if (e->evex_msrc1 && kmask && !s->evex_z) {
+                tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, ZMM_OFFSET(decode->op[1].n), vl, vl);
+            }
+#endif /* __Use_Original_Qemu (U191) */
             if (kmask) {
                 TCGv_ptr pd = evex_env_ptr(s, dst);
                 TCGv_ptr ps = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));

@@ -419,6 +419,10 @@ struct X86OpEntry {
      */
     unsigned     evex_dsrc:1;
 #endif /* __Use_Original_Qemu (U190) */
+#if __Use_Original_Qemu != 1 /* ours (U191) */
+    /* merging-masking takes SRC1 (EVEX.vvvv) for masked-off lanes (VPBLENDMx, VBLENDMPx) */
+    unsigned     evex_msrc1:1;
+#endif /* __Use_Original_Qemu (U191) */
 #endif /* __Use_Original_Qemu (U141) */
 };
 typedef struct X86DecodedOp {
