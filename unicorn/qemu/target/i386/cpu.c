@@ -4488,6 +4488,17 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             /* Maximum ECX value for sub-leaves */
             *eax = env->cpuid_level_func7;
             *ebx = env->features[FEAT_7_0_EBX]; /* Feature flags */
+#if __Use_Original_Qemu != 1 /* ours (U433) */
+            /*
+             * NoVmp (ledger U433): the fork's x87 always updates FDP/FDS only on
+             * unmasked x87 exceptions and saves FCS/FDS as 0000H (U64), which the
+             * SDM (Vol1 8.1.8) ties to CPUID.(EAX=07H,ECX=0):EBX[6]
+             * (FDP_EXCPTN_ONLY) and EBX[13] (ZERO_FCS_FDS). Report both on every
+             * model so CPUID and behaviour agree (UC_CTL_X86_CPUID profiles are
+             * returned as given).
+             */
+            *ebx |= (1U << 6) | (1U << 13);
+#endif /* __Use_Original_Qemu (U433) */
             *ecx = env->features[FEAT_7_0_ECX]; /* Feature flags */
             if ((*ecx & CPUID_7_0_ECX_PKU) && env->cr[4] & CR4_PKE_MASK) {
                 *ecx |= CPUID_7_0_ECX_OSPKE;
