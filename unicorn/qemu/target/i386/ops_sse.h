@@ -2416,6 +2416,45 @@ VNNI_INT8(vpdpbuud,  0, 0, 0)
 VNNI_INT8(vpdpbuuds, 0, 0, 1)
 #undef VNNI_INT8
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+/*
+ * NoVmp (ledger U86): AVX-VNNI-INT16 (SDM Vol2 VPDPW[SU,US,UU]D[,S], VEX
+ * forms). Per dword i: ORIGDEST.dword[i] + src1extend(SRC1.word[2i+k]) *
+ * src2extend(SRC2.word[2i+k]), k = 0, 1; SRC1 (VEX.vvvv) is sign-extended for
+ * SU, SRC2 (r/m) for US. S forms: UU -> UNSIGNED_DWORD_SATURATE (ORIGDEST
+ * unsigned), SU/US -> SIGNED_DWORD_SATURATE (ORIGDEST signed); others wrap.
+ */
+#define VNNI_INT16(name, s1sgn, s2sgn, sat)                                       \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)       \
+{                                                                                 \
+    Reg r;                                                                        \
+    int i, k;                                                                     \
+                                                                                  \
+    for (i = 0; i < 2 << SHIFT; i++) {                                            \
+        int64_t sum = (s1sgn || s2sgn) ? (int64_t)(int32_t)d->L(i)                \
+                                       : (int64_t)d->L(i);                        \
+        for (k = 0; k < 2; k++) {                                                 \
+            int64_t a = s1sgn ? (int64_t)(int16_t)v->W(2 * i + k)                 \
+                              : (int64_t)(uint16_t)v->W(2 * i + k);               \
+            int64_t b = s2sgn ? (int64_t)(int16_t)s->W(2 * i + k)                 \
+                              : (int64_t)(uint16_t)s->W(2 * i + k);               \
+            sum += a * b;                                                         \
+        }                                                                         \
+        r.L(i) = !sat ? (uint32_t)sum                                             \
+               : (s1sgn || s2sgn) ? (uint32_t)vnni_sat32(sum)                     \
+               : vnni_usat32(sum);                                                \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+VNNI_INT16(vpdpwsud,  1, 0, 0)
+VNNI_INT16(vpdpwsuds, 1, 0, 1)
+VNNI_INT16(vpdpwusd,  0, 1, 0)
+VNNI_INT16(vpdpwusds, 0, 1, 1)
+VNNI_INT16(vpdpwuud,  0, 0, 0)
+VNNI_INT16(vpdpwuuds, 0, 0, 1)
+#undef VNNI_INT16
+#endif /* __Use_Original_Qemu (U86) */
 
 void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {

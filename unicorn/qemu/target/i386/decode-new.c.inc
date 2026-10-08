@@ -381,6 +381,35 @@ static void decode_0F38_51(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 }
 #endif /* __Use_Original_Qemu (U85) */
 
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+/*
+ * NoVmp (ledger U86): AVX-VNNI-INT16, VEX.0F38.W0 D2/D3 by prefix (SDM Vol2
+ * VPDPW[SU,US,UU]D[,S]): NP = VPDPWUUD(S), 66 = VPDPWUSD(S), F3 = VPDPWSUD(S);
+ * F2 is undefined. VEX-only.
+ */
+static void decode_0F38_D2(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_0F38_D2[4] = {
+        X86_OP_ENTRY3(VPDPWUUD,   V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_00),
+        X86_OP_ENTRY3(VPDPWUSD,   V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_66),
+        X86_OP_ENTRY3(VPDPWSUD,   V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_f3),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_0F38_D2);
+}
+
+static void decode_0F38_D3(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_0F38_D3[4] = {
+        X86_OP_ENTRY3(VPDPWUUDS,  V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_00),
+        X86_OP_ENTRY3(VPDPWUSDS,  V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_66),
+        X86_OP_ENTRY3(VPDPWSUDS,  V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI_INT16) p_f3),
+        {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_0F38_D3);
+}
+#endif /* __Use_Original_Qemu (U86) */
+
 static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x00] = X86_OP_ENTRY3(PSHUFB,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
     [0x01] = X86_OP_ENTRY3(PHADDW,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
@@ -546,6 +575,10 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xcf] = X86_OP_ENTRY3(GF2P8MULB,   V,x,  H,x,  W,x,  vex4 chk(VEX_W0) cpuid(GFNI) p_66),
 #endif /* __Use_Original_Qemu (U70) */
 
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+    [0xd2] = X86_OP_GROUP0(0F38_D2),
+    [0xd3] = X86_OP_GROUP0(0F38_D3),
+#endif /* __Use_Original_Qemu (U86) */
     [0xdb] = X86_OP_ENTRY3(VAESIMC,     V,dq, None,None, W,dq, vex4 cpuid(AES) p_66),
     [0xdc] = X86_OP_ENTRY3(VAESENC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
     [0xdd] = X86_OP_ENTRY3(VAESENCLAST, V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
@@ -1720,6 +1753,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX_VNNI_INT8:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AVX_VNNI_INT8);
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+    case X86_FEAT_AVX_VNNI_INT16:
+        return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AVX_VNNI_INT16);
+#endif /* __Use_Original_Qemu (U86) */
 #if __Use_Original_Qemu != 1 /* ours (U72) */
     case X86_FEAT_MOVDIRI:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_MOVDIRI);

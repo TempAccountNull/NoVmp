@@ -910,6 +910,14 @@ BINARY_INT_VEX(VPDPBSUDS,  vpdpbsuds)
 BINARY_INT_VEX(VPDPBUUD,   vpdpbuud)
 BINARY_INT_VEX(VPDPBUUDS,  vpdpbuuds)
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+BINARY_INT_VEX(VPDPWSUD,   vpdpwsud)
+BINARY_INT_VEX(VPDPWSUDS,  vpdpwsuds)
+BINARY_INT_VEX(VPDPWUSD,   vpdpwusd)
+BINARY_INT_VEX(VPDPWUSDS,  vpdpwusds)
+BINARY_INT_VEX(VPDPWUUD,   vpdpwuud)
+BINARY_INT_VEX(VPDPWUUDS,  vpdpwuuds)
+#endif /* __Use_Original_Qemu (U86) */
 BINARY_INT_SSE(PUNPCKLQDQ, punpcklqdq)
 BINARY_INT_SSE(PUNPCKHQDQ, punpckhqdq)
 BINARY_INT_SSE(VPACKUSDW,  packusdw)

@@ -874,6 +874,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* Support for VPDPB[SU,UU,SS]D[,S] (AVX-VNNI-INT8) */
 #define CPUID_7_1_EDX_AVX_VNNI_INT8     (1U << 4)
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U86) */
+/* Support for VPDPW[SU,US,UU]D[,S] (AVX-VNNI-INT16) */
+#define CPUID_7_1_EDX_AVX_VNNI_INT16    (1U << 10)
+#endif /* __Use_Original_Qemu (U86) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
