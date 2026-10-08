@@ -685,7 +685,7 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_0_ECX_GFNI /* U70 */ | CPUID_7_0_ECX_MOVDIRI /* U72 */ | \
           CPUID_7_0_ECX_MOVDIR64B /* U73 */ | CPUID_7_0_ECX_KeyLocker /* U100 */ | CPUID_7_0_ECX_WAITPKG /* U111 */)
           CPUID_7_0_ECX_MOVDIR64B /* U73 */ | CPUID_7_0_ECX_WAITPKG /* U111 */ | \
-          CPUID_7_0_ECX_ENQCMD /* U112 */)
+          CPUID_7_0_ECX_ENQCMD /* U112 */ | CPUID_7_0_ECX_CET_SHSTK /* U114 */)
 #endif /* __Use_Original_Qemu (U69) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U74) */
 #define TCG_7_0_EDX_FEATURES 0
@@ -5481,6 +5481,9 @@ void x86_update_hflags(CPUX86State *env)
         }
     }
     env->hflags = hflags;
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    cpu_sync_cet_hflags(env);
+#endif /* __Use_Original_Qemu (U114) */
 }
 
 static void x86_cpu_common_class_init(struct uc_struct *uc, CPUClass *oc, void *data)

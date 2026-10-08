@@ -173,6 +173,12 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
     cpu_svm_check_intercept_param(env, SVM_EXIT_WRITE_CR0 + reg, 0, GETPC());
     switch (reg) {
     case 0:
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+        /* CR0.WP cannot be cleared while CR4.CET = 1 (SDM Vol3 2.5, CR4.CET) */
+        if (!(t0 & CR0_WP_MASK) && (env->cr[4] & CR4_CET_MASK)) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U114) */
         cpu_x86_update_cr0(env, (uint32_t)t0);
         break;
     case 3:
@@ -182,6 +188,12 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         if (t0 & cr4_reserved_bits(env)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+        /* CR4.CET can be set only if CR0.WP = 1 */
+        if ((t0 & CR4_CET_MASK) && !(env->cr[0] & CR0_WP_MASK)) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U114) */
         if (((t0 ^ env->cr[4]) & CR4_LA57_MASK) &&
             (env->hflags & HF_CS64_MASK)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -335,6 +347,68 @@ static bool novmp_canonical(CPUX86State *env, uint64_t addr)
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+static bool cet_canonical(CPUX86State *env, uint64_t v)
+{
+    int64_t sext = (int64_t)v >> ((env->cr[4] & CR4_LA57_MASK) ? 56 : 47);
+
+    return sext == 0 || sext == -1;
+}
+
+/*
+ * NoVmp (ledger U114): WRMSR to a CET MSR (SDM Vol4 Table 2-2). The MSRs exist
+ * with CET_SS or CET_IBT (without either they stay unknown MSRs: ignored, as
+ * before). IA32_U_CET/IA32_S_CET: bits 1:0 need CET_SS, bits 5:2 and 63:10
+ * need CET_IBT, 9:6 reserved, EB_LEG_BITMAP_BASE canonical, SUPPRESS = 1 only
+ * with TRACKER = IDLE. IA32_PLx_SSP (CET_SS): bits 1:0 zero, canonical.
+ * IA32_INTERRUPT_SSP_TABLE_ADDR (CET_SS): canonical. Returns false when WRMSR
+ * must raise #GP(0) (the MSR is then unchanged).
+ */
+static bool cet_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    bool ss = env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK;
+    bool ibt = env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT;
+
+    if (!ss && !ibt) {
+        return true;
+    }
+    switch (msr) {
+    case MSR_IA32_U_CET:
+    case MSR_IA32_S_CET: {
+        uint64_t valid = (ss ? 0x3ull : 0) | (ibt ? (0x3cull | ~0x3ffull) : 0);
+
+        if ((val & ~valid) || !cet_canonical(env, val) ||
+            ((val & CET_SUPPRESS) && (val & CET_TRACKER))) {
+            return false;
+        }
+        if (msr == MSR_IA32_U_CET) {
+            env->u_cet = val;
+        } else {
+            env->s_cet = val;
+        }
+        cpu_sync_cet_hflags(env);
+        return true;
+    }
+    case MSR_IA32_INT_SSP_TAB:
+        if (ss) {
+            if (!cet_canonical(env, val)) {
+                return false;
+            }
+            env->int_ssp_table = val;
+        }
+        return true;
+    default: /* IA32_PL0_SSP .. IA32_PL3_SSP */
+        if (ss) {
+            if ((val & 3) || !cet_canonical(env, val)) {
+                return false;
+            }
+            env->pl_ssp[msr - MSR_IA32_PL0_SSP] = val;
+        }
+        return true;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U114) */
 void helper_wrmsr(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);
@@ -614,6 +688,20 @@ void helper_wrmsr(CPUX86State *env)
         env->umwait = (uint32_t)val;
         break;
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case MSR_IA32_U_CET:
+    case MSR_IA32_S_CET:
+    case MSR_IA32_PL0_SSP:
+    case MSR_IA32_PL1_SSP:
+    case MSR_IA32_PL2_SSP:
+    case MSR_IA32_PL3_SSP:
+    case MSR_IA32_INT_SSP_TAB:
+        /* NoVmp (ledger U114): CET MSRs, see cet_wrmsr; #GP(0) on an invalid value */
+        if (!cet_wrmsr(env, (uint32_t)env->regs[R_ECX], val) && !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        break;
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     case MSR_IA32_PASID:
         /*
@@ -850,6 +938,23 @@ void helper_rdmsr(CPUX86State *env)
         val = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_ENQCMD) ? env->pasid : 0;
         break;
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case MSR_IA32_U_CET:
+        val = env->u_cet;
+        break;
+    case MSR_IA32_S_CET:
+        val = env->s_cet;
+        break;
+    case MSR_IA32_PL0_SSP:
+    case MSR_IA32_PL1_SSP:
+    case MSR_IA32_PL2_SSP:
+    case MSR_IA32_PL3_SSP:
+        val = env->pl_ssp[(uint32_t)env->regs[R_ECX] - MSR_IA32_PL0_SSP];
+        break;
+    case MSR_IA32_INT_SSP_TAB:
+        val = env->int_ssp_table;
+        break;
+#endif /* __Use_Original_Qemu (U114) */
     case MSR_IA32_XSS:
         val = env->xss;
         break;
@@ -1125,6 +1230,209 @@ void helper_pconfig(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/*
+ * NoVmp (ledger U114): CET shadow-stack management instructions (SDM Vol1
+ * 18.2, Vol2 INCSSP, SAVEPREVSSP, RSTORSSP, WRSS, WRUSS, SETSSBSY, CLRSSBSY).
+ * The translator has already raised #UD for LOCK, real-address/virtual-8086
+ * mode and - for INCSSP/SAVEPREVSSP/RSTORSSP/WRSS - when HF_CET_SS
+ * (ShadowStackEnabled(CPL)) is clear; RDSSP is done inline.
+ *
+ * Shadow-stack accesses: a user access at CPL 3, a supervisor access otherwise
+ * (WRUSS: always user). Outside 64-bit mode SSP and the shadow-stack addresses
+ * are 32 bits wide (Vol1 18.2.1). Without paging there are no page types and
+ * every linear address may be accessed; the paging rule "shadow-stack accesses
+ * only to shadow-stack pages" (Vol3 5.6) is not modelled (see the ledger).
+ */
+static bool cet_lm(CPUX86State *env)
+{
+    return env->hflags & HF_CS64_MASK;      /* IA32_EFER.LMA AND CS.L */
+}
+
+static target_ulong cet_la(CPUX86State *env, uint64_t a)
+{
+    return cet_lm(env) ? a : (uint32_t)a;
+}
+
+static int cet_ss_idx(CPUX86State *env, bool user)
+{
+    return (user || (env->hflags & HF_CPL_MASK) == 3) ? MMU_USER_IDX : MMU_KNOSMAP_IDX;
+}
+
+static uint64_t ss_ld8(CPUX86State *env, uint64_t a, bool user, uintptr_t ra)
+{
+    return cpu_ldq_mmuidx_ra(env, cet_la(env, a), cet_ss_idx(env, user), ra);
+}
+
+static uint32_t ss_ld4(CPUX86State *env, uint64_t a, bool user, uintptr_t ra)
+{
+    return cpu_ldl_mmuidx_ra(env, cet_la(env, a), cet_ss_idx(env, user), ra);
+}
+
+static void ss_st8(CPUX86State *env, uint64_t a, uint64_t v, bool user, uintptr_t ra)
+{
+    cpu_stq_mmuidx_ra(env, cet_la(env, a), v, cet_ss_idx(env, user), ra);
+}
+
+static void ss_st4(CPUX86State *env, uint64_t a, uint32_t v, bool user, uintptr_t ra)
+{
+    cpu_stl_mmuidx_ra(env, cet_la(env, a), v, cet_ss_idx(env, user), ra);
+}
+
+static void cet_set_ssp(CPUX86State *env, uint64_t v)
+{
+    env->ssp = cet_lm(env) ? v : (uint32_t)v;
+}
+
+/* INCSSPD r32 / INCSSPQ r64: pop and discard the first and last of r[7:0] elements */
+void helper_incssp(CPUX86State *env, target_ulong src, uint32_t q)
+{
+    uintptr_t ra = GETPC();
+    uint64_t n = src & 0xff, sz = q ? 8 : 4, ssp = env->ssp;
+
+    if (q) {
+        ss_ld8(env, ssp, false, ra);
+        if (n) {
+            ss_ld8(env, ssp + sz * (n - 1), false, ra);
+        }
+    } else {
+        ss_ld4(env, ssp, false, ra);
+        if (n) {
+            ss_ld4(env, ssp + sz * (n - 1), false, ra);
+        }
+    }
+    cet_set_ssp(env, ssp + n * sz);
+}
+
+/* SAVEPREVSSP: restore-shadow-stack token on the previous shadow stack */
+void helper_saveprevssp(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    bool lm = cet_lm(env);
+    uint64_t ssp = cet_la(env, env->ssp), prev, old;
+    bool cf = cpu_cc_compute_all(env, CC_OP) & CC_C;
+
+    if (ssp & 7) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    prev = ss_ld8(env, ssp, false, ra);
+    ssp += 8;
+    if (cf && lm) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (cf) {
+        if (ss_ld4(env, ssp, false, ra) != 0) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        ssp += 4;
+    }
+    if (!(prev & 2) || (!lm && (prev >> 32))) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    old = prev & ~3ull;
+    ss_st4(env, old - 4, 0, false, ra);
+    ss_st8(env, (old & ~7ull) - 8, old | lm, false, ra);
+    cet_set_ssp(env, ssp);
+}
+
+/* RSTORSSP m64: switch to the shadow stack whose restore token is at m64 */
+void helper_rstorssp(CPUX86State *env, target_ulong addr)
+{
+    uintptr_t ra = GETPC();
+    uint64_t lm = cet_lm(env), tok, prev_tok;
+    bool fault = false;
+
+    if (addr & 7) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    prev_tok = cet_la(env, env->ssp) | lm | 2;
+    tok = ss_ld8(env, addr, false, ra);
+    if ((tok & 3) != lm || (!lm && (tok >> 32)) ||
+        (((tok & ~1ull) - 8) & ~7ull) != addr) {
+        fault = true;
+    }
+    ss_st8(env, addr, fault ? tok : prev_tok, false, ra);
+    if (fault) {
+        raise_exception_err_ra(env, EXCP15_CP, CP_RSTORSSP, ra);
+    }
+    cet_set_ssp(env, addr);
+    CC_SRC = (tok & 4) ? CC_C : 0;
+}
+
+/* WRSSD/WRSSQ (user = 0) and WRUSSD/WRUSSQ (user = 1) m, r */
+void helper_wrss(CPUX86State *env, target_ulong addr, target_ulong val,
+                 uint32_t q, uint32_t user)
+{
+    uintptr_t ra = GETPC();
+    bool cpl3 = (env->hflags & HF_CPL_MASK) == 3;
+
+    if (user) {
+        if (!(env->cr[4] & CR4_CET_MASK)) {
+            raise_exception_ra(env, EXCP06_ILLOP, ra);
+        }
+        if (env->hflags & HF_CPL_MASK) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+    } else if (!((cpl3 ? env->u_cet : env->s_cet) & CET_WR_SHSTK_EN)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (addr & (q ? 7 : 3)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (q) {
+        ss_st8(env, addr, val, user, ra);
+    } else {
+        ss_st4(env, addr, (uint32_t)val, user, ra);
+    }
+}
+
+/* SETSSBSY / CLRSSBSY: common #UD / #GP checks (there is no CR4.FRED here) */
+static void cet_busy_check(CPUX86State *env, uintptr_t ra)
+{
+    if (!(env->cr[4] & CR4_CET_MASK) || !(env->s_cet & CET_SH_STK_EN)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->hflags & HF_CPL_MASK) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+}
+
+/* SETSSBSY: mark the supervisor shadow-stack token at IA32_PL0_SSP busy; SSP = it */
+void helper_setssbsy(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint64_t la, old;
+
+    cet_busy_check(env, ra);
+    la = cet_la(env, env->pl_ssp[0]);
+    if (la & 7) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    old = ss_ld8(env, la, false, ra);
+    ss_st8(env, la, old == la ? (la | 1) : old, false, ra);
+    if (old != la) {
+        raise_exception_err_ra(env, EXCP15_CP, CP_SETSSBSY, ra);
+    }
+    cet_set_ssp(env, la);
+}
+
+/* CLRSSBSY m64: clear the busy flag of the token at m64; CF = invalid token; SSP = 0 */
+void helper_clrssbsy(CPUX86State *env, target_ulong addr)
+{
+    uintptr_t ra = GETPC();
+    uint64_t old;
+
+    cet_busy_check(env, ra);
+    if (addr & 7) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    old = ss_ld8(env, addr, false, ra);
+    ss_st8(env, addr, old == (addr | 1) ? addr : old, false, ra);
+    CC_SRC = old == (addr | 1) ? 0 : CC_C;
+    env->ssp = 0;
+}
+
+#endif /* __Use_Original_Qemu (U114) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {

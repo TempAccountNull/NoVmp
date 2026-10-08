@@ -540,6 +540,9 @@ static int exception_has_error_code(int intno)
     case 13:
     case 14:
     case 17:
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case 21:    /* #CP pushes an error code (SDM Vol3 7.15, interrupt 21) */
+#endif /* __Use_Original_Qemu (U114) */
         return 1;
     }
     return 0;

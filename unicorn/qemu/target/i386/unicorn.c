@@ -445,6 +445,12 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
         CHECK_REG_TYPE(uint16_t);
         *(uint16_t *)value = env->fpop;
         return ret;
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case UC_X86_REG_SSP:
+        CHECK_REG_TYPE(uint64_t);
+        *(uint64_t *)value = env->ssp;
+        return ret;
+#endif /* __Use_Original_Qemu (U114) */
     }
 
     switch (mode) {
@@ -1331,6 +1337,12 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         CHECK_REG_TYPE(uint16_t);
         env->fpop = *(uint16_t *)value;
         return ret;
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case UC_X86_REG_SSP:
+        CHECK_REG_TYPE(uint64_t);
+        env->ssp = *(uint64_t *)value;
+        return ret;
+#endif /* __Use_Original_Qemu (U114) */
     }
 
     switch (mode) {

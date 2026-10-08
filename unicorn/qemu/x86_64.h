@@ -2678,6 +2678,15 @@
 #define helper_getsec helper_getsec_x86_64
 #define helper_pconfig helper_pconfig_x86_64
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+#define helper_incssp helper_incssp_x86_64
+#define helper_saveprevssp helper_saveprevssp_x86_64
+#define helper_rstorssp helper_rstorssp_x86_64
+#define helper_wrss helper_wrss_x86_64
+#define helper_setssbsy helper_setssbsy_x86_64
+#define helper_clrssbsy helper_clrssbsy_x86_64
+#define cpu_sync_cet_hflags cpu_sync_cet_hflags_x86_64
+#endif /* __Use_Original_Qemu (U114) */
 #define helper_boundw helper_boundw_x86_64
 #define helper_boundl helper_boundl_x86_64
 #define helper_outb helper_outb_x86_64

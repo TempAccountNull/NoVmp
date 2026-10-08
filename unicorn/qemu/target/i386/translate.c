@@ -7102,6 +7102,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * CPUID/IRET). 66/F2/F3/LOCK #UD; #UD without CPUID.7.0.EDX[14].
          */
         case 0xe8: /* serialize */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+            /*
+             * NoVmp (ledger U114): F3 0F 01 E8 SETSSBSY (CET_SS). #UD with LOCK
+             * or in real-address/virtual-8086 mode; CR4.CET, IA32_S_CET.SH_STK_EN
+             * (#UD) and CPL (#GP) at run time (SDM Vol2 SETSSBSY).
+             */
+            if ((s->prefix & PREFIX_REPZ)
+                && (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)) {
+                if ((s->prefix & PREFIX_LOCK) || !PE(s) || VM86(s)) {
+                    goto illegal_op;
+                }
+                gen_helper_setssbsy(tcg_ctx, cpu_env);
+                break;
+            }
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U110) */
             /*
              * NoVmp (ledger U110): F2 0F 01 E8 XSUSLDTRK (TSXLDTRK). Outside a
@@ -7124,6 +7139,34 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             s->base.is_jmp = DISAS_EOB_NEXT;
             break;
 #endif /* __Use_Original_Qemu (U74) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+        /*
+         * NoVmp (ledger U114): F3 0F 01 EA SAVEPREVSSP and F3 0F 01 /5 memory
+         * RSTORSSP m64 (CET_SS). #UD with LOCK, without F3, and unless shadow
+         * stacks are enabled at the CPL (HF_CET_SS, never in real-address or
+         * virtual-8086 mode). RSTORSSP sets CF, clears ZF/PF/AF/OF/SF.
+         */
+        case 0xea: /* saveprevssp */
+            if (!(s->prefix & PREFIX_REPZ) || (s->prefix & PREFIX_LOCK)
+                || !(s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)
+                || !(s->flags & HF_CET_SS_MASK)) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_helper_saveprevssp(tcg_ctx, cpu_env);
+            break;
+        CASE_MODRM_MEM_OP(5): /* rstorssp */
+            if (!(s->prefix & PREFIX_REPZ) || (s->prefix & PREFIX_LOCK)
+                || !(s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)
+                || !(s->flags & HF_CET_SS_MASK)) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_lea_modrm(env, s, modrm);
+            gen_helper_rstorssp(tcg_ctx, cpu_env, s->A0);
+            set_cc_op(s, CC_OP_EFLAGS);
+            break;
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U113) */
         /*
          * NoVmp (ledger U113): PCONFIG, NP 0F 01 C5 (SDM Vol2 PCONFIG). #UD if
@@ -7598,6 +7641,25 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x119: case 0x11c: case 0x11d: case 0x11e: case 0x11f: /* nop (multi byte) */
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+        /*
+         * NoVmp (ledger U114): F3 0F 1E /1 mod = 3 RDSSPD r32 / RDSSPQ r64
+         * (REX.W): with shadow stacks enabled at the CPL (HF_CET_SS) the
+         * destination gets SSP (SSP[31:0], zero-extended, for RDSSPD); else
+         * the opcode stays a NOP (SDM Vol2 RDSSPD/RDSSPQ). LOCK: #UD.
+         */
+        if (b == 0x11e && (prefixes & PREFIX_REPZ) && (modrm & 0xf8) == 0xc8
+            && (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)
+            && (s->flags & HF_CET_SS_MASK)) {
+            if (prefixes & PREFIX_LOCK) {
+                goto illegal_op;
+            }
+            tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, ssp));
+            gen_op_mov_reg_v(s, REX_W(s) ? MO_64 : MO_32,
+                             (modrm & 7) | REX_B(s), s->T0);
+            break;
+        }
+#endif /* __Use_Original_Qemu (U114) */
         gen_nop_modrm(env, s, modrm);
         break;
 
@@ -7709,6 +7771,40 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x1ae:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+        /*
+         * NoVmp (ledger U114): with CPUID.7.0:ECX.CET_SS, F3 0F AE /5 mod = 3
+         * INCSSPD r32 / INCSSPQ r64 (REX.W) and F3 0F AE /6 memory CLRSSBSY
+         * m64 (SDM Vol2). #UD with LOCK, in real-address/virtual-8086 mode,
+         * and for INCSSP unless shadow stacks are enabled at the CPL
+         * (HF_CET_SS); CLRSSBSY checks CR4.CET, IA32_S_CET and CPL at run time.
+         * Without CET_SS both stay #UD (U75).
+         */
+        if ((prefixes & PREFIX_REPZ)
+            && (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK)) {
+            int op = (modrm >> 3) & 7;
+
+            if ((modrm >> 6) == 3 && op == 5) {
+                if ((prefixes & PREFIX_LOCK) || !(s->flags & HF_CET_SS_MASK)) {
+                    goto illegal_op;
+                }
+                rm = (modrm & 7) | REX_B(s);
+                gen_helper_incssp(tcg_ctx, cpu_env, cpu_regs[rm],
+                                  tcg_constant_i32(tcg_ctx, REX_W(s) ? 1 : 0));
+                break;
+            }
+            if ((modrm >> 6) != 3 && op == 6) {
+                if ((prefixes & PREFIX_LOCK) || !PE(s) || VM86(s)) {
+                    goto illegal_op;
+                }
+                gen_update_cc_op(s);
+                gen_lea_modrm(env, s, modrm);
+                gen_helper_clrssbsy(tcg_ctx, cpu_env, s->A0);
+                set_cc_op(s, CC_OP_EFLAGS);
+                break;
+            }
+        }
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U111) */
         /*
          * NoVmp (ledger U111): WAITPKG, 0F AE /6 with mod = 3 (SDM Vol2

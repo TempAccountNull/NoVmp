@@ -44,11 +44,22 @@ void helper_raise_exception(CPUX86State *env, int exception_index)
 static int check_exception(CPUX86State *env, int intno, int *error_code,
                            uintptr_t retaddr)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U114) */
     int first_contributory = env->old_exception == 0 ||
                               (env->old_exception >= 10 &&
                                env->old_exception <= 13);
     int second_contributory = intno == 0 ||
                                (intno >= 10 && intno <= 13);
+#else /* ours (U114) */
+    /* #CP (21) is a contributory exception too (SDM Vol3 Table 7-3) */
+    int first_contributory = env->old_exception == 0 ||
+                              (env->old_exception >= 10 &&
+                               env->old_exception <= 13) ||
+                              env->old_exception == EXCP15_CP;
+    int second_contributory = intno == 0 ||
+                               (intno >= 10 && intno <= 13) ||
+                               intno == EXCP15_CP;
+#endif /* __Use_Original_Qemu (U114) */
 
     qemu_log_mask(CPU_LOG_INT, "check_exception old: 0x%x new 0x%x\n",
                 env->old_exception, intno);

@@ -104,6 +104,14 @@ DEF_HELPER_4(enqcmd, void, env, tl, tl, i32)
 DEF_HELPER_1(getsec, void, env)
 DEF_HELPER_1(pconfig, void, env)
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+DEF_HELPER_3(incssp, void, env, tl, i32)
+DEF_HELPER_1(saveprevssp, void, env)
+DEF_HELPER_2(rstorssp, void, env, tl)
+DEF_HELPER_5(wrss, void, env, tl, tl, i32, i32)
+DEF_HELPER_1(setssbsy, void, env)
+DEF_HELPER_2(clrssbsy, void, env, tl)
+#endif /* __Use_Original_Qemu (U114) */
 DEF_HELPER_1(single_step, void, env)
 DEF_HELPER_1(rechecking_single_step, void, env)
 DEF_HELPER_1(cpuid, void, env)

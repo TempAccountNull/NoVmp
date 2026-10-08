@@ -7127,6 +7127,317 @@ static void test_x86_smx_pconfig_sgx(void)
     OK(uc_close(r.uc));
 }
 
+static uint64_t nv_ld64(NvRun *r, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(r->uc, a, &v, 8));
+    return v;
+}
+
+static void nv_st64(NvRun *r, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(r->uc, a, &v, 8));
+}
+
+/* CR0.WP = 1 (needed for CR4.CET), then MOV CR4 with CET (bit 23) at CPL0 */
+static void nv_cet_on(NvRun *r)
+{
+    uint64_t cr0;
+
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x10000;
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR0, &cr0));
+    /* mov rax, cr4; bts rax, 23; mov cr4, rax */
+    OK(nv_run(r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x17\x0f\x22\xe0"));
+    TEST_CHECK(r->cap.count == 0);
+}
+
+/*
+ * NoVmp U114: CET shadow-stack state and management instructions (SDM Vol1
+ * 18.2; Vol2 RDSSP, INCSSP, WRSS, WRUSS, SETSSBSY, CLRSSBSY, RSTORSSP,
+ * SAVEPREVSSP; Vol3 CR4.CET; Vol4 CET MSRs). Shadow stacks live at 300000h
+ * (no paging, so every linear address may hold one).
+ */
+static void test_x86_cet_shadow_stack(void)
+{
+    NvRun r;
+    uint64_t cr4;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_mem_map(r.uc, 0x300000, 0x2000, UC_PROT_ALL));
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) & (1u << 7));
+
+    /* CR4.CET needs CR0.WP: #GP(0) while WP = 0 */
+    OK(nv_run(&r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x17\x0f\x22\xe0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_cet_on(&r);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    TEST_CHECK(cr4 & (1u << 23));
+    /* ... and WP cannot be cleared while CR4.CET = 1: mov rax, cr0; btr rax, 16; mov cr0, rax */
+    OK(nv_run(&r, "\x0f\x20\xc0\x48\x0f\xba\xf0\x10\x0f\x22\xc0"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /* shadow stacks still off (IA32_S_CET = 0): RDSSP is a NOP, INCSSP/SAVEPREVSSP/RSTORSSP/WRSS #UD */
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+    nv_set(&r, UC_X86_REG_RAX, 0x1111);
+    OK(nv_run(&r, "\xf3\x48\x0f\x1e\xc8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1111);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xea"));
+    nv_set(&r, UC_X86_REG_RDX, 0x301000);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\x2a"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    /* SETSSBSY/CLRSSBSY: #UD while IA32_S_CET.SH_STK_EN = 0 */
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\xae\x32"));
+
+    /* WRMSR IA32_S_CET: reserved bit 6 and (no CET_IBT) ENDBR_EN #GP(0); SH_STK_EN | WR_SHSTK_EN ok */
+    nv_set(&r, UC_X86_REG_RCX, 0x6a2);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    nv_set(&r, UC_X86_REG_RAX, 0x41);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0x5);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0x3);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a2) == 3);
+    /* IA32_PL0_SSP: bits 1:0 must be 0, canonical */
+    nv_set(&r, UC_X86_REG_RCX, 0x6a4);
+    nv_set(&r, UC_X86_REG_RAX, 0x301f02);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0x301f00);
+    nv_set(&r, UC_X86_REG_RDX, 0x80000000);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a4) == 0x301f00);
+
+    /* RDSSPQ rax = SSP; RDSSPD eax = SSP[31:0] zero-extended; LOCK #UD */
+    nv_set(&r, UC_X86_REG_SSP, 0x1234567800300800ull);
+    nv_set(&r, UC_X86_REG_RAX, 0x1111);
+    OK(nv_run(&r, "\xf3\x48\x0f\x1e\xc8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1234567800300800ull);
+    nv_set(&r, UC_X86_REG_RAX, ~0ull);
+    OK(nv_run(&r, "\xf3\x0f\x1e\xc8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x00300800);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\xf3\x0f\x1e\xc8"));
+
+    /* INCSSPQ rax (rax[7:0] = 2): SSP += 16; INCSSPD ecx (103h -> 3): SSP += 12; 0: no change */
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_set(&r, UC_X86_REG_RAX, 0x7702);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300810);
+    nv_set(&r, UC_X86_REG_RCX, 0x103);
+    OK(nv_run(&r, "\xf3\x0f\xae\xe9"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x30081c);
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x30081c);
+    /* the shadow-stack loads fault (SSP unchanged): first element, then the last element */
+    nv_set(&r, UC_X86_REG_SSP, 0x900000);
+    uc_assert_err(UC_ERR_READ_UNMAPPED, nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x900000);
+    nv_set(&r, UC_X86_REG_SSP, 0x301ff8);
+    nv_set(&r, UC_X86_REG_RAX, 2);
+    uc_assert_err(UC_ERR_READ_UNMAPPED, nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+
+    /* WRSSQ [rdx], rax / WRSSD [rdx], eax; alignment #GP(0); without WR_SHSTK_EN #UD */
+    nv_set(&r, UC_X86_REG_RDX, 0x300100);
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ull);
+    OK(nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    TEST_CHECK(nv_ld64(&r, 0x300100) == 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x300104);
+    nv_set(&r, UC_X86_REG_RAX, 0xaabbccdd);
+    OK(nv_run(&r, "\x0f\x38\xf6\x02"));
+    TEST_CHECK(nv_ld64(&r, 0x300100) == 0xaabbccdd55667788ull);
+    OK(nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x38\xf6\xc0"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\x0f\x38\xf6\x02"));
+
+    /* WRUSSQ [rdx], rax at CPL0 */
+    nv_set(&r, UC_X86_REG_RDX, 0x300108);
+    nv_set(&r, UC_X86_REG_RAX, 0x0102030405060708ull);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(nv_ld64(&r, 0x300108) == 0x0102030405060708ull);
+
+    /* SETSSBSY: token at IA32_PL0_SSP = 301F00h becomes busy, SSP = 301F00h; busy again: #CP(5) */
+    nv_st64(&r, 0x301f00, 0x301f00);
+    OK(nv_run(&r, "\xf3\x0f\x01\xe8"));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK(nv_ld64(&r, 0x301f00) == 0x301f01);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301f00);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    OK(nv_run(&r, "\xf3\x0f\x01\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    TEST_CHECK(nv_ld64(&r, 0x301f00) == 0x301f01);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+
+    /* CLRSSBSY [rdx]: busy token cleared, CF = 0, SSP = 0; not busy: CF = 1, unchanged */
+    nv_set(&r, UC_X86_REG_RDX, 0x301f00);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(nv_run(&r, "\xf3\x0f\xae\x32"));
+    TEST_CHECK(nv_ld64(&r, 0x301f00) == 0x301f00);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    OK(nv_run(&r, "\xf3\x0f\xae\x32"));
+    TEST_CHECK(nv_ld64(&r, 0x301f00) == 0x301f00);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x003);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x301f04);
+    OK(nv_run(&r, "\xf3\x0f\xae\x32"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /*
+     * RSTORSSP / SAVEPREVSSP (SDM Vol1 Figures 18-2/18-3): SSP = 300400h, the new
+     * stack's restore token at 301FF8h holds 302000h | 1 (64-bit).
+     */
+    nv_set(&r, UC_X86_REG_SSP, 0x300400);
+    nv_st64(&r, 0x301ff8, 0x302001);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff8);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    TEST_CHECK(nv_ld64(&r, 0x301ff8) == 0x300403);       /* previous-ssp token */
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    nv_st64(&r, 0x3003f8, 0);
+    OK(nv_run(&r, "\xf3\x0f\x01\xea"));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x302000);
+    TEST_CHECK(nv_ld64(&r, 0x3003f8) == 0x300401);       /* restore token on the old stack */
+    /* back to the old stack */
+    nv_set(&r, UC_X86_REG_RDX, 0x3003f8);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x3003f8);
+    TEST_CHECK(nv_ld64(&r, 0x3003f8) == 0x302003);
+    /* token with bit 2 (alignment hole) set: CF = 1 */
+    nv_st64(&r, 0x301ff8, 0x302005);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff8);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x003);
+    /* SAVEPREVSSP with CF = 1 in 64-bit mode: #GP(0) (stc; saveprevssp) */
+    OK(nv_run(&r, "\xf9\xf3\x0f\x01\xea"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    /* invalid token (address mismatch): #CP(4), token rewritten unchanged, SSP unchanged */
+    nv_st64(&r, 0x301ff0, 0x302001);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff0);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    TEST_CHECK(nv_ld64(&r, 0x301ff0) == 0x302001);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    /* compatibility-mode token (bit 0 = 0) in 64-bit mode: #CP(4); misaligned operand: #GP(0) */
+    nv_st64(&r, 0x301ff8, 0x302000);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff8);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff4);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /* CPL3: IA32_U_CET = 0 so RDSSP NOP, INCSSP #UD; SETSSBSY #GP(0) (S_CET on); WRUSS #GP(0) */
+    nv_set(&r, UC_X86_REG_RAX, 0x1111);
+    OK(nv_run3(&r, "\xf3\x48\x0f\x1e\xc8\x90"));
+    TEST_CHECK(nv_cpl(&r) == 3 && nv_get(&r, UC_X86_REG_RAX) == 0x1111);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\xf3\x48\x0f\xae\xe8"));
+    OK(nv_run3(&r, "\xf3\x0f\x01\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RDX, 0x300108);
+    OK(nv_run3(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    /* user shadow stacks on (IA32_U_CET = SH_STK_EN): RDSSP / INCSSP work at CPL3, WRSS #UD */
+    nv_wrmsr(&r, 0x6a0, 1);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    OK(nv_run3(&r, "\xf3\x48\x0f\xae\xe8\xf3\x48\x0f\x1e\xc9"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x300808);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x48\x0f\x38\xf6\x02"));
+    /* the API cannot store an invalid MSR value (dropped) */
+    nv_wrmsr(&r, 0x6a0, 0x40);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1);
+
+    /* CR4.CET = 0: WRUSS #UD at any CPL (the i5-13600K profile state) */
+    cr4 &= ~(uint64_t)(1u << 23);
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xe8"));
+    nv_set(&r, UC_X86_REG_RAX, 0x1111);
+    OK(nv_run(&r, "\xf3\x48\x0f\x1e\xc8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1111);
+    OK(uc_close(r.uc));
+
+    /* strict profile without CET_SS: every form #UD (RDSSP stays a NOP) although enabled */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_cet_on(&r);
+    nv_wrmsr(&r, 0x6a2, 3);
+    nv_profile7(&r, 0, 0, 0);
+    nv_set(&r, UC_X86_REG_RAX, 0x1111);
+    OK(nv_run(&r, "\xf3\x48\x0f\x1e\xc8"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1111);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x01\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    OK(uc_close(r.uc));
+}
+
+/* NoVmp U114: 32-bit mode - SSP and shadow-stack addresses are 32 bits, tokens use mode bit 0 */
+static void test_x86_cet_shadow_stack_32(void)
+{
+    NvRun r;
+    uint64_t cr0, cr4;
+    uc_x86_msr m = {0x6a2, 1};
+    uint32_t tok[2];
+
+    nv_open(&r, UC_MODE_32, UC_CPU_X86_MAX);
+    OK(uc_mem_map(r.uc, 0x300000, 0x2000, UC_PROT_ALL));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x10000;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR0, &cr0));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1u << 23;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(r.uc, UC_X86_REG_MSR, &m));
+
+    /* INCSSPD: SSP 32-bit, RDSSPD */
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_set(&r, UC_X86_REG_EAX, 2);
+    OK(nv_run(&r, "\xf3\x0f\xae\xe8\xf3\x0f\x1e\xc9"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300808);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_ECX) == 0x300808);
+
+    /* RSTORSSP with a legacy token (bit 0 = 0) at 301FF8h for 302000h */
+    tok[0] = 0x302000;
+    tok[1] = 0;
+    OK(uc_mem_write(r.uc, 0x301ff8, tok, 8));
+    nv_set(&r, UC_X86_REG_EDX, 0x301ff8);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    OK(uc_mem_read(r.uc, 0x301ff8, tok, 8));
+    TEST_CHECK(tok[0] == 0x30080a && tok[1] == 0);       /* old SSP | 2, mode 0 */
+    /* a 64-bit token (bit 0 = 1) is refused: #CP(4) */
+    tok[0] = 0x302001;
+    OK(uc_mem_write(r.uc, 0x301ff0, tok, 8));
+    nv_set(&r, UC_X86_REG_EDX, 0x301ff0);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7267,4 +7578,6 @@ TEST_LIST = {
     {"test_x86_waitpkg", test_x86_waitpkg},
     {"test_x86_enqcmd", test_x86_enqcmd},
     {"test_x86_smx_pconfig_sgx", test_x86_smx_pconfig_sgx},
+    {"test_x86_cet_shadow_stack", test_x86_cet_shadow_stack},
+    {"test_x86_cet_shadow_stack_32", test_x86_cet_shadow_stack_32},
     {NULL, NULL}};

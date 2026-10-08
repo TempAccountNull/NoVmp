@@ -83,6 +83,24 @@ void cpu_sync_bndcs_hflags(CPUX86State *env)
     env->hflags2 = hflags2;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/*
+ * NoVmp (ledger U114): HF_CET_SS = ShadowStackEnabled(CPL) (SDM Vol1 18.2.2):
+ * CR4.CET = 1, CR0.PE = 1, EFLAGS.VM = 0 and SH_STK_EN of IA32_U_CET (CPL 3)
+ * or IA32_S_CET (CPL < 3). Recomputed whenever one of these changes.
+ */
+void cpu_sync_cet_hflags(CPUX86State *env)
+{
+    uint64_t cet = (env->hflags & HF_CPL_MASK) == 3 ? env->u_cet : env->s_cet;
+
+    env->hflags &= ~HF_CET_SS_MASK;
+    if ((env->cr[4] & CR4_CET_MASK) && (env->cr[0] & CR0_PE_MASK) &&
+        !(env->eflags & VM_MASK) && (cet & CET_SH_STK_EN)) {
+        env->hflags |= HF_CET_SS_MASK;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U114) */
 static void cpu_x86_version(CPUX86State *env, int *family, int *model)
 {
     int cpuver = env->cpuid_version;
@@ -171,6 +189,9 @@ void cpu_x86_update_cr0(CPUX86State *env, uint32_t new_cr0)
     /* update FPU flags */
     env->hflags = (env->hflags & ~(HF_MP_MASK | HF_EM_MASK | HF_TS_MASK)) |
         ((new_cr0 << (HF_MP_SHIFT - 1)) & (HF_MP_MASK | HF_EM_MASK | HF_TS_MASK));
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    cpu_sync_cet_hflags(env);   /* CR0.PE */
+#endif /* __Use_Original_Qemu (U114) */
 }
 
 /* XXX: in legacy PAE mode, generate a GPF if reserved bits are set in
@@ -238,12 +259,21 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
         new_cr4 &= ~CR4_UINTR_MASK;
     }
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) &&
+        !(env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT)) {
+        new_cr4 &= ~CR4_CET_MASK;
+    }
+#endif /* __Use_Original_Qemu (U114) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;
 
     cpu_sync_bndcs_hflags(env);
     cpu_sync_avx_hflag(env);
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    cpu_sync_cet_hflags(env);
+#endif /* __Use_Original_Qemu (U114) */
 }
 
 hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,

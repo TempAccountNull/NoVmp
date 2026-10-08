@@ -171,6 +171,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U121) */
 #define HF_AVX512_EN_SHIFT  29 /* AVX-512 Enabled (CR4.OSXSAVE + XCR0[7:5,2:1]) */
 #endif /* __Use_Original_Qemu (U121) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+#define HF_CET_SS_SHIFT     29 /* NoVmp U114: ShadowStackEnabled(CPL), SDM Vol1 18.2.2 */
+#endif /* __Use_Original_Qemu (U114) */
 
 #define HF_CPL_MASK          (3 << HF_CPL_SHIFT)
 #define HF_INHIBIT_IRQ_MASK  (1 << HF_INHIBIT_IRQ_SHIFT)
@@ -201,6 +204,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U121) */
 #define HF_AVX512_EN_MASK    (1 << HF_AVX512_EN_SHIFT)
 #endif /* __Use_Original_Qemu (U121) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+#define HF_CET_SS_MASK       (1 << HF_CET_SS_SHIFT)
+#endif /* __Use_Original_Qemu (U114) */
 
 /* hflags2 */
 
@@ -264,6 +270,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 #define CR4_UINTR_MASK (1U << 25) /* user interrupts (SDM Vol3A 9.2) */
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+#define CR4_CET_MASK   (1U << 23)
+#endif /* __Use_Original_Qemu (U114) */
 
 #define CR4_RESERVED_MASK \
     (~(target_ulong)(CR4_VME_MASK | CR4_PVI_MASK | CR4_TSD_MASK | \
@@ -399,6 +408,32 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 #define MSR_IA32_PASID                  0xd93
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/* CET MSRs (SDM Vol4 Table 2-2) */
+#define MSR_IA32_U_CET                  0x6a0
+#define MSR_IA32_S_CET                  0x6a2
+#define MSR_IA32_PL0_SSP                0x6a4
+#define MSR_IA32_PL1_SSP                0x6a5
+#define MSR_IA32_PL2_SSP                0x6a6
+#define MSR_IA32_PL3_SSP                0x6a7
+#define MSR_IA32_INT_SSP_TAB            0x6a8
+/* IA32_U_CET / IA32_S_CET fields */
+#define CET_SH_STK_EN                   (1ull << 0)
+#define CET_WR_SHSTK_EN                 (1ull << 1)
+#define CET_ENDBR_EN                    (1ull << 2)
+#define CET_LEG_IW_EN                   (1ull << 3)
+#define CET_NO_TRACK_EN                 (1ull << 4)
+#define CET_SUPPRESS_DIS                (1ull << 5)
+#define CET_SUPPRESS                    (1ull << 10)
+#define CET_TRACKER                     (1ull << 11)
+#define CET_EB_LEG_BITMAP_BASE          (~0xfffull)
+/* #CP error codes (SDM Vol3 Table 7-1 / 18.2) */
+#define CP_NEAR_RET                     1
+#define CP_FAR_RET_IRET                 2
+#define CP_ENDBRANCH                    3
+#define CP_RSTORSSP                     4
+#define CP_SETSSBSY                     5
+#endif /* __Use_Original_Qemu (U114) */
 #define MSR_ARCH_LBR_CTL                0x000014ce
 #define MSR_ARCH_LBR_DEPTH              0x000014cf
 #define MSR_ARCH_LBR_FROM_0             0x00001500
@@ -869,6 +904,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define NOVMP_CPUID_19_EBX (CPUID_19_EBX_AESKLE | CPUID_19_EBX_AES_WIDE)
 #define NOVMP_CPUID_19_ECX CPUID_19_ECX_NOBACKUP
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/* CET shadow stack */
+#define CPUID_7_0_ECX_CET_SHSTK         (1U << 7)
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 /* Enqueue Stores (ENQCMD/ENQCMDS, IA32_PASID) */
 #define CPUID_7_0_ECX_ENQCMD            (1U << 29)
@@ -900,6 +939,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* PCONFIG instruction (targets enumerated by CPUID leaf 1BH) */
 #define CPUID_7_0_EDX_PCONFIG           (1U << 18)
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/* CET indirect branch tracking */
+#define CPUID_7_0_EDX_CET_IBT           (1U << 20)
+#endif /* __Use_Original_Qemu (U114) */
 /* Architectural Last Branch Records */
 #define CPUID_7_0_EDX_ARCH_LBR          (1U << 19)
 /* AVX512 FP16 instruction */
@@ -1190,6 +1233,9 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #if __Use_Original_Qemu != 1 /* ours (U67) */
 #define EXCP13_XM	19   /* NoVmp (U67): SIMD floating-point exception */
 #endif /* __Use_Original_Qemu (U67) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+#define EXCP15_CP	21   /* NoVmp (U114): control protection exception (CET) */
+#endif /* __Use_Original_Qemu (U114) */
 
 #define EXCP_VMEXIT     0x100 /* only for system emulation */
 #define EXCP_SYSCALL    0x101 /* only for user emulation */
@@ -1840,6 +1886,15 @@ typedef struct CPUX86State {
 
     uintptr_t retaddr;
 
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
+    uint64_t ssp;
+    uint64_t u_cet;
+    uint64_t s_cet;
+    uint64_t pl_ssp[4];
+    uint64_t int_ssp_table;
+#endif /* __Use_Original_Qemu (U114) */
+
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
 
@@ -2072,6 +2127,9 @@ void cpu_set_ignne(CPUX86State *env);
 /* mpx_helper.c */
 void cpu_sync_avx_hflag(CPUX86State *env);
 void cpu_sync_bndcs_hflags(CPUX86State *env);
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+void cpu_sync_cet_hflags(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U114) */
 
 /* this function must always be used to load data in the segment
    cache: it synchronizes the hflags with the segment cache values */
@@ -2116,6 +2174,10 @@ static inline void cpu_x86_load_seg_cache(CPUX86State *env,
             env->hflags = (env->hflags & ~HF_CPL_MASK) | cpl;
             /* Possibly switch between BNDCFGS and BNDCFGU */
             cpu_sync_bndcs_hflags(env);
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+            /* IA32_U_CET or IA32_S_CET now governs (U114) */
+            cpu_sync_cet_hflags(env);
+#endif /* __Use_Original_Qemu (U114) */
         }
         new_hflags = (env->segs[R_SS].flags & DESC_B_MASK)
             >> (DESC_B_SHIFT - HF_SS32_SHIFT);
@@ -2603,6 +2665,13 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~(uint64_t)CR4_UINTR_MASK;
     }
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    /* CR4.CET (bit 23) can be set with CET_SS or CET_IBT (SDM Vol3 5.1.4) */
+    if ((env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) ||
+        (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT)) {
+        reserved_bits &= ~(uint64_t)CR4_CET_MASK;
+    }
+#endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U113) */
     /* CR4.SMXE (bit 14) can be set only with CPUID.1:ECX.SMX (SDM Vol2 7.2.1) */
     if (env->features[FEAT_1_ECX] & CPUID_EXT_SMX) {

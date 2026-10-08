@@ -1753,6 +1753,39 @@ static void gen_ENQCMDS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 }
 
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+/*
+ * NoVmp (ledger U114): WRSSD/WRSSQ (NP 0F 38 F6) and WRUSSD/WRUSSQ (66 0F 38
+ * F5) m32/m64, r32/r64 (SDM Vol2): a shadow-stack store done by helper_wrss,
+ * not by the generic write-back. #UD with LOCK and in real-address/virtual-8086
+ * mode; WRSS also unless shadow stacks are enabled at the CPL (HF_CET_SS).
+ */
+static void gen_WRSS_common(DisasContext *s, X86DecodedInsn *decode, int user)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    decode->op[0].unit = X86_OP_SKIP;
+    if ((s->prefix & PREFIX_LOCK) || !PE(s) || VM86(s)
+        || (!user && !(s->flags & HF_CET_SS_MASK))) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    gen_helper_wrss(tcg_ctx, cpu_env, s->A0, s->T0,
+                    tcg_constant_i32(tcg_ctx, decode->op[0].ot == MO_64),
+                    tcg_constant_i32(tcg_ctx, user));
+}
+
+static void gen_WRSS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_WRSS_common(s, decode, 0);
+}
+
+static void gen_WRUSS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_WRSS_common(s, decode, 1);
+}
+
+#endif /* __Use_Original_Qemu (U114) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

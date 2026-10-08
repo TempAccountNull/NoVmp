@@ -756,6 +756,7 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
         {},
         {},
     },
+#if __Use_Original_Qemu == 1 /* original QEMU (U114) */
     [5] = {
         X86_OP_ENTRY3(BZHI, G,y, E,y, B,y, vex13 cpuid(BMI1)),
         {},
@@ -766,6 +767,20 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
     [6] = {
         {},
         X86_OP_ENTRY2(ADCX, G,y, E,y, cpuid(ADX)),
+#else /* ours (U114) */
+    /* WRUSSD/WRUSSQ m, r: 66 0F 38 F5 (U114) */
+    [5] = {
+        X86_OP_ENTRY3(BZHI, G,y, E,y, B,y, vex13 cpuid(BMI1)),
+        X86_OP_ENTRY3(WRUSS, M,y, G,y, None,None, cpuid(CET_SS)),
+        X86_OP_ENTRY3(PEXT, G,y, B,y, E,y, vex13 cpuid(BMI2)),
+        X86_OP_ENTRY3(PDEP, G,y, B,y, E,y, vex13 cpuid(BMI2)),
+        {},
+    },
+    /* WRSSD/WRSSQ m, r: NP 0F 38 F6 (U114) */
+    [6] = {
+        X86_OP_ENTRY3(WRSS, M,y, G,y, None,None, cpuid(CET_SS)),
+        X86_OP_ENTRY2(ADCX, G,y, E,y, cpuid(ADX)),
+#endif /* __Use_Original_Qemu (U114) */
         X86_OP_ENTRY2(ADOX, G,y, E,y, cpuid(ADX)),
         X86_OP_ENTRY3(MULX, /* B,y, */ G,y, E,y, 2,y, vex13 cpuid(BMI2)),
         {},
@@ -1993,6 +2008,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_ENQCMD:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_ENQCMD);
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U114) */
+    case X86_FEAT_CET_SS:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_CET_SHSTK);
+#endif /* __Use_Original_Qemu (U114) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

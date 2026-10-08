@@ -353,6 +353,7 @@ typedef enum uc_x86_reg {
     UC_X86_REG_FDS,
     UC_X86_REG_FOP,
     UC_X86_REG_XCR0,
+    UC_X86_REG_SSP, // NoVmp U114: CET shadow-stack pointer (uint64_t)
     UC_X86_REG_ENDING // <-- mark the end of the list of registers
 } uc_x86_reg;
 
