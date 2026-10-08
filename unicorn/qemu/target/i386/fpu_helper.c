@@ -5743,6 +5743,113 @@ void helper_amx_tilerelease(CPUX86State *env)
 }
 #endif /* __Use_Original_Qemu (U175) */
 
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+/*
+ * NoVmp (ledger U176): TILELOADD / TILELOADDT1 / TILESTORED (AMX-E3) and TILEZERO
+ * (AMX-E5). info = tile number (ModRM.reg | VEX.R, 0..15) | 32-bit address size << 8.
+ * sibmem: membegin = base + displacement (the translator's `base`), stride = index <<
+ * scale (0 without an index); row r is at segment base + (membegin + r * stride) with the
+ * effective address truncated to 32 bits under a 67H prefix (as every 64-bit-mode access).
+ */
+static target_ulong amx_row_byte(target_ulong base, target_ulong stride, target_ulong seg,
+                                 unsigned r, unsigned j, bool a32)
+{
+    target_ulong ea = base + (target_ulong)r * stride + j;
+
+    if (a32) {
+        ea = (uint32_t)ea;
+    }
+    return seg + ea;
+}
+
+/* AMX-E3 tile checks: valid tile below max_names, colsb % 4 = 0, start_row < rows */
+static void amx_check_e3(CPUX86State *env, unsigned t, uintptr_t ra)
+{
+    amx_check_tiledata(env, ra);
+    if (!amx_tile_valid(env, t) || (AMX_COLSB(env, t) & 3) ||
+        AMX_START_ROW(env) >= AMX_ROWS(env, t)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+/*
+ * TILELOADD[,T1] tdest, tsib (SDM Vol2B): start := start_row; zero_upper_rows(tdest,
+ * start); rows start..rows-1 read colsb bytes each (write_row_and_zero); start_row := 0.
+ * A fault leaves start_row = the row that faulted (the restart point) and that row as it
+ * was; earlier rows stay loaded. The T1 hint has no architectural effect.
+ */
+void helper_amx_tileload(CPUX86State *env, target_ulong base, target_ulong stride,
+                         target_ulong seg, uint32_t info)
+{
+    uintptr_t ra = GETPC();
+    unsigned t = info & 15, r, j, rows, nbytes;
+    bool a32 = (info >> 8) & 1;
+
+    amx_check_e3(env, t, ra);
+    rows = AMX_ROWS(env, t);
+    nbytes = AMX_COLSB(env, t);
+    amx_zero_upper_rows(env, t, AMX_START_ROW(env));
+    for (r = AMX_START_ROW(env); r < rows; r++) {
+        uint8_t buf[AMX_P1_BYTES_PER_ROW];
+
+        AMX_START_ROW(env) = r;
+        for (j = 0; j < nbytes; j++) {
+            buf[j] = cpu_ldub_data_ra(env, amx_row_byte(base, stride, seg, r, j, a32), ra);
+        }
+        memcpy(AMX_ROW(env, t, r), buf, nbytes);
+        memset(AMX_ROW(env, t, r) + nbytes, 0, AMX_P1_BYTES_PER_ROW - nbytes);
+    }
+    AMX_START_ROW(env) = 0;
+}
+
+/*
+ * TILESTORED tsib, tsrc (SDM Vol2B): rows start_row..rows-1, colsb bytes each;
+ * start_row := 0. Each row is translated for writing (both pages when it crosses one)
+ * before any of its bytes is stored; a fault leaves start_row = that row.
+ */
+void helper_amx_tilestore(CPUX86State *env, target_ulong base, target_ulong stride,
+                          target_ulong seg, uint32_t info)
+{
+    uintptr_t ra = GETPC();
+    unsigned t = info & 15, r, j, rows, nbytes;
+    bool a32 = (info >> 8) & 1;
+
+    amx_check_e3(env, t, ra);
+    rows = AMX_ROWS(env, t);
+    nbytes = AMX_COLSB(env, t);
+    for (r = AMX_START_ROW(env); r < rows; r++) {
+        target_ulong first = amx_row_byte(base, stride, seg, r, 0, a32);
+        target_ulong last = amx_row_byte(base, stride, seg, r, nbytes - 1, a32);
+
+        AMX_START_ROW(env) = r;
+        if (last >= first) {
+            amx_probe_write(env, first, nbytes, ra);
+        } else {                    /* the 32-bit effective address wrapped in the row */
+            for (j = 0; j < nbytes; j++) {
+                amx_probe_write(env, amx_row_byte(base, stride, seg, r, j, a32), 1, ra);
+            }
+        }
+        for (j = 0; j < nbytes; j++) {
+            cpu_stb_data_ra(env, amx_row_byte(base, stride, seg, r, j, a32),
+                            AMX_ROW(env, t, r)[j], ra);
+        }
+    }
+    AMX_START_ROW(env) = 0;
+}
+
+/* TILEZERO tdest (AMX-E5): every row and byte of the palette's tile := 0; start_row := 0 */
+void helper_amx_tilezero(CPUX86State *env, uint32_t t)
+{
+    uintptr_t ra = GETPC();
+
+    amx_check_tiledata(env, ra);
+    if (!amx_tile_valid(env, t)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    memset(AMX_TILE(env, t), 0, AMX_P1_BYTES_PER_ROW * AMX_P1_MAX_ROWS);
+    AMX_START_ROW(env) = 0;
+}
+#endif /* __Use_Original_Qemu (U176) */
 
 
 

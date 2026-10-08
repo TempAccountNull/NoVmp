@@ -2683,6 +2683,11 @@
 #define helper_amx_sttilecfg helper_amx_sttilecfg_x86_64
 #define helper_amx_tilerelease helper_amx_tilerelease_x86_64
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+#define helper_amx_tileload helper_amx_tileload_x86_64
+#define helper_amx_tilestore helper_amx_tilestore_x86_64
+#define helper_amx_tilezero helper_amx_tilezero_x86_64
+#endif /* __Use_Original_Qemu (U176) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 #define helper_incssp helper_incssp_x86_64
 #define helper_saveprevssp helper_saveprevssp_x86_64

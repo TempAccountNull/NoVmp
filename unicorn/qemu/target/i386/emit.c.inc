@@ -3329,6 +3329,75 @@ static void gen_TILERELEASE(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
 }
 #endif /* __Use_Original_Qemu (U175) */
 
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+/*
+ * TILELOADD / TILELOADDT1 / TILESTORED tmm, sibmem: "required to use SIB addressing"
+ * (ModRM.r/m = 100b, else #UD). The helper gets membegin = base + displacement (no index),
+ * stride = index << scale (0 when the SIB has no index register), the segment base (an
+ * FS/GS/... override, 0 otherwise - as gen_lea_v_seg in 64-bit mode) and 32-bit address
+ * size (67H).
+ */
+static void gen_amx_tile_mem(DisasContext *s, X86DecodedInsn *decode, bool store)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    AddressParts a = decode->mem;
+    TCGv stride, base, seg;
+    uint32_t info = ((s->modrm >> 3) & 7) | REX_R(s) | (s->aflag == MO_32 ? 0x100 : 0);
+
+    if ((s->modrm & 7) != 4) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    stride = tcg_temp_new(tcg_ctx);
+    if (a.index >= 0) {
+        tcg_gen_shli_tl(tcg_ctx, stride, cpu_regs[a.index], a.scale);
+    } else {
+        tcg_gen_movi_tl(tcg_ctx, stride, 0);
+    }
+    a.index = -1;
+    base = gen_lea_modrm_1(s, a, false);
+    seg = s->override >= 0 ? cpu_seg_base[s->override] : tcg_constant_tl(tcg_ctx, 0);
+    if (store) {
+        gen_helper_amx_tilestore(tcg_ctx, cpu_env, base, stride, seg,
+                                 tcg_constant_i32(tcg_ctx, info));
+    } else {
+        gen_helper_amx_tileload(tcg_ctx, cpu_env, base, stride, seg,
+                                tcg_constant_i32(tcg_ctx, info));
+    }
+    tcg_temp_free(tcg_ctx, stride);
+}
+
+/* TILELOADD tmm, sibmem: VEX.128.F2.0F38.W0 4B !(11):rrr:100 */
+static void gen_TILELOADD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tile_mem(s, decode, false);
+}
+
+/* TILELOADDT1 tmm, sibmem: VEX.128.66.0F38.W0 4B !(11):rrr:100 (cache hint only) */
+static void gen_TILELOADDT1(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tile_mem(s, decode, false);
+}
+
+/* TILESTORED sibmem, tmm: VEX.128.F3.0F38.W0 4B !(11):rrr:100 */
+static void gen_TILESTORED(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tile_mem(s, decode, true);
+}
+
+/* TILEZERO tmm: VEX.128.F2.0F38.W0 49 11:rrr:000 */
+static void gen_TILEZERO(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (s->modrm & 7) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    gen_helper_amx_tilezero(tcg_ctx, cpu_env,
+                            tcg_constant_i32(tcg_ctx, ((s->modrm >> 3) & 7) | REX_R(s)));
+}
+#endif /* __Use_Original_Qemu (U176) */
 
 
 

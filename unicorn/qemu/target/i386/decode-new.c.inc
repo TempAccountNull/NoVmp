@@ -411,7 +411,17 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
     };
     static const X86OpEntry amx_49_reg[4] = {
         [0] = X86_OP_ENTRY0(TILERELEASE, vex22 cpuid(AMX_TILE) p_00),
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+        [3] = X86_OP_ENTRY0(TILEZERO,    vex22 cpuid(AMX_TILE) p_f2),
+#endif /* __Use_Original_Qemu (U176) */
     };
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+    static const X86OpEntry amx_4b_mem[4] = {
+        [1] = X86_OP_ENTRYr(TILELOADDT1, M,None, vex22 cpuid(AMX_TILE) p_66),
+        [2] = X86_OP_ENTRYr(TILESTORED,  M,None, vex22 cpuid(AMX_TILE) p_f3),
+        [3] = X86_OP_ENTRYr(TILELOADD,   M,None, vex22 cpuid(AMX_TILE) p_f2),
+    };
+#endif /* __Use_Original_Qemu (U176) */
     int mod = get_modrm(s, env) >> 6;
 
     memset(entry, 0, sizeof(*entry));
@@ -422,6 +432,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
     case 0x49:
         *entry = *decode_by_prefix(s, mod == 3 ? amx_49_reg : amx_49_mem);
         break;
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+    case 0x4b:
+        if (mod != 3) {
+            *entry = *decode_by_prefix(s, amx_4b_mem);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U176) */
     default:
         break;
     }
@@ -592,6 +609,9 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     /* Intel AMX (VEX only, decode_0F38_AMX) */
     [0x49] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+    [0x4b] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U176) */
 
     [0x90] = X86_OP_ENTRY3(VPGATHERD, V,x,  H,x,  M,d,  vex12 cpuid(AVX2) p_66), /* vpgatherdd/q */
     [0x91] = X86_OP_ENTRY3(VPGATHERQ, V,x,  H,x,  M,q,  vex12 cpuid(AVX2) p_66), /* vpgatherqd/q */

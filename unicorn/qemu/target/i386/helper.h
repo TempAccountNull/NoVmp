@@ -109,6 +109,11 @@ DEF_HELPER_2(amx_ldtilecfg, void, env, tl)
 DEF_HELPER_2(amx_sttilecfg, void, env, tl)
 DEF_HELPER_1(amx_tilerelease, void, env)
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U176) */
+DEF_HELPER_5(amx_tileload, void, env, tl, tl, tl, i32)
+DEF_HELPER_5(amx_tilestore, void, env, tl, tl, tl, i32)
+DEF_HELPER_2(amx_tilezero, void, env, i32)
+#endif /* __Use_Original_Qemu (U176) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 DEF_HELPER_3(incssp, void, env, tl, i32)
 DEF_HELPER_1(saveprevssp, void, env)
