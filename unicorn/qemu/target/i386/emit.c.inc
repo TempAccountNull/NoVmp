@@ -2344,6 +2344,27 @@ static void gen_EVEX_VPSRA_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_evex_pshift(s, decode, 2);
 }
 #endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+
+/* NoVmp (ledger U235): VPROLVD/Q, VPRORVD/Q */
+static void gen_EVEX_VPROLV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_prolv(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, (s->evex_esz << 4) |
+                                                    (evex_nelem(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPRORV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_prolv(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, 1 | (s->evex_esz << 4) |
+                                                    (evex_nelem(s, decode) << 8)));
+}
+#endif /* __Use_Original_Qemu (U235) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

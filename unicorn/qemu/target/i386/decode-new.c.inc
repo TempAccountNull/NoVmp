@@ -2342,6 +2342,13 @@ static void decode_EVEX_0F38_PMOV(DisasContext *s, CPUX86State *env, X86OpEntry 
         X86_OP_ENTRY3(EVEX_VPSLLVW, V,x, H,x, W,x, EV_BW(W1, 16) p_66),
     };
 #endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+    /* 66 0F38 14 / 15: VPRORVD/Q / VPROLVD/Q, AVX512F, Full, {1toN}, E4 (U235) */
+    static const X86OpEntry vprolv[2] = {
+        X86_OP_ENTRY3(EVEX_VPRORV, V,x, H,x, W,x, EV_INT(WSEL)),
+        X86_OP_ENTRY3(EVEX_VPROLV, V,x, H,x, W,x, EV_INT(WSEL)),
+    };
+#endif /* __Use_Original_Qemu (U235) */
     int lo = *b & 15;
 
     memset(entry, 0, sizeof(*entry));
@@ -2358,6 +2365,11 @@ static void decode_EVEX_0F38_PMOV(DisasContext *s, CPUX86State *env, X86OpEntry 
         *entry = vpshiftvw[*b - 0x11];
     }
 #endif /* __Use_Original_Qemu (U265) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+    else if ((s->prefix & PREFIX_DATA) && (*b == 0x14 || *b == 0x15)) {
+        *entry = vprolv[*b - 0x14];
+    }
+#endif /* __Use_Original_Qemu (U235) */
 }
 #undef EV_PMX
 #undef EV_PMN
@@ -3654,6 +3666,13 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U231) */
     [0x13] = X86_OP_GROUP0(EVEX_0F38_13),
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+    /*
+     * NoVmp (ledger U235): VPRORVD/Q (14), VPROLVD/Q (15): Full, {k1}{z}, {1toN}; E4. The
+     * opcode bytes are shared with F3 VPMOVUSQW/VPMOVUSQD (U212): the 66 forms are an
+     * overlay in decode_EVEX_0F38_PMOV, [0x14]/[0x15] stay EVEX_0F38_PMOV.
+     */
+#endif /* __Use_Original_Qemu (U235) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

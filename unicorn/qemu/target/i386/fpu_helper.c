@@ -7881,3 +7881,30 @@ void helper_evex_pshift(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *c, uint3
     }
 }
 #endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U235) */
+
+/*
+ * NoVmp (ledger U235): VPROLVD/Q, VPRORVD/Q (SDM Vol2C PROLD/PROLVD/PROLQ/PROLVQ, PRORD/
+ * PRORVD/PRORQ/PRORVQ): each element rotated by its own count modulo the width.
+ * desc: bit 0 right, bits 7:4 element size, 15:8 count of elements.
+ */
+void helper_evex_prolv(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int right = desc & 1, esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, bits = 8 << esz, i;
+    uint64_t m = bits == 64 ? ~0ull : (1ull << bits) - 1;
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        uint64_t x = evex_get_elem(a, esz, i);
+        int c = (int)(evex_get_elem(b, esz, i) & (bits - 1));
+
+        if (right && c) {
+            c = bits - c;
+        }
+        evex_set_elem(&r, esz, i, c ? ((x << c) | (x >> (bits - c))) & m : x);
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U235) */
