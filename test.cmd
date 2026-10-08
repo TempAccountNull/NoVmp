@@ -97,6 +97,9 @@ rem AVX512DQ forms that need the integrated engine (ledger U290-U296 with U192, 
 rem masked VRANGESS/SD, VREDUCESS/SD with DEST != SRC1, DQ insert/extract/broadcast, QQ conversions
 rem vs the SDM model ref_evex_m3_dq.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq_post.txt" --avx512 --xcr0 0xE7 --expect-only --quirks 0
+rem AVX512-FP16 (ledger U330-U339): EVEX maps 5/6 and the FP16 forms of map 3 vs the independent
+rem SDM model ref_evex_fp16.py, Unicorn only with the AVX-512 opt-in (incl. UC_X86_AVX512_FP16).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_fp16.txt" --avx512 --xcr0 0xE7 --expect-only --quirks 0
 
 rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,

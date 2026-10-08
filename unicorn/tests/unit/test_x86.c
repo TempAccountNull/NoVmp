@@ -12121,6 +12121,123 @@ static void test_x86_fp16_optin(void)
     TEST_MSG("CPUID.7.0: EBX %08x EDX %08x", r[1], r[3]);
     OK(uc_close(c.uc));
 }
+static void fh_put(FhCtx *c, int n, uint16_t v)
+{
+    uint16_t z[32];
+    int i;
+    for (i = 0; i < 32; i++) {
+        z[i] = v;
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM0 + n, z));
+}
+
+static int fh_all(FhCtx *c, int n, uint16_t v)
+{
+    uint16_t z[32];
+    int i;
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM0 + n, z));
+    for (i = 0; i < 32; i++) {
+        if (z[i] != v) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* U333: map 5 decodes only with UC_X86_AVX512_FP16; VADDPH in 64- and 32-bit mode */
+static void test_x86_fp16_gating(void)
+{
+    /* VADDPH zmm1, zmm2, zmm3 */
+    static const char vaddph[] = "\x62\xf5\x6c\x48\x58\xcb";
+    FhCtx c;
+
+    fh_open(&c, UC_MODE_64, FH_ALL & ~UC_X86_AVX512_FP16);
+    TEST_CHECK(fh_run(&c, vaddph, 6) == 6);
+    OK(uc_close(c.uc));
+    fh_open(&c, UC_MODE_64, FH_ALL);
+    fh_put(&c, 2, 0x3c00);                              /* 1.0 */
+    fh_put(&c, 3, 0x4000);                              /* 2.0 */
+    TEST_CHECK(fh_run(&c, vaddph, 6) == -1);
+    TEST_CHECK(fh_all(&c, 1, 0x4200));                  /* 3.0 */
+    OK(uc_close(c.uc));
+    fh_open(&c, UC_MODE_32, FH_ALL);
+    fh_put(&c, 2, 0xbc00);                              /* -1.0 */
+    fh_put(&c, 3, 0x3c00);
+    fh_put(&c, 1, 0x1234);
+    TEST_CHECK(fh_run(&c, vaddph, 6) == -1);
+    TEST_CHECK(fh_all(&c, 1, 0x0000));                  /* +0.0 (RNE) */
+    OK(uc_close(c.uc));
+}
+
+/* U331/U333: VDIVPH by zero with MXCSR.ZM = 0: #XM, ZMM1 unchanged, ZE set */
+static void test_x86_fp16_xm(void)
+{
+    static const char vdivph[] = "\x62\xf5\x6c\x48\x5e\xcb";
+    uint32_t mxcsr = 0x1f80 & ~0x200;
+    FhCtx c;
+
+    fh_open(&c, UC_MODE_64, FH_ALL);
+    fh_put(&c, 1, 0x5555);
+    fh_put(&c, 2, 0x3c00);
+    fh_put(&c, 3, 0x0000);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(fh_run(&c, vdivph, 6) == 19);
+    TEST_CHECK(fh_all(&c, 1, 0x5555));
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK((mxcsr & 0x3f) == 0x04);
+    TEST_MSG("mxcsr %08x", mxcsr);
+    /* masked: +INF, ZE */
+    mxcsr = 0x1f80;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(fh_run(&c, vdivph, 6) == -1);
+    TEST_CHECK(fh_all(&c, 1, 0x7c00));
+    OK(uc_close(c.uc));
+}
+
+/* U338: VFMULCPH with the destination equal to a source is #UD; otherwise (1+2i)(3+4i) */
+static void test_x86_fp16_complex(void)
+{
+    /* VFMULCPH zmm1, zmm1, zmm2 (#UD) and VFMULCPH zmm1, zmm2, zmm3 */
+    static const char ud[] = "\x62\xf6\x76\x48\xd6\xca";
+    static const char ok[] = "\x62\xf6\x6e\x48\xd6\xcb";
+    uint16_t z[32];
+    FhCtx c;
+    int i, good = 1;
+
+    fh_open(&c, UC_MODE_64, FH_ALL);
+    TEST_CHECK(fh_run(&c, ud, 6) == 6);
+    for (i = 0; i < 32; i++) {
+        z[i] = (i & 1) ? 0x4000 : 0x3c00;               /* 1 + 2i */
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, z));
+    for (i = 0; i < 32; i++) {
+        z[i] = (i & 1) ? 0x4400 : 0x4200;               /* 3 + 4i */
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, z));
+    TEST_CHECK(fh_run(&c, ok, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (i = 0; i < 32; i++) {
+        good &= z[i] == ((i & 1) ? 0x4900 : 0xc500);    /* -5 + 10i */
+    }
+    TEST_CHECK(good);
+    OK(uc_close(c.uc));
+}
+
+/* U335: VCVTSH2SI rax, xmm1 (W1) and VCVTSI2SH xmm1, xmm2, rax round trip */
+static void test_x86_fp16_cvt_gpr(void)
+{
+    static const char sh2si[] = "\x62\xf5\xfe\x08\x2d\xc1";
+    uint64_t rax = 0;
+    FhCtx c;
+
+    fh_open(&c, UC_MODE_64, FH_ALL);
+    fh_put(&c, 1, 0xc580);                              /* -5.5 -> -6 (RNE) */
+    TEST_CHECK(fh_run(&c, sh2si, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_RAX, &rax));
+    TEST_CHECK(rax == (uint64_t)-6);
+    TEST_MSG("rax %llx", (unsigned long long)rax);
+    OK(uc_close(c.uc));
+}
 /* ===== end of NoVmp U330-U369 (AVX512-FP16) unit tests ===== */
 
 TEST_LIST = {
@@ -12316,4 +12433,8 @@ TEST_LIST = {
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
     {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
     {"test_x86_fp16_optin", test_x86_fp16_optin},
+    {"test_x86_fp16_gating", test_x86_fp16_gating},
+    {"test_x86_fp16_xm", test_x86_fp16_xm},
+    {"test_x86_fp16_complex", test_x86_fp16_complex},
+    {"test_x86_fp16_cvt_gpr", test_x86_fp16_cvt_gpr},
     {NULL, NULL}};
