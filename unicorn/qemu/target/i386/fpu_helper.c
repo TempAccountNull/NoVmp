@@ -7403,3 +7403,101 @@ uint64_t helper_evex_fpclass(CPUX86State *env, ZMMReg *s, uint32_t desc)
     return r;
 }
 #endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U293) */
+
+/*
+ * NoVmp (ledger U293): VRANGEPS/PD (U295: SS/SD), SDM Vol2C RangeSP/RangeDP: an SNaN
+ * operand (SRC1 first) returns that NaN quietened with IE; a denormal is a signed zero
+ * under DAZ, else DE unless the other operand is a QNaN; a QNaN SRC2 returns SRC1, a QNaN
+ * SRC1 returns SRC2; opposite-signed zeros give -0 (MIN, MIN_ABS) / +0 (MAX, MAX_ABS)
+ * (Table 5-22); equal magnitudes of opposite sign give the negative (MIN_ABS) / positive
+ * (MAX_ABS) one (Table 5-23); else imm8[1:0] 00 MIN, 01 MAX, 10 MIN_ABS, 11 MAX_ABS with
+ * "SRC1 <= SRC2 ? ..." as written; then imm8[3:2] sign: 00 SRC1's, 01 the compare
+ * result's, 10 cleared, 11 set. imm8[7:4] are not used. Flags go to sse_status.
+ */
+static uint64_t evex_range1(CPUX86State *env, uint64_t a, uint64_t b, bool dbl, int imm,
+                            bool daz)
+{
+    int fb = dbl ? 52 : 23, eb = dbl ? 11 : 8, op = imm & 3;
+    uint64_t sbit = 1ull << (fb + eb), mag = sbit - 1, qbit = 1ull << (fb - 1);
+    uint64_t emax = ((1ull << eb) - 1) << fb, fmask = (1ull << fb) - 1;
+    bool a_nan = (a & emax) == emax && (a & fmask), b_nan = (b & emax) == emax && (b & fmask);
+    bool a_q = a_nan && (a & qbit), b_q = b_nan && (b & qbit);
+    bool as = (a & sbit) != 0, bs = (b & sbit) != 0;
+    uint64_t t;
+
+    if (a_nan && !a_q) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return a | qbit;
+    }
+    if (b_nan && !b_q) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return b | qbit;
+    }
+    if (!(a & emax) && (a & fmask)) {
+        if (daz) {
+            a &= sbit;
+        } else if (!b_q) {
+            float_raise(float_flag_input_denormal_used, &env->sse_status);
+        }
+    }
+    if (!(b & emax) && (b & fmask)) {
+        if (daz) {
+            b &= sbit;
+        } else if (!a_q) {
+            float_raise(float_flag_input_denormal_used, &env->sse_status);
+        }
+    }
+    if (b_q) {
+        t = a;
+    } else if (a_q) {
+        t = b;
+    } else if (!(a & mag) && !(b & mag) && as != bs) {
+        t = (op & 1) ? 0 : sbit;                            /* Table 5-22 */
+    } else if ((a & mag) == (b & mag) && as != bs && op > 1) {
+        t = (op == 2) == as ? a : b;                        /* Table 5-23 */
+    } else if (op < 2) {
+        /* SRC1 <= SRC2 (no NaN; opposite-signed zeros handled above) */
+        bool le = as != bs ? as : as ? (a & mag) >= (b & mag) : (a & mag) <= (b & mag);
+
+        t = (op == 0) == le ? a : b;
+    } else {
+        bool le = (a & mag) <= (b & mag);
+
+        t = (op == 2) == le ? a : b;
+    }
+    switch ((imm >> 2) & 3) {
+    case 0:
+        return (t & mag) | (as ? sbit : 0);
+    case 1:
+        return t;
+    case 2:
+        return t & mag;
+    default:
+        return t | sbit;
+    }
+}
+
+/* d: result (scratch), a/b: SRC1/SRC2 (masking copies), u: the SRC1 register (scalar) */
+void helper_evex_range(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg *u,
+                       uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), imm = EVEX_DQ_IMM(desc), i;
+    bool daz = (env->mxcsr & SSE_DAZ) != 0;
+    ZMMReg r;
+
+    if (desc & EVEX_DQ_SCALAR) {
+        r = *u;                                 /* DEST[127:esz] := SRC1[127:esz] (U295) */
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, esz, i, evex_range1(env, evex_get_elem(a, esz, i),
+                                              evex_get_elem(b, esz, i), esz == MO_64, imm, daz));
+    }
+    if (desc & EVEX_DQ_SCALAR) {
+        memcpy(d, &r, 16);
+    } else {
+        memcpy(d, &r, (size_t)n << esz);
+    }
+}
+#endif /* __Use_Original_Qemu (U293) */

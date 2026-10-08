@@ -2858,6 +2858,26 @@ static void decode_EVEX_0F3A_67(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = opcodes_EVEX_0F3A_67[s->vex_w];
 }
 #endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U295) */
+/*
+ * NoVmp (ledger U295): 66 0F3A 51 VRANGESS (W0) / VRANGESD (W1) xmm1 {k1}{z}, xmm2,
+ * xmm3/m32 (m64){sae}, imm8 and (U296) 66 0F3A 57 VREDUCESS / VREDUCESD: LIG, Tuple1
+ * Scalar, {k1}{z}, AVX512DQ; E3. DEST[127:esz] := SRC1[127:esz].
+ */
+#define EV_DQS(op, sz, w) X86_OP_ENTRY4(op, V,x, H,x, W,sz, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG) \
+                          ev_tt(T1S) ev_mask(MZ) ev_rc(SAE) ev_w(w) ev_es(W) ev_fp p_66)
+
+static void decode_EVEX_0F3A_51(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F3A_51[2] = {
+        EV_DQS(EVEX_VRANGE, ss, W0), EV_DQS(EVEX_VRANGE, sd, W1),
+    };
+    *entry = opcodes_EVEX_0F3A_51[s->vex_w];
+}
+#endif /* __Use_Original_Qemu (U295) */
+#if __Use_Original_Qemu != 1 /* ours (U295) */
+#undef EV_DQS
+#endif /* __Use_Original_Qemu (U295) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -3361,6 +3381,17 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
                            ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
     [0x67] = X86_OP_GROUP0(EVEX_0F3A_67),
 #endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U293) */
+    /*
+     * NoVmp (ledger U293): VRANGEPS/PD (66 50 W0/W1) x1 {k1}{z}, x2, x3/m/{1toN}{sae}, imm8:
+     * Full tuple, AVX512DQ; E2 (IE, DE). 51: VRANGESS/SD (U295).
+     */
+    [0x50] = X86_OP_ENTRY4(EVEX_VRANGE, V,x, H,x, W,x, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_rc(SAE) ev_w(WSEL) ev_es(W) ev_fp p_66),
+#endif /* __Use_Original_Qemu (U293) */
+#if __Use_Original_Qemu != 1 /* ours (U295) */
+    [0x51] = X86_OP_GROUP0(EVEX_0F3A_51),
+#endif /* __Use_Original_Qemu (U295) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT
