@@ -433,6 +433,13 @@ DEF_HELPER_3(vsha512msg2, void, Reg, Reg, Reg)
 DEF_HELPER_3(vsha512rnds2, void, Reg, Reg, Reg)
 #endif
 #endif /* __Use_Original_Qemu (U82) */
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+#if SHIFT == 1
+DEF_HELPER_3(vsm3msg1, void, Reg, Reg, Reg)
+DEF_HELPER_3(vsm3msg2, void, Reg, Reg, Reg)
+DEF_HELPER_4(vsm3rnds2, void, Reg, Reg, Reg, i32)
+#endif
+#endif /* __Use_Original_Qemu (U83) */
 
 #undef SHIFT
 #undef Reg

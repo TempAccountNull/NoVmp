@@ -2981,6 +2981,95 @@ void helper_vsha512rnds2(Reg *d, Reg *a, Reg *b)
 #undef SHA512_CH
 #endif
 #endif /* __Use_Original_Qemu (U82) */
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+#if SHIFT == 1
+/*
+ * NoVmp (ledger U83): SM3 (SDM Vol2 VSM3MSG1 / VSM3MSG2 / VSM3RNDS2, VEX.128
+ * only), transcribed from the SDM Operation sections. d is SRCDEST; every
+ * input is read before d is written (d may alias a and b). ROL32 counts are
+ * taken modulo 32 as in the SDM (rol32() needs a count below 32).
+ */
+static inline uint32_t sm3_p0(uint32_t x)
+{
+    return x ^ rol32(x, 9) ^ rol32(x, 17);
+}
+
+static inline uint32_t sm3_p1(uint32_t x)
+{
+    return x ^ rol32(x, 15) ^ rol32(x, 23);
+}
+
+void helper_vsm3msg1(Reg *d, Reg *a, Reg *b)
+{
+    uint32_t w0 = b->L(0), w1 = b->L(1), w2 = b->L(2), w3 = b->L(3);
+    uint32_t w7 = d->L(0), w8 = d->L(1), w9 = d->L(2), w10 = d->L(3);
+    uint32_t w13 = a->L(0), w14 = a->L(1), w15 = a->L(2);
+    uint32_t t0 = w7 ^ w0 ^ rol32(w13, 15);
+    uint32_t t1 = w8 ^ w1 ^ rol32(w14, 15);
+    uint32_t t2 = w9 ^ w2 ^ rol32(w15, 15);
+    uint32_t t3 = w10 ^ w3;
+
+    d->L(0) = sm3_p1(t0);
+    d->L(1) = sm3_p1(t1);
+    d->L(2) = sm3_p1(t2);
+    d->L(3) = sm3_p1(t3);
+}
+
+void helper_vsm3msg2(Reg *d, Reg *a, Reg *b)
+{
+    uint32_t wt0 = d->L(0), wt1 = d->L(1), wt2 = d->L(2), wt3 = d->L(3);
+    uint32_t w3 = a->L(0), w4 = a->L(1), w5 = a->L(2), w6 = a->L(3);
+    uint32_t w10 = b->L(0), w11 = b->L(1), w12 = b->L(2), w13 = b->L(3);
+    uint32_t w16 = rol32(w3, 7) ^ w10 ^ wt0;
+    uint32_t w17 = rol32(w4, 7) ^ w11 ^ wt1;
+    uint32_t w18 = rol32(w5, 7) ^ w12 ^ wt2;
+    uint32_t w19 = rol32(w6, 7) ^ w13 ^ wt3;
+
+    w19 ^= rol32(w16, 6) ^ rol32(w16, 15) ^ rol32(w16, 30);
+    d->L(0) = w16;
+    d->L(1) = w17;
+    d->L(2) = w18;
+    d->L(3) = w19;
+}
+
+void helper_vsm3rnds2(Reg *d, Reg *a, Reg *b, uint32_t imm8)
+{
+    uint32_t A = a->L(3), B = a->L(2), C = d->L(3), D = d->L(2);
+    uint32_t E = a->L(1), F = a->L(0), G = d->L(1), H = d->L(0);
+    uint32_t w[6] = { b->L(0), b->L(1), 0, 0, b->L(2), b->L(3) };
+    uint32_t round = imm8 & 0x3e;   /* even rounds 0..62 */
+    uint32_t k = rol32(round < 16 ? 0x79cc4519 : 0x7a879d8a, round % 32);
+    int i;
+
+    C = rol32(C, 9);
+    D = rol32(D, 9);
+    G = rol32(G, 19);
+    H = rol32(H, 19);
+    for (i = 0; i < 2; i++) {
+        uint32_t s1 = rol32(rol32(A, 12) + E + k, 7);
+        uint32_t s2 = s1 ^ rol32(A, 12);
+        uint32_t ff = round < 16 ? A ^ B ^ C : (A & B) | (A & C) | (B & C);
+        uint32_t gg = round < 16 ? E ^ F ^ G : (E & F) | (~E & G);
+        uint32_t t1 = ff + D + s2 + (w[i] ^ w[i + 4]);
+        uint32_t t2 = gg + H + s1 + w[i];
+
+        D = C;
+        C = rol32(B, 9);
+        B = A;
+        A = t1;
+        H = G;
+        G = rol32(F, 19);
+        F = E;
+        E = sm3_p0(t2);
+        k = rol32(k, 1);
+    }
+    d->L(3) = A;
+    d->L(2) = B;
+    d->L(1) = E;
+    d->L(0) = F;
+}
+#endif
+#endif /* __Use_Original_Qemu (U83) */
 
 #undef SSE_HELPER_S
 

@@ -2170,6 +2170,28 @@ static void gen_VSHA512RNDS2(DisasContext *s, CPUX86State *env, X86DecodedInsn *
 }
 #endif /* __Use_Original_Qemu (U82) */
 
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+/* SM3 (VEX.128 only): op0 SRCDEST, op1 VEX.vvvv, op2 xmm/m128 */
+static void gen_VSM3MSG1(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    gen_helper_vsm3msg1(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_VSM3MSG2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    gen_helper_vsm3msg2(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_VSM3RNDS2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 imm = tcg_constant8u_i32(tcg_ctx, decode->immediate);
+    gen_helper_vsm3rnds2(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2, imm);
+}
+#endif /* __Use_Original_Qemu (U83) */
+
 static void gen_SHLX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

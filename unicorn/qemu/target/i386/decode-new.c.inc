@@ -658,6 +658,20 @@ static void decode_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
         *entry = vsha512[*b - 0xcb];
     }
 #endif /* __Use_Original_Qemu (U82) */
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+    /*
+     * NoVmp (ledger U83): 0F38 DA is selected by the VEX pp field (SDM Vol2):
+     * NP VSM3MSG1, 66 VSM3MSG2 (VEX.128.W0, SM3). VEX only (vex6: the legacy
+     * encodings are #UD); SM3 is VEX.128 only (dq: VEX.L1 is #UD).
+     */
+    if (*b == 0xda) {
+        static const X86OpEntry opcodes_0F38_DA[4] = {
+            [0] = X86_OP_ENTRY3(VSM3MSG1, V,dq, H,dq, W,dq, vex6 chk(W0) cpuid(SM3) p_00),
+            [1] = X86_OP_ENTRY3(VSM3MSG2, V,dq, H,dq, W,dq, vex6 chk(W0) cpuid(SM3) p_66),
+        };
+        *entry = *decode_by_prefix(s, opcodes_0F38_DA);
+    }
+#endif /* __Use_Original_Qemu (U83) */
 }
 
 static void decode_VINSERTPS(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -743,6 +757,10 @@ static const X86OpEntry opcodes_0F3A[256] = {
 
     [0xcc] = X86_OP_ENTRY3(SHA1RNDS4,  V,dq, W,dq, I,b,  sse4_novex cpuid(SHA_NI) p_00),
 
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+    /* VSM3RNDS2 xmm1, xmm2, xmm3/m128, imm8: VEX.128.66.0F3A.W0 DE /r ib (U83) */
+    [0xde] = X86_OP_ENTRY4(VSM3RNDS2,  V,dq, H,dq, W,dq, vex6 chk(W0) cpuid(SM3) p_66),
+#endif /* __Use_Original_Qemu (U83) */
     [0xdf] = X86_OP_ENTRY3(VAESKEYGEN, V,dq, W,dq, I,b,  vex4 cpuid(AES) p_66),
 
     [0xF0] = X86_OP_ENTRY3(RORX, G,y, E,y, I,b, vex13 cpuid(BMI2) p_f2),
@@ -1675,6 +1693,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_SHA512:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SHA512);
 #endif /* __Use_Original_Qemu (U82) */
+#if __Use_Original_Qemu != 1 /* ours (U83) */
+    case X86_FEAT_SM3:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM3);
+#endif /* __Use_Original_Qemu (U83) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
