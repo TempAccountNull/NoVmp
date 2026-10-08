@@ -608,6 +608,14 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x78] = X86_OP_ENTRY3(VPBROADCASTB,   V,x,  None,None, W,b,  vex6 chk(W0) cpuid(AVX2) p_66),
     [0x79] = X86_OP_ENTRY3(VPBROADCASTW,   V,x,  None,None, W,w,  vex6 chk(W0) cpuid(AVX2) p_66),
 
+#if __Use_Original_Qemu != 1 /* ours (U102) */
+    /*
+     * MOVRS r8, m8 / MOVRS rv, mv: NOREP 0F 38 8A/8B (ISE 319433-062), a load
+     * with a read-shared hint. 64-bit mode only; F2/F3/LOCK/VEX/mod=3 #UD.
+     */
+    [0x8a] = X86_OP_ENTRY3(MOVRS,        G,b,  None,None, M,b, cpuid(MOVRS) o64 p_00_66),
+    [0x8b] = X86_OP_ENTRY3(MOVRS,        G,v,  None,None, M,v, cpuid(MOVRS) o64 p_00_66),
+#endif /* __Use_Original_Qemu (U102) */
     [0x8c] = X86_OP_ENTRY3(VPMASKMOV,    V,x,  H,x, WM,x, vex6 cpuid(AVX2) p_66),
     [0x8e] = X86_OP_ENTRY3(VPMASKMOV_st, M,x,  V,x, H,x,  vex6 cpuid(AVX2) p_66),
 
@@ -1933,6 +1941,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_RAO_INT:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_RAO_INT);
 #endif /* __Use_Original_Qemu (U101) */
+#if __Use_Original_Qemu != 1 /* ours (U102) */
+    case X86_FEAT_MOVRS:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_MOVRS);
+#endif /* __Use_Original_Qemu (U102) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

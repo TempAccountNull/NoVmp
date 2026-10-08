@@ -6263,6 +6263,55 @@ static void test_x86_rao_int(void)
     OK(uc_close(uc));
 }
 
+/* U102: MOVRS r, m (64-bit only, NOREP) and PREFETCHRST2 m8 */
+static void test_x86_movrs_prefetchrst2(void)
+{
+    const char code[] = "\x0f\x38\x8b\x06"             /* movrs eax, [rsi] */
+                        "\x48\x0f\x38\x8b\x1e"         /* movrs rbx, [rsi] */
+                        "\x66\x0f\x38\x8b\x0e"         /* movrs cx, [rsi] */
+                        "\x0f\x38\x8a\x16"             /* movrs dl, [rsi] */
+                        "\x0f\x38\x8a\x26"             /* movrs ah, [rsi] */
+                        "\x44\x0f\x38\x8a\x06"         /* movrs r8b, [rsi] */
+                        "\x4c\x0f\x38\x8b\x3e"         /* movrs r15, [rsi] */
+                        "\x0f\x18\x26";                /* prefetchrst2 [rsi] */
+    const char *bad[] = {"\xf3\x0f\x38\x8b\x06", "\xf2\x0f\x38\x8a\x06", "\xf0\x0f\x38\x8b\x06",
+                         "\x0f\x38\x8b\xc0\x90", "\xf0\x0f\x18\x26\x90"};
+    uint64_t m = 0x8877665544332211ULL;
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    int i;
+
+    OK(uc_mem_write(uc, NV_HANDLE, &m, 8));
+    nv_setreg(uc, UC_X86_REG_RAX, ~0ULL);
+    nv_setreg(uc, UC_X86_REG_RCX, ~0ULL);
+    nv_setreg(uc, UC_X86_REG_RDX, ~0ULL);
+    nv_setreg(uc, UC_X86_REG_R8, ~0ULL);
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(intr.count == 0);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 0x44331111ULL);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == m);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RCX) == 0xffffffffffff2211ULL);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 0xffffffffffffff11ULL);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0xffffffffffffff11ULL);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R15) == m);
+    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
+    for (i = 0; i < 5; i++) {
+        OK(uc_mem_write(uc, code_start, bad[i], 5));
+        uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+        TEST_MSG("case %d", i);
+    }
+    OK(uc_close(uc));
+
+    /* not encodable outside 64-bit mode */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, "\x0f\x38\x8b\x06", 4));
+    uc_assert_err(UC_ERR_INSN_INVALID, uc_emu_start(uc, code_start, code_start + 4, 0, 0));
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -6394,4 +6443,5 @@ TEST_LIST = {
     {"test_x86_keylocker_faults", test_x86_keylocker_faults},
     {"test_x86_keylocker_cpl3", test_x86_keylocker_cpl3},
     {"test_x86_rao_int", test_x86_rao_int},
+    {"test_x86_movrs_prefetchrst2", test_x86_movrs_prefetchrst2},
     {NULL, NULL}};

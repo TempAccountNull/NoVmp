@@ -1679,6 +1679,14 @@ static void gen_AXOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 }
 
 #endif /* __Use_Original_Qemu (U101) */
+#if __Use_Original_Qemu != 1 /* ours (U102) */
+/* NoVmp (ledger U102): MOVRS r, m: DEST := SRC (the read-shared hint has no architectural effect) */
+static void gen_MOVRS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_op_ld_v(s, decode->op[0].ot, s->T0, s->A0);
+}
+
+#endif /* __Use_Original_Qemu (U102) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

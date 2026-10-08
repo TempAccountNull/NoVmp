@@ -922,6 +922,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* RAO-INT: AADD, AAND, AOR, AXOR */
 #define CPUID_7_1_EAX_RAO_INT           (1U << 3)
 #endif /* __Use_Original_Qemu (U101) */
+#if __Use_Original_Qemu != 1 /* ours (U102) */
+/* MOVRS and PREFETCHRST2 (read-shared hints) */
+#define CPUID_7_1_EAX_MOVRS             (1U << 31)
+#endif /* __Use_Original_Qemu (U102) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
