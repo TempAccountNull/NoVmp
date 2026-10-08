@@ -5250,6 +5250,20 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512F;
     }
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U128) */
+    /*
+     * NoVmp (ledger U128): UC_X86_AVX512_DQ / UC_X86_AVX512_BW in the UC_CTL_X86_AVX512
+     * mask add CPUID.(EAX=7,ECX=0):EBX.AVX512DQ[17] / AVX512BW[30] (the opmask B and
+     * D/Q forms, SDM Vol2A KADD..KXOR). The translator's copy is narrowed by a strict
+     * CPUID profile as for every other leaf-7 bit (U68).
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_DQ) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512DQ;
+    }
+    if (uc->x86_avx512 & UC_X86_AVX512_BW) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512BW;
+    }
+#endif /* __Use_Original_Qemu (U128) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

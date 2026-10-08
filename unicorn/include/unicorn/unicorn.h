@@ -681,8 +681,19 @@ typedef enum uc_control_type {
     // them and the XSAVE family saves/restores them; reset XCR0 enables them. Default 0
     // (UC_CPU_X86_MAX and the i5-13600K profile have no AVX-512). Only before the engine
     // is initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    // NoVmp U128: the value is a mask of UC_X86_AVX512_* below; UC_X86_AVX512_DQ and
+    // UC_X86_AVX512_BW add CPUID.(EAX=7,ECX=0):EBX.AVX512DQ / AVX512BW (needed by the
+    // B/D/Q opmask instructions); any non-zero value implies UC_X86_AVX512_F (the SDM
+    // defines DQ/BW as extensions of AVX512F); other bits -> UC_ERR_ARG. Reading returns
+    // the mask (1 stays "AVX512F only"). A strict CPUID profile (UC_CTL_X86_CPUID_STRICT)
+    // that hides a bit still #UDs that bit's instructions.
     UC_CTL_X86_AVX512,
 } uc_control_type;
+
+// UC_CTL_X86_AVX512 values (NoVmp U128)
+#define UC_X86_AVX512_F 1  // AVX512F (state components 5-7, opmask W forms)
+#define UC_X86_AVX512_DQ 2 // + AVX512DQ (opmask B forms, KADDW, KTESTW)
+#define UC_X86_AVX512_BW 4 // + AVX512BW (opmask D/Q forms, KUNPCKWD/DQ)
 
 /*
 
