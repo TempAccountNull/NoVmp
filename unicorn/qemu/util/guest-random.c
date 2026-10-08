@@ -18,6 +18,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#if __Use_Original_Qemu != 1 /* ours (U65) */
+#ifdef _MSC_VER
+#include <windows.h>
+/* RtlGenRandom (advapi32 SystemFunction036): the OS cryptographic generator */
+BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
+#define RtlGenRandom SystemFunction036
+#pragma comment(lib, "advapi32.lib")
+#endif
+#endif /* __Use_Original_Qemu (U65) */
 
 #ifndef _MSC_VER
 static __thread GRand *thread_rand;
@@ -47,6 +56,7 @@ static int glib_random_bytes(void *buf, size_t len)
         __builtin_memcpy(buf + i, &x, len - i);
     }
 #else
+#if __Use_Original_Qemu == 1 /* original QEMU (U65) */
     uint32_t x;
     size_t i;
 
@@ -67,6 +77,19 @@ static int glib_random_bytes(void *buf, size_t len)
         x = rand();
         memcpy(((uint8_t *)buf) + i, &x, len - i);
     }
+#else /* ours (U65) */
+    /*
+     * NoVmp (ledger U65): RDRAND/RDSEED deliver full-width random values like
+     * the hardware DRNG. MSVC's rand() gives 15 bits per call from srand(0),
+     * so every run saw the same tiny values (bits 31:15 always 0); take the
+     * bytes from the OS cryptographic generator instead.
+     */
+    (void)initialized;
+    (void)deterministic;
+    if (!RtlGenRandom(buf, (ULONG)len)) {
+        return -1;                      /* RDRAND: CF = 0, destination 0 */
+    }
+#endif /* __Use_Original_Qemu (U65) */
 #endif
     return 0;
 }

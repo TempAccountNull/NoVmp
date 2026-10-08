@@ -94,3 +94,6 @@ fld1; fnsave [rsi]; .byte 0x48, 0xdd, 0x26; fstp qword ptr [rsi+0x300]
 fld1; fdiv dword ptr [rsi+0x100]; fxsave [rsi] | fcw=0x037B
 fxrstor [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
 .byte 0x48, 0x0f, 0xae, 0x0e; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
+# --- RDRAND/RDSEED: upper bits populated, CF=1 (values differ by nature; check width)
+rdrand rax; mov rbx, rax; shr rbx, 47
+rdrand eax; mov ebx, eax; shr ebx, 15
