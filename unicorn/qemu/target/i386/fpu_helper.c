@@ -4116,6 +4116,7 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
     }
     if (data32) {
         /* 32 bit */
+#if __Use_Original_Qemu == 1 /* original QEMU (U62) */
         cpu_stl_data_ra(env, ptr, env->fpuc, retaddr);
         cpu_stl_data_ra(env, ptr + 4, fpus, retaddr);
         cpu_stl_data_ra(env, ptr + 8, fptag, retaddr);
@@ -4123,6 +4124,19 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
         cpu_stl_data_ra(env, ptr + 16, env->fpcs, retaddr); /* fpcs */
         cpu_stl_data_ra(env, ptr + 20, env->fpdp, retaddr); /* fpoo */
         cpu_stl_data_ra(env, ptr + 24, env->fpds, retaddr); /* fpos */
+#else /* ours (U62) */
+        /*
+         * NoVmp (ledger U62): the reserved upper words of the FCW, FSW, FTW and
+         * FDS dwords read as FFFFh (i5-13600K, emu-alltest --cases hwcheck_gate1)
+         */
+        cpu_stl_data_ra(env, ptr, 0xffff0000u | env->fpuc, retaddr);
+        cpu_stl_data_ra(env, ptr + 4, 0xffff0000u | fpus, retaddr);
+        cpu_stl_data_ra(env, ptr + 8, 0xffff0000u | fptag, retaddr);
+        cpu_stl_data_ra(env, ptr + 12, env->fpip, retaddr); /* fpip */
+        cpu_stl_data_ra(env, ptr + 16, env->fpcs, retaddr); /* fpcs */
+        cpu_stl_data_ra(env, ptr + 20, env->fpdp, retaddr); /* fpoo */
+        cpu_stl_data_ra(env, ptr + 24, 0xffff0000u | env->fpds, retaddr); /* fpos */
+#endif /* __Use_Original_Qemu (U62) */
     } else {
         /* 16 bit */
         cpu_stw_data_ra(env, ptr, env->fpuc, retaddr);
