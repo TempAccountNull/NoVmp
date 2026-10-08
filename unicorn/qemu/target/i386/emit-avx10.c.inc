@@ -173,3 +173,70 @@ AVX10_VCOMX_GEN(VUCOMXSS, AVX10_FMT_FP32, 0)
 AVX10_VCOMX_GEN(VUCOMXSD, AVX10_FMT_FP64, 0)
 AVX10_VCOMX_GEN(VUCOMXSH, AVX10_FMT_FP16, 0)
 #undef AVX10_VCOMX_GEN
+
+/* ---- saturating conversions (spec ch.12; U376) ---- */
+static void gen_avx10_cvt(DisasContext *s, X86DecodedInsn *decode, int key, int fmt, int dbytes)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = AVX10_DESC(key, fmt, evex_nelem(s, decode), dbytes);
+
+    gen_helper_avx10_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2, tcg_constant_i32(tcg_ctx, desc));
+}
+
+#define AVX10_CVT_GEN(name, key, fmt, dbytes)                                         \
+static void gen_##name(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)     \
+{                                                                                     \
+    gen_avx10_cvt(s, decode, key, fmt, dbytes);                                       \
+}
+AVX10_CVT_GEN(VCVTBF162IBS, AVX10_CVT_BF_S_R, AVX10_FMT_BF16, 2)
+AVX10_CVT_GEN(VCVTTBF162IBS, AVX10_CVT_BF_S_T, AVX10_FMT_BF16, 2)
+AVX10_CVT_GEN(VCVTBF162IUBS, AVX10_CVT_BF_U_R, AVX10_FMT_BF16, 2)
+AVX10_CVT_GEN(VCVTTBF162IUBS, AVX10_CVT_BF_U_T, AVX10_FMT_BF16, 2)
+AVX10_CVT_GEN(VCVTPH2IBS, AVX10_CVT_B_S_R, AVX10_FMT_FP16, 2)
+AVX10_CVT_GEN(VCVTTPH2IBS, AVX10_CVT_B_S_T16, AVX10_FMT_FP16, 2)
+AVX10_CVT_GEN(VCVTPH2IUBS, AVX10_CVT_B_U_R16, AVX10_FMT_FP16, 2)
+AVX10_CVT_GEN(VCVTTPH2IUBS, AVX10_CVT_B_U_T16, AVX10_FMT_FP16, 2)
+AVX10_CVT_GEN(VCVTPS2IBS, AVX10_CVT_B_S_R, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTTPS2IBS, AVX10_CVT_B_S_T32, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTPS2IUBS, AVX10_CVT_B_U_R32, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTTPS2IUBS, AVX10_CVT_B_U_T32, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTTPS2DQS, AVX10_CVT_DW_S, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTTPS2UDQS, AVX10_CVT_DW_U, AVX10_FMT_FP32, 4)
+AVX10_CVT_GEN(VCVTTPS2QQS, AVX10_CVT_QW_S, AVX10_FMT_FP32, 8)
+AVX10_CVT_GEN(VCVTTPS2UQQS, AVX10_CVT_QW_U, AVX10_FMT_FP32, 8)
+AVX10_CVT_GEN(VCVTTPD2DQS, AVX10_CVT_DW_S, AVX10_FMT_FP64, 4)
+AVX10_CVT_GEN(VCVTTPD2UDQS, AVX10_CVT_DW_U_PD, AVX10_FMT_FP64, 4)
+AVX10_CVT_GEN(VCVTTPD2QQS, AVX10_CVT_QW_S, AVX10_FMT_FP64, 8)
+AVX10_CVT_GEN(VCVTTPD2UQQS, AVX10_CVT_QW_U_PD, AVX10_FMT_FP64, 8)
+#undef AVX10_CVT_GEN
+
+/* VCVTTS{S,D}2{,U}SIS r32/r64: the destination size picks the 32- or 64-bit helper */
+static void gen_avx10_cvts(DisasContext *s, X86DecodedInsn *decode, int key32, int key64,
+                           int fmt)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int key = decode->op[0].ot == MO_64 ? key64 : key32;
+
+    gen_helper_avx10_cvts(tcg_ctx, s->T0, cpu_env, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, AVX10_DESC(key, fmt, 1, 0)));
+}
+
+static void gen_VCVTTSS2SIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_cvts(s, decode, AVX10_CVT_DW_S, AVX10_CVT_QW_S, AVX10_FMT_FP32);
+}
+
+static void gen_VCVTTSS2USIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_cvts(s, decode, AVX10_CVT_DW_U, AVX10_CVT_QW_U, AVX10_FMT_FP32);
+}
+
+static void gen_VCVTTSD2SIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_cvts(s, decode, AVX10_CVT_DW_S, AVX10_CVT_QW_S, AVX10_FMT_FP64);
+}
+
+static void gen_VCVTTSD2USIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10_cvts(s, decode, AVX10_CVT_DW_U_PD, AVX10_CVT_QW_U_PD, AVX10_FMT_FP64);
+}

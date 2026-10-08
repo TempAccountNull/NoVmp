@@ -450,4 +450,6 @@ DEF_HELPER_4(avx10_bf16_k, i64, env, ptr, ptr, i32)
 DEF_HELPER_3(avx10_vcomisbf16, void, env, ptr, ptr)
 DEF_HELPER_6(avx10_minmax, void, env, ptr, ptr, ptr, ptr, i32)
 DEF_HELPER_4(avx10_vcomx, void, env, ptr, ptr, i32)
+DEF_HELPER_4(avx10_cvt, void, env, ptr, ptr, i32)
+DEF_HELPER_3(avx10_cvts, tl, env, ptr, i32)
 #endif /* __Use_Original_Qemu (U373-U399) */

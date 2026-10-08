@@ -154,6 +154,74 @@ static void decode_A10_MAP5_2E(DisasContext *s, CPUX86State *env, X86OpEntry *en
     }
 }
 
+/* ---- U376: saturating conversions (spec ch.12), EVEX map 5 68-6D ---- */
+/* packed FP16/FP32/FP64 sources: {k1}{z}, {1toN}, {er}/{sae} (512-bit reg-reg), class E2 */
+#define A10_CVT(tt, rc, es, w) cpuid(AVX10_2) ev_vl(A10_VLALL) ev_tt(tt) ev_mask(MZ) \
+                               ev_rc(rc) ev_w(w) ev_es(es) ev_fp
+#define A10_CVTP(op, tt, rc, es) X86_OP_ENTRY3(op, V,x, None,None, W,x, A10_CVT(tt, rc, es, W0))
+/* scalar to r32/r64: LLIG, Tuple1 Scalar, no masking, {sae}, class E3NF; W ignored outside
+   64-bit mode (r32) */
+#define A10_CVTS(op, sz, es) X86_OP_ENTRY3(op, G,y, None,None, W,sz, cpuid(AVX10_2)          \
+                                 ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(NONE) ev_rc(SAE)      \
+                                 ev_w(WSEL) ev_es(es) ev_fp ev_w32 .evex_nofs = 1,)
+
+/* 68/6A: NP VCVTT PH2I[U]BS, 66 VCVTT PS2I[U]BS, F2 VCVTT BF162I[U]BS; 69/6B: the {er} forms */
+A10_SLOT(A10_MAP5_68, A10_CVTP(VCVTTPH2IBS, FULL, SAE, 16), A10_CVTP(VCVTTPS2IBS, FULL, SAE, 32),
+         {}, A10_BF16_2(VCVTTBF162IBS))
+A10_SLOT(A10_MAP5_69, A10_CVTP(VCVTPH2IBS, FULL, ER, 16), A10_CVTP(VCVTPS2IBS, FULL, ER, 32),
+         {}, A10_BF16_2(VCVTBF162IBS))
+A10_SLOT(A10_MAP5_6A, A10_CVTP(VCVTTPH2IUBS, FULL, SAE, 16),
+         A10_CVTP(VCVTTPS2IUBS, FULL, SAE, 32), {}, A10_BF16_2(VCVTTBF162IUBS))
+A10_SLOT(A10_MAP5_6B, A10_CVTP(VCVTPH2IUBS, FULL, ER, 16), A10_CVTP(VCVTPS2IUBS, FULL, ER, 32),
+         {}, A10_BF16_2(VCVTBF162IUBS))
+
+/*
+ * 6C / 6D: NP W0 VCVTTPS2UDQS / VCVTTPS2DQS, NP W1 VCVTTPD2UDQS / VCVTTPD2DQS (dword results
+ * of qword sources: destination VL/2), 66 W0 VCVTTPS2UQQS / VCVTTPS2QQS (Half tuple source),
+ * 66 W1 VCVTTPD2UQQS / VCVTTPD2QQS, F3 VCVTTSS2[U]SIS, F2 VCVTTSD2[U]SIS.
+ */
+static void decode_A10_MAP5_6C(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                               uint8_t *b)
+{
+    static const X86OpEntry ops[2][4] = {
+        {
+            A10_CVTP(VCVTTPS2UDQS, FULL, SAE, 32),
+            X86_OP_ENTRY3(VCVTTPS2UQQS, V,x, None,None, W,xh, A10_CVT(HALF, SAE, 32, W0)
+                          .evex_ds = X86_EVEX_ES_64,),
+            A10_CVTS(VCVTTSS2USIS, d, 32),
+            A10_CVTS(VCVTTSD2USIS, q, 64),
+        }, {
+            X86_OP_ENTRY3(VCVTTPD2UDQS, V,xh, None,None, W,x, A10_CVT(FULL, SAE, 64, W1)
+                          .evex_ds = X86_EVEX_ES_32,),
+            X86_OP_ENTRY3(VCVTTPD2UQQS, V,x, None,None, W,x, A10_CVT(FULL, SAE, 64, W1)),
+            A10_CVTS(VCVTTSS2USIS, d, 32),
+            A10_CVTS(VCVTTSD2USIS, q, 64),
+        },
+    };
+    *entry = *decode_by_prefix(s, ops[s->vex_w]);
+}
+
+static void decode_A10_MAP5_6D(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                               uint8_t *b)
+{
+    static const X86OpEntry ops[2][4] = {
+        {
+            A10_CVTP(VCVTTPS2DQS, FULL, SAE, 32),
+            X86_OP_ENTRY3(VCVTTPS2QQS, V,x, None,None, W,xh, A10_CVT(HALF, SAE, 32, W0)
+                          .evex_ds = X86_EVEX_ES_64,),
+            A10_CVTS(VCVTTSS2SIS, d, 32),
+            A10_CVTS(VCVTTSD2SIS, q, 64),
+        }, {
+            X86_OP_ENTRY3(VCVTTPD2DQS, V,xh, None,None, W,x, A10_CVT(FULL, SAE, 64, W1)
+                          .evex_ds = X86_EVEX_ES_32,),
+            X86_OP_ENTRY3(VCVTTPD2QQS, V,x, None,None, W,x, A10_CVT(FULL, SAE, 64, W1)),
+            A10_CVTS(VCVTTSS2SIS, d, 32),
+            A10_CVTS(VCVTTSD2SIS, q, 64),
+        },
+    };
+    *entry = *decode_by_prefix(s, ops[s->vex_w]);
+}
+
 /* ---- tables ---- */
 static const X86OpEntry opcodes_avx10_0F[256] = {
     /* U375 */
@@ -185,6 +253,13 @@ static const X86OpEntry opcodes_avx10_map5[256] = {
     [0x5f] = X86_OP_GROUP0(A10_MAP5_5F),
     /* U375 */
     [0x2e] = X86_OP_GROUP0(A10_MAP5_2E),
+    /* U376 */
+    [0x68] = X86_OP_GROUP0(A10_MAP5_68),
+    [0x69] = X86_OP_GROUP0(A10_MAP5_69),
+    [0x6a] = X86_OP_GROUP0(A10_MAP5_6A),
+    [0x6b] = X86_OP_GROUP0(A10_MAP5_6B),
+    [0x6c] = X86_OP_GROUP0(A10_MAP5_6C),
+    [0x6d] = X86_OP_GROUP0(A10_MAP5_6D),
 };
 
 static const X86OpEntry opcodes_avx10_map6[256] = {

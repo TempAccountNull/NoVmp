@@ -737,4 +737,263 @@ void helper_avx10_vcomx(CPUX86State *env, ZMMReg *s1, ZMMReg *s2, uint32_t desc)
     env->cc_src = fl;
 }
 
+/* ---------------------------------------------------------------------------------------
+ * Saturating conversions (spec chapter 12, helper functions 5.3; U376). Each helper of 5.3
+ * is executed as printed (AMBIGUOUS points in Emulator/tools/isa/ref_avx10_a.py):
+ *   IE  := NaN or +-Inf or OutOfDestRepresentation (per MXCSR.RC / {er} for the rounding forms)
+ *   NaN -> 0; x >(=) HI or +Inf -> MAX; x <(=) LO or -Inf -> MIN (no PE in these branches,
+ *   except VCVTTPH2IBS whose '// PE=1' is an action like its '// IE=1');
+ *   otherwise x is rounded (RC, or RTZ for the truncating forms) and PE := inexact and not
+ *   OutOfDestRepresentation; convert_DP_to_DW_UnSignedInteger_TruncateSaturate also sets PE
+ *   for x < 0 or x > 2^32 - 1. Typos taken as their evident intent: the QW signed saturation
+ *   bounds are 2^63 - 1 / -2^63 (printed 2^31 - 1 / -2^31 and "<= EXP"), W = 64 in the DP->QW
+ *   unsigned helper, src.fp16 for "src.bf16" in the FP16 unsigned truncating helper.
+ * Byte results are zero-extended into their word (BF16, FP16 sources) or dword (FP32) lane.
+ * DAZ: FP32/FP64 sources follow MXCSR.DAZ (SDM Vol1 10.2.3.4), FP16 sources never, BF16
+ * sources always (no flags, no MXCSR: the BF16 forms raise no exception).
+ * --------------------------------------------------------------------------------------- */
+
+/* a bound of a helper: (neg ? -mag : mag) + dh / 2 */
+typedef struct Avx10Bound {
+    uint64_t mag;
+    bool neg;
+    int dh;
+} Avx10Bound;
+
+/* OutOfDestRepresentation kinds */
+enum { OOD_RANGE, OOD_SBYTE_RC, OOD_UBYTE_RC, OOD_NONE };
+
+typedef struct Avx10SatCvt {
+    bool sign;
+    int wbits;
+    int ood;                    /* OOD_*; RANGE: x <= ood_lo || x >= ood_hi */
+    Avx10Bound ood_lo, ood_hi;
+    Avx10Bound hi, lo;          /* saturation tests */
+    bool hi_incl, lo_incl;      /* x >= hi / x <= lo (else x > hi / x < lo) */
+    bool pe_sat;                /* PE in the saturation branches (VCVTTPH2IBS) */
+    bool extra_pe;              /* DP -> unsigned DW: PE for x < 0 or x > 2^32 - 1 */
+    int rmode;                  /* -1: MXCSR.RC / {er}; else a FloatRoundMode */
+} Avx10SatCvt;
+
+#define B(m, n, h) { (uint64_t)(m), n, h }
+#define P63 (1ull << 63)
+static const Avx10SatCvt avx10_satcvt[] = {
+    /* AVX10_CVT_B_S_R: convert_fp16/fp32_to_signed_byte_saturate (EXP = 128) */
+    { true, 8, OOD_SBYTE_RC, {0}, {0}, B(127, 0, 0), B(128, 1, 0), true, true,
+      false, false, -1 },
+    /* AVX10_CVT_B_S_T32: convert_fp32_to_signed_byte_truncate_saturate */
+    { true, 8, OOD_RANGE, B(129, 1, 0), B(128, 0, 0), B(127, 0, 0), B(128, 1, 0),
+      true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_B_S_T16: convert_fp16_to_signed_byte_truncate_saturate ('// PE=1') */
+    { true, 8, OOD_RANGE, B(129, 1, 0), B(128, 0, 0), B(127, 0, 0), B(128, 1, 0),
+      true, true, true, false, float_round_to_zero },
+    /* AVX10_CVT_B_U_R32: convert_fp32_to_unsigned_byte_saturate (RC-independent range) */
+    { false, 8, OOD_RANGE, B(1, 1, 0), B(256, 0, 0), B(255, 0, 0), B(0, 0, 0),
+      false, false, false, false, -1 },
+    /* AVX10_CVT_B_U_T32: convert_fp32_to_unsigned_byte_truncate_saturate */
+    { false, 8, OOD_RANGE, B(1, 1, 0), B(256, 0, 0), B(255, 0, 0), B(0, 0, 0),
+      false, false, false, false, float_round_to_zero },
+    /* AVX10_CVT_B_U_R16: convert_fp16_to_unsigned_byte_saturate (EXP = 256) */
+    { false, 8, OOD_UBYTE_RC, {0}, {0}, B(255, 0, 0), B(0, 0, 0), true, true,
+      false, false, -1 },
+    /* AVX10_CVT_B_U_T16: convert_fp16_to_unsigned_byte_truncate_saturate */
+    { false, 8, OOD_RANGE, B(1, 1, 0), B(256, 0, 0), B(255, 0, 0), B(0, 0, 0),
+      true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_DW_S: convert_SP/DP_to_DW_SignedInteger_TruncateSaturate */
+    { true, 32, OOD_RANGE, B((1ull << 31) + 1, 1, 0), B(1ull << 31, 0, 0),
+      B((1ull << 31) - 1, 0, 0), B(1ull << 31, 1, 0), true, true, false, false,
+      float_round_to_zero },
+    /* AVX10_CVT_DW_U: convert_SP_to_DW_UnSignedInteger_TruncateSaturate */
+    { false, 32, OOD_RANGE, B(1, 1, 0), B(1ull << 32, 0, 0), B(0xffffffffull, 0, 0),
+      B(0, 0, 0), true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_DW_U_PD: convert_DP_to_DW_UnSignedInteger_TruncateSaturate */
+    { false, 32, OOD_RANGE, B(1, 1, 0), B(1ull << 32, 0, 0), B(0xffffffffull, 0, 0),
+      B(0, 0, 0), true, true, false, true, float_round_to_zero },
+    /* AVX10_CVT_QW_S: convert_SP/DP_to_QW_SignedInteger_TruncateSaturate */
+    { true, 64, OOD_RANGE, B(P63, 1, -2), B(P63, 0, 0), B(P63 - 1, 0, 0), B(P63, 1, 0),
+      true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_QW_U: convert_SP_to_QW_UnSignedInteger_TruncateSaturate */
+    { false, 64, OOD_RANGE, B(1, 1, 0), B(UINT64_MAX, 0, 2), B(UINT64_MAX, 0, 0),
+      B(0, 0, 0), true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_QW_U_PD: convert_DP_to_QW_UnSignedInteger_TruncateSaturate (src >= EXP) */
+    { false, 64, OOD_RANGE, B(1, 1, 0), B(UINT64_MAX, 0, 2), B(UINT64_MAX, 0, 2),
+      B(0, 0, 0), true, true, false, false, float_round_to_zero },
+    /* AVX10_CVT_BF_S_R / BF_S_T / BF_U_R / BF_U_T: convert_bf16_to_..._byte_..._saturate */
+    { true, 8, OOD_NONE, {0}, {0}, B(127, 0, 0), B(128, 1, 0), false, false,
+      false, false, float_round_nearest_even },
+    { true, 8, OOD_NONE, {0}, {0}, B(127, 0, 0), B(128, 1, 0), false, false,
+      false, false, float_round_to_zero },
+    { false, 8, OOD_NONE, {0}, {0}, B(255, 0, 0), B(0, 0, 0), false, false,
+      false, false, float_round_nearest_even },
+    { false, 8, OOD_NONE, {0}, {0}, B(255, 0, 0), B(0, 0, 0), false, false,
+      false, false, float_round_to_zero },
+};
+#undef B
+#undef P63
+
+static float128 avx10_bound(Avx10Bound b, float_status *ex)
+{
+    float128 v = uint64_to_float128(b.mag, ex);
+
+    if (b.neg) {
+        v = float128_chs(v);
+    }
+    if (b.dh) {
+        float128 half = float128_scalbn(int32_to_float128(b.dh, ex), -1, ex);
+        v = float128_add(v, half, ex);
+    }
+    return v;
+}
+
+/* x <= bound / x < bound, exactly (x is never a NaN here) */
+static bool avx10_le(float128 x, Avx10Bound b, float_status *ex)
+{
+    return float128_le_quiet(x, avx10_bound(b, ex), ex);
+}
+
+static bool avx10_lt(float128 x, Avx10Bound b, float_status *ex)
+{
+    return float128_lt_quiet(x, avx10_bound(b, ex), ex);
+}
+
+/* OutOfDestRepresentation of the byte helpers that depend on the rounding mode */
+static bool avx10_ood_rc(float128 x, bool sign, int rmode, float_status *ex)
+{
+    uint64_t e = sign ? 128 : 256;                      /* EXP */
+    Avx10Bound lo_le, lo_lt, hi_ge, hi_gt;
+
+    switch (rmode) {
+    case float_round_up:            /* x <= -(EXP+1) / x <= -1, or x > EXP - 1 */
+        lo_le = sign ? (Avx10Bound){ e + 1, true, 0 } : (Avx10Bound){ 1, true, 0 };
+        hi_gt = (Avx10Bound){ e - 1, false, 0 };
+        return avx10_le(x, lo_le, ex) || !avx10_le(x, hi_gt, ex);
+    case float_round_down:          /* x < -EXP / x < 0, or x >= EXP */
+        lo_lt = sign ? (Avx10Bound){ e, true, 0 } : (Avx10Bound){ 0, false, 0 };
+        hi_ge = (Avx10Bound){ e, false, 0 };
+        return avx10_lt(x, lo_lt, ex) || !avx10_lt(x, hi_ge, ex);
+    case float_round_to_zero:       /* x <= -(EXP+1) / x <= -1, or x >= EXP */
+        lo_le = sign ? (Avx10Bound){ e + 1, true, 0 } : (Avx10Bound){ 1, true, 0 };
+        hi_ge = (Avx10Bound){ e, false, 0 };
+        return avx10_le(x, lo_le, ex) || !avx10_lt(x, hi_ge, ex);
+    default:                        /* x < -(EXP+1/2) / x < -1/2, or x >= EXP - 1/2 */
+        lo_lt = sign ? (Avx10Bound){ e, true, -1 } : (Avx10Bound){ 0, false, -1 };
+        hi_ge = (Avx10Bound){ e, false, -1 };
+        return avx10_lt(x, lo_lt, ex) || !avx10_lt(x, hi_ge, ex);
+    }
+}
+
+/*
+ * One conversion: src (bits) of format fmt, helper key; returns the integer result masked
+ * to the helper's width and raises IE / PE in *st (when flags is true).
+ */
+static uint64_t avx10_satcvt1(CPUX86State *env, int key, int fmt, uint64_t src, bool flags)
+{
+    const Avx10SatCvt *c = &avx10_satcvt[key];
+    const Avx10Fmt *f = &avx10_fmt[fmt];
+    uint64_t mask = c->wbits == 64 ? UINT64_MAX : (1ull << c->wbits) - 1;
+    uint64_t maxv = c->sign ? mask >> 1 : mask;
+    uint64_t minv = c->sign ? (mask >> 1) + 1 : 0;
+    int rmode = c->rmode >= 0 ? c->rmode : get_float_rounding_mode(&env->sse_status);
+    bool neg = src & fmt_sign(f), inf, ood = false, ie, pe = false;
+    float_status ex;
+    float64 x64, r64;
+    float128 x;
+    uint64_t r;
+
+    f64_exact_status(env, &ex);
+    if (fmt_nan(f, src)) {
+        if (flags) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return 0;
+    }
+    if (fmt_denormal(f, src) &&
+        (fmt == AVX10_FMT_BF16 ||
+         ((fmt == AVX10_FMT_FP32 || fmt == AVX10_FMT_FP64) && (env->mxcsr & 0x40)))) {
+        src &= fmt_sign(f);                             /* DAZ */
+    }
+    inf = fmt_exp(f, src) == (1ull << f->ebits) - 1;
+    switch (fmt) {
+    case AVX10_FMT_BF16:
+        x64 = bfloat16_to_float64(src, &ex);
+        break;
+    case AVX10_FMT_FP16:
+        x64 = float16_to_float64(src, true, &ex);
+        break;
+    case AVX10_FMT_FP32:
+        x64 = float32_to_float64(src, &ex);
+        break;
+    default:
+        x64 = src;
+        break;
+    }
+    x = float64_to_float128(x64, &ex);
+
+    if (!inf) {
+        if (c->ood == OOD_RANGE) {
+            ood = avx10_le(x, c->ood_lo, &ex) || !avx10_lt(x, c->ood_hi, &ex);
+        } else if (c->ood != OOD_NONE) {
+            ood = avx10_ood_rc(x, c->sign, rmode, &ex);
+        }
+    }
+    ie = inf || ood;
+    if (c->extra_pe && (inf || float64_lt_quiet(x64, float64_zero, &ex) ||
+                        !avx10_le(x, (Avx10Bound){ 0xffffffffull, false, 0 }, &ex))) {
+        pe = true;
+    }
+
+    if (inf ? !neg : (c->hi_incl ? !avx10_lt(x, c->hi, &ex) : !avx10_le(x, c->hi, &ex))) {
+        r = maxv;
+        pe |= c->pe_sat;
+    } else if (inf ? neg : (c->lo_incl ? avx10_le(x, c->lo, &ex) : avx10_lt(x, c->lo, &ex))) {
+        r = minv;
+        pe |= c->pe_sat;
+    } else {
+        set_float_rounding_mode(rmode, &ex);
+        r64 = float64_round_to_int(x64, &ex);
+        set_float_rounding_mode(float_round_nearest_even, &ex);
+        if (!float64_eq_quiet(r64, x64, &ex) && !ood) {
+            pe = true;
+        }
+        r = (c->wbits == 64 && !c->sign) ? float64_to_uint64(r64, &ex)
+                                         : (uint64_t)float64_to_int64(r64, &ex);
+        r &= mask;
+    }
+    if (flags) {
+        if (ie) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        if (pe) {
+            float_raise(float_flag_inexact, &env->sse_status);
+        }
+    }
+    return r;
+}
+
+/*
+ * Packed forms: n elements of the source format (imm field) into lanes of 2/4/8 bytes
+ * (flags field: lane bytes); the BF16 forms raise nothing.
+ */
+void helper_avx10_cvt(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int key = AVX10_DESC_OP(desc), fmt = AVX10_DESC_IMM(desc), n = AVX10_DESC_N(desc);
+    int dbytes = AVX10_DESC_FL(desc), i;
+    const Avx10Fmt *f = &avx10_fmt[fmt];
+    uint64_t r[32];
+
+    for (i = 0; i < n; i++) {
+        r[i] = avx10_satcvt1(env, key, fmt, avx10_get(s, f->bytes, i), fmt != AVX10_FMT_BF16);
+    }
+    for (i = 0; i < n; i++) {
+        avx10_set(d, dbytes, i, r[i]);
+    }
+}
+
+/* VCVTTSS2SIS/USIS, VCVTTSD2SIS/USIS r32/r64 (12.12-12.15): the low element */
+target_ulong helper_avx10_cvts(CPUX86State *env, ZMMReg *s, uint32_t desc)
+{
+    int key = AVX10_DESC_OP(desc), fmt = AVX10_DESC_IMM(desc);
+
+    return avx10_satcvt1(env, key, fmt, avx10_get(s, avx10_fmt[fmt].bytes, 0), true);
+}
 #endif /* __Use_Original_Qemu (U372-U399) */

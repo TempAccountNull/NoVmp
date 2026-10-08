@@ -50,5 +50,26 @@ enum {
 /* helper_avx10_vcomx flags (desc bits 31:24; U375) */
 #define AVX10_VCOMX_SIGNALING (1u << 24)  /* VCOMX* (IE on any NaN), not VUCOMX* */
 
+/* helper_avx10_cvt / helper_avx10_cvts: the spec 5.3 helper (desc operation; U376) */
+enum {
+    AVX10_CVT_B_S_R,        /* convert_fp16/fp32_to_signed_byte_saturate */
+    AVX10_CVT_B_S_T32,      /* convert_fp32_to_signed_byte_truncate_saturate */
+    AVX10_CVT_B_S_T16,      /* convert_fp16_to_signed_byte_truncate_saturate */
+    AVX10_CVT_B_U_R32,      /* convert_fp32_to_unsigned_byte_saturate */
+    AVX10_CVT_B_U_T32,      /* convert_fp32_to_unsigned_byte_truncate_saturate */
+    AVX10_CVT_B_U_R16,      /* convert_fp16_to_unsigned_byte_saturate */
+    AVX10_CVT_B_U_T16,      /* convert_fp16_to_unsigned_byte_truncate_saturate */
+    AVX10_CVT_DW_S,         /* convert_SP/DP_to_DW_SignedInteger_TruncateSaturate */
+    AVX10_CVT_DW_U,         /* convert_SP_to_DW_UnSignedInteger_TruncateSaturate */
+    AVX10_CVT_DW_U_PD,      /* convert_DP_to_DW_UnSignedInteger_TruncateSaturate */
+    AVX10_CVT_QW_S,         /* convert_SP/DP_to_QW_SignedInteger_TruncateSaturate */
+    AVX10_CVT_QW_U,         /* convert_SP_to_QW_UnSignedInteger_TruncateSaturate */
+    AVX10_CVT_QW_U_PD,      /* convert_DP_to_QW_UnSignedInteger_TruncateSaturate */
+    AVX10_CVT_BF_S_R,       /* convert_bf16_to_signed_byte_rne_saturate */
+    AVX10_CVT_BF_S_T,       /* convert_bf16_to_signed_byte_truncate_saturate */
+    AVX10_CVT_BF_U_R,       /* convert_bf16_to_unsigned_byte_rne_saturate */
+    AVX10_CVT_BF_U_T,       /* convert_bf16_to_unsigned_byte_truncate_saturate */
+};
+
 #endif /* __Use_Original_Qemu (U372-U399) */
 #endif /* NOVMP_AVX10_HELPER_H */
