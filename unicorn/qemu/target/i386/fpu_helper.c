@@ -28,6 +28,9 @@
 #if __Use_Original_Qemu != 1 /* ours (U53) */
 #include "x87_trans.h"
 #endif /* __Use_Original_Qemu (U53) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+#include "crypto/sm4.h"
+#endif /* __Use_Original_Qemu (U84) */
 
 /* float macros */
 #define FT0    (env->ft0)

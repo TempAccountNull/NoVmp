@@ -2543,6 +2543,12 @@
 #define helper_vsm3msg2 helper_vsm3msg2_x86_64
 #define helper_vsm3rnds2 helper_vsm3rnds2_x86_64
 #endif /* __Use_Original_Qemu (U83) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+#define helper_vsm4key4_xmm helper_vsm4key4_xmm_x86_64
+#define helper_vsm4key4_ymm helper_vsm4key4_ymm_x86_64
+#define helper_vsm4rnds4_xmm helper_vsm4rnds4_xmm_x86_64
+#define helper_vsm4rnds4_ymm helper_vsm4rnds4_ymm_x86_64
+#endif /* __Use_Original_Qemu (U84) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

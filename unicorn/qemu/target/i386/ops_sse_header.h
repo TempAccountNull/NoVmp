@@ -440,6 +440,12 @@ DEF_HELPER_3(vsm3msg2, void, Reg, Reg, Reg)
 DEF_HELPER_4(vsm3rnds2, void, Reg, Reg, Reg, i32)
 #endif
 #endif /* __Use_Original_Qemu (U83) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+#if SHIFT >= 1
+DEF_HELPER_4(glue(vsm4key4, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_4(glue(vsm4rnds4, SUFFIX), void, env, Reg, Reg, Reg)
+#endif
+#endif /* __Use_Original_Qemu (U84) */
 
 #undef SHIFT
 #undef Reg

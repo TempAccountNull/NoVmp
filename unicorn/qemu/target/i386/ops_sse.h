@@ -3070,6 +3070,63 @@ void helper_vsm3rnds2(Reg *d, Reg *a, Reg *b, uint32_t imm8)
 }
 #endif
 #endif /* __Use_Original_Qemu (U83) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+#if SHIFT >= 1
+/*
+ * NoVmp (ledger U84): SM4 (SDM Vol2 VSM4KEY4 / VSM4RNDS4, VEX.128 / VEX.256),
+ * transcribed from the SDM Operation sections: four rounds per 128-bit lane,
+ * C[j] = P[j] ^ L(lower_t(P[j+1] ^ P[j+2] ^ P[j+3] ^ SRC2.dword[j])) over
+ * the sliding window P/C. lower_t is the byte-wise S-box of the SDM VSM4KEY4
+ * page (QEMU's crypto/sm4.c sm4_sbox, identical to it byte for byte);
+ * L_KEY = x ^ x<<<13 ^ x<<<23, L_RND = x ^ x<<<2 ^ x<<<10 ^ x<<<18 ^ x<<<24.
+ * Computed into a local Reg because d may alias a and b; the VEX.128 form's
+ * upper half is zeroed by the VEX writeback.
+ */
+#if SHIFT == 1
+static inline uint32_t sm4_lower_t(uint32_t x)
+{
+    return (uint32_t)sm4_sbox[x & 0xff] |
+           (uint32_t)sm4_sbox[(x >> 8) & 0xff] << 8 |
+           (uint32_t)sm4_sbox[(x >> 16) & 0xff] << 16 |
+           (uint32_t)sm4_sbox[x >> 24] << 24;
+}
+
+static inline uint32_t sm4_l_key(uint32_t x)
+{
+    return x ^ rol32(x, 13) ^ rol32(x, 23);
+}
+
+static inline uint32_t sm4_l_rnd(uint32_t x)
+{
+    return x ^ rol32(x, 2) ^ rol32(x, 10) ^ rol32(x, 18) ^ rol32(x, 24);
+}
+#endif
+
+#define SM4_HELPER(name, LFN)                                                     \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *a, Reg *b)       \
+{                                                                                 \
+    Reg r;                                                                        \
+    int i, j;                                                                     \
+                                                                                  \
+    for (i = 0; i < 1 << (SHIFT - 1); i++) {                                      \
+        uint32_t x[8];                                                            \
+        for (j = 0; j < 4; j++) {                                                 \
+            x[j] = a->L(4 * i + j);                                               \
+        }                                                                         \
+        for (j = 0; j < 4; j++) {                                                 \
+            x[j + 4] = x[j] ^ LFN(sm4_lower_t(x[j + 1] ^ x[j + 2] ^ x[j + 3] ^     \
+                                            b->L(4 * i + j)));                    \
+            r.L(4 * i + j) = x[j + 4];                                            \
+        }                                                                         \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+SM4_HELPER(vsm4key4, sm4_l_key)
+SM4_HELPER(vsm4rnds4, sm4_l_rnd)
+#undef SM4_HELPER
+#endif
+#endif /* __Use_Original_Qemu (U84) */
 
 #undef SSE_HELPER_S
 

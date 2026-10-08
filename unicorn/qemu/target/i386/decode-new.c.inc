@@ -668,6 +668,11 @@ static void decode_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
         static const X86OpEntry opcodes_0F38_DA[4] = {
             [0] = X86_OP_ENTRY3(VSM3MSG1, V,dq, H,dq, W,dq, vex6 chk(W0) cpuid(SM3) p_00),
             [1] = X86_OP_ENTRY3(VSM3MSG2, V,dq, H,dq, W,dq, vex6 chk(W0) cpuid(SM3) p_66),
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+            /* F3 VSM4KEY4, F2 VSM4RNDS4: VEX.128/256.W0, independent 128-bit lanes */
+            [2] = X86_OP_ENTRY3(VSM4KEY4,  V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(SM4) p_f3),
+            [3] = X86_OP_ENTRY3(VSM4RNDS4, V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(SM4) p_f2),
+#endif /* __Use_Original_Qemu (U84) */
         };
         *entry = *decode_by_prefix(s, opcodes_0F38_DA);
     }
@@ -1697,6 +1702,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_SM3:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM3);
 #endif /* __Use_Original_Qemu (U83) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+    case X86_FEAT_SM4:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM4);
+#endif /* __Use_Original_Qemu (U84) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

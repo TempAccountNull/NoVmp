@@ -855,6 +855,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* SM3 Instructions (VSM3MSG1, VSM3MSG2, VSM3RNDS2) */
 #define CPUID_7_1_EAX_SM3               (1U << 1)
 #endif /* __Use_Original_Qemu (U83) */
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+/* SM4 Instructions (VSM4KEY4, VSM4RNDS4) */
+#define CPUID_7_1_EAX_SM4               (1U << 2)
+#endif /* __Use_Original_Qemu (U84) */
 /* AVX512 BFloat16 Instruction */
 #if __Use_Original_Qemu != 1 /* ours (U71) */
 /* AVX VNNI (VEX-encoded VPDPBUSD..) */

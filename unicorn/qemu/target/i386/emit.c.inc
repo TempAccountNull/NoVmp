@@ -2192,6 +2192,29 @@ static void gen_VSM3RNDS2(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 #endif /* __Use_Original_Qemu (U83) */
 
+#if __Use_Original_Qemu != 1 /* ours (U84) */
+/* SM4 (VEX.128 / VEX.256, 128-bit lanes): op0 DEST, op1 VEX.vvvv, op2 x/ymm or m128/m256 */
+static void gen_VSM4KEY4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    if (!s->vex_l) {
+        gen_helper_vsm4key4_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    } else {
+        gen_helper_vsm4key4_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    }
+}
+
+static void gen_VSM4RNDS4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    if (!s->vex_l) {
+        gen_helper_vsm4rnds4_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    } else {
+        gen_helper_vsm4rnds4_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+    }
+}
+#endif /* __Use_Original_Qemu (U84) */
+
 static void gen_SHLX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
