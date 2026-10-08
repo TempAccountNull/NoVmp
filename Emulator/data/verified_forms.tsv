@@ -1,0 +1,398 @@
+# Hardware-verified status for instruction-table rows the emu-alltest sweep cannot reach or only reaches
+# with a #UD representative (plan 1.15b). Read by Emulator\tools\isa\gen_instruction_table.py; a row
+# applies when the sweep alone leaves the row ⬜. Evidence: Emulator\data\cases_reach.txt run with
+#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7 --cr0 0x33
+# status: ok   = implemented, identical to the i5-13600K (✅)
+#         ud   = #UD on the i5-13600K and in Unicorn: correct under the CPU profile, not implemented (⬜)
+#         cpl0 = CPL0 instruction, the CPL3 fault differs until Phase 2 (D6) (⏳)
+#         oos  = out of scope: not an Intel instruction on this target (⬜)
+# mnemonic\tencoding\tstatus\tnote
+pavgusb	legacy	oos	AMD 3DNow!
+pf2id	legacy	oos	AMD 3DNow!
+pf2iw	legacy	oos	AMD 3DNow!
+pfacc	legacy	oos	AMD 3DNow!
+pfadd	legacy	oos	AMD 3DNow!
+pfcmpeq	legacy	oos	AMD 3DNow!
+pfcmpge	legacy	oos	AMD 3DNow!
+pfcmpgt	legacy	oos	AMD 3DNow!
+pfmax	legacy	oos	AMD 3DNow!
+pfmin	legacy	oos	AMD 3DNow!
+pfmul	legacy	oos	AMD 3DNow!
+pfnacc	legacy	oos	AMD 3DNow!
+pfpnacc	legacy	oos	AMD 3DNow!
+pfrcp	legacy	oos	AMD 3DNow!
+pfrcpit1	legacy	oos	AMD 3DNow!
+pfrcpit2	legacy	oos	AMD 3DNow!
+pfrsqit1	legacy	oos	AMD 3DNow!
+pfrsqrt	legacy	oos	AMD 3DNow!
+pfsub	legacy	oos	AMD 3DNow!
+pfsubr	legacy	oos	AMD 3DNow!
+pi2fd	legacy	oos	AMD 3DNow!
+pi2fw	legacy	oos	AMD 3DNow!
+pmulhrw	legacy	oos	AMD 3DNow!
+pswapd	legacy	oos	AMD 3DNow!
+addr32	legacy	ok	67 prefix (LEA eax, [esi])
+bnd	legacy	ok	F2 on branches: plain branch without MPX
+data16	legacy	ok	66 prefix
+fclex	legacy	ok	9B DB E2 (FWAIT + FNCLEX; pending #MF with CR0.NE)
+finit	legacy	ok	9B DB E3 (FWAIT + FNINIT)
+fstcw	legacy	ok	9B D9 /7 (FWAIT + FNSTCW)
+fstsw	legacy	ok	9B DD /7, 9B DF E0 (FWAIT + FNSTSW; FIP per U90)
+lock	legacy	ok	F0 prefix (memory: locked; register: #UD)
+notrack	legacy	ok	3E on indirect JMP/CALL: ignored (IBT not enabled)
+rep	legacy	ok	F3 prefix (string ops)
+repe	legacy	ok	F3 prefix (CMPS/SCAS)
+repne	legacy	ok	F2 prefix (CMPS/SCAS)
+repnz	legacy	ok	F2 prefix (CMPS/SCAS)
+repz	legacy	ok	F3 prefix (CMPS/SCAS)
+rex64	legacy	ok	REX.W prefix
+bsrinit	vex	oos	not in the Intel SDM (XED ACE_1 extension)
+vgatherdpd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vgatherdps	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vgatherqpd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vgatherqps	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vpgatherdd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vpgatherdq	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vpgatherqd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vpgatherqq	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
+vpmadd52huq	vex	ud	the i5-13600K lacks AVX-IFMA: #UD in both
+vpmadd52luq	vex	ud	the i5-13600K lacks AVX-IFMA: #UD in both
+vbcstnebf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vbcstnesh2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vcvtneebf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vcvtneeph2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vcvtneobf162ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vcvtneoph2ps	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vcvtneps2bf16	vex	ud	the i5-13600K lacks AVX-NE-CONVERT: #UD in both
+vpdpwsud	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpwsuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpwusd	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpwusds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpwuud	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpwuuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT16: #UD in both
+vpdpbssd	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpdpbssds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpdpbsud	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpdpbsuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpdpbuud	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+vpdpbuuds	vex	ud	the i5-13600K lacks AVX-VNNI-INT8: #UD in both
+clrssbsy	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+incsspd	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+incsspq	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+rstorssp	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+saveprevssp	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+setssbsy	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+wrssd	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+wrssq	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+wrussd	legacy	cpl0	66 [REX.W] 0F 38 F5: CPU #GP(0) at CPL3 (CR4.CET = 1 under Windows), Unicorn #UD
+wrussq	legacy	cpl0	66 [REX.W] 0F 38 F5: CPU #GP(0) at CPL3 (CR4.CET = 1 under Windows), Unicorn #UD
+clzero	legacy	oos	AMD CLZERO
+enqcmd	legacy	ud	the i5-13600K lacks ENQCMD: #UD in both
+nop3	legacy	ok	0F 1F 00
+nop4	legacy	ok	0F 1F 40 00
+nop5	legacy	ok	0F 1F 44 00 00
+nop6	legacy	ok	66 0F 1F 44 00 00
+nop7	legacy	ok	0F 1F 80 disp32
+nop8	legacy	ok	0F 1F 84 SIB disp32
+nop9	legacy	ok	66 0F 1F 84 SIB disp32
+fcmovnp	legacy	ok	DB D8+i (= FCMOVNU, Capstone name)
+vfmaddpd	vex	oos	AMD FMA4
+vfmaddps	vex	oos	AMD FMA4
+vfmaddsd	vex	oos	AMD FMA4
+vfmaddss	vex	oos	AMD FMA4
+vfmaddsubpd	vex	oos	AMD FMA4
+vfmaddsubps	vex	oos	AMD FMA4
+vfmsubaddpd	vex	oos	AMD FMA4
+vfmsubaddps	vex	oos	AMD FMA4
+vfmsubpd	vex	oos	AMD FMA4
+vfmsubps	vex	oos	AMD FMA4
+vfmsubsd	vex	oos	AMD FMA4
+vfmsubss	vex	oos	AMD FMA4
+vfnmaddpd	vex	oos	AMD FMA4
+vfnmaddps	vex	oos	AMD FMA4
+vfnmaddsd	vex	oos	AMD FMA4
+vfnmaddss	vex	oos	AMD FMA4
+vfnmsubpd	vex	oos	AMD FMA4
+vfnmsubps	vex	oos	AMD FMA4
+vfnmsubsd	vex	oos	AMD FMA4
+vfnmsubss	vex	oos	AMD FMA4
+xacquire	legacy	ok	F2 on LOCK/XCHG: ignored, the CPU lacks HLE (locked op runs)
+xrelease	legacy	ok	F3 on LOCK/XCHG/MOV m: ignored, the CPU lacks HLE
+jecxz	legacy	ok	67 E3 rel8 (ECX = 0 with RCX[63:32] != 0 taken)
+nop2	legacy	ok	66 90 (XED name; Capstone NOP)
+udb	legacy	ok	D6 (UDB): #UD in 64-bit mode
+ibhf	legacy	ok	F3 [REX.W] 0F 1E F8: hint NOP
+prefetchit0	legacy	ok	0F 18 /7: NOP without PREFETCHI (RIP-relative and other memory forms)
+prefetchit1	legacy	ok	0F 18 /6: NOP without PREFETCHI
+aesdec128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesdec256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesenc128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesenc256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+encodekey128	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+encodekey256	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesdecwide128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesdecwide256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesencwide128kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+aesencwide256kl	legacy	ud	the i5-13600K lacks Key Locker: #UD in both
+llwpcb	xop	oos	AMD LWP
+lwpins	xop	oos	AMD LWP
+lwpval	xop	oos	AMD LWP
+slwpcb	xop	oos	AMD LWP
+mcommit	legacy	oos	AMD MCOMMIT
+monitorx	legacy	oos	AMD MONITORX
+mwaitx	legacy	oos	AMD MONITORX
+movrs	legacy	ud	the i5-13600K lacks MOVRS: #UD in both
+prefetchrst2	legacy	ok	0F 18 /4: NOP without MOVRS
+pconfig	legacy	ud	the i5-13600K lacks PCONFIG: #UD in both
+rdpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
+wrpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
+ud1	legacy	ok	0F B9 /r: #UD (its defined behaviour)
+ud2	legacy	ok	0F 0B: #UD (its defined behaviour)
+ud0	legacy	ok	0F FF /r: #UD (its defined behaviour)
+aadd	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
+aand	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
+aor	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
+axor	legacy	ud	the i5-13600K lacks RAO-INT: #UD in both
+rdpru	legacy	oos	AMD RDPRU
+xabort	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
+xbegin	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
+xend	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
+xtest	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
+encls	legacy	ud	the i5-13600K lacks SGX: #UD in both
+enclu	legacy	ud	the i5-13600K lacks SGX: #UD in both
+enclv	legacy	ud	the i5-13600K lacks SGX: #UD in both
+vsha512msg1	vex	ud	the i5-13600K lacks SHA512: #UD in both
+vsha512msg2	vex	ud	the i5-13600K lacks SHA512: #UD in both
+vsha512rnds2	vex	ud	the i5-13600K lacks SHA512: #UD in both
+vsm3msg1	vex	ud	the i5-13600K lacks SM3: #UD in both
+vsm3msg2	vex	ud	the i5-13600K lacks SM3: #UD in both
+vsm3rnds2	vex	ud	the i5-13600K lacks SM3: #UD in both
+vsm4key4	vex	ud	the i5-13600K lacks SM4: #UD in both
+vsm4rnds4	vex	ud	the i5-13600K lacks SM4: #UD in both
+getsec	legacy	ud	the i5-13600K lacks SMX: #UD in both
+blcfill	xop	oos	AMD TBM
+blci	xop	oos	AMD TBM
+blcic	xop	oos	AMD TBM
+blcmsk	xop	oos	AMD TBM
+blcs	xop	oos	AMD TBM
+blsfill	xop	oos	AMD TBM
+blsic	xop	oos	AMD TBM
+t1mskc	xop	oos	AMD TBM
+tzmsk	xop	oos	AMD TBM
+xresldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
+xsusldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
+clui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
+senduipi	legacy	ud	the i5-13600K lacks UINTR: #UD in both
+stui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
+testui	legacy	ud	the i5-13600K lacks UINTR: #UD in both
+uiret	legacy	ud	the i5-13600K lacks UINTR: #UD in both
+urdmsr	legacy	ud	the i5-13600K lacks USER_MSR: #UD in both
+urdmsr	vex	ud	the i5-13600K lacks USER_MSR: #UD in both
+uwrmsr	legacy	ud	the i5-13600K lacks USER_MSR: #UD in both
+uwrmsr	vex	ud	the i5-13600K lacks USER_MSR: #UD in both
+xcryptcbc	legacy	oos	VIA PadLock
+xcryptcfb	legacy	oos	VIA PadLock
+xcryptctr	legacy	oos	VIA PadLock
+xcryptecb	legacy	oos	VIA PadLock
+xcryptofb	legacy	oos	VIA PadLock
+montmul	legacy	oos	VIA PadLock
+xstore	legacy	oos	VIA PadLock
+xsha1	legacy	oos	VIA PadLock
+xsha256	legacy	oos	VIA PadLock
+tpause	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
+umonitor	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
+umwait	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
+vfrczpd	xop	oos	AMD XOP
+vfrczps	xop	oos	AMD XOP
+vfrczsd	xop	oos	AMD XOP
+vfrczss	xop	oos	AMD XOP
+vpcmov	xop	oos	AMD XOP
+vpcomb	xop	oos	AMD XOP
+vpcomd	xop	oos	AMD XOP
+vpcomeqb	xop	oos	AMD XOP
+vpcomeqd	xop	oos	AMD XOP
+vpcomeqq	xop	oos	AMD XOP
+vpcomequb	xop	oos	AMD XOP
+vpcomequd	xop	oos	AMD XOP
+vpcomequq	xop	oos	AMD XOP
+vpcomequw	xop	oos	AMD XOP
+vpcomeqw	xop	oos	AMD XOP
+vpcomfalseb	xop	oos	AMD XOP
+vpcomfalsed	xop	oos	AMD XOP
+vpcomfalseq	xop	oos	AMD XOP
+vpcomfalseub	xop	oos	AMD XOP
+vpcomfalseud	xop	oos	AMD XOP
+vpcomfalseuq	xop	oos	AMD XOP
+vpcomfalseuw	xop	oos	AMD XOP
+vpcomfalsew	xop	oos	AMD XOP
+vpcomgeb	xop	oos	AMD XOP
+vpcomged	xop	oos	AMD XOP
+vpcomgeq	xop	oos	AMD XOP
+vpcomgeub	xop	oos	AMD XOP
+vpcomgeud	xop	oos	AMD XOP
+vpcomgeuq	xop	oos	AMD XOP
+vpcomgeuw	xop	oos	AMD XOP
+vpcomgew	xop	oos	AMD XOP
+vpcomgtb	xop	oos	AMD XOP
+vpcomgtd	xop	oos	AMD XOP
+vpcomgtq	xop	oos	AMD XOP
+vpcomgtub	xop	oos	AMD XOP
+vpcomgtud	xop	oos	AMD XOP
+vpcomgtuq	xop	oos	AMD XOP
+vpcomgtuw	xop	oos	AMD XOP
+vpcomgtw	xop	oos	AMD XOP
+vpcomleb	xop	oos	AMD XOP
+vpcomled	xop	oos	AMD XOP
+vpcomleq	xop	oos	AMD XOP
+vpcomleub	xop	oos	AMD XOP
+vpcomleud	xop	oos	AMD XOP
+vpcomleuq	xop	oos	AMD XOP
+vpcomleuw	xop	oos	AMD XOP
+vpcomlew	xop	oos	AMD XOP
+vpcomltb	xop	oos	AMD XOP
+vpcomltd	xop	oos	AMD XOP
+vpcomltq	xop	oos	AMD XOP
+vpcomltub	xop	oos	AMD XOP
+vpcomltud	xop	oos	AMD XOP
+vpcomltuq	xop	oos	AMD XOP
+vpcomltuw	xop	oos	AMD XOP
+vpcomltw	xop	oos	AMD XOP
+vpcomneqb	xop	oos	AMD XOP
+vpcomneqd	xop	oos	AMD XOP
+vpcomneqq	xop	oos	AMD XOP
+vpcomnequb	xop	oos	AMD XOP
+vpcomnequd	xop	oos	AMD XOP
+vpcomnequq	xop	oos	AMD XOP
+vpcomnequw	xop	oos	AMD XOP
+vpcomneqw	xop	oos	AMD XOP
+vpcomq	xop	oos	AMD XOP
+vpcomtrueb	xop	oos	AMD XOP
+vpcomtrued	xop	oos	AMD XOP
+vpcomtrueq	xop	oos	AMD XOP
+vpcomtrueub	xop	oos	AMD XOP
+vpcomtrueud	xop	oos	AMD XOP
+vpcomtrueuq	xop	oos	AMD XOP
+vpcomtrueuw	xop	oos	AMD XOP
+vpcomtruew	xop	oos	AMD XOP
+vpcomub	xop	oos	AMD XOP
+vpcomud	xop	oos	AMD XOP
+vpcomuq	xop	oos	AMD XOP
+vpcomuw	xop	oos	AMD XOP
+vpcomw	xop	oos	AMD XOP
+vpermil2pd	vex	oos	AMD XOP
+vpermil2ps	vex	oos	AMD XOP
+vphaddbd	xop	oos	AMD XOP
+vphaddbq	xop	oos	AMD XOP
+vphaddbw	xop	oos	AMD XOP
+vphadddq	xop	oos	AMD XOP
+vphaddubd	xop	oos	AMD XOP
+vphaddubq	xop	oos	AMD XOP
+vphaddubw	xop	oos	AMD XOP
+vphaddudq	xop	oos	AMD XOP
+vphadduwd	xop	oos	AMD XOP
+vphadduwq	xop	oos	AMD XOP
+vphaddwd	xop	oos	AMD XOP
+vphaddwq	xop	oos	AMD XOP
+vphsubbw	xop	oos	AMD XOP
+vphsubdq	xop	oos	AMD XOP
+vphsubwd	xop	oos	AMD XOP
+vpmacsdd	xop	oos	AMD XOP
+vpmacsdqh	xop	oos	AMD XOP
+vpmacsdql	xop	oos	AMD XOP
+vpmacssdd	xop	oos	AMD XOP
+vpmacssdqh	xop	oos	AMD XOP
+vpmacssdql	xop	oos	AMD XOP
+vpmacsswd	xop	oos	AMD XOP
+vpmacssww	xop	oos	AMD XOP
+vpmacswd	xop	oos	AMD XOP
+vpmacsww	xop	oos	AMD XOP
+vpmadcsswd	xop	oos	AMD XOP
+vpmadcswd	xop	oos	AMD XOP
+vpperm	xop	oos	AMD XOP
+vprotb	xop	oos	AMD XOP
+vprotd	xop	oos	AMD XOP
+vprotq	xop	oos	AMD XOP
+vprotw	xop	oos	AMD XOP
+vpshab	xop	oos	AMD XOP
+vpshad	xop	oos	AMD XOP
+vpshaq	xop	oos	AMD XOP
+vpshaw	xop	oos	AMD XOP
+vpshlb	xop	oos	AMD XOP
+vpshld	xop	oos	AMD XOP
+vpshlq	xop	oos	AMD XOP
+vpshlw	xop	oos	AMD XOP
+tdpbf16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tcmmimfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tcmmrlfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpfp16ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbhf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdphbf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdphf8ps	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbssd	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbsud	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbusd	vex	ud	the i5-13600K lacks AMX: #UD in both
+tdpbuud	vex	ud	the i5-13600K lacks AMX: #UD in both
+tileloaddrs	vex	ud	the i5-13600K lacks AMX: #UD in both
+tileloaddrst1	vex	ud	the i5-13600K lacks AMX: #UD in both
+tileloadd	vex	ud	the i5-13600K lacks AMX: #UD in both
+tileloaddt1	vex	ud	the i5-13600K lacks AMX: #UD in both
+tilestored	vex	ud	the i5-13600K lacks AMX: #UD in both
+ldtilecfg	vex	ud	the i5-13600K lacks AMX: #UD in both
+sttilecfg	vex	ud	the i5-13600K lacks AMX: #UD in both
+tilerelease	vex	ud	the i5-13600K lacks AMX: #UD in both
+tilezero	vex	ud	the i5-13600K lacks AMX: #UD in both
+jmpabs	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
+popp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
+pushp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
+kaddd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kaddq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandnd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandnq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kmovd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kmovq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+knotd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+knotq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+korq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kortestd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kortestq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftld	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftlq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftrd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftrq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+ktestd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+ktestq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kunpckdq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kunpckwd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxnord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxnorq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxorq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kaddb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kaddw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandnb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kmovb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+knotb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+korb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kortestb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftlb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftrb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+ktestb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+ktestw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxnorb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxorb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandnw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kandw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kmovw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+knotw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kortestw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+korw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftlw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kshiftrw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kunpckbw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxnorw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kxorw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both

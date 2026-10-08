@@ -8,9 +8,14 @@ hardware-verified ledger items that the sweep cannot express (CHANGES_LEDGER.md)
   ⏳ implemented, open item (difference under decision, CPL3 check in Phase 2, SDM vectors pending)
   ⬜ not implemented / not reachable yet
 
-usage: python gen_instruction_table.py <alltest.csv> <isa_manual_forms.tsv> <out.md>
+usage: python gen_instruction_table.py <alltest.csv> <isa_manual_forms.tsv> <out.md> [verified_forms.tsv]
+
+verified_forms.tsv (default: next to isa_manual_forms.tsv) holds the hardware verdicts for rows the
+sweep cannot reach or only reaches with a #UD representative (plan 1.15b, evidence in
+Emulator\\data\\cases_reach.txt); it applies to rows the sweep alone leaves ⬜.
 """
 import csv
+import os
 import re
 import sys
 from collections import OrderedDict, defaultdict
@@ -103,11 +108,47 @@ INVALID_64 = {'aaa', 'aad', 'aam', 'aas', 'daa', 'das', 'bound', 'into', 'arpl',
               'pushfd', 'pushfl', 'popfd', 'popfl', 'jcxz', 'callf_ptr', 'jmpf_ptr'}
 
 
+# XED / SDM name -> Capstone name for the same opcode (plan 1.15b)
+NAME_ALIAS = {
+    'fcmovnp': 'fcmovnu',   # DB D8+i (XED FCMOVNP, Capstone FCMOVNU)
+    'fcmovp': 'fcmovu',     # DA D8+i
+    'nop2': 'nop', 'nop3': 'nop', 'nop4': 'nop', 'nop5': 'nop', 'nop6': 'nop', 'nop7': 'nop',
+    'nop8': 'nop', 'nop9': 'nop',   # XED length-specific names of 66 90 / 0F 1F /0
+}
+
+# verified_forms.tsv status -> (table status, note prefix)
+VERIFIED_STATUS = {
+    'ok': ('✅', 'identical to the i5-13600K (cases_reach)'),
+    'ud': ('⬜', 'not implemented (cases_reach)'),
+    'cpl0': ('⏳', 'CPL0 instruction (cases_reach): CPL3 fault in Phase 2 (D6)'),
+    'oos': ('⬜', 'out of scope'),
+}
+
+
+def load_verified(path):
+    v = {}
+    if not path or not os.path.exists(path):
+        return v
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.rstrip('\r\n')
+            if not line.strip() or line.startswith('#'):
+                continue
+            mn, enc, st, note = (line.split('\t') + ['', '', '', ''])[:4]
+            if st not in VERIFIED_STATUS:
+                raise SystemExit('verified_forms.tsv: unknown status %r for %s/%s' % (st, mn, enc))
+            v[(mn.lower(), enc)] = (st, note)
+    return v
+
+
 def resolve(sweep, mn, enc):
     """sweep buckets for (mn, enc), trying XED -> Capstone name aliases; returns (buckets, alias)"""
     b = sweep.get((mn, enc))
     if b:
         return b, None
+    alt = NAME_ALIAS.get(mn)
+    if alt and (alt, enc) in sweep:
+        return sweep[(alt, enc)], 'same opcode as %s (Capstone name)' % alt.upper()
     m = re.fullmatch(r'(v?cmp)([a-z_]+?)(ps|pd|ss|sd)', mn)
     if m and m.group(2) not in ('', 'x'):
         base = m.group(1) + m.group(3)
@@ -178,6 +219,10 @@ def status_from(b):
 
 def main():
     sweep = load_sweep(sys.argv[1])
+    vpath = sys.argv[4] if len(sys.argv) > 4 else os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])),
+                                                               'verified_forms.tsv')
+    verified = load_verified(vpath)
+    vcount = defaultdict(int)
     rows = OrderedDict()
     with open(sys.argv[2], encoding='utf-8') as fh:
         for line in fh:
@@ -217,6 +262,10 @@ def main():
             st, note = '⬜', 'not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b)'
         if alias and st != '⬜':
             note += ' — ' + alias
+        if st == '⬜' and (mn, enc) in verified:
+            vst, vnote = verified[(mn, enc)]
+            st, note = VERIFIED_STATUS[vst][0], VERIFIED_STATUS[vst][1] + (': ' + vnote if vnote else '')
+            vcount[vst] += 1
         totals[st] += 1
         vl = '/'.join(sorted(r['vl'], key=lambda v: int(v) if v.isdigit() else 0)) or '-'
         by_family[fam].append((mn, enc, vl, '+'.join(sorted(r['isa'])), st, note))
@@ -231,6 +280,12 @@ def main():
                'fix.\n')
     out.append('- ✅ %d  ·  ⏳ %d  ·  ⬜ %d  (of %d mnemonic/encoding rows)\n' % (
         totals['✅'], totals['⏳'], totals['⬜'], sum(totals.values())))
+    if verified:
+        out.append('- Rows the sweep cannot reach, verified one by one against the i5-13600K '
+                   '(`Emulator\\data\\cases_reach.txt` → `Emulator\\data\\verified_forms.tsv`): '
+                   '✅ identical %d  ·  ⬜ #UD in both (CPU lacks it / not enabled) %d  ·  '
+                   '⏳ CPL0 %d  ·  ⬜ out of scope (AMD / VIA / non-SDM) %d\n' % (
+                       vcount['ok'], vcount['ud'], vcount['cpl0'], vcount['oos']))
     out.append('### Microcode, firmware-modelled and decided behaviour\n')
     for line in MICROCODE:
         out.append(line)
@@ -252,7 +307,7 @@ def main():
             out.append('| %s | %s | %s | %s | %s | %s |' % (st, mn.upper(), enc, vl, isa, note))
         out.append('')
     open(sys.argv[3], 'w', encoding='utf-8').write('\n'.join(out) + '\n')
-    print('rows', sum(totals.values()), dict(totals), 'families', len(by_family))
+    print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount))
 
 
 MICROCODE = [
@@ -260,7 +315,7 @@ MICROCODE = [
     '- ✅ FPREM / FPREM1 / FSCALE — ROM routine model == hardware 148/148; fork == hardware 388/388.',
     '- ✅ FXTRACT / FRNDINT / FBSTP / FBLD — ROM routines decoded; fork matches hardware (U28, invalid BCD).',
     '- ✅ FSQRT / FCOM / FXAM / FIST — hardware uops (not MSROM); fork matches hardware.',
-    '- ✅ x87 environment / save images — FNSTENV/FNSAVE mask afterwards (U61), reserved FFFF (U62), FNSAVE REX.W (U63), FIP/FOP/FDP + FCS/FDS deprecation model (U64).',
+    '- ✅ x87 environment / save images — FNSTENV/FNSAVE mask afterwards (U61), reserved FFFF (U62), FNSAVE REX.W (U63), FIP/FOP/FDP + FCS/FDS deprecation model (U64), no FIP update by FNSTSW AX / DB E0, E1, E4 and FIP update by FNOP like the CPU (U90).',
     '- ✅ x87 condition codes — trig stack fault clears C2 (U57), F2XM1(±0) clears C1 (U58), special operands and unmasked exceptions (U54).',
     '- ✅ XSAVE family — XSAVE/XSAVEOPT/XRSTOR match; XSAVEC + compacted XRSTOR (U66); XSAVES/XRSTORS ⏳ CPL3 in Phase 2.',
     '- ✅ String microcode — REP + 67h with ECX = 0 zero-extends RCX/RSI/RDI (U60).',
