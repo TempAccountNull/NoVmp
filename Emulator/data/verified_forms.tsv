@@ -346,54 +346,54 @@ tilezero	vex	ud	the i5-13600K lacks AMX: #UD in both
 jmpabs	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
 popp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
 pushp	legacy	ud	the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD in both
-kaddd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kaddq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandnd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandnq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kmovd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kmovq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-knotd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-knotq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-korq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kortestd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kortestq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftld	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftlq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftrd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftrq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-ktestd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-ktestq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kunpckdq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kunpckwd	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxnord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxnorq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxord	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxorq	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kaddb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kaddw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandnb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kmovb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-knotb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-korb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kortestb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftlb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftrb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-ktestb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-ktestw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxnorb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxorb	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandnw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kandw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kmovw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-knotw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kortestw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-korw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftlw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kshiftrw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kunpckbw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxnorw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
-kxorw	vex	ud	the i5-13600K lacks AVX-512 (opmask VEX forms): #UD in both
+kaddd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kaddq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandnd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandnq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kmovd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kmovq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+knotd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+knotq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kord	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+korq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kortestd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kortestq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftld	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftlq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftrd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftrq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+ktestd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+ktestq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kunpckdq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kunpckwd	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxnord	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxnorq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxord	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxorq	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kaddb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kaddw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandnb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kmovb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+knotb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+korb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kortestb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftlb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftrb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+ktestb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+ktestw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxnorb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxorb	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandnw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kandw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kmovw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+knotw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kortestw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+korw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftlw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kshiftrw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kunpckbw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxnorw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
+kxorw	vex	sdm	U129-U133 opmask (VEX, AVX512F/DQ/BW): independent SDM-pseudocode model (ref_opmask.py) + unit tests + cases_opmask.txt "=>" (--avx512); without the UC_CTL_X86_AVX512 opt-in #UD == CPU
