@@ -1164,6 +1164,8 @@ static std::string r11_thunk( const char* op )
 	std::string s = "fxsave [r8]\nfninit\n";
 	for ( int i = 0; i < 8; ++i ) s += "fld tbyte ptr [rcx + " + std::to_string( 32 + i * 16 ) + "]\n";
 	s += "fldenv [rcx]\n";
+	// known EFLAGS before the op: AH (LAHF) must not depend on the caller's last compare
+	s += "xor eax, eax\n";
 	s += op;
 	s += "\nlahf\nmov byte ptr [rdx + 592], ah\nfnstenv [rdx]\nfxsave [rdx + 64]\n"
 		 "mov rax, qword ptr [rcx + 192]\nmov qword ptr [rdx + 576], rax\nmov rax, qword ptr [rcx + 200]\nmov qword ptr [rdx + 584], rax\n"
