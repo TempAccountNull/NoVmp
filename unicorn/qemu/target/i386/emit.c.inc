@@ -2415,6 +2415,13 @@ static void gen_EVEX_VGETMANT(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_fp1(s, decode, 3, 1, decode->immediate);
 }
 #endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+
+static void gen_EVEX_VRNDSCALE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 4, 1, decode->immediate);
+}
+#endif /* __Use_Original_Qemu (U241) */
 #if __Use_Original_Qemu != 1 /* ours (U239) */
 
 /* NoVmp (ledger U239): VSCALEFPS/PD/SS/SD */

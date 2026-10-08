@@ -3860,6 +3860,15 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x54] = X86_OP_ENTRY4(EVEX_VFIXUPIMM, V,x, H,x, W,x, EV_FPX(SAE, EV_NOFP)),
     [0x55] = X86_OP_GROUP0(EVEX_0F3A_55),
 #endif /* __Use_Original_Qemu (U240) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+    /* VRNDSCALEPS (08 W0) / PD (09 W1) ib, VRNDSCALESS (0A W0) / SD (0B W1) ib: {sae}; E2/E3 */
+    [0x08] = X86_OP_ENTRY3(EVEX_VRNDSCALE, V,x, W,x, I,b, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_rc(SAE) ev_w(W0) ev_es(W) ev_fp p_66),
+    [0x09] = X86_OP_ENTRY3(EVEX_VRNDSCALE, V,x, W,x, I,b, cpuid(AVX512F) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_rc(SAE) ev_w(W1) ev_es(W) ev_fp p_66),
+    [0x0a] = X86_OP_ENTRY4(EVEX_VRNDSCALE, V,x, H,x, W,ss, EV_FPS(W0, SAE, ev_fp)),
+    [0x0b] = X86_OP_ENTRY4(EVEX_VRNDSCALE, V,x, H,x, W,sd, EV_FPS(W1, SAE, ev_fp)),
+#endif /* __Use_Original_Qemu (U241) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 /*

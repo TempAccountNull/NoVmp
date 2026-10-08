@@ -8166,6 +8166,85 @@ static uint64_t evex_getmant(CPUX86State *env, const EvFmt *f, uint64_t x, int i
     return sign | ((uint64_t)e << f->fbits) | fr;
 }
 #endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+
+/*
+ * NoVmp (ledger U241): VRNDSCALEPS/PD/SS/SD (SDM Vol2C RoundToIntegerDP, Table 5-29, Figure
+ * 5-29): 2^-M * round_to_int(2^M * x) with M = imm8[7:4], rounding imm8[1:0] or MXCSR.RC
+ * (imm8[2] = 1); exact integer arithmetic (2^M * x never overflows). Sign kept (also of
+ * zero); NaN -> QNaN (IE for SNaN), inf and 0 unchanged; DAZ: a denormal is a zero of its
+ * sign first. PE when the result differs from the source unless imm8[3] = 1 (SPE). No DE.
+ */
+static uint64_t evex_rndscale(CPUX86State *env, const EvFmt *f, uint64_t x, int imm)
+{
+    uint64_t s = x & f->sign, ex = (x & f->emask) >> f->fbits, mant, q, rem, half;
+    int rc = (imm & 4) ? (env->mxcsr >> 13) & 3 : imm & 3, m = (imm >> 4) & 15;
+    int e2, sh, l;
+    bool up;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_isinf(f, x) || !(x & ~f->sign)) {
+        return x;
+    }
+    if (!ex) {
+        if (env->mxcsr & 0x40) {
+            return s;
+        }
+        mant = x & f->fmask;
+        e2 = 1 - f->bias - f->fbits;
+    } else {
+        mant = (x & f->fmask) | (f->fmask + 1);
+        e2 = (int)ex - f->bias - f->fbits;
+    }
+    /* value = mant * 2^e2; quantum 2^-m */
+    if (e2 >= -m) {
+        return x;
+    }
+    sh = -m - e2;
+    if (sh > 62) {
+        q = 0;
+        rem = mant;
+        half = 0;                       /* rem < 2^(sh-1): below half, not zero */
+    } else {
+        q = mant >> sh;
+        rem = mant & ((1ull << sh) - 1);
+        half = 1ull << (sh - 1);
+    }
+    if (!rem) {
+        return x;
+    }
+    switch (rc) {
+    case 0:
+        up = half && (rem > half || (rem == half && (q & 1)));
+        break;
+    case 1:
+        up = s != 0;
+        break;
+    case 2:
+        up = s == 0;
+        break;
+    default:
+        up = false;
+        break;
+    }
+    q += up;
+    if (!(imm & 8)) {
+        float_raise(float_flag_inexact, &env->sse_status);
+    }
+    if (!q) {
+        return s;
+    }
+    /* q * 2^-m, q < 2^(fbits + 2): normalise */
+    l = 63 - clz64(q);
+    q = l > f->fbits ? q >> (l - f->fbits) : q << (f->fbits - l);
+    return s | ((uint64_t)(l - m + f->bias) << f->fbits) | (q & f->fmask);
+}
+#endif /* __Use_Original_Qemu (U241) */
 #if __Use_Original_Qemu != 1 /* ours (U236) */
 
 /*
@@ -8190,6 +8269,10 @@ static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
     case 3:
         return evex_getmant(env, f, x, imm);
 #endif /* __Use_Original_Qemu (U238) */
+#if __Use_Original_Qemu != 1 /* ours (U241) */
+    case 4:
+        return evex_rndscale(env, f, x, imm);
+#endif /* __Use_Original_Qemu (U241) */
     default:
         g_assert_not_reached();
     }
