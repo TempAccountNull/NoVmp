@@ -2196,6 +2196,21 @@ EVEX_CVT(VCVTUDQ2PD, 1, 6, 0)
 EVEX_CVT(VCVTPS2PD, 5, 6, 0)
 EVEX_CVT(VCVTPD2PS, 6, 5, 0)
 EVEX_CVT(VCVTPH2PS, 4, 5, 0)
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+/* NoVmp (ledger U233): AVX512DQ quadword conversions */
+EVEX_CVT(VCVTQQ2PS, 2, 5, 0)
+EVEX_CVT(VCVTUQQ2PS, 3, 5, 0)
+EVEX_CVT(VCVTQQ2PD, 2, 6, 0)
+EVEX_CVT(VCVTUQQ2PD, 3, 6, 0)
+EVEX_CVT(VCVTPS2QQ, 5, 2, 0)
+EVEX_CVT(VCVTPS2UQQ, 5, 3, 0)
+EVEX_CVT(VCVTPD2QQ, 6, 2, 0)
+EVEX_CVT(VCVTPD2UQQ, 6, 3, 0)
+EVEX_CVT(VCVTTPS2QQ, 5, 2, 1)
+EVEX_CVT(VCVTTPS2UQQ, 5, 3, 1)
+EVEX_CVT(VCVTTPD2QQ, 6, 2, 1)
+EVEX_CVT(VCVTTPD2UQQ, 6, 3, 1)
+#endif /* __Use_Original_Qemu (U233) */
 
 /* VCVTPS2PH: destination = ModRM.r/m (op0), source = ModRM.reg (op1), imm8 rounding */
 static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

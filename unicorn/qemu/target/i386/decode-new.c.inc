@@ -2940,6 +2940,12 @@ static bool evex_cvt_w(DisasContext *s)
     return (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) ? evex_gpr_w(s) : s->vex_w;
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+/* NoVmp (ledger U233): the AVX512DQ quadword conversions (same rules, CPUID AVX512DQ) */
+#define EV_CVTQ(op, d, s, w, tt, rc, es, ds) X86_OP_ENTRY3(op, V,d, None,None, W,s,            \
+                          cpuid(AVX512DQ) ev_vl(EV_VLALL) ev_tt(tt) ev_mask(MZ) ev_rc(rc)        \
+                          ev_w(w) ev_es(es) ev_ds(ds) ev_fp)
+#endif /* __Use_Original_Qemu (U233) */
 #if __Use_Original_Qemu != 1 /* ours (U232) */
 /*
  * NoVmp (ledger U232): scalar conversions, LIG, no masking except VCVTSS2SD/VCVTSD2SS.
@@ -3022,6 +3028,9 @@ static void decode_EVEX_0F5B(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         [0][0] = EV_CVT(EVEX_VCVTDQ2PS, x, x, W0, FULL, ER, W, 32),
         [1][0] = EV_CVT(EVEX_VCVTPS2DQ, x, x, W0, FULL, ER, W, 32),
         [2][0] = EV_CVT(EVEX_VCVTTPS2DQ, x, x, W0, FULL, SAE, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [0][1] = EV_CVTQ(EVEX_VCVTQQ2PS, xh, x, W1, FULL, ER, W, 32),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F5B, s->vex_w);
 }
@@ -3041,6 +3050,10 @@ static void decode_EVEX_0F78(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         [3][0] = EV_F2SI(EVEX_VCVTTSD2USI, sd, SAE, 64),
         [3][1] = EV_F2SI(EVEX_VCVTTSD2USI, sd, SAE, 64),
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [1][0] = EV_CVTQ(EVEX_VCVTTPS2UQQ, x, xh, W0, HALF, SAE, W, 64),
+        [1][1] = EV_CVTQ(EVEX_VCVTTPD2UQQ, x, x, W1, FULL, SAE, W, 64),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F78, evex_cvt_w(s));
 }
@@ -3060,6 +3073,10 @@ static void decode_EVEX_0F79(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         [3][0] = EV_F2SI(EVEX_VCVTSD2USI, sd, ER, 64),
         [3][1] = EV_F2SI(EVEX_VCVTSD2USI, sd, ER, 64),
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [1][0] = EV_CVTQ(EVEX_VCVTPS2UQQ, x, xh, W0, HALF, ER, W, 64),
+        [1][1] = EV_CVTQ(EVEX_VCVTPD2UQQ, x, x, W1, FULL, ER, W, 64),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F79, evex_cvt_w(s));
 }
@@ -3073,6 +3090,12 @@ static void decode_EVEX_0F7A(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     static const X86OpEntry opcodes_EVEX_0F7A[4][2] = {
         [2][0] = EV_CVT(EVEX_VCVTUDQ2PD, x, xh, W0, HALF, NONE, W, 64),
         [3][0] = EV_CVT(EVEX_VCVTUDQ2PS, x, x, W0, FULL, ER, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [1][0] = EV_CVTQ(EVEX_VCVTTPS2QQ, x, xh, W0, HALF, SAE, W, 64),
+        [1][1] = EV_CVTQ(EVEX_VCVTTPD2QQ, x, x, W1, FULL, SAE, W, 64),
+        [2][1] = EV_CVTQ(EVEX_VCVTUQQ2PD, x, x, W1, FULL, ER, W, 64),
+        [3][1] = EV_CVTQ(EVEX_VCVTUQQ2PS, xh, x, W1, FULL, ER, W, 32),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F7A, s->vex_w);
 }
@@ -3089,6 +3112,10 @@ static void decode_EVEX_0F7B(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         [3][0] = EV_SI2F(EVEX_VCVTUSI2SD, W0, NONE, 64),
         [3][1] = EV_SI2F(EVEX_VCVTUSI2SD, W1, ER, 64),
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [1][0] = EV_CVTQ(EVEX_VCVTPS2QQ, x, xh, W0, HALF, ER, W, 64),
+        [1][1] = EV_CVTQ(EVEX_VCVTPD2QQ, x, x, W1, FULL, ER, W, 64),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0F7B, evex_cvt_w(s));
 }
@@ -3103,6 +3130,9 @@ static void decode_EVEX_0FE6(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         [1][1] = EV_CVT(EVEX_VCVTTPD2DQ, xh, x, W1, FULL, SAE, W, 32),
         [2][0] = EV_CVT(EVEX_VCVTDQ2PD, x, xh, W0, HALF, NONE, W, 64),
         [3][1] = EV_CVT(EVEX_VCVTPD2DQ, xh, x, W1, FULL, ER, W, 32),
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+        [2][1] = EV_CVTQ(EVEX_VCVTQQ2PD, x, x, W1, FULL, ER, W, 64),
+#endif /* __Use_Original_Qemu (U233) */
     };
     *entry = *evex_by_prefix_w(s, opcodes_EVEX_0FE6, s->vex_w);
 }
@@ -3798,6 +3828,9 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #undef EV_SI2F
 #undef EV_F2SI
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U233) */
+#undef EV_CVTQ
+#endif /* __Use_Original_Qemu (U233) */
 #if __Use_Original_Qemu != 1 /* ours (U231) */
 #undef EV_CVT
 #endif /* __Use_Original_Qemu (U231) */
