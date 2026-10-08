@@ -7450,6 +7450,34 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x1ae:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U75) */
+        /*
+         * NoVmp (ledger U75): 0F AE mandatory prefixes (SDM Vol2 opcode map
+         * A-6 group 15; i5-13600K agrees). The last F2/F3 is the mandatory
+         * prefix and a 66 beside it is ignored; otherwise 66. F2: every form
+         * #UD. F3: only mod=3 /0-/3 (RD/WR FS/GS BASE) and /4 (PTWRITE). 66:
+         * only memory /6 (CLWB) and /7 (CLFLUSHOPT). QEMU ignored the prefix
+         * on FXSAVE/FXRSTOR/LDMXCSR/STMXCSR and LFENCE/MFENCE/SFENCE, so
+         * INCSSP, TPAUSE/UMWAIT/UMONITOR etc. ran as fences.
+         */
+        {
+            int op = (modrm >> 3) & 7;
+            bool mem = (modrm >> 6) != 3;
+
+            if (prefixes & PREFIX_REPNZ) {
+                goto illegal_op;
+            }
+            if (prefixes & PREFIX_REPZ) {
+                if (mem ? op != 4 : op > 4) {
+                    goto illegal_op;
+                }
+            } else if (prefixes & PREFIX_DATA) {
+                if (!mem || op < 6) {
+                    goto illegal_op;
+                }
+            }
+        }
+#endif /* __Use_Original_Qemu (U75) */
         switch (modrm) {
         CASE_MODRM_MEM_OP(0): /* fxsave */
             if (!(s->cpuid_features & CPUID_FXSR)
