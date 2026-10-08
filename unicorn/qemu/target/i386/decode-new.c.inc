@@ -479,6 +479,13 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xca] = X86_OP_ENTRY2(SHA1MSG2,    V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
     [0xcb] = X86_OP_ENTRY2(SHA256RNDS2, V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
     [0xcc] = X86_OP_ENTRY2(SHA256MSG1,  V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
+#if __Use_Original_Qemu != 1 /* ours (U71) */
+    /* AVX-VNNI (U71): VEX.66.0F38.W0 50-53 */
+    [0x50] = X86_OP_ENTRY3(VPDPBUSD,    V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI) p_66),
+    [0x51] = X86_OP_ENTRY3(VPDPBUSDS,   V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI) p_66),
+    [0x52] = X86_OP_ENTRY3(VPDPWSSD,    V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI) p_66),
+    [0x53] = X86_OP_ENTRY3(VPDPWSSDS,   V,x,  H,x,  W,x,  vex6 chk(W0) cpuid(AVX_VNNI) p_66),
+#endif /* __Use_Original_Qemu (U71) */
     [0xcd] = X86_OP_ENTRY2(SHA256MSG2,  V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
 #if __Use_Original_Qemu != 1 /* ours (U70) */
     /* GFNI (U70): 66 0F 38 CF / VEX.66.0F38.W0 CF */
@@ -1534,6 +1541,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_GFNI:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_GFNI);
 #endif /* __Use_Original_Qemu (U70) */
+#if __Use_Original_Qemu != 1 /* ours (U71) */
+    case X86_FEAT_AVX_VNNI:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AVX_VNNI);
+#endif /* __Use_Original_Qemu (U71) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

@@ -2523,6 +2523,16 @@
 #define helper_gf2p8affineinvqb_xmm helper_gf2p8affineinvqb_xmm_x86_64
 #define helper_gf2p8affineinvqb_ymm helper_gf2p8affineinvqb_ymm_x86_64
 #endif /* __Use_Original_Qemu (U70) */
+#if __Use_Original_Qemu != 1 /* ours (U71) */
+#define helper_vpdpbusd_xmm helper_vpdpbusd_xmm_x86_64
+#define helper_vpdpbusd_ymm helper_vpdpbusd_ymm_x86_64
+#define helper_vpdpbusds_xmm helper_vpdpbusds_xmm_x86_64
+#define helper_vpdpbusds_ymm helper_vpdpbusds_ymm_x86_64
+#define helper_vpdpwssd_xmm helper_vpdpwssd_xmm_x86_64
+#define helper_vpdpwssd_ymm helper_vpdpwssd_ymm_x86_64
+#define helper_vpdpwssds_xmm helper_vpdpwssds_xmm_x86_64
+#define helper_vpdpwssds_ymm helper_vpdpwssds_ymm_x86_64
+#endif /* __Use_Original_Qemu (U71) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

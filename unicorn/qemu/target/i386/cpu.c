@@ -663,7 +663,11 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_0_ECX_GFNI /* U70 */)
 #endif /* __Use_Original_Qemu (U69) */
 #define TCG_7_0_EDX_FEATURES 0
+#if __Use_Original_Qemu == 1 /* original QEMU (U71) */
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD
+#else /* ours (U71) */
+#define TCG_7_1_EAX_FEATURES (CPUID_7_1_EAX_CMPCCXADD | CPUID_7_1_EAX_AVX_VNNI)
+#endif /* __Use_Original_Qemu (U71) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
 #if __Use_Original_Qemu == 1 /* original QEMU (U66) */
@@ -899,7 +903,11 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         .type = CPUID_FEATURE_WORD,
         .feat_names = {
             NULL, NULL, NULL, NULL,
+#if __Use_Original_Qemu == 1 /* original QEMU (U71) */
             NULL, "avx512-bf16", NULL, "cmpccxadd",
+#else /* ours (U71) */
+            "avx-vnni", "avx512-bf16", NULL, "cmpccxadd",
+#endif /* __Use_Original_Qemu (U71) */
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,
             NULL, NULL, NULL, NULL,

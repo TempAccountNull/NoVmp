@@ -2275,6 +2275,59 @@ void glue(helper_gf2p8affineinvqb, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg
     memcpy(d, &r, 8 << SHIFT);
 }
 #endif /* __Use_Original_Qemu (U70) */
+#if __Use_Original_Qemu != 1 /* ours (U71) */
+/*
+ * NoVmp (ledger U71): AVX-VNNI (SDM Vol2 VPDPBUSD/VPDPBUSDS/VPDPWSSD/VPDPWSSDS,
+ * VEX forms). Per dword: d += sum of 4 (unsigned byte of v * signed byte of s)
+ * or of 2 (signed word of v * signed word of s); the S forms saturate the
+ * whole sum (destination included) to int32, the others wrap.
+ */
+#if SHIFT == 1
+static int32_t vnni_sat32(int64_t x)
+{
+    return x > INT32_MAX ? INT32_MAX : x < INT32_MIN ? INT32_MIN : (int32_t)x;
+}
+#endif
+
+#define VNNI_BYTES(name, sat)                                                     \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)       \
+{                                                                                 \
+    Reg r;                                                                        \
+    int i, k;                                                                     \
+                                                                                  \
+    for (i = 0; i < 2 << SHIFT; i++) {                                            \
+        int64_t sum = (int32_t)d->L(i);                                           \
+        for (k = 0; k < 4; k++) {                                                 \
+            sum += (int64_t)(uint8_t)v->B(4 * i + k) * (int8_t)s->B(4 * i + k);  \
+        }                                                                         \
+        r.L(i) = sat ? (uint32_t)vnni_sat32(sum) : (uint32_t)sum;                 \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+#define VNNI_WORDS(name, sat)                                                     \
+void glue(helper_##name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)       \
+{                                                                                 \
+    Reg r;                                                                        \
+    int i, k;                                                                     \
+                                                                                  \
+    for (i = 0; i < 2 << SHIFT; i++) {                                            \
+        int64_t sum = (int32_t)d->L(i);                                           \
+        for (k = 0; k < 2; k++) {                                                 \
+            sum += (int64_t)(int16_t)v->W(2 * i + k) * (int16_t)s->W(2 * i + k);  \
+        }                                                                         \
+        r.L(i) = sat ? (uint32_t)vnni_sat32(sum) : (uint32_t)sum;                 \
+    }                                                                             \
+    memcpy(d, &r, 8 << SHIFT);                                                    \
+}
+
+VNNI_BYTES(vpdpbusd, 0)
+VNNI_BYTES(vpdpbusds, 1)
+VNNI_WORDS(vpdpwssd, 0)
+VNNI_WORDS(vpdpwssds, 1)
+#undef VNNI_BYTES
+#undef VNNI_WORDS
+#endif /* __Use_Original_Qemu (U71) */
 
 void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {

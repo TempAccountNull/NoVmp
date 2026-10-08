@@ -873,6 +873,12 @@ static void gen_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 #if __Use_Original_Qemu != 1 /* ours (U70) */
 BINARY_INT_SSE(GF2P8MULB,  gf2p8mulb)
 #endif /* __Use_Original_Qemu (U70) */
+#if __Use_Original_Qemu != 1 /* ours (U71) */
+BINARY_INT_SSE(VPDPBUSD,   vpdpbusd)
+BINARY_INT_SSE(VPDPBUSDS,  vpdpbusds)
+BINARY_INT_SSE(VPDPWSSD,   vpdpwssd)
+BINARY_INT_SSE(VPDPWSSDS,  vpdpwssds)
+#endif /* __Use_Original_Qemu (U71) */
 BINARY_INT_SSE(PUNPCKLQDQ, punpcklqdq)
 BINARY_INT_SSE(PUNPCKHQDQ, punpckhqdq)
 BINARY_INT_SSE(VPACKUSDW,  packusdw)
