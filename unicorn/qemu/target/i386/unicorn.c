@@ -451,6 +451,24 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
         *(uint64_t *)value = env->ssp;
         return ret;
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U174) */
+    /* NoVmp (ledger U174): AMX TILECFG (64 bytes) and TMM0-7 (1 KB each), any mode */
+    case UC_X86_REG_TILECFG:
+        CHECK_REG_TYPE(uint8_t[64]);
+        memcpy(value, env->xtilecfg, sizeof(env->xtilecfg));
+        return ret;
+    case UC_X86_REG_TMM0:
+    case UC_X86_REG_TMM1:
+    case UC_X86_REG_TMM2:
+    case UC_X86_REG_TMM3:
+    case UC_X86_REG_TMM4:
+    case UC_X86_REG_TMM5:
+    case UC_X86_REG_TMM6:
+    case UC_X86_REG_TMM7:
+        CHECK_REG_TYPE(uint8_t[1024]);
+        memcpy(value, env->xtiledata + 1024 * (regid - UC_X86_REG_TMM0), 1024);
+        return ret;
+#endif /* __Use_Original_Qemu (U174) */
     }
 
     switch (mode) {
@@ -1343,6 +1361,33 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         env->ssp = *(uint64_t *)value;
         return ret;
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U174) */
+    /*
+     * NoVmp (ledger U174): TILECFG is loaded like XRSTOR loads it (SDM Vol1 13.5.14): an
+     * image LDTILECFG would #GP on, or palette 0, leaves the INIT state; TMMn raw.
+     */
+    case UC_X86_REG_TILECFG: {
+        const uint8_t *buf = (const uint8_t *)value;
+        CHECK_REG_TYPE(uint8_t[64]);
+        if (buf[0] != 0 && x86_amx_tilecfg_ok(buf, env->xcr0)) {
+            memcpy(env->xtilecfg, buf, sizeof(env->xtilecfg));
+        } else {
+            memset(env->xtilecfg, 0, sizeof(env->xtilecfg));
+        }
+        return ret;
+    }
+    case UC_X86_REG_TMM0:
+    case UC_X86_REG_TMM1:
+    case UC_X86_REG_TMM2:
+    case UC_X86_REG_TMM3:
+    case UC_X86_REG_TMM4:
+    case UC_X86_REG_TMM5:
+    case UC_X86_REG_TMM6:
+    case UC_X86_REG_TMM7:
+        CHECK_REG_TYPE(uint8_t[1024]);
+        memcpy(env->xtiledata + 1024 * (regid - UC_X86_REG_TMM0), value, 1024);
+        return ret;
+#endif /* __Use_Original_Qemu (U174) */
     }
 
     switch (mode) {

@@ -354,6 +354,19 @@ typedef enum uc_x86_reg {
     UC_X86_REG_FOP,
     UC_X86_REG_XCR0,
     UC_X86_REG_SSP, // NoVmp U114: CET shadow-stack pointer (uint64_t)
+    // NoVmp U174: Intel AMX state (UC_CTL_X86_AMX). TILECFG: uint8_t[64] in the
+    // LDTILECFG/STTILECFG layout; a write that LDTILECFG would refuse (or with palette 0)
+    // initialises it, like XRSTOR, and never touches the tiles. TMM0-7: uint8_t[1024] each,
+    // 16 rows x 64 bytes, all of it whatever TILECFG says (like XSAVE/XRSTOR).
+    UC_X86_REG_TILECFG,
+    UC_X86_REG_TMM0,
+    UC_X86_REG_TMM1,
+    UC_X86_REG_TMM2,
+    UC_X86_REG_TMM3,
+    UC_X86_REG_TMM4,
+    UC_X86_REG_TMM5,
+    UC_X86_REG_TMM6,
+    UC_X86_REG_TMM7,
     UC_X86_REG_ENDING // <-- mark the end of the list of registers
 } uc_x86_reg;
 
