@@ -160,6 +160,10 @@ typedef enum X86InsnCheck {
     X86_CHECK_VEX_W0 = 512,
     X86_CHECK_VEX_W1 = 1024,
 #endif /* __Use_Original_Qemu (U70) */
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+    /* Fault if VEX.L=1 (upstream QEMU 8.2 value) (U79) */
+    X86_CHECK_VEX128 = 64,
+#endif /* __Use_Original_Qemu (U79) */
 } X86InsnCheck;
 
 typedef enum X86InsnSpecial {

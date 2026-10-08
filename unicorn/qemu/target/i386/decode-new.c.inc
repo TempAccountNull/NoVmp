@@ -269,6 +269,10 @@ static void decode_0F77(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
             entry->gen = NULL;
         }
 #endif /* __Use_Original_Qemu (U77) */
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+    } else if (s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ)) {
+        entry->gen = NULL;          /* VEX.66/F3/F2 0F 77: #UD (SDM: VEX.NP) (U79) */
+#endif /* __Use_Original_Qemu (U79) */
     } else if (!s->vex_l) {
         entry->gen = gen_VZEROUPPER;
         entry->vex_class = 8;
@@ -314,7 +318,11 @@ static void decode_0F7E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 {
     static const X86OpEntry opcodes_0F7E[4] = {
         X86_OP_ENTRY3(MOVD_from,  E,y, None,None, P,y, vex5 mmx),
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
         X86_OP_ENTRY3(MOVD_from,  E,y, None,None, V,y, vex5),
+#else /* ours (U79) */
+        X86_OP_ENTRY3(MOVD_from,  E,y, None,None, V,y, vex5 chk(VEX128)),
+#endif /* __Use_Original_Qemu (U79) */
         X86_OP_ENTRY3(MOVQ,       V,dq,None,None, W,q, vex5),  /* wrong dest Vq on SDM! */
         {},
     };
@@ -354,10 +362,20 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x06] = X86_OP_ENTRY3(PHSUBD,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
     [0x07] = X86_OP_ENTRY3(PHSUBSW,   V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
     [0x10] = X86_OP_ENTRY2(PBLENDVB,  V,x,         W,x,  vex4 cpuid(SSE41) avx2_256 p_66),
+#else /* ours (U79) */
+    /* legacy only: the VEX forms are 0F3A 4C/4A/4B (SDM Vol2) (U79) */
+    [0x10] = X86_OP_ENTRY2(PBLENDVB,  V,x,         W,x,  sse4_novex cpuid(SSE41) p_66),
+#endif /* __Use_Original_Qemu (U79) */
     [0x13] = X86_OP_ENTRY2(VCVTPH2PS, V,x,         W,xh, vex11 chk(W0) cpuid(F16C) p_66),
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
     [0x14] = X86_OP_ENTRY2(BLENDVPS,  V,x,         W,x,  vex4 cpuid(SSE41) p_66),
     [0x15] = X86_OP_ENTRY2(BLENDVPD,  V,x,         W,x,  vex4 cpuid(SSE41) p_66),
+#else /* ours (U79) */
+    [0x14] = X86_OP_ENTRY2(BLENDVPS,  V,x,         W,x,  sse4_novex cpuid(SSE41) p_66),
+    [0x15] = X86_OP_ENTRY2(BLENDVPD,  V,x,         W,x,  sse4_novex cpuid(SSE41) p_66),
+#endif /* __Use_Original_Qemu (U79) */
     /* Listed incorrectly as type 4 */
     [0x16] = X86_OP_ENTRY3(VPERMD,    V,qq, H,qq,      W,qq,  vex6 chk(W0) cpuid(AVX2) p_66), /* vpermps */
     [0x17] = X86_OP_ENTRY3(VPTEST,    None,None, V,x,  W,x,   vex4 cpuid(SSE41) p_66),
@@ -714,6 +732,33 @@ static const X86OpEntry opcodes_0F3A[256] = {
     [0xF0] = X86_OP_ENTRY3(RORX, G,y, E,y, I,b, vex13 cpuid(BMI2) p_f2),
 };
 
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+/*
+ * NoVmp (ledger U79): reached from the 0F map table, i.e. legacy 0F 38 / 0F 3A.
+ * VEX selects maps 2/3 with m-mmmm; a 38/3A byte inside VEX map 1 is not an
+ * escape and is #UD (SDM Vol2 Table A-3; i5-13600K).
+ */
+static void decode_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b);
+static void decode_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b);
+static void decode_0F38_esc(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    if (s->prefix & PREFIX_VEX) {
+        entry->gen = NULL;
+        return;
+    }
+    decode_0F38(s, env, entry, b);
+}
+
+static void decode_0F3A_esc(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    if (s->prefix & PREFIX_VEX) {
+        entry->gen = NULL;
+        return;
+    }
+    decode_0F3A(s, env, entry, b);
+}
+
+#endif /* __Use_Original_Qemu (U79) */
 static void decode_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
@@ -746,8 +791,14 @@ static void decode_0F10(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
     static const X86OpEntry opcodes_0F10_mem[4] = {
         X86_OP_ENTRY3(MOVDQ,      V,x,  None,None, W,x,  vex4_unal), /* MOVUPS */
         X86_OP_ENTRY3(MOVDQ,      V,x,  None,None, W,x,  vex4_unal), /* MOVUPD */
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
         X86_OP_ENTRY3(VMOVSS_ld,  V,x,  H,x,       M,ss, vex5),
         X86_OP_ENTRY3(VMOVSD_ld,  V,x,  H,x,       M,sd, vex5),
+#else /* ours (U79) */
+        /* load form: VEX.vvvv reserved, 1111b or #UD (SDM Vol2 MOVSS/MOVSD) (U79) */
+        X86_OP_ENTRY3(VMOVSS_ld,  V,x,  None,None, M,ss, vex5),
+        X86_OP_ENTRY3(VMOVSD_ld,  V,x,  None,None, M,sd, vex5),
+#endif /* __Use_Original_Qemu (U79) */
     };
 
     if ((get_modrm(s, env) >> 6) == 3) {
@@ -961,7 +1012,11 @@ static const X86OpEntry opcodes_0F[256] = {
     [0x10] = X86_OP_GROUP0(0F10),
     [0x11] = X86_OP_GROUP0(0F11),
     [0x12] = X86_OP_GROUP0(0F12),
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
     [0x13] = X86_OP_ENTRY3(VMOVLPx_st,  M,q, None,None, V,q,  vex5 p_00_66),
+#else /* ours (U79) */
+    [0x13] = X86_OP_ENTRY3(VMOVLPx_st,  M,q, None,None, V,q,  vex5 chk(VEX128) p_00_66),
+#endif /* __Use_Original_Qemu (U79) */
     [0x14] = X86_OP_ENTRY3(VUNPCKLPx,   V,x, H,x, W,x,        vex4 p_00_66),
     [0x15] = X86_OP_ENTRY3(VUNPCKHPx,   V,x, H,x, W,x,        vex4 p_00_66),
     [0x16] = X86_OP_GROUP0(0F16),
@@ -1004,8 +1059,13 @@ static const X86OpEntry opcodes_0F[256] = {
     [0x2E] = X86_OP_GROUP3(VxCOMISx,   None,None, V,x, W,x,  vex3 p_00_66), /* VUCOMISS/SD */
     [0x2F] = X86_OP_GROUP3(VxCOMISx,   None,None, V,x, W,x,  vex3 p_00_66), /* VCOMISS/SD */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U79) */
     [0x38] = X86_OP_GROUP0(0F38),
     [0x3a] = X86_OP_GROUP0(0F3A),
+#else /* ours (U79) */
+    [0x38] = X86_OP_GROUP0(0F38_esc),
+    [0x3a] = X86_OP_GROUP0(0F3A_esc),
+#endif /* __Use_Original_Qemu (U79) */
 
     [0x58] = X86_OP_ENTRY3(VADD,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
     [0x59] = X86_OP_ENTRY3(VMUL,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
@@ -1465,6 +1525,17 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
     if (!validate_sse_prefix(s, e)) {
         return false;
     }
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+    /*
+     * NoVmp (ledger U79): scalar SS/SD forms are VEX.LIG (SDM Vol2): VEX.L is
+     * ignored, so decode them exactly as L=0 (bits 255:128 of the destination
+     * zeroed). QEMU raised #UD for L=1; the i5-13600K executes them.
+     */
+    if ((s->prefix & PREFIX_VEX) && e->vex_special == X86_VEX_REPScalar &&
+        (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ))) {
+        s->vex_l = 0;
+    }
+#endif /* __Use_Original_Qemu (U79) */
 
     /* First compute size of operands in order to initialize s->rip_offset.  */
     if (e->op0 != X86_TYPE_None) {
@@ -1618,6 +1689,17 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         goto illegal;
     }
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+    /*
+     * NoVmp (ledger U79): the NP forms of the MMX/SSE dual opcodes are MMX
+     * only; VEX.NP on them is #UD (SDM Vol2 2.3.8; i5-13600K), and must
+     * fault before the x87 -> MMX transition.
+     */
+    if ((s->prefix & PREFIX_VEX) && e->special == X86_SPECIAL_MMX &&
+        !(s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+        goto illegal;
+    }
+#endif /* __Use_Original_Qemu (U79) */
     switch (e->vex_special) {
     case X86_VEX_None:
         break;
@@ -1744,6 +1826,18 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         if (s->vex_l) {
             goto illegal;
         }
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+        /*
+         * ...except RORX (G, E, Ib): VEX.vvvv reserved, 1111b or #UD (U79).
+         * MULX writes VEX.vvvv in gen_MULX (its B operand is not in the entry).
+         */
+        if (s->vex_v != 0 && e->gen != gen_MULX &&
+            e->op0 != X86_TYPE_H && e->op0 != X86_TYPE_B &&
+            e->op1 != X86_TYPE_H && e->op1 != X86_TYPE_B &&
+            e->op2 != X86_TYPE_H && e->op2 != X86_TYPE_B) {
+            goto illegal;
+        }
+#endif /* __Use_Original_Qemu (U79) */
         /* All integer instructions use VEX.vvvv, so exit.  */
         return true;
     }
@@ -1767,6 +1861,11 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
             goto illegal;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U79) */
+    if ((e->check & X86_CHECK_VEX128) && s->vex_l) {
+        goto illegal;
+    }
+#endif /* __Use_Original_Qemu (U79) */
     if (e->check & X86_CHECK_W1) {
         if (!s->vex_w) {
             goto illegal;
