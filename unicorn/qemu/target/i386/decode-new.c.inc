@@ -2780,6 +2780,22 @@ static void decode_EVEX_0F38_8D(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_evex_by_w(s, vperm);
 }
 #endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U290) */
+/*
+ * NoVmp (ledger U290): 66 0F38 40: VPMULLD (W0, AVX512F, U155), VPMULLQ (W1, AVX512DQ):
+ * low 32/64 bits of the signed product (SDM Vol2B PMULLD/PMULLQ); Full tuple, {k1}{z},
+ * {1toN}; E4.
+ */
+static void decode_EVEX_0F38_40(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F38_40[2] = {
+        X86_OP_ENTRY3(PMULLD, V,x, H,x, W,x, EV_INT(W0)),
+        X86_OP_ENTRY3(EVEX_PMULLQ, V,x, H,x, W,x, cpuid(AVX512DQ) ev_vl(EV_VLALL) ev_tt(FULL)
+                      ev_mask(MZ) ev_w(W1) ev_es(W) p_66),
+    };
+    *entry = opcodes_EVEX_0F38_40[s->vex_w];
+}
+#endif /* __Use_Original_Qemu (U290) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2968,7 +2984,12 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x3b] = X86_OP_ENTRY3(EVEX_PMINU, V,x, H,x, W,x, EV_INT(WSEL)),
     [0x3d] = X86_OP_ENTRY3(EVEX_PMAXS, V,x, H,x, W,x, EV_INT(WSEL)),
     [0x3f] = X86_OP_ENTRY3(EVEX_PMAXU, V,x, H,x, W,x, EV_INT(WSEL)),
+#if __Use_Original_Qemu == 1 /* original QEMU (U290) */
     [0x40] = X86_OP_ENTRY3(PMULLD, V,x, H,x, W,x, EV_INT(W0)),
+#else /* ours (U290) */
+    /* NoVmp (ledger U290): W0 VPMULLD (U155), W1 VPMULLQ (AVX512DQ) */
+    [0x40] = X86_OP_GROUP0(EVEX_0F38_40),
+#endif /* __Use_Original_Qemu (U290) */
 #endif /* __Use_Original_Qemu (U155) */
 #if __Use_Original_Qemu != 1 /* ours (U157) */
     /* NoVmp (ledger U157): VPSRLVD/Q (45), VPSRAVD/Q (46), VPSLLVD/Q (47); Full, E4 */

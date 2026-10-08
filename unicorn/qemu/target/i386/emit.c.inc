@@ -2076,6 +2076,18 @@ static void gen_EVEX_VPERMT2W(DisasContext *s, CPUX86State *env, X86DecodedInsn 
  * with X86OpEntry.evex_msrc1 (U191), as VPBLENDMD/Q (U201).
  */
 #endif /* __Use_Original_Qemu (U269) */
+#if __Use_Original_Qemu != 1 /* ours (U290) */
+
+/* NoVmp (ledger U290): VPMULLQ: the low 64 bits of every 64 x 64-bit product */
+static void gen_EVEX_PMULLQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+
+    tcg_gen_gvec_mul(tcg_ctx, MO_64, decode->op[0].offset, decode->op[1].offset,
+                     decode->op[2].offset, vl, vl);
+}
+#endif /* __Use_Original_Qemu (U290) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
