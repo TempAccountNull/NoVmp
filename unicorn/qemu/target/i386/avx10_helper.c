@@ -68,6 +68,9 @@ static void bf16_status(CPUX86State *env, float_status *st)
     set_float_ftz_detection(float_ftz_after_rounding, st);
     set_default_nan_mode(false, st);
     set_float_exception_flags(0, st);
+    /* U373 x U445: MXCSR is not consulted (no MXCSR.UM / OM rounding rules, FTZ always) */
+    st->unmasked_underflow = false;
+    st->unmasked_overflow = false;
 }
 
 /* exact arithmetic on float64 (RNE, no DAZ/FTZ): BF16 values and their scalings are exact */
@@ -79,6 +82,8 @@ static void f64_exact_status(CPUX86State *env, float_status *st)
     set_flush_inputs_to_zero(false, st);
     set_default_nan_mode(false, st);
     set_float_exception_flags(0, st);
+    st->unmasked_underflow = false;     /* U373 x U445: independent of MXCSR.UM / OM */
+    st->unmasked_overflow = false;
 }
 
 /* the relation of two DAZ'd BF16 values: 0 LT, 1 EQ, 2 GT, 3 unordered */

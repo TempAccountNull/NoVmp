@@ -111,6 +111,9 @@ rem AVX10.2 (avx10_b, ledger U400-U412): FP8 conversions, VCVT2PS2PHX, EVEX VNNI
 rem VDPPHPS, VMPSADBW, VMOVRS*, zero-extending VMOVD/VMOVW, EVEX SM4 vs the independent model
 rem ref_avx10_b.py, Unicorn only with the AVX10.2 opt-in (UC_CTL_X86_AVX10 = 2).
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_b.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
+rem U445 x U147 / U236 / U373 / U404: MXCSR.UM / OM = 0 must not reach the forms that behave as if
+rem every MXCSR exception were masked ({er} / {sae}, VRCP14, BF16, VCVT2PS2PHX); hand-derived cases.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_sae_unmasked.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
 
 rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,

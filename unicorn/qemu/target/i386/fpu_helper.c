@@ -6971,12 +6971,26 @@ void helper_evex_rc_begin(CPUX86State *env, int32_t rc)
         set_x86_rounding_mode(rc & 3, &env->sse_status);
     }
     set_float_exception_flags(0, &env->sse_status);
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    /*
+     * U147 x U445: {er} / {sae} behave as if every MXCSR exception were masked, so the
+     * unmasked-#U/#O rounding of U445 (FTZ ignored, exact tiny results reported) does not
+     * apply: with MXCSR.UM = 0 and FTZ = 1 a tiny result is still flushed to zero.
+     */
+    env->sse_status.unmasked_underflow = false;
+    env->sse_status.unmasked_overflow = false;
+#endif /* __Use_Original_Qemu (U147) */
 }
 
 void helper_evex_rc_end(CPUX86State *env)
 {
     set_float_exception_flags(env->evex_saved_flags, &env->sse_status);
     set_float_rounding_mode(env->evex_saved_rmode, &env->sse_status);
+#if __Use_Original_Qemu != 1 /* ours (U147) */
+    /* U147 x U445: back to MXCSR.UM / MXCSR.OM (update_mxcsr_status) */
+    env->sse_status.unmasked_underflow = !(env->mxcsr & (1 << 11));
+    env->sse_status.unmasked_overflow = !(env->mxcsr & (1 << 10));
+#endif /* __Use_Original_Qemu (U147) */
 }
 #endif /* __Use_Original_Qemu (U147) */
 #if __Use_Original_Qemu != 1 /* ours (U152) */
@@ -8150,6 +8164,9 @@ static uint64_t evex_rcp14(CPUX86State *env, const EvFmt *f, uint64_t x, bool rs
 
     set_float_rounding_mode(float_round_nearest_even, &st);
     set_float_exception_flags(0, &st);
+    /* U236 x U445: no MXCSR flag, so no unmasked-#U/#O rounding (FTZ applies as masked) */
+    st.unmasked_underflow = false;
+    st.unmasked_overflow = false;
     if (evf_isnan(f, x)) {
         return x | f->quiet;
     }
@@ -8903,6 +8920,9 @@ void helper_avx10b_cvt2ps2phx(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s
 
     set_flush_to_zero(0, &st);
     set_float_exception_flags(0, &st);
+    /* U404 x U445: MXCSR flags "as if all MXCSR numerical exceptions flags are masked" */
+    st.unmasked_underflow = false;
+    st.unmasked_overflow = false;
     if (rc >= 0) {
         set_x86_rounding_mode(rc, &st);
     }
