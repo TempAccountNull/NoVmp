@@ -659,7 +659,8 @@ static CPUCacheInfo legacy_l3_cache = {
 #define TCG_7_0_ECX_FEATURES (CPUID_7_0_ECX_UMIP | CPUID_7_0_ECX_PKU | \
           /* CPUID_7_0_ECX_OSPKE is dynamic */ \
           CPUID_7_0_ECX_LA57 | CPUID_7_0_ECX_PKS | CPUID_7_0_ECX_VAES | \
-          CPUID_7_0_ECX_RDPID | CPUID_7_0_ECX_VPCLMULQDQ /* U69 */)
+          CPUID_7_0_ECX_RDPID | CPUID_7_0_ECX_VPCLMULQDQ /* U69 */ | \
+          CPUID_7_0_ECX_GFNI /* U70 */)
 #endif /* __Use_Original_Qemu (U69) */
 #define TCG_7_0_EDX_FEATURES 0
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD

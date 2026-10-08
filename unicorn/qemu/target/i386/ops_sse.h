@@ -2186,6 +2186,95 @@ void glue(helper_pclmulqdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
         clmulq(&d->Q(i), &d->Q(i + 1), a, b);
     }
 }
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+/*
+ * NoVmp (ledger U70): GFNI (SDM Vol2 GF2P8MULB / GF2P8AFFINEQB /
+ * GF2P8AFFINEINVQB). GF(2^8) with the polynomial x^8 + x^4 + x^3 + x + 1;
+ * the inverse is computed (x^254, 0 -> 0), not tabled.
+ */
+#if SHIFT == 1
+static uint8_t gf2p8_mul(uint8_t a, uint8_t b)
+{
+    unsigned t = 0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        if (b & (1u << i)) {
+            t ^= (unsigned)a << i;
+        }
+    }
+    for (i = 14; i >= 8; i--) {             /* reduce by 0x11B */
+        if (t & (1u << i)) {
+            t ^= 0x11Bu << (i - 8);
+        }
+    }
+    return (uint8_t)t;
+}
+
+static uint8_t gf2p8_inv(uint8_t x)
+{
+    uint8_t r = 1, p = x;
+    int e = 254, i;
+
+    for (i = 0; i < 8; i++, e >>= 1) {      /* x^254 = x^-1, 0 -> 0 */
+        if (e & 1) {
+            r = gf2p8_mul(r, p);
+        }
+        p = gf2p8_mul(p, p);
+    }
+    return x ? r : 0;
+}
+
+/* bit i = parity(matrix.byte[7 - i] AND x) XOR imm.bit[i] */
+static uint8_t gf2p8_affine(uint64_t matrix, uint8_t x, uint8_t imm)
+{
+    uint8_t r = 0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        uint8_t row = (uint8_t)(matrix >> (8 * (7 - i)));
+        r |= (uint8_t)(ctpop8(row & x) & 1) << i;
+    }
+    return r ^ imm;
+}
+#endif
+
+void glue(helper_gf2p8mulb, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
+{
+    int i;
+    Reg r;  /* d may alias v or s */
+
+    for (i = 0; i < 8 << SHIFT; i++) {
+        r.B(i) = gf2p8_mul(v->B(i), s->B(i));
+    }
+    memcpy(d, &r, 8 << SHIFT);
+}
+
+/* d.qword[j].byte[b] = affine(s.qword[j], v.qword[j].byte[b], imm) */
+void glue(helper_gf2p8affineqb, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
+                                        uint32_t imm)
+{
+    int i;
+    Reg r;  /* d may alias v or s */
+
+    for (i = 0; i < 8 << SHIFT; i++) {
+        r.B(i) = gf2p8_affine(s->Q(i >> 3), v->B(i), imm);
+    }
+    memcpy(d, &r, 8 << SHIFT);
+}
+
+void glue(helper_gf2p8affineinvqb, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
+                                           uint32_t imm)
+{
+    int i;
+    Reg r;  /* d may alias v or s */
+
+    for (i = 0; i < 8 << SHIFT; i++) {
+        r.B(i) = gf2p8_affine(s->Q(i >> 3), gf2p8_inv(v->B(i)), imm);
+    }
+    memcpy(d, &r, 8 << SHIFT);
+}
+#endif /* __Use_Original_Qemu (U70) */
 
 void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {

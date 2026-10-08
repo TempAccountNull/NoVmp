@@ -2515,6 +2515,14 @@
 #define helper_pcmpistrm_xmm helper_pcmpistrm_xmm_x86_64
 #define helper_crc32 helper_crc32_x86_64
 #define helper_pclmulqdq_xmm helper_pclmulqdq_xmm_x86_64
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+#define helper_gf2p8mulb_xmm helper_gf2p8mulb_xmm_x86_64
+#define helper_gf2p8mulb_ymm helper_gf2p8mulb_ymm_x86_64
+#define helper_gf2p8affineqb_xmm helper_gf2p8affineqb_xmm_x86_64
+#define helper_gf2p8affineqb_ymm helper_gf2p8affineqb_ymm_x86_64
+#define helper_gf2p8affineinvqb_xmm helper_gf2p8affineinvqb_xmm_x86_64
+#define helper_gf2p8affineinvqb_ymm helper_gf2p8affineinvqb_ymm_x86_64
+#endif /* __Use_Original_Qemu (U70) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

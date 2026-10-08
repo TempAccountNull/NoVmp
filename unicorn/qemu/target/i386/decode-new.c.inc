@@ -480,6 +480,10 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xcb] = X86_OP_ENTRY2(SHA256RNDS2, V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
     [0xcc] = X86_OP_ENTRY2(SHA256MSG1,  V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
     [0xcd] = X86_OP_ENTRY2(SHA256MSG2,  V,dq, W,dq, sse4_novex cpuid(SHA_NI) p_00),
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    /* GFNI (U70): 66 0F 38 CF / VEX.66.0F38.W0 CF */
+    [0xcf] = X86_OP_ENTRY3(GF2P8MULB,   V,x,  H,x,  W,x,  vex4 chk(VEX_W0) cpuid(GFNI) p_66),
+#endif /* __Use_Original_Qemu (U70) */
 
     [0xdb] = X86_OP_ENTRY3(VAESIMC,     V,dq, None,None, W,dq, vex4 cpuid(AES) p_66),
     [0xdc] = X86_OP_ENTRY3(VAESENC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
@@ -631,6 +635,11 @@ static const X86OpEntry opcodes_0F3A[256] = {
     /* VEX.256 VPCLMULQDQ: two lanes (CPUID.7.0:ECX.VPCLMULQDQ, U69) */
     [0x44] = X86_OP_ENTRY4(PCLMULQDQ,  V,x, H,x, W,x, vex4 cpuid(PCLMULQDQ) p_66),
 #endif /* __Use_Original_Qemu (U69) */
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    /* GFNI (U70): 66 0F 3A CE/CF ib / VEX.66.0F3A.W1 CE/CF ib */
+    [0xce] = X86_OP_ENTRY4(GF2P8AFFINEQB,    V,x, H,x, W,x, vex4 chk(VEX_W1) cpuid(GFNI) p_66),
+    [0xcf] = X86_OP_ENTRY4(GF2P8AFFINEINVQB, V,x, H,x, W,x, vex4 chk(VEX_W1) cpuid(GFNI) p_66),
+#endif /* __Use_Original_Qemu (U70) */
     [0x46] = X86_OP_ENTRY4(VPERM2x128, V,qq, H,qq, W,qq, vex6 chk(W0) cpuid(AVX2) p_66),
 
     [0x60] = X86_OP_ENTRY4(PCMPESTRM,  None,None, V,dq, W,dq, vex4_unal cpuid(SSE42) p_66),
@@ -1521,6 +1530,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
 
     case X86_FEAT_AVX:
         return (s->cpuid_ext_features & CPUID_EXT_AVX);
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    case X86_FEAT_GFNI:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_GFNI);
+#endif /* __Use_Original_Qemu (U70) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
@@ -1709,6 +1722,13 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
             goto illegal;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    if ((s->prefix & PREFIX_VEX) &&
+        (((e->check & X86_CHECK_VEX_W0) && s->vex_w) ||
+         ((e->check & X86_CHECK_VEX_W1) && !s->vex_w))) {
+        goto illegal;
+    }
+#endif /* __Use_Original_Qemu (U70) */
     return true;
 
 nm_exception:

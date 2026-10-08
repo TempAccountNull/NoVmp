@@ -704,6 +704,10 @@ BINARY_IMM_SSE(VDPPS,      dpps)
 BINARY_IMM_SSE(VDPPD,      dppd)
 BINARY_IMM_SSE(VMPSADBW,   mpsadbw)
 BINARY_IMM_SSE(PCLMULQDQ,  pclmulqdq)
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+BINARY_IMM_SSE(GF2P8AFFINEQB,    gf2p8affineqb)
+BINARY_IMM_SSE(GF2P8AFFINEINVQB, gf2p8affineinvqb)
+#endif /* __Use_Original_Qemu (U70) */
 
 
 #define UNARY_INT_GVEC(uname, func, ...)                                           \
@@ -866,6 +870,9 @@ static void gen_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 }
 
 /* Instructions with no MMX equivalent.  */
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+BINARY_INT_SSE(GF2P8MULB,  gf2p8mulb)
+#endif /* __Use_Original_Qemu (U70) */
 BINARY_INT_SSE(PUNPCKLQDQ, punpcklqdq)
 BINARY_INT_SSE(PUNPCKHQDQ, punpckhqdq)
 BINARY_INT_SSE(VPACKUSDW,  packusdw)

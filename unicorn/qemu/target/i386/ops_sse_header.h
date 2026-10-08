@@ -354,6 +354,11 @@ DEF_HELPER_3(glue(aesimc, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_4(glue(aeskeygenassist, SUFFIX), void, env, Reg, Reg, i32)
 #endif
 DEF_HELPER_5(glue(pclmulqdq, SUFFIX), void, env, Reg, Reg, Reg, i32)
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+DEF_HELPER_4(glue(gf2p8mulb, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_5(glue(gf2p8affineqb, SUFFIX), void, env, Reg, Reg, Reg, i32)
+DEF_HELPER_5(glue(gf2p8affineinvqb, SUFFIX), void, env, Reg, Reg, Reg, i32)
+#endif /* __Use_Original_Qemu (U70) */
 #endif
 
 /* F16C helpers */

@@ -117,6 +117,9 @@ typedef enum X86CPUIDFeature {
     X86_FEAT_SSE41,
     X86_FEAT_SSE42,
     X86_FEAT_SSE4A,
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    X86_FEAT_GFNI,      /* U70 */
+#endif /* __Use_Original_Qemu (U70) */
 } X86CPUIDFeature;
 
 /* Execution flags */
@@ -143,6 +146,11 @@ typedef enum X86InsnCheck {
 
     /* Fault if VEX.W=0 */
     X86_CHECK_W1 = 256,
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    /* As W0/W1, but only for the VEX encoding (legacy forms ignore REX.W) (U70) */
+    X86_CHECK_VEX_W0 = 512,
+    X86_CHECK_VEX_W1 = 1024,
+#endif /* __Use_Original_Qemu (U70) */
 } X86InsnCheck;
 
 typedef enum X86InsnSpecial {
