@@ -5928,6 +5928,144 @@ static void amx_tmul_int8(CPUX86State *env, int op, unsigned d, unsigned s1, uns
 }
 #endif /* __Use_Original_Qemu (U177) */
 
+#if __Use_Original_Qemu != 1 /* ours (U178) */
+/*
+ * NoVmp (ledger U178): FP32 arithmetic of the AMX floating-point dot products (ISE 319433
+ * 3.2/3.4 fma32, SDM Vol2B pseudocode): "FP32 FMA with DAZ=FTZ=1, RNE rounding. MXCSR is
+ * neither consulted nor updated. No exceptions raised or denoted."
+ *   fma32(acc, x, y): denormal x, y, acc -> zero of the same sign (DAZ); v = x*y + acc
+ *     with one rounding (RNE, gradual underflow); a denormal v -> zero of v's sign (FTZ).
+ *   add32(a, b): the same for a + b.
+ * NaN results (the SDM leaves them open; x86 SIMD convention chosen): a NaN operand ->
+ * the first NaN in the order x, y, acc (a, b for add32), quieted; invalid (inf * 0,
+ * inf - inf) -> the QNaN indefinite FFC00000h. MXCSR and env->sse_status are not used.
+ */
+static float32 amx_daz32(float32 a)
+{
+    return float32_is_zero_or_denormal(a) ? make_float32(float32_val(a) & 0x80000000u) : a;
+}
+
+static float32 amx_ftz32(float32 a)
+{
+    return float32_is_denormal(a) ? make_float32(float32_val(a) & 0x80000000u) : a;
+}
+
+static void amx_fp_status(float_status *st)
+{
+    memset(st, 0, sizeof(*st));
+    set_float_rounding_mode(float_round_nearest_even, st);
+}
+
+static float32 amx_nan_result(float32 r, float_status *st)
+{
+    if (get_float_exception_flags(st) & float_flag_invalid) {
+        return make_float32(0xffc00000u);               /* QNaN indefinite */
+    }
+    return r;
+}
+
+static float32 amx_fma32(float32 acc, float32 x, float32 y)
+{
+    float_status st;
+    float32 r;
+
+    x = amx_daz32(x);
+    y = amx_daz32(y);
+    acc = amx_daz32(acc);
+    if (float32_is_any_nan(x)) {
+        return make_float32(float32_val(x) | 0x00400000u);
+    }
+    if (float32_is_any_nan(y)) {
+        return make_float32(float32_val(y) | 0x00400000u);
+    }
+    if (float32_is_any_nan(acc)) {
+        return make_float32(float32_val(acc) | 0x00400000u);
+    }
+    amx_fp_status(&st);
+    r = amx_nan_result(float32_muladd(x, y, acc, 0, &st), &st);
+    return amx_ftz32(r);
+}
+
+static float32 amx_add32(float32 a, float32 b)
+{
+    float_status st;
+    float32 r;
+
+    a = amx_daz32(a);
+    b = amx_daz32(b);
+    if (float32_is_any_nan(a)) {
+        return make_float32(float32_val(a) | 0x00400000u);
+    }
+    if (float32_is_any_nan(b)) {
+        return make_float32(float32_val(b) | 0x00400000u);
+    }
+    amx_fp_status(&st);
+    r = amx_nan_result(float32_add(a, b, &st), &st);
+    return amx_ftz32(r);
+}
+
+/*
+ * The common FP dot-product skeleton (TDPBF16PS, TDPFP16PS, TCMMIMFP16PS, TCMMRLFP16PS):
+ * per row m, temp1[0 .. 2N-1] := 0; for k (ascending), for n:
+ *   temp1[2n+0] := fma32(temp1[2n+0], ex(k, n), ey(k, n)),
+ *   temp1[2n+1] := fma32(temp1[2n+1], ox(k, n), oy(k, n));
+ * then tsrcdest.fp32[n] := add32(tsrcdest.fp32[n], add32(temp1[2n], temp1[2n+1])) and
+ * write_row_and_zero. `cvt` converts one 16-bit element to FP32; `pair` selects which
+ * elements of A = tsrc1.row[m].dword[k] (a0 = low, a1 = high half) and
+ * B = tsrc2.row[k].dword[n] feed the even and odd accumulators.
+ */
+typedef float32 (*AmxCvt16)(uint16_t h);
+typedef void (*AmxPair)(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
+                        uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy);
+
+static void amx_tmul_fp(CPUX86State *env, unsigned d, unsigned s1, unsigned s2,
+                        AmxCvt16 cvt, AmxPair pair)
+{
+    unsigned rows = AMX_ROWS(env, d), kk = AMX_COLSB(env, s1) / 4;
+    unsigned nn = AMX_COLSB(env, d) / 4, m, k, n;
+
+    for (m = 0; m < rows; m++) {
+        float32 temp1[32];
+        for (n = 0; n < 2 * nn; n++) {
+            temp1[n] = float32_zero;
+        }
+        for (k = 0; k < kk; k++) {
+            const uint8_t *a = AMX_ROW(env, s1, m) + 4 * k;
+            for (n = 0; n < nn; n++) {
+                const uint8_t *b = AMX_ROW(env, s2, k) + 4 * n;
+                uint16_t ex, ey, ox, oy;
+                pair(lduw_le_p(a), lduw_le_p(a + 2), lduw_le_p(b), lduw_le_p(b + 2),
+                     &ex, &ey, &ox, &oy);
+                temp1[2 * n] = amx_fma32(temp1[2 * n], cvt(ex), cvt(ey));
+                temp1[2 * n + 1] = amx_fma32(temp1[2 * n + 1], cvt(ox), cvt(oy));
+            }
+        }
+        for (n = 0; n < nn; n++) {
+            uint8_t *c = AMX_ROW(env, d, m) + 4 * n;
+            float32 tmpf32 = amx_add32(temp1[2 * n], temp1[2 * n + 1]);
+            stl_le_p(c, float32_val(amx_add32(make_float32(ldl_le_p(c)), tmpf32)));
+        }
+        memset(AMX_ROW(env, d, m) + 4 * nn, 0, AMX_P1_BYTES_PER_ROW - 4 * nn);
+    }
+    amx_tmul_finish(env, d);
+}
+
+/* make_fp32 (TDPBF16PS): the bfloat16 bit pattern in bits 31:16 of a dword */
+static float32 amx_cvt_bf16(uint16_t h)
+{
+    return make_float32((uint32_t)h << 16);
+}
+
+/* TDPBF16PS: even accumulator A.bf16[2k] * B.bf16[2n], odd A.bf16[2k+1] * B.bf16[2n+1] */
+static void amx_pair_dot(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
+                         uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy)
+{
+    *ex = a0;
+    *ey = b0;
+    *ox = a1;
+    *oy = b1;
+}
+#endif /* __Use_Original_Qemu (U178) */
 
 
 
@@ -5948,6 +6086,11 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
     case AMX_TDPBUUD:
         amx_tmul_int8(env, op, d, s1, s2);
         break;
+#if __Use_Original_Qemu != 1 /* ours (U178) */
+    case AMX_TDPBF16PS:
+        amx_tmul_fp(env, d, s1, s2, amx_cvt_bf16, amx_pair_dot);
+        break;
+#endif /* __Use_Original_Qemu (U178) */
     default:
         g_assert_not_reached();
     }

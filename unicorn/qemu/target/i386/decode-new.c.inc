@@ -430,6 +430,11 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         [3] = X86_OP_ENTRY0(TDPBSSD,      vex22 cpuid(AMX_INT8) p_f2),
     };
 #endif /* __Use_Original_Qemu (U177) */
+#if __Use_Original_Qemu != 1 /* ours (U178) */
+    static const X86OpEntry amx_5c_reg[4] = {
+        [2] = X86_OP_ENTRY0(TDPBF16PS,    vex22 cpuid(AMX_BF16) p_f3),
+    };
+#endif /* __Use_Original_Qemu (U178) */
     int mod = get_modrm(s, env) >> 6;
 
     memset(entry, 0, sizeof(*entry));
@@ -454,6 +459,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         }
         break;
 #endif /* __Use_Original_Qemu (U177) */
+#if __Use_Original_Qemu != 1 /* ours (U178) */
+    case 0x5c:
+        if (mod == 3) {
+            *entry = *decode_by_prefix(s, amx_5c_reg);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U178) */
     default:
         break;
     }
@@ -627,6 +639,9 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
 #if __Use_Original_Qemu != 1 /* ours (U176) */
     [0x4b] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U176) */
+#if __Use_Original_Qemu != 1 /* ours (U178) */
+    [0x5c] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U178) */
 #if __Use_Original_Qemu != 1 /* ours (U177) */
     [0x5e] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U177) */
