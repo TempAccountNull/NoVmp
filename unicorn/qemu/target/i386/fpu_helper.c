@@ -4138,6 +4138,14 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
 void helper_fstenv(CPUX86State *env, target_ulong ptr, int data32)
 {
     do_fstenv(env, ptr, data32, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U61) */
+    /*
+     * NoVmp (ledger U61): "FSTENV/FNSTENV ... then masks all floating-point
+     * exceptions" (SDM Vol2 FSTENV; i5-13600K: FCW 0360 -> 037F, ES/B cleared
+     * with the masks, Goldmont MSROM U6c29)
+     */
+    cpu_set_fpuc(env, env->fpuc | 0x3f);
+#endif /* __Use_Original_Qemu (U61) */
 }
 
 static void cpu_set_fpus(CPUX86State *env, uint16_t fpus)
