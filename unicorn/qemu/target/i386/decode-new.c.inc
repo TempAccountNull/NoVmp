@@ -2533,6 +2533,24 @@ static void decode_EVEX_0F3A_1B(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = opcodes[s->vex_w];
 }
 #endif /* __Use_Original_Qemu (U215) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+/*
+ * NoVmp (ledger U264): 0F 70: F3 VPSHUFHW, F2 VPSHUFLW zmm1{k1}{z}, zmm2/m512, imm8
+ * (AVX512BW, Full Mem, word writemask, E4NF); 66 W0 = VPSHUFD (AVX512F, U211).
+ */
+static void decode_EVEX_0F70(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F70[4] = {
+        {},
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+        X86_OP_ENTRY4(EVEX_VPSHUFD, V,x, None,None, W,x, EV_PRM(EV_VLALL, W0) p_66),
+#endif /* __Use_Original_Qemu (U211) */
+        X86_OP_ENTRY4(EVEX_PSHUFHW, V,x, W,x, None,None, EV_BW(WIG, 16) ev_nf),
+        X86_OP_ENTRY4(EVEX_PSHUFLW, V,x, W,x, None,None, EV_BW(WIG, 16) ev_nf),
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F70);
+}
+#endif /* __Use_Original_Qemu (U264) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -2600,7 +2618,7 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x6a] = X86_OP_ENTRY3(EVEX_UNPCKH, V,x, H,x, W,x, EV_PRM(EV_VLALL, W0) p_66), /* vpunpckhdq */
     [0x6c] = X86_OP_ENTRY3(EVEX_UNPCKL, V,x, H,x, W,x, EV_PRM(EV_VLALL, W1) p_66), /* vpunpcklqdq */
     [0x6d] = X86_OP_ENTRY3(EVEX_UNPCKH, V,x, H,x, W,x, EV_PRM(EV_VLALL, W1) p_66), /* vpunpckhqdq */
-    [0x70] = X86_OP_ENTRY4(EVEX_VPSHUFD, V,x, None,None, W,x, EV_PRM(EV_VLALL, W0) p_66),
+    /* 0x70: 66 VPSHUFD is the 66 slot of decode_EVEX_0F70 (with U264's F3/F2 VPSHUFHW/LW) */
     [0xc6] = X86_OP_GROUP0(EVEX_0FC6),
 #endif /* __Use_Original_Qemu (U211) */
 #if __Use_Original_Qemu != 1 /* ours (U214) */
@@ -2651,6 +2669,21 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xf6] = X86_OP_ENTRY3(EVEX_PSADBW,  V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
                            ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(64) ev_nf p_66),
 #endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+    /*
+     * NoVmp (ledger U264): unpacks / packs (66.0F.WIG; VPACKSSDW 66.0F.W0: Full tuple,
+     * m32bcst, word writemask), VPSHUFHW/LW (0F 70 F3/F2): E4NF
+     */
+    [0x60] = X86_OP_ENTRY3(EVEX_PUNPCKLBW, V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+    [0x61] = X86_OP_ENTRY3(EVEX_PUNPCKLWD, V,x, H,x, W,x, EV_BW(WIG, 16) ev_nf p_66),
+    [0x63] = X86_OP_ENTRY3(EVEX_PACKSSWB,  V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+    [0x67] = X86_OP_ENTRY3(EVEX_PACKUSWB,  V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+    [0x68] = X86_OP_ENTRY3(EVEX_PUNPCKHBW, V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+    [0x69] = X86_OP_ENTRY3(EVEX_PUNPCKHWD, V,x, H,x, W,x, EV_BW(WIG, 16) ev_nf p_66),
+    [0x6b] = X86_OP_ENTRY3(EVEX_PACKSSDW,  V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
+    [0x70] = X86_OP_GROUP0(EVEX_0F70),
+#endif /* __Use_Original_Qemu (U264) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -2848,6 +2881,12 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     /* NoVmp (ledger U263): VPMADDUBSW (66.0F38.WIG 04): Full Mem, word writemask, E4NF */
     [0x04] = X86_OP_ENTRY3(EVEX_PMADDUBSW, V,x, H,x, W,x, EV_BW(WIG, 16) ev_nf p_66),
 #endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+    /* NoVmp (ledger U264): VPSHUFB (00), VPACKUSDW (2B W0: Full, m32bcst, word writemask) */
+    [0x00] = X86_OP_ENTRY3(EVEX_PSHUFB,   V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+    [0x2b] = X86_OP_ENTRY3(EVEX_PACKUSDW, V,x, H,x, W,x, cpuid(AVX512BW) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_w(W0) ev_es(32) bw_kes(16) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U264) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -2908,6 +2947,10 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     /* NoVmp (ledger U263): VDBPSADBW (66.0F3A.W0 42 ib): Full Mem, word writemask, E4NF */
     [0x42] = X86_OP_ENTRY4(EVEX_VDBPSADBW, V,x, H,x, W,x, EV_BW(W0, 16) ev_nf p_66),
 #endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+    /* NoVmp (ledger U264): VPALIGNR (66.0F3A.WIG 0F ib): Full Mem, byte writemask, E4NF */
+    [0x0f] = X86_OP_ENTRY4(EVEX_PALIGNR, V,x, H,x, W,x, EV_BW(WIG, 8) ev_nf p_66),
+#endif /* __Use_Original_Qemu (U264) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U149) */
 #undef EV_INT

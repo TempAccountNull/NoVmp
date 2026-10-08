@@ -1853,6 +1853,49 @@ static void gen_EVEX_VDBPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn
                                                        (vector_len(s, decode) << 8)));
 }
 #endif /* __Use_Original_Qemu (U263) */
+#if __Use_Original_Qemu != 1 /* ours (U264) */
+
+/*
+ * NoVmp (ledger U264): byte/word shuffles, unpacks and packs, all within 128-bit lanes
+ * (SDM Vol2B PSHUFB, PSHUFHW, PSHUFLW, PALIGNR, PUNPCKLBW/WD, PUNPCKHBW/WD, PACKSSWB/
+ * SSDW, PACKUSWB, PACKUSDW): the ops_sse.h helper of the vector length (SHIFT 3 for 512).
+ */
+EVEX_SSE3(PSHUFB, pshufb)
+EVEX_SSE3(PUNPCKLBW, punpcklbw)
+EVEX_SSE3(PUNPCKHBW, punpckhbw)
+EVEX_SSE3(PUNPCKLWD, punpcklwd)
+EVEX_SSE3(PUNPCKHWD, punpckhwd)
+EVEX_SSE3(PACKSSWB, packsswb)
+EVEX_SSE3(PACKUSWB, packuswb)
+EVEX_SSE3(PACKSSDW, packssdw)
+EVEX_SSE3(PACKUSDW, packusdw)
+
+/* VPSHUFHW / VPSHUFLW zmm1{k1}{z}, zmm2/m512, imm8: op[1] = r/m source */
+static void gen_EVEX_PSHUFHW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pshufhw)(tcg_ctx, OP_PTR0, OP_PTR1,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+
+static void gen_EVEX_PSHUFLW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pshuflw)(tcg_ctx, OP_PTR0, OP_PTR1,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+
+/* VPALIGNR: per lane (SRC1:SRC2) >> imm8 * 8, 0 for imm8 >= 32 */
+static void gen_EVEX_PALIGNR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, palignr)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+#endif /* __Use_Original_Qemu (U264) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
