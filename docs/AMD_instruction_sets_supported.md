@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 01:33 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `3c49cf2 EVEX form table data: evex_forms.tsv, conflicts, APX list, draft .inc, summary`). Do not edit by hand._
+_Generated 2026-10-08 01:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX opmask instructions; HF_OPMASK_EN at hflags bit 2)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so every row is ❌ NOT SUPPORTED on our CPU.
 

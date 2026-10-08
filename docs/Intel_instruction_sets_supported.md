@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-08 01:33 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `3c49cf2 EVEX form table data: evex_forms.tsv, conflicts, APX list, draft .inc, summary`). Do not edit by hand._
+_Generated 2026-10-08 01:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `b6f97c9 Ledger U127-U133 (milestone K: VEX opmask instructions; HF_OPMASK_EN at hflags bit 2)`). Do not edit by hand._
 
 **Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, the emulator has an open item · ⬜ not implemented / not verified yet · **❌ NOT SUPPORTED on our i5-13600K** (the CPU cannot execute it, so it can never be checked against our hardware; it is still implemented from the manual where possible — the row says "implemented per the manual" or "not implemented yet").
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 81, open item 57, not implemented yet 1242) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 132, open item 57, not implemented yet 1191) — 2682 forms
 
 ## Currently being added
 
@@ -15,7 +15,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
   - ⏳ 1.15c small Intel extensions — merged so far: SHA512/SM3/SM4 (U82–U84), AVX-VNNI-INT8/INT16, AVX-IFMA, AVX-NE-CONVERT (U85–U88), Key Locker, RAO-INT, MOVRS, USER_MSR, UINTR, LOCK 0F 18 (U100–U105), TSX, WAITPKG, ENQCMD, GETSEC/PCONFIG/SGX faults, CET shadow stack + IBT + shadow-stack paging (U110–U117); CPL0-only ones = exact CPL3 faults per D6.
   - ⏳ 1.15d EVEX / AVX-512 — design done (`emulator\EVEX_DESIGN.md`, 2026-10-08): 2537 EVEX forms (AVX512F 1071, BW 250, DQ 126, CD 18, FP16 359, AVX10.2 ~410, others ~130) + 51 opmask forms; state (ZMM 32x512, k0–7) already in CPUX86State.
       - ⬜ M0 leftovers: Haswell-class models without XSAVEC still report non-zero 0DH.1 EBX (SDM: 0) — kept for an existing test, revisit; profile 0DH.1 EBX stays as captured (capture machine IA32_XSS share unknown).
-    - ⏳ K [agent, wt/evex_k, U127–U139]: 51 opmask instructions (KAND…KUNPCK, KMOV, KTEST/KORTEST, KSHIFT, KADD), X86_OP_KREG / X86_TYPE_K, opmask enable = CR4.OSXSAVE && XCR0 & E3h (separate hflag), K20/K21 #UD rules; XSAVE component 5 already done in M0.
+      - ⬜ K leftovers / M1 notes: (1) 32-bit VEX.B leak: disas_insn_new sets rex_b from VEX.B in every mode (SDM: ignored outside 64-bit) — fix globally in the prefix parser; (2) VEX in 16-bit protected mode is not recognised (upstream: protected, non-VM86); (3) vvvv is 4 bits outside 64-bit — validate_evex must decide per operand; (4) check bits: only 16384/32768 left in the 16-bit check field → separate EVEX check field; (5) hflags: bit 31 was the last free in the high range — 2 used now; (6) AVX10.1 also enables the opmask forms (M5); (7) CD/VL need new UC_CTL_X86_AVX512 bits (M3); (8) no #AC anywhere in the fork (KMOV at CPL3 unaligned); (9) U121 comment in helper.c still says E3h/E7h "left to K".
     - ⬜ M1: EVEX prefix (62), 32 registers, disp8*N, masking/zeroing, masked memory (fault suppression), broadcast, {er}/{sae}, validate_evex, SHIFT 3 helpers, asmjit-driven EVEX table generator, first instructions (VMOVDQU/A32/64, VMOVUPS/APS, VPADDD/Q, VPANDD/Q, VADDPS/PD, VPCMPD→k, VPBROADCASTD).
       - ⬜ M1 notes from M0: gate EVEX on env->features AVX512F (set by UC_CTL_X86_AVX512) masked by the strict profile; extend UC_CTL_X86_AVX512 to a bitmask for CD/BW/DQ/VL (M3); EVEX sets PREFIX_VEX so U126 zeroing covers EVEX.128/256 register destinations, masking must merge before writeback; emu-alltest `--avx512` + `xcr0=` key.
     - ⬜ M2: rest of AVX512F (FP, FMA, conversions, permutes, compress/expand, gather/scatter, ternlog, getexp/getmant/scalef/fixupimm/rndscale/rcp14/rsqrt14).
@@ -187,11 +187,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AVX10_2_BF16 | 29 | 0 | 0 | 0 | 0 | 0 | 29 |
 | AVX10_MOVRS | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
 | AVX10_V2_AUX | 21 | 0 | 0 | 0 | 0 | 0 | 21 |
-| AVX512BW | 112 | 0 | 0 | 0 | 0 | 0 | 112 |
+| AVX512BW | 112 | 0 | 0 | 0 | 26 | 0 | 86 |
 | AVX512CD | 6 | 0 | 0 | 0 | 0 | 0 | 6 |
-| AVX512DQ | 69 | 0 | 0 | 0 | 0 | 0 | 69 |
+| AVX512DQ | 69 | 0 | 0 | 0 | 14 | 0 | 55 |
 | AVX512ER | 10 | 0 | 0 | 0 | 0 | 0 | 10 |
-| AVX512F | 479 | 0 | 0 | 0 | 0 | 0 | 479 |
+| AVX512F | 479 | 0 | 0 | 0 | 11 | 0 | 468 |
 | AVX512PF | 16 | 0 | 0 | 0 | 0 | 0 | 16 |
 | AVX512_4FMAPS | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
 | AVX512_4VNNIW | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
@@ -2951,32 +2951,32 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | KADDD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KADDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDND | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDNQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KMOVD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KMOVQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KNOTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KNOTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORTESTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORTESTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTLD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTLQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTRD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTRQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KTESTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KTESTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KUNPCKDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KUNPCKWD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXNORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXNORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
+| ❌ | KADDD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KADDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDND | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDNQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KMOVD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KMOVQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KNOTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KNOTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORTESTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORTESTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTLD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTLQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTRD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTRQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KTESTD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KTESTQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KUNPCKDQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KUNPCKWD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXNORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXNORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXORD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXORQ | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VDBPSADBW | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (18 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVDQU16 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
 | ❌ | VMOVDQU8 | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[30] = 0 on this CPU) — not implemented yet: not implemented (24 forms #UD; the i5-13600K lacks it) |
@@ -3083,20 +3083,20 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | KADDB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KADDW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDNB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KMOVB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KNOTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORTESTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTLB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTRB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KTESTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KTESTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXNORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
+| ❌ | KADDB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KADDW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDNB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KMOVB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KNOTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORTESTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTLB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTRB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KTESTB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KTESTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXNORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXORB | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VANDNPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VANDNPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
 | ❌ | VANDPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[17] = 0 on this CPU) — not implemented yet: not implemented (27 forms #UD; the i5-13600K lacks it) |
@@ -3176,17 +3176,17 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | KANDNW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KANDW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KMOVW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KNOTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORTESTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTLW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KSHIFTRW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KUNPCKBW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXNORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
-| ❌ | KXORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AVX-512 (opmask VEX forms): #… |
+| ❌ | KANDNW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KANDW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KMOVW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KNOTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORTESTW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTLW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KSHIFTRW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KUNPCKBW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXNORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | KXORW | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 | ❌ | VADDPD | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
 | ❌ | VADDPS | evex | 128/256/512 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (30 forms #UD; the i5-13600K lacks it) |
 | ❌ | VADDSD | evex | 128 | NOT SUPPORTED on our i5-13600K (CPUID.7H:EBX[16] = 0 on this CPU) — not implemented yet: not implemented (9 forms #UD; the i5-13600K lacks it) |
