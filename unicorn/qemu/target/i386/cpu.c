@@ -4049,6 +4049,90 @@ static void x86_cpuid_set_vendor(X86CPU *cpu , const char *value)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U68) */
+/*
+ * NoVmp (ledger U68): CPUID from the UC_CTL_X86_CPUID profile. A leaf above the
+ * profile's maximum basic / extended leaf returns the highest basic leaf (SDM Vol2
+ * CPUID, Goldmont MSROM U478a/U1bce); a (leaf, subleaf) the profile does not list
+ * reads as zero except leaves 0Bh/1Fh, which echo ECX[7:0] and keep the x2APIC ID.
+ * OSXSAVE (1:ECX[27]) and OSPKE (7.0:ECX[4]) follow CR4. Returns false without a
+ * profile.
+ */
+static const struct uc_x86_cpuid *x86_cpuid_find(struct uc_struct *uc, uint32_t leaf,
+                                                 uint32_t sub, bool any_sub)
+{
+    size_t i;
+    for (i = 0; i < uc->x86_cpuid_count; i++) {
+        if (uc->x86_cpuid[i].leaf == leaf && (any_sub || uc->x86_cpuid[i].subleaf == sub)) {
+            return &uc->x86_cpuid[i];
+        }
+    }
+    return NULL;
+}
+
+static bool x86_cpuid_leaf_has_subleaves(uint32_t leaf)
+{
+    switch (leaf) {
+    case 0x4: case 0x7: case 0xb: case 0xd: case 0xf: case 0x10: case 0x12: case 0x14:
+    case 0x17: case 0x18: case 0x1b: case 0x1d: case 0x1f: case 0x20: case 0x23: case 0x24:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
+                              uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
+{
+    struct uc_struct *uc = env->uc;
+    const struct uc_x86_cpuid *e, *top;
+    uint32_t max_basic, max_ext;
+
+    if (!uc || !uc->x86_cpuid_count) {
+        return false;
+    }
+    top = x86_cpuid_find(uc, 0, 0, false);
+    max_basic = top ? top->eax : 0;
+    e = x86_cpuid_find(uc, 0x80000000, 0, false);
+    max_ext = e ? e->eax : 0;
+    if (index >= 0x80000000 ? index > max_ext : index > max_basic) {
+        index = max_basic;
+    }
+    if (!x86_cpuid_leaf_has_subleaves(index)) {
+        count = 0;
+    }
+    e = x86_cpuid_find(uc, index, count, false);
+    *eax = *ebx = *ecx = *edx = 0;
+    if (e) {
+        *eax = e->eax; *ebx = e->ebx; *ecx = e->ecx; *edx = e->edx;
+    } else if (index == 0xb || index == 0x1f) {
+        const struct uc_x86_cpuid *s0 = x86_cpuid_find(uc, index, 0, false);
+        *ecx = count & 0xff;
+        *edx = s0 ? s0->edx : 0;
+    }
+    if (index == 1) {
+        *ecx = (*ecx & ~CPUID_EXT_OSXSAVE) |
+               ((env->cr[4] & CR4_OSXSAVE_MASK) ? CPUID_EXT_OSXSAVE : 0);
+    } else if (index == 7 && count == 0) {
+        *ecx = (*ecx & ~CPUID_7_0_ECX_OSPKE) |
+               ((env->cr[4] & CR4_PKE_MASK) ? CPUID_7_0_ECX_OSPKE : 0);
+    }
+    return true;
+}
+
+/* strict mode: the feature word as the profile advertises it (translator, U68) */
+uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, int reg)
+{
+    uint32_t r[4];
+
+    if (!env->uc || !env->uc->x86_cpuid_strict ||
+        !x86_cpuid_profile(env, leaf, sub, &r[0], &r[1], &r[2], &r[3])) {
+        return ~0u;
+    }
+    return r[reg];
+}
+#endif /* __Use_Original_Qemu (U68) */
+
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx)
@@ -4076,6 +4160,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         limit = env->cpuid_level;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U68) */
+    if (x86_cpuid_profile(env, index, count, eax, ebx, ecx, edx)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U68) */
     if (index > limit) {
         /* Intel documentation states that invalid EAX input will
          * return the same information as EAX=cpuid_level

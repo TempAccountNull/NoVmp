@@ -513,6 +513,9 @@ uc_err uc_close(uc_engine *uc)
     int i;
     MemoryRegion *mr;
 
+    g_free(uc->x86_cpuid);    /* UC_CTL_X86_CPUID profile (U68) */
+    uc->x86_cpuid = NULL;
+
     if (!uc->init_done) {
         free(uc);
         return UC_ERR_OK;
@@ -3225,6 +3228,46 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *quirks = uc->x86_hw_quirks;
         } else if (rw == UC_CTL_IO_WRITE) {
             uc->x86_hw_quirks = va_arg(args, uint32_t);
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_CPUID:
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            size_t *count = va_arg(args, size_t *);
+            *count = uc->x86_cpuid_count;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            const struct uc_x86_cpuid *entries = va_arg(args, const struct uc_x86_cpuid *);
+            size_t count = va_arg(args, size_t);
+            g_free(uc->x86_cpuid);
+            uc->x86_cpuid = NULL;
+            uc->x86_cpuid_count = 0;
+            if (count) {
+                uc->x86_cpuid = g_memdup(entries, count * sizeof(*entries));
+                uc->x86_cpuid_count = count;
+            }
+            if (uc->init_done) {
+                uc->tb_flush(uc);           /* strict mode changes what translates */
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_CPUID_STRICT:
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *on = va_arg(args, int *);
+            *on = uc->x86_cpuid_strict;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            uc->x86_cpuid_strict = va_arg(args, int) != 0;
+            if (uc->init_done) {
+                uc->tb_flush(uc);
+            }
         } else {
             err = UC_ERR_ARG;
         }

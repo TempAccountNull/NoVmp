@@ -277,6 +277,7 @@ int main( int argc, char** argv )
 	int iters = -1, sample = -1;
 	uint32_t quirks = 0;
 	std::string filter, out_dir, cases;
+	at::case_opts copt;
 	for ( int i = 1; i < argc; ++i )
 	{
 		std::string a = argv[ i ];
@@ -289,9 +290,12 @@ int main( int argc, char** argv )
 		else if ( a == "--out" ) out_dir = val();
 		else if ( a == "--quirks" ) quirks = uint32_t( std::stoul( val(), nullptr, 0 ) );
 		else if ( a == "--cases" ) cases = val();
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE]\n" ); return 2; }
+		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
+		else if ( a == "--strict" ) copt.strict = 1;
+		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V]]\n" ); return 2; }
 	}
-	if ( !cases.empty() ) return at::run_cases( cases, quirks );
+	if ( !cases.empty() ) return at::run_cases( cases, quirks, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );

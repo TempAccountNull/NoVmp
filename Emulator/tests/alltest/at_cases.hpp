@@ -137,7 +137,26 @@ namespace at
 		return os.str();
 	}
 
-	static int run_cases( const std::string& path, uint32_t quirks )
+	// "LEAF SUB EAX EBX ECX EDX" per line (hex), '#' comments: Emulator\data\cpuid_*.txt
+	static std::vector<uc_x86_cpuid> load_cpuid_profile( const std::string& path )
+	{
+		std::vector<uc_x86_cpuid> v;
+		std::ifstream f( path );
+		std::string line;
+		while ( std::getline( f, line ) )
+		{
+			if ( line.empty() || line[ 0 ] == '#' ) continue;
+			uc_x86_cpuid e{};
+			std::istringstream is( line );
+			is >> std::hex >> e.leaf >> e.subleaf >> e.eax >> e.ebx >> e.ecx >> e.edx;
+			if ( is ) v.push_back( e );
+		}
+		return v;
+	}
+
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; };
+
+	static int run_cases( const std::string& path, uint32_t quirks, const case_opts& opt = {} )
 	{
 		std::ifstream f( path );
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
@@ -168,6 +187,7 @@ namespace at
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); continue; }
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX, quirks );
+			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0;
 			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); continue; }
 			uc.run( *st_in, u );
 			hw.run( p, *st_in, h );

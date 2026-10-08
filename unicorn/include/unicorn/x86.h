@@ -74,6 +74,13 @@ typedef enum uc_cpu_x86 {
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h
+// One CPUID result for UC_CTL_X86_CPUID (NoVmp ledger U68): what CPUID returns for
+// EAX = leaf, ECX = subleaf. Leaves that ignore ECX are given with subleaf 0.
+typedef struct uc_x86_cpuid {
+    uint32_t leaf, subleaf;
+    uint32_t eax, ebx, ecx, edx;
+} uc_x86_cpuid;
+
 typedef struct uc_x86_mmr {
     uint16_t selector; /* not used by GDTR and IDTR */
     uint64_t base;     /* handle 32 or 64 bit CPUs */

@@ -666,6 +666,16 @@ typedef enum uc_control_type {
     // where real CPUs differ from the Intel SDM. Default 0 = follow the manual.
     // Read: @args = (uint32_t *); Write: @args = (uint32_t)
     UC_CTL_X86_HW_QUIRKS,
+    // x86 only (NoVmp U68): CPUID profile. With entries set, CPUID returns them instead
+    // of the CPU model's values (CPUID.1:ECX.OSXSAVE and CPUID.7:ECX.OSPKE still follow
+    // CR4); a leaf above the profile's maximum returns the highest basic leaf (SDM).
+    // Write: @args = (const uc_x86_cpuid *entries, size_t count), count 0 = model values
+    // Read: @args = (size_t *count)
+    UC_CTL_X86_CPUID,
+    // x86 only (NoVmp U68): 1 = instructions of features the CPUID profile hides raise
+    // #UD (QEMU style); 0 (default) = they still execute, as on hardware where only
+    // the CPUID bit is hidden. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_CPUID_STRICT,
 } uc_control_type;
 
 /*
@@ -763,6 +773,14 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_HW_QUIRKS, 1), (quirks))
 #define uc_ctl_set_x86_hw_quirks(uc, quirks)                                   \
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_HW_QUIRKS, 1), (quirks))
+#define uc_ctl_set_x86_cpuid(uc, entries, count)                               \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_CPUID, 2), (entries), (count))
+#define uc_ctl_get_x86_cpuid_count(uc, count)                                  \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_CPUID, 1), (count))
+#define uc_ctl_set_x86_cpuid_strict(uc, on)                                    \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_CPUID_STRICT, 1), (on))
+#define uc_ctl_get_x86_cpuid_strict(uc, on)                                    \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_CPUID_STRICT, 1), (on))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

@@ -1536,6 +1536,12 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
 {
     X86OpEntry *e = &decode->e;
 
+#if __Use_Original_Qemu != 1 /* ours (U68) */
+    /* every VEX form needs CPUID.1:ECX.AVX (a strict CPUID profile can hide it, U68) */
+    if ((s->prefix & PREFIX_VEX) && !(s->cpuid_ext_features & CPUID_EXT_AVX)) {
+        goto illegal;
+    }
+#endif /* __Use_Original_Qemu (U68) */
     switch (e->vex_special) {
     case X86_VEX_None:
         break;
