@@ -3250,7 +3250,29 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                 uc->x86_cpuid_count = count;
             }
             if (uc->init_done) {
+                if (uc->x86_cpuid_changed) {
+                    uc->x86_cpuid_changed(uc);  /* XCR0 within the new leaf 0DH (U120) */
+                }
                 uc->tb_flush(uc);           /* strict mode changes what translates */
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_AVX512:
+        /* NoVmp U120: AVX-512 state in the CPU model; fixed once the CPU exists */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *on = va_arg(args, int *);
+            *on = uc->x86_avx512;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int on = va_arg(args, int);
+            if (uc->init_done) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_avx512 = on != 0;
             }
         } else {
             err = UC_ERR_ARG;

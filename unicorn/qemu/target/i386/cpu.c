@@ -4190,6 +4190,39 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
     return r[reg];
 }
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U120) */
+/*
+ * NoVmp (ledger U120): XCR0 restricted to the components CPUID.(EAX=0DH,ECX=0):EDX:EAX
+ * of the active UC_CTL_X86_CPUID profile reports, i.e. to what XSETBV accepts, keeping
+ * the XSETBV pairing rules (SDM Vol1 13.3: bit 0 always set, YMM only with SSE, MPX 4:3
+ * both or neither, AVX-512 7:5 all or none and only with 2:1). Used for reset XCR0 and
+ * when a profile is set later; without a profile the model value stands.
+ */
+uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
+{
+    const uint64_t avx512 = XSTATE_OPMASK_MASK | XSTATE_ZMM_Hi256_MASK |
+                            XSTATE_Hi16_ZMM_MASK;
+    const uint64_t mpx = XSTATE_BNDREGS_MASK | XSTATE_BNDCSR_MASK;
+    uint32_t eax, ebx, ecx, edx;
+
+    if (!x86_cpuid_profile(env, 0xd, 0, &eax, &ebx, &ecx, &edx)) {
+        return xcr0;
+    }
+    xcr0 &= ((uint64_t)edx << 32) | eax;
+    xcr0 |= XSTATE_FP_MASK;
+    if (!(xcr0 & XSTATE_SSE_MASK)) {
+        xcr0 &= ~XSTATE_YMM_MASK;
+    }
+    if ((xcr0 & mpx) != mpx) {
+        xcr0 &= ~mpx;
+    }
+    if ((xcr0 & (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) !=
+        (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) {
+        xcr0 &= ~avx512;
+    }
+    return xcr0;
+}
+#endif /* __Use_Original_Qemu (U120) */
 
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
@@ -4829,6 +4862,10 @@ static void x86_cpu_reset(CPUState *dev)
         cr4 |= CR4_FSGSBASE_MASK;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U120) */
+    /* reset XCR0 within the CPUID profile's leaf 0DH (what XSETBV accepts) */
+    xcr0 = x86_cpu_xcr0_in_profile(env, xcr0);
+#endif /* __Use_Original_Qemu (U120) */
     env->xcr0 = xcr0;
     cpu_x86_update_cr4(env, cr4);
 
@@ -5105,6 +5142,16 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
 
     x86_cpu_filter_features(cpu, cpu->check_cpuid || cpu->enforce_cpuid);
 
+#if __Use_Original_Qemu != 1 /* ours (U120) */
+    /*
+     * NoVmp (ledger U120): UC_CTL_X86_AVX512 opts in to AVX512F after the TCG filter
+     * (which drops it), so the recomputation below derives XSAVE components 5-7
+     * (opmask, ZMM_Hi256, Hi16_ZMM) for CPUID 0DH, XSETBV and reset XCR0.
+     */
+    if (uc->x86_avx512) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512F;
+    }
+#endif /* __Use_Original_Qemu (U120) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

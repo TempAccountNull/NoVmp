@@ -4922,6 +4922,169 @@ static void test_x86_lock_btc_reg(void)
     OK(uc_close(uc));
 }
 
+/*
+ * ---- NoVmp U120-U126: AVX-512 state (EVEX milestone M0) ----
+ * Each snippet runs from a fresh code address (no stale translation); m0_run returns
+ * the exception vector (6 for #UD, 13 for #GP, 19 for #XM) or -1.
+ */
+#define M0_DATA 0x200000
+#define M0_XCR0_AVX512 0xe7ULL
+
+typedef struct M0 {
+    uc_engine *uc;
+    uc_mode mode;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} M0;
+
+static void m0_open(M0 *m, uc_mode mode, int avx512, const uc_x86_cpuid *prof,
+                    size_t nprof)
+{
+    memset(m, 0, sizeof(*m));
+    m->mode = mode;
+    m->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &m->uc));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(m->uc, 1));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(m->uc, prof, nprof));
+    }
+    OK(uc_mem_map(m->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(m->uc, M0_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(m->uc, &m->hook, UC_HOOK_INTR, test_x86_intr_capture_cb,
+                   &m->cap, 1, 0));
+}
+
+static void m0_close(M0 *m)
+{
+    OK(uc_close(m->uc));
+}
+
+static void m0_set(M0 *m, int reg, uint64_t v)
+{
+    if (m->mode == UC_MODE_64) {
+        OK(uc_reg_write(m->uc, reg, &v));
+    } else {
+        uint32_t v32 = (uint32_t)v;
+        OK(uc_reg_write(m->uc, reg, &v32));
+    }
+}
+
+static uint64_t m0_get(M0 *m, int reg)
+{
+    uint64_t v = 0;
+    if (m->mode == UC_MODE_64) {
+        OK(uc_reg_read(m->uc, reg, &v));
+    } else {
+        uint32_t v32 = 0;
+        OK(uc_reg_read(m->uc, reg, &v32));
+        v = v32;
+    }
+    return v;
+}
+
+static int m0_run(M0 *m, const char *code, size_t len)
+{
+    uint64_t pc = m->pc;
+    uc_err err;
+
+    m->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && m->pc <= code_start + code_len);
+    m->cap.count = 0;
+    OK(uc_mem_write(m->uc, pc, code, len));
+    err = uc_emu_start(m->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return m->cap.count ? (int)m->cap.intno : -1;
+}
+
+static void m0_cpuid(M0 *m, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    m0_set(m, UC_X86_REG_EAX, leaf);
+    m0_set(m, UC_X86_REG_ECX, sub);
+    TEST_CHECK(m0_run(m, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)m0_get(m, UC_X86_REG_EAX);
+    r[1] = (uint32_t)m0_get(m, UC_X86_REG_EBX);
+    r[2] = (uint32_t)m0_get(m, UC_X86_REG_ECX);
+    r[3] = (uint32_t)m0_get(m, UC_X86_REG_EDX);
+}
+
+static uint64_t m0_xcr0(M0 *m)
+{
+    uint64_t xcr0 = 0;
+    OK(uc_reg_read(m->uc, UC_X86_REG_XCR0, &xcr0));
+    return xcr0;
+}
+
+/* NoVmp U120: UC_CTL_X86_AVX512 opt-in; reset XCR0 within the CPUID profile's leaf 0DH */
+static void test_x86_avx512_optin(void)
+{
+    static const uc_x86_cpuid prof7[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x7, 0x340, 0x340, 0},
+    };
+    static const uc_x86_cpuid prof2e7[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x2e7, 0xa88, 0xa88, 0},
+    };
+    M0 m;
+    uint32_t r[4];
+    uint64_t xcr0;
+    int on = -1;
+
+    /* default: off; CPUID.7.0:EBX.AVX512F = 0, 0DH.0:EAX[7:5] = 0, XCR0[7:5] = 0 */
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    OK(uc_ctl_get_x86_avx512(m.uc, &on));
+    TEST_CHECK(on == 0);
+    m0_cpuid(&m, 7, 0, r);
+    TEST_CHECK((r[1] & TEST_X86_CPUID_7_0_EBX_AVX512F) == 0);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0xe0) == 0);
+    TEST_CHECK((m0_xcr0(&m) & 0xe0) == 0);
+    /* the CPU exists now: the switch is fixed */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(m.uc, 1));
+    m0_close(&m);
+
+    /* on: AVX512F only (no DQ/CD/BW/VL yet), components 5-7, reset XCR0[7:5] = 111b */
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
+    OK(uc_ctl_get_x86_avx512(m.uc, &on));
+    TEST_CHECK(on == 1);
+    m0_cpuid(&m, 7, 0, r);
+    TEST_CHECK((r[1] & TEST_X86_CPUID_7_0_EBX_AVX512F) != 0);
+    TEST_CHECK((r[1] & (TEST_X86_CPUID_7_0_EBX_AVX512DQ | TEST_X86_CPUID_7_0_EBX_AVX512CD |
+                        TEST_X86_CPUID_7_0_EBX_AVX512BW | TEST_X86_CPUID_7_0_EBX_AVX512VL)) == 0);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0xe7) == 0xe7);
+    xcr0 = m0_xcr0(&m);
+    TEST_CHECK((xcr0 & 0xe7) == 0xe7);
+    TEST_MSG("xcr0=%llx", (unsigned long long)xcr0);
+    /* a profile set later narrows XCR0 to its leaf 0DH ... */
+    OK(uc_ctl_set_x86_cpuid(m.uc, prof7, 2));
+    TEST_CHECK(m0_xcr0(&m) == 7);
+    m0_close(&m);
+
+    /* ... a profile that has the components keeps them */
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
+    OK(uc_ctl_set_x86_cpuid(m.uc, prof2e7, 2));
+    TEST_CHECK(m0_xcr0(&m) == (xcr0 & 0x2e7));
+    m0_close(&m);
+
+    /* a profile set before init: reset XCR0 within its leaf 0DH */
+    m0_open(&m, UC_MODE_64, 1, prof7, 2);
+    TEST_CHECK(m0_xcr0(&m) == 7);
+    m0_close(&m);
+
+    /* without AVX-512 in the model, a profile listing 7:5 does not add them */
+    m0_open(&m, UC_MODE_64, 0, prof2e7, 2);
+    TEST_CHECK((m0_xcr0(&m) & 0xe0) == 0);
+    TEST_CHECK((m0_xcr0(&m) & 7) == 7);
+    m0_close(&m);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5038,4 +5201,5 @@ TEST_LIST = {
     {"test_x86_lock_bt_reg", test_x86_lock_bt_reg},
     {"test_x86_lock_btc_mem", test_x86_lock_btc_mem},
     {"test_x86_lock_btc_reg", test_x86_lock_btc_reg},
+    {"test_x86_avx512_optin", test_x86_avx512_optin},
     {NULL, NULL}};

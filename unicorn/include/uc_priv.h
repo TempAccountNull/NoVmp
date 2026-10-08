@@ -435,6 +435,8 @@ struct uc_struct {
     struct uc_x86_cpuid *x86_cpuid;   // UC_CTL_X86_CPUID profile (NoVmp U68), NULL = model
     size_t x86_cpuid_count;
     int x86_cpuid_strict;     // UC_CTL_X86_CPUID_STRICT
+    int x86_avx512;           // UC_CTL_X86_AVX512 (NoVmp U120), 0 = no AVX-512 state
+    uc_args_uc_t x86_cpuid_changed; // clamps XCR0 to a new CPUID profile (NoVmp U120)
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.

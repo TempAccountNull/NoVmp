@@ -2127,6 +2127,18 @@ static bool x86_opcode_hook_invalidate(uint32_t op, uint32_t flags)
     return true;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U120) */
+/* NoVmp (ledger U120): a CPUID profile set after init narrows XCR0 to its leaf 0DH */
+static void x86_cpuid_changed(struct uc_struct *uc)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    env->xcr0 = x86_cpu_xcr0_in_profile(env, env->xcr0);
+    cpu_sync_bndcs_hflags(env);
+    cpu_sync_avx_hflag(env);
+}
+
+#endif /* __Use_Original_Qemu (U120) */
 static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
 {
 
@@ -2153,6 +2165,9 @@ void uc_init(struct uc_struct *uc)
     uc->insn_hook_validate = x86_insn_hook_validate;
     uc->opcode_hook_invalidate = x86_opcode_hook_invalidate;
     uc->cpus_init = x86_cpus_init;
+#if __Use_Original_Qemu != 1 /* ours (U120) */
+    uc->x86_cpuid_changed = x86_cpuid_changed;
+#endif /* __Use_Original_Qemu (U120) */
     uc->cpu_context_size = offsetof(CPUX86State, end_reset_fields);
     uc_common_init(uc);
 }

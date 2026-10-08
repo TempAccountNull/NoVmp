@@ -676,6 +676,12 @@ typedef enum uc_control_type {
     // #UD (QEMU style); 0 (default) = they still execute, as on hardware where only
     // the CPUID bit is hidden. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_CPUID_STRICT,
+    // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
+    // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists
+    // them and the XSAVE family saves/restores them; reset XCR0 enables them. Default 0
+    // (UC_CPU_X86_MAX and the i5-13600K profile have no AVX-512). Only before the engine
+    // is initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_AVX512,
 } uc_control_type;
 
 /*
@@ -781,6 +787,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_CPUID_STRICT, 1), (on))
 #define uc_ctl_get_x86_cpuid_strict(uc, on)                                    \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_CPUID_STRICT, 1), (on))
+#define uc_ctl_set_x86_avx512(uc, on)                                          \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AVX512, 1), (on))
+#define uc_ctl_get_x86_avx512(uc, on)                                          \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AVX512, 1), (on))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;
