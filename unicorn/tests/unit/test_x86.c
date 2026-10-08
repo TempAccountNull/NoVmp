@@ -11681,6 +11681,125 @@ static void test_x86_evex_cvt_xm(void)
     OK(uc_close(c.uc));
 }
 
+/* ---- U440-U442: F16C VCVTPS2PH FTZ / underflow / precision (prefix hc_) ---- */
+typedef struct {
+    int count;
+    uint32_t intno;
+} hc_intr_t;
+
+static void hc_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    hc_intr_t *r = (hc_intr_t *)user_data;
+
+    if (r->count++ == 0) {
+        r->intno = intno;
+    }
+    uc_emu_stop(uc);
+}
+
+/*
+ * vcvtps2ph xmm0, xmm1, imm8 (VEX.128.66.0F3A.W0 1D C8 ib) with lane 0 = v,
+ * lanes 1..3 = 1.0, XMM0 preloaded with 0xA5 bytes. Returns the fault vector
+ * (-1 = none); *lo = XMM0 bits 63:0, *mx = MXCSR afterwards. Without a
+ * fault MXCSR comes from a following stmxcsr [rip+0xf3] (= code_start +
+ * 0x100): the API register read does not fold the pending softfloat flags.
+ */
+static int hc_run(uint32_t v, uint8_t imm, uint32_t mxcsr, uint64_t *lo, uint32_t *mx)
+{
+    uint8_t code[13] = {0xc4, 0xe3, 0x79, 0x1d, 0xc8, 0,
+                        0x0f, 0xae, 0x1d, 0xf3, 0x00, 0x00, 0x00};
+    uint32_t src[4] = {v, 0x3f800000, 0x3f800000, 0x3f800000};
+    uint8_t junk[16];
+    uint64_t x[2];
+    uint64_t cr4, xcr0 = 7;
+    hc_intr_t intr = {0, 0};
+    uc_engine *uc;
+    uc_hook h;
+    uc_err e;
+
+    code[5] = imm;
+    memset(junk, 0xa5, sizeof(junk));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code)));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, hc_hook_intr, &intr, 1, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1ULL << 18; /* OSXSAVE */
+    OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(uc, UC_X86_REG_XCR0, &xcr0));
+    OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &mxcsr));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM1, src));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0, junk));
+    e = uc_emu_start(uc, code_start, code_start + sizeof(code), 0, 0);
+    OK(e);
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0, x));
+    if (intr.count) {
+        OK(uc_reg_read(uc, UC_X86_REG_MXCSR, mx));
+    } else {
+        OK(uc_mem_read(uc, code_start + 0x100, mx, 4));
+    }
+    *lo = x[0];
+    OK(uc_close(uc));
+    return intr.count ? (int)intr.intno : -1;
+}
+
+static void test_x86_f16c_vcvtps2ph_ftz(void)
+{
+    static const struct {
+        const char *name;
+        uint32_t v;
+        uint8_t imm;
+        uint32_t mxcsr_in;
+        int fault;          /* -1 none, 19 = #XM */
+        uint16_t lane0;     /* result lane 0 when no fault */
+        uint32_t mxcsr_out;
+    } t[] = {
+        /* U440: FTZ ignored, tiny results stay FP16 denormals */
+        {"2^-20 exact, FTZ", 0x35800000, 0, 0x9f80, -1, 0x0010, 0x9f80},
+        {"2^-25+ulp RNE, FTZ", 0x33000001, 0, 0x9f80, -1, 0x0001, 0x9fb0},
+        {"2^-25+ulp RNE, FTZ via MXCSR.RC", 0x33000001, 4, 0x9f80, -1, 0x0001, 0x9fb0},
+        {"-(2^-20+x) up, FTZ", 0xb5801000, 2, 0x9f80, -1, 0x8010, 0x9fb0},
+        {"fp32 denormal up, FTZ", 0x00000001, 2, 0x9f80, -1, 0x0001, 0x9fb2},
+        {"fp32 denormal up, FTZ+DAZ", 0x00000001, 2, 0x9fc0, -1, 0x0000, 0x9fc0},
+        {"below 2^-14 RNE (not tiny after rounding)", 0x387fffff, 0, 0x9f80, -1, 0x0400, 0x9fa0},
+        /* U441: unmasked #U on an exact tiny result */
+        {"2^-20 exact, UM=0", 0x35800000, 0, 0x1780, 19, 0, 0x1790},
+        {"2^-24 exact, UM=0, FTZ", 0x33800000, 0, 0x9780, 19, 0, 0x9790},
+        {"2^-20 exact, UM=1", 0x35800000, 0, 0x1f80, -1, 0x0010, 0x1f80},
+        /* U442: unmasked #O/#U: PE from the unbounded-exponent rounding */
+        {"1.5*2^-24 tie, UM=0", 0x33c00000, 0, 0x1780, 19, 0, 0x1790},
+        {"2^-25+ulp, UM=0", 0x33000001, 0, 0x1780, 19, 0, 0x17b0},
+        {"fp32 denormal, UM=0", 0x00000001, 0, 0x1780, 19, 0, 0x17b2},
+        {"65536, OM=0", 0x47800000, 0, 0x1b80, 19, 0, 0x1b88},
+        {"65520, OM=0", 0x477ff000, 0, 0x1b80, 19, 0, 0x1ba8},
+        {"65536, OM=1", 0x47800000, 0, 0x1f80, -1, 0x7c00, 0x1fa8},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint64_t lo;
+        uint32_t mx;
+        int f = hc_run(t[i].v, t[i].imm, t[i].mxcsr_in, &lo, &mx);
+
+        TEST_CHECK(f == t[i].fault);
+        TEST_MSG("%s: fault %d, expected %d", t[i].name, f, t[i].fault);
+        TEST_CHECK(mx == t[i].mxcsr_out);
+        TEST_MSG("%s: mxcsr %04x, expected %04x", t[i].name, mx, t[i].mxcsr_out);
+        if (t[i].fault < 0) {
+            uint64_t want = 0x3c003c003c000000ULL | t[i].lane0;
+            TEST_CHECK(lo == want);
+            TEST_MSG("%s: xmm0 %016llx, expected %016llx", t[i].name,
+                     (unsigned long long)lo, (unsigned long long)want);
+        } else {
+            TEST_CHECK(lo == 0xa5a5a5a5a5a5a5a5ULL);
+            TEST_MSG("%s: destination written on #XM: %016llx", t[i].name,
+                     (unsigned long long)lo);
+        }
+    }
+}
+/* ---- end U440-U442 (hc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11871,4 +11990,5 @@ TEST_LIST = {
     {"test_x86_evex_cvt_scalar_merge", test_x86_evex_cvt_scalar_merge},
     {"test_x86_evex_cvt_gpr_w", test_x86_evex_cvt_gpr_w},
     {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
+    {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
     {NULL, NULL}};
