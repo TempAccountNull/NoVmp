@@ -361,7 +361,11 @@ static void decode_FP16_M5_6E(DisasContext *s, CPUX86State *env, X86OpEntry *ent
         {},
         X86_OP_ENTRY3(FP16_VMOVW_LD, V,x, None,None, E,w, cpuid(AVX512_FP16)
                       ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16)),
-        {}, {},
+        /* F3 W0: AVX10.2 zero-extending VMOVW xmm1, xmm2/m16 (U411, spec 13.2) */
+        X86_OP_ENTRY3(EVEX_VMOVZX_LD, V,dq, None,None, W,w, cpuid(AVX10_2)
+                      ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(W0) ev_es(16)
+                      .evex_nofs = 1,),
+        {},
     };
     decode_FP16_by_prefix(s, entry, tab);
 }
@@ -372,7 +376,11 @@ static void decode_FP16_M5_7E(DisasContext *s, CPUX86State *env, X86OpEntry *ent
         {},
         X86_OP_ENTRY3(FP16_VMOVW_ST, E,w, None,None, V,x, zext0 cpuid(AVX512_FP16)
                       ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(WIG) ev_es(16)),
-        {}, {},
+        /* F3 W0: AVX10.2 VMOVW xmm1/m16, xmm2 (U411) */
+        X86_OP_ENTRY3(EVEX_VMOVZX_ST, W,w, None,None, V,dq, cpuid(AVX10_2)
+                      ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(W0) ev_es(16)
+                      .evex_nofs = 1,),
+        {},
     };
     decode_FP16_by_prefix(s, entry, tab);
 }

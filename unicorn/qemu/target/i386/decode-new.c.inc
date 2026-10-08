@@ -2467,15 +2467,28 @@ static void decode_EVEX_0F2B(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F2B);
 }
 
+/*
+ * 0F 7E: 66 VMOVD/VMOVQ r/m, xmm (W selects, ignored outside 64-bit mode); F3 W1 VMOVQ xmm,
+ * xmm/m64; F3 W0 the AVX10.2 zero-extending VMOVD xmm1, xmm2/m32 (U410, spec 13.1)
+ */
 static void decode_EVEX_0F7E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
-    static const X86OpEntry opcodes_EVEX_0F7E[4] = {
-        {},
-        X86_OP_ENTRY3(EVEX_MOVD_FROM, E,y, None,None, V,dq, EV_M128(T1S, WSEL) ev_w32), /* vmovd/q */
-        X86_OP_ENTRY3(EVEX_MOVQ_XX, V,dq, None,None, W,q, EV_M128(T1S, W1)),           /* vmovq */
-        {},
+    static const X86OpEntry opcodes_EVEX_0F7E[2][4] = {
+        {
+            {},
+            X86_OP_ENTRY3(EVEX_MOVD_FROM, E,y, None,None, V,dq, EV_M128(T1S, WSEL) ev_w32), /* vmovd/q */
+            X86_OP_ENTRY3(EVEX_VMOVZX_LD, V,dq, None,None, W,d, cpuid(AVX10_2)
+                          ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(W0) ev_es(32)
+                          .evex_nofs = 1,),                                        /* vmovd */
+            {},
+        }, {
+            {},
+            X86_OP_ENTRY3(EVEX_MOVD_FROM, E,y, None,None, V,dq, EV_M128(T1S, WSEL) ev_w32), /* vmovd/q */
+            X86_OP_ENTRY3(EVEX_MOVQ_XX, V,dq, None,None, W,q, EV_M128(T1S, W1)),           /* vmovq */
+            {},
+        },
     };
-    *entry = *decode_by_prefix(s, opcodes_EVEX_0F7E);
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F7E[s->vex_w]);
 }
 #endif /* __Use_Original_Qemu (U214) */
 #if __Use_Original_Qemu != 1 /* ours (U215) */
@@ -3483,6 +3496,41 @@ static void decode_EVEX_MAP5_6F(DisasContext *s, CPUX86State *env, X86OpEntry *e
 }
 #undef EV_A10MOVRS
 #endif /* __Use_Original_Qemu (U409) */
+#if __Use_Original_Qemu != 1 /* ours (U410) */
+/*
+ * NoVmp (ledger U410): zero-extending VMOVD (spec 13.1), AVX10.2, EVEX.128.W0 only, Tuple1
+ * Scalar, no masking, no EVEX.b, vvvv = 1111b, class E9NF: F3 0F 7E VMOVD xmm1, xmm2/m32 and
+ * 66 0F D6 VMOVD xmm1/m32, xmm2 (the W1 forms are VMOVQ, AVX512F; 66 0F 7E is VMOVD r32/m32).
+ */
+#define EV_A10MOVZ(es) cpuid(AVX10_2) ev_vl(X86_EVEX_VL128) ev_tt(T1S) ev_mask(NONE) ev_w(W0) \
+                       ev_es(es) .evex_nofs = 1,
+/* F3 0F 7E VMOVD: in U214's decode_EVEX_0F7E. 0F D6: 66 W0 VMOVD (here), 66 W1 VMOVQ (U214) */
+static void decode_EVEX_0FD6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0FD6[2][4] = {
+        {
+            {},
+            X86_OP_ENTRY3(EVEX_VMOVZX_ST, W,d, None,None, V,dq, EV_A10MOVZ(32)),
+            {}, {},
+        }, {
+            {},
+            X86_OP_ENTRY3(EVEX_MOVQ_XX, W,q, None,None, V,dq, EV_M128(T1S, W1) p_66),
+            {}, {},
+        },
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0FD6[s->vex_w]);
+}
+#endif /* __Use_Original_Qemu (U410) */
+#if __Use_Original_Qemu != 1 /* ours (U411) */
+/*
+ * NoVmp (ledger U411): zero-extending VMOVW (spec 13.2), AVX10.2, EVEX.128.F3.MAP5.W0
+ * 6E / 7E: decoded with the AVX512-FP16 66 VMOVW forms of the same slots
+ * (decode_FP16_M5_6E/7E, decode_fp16.c.inc).
+ */
+#endif /* __Use_Original_Qemu (U411) */
+#if __Use_Original_Qemu != 1 /* ours (U410) */
+#undef EV_A10MOVZ
+#endif /* __Use_Original_Qemu (U410) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
@@ -3566,7 +3614,7 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x2b] = X86_OP_GROUP0(EVEX_0F2B),
     [0x6e] = X86_OP_ENTRY3(EVEX_MOVD_TO, V,dq, None,None, E,y, EV_M128(T1S, WSEL) ev_w32 p_66),
     [0x7e] = X86_OP_GROUP0(EVEX_0F7E),
-    [0xd6] = X86_OP_ENTRY3(EVEX_MOVQ_XX, W,q, None,None, V,dq, EV_M128(T1S, W1) p_66),
+    [0xd6] = X86_OP_GROUP0(EVEX_0FD6),     /* 66 W1 VMOVQ (U214), 66 W0 VMOVD (U410) */
     [0xe7] = X86_OP_ENTRY3(EVEX_MOV, WM,x, None,None, V,x, EV_NT(W0) p_66), /* vmovntdq */
 #endif /* __Use_Original_Qemu (U214) */
 #if __Use_Original_Qemu != 1 /* ours (U262) */

@@ -2653,6 +2653,54 @@ static void gen_EVEX_VMPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     }
 }
 #endif /* __Use_Original_Qemu (U408) */
+#if __Use_Original_Qemu != 1 /* ours (U410) */
+
+/*
+ * NoVmp (ledger U410, U411): zero-extending VMOVD / VMOVW (op[0] = destination, op[2] =
+ * source, 32 or 16 bits). Register destination: DEST[MAXVL-1:size] := 0 (bits 511:128 by
+ * gen_evex_insn); memory destination: a plain store of the element (no masking), the
+ * engine's masked store is skipped.
+ */
+static void gen_EVEX_VMOVZX_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+    int dst = ZMM_OFFSET(decode->op[0].n);
+
+    if (decode->op[2].ot == MO_16) {
+        tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    } else {
+        tcg_gen_ld_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    }
+    tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst, 16, 16, 0);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, dst);
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+
+static void gen_EVEX_VMOVZX_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    MemOp ot = decode->op[0].ot;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    if (ot == MO_16) {
+        tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    } else {
+        tcg_gen_ld_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    }
+    if (decode->op[0].has_ea) {
+        tcg_gen_extu_i32_tl(tcg_ctx, s->T0, t);
+        gen_op_st_v(s, ot, s->T0, s->A0);
+        decode->op[0].unit = X86_OP_SKIP;
+    } else {
+        int dst = ZMM_OFFSET(decode->op[0].n);
+
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst, 16, 16, 0);
+        tcg_gen_st_i32(tcg_ctx, t, cpu_env, dst);
+    }
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U410) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
