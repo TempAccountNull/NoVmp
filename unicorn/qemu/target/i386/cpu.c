@@ -5398,6 +5398,17 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512VL;
     }
 #endif /* __Use_Original_Qemu (U140) */
+#if __Use_Original_Qemu != 1 /* ours (U320) */
+    /*
+     * NoVmp (ledger U320): UC_X86_AVX512_CD adds CPUID.(EAX=7,ECX=0):EBX.AVX512CD[28]
+     * (VPCONFLICTD/Q, VPLZCNTD/Q, VPBROADCASTMB2Q/MW2D; SDM Vol2C "AVX512CD OR AVX10.1",
+     * the EVEX.128/256 forms also need AVX512VL). A strict CPUID profile narrows the
+     * translator's copy as for every leaf-7 bit (U68).
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_CD) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512CD;
+    }
+#endif /* __Use_Original_Qemu (U320) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

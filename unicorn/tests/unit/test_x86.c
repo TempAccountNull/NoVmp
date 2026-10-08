@@ -8147,7 +8147,7 @@ static void test_x86_opmask_optin(void)
         OK(uc_close(uc));
     }
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 16)); /* U140: 8 = VL is valid */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 32)); /* U140: 8 = VL, U320: 16 = CD */
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, -1));
     OK(uc_ctl_get_x86_avx512(uc, &on));
     TEST_CHECK(on == 0);
@@ -11219,6 +11219,122 @@ static void test_x86_avx512dq_values(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U320-U329: AVX512CD and further UC_CTL_X86_AVX512 feature bits ----
+ * Mask read-back, CPUID.(EAX=7,ECX=0) bits, strict CPUID profiles hiding / showing a bit.
+ * Instruction results: Emulator/data/cases_evex_m3_cd.txt (ref_evex_m3_cd.py).
+ */
+#define CDX_DATA 0x200000
+#define CDX_BASE (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+#define CDX_EBX_CD (1u << 28)
+
+typedef struct CdxCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} CdxCtx;
+
+static void cdx_open(CdxCtx *c, int avx512, const uc_x86_cpuid *prof, size_t nprof, int strict)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        if (strict) {
+            OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+        }
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, CDX_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the vector (6 #UD) or -1 */
+static int cdx_run(CdxCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void cdx_cpuid7(CdxCtx *c, uint32_t r[4])
+{
+    uint64_t v = 7;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(cdx_run(c, "\x0f\xa2", 2) == -1);
+    OK(uc_reg_read(c->uc, UC_X86_REG_EAX, &r[0]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_EBX, &r[1]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_ECX, &r[2]));
+    OK(uc_reg_read(c->uc, UC_X86_REG_EDX, &r[3]));
+}
+
+/* U320: UC_X86_AVX512_CD (16): read-back, CPUID.(7,0):EBX.AVX512CD[28], default off */
+static void test_x86_avx512cd_optin(void)
+{
+    static const struct {
+        int set, get, cd;
+    } m[] = {
+        {0, 0, 0},
+        {UC_X86_AVX512_F, UC_X86_AVX512_F, 0},
+        {CDX_BASE, CDX_BASE, 0},
+        {UC_X86_AVX512_CD, UC_X86_AVX512_F | UC_X86_AVX512_CD, 1},
+        {CDX_BASE | UC_X86_AVX512_CD, CDX_BASE | UC_X86_AVX512_CD, 1},
+    };
+    /* a profile without AVX512CD (CPUID.7.0:EBX = AVX512F|DQ|BW|VL ...) */
+    static const uc_x86_cpuid prof_nocd[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    CdxCtx c;
+    uint32_t r[4];
+    size_t i;
+    int on = -1, strict;
+
+    for (i = 0; i < sizeof(m) / sizeof(m[0]); i++) {
+        cdx_open(&c, m[i].set, NULL, 0, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK_(on == m[i].get, "mask %d: read back %d", m[i].set, on);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(!!(r[1] & CDX_EBX_CD) == m[i].cd, "mask %d: CPUID.7.0:EBX = %08x",
+                    m[i].set, r[1]);
+        OK(uc_close(c.uc));
+    }
+    /* the default (UC_CPU_X86_MAX, no opt-in) has no AVX512CD */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_get_x86_avx512(c.uc, &on));
+    TEST_CHECK(on == 0);
+    OK(uc_close(c.uc));
+    /* a CPUID profile without the bit hides it from CPUID, strict or not */
+    for (strict = 0; strict < 2; strict++) {
+        cdx_open(&c, CDX_BASE | UC_X86_AVX512_CD, prof_nocd, 4, strict);
+        cdx_cpuid7(&c, r);
+        TEST_CHECK_(r[1] == 0xc0030020, "profile, strict %d: CPUID.7.0:EBX = %08x", strict, r[1]);
+        OK(uc_close(c.uc));
+    }
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11401,4 +11517,5 @@ TEST_LIST = {
     {"test_x86_evex_bw_kmask64", test_x86_evex_bw_kmask64},
     {"test_x86_avx512dq_gating", test_x86_avx512dq_gating},
     {"test_x86_avx512dq_values", test_x86_avx512dq_values},
+    {"test_x86_avx512cd_optin", test_x86_avx512cd_optin},
     {NULL, NULL}};

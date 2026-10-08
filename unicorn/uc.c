@@ -3269,10 +3269,11 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *on = uc->x86_avx512;
         } else if (rw == UC_CTL_IO_WRITE) {
             int on = va_arg(args, int);
-            /* U128: mask of UC_X86_AVX512_F/DQ/BW; non-zero implies F; U140: + VL */
+            /* U128: mask of UC_X86_AVX512_F/DQ/BW; non-zero implies F; U140: + VL;
+             * U320: + CD */
             if (uc->init_done ||
                 (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
-                        UC_X86_AVX512_VL))) {
+                        UC_X86_AVX512_VL | UC_X86_AVX512_CD))) {
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
