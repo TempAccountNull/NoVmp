@@ -92,6 +92,13 @@ typedef enum uc_cpu_x86 {
 // #IA (FCW.IM = 0): the SDM leaves C3/C2/C0 (EFLAGS ZF/PF/CF) unchanged; the i5-13600K sets
 // them to "unordered" (111) anyway. FTST/FICOM always set "unordered" (SDM).
 #define UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC (1u << 6)
+// (V)DPPS unmasked SIMD FP exceptions (NoVmp ledger U446): the SDM
+// DPPS operation runs DP_Primitive on each 128-bit half in turn and invokes the #XM handler
+// after Temp2, after Temp3 and after Temp4 (the products only update the flags). Intel
+// hardware (i5-13600K) checks after all products (both halves), after Temp2 and Temp3
+// together (both halves), and after Temp4, so flags of operations the SDM would not reach
+// yet are set (e.g. Temp2 exact tiny with UM = 0 and Temp3 inexact -> UE and PE).
+#define UC_X86_QUIRK_DPPS_PARALLEL_STEPS (1u << 7)
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h
