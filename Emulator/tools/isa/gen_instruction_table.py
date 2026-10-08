@@ -119,6 +119,7 @@ NAME_ALIAS = {
 # verified_forms.tsv status -> (table status, note prefix)
 VERIFIED_STATUS = {
     'ok': ('✅', 'identical to the i5-13600K (cases_reach)'),
+    'sdm': ('✅', 'implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors'),
     'ud': ('⬜', 'not implemented (cases_reach)'),
     'cpl0': ('⏳', 'CPL0 instruction (cases_reach): CPL3 fault in Phase 2 (D6)'),
     'oos': ('⬜', 'out of scope'),

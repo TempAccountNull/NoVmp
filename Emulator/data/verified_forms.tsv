@@ -1,8 +1,9 @@
 # Hardware-verified status for instruction-table rows the emu-alltest sweep cannot reach or only reaches
 # with a #UD representative (plan 1.15b). Read by Emulator\tools\isa\gen_instruction_table.py; a row
 # applies when the sweep alone leaves the row ⬜. Evidence: Emulator\data\cases_reach.txt run with
-#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7 --cr0 0x33
+#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --cr0 0x33
 # status: ok   = implemented, identical to the i5-13600K (✅)
+#         sdm  = implemented, the i5-13600K lacks it: verified against SDM-pseudocode vectors (Emulator\data\cases_*.txt "=>" lines, unit tests) (✅)
 #         ud   = #UD on the i5-13600K and in Unicorn: correct under the CPU profile, not implemented (⬜)
 #         cpl0 = CPL0 instruction, the CPL3 fault differs until Phase 2 (D6) (⏳)
 #         oos  = out of scope: not an Intel instruction on this target (⬜)
@@ -161,14 +162,14 @@ xtest	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
 encls	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclu	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclv	legacy	ud	the i5-13600K lacks SGX: #UD in both
-vsha512msg1	vex	ud	the i5-13600K lacks SHA512: #UD in both
-vsha512msg2	vex	ud	the i5-13600K lacks SHA512: #UD in both
-vsha512rnds2	vex	ud	the i5-13600K lacks SHA512: #UD in both
-vsm3msg1	vex	ud	the i5-13600K lacks SM3: #UD in both
-vsm3msg2	vex	ud	the i5-13600K lacks SM3: #UD in both
-vsm3rnds2	vex	ud	the i5-13600K lacks SM3: #UD in both
-vsm4key4	vex	ud	the i5-13600K lacks SM4: #UD in both
-vsm4rnds4	vex	ud	the i5-13600K lacks SM4: #UD in both
+vsha512msg1	vex	sdm	U82: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsha512msg2	vex	sdm	U82: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsha512rnds2	vex	sdm	U82: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsm3msg1	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsm3msg2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsm3rnds2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsm4key4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
+vsm4rnds4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
 getsec	legacy	ud	the i5-13600K lacks SMX: #UD in both
 blcfill	xop	oos	AMD TBM
 blci	xop	oos	AMD TBM
