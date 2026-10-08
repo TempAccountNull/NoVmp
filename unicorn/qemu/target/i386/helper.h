@@ -234,6 +234,12 @@ DEF_HELPER_FLAGS_2(xgetbv, TCG_CALL_NO_WG, i64, env, i32)
 DEF_HELPER_FLAGS_3(xsetbv, TCG_CALL_NO_WG, void, env, i32, i64)
 DEF_HELPER_FLAGS_2(rdpkru, TCG_CALL_NO_WG, i64, env, i32)
 DEF_HELPER_FLAGS_3(wrpkru, TCG_CALL_NO_WG, void, env, i32, i64)
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+/* Key Locker (they write CC_SRC) */
+DEF_HELPER_3(loadiwkey, void, env, i32, i32)
+DEF_HELPER_3(encodekey, tl, env, tl, i32)
+DEF_HELPER_4(aeskl, void, env, tl, i32, i32)
+#endif /* __Use_Original_Qemu (U100) */
 
 DEF_HELPER_FLAGS_2(pdep, TCG_CALL_NO_RWG_SE, tl, tl, tl)
 DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)

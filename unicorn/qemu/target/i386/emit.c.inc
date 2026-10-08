@@ -1596,6 +1596,58 @@ static void gen_MOVDIR64B(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 
 #endif /* __Use_Original_Qemu (U73) */
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+/*
+ * NoVmp (ledger U100): Key Locker. The work (CR4.KL #UD, CPL/reserved-bit
+ * #GP, handle checks, AES-GCM-SIV wrap/unwrap, AES) is in misc_helper.c;
+ * the helpers set CC_SRC to ZF (other arithmetic flags 0).
+ */
+static void gen_LOADIWKEY(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_loadiwkey(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, decode->op[0].n),
+                         tcg_constant_i32(tcg_ctx, decode->op[2].n));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+static void gen_ENCODEKEY128(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_encodekey(tcg_ctx, s->T0, cpu_env, s->T1, tcg_constant_i32(tcg_ctx, 128));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+static void gen_ENCODEKEY256(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_encodekey(tcg_ctx, s->T0, cpu_env, s->T1, tcg_constant_i32(tcg_ctx, 256));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+/* F3 0F 38 DC/DD/DE/DF: AESENC128KL, AESDEC128KL, AESENC256KL, AESDEC256KL */
+static void gen_AESKL(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_aeskl(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, decode->op[0].n),
+                     tcg_constant_i32(tcg_ctx, decode->b - 0xdc));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+/* F3 0F 38 D8 /0../3: AESENCWIDE128KL, AESDECWIDE128KL, AESENCWIDE256KL, AESDECWIDE256KL */
+static void gen_AESKLWIDE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_aeskl(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, 0),
+                     tcg_constant_i32(tcg_ctx, 4 | ((s->modrm >> 3) & 3)));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+#endif /* __Use_Original_Qemu (U100) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

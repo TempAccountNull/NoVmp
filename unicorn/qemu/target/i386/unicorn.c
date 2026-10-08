@@ -204,6 +204,16 @@ static void reg_reset(struct uc_struct *uc)
         if (env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_FSGSBASE) {
             cr4 |= CR4_FSGSBASE_MASK;
         }
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+        /*
+         * NoVmp (ledger U100): like OSFXSR above, the OS of a Key Locker
+         * capable CPU has enabled it (CR4.KL, Key Locker spec 1.3); IWKey
+         * stays all zero (reset) until LOADIWKEY.
+         */
+        if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker) {
+            cr4 |= CR4_KL_MASK;
+        }
+#endif /* __Use_Original_Qemu (U100) */
 
         cpu_x86_update_cr0(env, CR0_PE_MASK); // protected mode
         cpu_x86_update_cr4(env, cr4);

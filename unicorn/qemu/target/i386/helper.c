@@ -228,6 +228,11 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
     if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_PKS)) {
         new_cr4 &= ~CR4_PKS_MASK;
     }
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker)) {
+        new_cr4 &= ~CR4_KL_MASK;
+    }
+#endif /* __Use_Original_Qemu (U100) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;

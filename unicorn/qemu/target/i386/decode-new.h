@@ -150,6 +150,11 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U84) */
     X86_FEAT_SM4,
 #endif /* __Use_Original_Qemu (U84) */
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    X86_FEAT_KL,            /* CPUID.(07H,0):ECX.KL (LOADIWKEY) */
+    X86_FEAT_AESKLE,        /* + CPUID.19H:EBX.AESKLE */
+    X86_FEAT_AESKLE_WIDE,   /* + CPUID.19H:EBX.AES_WIDE */
+#endif /* __Use_Original_Qemu (U100) */
 } X86CPUIDFeature;
 
 /* Execution flags */

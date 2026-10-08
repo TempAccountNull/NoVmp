@@ -2688,6 +2688,11 @@
 #define helper_debug helper_debug_x86_64
 #define helper_rdpkru helper_rdpkru_x86_64
 #define helper_wrpkru helper_wrpkru_x86_64
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+#define helper_loadiwkey helper_loadiwkey_x86_64
+#define helper_encodekey helper_encodekey_x86_64
+#define helper_aeskl helper_aeskl_x86_64
+#endif /* __Use_Original_Qemu (U100) */
 #define helper_bndck helper_bndck_x86_64
 #define helper_bndldx64 helper_bndldx64_x86_64
 #define helper_bndldx32 helper_bndldx32_x86_64

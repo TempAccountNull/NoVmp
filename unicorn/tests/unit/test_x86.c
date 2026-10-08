@@ -5836,6 +5836,381 @@ static void test_x86_vex_zero_maxvl(void)
         }
         m0_close(&m);
     }
+/* ---- NoVmp U100-U104 tests ---- */
+/*
+ * NoVmp (ledger U100-U104): Key Locker, RAO-INT, MOVRS, USER_MSR and UINTR on
+ * UC_CPU_X86_MAX. Expected values: SDM / ISE / Key Locker spec pseudocode,
+ * FIPS-197 Appendix C, the Key Locker spec zero-IWKey vector (page 45) and
+ * Emulator/tools/isa/ref_keylocker_misc.py (independent reference).
+ */
+#define NV_DATA 0x50000000ULL     /* GDT at +0, handles at +0x4000, stack at +0x8000 */
+#define NV_DATA_SIZE 0x10000
+#define NV_HANDLE (NV_DATA + 0x4000)
+#define NV_STACK (NV_DATA + 0x8000)
+
+typedef struct {
+    int count;
+    uint32_t intno;
+} nv_intr_t;
+
+static void nv_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    nv_intr_t *r = (nv_intr_t *)user_data;
+
+    if (r->count++ == 0) {
+        r->intno = intno;
+    }
+    uc_emu_stop(uc);
+}
+
+static uc_engine *nv_open(const char *code, size_t len, nv_intr_t *intr)
+{
+    uc_engine *uc;
+    uc_hook h;
+    uint64_t rsp = NV_STACK, rsi = NV_HANDLE;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    OK(uc_mem_map(uc, NV_DATA, NV_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nv_hook_intr, intr, 1, 0));
+    return uc;
+}
+
+static uc_err nv_run(uc_engine *uc, size_t len)
+{
+    return uc_emu_start(uc, code_start, code_start + len, 0, 0);
+}
+
+static void nv_setxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
+{
+    uint64_t v[2] = {lo, hi};
+
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0 + i, v));
+}
+
+static void nv_chkxmm(uc_engine *uc, int i, uint64_t lo, uint64_t hi)
+{
+    uint64_t v[2];
+
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0 + i, v));
+    TEST_CHECK(v[0] == lo && v[1] == hi);
+    TEST_MSG("xmm%d = %016" PRIx64 "%016" PRIx64 ", expected %016" PRIx64 "%016" PRIx64,
+             i, v[1], v[0], hi, lo);
+}
+
+static void nv_setreg(uc_engine *uc, int reg, uint64_t v)
+{
+    OK(uc_reg_write(uc, reg, &v));
+}
+
+static uint64_t nv_reg(uc_engine *uc, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(uc, reg, &v));
+    return v;
+}
+
+/*
+ * CPL3 for the code after a leading IRETQ (48 CF): GDT with a DPL3 data
+ * (0x10) and DPL3 64-bit code (0x18) descriptor; the IRETQ frame returns to
+ * code_start + 2 with CS = 0x1B, SS = 0x13, RSP = NV_STACK.
+ */
+static void nv_setup_cpl3(uc_engine *uc)
+{
+    uint64_t gdt[4] = {0, 0, 0x00CFF2000000FFFFULL, 0x00AFFA000000FFFFULL};
+    uint64_t frame[5] = {code_start + 2, 0x1B, 0x202, NV_STACK, 0x13};
+    uc_x86_mmr gdtr = {0, NV_DATA, sizeof(gdt) - 1, 0};
+    uint64_t rsp = NV_STACK - 0x100;
+
+    OK(uc_mem_write(uc, NV_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_mem_write(uc, rsp, frame, sizeof(frame)));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+}
+
+/* LOADIWKEY inputs used by the tests (also in ref_keylocker_misc.py) */
+static void kl_set_iwkey_inputs(uc_engine *uc)
+{
+    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);    /* integrity key */
+    nv_setxmm(uc, 1, 0x2726252423222120ULL, 0x2f2e2d2c2b2a2928ULL);    /* EncryptionKey[255:128] */
+    nv_setxmm(uc, 2, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);    /* EncryptionKey[127:0] */
+}
+
+#define KL_LOADIWKEY_X1_X2 "\xf3\x0f\x38\xdc\xca"
+#define KL_ENCODEKEY128_EAX_ECX "\xf3\x0f\x38\xfa\xc1"
+#define KL_ENCODEKEY256_EAX_ECX "\xf3\x0f\x38\xfb\xc1"
+#define KL_STORE_HANDLE3 "\xf3\x0f\x7f\x06\xf3\x0f\x7f\x4e\x10\xf3\x0f\x7f\x56\x20"
+#define KL_STORE_HANDLE4 KL_STORE_HANDLE3 "\xf3\x0f\x7f\x5e\x30"
+#define NV_SETZ_R8B "\x41\x0f\x94\xc0"
+#define NV_SETZ_R9B "\x41\x0f\x94\xc1"
+/* FIPS-197 C.1 / C.3: plaintext, AES-128 and AES-256 ciphertexts */
+#define FIPS_PT_LO 0x7766554433221100ULL
+#define FIPS_PT_HI 0xffeeddccbbaa9988ULL
+#define FIPS128_CT_LO 0x30047b6ad8e0c469ULL
+#define FIPS128_CT_HI 0x5ac5b47080b7cdd8ULL
+#define FIPS256_CT_LO 0xbf456751cab7a28eULL
+#define FIPS256_CT_HI 0x8960494b9049fceaULL
+
+/* U100: CPUID.(07H,0):ECX.KL, CPUID.19H, CR4.KL at reset, #UD with CR4.KL = 0 */
+static void test_x86_keylocker_cpuid(void)
+{
+    /* mov eax,7; xor ecx,ecx; cpuid; mov r8d,ecx; mov eax,0x19; xor ecx,ecx; cpuid */
+    const char code[] = "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2\x41\x89\xc8"
+                        "\xb8\x19\x00\x00\x00\x31\xc9\x0f\xa2";
+    const char enc[] = KL_ENCODEKEY128_EAX_ECX;
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    uint64_t cr4;
+
+    cr4 = nv_reg(uc, UC_X86_REG_CR4);
+    TEST_CHECK(cr4 & (1ULL << 19));
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) & (1u << 23));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 7);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 5);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RCX) == 1);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RDX) == 0);
+    /* CR4.KL = 0: AESKLE reads 0 and every Key Locker instruction #UDs */
+    nv_setreg(uc, UC_X86_REG_CR4, cr4 & ~(1ULL << 19));
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RBX) == 4);
+    OK(uc_mem_write(uc, code_start, enc, sizeof(enc) - 1));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, sizeof(enc) - 1));
+    OK(uc_close(uc));
+}
+
+/* U100: Key Locker spec page 45 footnote: IWKey = 0 (reset), ENCODEKEY128 of key 0 */
+static void test_x86_keylocker_zero_iwkey_vector(void)
+{
+    const char code[] = "\xf3\x0f\x38\xfa\xc0"; /* encodekey128 eax, eax */
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    int i;
+
+    nv_setreg(uc, UC_X86_REG_RAX, 0xffffffff00000000ULL);
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    nv_setxmm(uc, 3, 0x33, 0x33);
+    for (i = 4; i <= 6; i++) {
+        nv_setxmm(uc, i, ~0ULL, ~0ULL);
+    }
+    OK(nv_run(uc, sizeof(code) - 1));
+    nv_chkxmm(uc, 0, 0, 0);                                         /* AAD */
+    nv_chkxmm(uc, 1, 0x898940a278c095dcULL, 0x8720849214a248adULL); /* tag */
+    nv_chkxmm(uc, 2, 0x3382228c8474c308ULL, 0xd3e9d22b334fb3c2ULL); /* ciphertext */
+    nv_chkxmm(uc, 3, 0x33, 0x33);
+    for (i = 4; i <= 6; i++) {
+        nv_chkxmm(uc, i, 0, 0);
+    }
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_RAX) == 0); /* NoBackup 0, KeySource 0, r32 zero-extended */
+    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d5) == 0);
+    OK(uc_close(uc));
+}
+
+/* U100: LOADIWKEY + ENCODEKEY128 handle (reference) + AESENC128KL/AESDEC128KL == FIPS-197 C.1 */
+static void test_x86_keylocker_aes128(void)
+{
+    const char code[] = KL_LOADIWKEY_X1_X2 "\x66\x0f\x6f\xc3" KL_ENCODEKEY128_EAX_ECX
+                        KL_STORE_HANDLE3
+                        "\xf3\x0f\x38\xdc\x3e"     /* aesenc128kl xmm7, [rsi] */
+                        NV_SETZ_R8B
+                        "\x66\x0f\x6f\xef"         /* movdqa xmm5, xmm7 */
+                        "\xf3\x0f\x38\xdd\x3e"     /* aesdec128kl xmm7, [rsi] */
+                        NV_SETZ_R9B;
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+
+    kl_set_iwkey_inputs(uc);
+    nv_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.1 key */
+    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nv_setreg(uc, UC_X86_REG_RAX, 0);
+    nv_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(intr.count == 0);
+    nv_chkxmm(uc, 0, 0, 0);
+    nv_chkxmm(uc, 1, 0x634224a78ec0fc82ULL, 0xf011afe7aa419640ULL);
+    nv_chkxmm(uc, 2, 0x07d7a1ff305028f3ULL, 0xfcd0b2449592ab3fULL);
+    nv_chkxmm(uc, 5, FIPS128_CT_LO, FIPS128_CT_HI);
+    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0 && nv_reg(uc, UC_X86_REG_R9) == 0);
+    OK(uc_close(uc));
+}
+
+/* U100: ENCODEKEY256 (restrictions 5) handle, AESENCWIDE256KL / AESDECWIDE256KL == FIPS-197 C.3 */
+static void test_x86_keylocker_wide256(void)
+{
+    char code[256];
+    size_t n = 0;
+    const char head[] = KL_LOADIWKEY_X1_X2 "\x66\x0f\x6f\xc3" "\x66\x0f\x6f\xcc"
+                        KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4;
+    const char wide_enc[] = "\xf3\x0f\x38\xd8\x16" NV_SETZ_R8B;   /* aesencwide256kl [rsi] */
+    const char wide_dec[] = "\xf3\x0f\x38\xd8\x1e" NV_SETZ_R9B;   /* aesdecwide256kl [rsi] */
+    uint64_t pt[2] = {FIPS_PT_LO, FIPS_PT_HI}, hnd[8];
+    nv_intr_t intr;
+    uc_engine *uc;
+    int i;
+
+    memcpy(code, head, sizeof(head) - 1);
+    n = sizeof(head) - 1;
+    for (i = 0; i < 8; i++) { /* movdqu xmm<i>, [rsi + 0x100] */
+        memcpy(code + n, "\xf3\x0f\x6f", 3);
+        code[n + 3] = (char)(0x86 | (i << 3));
+        memcpy(code + n + 4, "\x00\x01\x00\x00", 4);
+        n += 8;
+    }
+    memcpy(code + n, wide_enc, sizeof(wide_enc) - 1);
+    n += sizeof(wide_enc) - 1;
+    uc = nv_open(code, n, &intr);
+    kl_set_iwkey_inputs(uc);
+    nv_setxmm(uc, 3, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL); /* FIPS-197 C.3 key */
+    nv_setxmm(uc, 4, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
+    nv_setreg(uc, UC_X86_REG_RCX, 5); /* CPL0-only + no-decrypt (CPL 0 here) */
+    OK(uc_mem_write(uc, NV_HANDLE + 0x100, pt, sizeof(pt)));
+    OK(nv_run(uc, n));
+    TEST_CHECK(intr.count == 0);
+    OK(uc_mem_read(uc, NV_HANDLE, hnd, sizeof(hnd)));
+    TEST_CHECK(hnd[0] == 0x0000000001000005ULL && hnd[1] == 0);
+    TEST_CHECK(hnd[2] == 0x01e20cd8b6763808ULL && hnd[3] == 0x7813f6924c30cb0eULL);
+    TEST_CHECK(hnd[4] == 0x2ff383ae0a96b9afULL && hnd[5] == 0x43b14021c4e562ecULL);
+    TEST_CHECK(hnd[6] == 0xddea96a39ab8e43fULL && hnd[7] == 0x47614f4794c81039ULL);
+    for (i = 0; i < 8; i++) {
+        nv_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+    }
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
+    /* the no-decrypt handle refuses AESDECWIDE256KL: ZF = 1, XMM0-7 unchanged */
+    OK(uc_mem_write(uc, code_start, wide_dec, sizeof(wide_dec) - 1));
+    OK(nv_run(uc, sizeof(wide_dec) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 1);
+    for (i = 0; i < 8; i++) {
+        nv_chkxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+    }
+    /* a handle without restrictions decrypts XMM0-7 back */
+    OK(uc_mem_write(uc, code_start, KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4,
+                    sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
+    for (i = 0; i < 8; i++) {
+        nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+    }
+    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nv_setxmm(uc, 1, 0x1716151413121110ULL, 0x1f1e1d1c1b1a1918ULL);
+    nv_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nv_run(uc, sizeof(KL_ENCODEKEY256_EAX_ECX KL_STORE_HANDLE4) - 1));
+    for (i = 0; i < 8; i++) {
+        nv_setxmm(uc, i, FIPS256_CT_LO, FIPS256_CT_HI);
+    }
+    OK(uc_mem_write(uc, code_start, wide_dec, sizeof(wide_dec) - 1));
+    OK(nv_run(uc, sizeof(wide_dec) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R9) == 0);
+    for (i = 0; i < 8; i++) {
+        nv_chkxmm(uc, i, FIPS_PT_LO, FIPS_PT_HI);
+    }
+    OK(uc_close(uc));
+}
+
+/* U100: handle violations (ZF = 1, destination unchanged) and #GP/#UD conditions */
+static void test_x86_keylocker_faults(void)
+{
+    const char make[] = KL_ENCODEKEY128_EAX_ECX KL_STORE_HANDLE3;
+    const char enc[] = "\xf3\x0f\x38\xdc\x3e" NV_SETZ_R8B;
+    const char dec[] = "\xf3\x0f\x38\xdd\x3e" NV_SETZ_R8B;
+    const char e256[] = "\xf3\x0f\x38\xdf\x3e" NV_SETZ_R8B;   /* AES-128 handle, AESDEC256KL */
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(KL_LOADIWKEY_X1_X2, 5, &intr);
+    uint8_t b;
+
+    /*
+     * a non-zero IWKey: with IWKey = 0 the POLYVAL key is 0 and the integrity
+     * check cannot detect a changed ciphertext (Key Locker spec page 45)
+     */
+    kl_set_iwkey_inputs(uc);
+    OK(nv_run(uc, 5));
+    OK(uc_mem_write(uc, code_start, make, sizeof(make) - 1));
+    /* no-encrypt handle (SRC = 2) */
+    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nv_setreg(uc, UC_X86_REG_RCX, 2);
+    OK(nv_run(uc, sizeof(make) - 1));
+    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(uc_mem_write(uc, code_start, enc, sizeof(enc) - 1));
+    OK(nv_run(uc, sizeof(enc) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
+    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nv_setxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
+    OK(uc_mem_write(uc, code_start, dec, sizeof(dec) - 1));
+    OK(nv_run(uc, sizeof(dec) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
+    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(uc_mem_write(uc, code_start, e256, sizeof(e256) - 1));
+    OK(nv_run(uc, sizeof(e256) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
+    /* integrity: one ciphertext bit flipped */
+    OK(uc_mem_read(uc, NV_HANDLE + 40, &b, 1));
+    b ^= 0x10;
+    OK(uc_mem_write(uc, NV_HANDLE + 40, &b, 1));
+    OK(uc_mem_write(uc, code_start, dec, sizeof(dec) - 1));
+    OK(nv_run(uc, sizeof(dec) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
+    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    /* ENCODEKEY128: reserved SRC bit 3 -> #GP */
+    nv_setreg(uc, UC_X86_REG_RCX, 8);
+    OK(uc_mem_write(uc, code_start, make, sizeof(make) - 1));
+    OK(nv_run(uc, sizeof(make) - 1));
+    TEST_CHECK(intr.count == 1 && intr.intno == 13);
+    /* LOADIWKEY: KeySource 1 (not enumerated) -> #GP */
+    memset(&intr, 0, sizeof(intr));
+    nv_setreg(uc, UC_X86_REG_RAX, 2);
+    OK(uc_mem_write(uc, code_start, KL_LOADIWKEY_X1_X2, 5));
+    OK(nv_run(uc, 5));
+    TEST_CHECK(intr.count == 1 && intr.intno == 13);
+    /* memory form of ENCODEKEY128, LOCK, register form of AESDEC128KL, D8 /4 -> #UD */
+    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xfa\x06", 5));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    OK(uc_mem_write(uc, code_start, "\xf0\xf3\x0f\x38\xfa\xc1", 6));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 6));
+    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xdd\xc1", 5));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    OK(uc_mem_write(uc, code_start, "\xf3\x0f\x38\xd8\x26", 5));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    OK(uc_close(uc));
+}
+
+/* U100: CPL 3: LOADIWKEY #GP; a CPL0-only handle sets ZF; ENCODEKEY works */
+static void test_x86_keylocker_cpl3(void)
+{
+    const char code[] = "\x48\xcf" "\xf3\x0f\x38\xfa\xc1" KL_STORE_HANDLE3 "\xf3\x0f\x38\xdc\x3e" NV_SETZ_R8B;
+    const char load[] = "\x48\xcf" KL_LOADIWKEY_X1_X2;
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+
+    nv_setup_cpl3(uc);
+    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nv_setreg(uc, UC_X86_REG_RCX, 1);
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(intr.count == 0);
+    TEST_CHECK((nv_reg(uc, UC_X86_REG_CS) & 3) == 3);
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 1);
+    nv_chkxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    OK(uc_close(uc));
+
+    uc = nv_open(code, sizeof(code) - 1, &intr);
+    nv_setup_cpl3(uc);
+    nv_setxmm(uc, 0, 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL);
+    nv_setxmm(uc, 7, FIPS_PT_LO, FIPS_PT_HI);
+    nv_setreg(uc, UC_X86_REG_RCX, 0);
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(nv_reg(uc, UC_X86_REG_R8) == 0);
+    nv_chkxmm(uc, 7, FIPS128_CT_LO, FIPS128_CT_HI);
+    OK(uc_close(uc));
+
+    uc = nv_open(load, sizeof(load) - 1, &intr);
+    nv_setup_cpl3(uc);
+    OK(nv_run(uc, sizeof(load) - 1));
+    TEST_CHECK(intr.count == 1 && intr.intno == 13);
+    OK(uc_close(uc));
 }
 
 TEST_LIST = {
@@ -5962,4 +6337,10 @@ TEST_LIST = {
     {"test_x86_avx512_xsave_32", test_x86_avx512_xsave_32},
     {"test_x86_avx512_cpuid", test_x86_avx512_cpuid},
     {"test_x86_vex_zero_maxvl", test_x86_vex_zero_maxvl},
+    {"test_x86_keylocker_cpuid", test_x86_keylocker_cpuid},
+    {"test_x86_keylocker_zero_iwkey_vector", test_x86_keylocker_zero_iwkey_vector},
+    {"test_x86_keylocker_aes128", test_x86_keylocker_aes128},
+    {"test_x86_keylocker_wide256", test_x86_keylocker_wide256},
+    {"test_x86_keylocker_faults", test_x86_keylocker_faults},
+    {"test_x86_keylocker_cpl3", test_x86_keylocker_cpl3},
     {NULL, NULL}};

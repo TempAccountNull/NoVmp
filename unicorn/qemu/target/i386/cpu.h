@@ -258,6 +258,9 @@ typedef enum X86Seg {
 #define CR4_SMAP_MASK   (1U << 21)
 #define CR4_PKE_MASK   (1U << 22)
 #define CR4_PKS_MASK   (1U << 24)
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+#define CR4_KL_MASK    (1U << 19) /* Key Locker (Key Locker spec 1.3) */
+#endif /* __Use_Original_Qemu (U100) */
 
 #define CR4_RESERVED_MASK \
     (~(target_ulong)(CR4_VME_MASK | CR4_PVI_MASK | CR4_TSD_MASK | \
@@ -824,6 +827,29 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_ECX_MOVDIRI           (1U << 27)
 /* Move 64 Bytes as Direct Store Instruction */
 #define CPUID_7_0_ECX_MOVDIR64B         (1U << 28)
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+/* Key Locker (CPUID.(07H,0):ECX.KL[23]; leaf 19H valid) */
+#define CPUID_7_0_ECX_KeyLocker         (1U << 23)
+/* CPUID.19H (Key Locker spec table 2-1) */
+#define CPUID_19_EAX_KL_CPL0_ONLY       (1U << 0)
+#define CPUID_19_EAX_KL_NO_ENCRYPT      (1U << 1)
+#define CPUID_19_EAX_KL_NO_DECRYPT      (1U << 2)
+#define CPUID_19_EBX_AESKLE             (1U << 0)
+#define CPUID_19_EBX_AES_WIDE           (1U << 2)
+#define CPUID_19_EBX_IWKEY_BACKUP       (1U << 4)
+#define CPUID_19_ECX_NOBACKUP           (1U << 0)
+#define CPUID_19_ECX_KEYSOURCE_RANDOM   (1U << 1)
+/*
+ * NoVmp (ledger U100): the Key Locker model of this fork. All three handle
+ * restrictions, AESKLE (while CR4.KL = 1) and the wide instructions are
+ * supported; NoBackup is accepted; KeySource 1 (IWKey randomised by the
+ * on-chip RNG) and the IWKeyBackup MSRs are not modelled (not enumerated).
+ */
+#define NOVMP_CPUID_19_EAX (CPUID_19_EAX_KL_CPL0_ONLY | CPUID_19_EAX_KL_NO_ENCRYPT | \
+                            CPUID_19_EAX_KL_NO_DECRYPT)
+#define NOVMP_CPUID_19_EBX (CPUID_19_EBX_AESKLE | CPUID_19_EBX_AES_WIDE)
+#define NOVMP_CPUID_19_ECX CPUID_19_ECX_NOBACKUP
+#endif /* __Use_Original_Qemu (U100) */
 /* Protection Keys for Supervisor-mode Pages */
 #define CPUID_7_0_ECX_PKS               (1U << 31)
 
@@ -1692,6 +1718,16 @@ typedef struct CPUX86State {
 
     uint64_t spec_ctrl;
     uint64_t virt_ssbd;
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    /*
+     * NoVmp (ledger U100): Key Locker internal wrapping key (IWKey), cleared
+     * by reset. Byte layout of the Key Locker spec A.5.2 "iwkey": [0,16) the
+     * integrity key, [16,48) the encryption key (bits 255:0, low byte first).
+     */
+    uint8_t kl_iwkey[48];
+    uint8_t kl_iwkey_nobackup;
+    uint8_t kl_iwkey_keysource;
+#endif /* __Use_Original_Qemu (U100) */
 
     /* End of state preserved by INIT (dummy marker).  */
     int end_init_save;
@@ -2469,6 +2505,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
     if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_PKS)) {
         reserved_bits |= CR4_PKS_MASK;
     }
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    /* CR4.KL exists if CPUID.(07H,0):ECX.KL = 1 (Key Locker spec 1.3) */
+    if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker) {
+        reserved_bits &= ~(uint64_t)CR4_KL_MASK;
+    }
+#endif /* __Use_Original_Qemu (U100) */
     return reserved_bits;
 }
 

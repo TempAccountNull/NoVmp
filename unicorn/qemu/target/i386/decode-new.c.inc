@@ -440,6 +440,52 @@ static void decode_0F38_B1(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 }
 #endif /* __Use_Original_Qemu (U88) */
 
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+/*
+ * NoVmp (ledger U100): Key Locker. F3 0F 38 DC-DF share the opcode bytes of
+ * the 66-prefixed AES-NI instructions: F3 (legacy) selects LOADIWKEY (DC,
+ * register form) or AESENC128KL/AESDEC128KL/AESENC256KL/AESDEC256KL (memory
+ * form). F3 0F 38 D8 /0-/3 (memory) are the wide forms (SDM Vol2).
+ */
+static void decode_0F38_DCtoDF(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry aesni[4] = {
+        X86_OP_ENTRY3(VAESENC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
+        X86_OP_ENTRY3(VAESENCLAST, V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
+        X86_OP_ENTRY3(VAESDEC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
+        X86_OP_ENTRY3(VAESDECLAST, V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
+    };
+    static const X86OpEntry loadiwkey =
+        X86_OP_ENTRY3(LOADIWKEY,   V,dq, None,None, U,dq, sse4_novex cpuid(KL) p_f3);
+    static const X86OpEntry aeskl =
+        X86_OP_ENTRY3(AESKL,       V,dq, None,None, M,b,  sse4_novex cpuid(AESKLE) p_f3);
+
+    if ((s->prefix & PREFIX_REPZ) && !(s->prefix & PREFIX_VEX)) {
+        if ((get_modrm(s, env) >> 6) != 3) {
+            *entry = aeskl;
+        } else if (*b == 0xdc) {
+            *entry = loadiwkey;
+        } else {
+            entry->gen = NULL;              /* F3 0F 38 DD-DF 11:rrr:bbb: #UD */
+        }
+        return;
+    }
+    *entry = aesni[*b - 0xdc];
+}
+
+static void decode_0F38_D8(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry wide =
+        X86_OP_ENTRY3(AESKLWIDE, None,None, None,None, M,b, sse4_novex cpuid(AESKLE_WIDE) p_f3);
+
+    if (((get_modrm(s, env) >> 3) & 7) < 4) {
+        *entry = wide;
+    } else {
+        entry->gen = NULL;                  /* /4-/7 reserved: #UD */
+    }
+}
+
+#endif /* __Use_Original_Qemu (U100) */
 static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x00] = X86_OP_ENTRY3(PSHUFB,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
     [0x01] = X86_OP_ENTRY3(PHADDW,    V,x,  H,x,   W,x,  vex4 cpuid(SSSE3) mmx avx2_256 p_00_66),
@@ -627,10 +673,19 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0xd3] = X86_OP_GROUP0(0F38_D3),
 #endif /* __Use_Original_Qemu (U86) */
     [0xdb] = X86_OP_ENTRY3(VAESIMC,     V,dq, None,None, W,dq, vex4 cpuid(AES) p_66),
+#if __Use_Original_Qemu == 1 /* original QEMU (U100) */
     [0xdc] = X86_OP_ENTRY3(VAESENC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
     [0xdd] = X86_OP_ENTRY3(VAESENCLAST, V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
     [0xde] = X86_OP_ENTRY3(VAESDEC,     V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
     [0xdf] = X86_OP_ENTRY3(VAESDECLAST, V,x,  H,x,       W,x,  vex4 cpuid(AES) p_66),
+#else /* ours (U100) */
+    /* 66: AES-NI; F3: Key Locker (decode_0F38_DCtoDF, decode_0F38_D8) */
+    [0xd8] = X86_OP_GROUP0(0F38_D8),
+    [0xdc] = X86_OP_GROUP0(0F38_DCtoDF),
+    [0xdd] = X86_OP_GROUP0(0F38_DCtoDF),
+    [0xde] = X86_OP_GROUP0(0F38_DCtoDF),
+    [0xdf] = X86_OP_GROUP0(0F38_DCtoDF),
+#endif /* __Use_Original_Qemu (U100) */
 
     /*
      * REG selects srcdest2 operand, VEX.vvvv selects src3.  VEX class not found
@@ -727,6 +782,23 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
         {},
     },
 #endif /* __Use_Original_Qemu (U72) */
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    /* ENCODEKEY128 / ENCODEKEY256 r32, r32: F3 0F 38 FA/FB 11:rrr:bbb (U100) */
+    [10] = {
+        {},
+        {},
+        X86_OP_ENTRY3(ENCODEKEY128, G,d, None,None, R,d, sse4_novex cpuid(AESKLE)),
+        {},
+        {},
+    },
+    [11] = {
+        {},
+        {},
+        X86_OP_ENTRY3(ENCODEKEY256, G,d, None,None, R,d, sse4_novex cpuid(AESKLE)),
+        {},
+        {},
+    },
+#endif /* __Use_Original_Qemu (U100) */
     [7] = {
         X86_OP_ENTRY3(BEXTR, G,y, E,y, B,y, vex13 cpuid(BMI1)),
         X86_OP_ENTRY3(SHLX, G,y, E,y, B,y, vex13 cpuid(BMI1)),
@@ -1832,6 +1904,17 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_SM4:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM4);
 #endif /* __Use_Original_Qemu (U84) */
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    case X86_FEAT_KL:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_KeyLocker);
+    case X86_FEAT_AESKLE:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_KeyLocker) &&
+               (s->cpuid_19_ebx_features & CPUID_19_EBX_AESKLE);
+    case X86_FEAT_AESKLE_WIDE:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_KeyLocker) &&
+               (s->cpuid_19_ebx_features & CPUID_19_EBX_AESKLE) &&
+               (s->cpuid_19_ebx_features & CPUID_19_EBX_AES_WIDE);
+#endif /* __Use_Original_Qemu (U100) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

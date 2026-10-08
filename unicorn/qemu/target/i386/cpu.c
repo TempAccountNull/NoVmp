@@ -661,7 +661,7 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_0_ECX_LA57 | CPUID_7_0_ECX_PKS | CPUID_7_0_ECX_VAES | \
           CPUID_7_0_ECX_RDPID | CPUID_7_0_ECX_VPCLMULQDQ /* U69 */ | \
           CPUID_7_0_ECX_GFNI /* U70 */ | CPUID_7_0_ECX_MOVDIRI /* U72 */ | \
-          CPUID_7_0_ECX_MOVDIR64B /* U73 */)
+          CPUID_7_0_ECX_MOVDIR64B /* U73 */ | CPUID_7_0_ECX_KeyLocker /* U100 */)
 #endif /* __Use_Original_Qemu (U69) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U74) */
 #define TCG_7_0_EDX_FEATURES 0
@@ -4571,6 +4571,26 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         }
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+    case 0x19:
+        /*
+         * NoVmp (ledger U100): Key Locker leaf (Key Locker spec 2, table 2-1).
+         * AESKLE reads 0 unless CR4.KL is set.
+         */
+        *eax = 0;
+        *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker) {
+            *eax = NOVMP_CPUID_19_EAX;
+            *ebx = NOVMP_CPUID_19_EBX;
+            if (!(env->cr[4] & CR4_KL_MASK)) {
+                *ebx &= ~CPUID_19_EBX_AESKLE;
+            }
+            *ecx = NOVMP_CPUID_19_ECX;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U100) */
     case 0x1D: {
         /* AMX TILE */
         *eax = 0;
@@ -5104,6 +5124,12 @@ static void x86_cpu_expand_features(X86CPU *cpu)
             }
         }
 
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+        /* Key Locker requires CPUID[0x19] */
+        if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker) {
+            x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x19);
+        }
+#endif /* __Use_Original_Qemu (U100) */
         /* CPU topology with multi-dies support requires CPUID[0x1F] */
         if (env->nr_dies > 1) {
             x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x1F);

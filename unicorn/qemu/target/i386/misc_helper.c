@@ -914,3 +914,299 @@ target_ulong HELPER(rdpid)(CPUX86State *env)
 {
     return env->tsc_aux;
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U100) */
+/*
+ * NoVmp (ledger U100): Key Locker (SDM Vol2 LOADIWKEY, ENCODEKEY128/256,
+ * AESENC/DEC128KL/256KL, AESENC/DECWIDE128KL/256KL; Intel Key Locker
+ * Specification 343965: handle format 1.4, A.3 functions, A.5.2 AES-GCM-SIV
+ * C code, which this follows step by step). IWKey is CPUX86State.kl_iwkey.
+ * The CPUID.19H of this model is NOVMP_CPUID_19_* (cpu.h); KeySource 1 is
+ * not enumerated, so LOADIWKEY never uses randomness.
+ */
+#include "crypto/aes.h"
+
+typedef struct KLBlock {
+    uint64_t lo, hi;    /* bits 63:0, 127:64 (byte 0 = bits 7:0) */
+} KLBlock;
+
+static KLBlock kl_ld(const uint8_t *p)
+{
+    KLBlock r;
+
+    r.lo = ldq_le_p(p);
+    r.hi = ldq_le_p(p + 8);
+    return r;
+}
+
+static void kl_st(uint8_t *p, KLBlock v)
+{
+    stq_le_p(p, v.lo);
+    stq_le_p(p + 8, v.hi);
+}
+
+static KLBlock kl_xmm(CPUX86State *env, int n)
+{
+    KLBlock r;
+
+    r.lo = env->xmm_regs[n].ZMM_Q(0);
+    r.hi = env->xmm_regs[n].ZMM_Q(1);
+    return r;
+}
+
+static void kl_set_xmm(CPUX86State *env, int n, KLBlock v)
+{
+    /* legacy-SSE write: bits MAXVL-1:128 are unchanged */
+    env->xmm_regs[n].ZMM_Q(0) = v.lo;
+    env->xmm_regs[n].ZMM_Q(1) = v.hi;
+}
+
+/* PCLMULQDQ of two quadwords */
+static KLBlock kl_clmul(uint64_t a, uint64_t b)
+{
+    KLBlock r = { 0, 0 };
+    int i;
+
+    for (i = 0; i < 64; i++) {
+        if ((b >> i) & 1) {
+            r.lo ^= a << i;
+            if (i) {
+                r.hi ^= a >> (64 - i);
+            }
+        }
+    }
+    return r;
+}
+
+/*
+ * Horner_Step (A.5.2): (A ^ B) * H in the POLYVAL field. POLY =
+ * setr_epi32(1, 0, 0, 0xc2000000); the code only uses its high quadword.
+ */
+static KLBlock kl_horner(KLBlock a, KLBlock b, KLBlock h)
+{
+    const uint64_t poly_hi = 0xc200000000000000ULL;
+    KLBlock t1, t2, t3, t4, sw;
+    int i;
+
+    a.lo ^= b.lo;
+    a.hi ^= b.hi;
+    t1 = kl_clmul(a.lo, h.lo);              /* imm 0x00 */
+    t4 = kl_clmul(a.hi, h.hi);              /* imm 0x11 */
+    t2 = kl_clmul(a.lo, h.hi);              /* imm 0x10 */
+    t3 = kl_clmul(a.hi, h.lo);              /* imm 0x01 */
+    t2.lo ^= t3.lo;
+    t2.hi ^= t3.hi;
+    t1.hi ^= t2.lo;                         /* TMP1 ^= TMP2 << 64 */
+    t4.lo ^= t2.hi;                         /* TMP4 ^= TMP2 >> 64 */
+    for (i = 0; i < 2; i++) {
+        t2 = kl_clmul(t1.lo, poly_hi);      /* clmul(TMP1, POLY, 0x10) */
+        sw.lo = t1.hi;                      /* shuffle_epi32(TMP1, 78) */
+        sw.hi = t1.lo;
+        t1.lo = sw.lo ^ t2.lo;
+        t1.hi = sw.hi ^ t2.hi;
+    }
+    t4.lo ^= t1.lo;
+    t4.hi ^= t1.hi;
+    return t4;
+}
+
+static KLBlock kl_aes(const AES_KEY *k, KLBlock in)
+{
+    uint8_t b[16];
+
+    kl_st(b, in);
+    AES_encrypt(b, b, k);
+    return kl_ld(b);
+}
+
+/* POLYVAL over AAD, the n plaintext blocks and the length block, bit 127 cleared */
+static KLBlock kl_polyval(CPUX86State *env, KLBlock aad, const KLBlock *pt, int n)
+{
+    KLBlock k1 = kl_ld(env->kl_iwkey), zero = { 0, 0 }, len, s;
+    int i;
+
+    s = kl_horner(aad, zero, k1);
+    for (i = 0; i < n; i++) {
+        s = kl_horner(pt[i], s, k1);
+    }
+    len.lo = 16 * 8;                        /* LENBLK = setr_epi32(128, 0, n*128, 0) */
+    len.hi = (uint64_t)n * 16 * 8;
+    s = kl_horner(s, len, k1);
+    s.hi &= 0x7fffffffffffffffULL;          /* AND_MASK */
+    return s;
+}
+
+/* XOR x[0..n) with AES(TAG | TOP_ONE), counter incremented by _mm_add_epi32 on dword 0 */
+static void kl_ctr(const AES_KEY *k, KLBlock tag, KLBlock *x, int n)
+{
+    KLBlock c = tag;
+    int i;
+
+    c.hi |= 0x8000000000000000ULL;
+    for (i = 0; i < n; i++) {
+        KLBlock ks = kl_aes(k, c);
+        x[i].lo ^= ks.lo;
+        x[i].hi ^= ks.hi;
+        c.lo = (c.lo & 0xffffffff00000000ULL) | (uint32_t)(c.lo + 1);
+    }
+}
+
+/* WrapKey128 / WrapKey256 (A.5.2.5/6): handle = AAD | tag | ciphertext */
+static void kl_wrap(CPUX86State *env, KLBlock aad, const KLBlock *key, int n, KLBlock *handle)
+{
+    AES_KEY k;
+    KLBlock tag;
+    int i;
+
+    AES_set_encrypt_key(env->kl_iwkey + 16, 256, &k);
+    tag = kl_aes(&k, kl_polyval(env, aad, key, n));
+    handle[0] = aad;
+    handle[1] = tag;
+    for (i = 0; i < n; i++) {
+        handle[2 + i] = key[i];
+    }
+    kl_ctr(&k, tag, handle + 2, n);
+}
+
+/* UnwrapKeyAndAuthenticate384/512 (A.5.2.7/8): true if authentic */
+static bool kl_unwrap(CPUX86State *env, const KLBlock *handle, int n, KLBlock *key)
+{
+    AES_KEY k;
+    KLBlock t;
+    int i;
+
+    AES_set_encrypt_key(env->kl_iwkey + 16, 256, &k);
+    for (i = 0; i < n; i++) {
+        key[i] = handle[2 + i];
+    }
+    kl_ctr(&k, handle[1], key, n);
+    t = kl_aes(&k, kl_polyval(env, handle[0], key, n));
+    return t.lo == handle[1].lo && t.hi == handle[1].hi;
+}
+
+/* every Key Locker instruction: #UD if CR4.KL = 0 (Key Locker spec 1.3) */
+static void kl_check_cr4(CPUX86State *env, uintptr_t ra)
+{
+    if (!(env->cr[4] & CR4_KL_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+/* LOADIWKEY xmm1, xmm2, <EAX>, <XMM0>: F3 0F 38 DC 11:rrr:bbb */
+void helper_loadiwkey(CPUX86State *env, uint32_t src1, uint32_t src2)
+{
+    uintptr_t ra = GETPC();
+    uint32_t eax = (uint32_t)env->regs[R_EAX];
+    uint32_t keysource = (eax >> 1) & 0xf;
+
+    kl_check_cr4(env, ra);
+    if ((env->hflags & HF_CPL_MASK) != 0 ||
+        keysource > 1 ||
+        (eax >> 5) != 0 ||
+        ((eax & 1) && !(NOVMP_CPUID_19_ECX & CPUID_19_ECX_NOBACKUP)) ||
+        (keysource == 1 && !(NOVMP_CPUID_19_ECX & CPUID_19_ECX_KEYSOURCE_RANDOM))) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    /* KeySource 0: IntegrityKey = XMM0, EncryptionKey[127:0] = SRC2, [255:128] = SRC1 */
+    kl_st(env->kl_iwkey, kl_xmm(env, 0));
+    kl_st(env->kl_iwkey + 16, kl_xmm(env, src2));
+    kl_st(env->kl_iwkey + 32, kl_xmm(env, src1));
+    env->kl_iwkey_nobackup = eax & 1;
+    env->kl_iwkey_keysource = keysource;
+    CC_SRC = 0;                             /* ZF, OF, SF, AF, PF, CF := 0 */
+}
+
+/*
+ * ENCODEKEY128 r32, r32 (F3 0F 38 FA 11:rrr:bbb) / ENCODEKEY256 (FB): the
+ * key in XMM0 (XMM1:XMM0) becomes the handle in XMM0-2 (XMM0-3); XMM4-6 := 0.
+ * Returns DEST (the 32-bit destination register).
+ */
+target_ulong helper_encodekey(CPUX86State *env, target_ulong src, uint32_t bits)
+{
+    uintptr_t ra = GETPC();
+    uint32_t reserved = 0xfffffff8u | (~NOVMP_CPUID_19_EAX & 7);
+    int n = bits == 256 ? 2 : 1;
+    KLBlock key[2], handle[4], aad, zero = { 0, 0 };
+    int i;
+
+    kl_check_cr4(env, ra);
+    if ((uint32_t)src & reserved) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    /* KeyMetadata: [2:0] restrictions, [27:24] KeyType (0 AES-128, 1 AES-256) */
+    aad.lo = (src & 7) | ((uint64_t)(n - 1) << 24);
+    aad.hi = 0;
+    key[0] = kl_xmm(env, 0);
+    key[1] = kl_xmm(env, 1);
+    kl_wrap(env, aad, key, n, handle);
+    for (i = 0; i < 2 + n; i++) {
+        kl_set_xmm(env, i, handle[i]);
+    }
+    for (i = 4; i <= 6; i++) {
+        kl_set_xmm(env, i, zero);
+    }
+    CC_SRC = 0;                             /* OF, SF, ZF, AF, PF, CF := 0 */
+    return env->kl_iwkey_nobackup | ((uint32_t)env->kl_iwkey_keysource << 1);
+}
+
+/*
+ * AESENC128KL / AESDEC128KL / AESENC256KL / AESDEC256KL xmm, m384/m512
+ * (F3 0F 38 DC/DD/DE/DF) and AESENCWIDE128KL / AESDECWIDE128KL /
+ * AESENCWIDE256KL / AESDECWIDE256KL m384/m512 (F3 0F 38 D8 /0-/3, XMM0-7).
+ * op: bit 0 decrypt, bit 1 AES-256, bit 2 wide. ZF := 1 on a handle
+ * violation (destination unchanged); the other arithmetic flags := 0.
+ */
+void helper_aeskl(CPUX86State *env, target_ulong a0, uint32_t reg, uint32_t op)
+{
+    uintptr_t ra = GETPC();
+    bool dec = op & 1, wide = op & 4;
+    int n = (op & 2) ? 2 : 1;
+    uint32_t cpl = env->hflags & HF_CPL_MASK;
+    int first = wide ? 0 : reg, last = wide ? 7 : reg;
+    KLBlock handle[4], key[2];
+    uint8_t keybytes[32];
+    AES_KEY k;
+    uint64_t aad;
+    bool illegal;
+    int i;
+
+    kl_check_cr4(env, ra);
+    /* Handle := UnalignedLoad of 384/512 bits (not guaranteed atomic) */
+    for (i = 0; i < 2 + n; i++) {
+        handle[i].lo = cpu_ldq_data_ra(env, a0 + 16 * i, ra);
+        handle[i].hi = cpu_ldq_data_ra(env, a0 + 16 * i + 8, ra);
+    }
+    aad = handle[0].lo;
+    illegal = handle[0].hi != 0 ||                      /* AAD[127:64] reserved */
+              (aad & 0xfffffffff0000000ULL) != 0 ||     /* AAD[63:28] reserved */
+              (aad & 0x0000000000fffff8ULL) != 0 ||     /* AAD[23:3] reserved */
+              ((aad & 1) && cpl > 0) ||                 /* CPL0-only handle */
+              (aad & (dec ? 4 : 2)) != 0 ||             /* no-decrypt / no-encrypt */
+              ((aad >> 24) & 0xf) != (uint64_t)(n - 1); /* HandleKeyType */
+    if (illegal || !kl_unwrap(env, handle, n, key)) {
+        CC_SRC = CC_Z;
+        return;
+    }
+    kl_st(keybytes, key[0]);
+    kl_st(keybytes + 16, key[1]);
+    if (dec) {
+        AES_set_decrypt_key(keybytes, 128 * n, &k);
+    } else {
+        AES_set_encrypt_key(keybytes, 128 * n, &k);
+    }
+    for (i = first; i <= last; i++) {
+        uint8_t b[16];
+
+        kl_st(b, kl_xmm(env, i));
+        if (dec) {
+            AES_decrypt(b, b, &k);
+        } else {
+            AES_encrypt(b, b, &k);
+        }
+        kl_set_xmm(env, i, kl_ld(b));
+    }
+    memset(keybytes, 0, sizeof(keybytes));
+    memset(&k, 0, sizeof(k));
+    CC_SRC = 0;
+}
+#endif /* __Use_Original_Qemu (U100) */
