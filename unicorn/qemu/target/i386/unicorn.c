@@ -237,7 +237,13 @@ static int x86_msr_read(CPUX86State *env, uc_x86_msr *msr)
     uint64_t edx = env->regs[R_EDX];
 
     env->regs[R_ECX] = msr->rid;
+#if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_rdmsr(env);
+#else /* ours (U111) */
+    env->msr_api = 1;
+    helper_rdmsr(env);
+    env->msr_api = 0;
+#endif /* __Use_Original_Qemu (U111) */
 
     msr->value = ((uint32_t)env->regs[R_EAX]) |
                  ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
@@ -260,7 +266,13 @@ static int x86_msr_write(CPUX86State *env, uc_x86_msr *msr)
     env->regs[R_ECX] = msr->rid;
     env->regs[R_EAX] = (unsigned int)msr->value;
     env->regs[R_EDX] = (unsigned int)(msr->value >> 32);
+#if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_wrmsr(env);
+#else /* ours (U111) */
+    env->msr_api = 1;
+    helper_wrmsr(env);
+    env->msr_api = 0;
+#endif /* __Use_Original_Qemu (U111) */
 
     env->regs[R_ECX] = ecx;
     env->regs[R_EAX] = eax;

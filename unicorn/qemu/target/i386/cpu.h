@@ -1893,6 +1893,14 @@ typedef struct CPUX86State {
 
     uint64_t xss;
     uint32_t umwait;
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+    /*
+     * NoVmp (ledger U111): set while uc_reg_read/uc_reg_write (UC_X86_REG_MSR)
+     * runs helper_rdmsr/helper_wrmsr outside translated code; a #GP(0) from
+     * WRMSR cannot be raised there, so the write is dropped instead.
+     */
+    uint8_t msr_api;
+#endif /* __Use_Original_Qemu (U111) */
 
     TPRAccess tpr_access_type;
 

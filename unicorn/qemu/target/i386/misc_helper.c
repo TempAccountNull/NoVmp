@@ -594,6 +594,26 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+    case MSR_IA32_UMWAIT_CONTROL:
+        /*
+         * NoVmp (ledger U111): IA32_UMWAIT_CONTROL (E1H, WAITPKG): bit 0
+         * C0.2 disable, bit 1 reserved, 31:2 maximum wait in TSC quanta,
+         * 63:32 reserved (SDM Vol4 Table 2-2): #GP(0) on reserved bits.
+         * Without WAITPKG it is an unknown MSR (ignored, as before).
+         */
+        if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_WAITPKG)) {
+            break;
+        }
+        if (val & ~0xfffffffdull) {
+            if (env->msr_api) {
+                break;
+            }
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        env->umwait = (uint32_t)val;
+        break;
+#endif /* __Use_Original_Qemu (U111) */
     case MSR_IA32_BNDCFGS:
         /* FIXME: #GP if reserved bits are set.  */
         /* FIXME: Extend highest implemented bit of linear address.  */
@@ -801,6 +821,11 @@ void helper_rdmsr(CPUX86State *env)
     case MSR_IA32_BNDCFGS:
         val = env->msr_bndcfgs;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+    case MSR_IA32_UMWAIT_CONTROL:
+        val = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_WAITPKG) ? env->umwait : 0;
+        break;
+#endif /* __Use_Original_Qemu (U111) */
     case MSR_IA32_XSS:
         val = env->xss;
         break;
@@ -1004,6 +1029,42 @@ void helper_xbegin_check(CPUX86State *env, target_ulong fallback_eip)
 }
 
 #endif /* __Use_Original_Qemu (U110) */
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+/*
+ * NoVmp (ledger U111): UMWAIT r32 / TPAUSE r32 (SDM Vol2 UMWAIT, TPAUSE).
+ * #GP(0) if src[31:1] != 0 or CR4.TSD = 1 at CPL > 0. Timing model (fully
+ * deterministic): the implementation-dependent optimized state is left at once,
+ * as the SDM allows ("Other implementation-dependent events may cause the
+ * processor to exit the implementation-dependent optimized state"), so no TSC
+ * time passes inside the instruction. The pseudocode is evaluated with the TSC
+ * sampled once (the RDTSC value without hooks): os_deadline = TSC +
+ * IA32_UMWAIT_CONTROL[31:2] quanta (0 = no maximum time, per the MSR
+ * description); CF = using_os_deadline AND TSC >= deadline, which therefore
+ * stays 0 (the OS limit is never reached); AF/PF/SF/ZF/OF = 0. UMONITOR state
+ * does not change the result: an unarmed monitor only means no wait at all.
+ */
+void helper_waitpkg(CPUX86State *env, uint32_t src)
+{
+    uint64_t tsc, instr_deadline, deadline, limit;
+    bool using_os_deadline = false;
+
+    if ((src & ~1u) || ((env->cr[4] & CR4_TSD_MASK)
+                        && (env->hflags & HF_CPL_MASK) != 0)) {
+        raise_exception_ra(env, EXCP0D_GPF, GETPC());
+    }
+    tsc = cpu_get_tsc(env) + env->tsc_offset;
+    instr_deadline = ((uint64_t)(uint32_t)env->regs[R_EDX] << 32)
+                     | (uint32_t)env->regs[R_EAX];
+    deadline = instr_deadline;
+    limit = env->umwait & ~3u;
+    if (limit != 0 && tsc + limit < instr_deadline) {
+        deadline = tsc + limit;
+        using_os_deadline = true;
+    }
+    CC_SRC = (using_os_deadline && tsc >= deadline) ? CC_C : 0;
+}
+
+#endif /* __Use_Original_Qemu (U111) */
 uint64_t helper_rdpkru(CPUX86State *env, uint32_t ecx)
 {
     if ((env->cr[4] & CR4_PKE_MASK) == 0) {

@@ -7672,6 +7672,35 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x1ae:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+        /*
+         * NoVmp (ledger U111): WAITPKG, 0F AE /6 with mod = 3 (SDM Vol2
+         * UMONITOR, UMWAIT, TPAUSE); mandatory prefix as in U75 (the last
+         * F2/F3, else 66): F3 UMONITOR r16/r32/r64, F2 UMWAIT r32, 66 TPAUSE
+         * r32 (REX.W ignored). #UD without CPUID.7.0:ECX.WAITPKG[5] or with
+         * LOCK. UMONITOR: the register is an effective address at the
+         * address size, DS unless overridden, checked like a byte load.
+         * UMWAIT/TPAUSE: helper_waitpkg.
+         */
+        if ((modrm & 0xf8) == 0xf0
+            && (prefixes & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
+            if (!(s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_WAITPKG)
+                || (prefixes & PREFIX_LOCK)) {
+                goto illegal_op;
+            }
+            rm = (modrm & 7) | REX_B(s);
+            if (prefixes & PREFIX_REPZ) {
+                gen_lea_v_seg(s, s->aflag, cpu_regs[rm], R_DS, s->override);
+                gen_op_ld_v(s, MO_8, s->T0, s->A0);
+            } else {
+                gen_update_cc_op(s);
+                tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, cpu_regs[rm]);
+                gen_helper_waitpkg(tcg_ctx, cpu_env, s->tmp2_i32);
+                set_cc_op(s, CC_OP_EFLAGS);
+            }
+            break;
+        }
+#endif /* __Use_Original_Qemu (U111) */
 #if __Use_Original_Qemu != 1 /* ours (U75) */
         /*
          * NoVmp (ledger U75): 0F AE mandatory prefixes (SDM Vol2 opcode map

@@ -6805,6 +6805,154 @@ static void test_x86_tsx_rtm_always_abort(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * NoVmp U111-U117: run a snippet at CPL3 in 64-bit mode. A flat GDT is built
+ * at 0x201000 (08h code64 DPL0, 10h data DPL0, 20h data DPL3, 28h code64 DPL3)
+ * and a CPL0 stub IRETQs to the snippet with CS = 2Bh, SS = 23h, RSP = 201F00h.
+ * The stub's own instructions are not part of the snippet's results.
+ */
+static void nv_gdt(NvRun *r)
+{
+    static const uint64_t gdt[6] = {
+        0, 0x00209a0000000000ull, 0x0000920000000000ull,
+        0, 0x0000f20000000000ull, 0x0020fa0000000000ull,
+    };
+    uc_x86_mmr gdtr = {0, 0x201000, sizeof(gdt) - 1, 0};
+
+    OK(uc_mem_write(r->uc, 0x201000, gdt, sizeof(gdt)));
+    OK(uc_reg_write(r->uc, UC_X86_REG_GDTR, &gdtr));
+}
+
+static uc_err nv_run3_n(NvRun *r, const char *code, size_t len)
+{
+    /* push 23h; push 201F00h; pushfq; push 2Bh; push code; iretq */
+    char stub[] = "\x6a\x23\x68\x00\x1f\x20\x00\x9c\x6a\x2b\x68\x00\x00\x00\x00\x48\xcf";
+    uint64_t sa = r->next, ca = r->next + 0x40;
+    uint32_t ca32 = (uint32_t)ca;
+
+    nv_gdt(r);
+    memcpy(stub + 11, &ca32, 4);
+    r->next += 0x40 + ((len + 0x3f) & ~(uint64_t)0x3f);
+    nv_set(r, UC_X86_REG_RSP, 0x201e00);
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = ca;
+    OK(uc_mem_write(r->uc, sa, stub, sizeof(stub) - 1));
+    OK(uc_mem_write(r->uc, ca, code, len));
+    return uc_emu_start(r->uc, sa, ca + len, 0, 0);
+}
+
+#define nv_run3(r, code) nv_run3_n((r), (code), sizeof(code) - 1)
+
+/* CPL from CS[1:0] after a run */
+static int nv_cpl(NvRun *r)
+{
+    return (int)(nv_get(r, UC_X86_REG_CS) & 3);
+}
+
+static uint64_t nv_rdmsr(NvRun *r, uint32_t msr)
+{
+    uc_x86_msr m = {msr, 0};
+
+    OK(uc_reg_read(r->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static void nv_wrmsr(NvRun *r, uint32_t msr, uint64_t value)
+{
+    uc_x86_msr m = {msr, value};
+
+    OK(uc_reg_write(r->uc, UC_X86_REG_MSR, &m));
+}
+
+/*
+ * NoVmp U111: WAITPKG (SDM Vol2 UMONITOR/UMWAIT/TPAUSE). Timing model: the
+ * optimized state is left at once, so CF = 0 (the OS time limit never expires)
+ * and AF/PF/SF/ZF/OF = 0; #GP(0) for src[31:1] != 0 or CR4.TSD at CPL > 0.
+ */
+static void test_x86_waitpkg(void)
+{
+    NvRun r;
+    uint64_t cr4;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) & (1u << 5));
+
+    /* umonitor rdx (DS:RDX, byte-load checks); tpause ecx; umwait ecx, deadline far away */
+    nv_set(&r, UC_X86_REG_RDX, 0x200100);
+    nv_set(&r, UC_X86_REG_RCX, 1);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(nv_run(&r, "\xf3\x0f\xae\xf2"));
+    nv_set(&r, UC_X86_REG_RDX, 0x7fffffff);
+    nv_set(&r, UC_X86_REG_RAX, 0xffffffff);
+    OK(nv_run(&r, "\x66\x0f\xae\xf1"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\xf2\x0f\xae\xf1"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    TEST_CHECK(r.cap.count == 0);
+
+    /* OS time limit set (IA32_UMWAIT_CONTROL = 400h quanta, C0.2 disabled): still CF = 0 */
+    nv_wrmsr(&r, 0xe1, 0x401);
+    TEST_CHECK(nv_rdmsr(&r, 0xe1) == 0x401);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(nv_run(&r, "\x66\x0f\xae\xf1"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    /* reserved MSR bits: WRMSR #GP(0); through the API the write is dropped */
+    nv_set(&r, UC_X86_REG_RCX, 0xe1);
+    nv_set(&r, UC_X86_REG_RAX, 2);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_wrmsr(&r, 0xe1, 0x100000000ull);
+    TEST_CHECK(nv_rdmsr(&r, 0xe1) == 0x401);
+    nv_set(&r, UC_X86_REG_RAX, 0x800);
+    OK(nv_run(&r, "\x0f\x30"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0xe1) == 0x800);
+
+    /* src[31:1] != 0: #GP(0), REX.W ignored (r32 operand) */
+    nv_set(&r, UC_X86_REG_RCX, 0x100000000ull);
+    OK(nv_run(&r, "\x66\x48\x0f\xae\xf1"));
+    TEST_CHECK(r.cap.count == 0);
+    nv_set(&r, UC_X86_REG_RCX, 2);
+    OK(nv_run(&r, "\x66\x0f\xae\xf1"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    OK(nv_run(&r, "\xf2\x0f\xae\xf1"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+
+    /* LOCK: #UD; memory form of F3 0F AE /6 is not UMONITOR */
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\x66\x0f\xae\xf1"));
+
+    /* UMONITOR of an unmapped address faults like a byte load */
+    nv_set(&r, UC_X86_REG_RDX, 0x900000);
+    uc_assert_err(UC_ERR_READ_UNMAPPED, nv_run(&r, "\xf3\x0f\xae\xf2"));
+
+    /* CR4.TSD: allowed at CPL0, #GP(0) at CPL3 (UMONITOR is not affected) */
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 4;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x66\x0f\xae\xf1"));
+    TEST_CHECK(r.cap.count == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x200100);
+    OK(nv_run3(&r, "\xf3\x0f\xae\xf2\x66\x0f\xae\xf1"));
+    TEST_CHECK(nv_cpl(&r) == 3);
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == r.last + 4);
+
+    /* strict profile without WAITPKG: #UD */
+    nv_profile7(&r, 0, 0, 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\xae\xf1"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\xae\xf1"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\xae\xf2"));
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -6942,4 +7090,5 @@ TEST_LIST = {
     {"test_x86_uintr_uif", test_x86_uintr_uif},
     {"test_x86_uintr_senduipi", test_x86_uintr_senduipi},
     {"test_x86_uintr_delivery", test_x86_uintr_delivery},
+    {"test_x86_waitpkg", test_x86_waitpkg},
     {NULL, NULL}};

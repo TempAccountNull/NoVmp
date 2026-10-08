@@ -94,6 +94,9 @@ DEF_HELPER_FLAGS_4(rao, TCG_CALL_NO_WG, void, env, tl, tl, i32)
 #if __Use_Original_Qemu != 1 /* ours (U110) */
 DEF_HELPER_2(xbegin_check, void, env, tl)
 #endif /* __Use_Original_Qemu (U110) */
+#if __Use_Original_Qemu != 1 /* ours (U111) */
+DEF_HELPER_2(waitpkg, void, env, i32)
+#endif /* __Use_Original_Qemu (U111) */
 DEF_HELPER_1(single_step, void, env)
 DEF_HELPER_1(rechecking_single_step, void, env)
 DEF_HELPER_1(cpuid, void, env)
