@@ -2347,6 +2347,15 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xa3] = X86_OP_ENTRY3(EVEX_VSCATTER, M,x, None,None, V,x, vex12 cpuid(AVX512F)
                            ev_vl(EV_VLALL) ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U201) */
+    /*
+     * NoVmp (ledger U201): VPBLENDMD/Q (64), VBLENDMPS/PD (65): zmm1{k1}{z}, zmm2 (vvvv),
+     * zmm3/m/{1toN}; Full tuple, class E4 (no SIMD FP exception); DEST[j] := SRC2[j] where
+     * k1[j] or no mask, else SRC1[j] (merging) / 0 (zeroing) - X86OpEntry.evex_msrc1.
+     */
+    [0x64] = X86_OP_ENTRY3(EVEX_MOV, V,x, H,x, W,x, EV_INT(WSEL) ev_msrc1),
+    [0x65] = X86_OP_ENTRY3(EVEX_MOV, V,x, H,x, W,x, EV_INT(WSEL) ev_msrc1),
+#endif /* __Use_Original_Qemu (U201) */
 #if __Use_Original_Qemu != 1 /* ours (U199) */
     /*
      * NoVmp (ledger U199): packed FMA zmm1{k1}{z}, zmm2 (vvvv), zmm3/m/{1toN}{er}: 66, W0 =
