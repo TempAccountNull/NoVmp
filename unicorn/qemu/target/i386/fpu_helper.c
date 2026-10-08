@@ -1026,6 +1026,50 @@ static void x87_compare_end(CPUX86State *env, int old_flags)
 }
 
 #endif /* __Use_Original_Qemu (U47/U54) */
+#if __Use_Original_Qemu != 1 /* ours (U431) */
+/*
+ * NoVmp (ledger U431): FCOM/FCOMP/FCOMPP, FUCOM/FUCOMP/FUCOMPP (SDM Vol2A: "if the
+ * operation results in an invalid-arithmetic-operand exception being raised, the
+ * condition code flags are set only if the exception is masked"; Operation: IF
+ * FPUControlWord.IM = 1 THEN C3, C2, C0 := 111) and FCOMI/FCOMIP/FUCOMI/FUCOMIP
+ * ("the status flags in the EFLAGS register are set only if the exception is
+ * masked"; OF/SF/AF are cleared regardless). True when this result must leave
+ * them unchanged: #IA raised and FCW.IM = 0, unless
+ * UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC (the i5-13600K writes "unordered"
+ * anyway). FTST and FICOM/FICOMP have no such condition (always "unordered").
+ */
+static bool x87_cmp_cc_kept(CPUX86State *env, int f)
+{
+    return (f & float_flag_invalid) && !(env->fpuc & 0x0001) &&
+           !(env->uc->x86_hw_quirks & UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC);
+}
+
+/* FSW condition codes of FCOM/FUCOM (im_rule) or FTST/FICOM (!im_rule), C1 = 0 */
+static void x87_compare_cc(CPUX86State *env, FloatRelation ret, int old_flags,
+                           bool im_rule)
+{
+    uint16_t cc_old = env->fpus & 0x4500;
+    int f;
+
+    env->fpus = (env->fpus & ~0x4700) | fcom_ccval[ret + 1];
+    f = x87_compare_flags(env);
+    merge_exception_flags(env, old_flags);
+    if (im_rule && x87_cmp_cc_kept(env, f)) {
+        env->fpus = (env->fpus & ~0x4500) | cc_old;
+    }
+}
+
+/* FTST, FICOM/FICOMP: "unordered" regardless of FCW.IM (SDM Operation) */
+void helper_fcom_unord_ST0_FT0(CPUX86State *env)
+{
+    int old_flags = save_exception_flags(env);
+    FloatRelation ret;
+
+    ret = floatx80_compare(ST0, FT0, &env->fp_status);
+    x87_compare_cc(env, ret, old_flags, false);
+}
+
+#endif /* __Use_Original_Qemu (U431) */
 void helper_fcom_ST0_FT0(CPUX86State *env)
 {
     int old_flags = save_exception_flags(env);
@@ -1033,12 +1077,12 @@ void helper_fcom_ST0_FT0(CPUX86State *env)
 
     ret = floatx80_compare(ST0, FT0, &env->fp_status);
     /* C1 is unconditionally cleared to 0 */
+#if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54/U431) */
     env->fpus = (env->fpus & ~0x4700) | fcom_ccval[ret + 1];
-#if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54) */
     merge_exception_flags(env, old_flags);
-#else /* ours (U45/U47/U53/U54) */
-    x87_compare_end(env, old_flags);
-#endif /* __Use_Original_Qemu (U45/U47/U53/U54) */
+#else /* ours (U45/U47/U53/U54/U431) */
+    x87_compare_cc(env, ret, old_flags, true);
+#endif /* __Use_Original_Qemu (U45/U47/U53/U54/U431) */
 }
 
 void helper_fucom_ST0_FT0(CPUX86State *env)
@@ -1048,12 +1092,12 @@ void helper_fucom_ST0_FT0(CPUX86State *env)
 
     ret = floatx80_compare_quiet(ST0, FT0, &env->fp_status);
     /* C1 is unconditionally cleared to 0 */
+#if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54/U431) */
     env->fpus = (env->fpus & ~0x4700) | fcom_ccval[ret + 1];
-#if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54) */
     merge_exception_flags(env, old_flags);
-#else /* ours (U45/U47/U53/U54) */
-    x87_compare_end(env, old_flags);
-#endif /* __Use_Original_Qemu (U45/U47/U53/U54) */
+#else /* ours (U45/U47/U53/U54/U431) */
+    x87_compare_cc(env, ret, old_flags, true);
+#endif /* __Use_Original_Qemu (U45/U47/U53/U54/U431) */
 }
 
 static const int fcomi_ccval[4] = {CC_C, CC_Z, 0, CC_Z | CC_P | CC_C};
@@ -1064,11 +1108,18 @@ void helper_fcomi_ST0_FT0(CPUX86State *env)
     FloatRelation ret;
 
     ret = floatx80_compare(ST0, FT0, &env->fp_status);
-#if __Use_Original_Qemu != 1 /* ours (U54) */
-    x87_compare_flags(env);
-#endif /* __Use_Original_Qemu (U54) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U54/U431) */
     /* OF, SF, and AF are unconditionally cleared to 0 */
     CC_SRC = fcomi_ccval[ret + 1];
+#else /* ours (U54/U431) */
+    {
+        /* U431: ZF/PF/CF stay unchanged on an unmasked #IA (OF/SF/AF still 0) */
+        uint32_t zpc_old = cpu_cc_compute_all(env, CC_OP) & (CC_Z | CC_P | CC_C);
+        int f = x87_compare_flags(env);
+
+        CC_SRC = x87_cmp_cc_kept(env, f) ? zpc_old : fcomi_ccval[ret + 1];
+    }
+#endif /* __Use_Original_Qemu (U54/U431) */
     /* C1 is cleared to 0 per the SDM; real Intel CPUs leave it unchanged, which
        UC_X86_QUIRK_FCOMI_KEEPS_C1 (UC_CTL_X86_HW_QUIRKS) selects */
     if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_FCOMI_KEEPS_C1)) {
@@ -1087,11 +1138,18 @@ void helper_fucomi_ST0_FT0(CPUX86State *env)
     FloatRelation ret;
 
     ret = floatx80_compare_quiet(ST0, FT0, &env->fp_status);
-#if __Use_Original_Qemu != 1 /* ours (U54) */
-    x87_compare_flags(env);
-#endif /* __Use_Original_Qemu (U54) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U54/U431) */
     /* OF, SF, and AF are unconditionally cleared to 0 */
     CC_SRC = fcomi_ccval[ret + 1];
+#else /* ours (U54/U431) */
+    {
+        /* U431: see helper_fcomi_ST0_FT0 */
+        uint32_t zpc_old = cpu_cc_compute_all(env, CC_OP) & (CC_Z | CC_P | CC_C);
+        int f = x87_compare_flags(env);
+
+        CC_SRC = x87_cmp_cc_kept(env, f) ? zpc_old : fcomi_ccval[ret + 1];
+    }
+#endif /* __Use_Original_Qemu (U54/U431) */
     /* C1: see helper_fcomi_ST0_FT0 (UC_X86_QUIRK_FCOMI_KEEPS_C1) */
     if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_FCOMI_KEEPS_C1)) {
         env->fpus &= ~0x0200;

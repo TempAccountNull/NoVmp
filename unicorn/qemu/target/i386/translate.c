@@ -5557,7 +5557,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                             break;
                         }
 
-                        gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1);
+                        if ((op1 == 2 || op1 == 3) && (op & 0x10)) {
+                            /* ours (U431): FICOM/FICOMP set "unordered" regardless
+                               of FCW.IM (SDM FICOM Operation) */
+                            gen_helper_fcom_unord_ST0_FT0(tcg_ctx, cpu_env);
+                        } else {
+                            gen_helper_fp_arith_ST0_FT0(tcg_ctx, op1);
+                        }
                         if (op1 == 3) {
                             /* fcomp needs pop */
                             gen_helper_fpop(tcg_ctx, cpu_env);
@@ -5763,7 +5769,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                         break;
                     case 4: /* ftst */
                         gen_helper_fldz_FT0(tcg_ctx, cpu_env);
+#if __Use_Original_Qemu == 1 /* original QEMU (U431) */
                         gen_helper_fcom_ST0_FT0(tcg_ctx, cpu_env);
+#else /* ours (U431) */
+                        /* FTST: "unordered" regardless of FCW.IM (SDM FTST Operation) */
+                        gen_helper_fcom_unord_ST0_FT0(tcg_ctx, cpu_env);
+#endif /* __Use_Original_Qemu (U431) */
                         break;
                     case 5: /* fxam */
                         gen_helper_fxam_ST0(tcg_ctx, cpu_env);

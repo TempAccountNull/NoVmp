@@ -11940,6 +11940,35 @@ static void qk_rep_zero(uint32_t q, int zx)
     OK(uc_close(uc));
 }
 
+/*
+ * bit 6: fninit; fldcw [rax+32] (IM = 0); fld [rax+16] (1.0); fld [rax+40] (QNaN);
+ * then fcom st(1) / fcomi st(0), st(1) / ftst. #IA unmasked.
+ */
+static void qk_x87_cmp(uint32_t q, char insn, uint16_t want_cc, uint64_t want_zpc)
+{
+    char code[] = "\xdb\xe3\xd9\x68\x20\xdd\x40\x10\xdd\x40\x28\x90\x90";
+    uint64_t rflags = 0;
+    uint16_t fsw;
+    uc_engine *uc;
+
+    if (insn == 'c') {          /* fcom st(1) */
+        code[11] = '\xd8', code[12] = '\xd1';
+    } else if (insn == 'i') {   /* fcomi st(0), st(1) */
+        code[11] = '\xdb', code[12] = '\xf1';
+    } else {                    /* ftst */
+        code[11] = '\xd9', code[12] = '\xe4';
+    }
+    uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    fsw = qk_fsw(uc);
+    OK(uc_reg_read(uc, UC_X86_REG_EFLAGS, &rflags));
+    TEST_CHECK((fsw & 0x0001) != 0);
+    TEST_CHECK((fsw & 0x4500) == want_cc);
+    TEST_CHECK((rflags & 0x45) == want_zpc);
+    TEST_MSG("quirks %x insn %c: fsw %04x rflags %llx", q, insn, fsw,
+             (unsigned long long)rflags);
+    OK(uc_close(uc));
+}
+
 static void test_x86_hw_quirk_bits(void)
 {
     /* bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 = 1 */
@@ -11961,6 +11990,14 @@ static void test_x86_hw_quirk_bits(void)
     /* bit 5 REP_ZERO_COUNT_ZX: SDM writes nothing, hardware zero-extends RCX/RSI/RDI */
     qk_rep_zero(0, 0);
     qk_rep_zero(UC_X86_QUIRK_REP_ZERO_COUNT_ZX, 1);
+    /* bit 6 X87_CMP_UNMASKED_IA_SETS_CC: SDM keeps C3/C2/C0 (ZF/PF/CF), hardware 111 */
+    qk_x87_cmp(0, 'c', 0x0000, 0);
+    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 'c', 0x4500, 0);
+    qk_x87_cmp(0, 'i', 0x0000, 0);
+    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 'i', 0x0000, 0x45);
+    /* FTST has no IM condition in the SDM: "unordered" either way */
+    qk_x87_cmp(0, 't', 0x4500, 0);
+    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 't', 0x4500, 0);
 }
 /* ---- qk_ block end ---- */
 
