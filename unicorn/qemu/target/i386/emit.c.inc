@@ -1812,6 +1812,27 @@ static void gen_EVEX_VINSERTPS(DisasContext *s, CPUX86State *env, X86DecodedInsn
     tcg_temp_free_i32(tcg_ctx, t);
 }
 #endif /* __Use_Original_Qemu (U215) */
+#if __Use_Original_Qemu != 1 /* ours (U262) */
+
+/*
+ * NoVmp (ledger U262): AVX512BW byte/word arithmetic. The gvec forms (VPADDB/W, VPADDS*,
+ * VPADDUS*, VPSUB*, VPMINS/U B/W, VPMAXS/U B/W, VPABSB/W, VPMULLW) reuse the VEX gen
+ * functions (vector_len() = the EVEX vector length); the ops_sse.h forms take the SHIFT
+ * 1/2/3 helper by vector length (SSE_FN3): DEST = op(SRC1 = vvvv, SRC2 = r/m).
+ */
+#define EVEX_SSE3(uname, lname)                                                      \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+                                                                                     \
+    SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);          \
+}
+EVEX_SSE3(PAVGB, pavgb)
+EVEX_SSE3(PAVGW, pavgw)
+EVEX_SSE3(PMULHUW, pmulhuw)
+EVEX_SSE3(PMULHW, pmulhw)
+EVEX_SSE3(PMULHRSW, pmulhrsw)
+#endif /* __Use_Original_Qemu (U262) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

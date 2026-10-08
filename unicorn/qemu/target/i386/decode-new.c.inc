@@ -2615,6 +2615,33 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xd6] = X86_OP_ENTRY3(EVEX_MOVQ_XX, W,q, None,None, V,dq, EV_M128(T1S, W1) p_66),
     [0xe7] = X86_OP_ENTRY3(EVEX_MOV, WM,x, None,None, V,x, EV_NT(W0) p_66), /* vmovntdq */
 #endif /* __Use_Original_Qemu (U214) */
+#if __Use_Original_Qemu != 1 /* ours (U262) */
+    /*
+     * NoVmp (ledger U262): AVX512BW byte/word arithmetic, EVEX.66.0F.WIG, Full Mem tuple,
+     * {k1}{z} per byte / word, E4 (fault suppression)
+     */
+    [0xd5] = X86_OP_ENTRY3(PMULLW,       V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xd8] = X86_OP_ENTRY3(PSUBUSB,      V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xd9] = X86_OP_ENTRY3(PSUBUSW,      V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xda] = X86_OP_ENTRY3(PMINUB,       V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xdc] = X86_OP_ENTRY3(PADDUSB,      V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xdd] = X86_OP_ENTRY3(PADDUSW,      V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xde] = X86_OP_ENTRY3(PMAXUB,       V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xe0] = X86_OP_ENTRY3(EVEX_PAVGB,   V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xe3] = X86_OP_ENTRY3(EVEX_PAVGW,   V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xe4] = X86_OP_ENTRY3(EVEX_PMULHUW, V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xe5] = X86_OP_ENTRY3(EVEX_PMULHW,  V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xe8] = X86_OP_ENTRY3(PSUBSB,       V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xe9] = X86_OP_ENTRY3(PSUBSW,       V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xea] = X86_OP_ENTRY3(PMINSW,       V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xec] = X86_OP_ENTRY3(PADDSB,       V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xed] = X86_OP_ENTRY3(PADDSW,       V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xee] = X86_OP_ENTRY3(PMAXSW,       V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xf8] = X86_OP_ENTRY3(PSUBB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xf9] = X86_OP_ENTRY3(PSUBW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0xfc] = X86_OP_ENTRY3(PADDB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0xfd] = X86_OP_ENTRY3(PADDW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+#endif /* __Use_Original_Qemu (U262) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -2798,6 +2825,16 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x5a] = X86_OP_GROUP0(EVEX_0F38_1A),
     [0x5b] = X86_OP_GROUP0(EVEX_0F38_1B),
 #endif /* __Use_Original_Qemu (U215) */
+#if __Use_Original_Qemu != 1 /* ours (U262) */
+    /* NoVmp (ledger U262): EVEX.66.0F38.WIG, Full Mem tuple, {k1}{z}, E4 */
+    [0x0b] = X86_OP_ENTRY3(EVEX_PMULHRSW, V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0x1c] = X86_OP_ENTRY3(PABSB,         V,x, None,None, W,x, EV_BW(WIG, 8) p_66),
+    [0x1d] = X86_OP_ENTRY3(PABSW,         V,x, None,None, W,x, EV_BW(WIG, 16) p_66),
+    [0x38] = X86_OP_ENTRY3(PMINSB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0x3a] = X86_OP_ENTRY3(PMINUW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+    [0x3c] = X86_OP_ENTRY3(PMAXSB,        V,x, H,x, W,x, EV_BW(WIG, 8) p_66),
+    [0x3e] = X86_OP_ENTRY3(PMAXUW,        V,x, H,x, W,x, EV_BW(WIG, 16) p_66),
+#endif /* __Use_Original_Qemu (U262) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
