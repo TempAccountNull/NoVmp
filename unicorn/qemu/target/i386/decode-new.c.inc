@@ -3531,6 +3531,24 @@ static void decode_EVEX_0FD6(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 #if __Use_Original_Qemu != 1 /* ours (U410) */
 #undef EV_A10MOVZ
 #endif /* __Use_Original_Qemu (U410) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+/*
+ * NoVmp (ledger U412): 0F38 DA: F3 = VSM4KEY4, F2 = VSM4RNDS4, EVEX forms (ISE 319433-062
+ * "AVX10 AND SM4"): EVEX.W0, 128/256/512 bits (independent 128-bit lanes), Full Mem tuple,
+ * no masking, no EVEX.b, class E6. The ops_sse.h SM4 helpers of the VEX forms (U84).
+ */
+static void decode_EVEX_0F38_DA(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F38_DA[4] = {
+        {}, {},
+        X86_OP_ENTRY3(EVEX_VSM4KEY4, V,x, H,x, W,x, cpuid(AVX10_SM4) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(NONE) ev_w(W0) ev_es(32)),
+        X86_OP_ENTRY3(EVEX_VSM4RNDS4, V,x, H,x, W,x, cpuid(AVX10_SM4) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(NONE) ev_w(W0) ev_es(32)),
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F38_DA);
+}
+#endif /* __Use_Original_Qemu (U412) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
@@ -4068,6 +4086,9 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U407) */
     [0x52] = X86_OP_GROUP0(EVEX_0F38_52),
 #endif /* __Use_Original_Qemu (U407) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+    [0xda] = X86_OP_GROUP0(EVEX_0F38_DA),
+#endif /* __Use_Original_Qemu (U412) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -5226,6 +5247,11 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX10_MOVRS:
         return s->avx10_version >= 1 && (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_MOVRS);
 #endif /* __Use_Original_Qemu (U400) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+    case X86_FEAT_AVX10_SM4:
+        /* "AVX10 AND SM4" (ISE 319433-062): AVX10 version >= 1 and CPUID.(07H,1):EAX.SM4[2] */
+        return s->avx10_version >= 1 && (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM4);
+#endif /* __Use_Original_Qemu (U412) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

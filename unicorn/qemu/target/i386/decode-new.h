@@ -226,6 +226,9 @@ typedef enum X86CPUIDFeature {
     X86_FEAT_AVX10_V1_AUX,
     X86_FEAT_AVX10_MOVRS,
 #endif /* __Use_Original_Qemu (U400) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+    X86_FEAT_AVX10_SM4,     /* EVEX VSM4KEY4 / VSM4RNDS4: "AVX10 AND SM4" (ISE 319433-062) */
+#endif /* __Use_Original_Qemu (U412) */
 } X86CPUIDFeature;
 
 /* Execution flags */

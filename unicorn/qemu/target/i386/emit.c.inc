@@ -2701,6 +2701,23 @@ static void gen_EVEX_VMOVZX_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn
     tcg_temp_free_i32(tcg_ctx, t);
 }
 #endif /* __Use_Original_Qemu (U410) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+
+/* NoVmp (ledger U412): EVEX VSM4KEY4 / VSM4RNDS4, 128-bit lanes at 128/256/512 bits */
+static void gen_EVEX_VSM4KEY4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, vsm4key4)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_VSM4RNDS4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, vsm4rnds4)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+#endif /* __Use_Original_Qemu (U412) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
