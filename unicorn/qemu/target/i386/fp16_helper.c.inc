@@ -754,7 +754,19 @@ static uint16_t fp16_narrow(CPUX86State *env, Fp16Ctx *c, uint64_t v, bool from6
     c->st.flush_inputs_to_zero = (env->mxcsr & 0x40) != 0;
     r = from64 ? float64_to_float16(v, true, &c->st) : float32_to_float16((uint32_t)v, true, &c->st);
     c->st.flush_inputs_to_zero = false;
-    return fp16_res(c, r);
+    r = fp16_res(c, r);
+    /*
+     * a denormal FP32/FP64 source (DAZ = 0) always gives a tiny inexact FP16 result: DE, UE
+     * and PE (SDM VCVTPS2PH: "a SIMD exception will be raised with DE, UE and PE set"),
+     * PE also with UM = 0 where the unbounded rounding (rebias) of e.g. 2^-149 is exact;
+     * the i5-13600K's F16C VCVTPS2PH does so (ref_evex_fp16.py --hwcmp)
+     */
+    if (!(env->mxcsr & 0x40) &&
+        (from64 ? !(v & 0x7ff0000000000000ull) && (v & 0x000fffffffffffffull)
+                : !(v & 0x7f800000u) && (v & 0x007fffffu))) {
+        c->flags |= FX_PE;
+    }
+    return r;
 }
 
 static uint64_t fp16_cvt(CPUX86State *env, Fp16Ctx *c, int st, int dt, uint64_t v, uint32_t desc)

@@ -2467,6 +2467,10 @@ static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn
     tcg_temp_free_ptr(tcg_ctx, pd);
 }
 #endif /* __Use_Original_Qemu (U240) */
+#if __Use_Original_Qemu != 1 /* ours (U333) */
+/* NoVmp (ledgers U333-U339): AVX512-FP16 */
+#include "emit_fp16.c.inc"
+#endif /* __Use_Original_Qemu (U333) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

@@ -3229,6 +3229,10 @@ EV_SCALAR_W(0F3A_55,
 #define EV_SHX(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(MEM128) ev_mask(MZ) ev_w(w) ev_es(W) \
                      .evex_nofs = 1, p_66
 #endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U333) */
+/* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
+#include "decode_fp16.c.inc"
+#endif /* __Use_Original_Qemu (U333) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -5439,7 +5443,7 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
          * P2 = z L' L b V' a a a (SDM Vol2A 2.7.1, Table 2-32). disas_insn routes 62h here
          * only when it is not BOUND (64-bit mode, or P0[7:6] = 11b in protected mode).
          * #UD: LOCK/66/F2/F3/REX before EVEX (Table 2-46); P[3] != 0, P[10] != 1, map 0/4/7
-         * (Table 2-40). Maps 5/6 (AVX512-FP16) are not implemented (#UD). Outside 64-bit
+         * (Table 2-40). Maps 5/6 are the AVX512-FP16 maps (U333). Outside 64-bit
          * mode EVEX.R/X/B/R' select nothing (Table 2-34: 8 registers; R and X are 1 there,
          * B and R' are ignored) and vvvv[3] is ignored (Table 2-41); V' is checked in
          * validate_evex.
@@ -5469,9 +5473,18 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             case 3:
                 decode_func = decode_evex_0F3A;
                 break;
+#if __Use_Original_Qemu == 1 /* original QEMU (U333) */
             case 5: /* AVX512-FP16 maps */
             case 6:
                 goto unknown_op;
+#else /* ours (U333) */
+            case 5: /* AVX512-FP16 maps (U333) */
+                decode_func = decode_evex_map5;
+                break;
+            case 6:
+                decode_func = decode_evex_map6;
+                break;
+#endif /* __Use_Original_Qemu (U333) */
             default:
                 goto illegal_op;
             }
