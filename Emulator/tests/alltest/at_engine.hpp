@@ -282,6 +282,8 @@ namespace at
 			uc_ctl_set_cpu_model( uc_, model_ );
 			// AVX-512 opt-in (emu-alltest --avx512): only before the engine is initialised
 			if ( avx512 && uc_ctl_set_x86_avx512( uc_, avx512 ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_avx512 failed"; return false; }
+			// AMX opt-in (emu-alltest --amx, UC_CTL_X86_AMX = UC_X86_AMX_ALL): same rule
+			if ( amx && uc_ctl_set_x86_amx( uc_, amx ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_amx failed"; return false; }
 			if ( quirks_ ) uc_ctl_set_x86_hw_quirks( uc_, quirks_ );
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
@@ -423,6 +425,7 @@ namespace at
 		uint64_t xcr0 = 0;
 		uint64_t cr0 = 0;
 		int avx512 = 0;          // UC_CTL_X86_AVX512 mask (0 = off, the default)
+		int amx = 0;             // UC_CTL_X86_AMX mask (0 = off, the default)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) through code hooks
 	private:
 		int model_;
