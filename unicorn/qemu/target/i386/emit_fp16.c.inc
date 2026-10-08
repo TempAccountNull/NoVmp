@@ -212,3 +212,49 @@ static void gen_FP16_CVTUSI2SH(DisasContext *s, CPUX86State *env, X86DecodedInsn
     gen_fp16_cvtsi(s, decode, true);
 }
 #endif /* __Use_Original_Qemu (U335) */
+#if __Use_Original_Qemu != 1 /* ours (U336) */
+
+/* NoVmp (ledger U336): VCMPPH/SH, VFPCLASSPH/SH into k1 (k2 AND-ed by gen_evex_insn) */
+static void gen_FP16_CMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = gen_fp16_kmask(s);
+
+    gen_helper_fp16_cmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2, k,
+                        tcg_constant_i32(tcg_ctx, fp16_desc(s, decode, FP16_OP_CMP,
+                                                            decode->immediate & 0x1f)));
+    tcg_temp_free_i64(tcg_ctx, k);
+}
+
+static void gen_FP16_FPCLASS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = gen_fp16_kmask(s);
+
+    gen_helper_fp16_cmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR2, OP_PTR2, k,
+                        tcg_constant_i32(tcg_ctx, fp16_desc(s, decode, FP16_OP_FPCLASS,
+                                                            decode->immediate & 0xff)));
+    tcg_temp_free_i64(tcg_ctx, k);
+}
+
+/* VCOMISH (IE for any NaN) / VUCOMISH (IE for an SNaN) xmm1, xmm2/m16: EFLAGS */
+static void gen_fp16_comi(DisasContext *s, X86DecodedInsn *decode, bool sig)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_fp16_comi(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, FP16_DESC(FP16_OP_CMP, 1, fp16_rc(s)) |
+                                          FP16_D_IMM(sig)));
+    set_cc_op(s, CC_OP_EFLAGS);
+}
+
+static void gen_FP16_COMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_comi(s, decode, true);
+}
+
+static void gen_FP16_UCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_comi(s, decode, false);
+}
+#endif /* __Use_Original_Qemu (U336) */

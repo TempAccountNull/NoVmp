@@ -2863,16 +2863,43 @@ static void decode_EVEX_0F57(DisasContext *s, CPUX86State *env, X86OpEntry *entr
  * (m64), imm8 (LIG, Tuple1 Scalar, E6), AVX512DQ (SDM Vol2C VFPCLASSPD .. VFPCLASSSS).
  * No MXCSR flag; EVEX.vvvv must be 1111b (validate_evex).
  */
+/*
+ * NoVmp (ledger U292 + U336, one decoder per opcode slot): 0F3A 66 / 67 also hold the
+ * AVX512-FP16 NP W0 forms VFPCLASSPH (Full tuple, {1to8/16/32}) / VFPCLASSSH (m16) k1{k2},
+ * r/m, imm8 (SDM Vol2C VFPCLASSPH, VFPCLASSSH; gen_FP16_FPCLASS of emit_fp16.c.inc).
+ */
+#define EV_FPCLASS_SH X86_OP_ENTRY4(FP16_FPCLASS, K,q, None,None, W,w, cpuid(AVX512_FP16)     \
+                          ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(KDEST) ev_w(W0) ev_es(16))
+static void decode_EVEX_0F3A_66(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F3A_66[4] = {
+        X86_OP_ENTRY4(FP16_FPCLASS, K,q, None,None, W,x, cpuid(AVX512_FP16) ev_vl(EV_VLALL)
+                      ev_tt(FULL) ev_mask(KDEST) ev_w(W0) ev_es(16)),
+        X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,x, I,b, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                      ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
+        {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_66);
+}
+
 static void decode_EVEX_0F3A_67(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
-    static const X86OpEntry opcodes_EVEX_0F3A_67[2] = {
-        X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,ss, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
-                      ev_tt(T1S) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
-        X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,sd, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
-                      ev_tt(T1S) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
+    static const X86OpEntry opcodes_EVEX_0F3A_67[2][4] = {
+        {
+            EV_FPCLASS_SH,
+            X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,ss, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
+                          ev_tt(T1S) ev_mask(KDEST) ev_w(W0) ev_es(W) p_66),
+            {}, {},
+        }, {
+            EV_FPCLASS_SH,      /* W1: #UD by its ev_w(W0) */
+            X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,sd, I,b, cpuid(AVX512DQ) ev_vl(X86_EVEX_LIG)
+                          ev_tt(T1S) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
+            {}, {},
+        },
     };
-    *entry = opcodes_EVEX_0F3A_67[s->vex_w];
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_67[s->vex_w]);
 }
+#undef EV_FPCLASS_SH
 #endif /* __Use_Original_Qemu (U292) */
 #if __Use_Original_Qemu != 1 /* ours (U295) */
 /*
@@ -3825,10 +3852,14 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #endif /* __Use_Original_Qemu (U267) */
 #if __Use_Original_Qemu != 1 /* ours (U292) */
     /* VFPCLASSPS/PD k2 {k1}, x/m/{1toN}, imm8 (66 W0/W1): Full, E4; 67: SS/SD (U292) */
-    [0x66] = X86_OP_ENTRY3(EVEX_VFPCLASS, K,q, W,x, I,b, cpuid(AVX512DQ) ev_vl(EV_VLALL)
-                           ev_tt(FULL) ev_mask(KDEST) ev_w(WSEL) ev_es(W) p_66),
+    /* U336: one decoder per slot - NP VFPCLASSPH / VFPCLASSSH (AVX512-FP16), 66 PS/PD/SS/SD */
+    [0x66] = X86_OP_GROUP0(EVEX_0F3A_66),
     [0x67] = X86_OP_GROUP0(EVEX_0F3A_67),
 #endif /* __Use_Original_Qemu (U292) */
+#if __Use_Original_Qemu != 1 /* ours (U336) */
+    /* NoVmp (ledger U336): AVX512-FP16 VCMPPH (NP) / VCMPSH (F3) k1{k2}, ..., imm8 {sae} */
+    [0xc2] = X86_OP_GROUP0(FP16_0F3A_C2),
+#endif /* __Use_Original_Qemu (U336) */
 #if __Use_Original_Qemu != 1 /* ours (U293) */
     /*
      * NoVmp (ledger U293): VRANGEPS/PD (66 50 W0/W1) x1 {k1}{z}, x2, x3/m/{1toN}{sae}, imm8:

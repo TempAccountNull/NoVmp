@@ -231,6 +231,40 @@ static void decode_FP16_M6_13(DisasContext *s, CPUX86State *env, X86OpEntry *ent
     decode_FP16_by_prefix(s, entry, tab);
 }
 #endif /* __Use_Original_Qemu (U335) */
+#if __Use_Original_Qemu != 1 /* ours (U336) */
+/* NoVmp (ledger U336): VCOMISH / VUCOMISH xmm1, xmm2/m16{sae} (NP 2F / 2E): no masking */
+#define FP16_COMI(op)     X86_OP_ENTRY3(op, None,None, V,x, W,w, cpuid(AVX512_FP16)          \
+                          ev_vl(X86_EVEX_LIG) ev_tt(T1S) ev_mask(NONE) ev_rc(SAE) ev_w(W0)   \
+                          ev_es(16))
+
+static void decode_FP16_M5_2E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { FP16_COMI(FP16_UCOMI), {}, {}, {}, };
+    decode_FP16_by_prefix(s, entry, tab);
+}
+
+static void decode_FP16_M5_2F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { FP16_COMI(FP16_COMI), {}, {}, {}, };
+    decode_FP16_by_prefix(s, entry, tab);
+}
+
+/* 0F3A 66 / 67 NP VFPCLASSPH / VFPCLASSSH: in decode_EVEX_0F3A_66/67 with the 66 forms (U292) */
+
+/* 0F3A C2: VCMPPH (NP) / VCMPSH (F3) k1{k2}, xmm2, r/m, imm8 {sae} */
+static void decode_FP16_0F3A_C2(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = {
+        X86_OP_ENTRY4(FP16_CMP, K,q, H,x, W,x, cpuid(AVX512_FP16) ev_vl(EV16_VL)
+                      ev_tt(FULL) ev_mask(KDEST) ev_rc(SAE) ev_w(W0) ev_es(16)),
+        {},
+        X86_OP_ENTRY4(FP16_CMP, K,q, H,x, W,w, cpuid(AVX512_FP16) ev_vl(X86_EVEX_LIG)
+                      ev_tt(T1S) ev_mask(KDEST) ev_rc(SAE) ev_w(W0) ev_es(16)),
+        {},
+    };
+    decode_FP16_by_prefix(s, entry, tab);
+}
+#endif /* __Use_Original_Qemu (U336) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 
 static const X86OpEntry opcodes_evex_map5[256] = {
@@ -255,6 +289,10 @@ static const X86OpEntry opcodes_evex_map5[256] = {
     [0x7c] = X86_OP_GROUP0(FP16_M5_7C),
     [0x7d] = X86_OP_GROUP0(FP16_M5_7D),
 #endif /* __Use_Original_Qemu (U335) */
+#if __Use_Original_Qemu != 1 /* ours (U336) */
+    [0x2e] = X86_OP_GROUP0(FP16_M5_2E),
+    [0x2f] = X86_OP_GROUP0(FP16_M5_2F),
+#endif /* __Use_Original_Qemu (U336) */
 };
 
 static const X86OpEntry opcodes_evex_map6[256] = {
@@ -312,3 +350,6 @@ static void decode_evex_map6(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 #undef FP16_C2I
 #undef FP16_I2C
 #endif /* __Use_Original_Qemu (U335) */
+#if __Use_Original_Qemu != 1 /* ours (U336) */
+#undef FP16_COMI
+#endif /* __Use_Original_Qemu (U336) */
