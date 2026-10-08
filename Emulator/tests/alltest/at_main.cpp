@@ -6,7 +6,10 @@
 //   --full           every form, --iters iterations (default 6)
 //   --filter S       only forms whose text, key or ISA groups contain S
 //   --out DIR        report directory (default: <exe dir>\alltest)
-//   --quirks N       UC_CTL_X86_HW_QUIRKS bitmask for Unicorn (default 0 = follow the manual)
+//   --quirks Q       UC_CTL_X86_HW_QUIRKS bitmask for Unicorn: a number, "cpu" (QUIRKS_I5_13600K, every
+//                    quirk bit the host i5-13600K needs) or "sdm" (0 = strictly the Intel SDM).
+//                    Default: cpu for hardware comparisons (quick/full runs, hardware "--cases"
+//                    lines), sdm for expected-value ("=>") lines; see docs\quirks.md
 //   --rebuild        re-sweep the opcode space instead of using the cached universe
 //   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp); a line
 //                    with "=> expectations" is an expected-value case (Unicorn only, vs the SDM)
@@ -284,7 +287,8 @@ int main( int argc, char** argv )
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );
 	bool full = false, rebuild = false;
 	int iters = -1, sample = -1;
-	uint32_t quirks = 0;
+	uint32_t quirks = QUIRKS_I5_13600K;   // hardware comparison runs: the host CPU's quirk set (U99)
+	bool quirks_given = false;
 	std::string filter, out_dir, cases;
 	at::case_opts copt;
 	for ( int i = 1; i < argc; ++i )
@@ -297,7 +301,14 @@ int main( int argc, char** argv )
 		else if ( a == "--sample" ) sample = std::stoi( val() );
 		else if ( a == "--filter" ) filter = val();
 		else if ( a == "--out" ) out_dir = val();
-		else if ( a == "--quirks" ) quirks = uint32_t( std::stoul( val(), nullptr, 0 ) );
+		else if ( a == "--quirks" )
+		{
+			std::string q = val();
+			if ( q == "cpu" ) quirks = QUIRKS_I5_13600K;
+			else if ( q == "sdm" ) quirks = 0;
+			else quirks = uint32_t( std::stoul( q, nullptr, 0 ) );
+			quirks_given = true;
+		}
 		else if ( a == "--cases" ) cases = val();
 		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
 		else if ( a == "--strict" ) copt.strict = 1;
@@ -308,9 +319,11 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_IFMA |
 												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI;
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--expect-only]]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--expect-only]]\n" ); return 2; }
 	}
-	if ( !cases.empty() ) return at::run_cases( cases, quirks, copt );
+	// --cases: hardware lines use the host CPU's quirk set, expected-value lines the SDM (0),
+	// unless --quirks sets both
+	if ( !cases.empty() ) return at::run_cases( cases, quirks, quirks_given ? quirks : 0u, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );

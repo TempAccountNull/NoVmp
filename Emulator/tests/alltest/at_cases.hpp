@@ -51,10 +51,13 @@
 //     rdrand rax =>! rflags=0x203
 //   An empty expectation ("nop =>") means: no fault, nothing changed.
 //
-// Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --xcr0 V /
-// --quirks N configure Unicorn for both kinds of case. --avx512 opts Unicorn in to AVX-512
+// Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --xcr0 V
+// configure Unicorn for both kinds of case. UC_CTL_X86_HW_QUIRKS (U99): hardware cases run with
+// the host CPU's quirk set (QUIRKS_I5_13600K), expected-value cases with 0 (strictly the SDM);
+// --quirks N|cpu|sdm sets both. --avx512 opts Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI, before the engine is
-// initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases. --amx
+// initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
+// Emulator\data\cases_opmask.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory).
 // Output: "[n] SAME|DIFF <line>", the engines' lines, then "cases: N, differing: M" over both kinds;
@@ -318,7 +321,7 @@ namespace at
 
 	static std::string fault_text( bool faulted, int vector ) { return faulted ? "fault #" + std::to_string( vector ) + " " : ""; }
 
-	static int run_cases( const std::string& path, uint32_t quirks, const case_opts& opt = {} )
+	static int run_cases( const std::string& path, uint32_t hw_quirks, uint32_t exp_quirks, const case_opts& opt = {} )
 	{
 		std::ifstream f( path );
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
@@ -393,7 +396,7 @@ namespace at
 			program p = build( bytes, &err );
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
 			result h, u;
-			unicorn_engine uc( UC_CPU_X86_MAX, quirks );
+			unicorn_engine uc( UC_CPU_X86_MAX, expect ? exp_quirks : hw_quirks );
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
 			uc.avx512 = opt.avx512;
 			uc.amx = opt.amx;
@@ -442,6 +445,7 @@ namespace at
 			++n;
 		}
 		std::printf( "cases: %d, differing: %d\n", n, differ );
+		std::printf( "quirks: hardware cases 0x%X, expected-value cases 0x%X\n", hw_quirks, exp_quirks );
 		if ( exp_n || exp_errors || skipped )
 			std::printf( "expected-value cases: %d, differing: %d, errors: %d, skipped (no \"=>\"): %d\n", exp_n, exp_differ, exp_errors, skipped );
 		return ( exp_differ || exp_errors ) ? 1 : 0;
