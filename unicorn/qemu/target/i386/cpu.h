@@ -172,10 +172,10 @@ typedef enum X86Seg {
 #define HF_AVX512_EN_SHIFT  29 /* AVX-512 Enabled (CR4.OSXSAVE + XCR0[7:5,2:1]) */
 #endif /* __Use_Original_Qemu (U121) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
-#define HF_CET_SS_SHIFT     29 /* NoVmp U114: ShadowStackEnabled(CPL), SDM Vol1 18.2.2 */
+#define HF_CET_SS_SHIFT     30 /* NoVmp U114: ShadowStackEnabled(CPL), SDM Vol1 18.2.2 */
 #endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U116) */
-#define HF_CET_IBT_SHIFT    30 /* NoVmp U116: EndbranchEnabled(CPL), SDM Vol1 18.3.2 */
+#define HF_CET_IBT_SHIFT    31 /* NoVmp U116: EndbranchEnabled(CPL), SDM Vol1 18.3.2 */
 #endif /* __Use_Original_Qemu (U116) */
 
 #define HF_CPL_MASK          (3 << HF_CPL_SHIFT)
@@ -208,10 +208,10 @@ typedef enum X86Seg {
 #define HF_AVX512_EN_MASK    (1 << HF_AVX512_EN_SHIFT)
 #endif /* __Use_Original_Qemu (U121) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
-#define HF_CET_SS_MASK       (1 << HF_CET_SS_SHIFT)
+#define HF_CET_SS_MASK       (1U << HF_CET_SS_SHIFT)
 #endif /* __Use_Original_Qemu (U114) */
 #if __Use_Original_Qemu != 1 /* ours (U116) */
-#define HF_CET_IBT_MASK      (1 << HF_CET_IBT_SHIFT)
+#define HF_CET_IBT_MASK      (1U << HF_CET_IBT_SHIFT)
 #endif /* __Use_Original_Qemu (U116) */
 
 /* hflags2 */

@@ -1,0 +1,75 @@
+# TSX / WAITPKG / ENQCMD / CET / SMX / PCONFIG (ledger U110-U116): expected-value cases (SDM values),
+# Unicorn UC_CPU_X86_MAX only, raw Unicorn = CPL0 (privileged setup inline):
+#   emu-alltest --cases Emulator\data\cases_tsx_cet_max.txt --expect-only
+# (no --cpuid/--strict: the i5-13600K profile hides these features; cases_tsx_cet.txt is the
+# hardware comparison under that profile). Layout: RSI = 30028000h, RDI = 30029000h.
+#
+# --- RTM: every transaction aborts at XBEGIN (EAX = 0, fallback); XABORT NOP; XEND #GP; XTEST ZF=1
+.byte 0xc7, 0xf8, 0x02, 0x00, 0x00, 0x00, 0xff, 0xc3, 0x48, 0xff, 0xc1 | rax=0xffffffff12345678 => rax=0 rcx=1
+.byte 0x66, 0xc7, 0xf8, 0x02, 0x00, 0xff, 0xc3, 0x48, 0xff, 0xc1 | rax=0x55 => rax=0 rcx=1
+.byte 0xc6, 0xf8, 0x55 | rax=0x1234 =>
+.byte 0xf0, 0xc7, 0xf8, 0x00, 0x00, 0x00, 0x00 => #UD
+.byte 0x0f, 0x01, 0xd5 => #GP
+.byte 0x66, 0x0f, 0x01, 0xd5 => #UD
+.byte 0x0f, 0x01, 0xd6 | rflags=0xad7 => rflags=0x242
+.byte 0xf2, 0x0f, 0x01, 0xe8 =>
+.byte 0xf2, 0x0f, 0x01, 0xe9 =>
+.byte 0xf0, 0xf2, 0x0f, 0x01, 0xe8 => #UD
+# HLE hints: the plain instruction
+.byte 0xf2, 0xf0, 0x01, 0x06 | rax=5 m+0x8000=01000000 => m+0x8000=06000000 rflags=0x206
+.byte 0xf3, 0x89, 0x06 | rax=5 m+0x8000=01000000 => m+0x8000=05000000
+#
+# --- WAITPKG: immediate wake, CF = 0 and AF/PF/SF/ZF/OF = 0; #GP for src[31:1]
+.byte 0xf3, 0x0f, 0xae, 0xf6 =>
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0x7fffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=1 rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=2 => #GP
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0x80000000 => #GP
+.byte 0xf0, 0x66, 0x0f, 0xae, 0xf1 => #UD
+#
+# --- ENQCMD/ENQCMDS: no enqueue register anywhere, retry status ZF = 1, nothing stored
+.byte 0xf2, 0x0f, 0x38, 0xf8, 0x3e => #GP
+mov ecx, 0xd93; mov eax, 0x80000001; xor edx, edx; wrmsr; .byte 0xf2, 0x0f, 0x38, 0xf8, 0x3e | rflags=0x2 =>! rflags=0x42 m+0x9000=0000000000000000
+.byte 0xf3, 0x0f, 0x38, 0xf8, 0x3e | m+0x8000=21430580 rflags=0x8d7 => rflags=0x042
+.byte 0xf3, 0x0f, 0x38, 0xf8, 0x3e | m+0x8000=00001000 => #GP
+.byte 0xf2, 0x0f, 0x38, 0xf8, 0xfe => #UD
+#
+# --- SMX (no TXT chipset) and PCONFIG
+.byte 0x0f, 0x37 => #UD
+mov rax, cr4; bts rax, 14; mov cr4, rax; mov rax, 0xffffffff00000000; .byte 0x0f, 0x37 =>! rax=0
+mov rax, cr4; bts rax, 14; mov cr4, rax; mov eax, 6; .byte 0x0f, 0x37 =>! #UD
+.byte 0x0f, 0x01, 0xc5 => #UD
+.byte 0x0f, 0x01, 0xcf => #UD
+.byte 0x0f, 0x01, 0xd7 => #UD
+#
+# --- CET off (CR4.CET = 0): RDSSP NOP, ENDBR NOP, the rest #UD
+.byte 0xf3, 0x48, 0x0f, 0x1e, 0xc8 | rax=0x1111 =>
+.byte 0xf3, 0x0f, 0x1e, 0xfa =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe8 | rax=1 => #UD
+.byte 0xf3, 0x0f, 0x01, 0xea => #UD
+.byte 0xf3, 0x0f, 0x01, 0xe8 => #UD
+.byte 0x48, 0x0f, 0x38, 0xf6, 0x06 => #UD
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 => #UD
+# CR4.CET needs CR0.WP
+mov rax, cr4; bts rax, 23; mov cr4, rax =>! #GP
+#
+# --- shadow stacks on at CPL0 (snippets are < 64 bytes, so the setup takes ECX/EAX/EDX as inputs):
+#     CR0.WP, CR4.CET, IA32_S_CET = SH_STK_EN | WR_SHSTK_EN, IA32_PL0_SSP = RDI with a supervisor
+#     token at [RDI]; SETSSBSY marks it busy and loads SSP; RDSSPQ rbx reads it
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; mov cl, 0xa4; mov eax, edi; wrmsr; mov [rdi], rdi; .byte 0xf3, 0x0f, 0x01, 0xe8; .byte 0xf3, 0x48, 0x0f, 0x1e, 0xcb | rcx=0x6a2 rax=3 rdx=0 =>! rbx=0x30029000 m+0x9000=0190023000000000
+# ... a second SETSSBSY on the busy token: #CP(SETSSBSY)
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; mov cl, 0xa4; mov eax, edi; wrmsr; mov [rdi], rdi; .byte 0xf3, 0x0f, 0x01, 0xe8; .byte 0xf3, 0x0f, 0x01, 0xe8 | rcx=0x6a2 rax=3 rdx=0 =>! #CP
+# ... CALL/RET pair: RET finds the same address on both stacks, SSP back to RDI
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; mov cl, 0xa4; mov eax, edi; wrmsr; mov [rdi], rdi; .byte 0xf3, 0x0f, 0x01, 0xe8; .byte 0xe8, 0x02, 0x00, 0x00, 0x00, 0xeb, 0x01, 0xc3; .byte 0xf3, 0x48, 0x0f, 0x1e, 0xcb | rcx=0x6a2 rax=3 rdx=0 =>! rbx=0x30029000
+# ... return address changed on the data stack: #CP(NEAR-RET)
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; mov cl, 0xa4; mov eax, edi; wrmsr; mov [rdi], rdi; .byte 0xf3, 0x0f, 0x01, 0xe8; .byte 0xe8, 0x01, 0x00, 0x00, 0x00, 0x90; mov qword ptr [rsp], 0; ret | rcx=0x6a2 rax=3 rdx=0 =>! #CP
+# ... WRSSQ [rsi+8], rsi; INCSSPQ 2 (reads [SSP] and [SSP+8]); RDSSPQ
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; mov cl, 0xa4; mov eax, edi; wrmsr; mov [rdi], rdi; .byte 0xf3, 0x0f, 0x01, 0xe8; .byte 0x48, 0x0f, 0x38, 0xf6, 0x76, 0x08; push 2; pop rax; .byte 0xf3, 0x48, 0x0f, 0xae, 0xe8; .byte 0xf3, 0x48, 0x0f, 0x1e, 0xcb | rcx=0x6a2 rax=3 rdx=0 =>! rbx=0x30029010 m+0x8008=0080023000000000
+#
+# --- indirect branch tracking at CPL0: IA32_S_CET = ENDBR_EN; jmp rax to a target without / with ENDBR64.
+#     After #CP(ENDBRANCH) the tracker still waits, so the harness epilogue (resumed after the fault,
+#     no ENDBR64) faults again and the dumped registers are not meaningful: only the fault is checked.
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; lea rax, [rip + 2]; jmp rax; nop | rcx=0x6a2 rax=4 rdx=0 =>! #CP
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; lea rax, [rip + 2]; jmp rax; .byte 0xf3, 0x0f, 0x1e, 0xfa; mov ebx, 7 | rcx=0x6a2 rax=4 rdx=0 =>! rbx=7
+# NOTRACK with NO_TRACK_EN: untracked
+mov rbx, cr0; bts ebx, 16; mov cr0, rbx; mov rbx, cr4; bts ebx, 23; mov cr4, rbx; wrmsr; lea rax, [rip + 3]; .byte 0x3e, 0xff, 0xe0; mov ebx, 7 | rcx=0x6a2 rax=0x14 rdx=0 =>! rbx=7
