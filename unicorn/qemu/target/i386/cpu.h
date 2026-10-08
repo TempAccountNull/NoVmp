@@ -847,6 +847,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* Speculative Store Bypass Disable */
 #define CPUID_7_0_EDX_SPEC_CTRL_SSBD    (1U << 31)
 
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+/* SHA512 Instructions (VSHA512MSG1, VSHA512MSG2, VSHA512RNDS2) */
+#define CPUID_7_1_EAX_SHA512            (1U << 0)
+#endif /* __Use_Original_Qemu (U82) */
 /* AVX512 BFloat16 Instruction */
 #if __Use_Original_Qemu != 1 /* ours (U71) */
 /* AVX VNNI (VEX-encoded VPDPBUSD..) */

@@ -2829,6 +2829,354 @@ static void test_x86_ptwrite_quirk(void)
     OK(uc_close(uc));
 }
 
+/*
+ * NoVmp U82-U84: VEX SHA512 / SM3 / SM4 (CPUID.(EAX=7,ECX=1):EAX bits 0-2). The
+ * i5-13600K implements none of them, so the expected values come from
+ * Emulator/tools/isa/ref_sha512_sm.py: a literal transcription of the SDM Vol2
+ * pseudocode, proven there against the FIPS 180-4 SHA-512, GB/T 32905 SM3 and
+ * GB/T 32907 SM4 standard vectors (whole hashes / cipher built from the
+ * instructions alone). Hex strings are register / memory images, lowest byte
+ * first; expected values are the whole YMM destination (VEX.128 zeroes 255:128).
+ */
+typedef struct X86VecCase {
+    const char *name;
+    const char *code;   /* instruction bytes */
+    int reg[3];         /* YMM inputs, -1 = unused */
+    const char *val[3]; /* their 32-byte values */
+    const char *mem;    /* 32 bytes at [rsi], or NULL */
+    int dest;
+    const char *expect; /* YMM[dest] afterwards */
+} X86VecCase;
+
+typedef struct X86UdCase {
+    const char *name;
+    const char *code;
+} X86UdCase;
+
+static size_t test_x86_hex(const char *hex, uint8_t *out, size_t max)
+{
+    size_t n = 0;
+
+    while (hex[0] && hex[1] && n < max) {
+        int hi = hex[0] <= '9' ? hex[0] - '0' : (hex[0] | 0x20) - 'a' + 10;
+        int lo = hex[1] <= '9' ? hex[1] - '0' : (hex[1] | 0x20) - 'a' + 10;
+        out[n++] = (uint8_t)(hi << 4 | lo);
+        hex += 2;
+    }
+    return n;
+}
+
+/* Runs one case on a fresh engine; returns the uc_emu_start result. */
+static uc_err test_x86_vec_run(const X86VecCase *c, int model,
+                               const uc_x86_cpuid *profile, size_t nprofile,
+                               uint8_t out[32])
+{
+    const uint64_t data = 0x200000;
+    uint8_t code[16], v[32];
+    uint64_t rsi = data;
+    size_t len = test_x86_hex(c->code, code, sizeof(code));
+    uc_engine *uc;
+    uc_err err;
+    int k;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    if (profile) {
+        OK(uc_ctl_set_x86_cpuid(uc, profile, nprofile));
+        OK(uc_ctl_set_x86_cpuid_strict(uc, 1));
+    }
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    OK(uc_mem_map(uc, data, 0x1000, UC_PROT_ALL));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    for (k = 0; k < 3; k++) {
+        if (c->reg[k] >= 0) {
+            memset(v, 0, sizeof(v));
+            test_x86_hex(c->val[k], v, sizeof(v));
+            OK(uc_reg_write(uc, UC_X86_REG_YMM0 + c->reg[k], v));
+        }
+    }
+    if (c->mem) {
+        test_x86_hex(c->mem, v, sizeof(v));
+        OK(uc_mem_write(uc, data, v, sizeof(v)));
+    }
+    err = uc_emu_start(uc, code_start, code_start + len, 0, 0);
+    if (err == UC_ERR_OK) {
+        OK(uc_reg_read(uc, UC_X86_REG_YMM0 + c->dest, out));
+        /* sources that are not the destination are left alone */
+        for (k = 0; k < 3; k++) {
+            uint8_t want[32] = { 0 };
+            if (c->reg[k] < 0 || c->reg[k] == c->dest) {
+                continue;
+            }
+            test_x86_hex(c->val[k], want, sizeof(want));
+            OK(uc_reg_read(uc, UC_X86_REG_YMM0 + c->reg[k], v));
+            TEST_CHECK_(memcmp(v, want, 32) == 0, "%s: source ymm%d unchanged",
+                        c->name, c->reg[k]);
+        }
+    }
+    OK(uc_close(uc));
+    return err;
+}
+
+static void test_x86_vec_cases(const X86VecCase *cases, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        uint8_t out[32], expect[32];
+        uc_err err = test_x86_vec_run(&cases[i], UC_CPU_X86_MAX, NULL, 0, out);
+
+        TEST_CHECK_(err == UC_ERR_OK, "%s: runs on UC_CPU_X86_MAX (%s)",
+                    cases[i].name, uc_strerror(err));
+        if (err != UC_ERR_OK) {
+            continue;
+        }
+        test_x86_hex(cases[i].expect, expect, sizeof(expect));
+        if (!TEST_CHECK_(memcmp(out, expect, 32) == 0, "%s: result", cases[i].name)) {
+            char got[65];
+            int k;
+            for (k = 0; k < 32; k++) {
+                snprintf(got + 2 * k, 3, "%02X", out[k]);
+            }
+            TEST_MSG("expected %s", cases[i].expect);
+            TEST_MSG("got      %s", got);
+        }
+        /* the CPU model without the feature (Haswell) raises #UD */
+        err = test_x86_vec_run(&cases[i], UC_CPU_X86_HASWELL, NULL, 0, out);
+        TEST_CHECK_(err == UC_ERR_INSN_INVALID, "%s: #UD without the CPUID feature (%s)",
+                    cases[i].name, uc_strerror(err));
+    }
+}
+
+static void test_x86_ud_cases(const X86UdCase *cases, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        X86VecCase c = { cases[i].name, cases[i].code, { -1, -1, -1 },
+                         { NULL, NULL, NULL }, NULL, 0, NULL };
+        uint8_t out[32];
+        uc_err err = test_x86_vec_run(&c, UC_CPU_X86_MAX, NULL, 0, out);
+
+        TEST_CHECK_(err == UC_ERR_INSN_INVALID, "%s: #UD on UC_CPU_X86_MAX (%s)",
+                    cases[i].name, uc_strerror(err));
+    }
+}
+
+static void test_x86_cpuid_regs(int model, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    uc_engine *uc;
+    const char code[] = "\x0f\xa2";
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_reg_write(uc, UC_X86_REG_EAX, &leaf));
+    OK(uc_reg_write(uc, UC_X86_REG_ECX, &sub));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_EAX, &r[0]));
+    OK(uc_reg_read(uc, UC_X86_REG_EBX, &r[1]));
+    OK(uc_reg_read(uc, UC_X86_REG_ECX, &r[2]));
+    OK(uc_reg_read(uc, UC_X86_REG_EDX, &r[3]));
+    OK(uc_close(uc));
+}
+
+/*
+ * UC_CTL_X86_CPUID_STRICT: the UC_CPU_X86_MAX leaves 0/1/7.0 replayed as a CPUID
+ * profile whose leaf 7.1 EAX is reduced to 'keep'. The case must run when its
+ * feature bit is kept and #UD when the profile hides it.
+ */
+static void test_x86_vec_strict(const X86VecCase *c, uint32_t feature, uint32_t keep)
+{
+    uc_x86_cpuid p[4];
+    uint32_t r[4];
+    uint8_t out[32], expect[32];
+    uc_err err;
+    int i;
+
+    static const uint32_t leaves[4][2] = { { 0, 0 }, { 1, 0 }, { 7, 0 }, { 7, 1 } };
+    for (i = 0; i < 4; i++) {
+        test_x86_cpuid_regs(UC_CPU_X86_MAX, leaves[i][0], leaves[i][1], r);
+        p[i].leaf = leaves[i][0];
+        p[i].subleaf = leaves[i][1];
+        p[i].eax = r[0];
+        p[i].ebx = r[1];
+        p[i].ecx = r[2];
+        p[i].edx = r[3];
+    }
+    TEST_CHECK((p[3].eax & feature) != 0); /* MAX advertises it (TCG feature) */
+    p[3].eax = keep;
+
+    err = test_x86_vec_run(c, UC_CPU_X86_MAX, p, 4, out);
+    if ((keep & feature) != 0) {
+        TEST_CHECK_(err == UC_ERR_OK, "%s: strict profile with the bit (%s)", c->name,
+                    uc_strerror(err));
+        test_x86_hex(c->expect, expect, sizeof(expect));
+        TEST_CHECK_(err != UC_ERR_OK || memcmp(out, expect, 32) == 0, "%s: strict result",
+                    c->name);
+    } else {
+        TEST_CHECK_(err == UC_ERR_INSN_INVALID, "%s: strict profile without the bit (%s)",
+                    c->name, uc_strerror(err));
+    }
+}
+
+#define TEST_X86_CPUID_7_1_EAX_SHA512 (1U << 0)
+#define TEST_X86_CPUID_7_1_EAX_SM3 (1U << 1)
+#define TEST_X86_CPUID_7_1_EAX_SM4 (1U << 2)
+
+/* U82: VSHA512MSG1 / VSHA512MSG2 / VSHA512RNDS2 (VEX.256.F2.0F38.W0 CC/CD/CB, registers only) */
+/* generated by Emulator/tools/isa/ref_sha512_sm.py --vectors sha512 */
+static const X86VecCase test_x86_sha512_cases[] = {
+    { "vsha512msg1 ymm0, xmm1 #0", "c4e27fccc1",
+      { 0, 1, -1 },
+      "E66FDBB975C99BA8BD465BE8C2810B7F88B38B5F60E51BB337882EEF59E1E004",
+      "FABB2BB4261A1CC24192DAF5E273E79EBC7536096B17ABD25B77CEF0931C05CC",
+      "",
+      NULL,
+      0, "7BBEF0ECD8A5A0AACD8B80776260644F0BEB317DEF3699686829F820970A299F" },
+    { "vsha512msg2 ymm0, ymm1 #0", "c4e27fcdc1",
+      { 0, 1, -1 },
+      "E66FDBB975C99BA8BD465BE8C2810B7F88B38B5F60E51BB337882EEF59E1E004",
+      "FABB2BB4261A1CC24192DAF5E273E79EBC7536096B17ABD25B77CEF0931C05CC",
+      "",
+      NULL,
+      0, "FC845541C6564101D7437E52300BFF2C616DFD98A118AC6D30760CA38B2112B4" },
+    { "vsha512rnds2 ymm0, ymm1, xmm2 #0", "c4e277cbc2",
+      { 0, 1, 2 },
+      "E66FDBB975C99BA8BD465BE8C2810B7F88B38B5F60E51BB337882EEF59E1E004",
+      "FABB2BB4261A1CC24192DAF5E273E79EBC7536096B17ABD25B77CEF0931C05CC",
+      "4EA1DF3490108A31058E223ED5CBDE0530F3D72CF540E217BF10F2C5293DF744",
+      NULL,
+      0, "5DB50E3EF6423B8DF4E17B3FCEDA305B36FB794C76E7F57572B69447444F0EE3" },
+    { "vsha512msg1 ymm0, xmm1 #1", "c4e27fccc1",
+      { 0, 1, -1 },
+      "E2336E4C7905D95209BE0D5D01598113E45F556BE506B98F6378AFAF4E7EE735",
+      "B6C7975BC1963D854DE616A28BD9FBB7D82F7FB8AF018016471237771C61B5BA",
+      "",
+      NULL,
+      0, "A8FDCFF9E434CDD31B0E25F77AA1CDB59DAD7CEF8A9D6689F6D3D69D2A0CF92A" },
+    { "vsha512msg2 ymm0, ymm1 #1", "c4e27fcdc1",
+      { 0, 1, -1 },
+      "E2336E4C7905D95209BE0D5D01598113E45F556BE506B98F6378AFAF4E7EE735",
+      "B6C7975BC1963D854DE616A28BD9FBB7D82F7FB8AF018016471237771C61B5BA",
+      "",
+      NULL,
+      0, "52A99BC924157AA49B7E55C132838A48E71CB508E31C24E46D717841DAD88C20" },
+    { "vsha512rnds2 ymm0, ymm1, xmm2 #1", "c4e277cbc2",
+      { 0, 1, 2 },
+      "E2336E4C7905D95209BE0D5D01598113E45F556BE506B98F6378AFAF4E7EE735",
+      "B6C7975BC1963D854DE616A28BD9FBB7D82F7FB8AF018016471237771C61B5BA",
+      "CAF079F5994B9B7CD10ADDB94D1529BB0C1745A3F7B085736B82F7EA2F78D331",
+      NULL,
+      0, "C6FFF4C2DCA1DBC96FFE12EE8E731DB967FD6CE1D48A1AC74100C37FBC271CA1" },
+    { "vsha512msg1 ymm0, xmm1 #2", "c4e27fccc1",
+      { 0, 1, -1 },
+      "1E83E3BA1187212E956FE7E7F1FA2D3280092AB915EA6A75CFAC01E6F5538012",
+      "B292E8427D4522B99998A954E9444F4A343BF8386BA0BF3F73B5AC05CDB11FC4",
+      "",
+      NULL,
+      0, "9821BF9C8912623A6FEA45CA26C558EC12DE54A62493E2BBBD1DB50C6798DA01" },
+    { "vsha512msg2 ymm0, ymm1 #2", "c4e27fcdc1",
+      { 0, 1, -1 },
+      "1E83E3BA1187212E956FE7E7F1FA2D3280092AB915EA6A75CFAC01E6F5538012",
+      "B292E8427D4522B99998A954E9444F4A343BF8386BA0BF3F73B5AC05CDB11FC4",
+      "",
+      NULL,
+      0, "70E1125A41018728932932D71E8371E7C67401EF34FD1E8EAE0BB0D80AF6A38F" },
+    { "vsha512rnds2 ymm0, ymm1, xmm2 #2", "c4e277cbc2",
+      { 0, 1, 2 },
+      "1E83E3BA1187212E956FE7E7F1FA2D3280092AB915EA6A75CFAC01E6F5538012",
+      "B292E8427D4522B99998A954E9444F4A343BF8386BA0BF3F73B5AC05CDB11FC4",
+      "8673B664F486802EDD49C733764149552820B588BA8DE6FD57007A711A0D288B",
+      NULL,
+      0, "E617ED4AF825197B6EACFC6F74D9674A9D9BE00DDA10F99D8B76B81B539411BF" },
+    { "vsha512msg1 ymm9, xmm12", "c4427fcccc",
+      { 9, 12, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "EE389856618F33092595ED7EE66AE6C1D013B1EE0A8304C9DF2C6C0D572BDFAB",
+      "",
+      NULL,
+      9, "D3A3AFDE7021F6BBFB50A625CE9AD9544A404DE1478EBF88B9E5F061AF4C86DD" },
+    { "vsha512msg2 ymm12, ymm9", "c4427fcde1",
+      { 12, 9, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "EE389856618F33092595ED7EE66AE6C1D013B1EE0A8304C9DF2C6C0D572BDFAB",
+      "",
+      NULL,
+      12, "B9C0FA44533A6A8A44BFD69875490DD0ADF2645078019A0E3C453113179EC647" },
+    { "vsha512rnds2 ymm9, ymm14, xmm3", "c4620fcbcb",
+      { 9, 14, 3 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "EE389856618F33092595ED7EE66AE6C1D013B1EE0A8304C9DF2C6C0D572BDFAB",
+      "8205794FF0A5BE6329F712C616EDF8DC844A373862E5555B8316EBD5279347F2",
+      NULL,
+      9, "14D54E638DA2F5032C9D58C5D1F4C677865C0576F6B555A5F82189CB8C74513F" },
+    { "vsha512msg1 ymm0, xmm0", "c4e27fccc0",
+      { 0, -1, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "",
+      "",
+      NULL,
+      0, "D3A3AFDE7021F6BBFB50A625CE9AD9544A404DE1478EBF888265011C8FBC1C7D" },
+    { "vsha512msg2 ymm0, ymm0", "c4e27fcdc0",
+      { 0, -1, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "",
+      "",
+      NULL,
+      0, "A52C8F1F84C2BAA59E2B354EFB323EB4CA462DD7D701FFCF181308B4247356F9" },
+    { "vsha512rnds2 ymm0, ymm1, xmm0", "c4e277cbc0",
+      { 0, 1, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "EE389856618F33092595ED7EE66AE6C1D013B1EE0A8304C9DF2C6C0D572BDFAB",
+      "",
+      NULL,
+      0, "2C897D8A742327C11B8BC718135E76A59E10349DDD3687628118DAD8C42D30AD" },
+    { "vsha512rnds2 ymm0, ymm0, xmm0", "c4e27fcbc0",
+      { 0, -1, -1 },
+      "9AB9A776D726F020618798C606763FF65C6CD5223AB62A057B3139598EB903F3",
+      "",
+      "",
+      NULL,
+      0, "0F15070C211378A6E23CAA2C67503688234C887DF83FC0ADE8E732BD3D185371" },
+};
+static const X86UdCase test_x86_sha512_ud[] = {
+    { "vsha512msg1 VEX.L0", "c4e27bccc1" },
+    { "vsha512msg1 VEX.W1", "c4e2ffccc1" },
+    { "vsha512msg1 [rsi] (register-only form)", "c4e27fcc06" },
+    { "vsha512msg1 VEX.66", "c4e27dccc1" },
+    { "vsha512msg1 VEX.NP (SHA-NI opcode, VEX)", "c4e27cccc1" },
+    { "vsha512msg1 legacy F2 0F 38", "f20f38ccc1" },
+    { "vsha512msg2 VEX.L0", "c4e27bcdc1" },
+    { "vsha512msg2 VEX.W1", "c4e2ffcdc1" },
+    { "vsha512msg2 [rsi] (register-only form)", "c4e27fcd06" },
+    { "vsha512msg2 VEX.66", "c4e27dcdc1" },
+    { "vsha512msg2 VEX.NP (SHA-NI opcode, VEX)", "c4e27ccdc1" },
+    { "vsha512msg2 legacy F2 0F 38", "f20f38cdc1" },
+    { "vsha512rnds2 VEX.L0", "c4e273cbc1" },
+    { "vsha512rnds2 VEX.W1", "c4e2f7cbc1" },
+    { "vsha512rnds2 [rsi] (register-only form)", "c4e277cb06" },
+    { "vsha512rnds2 VEX.66", "c4e275cbc1" },
+    { "vsha512rnds2 VEX.NP (SHA-NI opcode, VEX)", "c4e274cbc1" },
+    { "vsha512rnds2 legacy F2 0F 38", "f20f38cbc1" },
+    { "vsha512msg1 vvvv=0010b", "c4e26fccc1" },
+    { "vsha512msg2 vvvv=1101b", "c4e217cdc1" },
+};
+
+static void test_x86_vsha512(void)
+{
+    test_x86_vec_cases(test_x86_sha512_cases,
+                       sizeof(test_x86_sha512_cases) / sizeof(test_x86_sha512_cases[0]));
+    test_x86_ud_cases(test_x86_sha512_ud,
+                      sizeof(test_x86_sha512_ud) / sizeof(test_x86_sha512_ud[0]));
+    test_x86_vec_strict(&test_x86_sha512_cases[2], TEST_X86_CPUID_7_1_EAX_SHA512,
+                        TEST_X86_CPUID_7_1_EAX_SHA512);
+    test_x86_vec_strict(&test_x86_sha512_cases[2], TEST_X86_CPUID_7_1_EAX_SHA512,
+                        TEST_X86_CPUID_7_1_EAX_SM3 | TEST_X86_CPUID_7_1_EAX_SM4);
+}
+
 static void test_x86_data_watchpoint(void)
 {
     const uint64_t data_addr = 0x200000;
@@ -4095,6 +4443,7 @@ TEST_LIST = {
     {"test_x86_vaes_vex_gating", test_x86_vaes_vex_gating},
     {"test_x86_vpclmulqdq_tcg_mask", test_x86_vpclmulqdq_tcg_mask},
     {"test_x86_ptwrite_quirk", test_x86_ptwrite_quirk},
+    {"test_x86_vsha512", test_x86_vsha512},
     {"test_x86_relative_jump", test_x86_relative_jump},
     {"test_x86_loop", test_x86_loop},
     {"test_x86_invalid_mem_read", test_x86_invalid_mem_read},

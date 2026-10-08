@@ -2533,6 +2533,11 @@
 #define helper_vpdpwssds_xmm helper_vpdpwssds_xmm_x86_64
 #define helper_vpdpwssds_ymm helper_vpdpwssds_ymm_x86_64
 #endif /* __Use_Original_Qemu (U71) */
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+#define helper_vsha512msg1 helper_vsha512msg1_x86_64
+#define helper_vsha512msg2 helper_vsha512msg2_x86_64
+#define helper_vsha512rnds2 helper_vsha512rnds2_x86_64
+#endif /* __Use_Original_Qemu (U82) */
 #define helper_aesdec_xmm helper_aesdec_xmm_x86_64
 #define helper_aesdeclast_xmm helper_aesdeclast_xmm_x86_64
 #define helper_aesenc_xmm helper_aesenc_xmm_x86_64

@@ -2907,6 +2907,80 @@ void helper_sha256msg2(Reg *d, Reg *a, Reg *b)
     d->L(3) = a->L(3) + SHA256_MSGS1(d->L(1));
 }
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+#if SHIFT == 2
+/*
+ * NoVmp (ledger U82): SHA512 (SDM Vol2 VSHA512MSG1 / VSHA512MSG2 /
+ * VSHA512RNDS2, VEX.256 only), transcribed from the SDM Operation sections.
+ * d is SRCDEST (read and written); for MSG1/MSG2 a == d. Every input is
+ * read before d is written, since d may also alias b.
+ */
+#define SHA512_s0(x)   (ror64(x, 1) ^ ror64(x, 8) ^ ((x) >> 7))
+#define SHA512_s1(x)   (ror64(x, 19) ^ ror64(x, 61) ^ ((x) >> 6))
+#define SHA512_SIG0(x) (ror64(x, 28) ^ ror64(x, 34) ^ ror64(x, 39))
+#define SHA512_SIG1(x) (ror64(x, 14) ^ ror64(x, 18) ^ ror64(x, 41))
+#define SHA512_MAJ(a, b, c) (((a) & (b)) ^ ((a) & (c)) ^ ((b) & (c)))
+#define SHA512_CH(e, f, g)  (((e) & (f)) ^ ((g) & ~(e)))
+
+void helper_vsha512msg1(Reg *d, Reg *a, Reg *b)
+{
+    uint64_t w0 = a->Q(0), w1 = a->Q(1), w2 = a->Q(2), w3 = a->Q(3);
+    uint64_t w4 = b->Q(0);
+
+    d->Q(3) = w3 + SHA512_s0(w4);
+    d->Q(2) = w2 + SHA512_s0(w3);
+    d->Q(1) = w1 + SHA512_s0(w2);
+    d->Q(0) = w0 + SHA512_s0(w1);
+}
+
+void helper_vsha512msg2(Reg *d, Reg *a, Reg *b)
+{
+    uint64_t w14 = b->Q(2), w15 = b->Q(3);
+    uint64_t w16 = a->Q(0) + SHA512_s1(w14);
+    uint64_t w17 = a->Q(1) + SHA512_s1(w15);
+    uint64_t w18 = a->Q(2) + SHA512_s1(w16);
+    uint64_t w19 = a->Q(3) + SHA512_s1(w17);
+
+    d->Q(3) = w19;
+    d->Q(2) = w18;
+    d->Q(1) = w17;
+    d->Q(0) = w16;
+}
+
+void helper_vsha512rnds2(Reg *d, Reg *a, Reg *b)
+{
+    uint64_t A = a->Q(3), B = a->Q(2), C = d->Q(3), D = d->Q(2);
+    uint64_t E = a->Q(1), F = a->Q(0), G = d->Q(1), H = d->Q(0);
+    uint64_t wk[2] = { b->Q(0), b->Q(1) };
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        uint64_t t = SHA512_CH(E, F, G) + SHA512_SIG1(E) + wk[i] + H;
+        uint64_t a1 = t + SHA512_MAJ(A, B, C) + SHA512_SIG0(A);
+        uint64_t e1 = t + D;
+
+        H = G;
+        G = F;
+        F = E;
+        E = e1;
+        D = C;
+        C = B;
+        B = A;
+        A = a1;
+    }
+    d->Q(3) = A;
+    d->Q(2) = B;
+    d->Q(1) = E;
+    d->Q(0) = F;
+}
+#undef SHA512_s0
+#undef SHA512_s1
+#undef SHA512_SIG0
+#undef SHA512_SIG1
+#undef SHA512_MAJ
+#undef SHA512_CH
+#endif
+#endif /* __Use_Original_Qemu (U82) */
 
 #undef SSE_HELPER_S
 

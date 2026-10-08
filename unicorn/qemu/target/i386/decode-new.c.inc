@@ -642,6 +642,22 @@ static void decode_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
         }
         *entry = opcodes_0F38_F0toFF[*b & 15][row];
     }
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+    /*
+     * NoVmp (ledger U82): VEX.256.F2.0F38.W0 CB/CC/CD 11:rrr:bbb are
+     * VSHA512RNDS2/VSHA512MSG1/VSHA512MSG2 (SDM Vol2, CPUID.(7,1):EAX.SHA512);
+     * the legacy NP 0F 38 CB-CD (SHA-NI) entries above stay as they are.
+     * Register-only (U), VEX.256 only (qq), W0, MSG1/MSG2 do not use vvvv.
+     */
+    if ((s->prefix & PREFIX_VEX) && *b >= 0xcb && *b <= 0xcd) {
+        static const X86OpEntry vsha512[3] = {
+            X86_OP_ENTRY3(VSHA512RNDS2, V,qq, H,qq, U,dq, vex6 chk(W0) cpuid(SHA512) p_f2),
+            X86_OP_ENTRY2(VSHA512MSG1,  V,qq, U,dq,       vex6 chk(W0) cpuid(SHA512) p_f2),
+            X86_OP_ENTRY2(VSHA512MSG2,  V,qq, U,qq,       vex6 chk(W0) cpuid(SHA512) p_f2),
+        };
+        *entry = vsha512[*b - 0xcb];
+    }
+#endif /* __Use_Original_Qemu (U82) */
 }
 
 static void decode_VINSERTPS(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -1655,6 +1671,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_MOVDIR64B:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_MOVDIR64B);
 #endif /* __Use_Original_Qemu (U73) */
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+    case X86_FEAT_SHA512:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SHA512);
+#endif /* __Use_Original_Qemu (U82) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

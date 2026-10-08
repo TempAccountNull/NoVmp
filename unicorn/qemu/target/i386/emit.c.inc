@@ -2149,6 +2149,27 @@ static void gen_SHA256RNDS2(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     tcg_temp_free_i32(tcg_ctx, wk1);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+/* SHA512 (VEX.256 only): op1 is SRCDEST (2op) or VEX.vvvv, op2 the ModRM:r/m register */
+static void gen_VSHA512MSG1(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    gen_helper_vsha512msg1(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_VSHA512MSG2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    gen_helper_vsha512msg2(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_VSHA512RNDS2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    gen_helper_vsha512rnds2(tcg_ctx, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+#endif /* __Use_Original_Qemu (U82) */
+
 static void gen_SHLX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

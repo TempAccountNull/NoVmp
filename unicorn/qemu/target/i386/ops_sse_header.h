@@ -426,6 +426,13 @@ DEF_HELPER_5(sha256rnds2, void, Reg, Reg, Reg, i32, i32)
 DEF_HELPER_3(sha256msg1, void, Reg, Reg, Reg)
 DEF_HELPER_3(sha256msg2, void, Reg, Reg, Reg)
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U82) */
+#if SHIFT == 2
+DEF_HELPER_3(vsha512msg1, void, Reg, Reg, Reg)
+DEF_HELPER_3(vsha512msg2, void, Reg, Reg, Reg)
+DEF_HELPER_3(vsha512rnds2, void, Reg, Reg, Reg)
+#endif
+#endif /* __Use_Original_Qemu (U82) */
 
 #undef SHIFT
 #undef Reg
