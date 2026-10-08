@@ -177,6 +177,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U116) */
 #define HF_CET_IBT_SHIFT    31 /* NoVmp U116: EndbranchEnabled(CPL), SDM Vol1 18.3.2 */
 #endif /* __Use_Original_Qemu (U116) */
+#if __Use_Original_Qemu != 1 /* ours (U127) */
+#define HF_OPMASK_EN_SHIFT  2  /* VEX opmask insns Enabled (CR4.OSXSAVE + XCR0[7:5,1:0]); bit 2 is free (CPL = 1:0, INHIBIT_IRQ = 3); 29 = AVX512_EN, 30/31 = CET */
+#endif /* __Use_Original_Qemu (U127) */
 
 #define HF_CPL_MASK          (3 << HF_CPL_SHIFT)
 #define HF_INHIBIT_IRQ_MASK  (1 << HF_INHIBIT_IRQ_SHIFT)
@@ -213,6 +216,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U116) */
 #define HF_CET_IBT_MASK      (1U << HF_CET_IBT_SHIFT)
 #endif /* __Use_Original_Qemu (U116) */
+#if __Use_Original_Qemu != 1 /* ours (U127) */
+#define HF_OPMASK_EN_MASK    (1 << HF_OPMASK_EN_SHIFT)
+#endif /* __Use_Original_Qemu (U127) */
 
 /* hflags2 */
 

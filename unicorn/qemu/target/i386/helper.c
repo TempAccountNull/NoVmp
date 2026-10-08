@@ -51,6 +51,25 @@ void cpu_sync_avx_hflag(CPUX86State *env)
         env->hflags &= ~HF_AVX512_EN_MASK;
     }
 #endif /* __Use_Original_Qemu (U121) */
+#if __Use_Original_Qemu != 1 /* ours (U127) */
+    /*
+     * NoVmp (ledger U127): VEX-encoded opmask instructions (KAND..KXOR, milestone K)
+     * need CR4.OSXSAVE = 1 and XCR0 = 111xxx11b (SDM Vol2A Table 2-39; Tables 2-65/
+     * 2-66: #UD otherwise), i.e. (XCR0 & E3h) = E3h. XCR0[2] is not required: with
+     * XSETBV's rules E3h implies E7h, but an XCR0 written through the Unicorn API
+     * may hold E3h, so this is its own flag (bit 30, free like 29) rather than
+     * HF_AVX512_EN. Refreshed by every caller of this function (see U121).
+     */
+    if ((env->cr[4] & CR4_OSXSAVE_MASK)
+        && (env->xcr0 & (XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_OPMASK_MASK |
+                         XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK))
+            == (XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_OPMASK_MASK |
+                XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK)) {
+        env->hflags |= HF_OPMASK_EN_MASK;
+    } else {
+        env->hflags &= ~HF_OPMASK_EN_MASK;
+    }
+#endif /* __Use_Original_Qemu (U127) */
 }
 
 void cpu_sync_bndcs_hflags(CPUX86State *env)
