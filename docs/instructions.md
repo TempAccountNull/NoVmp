@@ -1,13 +1,13 @@
 # Instruction support — index
 
-_Generated 2026-10-08 02:29 (HEAD `60cee24 U94: uc_mem_write invalidates translated code it overwrites (stale #UD after rewrite)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-08 03:06 (HEAD `f89a4fa verified_forms: the 15 VEX AMX mnemonics are 'sdm' (U175-U180)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
 
 **Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, the emulator has an open item · ⬜ not implemented / not verified yet · **❌ NOT SUPPORTED on our i5-13600K** (the CPU cannot execute it, so it can never be checked against our hardware; it is still implemented from the manual where possible — the row says "implemented per the manual" or "not implemented yet").
 
-**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 133, open item 76, not implemented yet 1397)
+**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 148, open item 76, not implemented yet 1382)
 
 ## Currently being added
 
@@ -23,7 +23,8 @@ _Generated 2026-10-08 02:29 (HEAD `60cee24 U94: uc_mem_write invalidates transla
     - ⬜ M3: AVX512VL gate, BW, DQ, CD.
     - ⬜ M4: VBMI/VBMI2, VNNI, BITALG, VPOPCNTDQ, IFMA, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16, FP16.
     - ⬜ M5: AVX10 (CPUID leaf 0x24, AVX10.2 instructions).
-  - ⏳ 1.15e AVX10.x, AMX, APX — AMX started 2026-10-08 [agent, wt/amx, U170–U189]: tile state + TILECFG, XSAVE comps 17/18, XFD, CPUID 1DH/1EH, VEX AMX-TILE/INT8/BF16/FP16/COMPLEX instructions (EVEX AMX-AVX512 / APX forms after M1); AVX10 after M1–M4; APX after the EVEX decoder.
+  - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
+      - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
   - ⬜ 1.15f AMD/VIA-only forms (XOP, FMA4, TBM, 3DNow!, SSE4A, LWP, CLZERO, MONITORX, RDPRU, MCOMMIT, INVLPGB/TLBSYNC, VIA PadLock/ACE) — your decision 2026-10-07: implement, but only AFTER every Intel instruction (1.15a–e) is done; the host is Intel so these are tested against the AMD/VIA manuals only.
     - ⬜ New switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set, like `__Use_Original_Qemu`): AMD/VIA-only instructions decode only when it is 1; with 0 they are #UD as on Intel (also re-gates what QEMU already has, e.g. 3DNow!, SSE4A, FEMMS).
     - ⬜ You download the handbooks into `emulator\Amd Handbooks\` (list given 2026-10-07): AMD APM Vol 2 #24593, Vol 3 #24594, Vol 4 #26568, Vol 5 #26569, LWP spec #43724, VIA PadLock Programming Guide (+ ACE/RNG/PHE docs).
@@ -36,7 +37,7 @@ _Generated 2026-10-08 02:29 (HEAD `60cee24 U94: uc_mem_write invalidates transla
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 121 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 132 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

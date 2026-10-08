@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-08 02:29 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `60cee24 U94: uc_mem_write invalidates translated code it overwrites (stale #UD after rewrite)`). Do not edit by hand._
+_Generated 2026-10-08 03:06 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `f89a4fa verified_forms: the 15 VEX AMX mnemonics are 'sdm' (U175-U180)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so every row is ❌ NOT SUPPORTED on our CPU.
 

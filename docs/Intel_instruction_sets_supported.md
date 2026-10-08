@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-08 02:29 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `60cee24 U94: uc_mem_write invalidates translated code it overwrites (stale #UD after rewrite)`). Do not edit by hand._
+_Generated 2026-10-08 03:06 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `f89a4fa verified_forms: the 15 VEX AMX mnemonics are 'sdm' (U175-U180)`). Do not edit by hand._
 
 **Legend:** ✅ runs on our i5-13600K and the emulator is identical to it · ⏳ runs on our CPU, the emulator has an open item · ⬜ not implemented / not verified yet · **❌ NOT SUPPORTED on our i5-13600K** (the CPU cannot execute it, so it can never be checked against our hardware; it is still implemented from the manual where possible — the row says "implemented per the manual" or "not implemented yet").
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 132, open item 57, not implemented yet 1191) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 147, open item 57, not implemented yet 1176) — 2682 forms
 
 ## Currently being added
 
@@ -22,7 +22,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
     - ⬜ M3: AVX512VL gate, BW, DQ, CD.
     - ⬜ M4: VBMI/VBMI2, VNNI, BITALG, VPOPCNTDQ, IFMA, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16, FP16.
     - ⬜ M5: AVX10 (CPUID leaf 0x24, AVX10.2 instructions).
-  - ⏳ 1.15e AVX10.x, AMX, APX — AMX started 2026-10-08 [agent, wt/amx, U170–U189]: tile state + TILECFG, XSAVE comps 17/18, XFD, CPUID 1DH/1EH, VEX AMX-TILE/INT8/BF16/FP16/COMPLEX instructions (EVEX AMX-AVX512 / APX forms after M1); AVX10 after M1–M4; APX after the EVEX decoder.
+  - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
+      - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
   - ⬜ 1.15f AMD/VIA-only forms (XOP, FMA4, TBM, 3DNow!, SSE4A, LWP, CLZERO, MONITORX, RDPRU, MCOMMIT, INVLPGB/TLBSYNC, VIA PadLock/ACE) — your decision 2026-10-07: implement, but only AFTER every Intel instruction (1.15a–e) is done; the host is Intel so these are tested against the AMD/VIA manuals only.
     - ⬜ New switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set, like `__Use_Original_Qemu`): AMD/VIA-only instructions decode only when it is 1; with 0 they are #UD as on Intel (also re-gates what QEMU already has, e.g. 3DNow!, SSE4A, FEMMS).
     - ⬜ You download the handbooks into `emulator\Amd Handbooks\` (list given 2026-10-07): AMD APM Vol 2 #24593, Vol 3 #24594, Vol 4 #26568, Vol 5 #26569, LWP spec #43724, VIA PadLock Programming Guide (+ ACE/RNG/PHE docs).
@@ -152,14 +153,14 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | XSAVEOPT | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
 | XSAVES | 4 | 0 | 4 | 0 | 0 | 0 | 0 |
 | AMX_AVX512 | 5 | 0 | 0 | 0 | 0 | 0 | 5 |
-| AMX_BF16 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| AMX_COMPLEX | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
-| AMX_FP16 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
+| AMX_BF16 | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
+| AMX_COMPLEX | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
+| AMX_FP16 | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
 | AMX_FP8 | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
-| AMX_INT8 | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
+| AMX_INT8 | 4 | 0 | 0 | 0 | 4 | 0 | 0 |
 | AMX_MOVRS | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
-| AMX_TILE | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
-| AMX_TILE_BASE | 4 | 0 | 0 | 0 | 0 | 0 | 4 |
+| AMX_TILE | 3 | 0 | 0 | 0 | 3 | 0 | 0 |
+| AMX_TILE_BASE | 4 | 0 | 0 | 0 | 4 | 0 | 0 |
 | APX_F | 33 | 0 | 0 | 0 | 0 | 0 | 33 |
 | APX_F_ADX | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
 | APX_F_AMX | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
@@ -2458,7 +2459,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | TDPBF16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[22] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | TDPBF16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[22] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 
 </details>
 
@@ -2466,8 +2467,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | TCMMIMFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EDX[8] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TCMMRLFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EDX[8] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | TCMMIMFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EDX[8] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified agai… |
+| ❌ | TCMMRLFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EDX[8] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified agai… |
 
 </details>
 
@@ -2475,7 +2476,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | TDPFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EAX[21] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | TDPFP16PS | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H.1:EAX[21] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified aga… |
 
 </details>
 
@@ -2494,10 +2495,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | TDPBSSD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TDPBSUD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TDPBUSD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TDPBUUD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | TDPBSSD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TDPBSUD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TDPBUSD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TDPBUUD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[25] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 
 </details>
 
@@ -2514,9 +2515,9 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | TILELOADD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TILELOADDT1 | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TILESTORED | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | TILELOADD | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TILELOADDT1 | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TILESTORED | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 
 </details>
 
@@ -2524,10 +2525,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | | instruction | encoding | vector bits | status |
 |---|---|---|---|---|
-| ❌ | LDTILECFG | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | STTILECFG | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TILERELEASE | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| ❌ | TILEZERO | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — not implemented yet: not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| ❌ | LDTILECFG | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | STTILECFG | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TILERELEASE | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
+| ❌ | TILEZERO | vex | - | NOT SUPPORTED on our i5-13600K (CPUID.7H:EDX[24] = 0 on this CPU) — implemented per the manual (SDM-vector verified): implemented; the i5-13600K lacks it: verified again… |
 
 </details>
 
