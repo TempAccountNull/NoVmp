@@ -12546,6 +12546,215 @@ static void test_x86_avx10_2_gating(void)
 }
 /* ---- end NoVmp U370-U376 (a10_) ---- */
 
+/*
+ * ---- NoVmp U400-U412: AVX10.2 (avx10_b) ----
+ * UC_CTL_X86_AVX10 (U370, the a10_ block has the enumeration details), the AVX10.2 /
+ * AVX10_V1_AUX / "AVX10 and MOVRS" / "AVX10 AND SM4" gates, EVEX map 5 routing, a few
+ * result spot checks (FP8, VNNI, VMOVW) and the
+ * E4 / E4NF memory behaviour. Full results: Emulator/data/cases_avx10_b.txt (ref_avx10_b.py).
+ */
+static void xb_open(EvCtx *c, uc_mode mode, int avx10)
+{
+    memset(c, 0, sizeof(*c));
+    c->mode = mode;
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx10 < 0) {
+        OK(uc_ctl_set_x86_avx512(c->uc, EV_ALL));
+    } else if (avx10 > 0) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, EV_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* VCVT2PH2HF8 zmm1, zmm2, zmm3 / VPDPBSSD zmm1, zmm2, zmm3 / VMOVRSD zmm1, [rsi] / VMOVRSD
+   zmm1, [esi] (32-bit) / VMOVW xmm1, xmm2 / VCVTHF82PH zmm1{k1}, [rsi] / VCVTPH2BF8 ymm1{k1},
+   [rsi] */
+#define XB_VCVT2PH2HF8 "\x62\xf5\x6f\x48\x18\xcb"
+#define XB_VPDPBSSD "\x62\xf2\x6f\x48\x50\xcb"
+#define XB_VMOVRSD "\x62\xf5\x7e\x48\x6f\x0e"
+#define XB_VMOVW "\x62\xf5\x7e\x08\x6e\xca"
+#define XB_VCVTHF82PH_M "\x62\xf5\x7f\x49\x1e\x0e"
+#define XB_VCVTPH2BF8_M "\x62\xf2\x7e\x49\x74\x0e"
+#define XB_VSM4KEY4 "\x62\xf2\x6e\x48\xda\xcb"
+
+static void test_x86_avx10b_ctl(void)
+{
+    uc_engine *uc;
+    int v = -1, mask = 0;
+    EvCtx c;
+    uint64_t rax, rcx, rdx;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_get_x86_avx10(uc, &v));
+    TEST_CHECK(v == 0);
+    TEST_CHECK(uc_ctl_set_x86_avx10(uc, 3) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_avx10(uc, -1) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_avx10(uc, 2));
+    OK(uc_ctl_get_x86_avx10(uc, &v));
+    TEST_CHECK(v == 2);
+    /* U370: AVX10 leaves UC_CTL_X86_AVX512 (and the AVX512* CPUID bits) alone */
+    OK(uc_ctl_get_x86_avx512(uc, &mask));
+    TEST_CHECK(mask == 0);
+    OK(uc_close(uc));
+
+    /* CPUID.(EAX=7,ECX=1):EDX.AVX10[19] follows the opt-in; fixed once the CPU exists */
+    xb_open(&c, UC_MODE_64, 2);
+    ev_set(&c, UC_X86_REG_RAX, 7);
+    ev_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(ev_run(&c, "\x0f\xa2", 2) == -1);
+    rax = ev_get(&c, UC_X86_REG_RAX);
+    rcx = ev_get(&c, UC_X86_REG_RCX);
+    rdx = ev_get(&c, UC_X86_REG_RDX);
+    TEST_CHECK((rdx >> 19) & 1);
+    TEST_MSG("CPUID.7.1: eax %llx ecx %llx edx %llx", (unsigned long long)rax,
+             (unsigned long long)rcx, (unsigned long long)rdx);
+    TEST_CHECK(uc_ctl_set_x86_avx10(c.uc, 1) == UC_ERR_ARG);
+    OK(uc_close(c.uc));
+    xb_open(&c, UC_MODE_64, -1);
+    ev_set(&c, UC_X86_REG_RAX, 7);
+    ev_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(ev_run(&c, "\x0f\xa2", 2) == -1);
+    TEST_CHECK(!((ev_get(&c, UC_X86_REG_RDX) >> 19) & 1));
+    OK(uc_close(c.uc));
+}
+
+/* AVX10.2 forms need version 2; VMOVRS* needs AVX10 (any version) and MOVRS, 64-bit mode;
+   the EVEX VSM4KEY4 needs AVX10 (any version) and SM4 */
+static void test_x86_avx10b_gating(void)
+{
+    static const int vers[3] = { -1, 1, 2 };
+    EvCtx c;
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        int v = vers[i];
+        xb_open(&c, UC_MODE_64, v);
+        ev_set(&c, UC_X86_REG_RSI, EV_DATA);
+        TEST_CHECK(ev_run(&c, XB_VCVT2PH2HF8, 6) == (v == 2 ? -1 : 6));
+        TEST_CHECK(ev_run(&c, XB_VPDPBSSD, 6) == (v == 2 ? -1 : 6));
+        TEST_CHECK(ev_run(&c, XB_VMOVW, 6) == (v == 2 ? -1 : 6));
+        TEST_CHECK(ev_run(&c, XB_VMOVRSD, 6) == (v >= 1 ? -1 : 6));
+        TEST_CHECK(ev_run(&c, XB_VSM4KEY4, 6) == (v >= 1 ? -1 : 6));
+        TEST_MSG("avx10 version %d", v);
+        OK(uc_close(c.uc));
+    }
+    /* VMOVRSD is N.E. outside 64-bit mode (EVEX in 32-bit protected mode: P0[7:6] = 11b) */
+    xb_open(&c, UC_MODE_32, 2);
+    ev_set(&c, UC_X86_REG_ESI, EV_DATA);
+    TEST_CHECK(ev_run(&c, XB_VMOVRSD, 6) == 6);
+    TEST_CHECK(ev_run(&c, XB_VCVT2PH2HF8, 6) == -1);
+    OK(uc_close(c.uc));
+    /* empty map 5 / map 6 slots #UD; NP map 5 58 is VADDPH (AVX512-FP16, U333), which AVX10.1
+       includes (U371) */
+    xb_open(&c, UC_MODE_64, 2);
+    TEST_CHECK(ev_run(&c, "\x62\xf6\x7c\x48\x58\xcb", 6) == 6);
+    TEST_CHECK(ev_run(&c, "\x62\xf5\x7c\x48\x00\xcb", 6) == 6);
+    TEST_CHECK(ev_run(&c, "\x62\xf5\x7c\x48\x58\xcb", 6) == -1);
+    OK(uc_close(c.uc));
+}
+
+/* spot values: FP8 RNE / saturation (spec Table 3.5/3.6), VNNI signed bytes, VMOVW */
+static void test_x86_avx10b_values(void)
+{
+    uint16_t a[32], b[32];
+    uint8_t r[64], want[64];
+    uint32_t z1[16], z2[16], z3[16];
+    uint16_t w[32];
+    EvCtx c;
+    int i;
+
+    xb_open(&c, UC_MODE_64, 2);
+    for (i = 0; i < 32; i++) {
+        a[i] = 0x3C00;                          /* 1.0 -> E4M3 38h */
+        b[i] = 0x3C00;
+    }
+    b[0] = 0x5F40;                              /* 464: tie -> 448 = 7Eh */
+    b[1] = 0x5F41;                              /* 465: overflow -> NaN 7Fh */
+    b[2] = 0xFC00;                              /* -Inf -> FFh */
+    b[3] = 0x1800;                              /* 2^-9 = HF8 min denormal 01h */
+    b[4] = 0x8000;                              /* -0 */
+    a[0] = 0x7E00;                              /* NaN -> 7Fh (upper half, byte 32) */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, b));
+    TEST_CHECK(ev_run(&c, XB_VCVT2PH2HF8, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    memset(want, 0x38, 64);
+    want[0] = 0x7E;
+    want[1] = 0x7F;
+    want[2] = 0xFF;
+    want[3] = 0x01;
+    want[4] = 0x80;
+    want[32] = 0x7F;
+    TEST_CHECK(memcmp(r, want, 64) == 0);
+    /* VPDPBSSD: dword i += sum of 4 signed byte products */
+    for (i = 0; i < 16; i++) {
+        z1[i] = 0x7FFFFFF0u;
+        z2[i] = 0x80FF7F01u;                    /* bytes 01, 7F, FF, 80 */
+        z3[i] = 0x80808080u;                    /* -128 each */
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z1));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, z2));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, z3));
+    TEST_CHECK(ev_run(&c, XB_VPDPBSSD, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z1));
+    /* (1 + 127 - 1 - 128) * -128 = 128, wraps: 7FFFFFF0h + 80h */
+    TEST_CHECK(z1[0] == 0x80000070u && z1[15] == 0x80000070u);
+    TEST_MSG("vpdpbssd dword 0 = %08x", z1[0]);
+    /* VMOVW xmm1, xmm2: word 0, everything else of ZMM1 zero */
+    for (i = 0; i < 32; i++) {
+        w[i] = (uint16_t)(0x1111 * (i + 1));
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, w));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z3));
+    TEST_CHECK(ev_run(&c, XB_VMOVW, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, w));
+    TEST_CHECK(w[0] == 0x1111);
+    for (i = 1; i < 32; i++) {
+        TEST_CHECK(w[i] == 0);
+    }
+    OK(uc_close(c.uc));
+}
+
+/* E4 (VCVTHF82PH): masked-off elements never touch memory; E4NF (VCVTPH2BF8): the whole
+   operand is read whatever the mask (spec 4.2.5 / 4.2.6) */
+static void test_x86_avx10b_fault_suppression(void)
+{
+    uint64_t k0 = 0, k1 = 0xFFFF;
+    uint8_t z[64];
+    EvCtx c;
+    int i;
+
+    xb_open(&c, UC_MODE_64, 2);
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k0));
+    /* zmm source of 32 bytes ends 16 bytes into the unmapped page after EV_DATA + 0x4000 */
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x4000 - 16);
+    memset(z, 0xAB, 64);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(ev_run(&c, XB_VCVTHF82PH_M, 6) == -1);       /* k1 = 0: no access */
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (i = 0; i < 64; i++) {
+        TEST_CHECK(z[i] == 0xAB);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(ev_run(&c, XB_VCVTHF82PH_M, 6) == -1);       /* bytes 0-15 only: mapped */
+    k1 = 0x1FFFF;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(ev_run(&c, XB_VCVTHF82PH_M, 6) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    OK(uc_close(c.uc));
+
+    xb_open(&c, UC_MODE_64, 2);
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k0));
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x4000 - 32);
+    TEST_CHECK(ev_run(&c, XB_VCVTPH2BF8_M, 6) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    ev_set(&c, UC_X86_REG_RSI, EV_DATA + 0x4000 - 64);
+    TEST_CHECK(ev_run(&c, XB_VCVTPH2BF8_M, 6) == -1);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -12746,4 +12955,8 @@ TEST_LIST = {
     {"test_x86_avx10_optin", test_x86_avx10_optin},
     {"test_x86_avx10_gating", test_x86_avx10_gating},
     {"test_x86_avx10_2_gating", test_x86_avx10_2_gating},
+    {"test_x86_avx10b_ctl", test_x86_avx10b_ctl},
+    {"test_x86_avx10b_gating", test_x86_avx10b_gating},
+    {"test_x86_avx10b_values", test_x86_avx10b_values},
+    {"test_x86_avx10b_fault_suppression", test_x86_avx10b_fault_suppression},
     {NULL, NULL}};

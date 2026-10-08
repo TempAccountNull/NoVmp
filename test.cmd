@@ -107,6 +107,10 @@ rem and VEX opmask files at every vector length.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_a.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m1.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_opmask.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
+rem AVX10.2 (avx10_b, ledger U400-U412): FP8 conversions, VCVT2PS2PHX, EVEX VNNI-INT8/INT16,
+rem VDPPHPS, VMPSADBW, VMOVRS*, zero-extending VMOVD/VMOVW, EVEX SM4 vs the independent model
+rem ref_avx10_b.py, Unicorn only with the AVX10.2 opt-in (UC_CTL_X86_AVX10 = 2).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_b.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
 
 rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
