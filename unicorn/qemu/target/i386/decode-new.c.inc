@@ -937,6 +937,41 @@ static void decode_VINSERTPS(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = (modrm >> 6) == 3 ? vinsertps_reg : vinsertps_mem;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U133) */
+/*
+ * NoVmp (ledger U133): KSHIFTR 30/31, KSHIFTL 32/33 k1, k2, imm8 (SDM Vol2A), VEX.66.0F3A,
+ * RRI, VEX.L0, vvvv 1111b, ModRM.mod = 11b (K20). 30/32: W1 = W (AVX512F), W0 = B (DQ);
+ * 31/33: W1 = Q (BW), W0 = D (BW); NP/F3/F2 and legacy 0F 3A 30-33 #UD.
+ */
+static void decode_K_pp_w(DisasContext *s, X86OpEntry *entry, const X86OpEntry entries[8],
+                          bool w);
+#define KSH(op, sz, feat) X86_OP_ENTRY3(op, K,sz, KU,sz, I,b, vex20 chk(VEX128) cpuid(feat))
+static void decode_0F3A_KSHIFT(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    /* { W0: NP, 66, F3, F2, W1: NP, 66, F3, F2 } */
+    static const X86OpEntry k30[8] = {
+        X86_OP_NONE KSH(KSHIFTR, b, AVX512DQ), X86_OP_NONE X86_OP_NONE
+        X86_OP_NONE KSH(KSHIFTR, w, AVX512F), X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry k31[8] = {
+        X86_OP_NONE KSH(KSHIFTR, d, AVX512BW), X86_OP_NONE X86_OP_NONE
+        X86_OP_NONE KSH(KSHIFTR, q, AVX512BW), X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry k32[8] = {
+        X86_OP_NONE KSH(KSHIFTL, b, AVX512DQ), X86_OP_NONE X86_OP_NONE
+        X86_OP_NONE KSH(KSHIFTL, w, AVX512F), X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry k33[8] = {
+        X86_OP_NONE KSH(KSHIFTL, d, AVX512BW), X86_OP_NONE X86_OP_NONE
+        X86_OP_NONE KSH(KSHIFTL, q, AVX512BW), X86_OP_NONE X86_OP_NONE
+    };
+    static const X86OpEntry *const k[4] = { k30, k31, k32, k33 };
+
+    decode_K_pp_w(s, entry, k[*b - 0x30], s->vex_w);
+}
+#undef KSH
+#endif /* __Use_Original_Qemu (U133) */
+
 static const X86OpEntry opcodes_0F3A[256] = {
     /*
      * These are VEX-only, but incorrectly listed in the manual as exception type 4.
@@ -1017,6 +1052,14 @@ static const X86OpEntry opcodes_0F3A[256] = {
     [0xdf] = X86_OP_ENTRY3(VAESKEYGEN, V,dq, W,dq, I,b,  vex4 cpuid(AES) p_66),
 
     [0xF0] = X86_OP_ENTRY3(RORX, G,y, E,y, I,b, vex13 cpuid(BMI2) p_f2),
+#if __Use_Original_Qemu != 1 /* ours (U133) */
+
+    /* VEX opmask: KSHIFTR, KSHIFTL (U133) */
+    [0x30] = X86_OP_GROUP0(0F3A_KSHIFT),
+    [0x31] = X86_OP_GROUP0(0F3A_KSHIFT),
+    [0x32] = X86_OP_GROUP0(0F3A_KSHIFT),
+    [0x33] = X86_OP_GROUP0(0F3A_KSHIFT),
+#endif /* __Use_Original_Qemu (U133) */
 };
 
 #if __Use_Original_Qemu != 1 /* ours (U103) */

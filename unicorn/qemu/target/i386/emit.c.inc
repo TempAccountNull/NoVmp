@@ -1676,6 +1676,38 @@ static void gen_KTEST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 }
 #endif /* __Use_Original_Qemu (U132) */
 
+#if __Use_Original_Qemu != 1 /* ours (U133) */
+/*
+ * NoVmp (ledger U133): KSHIFTL / KSHIFTR k1, k2, imm8. COUNT := imm8[7:0] (unsigned);
+ * DEST := 0 if COUNT > w - 1, else SRC1[w-1:0] shifted (the KREG writeback keeps the low
+ * w bits of a left shift and zero-extends to 64). The source is T0 (op 1), already
+ * SRC1[w-1:0]; the count is known at translation time.
+ */
+static void gen_KSHIFTL(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    unsigned w = 8u << decode->op[0].ot, count = decode->immediate & 0xff;
+
+    if (count > w - 1) {
+        tcg_gen_movi_tl(tcg_ctx, s->T0, 0);
+    } else {
+        tcg_gen_shli_tl(tcg_ctx, s->T0, s->T0, count);
+    }
+}
+
+static void gen_KSHIFTR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    unsigned w = 8u << decode->op[0].ot, count = decode->immediate & 0xff;
+
+    if (count > w - 1) {
+        tcg_gen_movi_tl(tcg_ctx, s->T0, 0);
+    } else {
+        tcg_gen_shri_tl(tcg_ctx, s->T0, s->T0, count);
+    }
+}
+#endif /* __Use_Original_Qemu (U133) */
+
 static void gen_LDMXCSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
