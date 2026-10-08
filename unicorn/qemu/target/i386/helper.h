@@ -88,6 +88,9 @@ DEF_HELPER_3(movdir64b, void, env, tl, tl)
 DEF_HELPER_1(ptwrite, void, env)
 #endif /* __Use_Original_Qemu (U80) */
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+DEF_HELPER_FLAGS_4(rao, TCG_CALL_NO_WG, void, env, tl, tl, i32)
+#endif /* __Use_Original_Qemu (U101) */
 DEF_HELPER_1(single_step, void, env)
 DEF_HELPER_1(rechecking_single_step, void, env)
 DEF_HELPER_1(cpuid, void, env)

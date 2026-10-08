@@ -799,6 +799,20 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
         {},
     },
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+    /*
+     * RAO-INT (U101): NP AADD, 66 AAND, F3 AXOR, F2 AOR my, ry (0F 38 FC,
+     * memory only; 32-bit, REX.W 64-bit). F3/F2 take priority over 66 as
+     * for the SSE mandatory prefixes. LOCK #UDs (op0 is not an INT unit).
+     */
+    [12] = {
+        X86_OP_ENTRY3(AADD, M,y, G,y, None,None, cpuid(RAO_INT)),
+        X86_OP_ENTRY3(AAND, M,y, G,y, None,None, cpuid(RAO_INT)),
+        X86_OP_ENTRY3(AXOR, M,y, G,y, None,None, cpuid(RAO_INT)),
+        X86_OP_ENTRY3(AOR,  M,y, G,y, None,None, cpuid(RAO_INT)),
+        X86_OP_ENTRY3(AOR,  M,y, G,y, None,None, cpuid(RAO_INT)),
+    },
+#endif /* __Use_Original_Qemu (U101) */
     [7] = {
         X86_OP_ENTRY3(BEXTR, G,y, E,y, B,y, vex13 cpuid(BMI1)),
         X86_OP_ENTRY3(SHLX, G,y, E,y, B,y, vex13 cpuid(BMI1)),
@@ -1915,6 +1929,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
                (s->cpuid_19_ebx_features & CPUID_19_EBX_AESKLE) &&
                (s->cpuid_19_ebx_features & CPUID_19_EBX_AES_WIDE);
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+    case X86_FEAT_RAO_INT:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_RAO_INT);
+#endif /* __Use_Original_Qemu (U101) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

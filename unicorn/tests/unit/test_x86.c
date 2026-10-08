@@ -6213,6 +6213,56 @@ static void test_x86_keylocker_cpl3(void)
     OK(uc_close(uc));
 }
 
+/* U101: RAO-INT AADD/AAND/AOR/AXOR (no flags), alignment #GP, register form / LOCK #UD */
+static void test_x86_rao_int(void)
+{
+    const char code[] = "\x0f\x38\xfc\x06"                 /* aadd [rsi], eax */
+                        "\x48\x0f\x38\xfc\x46\x08"         /* aadd [rsi+8], rax */
+                        "\x66\x0f\x38\xfc\x46\x10"         /* aand [rsi+0x10], eax */
+                        "\x66\x48\x0f\x38\xfc\x46\x18"     /* aand [rsi+0x18], rax */
+                        "\xf2\x0f\x38\xfc\x46\x20"         /* aor [rsi+0x20], eax */
+                        "\xf2\x48\x0f\x38\xfc\x46\x28"     /* aor [rsi+0x28], rax */
+                        "\xf3\x0f\x38\xfc\x46\x30"         /* axor [rsi+0x30], eax */
+                        "\xf3\x48\x0f\x38\xfc\x46\x38";    /* axor [rsi+0x38], rax */
+    const uint64_t exp[8] = {0xf0f0f0f000000000ULL, 0x00e100e100000000ULL,
+                             0xf0f0f0f000000001ULL, 0x00f000f000000001ULL,
+                             0xf0f0f0f0ffffffffULL, 0xfff0fff0ffffffffULL,
+                             0xf0f0f0f0fffffffeULL, 0xff00ff00fffffffeULL};
+    uint64_t mem[8];
+    nv_intr_t intr;
+    uc_engine *uc = nv_open(code, sizeof(code) - 1, &intr);
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        mem[i] = 0xf0f0f0f0ffffffffULL;
+    }
+    OK(uc_mem_write(uc, NV_HANDLE, mem, sizeof(mem)));
+    nv_setreg(uc, UC_X86_REG_RAX, 0x0ff00ff000000001ULL);
+    nv_setreg(uc, UC_X86_REG_EFLAGS, 0x8d7);
+    OK(nv_run(uc, sizeof(code) - 1));
+    TEST_CHECK(intr.count == 0);
+    OK(uc_mem_read(uc, NV_HANDLE, mem, sizeof(mem)));
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(mem[i] == exp[i]);
+        TEST_MSG("slot %d: %016" PRIx64 " expected %016" PRIx64, i, mem[i], exp[i]);
+    }
+    TEST_CHECK((nv_reg(uc, UC_X86_REG_EFLAGS) & 0x8d7) == 0x8d7);
+    /* misaligned: m32 at +2, m64 at +4 -> #GP */
+    OK(uc_mem_write(uc, code_start, "\x0f\x38\xfc\x46\x02", 5));
+    OK(nv_run(uc, 5));
+    TEST_CHECK(intr.count == 1 && intr.intno == 13);
+    memset(&intr, 0, sizeof(intr));
+    OK(uc_mem_write(uc, code_start, "\xf3\x48\x0f\x38\xfc\x46\x04", 7));
+    OK(nv_run(uc, 7));
+    TEST_CHECK(intr.count == 1 && intr.intno == 13);
+    /* register form, LOCK -> #UD */
+    OK(uc_mem_write(uc, code_start, "\x0f\x38\xfc\xc0", 4));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 4));
+    OK(uc_mem_write(uc, code_start, "\xf0\x0f\x38\xfc\x06", 5));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(uc, 5));
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -6343,4 +6393,5 @@ TEST_LIST = {
     {"test_x86_keylocker_wide256", test_x86_keylocker_wide256},
     {"test_x86_keylocker_faults", test_x86_keylocker_faults},
     {"test_x86_keylocker_cpl3", test_x86_keylocker_cpl3},
+    {"test_x86_rao_int", test_x86_rao_int},
     {NULL, NULL}};

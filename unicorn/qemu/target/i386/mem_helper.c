@@ -73,6 +73,46 @@ void helper_movdir64b(CPUX86State *env, target_ulong dst, target_ulong src)
 }
 
 #endif /* __Use_Original_Qemu (U73) */
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+/*
+ * NoVmp (ledger U101): RAO-INT AADD / AAND / AOR / AXOR m32/m64, r (ISE
+ * 319433-062): dest := dest op src, no flags. #GP(0) unless the operand is
+ * naturally aligned. desc = op << 4 | MemOp size (op: 0 add, 1 and, 2 or,
+ * 3 xor). Unicorn runs one vCPU, so load + store is atomic; all memory is
+ * write-back, so the "not WB" #GP cannot occur.
+ */
+void helper_rao(CPUX86State *env, target_ulong a0, target_ulong src, uint32_t desc)
+{
+    uintptr_t ra = GETPC();
+    bool q = (desc & 0xf) == MO_64;
+    uint64_t v;
+
+    if (a0 & (q ? 7 : 3)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    v = q ? cpu_ldq_data_ra(env, a0, ra) : cpu_ldl_data_ra(env, a0, ra);
+    switch (desc >> 4) {
+    case 0:
+        v += src;
+        break;
+    case 1:
+        v &= src;
+        break;
+    case 2:
+        v |= src;
+        break;
+    default:
+        v ^= src;
+        break;
+    }
+    if (q) {
+        cpu_stq_data_ra(env, a0, v, ra);
+    } else {
+        cpu_stl_data_ra(env, a0, (uint32_t)v, ra);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U101) */
 void helper_cmpxchg8b(CPUX86State *env, target_ulong a0)
 {
 #ifdef CONFIG_ATOMIC64

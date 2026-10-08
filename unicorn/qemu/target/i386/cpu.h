@@ -918,6 +918,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* Support for VPDPW[SU,US,UU]D[,S] (AVX-VNNI-INT16) */
 #define CPUID_7_1_EDX_AVX_VNNI_INT16    (1U << 10)
 #endif /* __Use_Original_Qemu (U86) */
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+/* RAO-INT: AADD, AAND, AOR, AXOR */
+#define CPUID_7_1_EAX_RAO_INT           (1U << 3)
+#endif /* __Use_Original_Qemu (U101) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)

@@ -1648,6 +1648,37 @@ static void gen_AESKLWIDE(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U101) */
+/* NoVmp (ledger U101): RAO-INT, see helper_rao (mem_helper.c) */
+static void gen_rao(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_rao(tcg_ctx, cpu_env, s->A0, s->T0,
+                   tcg_constant_i32(tcg_ctx, (op << 4) | decode->op[0].ot));
+}
+
+static void gen_AADD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_rao(s, decode, 0);
+}
+
+static void gen_AAND(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_rao(s, decode, 1);
+}
+
+static void gen_AOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_rao(s, decode, 2);
+}
+
+static void gen_AXOR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_rao(s, decode, 3);
+}
+
+#endif /* __Use_Original_Qemu (U101) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
