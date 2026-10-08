@@ -805,6 +805,22 @@ static void gen_EVEX_PMULDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     SSE_FN3(s, decode, pmuldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
 }
 #endif /* __Use_Original_Qemu (U155) */
+#if __Use_Original_Qemu != 1 /* ours (U156) */
+
+/* NoVmp (ledger U156): VDIVPS/PD, VMINPS/PD, VMAXPS/PD (SSE_FN3), VSQRTPS/PD */
+EVEX_FP_PACKED(VDIV, div)
+EVEX_FP_PACKED(VMIN, min)
+EVEX_FP_PACKED(VMAX, max)
+
+static void gen_EVEX_VSQRT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    SSEFunc_0_epp fn = (s->prefix & PREFIX_DATA) ? SSE_FN3(s, decode, sqrtpd)
+                                                 : SSE_FN3(s, decode, sqrtps);
+
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+#endif /* __Use_Original_Qemu (U156) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */
