@@ -415,6 +415,217 @@ static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
      gen_helper_##name##_xmm)
 #endif /* __Use_Original_Qemu (U143) */
 
+#if __Use_Original_Qemu != 1 /* ours (U146) */
+/*
+ * NoVmp (ledger U146): execution of an EVEX instruction (SDM Vol2A 2.7.4, 2.8; Vol1 15.6).
+ * The form's gen function computes the full-length result of the operation; masking is
+ * applied here, after it, in one place:
+ * - E1 forms: #GP(0) unless the memory operand is VL-aligned, before any access and
+ *   whatever the mask (Table 2-46).
+ * - Memory source: without a mask (aaa = 000b, k0 = no masking) a plain load; with a mask
+ *   (and fault suppression) element by element, so masked-off elements never fault.
+ * - Floating point with a mask: the register sources are copied with +1.0 in the
+ *   masked-off lanes (no flag, no #XM from them); the result goes to a scratch register
+ *   and #XM (U67 sse_fp_begin/end) is raised before the destination is written.
+ * - Vector register destination: merging- or zeroing-masking per element (EVEX.z), then
+ *   DEST[MAXVL-1:VL] := 0. Memory destination: only the elements whose mask bit is set are
+ *   stored, all of them probed first. Opmask destination (k1 {k2}): ANDed with k2, the bits
+ *   above the element count are 0. Without a mask the result is written directly.
+ * The gen function of a form with an opmask destination leaves the mask in tmp1_i64.
+ */
+#define EVEX_DESC(esz, n)   ((uint32_t)(esz) | ((uint32_t)(n) << 8))
+#define EVEX_DESC_Z         (1u << 16)
+#define EVEX_DESC_ANY       (1u << 17)
+
+static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr p = tcg_temp_new_ptr(tcg_ctx);
+
+    tcg_gen_addi_ptr(tcg_ctx, p, cpu_env, ofs);
+    return p;
+}
+
+/* elements of the instruction that the opmask controls (scalar forms: element 0 only) */
+static int evex_nelem(DisasContext *s, X86DecodedInsn *decode)
+{
+    return (decode->e.evex_vl & X86_EVEX_LIG) ? 1 : s->evex_vl >> s->evex_esz;
+}
+
+static int evex_mem_bytes(X86DecodedOp *op)
+{
+    return op->ot <= MO_64 ? 1 << op->ot : 16 << (op->ot - MO_128);
+}
+
+/* load the memory source operand op into xmm_t0 (op->offset points there already) */
+static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp *op,
+                          TCGv_i64 kmask)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86OpEntry *e = &decode->e;
+    int nelem = evex_nelem(s, decode);
+    int bytes = evex_mem_bytes(op);
+    TCGv_ptr p;
+    uint32_t desc;
+
+    if (!kmask || e->evex_nofs) {
+        gen_load_sse(s, s->tmp4, op->ot, op->offset, false);
+        return;
+    }
+    if (e->evex_tt == X86_EVEX_TT_T1S || e->evex_tt == X86_EVEX_TT_T1F) {
+        /* one element used by every lane: read when any lane is active */
+        desc = EVEX_DESC(op->ot <= MO_64 ? op->ot : MO_64, nelem) | EVEX_DESC_ANY;
+    } else {
+        desc = EVEX_DESC(ctz32(bytes / nelem), nelem);
+    }
+    p = evex_env_ptr(s, op->offset - xmm_offset(op->ot));
+    gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, kmask, tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, p);
+}
+
+static void gen_evex_fp_begin(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_sse_fp_begin(tcg_ctx, cpu_env);
+}
+
+static void gen_evex_fp_end(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    /* the destination is not written yet: nothing to restore on #XM */
+    gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, 0),
+                          tcg_constant_i32(tcg_ctx, 0));
+}
+
+static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86OpEntry *e = &decode->e;
+    X86DecodedOp *op0 = &decode->op[0];
+    int vl = s->evex_vl, esz = s->evex_esz, nelem = evex_nelem(s, decode);
+    bool fp = e->evex_fp;
+    bool has_mem = op0->has_ea || decode->op[1].has_ea || decode->op[2].has_ea;
+    TCGv_i64 kmask = NULL;
+    bool to_scratch = false;
+    int i;
+
+    if (has_mem) {
+        gen_load_ea(s, &decode->mem, e->vex_class == 12);
+        if (e->evex_align) {
+            gen_helper_evex_align(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, vl - 1));
+        }
+    }
+    if (s->evex_aaa) {
+        kmask = tcg_temp_new_i64(tcg_ctx);
+        tcg_gen_ld_i64(tcg_ctx, kmask, cpu_env,
+                       offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    }
+
+    /* sources */
+    for (i = 1; i < 3; i++) {
+        X86DecodedOp *op = &decode->op[i];
+
+        if (op->unit == X86_OP_SSE) {
+            compute_xmm_offset(op);
+            if (op->has_ea) {
+                gen_evex_load(s, decode, op, kmask);
+            }
+        } else {
+            gen_load(s, decode, i, i == 1 ? s->T0 : s->T1);
+        }
+    }
+
+    /* destination: the scratch register evex_t1 unless written directly */
+    if (op0->unit == X86_OP_SSE) {
+        compute_xmm_offset(op0);
+        to_scratch = op0->has_ea || kmask || fp;
+        if (to_scratch) {
+            op0->offset = offsetof(CPUX86State, evex_t1) + xmm_offset(op0->ot);
+        }
+    }
+
+    /* floating point with a mask: neutral (1.0) masked-off lanes in copies of the sources */
+    if (fp && kmask) {
+        for (i = 1; i < 3; i++) {
+            X86DecodedOp *op = &decode->op[i];
+            int scr;
+            TCGv_ptr pd, ps;
+
+            if (op->unit != X86_OP_SSE) {
+                continue;
+            }
+            scr = op->has_ea ? offsetof(CPUX86State, xmm_t0)
+                             : i == 1 ? offsetof(CPUX86State, evex_s1)
+                                      : offsetof(CPUX86State, evex_s2);
+            pd = evex_env_ptr(s, scr);
+            ps = evex_env_ptr(s, vector_reg_offset(op));
+            gen_helper_evex_neutral(tcg_ctx, cpu_env, pd, ps, kmask,
+                                    tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem)));
+            tcg_temp_free_ptr(tcg_ctx, pd);
+            tcg_temp_free_ptr(tcg_ctx, ps);
+            op->offset = scr + xmm_offset(op->ot);
+        }
+    }
+
+    if (fp) {
+        gen_evex_fp_begin(s);
+    }
+    e->gen(s, env, decode);
+    if (fp) {
+        gen_evex_fp_end(s);
+    }
+
+    /* masking and writeback */
+    switch (op0->unit) {
+    case X86_OP_SSE:
+        if (op0->has_ea) {
+            int bytes = evex_mem_bytes(op0);
+            int n = (e->evex_vl & X86_EVEX_LIG) ? 1 : nelem;
+            TCGv_ptr p = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+
+            gen_helper_evex_mstore(tcg_ctx, cpu_env, p, s->A0,
+                                   kmask ? kmask : tcg_constant_i64(tcg_ctx, -1),
+                                   tcg_constant_i32(tcg_ctx, EVEX_DESC(ctz32(bytes / n), n)));
+            tcg_temp_free_ptr(tcg_ctx, p);
+        } else {
+            int dst = ZMM_OFFSET(op0->n);
+
+            if (kmask) {
+                TCGv_ptr pd = evex_env_ptr(s, dst);
+                TCGv_ptr ps = evex_env_ptr(s, offsetof(CPUX86State, evex_t1));
+
+                gen_helper_evex_blend(tcg_ctx, cpu_env, pd, ps, kmask,
+                                      tcg_constant_i32(tcg_ctx, EVEX_DESC(esz, nelem) |
+                                                       (s->evex_z ? EVEX_DESC_Z : 0)));
+                tcg_temp_free_ptr(tcg_ctx, pd);
+                tcg_temp_free_ptr(tcg_ctx, ps);
+            } else if (to_scratch) {
+                tcg_gen_gvec_mov(tcg_ctx, MO_64, dst, offsetof(CPUX86State, evex_t1), vl, vl);
+            }
+            if (vl < (int)sizeof(ZMMReg)) {
+                tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst + vl, sizeof(ZMMReg) - vl,
+                                     sizeof(ZMMReg) - vl, 0);
+            }
+        }
+        break;
+    case X86_OP_KREG:
+        if (kmask) {
+            tcg_gen_and_i64(tcg_ctx, s->tmp1_i64, s->tmp1_i64, kmask);
+        }
+        tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env,
+                       offsetof(CPUX86State, opmask_regs[op0->n]));
+        break;
+    default:
+        gen_writeback(s, decode, 0, s->T0);
+        break;
+    }
+    if (kmask) {
+        tcg_temp_free_i64(tcg_ctx, kmask);
+    }
+}
+#endif /* __Use_Original_Qemu (U146) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

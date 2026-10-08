@@ -199,6 +199,13 @@ DEF_HELPER_3(x87_pre, i32, env, i32, tl)
 DEF_HELPER_1(sse_fp_begin, void, env)
 DEF_HELPER_3(sse_fp_end, void, env, i32, i32)
 #endif /* __Use_Original_Qemu (U67) */
+#if __Use_Original_Qemu != 1 /* ours (U146) */
+DEF_HELPER_3(evex_align, void, env, tl, i32)
+DEF_HELPER_5(evex_mload, void, env, ptr, tl, i64, i32)
+DEF_HELPER_5(evex_mstore, void, env, ptr, tl, i64, i32)
+DEF_HELPER_5(evex_blend, void, env, ptr, ptr, i64, i32)
+DEF_HELPER_5(evex_neutral, void, env, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U146) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */

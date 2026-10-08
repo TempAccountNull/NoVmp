@@ -6442,3 +6442,210 @@ static uint32_t x86_rsqrt12(uint32_t x)
 #define SHIFT 3
 #include "ops_sse.h"
 #endif /* __Use_Original_Qemu (U143) */
+#if __Use_Original_Qemu != 1 /* ours (U146) */
+
+/*
+ * NoVmp (ledger U146): EVEX masking and masked memory (SDM Vol2A 2.7.4, 2.8; Vol1 15.6).
+ * desc (emit.c.inc EVEX_DESC): bits 1:0 element size log2, bits 15:8 element count,
+ * bit 16 zeroing-masking, bit 17 "one memory element shared by all lanes" (embedded or
+ * Tuple1 broadcast: loaded when any lane is active).
+ */
+#define EVEX_DESC_ESZ(d)   ((d) & 3)
+#define EVEX_DESC_N(d)     (((d) >> 8) & 0xff)
+#define EVEX_DESC_Z        (1 << 16)
+#define EVEX_DESC_ANY      (1 << 17)
+
+static uint64_t evex_get_elem(ZMMReg *r, int esz, int i)
+{
+    switch (esz) {
+    case MO_8:
+        return r->ZMM_B(i);
+    case MO_16:
+        return r->ZMM_W(i);
+    case MO_32:
+        return r->ZMM_L(i);
+    default:
+        return r->ZMM_Q(i);
+    }
+}
+
+static void evex_set_elem(ZMMReg *r, int esz, int i, uint64_t v)
+{
+    switch (esz) {
+    case MO_8:
+        r->ZMM_B(i) = v;
+        break;
+    case MO_16:
+        r->ZMM_W(i) = v;
+        break;
+    case MO_32:
+        r->ZMM_L(i) = v;
+        break;
+    default:
+        r->ZMM_Q(i) = v;
+        break;
+    }
+}
+
+static uint64_t evex_lanes(int n)
+{
+    return n >= 64 ? ~0ull : (1ull << n) - 1;
+}
+
+/* E1 (aligned vector moves): #GP(0) unless the memory operand is VL-aligned, whatever the mask */
+void helper_evex_align(CPUX86State *env, target_ulong a0, uint32_t align_mask)
+{
+    if (a0 & align_mask) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+}
+
+/*
+ * Masked load with fault suppression: only the elements whose mask bit is set are read
+ * (a masked-off element never faults); the others are zero in *d.
+ */
+void helper_evex_mload(CPUX86State *env, ZMMReg *d, target_ulong a0, uint64_t mask,
+                       uint32_t desc)
+{
+    uintptr_t ra = GETPC();
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+    int bytes = 1 << esz;
+    ZMMReg r;
+
+    memset(&r, 0, sizeof(r));
+    if (desc & EVEX_DESC_ANY) {
+        mask = (mask & evex_lanes(n)) ? 1 : 0;
+        n = 1;
+    }
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            target_ulong addr = a0 + i * bytes;
+            switch (esz) {
+            case MO_8:
+                r.ZMM_B(i) = cpu_ldub_data_ra(env, addr, ra);
+                break;
+            case MO_16:
+                r.ZMM_W(i) = cpu_lduw_data_ra(env, addr, ra);
+                break;
+            case MO_32:
+                r.ZMM_L(i) = cpu_ldl_data_ra(env, addr, ra);
+                break;
+            default:
+                r.ZMM_Q(i) = cpu_ldq_data_ra(env, addr, ra);
+                break;
+            }
+        }
+    }
+    *d = r;
+}
+
+/* probe one element for a write, page by page (#PF before any byte is written) */
+static void evex_probe_write(CPUX86State *env, target_ulong addr, int size, uintptr_t ra)
+{
+    int mmu_idx = cpu_mmu_index(env, false);
+    target_ulong first = (target_ulong)0 - (addr | TARGET_PAGE_MASK);
+
+    if (first >= (target_ulong)size) {
+        probe_write(env, addr, size, mmu_idx, ra);
+    } else {
+        probe_write(env, addr, first, mmu_idx, ra);
+        probe_write(env, addr + first, size - first, mmu_idx, ra);
+    }
+}
+
+/* Unicorn: is the guest-physical page behind a (probed) virtual address mapped? */
+static bool evex_mapped(CPUX86State *env, target_ulong addr)
+{
+    target_ulong paddr;
+
+    if (!tlb_vaddr_to_paddr(env, addr, MMU_DATA_STORE, cpu_mmu_index(env, false), &paddr)) {
+        return true;                    /* page fault: raised by the real access */
+    }
+    return env->uc->memory_mapping(env->uc, paddr) != NULL;
+}
+
+static void evex_store_elem(CPUX86State *env, ZMMReg *s, int esz, int i, target_ulong addr,
+                            uintptr_t ra)
+{
+    switch (esz) {
+    case MO_8:
+        cpu_stb_data_ra(env, addr, s->ZMM_B(i), ra);
+        break;
+    case MO_16:
+        cpu_stw_data_ra(env, addr, s->ZMM_W(i), ra);
+        break;
+    case MO_32:
+        cpu_stl_data_ra(env, addr, s->ZMM_L(i), ra);
+        break;
+    default:
+        cpu_stq_data_ra(env, addr, s->ZMM_Q(i), ra);
+        break;
+    }
+}
+
+/*
+ * Masked store: only the elements whose mask bit is set are written. Every one of them is
+ * probed first (#PF), and an element on memory Unicorn has not mapped is stored first:
+ * if no UC_HOOK_MEM_WRITE_UNMAPPED hook maps it, the instruction stops there and memory is
+ * unchanged (a plain Unicorn store would only request the exit and go on writing).
+ */
+void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t mask,
+                        uint32_t desc)
+{
+    uintptr_t ra = GETPC();
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+    int bytes = 1 << esz;
+    struct uc_struct *uc = env->uc;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_probe_write(env, a0 + i * bytes, bytes, ra);
+        }
+    }
+    for (i = 0; i < n; i++) {
+        target_ulong addr = a0 + i * bytes;
+
+        if ((mask & (1ull << i)) &&
+            (!evex_mapped(env, addr) || !evex_mapped(env, addr + bytes - 1))) {
+            evex_store_elem(env, s, esz, i, addr, ra);
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+        }
+    }
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_store_elem(env, s, esz, i, a0 + i * bytes, ra);
+        }
+    }
+}
+
+/* merging-/zeroing-masking of a computed result s into the destination register d */
+void helper_evex_blend(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+
+    for (i = 0; i < n; i++) {
+        if (mask & (1ull << i)) {
+            evex_set_elem(d, esz, i, evex_get_elem(s, esz, i));
+        } else if (desc & EVEX_DESC_Z) {
+            evex_set_elem(d, esz, i, 0);
+        }
+    }
+}
+
+/*
+ * Floating point: a copy of a source with +1.0 in the masked-off lanes, so that they
+ * raise no MXCSR flag and no #XM (SDM Vol1 15.6.3: exceptions are reported only for
+ * the elements that are written).
+ */
+void helper_evex_neutral(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, uint32_t desc)
+{
+    static const uint64_t one[4] = { 0, 0x3c00, 0x3f800000, 0x3ff0000000000000ull };
+    int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
+
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, (mask & (1ull << i)) ? evex_get_elem(s, esz, i) : one[esz]);
+    }
+}
+#endif /* __Use_Original_Qemu (U146) */

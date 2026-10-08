@@ -3335,6 +3335,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
 #if __Use_Original_Qemu != 1 /* ours (U145) */
     if (s->prefix & PREFIX_EVEX) {
         if (validate_evex(s, &decode)) {
+#if __Use_Original_Qemu != 1 /* ours (U146) */
+            gen_evex_insn(s, env, &decode);
+#endif /* __Use_Original_Qemu (U146) */
         }
         decode_temps_free(tcg_ctx, &decode);
         return;

@@ -1794,6 +1794,17 @@ typedef struct CPUX86State {
     uint32_t xm_saved_flags;
     target_ulong xm_cc_src;
 #endif /* __Use_Original_Qemu (U67) */
+#if __Use_Original_Qemu != 1 /* ours (U146) */
+    /*
+     * NoVmp (U146): EVEX scratch registers. evex_t1 = the result of a masked / memory-
+     * destination / floating-point EVEX instruction before it is merged into the
+     * destination; evex_s1/evex_s2 = copies of the register sources with neutral (1.0)
+     * masked-off lanes (floating point).
+     */
+    QEMU_ALIGN(16, ZMMReg evex_t1);
+    QEMU_ALIGN(16, ZMMReg evex_s1);
+    QEMU_ALIGN(16, ZMMReg evex_s2);
+#endif /* __Use_Original_Qemu (U146) */
 
     /*
      * YMM is not supported by QEMU at all
