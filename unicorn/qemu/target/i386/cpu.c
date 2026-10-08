@@ -4998,6 +4998,13 @@ static void x86_cpu_reset(CPUState *dev)
     cpu_set_fpuc(env, 0x37f);
 
     env->mxcsr = 0x1f80;
+#if __Use_Original_Qemu != 1 /* ours (U96) */
+    /*
+     * NoVmp (ledger U96): the memset above cleared sse_status; resync it with MXCSR
+     * (rounding, DAZ/FTZ and the SSE NaN rule use_first_nan) on RESET / INIT too.
+     */
+    update_mxcsr_status(env);
+#endif /* __Use_Original_Qemu (U96) */
     /* All units are in INIT state.  */
     env->xstate_bv = 0;
 

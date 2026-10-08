@@ -51,6 +51,12 @@ rem plan 1.15d milestone M1: EVEX instructions (moves, integer/logic, FP with {e
 rem into k, broadcasts; masking, {1toN}, disp8*N, fault suppression, #UD) vs the SDM model
 rem ref_evex_m1.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m1.txt" --avx512 --xcr0 0xE7
+rem ledger U96/U97: NaN propagation (SDM Vol1 4.8.3.5 Table 4-8). EVEX VADD/VSUB/VMUL/VDIV/VMIN/
+rem VMAX/VSQRT PS/PD with NaNs in both sources vs the SDM model (gen_cases_nan.py --evex).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_nan_evex.txt" --avx512 --xcr0 0xE7 --expect-only
+rem The same rules on the host CPU: legacy SSE, VEX AVX/FMA and x87 hardware cases (self-generated
+rem snippets, gen_cases_nan.py --hw) must all match the i5-13600K.
+call :hw_nan
 
 echo.
 if !FAILED! NEQ 0 (
@@ -101,6 +107,32 @@ if errorlevel 1 (
     set /a FAILED+=1
 ) else (
     echo [test] expect_selftest_bad passed: every wrong expectation reported
+)
+exit /b 0
+
+:hw_nan
+rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary
+set "EXE=%TESTS%\emu-alltest.exe"
+set "NANLOG=%TESTS%\cases_nan.log"
+echo.
+echo [test] ===== emu-alltest --cases cases_nan.txt --strict --xcr0 7 ^(host CPU, must be 0 differing^)
+if not exist "%EXE%" (
+    echo [test] missing %EXE% - run build.cmd first
+    set /a FAILED+=1
+    exit /b 0
+)
+"%EXE%" --cases "%ROOT%Emulator\data\cases_nan.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --strict --xcr0 7 > "%NANLOG%"
+set "RC=!errorlevel!"
+findstr /R /B /C:"cases: [0-9]*, differing: 0$" "%NANLOG%"
+if errorlevel 1 (
+    findstr /B /C:"cases:" "%NANLOG%"
+    echo [test] cases_nan FAILED: hardware and Unicorn differ, see %NANLOG%
+    set /a FAILED+=1
+) else if not "!RC!"=="0" (
+    echo [test] cases_nan FAILED: exit status !RC!
+    set /a FAILED+=1
+) else (
+    echo [test] cases_nan passed
 )
 exit /b 0
 

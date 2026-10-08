@@ -466,6 +466,21 @@ static int pickNaN(FloatClass a_cls, FloatClass b_cls,
         }
     }
 #else
+#if __Use_Original_Qemu == 1 /* original QEMU (U96) */
+    /* every x86 float_status (x87, 3DNow!, SSE) takes the x87 rule below */
+#else /* ours (U96) */
+    /*
+     * NoVmp (ledger U96): x86 SSE/AVX/AVX-512 (env->sse_status, use_first_nan set by
+     * update_mxcsr_status). SDM Vol1 4.8.3.5 Table 4-8, "SNaN and QNaN", "Two SNaNs",
+     * "Two QNaNs": SSE/SSE2/SSE3/SSE4.1/AVX -> the first source operand (an SNaN is
+     * converted to a QNaN by the caller); one NaN -> that NaN. a = SRC1 in every SSE
+     * helper. The larger-significand rule below stays for the x87 FPU (fp_status) and
+     * 3DNow! (mmx_status). Same as the i5-13600K (Emulator/data/cases_nan.txt).
+     */
+    if (status->use_first_nan) {
+        return is_nan(a_cls) ? 0 : 1;
+    }
+#endif /* __Use_Original_Qemu (U96) */
     /* This implements x87 NaN propagation rules:
      * SNaN + QNaN => return the QNaN
      * two SNaNs => return the one with the larger significand, silenced

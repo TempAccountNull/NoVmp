@@ -2056,6 +2056,24 @@ static bool x87_nan1(CPUX86State *env, floatx80 x, int k, floatx80 *res, bool *w
     return false;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U97) */
+/*
+ * NoVmp (ledger U97): two NaNs of the same kind on the x87 FPU -> the one with the larger
+ * significand (SDM Vol1 4.8.3.5 Table 4-8, x87 column); equal significands -> the
+ * positive one (the SDM leaves the tie open; i5-13600K FPATAN/FYL2X/FYL2XP1/FSCALE, as
+ * FADD & co. through softfloat's pickNaN, Emulator/data/cases_nan.txt).
+ */
+static floatx80 x87_nan_larger(floatx80 x, floatx80 y)
+{
+    uint64_t fx = extractFloatx80Frac(x), fy = extractFloatx80Frac(y);
+
+    if (fx != fy) {
+        return fx > fy ? x : y;
+    }
+    return extractFloatx80Sign(x) ? y : x;
+}
+#endif /* __Use_Original_Qemu (U97) */
+
 /* Two-operand NaN prologue (FYL2X/FYL2XP1/FPATAN: result goes to ST1). */
 static bool x87_nan2(CPUX86State *env, floatx80 x, floatx80 y, int kx, int ky,
                      floatx80 *res, bool *write)
@@ -2079,10 +2097,9 @@ static bool x87_nan2(CPUX86State *env, floatx80 x, floatx80 y, int kx, int ky,
                 return true;
             }
         }
-        /* SDM Table 4-8: two NaNs -> the larger significand, quieted */
+        /* SDM Table 4-8: two NaNs -> the larger significand, quieted (tie: U97) */
         *res = floatx80_silence_nan(
-            kx >= X87K_QNAN && ky >= X87K_QNAN ?
-                (extractFloatx80Frac(x) > extractFloatx80Frac(y) ? x : y) :
+            kx >= X87K_QNAN && ky >= X87K_QNAN ? x87_nan_larger(x, y) :
             kx >= X87K_QNAN ? x : y, &env->fp_status);
         *write = true;
         x87_set_c1(env, false);    /* NaN / unsupported: C1 cleared (i5-13600K) */
@@ -4002,7 +4019,7 @@ void helper_fscale(CPUX86State *env)
         if (kx >= X87K_QNAN && ky >= X87K_QNAN && kx != ky) {
             res = kx == X87K_QNAN ? x : y;      /* SNaN and QNaN: the QNaN */
         } else if (kx >= X87K_QNAN && ky >= X87K_QNAN) {
-            res = extractFloatx80Frac(x) >= extractFloatx80Frac(y) ? x : y;
+            res = x87_nan_larger(x, y);         /* tie: the positive one (U97) */
         } else {
             res = kx >= X87K_QNAN ? x : y;
         }
@@ -6203,6 +6220,16 @@ void update_mxcsr_status(CPUX86State *env)
      * when we detect underflow, which x86 does after rounding).
      */
     set_float_ftz_detection(float_ftz_after_rounding, &env->sse_status);
+#if __Use_Original_Qemu == 1 /* original QEMU (U96) */
+    /* two NaNs: x87 rule (larger significand), as for fp_status */
+#else /* ours (U96) */
+    /*
+     * NoVmp (ledger U96): two NaN sources -> SRC1, quieted (SDM Vol1 4.8.3.5 Table 4-8,
+     * SSE/AVX column; pickNaN in fpu/softfloat-specialize.c.inc). MINPS/MAXPS (SRC2 on any
+     * NaN) and the FMA order (Q(x), Q(y), Q(z), Vol1 Table 14-17) do not depend on it.
+     */
+    set_use_first_nan(true, &env->sse_status);
+#endif /* __Use_Original_Qemu (U96) */
 }
 
 void update_mxcsr_from_sse_status(CPUX86State *env)
