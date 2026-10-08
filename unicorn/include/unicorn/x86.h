@@ -60,7 +60,10 @@ typedef enum uc_cpu_x86 {
 } uc_cpu_x86;
 
 // Hardware quirks (UC_CTL_X86_HW_QUIRKS): documented places where real CPUs differ
-// from the Intel SDM. Default 0 = follow the manual.
+// from the Intel SDM. Default 0 = strictly the SDM (testable against its pseudocode);
+// each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
+// says "undefined"/"implementation specific" the emulator follows the hardware without a
+// bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
 // FCOMI/FCOMIP/FUCOMI/FUCOMIP: the SDM sets FSW.C1 = 0; Intel hardware (verified on
 // an i5-13600K) leaves C1 unchanged.
 #define UC_X86_QUIRK_FCOMI_KEEPS_C1 (1u << 0)
@@ -82,7 +85,8 @@ typedef enum uc_cpu_x86 {
 #define UC_X86_QUIRK_DPPD_NAN_ORDER (1u << 4)
 // REP MOVS/STOS/LODS/CMPS/SCAS with a 32-bit address size (67h) in 64-bit mode and ECX = 0:
 // the SDM (REP Operation: WHILE CountReg != 0) writes no register; the i5-13600K zero-extends
-// RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS).
+// RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS). (REP LODS leaves RCX unchanged
+// in about 5% of hardware runs; the bit models the usual result.)
 #define UC_X86_QUIRK_REP_ZERO_COUNT_ZX (1u << 5)
 // FCOM/FCOMP/FCOMPP/FUCOM/FUCOMP/FUCOMPP and FCOMI/FCOMIP/FUCOMI/FUCOMIP raising an unmasked
 // #IA (FCW.IM = 0): the SDM leaves C3/C2/C0 (EFLAGS ZF/PF/CF) unchanged; the i5-13600K sets
