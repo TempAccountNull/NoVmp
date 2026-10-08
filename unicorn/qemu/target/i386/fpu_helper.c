@@ -7645,3 +7645,164 @@ void helper_evex_reduce(CPUX86State *env, ZMMReg *d, ZMMReg *s, ZMMReg *u, uint3
     }
 }
 #endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U231) */
+
+/*
+ * NoVmp (ledger U231): EVEX conversions between integer and floating-point elements
+ * (SDM Vol2A CVTDQ2PS, CVTPS2DQ, CVTTPS2DQ, CVTPD2DQ, CVTTPD2DQ, CVTDQ2PD, CVTPS2PD,
+ * CVTPD2PS; Vol2C VCVTUDQ2PS, VCVTPS2UDQ, VCVTTPS2UDQ, VCVTPD2UDQ, VCVTTPD2UDQ,
+ * VCVTUDQ2PD, VCVTPH2PS, VCVTPS2PH, and the AVX512DQ QQ forms of U233).
+ * - Floating point -> integer: rounding by MXCSR.RC / {er}, or truncation (VCVTT*); a NaN,
+ *   an infinity or a value out of range is invalid (IE) and returns the integer indefinite
+ *   value (signed: the most negative integer; unsigned: 2^w - 1); IE replaces PE; a
+ *   negative value that rounds to 0 is 0 for the unsigned forms (PE only). DAZ: a
+ *   denormal source is 0 (exact); no DE (not in the forms' exception lists).
+ * - Integer -> floating point: rounded by MXCSR.RC / {er} (PE).
+ * - VCVTPS2PD/VCVTPD2PS: as the SSE forms (IE on SNaN, DE, OE/UE/PE, DAZ, FTZ).
+ * - VCVTPH2PS: exact, SNaN quietened (IE); DAZ ignored, no DE (SDM VCVTPH2PS: "MXCSR.DAZ
+ *   is ignored ... No denormal exception is reported", as U43 for the VEX form).
+ * - VCVTPS2PH: rounding from imm8[1:0] unless imm8[2] = 1 (MXCSR.RC); MXCSR.FTZ is ignored
+ *   (tiny results are converted to denormals); a denormal source sets DE (and the tiny
+ *   inexact result UE/PE), as the SDM describes.
+ * desc: bits 2:0 source type, 6:4 destination type (EVCVT_*), bit 8 truncation, bits
+ * 15:9 element count, bits 23:16 imm8, bit 24 imm8 present (VCVTPS2PH).
+ */
+enum { EVCVT_I32, EVCVT_U32, EVCVT_I64, EVCVT_U64, EVCVT_F16, EVCVT_F32, EVCVT_F64 };
+
+static const uint8_t evcvt_esz[] = { MO_32, MO_32, MO_64, MO_64, MO_16, MO_32, MO_64 };
+
+/* floating point (f32/f64 in x) to a 32/64-bit signed/unsigned integer */
+static uint64_t evex_cvt_f2i_one(CPUX86State *env, uint64_t x, int st, int dt, bool trunc)
+{
+    float_status *fs = &env->sse_status;
+    int old = get_float_exception_flags(fs);
+    uint64_t r, indef;
+
+    set_float_exception_flags(0, fs);
+    switch (dt) {
+    case EVCVT_I32:
+        indef = 0x80000000u;
+        if (st == EVCVT_F32) {
+            r = (uint32_t)(trunc ? float32_to_int32_round_to_zero(x, fs) : float32_to_int32(x, fs));
+        } else {
+            r = (uint32_t)(trunc ? float64_to_int32_round_to_zero(x, fs) : float64_to_int32(x, fs));
+        }
+        break;
+    case EVCVT_U32:
+        indef = 0xffffffffu;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_uint32_round_to_zero(x, fs) : float32_to_uint32(x, fs);
+        } else {
+            r = trunc ? float64_to_uint32_round_to_zero(x, fs) : float64_to_uint32(x, fs);
+        }
+        break;
+    case EVCVT_I64:
+        indef = 0x8000000000000000ull;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_int64_round_to_zero(x, fs) : float32_to_int64(x, fs);
+        } else {
+            r = trunc ? float64_to_int64_round_to_zero(x, fs) : float64_to_int64(x, fs);
+        }
+        break;
+    default:
+        indef = ~0ull;
+        if (st == EVCVT_F32) {
+            r = trunc ? float32_to_uint64_round_to_zero(x, fs) : float32_to_uint64(x, fs);
+        } else {
+            r = trunc ? float64_to_uint64_round_to_zero(x, fs) : float64_to_uint64(x, fs);
+        }
+        break;
+    }
+    if (get_float_exception_flags(fs) & float_flag_invalid) {
+        r = indef;
+    }
+    set_float_exception_flags(old | get_float_exception_flags(fs), fs);
+    return r;
+}
+
+/* integer (i32/u32/i64/u64 in x) to f32/f64 */
+static uint64_t evex_cvt_i2f_one(CPUX86State *env, uint64_t x, int st, int dt)
+{
+    float_status *fs = &env->sse_status;
+
+    if (dt == EVCVT_F32) {
+        switch (st) {
+        case EVCVT_I32:
+            return int32_to_float32((int32_t)x, fs);
+        case EVCVT_U32:
+            return uint32_to_float32((uint32_t)x, fs);
+        case EVCVT_I64:
+            return int64_to_float32((int64_t)x, fs);
+        default:
+            return uint64_to_float32(x, fs);
+        }
+    }
+    switch (st) {
+    case EVCVT_I32:
+        return int32_to_float64((int32_t)x, fs);
+    case EVCVT_U32:
+        return uint32_to_float64((uint32_t)x, fs);
+    case EVCVT_I64:
+        return int64_to_float64((int64_t)x, fs);
+    default:
+        return uint64_to_float64(x, fs);
+    }
+}
+
+/* one element of any EVEX conversion; imm8 >= 0: VCVTPS2PH rounding control */
+static uint64_t evex_cvt_one(CPUX86State *env, uint64_t x, int st, int dt, bool trunc, int imm)
+{
+    float_status *fs = &env->sse_status;
+
+    if (st <= EVCVT_U64) {
+        return evex_cvt_i2f_one(env, x, st, dt);
+    }
+    if (dt <= EVCVT_U64) {
+        return evex_cvt_f2i_one(env, x, st, dt, trunc);
+    }
+    if (st == EVCVT_F32 && dt == EVCVT_F64) {
+        return float32_to_float64(x, fs);
+    }
+    if (st == EVCVT_F64 && dt == EVCVT_F32) {
+        return float64_to_float32(x, fs);
+    }
+    if (st == EVCVT_F16) {
+        float_status st16 = *fs;
+        uint32_t r;
+
+        set_flush_inputs_to_zero(false, &st16);
+        set_float_exception_flags(0, &st16);
+        r = float16_to_float32(x, true, &st16);
+        float_raise(get_float_exception_flags(&st16) &
+                    ~(float_flag_input_denormal | float_flag_input_denormal_used), fs);
+        return r;
+    } else {
+        float_status st16 = *fs;
+        uint16_t r;
+
+        set_flush_to_zero(false, &st16);
+        if (imm >= 0 && !(imm & 4)) {
+            set_x86_rounding_mode(imm & 3, &st16);
+        }
+        set_float_exception_flags(0, &st16);
+        r = float32_to_float16(x, true, &st16);
+        float_raise(get_float_exception_flags(&st16), fs);
+        return r;
+    }
+}
+
+void helper_evex_cvt(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int st = desc & 7, dt = (desc >> 4) & 7, n = (desc >> 9) & 0x7f, i;
+    int imm = (desc & (1u << 24)) ? (int)((desc >> 16) & 0xff) : -1;
+    bool trunc = (desc >> 8) & 1;
+    ZMMReg r;
+
+    memset(&r, 0, sizeof(r));
+    for (i = 0; i < n; i++) {
+        evex_set_elem(&r, evcvt_esz[dt], i,
+                      evex_cvt_one(env, evex_get_elem(s, evcvt_esz[st], i), st, dt, trunc, imm));
+    }
+    *d = r;
+}
+#endif /* __Use_Original_Qemu (U231) */

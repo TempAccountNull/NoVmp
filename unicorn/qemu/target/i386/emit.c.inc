@@ -2157,6 +2157,57 @@ static void gen_EVEX_VREDUCE(DisasContext *s, CPUX86State *env, X86DecodedInsn *
                            tcg_constant_i32(tcg_ctx, desc));
 }
 #endif /* __Use_Original_Qemu (U294) */
+#if __Use_Original_Qemu != 1 /* ours (U231) */
+
+/*
+ * NoVmp (ledger U231): EVEX packed conversions (helper_evex_cvt, one element per opmask
+ * bit; source and destination element sizes may differ, U230). Types as fpu_helper.c
+ * EVCVT_*: 0 i32, 1 u32, 2 i64, 3 u64, 4 f16, 5 f32, 6 f64.
+ */
+#define EVCVT_DESC(st, dt, tr, n) ((uint32_t)(st) | ((uint32_t)(dt) << 4) | \
+                                   ((uint32_t)(tr) << 8) | ((uint32_t)(n) << 9))
+
+static void gen_evex_cvt(DisasContext *s, X86DecodedInsn *decode, int st, int dt, bool trunc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                        tcg_constant_i32(tcg_ctx, EVCVT_DESC(st, dt, trunc,
+                                                             evex_nelem(s, decode))));
+}
+
+#define EVEX_CVT(uname, st, dt, tr)                                                  \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_cvt(s, decode, st, dt, tr);                                             \
+}
+EVEX_CVT(VCVTDQ2PS, 0, 5, 0)
+EVEX_CVT(VCVTUDQ2PS, 1, 5, 0)
+EVEX_CVT(VCVTPS2DQ, 5, 0, 0)
+EVEX_CVT(VCVTPS2UDQ, 5, 1, 0)
+EVEX_CVT(VCVTTPS2DQ, 5, 0, 1)
+EVEX_CVT(VCVTTPS2UDQ, 5, 1, 1)
+EVEX_CVT(VCVTPD2DQ, 6, 0, 0)
+EVEX_CVT(VCVTPD2UDQ, 6, 1, 0)
+EVEX_CVT(VCVTTPD2DQ, 6, 0, 1)
+EVEX_CVT(VCVTTPD2UDQ, 6, 1, 1)
+EVEX_CVT(VCVTDQ2PD, 0, 6, 0)
+EVEX_CVT(VCVTUDQ2PD, 1, 6, 0)
+EVEX_CVT(VCVTPS2PD, 5, 6, 0)
+EVEX_CVT(VCVTPD2PS, 6, 5, 0)
+EVEX_CVT(VCVTPH2PS, 4, 5, 0)
+
+/* VCVTPS2PH: destination = ModRM.r/m (op0), source = ModRM.reg (op1), imm8 rounding */
+static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1,
+                        tcg_constant_i32(tcg_ctx, EVCVT_DESC(5, 4, 0, evex_nelem(s, decode)) |
+                                                  ((decode->immediate & 0xff) << 16) |
+                                                  (1u << 24)));
+}
+#endif /* __Use_Original_Qemu (U231) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
