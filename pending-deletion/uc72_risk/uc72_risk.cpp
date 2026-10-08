@@ -2059,10 +2059,7 @@ static void x87_list2( const char* inpath, const char* path, bool use_uc )
 //            everything unmasked;
 //   random   1000 operands per function (the --x87-dump distribution) x 4 RC;
 //   sweep    every 97th exponent, both signs, significands 1.0 / all-ones / ~pi, x 4 RC.
-// Required: the FSW is identical except C1 (every exception flag, ES/B, C0/C2/C3, TOP) and every
-// result is within 1 ulp. The bit-exact share (value and C1) is reported per function and must
-// not fall below its floor: the remaining +-1 ulp come from Intel's internal approximations
-// (ledger U53: the exact value with a measured relative bias per function).
+// Required: bit-exact, the FSW (C1 included) and both results (ledger U56: the microcode models).
 
 struct x87_case { const char* op; uint16_t fcw, se0, se1; uint64_t m0, m1; };
 
@@ -2181,18 +2178,12 @@ static bool x87_within_1ulp( uint16_t a_se, uint64_t a_m, uint16_t b_se, uint64_
 
 static void test_r17()
 {
-	std::printf( "R17 x87 transcendentals vs hardware: FSW (all but C1) identical, results within 1 ulp\n" );
+	std::printf( "R17 x87 transcendentals vs hardware: bit-exact (FSW incl. C1, results)\n" );
 	struct set_t { const char* name; std::vector<x87_case> cases; double floor; };
 	set_t sets[] = {
 		{ "special", x87_special_cases(), 0.0 },
 		{ "random", x87_random_cases( 1000, 0x5EED5EED12345678ull ), 0.0 },
 		{ "sweep", x87_sweep_cases(), 0.0 },
-	};
-	// minimum bit-exact share per function (value and C1), per set: measured with ledger U53, minus 1%
-	const double floors[ 3 ][ 8 ] = {
-		/* special */ { 0.94, 0.95, 0.89, 0.81, 0.97, 0.96, 0.99, 0.96 },
-		/* random  */ { 0.95, 0.94, 0.89, 0.93, 0.95, 0.97, 0.97, 0.96 },
-		/* sweep   */ { 0.98, 0.91, 0.89, 0.98, 0.96, 0.99, 0.99, 0.99 },
 	};
 	auto put = [ & ]( uint8_t* p, uint16_t se, uint64_t m ) { std::memcpy( p, &m, 8 ); std::memcpy( p + 8, &se, 2 ); };
 	for ( int si = 0; si < 3; ++si )
@@ -2234,6 +2225,10 @@ static void test_r17()
 			bool fsw_ok = ( ( fh ^ fu ) & ~0x0200 ) == 0;
 			bool ulp_ok = x87_within_1ulp( hx0, h0, ux0, u0 ) && x87_within_1ulp( hx1, h1, ux1, u1 );
 			if ( fh == fu && h0 == u0 && hx0 == ux0 && h1 == u1 && hx1 == ux1 ) ++s.exact;
+			else if ( s.n - s.exact <= 3 )
+				std::printf( "    FAIL: %s fcw=%04X x=%04X:%016llX y=%04X:%016llX: hw fsw %04X %04X:%016llX %04X:%016llX | uc fsw %04X %04X:%016llX %04X:%016llX\n",
+							 c.op, c.fcw, c.se0, ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1, fh, hx0, ( unsigned long long ) h0,
+							 hx1, ( unsigned long long ) h1, fu, ux0, ( unsigned long long ) u0, ux1, ( unsigned long long ) u1 );
 			if ( !fsw_ok && s.fsw++ < 3 )
 				std::printf( "    FAIL: %s fcw=%04X x=%04X:%016llX y=%04X:%016llX: fsw hw %04X uc %04X\n", c.op, c.fcw, c.se0,
 							 ( unsigned long long ) c.m0, c.se1, ( unsigned long long ) c.m1, fh, fu );
@@ -2248,12 +2243,9 @@ static void test_r17()
 			const stat_t& s = stat[ i ];
 			if ( !s.n ) continue;
 			double share = double( s.exact ) / double( s.n );
-			std::printf( "      %-8s n=%-6ld bit-exact %6.2f%% (floor %.0f%%)  FSW-mismatch %ld  >1ulp %ld\n", X87_TRANS_OPS[ i ], s.n,
-						 100.0 * share, 100.0 * floors[ si ][ i ], s.fsw, s.ulp );
-			CHECK( s.fsw == 0, "%s/%s: %ld FSW mismatches (other than C1)", st.name, X87_TRANS_OPS[ i ], s.fsw );
-			CHECK( s.ulp == 0, "%s/%s: %ld results off by more than 1 ulp", st.name, X87_TRANS_OPS[ i ], s.ulp );
-			CHECK( share >= floors[ si ][ i ], "%s/%s: bit-exact share %.2f%% below the floor %.0f%%", st.name, X87_TRANS_OPS[ i ],
-				   100.0 * share, 100.0 * floors[ si ][ i ] );
+			std::printf( "      %-8s n=%-6ld bit-exact %6.2f%%  FSW-mismatch(not C1) %ld  >1ulp %ld\n", X87_TRANS_OPS[ i ], s.n,
+						 100.0 * share, s.fsw, s.ulp );
+			CHECK( s.exact == s.n, "%s/%s: %ld of %ld cases not bit-exact", st.name, X87_TRANS_OPS[ i ], s.n - s.exact, s.n );
 		}
 	}
 }
@@ -2266,8 +2258,8 @@ static void test_r17()
 // IE/DE/ZE/OE/UE unmasked (one at a time and all), FSW = 0 or C0-C3 preset, natively and in
 // Unicorn. Required bit-exact: FSW, FTW, ST0, ST1, the memory operand and EFLAGS (FCOMI); the
 // SDM Vol1 8.5 responses (unmasked #IA/#D/#Z: nothing stored, no pop; unmasked #O/#U: biased
-// register result or no memory store) included. The transcendentals ride along with FSW preset
-// and are held to R17's rule (FSW identical but C1, values within 1 ulp).
+// register result or no memory store) included. The transcendentals ride along with FSW preset,
+// bit-exact as well (ledger U56).
 
 struct x87_case2 { std::string op; uint16_t fcw, fsw, se0, se1; uint64_t m0, m1; uint8_t mem[ 16 ]; bool tolerant; };
 
@@ -2403,16 +2395,7 @@ static void test_r18()
 			uint16_t fh = uint16_t( hw.env[ 4 ] | ( hw.env[ 5 ] << 8 ) ), fu = uint16_t( uc.env[ 4 ] | ( uc.env[ 5 ] << 8 ) );
 			bool same_tw = hw.env[ 8 ] == uc.env[ 8 ] && hw.env[ 9 ] == uc.env[ 9 ];
 			bool same_mem = !std::memcmp( hw.mem, uc.mem, 16 ) && hw.ah == uc.ah;
-			if ( !c.tolerant )
-				ok = fh == fu && same_tw && same_mem && !std::memcmp( hw.fx + 32, uc.fx + 32, 10 ) && !std::memcmp( hw.fx + 48, uc.fx + 48, 10 );
-			else
-			{
-				uint64_t h0, h1, u0, u1; uint16_t hx0, hx1, ux0, ux1;
-				std::memcpy( &h0, hw.fx + 32, 8 ); std::memcpy( &hx0, hw.fx + 40, 2 ); std::memcpy( &h1, hw.fx + 48, 8 ); std::memcpy( &hx1, hw.fx + 56, 2 );
-				std::memcpy( &u0, uc.fx + 32, 8 ); std::memcpy( &ux0, uc.fx + 40, 2 ); std::memcpy( &u1, uc.fx + 48, 8 ); std::memcpy( &ux1, uc.fx + 56, 2 );
-				ok = ( ( fh ^ fu ) & ~0x0200 ) == 0 && same_tw && same_mem && x87_within_1ulp( hx0, h0, ux0, u0 ) &&
-					 x87_within_1ulp( hx1, h1, ux1, u1 );
-			}
+			ok = fh == fu && same_tw && same_mem && !std::memcmp( hw.fx + 32, uc.fx + 32, 10 ) && !std::memcmp( hw.fx + 48, uc.fx + 48, 10 );
 		}
 		if ( !ok )
 		{
