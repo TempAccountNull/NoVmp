@@ -7008,3 +7008,92 @@ uint64_t helper_evex_fcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
     return r;
 }
 #endif /* __Use_Original_Qemu (U197) */
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+
+/*
+ * NoVmp (ledger U211): EVEX permutes, shuffles and unpacks, element by element as in the
+ * SDM pseudocode (Vol2B PUNPCKLDQ/PUNPCKHDQ/PSHUFD/SHUFPS/SHUFPD/UNPCKLPS/UNPCKHPS, Vol2C
+ * VPERMD/VPERMQ/VPERMPS/VPERMPD/VPERMI2x/VPERMT2x/VPERMILPS/VPERMILPD/VALIGND/VALIGNQ/
+ * VSHUFF32x4). desc: EVEX_PERM_DESC (cpu.h). d = destination (register or scratch),
+ * a = SRC1 (EVEX.vvvv), b = SRC2 (ModRM.r/m; {1toN} already replicated), c = the destination
+ * register before the instruction (VPERMI2 indices, VPERMT2 table 1). The result is built
+ * in a temporary: d may be any of the sources. Only the VL bytes of d are written.
+ */
+void helper_evex_perm(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMMReg *c,
+                      uint32_t desc)
+{
+    int imm = desc & 0xff, vl = (desc >> 8) & 0x7f, esz = (desc >> 16) & 3;
+    int op = (desc >> 24) & 0xff;
+    int n = vl >> esz, lane = 16 >> esz;    /* KL, elements per 128-bit lane */
+    int oesz = esz, obytes = vl;            /* result element size / bytes written */
+    ZMMReg r;
+    int j;
+
+    memset(&r, 0, sizeof(r));
+    for (j = 0; j < n; j++) {
+        int l0 = j & ~(lane - 1), k = j & (lane - 1);
+        uint64_t v, id;
+        int sel, ch;
+
+        switch (op) {
+        case EVEX_PERM_UNPCKL:      /* per lane: a0 b0 a1 b1 ... (low half) */
+            v = evex_get_elem((k & 1) ? b : a, esz, l0 + k / 2);
+            break;
+        case EVEX_PERM_UNPCKH:      /* per lane: high half */
+            v = evex_get_elem((k & 1) ? b : a, esz, l0 + lane / 2 + k / 2);
+            break;
+        case EVEX_PERM_SHUFPS:      /* lane dwords 0,1 from SRC1, 2,3 from SRC2 */
+            sel = (imm >> (2 * k)) & 3;
+            v = evex_get_elem(k < 2 ? a : b, esz, l0 + sel);
+            break;
+        case EVEX_PERM_SHUFPD:      /* even qwords from SRC1, odd from SRC2; imm8[j] */
+            v = evex_get_elem((j & 1) ? b : a, esz, (j & ~1) + ((imm >> j) & 1));
+            break;
+        case EVEX_PERM_PSHUFD:      /* Select4(SRC[lane], imm8[2k+1:2k]) */
+            v = evex_get_elem(b, esz, l0 + ((imm >> (2 * k)) & 3));
+            break;
+        case EVEX_PERM_PERMILPD_I:  /* imm8[j] selects the qword of the lane */
+            v = evex_get_elem(b, esz, (j & ~1) + ((imm >> j) & 1));
+            break;
+        case EVEX_PERM_PERMILPS_V:  /* Select4(SRC1[lane], SRC2[j][1:0]) */
+            v = evex_get_elem(a, esz, l0 + (evex_get_elem(b, esz, j) & 3));
+            break;
+        case EVEX_PERM_PERMILPD_V:  /* SRC2[j][1] selects the qword of the lane */
+            v = evex_get_elem(a, esz, (j & ~1) + ((evex_get_elem(b, esz, j) >> 1) & 1));
+            break;
+        case EVEX_PERM_PERM:        /* SRC2[SRC1[j] mod KL] */
+            v = evex_get_elem(b, esz, evex_get_elem(a, esz, j) & (n - 1));
+            break;
+        case EVEX_PERM_PERMQ_I:     /* per 256 bits: imm8[2(j mod 4)+1:2(j mod 4)] */
+            v = evex_get_elem(b, esz, (j & ~3) + ((imm >> (2 * (j & 3))) & 3));
+            break;
+        case EVEX_PERM_PERMI2:      /* DEST[j] bit log2(KL): SRC2, else SRC1 */
+            id = evex_get_elem(c, esz, j);
+            v = evex_get_elem((id & n) ? b : a, esz, id & (n - 1));
+            break;
+        case EVEX_PERM_PERMT2:      /* SRC1[j] bit log2(KL): SRC2, else DEST */
+            id = evex_get_elem(a, esz, j);
+            v = evex_get_elem((id & n) ? b : c, esz, id & (n - 1));
+            break;
+        case EVEX_PERM_ALIGN:       /* (SRC1:SRC2) >> (imm8 mod KL) elements */
+            sel = j + (imm & (n - 1));
+            v = sel < n ? evex_get_elem(b, esz, sel) : evex_get_elem(a, esz, sel - n);
+            break;
+        case EVEX_PERM_SHUF128:     /* 128-bit chunks: low half of the result from SRC1 */
+            ch = j / lane;
+            if (vl == 32) {
+                sel = (imm >> ch) & 1;
+                v = evex_get_elem(ch == 0 ? a : b, esz, sel * lane + k);
+            } else {
+                sel = (imm >> (2 * ch)) & 3;
+                v = evex_get_elem(ch < 2 ? a : b, esz, sel * lane + k);
+            }
+            break;
+        default:
+            g_assert_not_reached();
+        }
+        evex_set_elem(&r, oesz, j, v);
+    }
+    memcpy(d, &r, obytes);
+}
+#endif /* __Use_Original_Qemu (U211) */

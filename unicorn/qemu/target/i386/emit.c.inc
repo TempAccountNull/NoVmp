@@ -1419,6 +1419,52 @@ static void gen_EVEX_VFMAS(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     fn(tcg_ctx, cpu_env, OP_PTR0, a, b, c, tcg_constant_i32(tcg_ctx, even));
 }
 #endif /* __Use_Original_Qemu (U200) */
+#if __Use_Original_Qemu != 1 /* ours (U211) */
+
+/*
+ * NoVmp (ledger U211): EVEX permutes / shuffles / unpacks through helper_evex_perm: op[0]
+ * the destination (or the masking scratch), op[1] SRC1 = EVEX.vvvv (absent in the
+ * two-operand forms), op[2] SRC2 = r/m ({1toN} replicated by gen_evex_load); the
+ * destination register as it was before the instruction is passed for VPERMI2/VPERMT2.
+ */
+static void gen_evex_perm(DisasContext *s, X86DecodedInsn *decode, int op, int aux)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pc = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n >= 0 ? decode->op[0].n : 0));
+    TCGv_ptr pa = decode->op[1].unit == X86_OP_SSE ? OP_PTR1 : pc;
+
+    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR2, pc,
+                         tcg_constant_i32(tcg_ctx,
+                                          EVEX_PERM_DESC(op, decode->immediate,
+                                                         vector_len(s, decode),
+                                                         s->evex_esz, aux)));
+    tcg_temp_free_ptr(tcg_ctx, pc);
+}
+
+#define EVEX_PERM_GEN(uname, opc)                                                     \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    gen_evex_perm(s, decode, opc, 0);                                                \
+}
+EVEX_PERM_GEN(UNPCKL, EVEX_PERM_UNPCKL)
+EVEX_PERM_GEN(UNPCKH, EVEX_PERM_UNPCKH)
+EVEX_PERM_GEN(VPSHUFD, EVEX_PERM_PSHUFD)
+EVEX_PERM_GEN(VPERMILPD_I, EVEX_PERM_PERMILPD_I)
+EVEX_PERM_GEN(VPERMILPS_V, EVEX_PERM_PERMILPS_V)
+EVEX_PERM_GEN(VPERMILPD_V, EVEX_PERM_PERMILPD_V)
+EVEX_PERM_GEN(VPERM, EVEX_PERM_PERM)
+EVEX_PERM_GEN(VPERMQ_I, EVEX_PERM_PERMQ_I)
+EVEX_PERM_GEN(VPERMI2, EVEX_PERM_PERMI2)
+EVEX_PERM_GEN(VPERMT2, EVEX_PERM_PERMT2)
+EVEX_PERM_GEN(VALIGN, EVEX_PERM_ALIGN)
+EVEX_PERM_GEN(VSHUF128, EVEX_PERM_SHUF128)
+
+/* VSHUFPS (NP) / VSHUFPD (66) */
+static void gen_EVEX_VSHUFP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_perm(s, decode, (s->prefix & PREFIX_DATA) ? EVEX_PERM_SHUFPD : EVEX_PERM_SHUFPS, 0);
+}
+#endif /* __Use_Original_Qemu (U211) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
