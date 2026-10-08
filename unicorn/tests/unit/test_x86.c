@@ -7844,6 +7844,336 @@ static void test_x86_cet_shadow_stack_paging(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * ---- NoVmp U127-U133: VEX-encoded opmask instructions (EVEX milestone K) ----
+ * Expected values come from the independent SDM model Emulator/tools/isa/ref_opmask.py
+ * (x86_opmask_vectors.inc): KAND/KANDN/KOR/KXOR/KXNOR/KADD (B/W/D/Q), KUNPCKBW/WD/DQ,
+ * KNOT, KORTEST, KTEST, KMOV (k/m, m, r32/r64 both ways), KSHIFTL/KSHIFTR.
+ */
+#include "x86_opmask_vectors.inc"
+
+#define KT_DATA 0x200000
+#define KT_ALL (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW)
+
+typedef struct KtCfg {
+    int avx512;               /* UC_CTL_X86_AVX512 mask (0 = off) */
+    int set_xcr0;             /* write UC_X86_REG_XCR0 = xcr0 after init */
+    uint64_t xcr0;
+    uint64_t cr0_or;          /* bits OR-ed into CR0 (TS = 8) */
+    uint64_t cr4_clear;       /* bits cleared in CR4 (OSXSAVE = 1 << 18) */
+    const uc_x86_cpuid *prof; /* UC_CTL_X86_CPUID profile */
+    size_t nprof;
+    int strict;               /* UC_CTL_X86_CPUID_STRICT */
+} KtCfg;
+
+/* Run one vector; returns the exception vector (6 #UD, 7 #NM, ...) or -1, state in out */
+static int kt_run(const struct x86_kvec *t, const KtCfg *cfg, struct x86_kvec *out)
+{
+    uc_engine *uc;
+    uc_hook hook;
+    X86IntrCapture cap = { 0 };
+    uc_err err;
+    int i, vec;
+
+    *out = *t;
+    OK(uc_open(UC_ARCH_X86, t->mode == 64 ? UC_MODE_64 : UC_MODE_32, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (cfg->avx512) {
+        OK(uc_ctl_set_x86_avx512(uc, cfg->avx512));
+    }
+    if (cfg->nprof) {
+        OK(uc_ctl_set_x86_cpuid(uc, cfg->prof, cfg->nprof));
+    }
+    if (cfg->strict) {
+        OK(uc_ctl_set_x86_cpuid_strict(uc, 1));
+    }
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, KT_DATA, 0x1000, UC_PROT_ALL));
+    OK(uc_hook_add(uc, &hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &cap, 1, 0));
+    OK(uc_mem_write(uc, code_start, t->code, t->code_len));
+    OK(uc_mem_write(uc, KT_DATA, t->mem, sizeof(t->mem)));
+    for (i = 0; i < 8; i++) {
+        OK(uc_reg_write(uc, UC_X86_REG_K0 + i, &t->k[i]));
+    }
+    if (t->mode == 64) {
+        uint64_t rsi = KT_DATA;
+        OK(uc_reg_write(uc, UC_X86_REG_RAX, &t->rax));
+        OK(uc_reg_write(uc, UC_X86_REG_R9, &t->r9));
+        OK(uc_reg_write(uc, UC_X86_REG_R10, &t->r10));
+        OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &t->rflags));
+        OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    } else {
+        uint32_t eax = (uint32_t)t->rax, efl = (uint32_t)t->rflags, esi = KT_DATA;
+        OK(uc_reg_write(uc, UC_X86_REG_EAX, &eax));
+        OK(uc_reg_write(uc, UC_X86_REG_EFLAGS, &efl));
+        OK(uc_reg_write(uc, UC_X86_REG_ESI, &esi));
+    }
+    if (cfg->set_xcr0) {
+        OK(uc_reg_write(uc, UC_X86_REG_XCR0, &cfg->xcr0));
+    }
+    if (cfg->cr0_or) {
+        uint64_t cr0 = 0;
+        OK(uc_reg_read(uc, UC_X86_REG_CR0, &cr0));
+        cr0 |= cfg->cr0_or;
+        OK(uc_reg_write(uc, UC_X86_REG_CR0, &cr0));
+    }
+    if (cfg->cr4_clear) {
+        uint64_t cr4 = 0;
+        OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
+        cr4 &= ~cfg->cr4_clear;
+        OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    }
+    err = uc_emu_start(uc, code_start, code_start + t->code_len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        vec = 6;
+    } else {
+        OK(err);
+        vec = cap.count ? (int)cap.intno : -1;
+    }
+    for (i = 0; i < 8; i++) {
+        OK(uc_reg_read(uc, UC_X86_REG_K0 + i, &out->ek[i]));
+    }
+    if (t->mode == 64) {
+        OK(uc_reg_read(uc, UC_X86_REG_RAX, &out->erax));
+        OK(uc_reg_read(uc, UC_X86_REG_R9, &out->er9));
+        OK(uc_reg_read(uc, UC_X86_REG_R10, &out->er10));
+        OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &out->erflags));
+    } else {
+        uint32_t eax = 0, efl = 0;
+        OK(uc_reg_read(uc, UC_X86_REG_EAX, &eax));
+        OK(uc_reg_read(uc, UC_X86_REG_EFLAGS, &efl));
+        out->erax = eax;
+        out->erflags = efl;
+        out->er9 = t->er9;
+        out->er10 = t->er10;
+    }
+    OK(uc_mem_read(uc, KT_DATA, out->emem, sizeof(out->emem)));
+    OK(uc_close(uc));
+    return vec;
+}
+
+/* the state after a run equals the vector's expectation (or, unchanged = 1, its input) */
+static void kt_check_state(const struct x86_kvec *t, const struct x86_kvec *o, int unchanged)
+{
+    int i;
+    uint64_t rf_mask = 0xcd5; /* OF DF SF ZF AF PF CF (ignore RF/TF/IF bookkeeping) */
+
+    for (i = 0; i < 8; i++) {
+        uint64_t exp = unchanged ? t->k[i] : t->ek[i];
+        TEST_CHECK_(o->ek[i] == exp, "%s: k%d = %016llx, expected %016llx", t->name, i,
+                    (unsigned long long)o->ek[i], (unsigned long long)exp);
+    }
+    TEST_CHECK_(o->erax == (unchanged ? t->rax : t->erax), "%s: rax = %016llx", t->name,
+                (unsigned long long)o->erax);
+    TEST_CHECK_(o->er9 == (unchanged ? t->r9 : t->er9), "%s: r9", t->name);
+    TEST_CHECK_(o->er10 == (unchanged ? t->r10 : t->er10), "%s: r10 = %016llx", t->name,
+                (unsigned long long)o->er10);
+    TEST_CHECK_((o->erflags & rf_mask) == ((unchanged ? t->rflags : t->erflags) & rf_mask),
+                "%s: rflags = %llx, expected %llx", t->name, (unsigned long long)o->erflags,
+                (unsigned long long)(unchanged ? t->rflags : t->erflags));
+    TEST_CHECK_(memcmp(o->emem, unchanged ? t->mem : t->emem, sizeof(o->emem)) == 0,
+                "%s: memory", t->name);
+}
+
+/* every form, every vector: values, flags, memory sizes, zero extension (64- and 32-bit) */
+static void test_x86_opmask_vectors(void)
+{
+    static const KtCfg all = { KT_ALL };
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_kvecs) / sizeof(x86_kvecs[0]); i++) {
+        const struct x86_kvec *t = &x86_kvecs[i];
+        struct x86_kvec o;
+        int vec = kt_run(t, &all, &o);
+
+        TEST_CHECK_(vec == -1, "%s executes (vector %d)", t->name, vec);
+        kt_check_state(t, &o, 0);
+    }
+}
+
+/* reserved encodings #UD with everything enabled (and stay #UD, not #NM, with CR0.TS = 1) */
+static void test_x86_opmask_ud(void)
+{
+    static const KtCfg all = { KT_ALL };
+    static const KtCfg ts = { KT_ALL, 0, 0, 8 };
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_kuds) / sizeof(x86_kuds[0]); i++) {
+        const struct x86_kud *u = &x86_kuds[i];
+        struct x86_kvec t, o;
+
+        memset(&t, 0, sizeof(t));
+        t.name = u->name;
+        memcpy(t.code, u->code, sizeof(t.code));
+        t.code_len = u->code_len;
+        t.mode = u->mode;
+        t.rflags = t.erflags = 0x202;
+        TEST_CHECK_(kt_run(&t, &all, &o) == 6, "#UD: %s", u->name);
+        TEST_CHECK_(kt_run(&t, &ts, &o) == 6, "#UD with CR0.TS = 1: %s", u->name);
+    }
+}
+
+/*
+ * CPUID gating per form (SDM Vol2A: B forms AVX512DQ, W forms AVX512F except KADDW/KTESTW
+ * AVX512DQ, D/Q forms AVX512BW): the first vector of every form under each feature mask;
+ * a #UD leaves the state untouched.
+ */
+static void test_x86_opmask_features(void)
+{
+    static const int masks[] = {
+        0, UC_X86_AVX512_F, UC_X86_AVX512_F | UC_X86_AVX512_DQ,
+        UC_X86_AVX512_F | UC_X86_AVX512_BW, KT_ALL,
+    };
+    size_t i, j;
+
+    for (i = 0; i < sizeof(x86_kvecs) / sizeof(x86_kvecs[0]); i++) {
+        const struct x86_kvec *t = &x86_kvecs[i];
+
+        if (!t->first) {
+            continue;
+        }
+        for (j = 0; j < sizeof(masks) / sizeof(masks[0]); j++) {
+            KtCfg cfg = { masks[j] };
+            struct x86_kvec o;
+            int runs = masks[j] != 0 && (t->feat & masks[j]) != 0;
+            int vec = kt_run(t, &cfg, &o);
+
+            TEST_CHECK_(vec == (runs ? -1 : 6), "%s with AVX-512 mask %d: vector %d",
+                        t->name, masks[j], vec);
+            kt_check_state(t, &o, !runs);
+        }
+    }
+}
+
+/*
+ * State requirements (SDM Vol2A Tables 2-39, 2-65, 2-66): CR4.OSXSAVE = 1 and XCR0 =
+ * 111xxx11b, else #UD; CR0.TS = 1 -> #NM; a strict CPUID profile hiding the features
+ * -> #UD (non-strict: executes, as on hardware where only the CPUID bit is hidden).
+ */
+static void test_x86_opmask_state(void)
+{
+    static const uc_x86_cpuid noavx512[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x000b0671, 0x00800800, 0x7ffafbbf, 0xbfebfbff},
+        {0x7, 0, 0, 0x239c27eb, 0x98c007bc, 0xfc184410},
+        {0xd, 0, 0xe7, 0xa88, 0xa88, 0},
+    };
+    static const struct {
+        uint64_t xcr0;
+        int runs;
+    } xcr0s[] = {
+        {0xe7, 1}, {0xe3, 1},      /* XCR0[2] is not required (111xxx11b) */
+        {0x07, 0}, {0x03, 0}, {0x63, 0}, {0xa3, 0}, {0xc3, 0}, {0xe1, 0}, {0xe2, 0},
+    };
+    size_t i, j;
+
+    for (i = 0; i < sizeof(x86_kvecs) / sizeof(x86_kvecs[0]); i++) {
+        const struct x86_kvec *t = &x86_kvecs[i];
+        struct x86_kvec o;
+        int vec;
+
+        if (!t->first) {
+            continue;
+        }
+        for (j = 0; j < sizeof(xcr0s) / sizeof(xcr0s[0]); j++) {
+            KtCfg cfg = { KT_ALL, 1, xcr0s[j].xcr0 };
+
+            vec = kt_run(t, &cfg, &o);
+            TEST_CHECK_(vec == (xcr0s[j].runs ? -1 : 6), "%s with XCR0 = %llx: vector %d",
+                        t->name, (unsigned long long)xcr0s[j].xcr0, vec);
+            kt_check_state(t, &o, !xcr0s[j].runs);
+        }
+        {
+            KtCfg cfg = { KT_ALL, 0, 0, 0, 1ULL << 18 };   /* CR4.OSXSAVE = 0 */
+            vec = kt_run(t, &cfg, &o);
+            TEST_CHECK_(vec == 6, "%s with CR4.OSXSAVE = 0: vector %d", t->name, vec);
+            kt_check_state(t, &o, 1);
+        }
+        {
+            KtCfg cfg = { KT_ALL, 0, 0, 8 };                /* CR0.TS = 1 */
+            vec = kt_run(t, &cfg, &o);
+            TEST_CHECK_(vec == 7, "%s with CR0.TS = 1: vector %d (#NM)", t->name, vec);
+            kt_check_state(t, &o, 1);
+        }
+        {
+            KtCfg cfg = { KT_ALL, 0, 0, 0, 0, noavx512, 4, 1 };
+            vec = kt_run(t, &cfg, &o);
+            TEST_CHECK_(vec == 6, "%s strict profile without AVX-512: vector %d", t->name, vec);
+            kt_check_state(t, &o, 1);
+        }
+        {
+            KtCfg cfg = { KT_ALL, 0, 0, 0, 0, noavx512, 4, 0 };
+            vec = kt_run(t, &cfg, &o);
+            TEST_CHECK_(vec == -1, "%s non-strict profile without AVX-512: vector %d",
+                        t->name, vec);
+            kt_check_state(t, &o, 0);
+        }
+    }
+}
+
+/* NoVmp U128: UC_CTL_X86_AVX512 is a mask; DQ/BW appear in CPUID.(7,0):EBX; XSETBV path */
+static void test_x86_opmask_optin(void)
+{
+    static const struct {
+        int set, get;
+        uint32_t ebx;
+    } m[] = {
+        {UC_X86_AVX512_F, 1, TEST_X86_CPUID_7_0_EBX_AVX512F},
+        {UC_X86_AVX512_DQ, 3, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ},
+        {UC_X86_AVX512_BW, 5, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512BW},
+        {KT_ALL, 7, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ |
+                        TEST_X86_CPUID_7_0_EBX_AVX512BW},
+    };
+    const uint32_t all = TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ |
+                         TEST_X86_CPUID_7_0_EBX_AVX512CD | TEST_X86_CPUID_7_0_EBX_AVX512BW |
+                         TEST_X86_CPUID_7_0_EBX_AVX512VL;
+    uc_engine *uc;
+    size_t i;
+    int on = -1;
+    M0 mm;
+    uint32_t r[4];
+
+    for (i = 0; i < sizeof(m) / sizeof(m[0]); i++) {
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+        OK(uc_ctl_set_x86_avx512(uc, m[i].set));
+        OK(uc_ctl_get_x86_avx512(uc, &on));
+        TEST_CHECK(on == m[i].get);
+        OK(uc_close(uc));
+    }
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 8));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, -1));
+    OK(uc_ctl_get_x86_avx512(uc, &on));
+    TEST_CHECK(on == 0);
+    OK(uc_close(uc));
+
+    for (i = 0; i < sizeof(m) / sizeof(m[0]); i++) {
+        memset(&mm, 0, sizeof(mm));
+        mm.mode = UC_MODE_64;
+        mm.pc = code_start;
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &mm.uc));
+        OK(uc_ctl_set_cpu_model(mm.uc, UC_CPU_X86_MAX));
+        OK(uc_ctl_set_x86_avx512(mm.uc, m[i].set));
+        OK(uc_mem_map(mm.uc, code_start, code_len, UC_PROT_ALL));
+        OK(uc_mem_map(mm.uc, M0_DATA, 0x4000, UC_PROT_ALL));
+        OK(uc_hook_add(mm.uc, &mm.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &mm.cap, 1, 0));
+        m0_cpuid(&mm, 7, 0, r);
+        TEST_CHECK_((r[1] & all) == m[i].ebx, "mask %d: CPUID.7.0:EBX = %08x", m[i].set, r[1]);
+        /* the flag follows XSETBV: KANDW k1, k2, k3 */
+        if (i == 0) {
+            TEST_CHECK(m0_run(&mm, "\xc5\xec\x41\xcb", 4) == -1);
+            TEST_CHECK(m0_xsetbv(&mm, 0, 7) == -1);
+            TEST_CHECK(m0_run(&mm, "\xc5\xec\x41\xcb", 4) == 6);
+            TEST_CHECK(m0_xsetbv(&mm, 0, M0_XCR0_AVX512) == -1);
+            TEST_CHECK(m0_run(&mm, "\xc5\xec\x41\xcb", 4) == -1);
+            /* KANDB needs AVX512DQ */
+            TEST_CHECK(m0_run(&mm, "\xc5\xed\x41\xcb", 4) == 6);
+        }
+        OK(uc_close(mm.uc));
+    }
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7989,4 +8319,9 @@ TEST_LIST = {
     {"test_x86_cet_call_ret", test_x86_cet_call_ret},
     {"test_x86_cet_ibt", test_x86_cet_ibt},
     {"test_x86_cet_shadow_stack_paging", test_x86_cet_shadow_stack_paging},
+    {"test_x86_opmask_optin", test_x86_opmask_optin},
+    {"test_x86_opmask_vectors", test_x86_opmask_vectors},
+    {"test_x86_opmask_ud", test_x86_opmask_ud},
+    {"test_x86_opmask_features", test_x86_opmask_features},
+    {"test_x86_opmask_state", test_x86_opmask_state},
     {NULL, NULL}};

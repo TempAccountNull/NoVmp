@@ -41,6 +41,9 @@ rem plan 1.15a: expected-value ("SDM vector") cases - Unicorn only, compared to 
 rem results; any difference or unparsable line fails. The deliberately wrong file must be caught.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\expect_selftest.txt" --expect-only
 call :expect_bad
+rem plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only
+rem with the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_opmask.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
