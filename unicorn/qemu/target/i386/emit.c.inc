@@ -2407,6 +2407,14 @@ static void gen_EVEX_VGETEXP(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_evex_fp1(s, decode, 2, 2, 0);
 }
 #endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+
+/* packed: V, W, I (source op1); scalar: V, H, W, I */
+static void gen_EVEX_VGETMANT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 3, 1, decode->immediate);
+}
+#endif /* __Use_Original_Qemu (U238) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

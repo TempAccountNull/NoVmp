@@ -8101,6 +8101,71 @@ static uint64_t evex_getexp(CPUX86State *env, const EvFmt *f, uint64_t x)
     return evf_from_int(f, (int64_t)((x & f->emask) >> f->fbits) - f->bias);
 }
 #endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+
+/*
+ * NoVmp (ledger U238): VGETMANTPS/PD/SS/SD (SDM Vol2C pseudocode getmant_fp64, Table 5-16,
+ * Figure 5-15): imm8[1:0] interval ([1,2), [1/2,2), [1/2,1), [3/4,3/2)), imm8[3:2] sign
+ * control (SC[0]: positive result; SC[1]: a negative source gives QNaN indefinite and IE).
+ * The result is exact (no PE). Exceptions: IE, DE.
+ */
+static uint64_t evex_getmant(CPUX86State *env, const EvFmt *f, uint64_t x, int imm)
+{
+    bool sc0 = imm & 4, sc1 = imm & 8, neg = x & f->sign;
+    uint64_t one = f->one, fr = x & f->fmask, sign = sc0 ? 0 : (x & f->sign);
+    uint64_t signed_one = sc0 ? one : (one | f->sign);
+    int64_t uexp;
+    int e;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x) && (!fr || (env->mxcsr & 0x40))) {        /* zero */
+        return neg ? signed_one : one;
+    }
+    if (evf_isinf(f, x)) {
+        if (!neg) {
+            return one;
+        }
+        if (sc1) {
+            float_raise(float_flag_invalid, &env->sse_status);
+            return f->indef;
+        }
+        return signed_one;
+    }
+    if (neg && sc1) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return f->indef;
+    }
+    if (evf_expzero(f, x)) {                                        /* denormal, DAZ = 0 */
+        int sh = f->fbits - (63 - clz64(fr));                       /* shifts to the J bit */
+
+        fr = (fr << sh) & f->fmask;
+        uexp = -sh;
+        float_raise(float_flag_input_denormal_used, &env->sse_status);
+    } else {
+        uexp = (int64_t)((x & f->emask) >> f->fbits) - f->bias;
+    }
+    switch (imm & 3) {
+    case 0:
+        e = f->bias;
+        break;
+    case 1:
+        e = (uexp & 1) ? f->bias - 1 : f->bias;
+        break;
+    case 2:
+        e = f->bias - 1;
+        break;
+    default:
+        e = (fr & (f->fmask ^ (f->fmask >> 1))) ? f->bias - 1 : f->bias;
+        break;
+    }
+    return sign | ((uint64_t)e << f->fbits) | fr;
+}
+#endif /* __Use_Original_Qemu (U238) */
 #if __Use_Original_Qemu != 1 /* ours (U236) */
 
 /*
@@ -8121,6 +8186,10 @@ static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
     case 2:
         return evex_getexp(env, f, x);
 #endif /* __Use_Original_Qemu (U237) */
+#if __Use_Original_Qemu != 1 /* ours (U238) */
+    case 3:
+        return evex_getmant(env, f, x, imm);
+#endif /* __Use_Original_Qemu (U238) */
     default:
         g_assert_not_reached();
     }
