@@ -47,6 +47,10 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_opmask.txt" --avx512 
 rem Intel AMX (ledger U170-U180) vs the SDM model (ref_amx.py), Unicorn only with the AMX opt-in
 rem (the host has no AMX); tile programs store their results to memory.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_amx.txt" --amx --xcr0 0x60007
+rem plan 1.15d milestone M1: EVEX instructions (moves, integer/logic, FP with {er}, compares
+rem into k, broadcasts; masking, {1toN}, disp8*N, fault suppression, #UD) vs the SDM model
+rem ref_evex_m1.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m1.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
