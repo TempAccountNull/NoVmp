@@ -6941,3 +6941,59 @@ void helper_evex_pternlog(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ZMM
     }
 }
 #endif /* __Use_Original_Qemu (U159) */
+#if __Use_Original_Qemu != 1 /* ours (U197) */
+
+/*
+ * NoVmp (ledger U197): VCMPPS/PD/SS/SD into an opmask register (SDM Vol2A CMPPS/CMPPD,
+ * Table 3-8 "Comparison Predicate for CMPPD and CMPPS Instructions"): bit j = SRC1[j] OP5
+ * SRC2[j] for the n elements (desc bits 15:8; size log2 in bits 1:0), OP5 = imm8[4:0] in
+ * desc bits 20:16. Predicates 0-15 give the true relations among {A > B, A < B, A = B,
+ * unordered}; predicate p + 16 has the same relations with the opposite signalling
+ * behaviour. A signalling predicate raises #IA for a QNaN operand as well (else only for
+ * an SNaN); denormal operands set DE unless DAZ. Bits n..63 of the result are 0.
+ */
+uint64_t helper_evex_fcmp(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    /* bit 0: A > B, bit 1: A < B, bit 2: A = B, bit 3: unordered (Table 3-8, rows 0H-FH) */
+    static const uint8_t rel[16] = {
+        0x4, 0x2, 0x6, 0x8, 0xb, 0xd, 0x9, 0x7,
+        0xc, 0xa, 0xe, 0x0, 0x3, 0x5, 0x1, 0xf,
+    };
+    /* signalling ("Signals #IA on QNAN" = Yes) among predicates 0-15: 1, 2, 5, 6, 9, A, D, E */
+    static const uint16_t sig16 = 0x6666;
+    int esz = desc & 3, n = (desc >> 8) & 0xff, pred = (desc >> 16) & 31, i;
+    bool sig = ((sig16 >> (pred & 15)) & 1) ^ (pred >> 4);
+    uint64_t r = 0;
+
+    for (i = 0; i < n; i++) {
+        FloatRelation fr;
+        int bit;
+
+        if (esz == MO_64) {
+            fr = sig ? float64_compare(a->ZMM_D(i), b->ZMM_D(i), &env->sse_status)
+                     : float64_compare_quiet(a->ZMM_D(i), b->ZMM_D(i), &env->sse_status);
+        } else {
+            fr = sig ? float32_compare(a->ZMM_S(i), b->ZMM_S(i), &env->sse_status)
+                     : float32_compare_quiet(a->ZMM_S(i), b->ZMM_S(i), &env->sse_status);
+        }
+        switch (fr) {
+        case float_relation_greater:
+            bit = 1;
+            break;
+        case float_relation_less:
+            bit = 2;
+            break;
+        case float_relation_equal:
+            bit = 4;
+            break;
+        default:
+            bit = 8;
+            break;
+        }
+        if (rel[pred & 15] & bit) {
+            r |= 1ull << i;
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U197) */

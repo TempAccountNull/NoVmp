@@ -1216,6 +1216,23 @@ static void gen_EVEX_VUCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     set_cc_op(s, CC_OP_EFLAGS);
 }
 #endif /* __Use_Original_Qemu (U196) */
+#if __Use_Original_Qemu != 1 /* ours (U197) */
+
+/*
+ * NoVmp (ledger U197): VCMPPS/PD (U197) and VCMPSS/SD (U198) into an opmask register:
+ * helper_evex_fcmp with the predicate imm8[4:0] (imm8[7:5] reserved, ignored as in the
+ * VEX forms); the AND with k2 and DEST[MAX_KL-1:KL] := 0 are done by gen_evex_insn.
+ */
+static void gen_EVEX_VCMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = EVEX_DESC(s->evex_esz, evex_nelem(s, decode)) |
+                    ((uint32_t)(decode->immediate & 31) << 16);
+
+    gen_helper_evex_fcmp(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, desc));
+}
+#endif /* __Use_Original_Qemu (U197) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
