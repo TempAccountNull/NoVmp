@@ -125,3 +125,90 @@ static void gen_FP16_FMA(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     gen_fp16_call(s, decode, op, imm, 0);
 }
 #endif /* __Use_Original_Qemu (U334) */
+#if __Use_Original_Qemu != 1 /* ours (U335) */
+
+/* NoVmp (ledger U335): conversions (the scalar forms share the packed generators) */
+FP16_GEN_CVT(CVTPH2PS, FP16_T_F16, FP16_T_F32, 0)       /* VCVTPH2PSX, VCVTSH2SS */
+FP16_GEN_CVT(CVTPH2PD, FP16_T_F16, FP16_T_F64, 0)       /* VCVTPH2PD, VCVTSH2SD */
+FP16_GEN_CVT(CVTPS2PH, FP16_T_F32, FP16_T_F16, 0)       /* VCVTPS2PHX, VCVTSS2SH */
+FP16_GEN_CVT(CVTPD2PH, FP16_T_F64, FP16_T_F16, 0)       /* VCVTPD2PH, VCVTSD2SH */
+FP16_GEN_CVT(CVTPH2W, FP16_T_F16, FP16_T_I16, 0)
+FP16_GEN_CVT(CVTTPH2W, FP16_T_F16, FP16_T_I16, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTPH2UW, FP16_T_F16, FP16_T_U16, 0)
+FP16_GEN_CVT(CVTTPH2UW, FP16_T_F16, FP16_T_U16, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTPH2DQ, FP16_T_F16, FP16_T_I32, 0)
+FP16_GEN_CVT(CVTTPH2DQ, FP16_T_F16, FP16_T_I32, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTPH2UDQ, FP16_T_F16, FP16_T_U32, 0)
+FP16_GEN_CVT(CVTTPH2UDQ, FP16_T_F16, FP16_T_U32, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTPH2QQ, FP16_T_F16, FP16_T_I64, 0)
+FP16_GEN_CVT(CVTTPH2QQ, FP16_T_F16, FP16_T_I64, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTPH2UQQ, FP16_T_F16, FP16_T_U64, 0)
+FP16_GEN_CVT(CVTTPH2UQQ, FP16_T_F16, FP16_T_U64, FP16_D_TRUNC)
+FP16_GEN_CVT(CVTW2PH, FP16_T_I16, FP16_T_F16, 0)
+FP16_GEN_CVT(CVTUW2PH, FP16_T_U16, FP16_T_F16, 0)
+FP16_GEN_CVT(CVTDQ2PH, FP16_T_I32, FP16_T_F16, 0)
+FP16_GEN_CVT(CVTUDQ2PH, FP16_T_U32, FP16_T_F16, 0)
+FP16_GEN_CVT(CVTQQ2PH, FP16_T_I64, FP16_T_F16, 0)
+FP16_GEN_CVT(CVTUQQ2PH, FP16_T_U64, FP16_T_F16, 0)
+
+/* VCVT[T]SH2[U]SI r32/r64, xmm/m16: the result goes to T0 (written back as op0) */
+static void gen_fp16_cvt2i(DisasContext *s, X86DecodedInsn *decode, bool uns, bool trunc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool q = decode->op[0].ot == MO_64;
+    int dt = uns ? (q ? FP16_T_U64 : FP16_T_U32) : (q ? FP16_T_I64 : FP16_T_I32);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    gen_helper_fp16_cvt2i(tcg_ctx, t, cpu_env, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, FP16_DESC(FP16_OP_CVT, 1, fp16_rc(s)) |
+                                           FP16_D_IMM(FP16_CVT(FP16_T_F16, dt)) |
+                                           (trunc ? FP16_D_TRUNC : 0)));
+    tcg_gen_trunc_i64_tl(tcg_ctx, s->T0, t);
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+static void gen_FP16_CVTSH2SI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvt2i(s, decode, false, false);
+}
+
+static void gen_FP16_CVTTSH2SI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvt2i(s, decode, false, true);
+}
+
+static void gen_FP16_CVTSH2USI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvt2i(s, decode, true, false);
+}
+
+static void gen_FP16_CVTTSH2USI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvt2i(s, decode, true, true);
+}
+
+/* VCVT[U]SI2SH xmm1, xmm2, r/m32/64 (the integer source is in T1) */
+static void gen_fp16_cvtsi(DisasContext *s, X86DecodedInsn *decode, bool uns)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool q = decode->op[2].ot == MO_64;
+    int st = uns ? (q ? FP16_T_U64 : FP16_T_U32) : (q ? FP16_T_I64 : FP16_T_I32);
+    TCGv_i64 t = tcg_temp_new_i64(tcg_ctx);
+
+    tcg_gen_extu_tl_i64(tcg_ctx, t, s->T1);
+    gen_helper_fp16_cvtsi(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, t,
+                          tcg_constant_i32(tcg_ctx, FP16_DESC(FP16_OP_CVT, 1, fp16_rc(s)) |
+                                           FP16_D_IMM(FP16_CVT(st, FP16_T_F16))));
+    tcg_temp_free_i64(tcg_ctx, t);
+}
+
+static void gen_FP16_CVTSI2SH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvtsi(s, decode, false);
+}
+
+static void gen_FP16_CVTUSI2SH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_fp16_cvtsi(s, decode, true);
+}
+#endif /* __Use_Original_Qemu (U335) */
