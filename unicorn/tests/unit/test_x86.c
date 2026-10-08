@@ -11482,6 +11482,205 @@ static void test_x86_avx512_m4_bits(void)
     }
 }
 
+/*
+ * ---- NoVmp U230-U241: EVEX milestone M2 conversions / FP specials (prefix cv_) ----
+ * Engine paths around them (U230: opmask per destination element when source and
+ * destination element sizes differ, destination narrower than VL, scalar merge under a
+ * mask; masked 16-bit stores; EVEX.W of GPR forms outside 64-bit mode; #XM). Values are
+ * covered by Emulator/data/cases_evex_m2_cvt.txt (ref_evex_m2_cvt.py, independent model).
+ */
+static uint32_t cv_f32(float v)
+{
+    uint32_t u;
+    memcpy(&u, &v, 4);
+    return u;
+}
+
+static uint64_t cv_f64(double v)
+{
+    uint64_t u;
+    memcpy(&u, &v, 8);
+    return u;
+}
+
+/* VCVTPD2PS ymm1{k1}{z}, zmm2: one opmask bit per dword result, bits 511:256 zeroed */
+static void test_x86_evex_cvt_narrow(void)
+{
+    static const char merge[] = "\x62\xf1\xfd\x49\x5a\xca";
+    static const char zero[] = "\x62\xf1\xfd\xc9\x5a\xca";
+    uint64_t src[8], k = 0xA5;
+    uint32_t init[16], z[16];
+    EvCtx c;
+    int i, pass, ok;
+
+    for (pass = 0; pass < 2; pass++) {
+        ev_open(&c, UC_MODE_64, EV_ALL);
+        for (i = 0; i < 8; i++) {
+            src[i] = cv_f64((double)(i + 1));
+        }
+        for (i = 0; i < 16; i++) {
+            init[i] = 0x11111111u;
+        }
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, src));
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, init));
+        OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+        TEST_CHECK(ev_run(&c, pass ? zero : merge, 6) == -1);
+        ev_get_zmm(&c, 1, z);
+        ok = 1;
+        for (i = 0; i < 16; i++) {
+            uint32_t want = i >= 8 ? 0 : ((k >> i) & 1) ? cv_f32((float)(i + 1))
+                                                        : (pass ? 0 : 0x11111111u);
+            ok &= z[i] == want;
+        }
+        TEST_CHECK(ok);
+        TEST_MSG("pass %d: z[0..3] = %08x %08x %08x %08x z[8] = %08x", pass, z[0], z[1], z[2],
+                 z[3], z[8]);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* VCVTPS2PH [rax]{k1}, zmm2, 0: 16-bit elements stored per mask bit, fault suppression */
+static void test_x86_evex_cvt_ph_store(void)
+{
+    static const char code[] = "\x62\xf3\x7d\x49\x1d\x10\x00";
+    static const uint16_t half[8] = { 0x3C00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600, 0x4700,
+                                      0x4800 };
+    uint64_t base = EV_DATA + 0x4000 - 16, k;
+    uint32_t src[16];
+    uint16_t m[8], fill[8];
+    EvCtx c;
+    int i, r;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 16; i++) {
+        src[i] = cv_f32((float)(i + 1));
+    }
+    for (i = 0; i < 8; i++) {
+        fill[i] = 0xEEEE;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, src));
+    ev_set(&c, UC_X86_REG_RAX, base);
+    /* elements 0..7 mapped, 8..15 on the unmapped page: masked off, no fault */
+    OK(uc_mem_write(c.uc, base, fill, sizeof(fill)));
+    k = 0xB5;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, code, 7) == -1);
+    OK(uc_mem_read(c.uc, base, m, sizeof(m)));
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(m[i] == (((k >> i) & 1) ? half[i] : 0xEEEE));
+        TEST_MSG("word %d = %04x", i, m[i]);
+    }
+    /* an active element on the unmapped page: fault, nothing written */
+    OK(uc_mem_write(c.uc, base, fill, sizeof(fill)));
+    k = 0x1FF;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    r = ev_run(&c, code, 7);
+    TEST_CHECK(r <= -2);
+    TEST_MSG("run = %d", r);
+    OK(uc_mem_read(c.uc, base, m, sizeof(m)));
+    TEST_CHECK(memcmp(m, fill, sizeof(m)) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* VCVTSS2SD xmm1{k1}{z}, xmm2, xmm3: bits 127:64 from xmm2 also under the mask */
+static void test_x86_evex_cvt_scalar_merge(void)
+{
+    static const char code[] = "\x62\xf1\x6e\x89\x5a\xcb";
+    uint64_t z[8], k;
+    uint32_t s3[16];
+    EvCtx c;
+    int i, pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        ev_open(&c, UC_MODE_64, EV_ALL);
+        ev_put_zmm(&c, 1, 0x11111111);
+        ev_put_zmm(&c, 2, 0x22222222);
+        for (i = 0; i < 16; i++) {
+            s3[i] = cv_f32(1.5f);
+        }
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, s3));
+        k = pass;
+        OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+        TEST_CHECK(ev_run(&c, code, 6) == -1);
+        OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+        TEST_CHECK(z[0] == (pass ? cv_f64(1.5) : 0));
+        TEST_CHECK(z[1] == 0x2525252524242424ull);      /* dwords 2, 3 of ev_put_zmm(2) */
+        for (i = 2; i < 8; i++) {
+            TEST_CHECK(z[i] == 0);
+        }
+        TEST_MSG("pass %d: %016llx %016llx", pass, (unsigned long long)z[0],
+                 (unsigned long long)z[1]);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* EVEX.W of the GPR scalar conversions is ignored outside 64-bit mode */
+static void test_x86_evex_cvt_gpr_w(void)
+{
+    static const char ss2si_w1[] = "\x62\xf1\xfe\x08\x2d\xc2";   /* vcvtss2si eax/rax, xmm2 */
+    static const char si2sd_w1[] = "\x62\xf1\xef\x08\x2a\xc8";   /* vcvtsi2sd xmm1, xmm2, eax/rax */
+    static const char si2sd_w1_b[] = "\x62\xf1\xef\x18\x2a\xc8"; /* the same with EVEX.b */
+    uint32_t s2[16];
+    uint64_t z[8];
+    EvCtx c;
+    int i, mode, ax_reg;
+
+    for (i = 0; i < 16; i++) {
+        s2[i] = cv_f32(1099511627776.0f);                      /* 2^40 */
+    }
+    for (mode = 0; mode < 2; mode++) {
+        ev_open(&c, mode ? UC_MODE_64 : UC_MODE_32, EV_ALL);
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, s2));
+        ax_reg = mode ? UC_X86_REG_RAX : UC_X86_REG_EAX;
+        ev_set(&c, ax_reg, 0x1234);
+        TEST_CHECK(ev_run(&c, ss2si_w1, 6) == -1);
+        /* 32-bit: r32, 2^40 out of range -> integer indefinite; 64-bit: r64 = 2^40 */
+        TEST_CHECK(ev_get(&c, ax_reg) == (mode ? 0x10000000000ull : 0x80000000ull));
+        TEST_MSG("mode %d: eax = %llx", mode, (unsigned long long)ev_get(&c, ax_reg));
+        ev_set(&c, ax_reg, mode ? 0xFFFFFFFF00000005ull : 0xFFFFFFFBu);
+        TEST_CHECK(ev_run(&c, si2sd_w1, 6) == -1);
+        OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+        TEST_CHECK(z[0] == (mode ? cv_f64(-4294967291.0) : cv_f64(-5.0)));
+        /* EVEX.b: {er} only for the W1 (r/m64) form, which does not exist outside 64-bit mode */
+        TEST_CHECK(ev_run(&c, si2sd_w1_b, 6) == (mode ? -1 : 6));
+        OK(uc_close(c.uc));
+    }
+}
+
+/* VCVTPS2DQ zmm1, zmm2 with MXCSR.IM = 0: #XM for an active SNaN lane, none when masked off */
+static void test_x86_evex_cvt_xm(void)
+{
+    static const char plain[] = "\x62\xf1\x7d\x48\x5b\xca";
+    static const char masked[] = "\x62\xf1\x7d\x49\x5b\xca";    /* {k1} */
+    uint32_t s2[16], z[16], mxcsr = 0x1F00, mx = 0;
+    uint64_t k = ~(1ull << 3);
+    EvCtx c;
+    int i;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    for (i = 0; i < 16; i++) {
+        s2[i] = cv_f32((float)i);
+    }
+    s2[3] = 0x7FA00000u;                                         /* SNaN */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, s2));
+    ev_put_zmm(&c, 1, 0x11111111);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, plain, 6) == 19);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x11111111u && z[15] == 0x11111111u + 15 * 0x01010101u);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK((mx & 0x3F) == 1);
+    TEST_MSG("mxcsr = %x", mx);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(ev_run(&c, masked, 6) == -1);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[2] == 2 && z[3] == 0x11111111u + 3 * 0x01010101u && z[15] == 15);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK((mx & 0x3F) == 0);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -11667,4 +11866,9 @@ TEST_LIST = {
     {"test_x86_avx512cd_optin", test_x86_avx512cd_optin},
     {"test_x86_avx512cd_gating", test_x86_avx512cd_gating},
     {"test_x86_avx512_m4_bits", test_x86_avx512_m4_bits},
+    {"test_x86_evex_cvt_narrow", test_x86_evex_cvt_narrow},
+    {"test_x86_evex_cvt_ph_store", test_x86_evex_cvt_ph_store},
+    {"test_x86_evex_cvt_scalar_merge", test_x86_evex_cvt_scalar_merge},
+    {"test_x86_evex_cvt_gpr_w", test_x86_evex_cvt_gpr_w},
+    {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
     {NULL, NULL}};

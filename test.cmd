@@ -79,6 +79,10 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq.txt" --avx
 rem AVX512CD (ledger U320-U321): VPCONFLICTD/Q, VPLZCNTD/Q, VPBROADCASTMB2Q/MW2D vs the SDM
 rem model ref_evex_m3_cd.py, Unicorn only with the AVX-512 opt-in (F|DQ|BW|VL|CD).
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_cd.txt" --avx512 --xcr0 0xE7
+rem EVEX milestone M2 conversions / FP specials / shifts (ledger U230-U241): VCVT* (incl. the
+rem AVX512DQ QQ forms), VRCP14/VRSQRT14, VGETEXP, VGETMANT, VSCALEF, VFIXUPIMM, VRNDSCALE,
+rem VPSLL/VPSRL/VPSRA by xmm, VPROLV/VPRORV vs the SDM model ref_evex_m2_cvt.py, Unicorn only.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_cvt.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
