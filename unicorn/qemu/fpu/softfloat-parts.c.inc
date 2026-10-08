@@ -220,6 +220,10 @@ static void partsN(uncanon_normal)(FloatPartsN *p, float_status *s,
                 p->frac_lo &= ~round_mask;
             }
         } else if (unlikely(exp >= exp_max)) {
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+            /* inexact (and rounded_up) of the rounding with an unbounded exponent */
+            const int unbounded = flags;
+#endif /* __Use_Original_Qemu (U445) */
             flags |= float_flag_overflow;
             if (s->rebias_overflow) {
                 exp -= fmt->exp_re_bias;
@@ -241,6 +245,20 @@ static void partsN(uncanon_normal)(FloatPartsN *p, float_status *s,
                 exp = exp_max;
                 frac_clear(p);
             }
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+            /*
+             * NoVmp (ledger U445): x86 unmasked overflow (MXCSR.OM = 0). "If an
+             * inexact result occurs along with unmasked overflow ... the OE flag
+             * and the PE flag are set" (SDM Vol1 4.9.1.6), the result being the
+             * one rounded with an unbounded exponent: PE only when that rounding
+             * is inexact, not because the bounded result is +-inf / +-MAX.
+             * i5-13600K: MULPS 2^127 * 2 with OM = 0 -> #XM, MXCSR.OE only.
+             */
+            if (s->unmasked_overflow && !s->rebias_overflow) {
+                flags = float_flag_overflow |
+                        (unbounded & (float_flag_inexact | float_flag_rounded_up));
+            }
+#endif /* __Use_Original_Qemu (U445) */
         }
         frac_shr(p, frac_shift);
     } else if (unlikely(s->rebias_underflow)) {
@@ -264,6 +282,10 @@ static void partsN(uncanon_normal)(FloatPartsN *p, float_status *s,
         frac_clear(p);
     } else {
         bool is_tiny = s->tininess_before_rounding || exp < 0;
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+        /* the rounding with an unbounded exponent is inexact */
+        const bool unbounded_inexact = (p->frac_lo & round_mask) != 0;
+#endif /* __Use_Original_Qemu (U445) */
 
         if (!is_tiny) {
             FloatPartsN discard;
@@ -310,6 +332,31 @@ static void partsN(uncanon_normal)(FloatPartsN *p, float_status *s,
         frac_shr(p, frac_shift);
 
         if (is_tiny) {
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+            /*
+             * NoVmp (ledger U445): x86 unmasked underflow (MXCSR.UM = 0). "The
+             * underflow exception is reported when the result is non-zero tiny,
+             * regardless of inexactness" (SDM Vol1 4.9.1.5; tiny = the result
+             * rounded with an unbounded exponent is below the smallest normal,
+             * Table 4-12 note 1, i.e. detected after rounding as above), "If the
+             * underflow exception is not masked, the flush-to-zero bit is
+             * ignored" (10.2.3.3), and PE is that of the unbounded-exponent
+             * rounding (4.9.1.6). The value (not stored on #XM) stays the
+             * denormal. i5-13600K: MULPS 2^-100 * 2^-30 with UM = 0 -> #XM,
+             * MXCSR.UE only, also with FTZ = 1.
+             */
+            if (s->unmasked_underflow) {
+                flags = (flags & ~(float_flag_inexact | float_flag_rounded_up)) |
+                        float_flag_underflow |
+                        (unbounded_inexact ? float_flag_inexact : 0);
+                if (exp == 0 && frac_eqz(p)) {
+                    p->cls = float_class_zero;
+                }
+                p->exp = exp;
+                float_raise(flags, s);
+                return;
+            }
+#endif /* __Use_Original_Qemu (U445) */
             if (s->flush_to_zero) {
                 assert(s->ftz_detection == float_ftz_after_rounding);
                 flags |= float_flag_output_denormal;

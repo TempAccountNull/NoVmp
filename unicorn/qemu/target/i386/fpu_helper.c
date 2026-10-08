@@ -6303,6 +6303,15 @@ void update_mxcsr_status(CPUX86State *env)
      */
     set_use_first_nan(true, &env->sse_status);
 #endif /* __Use_Original_Qemu (U96) */
+#if __Use_Original_Qemu != 1 /* ours (U445) */
+    /*
+     * NoVmp (ledger U445): MXCSR.UM = 0 / MXCSR.OM = 0 change what the rounding
+     * reports (SDM Vol1 4.9.1.5, 4.9.1.6, 10.2.3.3): exact tiny results raise
+     * #U, FTZ is ignored, PE comes from the unbounded-exponent rounding.
+     */
+    env->sse_status.unmasked_underflow = !(mxcsr & (1 << 11));
+    env->sse_status.unmasked_overflow = !(mxcsr & (1 << 10));
+#endif /* __Use_Original_Qemu (U445) */
 }
 
 void update_mxcsr_from_sse_status(CPUX86State *env)
