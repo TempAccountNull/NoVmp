@@ -6627,12 +6627,23 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
 #if __Use_Original_Qemu != 1 /* ours (U193) */
     /*
      * NoVmp (ledger U193): exception classes E*NF ("no fault suppression", SDM Vol2A 2.8,
-     * Table 2-44): a fault on a masked-off element is reported as well, so every element of
-     * the operand is probed; only the active ones are written.
+     * Table 2-44): a fault on a masked-off element is reported as well, so every byte of
+     * the operand is probed for a write (#PF) before anything is written; only the active
+     * elements are written. U210 (merged here): a page that Unicorn has not mapped is
+     * reported through a one-byte read of it (UC_HOOK_MEM_UNMAPPED / #PF in emu-alltest), so
+     * that a masked-off element on it is never skipped silently; if a hook maps the page the
+     * instruction goes on. The operand is at most 64 bytes: its first and last byte cover
+     * every page it touches.
      */
     if (desc & (1 << 18)) {
-        for (i = 0; i < n; i++) {
-            evex_probe_write(env, a0 + i * bytes, bytes, ra);
+        target_ulong last = a0 + n * bytes - 1;
+
+        evex_probe_write(env, a0, n * bytes, ra);
+        if (!evex_mapped(env, a0) || !evex_mapped(env, last)) {
+            (void)cpu_ldub_data_ra(env, evex_mapped(env, a0) ? last : a0, ra);
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
         }
     }
 #endif /* __Use_Original_Qemu (U193) */

@@ -2744,6 +2744,7 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
     return reserved_bits;
 }
 
+
 int uc_check_cpu_x86_load_seg(CPUX86State *env, int seg_reg, int sel);
 X86CPU *cpu_x86_init(struct uc_struct *uc);
 

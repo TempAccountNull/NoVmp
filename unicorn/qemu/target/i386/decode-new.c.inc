@@ -2604,6 +2604,17 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
             *ot = MO_64;
             return true;
         }
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+        /*
+         * NoVmp (ledger U210): an EVEX dq operand is 128 bits whatever the vector length
+         * (VINSERTF32X4 xmm3/m128, VEXTRACTF32X4 xmm1/m128, VBROADCASTF32X4 m128): the
+         * allowed lengths are in the form's evex_vl (decode_evex_vl).
+         */
+        if (s->prefix & PREFIX_EVEX) {
+            *ot = MO_128;
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U210) */
         if (s->vex_l && e->s0 != X86_SIZE_qq && e->s1 != X86_SIZE_qq) {
             return false;
         }
@@ -2611,6 +2622,13 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
         return true;
 
     case X86_SIZE_qq: /* AVX 256-bit */
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+        /* NoVmp (ledger U210): EVEX qq (VINSERTF64X4 ymm3/m256, ...): 256 bits, see dq */
+        if (s->prefix & PREFIX_EVEX) {
+            *ot = MO_256;
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U210) */
         if (!s->vex_l) {
             return false;
         }
@@ -2645,6 +2663,26 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
 #endif /* __Use_Original_Qemu (U142) */
         *ot = s->vex_l ? MO_128 : MO_64;
         return true;
+
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+    /*
+     * NoVmp (ledger U210): EVEX Quarter Mem / Eighth Mem operands (VPMOVZXBD, VPMOVDB, ...):
+     * VL/4 and VL/8 bits (SDM Vol2A Table 2-37); EVEX only.
+     */
+    case X86_SIZE_xq:
+        if (!(s->prefix & PREFIX_EVEX)) {
+            return false;
+        }
+        *ot = s->evex_vl == 64 ? MO_128 : s->evex_vl == 32 ? MO_64 : MO_32;
+        return true;
+
+    case X86_SIZE_xo:
+        if (!(s->prefix & PREFIX_EVEX)) {
+            return false;
+        }
+        *ot = s->evex_vl == 64 ? MO_64 : s->evex_vl == 32 ? MO_32 : MO_16;
+        return true;
+#endif /* __Use_Original_Qemu (U210) */
 
     case X86_SIZE_d64:  /* Default to 64-bit in 64-bit mode */
         *ot = CODE64(s) && s->dflag == MO_32 ? MO_64 : s->dflag;
@@ -3553,7 +3591,13 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
     if (!(s->flags & HF_AVX512_EN_MASK)) {
         goto illegal;
     }
-    if (!(e->evex_vl & X86_EVEX_LIG) && s->evex_vl < 64 &&
+    /*
+     * NoVmp (ledger U210, was: every non-LIG length < 512): AVX512VL gates the 128/256-bit lengths of a form that also has a
+     * 512-bit length; forms that exist only at 128 bits (E9NF: VMOVD/VMOVQ, VPINSRD,
+     * VINSERTPS, VMOVHPS, ...; E7NM.128: VMOVHLPS/VMOVLHPS) need only their own feature
+     * (SDM opcode tables: "AVX512F" without "AVX512VL").
+     */
+    if (!(e->evex_vl & X86_EVEX_LIG) && (e->evex_vl & X86_EVEX_VL512) && s->evex_vl < 64 &&
         !(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512VL)) {
         goto illegal;
     }

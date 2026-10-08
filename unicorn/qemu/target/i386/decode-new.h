@@ -102,6 +102,11 @@ typedef enum X86OpSize {
     X86_SIZE_d64,
     X86_SIZE_f64,
     X86_SIZE_xh, /* SSE/AVX packed half register */
+#if __Use_Original_Qemu != 1 /* ours (U210) */
+    /* EVEX Quarter Mem / Eighth Mem operands: VL/4 and VL/8 bits (SDM Vol2A Table 2-37) */
+    X86_SIZE_xq, /* EVEX packed quarter register */
+    X86_SIZE_xo, /* EVEX packed eighth register */
+#endif /* __Use_Original_Qemu (U210) */
 } X86OpSize;
 
 typedef enum X86CPUIDFeature {
