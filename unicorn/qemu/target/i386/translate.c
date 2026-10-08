@@ -3412,6 +3412,28 @@ static void gen_sty_env_A0(DisasContext *s, int offset, bool align)
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->tmp0, mem_index, MO_LEUQ);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+/*
+ * NoVmp (ledger U142): EVEX.512 load of a full ZMM register image from A0 (eight
+ * little-endian qwords; with align, #GP(0) unless A0 is 64-byte aligned).
+ */
+static void gen_ldz_env_A0(DisasContext *s, int offset, bool align)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int mem_index = s->mem_index;
+    int i;
+
+    tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
+                        MO_LEUQ | (align ? MO_ALIGN_64 : 0));
+    tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(ZMMReg, ZMM_Q(0)));
+    for (i = 1; i < 8; i++) {
+        tcg_gen_addi_tl(tcg_ctx, s->tmp0, s->A0, 8 * i);
+        tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->tmp0, mem_index, MO_LEUQ);
+        tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(ZMMReg, ZMM_Q(i)));
+    }
+}
+#endif /* __Use_Original_Qemu (U142) */
+
 #include "decode-new.h"
 #include "emit.c.inc"
 #include "decode-new.c.inc"

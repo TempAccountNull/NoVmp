@@ -1899,6 +1899,12 @@ static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
         if (type != X86_TYPE_Q && type != X86_TYPE_N) {
             op->n |= REX_B(s);
         }
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+        /* EVEX.X selects ZMM16-31 for a vector ModRM.r/m (SDM Vol2A Table 2-33; U142) */
+        if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_SSE) {
+            op->n |= s->evex_x4;
+        }
+#endif /* __Use_Original_Qemu (U142) */
     } else {
         op->has_ea = true;
         op->n = -1;
@@ -1972,10 +1978,23 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
         /* fall through */
     case X86_SIZE_ps: /* SSE/AVX packed single precision */
     case X86_SIZE_pd: /* SSE/AVX packed double precision */
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+        /* EVEX: 128/256/512 bits from EVEX.L'L, or 512 with {er}/{sae} (decode_evex_vl, U142) */
+        if (s->prefix & PREFIX_EVEX) {
+            *ot = s->evex_vl == 64 ? MO_512 : s->evex_vl == 32 ? MO_256 : MO_128;
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U142) */
         *ot = s->vex_l ? MO_256 : MO_128;
         return true;
 
     case X86_SIZE_xh: /* SSE/AVX packed half register */
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+        if (s->prefix & PREFIX_EVEX) {
+            *ot = s->evex_vl == 64 ? MO_256 : s->evex_vl == 32 ? MO_128 : MO_64;
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U142) */
         *ot = s->vex_l ? MO_128 : MO_64;
         return true;
 
@@ -2051,6 +2070,12 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
         if (op->unit != X86_OP_MMX) {
             op->n |= REX_R(s);
         }
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+        /* EVEX.R' selects ZMM16-31 for a vector ModRM.reg (SDM Vol2A Table 2-33; U142) */
+        if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_SSE) {
+            op->n |= s->evex_rr;
+        }
+#endif /* __Use_Original_Qemu (U142) */
         break;
 
     case X86_TYPE_E:  /* ALU modrm operand */
@@ -2248,6 +2273,63 @@ static bool validate_sse_prefix(DisasContext *s, X86OpEntry *e)
     return e->valid_prefix & (1 << sse_prefixes);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+/*
+ * NoVmp (ledger U142): EVEX.W, element size and vector length of an EVEX form, before
+ * the operand sizes are computed (SDM Vol2A 2.7.10, Tables 2-38 and 2-43). false = #UD.
+ * - EVEX.W must match the form (W0/W1); WSEL forms take the element size from it; forms
+ *   whose W is ignored outside 64-bit mode behave as W0 there.
+ * - EVEX.b with ModRM.mod = 11b: only {er}/{sae} forms; L'L is then the rounding control
+ *   (or ignored for {sae}) and the vector length is 512 (scalar forms: 128).
+ * - EVEX.b with a memory operand: only Full/Half tuple forms (embedded broadcast).
+ * - Otherwise L'L = 11b is #UD and the form must exist at that length; LIG forms are 128.
+ * vex_l keeps meaning "wider than 128 bits".
+ */
+static bool decode_evex_vl(DisasContext *s, CPUX86State *env, X86OpEntry *e)
+{
+    static const uint8_t es_ot[] = { MO_32, MO_8, MO_16, MO_32, MO_64 };
+    bool reg;
+    int vl;
+
+    if (!e->gen) {
+        return true;                    /* empty slot: #UD as unknown opcode */
+    }
+    if (!e->evex_vl) {
+        return false;
+    }
+    reg = (get_modrm(s, env) >> 6) == 3;
+    if (e->evex_w32 && !CODE64(s)) {
+        s->vex_w = 0;
+    }
+    if ((e->evex_w == X86_EVEX_W0 && s->vex_w) || (e->evex_w == X86_EVEX_W1 && !s->vex_w)) {
+        return false;
+    }
+    s->evex_esz = e->evex_es == X86_EVEX_ES_W ? (s->vex_w ? MO_64 : MO_32) : es_ot[e->evex_es];
+
+    if (s->evex_b && reg) {
+        if (e->evex_rc == X86_EVEX_RC_NONE) {
+            return false;
+        }
+        s->evex_rc = e->evex_rc == X86_EVEX_RC_ER ? s->evex_ll : -2;
+        vl = (e->evex_vl & X86_EVEX_LIG) ? 16 : 64;
+    } else {
+        if (s->evex_b && e->evex_tt != X86_EVEX_TT_FULL && e->evex_tt != X86_EVEX_TT_HALF) {
+            return false;
+        }
+        if (e->evex_vl & X86_EVEX_LIG) {
+            vl = 16;
+        } else if (s->evex_ll == 3 || !(e->evex_vl & (1 << s->evex_ll))) {
+            return false;
+        } else {
+            vl = 16 << s->evex_ll;
+        }
+    }
+    s->evex_vl = vl;
+    s->vex_l = vl > 16;
+    return true;
+}
+#endif /* __Use_Original_Qemu (U142) */
+
 static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_func,
                         X86DecodedInsn *decode)
 {
@@ -2273,6 +2355,11 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
         s->vex_l = 0;
     }
 #endif /* __Use_Original_Qemu (U79) */
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+    if ((s->prefix & PREFIX_EVEX) && !decode_evex_vl(s, env, e)) {
+        return false;
+    }
+#endif /* __Use_Original_Qemu (U142) */
 
     /* First compute size of operands in order to initialize s->rip_offset.  */
     if (e->op0 != X86_TYPE_None) {

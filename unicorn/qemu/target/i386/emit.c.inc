@@ -112,6 +112,10 @@ static inline int xmm_offset(MemOp ot)
         return offsetof(ZMMReg, ZMM_X(0));
     case MO_256:
         return offsetof(ZMMReg, ZMM_Y(0));
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+    case MO_512:            /* EVEX.512: the whole ZMM register (U142) */
+        return 0;
+#endif /* __Use_Original_Qemu (U142) */
     default:
         g_assert_not_reached();
     }
@@ -212,6 +216,11 @@ static void gen_load_sse(DisasContext *s, TCGv temp, MemOp ot, int dest_ofs, boo
     case MO_256:
         gen_ldy_env_A0(s, dest_ofs, aligned);
         break;
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+    case MO_512:
+        gen_ldz_env_A0(s, dest_ofs, aligned);
+        break;
+#endif /* __Use_Original_Qemu (U142) */
     default:
         g_assert_not_reached();
     }
@@ -383,6 +392,11 @@ static void gen_writeback(DisasContext *s, X86DecodedInsn *decode, int opn, TCGv
 
 static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
 {
+#if __Use_Original_Qemu != 1 /* ours (U142) */
+    if (s->prefix & PREFIX_EVEX) {
+        return s->evex_vl;      /* 16/32/64 bytes (U142) */
+    }
+#endif /* __Use_Original_Qemu (U142) */
     if (decode->e.special == X86_SPECIAL_MMX &&
         !(s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
         return 8;
