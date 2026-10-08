@@ -273,6 +273,53 @@ static void decode_FP16_0F3A_C2(DisasContext *s, CPUX86State *env, X86OpEntry *e
  * (decode_EVEX_0F3A_08 .. _57 in decode-new.c.inc).
  */
 #endif /* __Use_Original_Qemu (U337) */
+#if __Use_Original_Qemu != 1 /* ours (U338) */
+/*
+ * NoVmp (ledger U338): map 6 F3/F2 56, 57, D6, D7: VF[C]MADDCPH/SH, VF[C]MULCPH/SH (F2 =
+ * complex conjugate); elements are FP16 pairs (32 bits: masking, {1toN}, m32 scalar).
+ * #UD if the destination register is SRC1 or SRC2 (SDM "Additionally: #UD If (dest_reg ==
+ * src1_reg) or (dest_reg == src2_reg)").
+ */
+static void decode_FP16_cplx(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                             const X86OpEntry tab[4])
+{
+    int modrm = get_modrm(s, env);
+    int dst = ((modrm >> 3) & 7) | REX_R(s) | s->evex_rr;
+
+    decode_FP16_by_prefix(s, entry, tab);
+    if (dst == s->vex_v ||
+        ((modrm >> 6) == 3 && dst == ((modrm & 7) | REX_B(s) | s->evex_x4))) {
+        memset(entry, 0, sizeof(*entry));       /* #UD */
+    }
+}
+
+#define FP16_CP(op)  X86_OP_ENTRY3(op, V,x, H,x, W,x, EV16PX(ER, FULL, 32))
+#define FP16_CSS(op) X86_OP_ENTRY3(op, V,x, H,x, W,d, EV16SX(ER, 32))
+
+static void decode_FP16_M6_56(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { {}, {}, FP16_CP(FP16_CFMA), FP16_CP(FP16_CFMAC), };
+    decode_FP16_cplx(s, env, entry, tab);
+}
+
+static void decode_FP16_M6_57(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { {}, {}, FP16_CSS(FP16_CFMA), FP16_CSS(FP16_CFMAC), };
+    decode_FP16_cplx(s, env, entry, tab);
+}
+
+static void decode_FP16_M6_D6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { {}, {}, FP16_CP(FP16_CMUL), FP16_CP(FP16_CMULC), };
+    decode_FP16_cplx(s, env, entry, tab);
+}
+
+static void decode_FP16_M6_D7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry tab[4] = { {}, {}, FP16_CSS(FP16_CMUL), FP16_CSS(FP16_CMULC), };
+    decode_FP16_cplx(s, env, entry, tab);
+}
+#endif /* __Use_Original_Qemu (U338) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 
 static const X86OpEntry opcodes_evex_map5[256] = {
@@ -338,6 +385,12 @@ static const X86OpEntry opcodes_evex_map6[256] = {
     [0x4e] = X86_OP_ENTRY3(FP16_RSQRT, V,x, None,None, W,x, EV16P(NONE) p_66),
     [0x4f] = X86_OP_ENTRY3(FP16_RSQRT, V,x, H,x, W,w, EV16S(NONE) p_66),
 #endif /* __Use_Original_Qemu (U337) */
+#if __Use_Original_Qemu != 1 /* ours (U338) */
+    [0x56] = X86_OP_GROUP0(FP16_M6_56),
+    [0x57] = X86_OP_GROUP0(FP16_M6_57),
+    [0xd6] = X86_OP_GROUP0(FP16_M6_D6),
+    [0xd7] = X86_OP_GROUP0(FP16_M6_D7),
+#endif /* __Use_Original_Qemu (U338) */
 };
 
 static void decode_evex_map5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -371,3 +424,12 @@ static void decode_evex_map6(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 #if __Use_Original_Qemu != 1 /* ours (U336) */
 #undef FP16_COMI
 #endif /* __Use_Original_Qemu (U336) */
+#if __Use_Original_Qemu != 1 /* ours (U337) */
+#undef FP16_P1I
+#undef FP16_SSI
+#undef FP16_0F3A_NP
+#endif /* __Use_Original_Qemu (U337) */
+#if __Use_Original_Qemu != 1 /* ours (U338) */
+#undef FP16_CP
+#undef FP16_CSS
+#endif /* __Use_Original_Qemu (U338) */
