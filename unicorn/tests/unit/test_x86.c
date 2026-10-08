@@ -10937,6 +10937,21 @@ static void qk_x87_cmp(uint32_t q, char insn, uint16_t want_cc, uint64_t want_zp
     OK(uc_close(uc));
 }
 
+/*
+ * U433 (not a quirk): the fork's x87 always behaves as FDP_EXCPTN_ONLY and
+ * ZERO_FCS_FDS (U64), so CPUID.(EAX=07H,ECX=0):EBX[6] and [13] are reported.
+ */
+static void qk_cpuid_fdp(void)
+{
+    static const char code[] = "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2";
+    uint64_t rbx = 0;
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, 0, UC_ERR_OK);
+    OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
+    TEST_CHECK((rbx & ((1u << 6) | (1u << 13))) == ((1u << 6) | (1u << 13)));
+    TEST_MSG("CPUID.7.0:EBX %llx", (unsigned long long)rbx);
+    OK(uc_close(uc));
+}
+
 static void test_x86_hw_quirk_bits(void)
 {
     /* bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 = 1 */
@@ -10969,6 +10984,7 @@ static void test_x86_hw_quirk_bits(void)
     /* FTST has no IM condition in the SDM: "unordered" either way */
     qk_x87_cmp(0, 't', 0x4500, 0);
     qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 't', 0x4500, 0);
+    qk_cpuid_fdp();
 }
 /* ---- qk_ block end ---- */
 
