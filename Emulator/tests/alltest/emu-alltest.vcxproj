@@ -73,6 +73,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="at_main.cpp" />
+    <ClInclude Include="at_cases.hpp" />
     <ClInclude Include="at_engine.hpp" />
     <ClInclude Include="at_universe.hpp" />
   </ItemGroup>

@@ -213,6 +213,14 @@ namespace at
 			r.ran = true;
 			r.faulted = g().faulted;
 			r.vector = g().faulted ? vector_of( g().code, g().info1 ) : -1;
+			// Windows reports #MF and #XM with the same STATUS_FLOAT_* codes: an x87 opcode
+			// (D8-DF, or FWAIT 9B) at the faulting RIP is #MF (16), anything else #XM (19)
+			if ( r.vector == 16 && g().rip >= ( uint64_t ) code_ && g().rip < ( uint64_t ) code_ + CODE_SIZE )
+			{
+				const uint8_t* q = ( const uint8_t* ) g().rip;
+				while ( *q == 0x66 || *q == 0x67 || *q == 0xF2 || *q == 0xF3 || ( *q & 0xF0 ) == 0x40 ) ++q;
+				if ( !( ( *q >= 0xD8 && *q <= 0xDF ) || *q == 0x9B ) ) r.vector = 19;
+			}
 			r.fault_rip = g().rip;
 			read_blocks( data_, mem_, *r.s );
 		}

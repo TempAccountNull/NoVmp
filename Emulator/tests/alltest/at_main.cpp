@@ -8,12 +8,14 @@
 //   --out DIR        report directory (default: <exe dir>\alltest)
 //   --quirks N       UC_CTL_X86_HW_QUIRKS bitmask for Unicorn (default 0 = follow the manual)
 //   --rebuild        re-sweep the opcode space instead of using the cached universe
+//   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp)
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
 // Every form lands in exactly one bucket (see BUCKETS below); the report lists them per ISA group,
 // plus the manual's forms that the sweep cannot reach yet (Emulator\data\isa_manual_forms.tsv).
 #include "at_universe.hpp"
+#include "at_cases.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -274,7 +276,7 @@ int main( int argc, char** argv )
 	bool full = false, rebuild = false;
 	int iters = -1, sample = -1;
 	uint32_t quirks = 0;
-	std::string filter, out_dir;
+	std::string filter, out_dir, cases;
 	for ( int i = 1; i < argc; ++i )
 	{
 		std::string a = argv[ i ];
@@ -286,8 +288,10 @@ int main( int argc, char** argv )
 		else if ( a == "--filter" ) filter = val();
 		else if ( a == "--out" ) out_dir = val();
 		else if ( a == "--quirks" ) quirks = uint32_t( std::stoul( val(), nullptr, 0 ) );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild]\n" ); return 2; }
+		else if ( a == "--cases" ) cases = val();
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE]\n" ); return 2; }
 	}
+	if ( !cases.empty() ) return at::run_cases( cases, quirks );
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );

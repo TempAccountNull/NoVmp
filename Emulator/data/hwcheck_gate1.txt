@@ -1,0 +1,81 @@
+# Gate-1 hardware checks (FORK_REVIEW.md): emu-alltest --cases Emulator\data\hwcheck_gate1.txt
+# Only these self-generated snippets run natively.
+#
+# --- REP string, 67h (32-bit address size) in 64-bit mode, ECX = 0: upper halves of RSI/RDI/RCX?
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xa5 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xaa | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0x48, 0xab | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xa6 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf2, 0xae | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+.byte 0x67, 0xf3, 0xac | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+# same without 67h (RCX = 0): nothing should change
+.byte 0xf3, 0xa4 | rcx=0 rsi=0x30028000 rdi=0x30029000
+# 67h with ECX = 2 and dirty upper halves: element-wise result
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000002 rsi=0x1111111130028000 rdi=0x2222222230029000 m+0x8000=AABB
+.byte 0x67, 0xf3, 0xa6 | rcx=0xFFFFFFFF00000002 rsi=0x1111111130028000 rdi=0x2222222230029000 m+0x8000=AABB m+0x9000=AACC
+#
+# --- FXSAVE image: MXCSR_MASK (+28), FOP/FIP/FDP, with and without REX.W
+fxsave [rsi]
+fld1; fxsave [rsi]
+fld1; fxsave64 [rsi]
+fld qword ptr [rsi+0x100]; fxsave [rsi] | m+0x8100=000000000000F03F
+fld qword ptr [rsi+0x100]; fxsave64 [rsi] | m+0x8100=000000000000F03F
+# --- FNSTENV / FNSAVE: FCW masked afterwards? pointers, FOP; FNSAVE with REX.W
+fnstenv [rsi]; fnstcw [rsi+0x40] | fcw=0x0360
+fld1; fnstenv [rsi]
+fld qword ptr [rsi+0x100]; fnstenv [rsi] | m+0x8100=000000000000F03F
+fld1; fnsave [rsi]
+fld1; .byte 0x48, 0xdd, 0x36
+# --- MXCSR reserved bits: LDMXCSR / FXRSTOR / XRSTOR #GP
+ldmxcsr [rsi] | m+0x8000=801F0100
+ldmxcsr [rsi] | m+0x8000=C01F0000
+fxsave [rsi]; mov dword ptr [rsi+24], 0x11f80; fxrstor [rsi]
+mov eax, 3; xor edx, edx; xsave [rsi]; mov dword ptr [rsi+24], 0x11f80; xrstor [rsi]
+# --- XSAVE family / XGETBV
+xor ecx, ecx; xgetbv
+mov ecx, 1; xgetbv
+mov eax, 3; xor edx, edx; xsave [rsi]
+mov eax, 3; xor edx, edx; xsaveopt [rsi]
+mov eax, 3; xor edx, edx; xsavec [rsi]
+mov eax, 3; xor edx, edx; xsavec [rsi]; xrstor [rsi]
+mov eax, 7; xor edx, edx; xsavec [rsi]
+# --- #XM: unmasked SSE exceptions (destination written?)
+ldmxcsr [rsi]; divps xmm0, xmm1 | m+0x8000=001F0000
+ldmxcsr [rsi]; divps xmm0, xmm1 | m+0x8000=800F0000 xmm0=0000803F0000803F0000803F0000803F xmm1=00004040000040400000404000004040
+ldmxcsr [rsi]; addss xmm0, xmm1 | m+0x8000=001F0000 xmm0=0000C07F000000000000000000000000
+# --- FBLD with invalid BCD nibbles
+fbld tbyte ptr [rsi] | m+0x8000=FFFFFFFFFFFFFFFFFF00
+fbld tbyte ptr [rsi] | m+0x8000=0A000000000000000000
+fbld tbyte ptr [rsi] | m+0x8000=A0000000000000000080
+fbld tbyte ptr [rsi] | m+0x8000=99999999999999999900
+# --- pseudo-NaN / pseudo-infinity / unnormal operands
+fxam | st0=7FFF:4000000000000000
+fxam | st0=7FFF:0000000000000000
+fxam | st0=FFFF:0000000000000000
+fxam | st0=8000:0000000000000001 ftw=0
+fadd st(0), st(0) | st0=7FFF:4000000000000000
+fsqrt | st0=7FFF:0000000000000000
+fcom st(1) | st0=7FFF:4000000000000000 st1=3FFF:8000000000000000
+fucom st(1) | st0=7FFF:4000000000000000 st1=3FFF:8000000000000000
+fstp qword ptr [rsi] | st0=7FFF:4000000000000000
+fistp dword ptr [rsi] | st0=7FFF:0000000000000000
+# --- CPUID identity (Unicorn UC_CPU_X86_MAX vs this CPU)
+xor eax, eax; xor ecx, ecx; cpuid
+mov eax, 1; xor ecx, ecx; cpuid
+mov eax, 7; xor ecx, ecx; cpuid
+mov eax, 0xd; xor ecx, ecx; cpuid
+mov eax, 0xd; mov ecx, 1; cpuid
+mov eax, 0x16; xor ecx, ecx; cpuid
+mov eax, 0x1a; xor ecx, ecx; cpuid
+mov eax, 0x80000000; xor ecx, ecx; cpuid
+mov eax, 0x80000008; xor ecx, ecx; cpuid
+mov eax, 0x40000000; xor ecx, ecx; cpuid
+mov eax, 0x7fffffff; xor ecx, ecx; cpuid
+# --- RCPPS / RSQRTPS (approximation vs exact)
+rcpps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
+rsqrtps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
+# --- RDRAND / RDSEED flags and width (values differ by nature)
+rdrand eax
+rdrand ax | rax=0xFFFFFFFFFFFFFFFF
+rdseed rax
