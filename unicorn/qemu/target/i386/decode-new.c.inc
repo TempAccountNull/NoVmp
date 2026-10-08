@@ -1916,6 +1916,10 @@ static void decode_EVEX_0F7F(DisasContext *s, CPUX86State *env, X86OpEntry *entr
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F7F);
 }
 #endif /* __Use_Original_Qemu (U148) */
+#if __Use_Original_Qemu != 1 /* ours (U149) */
+/* NoVmp (ledger U149): Full tuple integer forms, 66 only, {k1}{z}, {1toN}; E4 */
+#define EV_INT(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(w) ev_es(W) p_66
+#endif /* __Use_Original_Qemu (U149) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -1926,6 +1930,12 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x6f] = X86_OP_GROUP0(EVEX_0F6F),
     [0x7f] = X86_OP_GROUP0(EVEX_0F7F),
 #endif /* __Use_Original_Qemu (U148) */
+#if __Use_Original_Qemu != 1 /* ours (U149) */
+    [0xd4] = X86_OP_ENTRY3(PADDQ, V,x, H,x, W,x, EV_INT(W1)),  /* vpaddq */
+    [0xfa] = X86_OP_ENTRY3(PSUBD, V,x, H,x, W,x, EV_INT(W0)),  /* vpsubd */
+    [0xfb] = X86_OP_ENTRY3(PSUBQ, V,x, H,x, W,x, EV_INT(W1)),  /* vpsubq */
+    [0xfe] = X86_OP_ENTRY3(PADDD, V,x, H,x, W,x, EV_INT(W0)),  /* vpaddd */
+#endif /* __Use_Original_Qemu (U149) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -1933,6 +1943,9 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
 };
+#if __Use_Original_Qemu != 1 /* ours (U149) */
+#undef EV_INT
+#endif /* __Use_Original_Qemu (U149) */
 #if __Use_Original_Qemu != 1 /* ours (U148) */
 #undef EV_MOV
 #undef EV_VLALL
