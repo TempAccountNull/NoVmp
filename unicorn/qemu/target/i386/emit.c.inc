@@ -1144,6 +1144,32 @@ static void gen_EVEX_VSCATTER(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_vsib(s, decode, &decode->op[2], gen_helper_evex_scatter);
 }
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U194) */
+
+/*
+ * NoVmp (ledger U194): VADDSS/SD, VSUBSS/SD, VMULSS/SD, VDIVSS/SD ({er}), VMINSS/SD,
+ * VMAXSS/SD ({sae}), VSQRTSS/SD ({er}): element 0 by the SSE scalar helpers (same MXCSR,
+ * DAZ/FTZ, NaN and #XM rules as SSE/AVX); F3 = single, F2 = double. k1[0] masking,
+ * DEST[127:esz] := SRC1[127:esz] and the zeroing above bit 127 come from gen_evex_insn.
+ */
+#define EVEX_FP_SCALAR(uname, lname)                                                 \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+    SSEFunc_0_eppp fn = (s->prefix & PREFIX_REPNZ) ? gen_helper_##lname##sd          \
+                                                   : gen_helper_##lname##ss;         \
+                                                                                     \
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);                                 \
+}
+EVEX_FP_SCALAR(VADDS, add)
+EVEX_FP_SCALAR(VSUBS, sub)
+EVEX_FP_SCALAR(VMULS, mul)
+EVEX_FP_SCALAR(VDIVS, div)
+EVEX_FP_SCALAR(VMINS, min)
+EVEX_FP_SCALAR(VMAXS, max)
+EVEX_FP_SCALAR(VSQRTS, sqrt)
+#undef EVEX_FP_SCALAR
+#endif /* __Use_Original_Qemu (U194) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
