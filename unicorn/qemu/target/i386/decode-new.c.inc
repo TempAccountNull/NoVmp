@@ -3883,6 +3883,16 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U402) */
     [0x74] = X86_OP_GROUP0(EVEX_A10_FP8),
 #endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+    /*
+     * NoVmp (ledger U404): VCVT2PS2PHX (spec 9.2), "AVX10.2 OR AVX10_V1_AUX", 66 W0, Full
+     * tuple (m32bcst), {k1}{z} per FP16 result, {er}; MXCSR flags as if masked, never #XM, no
+     * memory fault suppression: gen_avx10b_cvt2ps2phx does the masking and the MXCSR update.
+     */
+    [0x67] = X86_OP_ENTRY3(EVEX_VCVT2PS2PHX, V,x, H,x, W,x, cpuid(AVX10_V1_AUX)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_rc(ER) ev_w(W0) ev_es(32)
+                           .evex_nofs = 1, p_66),
+#endif /* __Use_Original_Qemu (U404) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

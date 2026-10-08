@@ -8837,3 +8837,47 @@ void helper_avx10b_cvthf82ph(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t vl
     }
 }
 #endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+
+/*
+ * NoVmp (ledger U404): VCVT2PS2PHX (AVX10.2 spec 9.2): dest.word[i] (i < VL/16) :=
+ * convert_fp32_to_fp16(src2.fp32[i]) for i < KL/2, else of src1.fp32[i - KL/2]. Rounding:
+ * MXCSR.RC or {er}; MXCSR.DAZ applies to the FP32 inputs, FTZ is not applied to the FP16
+ * results. MXCSR flags (IE DE OE UE PE) are set as if every exception were masked, from the
+ * active elements only, and no #XM is raised; {er} implies SAE (no flag). NaN: quieted, the
+ * upper fraction bits kept (m_fp16 = (m_fp32 | 400000h) >> 13). desc: bits 7:0 VL bytes,
+ * bit 8 zeroing, bits 14:12 = {er} rounding + 1 (0 = MXCSR.RC).
+ */
+void helper_avx10b_cvt2ps2phx(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2,
+                              uint64_t mask, uint32_t desc)
+{
+    int vl = desc & 0xff, n = vl / 2, rc = (int)((desc >> 12) & 7) - 1, i;
+    bool zero = (desc >> 8) & 1;
+    float_status st = env->sse_status;
+    ZMMReg r = *d;
+
+    set_flush_to_zero(0, &st);
+    set_float_exception_flags(0, &st);
+    if (rc >= 0) {
+        set_x86_rounding_mode(rc, &st);
+    }
+    for (i = 0; i < n; i++) {
+        if ((mask >> i) & 1) {
+            uint32_t x = i < n / 2 ? s2->ZMM_L(i) : s1->ZMM_L(i - n / 2);
+            r.ZMM_W(i) = float32_to_float16(make_float32(x), true, &st);
+        } else if (zero) {
+            r.ZMM_W(i) = 0;
+        }
+    }
+    for (i = n; i < (int)sizeof(ZMMReg) / 2; i++) {
+        r.ZMM_W(i) = 0;
+    }
+    *d = r;
+    if (rc < 0) {
+        set_float_exception_flags(get_float_exception_flags(&env->sse_status) |
+                                  (get_float_exception_flags(&st) &
+                                   ~(float_flag_input_denormal | float_flag_output_denormal)),
+                                  &env->sse_status);
+    }
+}
+#endif /* __Use_Original_Qemu (U404) */

@@ -2545,6 +2545,29 @@ static void gen_EVEX_VCVTHF82PH(DisasContext *s, CPUX86State *env, X86DecodedIns
                                 tcg_constant_i32(tcg_ctx, s->evex_vl));
 }
 #endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+
+/*
+ * NoVmp (ledger U404): VCVT2PS2PHX: the helper converts the active elements only (no flag
+ * from a masked-off one), merges/zeroes per FP16 word and updates MXCSR as if every
+ * exception were masked (never #XM); {er}: static rounding, no flags. desc: bits 7:0 VL in
+ * bytes, bit 8 zeroing, bits 14:12 = {er} rounding control + 1 (0 = MXCSR.RC).
+ */
+static void gen_EVEX_VCVT2PS2PHX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = s->evex_vl | (s->evex_z ? AVX10B_Z : 0) |
+                    ((uint32_t)(s->evex_rc >= 0 ? s->evex_rc + 1 : 0) << 12);
+    TCGv_i64 k = gen_avx10b_kmask(s);
+    TCGv_ptr d = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_avx10b_cvt2ps2phx(tcg_ctx, cpu_env, d, OP_PTR1, OP_PTR2, k,
+                                 tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, d);
+    tcg_temp_free_i64(tcg_ctx, k);
+    decode->op[0].unit = X86_OP_SKIP;
+}
+#endif /* __Use_Original_Qemu (U404) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

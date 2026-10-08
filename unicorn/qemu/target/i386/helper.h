@@ -297,6 +297,9 @@ DEF_HELPER_6(avx10b_cvt_fp8, void, env, ptr, ptr, ptr, i64, i32)
 #if __Use_Original_Qemu != 1 /* ours (U403) */
 DEF_HELPER_4(avx10b_cvthf82ph, void, env, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+DEF_HELPER_6(avx10b_cvt2ps2phx, void, env, ptr, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U404) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */
