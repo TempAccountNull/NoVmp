@@ -46,6 +46,12 @@ namespace at
 		uint8_t fx[ 512 ];
 		uint8_t ymmh[ 16 ][ 16 ];
 		uint8_t env[ 28 ];
+		// AVX-512 state outside the thunk's XMM/YMM image: only the Unicorn engine moves it (code
+		// hooks at the snippet's first instruction and at the epilogue, ext_regs = true); the host
+		// CPU has no AVX-512, so the native engine leaves these zero
+		uint8_t zmmh[ 16 ][ 32 ];   // ZMM0-15 bits 511:256
+		uint8_t zmmx[ 16 ][ 64 ];   // ZMM16-31 bits 511:0
+		uint64_t k[ 8 ];            // opmask K0-K7
 		uint8_t stack[ STACK_TOP - STACK_LO ];
 		uint8_t mem[ MEM_SIZE ];
 
@@ -288,6 +294,15 @@ namespace at
 			uc_hook_add( uc_, &h, UC_HOOK_INTR, ( void* ) on_intr, this, 1, 0 );
 			uc_hook_add( uc_, &h, UC_HOOK_INSN_INVALID, ( void* ) on_invalid, this, 1, 0 );
 			uc_hook_add( uc_, &h, UC_HOOK_MEM_UNMAPPED, ( void* ) on_unmapped, this, 1, 0 );
+			if ( ext_regs )
+			{
+				// ZMM0-31 / K0-7 in at the snippet's first instruction, out at the epilogue's first
+				// instruction (the prologue's VEX loads zero ZMM bits 511:256, the epilogue's
+				// VZEROUPPER would zero them again)
+				uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ext, this, p.snippet_begin, p.snippet_begin );
+				if ( p.epilogue_at != p.snippet_begin )
+					uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ext, this, p.epilogue_at, p.epilogue_at );
+			}
 			prog_ = &p;
 			return true;
 		}
@@ -301,6 +316,8 @@ namespace at
 			uint64_t rsp = HOST + 0x800;
 			uc_reg_write( uc_, UC_X86_REG_RSP, &rsp );
 			cur_ = &r;
+			in_ = &in;
+			ext_in_done_ = ext_out_done_ = false;
 			pending_epilogue_ = false;
 			uc_err e = uc_emu_start( uc_, CODE, prog_->ret_at, 0, 0 );
 			if ( e && pending_epilogue_ )
@@ -314,7 +331,9 @@ namespace at
 			uc_mem_read( uc_, MEM, mem.data(), mem.size() );
 			read_blocks( data.data(), mem.data(), *r.s );
 			r.ran = !e;
+			if ( ext_regs && !ext_out_done_ && r.err.empty() ) r.err = "epilogue not reached: ZMM/K state not read";
 			cur_ = nullptr;
+			in_ = nullptr;
 		}
 	private:
 		void close() { if ( uc_ ) uc_close( uc_ ); uc_ = nullptr; }
@@ -354,13 +373,54 @@ namespace at
 			if ( rip >= self->prog_->snippet_begin && rip < self->prog_->snippet_end ) self->pending_epilogue_ = true;
 			return false;
 		}
-		bool pending_epilogue_ = false;
+		static void on_ext( uc_engine* uc, uint64_t addr, uint32_t, void* user )
+		{
+			auto* self = ( unicorn_engine* ) user;
+			if ( !self->cur_ || !self->in_ ) return;
+			if ( addr == self->prog_->snippet_begin && !self->ext_in_done_ )
+			{
+				self->ext_in_done_ = true;
+				const state& in = *self->in_;
+				for ( int i = 0; i < 32; ++i )
+				{
+					uint8_t z[ 64 ];
+					if ( i < 16 )
+					{
+						std::memcpy( z, in.xmm( i ), 16 );
+						std::memcpy( z + 16, in.ymmh[ i ], 16 );
+						std::memcpy( z + 32, in.zmmh[ i ], 32 );
+					}
+					else std::memcpy( z, in.zmmx[ i - 16 ], 64 );
+					if ( uc_reg_write( uc, UC_X86_REG_ZMM0 + i, z ) != UC_ERR_OK ) self->ext_err( "uc_reg_write ZMM" + std::to_string( i ) );
+				}
+				for ( int i = 0; i < 8; ++i )
+					if ( uc_reg_write( uc, UC_X86_REG_K0 + i, &in.k[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_write K" + std::to_string( i ) );
+			}
+			if ( addr == self->prog_->epilogue_at && !self->ext_out_done_ )
+			{
+				self->ext_out_done_ = true;
+				state& out = *self->cur_->s;
+				for ( int i = 0; i < 32; ++i )
+				{
+					uint8_t z[ 64 ] = {};
+					if ( uc_reg_read( uc, UC_X86_REG_ZMM0 + i, z ) != UC_ERR_OK ) self->ext_err( "uc_reg_read ZMM" + std::to_string( i ) );
+					if ( i < 16 ) std::memcpy( out.zmmh[ i ], z + 32, 32 );
+					else std::memcpy( out.zmmx[ i - 16 ], z, 64 );
+				}
+				for ( int i = 0; i < 8; ++i )
+					if ( uc_reg_read( uc, UC_X86_REG_K0 + i, &out.k[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_read K" + std::to_string( i ) );
+			}
+		}
+		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
+		bool pending_epilogue_ = false, ext_in_done_ = false, ext_out_done_ = false;
 		uc_engine* uc_ = nullptr;
+		const state* in_ = nullptr;
 	public:
 		std::vector<uc_x86_cpuid> cpuid;
 		int strict = 0;
 		uint64_t xcr0 = 0;
 		uint64_t cr0 = 0;
+		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) through code hooks
 	private:
 		int model_;
 		uint32_t quirks_;
