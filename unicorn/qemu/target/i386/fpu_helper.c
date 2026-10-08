@@ -7331,3 +7331,28 @@ void helper_evex_pmovwb(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
     }
 }
 #endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+
+/*
+ * NoVmp (ledger U269): word permutes (SDM Vol2C VPERMW, VPERMI2W, VPERMT2W). n = VL / 2
+ * words; mode 0 (VPERMW): d[j] = ta[idx[j] mod n]; mode 1 (two tables): d[j] = (idx[j]
+ * bit log2(n) ? tb : ta)[idx[j] mod n]. Index bits above are ignored. desc = VL in bytes |
+ * mode << 8. d may be any of the sources.
+ */
+void helper_evex_vpermw(CPUX86State *env, ZMMReg *d, ZMMReg *idx, ZMMReg *ta, ZMMReg *tb,
+                        uint32_t desc)
+{
+    int n = (desc & 0xff) / 2, mode = (desc >> 8) & 1, j;
+    ZMMReg r;
+
+    for (j = 0; j < n; j++) {
+        int x = idx->ZMM_W(j);
+        ZMMReg *t = (mode && (x & n)) ? tb : ta;
+
+        r.ZMM_W(j) = t->ZMM_W(x & (n - 1));
+    }
+    for (j = 0; j < n; j++) {
+        d->ZMM_W(j) = r.ZMM_W(j);
+    }
+}
+#endif /* __Use_Original_Qemu (U269) */

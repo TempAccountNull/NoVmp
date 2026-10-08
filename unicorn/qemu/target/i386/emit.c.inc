@@ -2033,6 +2033,49 @@ static void gen_EVEX_VPMOVUSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn
     gen_evex_pmovwb(s, decode, 2);
 }
 #endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+
+/*
+ * NoVmp (ledger U269): word permutes (helper_evex_vpermw, desc = VL | mode << 8).
+ * VPERMW: indices SRC1 (vvvv), table SRC2. VPERMI2W: indices = the destination before the
+ * instruction, tables SRC1 / SRC2. VPERMT2W: indices SRC1, tables = the destination before
+ * the instruction / SRC2. The old destination is read from the register itself (op0
+ * may be the masking scratch register).
+ */
+static void gen_EVEX_VPERMW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode)));
+}
+
+static void gen_EVEX_VPERMI2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+static void gen_EVEX_VPERMT2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, pd, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+}
+
+/*
+ * VPBLENDMB / VPBLENDMW (SDM Vol2C VPBLENDMB/VPBLENDMW): active elements (or all without
+ * a writemask) = SRC2, masked-off elements = SRC1 with merging, 0 with zeroing: gen_EVEX_MOV
+ * with X86OpEntry.evex_msrc1 (U191), as VPBLENDMD/Q (U201).
+ */
+#endif /* __Use_Original_Qemu (U269) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

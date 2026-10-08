@@ -2737,6 +2737,49 @@ static void decode_EVEX_0F38_30(DisasContext *s, CPUX86State *env, X86OpEntry *e
 #undef EV_PMOVWB
 #undef EV_PMOVXBW
 #endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+/*
+ * NoVmp (ledger U269): 66.0F38 66 VPBLENDMB (W0) / VPBLENDMW (W1) (Full Mem, E4); 75 / 7D
+ * / 8D W1 VPERMI2W / VPERMT2W / VPERMW (Full Mem, word writemask, E4NF); their W0 forms
+ * are VPERMI2B / VPERMT2B / VPERMB (AVX512_VBMI, not implemented: #UD).
+ */
+static void decode_EVEX_0F38_66(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry vpblendm[2] = {
+        /* SRC2 moved by gen_EVEX_MOV; masked-off lanes take SRC1: ev_msrc1 (U191) */
+        X86_OP_ENTRY3(EVEX_MOV, V,x, H,x, W,x, EV_BW(W0, 8) ev_msrc1 p_66),
+        X86_OP_ENTRY3(EVEX_MOV, V,x, H,x, W,x, EV_BW(W1, 16) ev_msrc1 p_66),
+    };
+    *entry = *decode_evex_by_w(s, vpblendm);
+}
+
+static void decode_EVEX_0F38_75(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry vpermi2[2] = {
+        {},
+        X86_OP_ENTRY3(EVEX_VPERMI2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf p_66),
+    };
+    *entry = *decode_evex_by_w(s, vpermi2);
+}
+
+static void decode_EVEX_0F38_7D(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry vpermt2[2] = {
+        {},
+        X86_OP_ENTRY3(EVEX_VPERMT2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf p_66),
+    };
+    *entry = *decode_evex_by_w(s, vpermt2);
+}
+
+static void decode_EVEX_0F38_8D(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry vperm[2] = {
+        {},
+        X86_OP_ENTRY3(EVEX_VPERMW, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf p_66),
+    };
+    *entry = *decode_evex_by_w(s, vperm);
+}
+#endif /* __Use_Original_Qemu (U269) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -3136,6 +3179,12 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x20] = X86_OP_GROUP0(EVEX_0F38_20),   /* VPMOVSXBW (66), VPMOVSWB (F3) */
     [0x30] = X86_OP_GROUP0(EVEX_0F38_30),   /* VPMOVZXBW (66), VPMOVWB (F3) */
 #endif /* __Use_Original_Qemu (U268) */
+#if __Use_Original_Qemu != 1 /* ours (U269) */
+    [0x66] = X86_OP_GROUP0(EVEX_0F38_66),   /* VPBLENDMB/W */
+    [0x75] = X86_OP_GROUP0(EVEX_0F38_75),   /* VPERMI2W (W1) */
+    [0x7d] = X86_OP_GROUP0(EVEX_0F38_7D),   /* VPERMT2W (W1) */
+    [0x8d] = X86_OP_GROUP0(EVEX_0F38_8D),   /* VPERMW (W1) */
+#endif /* __Use_Original_Qemu (U269) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
