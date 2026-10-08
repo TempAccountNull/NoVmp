@@ -1,0 +1,666 @@
+EVEX form table summary (gen_evex_tables.py)
+========================================================================
+Intel text: SDM 325383-092 Vol.2A-D, AVX10.2 spec 361050-007, ISE 319433-062 (PyMuPDF text)
+asmjit: asmjit\db\isa_x86.json   XED: emulator\Intel docs\xed-main\datafiles   (relative to the 'garbage' folder)
+Intel text: emulator\intel_docs_text\{sdm_vol2a..d_092, avx10_2_spec_361050_007, ise_319433_062}.md
+
+forms (TSV rows): 895   per-VL records: 2109
+  from Intel text: 857 forms (2029 per-VL)
+    SDM-092 Vol.2A: 49 forms
+    SDM-092 Vol.2B: 205 forms
+    SDM-092 Vol.2C: 449 forms
+    SDM-092 Vol.2D: 34 forms
+    AVX10.2 spec 361050-007: 102 forms
+    ISE 319433-062: 18 forms
+  asmjit only: 0 forms; XED only: 38 forms
+  Intel opcode rows that did not parse: 0 EVEX
+  Intel rows whose Op/En letter had no tuple entry: 0 (tuple then taken from asmjit, else XED)
+
+Layout cross-check (sdm2.txt):
+  sdm2.txt (pdftotext -layout of 325383-092): 1737 EVEX opcode strings, 1675 distinct; SDM md parse: 1737 rows, 1675 distinct
+    only in sdm2.txt: 0  []
+    only in md parse: 0  []
+
+Per family (forms / per-VL records):
+  AVX512F                        386    909
+  AVX512_FP16                    116    236
+  AVX10.2                        102    262
+  AVX512BW                        94    272
+  AVX512DQ                        55    126
+  AVX10_V2_AUX                    21     63
+  AVX512_VBMI2                    20     60
+  ACE_1                           17     17
+  AVX512PF                        16     16
+  AMX-AVX512                      12     12
+  AVX512ER                        10     10
+  AVX512CD                         6     18
+  AVX512_VNNI                      4     12
+  AVX512_VBMI                      4     12
+  AVX512_4FMAPS                    4      4
+  VAES                             4     12
+  MOVRS                            4     12
+  AVX512_BF16                      3      9
+  AVX512_BITALG                    3      9
+  GFNI                             3      9
+  AVX512_4VNNIW                    2      2
+  AVX512_VPOPCNTDQ                 2      6
+  AVX512_VP2INTERSECT              2      6
+  AVX512_IFMA                      2      6
+  SM4                              2      6
+  VPCLMULQDQ                       1      3
+
+Per CPUID feature combination (forms): family [+AVX512VL for 128/256] [| AVX10.x alternative]
+  AVX512F+VL | AVX10.1                         269
+  AVX512F | AVX10.1                            116
+  AVX512BW+VL | AVX10.1                        89
+  AVX10.2 | AVX10.2                            76
+  AVX512_FP16+VL | AVX10.1                     60
+  AVX512_FP16 | AVX10.1                        54
+  AVX512DQ+VL | AVX10.1                        39
+  AVX10.2 | AVX10.2,AVX10_V1_AUX               26
+  AVX10_V2_AUX                                 21
+  AVX512_VBMI2+VL | AVX10.1                    20
+  ACE_1                                        17
+  AVX512DQ | AVX10.1                           16
+  AVX512PF                                     16
+  AMX-AVX512                                   12
+  AVX512ER                                     10
+  AVX512CD+VL | AVX10.1                        6
+  AVX512BW | AVX10.1                           5
+  AVX512_VNNI+VL | AVX10.1                     4
+  AVX512_VBMI+VL | AVX10.1                     4
+  AVX512_4FMAPS                                4
+  VAES+VL | AVX10.1                            4
+  MOVRS | AVX10                                4
+  AVX512_BF16+VL | AVX10.1                     3
+  AVX512_BITALG+VL | AVX10.1                   3
+  GFNI+VL | AVX10.1                            3
+  AVX512_4VNNIW                                2
+  AVX512_VPOPCNTDQ+VL | AVX10.1                2
+  AVX512_VP2INTERSECT+VL                       2
+  AVX512_IFMA+VL | AVX10.1                     2
+  SM4 | AVX10                                  2
+  AVX512_FP16                                  2
+  AVX512F+VL                                   1
+  VPCLMULQDQ+VL | AVX10.1                      1
+
+Per map:
+  0F38   338
+  0F     240
+  MAP5   131
+  0F3A   117
+  MAP6   69
+
+Per tuple type (forms):
+  Full           370
+  Tuple1Scalar   232
+  FullMem        117
+  N/A            56
+  HalfMem        20
+  T1F            16
+  Half           15
+  QuarterMem     13
+  T2             12
+  T4             12
+  Mem128         9
+  T8             6
+  T1_4X          6
+  EighthMem      5
+  Quarter        5
+  MOVDDUP        1
+
+Masking: merge+zero=670, none=149, k-dest=39, k-required=32, merge=5
+Rounding: none=570, er=193, sae=132
+Broadcast: none=516, b32=151, b64=128, b16=100
+Exception class: E4=184, E2=174, E3=91, E4NF=66, E4.nb=60, E3NF=52, E6=38, E4NF.nb=30, E9NF=29, E5=22, E6NF=19, E7NM=16, E12=16, E12NP=16, E10=15, E4/E4NF/E4NF.nb=12, ACE-E4=10, E1=8, AMX-E8-EVEX(xed)=6, AMX-E7-EVEX(xed)=6, E10NF/E3NF=4, E1NF=4, ACE-E3=4, E7NM.128=2, E9NF(xed)=2, E11=2, E5NF=1, E4NF(xed)=1, ACE-E6=1, E4(xed)=1, ACE-E1=1, E10NF=1, ACE-E2=1
+
+asmjit vs Intel conflicts: 163 distinct (355 per-VL); all resolved to the Intel value
+  (not counted: 332 per-VL cases where asmjit writes {er}/{sae} on a folded xyz row and the SDM only on the 512-bit row - same meaning, rounding/SAE needs VL512 or scalar)
+  mnemonic                 44
+  family                   19
+  asmjit-encoding-defect   16
+  tuple                    15
+  tuple-missing            14
+  openc                    14
+  mask                     10
+  rc                       9
+  pp                       9
+  mod                      4
+  bcst                     3
+  map                      2
+  W                        2
+  W-omitted-in-SDM         2
+asmjit-only per-VL records: 0; Intel-only per-VL records: 44
+
+disp8*N check: 1 forms flagged
+  vpmovqd 0F38.F3.W0 35 [HalfMem] VL128: N=8 but the memory operand is 16 bytes
+
+isa_manual_forms.tsv coverage: 2537 EVEX rows = 2355 vector + 182 APX (APX listed in evex_forms_apx.txt)
+  covered 2355/2355 (384 are Capstone VCMP<pred>xx pseudo-ops = VCMPxx imm8), missing 0
+  TSV mnemonics not in isa_manual_forms.tsv: 0: 
+
+Decoder notes
+-------------
+EVEX slots (map 0F/0F38/0F3A, pp, opcode, /digit, W) shared with VEX but with a DIFFERENT instruction: 29 (the decoder must not reuse the VEX entry; W often selects it)
+  0F.66 72 /4 W1: EVEX vpsraq  vs  VEX vpsrad
+  0F.66 D6 /r W0: EVEX vmovd  vs  VEX vmovq
+  0F.66 E2 /r W1: EVEX vpsraq  vs  VEX vpsrad
+  0F.F3 7E /r W0: EVEX vmovd  vs  VEX vmovq
+  0F.F3 E6 /r W1: EVEX vcvtqq2pd  vs  VEX vcvtdq2pd
+  0F.NP 5B /r W1: EVEX vcvtqq2ps  vs  VEX vcvtdq2ps
+  0F38.66 19 /r W0: EVEX vbroadcastf32x2  vs  VEX vbroadcastsd
+  0F38.66 1A /r W0: EVEX vbroadcastf32x4  vs  VEX vbroadcastf128
+  0F38.66 2C /r W0: EVEX vscalefps  vs  VEX vmaskmovps
+  0F38.66 2D /r W0: EVEX vscalefss  vs  VEX vmaskmovpd
+  0F38.66 39 /r W1: EVEX vpminsq  vs  VEX vpminsd
+  0F38.66 3B /r W1: EVEX vpminuq  vs  VEX vpminud
+  0F38.66 3D /r W1: EVEX vpmaxsq  vs  VEX vpmaxsd
+  0F38.66 3F /r W1: EVEX vpmaxuq  vs  VEX vpmaxud
+  0F38.66 40 /r W1: EVEX vpmullq  vs  VEX vpmulld
+  0F38.66 4A /r W0: EVEX tilemovrow  vs  VEX tileloaddrst1
+  0F38.66 59 /r W0: EVEX vbroadcasti32x2  vs  VEX vpbroadcastq
+  0F38.66 5A /r W0: EVEX vbroadcasti32x4  vs  VEX vbroadcasti128
+  0F38.66 5E /r W0: EVEX top4busd  vs  VEX tdpbusd
+  0F38.F2 5E /r W0: EVEX top4bssd  vs  VEX tdpbssd
+  0F38.F3 5C /r W0: EVEX top2bf16ps  vs  VEX tdpbf16ps
+  0F38.F3 5E /r W0: EVEX top4bsud  vs  VEX tdpbsud
+  0F38.NP 5E /r W0: EVEX top4buud  vs  VEX tdpbuud
+  0F3A.66 08 /r W0: EVEX vrndscaleps  vs  VEX vroundps
+  0F3A.66 09 /r W1: EVEX vrndscalepd  vs  VEX vroundpd
+  0F3A.66 18 /r W0: EVEX vinsertf32x4  vs  VEX vinsertf128
+  0F3A.66 19 /r W0: EVEX vextractf32x4  vs  VEX vextractf128
+  0F3A.66 38 /r W0: EVEX vinserti32x4  vs  VEX vinserti128
+  0F3A.66 39 /r W0: EVEX vextracti32x4  vs  VEX vextracti128
+EVEX slots where only the name gains an element-size suffix (same operation, EVEX adds masking/W element width): 16
+  0F.66 6F /r W0: EVEX vmovdqa32  vs  VEX vmovdqa
+  0F.66 6F /r W1: EVEX vmovdqa64  vs  VEX vmovdqa
+  0F.66 7F /r W0: EVEX vmovdqa32  vs  VEX vmovdqa
+  0F.66 7F /r W1: EVEX vmovdqa64  vs  VEX vmovdqa
+  0F.66 DB /r W0: EVEX vpandd  vs  VEX vpand
+  0F.66 DB /r W1: EVEX vpandq  vs  VEX vpand
+  0F.66 DF /r W0: EVEX vpandnd  vs  VEX vpandn
+  0F.66 DF /r W1: EVEX vpandnq  vs  VEX vpandn
+  0F.66 EB /r W0: EVEX vpord  vs  VEX vpor
+  0F.66 EB /r W1: EVEX vporq  vs  VEX vpor
+  0F.66 EF /r W0: EVEX vpxord  vs  VEX vpxor
+  0F.66 EF /r W1: EVEX vpxorq  vs  VEX vpxor
+  0F.F3 6F /r W0: EVEX vmovdqu32  vs  VEX vmovdqu
+  0F.F3 6F /r W1: EVEX vmovdqu64  vs  VEX vmovdqu
+  0F.F3 7F /r W0: EVEX vmovdqu32  vs  VEX vmovdqu
+  0F.F3 7F /r W1: EVEX vmovdqu64  vs  VEX vmovdqu
+VEX-only slots (no EVEX form; EVEX encoding there is #UD): 115
+  0F.66:38 0F.66:41 0F.66:42 0F.66:44 0F.66:45 0F.66:46 0F.66:47 0F.66:4A 0F.66:4B 0F.66:50 0F.66:90 0F.66:91 0F.66:92 0F.66:93 0F.66:98 0F.66:99 0F.66:D7 0F.66:F7 0F.F2:92 0F.F2:93 0F.F2:F0 0F.NP:41 0F.NP:42 0F.NP:44 0F.NP:45 0F.NP:46 0F.NP:47 0F.NP:4A 0F.NP:4B 0F.NP:50 0F.NP:52 0F.NP:53 0F.NP:77 0F.NP:90 0F.NP:91 0F.NP:92 0F.NP:93 0F.NP:98 0F.NP:99 0F.NP:AE/2 0F.NP:AE/3 0F38.66:0E 0F38.66:0F 0F38.66:17 0F38.66:2E 0F38.66:2F 0F38.66:41 0F38.66:49/0 0F38.66:6C 0F38.66:8C 0F38.66:8E 0F38.66:B0 0F38.66:B1 0F38.66:DA 0F38.66:DB 0F38.66:E0 0F38.66:E1 0F38.66:E2 0F38.66:E3 0F38.66:E4 0F38.66:E5 0F38.66:E6 0F38.66:E7 0F38.66:E8 0F38.66:E9 0F38.66:EA 0F38.66:EB 0F38.66:EC 0F38.66:ED 0F38.66:EE 0F38.66:EF 0F38.66:F7 0F38.F2:49 0F38.F2:4A 0F38.F2:4B 0F38.F2:5C 0F38.F2:B0 0F38.F2:CB 0F38.F2:CC 0F38.F2:CD 0F38.F2:F5 0F38.F2:F6 0F38.F2:F7 0F38.F3:4B 0F38.F3:B0 0F38.F3:B1 0F38.F3:F5 0F38.F3:F7 0F38.NP:49/0 0F38.NP:49 0F38.NP:6C 0F38.NP:B0 0F38.NP:DA 0F38.NP:F2 0F38.NP:F3/1 0F38.NP:F3/2 0F38.NP:F3/3 0F38.NP:F5 0F38.NP:F7 0F3A.66:02 0F3A.66:06 0F3A.66:0E 0F3A.66:30 0F3A.66:31 0F3A.66:32 0F3A.66:33 0F3A.66:41 0F3A.66:46 0F3A.66:60 0F3A.66:61 0F3A.66:62 0F3A.66:63 0F3A.66:DE 0F3A.66:DF 0F3A.F2:F0
+W-split opcodes (same map/pp/opcode/digit, different mnemonic for W0 and W1): 180
+  0F.66 6E /r: W0=vmovd  W1=vmovq
+  0F.66 6F /r: W0=vmovdqa32  W1=vmovdqa64
+  0F.66 72 /0: W0=vprord  W1=vprorq
+  0F.66 72 /1: W0=vprold  W1=vprolq
+  0F.66 72 /4: W0=vpsrad  W1=vpsraq
+  0F.66 78 /r: W0=vcvttps2uqq  W1=vcvttpd2uqq
+  0F.66 79 /r: W0=vcvtps2uqq  W1=vcvtpd2uqq
+  0F.66 7A /r: W0=vcvttps2qq  W1=vcvttpd2qq
+  0F.66 7B /r: W0=vcvtps2qq  W1=vcvtpd2qq
+  0F.66 7E /r: W0=vmovd  W1=vmovq
+  0F.66 7F /r: W0=vmovdqa32  W1=vmovdqa64
+  0F.66 D6 /r: W0=vmovd  W1=vmovq
+  0F.66 DB /r: W0=vpandd  W1=vpandq
+  0F.66 DF /r: W0=vpandnd  W1=vpandnq
+  0F.66 E2 /r: W0=vpsrad  W1=vpsraq
+  0F.66 EB /r: W0=vpord  W1=vporq
+  0F.66 EF /r: W0=vpxord  W1=vpxorq
+  0F.F2 6F /r: W0=vmovdqu8  W1=vmovdqu16
+  0F.F2 7A /r: W0=vcvtudq2ps  W1=vcvtuqq2ps
+  0F.F2 7F /r: W0=vmovdqu8  W1=vmovdqu16
+  0F.F3 6F /r: W0=vmovdqu32  W1=vmovdqu64
+  0F.F3 7A /r: W0=vcvtudq2pd  W1=vcvtuqq2pd
+  0F.F3 7E /r: W0=vmovd  W1=vmovq
+  0F.F3 7F /r: W0=vmovdqu32  W1=vmovdqu64
+  0F.F3 E6 /r: W0=vcvtdq2pd  W1=vcvtqq2pd
+  0F.NP 5B /r: W0=vcvtdq2ps  W1=vcvtqq2ps
+  0F.NP 78 /r: W0=vcvttps2udq  W1=vcvttpd2udq
+  0F.NP 79 /r: W0=vcvtps2udq  W1=vcvtpd2udq
+  0F38.66 14 /r: W0=vprorvd  W1=vprorvq
+  0F38.66 15 /r: W0=vprolvd  W1=vprolvq
+  0F38.66 16 /r: W0=vpermps  W1=vpermpd
+  0F38.66 19 /r: W0=vbroadcastf32x2  W1=vbroadcastsd
+  0F38.66 1A /r: W0=vbroadcastf32x4  W1=vbroadcastf64x2
+  0F38.66 1B /r: W0=vbroadcastf32x8  W1=vbroadcastf64x4
+  0F38.66 26 /r: W0=vptestmb  W1=vptestmw
+  0F38.66 27 /r: W0=vptestmd  W1=vptestmq
+  0F38.66 2C /r: W0=vscalefps  W1=vscalefpd
+  0F38.66 2D /r: W0=vscalefss  W1=vscalefsd
+  0F38.66 36 /r: W0=vpermd  W1=vpermq
+  0F38.66 39 /r: W0=vpminsd  W1=vpminsq
+  0F38.66 3B /r: W0=vpminud  W1=vpminuq
+  0F38.66 3D /r: W0=vpmaxsd  W1=vpmaxsq
+  0F38.66 3F /r: W0=vpmaxud  W1=vpmaxuq
+  0F38.66 40 /r: W0=vpmulld  W1=vpmullq
+  0F38.66 42 /r: W0=vgetexpps  W1=vgetexppd
+  0F38.66 43 /r: W0=vgetexpss  W1=vgetexpsd
+  0F38.66 44 /r: W0=vplzcntd  W1=vplzcntq
+  0F38.66 45 /r: W0=vpsrlvd  W1=vpsrlvq
+  0F38.66 46 /r: W0=vpsravd  W1=vpsravq
+  0F38.66 47 /r: W0=vpsllvd  W1=vpsllvq
+  0F38.66 4C /r: W0=vrcp14ps  W1=vrcp14pd
+  0F38.66 4D /r: W0=vrcp14ss  W1=vrcp14sd
+  0F38.66 4E /r: W0=vrsqrt14ps  W1=vrsqrt14pd
+  0F38.66 4F /r: W0=vrsqrt14ss  W1=vrsqrt14sd
+  0F38.66 54 /r: W0=vpopcntb  W1=vpopcntw
+  0F38.66 55 /r: W0=vpopcntd  W1=vpopcntq
+  0F38.66 59 /r: W0=vbroadcasti32x2  W1=vpbroadcastq
+  0F38.66 5A /r: W0=vbroadcasti32x4  W1=vbroadcasti64x2
+  0F38.66 5B /r: W0=vbroadcasti32x8  W1=vbroadcasti64x4
+  0F38.66 62 /r: W0=vpexpandb  W1=vpexpandw
+  0F38.66 63 /r: W0=vpcompressb  W1=vpcompressw
+  0F38.66 64 /r: W0=vpblendmd  W1=vpblendmq
+  0F38.66 65 /r: W0=vblendmps  W1=vblendmpd
+  0F38.66 66 /r: W0=vpblendmb  W1=vpblendmw
+  0F38.66 71 /r: W0=vpshldvd  W1=vpshldvq
+  0F38.66 73 /r: W0=vpshrdvd  W1=vpshrdvq
+  0F38.66 75 /r: W0=vpermi2b  W1=vpermi2w
+  0F38.66 76 /r: W0=vpermi2d  W1=vpermi2q
+  0F38.66 77 /r: W0=vpermi2ps  W1=vpermi2pd
+  0F38.66 7C /r: W0=vpbroadcastd  W1=vpbroadcastq
+  0F38.66 7D /r: W0=vpermt2b  W1=vpermt2w
+  0F38.66 7E /r: W0=vpermt2d  W1=vpermt2q
+  0F38.66 7F /r: W0=vpermt2ps  W1=vpermt2pd
+  0F38.66 88 /r: W0=vexpandps  W1=vexpandpd
+  0F38.66 89 /r: W0=vpexpandd  W1=vpexpandq
+  0F38.66 8A /r: W0=vcompressps  W1=vcompresspd
+  0F38.66 8B /r: W0=vpcompressd  W1=vpcompressq
+  0F38.66 8D /r: W0=vpermb  W1=vpermw
+  0F38.66 90 /r: W0=vpgatherdd  W1=vpgatherdq
+  0F38.66 91 /r: W0=vpgatherqd  W1=vpgatherqq
+  0F38.66 92 /r: W0=vgatherdps  W1=vgatherdpd
+  0F38.66 93 /r: W0=vgatherqps  W1=vgatherqpd
+  0F38.66 96 /r: W0=vfmaddsub132ps  W1=vfmaddsub132pd
+  0F38.66 97 /r: W0=vfmsubadd132ps  W1=vfmsubadd132pd
+  0F38.66 98 /r: W0=vfmadd132ps  W1=vfmadd132pd
+  0F38.66 99 /r: W0=vfmadd132ss  W1=vfmadd132sd
+  0F38.66 9A /r: W0=vfmsub132ps  W1=vfmsub132pd
+  0F38.66 9B /r: W0=vfmsub132ss  W1=vfmsub132sd
+  0F38.66 9C /r: W0=vfnmadd132ps  W1=vfnmadd132pd
+  0F38.66 9D /r: W0=vfnmadd132ss  W1=vfnmadd132sd
+  0F38.66 9E /r: W0=vfnmsub132ps  W1=vfnmsub132pd
+  0F38.66 9F /r: W0=vfnmsub132ss  W1=vfnmsub132sd
+  0F38.66 A0 /r: W0=vpscatterdd  W1=vpscatterdq
+  0F38.66 A1 /r: W0=vpscatterqd  W1=vpscatterqq
+  0F38.66 A2 /r: W0=vscatterdps  W1=vscatterdpd
+  0F38.66 A3 /r: W0=vscatterqps  W1=vscatterqpd
+  0F38.66 A6 /r: W0=vfmaddsub213ps  W1=vfmaddsub213pd
+  0F38.66 A7 /r: W0=vfmsubadd213ps  W1=vfmsubadd213pd
+  0F38.66 A8 /r: W0=vfmadd213ps  W1=vfmadd213pd
+  0F38.66 A9 /r: W0=vfmadd213ss  W1=vfmadd213sd
+  0F38.66 AA /r: W0=vfmsub213ps  W1=vfmsub213pd
+  0F38.66 AB /r: W0=vfmsub213ss  W1=vfmsub213sd
+  0F38.66 AC /r: W0=vfnmadd213ps  W1=vfnmadd213pd
+  0F38.66 AD /r: W0=vfnmadd213ss  W1=vfnmadd213sd
+  0F38.66 AE /r: W0=vfnmsub213ps  W1=vfnmsub213pd
+  0F38.66 AF /r: W0=vfnmsub213ss  W1=vfnmsub213sd
+  0F38.66 B6 /r: W0=vfmaddsub231ps  W1=vfmaddsub231pd
+  0F38.66 B7 /r: W0=vfmsubadd231ps  W1=vfmsubadd231pd
+  0F38.66 B8 /r: W0=vfmadd231ps  W1=vfmadd231pd
+  0F38.66 B9 /r: W0=vfmadd231ss  W1=vfmadd231sd
+  0F38.66 BA /r: W0=vfmsub231ps  W1=vfmsub231pd
+  0F38.66 BB /r: W0=vfmsub231ss  W1=vfmsub231sd
+  0F38.66 BC /r: W0=vfnmadd231ps  W1=vfnmadd231pd
+  0F38.66 BD /r: W0=vfnmadd231ss  W1=vfnmadd231sd
+  0F38.66 BE /r: W0=vfnmsub231ps  W1=vfnmsub231pd
+  0F38.66 BF /r: W0=vfnmsub231ss  W1=vfnmsub231sd
+  0F38.66 C4 /r: W0=vpconflictd  W1=vpconflictq
+  0F38.66 C6 /1: W0=vgatherpf0dps  W1=vgatherpf0dpd
+  0F38.66 C6 /2: W0=vgatherpf1dps  W1=vgatherpf1dpd
+  0F38.66 C6 /5: W0=vscatterpf0dps  W1=vscatterpf0dpd
+  0F38.66 C6 /6: W0=vscatterpf1dps  W1=vscatterpf1dpd
+  0F38.66 C7 /1: W0=vgatherpf0qps  W1=vgatherpf0qpd
+  0F38.66 C7 /2: W0=vgatherpf1qps  W1=vgatherpf1qpd
+  0F38.66 C7 /5: W0=vscatterpf0qps  W1=vscatterpf0qpd
+  0F38.66 C7 /6: W0=vscatterpf1qps  W1=vscatterpf1qpd
+  0F38.66 C8 /r: W0=vexp2ps  W1=vexp2pd
+  0F38.66 CA /r: W0=vrcp28ps  W1=vrcp28pd
+  0F38.66 CB /r: W0=vrcp28ss  W1=vrcp28sd
+  0F38.66 CC /r: W0=vrsqrt28ps  W1=vrsqrt28pd
+  0F38.66 CD /r: W0=vrsqrt28ss  W1=vrsqrt28sd
+  0F38.F2 68 /r: W0=vp2intersectd  W1=vp2intersectq
+  0F38.F3 26 /r: W0=vptestnmb  W1=vptestnmw
+  0F38.F3 27 /r: W0=vptestnmd  W1=vptestnmq
+  0F38.F3 28 /r: W0=vpmovm2b  W1=vpmovm2w
+  0F38.F3 29 /r: W0=vpmovb2m  W1=vpmovw2m
+  0F38.F3 38 /r: W0=vpmovm2d  W1=vpmovm2q
+  0F38.F3 39 /r: W0=vpmovd2m  W1=vpmovq2m
+  0F3A.66 03 /r: W0=valignd  W1=valignq
+  0F3A.66 16 /r: W0=vpextrd  W1=vpextrq
+  0F3A.66 18 /r: W0=vinsertf32x4  W1=vinsertf64x2
+  0F3A.66 19 /r: W0=vextractf32x4  W1=vextractf64x2
+  0F3A.66 1A /r: W0=vinsertf32x8  W1=vinsertf64x4
+  0F3A.66 1B /r: W0=vextractf32x8  W1=vextractf64x4
+  0F3A.66 1E /r: W0=vpcmpud  W1=vpcmpuq
+  0F3A.66 1F /r: W0=vpcmpd  W1=vpcmpq
+  0F3A.66 22 /r: W0=vpinsrd  W1=vpinsrq
+  0F3A.66 23 /r: W0=vshuff32x4  W1=vshuff64x2
+  0F3A.66 25 /r: W0=vpternlogd  W1=vpternlogq
+  0F3A.66 26 /r: W0=vgetmantps  W1=vgetmantpd
+  0F3A.66 27 /r: W0=vgetmantss  W1=vgetmantsd
+  0F3A.66 38 /r: W0=vinserti32x4  W1=vinserti64x2
+  0F3A.66 39 /r: W0=vextracti32x4  W1=vextracti64x2
+  0F3A.66 3A /r: W0=vinserti32x8  W1=vinserti64x4
+  0F3A.66 3B /r: W0=vextracti32x8  W1=vextracti64x4
+  0F3A.66 3E /r: W0=vpcmpub  W1=vpcmpuw
+  0F3A.66 3F /r: W0=vpcmpb  W1=vpcmpw
+  0F3A.66 43 /r: W0=vshufi32x4  W1=vshufi64x2
+  0F3A.66 50 /r: W0=vrangeps  W1=vrangepd
+  0F3A.66 51 /r: W0=vrangess  W1=vrangesd
+  0F3A.66 52 /r: W0=vminmaxps  W1=vminmaxpd
+  0F3A.66 53 /r: W0=vminmaxss  W1=vminmaxsd
+  0F3A.66 54 /r: W0=vfixupimmps  W1=vfixupimmpd
+  0F3A.66 55 /r: W0=vfixupimmss  W1=vfixupimmsd
+  0F3A.66 56 /r: W0=vreduceps  W1=vreducepd
+  0F3A.66 57 /r: W0=vreducess  W1=vreducesd
+  0F3A.66 66 /r: W0=vfpclassps  W1=vfpclasspd
+  0F3A.66 67 /r: W0=vfpclassss  W1=vfpclasssd
+  0F3A.66 71 /r: W0=vpshldd  W1=vpshldq
+  0F3A.66 73 /r: W0=vpshrdd  W1=vpshrdq
+  MAP5.66 37 /r: W0=vcvthf62hf8  W1=vcvtbf62hf8
+  MAP5.66 6C /r: W0=vcvttps2uqqs  W1=vcvttpd2uqqs
+  MAP5.66 6D /r: W0=vcvttps2qqs  W1=vcvttpd2qqs
+  MAP5.F2 6F /r: W0=vmovrsb  W1=vmovrsw
+  MAP5.F2 7A /r: W0=vcvtudq2ph  W1=vcvtuqq2ph
+  MAP5.F3 3D /r: W0=vcvthf82bf4s  W1=vcvtbf82bf4s
+  MAP5.F3 6F /r: W0=vmovrsd  W1=vmovrsq
+  MAP5.NP 36 /r: W0=vcvthf82ps  W1=vcvtbf82ps
+  MAP5.NP 5B /r: W0=vcvtdq2ph  W1=vcvtqq2ph
+  MAP5.NP 6C /r: W0=vcvttps2udqs  W1=vcvttpd2udqs
+  MAP5.NP 6D /r: W0=vcvttps2dqs  W1=vcvttpd2dqs
+pp-split opcodes (same map/opcode/digit, different mnemonic per pp): 151
+  0F 10 /r: 66=vmovupd  F2=vmovsd  F3=vmovss  NP=vmovups
+  0F 11 /r: 66=vmovupd  F2=vmovsd  F3=vmovss  NP=vmovups
+  0F 12 /r: 66=vmovlpd  F2=vmovddup  F3=vmovsldup  NP=vmovhlps,vmovlps
+  0F 13 /r: 66=vmovlpd  NP=vmovlps
+  0F 14 /r: 66=vunpcklpd  NP=vunpcklps
+  0F 15 /r: 66=vunpckhpd  NP=vunpckhps
+  0F 16 /r: 66=vmovhpd  F3=vmovshdup  NP=vmovhps,vmovlhps
+  0F 17 /r: 66=vmovhpd  NP=vmovhps
+  0F 28 /r: 66=vmovapd  NP=vmovaps
+  0F 29 /r: 66=vmovapd  NP=vmovaps
+  0F 2A /r: F2=vcvtsi2sd  F3=vcvtsi2ss
+  0F 2B /r: 66=vmovntpd  NP=vmovntps
+  0F 2C /r: F2=vcvttsd2si  F3=vcvttss2si
+  0F 2D /r: F2=vcvtsd2si  F3=vcvtss2si
+  0F 2E /r: 66=vucomisd  F2=vucomxsd  F3=vucomxss  NP=vucomiss
+  0F 2F /r: 66=vcomisd  F2=vcomxsd  F3=vcomxss  NP=vcomiss
+  0F 51 /r: 66=vsqrtpd  F2=vsqrtsd  F3=vsqrtss  NP=vsqrtps
+  0F 54 /r: 66=vandpd  NP=vandps
+  0F 55 /r: 66=vandnpd  NP=vandnps
+  0F 56 /r: 66=vorpd  NP=vorps
+  0F 57 /r: 66=vxorpd  NP=vxorps
+  0F 58 /r: 66=vaddpd  F2=vaddsd  F3=vaddss  NP=vaddps
+  0F 59 /r: 66=vmulpd  F2=vmulsd  F3=vmulss  NP=vmulps
+  0F 5A /r: 66=vcvtpd2ps  F2=vcvtsd2ss  F3=vcvtss2sd  NP=vcvtps2pd
+  0F 5B /r: 66=vcvtps2dq  F3=vcvttps2dq  NP=vcvtdq2ps,vcvtqq2ps
+  0F 5C /r: 66=vsubpd  F2=vsubsd  F3=vsubss  NP=vsubps
+  0F 5D /r: 66=vminpd  F2=vminsd  F3=vminss  NP=vminps
+  0F 5E /r: 66=vdivpd  F2=vdivsd  F3=vdivss  NP=vdivps
+  0F 5F /r: 66=vmaxpd  F2=vmaxsd  F3=vmaxss  NP=vmaxps
+  0F 6F /r: 66=vmovdqa32,vmovdqa64  F2=vmovdqu16,vmovdqu8  F3=vmovdqu32,vmovdqu64
+  0F 70 /r: 66=vpshufd  F2=vpshuflw  F3=vpshufhw
+  0F 78 /r: 66=vcvttpd2uqq,vcvttps2uqq  F2=vcvttsd2usi  F3=vcvttss2usi  NP=vcvttpd2udq,vcvttps2udq
+  0F 79 /r: 66=vcvtpd2uqq,vcvtps2uqq  F2=vcvtsd2usi  F3=vcvtss2usi  NP=vcvtpd2udq,vcvtps2udq
+  0F 7A /r: 66=vcvttpd2qq,vcvttps2qq  F2=vcvtudq2ps,vcvtuqq2ps  F3=vcvtudq2pd,vcvtuqq2pd
+  0F 7B /r: 66=vcvtpd2qq,vcvtps2qq  F2=vcvtusi2sd  F3=vcvtusi2ss
+  0F 7F /r: 66=vmovdqa32,vmovdqa64  F2=vmovdqu16,vmovdqu8  F3=vmovdqu32,vmovdqu64
+  0F C2 /r: 66=vcmppd  F2=vcmpsd  F3=vcmpss  NP=vcmpps
+  0F C6 /r: 66=vshufpd  NP=vshufps
+  0F E6 /r: 66=vcvttpd2dq  F2=vcvtpd2dq  F3=vcvtdq2pd,vcvtqq2pd
+  0F38 10 /r: 66=vpsrlvw  F3=vpmovuswb
+  0F38 11 /r: 66=vpsravw  F3=vpmovusdb
+  0F38 12 /r: 66=vpsllvw  F3=vpmovusqb
+  0F38 13 /r: 66=vcvtph2ps  F3=vpmovusdw
+  0F38 14 /r: 66=vprorvd,vprorvq  F3=vpmovusqw
+  0F38 15 /r: 66=vprolvd,vprolvq  F3=vpmovusqd
+  0F38 20 /r: 66=vpmovsxbw  F3=vpmovswb
+  0F38 21 /r: 66=vpmovsxbd  F3=vpmovsdb
+  0F38 22 /r: 66=vpmovsxbq  F3=vpmovsqb
+  0F38 23 /r: 66=vpmovsxwd  F3=vpmovsdw
+  0F38 24 /r: 66=vpmovsxwq  F3=vpmovsqw
+  0F38 25 /r: 66=vpmovsxdq  F3=vpmovsqd
+  0F38 26 /r: 66=vptestmb,vptestmw  F3=vptestnmb,vptestnmw
+  0F38 27 /r: 66=vptestmd,vptestmq  F3=vptestnmd,vptestnmq
+  0F38 28 /r: 66=vpmuldq  F3=vpmovm2b,vpmovm2w
+  0F38 29 /r: 66=vpcmpeqq  F3=vpmovb2m,vpmovw2m
+  0F38 2A /r: 66=vmovntdqa  F3=vpbroadcastmb2q
+  0F38 30 /r: 66=vpmovzxbw  F3=vpmovwb
+  0F38 31 /r: 66=vpmovzxbd  F3=vpmovdb
+  0F38 32 /r: 66=vpmovzxbq  F3=vpmovqb
+  0F38 33 /r: 66=vpmovzxwd  F3=vpmovdw
+  0F38 34 /r: 66=vpmovzxwq  F3=vpmovqw
+  0F38 35 /r: 66=vpmovzxdq  F3=vpmovqd
+  0F38 38 /r: 66=vpminsb  F3=vpmovm2d,vpmovm2q
+  0F38 39 /r: 66=vpminsd,vpminsq  F3=vpmovd2m,vpmovq2m
+  0F38 3A /r: 66=vpminuw  F3=vpbroadcastmw2d
+  0F38 4A /r: 66=tilemovrow  F3=tcvtrowd2ps
+  0F38 50 /r: 66=vpdpbusd  F2=vpdpbssd  F3=vpdpbsud  NP=vpdpbuud
+  0F38 51 /r: 66=vpdpbusds  F2=vpdpbssds  F3=vpdpbsuds  NP=vpdpbuuds
+  0F38 52 /r: 66=vpdpwssd  F2=vp4dpwssd  F3=vdpbf16ps  NP=vdpphps
+  0F38 53 /r: 66=vpdpwssds  F2=vp4dpwssds
+  0F38 5E /r: 66=top4busd  F2=top4bssd  F3=top4bsud  NP=top4buud
+  0F38 6D /r: 66=tcvtrowps2phl  F2=tcvtrowps2bf16h  F3=tcvtrowps2bf16l  NP=tcvtrowps2phh
+  0F38 72 /r: 66=vpshrdvw  F2=vcvtne2ps2bf16  F3=vcvtneps2bf16
+  0F38 74 /r: F2=vcvt2ph2bf8  F3=vcvtph2bf8  NP=vcvtbiasph2bf8
+  0F38 9A /r: 66=vfmsub132pd,vfmsub132ps  F2=v4fmaddps
+  0F38 9B /r: 66=vfmsub132sd,vfmsub132ss  F2=v4fmaddss
+  0F38 AA /r: 66=vfmsub213pd,vfmsub213ps  F2=v4fnmaddps
+  0F38 AB /r: 66=vfmsub213sd,vfmsub213ss  F2=v4fnmaddss
+  0F38 D2 /r: 66=vpdpwusd  F3=vpdpwsud  NP=vpdpwuud
+  0F38 D3 /r: 66=vpdpwusds  F3=vpdpwsuds  NP=vpdpwuuds
+  0F38 DA /r: F2=vsm4rnds4  F3=vsm4key4
+  0F3A 07 /r: 66=tilemovrow  F2=tcvtrowps2bf16h  F3=tcvtrowd2ps  NP=tcvtrowps2phh
+  0F3A 08 /r: 66=vrndscaleps  F2=vrndscalebf16  NP=vrndscaleph
+  0F3A 0A /r: 66=vrndscaless  NP=vrndscalesh
+  0F3A 26 /r: 66=vgetmantpd,vgetmantps  F2=vgetmantbf16  NP=vgetmantph
+  0F3A 27 /r: 66=vgetmantsd,vgetmantss  NP=vgetmantsh
+  0F3A 42 /r: 66=vdbpsadbw  F3=vmpsadbw
+  0F3A 52 /r: 66=vminmaxpd,vminmaxps  F2=vminmaxbf16  NP=vminmaxph
+  0F3A 53 /r: 66=vminmaxsd,vminmaxss  NP=vminmaxsh
+  0F3A 56 /r: 66=vreducepd,vreduceps  F2=vreducebf16  NP=vreduceph
+  0F3A 57 /r: 66=vreducesd,vreducess  NP=vreducesh
+  0F3A 66 /r: 66=vfpclasspd,vfpclassps  F2=vfpclassbf16  NP=vfpclassph
+  0F3A 67 /r: 66=vfpclasssd,vfpclassss  NP=vfpclasssh
+  0F3A 77 /r: F2=tcvtrowps2phl  F3=tcvtrowps2bf16l
+  0F3A 8D /r: 66=top4mxhf8ps  F2=top4mxbhf8ps  F3=top4mxhbf8ps  NP=top4mxbf8ps
+  0F3A C2 /r: F2=vcmpbf16  F3=vcmpsh  NP=vcmpph
+  MAP5 18 /r: F2=vcvt2ph2hf8  F3=vcvtph2hf8  NP=vcvtbiasph2hf8
+  MAP5 1B /r: F2=vcvt2ph2hf8s  F3=vcvtph2hf8s  NP=vcvtbiasph2hf8s
+  MAP5 1D /r: 66=vcvtps2phx  NP=vcvtss2sh
+  MAP5 2E /r: F3=vucomxsh  NP=vucomish
+  MAP5 2F /r: 66=vcomisbf16  F3=vcomxsh  NP=vcomish
+  MAP5 37 /r: 66=vcvtbf62hf8,vcvthf62hf8  NP=vcvtbf42hf8
+  MAP5 38 /r: 66=vcvtrops2hf8  F3=vcvtps2hf8  NP=vcvtbiasps2hf8
+  MAP5 39 /r: F3=vcvtps2bf8  NP=vcvtbiasps2bf8
+  MAP5 3A /r: 66=vcvtrops2hf8s  F3=vcvtps2hf8s  NP=vcvtbiasps2hf8s
+  MAP5 3B /r: F3=vcvtps2bf8s  NP=vcvtbiasps2bf8s
+  MAP5 51 /r: 66=vsqrtbf16  F3=vsqrtsh  NP=vsqrtph
+  MAP5 58 /r: 66=vaddbf16  F3=vaddsh  NP=vaddph
+  MAP5 59 /r: 66=vmulbf16  F3=vmulsh  NP=vmulph
+  MAP5 5A /r: 66=vcvtpd2ph  F2=vcvtsd2sh  F3=vcvtsh2sd  NP=vcvtph2pd
+  MAP5 5B /r: 66=vcvtph2dq  F3=vcvttph2dq  NP=vcvtdq2ph,vcvtqq2ph
+  MAP5 5C /r: 66=vsubbf16  F3=vsubsh  NP=vsubph
+  MAP5 5D /r: 66=vminbf16  F3=vminsh  NP=vminph
+  MAP5 5E /r: 66=vdivbf16  F3=vdivsh  NP=vdivph
+  MAP5 5F /r: 66=vmaxbf16  F3=vmaxsh  NP=vmaxph
+  MAP5 68 /r: 66=vcvttps2ibs  F2=vcvttbf162ibs  NP=vcvttph2ibs
+  MAP5 69 /r: 66=vcvtps2ibs  F2=vcvtbf162ibs  NP=vcvtph2ibs
+  MAP5 6A /r: 66=vcvttps2iubs  F2=vcvttbf162iubs  NP=vcvttph2iubs
+  MAP5 6B /r: 66=vcvtps2iubs  F2=vcvtbf162iubs  NP=vcvtph2iubs
+  MAP5 6C /r: 66=vcvttpd2uqqs,vcvttps2uqqs  F2=vcvttsd2usis  F3=vcvttss2usis  NP=vcvttpd2udqs,vcvttps2udqs
+  MAP5 6D /r: 66=vcvttpd2qqs,vcvttps2qqs  F2=vcvttsd2sis  F3=vcvttss2sis  NP=vcvttpd2dqs,vcvttps2dqs
+  MAP5 6F /r: F2=vmovrsb,vmovrsw  F3=vmovrsd,vmovrsq
+  MAP5 74 /r: F2=vcvt2ph2bf8s  F3=vcvtph2bf8s  NP=vcvtbiasph2bf8s
+  MAP5 78 /r: 66=vcvttph2uqq  F3=vcvttsh2usi  NP=vcvttph2udq
+  MAP5 79 /r: 66=vcvtph2uqq  F3=vcvtsh2usi  NP=vcvtph2udq
+  MAP5 7A /r: 66=vcvttph2qq  F2=vcvtudq2ph,vcvtuqq2ph
+  MAP5 7B /r: 66=vcvtph2qq  F3=vcvtusi2sh
+  MAP5 7C /r: 66=vcvttph2w  NP=vcvttph2uw
+  MAP5 7D /r: 66=vcvtph2w  F2=vcvtuw2ph  F3=vcvtw2ph  NP=vcvtph2uw
+  MAP6 13 /r: 66=vcvtph2psx  NP=vcvtsh2ss
+  MAP6 2C /r: 66=vscalefph  NP=vscalefbf16
+  MAP6 42 /r: 66=vgetexpph  NP=vgetexpbf16
+  MAP6 4C /r: 66=vrcpph  NP=vrcpbf16
+  MAP6 4E /r: 66=vrsqrtph  NP=vrsqrtbf16
+  MAP6 56 /r: F2=vfcmaddcph  F3=vfmaddcph
+  MAP6 57 /r: F2=vfcmaddcsh  F3=vfmaddcsh
+  MAP6 95 /0: F2=bsrmovh  F3=bsrmovl  NP=bsrmovf
+  MAP6 98 /r: 66=vfmadd132ph  NP=vfmadd132bf16
+  MAP6 9A /r: 66=vfmsub132ph  NP=vfmsub132bf16
+  MAP6 9C /r: 66=vfnmadd132ph  NP=vfnmadd132bf16
+  MAP6 9E /r: 66=vfnmsub132ph  NP=vfnmsub132bf16
+  MAP6 A8 /r: 66=vfmadd213ph  NP=vfmadd213bf16
+  MAP6 AA /r: 66=vfmsub213ph  NP=vfmsub213bf16
+  MAP6 AC /r: 66=vfnmadd213ph  NP=vfnmadd213bf16
+  MAP6 AE /r: 66=vfnmsub213ph  NP=vfnmsub213bf16
+  MAP6 B8 /r: 66=vfmadd231ph  NP=vfmadd231bf16
+  MAP6 BA /r: 66=vfmsub231ph  NP=vfmsub231bf16
+  MAP6 BC /r: 66=vfnmadd231ph  NP=vfnmadd231bf16
+  MAP6 BE /r: 66=vfnmsub231ph  NP=vfnmsub231bf16
+  MAP6 D6 /r: F2=vfcmulcph  F3=vfmulcph
+  MAP6 D7 /r: F2=vfcmulcsh  F3=vfmulcsh
+mod-split opcodes (register and memory forms decode to different instructions): 2
+  0F.NP 12 /r W0: mem=vmovlps  reg=vmovhlps
+  0F.NP 16 /r W0: mem=vmovhps  reg=vmovlhps
+same mnemonic, separate register/memory rows (operand count, masking or tuple differ by ModRM.mod): 10
+  0F.F2 10 /r W1 vmovsd: differs in openc,tuple  reg: VMOVSD xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSD xmm1{k1}{z}, m64
+  0F.F2 11 /r W1 vmovsd: differs in openc,mask,tuple  reg: VMOVSD xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSD m64{k1}, xmm1
+  0F.F3 10 /r W0 vmovss: differs in openc,tuple  reg: VMOVSS xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSS xmm1{k1}{z}, m32
+  0F.F3 11 /r W0 vmovss: differs in openc,mask,tuple  reg: VMOVSS xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSS m32{k1}, xmm1
+  0F38.66 62 /r W0 vpexpandb: differs in tuple  reg: VPEXPANDB zmm1{k1}{z}, zmm2  |  mem: VPEXPANDB zmm1{k1}{z}, m512
+  0F38.66 62 /r W1 vpexpandw: differs in tuple  reg: VPEXPANDW zmm1{k1}{z}, zmm2  |  mem: VPEXPANDW zmm1{k1}{z}, m512
+  0F38.66 63 /r W0 vpcompressb: differs in mask,tuple  reg: VPCOMPRESSB zmm1{k1}{z}, zmm2  |  mem: VPCOMPRESSB m512{k1}, zmm1
+  0F38.66 63 /r W1 vpcompressw: differs in mask,tuple  reg: VPCOMPRESSW zmm1{k1}{z}, zmm2  |  mem: VPCOMPRESSW m512{k1}, zmm1
+  MAP5.F3 10 /r W0 vmovsh: differs in openc,tuple  reg: VMOVSH xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSH xmm1{k1}{z}, m16
+  MAP5.F3 11 /r W0 vmovsh: differs in openc,mask,tuple  reg: VMOVSH xmm1{k1}{z}, xmm2, xmm3  |  mem: VMOVSH m16{k1}, xmm1
+store-direction forms written with {k1}{z} in the SDM (EVEX.z=1 with a memory destination is #UD, SDM 2.7.11 / Table 2-42; only the register destination may zero): 41
+  vcompresspd vcompressps vcvtps2ph vextractf32x4 vextractf32x8 vextractf64x2 vextractf64x4 vextracti32x4 vextracti32x8 vextracti64x2 vextracti64x4 vmovapd vmovaps vmovdqa32 vmovdqa64 vmovdqu16 vmovdqu32 vmovdqu64 vmovdqu8 vmovupd vmovups vpcompressd vpcompressq vpmovdb vpmovdw vpmovqb vpmovqd vpmovqw vpmovsdb vpmovsdw vpmovsqb vpmovsqd vpmovsqw vpmovswb vpmovusdb vpmovusdw vpmovusqb vpmovusqd vpmovusqw vpmovuswb vpmovwb
+forms with a restricted VL set (not all of 128/256/512): 124
+  vmovlpd              0F.66.W1 12 vl=128
+  vmovlps              0F.NP.W0 12 vl=128
+  vmovhlps             0F.NP.W0 12 vl=128
+  vmovlpd              0F.66.W1 13 vl=128
+  vmovlps              0F.NP.W0 13 vl=128
+  vmovhpd              0F.66.W1 16 vl=128
+  vmovhps              0F.NP.W0 16 vl=128
+  vmovlhps             0F.NP.W0 16 vl=128
+  vmovhpd              0F.66.W1 17 vl=128
+  vmovhps              0F.NP.W0 17 vl=128
+  vmovd                0F.66.W0 6E vl=128
+  vmovq                0F.66.W1 6E vl=128
+  vmovd                0F.66.W0 7E vl=128
+  vmovq                0F.66.W1 7E vl=128
+  vmovd                0F.F3.W0 7E vl=128
+  vmovq                0F.F3.W1 7E vl=128
+  vpinsrw              0F.66.WIG C4 vl=128
+  vpextrw              0F.66.WIG C5 vl=128
+  vmovd                0F.66.W0 D6 vl=128
+  vmovq                0F.66.W1 D6 vl=128
+  vpermps              0F38.66.W0 16 vl=256,512
+  vpermpd              0F38.66.W1 16 vl=256,512
+  vbroadcastf32x2      0F38.66.W0 19 vl=256,512
+  vbroadcastsd         0F38.66.W1 19 vl=256,512
+  vbroadcastf32x4      0F38.66.W0 1A vl=256,512
+  vbroadcastf64x2      0F38.66.W1 1A vl=256,512
+  vbroadcastf32x8      0F38.66.W0 1B vl=512
+  vbroadcastf64x4      0F38.66.W1 1B vl=512
+  vpermd               0F38.66.W0 36 vl=256,512
+  vpermq               0F38.66.W1 36 vl=256,512
+  tilemovrow           0F38.66.W0 4A vl=512
+  tcvtrowd2ps          0F38.F3.W0 4A vl=512
+  tilemovcol           0F38.66.W1 4B vl=512
+  vp4dpwssd            0F38.F2.W0 52 vl=512
+  vp4dpwssds           0F38.F2.W0 53 vl=512
+  vbroadcasti32x4      0F38.66.W0 5A vl=256,512
+  vbroadcasti64x2      0F38.66.W1 5A vl=256,512
+  vbroadcasti32x8      0F38.66.W0 5B vl=512
+  vbroadcasti64x4      0F38.66.W1 5B vl=512
+  top2bf16ps           0F38.F3.W0 5C vl=512
+  top4busd             0F38.66.W0 5E vl=512
+  top4bssd             0F38.F2.W0 5E vl=512
+  top4bsud             0F38.F3.W0 5E vl=512
+  top4buud             0F38.NP.W0 5E vl=512
+  tcvtrowps2phl        0F38.66.W0 6D vl=512
+  tcvtrowps2bf16h      0F38.F2.W0 6D vl=512
+  tcvtrowps2bf16l      0F38.F3.W0 6D vl=512
+  tcvtrowps2phh        0F38.NP.W0 6D vl=512
+  v4fmaddps            0F38.F2.W0 9A vl=512
+  v4fnmaddps           0F38.F2.W0 AA vl=512
+  vgatherpf0dps        0F38.66.W0 C6 vl=512
+  vgatherpf0dpd        0F38.66.W1 C6 vl=512
+  vgatherpf1dps        0F38.66.W0 C6 vl=512
+  vgatherpf1dpd        0F38.66.W1 C6 vl=512
+  vscatterpf0dps       0F38.66.W0 C6 vl=512
+  vscatterpf0dpd       0F38.66.W1 C6 vl=512
+  vscatterpf1dps       0F38.66.W0 C6 vl=512
+  vscatterpf1dpd       0F38.66.W1 C6 vl=512
+  vgatherpf0qps        0F38.66.W0 C7 vl=512
+  vgatherpf0qpd        0F38.66.W1 C7 vl=512
+  vgatherpf1qps        0F38.66.W0 C7 vl=512
+  vgatherpf1qpd        0F38.66.W1 C7 vl=512
+  vscatterpf0qps       0F38.66.W0 C7 vl=512
+  vscatterpf0qpd       0F38.66.W1 C7 vl=512
+  vscatterpf1qps       0F38.66.W0 C7 vl=512
+  vscatterpf1qpd       0F38.66.W1 C7 vl=512
+  vexp2ps              0F38.66.W0 C8 vl=512
+  vexp2pd              0F38.66.W1 C8 vl=512
+  vrcp28ps             0F38.66.W0 CA vl=512
+  vrcp28pd             0F38.66.W1 CA vl=512
+  vrsqrt28ps           0F38.66.W0 CC vl=512
+  vrsqrt28pd           0F38.66.W1 CC vl=512
+  vpermq               0F3A.66.W1 00 vl=256,512
+  vpermpd              0F3A.66.W1 01 vl=256,512
+  tilemovrow           0F3A.66.W0 07 vl=512
+  tcvtrowps2bf16h      0F3A.F2.W0 07 vl=512
+  tcvtrowd2ps          0F3A.F3.W0 07 vl=512
+  tcvtrowps2phh        0F3A.NP.W0 07 vl=512
+  vpextrb              0F3A.66.WIG 14 vl=128
+  vpextrw              0F3A.66.WIG 15 vl=128
+  vpextrd              0F3A.66.W0 16 vl=128
+  vpextrq              0F3A.66.W1 16 vl=128
+  vextractps           0F3A.66.WIG 17 vl=128
+  vinsertf32x4         0F3A.66.W0 18 vl=256,512
+  vinsertf64x2         0F3A.66.W1 18 vl=256,512
+  vextractf32x4        0F3A.66.W0 19 vl=256,512
+  vextractf64x2        0F3A.66.W1 19 vl=256,512
+  vinsertf32x8         0F3A.66.W0 1A vl=512
+  vinsertf64x4         0F3A.66.W1 1A vl=512
+  vextractf32x8        0F3A.66.W0 1B vl=512
+  vextractf64x4        0F3A.66.W1 1B vl=512
+  vpinsrb              0F3A.66.WIG 20 vl=128
+  vinsertps            0F3A.66.W0 21 vl=128
+  vpinsrd              0F3A.66.W0 22 vl=128
+  vpinsrq              0F3A.66.W1 22 vl=128
+  vshuff32x4           0F3A.66.W0 23 vl=256,512
+  vshuff64x2           0F3A.66.W1 23 vl=256,512
+  tilemovcol           0F3A.66.W1 2F vl=512
+  vinserti32x4         0F3A.66.W0 38 vl=256,512
+  vinserti64x2         0F3A.66.W1 38 vl=256,512
+  vextracti32x4        0F3A.66.W0 39 vl=256,512
+  vextracti64x2        0F3A.66.W1 39 vl=256,512
+  vinserti32x8         0F3A.66.W0 3A vl=512
+  vinserti64x4         0F3A.66.W1 3A vl=512
+  vextracti32x8        0F3A.66.W0 3B vl=512
+  vextracti64x4        0F3A.66.W1 3B vl=512
+  vshufi32x4           0F3A.66.W0 43 vl=256,512
+  vshufi64x2           0F3A.66.W1 43 vl=256,512
+  tcvtrowps2phl        0F3A.F2.W0 77 vl=512
+  tcvtrowps2bf16l      0F3A.F3.W0 77 vl=512
+  top4mxhf8ps          0F3A.66.W0 8D vl=512
+  top4mxbhf8ps         0F3A.F2.W0 8D vl=512
+  top4mxhbf8ps         0F3A.F3.W0 8D vl=512
+  top4mxbf8ps          0F3A.NP.W0 8D vl=512
+  top4mxbssps          0F3A.F2.W0 8F vl=512
+  vmovw                MAP5.66.WIG 6E vl=128
+  vmovw                MAP5.F3.W0 6E vl=128
+  vmovw                MAP5.66.WIG 7E vl=128
+  vmovw                MAP5.F3.W0 7E vl=128
+  bsrmovh              MAP6.F2.W0 95 vl=512
+  bsrmovh              MAP6.F2.W1 95 vl=512
+  bsrmovl              MAP6.F3.W0 95 vl=512
+  bsrmovl              MAP6.F3.W1 95 vl=512
+  bsrmovf              MAP6.NP.W1 95 vl=512

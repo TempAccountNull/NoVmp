@@ -1,0 +1,831 @@
+# APX 'EVEX-promoted' legacy / VEX forms (MAP4 and promoted BMI/AMX/KMOV/CMPCCXADD/...), excluded from evex_forms.tsv.
+# Section 1: isa_manual_forms.tsv EVEX rows with an APX_F* feature. Section 2: asmjit 'apx' encodings.
+
+## manual rows (182)
+aadd	0	APX_F_RAO_INT
+aand	0	APX_F_RAO_INT
+adc	0	APX_F+APX_F_N3
+adcx	0	APX_F_ADX+APX_F_ADX_N3
+add	0	APX_F+APX_F_N3
+adox	0	APX_F_ADX+APX_F_ADX_N3
+and	0	APX_F+APX_F_N3
+andn	0	APX_F_BMI1+APX_F_BMI1_N3
+aor	0	APX_F_RAO_INT
+axor	0	APX_F_RAO_INT
+bextr	0	APX_F_BMI1+APX_F_BMI1_N3
+blsi	0	APX_F_BMI1+APX_F_BMI1_N3
+blsmsk	0	APX_F_BMI1+APX_F_BMI1_N3
+blsr	0	APX_F_BMI1+APX_F_BMI1_N3
+bzhi	0	APX_F_BMI2+APX_F_BMI2_N3
+ccmpb	0	APX_F_N3
+ccmpbe	0	APX_F_N3
+ccmpf	0	APX_F_N3
+ccmpl	0	APX_F_N3
+ccmple	0	APX_F_N3
+ccmpnb	0	APX_F_N3
+ccmpnbe	0	APX_F_N3
+ccmpnl	0	APX_F_N3
+ccmpnle	0	APX_F_N3
+ccmpno	0	APX_F_N3
+ccmpns	0	APX_F_N3
+ccmpnz	0	APX_F_N3
+ccmpo	0	APX_F_N3
+ccmps	0	APX_F_N3
+ccmpt	0	APX_F_N3
+ccmpz	0	APX_F_N3
+cfcmovb	0	APX_F_N3
+cfcmovbe	0	APX_F_N3
+cfcmovl	0	APX_F_N3
+cfcmovle	0	APX_F_N3
+cfcmovnb	0	APX_F_N3
+cfcmovnbe	0	APX_F_N3
+cfcmovnl	0	APX_F_N3
+cfcmovnle	0	APX_F_N3
+cfcmovno	0	APX_F_N3
+cfcmovnp	0	APX_F_N3
+cfcmovns	0	APX_F_N3
+cfcmovnz	0	APX_F_N3
+cfcmovo	0	APX_F_N3
+cfcmovp	0	APX_F_N3
+cfcmovs	0	APX_F_N3
+cfcmovz	0	APX_F_N3
+cmova	0	APX_F_N3
+cmovae	0	APX_F_N3
+cmovb	0	APX_F_N3
+cmovbe	0	APX_F_N3
+cmove	0	APX_F_N3
+cmovg	0	APX_F_N3
+cmovge	0	APX_F_N3
+cmovl	0	APX_F_N3
+cmovle	0	APX_F_N3
+cmovne	0	APX_F_N3
+cmovno	0	APX_F_N3
+cmovnp	0	APX_F_N3
+cmovns	0	APX_F_N3
+cmovo	0	APX_F_N3
+cmovp	0	APX_F_N3
+cmovs	0	APX_F_N3
+cmpaexadd	0	APX_F_CMPCCXADD
+cmpaxadd	0	APX_F_CMPCCXADD
+cmpbexadd	0	APX_F_CMPCCXADD
+cmpbxadd	0	APX_F_CMPCCXADD
+cmpexadd	0	APX_F_CMPCCXADD
+cmpgexadd	0	APX_F_CMPCCXADD
+cmpgxadd	0	APX_F_CMPCCXADD
+cmplexadd	0	APX_F_CMPCCXADD
+cmplxadd	0	APX_F_CMPCCXADD
+cmpnbexadd	0	APX_F_CMPCCXADD
+cmpnbxadd	0	APX_F_CMPCCXADD
+cmpnexadd	0	APX_F_CMPCCXADD
+cmpnlexadd	0	APX_F_CMPCCXADD
+cmpnlxadd	0	APX_F_CMPCCXADD
+cmpnoxadd	0	APX_F_CMPCCXADD
+cmpnpxadd	0	APX_F_CMPCCXADD
+cmpnsxadd	0	APX_F_CMPCCXADD
+cmpnzxadd	0	APX_F_CMPCCXADD
+cmpoxadd	0	APX_F_CMPCCXADD
+cmppxadd	0	APX_F_CMPCCXADD
+cmpsxadd	0	APX_F_CMPCCXADD
+cmpzxadd	0	APX_F_CMPCCXADD
+crc32	0	APX_F
+ctestb	0	APX_F_N3
+ctestbe	0	APX_F_N3
+ctestf	0	APX_F_N3
+ctestl	0	APX_F_N3
+ctestle	0	APX_F_N3
+ctestnb	0	APX_F_N3
+ctestnbe	0	APX_F_N3
+ctestnl	0	APX_F_N3
+ctestnle	0	APX_F_N3
+ctestno	0	APX_F_N3
+ctestns	0	APX_F_N3
+ctestnz	0	APX_F_N3
+ctesto	0	APX_F_N3
+ctests	0	APX_F_N3
+ctestt	0	APX_F_N3
+ctestz	0	APX_F_N3
+dec	0	APX_F+APX_F_N3
+div	0	APX_F+APX_F_N3
+enqcmd	0	APX_F_ENQCMD
+enqcmds	0	APX_F_ENQCMD
+idiv	0	APX_F+APX_F_N3
+imul	0	APX_F+APX_F_N3
+inc	0	APX_F+APX_F_N3
+invept	0	APX_F_VMX
+invpcid	0	APX_F_INVPCID
+invvpid	0	APX_F_VMX
+kmovb	0	APX_F_KOPB
+kmovd	0	APX_F_KOPD
+kmovq	0	APX_F_KOPQ
+kmovw	0	APX_F_KOPW
+ldtilecfg	0	APX_F_AMX_BASE
+lzcnt	0	APX_F_LZCNT+APX_F_LZCNT_N3
+movbe	0	APX_F_MOVBE
+movdir64b	0	APX_F_MOVDIR64B
+movdiri	0	APX_F_MOVDIRI
+movrs	0	APX_F_MOVRS
+mul	0	APX_F+APX_F_N3
+mulx	0	APX_F_BMI2
+neg	0	APX_F+APX_F_N3
+not	0	APX_F+APX_F_N3
+or	0	APX_F+APX_F_N3
+pdep	0	APX_F_BMI2
+pext	0	APX_F_BMI2
+pop2	0	APX_F_N3
+pop2p	0	APX_F_N3
+popcnt	0	APX_F_POPCNT+APX_F_POPCNT_N3
+push2	0	APX_F_N3
+push2p	0	APX_F_N3
+rcl	0	APX_F+APX_F_N3
+rcr	0	APX_F+APX_F_N3
+rdmsr	0	APX_F_MSR_IMM
+rol	0	APX_F+APX_F_N3
+ror	0	APX_F+APX_F_N3
+rorx	0	APX_F_BMI2
+sal	0	APX_F+APX_F_N3
+sar	0	APX_F+APX_F_N3
+sarx	0	APX_F_BMI2
+sbb	0	APX_F+APX_F_N3
+seta	0	APX_F_N3
+setae	0	APX_F_N3
+setb	0	APX_F_N3
+setbe	0	APX_F_N3
+sete	0	APX_F_N3
+setg	0	APX_F_N3
+setge	0	APX_F_N3
+setl	0	APX_F_N3
+setle	0	APX_F_N3
+setne	0	APX_F_N3
+setno	0	APX_F_N3
+setnp	0	APX_F_N3
+setns	0	APX_F_N3
+seto	0	APX_F_N3
+setp	0	APX_F_N3
+sets	0	APX_F_N3
+shl	0	APX_F+APX_F_N3
+shld	0	APX_F+APX_F_N3
+shlx	0	APX_F_BMI2
+shr	0	APX_F+APX_F_N3
+shrd	0	APX_F+APX_F_N3
+shrx	0	APX_F_BMI2
+sttilecfg	0	APX_F_AMX_BASE
+sub	0	APX_F+APX_F_N3
+tileloadd	0	APX_F_AMX
+tileloaddrs	0	APX_F_AMX_MOVRS
+tileloaddrst1	0	APX_F_AMX_MOVRS
+tileloaddt1	0	APX_F_AMX
+tilestored	0	APX_F_AMX
+tzcnt	0	APX_F_BMI1+APX_F_BMI1_N3
+urdmsr	0	APX_F_USER_MSR
+uwrmsr	0	APX_F_USER_MSR
+wrmsrns	0	APX_F_MSR_IMM
+wrssd	0	APX_F_CET
+wrssq	0	APX_F_CET
+wrussd	0	APX_F_CET
+wrussq	0	APX_F_CET
+xor	0	APX_F+APX_F_N3
+
+## asmjit apx encodings (643)
+crc32 X:r32, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.W0 F0 /r	SSE4_2
+crc32 X:r32, R:r16/m16	rm : EVEX.ND=0.LLZ.66.MAP4.W0 F1 /r	SSE4_2
+crc32 X:r32, R:r32/m32	rm : EVEX.ND=0.LLZ.NP.MAP4.W0 F1 /r	SSE4_2
+crc32 X:r64, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.W1 F0 /r	SSE4_2
+crc32 X:r64, R:r64/m64	rm : EVEX.ND=0.LLZ.NP.MAP4.W1 F1 /r	SSE4_2
+adcx X:~ry, R:~ry/my	rm : EVEX.ND=0.LLZ.66.MAP4.Wy 66 /r	ADX
+adcx W:ry, R:~ry, R:~ry/my	vrm: EVEX.ND=1.LLZ.66.MAP4.Wy 66 /r	ADX
+adox X:~ry, R:~ry/my	rm : EVEX.ND=0.LLZ.F3.MAP4.Wy 66 /r	ADX
+adox W:ry, R:~ry, R:~ry/my	vrm: EVEX.ND=1.LLZ.F3.MAP4.Wy 66 /r	ADX
+andn{nf} W:ry, R:ry, R:ry/my	rvm: EVEX.128.NP.0F38.Wy F2 /r	BMI
+bextr{nf} W:ry, R:ry/my, ry	rmv: EVEX.128.NP.0F38.Wy F7 /r	BMI
+blsi{nf} W:ry, R:ry/my	vm : EVEX.128.NP.0F38.Wy F3 /3	BMI
+blsmsk{nf} W:ry, R:ry/my	vm : EVEX.128.NP.0F38.Wy F3 /2	BMI
+blsr{nf} W:ry, R:ry/my	vm : EVEX.128.NP.0F38.Wy F3 /1	BMI
+tzcnt{nf} w:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv F4 /r	BMI
+bzhi{nf} W:ry, R:ry/my, R:ry	rmv: EVEX.128.NP.0F38.Wy F5 /r	BMI2
+mulx W:ry, W:ry, R:~ry/my, R:~<dxy>	rvm: EVEX.128.F2.0F38.Wy F6 /r	BMI2
+pdep W:ry, R:ry, R:ry/my	rvm: EVEX.128.F2.0F38.Wy F5 /r	BMI2
+pext W:ry, R:ry, R:ry/my	rvm: EVEX.128.F3.0F38.Wy F5 /r	BMI2
+rorx W:ry, R:ry/my, imm8	rm : EVEX.128.F2.0F3A.Wy F0 /r ib	BMI2
+sarx W:ry, R:ry/my, R:ry	rmv: EVEX.128.F3.0F38.Wy F7 /r	BMI2
+shlx W:ry, R:ry/my, R:ry	rmv: EVEX.128.66.0F38.Wy F7 /r	BMI2
+shrx W:ry, R:ry/my, R:ry	rmv: EVEX.128.F2.0F38.Wy F7 /r	BMI2
+lzcnt{nf} w:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv F5 /r	LZCNT
+popcnt{nf} w:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 88 /r	POPCNT
+movbe w:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 60 /r	MOVBE
+movbe w:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 61 /r	MOVBE
+aadd X:my, R:ry	mr : EVEX.ND=0.LLZ.NP.MAP4.Wy FC !(11):rrr:bbb	RAO_INT
+aand X:my, R:ry	mr : EVEX.ND=0.LLZ.66.MAP4.Wy FC !(11):rrr:bbb	RAO_INT
+aor X:my, R:ry	mr : EVEX.ND=0.LLZ.F2.MAP4.Wy FC !(11):rrr:bbb	RAO_INT
+axor X:my, R:ry	mr : EVEX.ND=0.LLZ.F3.MAP4.Wy FC !(11):rrr:bbb	RAO_INT
+cmpbxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E2 !(11):rrr:bbb	CMPCCXADD
+cmpbexadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E6 !(11):rrr:bbb	CMPCCXADD
+cmplxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy EC !(11):rrr:bbb	CMPCCXADD
+cmplexadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy EE !(11):rrr:bbb	CMPCCXADD
+cmpnbxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E3 !(11):rrr:bbb	CMPCCXADD
+cmpnbexadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E7 !(11):rrr:bbb	CMPCCXADD
+cmpnlxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy ED !(11):rrr:bbb	CMPCCXADD
+cmpnlexadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy EF !(11):rrr:bbb	CMPCCXADD
+cmpnoxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E1 !(11):rrr:bbb	CMPCCXADD
+cmpnpxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy EB !(11):rrr:bbb	CMPCCXADD
+cmpnsxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E9 !(11):rrr:bbb	CMPCCXADD
+cmpnzxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E5 !(11):rrr:bbb	CMPCCXADD
+cmpoxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E0 !(11):rrr:bbb	CMPCCXADD
+cmppxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy EA !(11):rrr:bbb	CMPCCXADD
+cmpsxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E8 !(11):rrr:bbb	CMPCCXADD
+cmpzxadd X:my, X:ry, R:ry	mrv: EVEX.128.66.0F38.Wy E4 !(11):rrr:bbb	CMPCCXADD
+movdiri W:my, ry	mr : EVEX.ND=0.LLZ.NP.MAP4.W0 F9 !(11):rrr:bbb	MOVDIRI
+movdir64b W:m512(es:r64), m512	rm : EVEX.LLZ.66.MAP4.W0 F8 !(11):rrr:bbb	MOVDIR64B
+wrssd  W:m32, R:r32	mr : EVEX.ND=0.LLZ.NP.MAP4.W0 66 !(11):rrr:bbb	CET_SS
+wrssq  W:m64, R:r64	mr : EVEX.ND=0.LLZ.NP.MAP4.W1 66 !(11):rrr:bbb	CET_SS
+wrussd W:m32, R:r32	mr : EVEX.ND=0.LLZ.66.MAP4.W0 65 !(11):rrr:bbb	CET_SS
+wrussq W:m64, R:r64	mr : EVEX.ND=0.LLZ.66.MAP4.W1 65 !(11):rrr:bbb	CET_SS
+urdmsr W:r64, R:r64	mr : EVEX.ND=0.LLZ.F2.MAP4.W0 F8 11:rrr:bbb	USER_MSR
+urdmsr W:r64, imm32	m  : EVEX.128.F2.MAP7.W0 F8 11:000:bbb id	USER_MSR
+uwrmsr R:r64, R:r64	rm : EVEX.ND=0.LLZ.F3.MAP4.W0 F8 11:rrr:bbb	USER_MSR
+uwrmsr imm32, R:r64	m  : EVEX.128.F3.MAP7.W0 F8 11:000:bbb id	USER_MSR
+invpcid R:r64, R:m128	rm : EVEX.ND=0.LLZ.F3.MAP4.WIG F2 !(11):rrr:bbb	I486
+rdmsr W:r64, R:imm32	m  : EVEX.128.F2.MAP7.W0 F6 11:000:bbb id	MSR_IMM
+wrmsrns imm32, R:r64	m  : EVEX.128.F3.MAP7.W0 F6 11:000:bbb id	MSR_IMM
+enqcmd W:m512(es:r64), R:m512	rm : EVEX.ND=0.LLZ.F2.MAP4.W? F8 !(11):rrr:bbb	ENQCMD
+enqcmds W:m512(es:r64), R:m512	rm : EVEX.ND=0.LLZ.F3.MAP4.W? F8 !(11):rrr:bbb	ENQCMD
+invept R:r64, R:m128	rm : EVEX.ND=0.LLZ.F3.MAP4.WIG F0 !(11):rrr:bbb	VMX
+invvpid R:r64, R:m128	rm : EVEX.ND=0.LLZ.F3.MAP4.WIG F1 !(11):rrr:bbb	VMX
+adc x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 10 /r	APX_F
+adc x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 11 /r	APX_F
+adc x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 12 /r	APX_F
+adc x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 13 /r	APX_F
+adc x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /2 ib	APX_F
+adc x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /2 ib	APX_F
+adc x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /2 iv	APX_F
+adc W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 10 /r	APX_F
+adc W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 11 /r	APX_F
+adc W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 12 /r	APX_F
+adc W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 13 /r	APX_F
+adc W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /2 ib	APX_F
+adc W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /2 ib	APX_F
+adc W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /2 iv	APX_F
+add{nf} x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 00 /r	APX_F
+add{nf} x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 01 /r	APX_F
+add{nf} x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 02 /r	APX_F
+add{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 03 /r	APX_F
+add{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /0 ib	APX_F
+add{nf} x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /0 ib	APX_F
+add{nf} x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /0 iv	APX_F
+add{nf} W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 00 /r	APX_F
+add{nf} W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 01 /r	APX_F
+add{nf} W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 02 /r	APX_F
+add{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 03 /r	APX_F
+add{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /0 ib	APX_F
+add{nf} W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /0 ib	APX_F
+add{nf} W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /0 iv	APX_F
+and{nf} x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 20 /r	APX_F
+and{nf} x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 21 /r	APX_F
+and{nf} x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 22 /r	APX_F
+and{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 23 /r	APX_F
+and{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /4 ib	APX_F
+and{nf} x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /4 ib	APX_F
+and{nf} x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /4 iv	APX_F
+and{nf} W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 20 /r	APX_F
+and{nf} W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 21 /r	APX_F
+and{nf} W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 22 /r	APX_F
+and{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 23 /r	APX_F
+and{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /4 ib	APX_F
+and{nf} W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /4 ib	APX_F
+and{nf} W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /4 iv	APX_F
+cmovb X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 42 /r	APX_F
+cmovbe X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 46 /r	APX_F
+cmovl X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4C /r	APX_F
+cmovle X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4E /r	APX_F
+cmovnb X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 43 /r	APX_F
+cmovnbe X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 47 /r	APX_F
+cmovnl X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4D /r	APX_F
+cmovnle X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4F /r	APX_F
+cmovno X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 41 /r	APX_F
+cmovnp X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4B /r	APX_F
+cmovns X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 49 /r	APX_F
+cmovnz X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 45 /r	APX_F
+cmovo X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 40 /r	APX_F
+cmovp X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 4A /r	APX_F
+cmovs X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 48 /r	APX_F
+cmovz X:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 44 /r	APX_F
+dec{nf} X:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG FE /1	APX_F
+dec{nf} X:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv FF /1	APX_F
+dec{nf} W:r8, R:r8/m8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG FE /1	APX_F
+dec{nf} W:rv, R:rv/mv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv FF /1	APX_F
+inc{nf} X:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG FE /0	APX_F
+inc{nf} X:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv FF /0	APX_F
+inc{nf} W:r8, R:r8/m8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG FE /0	APX_F
+inc{nf} W:rv, R:rv/mv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv FF /0	APX_F
+div{nf} x:<ax>, R:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /6	APX_F
+div{nf} x:<dxv>, x:<axv>, R:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /6	APX_F
+idiv{nf} x:<ax>, R:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /7	APX_F
+idiv{nf} x:<dxv>, x:<axv>, R:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /7	APX_F
+imul{nf} x:<ax>, R:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /5	APX_F
+imul{nf} w:<dxv>, x:<axv>, R:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /5	APX_F
+imul{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv AF /r	APX_F
+imul{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv AF /r	APX_F
+imul{nf} w:rv, R:rv/mv, imms8	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 6B /r ib	APX_F
+imul{nf} w:rv, R:rv/mv, immv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 69 /r iv	APX_F
+imulzu{nf} W:r16, R:r16/m16, imms8	rm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 6B /r ib	APX_F
+imulzu{nf} W:r16, R:r16/m16, imm16	rm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 69 /r iv	APX_F
+mul{nf} x:<ax>, R:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /4	APX_F
+mul{nf} w:<dxv>, x:<axv>, rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /4	APX_F
+neg{nf} X:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /3	APX_F
+neg{nf} X:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /3	APX_F
+neg{nf} W:r8, R:r8/m8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG F6 /3	APX_F
+neg{nf} W:rv, R:rv/mv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv F7 /3	APX_F
+not{nf} X:r8/m8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG F6 /2	APX_F
+not{nf} X:rv/mv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv F7 /2	APX_F
+not{nf} W:r8, R:r8/m8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG F6 /2	APX_F
+not{nf} W:rv, R:rv/mv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv F7 /2	APX_F
+or{nf} x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 08 /r	APX_F
+or{nf} x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 09 /r	APX_F
+or{nf} x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 0A /r	APX_F
+or{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 0B /r	APX_F
+or{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /1 ib	APX_F
+or{nf} x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /1 ib	APX_F
+or{nf} x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /1 iv	APX_F
+or{nf} W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 08 /r	APX_F
+or{nf} W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 09 /r	APX_F
+or{nf} W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 0A /r	APX_F
+or{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 0B /r	APX_F
+or{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /1 ib	APX_F
+or{nf} W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /1 ib	APX_F
+or{nf} W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /1 iv	APX_F
+rcl x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /2	APX_F
+rcl x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /2	APX_F
+rcl x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /2	APX_F
+rcl x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /2	APX_F
+rcl x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /2 ib	APX_F
+rcl x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /2 ib	APX_F
+rcl W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /2	APX_F
+rcl W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /2	APX_F
+rcl W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /2	APX_F
+rcl W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /2	APX_F
+rcl W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /2 ib	APX_F
+rcl W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /2 ib	APX_F
+rcr x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /3	APX_F
+rcr x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /3	APX_F
+rcr x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /3	APX_F
+rcr x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /3	APX_F
+rcr x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /3 ib	APX_F
+rcr x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /3 ib	APX_F
+rcr W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /3	APX_F
+rcr W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /3	APX_F
+rcr W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /3	APX_F
+rcr W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /3	APX_F
+rcr W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /3 ib	APX_F
+rcr W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /3 ib	APX_F
+rol{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /0	APX_F
+rol{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /0	APX_F
+rol{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /0	APX_F
+rol{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /0	APX_F
+rol{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /0 ib	APX_F
+rol{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /0 ib	APX_F
+rol{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /0	APX_F
+rol{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /0	APX_F
+rol{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /0	APX_F
+rol{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /0	APX_F
+rol{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /0 ib	APX_F
+rol{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /0 ib	APX_F
+ror{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /1	APX_F
+ror{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /1	APX_F
+ror{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /1	APX_F
+ror{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /1	APX_F
+ror{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /1 ib	APX_F
+ror{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /1 ib	APX_F
+ror{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /1	APX_F
+ror{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /1	APX_F
+ror{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /1	APX_F
+ror{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /1	APX_F
+ror{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /1 ib	APX_F
+ror{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /1 ib	APX_F
+sar{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /7	APX_F
+sar{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /7	APX_F
+sar{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /7	APX_F
+sar{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /7	APX_F
+sar{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /7 ib	APX_F
+sar{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /7 ib	APX_F
+sar{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /7	APX_F
+sar{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /7	APX_F
+sar{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /7	APX_F
+sar{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /7	APX_F
+sar{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /7 ib	APX_F
+sar{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /7 ib	APX_F
+sbb x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 18 /r	APX_F
+sbb x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 19 /r	APX_F
+sbb x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 1A /r	APX_F
+sbb x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 1B /r	APX_F
+sbb x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /3 ib	APX_F
+sbb x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /3 ib	APX_F
+sbb x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /3 iv	APX_F
+sbb W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 18 /r	APX_F
+sbb W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 19 /r	APX_F
+sbb W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 1A /r	APX_F
+sbb W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 1B /r	APX_F
+sbb W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /3 ib	APX_F
+sbb W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /3 ib	APX_F
+sbb W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /3 iv	APX_F
+shl{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /4	APX_F
+shl{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /6	APX_F
+shl{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /4	APX_F
+shl{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /6	APX_F
+shl{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /4 ib	APX_F
+shl{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /6 ib	APX_F
+shl{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /4	APX_F
+shl{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /6	APX_F
+shl{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /4	APX_F
+shl{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /6	APX_F
+shl{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /4 ib	APX_F
+shl{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /6 ib	APX_F
+shl{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /4	APX_F
+shl{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /6	APX_F
+shl{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /4	APX_F
+shl{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /6	APX_F
+shl{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /4	APX_F
+shl{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /6	APX_F
+shl{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /4	APX_F
+shl{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /6	APX_F
+shl{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /4 ib	APX_F
+shl{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /6 ib	APX_F
+shl{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /4 ib	APX_F
+shl{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /6 ib	APX_F
+shld{nf} x:rv/mv, R:rv, R:cl	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv A5 /r	APX_F
+shld{nf} x:rv/mv, R:rv, imm8	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 24 /r ib	APX_F
+shld{nf} W:rv, R:rv/mv, R:rv, R:cl	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv A5 /r	APX_F
+shld{nf} W:rv, R:rv/mv, R:rv, imm8	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 24 /r ib	APX_F
+shr{nf} x:r8/m8, R:cl	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D2 /5	APX_F
+shr{nf} x:rv/mv, R:cl	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D3 /5	APX_F
+shr{nf} x:r8/m8, 1	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG D0 /5	APX_F
+shr{nf} x:rv/mv, 1	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv D1 /5	APX_F
+shr{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG C0 /5 ib	APX_F
+shr{nf} x:rv/mv, imm8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv C1 /5 ib	APX_F
+shr{nf} W:r8, R:r8/m8, R:cl	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D2 /5	APX_F
+shr{nf} W:rv, R:rv/mv, R:cl	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D3 /5	APX_F
+shr{nf} W:r8, R:r8/m8, 1	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG D0 /5	APX_F
+shr{nf} W:rv, R:rv/mv, 1	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv D1 /5	APX_F
+shr{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG C0 /5 ib	APX_F
+shr{nf} W:rv, R:rv/mv, imm8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv C1 /5 ib	APX_F
+shrd{nf} x:rv/mv, R:rv, R:cl	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv AD /r	APX_F
+shrd{nf} x:rv/mv, R:rv, imm8	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 2C /r ib	APX_F
+shrd{nf} W:rv, R:rv/mv, R:rv, R:cl	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv AD /r	APX_F
+shrd{nf} W:rv, R:rv/mv, R:rv, imm8	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 2C /r ib	APX_F
+sub{nf} x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 28 /r	APX_F
+sub{nf} x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 29 /r	APX_F
+sub{nf} x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 2A /r	APX_F
+sub{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 2B /r	APX_F
+sub{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /5 ib	APX_F
+sub{nf} x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /5 ib	APX_F
+sub{nf} x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /5 iv	APX_F
+sub{nf} W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 28 /r	APX_F
+sub{nf} W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 29 /r	APX_F
+sub{nf} W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 2A /r	APX_F
+sub{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 2B /r	APX_F
+sub{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /5 ib	APX_F
+sub{nf} W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /5 ib	APX_F
+sub{nf} W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /5 iv	APX_F
+xor{nf} x:r8/m8, R:r8	mr : EVEX.ND=0.LLZ.NP.MAP4.WIG 38 /r	APX_F
+xor{nf} x:rv/mv, R:rv	mr : EVEX.ND=0.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+xor{nf} x:r8, R:r8/m8	rm : EVEX.ND=0.LLZ.NP.MAP4.WIG 3A /r	APX_F
+xor{nf} x:rv, R:rv/mv	rm : EVEX.ND=0.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+xor{nf} x:r8/m8, imm8	m  : EVEX.ND=0.LLZ.NP.MAP4.WIG 80 /6 ib	APX_F
+xor{nf} x:rv/mv, imms8	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 83 /6 ib	APX_F
+xor{nf} x:rv/mv, immv	m  : EVEX.ND=0.LLZ.Pv.MAP4.Wv 81 /6 iv	APX_F
+xor{nf} W:r8, R:r8/m8, R:r8	vmr: EVEX.ND=1.LLZ.NP.MAP4.WIG 38 /r	APX_F
+xor{nf} W:rv, R:rv/mv, R:rv	vmr: EVEX.ND=1.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+xor{nf} W:r8, R:r8, R:r8/m8	vrm: EVEX.ND=1.LLZ.NP.MAP4.WIG 3A /r	APX_F
+xor{nf} W:rv, R:rv, R:rv/mv	vrm: EVEX.ND=1.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+xor{nf} W:r8, R:r8/m8, imm8	vm : EVEX.ND=1.LLZ.NP.MAP4.WIG 80 /6 ib	APX_F
+xor{nf} W:rv, R:rv/mv, imms8	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 83 /6 ib	APX_F
+xor{nf} W:rv, R:rv/mv, immv	vm : EVEX.ND=1.LLZ.Pv.MAP4.Wv 81 /6 iv	APX_F
+ccmpb dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpb dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpb dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpb dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpb dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpbe dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpbe dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpbe dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpbe dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpbe dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpf dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpf dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpf dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpf dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpf dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpf dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpf dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpl dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpl dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpl dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpl dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpl dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmple dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmple dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmple dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmple dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmple dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmple dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmple dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpnb dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpnb dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpnb dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpnb dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpnb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpnb dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpnb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpnbe dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpnbe dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpnbe dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpnbe dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpnbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpnbe dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpnbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpnl dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpnl dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpnl dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpnl dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpnl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpnl dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpnl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpnle dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpnle dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpnle dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpnle dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpnle dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpnle dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpnle dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpno dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpno dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpno dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpno dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpno dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpno dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpno dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpns dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpns dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpns dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpns dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpns dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpns dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpns dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpnz dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpnz dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpnz dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpnz dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpnz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpnz dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpnz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpo dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpo dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpo dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpo dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpo dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpo dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpo dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmps dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmps dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmps dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmps dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmps dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmps dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmps dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpt dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpt dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpt dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpt dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpt dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpt dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpt dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+ccmpz dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG 38 /r	APX_F
+ccmpz dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv 39 /r	APX_F
+ccmpz dfv, R:r8, R:r8/m8	rm : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG 3A /r	APX_F
+ccmpz dfv, R:rv, R:rv/mv	rm : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv 3B /r	APX_F
+ccmpz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG 80 /7 ib	APX_F
+ccmpz dfv, R:rv/mv, imms8	m  : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv 83 /7 ib	APX_F
+ccmpz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv 81 /7 iv	APX_F
+cfcmovb X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 42 /r	APX_F
+cfcmovb X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 42 /r	APX_F
+cfcmovb X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 42 /r	APX_F
+cfcmovb W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 42 /r	APX_F
+cfcmovbe X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 46 /r	APX_F
+cfcmovbe X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 46 /r	APX_F
+cfcmovbe X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 46 /r	APX_F
+cfcmovbe W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 46 /r	APX_F
+cfcmovl X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4C /r	APX_F
+cfcmovl X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4C /r	APX_F
+cfcmovl X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4C /r	APX_F
+cfcmovl W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4C /r	APX_F
+cfcmovle X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4E /r	APX_F
+cfcmovle X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4E /r	APX_F
+cfcmovle X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4E /r	APX_F
+cfcmovle W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4E /r	APX_F
+cfcmovnb X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 43 /r	APX_F
+cfcmovnb X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 43 /r	APX_F
+cfcmovnb X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 43 /r	APX_F
+cfcmovnb W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 43 /r	APX_F
+cfcmovnbe X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 47 /r	APX_F
+cfcmovnbe X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 47 /r	APX_F
+cfcmovnbe X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 47 /r	APX_F
+cfcmovnbe W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 47 /r	APX_F
+cfcmovnl X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4D /r	APX_F
+cfcmovnl X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4D /r	APX_F
+cfcmovnl X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4D /r	APX_F
+cfcmovnl W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4D /r	APX_F
+cfcmovnle X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4F /r	APX_F
+cfcmovnle X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4F /r	APX_F
+cfcmovnle X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4F /r	APX_F
+cfcmovnle W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4F /r	APX_F
+cfcmovno X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 41 /r	APX_F
+cfcmovno X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 41 /r	APX_F
+cfcmovno X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 41 /r	APX_F
+cfcmovno W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 41 /r	APX_F
+cfcmovnp X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4B /r	APX_F
+cfcmovnp X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4B /r	APX_F
+cfcmovnp X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4B /r	APX_F
+cfcmovnp W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4B /r	APX_F
+cfcmovns X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 49 /r	APX_F
+cfcmovns X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 49 /r	APX_F
+cfcmovns X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 49 /r	APX_F
+cfcmovns W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 49 /r	APX_F
+cfcmovnz X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 45 /r	APX_F
+cfcmovnz X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 45 /r	APX_F
+cfcmovnz X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 45 /r	APX_F
+cfcmovnz W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 45 /r	APX_F
+cfcmovo X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 40 /r	APX_F
+cfcmovo X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 40 /r	APX_F
+cfcmovo X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 40 /r	APX_F
+cfcmovo W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 40 /r	APX_F
+cfcmovp X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 4A /r	APX_F
+cfcmovp X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4A /r	APX_F
+cfcmovp X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 4A /r	APX_F
+cfcmovp W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 4A /r	APX_F
+cfcmovs X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 48 /r	APX_F
+cfcmovs X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 48 /r	APX_F
+cfcmovs X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 48 /r	APX_F
+cfcmovs W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 48 /r	APX_F
+cfcmovz X:rv, R:rv/mv	rm : EVEX.ND=0.NF=0.LLZ.Pv.MAP4.Wv 44 /r	APX_F
+cfcmovz X:rv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 44 /r	APX_F
+cfcmovz X?:mv, R:rv	mr : EVEX.ND=0.NF=1.LLZ.Pv.MAP4.Wv 44 /r	APX_F
+cfcmovz W:rv, R:rv, R?:rv/mv	vrm: EVEX.ND=1.NF=1.LLZ.Pv.MAP4.Wv 44 /r	APX_F
+ctestb dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestb dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=2.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=2.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestbe dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestbe dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=6.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=6.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestf dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestf dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestf dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestf dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=A.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestf dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestf dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=A.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestl dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestl dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=C.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=C.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestle dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestle dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestle dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestle dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=E.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestle dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestle dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=E.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestnb dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestnb dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestnb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestnb dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=3.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestnb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestnb dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=3.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestnbe dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestnbe dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestnbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestnbe dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=7.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestnbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestnbe dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=7.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestnl dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestnl dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestnl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestnl dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=D.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestnl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestnl dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=D.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestnle dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestnle dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestnle dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestnle dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=F.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestnle dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestnle dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=F.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestno dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestno dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestno dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestno dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=1.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestno dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestno dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=1.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestns dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestns dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestns dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestns dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=9.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestns dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestns dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=9.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestnz dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestnz dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestnz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestnz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=5.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestnz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestnz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=5.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctesto dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctesto dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctesto dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctesto dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=0.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctesto dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctesto dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=0.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctests dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctests dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctests dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctests dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=8.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctests dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctests dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=8.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestt dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestt dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestt dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestt dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=B.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestt dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestt dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=B.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+ctestz dfv, R:r8/m8, R:r8	mr : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG 84 /r	APX_F
+ctestz dfv, R:rv/mv, R:rv	mr : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv 85 /r	APX_F
+ctestz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG F6 /0 ib	APX_F
+ctestz dfv, R:r8/m8, imm8	m  : EVEX.ND=0.SCC=4.LLZ.NP.MAP4.WIG F6 /1 ib	APX_F
+ctestz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv F7 /0 iv	APX_F
+ctestz dfv, R:rv/mv, immv	m  : EVEX.ND=0.SCC=4.LLZ.Pv.MAP4.Wv F7 /1 iv	APX_F
+pop2 W:r64, W:r64	vm : EVEX.ND=1.LLZ.NP.MAP4.W0 8F 11:000:bbb	APX_F
+pop2p W:r64, W:r64	vm : EVEX.ND=1.LLZ.NP.MAP4.W1 8F 11:000:bbb	APX_F
+push2 R:r64, R:r64	vm : EVEX.ND=1.LLZ.NP.MAP4.W0 FF 11:110:bbb	APX_F
+push2p R:r64, R:r64	vm : EVEX.ND=1.LLZ.NP.MAP4.W1 FF 11:110:bbb	APX_F
+setb w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 42 /r	APX_F
+setbe w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 46 /r	APX_F
+setl w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4C /r	APX_F
+setle w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4E /r	APX_F
+setnb w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 43 /r	APX_F
+setnbe w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 47 /r	APX_F
+setnl w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4D /r	APX_F
+setnle w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4F /r	APX_F
+setno w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 41 /r	APX_F
+setnp w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4B /r	APX_F
+setns w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 49 /r	APX_F
+setnz w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 45 /r	APX_F
+seto w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 40 /r	APX_F
+setp w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 4A /r	APX_F
+sets w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 48 /r	APX_F
+setz w:r8/m8	m  : EVEX.ND=0.LLZ.F2.MAP4.WIG 44 /r	APX_F
+setzub W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 42 /r	APX_F
+setzube W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 46 /r	APX_F
+setzul W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4C /r	APX_F
+setzule W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4E /r	APX_F
+setzunb W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 43 /r	APX_F
+setzunbe W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 47 /r	APX_F
+setzunl W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4D /r	APX_F
+setzunle W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4F /r	APX_F
+setzuno W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 41 /r	APX_F
+setzunp W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4B /r	APX_F
+setzuns W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 49 /r	APX_F
+setzunz W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 45 /r	APX_F
+setzuo W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 40 /r	APX_F
+setzup W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 4A /r	APX_F
+setzus W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 48 /r	APX_F
+setzuz W:r8	m  : EVEX.ND=1.LLZ.F2.MAP4.WIG 44 /r	APX_F
+kmovw W:k@16, k@16/m16	rm : EVEX.128.NP.0F.W0 90 /r	AVX512_F
+kmovw W:k@16, r32@16	rm : EVEX.128.NP.0F.W0 92 11:rrr:bbb	AVX512_F
+kmovw W:m16, k@16	mr : EVEX.128.NP.0F.W0 91 !(11):rrr:bbb	AVX512_F
+kmovw W:r32@16, k@16	rm : EVEX.128.NP.0F.W0 93 11:rrr:bbb	AVX512_F
+kmovb W:k@8, k@8/m8	rm : EVEX.128.66.0F.W0 90 /r	AVX512_DQ
+kmovb W:k@8, r32@8	rm : EVEX.128.66.0F.W0 92 11:rrr:bbb	AVX512_DQ
+kmovb W:m8, k@8	mr : EVEX.128.66.0F.W0 91 !(11):rrr:bbb	AVX512_DQ
+kmovb W:r32@8, k@8	rm : EVEX.128.66.0F.W0 93 11:rrr:bbb	AVX512_DQ
+kmovd W:k@32, k@32/m32	rm : EVEX.128.66.0F.W1 90 /r	AVX512_BW
+kmovd W:k@32, r32	rm : EVEX.128.F2.0F.W0 92 11:rrr:bbb	AVX512_BW
+kmovd W:m32, k@32	mr : EVEX.128.66.0F.W1 91 !(11):rrr:bbb	AVX512_BW
+kmovd W:r32, k@32	rm : EVEX.128.F2.0F.W0 93 11:rrr:bbb	AVX512_BW
+kmovq W:k@64, k@64/m64	rm : EVEX.128.NP.0F.W1 90 /r	AVX512_BW
+kmovq W:k@64, r64	rm : EVEX.128.F2.0F.W1 92 11:rrr:bbb	AVX512_BW
+kmovq W:m64, k@64	mr : EVEX.128.NP.0F.W1 91 !(11):rrr:bbb	AVX512_BW
+kmovq W:r64, k@64	rm : EVEX.128.F2.0F.W1 93 11:rrr:bbb	AVX512_BW
+ldtilecfg R:m512	m  : EVEX.128.NP.0F38.W0 49 !(11):000:bbb	AMX_TILE
+sttilecfg W:m512	m  : EVEX.128.66.0F38.W0 49 !(11):000:bbb	AMX_TILE
+tileloadd W:tmm, R:tmem	rm : EVEX.128.F2.0F38.W0 4B !(11):rrr:100	AMX_TILE
+tileloaddt1 W:tmm, R:tmem	rm : EVEX.128.66.0F38.W0 4B !(11):rrr:100	AMX_TILE
+tilestored W:tmem, R:tmm	mr : EVEX.128.F3.0F38.W0 4B !(11):rrr:100	AMX_TILE
+tileloaddrs W:tmm, tmem	rm : EVEX.128.F2.0F38.W0 4A !(11):rrr:100	AMX_MOVRS
+tileloaddrst1 W:tmm, tmem	rm : EVEX.128.66.0F38.W0 4A !(11):rrr:100	AMX_MOVRS

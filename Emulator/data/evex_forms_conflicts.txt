@@ -1,0 +1,218 @@
+# asmjit isa_x86.json vs Intel documents (SDM 325383-092 first, then AVX10.2 spec 361050-007, ISE 319433-062): every disagreement.
+# The Intel document wins; the TSV carries the Intel value. XED's view is shown as a third opinion.
+# kind | mnemonic | Intel encoding | VLs | asmjit | Intel | XED | resolution
+#
+# counts per kind: mnemonic=44, family=19, asmjit-encoding-defect=16, tuple=15, tuple-missing=14, openc=14, mask=10, rc=9, pp=9, mod=4, bcst=3, map=2, W=2, W-omitted-in-SDM=2
+# total distinct conflicts: 163 (from 355 per-VL disagreements)
+
+W | vpabsb | EVEX.66.0F38.WIG 1C /r mod=any | 128,256,512 | asmjit=W? | intel=WIG | xed: tt=FullMem W=WIG b=0 mask=mz rc=- exc=E4 | Intel value used
+W | vpabsw | EVEX.66.0F38.WIG 1D /r mod=any | 128,256,512 | asmjit=W? | intel=WIG | xed: tt=FullMem W=WIG b=0 mask=mz rc=- exc=E4 | Intel value used
+W-omitted-in-SDM | vpminub | EVEX.66.0F.W? DA /r mod=any | 128,256,512 | asmjit=W? | intel=W? | xed: tt=FullMem W=WIG b=0 mask=mz rc=- exc=E4 | SDM and asmjit print no W; XED WIG used
+W-omitted-in-SDM | vpminuw | EVEX.66.0F38.W? 3A /r mod=any | 128,256,512 | asmjit=W? | intel=W? | xed: tt=FullMem W=WIG b=0 mask=mz rc=- exc=E4 | SDM and asmjit print no W; XED WIG used
+asmjit-encoding-defect | vandnps | EVEX.NP.0F.W0 55 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.66.W0 55 /r  [map missing in asmjit encoding] | intel=EVEX.<L>.0F.W0 55 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vandps | EVEX.NP.0F.W0 54 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 54 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 54 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vmovups | EVEX.NP.0F.W0 10 /r mod=any | 128,256,512 | asmjit=rm : EVEX.xyz.0F.W0 10 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 10 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vmovups | EVEX.NP.0F.W0 11 /r mod=any | 128,256,512 | asmjit=mr : EVEX.xyz.0F.W0 11 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 11 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vmulps | EVEX.NP.0F.W0 59 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 59 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 59 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vpabsb | EVEX.66.0F38.WIG 1C /r mod=any | 128,256,512 | asmjit=rm : EVEX.xyz.66.0F38 1C /r  [W missing in asmjit encoding] | intel=EVEX.<L>.66.0F38.WIG 1C /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vpabsw | EVEX.66.0F38.WIG 1D /r mod=any | 128,256,512 | asmjit=rm : EVEX.xyz.66.0F38 1D /r  [W missing in asmjit encoding] | intel=EVEX.<L>.66.0F38.WIG 1D /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vpminub | EVEX.66.0F.W? DA /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.66.0F DA /r  [W missing in asmjit encoding] | intel=EVEX.<L>.66.0F DA /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vpminuw | EVEX.66.0F38.W? 3A /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.66.0F38 3A /r  [W missing in asmjit encoding] | intel=EVEX.<L>.66.0F38 3A/r | xed: - | Intel encoding used
+asmjit-encoding-defect | vshufps | EVEX.NP.0F.W0 C6 /r ib mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 C6 /r ib  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 C6 /r ib | xed: - | Intel encoding used
+asmjit-encoding-defect | vsqrtps | EVEX.NP.0F.W0 51 /r mod=any | 128,256 | asmjit=rm : EVEX.xyz.0F.W0 51 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 51 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vsqrtps | EVEX.NP.0F.W0 51 /r mod=any | 512 | asmjit=rm : EVEX.xyz.0F.W0 51 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 51/r | xed: - | Intel encoding used
+asmjit-encoding-defect | vsubps | EVEX.NP.0F.W0 5C /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 5C /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 5C /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vunpckhps | EVEX.NP.0F.W0 15 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 15 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 15 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vunpcklps | EVEX.NP.0F.W0 14 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 14 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 14 /r | xed: - | Intel encoding used
+asmjit-encoding-defect | vxorps | EVEX.NP.0F.W0 57 /r mod=any | 128,256,512 | asmjit=rvm: EVEX.xyz.0F.W0 57 /r  [pp missing in asmjit encoding (taken as NP)] | intel=EVEX.<L>.0F.W0 57 /r | xed: - | Intel encoding used
+bcst | vgf2p8affineinvqb | EVEX.66.0F3A.W1 CF /r ib mod=any | 128,256,512 | asmjit=0 | intel=64 | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E4 | Intel value used
+bcst | vgf2p8affineqb | EVEX.66.0F3A.W1 CE /r ib mod=any | 128,256,512 | asmjit=0 | intel=64 | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E4 | Intel value used
+bcst | vpconflictq | EVEX.66.0F38.W1 C4 /r mod=any | 128,256,512 | asmjit=32 | intel=64 | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E4NF | Intel value used
+family | tcvtrowd2ps | EVEX.F3.0F38.W0 4A /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tcvtrowd2ps | EVEX.F3.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | tcvtrowps2pbf16h | EVEX.F2.0F38.W0 6D /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tcvtrowps2pbf16h | EVEX.F2.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | tcvtrowps2pbf16l | EVEX.F3.0F38.W0 6D /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tcvtrowps2pbf16l | EVEX.F3.0F3A.W0 77 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | tcvtrowps2phh | EVEX.NP.0F38.W0 6D /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tcvtrowps2phh | EVEX.NP.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | tcvtrowps2phl | EVEX.66.0F38.W0 6D /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tcvtrowps2phl | EVEX.F2.0F3A.W0 77 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | tilemovrow | EVEX.66.0F38.W0 4A /r mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel CPUID column used
+family | tilemovrow | EVEX.66.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=AMX-AVX512+AVX10.2 | intel=AMX-AVX512 | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel CPUID column used
+family | vcvttpd2qq | EVEX.66.0F.W1 7A /r mod=any | 128,256,512 | asmjit=AVX512F | intel=AVX512DQ | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E2; tt=Full W=W1 b=0 mask=mz rc=sae exc=E2 | Intel CPUID column used
+family | vmovrsb | EVEX.F2.MAP5.W0 6F /r mod=mem | 128,256,512 | asmjit=AVX10.2+MOVRS | intel=MOVRS | xed: tt=FullMem W=W0 b=0 mask=mz rc=- exc=E4 | Intel CPUID column used
+family | vmovrsd | EVEX.F3.MAP5.W0 6F /r mod=mem | 128,256,512 | asmjit=AVX10.2+MOVRS | intel=MOVRS | xed: tt=FullMem W=W0 b=0 mask=mz rc=- exc=E4 | Intel CPUID column used
+family | vmovrsq | EVEX.F3.MAP5.W1 6F /r mod=mem | 128,256,512 | asmjit=AVX10.2+MOVRS | intel=MOVRS | xed: tt=FullMem W=W1 b=0 mask=mz rc=- exc=E4 | Intel CPUID column used
+family | vmovrsw | EVEX.F2.MAP5.W1 6F /r mod=mem | 128,256,512 | asmjit=AVX10.2+MOVRS | intel=MOVRS | xed: tt=FullMem W=W1 b=0 mask=mz rc=- exc=E4 | Intel CPUID column used
+family | vsm4key4 | EVEX.F3.0F38.W0 DA /r mod=any | 128,256,512 | asmjit=AVX10.2+SM4 | intel=SM4 | xed: tt=FullMem W=W0 b=0 mask=none rc=- exc=E6 | Intel CPUID column used
+family | vsm4rnds4 | EVEX.F2.0F38.W0 DA /r mod=any | 128,256,512 | asmjit=AVX10.2+SM4 | intel=SM4 | xed: tt=FullMem W=W0 b=0 mask=none rc=- exc=E6 | Intel CPUID column used
+map | vandnps | EVEX.NP.0F.W0 55 /r mod=any | 128,256,512 | asmjit=? | intel=0F | xed: tt=Full W=W0 b=0 mask=mz rc=- exc=E4 | Intel value used
+map | vgetexppbf16 | EVEX.NP.MAP6.W0 42 /r mod=any | 128,256,512 | asmjit=MAP5 | intel=MAP6 | xed: tt=Full W=W0 b=0 mask=mz rc=- exc=E4 | Intel value used
+mask | vmovsd | EVEX.F2.0F.W1 11 /r mod=mem | LIG | asmjit=none | intel=m | xed: tt=Tuple1Scalar W=W1 b=0 mask=m/mz rc=- exc=E5 | Intel value used
+mask | vmovsh | EVEX.F3.MAP5.W0 11 /r mod=mem | LIG | asmjit=none | intel=m | xed: tt=Tuple1Scalar W=W0 b=0 mask=m/mz rc=- exc=E5 | Intel value used
+mask | vmovss | EVEX.F3.0F.W0 11 /r mod=mem | LIG | asmjit=none | intel=m | xed: tt=Tuple1Scalar W=W0 b=0 mask=m/mz rc=- exc=E5 | Intel value used
+mask | vmovw | EVEX.66.MAP5.WIG 6E /r mod=any | 128 | asmjit=mz | intel=none | xed: tt=Tuple1Scalar W=WIG b=0 mask=none rc=- exc=E9NF | Intel value used
+mask | vpcompressb | EVEX.66.0F38.W0 63 /r mod=mem | 128,256,512 | asmjit=mz | intel=m | xed: tt=Tuple1Scalar W=W0 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+mask | vpcompressw | EVEX.66.0F38.W1 63 /r mod=mem | 128,256,512 | asmjit=mz | intel=m | xed: tt=Tuple1Scalar W=W1 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+mask | vpinsrb | EVEX.66.0F3A.WIG 20 /r ib mod=any | 128 | asmjit=mz | intel=none | xed: tt=Tuple1Scalar W=WIG b=0 mask=none rc=- exc=E9NF | Intel value used
+mask | vpinsrd | EVEX.66.0F3A.W0 22 /r ib mod=any | 128 | asmjit=mz | intel=none | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=- exc=E9NF | Intel value used
+mask | vpinsrq | EVEX.66.0F3A.W1 22 /r ib mod=any | 128 | asmjit=mz | intel=none | xed: tt=Tuple1Scalar W=W1 b=0 mask=none rc=- exc=E9NF | Intel value used
+mask | vpinsrw | EVEX.66.0F.WIG C4 /r ib mod=any | 128 | asmjit=mz | intel=none | xed: tt=Tuple1Scalar W=WIG b=0 mask=none rc=- exc=E9NF | Intel value used
+mnemonic | tcvtrowps2bf16h | - | 512 | asmjit=tcvtrowps2pbf16h | intel=tcvtrowps2bf16h | xed: - | Intel (current) mnemonic used
+mnemonic | tcvtrowps2bf16l | - | 512 | asmjit=tcvtrowps2pbf16l | intel=tcvtrowps2bf16l | xed: - | Intel (current) mnemonic used
+mnemonic | vaddbf16 | - | 128,256,512 | asmjit=vaddnepbf16 | intel=vaddbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vcmpbf16 | - | 128,256,512 | asmjit=vcmppbf16 | intel=vcmpbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vcomisbf16 | - | LIG | asmjit=vcomsbf16 | intel=vcomisbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vcvt2ph2bf8 | - | 128,256,512 | asmjit=vcvtne2ph2bf8 | intel=vcvt2ph2bf8 | xed: - | Intel (current) mnemonic used
+mnemonic | vcvt2ph2bf8s | - | 128,256,512 | asmjit=vcvtne2ph2bf8s | intel=vcvt2ph2bf8s | xed: - | Intel (current) mnemonic used
+mnemonic | vcvt2ph2hf8 | - | 128,256,512 | asmjit=vcvtne2ph2hf8 | intel=vcvt2ph2hf8 | xed: - | Intel (current) mnemonic used
+mnemonic | vcvt2ph2hf8s | - | 128,256,512 | asmjit=vcvtne2ph2hf8s | intel=vcvt2ph2hf8s | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtbf162ibs | - | 128,256,512 | asmjit=vcvtnebf162ibs | intel=vcvtbf162ibs | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtbf162iubs | - | 128,256,512 | asmjit=vcvtnebf162iubs | intel=vcvtbf162iubs | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtph2bf8 | - | 128,256,512 | asmjit=vcvtneph2bf8 | intel=vcvtph2bf8 | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtph2bf8s | - | 128,256,512 | asmjit=vcvtneph2bf8s | intel=vcvtph2bf8s | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtph2hf8 | - | 128,256,512 | asmjit=vcvtneph2hf8 | intel=vcvtph2hf8 | xed: - | Intel (current) mnemonic used
+mnemonic | vcvtph2hf8s | - | 128,256,512 | asmjit=vcvtneph2hf8s | intel=vcvtph2hf8s | xed: - | Intel (current) mnemonic used
+mnemonic | vcvttbf162ibs | - | 128,256,512 | asmjit=vcvttnebf162ibs | intel=vcvttbf162ibs | xed: - | Intel (current) mnemonic used
+mnemonic | vcvttbf162iubs | - | 128,256,512 | asmjit=vcvttnebf162iubs | intel=vcvttbf162iubs | xed: - | Intel (current) mnemonic used
+mnemonic | vdivbf16 | - | 128,256,512 | asmjit=vdivnepbf16 | intel=vdivbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmadd132bf16 | - | 128,256,512 | asmjit=vfmadd132nepbf16 | intel=vfmadd132bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmadd213bf16 | - | 128,256,512 | asmjit=vfmadd213nepbf16 | intel=vfmadd213bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmadd231bf16 | - | 128,256,512 | asmjit=vfmadd231nepbf16 | intel=vfmadd231bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmsub132bf16 | - | 128,256,512 | asmjit=vfmsub132nepbf16 | intel=vfmsub132bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmsub213bf16 | - | 128,256,512 | asmjit=vfmsub213nepbf16 | intel=vfmsub213bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfmsub231bf16 | - | 128,256,512 | asmjit=vfmsub231nepbf16 | intel=vfmsub231bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmadd132bf16 | - | 128,256,512 | asmjit=vfnmadd132nepbf16 | intel=vfnmadd132bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmadd213bf16 | - | 128,256,512 | asmjit=vfnmadd213nepbf16 | intel=vfnmadd213bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmadd231bf16 | - | 128,256,512 | asmjit=vfnmadd231nepbf16 | intel=vfnmadd231bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmsub132bf16 | - | 128,256,512 | asmjit=vfnmsub132nepbf16 | intel=vfnmsub132bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmsub213bf16 | - | 128,256,512 | asmjit=vfnmsub213nepbf16 | intel=vfnmsub213bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfnmsub231bf16 | - | 128,256,512 | asmjit=vfnmsub231nepbf16 | intel=vfnmsub231bf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vfpclassbf16 | - | 128,256,512 | asmjit=vfpclasspbf16 | intel=vfpclassbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vgetexpbf16 | - | 128,256,512 | asmjit=vgetexppbf16 | intel=vgetexpbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vgetmantbf16 | - | 128,256,512 | asmjit=vgetmantpbf16 | intel=vgetmantbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vmaxbf16 | - | 128,256,512 | asmjit=vmaxpbf16 | intel=vmaxbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vminbf16 | - | 128,256,512 | asmjit=vminpbf16 | intel=vminbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vminmaxbf16 | - | 128,256,512 | asmjit=vminmaxnepbf16 | intel=vminmaxbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vmulbf16 | - | 128,256,512 | asmjit=vmulnepbf16 | intel=vmulbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vrcpbf16 | - | 128,256,512 | asmjit=vrcppbf16 | intel=vrcpbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vreducebf16 | - | 128,256,512 | asmjit=vreducenepbf16 | intel=vreducebf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vrndscalebf16 | - | 128,256,512 | asmjit=vrndscalenepbf16 | intel=vrndscalebf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vrsqrtbf16 | - | 128,256,512 | asmjit=vrsqrtpbf16 | intel=vrsqrtbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vscalefbf16 | - | 128,256,512 | asmjit=vscalefpbf16 | intel=vscalefbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vsqrtbf16 | - | 128,256,512 | asmjit=vsqrtnepbf16 | intel=vsqrtbf16 | xed: - | Intel (current) mnemonic used
+mnemonic | vsubbf16 | - | 128,256,512 | asmjit=vsubnepbf16 | intel=vsubbf16 | xed: - | Intel (current) mnemonic used
+mod | vpcompressb | EVEX.66.0F38.W0 63 /r mod=mem | 128,256,512 | asmjit=any | intel=mem | xed: tt=Tuple1Scalar W=W0 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+mod | vpcompressw | EVEX.66.0F38.W1 63 /r mod=mem | 128,256,512 | asmjit=any | intel=mem | xed: tt=Tuple1Scalar W=W1 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+mod | vpexpandb | EVEX.66.0F38.W0 62 /r mod=mem | 128,256,512 | asmjit=any | intel=mem | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=- exc=E4 | Intel value used
+mod | vpexpandw | EVEX.66.0F38.W1 62 /r mod=mem | 128,256,512 | asmjit=any | intel=mem | xed: tt=Tuple1Scalar W=W1 b=0 mask=mz rc=- exc=E4 | Intel value used
+openc | tilemovrow | EVEX.66.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=rmv | intel=rm | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel value used
+openc | vgetexpsd | EVEX.66.0F38.W1 43 /r mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W1 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vgetexpsh | EVEX.66.MAP6.W0 43 /r mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vgetexpss | EVEX.66.0F38.W0 43 /r mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vgetmantsd | EVEX.66.0F3A.W1 27 /r ib mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W1 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vgetmantsh | EVEX.NP.0F3A.W0 27 /r ib mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vgetmantss | EVEX.66.0F3A.W0 27 /r ib mod=any | LIG | asmjit=rm | intel=rvm | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+openc | vmovsd | EVEX.F2.0F.W1 10 /r mod=mem | LIG | asmjit=mr | intel=rm | xed: tt=Tuple1Scalar W=W1 b=0 mask=mz rc=- exc=E5 | Intel value used
+openc | vmovshdup | EVEX.F3.0F.W0 16 /r mod=any | 128,256,512 | asmjit=rvm | intel=rm | xed: tt=FullMem W=W0 b=0 mask=mz rc=- exc=E4NF | Intel value used
+openc | vmovsldup | EVEX.F3.0F.W0 12 /r mod=any | 128,256,512 | asmjit=rvm | intel=rm | xed: tt=FullMem W=W0 b=0 mask=mz rc=- exc=E4NF | Intel value used
+openc | vmovss | EVEX.F3.0F.W0 10 /r mod=mem | LIG | asmjit=mr | intel=rm | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=- exc=E5 | Intel value used
+openc | vpcompressb | EVEX.66.0F38.W0 63 /r mod=mem | 128,256,512 | asmjit=rvm | intel=mr | xed: tt=Tuple1Scalar W=W0 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+openc | vpcompressw | EVEX.66.0F38.W1 63 /r mod=mem | 128,256,512 | asmjit=rvm | intel=mr | xed: tt=Tuple1Scalar W=W1 b=0 mask=m/mz rc=- exc=E4 | Intel value used
+openc | vpshufbitqmb | EVEX.66.0F38.W0 8F /r mod=any | 128,256,512 | asmjit=rm | intel=rvm | xed: tt=FullMem W=W0 b=0 mask=kdest rc=- exc=E4 | Intel value used
+pp | vandnps | EVEX.NP.0F.W0 55 /r mod=any | 128,256,512 | asmjit=66 | intel=NP | xed: tt=Full W=W0 b=0 mask=mz rc=- exc=E4 | Intel value used
+pp | vcomxsd | EVEX.F2.0F.W1 2F /r mod=any | LIG | asmjit=F3 | intel=F2 | xed: tt=Tuple1Scalar W=W1 b=0 mask=none rc=sae exc=E3NF | Intel value used
+pp | vcomxsh | EVEX.F3.MAP5.W0 2F /r mod=any | LIG | asmjit=F2 | intel=F3 | xed: tt=Tuple1Scalar W=W0 b=0 mask=none rc=sae exc=E3NF | Intel value used
+pp | vcomxss | EVEX.F3.0F.W0 2F /r mod=any | LIG | asmjit=F2 | intel=F3 | xed: tt=Tuple1Scalar W=W0 b=0 mask=none rc=sae exc=E3NF | Intel value used
+pp | vgetexppbf16 | EVEX.NP.MAP6.W0 42 /r mod=any | 128,256,512 | asmjit=66 | intel=NP | xed: tt=Full W=W0 b=0 mask=mz rc=- exc=E4 | Intel value used
+pp | vmovntps | EVEX.NP.0F.W0 2B /r mod=mem | 128,256,512 | asmjit=66 | intel=NP | xed: tt=FullMem W=W0 b=0 mask=none rc=- exc=E1NF | Intel value used
+pp | vucomxsd | EVEX.F2.0F.W1 2E /r mod=any | LIG | asmjit=F3 | intel=F2 | xed: tt=Tuple1Scalar W=W1 b=0 mask=none rc=sae exc=E3NF | Intel value used
+pp | vucomxsh | EVEX.F3.MAP5.W0 2E /r mod=any | LIG | asmjit=F2 | intel=F3 | xed: tt=Tuple1Scalar W=W0 b=0 mask=none rc=sae exc=E3NF | Intel value used
+pp | vucomxss | EVEX.F3.0F.W0 2E /r mod=any | LIG | asmjit=F2 | intel=F3 | xed: tt=Tuple1Scalar W=W0 b=0 mask=none rc=sae exc=E3NF | Intel value used
+rc | vcvtps2pd | EVEX.NP.0F.W0 5A /r mod=any | 128,256 | asmjit=er | intel= | xed: tt=Half W=W0 b=0 mask=mz rc=- exc=E2 | Intel value used
+rc | vcvtps2pd | EVEX.NP.0F.W0 5A /r mod=any | 512 | asmjit=er | intel=sae | xed: tt=Half W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+rc | vcvtsi2sd | EVEX.F2.0F.W0 2A /r mod=any | LIG | asmjit=er | intel= | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=- exc=E10NF | Intel value used
+rc | vcvtudq2pd | EVEX.F3.0F.W0 7A /r mod=any | 128,256,512 | asmjit=er | intel= | xed: tt=Half W=W0 b=0 mask=mz rc=- exc=E5 | Intel value used
+rc | vcvtusi2sd | EVEX.F2.0F.W0 7B /r mod=any | LIG | asmjit=er | intel= | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=- exc=E10NF | Intel value used
+rc | vreducepd | EVEX.66.0F3A.W1 56 /r ib mod=any | 512 | asmjit= | intel=sae | xed: tt=Full W=W1 b=0 mask=mz rc=sae exc=E2 | Intel value used
+rc | vreduceps | EVEX.66.0F3A.W0 56 /r ib mod=any | 512 | asmjit= | intel=sae | xed: tt=Full W=W0 b=0 mask=mz rc=sae exc=E2 | Intel value used
+rc | vreducesd | EVEX.66.0F3A.W1 57 /r ib mod=any | LIG | asmjit= | intel=sae | xed: tt=Tuple1Scalar W=W1 b=0 mask=mz rc=sae exc=E3 | Intel value used
+rc | vreducess | EVEX.66.0F3A.W0 57 /r ib mod=any | LIG | asmjit= | intel=sae | xed: tt=Tuple1Scalar W=W0 b=0 mask=mz rc=sae exc=E3 | Intel value used
+tuple | vcvtph2psx | EVEX.66.MAP6.W0 13 /r mod=any | 128,256,512 | asmjit=Quarter | intel=Half | xed: tt=Half W=W0 b=0 mask=mz rc=- exc=E2; tt=Half W=W0 b=0 mask=mz rc=sae exc=E2 | Intel value used
+tuple | vcvttps2qqs | EVEX.66.MAP5.W0 6D /r mod=any | 128,256,512 | asmjit=Full | intel=Half | xed: tt=Half W=W0 b=0 mask=mz rc=- exc=E2; tt=Half W=W0 b=0 mask=mz rc=sae exc=E2 | Intel value used
+tuple | vcvttps2uqqs | EVEX.66.MAP5.W0 6C /r mod=any | 128,256,512 | asmjit=Full | intel=Half | xed: tt=Half W=W0 b=0 mask=mz rc=- exc=E2; tt=Half W=W0 b=0 mask=mz rc=sae exc=E2 | Intel value used
+tuple | vcvttsd2sis | EVEX.F2.MAP5.W0 6D /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttsd2sis | EVEX.F2.MAP5.W1 6D /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W1/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttsd2usis | EVEX.F2.MAP5.W0 6C /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttsd2usis | EVEX.F2.MAP5.W1 6C /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W1/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttss2sis | EVEX.F3.MAP5.W0 6D /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttss2sis | EVEX.F3.MAP5.W1 6D /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W1/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttss2usis | EVEX.F3.MAP5.W0 6C /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W0/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vcvttss2usis | EVEX.F3.MAP5.W1 6C /r mod=any | LIG | asmjit=T1F | intel=Tuple1Scalar | xed: tt=Tuple1Scalar W=W1/WIG b=0 mask=none rc=sae exc=E3NF | Intel value used
+tuple | vgf2p8affineinvqb | EVEX.66.0F3A.W1 CF /r ib mod=any | 128,256,512 | asmjit=FullMem | intel=Full | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E4 | Intel value used
+tuple | vgf2p8affineqb | EVEX.66.0F3A.W1 CE /r ib mod=any | 128,256,512 | asmjit=FullMem | intel=Full | xed: tt=Full W=W1 b=0 mask=mz rc=- exc=E4 | Intel value used
+tuple | vinserti64x4 | EVEX.66.0F3A.W1 3A /r ib mod=any | 512 | asmjit=T2 | intel=T4 | xed: tt=T4 W=W1 b=0 mask=mz rc=- exc=E6NF | Intel value used
+tuple | vmpsadbw | EVEX.F3.0F3A.W0 42 /r ib mod=any | 128,256,512 | asmjit=Full | intel=FullMem | xed: tt=FullMem W=W0 b=0 mask=mz rc=- exc=E4NF | Intel value used
+tuple-missing | tcvtrowd2ps | EVEX.F3.0F38.W0 4A /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tcvtrowd2ps | EVEX.F3.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2pbf16h | EVEX.F2.0F38.W0 6D /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2pbf16h | EVEX.F2.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2pbf16l | EVEX.F3.0F38.W0 6D /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2pbf16l | EVEX.F3.0F3A.W0 77 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2phh | EVEX.NP.0F38.W0 6D /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2phh | EVEX.NP.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2phl | EVEX.66.0F38.W0 6D /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tcvtrowps2phl | EVEX.F2.0F3A.W0 77 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | tilemovrow | EVEX.66.0F38.W0 4A /r mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E8-EVEX | Intel tuple used
+tuple-missing | tilemovrow | EVEX.66.0F3A.W0 07 /r ib mod=reg | 512 | asmjit=? | intel=N/A | xed: tt=N/A W=W0 b=0 mask=none rc=- exc=AMX-E7-EVEX | Intel tuple used
+tuple-missing | vsm4key4 | EVEX.F3.0F38.W0 DA /r mod=any | 128,256,512 | asmjit=? | intel=FullMem | xed: tt=FullMem W=W0 b=0 mask=none rc=- exc=E6 | Intel tuple used
+tuple-missing | vsm4rnds4 | EVEX.F2.0F38.W0 DA /r mod=any | 128,256,512 | asmjit=? | intel=FullMem | xed: tt=FullMem W=W0 b=0 mask=none rc=- exc=E6 | Intel tuple used
+
+# ---- asmjit EVEX forms with no Intel text (kept from asmjit; XED view shown)
+
+# ---- Intel EVEX forms that asmjit does not have (TSV source = Intel)
+intel-only | vpcompressb | EVEX.66.0F38.W0 63 /r mod=reg | 128,256,512 | VPCOMPRESSB xmm1{k1}{z}, xmm2 | SDM-092 Vol.2C p474 (2C 5-468) VPCOMPRESSB/VCOMPRESSW—Store Sparse Packed Byte/Word Integer Values Into Dense Memory/Register
+intel-only | vpcompressw | EVEX.66.0F38.W1 63 /r mod=reg | 128,256,512 | VPCOMPRESSW xmm1{k1}{z}, xmm2 | SDM-092 Vol.2C p474 (2C 5-468) VPCOMPRESSB/VCOMPRESSW—Store Sparse Packed Byte/Word Integer Values Into Dense Memory/Register
+intel-only | vpexpandb | EVEX.66.0F38.W0 62 /r mod=reg | 128,256,512 | VPEXPANDB xmm1{k1}{z}, xmm2 | SDM-092 Vol.2C p547 (2C 5-541) VPEXPANDB/VPEXPANDW—Expand Byte/Word Values
+intel-only | vpexpandw | EVEX.66.0F38.W1 62 /r mod=reg | 128,256,512 | VPEXPANDW xmm1{k1}{z}, xmm2 | SDM-092 Vol.2C p547 (2C 5-541) VPEXPANDB/VPEXPANDW—Expand Byte/Word Values
+intel-only | v4fmaddps | EVEX.F2.0F38.W0 9A /r mod=mem | 512 | V4FMADDPS zmm1{k1}{z}, zmm2+3, m128 | SDM-092 Vol.2D p123 (2D 8-4) V4FMADDPS/V4FNMADDPS—Packed Single Precision Floating-Point Fused Multiply-Add (4-Iterations)
+intel-only | v4fnmaddps | EVEX.F2.0F38.W0 AA /r mod=mem | 512 | V4FNMADDPS zmm1{k1}{z}, zmm2+3, m128 | SDM-092 Vol.2D p123 (2D 8-4) V4FMADDPS/V4FNMADDPS—Packed Single Precision Floating-Point Fused Multiply-Add (4-Iterations)
+intel-only | v4fmaddss | EVEX.F2.0F38.W0 9B /r mod=mem | LIG | V4FMADDSS xmm1{k1}{z}, xmm2+3, m128 | SDM-092 Vol.2D p125 (2D 8-6) V4FMADDSS/V4FNMADDSS—Scalar Single Precision Floating-Point Fused Multiply-Add (4-Iterations)
+intel-only | v4fnmaddss | EVEX.F2.0F38.W0 AB /r mod=mem | LIG | V4FNMADDSS xmm1{k1}{z}, xmm2+3, m128 | SDM-092 Vol.2D p125 (2D 8-6) V4FMADDSS/V4FNMADDSS—Scalar Single Precision Floating-Point Fused Multiply-Add (4-Iterations)
+intel-only | vexp2pd | EVEX.66.0F38.W1 C8 /r mod=any | 512 | VEXP2PD zmm1{k1}{z}, zmm2/m512/m64bcst{sae} | SDM-092 Vol.2D p127 (2D 8-8) VEXP2PD—Approximation to the Exponential 2^x of Packed Double Precision Floating-Point Values With Less Than 2^-23 Relative
+intel-only | vexp2ps | EVEX.66.0F38.W0 C8 /r mod=any | 512 | VEXP2PS zmm1{k1}{z}, zmm2/m512/m32bcst{sae} | SDM-092 Vol.2D p129 (2D 8-10) VEXP2PS—Approximation to the Exponential 2^x of Packed Single Precision Floating-Point Values With Less Than 2^-23 Relative Er-
+intel-only | vgatherpf0dps | EVEX.66.0F38.W0 C6 /1 mod=mem | 512 | VGATHERPF0DPS vm32z{k1} | SDM-092 Vol.2D p131 (2D 8-12) VGATHERPF0DPS/VGATHERPF0QPS/VGATHERPF0DPD/VGATHERPF0QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf0qps | EVEX.66.0F38.W0 C7 /1 mod=mem | 512 | VGATHERPF0QPS vm64z{k1} | SDM-092 Vol.2D p131 (2D 8-12) VGATHERPF0DPS/VGATHERPF0QPS/VGATHERPF0DPD/VGATHERPF0QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf0dpd | EVEX.66.0F38.W1 C6 /1 mod=mem | 512 | VGATHERPF0DPD vm32y{k1} | SDM-092 Vol.2D p131 (2D 8-12) VGATHERPF0DPS/VGATHERPF0QPS/VGATHERPF0DPD/VGATHERPF0QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf0qpd | EVEX.66.0F38.W1 C7 /1 mod=mem | 512 | VGATHERPF0QPD vm64z{k1} | SDM-092 Vol.2D p131 (2D 8-12) VGATHERPF0DPS/VGATHERPF0QPS/VGATHERPF0DPD/VGATHERPF0QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf1dps | EVEX.66.0F38.W0 C6 /2 mod=mem | 512 | VGATHERPF1DPS vm32z{k1} | SDM-092 Vol.2D p133 (2D 8-14) VGATHERPF1DPS/VGATHERPF1QPS/VGATHERPF1DPD/VGATHERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf1qps | EVEX.66.0F38.W0 C7 /2 mod=mem | 512 | VGATHERPF1QPS vm64z{k1} | SDM-092 Vol.2D p133 (2D 8-14) VGATHERPF1DPS/VGATHERPF1QPS/VGATHERPF1DPD/VGATHERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf1dpd | EVEX.66.0F38.W1 C6 /2 mod=mem | 512 | VGATHERPF1DPD vm32y{k1} | SDM-092 Vol.2D p133 (2D 8-14) VGATHERPF1DPS/VGATHERPF1QPS/VGATHERPF1DPD/VGATHERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vgatherpf1qpd | EVEX.66.0F38.W1 C7 /2 mod=mem | 512 | VGATHERPF1QPD vm64z{k1} | SDM-092 Vol.2D p133 (2D 8-14) VGATHERPF1DPS/VGATHERPF1QPS/VGATHERPF1DPD/VGATHERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With Signed
+intel-only | vp4dpwssds | EVEX.F2.0F38.W0 53 /r mod=mem | 512 | VP4DPWSSDS zmm1{k1}{z}, zmm2+3, m128 | SDM-092 Vol.2D p135 (2D 8-16) VP4DPWSSDS—Dot Product of Signed Words With Dword Accumulation and Saturation (4-Iterations)
+intel-only | vp4dpwssd | EVEX.F2.0F38.W0 52 /r mod=mem | 512 | VP4DPWSSD zmm1{k1}{z}, zmm2+3, m128 | SDM-092 Vol.2D p137 (2D 8-18) VP4DPWSSD—Dot Product of Signed Words With Dword Accumulation (4-Iterations)
+intel-only | vrcp28pd | EVEX.66.0F38.W1 CA /r mod=any | 512 | VRCP28PD zmm1{k1}{z}, zmm2/m512/m64bcst{sae} | SDM-092 Vol.2D p139 (2D 8-20) VRCP28PD—Approximation to the Reciprocal of Packed Double Precision Floating-Point Values With Less Than 2^-28 Relative Error
+intel-only | vrcp28sd | EVEX.66.0F38.W1 CB /r mod=any | LIG | VRCP28SD xmm1{k1}{z}, xmm2, xmm3/m64{sae} | SDM-092 Vol.2D p141 (2D 8-22) VRCP28SD—Approximation to the Reciprocal of Scalar Double Precision Floating-Point Value With Less Than 2^-28 Relative Error
+intel-only | vrcp28ps | EVEX.66.0F38.W0 CA /r mod=any | 512 | VRCP28PS zmm1{k1}{z}, zmm2/m512/m32bcst{sae} | SDM-092 Vol.2D p143 (2D 8-24) VRCP28PS—Approximation to the Reciprocal of Packed Single Precision Floating-Point Values With Less Than 2^-28 Relative Error
+intel-only | vrcp28ss | EVEX.66.0F38.W0 CB /r mod=any | LIG | VRCP28SS xmm1{k1}{z}, xmm2, xmm3/m32{sae} | SDM-092 Vol.2D p145 (2D 8-26) VRCP28SS—Approximation to the Reciprocal of Scalar Single Precision Floating-Point Value With Less Than 2^-28 Relative Error
+intel-only | vrsqrt28pd | EVEX.66.0F38.W1 CC /r mod=any | 512 | VRSQRT28PD zmm1{k1}{z}, zmm2/m512/m64bcst{sae} | SDM-092 Vol.2D p147 (2D 8-28) VRSQRT28PD—Approximation to the Reciprocal Square Root of Packed Double Precision Floating-Point Values With Less Than 2^-28
+intel-only | vrsqrt28sd | EVEX.66.0F38.W1 CD /r mod=any | LIG | VRSQRT28SD xmm1{k1}{z}, xmm2, xmm3/m64{sae} | SDM-092 Vol.2D p149 (2D 8-30) VRSQRT28SD—Approximation to the Reciprocal Square Root of Scalar Double Precision Floating-Point Value With Less Than 2^-28
+intel-only | vrsqrt28ps | EVEX.66.0F38.W0 CC /r mod=any | 512 | VRSQRT28PS zmm1{k1}{z}, zmm2/m512/m32bcst{sae} | SDM-092 Vol.2D p151 (2D 8-32) VRSQRT28PS—Approximation to the Reciprocal Square Root of Packed Single Precision Floating-Point Values With Less Than 2^-28
+intel-only | vrsqrt28ss | EVEX.66.0F38.W0 CD /r mod=any | LIG | VRSQRT28SS xmm1{k1}{z}, xmm2, xmm3/m32{sae} | SDM-092 Vol.2D p153 (2D 8-34) VRSQRT28SS—Approximation to the Reciprocal Square Root of Scalar Single Precision Floating-Point Value With Less Than 2^-28 Rel-
+intel-only | vscatterpf0dps | EVEX.66.0F38.W0 C6 /5 mod=mem | 512 | VSCATTERPF0DPS vm32z{k1} | SDM-092 Vol.2D p155 (2D 8-36) VSCATTERPF0DPS/VSCATTERPF0QPS/VSCATTERPF0DPD/VSCATTERPF0QPD—Sparse Prefetch Packed SP/DP Data Values with
+intel-only | vscatterpf0qps | EVEX.66.0F38.W0 C7 /5 mod=mem | 512 | VSCATTERPF0QPS vm64z{k1} | SDM-092 Vol.2D p155 (2D 8-36) VSCATTERPF0DPS/VSCATTERPF0QPS/VSCATTERPF0DPD/VSCATTERPF0QPD—Sparse Prefetch Packed SP/DP Data Values with
+intel-only | vscatterpf0dpd | EVEX.66.0F38.W1 C6 /5 mod=mem | 512 | VSCATTERPF0DPD vm32y{k1} | SDM-092 Vol.2D p155 (2D 8-36) VSCATTERPF0DPS/VSCATTERPF0QPS/VSCATTERPF0DPD/VSCATTERPF0QPD—Sparse Prefetch Packed SP/DP Data Values with
+intel-only | vscatterpf0qpd | EVEX.66.0F38.W1 C7 /5 mod=mem | 512 | VSCATTERPF0QPD vm64z{k1} | SDM-092 Vol.2D p155 (2D 8-36) VSCATTERPF0DPS/VSCATTERPF0QPS/VSCATTERPF0DPD/VSCATTERPF0QPD—Sparse Prefetch Packed SP/DP Data Values with
+intel-only | vscatterpf1dps | EVEX.66.0F38.W0 C6 /6 mod=mem | 512 | VSCATTERPF1DPS vm32z{k1} | SDM-092 Vol.2D p157 (2D 8-38) VSCATTERPF1DPS/VSCATTERPF1QPS/VSCATTERPF1DPD/VSCATTERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With
+intel-only | vscatterpf1qps | EVEX.66.0F38.W0 C7 /6 mod=mem | 512 | VSCATTERPF1QPS vm64z{k1} | SDM-092 Vol.2D p157 (2D 8-38) VSCATTERPF1DPS/VSCATTERPF1QPS/VSCATTERPF1DPD/VSCATTERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With
+intel-only | vscatterpf1dpd | EVEX.66.0F38.W1 C6 /6 mod=mem | 512 | VSCATTERPF1DPD vm32y{k1} | SDM-092 Vol.2D p157 (2D 8-38) VSCATTERPF1DPS/VSCATTERPF1QPS/VSCATTERPF1DPD/VSCATTERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With
+intel-only | vscatterpf1qpd | EVEX.66.0F38.W1 C7 /6 mod=mem | 512 | VSCATTERPF1QPD vm64z{k1} | SDM-092 Vol.2D p157 (2D 8-38) VSCATTERPF1DPS/VSCATTERPF1QPS/VSCATTERPF1DPD/VSCATTERPF1QPD—Sparse Prefetch Packed SP/DP Data Values With
+
+# ---- Intel text normalisations (typos in the opcode column, resolved as noted)
+intel-text | EVEX.128.66.0F38 30.WIG /r | W 'WIG' written after the opcode byte | SDM-092 Vol.2B p371 (2B 4-363) PMOVZX—Packed Move With Zero Extend
+intel-text | EVEX.256.0F.W1 78 02 /r | stray byte '02' after the opcode | SDM-092 Vol.2C p109 (2C 5-103) VCVTTPD2UDQ—Convert With Truncation Packed Double Precision Floating-Point Values to Packed Unsigned Doubleword Integers
+intel-text | EVEX.512.66.0F3A.W0 04 /r | 'ib' of the opcode cell glued to the instruction cell | SDM-092 Vol.2C p523 (2C 5-517) VPERMILPS—Permute In-Lane of Quadruples of Single Precision Floating-Point Values
+intel-text | EVEX.LLIG.66.0F3A.W1 57 | no ModRM spec (/r, /digit) in opcode column | SDM-092 Vol.2C p699 (2C 5-693) VREDUCESD—Perform a Reduction Transformation on a Scalar Float64 Value
+
+# ---- asmjit rows that could not be parsed
