@@ -77,18 +77,18 @@ vpdpbsud	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_i
 vpdpbsuds	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
 vpdpbuud	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
 vpdpbuuds	vex	sdm	U85 AVX-VNNI-INT8: independent SDM-pseudocode model (ref_vnni_ifma_ne.py) + unit tests + cases_vnni_ifma.txt "=>"; strict i5-13600K profile #UD == CPU
-clrssbsy	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-incsspd	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-incsspq	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-rstorssp	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-saveprevssp	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-setssbsy	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-wrssd	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
-wrssq	legacy	ud	CET shadow stack (not enabled for user mode: IA32_U_CET.SH_STK_EN = 0): #UD in both
+clrssbsy	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+incsspd	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+incsspq	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+rstorssp	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+saveprevssp	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+setssbsy	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+wrssd	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+wrssq	legacy	sdm	U114 CET shadow stack: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 wrussd	legacy	cpl0	66 [REX.W] 0F 38 F5: CPU #GP(0) at CPL3 (CR4.CET = 1 under Windows), Unicorn #UD
 wrussq	legacy	cpl0	66 [REX.W] 0F 38 F5: CPU #GP(0) at CPL3 (CR4.CET = 1 under Windows), Unicorn #UD
 clzero	legacy	oos	AMD CLZERO
-enqcmd	legacy	ud	the i5-13600K lacks ENQCMD: #UD in both
+enqcmd	legacy	sdm	U112 ENQCMD: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 nop3	legacy	ok	0F 1F 00
 nop4	legacy	ok	0F 1F 40 00
 nop5	legacy	ok	0F 1F 44 00 00
@@ -144,7 +144,7 @@ monitorx	legacy	oos	AMD MONITORX
 mwaitx	legacy	oos	AMD MONITORX
 movrs	legacy	sdm	U102 MOVRS: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 prefetchrst2	legacy	ok	0F 18 /4: NOP without MOVRS
-pconfig	legacy	ud	the i5-13600K lacks PCONFIG: #UD in both
+pconfig	legacy	sdm	U113 GETSEC/PCONFIG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 rdpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
 wrpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
 ud1	legacy	ok	0F B9 /r: #UD (its defined behaviour)
@@ -155,10 +155,10 @@ aand	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.
 aor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 axor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 rdpru	legacy	oos	AMD RDPRU
-xabort	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
-xbegin	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
-xend	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
-xtest	legacy	ud	the i5-13600K lacks RTM (TSX): #UD in both
+xabort	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xbegin	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xend	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xtest	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 encls	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclu	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclv	legacy	ud	the i5-13600K lacks SGX: #UD in both
@@ -170,7 +170,7 @@ vsm3msg2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_s
 vsm3rnds2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
 vsm4key4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
 vsm4rnds4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
-getsec	legacy	ud	the i5-13600K lacks SMX: #UD in both
+getsec	legacy	sdm	U113 GETSEC/PCONFIG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 blcfill	xop	oos	AMD TBM
 blci	xop	oos	AMD TBM
 blcic	xop	oos	AMD TBM
@@ -180,8 +180,8 @@ blsfill	xop	oos	AMD TBM
 blsic	xop	oos	AMD TBM
 t1mskc	xop	oos	AMD TBM
 tzmsk	xop	oos	AMD TBM
-xresldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
-xsusldtrk	legacy	ud	the i5-13600K lacks TSXLDTRK: #UD in both
+xresldtrk	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xsusldtrk	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 clui	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 senduipi	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 stui	legacy	sdm	U104 UINTR: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
@@ -200,9 +200,9 @@ montmul	legacy	oos	VIA PadLock
 xstore	legacy	oos	VIA PadLock
 xsha1	legacy	oos	VIA PadLock
 xsha256	legacy	oos	VIA PadLock
-tpause	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
-umonitor	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
-umwait	legacy	ud	the i5-13600K lacks WAITPKG: #UD in both
+tpause	legacy	sdm	U111 WAITPKG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+umonitor	legacy	sdm	U111 WAITPKG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+umwait	legacy	sdm	U111 WAITPKG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 vfrczpd	xop	oos	AMD XOP
 vfrczps	xop	oos	AMD XOP
 vfrczsd	xop	oos	AMD XOP
