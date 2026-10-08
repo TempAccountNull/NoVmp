@@ -7847,3 +7847,37 @@ uint64_t helper_evex_cvt_f2i(CPUX86State *env, ZMMReg *s, uint32_t desc)
     return evex_cvt_f2i_one(env, evex_get_elem(s, evcvt_esz[st], 0), st, dt, (desc >> 8) & 1);
 }
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+
+/*
+ * NoVmp (ledger U234): VPSLLD/Q, VPSRLD/Q, VPSRAD/Q (VPSRAQ) by xmm3/m128 (SDM Vol2B PSLLW/
+ * PSLLD/PSLLQ, PSRLW/PSRLD/PSRLQ, PSRAW/PSRAD/PSRAQ "LOGICAL_LEFT_SHIFT_DWORDS ... (SRC2)"):
+ * the count is the unsigned 64-bit COUNT = SRC2[63:0] for every element; COUNT > width - 1
+ * gives 0 (logical) or the sign in every bit (arithmetic). desc: bits 1:0 kind (0 left,
+ * 1 logical right, 2 arithmetic right), bits 7:4 element size (MO_32/MO_64), 15:8 count.
+ */
+void helper_evex_pshift(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *c, uint32_t desc)
+{
+    int kind = desc & 3, esz = (desc >> 4) & 0xf, n = (desc >> 8) & 0xff, bits = 8 << esz, i;
+    uint64_t cnt = c->ZMM_Q(0);
+    ZMMReg r;
+
+    for (i = 0; i < n; i++) {
+        uint64_t x = evex_get_elem(a, esz, i), y;
+
+        if (kind == 2) {
+            int64_t sx = (int64_t)(x << (64 - bits)) >> (64 - bits);
+
+            y = (uint64_t)(sx >> (cnt > (uint64_t)bits - 1 ? bits - 1 : (int)cnt));
+        } else if (cnt > (uint64_t)bits - 1) {
+            y = 0;
+        } else {
+            y = kind == 0 ? x << cnt : x >> cnt;
+        }
+        evex_set_elem(&r, esz, i, y);
+    }
+    for (i = 0; i < n; i++) {
+        evex_set_elem(d, esz, i, evex_get_elem(&r, esz, i));
+    }
+}
+#endif /* __Use_Original_Qemu (U234) */

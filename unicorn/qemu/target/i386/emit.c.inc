@@ -2317,6 +2317,33 @@ EVEX_CVT_F2I(VCVTSD2USI, 6, true, false)
 EVEX_CVT_F2I(VCVTTSS2USI, 5, true, true)
 EVEX_CVT_F2I(VCVTTSD2USI, 6, true, true)
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+
+/* NoVmp (ledger U234): VPSLLD/Q, VPSRLD/Q, VPSRAD/Q by the count in xmm3/m128 */
+static void gen_evex_pshift(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_pshift(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, kind | (s->evex_esz << 4) |
+                                                     (evex_nelem(s, decode) << 8)));
+}
+
+static void gen_EVEX_VPSLL_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 0);
+}
+
+static void gen_EVEX_VPSRL_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 1);
+}
+
+static void gen_EVEX_VPSRA_X(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_pshift(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U234) */
 
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {

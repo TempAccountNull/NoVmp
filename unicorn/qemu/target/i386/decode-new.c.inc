@@ -3164,6 +3164,11 @@ static void decode_EVEX_0F3A_1D(DisasContext *s, CPUX86State *env, X86OpEntry *e
     *entry = *decode_by_prefix(s, opcodes_EVEX_0F3A_1D);
 }
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+/* NoVmp (ledger U234): shifts by xmm3/m128 (Mem128 tuple, E4NF.nb: no fault suppression) */
+#define EV_SHX(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(MEM128) ev_mask(MZ) ev_w(w) ev_es(W) \
+                     .evex_nofs = 1, p_66
+#endif /* __Use_Original_Qemu (U234) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -3348,6 +3353,18 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0x2c] = X86_OP_GROUP0(EVEX_0F2C),
     [0x2d] = X86_OP_GROUP0(EVEX_0F2D),
 #endif /* __Use_Original_Qemu (U232) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+    /*
+     * NoVmp (ledger U234): VPSRLD/Q (D2/D3), VPSRAD/Q (E2 W0/W1), VPSLLD/Q (F2/F3) zmm1{k1}{z},
+     * zmm2, xmm3/m128: the count is the low 64 bits of a 128-bit operand (Mem128 tuple,
+     * disp8 N = 16, no {1toN}); E4NF.nb: the count is read whole, no fault suppression.
+     */
+    [0xd2] = X86_OP_ENTRY3(EVEX_VPSRL_X, V,x, H,x, W,dq, EV_SHX(W0)),
+    [0xd3] = X86_OP_ENTRY3(EVEX_VPSRL_X, V,x, H,x, W,dq, EV_SHX(W1)),
+    [0xe2] = X86_OP_ENTRY3(EVEX_VPSRA_X, V,x, H,x, W,dq, EV_SHX(WSEL)),
+    [0xf2] = X86_OP_ENTRY3(EVEX_VPSLL_X, V,x, H,x, W,dq, EV_SHX(W0)),
+    [0xf3] = X86_OP_ENTRY3(EVEX_VPSLL_X, V,x, H,x, W,dq, EV_SHX(W1)),
+#endif /* __Use_Original_Qemu (U234) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -3834,6 +3851,9 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U231) */
 #undef EV_CVT
 #endif /* __Use_Original_Qemu (U231) */
+#if __Use_Original_Qemu != 1 /* ours (U234) */
+#undef EV_SHX
+#endif /* __Use_Original_Qemu (U234) */
 #if __Use_Original_Qemu != 1 /* ours (U148) */
 #undef EV_MOV
 #undef EV_VLALL
@@ -4042,7 +4062,8 @@ static bool decode_op_size(DisasContext *s, X86OpEntry *e, X86OpSize size, MemOp
         /*
          * NoVmp (ledger U210): an EVEX dq operand is 128 bits whatever the vector length
          * (VINSERTF32X4 xmm3/m128, VEXTRACTF32X4 xmm1/m128, VBROADCASTF32X4 m128; U260: the
-         * xmm3/m128 count of VPSLLW/VPSRLW/VPSRAW, Mem128 tuple, same rule): the
+         * xmm3/m128 count of VPSLLW/VPSRLW/VPSRAW, Mem128 tuple, same rule; U234: the same
+         * count of VPSLLD/Q, VPSRLD/Q, VPSRAD/Q): the
          * allowed lengths are in the form's evex_vl (decode_evex_vl).
          */
         if (s->prefix & PREFIX_EVEX) {
