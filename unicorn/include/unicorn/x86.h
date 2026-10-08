@@ -79,6 +79,10 @@ typedef enum uc_cpu_x86 {
 // product 0 (p0 + p1) in both selected elements; the i5-13600K computes element i as
 // p[i] + p[i^1], so element 1 gets product 1. (DPPS stays SDM: not repeatable on hardware.)
 #define UC_X86_QUIRK_DPPD_NAN_ORDER (1u << 4)
+// REP MOVS/STOS/LODS/CMPS/SCAS with a 32-bit address size (67h) in 64-bit mode and ECX = 0:
+// the SDM (REP Operation: WHILE CountReg != 0) writes no register; the i5-13600K zero-extends
+// RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS).
+#define UC_X86_QUIRK_REP_ZERO_COUNT_ZX (1u << 5)
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h

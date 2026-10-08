@@ -11804,14 +11804,17 @@ static void test_x86_f16c_vcvtps2ph_ftz(void)
  * NoVmp U99 (+U98, U430-U439): every UC_CTL_X86_HW_QUIRKS bit, off and on. With
  * quirks 0 the result is the Intel SDM's; with the bit set it is the i5-13600K's.
  * Each qk_ case runs one snippet on a fresh engine with only that bit (or none).
- * Data at QK_DATA: 2.0, -1.0, 1.0, -2.0 (doubles); RAX = QK_DATA.
+ * Data at QK_DATA (qwords): 2.0, -1.0, 1.0, -2.0 (doubles), FCW 037Eh (IM = 0),
+ * QNaN; RAX = QK_DATA.
  */
 #define QK_DATA 0x200000
 
 static uc_engine *qk_run(const char *code, size_t len, uint32_t quirks,
                          uc_err want)
 {
-    static const double data[4] = {2.0, -1.0, 1.0, -2.0};
+    static const uint64_t data[6] = {0x4000000000000000ULL, 0xBFF0000000000000ULL,
+                                     0x3FF0000000000000ULL, 0xC000000000000000ULL,
+                                     0x037E, 0x7FF8000000000001ULL};
     uint64_t rax = QK_DATA;
     uint32_t rb = 0xFFFFFFFFu;
     uc_engine *uc;
@@ -11907,6 +11910,36 @@ static void qk_dppd(uint32_t q, uint64_t want1)
     OK(uc_close(uc));
 }
 
+/* bit 5: rep movsb with 67h, ECX = 0, upper register halves set */
+static void qk_rep_zero(uint32_t q, int zx)
+{
+    static const char code[] = "\x67\xf3\xa4";
+    uint64_t rcx = 0xFFFFFFFF00000000ULL, rsi = 0x1111111100003000ULL;
+    uint64_t rdi = 0x2222222200004000ULL;
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_x86_hw_quirks(uc, q));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &rcx));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    OK(uc_reg_write(uc, UC_X86_REG_RDI, &rdi));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RCX, &rcx));
+    OK(uc_reg_read(uc, UC_X86_REG_RSI, &rsi));
+    OK(uc_reg_read(uc, UC_X86_REG_RDI, &rdi));
+    if (zx) {
+        TEST_CHECK(rcx == 0 && rsi == 0x3000 && rdi == 0x4000);
+    } else {
+        TEST_CHECK(rcx == 0xFFFFFFFF00000000ULL && rsi == 0x1111111100003000ULL &&
+                   rdi == 0x2222222200004000ULL);
+    }
+    TEST_MSG("quirks %x: rcx %llx rsi %llx rdi %llx", q, (unsigned long long)rcx,
+             (unsigned long long)rsi, (unsigned long long)rdi);
+    OK(uc_close(uc));
+}
+
 static void test_x86_hw_quirk_bits(void)
 {
     /* bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 = 1 */
@@ -11925,6 +11958,9 @@ static void test_x86_hw_quirk_bits(void)
     /* bit 4 DPPD_NAN_ORDER: SDM p0 + p1 in both elements, hardware p1 + p0 in element 1 */
     qk_dppd(0, 0x7FF8000000000A01ULL);
     qk_dppd(UC_X86_QUIRK_DPPD_NAN_ORDER, 0x7FF8000000000A02ULL);
+    /* bit 5 REP_ZERO_COUNT_ZX: SDM writes nothing, hardware zero-extends RCX/RSI/RDI */
+    qk_rep_zero(0, 0);
+    qk_rep_zero(UC_X86_QUIRK_REP_ZERO_COUNT_ZX, 1);
 }
 /* ---- qk_ block end ---- */
 
