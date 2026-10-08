@@ -16,6 +16,12 @@ gen_cases_nan.py -- NaN-propagation cases (ledger U96), Python 3 stdlib only.
       ref_evex_m1.py (Vol1 4.8.3.5 Table 4-8: SSE/AVX -> first source operand, quieted;
       MINPS/MAXPS pages: a NaN in either source -> the second source, unchanged, #I).
         emu-alltest --cases Emulator\\data\\cases_nan_evex.txt --avx512 --xcr0 0xE7 --expect-only
+  python gen_cases_nan.py --dp-hw       > Emulator/data/cases_dp_nan.txt
+  python gen_cases_nan.py --dp-hw-dpps  > Emulator/data/cases_dpps_nan.txt
+  python gen_cases_nan.py --dp-sdm      > Emulator/data/cases_dp_nan_sdm.txt
+      DPPS/DPPD with two or more NaN products (ledger U98): DPPD hardware cases (must match with
+      --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER), DPPS hardware cases (not repeatable on the
+      i5-13600K: measurement only) and SDM-pseudocode expected-value cases (--quirks 0).
 
 SDM rules exercised (Vol1 4.8.3.5, Table 4-8 "Rules for Handling NaNs"):
   SNaN and QNaN / two SNaNs / two QNaNs:
@@ -188,13 +194,254 @@ def dp(mn, esz, vex, vlb):
 
 
 DP_NOTE = """\
-# DPPS/DPPD with two or more NaN products are not in this file. The SDM pseudocode
-# (DP_primitive: Temp2 := p0 + p1, Temp3 := p2 + p3, every selected element := Temp2 + Temp3;
-# DPPD: both elements := p0 + p1) with the SSE NaN rule gives the first NaN product in the
-# order p0, p1, p2, p3 in every element (what the fork does). The i5-13600K instead gives
-# element-dependent NaNs - mostly t[j] := p[j^1] + p[j], element i := t[i] + t[i^2] (DPPS) and
-# element i := p[i] + p[i^1] (DPPD) - and DPPS is not even repeatable: the same input gives
-# another NaN in 0-4 of 176 such cases from run to run. Intel manuals win (AGENT_RULES.md)."""
+# DPPS/DPPD with two or more NaN products are not in this file (ledger U98): see
+# cases_dp_nan.txt (DPPD on the host, --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER),
+# cases_dp_nan_sdm.txt (SDM pseudocode, quirks 0) and cases_dpps_nan.txt (DPPS on the host:
+# not repeatable, measurement only). The SDM pseudocode (DP_primitive) gives the first NaN
+# product in the order p0, p1, p2, p3 in every element (the default); the i5-13600K gives
+# DPPD element i := p[i] + p[i^1] (repeatable) and DPPS mostly t[j] := p[j^1] + p[j],
+# element i := t[i] + t[i^2], with the pair order of elements 1 and 3 changing between runs."""
+
+
+# ---------------------------------------------------------------------------------------
+# DPPS/DPPD with two or more NaN products (ledger U98)
+# ---------------------------------------------------------------------------------------
+# Every NaN has its own payload: element k (0..3), source a (SRC1) or b (SRC2).
+def dp_nan(esz, kind, src, k):
+    """kind 'Q' / 'S'; src 'a' / 'b'; element k"""
+    if esz == 4:
+        base = (0x7FC00000 if kind == "Q" else 0x7F800000) | (0 if src == "a" else 0x80000000)
+        return base | ((k + 1) << 16) | (0xA if src == "a" else 0xB)
+    base = (0x7FF8000000000000 if kind == "Q" else 0x7FF0000000000000) | (0 if src == "a" else 1 << 63)
+    return base | ((k + 1) << 40) | (0xA if src == "a" else 0xB)
+
+
+def dp_num(esz, which):
+    return (V64 if esz == 8 else V32)[which]
+
+
+def dp_inf(esz):
+    return 0x7FF0000000000000 if esz == 8 else 0x7F800000
+
+
+# product kinds: (SRC1 element, SRC2 element) as functions of (esz, k)
+DP_KINDS = {
+    "N": lambda e, k: (dp_num(e, "N1"), dp_num(e, "N2")),
+    "Qa": lambda e, k: (dp_nan(e, "Q", "a", k), dp_num(e, "N2")),
+    "Sa": lambda e, k: (dp_nan(e, "S", "a", k), dp_num(e, "N2")),
+    "Qb": lambda e, k: (dp_num(e, "N1"), dp_nan(e, "Q", "b", k)),
+    "Sb": lambda e, k: (dp_num(e, "N1"), dp_nan(e, "S", "b", k)),
+    "QQ": lambda e, k: (dp_nan(e, "Q", "a", k), dp_nan(e, "Q", "b", k)),
+    "SQ": lambda e, k: (dp_nan(e, "S", "a", k), dp_nan(e, "Q", "b", k)),
+    "QS": lambda e, k: (dp_nan(e, "Q", "a", k), dp_nan(e, "S", "b", k)),
+    "I": lambda e, k: (dp_inf(e), 0),            # inf * 0 -> QNaN indefinite, #I
+}
+DP_NANKINDS = ["Qa", "Sa", "Qb", "Sb", "QQ", "SQ", "QS", "I"]
+
+
+# --- SDM element model (Vol1 4.8.3.5 Table 4-8, SSE column) ---------------------------
+def fp_parts(esz):
+    return (11, 52) if esz == 8 else (8, 23)
+
+
+def is_nan(x, esz):
+    eb, mb = fp_parts(esz)
+    return ((x >> mb) & ((1 << eb) - 1)) == (1 << eb) - 1 and (x & ((1 << mb) - 1)) != 0
+
+
+def is_snan(x, esz):
+    return is_nan(x, esz) and not (x >> (fp_parts(esz)[1] - 1)) & 1
+
+
+def quiet(x, esz):
+    return x | (1 << (fp_parts(esz)[1] - 1))
+
+
+def indefinite(esz):
+    return 0xFFF8000000000000 if esz == 8 else 0xFFC00000
+
+
+def nan2(x, y, esz):
+    """two-source SSE rule: the first source operand if it is a NaN, else the second (quieted);
+    returns (NaN or None, invalid)"""
+    inv = is_snan(x, esz) or is_snan(y, esz)
+    if is_nan(x, esz):
+        return quiet(x, esz), inv
+    if is_nan(y, esz):
+        return quiet(y, esz), inv
+    return None, inv
+
+
+def to_float(x, esz):
+    import struct
+    return struct.unpack("<d" if esz == 8 else "<f", x.to_bytes(esz, "little"))[0]
+
+
+def from_float(f, esz):
+    import struct
+    return int.from_bytes(struct.pack("<d" if esz == 8 else "<f", f), "little")
+
+
+def is_inf(x, esz):
+    eb, mb = fp_parts(esz)
+    return ((x >> mb) & ((1 << eb) - 1)) == (1 << eb) - 1 and (x & ((1 << mb) - 1)) == 0
+
+
+def is_zero(x, esz):
+    return (x & ((1 << (8 * esz - 1)) - 1)) == 0
+
+
+def fmul(x, y, esz):
+    """only the values the DP cases use: NaNs, +-1, -2, +inf * 0 (exact in both formats)"""
+    r, inv = nan2(x, y, esz)
+    if r is not None:
+        return r, inv
+    if (is_inf(x, esz) and is_zero(y, esz)) or (is_zero(x, esz) and is_inf(y, esz)):
+        return indefinite(esz), True
+    return from_float(to_float(x, esz) * to_float(y, esz), esz), False
+
+
+def fadd(x, y, esz):
+    r, inv = nan2(x, y, esz)
+    if r is not None:
+        return r, inv
+    return from_float(to_float(x, esz) + to_float(y, esz), esz), False
+
+
+def dp_lane(a, b, imm, esz, order):
+    """one 128-bit lane: a, b = SRC1 / SRC2 elements. order 'sdm' = DPPS/DPPD Operation
+    (DP_primitive); 'dppd_hw' = UC_X86_QUIRK_DPPD_NAN_ORDER (element i := p[i] + p[i^1]).
+    Returns (elements, invalid)"""
+    n = 16 // esz
+    inv = False
+    p = []
+    for k in range(n):
+        if imm & (1 << (4 + k)):
+            r, i = fmul(a[k], b[k], esz)
+            inv |= i
+        else:
+            r = 0
+        p.append(r)
+    if n == 2:
+        if order == "sdm":
+            t, i = fadd(p[0], p[1], esz)
+            inv |= i
+            res = [t, t]
+        else:
+            res = []
+            for k in range(2):
+                t, i = fadd(p[k], p[k ^ 1], esz)
+                inv |= i
+                res.append(t)
+    else:
+        t2, i2 = fadd(p[0], p[1], esz)
+        t3, i3 = fadd(p[2], p[3], esz)
+        t4, i4 = fadd(t2, t3, esz)
+        inv |= i2 | i3 | i4
+        res = [t4] * 4
+    return [res[k] if imm & (1 << k) else 0 for k in range(n)], inv
+
+
+def dp_multi_cases(mn, esz, vex, vlb):
+    """(asm, xmm1/SRC1 image, SRC2 image) for DPPS/DPPD with >= 2 NaN products per lane"""
+    n = 16 // esz
+    out = []
+    if n == 2:
+        combos = [(k0, k1) for k0 in DP_NANKINDS for k1 in DP_NANKINDS]
+        for ci, (k0, k1) in enumerate(combos):
+            for low in (3, 1, 2):
+                imm = 0x30 | low
+                kinds = [[k0, k1]]
+                out.append((imm, kinds))
+    else:
+        subsets = [s for s in range(16) if bin(s).count("1") >= 2]
+        for s in subsets:
+            for rot in range(8):
+                kinds = []
+                for lane in range(vlb // 16):
+                    r = rot + 3 * lane
+                    kinds.append([DP_NANKINDS[(r + 5 * j) % 8] if s >> j & 1 else "N" for j in range(4)])
+                out.append((0xFF, kinds))
+                # one NaN product masked off when at least two stay selected
+                nans = [j for j in range(4) if s >> j & 1]
+                if len(nans) >= 3 and rot < 2:
+                    out.append((0xFF & ~(1 << (4 + nans[rot])), kinds))
+                if rot == 0:
+                    for low in (1, 2, 4, 8, 5, 0xA):
+                        out.append((0xF0 | low, kinds))
+    cases = []
+    for imm, kinds in out:
+        av, bv = [], []
+        for lk in kinds:
+            for k in range(n):
+                x, y = DP_KINDS[lk[k]](esz, k)
+                av.append(x)
+                bv.append(y)
+        cases.append((imm, kinds, av, bv))
+    return cases
+
+
+def dp_multi_line(mn, esz, vex, vlb, imm, av, bv, order=None):
+    """the case line; with order: an expected-value case (=> model result)"""
+    r = "ymm" if vlb == 32 else "xmm"
+    a, b = pack(av, esz), pack(bv, esz)
+    d0 = bytes(range(0x40, 0x40 + vlb))
+    if vex:
+        line = "%s %s0, %s1, %s2, 0x%X | %s %s %s" % (mn, r, r, r, imm, regkeys(0, d0), regkeys(1, a), regkeys(2, b))
+    else:
+        line = "%s xmm0, xmm1, 0x%X | %s %s" % (mn, imm, regkeys(0, a), regkeys(1, b))
+    if order is None:
+        return line
+    n = 16 // esz
+    res, inv = [], False
+    for lane in range(vlb // 16):
+        r_, i = dp_lane(av[lane * n:(lane + 1) * n], bv[lane * n:(lane + 1) * n], imm, esz, order)
+        res += r_
+        inv |= i
+    img = pack(res, esz)
+    exp = regkeys(0, img + (bytes(16) if (vex and vlb == 16) else b""))
+    if vex and vlb == 16:
+        exp = "xmm0=%s ymmh0=%s" % (hexs(img), hexs(bytes(16)))   # VEX.128 zeroes bits 255:128
+    if inv:
+        exp += " mxcsr=0x1F81"
+    return line + " => " + exp
+
+
+DP_MULTI_NOTE = """\
+# DPPS/DPPD with two or more NaN products in one dot product. SDM (DPPS/DPPD Operation,
+# DP_primitive; Vol1 4.8.3.5 Table 4-8 SSE column): Temp2 := p0 + p1, Temp3 := p2 + p3,
+# every selected element := Temp2 + Temp3 (DPPD: both elements := p0 + p1), so the first
+# NaN product in the order p0, p1, p2, p3 lands in every selected element (quirks 0).
+# UC_X86_QUIRK_DPPD_NAN_ORDER (i5-13600K): DPPD element i := p[i] + p[i^1] (each element's
+# own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B."""
+
+
+def gen_dp_multi(model):
+    """model None: hardware cases (DPPD only, or DPPS with 'dpps'); 'sdm': expected-value cases"""
+    if model == "sdm":
+        w("# DPPS/DPPD multi-NaN (ledger U98), expected-value cases from the SDM pseudocode:")
+        w("#   Emulator/tools/isa/gen_cases_nan.py --dp-sdm (regenerate, do not edit). Unicorn only, quirks 0:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan_sdm.txt --expect-only --quirks 0")
+    elif model == "dpps":
+        w("# DPPS multi-NaN (ledger U98) hardware cases: Emulator/tools/isa/gen_cases_nan.py --dp-hw-dpps")
+        w("# (regenerate, do not edit). NOT a regression gate: the i5-13600K's NaN choice here is not")
+        w("# repeatable from run to run; the fork follows the SDM (no quirk). Measurement only:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dpps_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu")
+    else:
+        w("# DPPD multi-NaN (ledger U98) hardware cases: Emulator/tools/isa/gen_cases_nan.py --dp-hw")
+        w("# (regenerate, do not edit). With the i5-13600K quirk set (UC_X86_QUIRK_DPPD_NAN_ORDER) 0 differ:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu")
+    w(DP_MULTI_NOTE)
+    forms = []
+    if model in ("sdm", "dpps"):
+        forms += [("dpps", 4, False, 16), ("vdpps", 4, True, 16), ("vdpps", 4, True, 32)]
+    if model in ("sdm", None):
+        forms += [("dppd", 8, False, 16), ("vdppd", 8, True, 16)]
+    for mn, esz, vex, vlb in forms:
+        w("# %s %s" % (mn, "ymm" if vlb == 32 else "xmm"))
+        for imm, kinds, av, bv in dp_multi_cases(mn, esz, vex, vlb):
+            w("# products %s" % " | ".join(",".join(k) for k in kinds))
+            w(dp_multi_line(mn, esz, vex, vlb, imm, av, bv, "sdm" if model == "sdm" else None))
 
 
 # FMA: operand 1 / 2 / 3 values (instruction operand order), two palettes
@@ -534,6 +781,12 @@ def main():
         gen_hw()
     elif "--evex" in sys.argv:
         gen_evex()
+    elif "--dp-hw" in sys.argv:
+        gen_dp_multi(None)
+    elif "--dp-hw-dpps" in sys.argv:
+        gen_dp_multi("dpps")
+    elif "--dp-sdm" in sys.argv:
+        gen_dp_multi("sdm")
     else:
         print(__doc__)
         return

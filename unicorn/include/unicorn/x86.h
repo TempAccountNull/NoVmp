@@ -75,6 +75,10 @@ typedef enum uc_cpu_x86 {
 // (i5-13600K, leaf 0x14 all zero) executes it with tracing off: the r/m32/r/m64 operand is
 // read (#PF/#GP as usual), nothing else happens. LOCK and 66h stay #UD.
 #define UC_X86_QUIRK_PTWRITE_NOP (1u << 3)
+// DPPD with both products NaN: the SDM (DPPD Operation; Vol1 Table 4-8 first source) puts
+// product 0 (p0 + p1) in both selected elements; the i5-13600K computes element i as
+// p[i] + p[i^1], so element 1 gets product 1. (DPPS stays SDM: not repeatable on hardware.)
+#define UC_X86_QUIRK_DPPD_NAN_ORDER (1u << 4)
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h
