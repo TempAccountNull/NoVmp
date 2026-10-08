@@ -8624,3 +8624,7 @@ void helper_evex_fixupimm(CPUX86State *env, ZMMReg *d, ZMMReg *dold, ZMMReg *a, 
     }
 }
 #endif /* __Use_Original_Qemu (U240) */
+#if __Use_Original_Qemu != 1 /* ours (U331) */
+/* NoVmp (ledger U331): AVX512-FP16 helpers */
+#include "fp16_helper.c.inc"
+#endif /* __Use_Original_Qemu (U331) */
