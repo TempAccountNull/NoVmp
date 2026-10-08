@@ -8881,3 +8881,30 @@ void helper_avx10b_cvt2ps2phx(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s
     }
 }
 #endif /* __Use_Original_Qemu (U404) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+
+/*
+ * NoVmp (ledger U407): VDPPHPS (AVX10.2 spec 10.1): per dword i,
+ *   srcdest.fp32[i] := fma32(srcdest.fp32[i], s1o, s2o); then fma32(., s1e, s2e)
+ * with s1o/s1e = src1.fp16[2i+1]/[2i] and s2o/s2e = src2.fp16[2i+1]/[2i] converted exactly
+ * (amx_cvt_fp16, FP16 denormals kept) and fma32 = amx_fma32 (DAZ = FTZ = 1, RNE, MXCSR
+ * neither consulted nor updated; the NaN order gives the first NaN of src1.low, src2.low,
+ * src1.high, src2.high, srcdest as the description requires). d may alias a or b.
+ */
+void helper_avx10b_vdpphps(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    ZMMReg r;
+    int i;
+
+    for (i = 0; i < (int)vl / 4; i++) {
+        float32 acc = make_float32(d->ZMM_L(i));
+
+        acc = amx_fma32(acc, amx_cvt_fp16(a->ZMM_W(2 * i + 1)), amx_cvt_fp16(b->ZMM_W(2 * i + 1)));
+        acc = amx_fma32(acc, amx_cvt_fp16(a->ZMM_W(2 * i)), amx_cvt_fp16(b->ZMM_W(2 * i)));
+        r.ZMM_L(i) = float32_val(acc);
+    }
+    for (i = 0; i < (int)vl / 4; i++) {
+        d->ZMM_L(i) = r.ZMM_L(i);
+    }
+}
+#endif /* __Use_Original_Qemu (U407) */

@@ -2608,6 +2608,18 @@ AVX10B_VNNI(VPDPWUSDS, vpdpwusds)
 AVX10B_VNNI(VPDPWUUD, vpdpwuud)
 AVX10B_VNNI(VPDPWUUDS, vpdpwuuds)
 #endif /* __Use_Original_Qemu (U406) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+
+/* NoVmp (ledger U407): VDPPHPS (accumulates into DEST like the VNNI forms) */
+static void gen_EVEX_VDPPHPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_avx10b_acc_dest(s, decode);
+    gen_helper_avx10b_vdpphps(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U407) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

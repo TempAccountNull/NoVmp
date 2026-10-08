@@ -3424,6 +3424,21 @@ static void decode_EVEX_0F38_D3(DisasContext *s, CPUX86State *env, X86OpEntry *e
 #if __Use_Original_Qemu != 1 /* ours (U405) */
 #undef EV_A10VNNI
 #endif /* __Use_Original_Qemu (U405) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+/*
+ * NoVmp (ledger U407): 0F38 52: NP = VDPPHPS (spec 10.1), AVX10.2, EVEX.W0, Full tuple
+ * (m32bcst), {k1}{z}, class E4 (66 = VPDPWSSD, AVX512_VNNI, not here).
+ */
+static void decode_EVEX_0F38_52(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F38_52[4] = {
+        X86_OP_ENTRY3(EVEX_VDPPHPS, V,x, H,x, W,x, cpuid(AVX10_2) ev_vl(EV_VLALL) ev_tt(FULL)
+                      ev_mask(MZ) ev_w(W0) ev_es(32)),
+        {}, {}, {},
+    };
+    *entry = *decode_by_prefix(s, opcodes_EVEX_0F38_52);
+}
+#endif /* __Use_Original_Qemu (U407) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
@@ -3958,6 +3973,9 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xd2] = X86_OP_GROUP0(EVEX_0F38_D2),
     [0xd3] = X86_OP_GROUP0(EVEX_0F38_D3),
 #endif /* __Use_Original_Qemu (U406) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+    [0x52] = X86_OP_GROUP0(EVEX_0F38_52),
+#endif /* __Use_Original_Qemu (U407) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
