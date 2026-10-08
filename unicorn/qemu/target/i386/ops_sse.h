@@ -687,6 +687,23 @@ void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
         if (um && !(f & float_flag_inexact) && (r & 0x7c00) == 0 && (r & 0x03ff) != 0) {
             f |= float_flag_underflow;
         }
+        /*
+         * NoVmp (ledger U442): unmasked #O / #U. The handler's result is the
+         * source rounded to the 11-bit FP16 significand with an unbounded
+         * exponent (Vol1 4.9.1.5, 4.9.1.6: "inexact result ... along with
+         * unmasked overflow or underflow ... the OE or UE flag and the PE flag
+         * are set"), so PE means that rounding is inexact (FP32 fraction bits
+         * 12:0 non-zero), not that the bounded denormal/infinity is. A
+         * denormal FP32 source (DE, DAZ = 0) gives DE, UE and PE (Vol1 Table
+         * 14-14 note 1). i5-13600K: 2^-25 and 65536 -> UE / OE without PE.
+         */
+        if (((f & float_flag_overflow) && !(env->mxcsr & (1 << 10))) ||
+            ((f & float_flag_underflow) && um)) {
+            f &= ~float_flag_inexact;
+            if ((s->ZMM_S(i) & 0x1fff) || (f & float_flag_input_denormal_used)) {
+                f |= float_flag_inexact;
+            }
+        }
         flags |= f;
         d->ZMM_H(i) = r;
     }
