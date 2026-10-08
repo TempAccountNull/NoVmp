@@ -5581,6 +5581,93 @@ static void test_x86_avx512_xsave_32(void)
     m0_close(&m);
 }
 
+/* NoVmp U125: CPUID leaf 0DH with AVX-512 on / off; EBX follows XCR0 (model, profile) */
+static void test_x86_avx512_cpuid(void)
+{
+    /* the i5-13600K rows of leaf 0DH (Emulator\data\cpuid_i5-13600k.txt) */
+    static const uc_x86_cpuid prof13600k[] = {
+        {0x0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x207, 0x340, 0xa88, 0},
+        {0xd, 1, 0xf, 0x350, 0x1800, 0},
+        {0xd, 2, 0x100, 0x240, 0, 0},
+        {0xd, 9, 0x8, 0xa80, 0, 0},
+    };
+    /* the same with AVX-512 state (Sapphire Rapids-like offsets) */
+    static const uc_x86_cpuid profavx512[] = {
+        {0x0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x2e7, 0xa88, 0xa88, 0},
+        {0xd, 1, 0xf, 0xa88, 0x1800, 0},
+        {0xd, 2, 0x100, 0x240, 0, 0},
+        {0xd, 5, 0x40, 0x440, 0, 0},
+        {0xd, 6, 0x200, 0x480, 0, 0},
+        {0xd, 7, 0x400, 0x680, 0, 0},
+        {0xd, 9, 0x8, 0xa80, 0, 0},
+    };
+    static const uint32_t sub[3][2] = {{0x40, 0x440}, {0x200, 0x480}, {0x400, 0x680}};
+    M0 m;
+    uint32_t r[4];
+    uint64_t x;
+    unsigned i;
+
+    /* model, AVX-512 on */
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
+    TEST_CHECK(m0_xsetbv(&m, 0, M0_XCR0_AVX512) == -1);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0xe7) == 0xe7 && r[3] == 0);
+    TEST_CHECK(r[1] == 0xa80);                     /* XCR0 E7h: end of Hi16_ZMM */
+    TEST_CHECK(r[2] >= 0xa80);                     /* all supported */
+    m0_cpuid(&m, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x980);                     /* XSAVEC size for XCR0 E7h */
+    for (i = 0; i < 3; i++) {
+        m0_cpuid(&m, 0xd, 5 + i, r);
+        TEST_CHECK(r[0] == sub[i][0] && r[1] == sub[i][1] && r[2] == 0 && r[3] == 0);
+        TEST_MSG("0DH.%u: %x %x %x %x", 5 + i, r[0], r[1], r[2], r[3]);
+    }
+    TEST_CHECK(m0_xsetbv(&m, 0, 7) == -1);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0x340);
+    m0_cpuid(&m, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x340);
+    m0_close(&m);
+
+    /* model, AVX-512 off: no components 5-7 */
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0xe0) == 0);
+    for (i = 5; i < 8; i++) {
+        m0_cpuid(&m, 0xd, i, r);
+        TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    }
+    m0_close(&m);
+
+    /* i5-13600K profile: EBX from XCR0 and the profile's offsets */
+    m0_open(&m, UC_MODE_64, 0, prof13600k, sizeof(prof13600k) / sizeof(prof13600k[0]));
+    for (i = 0; i < 3; i++) {
+        static const uint64_t xs[3] = {7, 0x207, 3};
+        static const uint32_t ebx[3] = {0x340, 0xa88, 0x240};
+        x = xs[i];
+        OK(uc_reg_write(m.uc, UC_X86_REG_XCR0, &x));
+        m0_cpuid(&m, 0xd, 0, r);
+        TEST_CHECK(r[0] == 0x207 && r[1] == ebx[i] && r[2] == 0xa88 && r[3] == 0);
+        TEST_MSG("xcr0 %llx: ebx %x", (unsigned long long)x, r[1]);
+    }
+    m0_cpuid(&m, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x350);                     /* profile value (IA32_XSS unknown) */
+    m0_close(&m);
+
+    /* AVX-512 profile + model */
+    m0_open(&m, UC_MODE_64, 1, profavx512, sizeof(profavx512) / sizeof(profavx512[0]));
+    TEST_CHECK(m0_xsetbv(&m, 0, M0_XCR0_AVX512) == -1);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK(r[0] == 0x2e7 && r[1] == 0xa80 && r[2] == 0xa88);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0x2e7) == -1);
+    m0_cpuid(&m, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0xa88);
+    m0_cpuid(&m, 0xd, 6, r);
+    TEST_CHECK(r[0] == 0x200 && r[1] == 0x480 && r[2] == 0);
+    m0_close(&m);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -5703,4 +5790,5 @@ TEST_LIST = {
     {"test_x86_avx512_xsave", test_x86_avx512_xsave},
     {"test_x86_avx512_xsavec", test_x86_avx512_xsavec},
     {"test_x86_avx512_xsave_32", test_x86_avx512_xsave_32},
+    {"test_x86_avx512_cpuid", test_x86_avx512_cpuid},
     {NULL, NULL}};

@@ -4139,6 +4139,33 @@ static bool x86_cpuid_leaf_has_subleaves(uint32_t leaf)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U125) */
+/*
+ * NoVmp (ledger U125): CPUID.(EAX=0DH,ECX=0):EBX is the size of the standard-format
+ * XSAVE area for the components enabled in XCR0 (SDM Vol2 CPUID), so a profile's
+ * captured EBX (the capture machine's XCR0) is recomputed from the current XCR0 and
+ * the profile's own subleaf offsets/sizes (0DH.i: EBX offset, EAX size), at least
+ * the 576-byte legacy area + header.
+ */
+static uint32_t x86_cpuid_profile_xsave_size(struct uc_struct *uc, uint64_t xcr0)
+{
+    uint32_t size = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
+    int i;
+
+    for (i = 2; i < 63; i++) {
+        const struct uc_x86_cpuid *s;
+        if (!((xcr0 >> i) & 1)) {
+            continue;
+        }
+        s = x86_cpuid_find(uc, 0xd, i, false);
+        if (s && s->ebx + s->eax > size) {
+            size = s->ebx + s->eax;
+        }
+    }
+    return size;
+}
+
+#endif /* __Use_Original_Qemu (U125) */
 static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
                               uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
 {
@@ -4175,6 +4202,11 @@ static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
         *ecx = (*ecx & ~CPUID_7_0_ECX_OSPKE) |
                ((env->cr[4] & CR4_PKE_MASK) ? CPUID_7_0_ECX_OSPKE : 0);
     }
+#if __Use_Original_Qemu != 1 /* ours (U125) */
+    else if (index == 0xd && count == 0 && e) {
+        *ebx = x86_cpuid_profile_xsave_size(uc, env->xcr0);
+    }
+#endif /* __Use_Original_Qemu (U125) */
     return true;
 }
 
@@ -4488,7 +4520,18 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                               x86_cpu_xsave_xss_components(cpu);
 
             *eax = env->features[FEAT_XSAVE];
+#if __Use_Original_Qemu == 1 /* original QEMU (U125) */
             *ebx = xsave_area_size(xstate, true);
+#else /* ours (U125) */
+            /* NoVmp (ledger U125): SDM Vol1 13.2 - EBX is the XSAVES size for the
+               components currently set in XCR0 | IA32_XSS if EAX[3], else the XSAVEC
+               size for those currently set in XCR0 (not for all supported ones).
+               Without XSAVEC the SDM says 0; QEMU's non-zero value is kept there
+               (models without XSAVEC, e.g. Haswell, are outside this change). */
+            (void)xstate;
+            *ebx = xsave_area_size((*eax & CPUID_XSAVE_XSAVES) ? env->xcr0 | env->xss
+                                                                : env->xcr0, true);
+#endif /* __Use_Original_Qemu (U125) */
             *ecx = env->features[FEAT_XSAVE_XSS_LO];
             *edx = env->features[FEAT_XSAVE_XSS_HI];
             *ecx &= ~XSTATE_ARCH_LBR_MASK;
