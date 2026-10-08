@@ -14,6 +14,8 @@
 //                    #UD, XCR0, CR0; --cr0 0x33 = PE|MP|ET|NE as under Windows x64, so pending
 //                    x87 exceptions raise #MF; PG must stay clear: flat Unicorn memory)
 //   --expect-only    with --cases: run only the expected-value ("=>") lines
+//   --avx512         with --cases: Unicorn opts in to AVX-512 (UC_CTL_X86_AVX512 = AVX512F|DQ|BW,
+//                    reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -300,7 +302,8 @@ int main( int argc, char** argv )
 		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--cr0" ) copt.cr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--expect-only" ) copt.expect_only = true;
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--expect-only]]\n" ); return 2; }
+		else if ( a == "--avx512" ) copt.avx512 = UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW;
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild] [--cases FILE [--cpuid FILE] [--strict] [--xcr0 V] [--cr0 V] [--avx512] [--expect-only]]\n" ); return 2; }
 	}
 	if ( !cases.empty() ) return at::run_cases( cases, quirks, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;

@@ -52,7 +52,9 @@
 //   An empty expectation ("nop =>") means: no fault, nothing changed.
 //
 // Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --xcr0 V /
-// --quirks N configure Unicorn for both kinds of case.
+// --quirks N configure Unicorn for both kinds of case. --avx512 opts Unicorn in to AVX-512
+// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW, before the engine is initialised; reset XCR0 then has
+// 7:5 set) for opmask/EVEX expected-value cases, e.g. Emulator\data\cases_opmask.txt.
 // Output: "[n] SAME|DIFF <line>", the engines' lines, then "cases: N, differing: M" over both kinds;
 // when the file has expected-value cases (or --expect-only skipped lines) a second summary line
 // "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Exit status 1 when an
@@ -278,7 +280,7 @@ namespace at
 
 	// cr0: Unicorn's CR0 for the cases (0 = Unicorn default, PE only). Windows x64 runs with NE = 1:
 	// pending unmasked x87 exceptions raise #MF, not FERR#; use 0x33 (PE|MP|ET|NE), never PG (flat map)
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; };
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = 0; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
 	static int fault_vector( const std::string& t )
@@ -391,6 +393,7 @@ namespace at
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX, quirks );
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
+			uc.avx512 = opt.avx512;
 			uc.ext_regs = expect;
 			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
