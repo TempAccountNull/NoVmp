@@ -10187,6 +10187,466 @@ static void test_x86_evex_riprel(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U250-U251: EVEX gathers / scatters (exception class E12) ----
+ * Restart behaviour with Unicorn memory hooks (completed elements stay written, their k1
+ * bits clear, RIP at the instruction), element order, page-straddling elements, segment
+ * bases, 32-bit mode (V', 16-bit addressing #UD, 32-bit linear wrap), #UD/#NM order.
+ * Instruction results over every form/VL are in Emulator/data/cases_evex_m2_gather.txt
+ * (ref_evex_m2_gather.py, independent SDM model).
+ */
+#define GS_DATA 0x300000
+#define GS_ALL (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+
+typedef struct GsCtx {
+    uc_engine *uc;
+    uc_mode mode;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+    uint64_t last;      /* address of the last snippet */
+} GsCtx;
+
+/* code at code_start, data page GS_DATA (GS_DATA + 0x1000 is left unmapped) */
+static void gs_open(GsCtx *c, uc_mode mode)
+{
+    memset(c, 0, sizeof(*c));
+    c->mode = mode;
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(c->uc, GS_ALL));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, GS_DATA, 0x1000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* -1: completed; 6 #UD, 7 #NM, ...; -2 - uc_err for an emulation error (unmapped memory) */
+static int gs_result(GsCtx *c, uc_err err)
+{
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (err != UC_ERR_OK) {
+        return -2 - (int)err;
+    }
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static int gs_run(GsCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+
+    c->pc += 0x40;
+    c->last = pc;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    return gs_result(c, uc_emu_start(c->uc, pc, pc + len, 0, 0));
+}
+
+/* run the last snippet again from its first byte (the restart after a fault) */
+static int gs_rerun(GsCtx *c, size_t len)
+{
+    c->cap.count = 0;
+    return gs_result(c, uc_emu_start(c->uc, c->last, c->last + len, 0, 0));
+}
+
+static uint64_t gs_rip(GsCtx *c)
+{
+    uint64_t v = 0;
+    if (c->mode == UC_MODE_64) {
+        OK(uc_reg_read(c->uc, UC_X86_REG_RIP, &v));
+    } else {
+        uint32_t v32 = 0;
+        OK(uc_reg_read(c->uc, UC_X86_REG_EIP, &v32));
+        v = v32;
+    }
+    return v;
+}
+
+static void gs_set(GsCtx *c, int reg, uint64_t v)
+{
+    if (c->mode == UC_MODE_64) {
+        OK(uc_reg_write(c->uc, reg, &v));
+    } else {
+        uint32_t v32 = (uint32_t)v;
+        OK(uc_reg_write(c->uc, reg, &v32));
+    }
+}
+
+static void gs_setk(GsCtx *c, int n, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, UC_X86_REG_K0 + n, &v));
+}
+
+static uint64_t gs_getk(GsCtx *c, int n)
+{
+    uint64_t v = 0;
+    OK(uc_reg_read(c->uc, UC_X86_REG_K0 + n, &v));
+    return v;
+}
+
+static uint32_t gs_mem32(GsCtx *c, uint64_t addr)
+{
+    uint32_t v = 0;
+    OK(uc_mem_read(c->uc, addr, &v, 4));
+    return v;
+}
+
+static void gs_fill(GsCtx *c, uint64_t addr, uint32_t base, int n)
+{
+    uint32_t v;
+    int i;
+    for (i = 0; i < n; i++) {
+        v = base + (uint32_t)i;
+        OK(uc_mem_write(c->uc, addr + 4 * (uint64_t)i, &v, 4));
+    }
+}
+
+static bool gs_map_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                      int64_t value, void *user)
+{
+    (*(int *)user)++;
+    return uc_mem_map(uc, addr & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+typedef struct GsLog {
+    int n;
+    uint64_t addr[32];
+    int64_t value[32];
+} GsLog;
+
+static void gs_log_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                      int64_t value, void *user)
+{
+    GsLog *l = (GsLog *)user;
+    if (l->n < 32) {
+        l->addr[l->n] = addr;
+        l->value[l->n] = value;
+    }
+    l->n++;
+}
+
+/* VPGATHERDD zmm1{k1}, [rsi + zmm2*4] */
+#define GS_GATHER_DD "\x62\xf2\x7d\x49\x90\x0c\x96"
+/* VPSCATTERDD [rsi + zmm2*1]{k1}, zmm1 */
+#define GS_SCATTER_DD1 "\x62\xf2\x7d\x49\xa0\x0c\x16"
+
+/* a fault in the middle of a gather, then the restart after the page is mapped */
+static void test_x86_evex_gather_restart(void)
+{
+    const uint64_t k_in = 0xABCD00000000FFF5ULL;    /* elements 1 and 3 masked off */
+    uint32_t idx[16], z[16], z0[16], want[16];
+    uint64_t done = 0;
+    GsCtx c;
+    int j;
+
+    gs_open(&c, UC_MODE_64);
+    gs_fill(&c, GS_DATA, 0xA0000000, 0x400);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 3 * j;
+        z0[j] = 0xEEEE0000 + j;
+    }
+    idx[6] = 0x402;                                  /* GS_DATA + 0x1008: unmapped */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z0));
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+    gs_setk(&c, 1, k_in);
+    TEST_CHECK(gs_run(&c, GS_GATHER_DD, 7) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    TEST_CHECK(gs_rip(&c) == c.last);
+    TEST_MSG("rip %llx, insn at %llx", (unsigned long long)gs_rip(&c),
+             (unsigned long long)c.last);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (j = 0; j < 16; j++) {
+        bool completed = j < 6 && ((k_in >> j) & 1);
+        want[j] = completed ? 0xA0000000 + 3 * j : z0[j];
+        if (completed) {
+            done |= 1ULL << j;
+        }
+    }
+    TEST_CHECK(memcmp(z, want, sizeof(z)) == 0);
+    TEST_CHECK(gs_getk(&c, 1) == (k_in & ~done));
+    TEST_MSG("k1 = %llx, want %llx", (unsigned long long)gs_getk(&c, 1),
+             (unsigned long long)(k_in & ~done));
+
+    /* the completed elements are not read again: change their memory, map the page, restart */
+    gs_fill(&c, GS_DATA, 0x55000000, 0x30);
+    OK(uc_mem_map(c.uc, GS_DATA + 0x1000, 0x1000, UC_PROT_ALL));
+    gs_fill(&c, GS_DATA + 0x1000, 0xB0000000, 0x400);
+    TEST_CHECK(gs_rerun(&c, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    for (j = 6; j < 16; j++) {
+        if ((k_in >> j) & 1) {
+            want[j] = j == 6 ? 0xB0000002 : 0x55000000 + 3 * j;
+        }
+    }
+    TEST_CHECK(memcmp(z, want, sizeof(z)) == 0);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    TEST_CHECK(gs_rip(&c) == c.last + 7);
+    OK(uc_close(c.uc));
+}
+
+/* a read-unmapped hook that maps the page: one run; the reads come in element order */
+static void test_x86_evex_gather_hooks(void)
+{
+    uint32_t idx[16], z[16];
+    uint64_t q[8];
+    int mapped = 0, j, ordered = 1;
+    GsLog log;
+    uc_hook h1, h2;
+    GsCtx c;
+
+    gs_open(&c, UC_MODE_64);
+    gs_fill(&c, GS_DATA, 0xC0000000, 0x400);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 0x40 * (15 - j);                    /* descending addresses */
+    }
+    idx[9] = 0x480;                                  /* GS_DATA + 0x1200 */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+    gs_setk(&c, 1, 0xFFFF);
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h1, UC_HOOK_MEM_READ_UNMAPPED, gs_map_cb, &mapped, 1, 0));
+    OK(uc_hook_add(c.uc, &h2, UC_HOOK_MEM_READ, gs_log_cb, &log, GS_DATA, GS_DATA + 0x1fff));
+    TEST_CHECK(gs_run(&c, GS_GATHER_DD, 7) == -1);
+    TEST_CHECK(mapped == 1);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    TEST_CHECK(log.n == 16);
+    TEST_MSG("reads: %d", log.n);
+    for (j = 0; j < 16 && j < log.n; j++) {
+        if (log.addr[j] != GS_DATA + 4ULL * idx[j]) {
+            ordered = 0;
+        }
+    }
+    TEST_CHECK(ordered);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0xC0000000 + 0x40 * 15 && z[9] == 0 && z[15] == 0xC0000000);
+    OK(uc_hook_del(c.uc, h1));
+    OK(uc_hook_del(c.uc, h2));
+
+    /* VPGATHERQD xmm1{k2}, [rsi + ymm2*8] (EVEX.256): 4 dwords, DEST[MAXVL-1:128] = 0, k2 = 0 */
+    for (j = 0; j < 8; j++) {
+        q[j] = j < 4 ? (uint64_t)(int64_t)(-j) : 0x1234;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, q));
+    memset(z, 0xee, sizeof(z));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA + 0x100);
+    gs_setk(&c, 2, 0xFFFFFFFFFFFFFFF6ULL);           /* elements 1 and 2 */
+    TEST_CHECK(gs_run(&c, "\x62\xf2\x7d\x2a\x91\x0c\xd6", 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0xeeeeeeee && z[1] == 0xC0000000 + 0x40 - 2 &&
+               z[2] == 0xC0000000 + 0x40 - 4 && z[3] == 0xeeeeeeee);
+    for (j = 4; j < 16; j++) {
+        TEST_CHECK(z[j] == 0);
+    }
+    TEST_CHECK(gs_getk(&c, 2) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* a fault in the middle of a scatter (an element straddling the end of the page) */
+static void test_x86_evex_scatter_restart(void)
+{
+    const uint64_t k_in = 0x00000000FFFFFFDFULL;    /* element 5 masked off */
+    uint32_t idx[16], z[16], sentinel = 0x5a5a5a5a;
+    GsCtx c;
+    int j, ok;
+
+    gs_open(&c, UC_MODE_64);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 0x100 + 8 * j;
+        z[j] = 0xD0000000 + j;
+    }
+    idx[5] = 0x1000 + 0x40;                          /* masked off: never accessed */
+    idx[7] = 0xffe;                                  /* bytes 0xffe-0x1001: straddles */
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    for (j = 0; j < 0x400; j++) {
+        OK(uc_mem_write(c.uc, GS_DATA + 4 * j, &sentinel, 4));
+    }
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+    gs_setk(&c, 1, k_in);
+    TEST_CHECK(gs_run(&c, GS_SCATTER_DD1, 7) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    TEST_CHECK(gs_rip(&c) == c.last);
+    for (j = 0; j < 16; j++) {
+        uint32_t want = (j < 7 && j != 5) ? z[j] : sentinel;
+        if (j == 5 || j == 7) {
+            continue;
+        }
+        TEST_CHECK(gs_mem32(&c, GS_DATA + idx[j]) == want);
+        TEST_MSG("element %d", j);
+    }
+    /* no byte of the faulting element reached the mapped page */
+    {
+        uint16_t lo = 0;
+        OK(uc_mem_read(c.uc, GS_DATA + 0xffe, &lo, 2));
+        TEST_CHECK(lo == 0x5a5a);
+    }
+    TEST_CHECK(gs_getk(&c, 1) == (k_in & ~0x5FULL));
+    TEST_MSG("k1 = %llx", (unsigned long long)gs_getk(&c, 1));
+
+    /* restart once the page is there: elements 7-15, k1 = 0 */
+    OK(uc_mem_map(c.uc, GS_DATA + 0x1000, 0x1000, UC_PROT_ALL));
+    TEST_CHECK(gs_rerun(&c, 7) == -1);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    ok = 1;
+    for (j = 8; j < 16; j++) {
+        ok &= gs_mem32(&c, GS_DATA + idx[j]) == z[j];
+    }
+    TEST_CHECK(ok);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0xffe) == z[7]);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x1040) == 0);  /* element 5 never written */
+    OK(uc_close(c.uc));
+}
+
+/* overlapping scatter indices: every active element is written, in element order */
+static void test_x86_evex_scatter_order(void)
+{
+    uint32_t idx[16], z[16];
+    uint64_t ro = 0;
+    GsLog log;
+    uc_hook h;
+    GsCtx c;
+    int j, ok = 1;
+
+    gs_open(&c, UC_MODE_64);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 0x200;
+        z[j] = 0xF0000000 + j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+    gs_setk(&c, 1, 0x6F7F);
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_WRITE, gs_log_cb, &log, GS_DATA, GS_DATA + 0xfff));
+    TEST_CHECK(gs_run(&c, GS_SCATTER_DD1, 7) == -1);
+    TEST_CHECK(log.n == 13);
+    TEST_MSG("writes: %d", log.n);
+    for (j = 0; j < 16 && j < log.n; j++) {
+        static const int order[13] = { 0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 14 };
+        if (j < 13 && (uint32_t)log.value[j] != z[order[j]]) {
+            ok = 0;
+        }
+    }
+    TEST_CHECK(ok);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x200) == z[14]);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    OK(uc_hook_del(c.uc, h));
+
+    /* read-only memory (no hook): the scatter stops at that element, nothing of it written */
+    OK(uc_mem_map(c.uc, GS_DATA + 0x1000, 0x1000, UC_PROT_READ));
+    for (j = 0; j < 16; j++) {
+        idx[j] = j == 3 ? 0x1000 : 0x300 + 4 * j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, GS_SCATTER_DD1, 7) == -2 - (int)UC_ERR_WRITE_PROT);
+    TEST_CHECK(gs_getk(&c, 1) == 0xFFF8);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x1000) == 0);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x308) == z[2]);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x310) == 0);
+    OK(uc_mem_read(c.uc, GS_DATA + 0x1000, &ro, 8));
+    TEST_CHECK(ro == 0);
+    OK(uc_close(c.uc));
+}
+
+/* segment bases, 32-bit mode, address-size rules, #UD before #NM */
+static void test_x86_evex_vsib_modes(void)
+{
+    uint32_t idx[16], z[16];
+    uint64_t v;
+    GsCtx c;
+    int j;
+
+    /* 64-bit: FS:[rsi + zmm2*4] with FS.base = GS_DATA, rsi = 0x40 */
+    gs_open(&c, UC_MODE_64);
+    gs_fill(&c, GS_DATA, 0x11110000, 0x400);
+    for (j = 0; j < 16; j++) {
+        idx[j] = j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    v = GS_DATA;
+    OK(uc_reg_write(c.uc, UC_X86_REG_FS_BASE, &v));
+    gs_set(&c, UC_X86_REG_RSI, 0x40);
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, "\x64" GS_GATHER_DD, 8) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0x11110010 && z[15] == 0x1111001f);
+    /* 67h: (esi + index*4) wraps at 32 bits before FS.base is added */
+    gs_set(&c, UC_X86_REG_RSI, 0x1FFFFFFC0ULL);      /* esi = 0xFFFFFFC0 */
+    gs_setk(&c, 1, 0xFFFF);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 0x10 + j;                           /* 0xFFFFFFC0 + 0x40 + 4j wraps to 4j */
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    TEST_CHECK(gs_run(&c, "\x64\x67" GS_GATHER_DD, 9) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0x11110000 && z[15] == 0x1111000f);
+    /* destination == index over 32 registers: VPGATHERDD zmm17{k1}, [rsi + zmm17*4] */
+    TEST_CHECK(gs_run(&c, "\x62\xe2\x7d\x41\x90\x0c\x8e", 7) == 6);
+    /* ... zmm17 vs index zmm1 (only bit 4 differs) is valid */
+    gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+    for (j = 0; j < 16; j++) {
+        idx[j] = j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, idx));
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, "\x62\xe2\x7d\x49\x90\x0c\x8e", 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM17, z));
+    TEST_CHECK(z[3] == 0x11110003);
+    /* k0, then CR0.TS = 1: #UD (k0) before #NM; a valid gather is #NM */
+    OK(uc_reg_read(c.uc, UC_X86_REG_CR0, &v));
+    v |= 8;
+    OK(uc_reg_write(c.uc, UC_X86_REG_CR0, &v));
+    TEST_CHECK(gs_run(&c, "\x62\xf2\x7d\x48\x90\x0c\x96", 7) == 6);
+    TEST_CHECK(gs_run(&c, GS_GATHER_DD, 7) == 7);
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode */
+    gs_open(&c, UC_MODE_32);
+    gs_fill(&c, GS_DATA, 0x22220000, 0x400);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 2 * j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    gs_set(&c, UC_X86_REG_ESI, GS_DATA);
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, GS_GATHER_DD, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0x22220000 && z[15] == 0x2222001e);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    /* the linear address wraps at 32 bits: esi = 0xFFFFFF00, index * 4 = GS_DATA + 0x100 */
+    gs_set(&c, UC_X86_REG_ESI, 0xFFFFFF00);
+    for (j = 0; j < 16; j++) {
+        idx[j] = (GS_DATA + 0x100) / 4 + j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, GS_GATHER_DD, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(z[0] == 0x22220000 && z[15] == 0x2222000f);
+    /* 67h: 16-bit address size #UD; EVEX.V' = 0 outside 64-bit mode #UD */
+    gs_setk(&c, 1, 0xFFFF);
+    TEST_CHECK(gs_run(&c, "\x67" GS_GATHER_DD, 8) == 6);
+    TEST_CHECK(gs_run(&c, "\x62\xf2\x7d\x41\x90\x0c\x96", 7) == 6);
+    TEST_CHECK(gs_getk(&c, 1) == 0xFFFF);
+    /* scatter in 32-bit mode: VPSCATTERDD [esi + zmm2*1]{k1}, zmm1 */
+    gs_set(&c, UC_X86_REG_ESI, GS_DATA + 0x800);
+    for (j = 0; j < 16; j++) {
+        idx[j] = 4 * (15 - j);
+        z[j] = 0x33330000 + j;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(gs_run(&c, GS_SCATTER_DD1, 7) == -1);
+    TEST_CHECK(gs_mem32(&c, GS_DATA + 0x800) == 0x3333000f &&
+               gs_mem32(&c, GS_DATA + 0x83c) == 0x33330000);
+    TEST_CHECK(gs_getk(&c, 1) == 0);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -10355,4 +10815,9 @@ TEST_LIST = {
     {"test_x86_evex_state", test_x86_evex_state},
     {"test_x86_evex_masked_memory", test_x86_evex_masked_memory},
     {"test_x86_evex_riprel", test_x86_evex_riprel},
+    {"test_x86_evex_gather_restart", test_x86_evex_gather_restart},
+    {"test_x86_evex_gather_hooks", test_x86_evex_gather_hooks},
+    {"test_x86_evex_scatter_restart", test_x86_evex_scatter_restart},
+    {"test_x86_evex_scatter_order", test_x86_evex_scatter_order},
+    {"test_x86_evex_vsib_modes", test_x86_evex_vsib_modes},
     {NULL, NULL}};

@@ -57,6 +57,10 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_nan_evex.txt" --avx51
 rem The same rules on the host CPU: legacy SSE, VEX AVX/FMA and x87 hardware cases (self-generated
 rem snippets, gen_cases_nan.py --hw) must all match the i5-13600K.
 call :hw_nan
+rem plan 1.15d milestone M2 (ledger U250-U251): EVEX gathers/scatters (every form x VL, partial
+rem completion at an unmapped element, overlapping scatter indices, E12 #UD) vs the SDM model
+rem ref_evex_m2_gather.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_gather.txt" --avx512 --xcr0 0xE7 --expect-only
 
 echo.
 if !FAILED! NEQ 0 (
@@ -75,7 +79,7 @@ if not exist "%EXE%" (
     set /a FAILED+=1
     exit /b 0
 )
-"%EXE%" %2 %3 %4 %5 %6
+"%EXE%" %2 %3 %4 %5 %6 %7 %8 %9
 if errorlevel 1 (
     echo [test] %~1 FAILED
     set /a FAILED+=1
