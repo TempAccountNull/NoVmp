@@ -422,16 +422,36 @@ def main():
         out.append(line)
     out.append('')
     fam_order = sorted(by_family, key=lambda f: (f.startswith(('AVX512', 'AVX10', 'APX', 'AMX')), f))
+    # first everything the i5-13600K runs, then (own section) everything it cannot run
     for fam in fam_order:
-        items = sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9)))
+        items = [t for t in sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9))) if t[4] != '❌']
+        if not items:
+            continue
         c = defaultdict(int)
         for it in items:
             c[it[4]] += 1
-        out.append('### %s — ✅ %d · ⏳ %d · ⬜ %d · ❌ %d\n' % (fam, c['✅'], c['⏳'], c['⬜'], c['❌']))
+        out.append('### %s — ✅ %d · ⏳ %d · ⬜ %d\n' % (fam, c['✅'], c['⏳'], c['⬜']))
         out.append('| | instruction | encoding | vector bits | ISA | status |')
         out.append('|---|---|---|---|---|---|')
         for mn, enc, vl, isa, st, note in items:
             out.append('| %s | %s | %s | %s | %s | %s |' % (st, mn.upper(), enc, vl, isa, note))
+        out.append('')
+    out.append("### Instructions that can't be supported for now:\n")
+    out.append('**❌ %d rows the i5-13600K cannot honestly run** (CPUID bit clear, AMD/VIA-only, or OS-disabled) — never '
+               'marked as supported by our CPU. Column **CPU cannot support** = why; **emulator** = implemented per the '
+               'manual (SDM-vector verified) / open item / not implemented yet.\n' % totals['❌'])
+    for fam in fam_order:
+        items = [t for t in sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9))) if t[4] == '❌']
+        if not items:
+            continue
+        out.append('#### %s — ❌ %d\n' % (fam, len(items)))
+        out.append('| | instruction | encoding | vector bits | ISA | **CPU cannot support** | emulator |')
+        out.append('|---|---|---|---|---|---|---|')
+        for mn, enc, vl, isa, st, note in items:
+            n = note.replace('**', '')
+            m = re.search(r'NOT SUPPORTED on our i5-13600K \((.*?)\) — (.*)', n)
+            why, emu = (m.group(1), m.group(2)) if m else ('not reported by this CPU', n)
+            out.append('| ❌ | %s | %s | %s | %s | ❌ **cannot run** (%s) | %s |' % (mn.upper(), enc, vl, isa, why, emu))
         out.append('')
     open(sys.argv[3], 'w', encoding='utf-8').write('\n'.join(out) + '\n')
     # machine-readable copy for gen_status_docs.py (README / docs)

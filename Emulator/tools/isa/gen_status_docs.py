@@ -24,11 +24,45 @@ LEDGER = os.path.join(ROOT, 'CHANGES_LEDGER.md')
 DOCS = os.path.join(ROOT, 'docs')
 BEGIN, END = '<!-- NOVMP-STATUS:BEGIN -->', '<!-- NOVMP-STATUS:END -->'
 
-LEGEND = ('**How to read the tables.** Two separate questions per instruction: **"your i5-13600K"** = can '
-          'your CPU execute it at all (✅ runs / ❌ **cannot run** — CPUID bit clear, AMD/VIA-only, or disabled by '
-          'Windows; these can never be checked against your hardware) and **"emulator"** = what the emulator does '
-          '(✅ identical to the CPU, or implemented per the manual and verified against SDM-pseudocode vectors when '
-          'the CPU cannot run it · ⏳ open item · ⬜ not implemented yet).')
+LEGEND = ('**How the page is split.** The first part lists only instructions **your i5-13600K can run** '
+          '(columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, '
+          'AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can\'t be '
+          'supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never '
+          'marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them '
+          'against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, '
+          '✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, '
+          '⬜ queued (not started).')
+SPLIT_HEADING = "### Instructions that can't be supported for now:"
+
+# families an agent is working on right now (keep in sync with PLAN 1.15; prefix match on the family name)
+IN_PROGRESS = [
+    ('AVX512F', 'M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather'),
+    ('AVX512BW', 'wt/m3_bw'),
+    ('AVX512DQ', 'wt/m3_dq'),
+    ('AVX512CD', 'wt/m3_cd'),
+    ('AVX512_IFMA', 'wt/m3_cd (after CD)'),
+    ('AVX512_VBMI', 'wt/m3_cd (after CD)'),
+    ('AVX512_VPOPCNTDQ', 'wt/m3_cd (after CD)'),
+    ('AVX512_BITALG', 'wt/m3_cd (after CD)'),
+    ('AVX512_FP16', 'wt/fp16'),
+    ('AVX512_VNNI_FP16', 'wt/fp16'),
+    ('AVX10', 'wt/avx10_a, wt/avx10_b'),
+    ('AVX512_COM_EF', 'wt/avx10_a, wt/avx10_b'),
+    ('AVX512_MEDIAX', 'wt/avx10_a, wt/avx10_b'),
+    ('AVX512_MINMAX', 'wt/avx10_a'),
+    ('AVX512_MOVZXC', 'wt/avx10_b'),
+    ('AVX512_SAT_CVT', 'wt/avx10_a'),
+    ('AVX512_FP8_CONVERT', 'wt/avx10_b'),
+    ('AVX512_VNNI_INT', 'wt/avx10_b'),
+]
+
+
+def in_progress(fam):
+    best = None
+    for k, who in IN_PROGRESS:
+        if (fam == k or fam.startswith(k)) and (best is None or len(k) > len(best[0])):
+            best = (k, who)
+    return best[1] if best else None
 
 
 def git(*args):
@@ -55,63 +89,86 @@ def impl_kind(row):
     return '❌ (not implemented yet)'
 
 
-def cpu_cell(row):
-    """'✅ runs' or '❌ cannot run (reason)' for our i5-13600K"""
-    if row['status'] != '❌':
-        return '✅ runs'
+def _parts(row):
     n = re.sub(r'\*\*', '', row['note'])
-    m = re.search(r'NOT SUPPORTED on our i5-13600K \((.*?)\) —', n)
+    if row['status'] != '❌':
+        return row['status'], n, ''
+    m = re.search(r'NOT SUPPORTED on our i5-13600K \((.*?)\) — (.*)', n)
     why = m.group(1) if m else 'not reported by this CPU'
-    return '❌ **cannot run** (%s)' % why.replace('|', '/')
-
-
-def emu_cell(row):
-    """emulator status without the CPU part"""
-    n = re.sub(r'\*\*', '', row['note'])
-    if row['status'] != '❌':
-        return '%s %s' % (row['status'], short(n))
-    rest = n.split(' — ', 1)[1] if ' — ' in n else n
+    rest = m.group(2) if m else n
     k = impl_kind(row)
-    tag = {'❌ (implemented per manual)': '✅ implemented per the manual (SDM-vector verified)',
-           '❌ (implemented, open item)': '⏳ implemented per the manual, open item',
-           '❌ (not implemented yet)': '⬜ not implemented yet'}[k]
-    detail = rest.split(': ', 1)[1] if ': ' in rest else ''
-    return tag + (' — ' + short(detail, 140) if detail else '')
+    st = {'❌ (implemented per manual)': '✅', '❌ (implemented, open item)': '⏳', '❌ (not implemented yet)': '⬜'}[k]
+    detail = rest.split(': ', 1)[1] if ': ' in rest else rest
+    return st, detail, why
 
 
-def family_table(rows):
+def done_cell(row):
+    st, detail, why = _parts(row)
+    if st != '✅':
+        return ''
+    if why:
+        return '✅ per manual (SDM vectors) — ' + short(detail, 110)
+    return '✅ ' + short(detail, 130)
+
+
+def impl_cell(row):
+    st, detail, why = _parts(row)
+    if st == '✅':
+        return ''
+    who = in_progress(row['family'])
+    if st == '⏳':
+        return '⏳ open item — ' + short(detail, 120)
+    if who:
+        return '⏳ being implemented (%s)' % who
+    return '⬜ queued — ' + short(detail, 100)
+
+
+def cpu_cell(row):
+    st, detail, why = _parts(row)
+    return ('❌ **cannot run** (%s)' % why.replace('|', '/')) if why else ''
+
+
+def cpu_cannot(row):
+    return bool(_parts(row)[2])
+
+
+def family_table(rows, cannot=False):
     fams = {}
     for r in rows:
-        f = fams.setdefault(r['family'], {'n': 0, 'cpu': 0, '✅': 0, '⏳': 0, '⬜': 0, 'xi': 0, 'xo': 0, 'xn': 0})
+        f = fams.setdefault(r['family'], {'n': 0, 'done': 0, 'impl': 0, 'queued': 0, 'why': []})
         f['n'] += 1
-        if r['status'] != '❌':
-            f['cpu'] += 1
-        k = impl_kind(r)
-        if k == '❌ (implemented per manual)':
-            f['xi'] += 1
-        elif k == '❌ (implemented, open item)':
-            f['xo'] += 1
-        elif k.startswith('❌'):
-            f['xn'] += 1
+        st, detail, why = _parts(r)
+        if st == '✅':
+            f['done'] += 1
+        elif st == '⏳' or in_progress(r['family']):
+            f['impl'] += 1
         else:
-            f[k] += 1
-    out = ['| family | forms | **runs on your i5-13600K?** | ✅ identical to the CPU | ⏳ open item | ⬜ not done | '
-           '❌→ implemented per manual | ❌→ open item | ❌→ not implemented yet |',
-           '|---|---|---|---|---|---|---|---|---|']
+            f['queued'] += 1
+        for w in (why.split('; ') if why else []):
+            if w not in f['why']:
+                f['why'].append(w)
+    if cannot:
+        out = ['| family | forms | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |',
+               '|---|---|---|---|---|']
+    else:
+        out = ['| family | forms | **Done** | **Implementing** |', '|---|---|---|---|']
     for name in sorted(fams, key=lambda x: (x.startswith(('AVX512', 'AVX10', 'APX', 'AMX')), x)):
         f = fams[name]
-        if f['cpu'] == f['n']:
-            runs = '✅ yes'
-        elif f['cpu'] == 0:
-            runs = '❌ **no — cannot be supported on this CPU**'
+        done = '✅ %d' % f['done'] if f['done'] else ''
+        impl = []
+        if f['impl']:
+            impl.append('⏳ %d' % f['impl'] + (' (%s)' % in_progress(name) if in_progress(name) else ''))
+        if f['queued']:
+            impl.append('⬜ %d queued' % f['queued'])
+        if cannot:
+            why = '; '.join(f['why'][:3]).replace('|', '/') + (' …' if len(f['why']) > 3 else '')
+            out.append('| %s | %d | ❌ **cannot run** (%s) | %s | %s |' % (name, f['n'], why, done, ' · '.join(impl)))
         else:
-            runs = '⚠️ partly (%d of %d forms)' % (f['cpu'], f['n'])
-        out.append('| %s | %d | %s | %d | %d | %d | %d | %d | %d |' % (
-            name, f['n'], runs, f['✅'], f['⏳'], f['⬜'], f['xi'], f['xo'], f['xn']))
+            out.append('| %s | %d | %s | %s |' % (name, f['n'], done, ' · '.join(impl)))
     return out
 
 
-def details(rows):
+def details(rows, cannot=False):
     out = []
     by = {}
     for r in rows:
@@ -119,12 +176,35 @@ def details(rows):
     for name in sorted(by, key=lambda x: (x.startswith(('AVX512', 'AVX10', 'APX', 'AMX')), x)):
         rs = by[name]
         out.append('<details><summary><b>%s</b> (%d forms)</summary>\n' % (name, len(rs)))
-        out.append('| instruction | encoding | vector bits | **your i5-13600K** | emulator |')
-        out.append('|---|---|---|---|---|')
-        for r in rs:
-            out.append('| %s | %s | %s | %s | %s |' % (r['mnemonic'].upper(), r['encoding'], r['vl'],
-                                                      cpu_cell(r), emu_cell(r)))
+        if cannot:
+            out.append('| instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |')
+            out.append('|---|---|---|---|---|---|')
+            for r in rs:
+                out.append('| %s | %s | %s | %s | %s | %s |' % (r['mnemonic'].upper(), r['encoding'], r['vl'],
+                                                               cpu_cell(r), done_cell(r), impl_cell(r)))
+        else:
+            out.append('| instruction | encoding | vector bits | **Done** | **Implementing** |')
+            out.append('|---|---|---|---|---|')
+            for r in rs:
+                out.append('| %s | %s | %s | %s | %s |' % (r['mnemonic'].upper(), r['encoding'], r['vl'],
+                                                          done_cell(r), impl_cell(r)))
         out.append('\n</details>\n')
+    return out
+
+
+def split_sections(rows, what):
+    runs = [r for r in rows if not cpu_cannot(r)]
+    cannot = [r for r in rows if cpu_cannot(r)]
+    out = ['## Instructions your i5-13600K can run (%d forms)' % len(runs), '']
+    if runs:
+        out += ['### By family', ''] + family_table(runs) + ['', '### Per instruction', ''] + details(runs)
+    else:
+        out += ['- none: %s' % what]
+    out += ['', '---', '', SPLIT_HEADING, '',
+            '**%d forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. '
+            'The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against '
+            'SDM-pseudocode vectors.' % len(cannot), '',
+            '#### By family', ''] + family_table(cannot, True) + ['', '#### Per instruction', ''] + details(cannot, True)
     return out
 
 
@@ -177,6 +257,8 @@ def main():
     head = git('log', '-1', '--format=%h %s')
     status, adding = plan_lines()
     nledger, last = ledger_summary()
+    ncannot = sum(1 for r in rows if cpu_cannot(r))
+    nruns = len(rows) - ncannot
 
     def cnt(rs, k):
         return sum(1 for r in rs if impl_kind(r) == k or (k == '❌' and r['status'] == '❌'))
@@ -194,15 +276,17 @@ def main():
              cnt(intel, '✅'), cnt(intel, '⏳'), cnt(intel, '⬜'), cnt(intel, '❌'),
              cnt(intel, '❌ (implemented per manual)'), cnt(intel, '❌ (implemented, open item)'),
              cnt(intel, '❌ (not implemented yet)'), len(intel)), '',
-         '## Currently being added', ''] + (adding or ['- (nothing in progress)']) + ['', '## By family', ''] + \
-        family_table(intel) + ['', '## Per instruction', ''] + details(intel)
+         '## Currently being added', ''] + (adding or ['- (nothing in progress)']) + [''] + \
+        split_sections(intel, 'every Intel form is listed below')
     open(os.path.join(DOCS, 'Intel_instruction_sets_supported.md'), 'w', encoding='utf-8').write('\n'.join(o) + '\n')
 
     # ---- AMD / VIA
     o = ['# AMD (and VIA) instruction sets', '',
          '_Generated %s from `Emulator/tools/isa/gen_status_docs.py` (HEAD `%s`). Do not edit by hand._' % (now, head), '',
          'These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, '
-         'so every row is ❌ NOT SUPPORTED on our CPU.', '',
+         'so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can\'t be supported for now:"). '
+         'The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on '
+         'the i5-13600K and are listed first.', '',
          '- Decision (2026-10-07): implement them **after every Intel instruction is done** (plan 1.15f), from the vendor manuals '
          '(AMD APM Vol 2–5, AMD LWP spec, VIA PadLock guide → `emulator/Amd Handbooks/`).',
          '- A switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set) will gate them: with 0 they are #UD as on Intel.',
@@ -211,7 +295,7 @@ def main():
          '**Totals:** %d forms, implemented per the manual %d, not implemented yet %d' % (
              len(amd), cnt(amd, '❌ (implemented per manual)') + cnt(amd, '❌ (implemented, open item)'),
              cnt(amd, '❌ (not implemented yet)')), '',
-         '## By family', ''] + family_table(amd) + ['', '## Per instruction', ''] + details(amd)
+         ''] + split_sections(amd, 'AMD/VIA-only instructions never run on an Intel CPU')
     open(os.path.join(DOCS, 'AMD_instruction_sets_supported.md'), 'w', encoding='utf-8').write('\n'.join(o) + '\n')
 
     # ---- index
@@ -219,6 +303,8 @@ def main():
          '_Generated %s (HEAD `%s`); refreshed every 30 minutes while work is in progress._' % (now, head), '',
          '- [Intel instruction sets supported](Intel_instruction_sets_supported.md)',
          '- [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)', '', LEGEND, '',
+         '**Your i5-13600K:** runs %d forms · **cannot run %d forms** (each document lists them separately under '
+         '"Instructions that can\'t be supported for now:").' % (nruns, ncannot), '',
          '**All forms:** ✅ %d · ⏳ %d · ⬜ %d · ❌ %d (implemented per the manual %d, open item %d, not implemented yet %d)' % (
              t.get('✅', 0), t.get('⏳', 0), t.get('⬜', 0), t.get('❌', 0), u.get('✅', 0), u.get('⏳', 0), u.get('⬜', 0)), '',
          '## Currently being added', ''] + (adding or ['- (nothing in progress)']) + \
@@ -237,6 +323,7 @@ def main():
              '### Instruction support', '',
              '- ✅ %d · ⏳ %d · ⬜ %d · **❌ %d not supported on our CPU** (implemented per the manual %d, open item %d, not implemented yet %d)' % (
                  t.get('✅', 0), t.get('⏳', 0), t.get('⬜', 0), t.get('❌', 0), u.get('✅', 0), u.get('⏳', 0), u.get('⬜', 0)),
+             '- Your i5-13600K can run %d forms; **%d forms cannot honestly run on your CPU** — listed separately under "Instructions that can\'t be supported for now:" in the docs below.' % (nruns, ncannot),
              '- Details: [docs/instructions.md](docs/instructions.md) · [Intel](docs/Intel_instruction_sets_supported.md) · '
              '[AMD / VIA](docs/AMD_instruction_sets_supported.md)', '',
              '### Plan status', ''] + status + ['', '### Currently being added', ''] + (adding or ['- (nothing in progress)']) + [
