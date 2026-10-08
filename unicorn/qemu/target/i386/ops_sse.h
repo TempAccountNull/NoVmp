@@ -1959,6 +1959,7 @@ SSE_HELPER_I(helper_blendps, L, 2 << SHIFT, FBLENDP)
 SSE_HELPER_I(helper_blendpd, Q, 1 << SHIFT, FBLENDP)
 SSE_HELPER_I(helper_pblendw, W, 4 << SHIFT, FBLENDP)
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U446) */
 void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                uint32_t mask)
 {
@@ -2042,6 +2043,96 @@ void glue(helper_dppd, SUFFIX)(CPUX86State *env,
     d->ZMM_D(1) = (mask & (1 << 1)) ? temp2 : float64_zero;
 }
 #endif
+#else /* ours (U446) */
+/*
+ * NoVmp (ledger U446): DPPS / DPPD run as the steps of their SDM operation, each
+ * checked for unmasked exceptions where the SDM invokes the handler (sse_fp_step,
+ * fpu_helper.c): an unmasked step raises #XM at once, the destination is not
+ * written and later operations set no flags. DPPS (SDM): DP_Primitive on each
+ * 128-bit half in turn, checked after the products ("Exceptions are determined
+ * separately for each add and multiply operation, in the order of their
+ * execution"; the DPPD operation checks there, the DPPS pseudo-code only marks
+ * the adds), after Temp2, after Temp3 and after Temp4.
+ * UC_X86_QUIRK_DPPS_PARALLEL_STEPS (i5-13600K): checks after all products, after
+ * Temp2 and Temp3 together and after Temp4, each step covering both halves of
+ * VDPPS ymm.
+ */
+#define DP_STEP()                                           do {                                                        if (sse_fp_step(env, &acc)) {                               sse_fp_step_raise(env, acc, ra);                    }                                                   } while (0)
+
+void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
+                               uint32_t mask)
+{
+    const uintptr_t ra = GETPC();
+    const int nh = 1 << (SHIFT - 1);        /* 128-bit halves */
+    float32 prod[2 << SHIFT], temp2[1 << (SHIFT - 1)], temp3[1 << (SHIFT - 1)];
+    float32 temp4[1 << (SHIFT - 1)];
+    int acc = get_float_exception_flags(&env->sse_status);
+    int i, h;
+
+    set_float_exception_flags(0, &env->sse_status);
+    if (env->uc->x86_hw_quirks & UC_X86_QUIRK_DPPS_PARALLEL_STEPS) {
+        for (i = 0; i < 2 << SHIFT; i++) {
+            prod[i] = (mask & (0x10 << (i & 3))) ?
+                      float32_mul(v->ZMM_S(i), s->ZMM_S(i), &env->sse_status) : float32_zero;
+        }
+        DP_STEP();
+        /* (A+B)+(C+D), not ((A+B)+C)+D, rounding each intermediate result */
+        for (h = 0; h < nh; h++) {
+            temp2[h] = float32_add(prod[4 * h], prod[4 * h + 1], &env->sse_status);
+            temp3[h] = float32_add(prod[4 * h + 2], prod[4 * h + 3], &env->sse_status);
+        }
+        DP_STEP();
+        for (h = 0; h < nh; h++) {
+            temp4[h] = float32_add(temp2[h], temp3[h], &env->sse_status);
+        }
+        DP_STEP();
+    } else {
+        for (h = 0; h < nh; h++) {
+            for (i = 4 * h; i < 4 * h + 4; i++) {
+                prod[i] = (mask & (0x10 << (i & 3))) ?
+                          float32_mul(v->ZMM_S(i), s->ZMM_S(i), &env->sse_status) :
+                          float32_zero;
+            }
+            DP_STEP();
+            temp2[h] = float32_add(prod[4 * h], prod[4 * h + 1], &env->sse_status);
+            DP_STEP();
+            temp3[h] = float32_add(prod[4 * h + 2], prod[4 * h + 3], &env->sse_status);
+            DP_STEP();
+            temp4[h] = float32_add(temp2[h], temp3[h], &env->sse_status);
+            DP_STEP();
+        }
+    }
+    set_float_exception_flags(acc, &env->sse_status);
+    for (i = 0; i < 2 << SHIFT; i++) {
+        d->ZMM_S(i) = (mask & (1 << (i & 3))) ? temp4[i >> 2] : float32_zero;
+    }
+}
+
+#if SHIFT == 1
+/* there is no ymm version of dppd */
+void glue(helper_dppd, SUFFIX)(CPUX86State *env,
+                               Reg *d, Reg *v, Reg *s, uint32_t mask)
+{
+    const uintptr_t ra = GETPC();
+    float64 prod1, prod2, temp2;
+    int acc = get_float_exception_flags(&env->sse_status);
+
+    /* DPPD (SDM): handler check after the products and after the add */
+    set_float_exception_flags(0, &env->sse_status);
+    prod1 = (mask & (1 << 4)) ?
+            float64_mul(v->ZMM_D(0), s->ZMM_D(0), &env->sse_status) : float64_zero;
+    prod2 = (mask & (1 << 5)) ?
+            float64_mul(v->ZMM_D(1), s->ZMM_D(1), &env->sse_status) : float64_zero;
+    DP_STEP();
+    temp2 = float64_add(prod1, prod2, &env->sse_status);
+    DP_STEP();
+    set_float_exception_flags(acc, &env->sse_status);
+    d->ZMM_D(0) = (mask & (1 << 0)) ? temp2 : float64_zero;
+    d->ZMM_D(1) = (mask & (1 << 1)) ? temp2 : float64_zero;
+}
+#endif
+#undef DP_STEP
+#endif /* __Use_Original_Qemu (U446) */
 
 void glue(helper_mpsadbw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                   uint32_t offset)

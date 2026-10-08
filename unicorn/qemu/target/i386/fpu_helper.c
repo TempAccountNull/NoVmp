@@ -6378,6 +6378,42 @@ void helper_sse_fp_end(CPUX86State *env, uint32_t dst, uint32_t len)
 }
 #endif /* __Use_Original_Qemu (U67) */
 
+#if __Use_Original_Qemu != 1 /* ours (U446) */
+/*
+ * NoVmp (ledger U446): multi-step SSE FP instructions (DPPS, DPPD). "Exceptions
+ * are determined separately for each add and multiply operation, in the order of
+ * their execution", with "if unmasked exception reported, execute exception
+ * handler" after each step (SDM Vol2A DPPS/DPPD Operation, Exceptions).
+ * sse_fp_step() closes one step: its flags (an unmasked IE/DE/ZE suppresses that
+ * step's OE/UE/PE, Vol1 11.5.3) are OR-ed into *acc; true when one of them is
+ * unmasked, and the instruction then stops in sse_fp_step_raise() without writing
+ * its destination, keeping the flags of the earlier steps. i5-13600K: DPPS with
+ * DM = 0, a tiny inexact product then the add of that denormal -> #XM with DE, UE
+ * and PE; MAX * 2 - MAX * 2 with OM = 0 -> #XM with OE only (no IE from inf - inf).
+ */
+static bool sse_fp_step(CPUX86State *env, int *acc)
+{
+    int f = get_float_exception_flags(&env->sse_status);
+    int unmasked = sse_flags_to_mxcsr(f) & ~(env->mxcsr >> 7) & 0x3f;
+
+    if (unmasked & (FPUS_IE | FPUS_DE | FPUS_ZE)) {
+        f &= ~(float_flag_overflow | float_flag_underflow | float_flag_inexact |
+               float_flag_output_denormal);
+    }
+    *acc |= f;
+    set_float_exception_flags(0, &env->sse_status);
+    return unmasked != 0;
+}
+
+/* stop after an unmasked step: flags of all executed steps, #XM (#UD if CR4.OSXMMEXCPT = 0) */
+static void sse_fp_step_raise(CPUX86State *env, int acc, uintptr_t ra)
+{
+    set_float_exception_flags(env->xm_saved_flags | acc, &env->sse_status);
+    update_mxcsr_from_sse_status(env);
+    raise_exception_ra(env, (env->cr[4] & CR4_OSXMMEXCPT_MASK) ? EXCP13_XM : EXCP06_ILLOP, ra);
+}
+#endif /* __Use_Original_Qemu (U446) */
+
 void helper_update_mxcsr(CPUX86State *env)
 {
     update_mxcsr_from_sse_status(env);
