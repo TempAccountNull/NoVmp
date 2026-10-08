@@ -2182,6 +2182,12 @@ static void decode_EVEX_0FC2(DisasContext *s, CPUX86State *env, X86OpEntry *entr
                       ev_mask(KDEST) ev_rc(SAE) ev_w(W0) ev_es(W) ev_fp),
         X86_OP_ENTRY4(EVEX_VCMP, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(FULL)
                       ev_mask(KDEST) ev_rc(SAE) ev_w(W1) ev_es(W) ev_fp),
+#if __Use_Original_Qemu != 1 /* ours (U198) */
+        X86_OP_ENTRY4(EVEX_VCMP, K,q, H,x, W,ss, cpuid(AVX512F) ev_vl(X86_EVEX_LIG) ev_tt(T1S)
+                      ev_mask(KDEST) ev_rc(SAE) ev_w(W0) ev_es(W) ev_fp),
+        X86_OP_ENTRY4(EVEX_VCMP, K,q, H,x, W,sd, cpuid(AVX512F) ev_vl(X86_EVEX_LIG) ev_tt(T1S)
+                      ev_mask(KDEST) ev_rc(SAE) ev_w(W1) ev_es(W) ev_fp),
+#endif /* __Use_Original_Qemu (U198) */
     };
     *entry = *decode_by_prefix(s, opcodes_EVEX_0FC2);
 }
