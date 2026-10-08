@@ -3327,6 +3327,31 @@ static void decode_EVEX_0F3A_56(DisasContext *s, CPUX86State *env, X86OpEntry *e
 #define EV_SHX(w)    cpuid(AVX512F) ev_vl(EV_VLALL) ev_tt(MEM128) ev_mask(MZ) ev_w(w) ev_es(W) \
                      .evex_nofs = 1, p_66
 #endif /* __Use_Original_Qemu (U234) */
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+/*
+ * NoVmp (ledger U402): AVX10.2 FP16 -> FP8 conversions (AVX10.2 spec 361050-007 9.1, 9.3),
+ * "AVX10.2 OR AVX10_V1_AUX", EVEX.W0, Full tuple (m16bcst), {k1}{z}, class E4NF (no memory
+ * fault suppression). One destination byte per opmask bit: gen_avx10b_cvt_fp8 masks and
+ * writes the whole destination register itself. NP: VCVTBIASPH2*F8* (vvvv = bias bytes),
+ * F3: VCVTPH2*F8* (destination VL/2), F2: VCVT2PH2*F8* (two sources); 0F38 74 = BF8,
+ * MAP5 74 = BF8S, MAP5 18 = HF8, MAP5 1B = HF8S.
+ */
+#define EV_A10F8     cpuid(AVX10_V1_AUX) ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W0) \
+                     ev_es(16) .evex_nofs = 1,
+static const X86OpEntry opcodes_avx10b_fp8[4] = {
+    X86_OP_ENTRY3(EVEX_VCVTBIASPH2F8, V,xh, H,x, W,x, EV_A10F8),
+    {},
+    X86_OP_ENTRY3(EVEX_VCVTPH2F8, V,xh, None,None, W,x, EV_A10F8),
+    X86_OP_ENTRY3(EVEX_VCVT2PH2F8, V,x, H,x, W,x, EV_A10F8),
+};
+#undef EV_A10F8
+
+/* 0F38 74, MAP5 74 / 18 / 1B: by prefix (decode->b and the map select BF8/HF8 and S) */
+static void decode_EVEX_A10_FP8(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *entry = *decode_by_prefix(s, opcodes_avx10b_fp8);
+}
+#endif /* __Use_Original_Qemu (U402) */
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 /* NoVmp (ledgers U333-U339): AVX512-FP16 tables (maps 5 and 6, NP/F3 forms of map 3) */
 #include "decode_fp16.c.inc"
@@ -3840,6 +3865,9 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x2c] = X86_OP_ENTRY3(EVEX_VSCALEF, V,x, H,x, W,x, EV_FPX(ER, ev_fp)),
     [0x2d] = X86_OP_GROUP0(EVEX_0F38_2D),
 #endif /* __Use_Original_Qemu (U239) */
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+    [0x74] = X86_OP_GROUP0(EVEX_A10_FP8),
+#endif /* __Use_Original_Qemu (U402) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

@@ -380,6 +380,12 @@ static void decode_FP16_M5_7E(DisasContext *s, CPUX86State *env, X86OpEntry *ent
 #if __Use_Original_Qemu != 1 /* ours (U333) */
 
 static const X86OpEntry opcodes_evex_map5[256] = {
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+    /* AVX10.2 FP16 -> FP8 (decode_EVEX_A10_FP8, decode-new.c.inc): 18 HF8, 1B HF8S, 74 BF8S */
+    [0x18] = X86_OP_GROUP0(EVEX_A10_FP8),
+    [0x1b] = X86_OP_GROUP0(EVEX_A10_FP8),
+    [0x74] = X86_OP_GROUP0(EVEX_A10_FP8),
+#endif /* __Use_Original_Qemu (U402) */
     [0x51] = X86_OP_GROUP0(FP16_M5_51),
     [0x58] = X86_OP_GROUP0(FP16_M5_58),
     [0x59] = X86_OP_GROUP0(FP16_M5_59),

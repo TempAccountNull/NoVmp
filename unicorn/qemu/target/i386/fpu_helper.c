@@ -8628,3 +8628,173 @@ void helper_evex_fixupimm(CPUX86State *env, ZMMReg *d, ZMMReg *dold, ZMMReg *a, 
 /* NoVmp (ledger U331): AVX512-FP16 helpers */
 #include "fp16_helper.c.inc"
 #endif /* __Use_Original_Qemu (U331) */
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+
+/*
+ * NoVmp (ledger U402): AVX10.2 FP16 -> FP8 down-conversions, the helper pseudocode of the
+ * AVX10.2 spec 361050-007 chapter 5.1 transcribed bit for bit. BF8 = E5M2 (the upper byte
+ * of an FP16), HF8 = E4M3 (no infinity, S.1111.111 = NaN). No MXCSR interaction: DAZ and
+ * FTZ are not obeyed, no flag is set, no exception is raised (spec 3.2.2, 9.1.2, 9.3.2).
+ *   convert_fp16_to_bf8(x, s): Inf -> S.11110.11 (s) or Inf; NaN -> x[15:8] with bit 1 set;
+ *     else RNE by adding 7Fh + x[8] and taking the upper byte; with s a result
+ *     exponent of 11111b saturates to S.11110.11.
+ *   convert_fp16_to_hf8(x, s): Inf -> S.1111.110 (s) or S.1111.111; NaN -> S.1111.111;
+ *     |x| > 464 (FP16 exponent 23, mantissa > 340h) -> the same overflow results; FP16
+ *     exponent <= 8 -> HF8 denormal (J bit, shift, sticky, RNE); else RNE on bits 9:7.
+ *   convert_fp16_to_bf8_bias(x, b, s): Inf/NaN as above; else the upper byte of x + b
+ *     (bias below the BF8 LSB, then truncation), saturating like the RNE form.
+ *   convert_fp16_to_hf8_bias(x, b, s): Inf/NaN as above; overflow from x + (b >> 1)
+ *     (>= 480); FP16 denormal input: (m + (b << 7)) >> 15; FP16 exponent (after the bias)
+ *     <= 8: J bit, + (b << (8 - e)), >> (9 - e), truncation; else truncation of x + (b >> 1).
+ * The spec's text says the bias forms use RNE for denormal inputs; its pseudocode adds the
+ * bias for every input and truncates - the pseudocode is followed.
+ */
+static bool avx10b_f16_inf(uint16_t x)
+{
+    return (x & 0x7fff) == 0x7c00;
+}
+
+static bool avx10b_f16_nan(uint16_t x)
+{
+    return (x & 0x7c00) == 0x7c00 && (x & 0x3ff) != 0;
+}
+
+static uint8_t avx10b_bf8_special(uint16_t x, bool sat)
+{
+    if (avx10b_f16_inf(x)) {
+        return sat ? ((x >> 8) & 0x80) | 0x7b : x >> 8;
+    }
+    return (x >> 8) | 0x02;                     /* NaN: truncate, set the quiet bit */
+}
+
+static uint8_t avx10b_bf8_round(uint16_t temp, bool sat)
+{
+    if (((temp >> 8) & 0x7f) == 0x7c && sat) {
+        return ((temp >> 8) & 0x80) | 0x7b;     /* E5M2_MAX */
+    }
+    return temp >> 8;
+}
+
+static uint8_t avx10b_fp16_to_bf8(uint16_t x, bool sat)
+{
+    if (avx10b_f16_inf(x) || avx10b_f16_nan(x)) {
+        return avx10b_bf8_special(x, sat);
+    }
+    return avx10b_bf8_round((uint16_t)(x + 0x7f + ((x >> 8) & 1)), sat);
+}
+
+static uint8_t avx10b_fp16_to_bf8_bias(uint16_t x, uint8_t b, bool sat)
+{
+    if (avx10b_f16_inf(x) || avx10b_f16_nan(x)) {
+        return avx10b_bf8_special(x, sat);
+    }
+    return avx10b_bf8_round((uint16_t)(x + b), sat);
+}
+
+#define AVX10B_HF8_REBIAS 8                     /* fp16_bias 15 - hf8_bias 7 */
+
+static uint8_t avx10b_fp16_to_hf8(uint16_t x, bool sat)
+{
+    uint32_t sign = (x & 0x8000) >> 8, e16 = (x & 0x7c00) >> 10, m16 = x & 0x3ff;
+    uint32_t e, m;
+
+    if (avx10b_f16_inf(x)) {
+        e = 0xf;
+        m = sat ? 6 : 7;
+    } else if (avx10b_f16_nan(x)) {
+        e = 0xf;
+        m = 7;
+    } else if (e16 > AVX10B_HF8_REBIAS + 15 ||
+               (e16 == AVX10B_HF8_REBIAS + 15 && m16 > 0x340)) {
+        e = 0xf;                                /* overflow: NaN or E4M3_MAX */
+        m = sat ? 6 : 7;
+    } else if (e16 == 0 && m16 == 0) {
+        e = 0;
+        m = 0;
+    } else if (e16 <= AVX10B_HF8_REBIAS) {      /* underflow: HF8 denormal */
+        m = m16 | 0x400;
+        m >>= AVX10B_HF8_REBIAS + 1 - e16;
+        m |= ((m16 & 0x7f) + 0x7f) >> 7;        /* shift-out sticky into the LSB */
+        m += 0x3f + ((m >> 7) & 1);             /* RNE */
+        e = m >> 10;                            /* carry into the exponent */
+        m = (m >> 7) & 7;
+    } else {                                    /* normal: RNE */
+        uint32_t rne = x + 0x3f + ((m16 >> 7) & 1);
+        e = ((rne & 0x7c00) >> 10) - AVX10B_HF8_REBIAS;
+        m = (rne & 0x3ff) >> 7;
+    }
+    return sign | (e << 3) | m;
+}
+
+static uint8_t avx10b_fp16_to_hf8_bias(uint16_t x, uint8_t b, bool sat)
+{
+    uint32_t sign = (x & 0x8000) >> 8, e16 = (x & 0x7c00) >> 10, m16 = x & 0x3ff;
+    uint32_t xb = (uint16_t)(x + (b >> 1));
+    uint32_t e16b = (xb & 0x7c00) >> 10, m16b = xb & 0x3ff;
+    uint32_t e, m;
+
+    if (avx10b_f16_inf(x)) {
+        e = 0xf;
+        m = sat ? 6 : 7;
+    } else if (avx10b_f16_nan(x)) {
+        e = 0xf;
+        m = 7;
+    } else if (e16b > AVX10B_HF8_REBIAS + 15 ||
+               (e16b == AVX10B_HF8_REBIAS + 15 && m16b >= 0x380)) {
+        e = 0xf;                                /* overflow: NaN or E4M3_MAX */
+        m = sat ? 6 : 7;
+    } else if (e16 == 0) {                      /* FP16 denormal or zero input */
+        m = (m16 + ((uint32_t)b << 7)) >> (AVX10B_HF8_REBIAS + 7);
+        e = 0;
+    } else if (e16b <= AVX10B_HF8_REBIAS) {     /* underflow: HF8 denormal */
+        m = m16 | 0x400;
+        m += (uint32_t)b << (AVX10B_HF8_REBIAS - e16);
+        m >>= AVX10B_HF8_REBIAS + 1 - e16;
+        e = m >> 10;
+        m = (m >> 7) & 7;
+    } else {                                    /* normal: truncation */
+        e = e16b - AVX10B_HF8_REBIAS;
+        m = m16b >> 7;
+    }
+    return sign | (e << 3) | m;
+}
+
+/*
+ * VCVTPH2[B,H]F8[S] (kind 0): dest.fp8[i] := cvt(src2.fp16[i]), i < VL/16, upper VL/2 zero;
+ * VCVT2PH2[B,H]F8[S] (kind 1): dest.fp8[i], i < VL/8, from src2.fp16[i] (i < KL/2) or
+ * src1.fp16[i - KL/2]; VCVTBIASPH2[B,H]F8[S] (kind 2): cvt_bias(src2.fp16[i], src1.byte[2i]).
+ * Merging / zeroing per destination byte with mask bit i; DEST[MAXVL-1:n] := 0.
+ */
+void helper_avx10b_cvt_fp8(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2,
+                           uint64_t mask, uint32_t desc)
+{
+    int vl = desc & 0xff, kind = (desc >> 9) & 3, n = kind == 1 ? vl : vl / 2, i;
+    bool zero = (desc >> 8) & 1, hf8 = (desc >> 11) & 1, sat = (desc >> 12) & 1;
+    ZMMReg r = *d;
+
+    for (i = 0; i < n; i++) {
+        if ((mask >> i) & 1) {
+            uint16_t x;
+
+            if (kind == 1) {
+                x = i < n / 2 ? s2->ZMM_W(i) : s1->ZMM_W(i - n / 2);
+            } else {
+                x = s2->ZMM_W(i);
+            }
+            if (kind == 2) {
+                uint8_t b = s1->ZMM_B(2 * i);
+                r.ZMM_B(i) = hf8 ? avx10b_fp16_to_hf8_bias(x, b, sat)
+                                 : avx10b_fp16_to_bf8_bias(x, b, sat);
+            } else {
+                r.ZMM_B(i) = hf8 ? avx10b_fp16_to_hf8(x, sat) : avx10b_fp16_to_bf8(x, sat);
+            }
+        } else if (zero) {
+            r.ZMM_B(i) = 0;
+        }
+    }
+    for (i = n; i < (int)sizeof(ZMMReg); i++) {
+        r.ZMM_B(i) = 0;
+    }
+    *d = r;
+}
+#endif /* __Use_Original_Qemu (U402) */

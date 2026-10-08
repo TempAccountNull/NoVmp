@@ -2475,6 +2475,65 @@ static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn
 #include "emit-avx10.c.inc"
 #endif /* __Use_Original_Qemu (U372) */
 
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+
+/*
+ * NoVmp (ledger U402): AVX10.2 FP16 -> FP8 conversions. The opmask selects destination
+ * bytes while EVEX.b and disp8*N use the FP16 source element (ev_es 16), so the helper
+ * builds the whole destination register (merging/zeroing per byte, zero above the
+ * converted bytes) and the engine's writeback is skipped (op[0] unit X86_OP_SKIP). The
+ * sources are already loaded (and {1toN} replicated) by gen_evex_insn.
+ * desc: bits 7:0 VL in bytes, bit 8 zeroing, bits 10:9 kind (0 one source, 1 two sources,
+ * 2 bias), bit 11 HF8 (E4M3; else BF8 E5M2), bit 12 saturating.
+ */
+#define AVX10B_Z        (1u << 8)
+
+static TCGv_i64 gen_avx10b_kmask(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    if (s->evex_aaa) {
+        tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    } else {
+        tcg_gen_movi_i64(tcg_ctx, k, -1);
+    }
+    return k;
+}
+
+static void gen_avx10b_cvt_fp8(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool map5 = (s->evex_p0 & 7) == 5;
+    bool hf8 = decode->b != 0x74;
+    bool sat = decode->b == 0x1b || (decode->b == 0x74 && map5);
+    uint32_t desc = s->evex_vl | (s->evex_z ? AVX10B_Z : 0) | ((uint32_t)kind << 9) |
+                    (hf8 ? 1u << 11 : 0) | (sat ? 1u << 12 : 0);
+    TCGv_i64 k = gen_avx10b_kmask(s);
+    TCGv_ptr d = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_avx10b_cvt_fp8(tcg_ctx, cpu_env, d, kind ? OP_PTR1 : OP_PTR2, OP_PTR2, k,
+                              tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, d);
+    tcg_temp_free_i64(tcg_ctx, k);
+    decode->op[0].unit = X86_OP_SKIP;
+}
+
+static void gen_EVEX_VCVTPH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 0);
+}
+
+static void gen_EVEX_VCVT2PH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 1);
+}
+
+static void gen_EVEX_VCVTBIASPH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U402) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
