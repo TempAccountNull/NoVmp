@@ -8501,6 +8501,1281 @@ static void test_x86_mem_write_invalidates_tb(void)
     OK(uc_close(uc));
 }
 
+/*
+ * ---- NoVmp U170-U180: Intel AMX (VEX) ----
+ * Expected values: Emulator/tools/isa/ref_amx.py (independent SDM model) for the TMUL
+ * results and the exception matrix (x86_amx_vectors.inc); the load/store/XSAVE/XFD tests
+ * below compute their expectations directly from the SDM text they cite.
+ */
+#include "x86_amx_vectors.inc"
+
+#define AX_CODE 0x100000
+#define AX_CODE_SIZE 0x40000
+#define AX_DATA 0x200000
+#define AX_DATA_SIZE 0x20000
+#define AX_XCR0 0x60007ULL     /* x87, SSE, AVX, TILECFG, TILEDATA */
+
+typedef struct AmxT {
+    uc_engine *uc;
+    uc_mode mode;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} AmxT;
+
+static void ax_open(AmxT *a, uc_mode mode, int mask, const uc_x86_cpuid *prof, size_t nprof)
+{
+    memset(a, 0, sizeof(*a));
+    a->mode = mode;
+    a->pc = AX_CODE;
+    OK(uc_open(UC_ARCH_X86, mode, &a->uc));
+    OK(uc_ctl_set_cpu_model(a->uc, UC_CPU_X86_MAX));
+    if (mask) {
+        OK(uc_ctl_set_x86_amx(a->uc, mask));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(a->uc, prof, nprof));
+    }
+    OK(uc_mem_map(a->uc, AX_CODE, AX_CODE_SIZE, UC_PROT_ALL));
+    OK(uc_mem_map(a->uc, AX_DATA, AX_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_hook_add(a->uc, &a->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &a->cap, 1, 0));
+}
+
+static void ax_close(AmxT *a)
+{
+    OK(uc_close(a->uc));
+}
+
+/* outside 64-bit mode RAX..RDI name EAX..EDI */
+static int ax_reg32(int reg)
+{
+    static const int r64[] = {UC_X86_REG_RAX, UC_X86_REG_RBX, UC_X86_REG_RCX, UC_X86_REG_RDX,
+                              UC_X86_REG_RSI, UC_X86_REG_RDI};
+    static const int r32[] = {UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX,
+                              UC_X86_REG_ESI, UC_X86_REG_EDI};
+    size_t i;
+    for (i = 0; i < sizeof(r64) / sizeof(r64[0]); i++) {
+        if (reg == r64[i]) {
+            return r32[i];
+        }
+    }
+    return reg;
+}
+
+static void ax_set(AmxT *a, int reg, uint64_t v)
+{
+    if (a->mode == UC_MODE_64) {
+        OK(uc_reg_write(a->uc, reg, &v));
+    } else {
+        uint32_t v32 = (uint32_t)v;
+        OK(uc_reg_write(a->uc, ax_reg32(reg), &v32));
+    }
+}
+
+static uint64_t ax_get(AmxT *a, int reg)
+{
+    uint64_t v = 0;
+    if (a->mode == UC_MODE_64) {
+        OK(uc_reg_read(a->uc, reg, &v));
+    } else {
+        uint32_t v32 = 0;
+        OK(uc_reg_read(a->uc, ax_reg32(reg), &v32));
+        v = v32;
+    }
+    return v;
+}
+
+/* run code from a fresh address; the exception vector (6 #UD, 7 #NM, 13 #GP, ...) or -1 */
+static int ax_run(AmxT *a, const uint8_t *code, size_t len)
+{
+    uint64_t pc = a->pc;
+    uc_err err;
+
+    a->pc += 0x80;
+    TEST_CHECK(len <= 0x80 && a->pc <= AX_CODE + AX_CODE_SIZE);
+    a->cap.count = 0;
+    OK(uc_mem_write(a->uc, pc, code, len));
+    err = uc_emu_start(a->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (err != UC_ERR_OK) {
+        return 1000 + (int)err;
+    }
+    return a->cap.count ? (int)a->cap.intno : -1;
+}
+
+static void ax_cpuid(AmxT *a, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    static const uint8_t cpuid[] = {0x0f, 0xa2};
+    ax_set(a, UC_X86_REG_RAX, leaf);
+    ax_set(a, UC_X86_REG_RCX, sub);
+    TEST_CHECK(ax_run(a, cpuid, 2) == -1);
+    r[0] = (uint32_t)ax_get(a, UC_X86_REG_RAX);
+    r[1] = (uint32_t)ax_get(a, UC_X86_REG_RBX);
+    r[2] = (uint32_t)ax_get(a, UC_X86_REG_RCX);
+    r[3] = (uint32_t)ax_get(a, UC_X86_REG_RDX);
+}
+
+static uint64_t ax_xcr0(AmxT *a)
+{
+    uint64_t v = 0;
+    OK(uc_reg_read(a->uc, UC_X86_REG_XCR0, &v));
+    return v;
+}
+
+static int ax_xsetbv(AmxT *a, uint64_t v)
+{
+    static const uint8_t xsetbv[] = {0x0f, 0x01, 0xd1};
+    ax_set(a, UC_X86_REG_RCX, 0);
+    ax_set(a, UC_X86_REG_RAX, (uint32_t)v);
+    ax_set(a, UC_X86_REG_RDX, (uint32_t)(v >> 32));
+    return ax_run(a, xsetbv, 3);
+}
+
+static uint64_t ax_xgetbv1(AmxT *a)
+{
+    static const uint8_t xgetbv[] = {0x0f, 0x01, 0xd0};
+    ax_set(a, UC_X86_REG_RCX, 1);
+    TEST_CHECK(ax_run(a, xgetbv, 3) == -1);
+    return (ax_get(a, UC_X86_REG_RAX) & 0xffffffffULL) | (ax_get(a, UC_X86_REG_RDX) << 32);
+}
+
+static void ax_msr_write(AmxT *a, uint32_t id, uint64_t v)
+{
+    uc_x86_msr msr;
+    msr.rid = id;
+    msr.value = v;
+    OK(uc_reg_write(a->uc, UC_X86_REG_MSR, &msr));
+}
+
+static uint64_t ax_msr_read(AmxT *a, uint32_t id)
+{
+    uc_x86_msr msr;
+    msr.rid = id;
+    msr.value = 0;
+    OK(uc_reg_read(a->uc, UC_X86_REG_MSR, &msr));
+    return msr.value;
+}
+
+/* WRMSR / RDMSR executed by the guest (CPL 0): the exception vector or -1 */
+static int ax_wrmsr(AmxT *a, uint32_t id, uint64_t v)
+{
+    static const uint8_t wrmsr[] = {0x0f, 0x30};
+    ax_set(a, UC_X86_REG_RCX, id);
+    ax_set(a, UC_X86_REG_RAX, (uint32_t)v);
+    ax_set(a, UC_X86_REG_RDX, (uint32_t)(v >> 32));
+    return ax_run(a, wrmsr, 2);
+}
+
+static uint64_t ax_rdmsr(AmxT *a, uint32_t id)
+{
+    static const uint8_t rdmsr[] = {0x0f, 0x32};
+    ax_set(a, UC_X86_REG_RCX, id);
+    TEST_CHECK(ax_run(a, rdmsr, 2) == -1);
+    return (ax_get(a, UC_X86_REG_RAX) & 0xffffffffULL) | (ax_get(a, UC_X86_REG_RDX) << 32);
+}
+
+static void ax_hex(const char *s, uint8_t *out, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        unsigned v = 0;
+        int k;
+        for (k = 0; k < 2; k++) {
+            char c = s[2 * i + k];
+            v = v * 16 + (unsigned)(c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10);
+        }
+        out[i] = (uint8_t)v;
+    }
+}
+
+static void ax_cfg_set(AmxT *a, const uint8_t cfg[64])
+{
+    OK(uc_reg_write(a->uc, UC_X86_REG_TILECFG, cfg));
+}
+
+static void ax_cfg_get(AmxT *a, uint8_t cfg[64])
+{
+    OK(uc_reg_read(a->uc, UC_X86_REG_TILECFG, cfg));
+}
+
+static void ax_tile_set(AmxT *a, int t, const uint8_t tile[1024])
+{
+    OK(uc_reg_write(a->uc, UC_X86_REG_TMM0 + t, tile));
+}
+
+static void ax_tile_get(AmxT *a, int t, uint8_t tile[1024])
+{
+    OK(uc_reg_read(a->uc, UC_X86_REG_TMM0 + t, tile));
+}
+
+/* 64-byte TILECFG image: palette 1, start_row, {tile, rows, colsb} triples (-1 ends) */
+static void ax_cfg_make(uint8_t cfg[64], int start_row, const int *spec)
+{
+    memset(cfg, 0, 64);
+    cfg[0] = 1;
+    cfg[1] = (uint8_t)start_row;
+    for (; spec[0] >= 0; spec += 3) {
+        cfg[48 + spec[0]] = (uint8_t)spec[1];
+        cfg[16 + 2 * spec[0]] = (uint8_t)spec[2];
+        cfg[17 + 2 * spec[0]] = (uint8_t)(spec[2] >> 8);
+    }
+}
+
+/* ---- encodings: VEX.128.pp.0F38.W0 (pp 0 NP, 1 66, 2 F3, 3 F2) ---- */
+static size_t ax_enc_sib(uint8_t *o, int pp, uint8_t op, int reg, int base, int index,
+                         int scale, int32_t disp)
+{
+    int ix = index < 0 ? 4 : index;
+    o[0] = 0xc4;
+    o[1] = (uint8_t)(((reg & 8) ? 0 : 0x80) | ((ix & 8) ? 0 : 0x40) | ((base & 8) ? 0 : 0x20) | 2);
+    o[2] = (uint8_t)(0x78 | pp);
+    o[3] = op;
+    o[4] = (uint8_t)(0x80 | ((reg & 7) << 3) | 4);
+    o[5] = (uint8_t)((scale << 6) | ((ix & 7) << 3) | (base & 7));
+    memcpy(o + 6, &disp, 4);
+    return 10;
+}
+
+/* [base] (base not rsp/rbp/r12/r13), ModRM.reg = 0 */
+static size_t ax_enc_mem(uint8_t *o, int pp, int base)
+{
+    o[0] = 0xc4;
+    o[1] = (uint8_t)(0xc0 | ((base & 8) ? 0 : 0x20) | 2);
+    o[2] = (uint8_t)(0x78 | pp);
+    o[3] = 0x49;
+    o[4] = (uint8_t)(base & 7);
+    return 5;
+}
+
+#define AX_LDTILECFG(o, base) ax_enc_mem(o, 0, base)
+#define AX_STTILECFG(o, base) ax_enc_mem(o, 1, base)
+#define AX_TILELOADD(o, t, b, i, s, d) ax_enc_sib(o, 3, 0x4b, t, b, i, s, d)
+#define AX_TILELOADDT1(o, t, b, i, s, d) ax_enc_sib(o, 1, 0x4b, t, b, i, s, d)
+#define AX_TILESTORED(o, t, b, i, s, d) ax_enc_sib(o, 2, 0x4b, t, b, i, s, d)
+static const uint8_t ax_tilerelease[] = {0xc4, 0xe2, 0x78, 0x49, 0xc0};
+
+static size_t ax_enc_tilezero(uint8_t *o, int t)
+{
+    o[0] = 0xc4;
+    o[1] = (uint8_t)(((t & 8) ? 0 : 0x80) | 0x60 | 2);
+    o[2] = 0x7b;
+    o[3] = 0x49;
+    o[4] = (uint8_t)(0xc0 | ((t & 7) << 3));
+    return 5;
+}
+
+/* ---- the tile contents generator shared with ref_amx.py (splitmix64) ---- */
+static uint64_t ax_splitmix(uint64_t *st)
+{
+    uint64_t z;
+    *st += 0x9E3779B97F4A7C15ULL;
+    z = *st;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+/* ref_amx.py gen_elem: fmt 0 BF16, 1 FP16, 2 FP32; cls 0..5 NORMAL INT WIDE TINY HUGE SPECIAL */
+static uint32_t ax_gen_elem(int fmt, int cls, uint64_t r)
+{
+    const int EB = fmt == 1 ? 5 : 8, FB = fmt == 0 ? 7 : fmt == 1 ? 10 : 23;
+    const int W = 1 + EB + FB, BIAS = (1 << (EB - 1)) - 1, EMAX = (1 << EB) - 1;
+    const uint32_t sign = (uint32_t)(r >> 63) & 1, c = (uint32_t)r & 0xff;
+    const uint32_t fr = (uint32_t)(r >> 8) & ((1u << FB) - 1);
+    const uint32_t ex = (uint32_t)(r >> 40) & 0xffff;
+    const uint32_t sb = sign << (W - 1);
+    int lo = 0, hi = 0;
+
+#define AX_NORM(l, h) (lo = (l), hi = (h), sb | ((uint32_t)(lo + (int)(ex % (uint32_t)(hi - lo + 1))) << FB) | fr)
+#define AX_ZERO() (sb)
+#define AX_DEN() (sb | (fr ? fr : 1))
+#define AX_INF() (sb | ((uint32_t)EMAX << FB))
+    switch (cls) {
+    case 0:
+        return AX_NORM(BIAS - 6, BIAS + 6);
+    case 1: {
+        int v = (int)(ex % 9), a = v - 4 < 0 ? 4 - v : v - 4;
+        uint32_t s = v < 4 ? 1 : (v == 4 ? sign : 0), mag = 0;
+        if (a == 1) {
+            mag = (uint32_t)BIAS << FB;
+        } else if (a == 2) {
+            mag = (uint32_t)(BIAS + 1) << FB;
+        } else if (a == 3) {
+            mag = ((uint32_t)(BIAS + 1) << FB) | (1u << (FB - 1));
+        } else if (a == 4) {
+            mag = (uint32_t)(BIAS + 2) << FB;
+        }
+        return (s << (W - 1)) | mag;
+    }
+    case 2:
+        if (c < 8) return AX_ZERO();
+        if (c < 16) return AX_DEN();
+        if (c < 18) return AX_INF();
+        if (c < 20) break;                       /* NaN below */
+        return AX_NORM(1, EMAX - 1);
+    case 3:
+        if (fmt == 1) return c < 128 ? AX_DEN() : AX_NORM(1, 3);
+        if (fmt == 0) return c < 64 ? AX_DEN() : AX_NORM(BIAS - 70, BIAS - 56);
+        return c < 128 ? AX_DEN() : AX_NORM(1, 8);
+    case 4:
+        if (fmt == 0) return AX_NORM(BIAS + 60, BIAS + 66);
+        if (fmt == 1) return AX_NORM(EMAX - 3, EMAX - 1);
+        return AX_NORM(EMAX - 8, EMAX - 1);
+    default:
+        if (c < 40) return AX_ZERO();
+        if (c < 80) return AX_DEN();
+        if (c < 120) return AX_INF();
+        if (c < 160) break;                      /* NaN below */
+        return AX_NORM(BIAS - 2, BIAS + 2);
+    }
+    {
+        uint32_t f = fr & ((1u << (FB - 1)) - 1);
+        if ((r >> 56) & 1) {
+            f |= 1u << (FB - 1);
+        } else if (f == 0) {
+            f = 1;
+        }
+        return sb | ((uint32_t)EMAX << FB) | f;
+    }
+#undef AX_NORM
+#undef AX_ZERO
+#undef AX_DEN
+#undef AX_INF
+}
+
+static void ax_fill_tile(uint64_t seed, int t, int kind, uint8_t out[1024])
+{
+    uint64_t st = seed + (uint64_t)(t + 1) * 0xD1B54A32D192ED03ULL;
+    int i, b;
+
+    memset(out, 0, 1024);
+    if (kind == AMX_K_ZERO) {
+        return;
+    }
+    if (kind == AMX_K_BYTES) {
+        for (i = 0; i < 128; i++) {
+            uint64_t r = ax_splitmix(&st);
+            memcpy(out + 8 * i, &r, 8);
+        }
+        return;
+    }
+    {
+        int fmt = (kind - 2) / 6, cls = (kind - 2) % 6, w = fmt == 2 ? 4 : 2;
+        for (i = 0; i < 1024 / w; i++) {
+            uint32_t v = ax_gen_elem(fmt, cls, ax_splitmix(&st));
+            for (b = 0; b < w; b++) {
+                out[w * i + b] = (uint8_t)(v >> (8 * b));
+            }
+        }
+    }
+}
+
+static uint64_t ax_fnv(const uint8_t *p, size_t n, uint64_t h)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        h = (h ^ p[i]) * 0x100000001B3ULL;
+    }
+    return h;
+}
+
+/* NoVmp U170: UC_CTL_X86_AMX opt-in, CPUID 7/1DH/1EH/0DH, reset XCR0, profile */
+static void test_x86_amx_optin(void)
+{
+    /* i5-13600K leaf 0DH (no AMX components) */
+    static const uc_x86_cpuid prof207[] = {
+        {0x0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0xd, 0, 0x207, 0x340, 0xa88, 0},
+    };
+    static const uint8_t tilezero0[] = {0xc4, 0xe2, 0x7b, 0x49, 0xc0};
+    AmxT a;
+    uint32_t r[4];
+    int mask = -1;
+
+    /* default: off - no CPUID bits, leaves 1DH/1EH zero, XCR0[18:17] = 0, TILEZERO #UD */
+    ax_open(&a, UC_MODE_64, 0, NULL, 0);
+    OK(uc_ctl_get_x86_amx(a.uc, &mask));
+    TEST_CHECK(mask == 0);
+    ax_cpuid(&a, 7, 0, r);
+    TEST_CHECK((r[3] & ((1u << 22) | (1u << 24) | (1u << 25))) == 0);
+    ax_cpuid(&a, 7, 1, r);
+    TEST_CHECK((r[0] & (1u << 21)) == 0 && (r[3] & (1u << 8)) == 0);
+    ax_cpuid(&a, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0x60000) == 0);
+    ax_cpuid(&a, 0xd, 1, r);
+    TEST_CHECK((r[0] & 0x10) == 0);                  /* no XFD */
+    TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0);
+    TEST_CHECK(ax_run(&a, tilezero0, sizeof(tilezero0)) == 6);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, UC_X86_AMX_ALL));
+    ax_close(&a);
+
+    /* unknown bits refused; a non-zero mask implies TILE */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &a.uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, 32));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, -1));
+    OK(uc_ctl_set_x86_amx(a.uc, UC_X86_AMX_BF16));
+    OK(uc_ctl_get_x86_amx(a.uc, &mask));
+    TEST_CHECK(mask == (UC_X86_AMX_BF16 | UC_X86_AMX_TILE));
+    OK(uc_close(a.uc));
+
+    /* everything on */
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    ax_cpuid(&a, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x1e);
+    ax_cpuid(&a, 7, 0, r);
+    TEST_CHECK((r[3] & ((1u << 22) | (1u << 24) | (1u << 25))) ==
+               ((1u << 22) | (1u << 24) | (1u << 25)));
+    TEST_CHECK(r[0] >= 1);
+    ax_cpuid(&a, 7, 1, r);
+    TEST_CHECK((r[0] & (1u << 21)) && (r[3] & (1u << 8)));
+    ax_cpuid(&a, 0x1d, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    ax_cpuid(&a, 0x1d, 1, r);
+    TEST_CHECK(r[0] == 0x04002000 && r[1] == 0x00080040 && r[2] == 0x10 && r[3] == 0);
+    ax_cpuid(&a, 0x1d, 2, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    ax_cpuid(&a, 0x1e, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 0x4010 && r[2] == 0 && r[3] == 0);
+    ax_cpuid(&a, 0x1e, 1, r);
+    TEST_CHECK(r[0] == 0xf && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    ax_cpuid(&a, 0xd, 0, r);
+    TEST_CHECK((r[0] & 0x60000) == 0x60000);
+    TEST_CHECK(r[2] >= 0x2b00);                      /* max size, standard format */
+    ax_cpuid(&a, 0xd, 1, r);
+    TEST_CHECK(r[0] & 0x10);                         /* XFD */
+    ax_cpuid(&a, 0xd, 17, r);
+    TEST_CHECK(r[0] == 0x40 && r[1] == 0xac0 && r[2] == 2 && r[3] == 0);
+    ax_cpuid(&a, 0xd, 18, r);
+    TEST_CHECK(r[0] == 0x2000 && r[1] == 0xb00 && r[2] == 6 && r[3] == 0);
+    /* reset XCR0 enables 18:17 (like every supported component) */
+    TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0x60000);
+    /* 0DH.0:EBX / 0DH.1:EBX follow XCR0 (standard / compacted, 64-byte aligned AMX) */
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_cpuid(&a, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0x2b00);
+    ax_cpuid(&a, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x2380);                      /* 240h + AVX 100h, TILECFG 340h, TILEDATA 380h */
+    TEST_MSG("0DH.1:EBX = %x", r[1]);
+    ax_cpuid(&a, 0xd, 0, r);
+    if (r[0] & 0x200) {                               /* PKRU (8 bytes) then aligned TILECFG */
+        TEST_CHECK(ax_xsetbv(&a, AX_XCR0 | 0x200) == -1);
+        ax_cpuid(&a, 0xd, 1, r);
+        TEST_CHECK(r[1] == 0x23c0);                  /* PKRU 340h, TILECFG 380h, TILEDATA 3C0h */
+        TEST_MSG("0DH.1:EBX = %x", r[1]);
+    }
+    TEST_CHECK(ax_run(&a, tilezero0, sizeof(tilezero0)) == 6);   /* not configured */
+    ax_close(&a);
+
+    /* TILE only: no TMUL bits, 1EH.1:EAX = 0 */
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_TILE, NULL, 0);
+    ax_cpuid(&a, 7, 0, r);
+    TEST_CHECK((r[3] & ((1u << 22) | (1u << 24) | (1u << 25))) == (1u << 24));
+    ax_cpuid(&a, 7, 1, r);
+    TEST_CHECK((r[0] & (1u << 21)) == 0 && (r[3] & (1u << 8)) == 0);
+    ax_cpuid(&a, 0x1e, 1, r);
+    TEST_CHECK(r[0] == 0);
+    ax_close(&a);
+
+    /* INT8 + COMPLEX: aliases bits 0 and 2 */
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_INT8 | UC_X86_AMX_COMPLEX, NULL, 0);
+    ax_cpuid(&a, 0x1e, 1, r);
+    TEST_CHECK(r[0] == 5);
+    ax_close(&a);
+
+    /* the i5-13600K leaf 0DH has no AMX components: XCR0 without them, AMX unusable */
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, prof207, 2);
+    TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0);
+    TEST_CHECK(ax_xsetbv(&a, 0x60207) == 13);
+    {
+        static const uint8_t rel[] = {0xc4, 0xe2, 0x78, 0x49, 0xc0};
+        TEST_CHECK(ax_run(&a, rel, sizeof(rel)) == 6);       /* XCR0[18:17] != 11b */
+    }
+    ax_close(&a);
+}
+
+/* NoVmp U171: XSETBV XCR0[18:17] = 00b or 11b */
+static void test_x86_amx_xsetbv(void)
+{
+    static const struct {
+        uint64_t xcr0;
+        int ok;
+    } t[] = {
+        {0x60007, 1}, {0x00007, 1}, {0x20007, 0}, {0x40007, 0}, {0x60003, 1},
+        {0x60001, 1}, {0x60005, 0}, {0xe0007, 0}, {0x60007, 1},
+    };
+    AmxT a;
+    size_t i;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint64_t before = ax_xcr0(&a);
+        int v = ax_xsetbv(&a, t[i].xcr0);
+        TEST_CHECK_(v == (t[i].ok ? -1 : 13), "xsetbv %llx -> %d",
+                    (unsigned long long)t[i].xcr0, v);
+        TEST_CHECK(ax_xcr0(&a) == (t[i].ok ? t[i].xcr0 : before));
+    }
+    ax_close(&a);
+    ax_open(&a, UC_MODE_32, UC_X86_AMX_ALL, NULL, 0);    /* XSETBV of 18:17 in any mode */
+    TEST_CHECK(ax_xsetbv(&a, 0x60007) == -1);
+    TEST_CHECK(ax_xsetbv(&a, 0x40007) == 13);
+    ax_close(&a);
+    ax_open(&a, UC_MODE_64, 0, NULL, 0);                 /* unsupported without the opt-in */
+    TEST_CHECK(ax_xsetbv(&a, 0x60007) == 13);
+    TEST_CHECK(ax_xsetbv(&a, 0x00007) == -1);
+    ax_close(&a);
+}
+
+/* NoVmp U174: UC_X86_REG_TILECFG / UC_X86_REG_TMM0..7 */
+static void test_x86_amx_api(void)
+{
+    static const int spec[] = {0, 16, 64, 3, 2, 8, 7, 1, 4, -1};
+    uint8_t cfg[64], out[64], tile[1024], back[1024];
+    AmxT a;
+    int t, i;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));           /* INIT after reset */
+    ax_cfg_make(cfg, 5, spec);
+    ax_cfg_set(&a, cfg);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    for (t = 0; t < 8; t++) {
+        for (i = 0; i < 1024; i++) {
+            tile[i] = (uint8_t)(i * 7 + t * 31 + 1);
+        }
+        ax_tile_set(&a, t, tile);
+    }
+    for (t = 0; t < 8; t++) {
+        ax_tile_get(&a, t, back);
+        for (i = 0; i < 1024; i++) {
+            tile[i] = (uint8_t)(i * 7 + t * 31 + 1);
+        }
+        TEST_CHECK_(memcmp(tile, back, 1024) == 0, "tmm%d round trip", t);
+    }
+    /* an image LDTILECFG would refuse initialises TILECFG (like XRSTOR); tiles untouched */
+    cfg[48] = 17;
+    ax_cfg_set(&a, cfg);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    ax_tile_get(&a, 0, back);
+    TEST_CHECK(back[0] == 1 && back[1023] == (uint8_t)(1023 * 7 + 1));
+    /* palette 0 with garbage -> INIT */
+    memset(cfg, 0x5a, 64);
+    cfg[0] = 0;
+    ax_cfg_set(&a, cfg);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    /* palette 1 needs XCR0[18:17] = 11b */
+    ax_cfg_make(cfg, 0, spec);
+    TEST_CHECK(ax_xsetbv(&a, 0x7) == -1);
+    ax_cfg_set(&a, cfg);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_cfg_set(&a, cfg);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    /* uc_reg_read2 size checks */
+    {
+        size_t sz = 63;
+        uc_assert_err(UC_ERR_OVERFLOW, uc_reg_read2(a.uc, UC_X86_REG_TILECFG, out, &sz));
+        sz = 1023;
+        uc_assert_err(UC_ERR_OVERFLOW, uc_reg_read2(a.uc, UC_X86_REG_TMM3, back, &sz));
+        sz = 1024;
+        OK(uc_reg_read2(a.uc, UC_X86_REG_TMM3, back, &sz));
+        TEST_CHECK(sz == 1024);
+    }
+    ax_close(&a);
+}
+
+/*
+ * NoVmp U175: LDTILECFG / STTILECFG / TILERELEASE; the configuration matrix itself is in
+ * x86_amx_evecs (ldtilecfg_*). Here: tiles zeroed by LDTILECFG / TILERELEASE, STTILECFG
+ * image, start_row kept.
+ */
+static void test_x86_amx_cfg_insns(void)
+{
+    static const int spec[] = {0, 16, 64, 5, 3, 12, -1};
+    uint8_t cfg[64], out[64], tile[1024], code[16];
+    AmxT a;
+    int t;
+    size_t n;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    memset(tile, 0xee, sizeof(tile));
+    for (t = 0; t < 8; t++) {
+        ax_tile_set(&a, t, tile);
+    }
+    ax_cfg_make(cfg, 9, spec);
+    OK(uc_mem_write(a.uc, AX_DATA + 0x1000, cfg, 64));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+    n = AX_LDTILECFG(code, 6);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);                    /* start_row 9 loaded too */
+    for (t = 0; t < 8; t++) {
+        ax_tile_get(&a, t, tile);
+        TEST_CHECK_(m0_all_bytes(tile, 0, 1024, 0), "tmm%d zeroed by LDTILECFG", t);
+    }
+    /* STTILECFG [rdi]: the image (start_row included) */
+    memset(out, 0xcc, 64);
+    OK(uc_mem_write(a.uc, AX_DATA + 0x2000, out, 64));
+    ax_set(&a, UC_X86_REG_RDI, AX_DATA + 0x2000);
+    n = AX_STTILECFG(code, 7);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 0x2000, out, 64));
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    /* TILERELEASE: INIT, tiles zero; STTILECFG then stores 64 zero bytes */
+    memset(tile, 0x11, sizeof(tile));
+    ax_tile_set(&a, 6, tile);
+    TEST_CHECK(ax_run(&a, ax_tilerelease, sizeof(ax_tilerelease)) == -1);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    ax_tile_get(&a, 6, tile);
+    TEST_CHECK(m0_all_bytes(tile, 0, 1024, 0));
+    memset(out, 0xcc, 64);
+    OK(uc_mem_write(a.uc, AX_DATA + 0x2000, out, 64));
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 0x2000, out, 64));
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    /* LDTILECFG palette 0: INIT and tiles zeroed */
+    ax_cfg_set(&a, cfg);
+    memset(tile, 0x22, sizeof(tile));
+    ax_tile_set(&a, 2, tile);
+    memset(out, 0, 64);
+    out[5] = 0x77;                                           /* ignored with palette 0 */
+    OK(uc_mem_write(a.uc, AX_DATA + 0x1000, out, 64));
+    n = AX_LDTILECFG(code, 6);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));
+    ax_tile_get(&a, 2, tile);
+    TEST_CHECK(m0_all_bytes(tile, 0, 1024, 0));
+    /* LDTILECFG #GP: TILECFG and TILEDATA unchanged */
+    ax_cfg_set(&a, cfg);
+    ax_tile_set(&a, 2, tile);
+    memcpy(out, cfg, 64);
+    out[49] = 0;                                             /* tile 1: rows 0, colsb 0 ok */
+    out[50] = 4;                                             /* tile 2: rows 4, colsb 0 */
+    memset(tile, 0x33, sizeof(tile));
+    ax_tile_set(&a, 2, tile);
+    OK(uc_mem_write(a.uc, AX_DATA + 0x1000, out, 64));
+    TEST_CHECK(ax_run(&a, code, n) == 13);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    ax_tile_get(&a, 2, tile);
+    TEST_CHECK(tile[0] == 0x33 && tile[1023] == 0x33);
+    ax_close(&a);
+}
+
+/*
+ * NoVmp U176: TILELOADD/TILELOADDT1/TILESTORED/TILEZERO (SDM Vol2B Operation): strided
+ * rows, partial rows/columns, zeroing of the rest, no index (stride 0), scale, negative
+ * stride, displacement, segment override, 32-bit address size, start_row restart, faults.
+ */
+static void ax_mem_pattern(AmxT *a, uint64_t addr, size_t len, unsigned salt)
+{
+    static uint8_t buf[AX_DATA_SIZE];
+    size_t i;
+    TEST_CHECK(len <= sizeof(buf));
+    for (i = 0; i < len; i++) {
+        buf[i] = (uint8_t)(i * 13 + salt * 7 + (i >> 8));
+    }
+    OK(uc_mem_write(a->uc, addr, buf, len));
+}
+
+static uint8_t ax_pat(size_t i, unsigned salt)
+{
+    return (uint8_t)(i * 13 + salt * 7 + (i >> 8));
+}
+
+static void test_x86_amx_load_store(void)
+{
+    static const int spec[] = {0, 16, 64, 1, 5, 24, 2, 3, 4, 3, 16, 64, 4, 7, 12, 5, 16, 8,
+                               -1};
+    uint8_t cfg[64], tile[1024], code[32], mem[0x800], out[64];
+    AmxT a;
+    size_t n;
+    int r, j;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_cfg_make(cfg, 0, spec);
+    ax_cfg_set(&a, cfg);
+    ax_mem_pattern(&a, AX_DATA, AX_DATA_SIZE, 1);
+
+    /* tmm1 (5 x 24): rows at RSI + 0x40 + r * 100h (RCX = 100h, scale 0); rest zeroed */
+    memset(tile, 0xff, sizeof(tile));
+    ax_tile_set(&a, 1, tile);
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+    ax_set(&a, UC_X86_REG_RCX, 0x100);
+    n = AX_TILELOADD(code, 1, 6, 1, 0, 0x40);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 1, tile);
+    for (r = 0; r < 16; r++) {
+        for (j = 0; j < 64; j++) {
+            uint8_t exp = (r < 5 && j < 24) ? ax_pat(0x1040 + r * 0x100 + j, 1) : 0;
+            TEST_CHECK_(tile[64 * r + j] == exp, "tmm1 row %d byte %d", r, j);
+        }
+    }
+    ax_cfg_get(&a, out);
+    TEST_CHECK(out[1] == 0);
+    /* TILELOADDT1 into tmm0 (16 x 64) with R8 index scaled by 8 (stride 8 * 10h) */
+    ax_set(&a, UC_X86_REG_R8, 0x10);
+    n = AX_TILELOADDT1(code, 0, 6, 8, 3, -0x800);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 0, tile);
+    for (r = 0; r < 16; r++) {
+        for (j = 0; j < 64; j++) {
+            TEST_CHECK_(tile[64 * r + j] == ax_pat(0x800 + r * 0x80 + j, 1), "tmm0 %d/%d", r, j);
+        }
+    }
+    /* no index register: stride 0, every row the same 64 bytes; R13 base needs disp */
+    ax_set(&a, UC_X86_REG_R13, AX_DATA + 0x3000);
+    n = AX_TILELOADD(code, 3, 13, -1, 0, 0x10);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 3, tile);
+    for (r = 0; r < 16; r++) {
+        TEST_CHECK(tile[64 * r] == ax_pat(0x3010, 1) && tile[64 * r + 63] == ax_pat(0x304f, 1));
+    }
+    /* index RSP-encoding with VEX.X = 1 is R12 (a real index); negative stride */
+    ax_set(&a, UC_X86_REG_R12, (uint64_t)-0x40);
+    ax_set(&a, UC_X86_REG_RBX, AX_DATA + 0x5000);
+    n = AX_TILELOADD(code, 4, 3, 12, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 4, tile);
+    for (r = 0; r < 16; r++) {
+        for (j = 0; j < 64; j++) {
+            uint8_t exp = (r < 7 && j < 12) ? ax_pat(0x5000 - r * 0x40 + j, 1) : 0;
+            TEST_CHECK_(tile[64 * r + j] == exp, "tmm4 %d/%d", r, j);
+        }
+    }
+
+    /* TILESTORED tmm1 (5 x 24) to RDI + r * 30h: only colsb bytes of each row written */
+    memset(mem, 0xa5, sizeof(mem));
+    OK(uc_mem_write(a.uc, AX_DATA + 0x6000, mem, sizeof(mem)));
+    ax_set(&a, UC_X86_REG_RDI, AX_DATA + 0x6000);
+    ax_set(&a, UC_X86_REG_RDX, 0x30);
+    n = AX_TILESTORED(code, 1, 7, 2, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 0x6000, mem, sizeof(mem)));
+    for (j = 0; j < 0x200; j++) {
+        int row = j / 0x30, col = j % 0x30;
+        uint8_t exp = (row < 5 && col < 24) ? ax_pat(0x1040 + row * 0x100 + col, 1) : 0xa5;
+        TEST_CHECK_(mem[j] == exp, "store byte %x", j);
+    }
+
+    /* start_row restart: start_row = 2 loads rows 2..4 only, rows 0-1 kept, rows >= 2 zeroed */
+    memset(tile, 0x5c, sizeof(tile));
+    ax_tile_set(&a, 1, tile);
+    cfg[1] = 2;
+    ax_cfg_set(&a, cfg);
+    n = AX_TILELOADD(code, 1, 6, 1, 0, 0x40);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 1, tile);
+    for (r = 0; r < 16; r++) {
+        for (j = 0; j < 64; j++) {
+            uint8_t exp = r < 2 ? 0x5c : (r < 5 && j < 24) ? ax_pat(0x1040 + r * 0x100 + j, 1) : 0;
+            TEST_CHECK_(tile[64 * r + j] == exp, "restart tmm1 %d/%d", r, j);
+        }
+    }
+    ax_cfg_get(&a, out);
+    TEST_CHECK(out[1] == 0);
+    /* TILESTORED from start_row 4 writes only row 4 */
+    cfg[1] = 4;
+    ax_cfg_set(&a, cfg);
+    memset(mem, 0xa5, sizeof(mem));
+    OK(uc_mem_write(a.uc, AX_DATA + 0x6000, mem, sizeof(mem)));
+    n = AX_TILESTORED(code, 1, 7, 2, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 0x6000, mem, sizeof(mem)));
+    TEST_CHECK(mem[0] == 0xa5 && mem[3 * 0x30] == 0xa5);
+    TEST_CHECK(mem[4 * 0x30] == ax_pat(0x1040 + 4 * 0x100, 1) && mem[4 * 0x30 + 24] == 0xa5);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(out[1] == 0);
+    cfg[1] = 0;
+    ax_cfg_set(&a, cfg);
+
+    /* FS segment override: linear = FS.base + EA */
+    {
+        uint64_t fsb = 0x1000;
+        OK(uc_reg_write(a.uc, UC_X86_REG_FS_BASE, &fsb));
+        ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+        ax_set(&a, UC_X86_REG_RCX, 0x100);
+        code[0] = 0x64;
+        n = 1 + AX_TILELOADD(code + 1, 5, 6, 1, 0, 0);
+        TEST_CHECK(ax_run(&a, code, n) == -1);
+        ax_tile_get(&a, 5, tile);
+        TEST_CHECK(tile[0] == ax_pat(0x2000, 1) && tile[64 + 5] == ax_pat(0x2105, 1));
+        TEST_CHECK(tile[8] == 0);                            /* colsb 8 */
+        fsb = 0;
+        OK(uc_reg_write(a.uc, UC_X86_REG_FS_BASE, &fsb));
+    }
+    /* 67H: 32-bit effective address (upper RSI bits ignored, wraps at 4 GiB) */
+    ax_set(&a, UC_X86_REG_RSI, 0xffffffff00000000ULL | (AX_DATA + 0x1000));
+    ax_set(&a, UC_X86_REG_RCX, 0x100);
+    code[0] = 0x67;
+    n = 1 + AX_TILELOADD(code + 1, 2, 6, 1, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 2, tile);
+    TEST_CHECK(tile[0] == ax_pat(0x1000, 1) && tile[2 * 64 + 3] == ax_pat(0x1203, 1));
+
+    /* TILEZERO tmm0: all 16 x 64 bytes, start_row := 0 */
+    cfg[1] = 7;
+    ax_cfg_set(&a, cfg);
+    n = ax_enc_tilezero(code, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 0, tile);
+    TEST_CHECK(m0_all_bytes(tile, 0, 1024, 0));
+    ax_cfg_get(&a, out);
+    TEST_CHECK(out[1] == 0);
+
+    /* a fault in the middle: rows from AX_DATA + 0x1F000 + r*0x400 leave the mapping at row 4
+       (AX_DATA_SIZE = 0x20000): start_row = 4, rows 0-3 loaded, the rest zeroed */
+    memset(tile, 0x77, sizeof(tile));
+    ax_tile_set(&a, 3, tile);
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1f000);
+    ax_set(&a, UC_X86_REG_RCX, 0x400);
+    n = AX_TILELOADD(code, 3, 6, 1, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == 1000 + UC_ERR_READ_UNMAPPED);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(out[1] == 4);
+    TEST_MSG("start_row %d", out[1]);
+    ax_tile_get(&a, 3, tile);
+    TEST_CHECK(tile[0] == ax_pat(0x1f000, 1) && tile[3 * 64] == ax_pat(0x1fc00, 1));
+    TEST_CHECK(tile[4 * 64] == 0 && tile[15 * 64 + 63] == 0);
+    /* the restart (start_row 4, mapped memory now) loads rows 4.. and keeps 0-3 */
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    n = AX_TILELOADD(code, 3, 6, 1, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 3, tile);
+    TEST_CHECK(tile[0] == ax_pat(0x1f000, 1) && tile[4 * 64] == ax_pat(0x1000, 1));
+    ax_close(&a);
+}
+
+/* NoVmp U177-U180: every TMUL vector of ref_amx.py */
+static void test_x86_amx_tmul_vectors(void)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_amx_tvecs) / sizeof(x86_amx_tvecs[0]); i++) {
+        const struct x86_amx_tvec *v = &x86_amx_tvecs[i];
+        static uint8_t tiles[8][1024];
+        uint8_t cfg[64], out[1024], exp[1024], ocfg[64];
+        uint64_t h = 0xCBF29CE484222325ULL;
+        AmxT a;
+        int t, vec;
+
+        for (t = 0; t < 8; t++) {
+            ax_fill_tile(v->seed, t, v->kind[t], tiles[t]);
+            h = ax_fnv(tiles[t], 1024, h);
+        }
+        TEST_CHECK_(h == v->in_hash, "%s: generator hash %016llx", v->name, (unsigned long long)h);
+        ax_hex(v->cfg, cfg, 64);
+        ax_hex(v->exp, exp, 1024);
+        ax_open(&a, UC_MODE_64, v->mask, NULL, 0);
+        TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+        ax_cfg_set(&a, cfg);
+        for (t = 0; t < 8; t++) {
+            ax_tile_set(&a, t, tiles[t]);
+        }
+        vec = ax_run(&a, v->code, v->code_len);
+        TEST_CHECK_(vec == -1, "%s executes (vector %d)", v->name, vec);
+        for (t = 0; t < 8; t++) {
+            ax_tile_get(&a, t, out);
+            if (t == v->dst) {
+                int k;
+                for (k = 0; k < 1024; k += 4) {
+                    if (memcmp(out + k, exp + k, 4)) {
+                        uint32_t g, e;
+                        memcpy(&g, out + k, 4);
+                        memcpy(&e, exp + k, 4);
+                        TEST_CHECK_(0, "%s: row %d dword %d = %08x, expected %08x", v->name,
+                                    k / 64, (k % 64) / 4, g, e);
+                        break;
+                    }
+                }
+            } else {
+                TEST_CHECK_(memcmp(out, tiles[t], 1024) == 0, "%s: tmm%d unchanged", v->name, t);
+            }
+        }
+        ax_cfg_get(&a, ocfg);
+        cfg[1] = 0;                                  /* zero_tilecfg_start() */
+        TEST_CHECK_(memcmp(ocfg, cfg, 64) == 0, "%s: TILECFG", v->name);
+        ax_close(&a);
+    }
+}
+
+/* NoVmp U175-U180: the exception matrix of ref_amx.py (#UD / #NM / #GP / none) */
+static void test_x86_amx_exceptions(void)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_amx_evecs) / sizeof(x86_amx_evecs[0]); i++) {
+        const struct x86_amx_evec *v = &x86_amx_evecs[i];
+        uint8_t cfg[64], mem_cfg[64], post[64], out[64];
+        AmxT a;
+        int vec;
+
+        ax_hex(v->cfg, cfg, 64);
+        ax_hex(v->mem_cfg, mem_cfg, 64);
+        ax_hex(v->post_cfg, post, 64);
+        ax_open(&a, v->mode64 ? UC_MODE_64 : UC_MODE_32, v->mask, NULL, 0);
+        if (v->xcr0) {
+            OK(uc_reg_write(a.uc, UC_X86_REG_XCR0, &v->xcr0));
+        }
+        ax_cfg_set(&a, cfg);
+        if (v->xfd) {
+            ax_msr_write(&a, 0x1c4, v->xfd);
+        }
+        if (!v->osxsave) {
+            uint64_t cr4 = 0;
+            OK(uc_reg_read(a.uc, UC_X86_REG_CR4, &cr4));
+            cr4 &= ~(1ULL << 18);
+            OK(uc_reg_write(a.uc, UC_X86_REG_CR4, &cr4));
+        }
+        OK(uc_mem_write(a.uc, AX_DATA + 0x1000, mem_cfg, 64));
+        ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+        ax_set(&a, UC_X86_REG_RDI, AX_DATA + 0x4000);
+        ax_set(&a, UC_X86_REG_RCX, 64);
+        if (v->mode64) {
+            ax_set(&a, UC_X86_REG_R12, 64);
+        }
+        vec = ax_run(&a, v->code, v->code_len);
+        TEST_CHECK_(vec == v->vec, "%s: vector %d, expected %d", v->name, vec, v->vec);
+        if (v->mask) {
+            TEST_CHECK_(ax_msr_read(&a, 0x1c5) == v->xfd_err, "%s: IA32_XFD_ERR %llx", v->name,
+                        (unsigned long long)ax_msr_read(&a, 0x1c5));
+        }
+        ax_cfg_get(&a, out);
+        TEST_CHECK_(memcmp(out, post, 64) == 0, "%s: TILECFG afterwards", v->name);
+        ax_close(&a);
+    }
+}
+
+/* NoVmp U172/U173: XSAVE family with components 17-18 (+ XFD) */
+static void ax_xop(AmxT *a, const char *code, uint64_t rfbm, int expect)
+{
+    ax_set(a, UC_X86_REG_RSI, AX_DATA);
+    ax_set(a, UC_X86_REG_RAX, (uint32_t)rfbm);
+    ax_set(a, UC_X86_REG_RDX, (uint32_t)(rfbm >> 32));
+    TEST_CHECK_(ax_run(a, (const uint8_t *)code, 3) == expect, "xop %02x %02x %02x rfbm %llx",
+                (uint8_t)code[0], (uint8_t)code[1], (uint8_t)code[2], (unsigned long long)rfbm);
+}
+
+static void ax_put_state(AmxT *a, const uint8_t cfg[64], unsigned salt)
+{
+    uint8_t tile[1024];
+    int t, i;
+    ax_cfg_set(a, cfg);
+    for (t = 0; t < 8; t++) {
+        for (i = 0; i < 1024; i++) {
+            tile[i] = (uint8_t)(i * 3 + t * 17 + salt);
+        }
+        ax_tile_set(a, t, tile);
+    }
+}
+
+static int ax_state_is(AmxT *a, const uint8_t cfg[64], unsigned salt, int zero_tiles)
+{
+    uint8_t tile[1024], out[64];
+    int t, i, ok = 1;
+    ax_cfg_get(a, out);
+    ok &= memcmp(out, cfg, 64) == 0;
+    for (t = 0; t < 8; t++) {
+        ax_tile_get(a, t, tile);
+        for (i = 0; i < 1024; i++) {
+            ok &= tile[i] == (zero_tiles ? 0 : (uint8_t)(i * 3 + t * 17 + salt));
+        }
+    }
+    return ok;
+}
+
+static void test_x86_amx_xsave(void)
+{
+    static const int spec[] = {0, 16, 64, 6, 3, 20, -1};
+    static uint8_t area[0x3000];
+    uint8_t cfg[64], zero64[64] = {0};
+    AmxT a;
+    uint64_t bv;
+    int t, i;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_cfg_make(cfg, 3, spec);
+    ax_put_state(&a, cfg, 0x40);
+
+    /* XSAVE: TILECFG at AC0h (the STTILECFG image), all 8 KB of TILEDATA at B00h */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK((m0_rd64(area, 512) & 0x60000) == 0x60000);
+    TEST_CHECK(memcmp(area + 0xac0, cfg, 64) == 0);
+    for (t = 0; t < 8; t++) {
+        for (i = 0; i < 1024; i++) {
+            if (area[0xb00 + 1024 * t + i] != (uint8_t)(i * 3 + t * 17 + 0x40)) {
+                TEST_CHECK_(0, "XSAVE tmm%d byte %d", t, i);
+                t = 8;
+                break;
+            }
+        }
+    }
+    TEST_CHECK(m0_all_bytes(area, 0x2b00, 0x100, 0xcc));
+    /* scribble, XRSTOR: TILECFG (start_row too) and every tile byte back */
+    ax_put_state(&a, zero64, 0x99);
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+    TEST_CHECK(ax_state_is(&a, cfg, 0x40, 0));
+    /* XSTATE_BV[18:17] = 0: both initialised */
+    bv = m0_rd64(area, 512) & ~0x60000ULL;
+    OK(uc_mem_write(a.uc, AX_DATA + 512, &bv, 8));
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+    TEST_CHECK(ax_state_is(&a, zero64, 0, 1));
+    /* RFBM = TILEDATA only: tiles loaded whatever TILECFG is (INIT here), TILECFG untouched */
+    bv |= 0x60000;
+    OK(uc_mem_write(a.uc, AX_DATA + 512, &bv, 8));
+    ax_xop(&a, M0_XRSTOR, 0x40000, -1);
+    TEST_CHECK(ax_state_is(&a, zero64, 0x40, 0));
+    /* RFBM = TILECFG only: configuration loaded, TILEDATA not touched */
+    ax_put_state(&a, zero64, 0x99);
+    ax_xop(&a, M0_XRSTOR, 0x20000, -1);
+    TEST_CHECK(ax_state_is(&a, cfg, 0x99, 0));
+    /* an image LDTILECFG would refuse (rows 17) is loaded as INIT, without #GP */
+    area[0xac0 + 48] = 17;
+    OK(uc_mem_write(a.uc, AX_DATA + 0xac0, area + 0xac0, 64));
+    ax_put_state(&a, cfg, 0x99);
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+    TEST_CHECK(ax_state_is(&a, zero64, 0x40, 0));
+    area[0xac0 + 48] = 16;
+    OK(uc_mem_write(a.uc, AX_DATA + 0xac0, area + 0xac0, 64));
+
+    /* XINUSE (value-based): INIT TILECFG and zero tiles -> 18:17 not in use */
+    ax_put_state(&a, zero64, 0);
+    {
+        uint8_t z[1024] = {0};
+        for (t = 0; t < 8; t++) {
+            ax_tile_set(&a, t, z);
+        }
+        TEST_CHECK((ax_xgetbv1(&a) & 0x60000) == 0);
+        ax_cfg_set(&a, cfg);
+        TEST_CHECK((ax_xgetbv1(&a) & 0x60000) == 0x20000);
+        z[1023] = 1;
+        ax_tile_set(&a, 7, z);
+        TEST_CHECK((ax_xgetbv1(&a) & 0x60000) == 0x60000);
+        ax_cfg_set(&a, zero64);
+        TEST_CHECK((ax_xgetbv1(&a) & 0x60000) == 0x40000);
+        z[1023] = 0;
+        ax_tile_set(&a, 7, z);
+    }
+    /* XSAVE of the INIT state: XSTATE_BV[18:17] = 0, sections still written (zeros) */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK((m0_rd64(area, 512) & 0x60000) == 0);
+    TEST_CHECK(m0_all_bytes(area, 0xac0, 0x2040, 0));
+    /* XSAVEOPT leaves the sections of unused components alone */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVEOPT, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK(m0_all_bytes(area, 0xac0, 0x2040, 0xcc));
+
+    /* XSAVEC (XCR0 60007h): TILECFG at 340h, TILEDATA at 380h, XCOMP_BV 8000...60007h */
+    ax_put_state(&a, cfg, 0x21);
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVEC, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK(m0_rd64(area, 520) == 0x8000000000060007ULL);
+    TEST_CHECK(memcmp(area + 0x340, cfg, 64) == 0);
+    TEST_CHECK(area[0x380] == (uint8_t)0x21 && area[0x380 + 0x1fff] == (uint8_t)(1023 * 3 + 7 * 17 + 0x21));
+    TEST_CHECK(m0_all_bytes(area, 0x2380, 0x80, 0xcc));
+    ax_put_state(&a, zero64, 0x99);
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);                       /* compacted XRSTOR */
+    TEST_CHECK(ax_state_is(&a, cfg, 0x21, 0));
+    /* with PKRU (8 bytes) in XCR0 the AMX components move to the next 64-byte boundary */
+    {
+        uint32_t r[4];
+        ax_cpuid(&a, 0xd, 0, r);
+        if (r[0] & 0x200) {
+            TEST_CHECK(ax_xsetbv(&a, AX_XCR0 | 0x200) == -1);
+            ax_put_state(&a, cfg, 0x31);
+            memset(area, 0xcc, sizeof(area));
+            memset(area + 512, 0, 64);
+            OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+            ax_xop(&a, M0_XSAVEC, ~0ULL, -1);
+            OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+            TEST_CHECK(memcmp(area + 0x380, cfg, 64) == 0);
+            TEST_CHECK(area[0x3c0] == (uint8_t)0x31);
+            TEST_CHECK(m0_all_bytes(area, 0x348, 0x38, 0xcc));      /* the alignment gap */
+            ax_put_state(&a, zero64, 0x99);
+            ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+            TEST_CHECK(ax_state_is(&a, cfg, 0x31, 0));
+            TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+        }
+    }
+    ax_close(&a);
+
+    /* 32-bit mode: the XSAVE feature set manages AMX state in any mode */
+    ax_open(&a, UC_MODE_32, UC_X86_AMX_ALL, NULL, 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_put_state(&a, cfg, 0x55);
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK(memcmp(area + 0xac0, cfg, 64) == 0 && area[0xb00] == 0x55);
+    ax_put_state(&a, zero64, 0x99);
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+    TEST_CHECK(ax_state_is(&a, cfg, 0x55, 0));
+    {
+        static const uint8_t rel[] = {0xc4, 0xe2, 0x78, 0x49, 0xc0};
+        TEST_CHECK(ax_run(&a, rel, sizeof(rel)) == 6);       /* AMX itself: 64-bit only */
+    }
+    ax_close(&a);
+}
+
+/* NoVmp U173: IA32_XFD / IA32_XFD_ERR, #NM, XSAVE/XRSTOR with XFD armed */
+static void test_x86_amx_xfd(void)
+{
+    static const int spec[] = {0, 16, 64, 1, 16, 64, -1};
+    static uint8_t area[0x3000];
+    uint8_t cfg[64], code[16], out[64], tile[1024];
+    AmxT a;
+    size_t n;
+    uint64_t bv;
+
+    ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, NULL, 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    /* only bit 18 is supported (CPUID.(0DH,18):ECX[2]); the reset values are 0 */
+    TEST_CHECK(ax_rdmsr(&a, 0x1c4) == 0 && ax_rdmsr(&a, 0x1c5) == 0);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x20000) == 13);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x60000) == 13);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 1) == 13);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c5, 0x80000) == 13);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c4) == 0);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c5, 0x40000) == -1);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0x40000);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c5, 0) == -1);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x40000) == -1);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c4) == 0x40000);
+
+    ax_cfg_make(cfg, 0, spec);
+    ax_put_state(&a, cfg, 0x10);
+    /* TILELOADD #NM, IA32_XFD_ERR = 40000h, nothing changed */
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    ax_set(&a, UC_X86_REG_RCX, 64);
+    n = AX_TILELOADD(code, 1, 6, 1, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == 7);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0x40000);
+    TEST_CHECK(ax_state_is(&a, cfg, 0x10, 0));
+    TEST_CHECK(ax_wrmsr(&a, 0x1c5, 0) == -1);
+    /* STTILECFG does not use TILEDATA: no #NM */
+    ax_set(&a, UC_X86_REG_RDI, AX_DATA + 0x4000);
+    n = AX_STTILECFG(code, 7);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 0x4000, out, 64));
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0);
+
+    /* XSAVE: XSTATE_BV[18] = 0 and the initial configuration (zeros) for TILEDATA */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK((m0_rd64(area, 512) & 0x60000) == 0x20000);
+    TEST_CHECK(memcmp(area + 0xac0, cfg, 64) == 0);
+    TEST_CHECK(m0_all_bytes(area, 0xb00, 0x2000, 0));
+    /* XSAVEOPT / XSAVEC: TILEDATA not saved */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVEOPT, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK((m0_rd64(area, 512) & 0x60000) == 0x20000);
+    TEST_CHECK(m0_all_bytes(area, 0xb00, 0x2000, 0xcc));
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVEC, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    TEST_CHECK((m0_rd64(area, 512) & 0x60000) == 0x20000);
+    TEST_CHECK(m0_all_bytes(area, 0x380, 0x2000, 0xcc));
+    /* XGETBV(1) is not affected by XFD */
+    TEST_CHECK((ax_xgetbv1(&a) & 0x60000) == 0x60000);
+
+    /* XRSTOR loading TILEDATA (XSTATE_BV[18] = 1): #NM before anything is loaded */
+    memset(area, 0, sizeof(area));
+    memcpy(area + 0xac0, cfg, 64);
+    memset(area + 0xb00, 0x3c, 0x2000);
+    bv = 0x60003;
+    memcpy(area + 512, &bv, 8);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_put_state(&a, cfg, 0x10);
+    ax_xop(&a, M0_XRSTOR, ~0ULL, 7);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0x40000);
+    TEST_CHECK(ax_state_is(&a, cfg, 0x10, 0));
+    TEST_CHECK(ax_wrmsr(&a, 0x1c5, 0) == -1);
+    /* RFBM without 18: no #NM */
+    ax_xop(&a, M0_XRSTOR, 0x20003, -1);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0);
+    /* XSTATE_BV[18] = 0: TILEDATA initialised, no #NM */
+    bv = 0x20003;
+    OK(uc_mem_write(a.uc, AX_DATA + 512, &bv, 8));
+    ax_xop(&a, M0_XRSTOR, ~0ULL, -1);
+    TEST_CHECK(ax_state_is(&a, cfg, 0, 1));
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0);
+
+    /* LDTILECFG and TILERELEASE initialise TILEDATA without #NM */
+    memset(tile, 0x44, sizeof(tile));
+    ax_tile_set(&a, 0, tile);
+    OK(uc_mem_write(a.uc, AX_DATA + 0x1000, cfg, 64));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+    n = AX_LDTILECFG(code, 6);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_tile_get(&a, 0, tile);
+    TEST_CHECK(m0_all_bytes(tile, 0, 1024, 0));
+    TEST_CHECK(ax_run(&a, ax_tilerelease, sizeof(ax_tilerelease)) == -1);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c5) == 0);
+    /* XFD[18] has no effect while XCR0[18] = 0 */
+    TEST_CHECK(ax_xsetbv(&a, 0x7) == -1);
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    /* disarmed: TILELOADD runs */
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0) == -1);
+    ax_cfg_set(&a, cfg);
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    n = AX_TILELOADD(code, 1, 6, 1, 0, 0);
+    TEST_CHECK(ax_run(&a, code, n) == -1);
+    ax_close(&a);
+
+    /* without the opt-in the MSRs keep QEMU's store/return behaviour and have no effect */
+    ax_open(&a, UC_MODE_64, 0, NULL, 0);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x12345678abcdef00ULL) == -1);
+    TEST_CHECK(ax_rdmsr(&a, 0x1c4) == 0x12345678abcdef00ULL);
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_xop(&a, M0_XSAVE, ~0ULL, -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    /* IA32_XFD bit 9 is not an XFD component: PKRU is still saved as in use */
+    if (ax_xcr0(&a) & 0x200) {
+        TEST_CHECK(m0_rd64(area, 512) & 0x200);
+    }
+    ax_close(&a);
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -8655,4 +9930,13 @@ TEST_LIST = {
     {"test_x86_mpx_modrm_length", test_x86_mpx_modrm_length},
     {"test_x86_vex_b_32", test_x86_vex_b_32},
     {"test_x86_mem_write_invalidates_tb", test_x86_mem_write_invalidates_tb},
+    {"test_x86_amx_optin", test_x86_amx_optin},
+    {"test_x86_amx_xsetbv", test_x86_amx_xsetbv},
+    {"test_x86_amx_api", test_x86_amx_api},
+    {"test_x86_amx_cfg_insns", test_x86_amx_cfg_insns},
+    {"test_x86_amx_load_store", test_x86_amx_load_store},
+    {"test_x86_amx_tmul_vectors", test_x86_amx_tmul_vectors},
+    {"test_x86_amx_exceptions", test_x86_amx_exceptions},
+    {"test_x86_amx_xsave", test_x86_amx_xsave},
+    {"test_x86_amx_xfd", test_x86_amx_xfd},
     {NULL, NULL}};
