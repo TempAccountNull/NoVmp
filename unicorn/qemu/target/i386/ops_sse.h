@@ -866,6 +866,7 @@ int64_t helper_cvttsd2sq(CPUX86State *env, ZMMReg *s)
 #endif
 #endif
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U81) */
 void glue(helper_rsqrtps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
 {
     int old_flags = get_float_exception_flags(&env->sse_status);
@@ -915,6 +916,46 @@ void helper_rcpss(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s)
     set_float_exception_flags(old_flags, &env->sse_status);
 }
 #endif
+#else /* ours (U81) */
+/* NoVmp (ledger U81): Intel 12-bit approximations, see x86_rcp12/x86_rsqrt12 */
+void glue(helper_rsqrtps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+{
+    int i;
+    for (i = 0; i < 2 << SHIFT; i++) {
+        d->ZMM_L(i) = x86_rsqrt12(s->ZMM_L(i));
+    }
+}
+
+#if SHIFT == 1
+void helper_rsqrtss(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s)
+{
+    int i;
+    d->ZMM_L(0) = x86_rsqrt12(s->ZMM_L(0));
+    for (i = 1; i < 2 << SHIFT; i++) {
+        d->ZMM_L(i) = v->ZMM_L(i);
+    }
+}
+#endif
+
+void glue(helper_rcpps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+{
+    int i;
+    for (i = 0; i < 2 << SHIFT; i++) {
+        d->ZMM_L(i) = x86_rcp12(s->ZMM_L(i));
+    }
+}
+
+#if SHIFT == 1
+void helper_rcpss(CPUX86State *env, ZMMReg *d, ZMMReg *v, ZMMReg *s)
+{
+    int i;
+    d->ZMM_L(0) = x86_rcp12(s->ZMM_L(0));
+    for (i = 1; i < 2 << SHIFT; i++) {
+        d->ZMM_L(i) = v->ZMM_L(i);
+    }
+}
+#endif
+#endif /* __Use_Original_Qemu (U81) */
 
 #if SHIFT == 1
 static inline uint64_t helper_extrq(uint64_t src, int shift, int len)
