@@ -821,6 +821,25 @@ static void gen_EVEX_VSQRT(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
 }
 #endif /* __Use_Original_Qemu (U156) */
+#if __Use_Original_Qemu != 1 /* ours (U157) */
+
+/*
+ * NoVmp (ledger U157): VPSLLVD/Q, VPSRLVD/Q, VPSRAVD/Q (VPSRAVQ is new in AVX-512): a
+ * count >= the element width gives 0 / the sign (ops_sse.h vpsxxv helpers, SSE_FN3).
+ */
+#define EVEX_VSHIFT(uname, lname)                                                    \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+    SSEFunc_0_eppp fn = s->vex_w ? SSE_FN3(s, decode, lname##q)                      \
+                                 : SSE_FN3(s, decode, lname##d);                     \
+                                                                                     \
+    fn(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);                                 \
+}
+EVEX_VSHIFT(VPSLLV, vpsllv)
+EVEX_VSHIFT(VPSRLV, vpsrlv)
+EVEX_VSHIFT(VPSRAV, vpsrav)
+#endif /* __Use_Original_Qemu (U157) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */

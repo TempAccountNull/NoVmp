@@ -2083,6 +2083,12 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x3f] = X86_OP_ENTRY3(EVEX_PMAXU, V,x, H,x, W,x, EV_INT(WSEL)),
     [0x40] = X86_OP_ENTRY3(PMULLD, V,x, H,x, W,x, EV_INT(W0)),
 #endif /* __Use_Original_Qemu (U155) */
+#if __Use_Original_Qemu != 1 /* ours (U157) */
+    /* NoVmp (ledger U157): VPSRLVD/Q (45), VPSRAVD/Q (46), VPSLLVD/Q (47); Full, E4 */
+    [0x45] = X86_OP_ENTRY3(EVEX_VPSRLV, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x46] = X86_OP_ENTRY3(EVEX_VPSRAV, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x47] = X86_OP_ENTRY3(EVEX_VPSLLV, V,x, H,x, W,x, EV_INT(WSEL)),
+#endif /* __Use_Original_Qemu (U157) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
     /*
      * NoVmp (ledger U153): broadcasts, Tuple1 Scalar memory operand, {k1}{z}; E6 (E7NM for
