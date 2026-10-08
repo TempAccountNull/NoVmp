@@ -2909,6 +2909,101 @@ illegal:
     return false;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U145) */
+/*
+ * NoVmp (ledger U145): opcode-dependent EVEX #UD rules and #NM, after the CPUID feature
+ * of the form (SDM Vol2A 2.7.11, Tables 2-39, 2-41, 2-42; 2.8 exception classes E1-E12).
+ * The prefix rules (Table 2-40, LOCK/66/F2/F3/REX) are checked while parsing 62h, EVEX.W,
+ * EVEX.b (Table 2-43) and the vector length in decode_evex_vl.
+ * - Table 2-39: CR4.OSXSAVE = 1 and XCR0[7:5,2:1] = 111b,11b (HF_AVX512_EN, U121).
+ * - CPUID: AVX512VL for EVEX.128/256 (not for {er}/{sae} reg-reg: 512 bits, or LIG).
+ * - Table 2-41: ModRM.reg encoding a k register or GPR with EVEX.R' = 0 (64-bit), a k
+ *   register with EVEX.R = 0 (64-bit); EVEX.V' = 0 outside 64-bit mode; vvvv not used:
+ *   vvvv != 1111b or V' = 0.
+ * - Table 2-42: z = 1 with aaa = 000b, with a memory destination, or for k destinations;
+ *   aaa != 000b on forms without masking; aaa = 000b on gathers/scatters.
+ * - #NM if CR0.TS = 1 (2.7.12); CR0.EM is not an EVEX condition.
+ */
+static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
+{
+    X86OpEntry *e = &decode->e;
+    bool uses_vvvv = false, reg_k = false, reg_gpr = false;
+    X86OpType t[3] = { e->op0, e->op1, e->op2 };
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        switch (t[i]) {
+        case X86_TYPE_H:
+        case X86_TYPE_B:
+        case X86_TYPE_KH:
+            uses_vvvv = true;
+            break;
+        case X86_TYPE_K:
+            reg_k = true;
+            break;
+        case X86_TYPE_G:
+            reg_gpr = true;
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (!(s->flags & HF_AVX512_EN_MASK)) {
+        goto illegal;
+    }
+    if (!(e->evex_vl & X86_EVEX_LIG) && s->evex_vl < 64 &&
+        !(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512VL)) {
+        goto illegal;
+    }
+    if (CODE64(s)) {
+        if ((reg_k || reg_gpr) && s->evex_rr) {
+            goto illegal;
+        }
+        if (reg_k && REX_R(s)) {
+            goto illegal;
+        }
+    } else if (!(s->evex_p2 & 0x08)) {
+        goto illegal;
+    }
+    if (!uses_vvvv && ((s->evex_p1 & 0x78) != 0x78 ||
+                       (!(s->evex_p2 & 0x08) && e->vex_class != 12))) {
+        goto illegal;               /* V' extends a VSIB index (class 12) instead */
+    }
+    switch (e->evex_mask) {
+    case X86_EVEX_MASK_MZ:
+        if (s->evex_z && (!s->evex_aaa || decode->op[0].has_ea)) {
+            goto illegal;
+        }
+        break;
+    case X86_EVEX_MASK_M:
+    case X86_EVEX_MASK_KDEST:
+        if (s->evex_z) {
+            goto illegal;
+        }
+        break;
+    case X86_EVEX_MASK_KREQ:
+        if (s->evex_z || !s->evex_aaa) {
+            goto illegal;
+        }
+        break;
+    default:
+        if (s->evex_z || s->evex_aaa) {
+            goto illegal;
+        }
+        break;
+    }
+    if (s->flags & HF_TS_MASK) {
+        gen_NM_exception(s);
+        return false;
+    }
+    return true;
+
+illegal:
+    gen_illegal_opcode(s);
+    return false;
+}
+#endif /* __Use_Original_Qemu (U145) */
 
 static void decode_temp_free(TCGContext *tcg_ctx, X86DecodedOp *op)
 {
@@ -3237,6 +3332,14 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         break;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U145) */
+    if (s->prefix & PREFIX_EVEX) {
+        if (validate_evex(s, &decode)) {
+        }
+        decode_temps_free(tcg_ctx, &decode);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U145) */
     if (!validate_vex(s, &decode)) {
         return;
     }
