@@ -1987,7 +1987,44 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         }
         gen_load(s, &decode, 1, s->T0);
         gen_load(s, &decode, 2, s->T1);
+#if __Use_Original_Qemu == 1 /* original QEMU (U67) */
         decode.e.gen(s, env, &decode);
+#else /* ours (U67) */
+        /*
+         * NoVmp (ledger U67): SIMD floating-point instructions (exception
+         * classes 2/3, FMA, F16C, the CVT MMX forms) check their new MXCSR
+         * exceptions before the destination is written back: snapshot the
+         * destination register, run, then helper_sse_fp_end restores it and
+         * raises #XM/#UD on an unmasked exception. VCVTPS2PH m does it itself.
+         */
+        {
+            bool xm = ((decode.e.vex_class == 2 || decode.e.vex_class == 3) &&
+                       decode.e.gen != gen_VMPSADBW) ||
+                      decode.e.cpuid == X86_FEAT_FMA || decode.e.vex_class == 11 ||
+                      decode.e.gen == gen_CVTPI2Px || decode.e.gen == gen_CVTPx2PI ||
+                      decode.e.gen == gen_CVTTPx2PI;
+            int xm_len = 0, xm_ofs = 0;
+
+            if (xm && decode.e.gen == gen_VCVTPS2PH && decode.op[0].has_ea) {
+                xm = false;
+            }
+            if (xm && !decode.op[0].has_ea &&
+                (decode.op[0].unit == X86_OP_SSE || decode.op[0].unit == X86_OP_MMX)) {
+                xm_ofs = vector_reg_offset(&decode.op[0]);
+                xm_len = decode.op[0].unit == X86_OP_SSE ? 32 : 8;
+                tcg_gen_gvec_mov(tcg_ctx, MO_64, offsetof(CPUX86State, xm_save), xm_ofs,
+                                 xm_len, xm_len);
+            }
+            if (xm) {
+                gen_helper_sse_fp_begin(tcg_ctx, cpu_env);
+            }
+            decode.e.gen(s, env, &decode);
+            if (xm) {
+                gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, xm_ofs),
+                                      tcg_constant_i32(tcg_ctx, xm_len));
+            }
+        }
+#endif /* __Use_Original_Qemu (U67) */
         gen_writeback(s, &decode, 0, s->T0);
 #if __Use_Original_Qemu != 1 /* ours (U44) */
         if (decode.op[0].unit == X86_OP_MMX && !decode.op[0].has_ea) {

@@ -5155,6 +5155,57 @@ void update_mxcsr_from_sse_status(CPUX86State *env)
                     0));
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+/*
+ * NoVmp (ledger U67): SIMD floating-point exceptions (SDM Vol1 11.5, Vol3
+ * 6.15 #XM). An SSE/AVX FP instruction whose new MXCSR exceptions include an
+ * unmasked one does not write its destination; the flags are still set
+ * (an unmasked pre-computation exception IE/DE/ZE suppresses OE/UE/PE) and
+ * #XM is raised, #UD when CR4.OSXMMEXCPT = 0 (i5-13600K: DIVPS 0/0 with
+ * IM = 0 -> #XM, destination unchanged, MXCSR.IE = 1).
+ */
+void helper_sse_fp_begin(CPUX86State *env)
+{
+    env->xm_saved_flags = get_float_exception_flags(&env->sse_status);
+    set_float_exception_flags(0, &env->sse_status);
+    env->xm_cc_src = env->cc_src;
+}
+
+static int sse_flags_to_mxcsr(int flags)
+{
+    return (flags & float_flag_invalid ? FPUS_IE : 0) |
+           (flags & float_flag_input_denormal_used ? FPUS_DE : 0) |
+           (flags & float_flag_divbyzero ? FPUS_ZE : 0) |
+           (flags & float_flag_overflow ? FPUS_OE : 0) |
+           (flags & float_flag_underflow ? FPUS_UE : 0) |
+           (flags & float_flag_inexact ? FPUS_PE : 0) |
+           (flags & float_flag_output_denormal ? FPUS_UE | FPUS_PE : 0);
+}
+
+/* dst: env offset of the destination register (len bytes, 0 = none) */
+void helper_sse_fp_end(CPUX86State *env, uint32_t dst, uint32_t len)
+{
+    int raised = get_float_exception_flags(&env->sse_status);
+    int unmasked = sse_flags_to_mxcsr(raised) & ~(env->mxcsr >> 7) & 0x3f;
+
+    if (unmasked) {
+        if (unmasked & (FPUS_IE | FPUS_DE | FPUS_ZE)) {
+            raised &= ~(float_flag_overflow | float_flag_underflow | float_flag_inexact |
+                        float_flag_output_denormal);
+        }
+        set_float_exception_flags(env->xm_saved_flags | raised, &env->sse_status);
+        if (len) {
+            memcpy((uint8_t *)env + dst, &env->xm_save, len);
+        }
+        env->cc_src = env->xm_cc_src;
+        update_mxcsr_from_sse_status(env);
+        raise_exception_ra(env, (env->cr[4] & CR4_OSXMMEXCPT_MASK) ? EXCP13_XM : EXCP06_ILLOP,
+                           GETPC());
+    }
+    set_float_exception_flags(env->xm_saved_flags | raised, &env->sse_status);
+}
+#endif /* __Use_Original_Qemu (U67) */
+
 void helper_update_mxcsr(CPUX86State *env)
 {
     update_mxcsr_from_sse_status(env);

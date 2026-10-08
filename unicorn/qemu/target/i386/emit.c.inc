@@ -2246,9 +2246,22 @@ static void gen_VCVTPS2PD(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 
 static void gen_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    /* memory destination: #XM must come before the store (U67) */
+    if (decode->op[0].has_ea) {
+        gen_helper_sse_fp_begin(tcg_ctx, cpu_env);
+    }
+#endif /* __Use_Original_Qemu (U67) */
     gen_unary_imm_fp_sse(s, env, decode,
                       gen_helper_cvtps2ph_xmm,
                       gen_helper_cvtps2ph_ymm);
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+    if (decode->op[0].has_ea) {
+        gen_helper_sse_fp_end(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, 0),
+                              tcg_constant_i32(tcg_ctx, 0));
+    }
+#endif /* __Use_Original_Qemu (U67) */
     /*
      * VCVTPS2PH is the only instruction that performs an operation on a
      * register source and then *stores* into memory.

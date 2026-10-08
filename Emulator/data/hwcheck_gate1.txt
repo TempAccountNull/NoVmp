@@ -103,3 +103,10 @@ mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x210], 1; xrstor [rsi
 mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x200], 4; xrstor [rsi]
 mov eax, 3; xor edx, edx; xsavec [rsi]; mov dword ptr [rsi+24], 0x11f80; xrstor [rsi]
 mov eax, 2; xor edx, edx; xsavec [rsi]; mov eax, 3; xrstor [rsi] | st0=3FFF:8000000000000000 xmm2=22222222222222222222222222222222
+# --- #XM shapes: COMISS (EFLAGS), scalar, MMX destination, F16C store, precedence, masked control
+ldmxcsr [rsi]; comiss xmm0, xmm1 | m+0x8000=001F0000 xmm1=0100807F000000000000000000000000
+ldmxcsr [rsi]; divss xmm0, xmm1 | m+0x8000=001D0000 xmm0=0000803F0000803F0000803F0000803F
+ldmxcsr [rsi]; cvtps2pi mm0, xmm1 | m+0x8000=001F0000 xmm1=0000C07F0000C07F0000000000000000
+ldmxcsr [rsi]; vcvtps2ph qword ptr [rsi+0x100], xmm1, 0 | m+0x8000=000F0000 xmm1=FFFF7F7F000000000000000000000000
+ldmxcsr [rsi]; mulps xmm0, xmm1 | m+0x8000=00060000 xmm0=FFFF7F7F000000000000000000000000 xmm1=FFFF7F7F000000000000000000000000
+ldmxcsr [rsi]; divps xmm0, xmm1 | m+0x8000=801F0000

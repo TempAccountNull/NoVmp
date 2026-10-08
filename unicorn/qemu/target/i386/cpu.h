@@ -1069,6 +1069,9 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define EXCP10_COPR	16
 #define EXCP11_ALGN	17
 #define EXCP12_MCHK	18
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+#define EXCP13_XM	19   /* NoVmp (U67): SIMD floating-point exception */
+#endif /* __Use_Original_Qemu (U67) */
 
 #define EXCP_VMEXIT     0x100 /* only for system emulation */
 #define EXCP_SYSCALL    0x101 /* only for user emulation */
@@ -1581,6 +1584,16 @@ typedef struct CPUX86State {
     QEMU_ALIGN(16, ZMMReg xmm_regs[CPU_NB_REGS == 8 ? 8 : 32]);
     QEMU_ALIGN(16, ZMMReg xmm_t0);
     MMXReg mmx_t0;
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+    /*
+     * NoVmp (U67): #XM support. The destination of the current SIMD FP
+     * instruction before it ran, the MXCSR flags accumulated before it,
+     * and CC_SRC (COMIS/UCOMIS write EFLAGS).
+     */
+    QEMU_ALIGN(16, ZMMReg xm_save);
+    uint32_t xm_saved_flags;
+    target_ulong xm_cc_src;
+#endif /* __Use_Original_Qemu (U67) */
 
     /*
      * YMM is not supported by QEMU at all

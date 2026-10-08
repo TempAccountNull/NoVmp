@@ -2138,6 +2138,10 @@
 #define helper_fpush helper_fpush_x86_64
 #if __Use_Original_Qemu != 1 /* ours (U46) */
 #define helper_x87_pre helper_x87_pre_x86_64
+#if __Use_Original_Qemu != 1 /* ours (U67) */
+#define helper_sse_fp_begin helper_sse_fp_begin_x86_64
+#define helper_sse_fp_end helper_sse_fp_end_x86_64
+#endif /* __Use_Original_Qemu (U67) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 #define helper_xsavec helper_xsavec_x86_64
 #endif /* __Use_Original_Qemu (U66) */

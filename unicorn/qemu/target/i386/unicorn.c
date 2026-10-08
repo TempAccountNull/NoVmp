@@ -194,7 +194,12 @@ static void reg_reset(struct uc_struct *uc)
         uint32_t cr4 = 0;
 
         if (env->features[FEAT_1_ECX] & CPUID_EXT_XSAVE) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U67) */
             cr4 |= CR4_OSFXSR_MASK | CR4_OSXSAVE_MASK;
+#else /* ours (U67) */
+            /* an OS that enables SSE also enables #XM (Windows, Linux) */
+            cr4 |= CR4_OSFXSR_MASK | CR4_OSXMMEXCPT_MASK | CR4_OSXSAVE_MASK;
+#endif /* __Use_Original_Qemu (U67) */
         }
         if (env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_FSGSBASE) {
             cr4 |= CR4_FSGSBASE_MASK;
