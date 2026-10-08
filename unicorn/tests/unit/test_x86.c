@@ -11445,6 +11445,8 @@ static const struct {
     {UC_X86_AVX512_IFMA, 1, 1u << 21, "\x62\xf2\xed\x48\xb4\xcb"},
     /* U323 AVX512_VPOPCNTDQ: VPOPCNTD zmm1, zmm3 */
     {UC_X86_AVX512_VPOPCNTDQ, 2, 1u << 14, "\x62\xf2\x7d\x48\x55\xcb"},
+    /* U324 AVX512_BITALG: VPOPCNTB zmm1, zmm3 */
+    {UC_X86_AVX512_BITALG, 2, 1u << 12, "\x62\xf2\x7d\x48\x54\xcb"},
 };
 
 static void test_x86_avx512_m4_bits(void)

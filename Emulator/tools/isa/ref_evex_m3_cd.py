@@ -18,6 +18,9 @@ pseudocode), not from any C implementation:
                                                           accumulator
   AVX512_VPOPCNTDQ (U323):
   VPOPCNTD/Q      EVEX.128/256/512.66.0F38.W0/W1 55 /r   Full tuple, {1toN}, E4
+  AVX512_BITALG (U324):
+  VPOPCNTB/W      EVEX.128/256/512.66.0F38.W0/W1 54 /r   Full Mem tuple (no {1toN}), E4
+  VPSHUFBITQMB    EVEX.128/256/512.66.0F38.W0 8F /r      k1{k2}, Full Mem tuple, E4
 
 CPUID: AVX512CD (EVEX.512) and AVX512VL AND AVX512CD (EVEX.128/256), likewise for every
 extension; emu-alltest --avx512 enables all the UC_X86_AVX512_* bits. EVEX.vvvv is
@@ -445,8 +448,27 @@ EXT_FORMS = {
         dict(name="VPOPCNTQ", pp=1, opc=0x55, w=1, layout="rm", mesz=8, besz=8, fs=True,
              fn=lambda d, a, b, vl: pack([popcnt(x) for x in elems(b, 8)], 8)),
     ],
+    "BITALG": [
+        dict(name="VPOPCNTB", pp=1, opc=0x54, w=0, layout="rm", mesz=1, besz=None, fs=True,
+             fn=lambda d, a, b, vl: pack([popcnt(x) for x in elems(b, 1)], 1)),
+        dict(name="VPOPCNTW", pp=1, opc=0x54, w=1, layout="rm", mesz=2, besz=None, fs=True,
+             fn=lambda d, a, b, vl: pack([popcnt(x) for x in elems(b, 2)], 2)),
+        dict(name="VPSHUFBITQMB", pp=1, opc=0x8F, w=0, layout="kvm", mesz=1, besz=None, fs=True,
+             fn=lambda d, a, b, vl: shufbitqmb(a, b, vl)),
+    ],
 }
-EXT_ORDER = ["IFMA", "VPOPCNTDQ"]
+EXT_ORDER = ["IFMA", "VPOPCNTDQ", "BITALG"]
+
+
+def shufbitqmb(src1, src2, vl):
+    """VPSHUFBITQMB (Vol2C): FOR i (qword), j (byte): m := SRC2.qword[i].byte[j] & 0x3F;
+    k1[i*8+j] := SRC1.qword[i].bit[m]  (k2 / KL handled by the generic generator)"""
+    r = 0
+    for i in range(vl // 8):
+        q = int.from_bytes(src1[8 * i:8 * i + 8], "little")
+        for j in range(8):
+            r |= ((q >> (src2[8 * i + j] & 0x3F)) & 1) << (8 * i + j)
+    return r
 
 
 def popcnt(x):
@@ -467,6 +489,8 @@ def ext_vals(sp, n_bytes):
 def gen_ext_case(sp, vl, title, dst, s1, s2, kreg=0, kval=None, z=0, mem=None, bcst=0,
                  aimg=None, bimg=None, dimg=None):
     lay = sp["layout"]
+    if lay == "kvm":
+        dst &= 7                        # k0-k7 (ModRM.reg with EVEX.R = R' = 0)
     c = Case("%s VL%d %s" % (sp["name"], vl * 8, title))
     regs = {}
     if lay in ("rvm", "kvm"):
@@ -644,6 +668,10 @@ def selftest():
     # U323: VPOPCNTQ zmm1, zmm3 = 62 F2 FD 48 55 CB
     chk("enc vpopcntq", evex(2, 1, 1, 0x55, 1, 3, ll=2), bytes([0x62, 0xF2, 0xFD, 0x48, 0x55, 0xCB]))
     chk("popcnt", [popcnt(0), popcnt(M64), popcnt(0x80000001)], [0, 64, 2])
+    # U324: VPSHUFBITQMB k1, zmm2, zmm3 = 62 F2 6D 48 8F CB; byte j of SRC2 = j (+64 wraps)
+    chk("enc vpshufbitqmb", evex(2, 1, 0, 0x8F, 1, 3, vvvv=2, ll=2), bytes([0x62, 0xF2, 0x6D, 0x48, 0x8F, 0xCB]))
+    chk("shufbitqmb", shufbitqmb((0b10100101).to_bytes(8, "little") + bytes(8),
+                                 bytes([0, 1, 2, 64, 66, 5, 6, 7]) + bytes([0] * 8), 16), 0b10111101)
     return ok
 
 

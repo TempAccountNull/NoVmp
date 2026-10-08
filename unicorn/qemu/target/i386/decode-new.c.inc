@@ -2887,6 +2887,22 @@ static void decode_EVEX_0F3A_57(DisasContext *s, CPUX86State *env, X86OpEntry *e
 #if __Use_Original_Qemu != 1 /* ours (U295) */
 #undef EV_DQS
 #endif /* __Use_Original_Qemu (U295) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+/*
+ * NoVmp (ledger U324): AVX512_BITALG 66 0F38 54: VPOPCNTB (W0) / VPOPCNTW (W1) zmm1{k1}{z},
+ * zmm2/m (SDM Vol2C VPOPCNT): Full Mem tuple (no {1toN}), byte / word masking, class E4.
+ */
+static void decode_EVEX_0F38_54(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes_EVEX_0F38_54[2] = {
+        X86_OP_ENTRY3(EVEX_VPOPCNT, V,x, None,None, W,x, cpuid(AVX512_BITALG) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) p_66),
+        X86_OP_ENTRY3(EVEX_VPOPCNT, V,x, None,None, W,x, cpuid(AVX512_BITALG) ev_vl(EV_VLALL)
+                      ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W1) ev_es(16) p_66),
+    };
+    *entry = opcodes_EVEX_0F38_54[s->vex_w ? 1 : 0];
+}
+#endif /* __Use_Original_Qemu (U324) */
 
 static const X86OpEntry opcodes_evex_0F[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U148) */
@@ -3333,6 +3349,16 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x55] = X86_OP_ENTRY3(EVEX_VPOPCNT, V,x, None,None, W,x, cpuid(AVX512_VPOPCNTDQ)
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+    /*
+     * NoVmp (ledger U324): AVX512_BITALG. 54: VPOPCNTB/W (decode_EVEX_0F38_54). 8F (66 W0):
+     * VPSHUFBITQMB k1{k2}, zmm2 (vvvv), zmm3/m: Full Mem tuple, one mask bit per byte,
+     * class E4 (SDM Vol2C VPSHUFBITQMB).
+     */
+    [0x54] = X86_OP_GROUP0(EVEX_0F38_54),
+    [0x8f] = X86_OP_ENTRY3(EVEX_VPSHUFBITQMB, K,q, H,x, W,x, cpuid(AVX512_BITALG)
+                           ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(KDEST) ev_w(W0) ev_es(8) p_66),
+#endif /* __Use_Original_Qemu (U324) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -4350,6 +4376,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512_VPOPCNTDQ:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512_VPOPCNTDQ);
 #endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+    case X86_FEAT_AVX512_BITALG:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_AVX512BITALG);
+#endif /* __Use_Original_Qemu (U324) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

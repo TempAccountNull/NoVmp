@@ -5310,3 +5310,14 @@ static void gen_EVEX_VPOPCNT(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_evex_elem_unop(s, decode, EVEX_UNOP_POPCNT);
 }
 #endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+
+/* NoVmp (ledger U324): VPSHUFBITQMB: the mask goes to tmp1_i64, ANDed with k2 by gen_evex_insn */
+static void gen_EVEX_VPSHUFBITQMB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_shufbitqmb(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                               tcg_constant_i32(tcg_ctx, vector_len(s, decode)));
+}
+#endif /* __Use_Original_Qemu (U324) */

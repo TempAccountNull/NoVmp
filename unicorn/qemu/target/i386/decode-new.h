@@ -205,6 +205,9 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U323) */
     X86_FEAT_AVX512_VPOPCNTDQ, /* CPUID.(07H,0):ECX[14] */
 #endif /* __Use_Original_Qemu (U323) */
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+    X86_FEAT_AVX512_BITALG, /* CPUID.(07H,0):ECX[12] */
+#endif /* __Use_Original_Qemu (U324) */
 } X86CPUIDFeature;
 
 /* Execution flags */

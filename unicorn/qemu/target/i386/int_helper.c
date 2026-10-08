@@ -579,3 +579,24 @@ void helper_evex_elem_unop(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc
     }
 }
 #endif /* __Use_Original_Qemu (U321) */
+
+#if __Use_Original_Qemu != 1 /* ours (U324) */
+/*
+ * NoVmp (ledger U324): VPSHUFBITQMB (SDM Vol2C): k1[i*8+j] := SRC1.qword[i].bit[SRC2.qword[i].
+ * byte[j] & 0x3F] for the vl / 8 qwords; bits vl and up are 0 (k2 is applied by the caller).
+ */
+uint64_t helper_evex_shufbitqmb(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    uint64_t r = 0;
+    int i, j;
+
+    for (i = 0; i < (int)vl / 8; i++) {
+        uint64_t q = a->ZMM_Q(i);
+
+        for (j = 0; j < 8; j++) {
+            r |= ((q >> (b->ZMM_B(i * 8 + j) & 0x3f)) & 1) << (i * 8 + j);
+        }
+    }
+    return r;
+}
+#endif /* __Use_Original_Qemu (U324) */
