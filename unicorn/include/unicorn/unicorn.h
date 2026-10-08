@@ -687,6 +687,8 @@ typedef enum uc_control_type {
     // defines DQ/BW as extensions of AVX512F); other bits -> UC_ERR_ARG. Reading returns
     // the mask (1 stays "AVX512F only"). A strict CPUID profile (UC_CTL_X86_CPUID_STRICT)
     // that hides a bit still #UDs that bit's instructions.
+    // NoVmp U140: UC_X86_AVX512_VL adds CPUID.(EAX=7,ECX=0):EBX.AVX512VL (EVEX.128/256
+    // forms of the AVX512F/DQ/BW instructions).
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -706,6 +708,7 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_F 1  // AVX512F (state components 5-7, opmask W forms)
 #define UC_X86_AVX512_DQ 2 // + AVX512DQ (opmask B forms, KADDW, KTESTW)
 #define UC_X86_AVX512_BW 4 // + AVX512BW (opmask D/Q forms, KUNPCKWD/DQ)
+#define UC_X86_AVX512_VL 8 // + AVX512VL (EVEX.128 / EVEX.256 vector lengths) (NoVmp U140)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

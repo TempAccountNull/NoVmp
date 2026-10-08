@@ -53,7 +53,7 @@
 //
 // Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --xcr0 V /
 // --quirks N configure Unicorn for both kinds of case. --avx512 opts Unicorn in to AVX-512
-// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW, before the engine is initialised; reset XCR0 then has
+// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL, before the engine is initialised; reset XCR0 then has
 // 7:5 set) for opmask/EVEX expected-value cases, e.g. Emulator\data\cases_opmask.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory).

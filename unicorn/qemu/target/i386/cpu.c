@@ -5381,6 +5381,16 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 0x1e);
     }
 #endif /* __Use_Original_Qemu (U170) */
+#if __Use_Original_Qemu != 1 /* ours (U140) */
+    /*
+     * NoVmp (ledger U140): UC_X86_AVX512_VL adds CPUID.(EAX=7,ECX=0):EBX.AVX512VL[31]:
+     * the EVEX.128/256 forms of AVX512F/DQ/BW instructions need it (SDM Vol2A "(AVX512VL
+     * AND AVX512F) OR AVX10.1" CPUID columns). A strict profile narrows it like DQ/BW.
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_VL) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512VL;
+    }
+#endif /* __Use_Original_Qemu (U140) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

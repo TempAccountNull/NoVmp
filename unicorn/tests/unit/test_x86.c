@@ -8123,6 +8123,11 @@ static void test_x86_opmask_optin(void)
         {UC_X86_AVX512_BW, 5, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512BW},
         {KT_ALL, 7, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ |
                         TEST_X86_CPUID_7_0_EBX_AVX512BW},
+        /* U140: UC_X86_AVX512_VL adds AVX512VL */
+        {UC_X86_AVX512_VL, 9, TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512VL},
+        {KT_ALL | UC_X86_AVX512_VL, 15,
+         TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ |
+             TEST_X86_CPUID_7_0_EBX_AVX512BW | TEST_X86_CPUID_7_0_EBX_AVX512VL},
     };
     const uint32_t all = TEST_X86_CPUID_7_0_EBX_AVX512F | TEST_X86_CPUID_7_0_EBX_AVX512DQ |
                          TEST_X86_CPUID_7_0_EBX_AVX512CD | TEST_X86_CPUID_7_0_EBX_AVX512BW |
@@ -8142,7 +8147,7 @@ static void test_x86_opmask_optin(void)
         OK(uc_close(uc));
     }
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 8));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 16)); /* U140: 8 = VL is valid */
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, -1));
     OK(uc_ctl_get_x86_avx512(uc, &on));
     TEST_CHECK(on == 0);
