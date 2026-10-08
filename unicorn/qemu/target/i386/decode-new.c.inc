@@ -2005,6 +2005,10 @@ static const X86OpEntry opcodes_evex_0F[256] = {
     [0xeb] = X86_OP_ENTRY3(POR,   V,x, H,x, W,x, EV_INT(WSEL)), /* vpord/q */
     [0xef] = X86_OP_ENTRY3(PXOR,  V,x, H,x, W,x, EV_INT(WSEL)), /* vpxord/q */
 #endif /* __Use_Original_Qemu (U150) */
+#if __Use_Original_Qemu != 1 /* ours (U155) */
+    /* VPMULUDQ (66 W1 F4): unsigned dword x dword -> qword */
+    [0xf4] = X86_OP_ENTRY3(EVEX_PMULUDQ, V,x, H,x, W,x, EV_INT(W1)),
+#endif /* __Use_Original_Qemu (U155) */
 };
 
 static const X86OpEntry opcodes_evex_0F38[256] = {
@@ -2014,6 +2018,21 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x37] = X86_OP_ENTRY3(EVEX_VPCMPGT, K,q, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
                            ev_tt(FULL) ev_mask(KDEST) ev_w(W1) ev_es(W) p_66),
 #endif /* __Use_Original_Qemu (U154) */
+#if __Use_Original_Qemu != 1 /* ours (U155) */
+    /*
+     * NoVmp (ledger U155): Full tuple integer forms, {k1}{z}, {1toN}; E4. VPABSD (1E W0) /
+     * VPABSQ (1F W1), VPMULDQ (28 W1), VPMINSD/Q (39), VPMINUD/Q (3B), VPMAXSD/Q (3D),
+     * VPMAXUD/Q (3F), VPMULLD (40 W0; W1 = VPMULLQ is AVX512DQ, not yet).
+     */
+    [0x1e] = X86_OP_ENTRY3(EVEX_PABS, V,x, None,None, W,x, EV_INT(W0)),
+    [0x1f] = X86_OP_ENTRY3(EVEX_PABS, V,x, None,None, W,x, EV_INT(W1)),
+    [0x28] = X86_OP_ENTRY3(EVEX_PMULDQ, V,x, H,x, W,x, EV_INT(W1)),
+    [0x39] = X86_OP_ENTRY3(EVEX_PMINS, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x3b] = X86_OP_ENTRY3(EVEX_PMINU, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x3d] = X86_OP_ENTRY3(EVEX_PMAXS, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x3f] = X86_OP_ENTRY3(EVEX_PMAXU, V,x, H,x, W,x, EV_INT(WSEL)),
+    [0x40] = X86_OP_ENTRY3(PMULLD, V,x, H,x, W,x, EV_INT(W0)),
+#endif /* __Use_Original_Qemu (U155) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
     /*
      * NoVmp (ledger U153): broadcasts, Tuple1 Scalar memory operand, {k1}{z}; E6 (E7NM for

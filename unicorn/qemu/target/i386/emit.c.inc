@@ -763,6 +763,48 @@ static void gen_EVEX_VPTESTNM(DisasContext *s, CPUX86State *env, X86DecodedInsn 
                          tcg_constant_i32(tcg_ctx, desc));
 }
 #endif /* __Use_Original_Qemu (U154) */
+#if __Use_Original_Qemu != 1 /* ours (U155) */
+
+/*
+ * NoVmp (ledger U155): integer forms whose element size is EVEX.W (gvec) and the
+ * dword x dword -> qword multiplies (ops_sse.h pmuludq/pmuldq, SSE_FN3).
+ */
+#define EVEX_INT_GVEC3(uname, func)                                                  \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+    int vl = vector_len(s, decode);                                                  \
+                                                                                     \
+    func(tcg_ctx, s->evex_esz, decode->op[0].offset, decode->op[1].offset,           \
+         decode->op[2].offset, vl, vl);                                              \
+}
+EVEX_INT_GVEC3(PMINS, tcg_gen_gvec_smin)
+EVEX_INT_GVEC3(PMINU, tcg_gen_gvec_umin)
+EVEX_INT_GVEC3(PMAXS, tcg_gen_gvec_smax)
+EVEX_INT_GVEC3(PMAXU, tcg_gen_gvec_umax)
+
+static void gen_EVEX_PABS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode);
+
+    tcg_gen_gvec_abs(tcg_ctx, s->evex_esz, decode->op[0].offset, decode->op[2].offset, vl, vl);
+}
+
+static void gen_EVEX_PMULUDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmuludq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_PMULDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pmuldq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+#endif /* __Use_Original_Qemu (U155) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
 
 /* NoVmp (ledger U153): VPBROADCASTD r32 / VPBROADCASTQ r64 (EVEX.66.0F38 7C) */
