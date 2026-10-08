@@ -573,6 +573,16 @@ static const X86OpEntry opcodes_0F38_F0toFF[16][5] = {
         X86_OP_ENTRY3(MULX, /* B,y, */ G,y, E,y, 2,y, vex13 cpuid(BMI2)),
         {},
     },
+#if __Use_Original_Qemu != 1 /* ours (U72) */
+    /* MOVDIRI m32/m64, r32/r64: NP 0F 38 F9 (U72) */
+    [9] = {
+        X86_OP_ENTRY3(MOVDIRI, M,y, G,y, None,None, cpuid(MOVDIRI)),
+        {},
+        {},
+        {},
+        {},
+    },
+#endif /* __Use_Original_Qemu (U72) */
     [7] = {
         X86_OP_ENTRY3(BEXTR, G,y, E,y, B,y, vex13 cpuid(BMI1)),
         X86_OP_ENTRY3(SHLX, G,y, E,y, B,y, vex13 cpuid(BMI1)),
@@ -1545,6 +1555,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX_VNNI:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AVX_VNNI);
 #endif /* __Use_Original_Qemu (U71) */
+#if __Use_Original_Qemu != 1 /* ours (U72) */
+    case X86_FEAT_MOVDIRI:
+        return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_MOVDIRI);
+#endif /* __Use_Original_Qemu (U72) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

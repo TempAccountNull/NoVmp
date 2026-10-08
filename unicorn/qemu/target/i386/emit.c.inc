@@ -1483,6 +1483,21 @@ static void gen_MOVBE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U72) */
+/*
+ * NoVmp (ledger U72): MOVDIRI, a direct store (write-combining protocol on
+ * hardware; architecturally a 32/64-bit store). The M operand is not written
+ * back by the generic code, so store here. 66h is not a valid prefix (#UD
+ * via the table row); LOCK #UDs in disas_insn_new (op0 is not an INT unit).
+ */
+static void gen_MOVDIRI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    tcg_gen_qemu_st_tl(tcg_ctx, s->T0, s->A0, s->mem_index, decode->op[0].ot);
+}
+
+#endif /* __Use_Original_Qemu (U72) */
 static void gen_MOVD_from(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
