@@ -184,6 +184,13 @@ typedef enum X86CPUIDFeature {
     X86_FEAT_AVX512DQ,
     X86_FEAT_AVX512BW,
 #endif /* __Use_Original_Qemu (U129) */
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+    X86_FEAT_AMX_TILE,      /* CPUID.(07H,0):EDX[24] */
+    X86_FEAT_AMX_INT8,      /* CPUID.(07H,0):EDX[25] */
+    X86_FEAT_AMX_BF16,      /* CPUID.(07H,0):EDX[22] */
+    X86_FEAT_AMX_FP16,      /* CPUID.(07H,1):EAX[21] */
+    X86_FEAT_AMX_COMPLEX,   /* CPUID.(07H,1):EDX[8] */
+#endif /* __Use_Original_Qemu (U175) */
 } X86CPUIDFeature;
 
 /* Execution flags */

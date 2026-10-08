@@ -2678,6 +2678,11 @@
 #define helper_getsec helper_getsec_x86_64
 #define helper_pconfig helper_pconfig_x86_64
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+#define helper_amx_ldtilecfg helper_amx_ldtilecfg_x86_64
+#define helper_amx_sttilecfg helper_amx_sttilecfg_x86_64
+#define helper_amx_tilerelease helper_amx_tilerelease_x86_64
+#endif /* __Use_Original_Qemu (U175) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 #define helper_incssp helper_incssp_x86_64
 #define helper_saveprevssp helper_saveprevssp_x86_64

@@ -3284,3 +3284,52 @@ static void gen_VZEROUPPER(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     }
 #endif /* __Use_Original_Qemu (U126) */
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+/*
+ * NoVmp (ledger U175..U180): Intel AMX. decode_0F38_AMX / validate_vex (class 22) did the
+ * table checks; the fixed ModRM fields are checked here; everything that depends on
+ * CR4/XCR0/IA32_XFD/TILECFG is checked at run time by the helpers (fpu_helper.c).
+ */
+
+/* LDTILECFG m512: VEX.128.NP.0F38.W0 49 !(11):000:bbb */
+static void gen_LDTILECFG(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if ((s->modrm >> 3) & 7) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    gen_helper_amx_ldtilecfg(tcg_ctx, cpu_env, s->A0);
+}
+
+/* STTILECFG m512: VEX.128.66.0F38.W0 49 !(11):000:bbb */
+static void gen_STTILECFG(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if ((s->modrm >> 3) & 7) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    gen_helper_amx_sttilecfg(tcg_ctx, cpu_env, s->A0);
+}
+
+/* TILERELEASE: VEX.128.NP.0F38.W0 49 C0 */
+static void gen_TILERELEASE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (s->modrm != 0xc0) {
+        gen_illegal_opcode(s);
+        return;
+    }
+    gen_helper_amx_tilerelease(tcg_ctx, cpu_env);
+}
+#endif /* __Use_Original_Qemu (U175) */
+
+
+
+
+

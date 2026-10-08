@@ -5607,6 +5607,148 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
     raise_exception_ra(env, EXCP0D_GPF, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+/*
+ * NoVmp (ledger U175..U180): VEX-encoded Intel AMX instructions (SDM Vol2A 2.10 "Intel AMX
+ * Instruction Exception Classes" AMX-E1..E6, Vol2A/2B instruction pages, Vol1 ch. 19).
+ * The translator (validate_vex class 22) already raised #UD for: no VEX, outside 64-bit
+ * mode (IA32_EFER.LMA = 0 or CS.L = 0), VEX.L = 1, VEX.W = 1, LOCK/66/F2/F3/REX before
+ * VEX, VEX.vvvv != 1111b where unused, the CPUID feature bit clear, and the fixed ModRM
+ * fields (mod, reg = 000b, r/m = 000b / 100b (SIB), C0h). The run-time part is here:
+ *   1. #UD if CR4.OSXSAVE = 0 or XCR0[18:17] != 11b (all classes);
+ *   2. #NM if XFD is enabled for TILEDATA (E3/E4/E5 only; LDTILECFG, STTILECFG and
+ *      TILERELEASE never #NM - SDM Vol1 13.14), IA32_XFD_ERR := IA32_XFD AND 40000h;
+ *   3. #UD on TILES_CONFIGURED = 0 and the tile checks of the class;
+ *   4. memory faults (#GP/#SS non-canonical, #PF) of the accesses, LDTILECFG's #GP.
+ * Ordering choice (not specified by the SDM): the static #UDs, then #NM, then the #UDs
+ * that depend on TILECFG. No AMX class lists CR0.TS/CR0.EM (the VEX forms do not check
+ * them); AMX memory accesses never raise #AC (ISE 319433 3.6).
+ */
+#define AMX_TILE(env, t)        ((env)->xtiledata + 1024 * (t))
+#define AMX_ROW(env, t, r)      ((env)->xtiledata + 1024 * (t) + AMX_P1_BYTES_PER_ROW * (r))
+#define AMX_ROWS(env, t)        ((env)->xtilecfg[48 + (t)])
+#define AMX_COLSB(env, t)       lduw_le_p((env)->xtilecfg + 16 + 2 * (t))
+#define AMX_START_ROW(env)      ((env)->xtilecfg[1])
+#define AMX_CONFIGURED(env)     ((env)->xtilecfg[0] != 0)
+
+/* step 1: CR4.OSXSAVE and XCR0[18:17] = 11b */
+static void amx_check_enabled(CPUX86State *env, uintptr_t ra)
+{
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK) ||
+        (env->xcr0 & XSTATE_AMX_MASK) != XSTATE_AMX_MASK) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+/* steps 1-3 for the TILEDATA users (AMX-E3/E4/E5): + XFD #NM, + TILES_CONFIGURED */
+static void amx_check_tiledata(CPUX86State *env, uintptr_t ra)
+{
+    amx_check_enabled(env, ra);
+    if (x86_cpu_xfd_armed(env) & XSTATE_XTILE_DATA_MASK) {
+        env->msr_xfd_err = env->msr_xfd & XSTATE_XTILE_DATA_MASK;
+        raise_exception_ra(env, EXCP07_PREX, ra);
+    }
+    if (!AMX_CONFIGURED(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+}
+
+/* "valid tile" for palette 1: a name below max_names whose rows/colsb are non-zero */
+static bool amx_tile_valid(CPUX86State *env, unsigned t)
+{
+    return t < AMX_P1_MAX_NAMES && AMX_ROWS(env, t) != 0;
+}
+
+/* with paging, translate [addr, addr+len) for writing before any byte is stored */
+static void amx_probe_write(CPUX86State *env, target_ulong addr, int len, uintptr_t ra)
+{
+    int mmu_idx = cpu_mmu_index(env, false);
+    int first = TARGET_PAGE_SIZE - (int)(addr & ~TARGET_PAGE_MASK);
+
+    if (!(env->cr[0] & CR0_PG_MASK) || len <= 0) {
+        return;
+    }
+    if (first > len) {
+        first = len;
+    }
+    probe_write(env, addr, first, mmu_idx, ra);
+    if (first < len) {
+        probe_write(env, addr + first, len - first, mmu_idx, ra);
+    }
+}
+
+/* zero_all_tile_data() / zero_upper_rows(t, r) of SDM Vol1 19.4 */
+static void amx_zero_all_tile_data(CPUX86State *env)
+{
+    /* "if XCR0[TILEDATA]": guaranteed by amx_check_enabled */
+    memset(env->xtiledata, 0, sizeof(env->xtiledata));
+}
+
+static void amx_zero_upper_rows(CPUX86State *env, unsigned t, unsigned r)
+{
+    if (r < AMX_P1_MAX_ROWS) {
+        memset(AMX_ROW(env, t, r), 0, AMX_P1_BYTES_PER_ROW * (AMX_P1_MAX_ROWS - r));
+    }
+}
+
+/*
+ * LDTILECFG m512 (AMX-E1): 64 bytes read first; #GP(0) if the consistency checks fail
+ * (x86_amx_tilecfg_ok, U172); palette 0: TILECFG := 0; palette 1: TILECFG := image
+ * (start_row included). Both zero TILEDATA. XFD never applies (SDM Vol1 13.14).
+ */
+void helper_amx_ldtilecfg(CPUX86State *env, target_ulong ptr)
+{
+    uintptr_t ra = GETPC();
+    uint8_t buf[64];
+    int i;
+
+    amx_check_enabled(env, ra);
+    for (i = 0; i < 64; i += 8) {
+        stq_le_p(buf + i, cpu_ldq_data_ra(env, ptr + i, ra));
+    }
+    if (!x86_amx_tilecfg_ok(buf, env->xcr0)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (buf[0] == 0) {
+        memset(env->xtilecfg, 0, sizeof(env->xtilecfg));    /* TILES_CONFIGURED := 0 */
+    } else {
+        memcpy(env->xtilecfg, buf, sizeof(env->xtilecfg));  /* TILES_CONFIGURED := 1 */
+    }
+    amx_zero_all_tile_data(env);
+}
+
+/*
+ * STTILECFG m512 (AMX-E2): TILES_CONFIGURED = 0 stores 64 zero bytes, otherwise the
+ * TILECFG image (palette_id, start_row, colsb[8], rows[8], reserved bytes zero) - which
+ * is exactly env->xtilecfg. The destination is translated before any byte is written.
+ */
+void helper_amx_sttilecfg(CPUX86State *env, target_ulong ptr)
+{
+    uintptr_t ra = GETPC();
+    int i;
+
+    amx_check_enabled(env, ra);
+    amx_probe_write(env, ptr, 64, ra);
+    for (i = 0; i < 64; i += 8) {
+        cpu_stq_data_ra(env, ptr + i, ldq_le_p(env->xtilecfg + i), ra);
+    }
+}
+
+/* TILERELEASE (AMX-E6): TILEDATA := 0, TILECFG := 0, TILES_CONFIGURED := 0; never #NM */
+void helper_amx_tilerelease(CPUX86State *env)
+{
+    amx_check_enabled(env, GETPC());
+    amx_zero_all_tile_data(env);
+    memset(env->xtilecfg, 0, sizeof(env->xtilecfg));
+}
+#endif /* __Use_Original_Qemu (U175) */
+
+
+
+
+
+
+
 /* MMX/SSE */
 /* XXX: optimize by storing fptt and fptags in the static cpu state */
 

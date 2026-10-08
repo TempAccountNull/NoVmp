@@ -119,6 +119,10 @@
 #define vex20 .vex_class = 20,
 #define vex21 .vex_class = 21,
 #endif /* __Use_Original_Qemu (U129) */
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+/* VEX Intel AMX instructions: SDM Vol2A 2.10 exception classes AMX-E1..E6 */
+#define vex22 .vex_class = 22,
+#endif /* __Use_Original_Qemu (U175) */
 
 #define avx2_256 .vex_special = X86_VEX_AVX2_256,
 #define sse4_novex .vex_class = 4, .vex_special = X86_VEX_NoVEX,
@@ -386,6 +390,44 @@ static void decode_0F38_51(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 }
 #endif /* __Use_Original_Qemu (U85) */
 
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+/*
+ * NoVmp (ledger U175..U180): VEX.128.0F38.W0 49/4B/5C/5E/6C - Intel AMX (SDM Vol2A/2B,
+ * "Opcode/Instruction"). Selected by ModRM.mod and the pp prefix; anything else (legacy
+ * encoding, the other pp/mod combinations) stays an unknown opcode (#UD):
+ *   49 !(11):000:bbb  NP LDTILECFG m512        66 STTILECFG m512
+ *   49 C0             NP TILERELEASE           49 11:rrr:000  F2 TILEZERO tmm
+ *   4B !(11):rrr:100  F2 TILELOADD   66 TILELOADDT1   F3 TILESTORED  (sibmem)
+ *   5C 11:rrr:bbb     F3 TDPBF16PS   F2 TDPFP16PS
+ *   5E 11:rrr:bbb     F2 TDPBSSD  F3 TDPBSUD  66 TDPBUSD  NP TDPBUUD
+ *   6C 11:rrr:bbb     66 TCMMIMFP16PS  NP TCMMRLFP16PS
+ * The fixed ModRM.reg / r/m fields (000b, C0h, SIB) are checked by the gen_* functions.
+ */
+static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry amx_49_mem[4] = {
+        [0] = X86_OP_ENTRYr(LDTILECFG,   M,None, vex22 cpuid(AMX_TILE) p_00),
+        [1] = X86_OP_ENTRYr(STTILECFG,   M,None, vex22 cpuid(AMX_TILE) p_66),
+    };
+    static const X86OpEntry amx_49_reg[4] = {
+        [0] = X86_OP_ENTRY0(TILERELEASE, vex22 cpuid(AMX_TILE) p_00),
+    };
+    int mod = get_modrm(s, env) >> 6;
+
+    memset(entry, 0, sizeof(*entry));
+    if (!(s->prefix & PREFIX_VEX)) {
+        return;
+    }
+    switch (*b) {
+    case 0x49:
+        *entry = *decode_by_prefix(s, mod == 3 ? amx_49_reg : amx_49_mem);
+        break;
+    default:
+        break;
+    }
+}
+#endif /* __Use_Original_Qemu (U175) */
+
 #if __Use_Original_Qemu != 1 /* ours (U86) */
 /*
  * NoVmp (ledger U86): AVX-VNNI-INT16, VEX.0F38.W0 D2/D3 by prefix (SDM Vol2
@@ -546,6 +588,10 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x45] = X86_OP_ENTRY3(VPSRLV,      V,x,  H,x,       W,x,  vex6 cpuid(AVX2) p_66),
     [0x46] = X86_OP_ENTRY3(VPSRAV,      V,x,  H,x,       W,x,  vex6 chk(W0) cpuid(AVX2) p_66),
     [0x47] = X86_OP_ENTRY3(VPSLLV,      V,x,  H,x,       W,x,  vex6 cpuid(AVX2) p_66),
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+    /* Intel AMX (VEX only, decode_0F38_AMX) */
+    [0x49] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U175) */
 
     [0x90] = X86_OP_ENTRY3(VPGATHERD, V,x,  H,x,  M,d,  vex12 cpuid(AVX2) p_66), /* vpgatherdd/q */
     [0x91] = X86_OP_ENTRY3(VPGATHERQ, V,x,  H,x,  M,q,  vex12 cpuid(AVX2) p_66), /* vpgatherqd/q */
@@ -2307,6 +2353,18 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AVX512BW:
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512BW);
 #endif /* __Use_Original_Qemu (U129) */
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+    case X86_FEAT_AMX_TILE:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AMX_TILE);
+    case X86_FEAT_AMX_INT8:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AMX_INT8);
+    case X86_FEAT_AMX_BF16:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AMX_BF16);
+    case X86_FEAT_AMX_FP16:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AMX_FP16);
+    case X86_FEAT_AMX_COMPLEX:
+        return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AMX_COMPLEX);
+#endif /* __Use_Original_Qemu (U175) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
@@ -2519,6 +2577,27 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         }
         return true;
 #endif /* __Use_Original_Qemu (U129) */
+#if __Use_Original_Qemu != 1 /* ours (U175) */
+    case 22:
+        /*
+         * NoVmp (ledger U175): VEX Intel AMX, SDM Vol2A 2.10 AMX-E1..E6 - the static #UD
+         * conditions (CPUID and LOCK/66/F2/F3/REX before VEX are checked by the decoder):
+         * IA32_EFER.LMA = 0 or CS.L = 0; VEX.L = 1 (all forms are VEX.128); VEX.W = 1
+         * (W0); VEX.vvvv != 1111b unless it names tsrc2 (the TMUL forms, whose feature is
+         * not AMX_TILE). CR4.OSXSAVE, XCR0[18:17], XFD (#NM) and TILECFG are run-time
+         * checks in the helpers; no class lists CR0.TS or CR0.EM.
+         */
+        if (!(s->prefix & PREFIX_VEX) || !CODE64(s)) {
+            goto illegal;
+        }
+        if (s->vex_l || s->vex_w) {
+            goto illegal;
+        }
+        if (s->vex_v != 0 && e->cpuid == X86_FEAT_AMX_TILE) {
+            goto illegal;
+        }
+        return true;
+#endif /* __Use_Original_Qemu (U175) */
     case 13:
         if (!(s->prefix & PREFIX_VEX)) {
             goto illegal;
