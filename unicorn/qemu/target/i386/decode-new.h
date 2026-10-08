@@ -310,6 +310,62 @@ typedef enum X86VEXSpecial {
 } X86VEXSpecial;
 
 
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+/*
+ * NoVmp (ledger U141): attributes of an EVEX form (X86OpEntry.evex_*), SDM Vol2A 2.7 and
+ * Tables 2-36..2-43. Generated data: Emulator/data/evex_forms.tsv (gen_evex_tables.py).
+ */
+typedef enum X86EvexTuple {
+    X86_EVEX_TT_NONE,        /* register-only form */
+    X86_EVEX_TT_FULL,        /* Full: N = VL, the element size with EVEX.b (Table 2-36) */
+    X86_EVEX_TT_HALF,        /* Half: N = VL/2, the element size with EVEX.b */
+    X86_EVEX_TT_FULL_MEM,    /* Full Mem: N = VL (Table 2-37) */
+    X86_EVEX_TT_T1S,         /* Tuple1 Scalar: N = memory operand size */
+    X86_EVEX_TT_T1F,         /* Tuple1 Fixed: N = memory operand size */
+    X86_EVEX_TT_T2,          /* Tuple2: N = 2 elements */
+    X86_EVEX_TT_T4,          /* Tuple4: N = 4 elements */
+    X86_EVEX_TT_T8,          /* Tuple8: N = 8 elements */
+    X86_EVEX_TT_HALF_MEM,    /* N = VL/2 */
+    X86_EVEX_TT_QUARTER_MEM, /* N = VL/4 */
+    X86_EVEX_TT_EIGHTH_MEM,  /* N = VL/8 */
+    X86_EVEX_TT_MEM128,      /* N = 16 */
+    X86_EVEX_TT_MOVDDUP,     /* N = 8 (VL 128), VL otherwise */
+} X86EvexTuple;
+
+typedef enum X86EvexMask {
+    X86_EVEX_MASK_MZ,        /* {k1}{z}; z with aaa = 0 or a memory destination #UD */
+    X86_EVEX_MASK_M,         /* {k1} merging only, z #UD */
+    X86_EVEX_MASK_KDEST,     /* k1 {k2}: opmask destination ANDed with k2, z #UD */
+    X86_EVEX_MASK_KREQ,      /* aaa != 0 required, z #UD (gather/scatter) */
+    X86_EVEX_MASK_NONE,      /* aaa and z must be 0 */
+} X86EvexMask;
+
+typedef enum X86EvexRC {
+    X86_EVEX_RC_NONE,        /* EVEX.b on a register-register form #UD (Table 2-43) */
+    X86_EVEX_RC_ER,          /* {er}: static rounding control in L'L, SAE implied, VL 512 */
+    X86_EVEX_RC_SAE,         /* {sae}: suppress all exceptions, L'L ignored, VL 512 */
+} X86EvexRC;
+
+/* X86OpEntry.evex_w: EVEX.W requirement of the form */
+#define X86_EVEX_WSEL 0      /* both; W0/W1 select the element size (X86_EVEX_ES_W) */
+#define X86_EVEX_W0   1      /* W1 #UD */
+#define X86_EVEX_W1   2      /* W0 #UD */
+#define X86_EVEX_WIG  3      /* ignored */
+
+/* X86OpEntry.evex_vl: vector lengths of the form (EVEX.L'L), 0 = no EVEX form */
+#define X86_EVEX_VL128 1
+#define X86_EVEX_VL256 2
+#define X86_EVEX_VL512 4
+#define X86_EVEX_LIG   8     /* L'L ignored (scalar) */
+
+/* X86OpEntry.evex_es: element size for masking, broadcast and disp8*N */
+#define X86_EVEX_ES_W  0     /* EVEX.W0: 32 bits, EVEX.W1: 64 bits */
+#define X86_EVEX_ES_8  1
+#define X86_EVEX_ES_16 2
+#define X86_EVEX_ES_32 3
+#define X86_EVEX_ES_64 4
+#endif /* __Use_Original_Qemu (U141) */
+
 typedef struct X86OpEntry  X86OpEntry;
 typedef struct X86DecodedInsn X86DecodedInsn;
 
@@ -343,6 +399,19 @@ struct X86OpEntry {
     unsigned     check:16;
     uint16_t     valid_prefix:16;
     bool         is_decode:1;
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+    /* EVEX forms only (tables opcodes_evex_*), see X86EvexTuple above */
+    unsigned     evex_vl:4;     /* X86_EVEX_VL128/256/512 | X86_EVEX_LIG; 0 = none */
+    unsigned     evex_tt:4;     /* X86EvexTuple (disp8*N, broadcast) */
+    unsigned     evex_mask:3;   /* X86EvexMask (Table 2-42) */
+    unsigned     evex_rc:2;     /* X86EvexRC (Table 2-43) */
+    unsigned     evex_w:2;      /* X86_EVEX_WSEL/W0/W1/WIG */
+    unsigned     evex_es:3;     /* X86_EVEX_ES_* */
+    unsigned     evex_align:1;  /* exception class E1: memory operand VL-aligned, #GP(0) */
+    unsigned     evex_fp:1;     /* SIMD floating point: MXCSR flags, #XM (E2/E3) */
+    unsigned     evex_w32:1;    /* EVEX.W ignored outside 64-bit mode (behaves as W0) */
+    unsigned     evex_nofs:1;   /* no memory fault suppression (E*NF classes) */
+#endif /* __Use_Original_Qemu (U141) */
 };
 typedef struct X86DecodedOp {
     int8_t n;

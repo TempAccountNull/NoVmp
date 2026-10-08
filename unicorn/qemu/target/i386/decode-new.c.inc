@@ -1823,6 +1823,40 @@ static const X86OpEntry opcodes_root[256] = {
     [0x0F] = X86_OP_GROUP0(0F),
 };
 
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+/*
+ * NoVmp (ledger U141): EVEX opcode maps 1-3 (EVEX.mmm = 001b/010b/011b), separate from
+ * the VEX/legacy tables: 29 VEX/EVEX slots hold a different instruction and EVEX.W is
+ * mostly an opcode extension (Emulator/data/evex_forms_summary.txt). An empty slot is #UD.
+ */
+static const X86OpEntry opcodes_evex_0F[256] = {
+};
+
+static const X86OpEntry opcodes_evex_0F38[256] = {
+};
+
+static const X86OpEntry opcodes_evex_0F3A[256] = {
+};
+
+static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *b = x86_ldub_code(env, s);
+    *entry = opcodes_evex_0F[*b];
+}
+
+static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *b = x86_ldub_code(env, s);
+    *entry = opcodes_evex_0F38[*b];
+}
+
+static void decode_evex_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    *b = x86_ldub_code(env, s);
+    *entry = opcodes_evex_0F3A[*b];
+}
+#endif /* __Use_Original_Qemu (U141) */
+
 #undef mmx
 #undef vex1
 #undef vex2
@@ -2898,6 +2932,75 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             s->prefix |= pp_prefix[vex3 & 3] | PREFIX_VEX;
         }
         break;
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+    case 0x62:
+        /*
+         * NoVmp (ledger U141): EVEX prefix, P0 = R X B R' 0 m m m, P1 = W v v v v 1 p p,
+         * P2 = z L' L b V' a a a (SDM Vol2A 2.7.1, Table 2-32). disas_insn routes 62h here
+         * only when it is not BOUND (64-bit mode, or P0[7:6] = 11b in protected mode).
+         * #UD: LOCK/66/F2/F3/REX before EVEX (Table 2-46); P[3] != 0, P[10] != 1, map 0/4/7
+         * (Table 2-40). Maps 5/6 (AVX512-FP16) are not implemented (#UD). Outside 64-bit
+         * mode EVEX.R/X/B/R' select nothing (Table 2-34: 8 registers; R and X are 1 there,
+         * B and R' are ignored) and vvvv[3] is ignored (Table 2-41); V' is checked in
+         * validate_evex.
+         */
+        {
+            static const int pp_prefix[4] = {
+                0, PREFIX_DATA, PREFIX_REPZ, PREFIX_REPNZ
+            };
+            int p0 = x86_ldub_code(env, s);
+            int p1 = x86_ldub_code(env, s);
+            int p2 = x86_ldub_code(env, s);
+
+            if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ
+                             | PREFIX_LOCK | PREFIX_DATA | PREFIX_REX)) {
+                goto illegal_op;
+            }
+            if ((p0 & 0x08) || !(p1 & 0x04)) {
+                goto illegal_op;
+            }
+            switch (p0 & 7) {
+            case 1:
+                decode_func = decode_evex_0F;
+                break;
+            case 2:
+                decode_func = decode_evex_0F38;
+                break;
+            case 3:
+                decode_func = decode_evex_0F3A;
+                break;
+            case 5: /* AVX512-FP16 maps */
+            case 6:
+                goto unknown_op;
+            default:
+                goto illegal_op;
+            }
+            s->evex_p0 = p0;
+            s->evex_p1 = p1;
+            s->evex_p2 = p2;
+#ifdef TARGET_X86_64
+            if (CODE64(s)) {
+                s->rex_r = (~p0 >> 4) & 8;
+                s->rex_x = (~p0 >> 3) & 8;
+                s->rex_b = (~p0 >> 2) & 8;
+                s->evex_rr = ~p0 & 0x10;
+                s->evex_x4 = (~p0 >> 2) & 0x10;
+                s->evex_v4 = (~p2 << 1) & 0x10;
+            }
+#endif
+            s->vex_w = (p1 >> 7) & 1;
+            s->vex_v = ((~p1 >> 3) & 0xf) | s->evex_v4;
+            if (!CODE64(s)) {
+                s->vex_v &= 7;
+            }
+            s->evex_aaa = p2 & 7;
+            s->evex_b = (p2 >> 4) & 1;
+            s->evex_ll = (p2 >> 5) & 3;
+            s->evex_z = (p2 >> 7) & 1;
+            s->prefix |= pp_prefix[p1 & 3] | PREFIX_VEX | PREFIX_EVEX;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U141) */
     default:
         if (b >= 0x100) {
             b -= 0x100;

@@ -41,6 +41,10 @@
 #define PREFIX_ADR    0x10
 #define PREFIX_VEX    0x20
 #define PREFIX_REX    0x40
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+/* NoVmp (ledger U141): 62h EVEX prefix (SDM Vol2A 2.7); PREFIX_VEX is set with it */
+#define PREFIX_EVEX   0x80
+#endif /* __Use_Original_Qemu (U141) */
 
 #ifdef TARGET_X86_64
 # define ctztl  ctz64
@@ -163,6 +167,24 @@ typedef struct DisasContext {
     uint8_t rex_b;
 #endif
     bool vex_w; /* used by AVX even on 32-bit processors */
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+    /*
+     * NoVmp (ledger U141): EVEX prefix fields (SDM Vol2A 2.7.1, Table 2-32), valid with
+     * PREFIX_EVEX. vex_v holds vvvv (+ V' as bit 4 in 64-bit mode), vex_w EVEX.W, rex_r/x/b
+     * EVEX.R/X/B (64-bit mode only); evex_rr = EVEX.R' and evex_x4 = EVEX.X as bit 4 of a
+     * vector register number (64-bit mode only), evex_v4 = EVEX.V' as bit 4 of a VSIB index.
+     * evex_vl is the vector length in bytes (16/32/64), evex_n the disp8 scale (1 when not
+     * EVEX), evex_rc the static rounding mode of {er} (-1: none; -2: {sae}).
+     */
+    uint8_t evex_p0, evex_p1, evex_p2;
+    uint8_t evex_rr, evex_x4, evex_v4;
+    uint8_t evex_aaa, evex_ll;
+    bool evex_z, evex_b;
+    uint8_t evex_vl;
+    uint8_t evex_esz;
+    int8_t evex_rc;
+    uint8_t evex_n;
+#endif /* __Use_Original_Qemu (U141) */
     bool jmp_opt; /* use direct block chaining for direct jumps */
     bool repz_opt; /* optimize jumps within repz instructions */
     bool cc_op_dirty;
@@ -3689,6 +3711,16 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     s->vex_l = 0;
     s->vex_v = 0;
     s->vex_w = false;
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+    s->evex_p0 = s->evex_p1 = s->evex_p2 = 0;
+    s->evex_rr = s->evex_x4 = s->evex_v4 = 0;
+    s->evex_aaa = s->evex_ll = 0;
+    s->evex_z = s->evex_b = false;
+    s->evex_vl = 16;
+    s->evex_esz = MO_32;
+    s->evex_rc = -1;
+    s->evex_n = 1;
+#endif /* __Use_Original_Qemu (U141) */
     switch (sigsetjmp(s->jmpbuf, 0)) {
     case 0:
         break;
@@ -3825,6 +3857,25 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             return s->pc;
         }
         break;
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+    case 0x62:
+        /*
+         * NoVmp (ledger U141): EVEX (SDM Vol2A 2.7.1, Table 2-40) on a CPU with AVX-512:
+         * always in 64-bit mode (BOUND is #UD there); in protected non-VM86 mode only when
+         * P0[7:6] = 11b (EVEX.RX: BOUND's ModRM.mod = 11b would be #UD), else BOUND.
+         * Without AVX512F the byte stays BOUND / #UD exactly as before.
+         */
+        if ((s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
+            (CODE64(s) || (PE(s) && !VM86(s)))) {
+            int p0 = x86_ldub_code(env, s);
+            s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
+            if (CODE64(s) || (p0 & 0xc0) == 0xc0) {
+                disas_insn_new(s, cpu, b);
+                goto evex_done;
+            }
+        }
+        break;
+#endif /* __Use_Original_Qemu (U141) */
     }
 
     /* Post-process prefixes.  */
@@ -8393,6 +8444,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     default:
         goto unknown_op;
     }
+#if __Use_Original_Qemu != 1 /* ours (U141) */
+ evex_done:
+#endif /* __Use_Original_Qemu (U141) */
     if (insn_hook) {
         if (prev_op) {
             tcg_op = QTAILQ_NEXT(prev_op, link);
