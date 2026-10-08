@@ -8174,6 +8174,81 @@ static void test_x86_opmask_optin(void)
     }
 }
 
+/* ---- NoVmp U91-U99 tests ---- */
+/*
+ * U91: LOCK on 0F 19..0F 1F (multi-byte NOP / hint space) is #UD (i5-13600K:
+ * cases_fixes.txt, every /r, register and memory form); without LOCK a NOP. With
+ * MPX enabled, LOCK on the MPX forms is #UD except BNDMOV m, bnd (66 0F 1B, memory
+ * destination: SDM BNDMOV "#UD If the LOCK prefix is used but the destination is
+ * not a memory operand").
+ */
+static void test_x86_lock_hint_nops(void)
+{
+    static const char ops[] = {0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+    static const unsigned char modrms[] = {0xc0, 0xc7, 0x06, 0x3e, 0xf8, 0x36};
+    char buf[8];
+    nk_intr_t intr;
+    uc_engine *uc = nk_open("\x90", 1, &intr);
+    uint64_t v[2];
+    size_t i, j;
+
+    for (i = 0; i < sizeof(ops); i++) {
+        for (j = 0; j < sizeof(modrms); j++) {
+            memcpy(buf, "\x0f\x00\x00\x90", 4);
+            buf[1] = ops[i];
+            buf[2] = (char)modrms[j];
+            TEST_CHECK(nk_fault(uc, &intr, buf, 4) == -1);
+            TEST_MSG("0f %02x %02x", (unsigned char)ops[i], modrms[j]);
+            memcpy(buf, "\xf0\x0f\x00\x00", 4);
+            buf[2] = ops[i];
+            buf[3] = (char)modrms[j];
+            TEST_CHECK(nk_fault(uc, &intr, buf, 4) == 6);
+            TEST_MSG("f0 0f %02x %02x", (unsigned char)ops[i], modrms[j]);
+            memcpy(buf, "\x66\xf0\x0f\x00\x00", 5);
+            buf[3] = ops[i];
+            buf[4] = (char)modrms[j];
+            TEST_CHECK(nk_fault(uc, &intr, buf, 5) == 6);
+            TEST_MSG("66 f0 0f %02x %02x", (unsigned char)ops[i], modrms[j]);
+        }
+    }
+    /* ENDBR64 / ENDBR32 / RDSSPQ / CLDEMOTE space: NOP, LOCK #UD */
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x1e\xfa", 4) == -1);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x1e\xfa", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x1e\xfb", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x48\x0f\x1e\xc8", 5) == -1);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x48\x0f\x1e\xc8", 6) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\x0f\x1c\x06", 3) == -1);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x0f\x1c\x06", 4) == 6);
+
+    /* MPX on: CR4.OSXSAVE, XCR0 = x87|SSE|BNDREGS|BNDCSR, IA32_BNDCFGS.EN (CPL0) */
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_XCR0, 0x1b);
+    nk_wrmsr(uc, 0xd90, 1);
+    /* BNDMK bnd0, [rsi+0x10]: LB = RSI, UB = NOT(RSI + 0x10) */
+    TEST_CHECK(nk_fault(uc, &intr, "\xf3\x0f\x1b\x46\x10", 5) == -1);
+    /* LOCK BNDMOV [rsi], bnd0: runs (memory destination) */
+    memset(v, 0, sizeof(v));
+    OK(uc_mem_write(uc, NK_HANDLE, v, sizeof(v)));
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x66\x0f\x1b\x06", 5) == -1);
+    OK(uc_mem_read(uc, NK_HANDLE, v, sizeof(v)));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10));
+    TEST_MSG("bnd0 stored as %016" PRIx64 " %016" PRIx64, v[0], v[1]);
+    /* LOCK: BNDMOV bnd1, [rsi] / BNDMOV bnd1, bnd0 (both forms) / BNDMK / BNDCL / BNDCU / BNDCN */
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x66\x0f\x1a\x0e", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x66\x0f\x1a\xc8", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\x66\x0f\x1b\xc1", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x1b\x06", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf3\x0f\x1a\x06", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf2\x0f\x1a\x06", 5) == 6);
+    TEST_CHECK(nk_fault(uc, &intr, "\xf0\xf2\x0f\x1b\x06", 5) == 6);
+    /* without LOCK the same BNDMOV load works: bnd1 = [rsi], then [rdi] = bnd1 */
+    nk_setreg(uc, UC_X86_REG_RDI, NK_HANDLE + 0x20);
+    TEST_CHECK(nk_fault(uc, &intr, "\x66\x0f\x1a\x0e\x66\x0f\x1b\x0f", 8) == -1);
+    OK(uc_mem_read(uc, NK_HANDLE + 0x20, v, sizeof(v)));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10));
+    OK(uc_close(uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -8324,4 +8399,5 @@ TEST_LIST = {
     {"test_x86_opmask_ud", test_x86_opmask_ud},
     {"test_x86_opmask_features", test_x86_opmask_features},
     {"test_x86_opmask_state", test_x86_opmask_state},
+    {"test_x86_lock_hint_nops", test_x86_lock_hint_nops},
     {NULL, NULL}};

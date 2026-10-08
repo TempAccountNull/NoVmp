@@ -7623,6 +7623,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x11a:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U91) */
+        /*
+         * NoVmp (ledger U91): LOCK is #UD on every 0F 1A form: the MPX loads and
+         * checks (BNDCL/BNDCU/BNDMOV bnd, bnd/m/BNDLDX: "#UD If the LOCK prefix is
+         * used" / destination not memory, SDM Vol2A) and the hint NOP space (LOCK
+         * on a non-lockable instruction; i5-13600K, cases_fixes.txt).
+         */
+        if (prefixes & PREFIX_LOCK) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U91) */
         if (s->flags & HF_MPX_EN_MASK) {
             mod = (modrm >> 6) & 3;
             reg = ((modrm >> 3) & 7) | REX_R(s);
@@ -7713,6 +7724,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x11b:
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U91) */
+        /*
+         * NoVmp (ledger U91): LOCK is #UD on every 0F 1B form (BNDMK/BNDCN/BNDSTX
+         * "#UD If the LOCK prefix is used"; hint NOP space: i5-13600K) except
+         * MPX BNDMOV m, bnd (66 0F 1B, memory destination), whose only LOCK
+         * condition is "used but the destination is not a memory operand".
+         */
+        if ((prefixes & PREFIX_LOCK)
+            && !((s->flags & HF_MPX_EN_MASK) && (prefixes & PREFIX_DATA)
+                 && !(prefixes & (PREFIX_REPZ | PREFIX_REPNZ))
+                 && (modrm >> 6) != 3)) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U91) */
         if (s->flags & HF_MPX_EN_MASK) {
             mod = (modrm >> 6) & 3;
             reg = ((modrm >> 3) & 7) | REX_R(s);
@@ -7815,6 +7840,18 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
     case 0x119: case 0x11c: case 0x11d: case 0x11e: case 0x11f: /* nop (multi byte) */
         modrm = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U91) */
+        /*
+         * NoVmp (ledger U91): LOCK is #UD on every 0F 19/1C/1D/1E/1F form: the
+         * multi-byte NOP and hint space (incl. CLDEMOTE space, ENDBR32/64 and
+         * RDSSPD/Q while they are NOPs), LOCK on a non-lockable instruction; the
+         * i5-13600K #UDs every /r, register and memory form, with and without
+         * 66/F2/F3/REX (cases_fixes.txt).
+         */
+        if (prefixes & PREFIX_LOCK) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U91) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
         /*
          * NoVmp (ledger U114): F3 0F 1E /1 mod = 3 RDSSPD r32 / RDSSPQ r64
