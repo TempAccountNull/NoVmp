@@ -1636,6 +1636,46 @@ static void gen_KMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 }
 #endif /* __Use_Original_Qemu (U131) */
 
+#if __Use_Original_Qemu != 1 /* ours (U132) */
+/*
+ * NoVmp (ledger U132): KORTEST / KTEST set ZF and CF and clear OF, SF, AF, PF (SDM Vol2A
+ * "Flags Affected"); the other EFLAGS bits are untouched. T0 = first operand (ModRM.reg),
+ * T1 = second operand (r/m), both SRC[w-1:0]. CC_OP_EFLAGS: CC_SRC holds the six flags.
+ */
+static void gen_KORTEST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int w = 8 << decode->op[1].ot;
+    TCGv cf = tcg_temp_new(tcg_ctx);
+
+    /* TMP := DEST OR SRC; ZF := TMP = 0; CF := TMP = all ones (w bits) */
+    tcg_gen_or_tl(tcg_ctx, s->T0, s->T0, s->T1);
+    tcg_gen_setcondi_tl(tcg_ctx, TCG_COND_EQ, cf, s->T0,
+                        (target_ulong)MAKE_64BIT_MASK(0, w));
+    tcg_gen_setcondi_tl(tcg_ctx, TCG_COND_EQ, s->T0, s->T0, 0);
+    tcg_gen_shli_tl(tcg_ctx, s->T0, s->T0, ctz32(CC_Z));
+    tcg_gen_or_tl(tcg_ctx, cpu_cc_src, s->T0, cf);
+    set_cc_op(s, CC_OP_EFLAGS);
+    tcg_temp_free(tcg_ctx, cf);
+}
+
+static void gen_KTEST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv cf = tcg_temp_new(tcg_ctx);
+
+    /* ZF := (SRC2 AND SRC1) = 0; CF := (SRC2 AND NOT SRC1) = 0 */
+    tcg_gen_andc_tl(tcg_ctx, cf, s->T1, s->T0);
+    tcg_gen_setcondi_tl(tcg_ctx, TCG_COND_EQ, cf, cf, 0);
+    tcg_gen_and_tl(tcg_ctx, s->T0, s->T1, s->T0);
+    tcg_gen_setcondi_tl(tcg_ctx, TCG_COND_EQ, s->T0, s->T0, 0);
+    tcg_gen_shli_tl(tcg_ctx, s->T0, s->T0, ctz32(CC_Z));
+    tcg_gen_or_tl(tcg_ctx, cpu_cc_src, s->T0, cf);
+    set_cc_op(s, CC_OP_EFLAGS);
+    tcg_temp_free(tcg_ctx, cf);
+}
+#endif /* __Use_Original_Qemu (U132) */
+
 static void gen_LDMXCSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;

@@ -1448,6 +1448,21 @@ static void decode_0F_KMOV(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 }
 #endif /* __Use_Original_Qemu (U131) */
 
+#if __Use_Original_Qemu != 1 /* ours (U132) */
+/*
+ * NoVmp (ledger U132): KORTEST 98 / KTEST 99 k1, k2 (SDM Vol2A), RR, VEX.L0, vvvv 1111b,
+ * both operands read, only EFLAGS written. NP.W0 = W (KORTESTW AVX512F, KTESTW
+ * AVX512DQ), 66.W0 = B (DQ), NP.W1 = Q (BW), 66.W1 = D (BW).
+ */
+static void decode_0F_KTEST(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry k98[8] = K2_WBQD(KORTEST, None, K, AVX512F);
+    static const X86OpEntry k99[8] = K2_WBQD(KTEST, None, K, AVX512DQ);
+
+    decode_K_pp_w(s, entry, *b == 0x98 ? k98 : k99, s->vex_w);
+}
+#endif /* __Use_Original_Qemu (U132) */
+
 static const X86OpEntry opcodes_0F[256] = {
     [0x0E] = X86_OP_ENTRY0(EMMS,                              cpuid(3DNOW)), /* femms */
     /*
@@ -1533,6 +1548,11 @@ static const X86OpEntry opcodes_0F[256] = {
     [0x92] = X86_OP_GROUP0(0F_KMOV),
     [0x93] = X86_OP_GROUP0(0F_KMOV),
 #endif /* __Use_Original_Qemu (U131) */
+#if __Use_Original_Qemu != 1 /* ours (U132) */
+    /* VEX opmask: KORTEST, KTEST (U132) */
+    [0x98] = X86_OP_GROUP0(0F_KTEST),
+    [0x99] = X86_OP_GROUP0(0F_KTEST),
+#endif /* __Use_Original_Qemu (U132) */
 
     [0x58] = X86_OP_ENTRY3(VADD,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
     [0x59] = X86_OP_ENTRY3(VMUL,       V,x, H,x, W,x, vex2_rep3 p_00_66_f3_f2),
