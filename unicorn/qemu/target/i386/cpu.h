@@ -344,6 +344,9 @@ typedef enum X86Seg {
 #define PG_ERROR_RSVD_MASK 0x08
 #define PG_ERROR_I_D_MASK  0x10
 #define PG_ERROR_PK_MASK   0x20
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+#define PG_ERROR_SSTK_MASK 0x40   /* SS: the access was a shadow-stack access */
+#endif /* __Use_Original_Qemu (U117) */
 
 #define MCG_CTL_P       (1ULL<<8)   /* MCG_CAP register available */
 #define MCG_SER_P       (1ULL<<24) /* MCA recovery/new status bits */
@@ -2337,6 +2340,11 @@ uint64_t cpu_get_tsc(CPUX86State *env);
 #define MMU_KSMAP_IDX   0
 #define MMU_USER_IDX    1
 #define MMU_KNOSMAP_IDX 2
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+/* shadow-stack accesses (SDM Vol3 5.6): supervisor / user */
+#define MMU_SS_KSMAP_IDX 3
+#define MMU_SS_USER_IDX  4
+#endif /* __Use_Original_Qemu (U117) */
 static inline int cpu_mmu_index(CPUX86State *env, bool ifetch)
 {
     return (env->hflags & HF_CPL_MASK) == 3 ? MMU_USER_IDX :

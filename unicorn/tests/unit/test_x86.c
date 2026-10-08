@@ -7733,6 +7733,116 @@ static void test_x86_cet_ibt(void)
     OK(uc_close(r.uc));
 }
 
+/*
+ * NoVmp U117: shadow-stack page types with 4-level paging (SDM Vol3 5.6.1).
+ * Identity map: 0-2 MB and 2-4 MB through 4 KB page tables at 400000h. 300000h is a
+ * user shadow-stack page (R/W = 0, D = 1, U/S = 1), 301000h a supervisor one,
+ * 302000h an ordinary writable page; 380000h is not present.
+ */
+static void nv_paging_ss(NvRun *r)
+{
+    uint64_t e, cr0, cr4, a;
+    uc_x86_msr efer = {0xc0000080, 0};
+
+    OK(uc_mem_map(r->uc, 0x300000, 0x3000, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x400000, 0x5000, UC_PROT_ALL));
+    e = 0x401007; nv_st64(r, 0x400000, e);            /* PML4[0] -> PDPT */
+    e = 0x402007; nv_st64(r, 0x401000, e);            /* PDPT[0] -> PD */
+    e = 0x403007; nv_st64(r, 0x402000, e);            /* PD[0] -> PT 0-2 MB */
+    e = 0x404007; nv_st64(r, 0x402008, e);            /* PD[1] -> PT 2-4 MB */
+    for (a = code_start; a < code_start + code_len; a += 0x1000) {
+        nv_st64(r, 0x403000 + (a >> 12) * 8, a | 7);
+    }
+    nv_st64(r, 0x404000 + ((0x200000 - 0x200000) >> 12) * 8, 0x200000 | 7);
+    nv_st64(r, 0x404000 + ((0x201000 - 0x200000) >> 12) * 8, 0x201000 | 7);
+    nv_st64(r, 0x404000 + ((0x300000 - 0x200000) >> 12) * 8, 0x300000 | 0x45);
+    nv_st64(r, 0x404000 + ((0x301000 - 0x200000) >> 12) * 8, 0x301000 | 0x41);
+    nv_st64(r, 0x404000 + ((0x302000 - 0x200000) >> 12) * 8, 0x302000 | 7);
+    a = 0x400000;
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR3, &a));
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= (1u << 5) | (1u << 23);                    /* PAE, CET */
+    OK(uc_reg_read(r->uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 8;                            /* LME */
+    OK(uc_reg_write(r->uc, UC_X86_REG_MSR, &efer));
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x80010000ull;                             /* PG, WP */
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR0, &cr0));
+}
+
+static void test_x86_cet_shadow_stack_paging(void)
+{
+    NvRun r;
+    uint64_t cr2;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    nv_wrmsr(&r, 0x6a2, 3);                           /* SH_STK_EN | WR_SHSTK_EN */
+    nv_set(&r, UC_X86_REG_RAX, 1);
+
+    /* supervisor shadow-stack page: INCSSP reads it */
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301808);
+    /* a user shadow-stack page, an ordinary page, a not-present page: #PF, SSP unchanged */
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR2, &cr2));
+    TEST_CHECK(cr2 == 0x300800 && nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+    nv_set(&r, UC_X86_REG_SSP, 0x302800);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    nv_set(&r, UC_X86_REG_SSP, 0x380000);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+
+    /* ordinary accesses: reading a shadow-stack page is fine, writing it is #PF (R/W = 0, WP) */
+    nv_set(&r, UC_X86_REG_RDX, 0x301800);
+    OK(nv_run(&r, "\x48\x8b\x0a"));
+    TEST_CHECK(r.cap.count == 0);
+    OK(nv_run(&r, "\x48\x89\x0a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+
+    /* WRSSQ: supervisor shadow-stack page ok, ordinary page #PF */
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ull);
+    OK(nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301800) == 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x302000);
+    OK(nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    /* WRUSSQ (user access): user shadow-stack page ok, supervisor one #PF */
+    nv_set(&r, UC_X86_REG_RDX, 0x300808);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300808) == 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x301808);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+
+    /* CALL/RET on the supervisor shadow-stack page; with SSP on an ordinary page the CALL faults */
+    nv_set(&r, UC_X86_REG_SSP, 0x303000);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    OK(nv_run(&r, "\xe8\x02\x00\x00\x00\xeb\x01\xc3"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800);
+    nv_set(&r, UC_X86_REG_SSP, 0x301ff8);
+    OK(nv_run(&r, "\xe8\x02\x00\x00\x00\xeb\x01\xc3"));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    TEST_CHECK(nv_ld64(&r, 0x301ff0) == r.last + 5);
+
+    /* CPL3 (IA32_U_CET.SH_STK_EN): the user shadow-stack page only */
+    nv_wrmsr(&r, 0x6a0, 1);
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    OK(nv_run3(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x300808);
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    OK(nv_run3(&r, "\xf3\x48\x0f\xae\xe8"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    OK(uc_close(r.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -7877,4 +7987,5 @@ TEST_LIST = {
     {"test_x86_cet_shadow_stack_32", test_x86_cet_shadow_stack_32},
     {"test_x86_cet_call_ret", test_x86_cet_call_ret},
     {"test_x86_cet_ibt", test_x86_cet_ibt},
+    {"test_x86_cet_shadow_stack_paging", test_x86_cet_shadow_stack_paging},
     {NULL, NULL}};

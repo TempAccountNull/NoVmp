@@ -1240,9 +1240,9 @@ void helper_pconfig(CPUX86State *env)
  *
  * Shadow-stack accesses: a user access at CPL 3, a supervisor access otherwise
  * (WRUSS: always user). Outside 64-bit mode SSP and the shadow-stack addresses
- * are 32 bits wide (Vol1 18.2.1). Without paging there are no page types and
- * every linear address may be accessed; the paging rule "shadow-stack accesses
- * only to shadow-stack pages" (Vol3 5.6) is not modelled (see the ledger).
+ * are 32 bits wide (Vol1 18.2.1). They use their own MMU modes, which with
+ * paging allow only shadow-stack pages (Vol3 5.6, U117); without paging there
+ * are no page types and every linear address may be accessed.
  */
 static bool cet_lm(CPUX86State *env)
 {
@@ -1256,7 +1256,8 @@ static target_ulong cet_la(CPUX86State *env, uint64_t a)
 
 static int cet_ss_idx(CPUX86State *env, bool user)
 {
-    return (user || (env->hflags & HF_CPL_MASK) == 3) ? MMU_USER_IDX : MMU_KNOSMAP_IDX;
+    /* the shadow-stack MMU modes apply the page-type rules (U117) */
+    return (user || (env->hflags & HF_CPL_MASK) == 3) ? MMU_SS_USER_IDX : MMU_SS_KSMAP_IDX;
 }
 
 /*

@@ -402,8 +402,16 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
     uint64_t rsvd_mask = PG_HI_RSVD_MASK;
     uint32_t page_offset;
     target_ulong vaddr;
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+    /* R/W of every paging-structure entry above the one that maps the page */
+    uint64_t ss_upper_rw = PG_RW_MASK;
+#endif /* __Use_Original_Qemu (U117) */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U117) */
     is_user = mmu_idx == MMU_USER_IDX;
+#else /* ours (U117) */
+    is_user = mmu_idx == MMU_USER_IDX || mmu_idx == MMU_SS_USER_IDX;
+#endif /* __Use_Original_Qemu (U117) */
 #if defined(DEBUG_MMU)
     printf("MMU fault: addr=%" VADDR_PRIx " w=%d u=%d eip=" TARGET_FMT_lx "\n",
            addr, is_write1, is_user, env->eip);
@@ -481,6 +489,9 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
                     x86_stl_phys_notdirty(cs, pml5e_addr, pml5e);
                 }
                 ptep = pml5e ^ PG_NX_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+                ss_upper_rw &= pml5e;
+#endif /* __Use_Original_Qemu (U117) */
             } else {
                 pml5e = env->cr[3];
                 ptep = PG_NX_MASK | PG_USER_MASK | PG_RW_MASK;
@@ -501,6 +512,9 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
                 x86_stl_phys_notdirty(cs, pml4e_addr, pml4e);
             }
             ptep &= pml4e ^ PG_NX_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+            ss_upper_rw &= pml4e;
+#endif /* __Use_Original_Qemu (U117) */
             pdpe_addr = ((pml4e & PG_ADDRESS_MASK) + (((addr >> 30) & 0x1ff) << 3)) &
                 a20_mask;
             pdpe_addr = get_hphys(cs, pdpe_addr, MMU_DATA_STORE, NULL);
@@ -523,6 +537,9 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
                 pte = pdpe;
                 goto do_check_protect;
             }
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+            ss_upper_rw &= pdpe;
+#endif /* __Use_Original_Qemu (U117) */
         } else
 #endif
         {
@@ -559,6 +576,9 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
             pte = pde;
             goto do_check_protect;
         }
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+        ss_upper_rw &= pde;
+#endif /* __Use_Original_Qemu (U117) */
         /* 4 KB page */
         if (!(pde & PG_ACCESSED_MASK)) {
             pde |= PG_ACCESSED_MASK;
@@ -602,6 +622,9 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
             rsvd_mask = 0x200000;
             goto do_check_protect_pse36;
         }
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+        ss_upper_rw &= pde;
+#endif /* __Use_Original_Qemu (U117) */
 
         if (!(pde & PG_ACCESSED_MASK)) {
             pde |= PG_ACCESSED_MASK;
@@ -636,17 +659,42 @@ do_check_protect_pse36:
     }
 
     prot = 0;
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+    /*
+     * NoVmp (ledger U117): a shadow-stack access (SDM Vol3 5.6.1) is allowed
+     * only to a shadow-stack address - R/W = 0 and D = 1 in the entry that maps
+     * the page, R/W = 1 in every other paging-structure entry - of its own mode
+     * (user accesses to user addresses, supervisor accesses to supervisor
+     * addresses), and then both reads and writes are allowed. Protection keys
+     * apply as to ordinary data accesses (below).
+     */
+    if (mmu_idx == MMU_SS_KSMAP_IDX || mmu_idx == MMU_SS_USER_IDX) {
+        if ((pte & PG_RW_MASK) || !(pte & PG_DIRTY_MASK) ||
+            !(ss_upper_rw & PG_RW_MASK) || !(ptep & PG_USER_MASK) != !is_user) {
+            goto do_fault_protect;
+        }
+        prot = PAGE_READ | PAGE_WRITE;
+    } else
+#endif /* __Use_Original_Qemu (U117) */
     if (mmu_idx != MMU_KSMAP_IDX || !(ptep & PG_USER_MASK)) {
         prot |= PAGE_READ;
         if ((ptep & PG_RW_MASK) || (!is_user && !(env->cr[0] & CR0_WP_MASK))) {
             prot |= PAGE_WRITE;
         }
     }
+#if __Use_Original_Qemu == 1 /* original QEMU (U117) */
     if (!(ptep & PG_NX_MASK) &&
         (mmu_idx == MMU_USER_IDX ||
          !((env->cr[4] & CR4_SMEP_MASK) && (ptep & PG_USER_MASK)))) {
         prot |= PAGE_EXEC;
     }
+#else /* ours (U117) */
+    if (!(ptep & PG_NX_MASK) && mmu_idx != MMU_SS_KSMAP_IDX && mmu_idx != MMU_SS_USER_IDX &&
+        (mmu_idx == MMU_USER_IDX ||
+         !((env->cr[4] & CR4_SMEP_MASK) && (ptep & PG_USER_MASK)))) {
+        prot |= PAGE_EXEC;
+    }
+#endif /* __Use_Original_Qemu (U117) */
     if ((env->cr[4] & CR4_PKE_MASK) && (env->hflags & HF_LMA_MASK) &&
         (ptep & PG_USER_MASK) && env->pkru) {
         uint32_t pk = (pte & PG_PKRU_MASK) >> PG_PKRU_BIT;
@@ -715,6 +763,11 @@ do_check_protect_pse36:
     error_code |= (is_write << PG_ERROR_W_BIT);
     if (is_user)
         error_code |= PG_ERROR_U_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U117) */
+    if (mmu_idx == MMU_SS_KSMAP_IDX || mmu_idx == MMU_SS_USER_IDX) {
+        error_code |= PG_ERROR_SSTK_MASK;
+    }
+#endif /* __Use_Original_Qemu (U117) */
     if (is_write1 == 2 &&
         (((env->efer & MSR_EFER_NXE) &&
           (env->cr[4] & CR4_PAE_MASK)) ||

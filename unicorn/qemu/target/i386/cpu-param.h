@@ -23,6 +23,11 @@
 # define TARGET_VIRT_ADDR_SPACE_BITS  32
 #endif
 #define TARGET_PAGE_BITS 12
+#if __Use_Original_Qemu == 1 /* original QEMU (U117) */
 #define NB_MMU_MODES 3
+#else /* ours (U117) */
+/* NoVmp (ledger U117): + MMU_SS_KSMAP_IDX / MMU_SS_USER_IDX (CET shadow-stack accesses) */
+#define NB_MMU_MODES 5
+#endif /* __Use_Original_Qemu (U117) */
 
 #endif
