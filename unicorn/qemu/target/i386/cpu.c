@@ -4317,6 +4317,36 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
     return xcr0;
 }
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+/*
+ * NoVmp (ledger U173): the state components whose IA32_XFD / IA32_XFD_ERR bit can be set
+ * (SDM Vol1 13.14): CPUID.(EAX=0DH,ECX=1):EAX.XFD and, per supported user component i,
+ * CPUID.(EAX=0DH,ECX=i):ECX[2] (TILEDATA only, U170).
+ */
+uint64_t x86_cpu_xfd_supported(CPUX86State *env)
+{
+    uint64_t comps = ((uint64_t)env->features[FEAT_XSAVE_XCR0_HI] << 32) |
+                     env->features[FEAT_XSAVE_XCR0_LO];
+    uint64_t mask = 0;
+    int i;
+
+    if (!(env->features[FEAT_XSAVE] & CPUID_D_1_EAX_XFD)) {
+        return 0;
+    }
+    for (i = 2; i < XSAVE_STATE_AREA_COUNT; i++) {
+        if (((comps >> i) & 1) && (x86_ext_save_areas[i].ecx & ESA_FEATURE_XFD_MASK)) {
+            mask |= 1ULL << i;
+        }
+    }
+    return mask;
+}
+
+/* the components for which XFD is enabled: XCR0[i] = IA32_XFD[i] = 1 (supported bits) */
+uint64_t x86_cpu_xfd_armed(CPUX86State *env)
+{
+    return env->msr_xfd ? env->xcr0 & env->msr_xfd & x86_cpu_xfd_supported(env) : 0;
+}
+#endif /* __Use_Original_Qemu (U173) */
 
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,

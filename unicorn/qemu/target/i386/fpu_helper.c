@@ -4790,6 +4790,19 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+    /*
+     * NoVmp (ledger U173): SDM Vol1 13.14 - with XCR0[i] = IA32_XFD[i] = 1 the XSAVE family
+     * does not #NM but "operates as if XINUSE[i] = 0": XSTATE_BV[i] = 0; XSAVE saves the
+     * initial configuration, XSAVEOPT (opt != -1) does not save the component.
+     */
+    const uint64_t xfd = x86_cpu_xfd_armed(env);
+
+    inuse &= ~xfd;
+    if (opt != (uint64_t)-1) {
+        opt &= ~xfd;
+    }
+#endif /* __Use_Original_Qemu (U173) */
     /* Never save anything not enabled by XCR0.  */
     rfbm &= env->xcr0;
     opt &= rfbm;
@@ -4841,6 +4854,16 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         do_xsave_tilecfg(env, ptr + x86_ext_save_areas[XSTATE_XTILE_CFG_BIT].offset, ra);
     }
     if (opt & XSTATE_XTILE_DATA_MASK) {
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+        if (xfd & XSTATE_XTILE_DATA_MASK) {
+            /* XFD: XSAVE stores the initial configuration (all zero) */
+            target_ulong at = ptr + x86_ext_save_areas[XSTATE_XTILE_DATA_BIT].offset;
+            int i;
+            for (i = 0; i < (int)sizeof(env->xtiledata); i += 8) {
+                cpu_stq_data_ra(env, at + i, 0, ra);
+            }
+        } else
+#endif /* __Use_Original_Qemu (U173) */
         do_xsave_tiledata(env, ptr + x86_ext_save_areas[XSTATE_XTILE_DATA_BIT].offset, ra);
     }
 #endif /* __Use_Original_Qemu (U172) */
@@ -4925,6 +4948,10 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
     rfbm &= env->xcr0;
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+    /* XFD-disabled components: as if XINUSE[i] = 0, not saved (SDM Vol1 13.14) */
+    inuse &= ~x86_cpu_xfd_armed(env);
+#endif /* __Use_Original_Qemu (U173) */
     save = rfbm & inuse;
     if ((rfbm & XSTATE_SSE_MASK) && env->mxcsr != 0x1f80) {
         save |= XSTATE_SSE_MASK;
@@ -5122,6 +5149,24 @@ void helper_fxrstor(CPUX86State *env, target_ulong ptr)
     do_fxrstor(env, ptr, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+/*
+ * NoVmp (ledger U173): SDM Vol1 13.14 - XRSTOR loading component i from memory (RFBM[i] =
+ * XSTATE_BV[i] = 1) with XCR0[i] = IA32_XFD[i] = 1 raises #NM before any state is
+ * modified; IA32_XFD_ERR := IA32_XFD AND the components it would load. Initialising
+ * the component (XSTATE_BV[i] = 0) does not fault.
+ */
+static void xrstor_check_xfd(CPUX86State *env, uint64_t load, uintptr_t ra)
+{
+    uint64_t xfd = load & x86_cpu_xfd_armed(env);
+
+    if (xfd) {
+        env->msr_xfd_err = xfd;
+        raise_exception_ra(env, EXCP07_PREX, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U173) */
+
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 /* NoVmp (ledger U66): the compacted form of XRSTOR, see do_xsavec */
 static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
@@ -5150,6 +5195,9 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     if (restore & XSTATE_SSE_MASK) {
         check_mxcsr(env, cpu_ldl_data_ra(env, ptr + XO(legacy.mxcsr), ra), ra);
     }
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+    xrstor_check_xfd(env, restore, ra);
+#endif /* __Use_Original_Qemu (U173) */
 
     if (restore & XSTATE_FP_MASK) {
         do_xrstor_fpu(env, ptr, ra);
@@ -5320,6 +5368,9 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
     }
 
 #endif /* __Use_Original_Qemu (U40) */
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+    xrstor_check_xfd(env, rfbm & xstate_bv, ra);
+#endif /* __Use_Original_Qemu (U173) */
     if (rfbm & XSTATE_FP_MASK) {
         if (xstate_bv & XSTATE_FP_MASK) {
             do_xrstor_fpu(env, ptr, ra);

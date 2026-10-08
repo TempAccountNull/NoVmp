@@ -581,12 +581,37 @@ void helper_wrmsr(CPUX86State *env)
         env->xss = val & valid;
         break;
     }
+#if __Use_Original_Qemu == 1 /* original QEMU (U173) */
     case MSR_IA32_XFD:
         env->msr_xfd = val;
         break;
     case MSR_IA32_XFD_ERR:
         env->msr_xfd_err = val;
         break;
+#else /* ours (U173) */
+    case MSR_IA32_XFD:
+    case MSR_IA32_XFD_ERR:
+        /*
+         * NoVmp (ledger U173): SDM Vol1 13.14 - with CPUID.(EAX=0DH,ECX=1):EAX[4] (XFD,
+         * U170) "Bit i of either MSR can be set to 1 only if CPUID.0DH.i:ECX[2] is
+         * enumerated as 1": other bits #GP(0) (an API write with them is dropped).
+         * Without XFD the value is kept as QEMU did; only supported bits ever take
+         * effect (x86_cpu_xfd_armed).
+         */
+        if ((env->features[FEAT_XSAVE] & CPUID_D_1_EAX_XFD) &&
+            (val & ~x86_cpu_xfd_supported(env))) {
+            if (env->msr_api) {
+                break;
+            }
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        if ((uint32_t)env->regs[R_ECX] == MSR_IA32_XFD) {
+            env->msr_xfd = val;
+        } else {
+            env->msr_xfd_err = val;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U173) */
     case MSR_IA32_PKRS:
         if (val & 0xffffffff00000000ull) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());

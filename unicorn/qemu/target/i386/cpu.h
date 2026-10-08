@@ -2288,6 +2288,12 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 /* fpu_helper.c: LDTILECFG's consistency checks on a 64-byte TILECFG image */
 bool x86_amx_tilecfg_ok(const uint8_t *buf, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U173) */
+/* cpu.c: components whose IA32_XFD bit is supported (CPUID 0DH.1:EAX[4], 0DH.i:ECX[2]) */
+uint64_t x86_cpu_xfd_supported(CPUX86State *env);
+/* cpu.c: components with XFD enabled, XCR0 AND IA32_XFD (supported bits only) */
+uint64_t x86_cpu_xfd_armed(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U173) */
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx);
