@@ -83,6 +83,10 @@ rem EVEX milestone M2 conversions / FP specials / shifts (ledger U230-U241): VCV
 rem AVX512DQ QQ forms), VRCP14/VRSQRT14, VGETEXP, VGETMANT, VSCALEF, VFIXUPIMM, VRNDSCALE,
 rem VPSLL/VPSRL/VPSRA by xmm, VPROLV/VPRORV vs the SDM model ref_evex_m2_cvt.py, Unicorn only.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_cvt.txt" --avx512 --xcr0 0xE7
+rem AVX512DQ forms that need the integrated engine (ledger U290-U296 with U192, U210/U215, U230/U233):
+rem masked VRANGESS/SD, VREDUCESS/SD with DEST != SRC1, DQ insert/extract/broadcast, QQ conversions
+rem vs the SDM model ref_evex_m3_dq.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq_post.txt" --avx512 --xcr0 0xE7 --expect-only
 
 echo.
 if !FAILED! NEQ 0 (
