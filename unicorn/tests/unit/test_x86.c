@@ -10647,6 +10647,150 @@ static void test_x86_evex_vsib_modes(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * ---- NoVmp U190-U201: EVEX milestone M2 engine (scalar forms, FMA, compares, blends) ----
+ * Unicorn-visible behaviour the expected-value cases cannot show: masked scalar memory
+ * operands seen by the memory hooks (k1[0] = 0: no access at all), fault suppression on
+ * memory Unicorn has not mapped, and (U)COMISS EFLAGS after a lazily evaluated CMP, also when
+ * #XM leaves them unchanged. Results: Emulator/data/cases_evex_m2_engine.txt
+ * (ref_evex_m2_engine.py, independent SDM model).
+ */
+static void eg_set_k1(EvCtx *c, uint64_t k)
+{
+    OK(uc_reg_write(c->uc, UC_X86_REG_K1, &k));
+}
+
+static void eg_log_reset(EvMemLog *l)
+{
+    memset(l, 0, sizeof(*l));
+}
+
+static void test_x86_evex_scalar_memory(void)
+{
+    /* VMOVSS xmm1{k1}, [rsi] / VMOVSD [rsi]{k1}, xmm1 / VADDSD xmm1{k1}, xmm2, [rsi] */
+    static const char ldss[] = "\x62\xf1\x7e\x09\x10\x0e";
+    static const char stsd[] = "\x62\xf1\xff\x09\x11\x0e";
+    static const char addsd[] = "\x62\xf1\xef\x09\x58\x0e";
+    /* VFMADD231PS zmm1{k1}, zmm2, [rsi] */
+    static const char fma[] = "\x62\xf2\x6d\x49\xb8\x0e";
+    const uint64_t rsi = EV_DATA + 0x100, end = EV_DATA + 0x4000;
+    static const float one[16] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+    uint32_t z[16];
+    EvMemLog log;
+    EvCtx c;
+    uc_hook hr, hw;
+    int i, ok;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_mem_write(c.uc, rsi, one, sizeof(one)));
+    ev_set(&c, UC_X86_REG_RSI, rsi);
+    OK(uc_hook_add(c.uc, &hr, UC_HOOK_MEM_READ, ev_mem_cb, &log, 1, 0));
+    OK(uc_hook_add(c.uc, &hw, UC_HOOK_MEM_WRITE, ev_mem_cb, &log, 1, 0));
+
+    /* k1[0] = 0: the m32 is not read; DEST[31:0] kept (merging), DEST[MAXVL-1:32] := 0 */
+    ev_put_zmm(&c, 1, 0x11223344);
+    eg_set_k1(&c, 0xfe);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    ev_get_zmm(&c, 1, z);
+    for (ok = z[0] == 0x11223344, i = 1; i < 16; i++) {
+        ok &= z[i] == 0;
+    }
+    TEST_CHECK(ok);
+    /* k1[0] = 1: one 4-byte read */
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 4);
+    ev_get_zmm(&c, 1, z);
+    TEST_CHECK(z[0] == 0x3f800000 && z[1] == 0);
+
+    /* VADDSD: masked-off element 0 reads nothing; active: one 8-byte read */
+    eg_set_k1(&c, 0);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 8);
+
+    /* VMOVSD store: k1[0] = 0 writes nothing (k1[1] is not looked at), k1[0] = 1 one qword */
+    eg_set_k1(&c, 2);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(log.n == 0);
+    eg_set_k1(&c, 1);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(log.n == 1 && log.addr[0] == rsi && log.size[0] == 8);
+
+    /* packed FMA with a memory source: exactly the active elements are read */
+    eg_set_k1(&c, 0x8101);
+    eg_log_reset(&log);
+    TEST_CHECK(ev_run(&c, fma, 6) == -1);
+    TEST_CHECK(log.n == 3);
+    TEST_CHECK(log.addr[0] == rsi && log.addr[1] == rsi + 0x20 && log.addr[2] == rsi + 0x3c);
+    OK(uc_hook_del(c.uc, hr));
+    OK(uc_hook_del(c.uc, hw));
+
+    /* fault suppression on memory Unicorn has not mapped (EV_DATA + 0x4000) */
+    ev_set(&c, UC_X86_REG_RSI, end);
+    eg_set_k1(&c, 0);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -1);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -1);
+    TEST_CHECK(ev_run(&c, addsd, 6) == -1);
+    eg_set_k1(&c, 1);
+    TEST_CHECK(ev_run(&c, ldss, 6) == -2 - (int)UC_ERR_READ_UNMAPPED);
+    TEST_CHECK(ev_run(&c, stsd, 6) == -2 - (int)UC_ERR_WRITE_UNMAPPED);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_evex_comis_eflags(void)
+{
+    /* mov eax, 1; cmp eax, eax; VCOMISS xmm1, xmm2 / VUCOMISS xmm1, xmm2 {sae} */
+    static const char comis[] = "\xb8\x01\x00\x00\x00\x39\xc0\x62\xf1\x7c\x08\x2f\xca";
+    static const char ucomis_sae[] = "\xb8\x01\x00\x00\x00\x39\xc0\x62\xf1\x7c\x18\x2e\xca";
+    const uint64_t arith = 0x8d5;           /* OF SF ZF AF PF CF */
+    uint32_t x1[4] = { 0x3f800000, 0, 0, 0 }, x2[4] = { 0x40000000, 0, 0, 0 };
+    uint64_t fl, cr4;
+    uint32_t mxcsr;
+    EvCtx c;
+
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_reg_read(c.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1ULL << 10;                      /* CR4.OSXMMEXCPT: #XM, not #UD */
+    OK(uc_reg_write(c.uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM1, x1));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
+    /* 1.0 < 2.0: CF = 1, ZF = PF = 0, OF SF AF cleared (the CMP's ZF and PF replaced) */
+    TEST_CHECK(ev_run(&c, comis, 13) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x1);
+    TEST_MSG("eflags %llx", (unsigned long long)fl);
+    /* SNaN with IM = 0: #XM, EFLAGS still those of the CMP (ZF PF), MXCSR.IE set */
+    x2[0] = 0x7fa00000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
+    mxcsr = 0x1f00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, comis, 13) == 19);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x44);
+    TEST_MSG("eflags %llx", (unsigned long long)fl);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(mxcsr == 0x1f01);
+    /* {sae}: no #XM, no MXCSR flag; unordered: ZF PF CF */
+    mxcsr = 0x1f00;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(ev_run(&c, ucomis_sae, 13) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &fl));
+    TEST_CHECK((fl & arith) == 0x45);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxcsr));
+    TEST_CHECK(mxcsr == 0x1f00);
+    OK(uc_close(c.uc));
+}
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -10820,4 +10964,6 @@ TEST_LIST = {
     {"test_x86_evex_scatter_restart", test_x86_evex_scatter_restart},
     {"test_x86_evex_scatter_order", test_x86_evex_scatter_order},
     {"test_x86_evex_vsib_modes", test_x86_evex_vsib_modes},
+    {"test_x86_evex_scalar_memory", test_x86_evex_scalar_memory},
+    {"test_x86_evex_comis_eflags", test_x86_evex_comis_eflags},
     {NULL, NULL}};

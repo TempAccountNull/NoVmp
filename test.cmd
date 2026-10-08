@@ -61,6 +61,10 @@ rem plan 1.15d milestone M2 (ledger U250-U251): EVEX gathers/scatters (every for
 rem completion at an unmapped element, overlapping scatter indices, E12 #UD) vs the SDM model
 rem ref_evex_m2_gather.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_gather.txt" --avx512 --xcr0 0xE7 --expect-only
+rem plan 1.15d milestone M2 engine (ledger U190-U201): EVEX scalar FP (SS/SD arithmetic, VMOVSS/SD,
+rem (U)COMISS/SD), VCMPPS/PD/SS/SD into k, FMA (dest as source under masking), VPBLENDMx/VBLENDMPx
+rem vs the SDM model ref_evex_m2_engine.py, Unicorn only with the AVX-512 opt-in.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m2_engine.txt" --avx512 --xcr0 0xE7
 
 echo.
 if !FAILED! NEQ 0 (
