@@ -14420,6 +14420,68 @@ static void test_x86_bp_pause_tf(void)
              (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U459 (upstream QEMU e54ef98c8a + 0f1d6606c2 + 1e94ddc685): only MOV SS / POP SS
+ * delay the single-step #DB by one instruction; after LSS and after STI the trap
+ * comes at once (SDM Vol3A 7.8.3; Vol3C Table 27-3: blocking by STI covers
+ * maskable interrupts only, blocking by MOV SS also debug exceptions). 64-bit
+ * mode, CPL0. TF is set by POPFQ, so it applies from
+ * the instruction after the one following POPFQ.
+ */
+static void test_x86_bp_ss_sti_tf(void)
+{
+    /* pushfq; or qword [rsp], 100h; and qword [rsp], ~200h; popfq */
+#define BP_TF_ON "\x9c\x48\x81\x0c\x24\x00\x01\x00\x00\x48\x81\x24\x24\xff\xfd\xff\xff\x9d"
+    static const char sti[] = BP_TF_ON "\xfb\xff\xc0\xff\xc0";        /* sti; inc eax; inc eax */
+    static const char lss[] = BP_TF_ON "\x0f\xb2\x26\xff\xc0\xff\xc0"; /* lss esp, [rsi]; inc; inc */
+    static const char movss[] = BP_TF_ON "\x8e\xd1\xff\xc0\xff\xc0";   /* mov ss, ecx; inc; inc */
+#undef BP_TF_ON
+    uint8_t far_ptr[6] = {0x00, 0x7f, 0x08, 0x00, 0x00, 0x00}; /* 00087F00h : 0000h */
+    BpCpu c;
+    uint64_t base;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    OK(bp_run(&c, sti, sizeof(sti) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 19);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 0 && (bp_get(&c, UC_X86_REG_RFLAGS) & 0x200));
+    TEST_MSG("sti: intno %u rip %llx (expected %llx) rax %llx", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 19),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    OK(uc_mem_write(c.uc, BP_DATA, far_ptr, sizeof(far_ptr)));
+    bp_set(&c, UC_X86_REG_RSI, BP_DATA);
+    base = c.next;
+    OK(bp_run(&c, lss, sizeof(lss) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 21);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 0 && bp_get(&c, UC_X86_REG_RSP) == 0x87f00);
+    TEST_MSG("lss: intno %u rip %llx (expected %llx) rax %llx rsp %llx", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 21),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RSP));
+    OK(uc_close(c.uc));
+
+    /* MOV SS keeps the shadow: the trap follows the first INC */
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    base = c.next;
+    OK(bp_run(&c, movss, sizeof(movss) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 22);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("mov ss: intno %u rip %llx (expected %llx) rax %llx", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 22),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14637,4 +14699,5 @@ TEST_LIST = {
     {"test_x86_bp_lock_new_decoder", test_x86_bp_lock_new_decoder},
     {"test_x86_bp_lock_old_decoder", test_x86_bp_lock_old_decoder},
     {"test_x86_bp_pause_tf", test_x86_bp_pause_tf},
+    {"test_x86_bp_ss_sti_tf", test_x86_bp_ss_sti_tf},
     {NULL, NULL}};

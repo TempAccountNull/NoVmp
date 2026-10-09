@@ -2853,27 +2853,42 @@ static inline void gen_op_movl_seg_T0_vm(DisasContext *s, X86Seg seg_reg)
 }
 
 /* move T0 to seg_reg and compute if the CPU state may change. Never
-   call this function with seg_reg == R_CS */
-static void gen_movl_seg_T0(DisasContext *s, X86Seg seg_reg)
+   call this function with seg_reg == R_CS.
+   backport of QEMU e54ef98c8a + 0f1d6606c2 + 1e94ddc685: only MOV SS and POP SS
+   (inhibit_irq) create the interrupt/debug shadow, LSS does not (SDM Vol3A 7.8.3,
+   Vol2 MOV/POP "Loading the SS register with a MOV/POP instruction ...") */
+static void gen_movl_seg_T0(DisasContext *s, X86Seg seg_reg, bool inhibit_irq)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     if (PE(s) && !VM86(s)) {
         tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
         gen_helper_load_seg(tcg_ctx, cpu_env, tcg_const_i32(tcg_ctx, seg_reg), s->tmp2_i32);
-        /* abort translation because the addseg value may change or
-           because ss32 may change. For R_SS, translation must always
-           stop as a special handling must be done to disable hardware
-           interrupts for the next instruction */
-        if (seg_reg == R_SS) {
-            s->base.is_jmp = DISAS_EOB_INHIBIT_IRQ;
-        } else if (CODE32(s) && seg_reg < R_FS) {
+
+        /*
+         * For moves to SS, the SS32 flag may change. For CODE32 only, changes
+         * to SS, DS and ES may change the ADDSEG flags.
+         */
+        if (seg_reg == R_SS || (CODE32(s) && seg_reg < R_FS)) {
             s->base.is_jmp = DISAS_EOB_NEXT;
         }
     } else {
         gen_op_movl_seg_T0_vm(s, seg_reg);
-        if (seg_reg == R_SS) {
-            s->base.is_jmp = DISAS_EOB_INHIBIT_IRQ;
-        }
+    }
+
+    /*
+     * For MOV or POP to SS (but not LSS) translation must always
+     * stop as a special handling must be done to disable hardware
+     * interrupts for the next instruction.
+     *
+     * This is the last instruction, so it's okay to overwrite
+     * HF_TF_MASK; the next TB will start with the flag set.
+     *
+     * DISAS_EOB_INHIBIT_IRQ is a superset of DISAS_EOB_NEXT which
+     * might have been set above.
+     */
+    if (inhibit_irq) {
+        s->base.is_jmp = DISAS_EOB_INHIBIT_IRQ;
+        s->flags &= ~HF_TF_MASK;
     }
 }
 
@@ -3207,7 +3222,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr)
     if (recheck_tf) {
         gen_helper_rechecking_single_step(tcg_ctx, cpu_env);
         tcg_gen_exit_tb(tcg_ctx, NULL, 0);
-    } else if ((s->flags & HF_TF_MASK) && !inhibit) {
+    } else if (s->flags & HF_TF_MASK) {
+        /* QEMU 1e94ddc685: STI does not block the single-step trap */
         gen_helper_single_step(tcg_ctx, cpu_env);
     } else if (jr &&
                /* give irqs a chance to happen */
@@ -4954,13 +4970,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             goto illegal_op;
         reg = b >> 3;
         ot = gen_pop_T0(s);
-        gen_movl_seg_T0(s, reg);
+        gen_movl_seg_T0(s, reg, reg == R_SS);
         gen_pop_update(s, ot);
         break;
     case 0x1a1: /* pop fs */
     case 0x1a9: /* pop gs */
         ot = gen_pop_T0(s);
-        gen_movl_seg_T0(s, (b >> 3) & 7);
+        gen_movl_seg_T0(s, (b >> 3) & 7, false);
         gen_pop_update(s, ot);
         break;
 
@@ -5068,7 +5084,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (reg >= 6 || reg == R_CS)
             goto illegal_op;
         gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
-        gen_movl_seg_T0(s, reg);
+        gen_movl_seg_T0(s, reg, reg == R_SS);
         break;
     case 0x8c: /* mov Gv, seg */
         modrm = x86_ldub_code(env, s);
@@ -5255,7 +5271,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_add_A0_im(s, 1 << ot);
         /* load the segment first to handle exceptions properly */
         gen_op_ld_v(s, MO_16, s->T0, s->A0);
-        gen_movl_seg_T0(s, op);
+        gen_movl_seg_T0(s, op, false);
         /* then put the data */
         gen_op_mov_reg_v(s, ot, reg, s->T1);
         break;
