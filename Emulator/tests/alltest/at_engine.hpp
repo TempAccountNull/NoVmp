@@ -310,7 +310,7 @@ namespace at
 			g().active = false; g().prog = nullptr;
 			r.ran = true;
 			r.faulted = g().faulted;
-			r.vector = g().faulted ? vector_of( g().code, g().info1 ) : -1;
+			r.vector = g().faulted ? vector_of( g().code, g().info0, g().info1 ) : -1;
 			// Windows reports #MF and #XM with the same STATUS_FLOAT_* codes: an x87 opcode
 			// (D8-DF, or FWAIT 9B) at the faulting RIP is #MF (16), anything else #XM (19)
 			if ( r.vector == 16 && g().rip >= ( uint64_t ) code_ && g().rip < ( uint64_t ) code_ + CODE_SIZE )
@@ -323,7 +323,7 @@ namespace at
 			read_blocks( data_, mem_, *r.s );
 		}
 	private:
-		struct globals { uint64_t lo, hi, resume, rip, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active; };
+		struct globals { uint64_t lo, hi, resume, rip, info0, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active; };
 		static globals& g() { static globals x{}; return x; }
 		static LONG CALLBACK veh( EXCEPTION_POINTERS* ep )
 		{
@@ -336,6 +336,7 @@ namespace at
 			else if ( rip < g().lo || rip >= g().hi ) return EXCEPTION_CONTINUE_SEARCH;
 			g().faulted = true;
 			g().code = ep->ExceptionRecord->ExceptionCode;
+			g().info0 = ep->ExceptionRecord->NumberParameters >= 1 ? ep->ExceptionRecord->ExceptionInformation[ 0 ] : 0;
 			g().info1 = ep->ExceptionRecord->NumberParameters >= 2 ? ep->ExceptionRecord->ExceptionInformation[ 1 ] : 0;
 			g().rip = rip;
 			// a trap (single step) leaves TF set in the context: clear it before resuming
@@ -346,7 +347,7 @@ namespace at
 			if ( ep->ContextRecord->SegCs == SEL_CODE32_R3 ) ep->ContextRecord->SegCs = SEL_CODE64_R3;
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
-		static int vector_of( DWORD code, uint64_t info1 )
+		static int vector_of( DWORD code, uint64_t info0, uint64_t info1 )
 		{
 			switch ( code )
 			{
@@ -359,7 +360,10 @@ namespace at
 				case 0x4000001F: return 3;
 				case STATUS_ILLEGAL_INSTRUCTION: return 6;
 				case STATUS_PRIVILEGED_INSTRUCTION: return 13;
-				case STATUS_ACCESS_VIOLATION: return info1 == ~0ull ? 13 : 14;   // #GP reports address -1
+				// #GP reports address -1; U773: a #SS (non-canonical stack reference) reports
+				// ExceptionInformation[0] = 3 and address 0 (a #PF: 0 read, 1 write, 8 execute and the
+				// address; Windows 10 19044 on the i5-13600K, cases_fix4.txt)
+				case STATUS_ACCESS_VIOLATION: return info1 == ~0ull ? 13 : info0 == 3 ? 12 : 14;
 				case STATUS_DATATYPE_MISALIGNMENT: return 17;
 				case STATUS_FLOAT_MULTIPLE_FAULTS: case STATUS_FLOAT_MULTIPLE_TRAPS: return 19;
 				case STATUS_FLOAT_INVALID_OPERATION: case STATUS_FLOAT_DIVIDE_BY_ZERO: case STATUS_FLOAT_OVERFLOW:

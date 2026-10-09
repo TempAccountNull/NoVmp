@@ -25,3 +25,19 @@ hlt | cpl=3 => #GP(0)
 rdmsr | cpl=3 rcx=0x10 => #GP(0)
 mov cr0, rax | cpl=3 => #GP(0)
 ud2 => #UD
+#
+# --- U773 harness: Windows reports a #SS as STATUS_ACCESS_VIOLATION with ExceptionInformation[0] = 3
+# (address 0); a #PF has 0 (read), 1 (write) or 8 (execute) and the address, a #GP address -1
+# (checked on this machine, Windows 10 19044, with our own snippets). vector_of mapped every
+# access violation that was not a #GP to #PF (14). A non-canonical stack reference (RSP/RBP base,
+# no FS/GS override) is #SS(0), any other #GP(0) (SDM Vol1 3.3.7.1; U51). Before U773 the five
+# #SS lines differed (hw: fault #14, uc: fault #12).
+mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC
+mov rax, qword ptr [rsp+rcx] | rcx=0x8000000000000000
+mov qword ptr [rsp+rcx], rax | rcx=0x8000000000000000
+mov rax, qword ptr [rbp+rcx] | rbp=0x10 rcx=0x8000000000000000
+add qword ptr [rsp+rcx+8], 1 | rcx=0x8000000000000000
+mov rax, qword ptr fs:[rsp+rcx] | rcx=0x8000000000000000
+mov rax, qword ptr ss:[rcx] | rcx=0x8000000000000000
+mov rax, qword ptr [rcx] | rcx=0x8000000000000000
+mov rax, qword ptr [rcx] | rcx=0x10

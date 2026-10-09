@@ -97,6 +97,10 @@ In an expected-value case the fault token may carry the error code in parenthese
 mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC => #SS(0)
 ```
 
+## Native exception vectors (U773)
+
+The native engine maps the Windows exception record to a vector (`vector_of`, `at_engine.hpp`). An access violation is #GP when its address (ExceptionInformation[1]) is -1, #SS when ExceptionInformation[0] = 3 (Windows reports a stack fault, e.g. a non-canonical `[rsp+rcx]`, with access type 3 and address 0), else #PF (access type 0 read, 1 write, 8 execute, and the address). Checked on this machine (Windows 10 19044, i5-13600K) with our own snippets; `cases_fix4.txt` has the hardware #SS / #GP / #PF lines. Before U773 every #SS was reported as #PF (14).
+
 ## Output
 
 `[n] SAME|DIFF <line>` per case, then `cases: N, differing: M`; with expected-value cases a second line `expected-value cases: N, differing: M, errors: E, skipped: S`. Exit status 1 when an expected-value case differs or cannot be run; hardware differences are reported (test.cmd's `:hw_zero` requires `differing: 0`).
