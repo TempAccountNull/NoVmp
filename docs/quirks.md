@@ -106,6 +106,15 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - Hardware cases: `cases_backport_t1.txt` (the two `lock prefetchw` lines; the /0, /2, /7 lines match).
 - Ledger: U457.
 
+### SYSRET at CPL3 in compatibility mode
+
+- Behaviour: SYSRET (0F 07, also with REX.W) executed at CPL3 in compatibility mode (IA32_EFER.LMA = 1, CS.L = 0) with IA32_EFER.SCE = 1 (Windows).
+- SDM: Vol2B SYSRET Operation: `IF (CS.L ≠ 1) or (IA32_EFER.LMA ≠ 1) or (IA32_EFER.SCE ≠ 1) or (CR4.FRED = 1) THEN #UD; FI; IF (CPL ≠ 0) THEN #GP(0); FI;` and Compatibility Mode Exceptions: "#UD The SYSRET instruction is not recognized in compatibility mode."
+- Emulator: #UD (U460: Intel SYSCALL/SYSRET only in 64-bit mode).
+- i5-13600K: #GP(0) (Windows reports STATUS_PRIVILEGED_INSTRUCTION): the CPL check is made first. In 64-bit mode at CPL3 both give #GP(0).
+- Hardware cases: `cases_backport_t1.txt` (the two compatibility-mode `sysret` lines).
+- Ledger: U460.
+
 ## Host state (not SDM deviations)
 
 | tag | cases | reason |

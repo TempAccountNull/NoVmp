@@ -14482,6 +14482,82 @@ static void test_x86_bp_ss_sti_tf(void)
              (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U460 (upstream QEMU fd5dcb1ccd, SDM-corrected): on an Intel CPU SYSCALL and
+ * SYSRET are #UD unless IA32_EFER.LMA = 1 and CS.L = 1 (SDM Vol2B SYSCALL /
+ * SYSRET Operation): #UD in legacy protected mode, in compatibility mode and in
+ * real-address mode. Upstream tests only LMA (compatibility mode still runs).
+ */
+static uint32_t bp_syscall_hits;
+
+static void bp_syscall_cb(uc_engine *uc, void *user)
+{
+    (void)uc;
+    (void)user;
+    bp_syscall_hits++;
+}
+
+static void test_x86_bp_syscall_modes(void)
+{
+    /* push 08h; push BP_CODE+0x10; retfq -> compatibility mode (code32 DPL0) */
+    static const char to_compat[] = "\x6a\x08\x68\x10\x00\x01\x00\x48\xcb";
+    uc_x86_msr efer = {0xC0000080, 0};
+    BpCpu c;
+    uc_hook h;
+
+    /* 64-bit mode: the SYSCALL hook runs (Unicorn's SYSCALL) */
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, bp_syscall_cb, NULL, 1, 0, UC_X86_INS_SYSCALL));
+    bp_syscall_hits = 0;
+    OK(bp_run(&c, "\x0f\x05", 2));
+    TEST_CHECK(bp_syscall_hits == 1);
+    /* CPUID.80000001H:EDX[11] (SYSCALL) reads 1 in 64-bit mode */
+    OK(bp_run(&c, "\xb8\x01\x00\x00\x80\x0f\xa2", 7));
+    TEST_CHECK((bp_get(&c, UC_X86_REG_RDX) & 0x800) != 0);
+    /* compatibility mode: #UD, the hook does not run */
+    bp_syscall_hits = 0;
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE + 0x10, "\x0f\x05", 2));
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run_at(&c, BP_CODE, to_compat, sizeof(to_compat) - 1, 5));
+    TEST_CHECK(bp_syscall_hits == 0 && bp_seg(&c, UC_X86_REG_CS) == 0x08);
+    TEST_MSG("compat syscall: hook %u cs %04x", bp_syscall_hits, bp_seg(&c, UC_X86_REG_CS));
+    OK(uc_close(c.uc));
+
+    /* compatibility mode SYSRET (CPL0, EFER.SCE = 1): #UD */
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &efer));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE + 0x10, "\x0f\x07", 2));
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run_at(&c, BP_CODE, to_compat, sizeof(to_compat) - 1, 5));
+    TEST_CHECK(c.count == 0 && bp_seg(&c, UC_X86_REG_CS) == 0x08);
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode (LMA = 0): SYSCALL and SYSRET #UD */
+    bp_open(&c, UC_MODE_32, -1);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, bp_syscall_cb, NULL, 1, 0, UC_X86_INS_SYSCALL));
+    efer.value = 1;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &efer));
+    bp_syscall_hits = 0;
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\x0f\x05", 2));
+    TEST_CHECK(bp_syscall_hits == 0);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\x0f\x07", 2));
+    TEST_CHECK(c.count == 0);
+    /* ... and CPUID.80000001H:EDX[11] reads 0 outside 64-bit mode */
+    OK(bp_run(&c, "\xb8\x01\x00\x00\x80\x0f\xa2", 7));
+    TEST_CHECK((bp_get(&c, UC_X86_REG_EDX) & 0x800) == 0);
+    TEST_MSG("32-bit CPUID 80000001H: edx %08llx", (unsigned long long)bp_get(&c, UC_X86_REG_EDX));
+    OK(uc_close(c.uc));
+
+    /* real-address mode: SYSRET #UD (was #GP) */
+    bp_open(&c, UC_MODE_16, -1);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run_at(&c, 0x1000, "\x0f\x07", 2, 0));
+    TEST_CHECK(c.count == 0);
+    TEST_MSG("real-mode sysret: intr count %u intno %u", c.count, c.intno);
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14700,4 +14776,5 @@ TEST_LIST = {
     {"test_x86_bp_lock_old_decoder", test_x86_bp_lock_old_decoder},
     {"test_x86_bp_pause_tf", test_x86_bp_pause_tf},
     {"test_x86_bp_ss_sti_tf", test_x86_bp_ss_sti_tf},
+    {"test_x86_bp_syscall_modes", test_x86_bp_syscall_modes},
     {NULL, NULL}};

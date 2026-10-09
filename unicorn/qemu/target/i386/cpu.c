@@ -4379,6 +4379,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 
 #if __Use_Original_Qemu != 1 /* ours (U68) */
     if (x86_cpuid_profile(env, index, count, eax, ebx, ecx, edx)) {
+        /* NoVmp (ledger U460): SYSCALL/SYSRET reported only in 64-bit mode (see 80000001H) */
+        if (index == 0x80000001 && env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1 &&
+            !(env->hflags & HF_CS64_MASK)) {
+            *edx &= ~CPUID_EXT2_SYSCALL;
+        }
         return;
     }
 #endif /* __Use_Original_Qemu (U68) */
@@ -4840,6 +4845,24 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                 *ecx |= 1 << 1;    /* CmpLegacy bit */
             }
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U460) */
+        /* QEMU fd5dcb1ccd: Intel reports SYSCALL only in long mode */
+        if (env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1 &&
+            !(env->hflags & HF_LMA_MASK)) {
+            *edx &= ~CPUID_EXT2_SYSCALL;
+        }
+#else /* ours (U460) */
+        /*
+         * NoVmp (ledger U460): CPUID.80000001H:EDX[11] "SYSCALL/SYSRET available (when in
+         * 64-bit mode)" (SDM Vol2A CPUID / ISE): Intel returns it only in 64-bit mode,
+         * also 0 in compatibility mode (i5-13600K: EDX 2C100000h there, 2C100800h in 64-bit
+         * mode), matching SYSCALL/SYSRET being #UD there.
+         */
+        if (env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1 &&
+            !(env->hflags & HF_CS64_MASK)) {
+            *edx &= ~CPUID_EXT2_SYSCALL;
+        }
+#endif /* __Use_Original_Qemu (U460) */
         break;
     case 0x80000002:
     case 0x80000003:

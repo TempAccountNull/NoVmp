@@ -7069,7 +7069,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
 #ifdef TARGET_X86_64
     case 0x105: /* syscall */
-        /* XXX: is it usable in real mode ? */
+#if __Use_Original_Qemu == 1 /* original QEMU (U460) */
+        /* For Intel SYSCALL is only valid in long mode (QEMU fd5dcb1ccd) */
+        if (!LMA(s) && env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1) {
+            goto illegal_op;
+        }
+#else /* ours (U460) */
+        /*
+         * NoVmp (ledger U460): Intel SYSCALL is #UD unless IA32_EFER.LMA = 1 and
+         * CS.L = 1, i.e. outside 64-bit mode (SDM Vol2B SYSCALL Operation, Compatibility
+         * Mode Exceptions); upstream fd5dcb1ccd tests LMA only.
+         */
+        if (!CODE64(s) && env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U460) */
         gen_update_cc_op(s);
         gen_update_eip_cur(s);
         gen_helper_syscall(tcg_ctx, cpu_env, cur_insn_len_i32(s));
@@ -7079,6 +7093,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_eob_worker(s, false, true);
         break;
     case 0x107: /* sysret */
+#if __Use_Original_Qemu == 1 /* original QEMU (U460) */
+        /* For Intel SYSRET is only valid in long mode (QEMU fd5dcb1ccd) */
+        if (!LMA(s) && env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1) {
+            goto illegal_op;
+        }
+#else /* ours (U460) */
+        /*
+         * NoVmp (ledger U460): Intel SYSRET is #UD unless CS.L = 1 and IA32_EFER.LMA = 1
+         * (SDM Vol2B SYSRET Operation; also #UD in real-address mode, not #GP).
+         */
+        if (!CODE64(s) && env->cpuid_vendor1 == CPUID_VENDOR_INTEL_1) {
+            goto illegal_op;
+        }
+#endif /* __Use_Original_Qemu (U460) */
         if (!PE(s)) {
             gen_exception_gpf(s);
         } else {
