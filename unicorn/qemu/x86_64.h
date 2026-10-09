@@ -2655,9 +2655,6 @@
 #if __Use_Original_Qemu != 1 /* ours (U73) */
 #define helper_movdir64b helper_movdir64b_x86_64
 #endif /* __Use_Original_Qemu (U73) */
-#if __Use_Original_Qemu != 1 /* ours (U80) */
-#define helper_ptwrite helper_ptwrite_x86_64
-#endif /* __Use_Original_Qemu (U80) */
 #if __Use_Original_Qemu != 1 /* ours (U101) */
 #define helper_rao helper_rao_x86_64
 #endif /* __Use_Original_Qemu (U101) */

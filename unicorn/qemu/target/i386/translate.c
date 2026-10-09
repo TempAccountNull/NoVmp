@@ -8222,20 +8222,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U75) */
 #if __Use_Original_Qemu != 1 /* ours (U80) */
         /*
-         * NoVmp (ledger U80): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4). #UD on
-         * our CPUID profile (leaf 0x14 = 0) unless UC_X86_QUIRK_PTWRITE_NOP, then
-         * the operand is read and discarded. LOCK/66h #UD (SDM Vol2 PTWRITE).
+         * NoVmp (ledger U80, U534): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4)
+         * is #UD: "If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM Vol2 PTWRITE), and
+         * the fork has no Intel PT (leaf 0x14 = 0). The i5-13600K executes it
+         * anyway: documented deviation "PTWRITE without PT" (docs/quirks.md).
          */
         if ((prefixes & PREFIX_REPZ) && ((modrm >> 3) & 7) == 4) {
-            if (prefixes & (PREFIX_LOCK | PREFIX_DATA)) {
-                goto illegal_op;
-            }
-            gen_helper_ptwrite(tcg_ctx, cpu_env);
-            if ((modrm >> 6) != 3) {
-                gen_lea_modrm(env, s, modrm);
-                gen_op_ld_v(s, REX_W(s) ? MO_64 : MO_32, s->T0, s->A0);
-            }
-            break;
+            goto illegal_op;
         }
 #endif /* __Use_Original_Qemu (U80) */
         switch (modrm) {

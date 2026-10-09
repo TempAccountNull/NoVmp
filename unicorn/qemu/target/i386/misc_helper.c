@@ -1145,21 +1145,6 @@ void helper_debug(CPUX86State *env)
     cpu_loop_exit(cs);
 }
 
-#if __Use_Original_Qemu != 1 /* ours (U80) */
-/*
- * NoVmp (ledger U80): PTWRITE gate. CPUID.14.0:EBX[4] = 0 on the profile, so the
- * SDM makes PTWRITE #UD; UC_X86_QUIRK_PTWRITE_NOP selects the i5-13600K behaviour
- * (executes, tracing off; the translator then reads the operand). Checked at run
- * time so translated blocks stay valid when the quirk mask changes.
- */
-void helper_ptwrite(CPUX86State *env)
-{
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_PTWRITE_NOP)) {
-        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
-    }
-}
-
-#endif /* __Use_Original_Qemu (U80) */
 #if __Use_Original_Qemu != 1 /* ours (U430) */
 /*
  * NoVmp (ledger U430): zero-count exit of a REP string instruction with a 32-bit

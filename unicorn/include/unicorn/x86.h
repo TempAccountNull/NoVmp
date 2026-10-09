@@ -64,10 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// PTWRITE (F3 0F AE /4) with CPUID.14.0:EBX[4] = 0: the SDM makes it #UD; Intel hardware
-// (i5-13600K, leaf 0x14 all zero) executes it with tracing off: the r/m32/r/m64 operand is
-// read (#PF/#GP as usual), nothing else happens. LOCK and 66h stay #UD.
-#define UC_X86_QUIRK_PTWRITE_NOP (1u << 3)
 // DPPD with both products NaN: the SDM (DPPD Operation; Vol1 Table 4-8 first source) puts
 // product 0 (p0 + p1) in both selected elements; the i5-13600K computes element i as
 // p[i] + p[i^1], so element 1 gets product 1. (DPPS stays SDM: not repeatable on hardware.)

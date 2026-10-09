@@ -2885,12 +2885,12 @@ static void test_x86_sse_aligned_access(void)
 }
 
 /*
- * NoVmp U80: PTWRITE is #UD by default (SDM, CPUID.14.0:EBX[4] = 0) and, with
- * UC_X86_QUIRK_PTWRITE_NOP, reads its operand and does nothing else (i5-13600K).
- * The quirk is checked at run time: toggling it over the same translated block
- * must change the behaviour.
+ * NoVmp U80/U534: PTWRITE is #UD (SDM Vol2 PTWRITE: "#UD If CPUID.14H.00H:EBX.PTWRITE[4]
+ * = 0"; the fork has no Intel PT). The #UD comes before the memory operand is touched,
+ * so an unmapped operand is #UD too, and nothing after it runs. (The i5-13600K executes
+ * it: documented deviation "PTWRITE without PT", docs/quirks.md.)
  */
-static void test_x86_ptwrite_quirk(void)
+static void test_x86_ptwrite_ud(void)
 {
     /* ptwrite qword [rax]; inc rbx */
     static const char code[] = "\xf3\x48\x0f\xae\x20\x48\xff\xc3";
@@ -2898,7 +2898,6 @@ static void test_x86_ptwrite_quirk(void)
     uc_engine *uc;
     uc_hook hook;
     uint64_t rax = 0x200000, rbx = 0;
-    uint32_t quirks;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
@@ -2907,7 +2906,7 @@ static void test_x86_ptwrite_quirk(void)
     OK(uc_hook_add(uc, &hook, UC_HOOK_INTR, test_x86_intr_capture_cb,
                    &capture, 1, 0));
 
-    /* default: #UD (raw Unicorn reports it as UC_ERR_INSN_INVALID), RBX untouched */
+    /* mapped operand: #UD (raw Unicorn reports it as UC_ERR_INSN_INVALID), RBX untouched */
     OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
     OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
     uc_assert_err(UC_ERR_INSN_INVALID,
@@ -2915,23 +2914,13 @@ static void test_x86_ptwrite_quirk(void)
     OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
     TEST_CHECK(rbx == 0);
 
-    /* quirk on, same code: runs, RBX incremented */
-    OK(uc_ctl_set_x86_hw_quirks(uc, UC_X86_QUIRK_PTWRITE_NOP));
-    OK(uc_ctl_get_x86_hw_quirks(uc, &quirks));
-    TEST_CHECK(quirks == UC_X86_QUIRK_PTWRITE_NOP);
-    capture.count = 0;
-    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
-    OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
-    TEST_CHECK(capture.count == 0);
-    TEST_CHECK(rbx == 1);
-
-    /* quirk on: the operand is read, an unmapped one faults */
+    /* unmapped operand: still #UD, not a memory fault */
     rax = 0x300000;
     OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
-    uc_assert_err(UC_ERR_READ_UNMAPPED,
+    uc_assert_err(UC_ERR_INSN_INVALID,
                   uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
     OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
-    TEST_CHECK(rbx == 1);
+    TEST_CHECK(rbx == 0);
 
     OK(uc_close(uc));
 }
@@ -12007,9 +11996,9 @@ static void test_x86_hw_quirk_bits(void)
        with y = +0 (U432); the i5-13600K gives ST0 = x with PE / -0 (docs/quirks.md) */
     qk_fyl2xp1(0, 0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
     qk_fyl2xp1(0, 1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    /* bit 3 PTWRITE_NOP: SDM #UD, hardware reads the operand and goes on */
+    /* PTWRITE without PT (U534, quirk removed): SDM #UD (the i5-13600K reads the
+       operand and goes on, docs/quirks.md) */
     qk_ptwrite(0, UC_ERR_INSN_INVALID);
-    qk_ptwrite(UC_X86_QUIRK_PTWRITE_NOP, UC_ERR_OK);
     /* bit 4 DPPD_NAN_ORDER: SDM p0 + p1 in both elements, hardware p1 + p0 in element 1 */
     qk_dppd(0, 0x7FF8000000000A01ULL);
     qk_dppd(UC_X86_QUIRK_DPPD_NAN_ORDER, 0x7FF8000000000A02ULL);
@@ -13140,7 +13129,7 @@ TEST_LIST = {
     {"test_x86_vnni_ifma_ne_cpuid", test_x86_vnni_ifma_ne_cpuid},
     {"test_x86_vnni_ifma_ne_vectors", test_x86_vnni_ifma_ne_vectors},
     {"test_x86_vnni_ifma_ne_ud", test_x86_vnni_ifma_ne_ud},
-    {"test_x86_ptwrite_quirk", test_x86_ptwrite_quirk},
+    {"test_x86_ptwrite_ud", test_x86_ptwrite_ud},
     {"test_x86_vsha512", test_x86_vsha512},
     {"test_x86_vsm3", test_x86_vsm3},
     {"test_x86_vsm4", test_x86_vsm4},
