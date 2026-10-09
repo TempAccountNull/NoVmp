@@ -331,6 +331,9 @@ uc_err uc_open(uc_arch arch, uc_mode mode, uc_engine **result)
         uc->errnum = UC_ERR_OK;
         uc->arch = arch;
         uc->mode = mode;
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+        uc->x86_exc.vector = -1;    /* UC_CTL_X86_EXCEPTION: nothing raised yet */
+#endif /* __Use_Original_Qemu (U770) */
         uc->reg_read = default_reg_read;
         uc->reg_write = default_reg_write;
 
@@ -1114,6 +1117,11 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
     // Avoid nested uc_emu_start saves wrong jit states.
     if (uc->nested_level == 0) {
         UC_INIT(uc);
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+        /* UC_CTL_X86_EXCEPTION: an outermost run starts with no exception recorded */
+        memset(&uc->x86_exc, 0, sizeof(uc->x86_exc));
+        uc->x86_exc.vector = -1;
+#endif /* __Use_Original_Qemu (U770) */
     }
 
     // Advance the nested levels. We must decrease the level count by one when
@@ -3395,6 +3403,22 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+    case UC_CTL_X86_EXCEPTION:
+        /* NoVmp U770: the last exception / software interrupt (vector, error code, #PF address) */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_READ) {
+            err = UC_ERR_ARG;
+        } else {
+            struct uc_x86_exception *exc = va_arg(args, struct uc_x86_exception *);
+            if (exc == NULL) {
+                err = UC_ERR_ARG;
+            } else {
+                *exc = uc->x86_exc;
+            }
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U770) */
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

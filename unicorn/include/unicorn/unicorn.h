@@ -781,6 +781,15 @@ typedef enum uc_control_type {
     // be done at any time. Other modes -> UC_ERR_ARG.
     // Write: @args = (int mode, uint64_t seed); Read: @args = (int *mode, uint64_t *seed)
     UC_CTL_X86_RDRAND,
+    // x86 only (NoVmp U770): the last exception or software interrupt (INT n, INT3, INTO)
+    // the CPU raised: vector, error code (SDM Vol3A Table 7-1: #DF, #TS, #NP, #SS, #GP, #PF,
+    // #AC, #CP; after a #DF escalation the #DF and its error code 0) and for #PF the
+    // faulting linear address (the CR2 value). Valid inside a UC_HOOK_INTR / UC_HOOK_INSN_INVALID
+    // callback and after uc_emu_start returns; cleared (vector = -1) by uc_open and when an
+    // outermost uc_emu_start begins (nested calls from hooks keep it). Unicorn's own memory
+    // errors (UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_PROT, ...) are not x86 exceptions and do
+    // not change it. Read: @args = (uc_x86_exception *)
+    UC_CTL_X86_EXCEPTION,
 } uc_control_type;
 
 // UC_CTL_X86_RDRAND modes (NoVmp U835)
@@ -942,6 +951,8 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_RDRAND, 2), (int)(mode), (uint64_t)(seed))
 #define uc_ctl_get_x86_rdrand(uc, mode, seed)                                  \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_RDRAND, 2), (int *)(mode), (uint64_t *)(seed))
+#define uc_ctl_get_x86_exception(uc, exc)                                      \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EXCEPTION, 1), (exc))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

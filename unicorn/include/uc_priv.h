@@ -441,6 +441,7 @@ struct uc_struct {
     int x86_apx;              // UC_CTL_X86_APX (NoVmp U610): UC_X86_APX_F or 0 = no APX
     int x86_rdrand_mode;      // UC_CTL_X86_RDRAND (NoVmp U835) written before init: mode
     uint64_t x86_rdrand_seed; //   and seed, copied into the CPU when it is created
+    struct uc_x86_exception x86_exc; // UC_CTL_X86_EXCEPTION (NoVmp U770): last exception
     uc_args_uc_t x86_cpuid_changed; // clamps XCR0 to a new CPUID profile (NoVmp U120)
     // NoVmp U835: UC_CTL_X86_RDRAND after init: to_cpu = 1 copies x86_rdrand_mode/seed into
     // the CPU (count 0), 0 copies the CPU's current mode/seed back into them

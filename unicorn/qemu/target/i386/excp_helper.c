@@ -90,6 +90,44 @@ static int check_exception(CPUX86State *env, int intno, int *error_code,
     return intno;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+/*
+ * NoVmp (ledger U770): record the event for UC_CTL_X86_EXCEPTION. Unicorn hands an exception to
+ * UC_HOOK_INTR with its vector only; the error code (SDM Vol3A 7.13, Table 7-1: #DF, #TS, #NP,
+ * #SS, #GP, #PF, #AC, #CP push one; INT n / INT3 / INTO never do) and the #PF linear address
+ * (7.15 "Interrupt 14": the address that caused the fault is loaded into CR2) are kept here,
+ * after the #DF escalation of check_exception. A triple fault (EXCP_HLT) is not an x86 vector.
+ */
+static void x86_record_exception(CPUX86State *env, int intno, int is_int, int error_code)
+{
+    struct uc_x86_exception *e = &env->uc->x86_exc;
+    bool has_ec = false;
+
+    if (intno < 0 || intno > 255) {
+        return;
+    }
+    if (!is_int) {
+        switch (intno) {
+        case EXCP08_DBLE: case EXCP0A_TSS: case EXCP0B_NOSEG: case EXCP0C_STACK:
+        case EXCP0D_GPF: case EXCP0E_PAGE: case EXCP11_ALGN: case EXCP15_CP:
+            has_ec = true;
+            break;
+        default:
+            break;
+        }
+    }
+    memset(e, 0, sizeof(*e));
+    e->vector = intno;
+    e->software = is_int != 0;
+    e->has_error_code = has_ec;
+    e->error_code = has_ec ? (uint32_t)error_code : 0;
+    if (!is_int && intno == EXCP0E_PAGE) {
+        e->has_address = 1;
+        e->address = env->cr[2];
+    }
+}
+
+#endif /* __Use_Original_Qemu (U770) */
 /*
  * Signal an interruption. It is executed in the main CPU loop.
  * is_int is TRUE if coming from the int instruction. next_eip is the
@@ -110,6 +148,9 @@ static void QEMU_NORETURN raise_interrupt2(CPUX86State *env, int intno,
     } else {
         cpu_svm_check_intercept_param(env, SVM_EXIT_SWINT, 0, retaddr);
     }
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+    x86_record_exception(env, intno, is_int, error_code);
+#endif /* __Use_Original_Qemu (U770) */
 
     cs->exception_index = intno;
     env->error_code = error_code;
@@ -159,6 +200,9 @@ G_NORETURN void helper_icebp(CPUX86State *env)
     /* end the instruction as gen_eob() would: no IRQ shadow, RF cleared */
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
     env->eflags &= ~RF_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U770) */
+    x86_record_exception(env, EXCP01_DB, 0, 0);     /* INT1: a #DB, not a software INT n */
+#endif /* __Use_Original_Qemu (U770) */
 
     cs->exception_index = EXCP01_DB;
     env->error_code = 0;

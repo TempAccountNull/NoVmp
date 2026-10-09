@@ -18717,6 +18717,484 @@ static void test_x86_fx3_vsib_pending_db(void)
     }
 }
 /* ---- end U700-U719 (fx3_) ---- */
+/* ---- U770-U789 (fx4_) ---- */
+/*
+ * NoVmp U770: UC_CTL_X86_EXCEPTION, the last exception's vector, error code and #PF address.
+ * Expected values: SDM Vol2 exception lists of each instruction, Vol3A 7.13 / Table 7-1 (which
+ * vectors push an error code), 7.15 Interrupt 14 (error-code bits, CR2), Vol1 18 (CET #CP codes).
+ */
+#define FX4_SYS 0x54000000ULL
+
+/* the record, or vector -2 when the control fails */
+static uc_x86_exception fx4_exc(uc_engine *uc)
+{
+    uc_x86_exception e;
+
+    memset(&e, 0, sizeof(e));
+    if (uc_ctl_get_x86_exception(uc, &e) != UC_ERR_OK) {
+        e.vector = -2;
+    }
+    return e;
+}
+
+/* an exception with an error code: vector, code, no software flag, no address */
+static bool fx4_is(uc_engine *uc, int vector, uint32_t ec, const char *what)
+{
+    uc_x86_exception e = fx4_exc(uc);
+    bool ok = e.vector == vector && e.has_error_code && e.error_code == ec && !e.software &&
+              !e.has_address;
+
+    TEST_CHECK(ok);
+    TEST_MSG("%s: vector %d has_ec %u ec %#x sw %u has_addr %u (expected %d, ec %#x)", what,
+             e.vector, e.has_error_code, e.error_code, e.software, e.has_address, vector, ec);
+    return ok;
+}
+
+/* a #PF: error code and linear address (= CR2) */
+static bool fx4_pf(uc_engine *uc, uint32_t ec, uint64_t la, const char *what)
+{
+    uc_x86_exception e = fx4_exc(uc);
+    uint64_t cr2 = 0;
+    bool ok;
+
+    OK(uc_reg_read(uc, UC_X86_REG_CR2, &cr2));
+    ok = e.vector == 14 && e.has_error_code && e.error_code == ec && !e.software &&
+         e.has_address && e.address == la && cr2 == la;
+    TEST_CHECK(ok);
+    TEST_MSG("%s: vector %d has_ec %u ec %#x has_addr %u addr %" PRIx64 " cr2 %" PRIx64
+             " (expected ec %#x addr %" PRIx64 ")",
+             what, e.vector, e.has_error_code, e.error_code, e.has_address, e.address, cr2, ec,
+             la);
+    return ok;
+}
+
+/* UC_HOOK_INTR: the record as the hook sees it, then stop */
+typedef struct {
+    int count;
+    uint32_t intno;
+    uc_x86_exception e;
+    uc_err err;
+} fx4_hook_t;
+
+static void fx4_intr_hook(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    fx4_hook_t *h = (fx4_hook_t *)user_data;
+
+    if (h->count++ == 0) {
+        h->intno = intno;
+        h->err = uc_ctl_get_x86_exception(uc, &h->e);
+    }
+    uc_emu_stop(uc);
+}
+
+/*
+ * one 64-bit CPL0 engine: code at code_start, FX4_SYS (64 KiB) with the GDT at +0
+ *   08h code64 DPL0, 10h data DPL0, 18h code64 not present, 20h data not present,
+ *   28h data DPL3 (limit 2Fh)
+ * pointers at +4000h (RBX), stack at +8000h; fx4_intr_hook records the exception
+ */
+static uc_engine *fx4_open(fx4_hook_t *h)
+{
+    static const uint64_t gdt[6] = {0, 0x00209a0000000000ULL, 0x00cf92000000ffffULL,
+                                    0x00201a0000000000ULL, 0x00cf12000000ffffULL,
+                                    0x00cff2000000ffffULL};
+    uc_x86_mmr gdtr = {0, FX4_SYS, sizeof(gdt) - 1, 0};
+    uc_engine *uc;
+    uc_hook hh;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, FX4_SYS, 0x10000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, FX4_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    nk_setreg(uc, UC_X86_REG_RSP, FX4_SYS + 0x8000);
+    nk_setreg(uc, UC_X86_REG_RBX, FX4_SYS + 0x4000);
+    memset(h, 0, sizeof(*h));
+    OK(uc_hook_add(uc, &hh, UC_HOOK_INTR, fx4_intr_hook, h, 1, 0));
+    return uc;
+}
+
+/* runs code at the next slot; returns the uc_emu_start result */
+static uc_err fx4_run(uc_engine *uc, fx4_hook_t *h, const char *code, size_t len)
+{
+    uint64_t at = nk_slot();
+
+    h->count = 0;
+    memset(&h->e, 0, sizeof(h->e));
+    OK(uc_mem_write(uc, at, code, len));
+    return uc_emu_start(uc, at, at + len, 0, 0);
+}
+
+/*
+ * U770: the record itself: none after uc_open; INT3 / INT n are software (no error code), #UD
+ * and #DE have none, INT1 is a #DB; inside the hook the same values; an outermost uc_emu_start
+ * clears it, Unicorn memory errors do not set it.
+ */
+static void test_x86_fx4_exc_record(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        int vector, software;
+        const char *what;
+    } t[] = {
+        {"\xcc", 1, 3, 1, "int3"},
+        {"\xcd\x80", 2, 0x80, 1, "int 80h"},
+        {"\xcd\x0d", 2, 13, 1, "int 0Dh (no error code from INT n)"},
+        {"\xcd\x0e", 2, 14, 1, "int 0Eh (no error code, no address)"},
+        {"\xf1", 1, 1, 0, "int1 (icebp)"},
+        {"\x31\xc9\xf7\xf1", 4, 0, 0, "div ecx = 0"},
+        {"\x0f\x0b", 2, 6, 0, "ud2"},
+    };
+    fx4_hook_t h;
+    uc_engine *uc = fx4_open(&h);
+    uc_x86_exception e = fx4_exc(uc);
+    size_t i;
+    uc_err err;
+
+    TEST_CHECK(e.vector == -1);
+    TEST_MSG("after uc_open: vector %d", e.vector);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        err = fx4_run(uc, &h, t[i].code, t[i].len);
+        e = fx4_exc(uc);
+        /* #UD reaches UC_HOOK_INSN_INVALID (none installed here): UC_ERR_INSN_INVALID */
+        TEST_CHECK(e.vector == t[i].vector && e.software == t[i].software &&
+                   !e.has_error_code && e.error_code == 0 && !e.has_address &&
+                   (t[i].vector == 6 ? err == UC_ERR_INSN_INVALID
+                                     : err == UC_ERR_OK && h.count == 1 &&
+                                           h.err == UC_ERR_OK && h.intno == (uint32_t)t[i].vector &&
+                                           memcmp(&h.e, &e, sizeof(e)) == 0));
+        TEST_MSG("%s: err %u hook %d/%u vector %d sw %u has_ec %u ec %#x has_addr %u", t[i].what,
+                 err, h.count, h.intno, e.vector, e.software, e.has_error_code, e.error_code,
+                 e.has_address);
+    }
+    /* a new run clears it; an unmapped read is not an x86 exception */
+    err = fx4_run(uc, &h, "\x90", 1);
+    e = fx4_exc(uc);
+    TEST_CHECK(err == UC_ERR_OK && e.vector == -1);
+    TEST_MSG("nop after a fault: err %u vector %d", err, e.vector);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x7000000);
+    err = fx4_run(uc, &h, "\x48\x8b\x01", 3);
+    e = fx4_exc(uc);
+    TEST_CHECK(err == UC_ERR_READ_UNMAPPED && e.vector == -1);
+    TEST_MSG("unmapped read: err %u vector %d", err, e.vector);
+    /* NULL argument, write */
+    TEST_CHECK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EXCEPTION, 1), NULL) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_EXCEPTION, 1), &e) == UC_ERR_ARG);
+    OK(uc_close(uc));
+}
+
+/*
+ * U770 / U707: far CALL / JMP / RET / IRET limit and target checks are #GP(0), not
+ * #GP(selector) (SDM Vol2A CALL "#GP(0) If the target offset in destination operand is beyond
+ * the new code segment limit", JMP, Vol2B RET, Vol2A IRET) - the cases of test_x86_fx3_far_limits;
+ * a target code segment with L = D = 1 is #GP(selector)
+ */
+static void test_x86_fx4_far_limits_gp0(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint8_t mem[16];
+        size_t mlen;
+        uint64_t gate_off;
+        int stack_ret;
+        const char *what;
+    } t[] = {
+        {"\xff\x1b", 2, {0x00, 0x20, 0, 0, 0x18, 0}, 6, 0, 0, "call far 18h:2000h (limit FFFh)"},
+        {"\xff\x2b", 2, {0x00, 0x20, 0, 0, 0x18, 0}, 6, 0, 0, "jmp far 18h:2000h (limit FFFh)"},
+        {"\xff\x2b", 2, {0x00, 0x11, 0, 0, 0x20, 0}, 6, 0, 0, "jmp far to 20h (L = D = 1)"},
+        {"\xff\x1b", 2, {0x00, 0x11, 0, 0, 0x20, 0}, 6, 0, 0, "call far to 20h (L = D = 1)"},
+        {"\x48\xff\x1b", 3, {0, 0, 0, 0, 0, 0, 0, 0, 0x28, 0}, 10, 0x8000000000000000ULL, 0,
+         "call far, 64-bit gate, non-canonical RIP"},
+        {"\x48\xff\x2b", 3, {0, 0, 0, 0, 0, 0, 0, 0, 0x28, 0}, 10, 0x8000000000000000ULL, 0,
+         "jmp far, 64-bit gate, non-canonical RIP"},
+        {"\xcb", 1, {0}, 0, 0, 1, "retf to 18h:2000h (limit FFFh)"},
+        {"\x48\xcf", 2, {0}, 0, 0, 2, "iretq to 18h:2000h (limit FFFh)"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        nk_intr_t intr;
+        uc_engine *uc = fx3_far_open(t[i].code, t[i].len, t[i].gate_off, &intr);
+
+        if (t[i].mlen) {
+            OK(uc_mem_write(uc, FX3_SYS + 0x4000, t[i].mem, t[i].mlen));
+        }
+        if (t[i].stack_ret) {
+            uint64_t frame[5] = {0x2000, 0x18, 2, FX3_SYS + 0x7000, 0x10};
+            uint32_t retf32[2] = {0x2000, 0x18};
+            uint64_t rsp = FX3_SYS + 0x7f00;
+
+            nk_setreg(uc, UC_X86_REG_RSP, rsp);
+            if (t[i].stack_ret == 1) {
+                OK(uc_mem_write(uc, rsp, retf32, sizeof(retf32)));
+            } else {
+                OK(uc_mem_write(uc, rsp, frame, sizeof(frame)));
+            }
+        }
+        OK(uc_emu_start(uc, code_start, code_start + 0x100, 0, 1));
+        TEST_CHECK(intr.count == 1 && intr.intno == 13);
+        /* the L = D = 1 target is #GP(selector) (SDM Vol2A JMP/CALL: "has both the D-bit
+           and the L-bit set" is listed under #GP(selector)); the limit checks are #GP(0) */
+        fx4_is(uc, 13, t[i].mem[4] == 0x20 ? 0x20 : 0, t[i].what);
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * U770: selector error codes (SDM Vol2A JMP/CALL/MOV/LLDT protected-mode exceptions):
+ * #GP(selector) for a selector beyond the table limit, a wrong descriptor type or DPL,
+ * #NP(selector) for a not-present code / data segment, #SS(selector) for a not-present SS;
+ * the error code is the selector with the RPL bits cleared (TI = 0, EXT = 0, IDT = 0).
+ */
+static void test_x86_fx4_selector_codes(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint8_t ptr[6];     /* m16:32 at RBX */
+        int vector;
+        uint32_t ec;
+        const char *what;
+    } t[] = {
+        {"\xff\x2b", 2, {0, 0x20, 0, 0, 0x30, 0}, 13, 0x30, "jmp far 30h: beyond the GDT limit"},
+        {"\xff\x2b", 2, {0, 0x20, 0, 0, 0x33, 0}, 13, 0x30, "jmp far 33h: RPL bits cleared"},
+        {"\xff\x1b", 2, {0, 0x20, 0, 0, 0x10, 0}, 13, 0x10, "call far 10h: a data segment"},
+        {"\xff\x2b", 2, {0, 0x20, 0, 0, 0x18, 0}, 11, 0x18, "jmp far 18h: not present"},
+        {"\xff\x1b", 2, {0, 0x20, 0, 0, 0x18, 0}, 11, 0x18, "call far 18h: not present"},
+        {"\xff\x2b", 2, {0, 0x20, 0, 0, 0x00, 0}, 13, 0, "jmp far 0: null selector"},
+        {"\x66\xb8\x20\x00\x8e\xd8", 6, {0}, 11, 0x20, "mov ds, 20h: not present"},
+        {"\x66\xb8\x20\x00\x8e\xd0", 6, {0}, 12, 0x20, "mov ss, 20h: not present (#SS)"},
+        {"\x66\xb8\x28\x00\x8e\xd0", 6, {0}, 13, 0x28, "mov ss, 28h: DPL 3 at CPL0"},
+        {"\x66\xb8\x08\x00\x8e\xd0", 6, {0}, 13, 0x08, "mov ss, 08h: a code segment"},
+        {"\x66\xb8\x3b\x00\x8e\xe0", 6, {0}, 13, 0x38, "mov fs, 3Bh: beyond the limit"},
+        {"\x66\xb8\x10\x00\x0f\x00\xd0", 7, {0}, 13, 0x10, "lldt 10h: not an LDT descriptor"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        fx4_hook_t h;
+        uc_engine *uc = fx4_open(&h);
+        uc_err err;
+
+        OK(uc_mem_write(uc, FX4_SYS + 0x4000, t[i].ptr, sizeof(t[i].ptr)));
+        err = fx4_run(uc, &h, t[i].code, t[i].len);
+        TEST_CHECK(err == UC_ERR_OK && h.count == 1 && h.intno == (uint32_t)t[i].vector &&
+                   h.err == UC_ERR_OK && h.e.error_code == t[i].ec);
+        TEST_MSG("%s: err %u hook %d/%u ec in the hook %#x", t[i].what, err, h.count, h.intno,
+                 h.e.error_code);
+        fx4_is(uc, t[i].vector, t[i].ec, t[i].what);
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * U770: #SS(0) for a non-canonical stack reference, #GP(0) for any other non-canonical data
+ * reference (SDM Vol1 3.3.7.1; Vol2A MOV / PUSH 64-Bit Mode Exceptions)
+ */
+static void test_x86_fx4_ss0(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint64_t rcx, rsp;
+        int vector;
+        const char *what;
+    } t[] = {
+        {"\x48\x8b\x04\x0c", 4, 0x8000000000000000ULL, FX4_SYS + 0x8000, 12, "mov rax, [rsp+rcx]"},
+        {"\x50", 1, 0, 0x8000000000000008ULL, 12, "push rax, non-canonical RSP"},
+        {"\x58", 1, 0, 0x8000000000000000ULL, 12, "pop rax, non-canonical RSP"},
+        {"\x48\x8b\x01", 3, 0x8000000000000000ULL, FX4_SYS + 0x8000, 13, "mov rax, [rcx]"},
+        {"\x36\x48\x8b\x01", 4, 0x8000000000000000ULL, FX4_SYS + 0x8000, 13, "mov rax, ss:[rcx]"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        fx4_hook_t h;
+        uc_engine *uc;
+        uc_err err;
+
+        uc = fx4_open(&h);
+        nk_setreg(uc, UC_X86_REG_RCX, t[i].rcx);
+        nk_setreg(uc, UC_X86_REG_RSP, t[i].rsp);
+        err = fx4_run(uc, &h, t[i].code, t[i].len);
+        TEST_CHECK(err == UC_ERR_OK && h.count == 1 && h.intno == (uint32_t)t[i].vector);
+        TEST_MSG("%s: err %u hook %d/%u", t[i].what, err, h.count, h.intno);
+        fx4_is(uc, t[i].vector, 0, t[i].what);
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * U770: #PF error codes and addresses (SDM Vol3A 7.15 Interrupt 14, Figure 7-11: P bit 0, W/R 1,
+ * U/S 2, RSVD 3, I/D 4, PK 5, SS 6) with nv_paging_ss's 4-level identity map: 300000h user
+ * shadow-stack page, 301000h supervisor shadow-stack page (R/W = 0, U/S = 0), 302000h ordinary
+ * page, 380000h not present; added: 303000h with reserved bit 51, 304000h XD (EFER.NXE = 1).
+ * CR0.WP = 1, CR4.CET = 1, IA32_S_CET = SH_STK_EN | WR_SHSTK_EN.
+ */
+static void test_x86_fx4_pf_codes(void)
+{
+    NvRun r;
+    uc_x86_msr efer = {0xc0000080, 0};
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    nv_st64(&r, 0x404000 + ((0x303000 - 0x200000) >> 12) * 8, 0x303000 | 7 | (1ULL << 51));
+    nv_st64(&r, 0x404000 + ((0x304000 - 0x200000) >> 12) * 8, 0x304000 | 7 | (1ULL << 63));
+    OK(uc_reg_read(r.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 11;                           /* NXE */
+    OK(uc_reg_write(r.uc, UC_X86_REG_MSR, &efer));
+    nv_wrmsr(&r, 0x6a2, 3);
+
+    /* CPL0 data accesses */
+    nv_set(&r, UC_X86_REG_RDX, 0x380010);
+    OK(nv_run(&r, "\x48\x8b\x0a"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    fx4_pf(r.uc, 0x0, 0x380010, "read, not present");
+    OK(nv_run(&r, "\x48\x89\x0a"));
+    fx4_pf(r.uc, 0x2, 0x380010, "write, not present");
+    nv_set(&r, UC_X86_REG_RDX, 0x301808);
+    OK(nv_run(&r, "\x48\x89\x0a"));
+    fx4_pf(r.uc, 0x3, 0x301808, "write, R/W = 0 page, CR0.WP = 1");
+    nv_set(&r, UC_X86_REG_RDX, 0x303020);
+    OK(nv_run(&r, "\x48\x8b\x0a"));
+    fx4_pf(r.uc, 0x9, 0x303020, "read, reserved bit 51 in the PTE");
+    /* a qword across into the not-present page: the address of its first byte there */
+    nv_set(&r, UC_X86_REG_RDX, 0x37fffc);
+    OK(nv_run(&r, "\x48\x8b\x0a"));
+    fx4_pf(r.uc, 0x0, 0x37fffc, "read at 37FFFCh (37F000h not mapped either)");
+    /* instruction fetches (EFER.NXE = 1: I/D reported) */
+    nv_set(&r, UC_X86_REG_RAX, 0x380000);
+    OK(nv_run(&r, "\xff\xe0"));
+    fx4_pf(r.uc, 0x10, 0x380000, "fetch, not present");
+    nv_set(&r, UC_X86_REG_RAX, 0x304000);
+    OK(nv_run(&r, "\xff\xe0"));
+    fx4_pf(r.uc, 0x11, 0x304000, "fetch, XD page");
+    /* shadow-stack accesses (SS bit 6) */
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x302800);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    fx4_pf(r.uc, 0x41, 0x302800, "incsspq: shadow-stack read of an ordinary page");
+    nv_set(&r, UC_X86_REG_SSP, 0x380000);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    fx4_pf(r.uc, 0x40, 0x380000, "incsspq: shadow-stack read, not present");
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    OK(nv_run(&r, "\xf3\x48\x0f\xae\xe8"));
+    fx4_pf(r.uc, 0x41, 0x300800, "incsspq: supervisor shadow-stack read of a user SS page");
+    nv_set(&r, UC_X86_REG_RDX, 0x302000);
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ULL);
+    OK(nv_run(&r, "\x48\x0f\x38\xf6\x02"));
+    fx4_pf(r.uc, 0x43, 0x302000, "wrssq to an ordinary page");
+    nv_set(&r, UC_X86_REG_RDX, 0x301808);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    fx4_pf(r.uc, 0x47, 0x301808, "wrussq (user) to a supervisor SS page");
+    nv_set(&r, UC_X86_REG_SSP, 0x303000);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    OK(nv_run(&r, "\xe8\x02\x00\x00\x00\xeb\x01\xc3"));
+    fx4_pf(r.uc, 0x43, 0x302ff8, "call: shadow-stack push to an ordinary page");
+    /* CPL3 (user) accesses; shadow stacks off so the stub's IRETQ to CPL3 does not use SSP */
+    nv_wrmsr(&r, 0x6a2, 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x301800);
+    OK(nv_run3(&r, "\x48\x8b\x0a"));
+    TEST_CHECK(nv_cpl(&r) == 3);
+    fx4_pf(r.uc, 0x5, 0x301800, "CPL3 read of a supervisor page");
+    OK(nv_run3(&r, "\x48\x89\x0a"));
+    fx4_pf(r.uc, 0x7, 0x301800, "CPL3 write of a supervisor page");
+    nv_set(&r, UC_X86_REG_RDX, 0x380008);
+    OK(nv_run3(&r, "\x48\x8b\x0a"));
+    fx4_pf(r.uc, 0x4, 0x380008, "CPL3 read, not present");
+    OK(uc_close(r.uc));
+}
+
+/*
+ * U770: #CP error codes (SDM Vol3A 7.15 "Event 21 - Control Protection Exception": NEAR-RET 1,
+ * FAR-RET/IRET 2, ENDBRANCH 3, RSTORSSP 4, SETSSBSY 5)
+ */
+static void test_x86_fx4_cp_codes(void)
+{
+    NvRun r;
+    uint64_t t_plain;
+
+    /* NEAR-RET: the shadow-stack return address (0) differs from the data stack's (1234h) */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_mem_map(r.uc, 0x300000, 0x3000, UC_PROT_ALL));
+    nv_cet_on(&r);
+    nv_wrmsr(&r, 0x6a2, 3);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_RAX, 0x1234);
+    OK(nv_run(&r, "\x50\xc3"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    fx4_is(r.uc, 21, 1, "ret: NEAR-RET");
+    /* RSTORSSP: an invalid token (address mismatch) */
+    nv_st64(&r, 0x301ff0, 0x302001);
+    nv_set(&r, UC_X86_REG_RDX, 0x301ff0);
+    OK(nv_run(&r, "\xf3\x0f\x01\x2a"));
+    fx4_is(r.uc, 21, 4, "rstorssp: RSTORSSP");
+    /* SETSSBSY: the token at IA32_PL0_SSP already busy */
+    nv_wrmsr(&r, 0x6a4, 0x301f00);
+    nv_st64(&r, 0x301f00, 0x301f01);
+    OK(nv_run(&r, "\xf3\x0f\x01\xe8"));
+    fx4_is(r.uc, 21, 5, "setssbsy: SETSSBSY");
+    /* ENDBRANCH: jmp rax to a target without ENDBR64 (IA32_S_CET.ENDBR_EN) */
+    nv_wrmsr(&r, 0x6a2, 0x4);
+    t_plain = nv_ibt_target(&r, 1, "\x48\xff\xc3", 3);
+    nv_set(&r, UC_X86_REG_RAX, t_plain);
+    OK(uc_mem_write(r.uc, code_start + 0x2000, "\xff\xe0", 2));
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, code_start + 0x2000, t_plain + 3, 0, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    fx4_is(r.uc, 21, 3, "jmp rax: ENDBRANCH");
+    OK(uc_close(r.uc));
+
+    /* FAR-RET/IRET: RETF with a changed return address (cet2 layout) */
+    cet2_open64(&r);
+    nv_wrmsr(&r, 0x6a2, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RAX, 0x1234);
+    OK(cet2_call(&r, 8, CET2_C_RA));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21);
+    fx4_is(r.uc, 21, 2, "retf: FAR-RET/IRET");
+    OK(uc_close(r.uc));
+}
+
+/*
+ * U770: #TS(TSS selector) in 64-bit mode: a call gate to CPL0 reads RSP0 from the TSS; a TSS
+ * limit below 0Bh (RSP0 at 4..11) is #TS with the TR selector (SDM Vol2A CALL, IA-32e mode
+ * "IF TSS limit < 9 + 8 * DPL" ... "#TS(error_code)"; QEMU get_rsp_from_tss); the 64-bit gate
+ * itself: a DPL below CPL is #GP(gate selector).
+ */
+static void test_x86_fx4_ts(void)
+{
+    static const char code[] = "\x48\xff\x1e\xf3\x48\x0f\x1e\xca\xeb\x07"
+                               "\xf3\x48\x0f\x1e\xc9\x48\xcb";
+    NvRun r;
+    uint16_t gsel = 0x33;
+    uint64_t ca;
+    uc_x86_mmr tr = {0x40, CET2_TSS, 0x8, 0x8b00};
+
+    cet2_open64(&r);
+    OK(uc_reg_write(r.uc, UC_X86_REG_TR, &tr));
+    OK(uc_mem_write(r.uc, CET2_PTR + 8, &gsel, 2));
+    nv_set(&r, UC_X86_REG_RSI, CET2_PTR);
+    ca = r.next + 0x40;
+    cet2_gate(&r, 0x30, 8, ca + 10, 3);
+    OK(cet2_run3(&r, code));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 10 && nv_cpl(&r) == 3);
+    fx4_is(r.uc, 10, 0x40, "call far through a gate to CPL0, TSS limit 8");
+    /* the gate with DPL 0 from CPL3: #GP(30h) */
+    tr.limit = 0x67;
+    OK(uc_reg_write(r.uc, UC_X86_REG_TR, &tr));
+    ca = r.next;
+    cet2_gate(&r, 0x30, 8, ca + 10, 0);
+    OK(cet2_run3(&r, code));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    fx4_is(r.uc, 13, 0x30, "call far through a DPL 0 gate from CPL3");
+    OK(uc_close(r.uc));
+}
+/* ---- end U770-U789 (fx4_) ---- */
 
 /*
  * ---- NoVmp U790 (plan 1.F.13, axc_): the APX-promoted WRSSD/WRSSQ (EVEX NP MAP4 66) and
@@ -20503,4 +20981,11 @@ TEST_LIST = {
     {"test_x86_rg_rdrand_host", test_x86_rg_rdrand_host},
     {"test_x86_rg_ac_conditions", test_x86_rg_ac_conditions},
     {"test_x86_rg_ac_helpers", test_x86_rg_ac_helpers},
+    {"test_x86_fx4_exc_record", test_x86_fx4_exc_record},
+    {"test_x86_fx4_far_limits_gp0", test_x86_fx4_far_limits_gp0},
+    {"test_x86_fx4_selector_codes", test_x86_fx4_selector_codes},
+    {"test_x86_fx4_ss0", test_x86_fx4_ss0},
+    {"test_x86_fx4_pf_codes", test_x86_fx4_pf_codes},
+    {"test_x86_fx4_cp_codes", test_x86_fx4_cp_codes},
+    {"test_x86_fx4_ts", test_x86_fx4_ts},
     {NULL, NULL}};
