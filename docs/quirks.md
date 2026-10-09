@@ -103,7 +103,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - SDM: Vol2B PREFETCHW, Protected/Real-Address/Virtual-8086/Compatibility/64-Bit Mode Exceptions: "#UD If the LOCK prefix is used." Vol2A LOCK: PREFETCHW is not in the list of lockable instructions.
 - Emulator: #UD (U457, the old decoder's LOCK table).
 - i5-13600K: runs it (no #UD, no fault) for /1 with a memory or register operand; the other 0F 0D encodings (/0, /2, /7, register /0) with LOCK are #UD, as is LOCK PREFETCHNTA (0F 18 /0).
-- Hardware cases: `cases_backport_t1.txt` lines 197, 199 (the /0, /2, /7 lines next to them match).
+- Hardware cases: `cases_backport_t1.txt` lines 197, 199 (the /0, /2, /7 lines next to them match); `cases_fix4.txt` lines 149–150 (all 16 LOCK forms /0–/7 memory and register are on lines 147–162, the 14 others match; lines 163–178 the forms without LOCK, all NOPs on both).
 - Ledger: U457.
 
 ### SYSRET at CPL3 in compatibility mode
