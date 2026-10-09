@@ -4684,7 +4684,12 @@ static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     int modrm = get_modrm(s, env);
     if ((modrm >> 6) == 3) {
         op->n = (modrm & 7);
-        if (type != X86_TYPE_Q && type != X86_TYPE_N) {
+        /*
+         * backport 45230bca85 (U613): no REX.B for an MMX register, whatever the operand type
+         * (W/U with the mmx special also select MMX registers; REX.B made them MM8-MM15 and
+         * read past fpregs[]: i5-13600K 41 0F 60 C1 = PUNPCKLBW MM0, MM1)
+         */
+        if (op->unit != X86_OP_MMX) {
             op->n |= REX_B(s);
         }
 #if __Use_Original_Qemu != 1 /* ours (U142) */
