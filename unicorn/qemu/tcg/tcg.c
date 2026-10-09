@@ -1188,6 +1188,10 @@ bool tcg_op_supported(TCGOpcode op)
 
     case INDEX_op_goto_ptr:
         return TCG_TARGET_HAS_goto_ptr;
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+    case INDEX_op_uc_exit_check:
+        return TCG_TARGET_HAS_uc_exit_check;
+#endif /* __Use_Original_Qemu (U508) */
 
     case INDEX_op_mov_i32:
     case INDEX_op_movi_i32:

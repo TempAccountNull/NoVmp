@@ -47,6 +47,18 @@ DEF(br, 0, 0, 1, TCG_OPF_BB_END)
 #endif
 
 DEF(mb, 0, 0, 1, 0)
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+/*
+ * Unicorn's exit-request test after guest loads/stores and code hooks:
+ * "if (icount_decr.u32 < 0) leave the TB, restoring state to this guest
+ * instruction". Syncs the globals like any op with side effects (the exit path
+ * needs env); the exit itself is an out-of-line stub at the end of the TB.
+ */
+#ifndef TCG_TARGET_HAS_uc_exit_check
+#define TCG_TARGET_HAS_uc_exit_check 0
+#endif
+DEF(uc_exit_check, 0, 0, 0, TCG_OPF_SIDE_EFFECTS | IMPL(TCG_TARGET_HAS_uc_exit_check))
+#endif /* __Use_Original_Qemu (U508) */
 
 DEF(mov_i32, 1, 1, 0, TCG_OPF_NOT_PRESENT)
 DEF(movi_i32, 1, 0, 1, TCG_OPF_NOT_PRESENT)

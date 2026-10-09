@@ -30,6 +30,9 @@ typedef struct TCGLabelQemuLdst {
     TCGReg datahi_reg;      /* reg index for high word to be loaded or stored */
     tcg_insn_unit *raddr;   /* gen code addr of the next IR of qemu_ld/st IR */
     tcg_insn_unit *label_ptr[2]; /* label pointers to be updated */
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+    bool uc_exit;           /* INDEX_op_uc_exit_check stub, not a ld/st */
+#endif /* __Use_Original_Qemu (U508) */
     QSIMPLEQ_ENTRY(TCGLabelQemuLdst) next;
 } TCGLabelQemuLdst;
 
@@ -40,6 +43,9 @@ typedef struct TCGLabelQemuLdst {
 
 static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l);
 static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l);
+#if __Use_Original_Qemu != 1 && TCG_TARGET_HAS_uc_exit_check /* ours (U508) */
+static bool tcg_out_uc_exit_stub(TCGContext *s, TCGLabelQemuLdst *l);
+#endif /* __Use_Original_Qemu (U508) */
 
 static int tcg_out_ldst_finalize(TCGContext *s)
 {
@@ -47,6 +53,13 @@ static int tcg_out_ldst_finalize(TCGContext *s)
 
     /* qemu_ld/st slow paths */
     QSIMPLEQ_FOREACH(lb, &s->ldst_labels, next) {
+#if __Use_Original_Qemu != 1 && TCG_TARGET_HAS_uc_exit_check /* ours (U508) */
+        if (lb->uc_exit) {
+            if (!tcg_out_uc_exit_stub(s, lb)) {
+                return -2;
+            }
+        } else
+#endif /* __Use_Original_Qemu (U508) */
         if (lb->is_ld
             ? !tcg_out_qemu_ld_slow_path(s, lb)
             : !tcg_out_qemu_st_slow_path(s, lb)) {
@@ -72,6 +85,9 @@ static inline TCGLabelQemuLdst *new_ldst_label(TCGContext *s)
 {
     TCGLabelQemuLdst *l = tcg_malloc(s, sizeof(*l));
 
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+    l->uc_exit = false;
+#endif /* __Use_Original_Qemu (U508) */
     QSIMPLEQ_INSERT_TAIL(&s->ldst_labels, l, next);
 
     return l;

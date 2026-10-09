@@ -2874,6 +2874,16 @@ void check_exit_request(TCGContext *tcg_ctx)
     if (tcg_ctx->uc->no_exit_request) {
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+    /*
+     * Inline "cmp icount_decr, 0; jl stub" instead of a helper call per guest
+     * load/store; same exit, same restore point (see INDEX_op_uc_exit_check).
+     */
+    if (TCG_TARGET_HAS_uc_exit_check && tcg_ctx->delay_slot_flag == NULL) {
+        tcg_emit_op(tcg_ctx, INDEX_op_uc_exit_check);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U508) */
 
     TCGv_ptr puc = tcg_const_ptr(tcg_ctx, tcg_ctx->uc);
     TCGv_i32 tmp = tcg_const_i32(tcg_ctx, 0);

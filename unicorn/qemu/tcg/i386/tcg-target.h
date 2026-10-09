@@ -134,6 +134,9 @@ extern bool have_avx2;
 #define TCG_TARGET_HAS_mulsh_i32        0
 #define TCG_TARGET_HAS_goto_ptr         1
 #define TCG_TARGET_HAS_direct_jump      1
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+#define TCG_TARGET_HAS_uc_exit_check    1
+#endif /* __Use_Original_Qemu (U508) */
 
 #if TCG_TARGET_REG_BITS == 64
 /* Keep target addresses zero-extended in a register.  */

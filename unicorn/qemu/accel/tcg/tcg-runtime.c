@@ -207,6 +207,29 @@ void HELPER(check_exit_request_tb_start)(void *p, void *tbp)
 }
 #endif /* __Use_Original_Qemu (U502) */
 
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+/*
+ * Called from the INDEX_op_uc_exit_check stub (tcg/i386) only when
+ * cpu_loop_exit_requested(): the body of helper_check_exit_request for that
+ * case, with the caller's return address passed explicitly. Never returns.
+ */
+void uc_tb_exit_request(struct uc_struct *uc, uintptr_t retaddr);
+void uc_tb_exit_request(struct uc_struct *uc, uintptr_t retaddr)
+{
+    if (uc->nested_level == 1) {
+        tb_exec_unlock(uc);
+    }
+    uc->cpu->tcg_exit_req = 0;
+
+    if (uc->skip_sync_pc_on_exit) {
+        uc->skip_sync_pc_on_exit = false;
+        cpu_loop_exit(uc->cpu);
+    } else {
+        cpu_loop_exit_restore(uc->cpu, retaddr);
+    }
+}
+#endif /* __Use_Original_Qemu (U508) */
+
 void HELPER(check_exit_request)(void *p, uint32_t in_delay_slot) {
     uc_engine *uc = p;
 

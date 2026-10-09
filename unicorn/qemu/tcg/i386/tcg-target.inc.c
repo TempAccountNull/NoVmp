@@ -1819,6 +1819,30 @@ static void add_qemu_ldst_label(TCGContext *s, bool is_ld, bool is_64,
 /*
  * Generate code for the slow path for a load at the end of block
  */
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+void uc_tb_exit_request(struct uc_struct *uc, uintptr_t retaddr);
+
+/*
+ * Out-of-line half of INDEX_op_uc_exit_check: reached only when
+ * icount_decr.u32 < 0. uc_tb_exit_request does what helper_check_exit_request
+ * does in that case and never returns; retaddr (just after the JL in the TB
+ * body) lies in the current guest instruction's host range, as GETPC() of the
+ * helper call did, so cpu_restore_state picks the same instruction.
+ */
+static bool tcg_out_uc_exit_stub(TCGContext *s, TCGLabelQemuLdst *l)
+{
+    tcg_patch32(l->label_ptr[0], s->code_ptr - l->label_ptr[0] - 4);
+    tcg_out_movi(s, TCG_TYPE_PTR, tcg_target_call_iarg_regs[0],
+                 (uintptr_t)s->uc);
+    tcg_out_movi(s, TCG_TYPE_PTR, tcg_target_call_iarg_regs[1],
+                 (uintptr_t)l->raddr);
+    tcg_out_call(s, (tcg_insn_unit *)uc_tb_exit_request);
+    tcg_out8(s, 0x0f);   /* ud2: uc_tb_exit_request does not return */
+    tcg_out8(s, 0x0b);
+    return true;
+}
+#endif /* __Use_Original_Qemu (U508) */
+
 static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 {
     TCGMemOpIdx oi = l->oi;
@@ -2638,6 +2662,24 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_mb:
         tcg_out_mb(s, a0);
         break;
+#if __Use_Original_Qemu != 1 /* ours (U508) */
+    case INDEX_op_uc_exit_check:
+        {
+            /* cmpl $0, icount_decr.u32(env); jl stub (end of TB) */
+            TCGLabelQemuLdst *l = new_ldst_label(s);
+
+            tcg_out_modrm_offset(s, OPC_ARITH_EvIb, ARITH_CMP, TCG_AREG0,
+                                 offsetof(ArchCPU, neg.icount_decr.u32) -
+                                 offsetof(ArchCPU, env));
+            tcg_out8(s, 0);
+            tcg_out_opc(s, OPC_JCC_long + JCC_JL, 0, 0, 0);
+            l->label_ptr[0] = s->code_ptr;
+            s->code_ptr += 4;
+            l->raddr = s->code_ptr;
+            l->uc_exit = true;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U508) */
     case INDEX_op_mov_i32:  /* Always emitted via tcg_out_mov.  */
     case INDEX_op_mov_i64:
     case INDEX_op_movi_i32: /* Always emitted via tcg_out_movi.  */
