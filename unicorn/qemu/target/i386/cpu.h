@@ -671,6 +671,9 @@ typedef enum FeatureWord {
 #if __Use_Original_Qemu != 1 /* ours (U85) */
     FEAT_7_1_EDX,       /* CPUID[EAX=7,ECX=1].EDX */
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    FEAT_7_1_ECX,       /* CPUID[EAX=7,ECX=1].ECX */
+#endif /* __Use_Original_Qemu (U803) */
     FEAT_8000_0001_EDX, /* CPUID[8000_0001].EDX */
     FEAT_8000_0001_ECX, /* CPUID[8000_0001].ECX */
     FEAT_8000_0007_EDX, /* CPUID[8000_0007].EDX */
@@ -1086,6 +1089,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* RDMSRLIST, WRMSRLIST and IA32_BARRIER (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[27]) */
 #define CPUID_7_1_EAX_MSRLIST           (1U << 27)
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+/* immediate forms of RDMSR / WRMSRNS (SDM Vol1 Table 21-24: CPUID.(EAX=07H,ECX=1):ECX[5]) */
+#define CPUID_7_1_ECX_MSR_IMM           (1U << 5)
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu != 1 /* ours (U103) */
 /* URDMSR and UWRMSR */
 #define CPUID_7_1_EDX_USER_MSR          (1U << 15)

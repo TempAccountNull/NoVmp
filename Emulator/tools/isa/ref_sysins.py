@@ -2,7 +2,9 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
 
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
-      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802)
+      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803)
+  * the same, Intel APX EVEX forms (--apx)                          -> Emulator\data\cases_sysins_apx.txt
+      RDMSR / WRMSRNS imm32 EVEX map 7 (U803)
 
 Written from the Intel manuals only (the emulator's C sources were not read for the expected values;
 no CPU measurements - the i5-13600K has no AVX-512):
@@ -26,6 +28,12 @@ System instructions, from:
     != 0, an RDMSR / WRMSR #GP; partial completion on faults); Vol1 Table 21-22 (CPUID.(07H,1):
     EAX[27] MSRLIST); Vol4 IA32_BARRIER (2FH, R/O, 0); XED msrlist-isa.xed.txt (f2/f3_refining_
     prefix: a 66 prefix does not change the instruction).
+  * SDM Vol2B RDMSR / Vol2D WRMSRNS immediate forms (VEX.128.F2/F3.MAP7:W0 F6 11:000:bbb id,
+    64-bit mode, CPUID.(07H,1):ECX.MSR_IMM[5] (Vol1 Table 21-24), "DEST := MSR[SRC]" /
+    "MSR[DEST] := SRC" with the full 64-bit register); APX spec 355828-009 6.49 / 6.70 (EVEX.128
+    map 7 forms) and 4.2.21 (class MSR-IMM-EVEX: payload byte 3 all 0 apart from V4 = 1, L = 0,
+    vvvv = 1111b; ModRM.mod = 11b needs U = 1, 3.1.2.3); XED msr-imm-isa.xed.txt /
+    apx-f-msr-imm-isa.xed.txt (REG = 0, MOD = 3, UBIT = 1).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -43,6 +51,8 @@ Modelling decisions:
   f. RDMSRLIST / WRMSRLIST check RSI / RDI alignment first, also when RCX = 0 (the SDM lists the
      #GP without a condition on RCX); entries are processed strictly in order, no load-ahead
      (a #PF on entry n happens after entries < n completed).
+  g. MSR-IMM W1 is #UD for the VEX form (SDM "W0") and for the EVEX form (the APX table prints
+     "N/A"; read as the VEX form's W0, as asmjit's db does). NP / 66 F6 in map 7 is no instruction.
 
 Usage:
   python -I ref_sysins.py --selftest   hand-derived checks of the model (exit 0 on pass)
@@ -201,7 +211,7 @@ def cases_dq():
 # and the state before the faulting instruction).
 # ------------------------------------------------------------------------------------------------
 REGS = ['rax', 'rcx', 'rdx', 'rbx', 'rsp', 'rbp', 'rsi', 'rdi',
-        'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']
+        'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15'] + ['r%d' % i for i in range(16, 32)]
 MEM = 0x30020000                    # emu-alltest operand memory (64 KiB), RSI = MEM + 0x8000
 MEM_PTR = MEM + 0x8000
 MEM_DST = MEM + 0x9000
@@ -357,6 +367,45 @@ def i_wrmsrns(prefix=b''):
     return prefix + b'\x0f\x01\xc6', f
 
 
+def i_msrimm(write, reg, imm, evex_form=False, w=0, l=0, vvvv=0, regfield=0, pp=None, mod=3,
+             prefix=b'', nf=0, nd=0, vhi=0, z=0, ubit=1, aaa=0):
+    """RDMSR r64, imm32 (F2 MAP7 F6 /0) / WRMSRNS imm32, r64 (F3 MAP7 F6 /0), SDM Vol2B/2D +
+    APX spec 6.49/6.70: VEX.128.W0 (C4, map 7) or the APX EVEX.128 map 7 form (62, P0[2:0] =
+    111, B4 = P0[3], U = P1[2], P2 = 0 0 L 0 V4 NF 0 0). DEST := MSR[imm32] / MSR[imm32] := SRC."""
+    n = REGS.index(reg)
+    if pp is None:
+        pp = 2 if write else 3
+    if not evex_form:
+        b1 = (1 << 7) | (1 << 6) | ((~n >> 3 & 1) << 5) | 0x07
+        b2 = (w << 7) | ((~vvvv & 15) << 3) | (l << 2) | pp
+        enc = prefix + bytes([0xC4, b1, b2])
+    else:
+        p0 = (1 << 7) | (1 << 6) | ((~n >> 3 & 1) << 5) | (1 << 4) | ((n >> 4 & 1) << 3) | 0x07
+        p1 = (w << 7) | ((~vvvv & 15) << 3) | (ubit << 2) | pp
+        p2 = (z << 7) | (l << 5) | (nd << 4) | ((~vhi & 1) << 3) | (nf << 2) | aaa
+        enc = prefix + bytes([0x62, p0, p1, p2])
+    enc += bytes([0xF6, (mod << 6) | ((regfield & 7) << 3) | (n & 7)])
+    if mod == 0:
+        enc += b''                              # [rax]-style memory form (only for #UD cases)
+    enc += (imm & 0xFFFFFFFF).to_bytes(4, 'little')
+    ud = (prefix != b'' or w or l or vvvv or regfield or mod != 3 or pp not in (2, 3) or
+          (evex_form and (nf or nd or vhi or z or not ubit or aaa)))
+
+    def f(m):
+        if ud:
+            raise Fault('#UD')
+        if m.cpl:
+            raise Fault('#GP')
+        msr = imm & 0xFFFFFFFF
+        if pp == 2:                             # F3: WRMSRNS imm32, r64
+            if not msr_check(msr, m.r[reg]):
+                raise Fault('#GP')
+            m.msr[msr] = m.r[reg]
+        else:                                   # F2: RDMSR r64, imm32
+            m.r[reg] = msr_read(m, msr)
+    return enc, f
+
+
 def run_case(ins, inputs):
     """Run the instruction list on the model; returns the case line."""
     m = Machine(inputs)
@@ -474,6 +523,62 @@ def cases_sys():
     a(run_case([i_msrlist(True, b'\xf0')], {'rcx': 1, 'm+0x8000': q(0x1B01)}))
     a(run_case([rdl], {'rcx': 1, 'm+0x8000': q(0x2F), 'cpl': 3}))
     a(run_case([wrl], {'rcx': 1, 'm+0x8000': q(0x1B01), 'cpl': 3}))
+
+    # ---- MSR-IMM, VEX map 7 (U803)
+    a('# --- RDMSR r64, imm32 (VEX.128.F2.MAP7.W0 F6 /0) / WRMSRNS imm32, r64 (VEX.128.F3.MAP7.W0 F6 /0),')
+    a('# U803: the full 64-bit register, RAX/RCX/RDX untouched; IA32_BARRIER reads 0')
+    base = {'rax': 0x1111111111111111, 'rcx': 0x2222222222222222, 'rdx': 0x3333333333333333}
+    a(run_case([i_msrimm(True, 'r9', 0xC0000102), i_msrimm(False, 'r10', 0xC0000102)],
+               dict(base, r9=0xFFFF800012345678, r10=0x5555)))
+    a(run_case([i_msrimm(True, 'rbx', 0xE1), i_msrimm(False, 'rdx', 0xE1)], dict(base, rbx=0xFFFFFFFD)))
+    a(run_case([i_msrimm(True, 'r15', 0x1B01), i_msrimm(False, 'rax', 0x1B01)], dict(base, r15=1)))
+    a(run_case([i_msrimm(False, 'r8', 0x2F)], dict(base, r8=0x8888)))
+    a(run_case([i_msrimm(False, 'rcx', 0x2F)], dict(base)))
+    a('# reserved MSR bits / IA32_BARRIER write: #GP(0), nothing changes')
+    a(run_case([i_msrimm(True, 'r9', 0xE1)], dict(base, r9=2)))
+    a(run_case([i_msrimm(True, 'r9', 0xE1)], dict(base, r9=0x100000000)))
+    a(run_case([i_msrimm(True, 'rdx', 0x2F)], dict(base)))
+    a(run_case([i_msrimm(True, 'r12', 0x1B01)], dict(base, r12=3)))
+    a('# #UD: W1, L1, vvvv != 1111b, ModRM.reg != 0, memory form, NP / 66, LOCK; CPL3 -> #GP(0)')
+    for kw in ({'w': 1}, {'l': 1}, {'vvvv': 1}, {'regfield': 1}, {'mod': 0}, {'pp': 0}, {'pp': 1},
+               {'prefix': b'\xf0'}):
+        a(run_case([i_msrimm(False, 'rax', 0x2F, **kw)], dict(base)))
+        a(run_case([i_msrimm(True, 'rax', 0x1B01, **kw)], dict(base, rax=0)))
+    a(run_case([i_msrimm(False, 'r8', 0x2F)], dict(base, cpl=3)))
+    a(run_case([i_msrimm(True, 'r8', 0x1B01)], dict(base, cpl=3)))
+    return lines
+
+
+def cases_apx():
+    """The APX EVEX map 7 forms of MSR-IMM (needs --apx)."""
+    lines = []
+    a = lines.append
+    a('# CPL0 system instructions, the Intel APX EVEX forms (ledger U803-U829): expected values from the')
+    a('# independent model Emulator/tools/isa/ref_sysins.py (regenerate with --write, do not edit).')
+    a('# Unicorn only, MAX model with the APX opt-in:')
+    a('#   emu-alltest --cases Emulator\\data\\cases_sysins_apx.txt --apx --expect-only')
+    a('# --- RDMSR r64, imm32 / WRMSRNS imm32, r64: EVEX.128.F2/F3.MAP7 F6 11:000:bbb (APX spec 6.49 /')
+    a('# 6.70, U803); EGPRs through B4 / B3')
+    base = {'rax': 0x1111111111111111, 'rcx': 0x2222222222222222, 'rdx': 0x3333333333333333}
+    a(run_case([i_msrimm(True, 'r20', 0xC0000102, True), i_msrimm(False, 'r31', 0xC0000102, True)],
+               dict(base, r20=0x00007FFF00ABCDEF, r31=0x5555)))
+    a(run_case([i_msrimm(True, 'r9', 0xD93, True), i_msrimm(False, 'r16', 0xD93, True)],
+               dict(base, r9=0x80000001)))
+    a(run_case([i_msrimm(False, 'r24', 0x2F, True)], dict(base, r24=0x2424)))
+    a(run_case([i_msrimm(True, 'r27', 0x1B01, True), i_msrimm(False, 'rbx', 0x1B01, True)],
+               dict(base, r27=1)))
+    a('# reserved MSR bits / IA32_BARRIER write: #GP(0)')
+    a(run_case([i_msrimm(True, 'r17', 0xD93, True)], dict(base, r17=0x40000000)))
+    a(run_case([i_msrimm(True, 'r18', 0x2F, True)], dict(base)))
+    a('# #UD (class MSR-IMM-EVEX): W1, L1, vvvv != 1111b, V4 = 0, NF, ND (b), z, aaa, U = 0,')
+    a('# ModRM.reg != 0, memory form, NP / 66, LOCK; CPL3 -> #GP(0)')
+    for kw in ({'w': 1}, {'l': 1}, {'vvvv': 1}, {'vhi': 1}, {'nf': 1}, {'nd': 1}, {'z': 1},
+               {'aaa': 1}, {'ubit': 0}, {'regfield': 1}, {'mod': 0}, {'pp': 0}, {'pp': 1},
+               {'prefix': b'\xf0'}):
+        a(run_case([i_msrimm(False, 'r19', 0x2F, True, **kw)], dict(base)))
+        a(run_case([i_msrimm(True, 'r19', 0x1B01, True, **kw)], dict(base)))
+    a(run_case([i_msrimm(False, 'r21', 0x2F, True)], dict(base, cpl=3)))
+    a(run_case([i_msrimm(True, 'r21', 0x1B01, True)], dict(base, cpl=3)))
     return lines
 
 
@@ -491,6 +596,10 @@ def cases_hw():
     a('# RDMSRLIST / WRMSRLIST (U802): CPUID.(07H,1):EAX[27] = 0 on this CPU -> #UD on both')
     a('.byte 0xf2, 0x0f, 0x01, 0xc6 | rcx=0x1 m+0x8000=2F00000000000000 cpl=3')
     a('.byte 0xf3, 0x0f, 0x01, 0xc6 | rcx=0x1 m+0x8000=2F00000000000000 cpl=3')
+    a('# RDMSR / WRMSRNS imm32 (U803): no MSR_IMM (VEX map 7) and no APX (EVEX) on this CPU -> #UD on both')
+    for enc in (i_msrimm(False, 'rax', 0x2F)[0], i_msrimm(True, 'r9', 0x1B01)[0],
+                i_msrimm(False, 'rax', 0x2F, True)[0], i_msrimm(True, 'r9', 0x1B01, True)[0]):
+        a('.byte %s | r9=0x1 cpl=3' % bytelist(enc))
     return lines
 
 
@@ -550,7 +659,15 @@ def selftest():
         '.byte 0xf2, 0x0f, 0x01, 0xc6 | rcx=0x3 m+0x8000=2F000000000000002F00000001000000 '
         'm+0x9000=05 => rcx=0x2 m+0x9000=00 #GP')
     chk('wrmsrlist rex', i_msrlist(True, b'\x48')[0], bytes.fromhex('F3480F01C6'))
+    # MSR-IMM encodings: URDMSR's EVEX map 7 example (unit test test_x86_ax4_user_msr) with F6:
+    # 62 FF 7F 08 F8 C6 = urdmsr r22, imm -> rdmsr r22, imm = 62 FF 7F 08 F6 C6
+    chk('evex rdmsr r22', i_msrimm(False, 'r22', 0x1C, True)[0], bytes.fromhex('62FF7F08F6C61C000000'))
+    chk('vex rdmsr rax', i_msrimm(False, 'rax', 0x2F)[0], bytes.fromhex('C4E77BF6C02F000000'))
+    chk('vex wrmsrns r9', i_msrimm(True, 'r9', 0x1B01)[0], bytes.fromhex('C4C77AF6C1011B0000'))
+    chk('rdmsr imm line', run_case([i_msrimm(False, 'rcx', 0x2F)], {'rcx': 7}),
+        '.byte 0xc4, 0xe7, 0x7b, 0xf6, 0xc1, 0x2f, 0x00, 0x00, 0x00 | rcx=0x7 => rcx=0x0')
     try:
+        cases_apx()
         cases_sys()
         cases_dq()
     except Exception as e:                      # pragma: no cover
@@ -567,6 +684,7 @@ def main():
     if '--write' in sys.argv:
         write_file('cases_sysins_dq.txt', cases_dq())
         write_file('cases_sysins.txt', cases_sys())
+        write_file('cases_sysins_apx.txt', cases_apx())
         write_file('cases_sysins_hw.txt', cases_hw())
         return
     print(__doc__)

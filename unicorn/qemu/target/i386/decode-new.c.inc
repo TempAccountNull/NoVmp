@@ -1276,9 +1276,35 @@ static void decode_MAP7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
         X86_OP_ENTRY3(URDMSR_i, R,q, None,None, I,d, vex13 cpuid(USER_MSR) o64);
     static const X86OpEntry uwrmsr_i =
         X86_OP_ENTRY3(UWRMSR_i, None,None, R,q, I,d, vex13 cpuid(USER_MSR) o64);
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    /*
+     * NoVmp (ledger U803): MSR-IMM (SDM Vol2B RDMSR, Vol2D WRMSRNS): VEX.128.F2.MAP7.W0 F6
+     * 11:000:bbb id RDMSR r64, imm32 and VEX.128.F3.MAP7.W0 F6 11:000:bbb id WRMSRNS imm32,
+     * r64, 64-bit mode, CPUID.(07H,1):ECX.MSR_IMM[5]; the APX EVEX.128 map 7 forms (APX spec
+     * 6.49 / 6.70, class MSR-IMM-EVEX) come through decode_apx_map7 with the U646 payload
+     * checks. W1 #UD for both (SDM VEX "W0"; the APX table's "N/A" is read as the VEX form's
+     * W0, as asmjit's db). #GP(0) at CPL > 0 in the gen functions.
+     */
+    static const X86OpEntry rdmsr_i =
+        X86_OP_ENTRY3(RDMSR_i, R,q, None,None, I,d, vex13 cpuid(MSR_IMM) o64);
+    static const X86OpEntry wrmsrns_i =
+        X86_OP_ENTRY3(WRMSRNS_i, None,None, R,q, I,d, vex13 cpuid(MSR_IMM) o64);
+#endif /* __Use_Original_Qemu (U803) */
 
     *b = x86_ldub_code(env, s);
     memset(entry, 0, sizeof(*entry));
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    if (*b == 0xf6) {
+        if (!s->vex_w && ((get_modrm(s, env) >> 3) & 7) == 0) {
+            if (s->prefix & PREFIX_REPNZ) {
+                *entry = rdmsr_i;
+            } else if (s->prefix & PREFIX_REPZ) {
+                *entry = wrmsrns_i;
+            }
+        }
+        return;
+    }
+#endif /* __Use_Original_Qemu (U803) */
     if (*b != 0xf8 || s->vex_w || ((get_modrm(s, env) >> 3) & 7) != 0) {
         return;
     }
@@ -4787,8 +4813,8 @@ static bool apx_vex_promoted(DisasContext *s)
 
 /*
  * Intel APX: EVEX map 7 (APX spec 3.1.5): F8 11:000:bbb F2 URDMSR r64, imm32 / F3 UWRMSR imm32,
- * r64 (W0), promoted from VEX map 7 (decode_MAP7). F6 /0 RDMSR / WRMSRNS with an immediate
- * (MSR-IMM) are not implemented by this CPU model (#UD).
+ * r64 (W0), promoted from VEX map 7 (decode_MAP7). U803 (was: F6 /0 not implemented, #UD):
+ * F6 11:000:bbb F2 RDMSR r64, imm32 / F3 WRMSRNS imm32, r64 (MSR-IMM, APX spec 6.49 / 6.70).
  */
 static void decode_apx_map7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
@@ -5750,6 +5776,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_USER_MSR:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_USER_MSR);
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    case X86_FEAT_MSR_IMM:
+        return (s->cpuid_7_1_ecx_features & CPUID_7_1_ECX_MSR_IMM);
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     case X86_FEAT_ENQCMD:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_ENQCMD);

@@ -712,6 +712,9 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_1_EDX_USER_MSR /* U103 */ | \
           CPUID_7_1_EDX_UIRET_UIF /* U104 */)
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+#define TCG_7_1_ECX_FEATURES CPUID_7_1_ECX_MSR_IMM
+#endif /* __Use_Original_Qemu (U803) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
 #if __Use_Original_Qemu == 1 /* original QEMU (U66) */
@@ -997,6 +1000,27 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         .tcg_features = TCG_7_1_EDX_FEATURES,
     },
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    [FEAT_7_1_ECX] = {
+        .type = CPUID_FEATURE_WORD,
+        .feat_names = {
+            NULL, NULL, NULL, NULL,
+            NULL, "msr-imm", NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+        },
+        .cpuid = {
+            .eax = 7,
+            .needs_ecx = true, .ecx = 1,
+            .reg = R_ECX,
+        },
+        .tcg_features = TCG_7_1_ECX_FEATURES,
+    },
+#endif /* __Use_Original_Qemu (U803) */
     [FEAT_8000_0007_EDX] = {
         .type = CPUID_FEATURE_WORD,
         .feat_names = {
@@ -4643,7 +4667,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         } else if (count == 1) {
             *eax = env->features[FEAT_7_1_EAX];
             *ebx = 0;
+#if __Use_Original_Qemu == 1 /* original QEMU (U803) */
             *ecx = 0;
+#else /* ours (U803) */
+            *ecx = env->features[FEAT_7_1_ECX];
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U85) */
             *edx = 0;
 #else /* ours (U85) */

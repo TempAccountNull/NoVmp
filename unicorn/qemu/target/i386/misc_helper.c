@@ -2310,3 +2310,15 @@ void helper_wrmsrlist(CPUX86State *env)
     }
 }
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+/* NoVmp (ledger U803): RDMSR r64, imm32 / WRMSRNS imm32, r64 (CPL checked by the translator) */
+target_ulong helper_rdmsr_imm(CPUX86State *env, uint32_t msr)
+{
+    return x86_msr_access(env, msr, 0, false);
+}
+
+void helper_wrmsr_imm(CPUX86State *env, uint32_t msr, target_ulong val)
+{
+    x86_msr_access(env, msr, val, true);
+}
+#endif /* __Use_Original_Qemu (U803) */

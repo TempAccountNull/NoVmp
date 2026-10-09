@@ -347,6 +347,8 @@ Add-PySelftest 'ref_sysins_selftest' 'sysins tools' 'ref_sysins.py'
 # U801-U829: the CPL0 system instructions (WRMSRNS, ...) at CPL0 and CPL3 (cpl=3), MAX model, expected
 # values from ref_sysins.py; and at CPL3 against the i5-13600K with its strict profile (hardware).
 Add-Exp 'cases_sysins' 'cases_sysins' 'sysins expect'
+# U803: their Intel APX EVEX forms (MSR-IMM EVEX map 7, ...), with the APX opt-in
+Add-Exp 'cases_sysins_apx' 'cases_sysins_apx' 'sysins apx expect' @( '--apx' )
 Add-Hw 'cases_sysins_hw' 'hw sysins'
 
 # ---------------------------------------------------------------------------------------- selection

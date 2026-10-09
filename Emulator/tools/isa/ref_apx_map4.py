@@ -1593,7 +1593,7 @@ def special_lines(rng):
               Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, ll=1), Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, nf=1),
               Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, nd=1),
               Ev(0x90, 1, Reg(0), mapid=1), Ev(0x49, 0, Mem(3, None, 1, 0), mapid=2), Ev(0x4B, 0, Mem(3, 1, 1, 0), mapid=2, pp=3),
-              Ev(0xF8, 0, Reg(0), mapid=7, pp=3, imm=bytes(4)), Ev(0xF6, 0, Reg(0), mapid=7, pp=3, imm=bytes(4))):
+              Ev(0xF8, 0, Reg(0), mapid=7, pp=3, imm=bytes(4)), Ev(0xF6, 0, Reg(0), mapid=7, pp=3, w=1, imm=bytes(4))):
         L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0xF2, 1, Reg(0), mapid=2, v=2).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     c("--- JMPABS (U644): REX2 M0 = 0 W = 0 A1 target64; non-canonical target #GP; W = 1 and"

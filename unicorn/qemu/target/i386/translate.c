@@ -259,6 +259,9 @@ typedef struct DisasContext {
 #if __Use_Original_Qemu != 1 /* ours (U85) */
     int cpuid_7_1_edx_features;
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    int cpuid_7_1_ecx_features;     /* CPUID.(07H,1):ECX: MSR_IMM */
+#endif /* __Use_Original_Qemu (U803) */
     int cpuid_xsave_features;
 #if __Use_Original_Qemu != 1 /* ours (U720) */
     int cpuid_1e_1_eax_features; /* CPUID.(1EH,1):EAX: AMX_FP8 / AMX_AVX512 / AMX_MOVRS */
@@ -10447,6 +10450,10 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U85) */
     dc->cpuid_7_1_edx_features &= x86_cpuid_profile_mask(env, 7, 1, 3);
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    dc->cpuid_7_1_ecx_features = env->features[FEAT_7_1_ECX] &
+                                 x86_cpuid_profile_mask(env, 7, 1, 2);
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu != 1 /* ours (U100) */
     dc->cpuid_19_ebx_features &= x86_cpuid_profile_mask(env, 0x19, 0, 1);
 #endif /* __Use_Original_Qemu (U100) */

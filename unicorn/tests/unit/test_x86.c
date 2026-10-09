@@ -22086,6 +22086,88 @@ static void test_x86_si_msrlist(void)
     TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc6", 4) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U803: RDMSR r64, imm32 / WRMSRNS imm32, r64 (VEX map 7 F6 /0, APX EVEX map 7): CPUID.(7,1):ECX[5],
+ * the full 64-bit register, RDMSR / WRMSR hooks, RAX/RCX/RDX unchanged (also when the access
+ * faults), #UD outside 64-bit mode, when a strict profile hides MSR_IMM, and for the EVEX form
+ * without APX or with XCR0[19] = 0.
+ */
+#define SI_WRMSRNS_R9_KGS "\xc4\xc7\x7a\xf6\xc1\x02\x01\x00\xc0"     /* wrmsrns 0c0000102h, r9 */
+#define SI_RDMSR_R10_KGS "\xc4\xc7\x7b\xf6\xc2\x02\x01\x00\xc0"      /* rdmsr r10, 0c0000102h */
+#define SI_EWRMSRNS_R20_KGS "\x62\xff\x7e\x08\xf6\xc4\x02\x01\x00\xc0" /* {evex} wrmsrns .., r20 */
+#define SI_ERDMSR_R31_KGS "\x62\xdf\x7f\x08\xf6\xc7\x02\x01\x00\xc0"  /* {evex} rdmsr r31, .. */
+
+static void test_x86_si_msr_imm(void)
+{
+    static const uc_x86_cpuid no_msr_imm[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    uint32_t r[4];
+    uint64_t xcr0;
+    uc_hook h;
+    int hits = 0;
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[2] & (1u << 5));
+    si_set(&c, UC_X86_REG_RAX, 0x1111);
+    si_set(&c, UC_X86_REG_RCX, 0x2222);
+    si_set(&c, UC_X86_REG_RDX, 0x3333);
+    si_set(&c, UC_X86_REG_R9, 0xffff800012345678ull);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, si_msr_hook_cb, &hits, 1, 0, UC_X86_INS_WRMSR));
+    TEST_CHECK(si_run(&c, SI_WRMSRNS_R9_KGS, 9) == -1);
+    TEST_CHECK(hits == 1);
+    OK(uc_hook_del(c.uc, h));
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0xffff800012345678ull);
+    TEST_CHECK(si_run(&c, SI_RDMSR_R10_KGS, 9) == -1);
+    TEST_CHECK(si_get(&c, UC_X86_REG_R10) == 0xffff800012345678ull);
+    TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0x1111 && si_get(&c, UC_X86_REG_RCX) == 0x2222 &&
+               si_get(&c, UC_X86_REG_RDX) == 0x3333);
+    /* WRMSRNS 0E1h, r9 with bit 1 set: #GP(0), RAX/RCX/RDX and the MSR unchanged */
+    si_wrmsr(&c, 0xe1, 0);
+    si_set(&c, UC_X86_REG_R9, 2);
+    TEST_CHECK(si_run(&c, "\xc4\xc7\x7a\xf6\xc1\xe1\x00\x00\x00", 9) == 13);
+    TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0x1111 && si_get(&c, UC_X86_REG_RCX) == 0x2222 &&
+               si_get(&c, UC_X86_REG_RDX) == 0x3333 && si_rdmsr(&c, 0xe1) == 0);
+    /* W1 / ModRM.reg != 0: #UD; no APX: the EVEX form is #UD */
+    TEST_CHECK(si_run(&c, "\xc4\xc7\xfb\xf6\xc2\x02\x01\x00\xc0", 9) == 6);
+    TEST_CHECK(si_run(&c, "\xc4\xc7\x7b\xf6\xca\x02\x01\x00\xc0", 9) == 6);
+    TEST_CHECK(si_run(&c, SI_EWRMSRNS_R20_KGS, 10) == 6);
+    OK(uc_close(c.uc));
+
+    /* APX: EGPRs; XCR0[19] = 0 #UD */
+    si_open(&c, 0, 0, UC_X86_APX_F, NULL, 0);
+    si_set(&c, UC_X86_REG_R20, 0x00007fff00001000ull);
+    TEST_CHECK(si_run(&c, SI_EWRMSRNS_R20_KGS, 10) == -1);
+    TEST_CHECK(si_run(&c, SI_ERDMSR_R31_KGS, 10) == -1);
+    TEST_CHECK(si_get(&c, UC_X86_REG_R31) == 0x00007fff00001000ull);
+    xcr0 = si_get(&c, UC_X86_REG_XCR0);
+    si_set(&c, UC_X86_REG_RCX, 0);
+    si_set(&c, UC_X86_REG_RAX, xcr0 & ~(1ull << 19) & 0xffffffff);
+    si_set(&c, UC_X86_REG_RDX, xcr0 >> 32);
+    TEST_CHECK(si_run(&c, "\x0f\x01\xd1", 3) == -1);              /* XSETBV */
+    TEST_CHECK(si_run(&c, SI_ERDMSR_R31_KGS, 10) == 6);
+    TEST_CHECK(si_run(&c, SI_RDMSR_R10_KGS, 9) == -1);           /* the VEX form needs no APX */
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: #UD */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(si_run(&c, "\xc4\xe7\x7b\xf6\xc2\x02\x01\x00\xc0", 9) == 6);
+    OK(uc_close(c.uc));
+
+    /* a strict profile hiding MSR_IMM: #UD */
+    si_open(&c, 0, 0, 0, no_msr_imm, 1);
+    TEST_CHECK(si_run(&c, SI_RDMSR_R10_KGS, 9) == 6);
+    TEST_CHECK(si_run(&c, SI_WRMSRNS_R9_KGS, 9) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22392,4 +22474,5 @@ TEST_LIST = {
     {"test_x86_si_vpmov_dq", test_x86_si_vpmov_dq},
     {"test_x86_si_wrmsrns", test_x86_si_wrmsrns},
     {"test_x86_si_msrlist", test_x86_si_msrlist},
+    {"test_x86_si_msr_imm", test_x86_si_msr_imm},
     {NULL, NULL}};

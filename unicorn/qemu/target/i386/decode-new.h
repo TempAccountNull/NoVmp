@@ -178,6 +178,9 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U103) */
     X86_FEAT_USER_MSR,
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+    X86_FEAT_MSR_IMM,       /* CPUID.(07H,1):ECX[5] */
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     X86_FEAT_ENQCMD,
 #endif /* __Use_Original_Qemu (U112) */

@@ -4335,6 +4335,40 @@ static void gen_UWRMSR_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U803) */
+/*
+ * NoVmp (ledger U803): RDMSR r64, imm32 / WRMSRNS imm32, r64 (MSR-IMM): #GP(0) at CPL > 0, then
+ * the access of the MSR named by the zero-extended imm32 through helper_rdmsr / helper_wrmsr
+ * (x86_msr_access: same checks, faults and hooks); WRMSRNS ends the TB like WRMSR.
+ */
+static void gen_RDMSR_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (!check_cpl0(s)) {
+        return;
+    }
+    gen_update_cc_op(s);
+    gen_update_eip_cur(s);
+    gen_helper_rdmsr_imm(tcg_ctx, s->T0, cpu_env,
+                         tcg_constant_i32(tcg_ctx, (uint32_t)decode->immediate));
+}
+
+static void gen_WRMSRNS_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (!check_cpl0(s)) {
+        return;
+    }
+    gen_update_cc_op(s);
+    gen_update_eip_cur(s);
+    gen_helper_wrmsr_imm(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, (uint32_t)decode->immediate),
+                         s->T0);
+    s->base.is_jmp = DISAS_EOB_NEXT;
+}
+
+#endif /* __Use_Original_Qemu (U803) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 /*
  * NoVmp (ledger U112): ENQCMD (F2 0F 38 F8) / ENQCMDS (F3 0F 38 F8) r, m512.
