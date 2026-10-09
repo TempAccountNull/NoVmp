@@ -3469,6 +3469,21 @@ void helper_sysenter(CPUX86State *env, int next_eip_addend)
     bool synced = false;
 
     HOOK_FOREACH_VAR_DECLARE;
+#if __Use_Original_Qemu != 1 /* ours (U852) */
+    /*
+     * NoVmp (ledger U852): SDM Vol2B SYSENTER: "IF CR0.PE = 0 OR (CR4.FRED = 0 AND
+     * IA32_SYSENTER_CS[15:2] = 0) THEN #GP(0)". CR0.PE = 0 is #GP at translation; the CPU model has
+     * no FRED (CR4.FRED reserved), so the test is bits 15:2 of the MSR. Unicorn's hook-only SYSENTER
+     * had dropped the check (upstream QEMU's helper_sysenter tests the whole MSR against 0, so
+     * selectors 1-3 would pass there). The protected-mode reset state has an OS-like
+     * IA32_SYSENTER_CS (unicorn.c reg_reset, U852), so the UC_X86_INS_SYSENTER hook API is
+     * unchanged unless the guest or the user loads a NULL selector; the transition itself stays
+     * that hook API (plan decision A1), as for SYSCALL (U594).
+     */
+    if ((env->sysenter_cs & 0xfffc) == 0) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U852) */
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
         if (hook->to_delete)
             continue;

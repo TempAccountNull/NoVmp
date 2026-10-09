@@ -173,6 +173,18 @@ static void reg_reset(struct uc_struct *uc)
         break;
     case UC_MODE_32:
         env->hflags |= HF_CS32_MASK | HF_SS32_MASK | HF_OSFXSR_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U852) */
+        /*
+         * NoVmp (ledger U852): SYSENTER is #GP(0) with IA32_SYSENTER_CS[15:2] = 0 (SDM Vol2B; the
+         * SDM leaves the MSR's reset value open); a 32-bit OS loads its ring-0 code selector
+         * (Windows x86 KGDT_R0_CODE = 08h), and Unicorn's UC_X86_INS_SYSENTER hook relies on
+         * SYSENTER running, so the 32-bit reset state has IA32_SYSENTER_CS = 08h (only with
+         * CPUID.01H:EDX.SEP, as WRMSR would allow it).
+         */
+        if (env->features[FEAT_1_EDX] & CPUID_SEP) {
+            env->sysenter_cs = 0x08;
+        }
+#endif /* __Use_Original_Qemu (U852) */
         break;
     case UC_MODE_64:
         env->hflags |= HF_CS32_MASK | HF_SS32_MASK | HF_CS64_MASK |
@@ -190,6 +202,17 @@ static void reg_reset(struct uc_struct *uc)
             env->efer |= MSR_EFER_SCE;
         }
 #endif /* __Use_Original_Qemu (U594) */
+#if __Use_Original_Qemu != 1 /* ours (U852) */
+        /*
+         * NoVmp (ledger U852): the same for SYSENTER (#GP(0) with IA32_SYSENTER_CS[15:2] = 0, SDM
+         * Vol2B): a 64-bit OS loads its ring-0 code selector (Windows x64 KGDT64_R0_CODE, Linux
+         * __KERNEL_CS = 10h), so the 64-bit reset state has IA32_SYSENTER_CS = 10h (with
+         * CPUID.01H:EDX.SEP).
+         */
+        if (env->features[FEAT_1_EDX] & CPUID_SEP) {
+            env->sysenter_cs = 0x10;
+        }
+#endif /* __Use_Original_Qemu (U852) */
 
         /* If we are operating in 64bit mode then add the Long Mode flag
          * to the CPUID feature flag

@@ -33,8 +33,8 @@ Machine state (the harness, emu-alltest at_engine.hpp / docs\emu-alltest.md, not
   d. cpl=3: the harness's Windows x64 GDT (limit 37h): 08h all-zero descriptor, 10h code64 DPL0,
      18h data DPL0, 23h code32 DPL3, 2Bh data DPL3, 33h code64 DPL3 (all present, code readable,
      nonconforming); no LDT (TI = 1 is outside the limit of the null LDTR).
-  e. IA32_SYSENTER_CS: CPL0 cases write it with WRMSR first; the cpl=3 case relies on the reset
-     value 0 (guard case RDMSR 174h).
+  e. IA32_SYSENTER_CS: the SDM leaves its reset value open; the emulator's 64-bit reset state has the
+     OS-like 10h (U852; guard case RDMSR 174h). The cases write it with WRMSR (CPL0) first.
 Usage: python ref_sweep_sdm.py --selftest | --cases [fsgsbase,sysenter,lfslgs]
        (prints Emulator\data\cases_sweep_sdm.txt; default: all parts)
 """
@@ -43,6 +43,7 @@ import sys
 LIN_BITS = 48            # paging canonical with CR4.LA57 = 0 (a)
 GDT = [0, 0, 0x00209B0000000000, 0x00CF93000000FFFF, 0x00CFFB000000FFFF, 0x00CFF3000000FFFF, 0x0020FB0000000000]   # (d)
 GDT_LIMIT = len(GDT) * 8 - 1
+SYSENTER_CS_RESET = 0x10  # (e)
 M64 = (1 << 64) - 1
 
 
@@ -132,11 +133,12 @@ def lines(parts=PARTS):
     a('# Natively WRFSBASE/WRGSBASE and LFS/LGS would replace the host thread\'s FS/GS (GS base = the')
     a('# Windows TEB) and SYSENTER would enter the kernel, so these forms are checked against the SDM only.')
     a('#')
-    a('# --- guards: the machine state the model assumes (CR4.LA57 = 0, CR4.FSGSBASE = 1, IA32_SYSENTER_CS = 0)')
+    a('# --- guards: the machine state the model assumes (CR4.LA57 = 0, CR4.FSGSBASE = 1%s)'
+      % (', IA32_SYSENTER_CS = 10h' if 'sysenter' in parts else ''))
     a('mov rax, cr4; shr rax, 12; and eax, 1 =>! rax=0')
     a('mov rax, cr4; shr rax, 16; and eax, 1 =>! rax=1')
     if 'sysenter' in parts:
-        a('mov ecx, 0x174; rdmsr | rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rcx=0x174 rdx=0')
+        a('mov ecx, 0x174; rdmsr | rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=%s rcx=0x174 rdx=0' % hx(SYSENTER_CS_RESET))
     for wr, rd in (('wrfsbase', 'rdfsbase'), ('wrgsbase', 'rdgsbase')) if 'fsgsbase' in parts else ():
         seg = wr[2:4].upper()
         a('#')
@@ -181,12 +183,16 @@ def lines(parts=PARTS):
     if 'sysenter' in parts:
         a('#')
         a('# --- SYSENTER: #GP(0) when IA32_SYSENTER_CS[15:2] = 0 (CR4.FRED = 0); the transition itself is')
-        a('# Unicorn\'s UC_X86_INS_SYSENTER hook API (plan decision A1), not checked here')
-        for cs in (0, 1, 2, 3):
-            assert sysenter_faults(cs)
-            a('mov ecx, 0x174; mov eax, %d; xor edx, edx; wrmsr; sysenter | rdx=0x77 => #GP rax=%s rcx=0x174 rdx=0' % (cs, hx(cs)))
-        assert sysenter_faults(0)
-        a('sysenter | cpl=3 rax=0x1234 => #GP')
+        a('# Unicorn\'s UC_X86_INS_SYSENTER hook API (plan decision A1): without a hook it continues after')
+        a('# SYSENTER, so a non-NULL selector is checked only for "no fault" (loose)')
+        for cs in (0, 1, 2, 3, 4, 8, 0x10, 0xFFFC, 0xFFFF):
+            if sysenter_faults(cs):
+                a('mov ecx, 0x174; mov eax, %s; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=%s rcx=0x174 rdx=0'
+                  % (hx(cs), hx(cs)))
+            else:
+                a('mov ecx, 0x174; mov eax, %s; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=%s rcx=0x174 rdx=0'
+                  % (hx(cs), hx(cs)))
+        assert not sysenter_faults(SYSENTER_CS_RESET)
     if 'lfslgs' in parts:
         a('#')
         a('# --- LFS / LGS r16/r32/r64, m16:16/m16:32/m16:64 at CPL3 (Windows GDT): DEST := offset, FS/GS := selector;')
@@ -239,7 +245,8 @@ def self_test():
             check(f.name == '#UD', 'wrbase #UD name')
     check(rdbase(0xFFFF8000DEADBEEF, 32) == 0xDEADBEEF, 'rdbase r32')
     # SYSENTER
-    check(all(sysenter_faults(c) for c in (0, 1, 2, 3)) and not sysenter_faults(4) and not sysenter_faults(8), 'sysenter cs rule')
+    check(all(sysenter_faults(c) for c in (0, 1, 2, 3)) and not any(sysenter_faults(c) for c in (4, 8, 0x10, 0xFFFC)),
+          'sysenter cs rule')
     check(sysenter_faults(8, pe=False) and not sysenter_faults(0, fred=True), 'sysenter PE / FRED')
     # LFS/LGS selector checks
     check(load_fsgs(0, 3) is None and load_fsgs(3, 3) is None, 'null selectors load')
