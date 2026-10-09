@@ -7884,39 +7884,24 @@ void helper_evex_gather(CPUX86State *env, ZMMReg *d, ZMMReg *v, target_ulong a0,
  * land LSB to MSB and the highest one wins ("writes to overlapping vector indices are
  * ordered ... from LSB to MSB"); a fault leaves the elements below it written and their
  * k1 bits clear, nothing of the faulting element written, RIP at the instruction.
- * Each element is probed first (#PF before any byte), and the bytes Unicorn cannot store
- * as plain RAM (unmapped or read-only, no hook fixing it) are stored first, one by one:
- * a failing one stops the instruction there (a plain Unicorn store would only request the
- * exit and go on writing); with a hook that maps the memory the element is stored again
- * in one piece (UC_HOOK_MEM_WRITE then also sees those single bytes).
+ * Each element is probed first (#PF before any byte; U866: x86_probe_store, U592), and on
+ * a page Unicorn cannot store as plain RAM (unmapped or read-only) the element's first
+ * byte there is stored first with UC_HOOK_MEM_WRITE suppressed: the WRITE_UNMAPPED /
+ * WRITE_PROT hooks run as for the real store, and when none fixes the page the instruction
+ * stops there with nothing of the element written (a plain Unicorn store would only request
+ * the exit and go on writing). UC_HOOK_MEM_WRITE sees only the real element stores (before
+ * U866 it also saw a 1-byte store per probed byte).
  */
-static bool evex_plain_ram(CPUX86State *env, target_ulong addr)
-{
-    target_ulong paddr;
-    MemoryRegion *mr;
-
-    if (!tlb_vaddr_to_paddr(env, addr, MMU_DATA_STORE, cpu_mmu_index(env, false), &paddr)) {
-        return true;                    /* page fault: raised by the real access */
-    }
-    mr = env->uc->memory_mapping(env->uc, paddr);
-    return mr != NULL && (mr->perms & UC_PROT_WRITE);
-}
-
 static void evex_scatter_elem(CPUX86State *env, target_ulong addr, uint64_t val, int size,
                               uintptr_t ra)
 {
-    struct uc_struct *uc = env->uc;
+    uint8_t img[8];
     int i;
 
-    evex_probe_write(env, addr, size, ra);
     for (i = 0; i < size; i++) {
-        if (!evex_plain_ram(env, addr + i)) {
-            cpu_stb_data_ra(env, addr + i, (uint8_t)(val >> (8 * i)), ra);
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
-            }
-        }
+        img[i] = (uint8_t)(val >> (8 * i));
     }
+    x86_probe_store(env, addr, size, img, ra);
     if (size == 8) {
         cpu_stq_data_ra(env, addr, val, ra);
     } else {

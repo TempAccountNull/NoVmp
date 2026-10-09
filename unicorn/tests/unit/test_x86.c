@@ -19168,6 +19168,112 @@ static void test_x86_xm_x87_ptr_profiles(void)
     xm_load_case("i5-13600K", 1, i5);
     xm_load_case("EBX[13]=0", 1, i5 & ~((1u << 6) | (1u << 13)));
 }
+/*
+ * U866: an EVEX scatter element on memory Unicorn cannot store as plain RAM (unmapped page
+ * mapped by a UC_HOOK_MEM_WRITE_UNMAPPED hook, read-only page made writable by a
+ * UC_HOOK_MEM_WRITE_PROT hook) is probed without a UC_HOOK_MEM_WRITE event: the write hook
+ * sees exactly one store per active element, of the element's size, in element order.
+ */
+typedef struct XmWlog {
+    int n, mapped, prot;
+    int size[40];
+    uint64_t addr[40];
+    int64_t value[40];
+} XmWlog;
+
+static void xm_wlog_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                       int64_t value, void *user)
+{
+    XmWlog *l = (XmWlog *)user;
+
+    if (l->n < 40) {
+        l->size[l->n] = size;
+        l->addr[l->n] = addr;
+        l->value[l->n] = value;
+    }
+    l->n++;
+}
+
+static bool xm_wmap_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                       int64_t value, void *user)
+{
+    ((XmWlog *)user)->mapped++;
+    return uc_mem_map(uc, addr & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+static bool xm_wprot_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                        int64_t value, void *user)
+{
+    ((XmWlog *)user)->prot++;
+    return uc_mem_protect(uc, addr & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+static void test_x86_xm_scatter_write_hook(void)
+{
+    uint32_t idx[16], z[16];
+    uint64_t q[8], zq[8];
+    uc_hook h1, h2, h3;
+    XmWlog log;
+    GsCtx c;
+    int j, pass;
+
+    for (pass = 0; pass < 3; pass++) {
+        gs_open(&c, UC_MODE_64);
+        memset(&log, 0, sizeof(log));
+        if (pass == 1) {
+            OK(uc_mem_map(c.uc, GS_DATA + 0x1000, 0x1000, UC_PROT_READ));
+        }
+        OK(uc_hook_add(c.uc, &h1, UC_HOOK_MEM_WRITE_UNMAPPED, xm_wmap_cb, &log, 1, 0));
+        OK(uc_hook_add(c.uc, &h2, UC_HOOK_MEM_WRITE_PROT, xm_wprot_cb, &log, 1, 0));
+        OK(uc_hook_add(c.uc, &h3, UC_HOOK_MEM_WRITE, xm_wlog_cb, &log, GS_DATA, GS_DATA + 0x2fff));
+        gs_set(&c, UC_X86_REG_RSI, GS_DATA);
+        if (pass < 2) {
+            /* VPSCATTERDD [rsi+zmm2*4]{k1}, zmm1: element 3 on the unmapped / read-only page,
+               element 9 straddles into it (bytes 0xffe-0x1001), element 12 masked off */
+            for (j = 0; j < 16; j++) {
+                idx[j] = 0x100 + 8 * j;
+                z[j] = 0xE0000000 + j;
+            }
+            idx[3] = 0x1100;
+            idx[9] = 0xffe;
+            OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, idx));
+            OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+            gs_setk(&c, 1, 0xEFFF);
+            TEST_CHECK(gs_run(&c, GS_SCATTER_DD1, 7) == -1);
+            TEST_CHECK(log.n == 15);
+            TEST_MSG("pass %d: write events %d, mapped %d, prot %d", pass, log.n, log.mapped, log.prot);
+            for (j = 0; j < 15 && j < log.n; j++) {
+                int e = j < 12 ? j : j + 1;             /* element 12 is masked off */
+                TEST_CHECK(log.size[j] == 4 && log.addr[j] == GS_DATA + idx[e] &&
+                           (uint32_t)log.value[j] == z[e]);
+                TEST_MSG("pass %d event %d: size %d addr %llx value %llx", pass, j, log.size[j],
+                         (unsigned long long)log.addr[j], (unsigned long long)log.value[j]);
+            }
+            TEST_CHECK(pass == 0 ? log.mapped == 1 : log.prot >= 1);
+            TEST_CHECK(gs_mem32(&c, GS_DATA + 0x1100) == z[3] && gs_mem32(&c, GS_DATA + 0xffe) == z[9]);
+        } else {
+            /* VPSCATTERQQ [rsi+zmm2*1]{k1}, zmm1 (qword elements): element 5 on the unmapped page */
+            for (j = 0; j < 8; j++) {
+                q[j] = 0x200 + 16 * j;
+                zq[j] = 0xC0DE000000000000ULL + j;
+            }
+            q[5] = 0x1ffc;                               /* straddles 0x2000: both pages unmapped */
+            OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, q));
+            OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, zq));
+            gs_setk(&c, 1, 0xFF);
+            TEST_CHECK(gs_run(&c, "\x62\xf2\xfd\x49\xa1\x0c\x16", 7) == -1);
+            TEST_CHECK(log.n == 8);
+            TEST_MSG("qq: write events %d, mapped %d", log.n, log.mapped);
+            for (j = 0; j < 8 && j < log.n; j++) {
+                TEST_CHECK(log.size[j] == 8 && log.addr[j] == GS_DATA + q[j] &&
+                           (uint64_t)log.value[j] == zq[j]);
+            }
+            TEST_CHECK(log.mapped == 2);
+        }
+        TEST_CHECK(gs_getk(&c, 1) == 0);
+        OK(uc_close(c.uc));
+    }
+}
 /* ---- end of the x87misc (xm_) block ---- */
 
 TEST_LIST = {
@@ -19440,4 +19546,5 @@ TEST_LIST = {
     {"test_x86_axc_evex_r4_kreg", test_x86_axc_evex_r4_kreg},
     {"test_x86_axc_apx_nci_ndd_nf", test_x86_axc_apx_nci_ndd_nf},
     {"test_x86_xm_x87_ptr_profiles", test_x86_xm_x87_ptr_profiles},
+    {"test_x86_xm_scatter_write_hook", test_x86_xm_scatter_write_hook},
     {NULL, NULL}};
