@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 04:41 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `71d1343 U509 REP MOVS/STOS/LODS/CMPS/SCAS iterate inside the TB (when no hook can see an iteration)`). Do not edit by hand._
+_Generated 2026-10-09 06:04 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of U570-U574 are 'sdm' (VP2INTERSECT, GFNI, VAES, VPCLMULQDQ)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 834, open item 57, not implemented yet 489) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 844, open item 57, not implemented yet 479) — 2682 forms
 
 ## Currently being added
 
@@ -31,7 +31,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
       - ⬜ M2 cvt leftovers: no hardware analogue for VGETEXP/VGETMANT/VSCALEF/VFIXUPIMM/VRNDSCALE M≠0/unsigned and QQ conversions/VPROLV (SDM model only); VSCALEF QNaN×±inf per Table 5-37 literal; VFIXUPIMM response 0010 on a number is SDM-undefined; 32-bit-mode EVEX only in unit tests; FP16 siblings → wt/fp16.
     - ⏳ M3 — 3 agents started 2026-10-08: wt/m3_bw U260–U289 (byte/word elements in the EVEX engine, 64-bit masks, all AVX512BW incl. VMOVDQU8/16, VPMOV*2M/M2*); wt/m3_dq U290–U319 (VPMULLQ, VANDPS family, QQ conversions, VFPCLASS, VRANGE, VREDUCE, 32X8/64X2 insert/extract/broadcast); wt/m3_cd U320–U329 (UC_X86_AVX512_CD bit, VPCONFLICT, VPLZCNT, VPBROADCASTM*; then IFMA/VBMI/VPOPCNTDQ/BITALG if time permits). VL gate done in U140.
       - ⬜ M3 leftovers: VPMULTISHIFTQB (needs separate mask element size); masked VRANGESS/SD + VREDUCESS/SD with DEST≠SRC1 → run cases_evex_m3_dq_post.txt after the scalar merge and add to test.cmd; VREDUCE under DAZ/FTZ (SDM pseudocode has no DAZ step — confirm); VPBLENDMB/W switch to m2_engine blend mode; VPMOVD2M/Q2M + VPMOVM2D/Q gated on DQ; no BW cases in 32-bit mode.
-    - ⏳ M4: VBMI2, VNNI, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16 (IFMA/VBMI/VPOPCNTDQ/BITALG go to wt/m3_cd after CD); FP16 → [agent, wt/fp16, U330–U369, started 2026-10-08] AVX512-FP16 maps 5/6 + VNNI_FP16: opt-in bit in UC_CTL_X86_AVX512, arithmetic, FMA, complex FMA, VMOVSH/VMOVW, all conversions; independent model ref_evex_fp16.py + cases_evex_fp16.txt; F16C hardware cross-check.
+    - ⏳ M4 (2026-10-09: [agent, wt/evex_m4a, U550–U569] VBMI2, VPMULTISHIFTQB, AVX512_VNNI, AVX512_BF16; [agent, wt/evex_m4b, U570–U589] VP2INTERSECT, EVEX GFNI/VAES/VPCLMULQDQ): VBMI2, VNNI, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16 (IFMA/VBMI/VPOPCNTDQ/BITALG go to wt/m3_cd after CD); FP16 → [agent, wt/fp16, U330–U369, started 2026-10-08] AVX512-FP16 maps 5/6 + VNNI_FP16: opt-in bit in UC_CTL_X86_AVX512, arithmetic, FMA, complex FMA, VMOVSH/VMOVW, all conversions; independent model ref_evex_fp16.py + cases_evex_fp16.txt; F16C hardware cross-check.
       - ⏳ wt/fp16 finished 2026-10-08 (U330–U339, 13 commits): all 116 AVX512-FP16 forms (maps 5/6 + 0F3A FP16 slots), UC_X86_AVX512_FP16 = 0x200; cases_evex_fp16 5899/0; FP32↔FP16 core == i5-13600K F16C on 72177 cases. Merge in the AVX10 integration pass (shares maps 5/6 with avx10_a/b).
       - ⬜ fp16 leftovers: VRCP/VRSQRT PH correctly rounded (SDM gives only a bound); SDM ambiguities followed literally (VMIN/VMAX PH IE on QNaN, VGETEXPPH keeps NaN sign, VSCALEF DE with SRC2 ±INF, VCVTPH2PSX DE, complex conjugation per pseudocode vs opcode text); L'L=11 without EVEX.b on scalar FP16 untested; 0F3A slots 08/0A/26/27/56/57/66/67/C2 need one decoder per slot covering NP/F3 (FP16) and 66 (PS/PD) at merge.
     - ⏳ M5: AVX10 — 2 agents started 2026-10-08: wt/avx10_a U370–U399 (CPUID (7,1):EDX[19] + leaf 0x24 opt-in, "AVX512x OR AVX10.1" gating, AVX10.2 BF16 arithmetic, SAT_CVT, MINMAX, VCOMX, EVEX.U=0 256-bit {er}/{sae}); wt/avx10_b U400–U429 (FP8 conversions, AVX10.2 VNNI INT8/INT16 + VDPPHPS, MOVRS EVEX, MOVZXC VMOVD/VMOVW, VMPSADBW EVEX; XED-only AUX rows listed, not implemented unless an Intel document defines them).
@@ -430,7 +430,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | VPAVGW | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
 | VPBLENDVB | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
 | VPBLENDW | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
-| VPCLMULQDQ | vex | 128/256 | ✅ U69 (VEX.128/256) |  |
+| VPCLMULQDQ | vex | 128/256 | ✅ U69 (VEX.128/256); EVEX U574 |  |
 | VPCMPEQB | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
 | VPCMPEQD | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
 | VPCMPEQQ | vex | 128/256 | ✅ identical to the i5-13600K (4 forms) |  |
@@ -625,9 +625,9 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| VGF2P8AFFINEINVQB | vex | 128/256 | ✅ U70 (VEX); EVEX not implemented |  |
-| VGF2P8AFFINEQB | vex | 128/256 | ✅ U70 (VEX); EVEX not implemented |  |
-| VGF2P8MULB | vex | 128/256 | ✅ U70 (VEX); EVEX not implemented |  |
+| VGF2P8AFFINEINVQB | vex | 128/256 | ✅ U70 (VEX); EVEX U572 |  |
+| VGF2P8AFFINEQB | vex | 128/256 | ✅ U70 (VEX); EVEX U572 |  |
+| VGF2P8MULB | vex | 128/256 | ✅ U70 (VEX); EVEX U572 |  |
 
 </details>
 
@@ -2044,21 +2044,21 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AVX512_FP16 | 170 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) | ✅ 106 | ⏳ 64 (wt/fp16) |
 | AVX512_FP16_CONVERT | 1 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ 1 |  |
 | AVX512_FP8_CONVERT | 13 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ 13 |  |
-| AVX512_GFNI | 3 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) |  | ⬜ 3 queued |
+| AVX512_GFNI | 3 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) | ✅ 3 |  |
 | AVX512_IFMA | 2 | ❌ **cannot run** (CPUID.7H:EBX[21] = 0 on this CPU) | ✅ 2 |  |
 | AVX512_MEDIAX | 1 | ❌ **cannot run** (AVX512_MEDIAX not reported by this CPU) | ✅ 1 |  |
 | AVX512_MINMAX | 7 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ 7 |  |
 | AVX512_SAT_CVT | 12 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ 12 |  |
 | AVX512_SAT_CVT_DS | 12 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ 12 |  |
-| AVX512_VAES | 4 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) |  | ⬜ 4 queued |
+| AVX512_VAES | 4 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ 4 |  |
 | AVX512_VBMI | 4 | ❌ **cannot run** (CPUID.7H:ECX[1] = 0 on this CPU) | ✅ 3 | ⏳ 1 (wt/m3_cd (after CD)) |
 | AVX512_VBMI2 | 16 | ❌ **cannot run** (CPUID.7H:ECX[6] = 0 on this CPU) |  | ⏳ 16 (wt/m3_cd (after CD)) |
 | AVX512_VNNI | 4 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) |  | ⬜ 4 queued |
 | AVX512_VNNI_FP16 | 1 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 1 |  |
 | AVX512_VNNI_INT16 | 6 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 6 |  |
 | AVX512_VNNI_INT8 | 6 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 6 |  |
-| AVX512_VP2INTERSECT | 2 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) |  | ⬜ 2 queued |
-| AVX512_VPCLMULQDQ | 1 | ❌ **cannot run** (AVX512_VPCLMULQDQ not reported by this CPU) |  | ⬜ 1 queued |
+| AVX512_VP2INTERSECT | 2 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) | ✅ 2 |  |
+| AVX512_VPCLMULQDQ | 1 | ❌ **cannot run** (AVX512_VPCLMULQDQ not reported by this CPU) | ✅ 1 |  |
 | AVX512_VPOPCNTDQ | 2 | ❌ **cannot run** (CPUID.7H:ECX[14] = 0 on this CPU) | ✅ 2 |  |
 
 #### Per instruction
@@ -3980,9 +3980,9 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VGF2P8AFFINEINVQB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
-| VGF2P8AFFINEQB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
-| VGF2P8MULB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
+| VGF2P8AFFINEINVQB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VGF2P8AFFINEQB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VGF2P8MULB | evex | 128/256/512 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
 
 </details>
 
@@ -4059,10 +4059,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VAESDEC | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) |  | ⬜ queued — not implemented (6 forms #UD; the i5-13600K lacks it) |
-| VAESDECLAST | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) |  | ⬜ queued — not implemented (6 forms #UD; the i5-13600K lacks it) |
-| VAESENC | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) |  | ⬜ queued — not implemented (6 forms #UD; the i5-13600K lacks it) |
-| VAESENCLAST | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) |  | ⬜ queued — not implemented (6 forms #UD; the i5-13600K lacks it) |
+| VAESDEC | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VAESDECLAST | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VAESENC | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VAESENCLAST | evex | 128/256/512 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
 
 </details>
 
@@ -4149,8 +4149,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VP2INTERSECTD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| VP2INTERSECTQ | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| VP2INTERSECTD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
+| VP2INTERSECTQ | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
 
 </details>
 
@@ -4158,7 +4158,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VPCLMULQDQ | evex | 128/256/512 | ❌ **cannot run** (AVX512_VPCLMULQDQ not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
+| VPCLMULQDQ | evex | 128/256/512 | ❌ **cannot run** (AVX512_VPCLMULQDQ not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U570-U574 EVEX (AVX512_VP2INTER… |  |
 
 </details>
 

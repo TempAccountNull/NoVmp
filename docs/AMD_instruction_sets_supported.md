@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 04:41 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `71d1343 U509 REP MOVS/STOS/LODS/CMPS/SCAS iterate inside the TB (when no hook can see an iteration)`). Do not edit by hand._
+_Generated 2026-10-09 06:04 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of U570-U574 are 'sdm' (VP2INTERSECT, GFNI, VAES, VPCLMULQDQ)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
