@@ -9147,6 +9147,31 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * ends like after WRMSR (the MSR may change hflags).
          */
         case 0xc6: /* wrmsrns */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+            /*
+             * NoVmp (ledger U802): F2 0F 01 C6 RDMSRLIST / F3 0F 01 C6 WRMSRLIST (SDM Vol2B/2D):
+             * #UD outside 64-bit mode, without CPUID.(07H,1):EAX.MSRLIST[27] or with LOCK (66
+             * is ignored: XED f2/f3_refining_prefix); #GP(0) at CPL > 0; the table walk is
+             * helper_rdmsrlist / helper_wrmsrlist. WRMSRLIST ends the TB like WRMSR.
+             */
+            if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) {
+                if (!CODE64(s) || !(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_MSRLIST)
+                    || (s->prefix & PREFIX_LOCK)) {
+                    goto illegal_op;
+                }
+                if (check_cpl0(s)) {
+                    gen_update_cc_op(s);
+                    gen_update_eip_cur(s);
+                    if (s->prefix & PREFIX_REPNZ) {
+                        gen_helper_rdmsrlist(tcg_ctx, cpu_env);
+                    } else {
+                        gen_helper_wrmsrlist(tcg_ctx, cpu_env);
+                        s->base.is_jmp = DISAS_EOB_NEXT;
+                    }
+                }
+                break;
+            }
+#endif /* __Use_Original_Qemu (U802) */
             if ((s->prefix & (PREFIX_REPZ | PREFIX_REPNZ))
                 || !(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_WRMSRNS)
                 || (s->prefix & (PREFIX_LOCK | PREFIX_DATA))) {

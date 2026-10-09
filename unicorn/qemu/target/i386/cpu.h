@@ -405,6 +405,9 @@ typedef enum X86Seg {
 #define MSR_IA32_USER_MSR_CTL           0x1c    /* SDM Vol4: URDMSR/UWRMSR enable + bitmap */
 #define MSR_IA32_UARCH_MISC_CTL         0x1b01  /* SDM Vol4: bit 0 DOITM */
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+#define MSR_IA32_BARRIER                0x2f    /* SDM Vol4: R/O, 0; with MSRLIST */
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -1079,6 +1082,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* WRMSRNS (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[19]) */
 #define CPUID_7_1_EAX_WRMSRNS           (1U << 19)
 #endif /* __Use_Original_Qemu (U801) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+/* RDMSRLIST, WRMSRLIST and IA32_BARRIER (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[27]) */
+#define CPUID_7_1_EAX_MSRLIST           (1U << 27)
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U103) */
 /* URDMSR and UWRMSR */
 #define CPUID_7_1_EDX_USER_MSR          (1U << 15)
@@ -2020,6 +2027,15 @@ typedef struct CPUX86State {
 
     uintptr_t retaddr;
 
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+    /*
+     * NoVmp (ledger U802): RAX, RCX, RDX of the instruction while x86_msr_access runs
+     * helper_rdmsr / helper_wrmsr on an MSR of its own; raise_interrupt2 puts them back when
+     * the access faults (msr_swap set).
+     */
+    uint64_t msr_swap_regs[3];
+    bool msr_swap;
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;
@@ -2278,6 +2294,11 @@ void cpu_sync_cet_hflags(CPUX86State *env);
 bool x86_cet_msr_ok(CPUX86State *env, uint32_t msr, uint64_t val);
 void x86_cet_msr_load(CPUX86State *env, uint32_t msr, uint64_t val);
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+/* misc_helper.c: RDMSR / WRMSR of an MSR an instruction names itself (U802) */
+uint64_t x86_msr_access(CPUX86State *env, uint32_t msr, uint64_t val, bool write);
+void x86_msr_swap_restore(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U802) */
 
 /* this function must always be used to load data in the segment
    cache: it synchronizes the hflags with the segment cache values */

@@ -21978,6 +21978,114 @@ static void test_x86_si_wrmsrns(void)
     TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0x7000);
     OK(uc_close(c.uc));
 }
+
+static uint64_t si_ld64(SiCtx *c, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(c->uc, a, &v, 8));
+    return v;
+}
+
+static void si_st64(SiCtx *c, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(c->uc, a, &v, 8));
+}
+
+/*
+ * U802: RDMSRLIST / WRMSRLIST (F2 / F3 0F 01 C6): CPUID.(7,1):EAX[27], the table walk with one
+ * UC_X86_INS_RDMSR / WRMSR hook call per entry, a #GP in the middle leaves RCX partially cleared
+ * and RAX/RCX-high/RDX as they were (the swapped registers come back), IA32_BARRIER (2FH) reads 0
+ * and is read-only (WRMSR #GP, API write dropped), #UD outside 64-bit mode and when a strict
+ * profile hides MSRLIST.
+ */
+static void test_x86_si_msrlist(void)
+{
+    static const uc_x86_cpuid no_msrlist[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    const uint64_t tab = SI_DATA, dat = SI_DATA + 0x1000;
+    uint32_t r[4];
+    uc_hook h;
+    int hits = 0;
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[0] & (1u << 27));
+    /* WRMSRLIST entries 0 and 2: IA32_KERNEL_GS_BASE, IA32_UARCH_MISC_CTL */
+    si_st64(&c, tab, 0xc0000102);
+    si_st64(&c, tab + 8, 0xffffffff00000000ull);           /* skipped: RCX[1] = 0 */
+    si_st64(&c, tab + 16, 0x1b01);
+    si_st64(&c, dat, 0x00007fff00042000ull);
+    si_st64(&c, dat + 16, 1);
+    si_set(&c, UC_X86_REG_RSI, tab);
+    si_set(&c, UC_X86_REG_RDI, dat);
+    si_set(&c, UC_X86_REG_RCX, 5);
+    si_set(&c, UC_X86_REG_RAX, 0x1234);
+    si_set(&c, UC_X86_REG_RDX, 0x5678);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, si_msr_hook_cb, &hits, 1, 0, UC_X86_INS_WRMSR));
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc6", 4) == -1);
+    TEST_CHECK(hits == 2);
+    OK(uc_hook_del(c.uc, h));
+    TEST_CHECK(si_get(&c, UC_X86_REG_RCX) == 0 && si_get(&c, UC_X86_REG_RAX) == 0x1234 &&
+               si_get(&c, UC_X86_REG_RDX) == 0x5678);
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0x00007fff00042000ull);
+    TEST_CHECK(si_rdmsr(&c, 0x1b01) == 1);
+    /* RDMSRLIST back into a second data table, with IA32_BARRIER as entry 1 */
+    si_st64(&c, tab + 8, 0x2f);
+    si_st64(&c, dat + 0x108, 0x5555);
+    si_set(&c, UC_X86_REG_RDI, dat + 0x100);
+    si_set(&c, UC_X86_REG_RCX, 7);
+    hits = 0;
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, si_msr_hook_cb, &hits, 1, 0, UC_X86_INS_RDMSR));
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x01\xc6", 4) == -1);
+    TEST_CHECK(hits == 3);
+    OK(uc_hook_del(c.uc, h));
+    TEST_CHECK(si_ld64(&c, dat + 0x100) == 0x00007fff00042000ull);
+    TEST_CHECK(si_ld64(&c, dat + 0x108) == 0 && si_ld64(&c, dat + 0x110) == 1);
+    /* WRMSRLIST: entry 1 = IA32_BARRIER (read-only) -> #GP(0) after entry 0 */
+    si_st64(&c, tab, 0x1b01);
+    si_st64(&c, dat, 0);
+    si_set(&c, UC_X86_REG_RDI, dat);
+    si_set(&c, UC_X86_REG_RCX, 0xff00000000000003ull);
+    si_set(&c, UC_X86_REG_RAX, 0xaaaa);
+    si_set(&c, UC_X86_REG_RDX, 0xdddd);
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc6", 4) == 13);
+    TEST_CHECK(si_get(&c, UC_X86_REG_RCX) == 0xff00000000000002ull);
+    TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0xaaaa && si_get(&c, UC_X86_REG_RDX) == 0xdddd);
+    TEST_CHECK(si_rdmsr(&c, 0x1b01) == 0);
+    /* WRMSR to IA32_BARRIER #GP(0); an API write is dropped; RDMSR reads 0 */
+    si_set(&c, UC_X86_REG_RCX, 0x2f);
+    TEST_CHECK(si_run(&c, "\x0f\x30", 2) == 13);
+    si_wrmsr(&c, 0x2f, 0x1234);
+    TEST_CHECK(si_rdmsr(&c, 0x2f) == 0);
+    /* RSI not 8-byte aligned: #GP(0), RCX unchanged */
+    si_set(&c, UC_X86_REG_RSI, tab + 4);
+    si_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x01\xc6", 4) == 13);
+    TEST_CHECK(si_get(&c, UC_X86_REG_RCX) == 1);
+    OK(uc_close(c.uc));
+
+    /* 32-bit (protected) mode: not recognized, #UD */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    si_set(&c, UC_X86_REG_ECX, 0);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x01\xc6", 4) == 6);
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc6", 4) == 6);
+    OK(uc_close(c.uc));
+
+    /* a strict profile hiding MSRLIST: #UD */
+    si_open(&c, 0, 0, 0, no_msrlist, 1);
+    si_set(&c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x01\xc6", 4) == 6);
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc6", 4) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22283,4 +22391,5 @@ TEST_LIST = {
     {"test_x86_fx4_hook_flags_apx", test_x86_fx4_hook_flags_apx},
     {"test_x86_si_vpmov_dq", test_x86_si_vpmov_dq},
     {"test_x86_si_wrmsrns", test_x86_si_wrmsrns},
+    {"test_x86_si_msrlist", test_x86_si_msrlist},
     {NULL, NULL}};

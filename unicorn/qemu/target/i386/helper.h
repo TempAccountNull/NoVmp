@@ -424,6 +424,10 @@ DEF_HELPER_4(aeskl, void, env, tl, i32, i32)
 DEF_HELPER_2(urdmsr, tl, env, tl)
 DEF_HELPER_3(uwrmsr, void, env, tl, tl)
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+DEF_HELPER_1(rdmsrlist, void, env)
+DEF_HELPER_1(wrmsrlist, void, env)
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */
 DEF_HELPER_1(clui, void, env)

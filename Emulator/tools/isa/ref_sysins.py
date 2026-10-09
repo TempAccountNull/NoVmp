@@ -2,7 +2,7 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
 
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
-      WRMSRNS (U801)
+      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802)
 
 Written from the Intel manuals only (the emulator's C sources were not read for the expected values;
 no CPU measurements - the i5-13600K has no AVX-512):
@@ -20,6 +20,12 @@ System instructions, from:
     bits; #UD LOCK); Vol2B RDMSR (0F 32: "EDX:EAX := MSR[ECX]", high 32 bits of RAX/RDX cleared);
     Vol1 Table 21-22 (CPUID.(07H,1):EAX[19] WRMSRNS); XED wrmsrns-isa.xed.txt (no_refining_prefix
     = no 66/F2/F3: 66 0F 01 C6 is not WRMSRNS -> #UD).
+  * SDM Vol2B RDMSRLIST / Vol2D WRMSRLIST (F2 / F3 0F 01 C6, 64-bit mode only; Operation: DO WHILE
+    RCX != 0, the lowest set bit n, entry = 8 bytes at RSI + 8n, entry[63:32] != 0 #GP(0), the
+    MSR value stored to / loaded from RDI + 8n, RCX[n] := 0; #GP(0) CPL > 0, RSI[2:0] or RDI[2:0]
+    != 0, an RDMSR / WRMSR #GP; partial completion on faults); Vol1 Table 21-22 (CPUID.(07H,1):
+    EAX[27] MSRLIST); Vol4 IA32_BARRIER (2FH, R/O, 0); XED msrlist-isa.xed.txt (f2/f3_refining_
+    prefix: a 66 prefix does not change the instruction).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -34,6 +40,9 @@ Modelling decisions:
   d. REX prefixes before 0F 01 C6 are ignored (the opcode is fixed by the ModRM byte).
   e. Only canonical values are written to address MSRs (the emulator's WRMSR does not check them;
      outside this model).
+  f. RDMSRLIST / WRMSRLIST check RSI / RDI alignment first, also when RCX = 0 (the SDM lists the
+     #GP without a condition on RCX); entries are processed strictly in order, no load-ahead
+     (a #PF on entry n happens after entries < n completed).
 
 Usage:
   python -I ref_sysins.py --selftest   hand-derived checks of the model (exit 0 on pass)
@@ -200,7 +209,10 @@ M64 = (1 << 64) - 1
 
 
 class Fault(Exception):
-    pass
+    """A fault; keep=True: the instruction's completed part stays (RDMSRLIST / WRMSRLIST)."""
+    def __init__(self, name, keep=False):
+        Exception.__init__(self, name)
+        self.keep = keep
 
 
 def canonical(v, bits=57):
@@ -219,7 +231,29 @@ def msr_check(msr, val):
         return (val & ~0x800FFFFF & M64) == 0
     if msr == 0x1B01:                           # IA32_UARCH_MISC_CTL
         return (val & ~1 & M64) == 0
+    if msr == 0x2F:                             # IA32_BARRIER: R/O
+        return False
     raise ValueError('MSR %X not in the model' % msr)
+
+
+def msr_read(m, msr):
+    if msr == 0x2F:                             # IA32_BARRIER: always 0
+        return 0
+    return m.msr[msr]                           # the cases read only MSRs they wrote
+
+
+def ld64(m, addr):
+    """8-byte CPL0 data read of the operand memory; outside it (MEM + 10000h is unmapped) #PF."""
+    if not (MEM <= addr and addr + 8 <= MEM + 0x10000):
+        raise Fault('#PF', keep=True)
+    return int.from_bytes(bytes(m.mem.get(addr + i, 0) for i in range(8)), 'little')
+
+
+def st64(m, addr, v):
+    if not (MEM <= addr and addr + 8 <= MEM + 0x10000):
+        raise Fault('#PF', keep=True)
+    for i in range(8):
+        m.mem[addr + i] = (v >> (8 * i)) & 0xFF
 
 
 class Machine:
@@ -267,10 +301,45 @@ def i_rdmsr():
     def f(m):
         if m.cpl:
             raise Fault('#GP')
-        v = m.msr[m.r['rcx'] & 0xFFFFFFFF]
+        v = msr_read(m, m.r['rcx'] & 0xFFFFFFFF)
         m.r['rax'] = v & 0xFFFFFFFF
         m.r['rdx'] = v >> 32
     return b'\x0f\x32', f
+
+
+def i_lea_rdi(disp):
+    """LEA RDI, [RDI + disp32] (48 8D BF id); no flags."""
+    def f(m):
+        m.r['rdi'] = (m.r['rdi'] + disp) & M64
+    return b'\x48\x8d\xbf' + (disp & 0xFFFFFFFF).to_bytes(4, 'little'), f
+
+
+def i_msrlist(write, prefix=b''):
+    """RDMSRLIST (F2 0F 01 C6) / WRMSRLIST (F3 0F 01 C6), SDM Vol2B / Vol2D Operation."""
+    def f(m):
+        if b'\xf0' in prefix:
+            raise Fault('#UD')
+        if m.cpl:
+            raise Fault('#GP')
+        if (m.r['rsi'] & 7) or (m.r['rdi'] & 7):
+            raise Fault('#GP')
+        while m.r['rcx']:
+            n = (m.r['rcx'] & -m.r['rcx']).bit_length() - 1
+            ent = ld64(m, (m.r['rsi'] + 8 * n) & M64)
+            if ent >> 32:
+                raise Fault('#GP', keep=True)
+            if write:
+                v = ld64(m, (m.r['rdi'] + 8 * n) & M64)
+                if not msr_check(ent, v):
+                    raise Fault('#GP', keep=True)
+                m.msr[ent] = v
+            else:
+                st64(m, (m.r['rdi'] + 8 * n) & M64, msr_read(m, ent))
+            m.r['rcx'] &= ~(1 << n)
+    mand = b'\xf3' if write else b'\xf2'
+    if prefix and 0x40 <= prefix[0] <= 0x4F:    # REX goes after the mandatory prefix
+        return mand + prefix + b'\x0f\x01\xc6', f
+    return prefix + mand + b'\x0f\x01\xc6', f
 
 
 def i_wrmsrns(prefix=b''):
@@ -299,7 +368,8 @@ def run_case(ins, inputs):
         try:
             f(m)
         except Fault as e:
-            m.restore(saved)
+            if not e.keep:
+                m.restore(saved)
             fault = str(e)
             break
     exp = []
@@ -308,9 +378,15 @@ def run_case(ins, inputs):
             exp.append('%s=0x%X' % (k, m.r[k]))
     if m.rflags != f0:
         exp.append('rflags=0x%X' % m.rflags)
+    run = []                                    # contiguous changed bytes -> one m+OFF=HEX
     for a in sorted(set(m.mem) | set(mem0)):
         if m.mem.get(a, 0) != mem0.get(a, 0):
-            exp.append('m+0x%X=%02X' % (a - MEM, m.mem.get(a, 0)))
+            if run and run[-1][0] + len(run[-1][1]) == a:
+                run[-1][1].append(m.mem.get(a, 0))
+            else:
+                run.append((a, [m.mem.get(a, 0)]))
+    for a, bs in run:
+        exp.append('m+0x%X=%s' % (a - MEM, hexbytes(bs)))
     if fault:
         exp.append(fault)
     inp = []
@@ -359,6 +435,45 @@ def cases_sys():
     a(run_case([i_wrmsrns(b'\xf0')], {'rcx': 0x1B01, 'rax': 1}))
     a(run_case([i_wrmsrns(b'\x66')], {'rcx': 0x1B01, 'rax': 1}))
     a(run_case([i_wrmsrns()], {'rcx': 0x1B01, 'rax': 1, 'cpl': 3}))
+
+    # ---- RDMSRLIST / WRMSRLIST (U802)
+    def q(*v):
+        return b''.join((x & M64).to_bytes(8, 'little') for x in v)
+    rdl, wrl = i_msrlist(False), i_msrlist(True)
+    a('# --- RDMSRLIST (F2 0F 01 C6) / WRMSRLIST (F3 0F 01 C6), U802: RSI = MSR-address table, RDI =')
+    a('# data table, RCX = entry mask (bit n cleared when entry n is done); IA32_BARRIER (2FH) reads 0')
+    a(run_case([wrl, i_mov32('rcx', 0xB), i_lea_rdi(0x100), rdl],
+               {'rcx': 0xB, 'm+0x8000': q(0xC0000102, 0x1B01, 0xFFFFFFFF00000000, 0xE1),
+                'm+0x9000': q(0x00007FFF12345678, 1, 0xDEAD, 0x100)}))
+    a(run_case([rdl], {'rcx': 1, 'm+0x8000': q(0x2F), 'm+0x9000': q(0x1111111111111111)}))
+    a(run_case([wrl, i_lea_rdi(0x200), i_mov32('rcx', 0x20), rdl],
+               {'rcx': (1 << 63) | (1 << 5), 'm+0x8028': q(0xE1), 'm+0x81F8': q(0x1B01),
+                'm+0x9028': q(0x00000FFC), 'm+0x91F8': q(1)}))
+    a(run_case([i_msrlist(False, b'\x66'), i_msrlist(True, b'\x48')],
+               {'rcx': 0, 'rsi': MEM_PTR + 0x40, 'rdi': MEM_DST + 0x40}))
+    a(run_case([i_msrlist(True, b'\x66')], {'rcx': 2, 'm+0x8008': q(0x1B01), 'm+0x9008': q(1)}))
+    a('# an entry with bits 63:32 set / a value WRMSR refuses / IA32_BARRIER written: #GP(0) at that')
+    a('# entry, the entries before it completed (RCX bits cleared), RAX/RDX unchanged')
+    a(run_case([wrl], {'rcx': 3, 'rax': 0xAAAA, 'rdx': 0xDDDD,
+                       'm+0x8000': q(0x1B01, 0x1000000E1), 'm+0x9000': q(1, 0)}))
+    a(run_case([wrl], {'rcx': 3, 'm+0x8000': q(0x1B01, 0x2F), 'm+0x9000': q(1, 0)}))
+    a(run_case([wrl], {'rcx': 5, 'm+0x8000': q(0xE1, 0, 0xD93), 'm+0x9000': q(0x100, 0, 0x100000)}))
+    a(run_case([wrl], {'rcx': 1, 'm+0x8000': q(0x1B01), 'm+0x9000': q(2)}))
+    a(run_case([rdl], {'rcx': 3, 'm+0x8000': q(0x2F, 0x100000002F), 'm+0x9000': q(5, 5)}))
+    a('# RSI / RDI not 8-byte aligned: #GP(0) before any entry (also with RCX = 0); RCX = 0: nothing')
+    a(run_case([rdl], {'rcx': 1, 'rsi': MEM_PTR + 4, 'm+0x8004': q(0x2F)}))
+    a(run_case([wrl], {'rcx': 1, 'rdi': MEM_DST + 1, 'm+0x8000': q(0x1B01)}))
+    a(run_case([rdl], {'rcx': 0, 'rsi': MEM_PTR + 2}))
+    a(run_case([rdl], {'rcx': 0, 'rsi': MEM + 0x20000, 'rdi': MEM + 0x30000}))
+    a('# #PF on a table access (MEM + 10000h is unmapped): partial completion')
+    a(run_case([rdl], {'rcx': 3, 'rsi': MEM + 0xFFF8, 'm+0xFFF8': q(0x2F), 'm+0x9000': q(7)}))
+    a(run_case([rdl], {'rcx': 3, 'rdi': MEM + 0xFFF8, 'm+0x8000': q(0x2F, 0x2F), 'm+0xFFF8': q(7)}))
+    a(run_case([wrl], {'rcx': 2, 'rdi': MEM + 0xFFF8, 'm+0x8008': q(0x1B01)}))
+    a('# LOCK -> #UD; CPL3 -> #GP(0)')
+    a(run_case([i_msrlist(False, b'\xf0')], {'rcx': 1, 'm+0x8000': q(0x2F)}))
+    a(run_case([i_msrlist(True, b'\xf0')], {'rcx': 1, 'm+0x8000': q(0x1B01)}))
+    a(run_case([rdl], {'rcx': 1, 'm+0x8000': q(0x2F), 'cpl': 3}))
+    a(run_case([wrl], {'rcx': 1, 'm+0x8000': q(0x1B01), 'cpl': 3}))
     return lines
 
 
@@ -373,6 +488,9 @@ def cases_hw():
     a('# WRMSRNS (U801): CPUID.(07H,1):EAX[19] = 0 on this CPU -> #UD on both')
     a('.byte 0x0f, 0x01, 0xc6 | rcx=0x1B01 rax=0x1 cpl=3')
     a('.byte 0x48, 0x0f, 0x01, 0xc6 | rcx=0xE1 cpl=3')
+    a('# RDMSRLIST / WRMSRLIST (U802): CPUID.(07H,1):EAX[27] = 0 on this CPU -> #UD on both')
+    a('.byte 0xf2, 0x0f, 0x01, 0xc6 | rcx=0x1 m+0x8000=2F00000000000000 cpl=3')
+    a('.byte 0xf3, 0x0f, 0x01, 0xc6 | rcx=0x1 m+0x8000=2F00000000000000 cpl=3')
     return lines
 
 
@@ -426,6 +544,12 @@ def selftest():
                                   {'rcx': 0xC0000102, 'rax': 0xFFFFFFFF00001000, 'rdx': 0x7F}),
         '.byte 0x0f, 0x01, 0xc6, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x32 | rcx=0xC0000102 '
         'rax=0xFFFFFFFF00001000 rdx=0x7F => rax=0x1000')
+    # RDMSRLIST: entry 0 = IA32_BARRIER -> 0 stored at RDI; entry 1 (bit 63:32 set) #GP, RCX = 2
+    chk('rdmsrlist partial', run_case([i_msrlist(False)], {'rcx': 3, 'm+0x8000':
+        bytes.fromhex('2F00000000000000' '2F00000001000000'), 'm+0x9000': b'\x05'}),
+        '.byte 0xf2, 0x0f, 0x01, 0xc6 | rcx=0x3 m+0x8000=2F000000000000002F00000001000000 '
+        'm+0x9000=05 => rcx=0x2 m+0x9000=00 #GP')
+    chk('wrmsrlist rex', i_msrlist(True, b'\x48')[0], bytes.fromhex('F3480F01C6'))
     try:
         cases_sys()
         cases_dq()

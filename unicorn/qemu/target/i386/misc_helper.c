@@ -789,6 +789,18 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+    case MSR_IA32_BARRIER:
+        /*
+         * NoVmp (ledger U802): IA32_BARRIER (2FH) exists with CPUID.(07H,1):EAX.MSRLIST[27] and
+         * is read-only (SDM Vol4): WRMSR #GP(0) (an API write is dropped). Without MSRLIST it
+         * stays an unknown MSR (ignored, as before).
+         */
+        if ((env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_MSRLIST) && !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        break;
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* user-interrupt MSRs (SDM Vol3A 9.3.2), present with CPUID.(07H,0):EDX.UINTR */
     case MSR_IA32_UINTR_RR:
@@ -1171,6 +1183,12 @@ void helper_rdmsr(CPUX86State *env)
         val = env->msr_uarch_misc_ctl;
         break;
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+    case MSR_IA32_BARRIER:
+        /* NoVmp (ledger U802): SDM Vol4 IA32_BARRIER (R/O, bits 63:0 always 0) */
+        val = 0;
+        break;
+#endif /* __Use_Original_Qemu (U802) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     case MSR_IA32_UINTR_RR:
         val = env->uintr_rr;
@@ -2185,3 +2203,110 @@ void helper_uwrmsr(CPUX86State *env, target_ulong msr, target_ulong val)
     env->regs[R_EDX] = rdx;
 }
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+
+/*
+ * NoVmp (ledger U802): RDMSR / WRMSR of an MSR an instruction names itself (RDMSRLIST /
+ * WRMSRLIST table entries, the MSR-IMM immediate forms): helper_rdmsr / helper_wrmsr do the
+ * access with their checks, #GP(0) cases and UC_X86_INS_RDMSR / UC_X86_INS_WRMSR hooks, and
+ * take the MSR in ECX and the value in EDX:EAX. RAX, RCX and RDX are swapped in for the call
+ * and put back afterwards; if the access faults, raise_interrupt2 puts them back
+ * (x86_msr_swap_restore), so the faulting instruction leaves them unchanged. The caller has
+ * synced EIP (hooks, faults) before calling its helper.
+ */
+void x86_msr_swap_restore(CPUX86State *env)
+{
+    if (env->msr_swap) {
+        env->regs[R_EAX] = env->msr_swap_regs[0];
+        env->regs[R_ECX] = env->msr_swap_regs[1];
+        env->regs[R_EDX] = env->msr_swap_regs[2];
+        env->msr_swap = false;
+    }
+}
+
+uint64_t x86_msr_access(CPUX86State *env, uint32_t msr, uint64_t val, bool write)
+{
+    env->msr_swap_regs[0] = env->regs[R_EAX];
+    env->msr_swap_regs[1] = env->regs[R_ECX];
+    env->msr_swap_regs[2] = env->regs[R_EDX];
+    env->msr_swap = true;
+    env->regs[R_ECX] = msr;
+    if (write) {
+        env->regs[R_EAX] = (uint32_t)val;
+        env->regs[R_EDX] = (uint32_t)(val >> 32);
+        helper_wrmsr(env);
+    } else {
+        helper_rdmsr(env);
+        val = (uint32_t)env->regs[R_EAX] | ((uint64_t)(uint32_t)env->regs[R_EDX] << 32);
+    }
+    x86_msr_swap_restore(env);
+    return val;
+}
+
+/*
+ * NoVmp (ledger U802): RDMSRLIST (F2 0F 01 C6) / WRMSRLIST (F3 0F 01 C6), SDM Vol2B/2D, 64-bit
+ * mode, CPL0 (checked by the translator). #GP(0) if RSI[2:0] or RDI[2:0] != 0. Then, while RCX
+ * != 0, for the lowest set bit n: the MSR address = 8 bytes at linear address RSI + 8n (bits
+ * 63:32 != 0: #GP(0)); RDMSRLIST stores the MSR value to RDI + 8n, WRMSRLIST loads it from
+ * RDI + 8n and writes the MSR (any RDMSR / WRMSR #GP is #GP(0)); then RCX[n] := 0. A fault
+ * leaves RCX with the bits of the completed entries cleared and RIP at the instruction (partial
+ * completion, like REP string instructions). The table reads/writes are CPL0 data accesses
+ * (#PF, SMAP, non-canonical #GP from the MMU). Not modelled: pending interrupts between entries
+ * (Unicorn has none), "load ahead", IA32_BARRIER ordering (the model is sequential).
+ */
+/* a store to memory Unicorn has not mapped: the instruction stops there, like a #PF (U480 style) */
+static void msrlist_unicorn_stop(CPUX86State *env, uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+
+    if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+        cpu_loop_exit_restore(uc->cpu, ra);
+    }
+}
+
+static void msrlist_entry_check(CPUX86State *env, uintptr_t ra)
+{
+    if ((env->regs[R_ESI] & 7) || (env->regs[R_EDI] & 7)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+}
+
+void helper_rdmsrlist(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+
+    msrlist_entry_check(env, ra);
+    while (env->regs[R_ECX]) {
+        int n = ctz64(env->regs[R_ECX]);
+        uint64_t a = cpu_ldq_data_ra(env, env->regs[R_ESI] + 8 * (target_ulong)n, ra);
+        uint64_t v;
+
+        if (a >> 32) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        v = x86_msr_access(env, (uint32_t)a, 0, false);
+        cpu_stq_data_ra(env, env->regs[R_EDI] + 8 * (target_ulong)n, v, ra);
+        msrlist_unicorn_stop(env, ra);
+        env->regs[R_ECX] &= ~(1ULL << n);
+    }
+}
+
+void helper_wrmsrlist(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+
+    msrlist_entry_check(env, ra);
+    while (env->regs[R_ECX]) {
+        int n = ctz64(env->regs[R_ECX]);
+        uint64_t a = cpu_ldq_data_ra(env, env->regs[R_ESI] + 8 * (target_ulong)n, ra);
+        uint64_t v;
+
+        if (a >> 32) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        v = cpu_ldq_data_ra(env, env->regs[R_EDI] + 8 * (target_ulong)n, ra);
+        x86_msr_access(env, (uint32_t)a, v, true);
+        env->regs[R_ECX] &= ~(1ULL << n);
+    }
+}
+#endif /* __Use_Original_Qemu (U802) */

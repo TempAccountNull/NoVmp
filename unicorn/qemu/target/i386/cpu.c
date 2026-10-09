@@ -703,7 +703,7 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_1_EAX_SHA512 /* U82 */ | CPUID_7_1_EAX_SM3 /* U83 */ | \
           CPUID_7_1_EAX_SM4 /* U84 */ | CPUID_7_1_EAX_AVX_IFMA /* U87 */ | \
           CPUID_7_1_EAX_RAO_INT /* U101 */ | CPUID_7_1_EAX_MOVRS /* U102 */ | \
-          CPUID_7_1_EAX_WRMSRNS /* U801 */)
+          CPUID_7_1_EAX_WRMSRNS /* U801 */ | CPUID_7_1_EAX_MSRLIST /* U802 */)
 #endif /* __Use_Original_Qemu (U71) */
 #if __Use_Original_Qemu != 1 /* ours (U85) */
 #define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8 | \

@@ -141,6 +141,10 @@ static void QEMU_NORETURN raise_interrupt2(CPUX86State *env, int intno,
 {
     CPUState *cs = env_cpu(env);
 
+#if __Use_Original_Qemu != 1 /* ours (U802) */
+    /* an MSR access of RDMSRLIST / WRMSRLIST / MSR-IMM faulted: its RAX/RCX/RDX are back (U802) */
+    x86_msr_swap_restore(env);
+#endif /* __Use_Original_Qemu (U802) */
     if (!is_int) {
         cpu_svm_check_intercept_param(env, SVM_EXIT_EXCP_BASE + intno,
                                       error_code, retaddr);
