@@ -64,6 +64,7 @@ static inline void mul64(uint64_t *plow, uint64_t *phigh,
 }
 
 /* Unsigned 64x64 -> 128 multiplication */
+#ifndef QEMU_MUL64_INTRINSIC /* ours (U505): inline _umul128/_mul128 on MSVC x64 */
 void mulu64 (uint64_t *plow, uint64_t *phigh, uint64_t a, uint64_t b)
 {
     mul64(plow, phigh, a, b);
@@ -85,6 +86,7 @@ void muls64 (uint64_t *plow, uint64_t *phigh, int64_t a, int64_t b)
     }
     *phigh = rh;
 }
+#endif /* QEMU_MUL64_INTRINSIC (U505) */
 
 /*
  * Unsigned 128-by-64 division.

@@ -110,8 +110,32 @@ static inline int64_t divs128(uint64_t *plow, int64_t *phigh,
     return dividend % divisor;
 }
 #else
+#if __Use_Original_Qemu == 1 || !defined(_MSC_VER) || !defined(_M_X64) /* original QEMU (U505) */
 void muls64(uint64_t *plow, uint64_t *phigh, int64_t a, int64_t b);
 void mulu64(uint64_t *plow, uint64_t *phigh, uint64_t a, uint64_t b);
+#else /* ours (U505) */
+/*
+ * MSVC has no __int128 (CONFIG_INT128 is off), so mulu64/muls64 were the
+ * out-of-line 32x32 schoolbook in util/host-utils.c; they sit on the hot path
+ * of every softfloat 64x64 multiply (x87 FMUL/FDIV/FSQRT, float64 helpers).
+ * _umul128/_mul128 compute the same exact 128-bit products in one MUL/IMUL.
+ */
+#define QEMU_MUL64_INTRINSIC 1
+static inline void mulu64(uint64_t *plow, uint64_t *phigh,
+                          uint64_t a, uint64_t b)
+{
+    *plow = _umul128(a, b, phigh);
+}
+
+static inline void muls64(uint64_t *plow, uint64_t *phigh,
+                          int64_t a, int64_t b)
+{
+    int64_t hi;
+
+    *plow = (uint64_t)_mul128(a, b, &hi);
+    *phigh = (uint64_t)hi;
+}
+#endif /* __Use_Original_Qemu (U505) */
 uint64_t divu128(uint64_t *plow, uint64_t *phigh, uint64_t divisor);
 int64_t divs128(uint64_t *plow, int64_t *phigh, int64_t divisor);
 
