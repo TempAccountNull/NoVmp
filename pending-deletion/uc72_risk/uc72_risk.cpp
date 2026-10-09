@@ -429,9 +429,11 @@ static void test_r4()
 	}
 }
 
-// ── R5: hardware-quirk switch (plan 1.9.1) ──────────────────────────────────────────────────
+// ── R5: FCOMI/FUCOMI C1 (plan 1.9.1; U531: the quirk switch is gone, SDM only) ──────────────
+// SDM Vol2A FCOMI/FCOMIP/FUCOMI/FUCOMIP, FPU Flags Affected: "C1 Set to 0". The i5-13600K leaves
+// C1 unchanged: docs/quirks.md "FCOMI/FUCOMI C1" (a known deviation, not emulated).
 
-static uint16_t fcomi_c1_run( bool quirk, bool fucomi, uint32_t* readback )
+static uint16_t fcomi_c1_run( bool fucomi )
 {
 	// ST1 = 2.0, ST0 = -1.0; fxam sets C1 = sign(ST0) = 1; then fcomi/fucomi st(0), st(1)
 	// fninit first: the RESET x87 state (SDM Vol3 Table 11-1: all eight registers valid +0.0) makes the
@@ -440,8 +442,6 @@ static uint16_t fcomi_c1_run( bool quirk, bool fucomi, uint32_t* readback )
 										  ( fucomi ? "fucomi st(0), st(1)\n" : "fcomi st(0), st(1)\n" ) );
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
-	if ( quirk ) uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 );
-	if ( readback ) uc_ctl_get_x86_hw_quirks( uc, readback );
 	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, 0x2000, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
 	double vals[ 2 ] = { 2.0, -1.0 };
@@ -458,24 +458,13 @@ static uint16_t fcomi_c1_run( bool quirk, bool fucomi, uint32_t* readback )
 
 static void test_r5()
 {
-	std::printf( "R5  hardware-quirk switch: FCOMI/FUCOMI C1 (SDM: cleared; i5-13600K: unchanged)\n" );
+	std::printf( "R5  FCOMI/FUCOMI C1 = 0 (SDM; the i5-13600K keeps C1: known deviation, docs/quirks.md)\n" );
 	for ( bool fu : { false, true } )
 	{
-		uint32_t rb = 0xFFFF;
-		uint16_t sdm = fcomi_c1_run( false, fu, &rb ), hw = fcomi_c1_run( true, fu, nullptr );
-		std::printf( "    %-7s default (manual): fsw=%04X C1=%d (quirks=%u)   UC_X86_QUIRK_FCOMI_KEEPS_C1: fsw=%04X C1=%d\n",
-					 fu ? "fucomi" : "fcomi", sdm, ( sdm >> 9 ) & 1, rb, hw, ( hw >> 9 ) & 1 );
-		CHECK( rb == 0, "default quirks %u, expected 0", rb );
-		CHECK( ( ( sdm >> 9 ) & 1 ) == 0, "%s: default must clear C1 (SDM)", fu ? "fucomi" : "fcomi" );
-		CHECK( ( ( hw >> 9 ) & 1 ) == 1, "%s: quirk must keep C1 (hardware)", fu ? "fucomi" : "fcomi" );
+		uint16_t sdm = fcomi_c1_run( fu );
+		std::printf( "    %-7s fsw=%04X C1=%d\n", fu ? "fucomi" : "fcomi", sdm, ( sdm >> 9 ) & 1 );
+		CHECK( ( ( sdm >> 9 ) & 1 ) == 0, "%s: must clear C1 (SDM)", fu ? "fucomi" : "fcomi" );
 	}
-	uint32_t rb = 0;
-	uc_engine* uc = nullptr;
-	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
-	uc_ctl_set_x86_hw_quirks( uc, UC_X86_QUIRK_FCOMI_KEEPS_C1 );
-	uc_ctl_get_x86_hw_quirks( uc, &rb );
-	uc_close( uc );
-	CHECK( rb == UC_X86_QUIRK_FCOMI_KEEPS_C1, "uc_ctl round trip %u", rb );
 }
 
 // ── R6: MXCSR load/store rules of XRSTOR / XSAVE / LDMXCSR (plan 1.10.2) ───────────────────────
@@ -1113,7 +1102,7 @@ static void test_r10()
 	};
 	uint8_t in[ 32 ];
 	for ( int i = 0; i < 32; ++i ) in[ i ] = uint8_t( 0x11 * ( i + 1 ) );
-	const uint32_t hw_quirks = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87;
+	const uint32_t hw_quirks = UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87;
 	for ( const c& k : cases )
 	{
 		std::vector<uint8_t> code = assemble( r10_thunk( k.op ) );
@@ -1194,7 +1183,7 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 }
 
 // every documented i5-13600K deviation from the SDM, for the hardware comparisons
-static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_FCOMI_KEEPS_C1 | UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
+static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
                                          UC_X86_QUIRK_FYL2XP1_BELOW_M1 | UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC;
 
 static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
@@ -1259,6 +1248,46 @@ static std::string r11_diff( const r11_result& a, const r11_result& b, bool flag
 	return d;
 }
 
+// ── U531-U538: documented i5-13600K deviations from the SDM (docs/quirks.md) ─────────────────
+// The emulator implements the SDM only. A hardware comparison whose difference is exactly one of
+// the documented deviations is counted as a known deviation (printed, not a failure):
+// x87_known_deviation() applies the documented i5-13600K behaviour to a copy of the Unicorn (SDM)
+// result and returns the docs/quirks.md name when that copy equals the hardware result in every
+// compared field (r11_diff incl. EFLAGS), nullptr otherwise. 'in' is the R11 thunk input (fldenv
+// image at +0: FCW +0, FSW +4; ST0 = the m80 at +32 + 7 * 16).
+
+static uint16_t r11_fsw( const r11_result& r ) { return uint16_t( r.env[ 4 ] | ( r.env[ 5 ] << 8 ) ); }
+
+static void r11_set_fsw( r11_result& r, uint16_t v )
+{
+	r.env[ 4 ] = uint8_t( v ); r.env[ 5 ] = uint8_t( v >> 8 );     // FNSTENV image
+	r.fx[ 2 ] = uint8_t( v ); r.fx[ 3 ] = uint8_t( v >> 8 );       // FXSAVE image
+}
+
+// first token of the op text ("fcomi st(0), st(1)" -> "fcomi")
+static std::string x87_mnemonic( const char* op )
+{
+	std::string s = op;
+	size_t p = s.find_first_of( " \n" );
+	return p == std::string::npos ? s : s.substr( 0, p );
+}
+
+static const char* x87_known_deviation( const char* op, const uint8_t* in, const r11_result& hw, const r11_result& uc )
+{
+	if ( hw.fault >= 0 || uc.fault >= 0 ) return nullptr;
+	const std::string mn = x87_mnemonic( op );
+	const uint16_t fsw_in = uint16_t( in[ 4 ] | ( in[ 5 ] << 8 ) );
+	const bool fcomi = mn == "fcomi" || mn == "fcomip" || mn == "fucomi" || mn == "fucomip";
+	// "FCOMI/FUCOMI C1": SDM C1 = 0, the i5-13600K leaves C1 as it was
+	if ( fcomi )
+	{
+		r11_result p = uc;
+		r11_set_fsw( p, uint16_t( ( r11_fsw( p ) & ~0x0200 ) | ( fsw_in & 0x0200 ) ) );
+		if ( r11_diff( hw, p, true ).empty() ) return "FCOMI/FUCOMI C1";
+	}
+	return nullptr;
+}
+
 static void test_r11()
 {
 	std::printf( "R11 x87 C1 rounding + stack underflow/overflow: every form x RC x PC x C1 vs hardware\n" );
@@ -1304,6 +1333,7 @@ static void test_r11()
 	scens.push_back( { 0x037F, 0x0200, 0xFFFF, "all empty, IM masked" } );
 	scens.push_back( { 0x037E, 0x0000, 0xFFFF, "all empty, IM unmasked" } );
 	int total = 0, total_diff = 0, forms_diff = 0, staged = 0;
+	std::map<std::string, int> known;     // U531+: documented deviations (docs/quirks.md) per name
 	// Plan 1.10.6d / Phase 5 (D5, own softfloat): the transcendental results are Intel-microcode specific
 	// (FSIN/FCOS/FPTAN/FSINCOS still go through host doubles, FYL2XP1 outside its SDM range is "undefined",
 	// F2XM1/FYL2X/FPATAN differ by an ulp / in C1). Their value differences are staged; their stack-fault
@@ -1331,6 +1361,12 @@ static void test_r11()
 			if ( d.empty() ) continue;
 			std::string name = op;
 			for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
+			if ( const char* kd = x87_known_deviation( op, buf, hw, uc ) )
+			{
+				++known[ kd ];
+				if ( dump ) std::fprintf( dump, "%s|%s|%04X|%04X|%04X|KNOWN DEVIATION %s: %s\n", name.c_str(), sc.name, sc.fcw, sc.fsw, sc.ftw, kd, d.c_str() );
+				continue;
+			}
 			bool is_trans = false;
 			for ( const char* t : transcendental ) is_trans |= name == t;
 			if ( is_trans && hw.fault < 0 && !( hw.env[ 4 ] & 0x40 ) )
@@ -1349,6 +1385,7 @@ static void test_r11()
 	if ( dump ) std::fclose( dump );
 	std::printf( "    %d forms x %zu scenarios = %d cases, %d differ in %d forms; %d transcendental value differences staged (plan 1.10.6d)\n",
 				 int( std::size( ops ) ), scens.size(), total, total_diff, forms_diff, staged );
+	for ( auto& kv : known ) std::printf( "    known deviation (docs/quirks.md) %s: %d cases\n", kv.first.c_str(), kv.second );
 	CHECK( total_diff == 0, "%d of %d x87 cases differ from hardware", total_diff, total );
 }
 
@@ -2366,6 +2403,7 @@ static void test_r18()
 	std::map<std::string, stat_t> stats;
 	std::map<std::string, std::vector<uint8_t>> codes;
 	long total = 0, failed = 0;
+	std::map<std::string, long> known;     // U531+: documented deviations (docs/quirks.md) per name
 	for ( const x87_case2& c : cases )
 	{
 		auto ci = codes.find( c.op );
@@ -2397,7 +2435,9 @@ static void test_r18()
 			bool same_mem = !std::memcmp( hw.mem, uc.mem, 16 ) && hw.ah == uc.ah;
 			ok = fh == fu && same_tw && same_mem && !std::memcmp( hw.fx + 32, uc.fx + 32, 10 ) && !std::memcmp( hw.fx + 48, uc.fx + 48, 10 );
 		}
-		if ( !ok )
+		const char* kd = ok ? nullptr : x87_known_deviation( c.op.c_str(), in, hw, uc );
+		if ( kd ) ++known[ kd ];
+		else if ( !ok )
 		{
 			++failed;
 			if ( s.bad++ < 2 )
@@ -2410,6 +2450,7 @@ static void test_r18()
 	long clean = 0;
 	for ( auto& kv : stats ) clean += kv.second.bad == 0;
 	std::printf( "    %ld cases, %zu instruction forms: %ld bit-exact forms, %ld mismatching cases\n", total, stats.size(), clean, failed );
+	for ( auto& kv : known ) std::printf( "    known deviation (docs/quirks.md) %s: %ld cases\n", kv.first.c_str(), kv.second );
 	for ( auto& kv : stats )
 		if ( kv.second.bad ) std::printf( "      %-34s %ld / %ld\n", kv.first.c_str(), kv.second.bad, kv.second.n );
 	CHECK( failed == 0, "%ld x87 cases differ from the hardware", failed );

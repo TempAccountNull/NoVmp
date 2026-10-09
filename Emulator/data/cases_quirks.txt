@@ -4,10 +4,10 @@
 #   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu
 # with --quirks 0 (strictly the SDM) every case differs from the hardware. docs\quirks.md.
 #
-# bit 0 FCOMI_KEEPS_C1: SDM C1 = 0, hardware keeps C1 (= 1 here)
-fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
-fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
-fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200
+# FCOMI/FUCOMI C1 (U531): SDM C1 = 0, hardware keeps C1 (= 1 here)
+fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
+fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
+fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
 # bit 1 CVTPI2PS_M64_KEEPS_X87: SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
 fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000
 # bit 2 FYL2XP1_BELOW_M1: x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf

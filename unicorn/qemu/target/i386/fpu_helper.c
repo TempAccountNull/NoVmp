@@ -195,7 +195,7 @@ static inline floatx80 helper_fdiv(CPUX86State *env, floatx80 a, floatx80 b)
  * NoVmp (ledger U45): set_c1 makes FSW.C1 report the rounding direction of
  * this operation, "1 = rounded up, 0 = not" (SDM Vol1 8.1.3.1 / 4.9.1.6;
  * the per-instruction "C1 ... set if result was rounded up; cleared
- * otherwise"). FPREM/FPREM1 (C1 = Q0) and FCOMI/FUCOMI (quirk switch) keep
+ * otherwise"). FPREM/FPREM1 (C1 = Q0) and FCOMI/FUCOMI (C1 = 0) keep
  * the C1 they computed and merge with set_c1 = false.
  */
 static void merge_exception_flags_ex(CPUX86State *env, int old_flags,
@@ -1120,11 +1120,8 @@ void helper_fcomi_ST0_FT0(CPUX86State *env)
         CC_SRC = x87_cmp_cc_kept(env, f) ? zpc_old : fcomi_ccval[ret + 1];
     }
 #endif /* __Use_Original_Qemu (U54/U431) */
-    /* C1 is cleared to 0 per the SDM; real Intel CPUs leave it unchanged, which
-       UC_X86_QUIRK_FCOMI_KEEPS_C1 (UC_CTL_X86_HW_QUIRKS) selects */
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_FCOMI_KEEPS_C1)) {
-        env->fpus &= ~0x0200;
-    }
+    /* C1 is unconditionally cleared to 0 */
+    env->fpus &= ~0x0200;
 #if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54) */
     merge_exception_flags(env, old_flags);
 #else /* ours (U45/U47/U53/U54) */
@@ -1150,10 +1147,8 @@ void helper_fucomi_ST0_FT0(CPUX86State *env)
         CC_SRC = x87_cmp_cc_kept(env, f) ? zpc_old : fcomi_ccval[ret + 1];
     }
 #endif /* __Use_Original_Qemu (U54/U431) */
-    /* C1: see helper_fcomi_ST0_FT0 (UC_X86_QUIRK_FCOMI_KEEPS_C1) */
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_FCOMI_KEEPS_C1)) {
-        env->fpus &= ~0x0200;
-    }
+    /* C1 is unconditionally cleared to 0 */
+    env->fpus &= ~0x0200;
 #if __Use_Original_Qemu == 1 /* original QEMU (U45/U47/U53/U54) */
     merge_exception_flags(env, old_flags);
 #else /* ours (U45/U47/U53/U54) */

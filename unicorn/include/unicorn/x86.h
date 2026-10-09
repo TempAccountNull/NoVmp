@@ -64,9 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// FCOMI/FCOMIP/FUCOMI/FUCOMIP: the SDM sets FSW.C1 = 0; Intel hardware (verified on
-// an i5-13600K) leaves C1 unchanged.
-#define UC_X86_QUIRK_FCOMI_KEEPS_C1 (1u << 0)
 // CVTPI2PS xmm, m64: the SDM's CVTPI2PS page says the instruction causes the x87 -> MMX
 // transition (TOP = 0, all tags valid) without exempting the memory form (only CVTPI2PD
 // m64 is exempt); Intel hardware (i5-13600K) leaves the x87 state unchanged for m64.
