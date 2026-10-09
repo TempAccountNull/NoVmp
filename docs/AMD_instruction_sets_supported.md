@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 13:55 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `0ec613b Ledger U750-U756, U758, U760 (CET on far transfers, CET_U/CET_S XSAVE components, REX2 ENDBR64, CPU-canonical CET MSRs; U757 retired); docs refresh`). Do not edit by hand._
+_Generated 2026-10-09 15:51 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `6f5f6c0 U793: CPUID.29H:EBX.APX_NCI_NDD_NF gates the forms whose APX CPUID column names it`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
@@ -8,7 +8,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 - A switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set) will gate them: with 0 they are #UD as on Intel.
 - Some (3DNow!, SSE4a, FEMMS) already exist in QEMU and run under the non-strict MAX model; under the i5-13600K profile with `--strict` they are #UD like the CPU.
 
-**Totals:** 229 forms, implemented per the manual 21, not implemented yet 205
+**Totals:** 229 forms, implemented per the manual 15, not implemented yet 211
 
 
 ## Instructions your i5-13600K can run (3 forms)
@@ -27,7 +27,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 |---|---|---|---|---|
 | LZCNT | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
 | SYSCALL | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SYSRET | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
+| SYSRET | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 
 </details>
 
@@ -44,14 +44,14 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 |---|---|---|---|---|
 | 3DNOW | 25 | ❌ **cannot run** (AMD 3DNow!) |  | ⏳ 1 · ⬜ 24 queued |
 | ACE_1 | 16 | ❌ **cannot run** (VIA/Zhaoxin ACE; AMX_AVX512 not reported by this CPU) | ✅ 1 | ⬜ 15 queued |
-| AMD_INVLPGB | 2 | ❌ **cannot run** (AMD INVLPGB) |  | ⏳ 2 |
+| AMD_INVLPGB | 2 | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ 2 queued |
 | CLZERO | 1 | ❌ **cannot run** (AMD CLZERO) |  | ⬜ 1 queued |
 | FMA4 | 20 | ❌ **cannot run** (AMD FMA4) |  | ⬜ 20 queued |
 | LWP | 4 | ❌ **cannot run** (AMD LWP) |  | ⬜ 4 queued |
 | MCOMMIT | 1 | ❌ **cannot run** (AMD MCOMMIT) |  | ⬜ 1 queued |
 | MONITORX | 2 | ❌ **cannot run** (AMD MONITORX) |  | ⬜ 2 queued |
 | RDPRU | 1 | ❌ **cannot run** (AMD RDPRU) |  | ⬜ 1 queued |
-| SNP | 4 | ❌ **cannot run** (AMD SEV-SNP) |  | ⏳ 4 |
+| SNP | 4 | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ 4 queued |
 | SSE4a | 4 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ 4 |
 | SVM | 8 | ❌ **cannot run** (AMD SVM) |  | ⏳ 8 |
 | TBM | 10 | ❌ **cannot run** (AMD TBM) | ✅ 1 | ⬜ 9 queued |
@@ -122,8 +122,8 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| INVLPGB | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
-| TLBSYNC | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
+| INVLPGB | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| TLBSYNC | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
 
 </details>
 
@@ -202,10 +202,10 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| PSMASH | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
-| PVALIDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
-| RMPADJUST | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
-| RMPUPDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⏳ open item — CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6) |
+| PSMASH | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| PVALIDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| RMPADJUST | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| RMPUPDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
 
 </details>
 
@@ -224,14 +224,14 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| CLGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| INVLPGA | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| SKINIT | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| STGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| VMLOAD | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| VMMCALL | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| VMRUN | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
-| VMSAVE | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 2 (D6) |
+| CLGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| INVLPGA | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| SKINIT | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| STGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMLOAD | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMMCALL | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMRUN | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMSAVE | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 
 </details>
 
