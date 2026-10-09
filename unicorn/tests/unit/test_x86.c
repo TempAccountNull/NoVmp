@@ -19390,6 +19390,78 @@ static void test_x86_rg_mmx_regs(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U831: UC_X86_REG_PKRU (uint32_t) is PKRU as RDPKRU / WRPKRU see it (SDM Vol3A 5.6.2);
+ * UC_ERR_ARG on a model without PKU. It holds its value whatever CR4.PKE says. A write that
+ * changes it flushes the TLB like WRPKRU: a user page with key 5 read with PKRU = 0 (TLB
+ * entry filled) faults with #PF after AD5 is set through the API, and reads again after.
+ */
+static void test_x86_rg_pkru(void)
+{
+    static const char rd[] = "\x48\x8b\x04\x25\x00\x40\x00\x60"; /* mov rax, [TB2_DATA] */
+    static const char rdpkru[] = "\x31\xc9\x0f\x01\xee";          /* xor ecx, ecx; rdpkru */
+    /* xor ecx, ecx; xor edx, edx; mov eax, 0Ch; wrpkru */
+    static const char wrpkru[] = "\x31\xc9\x31\xd2\xb8\x0c\x00\x00\x00\x0f\x01\xef";
+    nk_intr_t intr;
+    uc_engine *uc;
+    uint32_t pk;
+    uint64_t cr4;
+    size_t sz;
+    int slot = 0;
+
+    /* no PKU in the CPU model */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_QEMU64));
+    pk = 0;
+    TEST_CHECK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk) == UC_ERR_ARG);
+    TEST_CHECK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk) == UC_ERR_ARG);
+    OK(uc_close(uc));
+
+    uc = tb2_sys_open("\x90", 1, &intr);
+    pk = 0xffffffff;
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 0); /* reset value */
+    pk = 0x55555554;     /* CR4.PKE = 0: the register still takes it */
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    pk = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 0x55555554);
+    tb2_paging(uc, (5ULL << 59) | 7); /* TB2_DATA: user page, protection key 5 */
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 22)); /* CR4.PKE */
+    /* RDPKRU returns the API value, EDX = 0 */
+    nk_setreg(uc, UC_X86_REG_RDX, ~0ULL);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rdpkru, sizeof(rdpkru) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0x55555554 && nk_reg(uc, UC_X86_REG_RDX) == 0);
+    TEST_MSG("rax %016" PRIx64 " rdx %016" PRIx64, nk_reg(uc, UC_X86_REG_RAX),
+             nk_reg(uc, UC_X86_REG_RDX));
+    /* PKRU = 0: the read works (and fills the TLB) */
+    pk = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    /* AD5 through the API: the stale TLB entry is gone, the read takes #PF */
+    pk = 1u << 10;
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == 14);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR2) == TB2_DATA);
+    /* AD4 only: key 5 is accessible again */
+    pk = 1u << 8;
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    /* WRPKRU's value is what the API reads */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, wrpkru, sizeof(wrpkru) - 1) == -1);
+    pk = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 0xc);
+    /* the value is a uint32_t */
+    sz = 2;
+    TEST_CHECK(uc_reg_read2(uc, UC_X86_REG_PKRU, &pk, &sz) == UC_ERR_OVERFLOW);
+    sz = 8;
+    OK(uc_reg_read2(uc, UC_X86_REG_PKRU, &pk, &sz));
+    TEST_CHECK(sz == 4 && pk == 0xc);
+    OK(uc_close(uc));
+}
+
 /* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
@@ -19664,4 +19736,5 @@ TEST_LIST = {
     {"test_x86_xm_x87_ptr_profiles", test_x86_xm_x87_ptr_profiles},
     {"test_x86_xm_scatter_write_hook", test_x86_xm_scatter_write_hook},
     {"test_x86_rg_mmx_regs", test_x86_rg_mmx_regs},
+    {"test_x86_rg_pkru", test_x86_rg_pkru},
     {NULL, NULL}};

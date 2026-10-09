@@ -8,6 +8,9 @@
 #include "unicorn_common.h"
 #include <unicorn/x86.h> /* needed for uc_x86_mmr */
 #include "unicorn.h"
+#if __Use_Original_Qemu != 1 /* ours (U831) */
+#include "exec/exec-all.h" /* tlb_flush */
+#endif /* __Use_Original_Qemu (U831) */
 
 #define FPST(n) (env->fpregs[(env->fpstt + (n)) & 7].d)
 
@@ -551,6 +554,16 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
         *(uint64_t *)value = env->fpregs[regid - UC_X86_REG_MM0].mmx.MMX_Q(0);
         return ret;
 #endif /* __Use_Original_Qemu (U830) */
+#if __Use_Original_Qemu != 1 /* ours (U831) */
+    /* NoVmp (ledger U831): PKRU as RDPKRU returns it (EAX; EDX = 0), CPUs with PKU only */
+    case UC_X86_REG_PKRU:
+        if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_PKU)) {
+            return UC_ERR_ARG;
+        }
+        CHECK_REG_TYPE(uint32_t);
+        *(uint32_t *)value = env->pkru;
+        return ret;
+#endif /* __Use_Original_Qemu (U831) */
     }
 
     switch (mode) {
@@ -1542,6 +1555,23 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         return ret;
     }
 #endif /* __Use_Original_Qemu (U830) */
+#if __Use_Original_Qemu != 1 /* ours (U831) */
+    /*
+     * NoVmp (ledger U831): PKRU <- the 32-bit value, as WRPKRU writes EAX (EDX must be 0
+     * there: a 32-bit type has no upper half). Like WRPKRU (and XRSTOR of component 9) a
+     * change flushes the TLB, whose entries carry the protection-key rights.
+     */
+    case UC_X86_REG_PKRU:
+        if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_PKU)) {
+            return UC_ERR_ARG;
+        }
+        CHECK_REG_TYPE(uint32_t);
+        if (env->pkru != *(uint32_t *)value) {
+            env->pkru = *(uint32_t *)value;
+            tlb_flush(env_cpu(env));
+        }
+        return ret;
+#endif /* __Use_Original_Qemu (U831) */
     }
 
     switch (mode) {

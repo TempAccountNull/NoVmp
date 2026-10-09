@@ -426,6 +426,11 @@ typedef enum uc_x86_reg {
     UC_X86_REG_R29B,
     UC_X86_REG_R30B,
     UC_X86_REG_R31B,
+    // NoVmp U831: protection-key rights register PKRU (uint32_t), as RDPKRU/WRPKRU see
+    // it (SDM Vol3A 5.6.2); UC_ERR_ARG on a CPU model without PKU (CPUID.(EAX=7,ECX=0):
+    // ECX.PKU[3]). Readable and writable whatever CR4.PKE says (the register keeps its
+    // value, like XSAVE state component 9); a write that changes it flushes the TLB.
+    UC_X86_REG_PKRU,
     UC_X86_REG_ENDING // <-- mark the end of the list of registers
 } uc_x86_reg;
 
