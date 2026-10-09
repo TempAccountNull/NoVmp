@@ -64,12 +64,24 @@ void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
     /* Unicorn: early check to see if the address of this block is
      * the "run until" address. */
     if (uc_addr_is_exit(uc, tb->pc)) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U502) */
         TCGv_ptr puc = tcg_const_ptr(tcg_ctx, uc);
 
         gen_tb_start(tcg_ctx, db->tb);
         ops->tb_start(db, cpu);
         db->num_insns++;
         ops->insn_start(db, cpu);
+#else /* ours (U502) */
+        /* the constant is made after gen_tb_start's branch (a temp does not
+           survive the end of a basic block) */
+        TCGv_ptr puc;
+
+        gen_tb_start(tcg_ctx, db->tb);
+        ops->tb_start(db, cpu);
+        db->num_insns++;
+        ops->insn_start(db, cpu);
+        puc = tcg_const_ptr(tcg_ctx, uc);
+#endif /* __Use_Original_Qemu (U502) */
         gen_helper_emu_stop(tcg_ctx, puc);
         tcg_temp_free_ptr(tcg_ctx, puc);
         check_exit_request(tcg_ctx);

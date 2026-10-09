@@ -672,6 +672,10 @@ struct TCGContext {
 #endif
 
     TCGv_i32 delay_slot_flag;
+#if __Use_Original_Qemu != 1 /* ours (U502) */
+    /* gen_tb_start's inline exit-request branch target, placed by gen_tb_end */
+    TCGLabel *uc_exitreq_label;
+#endif /* __Use_Original_Qemu (U502) */
 
     TCGTempSet free_temps[TCG_TYPE_COUNT * 2];
     TCGTemp temps[TCG_MAX_TEMPS]; /* globals first, temps after */

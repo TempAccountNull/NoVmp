@@ -178,6 +178,35 @@ void HELPER(exit_atomic)(CPUArchState *env)
     cpu_loop_exit_atomic(env_cpu(env), GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U502) */
+/*
+ * Out-of-line half of gen_tb_start's inline test (U502): reached only when
+ * icount_decr.u32 < 0 was seen at the start of TB tbp. Does exactly what
+ * helper_check_exit_request does when called at TB start; the restore point is
+ * the TB's first instruction, as for a call placed before the first
+ * insn_start (tc.ptr + GETPC_ADJ is inside instruction 0's host range).
+ */
+void HELPER(check_exit_request_tb_start)(void *p, void *tbp)
+{
+    uc_engine *uc = p;
+    TranslationBlock *tb = tbp;
+
+    if (cpu_loop_exit_requested(uc->cpu)) {
+        if (uc->nested_level == 1) {
+            tb_exec_unlock(uc);
+        }
+        uc->cpu->tcg_exit_req = 0;
+
+        if (uc->skip_sync_pc_on_exit) {
+            uc->skip_sync_pc_on_exit = false;
+            cpu_loop_exit(uc->cpu);
+        } else {
+            cpu_loop_exit_restore(uc->cpu, (uintptr_t)tb->tc.ptr + GETPC_ADJ);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U502) */
+
 void HELPER(check_exit_request)(void *p, uint32_t in_delay_slot) {
     uc_engine *uc = p;
 
