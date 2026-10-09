@@ -283,6 +283,26 @@ DEF_HELPER_6(evex_scalef, void, env, ptr, ptr, ptr, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U240) */
 DEF_HELPER_7(evex_fixupimm, void, env, ptr, ptr, ptr, ptr, i64, i32)
 #endif /* __Use_Original_Qemu (U240) */
+#if __Use_Original_Qemu != 1 /* ours (U331) */
+/* NoVmp (ledger U331): AVX512-FP16 (fp16_helper.c.inc, desc layout in fp16.h) */
+DEF_HELPER_7(fp16_op, void, env, ptr, ptr, ptr, ptr, i64, i32)
+DEF_HELPER_5(fp16_cmp, i64, env, ptr, ptr, i64, i32)
+DEF_HELPER_4(fp16_comi, void, env, ptr, ptr, i32)
+DEF_HELPER_3(fp16_cvt2i, i64, env, ptr, i32)
+DEF_HELPER_5(fp16_cvtsi, void, env, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U331) */
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+DEF_HELPER_6(avx10b_cvt_fp8, void, env, ptr, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+DEF_HELPER_4(avx10b_cvthf82ph, void, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+DEF_HELPER_6(avx10b_cvt2ps2phx, void, env, ptr, ptr, ptr, i64, i32)
+#endif /* __Use_Original_Qemu (U404) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+DEF_HELPER_5(avx10b_vdpphps, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U407) */
 #if __Use_Original_Qemu != 1 /* ours (U66) */
 DEF_HELPER_FLAGS_3(xsavec, TCG_CALL_NO_WG, void, env, tl, i64)
 #endif /* __Use_Original_Qemu (U66) */
@@ -434,3 +454,14 @@ DEF_HELPER_4(evex_shufbitqmb, i64, env, ptr, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U325) */
 DEF_HELPER_6(evex_permb, void, env, ptr, ptr, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U373-U399) */
+/* NoVmp: Intel AVX10.2 instructions (avx10_helper.c) */
+DEF_HELPER_5(avx10_bf16, void, env, ptr, ptr, ptr, i32)
+DEF_HELPER_6(avx10_bf16_fma, void, env, ptr, ptr, ptr, ptr, i32)
+DEF_HELPER_4(avx10_bf16_k, i64, env, ptr, ptr, i32)
+DEF_HELPER_3(avx10_vcomisbf16, void, env, ptr, ptr)
+DEF_HELPER_6(avx10_minmax, void, env, ptr, ptr, ptr, ptr, i32)
+DEF_HELPER_4(avx10_vcomx, void, env, ptr, ptr, i32)
+DEF_HELPER_4(avx10_cvt, void, env, ptr, ptr, i32)
+DEF_HELPER_3(avx10_cvts, tl, env, ptr, i32)
+#endif /* __Use_Original_Qemu (U373-U399) */

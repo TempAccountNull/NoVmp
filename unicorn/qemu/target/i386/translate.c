@@ -213,6 +213,12 @@ typedef struct DisasContext {
     int cpuid_7_1_edx_features;
 #endif /* __Use_Original_Qemu (U85) */
     int cpuid_xsave_features;
+#if __Use_Original_Qemu != 1 /* ours (U371) */
+    /* AVX10 version (CPUID.(7,1):EDX.AVX10 and (24H,0):EBX[7:0]; 0 = no AVX10) and
+       CPUID.(24H,1):ECX.AVX10_V1_AUX, as the translator sees them (U371) */
+    uint8_t avx10_version;
+    bool avx10_v1_aux;
+#endif /* __Use_Original_Qemu (U371) */
     struct uc_struct *uc;
 
     /* TCG local temps */
@@ -8686,6 +8692,36 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U100) */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U371) */
+    /*
+     * NoVmp (ledger U371): Intel AVX10 (UC_CTL_X86_AVX10, U370). AVX10.1 contains the
+     * AVX-512 families of AVX10.2 spec 361050-007 Table 3.2 at every vector length (Table
+     * 3.3), so every EVEX form whose SDM CPUID column reads "AVX512x OR AVX10.1" (and the
+     * VEX opmask instructions, "AVX512x OR AVX10.1") executes with AVX10 alone: the
+     * translator's copies of those feature bits are set (the CPUID instruction still
+     * reports the model's own AVX512* bits). VAES/GFNI/VPCLMULQDQ keep their own bits
+     * ({AVX10.1 AND VAES}, 3.1.2 Note). A strict profile hides AVX10 with 7.1:EDX[19] = 0
+     * and caps the version with its 24H.0:EBX[7:0] (and AVX10_V1_AUX with 24H.1:ECX[2]).
+     */
+    dc->avx10_version = 0;
+    dc->avx10_v1_aux = false;
+    if ((env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10) &&
+        (x86_cpuid_profile_mask(env, 7, 1, 3) & CPUID_7_1_EDX_AVX10)) {
+        int v = env->uc->x86_avx10;
+
+        dc->avx10_version = MIN(v & UC_X86_AVX10_VERSION,
+                                x86_cpuid_profile_mask(env, 0x24, 0, 1) & 0xff);
+        dc->avx10_v1_aux = ((v & UC_X86_AVX10_V1_AUX) || dc->avx10_version >= 2) &&
+                           (x86_cpuid_profile_mask(env, 0x24, 1, 2) &
+                            CPUID_24_1_ECX_AVX10_V1_AUX);
+    }
+    if (dc->avx10_version >= 1) {
+        dc->cpuid_7_0_ebx_features |= AVX10_1_7_0_EBX;
+        dc->cpuid_7_0_ecx_features |= AVX10_1_7_0_ECX;
+        dc->cpuid_7_0_edx_features |= AVX10_1_7_0_EDX;
+        dc->cpuid_7_1_eax_features |= AVX10_1_7_1_EAX;
+    }
+#endif /* __Use_Original_Qemu (U371) */
     dc->jmp_opt = !(flags & (HF_RF_MASK | HF_TF_MASK | HF_INHIBIT_IRQ_MASK));
     /*
      * If jmp_opt, we want to handle each string instruction individually.

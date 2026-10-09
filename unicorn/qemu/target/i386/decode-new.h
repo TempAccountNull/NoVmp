@@ -211,6 +211,24 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U325) */
     X86_FEAT_AVX512_VBMI,   /* CPUID.(07H,0):ECX[1] */
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U330) */
+    X86_FEAT_AVX512_FP16,   /* CPUID.(07H,0):EDX[23] */
+#endif /* __Use_Original_Qemu (U330) */
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+    X86_FEAT_AVX10_2,       /* CPUID.(07H,1):EDX.AVX10[19] and CPUID.(24H,0):EBX[7:0] >= 2 */
+#endif /* __Use_Original_Qemu (U372) */
+#if __Use_Original_Qemu != 1 /* ours (U400) */
+    /*
+     * "AVX10.2 OR AVX10_V1_AUX" (AVX10.2 spec 361050-007 ch.2; CPUID.(24H,1):ECX[2], U370)
+     * and VMOVRS* = "AVX10 and MOVRS" (ISE 319433-062): AVX10 version >= 1 plus CPUID.(07H,1):
+     * EAX.MOVRS[31]
+     */
+    X86_FEAT_AVX10_V1_AUX,
+    X86_FEAT_AVX10_MOVRS,
+#endif /* __Use_Original_Qemu (U400) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+    X86_FEAT_AVX10_SM4,     /* EVEX VSM4KEY4 / VSM4RNDS4: "AVX10 AND SM4" (ISE 319433-062) */
+#endif /* __Use_Original_Qemu (U412) */
 } X86CPUIDFeature;
 
 /* Execution flags */
@@ -350,6 +368,13 @@ typedef enum X86EvexTuple {
     X86_EVEX_TT_EIGHTH_MEM,  /* N = VL/8 */
     X86_EVEX_TT_MEM128,      /* N = 16 */
     X86_EVEX_TT_MOVDDUP,     /* N = 8 (VL 128), VL otherwise */
+#if __Use_Original_Qemu != 1 /* ours (U332) */
+    /*
+     * AVX512-FP16 "Quarter" tuple (SDM Vol2A Table 2-34, VCVTPH2PD/QQ/UQQ): N = VL/4, the
+     * element size with EVEX.b ({1toN} allowed, unlike Quarter Mem of U210)
+     */
+    X86_EVEX_TT_QUARTER,
+#endif /* __Use_Original_Qemu (U332) */
 } X86EvexTuple;
 
 typedef enum X86EvexMask {

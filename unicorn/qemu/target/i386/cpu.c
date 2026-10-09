@@ -4755,6 +4755,32 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 #endif /* __Use_Original_Qemu (U170) */
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U370) */
+    case 0x24:
+        /*
+         * NoVmp (ledger U370): Intel AVX10 Converged Vector ISA leaf (AVX10.2 spec 361050-007
+         * Table 3.1, ISE 319433-062): (24H,0) EAX = maximum sub-leaf, EBX[7:0] = version,
+         * EBX[18:16] reserved at 1; (24H,1) ECX[2] = AVX10_V1_AUX (always with AVX10.2:
+         * "Intel CPUs which support Intel AVX10.2 will include an enumeration for
+         * AVX10_V1_AUX"). All zero without AVX10.
+         */
+        *eax = 0;
+        *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10) {
+            int v = env->uc->x86_avx10;
+            bool aux = (v & UC_X86_AVX10_V1_AUX) || (v & UC_X86_AVX10_VERSION) >= 2;
+
+            if (count == 0) {
+                *eax = aux ? 1 : 0;
+                *ebx = (v & UC_X86_AVX10_VERSION) | CPUID_24_0_EBX_AVX10_VL_MASK;
+            } else if (count == 1 && aux) {
+                *ecx = CPUID_24_1_ECX_AVX10_V1_AUX;
+            }
+        }
+        break;
+#endif /* __Use_Original_Qemu (U370) */
     case 0x40000000:
         /*
          * CPUID code in kvm_arch_init_vcpu() ignores stuff
@@ -4946,6 +4972,24 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U370) */
+/*
+ * NoVmp (ledger U370): XSAVE state component i is supported by the CPU model: its own
+ * feature bit, or AVX10 for components 5-7 (AVX10.2 spec 361050-007 3.1.3: AVX10 state is
+ * enumerated in CPUID 0DH and enabled in XCR0 exactly as the AVX-512 state, Table 3.4).
+ */
+static bool x86_cpu_esa_supported(CPUX86State *env, int i)
+{
+    const ExtSaveArea *esa = &x86_ext_save_areas[i];
+
+    if (env->features[esa->feature] & esa->bits) {
+        return true;
+    }
+    return i >= XSTATE_OPMASK_BIT && i <= XSTATE_Hi16_ZMM_BIT &&
+           (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10);
+}
+
+#endif /* __Use_Original_Qemu (U370) */
 static void x86_cpu_reset(CPUState *dev)
 {
     CPUState *s = CPU(dev);
@@ -5043,7 +5087,12 @@ static void x86_cpu_reset(CPUState *dev)
         if (!((1ULL << i) & CPUID_XSTATE_XCR0_MASK)) {
             continue;
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U370) */
         if (env->features[esa->feature] & esa->bits) {
+#else /* ours (U370) */
+        (void)esa;
+        if (x86_cpu_esa_supported(env, i)) {
+#endif /* __Use_Original_Qemu (U370) */
             xcr0 |= 1ull << i;
         }
     }
@@ -5151,7 +5200,12 @@ static void x86_cpu_enable_xsave_components(X86CPU *cpu)
     mask = 0;
     for (i = 0; i < ARRAY_SIZE(x86_ext_save_areas); i++) {
         const ExtSaveArea *esa = &x86_ext_save_areas[i];
+#if __Use_Original_Qemu == 1 /* original QEMU (U370) */
         if (env->features[esa->feature] & esa->bits) {
+#else /* ours (U370) */
+        (void)esa;
+        if (x86_cpu_esa_supported(env, i)) {
+#endif /* __Use_Original_Qemu (U370) */
             mask |= (1ULL << i);
         }
     }
@@ -5444,6 +5498,29 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_AVX512_VBMI;
     }
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U330) */
+    /*
+     * NoVmp (ledger U330): UC_X86_AVX512_FP16 adds CPUID.(EAX=7,ECX=0):EDX.AVX512_FP16[23]
+     * (EVEX maps 5 and 6, SDM Vol2C VADDPH..VUCOMISH; uc_ctl already added AVX512BW, which
+     * the FP16 extensions require, SDM Vol1 15.2.2). A strict profile narrows it like DQ/BW.
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_FP16) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_FP16;
+    }
+#endif /* __Use_Original_Qemu (U330) */
+#if __Use_Original_Qemu != 1 /* ours (U370) */
+    /*
+     * NoVmp (ledger U370): UC_CTL_X86_AVX10 opts in to AVX10 after the TCG filter:
+     * CPUID.(EAX=7,ECX=1):EDX.AVX10[19] (leaf-7 level >= 1) and leaf 24H (basic level >=
+     * 24H); the U37 recomputation below then derives state components 5-7 from it
+     * (x86_cpu_esa_supported) for CPUID 0DH, XSETBV and reset XCR0.
+     */
+    if (uc->x86_avx10) {
+        env->features[FEAT_7_1_EDX] |= CPUID_7_1_EDX_AVX10;
+        env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+        env->cpuid_level = MAX(env->cpuid_level, 0x24);
+    }
+#endif /* __Use_Original_Qemu (U370) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

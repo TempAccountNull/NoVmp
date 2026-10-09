@@ -1044,6 +1044,23 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* UIRET loads UIF from RFLAGS[1] of its stack image (SDM Vol3A 9.7) */
 #define CPUID_7_1_EDX_UIRET_UIF         (1U << 17)
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U370) */
+/* Intel AVX10 Converged Vector ISA (AVX10.2 spec 361050-007 Table 3.1) */
+#define CPUID_7_1_EDX_AVX10             (1U << 19)
+/* CPUID.(24H,0):EBX[18:16] reserved at 1 (former VL128/VL256/VL512 bits) */
+#define CPUID_24_0_EBX_AVX10_VL_MASK    (7U << 16)
+/* CPUID.(24H,1):ECX.AVX10_V1_AUX[2] */
+#define CPUID_24_1_ECX_AVX10_V1_AUX     (1U << 2)
+/* the AVX-512 families AVX10.1 includes (Table 3.2), per CPUID word */
+#define AVX10_1_7_0_EBX (CPUID_7_0_EBX_AVX512F | CPUID_7_0_EBX_AVX512DQ |              \
+                         CPUID_7_0_EBX_AVX512IFMA | CPUID_7_0_EBX_AVX512CD |           \
+                         CPUID_7_0_EBX_AVX512BW | CPUID_7_0_EBX_AVX512VL)
+#define AVX10_1_7_0_ECX (CPUID_7_0_ECX_AVX512_VBMI | CPUID_7_0_ECX_AVX512_VBMI2 |      \
+                         CPUID_7_0_ECX_AVX512VNNI | CPUID_7_0_ECX_AVX512BITALG |       \
+                         CPUID_7_0_ECX_AVX512_VPOPCNTDQ)
+#define AVX10_1_7_0_EDX CPUID_7_0_EDX_AVX512_FP16
+#define AVX10_1_7_1_EAX CPUID_7_1_EAX_AVX512_BF16
+#endif /* __Use_Original_Qemu (U370) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)

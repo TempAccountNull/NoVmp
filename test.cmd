@@ -97,6 +97,23 @@ rem AVX512DQ forms that need the integrated engine (ledger U290-U296 with U192, 
 rem masked VRANGESS/SD, VREDUCESS/SD with DEST != SRC1, DQ insert/extract/broadcast, QQ conversions
 rem vs the SDM model ref_evex_m3_dq.py, Unicorn only with the AVX-512 opt-in.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq_post.txt" --avx512 --xcr0 0xE7 --expect-only --quirks 0
+rem AVX512-FP16 (ledger U330-U339): EVEX maps 5/6 and the FP16 forms of map 3 vs the independent
+rem SDM model ref_evex_fp16.py, Unicorn only with the AVX-512 opt-in (incl. UC_X86_AVX512_FP16).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_fp16.txt" --avx512 --xcr0 0xE7 --expect-only --quirks 0
+rem Intel AVX10 (ledger U370-U376): AVX10.2 alone (no AVX512* CPUID bits) runs the AVX-512 forms
+rem and the AVX10.2 BF16 / MINMAX / VCOMX / saturating-conversion instructions vs the spec model
+rem ref_avx10_a.py (AVX10.2 spec 361050-007), Unicorn only. AVX10.1 alone (U371) runs the M1 EVEX
+rem and VEX opmask files at every vector length.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_a.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m1.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_opmask.txt" --avx10 1 --xcr0 0xE7 --expect-only --quirks 0
+rem AVX10.2 (avx10_b, ledger U400-U412): FP8 conversions, VCVT2PS2PHX, EVEX VNNI-INT8/INT16,
+rem VDPPHPS, VMPSADBW, VMOVRS*, zero-extending VMOVD/VMOVW, EVEX SM4 vs the independent model
+rem ref_avx10_b.py, Unicorn only with the AVX10.2 opt-in (UC_CTL_X86_AVX10 = 2).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_avx10_b.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
+rem U445 x U147 / U236 / U373 / U404: MXCSR.UM / OM = 0 must not reach the forms that behave as if
+rem every MXCSR exception were masked ({er} / {sae}, VRCP14, BF16, VCVT2PS2PHX); hand-derived cases.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_sae_unmasked.txt" --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
 
 rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
@@ -108,6 +125,10 @@ call :hw_zero cases_dp_nan
 rem ledger U434: one hardware case per UC_X86_QUIRK_* behaviour (cases_quirks.txt): all match the
 rem i5-13600K with --quirks cpu (each one differs with --quirks 0, i.e. the SDM).
 call :hw_zero cases_quirks
+rem Decoder tables: no X86OpEntry table of decode-new.c.inc (with its included decode*.c.inc)
+rem names an element twice ([0x42] = A, ..., [0x42] = B compiles silently, the later one wins)
+rem in either build (__Use_Original_Qemu = 0 and = 1): Emulator\tools\check_decode_dups.py.
+call :py_check "%ROOT%Emulator\tools\check_decode_dups.py" "%ROOT%unicorn\qemu\target\i386"
 
 rem ledger U445-U447: SSE/AVX/FMA post-computation exceptions (gen_cases_sse_exc.py): ADD/SUB/MUL/DIV/
 rem SQRT, HADD/HSUB/ADDSUB, DPPS/DPPD, all 60 FMA3 forms, CVT*, ROUND, RCP/RSQRT, MIN/MAX/CMP x {masked,
@@ -125,6 +146,8 @@ echo [test] OK: all suites passed
 exit /b 0
 
 :suite
+rem %1 = test executable, up to 9 arguments after it (shifted below)
+set "SUITE=%~1"
 set "EXE=%TESTS%\%~1.exe"
 echo.
 echo [test] ===== %~1
@@ -133,12 +156,32 @@ if not exist "%EXE%" (
     set /a FAILED+=1
     exit /b 0
 )
-"%EXE%" %2 %3 %4 %5 %6 %7 %8 %9
+shift
+"%EXE%" %1 %2 %3 %4 %5 %6 %7 %8 %9
 if errorlevel 1 (
-    echo [test] %~1 FAILED
+    echo [test] !SUITE! FAILED
     set /a FAILED+=1
 ) else (
-    echo [test] %~1 passed
+    echo [test] !SUITE! passed
+)
+exit /b 0
+
+:py_check
+rem %1 = python script, %2 = its argument; python must be on PATH
+echo.
+echo [test] ===== python %~nx1
+where python >nul 2>nul
+if errorlevel 1 (
+    echo [test] python not found - %~nx1 cannot run
+    set /a FAILED+=1
+    exit /b 0
+)
+python -I %1 %2
+if errorlevel 1 (
+    echo [test] %~nx1 FAILED
+    set /a FAILED+=1
+) else (
+    echo [test] %~nx1 passed
 )
 exit /b 0
 

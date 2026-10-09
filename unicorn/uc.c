@@ -3272,6 +3272,7 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             /* U128: mask of UC_X86_AVX512_F/DQ/BW; non-zero implies F; U140: + VL;
              * U320: + CD; U322: + IFMA; U323: + VPOPCNTDQ; U324: + BITALG;
              * U325: + VBMI */
+#if __Use_Original_Qemu == 1 /* original QEMU (U330) */
             if (uc->init_done ||
                 (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
                         UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
@@ -3281,6 +3282,21 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             } else {
                 uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
             }
+#else /* ours (U330) */
+            /* U330: + FP16 (implies BW: SDM Vol1 15.2.2) */
+            if (uc->init_done ||
+                (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
+                        UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
+                        UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG |
+                        UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16))) {
+                err = UC_ERR_ARG;
+            } else {
+                if (on & UC_X86_AVX512_FP16) {
+                    on |= UC_X86_AVX512_BW;
+                }
+                uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
+            }
+#endif /* __Use_Original_Qemu (U330) */
         } else {
             err = UC_ERR_ARG;
         }
@@ -3300,6 +3316,29 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_amx = mask ? (mask | UC_X86_AMX_TILE) : 0;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_AVX10:
+        /* NoVmp U370: AVX10 version (1 or 2) | UC_X86_AVX10_V1_AUX, 0 = none; fixed once
+           the CPU exists */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *version = va_arg(args, int *);
+            *version = uc->x86_avx10;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int version = va_arg(args, int);
+            int v = version & UC_X86_AVX10_VERSION;
+            if (uc->init_done ||
+                (version & ~(UC_X86_AVX10_VERSION | UC_X86_AVX10_V1_AUX)) ||
+                v > UC_X86_AVX10_2 || (version && !v)) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_avx10 = version;
             }
         } else {
             err = UC_ERR_ARG;

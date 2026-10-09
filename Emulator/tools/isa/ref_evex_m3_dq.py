@@ -551,7 +551,9 @@ def gen_packed(sp):
     ud.append(("L'L = 11b", dict(ll=3)))
     if lay == "rvm" and sp["op"] != "mullq":
         ud.append(("EVEX.W%d" % (1 - w), dict(w=1 - w)))
-    if sp["mmm"] == 1:
+    # a wrong prefix: F3 for map 1 and for 0F3A 56/66 W0 (whose NP W0 forms are the
+    # AVX512-FP16 VREDUCEPH / VFPCLASSPH, enabled by emu-alltest --avx512), NP otherwise
+    if sp["mmm"] == 1 or (sp["opc"] in (0x56, 0x66) and w == 0):
         ud.append(("prefix F3", dict(pp=2)))
     else:
         ud.append(("prefix NP", dict(pp=0)))

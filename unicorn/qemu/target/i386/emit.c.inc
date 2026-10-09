@@ -2467,7 +2467,257 @@ static void gen_EVEX_VFIXUPIMM(DisasContext *s, CPUX86State *env, X86DecodedInsn
     tcg_temp_free_ptr(tcg_ctx, pd);
 }
 #endif /* __Use_Original_Qemu (U240) */
+#if __Use_Original_Qemu != 1 /* ours (U333) */
+/* NoVmp (ledgers U333-U339): AVX512-FP16 */
+#include "emit_fp16.c.inc"
+#endif /* __Use_Original_Qemu (U333) */
+#if __Use_Original_Qemu != 1 /* ours (U372) */
+#include "emit-avx10.c.inc"
+#endif /* __Use_Original_Qemu (U372) */
 
+#if __Use_Original_Qemu != 1 /* ours (U402) */
+
+/*
+ * NoVmp (ledger U402): AVX10.2 FP16 -> FP8 conversions. The opmask selects destination
+ * bytes while EVEX.b and disp8*N use the FP16 source element (ev_es 16), so the helper
+ * builds the whole destination register (merging/zeroing per byte, zero above the
+ * converted bytes) and the engine's writeback is skipped (op[0] unit X86_OP_SKIP). The
+ * sources are already loaded (and {1toN} replicated) by gen_evex_insn.
+ * desc: bits 7:0 VL in bytes, bit 8 zeroing, bits 10:9 kind (0 one source, 1 two sources,
+ * 2 bias), bit 11 HF8 (E4M3; else BF8 E5M2), bit 12 saturating.
+ */
+#define AVX10B_Z        (1u << 8)
+
+static TCGv_i64 gen_avx10b_kmask(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+    if (s->evex_aaa) {
+        tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    } else {
+        tcg_gen_movi_i64(tcg_ctx, k, -1);
+    }
+    return k;
+}
+
+static void gen_avx10b_cvt_fp8(DisasContext *s, X86DecodedInsn *decode, int kind)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool map5 = (s->evex_p0 & 7) == 5;
+    bool hf8 = decode->b != 0x74;
+    bool sat = decode->b == 0x1b || (decode->b == 0x74 && map5);
+    uint32_t desc = s->evex_vl | (s->evex_z ? AVX10B_Z : 0) | ((uint32_t)kind << 9) |
+                    (hf8 ? 1u << 11 : 0) | (sat ? 1u << 12 : 0);
+    TCGv_i64 k = gen_avx10b_kmask(s);
+    TCGv_ptr d = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_avx10b_cvt_fp8(tcg_ctx, cpu_env, d, kind ? OP_PTR1 : OP_PTR2, OP_PTR2, k,
+                              tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, d);
+    tcg_temp_free_i64(tcg_ctx, k);
+    decode->op[0].unit = X86_OP_SKIP;
+}
+
+static void gen_EVEX_VCVTPH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 0);
+}
+
+static void gen_EVEX_VCVT2PH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 1);
+}
+
+static void gen_EVEX_VCVTBIASPH2F8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_avx10b_cvt_fp8(s, decode, 2);
+}
+#endif /* __Use_Original_Qemu (U402) */
+#if __Use_Original_Qemu != 1 /* ours (U403) */
+
+/* NoVmp (ledger U403): VCVTHF82PH: VL/2 E4M3 bytes -> FP16 words; masking by gen_evex_insn */
+static void gen_EVEX_VCVTHF82PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_avx10b_cvthf82ph(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                                tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U403) */
+#if __Use_Original_Qemu != 1 /* ours (U404) */
+
+/*
+ * NoVmp (ledger U404): VCVT2PS2PHX: the helper converts the active elements only (no flag
+ * from a masked-off one), merges/zeroes per FP16 word and updates MXCSR as if every
+ * exception were masked (never #XM); {er}: static rounding, no flags. desc: bits 7:0 VL in
+ * bytes, bit 8 zeroing, bits 14:12 = {er} rounding control + 1 (0 = MXCSR.RC).
+ */
+static void gen_EVEX_VCVT2PS2PHX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = s->evex_vl | (s->evex_z ? AVX10B_Z : 0) |
+                    ((uint32_t)(s->evex_rc >= 0 ? s->evex_rc + 1 : 0) << 12);
+    TCGv_i64 k = gen_avx10b_kmask(s);
+    TCGv_ptr d = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
+
+    gen_helper_avx10b_cvt2ps2phx(tcg_ctx, cpu_env, d, OP_PTR1, OP_PTR2, k,
+                                 tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, d);
+    tcg_temp_free_i64(tcg_ctx, k);
+    decode->op[0].unit = X86_OP_SKIP;
+}
+#endif /* __Use_Original_Qemu (U404) */
+#if __Use_Original_Qemu != 1 /* ours (U405) */
+
+/*
+ * NoVmp (ledger U405, U406): EVEX VPDPB[SS,SU,UU]D[S], VPDPW[SU,US,UU]D[S]: the ops_sse.h
+ * helpers of the VEX forms (U85, U86) at 128/256/512 bits (SSE_FN3). They accumulate into
+ * DEST: with masking gen_evex_insn sends the result to evex_t1, which then starts as DEST.
+ */
+static void gen_avx10b_acc_dest(DisasContext *s, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int vl = vector_len(s, decode), dst = ZMM_OFFSET(decode->op[0].n);
+
+    if (decode->op[0].offset != dst) {
+        tcg_gen_gvec_mov(tcg_ctx, MO_64, decode->op[0].offset, dst, vl, vl);
+    }
+}
+
+#define AVX10B_VNNI(uname, lname)                                                    \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                    \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                            \
+                                                                                     \
+    gen_avx10b_acc_dest(s, decode);                                                  \
+    SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);          \
+}
+AVX10B_VNNI(VPDPBSSD, vpdpbssd)
+AVX10B_VNNI(VPDPBSSDS, vpdpbssds)
+AVX10B_VNNI(VPDPBSUD, vpdpbsud)
+AVX10B_VNNI(VPDPBSUDS, vpdpbsuds)
+AVX10B_VNNI(VPDPBUUD, vpdpbuud)
+AVX10B_VNNI(VPDPBUUDS, vpdpbuuds)
+#endif /* __Use_Original_Qemu (U405) */
+#if __Use_Original_Qemu != 1 /* ours (U406) */
+AVX10B_VNNI(VPDPWSUD, vpdpwsud)
+AVX10B_VNNI(VPDPWSUDS, vpdpwsuds)
+AVX10B_VNNI(VPDPWUSD, vpdpwusd)
+AVX10B_VNNI(VPDPWUSDS, vpdpwusds)
+AVX10B_VNNI(VPDPWUUD, vpdpwuud)
+AVX10B_VNNI(VPDPWUUDS, vpdpwuuds)
+#endif /* __Use_Original_Qemu (U406) */
+#if __Use_Original_Qemu != 1 /* ours (U407) */
+
+/* NoVmp (ledger U407): VDPPHPS (accumulates into DEST like the VNNI forms) */
+static void gen_EVEX_VDPPHPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_avx10b_acc_dest(s, decode);
+    gen_helper_avx10b_vdpphps(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U407) */
+#if __Use_Original_Qemu != 1 /* ours (U408) */
+
+/*
+ * NoVmp (ledger U408): EVEX VMPSADBW: the ops_sse.h mpsadbw helpers per 128-bit lane pair
+ * (imm8[2:0] for lanes 0/2, imm8[5:3] for lanes 1/3: the 512-bit form replicates the
+ * control of the lower two lanes to the upper two, spec 10.2); masking per word by
+ * gen_evex_insn.
+ */
+static void gen_EVEX_VMPSADBW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 imm = tcg_constant_i32(tcg_ctx, decode->immediate & 0xff);
+
+    if (s->evex_vl == 16) {
+        gen_helper_mpsadbw_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, imm);
+    } else {
+        gen_helper_mpsadbw_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2, imm);
+        if (s->evex_vl == 64) {
+            TCGv_ptr d = tcg_temp_new_ptr(tcg_ctx);
+            TCGv_ptr v = tcg_temp_new_ptr(tcg_ctx);
+            TCGv_ptr w = tcg_temp_new_ptr(tcg_ctx);
+
+            tcg_gen_addi_ptr(tcg_ctx, d, OP_PTR0, 32);
+            tcg_gen_addi_ptr(tcg_ctx, v, OP_PTR1, 32);
+            tcg_gen_addi_ptr(tcg_ctx, w, OP_PTR2, 32);
+            gen_helper_mpsadbw_ymm(tcg_ctx, cpu_env, d, v, w, imm);
+            tcg_temp_free_ptr(tcg_ctx, d);
+            tcg_temp_free_ptr(tcg_ctx, v);
+            tcg_temp_free_ptr(tcg_ctx, w);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U408) */
+#if __Use_Original_Qemu != 1 /* ours (U410) */
+
+/*
+ * NoVmp (ledger U410, U411): zero-extending VMOVD / VMOVW (op[0] = destination, op[2] =
+ * source, 32 or 16 bits). Register destination: DEST[MAXVL-1:size] := 0 (bits 511:128 by
+ * gen_evex_insn); memory destination: a plain store of the element (no masking), the
+ * engine's masked store is skipped.
+ */
+static void gen_EVEX_VMOVZX_LD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+    int dst = ZMM_OFFSET(decode->op[0].n);
+
+    if (decode->op[2].ot == MO_16) {
+        tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    } else {
+        tcg_gen_ld_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    }
+    tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst, 16, 16, 0);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, dst);
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+
+static void gen_EVEX_VMOVZX_ST(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    MemOp ot = decode->op[0].ot;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    if (ot == MO_16) {
+        tcg_gen_ld16u_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    } else {
+        tcg_gen_ld_i32(tcg_ctx, t, cpu_env, decode->op[2].offset);
+    }
+    if (decode->op[0].has_ea) {
+        tcg_gen_extu_i32_tl(tcg_ctx, s->T0, t);
+        gen_op_st_v(s, ot, s->T0, s->A0);
+        decode->op[0].unit = X86_OP_SKIP;
+    } else {
+        int dst = ZMM_OFFSET(decode->op[0].n);
+
+        tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, dst, 16, 16, 0);
+        tcg_gen_st_i32(tcg_ctx, t, cpu_env, dst);
+    }
+    tcg_temp_free_i32(tcg_ctx, t);
+}
+#endif /* __Use_Original_Qemu (U410) */
+#if __Use_Original_Qemu != 1 /* ours (U412) */
+
+/* NoVmp (ledger U412): EVEX VSM4KEY4 / VSM4RNDS4, 128-bit lanes at 128/256/512 bits */
+static void gen_EVEX_VSM4KEY4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, vsm4key4)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_VSM4RNDS4(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, vsm4rnds4)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+#endif /* __Use_Original_Qemu (U412) */
 static void gen_store_sse(DisasContext *s, X86DecodedInsn *decode, int src_ofs)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
