@@ -1,0 +1,5 @@
+# emu-alltest --full / quick (U530): forms whose hardware difference is a documented i5-13600K
+# deviation from the Intel SDM (docs/quirks.md). The emulator implements the SDM only; these forms
+# are reported in the bucket "known deviation (docs/quirks.md)" instead of "differs" / "unicorn-#UD",
+# and in "known deviation not observed (matches)" when the run did not show the deviation.
+# One form per line: <form text exactly as in alltest.csv><TAB><docs/quirks.md entry name>

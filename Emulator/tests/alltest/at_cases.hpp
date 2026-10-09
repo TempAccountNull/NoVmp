@@ -63,17 +63,28 @@
 // state itself is not a checked field (the cases store their results to memory). --avx10 N opts in
 // to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; AVX-512 CPUID bits stay off unless
 // --avx512 is given too) for Emulator\data\cases_avx10_a.txt.
-// Output: "[n] SAME|DIFF <line>", the engines' lines, then "cases: N, differing: M" over both kinds;
-// when the file has expected-value cases (or --expect-only skipped lines) a second summary line
+// Tags (U530, hardware cases only), a trailing comment on the case line:
+//   # known deviation: NAME   the i5-13600K deviates from the SDM here and the emulator implements
+//                             the SDM; NAME is the docs\quirks.md entry
+//   # host state: REASON      the host's state differs from the emulator's (RDRAND values, APIC ID,
+//                             CET shadow stacks the host OS leaves off, ...), not an SDM question
+// A tagged case that differs is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as
+// differing; a tagged case that matches is listed as "not observed" (stale tag, or a CPU that
+// sometimes takes the SDM path).
+// Output: "[n] SAME|DIFF|KNOWN DEVIATION|HOST STATE <line>", the engines' lines, then
+// "cases: N, differing: M, known deviations: K, host state: H" (M = untagged cases of both kinds
+// that differ), one line per tag name, and the tagged cases that were not observed; when the file
+// has expected-value cases (or --expect-only skipped lines) a second summary line
 // "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Exit status 1 when an
 // expected-value case differs or cannot be parsed/assembled/run; hardware-case differences never
-// fail the run (they are the work list).
+// fail the run (they are the work list; test.cmd requires "differing: 0" for its hardware files).
 #pragma once
 #include "at_engine.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 namespace at
@@ -326,6 +337,28 @@ namespace at
 
 	static std::string fault_text( bool faulted, int vector ) { return faulted ? "fault #" + std::to_string( vector ) + " " : ""; }
 
+	// U530: trailing tag of a hardware case, "# known deviation: NAME" (a CPU-vs-SDM deviation
+	// documented in docs\quirks.md; the emulator implements the SDM) or "# host state: REASON"
+	// (the host's state differs from the emulator's, e.g. RDRAND values, the APIC ID, CET shadow
+	// stacks Windows does not enable). Returns the kind ("" = untagged) and strips the tag.
+	static std::string case_tag( std::string& line, std::string& name )
+	{
+		static const char* kinds[] = { "known deviation", "host state" };
+		for ( const char* k : kinds )
+		{
+			std::string key = std::string( "# " ) + k + ":";
+			size_t p = line.find( key );
+			if ( p == std::string::npos ) continue;
+			name = line.substr( p + key.size() );
+			name.erase( 0, name.find_first_not_of( " \t" ) );
+			while ( !name.empty() && ( name.back() == ' ' || name.back() == '\t' ) ) name.pop_back();
+			line.erase( p );
+			while ( !line.empty() && ( line.back() == ' ' || line.back() == '\t' ) ) line.pop_back();
+			return k;
+		}
+		return "";
+	}
+
 	static int run_cases( const std::string& path, uint32_t hw_quirks, uint32_t exp_quirks, const case_opts& opt = {} )
 	{
 		std::ifstream f( path );
@@ -336,10 +369,21 @@ namespace at
 		std::string line;
 		int n = 0, differ = 0;
 		int exp_n = 0, exp_differ = 0, exp_errors = 0, skipped = 0;
+		// U530: tagged hardware cases (see case_tag): differing ones per tag name, matching ones listed
+		std::map<std::string, int> known, host;
+		std::vector<std::string> not_observed;
+		int known_n = 0, host_n = 0;
 		while ( std::getline( f, line ) )
 		{
 			if ( !line.empty() && line.back() == '\r' ) line.pop_back();
 			if ( line.empty() || line[ 0 ] == '#' ) continue;
+			std::string tag_name, tag_kind = case_tag( line, tag_name );
+			if ( !tag_kind.empty() && ( line.find( "=>" ) != std::string::npos || tag_name.empty() ) )
+			{
+				std::printf( "[%d] %s\n    bad tag: \"# %s:\" needs a name and belongs to hardware cases only\n", n, line.c_str(), tag_kind.c_str() );
+				++exp_errors;
+				continue;
+			}
 			// "=>" / "=>!" splits off the expectations (expected-value case: Unicorn only)
 			size_t arrow = line.find( "=>" );
 			bool expect = arrow != std::string::npos, loose = false;
@@ -443,14 +487,31 @@ namespace at
 			bool same_fault = h.faulted == u.faulted && h.vector == u.vector;
 			std::string hd = case_fields( *st_in, *h.s ), ud = case_fields( *st_in, *u.s ), x = case_fields( *h.s, *u.s );
 			bool same = same_fault && x.empty();
-			differ += !same;
-			std::printf( "[%d] %s %s\n", n, same ? "SAME" : "DIFF", line.c_str() );
+			// U530: a tagged case that differs is counted under its tag, not as differing; a tagged
+			// case that matches is listed (the deviation was not observed: stale tag or a CPU that
+			// sometimes takes the SDM path)
+			const char* verdict = same ? "SAME" : "DIFF";
+			if ( tag_kind.empty() ) differ += !same;
+			else if ( same )
+			{
+				not_observed.push_back( "[" + std::to_string( n ) + "] " + tag_kind + ": " + tag_name );
+				verdict = "SAME (tagged, not observed)";
+			}
+			else if ( tag_kind == "known deviation" ) { ++known[ tag_name ]; ++known_n; verdict = "KNOWN DEVIATION"; }
+			else { ++host[ tag_name ]; ++host_n; verdict = "HOST STATE"; }
+			std::printf( "[%d] %s %s%s\n", n, verdict, line.c_str(), tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name ).c_str() );
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
 			++n;
 		}
-		std::printf( "cases: %d, differing: %d\n", n, differ );
+		// U530: "differing" counts only untagged cases (hardware and expected-value); tagged hardware
+		// cases that differ are counted per tag (docs\quirks.md names / host-state reasons)
+		std::printf( "cases: %d, differing: %d, known deviations: %d, host state: %d\n", n, differ, known_n, host_n );
+		for ( auto& [ k, v ] : known ) std::printf( "known deviation: %s: %d\n", k.c_str(), v );
+		for ( auto& [ k, v ] : host ) std::printf( "host state: %s: %d\n", k.c_str(), v );
+		std::printf( "tagged but not observed (matched the hardware): %zu\n", not_observed.size() );
+		for ( auto& s : not_observed ) std::printf( "  not observed %s\n", s.c_str() );
 		std::printf( "quirks: hardware cases 0x%X, expected-value cases 0x%X\n", hw_quirks, exp_quirks );
 		// U435: the CPUID profile and the strict setting Unicorn used
 		if ( opt.cpuid.empty() )

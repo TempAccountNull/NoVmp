@@ -45,10 +45,32 @@
 
 namespace at
 {
-	enum bucket { MATCH, DIFF, UC_MISSING, HOST_LACKS_UC_UD, HOST_LACKS_UC_RUNS, NOT_NATIVE_UC_RUNS, NOT_NATIVE_UC_UD, PRIV, HARNESS_ERROR, BUCKET_COUNT };
+	enum bucket { MATCH, DIFF, UC_MISSING, HOST_LACKS_UC_UD, HOST_LACKS_UC_RUNS, NOT_NATIVE_UC_RUNS, NOT_NATIVE_UC_UD, PRIV, HARNESS_ERROR,
+				  KNOWN_DEV, KNOWN_DEV_NOT_OBSERVED, BUCKET_COUNT };
 	static const char* k_bucket_name[ BUCKET_COUNT ] = {
 		"match", "differs", "unicorn-#UD (hw runs it)", "host lacks + unicorn #UD", "host lacks, unicorn runs (needs SDM check)",
-		"not native-safe, unicorn runs (needs SDM check)", "not native-safe, unicorn #UD", "privileged (CPL0 in raw unicorn; Phase 2 CPL3)", "harness error" };
+		"not native-safe, unicorn runs (needs SDM check)", "not native-safe, unicorn #UD", "privileged (CPL0 in raw unicorn; Phase 2 CPL3)", "harness error",
+		"known deviation (docs/quirks.md)", "known deviation not observed (matches)" };
+
+	// U530: Emulator\data\alltest_known_deviations.tsv, "<form text>\t<docs/quirks.md name>" per line
+	// ('#' comments): forms where the i5-13600K deviates from the SDM the emulator implements. Such a
+	// form that differs (or that only Unicorn #UDs) lands in KNOWN_DEV, one that matches in
+	// KNOWN_DEV_NOT_OBSERVED (a stale entry, or random inputs that never reached the deviation).
+	static std::map<std::string, std::string> load_known_deviations( const std::string& path )
+	{
+		std::map<std::string, std::string> m;
+		std::ifstream f( path );
+		std::string line;
+		while ( std::getline( f, line ) )
+		{
+			if ( !line.empty() && line.back() == '\r' ) line.pop_back();
+			if ( line.empty() || line[ 0 ] == '#' ) continue;
+			size_t t = line.find( '\t' );
+			if ( t == std::string::npos ) continue;
+			m[ line.substr( 0, t ) ] = line.substr( t + 1 );
+		}
+		return m;
+	}
 
 	// ── randomized state (ported from the old difftest) ───────────────────────────────────
 	static std::mt19937_64 g_rng( 0x5EED1234 );
@@ -340,6 +362,8 @@ int main( int argc, char** argv )
 	std::filesystem::create_directories( out_dir );
 	std::filesystem::path root = exe_dir / ".." / ".." / ".." / "..";          // build\x64\Release\tests -> NoVmp root
 	std::string manual_tsv = ( root / "Emulator" / "data" / "isa_manual_forms.tsv" ).lexically_normal().string();
+	std::string known_tsv = ( root / "Emulator" / "data" / "alltest_known_deviations.tsv" ).lexically_normal().string();
+	const std::map<std::string, std::string> known_dev = load_known_deviations( known_tsv );
 
 	unsigned maj = 0, min = 0; uc_version( &maj, &min );
 	std::printf( "emu-alltest: Unicorn %u.%u UC_CPU_X86_MAX vs host CPU | mode %s | iterations %d | sample 1/%d | quirks 0x%X\n",
@@ -376,6 +400,21 @@ int main( int argc, char** argv )
 		if ( !filter.empty() && f.text.find( filter ) == std::string::npos && f.key.find( filter ) == std::string::npos && f.groups.find( filter ) == std::string::npos ) continue;
 		if ( idx++ % size_t( sample ) ) continue;
 		rows.push_back( { &f, run_form( f, hw, iters, quirks ) } );
+		auto kd = known_dev.find( f.text );
+		if ( kd != known_dev.end() )
+		{
+			form_result& r = rows.back().r;
+			if ( r.b == DIFF || r.b == UC_MISSING )
+			{
+				r.detail = "known deviation: " + kd->second + "; " + r.detail;
+				r.b = KNOWN_DEV;
+			}
+			else if ( r.b == MATCH )
+			{
+				r.detail = "known deviation not observed: " + kd->second;
+				r.b = KNOWN_DEV_NOT_OBSERVED;
+			}
+		}
 		if ( rows.size() % 500 == 0 ) std::printf( "  ... %zu forms run\n", rows.size() );
 	}
 	double run_s = std::chrono::duration<double>( std::chrono::steady_clock::now() - t1 ).count();
@@ -434,7 +473,8 @@ int main( int argc, char** argv )
 	for ( auto& [ k, v ] : per_cls ) md << k << " " << v << ", ";
 	md << "). Run: **" << rows.size() << " forms** in " << int( run_s ) << " s.\n\n## Buckets\n\n| bucket | forms |\n|---|---|\n";
 	for ( int b = 0; b < BUCKET_COUNT; ++b ) md << "| " << k_bucket_name[ b ] << " | " << count[ b ] << " |\n";
-	md << "\n## Per ISA group (Capstone groups)\n\n| group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error |\n|---|---|---|---|---|---|---|---|---|---|\n";
+	md << "\nKnown deviations: " << known_dev.size() << " forms listed in `Emulator\\data\\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).\n";
+	md << "\n## Per ISA group (Capstone groups)\n\n| group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n";
 	for ( auto& [ g, c ] : per_group )
 	{
 		md << "| " << g;
@@ -444,6 +484,10 @@ int main( int argc, char** argv )
 	md << "\n## Differences (first iteration that differs)\n\n";
 	for ( auto& r : rows )
 		if ( r.r.b == DIFF || r.r.b == UC_MISSING || r.r.b == HARNESS_ERROR )
+			md << "- `" << r.f->text << "` (" << r.f->groups << ", " << k_bucket_name[ r.r.b ] << ", " << r.r.iters_diff << "/" << r.r.iters << "): " << r.r.detail << "\n";
+	md << "\n## Known deviations (docs/quirks.md)\n\n";
+	for ( auto& r : rows )
+		if ( r.r.b == KNOWN_DEV || r.r.b == KNOWN_DEV_NOT_OBSERVED )
 			md << "- `" << r.f->text << "` (" << r.f->groups << ", " << k_bucket_name[ r.r.b ] << ", " << r.r.iters_diff << "/" << r.r.iters << "): " << r.r.detail << "\n";
 	md << "\n## Manual forms not reachable by the sweep yet\n\n" << manual_unreached << " of " << manual_forms
 	   << " forms in `Emulator\\data\\isa_manual_forms.tsv` have a mnemonic/encoding Capstone 6 never produced (no decoder yet - plan 5.3/5.3b; some are naming differences to review):\n\n";

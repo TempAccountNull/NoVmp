@@ -212,7 +212,8 @@ if errorlevel 1 (
 exit /b 0
 
 :hw_zero
-rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary.
+rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary (U530: cases
+rem tagged "# known deviation: NAME" (docs\quirks.md) or "# host state: REASON" are counted apart).
 rem %1 = case file name without .txt; runs with the i5-13600K quirk set (--quirks cpu).
 rem ledger U435: no --strict: a CPUID profile is strict by default (features it hides #UD);
 rem the summary must say so.
@@ -227,7 +228,7 @@ if not exist "%EXE%" (
 )
 "%EXE%" --cases "%ROOT%Emulator\data\%~1.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --xcr0 7 --quirks cpu > "%NANLOG%"
 set "RC=!errorlevel!"
-findstr /R /B /C:"cases: [0-9]*, differing: 0$" "%NANLOG%"
+findstr /R /B /C:"cases: [0-9]*, differing: 0, known deviations: [0-9]*, host state: [0-9]*" "%NANLOG%"
 if errorlevel 1 (
     findstr /B /C:"cases:" "%NANLOG%"
     echo [test] %~1 FAILED: hardware and Unicorn differ, see %NANLOG%
@@ -236,6 +237,8 @@ if errorlevel 1 (
     echo [test] %~1 FAILED: exit status !RC!
     set /a FAILED+=1
 ) else (
+    rem U530: tagged cases per docs\quirks.md deviation / host-state reason, and stale tags
+    findstr /B /C:"known deviation: " /C:"host state: " /C:"tagged but not observed" /C:"  not observed " "%NANLOG%"
     findstr /B /C:"cpuid: profile" "%NANLOG%" | findstr /C:"strict on (default with a profile)" >nul
     if errorlevel 1 (
         echo [test] %~1 FAILED: the CPUID profile was not strict by default ^(U435^)
