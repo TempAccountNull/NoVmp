@@ -13504,6 +13504,33 @@ static void test_x86_bp_rep_string_rf(void)
     TEST_MSG("rflags at the end %" PRIx64, fl);
     m0_close(&m);
 }
+
+/*
+ * U483 (backport 51aa3f3e05): SYSRETQ with a non-canonical RCX is #GP(0) on Intel (SDM Vol2B
+ * SYSRET) before any state changes: RFLAGS is not loaded from R11 and CS stays.
+ */
+static void test_x86_bp_sysret_canonical(void)
+{
+    static const char sysretq[] = "\x48\x0f\x07";
+    M0 m;
+    uc_x86_msr efer = {0xc0000080, 0}, star = {0xc0000081, 0x0013000800000000ULL};
+
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    OK(uc_reg_read(m.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1;                                            /* SCE */
+    OK(uc_reg_write(m.uc, UC_X86_REG_MSR, &efer));
+    OK(uc_reg_write(m.uc, UC_X86_REG_MSR, &star));
+    m0_set(&m, UC_X86_REG_R11, 0x246 | 0x400);                  /* DF in the new RFLAGS */
+    m0_set(&m, UC_X86_REG_RCX, 0x0000800000000000ULL);          /* non-canonical */
+    TEST_CHECK(m0_run(&m, sysretq, 3) == 13);
+    TEST_CHECK(!(m0_get(&m, UC_X86_REG_RFLAGS) & 0x400));
+    TEST_CHECK((m0_get(&m, UC_X86_REG_CS) & 3) == 0);
+    m0_set(&m, UC_X86_REG_RCX, m.pc + 3);                       /* canonical: returns there */
+    TEST_CHECK(m0_run(&m, sysretq, 3) == -1);
+    TEST_CHECK((m0_get(&m, UC_X86_REG_CS) & 0xffff) == 0x23);   /* STAR[63:48] + 16, RPL 3 */
+    TEST_CHECK(m0_get(&m, UC_X86_REG_RFLAGS) & 0x400);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13720,4 +13747,5 @@ TEST_LIST = {
     {"test_x86_bp_x87_no_partial", test_x86_bp_x87_no_partial},
     {"test_x86_bp_far_ret_call_cpl3_smap", test_x86_bp_far_ret_call_cpl3_smap},
     {"test_x86_bp_rep_string_rf", test_x86_bp_rep_string_rf},
+    {"test_x86_bp_sysret_canonical", test_x86_bp_sysret_canonical},
     {NULL, NULL}};
