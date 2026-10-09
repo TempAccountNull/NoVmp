@@ -1657,6 +1657,26 @@ void helper_ss_ret(CPUX86State *env, target_ulong ret_ip)
 }
 
 #endif /* __Use_Original_Qemu (U115) */
+#if __Use_Original_Qemu != 1 /* ours (U780) */
+/*
+ * NoVmp (ledger U780): a near CALL with shadow stacks stores the return address on the data
+ * stack, then pushes it on the shadow stack (helper_ss_call). A fault on the shadow-stack
+ * push (#PF with the SS bit, #GP(0) for a non-canonical SSP, memory Unicorn has not mapped
+ * or maps read-only) left the data-stack slot written although RSP, SSP and RIP were
+ * unchanged; SDM Vol3A 6.15: the faulting instruction writes nothing. Both slots are now
+ * checked first, the data-stack slot before the shadow-stack one (the CALL pseudocode order,
+ * so a data-stack fault still comes first), without writing anything (x86_probe_write).
+ */
+void helper_ss_call_probe(CPUX86State *env, target_ulong data_la, uint32_t size)
+{
+    uintptr_t ra = GETPC();
+    uint32_t sz = cet_lm(env) ? 8 : 4;
+
+    x86_probe_write(env, data_la, size, ra);
+    x86_probe_write_la(env, ss_addr(env, env->ssp - sz, ra), sz, cet_ss_idx(env, false), ra);
+}
+
+#endif /* __Use_Original_Qemu (U780) */
 #if __Use_Original_Qemu != 1 /* ours (U116) */
 /*
  * NoVmp (ledger U116): CET indirect branch tracking (SDM Vol1 18.3; Vol2 CALL,

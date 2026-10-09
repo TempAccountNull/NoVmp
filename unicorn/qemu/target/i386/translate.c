@@ -3271,6 +3271,10 @@ static void gen_push_call(DisasContext *s, TCGv val, bool ss)
         }
         gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
     }
+#if __Use_Original_Qemu != 1 /* ours (U780) */
+    /* U780: the data-stack and shadow-stack slots are checked before either is written */
+    gen_helper_ss_call_probe(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, size));
+#endif /* __Use_Original_Qemu (U780) */
     gen_op_st_v(s, d_ot, val, s->A0);
     if (new_esp == s->A0) {
         new_esp = s->tmp4;

@@ -19988,6 +19988,34 @@ static void test_x86_fx4_store_evex(void)
     TEST_MSG("EVEX stores: %d of %d checks failed", bad, n);
 }
 
+/*
+ * U780: a near CALL whose shadow-stack push faults (#PF: SSP on an ordinary page, nv_paging_ss's
+ * map) writes nothing: the data-stack slot keeps its bytes, RSP and SSP stay (SDM Vol3A 6.15).
+ */
+static void test_x86_fx4_call_ss_pf(void)
+{
+    NvRun r;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    nv_wrmsr(&r, 0x6a2, 3);
+    nv_set(&r, UC_X86_REG_SSP, 0x303000);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_st64(&r, 0x2017f8, 0x5a5a5a5a5a5a5a5aULL);
+    OK(nv_run(&r, "\xe8\x02\x00\x00\x00\xeb\x01\xc3"));
+    {
+        uint64_t rsp = nv_get(&r, UC_X86_REG_RSP), ssp = nv_get(&r, UC_X86_REG_SSP);
+        uint64_t slot = nv_ld64(&r, 0x2017f8);
+
+        TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14 && rsp == 0x201800 && ssp == 0x303000 &&
+                   slot == 0x5a5a5a5a5a5a5a5aULL);
+        TEST_MSG("call, shadow-stack #PF: intr %u/%u rsp %" PRIx64 " ssp %" PRIx64
+                 " data slot %016" PRIx64, r.cap.count, r.cap.intno, rsp, ssp, slot);
+    }
+    fx4_pf(r.uc, 0x43, 0x302ff8, "call: shadow-stack push to an ordinary page");
+    OK(uc_close(r.uc));
+}
+
 /* U777-U780: every instruction of the table */
 static void test_x86_fx4_store_partial(void)
 {
@@ -21793,4 +21821,6 @@ TEST_LIST = {
     {"test_x86_fx4_store_stop", test_x86_fx4_store_stop},
     {"test_x86_fx4_store_prepare", test_x86_fx4_store_prepare},
     {"test_x86_fx4_store_evex", test_x86_fx4_store_evex},
+    {"test_x86_fx4_store_partial", test_x86_fx4_store_partial},
+    {"test_x86_fx4_call_ss_pf", test_x86_fx4_call_ss_pf},
     {NULL, NULL}};
