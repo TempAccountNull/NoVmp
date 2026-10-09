@@ -21,7 +21,8 @@
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
 //   --bench          performance benchmark (at_bench.hpp, ledger U500): [--reps N] [--filter S]
-//                    [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]; Unicorn only, own code only
+//                    [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]; Unicorn only, own code only;
+//                    --profile N also works with a quick/--full run (whole-run profile)
 //   --avx10 N        with --cases: Unicorn opts in to Intel AVX10 version N (UC_CTL_X86_AVX10 = N,
 //                    1 or 2; the AVX512* CPUID bits stay off) for the AVX10 expected-value cases
 //
@@ -394,6 +395,8 @@ int main( int argc, char** argv )
 	std::vector<row> rows;
 	size_t idx = 0;
 	auto t1 = std::chrono::steady_clock::now();
+	at::bench::sampler prof;   // --profile N with a quick/full run: hottest functions of the whole run (U500)
+	if ( bench_profile ) prof.start();
 	for ( auto& f : uv.forms )
 	{
 		if ( !filter.empty() && f.text.find( filter ) == std::string::npos && f.key.find( filter ) == std::string::npos && f.groups.find( filter ) == std::string::npos ) continue;
@@ -417,6 +420,7 @@ int main( int argc, char** argv )
 		if ( rows.size() % 500 == 0 ) std::printf( "  ... %zu forms run\n", rows.size() );
 	}
 	double run_s = std::chrono::duration<double>( std::chrono::steady_clock::now() - t1 ).count();
+	if ( bench_profile ) { prof.stop(); prof.report( bench_profile ); }
 
 	// CSV
 	{
