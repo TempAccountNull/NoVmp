@@ -285,6 +285,9 @@ Add-HwCmp 'ref_apx_core_hwcmp' 'hw apx' 'ref_apx_core.py' 'cases_apx_core_hw'
 # expected values from the independent model ref_apx_map4.py (Unicorn only, APX opt-in).
 Add-Exp 'cases_apx_map4' 'cases_apx_map4' 'apx expect' @( '--apx' )
 Add-PySelftest 'ref_apx_map4_selftest' 'apx tools' 'ref_apx_map4.py'
+# EVEX map 4 decode sweep: every opcode x pp x W x ND x NF x mod (x reg / V), #UD or fault-free, from
+# the APX spec table cross-checked against Intel XED (gen_apx_map4_sweep.py).
+Add-Exp 'cases_apx_map4_sweep' 'cases_apx_map4_sweep' 'apx expect' @( '--apx' )
 # U646: the APX-promoted KMOV* and AMX forms need AVX-512 and AMX as well.
 Add-Exp 'cases_apx_map4_ext' 'cases_apx_map4_ext' 'apx evex amx expect' @( '--apx', '--avx512', '--amx' )
 # The same instructions with R0-R15 only: the i5-13600K runs the legacy equivalent (ND = 1: MOV + op +
