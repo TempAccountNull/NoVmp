@@ -421,7 +421,13 @@ namespace at
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
 		// U540 (plan 1.H.2): XCR0 / CR0 per kind of case (0 = not written: Unicorn's reset value)
 		const uint64_t host_x = host_xcr0();
-		const uint64_t hw_xcr0 = opt.xcr0 ? opt.xcr0 : host_x, hw_cr0 = opt.cr0 ? opt.cr0 : WINDOWS_CR0;
+		// U547: the host OS state plus the components of features Unicorn is opted in to that the host
+		// lacks (an OS enabling them would set these bits): AVX-512/AVX10 7:5, AMX 18:17, APX 19.
+		uint64_t optin_x = 0;
+		if ( opt.avx512 || opt.avx10 ) optin_x |= 0xE0ull;
+		if ( opt.amx ) optin_x |= 0x60000ull;
+		if ( opt.apx ) optin_x |= 0x80000ull;
+		const uint64_t hw_xcr0 = opt.xcr0 ? opt.xcr0 : ( host_x ? ( host_x | optin_x ) : 0 ), hw_cr0 = opt.cr0 ? opt.cr0 : WINDOWS_CR0;
 		const uint64_t exp_xcr0 = opt.xcr0, exp_cr0 = opt.cr0;
 		{
 			// the effective values as an engine of this run starts with them (reset values included)
@@ -429,7 +435,7 @@ namespace at
 			{
 				unicorn_engine pe( UC_CPU_X86_MAX );
 				pe.cpuid = opt.cpuid; pe.strict = opt.strict; pe.xcr0 = x; pe.cr0 = c;
-				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10;
+				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx;
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
 				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }

@@ -278,7 +278,7 @@ Add-Exp 'cases_apx_evex' 'cases_apx_evex' 'apx evex expect' @( '--apx', '--avx51
 # The same instructions with R0-R15 only: legacy encoding on the i5-13600K vs the REX2 encoding on
 # Unicorn ("<legacy> ~~ <REX2>" pairs; --apx and NO CPUID profile, which would hide APX), 0 differing;
 # the CPU's results must also match the model (--hwcmp).
-Add-Suite 'cases_apx_core_hw' 'hw apx' 'hw' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_core_hw' ), '--apx' )
+Add-Suite 'cases_apx_core_hw' 'hw apx' 'hwnp' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_core_hw' ), '--apx' )
 Add-HwCmp 'ref_apx_core_hwcmp' 'hw apx' 'ref_apx_core.py' 'cases_apx_core_hw'
 
 # ---------------------------------------------------------------------------------------- selection
@@ -413,6 +413,15 @@ function Complete-Suite( $s )
 			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
 			elseif ( -not ( $lines | Where-Object { $_ -like 'cpuid: profile*' -and $_ -like '*strict on (default with a profile)*' } ) )
 			{ $s.Reason = 'the CPUID profile was not strict by default (U435)' }
+		}
+		'hwnp'
+		{
+			# U547: hardware pairs run WITHOUT a CPUID profile (it would hide an opt-in feature the host
+			# lacks, e.g. APX: "<legacy on the CPU> ~~ <REX2 on Unicorn>"); nothing may differ and no
+			# case may need a known-deviation or host-state tag.
+			if ( -not ( $lines | Where-Object { $_ -match '^cases: [0-9]+, differing: 0, known deviations: 0, host state: 0' } ) )
+			{ $s.Reason = "hardware and Unicorn differ, see $( $s.Log )" }
+			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
 		}
 		'bad'
 		{
