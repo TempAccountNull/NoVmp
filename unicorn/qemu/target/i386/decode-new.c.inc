@@ -5620,6 +5620,14 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AMX_FP16);
     case X86_FEAT_AMX_COMPLEX:
         return (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_AMX_COMPLEX);
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+    case X86_FEAT_AMX_FP8:
+        return (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_FP8);
+    case X86_FEAT_AMX_AVX512:
+        return (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_AVX512);
+    case X86_FEAT_AMX_MOVRS:
+        return (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_MOVRS);
+#endif /* __Use_Original_Qemu (U720) */
 #endif /* __Use_Original_Qemu (U175) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
     case X86_FEAT_AVX512CD:

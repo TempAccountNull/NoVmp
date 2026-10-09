@@ -246,6 +246,9 @@ typedef struct DisasContext {
     int cpuid_7_1_edx_features;
 #endif /* __Use_Original_Qemu (U85) */
     int cpuid_xsave_features;
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+    int cpuid_1e_1_eax_features; /* CPUID.(1EH,1):EAX: AMX_FP8 / AMX_AVX512 / AMX_MOVRS */
+#endif /* __Use_Original_Qemu (U720) */
 #if __Use_Original_Qemu != 1 /* ours (U371) */
     /* AVX10 version (CPUID.(7,1):EDX.AVX10 and (24H,0):EBX[7:0]; 0 = no AVX10) and
        CPUID.(24H,1):ECX.AVX10_V1_AUX, as the translator sees them (U371) */
@@ -9812,6 +9815,11 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U100) */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+    /* AMX features enumerated only in leaf 1EH (U720); a strict profile narrows them (U721) */
+    dc->cpuid_1e_1_eax_features = x86_cpu_amx_1e_1_eax(env) &
+                                  x86_cpuid_profile_mask(env, 0x1e, 1, 0);
+#endif /* __Use_Original_Qemu (U720) */
 #if __Use_Original_Qemu != 1 /* ours (U371) */
     /*
      * NoVmp (ledger U371): Intel AVX10 (UC_CTL_X86_AVX10, U370). AVX10.1 contains the

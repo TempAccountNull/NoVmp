@@ -999,6 +999,12 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_1E_1_EAX_AMX_BF16         (1U << 1)
 #define CPUID_1E_1_EAX_AMX_COMPLEX      (1U << 2)
 #define CPUID_1E_1_EAX_AMX_FP16         (1U << 3)
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+/* enumerated only in CPUID.(1EH,1):EAX (ISE 319433-062 Table 1-3) */
+#define CPUID_1E_1_EAX_AMX_FP8          (1U << 4)
+#define CPUID_1E_1_EAX_AMX_AVX512       (1U << 7)
+#define CPUID_1E_1_EAX_AMX_MOVRS        (1U << 8)
+#endif /* __Use_Original_Qemu (U720) */
 /* AMX state components 17 (TILECFG) and 18 (TILEDATA): enabled together or not at all */
 #define XSTATE_AMX_MASK                 (XSTATE_XTILE_CFG_MASK | XSTATE_XTILE_DATA_MASK)
 #endif /* __Use_Original_Qemu (U170) */
@@ -2383,6 +2389,10 @@ uint64_t x86_cpu_xfd_supported(CPUX86State *env);
 /* cpu.c: components with XFD enabled, XCR0 AND IA32_XFD (supported bits only) */
 uint64_t x86_cpu_xfd_armed(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U173) */
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+/* cpu.c: the model's CPUID.(EAX=1EH,ECX=1):EAX (AMX feature enumeration) */
+uint32_t x86_cpu_amx_1e_1_eax(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U720) */
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx);

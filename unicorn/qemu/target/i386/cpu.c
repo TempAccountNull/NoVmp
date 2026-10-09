@@ -4206,6 +4206,14 @@ static bool x86_cpuid_leaf_has_subleaves(uint32_t leaf)
     case 0x4: case 0x7: case 0xb: case 0xd: case 0xf: case 0x10: case 0x12: case 0x14:
     case 0x17: case 0x18: case 0x1b: case 0x1d: case 0x1f: case 0x20: case 0x23: case 0x24:
     case 0x29: /* APX leaf, ECX = sub-leaf (U610) */
+#if __Use_Original_Qemu != 1 /* ours (U721) */
+    /*
+     * NoVmp (ledger U721): leaf 1EH has sub-leaves too (ISE 319433-062 Table 1-3: 1EH.0 TMUL
+     * main leaf, 1EH.1 the AMX feature flags); a profile lookup of (1EH, 1) returned sub-leaf
+     * 0 (EAX = 1 = "AMX_INT8"), so CPUID and the strict-profile mask of 1EH.1 were wrong.
+     */
+    case 0x1e:
+#endif /* __Use_Original_Qemu (U721) */
         return true;
     default:
         return false;
@@ -4393,6 +4401,46 @@ uint64_t x86_cpu_xfd_armed(CPUX86State *env)
     return env->msr_xfd ? env->xcr0 & env->msr_xfd & x86_cpu_xfd_supported(env) : 0;
 }
 #endif /* __Use_Original_Qemu (U173) */
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+/*
+ * NoVmp (ledger U720): CPUID.(EAX=1EH,ECX=1):EAX of the model (ISE 319433-062 Table 1-3):
+ * bits 0-3 mirror AMX_INT8 / AMX_BF16 / AMX_COMPLEX / AMX_FP16 of leaf 7 ("enumerated in
+ * both"); AMX_FP8 (4), AMX_AVX512 (7) and AMX_MOVRS (8) exist only here and come from the
+ * UC_CTL_X86_AMX mask. Bits 6:5 are reserved (5 was AMX-TRANSPOSE, 6 AMX-TF32: both removed
+ * from the ISE). 0 without AMX_TILE.
+ */
+uint32_t x86_cpu_amx_1e_1_eax(CPUX86State *env)
+{
+    uint32_t eax = 0;
+    int mask = env->uc ? env->uc->x86_amx : 0;
+
+    if (!(env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_AMX_TILE)) {
+        return 0;
+    }
+    if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_AMX_INT8) {
+        eax |= CPUID_1E_1_EAX_AMX_INT8;
+    }
+    if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_AMX_BF16) {
+        eax |= CPUID_1E_1_EAX_AMX_BF16;
+    }
+    if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AMX_COMPLEX) {
+        eax |= CPUID_1E_1_EAX_AMX_COMPLEX;
+    }
+    if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_AMX_FP16) {
+        eax |= CPUID_1E_1_EAX_AMX_FP16;
+    }
+    if (mask & UC_X86_AMX_FP8) {
+        eax |= CPUID_1E_1_EAX_AMX_FP8;
+    }
+    if (mask & UC_X86_AMX_AVX512) {
+        eax |= CPUID_1E_1_EAX_AMX_AVX512;
+    }
+    if (mask & UC_X86_AMX_MOVRS) {
+        eax |= CPUID_1E_1_EAX_AMX_MOVRS;
+    }
+    return eax;
+}
+#endif /* __Use_Original_Qemu (U720) */
 
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
@@ -4802,6 +4850,10 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_AMX_FP16) {
                 *eax |= CPUID_1E_1_EAX_AMX_FP16;
             }
+#if __Use_Original_Qemu != 1 /* ours (U720) */
+            /* + AMX_FP8 / AMX_AVX512 / AMX_MOVRS (x86_cpu_amx_1e_1_eax) */
+            *eax |= x86_cpu_amx_1e_1_eax(env);
+#endif /* __Use_Original_Qemu (U720) */
         }
 #endif /* __Use_Original_Qemu (U170) */
         break;

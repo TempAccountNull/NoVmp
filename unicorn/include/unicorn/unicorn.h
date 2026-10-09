@@ -731,6 +731,14 @@ typedef enum uc_control_type {
     // (UC_CPU_X86_MAX and the i5-13600K profile have no AMX). Reset XCR0 enables 18:17
     // (like every supported component, U120); IA32_XFD resets to 0. Only before the
     // engine is initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    // NoVmp U720: UC_X86_AMX_FP8 / UC_X86_AMX_AVX512 / UC_X86_AMX_MOVRS add AMX-FP8
+    // (CPUID.(1EH,1):EAX[4]: TDPBF8PS, TDPBHF8PS, TDPHBF8PS, TDPHF8PS), AMX-AVX512
+    // (1EH.1:EAX[7]: TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) and
+    // AMX-MOVRS (1EH.1:EAX[8]: TILELOADDRS, TILELOADDRST1; with UC_CTL_X86_APX also the
+    // EVEX forms) - ISE 319433-062 Table 1-3, enumerated only in leaf 1EH. The AMX-AVX512
+    // instructions also need the AVX-512 state (XCR0[7:5] = 111b, AMX-E7/E8-EVEX), i.e.
+    // UC_CTL_X86_AVX512 or UC_CTL_X86_AVX10 as well. AMX-TF32 (TMMULTF32PS) is not offered:
+    // ISE 319433-062 removed it (CPUID.1EH.01H:EAX[6] reserved).
     UC_CTL_X86_AMX,
     // x86 only (NoVmp U370): Intel AVX10 in the CPU model (AVX10.2 spec 361050-007 3.1.2,
     // Table 3.1). The value is the AVX10 version, UC_X86_AVX10_1 or UC_X86_AVX10_2, plus
@@ -784,7 +792,10 @@ typedef enum uc_control_type {
 #define UC_X86_AMX_BF16 4     // + AMX-BF16: TDPBF16PS
 #define UC_X86_AMX_FP16 8     // + AMX-FP16: TDPFP16PS
 #define UC_X86_AMX_COMPLEX 16 // + AMX-COMPLEX: TCMMIMFP16PS, TCMMRLFP16PS
-#define UC_X86_AMX_ALL 31
+#define UC_X86_AMX_FP8 32     // + AMX-FP8: TDPBF8PS, TDPBHF8PS, TDPHBF8PS, TDPHF8PS (U720)
+#define UC_X86_AMX_AVX512 64  // + AMX-AVX512: TCVTROW*, TILEMOVROW (EVEX; U720)
+#define UC_X86_AMX_MOVRS 128  // + AMX-MOVRS: TILELOADDRS, TILELOADDRST1 (U720)
+#define UC_X86_AMX_ALL 255
 
 // UC_CTL_X86_AVX10 values (NoVmp U370)
 #define UC_X86_AVX10_1 1           // AVX10.1: the AVX-512 instruction set (Table 3.2)

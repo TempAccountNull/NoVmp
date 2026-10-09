@@ -8915,7 +8915,7 @@ static void test_x86_amx_optin(void)
 
     /* unknown bits refused; a non-zero mask implies TILE */
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &a.uc));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, 32));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, 256));  /* U720: 32..128 are FP8/AVX512/MOVRS */
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_amx(a.uc, -1));
     OK(uc_ctl_set_x86_amx(a.uc, UC_X86_AMX_BF16));
     OK(uc_ctl_get_x86_amx(a.uc, &mask));
@@ -8941,7 +8941,7 @@ static void test_x86_amx_optin(void)
     ax_cpuid(&a, 0x1e, 0, r);
     TEST_CHECK(r[0] == 1 && r[1] == 0x4010 && r[2] == 0 && r[3] == 0);
     ax_cpuid(&a, 0x1e, 1, r);
-    TEST_CHECK(r[0] == 0xf && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    TEST_CHECK(r[0] == 0x19f && r[1] == 0 && r[2] == 0 && r[3] == 0);
     ax_cpuid(&a, 0xd, 0, r);
     TEST_CHECK((r[0] & 0x60000) == 0x60000);
     TEST_CHECK(r[2] >= 0x2b00);                      /* max size, standard format */
