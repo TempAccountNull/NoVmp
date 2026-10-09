@@ -19719,7 +19719,7 @@ typedef struct {
     const char *code;
     size_t len;
     int cet;                /* 1: CR4.CET, IA32_S_CET = SH_STK_EN | WR_SHSTK_EN, PL0_SSP = B */
-    int avx512;
+    int opt;                /* 1: AVX-512 opt-in, 2: AMX opt-in */
     uint64_t rbx;           /* operand base */
     const char *what;
     uint64_t tok;           /* the qword at page B + 0 */
@@ -19756,8 +19756,10 @@ static void fx4_store_run(const fx4_sc_t *t, int mode, int pre_only, fx4_st_t *s
     }
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
-    if (t->avx512) {
+    if (t->opt == 1) {
         OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_VL | UC_X86_AVX512_BW));
+    } else if (t->opt == 2) {
+        OK(uc_ctl_set_x86_amx(uc, UC_X86_AMX_TILE));
     }
     OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, n));
@@ -19972,6 +19974,37 @@ static void test_x86_fx4_store_prepare(void)
     fx4_store_cases(0, 11, "x86_access_prepare stores");
 }
 
+/*
+ * TILECFG at [rsp] (palette 1, tile 0: 1 row of 64 bytes), LDTILECFG [rsp], RCX = 64 (stride):
+ * xor eax, eax; mov [rsp+0..56], rax; mov byte [rsp], 1; mov word [rsp+16], 64;
+ * mov byte [rsp+48], 1; ldtilecfg [rsp]; mov ecx, 64
+ */
+#define FX4_AMX_PRE                                                                        \
+    "\x31\xc0\x48\x89\x04\x24\x48\x89\x44\x24\x08\x48\x89\x44\x24\x10\x48\x89\x44\x24\x18"   \
+    "\x48\x89\x44\x24\x20\x48\x89\x44\x24\x28\x48\x89\x44\x24\x30\x48\x89\x44\x24\x38"       \
+    "\xc6\x04\x24\x01\x66\xc7\x44\x24\x10\x40\x00\xc6\x44\x24\x30\x01\xc4\xe2\x78\x49\x04\x24" \
+    "\xb9\x40\x00\x00\x00"
+#define FX4_AMX_PRE_LEN 68
+
+/* U781: STTILECFG / TILESTORED into a read-only page B (UC_CTL_X86_AMX) */
+static void test_x86_fx4_store_amx(void)
+{
+    static const fx4_sc_t t[] = {
+        {FX4_AMX_PRE, FX4_AMX_PRE_LEN, "\xc4\xe2\x79\x49\x83\xe0\x0f\x00\x00", 9, 0, 2, FX4_PA,
+         "sttilecfg [rbx+0xfe0]"},
+        {FX4_AMX_PRE, FX4_AMX_PRE_LEN, "\xc4\xe2\x7a\x4b\x84\x0b\xe0\x0f\x00\x00", 10, 0, 2, FX4_PA,
+         "tilestored [rbx+rcx+0xfe0], tmm0 (a 64-byte row across into B)"},
+    };
+    size_t i;
+    int bad = 0;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        bad += fx4_store_case(&t[i]);
+    }
+    TEST_CHECK(bad == 0);
+    TEST_MSG("AMX stores: %d of %d checks failed", bad, (int)(3 * (sizeof(t) / sizeof(t[0]))));
+}
+
 /* U779: EVEX stores (helper_evex_mstore) into a read-only page B: the table's AVX-512 entries */
 static void test_x86_fx4_store_evex(void)
 {
@@ -19979,7 +20012,7 @@ static void test_x86_fx4_store_evex(void)
     int bad = 0, n = 0;
 
     for (i = 0; i < FX4_NPARTIAL; i++) {
-        if (fx4_partial[i].avx512) {
+        if (fx4_partial[i].opt == 1) {
             bad += fx4_store_case(&fx4_partial[i]);
             n += 3;
         }
@@ -21823,4 +21856,5 @@ TEST_LIST = {
     {"test_x86_fx4_store_evex", test_x86_fx4_store_evex},
     {"test_x86_fx4_store_partial", test_x86_fx4_store_partial},
     {"test_x86_fx4_call_ss_pf", test_x86_fx4_call_ss_pf},
+    {"test_x86_fx4_store_amx", test_x86_fx4_store_amx},
     {NULL, NULL}};

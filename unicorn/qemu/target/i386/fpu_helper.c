@@ -6422,21 +6422,16 @@ static bool amx_tile_valid(CPUX86State *env, unsigned t)
     return t < AMX_P1_MAX_NAMES && AMX_ROWS(env, t) != 0;
 }
 
-/* with paging, translate [addr, addr+len) for writing before any byte is stored */
+/*
+ * translate [addr, addr+len) for writing before any byte is stored. U781: with x86_probe_write
+ * (U701), so memory Unicorn has not mapped or maps read-only is reported before the first
+ * byte too (STTILECFG wrote the part on the writable page, TILESTORED the first bytes of a
+ * row across into such memory); unhandled, the instruction stops with start_row = that row.
+ */
 static void amx_probe_write(CPUX86State *env, target_ulong addr, int len, uintptr_t ra)
 {
-    int mmu_idx = cpu_mmu_index(env, false);
-    int first = TARGET_PAGE_SIZE - (int)(addr & ~TARGET_PAGE_MASK);
-
-    if (!(env->cr[0] & CR0_PG_MASK) || len <= 0) {
-        return;
-    }
-    if (first > len) {
-        first = len;
-    }
-    probe_write(env, addr, first, mmu_idx, ra);
-    if (first < len) {
-        probe_write(env, addr + first, len - first, mmu_idx, ra);
+    if (len > 0) {
+        x86_probe_write(env, addr, (uint32_t)len, ra);
     }
 }
 
