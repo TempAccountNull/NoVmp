@@ -269,6 +269,15 @@ Add-HwCmp 'ref_evex_m4a_hwcmp' 'hw evex' 'ref_evex_m4a.py' 'cases_evex_m4a_hw'
 # U590-U609 (plan 1.F.7): LSS/LFS/LGS m16:64, 64-bit stack width of IRET/RETF/far CALL, page-crossing
 # stores, MAXPHYADDR, SYSCALL and EFER.SCE, RDPMC; hardware lines at CPL3 + SDM expected values.
 Add-Hw 'cases_fixes2' 'hw'
+# U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
+# state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
+# independent model ref_apx_core.py, Unicorn only with the APX opt-in (the host has no APX).
+Add-Exp 'cases_apx_core' 'cases_apx_core' 'apx expect' @( '--apx' )
+# The same instructions with R0-R15 only: legacy encoding on the i5-13600K vs the REX2 encoding on
+# Unicorn ("<legacy> ~~ <REX2>" pairs; --apx and NO CPUID profile, which would hide APX), 0 differing;
+# the CPU's results must also match the model (--hwcmp).
+Add-Suite 'cases_apx_core_hw' 'hw apx' 'hw' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_core_hw' ), '--apx' )
+Add-HwCmp 'ref_apx_core_hwcmp' 'hw apx' 'ref_apx_core.py' 'cases_apx_core_hw'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

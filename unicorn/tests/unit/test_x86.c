@@ -16105,6 +16105,491 @@ static void test_x86_f2_rdpmc(void)
 
 /* ---- end U590-U609 (f2_) ---- */
 
+/*
+ * ---- NoVmp U610-U616: Intel APX part 1 (apx_) ----
+ * UC_CTL_X86_APX (CPUID.(7,1):EDX.APX_F[21], leaf 29H, MPX withdrawn, XSAVE component 19 =
+ * R16-R31 at 3C0H), the EGPR register API and uc_context, XSAVE/XSAVEC/XSAVEOPT/XRSTOR images
+ * and XINUSE[19], XSETBV / CR4.OSXSAVE gating of REX2 (Table 3.8), REX2 decoding and its #UD
+ * rules, D5 = AAD outside 64-bit mode. APX spec 355828-009 3.1.2.1, 3.1.4.
+ */
+#define APX_DATA 0x200000
+
+typedef struct ApxCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} ApxCtx;
+
+static void apx_open(ApxCtx *c, uc_mode mode, int apx, const uc_x86_cpuid *prof, size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(c->uc, apx));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));   /* strict by default (U435) */
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, APX_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* run a snippet from a fresh address (at = 0) or at a fixed one: the vector (6 #UD) or -1 */
+static int apx_run_at(ApxCtx *c, uint64_t at, const char *code, size_t len)
+{
+    uint64_t pc = at;
+    uc_err err;
+
+    if (!at) {
+        pc = c->pc;
+        c->pc += 0x80;
+    }
+    TEST_CHECK(len <= 0x80 && pc + len <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static int apx_run(ApxCtx *c, const char *code, size_t len)
+{
+    return apx_run_at(c, 0, code, len);
+}
+
+static uint64_t apx_get(ApxCtx *c, int reg)
+{
+    uint64_t v = 0;
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void apx_set(ApxCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+static void apx_cpuid(ApxCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    apx_set(c, UC_X86_REG_RAX, leaf);
+    apx_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(apx_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)apx_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)apx_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)apx_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)apx_get(c, UC_X86_REG_RDX);
+}
+
+/* XSETBV(0) := v (CPL0); the vector or -1 */
+static int apx_xsetbv(ApxCtx *c, uint64_t v)
+{
+    apx_set(c, UC_X86_REG_RCX, 0);
+    apx_set(c, UC_X86_REG_RAX, v & 0xffffffffu);
+    apx_set(c, UC_X86_REG_RDX, v >> 32);
+    return apx_run(c, "\x0f\x01\xd1", 3);
+}
+
+/* REX2 encodings used below (payload M0 R4 X4 B4 W R3 X3 B3) */
+#define APX_ADD_R16_R17 "\xd5\x58\x01\xc8"         /* add r16, r17        (01 /r, R4 B4 W) */
+#define APX_MOV_RAX_R31 "\xd5\x19\x8b\xc7"         /* mov rax, r31        (8B /r, B4 W B3) */
+#define APX_MOV_R16_RAX "\xd5\x18\x89\xc0"         /* mov r16, rax        (89 /r, B4 W) */
+
+static void test_x86_apx_optin(void)
+{
+    ApxCtx c;
+    uint32_t r[4], size;
+    uint64_t xcr0, v = 0;
+    int on = -1, i;
+
+    /* default: off - no APX_F, D5 is AAD (#UD in 64-bit mode), no EGPRs, XCR0[19] refused */
+    apx_open(&c, UC_MODE_64, 0, NULL, 0);
+    OK(uc_ctl_get_x86_apx(c.uc, &on));
+    TEST_CHECK(on == 0);
+    apx_cpuid(&c, 7, 1, r);
+    TEST_CHECK((r[3] & (1u << 21)) == 0);
+    TEST_CHECK((apx_get(&c, UC_X86_REG_XCR0) & (1ull << 19)) == 0);
+    TEST_CHECK(apx_run(&c, APX_ADD_R16_R17, 4) == 6);
+    uc_assert_err(UC_ERR_ARG, uc_reg_read(c.uc, UC_X86_REG_R16, &v));
+    uc_assert_err(UC_ERR_ARG, uc_reg_write(c.uc, UC_X86_REG_R31B, &v));
+    TEST_CHECK(apx_xsetbv(&c, apx_get(&c, UC_X86_REG_XCR0) | (1ull << 19)) == 13);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_apx(c.uc, UC_X86_APX_F));      /* after init */
+    OK(uc_close(c.uc));
+
+    /* values: 0 or UC_X86_APX_F */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_apx(c.uc, 2));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_apx(c.uc, -1));
+    OK(uc_ctl_set_x86_apx(c.uc, UC_X86_APX_F));
+    OK(uc_ctl_get_x86_apx(c.uc, &on));
+    TEST_CHECK(on == UC_X86_APX_F);
+    OK(uc_ctl_set_x86_apx(c.uc, 0));
+    OK(uc_ctl_get_x86_apx(c.uc, &on));
+    TEST_CHECK(on == 0);
+    OK(uc_close(c.uc));
+
+    /* on: 7.1:EDX[21], CMOV, leaf 29H, no MPX (7.0:EBX[14], 0DH.3/4), 0DH.19, reset XCR0 */
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    apx_cpuid(&c, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x29);
+    apx_cpuid(&c, 1, 0, r);
+    TEST_CHECK(r[3] & (1u << 15));
+    apx_cpuid(&c, 7, 0, r);
+    TEST_CHECK(r[0] >= 1 && (r[1] & (1u << 14)) == 0);
+    apx_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[3] & (1u << 21));
+    apx_cpuid(&c, 0x29, 0, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 1 && r[2] == 0 && r[3] == 0);
+    TEST_MSG("29H.0 = %x %x %x %x", r[0], r[1], r[2], r[3]);
+    apx_cpuid(&c, 0x29, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    apx_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK((r[0] & (1u << 19)) && (r[0] & 0x18) == 0);
+    apx_cpuid(&c, 0xd, 19, r);
+    TEST_CHECK(r[0] == 0x80 && r[1] == 0x3c0 && r[2] == 0 && r[3] == 0);
+    TEST_MSG("0DH.19 = %x %x %x %x", r[0], r[1], r[2], r[3]);
+    for (i = 3; i <= 4; i++) {
+        apx_cpuid(&c, 0xd, i, r);
+        TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    }
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK(xcr0 & (1ull << 19));
+    TEST_MSG("XCR0 %llx", (unsigned long long)xcr0);
+    /* 0DH.1:EBX = the compacted size of XCR0: component 19 after the lower ones */
+    size = 576;
+    for (i = 2; i < 63; i++) {
+        uint32_t s[4];
+        if (!((xcr0 >> i) & 1)) {
+            continue;
+        }
+        apx_cpuid(&c, 0xd, i, s);
+        if (s[2] & 2) {
+            size = (size + 63) & ~63u;
+        }
+        size += s[0];
+    }
+    apx_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == size);
+    TEST_MSG("0DH.1 EBX %x, expected %x", r[1], size);
+    apx_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[1] >= 0x440);       /* standard size for XCR0 covers 3C0H + 80H */
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_apx_regs(void)
+{
+    ApxCtx c;
+    uc_context *ctx;
+    uint64_t v, w;
+    uint32_t d;
+    uint16_t h;
+    uint8_t b;
+    int i;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == 0);         /* reset value 0 */
+        apx_set(&c, UC_X86_REG_R16 + i, 0x1111111111111111ull * (uint64_t)(i + 1));
+    }
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == 0x1111111111111111ull * (uint64_t)(i + 1));
+    }
+    /* 32/16/8-bit forms: low bits, the rest kept (like R8D/R8W/R8B) */
+    d = 0xaabbccdd;
+    OK(uc_reg_write(c.uc, UC_X86_REG_R20D, &d));
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R20) == 0x55555555aabbccddull);
+    h = 0x1234;
+    OK(uc_reg_write(c.uc, UC_X86_REG_R20W, &h));
+    b = 0x99;
+    OK(uc_reg_write(c.uc, UC_X86_REG_R20B, &b));
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R20) == 0x55555555aabb1299ull);
+    OK(uc_reg_read(c.uc, UC_X86_REG_R31D, &d));
+    TEST_CHECK(d == 0x00000000u + 0x11111111u * 16u);
+    OK(uc_reg_read(c.uc, UC_X86_REG_R31W, &h));
+    TEST_CHECK(h == 0x1110);
+    OK(uc_reg_read(c.uc, UC_X86_REG_R17B, &b));
+    TEST_CHECK(b == 0x22);
+    /* the instructions see the same registers */
+    TEST_CHECK(apx_run(&c, APX_MOV_RAX_R31, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == apx_get(&c, UC_X86_REG_R31));
+    v = apx_get(&c, UC_X86_REG_R16);
+    w = apx_get(&c, UC_X86_REG_R17);
+    TEST_CHECK(apx_run(&c, APX_ADD_R16_R17, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == v + w);
+    /* uc_context save / restore round trip */
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    for (i = 0; i < 16; i++) {
+        apx_set(&c, UC_X86_REG_R16 + i, ~0ull - (uint64_t)i);
+    }
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == v + w);
+    for (i = 1; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == 0x1111111111111111ull * (uint64_t)(i + 1) ||
+                   i == 4);
+    }
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R20) == 0x55555555aabb1299ull);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+
+    /* a 32-bit engine still has the registers (any mode, 3.1.4.1.2) */
+    apx_open(&c, UC_MODE_32, UC_X86_APX_F, NULL, 0);
+    apx_set(&c, UC_X86_REG_R25, 0x0123456789abcdefull);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R25) == 0x0123456789abcdefull);
+    OK(uc_close(c.uc));
+}
+
+static void apx_fill(ApxCtx *c, uint64_t seed)
+{
+    int i;
+    for (i = 0; i < 16; i++) {
+        apx_set(c, UC_X86_REG_R16 + i, seed * (uint64_t)(i + 3) ^ ((uint64_t)i << 56));
+    }
+}
+
+static void test_x86_apx_xsave(void)
+{
+    ApxCtx c;
+    uint8_t buf[0x1000];
+    uint64_t q, regs[16];
+    int i, ok;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    apx_fill(&c, 0x9e3779b97f4a7c15ull);
+    for (i = 0; i < 16; i++) {
+        regs[i] = apx_get(&c, UC_X86_REG_R16 + i);
+    }
+    /* XSAVE (RFBM = 80000H): R16-R31 at 3C0H, XSTATE_BV[19] = 1, nothing else written */
+    memset(buf, 0xcc, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_RSI, APX_DATA);
+    apx_set(&c, UC_X86_REG_RAX, 0x80000);
+    apx_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x26", 3) == -1);                /* xsave [rsi] */
+    OK(uc_mem_read(c.uc, APX_DATA, buf, sizeof(buf)));
+    ok = memcmp(buf + 0x3c0, regs, 128) == 0;
+    TEST_CHECK(ok);
+    memcpy(&q, buf + 0x200, 8);
+    TEST_CHECK(q == ((0xccccccccccccccccull & ~0x80000ull) | 0x80000ull));
+    TEST_CHECK(buf[0x3bf] == 0xcc && buf[0x440] == 0xcc && buf[0] == 0xcc && buf[0x208] == 0xcc);
+    /* XSAVEC (RFBM = 80000H): compacted at 576, XCOMP_BV = 8000000000080000H */
+    memset(buf, 0, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    TEST_CHECK(apx_run(&c, "\x0f\xc7\x26", 3) == -1);                /* xsavec [rsi] */
+    OK(uc_mem_read(c.uc, APX_DATA, buf, sizeof(buf)));
+    TEST_CHECK(memcmp(buf + 576, regs, 128) == 0);
+    memcpy(&q, buf + 0x208, 8);
+    TEST_CHECK(q == 0x8000000000080000ull);
+    memcpy(&q, buf + 0x200, 8);
+    TEST_CHECK(q == 0x80000);
+    /* XSAVEC with AVX (component 2, 256 bytes at 576): component 19 at 832 */
+    memset(buf, 0, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_RAX, 0x80004);
+    TEST_CHECK(apx_run(&c, "\x0f\xc7\x26", 3) == -1);
+    OK(uc_mem_read(c.uc, APX_DATA, buf, sizeof(buf)));
+    TEST_CHECK(memcmp(buf + 832, regs, 128) == 0);
+    memcpy(&q, buf + 0x208, 8);
+    TEST_CHECK(q == 0x8000000000080004ull);
+    /* XGETBV(1): XCR0 AND XINUSE - bit 19 follows the EGPR values */
+    apx_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(apx_run(&c, "\x0f\x01\xd0", 3) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) & 0x80000);
+    /* XRSTOR with XSTATE_BV[19] = 0: initial configuration (all 0); XINUSE[19] then 0 */
+    memset(buf, 0, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_RAX, 0x80000);
+    apx_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x2e", 3) == -1);                /* xrstor [rsi] */
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == 0);
+    }
+    apx_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(apx_run(&c, "\x0f\x01\xd0", 3) == -1);
+    TEST_CHECK((apx_get(&c, UC_X86_REG_RAX) & 0x80000) == 0);
+    /* XRSTOR from the standard image, then REX2 MOV RAX, R31 in the same snippet */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf + 0x3c0, regs, 128);
+    q = 0x80000;
+    memcpy(buf + 0x200, &q, 8);
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_RAX, 0x80000);
+    apx_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x2e" APX_MOV_RAX_R31, 7) == -1);
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == regs[i]);
+    }
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == regs[15]);
+    /* compacted XRSTOR (XCOMP_BV[63] = 1): component 19 at 576 */
+    apx_fill(&c, 0);
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf + 576, regs, 128);
+    q = 0x80000;
+    memcpy(buf + 0x200, &q, 8);
+    q = 0x8000000000080000ull;
+    memcpy(buf + 0x208, &q, 8);
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_RAX, 0x80000);
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x2e", 3) == -1);
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(apx_get(&c, UC_X86_REG_R16 + i) == regs[i]);
+    }
+    /* XSAVEOPT of an unmodified EGPR state still writes XSTATE_BV[19] = XINUSE[19] = 1 */
+    memset(buf, 0, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x36", 3) == -1);                /* xsaveopt [rsi] */
+    OK(uc_mem_read(c.uc, APX_DATA, buf, sizeof(buf)));
+    memcpy(&q, buf + 0x200, 8);
+    TEST_CHECK(q == 0x80000 && memcmp(buf + 0x3c0, regs, 128) == 0);
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: XSAVE saves R16-R31 too ("no modal specialization", 3.1.4.1.2) */
+    apx_open(&c, UC_MODE_32, UC_X86_APX_F, NULL, 0);
+    apx_fill(&c, 0x0123456789abcdefull);
+    for (i = 0; i < 16; i++) {
+        regs[i] = apx_get(&c, UC_X86_REG_R16 + i);
+    }
+    memset(buf, 0, sizeof(buf));
+    OK(uc_mem_write(c.uc, APX_DATA, buf, sizeof(buf)));
+    apx_set(&c, UC_X86_REG_ESI, APX_DATA);
+    apx_set(&c, UC_X86_REG_EAX, 0x80000);
+    apx_set(&c, UC_X86_REG_EDX, 0);
+    TEST_CHECK(apx_run(&c, "\x0f\xae\x26", 3) == -1);
+    OK(uc_mem_read(c.uc, APX_DATA, buf, sizeof(buf)));
+    TEST_CHECK(memcmp(buf + 0x3c0, regs, 128) == 0);
+    /* D5 is AAD outside 64-bit mode: AL = AH * 10 + AL, AH = 0 */
+    apx_set(&c, UC_X86_REG_EAX, 0x0307);
+    TEST_CHECK(apx_run(&c, "\xd5\x0a", 2) == -1);
+    TEST_CHECK((apx_get(&c, UC_X86_REG_EAX) & 0xffff) == 37);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_apx_gating(void)
+{
+    ApxCtx c;
+    uint64_t xcr0, cr4;
+    const uint64_t at = code_start + 0x3000;     /* one address, retranslation is not needed */
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    apx_set(&c, UC_X86_REG_R16, 1);
+    apx_set(&c, UC_X86_REG_R17, 2);
+    TEST_CHECK(apx_run_at(&c, at, APX_ADD_R16_R17, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 3);
+    /* XCR0[19] = 0: the same (already translated) REX2 instruction #UD (Table 3.8) */
+    TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
+    TEST_CHECK(apx_run_at(&c, at, APX_ADD_R16_R17, 4) == 6);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 3);
+    /* the EGPRs stay accessible through XSAVE-free paths and keep their values */
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R17) == 2);
+    /* XCR0 = 80001H (x87 + APX only) is a valid XSETBV value and enables REX2 */
+    TEST_CHECK(apx_xsetbv(&c, 0x80001) == -1);
+    TEST_CHECK(apx_run_at(&c, at, APX_ADD_R16_R17, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 5);
+    TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
+    /* CR4.OSXSAVE = 0: XCR0 reads as 0 for the rule - REX2 #UD; restored - runs again */
+    cr4 = apx_get(&c, UC_X86_REG_CR4);
+    apx_set(&c, UC_X86_REG_CR4, cr4 & ~(1ull << 18));
+    TEST_CHECK(apx_run_at(&c, at, APX_ADD_R16_R17, 4) == 6);
+    apx_set(&c, UC_X86_REG_CR4, cr4);
+    TEST_CHECK(apx_run_at(&c, at, APX_ADD_R16_R17, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 7);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_apx_rex2_decode(void)
+{
+    ApxCtx c;
+    static const uc_x86_cpuid no_apx[] = {
+        {0, 0, 0x29, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x7ffafbff, 0xbfebfbff},
+        {7, 0, 1, 0x239c27eb, 0x98c027ac, 0xfc1cc410},
+        {7, 1, 0, 0, 0, 0},
+        {0xd, 0, 0x207, 0, 0xa88, 0},
+    };
+    char code[16];
+    int row, lo, n;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    /* register ids: R4/B4 (mov r16, rax; mov rax, r31), SIB index 100 with X4 = R20 */
+    apx_set(&c, UC_X86_REG_RAX, 0x1122334455667788ull);
+    TEST_CHECK(apx_run(&c, APX_MOV_R16_RAX, 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 0x1122334455667788ull);
+    apx_set(&c, UC_X86_REG_RBX, APX_DATA);
+    apx_set(&c, UC_X86_REG_R20, 0x10);
+    OK(uc_mem_write(c.uc, APX_DATA + 0x40, "\x44\x33\x22\x11", 4));
+    TEST_CHECK(apx_run(&c, "\xd5\x20\x8b\x04\xa3", 5) == -1);      /* mov eax, [rbx+r20*4] */
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == 0x11223344);
+    /* REX2 byte registers 4-7: SPL..DIL, never AH..BH (mov dil, sil) */
+    apx_set(&c, UC_X86_REG_RSI, 0x1234);
+    apx_set(&c, UC_X86_REG_RDI, 0x5678);
+    TEST_CHECK(apx_run(&c, "\xd5\x00\x88\xf7", 4) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RDI) == 0x5634);
+    /* reserved rows: map 0 4x 7x Ax Ex (A1 with W = 1), map 1 3x 8x - #UD */
+    for (row = 0; row < 6; row++) {
+        static const int rows[6] = {0x40, 0x70, 0xa0, 0xe0, 0x130, 0x180};
+        for (lo = 0; lo < 16; lo++) {
+            int op = rows[row] | lo;
+            if (op == 0xa1) {
+                continue;               /* JMPABS (APX part 3) with W = 0 */
+            }
+            memcpy(code, "\xd5\x00\x00\xc0\x00\x00\x00\x00\x00\x00\x00\x00", 12);
+            code[1] = (char)((op & 0x100) ? 0x80 : 0x00);
+            code[2] = (char)(op & 0xff);
+            TEST_CHECK(apx_run(&c, code, 12) == 6);
+            TEST_MSG("REX2 opcode %x", op);
+        }
+    }
+    TEST_CHECK(apx_run(&c, "\xd5\x08\xa1\x00\x00\x00\x00\x00\x00\x00\x00", 11) == 6);
+    /* escape / prefix bytes after REX2.M0 = 0, REX right before REX2 */
+    {
+        static const unsigned char bad[] = {0x0f, 0x66, 0x67, 0xf0, 0xf2, 0xf3, 0x2e, 0x36,
+                                            0x3e, 0x26, 0x64, 0x65, 0x62, 0xc4, 0xc5, 0xd5};
+        for (n = 0; n < (int)sizeof(bad); n++) {
+            memcpy(code, "\xd5\x00\x00\x01\xc0\x90\x90", 7);
+            code[2] = (char)bad[n];
+            TEST_CHECK(apx_run(&c, code, 7) == 6);
+            TEST_MSG("REX2 + %02x", bad[n]);
+        }
+    }
+    TEST_CHECK(apx_run(&c, "\x48\xd5\x00\x01\xc0", 5) == 6);
+    TEST_CHECK(apx_run(&c, "\x66\x48\xd5\x00\x01\xc0", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x48\x66\xd5\x00\x01\xc0", 6) == -1);   /* REX not right before */
+    /* the XSAVE and XRSTOR family with REX2: #UD; FXSAVE: allowed */
+    apx_set(&c, UC_X86_REG_RSI, APX_DATA);
+    apx_set(&c, UC_X86_REG_RAX, 0x80000);
+    apx_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(apx_run(&c, "\xd5\x80\xae\x26", 4) == 6);
+    TEST_CHECK(apx_run(&c, "\xd5\x88\xae\x2e", 4) == 6);
+    TEST_CHECK(apx_run(&c, "\xd5\x80\xae\x36", 4) == 6);
+    TEST_CHECK(apx_run(&c, "\xd5\x80\xc7\x26", 4) == 6);
+    TEST_CHECK(apx_run(&c, "\xd5\x80\xae\x06", 4) == -1);
+    /* LOCK with a register destination stays #UD; with memory it runs */
+    TEST_CHECK(apx_run(&c, "\xf0\xd5\x10\x01\xc0", 5) == 6);
+    apx_set(&c, UC_X86_REG_R16, APX_DATA + 0x100);
+    TEST_CHECK(apx_run(&c, "\xf0\xd5\x10\x01\x00", 5) == -1);
+    /* MOV CR/DR: R4 names CR16+/DR16+ (#UD), R3 alone CR8, B4 the GPR */
+    TEST_CHECK(apx_run(&c, "\xd5\xc0\x20\xc0", 4) == 6);
+    TEST_CHECK(apx_run(&c, "\xd5\xc0\x21\xc0", 4) == 6);
+    apx_set(&c, UC_X86_REG_R16, 0x1234);
+    TEST_CHECK(apx_run(&c, "\xd5\x94\x20\xc0", 4) == -1);           /* mov r16, cr8 */
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 0);
+    OK(uc_close(c.uc));
+
+    /* a strict CPUID profile without APX_F hides it: D5 #UD even with the opt-in */
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, no_apx, sizeof(no_apx) / sizeof(no_apx[0]));
+    TEST_CHECK(apx_run(&c, APX_ADD_R16_R17, 4) == 6);
+    OK(uc_close(c.uc));
+}
+/* ---- end U610-U616 (apx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -16342,4 +16827,9 @@ TEST_LIST = {
     {"test_x86_f2_maxphyaddr", test_x86_f2_maxphyaddr},
     {"test_x86_f2_syscall_sce", test_x86_f2_syscall_sce},
     {"test_x86_f2_rdpmc", test_x86_f2_rdpmc},
+    {"test_x86_apx_optin", test_x86_apx_optin},
+    {"test_x86_apx_regs", test_x86_apx_regs},
+    {"test_x86_apx_xsave", test_x86_apx_xsave},
+    {"test_x86_apx_gating", test_x86_apx_gating},
+    {"test_x86_apx_rex2_decode", test_x86_apx_rex2_decode},
     {NULL, NULL}};
