@@ -490,10 +490,10 @@ hsubpd xmm0, xmm1 | xmm0=555555555555F8FF555555555555F87F xmm1=555555555555F87F5
 hsubpd xmm0, xmm1 | xmm0=555555555555F2FF555555555555F27F xmm1=555555555555F27F555555555555F2FF
 # dpps / dppd: one NaN product per dot product
 # DPPS/DPPD with two or more NaN products are not in this file (ledger U98): see
-# cases_dp_nan.txt (DPPD on the host, --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER),
-# cases_dp_nan_sdm.txt (SDM pseudocode, quirks 0) and cases_dpps_nan.txt (DPPS on the host:
-# not repeatable, measurement only). The SDM pseudocode (DP_primitive) gives the first NaN
-# product in the order p0, p1, p2, p3 in every element (the default); the i5-13600K gives
+# cases_dp_nan.txt (DPPD on the host, documented deviations tagged), cases_dp_nan_sdm.txt
+# (SDM pseudocode) and cases_dpps_nan.txt (DPPS on the host: not repeatable, measurement
+# only). The SDM pseudocode (DP_primitive) gives the first NaN product in the order p0, p1,
+# p2, p3 in every element (what the emulator implements); the i5-13600K gives
 # DPPD element i := p[i] + p[i^1] (repeatable) and DPPS mostly t[j] := p[j^1] + p[j],
 # element i := t[i] + t[i^2], with the pair order of elements 1 and 3 changing between runs.
 dpps xmm0, xmm1, 0xFF | xmm0=0000803F0000803F0000803F0000803F xmm1=1111C17F000000C0000000C0000000C0
@@ -1350,10 +1350,10 @@ vhsubpd ymm0, ymm1, ymm2 | xmm1=333333333333F07F222222222222FCFF ymmh1=444444444
 vhsubpd ymm0, ymm1, ymm2 | xmm1=555555555555F8FF555555555555F87F ymmh1=555555555555F87F555555555555F8FF xmm2=555555555555F2FF555555555555F27F ymmh2=555555555555F27F555555555555F2FF
 # vdpps / vdppd: one NaN product per dot product
 # DPPS/DPPD with two or more NaN products are not in this file (ledger U98): see
-# cases_dp_nan.txt (DPPD on the host, --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER),
-# cases_dp_nan_sdm.txt (SDM pseudocode, quirks 0) and cases_dpps_nan.txt (DPPS on the host:
-# not repeatable, measurement only). The SDM pseudocode (DP_primitive) gives the first NaN
-# product in the order p0, p1, p2, p3 in every element (the default); the i5-13600K gives
+# cases_dp_nan.txt (DPPD on the host, documented deviations tagged), cases_dp_nan_sdm.txt
+# (SDM pseudocode) and cases_dpps_nan.txt (DPPS on the host: not repeatable, measurement
+# only). The SDM pseudocode (DP_primitive) gives the first NaN product in the order p0, p1,
+# p2, p3 in every element (what the emulator implements); the i5-13600K gives
 # DPPD element i := p[i] + p[i^1] (repeatable) and DPPS mostly t[j] := p[j^1] + p[j],
 # element i := t[i] + t[i^2], with the pair order of elements 1 and 3 changing between runs.
 vdpps xmm0, xmm1, xmm2, 0xFF | xmm1=0000803F0000803F0000803F0000803F xmm2=1111C17F000000C0000000C0000000C0

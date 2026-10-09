@@ -1,12 +1,12 @@
 # DPPS/DPPD multi-NaN (ledger U98), expected-value cases from the SDM pseudocode:
-#   Emulator/tools/isa/gen_cases_nan.py --dp-sdm (regenerate, do not edit). Unicorn only, quirks 0:
-#   emu-alltest --cases Emulator\data\cases_dp_nan_sdm.txt --expect-only --quirks 0
+#   Emulator/tools/isa/gen_cases_nan.py --dp-sdm (regenerate, do not edit). Unicorn only:
+#   emu-alltest --cases Emulator\data\cases_dp_nan_sdm.txt --expect-only
 # DPPS/DPPD with two or more NaN products in one dot product. SDM (DPPS/DPPD Operation,
 # DP_primitive; Vol1 4.8.3.5 Table 4-8 SSE column): Temp2 := p0 + p1, Temp3 := p2 + p3,
 # every selected element := Temp2 + Temp3 (DPPD: both elements := p0 + p1), so the first
-# NaN product in the order p0, p1, p2, p3 lands in every selected element (quirks 0).
-# UC_X86_QUIRK_DPPD_NAN_ORDER (i5-13600K): DPPD element i := p[i] + p[i^1] (each element's
-# own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B.
+# NaN product in the order p0, p1, p2, p3 lands in every selected element (the emulator).
+# i5-13600K (docs/quirks.md "DPPD two NaN products"): DPPD element i := p[i] + p[i^1] (each
+# element's own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B.
 # dpps xmm
 # products Qa,SQ,N,N
 dpps xmm0, xmm1, 0xFF | xmm0=0A00C17F0A00827F0000803F0000803F xmm1=000000C00B00C2FF000000C0000000C0 => xmm0=0A00C17F0A00C17F0A00C17F0A00C17F mxcsr=0x1F81

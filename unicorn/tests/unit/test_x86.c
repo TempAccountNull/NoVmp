@@ -11999,9 +11999,9 @@ static void test_x86_hw_quirk_bits(void)
     /* PTWRITE without PT (U534, quirk removed): SDM #UD (the i5-13600K reads the
        operand and goes on, docs/quirks.md) */
     qk_ptwrite(0, UC_ERR_INSN_INVALID);
-    /* bit 4 DPPD_NAN_ORDER: SDM p0 + p1 in both elements, hardware p1 + p0 in element 1 */
+    /* DPPD two NaN products (U535, quirk removed): SDM p0 + p1 in both elements (the
+       i5-13600K gives p1 + p0 in element 1, docs/quirks.md) */
     qk_dppd(0, 0x7FF8000000000A01ULL);
-    qk_dppd(UC_X86_QUIRK_DPPD_NAN_ORDER, 0x7FF8000000000A02ULL);
     /* bit 5 REP_ZERO_COUNT_ZX: SDM writes nothing, hardware zero-extends RCX/RSI/RDI */
     qk_rep_zero(0, 0);
     qk_rep_zero(UC_X86_QUIRK_REP_ZERO_COUNT_ZX, 1);

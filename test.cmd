@@ -119,8 +119,9 @@ rem ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py
 rem source (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory,
 rem unmasked exceptions; must be 0 differing against the i5-13600K.
 call :hw_zero cases_f16c
-rem ledger U98: DPPD with two NaN products on the host CPU (gen_cases_nan.py --dp-hw) must match with
-rem the i5-13600K quirk set (UC_X86_QUIRK_DPPD_NAN_ORDER).
+rem ledger U98/U535: DPPD with two NaN products on the host CPU (gen_cases_nan.py --dp-hw): the
+rem emulator implements the SDM; the cases where the i5-13600K's element order gives another NaN are
+rem tagged "# known deviation: DPPD two NaN products" (docs\quirks.md), all others must match.
 call :hw_zero cases_dp_nan
 rem ledger U434: one hardware case per UC_X86_QUIRK_* behaviour (cases_quirks.txt): all match the
 rem i5-13600K with --quirks cpu (each one differs with --quirks 0, i.e. the SDM).

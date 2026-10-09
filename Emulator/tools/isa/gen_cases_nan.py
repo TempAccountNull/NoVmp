@@ -19,9 +19,11 @@ gen_cases_nan.py -- NaN-propagation cases (ledger U96), Python 3 stdlib only.
   python gen_cases_nan.py --dp-hw       > Emulator/data/cases_dp_nan.txt
   python gen_cases_nan.py --dp-hw-dpps  > Emulator/data/cases_dpps_nan.txt
   python gen_cases_nan.py --dp-sdm      > Emulator/data/cases_dp_nan_sdm.txt
-      DPPS/DPPD with two or more NaN products (ledger U98): DPPD hardware cases (must match with
-      --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER), DPPS hardware cases (not repeatable on the
-      i5-13600K: measurement only) and SDM-pseudocode expected-value cases (--quirks 0).
+      DPPS/DPPD with two or more NaN products (ledger U98): DPPD hardware cases (the emulator
+      implements the SDM; every case where the i5-13600K's element order gives another NaN is
+      tagged "# known deviation: DPPD two NaN products", docs/quirks.md, U535), DPPS hardware
+      cases (not repeatable on the i5-13600K: measurement only) and SDM-pseudocode
+      expected-value cases.
 
 SDM rules exercised (Vol1 4.8.3.5, Table 4-8 "Rules for Handling NaNs"):
   SNaN and QNaN / two SNaNs / two QNaNs:
@@ -195,10 +197,10 @@ def dp(mn, esz, vex, vlb):
 
 DP_NOTE = """\
 # DPPS/DPPD with two or more NaN products are not in this file (ledger U98): see
-# cases_dp_nan.txt (DPPD on the host, --quirks cpu = UC_X86_QUIRK_DPPD_NAN_ORDER),
-# cases_dp_nan_sdm.txt (SDM pseudocode, quirks 0) and cases_dpps_nan.txt (DPPS on the host:
-# not repeatable, measurement only). The SDM pseudocode (DP_primitive) gives the first NaN
-# product in the order p0, p1, p2, p3 in every element (the default); the i5-13600K gives
+# cases_dp_nan.txt (DPPD on the host, documented deviations tagged), cases_dp_nan_sdm.txt
+# (SDM pseudocode) and cases_dpps_nan.txt (DPPS on the host: not repeatable, measurement
+# only). The SDM pseudocode (DP_primitive) gives the first NaN product in the order p0, p1,
+# p2, p3 in every element (what the emulator implements); the i5-13600K gives
 # DPPD element i := p[i] + p[i^1] (repeatable) and DPPS mostly t[j] := p[j^1] + p[j],
 # element i := t[i] + t[i^2], with the pair order of elements 1 and 3 changing between runs."""
 
@@ -310,7 +312,8 @@ def fadd(x, y, esz):
 
 def dp_lane(a, b, imm, esz, order):
     """one 128-bit lane: a, b = SRC1 / SRC2 elements. order 'sdm' = DPPS/DPPD Operation
-    (DP_primitive); 'dppd_hw' = UC_X86_QUIRK_DPPD_NAN_ORDER (element i := p[i] + p[i^1]).
+    (DP_primitive); 'dppd_hw' = the i5-13600K (element i := p[i] + p[i^1]; documented
+    deviation "DPPD two NaN products", only used to tag the hardware cases).
     Returns (elements, invalid)"""
     n = 16 // esz
     inv = False
@@ -381,8 +384,24 @@ def dp_multi_cases(mn, esz, vex, vlb):
     return cases
 
 
+DPPD_DEVIATION = " # known deviation: DPPD two NaN products"
+
+
+def dp_result(esz, vlb, imm, av, bv, order):
+    """(elements, invalid) of every 128-bit lane under the given order"""
+    n = 16 // esz
+    res, inv = [], False
+    for lane in range(vlb // 16):
+        r_, i = dp_lane(av[lane * n:(lane + 1) * n], bv[lane * n:(lane + 1) * n], imm, esz, order)
+        res += r_
+        inv |= i
+    return res, inv
+
+
 def dp_multi_line(mn, esz, vex, vlb, imm, av, bv, order=None):
-    """the case line; with order: an expected-value case (=> model result)"""
+    """the case line; with order: an expected-value case (=> model result). A DPPD hardware
+    case (order None) where the i5-13600K's element order ('dppd_hw') gives another result
+    than the SDM is tagged as the documented deviation (U535)"""
     r = "ymm" if vlb == 32 else "xmm"
     a, b = pack(av, esz), pack(bv, esz)
     d0 = bytes(range(0x40, 0x40 + vlb))
@@ -391,13 +410,10 @@ def dp_multi_line(mn, esz, vex, vlb, imm, av, bv, order=None):
     else:
         line = "%s xmm0, xmm1, 0x%X | %s %s" % (mn, imm, regkeys(0, a), regkeys(1, b))
     if order is None:
+        if esz == 8 and dp_result(esz, vlb, imm, av, bv, "sdm") != dp_result(esz, vlb, imm, av, bv, "dppd_hw"):
+            line += DPPD_DEVIATION
         return line
-    n = 16 // esz
-    res, inv = [], False
-    for lane in range(vlb // 16):
-        r_, i = dp_lane(av[lane * n:(lane + 1) * n], bv[lane * n:(lane + 1) * n], imm, esz, order)
-        res += r_
-        inv |= i
+    res, inv = dp_result(esz, vlb, imm, av, bv, order)
     img = pack(res, esz)
     exp = regkeys(0, img + (bytes(16) if (vex and vlb == 16) else b""))
     if vex and vlb == 16:
@@ -411,26 +427,28 @@ DP_MULTI_NOTE = """\
 # DPPS/DPPD with two or more NaN products in one dot product. SDM (DPPS/DPPD Operation,
 # DP_primitive; Vol1 4.8.3.5 Table 4-8 SSE column): Temp2 := p0 + p1, Temp3 := p2 + p3,
 # every selected element := Temp2 + Temp3 (DPPD: both elements := p0 + p1), so the first
-# NaN product in the order p0, p1, p2, p3 lands in every selected element (quirks 0).
-# UC_X86_QUIRK_DPPD_NAN_ORDER (i5-13600K): DPPD element i := p[i] + p[i^1] (each element's
-# own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B."""
+# NaN product in the order p0, p1, p2, p3 lands in every selected element (the emulator).
+# i5-13600K (docs/quirks.md "DPPD two NaN products"): DPPD element i := p[i] + p[i^1] (each
+# element's own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B."""
 
 
 def gen_dp_multi(model):
     """model None: hardware cases (DPPD only, or DPPS with 'dpps'); 'sdm': expected-value cases"""
     if model == "sdm":
         w("# DPPS/DPPD multi-NaN (ledger U98), expected-value cases from the SDM pseudocode:")
-        w("#   Emulator/tools/isa/gen_cases_nan.py --dp-sdm (regenerate, do not edit). Unicorn only, quirks 0:")
-        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan_sdm.txt --expect-only --quirks 0")
+        w("#   Emulator/tools/isa/gen_cases_nan.py --dp-sdm (regenerate, do not edit). Unicorn only:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan_sdm.txt --expect-only")
     elif model == "dpps":
         w("# DPPS multi-NaN (ledger U98) hardware cases: Emulator/tools/isa/gen_cases_nan.py --dp-hw-dpps")
         w("# (regenerate, do not edit). NOT a regression gate: the i5-13600K's NaN choice here is not")
-        w("# repeatable from run to run; the fork follows the SDM (no quirk). Measurement only:")
-        w("#   emu-alltest --cases Emulator\\data\\cases_dpps_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu")
+        w("# repeatable from run to run; the fork follows the SDM (docs/quirks.md). Measurement only:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dpps_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7")
     else:
         w("# DPPD multi-NaN (ledger U98) hardware cases: Emulator/tools/isa/gen_cases_nan.py --dp-hw")
-        w("# (regenerate, do not edit). With the i5-13600K quirk set (UC_X86_QUIRK_DPPD_NAN_ORDER) 0 differ:")
-        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu")
+        w("# (regenerate, do not edit). The emulator implements the SDM; a case where the i5-13600K's")
+        w("# order gives another NaN is tagged \"# known deviation: DPPD two NaN products\" (docs/quirks.md).")
+        w("# 0 untagged cases differ:")
+        w("#   emu-alltest --cases Emulator\\data\\cases_dp_nan.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7")
     w(DP_MULTI_NOTE)
     forms = []
     if model in ("sdm", "dpps"):

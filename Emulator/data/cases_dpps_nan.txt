@@ -1,13 +1,13 @@
 # DPPS multi-NaN (ledger U98) hardware cases: Emulator/tools/isa/gen_cases_nan.py --dp-hw-dpps
 # (regenerate, do not edit). NOT a regression gate: the i5-13600K's NaN choice here is not
-# repeatable from run to run; the fork follows the SDM (no quirk). Measurement only:
-#   emu-alltest --cases Emulator\data\cases_dpps_nan.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu
+# repeatable from run to run; the fork follows the SDM (docs/quirks.md). Measurement only:
+#   emu-alltest --cases Emulator\data\cases_dpps_nan.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
 # DPPS/DPPD with two or more NaN products in one dot product. SDM (DPPS/DPPD Operation,
 # DP_primitive; Vol1 4.8.3.5 Table 4-8 SSE column): Temp2 := p0 + p1, Temp3 := p2 + p3,
 # every selected element := Temp2 + Temp3 (DPPD: both elements := p0 + p1), so the first
-# NaN product in the order p0, p1, p2, p3 lands in every selected element (quirks 0).
-# UC_X86_QUIRK_DPPD_NAN_ORDER (i5-13600K): DPPD element i := p[i] + p[i^1] (each element's
-# own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B.
+# NaN product in the order p0, p1, p2, p3 lands in every selected element (the emulator).
+# i5-13600K (docs/quirks.md "DPPD two NaN products"): DPPD element i := p[i] + p[i^1] (each
+# element's own product is the first addend). Payloads: element k, SRC1 -> ...(k+1)..A, SRC2 -> ...(k+1)..B.
 # dpps xmm
 # products Qa,SQ,N,N
 dpps xmm0, xmm1, 0xFF | xmm0=0A00C17F0A00827F0000803F0000803F xmm1=000000C00B00C2FF000000C0000000C0

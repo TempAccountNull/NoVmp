@@ -64,10 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// DPPD with both products NaN: the SDM (DPPD Operation; Vol1 Table 4-8 first source) puts
-// product 0 (p0 + p1) in both selected elements; the i5-13600K computes element i as
-// p[i] + p[i^1], so element 1 gets product 1. (DPPS stays SDM: not repeatable on hardware.)
-#define UC_X86_QUIRK_DPPD_NAN_ORDER (1u << 4)
 // REP MOVS/STOS/LODS/CMPS/SCAS with a 32-bit address size (67h) in 64-bit mode and ECX = 0:
 // the SDM (REP Operation: WHILE CountReg != 0) writes no register; the i5-13600K zero-extends
 // RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS). (REP LODS leaves RCX unchanged
