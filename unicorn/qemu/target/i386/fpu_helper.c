@@ -7331,6 +7331,55 @@ static uint32_t x86_rsqrt12(uint32_t x)
 }
 
 #endif /* __Use_Original_Qemu (U81) */
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+/* U709: would an access of [addr, addr + size) fault (#PF, #GP/#SS, Unicorn-unmapped)? */
+static bool x86_access_would_fault(CPUX86State *env, target_ulong addr, int size,
+                                   MMUAccessType type, uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+    int mmu_idx = cpu_mmu_index(env, false);
+    target_ulong p = addr, n;
+    int left = size;
+
+    while (left > 0) {
+        void *host;
+        target_ulong paddr;
+        MemoryRegion *mr;
+
+        n = TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK);
+        if (n > (target_ulong)left) {
+            n = left;
+        }
+        if (probe_access_flags(env, p, type, mmu_idx, true, &host, ra) & TLB_INVALID_MASK) {
+            return true;
+        }
+        if (!tlb_vaddr_to_paddr(env, p, type, mmu_idx, &paddr)) {
+            return true;
+        }
+        mr = uc->memory_mapping(uc, paddr);
+        if (mr == NULL ||
+            !(mr->perms & (type == MMU_DATA_STORE ? UC_PROT_WRITE : UC_PROT_READ))) {
+            return true;
+        }
+        p += n;
+        left -= (int)n;
+    }
+    return false;
+}
+
+/*
+ * U709: before the access of a gather / scatter element: if a data breakpoint hit by an
+ * earlier element of this execution is pending and this access would fault, that #DB is
+ * delivered instead (RF = 1; x86_deliver_pending_data_bp, bpt_helper.c).
+ */
+static void x86_vsib_elem_check(CPUX86State *env, target_ulong addr, int size,
+                                MMUAccessType type, uintptr_t ra)
+{
+    if (env_cpu(env)->watchpoint_hit && x86_access_would_fault(env, addr, size, type, ra)) {
+        x86_deliver_pending_data_bp(env, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U709) */
 #define SHIFT 0
 #include "ops_sse.h"
 
@@ -7631,6 +7680,9 @@ void helper_evex_gather(CPUX86State *env, ZMMReg *d, ZMMReg *v, target_ulong a0,
         if (*k & (1ull << j)) {
             target_ulong addr = evex_vsib_addr(v, desc, j, a0, seg);
 
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, addr, q ? 8 : 4, MMU_DATA_LOAD, ra);
+#endif /* __Use_Original_Qemu (U709) */
             if (q) {
                 d->ZMM_Q(j) = cpu_ldq_data_ra(env, addr, ra);
             } else {
@@ -7704,6 +7756,10 @@ void helper_evex_scatter(CPUX86State *env, ZMMReg *s, ZMMReg *v, target_ulong a0
 
     for (j = 0; j < kl; j++) {
         if (*k & (1ull << j)) {
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, evex_vsib_addr(v, desc, j, a0, seg), q ? 8 : 4,
+                                MMU_DATA_STORE, ra);
+#endif /* __Use_Original_Qemu (U709) */
             evex_scatter_elem(env, evex_vsib_addr(v, desc, j, a0, seg),
                               q ? s->ZMM_Q(j) : s->ZMM_L(j), q ? 8 : 4, ra);
             *k &= ~(1ull << j);

@@ -17678,6 +17678,121 @@ static void test_x86_fx3_cmpxchg_ro(void)
         OK(uc_close(uc));
     }
 }
+
+/* UC_HOOK_INTR for U709: vector, RIP and RFLAGS at the exception; stops */
+typedef struct {
+    int count;
+    uint32_t intno;
+    uint64_t rip, rflags;
+} fx3_trap_t;
+
+static void fx3_trap_hook(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    fx3_trap_t *r = (fx3_trap_t *)user_data;
+
+    if (r->count++ == 0) {
+        r->intno = intno;
+        OK(uc_reg_read(uc, UC_X86_REG_RIP, &r->rip));
+        OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &r->rflags));
+    }
+    uc_emu_stop(uc);
+}
+
+/*
+ * U709: a gather / scatter whose element 0 hits a data breakpoint (DR0 = FX3_PG, 4 bytes) and
+ * whose element 2 is on an unmapped page: the #DB pending from element 0 is delivered in lieu
+ * of the fault, RF = 1, RIP at the instruction, elements 0 and 1 done (data / memory written,
+ * mask bits cleared), DR6.B0 = 1 (SDM Vol2C VPGATHERDD / VPSCATTERDD, Vol2B VPGATHERDD).
+ * Indices 0, 4, 1000h, 8 from RBX = FX3_PG; memory 01..10h; the source / destination 11h..
+ */
+static void test_x86_fx3_vsib_pending_db(void)
+{
+    /* mov rax, FX3_PG; mov dr0, rax; mov rax, DR7; mov dr7, rax; <insn>; nop */
+    static const uint8_t pre[] = {0x48, 0xb8, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00,
+                                  0x0f, 0x23, 0xc0, 0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0,
+                                  0x0f, 0x23, 0xf8};
+    static const struct {
+        const char *insn;
+        size_t len;
+        int evex, store;
+        uint32_t dr7;
+        const char *what;
+    } t[] = {
+        {"\xc4\xe2\x71\x90\x04\x13", 6, 0, 0, 0xF0401, "AVX2 vpgatherdd xmm0, [rbx+xmm2], xmm1"},
+        {"\x62\xf2\x7d\x09\x90\x04\x13", 7, 1, 0, 0xF0401, "vpgatherdd xmm0{k1}, [rbx+xmm2]"},
+        {"\x62\xf2\x7d\x09\xa0\x04\x13", 7, 1, 1, 0xD0401, "vpscatterdd [rbx+xmm2]{k1}, xmm0"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc_engine *uc;
+        uc_hook h;
+        uc_err err;
+        fx3_trap_t trap;
+        uint8_t code[64], m[16], x[16];
+        uint32_t idx[4] = {0, 4, 0x1000, 8}, ones[4] = {~0u, ~0u, ~0u, ~0u}, mem[4];
+        uint64_t rbx = FX3_PG, k1 = 0xf, dr6 = 0, km = 0;
+        size_t n = sizeof(pre), at;
+        int j;
+        bool ok;
+
+        memcpy(code, pre, n);
+        memcpy(code + 15, &t[i].dr7, 4);
+        at = n;
+        memcpy(code + n, t[i].insn, t[i].len);
+        n += t[i].len;
+        code[n++] = 0x90;
+        for (j = 0; j < 16; j++) {
+            m[j] = (uint8_t)(j + 1);
+            x[j] = 0x11;
+        }
+        memset(&trap, 0, sizeof(trap));
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        if (t[i].evex) {
+            OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_VL));
+        }
+        OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, code_start, code, n));
+        OK(uc_mem_map(uc, FX3_PG, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, FX3_PG, m, sizeof(m)));
+        OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM0, x));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM1, ones));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM2, idx));
+        if (t[i].evex) {
+            OK(uc_reg_write(uc, UC_X86_REG_K1, &k1));
+        }
+        OK(uc_hook_add(uc, &h, UC_HOOK_INTR, fx3_trap_hook, &trap, 1, 0));
+        err = uc_emu_start(uc, code_start, code_start + n, 0, 0);
+        OK(uc_reg_read(uc, UC_X86_REG_XMM0, x));
+        OK(uc_reg_read(uc, UC_X86_REG_XMM1, ones));
+        OK(uc_reg_read(uc, UC_X86_REG_DR6, &dr6));
+        OK(uc_mem_read(uc, FX3_PG, mem, sizeof(mem)));
+        if (t[i].evex) {
+            OK(uc_reg_read(uc, UC_X86_REG_K1, &km));
+        }
+        ok = err == UC_ERR_OK && trap.count == 1 && trap.intno == 1 &&
+             trap.rip == code_start + at && (trap.rflags & 0x10000) && (dr6 & 1);
+        if (t[i].store) {
+            /* elements 0 and 1 stored (11111111h), the others not; k1 = 1100b */
+            ok = ok && mem[0] == 0x11111111 && mem[1] == 0x11111111 &&
+                 mem[2] == 0x0c0b0a09 && mem[3] == 0x100f0e0d && km == 0xc;
+        } else {
+            /* elements 0 and 1 gathered (04030201h, 08070605h), the mask cleared for them */
+            uint32_t *d = (uint32_t *)x;
+
+            ok = ok && d[0] == 0x04030201 && d[1] == 0x08070605 && d[2] == 0x11111111 &&
+                 d[3] == 0x11111111 &&
+                 (t[i].evex ? km == 0xc : (ones[0] == 0 && ones[1] == 0 && ones[2] == ~0u));
+        }
+        TEST_CHECK(ok);
+        TEST_MSG("%s: err %u traps %d #%u rip %" PRIx64 " (expected %" PRIx64 ") rflags %"
+                 PRIx64 " dr6 %" PRIx64 " k1 %" PRIx64,
+                 t[i].what, err, trap.count, trap.intno, trap.rip, code_start + at,
+                 trap.rflags, dr6, km);
+        OK(uc_close(uc));
+    }
+}
 /* ---- end U700-U719 (fx3_) ---- */
 
 TEST_LIST = {
@@ -17937,4 +18052,5 @@ TEST_LIST = {
     {"test_x86_fx3_far_limits", test_x86_fx3_far_limits},
     {"test_x86_fx3_far_call_pushes", test_x86_fx3_far_call_pushes},
     {"test_x86_fx3_cmpxchg_ro", test_x86_fx3_cmpxchg_ro},
+    {"test_x86_fx3_vsib_pending_db", test_x86_fx3_vsib_pending_db},
     {NULL, NULL}};

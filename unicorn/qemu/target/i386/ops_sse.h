@@ -3100,6 +3100,9 @@ void glue(helper_vpgatherdd, SUFFIX)(CPUX86State *env,
         if (v->L(i) >> 31) {
             target_ulong addr = a0
                 + ((target_ulong)(int32_t)s->L(i) << scale);
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, addr & amask, 4, MMU_DATA_LOAD, GETPC());
+#endif /* __Use_Original_Qemu (U709) */
             d->L(i) = cpu_ldl_data_ra(env, addr & amask, GETPC());
         }
         v->L(i) = 0;
@@ -3114,6 +3117,9 @@ void glue(helper_vpgatherdq, SUFFIX)(CPUX86State *env,
         if (v->Q(i) >> 63) {
             target_ulong addr = a0
                 + ((target_ulong)(int32_t)s->L(i) << scale);
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, addr & amask, 8, MMU_DATA_LOAD, GETPC());
+#endif /* __Use_Original_Qemu (U709) */
             d->Q(i) = cpu_ldq_data_ra(env, addr & amask, GETPC());
         }
         v->Q(i) = 0;
@@ -3128,6 +3134,9 @@ void glue(helper_vpgatherqd, SUFFIX)(CPUX86State *env,
         if (v->L(i) >> 31) {
             target_ulong addr = a0
                 + ((target_ulong)(int64_t)s->Q(i) << scale);
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, addr & amask, 4, MMU_DATA_LOAD, GETPC());
+#endif /* __Use_Original_Qemu (U709) */
             d->L(i) = cpu_ldl_data_ra(env, addr & amask, GETPC());
         }
         v->L(i) = 0;
@@ -3146,6 +3155,9 @@ void glue(helper_vpgatherqq, SUFFIX)(CPUX86State *env,
         if (v->Q(i) >> 63) {
             target_ulong addr = a0
                 + ((target_ulong)(int64_t)s->Q(i) << scale);
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+            x86_vsib_elem_check(env, addr & amask, 8, MMU_DATA_LOAD, GETPC());
+#endif /* __Use_Original_Qemu (U709) */
             d->Q(i) = cpu_ldq_data_ra(env, addr & amask, GETPC());
         }
         v->Q(i) = 0;

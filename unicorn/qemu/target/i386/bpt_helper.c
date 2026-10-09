@@ -205,6 +205,34 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
     return hit_enabled;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+/*
+ * NoVmp (ledger U709): a gather / scatter element is about to fault while a data breakpoint
+ * hit by an earlier element of the same execution is pending (QEMU re-runs the instruction
+ * after a watchpoint hit with cs->watchpoint_hit set and requests CPU_INTERRUPT_DEBUG for
+ * after it; the fault came first and the #DB after it). SDM Vol2C VPGATHERDD/VSCATTERDPS, Vol2B
+ * VPGATHERDD (AVX2): "If any traps or interrupts are pending from already gathered elements,
+ * they will be delivered in lieu of the exception; in this case, EFLAG.RF is set to one so an
+ * instruction breakpoint is not re-triggered when the instruction is continued." Raises that
+ * #DB (DR6 as breakpoint_handler, RF = 1, RIP at the instruction: the completed elements stay
+ * done) and does not return; returns when no data breakpoint is pending.
+ */
+void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra)
+{
+    CPUState *cs = env_cpu(env);
+
+    if (!cs->watchpoint_hit || !(cs->watchpoint_hit->flags & BP_CPU)) {
+        return;
+    }
+    cs->watchpoint_hit = NULL;
+    cpu_reset_interrupt(cs, CPU_INTERRUPT_DEBUG);
+    if (check_hw_breakpoints(env, false)) {
+        env->eflags |= RF_MASK;
+        raise_exception_ra(env, EXCP01_DB, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U709) */
+
 void breakpoint_handler(CPUState *cs)
 {
     X86CPU *cpu = X86_CPU(cs);

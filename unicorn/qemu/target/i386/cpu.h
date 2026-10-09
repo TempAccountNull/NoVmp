@@ -2384,6 +2384,10 @@ void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t 
 void x86_probe_write_mmu(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
                          uintptr_t ra);
 #endif /* __Use_Original_Qemu (U708) */
+#if __Use_Original_Qemu != 1 /* ours (U709) */
+/* bpt_helper.c: deliver a data-breakpoint #DB pending from a gather/scatter element */
+void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra);
+#endif /* __Use_Original_Qemu (U709) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */
