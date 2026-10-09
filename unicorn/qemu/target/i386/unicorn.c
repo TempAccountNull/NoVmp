@@ -537,6 +537,20 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
         memcpy(value, env->xtiledata + 1024 * (regid - UC_X86_REG_TMM0), 1024);
         return ret;
 #endif /* __Use_Original_Qemu (U174) */
+#if __Use_Original_Qemu != 1 /* ours (U830) */
+    /* NoVmp (ledger U830): MMn = bits 63:0 of the physical register Rn (SDM Vol1 9.5) */
+    case UC_X86_REG_MM0:
+    case UC_X86_REG_MM1:
+    case UC_X86_REG_MM2:
+    case UC_X86_REG_MM3:
+    case UC_X86_REG_MM4:
+    case UC_X86_REG_MM5:
+    case UC_X86_REG_MM6:
+    case UC_X86_REG_MM7:
+        CHECK_REG_TYPE(uint64_t);
+        *(uint64_t *)value = env->fpregs[regid - UC_X86_REG_MM0].mmx.MMX_Q(0);
+        return ret;
+#endif /* __Use_Original_Qemu (U830) */
     }
 
     switch (mode) {
@@ -1507,6 +1521,27 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         memcpy(env->xtiledata + 1024 * (regid - UC_X86_REG_TMM0), value, 1024);
         return ret;
 #endif /* __Use_Original_Qemu (U174) */
+#if __Use_Original_Qemu != 1 /* ours (U830) */
+    /*
+     * NoVmp (ledger U830): MMn -> bits 63:0 of Rn; bits 79:64 become all 1s, as when an MMX
+     * instruction writes MMn (SDM Vol1 9.6.2). TOP and the tag word are not touched: the SDM
+     * sets them on the execution of an MMX instruction (9.5.1, 9.6.2), and none executes.
+     */
+    case UC_X86_REG_MM0:
+    case UC_X86_REG_MM1:
+    case UC_X86_REG_MM2:
+    case UC_X86_REG_MM3:
+    case UC_X86_REG_MM4:
+    case UC_X86_REG_MM5:
+    case UC_X86_REG_MM6:
+    case UC_X86_REG_MM7: {
+        FPReg *r = &env->fpregs[regid - UC_X86_REG_MM0];
+        CHECK_REG_TYPE(uint64_t);
+        r->mmx.MMX_Q(0) = *(uint64_t *)value;
+        r->d.high = 0xffff;
+        return ret;
+    }
+#endif /* __Use_Original_Qemu (U830) */
     }
 
     switch (mode) {

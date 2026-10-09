@@ -19275,6 +19275,122 @@ static void test_x86_xm_scatter_write_hook(void)
     }
 }
 /* ---- end of the x87misc (xm_) block ---- */
+/* ---- U830-U849 (rg_) ---- */
+
+/* the physical x87 register Rn through UC_X86_REG_FPn: significand and sign/exponent */
+static void rg_fp80(uc_engine *uc, int n, uint64_t *mant, uint16_t *exp)
+{
+    uint8_t fp[10];
+
+    OK(uc_reg_read(uc, UC_X86_REG_FP0 + n, fp));
+    memcpy(mant, fp, 8);
+    memcpy(exp, fp + 8, 2);
+}
+
+/* 1 if no field of the abridged-from-full tag word (UC_X86_REG_FPTAG) is 11b (empty) */
+static int rg_tags_valid(uint16_t ftw)
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        if (((ftw >> (2 * i)) & 3) == 3) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * U830: UC_X86_REG_MM0-7 are bits 63:0 of the physical x87 registers R0-R7 (SDM Vol1 9.5: the
+ * MMX registers map to R0-R7, not to ST(i)). An API write also sets bits 79:64 of Rn to all
+ * 1s, as an MMX instruction writing MMn does (9.6.2), and leaves FSW.TOP and the tag word
+ * alone: the SDM sets TOP = 0 and every tag valid when an MMX instruction executes (9.5.1,
+ * 9.6.2), and an API write executes none. Any mode.
+ */
+static void test_x86_rg_mmx_regs(void)
+{
+    static const char rd5[] = "\x48\x0f\x7e\xe8"; /* movq rax, mm5 */
+    static const char wr2[] = "\x48\x0f\x6e\xd3"; /* movq mm2, rbx */
+    uc_engine *uc;
+    uint64_t v, mant;
+    uint16_t exp, fsw, ftw;
+    uint8_t fp[10], st[10];
+    size_t sz;
+    int i;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    fsw = (3u << 11) | 0x0001; /* TOP = 3, IE */
+    OK(uc_reg_write(uc, UC_X86_REG_FPSW, &fsw));
+    ftw = 0xffff; /* every register empty */
+    OK(uc_reg_write(uc, UC_X86_REG_FPTAG, &ftw));
+    for (i = 0; i < 8; i++) {
+        v = 0x8877665544332200ULL | (uint64_t)i;
+        OK(uc_reg_write(uc, UC_X86_REG_MM0 + i, &v));
+    }
+    for (i = 0; i < 8; i++) {
+        v = 0;
+        OK(uc_reg_read(uc, UC_X86_REG_MM0 + i, &v));
+        rg_fp80(uc, i, &mant, &exp);
+        TEST_CHECK(v == (0x8877665544332200ULL | (uint64_t)i));
+        TEST_CHECK(mant == v && exp == 0xffff);
+        TEST_MSG("MM%d %016" PRIx64 ", R%d %04x:%016" PRIx64, i, v, i, exp, mant);
+    }
+    /* physical registers: with TOP = 3, ST(2) is R5 */
+    OK(uc_reg_read(uc, UC_X86_REG_ST2, st));
+    TEST_CHECK(st[0] == 0x05 && st[7] == 0x88 && st[8] == 0xff && st[9] == 0xff);
+    /* no instruction executed: TOP and the tag word are what was written */
+    OK(uc_reg_read(uc, UC_X86_REG_FPSW, &fsw));
+    OK(uc_reg_read(uc, UC_X86_REG_FPTAG, &ftw));
+    TEST_CHECK(fsw == ((3u << 11) | 0x0001) && ftw == 0xffff);
+    TEST_MSG("fsw %04x ftw %04x", fsw, ftw);
+    /* a read leaves Rn alone: R6 = 1.5 (3FFF:C000000000000000) written through FP6 */
+    mant = 0xc000000000000000ULL;
+    exp = 0x3fff;
+    memcpy(fp, &mant, 8);
+    memcpy(fp + 8, &exp, 2);
+    OK(uc_reg_write(uc, UC_X86_REG_FP6, fp));
+    OK(uc_reg_read(uc, UC_X86_REG_MM6, &v));
+    rg_fp80(uc, 6, &mant, &exp);
+    TEST_CHECK(v == 0xc000000000000000ULL && mant == v && exp == 0x3fff);
+    /* an MMX instruction reads the API value; executing it sets TOP = 0, every tag valid */
+    OK(uc_mem_write(uc, code_start, rd5, sizeof(rd5) - 1));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(rd5) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RAX, &v));
+    OK(uc_reg_read(uc, UC_X86_REG_FPSW, &fsw));
+    OK(uc_reg_read(uc, UC_X86_REG_FPTAG, &ftw));
+    TEST_CHECK(v == 0x8877665544332205ULL);
+    TEST_CHECK(((fsw >> 11) & 7) == 0 && rg_tags_valid(ftw));
+    TEST_MSG("rax %016" PRIx64 " fsw %04x ftw %04x", v, fsw, ftw);
+    /* an MMX instruction's write is what the API reads (R2 exponent all 1s, U44) */
+    v = 0x0123456789abcdefULL;
+    OK(uc_reg_write(uc, UC_X86_REG_RBX, &v));
+    OK(uc_mem_write(uc, code_start, wr2, sizeof(wr2) - 1));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(wr2) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_MM2, &v));
+    rg_fp80(uc, 2, &mant, &exp);
+    TEST_CHECK(v == 0x0123456789abcdefULL && mant == v && exp == 0xffff);
+    /* the value is a uint64_t */
+    sz = 4;
+    TEST_CHECK(uc_reg_read2(uc, UC_X86_REG_MM0, &v, &sz) == UC_ERR_OVERFLOW);
+    TEST_CHECK(uc_reg_write2(uc, UC_X86_REG_MM0, &v, &sz) == UC_ERR_OVERFLOW);
+    sz = 16;
+    OK(uc_reg_read2(uc, UC_X86_REG_MM0, &v, &sz));
+    TEST_CHECK(sz == 8 && v == 0x8877665544332200ULL);
+    OK(uc_close(uc));
+
+    /* 32-bit mode: the same registers */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &uc));
+    v = 0xfedcba9876543210ULL;
+    OK(uc_reg_write(uc, UC_X86_REG_MM7, &v));
+    v = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_MM7, &v));
+    rg_fp80(uc, 7, &mant, &exp);
+    TEST_CHECK(v == 0xfedcba9876543210ULL && mant == v && exp == 0xffff);
+    OK(uc_close(uc));
+}
+
+/* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -19547,4 +19663,5 @@ TEST_LIST = {
     {"test_x86_axc_apx_nci_ndd_nf", test_x86_axc_apx_nci_ndd_nf},
     {"test_x86_xm_x87_ptr_profiles", test_x86_xm_x87_ptr_profiles},
     {"test_x86_xm_scatter_write_hook", test_x86_xm_scatter_write_hook},
+    {"test_x86_rg_mmx_regs", test_x86_rg_mmx_regs},
     {NULL, NULL}};

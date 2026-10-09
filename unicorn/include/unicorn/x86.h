@@ -178,6 +178,11 @@ typedef enum uc_x86_reg {
     UC_X86_REG_K5,
     UC_X86_REG_K6,
     UC_X86_REG_K7,
+    // NoVmp U830: MMn (uint64_t) = bits 63:0 of the physical x87 register Rn (not ST(n);
+    // SDM Vol1 9.5). A write also sets bits 79:64 of Rn to all 1s, as an MMX instruction
+    // writing MMn does (SDM Vol1 9.6.2); FSW.TOP and the tag word are left alone: the SDM
+    // ties TOP = 0 / all tags valid to the execution of an MMX instruction, and an API
+    // write executes none (set them with UC_X86_REG_FPSW / UC_X86_REG_FPTAG if wanted).
     UC_X86_REG_MM0,
     UC_X86_REG_MM1,
     UC_X86_REG_MM2,
