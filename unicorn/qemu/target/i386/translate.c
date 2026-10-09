@@ -3815,23 +3815,33 @@ static uint32_t x87_stack_desc(DisasContext *s, int op, int mod, int rm)
     const uint32_t cmp = XD_CAT(X87C_COMPARE);
     const uint32_t push = X87D_PUSH | XD_CAT(X87C_PUSH) | X87D_C1CLR;
     const uint32_t push2 = st0 | X87D_PUSH | XD_CAT(X87C_PUSH2);
-    const uint32_t store = st0 | XD_CAT(X87C_STORE);
+    const uint32_t store = st0 | XD_CAT(X87C_STORE) | X87D_MEM;      /* U705: X87D_MEM */
     bool cmov = (s->cpuid_features & CPUID_CMOV) != 0;
 
     if (mod != 3) {
+        /* U705: X87D_MEM + the operand's format: the memory operand is accessed first */
+        static const uint8_t src_fmt[4] = { X87F_F32, X87F_I32, X87F_F64, X87F_I16 };
+
         if ((op & 0x08) == 0) {     /* 0x00-07, 10-17, 20-27, 30-37: fxxx m32/m32int/m64/m16int */
+            const uint32_t mem = X87D_MEM | XD_FMT(src_fmt[op >> 4]);
+
             if ((op & 7) == 2) {
-                return st0 | cmp;
+                return st0 | cmp | mem;
             }
             if ((op & 7) == 3) {
-                return st0 | cmp | XD_POPS(1);
+                return st0 | cmp | XD_POPS(1) | mem;
             }
-            return dst0;
+            return dst0 | mem;
         }
         switch (op) {
         case 0x08: case 0x18: case 0x28: case 0x38: /* fld/fild m32/m64/m16 */
-        case 0x1d: case 0x3c: case 0x3d:            /* fld m80, fbld, fild m64 */
-            return push;
+            return push | X87D_MEM | XD_FMT(src_fmt[op >> 4]);
+        case 0x1d: return push | X87D_MEM | XD_FMT(X87F_F80);   /* fld m80 */
+        case 0x3c: return push | X87D_MEM | XD_FMT(X87F_BCD);   /* fbld */
+        case 0x3d: return push | X87D_MEM | XD_FMT(X87F_I64);   /* fild m64 */
+        }
+        /* the stores (U705: X87D_MEM) */
+        switch (op) {
         case 0x0a: return store | XD_FMT(X87F_F32);
         case 0x0b: return store | XD_FMT(X87F_F32) | XD_POPS(1);
         case 0x2a: return store | XD_FMT(X87F_F64);

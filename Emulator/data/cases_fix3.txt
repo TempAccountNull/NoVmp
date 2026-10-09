@@ -225,3 +225,35 @@ sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF m+0xF
 sidt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF m+0xFFF8=0000000000000000
 sgdt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF
 sgdt [rsi+0x7ff6] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => m+0xFFF6=37000000043000000000
+#
+# --- U705 an x87 instruction with a memory operand and a stack fault (#IS: empty source /
+# full stack; the default state has every register empty) accesses its memory operand first:
+# a memory source is read before the stack check, so a #PF leaves FSW, the tags and the
+# registers unchanged (also with FCW.IM = 0); a masked store response stores the indefinite
+# before FSW/C1/the stack change; an unmasked one (FCW = 37Eh) does not access memory (no
+# #PF). FSTP m80 [rsi+0x7ff8] is left out: its qword ends at the page end, where the
+# i5-13600K is not repeatable (docs\quirks.md, U480). Before U705: 23 of these 24 differed.
+fadd dword ptr [rsi+0x8000] | cpl=3
+fcomp dword ptr [rsi+0x8000] | cpl=3
+fcom qword ptr [rsi+0x8000] | cpl=3
+fiadd word ptr [rsi+0x8000] | cpl=3
+ficomp dword ptr [rsi+0x8000] | cpl=3
+fdivr qword ptr [rsi+0x8000] | cpl=3
+fadd dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
+fcomp dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
+fstp dword ptr [rsi+0x8000] | cpl=3
+fst qword ptr [rsi+0x8000] | cpl=3
+fistp word ptr [rsi+0x8000] | cpl=3
+fist dword ptr [rsi+0x8000] | cpl=3
+fisttp qword ptr [rsi+0x8000] | cpl=3
+.byte 0xdb, 0xbe, 0x00, 0x80, 0x00, 0x00 | cpl=3
+.byte 0xdf, 0xb6, 0x00, 0x80, 0x00, 0x00 | cpl=3
+fstp dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
+fstp dword ptr [rsi+0x7ffe] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x8000] | cpl=3
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fild qword ptr [rsi+0x8000] | cpl=3
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; .byte 0xdb, 0xae, 0x00, 0x80, 0x00, 0x00 | cpl=3
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; .byte 0xdf, 0xa6, 0x00, 0x80, 0x00, 0x00 | cpl=3
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
+fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x7ffe] | cpl=3
+fadd dword ptr [rsi+0x7ffe] | cpl=3

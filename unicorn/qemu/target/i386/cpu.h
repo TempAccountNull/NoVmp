@@ -2708,6 +2708,7 @@ static inline void cpu_sync_fpus_es(CPUX86State *env)
 #define X87D_C1CLR          (1u << 23)          /* C1 = 0 when no fault    */
 #define X87D_FCOMI          (1u << 24)          /* compare sets ZF/PF/CF   */
 #define X87D_C2CLR          (1u << 25)          /* C2 = 0 on a stack fault */
+#define X87D_MEM            (1u << 26)          /* memory operand, X87F_* (U705) */
 
 enum {
     X87C_NONE,      /* no stack check (only the C1 rule)                 */

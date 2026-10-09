@@ -280,6 +280,79 @@ static void merge_exception_flags(CPUX86State *env, int old_flags)
     merge_exception_flags_ex(env, old_flags, true);
 }
 
+/* U705: bytes of an x87 memory operand of format X87F_* */
+static uint32_t x87_fmt_len(unsigned fmt)
+{
+    switch (fmt) {
+    case X87F_I16:
+        return 2;
+    case X87F_F32:
+    case X87F_I32:
+        return 4;
+    case X87F_F64:
+    case X87F_I64:
+        return 8;
+    default:        /* F80, BCD */
+        return 10;
+    }
+}
+
+/*
+ * U705: the masked #IS response of a store, the QNaN / integer indefinite in its format; each
+ * part is checked first (x86_probe_store, U592: a page Unicorn has not mapped stops the
+ * instruction before the part is stored). F80 / packed BCD: bytes 7:0, then bytes 9:8 (U480).
+ */
+static void x87_store_part(CPUX86State *env, target_ulong a0, uint64_t v, uint32_t len,
+                           uintptr_t ra)
+{
+    uint8_t img[8];
+    uint32_t k;
+
+    for (k = 0; k < len; k++) {
+        img[k] = (uint8_t)(v >> (8 * k));
+    }
+    x86_probe_store(env, a0, len, img, ra);
+    switch (len) {
+    case 2:
+        cpu_stw_data_ra(env, a0, (uint16_t)v, ra);
+        break;
+    case 4:
+        cpu_stl_data_ra(env, a0, (uint32_t)v, ra);
+        break;
+    default:
+        cpu_stq_data_ra(env, a0, v, ra);
+        break;
+    }
+}
+
+static void x87_store_indefinite(CPUX86State *env, uint32_t desc, target_ulong a0, uintptr_t ra)
+{
+    switch (X87D_FMT(desc)) {
+    case X87F_F32:
+        x87_store_part(env, a0, 0xffc00000u, 4, ra);
+        break;
+    case X87F_F64:
+        x87_store_part(env, a0, 0xfff8000000000000ull, 8, ra);
+        break;
+    case X87F_I16:
+        x87_store_part(env, a0, 0x8000, 2, ra);
+        break;
+    case X87F_I32:
+        x87_store_part(env, a0, 0x80000000u, 4, ra);
+        break;
+    case X87F_I64:
+        x87_store_part(env, a0, 0x8000000000000000ull, 8, ra);
+        break;
+    default: {  /* F80 and packed-BCD indefinite share the encoding */
+        floatx80 ind = floatx80_default_nan(&env->fp_status);
+
+        x87_store_part(env, a0, ind.low, 8, ra);
+        x87_store_part(env, a0 + 8, ind.high, 2, ra);
+        break;
+    }
+    }
+}
+
 /*
  * NoVmp (ledger U46): x87 stack overflow / underflow, checked before every
  * x87 operation that reads or pushes registers (descriptor in cpu.h, built
@@ -317,6 +390,22 @@ uint32_t helper_x87_pre(CPUX86State *env, uint32_t desc, target_ulong a0)
         fpop(env);
         return 1;
     }
+    /*
+     * U705: the memory operand is accessed before the stack fault is reported. A memory source
+     * (arithmetic, compare, FLD/FILD/FBLD m) is read first: a #PF there leaves the x87 state
+     * unchanged (the i5-13600K faults with FSW, the tags and the registers as they were, also
+     * with FCW.IM = 0). A masked store response stores the indefinite first and changes FSW,
+     * C1 and the stack only after the store (FSTP m80 / FBSTP: bytes 7:0, then bytes 9:8, as
+     * U480); an unmasked one does not access memory. SDM Vol3A 6.15: the faulting instruction
+     * is not executed.
+     */
+    if (desc & X87D_MEM) {
+        if (cat != X87C_STORE) {
+            x86_access_prepare(env, a0, x87_fmt_len(X87D_FMT(desc)), MMU_DATA_LOAD, ra);
+        } else if (env->fpuc & 0x0001) {            /* FCW.IM */
+            x87_store_indefinite(env, desc, a0, ra);
+        }
+    }
 
     /* #IS: IE and SF; C1 = 1 for overflow, 0 for underflow (SDM 8.5.1.1) */
     env->fpus = (env->fpus & ~FPUS_C1) | (over ? FPUS_C1 : 0);
@@ -341,27 +430,7 @@ uint32_t helper_x87_pre(CPUX86State *env, uint32_t desc, target_ulong a0)
             env->fptags[(env->fpstt + dst) & 7] = 0;
             break;
         case X87C_STORE:
-            switch (X87D_FMT(desc)) {
-            case X87F_F32:
-                cpu_stl_data_ra(env, a0, 0xffc00000u, ra);
-                break;
-            case X87F_F64:
-                cpu_stq_data_ra(env, a0, 0xfff8000000000000ull, ra);
-                break;
-            case X87F_I16:
-                cpu_stw_data_ra(env, a0, 0x8000, ra);
-                break;
-            case X87F_I32:
-                cpu_stl_data_ra(env, a0, 0x80000000u, ra);
-                break;
-            case X87F_I64:
-                cpu_stq_data_ra(env, a0, 0x8000000000000000ull, ra);
-                break;
-            default:    /* F80 and packed-BCD indefinite share the encoding */
-                do_fstt(env, ind, a0, ra);
-                break;
-            }
-            break;
+            break;          /* stored above, before FSW changed (U705) */
         case X87C_PUSH:
             fpush(env);
             ST0 = ind;
