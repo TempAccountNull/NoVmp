@@ -14199,6 +14199,43 @@ static void test_x86_bp_iret_vm86(void)
              bp_seg(&c, UC_X86_REG_CS), (unsigned long long)bp_get(&c, UC_X86_REG_RSP));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U454 (upstream QEMU c45b426acd): RDPMC #GP(0) iff CPL > 0 and CR4.PCE = 0
+ * (SDM Vol2B RDPMC). Where access is allowed the counter read is still
+ * unimplemented here (#UD), see the ledger row.
+ */
+static void test_x86_bp_rdpmc_gp(void)
+{
+    BpCpu c;
+    uint64_t cr4;
+
+    /* CPL3, CR4.PCE = 0: #GP(0) at the RDPMC */
+    bp_open(&c, UC_MODE_64, -1);
+    cr4 = bp_get(&c, UC_X86_REG_CR4) & ~(uint64_t)0x100;
+    bp_set(&c, UC_X86_REG_CR4, cr4);
+    OK(bp_run64_cpl3(&c, "\x0f\x33", 2));
+    TEST_CHECK(c.count == 1 && c.intno == 13 && c.rip == BP_CODE + 0x100);
+    TEST_MSG("CPL3 PCE=0: count %u intno %u rip %llx", c.count, c.intno,
+             (unsigned long long)c.rip);
+    OK(uc_close(c.uc));
+
+    /* CPL3, CR4.PCE = 1: no #GP (the read itself is unimplemented: #UD) */
+    bp_open(&c, UC_MODE_64, -1);
+    cr4 = bp_get(&c, UC_X86_REG_CR4) | 0x100;
+    bp_set(&c, UC_X86_REG_CR4, cr4);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run64_cpl3(&c, "\x0f\x33", 2));
+    TEST_CHECK(c.count == 0);
+    OK(uc_close(c.uc));
+
+    /* CPL0, CR4.PCE = 0: no #GP */
+    bp_open(&c, UC_MODE_64, -1);
+    cr4 = bp_get(&c, UC_X86_REG_CR4) & ~(uint64_t)0x100;
+    bp_set(&c, UC_X86_REG_CR4, cr4);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run_at(&c, BP_CODE, "\x0f\x33", 2, 0));
+    TEST_CHECK(c.count == 0);
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14411,4 +14448,5 @@ TEST_LIST = {
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
     {"test_x86_bp_tcg_temp_overflow", test_x86_bp_tcg_temp_overflow},
     {"test_x86_bp_iret_vm86", test_x86_bp_iret_vm86},
+    {"test_x86_bp_rdpmc_gp", test_x86_bp_rdpmc_gp},
     {NULL, NULL}};
