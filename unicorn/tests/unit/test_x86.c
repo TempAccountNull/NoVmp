@@ -14639,6 +14639,80 @@ static void test_x86_bp_dr7_gd(void)
     TEST_CHECK(bp_get(&c, UC_X86_REG_DR0) == 0x1234);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U463-U465 helpers: a task switch by JMP FAR to the TSS descriptor 40h (TSS at
+ * BP_TSS_NEW) from the task in TR = 38h (TSS at BP_TSS_OLD); 32-bit protected
+ * mode, CPL0, the new task starts at BP_TASK_EIP.
+ */
+#define BP_TSS_OLD 0x5000
+#define BP_TSS_NEW 0x6000
+#define BP_TASK_EIP 0x7000
+
+static void bp_task_setup(BpCpu *c, int old32, int new32)
+{
+    uc_x86_mmr tr = {0x38, BP_TSS_OLD, old32 ? 0x67 : 0x2b, old32 ? 0x8b00 : 0x8300};
+    uint8_t zero[0x100] = {0};
+
+    bp_open(c, UC_MODE_32, -1);
+    OK(uc_mem_write(c->uc, BP_TSS_OLD, zero, sizeof(zero)));
+    OK(uc_mem_write(c->uc, BP_TSS_NEW, zero, sizeof(zero)));
+    bp_set_gdt_entry(c, 7, bp_desc(BP_TSS_OLD, old32 ? 0x67 : 0x2b, old32 ? 0x8b : 0x83, 0));
+    bp_set_gdt_entry(c, 8, bp_desc(BP_TSS_NEW, new32 ? 0x67 : 0x2b, new32 ? 0x89 : 0x81, 0));
+    OK(uc_reg_write(c->uc, UC_X86_REG_TR, &tr));
+    OK(uc_mem_write(c->uc, BP_TASK_EIP, "\x90", 1));
+}
+
+static void bp_put16(BpCpu *c, uint64_t addr, uint16_t v)
+{
+    OK(uc_mem_write(c->uc, addr, &v, 2));
+}
+
+static void bp_put32(BpCpu *c, uint64_t addr, uint32_t v)
+{
+    OK(uc_mem_write(c->uc, addr, &v, 4));
+}
+
+static uint32_t bp_peek(BpCpu *c, uint64_t addr, int size)
+{
+    uint32_t v = 0;
+
+    OK(uc_mem_read(c->uc, addr, &v, size));
+    return v;
+}
+
+/*
+ * U463 (upstream QEMU 28f6aa1178): the 16-bit TSS has 2-byte selector slots:
+ * ES 22h, CS 24h, SS 26h, DS 28h, LDT 2Ah (SDM Vol3A Figure 10-10).
+ */
+static void test_x86_bp_tss16_selectors(void)
+{
+    BpCpu c;
+    uc_err e;
+
+    bp_task_setup(&c, 1, 0);
+    bp_put16(&c, BP_TSS_NEW + 0x0e, BP_TASK_EIP);
+    bp_put16(&c, BP_TSS_NEW + 0x10, 0x0002);
+    bp_put16(&c, BP_TSS_NEW + 0x12, 0x1111);   /* AX */
+    bp_put16(&c, BP_TSS_NEW + 0x22, 0x23);     /* ES */
+    bp_put16(&c, BP_TSS_NEW + 0x24, 0x08);     /* CS */
+    bp_put16(&c, BP_TSS_NEW + 0x26, 0x10);     /* SS */
+    bp_put16(&c, BP_TSS_NEW + 0x28, 0x23);     /* DS */
+    bp_put16(&c, BP_TSS_NEW + 0x2a, 0x00);     /* LDT */
+    OK(uc_mem_write(c.uc, BP_CODE, "\xea\x00\x00\x00\x00\x40\x00", 7));
+    bp_set(&c, UC_X86_REG_EAX, 0x12345678);
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, BP_TASK_EIP + 1, 0, 2);
+    TEST_CHECK(e == UC_ERR_OK && c.count == 0);
+    TEST_CHECK(bp_seg(&c, UC_X86_REG_CS) == 0x08 && bp_seg(&c, UC_X86_REG_SS) == 0x10);
+    TEST_CHECK(bp_seg(&c, UC_X86_REG_ES) == 0x23 && bp_seg(&c, UC_X86_REG_DS) == 0x23);
+    TEST_CHECK((bp_get(&c, UC_X86_REG_EAX) & 0xffff) == 0x1111);
+    TEST_MSG("err %d intr %u/%u cs %04x ss %04x es %04x ds %04x eax %08llx", (int)e, c.count,
+             c.intno, bp_seg(&c, UC_X86_REG_CS), bp_seg(&c, UC_X86_REG_SS),
+             bp_seg(&c, UC_X86_REG_ES), bp_seg(&c, UC_X86_REG_DS),
+             (unsigned long long)bp_get(&c, UC_X86_REG_EAX));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14860,4 +14934,5 @@ TEST_LIST = {
     {"test_x86_bp_syscall_modes", test_x86_bp_syscall_modes},
     {"test_x86_bp_mov_dr", test_x86_bp_mov_dr},
     {"test_x86_bp_dr7_gd", test_x86_bp_dr7_gd},
+    {"test_x86_bp_tss16_selectors", test_x86_bp_tss16_selectors},
     {NULL, NULL}};
