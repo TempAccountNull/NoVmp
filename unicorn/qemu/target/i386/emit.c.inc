@@ -1276,19 +1276,17 @@ static void gen_EVEX_VPRORI(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
 
 /*
  * NoVmp (ledger U159): VPTERNLOGD/Q: bit = imm8[(DEST << 2) | (SRC2 << 1) | SRC3] with
- * DEST the destination register before the instruction (also when the result goes to the
- * scratch register for masking), SRC2 = EVEX.vvvv, SRC3 = r/m / {1toN}.
+ * DEST the destination register before the instruction, SRC2 = EVEX.vvvv, SRC3 = r/m /
+ * {1toN}. U868: DEST comes in OP_PTR0 (X86OpEntry.evex_dsrc, U190: gen_evex_insn copies the
+ * register to the result scratch), which is also the result.
  */
 static void gen_EVEX_VPTERNLOG(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGv_ptr pa = tcg_temp_new_ptr(tcg_ctx);
 
-    tcg_gen_addi_ptr(tcg_ctx, pa, cpu_env, ZMM_OFFSET(decode->op[0].n));
-    gen_helper_evex_pternlog(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR1, OP_PTR2,
+    gen_helper_evex_pternlog(tcg_ctx, cpu_env, OP_PTR0, OP_PTR0, OP_PTR1, OP_PTR2,
                              tcg_constant_i32(tcg_ctx, (decode->immediate & 0xff) |
                                                        (vector_len(s, decode) << 8)));
-    tcg_temp_free_ptr(tcg_ctx, pa);
 }
 #endif /* __Use_Original_Qemu (U159) */
 #if __Use_Original_Qemu != 1 /* ours (U153) */
@@ -1530,20 +1528,26 @@ static void gen_EVEX_VFMAS(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
  * NoVmp (ledger U211): EVEX permutes / shuffles / unpacks through helper_evex_perm: op[0]
  * the destination (or the masking scratch), op[1] SRC1 = EVEX.vvvv (absent in the
  * two-operand forms), op[2] SRC2 = r/m ({1toN} replicated by gen_evex_load); the
- * destination register as it was before the instruction is passed for VPERMI2/VPERMT2.
+ * destination register as it was before the instruction is the fourth operand: for
+ * VPERMI2/VPERMT2 (X86OpEntry.evex_dsrc, U868) OP_PTR0 itself, which gen_evex_insn loaded
+ * with DEST (U190); the other forms do not read it (a placeholder pointer).
  */
 static void gen_evex_perm(DisasContext *s, X86DecodedInsn *decode, int op, int aux)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGv_ptr pc = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n >= 0 ? decode->op[0].n : 0));
-    TCGv_ptr pa = decode->op[1].unit == X86_OP_SSE ? OP_PTR1 : pc;
+    TCGv_ptr pc = decode->e.evex_dsrc ? NULL :
+                  evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n >= 0 ? decode->op[0].n : 0));
+    TCGv_ptr c = pc ? pc : OP_PTR0;
+    TCGv_ptr pa = decode->op[1].unit == X86_OP_SSE ? OP_PTR1 : c;
 
-    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR2, pc,
+    gen_helper_evex_perm(tcg_ctx, cpu_env, OP_PTR0, pa, OP_PTR2, c,
                          tcg_constant_i32(tcg_ctx,
                                           EVEX_PERM_DESC(op, decode->immediate,
                                                          vector_len(s, decode),
                                                          s->evex_esz, aux)));
-    tcg_temp_free_ptr(tcg_ctx, pc);
+    if (pc) {
+        tcg_temp_free_ptr(tcg_ctx, pc);
+    }
 }
 
 #define EVEX_PERM_GEN(uname, opc)                                                     \
@@ -2043,8 +2047,8 @@ static void gen_EVEX_VPMOVUSWB(DisasContext *s, CPUX86State *env, X86DecodedInsn
  * NoVmp (ledger U269): word permutes (helper_evex_vpermw, desc = VL | mode << 8).
  * VPERMW: indices SRC1 (vvvv), table SRC2. VPERMI2W: indices = the destination before the
  * instruction, tables SRC1 / SRC2. VPERMT2W: indices SRC1, tables = the destination before
- * the instruction / SRC2. The old destination is read from the register itself (op0
- * may be the masking scratch register).
+ * the instruction / SRC2. The old destination comes in OP_PTR0 (X86OpEntry.evex_dsrc, U868;
+ * gen_evex_insn loads the result scratch with it, U190).
  */
 static void gen_EVEX_VPERMW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
@@ -2057,21 +2061,17 @@ static void gen_EVEX_VPERMW(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
 static void gen_EVEX_VPERMI2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
 
-    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR0, OP_PTR1, OP_PTR2,
                            tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
-    tcg_temp_free_ptr(tcg_ctx, pd);
 }
 
 static void gen_EVEX_VPERMT2W(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGv_ptr pd = evex_env_ptr(s, ZMM_OFFSET(decode->op[0].n));
 
-    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, pd, OP_PTR2,
+    gen_helper_evex_vpermw(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR0, OP_PTR2,
                            tcg_constant_i32(tcg_ctx, vector_len(s, decode) | (1 << 8)));
-    tcg_temp_free_ptr(tcg_ctx, pd);
 }
 
 /*
@@ -6054,18 +6054,16 @@ static void gen_EVEX_VPSHUFBITQMB(DisasContext *s, CPUX86State *env, X86DecodedI
 
 /*
  * NoVmp (ledger U325): VPERMB / VPERMI2B / VPERMT2B (helper_evex_permb). The destination
- * register before the instruction (index of VPERMI2B, table of VPERMT2B) is passed
- * separately: with a mask the result goes to gen_evex_insn's scratch register.
+ * register before the instruction (index of VPERMI2B, table of VPERMT2B) comes in OP_PTR0
+ * (X86OpEntry.evex_dsrc, U868: gen_evex_insn loads the result scratch with it, U190);
+ * VPERMB does not read it.
  */
 static void gen_evex_permb(DisasContext *s, X86DecodedInsn *decode, int op)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGv_ptr pd = tcg_temp_new_ptr(tcg_ctx);
 
-    tcg_gen_addi_ptr(tcg_ctx, pd, cpu_env, ZMM_OFFSET(decode->op[0].n));
-    gen_helper_evex_permb(tcg_ctx, cpu_env, OP_PTR0, pd, OP_PTR1, OP_PTR2,
+    gen_helper_evex_permb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR0, OP_PTR1, OP_PTR2,
                           tcg_constant_i32(tcg_ctx, op | (vector_len(s, decode) << 8)));
-    tcg_temp_free_ptr(tcg_ctx, pd);
 }
 
 static void gen_EVEX_VPERMB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

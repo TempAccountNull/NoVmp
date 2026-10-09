@@ -2994,7 +2994,7 @@ static void decode_EVEX_0F38_75(DisasContext *s, CPUX86State *env, X86OpEntry *e
 {
     static const X86OpEntry vpermi2[2] = {
         {},
-        X86_OP_ENTRY3(EVEX_VPERMI2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf p_66),
+        X86_OP_ENTRY3(EVEX_VPERMI2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf ev_dsrc p_66),
     };
     *entry = *decode_evex_by_w(s, vpermi2);
 }
@@ -3003,7 +3003,7 @@ static void decode_EVEX_0F38_7D(DisasContext *s, CPUX86State *env, X86OpEntry *e
 {
     static const X86OpEntry vpermt2[2] = {
         {},
-        X86_OP_ENTRY3(EVEX_VPERMT2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf p_66),
+        X86_OP_ENTRY3(EVEX_VPERMT2W, V,x, H,x, W,x, EV_BW(W1, 16) ev_nf ev_dsrc p_66),
     };
     *entry = *decode_evex_by_w(s, vpermt2);
 }
@@ -4179,10 +4179,11 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0x0d] = EV_PRM3(EVEX_VPERMILPD_V, EV_VLALL, W1, p_66),
     [0x16] = EV_PRM3(EVEX_VPERM, EV_VL256UP, WSEL, p_66),
     [0x36] = EV_PRM3(EVEX_VPERM, EV_VL256UP, WSEL, p_66),
-    [0x76] = EV_PRM3(EVEX_VPERMI2, EV_VLALL, WSEL, p_66),
-    [0x77] = EV_PRM3(EVEX_VPERMI2, EV_VLALL, WSEL, p_66),
-    [0x7e] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, p_66),
-    [0x7f] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, p_66),
+    /* DEST is a source (index / table): ev_dsrc (U868) */
+    [0x76] = EV_PRM3(EVEX_VPERMI2, EV_VLALL, WSEL, ev_dsrc p_66),
+    [0x77] = EV_PRM3(EVEX_VPERMI2, EV_VLALL, WSEL, ev_dsrc p_66),
+    [0x7e] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, ev_dsrc p_66),
+    [0x7f] = EV_PRM3(EVEX_VPERMT2, EV_VLALL, WSEL, ev_dsrc p_66),
 #endif /* __Use_Original_Qemu (U211) */
 #if __Use_Original_Qemu != 1 /* ours (U212) */
     /* NoVmp (ledger U212): VPMOVZX/SX (66), VPMOV/VPMOVS/VPMOVUS (F3), decode_EVEX_0F38_PMOV */
@@ -4464,7 +4465,7 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U159) */
     /* NoVmp (ledger U159): VPTERNLOGD/Q (66 25 ib, W0/W1): Full, {k1}{z}, {1toN}; E4 */
     [0x25] = X86_OP_ENTRY4(EVEX_VPTERNLOG, V,x, H,x, W,x, cpuid(AVX512F) ev_vl(EV_VLALL)
-                           ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) p_66),
+                           ev_tt(FULL) ev_mask(MZ) ev_w(WSEL) ev_es(W) ev_dsrc p_66),  /* U868 */
 #endif /* __Use_Original_Qemu (U159) */
 #if __Use_Original_Qemu != 1 /* ours (U211) */
     /*
@@ -4647,11 +4648,11 @@ static const X86OpEntry opcodes_evex_0F38_F3[256] = {
  * is read). VPERMI2B: index = DEST, tables SRC1/SRC2; VPERMT2B: index = SRC1, tables
  * DEST/SRC2; the table-select bit is bit 4/5/6 (VL 128/256/512) of the index byte.
  */
-#define EV_VBMI(op) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(AVX512_VBMI) ev_vl(EV_VLALL) \
-                        ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) .evex_nofs = 1, p_66)
+#define EV_VBMI(op, ...) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(AVX512_VBMI) ev_vl(EV_VLALL) \
+                        ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) .evex_nofs = 1, __VA_ARGS__ p_66)
 static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
-    [0x75] = EV_VBMI(EVEX_VPERMI2B),
-    [0x7d] = EV_VBMI(EVEX_VPERMT2B),
+    [0x75] = EV_VBMI(EVEX_VPERMI2B, ev_dsrc),       /* DEST = index / table: ev_dsrc (U868) */
+    [0x7d] = EV_VBMI(EVEX_VPERMT2B, ev_dsrc),
     [0x8d] = EV_VBMI(EVEX_VPERMB),
 };
 #undef EV_VBMI
