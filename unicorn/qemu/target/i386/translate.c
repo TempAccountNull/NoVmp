@@ -7085,9 +7085,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_op_st_v(s, MO_16, s->T0, s->A0);
             gen_add_A0_im(s, 2);
             tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, gdt.base));
-            if (dflag == MO_16) {
-                tcg_gen_andi_tl(tcg_ctx, s->T0, s->T0, 0xffffff);
-            }
+            /*
+             * NB: Despite a confusing description in Intel CPU documentation,
+             *     all 32-bits are written regardless of operand size.
+             * (backport 7653b44534, U476; SDM Vol2B SGDT Operation: "Full
+             * 32-bit base address stored", 64-bit mode: full 64-bit base)
+             */
             gen_op_st_v(s, CODE64(s) + MO_32, s->T0, s->A0);
             break;
 
@@ -7141,9 +7144,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_op_st_v(s, MO_16, s->T0, s->A0);
             gen_add_A0_im(s, 2);
             tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, idt.base));
-            if (dflag == MO_16) {
-                tcg_gen_andi_tl(tcg_ctx, s->T0, s->T0, 0xffffff);
-            }
+            /*
+             * NB: Despite a confusing description in Intel CPU documentation,
+             *     all 32-bits are written regardless of operand size.
+             * (backport 7653b44534, U476; SDM Vol2B SIDT Operation)
+             */
             gen_op_st_v(s, CODE64(s) + MO_32, s->T0, s->A0);
             break;
 

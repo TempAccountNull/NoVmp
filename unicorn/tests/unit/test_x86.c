@@ -13092,6 +13092,60 @@ static void test_x86_cpuid_strict_default(void)
 
 /* ---- sd_ block end ---- */
 
+/*
+ * ---- NoVmp U475-U499 (tb2_): Tier-2/3 upstream QEMU backports, PUSHF RF/VM, LFENCE ----
+ * Helpers reuse the M0 engine (m0_open/m0_run/m0_set/m0_get, data at M0_DATA).
+ */
+static void tb2_mem(M0 *m, uint64_t addr, void *buf, size_t len)
+{
+    OK(uc_mem_read(m->uc, addr, buf, len));
+}
+
+/* U476 (backport 7653b44534): SGDT/SIDT store the whole base for every operand size */
+static void test_x86_bp_sgdt_sidt_base(void)
+{
+    /* o16 sgdt [0x200000]; o16 sidt [0x200010] (32-bit code) */
+    static const char c32[] = "\x66\x0f\x01\x05\x00\x00\x20\x00"
+                              "\x66\x0f\x01\x0d\x10\x00\x20\x00";
+    /* o16 sgdt [0x200000]; o16 sidt [0x200010] (64-bit code, absolute disp32) */
+    static const char c64[] = "\x66\x0f\x01\x04\x25\x00\x00\x20\x00"
+                              "\x66\x0f\x01\x0c\x25\x10\x00\x20\x00";
+    uc_x86_mmr gdtr = {0, 0x12345678, 0x1234, 0};
+    uc_x86_mmr idtr = {0, 0x9abcdef0, 0x0567, 0};
+    uint8_t b[32];
+    M0 m;
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        m0_open(&m, i ? UC_MODE_64 : UC_MODE_32, 0, NULL, 0);
+        if (i) {
+            gdtr.base = 0xfffff80012345678ULL;
+            idtr.base = 0xfffff8009abcdef0ULL;
+        }
+        OK(uc_reg_write(m.uc, UC_X86_REG_GDTR, &gdtr));
+        OK(uc_reg_write(m.uc, UC_X86_REG_IDTR, &idtr));
+        memset(b, 0xa5, sizeof(b));
+        OK(uc_mem_write(m.uc, M0_DATA, b, sizeof(b)));
+        TEST_CHECK(m0_run(&m, i ? c64 : c32, i ? sizeof(c64) - 1 : sizeof(c32) - 1) == -1);
+        tb2_mem(&m, M0_DATA, b, sizeof(b));
+        TEST_CHECK(b[0] == 0x34 && b[1] == 0x12);
+        TEST_CHECK(b[0x10] == 0x67 && b[0x11] == 0x05);
+        if (!i) {
+            /* legacy mode: 2 + 4 bytes, base bits 31:24 included */
+            TEST_CHECK(memcmp(b + 2, "\x78\x56\x34\x12\xa5", 5) == 0);
+            TEST_CHECK(memcmp(b + 0x12, "\xf0\xde\xbc\x9a\xa5", 5) == 0);
+        } else {
+            /* 64-bit mode: 2 + 8 bytes whatever the operand size */
+            TEST_CHECK(memcmp(b + 2, "\x78\x56\x34\x12\x00\xf8\xff\xff\xa5", 9) == 0);
+            TEST_CHECK(memcmp(b + 0x12, "\xf0\xde\xbc\x9a\x00\xf8\xff\xff\xa5", 9) == 0);
+        }
+        TEST_MSG("mode %d: %02x%02x%02x%02x%02x%02x%02x%02x", i ? 64 : 32, b[2], b[3], b[4],
+                 b[5], b[6], b[7], b[8], b[9]);
+        m0_close(&m);
+    }
+}
+/* ---- end U475-U499 (tb2_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -13300,4 +13354,5 @@ TEST_LIST = {
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
+    {"test_x86_bp_sgdt_sidt_base", test_x86_bp_sgdt_sidt_base},
     {NULL, NULL}};

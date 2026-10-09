@@ -144,6 +144,9 @@ call :hw_zero hwcheck_gate1
 call :hw_zero cases_reach --cr0 0x33
 call :hw_zero cases_tsx_cet
 call :hw_zero cases_fixes
+rem ledger U475-U499: Tier-2/3 upstream QEMU backports and the PUSHF / LFENCE fixes, CPL3-reachable
+rem behaviour (cases_backport_t2.txt, self-generated snippets): must be 0 differing against the i5-13600K.
+call :hw_zero cases_backport_t2
 
 echo.
 if !FAILED! NEQ 0 (

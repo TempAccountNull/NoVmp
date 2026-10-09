@@ -1,0 +1,14 @@
+# Tier-2/3 upstream QEMU backports and two Unicorn fixes (ledger U475-U499), hardware lines only
+# (no "=>"): every snippet is our own and runs natively on the host and in Unicorn.
+#   emu-alltest --cases Emulator\data\cases_backport_t2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+# Expected: every line SAME (differing: 0).
+#
+# --- U476 (backport 7653b44534): SGDT/SIDT store the whole base whatever the operand size. In
+# 64-bit mode 66h does not change the 10-byte image (SDM Vol2B SGDT: "the operand size is fixed at
+# 8+2 bytes"). The two images are compared on the CPU and the memory is cleared again, so the
+# result does not depend on where the host or Unicorn keeps its GDT/IDT: rax = rcx = 0.
+sgdt [rsi]; .byte 0x66, 0x0f, 0x01, 0x46, 0x10; mov rax, [rsi+2]; xor rax, [rsi+0x12]; movzx ecx, word ptr [rsi]; movzx edx, word ptr [rsi+0x10]; xor ecx, edx; xor edx, edx; mov [rsi], rdx; mov [rsi+8], rdx; mov [rsi+0x10], rdx; mov [rsi+0x18], rdx
+sidt [rsi]; .byte 0x66, 0x0f, 0x01, 0x4e, 0x10; mov rax, [rsi+2]; xor rax, [rsi+0x12]; movzx ecx, word ptr [rsi]; movzx edx, word ptr [rsi+0x10]; xor ecx, edx; xor edx, edx; mov [rsi], rdx; mov [rsi+8], rdx; mov [rsi+0x10], rdx; mov [rsi+0x18], rdx
+# the 66h form writes exactly 10 bytes (bytes 10..15 keep their marker)
+.byte 0x66, 0x0f, 0x01, 0x06; mov rax, [rsi+8]; shr rax, 16; xor edx, edx; mov [rsi], rdx; mov word ptr [rsi+8], dx | m+0x8008=0000A5A5A5A5A5A5
+.byte 0x66, 0x0f, 0x01, 0x0e; mov rax, [rsi+8]; shr rax, 16; xor edx, edx; mov [rsi], rdx; mov word ptr [rsi+8], dx | m+0x8008=0000A5A5A5A5A5A5
