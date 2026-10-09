@@ -234,6 +234,10 @@ Add-Hw 'cases_dp_nan' 'hw sse nan quirks'
 # ledger U434/U539: one or more hardware cases per documented i5-13600K deviation from the SDM
 # (cases_quirks.txt, docs\quirks.md): every case is tagged "# known deviation: NAME".
 Add-Hw 'cases_quirks' 'hw quirks x87' -Exclusive
+# ledger U861: x87 compares / FTST / FXAM with unmasked #IS / #D / #IA (gen_cases_x87_cmp.py): TOP, tags,
+# C1 and the condition codes / ZF PF CF on the host CPU; the unmasked-#IA condition codes are the documented
+# deviation (tagged), everything else must match the i5-13600K.
+Add-Hw 'cases_x87_cmp_exc' 'hw x87'
 # Decoder tables: no X86OpEntry table of decode-new.c.inc (with its included decode*.c.inc) names an
 # element twice ([0x42] = A, ..., [0x42] = B compiles silently, the later one wins) in either build
 # (__Use_Original_Qemu = 0 and = 1): Emulator\tools\check_decode_dups.py.
