@@ -13753,6 +13753,33 @@ static void test_x86_bp_pushf_rf(void)
     TEST_MSG("pushed %" PRIx64, m0_get(&m, UC_X86_REG_RAX));
     m0_close(&m);
 }
+
+/*
+ * U492 (ours): LFENCE needs SSE2 (SDM Vol2A LFENCE: "#UD If CPUID.01H:EDX.SSE2[26] = 0."),
+ * SFENCE needs SSE. Strict profile with SSE but without SSE2: LFENCE and MFENCE #UD, SFENCE
+ * runs; with SSE2 all three run.
+ */
+static void test_x86_bp_lfence_sse2(void)
+{
+    uc_x86_cpuid p[2] = {
+        {0, 0, 1, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0, 0x03800001},                  /* FPU, MMX, FXSR, SSE */
+    };
+    static const char lfence[] = "\x0f\xae\xe8", sfence[] = "\x0f\xae\xf8", mfence[] = "\x0f\xae\xf0";
+    M0 m;
+    int sse2;
+
+    for (sse2 = 0; sse2 < 2; sse2++) {
+        p[1].edx = 0x03800001 | (sse2 ? 0x04000000u : 0);
+        m0_open(&m, UC_MODE_64, 0, p, 2);
+        OK(uc_ctl_set_x86_cpuid_strict(m.uc, 1));
+        TEST_CHECK(m0_run(&m, lfence, 3) == (sse2 ? -1 : 6));
+        TEST_CHECK(m0_run(&m, mfence, 3) == (sse2 ? -1 : 6));
+        TEST_CHECK(m0_run(&m, sfence, 3) == -1);
+        TEST_MSG("SSE2 = %d", sse2);
+        m0_close(&m);
+    }
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13978,4 +14005,5 @@ TEST_LIST = {
     {"test_x86_bp_cpuid_prfchw", test_x86_bp_cpuid_prfchw},
     {"test_x86_bp_wrap_4g", test_x86_bp_wrap_4g},
     {"test_x86_bp_pushf_rf", test_x86_bp_pushf_rf},
+    {"test_x86_bp_lfence_sse2", test_x86_bp_lfence_sse2},
     {NULL, NULL}};

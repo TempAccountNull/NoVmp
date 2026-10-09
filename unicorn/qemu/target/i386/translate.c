@@ -8422,10 +8422,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_mb(tcg_ctx, TCG_MO_ST_ST | TCG_BAR_SC);
             break;
         case 0xe8: case 0xe9: case 0xea: case 0xeb: case 0xec: case 0xed: case 0xee: case 0xef: /* lfence */
+#if __Use_Original_Qemu == 1 /* original QEMU (U492) */
             if (!(s->cpuid_features & CPUID_SSE)
                 || (prefixes & PREFIX_LOCK)) {
                 goto illegal_op;
             }
+#else /* ours (U492) */
+            /*
+             * NoVmp (ledger U492): LFENCE is an SSE2 instruction (SDM Vol2A LFENCE, Protected
+             * Mode Exceptions: "#UD If CPUID.01H:EDX.SSE2[26] = 0."); SFENCE is SSE.
+             */
+            if (!(s->cpuid_features & CPUID_SSE2)
+                || (prefixes & PREFIX_LOCK)) {
+                goto illegal_op;
+            }
+#endif /* __Use_Original_Qemu (U492) */
             tcg_gen_mb(tcg_ctx, TCG_MO_LD_LD | TCG_BAR_SC);
             break;
         case 0xf0: case 0xf1: case 0xf2: case 0xf3: case 0xf4: case 0xf5: case 0xf6: case 0xf7: /* mfence */
