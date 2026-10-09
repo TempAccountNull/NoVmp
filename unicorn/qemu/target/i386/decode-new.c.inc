@@ -1472,6 +1472,23 @@ static void decode_0F3A_esc(DisasContext *s, CPUX86State *env, X86OpEntry *entry
 static void decode_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    /*
+     * NoVmp (ledger U804): F3 0F 3A F0 C0 ib HRESET imm8, <EAX> (SDM Vol2A; XED: MOD = 3, REG =
+     * 0, RM = 0, f3_refining_prefix - a 66 prefix does not change it, REX.B does not change the
+     * ModRM byte); any other ModRM byte #UD. The VEX map 3 F0 (RORX) keeps its table entry.
+     */
+    if (*b == 0xf0 && !(s->prefix & PREFIX_VEX) && (s->prefix & PREFIX_REPZ)) {
+        static const X86OpEntry hreset =
+            X86_OP_ENTRY3(HRESET, None,None, None,None, I,b, cpuid(HRESET));
+
+        memset(entry, 0, sizeof(*entry));
+        if (get_modrm(s, env) == 0xc0) {
+            *entry = hreset;
+        }
+        return;
+    }
+#endif /* __Use_Original_Qemu (U804) */
     *entry = opcodes_0F3A[*b];
 }
 
@@ -5780,6 +5797,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_MSR_IMM:
         return (s->cpuid_7_1_ecx_features & CPUID_7_1_ECX_MSR_IMM);
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    case X86_FEAT_HRESET:
+        return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_HRESET);
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     case X86_FEAT_ENQCMD:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_ENQCMD);

@@ -703,7 +703,8 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_1_EAX_SHA512 /* U82 */ | CPUID_7_1_EAX_SM3 /* U83 */ | \
           CPUID_7_1_EAX_SM4 /* U84 */ | CPUID_7_1_EAX_AVX_IFMA /* U87 */ | \
           CPUID_7_1_EAX_RAO_INT /* U101 */ | CPUID_7_1_EAX_MOVRS /* U102 */ | \
-          CPUID_7_1_EAX_WRMSRNS /* U801 */ | CPUID_7_1_EAX_MSRLIST /* U802 */)
+          CPUID_7_1_EAX_WRMSRNS /* U801 */ | CPUID_7_1_EAX_MSRLIST /* U802 */ | \
+          CPUID_7_1_EAX_HRESET /* U804 */)
 #endif /* __Use_Original_Qemu (U71) */
 #if __Use_Original_Qemu != 1 /* ours (U85) */
 #define TCG_7_1_EDX_FEATURES (CPUID_7_1_EDX_AVX_VNNI_INT8 | \
@@ -4929,6 +4930,23 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 #endif /* __Use_Original_Qemu (U170) */
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    case 0x20:
+        /*
+         * NoVmp (ledger U804): Processor History Reset leaf (SDM Vol1 Table 21-72), valid with
+         * CPUID.(07H,1):EAX.HRESET[22]: (20H,0) EAX = MAX_SUBLEAF 0, EBX[0] =
+         * THREAD_DIRECTOR_HRESET (HRESET's EAX[0] and IA32_HRESET_ENABLE[0]); other sub-leaves
+         * and registers 0. The history itself is not modelled (HRESET resets nothing).
+         */
+        *eax = 0;
+        *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        if ((env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_HRESET) && count == 0) {
+            *ebx = CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U370) */
     case 0x24:
         /*
@@ -5544,6 +5562,12 @@ static void x86_cpu_expand_features(X86CPU *cpu)
             x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x19);
         }
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+        /* HRESET requires CPUID[0x20] (SDM Vol1: "Processor History Reset Leaf ... is valid") */
+        if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_HRESET) {
+            x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x20);
+        }
+#endif /* __Use_Original_Qemu (U804) */
         /* CPU topology with multi-dies support requires CPUID[0x1F] */
         if (env->nr_dies > 1) {
             x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x1F);

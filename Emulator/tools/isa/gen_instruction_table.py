@@ -89,9 +89,9 @@ OVERRIDES = {
     'vrcpss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtps': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
-    # U790: INVPCID and HRESET are not implemented (#UD in this CPU model): ⬜ until a verified_forms row proves them
+    # U790: INVPCID is not implemented (#UD in this CPU model): ⬜ until a verified_forms row proves it
+    # (U804: HRESET is implemented, verified_forms.tsv)
     'invpcid': ('⬜', 'not implemented (#UD in this CPU model); CPL0: #GP(0) at CPL3 is a Phase 3 item (D6)'),
-    'hreset': ('⬜', 'not implemented (#UD in this CPU model); the i5-13600K raises #GP at CPL3 even with CPUID bit 0 (Phase 3, D6)'),
     'rdtsc': ('⏳', 'TSC determinism hook: Phase 3'),
     'rdtscp': ('⏳', 'TSC/TSC_AUX: Phase 3'),
     'rdpid': ('⏳', 'TSC_AUX value: Phase 3 environment'),

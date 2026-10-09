@@ -408,6 +408,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U802) */
 #define MSR_IA32_BARRIER                0x2f    /* SDM Vol4: R/O, 0; with MSRLIST */
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+#define MSR_IA32_HRESET_ENABLE          0x17da  /* SDM Vol4: bits CPUID.20H.0:EBX may set */
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -1089,6 +1092,12 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* RDMSRLIST, WRMSRLIST and IA32_BARRIER (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[27]) */
 #define CPUID_7_1_EAX_MSRLIST           (1U << 27)
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+/* HRESET and IA32_HRESET_ENABLE, leaf 20H valid (SDM Vol1 Table 21-22: CPUID.(07H,1):EAX[22]) */
+#define CPUID_7_1_EAX_HRESET            (1U << 22)
+/* CPUID.(20H,0):EBX[0] THREAD_DIRECTOR_HRESET (SDM Vol1 Table 21-72) */
+#define CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET (1U << 0)
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U803) */
 /* immediate forms of RDMSR / WRMSRNS (SDM Vol1 Table 21-24: CPUID.(EAX=07H,ECX=1):ECX[5]) */
 #define CPUID_7_1_ECX_MSR_IMM           (1U << 5)
@@ -2043,6 +2052,9 @@ typedef struct CPUX86State {
     uint64_t msr_swap_regs[3];
     bool msr_swap;
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    uint64_t msr_hreset_enable;     /* IA32_HRESET_ENABLE (17DAH), reset 0 */
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;

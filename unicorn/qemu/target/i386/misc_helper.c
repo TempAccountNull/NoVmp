@@ -801,6 +801,25 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    case MSR_IA32_HRESET_ENABLE:
+        /*
+         * NoVmp (ledger U804): IA32_HRESET_ENABLE (17DAH) exists with CPUID.(07H,1):EAX.HRESET;
+         * "only the bits enumerated by CPUID.20H.00H:EBX can be set" (SDM Vol2A HRESET, Vol4:
+         * 31:1 reserved for other capabilities, 63:32 reserved): other bits #GP(0) (an API
+         * write with them is dropped). Without HRESET it stays an unknown MSR (ignored).
+         */
+        if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_HRESET) {
+            if (val & ~(uint64_t)CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET) {
+                if (env->msr_api) {
+                    break;
+                }
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
+            env->msr_hreset_enable = val;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* user-interrupt MSRs (SDM Vol3A 9.3.2), present with CPUID.(07H,0):EDX.UINTR */
     case MSR_IA32_UINTR_RR:
@@ -1189,6 +1208,11 @@ void helper_rdmsr(CPUX86State *env)
         val = 0;
         break;
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+    case MSR_IA32_HRESET_ENABLE:
+        val = env->msr_hreset_enable;
+        break;
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     case MSR_IA32_UINTR_RR:
         val = env->uintr_rr;
@@ -2322,3 +2346,16 @@ void helper_wrmsr_imm(CPUX86State *env, uint32_t msr, target_ulong val)
     x86_msr_access(env, msr, val, true);
 }
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+/*
+ * NoVmp (ledger U804): HRESET (SDM Vol2A): #GP(0) if (EAX AND NOT IA32_HRESET_ENABLE) != 0 (the
+ * CPL check is the translator's); otherwise it resets the selected prediction history, which
+ * the emulator does not keep: nothing else happens (EAX = 0 is a NOP anyway).
+ */
+void helper_hreset(CPUX86State *env)
+{
+    if ((uint32_t)env->regs[R_EAX] & ~env->msr_hreset_enable) {
+        raise_exception_ra(env, EXCP0D_GPF, GETPC());
+    }
+}
+#endif /* __Use_Original_Qemu (U804) */

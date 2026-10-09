@@ -2,7 +2,7 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
 
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
-      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803)
+      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803), HRESET (U804)
   * the same, Intel APX EVEX forms (--apx)                          -> Emulator\data\cases_sysins_apx.txt
       RDMSR / WRMSRNS imm32 EVEX map 7 (U803)
 
@@ -34,6 +34,12 @@ System instructions, from:
     map 7 forms) and 4.2.21 (class MSR-IMM-EVEX: payload byte 3 all 0 apart from V4 = 1, L = 0,
     vvvv = 1111b; ModRM.mod = 11b needs U = 1, 3.1.2.3); XED msr-imm-isa.xed.txt /
     apx-f-msr-imm-isa.xed.txt (REG = 0, MOD = 3, UBIT = 1).
+  * SDM Vol2A HRESET (F3 0F 3A F0 C0 ib; #GP(0) "If CPL > 0 or (EAX AND NOT IA32_HRESET_ENABLE)
+    != 0", imm8 ignored, EAX = 0 a NOP); Vol1 Table 21-22 (CPUID.(07H,1):EAX[22]) and Table 21-72
+    (leaf 20H: EBX[0] THREAD_DIRECTOR_HRESET, the model reports 1); Vol3B 17.6.11.1 / Vol4
+    IA32_HRESET_ENABLE (17DAH: bit 0, 31:1 and 63:32 reserved; "only the bits enumerated by
+    CPUID.20H.00H:EBX can be set"); XED hreset-isa.xed.txt (MOD = 3, REG = 0, RM = 0,
+    f3_refining_prefix).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -243,6 +249,8 @@ def msr_check(msr, val):
         return (val & ~1 & M64) == 0
     if msr == 0x2F:                             # IA32_BARRIER: R/O
         return False
+    if msr == 0x17DA:                           # IA32_HRESET_ENABLE: CPUID.20H.0:EBX = 1
+        return (val & ~1 & M64) == 0
     raise ValueError('MSR %X not in the model' % msr)
 
 
@@ -406,6 +414,22 @@ def i_msrimm(write, reg, imm, evex_form=False, w=0, l=0, vvvv=0, regfield=0, pp=
     return enc, f
 
 
+def i_hreset(imm, prefix=b'', mand=b'\xf3', rex=b'', modrm=0xC0):
+    """HRESET imm8, <EAX> (F3 0F 3A F0 C0 ib), SDM Vol2A: #GP(0) if CPL > 0 or (EAX AND NOT
+    IA32_HRESET_ENABLE) != 0; otherwise a history reset (no architectural state)."""
+    enc = prefix + mand + rex + b'\x0f\x3a\xf0' + bytes([modrm, imm & 0xFF])
+    ud = b'\xf0' in prefix or mand != b'\xf3' or modrm != 0xC0
+
+    def f(m):
+        if ud:
+            raise Fault('#UD')
+        if m.cpl:
+            raise Fault('#GP')
+        if (m.r['rax'] & 0xFFFFFFFF) & ~m.msr.get(0x17DA, 0):
+            raise Fault('#GP')
+    return enc, f
+
+
 def run_case(ins, inputs):
     """Run the instruction list on the model; returns the case line."""
     m = Machine(inputs)
@@ -546,6 +570,27 @@ def cases_sys():
         a(run_case([i_msrimm(True, 'rax', 0x1B01, **kw)], dict(base, rax=0)))
     a(run_case([i_msrimm(False, 'r8', 0x2F)], dict(base, cpl=3)))
     a(run_case([i_msrimm(True, 'r8', 0x1B01)], dict(base, cpl=3)))
+
+    # ---- HRESET (U804)
+    a('# --- HRESET imm8 (F3 0F 3A F0 C0 ib), U804: EAX = 0 is a NOP; EAX bits outside')
+    a('# IA32_HRESET_ENABLE (17DAH, reset 0; only bit 0 = CPUID.20H.0:EBX may be set) -> #GP(0)')
+    a(run_case([i_hreset(0x55)], {'rax': 0xFFFFFFFF00000000}))
+    a(run_case([i_hreset(0)], {'rax': 1}))
+    a(run_case([i_hreset(0)], {'rax': 0x80000000}))
+    hre = [i_mov32('rcx', 0x17DA), i_mov32('rax', 1), i_mov32('rdx', 0), i_wrmsrns()]
+    a(run_case(hre + [i_hreset(0xFF), i_mov32('rax', 0), i_rdmsr()], {}))
+    a(run_case(hre + [i_hreset(0x01, b'\x66'), i_hreset(2, rex=b'\x41')], {}))
+    a(run_case(hre + [i_mov32('rax', 3), i_hreset(0)], {}))
+    a(run_case(hre + [i_mov32('rax', 0x80000001), i_hreset(0)], {}))
+    a('# IA32_HRESET_ENABLE: bits other than 0 -> #GP(0)')
+    a(run_case([i_wrmsrns()], {'rcx': 0x17DA, 'rax': 2}))
+    a(run_case([i_wrmsrns()], {'rcx': 0x17DA, 'rax': 1, 'rdx': 1}))
+    a('# #UD: ModRM other than C0, NP / F2 (no such instruction; NP F0 = RORX is VEX-only), LOCK;')
+    a('# CPL3 -> #GP(0) (also with EAX = 0)')
+    for kw in ({'modrm': 0xC1}, {'modrm': 0xC8}, {'modrm': 0x00}, {'mand': b''}, {'mand': b'\xf2'},
+               {'prefix': b'\xf0'}):
+        a(run_case([i_hreset(0, **kw)], {'rax': 0}))
+    a(run_case([i_hreset(0)], {'rax': 0, 'cpl': 3}))
     return lines
 
 
@@ -600,6 +645,12 @@ def cases_hw():
     for enc in (i_msrimm(False, 'rax', 0x2F)[0], i_msrimm(True, 'r9', 0x1B01)[0],
                 i_msrimm(False, 'rax', 0x2F, True)[0], i_msrimm(True, 'r9', 0x1B01, True)[0]):
         a('.byte %s | r9=0x1 cpl=3' % bytelist(enc))
+    a('# HRESET (U804): CPUID.(07H,1):EAX[22] = 0 in the profile, so the SDM gives #UD; the i5-13600K')
+    a('# decodes it and raises #GP(0) at CPL3 (docs/quirks.md "HRESET without CPUID"). Other ModRM')
+    a('# bytes are #UD on both.')
+    a('.byte %s | rax=0x0 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
+    a('.byte %s | rax=0x1 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
+    a('.byte %s | rax=0x0 cpl=3' % bytelist(i_hreset(0, modrm=0xC1)[0]))
     return lines
 
 

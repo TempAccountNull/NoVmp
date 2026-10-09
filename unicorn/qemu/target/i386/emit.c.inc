@@ -4369,6 +4369,21 @@ static void gen_WRMSRNS_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U804) */
+/* NoVmp (ledger U804): HRESET imm8 (imm8 ignored): #GP(0) at CPL > 0 / virtual-8086, then EAX */
+static void gen_HRESET(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (!check_cpl0(s)) {
+        return;
+    }
+    gen_update_cc_op(s);
+    gen_update_eip_cur(s);
+    gen_helper_hreset(tcg_ctx, cpu_env);
+}
+
+#endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 /*
  * NoVmp (ledger U112): ENQCMD (F2 0F 38 F8) / ENQCMDS (F3 0F 38 F8) r, m512.

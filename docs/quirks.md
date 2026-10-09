@@ -50,6 +50,15 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - Hardware cases: `cases_quirks.txt` lines 21–22; `alltest_known_deviations.tsv` `ptwrite eax`, `ptwrite dword ptr [rsi]`, `ptwrite rax`, `ptwrite qword ptr [rsi]` (--full: hardware runs, emulator #UD).
 - Ledger: U80 (quirk bit 3), removed in U534.
 
+### HRESET without CPUID
+
+- Behaviour: HRESET imm8 (F3 0F 3A F0 C0 ib) on a CPU whose CPUID.(EAX=07H,ECX=1):EAX[22] (HRESET) = 0.
+- SDM: Vol2A HRESET, Protected Mode Exceptions: "#UD If CPUID.07H.01H:EAX.HRESET[22] = 0."
+- Emulator: the MAX model reports HRESET (U804) and executes it; with the i5-13600K CPUID profile (strict, bit 22 = 0) it is #UD.
+- i5-13600K (bit 22 = 0 as Windows reports it): decodes it; at CPL3 #GP(0) (the CPL check of an implemented HRESET). Other ModRM bytes than C0 are #UD on both.
+- Hardware cases: `cases_sysins_hw.txt` (the two HRESET lines with ModRM C0, CPL3).
+- Ledger: U804 (no quirk bit; tag only).
+
 ### DPPD two NaN products
 
 - Behaviour: (V)DPPD where both products are NaN and destination element 1 is selected.

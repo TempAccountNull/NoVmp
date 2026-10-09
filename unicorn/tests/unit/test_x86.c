@@ -22168,6 +22168,68 @@ static void test_x86_si_msr_imm(void)
     TEST_CHECK(si_run(&c, SI_WRMSRNS_R9_KGS, 9) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U804: HRESET (F3 0F 3A F0 C0 ib): CPUID.(7,1):EAX[22], leaf 20H (max basic leaf >= 20H, EBX = 1),
+ * IA32_HRESET_ENABLE (17DAH: only bit 0, #GP otherwise, API write dropped), #GP(0) when EAX sets
+ * a bit outside it, a NOP otherwise (also in real-address mode), ModRM != C0 #UD, #UD when a
+ * strict profile hides HRESET.
+ */
+#define SI_HRESET "\xf3\x0f\x3a\xf0\xc0\x00"
+
+static void test_x86_si_hreset(void)
+{
+    static const uc_x86_cpuid no_hreset[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    uint32_t r[4];
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[0] & (1u << 22));
+    si_cpuid(&c, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x20);
+    si_cpuid(&c, 0x20, 0, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 1 && r[2] == 0 && r[3] == 0);
+    si_cpuid(&c, 0x20, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    TEST_CHECK(si_rdmsr(&c, 0x17da) == 0);
+    si_set(&c, UC_X86_REG_RAX, 0xffffffff00000000ull);       /* EAX = 0: NOP */
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == -1);
+    si_set(&c, UC_X86_REG_RAX, 1);
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == 13);
+    si_set(&c, UC_X86_REG_RCX, 0x17da);
+    si_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(si_run(&c, "\x0f\x30", 2) == -1);               /* WRMSR IA32_HRESET_ENABLE = 1 */
+    TEST_CHECK(si_rdmsr(&c, 0x17da) == 1);
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == -1);
+    si_set(&c, UC_X86_REG_RAX, 3);
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == 13);
+    TEST_CHECK(si_run(&c, "\x0f\x30", 2) == 13);               /* IA32_HRESET_ENABLE = 3 */
+    si_wrmsr(&c, 0x17da, 2);                                   /* API: dropped */
+    TEST_CHECK(si_rdmsr(&c, 0x17da) == 1);
+    si_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x3a\xf0\xc1\x00", 6) == 6);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x3a\xf0\xc0\x00", 6) == 6);
+    TEST_CHECK(si_run(&c, "\xf0\xf3\x0f\x3a\xf0\xc0\x00", 7) == 6);
+    OK(uc_close(c.uc));
+
+    /* real-address mode: CPL 0, HRESET with EAX = 0 runs */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_16, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == -1);
+    OK(uc_close(c.uc));
+
+    /* a strict profile hiding HRESET: #UD */
+    si_open(&c, 0, 0, 0, no_hreset, 1);
+    TEST_CHECK(si_run(&c, SI_HRESET, 6) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22475,4 +22537,5 @@ TEST_LIST = {
     {"test_x86_si_wrmsrns", test_x86_si_wrmsrns},
     {"test_x86_si_msrlist", test_x86_si_msrlist},
     {"test_x86_si_msr_imm", test_x86_si_msr_imm},
+    {"test_x86_si_hreset", test_x86_si_hreset},
     {NULL, NULL}};
