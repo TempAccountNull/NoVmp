@@ -21881,6 +21881,103 @@ static void test_x86_si_vpmov_dq(void)
     TEST_CHECK(si_run(&c, "\x62\xf2\x7e\x48\x29\xc2", 6) == -1);      /* BW still visible */
     OK(uc_close(c.uc));
 }
+
+static uint64_t si_rdmsr(SiCtx *c, uint32_t msr)
+{
+    uc_x86_msr m = {msr, 0};
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static void si_wrmsr(SiCtx *c, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m = {msr, v};
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_MSR, &m));
+}
+
+static void si_cpuid(SiCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    si_set(c, UC_X86_REG_RAX, leaf);
+    si_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(si_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)si_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)si_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)si_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)si_get(c, UC_X86_REG_RDX);
+}
+
+static int si_msr_hook_cb(uc_engine *uc, void *data)
+{
+    (*(int *)data)++;
+    return 0;                                   /* do not skip the access */
+}
+
+/*
+ * U801: WRMSRNS (NP 0F 01 C6): CPUID.(7,1):EAX[19] on the MAX model, EDX:EAX -> MSR[ECX] with
+ * WRMSR's checks and UC_X86_INS_WRMSR hooks, #GP(0) on reserved bits (the MSR unchanged), allowed
+ * in real-address mode, LOCK / 66 #UD, #UD when a strict profile hides the bit.
+ */
+static void test_x86_si_wrmsrns(void)
+{
+    static const uc_x86_cpuid no_wrmsrns[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    uint32_t r[4];
+    uc_hook h;
+    int hits = 0;
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[0] & (1u << 19));
+    si_set(&c, UC_X86_REG_RCX, 0xffffffff00000000ull | 0xc0000102);
+    si_set(&c, UC_X86_REG_RAX, 0x1111111189abcdefull);
+    si_set(&c, UC_X86_REG_RDX, 0x22222222ffff8000ull);
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, si_msr_hook_cb, &hits, 1, 0, UC_X86_INS_WRMSR));
+    TEST_CHECK(si_run(&c, "\x0f\x01\xc6", 3) == -1);
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0xffff800089abcdefull);
+    TEST_CHECK(hits == 1);
+    OK(uc_hook_del(c.uc, h));
+    /* IA32_UMWAIT_CONTROL bit 1 reserved: #GP(0), MSR and registers unchanged */
+    si_wrmsr(&c, 0xe1, 0x100);
+    si_set(&c, UC_X86_REG_RCX, 0xe1);
+    si_set(&c, UC_X86_REG_RAX, 0x102);
+    si_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(si_run(&c, "\x0f\x01\xc6", 3) == 13);
+    TEST_CHECK(si_rdmsr(&c, 0xe1) == 0x100 && si_get(&c, UC_X86_REG_RAX) == 0x102);
+    /* LOCK, 66, F2, F3 */
+    si_set(&c, UC_X86_REG_RAX, 0x104);
+    TEST_CHECK(si_run(&c, "\xf0\x0f\x01\xc6", 4) == 6);
+    TEST_CHECK(si_run(&c, "\x66\x0f\x01\xc6", 4) == 6);
+    TEST_CHECK(si_rdmsr(&c, 0xe1) == 0x100);
+    OK(uc_close(c.uc));
+
+    /* real-address mode: CPL 0, WRMSRNS runs */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_16, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    si_set(&c, UC_X86_REG_ECX, 0xc0000102);
+    si_set(&c, UC_X86_REG_EAX, 0x00005000);
+    si_set(&c, UC_X86_REG_EDX, 0);
+    TEST_CHECK(si_run(&c, "\x0f\x01\xc6", 3) == -1);
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0x5000);
+    OK(uc_close(c.uc));
+
+    /* a strict profile hiding CPUID.(7,1):EAX.WRMSRNS: #UD; WRMSR still runs */
+    si_open(&c, 0, 0, 0, no_wrmsrns, 1);
+    si_set(&c, UC_X86_REG_RCX, 0xc0000102);
+    si_set(&c, UC_X86_REG_RAX, 0x7000);
+    si_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(si_run(&c, "\x0f\x01\xc6", 3) == 6);
+    TEST_CHECK(si_run(&c, "\x0f\x30", 2) == -1);
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0x7000);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22185,4 +22282,5 @@ TEST_LIST = {
     {"test_x86_fx4_mpx_bndcfg_load", test_x86_fx4_mpx_bndcfg_load},
     {"test_x86_fx4_hook_flags_apx", test_x86_fx4_hook_flags_apx},
     {"test_x86_si_vpmov_dq", test_x86_si_vpmov_dq},
+    {"test_x86_si_wrmsrns", test_x86_si_wrmsrns},
     {NULL, NULL}};

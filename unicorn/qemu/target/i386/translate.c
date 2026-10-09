@@ -9137,6 +9137,29 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             set_cc_op(s, CC_OP_EFLAGS);
             break;
 #endif /* __Use_Original_Qemu (U110) */
+#if __Use_Original_Qemu != 1 /* ours (U801) */
+        /*
+         * NoVmp (ledger U801): NP 0F 01 C6 WRMSRNS (SDM Vol2D WRMSRNS): WRMSR (EDX:EAX to the
+         * MSR in ECX, helper_wrmsr: same checks, same UC_X86_INS_WRMSR hooks) without the
+         * serialization, which the translator does not model anyway. #UD without
+         * CPUID.(07H,1):EAX.WRMSRNS[19], with LOCK or 66 (only the NP form exists); #GP(0) at
+         * CPL > 0 and in virtual-8086 mode (check_cpl0), allowed in real-address mode. The TB
+         * ends like after WRMSR (the MSR may change hflags).
+         */
+        case 0xc6: /* wrmsrns */
+            if ((s->prefix & (PREFIX_REPZ | PREFIX_REPNZ))
+                || !(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_WRMSRNS)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA))) {
+                goto illegal_op;
+            }
+            if (check_cpl0(s)) {
+                gen_update_cc_op(s);
+                gen_update_eip_cur(s);
+                gen_helper_wrmsr(tcg_ctx, cpu_env);
+                s->base.is_jmp = DISAS_EOB_NEXT;
+            }
+            break;
+#endif /* __Use_Original_Qemu (U801) */
         case 0xee: /* rdpkru */
             if (s->prefix & (PREFIX_LOCK | PREFIX_DATA
                              | PREFIX_REPZ | PREFIX_REPNZ)) {

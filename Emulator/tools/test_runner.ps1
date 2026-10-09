@@ -344,6 +344,10 @@ Add-Exp 'cases_ac' 'cases_ac' 'ac expect' @( '--avx512', '--apx', '--cr0', '0x40
 Add-Exp 'cases_sysins_dq' 'cases_sysins_dq' 'evex sysins expect' @( '--avx512' )
 Add-Exp 'cases_sysins_dq_avx10_1' 'cases_sysins_dq' 'avx10 evex sysins expect' @( '--avx10', '1' )
 Add-PySelftest 'ref_sysins_selftest' 'sysins tools' 'ref_sysins.py'
+# U801-U829: the CPL0 system instructions (WRMSRNS, ...) at CPL0 and CPL3 (cpl=3), MAX model, expected
+# values from ref_sysins.py; and at CPL3 against the i5-13600K with its strict profile (hardware).
+Add-Exp 'cases_sysins' 'cases_sysins' 'sysins expect'
+Add-Hw 'cases_sysins_hw' 'hw sysins'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

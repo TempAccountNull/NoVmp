@@ -1075,6 +1075,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* MOVRS and PREFETCHRST2 (read-shared hints) */
 #define CPUID_7_1_EAX_MOVRS             (1U << 31)
 #endif /* __Use_Original_Qemu (U102) */
+#if __Use_Original_Qemu != 1 /* ours (U801) */
+/* WRMSRNS (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[19]) */
+#define CPUID_7_1_EAX_WRMSRNS           (1U << 19)
+#endif /* __Use_Original_Qemu (U801) */
 #if __Use_Original_Qemu != 1 /* ours (U103) */
 /* URDMSR and UWRMSR */
 #define CPUID_7_1_EDX_USER_MSR          (1U << 15)
