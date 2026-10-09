@@ -821,7 +821,8 @@ static bool x86_canonical_fault_is_ss(CPUX86State *env, vaddr addr)
         0x05, 0x06, 0x07, 0x08, 0x09, 0x0b, 0x0e, 0x30, 0x31, 0x32, 0x33,
         0x34, 0x35, 0x37, 0x77, 0xa0, 0xa1, 0xa2, 0xa8, 0xa9, 0xaa,
     };
-    target_ulong pc = env->segs[R_CS].base + env->eip;
+    /* 64-bit mode only (the caller checks HF_CS64): CS.base is not used for fetch (U467) */
+    target_ulong pc = env->eip;
     int len = 0, rex = 0, map = 0, fsgs = -1, i;
     bool a32 = false, modrm_present, implicit = false, vex = false;
     uint8_t b, modrm, sib = 0;
@@ -954,7 +955,7 @@ static bool x86_canonical_fault_is_ss(CPUX86State *env, vaddr addr)
     }
     ea = disp;
     if (base == -2) {
-        ea += env->segs[R_CS].base + env->eip + len;
+        ea += env->eip + len;       /* RIP-relative (U467: no CS.base) */
     } else if (base >= 0) {
         ea += env->regs[base];
     }

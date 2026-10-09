@@ -14858,6 +14858,35 @@ static void test_x86_bp_cs_base_fetch(void)
              (unsigned long long)bp_get(&c, UC_X86_REG_EIP));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U467: the non-canonical #SS/#GP classifier (U51) decodes the faulting 64-bit
+ * instruction at RIP, not at CS.base + RIP, when the loaded CS descriptor has a
+ * non-zero base (ignored in 64-bit mode, SDM Vol3A 3.2.4). MOV RAX, [RSP] with a
+ * non-canonical RSP is #SS; the bytes at CS.base + RIP (MOV RAX, [RCX]) would
+ * give #GP.
+ */
+static void test_x86_bp_canonical_ss_cs_base(void)
+{
+    /* push 48h; push BP_CODE+0x40; retfq (48h = code64 DPL0 with base 1000h) */
+    static const char far64[] = "\x6a\x48\x68\x40\x00\x01\x00\x48\xcb";
+    BpCpu c;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set_gdt_entry(&c, 9, bp_desc(0x1000, 0xfffff, 0x9b, 0xa));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RBX, 0x8000000000000000ULL);
+    bp_set(&c, UC_X86_REG_RCX, 0x8000000000000000ULL);
+    /* mov rsp, rbx; mov rax, [rsp] */
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x48\x89\xdc\x48\x8b\x04\x24", 7));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x1040, "\x48\x89\xdc\x48\x8b\x01\x90", 7));
+    OK(uc_mem_write(c.uc, BP_CODE, far64, sizeof(far64) - 1));
+    c.count = 0;
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x47, 0, 6));
+    TEST_CHECK(c.count == 1 && c.intno == 12 && c.rip == BP_CODE + 0x43);
+    TEST_MSG("count %u intno %u rip %llx", c.count, c.intno, (unsigned long long)c.rip);
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -15083,4 +15112,5 @@ TEST_LIST = {
     {"test_x86_bp_tss16_gpr_upper", test_x86_bp_tss16_gpr_upper},
     {"test_x86_bp_tss_save_old_format", test_x86_bp_tss_save_old_format},
     {"test_x86_bp_cs_base_fetch", test_x86_bp_cs_base_fetch},
+    {"test_x86_bp_canonical_ss_cs_base", test_x86_bp_canonical_ss_cs_base},
     {NULL, NULL}};
