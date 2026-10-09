@@ -23,6 +23,10 @@
 using namespace llvm_ks;
 
 MCAsmInfo::MCAsmInfo() {
+  // NoVmp (ledger U546): Radix was never initialised, so a fresh engine sometimes parsed plain
+  // immediates as hex (uninitialised memory == 16). Default to decimal; ks_option sets 16 only
+  // for the KS_OPT_SYNTAX_RADIX16 syntaxes.
+  Radix = 10;
   PointerSize = 4;
   CalleeSaveStackSlotSize = 4;
 
