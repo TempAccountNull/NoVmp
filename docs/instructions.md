@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 06:34 (HEAD `c895b78 U558-U560: ref_evex_m4a.py SDM model, cases_evex_m4a(_hw).txt (test.cmd), m4a_ unit tests, verified_forms`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 07:12 (HEAD `e58b2b0 alltest_baseline: refresh for U591/U594/U595 (10 intended rows)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -35,6 +35,7 @@ _Generated 2026-10-09 06:34 (HEAD `c895b78 U558-U560: ref_evex_m4a.py SDM model,
     - ⏳ M3 — 3 agents started 2026-10-08: wt/m3_bw U260–U289 (byte/word elements in the EVEX engine, 64-bit masks, all AVX512BW incl. VMOVDQU8/16, VPMOV*2M/M2*); wt/m3_dq U290–U319 (VPMULLQ, VANDPS family, QQ conversions, VFPCLASS, VRANGE, VREDUCE, 32X8/64X2 insert/extract/broadcast); wt/m3_cd U320–U329 (UC_X86_AVX512_CD bit, VPCONFLICT, VPLZCNT, VPBROADCASTM*; then IFMA/VBMI/VPOPCNTDQ/BITALG if time permits). VL gate done in U140.
       - ⬜ M3 leftovers: VPMULTISHIFTQB (needs separate mask element size); masked VRANGESS/SD + VREDUCESS/SD with DEST≠SRC1 → run cases_evex_m3_dq_post.txt after the scalar merge and add to test.cmd; VREDUCE under DAZ/FTZ (SDM pseudocode has no DAZ step — confirm); VPBLENDMB/W switch to m2_engine blend mode; VPMOVD2M/Q2M + VPMOVM2D/Q gated on DQ; no BW cases in 32-bit mode.
     - ⏳ M4 (2026-10-09: [agent, wt/evex_m4a, U550–U569] VBMI2, VPMULTISHIFTQB, AVX512_VNNI, AVX512_BF16; [agent, wt/evex_m4b, U570–U589] VP2INTERSECT, EVEX GFNI/VAES/VPCLMULQDQ): VBMI2, VNNI, VP2INTERSECT, EVEX GFNI/VAES/VPCLMUL, BF16 (IFMA/VBMI/VPOPCNTDQ/BITALG go to wt/m3_cd after CD); FP16 → [agent, wt/fp16, U330–U369, started 2026-10-08] AVX512-FP16 maps 5/6 + VNNI_FP16: opt-in bit in UC_CTL_X86_AVX512, arithmetic, FMA, complex FMA, VMOVSH/VMOVW, all conversions; independent model ref_evex_fp16.py + cases_evex_fp16.txt; F16C hardware cross-check.
+      - ⬜ M4 leftovers: VP4DPWSSD/VP4DPWSSDS (AVX512_4VNNIW) and the other Xeon-Phi-only forms (AVX512_4FMAPS, AVX512ER/PF) stay #UD — decide whether to implement (they are in the SDM); amx_fma32 FTZ bug → wt/fixes2 item 7; EVEX_VAES macro in emit.c.inc collapsed onto one line (readability); no 32-bit-mode cases for the M4 forms.
       - ⏳ wt/fp16 finished 2026-10-08 (U330–U339, 13 commits): all 116 AVX512-FP16 forms (maps 5/6 + 0F3A FP16 slots), UC_X86_AVX512_FP16 = 0x200; cases_evex_fp16 5899/0; FP32↔FP16 core == i5-13600K F16C on 72177 cases. Merge in the AVX10 integration pass (shares maps 5/6 with avx10_a/b).
       - ⬜ fp16 leftovers: VRCP/VRSQRT PH correctly rounded (SDM gives only a bound); SDM ambiguities followed literally (VMIN/VMAX PH IE on QNaN, VGETEXPPH keeps NaN sign, VSCALEF DE with SRC2 ±INF, VCVTPH2PSX DE, complex conjugation per pseudocode vs opcode text); L'L=11 without EVEX.b on scalar FP16 untested; 0F3A slots 08/0A/26/27/56/57/66/67/C2 need one decoder per slot covering NP/F3 (FP16) and 66 (PS/PD) at merge.
     - ⏳ M5: AVX10 — 2 agents started 2026-10-08: wt/avx10_a U370–U399 (CPUID (7,1):EDX[19] + leaf 0x24 opt-in, "AVX512x OR AVX10.1" gating, AVX10.2 BF16 arithmetic, SAT_CVT, MINMAX, VCOMX, EVEX.U=0 256-bit {er}/{sae}); wt/avx10_b U400–U429 (FP8 conversions, AVX10.2 VNNI INT8/INT16 + VDPPHPS, MOVRS EVEX, MOVZXC VMOVD/VMOVW, VMPSADBW EVEX; XED-only AUX rows listed, not implemented unless an Intel document defines them).
@@ -53,7 +54,7 @@ _Generated 2026-10-09 06:34 (HEAD `c895b78 U558-U560: ref_evex_m4a.py SDM model,
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 335 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 342 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
