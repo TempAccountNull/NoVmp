@@ -2384,6 +2384,16 @@ bool x86_uintr_deliverable(CPUX86State *env);
 void x86_uintr_deliver(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U860) */
+/*
+ * cpu.c (ledger U860): the x87 pointer bits of the effective CPUID.(EAX=07H,ECX=0):EBX
+ * (UC_CTL_X86_CPUID profile, else the model): bit 6 FDP_EXCPTN_ONLY, bit 13 FCS/FDS
+ * deprecated (SDM Vol1 8.1.8)
+ */
+#define X86_X87_FDP_EXCPTN_ONLY (1u << 6)
+#define X86_X87_FCS_FDS_DEPR    (1u << 13)
+uint32_t x86_cpu_x87_ptr_bits(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U860) */
 #if __Use_Original_Qemu != 1 /* ours (U593) */
 /* cpu.c: MAXPHYADDR from the UC_CTL_X86_CPUID profile (80000008H:EAX[7:0]) or the model */
 void x86_cpu_update_phys_bits(X86CPU *cpu);

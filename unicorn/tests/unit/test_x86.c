@@ -18955,6 +18955,213 @@ static void test_x86_axc_apx_nci_ndd_nf(void)
     }
 }
 /* ---- end U790-U793 (axc_) ---- */
+ * ---- x87misc (xm_) block: ledger U860-U889 ----
+ * U860: FDP/FCS/FDS follow the effective CPUID.(EAX=07H,ECX=0):EBX[6] (FDP_EXCPTN_ONLY)
+ * and EBX[13] (FCS/FDS deprecated), SDM Vol1 8.1.8. Profiles: the i5-13600K leaves 0/1/7
+ * with EBX[6]/[13] as given; no profile = the model (both bits, U433).
+ */
+#define XM_CODE 0x400000ULL
+#define XM_DATA 0x500000ULL
+#define XM_RSI (XM_DATA + 0x100)
+#define XM_RDI (XM_DATA + 0x800)
+
+static uc_engine *xm_open(uint32_t ebx7, int with_profile)
+{
+    uc_x86_cpuid prof[3] = {
+        {0, 0, 0x00000007, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {1, 0, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+        {7, 0, 0x00000000, 0, 0x9840078C, 0xBC004410},
+    };
+    uint16_t cs = 0x33, ds = 0x2b, es = 0x53, ss = 0x23;
+    uc_engine *uc;
+
+    prof[2].ebx = ebx7;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    if (with_profile) {
+        OK(uc_ctl_set_x86_cpuid(uc, prof, 3));
+    }
+    OK(uc_mem_map(uc, XM_CODE, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_map(uc, XM_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_reg_write(uc, UC_X86_REG_CS, &cs));
+    OK(uc_reg_write(uc, UC_X86_REG_DS, &ds));
+    OK(uc_reg_write(uc, UC_X86_REG_ES, &es));
+    OK(uc_reg_write(uc, UC_X86_REG_SS, &ss));
+    return uc;
+}
+
+static uc_err xm_run(uc_engine *uc, const char *code, size_t len)
+{
+    uint64_t rsi = XM_RSI, rdi = XM_RDI;
+
+    OK(uc_mem_write(uc, XM_CODE, code, len));
+    OK(uc_reg_write(uc, UC_X86_REG_RSI, &rsi));
+    OK(uc_reg_write(uc, UC_X86_REG_RBP, &rsi));
+    OK(uc_reg_write(uc, UC_X86_REG_RDI, &rdi));
+    return uc_emu_start(uc, XM_CODE, XM_CODE + len, 0, 0);
+}
+
+static uint32_t xm_rd32(uc_engine *uc, uint64_t a)
+{
+    uint8_t b[4];
+
+    OK(uc_mem_read(uc, a, b, 4));
+    return b[0] | (b[1] << 8) | (b[2] << 16) | ((uint32_t)b[3] << 24);
+}
+
+static uint64_t xm_rd64(uc_engine *uc, uint64_t a)
+{
+    return xm_rd32(uc, a) | ((uint64_t)xm_rd32(uc, a + 4) << 32);
+}
+
+/* the pointer registers and the three images (FNSTENV 32-bit, FXSAVE, FXSAVE64) */
+static void xm_check_ptrs(uc_engine *uc, const char *what, uint64_t fip, uint16_t fcs,
+                          uint64_t fdp, uint16_t fds, uint16_t fop)
+{
+    uint64_t r_fip = 0, r_fdp = 0;
+    uint16_t r_fcs = 0xffff, r_fds = 0xffff, r_fop = 0xffff;
+    uint64_t env = XM_RDI, fx = XM_RDI + 0x40, fx64 = XM_RDI + 0x240;
+
+    OK(uc_reg_read(uc, UC_X86_REG_FIP, &r_fip));
+    OK(uc_reg_read(uc, UC_X86_REG_FCS, &r_fcs));
+    OK(uc_reg_read(uc, UC_X86_REG_FDP, &r_fdp));
+    OK(uc_reg_read(uc, UC_X86_REG_FDS, &r_fds));
+    OK(uc_reg_read(uc, UC_X86_REG_FOP, &r_fop));
+    TEST_CHECK(r_fip == fip && r_fcs == fcs && r_fdp == fdp && r_fds == fds && r_fop == fop);
+    TEST_MSG("%s regs: fip %llx fcs %x fdp %llx fds %x fop %x (want %llx %x %llx %x %x)", what,
+             (unsigned long long)r_fip, r_fcs, (unsigned long long)r_fdp, r_fds, r_fop,
+             (unsigned long long)fip, fcs, (unsigned long long)fdp, fds, fop);
+    /* FNSTENV, 32-bit protected-mode format: FIP, FOP:FCS, FDP, FFFFh:FDS */
+    TEST_CHECK(xm_rd32(uc, env + 12) == (uint32_t)fip);
+    TEST_CHECK(xm_rd32(uc, env + 16) == (((uint32_t)fop << 16) | fcs));
+    TEST_CHECK(xm_rd32(uc, env + 20) == (uint32_t)fdp);
+    TEST_CHECK(xm_rd32(uc, env + 24) == (0xffff0000u | fds));
+    TEST_MSG("%s fnstenv: %08x %08x %08x %08x", what, xm_rd32(uc, env + 12),
+             xm_rd32(uc, env + 16), xm_rd32(uc, env + 20), xm_rd32(uc, env + 24));
+    /* FXSAVE without REX.W: FIP[31:0], FCS, FDP[31:0], FDS */
+    TEST_CHECK(xm_rd32(uc, fx + 8) == (uint32_t)fip && xm_rd32(uc, fx + 12) == fcs);
+    TEST_CHECK(xm_rd32(uc, fx + 16) == (uint32_t)fdp && xm_rd32(uc, fx + 20) == fds);
+    TEST_MSG("%s fxsave: %08x %08x %08x %08x", what, xm_rd32(uc, fx + 8), xm_rd32(uc, fx + 12),
+             xm_rd32(uc, fx + 16), xm_rd32(uc, fx + 20));
+    /* FXSAVE64: 64-bit FIP / FDP, no selectors */
+    TEST_CHECK(xm_rd64(uc, fx64 + 8) == fip && xm_rd64(uc, fx64 + 16) == fdp);
+}
+
+/*
+ * fninit (Unicorn starts with the power-up FCW 0040h / FTW 5555h); fld dword [rsi];
+ * fld dword es:[rsi+4] (64-bit mode: the ES override is ignored, DS); fadd st(0), st(1);
+ * fnstenv [rdi];
+ * fxsave [rdi+40h]; fxsave64 [rdi+240h]
+ */
+static const char xm_ptr_code[] = "\xdb\xe3"
+                                  "\xd9\x06"
+                                  "\x26\xd9\x46\x04"
+                                  "\xd8\xc1"
+                                  "\xd9\x37"
+                                  "\x0f\xae\x47\x40"
+                                  "\x48\x0f\xae\x87\x40\x02\x00\x00";
+/*
+ * fninit; fldcw [rsi+8] (037Bh: ZM = 0); fld1; fdiv dword [rbp+12] (SS; 0.0: unmasked #Z);
+ * fnstenv [rdi]; fxsave [rdi+40h]; fxsave64 [rdi+240h] (non-waiting: no #MF)
+ */
+static const char xm_exc_code[] = "\xdb\xe3"
+                                  "\xd9\x6e\x08"
+                                  "\xd9\xe8"
+                                  "\xd8\x75\x0c"
+                                  "\xd9\x37"
+                                  "\x0f\xae\x47\x40"
+                                  "\x48\x0f\xae\x87\x40\x02\x00\x00";
+
+static void xm_ptr_case(const char *what, int with_profile, uint32_t ebx7)
+{
+    static const uint8_t data[16] = {0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x40,
+                                     0x7b, 0x03, 0, 0, 0, 0, 0, 0};
+    bool excptn_only = (ebx7 >> 6) & 1, depr = (ebx7 >> 13) & 1;
+    uc_engine *uc;
+    char name[96];
+
+    /* no exception: FDP/FDS only when EBX[6] = 0, FCS/FDS only when EBX[13] = 0 */
+    uc = xm_open(ebx7, with_profile);
+    OK(uc_mem_write(uc, XM_RSI, data, sizeof(data)));
+    TEST_CHECK(xm_run(uc, xm_ptr_code, sizeof(xm_ptr_code) - 1) == UC_ERR_OK);
+    snprintf(name, sizeof(name), "%s masked", what);
+    xm_check_ptrs(uc, name, XM_CODE + 8, depr ? 0 : 0x33, excptn_only ? 0 : XM_RSI + 4,
+                  (excptn_only || depr) ? 0 : 0x2b, 0);
+    OK(uc_close(uc));
+
+    /* unmasked #Z on the memory operand: FDP/FDS (= SS) whatever EBX[6] says, FOP = 075h */
+    uc = xm_open(ebx7, with_profile);
+    OK(uc_mem_write(uc, XM_RSI, data, sizeof(data)));
+    TEST_CHECK(xm_run(uc, xm_exc_code, sizeof(xm_exc_code) - 1) == UC_ERR_OK);
+    snprintf(name, sizeof(name), "%s unmasked #Z", what);
+    xm_check_ptrs(uc, name, XM_CODE + 7, depr ? 0 : 0x33, XM_RSI + 12, depr ? 0 : 0x23, 0x075);
+    OK(uc_close(uc));
+}
+
+/*
+ * FLDENV (CR0.PE = 1) and FXRSTOR load FCS/FDS from the image unless EBX[13] = 1;
+ * FXRSTOR64 clears them (SDM Vol1 8.1.8)
+ */
+static void xm_load_case(const char *what, int with_profile, uint32_t ebx7)
+{
+    /* fldenv [rsi] / fxrstor [rsi+200h] / fxrstor64 [rsi+200h] */
+    static const char c_fldenv[] = "\xd9\x26";
+    static const char c_fxrstor[] = "\x0f\xae\x8e\x00\x02\x00\x00";
+    static const char c_fxrstor64[] = "\x48\x0f\xae\x8e\x00\x02\x00\x00";
+    uint8_t env[28], fx[512];
+    bool depr = (ebx7 >> 13) & 1;
+    uint16_t fcs, fds;
+    uc_engine *uc;
+    int i;
+
+    memset(env, 0, sizeof(env));
+    env[0] = 0x7f; env[1] = 0x03;                       /* FCW 037Fh */
+    env[8] = 0xff; env[9] = 0xff;                       /* FTW all empty */
+    env[16] = 0x34; env[17] = 0x12;                     /* FCS 1234h */
+    env[24] = 0x78; env[25] = 0x56;                     /* FDS 5678h */
+    memset(fx, 0, sizeof(fx));
+    fx[0] = 0x7f; fx[1] = 0x03;
+    fx[12] = 0xbc; fx[13] = 0x9a;                       /* FCS 9ABCh */
+    fx[20] = 0xf0; fx[21] = 0xde;                       /* FDS DEF0h */
+    fx[24] = 0x80; fx[25] = 0x1f;                       /* MXCSR 1F80h */
+    for (i = 0; i < 3; i++) {
+        uc = xm_open(ebx7, with_profile);
+        OK(uc_mem_write(uc, XM_RSI, env, sizeof(env)));
+        OK(uc_mem_write(uc, XM_RSI + 0x200, fx, sizeof(fx)));
+        if (i == 0) {
+            TEST_CHECK(xm_run(uc, c_fldenv, sizeof(c_fldenv) - 1) == UC_ERR_OK);
+        } else if (i == 1) {
+            TEST_CHECK(xm_run(uc, c_fxrstor, sizeof(c_fxrstor) - 1) == UC_ERR_OK);
+        } else {
+            TEST_CHECK(xm_run(uc, c_fxrstor64, sizeof(c_fxrstor64) - 1) == UC_ERR_OK);
+        }
+        OK(uc_reg_read(uc, UC_X86_REG_FCS, &fcs));
+        OK(uc_reg_read(uc, UC_X86_REG_FDS, &fds));
+        if (depr || i == 2) {
+            TEST_CHECK(fcs == 0 && fds == 0);
+        } else if (i == 0) {
+            TEST_CHECK(fcs == 0x1234 && fds == 0x5678);
+        } else {
+            TEST_CHECK(fcs == 0x9abc && fds == 0xdef0);
+        }
+        TEST_MSG("%s load %d: fcs %x fds %x", what, i, fcs, fds);
+        OK(uc_close(uc));
+    }
+}
+
+static void test_x86_xm_x87_ptr_profiles(void)
+{
+    const uint32_t i5 = 0x219C27EB;         /* the i5-13600K: EBX[6] = EBX[13] = 1 */
+
+    xm_ptr_case("model", 0, (1u << 6) | (1u << 13));
+    xm_ptr_case("i5-13600K", 1, i5);
+    xm_ptr_case("EBX[6]=0 EBX[13]=0", 1, i5 & ~((1u << 6) | (1u << 13)));
+    xm_ptr_case("EBX[6]=0 EBX[13]=1", 1, i5 & ~(1u << 6));
+    xm_ptr_case("EBX[6]=1 EBX[13]=0", 1, i5 & ~(1u << 13));
+    xm_load_case("model", 0, (1u << 6) | (1u << 13));
+    xm_load_case("i5-13600K", 1, i5);
+    xm_load_case("EBX[13]=0", 1, i5 & ~((1u << 6) | (1u << 13)));
+}
+/* ---- end of the x87misc (xm_) block ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -19225,4 +19432,5 @@ TEST_LIST = {
     {"test_x86_axc_wrss_paging", test_x86_axc_wrss_paging},
     {"test_x86_axc_evex_r4_kreg", test_x86_axc_evex_r4_kreg},
     {"test_x86_axc_apx_nci_ndd_nf", test_x86_axc_apx_nci_ndd_nf},
+    {"test_x86_xm_x87_ptr_profiles", test_x86_xm_x87_ptr_profiles},
     {NULL, NULL}};

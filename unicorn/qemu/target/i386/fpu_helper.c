@@ -4386,6 +4386,33 @@ void helper_fxam_ST0(CPUX86State *env)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U860) */
+/*
+ * NoVmp (ledger U860): FCS/FDS as FSTENV/FSAVE/FXSAVE/XSAVE save them: "If
+ * CPUID.07H.00H:EBX[13] = 1, the processor deprecates FCS and FDS; it saves each as 0000H"
+ * (SDM Vol1 8.1.8, the effective CPUID); otherwise the selectors themselves.
+ */
+static uint16_t x87_saved_sel(CPUX86State *env, uint16_t sel)
+{
+    return (x86_cpu_x87_ptr_bits(env) & X86_X87_FCS_FDS_DEPR) ? 0 : sel;
+}
+
+/*
+ * NoVmp (ledger U860): FCS/FDS loaded by FLDENV/FRSTOR/FXRSTOR/XRSTOR (32-bit pointer
+ * formats): from the image when CR0.PE = 1 (FLDENV/FRSTOR; FXRSTOR/XRSTOR always), else
+ * cleared; while CPUID.07H.00H:EBX[13] = 1 they are deprecated and stay 0000H (the value
+ * every save reports, U64).
+ */
+static void x87_load_sels(CPUX86State *env, uint16_t fcs, uint16_t fds, bool load)
+{
+    if (!load || (x86_cpu_x87_ptr_bits(env) & X86_X87_FCS_FDS_DEPR)) {
+        fcs = fds = 0;
+    }
+    env->fpcs = fcs;
+    env->fpds = fds;
+}
+
+#endif /* __Use_Original_Qemu (U860) */
 static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
                       uintptr_t retaddr)
 {
@@ -4433,9 +4460,11 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
         cpu_stl_data_ra(env, ptr + 8, 0xffff0000u | fptag, retaddr);
         cpu_stl_data_ra(env, ptr + 12, env->fpip, retaddr); /* fpip */
         /* FOP in bits 26:16 next to FCS (U64) */
-        cpu_stl_data_ra(env, ptr + 16, ((uint32_t)(env->fpop & 0x7ff) << 16) | env->fpcs, retaddr);
+        cpu_stl_data_ra(env, ptr + 16, ((uint32_t)(env->fpop & 0x7ff) << 16) |
+                        x87_saved_sel(env, env->fpcs), retaddr);  /* U860 */
         cpu_stl_data_ra(env, ptr + 20, env->fpdp, retaddr); /* fpoo */
-        cpu_stl_data_ra(env, ptr + 24, 0xffff0000u | env->fpds, retaddr); /* fpos */
+        cpu_stl_data_ra(env, ptr + 24, 0xffff0000u | x87_saved_sel(env, env->fpds),
+                        retaddr); /* fpos (U860) */
 #endif /* __Use_Original_Qemu (U62) */
     } else {
         /* 16 bit */
@@ -4443,9 +4472,15 @@ static void do_fstenv(CPUX86State *env, target_ulong ptr, int data32,
         cpu_stw_data_ra(env, ptr + 2, fpus, retaddr);
         cpu_stw_data_ra(env, ptr + 4, fptag, retaddr);
         cpu_stw_data_ra(env, ptr + 6, env->fpip, retaddr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U860) */
         cpu_stw_data_ra(env, ptr + 8, env->fpcs, retaddr);
         cpu_stw_data_ra(env, ptr + 10, env->fpdp, retaddr);
         cpu_stw_data_ra(env, ptr + 12, env->fpds, retaddr);
+#else /* ours (U860) */
+        cpu_stw_data_ra(env, ptr + 8, x87_saved_sel(env, env->fpcs), retaddr);
+        cpu_stw_data_ra(env, ptr + 10, env->fpdp, retaddr);
+        cpu_stw_data_ra(env, ptr + 12, x87_saved_sel(env, env->fpds), retaddr);
+#endif /* __Use_Original_Qemu (U860) */
     }
 }
 
@@ -4462,11 +4497,22 @@ void helper_x87_ptrs(CPUX86State *env, uint32_t fop, target_ulong fdp, uint32_t 
 {
     if (env->fpus & FPUS_SE) {
         env->fpop = fop & 0x7ff;
-        if (mem) {
-            env->fpdp = fdp;
-        }
+    }
+    /*
+     * NoVmp (ledger U860): 'mem' = bit 0 memory operand, bits 11:8 its segment register,
+     * plus the effective CPUID.(EAX=07H,ECX=0):EBX bits 6 (FDP_EXCPTN_ONLY) and 13 (FCS/FDS
+     * deprecated). SDM Vol1 8.1.8: "If CPUID.07H.00H:EBX[6] = 1, the data pointer is updated
+     * only for x87 non-control instructions that incur unmasked x87 exceptions"; with the bit
+     * clear every non-control instruction with a memory operand updates FDP (and FDS, the
+     * selector of the segment it used; 0000H while EBX[13] = 1). A register-only instruction
+     * leaves the data pointer as it was ("undefined (reserved)").
+     */
+    if ((mem & 1) && (!(mem & X86_X87_FDP_EXCPTN_ONLY) || (env->fpus & FPUS_SE))) {
+        env->fpdp = fdp;
+        env->fpds = (mem & X86_X87_FCS_FDS_DEPR) ? 0 : env->segs[(mem >> 8) & 7].selector;
     }
 }
+
 #endif /* __Use_Original_Qemu (U64) */
 
 void helper_fstenv(CPUX86State *env, target_ulong ptr, int data32)
@@ -4534,12 +4580,16 @@ static void do_fldenv(CPUX86State *env, target_ulong ptr, int data32,
         env->fpip = cpu_ldl_data_ra(env, ptr + 12, retaddr);
         env->fpop = (cpu_ldl_data_ra(env, ptr + 16, retaddr) >> 16) & 0x7ff;
         env->fpdp = cpu_ldl_data_ra(env, ptr + 20, retaddr);
+        /* FCS / FDS (U860) */
+        x87_load_sels(env, cpu_lduw_data_ra(env, ptr + 16, retaddr),
+                      cpu_lduw_data_ra(env, ptr + 24, retaddr), env->cr[0] & CR0_PE_MASK);
     } else {
         env->fpip = cpu_lduw_data_ra(env, ptr + 6, retaddr);
         env->fpop = cpu_lduw_data_ra(env, ptr + 8, retaddr) & 0x7ff;
         env->fpdp = cpu_lduw_data_ra(env, ptr + 10, retaddr);
+        x87_load_sels(env, cpu_lduw_data_ra(env, ptr + 8, retaddr),
+                      cpu_lduw_data_ra(env, ptr + 12, retaddr), env->cr[0] & CR0_PE_MASK);
     }
-    env->fpcs = env->fpds = 0;
 #endif /* __Use_Original_Qemu (U64) */
 }
 
@@ -4667,9 +4717,9 @@ static void do_xsave_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
         cpu_stq_data_ra(env, ptr + XO(legacy.fpdp), env->fpdp, ra);
     } else {
         cpu_stl_data_ra(env, ptr + XO(legacy.fpip), (uint32_t)env->fpip, ra);
-        cpu_stl_data_ra(env, ptr + XO(legacy.fpip) + 4, env->fpcs, ra);
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpip) + 4, x87_saved_sel(env, env->fpcs), ra);
         cpu_stl_data_ra(env, ptr + XO(legacy.fpdp), (uint32_t)env->fpdp, ra);
-        cpu_stl_data_ra(env, ptr + XO(legacy.fpdp) + 4, env->fpds, ra);
+        cpu_stl_data_ra(env, ptr + XO(legacy.fpdp) + 4, x87_saved_sel(env, env->fpds), ra);
     }
 #endif /* __Use_Original_Qemu (U64) */
 
@@ -5538,11 +5588,14 @@ static void do_xrstor_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
     if (env->x87_fx64) {
         env->fpip = cpu_ldq_data_ra(env, ptr + XO(legacy.fpip), ra);
         env->fpdp = cpu_ldq_data_ra(env, ptr + XO(legacy.fpdp), ra);
+        env->fpcs = env->fpds = 0;      /* REX.W: "clears FCS and FDS" (Vol1 8.1.8) */
     } else {
         env->fpip = cpu_ldl_data_ra(env, ptr + XO(legacy.fpip), ra);
         env->fpdp = cpu_ldl_data_ra(env, ptr + XO(legacy.fpdp), ra);
+        /* "loads FCS and FDS from memory" unless deprecated (U860) */
+        x87_load_sels(env, cpu_lduw_data_ra(env, ptr + XO(legacy.fpip) + 4, ra),
+                      cpu_lduw_data_ra(env, ptr + XO(legacy.fpdp) + 4, ra), true);
     }
-    env->fpcs = env->fpds = 0;
 #endif /* __Use_Original_Qemu (U64) */
 
     addr = ptr + XO(legacy.fpregs);

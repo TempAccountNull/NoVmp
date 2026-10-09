@@ -7064,10 +7064,18 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     tcg_gen_st_tl(tcg_ctx, last_addr, cpu_env,
                                   offsetof(CPUX86State, fpdp));
 #else /* ours (U64) */
-                    /* FOP/FDP only on an unmasked exception, FDS = 0 (U64) */
+                    /*
+                     * FOP on an unmasked exception (U64); FDP and FDS as the effective
+                     * CPUID.(7,0):EBX[6]/[13] say (U860, SDM Vol1 8.1.8): the segment
+                     * register's selector is read when the helper runs
+                     */
+                    int last_seg = s->override >= 0 ? s->override : a.def_seg;
+
                     gen_helper_x87_ptrs(tcg_ctx, cpu_env,
                                         tcg_constant_i32(tcg_ctx, ((b & 7) << 8) | modrm),
-                                        last_addr, tcg_constant_i32(tcg_ctx, 1));
+                                        last_addr,
+                                        tcg_constant_i32(tcg_ctx, 1 | (last_seg << 8) |
+                                                         x86_cpu_x87_ptr_bits(env)));
 #endif /* __Use_Original_Qemu (U64) */
                 }
                 tcg_temp_free(tcg_ctx, last_addr);
@@ -7441,9 +7449,19 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 tcg_gen_st_tl(tcg_ctx, eip_cur_tl(s),
                               cpu_env, offsetof(CPUX86State, fpip));
 #else /* ours (U64) */
-                /* FIP always, FCS = 0 (deprecated on this CPU); FOP on exception (U64) */
-                tcg_gen_st16_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
-                                 offsetof(CPUX86State, fpcs));
+                /*
+                 * FIP always; FCS = CS selector, or 0 when CPUID.(7,0):EBX[13] deprecates
+                 * FCS/FDS (U860, SDM Vol1 8.1.8); FOP on exception (U64)
+                 */
+                if (x86_cpu_x87_ptr_bits(env) & X86_X87_FCS_FDS_DEPR) {
+                    tcg_gen_st16_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
+                                     offsetof(CPUX86State, fpcs));
+                } else {
+                    tcg_gen_ld_i32(tcg_ctx, s->tmp2_i32, cpu_env,
+                                   offsetof(CPUX86State, segs[R_CS].selector));
+                    tcg_gen_st16_i32(tcg_ctx, s->tmp2_i32, cpu_env,
+                                     offsetof(CPUX86State, fpcs));
+                }
                 tcg_gen_st_tl(tcg_ctx, eip_cur_tl(s),
                               cpu_env, offsetof(CPUX86State, fpip));
                 if (mod == 3) {

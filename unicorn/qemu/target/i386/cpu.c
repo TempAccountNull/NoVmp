@@ -4322,6 +4322,24 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
     return r[reg];
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U860) */
+/*
+ * NoVmp (ledger U860): SDM Vol1 8.1.8 ties the x87 data pointer and the FCS/FDS selectors to
+ * CPUID.(EAX=07H,ECX=0):EBX[6] (FDP_EXCPTN_ONLY: FDP/FDS updated only by a non-control
+ * instruction that incurs an unmasked x87 exception) and EBX[13] (FCS and FDS deprecated,
+ * saved as 0000H). The behaviour follows what CPUID reports: the UC_CTL_X86_CPUID profile
+ * as given (a custom profile may clear either bit), else the model (both bits, U433; a
+ * model without leaf 7 reports neither).
+ */
+uint32_t x86_cpu_x87_ptr_bits(CPUX86State *env)
+{
+    uint32_t eax, ebx, ecx, edx;
+
+    cpu_x86_cpuid(env, 7, 0, &eax, &ebx, &ecx, &edx);
+    return ebx & (X86_X87_FDP_EXCPTN_ONLY | X86_X87_FCS_FDS_DEPR);
+}
+
+#endif /* __Use_Original_Qemu (U860) */
 #if __Use_Original_Qemu != 1 /* ours (U593) */
 /*
  * NoVmp (ledger U593): MAXPHYADDR (cpu->phys_bits: the reserved bits of CR3 and of the paging
@@ -4608,12 +4626,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             *ebx = env->features[FEAT_7_0_EBX]; /* Feature flags */
 #if __Use_Original_Qemu != 1 /* ours (U433) */
             /*
-             * NoVmp (ledger U433): the fork's x87 always updates FDP/FDS only on
-             * unmasked x87 exceptions and saves FCS/FDS as 0000H (U64), which the
-             * SDM (Vol1 8.1.8) ties to CPUID.(EAX=07H,ECX=0):EBX[6]
-             * (FDP_EXCPTN_ONLY) and EBX[13] (ZERO_FCS_FDS). Report both on every
-             * model so CPUID and behaviour agree (UC_CTL_X86_CPUID profiles are
-             * returned as given).
+             * NoVmp (ledger U433): every built-in model reports
+             * CPUID.(EAX=07H,ECX=0):EBX[6] (FDP_EXCPTN_ONLY) and EBX[13]
+             * (ZERO_FCS_FDS) like the i5-13600K. The x87 follows whatever CPUID
+             * reports (x86_cpu_x87_ptr_bits, U860, SDM Vol1 8.1.8), so a
+             * UC_CTL_X86_CPUID profile (returned as given) may clear either bit.
              */
             *ebx |= (1U << 6) | (1U << 13);
 #endif /* __Use_Original_Qemu (U433) */
