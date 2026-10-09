@@ -11,6 +11,8 @@
 | `--filter S` / `--sample N` / `--rebuild` | restrict the sweep / sample / re-sweep the opcode space |
 | `--cases FILE` | hand-written snippets with a chosen input state; format at the top of `at_cases.hpp` |
 | `--expect-only` | with `--cases`: only the expected-value (`=>`) lines — they never run natively |
+| `--bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE]` | performance benchmark (U500, `at_bench.hpp`): 13 workloads of our own code, Unicorn only — integer/branch, AVX/FMA, SSE integer, x87, REP strings, TLB misses, self-modifying code, 4096 short TBs, code/count/memory-hook overhead, short `uc_emu_start` calls, `uc_open` churn. Cold and warm median of N (default 5) fresh engines, Minsn/s from a calibrated instruction count, and an FNV-1a hash of the complete guest end state that must not change between builds. Pinned to logical CPU C (default 4) at high priority |
+| `--profile N` | with `--bench` (per workload) or a quick/`--full` run (whole run): in-process sampling profiler, the N hottest functions self and inclusive (PDBs next to the exe; `[jit]` = TCG-generated code) |
 
 ## Machine-state options (apply to `--cases` runs)
 
