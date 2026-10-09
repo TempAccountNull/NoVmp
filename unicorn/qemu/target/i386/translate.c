@@ -174,6 +174,23 @@ typedef struct DisasContext {
      */
     bool rex2;
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    /*
+     * NoVmp (ledger U640): Intel APX EVEX map 4 (promoted legacy instructions, APX spec
+     * 355828-009 3.1.2.3.1). apx_ndd: the NDD register (EVEX.ND = 1 of an NDD instruction),
+     * else -1: the result goes there, zero-extended, and r/m stays a source (Table 3.2,
+     * 3.1.2.4). apx_zu: ZU (IMUL 69/6B, SETcc with EVEX.ND = 1): the destination register is
+     * zero-extended. apx_post: APX_POST_NF (EVEX.NF = 1: the status flags are restored after
+     * the instruction) or APX_POST_CC (CCMPscc / CTESTscc: SCC false -> the DFV flags);
+     * apx_flags / apx_cond: the flags before the instruction and the SCC value (local temps).
+     */
+    int8_t apx_ndd;
+    bool apx_zu;
+    uint8_t apx_post;
+    uint8_t apx_scc, apx_dfv;
+    uint8_t apx_nd, apx_nf;
+    TCGv apx_flags, apx_cond;
+#endif /* __Use_Original_Qemu (U640) */
     bool vex_w; /* used by AVX even on 32-bit processors */
 #if __Use_Original_Qemu != 1 /* ours (U141) */
     /*
@@ -678,8 +695,29 @@ static inline void gen_op_st_v(DisasContext *s, int idx, TCGv t0, TCGv a0)
     tcg_gen_qemu_st_tl(tcg_ctx, t0, a0, s->mem_index, idx | MO_LE);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+/*
+ * NoVmp (ledger U640): write the result T of an Intel APX NDD instruction (EVEX map 4,
+ * EVEX.ND = 1) to its new data destination: "the destination GPR (namely, the NDD) will
+ * get the instruction's result in bits [OSIZE-1:0] and, if OSIZE < 64b, have its upper bits
+ * [63:OSIZE] zeroed" (APX spec 355828-009 3.1.2.4); the r/m operand is only a source.
+ */
+static void gen_apx_ndd_write(DisasContext *s, MemOp ot, TCGv t)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    tcg_gen_extract_tl(tcg_ctx, cpu_regs[s->apx_ndd], t, 0, 8 << (ot & MO_SIZE));
+}
+
+#endif /* __Use_Original_Qemu (U640) */
 static inline void gen_op_st_rm_T0_A0(DisasContext *s, int idx, int d)
 {
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    if (s->apx_ndd >= 0) {
+        gen_apx_ndd_write(s, idx, s->T0);   /* APX NDD: r/m is a source only */
+        return;
+    }
+#endif /* __Use_Original_Qemu (U640) */
     if (d == OR_TMP0) {
         gen_op_st_v(s, idx, s->T0, s->A0);
     } else {
@@ -3943,6 +3981,356 @@ static bool rex2_reserved(int b)
 }
 
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+/*
+ * NoVmp (ledger U640): Intel APX EVEX map 4, the promoted legacy instructions (APX spec
+ * 355828-009 3.1.2.3.1, Figure 3.3, the table of 3.1.5, exception class APX-EVEX-INT
+ * Table 4.12). Payload: P0 = R3 X3 B3 R4 B4 1 0 0, P1 = W V3 V2 V1 V0 U(X4) p p, P2 = 0 0 0
+ * ND V4 NF 0 0 (R3 X3 B3 R4 V* and U inverted). The instructions promoted from legacy maps 0
+ * and 1 run through the legacy opcode handlers with 5-bit register ids (uniform byte
+ * registers), the operand size from W / pp = 66H, NDD (apx_ndd), ZU (apx_zu) and NF
+ * (apx_post); those promoted from maps 2 and 3 are decoded by decode-new.
+ */
+#define APX_POST_NF 1
+#define APX_POST_CC 2
+enum { APX_M4_UD, APX_M4_NEW, APX_M4_GO };
+#define APX_OP_OWN    0x300    /* pseudo opcodes of the main switch */
+#define APX_OP_JMPABS 0x301
+
+/* the status flags (CC_O..CC_C) into dst without changing the lazy flags state */
+static void gen_apx_flags(DisasContext *s, TCGv dst)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv zero = NULL, d = cpu_cc_dst, s1 = cpu_cc_src, s2 = cpu_cc_src2;
+    int live, dead;
+
+    if (s->cc_op == CC_OP_EFLAGS) {
+        tcg_gen_mov_tl(tcg_ctx, dst, cpu_cc_src);
+        return;
+    }
+    if (s->cc_op == CC_OP_CLR) {
+        tcg_gen_movi_tl(tcg_ctx, dst, CC_Z | CC_P);
+        return;
+    }
+    live = cc_op_live[s->cc_op] & ~USES_CC_SRCT;
+    dead = live ^ (USES_CC_DST | USES_CC_SRC | USES_CC_SRC2);
+    if (dead) {
+        zero = tcg_const_tl(tcg_ctx, 0);
+        if (dead & USES_CC_DST) {
+            d = zero;
+        }
+        if (dead & USES_CC_SRC) {
+            s1 = zero;
+        }
+        if (dead & USES_CC_SRC2) {
+            s2 = zero;
+        }
+    }
+    gen_update_cc_op(s);
+    gen_helper_cc_compute_all(tcg_ctx, dst, d, s1, s2, cpu_cc_op);
+    if (zero) {
+        tcg_temp_free(tcg_ctx, zero);
+    }
+}
+
+/* dst = condition cc (the x86 encoding, SDM Vol1 Appendix B) of the flags value f, 0 or 1 */
+static void gen_apx_cc(DisasContext *s, TCGv dst, TCGv f, int cc)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv t = tcg_temp_new(tcg_ctx);
+
+    switch ((cc >> 1) & 7) {
+    case JCC_O:
+        tcg_gen_extract_tl(tcg_ctx, dst, f, 11, 1);
+        break;
+    case JCC_B:
+        tcg_gen_andi_tl(tcg_ctx, dst, f, CC_C);
+        break;
+    case JCC_Z:
+        tcg_gen_extract_tl(tcg_ctx, dst, f, 6, 1);
+        break;
+    case JCC_BE:
+        tcg_gen_shri_tl(tcg_ctx, t, f, 6);
+        tcg_gen_or_tl(tcg_ctx, t, t, f);
+        tcg_gen_andi_tl(tcg_ctx, dst, t, 1);
+        break;
+    case JCC_S:
+        tcg_gen_extract_tl(tcg_ctx, dst, f, 7, 1);
+        break;
+    case JCC_P:
+        tcg_gen_extract_tl(tcg_ctx, dst, f, 2, 1);
+        break;
+    case JCC_L:
+        tcg_gen_shri_tl(tcg_ctx, t, f, 4);            /* OF -> SF position */
+        tcg_gen_xor_tl(tcg_ctx, t, t, f);
+        tcg_gen_extract_tl(tcg_ctx, dst, t, 7, 1);
+        break;
+    default: /* JCC_LE */
+        tcg_gen_shri_tl(tcg_ctx, t, f, 4);
+        tcg_gen_xor_tl(tcg_ctx, t, t, f);
+        tcg_gen_shri_tl(tcg_ctx, t, t, 1);            /* SF^OF -> ZF position */
+        tcg_gen_or_tl(tcg_ctx, t, t, f);
+        tcg_gen_extract_tl(tcg_ctx, dst, t, 6, 1);
+        break;
+    }
+    if (cc & 1) {
+        tcg_gen_xori_tl(tcg_ctx, dst, dst, 1);
+    }
+    tcg_temp_free(tcg_ctx, t);
+}
+
+/*
+ * Before the legacy handler of an EVEX.NF = 1 instruction: keep the status flags. The
+ * lazy flags state is not changed here, so a fault inside the instruction restores it
+ * exactly (restore_state_to_opc keeps the cc_op of the instruction start).
+ */
+static void gen_apx_pre(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    s->apx_flags = tcg_temp_local_new(tcg_ctx);
+    gen_apx_flags(s, s->apx_flags);
+}
+
+/* After it: "setting EVEX.NF = 1 suppresses the update of status flags" (3.1.2.3.1 2.(c)) */
+static void gen_apx_post(DisasContext *s)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    set_cc_op(s, CC_OP_EFLAGS);
+    tcg_gen_mov_tl(tcg_ctx, cpu_cc_src, s->apx_flags);
+    tcg_temp_free(tcg_ctx, s->apx_flags);
+}
+
+/*
+ * Decode the EVEX map 4 prefix at s->pc (P0 is the next byte) and check every #UD rule of
+ * the promoted map 0/1 instructions. APX_M4_GO: *pb is the legacy opcode (100H + a map 1
+ * opcode), *pprefixes / rex_r/x/b / vex_w / vex_v / apx_* are set; APX_M4_NEW: s->pc is
+ * back at P0 and decode-new takes the instruction (promoted legacy map 2/3 instructions);
+ * APX_M4_UD: #UD.
+ */
+static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, int *pb)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int p0, p1, p2, opc, modrm, mod, reg, pp, nd, nf, v, b;
+    bool byte_op = false, nd_ok = false, nf_ok = false, zu = false;
+    int prefixes = *pprefixes;
+
+    p0 = x86_ldub_code(env, s);
+    p1 = x86_ldub_code(env, s);
+    p2 = x86_ldub_code(env, s);
+    opc = x86_ldub_code(env, s);
+    switch (opc) {
+    case 0x60: case 0x61: case 0x65: case 0x66: case 0x8a: case 0x8b:
+    case 0xf0: case 0xf1: case 0xf2: case 0xf8: case 0xf9: case 0xfc:
+        s->pc -= 4;     /* MOVBE CRC32 ADCX ADOX WRSS WRUSS MOVRS INVEPT ... (decode-new) */
+        return APX_M4_NEW;
+    default:
+        break;
+    }
+    /* "The only prefixes which may precede the extended EVEX prefix are ASIZE override
+       (0x67) and segment overrides. The presence of any other prefix triggers #UD." */
+    if (prefixes & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_LOCK | PREFIX_DATA | PREFIX_REX)) {
+        return APX_M4_UD;
+    }
+    /* XCR0[APX_F] and CR4.OSXSAVE (Table 3.8), first: every map 4 instruction is APX */
+    gen_helper_apx_check(tcg_ctx, cpu_env);
+    modrm = x86_ldub_code(env, s);      /* "every instruction in EVEX map 4 has a ModRM" */
+    s->pc--;
+    mod = (modrm >> 6) & 3;
+    reg = (modrm >> 3) & 7;
+    pp = p1 & 3;
+    nd = (p2 >> 4) & 1;
+    nf = (p2 >> 2) & 1;
+    v = ((~p1 >> 3) & 15) | ((~p2 << 1) & 16);
+    /* "When ModRM.Mod = 3, the U bit must be 1 for all instructions in EVEX map 4" */
+    if (mod == 3 && !(p1 & 0x04)) {
+        return APX_M4_UD;
+    }
+    switch (opc) {
+    case 0x00: case 0x01: case 0x02: case 0x03:      /* ADD */
+    case 0x08: case 0x09: case 0x0a: case 0x0b:      /* OR */
+    case 0x10: case 0x11: case 0x12: case 0x13:      /* ADC */
+    case 0x18: case 0x19: case 0x1a: case 0x1b:      /* SBB */
+    case 0x20: case 0x21: case 0x22: case 0x23:      /* AND */
+    case 0x28: case 0x29: case 0x2a: case 0x2b:      /* SUB */
+    case 0x30: case 0x31: case 0x32: case 0x33:      /* XOR */
+        b = opc;
+        byte_op = !(opc & 1);
+        nd_ok = true;
+        nf_ok = (opc >> 3) != 2 && (opc >> 3) != 3;     /* not ADC/SBB */
+        break;
+    case 0x69: case 0x6b:                            /* IMUL rv, rv/mv, iz/ib: ZU */
+        b = opc;
+        zu = nf_ok = true;
+        break;
+    case 0x80: case 0x81: case 0x83:                 /* group 1 */
+        if (reg == 7) {
+            return APX_M4_UD;                        /* CCMPscc: U641 */
+        }
+        b = opc;
+        byte_op = opc == 0x80;
+        nd_ok = true;
+        nf_ok = reg != 2 && reg != 3;
+        break;
+    case 0xc0: case 0xc1: case 0xd0: case 0xd1: case 0xd2: case 0xd3:   /* group 2 */
+        b = opc;
+        byte_op = !(opc & 1);
+        nd_ok = true;
+        nf_ok = reg != 2 && reg != 3;                /* not RCL/RCR */
+        break;
+    case 0xf6: case 0xf7:                            /* group 3 */
+        b = opc;
+        byte_op = opc == 0xf6;
+        switch (reg) {
+        case 0: case 1:
+            return APX_M4_UD;                        /* CTESTscc: U641 */
+        case 2:                                      /* NOT */
+            nd_ok = true;
+            break;
+        case 3:                                      /* NEG */
+            nd_ok = nf_ok = true;
+            break;
+        default:                                     /* MUL IMUL DIV IDIV */
+            nf_ok = true;
+            break;
+        }
+        break;
+    case 0xfe: case 0xff:                            /* INC / DEC */
+        if (reg >= 2) {
+            return APX_M4_UD;                        /* FF /6 mod 11b = PUSH2: U643 */
+        }
+        b = opc;
+        byte_op = opc == 0xfe;
+        nd_ok = nf_ok = true;
+        break;
+    case 0x24: case 0x2c: case 0xa5: case 0xad:      /* SHLD / SHRD (map 1 A4 AC A5 AD) */
+        b = 0x100 | (opc == 0x24 ? 0xa4 : opc == 0x2c ? 0xac : opc);
+        nd_ok = nf_ok = true;
+        break;
+    case 0xaf:                                       /* IMUL rv, rv/mv (map 1 AF) */
+        b = 0x1af;
+        nd_ok = nf_ok = true;
+        break;
+    case 0x88:                                       /* POPCNT (map 1 F3 B8) */
+        if (!(s->cpuid_ext_features & CPUID_EXT_POPCNT)) {
+            return APX_M4_UD;
+        }
+        b = 0x1b8;
+        nf_ok = true;
+        prefixes |= PREFIX_REPZ;
+        break;
+    case 0xf4:                                       /* TZCNT (map 1 F3 BC) */
+        if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_BMI1)) {
+            return APX_M4_UD;
+        }
+        b = 0x1bc;
+        nf_ok = true;
+        prefixes |= PREFIX_REPZ;
+        break;
+    case 0xf5:                                       /* LZCNT (map 1 F3 BD) */
+        if (!(s->cpuid_ext3_features & CPUID_EXT3_ABM)) {
+            return APX_M4_UD;
+        }
+        b = 0x1bd;
+        nf_ok = true;
+        prefixes |= PREFIX_REPZ;
+        break;
+    case 0x40: case 0x41: case 0x42: case 0x43: case 0x44: case 0x45: case 0x46: case 0x47:
+    case 0x48: case 0x49: case 0x4a: case 0x4b: case 0x4c: case 0x4d: case 0x4e: case 0x4f:
+        if (pp == 3) {                               /* F2: SETcc (map 1 90+cc), ZU */
+            b = APX_OP_OWN;
+            byte_op = zu = true;
+            break;
+        }
+        return APX_M4_UD;                            /* CMOVcc / CFCMOVcc: U642 */
+    default:
+        return APX_M4_UD;
+    }
+    /* reserved payload bits: P2 = 0 0 0 ND V4 NF 0 0 ("any bit other than {V4,ND,NF}") */
+    if (p2 & 0xe3) {
+        return APX_M4_UD;
+    }
+    /* pp: NP for the byte forms, NP or 66 (OSIZE override) otherwise, F2 for SETcc */
+    if (b == APX_OP_OWN && (opc & 0xf0) == 0x40 && pp == 3) {
+        /* SETcc */
+    } else if (byte_op ? pp != 0 : pp > 1) {
+        return APX_M4_UD;
+    }
+    /* "EVEX.ND=0 and any of EVEX.{V4..V0} is 0", "EVEX.ND=1 and the instruction does not
+       support NDD or ZU", "any of EVEX.{V4..V0} is 0 and the instruction supports ZU",
+       "EVEX.NF=1 and the instruction does not support NF" (Table 4.12) */
+    if ((!nd || zu) && v != 0) {
+        return APX_M4_UD;
+    }
+    if (nd && !nd_ok && !zu) {
+        return APX_M4_UD;
+    }
+    if (nf && !nf_ok) {
+        return APX_M4_UD;
+    }
+    /* register ids: R = R4 R3 ModRM.reg, X = X4 (= ~U) X3 SIB.index, B = B4 B3 ModRM.r/m */
+    s->rex_r = ((~p0 >> 4) & 8) | (~p0 & 0x10);
+    s->rex_x = ((~p0 >> 3) & 8) | ((~p1 & 0x04) << 2);
+    s->rex_b = ((~p0 >> 2) & 8) | ((p0 & 0x08) << 1);
+    s->vex_w = (p1 >> 7) & 1;
+    s->vex_v = v;
+    /* "For EVEX map 4, when OSIZE = 8b, GPR register ids [4,5,6,7] address byte registers
+       [SPL,BPL,SIL,DIL]"; pp = 01 is the OSIZE override (W wins) */
+    prefixes |= PREFIX_REX;
+    if (pp == 1) {
+        prefixes |= PREFIX_DATA;
+    }
+    s->apx_nd = nd;
+    s->apx_nf = nf;
+    s->apx_scc = opc;
+    if (nd && nd_ok) {
+        s->apx_ndd = v;
+    }
+    s->apx_zu = zu && nd;
+    if (nf && b != APX_OP_OWN) {
+        s->apx_post = APX_POST_NF;
+    }
+    *pprefixes = prefixes;
+    *pb = b;
+    return APX_M4_GO;
+}
+
+/* SETcc r/m8 (EVEX map 4 F2 40+cc): "dest[63:0] = 1 / 0" for a register with ND = 1 (ZU) */
+static void gen_apx_setcc(CPUX86State *env, DisasContext *s, int modrm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int rm = (modrm & 7) | REX_B(s);
+
+    gen_apx_flags(s, s->T0);
+    gen_apx_cc(s, s->T0, s->T0, s->apx_scc & 15);
+    if ((modrm >> 6) == 3) {
+        if (s->apx_zu) {
+            tcg_gen_mov_tl(tcg_ctx, cpu_regs[rm], s->T0);
+        } else {
+            gen_op_mov_reg_v(s, MO_8, rm, s->T0);
+        }
+    } else {
+        /* "SETcc mem always writes a single byte of memory regardless of EVEX.ND" */
+        gen_lea_modrm(env, s, modrm);
+        gen_op_st_v(s, MO_8, s->T0, s->A0);
+    }
+}
+
+/* the instructions of EVEX map 4 with their own code (APX_OP_OWN); false: #UD */
+static bool gen_apx_map4_own(CPUX86State *env, DisasContext *s)
+{
+    int modrm = x86_ldub_code(env, s);
+    int opc = s->apx_scc;
+
+    if ((opc & 0xf0) == 0x40) {
+        gen_apx_setcc(env, s, modrm);
+        return true;
+    }
+    return false;
+}
+
+#endif /* __Use_Original_Qemu (U640) */
 static bool disas_insn(DisasContext *s, CPUState *cpu)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -3979,6 +4367,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U614) */
     s->rex2 = false;
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    s->apx_ndd = -1;
+    s->apx_zu = false;
+    s->apx_post = 0;
+    s->apx_nd = s->apx_nf = 0;
+#endif /* __Use_Original_Qemu (U640) */
     s->rip_offset = 0; /* for relative ip address */
     s->vex_l = 0;
     s->vex_v = 0;
@@ -4173,6 +4567,32 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         break;
 #if __Use_Original_Qemu != 1 /* ours (U141) */
     case 0x62:
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+        /*
+         * NoVmp (ledger U640): with Intel APX (APX_F) every EVEX prefix in 64-bit mode is
+         * decoded, with or without AVX-512 (the promoted legacy and VEX instructions need
+         * none; vector EVEX instructions still check AVX512 / XCR0 in decode-new). EVEX map 4
+         * (P0[2:0] = 100b) holds the promoted legacy instructions (APX spec 355828-009
+         * 3.1.2.3.1): those of legacy maps 0/1 continue below with their legacy opcode.
+         */
+        if (CODE64(s) && (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F)) {
+            int p0 = x86_ldub_code(env, s);
+
+            s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
+            if ((p0 & 7) == 4) {
+                int r = apx_map4_decode(env, s, &prefixes, &b);
+
+                if (r == APX_M4_UD) {
+                    goto illegal_op;
+                }
+                if (r == APX_M4_GO) {
+                    break;
+                }
+            }
+            disas_insn_new(s, cpu, 0x62);
+            goto evex_done;
+        }
+#endif /* __Use_Original_Qemu (U640) */
         /*
          * NoVmp (ledger U141): EVEX (SDM Vol2A 2.7.1, Table 2-40) on a CPU with AVX-512:
          * always in 64-bit mode (BOUND is #UD there); in protected non-VM86 mode only when
@@ -4240,6 +4660,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         goto illegal_op;
     }
 #endif /* __Use_Original_Qemu (U457) */
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    if (s->apx_post) {
+        gen_apx_pre(s);     /* APX EVEX.NF = 1: keep the status flags (U640) */
+    }
+#endif /* __Use_Original_Qemu (U640) */
     /* now check op code */
     switch (b) {
         /**************************/
@@ -4268,7 +4693,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 if (mod != 3) {
                     gen_lea_modrm(env, s, modrm);
                     opreg = OR_TMP0;
+#if __Use_Original_Qemu == 1 /* original QEMU (U640) */
                 } else if (op == OP_XORL && rm == reg) {
+#else /* ours (U640) */
+                } else if (op == OP_XORL && rm == reg && s->apx_ndd < 0) {    /* not NDD */
+#endif /* __Use_Original_Qemu (U640) */
                 xor_zero:
                     /* xor reg, reg optimisation */
                     set_cc_op(s, CC_OP_CLR);
@@ -4289,7 +4718,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 if (mod != 3) {
                     gen_lea_modrm(env, s, modrm);
                     gen_op_ld_v(s, ot, s->T1, s->A0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U640) */
                 } else if (op == OP_XORL && rm == reg) {
+#else /* ours (U640) */
+                } else if (op == OP_XORL && rm == reg && s->apx_ndd < 0) {    /* not NDD */
+#endif /* __Use_Original_Qemu (U640) */
                     goto xor_zero;
                 } else {
                     gen_op_mov_v_reg(s, ot, s->T1, rm);
@@ -4401,6 +4834,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                             s->mem_index, ot | MO_LE);
             } else {
                 tcg_gen_not_tl(tcg_ctx, s->T0, s->T0);
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+                if (s->apx_ndd >= 0) {
+                    gen_apx_ndd_write(s, ot, s->T0);     /* APX NOT ndd, r/m */
+                } else
+#endif /* __Use_Original_Qemu (U640) */
                 if (mod != 3) {
                     gen_op_st_v(s, ot, s->T0, s->A0);
                 } else {
@@ -4439,6 +4877,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 tcg_temp_free(tcg_ctx, t0);
             } else {
                 tcg_gen_neg_tl(tcg_ctx, s->T0, s->T0);
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+                if (s->apx_ndd >= 0) {
+                    gen_apx_ndd_write(s, ot, s->T0);     /* APX NEG ndd, r/m */
+                } else
+#endif /* __Use_Original_Qemu (U640) */
                 if (mod != 3) {
                     gen_op_st_v(s, ot, s->T0, s->A0);
                 } else {
@@ -4835,6 +5278,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         } else {
             gen_op_mov_v_reg(s, ot, s->T1, reg);
         }
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+        if (s->apx_ndd >= 0) {
+            reg = s->apx_ndd;   /* APX IMUL ndd, reg, r/m (EVEX map 4 AF, ND = 1) */
+        }
+#endif /* __Use_Original_Qemu (U640) */
         switch (ot) {
 #ifdef TARGET_X86_64
         case MO_64:
@@ -4863,7 +5311,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_mov_tl(tcg_ctx, cpu_cc_dst, s->T0);
             tcg_gen_ext16s_tl(tcg_ctx, s->tmp0, s->T0);
             tcg_gen_sub_tl(tcg_ctx, cpu_cc_src, s->T0, s->tmp0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U640) */
             gen_op_mov_reg_v(s, ot, reg, s->T0);
+#else /* ours (U640) */
+            if (s->apx_ndd >= 0 || s->apx_zu) {
+                tcg_gen_ext16u_tl(tcg_ctx, cpu_regs[reg], s->T0);   /* APX NDD / ZU */
+            } else {
+                gen_op_mov_reg_v(s, ot, reg, s->T0);
+            }
+#endif /* __Use_Original_Qemu (U640) */
             break;
         }
         set_cc_op(s, CC_OP_MULB + ot);
@@ -8860,9 +9316,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         modrm = x86_ldub_code(env, s);
         (void)gen_lea_modrm_0(env, s, modrm, false);
         goto illegal_op;
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    case APX_OP_OWN:    /* Intel APX EVEX map 4 instructions with their own code (U640) */
+        if (!gen_apx_map4_own(env, s)) {
+            goto illegal_op;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U640) */
     default:
         goto unknown_op;
     }
+#if __Use_Original_Qemu != 1 /* ours (U640) */
+    if (s->apx_post) {
+        gen_apx_post(s);    /* U640 */
+    }
+#endif /* __Use_Original_Qemu (U640) */
 #if __Use_Original_Qemu != 1 /* ours (U141) */
  evex_done:
 #endif /* __Use_Original_Qemu (U141) */
