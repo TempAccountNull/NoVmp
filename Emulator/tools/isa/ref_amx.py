@@ -17,8 +17,9 @@ Literal transcription of
 
 The floating-point results are computed with exact rational arithmetic
 (fractions.Fraction) and one explicit round-to-nearest-even to binary32 (gradual
-underflow), then the FTZ rule "if ftz and denormal(v): v = 0" is applied to the rounded
-value; DAZ turns denormal inputs into zeros. Choices the SDM leaves open (also made by the
+underflow); FTZ (U596) as MXCSR.FTZ defines it (SDM Vol1 10.2.3.3, 11.5.2.5): a result that
+is tiny after rounding with an unbounded exponent becomes a zero of its sign (the ISE's
+"if ftz and denormal(v)"); DAZ turns denormal inputs into zeros. Choices the SDM leaves open (also made by the
 emulator, documented in fpu_helper.c U178):
   * a flushed / DAZ-ed zero keeps the sign of the value it replaces (x86 FTZ/DAZ);
   * NaN operands: the result is the first NaN in the order x, y, acc (fma32: v = x*y+acc)
@@ -150,8 +151,37 @@ def daz(b):
 
 
 def ftz(b):
-    """FTZ: 'if ftz and denormal(v): v = 0' on the rounded result (sign kept)"""
+    """flush a denormal binary32 to a zero of the same sign"""
     return b & 0x80000000 if f32_is_denormal(b) else b
+
+
+def tiny_unbounded(v):
+    """U596: SDM Vol1 11.5.2.5 underflow condition: the magnitude of v rounded to 24 bits
+    (RNE) with an unbounded exponent is less than the smallest normal 2^-126"""
+    a = -v if v < 0 else v
+    n, d = a.numerator, a.denominator
+    e = n.bit_length() - d.bit_length()
+    while n * (1 << max(-e, 0)) < d * (1 << max(e, 0)):
+        e -= 1
+    while n * (1 << max(-(e + 1), 0)) >= d * (1 << max(e + 1, 0)):
+        e += 1
+    q_exp = e - 23
+    num = n * (1 << max(-q_exp, 0))
+    den = d * (1 << max(q_exp, 0))
+    q, r = divmod(num, den)
+    if 2 * r > den or (2 * r == den and (q & 1)):
+        q += 1
+    return Fraction(q) * (Fraction(2) ** q_exp) < Fraction(2) ** -126
+
+
+def round_f32_ftz(v):
+    """U596: RNE to binary32 with FTZ = 1 as MXCSR.FTZ defines it (SDM Vol1 10.2.3.3): an
+    underflow condition (tiny after rounding with an unbounded exponent, 11.5.2.5) returns a
+    zero with the sign of the true result; otherwise the ordinary rounding. (Rounding to
+    denormal precision first and flushing a denormal kept 2^-126 - 2^-150 as 2^-126.)"""
+    if tiny_unbounded(v):
+        return (1 << 31) if v < 0 else 0
+    return round_f32(v)
 
 
 def quiet(b):
@@ -179,7 +209,7 @@ def fma32(acc, x, y):
         if p == 0 and f32_is_zero(acc):
             return (ps & f32_sign(acc)) << 31      # (+-0) + (+-0): -0 only if both -0
         return 0                                   # exact cancellation: +0 under RNE
-    return ftz(round_f32(s))
+    return round_f32_ftz(s)
 
 
 def add32(a, b):
@@ -199,7 +229,7 @@ def add32(a, b):
         if f32_is_zero(a) and f32_is_zero(b):
             return (f32_sign(a) & f32_sign(b)) << 31
         return 0
-    return ftz(round_f32(s))
+    return round_f32_ftz(s)
 
 
 def make_fp32(bf16):
@@ -853,10 +883,16 @@ def selftest():
     chk(fma32(0, 0x00800000, half) == 0, "2^-127 flushed")
     chk(fma32(0, 0x80800000, half) == 0x80000000, "-2^-127 flushed to -0")
     chk(fma32(0, 0x00800000, one) == 0x00800000, "2^-126 kept")
-    # rounding into the smallest normal: (2^-126 - 2^-150) rounds up to 2^-126 -> kept
+    # rounding at denormal precision: (2^-126 - 2^-150) rounds up to 2^-126 (gradual underflow)
     v = round_f32(Fraction(2) ** -126 - Fraction(2) ** -150)
     chk(v == 0x00800000, "RNE to the smallest normal (got %08x)" % v)
-    chk(ftz(v) == 0x00800000, "smallest normal is not flushed")
+    # U596, FTZ per SDM Vol1 10.2.3.3 / 11.5.2.5: that value is tiny with an unbounded exponent
+    # (1.11..1b * 2^-127, exact at 24 bits) -> +0; the i5-13600K's VFMADD231SS with FTZ agrees
+    chk(fma32(0x00800000, 0x1A000000, 0x9A000000) == 0, "2^-126 - 2^-150 flushed (U596)")
+    chk(fma32(0x80800000, 0x9A000000, 0x9A000000) == 0x80000000, "-(2^-126 - 2^-150) -> -0")
+    # 2^-126 - 2^-152 rounds to 2^-126 with an unbounded exponent: not tiny, kept
+    chk(fma32(0x00800000, 0x19800000, 0x99800000) == 0x00800000, "2^-126 - 2^-152 kept")
+    chk(add32(0x00800000, 0x80800000) == 0, "2^-126 - 2^-126 = +0")
     # RNE ties to even: 1 + 2^-24 -> 1; 1 + 3*2^-24 -> 1 + 2^-22
     chk(round_f32(1 + Fraction(1, 1 << 24)) == one, "tie to even down")
     chk(round_f32(1 + Fraction(3, 1 << 24)) == 0x3F800002, "tie to even up")
@@ -1333,6 +1369,44 @@ def emit_cases():
                 cases.append("# %s_%s_%dx%dx%d_stride%d\n.byte %s | %s => m+0x%X=%s\n" % (
                     op.lower(), cname, M, K, N, stride,
                     ", ".join("0x%02x" % b for b in code), " ".join(ins), lo, res))
+    # U596: FTZ at the smallest normal. M = N = 1, K = 2, stride 8: temp1.fp32[1] (the odd
+    # products) = fma32(fma32(0, 2^-63, 2^-63), x, y) = fma32(2^-126, x, y) with x*y = -+2^-150
+    # (BF16 1A00h = 2^-75) or -+2^-152 (1980h = 2^-76); the even products are 0 * 0. 2^-126 -
+    # 2^-150 is tiny after rounding with an unbounded exponent (SDM Vol1 11.5.2.5) -> a zero of
+    # its sign; 2^-126 - 2^-152 rounds to 2^-126 and is kept. The dot product is then added to
+    # the accumulator 0 (add32). FP16 products are multiples of 2^-48 with magnitude >= 2^-48,
+    # so TDPFP16PS / TCMM*FP16PS / VDPPHPS cannot reach this boundary.
+    for (cname, x0, xo, yo) in [("ftz_tiny_pos", 0x2000, 0x1A00, 0x9A00),
+                                ("ftz_tiny_neg", 0xA000, 0x9A00, 0x9A00),
+                                ("ftz_kept", 0x2000, 0x1980, 0x9980),
+                                ("ftz_kept_neg", 0xA000, 0x9980, 0x9980)]:
+        op, stride = "TDPBF16PS", 8
+        cfg = cfg_bytes({0: (1, 4), 1: (1, 8), 2: (2, 4)})
+        A = bytes([0, 0, x0 & 0xFF, x0 >> 8, 0, 0, xo & 0xFF, xo >> 8])     # k = 0, 1
+        B = bytes([0, 0, 0x00, 0x20] + [0] * (stride - 4) + [0, 0, yo & 0xFF, yo >> 8])
+        C = bytes(4)
+        mem = {}
+        for (off, data) in [(0x8000, cfg), (0x8100, A), (0x8500, B), (0x9000, C)]:
+            for i, b_ in enumerate(data):
+                mem[off + i] = b_
+        a_ = Amx()
+        for k_, v_ in mem.items():
+            a_.mem[MEM + k_] = v_
+        rsi, rdi = MEM + 0x8000, MEM + 0x9000
+        a_.LDTILECFG(rsi)
+        a_.TILELOADD(1, rsi + 0x100, stride)
+        a_.TILELOADD(2, rsi + 0x500, stride)
+        a_.TILELOADD(0, rdi, stride)
+        run_tmul(a_, op, 0, 1, 2)
+        a_.TILESTORED(rdi, stride, 0)
+        a_.TILERELEASE()
+        ins = ["rcx=%d" % stride]
+        for lo, hi in [(0x8000, 0x8040), (0x8100, 0x8108), (0x8500, 0x8500 + stride + 4),
+                       (0x9000, 0x9004)]:
+            ins.append("m+0x%X=%s" % (lo, "".join("%02X" % mem.get(i, 0) for i in range(lo, hi))))
+        res = "".join("%02X" % a_.mem.get(MEM + i, 0) for i in range(0x9000, 0x9004))
+        cases.append("# %s_%s_1x2x1_stride8 (U596)\n.byte %s | %s => m+0x9000=%s\n" % (
+            op.lower(), cname, ", ".join("0x%02x" % b_ for b_ in prog(op)), " ".join(ins), res))
     # faults: an LDTILECFG #GP, a TMUL shape #UD (state saved at the faulting instruction)
     bad = cfg_bytes({0: (17, 64)})
     cases.append("# ldtilecfg_rows17_gp\n.byte %s | m+0x8000=%s => #GP\n" % (

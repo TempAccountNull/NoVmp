@@ -6224,6 +6224,22 @@ static void amx_fp_status(float_status *st)
 {
     memset(st, 0, sizeof(*st));
     set_float_rounding_mode(float_round_nearest_even, st);
+#if __Use_Original_Qemu != 1 /* ours (U596) */
+    /*
+     * NoVmp (ledger U596): FTZ is the MXCSR.FTZ response to an underflow condition (SDM Vol1
+     * 10.2.3.3), and the condition is "the magnitude of the rounded result ..., with unbounded
+     * exponent, is less than the smallest possible normalized" (11.5.2.5): tininess after
+     * rounding with an unbounded exponent, and the zero carries the sign of the true result.
+     * Rounding to denormal precision first and then flushing a denormal (amx_ftz32 alone) kept
+     * results that round up to 2^-126 only at denormal precision: 2^-126 + 2^-75 * -2^-75 =
+     * 2^-126 - 2^-150 is tiny (24-bit rounding with unbounded exponent: 1.11..1b * 2^-127,
+     * exact), so +0, where the old code gave 00800000h (RNE tie at denormal precision). The
+     * i5-13600K's VFMADD231SS with MXCSR.FTZ = 1 gives +0 too (cases_fixes2). softfloat's
+     * flush-to-zero with after-rounding detection is that rule (the SSE path's, U445).
+     */
+    set_flush_to_zero(true, st);
+    set_float_ftz_detection(float_ftz_after_rounding, st);
+#endif /* __Use_Original_Qemu (U596) */
 }
 
 static float32 amx_nan_result(float32 r, float_status *st)

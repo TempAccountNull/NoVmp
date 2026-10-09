@@ -118,3 +118,21 @@ rdpmc | rcx=0x80000000 => #GP
 rdpmc | rcx=0x10000 => #GP
 rdpmc | cpl=3 rcx=0x40000000
 rdpmc | cpl=3 rcx=6
+#
+# --- U596 FTZ = tininess after rounding with an unbounded exponent (SDM Vol1 10.2.3.3 / 11.5.2.5),
+# the rule amx_fma32 (TDPBF16PS & co., VDPPHPS) now uses: hardware cross-check on the i5-13600K with
+# VFMADD231SS xmm0 (acc), xmm1, xmm2 (x*y) and MXCSR.FTZ = 1 (m+0x8000 = 9F80h) or 0 (1F80h).
+# 2^-126 + 2^-75 * -2^-75 = 2^-126 - 2^-150: tiny at 24 bits with an unbounded exponent -> +0 with FTZ
+# (00800000h only when rounding at denormal precision, FTZ = 0)
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008000 xmm1=0000001A xmm2=0000009A
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=801F0000 xmm0=00008000 xmm1=0000001A xmm2=0000009A
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008080 xmm1=0000009A xmm2=0000009A
+# 2^-126 - 2^-152 rounds to 2^-126 with an unbounded exponent: not tiny, kept
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008000 xmm1=00008019 xmm2=00008099
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008080 xmm1=00008099 xmm2=00008099
+# exact tiny 2^-127 (0 + 2^-63 * 2^-64) and 2^-126 - 2^-149 (exact denormal) with FTZ
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00000000 xmm1=00000020 xmm2=0000801F
+ldmxcsr [rsi]; vfmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008000 xmm1=00008019 xmm2=0000009B
+# the same with the scalar VFMADD213SS / VFNMADD231SS forms
+ldmxcsr [rsi]; vfmadd213ss xmm1, xmm2, xmm0 | m+0x8000=809F0000 xmm0=00008000 xmm1=0000001A xmm2=0000009A
+ldmxcsr [rsi]; vfnmadd231ss xmm0, xmm1, xmm2 | m+0x8000=809F0000 xmm0=00008000 xmm1=0000001A xmm2=0000001A
