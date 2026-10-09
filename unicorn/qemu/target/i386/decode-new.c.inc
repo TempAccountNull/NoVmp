@@ -5535,6 +5535,14 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
             goto illegal;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U70) */
+    /* U487: the VEX-only W0/W1 restriction is a #UD condition too, checked before #NM */
+    if ((s->prefix & PREFIX_VEX) &&
+        (((e->check & X86_CHECK_VEX_W0) && s->vex_w) ||
+         ((e->check & X86_CHECK_VEX_W1) && !s->vex_w))) {
+        goto illegal;
+    }
+#endif /* __Use_Original_Qemu (U70) */
 
     if (s->flags & HF_TS_MASK) {
         goto nm_exception;
@@ -5542,14 +5550,6 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
     if (s->flags & HF_EM_MASK) {
         goto illegal;
     }
-
-#if __Use_Original_Qemu != 1 /* ours (U70) */
-    if ((s->prefix & PREFIX_VEX) &&
-        (((e->check & X86_CHECK_VEX_W0) && s->vex_w) ||
-         ((e->check & X86_CHECK_VEX_W1) && !s->vex_w))) {
-        goto illegal;
-    }
-#endif /* __Use_Original_Qemu (U70) */
     return true;
 
 nm_exception:

@@ -13615,6 +13615,25 @@ static void test_x86_bp_vex_ud_before_nm(void)
     TEST_CHECK(m0_run(&m, perm_w0, 5) == 7);
     m0_close(&m);
 }
+
+/*
+ * U487 (ours, the U70 check): VGF2P8MULB is VEX.W0 only (SDM Vol2A GF2P8MULB: VEX.128.66.0F38.W0
+ * CF /r); VEX.W = 1 is #UD before CR0.TS (#NM), as the upstream W0/W1 checks (U486).
+ */
+static void test_x86_bp_vex_w_ud_before_nm(void)
+{
+    static const char w1[] = "\xc4\xe2\xf9\xcf\xc1";          /* vgf2p8mulb xmm0, xmm0, xmm1, W1 */
+    static const char w0[] = "\xc4\xe2\x79\xcf\xc1";          /* the same with W0 */
+    M0 m;
+
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    TEST_CHECK(m0_run(&m, w1, 5) == 6);
+    TEST_CHECK(m0_run(&m, w0, 5) == -1);
+    m0_set(&m, UC_X86_REG_CR0, m0_get(&m, UC_X86_REG_CR0) | 8);           /* CR0.TS */
+    TEST_CHECK(m0_run(&m, w1, 5) == 6);
+    TEST_CHECK(m0_run(&m, w0, 5) == 7);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13835,4 +13854,5 @@ TEST_LIST = {
     {"test_x86_bp_vex_16bit_pm", test_x86_bp_vex_16bit_pm},
     {"test_x86_bp_ud0_ud1_modrm", test_x86_bp_ud0_ud1_modrm},
     {"test_x86_bp_vex_ud_before_nm", test_x86_bp_vex_ud_before_nm},
+    {"test_x86_bp_vex_w_ud_before_nm", test_x86_bp_vex_w_ud_before_nm},
     {NULL, NULL}};
