@@ -66,8 +66,10 @@
 // case keeps Unicorn's reset XCR0 / CR0 (the reset XCR0 enables every state component the CPU
 // model, the opt-ins and the CPUID profile support). --xcr0 V / --cr0 V (V != 0) override both
 // kinds. The effective values are printed first ("machine state: ...").
-// U539: Unicorn implements the SDM only, for both kinds of case (no quirk switch; hardware deviations are tags, below). --avx512 opts
-// Unicorn in to AVX-512
+// --shard K/N (U543) runs only the K-th of N contiguous blocks of the case lines (the N runs together
+// are the whole file in order; the case numbers [n] restart in each block).
+// U539: Unicorn implements the SDM only, for both kinds of case (no quirk switch; hardware
+// deviations are tags, below). --avx512 opts Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, before the engine is
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
 // Emulator\data\cases_opmask.txt. --amx
@@ -333,7 +335,8 @@ namespace at
 	// Never PG in cr0 (flat map).
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; };
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0;
+					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */ };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
 	static int fault_vector( const std::string& t )
@@ -427,10 +430,28 @@ namespace at
 		std::map<std::string, int> known, host;
 		std::vector<std::string> not_observed;
 		int known_n = 0, host_n = 0;
+		// U543: --shard K/N runs the K-th of N contiguous blocks of the file's case lines (non-empty,
+		// not '#'); the N blocks together are exactly the file, in order (test.cmd runs them side by side)
+		size_t shard_lo = 0, shard_hi = SIZE_MAX, case_line = 0;
+		if ( opt.shard_n > 1 )
+		{
+			size_t total = 0;
+			while ( std::getline( f, line ) )
+			{
+				if ( !line.empty() && line.back() == '\r' ) line.pop_back();
+				total += !( line.empty() || line[ 0 ] == '#' );
+			}
+			f.clear();
+			f.seekg( 0 );
+			shard_lo = total * size_t( opt.shard_k - 1 ) / size_t( opt.shard_n );
+			shard_hi = total * size_t( opt.shard_k ) / size_t( opt.shard_n );
+			std::printf( "shard %d/%d: case lines %zu-%zu of %zu\n", opt.shard_k, opt.shard_n, shard_lo + 1, shard_hi, total );
+		}
 		while ( std::getline( f, line ) )
 		{
 			if ( !line.empty() && line.back() == '\r' ) line.pop_back();
 			if ( line.empty() || line[ 0 ] == '#' ) continue;
+			if ( const size_t cl = case_line++; cl < shard_lo || cl >= shard_hi ) continue;   // U543: another shard's line
 			std::string tag_name, tag_kind = case_tag( line, tag_name );
 			if ( !tag_kind.empty() && ( line.find( "=>" ) != std::string::npos || tag_name.empty() ) )
 			{

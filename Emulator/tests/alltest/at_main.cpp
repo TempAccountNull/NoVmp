@@ -18,8 +18,10 @@
 //                    UC_CTL_X86_CPUID_STRICT on while a profile is installed); --no-strict writes
 //                    0 (hidden features still execute), --strict writes 1 explicitly
 //   --expect-only    with --cases: run only the expected-value ("=>") lines
+//   --shard K/N      with --cases: only the K-th of N contiguous blocks of the case lines (U543;
+//                    test.cmd runs the blocks of a long file side by side)
 //   --avx512         with --cases: Unicorn opts in to AVX-512 (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|
-//                    VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
+//                    VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, reset XCR0 with 7:5) for opmask/EVEX expected-value cases; the host CPU has none
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
 //   --bench          performance benchmark (at_bench.hpp, ledger U500): [--reps N] [--filter S]
@@ -340,6 +342,14 @@ int main( int argc, char** argv )
 		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--cr0" ) copt.cr0 = std::stoull( val(), nullptr, 0 );
 		else if ( a == "--expect-only" ) copt.expect_only = true;
+		else if ( a == "--shard" )   // U543: K/N, 1 <= K <= N
+		{
+			std::string v = val();
+			size_t sl = v.find( '/' );
+			copt.shard_k = sl == std::string::npos ? 0 : std::atoi( v.substr( 0, sl ).c_str() );
+			copt.shard_n = sl == std::string::npos ? 0 : std::atoi( v.substr( sl + 1 ).c_str() );
+			if ( copt.shard_n < 1 || copt.shard_k < 1 || copt.shard_k > copt.shard_n ) { std::printf( "--shard K/N: 1 <= K <= N\n" ); return 2; }
+		}
 		else if ( a == "--avx512" ) copt.avx512 = UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_CD |
 												  UC_X86_AVX512_IFMA |
 												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI |
@@ -354,7 +364,7 @@ int main( int argc, char** argv )
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only] [--shard K/N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );

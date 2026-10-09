@@ -14,7 +14,9 @@
 # "cases: 6, differing: 6" + exit 1 (the deliberately wrong expectations, formerly :expect_bad).
 # The suites are independent processes; hardware suites compare architectural results (never
 # timing), so running them side by side cannot change a result. Longest suites start first (the
-# previous run's times, logs\times.tsv).
+# previous run's times, logs\times.tsv). cases_sse_exc runs as 8 shards (emu-alltest --shard K/8,
+# U543) and emu-uc72-risk as three parts (--only, U542); hwcheck_gate1 and cases_quirks run alone
+# first (a tagged case whose CPU result depends on the load beside it, see Add-Hw).
 # Only self-contained test code runs: Unicorn's unit tests emulate their own snippets and
 # emu-alltest runs only self-generated snippets natively; nothing from the sample is ever executed.
 
@@ -78,9 +80,21 @@ function CaseFile( [string]$Name ) { return ( Join-Path $D "$Name.txt" ) }
 # -Exclusive: the file has a tagged case whose CPU result depends on what runs beside it (REP LODS
 # with 67h and ECX = 0 takes the SDM path in ~4 % of the runs alone, ~13 % beside 8 parallel runs,
 # docs\quirks.md); such a file runs alone, before the parallel suites, as under the serial test.cmd.
-function Add-Hw( [string]$Name, [string]$Groups, [string[]]$Extra = @(), [switch]$Exclusive )
+# -Shards N (U543): N suites NAME-1 .. NAME-N, each running one contiguous block of the case lines
+# (emu-alltest --shard K/N); together exactly the file. "test.cmd NAME" selects all N; the summary adds
+# a total row.
+function Add-Hw( [string]$Name, [string]$Groups, [string[]]$Extra = @(), [switch]$Exclusive, [int]$Shards = 0 )
 {
-	Add-Suite $Name $Groups 'hw' 'emu-alltest' ( @( '--cases', ( CaseFile $Name ), '--cpuid', $Cpuid ) + $Extra ) '' $Exclusive.IsPresent
+	if ( $Shards -lt 2 )
+	{
+		Add-Suite $Name $Groups 'hw' 'emu-alltest' ( @( '--cases', ( CaseFile $Name ), '--cpuid', $Cpuid ) + $Extra ) '' $Exclusive.IsPresent
+		return
+	}
+	for ( $k = 1; $k -le $Shards; $k++ )
+	{
+		Add-Suite "$Name-$k" $Groups 'hw' 'emu-alltest' ( @( '--cases', ( CaseFile $Name ), '--cpuid', $Cpuid ) + $Extra + @( '--shard', "$k/$Shards" ) ) '' $Exclusive.IsPresent
+		$Suites[ $Suites.Count - 1 ].Parent = $Name
+	}
 }
 # an expected-value file: Unicorn only vs the SDM model (U540: Unicorn's reset XCR0, from the opt-ins)
 function Add-Exp( [string]$Id, [string]$File, [string]$Groups, [string[]]$Extra = @() )
@@ -224,7 +238,7 @@ Add-Suite 'check_decode_dups' 'tools' 'py' ( Join-Path $Root 'Emulator\tools\che
 # per RC, exact overflow, denormal sources; must be 0 differing against the i5-13600K.
 # U538: the emulator uses the SDM DPPS step order; the cases where the i5-13600K's grouping gives
 # another outcome are tagged "# known deviation: DPPS exception step grouping" (dpps_steps.py).
-Add-Hw 'cases_sse_exc' 'hw sse'
+Add-Hw 'cases_sse_exc' 'hw sse' -Shards 8
 # U539: the Gate-1, reach, TSX/CET and fixes hardware files; every difference is tagged (known
 # deviation, or host state: RDRAND/RDSEED values, CPUID initial APIC ID, WRUSS under host CR4.CET = 1).
 # cases_reach needs CR0.NE = 1 (pending x87 exceptions raise #MF): the U540 default CR0 33h.
