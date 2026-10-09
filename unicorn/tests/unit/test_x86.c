@@ -15908,6 +15908,83 @@ static void test_x86_f2_store_no_partial_paging(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U593 (ours; page-walk mask as upstream 4a1e9d4d11): MAXPHYADDR follows a CPUID profile's
+ * leaf 80000008H (SDM Vol3A 5.3, 5.5): with 45 (i5-13600K) CR3 bit 44 and a PTE address bit
+ * 40 are legal, bit 45 is reserved; with the model's 40 bits 40 and up are reserved.
+ */
+static void f2_set_maxphy(uc_engine *uc, uint32_t bits)
+{
+    uc_x86_cpuid prof[3] = {
+        {0, 0, 0x16, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {0x80000000, 0, 0x80000008, 0, 0, 0},
+        {0x80000008, 0, 0x3000 | bits, 0, 0, 0},
+    };
+
+    OK(uc_ctl_set_x86_cpuid(uc, prof, 3));
+    OK(uc_ctl_set_x86_cpuid_strict(uc, 0));
+}
+
+static void test_x86_f2_maxphyaddr(void)
+{
+    /* mov cr3, rax */
+    static const char wcr3[] = "\x0f\x22\xd8";
+    /* mov rax, [TB2_DATA] */
+    static const char rd[] = "\x48\x8b\x04\x25\x00\x40\x00\x60";
+    const uint64_t hi40 = 1ULL << 40;
+    nk_intr_t intr;
+    uc_engine *uc;
+    uint64_t marker = 0x1122334455667788ULL;
+    int slot, k;
+
+    /* CR3 reserved bits: k = 0 profile 45, 1 profile 45 set after a write saw 40, 2 the model */
+    for (k = 0; k < 3; k++) {
+        int model40 = k == 2;
+
+        uc = tb2_sys_open("\x90", 1, &intr);
+        if (k == 0) {
+            f2_set_maxphy(uc, 45);
+        } else if (k == 1) {
+            nk_setreg(uc, UC_X86_REG_RAX, 1ULL << 44);
+            TEST_CHECK(tb2_exec(uc, &intr, 0, wcr3, 3) == 13);   /* still the model's 40 */
+            f2_set_maxphy(uc, 45);
+        }
+        slot = 1;
+        nk_setreg(uc, UC_X86_REG_RAX, 1ULL << 44);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, wcr3, 3) == (model40 ? 13 : -1));
+        nk_setreg(uc, UC_X86_REG_RAX, 1ULL << 40);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, wcr3, 3) == (model40 ? 13 : -1));
+        nk_setreg(uc, UC_X86_REG_RAX, 1ULL << 45);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, wcr3, 3) == 13);
+        nk_setreg(uc, UC_X86_REG_RAX, 1ULL << 39);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, wcr3, 3) == -1);
+        TEST_MSG("CR3 case %d", k);
+        OK(uc_close(uc));
+    }
+
+    /* a PTE whose address has bit 40 set: legal with 45, #PF (reserved bit) with 40 */
+    for (k = 0; k < 2; k++) {
+        uc = tb2_sys_open("\x90", 1, &intr);
+        if (k == 0) {
+            f2_set_maxphy(uc, 45);
+        }
+        OK(uc_mem_map(uc, hi40 + TB2_DATA, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, hi40 + TB2_DATA, &marker, 8));
+        tb2_paging(uc, 3);
+        tb2_set_data_pte(uc, hi40 | 3);
+        nk_setreg(uc, UC_X86_REG_RAX, 0);
+        if (k == 0) {
+            TEST_CHECK(tb2_exec(uc, &intr, 0, rd, sizeof(rd) - 1) == -1);
+            TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == marker);
+        } else {
+            TEST_CHECK(tb2_exec(uc, &intr, 0, rd, sizeof(rd) - 1) == 14);
+            TEST_CHECK(nk_reg(uc, UC_X86_REG_CR2) == TB2_DATA);
+        }
+        TEST_MSG("PTE case %d: rax %016" PRIx64, k, nk_reg(uc, UC_X86_REG_RAX));
+        OK(uc_close(uc));
+    }
+}
+
 /* ---- end U590-U609 (f2_) ---- */
 
 TEST_LIST = {
@@ -16144,4 +16221,5 @@ TEST_LIST = {
     {"test_x86_f2_stack64", test_x86_f2_stack64},
     {"test_x86_f2_store_no_partial", test_x86_f2_store_no_partial},
     {"test_x86_f2_store_no_partial_paging", test_x86_f2_store_no_partial_paging},
+    {"test_x86_f2_maxphyaddr", test_x86_f2_maxphyaddr},
     {NULL, NULL}};

@@ -4279,6 +4279,35 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
     }
     return r[reg];
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U593) */
+/*
+ * NoVmp (ledger U593): MAXPHYADDR (cpu->phys_bits: the reserved bits of CR3 and of the paging
+ * structures, SDM Vol3A 5.3/5.5) follows the CPU that CPUID describes: with a UC_CTL_X86_CPUID
+ * profile that reports leaf 80000008H, its EAX[7:0] (i5-13600K: 45 = 2Dh), else the model's
+ * value (TCG's 40 for 64-bit models, 36/32 without long mode - x86_cpu_realizefn). Called at
+ * realize and whenever the profile changes.
+ */
+void x86_cpu_update_phys_bits(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+    const struct uc_x86_cpuid *top, *e;
+
+    if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+        cpu->phys_bits = TCG_PHYS_ADDR_BITS;
+    } else {
+        cpu->phys_bits = (env->features[FEAT_1_EDX] & CPUID_PSE36) ? 36 : 32;
+    }
+    if (!env->uc || !env->uc->x86_cpuid_count) {
+        return;
+    }
+    top = x86_cpuid_find(env->uc, 0x80000000, 0, false);
+    e = x86_cpuid_find(env->uc, 0x80000008, 0, false);
+    if (top && top->eax >= 0x80000008 && e && (e->eax & 0xff) >= 32 && (e->eax & 0xff) <= 52) {
+        cpu->phys_bits = e->eax & 0xff;
+    }
+}
+#endif /* __Use_Original_Qemu (U593) */
 #endif /* __Use_Original_Qemu (U68) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 /*
@@ -5650,6 +5679,9 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
             cpu->phys_bits = 32;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U593) */
+    x86_cpu_update_phys_bits(cpu);   /* a UC_CTL_X86_CPUID profile set before init */
+#endif /* __Use_Original_Qemu (U593) */
 
     /* Cache information initialization */
     if (!cpu->legacy_cache) {

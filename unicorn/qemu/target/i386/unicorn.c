@@ -2281,6 +2281,11 @@ static void x86_cpuid_changed(struct uc_struct *uc)
     env->xcr0 = x86_cpu_xcr0_in_profile(env, env->xcr0);
     cpu_sync_bndcs_hflags(env);
     cpu_sync_avx_hflag(env);
+#if __Use_Original_Qemu != 1 /* ours (U593) */
+    /* MAXPHYADDR follows the new profile; cached translations used the old reserved bits */
+    x86_cpu_update_phys_bits(X86_CPU(uc->cpu));
+    tlb_flush(uc->cpu);
+#endif /* __Use_Original_Qemu (U593) */
 }
 
 #endif /* __Use_Original_Qemu (U120) */

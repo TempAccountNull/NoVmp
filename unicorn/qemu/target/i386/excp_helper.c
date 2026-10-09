@@ -184,7 +184,12 @@ static hwaddr get_hphys(CPUState *cs, hwaddr gphys, MMUAccessType access_type,
                         int *prot)
 {
     CPUX86State *env = &X86_CPU(cs)->env;
-    uint64_t rsvd_mask = PG_HI_RSVD_MASK;
+    /*
+     * backport of 4a1e9d4d11's reserved-bit mask (U593): bits MAXPHYADDR..51 of a paging-
+     * structure address are reserved (SDM Vol3A 5.5), MAXPHYADDR = cpu->phys_bits, not
+     * the fixed TCG_PHYS_ADDR_BITS
+     */
+    uint64_t rsvd_mask = PG_ADDRESS_MASK & ~MAKE_64BIT_MASK(0, env_archcpu(env)->phys_bits);
     uint64_t ptep, pte;
     uint64_t exit_info_1 = 0;
     target_ulong pde_addr, pte_addr;
@@ -399,7 +404,12 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
     int error_code = 0;
     int is_dirty, prot, page_size, is_write, is_user;
     hwaddr paddr;
-    uint64_t rsvd_mask = PG_HI_RSVD_MASK;
+    /*
+     * backport of 4a1e9d4d11's reserved-bit mask (U593): bits MAXPHYADDR..51 of a paging-
+     * structure address are reserved (SDM Vol3A 5.5), MAXPHYADDR = cpu->phys_bits, not
+     * the fixed TCG_PHYS_ADDR_BITS
+     */
+    uint64_t rsvd_mask = PG_ADDRESS_MASK & ~MAKE_64BIT_MASK(0, env_archcpu(env)->phys_bits);
     uint32_t page_offset;
     target_ulong vaddr;
     uint32_t pkr;   /* backport e7e7bdabab (U479) */

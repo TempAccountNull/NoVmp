@@ -2316,6 +2316,10 @@ bool x86_uintr_deliverable(CPUX86State *env);
 void x86_uintr_deliver(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U593) */
+/* cpu.c: MAXPHYADDR from the UC_CTL_X86_CPUID profile (80000008H:EAX[7:0]) or the model */
+void x86_cpu_update_phys_bits(X86CPU *cpu);
+#endif /* __Use_Original_Qemu (U593) */
 #if __Use_Original_Qemu != 1 /* ours (U592) */
 /* mem_helper.c: fault a store before any byte of it is written (Unicorn-unmapped too) */
 void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint8_t *src,
