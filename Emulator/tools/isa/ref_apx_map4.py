@@ -739,6 +739,154 @@ def m4_push2_pop2(v, b, v2, b2, w=0, w2=0):
     return Ins(raw, sem)
 
 
+# --------------------------------------------------------------------------------------------
+# U645: EVEX map 4 instructions promoted from legacy maps 2/3 (3.1.2.3.1 2.(e), chapter 6):
+#   60/61 MOVBE (also reg-reg), 66 ADCX (66) / ADOX (F3) with NDD, F0/F1 CRC32, 8A/8B MOVRS,
+#   F9 MOVDIRI, F8 66 MOVDIR64B, FC AADD/AAND/AXOR/AOR, 65/66 WRUSS/WRSS, F8 F2/F3 ENQCMD(S) /
+#   URDMSR / UWRMSR. Semantics from the SDM pages of the legacy forms.
+# --------------------------------------------------------------------------------------------
+def bswap(v, n):
+    return int.from_bytes((v & mask(n)).to_bytes(n // 8, "little"), "big")
+
+
+def crc32c(crc, data, nbytes):
+    """SDM CRC32: the CRC-32C polynomial 11EDC6F41H, bit-reflected, no pre/post inversion"""
+    crc &= mask(32)
+    for i in range(nbytes):
+        crc ^= (data >> (8 * i)) & 0xFF
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82F63B78 if crc & 1 else 0)
+    return crc
+
+
+def m4_movbe(load, n, reg, rmop):
+    """60 /r MOVBE rv, rv/mv (load = True) or 61 /r MOVBE rv/mv, rv: bytes reversed"""
+    w, pp = wpp(n)
+    lpfx = [0x66] if n == 16 else []
+    if isinstance(rmop, Reg):
+        # legacy: mov + bswap (32/64) or a 16-bit rol by 8 inside pushfq/popfq
+        dst, src = (reg, rmop.r) if load else (rmop.r, reg)
+        mv = Enc(0x8B, pfx=lpfx, reg=dst, rm=Reg(src), w=w)
+        if n == 16:
+            leg = frame(1, mv, Enc(0xC1, pfx=lpfx, reg=0, rm=Reg(dst), imm=b"\x08"))
+        else:
+            leg = leg_bytes(mv, Enc(0xC8, map1=True, oreg=dst, w=w))
+    else:
+        leg = legacy_0f38(0xF0 if load else 0xF1, lpfx, reg, rmop, w)
+    e = Ev(0x60 if load else 0x61, reg, rmop, w=w, pp=pp, leg=leg)
+
+    def sem(st):
+        if load:
+            st.setr(reg, n, bswap(rd_op(st, rmop, n), n))
+        else:
+            wr_op(st, rmop, n, bswap(st.getr(reg, n), n))
+    return Ins(e, sem)
+
+
+def legacy_0f38(opc, pfx, reg, rm, w, imm=b""):
+    """a legacy 0F 38 xx instruction (mandatory prefixes in pfx, before REX)"""
+    e2 = Enc(0x38, map1=True, pfx=pfx, reg=reg, rm=rm, w=w)
+    lb = e2.legacy()
+    if lb is None:
+        return None
+    k = lb.index(b"\x0f\x38") + 2
+    return lb[:k] + bytes([opc]) + lb[k:] + imm
+
+
+def m4_crc32(n, w, reg, rmop):
+    """F0 /r CRC32 ry, r/m8 (n = 8, NP) or F1 /r CRC32 ry, rv/mv (NP/66); W: 64-bit destination"""
+    pp = 1 if n == 16 else 0
+    opc = 0xF0 if n == 8 else 0xF1
+    lpfx = ([0x66] if n == 16 else []) + [0xF2]
+    e2 = Enc(0x38, map1=True, pfx=lpfx, reg=reg, rm=rmop, w=w, b8="rm" if n == 8 else "")
+    lb = e2.legacy()
+    if lb is not None:
+        k = lb.index(b"\x0f\x38") + 2
+        lb = lb[:k] + bytes([opc]) + lb[k:]
+    e = Ev(opc, reg, rmop, w=w, pp=pp, leg=lb)
+
+    def sem(st):
+        st.regs[reg] = crc32c(st.regs[reg], rd_op(st, rmop, n), n // 8)    # 63:32 zeroed
+    return Ins(e, sem)
+
+
+def m4_adcox(name, n, reg, rmop, nd=0, ndd=0):
+    """66 /r ADCX (pp 66) / ADOX (pp F3): ry, ry/my; ND = 1: ry_n := ry_r + ry/my + CF/OF"""
+    w = 1 if n == 64 else 0
+    pp = 1 if name == "adcx" else 2
+    lpfx = [0x66 if name == "adcx" else 0xF3]
+    if nd:
+        lb = leg_bytes(mov64(ndd, reg), legacy_0f38(0xF6, lpfx, ndd, rmop, w) or b"")
+        if legacy_0f38(0xF6, lpfx, ndd, rmop, w) is None:
+            lb = None
+    else:
+        lb = legacy_0f38(0xF6, lpfx, reg, rmop, w)
+    e = Ev(0x66, reg, rmop, w=w, pp=pp, nd=nd, v=ndd if nd else 0, leg=lb)
+    fl = CF if name == "adcx" else OF
+
+    def sem(st):
+        c = 1 if st.rflags & fl else 0
+        s = st.getr(reg, n) + rd_op(st, rmop, n) + c
+        if nd:
+            st.regs[ndd] = s & mask(n)
+        else:
+            st.setr(reg, n, s)
+        set_flags(st, fl if s >> n else 0, fl)
+    return Ins(e, sem)
+
+
+def m4_movrs(n, reg, m):
+    """8A MOVRS r8, m8 (NP W0) / 8B MOVRS rv, mv (NP/66): a load with a read-shared hint"""
+    w, pp = wpp(n)
+    if n == 8:
+        w = 0
+    e = Ev(0x8A if n == 8 else 0x8B, reg, m, w=w, pp=pp)
+
+    def sem(st):
+        st.setr(reg, n, rd_op(st, m, n))
+    return Ins(e, sem)
+
+
+def m4_movdiri(n, m, reg):
+    """F9 MOVDIRI m32/m64, r32/r64 (NP)"""
+    w = 1 if n == 64 else 0
+    e = Ev(0xF9, reg, m, w=w, leg=legacy_0f38(0xF9, [], reg, m, w))
+
+    def sem(st):
+        wr_op(st, m, n, st.regs[reg])
+    return Ins(e, sem)
+
+
+def m4_movdir64b(reg, m):
+    """F8 /r 66 MOVDIR64B r64, m512: 64 bytes from m to [r64] (64-byte aligned, else #GP)"""
+    e = Ev(0xF8, reg, m, pp=1, leg=legacy_0f38(0xF8, [0x66], reg, m, 0))
+
+    def sem(st):
+        d = st.regs[reg]
+        if d % 64:
+            raise Fault(13)
+        st.wr(d, 64, st.rd(m.ea(st), 64))
+    return Ins(e, sem)
+
+
+def m4_rao(name, n, m, reg):
+    """FC !(11) AADD (NP) / AAND (66) / AXOR (F3) / AOR (F2) m32/m64, r32/r64; flags unchanged;
+    #GP if the memory operand is not naturally aligned"""
+    w = 1 if n == 64 else 0
+    pp = {"aadd": 0, "aand": 1, "axor": 2, "aor": 3}[name]
+    e = Ev(0xFC, reg, m, w=w, pp=pp)
+
+    def sem(st):
+        a = m.ea(st)
+        if a % (n // 8):
+            raise Fault(13)
+        v = rd_op(st, m, n)
+        r = st.getr(reg, n)
+        res = {"aadd": v + r, "aand": v & r, "axor": v ^ r, "aor": v | r}[name]
+        wr_op(st, m, n, res)
+    return Ins(e, sem)
+
+
 class MCase(Case):
     """ref_apx_core.Case with state-dependent undefined flags (Ins.undef_fn)"""
 
@@ -996,6 +1144,46 @@ def gen_items(rng, egpr, hw=False):
             data = st.rflags.to_bytes(8, "little") + bytes(rng.getrandbits(8) for _ in range(16))
             st.mem[sp - 8 - MEM:sp - MEM + 16] = data
             yield MCase(m4_pop2(v2, b2, w), st, [4], [(sp - 8 - MEM, data)])
+    # ---- promoted legacy map 2/3 instructions (U645) ----
+    for n in (16, 32, 64):
+        for load in (True, False):
+            for memf in (False, True):
+                st, a, b, m, used, runs = operands(n, memf)
+                yield MCase(m4_movbe(load, n, a, m if memf else Reg(b)), st, used, runs)
+    for n, w in ((8, 0), (8, 1), (16, 0), (32, 0), (64, 1)):
+        for memf in (False, True):
+            for k in range(2):
+                st, a, b, m, used, runs = operands(n, memf)
+                yield MCase(m4_crc32(n, w, a, m if memf else Reg(b)), st, used, runs)
+    for name in ("adcx", "adox"):
+        for n in (32, 64):
+            for memf in (False, True):
+                for nd in (0, 1):
+                    st, a, b, m, used, runs = operands(n, memf)
+                    rmop = m if memf else Reg(b)
+                    avoid = [b] if not memf else [m.base] + ([m.index] if m.index is not None else [])
+                    ndd = pick_ndd(avoid) if nd else 0
+                    if nd:
+                        st.regs[ndd] = rng.getrandbits(64)
+                        used = used + [ndd]
+                    yield MCase(m4_adcox(name, n, a, rmop, nd, ndd), st, used, runs)
+    for n in (32, 64):
+        st, a, b, m, used, runs = operands(n, True)
+        yield MCase(m4_movdiri(n, m, a), st, used, runs)
+    for k in range(4):
+        st, a, b, m, used, runs = operands(64, True, nbytes=64)
+        st.regs[a] = MEM + 0xC000 + 64 * rng.randrange(0, 0x40)
+        yield MCase(m4_movdir64b(a, m), st, used, runs)
+    if not hw:
+        for n in (8, 16, 32, 64):
+            st, a, b, m, used, runs = operands(n, True)
+            yield MCase(m4_movrs(n, a, m), st, used, runs)
+        for name in ("aadd", "aand", "axor", "aor"):
+            for n in (32, 64):
+                a, b, base, idx = regs(4)
+                st = mk_state(rng, [a, b])
+                m, run = mem_at(rng, st, base, None, 1, 8, align=8)
+                yield MCase(m4_rao(name, n, m, a), st, [a, base], [run])
 
 
 # --------------------------------------------------------------------------------------------
@@ -1173,6 +1361,38 @@ def special_lines(rng):
         L.append(line_ud(e.rex2()))
     # RSP id through B4/V4: R20 (not RSP) is fine
     L.append(mk_line(m4_push2(20, 21), {4: SP, 20: 5, 21: 6}))
+    c("--- promoted legacy map 2/3 instructions (U645): EGPRs, byte registers, MOVBE reg-reg ---")
+    L.append(mk_line(m4_movbe(True, 64, 16, Reg(31)), {16: -1, 31: 0x0102030405060708}))
+    L.append(mk_line(m4_movbe(False, 16, 17, Reg(30)), {17: 0x1122, 30: 0xFFFFFFFFFFFFFFFF}))
+    L.append(mk_line(m4_movbe(True, 32, 2, Mem(20, 21, 2, -8)), {20: MEM_PTR, 21: 4, 2: -1}, {0x8000: bytes([1, 2, 3, 4])}))
+    L.append(mk_line(m4_crc32(8, 0, 0, Reg(6)), {0: 0xFFFFFFFF, 6: 0x1261}))              # SIL, not DH
+    L.append(mk_line(m4_crc32(8, 1, 19, Reg(7)), {19: 0xFFFFFFFFFFFFFFFF, 7: 0x31}))
+    L.append(mk_line(m4_crc32(16, 0, 1, Reg(2)), {1: 0, 2: 0x3132}))
+    L.append(mk_line(m4_adcox("adcx", 64, 1, Reg(2), nd=1, ndd=27), {1: -1, 2: 1, 27: 5}, rflags=0x203))
+    L.append(mk_line(m4_adcox("adox", 32, 1, Reg(2), nd=1, ndd=27), {1: 0xFFFFFFFF, 2: 0, 27: -1}, rflags=0xA02))
+    c("--- U645 #UD: ND/NF/V/pp/W/mod rules, INVEPT/INVVPID/INVPCID (not supported), U = 0 ---")
+    for e in (Ev(0x60, 0, Reg(1), nd=1, v=2), Ev(0x60, 0, Reg(1), nf=1), Ev(0x60, 0, Reg(1), v=2),
+              Ev(0x60, 0, Reg(1), pp=2), Ev(0x60, 0, Reg(1), pp=3), Ev(0x61, 0, Reg(1), pp=3),
+              Ev(0xF0, 0, Reg(1), pp=1), Ev(0xF1, 0, Reg(1), pp=3), Ev(0xF0, 0, Reg(1), nd=1, v=1),
+              Ev(0xF1, 0, Reg(1), nf=1), Ev(0x66, 0, Reg(1), pp=1, nf=1), Ev(0x66, 0, Reg(1), pp=3),
+              Ev(0x66, 0, Reg(1), pp=1, v=3), Ev(0x66, 0, Reg(1)), Ev(0x65, 0, Reg(1), pp=1),
+              Ev(0x65, 0, Mem(3, None, 1, 0), pp=0), Ev(0x8A, 0, Reg(1)), Ev(0x8B, 0, Reg(1)),
+              Ev(0x8A, 0, Mem(3, None, 1, 0), w=1), Ev(0x8A, 0, Mem(3, None, 1, 0), pp=1),
+              Ev(0x8B, 0, Mem(3, None, 1, 0), pp=2), Ev(0xF9, 0, Reg(1)), Ev(0xF9, 0, Mem(3, None, 1, 0), pp=1),
+              Ev(0xF8, 0, Reg(1), pp=1), Ev(0xF8, 0, Mem(3, None, 1, 0)), Ev(0xFC, 0, Reg(1)),
+              Ev(0xFC, 0, Mem(3, None, 1, 0), nd=1, v=1), Ev(0xF8, 0, Reg(1), pp=3, w=1),
+              Ev(0xF8, 0, Reg(1), pp=2, w=1), Ev(0xF8, 0, Reg(1), pp=3, v=1),
+              Ev(0xF0, 0, Mem(3, None, 1, 0), pp=2), Ev(0xF1, 0, Mem(3, None, 1, 0), pp=2),
+              Ev(0xF2, 0, Mem(3, None, 1, 0), pp=2), Ev(0x60, 0, Reg(1), ubit=0),
+              Ev(0x66, 0, Reg(1), pp=1, p2or=0x01), Ev(0x60, 0, Reg(1), p2or=0x20),
+              Ev(0x62, 0, Reg(1)), Ev(0x67, 0, Reg(1)), Ev(0xFF, 0, Mem(3, None, 1, 0), pp=3)):
+        L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))
+    # CET shadow stacks are off (CR4.CET = 0): WRSS / WRUSS #UD as their legacy forms
+    L.append(line_ud(Ev(0x66, 0, Mem(3, None, 1, 0)).rex2(), "rbx=0x%X" % MEM_PTR))
+    L.append(line_ud(Ev(0x65, 0, Mem(3, None, 1, 0), pp=1).rex2(), "rbx=0x%X" % MEM_PTR))
+    # MOVDIR64B: destination not 64-byte aligned -> #GP; RAO-INT misaligned -> #GP
+    L.append("%s | rax=0x%X rbx=0x%X => #GP" % (dotbyte(m4_movdir64b(0, Mem(3, None, 1, 0)).rex2_bytes()), MEM + 0xC008, MEM_PTR))
+    L.append("%s | rax=0x1 rbx=0x%X => #GP" % (dotbyte(m4_rao("aadd", 32, Mem(3, None, 1, 0), 0).rex2_bytes()), MEM_PTR + 2))
     c("--- JMPABS (U644): REX2 M0 = 0 W = 0 A1 target64; non-canonical target #GP; W = 1 and"
       " 66/67/F0/F2/F3/REX before it #UD (the jump itself: unit test test_x86_ax4_jmpabs) ---")
     tgt = struct.pack("<Q", 0x0000800000000000)

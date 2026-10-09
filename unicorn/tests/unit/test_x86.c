@@ -16758,8 +16758,12 @@ static void test_x86_ax4_gating(void)
     TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
     TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
     TEST_CHECK(apx_run(&c, AX4_INC_NF, 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xcc\xfc\x08\x60\xc7", 6) == 6);   /* U645: movbe r16, r31 */
     TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
     TEST_CHECK(apx_run(&c, AX4_INC_NF, 6) == -1);
+    apx_set(&c, UC_X86_REG_R31, 0x0102030405060708ull);
+    TEST_CHECK(apx_run(&c, "\x62\xcc\xfc\x08\x60\xc7", 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 0x0807060504030201ull);
     OK(uc_close(c.uc));
     /* no APX: 62 in 64-bit mode (BOUND) is #UD */
     apx_open(&c, UC_MODE_64, 0, NULL, 0);
