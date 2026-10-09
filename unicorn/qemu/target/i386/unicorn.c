@@ -301,6 +301,40 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
     CPUX86State *env = _env;
     uc_err ret = UC_ERR_ARG;
 
+#if __Use_Original_Qemu != 1 /* ours (U611) */
+    /*
+     * NoVmp (ledger U611): Intel APX EGPRs R16-R31 and their 32/16/8-bit forms, any mode;
+     * UC_ERR_ARG when the CPU model has no APX (UC_CTL_X86_APX).
+     */
+    if (regid >= UC_X86_REG_R16 && regid <= UC_X86_REG_R31B) {
+        unsigned k = regid - UC_X86_REG_R16;
+        target_ulong *r = &env->regs[16 + (k & 15)];
+
+        if (!(env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_APX_F)) {
+            return UC_ERR_ARG;
+        }
+        switch (k >> 4) {
+        case 0:
+            CHECK_REG_TYPE(int64_t);
+            *(int64_t *)value = READ_QWORD(*r);
+            break;
+        case 1:
+            CHECK_REG_TYPE(int32_t);
+            *(int32_t *)value = READ_DWORD(*r);
+            break;
+        case 2:
+            CHECK_REG_TYPE(int16_t);
+            *(int16_t *)value = READ_WORD(*r);
+            break;
+        default:
+            CHECK_REG_TYPE(int8_t);
+            *(int8_t *)value = READ_BYTE_L(*r);
+            break;
+        }
+        return ret;
+    }
+#endif /* __Use_Original_Qemu (U611) */
+
     switch (regid) {
     default:
         break;
@@ -1250,6 +1284,37 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
 {
     CPUX86State *env = _env;
     uc_err ret = UC_ERR_ARG;
+
+#if __Use_Original_Qemu != 1 /* ours (U611) */
+    /* NoVmp (ledger U611): Intel APX EGPRs R16-R31 (see reg_read) */
+    if (regid >= UC_X86_REG_R16 && regid <= UC_X86_REG_R31B) {
+        unsigned k = regid - UC_X86_REG_R16;
+        target_ulong *r = &env->regs[16 + (k & 15)];
+
+        if (!(env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_APX_F)) {
+            return UC_ERR_ARG;
+        }
+        switch (k >> 4) {
+        case 0:
+            CHECK_REG_TYPE(uint64_t);
+            *r = *(uint64_t *)value;
+            break;
+        case 1:
+            CHECK_REG_TYPE(uint32_t);
+            WRITE_DWORD(*r, *(uint32_t *)value);
+            break;
+        case 2:
+            CHECK_REG_TYPE(uint16_t);
+            WRITE_WORD(*r, *(uint16_t *)value);
+            break;
+        default:
+            CHECK_REG_TYPE(uint8_t);
+            WRITE_BYTE_L(*r, *(uint8_t *)value);
+            break;
+        }
+        return ret;
+    }
+#endif /* __Use_Original_Qemu (U611) */
 
     switch (regid) {
     default:

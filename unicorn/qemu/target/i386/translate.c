@@ -8849,6 +8849,18 @@ void tcg_x86_init(struct uc_struct *uc)
                                          offsetof(CPUX86State, regs[i]),
                                          reg_names[i]);
     }
+#if __Use_Original_Qemu != 1 /* ours (U611) */
+    /* NoVmp (ledger U611): Intel APX EGPRs R16-R31 = cpu_regs[16..31] */
+    for (i = CPU_NB_REGS; i < CPU_NB_EREGS; ++i) {
+        static const char egpr_names[16][4] = {
+            "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",
+            "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31",
+        };
+        cpu_regs[i] = tcg_global_mem_new(tcg_ctx, cpu_env,
+                                         offsetof(CPUX86State, regs[i]),
+                                         egpr_names[i - CPU_NB_REGS]);
+    }
+#endif /* __Use_Original_Qemu (U611) */
 
     for (i = 0; i < 6; ++i) {
         cpu_seg_base[i]

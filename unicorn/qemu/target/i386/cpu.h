@@ -1540,6 +1540,18 @@ typedef struct {
 #else
 #define CPU_NB_REGS CPU_NB_REGS32
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U611) */
+/*
+ * NoVmp (ledger U611): Intel APX extended GPRs R16-R31 (APX spec 355828-009 3.1.4.1.1) are
+ * regs[16..31], right after R0-R15, so a 5-bit register number indexes regs[] / cpu_regs[]
+ * directly. CPU_NB_REGS stays 16 (it also sizes the XMM/legacy loops).
+ */
+#ifdef TARGET_X86_64
+#define CPU_NB_EREGS 32
+#else
+#define CPU_NB_EREGS CPU_NB_REGS
+#endif
+#endif /* __Use_Original_Qemu (U611) */
 
 #define MAX_FIXED_COUNTERS 3
 #define MAX_GP_COUNTERS    (MSR_IA32_PERF_STATUS - MSR_P6_EVNTSEL0)
@@ -1760,7 +1772,11 @@ typedef struct CPUCaches {
 
 typedef struct CPUX86State {
     /* standard registers */
+#if __Use_Original_Qemu == 1 /* original QEMU (U611) */
     target_ulong regs[CPU_NB_REGS];
+#else /* ours (U611) */
+    target_ulong regs[CPU_NB_EREGS];    /* R0-R15, then the APX EGPRs R16-R31 */
+#endif /* __Use_Original_Qemu (U611) */
     target_ulong eip;
     target_ulong eflags; /* eflags register. During CPU emulation, CC
                         flags and DF are set to zero because they are
