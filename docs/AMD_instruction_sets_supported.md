@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 13:55 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `ecccb4b Tests for U750-U760: ref_cet2.py, cases_cet2(_hw).txt, unit tests test_x86_cet2_*`). Do not edit by hand._
+_Generated 2026-10-09 13:55 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `0ec613b Ledger U750-U756, U758, U760 (CET on far transfers, CET_U/CET_S XSAVE components, REX2 ENDBR64, CPU-canonical CET MSRs; U757 retired); docs refresh`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 

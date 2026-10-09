@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 13:55 (HEAD `ecccb4b Tests for U750-U760: ref_cet2.py, cases_cet2(_hw).txt, unit tests test_x86_cet2_*`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 13:55 (HEAD `0ec613b Ledger U750-U756, U758, U760 (CET on far transfers, CET_U/CET_S XSAVE components, REX2 ENDBR64, CPU-canonical CET MSRs; U757 retired); docs refresh`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
