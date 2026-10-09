@@ -339,6 +339,11 @@ Add-Exp 'cases_rdrand_host' 'cases_rdrand_host' 'rdrand expect' @( '--HostSeed' 
 # case), and expected values for AVX-512 / APX / CPL0 (CR0.AM = 1 through --cr0).
 Add-Hw 'cases_ac_hw' 'hw ac'
 Add-Exp 'cases_ac' 'cases_ac' 'ac expect' @( '--avx512', '--apx', '--cr0', '0x40011' )
+# U800-U829 (agent sysins): AVX512DQ VPMOVD2M/Q2M/M2D/M2Q with AVX-512 and with AVX10.1 alone;
+# expected values from the independent model ref_sysins.py (Unicorn only, the host has no AVX-512).
+Add-Exp 'cases_sysins_dq' 'cases_sysins_dq' 'evex sysins expect' @( '--avx512' )
+Add-Exp 'cases_sysins_dq_avx10_1' 'cases_sysins_dq' 'avx10 evex sysins expect' @( '--avx10', '1' )
+Add-PySelftest 'ref_sysins_selftest' 'sysins tools' 'ref_sysins.py'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

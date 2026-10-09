@@ -4639,6 +4639,32 @@ static const X86OpEntry opcodes_evex_0F38_F3[256] = {
                            ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W0) ev_es(32) p_f3),
 };
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U800) */
+/*
+ * NoVmp (ledger U800): AVX512DQ (SDM Vol2C VPMOVM2B/VPMOVM2W/VPMOVM2D/VPMOVM2Q,
+ * VPMOVB2M/VPMOVW2M/VPMOVD2M/VPMOVQ2M): EVEX.F3.0F38.W0/W1 38 /r VPMOVM2D/VPMOVM2Q x/y/zmm1,
+ * k1 and 39 /r VPMOVD2M/VPMOVQ2M k1, x/y/zmm1, "(AVX512VL AND AVX512DQ) OR AVX10.1" (512
+ * bits: "AVX512DQ OR AVX10.1"; AVX10.1 sets the translator's AVX512DQ copy, U371). Register
+ * operands only, no writemask, EVEX.vvvv reserved (class E7NM): the U266 VPMOVM2B/W and
+ * VPMOVB2M/W2M path with doubleword / quadword elements. 66 38 (VPMINSB) and 66 39
+ * (VPMINSD/Q) stay in opcodes_evex_0F38; decode_evex_0F38 takes the F3 forms first.
+ * [opcode 38/39][EVEX.W]
+ */
+static const X86OpEntry opcodes_evex_0F38_F3_DQ[2][2] = {
+    {
+        X86_OP_ENTRY3(EVEX_VPMOVM2, V,x, None,None, KU,q, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                      ev_mask(NONE) ev_w(W0) ev_es(32)),
+        X86_OP_ENTRY3(EVEX_VPMOVM2, V,x, None,None, KU,q, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                      ev_mask(NONE) ev_w(W1) ev_es(64)),
+    },
+    {
+        X86_OP_ENTRY3(EVEX_VPMOV2M, K,q, None,None, U,x, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                      ev_mask(NONE) ev_w(W0) ev_es(32)),
+        X86_OP_ENTRY3(EVEX_VPMOV2M, K,q, None,None, U,x, cpuid(AVX512DQ) ev_vl(EV_VLALL)
+                      ev_mask(NONE) ev_w(W1) ev_es(64)),
+    },
+};
+#endif /* __Use_Original_Qemu (U800) */
 #if __Use_Original_Qemu != 1 /* ours (U325) */
 /*
  * NoVmp (ledger U325): EVEX.66.0F38.W0 forms whose opcode byte holds an AVX512BW W1 form in
@@ -4836,6 +4862,12 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         return;
     }
 #endif /* __Use_Original_Qemu (U321) */
+#if __Use_Original_Qemu != 1 /* ours (U800) */
+    if ((s->prefix & PREFIX_REPZ) && (*b == 0x38 || *b == 0x39)) {
+        *entry = *decode_evex_by_w(s, opcodes_evex_0F38_F3_DQ[*b & 1]);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U800) */
 #if __Use_Original_Qemu != 1 /* ours (U325) */
     if ((s->prefix & PREFIX_DATA) && !s->vex_w && opcodes_evex_0F38_66W0[*b].gen) {
         *entry = opcodes_evex_0F38_66W0[*b];

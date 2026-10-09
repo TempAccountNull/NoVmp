@@ -21701,6 +21701,188 @@ static void test_x86_rg_ac_helpers(void)
 
 /* ---- end U830-U849 (rg_) ---- */
 
+/*
+ * ---- NoVmp U800-U829: AVX512DQ VPMOVD2M/Q2M/M2D/M2Q and the CPL0 system instructions (si_) ----
+ * Expected values from the SDM (Vol2C VPMOVx2M / VPMOVM2x Operation); the case files
+ * cases_sysins*.txt come from the independent model Emulator\tools\isa\ref_sysins.py.
+ */
+#define SI_DATA 0x200000
+
+typedef struct SiCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} SiCtx;
+
+/* MAX model with the given opt-ins (0 = none) and an optional strict CPUID profile */
+static void si_open(SiCtx *c, int avx512, int avx10, int apx, const uc_x86_cpuid *prof,
+                    size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(c->uc, apx));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));   /* strict by default (U435) */
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, SI_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* run a snippet at a fresh address: the vector (6 = #UD) or -1 */
+static int si_run(SiCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x80;
+    if (c->pc + 0x80 > code_start + code_len) {
+        c->pc = code_start;
+    }
+    TEST_CHECK(len <= 0x80);
+    c->cap.count = 0;
+    c->cap.intno = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static uint64_t si_get(SiCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void si_set(SiCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/*
+ * U800: VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (EVEX.F3.0F38.W0/W1 39 / 38): values at
+ * VL 128/256/512, and the gating "(AVX512VL AND AVX512DQ) OR AVX10.1" (512: "AVX512DQ OR
+ * AVX10.1"): no DQ #UD, DQ without VL only EVEX.512, AVX10.1 alone all lengths, a strict
+ * profile without AVX512DQ #UD; the U266 byte form still runs without DQ.
+ */
+static void test_x86_si_vpmov_dq(void)
+{
+    /* 62 F2 7E/FE LL 38/39 C2: vpmovm2d/q xmm0|ymm0|zmm0, k2 ; vpmovd2m/q2m k0, xmm2|ymm2|zmm2 */
+    static const uint8_t p1[2] = {0x7e, 0xfe}, p2[3] = {0x08, 0x28, 0x48};
+    static const uc_x86_cpuid no_dq[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},     /* AVX OSXSAVE XSAVE, SSE SSE2 */
+        {0x7, 0, 0, 0xd0010020u, 0, 0},     /* AVX2, AVX512F|CD|BW|VL, no DQ (bit 17) */
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    uint64_t xcr0 = 0xe7;
+    static const struct {
+        int avx512, avx10;
+        int ok[3];                          /* VL 128 / 256 / 512 */
+    } g[] = {
+        {UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_VL, 0, {1, 1, 1}},
+        {UC_X86_AVX512_F | UC_X86_AVX512_DQ, 0, {0, 0, 1}},
+        {UC_X86_AVX512_F | UC_X86_AVX512_BW | UC_X86_AVX512_VL, 0, {0, 0, 0}},
+        {0, 1, {1, 1, 1}},
+        {0, 0, {0, 0, 0}},
+    };
+    uint8_t z[64], zr[64], src[64];
+    char code[6] = {0x62, (char)0xf2, 0, 0, 0, (char)0xc2};
+    SiCtx c;
+    size_t i;
+    int w, ll, op, j, vl, esz, kl;
+
+    for (i = 0; i < sizeof(g) / sizeof(g[0]); i++) {
+        si_open(&c, g[i].avx512, g[i].avx10, 0, NULL, 0);
+        for (op = 0x38; op <= 0x39; op++) {
+            for (w = 0; w < 2; w++) {
+                for (ll = 0; ll < 3; ll++) {
+                    uint64_t k;
+
+                    esz = w ? 64 : 32;
+                    vl = 128 << ll;
+                    kl = vl / esz;
+                    code[2] = (char)p1[w];
+                    code[3] = (char)p2[ll];
+                    code[4] = (char)op;
+                    memset(z, 0x5a, sizeof(z));
+                    for (j = 0; j < 64; j++) {
+                        src[j] = (uint8_t)(j * 37 + 0x81);    /* mixed sign bits */
+                    }
+                    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM0, z));
+                    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, src));
+                    si_set(&c, UC_X86_REG_K2, 0xa5c3a5c3a5c3a5c3ull);
+                    si_set(&c, UC_X86_REG_K0, ~0ull);
+                    if (!g[i].ok[ll]) {
+                        TEST_CHECK(si_run(&c, code, 6) == 6);
+                        TEST_MSG("config %u op %x W%d VL%d ran", (unsigned)i, op, w, vl);
+                        continue;
+                    }
+                    TEST_CHECK(si_run(&c, code, 6) == -1);
+                    TEST_MSG("config %u op %x W%d VL%d faulted", (unsigned)i, op, w, vl);
+                    if (op == 0x38) {
+                        /* element j = -1 if k2[j] else 0; DEST[MAXVL-1:VL] = 0 */
+                        OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, zr));
+                        for (j = 0; j < 64; j++) {
+                            int e = j / (esz / 8);
+                            uint8_t exp = (j < vl / 8 && ((0xa5c3a5c3a5c3a5c3ull >> e) & 1))
+                                              ? 0xff : 0;
+                            TEST_CHECK(zr[j] == exp);
+                            TEST_MSG("op 38 W%d VL%d byte %d: %02x expected %02x", w, vl, j,
+                                     zr[j], exp);
+                        }
+                    } else {
+                        /* bit j = SRC[j * esz + esz - 1]; DEST[63:KL] = 0 */
+                        uint64_t exp = 0;
+
+                        for (j = 0; j < kl; j++) {
+                            exp |= (uint64_t)(src[(j + 1) * (esz / 8) - 1] >> 7) << j;
+                        }
+                        k = si_get(&c, UC_X86_REG_K0);
+                        TEST_CHECK(k == exp);
+                        TEST_MSG("op 39 W%d VL%d: k0 %" PRIx64 " expected %" PRIx64, w, vl, k,
+                                 exp);
+                    }
+                }
+            }
+        }
+        OK(uc_close(c.uc));
+    }
+
+    /* the AVX512BW byte form (U266) needs no DQ: vpmovb2m k0, zmm2 */
+    si_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_BW, 0, 0, NULL, 0);
+    TEST_CHECK(si_run(&c, "\x62\xf2\x7e\x48\x29\xc2", 6) == -1);
+    TEST_CHECK(si_run(&c, "\x62\xf2\x7e\x48\x39\xc2", 6) == 6);       /* vpmovd2m: no DQ */
+    OK(uc_close(c.uc));
+
+    /* a strict CPUID profile hiding AVX512DQ: #UD despite the opt-in */
+    si_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL, 0, 0,
+            no_dq, sizeof(no_dq) / sizeof(no_dq[0]));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XCR0, &xcr0));
+    TEST_CHECK(si_run(&c, "\x62\xf2\x7e\x48\x39\xc2", 6) == 6);
+    TEST_CHECK(si_run(&c, "\x62\xf2\xfe\x48\x38\xc2", 6) == 6);
+    TEST_CHECK(si_run(&c, "\x62\xf2\x7e\x48\x29\xc2", 6) == -1);      /* BW still visible */
+    OK(uc_close(c.uc));
+}
+/* ---- end U800-U829 (si_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -22002,4 +22184,5 @@ TEST_LIST = {
     {"test_x86_fx4_mpx_bndcfg", test_x86_fx4_mpx_bndcfg},
     {"test_x86_fx4_mpx_bndcfg_load", test_x86_fx4_mpx_bndcfg_load},
     {"test_x86_fx4_hook_flags_apx", test_x86_fx4_hook_flags_apx},
+    {"test_x86_si_vpmov_dq", test_x86_si_vpmov_dq},
     {NULL, NULL}};
