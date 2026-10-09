@@ -5957,3 +5957,14 @@ EVEX_VAES(VAESDEC, aesdec)
 EVEX_VAES(VAESDECLAST, aesdeclast)
 #undef EVEX_VAES
 #endif /* __Use_Original_Qemu (U573) */
+#if __Use_Original_Qemu != 1 /* ours (U574) */
+
+/* NoVmp (ledger U574): EVEX VPCLMULQDQ, one 64x64 carry-less multiply per 128-bit lane */
+static void gen_EVEX_VPCLMULQDQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, pclmulqdq)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                  tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+#endif /* __Use_Original_Qemu (U574) */

@@ -241,6 +241,10 @@ typedef enum X86CPUIDFeature {
     /* EVEX VAES forms: "VAES (AVX512F OR AVX10.1)" (CPUID.(07H,0):ECX.VAES[9]) */
     X86_FEAT_EVEX_VAES,
 #endif /* __Use_Original_Qemu (U573) */
+#if __Use_Original_Qemu != 1 /* ours (U574) */
+    /* EVEX VPCLMULQDQ: "VPCLMULQDQ (AVX512F OR AVX10.1)" (CPUID.(07H,0):ECX.VPCLMULQDQ[10]) */
+    X86_FEAT_EVEX_VPCLMULQDQ,
+#endif /* __Use_Original_Qemu (U574) */
 } X86CPUIDFeature;
 
 /* Execution flags */

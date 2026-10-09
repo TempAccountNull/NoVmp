@@ -4271,6 +4271,17 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(64) ev_ds(8)
                            ev_nf p_66),
 #endif /* __Use_Original_Qemu (U572) */
+#if __Use_Original_Qemu != 1 /* ours (U574) */
+    /*
+     * NoVmp (ledger U574): VPCLMULQDQ zmm1, zmm2, zmm3/m, imm8 (SDM Vol2B 4-242):
+     * EVEX.66.0F3A.WIG 44, one carry-less multiply per 128-bit lane (imm8[0] selects the
+     * SRC1 qword, imm8[4] the SRC2 qword), Full Mem tuple, no masking, class E4NF. The
+     * ops_sse.h helper of the legacy/VEX forms (SHIFT 1/2/3).
+     */
+    [0x44] = X86_OP_ENTRY4(EVEX_VPCLMULQDQ, V,x, H,x, W,x, cpuid(EVEX_VPCLMULQDQ)
+                           ev_vl(EV_VLALL) ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(64)
+                           ev_nf p_66),
+#endif /* __Use_Original_Qemu (U574) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 /*
@@ -5327,6 +5338,16 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
                (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_VAES);
 #endif /* __Use_Original_Qemu (U573) */
+#if __Use_Original_Qemu != 1 /* ours (U574) */
+    case X86_FEAT_EVEX_VPCLMULQDQ:
+        /*
+         * SDM Vol2B PCLMULQDQ: "VPCLMULQDQ (AVX512F OR AVX10.1)", "(AVX512VL OR AVX10.1)" for
+         * EVEX.128/256 (AVX512VL: validate_evex); EVEX.128 needs VPCLMULQDQ (the VEX.128 form
+         * needs only PCLMULQDQ and AVX).
+         */
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
+               (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_VPCLMULQDQ);
+#endif /* __Use_Original_Qemu (U574) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
