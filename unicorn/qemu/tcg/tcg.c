@@ -3243,7 +3243,8 @@ static void tcg_reg_alloc_dup(TCGContext *s, const TCGOp *op)
 
     if (its->val_type == TEMP_VAL_CONST) {
         /* Propagate constant via movi -> dupi.  */
-        tcg_target_ulong val = its->val;
+        /* backport 0d0fc3f465 (3b2089e6f2): the scalar must be replicated (U475) */
+        tcg_target_ulong val = dup_const(vece, its->val);
         if (IS_DEAD_ARG(1)) {
             temp_dead(s, its);
         }
