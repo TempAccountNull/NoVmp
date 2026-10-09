@@ -12279,8 +12279,9 @@ static void a10_open(A10Ctx *c, uc_mode mode, int avx512, int avx10, const uc_x8
     }
     if (nprof) {
         OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
-    }
-    if (strict) {
+        /* U435: a profile is strict by default, so "not strict" must be written explicitly */
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, strict ? 1 : 0));
+    } else if (strict) {
         OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
     }
     OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
