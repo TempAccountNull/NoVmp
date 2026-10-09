@@ -284,6 +284,17 @@ target_ulong helper_get_dr(CPUX86State *env, int reg)
         }
     }
 
+    /*
+     * backport of QEMU 57f8dbdbe9: DR7.GD = 1 makes any MOV DR a fault-class #DB
+     * with DR6.BD = 1; GD is cleared so the handler can use the debug registers
+     * (SDM Vol3B 20.2.4, 20.3.1.3)
+     */
+    if (env->dr[7] & DR7_GD) {
+        env->dr[7] &= ~DR7_GD;
+        env->dr[6] |= DR6_BD;
+        raise_exception_ra(env, EXCP01_DB, GETPC());
+    }
+
     return env->dr[reg];
 }
 
@@ -295,6 +306,12 @@ void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
         } else {
             reg += 2;
         }
+    }
+
+    if (env->dr[7] & DR7_GD) {
+        env->dr[7] &= ~DR7_GD;
+        env->dr[6] |= DR6_BD;
+        raise_exception_ra(env, EXCP01_DB, GETPC());
     }
 
     if (reg >= 4 && (t0 & DR_RESERVED_MASK)) {

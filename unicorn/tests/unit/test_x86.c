@@ -14604,6 +14604,41 @@ static void test_x86_bp_mov_dr(void)
     OK(uc_reg_write(c.uc, UC_X86_REG_DR7, &dr7));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U462 (upstream QEMU 57f8dbdbe9): DR7.GD = 1 makes any MOV DR a fault-class #DB
+ * (RIP = the MOV) with DR6.BD = 1 and DR7.GD cleared (SDM Vol3B 20.2.4, 20.3.1.3). The
+ * uc_reg_write path is not affected.
+ */
+static void test_x86_bp_dr7_gd(void)
+{
+    BpCpu c;
+    uint64_t dr7 = 0x2000, dr0 = 0x1234, base;
+
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_reg_write(c.uc, UC_X86_REG_DR7, &dr7));
+    OK(uc_reg_write(c.uc, UC_X86_REG_DR0, &dr0)); /* API write with GD set: no #DB */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    OK(bp_run(&c, "\x0f\x21\xc0", 3)); /* mov rax, dr0 */
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_CHECK((bp_get(&c, UC_X86_REG_DR6) & 0x2000) != 0);
+    TEST_CHECK((bp_get(&c, UC_X86_REG_DR7) & 0x2000) == 0);
+    TEST_MSG("GD: intno %u rip %llx dr6 %llx dr7 %llx", c.intno, (unsigned long long)c.rip,
+             (unsigned long long)bp_get(&c, UC_X86_REG_DR6),
+             (unsigned long long)bp_get(&c, UC_X86_REG_DR7));
+    /* GD is clear now: the access succeeds */
+    OK(bp_run(&c, "\x0f\x21\xc0", 3));
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_RAX) == 0x1234);
+    /* MOV to DR also faults */
+    OK(uc_reg_write(c.uc, UC_X86_REG_DR7, &dr7));
+    base = c.next;
+    OK(bp_run(&c, "\x0f\x23\xc0", 3)); /* mov dr0, rax */
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_DR0) == 0x1234);
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14824,4 +14859,5 @@ TEST_LIST = {
     {"test_x86_bp_ss_sti_tf", test_x86_bp_ss_sti_tf},
     {"test_x86_bp_syscall_modes", test_x86_bp_syscall_modes},
     {"test_x86_bp_mov_dr", test_x86_bp_mov_dr},
+    {"test_x86_bp_dr7_gd", test_x86_bp_dr7_gd},
     {NULL, NULL}};
