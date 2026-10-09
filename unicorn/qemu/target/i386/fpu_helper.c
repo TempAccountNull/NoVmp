@@ -5885,6 +5885,20 @@ uint64_t helper_xgetbv(CPUX86State *env, uint32_t ecx)
     raise_exception_ra(env, EXCP0D_GPF, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+/*
+ * NoVmp (ledger U614): an Intel APX prefix (REX2) is usable only with CR4.OSXSAVE = 1 and
+ * XCR0[APX_F = 19] = 1 (APX spec 355828-009 Table 3.8: every other combination "Fault (UD)";
+ * "when CR4.OSXSAVE=0, XCR0 is treated as all 0's"). Called first in a REX2 instruction.
+ */
+void helper_apx_check(CPUX86State *env)
+{
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK) || !(env->xcr0 & XSTATE_APX_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+    }
+}
+
+#endif /* __Use_Original_Qemu (U614) */
 void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
 {
     uint32_t dummy, ena_lo, ena_hi;

@@ -166,6 +166,14 @@ typedef struct DisasContext {
     uint8_t rex_x;
     uint8_t rex_b;
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+    /*
+     * NoVmp (ledger U614): an Intel APX REX2 prefix (D5) was decoded. It also sets PREFIX_REX
+     * (uniform byte registers) and rex_r/rex_x/rex_b = R3/X3/B3 << 3 | R4/X4/B4 << 4, so every
+     * "(x & 7) | REX_R/X/B(s)" GPR number is 5 bits wide (R16-R31 = cpu_regs[16..31]).
+     */
+    bool rex2;
+#endif /* __Use_Original_Qemu (U614) */
     bool vex_w; /* used by AVX even on 32-bit processors */
 #if __Use_Original_Qemu != 1 /* ours (U141) */
     /*
@@ -395,7 +403,11 @@ enum {
     OR_ESI,
     OR_EDI,
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U614) */
     OR_TMP0 = 16,    /* temporary operand register */
+#else /* ours (U614) */
+    OR_TMP0 = 32,    /* temporary operand register (above the APX EGPRs R16-R31, U614) */
+#endif /* __Use_Original_Qemu (U614) */
     OR_TMP1,
     OR_A0, /* temporary register used when doing address evaluation */
 };
@@ -3897,6 +3909,39 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
 }
 
 #endif /* __Use_Original_Qemu (U457) */
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+/*
+ * NoVmp (ledger U614): the opcodes a REX2 prefix may not precede (APX spec 355828-009
+ * 3.1.2.1), B = the main opcode byte (+ 100H for REX2.M0 = 1, legacy map 1):
+ *  - legacy map 0 rows 4xH, 7xH, AxH and ExH, map 1 rows 3xH and 8xH ("reserved under REX2
+ *    and triggers #UD"). A1H (JMPABS, 3.1.3.3) is left to APX part 3 and stays #UD here;
+ *  - after REX2.M0 = 0 the escape 0FH ("REX2 prefix followed by 0x0F triggers #UD") and
+ *    every prefix byte - 66H, 67H, F0H, F2H, F3H, the segment overrides, REX 4xH, VEX
+ *    C4H/C5H, EVEX 62H, REX2 D5H - "must #UD, because none of those bytes is the opcode of
+ *    a valid instruction in legacy map 0 in 64-bit mode" (REX2 is always the last prefix).
+ * Legacy maps 2 and 3 are not reachable: 0F 38 / 0F 3A are map-1 row 3.
+ */
+static bool rex2_reserved(int b)
+{
+    if (b >= 0x100) {
+        return ((b >> 4) & 0xf) == 0x3 || ((b >> 4) & 0xf) == 0x8;
+    }
+    switch (b >> 4) {
+    case 0x4: case 0x7: case 0xa: case 0xe:
+        return true;
+    default:
+        break;
+    }
+    switch (b) {
+    case 0x0f: case 0x26: case 0x2e: case 0x36: case 0x3e: case 0x62: case 0x64: case 0x65:
+    case 0x66: case 0x67: case 0xc4: case 0xc5: case 0xd5: case 0xf0: case 0xf2: case 0xf3:
+        return true;
+    default:
+        return false;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U614) */
 static bool disas_insn(DisasContext *s, CPUState *cpu)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -3930,6 +3975,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     s->rex_x = 0;
     s->rex_b = 0;
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+    s->rex2 = false;
+#endif /* __Use_Original_Qemu (U614) */
     s->rip_offset = 0; /* for relative ip address */
     s->vex_l = 0;
     s->vex_v = 0;
@@ -4068,6 +4116,40 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         }
         break;
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+    case 0xd5:
+        /*
+         * NoVmp (ledger U614): Intel APX REX2 prefix (APX spec 355828-009 3.1.2.1, Figure 3.1):
+         * D5H + payload M0 R4 X4 B4 W R3 X3 B3, in 64-bit mode only (elsewhere D5H stays AAD)
+         * and only on a CPU with APX_F (UC_CTL_X86_APX; hidden by a strict CPUID profile
+         * without it); otherwise D5H is the AAD opcode, #UD in 64-bit mode. Use needs
+         * CR4.OSXSAVE = 1 and XCR0[APX_F = 19] = 1, else #UD (Table 3.8): checked at run time
+         * (helper_apx_check) since neither is part of the TB flags. W, R3, X3, B3 mean what REX
+         * does, R4/X4/B4 are bit 4 of the register numbers; REX2 also makes byte registers
+         * 4-7 SPL/BPL/SIL/DIL (no AH-BH). The next byte is the opcode in legacy map M0 (0 or
+         * 1, never 0F-escaped); a REX prefix right before REX2 (Table 3.1) and the reserved
+         * opcodes (rex2_reserved) #UD.
+         */
+        if (CODE64(s) && (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F)) {
+            int p = x86_ldub_code(env, s);
+
+            gen_helper_apx_check(tcg_ctx, cpu_env);
+            if (prefixes & PREFIX_REX) {
+                goto illegal_op;
+            }
+            prefixes |= PREFIX_REX;
+            s->rex2 = true;
+            s->vex_w = (p >> 3) & 1;
+            s->rex_r = ((p & 0x04) << 1) | ((p & 0x40) >> 2);
+            s->rex_x = ((p & 0x02) << 2) | ((p & 0x20) >> 1);
+            s->rex_b = ((p & 0x01) << 3) | (p & 0x10);
+            b = x86_ldub_code(env, s) | ((p & 0x80) ? 0x100 : 0);
+            if (rex2_reserved(b)) {
+                goto illegal_op;
+            }
+        }
+        break;
+#endif /* __Use_Original_Qemu (U614) */
     case 0xc5: /* 2-byte VEX */
     case 0xc4: /* 3-byte VEX */
         /*
@@ -4926,6 +5008,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
                 goto illegal_op;
             }
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+            if (s->rex2) {
+                goto illegal_op;    /* APX 3.1.2.1, see XSAVE */
+            }
+#endif /* __Use_Original_Qemu (U614) */
             if (s->flags & HF_TS_MASK) {
                 gen_exception(s, EXCP07_PREX);
                 break;
@@ -8536,6 +8623,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                 | PREFIX_REPZ | PREFIX_REPNZ))) {
                 goto illegal_op;
             }
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+            /* "Prefixing XSAVE* and XRSTOR* instructions with REX2 triggers #UD" (APX 3.1.2.1) */
+            if (s->rex2) {
+                goto illegal_op;
+            }
+#endif /* __Use_Original_Qemu (U614) */
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
@@ -8551,6 +8644,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                 | PREFIX_REPZ | PREFIX_REPNZ))) {
                 goto illegal_op;
             }
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+            if (s->rex2) {
+                goto illegal_op;    /* APX 3.1.2.1, see XSAVE */
+            }
+#endif /* __Use_Original_Qemu (U614) */
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
@@ -8580,6 +8678,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     || (prefixes & (PREFIX_REPZ | PREFIX_REPNZ))) {
                     goto illegal_op;
                 }
+#if __Use_Original_Qemu != 1 /* ours (U614) */
+                if (s->rex2) {
+                    goto illegal_op;    /* APX 3.1.2.1, see XSAVE */
+                }
+#endif /* __Use_Original_Qemu (U614) */
                 gen_lea_modrm(env, s, modrm);
                 tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                       cpu_regs[R_EDX]);
