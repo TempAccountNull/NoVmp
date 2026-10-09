@@ -16783,6 +16783,34 @@ static void test_x86_ax4_gating(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U645/U646: URDMSR promoted to EVEX map 4 (F2 F8 11:rrr:bbb, W0) and map 7 (F2 F8 11:000:bbb
+ * imm32, W0) with EGPRs, after IA32_USER_MSR_CTL enables it (bitmap: read 1CH); W1 #UD.
+ */
+static void test_x86_ax4_user_msr(void)
+{
+    ApxCtx c;
+    const uint64_t ctl = (APX_DATA + 0x2000) | 1;
+    uint8_t bits = 0x10;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    apx_set(&c, UC_X86_REG_R21, 0x1c);
+    TEST_CHECK(apx_run(&c, "\x62\xec\x7f\x08\xf8\xec", 6) == 6);           /* ENABLE = 0 */
+    OK(uc_mem_write(c.uc, APX_DATA + 0x2000 + 3, &bits, 1));
+    apx_set(&c, UC_X86_REG_RCX, 0x1c);
+    apx_set(&c, UC_X86_REG_RAX, ctl & 0xffffffffu);
+    apx_set(&c, UC_X86_REG_RDX, ctl >> 32);
+    TEST_CHECK(apx_run(&c, "\x0f\x30", 2) == -1);                            /* WRMSR */
+    TEST_CHECK(apx_run(&c, "\x62\xec\x7f\x08\xf8\xec", 6) == -1);          /* urdmsr r20, r21 */
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R20) == ctl);
+    TEST_CHECK(apx_run(&c, "\x62\xff\x7f\x08\xf8\xc6\x1c\x00\x00\x00", 10) == -1); /* urdmsr r22, 1ch */
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R22) == ctl);
+    TEST_CHECK(apx_run(&c, "\x62\xec\xff\x08\xf8\xec", 6) == 6);           /* W1 */
+    TEST_CHECK(apx_run(&c, "\x62\xff\xff\x08\xf8\xc6\x1c\x00\x00\x00", 10) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xff\x7f\x28\xf8\xc6\x1c\x00\x00\x00", 10) == 6); /* L = 1 */
+    OK(uc_close(c.uc));
+}
+
 /* U644: JMPABS target64 (REX2 M0 = 0, W = 0, A1): skips the MOV EAX, lands on MOV ECX */
 static void test_x86_ax4_jmpabs(void)
 {
@@ -17070,4 +17098,5 @@ TEST_LIST = {
     {"test_x86_ax4_decode", test_x86_ax4_decode},
     {"test_x86_ax4_gating", test_x86_ax4_gating},
     {"test_x86_ax4_jmpabs", test_x86_ax4_jmpabs},
+    {"test_x86_ax4_user_msr", test_x86_ax4_user_msr},
     {NULL, NULL}};

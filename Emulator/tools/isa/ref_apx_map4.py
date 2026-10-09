@@ -31,6 +31,8 @@ from ref_apx_core.py, the part 1 model, and the SDM Operation sections):
 Usage:
   python ref_apx_map4.py --selftest     hand-derived checks of the model, exit 0 on pass
   python ref_apx_map4.py --cases        Emulator/data/cases_apx_map4.txt (stdout)
+  python ref_apx_map4.py --ext          Emulator/data/cases_apx_map4_ext.txt (stdout): the promoted
+                                        KMOV* / AMX forms, run with --apx --avx512 --amx
   python ref_apx_map4.py --hwgen        Emulator/data/cases_apx_map4_hw.txt (stdout): pairs
                                         "<legacy bytes> ~~ <EVEX bytes>" with registers R0-R15
                                         only: the i5-13600K runs the legacy encoding (for NDD a
@@ -887,6 +889,138 @@ def m4_rao(name, n, m, reg):
     return Ins(e, sem)
 
 
+# --------------------------------------------------------------------------------------------
+# U646: VEX instructions promoted to EVEX (3.1.2.3.2, Figure 3.4: P2 = 0 0 L 0 V4 NF 0 0) -
+#   BMI1/BMI2 in EVEX maps 2/3 (NF on ANDN BEXTR BLSI BLSMSK BLSR BZHI), CMPccXADD (map 2
+#   E0-EF), KMOV* (map 1 90-93), AMX LDTILECFG/STTILECFG/TILELOADD(T1)/TILESTORED (map 2 49/4B),
+#   URDMSR/UWRMSR imm32 (map 7 F8). Semantics: the SDM pages (BMI flags as listed there).
+# --------------------------------------------------------------------------------------------
+def vex3(mm, pp, w, opc, reg, rm, v=0, imm=b"", l=0):
+    """3-byte VEX encoding (registers 0-15) of the legacy equivalent; None if an id needs APX"""
+    r, x, b, tail, _ = modrm_parts(reg, rm)
+    if (r | x | b | v) & 16:
+        return None
+    b1 = (((~r >> 3) & 1) << 7) | (((~x >> 3) & 1) << 6) | (((~b >> 3) & 1) << 5) | mm
+    b2 = (w << 7) | (((~v) & 15) << 3) | (l << 2) | pp
+    return bytes([0xC4, b1, b2, opc]) + tail + imm
+
+
+BMI_FORMS = {
+    # name: (map, pp, opc, reg ext or None, NF allowed, form)
+    #   form 'rvm': r_r := f(r_n, r/m); 'rmv': r_r := f(r/m, r_n); 'vm': r_n := f(r/m); 'rmi': imm
+    "andn": (2, 0, 0xF2, None, True, "rvm"),
+    "bextr": (2, 0, 0xF7, None, True, "rmv"),
+    "blsr": (2, 0, 0xF3, 1, True, "vm"),
+    "blsmsk": (2, 0, 0xF3, 2, True, "vm"),
+    "blsi": (2, 0, 0xF3, 3, True, "vm"),
+    "bzhi": (2, 0, 0xF5, None, True, "rmv"),
+    "pext": (2, 2, 0xF5, None, False, "rvm"),
+    "pdep": (2, 3, 0xF5, None, False, "rvm"),
+    "mulx": (2, 3, 0xF6, None, False, "rvm"),
+    "shlx": (2, 1, 0xF7, None, False, "rmv"),
+    "sarx": (2, 2, 0xF7, None, False, "rmv"),
+    "shrx": (2, 3, 0xF7, None, False, "rmv"),
+    "rorx": (3, 3, 0xF0, None, False, "rmi"),
+}
+
+
+def pdep(src, msk, n):
+    r, k = 0, 0
+    for i in range(n):
+        if (msk >> i) & 1:
+            r |= ((src >> k) & 1) << i
+            k += 1
+    return r
+
+
+def pext(src, msk, n):
+    r, k = 0, 0
+    for i in range(n):
+        if (msk >> i) & 1:
+            r |= ((src >> i) & 1) << k
+            k += 1
+    return r
+
+
+def m4_bmi(name, n, rr, rn, rmop, imm=0, nf=0):
+    """BMI1/BMI2 in EVEX map 2/3: rr = ModRM.reg, rn = V (vvvv), rmop = r/m"""
+    mapid, pp, opc, ext, nf_ok, form = BMI_FORMS[name]
+    w = 1 if n == 64 else 0
+    reg = ext if ext is not None else rr
+    vv = rn if form != "rmi" else 0
+    ib = bytes([imm & 0xFF]) if form == "rmi" else b""
+    lv = vex3(mapid, pp, w, opc, reg, rmop, vv, ib)
+    leg = None if lv is None else (PUSHFQ + lv + POPFQ if nf else lv)
+    e = Ev(opc, reg, rmop, w=w, pp=pp, nf=nf, v=vv, imm=ib, mapid=mapid, leg=leg)
+    m = mask(n)
+
+    def sem(st):
+        src = rd_op(st, rmop, n)
+        fl, fm = 0, 0
+        if name == "andn":
+            res = ~st.getr(rn, n) & src & m
+            fl, fm = szp(res, n) & (ZF | SF), STATUS & ~(AF | PF)
+            st.setr(rr, n, res)
+        elif name == "bextr":
+            c = st.getr(rn, n)
+            start, ln = c & 0xFF, (c >> 8) & 0xFF
+            res = (src >> start) & mask(ln) if start < n else 0
+            fl, fm = (ZF if res == 0 else 0), STATUS & ~(AF | SF | PF)
+            st.setr(rr, n, res)
+        elif name in ("blsi", "blsmsk", "blsr"):
+            if name == "blsi":
+                res = (-src) & src & m
+                fl = (szp(res, n) & (ZF | SF)) | (CF if src != 0 else 0)
+            elif name == "blsmsk":
+                res = ((src - 1) ^ src) & m
+                fl = (szp(res, n) & SF) | (CF if src == 0 else 0)
+            else:
+                res = ((src - 1) & src) & m
+                fl = (szp(res, n) & (ZF | SF)) | (CF if src == 0 else 0)
+            fm = STATUS & ~(AF | PF)
+            st.setr(rn, n, res)
+        elif name == "bzhi":
+            k = st.getr(rn, n) & 0xFF
+            res = src & mask(k) if k < n else src
+            fl = (szp(res, n) & (ZF | SF)) | (CF if k > n - 1 else 0)
+            fm = STATUS & ~(AF | PF)
+            st.setr(rr, n, res)
+        elif name in ("pdep", "pext"):
+            s1 = st.getr(rn, n)
+            st.setr(rr, n, pdep(s1, src, n) if name == "pdep" else pext(s1, src, n))
+        elif name == "mulx":
+            p = st.getr(2, n) * src
+            st.setr(rn, n, p)              # low half to vvvv, then the high half to reg
+            st.setr(rr, n, p >> n)
+        elif name in ("shlx", "sarx", "shrx"):
+            c = st.getr(rn, n) & (n - 1)
+            res = {"shlx": src << c, "shrx": src >> c, "sarx": sx(src, n) >> c}[name] & m
+            st.setr(rr, n, res)
+        else:   # rorx
+            c = imm & (n - 1)
+            st.setr(rr, n, ((src >> c) | (src << (n - c))) & m)
+        if fm and not nf:
+            set_flags(st, fl, fm)
+    und = 0 if (nf or name not in ("andn", "bextr", "blsi", "blsmsk", "blsr", "bzhi")) else \
+        (AF | PF | (SF if name == "bextr" else 0))
+    return Ins(e, sem, und)
+
+
+def m4_cmpccxadd(cc, n, m, r2, r3):
+    """EVEX.128.66.0F38.W0/W1 E0+cc !(11): CMPccXADD m, r2 (ModRM.reg), r3 (vvvv) (SDM)"""
+    w = 1 if n == 64 else 0
+    e = Ev(0xE0 + cc, r2, m, w=w, pp=1, v=r3, mapid=2)
+
+    def sem(st):
+        t1 = rd_op(st, m, n)
+        t2 = (t1 + st.getr(r3, n)) & mask(n)
+        _, f, _ = alu_core("cmp", t1, st.getr(r2, n), n, 0)
+        wr_op(st, m, n, t2 if cond(cc, f | 0x202) else t1)
+        st.setr(r2, n, t1)
+        set_flags(st, f, STATUS)
+    return Ins(e, sem)
+
+
 class MCase(Case):
     """ref_apx_core.Case with state-dependent undefined flags (Ins.undef_fn)"""
 
@@ -1184,6 +1318,38 @@ def gen_items(rng, egpr, hw=False):
                 st = mk_state(rng, [a, b])
                 m, run = mem_at(rng, st, base, None, 1, 8, align=8)
                 yield MCase(m4_rao(name, n, m, a), st, [a, base], [run])
+    # ---- promoted VEX instructions: BMI1/BMI2 (NF on six of them), CMPccXADD (U646) ----
+    for name in BMI_FORMS:
+        nf_ok = BMI_FORMS[name][4]
+        for n in (32, 64):
+            for memf in (False, True):
+                for nf in ((0, 1) if nf_ok else (0,)):
+                    st, a, b, m, used, runs = operands(n, memf, excl=(2,))
+                    rmop = m if memf else Reg(b)
+                    avoid = [a, 2] + ([b] if not memf else [m.base] + ([m.index] if m.index is not None else []))
+                    rn = pick_ndd(avoid)
+                    st.regs[rn] = rng.getrandbits(64)
+                    if name in ("bextr",):
+                        st.regs[rn] = rng.randrange(0, n + 8) | (rng.randrange(0, n + 8) << 8) | (rng.getrandbits(16) << 16)
+                    elif name == "bzhi":
+                        st.regs[rn] = (st.regs[rn] & ~0xFF) | rng.randrange(0, 80)
+                    st.regs[2] = rng.getrandbits(64)
+                    if rng.random() < 0.15:
+                        if memf:
+                            off = m.ea(st) - MEM
+                            st.mem[off:off + n // 8] = bytes(n // 8)
+                        else:
+                            st.regs[b] = 0
+                    yield MCase(m4_bmi(name, n, a, rn, rmop, rng.getrandbits(8), nf), st, used + [rn, 2], fresh(st, runs))
+    if not hw:
+        for n in (32, 64):
+            for cc in range(16):
+                a, b, base, idx = regs(4)
+                st = mk_state(rng, [a, b])
+                m, run = mem_at(rng, st, base, idx if rng.random() < 0.5 else None, rng.choice([1, 2, 4, 8]), 8)
+                if rng.random() < 0.3:
+                    st.regs[a] = int.from_bytes(run[1][:n // 8], "little")
+                yield MCase(m4_cmpccxadd(cc, n, m, a, b), st, [a, b, base] + ([m.index] if m.index is not None else []), [run])
 
 
 # --------------------------------------------------------------------------------------------
@@ -1393,6 +1559,29 @@ def special_lines(rng):
     # MOVDIR64B: destination not 64-byte aligned -> #GP; RAO-INT misaligned -> #GP
     L.append("%s | rax=0x%X rbx=0x%X => #GP" % (dotbyte(m4_movdir64b(0, Mem(3, None, 1, 0)).rex2_bytes()), MEM + 0xC008, MEM_PTR))
     L.append("%s | rax=0x1 rbx=0x%X => #GP" % (dotbyte(m4_rao("aadd", 32, Mem(3, None, 1, 0), 0).rex2_bytes()), MEM_PTR + 2))
+    c("--- promoted VEX instructions (U646): BMI with EGPRs (vvvv V4), NF, CMPccXADD ---")
+    L.append(mk_line(m4_bmi("andn", 64, 16, 31, Reg(17)), {16: 0, 31: 0xF0F0, 17: 0xFFFF}))
+    L.append(mk_line(m4_bmi("andn", 64, 16, 31, Reg(17), nf=1), {16: 0, 31: 0xF0F0, 17: 0xFFFF}, rflags=0x8D7))
+    L.append(mk_line(m4_bmi("blsr", 32, 0, 20, Mem(21, 22, 4, 4)), {21: MEM_PTR, 22: 1, 20: -1}, {0x8008: bytes([0, 0, 0, 0])}))
+    L.append(mk_line(m4_bmi("mulx", 64, 25, 25, Reg(26)), {2: -1, 26: -1, 25: 7}))         # same reg: high half
+    L.append(mk_line(m4_bmi("rorx", 32, 18, 0, Reg(19), imm=0x24), {18: -1, 19: 0x12345678}))
+    L.append(mk_line(m4_bmi("shlx", 64, 3, 28, Reg(29)), {28: 0x41, 29: 3}))
+    c("--- U646 #UD: L = 1, ND, NF without support, V without use, reserved P2 bits, U = 0, pp ---")
+    for e in (Ev(0xF2, 1, Reg(0), mapid=2, v=2, ll=1), Ev(0xF2, 1, Reg(0), mapid=2, v=2, nd=1),
+              Ev(0xF2, 1, Reg(0), mapid=2, v=2, p2or=0x80), Ev(0xF2, 1, Reg(0), mapid=2, v=2, p2or=0x40),
+              Ev(0xF2, 1, Reg(0), mapid=2, v=2, p2or=0x01), Ev(0xF2, 1, Reg(0), mapid=2, v=2, p2or=0x02),
+              Ev(0xF6, 1, Reg(0), mapid=2, pp=3, v=2, nf=1), Ev(0xF5, 1, Reg(0), mapid=2, pp=3, v=2, nf=1),
+              Ev(0xF7, 1, Reg(0), mapid=2, pp=1, v=2, nf=1), Ev(0xF0, 1, Reg(0), mapid=3, pp=3, nf=1, imm=b"\x01"),
+              Ev(0xF0, 1, Reg(0), mapid=3, pp=3, v=2, imm=b"\x01"), Ev(0xF2, 1, Reg(0), mapid=2, v=2, ubit=0),
+              Ev(0xF2, 1, Reg(0), mapid=2, pp=1, v=2), Ev(0xF3, 4, Reg(0), mapid=2, v=2),
+              Ev(0xF6, 1, Reg(0), mapid=2, pp=1), Ev(0xF6, 1, Reg(0), mapid=2, pp=2), Ev(0xF5, 1, Mem(3, None, 1, 0), mapid=2, pp=1),
+              Ev(0xE4, 1, Reg(0), mapid=2, pp=1, v=2), Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=0, v=2),
+              Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, ll=1), Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, nf=1),
+              Ev(0xE4, 1, Mem(3, None, 1, 0), mapid=2, pp=1, v=2, nd=1),
+              Ev(0x90, 1, Reg(0), mapid=1), Ev(0x49, 0, Mem(3, None, 1, 0), mapid=2), Ev(0x4B, 0, Mem(3, 1, 1, 0), mapid=2, pp=3),
+              Ev(0xF8, 0, Reg(0), mapid=7, pp=3, imm=bytes(4)), Ev(0xF6, 0, Reg(0), mapid=7, pp=3, imm=bytes(4))):
+        L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))
+    L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0xF2, 1, Reg(0), mapid=2, v=2).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     c("--- JMPABS (U644): REX2 M0 = 0 W = 0 A1 target64; non-canonical target #GP; W = 1 and"
       " 66/67/F0/F2/F3/REX before it #UD (the jump itself: unit test test_x86_ax4_jmpabs) ---")
     tgt = struct.pack("<Q", 0x0000800000000000)
@@ -1407,6 +1596,112 @@ def special_lines(rng):
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x01, 1, Reg(0), w=1).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x44, 0, Reg(0), pp=3).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     return L
+
+
+# --------------------------------------------------------------------------------------------
+# U646 with AVX-512 and AMX: the promoted KMOV* (APX-EVEX-KMOV) and AMX (LDTILECFG, STTILECFG,
+# TILELOADD, TILELOADDT1, TILESTORED) forms - Emulator/data/cases_apx_map4_ext.txt, run with
+# --apx --avx512 --amx (XCR0 = E02E7H: opmask/ZMM, AMX and APX state enabled)
+# --------------------------------------------------------------------------------------------
+KMOV_SZ = {  # (opcode, pp, W) -> bits of the k <-> k/m / r move
+    (0x90, 0, 0): 16, (0x90, 0, 1): 64, (0x90, 1, 0): 8, (0x90, 1, 1): 32,
+    (0x91, 0, 0): 16, (0x91, 0, 1): 64, (0x91, 1, 0): 8, (0x91, 1, 1): 32,
+    (0x92, 0, 0): 16, (0x92, 1, 0): 8, (0x92, 3, 0): 32, (0x92, 3, 1): 64,
+    (0x93, 0, 0): 16, (0x93, 1, 0): 8, (0x93, 3, 0): 32, (0x93, 3, 1): 64,
+}
+
+
+def ext_lines(rng):
+    L = []
+    c = lambda s: L.append("# " + s)
+    c("--- KMOV (EVEX map 1 90-93, APX-promoted): GPRs R16-R31 (B4 / R4) and EGPR addresses ---")
+    for (opc, pp, w), n in sorted(KMOV_SZ.items()):
+        for k in range(3):
+            kr, kb = rng.randrange(0, 8), rng.randrange(0, 8)
+            gv = rng.getrandbits(64)
+            kv = rng.getrandbits(64)
+            if opc == 0x92:                       # k_r := zero-extend(r_b[n-1:0])
+                rb = rng.choice(EGPR + LOW)
+                e = Ev(opc, kr, Reg(rb), w=w, pp=pp, mapid=1)
+                L.append("%s | %s=0x%X => k%d=0x%X" % (dotbyte(e.rex2()), NAMES[rb], gv, kr, gv & mask(n)))
+            elif opc == 0x93:                     # r_r := zero-extend(k_b[n-1:0])
+                rr = rng.choice(EGPR + LOW)
+                e = Ev(opc, rr, Reg(kb), w=w, pp=pp, mapid=1)
+                L.append("%s | k%d=0x%X %s=0x%X => %s=0x%X" % (dotbyte(e.rex2()), kb, kv, NAMES[rr], gv, NAMES[rr], kv & mask(n)))
+            elif opc == 0x90 and k == 0:          # k_r := k_b
+                e = Ev(opc, kr, Reg(kb), w=w, pp=pp, mapid=1)
+                exp = (kv & mask(n)) if kr != kb else (kv & mask(n))
+                L.append("%s | k%d=0x%X => k%d=0x%X" % (dotbyte(e.rex2()), kb, kv, kr, exp))
+            else:                                 # memory: [r20 + r21*8 + disp]
+                base, idx = rng.sample(EGPR, 2)
+                off = 0x8000 + 8 * rng.randrange(0, 0x100)
+                iv = rng.randrange(0, 0x20)
+                disp = rng.choice([0, 8, -8, 0x40])
+                bv = MEM + off - iv * 8 - disp
+                e = Ev(opc, kr, Mem(base, idx, 8, disp), w=w, pp=pp, mapid=1)
+                data = kv.to_bytes(8, "little")
+                if opc == 0x90:
+                    L.append("%s | %s=0x%X %s=0x%X m+0x%X=%s => k%d=0x%X" % (dotbyte(e.rex2()), NAMES[base], bv, NAMES[idx], iv,
+                                                                          off, data.hex().upper(), kr, kv & mask(n)))
+                else:
+                    out = (kv & mask(n)).to_bytes(n // 8, "little")
+                    L.append("%s | k%d=0x%X %s=0x%X %s=0x%X => m+0x%X=%s" % (dotbyte(e.rex2()), kr, kv, NAMES[base], bv, NAMES[idx], iv,
+                                                                             off, out.hex().upper()))
+    c("--- KMOV #UD: L = 1, V != 0, NF / ND, R3 with a k register in ModRM.reg, memory / register forms ---")
+    for e in (Ev(0x92, 1, Reg(0), mapid=1, ll=1), Ev(0x92, 1, Reg(0), mapid=1, v=1), Ev(0x92, 1, Reg(0), mapid=1, nf=1),
+              Ev(0x92, 1, Reg(0), mapid=1, nd=1), Ev(0x92, 9, Reg(0), mapid=1), Ev(0x90, 9, Reg(0), mapid=1),
+              Ev(0x91, 1, Reg(0), mapid=1), Ev(0x92, 1, Mem(3, None, 1, 0), mapid=1), Ev(0x93, 1, Mem(3, None, 1, 0), mapid=1),
+              Ev(0x92, 1, Reg(0), mapid=1, pp=2), Ev(0x92, 1, Reg(0), mapid=1, w=1), Ev(0x93, 1, Reg(0), mapid=1, ubit=0),
+              Ev(0x92, 1, Reg(0), mapid=1, p2or=0x80), Ev(0x92, 1, Reg(0), mapid=1, p2or=0x01)):
+        L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))
+    # R4 with a k register (ignored) and V4 (must be 0)
+    L.append("%s | r16=0x1234 => k1=0x1234" % dotbyte(Ev(0x92, 1 | 16, Reg(16), mapid=1).rex2()))
+    L.append(line_ud(Ev(0x92, 1, Reg(16), mapid=1, v=16).rex2()))
+    c("--- AMX (EVEX map 2 49 / 4B, APX-promoted): LDTILECFG [r16]; TILELOADD tmm0, [r17 + r18];"
+      " TILESTORED [r19 + r20], tmm0; STTILECFG [r21]; TILERELEASE (VEX) ---")
+    for k in range(4):
+        rows, colsb = rng.randrange(1, 5), rng.choice([4, 8, 16, 32])
+        stride_ld, stride_st = rng.choice([32, 64, 48]), rng.choice([64, 80])
+        cfg = bytearray(64)
+        cfg[0] = 1
+        cfg[16:18] = colsb.to_bytes(2, "little")
+        cfg[48] = rows
+        src = bytes(rng.getrandbits(8) for _ in range(rows * stride_ld))
+        prog = Ev(0x49, 0, Mem(16, None, 1, 0), mapid=2).rex2() + \
+            Ev(0x4B, 0, Mem(17, 18, 1, 0), pp=3, mapid=2).rex2() + \
+            Ev(0x4B, 0, Mem(19, 20, 1, 0), pp=2, mapid=2).rex2() + \
+            Ev(0x49, 0, Mem(21, None, 1, 0), pp=1, mapid=2).rex2() + bytes([0xC4, 0xE2, 0x78, 0x49, 0xC0])
+        st = St()
+        regs = {16: MEM + 0x8000, 17: MEM + 0x8100, 18: stride_ld, 19: MEM + 0x9000, 20: stride_st, 21: MEM + 0x9800}
+        for r, v in regs.items():
+            st.regs[r] = v
+        st.mem[0x8000:0x8040] = cfg
+        st.mem[0x8100:0x8100 + len(src)] = src
+
+        def sem(s2, rows=rows, colsb=colsb, stride_ld=stride_ld, stride_st=stride_st):
+            s2.mem[0x9800:0x9840] = s2.mem[0x8000:0x8040]
+            for i in range(rows):
+                s2.mem[0x9000 + i * stride_st:0x9000 + i * stride_st + colsb] = \
+                    s2.mem[0x8100 + i * stride_ld:0x8100 + i * stride_ld + colsb]
+        L.append(MCase(Ins(Raw(prog), sem), st, list(regs), [(0x8000, bytes(cfg)), (0x8100, src)]).line_rex2())
+    c("--- AMX #UD: register forms (TILERELEASE / TILEZERO are not promoted), W1, L1, V, TILELOADDRS (4A, not implemented) ---")
+    for e in (Ev(0x49, 0, Reg(0), mapid=2), Ev(0x49, 0, Reg(0), pp=3, mapid=2), Ev(0x49, 0, Mem(16, None, 1, 0), w=1, mapid=2),
+              Ev(0x49, 0, Mem(16, None, 1, 0), ll=1, mapid=2), Ev(0x49, 0, Mem(16, None, 1, 0), v=1, mapid=2),
+              Ev(0x49, 0, Mem(16, None, 1, 0), nf=1, mapid=2), Ev(0x4B, 0, Mem(17, 18, 1, 0), pp=3, w=1, mapid=2),
+              Ev(0x4A, 0, Mem(17, 18, 1, 0), pp=3, mapid=2), Ev(0x4A, 0, Mem(17, 18, 1, 0), pp=1, mapid=2),
+              Ev(0x5E, 0, Reg(1), pp=3, mapid=2), Ev(0x4B, 0, Mem(17, 18, 1, 0), pp=0, mapid=2)):
+        L.append(line_ud(e.rex2(), "r16=0x%X r17=0x%X r18=0x40" % (MEM + 0x8000, MEM + 0x8100)))
+    return L
+
+
+def gen_ext(out):
+    rng = random.Random(0x0A9C0DE6)
+    out.write("# Intel APX parts 2/3 (ledger U646): the APX-promoted KMOV* and AMX forms (EVEX maps 1/2)\n")
+    out.write("# with EGPRs. Expected values from Emulator/tools/isa/ref_apx_map4.py --ext (regenerate, do\n")
+    out.write("# not edit); Unicorn only, with the APX, AVX-512 and AMX opt-ins:\n")
+    out.write("#   emu-alltest --cases Emulator\\data\\cases_apx_map4_ext.txt --apx --avx512 --amx --expect-only\n")
+    for l in ext_lines(rng):
+        out.write(l + "\n")
 
 
 def gen_cases(out):
@@ -1532,6 +1827,9 @@ def main():
         sys.exit(0 if ok else 1)
     if "--cases" in sys.argv:
         gen_cases(sys.stdout)
+        return
+    if "--ext" in sys.argv:
+        gen_ext(sys.stdout)
         return
     if "--hwgen" in sys.argv:
         gen_hw(sys.stdout)

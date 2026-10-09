@@ -285,6 +285,8 @@ Add-HwCmp 'ref_apx_core_hwcmp' 'hw apx' 'ref_apx_core.py' 'cases_apx_core_hw'
 # expected values from the independent model ref_apx_map4.py (Unicorn only, APX opt-in).
 Add-Exp 'cases_apx_map4' 'cases_apx_map4' 'apx expect' @( '--apx' )
 Add-PySelftest 'ref_apx_map4_selftest' 'apx tools' 'ref_apx_map4.py'
+# U646: the APX-promoted KMOV* and AMX forms need AVX-512 and AMX as well.
+Add-Exp 'cases_apx_map4_ext' 'cases_apx_map4_ext' 'apx evex amx expect' @( '--apx', '--avx512', '--amx' )
 # The same instructions with R0-R15 only: the i5-13600K runs the legacy equivalent (ND = 1: MOV + op +
 # MOVZX; NF = 1: inside PUSHFQ ... POPFQ), Unicorn the EVEX encoding ("~~" pairs, no CPUID profile),
 # 0 differing; the CPU's results must also match the model (--hwcmp).
