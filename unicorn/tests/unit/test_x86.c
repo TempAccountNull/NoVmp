@@ -20054,6 +20054,42 @@ static void test_x86_fx4_store_partial(void)
 {
     fx4_store_cases(0, FX4_NPARTIAL, "partial-store audit");
 }
+/*
+ * U782: MPX in 64-bit mode (SDM Vol1 E.4.3.1): "A bound directory is located at the 4-KByte
+ * aligned linear address specified in bits 63:12 of BNDCFGx"; the BDE offset is LAp[47+MAWA:20]
+ * << 3 (MAWA = 0 at CPL0). BNDCFGS = 123001h (base 123000h, EN): for LAp = 50000000h the BDE is
+ * at 123000h + 500h * 8 = 125800h; it points to the bound table at NK_DATA + C000h, BTE 0 there.
+ * QEMU took BNDCFG[63:20] as the base (bits 31:20 of 123001h, 1, shifted to 1000h): BDE at
+ * 3800h, not valid there -> #BR.
+ */
+static void test_x86_fx4_mpx_bndcfg(void)
+{
+    /* bndmk bnd1, [rsi+0x10]; bndstx [rbx+rcx], bnd1; bndldx bnd2, [rbx+rcx]; bndmov [rsi+0x40], bnd2 */
+    static const char code[] = "\xf3\x0f\x1b\x4e\x10\x0f\x1b\x0c\x0b\x0f\x1a\x14\x0b"
+                               "\x66\x0f\x1b\x56\x40";
+    const uint64_t bt = NK_DATA + 0xC000, bde = bt | 1;
+    nk_intr_t intr;
+    uc_engine *uc = nk_open("\x90", 1, &intr);
+    uint64_t v[3] = {0, 0, 0};
+    int f;
+
+    OK(uc_mem_map(uc, 0x120000, 0x10000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, 0x125800, &bde, 8));
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_XCR0, 0x1b);
+    nk_wrmsr(uc, 0xd90, 0x123001);
+    nk_setreg(uc, UC_X86_REG_RBX, NK_DATA);
+    nk_setreg(uc, UC_X86_REG_RCX, 0x777);
+    f = nk_fault(uc, &intr, code, sizeof(code) - 1);
+    OK(uc_mem_read(uc, bt, v, sizeof(v)));
+    TEST_CHECK(f == -1 && v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10) && v[2] == 0x777);
+    TEST_MSG("bndstx with BNDCFGS 123001h: fault %d, BTE %016" PRIx64 " %016" PRIx64 " %016" PRIx64,
+             f, v[0], v[1], v[2]);
+    OK(uc_mem_read(uc, NK_HANDLE + 0x40, v, 16));
+    TEST_CHECK(v[0] == NK_HANDLE && v[1] == ~(NK_HANDLE + 0x10));
+    TEST_MSG("bndldx back: %016" PRIx64 " %016" PRIx64, v[0], v[1]);
+    OK(uc_close(uc));
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -21857,4 +21893,5 @@ TEST_LIST = {
     {"test_x86_fx4_store_partial", test_x86_fx4_store_partial},
     {"test_x86_fx4_call_ss_pf", test_x86_fx4_call_ss_pf},
     {"test_x86_fx4_store_amx", test_x86_fx4_store_amx},
+    {"test_x86_fx4_mpx_bndcfg", test_x86_fx4_mpx_bndcfg},
     {NULL, NULL}};

@@ -42,7 +42,23 @@ static uint64_t lookup_bte64(CPUX86State *env, uint64_t base, uintptr_t ra)
         bndcsr = env->msr_bndcfgs;
     }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U782) */
     bde = (extract64(base, 20, 28) << 3) + (extract64(bndcsr, 20, 44) << 12);
+#else /* ours (U782) */
+    /*
+     * NoVmp (ledger U782): SDM Vol1 E.4.3.1, 64-bit mode: "A bound directory is located at
+     * the 4-KByte aligned linear address specified in bits 63:12 of BNDCFGx"; the BDE offset
+     * has bits 30+MAWA:3 = LAp[47+MAWA:20], MAWA = 0 for CPL < 3 and MAWAU =
+     * CPUID.(EAX=07H,ECX=0):ECX[21:17] for CPL = 3. QEMU used BNDCFGx[63:20] as bits
+     * 55:12 of the base (a bound directory not 1-MByte aligned was looked up elsewhere).
+     */
+    {
+        int mawa = (env->hflags & HF_CPL_MASK) == 3 ?
+                   (int)((env->features[FEAT_7_0_ECX] >> 17) & 0x1f) : 0;
+
+        bde = (extract64(base, 20, 28 + mawa) << 3) + (bndcsr & ~(uint64_t)0xfff);
+    }
+#endif /* __Use_Original_Qemu (U782) */
     bt = cpu_ldq_data_ra(env, bde, ra);
     if ((bt & 1) == 0) {
         env->bndcs_regs.sts = bde | 2;
