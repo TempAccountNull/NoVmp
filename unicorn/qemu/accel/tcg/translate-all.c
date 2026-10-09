@@ -1099,7 +1099,12 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     tb_page_addr_t phys_pc, phys_page2;
     target_ulong virt_page2;
     tcg_insn_unit *gen_code_buf;
-    int gen_code_size, search_size, max_insns;
+    int gen_code_size, search_size;
+    /*
+     * Modified between sigsetjmp(jmp_trans) and a possible siglongjmp (temp or
+     * frame overflow restart): volatile, so MSVC does not restore a stale copy.
+     */
+    volatile int max_insns;
 
     assert_memory_lock();
 #ifdef HAVE_PTHREAD_JIT_PROTECT
@@ -1148,6 +1153,11 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     tcg_ctx->tb_cflags = cflags;
  tb_overflow:
 
+    gen_code_size = sigsetjmp(tcg_ctx->jmp_trans, 0);
+    if (unlikely(gen_code_size != 0)) {
+        goto error_return;
+    }
+
     tcg_func_start(tcg_ctx);
 
     tcg_ctx->cpu = env_cpu(env);
@@ -1155,6 +1165,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     gen_intermediate_code(cpu, tb, max_insns);
     UC_TRACE_END(UC_TRACE_TB_TRANS, "[uc] translate tb 0x%" PRIx64 ": ", tb->pc);
     tcg_ctx->cpu = NULL;
+    max_insns = tb->icount;
 
     /* generate machine code */
     tb->jmp_reset_offset[0] = TB_JMP_RESET_OFFSET_INVALID;
@@ -1170,6 +1181,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
 
     gen_code_size = tcg_gen_code(tcg_ctx, tb);
     if (unlikely(gen_code_size < 0)) {
+ error_return:
         switch (gen_code_size) {
         case -1:
             /*
@@ -1193,8 +1205,10 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
              * Try again with half as many insns as we attempted this time.
              * If a single insn overflows, there's a bug somewhere...
              */
-            max_insns = tb->icount;
-            assert(max_insns > 1);
+            /* assert() is compiled out under NDEBUG (MSVC Release): test it */
+            if (max_insns <= 1) {
+                tcg_abort();
+            }
             max_insns /= 2;
             goto tb_overflow;
 

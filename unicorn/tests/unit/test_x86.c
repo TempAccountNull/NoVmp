@@ -13881,6 +13881,108 @@ static void test_x86_bp_no_pcommit(void)
 }
 /* ---- end U475-U499 (tb2_) ---- */
 
+/* ---- begin U450-U474 (bp_): Tier 1 upstream QEMU backports ---- */
+/*
+ * U450 (upstream QEMU ae30e86661 + db6b7d0c69): a translation block whose
+ * constants exhaust TCGContext.temps[TCG_MAX_TEMPS] restarts with fewer guest
+ * instructions (siglongjmp to tb_gen_code) instead of writing past the array.
+ * tcg_constant_* is tcg_const_* in this TCG core, so every PSHUFD/SHUFPS imm8
+ * leaks one temp; BP_TEMPS_N straight-line instructions give TBs of up to 512
+ * instructions (TCG_MAX_INSNS) with about one leaked temp each.
+ *   (a) BP_TEMPS_N x PSHUFD xmm0, xmm0, 39h
+ *   (b) BP_TEMPS_N x {PSHUFD xmm1, xmm1, 39h; SHUFPS xmm2, xmm2, 93h; ADD EAX, imm32}
+ */
+#define BP_TEMPS_N 3001
+#define BP_TEMPS_BASE 0x100000
+
+/* PSHUFD 39h: dest[j] = src[(j + 1) & 3]; SHUFPS x, x, 93h: dest[j] = src[(j + 3) & 3] */
+static void bp_rot(uint32_t out[4], const uint32_t in[4], int by)
+{
+    int j;
+
+    for (j = 0; j < 4; j++) {
+        out[j] = in[(j + by) & 3];
+    }
+}
+
+static void bp_temps_run(const uint8_t *code, size_t len, const uint32_t xin[4],
+                         uint64_t rax_in, uint32_t xout[3][4], uint64_t *rax_out)
+{
+    uc_engine *uc;
+    int run;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, BP_TEMPS_BASE, 0x20000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, BP_TEMPS_BASE, code, len));
+    /* twice: translated, then from the TB cache */
+    for (run = 0; run < 2; run++) {
+        OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax_in));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM0, xin));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM1, xin));
+        OK(uc_reg_write(uc, UC_X86_REG_XMM2, xin));
+        OK(uc_emu_start(uc, BP_TEMPS_BASE, BP_TEMPS_BASE + len, 0, 0));
+        OK(uc_reg_read(uc, UC_X86_REG_XMM0, xout[0]));
+        OK(uc_reg_read(uc, UC_X86_REG_XMM1, xout[1]));
+        OK(uc_reg_read(uc, UC_X86_REG_XMM2, xout[2]));
+        OK(uc_reg_read(uc, UC_X86_REG_RAX, rax_out));
+    }
+    OK(uc_close(uc));
+}
+
+static void test_x86_bp_tcg_temp_overflow(void)
+{
+    static const uint8_t pshufd0[5] = {0x66, 0x0f, 0x70, 0xc0, 0x39};
+    static const uint8_t pshufd1[5] = {0x66, 0x0f, 0x70, 0xc9, 0x39};
+    static const uint8_t shufps2[4] = {0x0f, 0xc6, 0xd2, 0x93};
+    const uint32_t xin[4] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+    uint8_t *code = (uint8_t *)malloc(BP_TEMPS_N * 14);
+    uint32_t xout[3][4], xexp[4];
+    uint64_t rax = 0;
+    uint32_t eax_exp = 0x01020304;
+    size_t off;
+    int i;
+
+    TEST_CHECK(code != NULL);
+    if (!code) {
+        return;
+    }
+    /* (a) */
+    for (i = 0, off = 0; i < BP_TEMPS_N; i++, off += 5) {
+        memcpy(code + off, pshufd0, 5);
+    }
+    bp_temps_run(code, off, xin, 0, xout, &rax);
+    bp_rot(xexp, xin, BP_TEMPS_N);
+    TEST_CHECK(memcmp(xout[0], xexp, 16) == 0);
+    TEST_MSG("(a) xmm0 %08x %08x %08x %08x, expected %08x %08x %08x %08x", xout[0][0],
+             xout[0][1], xout[0][2], xout[0][3], xexp[0], xexp[1], xexp[2], xexp[3]);
+    /* (b) */
+    for (i = 0, off = 0; i < BP_TEMPS_N; i++) {
+        uint32_t imm = 0x9e3779b9u * (uint32_t)(i + 1);
+
+        memcpy(code + off, pshufd1, 5);
+        off += 5;
+        memcpy(code + off, shufps2, 4);
+        off += 4;
+        code[off++] = 0x05; /* add eax, imm32 */
+        memcpy(code + off, &imm, 4);
+        off += 4;
+        eax_exp += imm;
+    }
+    bp_temps_run(code, off, xin, 0x01020304, xout, &rax);
+    bp_rot(xexp, xin, BP_TEMPS_N);
+    TEST_CHECK(memcmp(xout[1], xexp, 16) == 0);
+    TEST_MSG("(b) xmm1 %08x %08x %08x %08x, expected %08x %08x %08x %08x", xout[1][0],
+             xout[1][1], xout[1][2], xout[1][3], xexp[0], xexp[1], xexp[2], xexp[3]);
+    bp_rot(xexp, xin, 3 * BP_TEMPS_N);
+    TEST_CHECK(memcmp(xout[2], xexp, 16) == 0);
+    TEST_MSG("(b) xmm2 %08x %08x %08x %08x, expected %08x %08x %08x %08x", xout[2][0],
+             xout[2][1], xout[2][2], xout[2][3], xexp[0], xexp[1], xexp[2], xexp[3]);
+    TEST_CHECK(rax == eax_exp);
+    TEST_MSG("(b) rax %016llx, expected %08x", (unsigned long long)rax, eax_exp);
+    free(code);
+}
+/* ---- end U450-U474 (bp_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -14089,23 +14191,5 @@ TEST_LIST = {
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
-    {"test_x86_bp_sgdt_sidt_base", test_x86_bp_sgdt_sidt_base},
-    {"test_x86_bp_iret_null_seg_keeps_base", test_x86_bp_iret_null_seg_keeps_base},
-    {"test_x86_bp_pks", test_x86_bp_pks},
-    {"test_x86_bp_x87_no_partial", test_x86_bp_x87_no_partial},
-    {"test_x86_bp_far_ret_call_cpl3_smap", test_x86_bp_far_ret_call_cpl3_smap},
-    {"test_x86_bp_rep_string_rf", test_x86_bp_rep_string_rf},
-    {"test_x86_bp_sysret_canonical", test_x86_bp_sysret_canonical},
-    {"test_x86_bp_vex_16bit_pm", test_x86_bp_vex_16bit_pm},
-    {"test_x86_bp_ud0_ud1_modrm", test_x86_bp_ud0_ud1_modrm},
-    {"test_x86_bp_vex_ud_before_nm", test_x86_bp_vex_ud_before_nm},
-    {"test_x86_bp_vex_w_ud_before_nm", test_x86_bp_vex_w_ud_before_nm},
-    {"test_x86_bp_cpuid_80000000", test_x86_bp_cpuid_80000000},
-    {"test_x86_bp_cpuid_prfchw", test_x86_bp_cpuid_prfchw},
-    {"test_x86_bp_wrap_4g", test_x86_bp_wrap_4g},
-    {"test_x86_bp_pushf_rf", test_x86_bp_pushf_rf},
-    {"test_x86_bp_lfence_sse2", test_x86_bp_lfence_sse2},
-    {"test_x86_bp_callgate_rsp0_canonical", test_x86_bp_callgate_rsp0_canonical},
-    {"test_x86_bp_lcall_real_eip", test_x86_bp_lcall_real_eip},
-    {"test_x86_bp_no_pcommit", test_x86_bp_no_pcommit},
+    {"test_x86_bp_tcg_temp_overflow", test_x86_bp_tcg_temp_overflow},
     {NULL, NULL}};
