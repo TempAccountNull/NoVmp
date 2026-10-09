@@ -1101,6 +1101,16 @@ void helper_rdmsr(CPUX86State *env)
 static void do_pause(X86CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
+    CPUX86State *env = &cpu->env;
+
+    /*
+     * backport of QEMU 3718523d01: do the gen_eob() tasks before going back to the
+     * main loop - no interrupt shadow, RF cleared, and the single-step trap after
+     * PAUSE when TF = 1 (SDM Vol3B 20.3.1.4)
+     */
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    env->eflags &= ~RF_MASK;
+    helper_rechecking_single_step(env);
 
     /* Just let another CPU run.  */
     cs->exception_index = EXCP_INTERRUPT;

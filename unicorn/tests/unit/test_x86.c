@@ -14396,6 +14396,30 @@ static void test_x86_bp_lock_old_decoder(void)
     }
     OK(uc_close(c.uc));
 }
+
+/*
+ * U458 (upstream QEMU 3718523d01): PAUSE with TF = 1 raises the single-step #DB
+ * right after PAUSE (trap: RIP = next instruction), not after the next one.
+ * pushfq; or qword [rsp], 100h; popfq (TF applies after the next instruction);
+ * pause; inc eax
+ */
+static void test_x86_bp_pause_tf(void)
+{
+    static const uint8_t code[] = {0x9c, 0x48, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00,
+                                   0x9d, 0xf3, 0x90, 0xff, 0xc0};
+    BpCpu c;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    OK(bp_run_at(&c, BP_CODE, code, sizeof(code), 0));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == BP_CODE + 12);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_MSG("count %u intno %u rip %llx (expected %llx) rax %llx", c.count, c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(BP_CODE + 12),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14612,4 +14636,5 @@ TEST_LIST = {
     {"test_x86_bp_vex_vvvv3_32", test_x86_bp_vex_vvvv3_32},
     {"test_x86_bp_lock_new_decoder", test_x86_bp_lock_new_decoder},
     {"test_x86_bp_lock_old_decoder", test_x86_bp_lock_old_decoder},
+    {"test_x86_bp_pause_tf", test_x86_bp_pause_tf},
     {NULL, NULL}};
