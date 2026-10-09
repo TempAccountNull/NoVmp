@@ -1,6 +1,6 @@
 # TSX / WAITPKG / ENQCMD / CET / PCONFIG / SGX / SMX (plan 1.15c part 4, ledger U110-U119).
 # Hardware compare (self-generated snippets only):
-#   emu-alltest --cases Emulator\data\cases_tsx_cet.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_tsx_cet.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # The host runs these at CPL3 (Windows user mode), raw Unicorn at CPL0. Under the i5-13600K profile
 # RTM/HLE/TSXLDTRK/WAITPKG/ENQCMD/PCONFIG/SGX/SMX are not reported and CET_SS is reported, but
 # shadow stacks are not enabled for the process (host CR4.CET = 1, Unicorn CR4.CET = 0).

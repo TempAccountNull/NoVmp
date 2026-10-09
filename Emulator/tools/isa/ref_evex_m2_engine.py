@@ -1256,7 +1256,7 @@ def main():
         out.write("# EVEX milestone M2 engine (ledger U190-U201): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m2_engine.py --cases (regenerate, do not edit). The i5-13600K has\n")
         out.write("# no AVX-512: expected-value cases only, run with AVX-512 enabled:\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_engine.txt --avx512 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_engine.txt --avx512 --expect-only\n")
         out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         for c in cases:
             if isinstance(c, str):

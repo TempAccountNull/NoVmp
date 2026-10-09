@@ -1817,7 +1817,7 @@ def main():
         out.write("# EVEX milestone M2 permutes/moves (ledger U210-U229): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m2_perm.py --cases (regenerate, do not edit). The i5-13600K has no\n")
         out.write("# AVX-512: expected-value cases only, run with AVX-512 enabled:\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_perm.txt --avx512 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_perm.txt --avx512 --expect-only\n")
         out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         out.write("# Modelled CPU: AVX512F/DQ/BW/VL, no AVX10.2 (EVEX.F3.0F.W0 7E and EVEX.66.0F.W0 D6 are #UD).\n")
         for c in OUT:

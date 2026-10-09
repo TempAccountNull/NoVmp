@@ -1232,8 +1232,8 @@ def main():
         out.write("# U550-U557): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m4a.py --cases (regenerate, do not edit). The i5-13600K has\n")
         out.write("# no AVX-512: expected-value cases only, run with AVX-512 enabled (every bit) or AVX10.1:\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4a.txt --avx512 --xcr0 0xE7 --expect-only\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4a.txt --avx10 1 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4a.txt --avx512 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4a.txt --avx10 1 --expect-only\n")
         out.write("# RSI = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         for l in out_lines:
             out.write(l + "\n")

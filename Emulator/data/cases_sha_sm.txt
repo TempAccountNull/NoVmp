@@ -4,7 +4,7 @@
 # proven against the FIPS 180-4 / GB/T 32905 / GB/T 32907 standard vectors. The i5-13600K has none of
 # these instructions (CPUID.(7,1):EAX[2:0] = 0): natively every line is #UD, on UC_CPU_X86_MAX the
 # value lines run and match "=>". With the reference machine's CPUID profile in strict mode
-#   emu-alltest --cases Emulator\data\cases_sha_sm.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_sha_sm.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # Unicorn must #UD on every line as well. Lines marked "#UD" are invalid encodings (#UD everywhere).
 # Memory forms use [rsi] (RSI = MEM + 0x8000).
 # ---- SHA512 (ref_sha512_sm.py --cases sha512)

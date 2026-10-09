@@ -918,7 +918,7 @@ def main():
         out.write("# from the independent SDM model Emulator/tools/isa/ref_evex_m4b.py --cases (regenerate,\n")
         out.write("# do not edit). The i5-13600K has no AVX-512: expected-value cases only, run with AVX-512\n")
         out.write("# enabled (every UC_X86_AVX512_* bit, incl. VP2INTERSECT):\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4b.txt --avx512 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m4b.txt --avx512 --expect-only\n")
         out.write("# RSI = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         out.write("# The GFNI/VAES/VPCLMULQDQ operation of each case also runs on the CPU's VEX/legacy forms:\n")
         out.write("# cases_evex_m4b_hw.txt (ref_evex_m4b.py --hwgen / --hwcmp).\n")

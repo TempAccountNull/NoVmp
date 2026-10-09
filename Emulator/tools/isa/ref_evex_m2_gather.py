@@ -639,7 +639,7 @@ def main():
         out.write("# EVEX gathers/scatters (ledger U250-U252): expected values from the independent SDM\n")
         out.write("# model Emulator/tools/isa/ref_evex_m2_gather.py --cases (regenerate, do not edit). The\n")
         out.write("# i5-13600K has no AVX-512: expected-value cases only, run with AVX-512 enabled:\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_gather.txt --avx512 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_gather.txt --avx512 --expect-only\n")
         out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / partial-completion cases).\n")
         for c in cases:
             if isinstance(c, str):

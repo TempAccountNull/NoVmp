@@ -1,7 +1,7 @@
 # Hardware-verified status for instruction-table rows the emu-alltest sweep cannot reach or only reaches
 # with a #UD representative (plan 1.15b). Read by Emulator\tools\isa\gen_instruction_table.py; a row
 # applies when the sweep alone leaves the row ⬜. Evidence: Emulator\data\cases_reach.txt run with
-#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --cr0 0x33
+#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # status: ok   = implemented, identical to the i5-13600K (✅)
 #         sdm  = implemented, the i5-13600K lacks it: verified against SDM-pseudocode vectors (Emulator\data\cases_*.txt "=>" lines, unit tests) (✅)
 #         ud   = #UD on the i5-13600K and in Unicorn: correct under the CPU profile, not implemented (⬜)

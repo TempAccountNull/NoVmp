@@ -2,7 +2,7 @@
 # (regenerate, do not edit). The emulator implements the SDM; a case where the i5-13600K's
 # order gives another NaN is tagged "# known deviation: DPPD two NaN products" (docs/quirks.md).
 # 0 untagged cases differ:
-#   emu-alltest --cases Emulator\data\cases_dp_nan.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_dp_nan.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # DPPS/DPPD with two or more NaN products in one dot product. SDM (DPPS/DPPD Operation,
 # DP_primitive; Vol1 4.8.3.5 Table 4-8 SSE column): Temp2 := p0 + p1, Temp3 := p2 + p3,
 # every selected element := Temp2 + Temp3 (DPPD: both elements := p0 + p1), so the first

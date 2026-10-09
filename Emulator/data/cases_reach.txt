@@ -1,7 +1,7 @@
 # Plan 1.15b: instruction-table rows "not reachable by the sweep" (no Capstone 6 form).
 # Encodings from the Intel SDM Vol. 2 / ISE; run against the i5-13600K:
-#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7 --cr0 0x33
-# (--cr0 0x33: CR0.NE = 1 as under Windows, so the pending-#MF cases fault like the CPU.) Expected: every
+#   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# (CR0.NE = 1 as under Windows, the U540 default for hardware cases: the pending-#MF cases fault like the CPU.) Expected: every
 # case SAME except WRUSSD/WRUSSQ (CPL0 instruction: #GP at CPL3 on the CPU, Unicorn #UD; Phase 2, D6),
 # tagged "# host state" (U539): Windows runs with CR4.CET = 1, Unicorn with CR4.CET = 0 (SDM: #UD).
 # Only these self-generated snippets run natively. Verdicts: Emulator\data\verified_forms.tsv.

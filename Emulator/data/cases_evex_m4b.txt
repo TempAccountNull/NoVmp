@@ -2,7 +2,7 @@
 # from the independent SDM model Emulator/tools/isa/ref_evex_m4b.py --cases (regenerate,
 # do not edit). The i5-13600K has no AVX-512: expected-value cases only, run with AVX-512
 # enabled (every UC_X86_AVX512_* bit, incl. VP2INTERSECT):
-#   emu-alltest --cases Emulator\data\cases_evex_m4b.txt --avx512 --xcr0 0xE7 --expect-only
+#   emu-alltest --cases Emulator\data\cases_evex_m4b.txt --avx512 --expect-only
 # RSI = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).
 # The GFNI/VAES/VPCLMULQDQ operation of each case also runs on the CPU's VEX/legacy forms:
 # cases_evex_m4b_hw.txt (ref_evex_m4b.py --hwgen / --hwcmp).

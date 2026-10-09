@@ -1,7 +1,7 @@
 # AVX512BW (ledger U260-U269): expected values from the independent SDM model
 # Emulator/tools/isa/ref_evex_m3_bw.py --cases (regenerate, do not edit). The i5-13600K has no
 # AVX-512: expected-value cases only, run with AVX-512 enabled:
-#   emu-alltest --cases Emulator\data\cases_evex_m3_bw.txt --avx512 --xcr0 0xE7 --expect-only
+#   emu-alltest --cases Emulator\data\cases_evex_m3_bw.txt --avx512 --expect-only
 # RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).
 # --- AVX512BW forms x VL 128/256/512 x {no mask, merge, zero} x {register, memory}
 # VMOVDQU8 (EVEX.F2.0F.W0 6F)

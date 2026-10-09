@@ -1,7 +1,7 @@
 # Plan 1.F.7 fixes (ledger U590-U609), hand-written. Hardware lines (no "=>") run natively on the
 # i5-13600K (CPL3, Windows x64) and in Unicorn; expected-value lines ("=>") run in Unicorn only,
 # against the SDM:
-#   emu-alltest --cases Emulator\data\cases_fixes2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_fixes2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
 # Expected: every line SAME. Only our own snippets run natively; nothing here leaves CPL3 or touches
 # FS/GS natively (LFS/LGS would replace the host's FS/GS selector and base: expected values only).
 # cpl=3: Unicorn also runs at CPL3 (Windows GDT: 23h code32, 2Bh data, 33h code64, all DPL3).

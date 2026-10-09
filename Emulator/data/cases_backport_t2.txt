@@ -1,6 +1,6 @@
 # Tier-2/3 upstream QEMU backports and two Unicorn fixes (ledger U475-U499), hardware lines only
 # (no "=>"): every snippet is our own and runs natively on the host and in Unicorn.
-#   emu-alltest --cases Emulator\data\cases_backport_t2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_backport_t2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # Expected: every line SAME (differing: 0).
 #
 # --- U476 (backport 7653b44534): SGDT/SIDT store the whole base whatever the operand size. In

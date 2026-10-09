@@ -1,7 +1,7 @@
 # EVEX milestone M2 engine (ledger U190-U201): expected values from the independent SDM model
 # Emulator/tools/isa/ref_evex_m2_engine.py --cases (regenerate, do not edit). The i5-13600K has
 # no AVX-512: expected-value cases only, run with AVX-512 enabled:
-#   emu-alltest --cases Emulator\data\cases_evex_m2_engine.txt --avx512 --xcr0 0xE7 --expect-only
+#   emu-alltest --cases Emulator\data\cases_evex_m2_engine.txt --avx512 --expect-only
 # RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).
 # --- scalar FP: VADDSS/SD VSUBSS/SD VMULSS/SD VDIVSS/SD VSQRTSS/SD ({er}), VMINSS/SD VMAXSS/SD ({sae}); EVEX.LLIG, Tuple1 Scalar, E3
 # VADDSS (EVEX.LLIG.F3.0F.W0 58 /r)

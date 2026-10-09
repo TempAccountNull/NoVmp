@@ -3,7 +3,7 @@
 # i5-13600K differ. The emulator implements the SDM only, so every case is tagged
 # "# known deviation: NAME" and counted under that name, never as differing. Hand-written; only
 # these self-generated snippets run natively:
-#   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 #
 # FCOMI/FUCOMI C1 (U531): SDM C1 = 0, hardware keeps C1 (= 1 here)
 fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1

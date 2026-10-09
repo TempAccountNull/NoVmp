@@ -2199,7 +2199,7 @@ def main():
         out = sys.stdout
         out.write("# EVEX milestone M2 (conversions, FP specials, shifts): expected values from the independent\n")
         out.write("# SDM model Emulator/tools/isa/ref_evex_m2_cvt.py --cases (regenerate, do not edit).\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_cvt.txt --avx512 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_m2_cvt.txt --avx512 --expect-only\n")
         out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped.\n")
         n = 0
         for c in cases:

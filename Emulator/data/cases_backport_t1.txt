@@ -2,7 +2,7 @@
 # do not edit by hand.
 # Hardware lines (no "=>") run natively on the i5-13600K (CPL3, Windows x64) and in Unicorn;
 # expected-value lines ("=>") run in Unicorn only, against the SDM:
-#   emu-alltest --cases Emulator\data\cases_backport_t1.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7
+#   emu-alltest --cases Emulator\data\cases_backport_t1.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
 #   emu-alltest --cases Emulator\data\cases_backport_t1.txt --expect-only
 # Expected: every line SAME. Only our own snippets run natively: nothing here can leave CPL3; SYSCALL
 # (a real system call in 64-bit mode) never runs natively, its compatibility-mode #UD is an expected value.

@@ -2,7 +2,7 @@
 # '--- AVX512_*'): expected values from the independent SDM model
 # Emulator/tools/isa/ref_evex_m3_cd.py --cases (regenerate, do not edit). The i5-13600K has
 # no AVX-512: expected-value cases only, run with AVX-512 enabled (every bit):
-#   emu-alltest --cases Emulator\data\cases_evex_m3_cd.txt --avx512 --xcr0 0xE7 --expect-only
+#   emu-alltest --cases Emulator\data\cases_evex_m3_cd.txt --avx512 --expect-only
 # RSI = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).
 # --- VPCONFLICTD/Q (E4NF) and VPLZCNTD/Q (E4): Full tuple, {k1}{z}, {1toN}
 # VPCONFLICTD (EVEX.66.0F38.W0 C4 /r)

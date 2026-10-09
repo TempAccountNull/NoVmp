@@ -2274,7 +2274,7 @@ def main():
         out.write("# Emulator/tools/isa/ref_avx10_a.py --cases (regenerate, do not edit). Sources: Intel AVX10.2 spec\n")
         out.write("# 361050-007 (rev 7.0) + SDM 092. The i5-13600K has no AVX10: expected-value cases only, run with\n")
         out.write("# AVX10.2 alone (the AVX-512 CPUID bits stay off):\n")
-        out.write("#   emu-alltest --cases Emulator%sdata%scases_avx10_a.txt --avx10 2 --xcr0 0xE7 --expect-only\n" % (BS, BS))
+        out.write("#   emu-alltest --cases Emulator%sdata%scases_avx10_a.txt --avx10 2 --expect-only\n" % (BS, BS))
         out.write("# RSI = R14 = MEM + 0x8000. Cases titled AMBIGUOUS-nn test an ambiguous spec point (see the\n")
         out.write("# AMBIGUOUS: comments in ref_avx10_a.py); every other case avoids those inputs.\n")
         for c in cases:

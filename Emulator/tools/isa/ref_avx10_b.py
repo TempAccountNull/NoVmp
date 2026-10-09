@@ -1524,7 +1524,7 @@ def main():
         out.write("# AVX10.2 (avx10_b, ledger U400-U412): expected values from the independent model\n")
         out.write("# Emulator/tools/isa/ref_avx10_b.py --cases (regenerate, do not edit). The i5-13600K has no\n")
         out.write("# AVX10.2 / AVX-512: expected-value cases only, run with AVX10.2 enabled:\n")
-        out.write("#   emu-alltest --cases Emulator\\data\\cases_avx10_b.txt --avx10 --xcr0 0xE7 --expect-only\n")
+        out.write("#   emu-alltest --cases Emulator\\data\\cases_avx10_b.txt --avx10 --expect-only\n")
         out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
         for c in cases:
             if isinstance(c, str):

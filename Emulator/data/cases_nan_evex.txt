@@ -2,7 +2,7 @@
 # (regenerate, do not edit). Expected values: SDM model of ref_evex_m1.py (Vol1 4.8.3.5 Table 4-8:
 # SSE/AVX/AVX-512 -> SRC1 (EVEX.vvvv) quieted when both sources are NaN; MINPS/MAXPS: any NaN ->
 # SRC2 unchanged + #I; SQRT: the NaN source quieted). The i5-13600K has no AVX-512:
-#   emu-alltest --cases Emulator\data\cases_nan_evex.txt --avx512 --xcr0 0xE7 --expect-only
+#   emu-alltest --cases Emulator\data\cases_nan_evex.txt --avx512 --expect-only
 # Lanes (SRC1, SRC2): N1/Qs N1/Ss Qs/N2 Ss/N2 Qs/QL QL/Qs Ss/SL SL/Ss Ss/QL SL/Qs Qs/SL QL/Ss Qtn/Qtp Qtp/Qtn Stn/Stp Stp/Stn
 # VADDPS (EVEX.NP.0F.W0 58 /r)
 # VADDPS VL128 lanes 0..

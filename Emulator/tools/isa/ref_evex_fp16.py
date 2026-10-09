@@ -137,7 +137,7 @@ VCVTPS2PH (FP16 midpoints +-1 ulp, the overflow threshold 65504..65536, the deno
 denormals, random FP32, imm8 0..3 and 4 with every MXCSR.RC, DAZ, FTZ (ignored), every exception
 unmasked); the expectations come from cvt_widen / cvt_narrow, the functions VCVTPH2PSX,
 VCVTSH2SS/SD, VCVTPH2PD, VCVTPS2PHX, VCVTSS2SH, VCVTPD2PH and VCVTSD2SH use:
-  emu-alltest --cases HW.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict --xcr0 7 > LOG
+  emu-alltest --cases HW.txt --cpuid Emulator\\data\\cpuid_i5-13600k.txt --strict > LOG
   python ref_evex_fp16.py --hwcmp LOG OUT.json
 Result (2026-10-08): 72177 cases compared, 0 differ (vcvtph2ps 16601, vcvtps2ph 55576).
 """
@@ -1829,7 +1829,7 @@ def write_cases(out, groups):
     out.write("# AVX512-FP16: expected values from the independent SDM model\n")
     out.write("# Emulator/tools/isa/ref_evex_fp16.py --cases (regenerate, do not edit). The i5-13600K has no\n")
     out.write("# AVX512-FP16: expected-value cases only, run with AVX-512 (incl. FP16) enabled:\n")
-    out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_fp16.txt --avx512 --xcr0 0xE7 --expect-only\n")
+    out.write("#   emu-alltest --cases Emulator\\data\\cases_evex_fp16.txt --avx512 --expect-only\n")
     out.write("# RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases).\n")
     out.write("# One '# --- MNEMONIC' header per instruction (filter with --only / EXCLUDE).\n")
     if EXCLUDE:

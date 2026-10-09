@@ -1163,11 +1163,11 @@ def main():
                "has no AVX-512: expected-value cases only, run with AVX-512 enabled:"]
         if "--cases" in sys.argv:
             write(cases, sys.stdout, hdr + [
-                "  emu-alltest --cases Emulator\\data\\cases_evex_m3_dq.txt --avx512 --xcr0 0xE7 --expect-only",
+                "  emu-alltest --cases Emulator\\data\\cases_evex_m3_dq.txt --avx512 --expect-only",
                 "RSI = R14 = MEM + 0x8000; MEM + 0x10000 is unmapped (#PF / fault suppression cases)."])
         else:
             write(post, sys.stdout, hdr + [
-                "  emu-alltest --cases Emulator\\data\\cases_evex_m3_dq_post.txt --avx512 --xcr0 0xE7 --expect-only",
+                "  emu-alltest --cases Emulator\\data\\cases_evex_m3_dq_post.txt --avx512 --expect-only",
                 "POST-MERGE file: needs m2_engine U192 (masked scalar, DEST != SRC1), m2_cvt U230/U233",
                 "(QQ conversions) and m2_perm U210/U215 (Tuple2/Tuple8 insert/extract/broadcast)."])
         return

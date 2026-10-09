@@ -64,7 +64,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - Behaviour: REP/REPE/REPNE MOVS, STOS, LODS, CMPS, SCAS with a 32-bit address size (67H) in 64-bit mode and ECX = 0.
 - SDM: Vol2B REP/REPE/REPZ/REPNE/REPNZ Operation: the address size selects ECX as CountReg, then `WHILE CountReg ≠ 0 DO … OD`: with ECX = 0 nothing is executed and no register is written.
 - Emulator: nothing is written (the original QEMU code; the U60/U430 split is gone).
-- i5-13600K: zero-extends RCX, RSI, RDI (MOVS), RCX, RDI (STOS), RCX (LODS, CMPS, SCAS). REP LODS takes the SDM path in about 4–5 % of the runs (hwcheck_gate1 case 6: 16 of 400 runs), so its tag can be reported "not observed".
+- i5-13600K: zero-extends RCX, RSI, RDI (MOVS), RCX, RDI (STOS), RCX (LODS, CMPS, SCAS). REP LODS takes the SDM path in about 4–5 % of the runs (hwcheck_gate1 case 6: 16 of 400 runs), so its tag can be reported "not observed". The rate depends on what runs on the other logical processors (U544, measured 2026-10-09, 200 runs of hwcheck_gate1 each): 8/200 serially with the pre-U540 emu-alltest, 7/200 serially with U540, 26/200 (13 %) with 8 copies side by side; so test.cmd runs hwcheck_gate1 and cases_quirks alone, before the parallel suites (U541).
 - Hardware cases: `hwcheck_gate1.txt` lines 7–13; `cases_quirks.txt` lines 27–29.
 - Ledger: U60/U430 (quirk bit 5), removed in U536.
 
