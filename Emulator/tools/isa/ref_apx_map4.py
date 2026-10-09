@@ -1173,6 +1173,16 @@ def special_lines(rng):
         L.append(line_ud(e.rex2()))
     # RSP id through B4/V4: R20 (not RSP) is fine
     L.append(mk_line(m4_push2(20, 21), {4: SP, 20: 5, 21: 6}))
+    c("--- JMPABS (U644): REX2 M0 = 0 W = 0 A1 target64; non-canonical target #GP; W = 1 and"
+      " 66/67/F0/F2/F3/REX before it #UD (the jump itself: unit test test_x86_ax4_jmpabs) ---")
+    tgt = struct.pack("<Q", 0x0000800000000000)
+    L.append("%s => #GP" % dotbyte(b"\xd5\x00\xa1" + tgt))
+    L.append("%s => #GP" % dotbyte(b"\xd5\x77\xa1" + struct.pack("<Q", 0xFFFF7FFFFFFFFFF0)))   # R4 X4 B4 R3 X3 B3 ignored
+    L.append("%s => #GP" % dotbyte(b"\x2e\xd5\x00\xa1" + tgt))                              # segment override ignored
+    L.append(line_ud(b"\xd5\x08\xa1" + bytes(8)))                                              # W = 1
+    for pfx in (0x66, 0x67, 0xF0, 0xF2, 0xF3, 0x40, 0x48):
+        L.append(line_ud(bytes([pfx]) + b"\xd5\x00\xa1" + bytes(8)))
+    L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + b"\xd5\x00\xa1" + tgt, "rcx=0x0 rax=0x7 rdx=0x0"))
     c("--- XCR0[19] = 0 (XSETBV 7 first): every map 4 instruction #UD (Table 3.8) ---")
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x01, 1, Reg(0), w=1).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x44, 0, Reg(0), pp=3).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))

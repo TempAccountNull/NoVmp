@@ -16778,6 +16778,46 @@ static void test_x86_ax4_gating(void)
     TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
     OK(uc_close(c.uc));
 }
+
+/* U644: JMPABS target64 (REX2 M0 = 0, W = 0, A1): skips the MOV EAX, lands on MOV ECX */
+static void test_x86_ax4_jmpabs(void)
+{
+    ApxCtx c;
+    uint8_t code[21] = {0xd5, 0x00, 0xa1, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0xb8, 0x11, 0x11, 0x11, 0x11,          /* mov eax, 11111111h */
+                        0xb9, 0x22, 0x22, 0x22, 0x22};         /* mov ecx, 22222222h */
+    uint64_t at = code_start + 0x3000, target = at + 16, xcr0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        code[3 + i] = (uint8_t)(target >> (8 * i));
+    }
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    TEST_CHECK(apx_run_at(&c, at, (const char *)code, sizeof(code)) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == 0 && apx_get(&c, UC_X86_REG_RCX) == 0x22222222);
+    /* the other payload bits are ignored */
+    code[1] = 0x77;
+    apx_set(&c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(apx_run_at(&c, at, (const char *)code, sizeof(code)) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == 0 && apx_get(&c, UC_X86_REG_RCX) == 0x22222222);
+    /* W = 1: #UD; non-canonical target: #GP */
+    code[1] = 0x08;
+    TEST_CHECK(apx_run_at(&c, at, (const char *)code, sizeof(code)) == 6);
+    code[1] = 0x00;
+    code[10] = 0x80;
+    TEST_CHECK(apx_run_at(&c, at, (const char *)code, sizeof(code)) == 13);
+    code[10] = 0x00;
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
+    TEST_CHECK(apx_run_at(&c, at, (const char *)code, sizeof(code)) == 6);
+    OK(uc_close(c.uc));
+    /* 32-bit mode: D5 is AAD (imm8 00), then A1 = MOV EAX, moffs32 */
+    apx_open(&c, UC_MODE_32, UC_X86_APX_F, NULL, 0);
+    apx_set(&c, UC_X86_REG_EAX, 0x0102);
+    TEST_CHECK(apx_run(&c, "\xd5\x00", 2) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_EAX) == 0x0002);
+    OK(uc_close(c.uc));
+}
 /* ---- end U640-U689 (ax4_) ---- */
 
 TEST_LIST = {
@@ -17025,4 +17065,5 @@ TEST_LIST = {
     {"test_x86_apx_evex", test_x86_apx_evex},
     {"test_x86_ax4_decode", test_x86_ax4_decode},
     {"test_x86_ax4_gating", test_x86_ax4_gating},
+    {"test_x86_ax4_jmpabs", test_x86_ax4_jmpabs},
     {NULL, NULL}};
