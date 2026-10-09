@@ -402,6 +402,7 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
     uint64_t rsvd_mask = PG_HI_RSVD_MASK;
     uint32_t page_offset;
     target_ulong vaddr;
+    uint32_t pkr;   /* backport e7e7bdabab (U479) */
 #if __Use_Original_Qemu != 1 /* ours (U117) */
     /* R/W of every paging-structure entry above the one that maps the page */
     uint64_t ss_upper_rw = PG_RW_MASK;
@@ -695,21 +696,33 @@ do_check_protect_pse36:
         prot |= PAGE_EXEC;
     }
 #endif /* __Use_Original_Qemu (U117) */
-    if ((env->cr[4] & CR4_PKE_MASK) && (env->hflags & HF_LMA_MASK) &&
-        (ptep & PG_USER_MASK) && env->pkru) {
+    /*
+     * backport e7e7bdabab (U479): protection keys for supervisor-mode pages.
+     * SDM Vol3A 5.6.2: CR4.PKE / PKRU control user-mode addresses, CR4.PKS /
+     * IA32_PKRS supervisor-mode addresses (same AD/WD format; WD of IA32_PKRS
+     * applies only if CR0.WP = 1); 4-level and 5-level paging only.
+     */
+    if (!(env->hflags & HF_LMA_MASK)) {
+        pkr = 0;
+    } else if (ptep & PG_USER_MASK) {
+        pkr = env->cr[4] & CR4_PKE_MASK ? env->pkru : 0;
+    } else {
+        pkr = env->cr[4] & CR4_PKS_MASK ? env->pkrs : 0;
+    }
+    if (pkr) {
         uint32_t pk = (pte & PG_PKRU_MASK) >> PG_PKRU_BIT;
-        uint32_t pkru_ad = (env->pkru >> pk * 2) & 1;
-        uint32_t pkru_wd = (env->pkru >> pk * 2) & 2;
-        uint32_t pkru_prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
+        uint32_t pkr_ad = (pkr >> pk * 2) & 1;
+        uint32_t pkr_wd = (pkr >> pk * 2) & 2;
+        uint32_t pkr_prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
 
-        if (pkru_ad) {
-            pkru_prot &= ~(PAGE_READ | PAGE_WRITE);
-        } else if (pkru_wd && (is_user || env->cr[0] & CR0_WP_MASK)) {
-            pkru_prot &= ~PAGE_WRITE;
+        if (pkr_ad) {
+            pkr_prot &= ~(PAGE_READ | PAGE_WRITE);
+        } else if (pkr_wd && (is_user || env->cr[0] & CR0_WP_MASK)) {
+            pkr_prot &= ~PAGE_WRITE;
         }
 
-        prot &= pkru_prot;
-        if ((pkru_prot & (1 << is_write1)) == 0) {
+        prot &= pkr_prot;
+        if ((pkr_prot & (1 << is_write1)) == 0) {
             assert(is_write1 != 2);
             error_code |= PG_ERROR_PK_MASK;
             goto do_fault_protect;

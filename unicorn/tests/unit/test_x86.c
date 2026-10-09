@@ -13218,6 +13218,132 @@ static void test_x86_bp_iret_null_seg_keeps_base(void)
              nk_reg(uc, UC_X86_REG_FS_BASE));
     OK(uc_close(uc));
 }
+
+/* runs 'code' from slot 'slot' (64 bytes each) of the code region; intno or -1 */
+static int tb2_exec(uc_engine *uc, nk_intr_t *intr, int slot, const char *code, size_t len)
+{
+    uint64_t pc = code_start + 0x400 + (uint64_t)slot * 0x40;
+    uc_err err;
+
+    TEST_CHECK(len <= 0x40 && pc + 0x40 <= code_start + code_len);
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_mem_write(uc, pc, code, len));
+    err = uc_emu_start(uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return intr->count ? (int)intr->intno : -1;
+}
+
+/*
+ * 4-level paging over tb2_sys_open's layout (tables at TB2_PT, physical = linear):
+ *   code pages (code_start .. +code_len): user, R/W
+ *   TB2_SYS pages: GDT and CPL0 stack supervisor R/W, CPL3 stack user R/W,
+ *   the data page TB2_DATA with 'data_flags' (P/RW/US/PK... bits of the PTE).
+ */
+#define TB2_PT 0x400000ULL
+
+static void tb2_st64(uc_engine *uc, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(uc, a, &v, 8));
+}
+
+static void tb2_set_data_pte(uc_engine *uc, uint64_t data_flags)
+{
+    tb2_st64(uc, TB2_PT + 0x5000 + ((TB2_DATA - TB2_SYS) >> 12) * 8, TB2_DATA | data_flags);
+}
+
+static void tb2_paging(uc_engine *uc, uint64_t data_flags)
+{
+    uc_x86_msr efer = {0xc0000080, 0};
+    uint64_t a, cr0, cr4;
+
+    OK(uc_mem_map(uc, TB2_PT, 0x6000, UC_PROT_ALL));
+    tb2_st64(uc, TB2_PT + 0x0000, (TB2_PT + 0x1000) | 7);           /* PML4[0] */
+    tb2_st64(uc, TB2_PT + 0x1000, (TB2_PT + 0x2000) | 7);           /* PDPT[0]: 0-1 GB */
+    tb2_st64(uc, TB2_PT + 0x1008, (TB2_PT + 0x3000) | 7);           /* PDPT[1]: 1-2 GB */
+    tb2_st64(uc, TB2_PT + 0x2000, (TB2_PT + 0x4000) | 7);           /* PD0[0]: 0-2 MB */
+    tb2_st64(uc, TB2_PT + 0x3000 + ((TB2_SYS - 0x40000000ULL) >> 21) * 8,
+             (TB2_PT + 0x5000) | 7);                                  /* PD1: TB2_SYS */
+    for (a = code_start; a < code_start + code_len; a += 0x1000) {
+        tb2_st64(uc, TB2_PT + 0x4000 + (a >> 12) * 8, a | 7);
+    }
+    for (a = TB2_SYS; a < TB2_SYS + TB2_SYS_SIZE; a += 0x1000) {
+        tb2_st64(uc, TB2_PT + 0x5000 + ((a - TB2_SYS) >> 12) * 8,
+                 a | (a >= TB2_SYS + 0x9000 ? 7 : 3));
+    }
+    tb2_set_data_pte(uc, data_flags);
+    a = TB2_PT;
+    OK(uc_reg_write(uc, UC_X86_REG_CR3, &a));
+    OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1u << 5;                                                   /* PAE */
+    OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 8;                                            /* LME */
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &efer));
+    OK(uc_reg_read(uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x80010000ull;                                             /* PG, WP */
+    OK(uc_reg_write(uc, UC_X86_REG_CR0, &cr0));
+}
+
+static void tb2_wrmsr(uc_engine *uc, uint32_t idx, uint64_t v)
+{
+    uc_x86_msr msr = {idx, v};
+
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
+}
+
+/*
+ * U479 (backport e7e7bdabab): PKS. SDM Vol3A 5.6.2: with CR4.PKS = 1 the IA32_PKRS MSR (6E1H)
+ * controls data accesses to supervisor-mode addresses by protection key (PTE bits 62:59):
+ * ADi = 1 -> no data access; WDi = 1 -> no write if CR0.WP = 1. Supervisor page TB2_DATA has
+ * key 5 (PKRS bit 10 = AD5, bit 11 = WD5).
+ */
+static void test_x86_bp_pks(void)
+{
+    /* mov rax, [TB2_DATA] / mov [TB2_DATA], rax (absolute disp32) */
+    static const char rd[] = "\x48\x8b\x04\x25\x00\x40\x00\x60";
+    static const char wr[] = "\x48\x89\x04\x25\x00\x40\x00\x60";
+    const uint64_t key5 = 5ULL << 59;
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uint64_t cr4, cr0;
+    int slot = 0;
+
+    tb2_paging(uc, key5 | 3);
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 24));                  /* CR4.PKS */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR4) & (1u << 24));
+    /* AD5: read and write fault (#PF, CR2 = address) */
+    tb2_wrmsr(uc, 0x6e1, 1u << 10);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == 14);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR2) == TB2_DATA);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, wr, sizeof(wr) - 1) == 14);
+    /* AD of another key: no effect */
+    tb2_wrmsr(uc, 0x6e1, 1u << 8);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, wr, sizeof(wr) - 1) == -1);
+    /* WD5 with CR0.WP = 1: read allowed, write faults */
+    tb2_wrmsr(uc, 0x6e1, 1u << 11);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, wr, sizeof(wr) - 1) == 14);
+    /* WD5 with CR0.WP = 0: write allowed */
+    cr0 = nk_reg(uc, UC_X86_REG_CR0);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0 & ~(1ULL << 16));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, wr, sizeof(wr) - 1) == -1);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0);
+    /* CR4.PKS = 0: IA32_PKRS is ignored */
+    tb2_wrmsr(uc, 0x6e1, 1u << 10);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    /* a user page with key 5: IA32_PKRS does not apply (PKRU = 0, SMAP off) */
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 24));
+    tb2_set_data_pte(uc, key5 | 7);
+    tb2_wrmsr(uc, 0x6e1, 1u << 10);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13430,4 +13556,5 @@ TEST_LIST = {
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
     {"test_x86_bp_sgdt_sidt_base", test_x86_bp_sgdt_sidt_base},
     {"test_x86_bp_iret_null_seg_keeps_base", test_x86_bp_iret_null_seg_keeps_base},
+    {"test_x86_bp_pks", test_x86_bp_pks},
     {NULL, NULL}};
