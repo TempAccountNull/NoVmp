@@ -63,8 +63,9 @@ fucom st(1) | st0=7FFF:4000000000000000 st1=3FFF:8000000000000000
 fstp qword ptr [rsi] | st0=7FFF:4000000000000000
 fistp dword ptr [rsi] | st0=7FFF:0000000000000000
 # --- CPUID identity (Unicorn UC_CPU_X86_MAX vs this CPU)
+# (leaf 1 EBX[31:24] is the initial APIC ID of the core the thread runs on: "# host state", U539)
 xor eax, eax; xor ecx, ecx; cpuid
-mov eax, 1; xor ecx, ecx; cpuid
+mov eax, 1; xor ecx, ecx; cpuid # host state: CPUID initial APIC ID
 mov eax, 7; xor ecx, ecx; cpuid
 mov eax, 0xd; xor ecx, ecx; cpuid
 mov eax, 0xd; mov ecx, 1; cpuid
@@ -77,10 +78,10 @@ mov eax, 0x7fffffff; xor ecx, ecx; cpuid
 # --- RCPPS / RSQRTPS (approximation vs exact)
 rcpps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
 rsqrtps xmm0, xmm1 | xmm1=0000803F00004040ABAAAA3E0000C842
-# --- RDRAND / RDSEED flags and width (values differ by nature)
-rdrand eax
-rdrand ax | rax=0xFFFFFFFFFFFFFFFF
-rdseed rax
+# --- RDRAND / RDSEED flags and width (values differ by nature: "# host state", U539)
+rdrand eax # host state: RDRAND/RDSEED values
+rdrand ax | rax=0xFFFFFFFFFFFFFFFF # host state: RDRAND/RDSEED values
+rdseed rax # host state: RDRAND/RDSEED values
 # --- FDP / FOP / FCS / FDS: updated only on an unmasked exception? (CPUID.7.EBX[6], [13])
 fld1; fdiv dword ptr [rsi+0x100]; fnstenv [rsi] | fcw=0x037B
 fld1; fdiv dword ptr [rsi+0x100]; fnstenv [rsi] | fcw=0x037F
@@ -97,8 +98,8 @@ fld1; fdiv dword ptr [rsi+0x100]; fxsave [rsi] | fcw=0x037B
 fxrstor [rsi]; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
 .byte 0x48, 0x0f, 0xae, 0x0e; fnstenv [rsi+0x200] | m+0x8000=7F0300000000AA007856341200000000F0DEBC9A00000000801F0000FFFF0000
 # --- RDRAND/RDSEED: upper bits populated, CF=1 (values differ by nature; check width)
-rdrand rax; mov rbx, rax; shr rbx, 47
-rdrand eax; mov ebx, eax; shr ebx, 15
+rdrand rax; mov rbx, rax; shr rbx, 47 # host state: RDRAND/RDSEED values
+rdrand eax; mov ebx, eax; shr ebx, 15 # host state: RDRAND/RDSEED values
 # --- XSAVEC / compacted XRSTOR round trip and #GP rules
 mov eax, 7; xor edx, edx; xsavec [rsi]; xorps xmm3, xmm3; vxorps ymm4, ymm4, ymm4; fninit; xrstor [rsi] | xmm3=11111111111111111111111111111111 st0=3FFF:8000000000000000 mxcsr=0x1FC0
 mov eax, 3; xor edx, edx; xsavec [rsi]; mov byte ptr [rsi+0x210], 1; xrstor [rsi]

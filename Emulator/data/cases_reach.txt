@@ -2,7 +2,8 @@
 # Encodings from the Intel SDM Vol. 2 / ISE; run against the i5-13600K:
 #   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7 --cr0 0x33
 # (--cr0 0x33: CR0.NE = 1 as under Windows, so the pending-#MF cases fault like the CPU.) Expected: every
-# case SAME except WRUSSD/WRUSSQ (CPL0 instruction: #GP at CPL3 on the CPU, Unicorn #UD; Phase 2, D6).
+# case SAME except WRUSSD/WRUSSQ (CPL0 instruction: #GP at CPL3 on the CPU, Unicorn #UD; Phase 2, D6),
+# tagged "# host state" (U539): Windows runs with CR4.CET = 1, Unicorn with CR4.CET = 0 (SDM: #UD).
 # Only these self-generated snippets run natively. Verdicts: Emulator\data\verified_forms.tsv.
 #
 # common inputs: xmm1/xmm2/xmm3 distinct non-zero lanes, 64 bytes of operand memory at [rsi]
@@ -271,8 +272,8 @@
 .byte 0xf3, 0x48, 0x0f, 0xae, 0xe8 | rax=1
 .byte 0x0f, 0x38, 0xf6, 0x06 | rax=0x55
 .byte 0x48, 0x0f, 0x38, 0xf6, 0x06 | rax=0x55
-.byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x55
-.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x55
+.byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x55 # host state: WRUSS under host CR4.CET = 1
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x55 # host state: WRUSS under host CR4.CET = 1
 .byte 0xf3, 0x0f, 0x01, 0x2e
 .byte 0xf3, 0x0f, 0x01, 0xea
 .byte 0xf3, 0x0f, 0x01, 0xe8

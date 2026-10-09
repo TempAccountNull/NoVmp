@@ -22,11 +22,12 @@
 .byte 0x0f, 0x38, 0xf6, 0x06 | rax=0x11223344
 # WRUSS: the host gives #GP(0) - i.e. Windows runs with CR4.CET = 1 (WRUSS checks CR4.CET (#UD)
 # before CPL (#GP)); raw Unicorn runs at CPL0 with CR4.CET = 0 and gives #UD. These two lines are
-# the only known differences (harness CPL/CR4, not the emulator); test_x86_cet_shadow_stack checks
+# the only known differences (harness CPL/CR4, not the emulator; tagged "# host state", U539);
+# test_x86_cet_shadow_stack checks
 # WRUSS #GP at CPL3 with CR4.CET = 1. The other CET lines agree because IA32_U_CET/S_CET.SH_STK_EN
 # are 0 for this process (INCSSP etc. #UD, RDSSP NOP, SETSSBSY/CLRSSBSY #UD before the CPL check).
-.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788
-.byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x11223344
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 # host state: WRUSS under host CR4.CET = 1
+.byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x11223344 # host state: WRUSS under host CR4.CET = 1
 # WRSS register form: #UD
 .byte 0x0f, 0x38, 0xf6, 0xc0
 # --- CET: NOTRACK (3Eh) on a near indirect JMP is a plain jump while IBT is off

@@ -138,6 +138,12 @@ rem overflow per RC, exact overflow, denormal sources; must be 0 differing again
 rem U538: the emulator uses the SDM DPPS step order; the cases where the i5-13600K's grouping gives
 rem another outcome are tagged "# known deviation: DPPS exception step grouping" (dpps_steps.py).
 call :hw_zero cases_sse_exc
+rem U539: the Gate-1, reach, TSX/CET and fixes hardware files; every difference is tagged (known
+rem deviation, or host state: RDRAND/RDSEED values, CPUID initial APIC ID, WRUSS under host CR4.CET = 1).
+call :hw_zero hwcheck_gate1
+call :hw_zero cases_reach --cr0 0x33
+call :hw_zero cases_tsx_cet
+call :hw_zero cases_fixes
 
 echo.
 if !FAILED! NEQ 0 (
@@ -216,19 +222,19 @@ exit /b 0
 :hw_zero
 rem hardware cases never fail emu-alltest itself: require "differing: 0" in its summary (U530: cases
 rem tagged "# known deviation: NAME" (docs\quirks.md) or "# host state: REASON" are counted apart).
-rem %1 = case file name without .txt.
+rem %1 = case file name without .txt, %2 %3 = optional extra emu-alltest arguments (--cr0 0x33).
 rem ledger U435: no --strict: a CPUID profile is strict by default (features it hides #UD);
 rem the summary must say so.
 set "EXE=%TESTS%\emu-alltest.exe"
 set "NANLOG=%TESTS%\%~1.log"
 echo.
-echo [test] ===== emu-alltest --cases %~1.txt --cpuid i5-13600k --xcr0 7 ^(host CPU, must be 0 differing^)
+echo [test] ===== emu-alltest --cases %~1.txt --cpuid i5-13600k --xcr0 7 %~2 %~3 ^(host CPU, must be 0 differing^)
 if not exist "%EXE%" (
     echo [test] missing %EXE% - run build.cmd first
     set /a FAILED+=1
     exit /b 0
 )
-"%EXE%" --cases "%ROOT%Emulator\data\%~1.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --xcr0 7 > "%NANLOG%"
+"%EXE%" --cases "%ROOT%Emulator\data\%~1.txt" --cpuid "%ROOT%Emulator\data\cpuid_i5-13600k.txt" --xcr0 7 %2 %3 > "%NANLOG%"
 set "RC=!errorlevel!"
 findstr /R /B /C:"cases: [0-9]*, differing: 0, known deviations: [0-9]*, host state: [0-9]*" "%NANLOG%"
 if errorlevel 1 (

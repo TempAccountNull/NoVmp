@@ -17,7 +17,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
       - ⬜ M0 leftovers: Haswell-class models without XSAVEC still report non-zero 0DH.1 EBX (SDM: 0) — kept for an existing test, revisit; profile 0DH.1 EBX stays as captured (capture machine IA32_XSS share unknown).
       - ⬜ K leftovers / M1 notes: (1) 32-bit VEX.B leak: disas_insn_new sets rex_b from VEX.B in every mode (SDM: ignored outside 64-bit) — fix globally in the prefix parser; (2) VEX in 16-bit protected mode is not recognised (upstream: protected, non-VM86); (3) vvvv is 4 bits outside 64-bit — validate_evex must decide per operand; (4) check bits: only 16384/32768 left in the 16-bit check field → separate EVEX check field; (5) hflags: bit 31 was the last free in the high range — 2 used now; (6) AVX10.1 also enables the opmask forms (M5); (7) CD/VL need new UC_CTL_X86_AVX512 bits (M3); (8) no #AC anywhere in the fork (KMOV at CPL3 unaligned); (9) U121 comment in helper.c still says E3h/E7h "left to K".
         - ⏳ [agent, wt/strict_dpps, U435–U439] your decisions 2026-10-08: UC_CTL_X86_CPUID_STRICT on by default when a profile is installed ("Strict when profile set"); DPPS majority-rule bit 7 built experimentally and measured both ways ("test both before asking again") — results go to you before any default changes.
-        - ⬜ quirk leftovers: REP LODS 67h ECX=0 — CPU takes the SDM path in ~4% of runs (hwcheck_gate1 6↔7 flake); FDP/FCS/FDS gating on effective CPUID bits + FCS/FDS selector tracking; unmasked #IS/#D on compares treated as silent.
+        - ⬜ documented deviations (docs/quirks.md): REP LODS 67h ECX=0 — CPU takes the SDM path in ~4% of runs (hwcheck_gate1 6↔7 flake); FDP/FCS/FDS gating on effective CPUID bits + FCS/FDS selector tracking; unmasked #IS/#D on compares treated as silent.
         - ⬜ After merge: drop `no_nan_pairs()` in ref_evex_m1.py and regenerate cases_evex_m1.txt with two-NaN lanes; 3DNow! mmx_status keeps the x87 rule (not checkable on Intel); optional unit test.
       - ⬜ Unicorn plain stores to a partly unmapped range write the mapped part (only the exit is requested); EVEX masked stores now probe first, VEX/legacy stores do not.
       - ⬜ M2 engine work: scalar merge from SRC1 (E3/E10), "masked lanes take SRC1" (VPBLENDM/VBLENDMP), FMA with dest as source under masking, T2/T4/T8 and Half/Quarter/Eighth-Mem masked loads, E*NF no-fault-suppression, gathers/scatters (VSIB, k cleared per element, E12 overlap over 32 regs), narrowing stores (VPMOV*), {sae} on compares into k.
@@ -780,11 +780,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| FCOMI | legacy | - | ✅ manual C1=0 default, quirk bit 0 = hardware (U38) |  |
-| FCOMIP | legacy | - | ✅ quirk bit 0 (U38) |  |
+| FCOMI | legacy | - | ✅ SDM C1 = 0 (U531; the CPU keeps C1: docs/quirks.md) |  |
+| FCOMIP | legacy | - | ✅ SDM C1 = 0 (U531, docs/quirks.md) |  |
 | FCOMPI | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
-| FUCOMI | legacy | - | ✅ quirk bit 0 (U38) |  |
-| FUCOMIP | legacy | - | ✅ quirk bit 0 (U38) |  |
+| FUCOMI | legacy | - | ✅ SDM C1 = 0 (U531, docs/quirks.md) |  |
+| FUCOMIP | legacy | - | ✅ SDM C1 = 0 (U531, docs/quirks.md) |  |
 | FUCOMPI | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 
 </details>
@@ -1305,7 +1305,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| PTWRITE | legacy | - | ✅ U80: SDM #UD default (CPUID.14 = 0), quirk bit 3 = hardware (operand read) |  |
+| PTWRITE | legacy | - | ✅ SDM #UD (CPUID.14 = 0, U534; the CPU executes it: docs/quirks.md) |  |
 
 </details>
 
@@ -1476,7 +1476,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | CMPUNORDPS | legacy | 128 | ✅ identical to the i5-13600K (2 forms) — CMPPS imm8 predicate alias |  |
 | CMPUNORDSS | legacy | 128 | ✅ identical to the i5-13600K (2 forms) — CMPSS imm8 predicate alias |  |
 | COMISS | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
-| CVTPI2PS | legacy | 128 | ✅ m64 form: manual transition default, quirk bit 1 = hardware (U44/U50) |  |
+| CVTPI2PS | legacy | 128 | ✅ m64 form: SDM x87 transition + #MF (U532; the CPU deviates, docs/quirks.md) |  |
 | CVTPS2PI | legacy | 64/128 | ✅ identical to the i5-13600K (2 forms) |  |
 | CVTSI2SS | legacy | 128 | ✅ identical to the i5-13600K (4 forms) |  |
 | CVTSS2SI | legacy | 128 | ✅ identical to the i5-13600K (4 forms) |  |
@@ -1898,7 +1898,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | FXCH | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | FXTRACT | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | FYL2X | legacy | - | ✅ U56 microcode model, 100% bit-exact |  |
-| FYL2XP1 | legacy | - | ✅ U56 microcode model, 100% bit-exact; x < -1: manual #IA, quirk bit 2 = hardware |  |
+| FYL2XP1 | legacy | - | ✅ U56 microcode model, 100% bit-exact; x < -1: SDM #IA (U533; the CPU deviates, docs/quirks.md) |  |
 | WAIT | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 
 </details>
