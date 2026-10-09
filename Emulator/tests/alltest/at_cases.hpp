@@ -23,6 +23,7 @@
 //   zmm0..zmm31=HEX        bits 511:0, up to 128 hex digits, low byte first (fewer digits: only
 //                          the low bytes given are set; the rest keep their value)
 //   k0..k7=V               AVX-512 opmask registers (64-bit)
+//   r16..r31=V             Intel APX extended GPRs (64-bit; needs --apx, Unicorn only like k*)
 //   m+OFF=HEXBYTES         operand memory at MEM + OFF (RSI/R14 = MEM + 0x8000, RDI = MEM + 0x9000)
 //   cpl=3                  (inputs only, a case option) Unicorn runs the thunk at CPL3 like the host:
 //                          Windows x64 GDT (23h code32 DPL3 = compatibility mode, 2Bh data DPL3,
@@ -76,7 +77,13 @@
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory). --avx10 N opts in
 // to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; AVX-512 CPUID bits stay off unless
-// --avx512 is given too) for Emulator\data\cases_avx10_a.txt.
+// --avx512 is given too) for Emulator\data\cases_avx10_a.txt. --apx opts in to Intel APX
+// (UC_CTL_X86_APX = UC_X86_APX_F; reset XCR0 then has bit 19) for Emulator\data\cases_apx_core.txt:
+// the r16..r31 keys move R16-R31 like the ZMM/K state (and are checked fields of a strict case).
+// Paired hardware case (U614, APX): "<host asm> ~~ <unicorn asm> | <inputs>" runs the first
+// snippet on the host CPU and the second one on Unicorn, then compares the two results as for
+// any hardware case - e.g. a legacy instruction on the i5-13600K against its REX2 encoding
+// (".byte 0xd5, ...") on Unicorn with --apx (Emulator\data\cases_apx_core_hw.txt).
 // Tags (U530, hardware cases only), a trailing comment on the case line:
 //   # known deviation: NAME   the i5-13600K deviates from the SDM here and the emulator implements
 //                             the SDM; NAME is the docs\quirks.md entry
@@ -172,6 +179,17 @@ namespace at
 		};
 		for ( int i = 0; i < 16; i++ )
 			if ( k == reg_name( i ) ) { s.gpr[ i ] = num(); mk( &s.gpr[ i ], 8 ); return true; }
+		// U614: Intel APX R16-R31 (Unicorn-only state, like k*)
+		if ( k.size() == 3 && k[ 0 ] == 'r' && std::isdigit( ( unsigned char ) k[ 1 ] ) && std::isdigit( ( unsigned char ) k[ 2 ] ) )
+		{
+			int i = std::stoi( k.substr( 1 ) );
+			if ( i >= 16 && i <= 31 )
+			{
+				s.egpr[ i - 16 ] = num(); mk( &s.egpr[ i - 16 ], 8 );
+				if ( ext ) *ext = true;
+				return true;
+			}
+		}
 		if ( k == "rflags" ) { s.rflags = num(); mk( &s.rflags, 8 ); return true; }
 		if ( k == "mxcsr" ) { uint32_t x = uint32_t( num() ); std::memcpy( s.fx + 24, &x, 4 ); mk( s.fx + 24, 4 ); return true; }
 		if ( k == "fcw" ) { uint16_t x = uint16_t( num() ); std::memcpy( s.fx, &x, 2 ); mk( s.fx, 2 ); return true; }
@@ -285,6 +303,8 @@ namespace at
 			if ( std::memcmp( i.zmmx[ r ], o.zmmx[ r ], 64 ) ) { os << " zmm" << ( r + 16 ) << "="; hexs( o.zmmx[ r ], 64 ); }
 		for ( int r = 0; r < 8; r++ )
 			if ( i.k[ r ] != o.k[ r ] ) os << " k" << r << "=" << h( o.k[ r ] );
+		for ( int r = 0; r < 16; r++ )
+			if ( i.egpr[ r ] != o.egpr[ r ] ) os << " r" << ( r + 16 ) << "=" << h( o.egpr[ r ] );
 		// the rest of the FXSAVE header (FOP, FIP, FDP, MXCSR_MASK) as raw bytes
 		for ( int k : { 6, 8, 16, 28 } )
 		{
@@ -335,7 +355,7 @@ namespace at
 	// Never PG in cr0 (flat map).
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
-	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0;
+	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */ };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
@@ -367,6 +387,7 @@ namespace at
 		on( offsetof( state, zmmh ), sizeof( state::zmmh ) );
 		on( offsetof( state, zmmx ), sizeof( state::zmmx ) );
 		on( offsetof( state, k ), sizeof( state::k ) );
+		on( offsetof( state, egpr ), sizeof( state::egpr ) );   // U614: APX R16-R31
 		on( offsetof( state, mem ), sizeof( state::mem ) );
 	}
 
@@ -471,8 +492,23 @@ namespace at
 			else if ( opt.expect_only ) { ++skipped; continue; }
 			size_t bar = body.find( '|' );
 			std::string text = body.substr( 0, bar ), assigns = bar == std::string::npos ? "" : body.substr( bar + 1 );
-			std::string asmtext = text;
+			// U614: "<host asm> ~~ <unicorn asm>" pairs two encodings of one operation (hardware cases)
+			std::string uc_text = text;
+			size_t pair = text.find( "~~" );
+			if ( pair != std::string::npos )
+			{
+				if ( expect )
+				{
+					std::printf( "[%d] %s\n    bad case: \"~~\" pairs belong to hardware cases only\n", n, line.c_str() );
+					++exp_errors;
+					continue;
+				}
+				uc_text = text.substr( pair + 2 );
+				text = text.substr( 0, pair );
+			}
+			std::string asmtext = text, uc_asmtext = uc_text;
 			for ( char& c : asmtext ) if ( c == ';' ) c = '\n';
+			for ( char& c : uc_asmtext ) if ( c == ';' ) c = '\n';
 			auto st_in = std::make_unique<state>();
 			case_default( *st_in );
 			std::istringstream as( assigns );
@@ -490,7 +526,7 @@ namespace at
 			if ( !ok ) { exp_errors += expect; continue; }
 			if ( ext && !expect )
 			{
-				std::printf( "[%d] %s\n    unsupported register for a hardware case: zmm*/zmmh*/k*/xmm16-31/ymmh16-31 exist only in expected-value cases (\"=>\"); the host CPU has no AVX-512\n", n, line.c_str() );
+				std::printf( "[%d] %s\n    unsupported register for a hardware case: zmm*/zmmh*/k*/xmm16-31/ymmh16-31/r16-r31 exist only in expected-value cases (\"=>\"); the host CPU has no AVX-512 or APX\n", n, line.c_str() );
 				continue;
 			}
 			// expectations: the input state with the listed assignments applied
@@ -521,6 +557,15 @@ namespace at
 			if ( bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
 			program p = build( bytes, &err );
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
+			// U614: the Unicorn snippet of a "~~" pair (else the same program)
+			program p_uc = p;
+			if ( pair != std::string::npos )
+			{
+				std::vector<uint8_t> uc_bytes = assemble( uc_asmtext, CODE, &err );
+				if ( uc_bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); continue; }
+				p_uc = build( uc_bytes, &err );
+				if ( p_uc.code.empty() ) { std::printf( "[%d] %s\n    build failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); continue; }
+			}
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX );
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict;
@@ -529,9 +574,10 @@ namespace at
 			uc.avx512 = opt.avx512;
 			uc.amx = opt.amx;
 			uc.avx10 = opt.avx10;
+			uc.apx = opt.apx;
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
-			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
+			if ( !uc.load( p_uc, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
 			if ( expect )
 			{

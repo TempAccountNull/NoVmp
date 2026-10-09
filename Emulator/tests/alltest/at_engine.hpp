@@ -60,6 +60,7 @@ namespace at
 		uint8_t zmmh[ 16 ][ 32 ];   // ZMM0-15 bits 511:256
 		uint8_t zmmx[ 16 ][ 64 ];   // ZMM16-31 bits 511:0
 		uint64_t k[ 8 ];            // opmask K0-K7
+		uint64_t egpr[ 16 ];        // Intel APX R16-R31 (U614: --apx; Unicorn only, like ZMM/K)
 		uint8_t stack[ STACK_TOP - STACK_LO ];
 		uint8_t mem[ MEM_SIZE ];
 
@@ -328,6 +329,8 @@ namespace at
 			if ( amx && uc_ctl_set_x86_amx( uc_, amx ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_amx failed"; return false; }
 			// AVX10 opt-in (emu-alltest --avx10 N, UC_CTL_X86_AVX10 = N): same rule
 			if ( avx10 && uc_ctl_set_x86_avx10( uc_, avx10 ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_avx10 failed"; return false; }
+			// APX opt-in (emu-alltest --apx, UC_CTL_X86_APX = UC_X86_APX_F, U610): same rule
+			if ( apx && uc_ctl_set_x86_apx( uc_, apx ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_apx failed"; return false; }
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
@@ -498,6 +501,10 @@ namespace at
 				}
 				for ( int i = 0; i < 8; ++i )
 					if ( uc_reg_write( uc, UC_X86_REG_K0 + i, &in.k[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_write K" + std::to_string( i ) );
+				// APX R16-R31 (--apx only: without APX the registers do not exist, UC_ERR_ARG)
+				if ( self->apx )
+					for ( int i = 0; i < 16; ++i )
+						if ( uc_reg_write( uc, UC_X86_REG_R16 + i, &in.egpr[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_write R" + std::to_string( 16 + i ) );
 			}
 			if ( addr == self->prog_->epilogue_at && !self->ext_out_done_ )
 			{
@@ -512,6 +519,9 @@ namespace at
 				}
 				for ( int i = 0; i < 8; ++i )
 					if ( uc_reg_read( uc, UC_X86_REG_K0 + i, &out.k[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_read K" + std::to_string( i ) );
+				if ( self->apx )
+					for ( int i = 0; i < 16; ++i )
+						if ( uc_reg_read( uc, UC_X86_REG_R16 + i, &out.egpr[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_read R" + std::to_string( 16 + i ) );
 			}
 		}
 		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
@@ -526,7 +536,8 @@ namespace at
 		int avx512 = 0;          // UC_CTL_X86_AVX512 mask (0 = off, the default)
 		int amx = 0;             // UC_CTL_X86_AMX mask (0 = off, the default)
 		int avx10 = 0;           // UC_CTL_X86_AVX10 version (0 = off, the default)
-		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) through code hooks
+		int apx = 0;             // UC_CTL_X86_APX (0 = off, the default; UC_X86_APX_F = --apx)
+		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
 	private:
 		int model_;

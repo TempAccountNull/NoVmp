@@ -29,6 +29,8 @@
 //                    --profile N also works with a quick/--full run (whole-run profile)
 //   --avx10 N        with --cases: Unicorn opts in to Intel AVX10 version N (UC_CTL_X86_AVX10 = N,
 //                    1 or 2; the AVX512* CPUID bits stay off) for the AVX10 expected-value cases
+//   --apx            with --cases: Unicorn opts in to Intel APX (UC_CTL_X86_APX = UC_X86_APX_F, reset
+//                    XCR0 with bit 19; keys r16..r31) for the APX cases; the host has none
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -358,13 +360,14 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI | UC_X86_AVX512_BF16; /* U558 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
+		else if ( a == "--apx" ) copt.apx = UC_X86_APX_F;
 		else if ( a == "--bench" ) bench = true;
 		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
 		else if ( a == "--scale" ) bench_scale = std::stod( val() );
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only] [--shard K/N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--apx] [--expect-only] [--shard K/N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );

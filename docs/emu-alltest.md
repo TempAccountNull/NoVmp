@@ -28,6 +28,7 @@ These set **real architectural state** defined by the SDM — they are not test 
 | `--avx512` | `UC_CTL_X86_AVX512` = F\|DQ\|BW\|VL\|CD\|IFMA\|VPOPCNTDQ\|BITALG\|VBMI\|FP16 before the engine starts | AVX-512 is opt-in (off in MAX and in the i5-13600K profile, which has none). |
 | `--amx` | `UC_CTL_X86_AMX` = all AMX parts | AMX is opt-in. |
 | `--avx10 N` | `UC_CTL_X86_AVX10` = N (1 or 2) | AVX10 is opt-in; the AVX512* CPUID bits stay off unless `--avx512` is given too. |
+| `--apx` | `UC_CTL_X86_APX` = `UC_X86_APX_F` (ledger U610) | Intel APX is opt-in (the i5-13600K has none): CPUID.(7,1):EDX.APX_F, leaf 29H, XSAVE component 19 (R16-R31), REX2. The case keys `r16`..`r31` move R16-R31 like the ZMM/K state (Unicorn only). |
 | `cpl=3` (a case's input token, ledger U452) | Unicorn runs that case at CPL3: a Windows x64 GDT (10h code64 / 18h data DPL0, 23h code32 DPL3 = compatibility mode, 2Bh data DPL3, 33h code64 DPL3) on a separate page (`SYS_PAGE`, never compared), entered by IRETQ from a CPL0 stub with CS = 33h, SS = 2Bh, RFLAGS = 202h; IA32_EFER.SCE = 1 | The host always runs the snippets at CPL3 under Windows; without `cpl=3` Unicorn runs at CPL0 with no GDT, so privilege-dependent results (RDPMC, IRET, MOV DR, STI, SYSRET, LSS/MOV SS selectors) cannot be compared. A snippet may switch to compatibility mode (far transfer to 23h) and back to 33h; a fault taken in compatibility mode resumes at the 64-bit epilogue in both engines (native: the VEH sets the context's CS to 33h; Unicorn: a 32-bit gate `push 33h; push epilogue; retf`). |
 
 ### Automatic machine state (U540, plan 1.H.2)
@@ -65,6 +66,10 @@ test.cmd [--release | --debug] [-j N | --jobs N | --serial] [-v | --verbose] [li
 ## Quirks
 
 `--quirks` and the UC_CTL_X86_HW_QUIRKS control are being removed (plan 1.G, pure SDM). Hardware cases where the i5-13600K deviates from the SDM are tagged `# known deviation: <name>` (documented in `docs\quirks.md`); host-state differences (RDRAND values, APIC ID, …) are tagged `# host state: <reason>`. Both are counted separately so every file reports 0 unexplained differences.
+
+## Paired hardware cases (U614)
+
+A hardware case `<host asm> ~~ <unicorn asm> | <inputs>` runs the first snippet on the host CPU and the second on Unicorn and compares the two results like any hardware case. `Emulator\data\cases_apx_core_hw.txt` uses it to run each instruction's legacy encoding on the i5-13600K against its REX2 encoding on Unicorn (`--apx`, no CPUID profile, which would hide APX); test.cmd's `:hw_apx` requires `differing: 0`.
 
 ## Output
 
