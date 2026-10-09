@@ -16719,6 +16719,15 @@ static void test_x86_ax4_decode(void)
     TEST_CHECK(apx_run(&c, "\x62\xf4\xfe\x08\x01\xd8", 6) == 6);
     TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x08\x89\xd8", 6) == 6);
     TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x08\x05\xd8", 6) == 6);
+    /* U641 CCMPscc: ccmpf {dfv=of,cf} rax, rbx -> OF CF PF set, SF ZF AF clear; ccmpt = cmp */
+    apx_set(&c, UC_X86_REG_EFLAGS, 0x2d6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xcc\x0b\x39\xd8", 6) == -1);
+    TEST_CHECK((apx_get(&c, UC_X86_REG_EFLAGS) & 0x8d5) == 0x805);
+    apx_set(&c, UC_X86_REG_RAX, 3);
+    apx_set(&c, UC_X86_REG_RBX, 3);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xcc\x0a\x39\xd8", 6) == -1);
+    TEST_CHECK((apx_get(&c, UC_X86_REG_EFLAGS) & 0x8d5) == 0x44);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xcc\x1a\x39\xd8", 6) == 6);   /* ND = 1 */
     OK(uc_close(c.uc));
 }
 

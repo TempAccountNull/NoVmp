@@ -556,6 +556,94 @@ def m4_setcc(cc, op, zu=0, w=0):
 # --------------------------------------------------------------------------------------------
 # case text helpers
 # --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------
+# U641: CCMPscc / CTESTscc (3.1.3.2.1, Figure 3.7/3.8/3.9, chapter 8.1/8.3)
+#   P1 = W OF SF ZF CF U p p (the default flags value DFV, not inverted), P2 = 0 0 0 ND=0 SC3..SC0
+#   SCC 1010b = T (always true), 1011b = F (always false), else the x86 condition code.
+#   SCC true: the CMP / TEST updates the flags; false: OF SF ZF CF = DFV, PF = CF, AF = 0.
+#   The memory operand is read either way (no fault suppression).
+# --------------------------------------------------------------------------------------------
+def scc_true(scc, fl):
+    if scc == 0xA:
+        return True
+    if scc == 0xB:
+        return False
+    return cond(scc, fl)
+
+
+def dfv_flags(dfv):
+    return (OF if dfv & 8 else 0) | (SF if dfv & 4 else 0) | (ZF if dfv & 2 else 0) | \
+           ((CF | PF) if dfv & 1 else 0)
+
+
+def jcc8(cc, disp):
+    return bytes([0x70 + cc, disp & 0xFF])
+
+
+def set_dfv_legacy(dfv):
+    """pushfq; and qword ptr [rsp], ~(OF SF ZF AF PF CF); or qword ptr [rsp], DFV; popfq"""
+    return PUSHFQ + b"\x48\x81\x24\x24" + struct.pack("<i", ~STATUS) + \
+        b"\x48\x81\x0c\x24" + struct.pack("<i", dfv_flags(dfv)) + POPFQ
+
+
+def m4_ccmp(kind, n, form, dst, src, imm, scc, dfv):
+    """kind 'cmp': form EG (38/39), GE (3A/3B), EI (80/81 /7), EI8 (83 /7); kind 'test': EG (84/85),
+    EI (F6/F7 /0), EI1 (F6/F7 /1)"""
+    w, pp = wpp(n)
+    if n == 8:
+        w = 0
+    lpfx = [0x66] if n == 16 else []
+    b8 = "reg,rm" if n == 8 else ""
+    if kind == "cmp":
+        if form == "EG":
+            opc, reg, rm, ib = (0x38 if n == 8 else 0x39), src.r, dst, b""
+        elif form == "GE":
+            opc, reg, rm, ib = (0x3A if n == 8 else 0x3B), dst.r, src, b""
+        elif form == "EI8":
+            opc, reg, rm, ib = 0x83, 7, dst, imm_bytes(imm, 8)
+        else:
+            opc, reg, rm, ib = (0x80 if n == 8 else 0x81), 7, dst, imm_bytes(imm, min(n, 32))
+    else:
+        if form == "EG":
+            opc, reg, rm, ib = (0x84 if n == 8 else 0x85), src.r, dst, b""
+        else:
+            opc, reg, rm, ib = (0xF6 if n == 8 else 0xF7), (1 if form == "EI1" else 0), dst, imm_bytes(imm, min(n, 32))
+    # legacy: j!scc skip; cmp/test; jmp done; skip: set DFV; done
+    body = Enc(opc, pfx=lpfx, reg=reg, rm=rm, w=w, imm=ib, b8=b8).legacy()
+    if body is None:
+        leg = None
+    else:
+        setf = set_dfv_legacy(dfv)
+        if scc == 0xA:
+            leg = body
+        elif scc == 0xB:
+            leg = setf
+        else:
+            leg = jcc8(scc ^ 1, len(body) + 2) + body + bytes([0xEB, len(setf)]) + setf
+    e = Ev(opc, reg, rm, w=w, pp=pp, imm=ib, scc=scc, dfv=dfv, leg=leg)
+
+    def operands(st):
+        a = rd_op(st, dst, n)
+        if form in ("EG", "GE"):
+            b = rd_op(st, src, n)
+        elif form == "EI8":
+            b = sx(imm, 8) & mask(n)
+        else:
+            b = (sx(imm, 32) if n == 64 else imm) & mask(n)
+        return a, b
+
+    def sem(st):
+        a, b = operands(st)          # read (and fault) whatever the SCC
+        if scc_true(scc, st.rflags):
+            _, f, _ = alu_core("cmp" if kind == "cmp" else "test", a, b, n, 0)
+            set_flags(st, f, STATUS)
+        else:
+            set_flags(st, dfv_flags(dfv), STATUS)
+    ins = Ins(e, sem)
+    ins.undef_fn = lambda st: AF if (kind == "test" and scc_true(scc, st.rflags)) else 0
+    return ins
+
+
 class MCase(Case):
     """ref_apx_core.Case with state-dependent undefined flags (Ins.undef_fn)"""
 
@@ -764,6 +852,24 @@ def gen_items(rng, egpr, hw=False):
                 st, a, b, m, used, runs = operands(8, memf)
                 op = m if memf else Reg(a)
                 yield MCase(m4_setcc(cc, op, zu, w=rng.getrandbits(1)), st, used, runs)
+    # ---- CCMPscc / CTESTscc (U641) ----
+    for kind in ("cmp", "test"):
+        for n in SIZES:
+            forms = ("EG", "GE", "EI", "EI8") if kind == "cmp" else ("EG", "EI", "EI1")
+            for form in forms:
+                if form == "EI8" and n == 8:
+                    continue
+                for memf in (False, True):
+                    for scc in rng.sample(range(16), 6) + [0xA, 0xB]:
+                        st, a, b, m, used, runs = operands(n, memf)
+                        imm = rng.getrandbits(8 if form == "EI8" else min(n, 32))
+                        if form == "GE":
+                            dst, src = Reg(a), (m if memf else Reg(b))
+                        else:
+                            dst, src = (m if memf else Reg(a)), Reg(b)
+                        if rng.random() < 0.3:
+                            st.regs[b] = st.regs[a]          # equal operands (ZF)
+                        yield MCase(m4_ccmp(kind, n, form, dst, src, imm, scc, rng.getrandbits(4)), st, used, runs)
 
 
 # --------------------------------------------------------------------------------------------
@@ -875,6 +981,27 @@ def special_lines(rng):
                      (0xBC, 0), (0xBD, 0), (0xB6, 0), (0xFA, 0), (0x07, 0), (0x3C, 0), (0xA8, 0),
                      (0x92, 0), (0xA3, 0), (0xAB, 0)):
         L.append(line_ud(Ev(opc, reg, Reg(1)).rex2() + bytes(4)))
+    c("--- CCMPscc / CTESTscc (U641): DFV in P1[6:3] (not inverted), SCC in P2[3:0], T / F ---")
+    for scc in range(16):
+        L.append(mk_line(m4_ccmp("cmp", 64, "EG", Reg(0), Reg(1), None, scc, scc ^ 0x5), {0: 5, 1: 7}, rflags=0x202 | (scc & 1) * CF | ((scc >> 1) & 1) * ZF | ((scc >> 2) & 1) * SF | ((scc >> 3) & 1) * OF))
+    L.append(mk_line(m4_ccmp("cmp", 64, "EG", Reg(16), Reg(31), None, 0xB, 0xF), {16: 5, 31: 5}))       # F: all four DFV bits, PF = CF, AF = 0
+    L.append(mk_line(m4_ccmp("cmp", 64, "EG", Reg(16), Reg(31), None, 0xB, 0x0), {16: 5, 31: 7}, rflags=0x8D7))
+    L.append(mk_line(m4_ccmp("test", 32, "EI", Mem(20, None, 1, 0), None, 0x80, 0xA, 0x3), {20: MEM_PTR}, {0x8000: bytes([0x80, 0, 0, 0])}))
+    L.append(mk_line(m4_ccmp("test", 8, "EG", Reg(6), Reg(7), None, 0x4, 0x2), {6: 0x10, 7: 0x01}, rflags=0x242))   # SIL, DIL
+    # SCC false still reads the memory operand: #PF on an unmapped address
+    L.append("%s | rbx=0x10 => #PF" % dotbyte(Ev(0x39, 0, Mem(3, None, 1, 0), w=1, scc=0xB, dfv=0).rex2()))
+    c("--- CCMP / CTEST #UD: P2 bits 7..4 (incl. ND), mod = 11b with U = 0, pp ---")
+    for bit in (0x80, 0x40, 0x20, 0x10):
+        L.append(line_ud(Ev(0x39, 1, Reg(0), w=1, scc=2, dfv=0, p2or=bit).rex2()))
+    L.append(line_ud(Ev(0x39, 1, Reg(0), w=1, scc=2, dfv=0, ubit=0).rex2()))
+    L.append(line_ud(Ev(0x38, 1, Reg(0), pp=1, scc=2, dfv=0).rex2()))
+    L.append(line_ud(Ev(0x39, 1, Reg(0), pp=2, scc=2, dfv=0).rex2()))
+    L.append(line_ud(Ev(0x85, 1, Reg(0), pp=3, scc=2, dfv=0).rex2()))
+    L.append(line_ud(Ev(0xF6, 0, Reg(0), pp=1, scc=2, dfv=0, imm=b"\x01").rex2()))
+    L.append(line_ud(Ev(0x3C, 0, Reg(0), scc=2, dfv=0).rex2() + b"\x01"))          # CMP AL, ib: not promoted
+    L.append(line_ud(Ev(0xA9, 0, Reg(0), scc=2, dfv=0).rex2() + bytes(4)))         # TEST eAX, iz: not promoted
+    # V-bits other than DFV are not checked, NF bit is SC2: a CCMP with SC2 = 1 (SCC = 4, Z)
+    L.append(mk_line(m4_ccmp("cmp", 32, "EG", Reg(0), Reg(1), None, 0x4, 0xF), {0: 1, 1: 1}, rflags=0x202))
     c("--- XCR0[19] = 0 (XSETBV 7 first): every map 4 instruction #UD (Table 3.8) ---")
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x01, 1, Reg(0), w=1).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x44, 0, Reg(0), pp=3).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
