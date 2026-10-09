@@ -979,7 +979,7 @@ def xed_view(xidx, mn, mp, pp, opc, digit, vl, W):
 
 
 # ====================================================================================== disp8*N
-def disp8_n(tup, vl, W, bcst, memsize):
+def disp8_n(tup, vl, W, bcst, memsize, vsib=False):
     """SDM Vol.2A Tables 2-36 / 2-37 (and the AVX512-FP16 'Quarter' tuple). -> (N for b=0 or None, N for b=1 or None,
     error string or '')."""
     v = VLB.get(vl, 16)
@@ -1004,6 +1004,11 @@ def disp8_n(tup, vl, W, bcst, memsize):
         # The memory operand (one element) gives the input size directly; compress/expand/gather/scatter
         # (element-granular full-vector or VSIB memory) take the element size from W.
         wsz = 4 if W == "W0" else (8 if W == "W1" else None)
+        if vsib and wsz:
+            # gather/scatter/prefetch (U867): memsize is the VSIB index size; one data element is
+            # accessed, its size given by EVEX.W ("the same disp8*N and alignment rules as for scalar
+            # instructions (Tuple 1)", SDM Vol2C VPGATHERDQ/VPSCATTERDQ...)
+            return wsz, None, ""
         if memsize and memsize <= 8:
             return memsize, None, ""
         if wsz:
@@ -1369,14 +1374,19 @@ def main():
     # ------------------------------------------------------------------ 6. fold per-VL records into forms
     allrecs = intel + aj_only + xed_only
     for r in allrecs:
-        n0, nb, err = disp8_n(r["tuple"], r["vl"], r["W"], r["bcst"], r["memsize"])
+        n0, nb, err = disp8_n(r["tuple"], r["vl"], r["W"], r["bcst"], r["memsize"], r["vsib"])
         r["n0"], r["nb"], r["nerr"] = n0, nb, err
         # cross-check: N (b=0) must equal the size of the memory operand, except for element-granular T1S forms
         # (compress/expand: full-vector memory, N = element) and VSIB (memsize there is the index size)
         if r["tuple"] not in ("N/A", "?", "Mem128", "MOVDDUP", "T1_4X") and r["memsize"] and n0 and r["mod"] != "reg" \
                 and n0 != r["memsize"] and not r["vsib"] and not (r["tuple"] == "Tuple1Scalar" and r["memsize"] > 8):
             r["nerr"] = (err + "; " if err else "") + f"N={n0} but the memory operand is {r['memsize']} bytes"
-        if r["tuple"] == "Tuple1Scalar" and r["memsize"] and r["memsize"] <= 8 and r["W"] in ("W0", "W1") \
+        if r["tuple"] == "Tuple1Scalar" and r["vsib"] and r["W"] in ("W0", "W1") and r["memsize"] in (4, 8) \
+                and r["memsize"] != (4 if r["W"] == "W0" else 8):
+            # U867: VSIB rows whose index size differs from the data element (DQ/QD, DPD/QPS)
+            r["notes"].append(f"VSIB: {r['memsize'] * 8}-bit indices; T1S N = the data element size "
+                              f"from EVEX.{r['W']} (Vol2C: same disp8*N as scalar Tuple 1): N={n0}")
+        elif r["tuple"] == "Tuple1Scalar" and r["memsize"] and r["memsize"] <= 8 and r["W"] in ("W0", "W1") \
                 and r["memsize"] in (4, 8) and r["memsize"] != (4 if r["W"] == "W0" else 8):
             r["notes"].append(f"T1S input size {r['memsize'] * 8} bit although EVEX.{r['W']} (W selects the GPR, "
                               f"not the memory element): N={r['memsize']}")
