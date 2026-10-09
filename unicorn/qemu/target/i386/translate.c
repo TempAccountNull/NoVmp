@@ -262,6 +262,9 @@ typedef struct DisasContext {
 #if __Use_Original_Qemu != 1 /* ours (U803) */
     int cpuid_7_1_ecx_features;     /* CPUID.(07H,1):ECX: MSR_IMM */
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    int cpuid_7_1_ebx_features;     /* CPUID.(07H,1):EBX: PBNDKB */
+#endif /* __Use_Original_Qemu (U807) */
     int cpuid_xsave_features;
 #if __Use_Original_Qemu != 1 /* ours (U720) */
     int cpuid_1e_1_eax_features; /* CPUID.(1EH,1):EAX: AMX_FP8 / AMX_AVX512 / AMX_MOVRS */
@@ -9208,6 +9211,24 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
             break;
 #endif /* __Use_Original_Qemu (U801) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+        /*
+         * NoVmp (ledger U807): NP 0F 01 C7 PBNDKB (SDM Vol2B; XED pbndkb-isa: no_refining_prefix,
+         * mode64): #UD without CPUID.(07H,1):EBX.PBNDKB[1], at CPL > 0, outside 64-bit mode, with
+         * LOCK or 66/F2/F3. helper_pbndkb sets RAX and the flags (ZF = failure, CF/PF/AF/OF/SF
+         * cleared).
+         */
+        case 0xc7: /* pbndkb */
+            if (!(s->cpuid_7_1_ebx_features & CPUID_7_1_EBX_PBNDKB) || CPL(s) != 0 || !CODE64(s)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_pbndkb(tcg_ctx, cpu_env);
+            set_cc_op(s, CC_OP_EFLAGS);
+            break;
+#endif /* __Use_Original_Qemu (U807) */
         case 0xee: /* rdpkru */
             if (s->prefix & (PREFIX_LOCK | PREFIX_DATA
                              | PREFIX_REPZ | PREFIX_REPNZ)) {
@@ -10474,6 +10495,10 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cpuid_7_1_ecx_features = env->features[FEAT_7_1_ECX] &
                                  x86_cpuid_profile_mask(env, 7, 1, 2);
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    dc->cpuid_7_1_ebx_features = env->features[FEAT_7_1_EBX] &
+                                 x86_cpuid_profile_mask(env, 7, 1, 1);
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U100) */
     dc->cpuid_19_ebx_features &= x86_cpuid_profile_mask(env, 0x19, 0, 1);
 #endif /* __Use_Original_Qemu (U100) */

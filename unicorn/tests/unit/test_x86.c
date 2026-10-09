@@ -1147,7 +1147,8 @@ static void test_x86_vnni_ifma_ne_cpuid(void)
     TEST_CHECK((edx & (1U << 4)) != 0);
     TEST_CHECK((edx & (1U << 5)) != 0);
     TEST_CHECK((edx & (1U << 10)) != 0);
-    TEST_CHECK(ebx == 0);
+    /* EBX: only bit 1, PBNDKB (U807; was 0) */
+    TEST_CHECK(ebx == (1U << 1));
 }
 
 /* Run one vector on 'model'; returns the uc_emu_start result, ymm0 in 'out'. */
@@ -22421,6 +22422,183 @@ static void test_x86_si_invpcid(void)
     TEST_CHECK(si_run(&c, SI_INVPCID_RAX_RBX, 5) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U807: PBNDKB (NP 0F 01 C7): CPUID.(7,1):EBX[1], IA32_TSE_CAPABILITY (9F1H: 0, read-only); the
+ * output bind structure checked field by field, and its MAC / ciphertext recomputed with an
+ * independent implementation, Windows CNG (BCrypt HMAC-SHA256 and AES-256-GCM), from the
+ * model's platform key (32 zero bytes), the input structure and the IV PBNDKB wrote; #GP(0)
+ * checks; #UD at CPL3 (nv_ helpers are not needed: CPL is checked at translation), with a
+ * prefix, outside 64-bit mode and when a strict profile hides PBNDKB.
+ */
+#ifdef _WIN32
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
+
+/* HMAC-SHA256(key, msg) and AES-256-GCM(key2, iv, aad, pt) -> ct, tag with Windows CNG */
+static int si_cng_bind(const uint8_t key[32], const uint8_t *msg, ULONG nmsg, const uint8_t iv[12],
+                       const uint8_t *aad, ULONG naad, const uint8_t *pt, ULONG npt,
+                       uint8_t *ct, uint8_t tag[16])
+{
+    BCRYPT_ALG_HANDLE hh = NULL, ha = NULL;
+    BCRYPT_KEY_HANDLE hk = NULL;
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO info;
+    uint8_t wkey[32], nonce[12], ad[176];
+    ULONG cb = 0;
+    int ok = 0;
+
+    memcpy(nonce, iv, 12);
+    memcpy(ad, aad, naad);
+    if (BCryptOpenAlgorithmProvider(&hh, BCRYPT_SHA256_ALGORITHM, NULL,
+                                    BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0 ||
+        BCryptHash(hh, (PUCHAR)key, 32, (PUCHAR)msg, nmsg, wkey, 32) != 0 ||
+        BCryptOpenAlgorithmProvider(&ha, BCRYPT_AES_ALGORITHM, NULL, 0) != 0 ||
+        BCryptSetProperty(ha, BCRYPT_CHAINING_MODE, (PUCHAR)BCRYPT_CHAIN_MODE_GCM,
+                          sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != 0 ||
+        BCryptGenerateSymmetricKey(ha, &hk, NULL, 0, wkey, 32, 0) != 0) {
+        goto done;
+    }
+    BCRYPT_INIT_AUTH_MODE_INFO(info);
+    info.pbNonce = nonce;
+    info.cbNonce = 12;
+    info.pbAuthData = ad;
+    info.cbAuthData = naad;
+    info.pbTag = tag;
+    info.cbTag = 16;
+    ok = BCryptEncrypt(hk, (PUCHAR)pt, npt, &info, NULL, 0, ct, npt, &cb, 0) == 0 && cb == npt;
+done:
+    if (hk) {
+        BCryptDestroyKey(hk);
+    }
+    if (ha) {
+        BCryptCloseAlgorithmProvider(ha, 0);
+    }
+    if (hh) {
+        BCryptCloseAlgorithmProvider(hh, 0);
+    }
+    return ok;
+}
+#endif
+
+#define SI_PBNDKB "\x0f\x01\xc7"
+
+static void test_x86_si_pbndkb(void)
+{
+    static const uc_x86_cpuid no_pbndkb[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    static const uint8_t zero_key[32];
+    const uint64_t in = SI_DATA + 0x1000, out = SI_DATA + 0x1100;
+    uint8_t s[256], o[256], aad[176], ct[64], tag[16], pt[64];
+    uint32_t r[4];
+    uint64_t fl;
+    int i, kg;
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[1] & (1u << 1));
+    TEST_CHECK(si_rdmsr(&c, 0x9f1) == 0);
+    si_set(&c, UC_X86_REG_RCX, 0x9f1);
+    si_set(&c, UC_X86_REG_RAX, 0);
+    si_set(&c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(si_run(&c, "\x0f\x30", 2) == 13);               /* IA32_TSE_CAPABILITY is R/O */
+    for (kg = 0; kg < 2; kg++) {
+        for (i = 0; i < 256; i++) {
+            s[i] = (uint8_t)(i * 7 + 3);
+        }
+        memset(s + 16, 0, 8);
+        memset(s + 36, 0, 28);
+        s[160] = (uint8_t)kg;
+        memset(s + 161, 0, 95);
+        OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+        memset(o, 0xee, sizeof(o));
+        OK(uc_mem_write(c.uc, out, o, sizeof(o)));
+        si_set(&c, UC_X86_REG_RBX, in);
+        si_set(&c, UC_X86_REG_RCX, out);
+        si_set(&c, UC_X86_REG_RAX, 0x1234);
+        si_set(&c, UC_X86_REG_EFLAGS, 0x8d7);                    /* OF SF ZF AF PF CF */
+        TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == -1);
+        fl = si_get(&c, UC_X86_REG_EFLAGS);
+        TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0 && (fl & 0x8d5) == 0);
+        OK(uc_mem_read(c.uc, out, o, sizeof(o)));
+        for (i = 16; i < 24; i++) {
+            TEST_CHECK(o[i] == 0);
+        }
+        for (i = 36; i < 64; i++) {
+            TEST_CHECK(o[i] == 0);
+        }
+        for (i = 128; i < 160; i++) {
+            TEST_CHECK(o[i] == 0);                                  /* challenge zeroed */
+        }
+        TEST_CHECK(o[160] == kg);
+        for (i = 161; i < 256; i++) {
+            TEST_CHECK(o[i] == 0);
+        }
+        OK(uc_mem_read(c.uc, in, pt, 1));
+        TEST_CHECK(pt[0] == s[0]);                                  /* input not modified */
+#ifdef _WIN32
+        /* AAD = 8 zero bytes || IV (output bytes 35:24) || 28 zero bytes || input BTDATA */
+        memset(aad, 0, sizeof(aad));
+        memcpy(aad + 8, o + 24, 12);
+        memcpy(aad + 48, s + 128, 128);
+        TEST_CHECK(si_cng_bind(zero_key, s + 128, 32, o + 24, aad, 176, s + 64, 64, ct, tag));
+        if (kg == 0) {
+            TEST_CHECK(memcmp(tag, o, 16) == 0);
+            TEST_CHECK(memcmp(ct, o + 64, 64) == 0);
+        } else {
+            /* randomized keys: the plaintext was s + 64 XOR random; GCM is CTR mode, so
+               o[64..] XOR ct = that random value, and the MAC still checks against the
+               ciphertext PBNDKB stored: recompute with the recovered plaintext */
+            for (i = 0; i < 64; i++) {
+                pt[i] = (uint8_t)(s[64 + i] ^ o[64 + i] ^ ct[i]);
+            }
+            TEST_CHECK(si_cng_bind(zero_key, s + 128, 32, o + 24, aad, 176, pt, 64, ct, tag));
+            TEST_CHECK(memcmp(ct, o + 64, 64) == 0 && memcmp(tag, o, 16) == 0);
+        }
+#endif
+    }
+    /* #GP(0): RBX = RCX, misaligned, non-canonical, reserved bytes, KEY_GENERATION_CTRL > 1 */
+    si_set(&c, UC_X86_REG_RCX, in);
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    si_set(&c, UC_X86_REG_RCX, out + 8);
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    si_set(&c, UC_X86_REG_RCX, 0x0000800000000000ull);
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    si_set(&c, UC_X86_REG_RCX, out);
+    s[160] = 2;
+    OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    s[160] = 0;
+    s[200] = 1;
+    OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    s[200] = 0;
+    s[20] = 1;
+    OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 13);
+    /* prefixes #UD */
+    s[20] = 0;
+    OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+    TEST_CHECK(si_run(&c, "\x66\x0f\x01\xc7", 4) == 6);
+    TEST_CHECK(si_run(&c, "\xf3\x0f\x01\xc7", 4) == 6);
+    TEST_CHECK(si_run(&c, "\xf0\x0f\x01\xc7", 4) == 6);
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == -1);
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode #UD; a strict profile hiding PBNDKB #UD */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 6);
+    OK(uc_close(c.uc));
+    si_open(&c, 0, 0, 0, no_pbndkb, 1);
+    TEST_CHECK(si_run(&c, SI_PBNDKB, 3) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22731,4 +22909,5 @@ TEST_LIST = {
     {"test_x86_si_hreset", test_x86_si_hreset},
     {"test_x86_si_lkgs", test_x86_si_lkgs},
     {"test_x86_si_invpcid", test_x86_si_invpcid},
+    {"test_x86_si_pbndkb", test_x86_si_pbndkb},
     {NULL, NULL}};

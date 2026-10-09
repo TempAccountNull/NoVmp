@@ -441,6 +441,9 @@ DEF_HELPER_2(lkgs, void, env, i32)
 #if __Use_Original_Qemu != 1 /* ours (U806) */
 DEF_HELPER_4(invpcid, void, env, tl, tl, tl)
 #endif /* __Use_Original_Qemu (U806) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+DEF_HELPER_1(pbndkb, void, env)
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */
 DEF_HELPER_1(clui, void, env)

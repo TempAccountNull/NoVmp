@@ -820,6 +820,14 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    case MSR_IA32_TSE_CAPABILITY:
+        /* NoVmp (ledger U807): read-only with PBNDKB: WRMSR #GP(0) (an API write is dropped) */
+        if ((env->features[FEAT_7_1_EBX] & CPUID_7_1_EBX_PBNDKB) && !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        break;
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* user-interrupt MSRs (SDM Vol3A 9.3.2), present with CPUID.(07H,0):EDX.UINTR */
     case MSR_IA32_UINTR_RR:
@@ -1213,6 +1221,16 @@ void helper_rdmsr(CPUX86State *env)
         val = env->msr_hreset_enable;
         break;
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    case MSR_IA32_TSE_CAPABILITY:
+        /*
+         * NoVmp (ledger U807): SDM Vol4 IA32_TSE_CAPABILITY (R/O, with PBNDKB): no encryption
+         * algorithm, no key source, TSE_MAX_KEYS 0 - the model has no TSE engine (PCONFIG is
+         * not reported).
+         */
+        val = 0;
+        break;
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     case MSR_IA32_UINTR_RR:
         val = env->uintr_rr;
@@ -2400,3 +2418,250 @@ void helper_invpcid(CPUX86State *env, target_ulong type, target_ulong lo, target
     }
 }
 #endif /* __Use_Original_Qemu (U806) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+#include "qemu/guest-random.h"
+
+/*
+ * NoVmp (ledger U807): PBNDKB (SDM Vol2B), 64-bit mode, CPL 0 (checked by the translator).
+ * Crypto: HMAC-SHA256 (FIPS 198-1 / 180-4) and AES-256-GCM (SP 800-38D, 96-bit IV, 128-bit tag)
+ * written here; AES itself is QEMU's crypto/aes.c (as Key Locker, U100).
+ * Not modelled (platform state Unicorn does not have): the 256-bit platform-specific key that
+ * PBNDKB derives the wrapping key from is a fixed model constant (32 zero bytes), so the bind
+ * structures are not platform-bound; the random values (key randomization, IV) come from the
+ * same source as RDRAND (qemu_guest_getrandom), whose failure is the ENTROPY_ERROR path.
+ */
+static const uint32_t pb_sha256_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+static uint32_t pb_ror(uint32_t x, int n)
+{
+    return (x >> n) | (x << (32 - n));
+}
+
+static void pb_sha256_block(uint32_t h[8], const uint8_t *p)
+{
+    uint32_t w[64], a, b, c, d, e, f, g, k, t1, t2;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        w[i] = ldl_be_p(p + 4 * i);
+    }
+    for (i = 16; i < 64; i++) {
+        uint32_t s0 = pb_ror(w[i - 15], 7) ^ pb_ror(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = pb_ror(w[i - 2], 17) ^ pb_ror(w[i - 2], 19) ^ (w[i - 2] >> 10);
+
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; f = h[5]; g = h[6]; k = h[7];
+    for (i = 0; i < 64; i++) {
+        t1 = k + (pb_ror(e, 6) ^ pb_ror(e, 11) ^ pb_ror(e, 25)) + ((e & f) ^ (~e & g)) +
+             pb_sha256_k[i] + w[i];
+        t2 = (pb_ror(a, 2) ^ pb_ror(a, 13) ^ pb_ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        k = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += k;
+}
+
+/* SHA-256 of the concatenation p1 || p2 (FIPS 180-4) */
+static void pb_sha256(const uint8_t *p1, size_t n1, const uint8_t *p2, size_t n2, uint8_t out[32])
+{
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    uint8_t blk[64];
+    size_t total = n1 + n2, used = 0, i;
+
+    for (i = 0; i < total; i++) {
+        blk[used++] = i < n1 ? p1[i] : p2[i - n1];
+        if (used == 64) {
+            pb_sha256_block(h, blk);
+            used = 0;
+        }
+    }
+    blk[used++] = 0x80;
+    if (used > 56) {
+        memset(blk + used, 0, 64 - used);
+        pb_sha256_block(h, blk);
+        used = 0;
+    }
+    memset(blk + used, 0, 56 - used);
+    stq_be_p(blk + 56, (uint64_t)total * 8);
+    pb_sha256_block(h, blk);
+    for (i = 0; i < 8; i++) {
+        stl_be_p(out + 4 * i, h[i]);
+    }
+}
+
+/* HMAC-SHA256 with a 32-byte key (FIPS 198-1: the key is padded to the 64-byte block) */
+static void pb_hmac_sha256(const uint8_t key[32], const uint8_t *msg, size_t n, uint8_t out[32])
+{
+    uint8_t pad[64], inner[32];
+    int i;
+
+    for (i = 0; i < 64; i++) {
+        pad[i] = (i < 32 ? key[i] : 0) ^ 0x36;
+    }
+    pb_sha256(pad, 64, msg, n, inner);
+    for (i = 0; i < 64; i++) {
+        pad[i] = (i < 32 ? key[i] : 0) ^ 0x5c;
+    }
+    pb_sha256(pad, 64, inner, 32, out);
+}
+
+/* GF(2^128) multiplication of SP 800-38D 6.3 (Algorithm 1); x, y big-endian 16-byte blocks */
+static void pb_gf_mul(uint8_t x[16], const uint8_t y[16])
+{
+    uint64_t zh = 0, zl = 0, vh = ldq_be_p(y), vl = ldq_be_p(y + 8);
+    int i;
+
+    for (i = 0; i < 128; i++) {
+        if ((x[i >> 3] >> (7 - (i & 7))) & 1) {
+            zh ^= vh;
+            zl ^= vl;
+        }
+        if (vl & 1) {
+            vl = (vl >> 1) | (vh << 63);
+            vh = (vh >> 1) ^ 0xe100000000000000ULL;
+        } else {
+            vl = (vl >> 1) | (vh << 63);
+            vh >>= 1;
+        }
+    }
+    stq_be_p(x, zh);
+    stq_be_p(x + 8, zl);
+}
+
+static void pb_ghash_blocks(uint8_t x[16], const uint8_t h[16], const uint8_t *p, size_t n)
+{
+    size_t i, j;
+
+    for (i = 0; i < n; i += 16) {
+        for (j = 0; j < 16 && i + j < n; j++) {
+            x[j] ^= p[i + j];
+        }
+        pb_gf_mul(x, h);
+    }
+}
+
+/* AES-256-GCM encryption, 96-bit IV, 128-bit tag (SP 800-38D 7.1) */
+static void pb_aes256_gcm(const uint8_t key[32], const uint8_t iv[12], const uint8_t *aad,
+                          size_t na, const uint8_t *pt, size_t np, uint8_t *ct, uint8_t tag[16])
+{
+    AES_KEY k;
+    uint8_t h[16] = {0}, j0[16], cb[16], ks[16], x[16] = {0}, lens[16];
+    uint32_t ctr;
+    size_t i, j;
+
+    AES_set_encrypt_key(key, 256, &k);
+    AES_encrypt(h, h, &k);
+    memcpy(j0, iv, 12);
+    stl_be_p(j0 + 12, 1);
+    memcpy(cb, j0, 16);
+    for (i = 0; i < np; i += 16) {
+        ctr = ldl_be_p(cb + 12) + 1;
+        stl_be_p(cb + 12, ctr);
+        AES_encrypt(cb, ks, &k);
+        for (j = 0; j < 16 && i + j < np; j++) {
+            ct[i + j] = pt[i + j] ^ ks[j];
+        }
+    }
+    pb_ghash_blocks(x, h, aad, na);
+    pb_ghash_blocks(x, h, ct, np);
+    stq_be_p(lens, (uint64_t)na * 8);
+    stq_be_p(lens + 8, (uint64_t)np * 8);
+    pb_ghash_blocks(x, h, lens, 16);
+    AES_encrypt(j0, ks, &k);
+    for (i = 0; i < 16; i++) {
+        tag[i] = ks[i] ^ x[i];
+    }
+}
+
+static bool pb_zero(const uint8_t *p, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (p[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool pb_canonical(CPUX86State *env, uint64_t a)
+{
+    int bits = (env->cr[4] & CR4_LA57_MASK) ? 57 : 48;
+
+    return (uint64_t)((int64_t)(a << (64 - bits)) >> (64 - bits)) == a;
+}
+
+/*
+ * PBNDKB (SDM Vol2B Operation): #GP(0) if RBX or RCX is not canonical (current paging mode),
+ * not 256-byte aligned, or RBX = RCX; the 256-byte input bind structure at RBX is read; #GP(0)
+ * if bytes 23:16 or 63:36 are not 0, KEY_GENERATION_CTRL (byte 160) > 1, or BTDATA bytes 127:33
+ * (structure bytes 255:161) are not 0. KEY_GENERATION_CTRL = 1 XORs 64 random bytes into
+ * BTENCDATA (data key, tweak key). WRAPPING_KEY = HMAC_SHA256(PLATFORM_KEY, USER_SUPP_CHALLENGE
+ * (BTDATA bytes 31:0)); a random 96-bit IV; AAD = 8 zero bytes || IV || 28 zero bytes || the
+ * input BTDATA (176 bytes); AES-256-GCM of BTENCDATA. The output structure (MAC, zero, IV,
+ * zero, ciphertext, BTDATA with USER_SUPP_CHALLENGE zeroed and bytes 127:33 zero) is stored at
+ * RCX; RAX = 0, ZF = 0. No entropy: RAX = 1 (ENTROPY_ERROR), ZF = 1, nothing stored. CF, PF,
+ * AF, OF, SF := 0 in both cases.
+ */
+void helper_pbndkb(CPUX86State *env)
+{
+    static const uint8_t platform_key[32];          /* not modelled: model constant (zeros) */
+    uintptr_t ra = GETPC();
+    uint64_t in = env->regs[R_EBX], out = env->regs[R_ECX];
+    uint8_t s[256], o[256], rnd[64], iv[12], wkey[32], aad[176], tag[16];
+    int i;
+
+    if (!pb_canonical(env, in) || !pb_canonical(env, out) || (in & 0xff) || (out & 0xff) ||
+        in == out) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    for (i = 0; i < 256; i += 8) {
+        stq_le_p(s + i, cpu_ldq_data_ra(env, in + i, ra));
+    }
+    if (!pb_zero(s + 16, 8) || !pb_zero(s + 36, 28) || s[160] > 1 || !pb_zero(s + 161, 95)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (s[160] == 1) {
+        if (qemu_guest_getrandom(rnd, sizeof(rnd)) < 0) {
+            goto entropy_error;
+        }
+        for (i = 0; i < 64; i++) {
+            s[64 + i] ^= rnd[i];         /* the copy only: the input structure is not modified */
+        }
+    }
+    pb_hmac_sha256(platform_key, s + 128, 32, wkey);
+    if (qemu_guest_getrandom(iv, sizeof(iv)) < 0) {
+        goto entropy_error;
+    }
+    memset(aad, 0, sizeof(aad));
+    memcpy(aad + 8, iv, 12);
+    memcpy(aad + 48, s + 128, 128);
+    memset(o, 0, sizeof(o));
+    pb_aes256_gcm(wkey, iv, aad, sizeof(aad), s + 64, 64, o + 64, tag);
+    memcpy(o, tag, 16);
+    memcpy(o + 24, iv, 12);
+    o[160] = s[160];
+    for (i = 0; i < 256; i += 8) {
+        cpu_stq_data_ra(env, out + i, ldq_le_p(o + i), ra);
+        msrlist_unicorn_stop(env, ra);   /* unmapped: stops like a #PF (U802) */
+    }
+    env->regs[R_EAX] = 0;
+    CC_SRC = 0;
+    return;
+
+entropy_error:
+    env->regs[R_EAX] = 1;               /* ENTROPY_ERROR */
+    CC_SRC = CC_Z;
+}
+#endif /* __Use_Original_Qemu (U807) */

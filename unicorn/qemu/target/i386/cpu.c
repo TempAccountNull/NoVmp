@@ -716,6 +716,9 @@ static CPUCacheInfo legacy_l3_cache = {
 #if __Use_Original_Qemu != 1 /* ours (U803) */
 #define TCG_7_1_ECX_FEATURES CPUID_7_1_ECX_MSR_IMM
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+#define TCG_7_1_EBX_FEATURES CPUID_7_1_EBX_PBNDKB
+#endif /* __Use_Original_Qemu (U807) */
 #define TCG_APM_FEATURES 0
 #define TCG_6_EAX_FEATURES CPUID_6_EAX_ARAT
 #if __Use_Original_Qemu == 1 /* original QEMU (U66) */
@@ -1022,6 +1025,27 @@ static FeatureWordInfo feature_word_info[FEATURE_WORDS] = {
         .tcg_features = TCG_7_1_ECX_FEATURES,
     },
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    [FEAT_7_1_EBX] = {
+        .type = CPUID_FEATURE_WORD,
+        .feat_names = {
+            NULL, "pbndkb", NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+            NULL, NULL, NULL, NULL,
+        },
+        .cpuid = {
+            .eax = 7,
+            .needs_ecx = true, .ecx = 1,
+            .reg = R_EBX,
+        },
+        .tcg_features = TCG_7_1_EBX_FEATURES,
+    },
+#endif /* __Use_Original_Qemu (U807) */
     [FEAT_8000_0007_EDX] = {
         .type = CPUID_FEATURE_WORD,
         .feat_names = {
@@ -4667,7 +4691,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             *edx = env->features[FEAT_7_0_EDX]; /* Feature flags */
         } else if (count == 1) {
             *eax = env->features[FEAT_7_1_EAX];
+#if __Use_Original_Qemu == 1 /* original QEMU (U807) */
             *ebx = 0;
+#else /* ours (U807) */
+            *ebx = env->features[FEAT_7_1_EBX];
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U803) */
             *ecx = 0;
 #else /* ours (U803) */
@@ -5536,6 +5564,11 @@ static void x86_cpu_expand_features(X86CPU *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U85) */
         x86_cpu_adjust_feat_level(cpu, FEAT_7_1_EDX);
 #endif /* __Use_Original_Qemu (U85) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+        /* the leaf-7 sub-leaf 1 words of U803 / U807 need CPUID.(07H,0):EAX >= 1 too */
+        x86_cpu_adjust_feat_level(cpu, FEAT_7_1_ECX);
+        x86_cpu_adjust_feat_level(cpu, FEAT_7_1_EBX);
+#endif /* __Use_Original_Qemu (U807) */
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0001_EDX);
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0001_ECX);
         x86_cpu_adjust_feat_level(cpu, FEAT_8000_0007_EDX);

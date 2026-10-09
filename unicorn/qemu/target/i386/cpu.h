@@ -411,6 +411,9 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U804) */
 #define MSR_IA32_HRESET_ENABLE          0x17da  /* SDM Vol4: bits CPUID.20H.0:EBX may set */
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+#define MSR_IA32_TSE_CAPABILITY         0x9f1   /* SDM Vol4: R/O, with PBNDKB */
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -677,6 +680,9 @@ typedef enum FeatureWord {
 #if __Use_Original_Qemu != 1 /* ours (U803) */
     FEAT_7_1_ECX,       /* CPUID[EAX=7,ECX=1].ECX */
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+    FEAT_7_1_EBX,       /* CPUID[EAX=7,ECX=1].EBX */
+#endif /* __Use_Original_Qemu (U807) */
     FEAT_8000_0001_EDX, /* CPUID[8000_0001].EDX */
     FEAT_8000_0001_ECX, /* CPUID[8000_0001].ECX */
     FEAT_8000_0007_EDX, /* CPUID[8000_0007].EDX */
@@ -1106,6 +1112,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* immediate forms of RDMSR / WRMSRNS (SDM Vol1 Table 21-24: CPUID.(EAX=07H,ECX=1):ECX[5]) */
 #define CPUID_7_1_ECX_MSR_IMM           (1U << 5)
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U807) */
+/* PBNDKB and IA32_TSE_CAPABILITY (SDM Vol1 Table 21-23: CPUID.(EAX=07H,ECX=1):EBX[1]) */
+#define CPUID_7_1_EBX_PBNDKB            (1U << 1)
+#endif /* __Use_Original_Qemu (U807) */
 #if __Use_Original_Qemu != 1 /* ours (U103) */
 /* URDMSR and UWRMSR */
 #define CPUID_7_1_EDX_USER_MSR          (1U << 15)

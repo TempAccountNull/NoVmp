@@ -3,7 +3,7 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
       WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803), HRESET (U804),
-      LKGS (U805), INVPCID (U806)
+      LKGS (U805), INVPCID (U806), PBNDKB (U807)
   * the same, Intel APX EVEX forms (--apx)                          -> Emulator\data\cases_sysins_apx.txt
       RDMSR / WRMSRNS imm32 EVEX map 7 (U803), INVPCID EVEX map 4 (U806)
 
@@ -52,6 +52,11 @@ System instructions, from:
     with type 0/1 and PCID != 0, type 0 with a non-canonical address; #UD LOCK, CPUID); APX spec
     6.27 / 4.1.14 (EVEX.LLZ.F3.MAP4.IGNORED F2 !(11):rrr:bbb, class APX-EVEX-INVPCID); XED
     apx-f-isa INVPCID (MOD != 3, ND = 0, NF = 0, NOEVSR).
+  * SDM Vol2B PBNDKB (NP 0F 01 C7, 64-bit mode; Operation: #UD CPUID / CPL > 0; #GP(0) RBX = RCX,
+    not 256-byte aligned, not canonical, reserved bytes 23:16 / 63:36 / BTDATA 127:33 set,
+    KEY_GENERATION_CTRL > 1; output fields; RAX := 0, ZF := 0 (ENTROPY_ERROR: RAX := 1, ZF :=
+    1), CF/PF/AF/OF/SF := 0); Vol1 Table 21-23 (CPUID.(07H,1):EBX[1]); Vol4 IA32_TSE_CAPABILITY
+    (9F1H, R/O); XED pbndkb-isa.xed.txt (no_refining_prefix, mode64).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -73,6 +78,11 @@ Modelling decisions:
      operand would #PF); the descriptor is read (low quadword first) before the type is checked
      (the SDM Operation reads both first); "canonical" for the type-0 address is relative to
      the current paging mode (4-level here).
+  i. PBNDKB: the platform key, the IV and the key randomization are not architectural (a
+     platform secret and random values), so success cases are loose: RAX, RFLAGS and the output
+     fields that do not depend on them. The faults are checked in the SDM Operation's order
+     (#UD, then the pointer #GP, the input read, the reserved-field #GP); nothing is stored before
+     the output write, and the output (256-byte aligned) never crosses a page.
   g. MSR-IMM W1 is #UD for the VEX form (SDM "W0") and for the EVEX form (the APX table prints
      "N/A"; read as the VEX form's W0, as asmjit's db does). NP / 66 F6 in map 7 is no instruction.
 
@@ -564,6 +574,38 @@ def i_invpcid(treg, disp=0, prefix=b'\x66', rexw=False, mod=1, evex_form=False, 
     return enc, f
 
 
+def i_pbndkb(prefix=b''):
+    """PBNDKB (NP 0F 01 C7), SDM Vol2B, fault part only (the success result is random: IV, and
+    the keys with KEY_GENERATION_CTRL = 1): #UD prefix / CPL > 0; #GP(0) RBX/RCX not canonical,
+    not 256-byte aligned or equal; the input read (#PF); reserved bytes / KEY_GENERATION_CTRL."""
+    def f(m):
+        if prefix:
+            raise Fault('#UD')
+        if m.cpl:
+            raise Fault('#UD')
+        rbx, rcx = m.r['rbx'], m.r['rcx']
+        if not canonical48(rbx) or not canonical48(rcx) or rbx & 0xFF or rcx & 0xFF or rbx == rcx:
+            raise Fault('#GP')
+        s = b''.join(ld64(m, rbx + i).to_bytes(8, 'little') for i in range(0, 256, 8))
+        if any(s[16:24]) or any(s[36:64]) or s[160] > 1 or any(s[161:256]):
+            raise Fault('#GP')
+        raise ValueError('PBNDKB success is not a strict case')
+    return prefix + b'\x0f\x01\xc7', f
+
+
+def pbndkb_ok_line(struct, keygen):
+    """A loose ("=>!") success case: RAX = 0, ZF and CF/PF/AF/OF/SF = 0, and the output fields
+    that do not depend on the random values: bytes 23:16 and 63:36 zero, USER_SUPP_CHALLENGE
+    zero, KEY_GENERATION_CTRL copied, BTDATA bytes 127:33 zero (output prefilled with EEh)."""
+    s = bytearray(struct)
+    s[160] = keygen
+    out = 'm+0x9010=%s m+0x9024=%s m+0x9080=%s m+0x90A0=%02X m+0x90A1=%s' % (
+        hexbytes(bytes(8)), hexbytes(bytes(28)), hexbytes(bytes(32)), keygen, hexbytes(bytes(95)))
+    return ('.byte 0x0f, 0x01, 0xc7 | rax=0x1234 rbx=0x%X rcx=0x%X rflags=0xAD7 m+0x8000=%s '
+            'm+0x9000=%s =>! rax=0x0 rflags=0x202 %s' % (MEM_PTR, MEM_DST, hexbytes(s),
+                                                         hexbytes(b'\xee' * 256), out))
+
+
 def desc(base, limit, typ, dpl, p=1, s=1, g=1, db=1):
     """A legacy segment descriptor (SDM Vol3A 3.4.5)."""
     return ((limit & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (typ << 40) | (s << 44) | (dpl << 45) |
@@ -795,6 +837,39 @@ def cases_sys():
     for pfx in (b'\xf0\x66', b'', b'\xf2', b'\xf3'):
         a(run_case([i_invpcid('rax', 0x10, prefix=pfx)], {'rax': 2, 'm+0x8010': dq(0, 0)}))
     a(run_case([i_invpcid('rax', 0)], {'rax': 2, 'rsi': MEM + 0x20000, 'cpl': 3}))
+
+    # ---- PBNDKB (U807)
+    st = bytearray((i * 13 + 5) & 0xFF for i in range(256))
+    st[16:24] = bytes(8)
+    st[36:64] = bytes(28)
+    st[160] = 0
+    st[161:256] = bytes(95)
+    a('# --- PBNDKB (NP 0F 01 C7), U807: RBX = input bind structure (MEM+8000h), RCX = output')
+    a('# (MEM+9000h). Success (loose: IV, MAC and ciphertext are random; the crypto is unit test')
+    a('# test_x86_si_pbndkb against Windows CNG): RAX = 0, ZF/CF/PF/AF/OF/SF = 0, the fixed fields')
+    for kg in (0, 1):
+        a(pbndkb_ok_line(st, kg))
+    base = {'rbx': MEM_PTR, 'rcx': MEM_DST, 'rax': 0x1234, 'm+0x8000': bytes(st)}
+    a('# #GP(0): RBX = RCX, RBX / RCX not 256-byte aligned or not canonical; reserved bytes 23:16,')
+    a('# 63:36, BTDATA 127:33 (structure 255:161) set, KEY_GENERATION_CTRL > 1; nothing changes')
+    for kw in ({'rcx': MEM_PTR}, {'rbx': MEM_PTR + 0x80}, {'rcx': MEM_DST + 8},
+               {'rbx': 0x0000800000000000}, {'rcx': 0xFFFF7FFFFFFFFF00}):
+        a(run_case([i_pbndkb()], dict(base, **kw)))
+    for off, v in ((16, 1), (23, 0x80), (36, 1), (63, 1), (160, 2), (160, 0xFF), (161, 1), (255, 1)):
+        bad = bytearray(st)
+        bad[off] = v
+        a(run_case([i_pbndkb()], dict(base, **{'m+0x8000': bytes(bad)})))
+    a('# #PF: the input structure on the unmapped page; the output there: nothing stored, RAX kept')
+    a(run_case([i_pbndkb()], dict(base, rbx=MEM + 0x10000)))
+    a('.byte 0x0f, 0x01, 0xc7 | rax=0x1234 rbx=0x%X rcx=0x%X m+0x8000=%s => #PF' % (
+        MEM_PTR, MEM + 0x10000, hexbytes(st)))
+    a('# #UD: 66 / F2 / F3 / LOCK, CPL3')
+    for pfx in (b'\x66', b'\xf2', b'\xf3', b'\xf0'):
+        a(run_case([i_pbndkb(pfx)], dict(base)))
+    a(run_case([i_pbndkb()], dict(base, cpl=3)))
+    a('# IA32_TSE_CAPABILITY (9F1H): 0 (no TSE engine), read-only (WRMSR #GP(0))')
+    a('.byte 0xb9, 0xf1, 0x09, 0x00, 0x00, 0x0f, 0x32 | rax=0x1111 rdx=0x2222 => rax=0x0 rcx=0x9F1 rdx=0x0')
+    a('.byte 0x0f, 0x30 | rcx=0x9F1 rax=0x0 rdx=0x0 => #GP')
     return lines
 
 
@@ -881,6 +956,8 @@ def cases_hw():
     a('.byte %s | rax=0x2 m+0x8010=00000000000000000000000000000000 cpl=3' % bytelist(i_invpcid('rax', 0x10)[0]))
     a('.byte %s | rax=0x9 m+0x8010=FFFFFFFFFFFFFFFF0000000000800000 cpl=3' % bytelist(i_invpcid('rax', 0x10)[0]))
     a('.byte %s | rax=0x2 cpl=3' % bytelist(i_invpcid('rax', mod=3)[0]))
+    a('# PBNDKB (U807): CPUID.(07H,1):EBX[1] = 0 on this CPU (and CPL3) -> #UD on both')
+    a('.byte 0x0f, 0x01, 0xc7 | rbx=0x%X rcx=0x%X cpl=3' % (MEM_PTR, MEM_DST))
     return lines
 
 
