@@ -13634,6 +13634,45 @@ static void test_x86_bp_vex_w_ud_before_nm(void)
     TEST_CHECK(m0_run(&m, w0, 5) == 7);
     m0_close(&m);
 }
+
+/* CPUID leaf/sub-leaf on a built-in model (no profile): eax, ebx, ecx, edx */
+static void tb2_cpuid_model(int model, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    static const char code[] = "\x0f\xa2";
+    uc_engine *uc;
+    uint64_t v;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, 2));
+    nk_setreg(uc, UC_X86_REG_RAX, leaf);
+    nk_setreg(uc, UC_X86_REG_RCX, sub);
+    OK(uc_emu_start(uc, code_start, code_start + 2, 0, 0));
+    v = nk_reg(uc, UC_X86_REG_RAX); r[0] = (uint32_t)v;
+    v = nk_reg(uc, UC_X86_REG_RBX); r[1] = (uint32_t)v;
+    v = nk_reg(uc, UC_X86_REG_RCX); r[2] = (uint32_t)v;
+    v = nk_reg(uc, UC_X86_REG_RDX); r[3] = (uint32_t)v;
+    OK(uc_close(uc));
+}
+
+/*
+ * U488 (backport a539cd2614): CPUID 80000000H EBX/ECX/EDX are reserved (0) on Intel (SDM
+ * Vol2A CPUID; i5-13600K profile: 0, 0, 0); an AMD model still returns its vendor string.
+ */
+static void test_x86_bp_cpuid_80000000(void)
+{
+    uint32_t r[4];
+
+    tb2_cpuid_model(UC_CPU_X86_MAX, 0x80000000, 0, r);
+    TEST_CHECK(r[0] >= 0x80000008 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    TEST_MSG("MAX: %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
+    tb2_cpuid_model(UC_CPU_X86_SKYLAKE_CLIENT, 0x80000000, 0, r);
+    TEST_CHECK(r[1] == 0 && r[2] == 0 && r[3] == 0);
+    tb2_cpuid_model(UC_CPU_X86_EPYC, 0x80000000, 0, r);
+    TEST_CHECK(r[1] == 0x68747541 && r[3] == 0x69746e65 && r[2] == 0x444d4163);  /* AuthenticAMD */
+    TEST_MSG("EPYC: %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13855,4 +13894,5 @@ TEST_LIST = {
     {"test_x86_bp_ud0_ud1_modrm", test_x86_bp_ud0_ud1_modrm},
     {"test_x86_bp_vex_ud_before_nm", test_x86_bp_vex_ud_before_nm},
     {"test_x86_bp_vex_w_ud_before_nm", test_x86_bp_vex_w_ud_before_nm},
+    {"test_x86_bp_cpuid_80000000", test_x86_bp_cpuid_80000000},
     {NULL, NULL}};

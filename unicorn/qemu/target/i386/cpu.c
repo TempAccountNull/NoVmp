@@ -4807,9 +4807,19 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         break;
     case 0x80000000:
         *eax = env->cpuid_xlevel;
-        *ebx = env->cpuid_vendor1;
-        *edx = env->cpuid_vendor2;
-        *ecx = env->cpuid_vendor3;
+        /*
+         * backport a539cd2614 (U488): EBX/ECX/EDX are reserved on Intel (SDM Vol2A CPUID
+         * 80000000H: "EBX Reserved. ECX Reserved. EDX Reserved."; i5-13600K: 0, 0, 0).
+         * Upstream also tests its vendor_cpuid_only_v2 machine property, which Unicorn
+         * lacks (always the new behaviour here).
+         */
+        if (IS_INTEL_CPU(env)) {
+            *ebx = *ecx = *edx = 0;
+        } else {
+            *ebx = env->cpuid_vendor1;
+            *edx = env->cpuid_vendor2;
+            *ecx = env->cpuid_vendor3;
+        }
         break;
     case 0x80000001:
         *eax = env->cpuid_version;
