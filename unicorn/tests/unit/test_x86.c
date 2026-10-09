@@ -13144,6 +13144,80 @@ static void test_x86_bp_sgdt_sidt_base(void)
         m0_close(&m);
     }
 }
+
+/*
+ * System-level setup (64-bit mode, CPL0): GDT at TB2_SYS with
+ *   0x08 64-bit code DPL0, 0x10 data DPL0, 0x18 data DPL3, 0x20 64-bit code DPL3,
+ *   0x28 32-bit code DPL3, 0x30 data DPL0 (base 0)
+ * data at TB2_SYS + 0x4000, stacks below TB2_SYS + 0x8000 (CPL0) and + 0xC000 (CPL3).
+ */
+#define TB2_SYS 0x60000000ULL
+#define TB2_SYS_SIZE 0x10000
+#define TB2_DATA (TB2_SYS + 0x4000)
+#define TB2_KSTACK (TB2_SYS + 0x8000)
+#define TB2_USTACK (TB2_SYS + 0xC000)
+
+static uc_engine *tb2_sys_open(const char *code, size_t len, nk_intr_t *intr)
+{
+    static const uint64_t gdt[7] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL,
+                                    0x00CFF2000000FFFFULL, 0x00AFFA000000FFFFULL,
+                                    0x00CFFA000000FFFFULL, 0x00CF92000000FFFFULL};
+    uc_x86_mmr gdtr = {0, TB2_SYS, sizeof(gdt) - 1, 0};
+    uc_engine *uc;
+    uc_hook h;
+    uint64_t rsp = TB2_KSTACK;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    OK(uc_mem_map(uc, TB2_SYS, TB2_SYS_SIZE, UC_PROT_ALL));
+    OK(uc_mem_write(uc, TB2_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, intr, 1, 0));
+    return uc;
+}
+
+/* IRETQ frame on the CPL0 stack: to 'rip' at CPL3 (CS 0x23, SS 0x1B, RSP TB2_USTACK) */
+static void tb2_iretq_frame(uc_engine *uc, uint64_t rip, uint64_t rflags)
+{
+    uint64_t frame[5] = {rip, 0x23, rflags, TB2_USTACK, 0x1B};
+
+    OK(uc_mem_write(uc, TB2_KSTACK, frame, sizeof(frame)));
+}
+
+/*
+ * U477 (backport c2ba0515f2): IRET to an outer level makes ES/DS/FS/GS null when their DPL is
+ * below the new CPL, but only the selector: the cached base and limit stay (SDM Vol2A IRET:
+ * "the segment register is loaded with a NULL segment selector"). FS keeps its base, so
+ * fs:[0] still reads TB2_DATA after the return to CPL3.
+ */
+static void test_x86_bp_iret_null_seg_keeps_base(void)
+{
+    /* iretq; mov rax, fs:[0] */
+    static const char code[] = "\x48\xcf\x64\x48\x8b\x04\x25\x00\x00\x00\x00";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open(code, sizeof(code) - 1, &intr);
+    uint64_t marker = 0x1122334455667788ULL;
+
+    tb2_iretq_frame(uc, code_start + 2, 0x202);
+    OK(uc_mem_write(uc, TB2_DATA, &marker, 8));
+    nk_setreg(uc, UC_X86_REG_DS, 0x10);
+    nk_setreg(uc, UC_X86_REG_FS, 0x10);
+    nk_setreg(uc, UC_X86_REG_FS_BASE, TB2_DATA);
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(intr.count == 0);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 0xffff) == 0x23);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_DS) & 0xffff) == 0);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_FS) & 0xffff) == 0);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_FS_BASE) == TB2_DATA);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == marker);
+    TEST_MSG("rax %016" PRIx64 " fs.base %016" PRIx64, nk_reg(uc, UC_X86_REG_RAX),
+             nk_reg(uc, UC_X86_REG_FS_BASE));
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13355,4 +13429,5 @@ TEST_LIST = {
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
     {"test_x86_bp_sgdt_sidt_base", test_x86_bp_sgdt_sidt_base},
+    {"test_x86_bp_iret_null_seg_keeps_base", test_x86_bp_iret_null_seg_keeps_base},
     {NULL, NULL}};

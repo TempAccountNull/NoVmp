@@ -2112,7 +2112,16 @@ static inline void validate_seg(CPUX86State *env, int seg_reg, int cpl)
     if (!(e2 & DESC_CS_MASK) || !(e2 & DESC_C_MASK)) {
         /* data or non conforming code segment */
         if (dpl < cpl) {
-            cpu_x86_load_seg_cache(env, seg_reg, 0, 0, 0, 0);
+            /*
+             * backport c2ba0515f2 (U477): only the selector becomes null; the
+             * descriptor cache keeps base and limit, P is cleared (SDM Vol2A
+             * IRET / RET far: "the segment register is loaded with a NULL
+             * segment selector")
+             */
+            cpu_x86_load_seg_cache(env, seg_reg, 0,
+                                   env->segs[seg_reg].base,
+                                   env->segs[seg_reg].limit,
+                                   env->segs[seg_reg].flags & ~DESC_P_MASK);
         }
     }
 }
