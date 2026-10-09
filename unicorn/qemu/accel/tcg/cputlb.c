@@ -727,6 +727,7 @@ void tlb_reset_dirty_by_vaddr(CPUState *cpu, target_ulong start1, target_ulong l
     int mmu_idx;
 
     env = cpu->env_ptr;
+#if __Use_Original_Qemu == 1 /* original QEMU (U504) */
     for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
         unsigned int i;
         unsigned int n = tlb_n_entries(&env_tlb(env)->f[mmu_idx]);
@@ -741,6 +742,42 @@ void tlb_reset_dirty_by_vaddr(CPUState *cpu, target_ulong start1, target_ulong l
                                                   start1, length);
         }
     }
+#else /* ours (U504) */
+    /*
+     * Unicorn calls this for every TB it generates (tb_gen_code), with the
+     * TB's page and length (at most two pages). The main TLB is direct mapped:
+     * an entry for virtual page P can only sit at tlb_index(P), so visit those
+     * entries (and the victim TLB) instead of every entry of every MMU index.
+     * The per-entry test is unchanged, so exactly the same entries are marked.
+     */
+    if (length == 0) {
+        return;
+    }
+    for (mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
+        unsigned int i;
+        unsigned int n = tlb_n_entries(&env_tlb(env)->f[mmu_idx]);
+        target_ulong page = start1 & TARGET_PAGE_MASK;
+        target_ulong npages = (((start1 & ~TARGET_PAGE_MASK) + length - 1)
+                               >> TARGET_PAGE_BITS) + 1;
+
+        if (npages >= n) {
+            for (i = 0; i < n; i++) {
+                tlb_reset_dirty_range_by_vaddr_locked(uc, &env_tlb(env)->f[mmu_idx].table[i],
+                                                      start1, length);
+            }
+        } else {
+            for (; npages; npages--, page += TARGET_PAGE_SIZE) {
+                tlb_reset_dirty_range_by_vaddr_locked(uc, tlb_entry(env, mmu_idx, page),
+                                                      start1, length);
+            }
+        }
+
+        for (i = 0; i < CPU_VTLB_SIZE; i++) {
+            tlb_reset_dirty_range_by_vaddr_locked(uc, &env_tlb(env)->d[mmu_idx].vtable[i],
+                                                  start1, length);
+        }
+    }
+#endif /* __Use_Original_Qemu (U504) */
 }
 
 /* Called with tlb_c.lock held */
