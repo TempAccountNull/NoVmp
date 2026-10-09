@@ -27,6 +27,20 @@ from ref_apx_core.py, the part 1 model, and the SDM Operation sections):
               instruction without NDD/ZU; V != 0 on a ZU instruction; NF = 1 without NF support;
               mod = 11b and U = 0; a prefix other than 67H / segment before 62H; pp not listed;
               XCR0[19] = 0 or CR4.OSXSAVE = 0 (Table 3.8).
+  CCMP/CTEST  (3.1.3.2.1, Figures 3.7-3.9) P1 = W OF SF ZF CF U pp (DFV, not inverted), P2 = 0 0 0
+              ND=0 SC3..SC0; SCC 1010b = T, 1011b = F; SCC false: OF SF ZF CF = DFV, PF = CF, AF = 0;
+              the memory operand is read either way.
+  CFCMOVcc    (3.1.3.2.2, Table 3.5) ND NF = 00 reg := cc ? r/m : 0; 01 r/m := reg if cc (register
+              r/m := 0 if not; memory: no access); 10 CMOVcc ndd := cc ? r/m : reg (r/m always read);
+              11 ndd := cc ? r/m : reg (no access if not); register destinations zero-extended.
+  PUSH2/POP2  (3.1.3.1.1, Table 3.4) FF /6, 8F /0 mod = 11b, ND = 1: PUSH v; PUSH b / POP v; POP b;
+              #GP unless RSP % 16 = 0; W = PPX hint.
+  JMPABS      (3.1.3.3) REX2 M0 = 0 W = 0 A1 target64; non-canonical: #GP; W = 1 / 66 67 F0 F2 F3:
+              #UD (the jump itself: unit test test_x86_ax4_jmpabs).
+  Promoted    legacy maps 2/3 (MOVBE also register-register, CRC32, ADCX/ADOX with NDD, MOVRS,
+              MOVDIRI, MOVDIR64B, AADD/AAND/AOR/AXOR) and VEX instructions (BMI1/BMI2 with NF on
+              ANDN BEXTR BLSI BLSMSK BLSR BZHI, CMPccXADD, KMOV*, AMX): SDM semantics of the base
+              instruction, EVEX payload of Figures 3.3 / 3.4.
 
 Usage:
   python ref_apx_map4.py --selftest     hand-derived checks of the model, exit 0 on pass
