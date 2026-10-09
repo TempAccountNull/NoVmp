@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 09:48 (HEAD `70b7194 U547 harness: hardware-case XCR0 = host XCR0 + opt-in components; runner kind hwnp`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 11:25 (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U646 parts of the model in the module text`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -45,7 +45,9 @@ _Generated 2026-10-09 09:48 (HEAD `70b7194 U547 harness: hardware-case XCR0 = ho
       - ⏳ wt/avx10_b finished 2026-10-08 (U400–U412, 12 commits; merge after avx10_a so the enumeration is unified): map 5 table, 12 FP16→FP8 conversions, VCVTHF82PH, VCVT2PS2PHX, EVEX VNNI INT8/INT16, VDPPHPS, EVEX VMPSADBW, VMOVRSB/W/D/Q, zero-extending VMOVD/VMOVW, EVEX VSM4KEY4/VSM4RNDS4; cases_avx10_b 1819/0, exhaustive FP8 14107/0, VNNI model == CPU on 600.
       - ⬜ avx10_b leftovers: U400 provisional UC_CTL_X86_AVX10 → replace by avx10_a enumeration; spec conflicts followed: FP8 bias forms truncate (pseudocode) though the text says RNE for denormals, VCVT2PS2PHX RZ overflow = max finite (IEEE) though helper pseudocode says inf — re-check against the next spec revision; 38 XED-only forms (MAP5 HF6/BF4/PS2HF8 conversions, VPMOVSSDB, VUNPACKB, AMX TOP*, TILEMOVCOL, MAP6 BSRMOV*) not in any Intel publication → not implemented (oos); AMX-AVX512/AMX-FP8/AMX-MOVRS open; 32-bit mode only unit-tested.
   - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
-    - ⏳ APX part 1 [agent, wt/apx_core, U610–U639, started 2026-10-09]: opt-in UC_CTL, CPUID 7.1:EDX[21] + leaf 29H, XCR0[19] + XSAVE component 19, R16–R31 state + API, REX2 (D5) decoding in both decoders with every #UD rule; parts 2 (EVEX MAP4 promoted forms, NDD, NF, ZU) and 3 (PUSH2/POP2/PPX, CCMP/CTEST, CFCMOV, JMPABS) follow on top of it.
+    - ⬜ APX leftovers: INVEPT/INVVPID/INVPCID (base instructions not in this CPU model), TILELOADDRS(T1) (AMX-MOVRS) and RDMSR/WRMSRNS imm (MSR-IMM) base instructions not implemented; CPUID.29H:EBX[0] (APX_NCI_NDD_NF) not checked separately from APX_F; APX system interactions (VMX exit info, SMM save of R16–R31, LBR/PT) not modelled; no exhaustive sweep for the VEX-promoted maps 1/2/3/7; no hardware pairs for KMOV/AMX/CMPccXADD/MOVRS/RAO-INT/USER_MSR (host lacks them).
+    - ⬜ Suspected existing bug (found by the APX map-4 agent, unverified): some legacy paths (e.g. RCL/RCR with a memory operand) call gen_compute_eflags before a memory access that can fault; restore_state_to_opc puts back the instruction-start cc_op, so flags read back after a #PF may be wrong — write a hardware case (fault on the memory operand, check RFLAGS in the handler state) and fix if confirmed.
+    - ⬜ APX part 1 leftovers: EVEX.R4 with a k register in ModRM.reg still #UD (spec: unused bits ignored once APX is enabled — decide); REX2-prefixed ENDBR64 (F3 D5 80 1E FA) not recognised by the IBT tracker (spec silent); XSAVES/XRSTORS absent; compatibility-mode D5 = AAD only unit-tested.
       - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
@@ -55,7 +57,7 @@ _Generated 2026-10-09 09:48 (HEAD `70b7194 U547 harness: hardware-case XCR0 = ho
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 356 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 363 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
