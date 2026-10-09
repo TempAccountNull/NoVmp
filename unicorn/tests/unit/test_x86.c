@@ -16728,6 +16728,18 @@ static void test_x86_ax4_decode(void)
     TEST_CHECK(apx_run(&c, "\x62\xf4\xcc\x0a\x39\xd8", 6) == -1);
     TEST_CHECK((apx_get(&c, UC_X86_REG_EFLAGS) & 0x8d5) == 0x44);
     TEST_CHECK(apx_run(&c, "\x62\xf4\xcc\x1a\x39\xd8", 6) == 6);   /* ND = 1 */
+    /* U643 PUSH2 rcx, rdx; POP2 rsi, rdi: rsi = rdx (stack top), rdi = rcx; RSP % 16 != 0: #GP */
+    apx_set(&c, UC_X86_REG_RSP, APX_DATA + 0x1000);
+    apx_set(&c, UC_X86_REG_RCX, 0x1111);
+    apx_set(&c, UC_X86_REG_RDX, 0x2222);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x74\x18\xff\xf2\x62\xf4\x4c\x18\x8f\xc7", 12) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RSI) == 0x2222 && apx_get(&c, UC_X86_REG_RDI) == 0x1111);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RSP) == APX_DATA + 0x1000);
+    apx_set(&c, UC_X86_REG_RSP, APX_DATA + 0x1008);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x74\x18\xff\xf2", 6) == 13);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RSP) == APX_DATA + 0x1008);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x74\x18\xff\xf4", 6) == 6);   /* PUSH2 with RSP */
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x74\x18\x8f\xc1", 6) == 6);   /* POP2 rcx, rcx */
     OK(uc_close(c.uc));
 }
 

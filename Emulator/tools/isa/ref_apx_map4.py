@@ -644,6 +644,101 @@ def m4_ccmp(kind, n, form, dst, src, imm, scc, dfv):
     return ins
 
 
+# --------------------------------------------------------------------------------------------
+# U642: CMOVcc ndd / CFCMOVcc (3.1.3.2.2, Table 3.5, chapter 8.2; 3.1.2.4: register
+# destinations zero-extended; "memory faults are suppressed" when the condition is false)
+# --------------------------------------------------------------------------------------------
+def mov_r32_0(r):
+    return Enc(0xB8, oreg=r, imm=bytes(4))          # mov r32, 0 (no flag change)
+
+
+def m4_cmov(cc, n, reg, rmop, nd=0, nf=0, ndd=0):
+    """map 4 40+cc /r (NP/66): ND NF = 00 CFCMOVcc reg, r/m; 01 CFCMOVcc r/m, reg; 10 CMOVcc ndd,
+    reg, r/m; 11 CFCMOVcc ndd, reg, r/m"""
+    w, pp = wpp(n)
+    lpfx = [0x66] if n == 16 else []
+    e_args = dict(w=w, pp=pp, nd=nd, nf=nf, v=ndd if nd else 0)
+    # legacy equivalents (no faults in the hardware pairs)
+    if nd:
+        leg = leg_bytes(mov64(ndd, reg), Enc(0x40 + cc, map1=True, pfx=lpfx, reg=ndd, rm=rmop, w=w), zext(n, ndd))
+    elif not nf:
+        a = leg_bytes(Enc(0x8B, pfx=lpfx, reg=reg, rm=rmop, w=w), zext(n, reg))
+        bb = leg_bytes(mov_r32_0(reg))
+        leg = None if a is None or bb is None else jcc8(cc ^ 1, len(a) + 2) + a + bytes([0xEB, len(bb)]) + bb
+    else:
+        if isinstance(rmop, Reg):
+            a = leg_bytes(Enc(0x89, pfx=lpfx, reg=reg, rm=rmop, w=w), zext(n, rmop.r))
+            bb = leg_bytes(mov_r32_0(rmop.r))
+        else:
+            a = leg_bytes(Enc(0x89, pfx=lpfx, reg=reg, rm=rmop, w=w))
+            bb = b""
+        leg = None if a is None or bb is None else jcc8(cc ^ 1, len(a) + 2) + a + bytes([0xEB, len(bb)]) + bb
+    e = Ev(0x40 + cc, reg, rmop, leg=leg, **e_args)
+
+    def sem(st):
+        c = cond(cc, st.rflags)
+        if nd and not nf:
+            t = rd_op(st, rmop, n)                     # faults whatever the condition
+            st.regs[ndd] = (t if c else st.regs[reg]) & mask(n)
+        elif nd:
+            st.regs[ndd] = (rd_op(st, rmop, n) if c else st.regs[reg]) & mask(n)
+        elif not nf:
+            st.regs[reg] = rd_op(st, rmop, n) if c else 0
+        elif c:
+            if isinstance(rmop, Reg):
+                st.regs[rmop.r] = st.regs[reg] & mask(n)
+            else:
+                wr_op(st, rmop, n, st.regs[reg])
+        elif isinstance(rmop, Reg):
+            st.regs[rmop.r] = 0
+    return Ins(e, sem)
+
+
+# --------------------------------------------------------------------------------------------
+# U643: PUSH2 / POP2 (3.1.3.1.1, Figure 3.6, Table 3.4, chapter 9.1/9.3): EVEX map 4 pp=0 ND=1
+#   FF /6 mod=11 PUSH2 v64, b64 = PUSH v64; PUSH b64 ; 8F /0 mod=11 POP2 v64, b64 = POP v64; POP
+#   b64; #GP(0) if RSP % 16 != 0; W = PPX hint (no functional effect)
+# --------------------------------------------------------------------------------------------
+def m4_push2(v, b, w=0):
+    e = Ev(0xFF, 6, Reg(b), w=w, nd=1, v=v)
+
+    def sem(st):
+        sp = st.regs[4]
+        if sp % 16:
+            raise Fault(13)
+        st.wr(sp - 8, 8, st.regs[v])
+        st.wr(sp - 16, 8, st.regs[b])
+        st.regs[4] = sp - 16
+    return Ins(e, sem)
+
+
+def m4_pop2(v, b, w=0):
+    e = Ev(0x8F, 0, Reg(b), w=w, nd=1, v=v)
+
+    def sem(st):
+        sp = st.regs[4]
+        if sp % 16:
+            raise Fault(13)
+        x, y = st.rd(sp, 8), st.rd(sp + 8, 8)
+        st.regs[v] = x
+        st.regs[b] = y
+        st.regs[4] = sp + 16
+    return Ins(e, sem)
+
+
+def m4_push2_pop2(v, b, v2, b2, w=0, w2=0):
+    """PUSH2 v, b; POP2 v2, b2 (legacy: push v; push b; pop v2; pop b2)"""
+    e1, e2 = m4_push2(v, b, w), m4_pop2(v2, b2, w2)
+    leg = leg_bytes(Enc(0x50, oreg=v), Enc(0x50, oreg=b), Enc(0x58, oreg=v2), Enc(0x58, oreg=b2))
+    raw = Raw(e1.rex2_bytes() + e2.rex2_bytes(), leg)
+
+    def sem(st):
+        x, y = st.regs[v], st.regs[b]      # the stack top is b's value
+        st.regs[v2] = y
+        st.regs[b2] = x
+    return Ins(raw, sem)
+
+
 class MCase(Case):
     """ref_apx_core.Case with state-dependent undefined flags (Ins.undef_fn)"""
 
@@ -870,6 +965,37 @@ def gen_items(rng, egpr, hw=False):
                         if rng.random() < 0.3:
                             st.regs[b] = st.regs[a]          # equal operands (ZF)
                         yield MCase(m4_ccmp(kind, n, form, dst, src, imm, scc, rng.getrandbits(4)), st, used, runs)
+    # ---- CMOVcc ndd / CFCMOVcc (U642) ----
+    for n in (16, 32, 64):
+        for memf in (False, True):
+            for nd, nf in nd_nf:
+                for cc in rng.sample(range(16), 8):
+                    st, a, b, m, used, runs = operands(n, memf)
+                    rmop = m if memf else Reg(b)
+                    avoid = [b] if not memf else [m.base] + ([m.index] if m.index is not None else [])
+                    ndd = pick_ndd(avoid) if nd else 0
+                    if nd:
+                        st.regs[ndd] = rng.getrandbits(64)
+                        used = used + [ndd]
+                    yield MCase(m4_cmov(cc, n, a, rmop, nd, nf, ndd), st, used, runs)
+    # ---- PUSH2 / POP2 (U643) ----
+    for k in range(48):
+        v, b, v2, b2 = regs(4)
+        st = mk_state(rng, [v, b])
+        w, w2 = rng.getrandbits(1), rng.getrandbits(1)
+        if hw:
+            yield MCase(m4_push2_pop2(v, b, v2, b2, w, w2), st, [v, b, v2, b2])
+            continue
+        sp = MEM + 0x9000 + 16 * rng.randrange(0, 0x80)
+        st.regs[4] = sp
+        if k % 2 == 0:
+            yield MCase(m4_push2(v, b, w), st, [v, b, 4])
+        else:
+            # the 8 bytes below RSP hold RFLAGS: emu-alltest loads the input flags through the
+            # test stack (popfq), so that qword is input state too
+            data = st.rflags.to_bytes(8, "little") + bytes(rng.getrandbits(8) for _ in range(16))
+            st.mem[sp - 8 - MEM:sp - MEM + 16] = data
+            yield MCase(m4_pop2(v2, b2, w), st, [4], [(sp - 8 - MEM, data)])
 
 
 # --------------------------------------------------------------------------------------------
@@ -1002,6 +1128,51 @@ def special_lines(rng):
     L.append(line_ud(Ev(0xA9, 0, Reg(0), scc=2, dfv=0).rex2() + bytes(4)))         # TEST eAX, iz: not promoted
     # V-bits other than DFV are not checked, NF bit is SC2: a CCMP with SC2 = 1 (SCC = 4, Z)
     L.append(mk_line(m4_ccmp("cmp", 32, "EG", Reg(0), Reg(1), None, 0x4, 0xF), {0: 1, 1: 1}, rflags=0x202))
+    c("--- CFCMOVcc (U642): no memory access when the condition is false (an unmapped address) ---")
+    UNM = 0x10                                   # not mapped
+    for nd, nf in ((0, 0), (0, 1), (1, 1)):
+        e = m4_cmov(0x4, 64, 0, Mem(3, None, 1, 0), nd, nf, 9)      # CFCMOVZ, ZF = 0: false
+        L.append(mk_line(e, {3: UNM, 0: 0x1111, 9: 0x2222}))
+        e = m4_cmov(0x5, 32, 0, Mem(3, None, 1, 0), nd, nf, 9)      # CFCMOVNZ, ZF = 0: true -> #PF
+        L.append("%s | rbx=0x%X rax=0x1111 r9=0x2222 => #PF" % (dotbyte(e.rex2_bytes()), UNM))
+    # CMOVcc ndd (ND = 1, NF = 0) reads the memory operand whatever the condition
+    e = m4_cmov(0x4, 64, 0, Mem(3, None, 1, 0), 1, 0, 9)
+    L.append("%s | rbx=0x%X rax=0x1111 r9=0x2222 => #PF" % (dotbyte(e.rex2_bytes()), UNM))
+    # register forms: zeroing (false) and zero-extension (true) of 16/32-bit destinations
+    L.append(mk_line(m4_cmov(0x4, 16, 0, Reg(1)), {0: -1, 1: 0x12345678}))
+    L.append(mk_line(m4_cmov(0x4, 16, 0, Reg(1)), {0: -1, 1: 0x12345678}, rflags=0x242))
+    L.append(mk_line(m4_cmov(0x4, 32, 0, Reg(1), 0, 1), {0: 0x12345678, 1: -1}))
+    L.append(mk_line(m4_cmov(0x4, 32, 0, Reg(1), 0, 1), {0: 0x12345678, 1: -1}, rflags=0x242))
+    L.append(mk_line(m4_cmov(0x4, 16, 0, Mem(3, None, 1, 0), 0, 1), {0: 0x12345678, 3: MEM_PTR}, {0x8000: bytes([0xAA, 0xBB, 0xCC, 0xDD])}, rflags=0x242))
+    L.append(mk_line(m4_cmov(0xF, 64, 17, Reg(30), 1, 0, 25), {17: 1, 30: 2, 25: 3}, rflags=0x2C2))
+    L.append(mk_line(m4_cmov(0xF, 64, 17, Reg(30), 1, 1, 25), {17: 1, 30: 2, 25: 3}, rflags=0x202))
+    c("--- CMOVcc / CFCMOVcc #UD: V without ND, pp F3, mod = 11b with U = 0, reserved P2 bits ---")
+    L.append(line_ud(Ev(0x44, 0, Reg(1), v=3).rex2()))
+    L.append(line_ud(Ev(0x44, 0, Reg(1), nf=1, v=3).rex2()))
+    L.append(line_ud(Ev(0x44, 0, Reg(1), pp=2).rex2()))
+    L.append(line_ud(Ev(0x44, 0, Reg(1), ubit=0).rex2()))
+    L.append(line_ud(Ev(0x44, 0, Reg(1), nd=1, v=3, p2or=0x01).rex2()))
+    L.append(line_ud(Ev(0x44, 0, Reg(1), nd=1, v=3, p2or=0x20).rex2()))
+    c("--- PUSH2 / POP2 (U643): order, RSP alignment #GP, PPX (W), #UD rules ---")
+    SP = MEM + 0x9000
+    L.append(mk_line(m4_push2(16, 31), {4: SP, 16: 0x1111111111111111, 31: 0x2222222222222222}))
+    L.append(mk_line(m4_push2(1, 2, w=1), {4: SP, 1: 0xA, 2: 0xB}))
+    fq = (0x202).to_bytes(8, "little")          # RFLAGS below RSP (emu-alltest's popfq)
+    L.append(mk_line(m4_pop2(20, 3), {4: SP}, {0x8FF8: fq + bytes(range(16))}))
+    L.append(mk_line(m4_pop2(3, 20, w=1), {4: SP}, {0x8FF8: fq + bytes(range(16))}))
+    for off in (8, 4, 1):
+        for e in (m4_push2(1, 2), m4_pop2(1, 2)):
+            L.append("%s | rsp=0x%X m+0x%X=%s => #GP" % (dotbyte(e.rex2_bytes()), SP + off, 0x9000 + off - 8, fq.hex().upper()))
+    for e in (Ev(0xFF, 6, Reg(4), nd=1, v=1), Ev(0xFF, 6, Reg(1), nd=1, v=4), Ev(0x8F, 0, Reg(4), nd=1, v=1),
+              Ev(0x8F, 0, Reg(1), nd=1, v=4), Ev(0x8F, 0, Reg(1), nd=1, v=1), Ev(0x8F, 0, Reg(17), nd=1, v=17),
+              Ev(0xFF, 6, Reg(1), v=0), Ev(0x8F, 0, Reg(1), v=0), Ev(0xFF, 6, Reg(1), nd=1, v=2, nf=1),
+              Ev(0xFF, 6, Reg(1), nd=1, v=2, pp=1), Ev(0x8F, 0, Reg(1), nd=1, v=2, pp=2),
+              Ev(0xFF, 6, Reg(1), nd=1, v=2, ubit=0), Ev(0xFF, 6, Reg(1), nd=1, v=2, p2or=0x20),
+              Ev(0x8F, 1, Reg(1), nd=1, v=2), Ev(0xFF, 6, Mem(3, None, 1, 0), nd=1, v=2),
+              Ev(0x8F, 0, Mem(3, None, 1, 0), nd=1, v=2), Ev(0xFF, 7, Reg(1), nd=1, v=2)):
+        L.append(line_ud(e.rex2()))
+    # RSP id through B4/V4: R20 (not RSP) is fine
+    L.append(mk_line(m4_push2(20, 21), {4: SP, 20: 5, 21: 6}))
     c("--- XCR0[19] = 0 (XSETBV 7 first): every map 4 instruction #UD (Table 3.8) ---")
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x01, 1, Reg(0), w=1).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
     L.append(line_ud(bytes([0x0F, 0x01, 0xD1]) + Ev(0x44, 0, Reg(0), pp=3).rex2(), "rcx=0x0 rax=0x7 rdx=0x0"))
