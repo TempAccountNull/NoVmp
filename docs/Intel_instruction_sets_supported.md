@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 11:50 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `cabd3f5 U690 tools: apx_cov.py (independent APX decoder: case bytes -> manual form) and mkrows.py (verified_forms rows)`). Do not edit by hand._
+_Generated 2026-10-09 13:18 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `6b2fe8b Tests for U720-U727: ref_amx.py ISE -062 model, cases_amx2.txt, x86_amx2_vectors.inc, unit tests`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 1036, open item 57, not implemented yet 287) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 1049, open item 57, not implemented yet 274) — 2682 forms
 
 ## Currently being added
 
@@ -42,11 +42,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
       - ⏳ wt/avx10_b finished 2026-10-08 (U400–U412, 12 commits; merge after avx10_a so the enumeration is unified): map 5 table, 12 FP16→FP8 conversions, VCVTHF82PH, VCVT2PS2PHX, EVEX VNNI INT8/INT16, VDPPHPS, EVEX VMPSADBW, VMOVRSB/W/D/Q, zero-extending VMOVD/VMOVW, EVEX VSM4KEY4/VSM4RNDS4; cases_avx10_b 1819/0, exhaustive FP8 14107/0, VNNI model == CPU on 600.
       - ⬜ avx10_b leftovers: U400 provisional UC_CTL_X86_AVX10 → replace by avx10_a enumeration; spec conflicts followed: FP8 bias forms truncate (pseudocode) though the text says RNE for denormals, VCVT2PS2PHX RZ overflow = max finite (IEEE) though helper pseudocode says inf — re-check against the next spec revision; 38 XED-only forms (MAP5 HF6/BF4/PS2HF8 conversions, VPMOVSSDB, VUNPACKB, AMX TOP*, TILEMOVCOL, MAP6 BSRMOV*) not in any Intel publication → not implemented (oos); AMX-AVX512/AMX-FP8/AMX-MOVRS open; 32-bit mode only unit-tested.
   - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
-    - ⬜ APX leftovers: INVEPT/INVVPID/INVPCID (base instructions not in this CPU model), TILELOADDRS(T1) (AMX-MOVRS) and RDMSR/WRMSRNS imm (MSR-IMM) base instructions not implemented; CPUID.29H:EBX[0] (APX_NCI_NDD_NF) not checked separately from APX_F; APX system interactions (VMX exit info, SMM save of R16–R31, LBR/PT) not modelled; no exhaustive sweep for the VEX-promoted maps 1/2/3/7; no hardware pairs for KMOV/AMX/CMPccXADD/MOVRS/RAO-INT/USER_MSR (host lacks them).
+    - ⬜ APX leftovers: INVEPT/INVVPID/INVPCID (base instructions not in this CPU model), RDMSR/WRMSRNS imm (MSR-IMM) base instructions not implemented (TILELOADDRS(T1): done, U722/U723); CPUID.29H:EBX[0] (APX_NCI_NDD_NF) not checked separately from APX_F; APX system interactions (VMX exit info, SMM save of R16–R31, LBR/PT) not modelled; no exhaustive sweep for the VEX-promoted maps 1/2/3/7; no hardware pairs for KMOV/AMX/CMPccXADD/MOVRS/RAO-INT/USER_MSR (host lacks them).
     - ⬜ Suspected existing bug (found by the APX map-4 agent, unverified): some legacy paths (e.g. RCL/RCR with a memory operand) call gen_compute_eflags before a memory access that can fault; restore_state_to_opc puts back the instruction-start cc_op, so flags read back after a #PF may be wrong — write a hardware case (fault on the memory operand, check RFLAGS in the handler state) and fix if confirmed.
     - ⬜ APX part 1 leftovers: EVEX.R4 with a k register in ModRM.reg still #UD (spec: unused bits ignored once APX is enabled — decide); REX2-prefixed ENDBR64 (F3 D5 80 1E FA) not recognised by the IBT tracker (spec silent); XSAVES/XRSTORS absent; compatibility-mode D5 = AAD only unit-tested.
-      - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
-      - ⏳ [agent, wt/amx2, U720–U749, started 2026-10-09] AMX-AVX512, AMX-FP8, AMX-TF32, AMX-MOVRS, leaf 1EH subleaves, XSAVES/XRSTORS framework (+ IA32_XSS, compacted format).
+      - ⬜ AMX leftovers 2: AMX-TF32 (TMMULTF32PS) not implemented — removed by ISE 319433-062 (1EH.1:EAX[6] reserved), needs a decision + an older ISE text; other XSAVES supervisor components (PT, PASID, HDC, UINTR, LBR, HWP) not modelled; XSAVES modified optimisation not modelled (allowed by 13.6); APX-promoted TILELOADDRS does not check EVEX.R4 (U646 path); AMX-AVX512 under AVX10 only (no --avx512) has no dedicated run.
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
@@ -2002,20 +2001,20 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | WAITPKG | 3 | ❌ **cannot run** (CPUID.7H:ECX[5] = 0 on this CPU) |  | ⏳ 3 |
 | WBNOINVD | 1 | ❌ **cannot run** (CPUID.80000008H:EBX[9] = 0 on this CPU) |  | ⏳ 1 |
 | WRMSRNS | 1 | ❌ **cannot run** (CPUID.7H.1:EAX[19] = 0 on this CPU) |  | ⏳ 1 |
-| AMX_AVX512 | 5 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ 5 queued |
+| AMX_AVX512 | 5 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ 5 |  |
 | AMX_BF16 | 1 | ❌ **cannot run** (CPUID.7H:EDX[22] = 0 on this CPU) | ✅ 1 |  |
 | AMX_COMPLEX | 2 | ❌ **cannot run** (CPUID.7H.1:EDX[8] = 0 on this CPU) | ✅ 2 |  |
 | AMX_FP16 | 1 | ❌ **cannot run** (CPUID.7H.1:EAX[21] = 0 on this CPU) | ✅ 1 |  |
-| AMX_FP8 | 4 | ❌ **cannot run** (AMX_FP8 not reported by this CPU) |  | ⬜ 4 queued |
+| AMX_FP8 | 4 | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ 4 |  |
 | AMX_INT8 | 4 | ❌ **cannot run** (CPUID.7H:EDX[25] = 0 on this CPU) | ✅ 4 |  |
-| AMX_MOVRS | 2 | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) |  | ⬜ 2 queued |
+| AMX_MOVRS | 2 | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ 2 |  |
 | AMX_TILE | 3 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 3 |  |
 | AMX_TILE_BASE | 4 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 4 |  |
 | APX_F | 33 | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ 32 | ⬜ 1 queued |
 | APX_F_ADX | 2 | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) | ✅ 2 |  |
 | APX_F_AMX | 3 | ❌ **cannot run** (APX_F_AMX not reported by this CPU) | ✅ 2 | ⬜ 1 queued |
 | APX_F_AMX_BASE | 2 | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) | ✅ 2 |  |
-| APX_F_AMX_MOVRS | 2 | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ 2 queued |
+| APX_F_AMX_MOVRS | 2 | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) | ✅ 2 |  |
 | APX_F_BMI1 | 6 | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ 6 |  |
 | APX_F_BMI2 | 8 | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU; APX_F_BMI2_N3 not reported by this CPU) | ✅ 8 |  |
 | APX_F_CET | 4 | ❌ **cannot run** (APX_F_CET not reported by this CPU) |  | ⏳ 2 · ⬜ 2 queued |
@@ -2491,11 +2490,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TCVTROWD2PS | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TCVTROWPS2BF16H | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TCVTROWPS2BF16L | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TCVTROWPS2PHH | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TCVTROWPS2PHL | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TCVTROWD2PS | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TCVTROWPS2BF16H | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TCVTROWPS2BF16L | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TCVTROWPS2PHH | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TCVTROWPS2PHL | evex | 512 | ❌ **cannot run** (AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
 
 </details>
 
@@ -2528,10 +2527,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TDPBF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| TDPBHF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| TDPHBF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| TDPHF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| TDPBF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TDPBHF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TDPHBF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TDPHF8PS | vex | - | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
 
 </details>
 
@@ -2550,8 +2549,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TILELOADDRS | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
-| TILELOADDRST1 | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks AMX: #UD in both |
+| TILELOADDRS | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TILELOADDRST1 | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
 
 </details>
 
@@ -2648,8 +2647,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TILELOADDRS | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): base instruction not implemented in this CPU model: AMX-MOVRS (TILEL… |
-| TILELOADDRST1 | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): base instruction not implemented in this CPU model: AMX-MOVRS (TILEL… |
+| TILELOADDRS | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TILELOADDRST1 | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
 
 </details>
 
