@@ -269,16 +269,13 @@ namespace at
 	};
 
 	// ── Unicorn ─────────────────────────────────────────────────────────────────────────────
-	// UC_CTL_X86_HW_QUIRKS (ledger U99): Unicorn's default (0) is strictly the Intel SDM. The
-	// hardware comparisons run against the host i5-13600K, so they enable every quirk bit this
-	// CPU needs (emu-alltest --quirks cpu, the default for hardware runs); expected-value (SDM
-	// model) cases run with 0 (--quirks sdm, the default for "=>" lines). docs\quirks.md.
-	constexpr uint32_t QUIRKS_I5_13600K = 0;     // U538: every quirk bit is gone (removed in U539)
+	// U539: Unicorn implements the Intel SDM only (no UC_CTL_X86_HW_QUIRKS, no --quirks). Where
+	// the host i5-13600K deviates, the hardware cases are tagged (docs\quirks.md, at_cases.hpp).
 
 	class unicorn_engine
 	{
 	public:
-		explicit unicorn_engine( int model, uint32_t quirks = 0 ) : model_( model ), quirks_( quirks ) {}
+		explicit unicorn_engine( int model ) : model_( model ) {}
 		// one engine per form (fresh translation cache), reused across that form's iterations
 		bool load( const program& p, std::string& err )
 		{
@@ -292,7 +289,6 @@ namespace at
 			if ( amx && uc_ctl_set_x86_amx( uc_, amx ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_amx failed"; return false; }
 			// AVX10 opt-in (emu-alltest --avx10 N, UC_CTL_X86_AVX10 = N): same rule
 			if ( avx10 && uc_ctl_set_x86_avx10( uc_, avx10 ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_avx10 failed"; return false; }
-			if ( quirks_ ) uc_ctl_set_x86_hw_quirks( uc_, quirks_ );
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
@@ -439,7 +435,6 @@ namespace at
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) through code hooks
 	private:
 		int model_;
-		uint32_t quirks_;
 		const program* prog_ = nullptr;
 		result* cur_ = nullptr;
 	};

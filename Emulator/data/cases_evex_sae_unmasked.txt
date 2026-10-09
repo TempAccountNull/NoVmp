@@ -4,7 +4,7 @@
 # exceptions flags are masked"), the AVX10.2 BF16 arithmetic (spec 7.1: RNE, DAZ, FTZ, MXCSR neither
 # consulted nor updated). Hand-derived expected values; the U445 rules themselves (FTZ ignored and
 # exact tiny results raising #U only while unmasked) are the i5-13600K cases_sse_exc.txt. Run:
-#   emu-alltest --cases Emulator\data\cases_evex_sae_unmasked.txt --avx10 2 --xcr0 0xE7 --expect-only --quirks 0
+#   emu-alltest --cases Emulator\data\cases_evex_sae_unmasked.txt --avx10 2 --xcr0 0xE7 --expect-only
 # VMULPS zmm1, zmm2, zmm3, {rn-sae}: 2^-100 * 2^-30 = 2^-130 (exact denormal); FTZ = 1, UM = 0:
 # as if masked, so the tiny result is flushed to +0; no flag (SAE)
 .byte 0x62, 0xf1, 0x6c, 0x18, 0x59, 0xcb | zmm2=0000800D000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 zmm3=00008030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 mxcsr=0x9780 => zmm1=00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 mxcsr=0x9780

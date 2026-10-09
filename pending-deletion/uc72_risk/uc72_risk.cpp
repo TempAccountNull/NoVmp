@@ -8,7 +8,7 @@
 //   R3  QEMU's CPUX86State.old_exception: two independent contributory faults in successive
 //       uc_emu_start calls must each arrive as themselves (#DE=0 / #GP=13), not as #DF=8.
 //   R4  CPUID consistency of the CPU models (leaf 7 levels, XSAVE components).
-//   R5  hardware-quirk switch (FCOMI/FUCOMI C1).
+//   R5  FCOMI/FUCOMI C1 = 0 (SDM; the i5-13600K keeps C1: docs/quirks.md).
 //   R6  MXCSR rules of XRSTOR/XSAVE (RFBM[1]/RFBM[2]) and the reserved-bit #GP, vs hardware.
 //   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
 //   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
@@ -1035,14 +1035,13 @@ static r10_result r10_native( const std::vector<uint8_t>& code, const uint8_t in
 	return r;
 }
 
-static r10_result r10_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 32 ], uint32_t quirks )
+static r10_result r10_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 32 ] )
 {
 	r10_result r{ -1, {}, {} };
 	const uint64_t R10_CODE = 0x1000, R10_IN = 0x10000, R10_OUTP = 0x11000, R10_BACKUP = 0x12000, R10_STACK = 0x30000;
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
 	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
-	uc_ctl_set_x86_hw_quirks( uc, quirks );
 	uc_mem_map( uc, R10_CODE, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, R10_IN, 0x4000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_map( uc, R10_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
@@ -1109,7 +1108,7 @@ static void test_r10()
 		std::vector<uint8_t> code = assemble( r10_thunk( k.op ) );
 		CHECK( !code.empty(), "%s: assembly", k.op );
 		if ( code.empty() ) continue;
-		r10_result hw = r10_native( code, in ), man = r10_unicorn( code, in, 0 );
+		r10_result hw = r10_native( code, in ), man = r10_unicorn( code, in );
 		std::string d_man = r10_diff( hw, man );
 		std::string name = k.op;
 		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
@@ -1182,17 +1181,14 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 	return r;
 }
 
-// every documented i5-13600K deviation from the SDM, for the hardware comparisons
-static constexpr uint32_t X87_HW_QUIRKS = 0;     // U537: no quirk bit left for the x87 comparisons
 
-static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
+static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ] )
 {
 	r11_result r{ -1, {}, {}, {}, 0 };
 	const uint64_t R11_CODE = 0x1000, R11_IN = 0x10000, R11_OUTP = 0x11000, R11_BACKUP = 0x12000, R11_STACK = 0x30000;
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
 	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
-	uc_ctl_set_x86_hw_quirks( uc, quirks );
 	uc_mem_map( uc, R11_CODE, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, R11_IN, 0x4000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_map( uc, R11_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
@@ -1397,7 +1393,7 @@ static void test_r11()
 			std::memcpy( buf, in, 208 );
 			std::memset( buf, 0, 28 );
 			std::memcpy( buf + 0, &sc.fcw, 2 ); std::memcpy( buf + 4, &sc.fsw, 2 ); std::memcpy( buf + 8, &sc.ftw, 2 );
-			r11_result hw = r11_native( code, buf ), uc = r11_unicorn( code, buf, X87_HW_QUIRKS );
+			r11_result hw = r11_native( code, buf ), uc = r11_unicorn( code, buf );
 			std::string d = r11_diff( hw, uc, flags );
 			++total;
 			if ( d.empty() ) continue;
@@ -1511,7 +1507,7 @@ static void test_r13()
 			put( in + 32 + 6 * 16, uint16_t( s1 | e1 ), m1 );     // ST1
 			uint16_t fcw = 0x037F, fsw = 0, ftw = 0;
 			std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
-			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, 0 );
+			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in );
 			std::string d = r11_diff( hw, uc, false );
 			++total; ++n_op;
 			if ( d.empty() ) continue;
@@ -1567,7 +1563,6 @@ static int r14_unicorn( const std::vector<uint8_t>& code, const uint8_t* in, uin
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
 	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
-	uc_ctl_set_x86_hw_quirks( uc, X87_HW_QUIRKS );
 	uc_mem_map( uc, R14_CODE, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, R14_IN, 0x8000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_map( uc, R14_STACK, 0x10000, UC_PROT_READ | UC_PROT_WRITE );
@@ -1654,14 +1649,13 @@ static void test_r14()
 // the SSE side (CVT*PI*, MOVQ2DQ, MOVDQ2Q) with OSFXSR = 0 -> #UD, EMMS unaffected. Also the
 // SDM #MF of CVTPI2PS xmm, m64 (U532: the only behaviour; the i5-13600K runs it, docs/quirks.md).
 
-static int r15_run( const char* text, uint64_t cr0_set, uint64_t cr0_clr, uint64_t cr4_clr, bool pending_mf, uint32_t quirks )
+static int r15_run( const char* text, uint64_t cr0_set, uint64_t cr0_clr, uint64_t cr4_clr, bool pending_mf )
 {
 	std::vector<uint8_t> code = assemble( text );
 	if ( code.empty() ) return -9;
 	uc_engine* uc = nullptr;
 	uc_open( UC_ARCH_X86, UC_MODE_64, &uc );
 	uc_ctl_set_cpu_model( uc, UC_CPU_X86_MAX );
-	uc_ctl_set_x86_hw_quirks( uc, quirks );
 	uc_mem_map( uc, 0x1000, 0x1000, UC_PROT_ALL );
 	uc_mem_map( uc, 0x10000, 0x1000, UC_PROT_READ | UC_PROT_WRITE );
 	uc_mem_write( uc, 0x1000, code.data(), code.size() );
@@ -1694,30 +1688,30 @@ static void test_r15()
 {
 	std::printf( "R15 CR0.TS/EM, CR4.OSFXSR and CVTPI2PS m64 #MF (manual default): Unicorn vs SDM\n" );
 	const uint64_t TS = 0x8, EM = 0x4, MP = 0x2, OSFXSR = 1ull << 9;
-	struct c { const char* text; uint64_t set, clr, cr4clr; bool mf; uint32_t quirks; int expect; const char* why; };
+	struct c { const char* text; uint64_t set, clr, cr4clr; bool mf; int expect; const char* why; };
 	const c cases[] = {
-		{ "fadd st(0), st(1)", TS, 0, 0, false, 0, 7, "x87, CR0.TS" },
-		{ "fadd st(0), st(1)", EM, 0, 0, false, 0, 7, "x87, CR0.EM" },
-		{ "paddb mm0, mm1", TS, 0, 0, false, 0, 7, "MMX, CR0.TS" },
-		{ "paddb mm0, mm1", EM, 0, 0, false, 0, 6, "MMX, CR0.EM" },
-		{ "emms", TS, 0, 0, false, 0, 7, "EMMS, CR0.TS" },
-		{ "emms", EM, 0, 0, false, 0, 6, "EMMS, CR0.EM" },
-		{ "emms", 0, 0, OSFXSR, false, 0, -1, "EMMS, OSFXSR=0 runs" },
-		{ "cvtpi2ps xmm0, mm1", TS, 0, 0, false, 0, 7, "CVTPI2PS, CR0.TS" },
-		{ "cvtpi2ps xmm0, mm1", EM, 0, 0, false, 0, 6, "CVTPI2PS, CR0.EM" },
-		{ "cvtpi2ps xmm0, mm1", 0, 0, OSFXSR, false, 0, 6, "CVTPI2PS, OSFXSR=0" },
-		{ "cvtps2pi mm0, xmm1", TS, 0, 0, false, 0, 7, "CVTPS2PI, CR0.TS" },
-		{ "cvttpd2pi mm0, xmm1", EM, 0, 0, false, 0, 6, "CVTTPD2PI, CR0.EM" },
-		{ "movq2dq xmm0, mm1", TS, 0, 0, false, 0, 7, "MOVQ2DQ, CR0.TS" },
-		{ "movdq2q mm0, xmm1", 0, 0, OSFXSR, false, 0, 6, "MOVDQ2Q, OSFXSR=0" },
-		{ "fwait", TS | MP, 0, 0, false, 0, 7, "WAIT, CR0.MP+TS" },
-		{ "fwait", TS, 0, 0, false, 0, -1, "WAIT, CR0.TS only runs" },
-		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, 16, "CVTPI2PS m64, pending, manual: #MF" },
-		{ "cvtpi2pd xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, -1, "CVTPI2PD m64, pending: runs (SDM)" },
+		{ "fadd st(0), st(1)", TS, 0, 0, false, 7, "x87, CR0.TS" },
+		{ "fadd st(0), st(1)", EM, 0, 0, false, 7, "x87, CR0.EM" },
+		{ "paddb mm0, mm1", TS, 0, 0, false, 7, "MMX, CR0.TS" },
+		{ "paddb mm0, mm1", EM, 0, 0, false, 6, "MMX, CR0.EM" },
+		{ "emms", TS, 0, 0, false, 7, "EMMS, CR0.TS" },
+		{ "emms", EM, 0, 0, false, 6, "EMMS, CR0.EM" },
+		{ "emms", 0, 0, OSFXSR, false, -1, "EMMS, OSFXSR=0 runs" },
+		{ "cvtpi2ps xmm0, mm1", TS, 0, 0, false, 7, "CVTPI2PS, CR0.TS" },
+		{ "cvtpi2ps xmm0, mm1", EM, 0, 0, false, 6, "CVTPI2PS, CR0.EM" },
+		{ "cvtpi2ps xmm0, mm1", 0, 0, OSFXSR, false, 6, "CVTPI2PS, OSFXSR=0" },
+		{ "cvtps2pi mm0, xmm1", TS, 0, 0, false, 7, "CVTPS2PI, CR0.TS" },
+		{ "cvttpd2pi mm0, xmm1", EM, 0, 0, false, 6, "CVTTPD2PI, CR0.EM" },
+		{ "movq2dq xmm0, mm1", TS, 0, 0, false, 7, "MOVQ2DQ, CR0.TS" },
+		{ "movdq2q mm0, xmm1", 0, 0, OSFXSR, false, 6, "MOVDQ2Q, OSFXSR=0" },
+		{ "fwait", TS | MP, 0, 0, false, 7, "WAIT, CR0.MP+TS" },
+		{ "fwait", TS, 0, 0, false, -1, "WAIT, CR0.TS only runs" },
+		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 16, "CVTPI2PS m64, pending, manual: #MF" },
+		{ "cvtpi2pd xmm0, qword ptr [rcx]", 0, 0, 0, true, -1, "CVTPI2PD m64, pending: runs (SDM)" },
 	};
 	for ( const c& k : cases )
 	{
-		int v = r15_run( k.text, k.set, k.clr, k.cr4clr, k.mf, k.quirks );
+		int v = r15_run( k.text, k.set, k.clr, k.cr4clr, k.mf );
 		auto nm = [ & ]( int x ) { return x == -1 ? std::string( "runs" ) : x == 6 ? std::string( "#UD" ) : x == 7 ? std::string( "#NM" ) :
 										  x == 16 ? std::string( "#MF" ) : "v" + std::to_string( x ); };
 		std::printf( "    %-36s %-44s SDM %-5s uc %-5s %s\n", k.text, k.why, nm( k.expect ).c_str(), nm( v ).c_str(), v == k.expect ? "ok" : "WRONG" );
@@ -1901,7 +1895,7 @@ static void x87_dump( const char* path, bool use_uc )
 				// ST(7) empty so FPTAN/FSINCOS can push; all exceptions masked; PC = 64 bits
 				uint16_t fcw = uint16_t( 0x037F | ( rc << 10 ) ), fsw = 0, ftw = 0xC000;
 				std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
-				r11_result res = use_uc ? r11_unicorn( code, in, X87_HW_QUIRKS )
+				r11_result res = use_uc ? r11_unicorn( code, in )
 										: r11_native( code, in );
 				if ( res.fault >= 0 ) continue;
 				uint16_t fsw_out = uint16_t( res.env[ 4 ] | ( res.env[ 5 ] << 8 ) );
@@ -2009,7 +2003,7 @@ static void x87_special( const char* path, bool use_uc )
 					{
 						uint16_t fcw = uint16_t( ( im ? 0x037F : 0x037E ) | ( rc << 10 ) ), fsw = 0, ftw = 0xC000;
 						std::memcpy( in + 0, &fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
-						r11_result res = use_uc ? r11_unicorn( code, in, X87_HW_QUIRKS )
+						r11_result res = use_uc ? r11_unicorn( code, in )
 												: r11_native( code, in );
 						if ( res.fault >= 0 ) continue;
 						uint64_t o0, o1; uint16_t x0, x1;
@@ -2052,7 +2046,7 @@ static void x87_list( const char* inpath, const char* path, bool use_uc )
 		put( buf + 32 + 6 * 16, uint16_t( se1 ), m1 );
 		uint16_t fc = uint16_t( fcw ), fsw = 0, ftw = 0xC000;
 		std::memcpy( buf + 0, &fc, 2 ); std::memcpy( buf + 4, &fsw, 2 ); std::memcpy( buf + 8, &ftw, 2 );
-		r11_result res = use_uc ? r11_unicorn( code, buf, X87_HW_QUIRKS ) : r11_native( code, buf );
+		r11_result res = use_uc ? r11_unicorn( code, buf ) : r11_native( code, buf );
 		if ( res.fault >= 0 ) continue;
 		uint64_t o0, o1; uint16_t x0, x1;
 		std::memcpy( &o0, res.fx + 32, 8 ); std::memcpy( &x0, res.fx + 40, 2 );
@@ -2109,7 +2103,7 @@ static void x87_list2( const char* inpath, const char* path, bool use_uc )
 		}
 		uint16_t fc = uint16_t( fcw ), fs = uint16_t( fsw ), ftw = 0xC000;     // ST(7) empty: pushes possible
 		std::memcpy( buf + 0, &fc, 2 ); std::memcpy( buf + 4, &fs, 2 ); std::memcpy( buf + 8, &ftw, 2 );
-		r11_result res = use_uc ? r11_unicorn( code, buf, X87_HW_QUIRKS ) : r11_native( code, buf );
+		r11_result res = use_uc ? r11_unicorn( code, buf ) : r11_native( code, buf );
 		if ( res.fault >= 0 )
 		{
 			std::fprintf( f, "%s,%04X,%04X,%04X:%016llX,%04X:%016llX,%s,fault %d,,,,,\n", fld[ 0 ], fcw, fsw, se0, m0, se1, m1, fld[ 5 ], res.fault );
@@ -2291,7 +2285,7 @@ static void test_r17()
 			put( in + 32 + 6 * 16, c.se1, c.m1 );       // ST1
 			uint16_t fsw = 0, ftw = 0xC000;             // ST(7) empty so FPTAN/FSINCOS can push
 			std::memcpy( in + 0, &c.fcw, 2 ); std::memcpy( in + 4, &fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
-			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, X87_HW_QUIRKS );
+			r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in );
 			if ( hw.fault >= 0 || uc.fault >= 0 )
 			{
 				CHECK( hw.fault == uc.fault, "%s fcw=%04X x=%04X:%016llX y=%04X:%016llX: fault hw %d uc %d", c.op, c.fcw, c.se0,
@@ -2467,7 +2461,7 @@ static void test_r18()
 		std::memcpy( in + 192, c.mem, 16 );
 		uint16_t ftw = 0xC000;                          // ST(7) empty: pushes possible
 		std::memcpy( in + 0, &c.fcw, 2 ); std::memcpy( in + 4, &c.fsw, 2 ); std::memcpy( in + 8, &ftw, 2 );
-		r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in, X87_HW_QUIRKS );
+		r11_result hw = r11_native( code, in ), uc = r11_unicorn( code, in );
 		stat_t& s = stats[ c.op ];
 		++s.n;
 		++total;

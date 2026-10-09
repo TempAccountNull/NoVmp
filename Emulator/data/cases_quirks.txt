@@ -1,8 +1,9 @@
-# UC_CTL_X86_HW_QUIRKS (ledger U99, U98, U430-U432): one or more hardware cases per quirk bit,
-# every case one where the Intel SDM and the i5-13600K differ. Hand-written; only these
-# self-generated snippets run natively. With the CPU's quirk set every case matches:
-#   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7 --quirks cpu
-# with --quirks 0 (strictly the SDM) every case differs from the hardware. docs\quirks.md.
+# Documented i5-13600K deviations from the Intel SDM (docs\quirks.md; ledger U98/U99, U430-U432,
+# U434, U531-U539): one or more hardware cases per deviation, every case one where the SDM and the
+# i5-13600K differ. The emulator implements the SDM only, so every case is tagged
+# "# known deviation: NAME" and counted under that name, never as differing. Hand-written; only
+# these self-generated snippets run natively:
+#   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
 #
 # FCOMI/FUCOMI C1 (U531): SDM C1 = 0, hardware keeps C1 (= 1 here)
 fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1

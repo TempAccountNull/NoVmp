@@ -1,15 +1,11 @@
 // emu-alltest (plan step 1.9): one full test of every instruction form.
 //
-//   emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N] [--rebuild]
+//   emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild]
 //
 //   default (quick)  every 7th form, 2 iterations - the test.cmd smoke run
 //   --full           every form, --iters iterations (default 6)
 //   --filter S       only forms whose text, key or ISA groups contain S
 //   --out DIR        report directory (default: <exe dir>\alltest)
-//   --quirks Q       UC_CTL_X86_HW_QUIRKS bitmask for Unicorn: a number, "cpu" (QUIRKS_I5_13600K, every
-//                    quirk bit the host i5-13600K needs) or "sdm" (0 = strictly the Intel SDM).
-//                    Default: cpu for hardware comparisons (quick/full runs, hardware "--cases"
-//                    lines), sdm for expected-value ("=>") lines; see docs\quirks.md
 //   --rebuild        re-sweep the opcode space instead of using the cached universe
 //   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp); a line
 //                    with "=> expectations" is an expected-value case (Unicorn only, vs the SDM)
@@ -263,13 +259,13 @@ namespace at
 
 	static std::string outcome_str( const result& r ) { return r.faulted ? "#" + std::to_string( r.vector ) : "ok"; }
 
-	static form_result run_form( const form& f, native_engine& hw, int iters, uint32_t quirks )
+	static form_result run_form( const form& f, native_engine& hw, int iters )
 	{
 		form_result fr;
 		std::string err;
 		program p = build( f.bytes, &err );
 		if ( p.code.empty() ) { fr.b = HARNESS_ERROR; fr.detail = "build: " + err; return fr; }
-		unicorn_engine uc( UC_CPU_X86_MAX, quirks );
+		unicorn_engine uc( UC_CPU_X86_MAX );
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		auto in = std::make_unique<state>();
 		bool hw_ud_all = true, uc_ud_all = true, any_diff = false;
@@ -314,8 +310,6 @@ int main( int argc, char** argv )
 	std::setvbuf( stdout, nullptr, _IONBF, 0 );
 	bool full = false, rebuild = false;
 	int iters = -1, sample = -1;
-	uint32_t quirks = QUIRKS_I5_13600K;   // hardware comparison runs: the host CPU's quirk set (U99)
-	bool quirks_given = false;
 	std::string filter, out_dir, cases;
 	at::case_opts copt;
 	for ( int i = 1; i < argc; ++i )
@@ -328,14 +322,6 @@ int main( int argc, char** argv )
 		else if ( a == "--sample" ) sample = std::stoi( val() );
 		else if ( a == "--filter" ) filter = val();
 		else if ( a == "--out" ) out_dir = val();
-		else if ( a == "--quirks" )
-		{
-			std::string q = val();
-			if ( q == "cpu" ) quirks = QUIRKS_I5_13600K;
-			else if ( q == "sdm" ) quirks = 0;
-			else quirks = uint32_t( std::stoul( q, nullptr, 0 ) );
-			quirks_given = true;
-		}
 		else if ( a == "--cases" ) cases = val();
 		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
 		else if ( a == "--strict" ) copt.strict = 1;
@@ -349,11 +335,9 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_FP16; /* U330: + FP16 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--quirks N|cpu|sdm] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
 	}
-	// --cases: hardware lines use the host CPU's quirk set, expected-value lines the SDM (0),
-	// unless --quirks sets both
-	if ( !cases.empty() ) return at::run_cases( cases, quirks, quirks_given ? quirks : 0u, copt );
+	if ( !cases.empty() ) return at::run_cases( cases, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );
@@ -366,8 +350,8 @@ int main( int argc, char** argv )
 	const std::map<std::string, std::string> known_dev = load_known_deviations( known_tsv );
 
 	unsigned maj = 0, min = 0; uc_version( &maj, &min );
-	std::printf( "emu-alltest: Unicorn %u.%u UC_CPU_X86_MAX vs host CPU | mode %s | iterations %d | sample 1/%d | quirks 0x%X\n",
-				 maj, min, full ? "full" : "quick", iters, sample, quirks );
+	std::printf( "emu-alltest: Unicorn %u.%u UC_CPU_X86_MAX vs host CPU | mode %s | iterations %d | sample 1/%d\n",
+				 maj, min, full ? "full" : "quick", iters, sample );
 	std::printf( "  output: %s\n", out_dir.c_str() );
 
 	// universe
@@ -399,7 +383,7 @@ int main( int argc, char** argv )
 	{
 		if ( !filter.empty() && f.text.find( filter ) == std::string::npos && f.key.find( filter ) == std::string::npos && f.groups.find( filter ) == std::string::npos ) continue;
 		if ( idx++ % size_t( sample ) ) continue;
-		rows.push_back( { &f, run_form( f, hw, iters, quirks ) } );
+		rows.push_back( { &f, run_form( f, hw, iters ) } );
 		auto kd = known_dev.find( f.text );
 		if ( kd != known_dev.end() )
 		{
@@ -468,7 +452,7 @@ int main( int argc, char** argv )
 
 	std::ofstream md( out_dir + "\\alltest_report.md" );
 	md << "# emu-alltest report\n\nUnicorn " << maj << "." << min << " `UC_CPU_X86_MAX` vs host CPU. Mode **" << ( full ? "full" : "quick" )
-	   << "**, " << iters << " iterations per form, sample 1/" << sample << ", quirks 0x" << std::hex << quirks << std::dec << ".\n\n";
+	   << "**, " << iters << " iterations per form, sample 1/" << sample << ".\n\n";
 	md << "Universe: **" << uv.forms.size() << " forms** decoded by Capstone (";
 	for ( auto& [ k, v ] : per_cls ) md << k << " " << v << ", ";
 	md << "). Run: **" << rows.size() << " forms** in " << int( run_s ) << " s.\n\n## Buckets\n\n| bucket | forms |\n|---|---|\n";

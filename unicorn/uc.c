@@ -3220,19 +3220,6 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
-    case UC_CTL_X86_HW_QUIRKS:
-        if (uc->arch != UC_ARCH_X86) {
-            err = UC_ERR_ARG;
-        } else if (rw == UC_CTL_IO_READ) {
-            uint32_t *quirks = va_arg(args, uint32_t *);
-            *quirks = uc->x86_hw_quirks;
-        } else if (rw == UC_CTL_IO_WRITE) {
-            uc->x86_hw_quirks = va_arg(args, uint32_t);
-        } else {
-            err = UC_ERR_ARG;
-        }
-        break;
-
     case UC_CTL_X86_CPUID:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

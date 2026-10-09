@@ -59,11 +59,9 @@ typedef enum uc_cpu_x86 {
     UC_CPU_X86_ENDING
 } uc_cpu_x86;
 
-// Hardware quirks (UC_CTL_X86_HW_QUIRKS): documented places where real CPUs differ
-// from the Intel SDM. Default 0 = strictly the SDM (testable against its pseudocode);
-// each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
-// says "undefined"/"implementation specific" the emulator follows the hardware without a
-// bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
+// NoVmp (U539): the emulator implements the Intel SDM only; there is no hardware-quirk
+// switch (UC_CTL_X86_HW_QUIRKS is gone). Where the i5-13600K deviates from the SDM, the
+// deviation is documented in docs/quirks.md and tagged in the hardware case files.
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h

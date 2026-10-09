@@ -53,9 +53,9 @@
 //
 // Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --no-strict /
 // --xcr0 V configure Unicorn for both kinds of case (U435: a --cpuid profile is strict by
-// default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0). UC_CTL_X86_HW_QUIRKS (U99): hardware cases run with
-// the host CPU's quirk set (QUIRKS_I5_13600K), expected-value cases with 0 (strictly the SDM);
-// --quirks N|cpu|sdm sets both. --avx512 opts Unicorn in to AVX-512
+// default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0). U539: Unicorn implements the SDM only,
+// for both kinds of case (no quirk switch; hardware deviations are tags, below). --avx512 opts
+// Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16, before the engine is
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
 // Emulator\data\cases_opmask.txt. --amx
@@ -359,7 +359,7 @@ namespace at
 		return "";
 	}
 
-	static int run_cases( const std::string& path, uint32_t hw_quirks, uint32_t exp_quirks, const case_opts& opt = {} )
+	static int run_cases( const std::string& path, const case_opts& opt = {} )
 	{
 		std::ifstream f( path );
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
@@ -445,7 +445,7 @@ namespace at
 			program p = build( bytes, &err );
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
 			result h, u;
-			unicorn_engine uc( UC_CPU_X86_MAX, expect ? exp_quirks : hw_quirks );
+			unicorn_engine uc( UC_CPU_X86_MAX );
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
 			uc.avx512 = opt.avx512;
 			uc.amx = opt.amx;
@@ -512,7 +512,6 @@ namespace at
 		for ( auto& [ k, v ] : host ) std::printf( "host state: %s: %d\n", k.c_str(), v );
 		std::printf( "tagged but not observed (matched the hardware): %zu\n", not_observed.size() );
 		for ( auto& s : not_observed ) std::printf( "  not observed %s\n", s.c_str() );
-		std::printf( "quirks: hardware cases 0x%X, expected-value cases 0x%X\n", hw_quirks, exp_quirks );
 		// U435: the CPUID profile and the strict setting Unicorn used
 		if ( opt.cpuid.empty() )
 			std::printf( "cpuid: model (no profile), strict %s\n", opt.strict < 0 ? "off (default)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );

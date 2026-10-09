@@ -431,7 +431,6 @@ struct uc_struct {
     FlatView *empty_view; // Static function variable moved from flatviews_init
 
     uint32_t tcg_buffer_size; // The buffer size we are going to use
-    uint32_t x86_hw_quirks;   // UC_X86_QUIRK_* (UC_CTL_X86_HW_QUIRKS); 0 = follow the SDM
     struct uc_x86_cpuid *x86_cpuid;   // UC_CTL_X86_CPUID profile (NoVmp U68), NULL = model
     size_t x86_cpuid_count;
     int x86_cpuid_strict;     // UC_CTL_X86_CPUID_STRICT (effective value)

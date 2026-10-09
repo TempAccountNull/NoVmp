@@ -11797,30 +11797,25 @@ static void test_x86_f16c_vcvtps2ph_ftz(void)
     }
 }
 /* ---- end U440-U442 (hc_) ---- */
-/* ---- qk_ block begin (NoVmp U98/U99/U430-U439: hardware quirk bits) ---- */
+/* ---- qk_ block begin (NoVmp U98/U99/U430-U439, U531-U539: SDM results where the i5-13600K deviates) ---- */
 /*
- * NoVmp U99 (+U98, U430-U439): every UC_CTL_X86_HW_QUIRKS bit, off and on. With
- * quirks 0 the result is the Intel SDM's; with the bit set it is the i5-13600K's.
- * Each qk_ case runs one snippet on a fresh engine with only that bit (or none).
+ * NoVmp U539: the SDM result of every behaviour where the i5-13600K deviates from the
+ * SDM (docs/quirks.md; the former UC_CTL_X86_HW_QUIRKS bits, removed in U531-U538).
+ * Each qk_ case runs one snippet on a fresh engine.
  * Data at QK_DATA (qwords): 2.0, -1.0, 1.0, -2.0 (doubles), FCW 037Eh (IM = 0),
  * QNaN; RAX = QK_DATA.
  */
 #define QK_DATA 0x200000
 
-static uc_engine *qk_run(const char *code, size_t len, uint32_t quirks,
-                         uc_err want)
+static uc_engine *qk_run(const char *code, size_t len, uc_err want)
 {
     static const uint64_t data[6] = {0x4000000000000000ULL, 0xBFF0000000000000ULL,
                                      0x3FF0000000000000ULL, 0xC000000000000000ULL,
                                      0x037E, 0x7FF8000000000001ULL};
     uint64_t rax = QK_DATA;
-    uint32_t rb = 0xFFFFFFFFu;
     uc_engine *uc;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    OK(uc_ctl_set_x86_hw_quirks(uc, quirks));
-    OK(uc_ctl_get_x86_hw_quirks(uc, &rb));
-    TEST_CHECK(rb == quirks);
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, len));
     OK(uc_mem_map(uc, QK_DATA, 0x1000, UC_PROT_READ | UC_PROT_WRITE));
@@ -11838,35 +11833,35 @@ static uint16_t qk_fsw(uc_engine *uc)
 }
 
 /* bit 0: fninit; fld [rax] (2.0); fld [rax+8] (-1.0); fxam (C1 = 1); fcomi st0, st1 */
-static void qk_fcomi(uint32_t q, int want_c1)
+static void qk_fcomi(int want_c1)
 {
     static const char code[] = "\xdb\xe3\xdd\x00\xdd\x40\x08\xd9\xe5\xdb\xf1";
-    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, UC_ERR_OK);
     uint16_t fsw = qk_fsw(uc);
     TEST_CHECK(((fsw >> 9) & 1) == want_c1);
-    TEST_MSG("quirks %x: fsw %04x, C1 want %d", q, fsw, want_c1);
+    TEST_MSG("fsw %04x, C1 want %d", fsw, want_c1);
     OK(uc_close(uc));
 }
 
 /* bit 1: fninit; fld1 (TOP 7); cvtpi2ps xmm0, qword [rax] (SDM: x87 -> MMX, TOP 0) */
-static void qk_cvtpi2ps(uint32_t q, int want_top)
+static void qk_cvtpi2ps(int want_top)
 {
     static const char code[] = "\xdb\xe3\xd9\xe8\x0f\x2a\x00";
-    uc_engine *uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, UC_ERR_OK);
     uint16_t fsw = qk_fsw(uc);
     TEST_CHECK(((fsw >> 11) & 7) == want_top);
-    TEST_MSG("quirks %x: fsw %04x, TOP want %d", q, fsw, want_top);
+    TEST_MSG("fsw %04x, TOP want %d", fsw, want_top);
     OK(uc_close(uc));
 }
 
 /* bit 2: fninit; fld [rax+16] (y = 1.0) or fldz; fld [rax+24] (x = -2.0); fyl2xp1 */
-static void qk_fyl2xp1(uint32_t q, int yzero, uint16_t want_sexp,
+static void qk_fyl2xp1(int yzero, uint16_t want_sexp,
                        uint64_t want_mant, uint16_t want_flag)
 {
     static const char code1[] = "\xdb\xe3\xdd\x40\x10\xdd\x40\x18\xd9\xf9";
     static const char code0[] = "\xdb\xe3\xd9\xee\x90\xdd\x40\x18\xd9\xf9";
     uc_engine *uc =
-        qk_run(yzero ? code0 : code1, sizeof(code1) - 1, q, UC_ERR_OK);
+        qk_run(yzero ? code0 : code1, sizeof(code1) - 1, UC_ERR_OK);
     uint8_t st0[10];
     uint64_t mant;
     uint16_t sexp, fsw = qk_fsw(uc);
@@ -11875,20 +11870,20 @@ static void qk_fyl2xp1(uint32_t q, int yzero, uint16_t want_sexp,
     memcpy(&sexp, st0 + 8, 2);
     TEST_CHECK(sexp == want_sexp && mant == want_mant);
     TEST_CHECK(want_flag == 0 ? (fsw & 0x3F) == 0 : (fsw & want_flag) != 0);
-    TEST_MSG("quirks %x: st0 %04x:%016llx fsw %04x", q, sexp,
+    TEST_MSG("st0 %04x:%016llx fsw %04x", sexp,
              (unsigned long long)mant, fsw);
     OK(uc_close(uc));
 }
 
 /* bit 3: ptwrite dword [rax] (CPUID.14.0:EBX[4] = 0) */
-static void qk_ptwrite(uint32_t q, uc_err want)
+static void qk_ptwrite(uc_err want)
 {
     static const char code[] = "\xf3\x0f\xae\x20";
-    OK(uc_close(qk_run(code, sizeof(code) - 1, q, want)));
+    OK(uc_close(qk_run(code, sizeof(code) - 1, want)));
 }
 
 /* bit 4: dppd xmm0, xmm1, 0x33 with two NaN products (xmm0 = QNaN a0, QNaN a1) */
-static void qk_dppd(uint32_t q, uint64_t want1)
+static void qk_dppd(uint64_t want1)
 {
     static const char code[] = "\x66\x0f\x3a\x41\xc1\x33";
     uint64_t x0[2] = {0x7FF8000000000A01ULL, 0x7FF8000000000A02ULL};
@@ -11897,7 +11892,6 @@ static void qk_dppd(uint32_t q, uint64_t want1)
     uc_engine *uc;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    OK(uc_ctl_set_x86_hw_quirks(uc, q));
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
     OK(uc_reg_write(uc, UC_X86_REG_XMM0, x0));
@@ -11905,13 +11899,13 @@ static void qk_dppd(uint32_t q, uint64_t want1)
     OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
     OK(uc_reg_read(uc, UC_X86_REG_XMM0, r));
     TEST_CHECK(r[0] == x0[0] && r[1] == want1);
-    TEST_MSG("quirks %x: xmm0 %016llx %016llx", q, (unsigned long long)r[0],
+    TEST_MSG("xmm0 %016llx %016llx", (unsigned long long)r[0],
              (unsigned long long)r[1]);
     OK(uc_close(uc));
 }
 
 /* bit 5: rep movsb with 67h, ECX = 0, upper register halves set */
-static void qk_rep_zero(uint32_t q, int zx)
+static void qk_rep_zero(int zx)
 {
     static const char code[] = "\x67\xf3\xa4";
     uint64_t rcx = 0xFFFFFFFF00000000ULL, rsi = 0x1111111100003000ULL;
@@ -11919,7 +11913,6 @@ static void qk_rep_zero(uint32_t q, int zx)
     uc_engine *uc;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    OK(uc_ctl_set_x86_hw_quirks(uc, q));
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
     OK(uc_reg_write(uc, UC_X86_REG_RCX, &rcx));
@@ -11935,7 +11928,7 @@ static void qk_rep_zero(uint32_t q, int zx)
         TEST_CHECK(rcx == 0xFFFFFFFF00000000ULL && rsi == 0x1111111100003000ULL &&
                    rdi == 0x2222222200004000ULL);
     }
-    TEST_MSG("quirks %x: rcx %llx rsi %llx rdi %llx", q, (unsigned long long)rcx,
+    TEST_MSG("rcx %llx rsi %llx rdi %llx", (unsigned long long)rcx,
              (unsigned long long)rsi, (unsigned long long)rdi);
     OK(uc_close(uc));
 }
@@ -11944,7 +11937,7 @@ static void qk_rep_zero(uint32_t q, int zx)
  * bit 6: fninit; fldcw [rax+32] (IM = 0); fld [rax+16] (1.0); fld [rax+40] (QNaN);
  * then fcom st(1) / fcomi st(0), st(1) / ftst. #IA unmasked.
  */
-static void qk_x87_cmp(uint32_t q, char insn, uint16_t want_cc, uint64_t want_zpc)
+static void qk_x87_cmp(char insn, uint16_t want_cc, uint64_t want_zpc)
 {
     char code[] = "\xdb\xe3\xd9\x68\x20\xdd\x40\x10\xdd\x40\x28\x90\x90";
     uint64_t rflags = 0;
@@ -11958,13 +11951,13 @@ static void qk_x87_cmp(uint32_t q, char insn, uint16_t want_cc, uint64_t want_zp
     } else {                    /* ftst */
         code[11] = '\xd9', code[12] = '\xe4';
     }
-    uc = qk_run(code, sizeof(code) - 1, q, UC_ERR_OK);
+    uc = qk_run(code, sizeof(code) - 1, UC_ERR_OK);
     fsw = qk_fsw(uc);
     OK(uc_reg_read(uc, UC_X86_REG_EFLAGS, &rflags));
     TEST_CHECK((fsw & 0x0001) != 0);
     TEST_CHECK((fsw & 0x4500) == want_cc);
     TEST_CHECK((rflags & 0x45) == want_zpc);
-    TEST_MSG("quirks %x insn %c: fsw %04x rflags %llx", q, insn, fsw,
+    TEST_MSG("insn %c: fsw %04x rflags %llx", insn, fsw,
              (unsigned long long)rflags);
     OK(uc_close(uc));
 }
@@ -11977,40 +11970,40 @@ static void qk_cpuid_fdp(void)
 {
     static const char code[] = "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2";
     uint64_t rbx = 0;
-    uc_engine *uc = qk_run(code, sizeof(code) - 1, 0, UC_ERR_OK);
+    uc_engine *uc = qk_run(code, sizeof(code) - 1, UC_ERR_OK);
     OK(uc_reg_read(uc, UC_X86_REG_RBX, &rbx));
     TEST_CHECK((rbx & ((1u << 6) | (1u << 13))) == ((1u << 6) | (1u << 13)));
     TEST_MSG("CPUID.7.0:EBX %llx", (unsigned long long)rbx);
     OK(uc_close(uc));
 }
 
-static void test_x86_hw_quirk_bits(void)
+static void test_x86_sdm_documented_deviations(void)
 {
     /* FCOMI/FUCOMI C1 (U531, quirk removed): SDM C1 = 0 (the i5-13600K keeps C1 = 1,
        docs/quirks.md) */
-    qk_fcomi(0, 0);
+    qk_fcomi(0);
     /* CVTPI2PS m64 x87 transition (U532, quirk removed): SDM TOP = 0 (the i5-13600K
        keeps TOP = 7, docs/quirks.md) */
-    qk_cvtpi2ps(0, 0);
+    qk_cvtpi2ps(0);
     /* FYL2XP1 below -1 (U533, quirk removed): SDM #IA (masked: indefinite, IE), also
        with y = +0 (U432); the i5-13600K gives ST0 = x with PE / -0 (docs/quirks.md) */
-    qk_fyl2xp1(0, 0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    qk_fyl2xp1(0, 1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
+    qk_fyl2xp1(0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
+    qk_fyl2xp1(1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
     /* PTWRITE without PT (U534, quirk removed): SDM #UD (the i5-13600K reads the
        operand and goes on, docs/quirks.md) */
-    qk_ptwrite(0, UC_ERR_INSN_INVALID);
+    qk_ptwrite(UC_ERR_INSN_INVALID);
     /* DPPD two NaN products (U535, quirk removed): SDM p0 + p1 in both elements (the
        i5-13600K gives p1 + p0 in element 1, docs/quirks.md) */
-    qk_dppd(0, 0x7FF8000000000A01ULL);
+    qk_dppd(0x7FF8000000000A01ULL);
     /* REP 67h ECX=0 zero-extension (U536, quirk removed): SDM writes nothing (the
        i5-13600K zero-extends RCX/RSI/RDI, docs/quirks.md) */
-    qk_rep_zero(0, 0);
+    qk_rep_zero(0);
     /* x87 compare unmasked #IA condition codes (U537, quirk removed): SDM keeps C3/C2/C0
        (ZF/PF/CF) (the i5-13600K sets 111, docs/quirks.md) */
-    qk_x87_cmp(0, 'c', 0x0000, 0);
-    qk_x87_cmp(0, 'i', 0x0000, 0);
+    qk_x87_cmp('c', 0x0000, 0);
+    qk_x87_cmp('i', 0x0000, 0);
     /* FTST has no IM condition in the SDM: "unordered" */
-    qk_x87_cmp(0, 't', 0x4500, 0);
+    qk_x87_cmp('t', 0x4500, 0);
     qk_cpuid_fdp();
 }
 /* ---- qk_ block end ---- */
@@ -12771,7 +12764,6 @@ typedef struct {
     uint8_t len;
     uint32_t x0[4], x1[4], x2[4];   /* XMM0..2 inputs (lane 0 first) */
     uint32_t mxcsr_in;
-    uint32_t quirks;
     int fault;                      /* -1 none, 19 = #XM */
     uint32_t mxcsr_out;             /* uc_reg_read(UC_X86_REG_MXCSR) afterwards */
     int dst;                        /* destination register 0 or 1 */
@@ -12792,9 +12784,6 @@ static int sx_run(const sx_case *t, uint32_t d[4], uint32_t *mx)
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
-    if (t->quirks) {
-        OK(uc_ctl_set_x86_hw_quirks(uc, t->quirks));
-    }
     OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, t->code, t->len));
     OK(uc_hook_add(uc, &h, UC_HOOK_INTR, sx_hook_intr, &intr, 1, 0));
@@ -12850,43 +12839,43 @@ static void test_x86_sse_unmasked_ou(void)
 {
     static const sx_case t[] = {
         {"mulss 2^-100*2^-30 UM=0", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
-         0x1780, 0, 19, 0x1790, 1, 0},
+         0x1780, 19, 0x1790, 1, 0},
         {"mulss 2^-100*2^-30 UM=0 FTZ", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
-         0x9780, 0, 19, 0x9790, 1, 0},
+         0x9780, 19, 0x9790, 1, 0},
         {"mulss 2^-100*2^-30 masked", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
-         0x1f80, 0, -1, 0x1f80, 1, 0x00080000},
+         0x1f80, -1, 0x1f80, 1, 0x00080000},
         {"mulss 2^-100*2^-30 masked FTZ", SX_MULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
-         0x9f80, 0, -1, 0x9fb0, 1, 0},
+         0x9f80, -1, 0x9fb0, 1, 0},
         {"mulss tiny unbounded-exact UM=0", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800000, SX_ONE},
-         0x1780, 0, 19, 0x1790, 1, 0},
+         0x1780, 19, 0x1790, 1, 0},
         {"mulss tiny unbounded-exact masked", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800000, SX_ONE},
-         0x1f80, 0, -1, 0x1fb0, 1, 0x00080000},
+         0x1f80, -1, 0x1fb0, 1, 0x00080000},
         {"mulss tiny inexact UM=0", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800001, SX_ONE},
-         0x1780, 0, 19, 0x17b0, 1, 0},
+         0x1780, 19, 0x17b0, 1, 0},
         {"mulss 2^127*2 OM=0", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
-         0x1b80, 0, 19, 0x1b88, 1, 0},
+         0x1b80, 19, 0x1b88, 1, 0},
         {"mulss MAX*MAX OM=0", SX_MULSS, SX_J, {0x7f7fffff, SX_ONE}, {0x7f7fffff, SX_ONE},
-         0x1b80, 0, 19, 0x1ba8, 1, 0},
+         0x1b80, 19, 0x1ba8, 1, 0},
         {"mulss 2^127*2 masked", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
-         0x1f80, 0, -1, 0x1fa8, 1, 0x7f800000},
+         0x1f80, -1, 0x1fa8, 1, 0x7f800000},
         {"mulss 2^127*2 RZ OM=0", SX_MULSS, SX_J, {0x7f000000, SX_ONE}, {0x40000000, SX_ONE},
-         0x7b80, 0, 19, 0x7b88, 1, 0},
+         0x7b80, 19, 0x7b88, 1, 0},
         /* tininess after rounding: (1+u)minN*(1-u) rounds to minN at RN, not at RZ */
         {"mulss rounds to minN RN", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
-         0x1f80, 0, -1, 0x1fa0, 1, 0x00800000},
+         0x1f80, -1, 0x1fa0, 1, 0x00800000},
         {"mulss rounds to minN RN UM=0", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
-         0x1780, 0, -1, 0x17a0, 1, 0x00800000},
+         0x1780, -1, 0x17a0, 1, 0x00800000},
         {"mulss tiny at RZ", SX_MULSS, SX_J, {0x00800001, SX_ONE}, {0x3f7ffffe, SX_ONE},
-         0x7f80, 0, -1, 0x7fb0, 1, 0x007fffff},
+         0x7f80, -1, 0x7fb0, 1, 0x007fffff},
         {"vmulss 2^-100*2^-30 UM=0", SX_VMULSS, SX_J, {0x0d800000, SX_ONE}, {0x30800000, SX_ONE},
-         0x1780, 0, 19, 0x1790, 0, 0},
+         0x1780, 19, 0x1790, 0, 0},
         {"vfmadd231ss 2^-100*2^-30+0 UM=0", SX_FMA231, {0, SX_ONE}, {0x0d800000, SX_ONE},
-         {0x30800000, SX_ONE}, 0x1780, 0, 19, 0x1790, 0, 0},
+         {0x30800000, SX_ONE}, 0x1780, 19, 0x1790, 0, 0},
         {"vfmadd231ss MAX*2-MAX OM=0 (no overflow)", SX_FMA231, {0xff7fffff, SX_ONE},
-         {0x7f7fffff, SX_ONE}, {0x40000000, SX_ONE}, 0x1b80, 0, -1, 0x1b80, 0, 0x7f7fffff},
-        {"cvtsd2ss 2^-130 UM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x37d00000}, 0x1780, 0,
+         {0x7f7fffff, SX_ONE}, {0x40000000, SX_ONE}, 0x1b80, -1, 0x1b80, 0, 0x7f7fffff},
+        {"cvtsd2ss 2^-130 UM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x37d00000}, 0x1780,
          19, 0x1790, 1, 0},
-        {"cvtsd2ss 2^128 OM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x47f00000}, 0x1b80, 0,
+        {"cvtsd2ss 2^128 OM=0", SX_CVTSD2SS, SX_J, SX_J, {0x00000000, 0x47f00000}, 0x1b80,
          19, 0x1b88, 1, 0},
     };
 
@@ -12900,15 +12889,15 @@ static void test_x86_sse_dpps_steps(void)
     static const sx_case t[] = {
         /* Temp2 = 1.5minN - minN exact tiny (#U), Temp3 = 1 + 2^-24 inexact */
         {"dpps Temp2 tiny UM=0 (SDM)", SX_DPPS, SX_J, {0x00c00000, 0x80800000, SX_ONE, 0x33800000},
-         {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, 0, 19, 0x1790, 1, 0},
+         {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, 19, 0x1790, 1, 0},
         /* products MAX*2 and -MAX*2 overflow (#O): stop before inf - inf */
         {"dpps product overflow OM=0", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
-         {0x40000000, 0x40000000, 0, 0}, 0x1b80, 0, 19, 0x1b88, 1, 0},
+         {0x40000000, 0x40000000, 0, 0}, 0x1b80, 19, 0x1b88, 1, 0},
         {"dpps product overflow masked", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
-         {0x40000000, 0x40000000, 0, 0}, 0x1f80, 0, -1, 0x1fa9, 1, 0xffc00000},
+         {0x40000000, 0x40000000, 0, 0}, 0x1f80, -1, 0x1fa9, 1, 0xffc00000},
         /* tiny inexact product (masked U, P), then the add of that denormal with DM = 0 */
         {"dpps denormal intermediate DM=0", SX_DPPS, SX_J, {0x0d800001, 0, 0, 0},
-         {0x30800001, 0, 0, 0}, 0x1e80, 0, 19, 0x1eb2, 1, 0},
+         {0x30800001, 0, 0, 0}, 0x1e80, 19, 0x1eb2, 1, 0},
     };
 
     sx_check(t, sizeof(t) / sizeof(t[0]));
@@ -12919,21 +12908,21 @@ static void test_x86_mxcsr_api(void)
 {
     static const sx_case t[] = {
         {"addss 1+2^-30 PE visible", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
-         0x1f80, 0, -1, 0x1fa0, 1, SX_ONE},
+         0x1f80, -1, 0x1fa0, 1, SX_ONE},
         {"addss 1+2^-30 RU", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
-         0x5f80, 0, -1, 0x5fa0, 1, 0x3f800001},
+         0x5f80, -1, 0x5fa0, 1, 0x3f800001},
         {"addss 1+2^-30 RD", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {0x30800000, SX_ONE},
-         0x3f80, 0, -1, 0x3fa0, 1, SX_ONE},
+         0x3f80, -1, 0x3fa0, 1, SX_ONE},
         {"addss flags preset stay", SX_ADDSS, SX_J, {SX_ONE, SX_ONE}, {SX_ONE, SX_ONE},
-         0x1f81, 0, -1, 0x1f81, 1, 0x40000000},
+         0x1f81, -1, 0x1f81, 1, 0x40000000},
         {"addss minD+0 DAZ", SX_ADDSS, SX_J, {0x00000001, SX_ONE}, {0, SX_ONE},
-         0x1fc0, 0, -1, 0x1fc0, 1, 0},
+         0x1fc0, -1, 0x1fc0, 1, 0},
         {"addss minD+0 no DAZ", SX_ADDSS, SX_J, {0x00000001, SX_ONE}, {0, SX_ONE},
-         0x1f80, 0, -1, 0x1f82, 1, 0x00000001},
+         0x1f80, -1, 0x1f82, 1, 0x00000001},
         {"mulss tiny FTZ", SX_MULSS, SX_J, {0x0d800001, SX_ONE}, {0x30800001, SX_ONE},
-         0x9f80, 0, -1, 0x9fb0, 1, 0},
+         0x9f80, -1, 0x9fb0, 1, 0},
         {"addss two QNaNs -> src1 (U96)", SX_ADDSS, SX_J, {0x7fc11111, SX_ONE}, {0x7fc22222, SX_ONE},
-         0x1f80, 0, -1, 0x1f80, 1, 0x7fc11111},
+         0x1f80, -1, 0x1f80, 1, 0x7fc11111},
     };
     uc_engine *uc;
     uint32_t mx;
@@ -13294,7 +13283,7 @@ TEST_LIST = {
     {"test_x86_evex_cvt_gpr_w", test_x86_evex_cvt_gpr_w},
     {"test_x86_evex_cvt_xm", test_x86_evex_cvt_xm},
     {"test_x86_f16c_vcvtps2ph_ftz", test_x86_f16c_vcvtps2ph_ftz},
-    {"test_x86_hw_quirk_bits", test_x86_hw_quirk_bits},
+    {"test_x86_sdm_documented_deviations", test_x86_sdm_documented_deviations},
     {"test_x86_fp16_optin", test_x86_fp16_optin},
     {"test_x86_fp16_gating", test_x86_fp16_gating},
     {"test_x86_fp16_xm", test_x86_fp16_xm},
