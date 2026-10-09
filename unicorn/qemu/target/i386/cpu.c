@@ -4764,11 +4764,17 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             /* NoVmp (ledger U125): SDM Vol1 13.2 - EBX is the XSAVES size for the
                components currently set in XCR0 | IA32_XSS if EAX[3], else the XSAVEC
                size for those currently set in XCR0 (not for all supported ones).
-               Without XSAVEC the SDM says 0; QEMU's non-zero value is kept there
-               (models without XSAVEC, e.g. Haswell, are outside this change). */
+               NoVmp (ledger U833): "If EAX[1] and EAX[3] are both enumerated as 0, EBX
+               enumerates zero" - models without XSAVEC/XSAVES (e.g. Haswell) report 0,
+               not QEMU's compacted size. */
             (void)xstate;
-            *ebx = xsave_area_size((*eax & CPUID_XSAVE_XSAVES) ? env->xcr0 | env->xss
-                                                                : env->xcr0, true);
+            if (*eax & CPUID_XSAVE_XSAVES) {
+                *ebx = xsave_area_size(env->xcr0 | env->xss, true);
+            } else if (*eax & CPUID_XSAVE_XSAVEC) {
+                *ebx = xsave_area_size(env->xcr0, true);
+            } else {
+                *ebx = 0;
+            }
 #endif /* __Use_Original_Qemu (U125) */
             *ecx = env->features[FEAT_XSAVE_XSS_LO];
             *edx = env->features[FEAT_XSAVE_XSS_HI];

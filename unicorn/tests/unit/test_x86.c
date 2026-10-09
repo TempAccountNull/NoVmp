@@ -1799,7 +1799,9 @@ static void test_x86_qemu72_xsave_cpuid(void)
     OK(uc_reg_read(uc, UC_X86_REG_EDX, &edx));
 
     TEST_CHECK(eax != 0);
-    TEST_CHECK(ebx >= 512);
+    /* NoVmp U833: Haswell has XSAVEOPT only (EAX[1] = EAX[3] = 0): "EBX enumerates zero"
+       (SDM Vol1 13.2); was ebx >= 512 (QEMU's compacted size) */
+    TEST_CHECK(ebx == 0);
     TEST_CHECK((ecx & ~(1U << 15)) == 0);
     TEST_CHECK(edx == 0);
 
@@ -19888,6 +19890,66 @@ static void test_x86_rg_context_tlb(void)
     OK(uc_close(uc));
 }
 
+/* CPUID.(EAX=leaf, ECX=sub) on a 64-bit engine of 'model' with XCR0 = 'xcr0' (0 = reset) */
+static void rg_cpuid(int model, uint64_t xcr0, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    static const char code[] = "\x0f\xa2"; /* cpuid */
+    uc_engine *uc;
+    uint64_t v;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    if (xcr0) {
+        OK(uc_reg_write(uc, UC_X86_REG_XCR0, &xcr0));
+    }
+    v = leaf;
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &v));
+    v = sub;
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &v));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    r[0] = (uint32_t)nk_reg(uc, UC_X86_REG_RAX);
+    r[1] = (uint32_t)nk_reg(uc, UC_X86_REG_RBX);
+    r[2] = (uint32_t)nk_reg(uc, UC_X86_REG_RCX);
+    r[3] = (uint32_t)nk_reg(uc, UC_X86_REG_RDX);
+    OK(uc_close(uc));
+}
+
+/*
+ * U833: CPUID.(EAX=0DH,ECX=1):EBX (SDM Vol1 13.2): the XSAVES size for XCR0 | IA32_XSS if
+ * EAX[3] = 1; else the XSAVEC size for XCR0 if EAX[1] = 1; "If EAX[1] and EAX[3] are both
+ * enumerated as 0, EBX enumerates zero" (Sandy Bridge .. Broadwell: XSAVEOPT only).
+ */
+static void test_x86_rg_cpuid_0d1_ebx(void)
+{
+    static const struct {
+        int model;
+        const char *name;
+        uint32_t xsave_bits; /* EAX[1] | EAX[3] expected */
+        uint32_t ebx;        /* with XCR0 = 7, IA32_XSS = 0 */
+    } t[] = {
+        {UC_CPU_X86_SANDYBRIDGE, "SandyBridge", 0, 0},
+        {UC_CPU_X86_IVYBRIDGE, "IvyBridge", 0, 0},
+        {UC_CPU_X86_HASWELL, "Haswell", 0, 0},
+        {UC_CPU_X86_BROADWELL, "Broadwell", 0, 0},
+        {UC_CPU_X86_SKYLAKE_CLIENT, "Skylake-Client (XSAVEC)", 2, 576 + 256},
+        {UC_CPU_X86_MAX, "max (XSAVES)", 10, 576 + 256},
+    };
+    uint32_t r[4];
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        rg_cpuid(t[i].model, 7, 0xd, 1, r);
+        TEST_CHECK((r[0] & 0xa) == t[i].xsave_bits && r[1] == t[i].ebx);
+        TEST_MSG("%s: 0DH.1 EAX %08x EBX %08x (expected EAX[3,1] %x, EBX %x)", t[i].name, r[0],
+                 r[1], t[i].xsave_bits, t[i].ebx);
+    }
+    /* and at the reset XCR0 (EBX does not depend on XCR0 there) */
+    rg_cpuid(UC_CPU_X86_HASWELL, 0, 0xd, 1, r);
+    TEST_CHECK(r[0] != 0 && r[1] == 0);
+}
+
 /* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
@@ -20166,4 +20228,5 @@ TEST_LIST = {
     {"test_x86_rg_context_roundtrip", test_x86_rg_context_roundtrip},
     {"test_x86_rg_context_reg_write", test_x86_rg_context_reg_write},
     {"test_x86_rg_context_tlb", test_x86_rg_context_tlb},
+    {"test_x86_rg_cpuid_0d1_ebx", test_x86_rg_cpuid_0d1_ebx},
     {NULL, NULL}};
