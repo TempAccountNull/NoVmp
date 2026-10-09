@@ -20,6 +20,8 @@
 //                    VPOPCNTDQ|BITALG|VBMI|FP16, reset XCR0 E7h) for opmask/EVEX expected-value cases; the host CPU has none
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
+//   --bench          performance benchmark (at_bench.hpp, ledger U500): [--reps N] [--filter S]
+//                    [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]; Unicorn only, own code only
 //   --avx10 N        with --cases: Unicorn opts in to Intel AVX10 version N (UC_CTL_X86_AVX10 = N,
 //                    1 or 2; the AVX512* CPUID bits stay off) for the AVX10 expected-value cases
 //
@@ -29,6 +31,7 @@
 // plus the manual's forms that the sweep cannot reach yet (Emulator\data\isa_manual_forms.tsv).
 #include "at_universe.hpp"
 #include "at_cases.hpp"
+#include "at_bench.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -312,6 +315,11 @@ int main( int argc, char** argv )
 	int iters = -1, sample = -1;
 	std::string filter, out_dir, cases;
 	at::case_opts copt;
+	bool bench = false;
+	int bench_reps = 5, bench_cpu = 4;
+	double bench_scale = 1.0;
+	std::string bench_csv;
+	int bench_profile = 0;
 	for ( int i = 1; i < argc; ++i )
 	{
 		std::string a = argv[ i ];
@@ -335,8 +343,15 @@ int main( int argc, char** argv )
 												  UC_X86_AVX512_FP16; /* U330: + FP16 */
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]]\n" ); return 2; }
+		else if ( a == "--bench" ) bench = true;
+		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
+		else if ( a == "--scale" ) bench_scale = std::stod( val() );
+		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
+		else if ( a == "--csv" ) bench_csv = val();
+		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--expect-only]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
+	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
