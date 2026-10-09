@@ -458,3 +458,15 @@ DEF_HELPER_4(avx10_vcomx, void, env, ptr, ptr, i32)
 DEF_HELPER_4(avx10_cvt, void, env, ptr, ptr, i32)
 DEF_HELPER_3(avx10_cvts, tl, env, ptr, i32)
 #endif /* __Use_Original_Qemu (U373-U399) */
+#if __Use_Original_Qemu != 1 /* ours (U552) */
+DEF_HELPER_5(evex_vbmi2_shd, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U552) */
+#if __Use_Original_Qemu != 1 /* ours (U554) */
+DEF_HELPER_5(evex_vpmultishiftqb, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U554) */
+#if __Use_Original_Qemu != 1 /* ours (U556) */
+DEF_HELPER_5(evex_cvtne2ps2bf16, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U557) */
+DEF_HELPER_5(evex_vdpbf16ps, void, env, ptr, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U557) */

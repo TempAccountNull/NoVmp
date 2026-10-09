@@ -3275,13 +3275,16 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                 uc->x86_avx512 = on ? (on | UC_X86_AVX512_F) : 0;
             }
 #else /* ours (U330) */
-            /* U330: + FP16 (implies BW: SDM Vol1 15.2.2); U570: + VP2INTERSECT */
+            /* U330: + FP16 (implies BW: SDM Vol1 15.2.2); U570: + VP2INTERSECT;
+             * U550: + VBMI2; U555: + VNNI; U556: + BF16 */
             if (uc->init_done ||
                 (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
                         UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
                         UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG |
                         UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 |
-                        UC_X86_AVX512_VP2INTERSECT))) {
+                        UC_X86_AVX512_VP2INTERSECT |
+                        UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |
+                        UC_X86_AVX512_BF16))) {
                 err = UC_ERR_ARG;
             } else {
                 if (on & UC_X86_AVX512_FP16) {

@@ -717,10 +717,23 @@ static void gen_evex_cx(DisasContext *s, X86DecodedInsn *decode, TCGv_i64 kmask)
     if (dst->has_ea || src->has_ea) {
         /* the first popcount(k1 & (2^KL - 1)) elements of the memory operand */
         lm = tcg_temp_new_i64(tcg_ctx);
-        tcg_gen_andi_i64(tcg_ctx, lm, m, (1ull << n) - 1);
-        tcg_gen_ctpop_i64(tcg_ctx, lm, lm);
-        tcg_gen_shl_i64(tcg_ctx, lm, tcg_constant_i64(tcg_ctx, 1), lm);
-        tcg_gen_subi_i64(tcg_ctx, lm, lm, 1);
+        /*
+         * NoVmp (ledger U551, was: (1 << n) - 1 and 1 << popcount): VPEXPANDB / VPCOMPRESSB
+         * at 512 bits have KL = 64 elements: no shift by 64 (C and TCG leave it undefined):
+         * (1 << ceil(c/2)) << floor(c/2) is 2^c for c = 0..64 (0 for c = 64: all ones)
+         */
+        {
+            TCGv_i64 h = tcg_temp_new_i64(tcg_ctx);
+
+            tcg_gen_andi_i64(tcg_ctx, lm, m, n >= 64 ? ~0ull : (1ull << n) - 1);
+            tcg_gen_ctpop_i64(tcg_ctx, lm, lm);
+            tcg_gen_shri_i64(tcg_ctx, h, lm, 1);
+            tcg_gen_sub_i64(tcg_ctx, lm, lm, h);
+            tcg_gen_shl_i64(tcg_ctx, lm, tcg_constant_i64(tcg_ctx, 1), lm);
+            tcg_gen_shl_i64(tcg_ctx, lm, lm, h);
+            tcg_gen_subi_i64(tcg_ctx, lm, lm, 1);
+            tcg_temp_free_i64(tcg_ctx, h);
+        }
     }
     if (decode->e.evex_cx == X86_EVEX_CX_EXPAND) {
         int sofs = src->has_ea ? offsetof(CPUX86State, xmm_t0) : ZMM_OFFSET(src->n);
@@ -5968,3 +5981,110 @@ static void gen_EVEX_VPCLMULQDQ(DisasContext *s, CPUX86State *env, X86DecodedIns
                                   tcg_constant8u_i32(tcg_ctx, decode->immediate));
 }
 #endif /* __Use_Original_Qemu (U574) */
+#if __Use_Original_Qemu != 1 /* ours (U552) */
+
+/*
+ * NoVmp (ledgers U552, U553): VPSHLD/VPSHRD imm8 and VPSHLDV/VPSHRDV (helper_evex_vbmi2_shd;
+ * desc: bit 0 right, bit 1 variable, element size, VL, imm8). The variable forms read DEST:
+ * ev_dsrc makes OP_PTR0 the result scratch register holding DEST (U190).
+ */
+static void gen_evex_vbmi2_shd(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t desc = op | (s->evex_esz << 4) | (s->evex_vl << 8);
+
+    if (!(op & 2)) {
+        desc |= (decode->immediate & 0xff) << 16;
+    }
+    gen_helper_evex_vbmi2_shd(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, desc));
+}
+
+static void gen_EVEX_VPSHLD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vbmi2_shd(s, decode, 0);
+}
+
+static void gen_EVEX_VPSHRD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vbmi2_shd(s, decode, 1);
+}
+#endif /* __Use_Original_Qemu (U552) */
+#if __Use_Original_Qemu != 1 /* ours (U553) */
+
+static void gen_EVEX_VPSHLDV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vbmi2_shd(s, decode, 2);
+}
+
+static void gen_EVEX_VPSHRDV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_vbmi2_shd(s, decode, 3);
+}
+#endif /* __Use_Original_Qemu (U553) */
+#if __Use_Original_Qemu != 1 /* ours (U554) */
+
+/* NoVmp (ledger U554): VPMULTISHIFTQB (helper_evex_vpmultishiftqb); masking per byte (ev_ds) */
+static void gen_EVEX_VPMULTISHIFTQB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_vpmultishiftqb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                   tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U554) */
+#if __Use_Original_Qemu != 1 /* ours (U555) */
+
+/*
+ * NoVmp (ledger U555): EVEX VPDPBUSD(S) / VPDPWSSD(S) with the ops_sse.h helpers of the VEX
+ * AVX-VNNI forms (U71) at 128/256/512 bits (SSE_FN3): per dword, DEST + 4 x (unsigned byte of
+ * SRC1 * signed byte of SRC2) or 2 x (signed word * signed word), the S forms saturating the
+ * whole sum to int32. DEST is the accumulator: OP_PTR0 holds it (ev_dsrc, U190).
+ */
+#define M4A_VNNI(uname, lname)                                                          \
+static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) \
+{                                                                                       \
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;                                               \
+                                                                                        \
+    SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);             \
+}
+M4A_VNNI(VPDPBUSD, vpdpbusd)
+M4A_VNNI(VPDPBUSDS, vpdpbusds)
+M4A_VNNI(VPDPWSSD, vpdpwssd)
+M4A_VNNI(VPDPWSSDS, vpdpwssds)
+#undef M4A_VNNI
+#endif /* __Use_Original_Qemu (U555) */
+#if __Use_Original_Qemu != 1 /* ours (U556) */
+
+/*
+ * NoVmp (ledger U556): VCVTNEPS2BF16 EVEX: the ops_sse.h helper of the VEX form (U88) at
+ * 128/256/512 bits (the converted words in the lower VL/2 bytes, the rest zero); masking per
+ * word and DEST[MAXVL-1:VL/2] := 0 by gen_evex_insn (destination operand xh, U210/U230).
+ */
+static void gen_EVEX_VCVTNEPS2BF16(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, vcvtneps2bf16)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2);
+}
+
+/* VCVTNE2PS2BF16 (helper_evex_cvtne2ps2bf16): lower half from SRC2, upper half from SRC1 */
+static void gen_EVEX_VCVTNE2PS2BF16(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_cvtne2ps2bf16(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                  tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U557) */
+
+/* NoVmp (ledger U557): VDPBF16PS (helper_evex_vdpbf16ps); OP_PTR0 holds DEST (ev_dsrc) */
+static void gen_EVEX_VDPBF16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_evex_vdpbf16ps(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                              tcg_constant_i32(tcg_ctx, s->evex_vl));
+}
+#endif /* __Use_Original_Qemu (U557) */

@@ -12087,7 +12087,8 @@ static void test_x86_fp16_optin(void)
     OK(uc_ctl_get_x86_avx512(uc, &on));
     TEST_CHECK(on == (UC_X86_AVX512_FP16 | UC_X86_AVX512_BW | UC_X86_AVX512_F));
     TEST_MSG("mask %d", on);
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 0x400));
+    /* an unknown bit (U550: 0x400 is UC_X86_AVX512_VBMI2 now; bit 30 as in opmask_optin) */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx512(uc, 1 << 30));
     OK(uc_close(uc));
 
     /* default (no opt-in) and AVX-512 without FP16: no AVX512_FP16 bit */

@@ -9115,3 +9115,164 @@ void helper_avx10b_vdpphps(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, ui
     }
 }
 #endif /* __Use_Original_Qemu (U407) */
+#if __Use_Original_Qemu != 1 /* ours (U552) */
+
+/*
+ * NoVmp (ledgers U552, U553): AVX512_VBMI2 concatenate-and-shift (SDM Vol2C VPSHLD, VPSHLDV,
+ * VPSHRD, VPSHRDV). desc: bit 0 = right, bit 1 = variable count, bits 5:4 = element size
+ * log2 (16/32/64-bit elements), bits 15:8 = VL in bytes, bits 23:16 = imm8. Per element, with
+ * c = count modulo the element width w:
+ *   VPSHLD  DEST := (concat(SRC2, SRC3) << c).upper half    (count imm8)
+ *   VPSHLDV DEST := (concat(DEST, SRC2) << c).upper half    (count SRC3)
+ *   VPSHRD  DEST := (concat(SRC3, SRC2) >> c).lower half    (count imm8)
+ *   VPSHRDV DEST := (concat(SRC2, DEST) >> c).lower half    (count SRC3)
+ * i.e. with x = SRC2 / DEST (the half that is shifted) and y = SRC3 / SRC2 (the half whose
+ * bits are shifted in): left (x << c) | (y >> (w - c)), right (x >> c) | (y << (w - c)),
+ * x for c = 0. d (the result, may be gen_evex_insn's scratch register holding DEST for the
+ * variable forms) may alias a or b.
+ */
+void helper_evex_vbmi2_shd(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int right = desc & 1, var = (desc >> 1) & 1, esz = (desc >> 4) & 3;
+    int vl = (desc >> 8) & 0xff, imm = (desc >> 16) & 0xff;
+    int bits = 8 << esz, n = vl >> esz, j;
+    uint64_t wm = bits == 64 ? ~0ull : (1ull << bits) - 1;
+    ZMMReg r;
+
+    for (j = 0; j < n; j++) {
+        uint64_t x, y, v;
+        int c;
+
+        if (var) {
+            x = evex_get_elem(d, esz, j);
+            y = evex_get_elem(a, esz, j);
+            c = (int)(evex_get_elem(b, esz, j) & (bits - 1));
+        } else {
+            x = evex_get_elem(a, esz, j);
+            y = evex_get_elem(b, esz, j);
+            c = imm & (bits - 1);
+        }
+        if (c == 0) {
+            v = x;
+        } else if (right) {
+            v = ((x >> c) | (y << (bits - c))) & wm;
+        } else {
+            v = ((x << c) | (y >> (bits - c))) & wm;
+        }
+        evex_set_elem(&r, esz, j, v);
+    }
+    memcpy(d, &r, vl);
+}
+#endif /* __Use_Original_Qemu (U552) */
+#if __Use_Original_Qemu != 1 /* ours (U554) */
+
+/*
+ * NoVmp (ledger U554): VPMULTISHIFTQB (SDM Vol2C): for each qword i of SRC2 (tcur; the
+ * broadcast element is replicated by gen_evex_insn) and byte j: ctrl := SRC1.qword[i].
+ * byte[j] & 63; res.bit[k] := tcur.bit[(ctrl + k) mod 64], k = 0..7 - the low byte of tcur
+ * rotated right by ctrl. vl = VL in bytes; d may alias a or b.
+ */
+void helper_evex_vpmultishiftqb(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    ZMMReg r;
+    int i, j;
+
+    for (i = 0; i < (int)vl / 8; i++) {
+        uint64_t tcur = b->ZMM_Q(i);
+
+        for (j = 0; j < 8; j++) {
+            r.ZMM_B(8 * i + j) = (uint8_t)ror64(tcur, a->ZMM_B(8 * i + j) & 63);
+        }
+    }
+    memcpy(d, &r, vl);
+}
+#endif /* __Use_Original_Qemu (U554) */
+#if __Use_Original_Qemu != 1 /* ours (U556) */
+
+/*
+ * NoVmp (ledger U556): VCVTNE2PS2BF16 (SDM Vol2C): KL = VL/16 words; dest.word[i] :=
+ * convert_fp32_to_bfloat16(i < KL/2 ? src2.fp32[i] : src1.fp32[i - KL/2]) - the lower half of
+ * the result comes from SRC2 (b, ModRM.r/m), the upper half from SRC1 (a, EVEX.vvvv), over
+ * the whole vector (not per 128-bit lane). convert_fp32_to_bfloat16 is the U88 function of
+ * the VEX VCVTNEPS2BF16 (ops_sse.h ne_fp32_to_bf16: zero/denormal -> signed zero, inf
+ * truncated, NaN truncated with bit 6 set, normal: RNE by integer add); MXCSR is neither
+ * consulted nor updated. vl = VL in bytes; d may alias a or b.
+ */
+void helper_evex_cvtne2ps2bf16(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    int half = (int)vl / 4, i;          /* KL/2 = number of FP32 elements per source */
+    ZMMReg r;
+
+    for (i = 0; i < half; i++) {
+        r.ZMM_W(i) = ne_fp32_to_bf16(b->ZMM_L(i));
+        r.ZMM_W(half + i) = ne_fp32_to_bf16(a->ZMM_L(i));
+    }
+    memcpy(d, &r, vl);
+}
+#endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U557) */
+
+/*
+ * NoVmp (ledger U557): one accumulation step of VDPBF16PS (SDM Vol2C: "FP32 FMA with daz in,
+ * ftz out and RNE rounding. MXCSR neither consulted nor updated"; BF16 numerics 338302 1.2.1:
+ * a three-way FP32 FMA with DAZ and FTZ "On", RNE, all exceptions masked): acc + x * y
+ * rounded once (RNE) with denormal x / y / acc treated as zero and a tiny result flushed to
+ * zero as MXCSR.FTZ does (tininess after rounding with an unbounded exponent, SDM Vol1
+ * 4.9.1.5; the softfloat FTZ of the SSE helpers). NaNs (Table 5-4 "NaN Propagation
+ * Priorities": src1 low, src2 low, src1 high, src2 high, srcdest, the low pair accumulating
+ * last): a NaN operand gives the first NaN in the order x, y, acc, quieted; an invalid
+ * operation (inf * 0, inf - inf) the QNaN indefinite FFC00000h.
+ */
+static float32 m4a_bf16_fma32(CPUX86State *env, float32 acc, float32 x, float32 y)
+{
+    float_status st = env->sse_status;
+    float32 r;
+
+    if (float32_is_any_nan(x)) {
+        return make_float32(float32_val(x) | 0x00400000u);
+    }
+    if (float32_is_any_nan(y)) {
+        return make_float32(float32_val(y) | 0x00400000u);
+    }
+    if (float32_is_any_nan(acc)) {
+        return make_float32(float32_val(acc) | 0x00400000u);
+    }
+    set_float_rounding_mode(float_round_nearest_even, &st);
+    set_flush_to_zero(true, &st);
+    set_flush_inputs_to_zero(true, &st);
+    set_float_ftz_detection(float_ftz_after_rounding, &st);
+    set_default_nan_mode(false, &st);
+    set_float_exception_flags(0, &st);
+    st.unmasked_underflow = false;      /* U445 rules: MXCSR.UM / OM are not consulted */
+    st.unmasked_overflow = false;
+    r = float32_muladd(x, y, acc, 0, &st);
+    if (get_float_exception_flags(&st) & float_flag_invalid) {
+        return make_float32(0xffc00000u);
+    }
+    return r;
+}
+
+/*
+ * VDPBF16PS: per dword i, make_fp32(bf16) = bf16 << 16 (exact):
+ *   srcdest.fp32[i] += make_fp32(src1.bfloat16[2i+1]) * make_fp32(src2.bfloat16[2i+1])
+ *   srcdest.fp32[i] += make_fp32(src1.bfloat16[2i+0]) * make_fp32(src2.bfloat16[2i+0])
+ * d is the accumulator (gen_evex_insn's scratch register holding DEST, ev_dsrc) and the
+ * result; vl = VL in bytes; d may alias a or b.
+ */
+void helper_evex_vdpbf16ps(CPUX86State *env, ZMMReg *d, ZMMReg *a, ZMMReg *b, uint32_t vl)
+{
+    ZMMReg r;
+    int i;
+
+    for (i = 0; i < (int)vl / 4; i++) {
+        float32 acc = make_float32(d->ZMM_L(i));
+
+        acc = m4a_bf16_fma32(env, acc, make_float32((uint32_t)a->ZMM_W(2 * i + 1) << 16),
+                             make_float32((uint32_t)b->ZMM_W(2 * i + 1) << 16));
+        acc = m4a_bf16_fma32(env, acc, make_float32((uint32_t)a->ZMM_W(2 * i) << 16),
+                             make_float32((uint32_t)b->ZMM_W(2 * i) << 16));
+        r.ZMM_L(i) = float32_val(acc);
+    }
+    memcpy(d, &r, vl);
+}
+#endif /* __Use_Original_Qemu (U557) */

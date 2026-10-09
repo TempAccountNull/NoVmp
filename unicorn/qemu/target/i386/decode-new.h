@@ -245,6 +245,15 @@ typedef enum X86CPUIDFeature {
     /* EVEX VPCLMULQDQ: "VPCLMULQDQ (AVX512F OR AVX10.1)" (CPUID.(07H,0):ECX.VPCLMULQDQ[10]) */
     X86_FEAT_EVEX_VPCLMULQDQ,
 #endif /* __Use_Original_Qemu (U574) */
+#if __Use_Original_Qemu != 1 /* ours (U550) */
+    X86_FEAT_AVX512_VBMI2,  /* CPUID.(07H,0):ECX[6] */
+#endif /* __Use_Original_Qemu (U550) */
+#if __Use_Original_Qemu != 1 /* ours (U555) */
+    X86_FEAT_AVX512_VNNI,   /* CPUID.(07H,0):ECX[11] */
+#endif /* __Use_Original_Qemu (U555) */
+#if __Use_Original_Qemu != 1 /* ours (U556) */
+    X86_FEAT_AVX512_BF16,   /* CPUID.(07H,1):EAX[5] */
+#endif /* __Use_Original_Qemu (U556) */
 } X86CPUIDFeature;
 
 /* Execution flags */

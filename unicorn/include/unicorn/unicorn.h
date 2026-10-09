@@ -703,7 +703,7 @@ typedef enum uc_control_type {
     // NoVmp U324: UC_X86_AVX512_BITALG adds CPUID.(EAX=7,ECX=0):ECX.AVX512_BITALG[12]
     // (VPOPCNTB/W, VPSHUFBITQMB).
     // NoVmp U325: UC_X86_AVX512_VBMI adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VBMI[1] (VPERMB,
-    // VPERMI2B, VPERMT2B; VPMULTISHIFTQB is not implemented yet and stays #UD).
+    // VPERMI2B, VPERMT2B; U554: VPMULTISHIFTQB).
     // NoVmp U330: UC_X86_AVX512_FP16 adds CPUID.(EAX=7,ECX=0):EDX.AVX512_FP16[23] (the EVEX
     // map 5 / map 6 FP16 instructions); it implies UC_X86_AVX512_BW (SDM Vol1 15.2.2: the
     // AVX512-FP16 extensions require AVX512BW). Default off: UC_CPU_X86_MAX and the
@@ -713,6 +713,12 @@ typedef enum uc_control_type {
     // alone does not add them). The EVEX forms of GFNI, VAES and VPCLMULQDQ need no bit
     // here: they take the model's own GFNI/VAES/VPCLMULQDQ bits plus AVX512F (AVX512VL
     // below 512 bits) or AVX10.1 (U572-U574).
+    // NoVmp U550: UC_X86_AVX512_VBMI2 adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VBMI2[6]
+    // (VPCOMPRESSB/W, VPEXPANDB/W, VPSHLD/VPSHRD W/D/Q, VPSHLDV/VPSHRDV W/D/Q).
+    // NoVmp U555: UC_X86_AVX512_VNNI adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VNNI[11] (EVEX
+    // VPDPBUSD, VPDPBUSDS, VPDPWSSD, VPDPWSSDS).
+    // NoVmp U556: UC_X86_AVX512_BF16 adds CPUID.(EAX=7,ECX=1):EAX.AVX512_BF16[5]
+    // (VCVTNE2PS2BF16, VCVTNEPS2BF16, VDPBF16PS); the leaf-7 subleaf count becomes >= 1.
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -757,6 +763,9 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_VBMI 64 // + AVX512_VBMI (CPUID.7.0:ECX[1]) (NoVmp U325)
 #define UC_X86_AVX512_FP16 0x200 // + AVX512_FP16 (CPUID.7.0:EDX[23], implies BW) (NoVmp U330)
 #define UC_X86_AVX512_VP2INTERSECT 0x10000 // + AVX512_VP2INTERSECT (CPUID.7.0:EDX[8]) (NoVmp U570)
+#define UC_X86_AVX512_VBMI2 0x400 // + AVX512_VBMI2 (CPUID.7.0:ECX[6]) (NoVmp U550)
+#define UC_X86_AVX512_VNNI 0x800 // + AVX512_VNNI (CPUID.7.0:ECX[11]) (NoVmp U555)
+#define UC_X86_AVX512_BF16 0x1000 // + AVX512_BF16 (CPUID.7.1:EAX[5]) (NoVmp U556)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

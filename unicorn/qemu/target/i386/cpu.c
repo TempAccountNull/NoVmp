@@ -5553,6 +5553,28 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_VP2INTERSECT;
     }
 #endif /* __Use_Original_Qemu (U570) */
+#if __Use_Original_Qemu != 1 /* ours (U550) */
+    /* NoVmp (ledger U550): UC_X86_AVX512_VBMI2 adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VBMI2[6] */
+    if (uc->x86_avx512 & UC_X86_AVX512_VBMI2) {
+        env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_AVX512_VBMI2;
+    }
+#endif /* __Use_Original_Qemu (U550) */
+#if __Use_Original_Qemu != 1 /* ours (U555) */
+    /* NoVmp (ledger U555): UC_X86_AVX512_VNNI adds CPUID.(EAX=7,ECX=0):ECX.AVX512_VNNI[11] */
+    if (uc->x86_avx512 & UC_X86_AVX512_VNNI) {
+        env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_AVX512VNNI;
+    }
+#endif /* __Use_Original_Qemu (U555) */
+#if __Use_Original_Qemu != 1 /* ours (U556) */
+    /*
+     * NoVmp (ledger U556): UC_X86_AVX512_BF16 adds CPUID.(EAX=7,ECX=1):EAX.AVX512_BF16[5]
+     * (subleaf 1 needs CPUID.(EAX=7,ECX=0):EAX >= 1). A strict profile narrows it (U68).
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_BF16) {
+        env->features[FEAT_7_1_EAX] |= CPUID_7_1_EAX_AVX512_BF16;
+        env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+    }
+#endif /* __Use_Original_Qemu (U556) */
 #if __Use_Original_Qemu != 1 /* ours (U370) */
     /*
      * NoVmp (ledger U370): UC_CTL_X86_AVX10 opts in to AVX10 after the TCG filter:
