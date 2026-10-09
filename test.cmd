@@ -174,6 +174,9 @@ rem can run (cases_evex_m4a_hw.txt, ref_evex_m4a.py --hwgen): VEX AVX-VNNI, SHLD
 rem VFMADD231SS with MXCSR 9FC0h (one VDPBF16PS step); Unicorn == CPU (0 differing) and CPU == model (--hwcmp).
 call :hw_zero cases_evex_m4a_hw
 call :py_hwcmp "%ROOT%Emulator\tools\isa\ref_evex_m4a.py" "%TESTS%\cases_evex_m4a_hw.log"
+rem U590-U609 (plan 1.F.7): LSS/LFS/LGS m16:64, 64-bit stack width of IRET/RETF/far CALL, page-crossing
+rem stores, MAXPHYADDR, SYSCALL and EFER.SCE, RDPMC; hardware lines at CPL3 + SDM expected values.
+call :hw_zero cases_fixes2
 
 echo.
 if !FAILED! NEQ 0 (

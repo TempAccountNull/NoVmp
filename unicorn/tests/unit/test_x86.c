@@ -15551,6 +15551,61 @@ static void test_x86_m4a_values(void)
     OK(uc_close(c.uc));
 }
 /* ---- end U550-U559 (m4a_) ---- */
+/* ---- U590-U609 plan 1.F.7 fixes (f2_; uses the bp_ machine above) ---- */
+/*
+ * U590 (upstream QEMU 3519b813e1): LSS/LFS/LGS with REX.W load m16:64 (SDM Vol2A
+ * LDS/LES/LFS/LGS/LSS "LSS r64,m16:64"): 8-byte offset, then the selector. 64-bit
+ * mode CPL0, selector 10h (data DPL0).
+ */
+static void test_x86_f2_lss_rexw(void)
+{
+    static const struct {
+        const char *code;
+        int reg, seg;
+        const char *what;
+    } t[] = {
+        {"\x48\x0f\xb2\x03", UC_X86_REG_RAX, UC_X86_REG_SS, "lss rax, [rbx]"},
+        {"\x4c\x0f\xb4\x0b", UC_X86_REG_R9, UC_X86_REG_FS, "lfs r9, [rbx]"},
+        {"\x48\x0f\xb5\x13", UC_X86_REG_RDX, UC_X86_REG_GS, "lgs rdx, [rbx]"},
+    };
+    uint8_t m[10] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x10, 0x00};
+    uint8_t m32[6] = {0x11, 0x22, 0x33, 0x44, 0x10, 0x00};
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        BpCpu c;
+        uint64_t v;
+
+        bp_open(&c, UC_MODE_64, -1);
+        OK(uc_mem_write(c.uc, BP_DATA, m, sizeof(m)));
+        bp_set(&c, UC_X86_REG_RBX, BP_DATA);
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        OK(bp_run(&c, t[i].code, 4));
+        v = bp_get(&c, t[i].reg);
+        TEST_CHECK(c.count == 0 && v == 0x8877665544332211ULL && bp_seg(&c, t[i].seg) == 0x10);
+        TEST_MSG("%s: intr %u/%u value %llx selector %04x", t[i].what, c.count, c.intno,
+                 (unsigned long long)v, bp_seg(&c, t[i].seg));
+        OK(uc_close(c.uc));
+    }
+
+    /* without REX.W: m16:32, the 32-bit offset zero-extended */
+    {
+        BpCpu c;
+        uint64_t v;
+
+        bp_open(&c, UC_MODE_64, -1);
+        OK(uc_mem_write(c.uc, BP_DATA, m32, sizeof(m32)));
+        bp_set(&c, UC_X86_REG_RBX, BP_DATA);
+        bp_set(&c, UC_X86_REG_RAX, ~0ULL);
+        OK(bp_run(&c, "\x0f\xb2\x03", 3));
+        v = bp_get(&c, UC_X86_REG_RAX);
+        TEST_CHECK(c.count == 0 && v == 0x44332211ULL && bp_seg(&c, UC_X86_REG_SS) == 0x10);
+        TEST_MSG("lss eax, [rbx]: intr %u value %llx", c.count, (unsigned long long)v);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* ---- end U590-U609 (f2_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -15782,4 +15837,5 @@ TEST_LIST = {
     {"test_x86_m4a_optin", test_x86_m4a_optin},
     {"test_x86_m4a_gating", test_x86_m4a_gating},
     {"test_x86_m4a_values", test_x86_m4a_values},
+    {"test_x86_f2_lss_rexw", test_x86_f2_lss_rexw},
     {NULL, NULL}};

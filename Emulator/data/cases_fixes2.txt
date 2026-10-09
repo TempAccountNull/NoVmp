@@ -1,0 +1,32 @@
+# Plan 1.F.7 fixes (ledger U590-U609), hand-written. Hardware lines (no "=>") run natively on the
+# i5-13600K (CPL3, Windows x64) and in Unicorn; expected-value lines ("=>") run in Unicorn only,
+# against the SDM:
+#   emu-alltest --cases Emulator\data\cases_fixes2.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --xcr0 7
+# Expected: every line SAME. Only our own snippets run natively; nothing here leaves CPL3 or touches
+# FS/GS natively (LFS/LGS would replace the host's FS/GS selector and base: expected values only).
+# cpl=3: Unicorn also runs at CPL3 (Windows GDT: 23h code32, 2Bh data, 33h code64, all DPL3).
+#
+# --- U590 LSS/LFS/LGS with REX.W = m16:64 (QEMU 3519b813e1; SDM Vol2A LDS/LES/LFS/LGS/LSS:
+# "REX.W + 0F B2 /r LSS r64,m16:64"). [rsi] = 8-byte offset 8877665544332211h, then selector 2Bh.
+# As m16:32 the selector would be 6655h (#GP beyond the GDT limit) and RAX 44332211h.
+# 48 0F B2 06 = lss rax, [rsi]
+.byte 0x48, 0x0f, 0xb2, 0x06 | cpl=3 m+0x8000=11223344556677882B00
+# 4C 0F B2 1E = lss r11, [rsi]; 49 0F B2 3E = lss rdi, [r14]
+.byte 0x4c, 0x0f, 0xb2, 0x1e | cpl=3 m+0x8000=F0DEBC9A785634122B00
+.byte 0x49, 0x0f, 0xb2, 0x3e | cpl=3 m+0x8000=01000000000000802B00
+# REX.W with a null selector at CPL3: #GP(0) after reading the full 10-byte operand
+.byte 0x48, 0x0f, 0xb2, 0x06 | cpl=3 m+0x8000=11223344556677880000
+# REX.W, the operand's selector at the end of the 64 KiB area: m16:64 reads bytes FFF6h..FFFFh
+.byte 0x48, 0x0f, 0xb2, 0x86, 0xf6, 0x7f, 0x00, 0x00 | cpl=3 m+0xFFF6=11223344556677882B00
+# without REX.W (m16:32) and with 66h (m16:16): unchanged
+.byte 0x0f, 0xb2, 0x06 | cpl=3 m+0x8000=112233442B00
+.byte 0x66, 0x0f, 0xb2, 0x06 | cpl=3 m+0x8000=11222B00
+# REX.W + 66h: REX.W wins (64-bit operand size)
+.byte 0x66, 0x48, 0x0f, 0xb2, 0x06 | cpl=3 m+0x8000=11223344556677882B00
+# LFS / LGS r64, m16:64 (expected values: natively they would change the host's FS/GS)
+.byte 0x48, 0x0f, 0xb4, 0x06 | cpl=3 m+0x8000=11223344556677882B00 => rax=0x8877665544332211
+.byte 0x48, 0x0f, 0xb5, 0x06 | cpl=3 m+0x8000=11223344556677882B00 => rax=0x8877665544332211
+.byte 0x4c, 0x0f, 0xb4, 0x0e | cpl=3 m+0x8000=0000000000000080 => r9=0x8000000000000000
+.byte 0x48, 0x0f, 0xb5, 0x06 | cpl=3 m+0x8000=11223344556677880000 => rax=0x8877665544332211
+.byte 0x0f, 0xb4, 0x06 | cpl=3 rax=0xFFFFFFFFFFFFFFFF m+0x8000=112233442B00 => rax=0x44332211
+.byte 0x66, 0x0f, 0xb5, 0x06 | cpl=3 rax=0xFFFFFFFFFFFFFFFF m+0x8000=11222B00 => rax=0xFFFFFFFFFFFF2211

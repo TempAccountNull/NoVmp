@@ -5337,7 +5337,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x1b5: /* lgs Gv */
         op = R_GS;
     do_lxx:
-        ot = dflag != MO_16 ? MO_32 : MO_16;
+        /*
+         * backport 3519b813e1 (U590): the offset has the operand size (new decoder X86_SIZE_p
+         * = dflag), so REX.W + 0F B2/B4/B5 loads m16:64 (SDM Vol2A LDS/LES/LFS/LGS/LSS:
+         * "LSS r64,m16:64"); it was always read as m16:32
+         */
+        ot = dflag;
         modrm = x86_ldub_code(env, s);
         reg = ((modrm >> 3) & 7) | REX_R(s);
         mod = (modrm >> 6) & 3;
