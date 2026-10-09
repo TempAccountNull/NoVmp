@@ -887,7 +887,21 @@ static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
     if ((index + 7) > env->tr.limit) {
         raise_exception_err(env, EXCP0A_TSS, env->tr.selector & 0xfffc);
     }
-    return cpu_ldq_kernel(env, env->tr.base + index);
+    {
+        /*
+         * backport 50fcc7cbb6 (U496): a non-canonical RSPn / ISTn from the 64-bit TSS is
+         * #SS (SDM Vol2A CALL, 64-bit call gate: "IF pushing 32 bytes on the stack would use a
+         * non-canonical address THEN #SS(NewSS)"; NewSS is the null selector with RPL = new
+         * CPL, i.e. 0 for a ring-0 target). 7.2 lacks get_pg_mode(): CR4.LA57 selects the width.
+         */
+        target_ulong rsp = cpu_ldq_kernel(env, env->tr.base + index);
+        int64_t sext = (int64_t)rsp >> ((env->cr[4] & CR4_LA57_MASK) ? 56 : 47);
+
+        if (sext != 0 && sext != -1) {
+            raise_exception_err(env, EXCP0C_STACK, 0);
+        }
+        return rsp;
+    }
 }
 
 /* 64 bit interrupt */

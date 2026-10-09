@@ -13780,6 +13780,56 @@ static void test_x86_bp_lfence_sse2(void)
         m0_close(&m);
     }
 }
+
+/*
+ * U496 (backport 50fcc7cbb6): a CPL3 far CALL through a 64-bit call gate to ring 0 takes RSP0
+ * from the 64-bit TSS; a non-canonical RSP0 is #SS (SDM Vol2A CALL: "IF pushing 32 bytes on
+ * the stack would use a non-canonical address THEN #SS(NewSS)"). A canonical RSP0 enters the
+ * gate's target.
+ */
+static void test_x86_bp_callgate_rsp0_canonical(void)
+{
+    /* iretq (to CPL3); call far [TB2_DATA] (m16:32, selector 3Bh = the call gate) */
+    static const char code[] = "\x48\xcf\xff\x1c\x25\x00\x40\x00\x60";
+    const uint64_t tss = TB2_SYS + 0x2000, target = code_start + 0x300;
+    uint64_t gdt[9] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
+                       0x00AFFA000000FFFFULL, 0, 0, 0, 0};
+    uc_x86_mmr gdtr = {0, TB2_SYS, sizeof(gdt) - 1, 0};
+    uc_x86_mmr tr = {0x28, tss, 0x67, 0x8900};
+    uint32_t fp[2] = {0, 0x3b};
+    nk_intr_t intr;
+    int pass;
+
+    /* 64-bit TSS descriptor at 28h, call gate (DPL3, 0x08:target) at 38h */
+    gdt[5] = 0x67 | ((tss & 0xffffff) << 16) | (0x89ULL << 40) | (((tss >> 24) & 0xff) << 56);
+    gdt[6] = tss >> 32;
+    gdt[7] = (target & 0xffff) | (0x08ULL << 16) | (0xECULL << 40) | (((target >> 16) & 0xffff) << 48);
+    gdt[8] = target >> 32;
+    for (pass = 0; pass < 2; pass++) {
+        uc_engine *uc = tb2_sys_open(code, sizeof(code) - 1, &intr);
+        uint64_t rsp0 = pass ? TB2_KSTACK - 0x100 : 0x0000800000001000ULL;
+        uc_err err;
+
+        OK(uc_mem_write(uc, TB2_SYS, gdt, sizeof(gdt)));
+        OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+        OK(uc_reg_write(uc, UC_X86_REG_TR, &tr));
+        OK(uc_mem_write(uc, tss + 4, &rsp0, 8));
+        OK(uc_mem_write(uc, TB2_DATA, fp, 6));
+        OK(uc_mem_write(uc, target, "\x90", 1));
+        tb2_iretq_frame(uc, code_start + 2, 0x202);
+        err = uc_emu_start(uc, code_start, target + 1, 0, 0);
+        if (!pass) {
+            TEST_CHECK(intr.count == 1 && intr.intno == 12);
+        } else {
+            OK(err);
+            TEST_CHECK(intr.count == 0);
+            TEST_CHECK(nk_reg(uc, UC_X86_REG_RIP) == target + 1);
+            TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 0xffff) == 0x08);
+        }
+        TEST_MSG("pass %d: err %d, intr count %d intno %u", pass, err, intr.count, intr.intno);
+        OK(uc_close(uc));
+    }
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -14006,4 +14056,5 @@ TEST_LIST = {
     {"test_x86_bp_wrap_4g", test_x86_bp_wrap_4g},
     {"test_x86_bp_pushf_rf", test_x86_bp_pushf_rf},
     {"test_x86_bp_lfence_sse2", test_x86_bp_lfence_sse2},
+    {"test_x86_bp_callgate_rsp0_canonical", test_x86_bp_callgate_rsp0_canonical},
     {NULL, NULL}};
