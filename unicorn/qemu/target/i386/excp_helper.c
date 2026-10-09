@@ -545,7 +545,7 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
 #endif
         {
             /* XXX: load them when cr3 is loaded ? */
-            pdpe_addr = ((env->cr[3] & ~0x1f) + ((addr >> 27) & 0x18)) &
+            pdpe_addr = ((env->cr[3] & 0xffffffe0ULL /* U495 */) + ((addr >> 27) & 0x18)) &
                 a20_mask;
             pdpe_addr = get_hphys(cs, pdpe_addr, MMU_DATA_STORE, false);
             pdpe = x86_ldq_phys(cs, pdpe_addr);
@@ -602,7 +602,7 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
         uint32_t pde;
 
         /* page directory entry */
-        pde_addr = ((env->cr[3] & ~0xfff) + ((addr >> 20) & 0xffc)) &
+        pde_addr = ((env->cr[3] & 0xfffff000ULL /* U495 */) + ((addr >> 20) & 0xffc)) &
             a20_mask;
         pde_addr = get_hphys(cs, pde_addr, MMU_DATA_STORE, NULL);
         pde = x86_ldl_phys(cs, pde_addr);
