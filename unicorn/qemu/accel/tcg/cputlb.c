@@ -2375,6 +2375,25 @@ store_memop(void *haddr, uint64_t val, MemOp op)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U777) */
+/*
+ * NoVmp (ledger U777): a store to memory Unicorn has not mapped (or maps read-only) that no
+ * hook handles stops the instruction at once, as load_helper already does for reads: the
+ * state is restored to the instruction start and nothing after the failed store runs. It
+ * only requested an exit before, so a helper went on (FNSAVE reinitialised the FPU, FNSTENV
+ * masked the exceptions, SETSSBSY / CLRSSBSY / RSTORSSP / near CALL changed SSP) and the
+ * instruction then looked completed (RIP after it: MOVDIR64B, WRSS). SDM Vol3A 6.5 / 6.15:
+ * a fault leaves the state as it was before the instruction. Parts already stored stay;
+ * multi-part stores probe first (x86_probe_write, x86_access_prepare).
+ */
+static void store_helper_stop(struct uc_struct *uc, uintptr_t retaddr)
+{
+    if (uc->nested_level > 0 && !uc->cpu->stopped) {
+        cpu_loop_exit_restore(uc->cpu, retaddr);
+    }
+}
+#endif /* __Use_Original_Qemu (U777) */
+
 static inline void
 store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op)
@@ -2473,6 +2492,9 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
             uc->invalid_error = UC_ERR_WRITE_UNMAPPED;
             // printf("***** Invalid memory write at " TARGET_FMT_lx "\n", addr);
             cpu_exit(uc->cpu);
+#if __Use_Original_Qemu != 1 /* ours (U777) */
+            store_helper_stop(uc, retaddr);
+#endif /* __Use_Original_Qemu (U777) */
             return;
         } else {
             uc->invalid_error = UC_ERR_OK;
@@ -2484,6 +2506,9 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
             if (mr == NULL) {
                 uc->invalid_error = UC_ERR_MAP;
                 cpu_exit(uc->cpu);
+#if __Use_Original_Qemu != 1 /* ours (U777) */
+                store_helper_stop(uc, retaddr);
+#endif /* __Use_Original_Qemu (U777) */
                 return;
             }
             tlb_hook_state_restore(env, &hook_state);
@@ -2523,6 +2548,9 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
             uc->invalid_error = UC_ERR_WRITE_PROT;
             // printf("***** Invalid memory write (ro) at " TARGET_FMT_lx "\n", addr);
             cpu_exit(uc->cpu);
+#if __Use_Original_Qemu != 1 /* ours (U777) */
+            store_helper_stop(uc, retaddr);
+#endif /* __Use_Original_Qemu (U777) */
             return;
         }
     }

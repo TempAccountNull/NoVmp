@@ -19674,6 +19674,292 @@ static void test_x86_fx4_hook_flags(void)
     TEST_CHECK(bad == 0);
     TEST_MSG("hook/fault flag audit: %d of %d checks failed", bad, n);
 }
+/*
+ * U777 audit (plan 1.F.14): instructions that store several parts or change state after a
+ * store, with their operand crossing from page A (FX4_PA, read/write) into page B (FX4_PA +
+ * 1000h): B not mapped, B read-only, B mapped by a UC_HOOK_MEM_UNMAPPED hook. A store to memory
+ * Unicorn has not mapped or maps read-only only requests an exit; a helper that went on stored
+ * the parts on page A and changed registers (FNSAVE reinitialises the FPU, FNSTENV masks the
+ * exceptions, FSTP pops). SDM Vol3A 6.5 / 6.15: a fault leaves the state as it was before the
+ * instruction. Checks: with B not mapped / read-only the run stops at the instruction with page A,
+ * the GPRs, RFLAGS, SSP, the x87 state, MXCSR and XMM0 unchanged; with B mapped by the hook the
+ * end state equals a run with B mapped from the start.
+ */
+#define FX4_PA 0x58000000ULL
+
+enum { FX4_B_UNMAPPED, FX4_B_RO, FX4_B_HOOKMAP, FX4_B_RW };
+
+typedef struct {
+    uc_err err;
+    uint64_t gpr[6];        /* RAX RCX RDX RBX RSP RIP */
+    uint64_t rflags, ssp;
+    uint16_t fsw, fcw, ftw;
+    uint32_t mxcsr;
+    uint8_t xmm0[16], st0[10];
+    uint8_t a[0x1000], b[0x1000];
+    int hook_calls;
+} fx4_st_t;
+
+static int fx4_map_calls;
+static uint64_t fx4_b_tok;       /* the qword at page B + 0 (CET tokens), else 0 */
+
+static bool fx4_map_b(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value,
+                      void *user_data)
+{
+    fx4_map_calls++;
+    if (uc_mem_map(uc, address & ~0xfffULL, 0x1000, UC_PROT_ALL) != UC_ERR_OK) {
+        return false;
+    }
+    return uc_mem_write(uc, FX4_PA + 0x1000, &fx4_b_tok, 8) == UC_ERR_OK;
+}
+
+typedef struct {
+    const char *pre;        /* run before (state after it = "before the instruction") */
+    size_t plen;
+    const char *code;
+    size_t len;
+    int cet;                /* 1: CR4.CET, IA32_S_CET = SH_STK_EN | WR_SHSTK_EN, PL0_SSP = B */
+    int avx512;
+    uint64_t rbx;           /* operand base */
+    const char *what;
+    uint64_t tok;           /* the qword at page B + 0 */
+} fx4_sc_t;
+
+static const int fx4_st_regs[6] = {UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX,
+                                  UC_X86_REG_RBX, UC_X86_REG_RSP, UC_X86_REG_RIP};
+
+static void fx4_store_run(const fx4_sc_t *t, int mode, int pre_only, fx4_st_t *st)
+{
+    uc_engine *uc;
+    uc_hook hh;
+    uint8_t pa[0x1000], pb[0x1000], x[16];
+    uint64_t v, cr0, cr4;
+    char code[96];
+    size_t n;
+    int i;
+
+    memset(st, 0, sizeof(*st));
+    for (i = 0; i < 0x1000; i++) {
+        pa[i] = (uint8_t)(0xa5 ^ i);
+        pb[i] = 0;
+    }
+    for (i = 0; i < 16; i++) {
+        x[i] = (uint8_t)(0x30 + i);
+    }
+    fx4_b_tok = t->tok;
+    memcpy(pb, &fx4_b_tok, 8);
+    memcpy(code, t->pre, t->plen);
+    n = t->plen;
+    if (!pre_only) {
+        memcpy(code + n, t->code, t->len);
+        n += t->len;
+    }
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (t->avx512) {
+        OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_VL | UC_X86_AVX512_BW));
+    }
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, n));
+    OK(uc_mem_map(uc, FX4_PA, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, FX4_PA, pa, sizeof(pa)));
+    if (mode == FX4_B_RO || mode == FX4_B_RW) {
+        OK(uc_mem_map(uc, FX4_PA + 0x1000, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, FX4_PA + 0x1000, pb, sizeof(pb)));
+        if (mode == FX4_B_RO) {
+            OK(uc_mem_protect(uc, FX4_PA + 0x1000, 0x1000, UC_PROT_READ));
+        }
+    }
+    if (mode == FX4_B_HOOKMAP) {
+        OK(uc_hook_add(uc, &hh, UC_HOOK_MEM_UNMAPPED, fx4_map_b, NULL, 1, 0));
+    }
+    OK(uc_reg_read(uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= (1ULL << 9) | (1ULL << 18);                  /* OSFXSR, OSXSAVE */
+    OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+    if (t->cet) {
+        OK(uc_reg_read(uc, UC_X86_REG_CR0, &cr0));
+        cr0 |= 0x10000;                                 /* WP */
+        OK(uc_reg_write(uc, UC_X86_REG_CR0, &cr0));
+        cr4 |= 1ULL << 23;                              /* CET */
+        OK(uc_reg_write(uc, UC_X86_REG_CR4, &cr4));
+        nk_wrmsr(uc, 0x6a2, 3);
+        nk_wrmsr(uc, 0x6a4, FX4_PA + 0x1000);           /* IA32_PL0_SSP: on page B */
+        v = FX4_PA + 0x1008;                            /* SSP: a push goes to page B + 0 */
+        OK(uc_reg_write(uc, UC_X86_REG_SSP, &v));
+    }
+    v = t->rbx;
+    OK(uc_reg_write(uc, UC_X86_REG_RBX, &v));
+    v = FX4_PA + 0x800;
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &v));
+    v = 7;                                              /* XSAVE*: RFBM = x87 | SSE | AVX */
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_RDX, &v));
+    v = 0x1111;
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &v));
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0, x));
+    {
+        uint16_t ftw = 0xffff;      /* empty x87 stack (Unicorn's reset tags are "valid") */
+
+        OK(uc_reg_write(uc, UC_X86_REG_FPTAG, &ftw));
+    }
+    fx4_map_calls = 0;
+    st->err = uc_emu_start(uc, code_start, code_start + n, 0, 0);
+    st->hook_calls = fx4_map_calls;
+    for (i = 0; i < 6; i++) {
+        OK(uc_reg_read(uc, fx4_st_regs[i], &st->gpr[i]));
+    }
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &st->rflags));
+    if (t->cet) {
+        OK(uc_reg_read(uc, UC_X86_REG_SSP, &st->ssp));
+    }
+    OK(uc_reg_read(uc, UC_X86_REG_FPSW, &st->fsw));
+    OK(uc_reg_read(uc, UC_X86_REG_FPCW, &st->fcw));
+    OK(uc_reg_read(uc, UC_X86_REG_FPTAG, &st->ftw));
+    OK(uc_reg_read(uc, UC_X86_REG_MXCSR, &st->mxcsr));
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0, st->xmm0));
+    OK(uc_reg_read(uc, UC_X86_REG_ST0, st->st0));
+    OK(uc_mem_read(uc, FX4_PA, st->a, sizeof(st->a)));
+    if (mode != FX4_B_UNMAPPED || st->hook_calls) {
+        uc_mem_read(uc, FX4_PA + 0x1000, st->b, sizeof(st->b));
+    }
+    OK(uc_close(uc));
+}
+
+static int fx4_store_case(const fx4_sc_t *t)
+{
+    static fx4_st_t pre, ref, r;
+    static const char *mname[] = {"B unmapped", "B read-only", "B mapped by a hook"};
+    int mode, bad = 0;
+
+    fx4_store_run(t, FX4_B_RW, 1, &pre);
+    fx4_store_run(t, FX4_B_RW, 0, &ref);
+    TEST_CHECK(pre.err == UC_ERR_OK && ref.err == UC_ERR_OK);
+    TEST_MSG("%s: reference runs err %u / %u", t->what, pre.err, ref.err);
+    for (mode = FX4_B_UNMAPPED; mode <= FX4_B_HOOKMAP; mode++) {
+        char why[200] = "";
+        bool ok;
+
+        fx4_store_run(t, mode, 0, &r);
+        if (mode == FX4_B_HOOKMAP) {
+            /* completes like the run with B mapped (zero-filled) from the start */
+            ok = r.err == UC_ERR_OK && !memcmp(r.gpr, ref.gpr, sizeof(r.gpr)) &&
+                 r.rflags == ref.rflags && r.ssp == ref.ssp && r.fsw == ref.fsw &&
+                 r.fcw == ref.fcw && r.ftw == ref.ftw && r.mxcsr == ref.mxcsr &&
+                 !memcmp(r.a, ref.a, sizeof(r.a)) && !memcmp(r.b, ref.b, sizeof(r.b));
+            snprintf(why, sizeof(why), "err %u hook calls %d rip %" PRIx64 " (ref %" PRIx64
+                     ") page A %s page B %s fsw %04x/%04x", r.err, r.hook_calls, r.gpr[5],
+                     ref.gpr[5], memcmp(r.a, ref.a, sizeof(r.a)) ? "differs" : "same",
+                     memcmp(r.b, ref.b, sizeof(r.b)) ? "differs" : "same", r.fsw, ref.fsw);
+        } else {
+            int j;
+
+            for (j = 0; j < 0x1000 && r.a[j] == pre.a[j]; j++) {
+            }
+            ok = r.err != UC_ERR_OK && r.gpr[5] == code_start + t->plen &&
+                 !memcmp(r.gpr, pre.gpr, 5 * sizeof(uint64_t)) && r.rflags == pre.rflags &&
+                 r.ssp == pre.ssp && r.fsw == pre.fsw && r.fcw == pre.fcw &&
+                 r.ftw == pre.ftw && r.mxcsr == pre.mxcsr &&
+                 !memcmp(r.xmm0, pre.xmm0, 16) && !memcmp(r.st0, pre.st0, 10) && j == 0x1000;
+            snprintf(why, sizeof(why), "err %u rip %" PRIx64 " (insn %" PRIx64 ") page A byte "
+                     "%03x changed, fsw %04x/%04x fcw %04x/%04x ftw %04x/%04x ssp %" PRIx64
+                     "/%" PRIx64 " rsp %" PRIx64 "/%" PRIx64, r.err, r.gpr[5],
+                     code_start + t->plen, j, r.fsw, pre.fsw, r.fcw, pre.fcw, r.ftw, pre.ftw,
+                     r.ssp, pre.ssp, r.gpr[4], pre.gpr[4]);
+        }
+        TEST_CHECK(ok);
+        TEST_MSG("%s (%s): %s", t->what, mname[mode], why);
+        bad += !ok;
+    }
+    return bad;
+}
+
+/* FLD1; FLDPI: two x87 registers in use; then the instruction */
+#define FX4_X87 "\xd9\xe8\xd9\xeb"
+
+/*
+ * U777: a helper store to memory Unicorn has not mapped / maps read-only stops the instruction
+ * at once (operands entirely on page B: no partial store involved). Before U777 the helper went
+ * on: FNSAVE reinitialised the FPU, FNSTENV masked the exceptions, FSTP/FBSTP popped,
+ * SETSSBSY/CLRSSBSY/RSTORSSP changed SSP, and RIP was after the instruction.
+ */
+static void test_x86_fx4_store_stop(void)
+{
+    static const fx4_sc_t t[] = {
+        {FX4_X87, 4, "\x0f\xae\x03", 3, 0, 0, FX4_PA + 0x1000, "fxsave [rbx] (B)"},
+        {FX4_X87, 4, "\x0f\xae\x23", 3, 0, 0, FX4_PA + 0x1000, "xsave [rbx] (B)"},
+        {FX4_X87, 4, "\xdd\x33", 2, 0, 0, FX4_PA + 0x1000, "fnsave [rbx] (B)"},
+        {FX4_X87, 4, "\xd9\x33", 2, 0, 0, FX4_PA + 0x1000, "fnstenv [rbx] (B)"},
+        {FX4_X87, 4, "\xdb\x3b", 2, 0, 0, FX4_PA + 0x1000, "fstp tbyte [rbx] (B)"},
+        {FX4_X87, 4, "\xdf\x33", 2, 0, 0, FX4_PA + 0x1000, "fbstp tbyte [rbx] (B)"},
+        {"", 0, "\x66\x0f\x38\xf8\x1c\x24", 6, 0, 0, FX4_PA + 0x1000, "movdir64b rbx, [rsp] (to B)"},
+        {"", 0, "\x48\x0f\x38\xf6\x03", 5, 1, 0, FX4_PA + 0x1000, "wrssq [rbx], rax (B)"},
+        {"", 0, "\xf3\x0f\x01\xe8", 4, 1, 0, FX4_PA, "setssbsy (token on B)", FX4_PA + 0x1000},
+        {"", 0, "\xf3\x0f\xae\x33", 4, 1, 0, FX4_PA + 0x1000, "clrssbsy [rbx] (token on B)",
+         FX4_PA + 0x1001},
+        {"", 0, "\xf3\x0f\x01\x2b", 4, 1, 0, FX4_PA + 0x1000, "rstorssp [rbx] (token on B)",
+         FX4_PA + 0x1009},
+    };
+    size_t i;
+    int bad = 0;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        bad += fx4_store_case(&t[i]);
+    }
+    TEST_CHECK(bad == 0);
+    TEST_MSG("store-stop cases: %d of %d checks failed", bad, (int)(3 * (sizeof(t) / sizeof(t[0]))));
+}
+
+static void test_x86_fx4_store_partial(void)
+{
+    static const fx4_sc_t t[] = {
+        {FX4_X87, 4, "\x0f\xae\x83\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "fxsave [rbx+0xf00]"},
+        {FX4_X87, 4, "\x48\x0f\xae\x83\x00\x0f\x00\x00", 8, 0, 0, FX4_PA, "fxsave64 [rbx+0xf00]"},
+        {FX4_X87, 4, "\x0f\xae\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsave [rbx+0xf00]"},
+        {FX4_X87, 4, "\x0f\xae\xb3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaveopt [rbx+0xf00]"},
+        {FX4_X87, 4, "\x0f\xc7\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsavec [rbx+0xf00]"},
+        {FX4_X87, 4, "\x0f\xc7\xab\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaves [rbx+0xf00]"},
+        {FX4_X87, 4, "\xdd\xb3\xa0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnsave [rbx+0xfa0]"},
+        {FX4_X87, 4, "\x66\xdd\xb3\xb0\x0f\x00\x00", 7, 0, 0, FX4_PA, "fnsave (16-bit) [rbx+0xfb0]"},
+        {FX4_X87, 4, "\xd9\xb3\xf0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstenv [rbx+0xff0]"},
+        {FX4_X87, 4, "\xdb\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp tbyte [rbx+0xffc]"},
+        {FX4_X87, 4, "\xdf\xb3\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fbstp tbyte [rbx+0xffc]"},
+        {FX4_X87, 4, "\xdd\x9b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp qword [rbx+0xffc]"},
+        {FX4_X87, 4, "\xdf\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fistp qword [rbx+0xffc]"},
+        {FX4_X87, 4, "\xdd\x8b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fisttp qword [rbx+0xffc]"},
+        {FX4_X87, 4, "\xd9\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstcw [rbx+0xfff]"},
+        {FX4_X87, 4, "\xdd\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstsw [rbx+0xfff]"},
+        {"", 0, "\x0f\xae\x9b\xfe\x0f\x00\x00", 7, 0, 0, FX4_PA, "stmxcsr [rbx+0xffe]"},
+        {"", 0, "\xf3\x0f\x7f\x83\xf8\x0f\x00\x00", 8, 0, 0, FX4_PA, "movdqu [rbx+0xff8]"},
+        {"", 0, "\xc5\xfe\x7f\x83\xf0\x0f\x00\x00", 8, 0, 0, FX4_PA, "vmovdqu [rbx+0xff0], ymm0"},
+        {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xe0\x0f\x00\x00", 10, 0, 1, FX4_PA,
+         "vmovdqu64 [rbx+0xfe0], zmm0"},
+        {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xc8\x0f\x00\x00", 10, 0, 1, FX4_PA,
+         "vmovdqu64 [rbx+0xfc8], zmm0"},
+        {"", 0, "\x48\x0f\xc3\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "movnti [rbx+0xffc], rax"},
+        {"", 0, "\xf0\x48\x01\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "lock add [rbx+0xffc], rax"},
+        {"", 0, "\x48\x0f\xc1\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "xadd [rbx+0xffc], rax"},
+        {"", 0, "\x48\x87\x83\xfc\x0f\x00\x00", 7, 0, 0, FX4_PA, "xchg [rbx+0xffc], rax"},
+        {"", 0, "\x48\x0f\xc7\x8b\x00\x00\x00\x00", 8, 0, 0, FX4_PA + 0x1000, "cmpxchg16b [rbx] (B)"},
+        {"", 0, "\x66\x0f\x38\xf8\x1c\x24", 6, 0, 0, FX4_PA + 0x1000, "movdir64b rbx, [rsp] (to B)"},
+        {"", 0, "\x48\x0f\x38\xf6\x03", 5, 1, 0, FX4_PA + 0x1000, "wrssq [rbx], rax (B)"},
+        /* call $+6 (CALL 0 is not pushed on the shadow stack); int3 skipped; nop */
+        {"", 0, "\xe8\x01\x00\x00\x00\xcc\x90", 7, 1, 0, FX4_PA, "call (shadow-stack push on B)"},
+        {"", 0, "\xf3\x0f\x01\xe8", 4, 1, 0, FX4_PA, "setssbsy (token on B)", FX4_PA + 0x1000},
+        {"", 0, "\xf3\x0f\xae\x33", 4, 1, 0, FX4_PA + 0x1000, "clrssbsy [rbx] (token on B)",
+         FX4_PA + 0x1001},
+        {"", 0, "\xf3\x0f\x01\x2b", 4, 1, 0, FX4_PA + 0x1000, "rstorssp [rbx] (token on B)",
+         FX4_PA + 0x1009},
+    };
+    size_t i;
+    int bad = 0;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        bad += fx4_store_case(&t[i]);
+    }
+    TEST_CHECK(bad == 0);
+    TEST_MSG("partial-store audit: %d of %d checks failed", bad, (int)(3 * (sizeof(t) / sizeof(t[0]))));
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -21471,4 +21757,5 @@ TEST_LIST = {
     {"test_x86_fx4_cr2_probe", test_x86_fx4_cr2_probe},
     {"test_x86_fx4_rep_cmps_restore", test_x86_fx4_rep_cmps_restore},
     {"test_x86_fx4_hook_flags", test_x86_fx4_hook_flags},
+    {"test_x86_fx4_store_stop", test_x86_fx4_store_stop},
     {NULL, NULL}};
