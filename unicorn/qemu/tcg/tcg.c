@@ -3266,7 +3266,6 @@ static void tcg_reg_alloc_dup(TCGContext *s, const TCGOp *op)
         ots->reg = tcg_reg_alloc(s, dup_out_regs, allocated_regs,
                                  op->output_pref[0], ots->indirect_base);
         ots->val_type = TEMP_VAL_REG;
-        ots->mem_coherent = 0;
         s->reg_to_temp[ots->reg] = ots;
     }
 
@@ -3320,6 +3319,8 @@ static void tcg_reg_alloc_dup(TCGContext *s, const TCGOp *op)
     tcg_debug_assert(ok);
 
  done:
+    /* backport 36f5539cfd (U493): the output register changed in every case */
+    ots->mem_coherent = 0;
     if (IS_DEAD_ARG(1)) {
         temp_dead(s, its);
     }
