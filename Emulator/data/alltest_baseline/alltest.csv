@@ -1763,7 +1763,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "match",legacy,"base","phminposuw xmm0, xmmword ptr [rsi]","66 0F 38 41 06 ",ok,ok,6,0,""
 "privileged (CPL0 in raw unicorn; Phase 2 CPL3)",legacy,"vm","invept rax, xmmword ptr [rsi]","66 0F 38 80 06 ",,#6,6,0,""
 "privileged (CPL0 in raw unicorn; Phase 2 CPL3)",legacy,"vm","invvpid rax, xmmword ptr [rsi]","66 0F 38 81 06 ",,#6,6,0,""
-"privileged (CPL0 in raw unicorn; Phase 2 CPL3)",legacy,"base","invpcid rax, xmmword ptr [rsi]","66 0F 38 82 06 ",,#6,6,0,""
+"privileged (CPL0 in raw unicorn; Phase 2 CPL3)",legacy,"base","invpcid rax, xmmword ptr [rsi]","66 0F 38 82 06 ",,#13,6,0,""
 "match",legacy,"base","gf2p8mulb xmm0, xmm0","66 0F 38 CF C0 ",ok,ok,6,0,""
 "match",legacy,"aes","aesimc xmm0, xmm0","66 0F 38 DB C0 ",ok,ok,6,0,""
 "match",legacy,"aes","aesenc xmm0, xmm0","66 0F 38 DC C0 ",ok,ok,6,0,""

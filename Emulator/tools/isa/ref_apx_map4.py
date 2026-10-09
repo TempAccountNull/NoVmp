@@ -1550,7 +1550,7 @@ def special_lines(rng):
     L.append(mk_line(m4_crc32(16, 0, 1, Reg(2)), {1: 0, 2: 0x3132}))
     L.append(mk_line(m4_adcox("adcx", 64, 1, Reg(2), nd=1, ndd=27), {1: -1, 2: 1, 27: 5}, rflags=0x203))
     L.append(mk_line(m4_adcox("adox", 32, 1, Reg(2), nd=1, ndd=27), {1: 0xFFFFFFFF, 2: 0, 27: -1}, rflags=0xA02))
-    c("--- U645 #UD: ND/NF/V/pp/W/mod rules, INVEPT/INVVPID/INVPCID (not supported), U = 0 ---")
+    c("--- U645 #UD: ND/NF/V/pp/W/mod rules, INVEPT/INVVPID (not supported), INVPCID NF (U806), U = 0 ---")
     for e in (Ev(0x60, 0, Reg(1), nd=1, v=2), Ev(0x60, 0, Reg(1), nf=1), Ev(0x60, 0, Reg(1), v=2),
               Ev(0x60, 0, Reg(1), pp=2), Ev(0x60, 0, Reg(1), pp=3), Ev(0x61, 0, Reg(1), pp=3),
               Ev(0xF0, 0, Reg(1), pp=1), Ev(0xF1, 0, Reg(1), pp=3), Ev(0xF0, 0, Reg(1), nd=1, v=1),
@@ -1563,7 +1563,7 @@ def special_lines(rng):
               Ev(0xFC, 0, Mem(3, None, 1, 0), nd=1, v=1), Ev(0xF8, 0, Reg(1), pp=3, w=1),
               Ev(0xF8, 0, Reg(1), pp=2, w=1), Ev(0xF8, 0, Reg(1), pp=3, v=1),
               Ev(0xF0, 0, Mem(3, None, 1, 0), pp=2), Ev(0xF1, 0, Mem(3, None, 1, 0), pp=2),
-              Ev(0xF2, 0, Mem(3, None, 1, 0), pp=2), Ev(0x60, 0, Reg(1), ubit=0),
+              Ev(0xF2, 0, Mem(3, None, 1, 0), pp=2, nf=1), Ev(0x60, 0, Reg(1), ubit=0),
               Ev(0x66, 0, Reg(1), pp=1, p2or=0x01), Ev(0x60, 0, Reg(1), p2or=0x20),
               Ev(0x62, 0, Reg(1)), Ev(0x67, 0, Reg(1)), Ev(0xFF, 0, Mem(3, None, 1, 0), pp=3)):
         L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))

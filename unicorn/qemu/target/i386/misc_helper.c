@@ -2359,3 +2359,44 @@ void helper_hreset(CPUX86State *env)
     }
 }
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+/*
+ * NoVmp (ledger U806): INVPCID (SDM Vol2A; CPL checked by the translator). #GP(0) if the type
+ * > 3, if descriptor bits 63:12 are not 0, if the type is 0 or 1 with a PCID != 0 while
+ * CR4.PCIDE = 0 (outside IA-32e mode PCIDE is always 0), or if the type is 0 and the linear
+ * address (descriptor bits 127:64) is not canonical for the current paging mode (48 bits, 57
+ * with CR4.LA57). QEMU's TLB holds only the current PCID's translations (every CR3 load flushes
+ * it) and no paging-structure caches: type 0 for the current PCID flushes that page, type 1
+ * for the current PCID flushes the whole TLB (global translations too, which the SDM allows),
+ * types 2 and 3 flush everything; a PCID other than the current one has nothing cached.
+ */
+void helper_invpcid(CPUX86State *env, target_ulong type, target_ulong lo, target_ulong hi)
+{
+    uintptr_t ra = GETPC();
+    uint64_t pcid = lo & 0xfff;
+    uint64_t cur = (env->cr[4] & CR4_PCIDE_MASK) ? (env->cr[3] & 0xfff) : 0;
+    int bits = (env->cr[4] & CR4_LA57_MASK) ? 57 : 48;
+    int64_t sext = (int64_t)((uint64_t)hi << (64 - bits)) >> (64 - bits);
+
+    if (type > 3 || (lo >> 12) != 0 ||
+        (type <= 1 && pcid != 0 && !(env->cr[4] & CR4_PCIDE_MASK)) ||
+        (type == 0 && (uint64_t)sext != (uint64_t)hi)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    switch (type) {
+    case 0:
+        if (pcid == cur) {
+            tlb_flush_page(env_cpu(env), hi);
+        }
+        break;
+    case 1:
+        if (pcid == cur) {
+            tlb_flush(env_cpu(env));
+        }
+        break;
+    default:
+        tlb_flush(env_cpu(env));
+        break;
+    }
+}
+#endif /* __Use_Original_Qemu (U806) */

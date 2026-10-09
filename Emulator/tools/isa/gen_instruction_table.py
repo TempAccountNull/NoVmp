@@ -89,9 +89,7 @@ OVERRIDES = {
     'vrcpss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtps': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
-    # U790: INVPCID is not implemented (#UD in this CPU model): ⬜ until a verified_forms row proves it
-    # (U804: HRESET is implemented, verified_forms.tsv)
-    'invpcid': ('⬜', 'not implemented (#UD in this CPU model); CPL0: #GP(0) at CPL3 is a Phase 3 item (D6)'),
+    # U790's INVPCID / HRESET entries removed: implemented and proven by verified_forms.tsv (U804, U806)
     'rdtsc': ('⏳', 'TSC determinism hook: Phase 3'),
     'rdtscp': ('⏳', 'TSC/TSC_AUX: Phase 3'),
     'rdpid': ('⏳', 'TSC_AUX value: Phase 3 environment'),

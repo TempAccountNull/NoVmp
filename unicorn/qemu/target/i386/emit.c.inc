@@ -4369,6 +4369,36 @@ static void gen_WRMSRNS_i(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 }
 
 #endif /* __Use_Original_Qemu (U803) */
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+/*
+ * NoVmp (ledger U806): INVPCID r32/r64, m128 (legacy 66 0F 38 82, APX EVEX map 4 F3 F2): #GP(0)
+ * at CPL > 0 / virtual-8086 mode before the memory operand is read; then the 16-byte descriptor
+ * (low quadword first) and helper_invpcid (type and descriptor checks, the TLB flush; the TB ends
+ * as after INVLPG).
+ */
+static void gen_INVPCID(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv hi = tcg_temp_new(tcg_ctx);
+
+    if (!check_cpl0(s)) {
+        tcg_temp_free(tcg_ctx, hi);
+        return;
+    }
+    if (!CODE64(s)) {
+        tcg_gen_ext32u_tl(tcg_ctx, s->T0, s->T0);
+    }
+    gen_update_cc_op(s);
+    gen_update_eip_cur(s);
+    gen_op_ld_v(s, MO_64, s->T1, s->A0);
+    tcg_gen_addi_tl(tcg_ctx, s->A0, s->A0, 8);
+    gen_op_ld_v(s, MO_64, hi, s->A0);
+    gen_helper_invpcid(tcg_ctx, cpu_env, s->T0, s->T1, hi);
+    tcg_temp_free(tcg_ctx, hi);
+    s->base.is_jmp = DISAS_EOB_NEXT;
+}
+
+#endif /* __Use_Original_Qemu (U806) */
 #if __Use_Original_Qemu != 1 /* ours (U804) */
 /* NoVmp (ledger U804): HRESET imm8 (imm8 ignored): #GP(0) at CPL > 0 / virtual-8086, then EAX */
 static void gen_HRESET(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

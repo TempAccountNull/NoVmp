@@ -22317,6 +22317,110 @@ static void test_x86_si_lkgs(void)
     TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U806: INVPCID (66 0F 38 82, APX EVEX map 4 F3 F2) with 4-level paging (tb2_ helpers): a PTE
+ * changed in memory is not seen while the old translation is cached; type 0 for that address
+ * and types 1 (PCID 0), 2 and 3 drop it, type 0 for another address does not. The checks: type
+ * > 3 (the whole 64-bit register), descriptor bits 63:12, PCID != 0 with CR4.PCIDE = 0,
+ * non-canonical address for type 0; CPUID.(7,0):EBX[10]; strict profile #UD.
+ */
+#define SI_INVPCID_RAX_RBX "\x66\x0f\x38\x82\x03"              /* invpcid rax, [rbx] */
+#define SI_RD_DATA "\x48\x8b\x04\x25\x00\x40\x00\x60"           /* mov rax, [TB2_DATA] */
+
+static uint64_t si_tlb_read(uc_engine *uc, nk_intr_t *intr, int *slot)
+{
+    TEST_CHECK(tb2_exec(uc, intr, (*slot)++, SI_RD_DATA, 8) == -1);
+    return nk_reg(uc, UC_X86_REG_RAX);
+}
+
+static int si_invpcid(uc_engine *uc, nk_intr_t *intr, int *slot, uint64_t type, uint64_t lo,
+                      uint64_t hi)
+{
+    const uint64_t d = code_start + 0x3000;
+
+    tb2_st64(uc, d, lo);
+    tb2_st64(uc, d + 8, hi);
+    nk_setreg(uc, UC_X86_REG_RAX, type);
+    nk_setreg(uc, UC_X86_REG_RBX, d);
+    return tb2_exec(uc, intr, (*slot)++, SI_INVPCID_RAX_RBX, 5);
+}
+
+static void test_x86_si_invpcid(void)
+{
+    static const uc_x86_cpuid no_invpcid[] = {
+        {7, 0, 0, 0, 0, 0},
+    };
+    const uint64_t pte = TB2_PT + 0x5000 + ((TB2_DATA - TB2_SYS) >> 12) * 8;
+    const uint64_t a = 0xaaaaaaaaaaaaaaaaull, b = 0xbbbbbbbbbbbbbbbbull;
+    static const struct {
+        uint64_t type, lo, hi;
+        int drops;
+    } t[] = {
+        {0, 0, TB2_DATA, 1},
+        {0, 0, TB2_DATA + 0x1000, 0},
+        {1, 0, 0x8000000000000000ull, 1},     /* the address is not used for type 1 */
+        {2, 0xfff, 0, 1},
+        {3, 0x123, 0, 1},
+    };
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uint32_t r[4];
+    int slot = 0;
+    size_t i;
+    SiCtx c;
+
+    tb2_paging(uc, 3);
+    tb2_st64(uc, TB2_DATA, a);
+    tb2_st64(uc, TB2_DATA + 0x1000, b);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint64_t now;
+
+        tb2_st64(uc, pte, TB2_DATA | 3);
+        TEST_CHECK(si_invpcid(uc, &intr, &slot, 2, 0, 0) == -1);
+        TEST_CHECK(si_tlb_read(uc, &intr, &slot) == a);           /* cached: TB2_DATA */
+        tb2_st64(uc, pte, (TB2_DATA + 0x1000) | 3);               /* remap in memory only */
+        TEST_CHECK(si_tlb_read(uc, &intr, &slot) == a);           /* the stale translation */
+        TEST_CHECK(si_invpcid(uc, &intr, &slot, t[i].type, t[i].lo, t[i].hi) == -1);
+        now = si_tlb_read(uc, &intr, &slot);
+        TEST_CHECK(now == (t[i].drops ? b : a));
+        TEST_MSG("type %u: %016" PRIx64, (unsigned)t[i].type, now);
+    }
+    /* #GP(0): type 4, type 2^32 + 1 (64-bit register), bits 63:12, PCID with PCIDE = 0,
+       non-canonical address for type 0 */
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 4, 0, 0) == 13);
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 0x100000001ull, 0, 0) == 13);
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 2, 0x1000, 0) == 13);
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 1, 1, 0) == 13);
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 0, 0, 0x0000800000000000ull) == 13);
+    TEST_CHECK(si_invpcid(uc, &intr, &slot, 0, 0, 0xffff800000000000ull) == -1);
+    /* register form #UD */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, "\x66\x0f\x38\x82\xc3", 5) == 6);
+    OK(uc_close(uc));
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 0, r);
+    TEST_CHECK(r[1] & (1u << 10));
+    OK(uc_close(c.uc));
+    /* APX EVEX map 4 F3 F2: invpcid r20, [rbx] */
+    si_open(&c, 0, 0, UC_X86_APX_F, NULL, 0);
+    si_st64(&c, SI_DATA, 0);
+    si_st64(&c, SI_DATA + 8, 0);
+    si_set(&c, UC_X86_REG_RBX, SI_DATA);
+    si_set(&c, UC_X86_REG_R20, 3);
+    TEST_CHECK(si_run(&c, "\x62\xe4\x7e\x08\xf2\x23", 6) == -1);
+    si_set(&c, UC_X86_REG_R20, 4);
+    TEST_CHECK(si_run(&c, "\x62\xe4\x7e\x08\xf2\x23", 6) == 13);
+    TEST_CHECK(si_run(&c, "\x62\xe4\x7e\x0c\xf2\x23", 6) == 6);     /* NF = 1 */
+    OK(uc_close(c.uc));
+    /* a strict profile hiding INVPCID: #UD */
+    si_open(&c, 0, 0, 0, no_invpcid, 1);
+    si_st64(&c, SI_DATA, 0);
+    si_set(&c, UC_X86_REG_RBX, SI_DATA);
+    si_set(&c, UC_X86_REG_RAX, 2);
+    TEST_CHECK(si_run(&c, SI_INVPCID_RAX_RBX, 5) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22626,4 +22730,5 @@ TEST_LIST = {
     {"test_x86_si_msr_imm", test_x86_si_msr_imm},
     {"test_x86_si_hreset", test_x86_si_hreset},
     {"test_x86_si_lkgs", test_x86_si_lkgs},
+    {"test_x86_si_invpcid", test_x86_si_invpcid},
     {NULL, NULL}};

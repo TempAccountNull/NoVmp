@@ -818,6 +818,14 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
      * MOVRS r8, m8 / MOVRS rv, mv: NOREP 0F 38 8A/8B (ISE 319433-062), a load
      * with a read-shared hint. 64-bit mode only; F2/F3/LOCK/VEX/mod=3 #UD.
      */
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+    /*
+     * NoVmp (ledger U806): 66 0F 38 82 /r INVPCID r32/r64, m128 (SDM Vol2A): the register is
+     * 64-bit in 64-bit mode (whatever REX.W), else 32-bit; memory only (M: the operand is not
+     * pre-loaded, gen_INVPCID checks CPL first and reads the descriptor itself).
+     */
+    [0x82] = X86_OP_ENTRY3(INVPCID,      None,None, G,q, M,b, cpuid(INVPCID) p_66),
+#endif /* __Use_Original_Qemu (U806) */
     [0x8a] = X86_OP_ENTRY3(MOVRS,        G,b,  None,None, M,b, cpuid(MOVRS) o64 p_00_66),
     [0x8b] = X86_OP_ENTRY3(MOVRS,        G,v,  None,None, M,v, cpuid(MOVRS) o64 p_00_66),
 #endif /* __Use_Original_Qemu (U102) */
@@ -1353,8 +1361,9 @@ static void decode_VEX_MAP5(DisasContext *s, CPUX86State *env, X86OpEntry *entry
  *   F0 /r NP CRC32 ry, r/m8       F1 /r NP/66 CRC32 ry, rv/mv
  *   F8 !(11) 66 MOVDIR64B, F2 ENQCMD, F3 ENQCMDS; F8 11 F2 URDMSR, F3 UWRMSR (W0)
  *   F9 !(11) NP MOVDIRI           FC !(11) NP AADD, 66 AAND, F3 AXOR, F2 AOR
- * INVEPT / INVVPID / INVPCID (F3 F0 / F1 / F2) need VMX / INVPCID, which this CPU model does
- * not implement: #UD, like every other combination. Byte registers 4-7 are SPL..DIL.
+ * INVEPT / INVVPID (F3 F0 / F1) need VMX, which this CPU model does not implement: #UD, like
+ * every other combination; U806 (was: INVPCID #UD too): F3 F2 !(11) INVPCID r64, m128. Byte
+ * registers 4-7 are SPL..DIL.
  */
 static void decode_apx_map4(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
@@ -1364,6 +1373,10 @@ static void decode_apx_map4(DisasContext *s, CPUX86State *env, X86OpEntry *entry
     static const X86OpEntry adox_nd = X86_OP_ENTRY3(ADOX, B,y, G,y, E,y, cpuid(ADX));
     static const X86OpEntry crc32_b = X86_OP_ENTRY2(CRC32, G,d, E,b, cpuid(SSE42));
     static const X86OpEntry crc32_v = X86_OP_ENTRY2(CRC32, G,d, E,v, cpuid(SSE42));
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+    /* U806: EVEX.LLZ.F3.MAP4.WIG F2 !(11):rrr:bbb INVPCID r64, m128 (APX spec 6.27) */
+    static const X86OpEntry invpcid = X86_OP_ENTRY3(INVPCID, None,None, G,q, M,b, cpuid(INVPCID));
+#endif /* __Use_Original_Qemu (U806) */
     int pp = s->evex_p1 & 3;
     bool nd = (s->evex_p2 & 0x10) != 0;
     bool mem;
@@ -1418,6 +1431,13 @@ static void decode_apx_map4(DisasContext *s, CPUX86State *env, X86OpEntry *entry
             *entry = crc32_v;
         }
         break;
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+    case 0xf2:
+        if (pp == 2 && mem) {
+            *entry = invpcid;           /* class APX-EVEX-INVPCID: the U645 payload checks */
+        }
+        break;
+#endif /* __Use_Original_Qemu (U806) */
     case 0xf8:
         if (pp == 1 && mem) {
             *entry = opcodes_0F38_F0toFF[8][1];         /* MOVDIR64B */
@@ -5801,6 +5821,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_HRESET:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_HRESET);
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+    case X86_FEAT_INVPCID:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_INVPCID);
+#endif /* __Use_Original_Qemu (U806) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     case X86_FEAT_ENQCMD:
         return (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_ENQCMD);

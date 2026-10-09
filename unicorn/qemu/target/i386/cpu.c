@@ -668,7 +668,7 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_0_EBX_CLWB | CPUID_7_0_EBX_MPX | CPUID_7_0_EBX_FSGSBASE | \
           CPUID_7_0_EBX_ERMS | CPUID_7_0_EBX_AVX2 | CPUID_7_0_EBX_RDSEED | \
           CPUID_7_0_EBX_SHA_NI | CPUID_7_0_EBX_HLE /* U110 */ | \
-          CPUID_7_0_EBX_RTM /* U110 */)
+          CPUID_7_0_EBX_RTM /* U110 */ | CPUID_7_0_EBX_INVPCID /* U806 */)
 #endif /* __Use_Original_Qemu (U110) */
           /* missing:
           CPUID_7_0_EBX_HLE

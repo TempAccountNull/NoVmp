@@ -438,6 +438,9 @@ DEF_HELPER_1(hreset, void, env)
 #if __Use_Original_Qemu != 1 /* ours (U805) */
 DEF_HELPER_2(lkgs, void, env, i32)
 #endif /* __Use_Original_Qemu (U805) */
+#if __Use_Original_Qemu != 1 /* ours (U806) */
+DEF_HELPER_4(invpcid, void, env, tl, tl, tl)
+#endif /* __Use_Original_Qemu (U806) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */
 DEF_HELPER_1(clui, void, env)

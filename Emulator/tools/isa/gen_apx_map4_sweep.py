@@ -11,8 +11,9 @@ apx_spec_table() below) and is cross-checked against the Intel XED APX datafiles
 of datafiles/apx-f/*.xed.txt with MAP4: opcode, VNP/V66/VF2/VF3, MOD, REG, ND, NF / SCC, W0/W1);
 the generator stops on any disagreement, so the file holds only combinations both agree on.
 Combinations whose execution depends on run-time state (WRSS/WRUSS: CR4.CET; URDMSR/UWRMSR:
-IA32_USER_MSR_CTL; ENQCMD/ENQCMDS: PASID / destination) and the instructions this CPU model
-does not implement (INVEPT, INVVPID, INVPCID: #UD) are left out of the "=>!" lines.
+IA32_USER_MSR_CTL; ENQCMD/ENQCMDS: PASID / destination; INVPCID (U806): the type and the
+descriptor) and the instructions this CPU model does not implement (INVEPT, INVVPID: #UD) are left
+out of the "=>!" lines.
 
 The state makes every valid form fault-free: RAX = 1, RDX = 0 (DIV/IDIV: 1 / divisor), RSI =
 0101H (the register r/m operand), RBX = MEM+8000H (ModRM.reg of the non-group opcodes and the

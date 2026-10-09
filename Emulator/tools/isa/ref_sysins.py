@@ -3,9 +3,9 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
       WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803), HRESET (U804),
-      LKGS (U805)
+      LKGS (U805), INVPCID (U806)
   * the same, Intel APX EVEX forms (--apx)                          -> Emulator\data\cases_sysins_apx.txt
-      RDMSR / WRMSRNS imm32 EVEX map 7 (U803)
+      RDMSR / WRMSRNS imm32 EVEX map 7 (U803), INVPCID EVEX map 4 (U806)
 
 Written from the Intel manuals only (the emulator's C sources were not read for the expected values;
 no CPU measurements - the i5-13600K has no AVX-512):
@@ -47,6 +47,11 @@ System instructions, from:
     IA32_KERNEL_GS_BASE := descriptor.base (63:32 cleared), the GS base not modified); Vol1
     Table 21-22 (CPUID.(07H,1):EAX[18]); Vol3A 3.4.5 descriptor layout; MOV (to GS) for the
     accessed bit; Vol2A LGDT (64-bit: 2-byte limit, 8-byte base); MOV r16, Sreg (low 16 bits).
+  * SDM Vol2A INVPCID (66 0F 38 82 /r; the register is 64-bit in 64-bit mode; Operation and
+    64-Bit Mode Exceptions: #GP(0) CPL > 0, type > 3, descriptor bits 63:12 != 0, CR4.PCIDE = 0
+    with type 0/1 and PCID != 0, type 0 with a non-canonical address; #UD LOCK, CPUID); APX spec
+    6.27 / 4.1.14 (EVEX.LLZ.F3.MAP4.IGNORED F2 !(11):rrr:bbb, class APX-EVEX-INVPCID); XED
+    apx-f-isa INVPCID (MOD != 3, ND = 0, NF = 0, NOEVSR).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -64,6 +69,10 @@ Modelling decisions:
   f. RDMSRLIST / WRMSRLIST check RSI / RDI alignment first, also when RCX = 0 (the SDM lists the
      #GP without a condition on RCX); entries are processed strictly in order, no load-ahead
      (a #PF on entry n happens after entries < n completed).
+  h. INVPCID: CPL is checked before the memory operand is read (#GP(0) at CPL3 even when the
+     operand would #PF); the descriptor is read (low quadword first) before the type is checked
+     (the SDM Operation reads both first); "canonical" for the type-0 address is relative to
+     the current paging mode (4-level here).
   g. MSR-IMM W1 is #UD for the VEX form (SDM "W0") and for the EVEX form (the APX table prints
      "N/A"; read as the VEX form's W0, as asmjit's db does). NP / 66 F6 in map 7 is no instruction.
 
@@ -513,6 +522,48 @@ def i_lkgs(reg=None, disp=None, prefix=b'', mand=b'\xf2'):
     return enc, f
 
 
+def canonical48(v):
+    """Canonical for the current paging mode: 4-level (CR4.LA57 = 0 in the cases)."""
+    top = v >> 47
+    return top == 0 or top == (1 << 17) - 1
+
+
+def i_invpcid(treg, disp=0, prefix=b'\x66', rexw=False, mod=1, evex_form=False, nf=0, nd=0, pp=None,
+              mand_ok=True):
+    """INVPCID r64, m128 [RSI + disp8] (66 0F 38 82 /r; APX: EVEX.LLZ.F3.MAP4 F2), SDM Vol2A:
+    #GP(0) CPL > 0, type > 3, desc[63:12] != 0, type 0/1 with PCID != 0 (CR4.PCIDE = 0), type 0
+    with a non-canonical address; no other architectural effect (TLBs)."""
+    n = REGS.index(treg)
+    modrm = (mod << 6) | ((n & 7) << 3) | 6
+    if not evex_form:
+        rex = 0x40 | (8 if rexw else 0) | (4 if n & 8 else 0)
+        enc = prefix + (bytes([rex]) if rex != 0x40 else b'') + b'\x0f\x38\x82' + bytes([modrm])
+        ud = prefix != b'\x66'
+    else:
+        if pp is None:
+            pp = 2
+        p0 = (((~n >> 3) & 1) << 7) | 0x40 | 0x20 | (((~n >> 4) & 1) << 4) | 0x04
+        p1 = (int(rexw) << 7) | 0x78 | 0x04 | pp
+        p2 = (nd << 4) | 0x08 | (nf << 2)
+        enc = prefix + bytes([0x62, p0, p1, p2, 0xF2, modrm])
+        ud = prefix != b'' or nf or nd or pp != 2
+    if mod == 1:
+        enc += bytes([disp & 0xFF])
+    ud = ud or mod == 3
+
+    def f(m):
+        if ud:
+            raise Fault('#UD')
+        if m.cpl:
+            raise Fault('#GP')
+        a = (m.r['rsi'] + disp) & M64
+        lo, hi = ld64(m, a), ld64(m, a + 8)
+        t = m.r[treg]
+        if t > 3 or lo >> 12 or (t <= 1 and lo & 0xFFF) or (t == 0 and not canonical48(hi)):
+            raise Fault('#GP')
+    return enc, f
+
+
 def desc(base, limit, typ, dpl, p=1, s=1, g=1, db=1):
     """A legacy segment descriptor (SDM Vol3A 3.4.5)."""
     return ((limit & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (typ << 40) | (s << 44) | (dpl << 45) |
@@ -721,6 +772,29 @@ def cases_sys():
     a(run_case([i_lkgs('rcx', prefix=b'\xf0')], {'rcx': 0}))
     a(run_case([i_lkgs('rcx', mand=b'')], {'rcx': 0}))
     a(run_case([i_lkgs('rcx', mand=b'\xf3')], {'rcx': 0}))
+
+    # ---- INVPCID (U806)
+    def dq(lo, hi):
+        return lo.to_bytes(8, 'little') + hi.to_bytes(8, 'little')
+    a('# --- INVPCID r64, m128 (66 0F 38 82 /r), U806: types 0-3 (CR4.PCIDE = 0, no visible state;')
+    a('# the TLB effect is unit test test_x86_si_invpcid); the type is the full 64-bit register')
+    for t, lo, hi in ((0, 0, MEM_PTR), (0, 0, 0xFFFF800000001000), (1, 0, 0x0000800000000000),
+                      (2, 0xFFF, 0x0000800000000000), (3, 0x123, 0)):
+        a(run_case([i_invpcid('rax', 0x10)], {'rax': t, 'm+0x8010': dq(lo, hi)}))
+    a(run_case([i_invpcid('r9', 0x20, rexw=True)], {'r9': 2, 'm+0x8020': dq(0, 0)}))
+    a('# #GP(0): type > 3 (also 2^32 + n), descriptor bits 63:12, PCID != 0 for types 0/1 with')
+    a('# CR4.PCIDE = 0, a non-canonical address for type 0')
+    for t, lo, hi in ((4, 0, 0), (0xFFFFFFFF, 0, 0), (0x100000002, 0, 0), (2, 0x1000, 0),
+                      (3, 0x8000000000000000, 0), (0, 1, 0), (1, 0xFFF, 0), (0, 0, 0x0000800000000000),
+                      (0, 0, 0x7FFF000000000000)):
+        a(run_case([i_invpcid('rcx', 0x30)], {'rcx': t, 'm+0x8030': dq(lo, hi)}))
+    a('# #PF on the second quadword (MEM + 10000h unmapped); #UD: register form, LOCK, NP / F2 / F3;')
+    a('# CPL3 -> #GP(0) before the memory operand is read')
+    a(run_case([i_invpcid('rax', 0)], {'rax': 2, 'rsi': MEM + 0xFFF8}))
+    a(run_case([i_invpcid('rax', mod=3)], {'rax': 2}))
+    for pfx in (b'\xf0\x66', b'', b'\xf2', b'\xf3'):
+        a(run_case([i_invpcid('rax', 0x10, prefix=pfx)], {'rax': 2, 'm+0x8010': dq(0, 0)}))
+    a(run_case([i_invpcid('rax', 0)], {'rax': 2, 'rsi': MEM + 0x20000, 'cpl': 3}))
     return lines
 
 
@@ -754,6 +828,24 @@ def cases_apx():
         a(run_case([i_msrimm(True, 'r19', 0x1B01, True, **kw)], dict(base)))
     a(run_case([i_msrimm(False, 'r21', 0x2F, True)], dict(base, cpl=3)))
     a(run_case([i_msrimm(True, 'r21', 0x1B01, True)], dict(base, cpl=3)))
+
+    def dq(lo, hi):
+        return lo.to_bytes(8, 'little') + hi.to_bytes(8, 'little')
+    a('# --- INVPCID r64, m128: EVEX.LLZ.F3.MAP4.WIG F2 !(11):rrr:bbb (APX spec 6.27, U806); the')
+    a('# register through R4 / R3; W ignored')
+    for treg, t, lo, hi, w in (('r20', 0, 0, MEM_PTR, 0), ('r31', 2, 0xABC, 0, 1), ('r16', 3, 0, 0, 0),
+                               ('rax', 1, 0, 0, 0)):
+        a(run_case([i_invpcid(treg, 0x10, prefix=b'', evex_form=True, rexw=w)],
+                   {treg: t, 'm+0x8010': dq(lo, hi)}))
+    a('# #GP(0) (class APX-EVEX-INVPCID): type > 3, PCID with PCIDE = 0, non-canonical address')
+    for t, lo, hi in ((5, 0, 0), (0, 7, 0), (0, 0, 0x0001000000000000)):
+        a(run_case([i_invpcid('r17', 0x10, prefix=b'', evex_form=True)], {'r17': t, 'm+0x8010': dq(lo, hi)}))
+    a('# #UD: NF, ND, ModRM.mod = 11b, pp other than F3, LOCK / 66 before 62; CPL3 -> #GP(0)')
+    for kw in ({'nf': 1}, {'nd': 1}, {'mod': 3}, {'pp': 0}, {'pp': 1}, {'pp': 3}, {'prefix': b'\xf0'},
+               {'prefix': b'\x66'}):
+        args = dict({'prefix': b''}, **kw)
+        a(run_case([i_invpcid('r18', 0x10, evex_form=True, **args)], {'r18': 2, 'm+0x8010': dq(0, 0)}))
+    a(run_case([i_invpcid('r18', 0x10, prefix=b'', evex_form=True)], {'r18': 2, 'cpl': 3}))
     return lines
 
 
@@ -784,6 +876,11 @@ def cases_hw():
     a('# LKGS (U805): CPUID.(07H,1):EAX[18] = 0 on this CPU (and CPL3) -> #UD on both')
     a('.byte %s | rcx=0x2B cpl=3' % bytelist(i_lkgs('rcx')[0]))
     a('.byte %s | m+0x8040=2B00 cpl=3' % bytelist(i_lkgs(disp=0x40)[0]))
+    a('# INVPCID (U806): the i5-13600K has INVPCID (CPUID.(07H,0):EBX[10] = 1): #GP(0) at CPL3 on both,')
+    a('# also with an invalid type or descriptor (CPL is checked first); register form #UD')
+    a('.byte %s | rax=0x2 m+0x8010=00000000000000000000000000000000 cpl=3' % bytelist(i_invpcid('rax', 0x10)[0]))
+    a('.byte %s | rax=0x9 m+0x8010=FFFFFFFFFFFFFFFF0000000000800000 cpl=3' % bytelist(i_invpcid('rax', 0x10)[0]))
+    a('.byte %s | rax=0x2 cpl=3' % bytelist(i_invpcid('rax', mod=3)[0]))
     return lines
 
 
