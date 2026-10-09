@@ -45,6 +45,21 @@ Without `--xcr0` / `--cr0`, emu-alltest derives the state per kind of case and p
 
 **When `--xcr0` / `--cr0` are still needed:** to test the XCR0 gating itself (a component disabled) or another CR0 (e.g. NE = 0 → FERR#). They apply to both kinds of case.
 
+## test.cmd: selective and parallel runs (U541–U543, plan 1.H.3)
+
+```
+test.cmd [--release | --debug] [-j N | --jobs N | --serial] [-v | --verbose] [list | NAME ...]
+```
+
+- **NAME** = a group or one suite id; several at once (`test.cmd evex x87`); no NAME (or `all`) = every suite, the full gate. `test.cmd list` prints the groups, the suites and their commands. Unknown names/options: message + usage, exit 2.
+- **Groups:** `unit` (Unicorn unit tests + emu-uc72-risk), `sweep` (emu-alltest quick run), `selftest`, `expect` (every expected-value file), `evex`, `amx`, `fp16`, `avx10`, `ext` (Key Locker / SHA-SM / VNNI-IFMA), `sse`, `nan`, `x87`, `hw` (everything compared with the host CPU), `quirks`, `backport`, `tools` (check_decode_dups.py). A suite can be in several groups.
+- **Parallel:** the suites are independent processes; up to N run at once (default NUMBER_OF_PROCESSORS, `--serial` = 1), longest first (the previous run's times, `logs\times.tsv`). Each writes its own log `build\x64\<config>\tests\logs\<suite>.log`; after the run each suite's key lines (command, machine state, summary, tags) are printed in suite order, `-v` prints whole logs.
+- **Verdicts** are the old test.cmd rules: exit status 0; hardware files (`hw`): `differing: 0` + exit 0 + a strict CPUID profile; `expect_selftest_bad`: `cases: 6, differing: 6` + exit 1. A crash (negative exit status) now fails a suite (the old `if errorlevel 1` let it pass).
+- **Summary table:** suite, result, cases, differing, known deviations, host state, tagged-not-observed, time; a total row for a split suite; wall clock vs the sum of the suite times. Then `[test] OK: all suites passed` (exit 0) or `[test] FAILED: N suite(s) failed` (exit 1), as before.
+- **Run alone:** `hwcheck_gate1` and `cases_quirks` run first, each with nothing beside it: they contain the tagged REP LODS (67h, ECX = 0) case, whose CPU result depends on what runs on the other logical processors (docs\quirks.md "REP 67h ECX=0 zero-extension"; measured with 200 runs each: SDM path taken 8/200 serially with the old binary, 7/200 serially, 26/200 with 8 copies side by side). A tagged case never fails a run, but alone it keeps the same rate as the serial test.cmd.
+- **Results do not depend on the parallel load:** hardware suites compare architectural results, never timing. Checked case by case (every verdict and every hw/uc/exp line) for every suite: the serial test.cmd before U540 vs the parallel runs — identical except the documented RDRAND values of loose cases, host-state tags (APIC ID, RDRAND) and the REP LODS tag above.
+- **Tiers** (plan 1.H.3): while working on an area run only its group(s); a harness-only change: only the affected files (same cases, same counts); before a push that changes emulator code: the full `test.cmd` at 100%.
+
 ## Quirks
 
 `--quirks` and the UC_CTL_X86_HW_QUIRKS control are being removed (plan 1.G, pure SDM). Hardware cases where the i5-13600K deviates from the SDM are tagged `# known deviation: <name>` (documented in `docs\quirks.md`); host-state differences (RDRAND values, APIC ID, …) are tagged `# host state: <reason>`. Both are counted separately so every file reports 0 unexplained differences.
