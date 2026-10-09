@@ -13734,6 +13734,25 @@ static void test_x86_bp_wrap_4g(void)
     TEST_CHECK(b[0] == 0x55 && b[1] == 0x66);
     OK(uc_close(uc));
 }
+
+/*
+ * U491 (ours): PUSHF/PUSHFQ clear VM and RF in the pushed image (SDM Vol2B PUSHF); Unicorn's
+ * helper_read_eflags returns them. With RF = 1 (set as after a fault), PUSHFQ pushes RF = 0.
+ */
+static void test_x86_bp_pushf_rf(void)
+{
+    static const char code[] = "\x9c\x58";                    /* pushfq; pop rax */
+    M0 m;
+
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    m0_set(&m, UC_X86_REG_RSP, M0_DATA + 0x1000);
+    m0_set(&m, UC_X86_REG_RFLAGS, 0x10202);
+    TEST_CHECK(m0_get(&m, UC_X86_REG_RFLAGS) & 0x10000);
+    TEST_CHECK(m0_run(&m, code, 2) == -1);
+    TEST_CHECK((m0_get(&m, UC_X86_REG_RAX) & 0x30000) == 0);
+    TEST_MSG("pushed %" PRIx64, m0_get(&m, UC_X86_REG_RAX));
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13958,4 +13977,5 @@ TEST_LIST = {
     {"test_x86_bp_cpuid_80000000", test_x86_bp_cpuid_80000000},
     {"test_x86_bp_cpuid_prfchw", test_x86_bp_cpuid_prfchw},
     {"test_x86_bp_wrap_4g", test_x86_bp_wrap_4g},
+    {"test_x86_bp_pushf_rf", test_x86_bp_pushf_rf},
     {NULL, NULL}};

@@ -6432,6 +6432,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (check_vm86_iopl(s)) {
             gen_update_cc_op(s);
             gen_helper_read_eflags(tcg_ctx, s->T0, cpu_env);
+#if __Use_Original_Qemu != 1 /* ours (U491) */
+            /*
+             * NoVmp (ledger U491): Unicorn's helper_read_eflags returns the whole EFLAGS
+             * (cpu_compute_eflags, needed for its register sync), RF and VM included. SDM
+             * Vol2B PUSHF: "the VM and RF flags (bits 16 and 17) are not copied; instead,
+             * the values for these flags are cleared in the EFLAGS image stored on the stack".
+             */
+            tcg_gen_andi_tl(tcg_ctx, s->T0, s->T0, ~(target_ulong)(VM_MASK | RF_MASK));
+#endif /* __Use_Original_Qemu (U491) */
             gen_push_v(s, s->T0);
         }
         break;

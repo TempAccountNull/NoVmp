@@ -70,3 +70,8 @@ mov eax, 0x80000000; cpuid
 mov eax, 0x80000001; cpuid
 prefetchw [rsi]
 .byte 0x0f, 0x0d, 0x4e, 0x40
+#
+# --- U491 (ours) with U482: TF set by POPF single-steps REP MOVSB after its first iteration (#DB with RF = 1,
+# U482); the epilogue's PUSHFQ must not copy RF (SDM Vol2B PUSHF). RCX = 3 -> 2, one byte moved.
+pushfq; or dword ptr [rsp], 0x100; popfq; rep movsb | rcx=3 m+0x8000=010203
+pushfq; or dword ptr [rsp], 0x100; popfq; rep stosd | rcx=4 rax=0x11223344
