@@ -4403,7 +4403,8 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U116) */
             } else {
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
-                gen_helper_lcall_real(tcg_ctx, cpu_env, s->tmp2_i32, s->T1,
+                tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp3_i32, s->T1);     /* 8c03ab9f74 (U497) */
+                gen_helper_lcall_real(tcg_ctx, cpu_env, s->tmp2_i32, s->tmp3_i32,
                                       tcg_constant_i32(tcg_ctx, dflag - 1),
                                       eip_next_i32(s));
             }

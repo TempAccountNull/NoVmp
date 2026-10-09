@@ -13830,6 +13830,38 @@ static void test_x86_bp_callgate_rsp0_canonical(void)
         OK(uc_close(uc));
     }
 }
+
+/*
+ * U497 (backport 8c03ab9f74): real-mode CALL FAR with 66h and an offset >= 80000000h loads
+ * EIP = offset zero-extended (SDM Vol2A CALL, real-address mode: EIP := DEST), not sign-
+ * extended into the 64-bit RIP. 66 9A: call 0000:80001000h; the fetch there is unmapped.
+ */
+static bool tb2_fetch_unmapped_cb(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                                  int64_t value, void *user_data)
+{
+    *(uint64_t *)user_data = address;
+    return false;
+}
+
+static void test_x86_bp_lcall_real_eip(void)
+{
+    static const char code[] = "\x66\x9a\x00\x10\x00\x80\x00\x00";
+    uc_engine *uc;
+    uc_hook h;
+    uint64_t at = 0;
+    uc_err err;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_16, &uc));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, sizeof(code) - 1));
+    OK(uc_hook_add(uc, &h, UC_HOOK_MEM_FETCH_UNMAPPED, tb2_fetch_unmapped_cb, &at, 1, 0));
+    nk_setreg(uc, UC_X86_REG_SP, 0x3000);
+    err = uc_emu_start(uc, code_start, code_start + 0x100, 0, 0);
+    TEST_CHECK(err == UC_ERR_FETCH_UNMAPPED);
+    TEST_CHECK(at == 0x80001000ULL);
+    TEST_MSG("err %d, fetch at %016" PRIx64, err, at);
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -14057,4 +14089,5 @@ TEST_LIST = {
     {"test_x86_bp_pushf_rf", test_x86_bp_pushf_rf},
     {"test_x86_bp_lfence_sse2", test_x86_bp_lfence_sse2},
     {"test_x86_bp_callgate_rsp0_canonical", test_x86_bp_callgate_rsp0_canonical},
+    {"test_x86_bp_lcall_real_eip", test_x86_bp_lcall_real_eip},
     {NULL, NULL}};
