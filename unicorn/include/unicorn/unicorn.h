@@ -708,6 +708,11 @@ typedef enum uc_control_type {
     // map 5 / map 6 FP16 instructions); it implies UC_X86_AVX512_BW (SDM Vol1 15.2.2: the
     // AVX512-FP16 extensions require AVX512BW). Default off: UC_CPU_X86_MAX and the
     // i5-13600K profile are unchanged.
+    // NoVmp U570: UC_X86_AVX512_VP2INTERSECT (0x10000) adds CPUID.(EAX=7,ECX=0):EDX.
+    // AVX512_VP2INTERSECT[8] (VP2INTERSECTD/Q; not part of AVX10.1, so UC_CTL_X86_AVX10
+    // alone does not add them). The EVEX forms of GFNI, VAES and VPCLMULQDQ need no bit
+    // here: they take the model's own GFNI/VAES/VPCLMULQDQ bits plus AVX512F (AVX512VL
+    // below 512 bits) or AVX10.1 (U572-U574).
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -751,6 +756,7 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_BITALG 256 // + AVX512_BITALG (CPUID.7.0:ECX[12]) (NoVmp U324)
 #define UC_X86_AVX512_VBMI 64 // + AVX512_VBMI (CPUID.7.0:ECX[1]) (NoVmp U325)
 #define UC_X86_AVX512_FP16 0x200 // + AVX512_FP16 (CPUID.7.0:EDX[23], implies BW) (NoVmp U330)
+#define UC_X86_AVX512_VP2INTERSECT 0x10000 // + AVX512_VP2INTERSECT (CPUID.7.0:EDX[8]) (NoVmp U570)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

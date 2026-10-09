@@ -62,7 +62,7 @@
 // default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0). U539: Unicorn implements the SDM only,
 // for both kinds of case (no quirk switch; hardware deviations are tags, below). --avx512 opts
 // Unicorn in to AVX-512
-// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16, before the engine is
+// (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT, before the engine is
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
 // Emulator\data\cases_opmask.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile

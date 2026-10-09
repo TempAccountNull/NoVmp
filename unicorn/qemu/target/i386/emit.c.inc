@@ -5898,3 +5898,23 @@ static void gen_EVEX_VPERMT2B(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_permb(s, decode, 2);
 }
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U571) */
+
+/*
+ * NoVmp (ledger U571): VP2INTERSECTD/Q k1+1, src1, src2 (SDM Vol2C): helper_evex_vp2intersect
+ * writes maskregs[dest_base + 1] itself and returns maskregs[dest_base + 0], which
+ * gen_evex_insn stores to op[0] (no masking: aaa = 000b, so nothing is ANDed); dest_base =
+ * ModRM.reg & ~1. desc = EVEX_DESC(element size, KL) | (dest_base + 1) << 16.
+ */
+static void gen_EVEX_VP2INTERSECT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int base = decode->op[0].n & ~1;
+    uint32_t desc = EVEX_DESC(s->evex_esz, s->evex_vl >> s->evex_esz) |
+                    ((uint32_t)(base + 1) << 16);
+
+    gen_helper_evex_vp2intersect(tcg_ctx, s->tmp1_i64, cpu_env, OP_PTR1, OP_PTR2,
+                                 tcg_constant_i32(tcg_ctx, desc));
+    decode->op[0].n = base;
+}
+#endif /* __Use_Original_Qemu (U571) */

@@ -645,3 +645,32 @@ void helper_evex_permb(CPUX86State *env, ZMMReg *d, ZMMReg *old, ZMMReg *a, ZMMR
     }
 }
 #endif /* __Use_Original_Qemu (U325) */
+#if __Use_Original_Qemu != 1 /* ours (U571) */
+
+/*
+ * NoVmp (ledger U571): VP2INTERSECTD/Q (SDM Vol2C Operation): maskregs[dest_base+0] and
+ * [dest_base+1] := 0 (all 64 bits: MAX_KL), then for every i, j < KL: match := (src1.elem[i]
+ * == src2.elem[j]); maskregs[dest_base+0].bit[i] |= match; maskregs[dest_base+1].bit[j] |=
+ * match. desc: bits 1:0 element size log2 (2 = dword, 3 = qword), bits 15:8 KL, bits 18:16
+ * dest_base + 1 (written here); the dest_base mask is returned. Both sources are read before
+ * any opmask is written (they are vector registers or memory, never opmasks).
+ */
+uint64_t helper_evex_vp2intersect(CPUX86State *env, ZMMReg *a, ZMMReg *b, uint32_t desc)
+{
+    int esz = desc & 3, kl = (desc >> 8) & 0xff, odd = (desc >> 16) & 7, i, j;
+    uint64_t m0 = 0, m1 = 0;
+
+    for (i = 0; i < kl; i++) {
+        for (j = 0; j < kl; j++) {
+            bool match = esz == 3 ? a->ZMM_Q(i) == b->ZMM_Q(j) : a->ZMM_L(i) == b->ZMM_L(j);
+
+            if (match) {
+                m0 |= 1ULL << i;
+                m1 |= 1ULL << j;
+            }
+        }
+    }
+    env->opmask_regs[odd] = m1;
+    return m0;
+}
+#endif /* __Use_Original_Qemu (U571) */

@@ -5543,6 +5543,16 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_FP16;
     }
 #endif /* __Use_Original_Qemu (U330) */
+#if __Use_Original_Qemu != 1 /* ours (U570) */
+    /*
+     * NoVmp (ledger U570): UC_X86_AVX512_VP2INTERSECT adds CPUID.(EAX=7,ECX=0):EDX.
+     * AVX512_VP2INTERSECT[8] (SDM Vol2C VP2INTERSECTD/Q). A strict profile narrows the
+     * translator's copy as for every leaf-7 bit (U68).
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_VP2INTERSECT) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_VP2INTERSECT;
+    }
+#endif /* __Use_Original_Qemu (U570) */
 #if __Use_Original_Qemu != 1 /* ours (U370) */
     /*
      * NoVmp (ledger U370): UC_CTL_X86_AVX10 opts in to AVX10 after the TCG filter:

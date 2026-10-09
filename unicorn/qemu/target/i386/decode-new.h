@@ -229,6 +229,10 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U412) */
     X86_FEAT_AVX10_SM4,     /* EVEX VSM4KEY4 / VSM4RNDS4: "AVX10 AND SM4" (ISE 319433-062) */
 #endif /* __Use_Original_Qemu (U412) */
+#if __Use_Original_Qemu != 1 /* ours (U570) */
+    /* AVX512F and CPUID.(07H,0):EDX.AVX512_VP2INTERSECT[8] (+ AVX512VL below 512 bits) */
+    X86_FEAT_AVX512_VP2INTERSECT,
+#endif /* __Use_Original_Qemu (U570) */
 } X86CPUIDFeature;
 
 /* Execution flags */

@@ -4090,6 +4090,17 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U412) */
     [0xda] = X86_OP_GROUP0(EVEX_0F38_DA),
 #endif /* __Use_Original_Qemu (U412) */
+#if __Use_Original_Qemu != 1 /* ours (U571) */
+    /*
+     * NoVmp (ledger U571): VP2INTERSECTD (W0) / VP2INTERSECTQ (W1) k1+1, H, W/mbcst (SDM Vol2C
+     * VP2INTERSECTD/VP2INTERSECTQ): EVEX.F2.0F38 68, Full tuple ({1toN}), "EVEX.aaa and
+     * EVEX.z must be zero" (no masking), class E4NF. ModRM.reg names the pair k(reg & ~1),
+     * k(reg | 1) (gen_EVEX_VP2INTERSECT); an opmask destination, so EVEX.R/R' must be 0.
+     */
+    [0x68] = X86_OP_ENTRY3(EVEX_VP2INTERSECT, K,q, H,x, W,x, cpuid(AVX512_VP2INTERSECT)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(NONE) ev_w(WSEL) ev_es(W)
+                           ev_nf p_f2),
+#endif /* __Use_Original_Qemu (U571) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -5249,6 +5260,16 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         /* "AVX10 AND SM4" (ISE 319433-062): AVX10 version >= 1 and CPUID.(07H,1):EAX.SM4[2] */
         return s->avx10_version >= 1 && (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM4);
 #endif /* __Use_Original_Qemu (U412) */
+#if __Use_Original_Qemu != 1 /* ours (U570) */
+    case X86_FEAT_AVX512_VP2INTERSECT:
+        /*
+         * SDM Vol2C VP2INTERSECTD/Q: "AVX512F AVX512_VP2INTERSECT" (EVEX.512), "AVX512VL
+         * AVX512_VP2INTERSECT" (EVEX.128/256, AVX512VL checked by validate_evex); no AVX10.1
+         * alternative, so AVX10 alone does not add it (CPUID.(07H,0):EDX[8] is required).
+         */
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
+               (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_VP2INTERSECT);
+#endif /* __Use_Original_Qemu (U570) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);
