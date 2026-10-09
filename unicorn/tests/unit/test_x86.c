@@ -13673,6 +13673,21 @@ static void test_x86_bp_cpuid_80000000(void)
     TEST_CHECK(r[1] == 0x68747541 && r[3] == 0x69746e65 && r[2] == 0x444d4163);  /* AuthenticAMD */
     TEST_MSG("EPYC: %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
 }
+
+/*
+ * U489 (backport 8afce497e4): CPUID.80000001H:ECX[8] PRFCHW is reported (PREFETCHW, 0F 0D /1,
+ * is implemented; i5-13600K profile: ECX = 00000121h) on MAX and on Intel models listing it.
+ */
+static void test_x86_bp_cpuid_prfchw(void)
+{
+    uint32_t r[4];
+
+    tb2_cpuid_model(UC_CPU_X86_MAX, 0x80000001, 0, r);
+    TEST_CHECK(r[2] & (1u << 8));
+    TEST_MSG("MAX 80000001H: ecx %08x", r[2]);
+    tb2_cpuid_model(UC_CPU_X86_SKYLAKE_CLIENT, 0x80000001, 0, r);
+    TEST_CHECK(r[2] & (1u << 8));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13895,4 +13910,5 @@ TEST_LIST = {
     {"test_x86_bp_vex_ud_before_nm", test_x86_bp_vex_ud_before_nm},
     {"test_x86_bp_vex_w_ud_before_nm", test_x86_bp_vex_w_ud_before_nm},
     {"test_x86_bp_cpuid_80000000", test_x86_bp_cpuid_80000000},
+    {"test_x86_bp_cpuid_prfchw", test_x86_bp_cpuid_prfchw},
     {NULL, NULL}};

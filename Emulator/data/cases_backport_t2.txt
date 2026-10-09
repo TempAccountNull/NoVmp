@@ -65,3 +65,8 @@ fld1; fstp tbyte ptr [rsi+0x7FF6] | m+0xFF00=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A
 #
 # --- U488 (backport a539cd2614): CPUID 80000000H EBX/ECX/EDX = 0 on Intel (profile mode: the i5-13600K values)
 mov eax, 0x80000000; cpuid
+#
+# --- U489 (backport 8afce497e4): CPUID.80000001H:ECX[8] PRFCHW; PREFETCHW runs
+mov eax, 0x80000001; cpuid
+prefetchw [rsi]
+.byte 0x0f, 0x0d, 0x4e, 0x40
