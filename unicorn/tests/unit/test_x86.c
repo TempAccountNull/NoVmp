@@ -14751,6 +14751,67 @@ static void test_x86_bp_tss16_gpr_upper(void)
     }
     OK(uc_close(c.uc));
 }
+
+/*
+ * U465 (upstream QEMU 1b627f389f): the outgoing task is saved in the format of
+ * its own (current) TSS: from a 16-bit TSS to a 32-bit TSS the old state goes to
+ * the 16-bit slots (IP 0Eh, FLAGS 10h, AX 12h ..., ES 22h ...), nothing in the
+ * 32-bit-only slots; the other way round the 32-bit slots (SDM Vol3A 10.3,
+ * Figures 10-2 and 10-10).
+ */
+static void test_x86_bp_tss_save_old_format(void)
+{
+    BpCpu c;
+    uc_err e;
+
+    bp_task_setup(&c, 0, 1);
+    bp_put32(&c, BP_TSS_NEW + 0x20, BP_TASK_EIP);
+    bp_put32(&c, BP_TSS_NEW + 0x24, 0x00000002);
+    bp_put32(&c, BP_TSS_NEW + 0x28, 0xcafe0001);  /* EAX */
+    bp_put16(&c, BP_TSS_NEW + 0x48, 0x10);        /* ES */
+    bp_put16(&c, BP_TSS_NEW + 0x4c, 0x08);        /* CS */
+    bp_put16(&c, BP_TSS_NEW + 0x50, 0x10);        /* SS */
+    bp_put16(&c, BP_TSS_NEW + 0x54, 0x10);        /* DS */
+    OK(uc_mem_write(c.uc, BP_CODE, "\xea\x00\x00\x00\x00\x40\x00", 7));
+    bp_set(&c, UC_X86_REG_EAX, 0x1234abcd);
+    bp_set(&c, UC_X86_REG_EBX, 0x5678bcde);
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, BP_TASK_EIP + 1, 0, 2);
+    TEST_CHECK(e == UC_ERR_OK && c.count == 0 && bp_get(&c, UC_X86_REG_EAX) == 0xcafe0001);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x0e, 2) == ((BP_CODE + 7) & 0xffff));
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x12, 2) == 0xabcd);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x18, 2) == 0xbcde);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x22, 2) == 0x10);   /* ES (bp_open: 10h) */
+    /* nothing in the 32-bit-only slots past the 16-bit TSS (EBX 34h, ES 48h) */
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x34, 4) == 0);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x48, 2) == 0);
+    TEST_MSG("err %d intr %u old TSS: ip %04x ax %04x bx %04x es %04x [+34h] %08x [+48h] %04x",
+             (int)e, c.count, bp_peek(&c, BP_TSS_OLD + 0x0e, 2), bp_peek(&c, BP_TSS_OLD + 0x12, 2),
+             bp_peek(&c, BP_TSS_OLD + 0x18, 2), bp_peek(&c, BP_TSS_OLD + 0x22, 2),
+             bp_peek(&c, BP_TSS_OLD + 0x34, 4), bp_peek(&c, BP_TSS_OLD + 0x48, 2));
+    OK(uc_close(c.uc));
+
+    /* and from a 32-bit TSS to a 16-bit TSS: the old state in the 32-bit slots */
+    bp_task_setup(&c, 1, 0);
+    bp_put16(&c, BP_TSS_NEW + 0x0e, BP_TASK_EIP);
+    bp_put16(&c, BP_TSS_NEW + 0x10, 0x0002);
+    bp_put16(&c, BP_TSS_NEW + 0x22, 0x10);
+    bp_put16(&c, BP_TSS_NEW + 0x24, 0x08);
+    bp_put16(&c, BP_TSS_NEW + 0x26, 0x10);
+    bp_put16(&c, BP_TSS_NEW + 0x28, 0x10);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xea\x00\x00\x00\x00\x40\x00", 7));
+    bp_set(&c, UC_X86_REG_EAX, 0x12345678);
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, BP_TASK_EIP + 1, 0, 2);
+    TEST_CHECK(e == UC_ERR_OK && c.count == 0);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x20, 4) == BP_CODE + 7);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x28, 4) == 0x12345678);
+    TEST_CHECK(bp_peek(&c, BP_TSS_OLD + 0x0e, 2) == 0);
+    TEST_MSG("32 -> 16: old TSS [+20h] %08x [+28h] %08x [+0Eh] %04x",
+             bp_peek(&c, BP_TSS_OLD + 0x20, 4), bp_peek(&c, BP_TSS_OLD + 0x28, 4),
+             bp_peek(&c, BP_TSS_OLD + 0x0e, 2));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14974,4 +15035,5 @@ TEST_LIST = {
     {"test_x86_bp_dr7_gd", test_x86_bp_dr7_gd},
     {"test_x86_bp_tss16_selectors", test_x86_bp_tss16_selectors},
     {"test_x86_bp_tss16_gpr_upper", test_x86_bp_tss16_gpr_upper},
+    {"test_x86_bp_tss_save_old_format", test_x86_bp_tss_save_old_format},
     {NULL, NULL}};
