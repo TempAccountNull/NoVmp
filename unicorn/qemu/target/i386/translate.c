@@ -1546,6 +1546,51 @@ static void gen_x87_fx64(DisasContext *s)
 }
 #endif /* __Use_Original_Qemu (U64) */
 
+#if __Use_Original_Qemu != 1 /* ours (U509) */
+/*
+ * U509 (Unicorn-safe form of upstream QEMU 456709db50 "execute multiple REP/REPZ
+ * iterations without leaving TB", the follow-up of 0d82d9e846 = U482): with RF = 1
+ * between iterations (U482) every iteration after the first ran in an RF TB, which
+ * cannot chain, i.e. one trip through cpu_exec per iteration. The iterations now loop
+ * inside the TB when nothing can observe an iteration boundary: no TF / interrupt
+ * shadow / single step / icount, no UC_HOOK_CODE on this instruction (code hooks and
+ * uc_emu_start's count hook fire once per iteration) and no UC_HOOK_BLOCK(_ICOUNT) on
+ * this TB (they fire once per TB execution). RF is set after every iteration that
+ * loops back, exactly when U482 set it before re-entering the instruction, and cleared
+ * when the repetition ends (as the RF TB's exit path did), so a fault or an exit
+ * request (checked after every load/store, U508) in iteration k sees the same RF,
+ * RCX, RSI, RDI and restores to the REP instruction as before. INS/OUTS keep the
+ * per-iteration form.
+ */
+static bool gen_rep_can_loop(DisasContext *s)
+{
+    return !(s->flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) &&
+           !s->base.singlestep_enabled &&
+           !(tb_cflags(s->base.tb) & CF_USE_ICOUNT) &&
+           !HOOK_EXISTS_BOUNDED(s->uc, UC_HOOK_CODE, s->base.pc_next) &&
+           !HOOK_EXISTS_BOUNDED(s->uc, UC_HOOK_BLOCK, s->base.tb->pc) &&
+           !HOOK_EXISTS_BOUNDED(s->uc, UC_HOOK_BLOCK_ICOUNT, s->base.tb->pc);
+}
+
+/* loop tail shared by REP and REPZ/REPNZ: next iteration or leave through l2 */
+static void gen_rep_loop_tail(DisasContext *s, bool had_rf, TCGLabel *top,
+                              TCGLabel *done, TCGLabel *l2)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_op_jz_ecx(s, done);
+    if (!had_rf) {
+        gen_set_eflags(s, RF_MASK);     /* U482: RF = 1 between iterations */
+    }
+    tcg_gen_br(tcg_ctx, top);
+    gen_set_label(tcg_ctx, done);
+    if (!had_rf) {
+        gen_reset_eflags(s, RF_MASK);   /* repetition over (U482 exit path) */
+    }
+    tcg_gen_br(tcg_ctx, l2);            /* l2: gen_rep_done_rf + next instruction */
+}
+#endif /* __Use_Original_Qemu (U509) */
+
 /* Generate jumps to current or next instruction */
 static void gen_repz(DisasContext *s, MemOp ot,
                      void (*fn)(DisasContext *s, MemOp ot))
@@ -1561,6 +1606,20 @@ static void gen_repz(DisasContext *s, MemOp ot,
     s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
     l2 = gen_jz_ecx_string(s);
+#if __Use_Original_Qemu != 1 /* ours (U509) */
+    if ((fn == gen_movs || fn == gen_stos || fn == gen_lods) &&
+        gen_rep_can_loop(s)) {
+        TCGContext *tcg_ctx = s->uc->tcg_ctx;
+        TCGLabel *top = gen_new_label(tcg_ctx);
+        TCGLabel *done = gen_new_label(tcg_ctx);
+
+        gen_set_label(tcg_ctx, top);
+        fn(s, ot);
+        gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
+        gen_rep_loop_tail(s, had_rf, top, done, l2);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U509) */
     fn(s, ot);
     gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
     /*
@@ -1594,6 +1653,24 @@ static void gen_repz2(DisasContext *s, MemOp ot, int nz,
     s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
     l2 = gen_jz_ecx_string(s);
+#if __Use_Original_Qemu != 1 /* ours (U509) */
+    if (gen_rep_can_loop(s)) {
+        TCGContext *tcg_ctx = s->uc->tcg_ctx;
+        TCGLabel *top = gen_new_label(tcg_ctx);
+        TCGLabel *done = gen_new_label(tcg_ctx);
+
+        /* env->cc_op is current (gen_update_cc_op above); the back edge arrives
+           with CC_OP_DYNAMIC too (gen_jcc1) */
+        set_cc_op(s, CC_OP_DYNAMIC);
+        gen_set_label(tcg_ctx, top);
+        fn(s, ot);
+        gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
+        gen_update_cc_op(s);
+        gen_jcc1(s, (JCC_Z << 1) | (nz ^ 1), done);
+        gen_rep_loop_tail(s, had_rf, top, done, l2);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U509) */
     fn(s, ot);
     gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
     gen_update_cc_op(s);
