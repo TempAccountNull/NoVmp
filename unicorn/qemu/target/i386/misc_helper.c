@@ -1721,6 +1721,12 @@ void helper_ibt_check(CPUX86State *env, target_ulong la, uint32_t kind)
     if (!(*cet & CET_TRACKER) || kind == 2) {
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U758) */
+    /* F3 REX2 1E FA (kind 3, U758): ENDBR64 when REX2 is usable (CR4.OSXSAVE, XCR0[APX_F]) */
+    if (kind == 3) {
+        kind = ((env->cr[4] & CR4_OSXSAVE_MASK) && (env->xcr0 & XSTATE_APX_MASK)) ? 1 : 0;
+    }
+#endif /* __Use_Original_Qemu (U758) */
     if (kind == 1) {
         *cet &= ~(CET_TRACKER | CET_SUPPRESS);
         return;

@@ -4104,7 +4104,14 @@ static int ibt_kind(CPUX86State *env, DisasContext *s)
     target_ulong pc = s->base.pc_next;
     int b, mand = 0, n;
 
+#if __Use_Original_Qemu != 1 /* ours (U758) */
+    bool rex_before = false;    /* REX immediately before a REX2 (U758) */
+#endif /* __Use_Original_Qemu (U758) */
+
     for (n = 0; n < 14; n++) {
+#if __Use_Original_Qemu != 1 /* ours (U758) */
+        rex_before = n > 0 && CODE64(s) && (b & 0xf0) == 0x40;
+#endif /* __Use_Original_Qemu (U758) */
         b = translator_ldub(tcg_ctx, env, pc++);
         if (b == 0xf2 || b == 0xf3) {
             mand = b;
@@ -4119,6 +4126,28 @@ static int ibt_kind(CPUX86State *env, DisasContext *s)
     if (b == 0xcc || b == 0xf1) {
         return 2;
     }
+#if __Use_Original_Qemu != 1 /* ours (U758) */
+    /*
+     * NoVmp (ledger U758): F3 REX2(M0 = 1) 1E FA is ENDBR64 too. APX spec 355828-009
+     * 3.1.2.1: a REX2-prefixed instruction is the legacy map-0/1 instruction selected by
+     * REX2.M0 and the next byte ("The 0x0F escape byte is neither needed nor allowed"), and
+     * REX2 "is applicable to all instructions in maps 0 and 1" except the listed rows
+     * (map 1 rows 3xH and 8xH, XSAVE and XRSTOR) - 0F 1E is not among them; ENDBR64 (SDM
+     * Vol2A) has no register operand, so the payload's W/R/X/B bits select nothing (as
+     * REX on F3 0F 1E FA, U116; XED's ENDBR64 pattern "0x0F 0x1E MOD=3 REG=7 RM=2
+     * f3_refining_prefix" has no norex2 restriction). REX2 exists only in 64-bit mode with
+     * APX_F; whether it is usable (CR4.OSXSAVE and XCR0[APX_F], else the instruction is
+     * #UD and so not an ENDBRANCH) is a run-time state: kind 3, decided by helper_ibt_check.
+     * A REX prefix before REX2 makes it #UD (not an ENDBRANCH either).
+     */
+    if (b == 0xd5 && CODE64(s) && mand == 0xf3 && !rex_before &&
+        (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F) &&
+        (translator_ldub(tcg_ctx, env, pc) & 0x80) &&
+        translator_ldub(tcg_ctx, env, pc + 1) == 0x1e &&
+        translator_ldub(tcg_ctx, env, pc + 2) == 0xfa) {
+        return 3;
+    }
+#endif /* __Use_Original_Qemu (U758) */
     if (b == 0x0f && mand == 0xf3 && translator_ldub(tcg_ctx, env, pc) == 0x1e &&
         translator_ldub(tcg_ctx, env, pc + 1) == (CODE64(s) ? 0xfa : 0xfb)) {
         return 1;
