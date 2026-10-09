@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 13:18 (HEAD `6b2fe8b Tests for U720-U727: ref_amx.py ISE -062 model, cases_amx2.txt, x86_amx2_vectors.inc, unit tests`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 13:26 (HEAD `b62a876 U709: gather/scatter: a data-breakpoint trap pending from completed elements wins over a fault`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -46,7 +46,6 @@ _Generated 2026-10-09 13:18 (HEAD `6b2fe8b Tests for U720-U727: ref_amx.py ISE -
       - ⬜ avx10_b leftovers: U400 provisional UC_CTL_X86_AVX10 → replace by avx10_a enumeration; spec conflicts followed: FP8 bias forms truncate (pseudocode) though the text says RNE for denormals, VCVT2PS2PHX RZ overflow = max finite (IEEE) though helper pseudocode says inf — re-check against the next spec revision; 38 XED-only forms (MAP5 HF6/BF4/PS2HF8 conversions, VPMOVSSDB, VUNPACKB, AMX TOP*, TILEMOVCOL, MAP6 BSRMOV*) not in any Intel publication → not implemented (oos); AMX-AVX512/AMX-FP8/AMX-MOVRS open; 32-bit mode only unit-tested.
   - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
     - ⬜ APX leftovers: INVEPT/INVVPID/INVPCID (base instructions not in this CPU model), RDMSR/WRMSRNS imm (MSR-IMM) base instructions not implemented (TILELOADDRS(T1): done, U722/U723); CPUID.29H:EBX[0] (APX_NCI_NDD_NF) not checked separately from APX_F; APX system interactions (VMX exit info, SMM save of R16–R31, LBR/PT) not modelled; no exhaustive sweep for the VEX-promoted maps 1/2/3/7; no hardware pairs for KMOV/AMX/CMPccXADD/MOVRS/RAO-INT/USER_MSR (host lacks them).
-    - ⬜ Suspected existing bug (found by the APX map-4 agent, unverified): some legacy paths (e.g. RCL/RCR with a memory operand) call gen_compute_eflags before a memory access that can fault; restore_state_to_opc puts back the instruction-start cc_op, so flags read back after a #PF may be wrong — write a hardware case (fault on the memory operand, check RFLAGS in the handler state) and fix if confirmed.
     - ⬜ APX part 1 leftovers: EVEX.R4 with a k register in ModRM.reg still #UD (spec: unused bits ignored once APX is enabled — decide); REX2-prefixed ENDBR64 (F3 D5 80 1E FA) not recognised by the IBT tracker (spec silent); XSAVES/XRSTORS absent; compatibility-mode D5 = AAD only unit-tested.
       - ⬜ AMX leftovers 2: AMX-TF32 (TMMULTF32PS) not implemented — removed by ISE 319433-062 (1EH.1:EAX[6] reserved), needs a decision + an older ISE text; other XSAVES supervisor components (PT, PASID, HDC, UINTR, LBR, HWP) not modelled; XSAVES modified optimisation not modelled (allowed by 13.6); APX-promoted TILELOADDRS does not check EVEX.R4 (U646 path); AMX-AVX512 under AVX10 only (no --avx512) has no dedicated run.
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
@@ -58,7 +57,7 @@ _Generated 2026-10-09 13:18 (HEAD `6b2fe8b Tests for U720-U727: ref_amx.py ISE -
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 371 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 381 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
