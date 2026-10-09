@@ -888,8 +888,23 @@ void helper_wrmsr(CPUX86State *env)
         break;
 #endif /* __Use_Original_Qemu (U112) */
     case MSR_IA32_BNDCFGS:
+#if __Use_Original_Qemu == 1 /* original QEMU (U783) */
         /* FIXME: #GP if reserved bits are set.  */
         /* FIXME: Extend highest implemented bit of linear address.  */
+#else /* ours (U783) */
+        /*
+         * NoVmp (ledger U783): SDM Vol1 E.3.3 "WRMSR to BNDCFGS will #GP if any of the
+         * reserved bits of BNDCFGS is not zero or if the base address of the bound directory
+         * is not canonical" (bits 11:2 reserved; canonical to the CPU's linear-address width).
+         * An API write with such a value is dropped, as for the other MSRs.
+         */
+        if ((val & 0xffc) || !novmp_canonical(env, val)) {
+            if (env->msr_api) {
+                break;
+            }
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U783) */
         env->msr_bndcfgs = val;
         cpu_sync_bndcs_hflags(env);
         break;

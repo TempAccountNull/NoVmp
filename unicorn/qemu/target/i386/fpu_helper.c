@@ -5732,9 +5732,25 @@ static void do_xrstor_bndregs(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 
 static void do_xrstor_bndcsr(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U783) */
     /* FIXME: Extend highest implemented bit of linear address.  */
     env->bndcs_regs.cfgu
         = cpu_ldq_data_ra(env, ptr + offsetof(XSaveBNDCSR, bndcsr.cfgu), ra);
+#else /* ours (U783) */
+    /*
+     * NoVmp (ledger U783): SDM Vol1 E.3.3 "XRSTOR of BNDCFGU ignores the reserved bits and
+     * does not fault if any is non-zero; similarly, it ignores the upper bits of the base
+     * address of the bound directory and sign-extends the highest implemented bit of the
+     * linear address": bits 11:2 are loaded as 0, bits 63:48 (63:57 with LA57) copy bit 47
+     * (56), the CPU's linear-address width.
+     */
+    {
+        uint64_t v = cpu_ldq_data_ra(env, ptr + offsetof(XSaveBNDCSR, bndcsr.cfgu), ra);
+        int shift = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 64 - 57 : 64 - 48;
+
+        env->bndcs_regs.cfgu = (uint64_t)((int64_t)(v << shift) >> shift) & ~(uint64_t)0xffc;
+    }
+#endif /* __Use_Original_Qemu (U783) */
     env->bndcs_regs.sts
         = cpu_ldq_data_ra(env, ptr + offsetof(XSaveBNDCSR, bndcsr.sts), ra);
 }

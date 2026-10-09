@@ -20090,6 +20090,63 @@ static void test_x86_fx4_mpx_bndcfg(void)
     TEST_MSG("bndldx back: %016" PRIx64 " %016" PRIx64, v[0], v[1]);
     OK(uc_close(uc));
 }
+/*
+ * U783: SDM Vol1 E.3.3 "Configuration and Status Registers": "WRMSR to BNDCFGS will #GP if
+ * any of the reserved bits of BNDCFGS is not zero or if the base address of the bound directory
+ * is not canonical. XRSTOR of BNDCFGU ignores the reserved bits and does not fault if any is
+ * non-zero; similarly, it ignores the upper bits of the base address of the bound directory and
+ * sign-extends the highest implemented bit of the linear address" (bit 47, or 56 with LA57: the
+ * values below give the same result for both widths).
+ */
+static void test_x86_fx4_mpx_bndcfg_load(void)
+{
+    static const struct {
+        uint64_t v;
+        int vector;
+    } w[] = {
+        {0x123005, 13},                 /* reserved bit 2 */
+        {0x123801, 13},                 /* reserved bit 11 */
+        {0x0100000000123001ULL, 13},    /* base not canonical (48 and 57 bits) */
+        {0xffff800000123001ULL, -1},    /* canonical */
+        {0x123003, -1},                 /* EN | BNDPRESERVE */
+    };
+    /* mov eax, 10h; xor edx, edx; xrstor [rsi]; xsave [rsi+0x1000] */
+    static const char xr[] = "\xb8\x10\x00\x00\x00\x31\xd2\x0f\xae\x2e\x0f\xae\xa6\x00\x10\x00\x00";
+    nk_intr_t intr;
+    uc_engine *uc = nk_open("\x90", 1, &intr);
+    uint8_t area[0x440];
+    uint64_t v, bv = 0x10, cfgu = 0x7e00000000123ffdULL;
+    size_t i;
+    int f;
+
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_XCR0, 0x1b);
+    for (i = 0; i < sizeof(w) / sizeof(w[0]); i++) {
+        /* mov ecx, 0xd90; mov eax, lo; mov edx, hi; wrmsr */
+        char code[] = "\xb9\x90\x0d\x00\x00\xb8\x00\x00\x00\x00\xba\x00\x00\x00\x00\x0f\x30";
+        uint32_t lo = (uint32_t)w[i].v, hi = (uint32_t)(w[i].v >> 32);
+
+        nk_wrmsr(uc, 0xd90, 0);
+        memcpy(code + 6, &lo, 4);
+        memcpy(code + 11, &hi, 4);
+        f = nk_fault(uc, &intr, code, sizeof(code) - 1);
+        v = nk_rdmsr(uc, 0xd90);
+        TEST_CHECK(f == w[i].vector && v == (f < 0 ? w[i].v : 0));
+        TEST_MSG("wrmsr BNDCFGS %016" PRIx64 ": fault %d (want %d), BNDCFGS %016" PRIx64, w[i].v, f,
+                 w[i].vector, v);
+    }
+    /* XRSTOR BNDCFGU 7E00000000123FFDh: reserved bits 11:2 and the bits above 47 / 56 ignored */
+    memset(area, 0, sizeof(area));
+    memcpy(area + 512, &bv, 8);
+    memcpy(area + 0x400, &cfgu, 8);
+    OK(uc_mem_write(uc, NK_HANDLE, area, sizeof(area)));
+    f = nk_fault(uc, &intr, xr, sizeof(xr) - 1);
+    OK(uc_mem_read(uc, NK_HANDLE + 0x1000 + 0x400, &v, 8));
+    TEST_CHECK(f == -1 && v == 0x123001);
+    TEST_MSG("xrstor BNDCFGU %016" PRIx64 ": fault %d, saved back as %016" PRIx64 " (want 123001h)",
+             cfgu, f, v);
+    OK(uc_close(uc));
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -21894,4 +21951,5 @@ TEST_LIST = {
     {"test_x86_fx4_call_ss_pf", test_x86_fx4_call_ss_pf},
     {"test_x86_fx4_store_amx", test_x86_fx4_store_amx},
     {"test_x86_fx4_mpx_bndcfg", test_x86_fx4_mpx_bndcfg},
+    {"test_x86_fx4_mpx_bndcfg_load", test_x86_fx4_mpx_bndcfg_load},
     {NULL, NULL}};
