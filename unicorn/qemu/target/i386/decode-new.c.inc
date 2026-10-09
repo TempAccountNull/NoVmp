@@ -172,8 +172,8 @@ static void decode_group15(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
     };
 
     static const X86OpEntry group15_mem[8] = {
-        [2] = X86_OP_ENTRYr(LDMXCSR,    E,d, vex5),
-        [3] = X86_OP_ENTRYw(STMXCSR,    E,d, vex5),
+        [2] = X86_OP_ENTRYr(LDMXCSR,    E,d, vex5 chk(VEX128)),     /* 183e6679e3 (U486) */
+        [3] = X86_OP_ENTRYw(STMXCSR,    E,d, vex5 chk(VEX128)),
     };
 
     uint8_t modrm = get_modrm(s, env);
@@ -5515,6 +5515,27 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         goto illegal;
     }
 
+    /*
+     * backport 183e6679e3 (U486): "Checks that result in #UD come first" - the VEX.W and
+     * VEX.L restrictions of the entry (W0, W1, VEX128) before CR0.TS (#NM) and CR0.EM, so
+     * e.g. VLDMXCSR/VSTMXCSR with VEX.L = 1 are #UD (SDM Vol2A LDMXCSR: "If VLDMXCSR is
+     * encoded with VEX.L= 1, an attempt to execute the instruction ... will cause an #UD"),
+     * not #NM or a memory fault.
+     */
+    if (e->check & X86_CHECK_W0) {
+        if (s->vex_w) {
+            goto illegal;
+        }
+    }
+    if ((e->check & X86_CHECK_VEX128) && s->vex_l) {
+        goto illegal;
+    }
+    if (e->check & X86_CHECK_W1) {
+        if (!s->vex_w) {
+            goto illegal;
+        }
+    }
+
     if (s->flags & HF_TS_MASK) {
         goto nm_exception;
     }
@@ -5522,21 +5543,6 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         goto illegal;
     }
 
-    if (e->check & X86_CHECK_W0) {
-        if (s->vex_w) {
-            goto illegal;
-        }
-    }
-#if __Use_Original_Qemu != 1 /* ours (U79) */
-    if ((e->check & X86_CHECK_VEX128) && s->vex_l) {
-        goto illegal;
-    }
-#endif /* __Use_Original_Qemu (U79) */
-    if (e->check & X86_CHECK_W1) {
-        if (!s->vex_w) {
-            goto illegal;
-        }
-    }
 #if __Use_Original_Qemu != 1 /* ours (U70) */
     if ((s->prefix & PREFIX_VEX) &&
         (((e->check & X86_CHECK_VEX_W0) && s->vex_w) ||

@@ -13586,6 +13586,35 @@ static void test_x86_bp_ud0_ud1_modrm(void)
         m0_close(&m);
     }
 }
+
+/*
+ * U486 (backport 183e6679e3): the VEX.L / VEX.W #UD conditions of an entry come before
+ * CR0.TS (#NM): VLDMXCSR/VSTMXCSR with VEX.L = 1 (SDM Vol2A LDMXCSR/STMXCSR: #UD) and
+ * VPERMILPS with VEX.W = 1 (W0) are #UD with CR0.TS = 1; the valid forms still #NM.
+ */
+static void test_x86_bp_vex_ud_before_nm(void)
+{
+    static const char vld_l1[] = "\xc5\xfc\xae\x10";          /* vldmxcsr [rax], VEX.L = 1 */
+    static const char vst_l1[] = "\xc5\xfc\xae\x18";          /* vstmxcsr [rax], VEX.L = 1 */
+    static const char vld_l0[] = "\xc5\xf8\xae\x10";          /* vldmxcsr [rax] */
+    static const char perm_w1[] = "\xc4\xe2\xf9\x0c\xc1";     /* vpermilps xmm0, xmm0, xmm1, W1 */
+    static const char perm_w0[] = "\xc4\xe2\x79\x0c\xc1";     /* the same with W0 */
+    M0 m;
+
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    m0_set(&m, UC_X86_REG_RAX, M0_DATA);
+    /* TS = 0: L = 1 / W = 1 #UD, the valid forms run */
+    TEST_CHECK(m0_run(&m, vld_l1, 4) == 6);
+    TEST_CHECK(m0_run(&m, perm_w1, 5) == 6);
+    TEST_CHECK(m0_run(&m, perm_w0, 5) == -1);
+    m0_set(&m, UC_X86_REG_CR0, m0_get(&m, UC_X86_REG_CR0) | 8);           /* CR0.TS */
+    TEST_CHECK(m0_run(&m, vld_l1, 4) == 6);
+    TEST_CHECK(m0_run(&m, vst_l1, 4) == 6);
+    TEST_CHECK(m0_run(&m, perm_w1, 5) == 6);
+    TEST_CHECK(m0_run(&m, vld_l0, 4) == 7);
+    TEST_CHECK(m0_run(&m, perm_w0, 5) == 7);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13805,4 +13834,5 @@ TEST_LIST = {
     {"test_x86_bp_sysret_canonical", test_x86_bp_sysret_canonical},
     {"test_x86_bp_vex_16bit_pm", test_x86_bp_vex_16bit_pm},
     {"test_x86_bp_ud0_ud1_modrm", test_x86_bp_ud0_ud1_modrm},
+    {"test_x86_bp_vex_ud_before_nm", test_x86_bp_vex_ud_before_nm},
     {NULL, NULL}};
