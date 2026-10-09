@@ -1808,13 +1808,20 @@ void tcg_gen_andc_i64(TCGContext *tcg_ctx, TCGv_i64 ret, TCGv_i64 arg1, TCGv_i64
 #if TCG_TARGET_REG_BITS == 32
         tcg_gen_andc_i32(tcg_ctx, TCGV_LOW(tcg_ctx, ret), TCGV_LOW(tcg_ctx, arg1), TCGV_LOW(tcg_ctx, arg2));
         tcg_gen_andc_i32(tcg_ctx, TCGV_HIGH(tcg_ctx, ret), TCGV_HIGH(tcg_ctx, arg1), TCGV_HIGH(tcg_ctx, arg2));
-#elif TCG_TARGET_HAS_andc_i64
-        tcg_gen_op3_i64(tcg_ctx, INDEX_op_andc_i64, ret, arg1, arg2);
 #else
+    /*
+     * U501: TCG_TARGET_HAS_andc_i64 is the run-time host test have_bmi1 on
+     * i386 hosts; as a preprocessor #elif it was always 0 (QEMU 5.0 tests it
+     * with a C if).
+     */
+    if (TCG_TARGET_HAS_andc_i64) {
+        tcg_gen_op3_i64(tcg_ctx, INDEX_op_andc_i64, ret, arg1, arg2);
+    } else {
         TCGv_i64 t0 = tcg_temp_new_i64(tcg_ctx);
         tcg_gen_not_i64(tcg_ctx, t0, arg2);
         tcg_gen_and_i64(tcg_ctx, ret, arg1, t0);
         tcg_temp_free_i64(tcg_ctx, t0);
+    }
 #endif
 }
 
@@ -1971,16 +1978,25 @@ void tcg_gen_clrsb_i64(TCGContext *tcg_ctx, TCGv_i64 ret, TCGv_i64 arg)
 
 void tcg_gen_ctpop_i64(TCGContext *tcg_ctx, TCGv_i64 ret, TCGv_i64 arg1)
 {
-#if TCG_TARGET_HAS_ctpop_i64
+    /*
+     * U501: TCG_TARGET_HAS_ctpop_i64/_i32 are the run-time host test
+     * have_popcnt on i386 hosts; as preprocessor #if/#elif they were always 0,
+     * so POPCNT always called helper_ctpop_i64 (QEMU 5.0 tests them with C ifs).
+     */
+    if (TCG_TARGET_HAS_ctpop_i64) {
         tcg_gen_op2_i64(tcg_ctx, INDEX_op_ctpop_i64, ret, arg1);
-#elif TCG_TARGET_REG_BITS == 32 && TCG_TARGET_HAS_ctpop_i32
+        return;
+    }
+#if TCG_TARGET_REG_BITS == 32
+    if (TCG_TARGET_HAS_ctpop_i32) {
         tcg_gen_ctpop_i32(tcg_ctx, TCGV_HIGH(tcg_ctx, ret), TCGV_HIGH(tcg_ctx, arg1));
         tcg_gen_ctpop_i32(tcg_ctx, TCGV_LOW(tcg_ctx, ret), TCGV_LOW(tcg_ctx, arg1));
         tcg_gen_add_i32(tcg_ctx, TCGV_LOW(tcg_ctx, ret), TCGV_LOW(tcg_ctx, ret), TCGV_HIGH(tcg_ctx, ret));
         tcg_gen_movi_i32(tcg_ctx, TCGV_HIGH(tcg_ctx, ret), 0);
-#else
-        gen_helper_ctpop_i64(tcg_ctx, ret, arg1);
+        return;
+    }
 #endif
+    gen_helper_ctpop_i64(tcg_ctx, ret, arg1);
 }
 
 void tcg_gen_rotl_i64(TCGContext *tcg_ctx, TCGv_i64 ret, TCGv_i64 arg1, TCGv_i64 arg2)
