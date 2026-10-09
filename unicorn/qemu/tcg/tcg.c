@@ -3017,6 +3017,10 @@ static void temp_load(TCGContext *s, TCGTemp *ts, TCGRegSet desired_regs,
         ts->mem_coherent = 0;
         break;
     case TEMP_VAL_MEM:
+        /* backport e139bc4b17 (U494): a never-stored temp has no frame slot yet */
+        if (!ts->mem_allocated) {
+            temp_allocate_frame(s, ts);
+        }
         reg = tcg_reg_alloc(s, desired_regs, allocated_regs,
                             preferred_regs, ts->indirect_base);
         tcg_out_ld(s, ts->type, reg, ts->mem_base->reg, ts->mem_offset);
