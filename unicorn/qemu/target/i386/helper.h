@@ -379,7 +379,12 @@ DEF_HELPER_FLAGS_2(fxsave, TCG_CALL_NO_WG, void, env, tl)
 DEF_HELPER_FLAGS_2(fxrstor, TCG_CALL_NO_WG, void, env, tl)
 DEF_HELPER_FLAGS_3(xsave, TCG_CALL_NO_WG, void, env, tl, i64)
 DEF_HELPER_FLAGS_3(xsaveopt, TCG_CALL_NO_WG, void, env, tl, i64)
+#if __Use_Original_Qemu == 1 /* original QEMU (U612) */
 DEF_HELPER_FLAGS_3(xrstor, TCG_CALL_NO_WG, void, env, tl, i64)
+#else /* ours (U612) */
+/* XRSTOR loads the APX EGPRs R16-R31 (state component 19), which are TCG globals */
+DEF_HELPER_3(xrstor, void, env, tl, i64)
+#endif /* __Use_Original_Qemu (U612) */
 DEF_HELPER_FLAGS_2(xgetbv, TCG_CALL_NO_WG, i64, env, i32)
 DEF_HELPER_FLAGS_3(xsetbv, TCG_CALL_NO_WG, void, env, i32, i64)
 DEF_HELPER_FLAGS_2(rdpkru, TCG_CALL_NO_WG, i64, env, i32)

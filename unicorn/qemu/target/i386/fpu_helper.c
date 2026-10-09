@@ -4937,6 +4937,52 @@ static uint64_t get_xinuse_amx(CPUX86State *env)
     return inuse;
 }
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+/*
+ * NoVmp (ledger U612): Intel APX state component 19 (APX spec 355828-009 3.1.4.3.3, Table
+ * 3.9): R16-R31 as 16 quadwords, R16 at offset 0. The XSAVE family saves and restores them in
+ * every mode ("XSAVE/XRSTOR behavior for EGPRs has no modal specialization", 3.1.4.1.2).
+ */
+static void do_xsave_apx(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        cpu_stq_data_ra(env, ptr + 8 * i, env->regs[16 + i], ra);
+    }
+}
+
+static void do_xrstor_apx(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        env->regs[16 + i] = cpu_ldq_data_ra(env, ptr + 8 * i, ra);
+    }
+}
+
+/* initial configuration: all EGPRs 0 (3.1.4.1.2) */
+static void do_clear_apx(CPUX86State *env)
+{
+    memset(&env->regs[16], 0, 16 * sizeof(env->regs[0]));
+}
+
+/*
+ * XINUSE[19], value-based like U124/U172: "EGPR state (R16-R31) are considered to be in INIT
+ * state if all of the registers have the value 0x0. XINUSE = 0 when this condition is met"
+ * (3.1.4.1.2).
+ */
+static uint64_t get_xinuse_apx(CPUX86State *env)
+{
+    target_ulong acc = 0;
+    int i;
+
+    for (i = 16; i < 32; i++) {
+        acc |= env->regs[i];
+    }
+    return acc ? XSTATE_APX_MASK : 0;
+}
+#endif /* __Use_Original_Qemu (U612) */
 
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
@@ -4986,6 +5032,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     inuse &= ~XSTATE_AMX_MASK;
     inuse |= get_xinuse_amx(env);
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+    /* APX EGPRs: value-based (see get_xinuse_apx) */
+    inuse &= ~XSTATE_APX_MASK;
+    inuse |= get_xinuse_apx(env);
+#endif /* __Use_Original_Qemu (U612) */
     return inuse;
 }
 
@@ -5103,6 +5154,11 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         do_xsave_tiledata(env, ptr + x86_ext_save_areas[XSTATE_XTILE_DATA_BIT].offset, ra);
     }
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+    if (opt & XSTATE_APX_MASK) {
+        do_xsave_apx(env, ptr + x86_ext_save_areas[XSTATE_APX_BIT].offset, ra);
+    }
+#endif /* __Use_Original_Qemu (U612) */
 
     /* Update the XSTATE_BV field.  */
     old_bv = cpu_ldq_data_ra(env, ptr + XO(header.xstate_bv), ra);
@@ -5151,6 +5207,9 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
     case XSTATE_XTILE_CFG_BIT:  do_xsave_tilecfg(env, at, ra); break;
     case XSTATE_XTILE_DATA_BIT: do_xsave_tiledata(env, at, ra); break;
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+    case XSTATE_APX_BIT:        do_xsave_apx(env, at, ra); break;
+#endif /* __Use_Original_Qemu (U612) */
     default:                 break;
     }
 }
@@ -5526,6 +5585,11 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     do_xrstor_tiledata(env, ptr + next, ra);
                     break;
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+                case XSTATE_APX_BIT:
+                    do_xrstor_apx(env, ptr + next, ra);
+                    break;
+#endif /* __Use_Original_Qemu (U612) */
                 default:
                     break;
                 }
@@ -5542,6 +5606,11 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                 do_clear_tiledata(env);
                 break;
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+            case XSTATE_APX_BIT:
+                do_clear_apx(env);
+                break;
+#endif /* __Use_Original_Qemu (U612) */
             case XSTATE_YMM_BIT:
                 do_clear_ymmh(env);
                 break;
@@ -5747,6 +5816,15 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
         }
     }
 #endif /* __Use_Original_Qemu (U172) */
+#if __Use_Original_Qemu != 1 /* ours (U612) */
+    if (rfbm & XSTATE_APX_MASK) {
+        if (xstate_bv & XSTATE_APX_MASK) {
+            do_xrstor_apx(env, ptr + x86_ext_save_areas[XSTATE_APX_BIT].offset, ra);
+        } else {
+            do_clear_apx(env);
+        }
+    }
+#endif /* __Use_Original_Qemu (U612) */
 }
 
 #undef XO
