@@ -64,10 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// FYL2XP1 with a finite ST0 < -1: the SDM (Vol1 Table 8-10) makes it #IA with the QNaN
-// indefinite; Intel hardware (i5-13600K) stores ST0 itself as the result and sets PE
-// (with ST1 = +-0 / +-inf it returns +-0 / +-inf, sign of x XOR y, no #IA).
-#define UC_X86_QUIRK_FYL2XP1_BELOW_M1 (1u << 2)
 // PTWRITE (F3 0F AE /4) with CPUID.14.0:EBX[4] = 0: the SDM makes it #UD; Intel hardware
 // (i5-13600K, leaf 0x14 all zero) executes it with tracing off: the r/m32/r/m64 operand is
 // read (#PF/#GP as usual), nothing else happens. LOCK and 66h stay #UD.

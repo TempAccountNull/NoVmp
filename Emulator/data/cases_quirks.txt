@@ -10,12 +10,12 @@ fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x
 fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
 # CVTPI2PS m64 x87 transition (U532): SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
 fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000 # known deviation: CVTPI2PS m64 x87 transition
-# bit 2 FYL2XP1_BELOW_M1: x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf
-fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000
-fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000
-fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000
-fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000
-fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000
+# FYL2XP1 below -1 (U533): x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf
+fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000 # known deviation: FYL2XP1 below -1
+fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000 # known deviation: FYL2XP1 below -1
+fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000 # known deviation: FYL2XP1 below -1
+fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000 # known deviation: FYL2XP1 below -1
+fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000 # known deviation: FYL2XP1 below -1
 # bit 3 PTWRITE_NOP: SDM #UD (CPUID.14.0:EBX[4] = 0), hardware reads the operand and goes on
 .byte 0xf3, 0x0f, 0xae, 0x26
 .byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234

@@ -12003,13 +12003,10 @@ static void test_x86_hw_quirk_bits(void)
     /* CVTPI2PS m64 x87 transition (U532, quirk removed): SDM TOP = 0 (the i5-13600K
        keeps TOP = 7, docs/quirks.md) */
     qk_cvtpi2ps(0, 0);
-    /* bit 2 FYL2XP1_BELOW_M1: SDM #IA (masked: indefinite, IE); hardware ST0 = x, PE */
+    /* FYL2XP1 below -1 (U533, quirk removed): SDM #IA (masked: indefinite, IE), also
+       with y = +0 (U432); the i5-13600K gives ST0 = x with PE / -0 (docs/quirks.md) */
     qk_fyl2xp1(0, 0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 0, 0xC000, 0x8000000000000000ULL,
-               0x0020);
-    /* ... also with y = +0 (U432): SDM #IA; hardware -0 without an exception */
     qk_fyl2xp1(0, 1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 1, 0x8000, 0, 0);
     /* bit 3 PTWRITE_NOP: SDM #UD, hardware reads the operand and goes on */
     qk_ptwrite(0, UC_ERR_INSN_INVALID);
     qk_ptwrite(UC_X86_QUIRK_PTWRITE_NOP, UC_ERR_OK);
