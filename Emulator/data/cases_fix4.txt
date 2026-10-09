@@ -70,3 +70,17 @@ add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=2 rsi=0x3002FFF0 rdi=0x3
 inc r8; repne scasq | r8=0xFFFFFFFFFFFFFFFF rax=5 rcx=2 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222
 shl r8, 1; repe cmpsb | r8=0xC000000000000001 rcx=5 rsi=0x3002FFF0 rdi=0x3002FFF8 m+0xFFF0=01020304050607080102030405FF0708
 add r8, r9; rep movsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFE0 m+0xFFE0=1111111111111111
+#
+# --- U775 CMPXCHG8B/CMPXCHG16B after a flag setter in the same translation block: "The CF, PF, AF,
+# SF, and OF flags are unaffected" (SDM Vol2A CMPXCHG8B/CMPXCHG16B). The helper read the flags
+# through env->cc_op, which the translator had not synced: they were computed from a stale cc_op
+# (e.g. 202h instead of the CMP's 297h). Before U775: 7 of these 8 differed (the AND line matched
+# by chance: the stale cc_op gave the same flags).
+cmp r8, r9; cmpxchg8b qword ptr [rsi] | r8=1 r9=2 m+0x8000=0100000000000000
+cmp r8, r9; cmpxchg8b qword ptr [rsi] | r8=1 r9=2 rax=1 m+0x8000=0100000000000000
+add r8, r9; cmpxchg16b xmmword ptr [rsi] | r8=0x7FFFFFFFFFFFFFFF r9=1 m+0x8000=01000000000000000000000000000000
+inc r8; cmpxchg16b xmmword ptr [rsi] | r8=0xFFFFFFFFFFFFFFFF rax=1 m+0x8000=01000000000000000000000000000000
+cmp r8, r9; lock cmpxchg8b qword ptr [rsi] | r8=1 r9=2 m+0x8000=0100000000000000
+shl r8, 1; lock cmpxchg16b xmmword ptr [rsi] | r8=0xC000000000000001 m+0x8000=01000000000000000000000000000000
+imul r8, r9; cmpxchg8b qword ptr [rsi] | r8=0x4000000000000000 r9=4 rax=1 m+0x8000=0100000000000000
+and r8, r9; cmpxchg16b xmmword ptr [rsi] | r8=0x80 r9=0x80 m+0x8000=01000000000000000000000000000000

@@ -6141,6 +6141,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     goto illegal_op;
                 }
                 gen_lea_modrm(env, s, modrm);
+                /*
+                 * U775: the helper reads the flags through env->cc_op (CF/PF/AF/SF/OF are
+                 * kept, SDM Vol2A CMPXCHG8B/CMPXCHG16B): sync it first. Upstream 7.2 lacked
+                 * this; 326ad06cf5 / 5f0dd8cd33 (QEMU 8.0) inline the instruction instead.
+                 */
+                gen_update_cc_op(s);
                 if ((s->prefix & PREFIX_LOCK) &&
                     (tb_cflags(s->base.tb) & CF_PARALLEL)) {
                     gen_helper_cmpxchg16b(tcg_ctx, cpu_env, s->A0);
@@ -6158,6 +6164,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             gen_ac_check(s, s->A0, 7);
 #endif /* __Use_Original_Qemu (U834) */
+            gen_update_cc_op(s);        /* U775, see CMPXCHG16B above */
             if ((s->prefix & PREFIX_LOCK) &&
                 (tb_cflags(s->base.tb) & CF_PARALLEL)) {
                 gen_helper_cmpxchg8b(tcg_ctx, cpu_env, s->A0);
