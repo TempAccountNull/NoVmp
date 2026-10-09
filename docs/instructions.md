@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 13:26 (HEAD `b62a876 U709: gather/scatter: a data-breakpoint trap pending from completed elements wins over a fault`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 13:55 (HEAD `ecccb4b Tests for U750-U760: ref_cet2.py, cases_cet2(_hw).txt, unit tests test_x86_cet2_*`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -52,12 +52,11 @@ _Generated 2026-10-09 13:26 (HEAD `b62a876 U709: gather/scatter: a data-breakpoi
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
       - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
-      - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
-        - ⏳ [agent, wt/cet2, U750–U769, started 2026-10-09] CET on far CALL/RET, IRET, interrupts/exceptions (incl. IST shadow stacks), SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; REX2 ENDBR64.
+      - ⬜ CET leftovers 2: U755 IDT delivery untested (Unicorn hands exceptions / INT n to UC_HOOK_INTR — needs an IDT-delivery mode); SYSCALL/SYSENTER CET rules (save IA32_PL3_SSP, SSP := 0, WAIT_FOR_ENDBRANCH) not applied while those are hook-only (decision A1); compat/32-bit far transfers, INT n, LDT selectors not covered (1.I); task switch + IRET to virtual-8086 unit-tested only; PKS ignored by the page walker.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 381 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 390 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

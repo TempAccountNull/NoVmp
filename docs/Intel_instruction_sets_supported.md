@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 13:26 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `b62a876 U709: gather/scatter: a data-breakpoint trap pending from completed elements wins over a fault`). Do not edit by hand._
+_Generated 2026-10-09 13:55 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `ecccb4b Tests for U750-U760: ref_cet2.py, cases_cet2(_hw).txt, unit tests test_x86_cet2_*`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
@@ -49,8 +49,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
       - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
-      - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
-        - ⏳ [agent, wt/cet2, U750–U769, started 2026-10-09] CET on far CALL/RET, IRET, interrupts/exceptions (incl. IST shadow stacks), SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; REX2 ENDBR64.
+      - ⬜ CET leftovers 2: U755 IDT delivery untested (Unicorn hands exceptions / INT n to UC_HOOK_INTR — needs an IDT-delivery mode); SYSCALL/SYSENTER CET rules (save IA32_PL3_SSP, SSP := 0, WAIT_FOR_ENDBRANCH) not applied while those are hook-only (decision A1); compat/32-bit far transfers, INT n, LDT selectors not covered (1.I); task switch + IRET to virtual-8086 unit-tested only; PKS ignored by the page walker.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
