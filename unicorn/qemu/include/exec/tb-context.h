@@ -23,7 +23,17 @@
 #include "qemu/thread.h"
 #include "qemu/qht.h"
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U510) */
 #define CODE_GEN_HTABLE_BITS     15
+#else /* ours (U510) */
+/*
+ * Unicorn creates and destroys whole engines (emu-alltest: one per form); qht_init
+ * allocated and zeroed 2^15 buckets x 64 B = 2 MiB per uc_open and per tb_flush.
+ * Start at 2^12 buckets (256 KiB); the table is QHT_MODE_AUTO_RESIZE and doubles
+ * itself when it fills, so large translation caches end up the same size.
+ */
+#define CODE_GEN_HTABLE_BITS     12
+#endif /* __Use_Original_Qemu (U510) */
 #define CODE_GEN_HTABLE_SIZE     (1 << CODE_GEN_HTABLE_BITS)
 
 typedef struct TranslationBlock TranslationBlock;
