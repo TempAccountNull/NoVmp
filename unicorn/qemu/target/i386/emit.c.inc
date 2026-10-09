@@ -5741,6 +5741,25 @@ static void gen_TILESTORED(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
 {
     gen_amx_tile_mem(s, decode, true);
 }
+#if __Use_Original_Qemu != 1 /* ours (U722) */
+
+/*
+ * NoVmp (ledger U722): AMX-MOVRS (ISE 319433-062 TILELOADDRS[,T1]): the Operation is that of
+ * TILELOADD (start_row, zero_upper_rows, write_row_and_zero, AMX-E3); the read-shared hint
+ * and T1 have no architectural effect.
+ */
+/* TILELOADDRS tmm, sibmem: VEX.128.F2.0F38.W0 4A !(11):rrr:100 */
+static void gen_TILELOADDRS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tile_mem(s, decode, false);
+}
+
+/* TILELOADDRST1 tmm, sibmem: VEX.128.66.0F38.W0 4A !(11):rrr:100 */
+static void gen_TILELOADDRST1(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tile_mem(s, decode, false);
+}
+#endif /* __Use_Original_Qemu (U722) */
 
 /* TILEZERO tmm: VEX.128.F2.0F38.W0 49 11:rrr:000 */
 static void gen_TILEZERO(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

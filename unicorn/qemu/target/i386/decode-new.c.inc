@@ -399,6 +399,7 @@ static void decode_0F38_51(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
  *   49 !(11):000:bbb  NP LDTILECFG m512        66 STTILECFG m512
  *   49 C0             NP TILERELEASE           49 11:rrr:000  F2 TILEZERO tmm
  *   4B !(11):rrr:100  F2 TILELOADD   66 TILELOADDT1   F3 TILESTORED  (sibmem)
+ *   4A !(11):rrr:100  F2 TILELOADDRS 66 TILELOADDRST1 (AMX-MOVRS, ISE 319433-062; U722)
  *   5C 11:rrr:bbb     F3 TDPBF16PS   F2 TDPFP16PS
  *   5E 11:rrr:bbb     F2 TDPBSSD  F3 TDPBSUD  66 TDPBUSD  NP TDPBUUD
  *   6C 11:rrr:bbb     66 TCMMIMFP16PS  NP TCMMRLFP16PS
@@ -423,6 +424,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         [3] = X86_OP_ENTRYr(TILELOADD,   M,None, vex22 cpuid(AMX_TILE) p_f2),
     };
 #endif /* __Use_Original_Qemu (U176) */
+#if __Use_Original_Qemu != 1 /* ours (U722) */
+    /* AMX-MOVRS (ISE 319433-062): 4A !(11):rrr:100 F2 TILELOADDRS, 66 TILELOADDRST1 */
+    static const X86OpEntry amx_4a_mem[4] = {
+        [1] = X86_OP_ENTRYr(TILELOADDRST1, M,None, vex22 cpuid(AMX_MOVRS) p_66),
+        [3] = X86_OP_ENTRYr(TILELOADDRS,   M,None, vex22 cpuid(AMX_MOVRS) p_f2),
+    };
+#endif /* __Use_Original_Qemu (U722) */
 #if __Use_Original_Qemu != 1 /* ours (U177) */
     static const X86OpEntry amx_5e_reg[4] = {
         [0] = X86_OP_ENTRY0(TDPBUUD,      vex22 cpuid(AMX_INT8) p_00),
@@ -462,6 +470,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         }
         break;
 #endif /* __Use_Original_Qemu (U176) */
+#if __Use_Original_Qemu != 1 /* ours (U722) */
+    case 0x4a:
+        if (mod != 3) {
+            *entry = *decode_by_prefix(s, amx_4a_mem);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U722) */
 #if __Use_Original_Qemu != 1 /* ours (U177) */
     case 0x5e:
         if (mod == 3) {
@@ -653,6 +668,9 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     /* Intel AMX (VEX only, decode_0F38_AMX) */
     [0x49] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U722) */
+    [0x4a] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U722) */
 #if __Use_Original_Qemu != 1 /* ours (U176) */
     [0x4b] = X86_OP_GROUP0(0F38_AMX),
 #endif /* __Use_Original_Qemu (U176) */
@@ -4689,17 +4707,19 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
      * Intel APX: VEX map 2 instructions promoted to EVEX map 2 (APX spec 3.1.2.3.2, the table
      * of 3.1.5): ANDN BEXTR BLSI BLSMSK BLSR BZHI MULX PDEP PEXT SARX SHLX SHRX (F2-F7, the
      * VEX forms: exception class 13 entries), CMPccXADD (E0-EF), LDTILECFG / STTILECFG (49
-     * memory) and TILELOADD / TILELOADDT1 / TILESTORED (4B). TILELOADDRS[T1] (4A) is not
-     * implemented by this CPU model (#UD).
+     * memory) and TILELOADD / TILELOADDT1 / TILESTORED (4B); U723 (was: 4A not implemented):
+     * TILELOADDRS / TILELOADDRST1, EVEX.128.F2/66.0F38.W0 4A !(11):rrr:100 ("APX_F and
+     * AMX-MOVRS", APX spec 6.64, AMX-E3-EVEX). 4A with ModRM.mod = 11b is not promoted: it is
+     * EVEX.512 F3 TCVTROWD2PS / 66 TILEMOVROW r32 (AMX-AVX512, U725).
      */
     if (apx_vex_promoted(s) &&
         ((*b >= 0xe0 && *b <= 0xef) || *b == 0xf2 || *b == 0xf3 || (*b >= 0xf5 && *b <= 0xf7) ||
-         *b == 0x49 || *b == 0x4b)) {
+         *b == 0x49 || *b == 0x4b || (*b == 0x4a && (get_modrm(s, env) >> 6) != 3))) {
         int row;
 
         s->apx_promoted = true;
         memset(entry, 0, sizeof(*entry));
-        if (*b == 0x49 || *b == 0x4b) {
+        if (*b == 0x49 || *b == 0x4b || *b == 0x4a) {
             if ((get_modrm(s, env) >> 6) != 3) {
                 decode_0F38_AMX(s, env, entry, b);
             }
@@ -5961,6 +5981,12 @@ static bool validate_vex(DisasContext *s, X86DecodedInsn *decode)
         if (s->vex_v != 0 && e->cpuid == X86_FEAT_AMX_TILE) {
             goto illegal;
         }
+#if __Use_Original_Qemu != 1 /* ours (U722) */
+        /* TILELOADDRS[T1] (AMX-MOVRS, AMX-E3): "#UD if VVVV != 0b1111" too */
+        if (s->vex_v != 0 && e->cpuid == X86_FEAT_AMX_MOVRS) {
+            goto illegal;
+        }
+#endif /* __Use_Original_Qemu (U722) */
         return true;
 #endif /* __Use_Original_Qemu (U175) */
     case 13:
