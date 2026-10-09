@@ -47,10 +47,31 @@ static int g_failures = 0;
 
 // ── assembling (self-generated code only) ─────────────────────────────────────────────────────
 
+// U545: Keystone never initialises MCAsmInfo::Radix, so a fresh engine occasionally reads plain
+// immediates as hex ("26" = 26h); every engine is checked with "mov eax, 10" (B8 0A 00 00 00 only in
+// radix 10) and reopened until it reads decimal (same check as emu-alltest, at_engine.hpp).
+static ks_engine* ks_open_decimal()
+{
+	static const unsigned char want[] = { 0xB8, 0x0A, 0x00, 0x00, 0x00 };
+	for ( int tries = 0; tries < 64; ++tries )
+	{
+		ks_engine* ks = nullptr;
+		if ( ks_open( KS_ARCH_X86, KS_MODE_64, &ks ) != KS_ERR_OK ) return nullptr;
+		unsigned char* enc = nullptr;
+		size_t size = 0, count = 0;
+		bool decimal = ks_asm( ks, "mov eax, 10", 0, &enc, &size, &count ) == KS_ERR_OK && size == sizeof( want ) &&
+					   !std::memcmp( enc, want, sizeof( want ) );
+		if ( enc ) ks_free( enc );
+		if ( decimal ) return ks;
+		ks_close( ks );
+	}
+	return nullptr;
+}
+
 static std::vector<uint8_t> assemble( const std::string& text )
 {
-	ks_engine* ks = nullptr;
-	if ( ks_open( KS_ARCH_X86, KS_MODE_64, &ks ) != KS_ERR_OK )
+	ks_engine* ks = ks_open_decimal();
+	if ( !ks )
 	{
 		std::printf( "    keystone: ks_open failed\n" );
 		return {};
@@ -1823,14 +1844,13 @@ static void test_r16()
 	};
 	for ( const u& k : ucases )
 	{
-		ks_engine* ks = nullptr;
-		ks_open( KS_ARCH_X86, KS_MODE_64, &ks );
+		ks_engine* ks = ks_open_decimal();
 		unsigned char* enc = nullptr;
 		size_t size = 0, count = 0;
 		std::vector<uint8_t> code;
-		if ( ks_asm( ks, k.text, k.base, &enc, &size, &count ) == KS_ERR_OK ) code.assign( enc, enc + size );
+		if ( ks && ks_asm( ks, k.text, k.base, &enc, &size, &count ) == KS_ERR_OK ) code.assign( enc, enc + size );
 		if ( enc ) ks_free( enc );
-		ks_close( ks );
+		if ( ks ) ks_close( ks );
 		CHECK( !code.empty(), "%s: assembly", k.what );
 		if ( code.empty() ) continue;
 		int64_t rip_off = 0, rsp_delta = 0;

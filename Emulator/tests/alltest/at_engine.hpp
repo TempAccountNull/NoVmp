@@ -85,11 +85,34 @@ namespace at
 	inline std::string hx( uint64_t v ) { char b[ 24 ]; std::snprintf( b, sizeof( b ), "0x%llX", ( unsigned long long ) v ); return b; }
 
 	// ── assembling (self-generated code only) ───────────────────────────────────────────────
+	// U545: Keystone never initialises MCAsmInfo::Radix (MCAsmInfo's constructor leaves it out;
+	// ks_option can only set 16), so a fresh engine occasionally reads a plain immediate as hex
+	// ("shrd rax, rcx, 26" -> imm8 26h): 8 of 160000 fresh engines under parallel load, which gave
+	// both engines the same wrong instruction. Every engine is checked with "mov eax, 10" (B8 0A 00
+	// 00 00 only in radix 10) and reopened until it reads decimal.
+	inline ks_engine* ks_open_decimal()
+	{
+		static const unsigned char want[] = { 0xB8, 0x0A, 0x00, 0x00, 0x00 };
+		for ( int tries = 0; tries < 64; ++tries )
+		{
+			ks_engine* ks = nullptr;
+			if ( ks_open( KS_ARCH_X86, KS_MODE_64, &ks ) != KS_ERR_OK ) return nullptr;
+			unsigned char* enc = nullptr;
+			size_t size = 0, count = 0;
+			bool decimal = ks_asm( ks, "mov eax, 10", 0, &enc, &size, &count ) == KS_ERR_OK && size == sizeof( want ) &&
+						   !std::memcmp( enc, want, sizeof( want ) );
+			if ( enc ) ks_free( enc );
+			if ( decimal ) return ks;
+			ks_close( ks );
+		}
+		return nullptr;
+	}
+
 	inline std::vector<uint8_t> assemble( const std::string& text, uint64_t addr, std::string* err = nullptr )
 	{
-		ks_engine* ks = nullptr;
+		ks_engine* ks = ks_open_decimal();
 		std::vector<uint8_t> out;
-		if ( ks_open( KS_ARCH_X86, KS_MODE_64, &ks ) != KS_ERR_OK ) { if ( err ) *err = "ks_open"; return out; }
+		if ( !ks ) { if ( err ) *err = "ks_open (no engine with decimal immediates)"; return out; }
 		unsigned char* enc = nullptr;
 		size_t size = 0, count = 0;
 		if ( ks_asm( ks, text.c_str(), addr, &enc, &size, &count ) != KS_ERR_OK ) { if ( err ) *err = ks_strerror( ks_errno( ks ) ); }
