@@ -64,13 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// (V)DPPS unmasked SIMD FP exceptions (NoVmp ledger U446): the SDM
-// DPPS operation runs DP_Primitive on each 128-bit half in turn and invokes the #XM handler
-// after Temp2, after Temp3 and after Temp4 (the products only update the flags). Intel
-// hardware (i5-13600K) checks after all products (both halves), after Temp2 and Temp3
-// together (both halves), and after Temp4, so flags of operations the SDM would not reach
-// yet are set (e.g. Temp2 exact tiny with UM = 0 and Temp3 inexact -> UE and PE).
-#define UC_X86_QUIRK_DPPS_PARALLEL_STEPS (1u << 7)
 
 // Memory-Management Register for instructions IDTR, GDTR, LDTR, TR.
 // Borrow from SegmentCache in qemu/target-i386/cpu.h

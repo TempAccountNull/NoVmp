@@ -2033,10 +2033,10 @@ void glue(helper_dppd, SUFFIX)(CPUX86State *env,
  * 128-bit half in turn, checked after the products ("Exceptions are determined
  * separately for each add and multiply operation, in the order of their
  * execution"; the DPPD operation checks there, the DPPS pseudo-code only marks
- * the adds), after Temp2, after Temp3 and after Temp4.
- * UC_X86_QUIRK_DPPS_PARALLEL_STEPS (i5-13600K): checks after all products, after
- * Temp2 and Temp3 together and after Temp4, each step covering both halves of
- * VDPPS ymm.
+ * the adds), after Temp2, after Temp3 and after Temp4. (U538: the only order; the
+ * i5-13600K checks after all products, after Temp2 and Temp3 together and after
+ * Temp4, both halves of VDPPS ymm per step: documented deviation "DPPS exception
+ * step grouping", docs/quirks.md.)
  */
 #define DP_STEP()                                           do {                                                        if (sse_fp_step(env, &acc)) {                               sse_fp_step_raise(env, acc, ra);                    }                                                   } while (0)
 
@@ -2051,37 +2051,20 @@ void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
     int i, h;
 
     set_float_exception_flags(0, &env->sse_status);
-    if (env->uc->x86_hw_quirks & UC_X86_QUIRK_DPPS_PARALLEL_STEPS) {
-        for (i = 0; i < 2 << SHIFT; i++) {
+    /* (A+B)+(C+D), not ((A+B)+C)+D, rounding each intermediate result */
+    for (h = 0; h < nh; h++) {
+        for (i = 4 * h; i < 4 * h + 4; i++) {
             prod[i] = (mask & (0x10 << (i & 3))) ?
-                      float32_mul(v->ZMM_S(i), s->ZMM_S(i), &env->sse_status) : float32_zero;
+                      float32_mul(v->ZMM_S(i), s->ZMM_S(i), &env->sse_status) :
+                      float32_zero;
         }
         DP_STEP();
-        /* (A+B)+(C+D), not ((A+B)+C)+D, rounding each intermediate result */
-        for (h = 0; h < nh; h++) {
-            temp2[h] = float32_add(prod[4 * h], prod[4 * h + 1], &env->sse_status);
-            temp3[h] = float32_add(prod[4 * h + 2], prod[4 * h + 3], &env->sse_status);
-        }
+        temp2[h] = float32_add(prod[4 * h], prod[4 * h + 1], &env->sse_status);
         DP_STEP();
-        for (h = 0; h < nh; h++) {
-            temp4[h] = float32_add(temp2[h], temp3[h], &env->sse_status);
-        }
+        temp3[h] = float32_add(prod[4 * h + 2], prod[4 * h + 3], &env->sse_status);
         DP_STEP();
-    } else {
-        for (h = 0; h < nh; h++) {
-            for (i = 4 * h; i < 4 * h + 4; i++) {
-                prod[i] = (mask & (0x10 << (i & 3))) ?
-                          float32_mul(v->ZMM_S(i), s->ZMM_S(i), &env->sse_status) :
-                          float32_zero;
-            }
-            DP_STEP();
-            temp2[h] = float32_add(prod[4 * h], prod[4 * h + 1], &env->sse_status);
-            DP_STEP();
-            temp3[h] = float32_add(prod[4 * h + 2], prod[4 * h + 3], &env->sse_status);
-            DP_STEP();
-            temp4[h] = float32_add(temp2[h], temp3[h], &env->sse_status);
-            DP_STEP();
-        }
+        temp4[h] = float32_add(temp2[h], temp3[h], &env->sse_status);
+        DP_STEP();
     }
     set_float_exception_flags(acc, &env->sse_status);
     for (i = 0; i < 2 << SHIFT; i++) {

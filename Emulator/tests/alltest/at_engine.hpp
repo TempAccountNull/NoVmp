@@ -273,7 +273,7 @@ namespace at
 	// hardware comparisons run against the host i5-13600K, so they enable every quirk bit this
 	// CPU needs (emu-alltest --quirks cpu, the default for hardware runs); expected-value (SDM
 	// model) cases run with 0 (--quirks sdm, the default for "=>" lines). docs\quirks.md.
-	constexpr uint32_t QUIRKS_I5_13600K = UC_X86_QUIRK_DPPS_PARALLEL_STEPS;
+	constexpr uint32_t QUIRKS_I5_13600K = 0;     // U538: every quirk bit is gone (removed in U539)
 
 	class unicorn_engine
 	{

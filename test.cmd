@@ -134,8 +134,9 @@ call :py_check "%ROOT%Emulator\tools\check_decode_dups.py" "%ROOT%unicorn\qemu\t
 rem ledger U445-U447: SSE/AVX/FMA post-computation exceptions (gen_cases_sse_exc.py): ADD/SUB/MUL/DIV/
 rem SQRT, HADD/HSUB/ADDSUB, DPPS/DPPD, all 60 FMA3 forms, CVT*, ROUND, RCP/RSQRT, MIN/MAX/CMP x {masked,
 rem OM=0, UM=0, PM=0, DM=0, all unmasked} x RC x FTZ/DAZ: exact/inexact tiny, rounds-to-normal,
-rem overflow per RC, exact overflow, denormal sources; must be 0 differing against the i5-13600K
-rem with the i5-13600K quirk set (incl. UC_X86_QUIRK_DPPS_PARALLEL_STEPS, bit 7) for the DPPS step order.
+rem overflow per RC, exact overflow, denormal sources; must be 0 differing against the i5-13600K.
+rem U538: the emulator uses the SDM DPPS step order; the cases where the i5-13600K's grouping gives
+rem another outcome are tagged "# known deviation: DPPS exception step grouping" (dpps_steps.py).
 call :hw_zero cases_sse_exc
 
 echo.

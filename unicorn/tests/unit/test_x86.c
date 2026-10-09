@@ -12893,20 +12893,17 @@ static void test_x86_sse_unmasked_ou(void)
     sx_check(t, sizeof(t) / sizeof(t[0]));
 }
 
-/* U446: DPPS steps (SDM default) vs UC_X86_QUIRK_DPPS_PARALLEL_STEPS (i5-13600K) */
+/* U446/U538: DPPS steps in the SDM order (the i5-13600K's grouping is a documented
+   deviation, docs/quirks.md "DPPS exception step grouping") */
 static void test_x86_sse_dpps_steps(void)
 {
     static const sx_case t[] = {
         /* Temp2 = 1.5minN - minN exact tiny (#U), Temp3 = 1 + 2^-24 inexact */
         {"dpps Temp2 tiny UM=0 (SDM)", SX_DPPS, SX_J, {0x00c00000, 0x80800000, SX_ONE, 0x33800000},
          {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, 0, 19, 0x1790, 1, 0},
-        {"dpps Temp2 tiny UM=0 (quirk)", SX_DPPS, SX_J, {0x00c00000, 0x80800000, SX_ONE, 0x33800000},
-         {SX_ONE, SX_ONE, SX_ONE, SX_ONE}, 0x1780, UC_X86_QUIRK_DPPS_PARALLEL_STEPS, 19, 0x17b0, 1, 0},
         /* products MAX*2 and -MAX*2 overflow (#O): stop before inf - inf */
         {"dpps product overflow OM=0", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
          {0x40000000, 0x40000000, 0, 0}, 0x1b80, 0, 19, 0x1b88, 1, 0},
-        {"dpps product overflow OM=0 (quirk)", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
-         {0x40000000, 0x40000000, 0, 0}, 0x1b80, UC_X86_QUIRK_DPPS_PARALLEL_STEPS, 19, 0x1b88, 1, 0},
         {"dpps product overflow masked", SX_DPPS, SX_J, {0x7f7fffff, 0xff7fffff, 0, 0},
          {0x40000000, 0x40000000, 0, 0}, 0x1f80, 0, -1, 0x1fa9, 1, 0xffc00000},
         /* tiny inexact product (masked U, P), then the add of that denormal with DM = 0 */
