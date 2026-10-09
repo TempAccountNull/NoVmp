@@ -23,7 +23,7 @@ floatx80 cpu_set_fp80(uint64_t mant, uint16_t upper);
 
 extern void helper_wrmsr(CPUX86State *env);
 extern void helper_rdmsr(CPUX86State *env);
-extern void helper_set_dr(CPUX86State *env, int reg, target_ulong t0);
+extern void x86_store_dr(CPUX86State *env, int reg, target_ulong t0);
 
 static void x86_set_pc(struct uc_struct *uc, uint64_t address)
 {
@@ -1468,8 +1468,8 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         case UC_X86_REG_DR3:
         case UC_X86_REG_DR7:
             CHECK_REG_TYPE(uint32_t);
-            helper_set_dr(env, regid - UC_X86_REG_DR0,
-                          *(uint32_t *)value);
+            x86_store_dr(env, regid - UC_X86_REG_DR0,
+                         *(uint32_t *)value);
             break;
         case UC_X86_REG_DR4:
         case UC_X86_REG_DR5:
@@ -1723,8 +1723,8 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         case UC_X86_REG_DR3:
         case UC_X86_REG_DR7:
             CHECK_REG_TYPE(uint64_t);
-            helper_set_dr(env, regid - UC_X86_REG_DR0,
-                          *(uint64_t *)value);
+            x86_store_dr(env, regid - UC_X86_REG_DR0,
+                         *(uint64_t *)value);
             break;
         case UC_X86_REG_DR4:
         case UC_X86_REG_DR5:

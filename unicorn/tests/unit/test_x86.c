@@ -13983,7 +13983,7 @@ static void test_x86_bp_tcg_temp_overflow(void)
 }
 
 /*
- * bp_ helpers (U453-U467): one engine with 4 MiB of RWX memory at 0, a GDT at
+ * bp_ helpers (U453-U466): one engine with 4 MiB of RWX memory at 0, a GDT at
  * BP_GDT, code at BP_CODE, stack below BP_STACK and data at BP_DATA. The
  * interrupt hook records the first vector and the RIP/EIP it reports, then
  * stops; raw Unicorn reports #UD as UC_ERR_INSN_INVALID instead.
@@ -14558,6 +14558,52 @@ static void test_x86_bp_syscall_modes(void)
     TEST_MSG("real-mode sysret: intr count %u intno %u", c.count, c.intno);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U461 (upstream QEMU 533883fd7e): MOV DR (SDM Vol2B MOV-Move to/from Debug
+ * Registers): DR4/DR5 alias DR6/DR7 with CR4.DE = 0 and are #UD with CR4.DE = 1;
+ * writing a 1 to bits 63:32 of DR6 or DR7 is #GP(0). uc_reg_write of a debug
+ * register never raises a guest exception.
+ */
+static void test_x86_bp_mov_dr(void)
+{
+    BpCpu c;
+    uint64_t cr4, dr7;
+    uint64_t base;
+
+    bp_open(&c, UC_MODE_64, -1);
+    cr4 = bp_get(&c, UC_X86_REG_CR4) & ~(uint64_t)8;
+    bp_set(&c, UC_X86_REG_CR4, cr4);
+    /* mov rax, dr4 (= DR6) */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    OK(bp_run(&c, "\x0f\x21\xe0", 3));
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 0xffff0ff0);
+    TEST_MSG("mov rax, dr4: %llx", (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    /* mov dr5, rax (= DR7) */
+    bp_set(&c, UC_X86_REG_RAX, 0x401);
+    OK(bp_run(&c, "\x0f\x23\xe8", 3));
+    TEST_CHECK(bp_get(&c, UC_X86_REG_DR7) == 0x401);
+    /* bits 63:32 of DR7 / DR6: #GP(0), DR unchanged */
+    bp_set(&c, UC_X86_REG_RAX, 0x100000000ULL);
+    base = c.next;
+    OK(bp_run(&c, "\x0f\x23\xf8", 3));
+    TEST_CHECK(c.count == 1 && c.intno == 13 && c.rip == base);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_DR7) == 0x401);
+    base = c.next;
+    OK(bp_run(&c, "\x0f\x23\xf0", 3));
+    TEST_CHECK(c.count == 1 && c.intno == 13 && c.rip == base);
+    /* DR0-DR3 take 64-bit addresses */
+    OK(bp_run(&c, "\x0f\x23\xc0", 3));
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_DR0) == 0x100000000ULL);
+    /* CR4.DE = 1: DR4/DR5 #UD */
+    bp_set(&c, UC_X86_REG_CR4, cr4 | 8);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\x0f\x21\xe0", 3));
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\x0f\x23\xe8", 3));
+    /* uc_reg_write is not MOV DR: no #GP for DR7 bit 32 */
+    dr7 = 0x100000401ULL;
+    OK(uc_reg_write(c.uc, UC_X86_REG_DR7, &dr7));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14777,4 +14823,5 @@ TEST_LIST = {
     {"test_x86_bp_pause_tf", test_x86_bp_pause_tf},
     {"test_x86_bp_ss_sti_tf", test_x86_bp_ss_sti_tf},
     {"test_x86_bp_syscall_modes", test_x86_bp_syscall_modes},
+    {"test_x86_bp_mov_dr", test_x86_bp_mov_dr},
     {NULL, NULL}};

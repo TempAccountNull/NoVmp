@@ -247,10 +247,13 @@ void helper_rechecking_single_step(CPUX86State *env)
     }
 }
 
-void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
+/*
+ * Unicorn: store a debug register without the MOV DR checks (uc_reg_write must
+ * not raise a guest exception). reg is 0-3, 6 or 7.
+ */
+void x86_store_dr(CPUX86State *env, int reg, target_ulong t0)
 {
-    switch (reg) {
-    case 0: case 1: case 2: case 3:
+    if (reg < 4) {
         if (hw_breakpoint_enabled(env->dr[7], reg)
             && hw_breakpoint_type(env->dr[7], reg) != DR7_TYPE_IO_RW) {
             hw_breakpoint_remove(env, reg);
@@ -259,46 +262,45 @@ void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
         } else {
             env->dr[reg] = t0;
         }
-        return;
-    case 4:
-        if (env->cr[4] & CR4_DE_MASK) {
-            break;
-        }
-        /* fallthru */
-    case 6:
+    } else if (reg == 6) {
         env->dr[6] = t0 | DR6_FIXED_1;
-        return;
-    case 5:
-        if (env->cr[4] & CR4_DE_MASK) {
-            break;
-        }
-        /* fallthru */
-    case 7:
+    } else {
         cpu_x86_update_dr7(env, t0);
-        return;
     }
-    raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
 }
 
+/*
+ * backport of QEMU 533883fd7e: MOV DR4/DR5 with CR4.DE = 1 is #UD without an
+ * error code; MOV to DR6/DR7 with any of bits 63:32 set is #GP(0) (SDM Vol2B
+ * MOV-Move to/from Debug Registers).
+ */
 target_ulong helper_get_dr(CPUX86State *env, int reg)
 {
-    switch (reg) {
-    case 0: case 1: case 2: case 3: case 6: case 7:
-        return env->dr[reg];
-    case 4:
+    if (reg >= 4 && reg < 6) {
         if (env->cr[4] & CR4_DE_MASK) {
-            break;
+            raise_exception_ra(env, EXCP06_ILLOP, GETPC());
         } else {
-            return env->dr[6];
-        }
-    case 5:
-        if (env->cr[4] & CR4_DE_MASK) {
-            break;
-        } else {
-            return env->dr[7];
+            reg += 2;
         }
     }
-    raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
+
+    return env->dr[reg];
+}
+
+void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
+{
+    if (reg >= 4 && reg < 6) {
+        if (env->cr[4] & CR4_DE_MASK) {
+            raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+        } else {
+            reg += 2;
+        }
+    }
+
+    if (reg >= 4 && (t0 & DR_RESERVED_MASK)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+    x86_store_dr(env, reg, t0);
 }
 
 /* Check if Port I/O is trapped by a breakpoint.  */
