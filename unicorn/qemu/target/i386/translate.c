@@ -1232,6 +1232,16 @@ static void gen_cc_op_restart(DisasContext *s)
     }
 }
 #endif /* __Use_Original_Qemu (U700) */
+#if __Use_Original_Qemu != 1 /* ours (U774) */
+
+/* U774: the instruction keeps env->cc_op current itself: restore none (CC_OP_DYNAMIC) */
+static void gen_cc_op_dynamic_restart(DisasContext *s)
+{
+    if (s->insn_start_op) {
+        tcg_set_insn_start_param(s->insn_start_op, 1, CC_OP_DYNAMIC);
+    }
+}
+#endif /* __Use_Original_Qemu (U774) */
 
 static void sync_eflags(DisasContext *s)
 {
@@ -1769,6 +1779,16 @@ static void gen_repz(DisasContext *s, MemOp ot,
 
     s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
+#if __Use_Original_Qemu != 1 /* ours (U774) */
+    /*
+     * U774, as upstream 6986cf0032: env->cc_op is kept current from here on (synced above
+     * and after every CMPS/SCAS iteration), so the restore point of the whole instruction
+     * is CC_OP_DYNAMIC. The U509 in-TB loop runs iterations 2.. under this instruction's
+     * insn_start, whose cc_op was that of the instruction before: a fault or a memory hook
+     * there combined it with the CC_* values of the last iteration (wrong RFLAGS).
+     */
+    gen_cc_op_dynamic_restart(s);
+#endif /* __Use_Original_Qemu (U774) */
     l2 = gen_jz_ecx_string(s);
 #if __Use_Original_Qemu != 1 /* ours (U509) */
     if ((fn == gen_movs || fn == gen_stos || fn == gen_lods) &&
@@ -1816,6 +1836,16 @@ static void gen_repz2(DisasContext *s, MemOp ot, int nz,
 
     s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
+#if __Use_Original_Qemu != 1 /* ours (U774) */
+    /*
+     * U774, as upstream 6986cf0032: env->cc_op is kept current from here on (synced above
+     * and after every CMPS/SCAS iteration), so the restore point of the whole instruction
+     * is CC_OP_DYNAMIC. The U509 in-TB loop runs iterations 2.. under this instruction's
+     * insn_start, whose cc_op was that of the instruction before: a fault or a memory hook
+     * there combined it with the CC_* values of the last iteration (wrong RFLAGS).
+     */
+    gen_cc_op_dynamic_restart(s);
+#endif /* __Use_Original_Qemu (U774) */
     l2 = gen_jz_ecx_string(s);
 #if __Use_Original_Qemu != 1 /* ours (U509) */
     if (gen_rep_can_loop(s)) {

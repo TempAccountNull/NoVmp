@@ -132,6 +132,14 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - i5-13600K: no #AC at any offset (+1, +2, +4, +6 tried); the stores are made.
 - Hardware cases: `Emulator/data/cases_ac_hw.txt` lines 241-246.
 - Ledger: U834.
+### REP CMPS/SCAS flags at a fault
+
+- Behaviour: REPE/REPNE CMPS or SCAS (any width) whose second or a later iteration faults (here: the next element on a not-present page), so the instruction stops after one or more completed iterations.
+- SDM: Vol2B REP/REPE/REPZ/REPNE/REPNZ Operation: `WHILE CountReg ≠ 0 DO Service pending interrupts (if any); Execute associated string instruction; CountReg := (CountReg – 1); ... IF (Repeat prefix is REPZ or REPE) and (ZF = 0) ... THEN exit WHILE loop; FI; OD;` — each iteration executes CMPS/SCAS, which set the status flags ("The CF, OF, SF, ZF, AF, and PF flags are set according to the temporary result of the comparison"); "A repeating string operation can be suspended by an exception or interrupt ... the ECX register has the value it held following the last successful iteration". So the faulting state has the flags of the last completed iteration (the faulting iteration changes nothing, Vol3A 6.5).
+- Emulator: the flags of the last completed iteration with RCX/RSI/RDI as after it, RIP at the instruction (U774; also what memory hooks see during an iteration: the flags of the iteration before).
+- i5-13600K: RCX/RSI/RDI as after the completed iterations, but RFLAGS as before the instruction (e.g. `cmp r8, r9; repe cmpsq` with an equal first pair and a not-present second one: RFLAGS 297h, the CMP's, not 246h).
+- Hardware cases: `cases_fix4.txt` lines 54–67 (REPE/REPNE CMPSQ, CMPSD, SCASQ, SCASB after nine different flag setters); the four lines after them (no fault) match.
+- Ledger: U774.
 
 ## Host state (not SDM deviations)
 

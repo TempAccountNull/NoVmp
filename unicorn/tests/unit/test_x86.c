@@ -19235,6 +19235,122 @@ static void test_x86_fx4_cr2_probe(void)
     fx4_pf(r.uc, 0x0, 0x380000, "gather element 2 not present");
     OK(uc_close(r.uc));
 }
+/*
+ * U774: REPE/REPNE CMPS and SCAS after a flag setter with another cc_op (ADD here). SDM Vol2B
+ * REP pseudocode: each iteration executes the string instruction (which sets the flags), so a
+ * fault in iteration 2 leaves the flags of iteration 1 (RCX, RSI, RDI as after it, RIP at the
+ * instruction), and memory hooks of iteration 2 see them. The U509 in-TB loop kept the
+ * instruction's restore cc_op (the ADD's) for iteration 2: a wrong RFLAGS there. (The
+ * i5-13600K keeps the flags of the instruction start at such a fault: docs/quirks.md "REP
+ * CMPS/SCAS flags at a fault"; the emulator follows the SDM.)
+ * Data page FX4_PG (+1000h not mapped): two equal qwords at +FF0h / +FF8h.
+ */
+#define FX4_PG 0x56000000ULL
+#define FX4_STATUS 0x8d5ULL     /* OF SF ZF AF PF CF */
+#define FX4_EQ_STATUS 0x44ULL   /* ZF PF: the compare of equal values */
+
+/* RFLAGS seen by memory hooks */
+typedef struct {
+    int n;
+    uint64_t fl[64];
+} fx4_mh_t;
+
+static fx4_mh_t fx4_rep_h;
+
+static void fx4_rep_mem_hook(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                             int64_t value, void *user_data)
+{
+    uint64_t fl = 0;
+
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &fl));
+    if (fx4_rep_h.n < 64) {
+        fx4_rep_h.fl[fx4_rep_h.n] = fl;
+    }
+    fx4_rep_h.n++;
+}
+
+static void test_x86_fx4_rep_cmps_restore(void)
+{
+    static const struct {
+        const char *code;   /* add r8, r9; <rep insn> */
+        size_t len;
+        int per;            /* memory accesses per iteration */
+        const char *what;
+    } t[] = {
+        {"\x4d\x01\xc8\xf3\x48\xa7", 6, 2, "add r8, r9; repe cmpsq"},
+        {"\x4d\x01\xc8\xf2\x48\xaf", 6, 1, "add r8, r9; repne scasq"},
+        {"\x4d\x01\xc8\xf3\x48\xaf", 6, 1, "add r8, r9; repe scasq"},
+    };
+    size_t i;
+    int pass, k;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        for (pass = 0; pass < 2; pass++) {
+            uc_engine *uc;
+            uc_hook hh;
+            uc_err err;
+            uint64_t q[2] = {0x1111111111111111ULL, 0x1111111111111111ULL};
+            uint64_t r8 = 0x7fffffffffffffffULL, r9 = 1, fl = 2, rcx = 2;
+            bool repne = t[i].code[3] == '\xf2';
+            /* scas: RAX = the element (REPE: equal, continue) or 5 (REPNE: not equal, continue) */
+            uint64_t rax = repne ? 5 : 0x1111111111111111ULL;
+            /*
+             * pass 0: both iterations on the page (cmps: RSI = RDI = +FF0h; scas: RDI = +FF0h);
+             * pass 1: the second iteration reads +1000h (cmps: RSI = +FF8h, RDI = +FF0h; scas:
+             * RDI = +FF8h)
+             */
+            uint64_t rsi = pass && t[i].per == 2 ? FX4_PG + 0xff8 : FX4_PG + 0xff0;
+            uint64_t rdi = pass && t[i].per == 1 ? FX4_PG + 0xff8 : FX4_PG + 0xff0;
+            bool ok = true;
+            /* status after iteration 1: equal ZF PF; 5 - 1111111111111111h: CF SF */
+            uint64_t want = repne ? 0x81 : FX4_EQ_STATUS;
+
+            OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+            OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+            OK(uc_mem_write(uc, code_start, t[i].code, t[i].len));
+            OK(uc_mem_map(uc, FX4_PG, 0x1000, UC_PROT_ALL));
+            OK(uc_mem_write(uc, FX4_PG + 0xff0, q, sizeof(q)));
+            nk_setreg(uc, UC_X86_REG_R8, r8);
+            nk_setreg(uc, UC_X86_REG_R9, r9);
+            nk_setreg(uc, UC_X86_REG_RFLAGS, fl);
+            nk_setreg(uc, UC_X86_REG_RCX, rcx);
+            nk_setreg(uc, UC_X86_REG_RAX, rax);
+            nk_setreg(uc, UC_X86_REG_RSI, rsi);
+            nk_setreg(uc, UC_X86_REG_RDI, rdi);
+            memset(&fx4_rep_h, 0, sizeof(fx4_rep_h));
+            if (pass == 0) {
+                OK(uc_hook_add(uc, &hh, UC_HOOK_MEM_READ, fx4_rep_mem_hook, NULL, 1, 0));
+            }
+            err = uc_emu_start(uc, code_start, code_start + t[i].len, 0, 0);
+            if (pass == 0) {
+                /* iteration 1: the ADD's flags (OF SF AF PF = 894h); iteration 2: iteration 1's */
+                ok = err == UC_ERR_OK && fx4_rep_h.n == 2 * t[i].per;
+                for (k = 0; ok && k < fx4_rep_h.n; k++) {
+                    uint64_t exp = k < t[i].per ? 0x894 : want;
+
+                    ok = (fx4_rep_h.fl[k] & FX4_STATUS) == exp;
+                }
+                TEST_CHECK(ok);
+                TEST_MSG("%s, memory hooks: err %u hooks %d: %" PRIx64 " %" PRIx64 " %" PRIx64
+                         " %" PRIx64 " (want 894h for iteration 1, %" PRIx64 "h for 2)",
+                         t[i].what, err, fx4_rep_h.n, fx4_rep_h.fl[0], fx4_rep_h.fl[1],
+                         fx4_rep_h.fl[2], fx4_rep_h.fl[3], want);
+            } else {
+                /* iteration 2 reads FX4_PG + 1000h (not mapped) */
+                uint64_t f = nk_reg(uc, UC_X86_REG_RFLAGS);
+
+                ok = err == UC_ERR_READ_UNMAPPED && nk_reg(uc, UC_X86_REG_RIP) == code_start + 3 &&
+                     nk_reg(uc, UC_X86_REG_RCX) == 1 && (f & FX4_STATUS) == want;
+                TEST_CHECK(ok);
+                TEST_MSG("%s, fault in iteration 2: err %u rip %" PRIx64 " rcx %" PRIx64
+                         " rflags %" PRIx64 " (want status %" PRIx64 ")",
+                         t[i].what, err, nk_reg(uc, UC_X86_REG_RIP), nk_reg(uc, UC_X86_REG_RCX), f,
+                         want);
+            }
+            OK(uc_close(uc));
+        }
+    }
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -21030,4 +21146,5 @@ TEST_LIST = {
     {"test_x86_fx4_cp_codes", test_x86_fx4_cp_codes},
     {"test_x86_fx4_ts", test_x86_fx4_ts},
     {"test_x86_fx4_cr2_probe", test_x86_fx4_cr2_probe},
+    {"test_x86_fx4_rep_cmps_restore", test_x86_fx4_rep_cmps_restore},
     {NULL, NULL}};

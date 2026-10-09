@@ -41,3 +41,32 @@ mov rax, qword ptr fs:[rsp+rcx] | rcx=0x8000000000000000
 mov rax, qword ptr ss:[rcx] | rcx=0x8000000000000000
 mov rax, qword ptr [rcx] | rcx=0x8000000000000000
 mov rax, qword ptr [rcx] | rcx=0x10
+#
+# --- U774 REPE/REPNE CMPS and SCAS whose second iteration faults (the next element is the first
+# byte after the operand area, not mapped). SDM Vol2B REP pseudocode: every iteration executes
+# the string instruction, which sets the flags, so the faulting state has RCX/RSI/RDI and the
+# flags of iteration 1. The U509 in-TB loop kept the instruction's restore cc_op (that of the
+# instruction before) for iteration 2: RFLAGS was a mix of both (e.g. 0x11101257 after INC).
+# The i5-13600K keeps the flags of the instruction start at such a fault (RCX/RSI/RDI updated):
+# known deviation, docs/quirks.md. Before U774 all 14 differed from the hardware, and 9 of them
+# (lines 56, 57, 60-62, 64-67) had flags that were neither the SDM's nor the CPU's; the other 5
+# had the SDM's iteration-1 flags by chance (the old restore cc_op gave the same flags).
+repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+cmp r8, r9; repe cmpsq | r8=1 r9=2 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+inc r8; repe cmpsq | r8=0xFFFFFFFFFFFFFFFF rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+shl r8, 1; repe cmpsq | r8=0xC000000000000001 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+and r8, r9; repe cmpsq | r8=0x80 r9=0x80 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+imul r8, r9; repe cmpsq | r8=0x4000000000000000 r9=4 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+popcnt r8, r9; repe cmpsq | r9=0 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+stc; repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+add r8, r9; repne cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222 # known deviation: REP CMPS/SCAS flags at a fault
+add r8, r9; repne scasq | r8=0x7FFFFFFFFFFFFFFF r9=1 rax=5 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+inc r8; repe scasq | r8=0xFFFFFFFFFFFFFFFF rax=0x1111111111111111 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+inc r8; repe scasb | r8=0xFFFFFFFFFFFFFFFF rax=0x11 rcx=3 rdi=0x3002FFFF m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+add r8, r9; repe cmpsd | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFFC rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+# without a fault (same values on both): the flags of the last iteration
+add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=2 rsi=0x3002FFF0 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111
+inc r8; repne scasq | r8=0xFFFFFFFFFFFFFFFF rax=5 rcx=2 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222
+shl r8, 1; repe cmpsb | r8=0xC000000000000001 rcx=5 rsi=0x3002FFF0 rdi=0x3002FFF8 m+0xFFF0=01020304050607080102030405FF0708
+add r8, r9; rep movsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFE0 m+0xFFE0=1111111111111111
