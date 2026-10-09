@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 06:04 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of U570-U574 are 'sdm' (VP2INTERSECT, GFNI, VAES, VPCLMULQDQ)`). Do not edit by hand._
+_Generated 2026-10-09 06:34 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `c895b78 U558-U560: ref_evex_m4a.py SDM model, cases_evex_m4a(_hw).txt (test.cmd), m4a_ unit tests, verified_forms`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 

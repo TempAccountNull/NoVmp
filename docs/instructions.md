@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 06:04 (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of U570-U574 are 'sdm' (VP2INTERSECT, GFNI, VAES, VPCLMULQDQ)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 06:34 (HEAD `c895b78 U558-U560: ref_evex_m4a.py SDM model, cases_evex_m4a(_hw).txt (test.cmd), m4a_ unit tests, verified_forms`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,7 +9,7 @@ _Generated 2026-10-09 06:04 (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of 
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1606 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 845, open item 76, not implemented yet 685)
+**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 869, open item 76, not implemented yet 661)
 
 ## Currently being added
 
@@ -53,7 +53,7 @@ _Generated 2026-10-09 06:04 (HEAD `4d5f2c5 verified_forms: 10 EVEX mnemonics of 
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 324 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 335 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
