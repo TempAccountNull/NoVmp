@@ -199,6 +199,21 @@ void helper_probe_write(CPUX86State *env, target_ulong a0, uint32_t len)
     x86_probe_write(env, a0, len, GETPC());
 }
 #endif /* __Use_Original_Qemu (U701) */
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+/*
+ * NoVmp (ledger U750): x86_probe_write_mmu for a shadow-stack slot whose linear address the
+ * caller has already formed for the mode of that shadow stack (32-bit outside 64-bit mode,
+ * canonical in it), which can differ from the current mode on a far transfer: no 4-GiB
+ * truncation here.
+ */
+void x86_probe_write_la(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
+                        uintptr_t ra)
+{
+    if (len != 0) {
+        x86_probe_write_part(env, a0, len, mmu_idx, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U750) */
 
 
 void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)

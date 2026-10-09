@@ -6832,6 +6832,16 @@ static uc_err nv_run3_n(NvRun *r, const char *code, size_t len)
     r->last = ca;
     OK(uc_mem_write(r->uc, sa, stub, sizeof(stub) - 1));
     OK(uc_mem_write(r->uc, ca, code, len));
+    /*
+     * NoVmp U752: already at CPL3 (an earlier nv_run3), the snippet starts directly with the
+     * state the stub would give it (RSP = 201F00h, CS/SS and RFLAGS unchanged): the stub's
+     * IRETQ would be a same-privilege IRET, which with user shadow stacks pops and checks a
+     * CS / LIP / SSP frame on the shadow stack (SDM Vol2 IRET).
+     */
+    if ((nv_get(r, UC_X86_REG_CS) & 3) == 3) {
+        nv_set(r, UC_X86_REG_RSP, 0x201f00);
+        return uc_emu_start(r->uc, ca, ca + len, 0, 0);
+    }
     return uc_emu_start(r->uc, sa, ca + len, 0, 0);
 }
 
@@ -7503,6 +7513,7 @@ static void test_x86_cet_call_ret(void)
     TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x300800);
     /* ... but at CPL3 with IA32_U_CET.SH_STK_EN: user shadow stack */
     nv_wrmsr(&r, 0x6a0, 1);
+    nv_wrmsr(&r, 0x6a7, 0x300800);  /* U752: the IRETQ to CPL3 loads SSP from IA32_PL3_SSP */
     OK(nv_run3(&r, "\xe8\x07\x00\x00\x00\xf3\x48\x0f\x1e\xca\xeb\x06"
                    "\xf3\x48\x0f\x1e\xc9\xc3"));
     TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
@@ -7827,7 +7838,13 @@ static void test_x86_cet_shadow_stack_paging(void)
     /* CPL3 (IA32_U_CET.SH_STK_EN): the user shadow-stack page only */
     nv_wrmsr(&r, 0x6a0, 1);
     nv_set(&r, UC_X86_REG_RAX, 1);
-    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    /*
+     * U752: the stub's IRETQ to CPL3 frees the supervisor token at the CPL0 SSP (a
+     * supervisor shadow-stack access: SSP on the supervisor page) and loads SSP from
+     * IA32_PL3_SSP
+     */
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    nv_wrmsr(&r, 0x6a7, 0x300800);
     OK(nv_run3(&r, "\xf3\x48\x0f\xae\xe8"));
     TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x300808);
     nv_set(&r, UC_X86_REG_SSP, 0x301800);

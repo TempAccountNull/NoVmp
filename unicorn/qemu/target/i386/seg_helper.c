@@ -135,6 +135,428 @@ static inline void load_seg_vm(CPUX86State *env, int seg, int selector)
                            DESC_A_MASK | (3 << DESC_DPL_SHIFT));
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+/*
+ * NoVmp (ledger U750): CET shadow stacks and indirect branch tracking on far transfers
+ * (SDM Vol1 18.2.2, 18.2.3, 18.3.3; Vol2 CALL, RET, IRET, INT n, SYSRET, SYSEXIT;
+ * Vol3A 7.12.1.1, 10.3). Common pieces used by far CALL (U750), RET far / IRET (U751,
+ * U752), SYSRET / SYSEXIT (U753), task switches (U754) and IDT event delivery (U755):
+ *  - cet2_ss_en / cet2_ibt_en: ShadowStackEnabled(CPL) / EndbranchEnabled(CPL) for a
+ *    given CPL and EFLAGS.VM (a transfer evaluates them at the old and the new CPL):
+ *    CR4.CET = 1, CR0.PE = 1, VM = 0 and SH_STK_EN / ENDBR_EN of IA32_U_CET (CPL 3) or
+ *    IA32_S_CET (CPL < 3); like U115/U116 also the CPUID feature as a strict profile
+ *    shows it;
+ *  - shadow-stack loads and stores with an explicit privilege (user: the stack belongs to
+ *    CPL 3) and address size (Vol1 18.2.1: 32-bit in 32-bit/compatibility mode, 64-bit in
+ *    64-bit mode). Pops and the token release on the old shadow stack use the mode the
+ *    transfer starts in, pushes and the token acquisition on the new shadow stack the
+ *    target mode. A non-canonical 64-bit address is #GP(0) (as U115). They use the
+ *    shadow-stack MMU modes (U117);
+ *  - shadow_stack_lock_cmpxchg8b (Vol1 18.2.2): the value read is written back when the
+ *    compare fails; the supervisor shadow-stack token checks (18.2.3);
+ *  - LA_adjust (CALL, INT n, SYSCALL): bits 63:N get bit N-1, N = the maximum
+ *    linear-address width (57 with LA57 enumerated, else 48).
+ * Every check that faults runs before the transfer commits, so a fault leaves the
+ * registers (SSP and the CET MSRs included) unchanged; stores already made stay (the
+ * "prematurely busy" token of 18.2.3).
+ */
+static bool cet2_ss_cpuid(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) &&
+           (x86_cpuid_profile_mask(env, 7, 0, 2) & CPUID_7_0_ECX_CET_SHSTK);
+}
+
+static bool cet2_ibt_cpuid(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT) &&
+           (x86_cpuid_profile_mask(env, 7, 0, 3) & CPUID_7_0_EDX_CET_IBT);
+}
+
+static uint64_t cet2_msr(CPUX86State *env, int cpl)
+{
+    return cpl == 3 ? env->u_cet : env->s_cet;
+}
+
+/* ShadowStackEnabled(cpl) with EFLAGS.VM = vm (SDM Vol1 18.2.2) */
+static bool cet2_ss_en(CPUX86State *env, int cpl, bool vm)
+{
+    return cet2_ss_cpuid(env) && (env->cr[4] & CR4_CET_MASK) &&
+           (env->cr[0] & CR0_PE_MASK) && !vm && (cet2_msr(env, cpl) & CET_SH_STK_EN);
+}
+
+/* EndbranchEnabled(cpl) with EFLAGS.VM = vm (SDM Vol1 18.3.2) */
+static bool cet2_ibt_en(CPUX86State *env, int cpl, bool vm)
+{
+    return cet2_ibt_cpuid(env) && (env->cr[4] & CR4_CET_MASK) &&
+           (env->cr[0] & CR0_PE_MASK) && !vm && (cet2_msr(env, cpl) & CET_ENDBR_EN);
+}
+
+/* IA32_x_CET.TRACKER = WAIT_FOR_ENDBRANCH, SUPPRESS = 0 for the tracker of cpl */
+static void cet2_ibt_wait(CPUX86State *env, int cpl)
+{
+    uint64_t *cet = cpl == 3 ? &env->u_cet : &env->s_cet;
+
+    *cet = (*cet & ~CET_SUPPRESS) | CET_TRACKER;
+}
+
+/* canonical relative to the current paging mode (CR4.LA57) */
+static bool cet2_canonical(CPUX86State *env, uint64_t v)
+{
+    int64_t sext = (int64_t)v >> ((env->cr[4] & CR4_LA57_MASK) ? 56 : 47);
+
+    return sext == 0 || sext == -1;
+}
+
+/* LA_adjust: bits 63:N := bit N-1, N = maximum linear-address width */
+static uint64_t cet2_la_adjust(CPUX86State *env, uint64_t v)
+{
+    int shift = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 64 - 57 : 64 - 48;
+
+    return (uint64_t)((int64_t)(v << shift) >> shift);
+}
+
+static target_ulong cet2_addr(CPUX86State *env, uint64_t a, bool lm, uintptr_t ra)
+{
+    if (lm) {
+        if (!cet2_canonical(env, a)) {
+            raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+        }
+        return a;
+    }
+    return (uint32_t)a;
+}
+
+static uint64_t cet2_ld8(CPUX86State *env, uint64_t a, bool lm, bool user, uintptr_t ra)
+{
+    return cpu_ldq_mmuidx_ra(env, cet2_addr(env, a, lm, ra),
+                             user ? MMU_SS_USER_IDX : MMU_SS_KSMAP_IDX, ra);
+}
+
+static void cet2_st8(CPUX86State *env, uint64_t a, uint64_t v, bool lm, bool user,
+                     uintptr_t ra)
+{
+    cpu_stq_mmuidx_ra(env, cet2_addr(env, a, lm, ra), v,
+                      user ? MMU_SS_USER_IDX : MMU_SS_KSMAP_IDX, ra);
+}
+
+static void cet2_st4(CPUX86State *env, uint64_t a, uint32_t v, bool lm, bool user,
+                     uintptr_t ra)
+{
+    cpu_stl_mmuidx_ra(env, cet2_addr(env, a, lm, ra), v,
+                      user ? MMU_SS_USER_IDX : MMU_SS_KSMAP_IDX, ra);
+}
+
+/* shadow_stack_lock_cmpxchg8b(a, new, expected): returns the value read */
+static uint64_t cet2_cmpxchg8(CPUX86State *env, uint64_t a, uint64_t nv, uint64_t expect,
+                              bool lm, bool user, uintptr_t ra)
+{
+    uint64_t old = cet2_ld8(env, a, lm, user, ra);
+
+    cet2_st8(env, a, old == expect ? nv : old, lm, user, ra);
+    return old;
+}
+
+static uint64_t cet2_wrap(uint64_t v, bool lm)
+{
+    return lm ? v : (uint32_t)v;
+}
+
+/* ShadowStackPush8B(cs); ShadowStackPush8B(lip); ShadowStackPush8B(ssp) below top */
+static uint64_t cet2_push_frame(CPUX86State *env, uint64_t top, uint64_t cs, uint64_t lip,
+                                uint64_t ssp, bool lm, bool user, uintptr_t ra)
+{
+    cet2_st8(env, top - 8, cs, lm, user, ra);
+    cet2_st8(env, top - 16, lip, lm, user, ra);
+    cet2_st8(env, top - 24, ssp, lm, user, ra);
+    return cet2_wrap(top - 24, lm);
+}
+
+/*
+ * A far CALL's or an event delivery's shadow-stack work is done in two steps, so that a fault
+ * leaves memory and registers as they were (SDM Vol3A 6.15; fix3's U708 probes the data-stack
+ * pushes the same way). cet2_plan_*: every check of the pseudocode (#GP(0)), the supervisor
+ * token read and compare, then the shadow-stack slots to be written are probed
+ * (x86_probe_write_la in the shadow-stack MMU modes: #PF; a non-canonical 64-bit address
+ * #GP(0)) - nothing is written. The caller checks and probes its data-stack pushes first
+ * (they come first in the pseudocode), plans, writes the data stack, then cet2_commit sets
+ * the token's busy bit, writes the 4 zero bytes and the CS / LIP / SSP frame and loads SSP /
+ * IA32_PL3_SSP.
+ */
+typedef struct Cet2Xfer {
+    bool en;            /* shadow stacks at the target CPL: SSP is loaded */
+    bool lm, user;      /* target mode 64-bit; user shadow stack */
+    bool zero4, token, frame, pl3;
+    uint64_t base, tok, top, cs, lip, saved, new_ssp, pl3_val;
+} Cet2Xfer;
+
+static void cet2_probe(CPUX86State *env, uint64_t a, uint32_t len, bool lm, bool user,
+                       uintptr_t ra)
+{
+    x86_probe_write_la(env, cet2_addr(env, a, lm, ra), len,
+                       user ? MMU_SS_USER_IDX : MMU_SS_KSMAP_IDX, ra);
+}
+
+/* the CS / LIP / saved-SSP frame below top (x->cs, x->lip, x->saved set by the caller) */
+static void cet2_plan_frame(CPUX86State *env, Cet2Xfer *x, uint64_t top, uintptr_t ra)
+{
+    x->frame = true;
+    x->top = top;
+    cet2_probe(env, top - 8, 8, x->lm, x->user, ra);
+    cet2_probe(env, top - 16, 8, x->lm, x->user, ra);
+    cet2_probe(env, top - 24, 8, x->lm, x->user, ra);
+    x->new_ssp = cet2_wrap(top - 24, x->lm);
+}
+
+/*
+ * "Shadow_stack_store 4 bytes of 0 to (base - 4); SSP = base & ~7; push CS, LIP, saved"
+ * (far CALL / event delivery without a shadow-stack switch)
+ */
+static void cet2_plan_align(CPUX86State *env, Cet2Xfer *x, uint64_t base, uintptr_t ra)
+{
+    x->zero4 = true;
+    x->base = base;
+    cet2_probe(env, base - 4, 4, x->lm, x->user, ra);
+    cet2_plan_frame(env, x, base & ~7ull, ra);
+}
+
+/*
+ * Supervisor shadow-stack token at ssp (IA32_PLi_SSP or an interrupt SSP table entry)
+ * before the new shadow stack is used by a far CALL or event delivery (Vol1 18.2.3): 8-byte
+ * aligned, token and the 24-byte frame within one naturally aligned 32-byte region, below
+ * 4 GB unless the target is 64-bit mode, token == ssp (busy clear, reserved bits 0). The
+ * locked compare-exchange: on a mismatch the value read is written back and #GP(0); on a
+ * match the busy bit is set by cet2_commit.
+ */
+static void cet2_plan_token(CPUX86State *env, Cet2Xfer *x, uint64_t ssp, uintptr_t ra)
+{
+    uint64_t v;
+
+    if ((ssp & 7) || (ssp & ~0x1full) != ((ssp - 24) & ~0x1full) ||
+        (!x->lm && (ssp >> 32))) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    v = cet2_ld8(env, ssp, x->lm, false, ra);
+    cet2_probe(env, ssp, 8, x->lm, false, ra);
+    if (v != ssp) {
+        cet2_st8(env, ssp, v, x->lm, false, ra);
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    x->token = true;
+    x->tok = ssp;
+    x->new_ssp = ssp;
+}
+
+static void cet2_commit(CPUX86State *env, Cet2Xfer *x, uintptr_t ra)
+{
+    if (x->token) {
+        cet2_st8(env, x->tok, x->tok | 1, x->lm, false, ra);
+    }
+    if (x->zero4) {
+        cet2_st4(env, x->base - 4, 0, x->lm, x->user, ra);
+    }
+    if (x->frame) {
+        cet2_push_frame(env, x->top, x->cs, x->lip, x->saved, x->lm, x->user, ra);
+    }
+    if (x->pl3) {
+        env->pl_ssp[3] = x->pl3_val;
+    }
+    if (x->en) {
+        env->ssp = x->new_ssp;
+    }
+}
+
+
+/* token release (far RET / IRET): busy token == ssp | 1 becomes ssp, else unchanged */
+static void cet2_token_release(CPUX86State *env, uint64_t ssp, bool lm, bool user,
+                               uintptr_t ra)
+{
+    cet2_cmpxchg8(env, ssp, ssp, ssp | 1, lm, user, ra);
+}
+
+/* the SSP a far RET / IRET (or task-switch IRET) returns to: #GP(0) unless usable */
+static void cet2_check_ret_ssp(CPUX86State *env, uint64_t v, bool lm_new, uintptr_t ra)
+{
+    if (lm_new ? !cet2_canonical(env, v) : (v >> 32) != 0) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+}
+
+/*
+ * Pop and check the CS / LIP / SSP frame at *ssp (far RET / IRET): CS and LIP must equal
+ * the return CS (zero-extended selector) and CS.base + EIP (32 bits outside 64-bit mode),
+ * the popped SSP must be 4-byte aligned, else #CP(FAR-RET/IRET). Returns the popped SSP.
+ */
+static uint64_t cet2_pop_frame(CPUX86State *env, uint64_t *ssp, uint64_t cs, uint64_t lip,
+                               bool lm, bool user, uintptr_t ra)
+{
+    uint64_t scs = cet2_ld8(env, *ssp + 16, lm, user, ra);
+    uint64_t slip = cet2_ld8(env, *ssp + 8, lm, user, ra);
+    uint64_t prev = cet2_ld8(env, *ssp, lm, user, ra);
+
+    *ssp = cet2_wrap(*ssp + 24, lm);
+    if (scs != cs || slip != lip || (prev & 3)) {
+        raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+    }
+    return prev;
+}
+
+/* CS.base + EIP of the current code (RIP in 64-bit mode), 32 bits outside 64-bit mode */
+static uint64_t cet2_cur_lip(CPUX86State *env, target_ulong eip)
+{
+    if (env->hflags & HF_CS64_MASK) {
+        return eip;
+    }
+    return (uint32_t)(env->segs[R_CS].base + eip);
+}
+
+/*
+ * Far CALL to a code segment or through a call gate without a privilege change (SDM Vol2
+ * CALL, CONFORMING/NONCONFORMING-CODE-SEGMENT and SAME-PRIVILEGE): planned after the
+ * data-stack pushes are checked, before any of them is written. check4g: the code-segment
+ * forms' "SSP must be in low 4GB" check for a legacy/compatibility-mode target (#GP(0)); the
+ * call-gate form has none.
+ */
+static void cet2_plan_same(CPUX86State *env, Cet2Xfer *x, uint32_t new_e2, uint64_t lip,
+                           bool check4g, uintptr_t ra)
+{
+    int cpl = env->hflags & HF_CPL_MASK;
+    uint64_t ssp = env->ssp;
+
+    memset(x, 0, sizeof(*x));
+    if (!cet2_ss_en(env, cpl, env->eflags & VM_MASK)) {
+        return;
+    }
+    x->en = true;
+    x->lm = (env->hflags & HF_LMA_MASK) && (new_e2 & DESC_L_MASK);
+    x->user = cpl == 3;
+    if (check4g && !x->lm && (ssp >> 32)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    x->cs = env->segs[R_CS].selector;
+    x->lip = lip;
+    x->saved = ssp;
+    cet2_plan_align(env, x, ssp, ra);
+}
+
+/*
+ * The LIP a far CALL to a code segment pushes (SDM Vol2 CALL): conforming target - RIP for
+ * a 64-bit operand, CS.base + EIP / CS.base + IP otherwise; non-conforming target - RIP
+ * in 64-bit mode, else CS.base + EIP. 32-bit values are zero-extended; CS.base is 0 in
+ * 64-bit mode.
+ */
+static uint64_t cet2_call_lip(CPUX86State *env, uint32_t new_e2, int shift,
+                              target_ulong next_eip)
+{
+    bool cs64 = env->hflags & HF_CS64_MASK;
+    uint64_t base = cs64 ? 0 : env->segs[R_CS].base;
+
+    if (new_e2 & DESC_C_MASK) {
+        if (shift == 2) {
+            return next_eip;
+        }
+        return (uint32_t)(base + (shift ? (uint32_t)next_eip : (next_eip & 0xffff)));
+    }
+    return cs64 ? next_eip : (uint32_t)(base + next_eip);
+}
+
+/*
+ * Far CALL through a call gate to a more privileged level (SDM Vol2 CALL, MORE-PRIVILEGE):
+ * planned after the new stack's slots are checked, before anything is pushed. From CPL 3
+ * with user shadow stacks IA32_PL3_SSP gets SSP (LA_adjust in IA-32e mode); with shadow
+ * stacks at the new CPL dpl the token at IA32_PLdpl_SSP is checked (#GP(0)) and, unless the
+ * old SS.DPL is 3, CS / LIP / SSP of the caller are pushed on the new shadow stack.
+ */
+static void cet2_plan_inner(CPUX86State *env, Cet2Xfer *x, int dpl, uint32_t new_e2,
+                            uint64_t lip, uintptr_t ra)
+{
+    int cpl = env->hflags & HF_CPL_MASK;
+    bool lma = env->hflags & HF_LMA_MASK;
+    uint64_t ssp = env->ssp;
+
+    memset(x, 0, sizeof(*x));
+    if (cpl == 3 && cet2_ss_en(env, cpl, env->eflags & VM_MASK)) {
+        x->pl3 = true;
+        x->pl3_val = lma ? cet2_la_adjust(env, ssp) : ssp;
+    }
+    if (!cet2_ss_en(env, dpl, false)) {
+        return;
+    }
+    x->en = true;
+    x->lm = lma && (new_e2 & DESC_L_MASK);
+    cet2_plan_token(env, x, env->pl_ssp[dpl], ra);
+    if (((env->segs[R_SS].flags >> DESC_DPL_SHIFT) & 3) != 3) {
+        x->cs = env->segs[R_CS].selector;
+        x->lip = lip;
+        x->saved = ssp;
+        cet2_plan_frame(env, x, x->tok, ra);
+    }
+}
+
+/*
+ * RET far / IRET in protected or IA-32e mode, not to virtual-8086 mode (SDM Vol2 RET and
+ * IRET, RETURN-TO-SAME/OUTER-PRIVILEGE-LEVEL): called after every other check of the
+ * instruction and before the transfer commits; commits SSP itself. rpl: the return CS
+ * RPL (the new CPL); e1/e2: the return code-segment descriptor.
+ *  - same privilege, shadow stacks at the CPL: SSP 8-byte aligned (#CP), frame popped and
+ *    checked, the popped SSP usable in the target mode (#GP(0)); IRET in IA-32e mode then
+ *    frees a busy token at the SSP after the frame when the popped SSP is elsewhere (an
+ *    IST stack switch);
+ *  - outer privilege: with shadow stacks at the old CPL SSP 8-byte aligned (#CP) and,
+ *    unless returning to CPL 3, the frame popped and checked; with shadow stacks at the
+ *    new CPL SSP becomes the popped SSP or IA32_PL3_SSP (#GP(0) unless usable); the
+ *    supervisor token at the old SSP is freed (supervisor access).
+ */
+static void cet2_ret(CPUX86State *env, bool is_iret, int rpl, uint32_t new_cs,
+                     uint32_t e1, uint32_t e2, target_ulong new_eip, uintptr_t ra)
+{
+    int cpl = env->hflags & HF_CPL_MASK;
+    bool lm_old = env->hflags & HF_CS64_MASK;
+    bool lm_new = (env->hflags & HF_LMA_MASK) && (e2 & DESC_L_MASK);
+    uint64_t base = lm_new ? 0 : (uint32_t)((e1 >> 16) | ((e2 & 0xff) << 16) |
+                                            (e2 & 0xff000000));
+    uint64_t lip = lm_new ? (uint64_t)new_eip : (uint32_t)(base + new_eip);
+    uint64_t ssp = env->ssp, tmp = 0;
+    bool old_en = cet2_ss_en(env, cpl, false), new_en;
+
+    if (rpl == cpl) {
+        if (!old_en) {
+            return;
+        }
+        if (ssp & 7) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+        }
+        tmp = cet2_pop_frame(env, &ssp, new_cs, lip, lm_old, cpl == 3, ra);
+        cet2_check_ret_ssp(env, tmp, lm_new, ra);
+        if (is_iret && (env->hflags & HF_LMA_MASK) && tmp != ssp) {
+            cet2_token_release(env, ssp, lm_old, cpl == 3, ra);
+        }
+        env->ssp = tmp;
+        return;
+    }
+    if (old_en) {
+        if (ssp & 7) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+        }
+        if (rpl != 3) {
+            tmp = cet2_pop_frame(env, &ssp, new_cs, lip, lm_old, false, ra);
+        }
+    }
+    new_en = cet2_ss_en(env, rpl, false);
+    if (new_en) {
+        if (rpl == 3) {
+            tmp = env->pl_ssp[3];
+        }
+        cet2_check_ret_ssp(env, tmp, lm_new, ra);
+    }
+    if (old_en) {
+        cet2_token_release(env, ssp, lm_old, false, ra);
+    }
+    if (new_en) {
+        env->ssp = tmp;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U750) */
 static inline void get_ss_esp_from_tss(CPUX86State *env, uint32_t *ss_ptr,
                                        uint32_t *esp_ptr, int dpl,
                                        uintptr_t retaddr)
@@ -250,6 +672,10 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
     SegmentCache *dt;
     int index;
     target_ulong ptr;
+#if __Use_Original_Qemu != 1 /* ours (U754) */
+    bool cet_push = false, cet_verify = false;
+    uint64_t cet_cs = 0, cet_lip = 0, cet_ssp = 0;
+#endif /* __Use_Original_Qemu (U754) */
 
     type = (e2 >> DESC_TYPE_SHIFT) & 0xf;
     LOG_PCALL("switch_tss: sel=0x%04x type=%d src=%d\n", tss_selector, type,
@@ -291,6 +717,22 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
         tss_limit < tss_limit_max) {
         raise_exception_err_ra(env, EXCP0A_TSS, tss_selector & 0xfffc, retaddr);
     }
+#if __Use_Original_Qemu != 1 /* ours (U754) */
+    /*
+     * NoVmp (ledger U754): SDM Vol3A 10.3 step 3 - a task switch by IRET with shadow
+     * stacks at the current CPL needs SSP 8-byte aligned, else #TS(current task TSS); with
+     * CR4.CET = 1 the new TSS must be a 32-bit TSS with a limit >= 107 (the task's SSP is
+     * at offset 104), else #TS(new task TSS).
+     */
+    if (source == SWITCH_TSS_IRET &&
+        cet2_ss_en(env, env->hflags & HF_CPL_MASK, env->eflags & VM_MASK) &&
+        (env->ssp & 7)) {
+        raise_exception_err_ra(env, EXCP0A_TSS, env->tr.selector & 0xfffc, retaddr);
+    }
+    if ((env->cr[4] & CR4_CET_MASK) && (!(type & 8) || tss_limit < 107)) {
+        raise_exception_err_ra(env, EXCP0A_TSS, tss_selector & 0xfffc, retaddr);
+    }
+#endif /* __Use_Original_Qemu (U754) */
     old_type = (env->tr.flags >> DESC_TYPE_SHIFT) & 0xf;
     if (old_type & 8) {
         old_tss_limit_max = 103;
@@ -410,6 +852,51 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U754) */
+    /*
+     * NoVmp (ledger U754): SDM Vol3A 10.3 step 8 (before the new task's state is loaded).
+     * The new task's CPL is 3 with EFLAGS.VM = 1 in its TSS, else its CS.RPL. With shadow
+     * stacks at the current CPL:
+     *  - CALL / exception / interrupt: from CPL 3 to a lower CPL IA32_PL3_SSP := SSP;
+     *    otherwise CS, LIP (CS.base + EIP) and SSP of the old task are pushed on the new
+     *    task's shadow stack in step 15;
+     *  - IRET: when the new CPL equals the current one or is below 3, CS / LIP / SSP are
+     *    popped from the current shadow stack (checked in step 15); then the busy token at
+     *    the (8-byte aligned) SSP is freed and SSP := 0.
+     */
+    {
+        int old_cpl = env->hflags & HF_CPL_MASK;
+        int new_cpl = (new_eflags & VM_MASK) ? 3 : (new_segs[R_CS] & 3);
+
+        if (cet2_ss_en(env, old_cpl, env->eflags & VM_MASK)) {
+            if (source == SWITCH_TSS_CALL) {
+                if (new_cpl < old_cpl && old_cpl == 3) {
+                    env->pl_ssp[3] = env->ssp;
+                } else {
+                    cet_push = true;
+                    cet_ssp = env->ssp;
+                    cet_lip = (uint32_t)(env->segs[R_CS].base + next_eip);
+                    cet_cs = env->segs[R_CS].selector;
+                }
+            } else if (source == SWITCH_TSS_IRET) {
+                uint64_t ssp = env->ssp;
+
+                if (new_cpl == old_cpl || new_cpl < 3) {
+                    cet_cs = cet2_ld8(env, ssp + 16, false, old_cpl == 3, retaddr);
+                    cet_lip = cet2_ld8(env, ssp + 8, false, old_cpl == 3, retaddr);
+                    cet_ssp = cet2_ld8(env, ssp, false, old_cpl == 3, retaddr);
+                    ssp = (uint32_t)(ssp + 24);
+                    cet_verify = true;
+                }
+                if (!(ssp & 7)) {
+                    cet2_cmpxchg8(env, ssp, ssp, (ssp & ~7ull) | 1, false, old_cpl == 3,
+                                  retaddr);
+                }
+                env->ssp = 0;
+            }
+        }
+    }
+#endif /* __Use_Original_Qemu (U754) */
     /* now if an exception occurs, it will occurs in the next task
        context */
 
@@ -525,6 +1012,65 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
         tss_load_seg(env, R_GS, new_segs[R_GS], cpl, retaddr);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U754) */
+    /*
+     * NoVmp (ledger U754): SDM Vol3A 10.3 step 15, in the context of the new task (its
+     * faults report the new task's CS:EIP, so they are raised without restoring the old
+     * instruction's state). "Enabled at the current CPL" here is CR4.CET and the enable bit
+     * of IA32_U_CET (CPL 3) / IA32_S_CET (CPL < 3) - EFLAGS.VM = 1 with either is #TS(new
+     * TSS). CALL / JMP / exception / interrupt with shadow stacks: the 32-bit SSP at TSS
+     * offset 104 must be 8-byte aligned and hold a free supervisor token (busy bit set by
+     * the locked compare-exchange; else #TS(new TSS)), then the old task's CS / LIP / SSP
+     * are pushed when step 8 asked for it. IRET: the popped CS / LIP must equal CS and
+     * CS.base + EIP (#CP(FAR-RET/IRET)); with shadow stacks at the new CPL SSP becomes the
+     * popped SSP, or IA32_PL3_SSP when nothing was popped (#CP unless 4-byte aligned and
+     * below 4 GB). The IBT tracker of the new CPL waits for ENDBRANCH except after IRET.
+     */
+    {
+        int ncpl = env->hflags & HF_CPL_MASK;
+        bool nvm = env->eflags & VM_MASK;
+        uint64_t ncet = cet2_msr(env, ncpl);
+        bool ss_on = cet2_ss_cpuid(env) && (env->cr[4] & CR4_CET_MASK) &&
+                     (ncet & CET_SH_STK_EN);
+        bool ibt_on = cet2_ibt_cpuid(env) && (env->cr[4] & CR4_CET_MASK) &&
+                      (ncet & CET_ENDBR_EN);
+
+        if ((ss_on || ibt_on) && nvm) {
+            raise_exception_err_ra(env, EXCP0A_TSS, tss_selector & 0xfffc, 0);
+        }
+        if (ss_on && source != SWITCH_TSS_IRET) {
+            uint64_t nssp = cpu_ldl_kernel_ra(env, tss_base + 104, 0);
+
+            if ((nssp & 7) ||
+                cet2_cmpxchg8(env, nssp, nssp | 1, nssp, false, ncpl == 3, 0) != nssp) {
+                raise_exception_err_ra(env, EXCP0A_TSS, tss_selector & 0xfffc, 0);
+            }
+            if (cet_push) {
+                nssp = cet2_push_frame(env, nssp, cet_cs, cet_lip, cet_ssp, false,
+                                       ncpl == 3, 0);
+            }
+            env->ssp = nssp;
+        }
+        if (source == SWITCH_TSS_IRET) {
+            if (cet_verify &&
+                (cet_cs != env->segs[R_CS].selector ||
+                 cet_lip != (uint32_t)(env->segs[R_CS].base + env->eip))) {
+                raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, 0);
+            }
+            if (cet2_ss_en(env, ncpl, nvm)) {
+                if (!cet_verify) {
+                    cet_ssp = env->pl_ssp[3];
+                }
+                if ((cet_ssp & 3) || (cet_ssp >> 32)) {
+                    raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, 0);
+                }
+                env->ssp = cet_ssp;
+            }
+        } else if (cet2_ibt_en(env, ncpl, nvm)) {
+            cet2_ibt_wait(env, ncpl);
+        }
+    }
+#endif /* __Use_Original_Qemu (U754) */
     /* check that env->eip is in the CS segment limits */
     if (new_eip > env->segs[R_CS].limit) {
         /* XXX: different exception if CALL? */
@@ -714,6 +1260,77 @@ static void far_probe_pushes(CPUX86State *env, target_ulong ssp, target_ulong sp
 #define POPW(ssp, sp, sp_mask, val) POPW_RA(ssp, sp, sp_mask, val, 0)
 #define POPL(ssp, sp, sp_mask, val) POPL_RA(ssp, sp, sp_mask, val, 0)
 
+#if __Use_Original_Qemu != 1 /* ours (U755) */
+/*
+ * NoVmp (ledger U755): CET on event delivery through an interrupt or trap gate (SDM Vol2
+ * INT n/INTO/INT3/INT1 Operation - which "applies ... also to the delivery of external
+ * interrupts, NMIs and exceptions" - and Vol3A 7.12.1.1, 7.14.5). Called after the stack
+ * frame is written and before the transfer commits; commits SSP, IA32_PL3_SSP and the
+ * IBT tracker. inner: the handler runs at dpl < cpl (vm86: from virtual-8086 mode, dpl
+ * = 0); ist: the IST index of a 64-bit gate; old_eip: the return EIP pushed.
+ *  - INTER-PRIVILEGE: from CPL 3 with user shadow stacks IA32_PL3_SSP := SSP (LA_adjust
+ *    in IA-32e mode); with shadow stacks at dpl the new SSP is IA32_PLdpl_SSP, or in
+ *    IA-32e mode with IST != 0 the entry IST of the table at IA32_INTERRUPT_SSP_TABLE_ADDR
+ *    (8-byte supervisor data read, done only when shadow stacks are enabled at CPL 0);
+ *    its supervisor token is acquired (#GP(0)) and, unless the old SS.DPL is 3 or the
+ *    event came from virtual-8086 mode, CS / LIP / SSP of the interrupted code pushed;
+ *  - INTRA-PRIVILEGE: with shadow stacks at the CPL the frame goes on the current shadow
+ *    stack (4 zero bytes at SSP - 4, SSP aligned down to 8) - in IA-32e mode with IST != 0
+ *    on the IST shadow stack after its token is acquired;
+ *  - EndbranchEnabled at the new CPL: its tracker waits for ENDBRANCH, unsuppressed.
+ * In Unicorn exceptions and INT n are reported to UC_HOOK_INTR instead of being delivered
+ * through the IDT, so this runs only for events the IDT path delivers.
+ */
+static void cet2_event(CPUX86State *env, bool inner, int cpl, int dpl, uint32_t new_e2,
+                       int ist, target_ulong old_eip)
+{
+    bool lma = env->hflags & HF_LMA_MASK;
+    bool vm = env->eflags & VM_MASK;
+    uint64_t ssp = env->ssp, nssp;
+    int ncpl = inner ? dpl : cpl;
+    Cet2Xfer x;
+
+    memset(&x, 0, sizeof(x));
+    if (inner && cpl == 3 && cet2_ss_en(env, cpl, vm)) {
+        x.pl3 = true;
+        x.pl3_val = lma ? cet2_la_adjust(env, ssp) : ssp;
+    }
+    if (cet2_ss_en(env, ncpl, false)) {
+        x.en = true;
+        x.lm = lma && (new_e2 & DESC_L_MASK);
+        x.user = ncpl == 3;
+        x.cs = env->segs[R_CS].selector;
+        x.lip = cet2_cur_lip(env, old_eip);
+        x.saved = ssp;
+        if (inner) {
+            nssp = env->pl_ssp[dpl];
+            if (lma && ist) {
+                nssp = 0;
+                if (cet2_ss_en(env, 0, false)) {
+                    nssp = cpu_ldq_kernel(env, env->int_ssp_table + ((uint64_t)ist << 3));
+                }
+            }
+            x.user = false;
+            cet2_plan_token(env, &x, nssp, 0);
+            if (!vm && ((env->segs[R_SS].flags >> DESC_DPL_SHIFT) & 3) != 3) {
+                cet2_plan_frame(env, &x, nssp, 0);
+            }
+        } else {
+            nssp = ssp;
+            if (lma && ist) {
+                nssp = cpu_ldq_kernel(env, env->int_ssp_table + ((uint64_t)ist << 3));
+                cet2_plan_token(env, &x, nssp, 0);
+            }
+            cet2_plan_align(env, &x, nssp, 0);
+        }
+    }
+    cet2_commit(env, &x, 0);
+    if (cet2_ibt_en(env, ncpl, false)) {
+        cet2_ibt_wait(env, ncpl);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U755) */
 /* protected mode interrupt */
 static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
                                    int error_code, unsigned int next_eip,
@@ -899,6 +1516,9 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U755) */
+    cet2_event(env, new_stack, cpl, dpl, e2, 0, old_eip);   /* CET (U755) */
+#endif /* __Use_Original_Qemu (U755) */
     /* interrupt gate clear IF mask */
     if ((type & 1) == 0) {
         env->eflags &= ~IF_MASK;
@@ -1084,6 +1704,9 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
         PUSHQ(esp, error_code);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U755) */
+    cet2_event(env, dpl < cpl, cpl, dpl, e2, ist, old_eip);   /* CET (U755) */
+#endif /* __Use_Original_Qemu (U755) */
     /* interrupt gate clear IF mask */
     if ((type & 1) == 0) {
         env->eflags &= ~IF_MASK;
@@ -1203,6 +1826,15 @@ void helper_sysret(CPUX86State *env, int dflag)
         cpu_load_eflags(env, (uint32_t)(env->regs[11]), TF_MASK | AC_MASK
                         | ID_MASK | IF_MASK | IOPL_MASK | VM_MASK | RF_MASK |
                         NT_MASK);
+#if __Use_Original_Qemu != 1 /* ours (U753) */
+        /*
+         * NoVmp (ledger U753): SDM Vol2B SYSRET: "CPL := 3; IF ShadowStackEnabled(CPL) SSP :=
+         * IA32_PL3_SSP" (the SDM's RFLAGS image has VM = 0: R11 AND 3C7FD7H)
+         */
+        if (cet2_ss_en(env, 3, false)) {
+            env->ssp = env->pl_ssp[3];
+        }
+#endif /* __Use_Original_Qemu (U753) */
     } else {
         env->eflags |= IF_MASK;
         cpu_x86_load_seg_cache(env, R_CS, selector | 3,
@@ -1987,6 +2619,11 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #if __Use_Original_Qemu != 1 /* ours (U707) */
     int gate_bits = 32;     /* 16, 32 or 64: the call gate's size */
 #endif /* __Use_Original_Qemu (U707) */
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+    Cet2Xfer cet;
+
+    memset(&cet, 0, sizeof(cet));
+#endif /* __Use_Original_Qemu (U750) */
 
     LOG_PCALL("lcall %04x:" TARGET_FMT_lx " s=%d\n", new_cs, new_eip, shift);
     LOG_PCALL_STATE(env_cpu(env));
@@ -2041,6 +2678,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #if __Use_Original_Qemu != 1 /* ours (U708) */
             far_probe_pushes(env, 0, rsp, ~(target_ulong)0, 8, 2, cpl, GETPC());
 #endif /* __Use_Original_Qemu (U708) */
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+            /* shadow-stack frame (CS, LIP, SSP): checked and probed before any push (U750) */
+            cet2_plan_same(env, &cet, e2, cet2_call_lip(env, e2, shift, next_eip), true, GETPC());
+#endif /* __Use_Original_Qemu (U750) */
             /* backport e136648c5c (U481): at the current CPL */
             PUSHQ_PL(rsp, env->segs[R_CS].selector, cpl, GETPC());
             PUSHQ_PL(rsp, next_eip, cpl, GETPC());
@@ -2050,6 +2691,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                                    get_seg_base(e1, e2),
                                    get_seg_limit(e1, e2), e2);
             env->eip = new_eip;
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+            cet2_commit(env, &cet, GETPC());   /* shadow stack, SSP (U750) */
+#endif /* __Use_Original_Qemu (U750) */
         } else
 #endif
         {
@@ -2079,6 +2723,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #if __Use_Original_Qemu != 1 /* ours (U708) */
             far_probe_pushes(env, ssp, sp, sp_mask, shift ? 4 : 2, 2, cpl, GETPC());
 #endif /* __Use_Original_Qemu (U708) */
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+            cet2_plan_same(env, &cet, e2, cet2_call_lip(env, e2, shift, next_eip), true, GETPC());
+#endif /* __Use_Original_Qemu (U750) */
             /* backport e136648c5c (U481): at the current CPL */
             if (shift) {
                 PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
@@ -2099,6 +2746,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             cpu_x86_load_seg_cache(env, R_CS, (new_cs & 0xfffc) | cpl,
                                    get_seg_base(e1, e2), limit, e2);
             env->eip = new_eip;
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+            cet2_commit(env, &cet, GETPC());   /* shadow stack, SSP (U750) */
+#endif /* __Use_Original_Qemu (U750) */
         }
     } else {
         /* check gate type */
@@ -2294,6 +2944,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                                                            old_sp_mask), GETPC());
                 }
                 far_probe_pushes(env, ssp, sp, sp_mask, psize, 4 + nparam, dpl, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+                /* shadow stack of the new CPL: token, frame (U750), before any push */
+                cet2_plan_inner(env, &cet, dpl, e2, cet2_cur_lip(env, next_eip), GETPC());
+#endif /* __Use_Original_Qemu (U750) */
 #ifdef TARGET_X86_64
                 if (shift == 2) {
                     /* backport e136648c5c (U481): new stack at the new CPL (dpl) */
@@ -2340,6 +2994,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             far_probe_pushes(env, ssp, sp, sp_mask, shift == 2 ? 8 : shift ? 4 : 2, 2, cpl,
                              GETPC());
 #endif /* __Use_Original_Qemu (U708) */
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+            cet2_plan_same(env, &cet, e2, cet2_cur_lip(env, next_eip), false, GETPC());
+#endif /* __Use_Original_Qemu (U750) */
         }
 
         /* backport e136648c5c (U481): new stack at dpl, else the current one at CPL */
@@ -2383,6 +3040,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                        e2);
         SET_ESP(sp, sp_mask);
         env->eip = offset;
+#if __Use_Original_Qemu != 1 /* ours (U750) */
+        /* call gate (U750): token busy, 4 zero bytes, frame, SSP / IA32_PL3_SSP */
+        cet2_commit(env, &cet, GETPC());
+#endif /* __Use_Original_Qemu (U750) */
     }
 }
 
@@ -2595,6 +3256,10 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
 #if __Use_Original_Qemu != 1 /* ours (U707) */
         ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
 #endif /* __Use_Original_Qemu (U707) */
+#if __Use_Original_Qemu != 1 /* ours (U751) */
+        /* NoVmp (ledger U751/U752): shadow-stack frame check, last before the commit */
+        cet2_ret(env, is_iret, rpl, new_cs, e1, e2, new_eip, retaddr);
+#endif /* __Use_Original_Qemu (U751) */
         cpu_x86_load_seg_cache(env, R_CS, new_cs,
                        get_seg_base(e1, e2),
                        get_seg_limit(e1, e2),
@@ -2630,6 +3295,10 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
 #if __Use_Original_Qemu != 1 /* ours (U707) */
                 ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
 #endif /* __Use_Original_Qemu (U707) */
+#if __Use_Original_Qemu != 1 /* ours (U751) */
+                /* shadow stack (U751/U752; IA-32e IRET to the same CPL too) */
+                cet2_ret(env, is_iret, rpl, new_cs, e1, e2, new_eip, retaddr);
+#endif /* __Use_Original_Qemu (U751) */
                 cpu_x86_load_seg_cache(env, R_SS, new_ss,
                                        0, 0xffffffff,
                                        DESC_G_MASK | DESC_B_MASK | DESC_P_MASK |
@@ -2663,6 +3332,10 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
 #if __Use_Original_Qemu != 1 /* ours (U707) */
             ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
 #endif /* __Use_Original_Qemu (U707) */
+#if __Use_Original_Qemu != 1 /* ours (U751) */
+            /* shadow stack (U751/U752), after the SS checks, before the commit */
+            cet2_ret(env, is_iret, rpl, new_cs, e1, e2, new_eip, retaddr);
+#endif /* __Use_Original_Qemu (U751) */
             cpu_x86_load_seg_cache(env, R_SS, new_ss,
                                    get_seg_base(ss_e1, ss_e2),
                                    get_seg_limit(ss_e1, ss_e2),
@@ -2711,12 +3384,31 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
     return;
 
  return_to_vm86:
+#if __Use_Original_Qemu != 1 /* ours (U752) */
+    /*
+     * NoVmp (ledger U752): SDM Vol2 IRET, RETURN-TO-VIRTUAL-8086-MODE: "IF CR4.CET AND
+     * (IA32_U_CET.ENDBR_EN OR IA32_U_CET.SHSTK_EN) THEN #GP(0)" first; with shadow stacks
+     * at CPL 0 SSP must be 8-byte aligned (#CP(FAR-RET/IRET)) and the supervisor token
+     * at SSP is freed; SSP itself is not changed.
+     */
+    if ((env->cr[4] & CR4_CET_MASK) && (env->u_cet & (CET_ENDBR_EN | CET_SH_STK_EN))) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, retaddr);
+    }
+#endif /* __Use_Original_Qemu (U752) */
     POPL_RA(ssp, sp, sp_mask, new_esp, retaddr);
     POPL_RA(ssp, sp, sp_mask, new_ss, retaddr);
     POPL_RA(ssp, sp, sp_mask, new_es, retaddr);
     POPL_RA(ssp, sp, sp_mask, new_ds, retaddr);
     POPL_RA(ssp, sp, sp_mask, new_fs, retaddr);
     POPL_RA(ssp, sp, sp_mask, new_gs, retaddr);
+#if __Use_Original_Qemu != 1 /* ours (U752) */
+    if (cet2_ss_en(env, env->hflags & HF_CPL_MASK, false)) {
+        if (env->ssp & 7) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, retaddr);
+        }
+        cet2_token_release(env, env->ssp, false, false, retaddr);
+    }
+#endif /* __Use_Original_Qemu (U752) */
 
     /* modify processor state */
     cpu_load_eflags(env, new_eflags, TF_MASK | AC_MASK | ID_MASK |
@@ -2836,6 +3528,12 @@ void helper_sysexit(CPUX86State *env, int dflag)
     }
     env->regs[R_ESP] = env->regs[R_ECX];
     env->eip = env->regs[R_EDX];
+#if __Use_Original_Qemu != 1 /* ours (U753) */
+    /* NoVmp (ledger U753): SDM Vol2B SYSEXIT: CPL := 3; IF ShadowStackEnabled(CPL) SSP := IA32_PL3_SSP */
+    if (cet2_ss_en(env, 3, env->eflags & VM_MASK)) {
+        env->ssp = env->pl_ssp[3];
+    }
+#endif /* __Use_Original_Qemu (U753) */
 }
 
 target_ulong helper_lsl(CPUX86State *env, target_ulong selector1)
