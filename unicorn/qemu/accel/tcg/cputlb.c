@@ -1700,6 +1700,16 @@ load_memop(const void *haddr, MemOp op)
     }
 }
 
+/* backport bdf26b5d16 (U490): the second page of a page-crossing access */
+static inline target_ulong tlb_pointer_wrap(CPUArchState *env, int mmu_idx,
+                                            target_ulong result, target_ulong base)
+{
+    CPUClass *cc = CPU_GET_CLASS(env_cpu(env));
+
+    return cc->pointer_wrap ? cc->pointer_wrap(env_cpu(env), mmu_idx, result, base)
+                            : result;
+}
+
 static inline uint64_t
 load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
@@ -1991,7 +2001,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         int old_size;
     do_unaligned_access:
         addr1 = addr & ~((target_ulong)size - 1);
-        addr2 = addr1 + size;
+        addr2 = tlb_pointer_wrap(env, mmu_idx, addr1 + size, addr);   /* U490 */
         old_size = uc->size_recur_mem;
         uc->size_recur_mem = size;
         r1 = full_load(env, addr1, oi, retaddr);
@@ -2548,7 +2558,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
          * is already guaranteed to be filled, and that the second page
          * cannot evict the first.
          */
-        page2 = (addr + size) & TARGET_PAGE_MASK;
+        page2 = tlb_pointer_wrap(env, mmu_idx, addr + size, addr) & TARGET_PAGE_MASK;  /* U490 */
         size2 = (addr + size) & ~TARGET_PAGE_MASK;
         index2 = tlb_index(env, mmu_idx, page2);
         entry2 = tlb_entry(env, mmu_idx, page2);
@@ -2594,7 +2604,11 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
                 /* Little-endian extract.  */
                 val8 = val >> (i * 8);
             }
-            helper_ret_stb_mmu(env, addr + i, val8, oi, retaddr);
+            /* U490: bytes on the second page wrap like the page itself */
+            helper_ret_stb_mmu(env, (addr & TARGET_PAGE_MASK) == ((addr + i) & TARGET_PAGE_MASK)
+                                    ? addr + i
+                                    : tlb_pointer_wrap(env, mmu_idx, addr + i, addr),
+                               val8, oi, retaddr);
         }
         uc->size_recur_mem = old_size;
         return;

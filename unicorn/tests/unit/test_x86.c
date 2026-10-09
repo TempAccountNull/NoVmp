@@ -13688,6 +13688,52 @@ static void test_x86_bp_cpuid_prfchw(void)
     tb2_cpuid_model(UC_CPU_X86_SKYLAKE_CLIENT, 0x80000001, 0, r);
     TEST_CHECK(r[2] & (1u << 8));
 }
+
+/*
+ * U490 (backport bdf26b5d16 + 7174cd2eec, pointer_wrap): outside 64-bit mode a 4-byte access at
+ * linear FFFFFFFEh continues at 0, not at 1_0000_0000h. Compatibility mode (IA-32e, CS.L = 0):
+ * mov eax, [0FFFFFFFEh] / mov [0FFFFFFFEh], eax with distinct bytes at 0 and at 1_0000_0000h.
+ */
+static void test_x86_bp_wrap_4g(void)
+{
+    static const uint64_t gdt[4] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL,
+                                    0x00CF9A000000FFFFULL};
+    /*
+     * 64-bit: jmp far [TB2_DATA] (m16:32 -> 0x18:next, a 32-bit code segment);
+     * compatibility mode: mov eax, [0FFFFFFFEh]; mov ecx, eax; mov eax, 0AABBCCDDh;
+     * mov [0FFFFFFFEh], eax
+     */
+    static const char code[] = "\xff\x2c\x25\x00\x40\x00\x60"
+                               "\xa1\xfe\xff\xff\xff\x89\xc1\xb8\xdd\xcc\xbb\xaa"
+                               "\xa3\xfe\xff\xff\xff";
+    uc_x86_mmr gdtr = {0, TB2_SYS, sizeof(gdt) - 1, 0};
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open(code, sizeof(code) - 1, &intr);
+    uint8_t lo[2] = {0x11, 0x22}, z[2] = {0x33, 0x44}, hi[2] = {0x55, 0x66}, b[2];
+    uint32_t fp[2] = {(uint32_t)code_start + 7, 0x18};
+
+    OK(uc_mem_write(uc, TB2_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_mem_write(uc, TB2_DATA, fp, 6));
+    OK(uc_mem_map(uc, 0xfffff000ULL, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_map(uc, 0, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_map(uc, 0x100000000ULL, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, 0xfffffffeULL, lo, 2));
+    OK(uc_mem_write(uc, 0, z, 2));
+    OK(uc_mem_write(uc, 0x100000000ULL, hi, 2));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(intr.count == 0);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 0xffff) == 0x18);
+    TEST_CHECK((uint32_t)nk_reg(uc, UC_X86_REG_RCX) == 0x44332211);
+    TEST_MSG("ecx %08x", (uint32_t)nk_reg(uc, UC_X86_REG_RCX));
+    OK(uc_mem_read(uc, 0xfffffffeULL, b, 2));
+    TEST_CHECK(b[0] == 0xdd && b[1] == 0xcc);
+    OK(uc_mem_read(uc, 0, b, 2));
+    TEST_CHECK(b[0] == 0xbb && b[1] == 0xaa);
+    OK(uc_mem_read(uc, 0x100000000ULL, b, 2));
+    TEST_CHECK(b[0] == 0x55 && b[1] == 0x66);
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13911,4 +13957,5 @@ TEST_LIST = {
     {"test_x86_bp_vex_w_ud_before_nm", test_x86_bp_vex_w_ud_before_nm},
     {"test_x86_bp_cpuid_80000000", test_x86_bp_cpuid_80000000},
     {"test_x86_bp_cpuid_prfchw", test_x86_bp_cpuid_prfchw},
+    {"test_x86_bp_wrap_4g", test_x86_bp_wrap_4g},
     {NULL, NULL}};

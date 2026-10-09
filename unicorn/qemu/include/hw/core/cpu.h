@@ -156,6 +156,12 @@ typedef struct CPUClass {
     bool (*tlb_fill_cpu)(CPUState *cpu, vaddr address, int size,
                      MMUAccessType access_type, int mmu_idx,
                      bool probe, uintptr_t retaddr);
+    /*
+     * backport bdf26b5d16 (U490), upstream TCGCPUOps.pointer_wrap: a multi-byte access
+     * has incremented @base to @result, crossing into the next page; adjust @result for
+     * a possible overflow in the current CPU state. NULL: no wrap.
+     */
+    vaddr (*pointer_wrap)(CPUState *cpu, int mmu_idx, vaddr result, vaddr base);
     hwaddr (*get_phys_page_debug)(CPUState *cpu, vaddr addr);
     hwaddr (*get_phys_page_attrs_debug)(CPUState *cpu, vaddr addr,
                                         MemTxAttrs *attrs);

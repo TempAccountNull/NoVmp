@@ -5770,6 +5770,16 @@ void x86_update_hflags(CPUX86State *env)
 #endif /* __Use_Original_Qemu (U114) */
 }
 
+/*
+ * backport 7174cd2eec (U490): outside 64-bit mode (legacy and compatibility mode) a linear
+ * address is 32 bits, so a multi-byte access that crosses FFFFFFFFh continues at 0 (SDM
+ * Vol3A 3.4 / Vol1 3.3.7: 64-bit addresses only in 64-bit mode). No MMU-index split.
+ */
+static vaddr x86_pointer_wrap(CPUState *cs, int mmu_idx, vaddr result, vaddr base)
+{
+    return (X86_CPU(cs)->env.hflags & HF_CS64_MASK) ? result : (uint32_t)result;
+}
+
 static void x86_cpu_common_class_init(struct uc_struct *uc, CPUClass *oc, void *data)
 {
     X86CPUClass *xcc = X86_CPU_CLASS(oc);
@@ -5794,6 +5804,7 @@ static void x86_cpu_common_class_init(struct uc_struct *uc, CPUClass *oc, void *
     cc->cpu_exec_exit = x86_cpu_exec_exit;
     cc->tcg_initialize = tcg_x86_init;
     cc->tlb_fill_cpu = x86_cpu_tlb_fill;
+    cc->pointer_wrap = x86_pointer_wrap;     /* backport 7174cd2eec (U490) */
     cc->do_unaligned_access = x86_cpu_do_unaligned_access;
 }
 
