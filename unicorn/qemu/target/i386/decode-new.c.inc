@@ -4689,9 +4689,22 @@ static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
          * (W/U with the mmx special also select MMX registers; REX.B made them MM8-MM15 and
          * read past fpregs[]: i5-13600K 41 0F 60 C1 = PUNPCKLBW MM0, MM1)
          */
+#if __Use_Original_Qemu == 1 /* original QEMU (U615) */
         if (op->unit != X86_OP_MMX) {
             op->n |= REX_B(s);
         }
+#else /* ours (U615) */
+        /*
+         * NoVmp (ledger U615): REX2.B4 (bit 4 of rex_b, U614) selects R16-R31 for a GPR only;
+         * "REX2.R4, REX2.X4 or REX2.B4 are generally ignored" when the register is a vector
+         * register (APX spec 355828-009 3.1.2.1: no XMM16-31 through REX2).
+         */
+        if (op->unit == X86_OP_SSE) {
+            op->n |= REX_B(s) & 8;
+        } else if (op->unit != X86_OP_MMX) {
+            op->n |= REX_B(s);
+        }
+#endif /* __Use_Original_Qemu (U615) */
 #if __Use_Original_Qemu != 1 /* ours (U142) */
         /* EVEX.X selects ZMM16-31 for a vector ModRM.r/m (SDM Vol2A Table 2-33; U142) */
         if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_SSE) {
@@ -4907,9 +4920,18 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
         }
     get_reg:
         op->n = ((get_modrm(s, env) >> 3) & 7);
+#if __Use_Original_Qemu == 1 /* original QEMU (U615) */
         if (op->unit != X86_OP_MMX) {
             op->n |= REX_R(s);
         }
+#else /* ours (U615) */
+        /* REX2.R4 is ignored for a vector register, kept for a GPR/CR/DR (APX 3.1.2.1, U615) */
+        if (op->unit == X86_OP_SSE) {
+            op->n |= REX_R(s) & 8;
+        } else if (op->unit != X86_OP_MMX) {
+            op->n |= REX_R(s);
+        }
+#endif /* __Use_Original_Qemu (U615) */
 #if __Use_Original_Qemu != 1 /* ours (U142) */
         /* EVEX.R' selects ZMM16-31 for a vector ModRM.reg (SDM Vol2A Table 2-33; U142) */
         if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_SSE) {
