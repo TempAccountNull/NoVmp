@@ -6860,6 +6860,20 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             goto illegal_op;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): exception types that never report #AC (SDM Vol2A 2.8 / 2.10):
+     * type 11 / E11 (F16C, VCVTPH2PS / VCVTPS2PH: "Mem Arg, No AC"), type 12 / E12 (VSIB
+     * gathers and scatters: "No AC"), Intel AMX ("will never generate #AC exceptions").
+     * VMASKMOV / VPMASKMOV ("No AC# reported for any mask bit combinations") and MASKMOVDQU
+     * (type 4, no #AC row) access memory through helpers that are not checked.
+     */
+    if (decode.e.vex_class == 11 || decode.e.vex_class == 12 || decode.e.vex_class == 22 ||
+        decode.e.vex_class == 23 ||
+        decode.e.gen == gen_EVEX_VCVTPH2PS || decode.e.gen == gen_EVEX_VCVTPS2PH) {
+        s->ac_insn = false;
+    }
+#endif /* __Use_Original_Qemu (U834) */
 
 #if __Use_Original_Qemu != 1 /* ours (U645) */
     /* Intel APX-promoted EVEX forms: their own checks, then the VEX/legacy code path (U645) */
@@ -6921,6 +6935,25 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         gen_helper_fwait(tcg_ctx, cpu_env);
     }
 #endif /* __Use_Original_Qemu (U50) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): the #AC of an MMX instruction's memory operand comes before its x87
+     * state transition (TOP = 0, all tags valid): a faulting instruction leaves them alone
+     * (i5-13600K, cases_ac_hw). The access itself re-checks (no effect, same address).
+     */
+    if (s->ac_insn && decode.e.special == X86_SPECIAL_MMX &&
+        !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
+        int i;
+
+        for (i = 0; i < 3; i++) {
+            if (decode.op[i].has_ea) {
+                gen_load_ea(s, &decode.mem, false);
+                gen_ac_check_ot(s, s->A0, decode.op[i].ot);
+                break;
+            }
+        }
+    }
+#endif /* __Use_Original_Qemu (U834) */
     if (decode.e.special == X86_SPECIAL_MMX &&
         !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
         gen_helper_enter_mmx(tcg_ctx, cpu_env);

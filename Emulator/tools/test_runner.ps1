@@ -332,6 +332,10 @@ Add-HwCmp 'ref_apx_map4_hwcmp' 'hw apx' 'ref_apx_map4.py' 'cases_apx_map4_hw'
 Add-Exp 'cases_rdrand' 'cases_rdrand' 'rdrand expect'
 Add-Exp 'cases_rdrand_seed' 'cases_rdrand_seed' 'rdrand expect' @( '--rdrand-seed', '0x1234' )
 Add-Exp 'cases_rdrand_host' 'cases_rdrand_host' 'rdrand expect' @( '--HostSeed' )
+# U834: alignment check (#AC) at CPL3 vs the i5-13600K (Windows: CR0.AM = 1; RFLAGS.AC set by the
+# case), and expected values for AVX-512 / APX / CPL0 (CR0.AM = 1 through --cr0).
+Add-Hw 'cases_ac_hw' 'hw ac'
+Add-Exp 'cases_ac' 'cases_ac' 'ac expect' @( '--avx512', '--apx', '--cr0', '0x40011' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

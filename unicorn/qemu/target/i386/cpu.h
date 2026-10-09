@@ -2465,6 +2465,11 @@ bool x86_ip_is_canonical(CPUX86State *env, target_ulong ip);
 void x86_check_canonical_range(CPUX86State *env, target_ulong addr, uint32_t size,
                                uintptr_t ra);
 #endif /* __Use_Original_Qemu (U706) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+/* excp_helper.c: alignment check (#AC(0)): CR0.AM && EFLAGS.AC && CPL 3; addr & mask != 0 */
+bool x86_ac_enabled(CPUX86State *env);
+void x86_ac_check(CPUX86State *env, target_ulong addr, uint32_t mask, uintptr_t ra);
+#endif /* __Use_Original_Qemu (U834) */
 bool x86_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                       MMUAccessType access_type, int mmu_idx,
                       bool probe, uintptr_t retaddr);
@@ -2582,8 +2587,20 @@ typedef X86CPU ArchCPU;
 static inline void cpu_get_tb_cpu_state(CPUX86State *env, target_ulong *pc,
                                         target_ulong *cs_base, uint32_t *flags)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U834) */
     *flags = env->hflags |
         (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK));
+#else /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): TB flag bit 18 (HF_AC_MASK) = EFLAGS.AC AND CR0.AM, the part of
+     * the alignment-check condition that is not already in the flags (CPL is): a TB
+     * translated with it set (and CPL 3) checks data alignment (#AC); EFLAGS.AC alone (SMAP
+     * STAC/CLAC at CPL0, or AM = 0) changes no translation.
+     */
+    *flags = env->hflags |
+        (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK)) |
+        ((env->eflags & AC_MASK) & ((uint32_t)env->cr[0] & CR0_AM_MASK));
+#endif /* __Use_Original_Qemu (U834) */
     /*
      * backport of QEMU 15e207b9ed (the cpu.h/synchronize_from_tb half): in 64-bit
      * mode CS.base is 0 for instruction fetch; elsewhere CS.base + EIP wraps at

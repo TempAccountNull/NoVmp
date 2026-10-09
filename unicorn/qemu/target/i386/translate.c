@@ -238,6 +238,11 @@ typedef struct DisasContext {
     CCOp cc_op;  /* current CC operation */
     int mem_index; /* select memory access functions */
     uint32_t flags; /* all execution flags */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    bool ac;       /* the TB checks alignment: HF_AC_MASK (EFLAGS.AC AND CR0.AM) at CPL3 */
+    bool ac_insn;  /* the current instruction is subject to it (U834 exceptions below) */
+    uint8_t ac_min; /* alignment mask the instruction's operand needs at least (Table 7-7) */
+#endif /* __Use_Original_Qemu (U834) */
     int cpuid_features;
     int cpuid_ext_features;
     int cpuid_ext2_features;
@@ -706,15 +711,78 @@ static inline void gen_op_add_reg_T0(DisasContext *s, MemOp size, int reg)
     gen_op_mov_reg_v(s, size, reg, s->tmp0);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+/*
+ * NoVmp (ledger U834): alignment check (#AC(0), SDM Vol3A 7.15) of a data access at addr whose
+ * data type must be aligned to mask + 1 bytes (Table 7-7). Emitted only in a TB that checks
+ * alignment (s->ac: EFLAGS.AC AND CR0.AM at CPL3) and for an instruction that is subject to it
+ * (s->ac_insn), so the AC = 0 path generates exactly the code it did before.
+ */
+static void gen_ac_check(DisasContext *s, TCGv addr, unsigned mask)
+{
+    if (s->ac_insn && mask) {
+        TCGContext *tcg_ctx = s->uc->tcg_ctx;
+        mask |= s->ac_min;
+        gen_helper_ac_check(tcg_ctx, cpu_env, addr, tcg_constant_i32(tcg_ctx, mask));
+    }
+}
+
+/* #AC check of an operand of size ot (MO_8 .. MO_64: natural alignment) */
+static inline void gen_ac_check_ot(DisasContext *s, TCGv addr, MemOp ot)
+{
+    gen_ac_check(s, addr, (1u << (ot & MO_SIZE)) - 1);
+}
+#endif /* __Use_Original_Qemu (U834) */
+
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+/*
+ * NoVmp (ledger U834): alignment mask of an x87 memory operand, op = (opcode & 7) << 3 | reg
+ * (SDM Vol3A Table 7-7): m16int / m2byte (FLDCW, FNSTCW, FNSTSW) 2, m32fp / m32int 4, m64fp /
+ * m64int 8, m80 double extended and m80 packed BCD 8 (the BCD size is not in the table; the
+ * i5-13600K checks 8 as for m80fp, cases_ac_hw), FLDENV / FNSTENV / FRSTOR / FNSAVE areas "4 or
+ * 2, depending on operand size". The helpers that access the larger areas are not checked
+ * per field (an FNSAVE area at 4 mod 8 is fine although its 80-bit registers are not 8-aligned).
+ */
+static unsigned x87_ac_mask(DisasContext *s, int op)
+{
+    switch (op) {
+    case 0x0c: case 0x0e: case 0x2c: case 0x2e:     /* fldenv fnstenv frstor fnsave */
+        return s->dflag == MO_16 ? 1 : 3;
+    case 0x0d: case 0x0f: case 0x2f:                /* fldcw fnstcw fnstsw m2byte */
+        return 1;
+    case 0x1d: case 0x1f: case 0x3c: case 0x3e:     /* fld/fstp m80, fbld/fbstp m80 */
+        return 7;
+    case 0x09: case 0x1c: case 0x1e: case 0x2d:     /* reserved (#UD) */
+        return 0;
+    }
+    switch (op >> 3) {
+    case 0: case 1: case 2: case 3:                 /* D8-DB: m32fp / m32int */
+        return 3;
+    case 4: case 5:                                 /* DC-DD: m64fp (fisttp m64int) */
+        return 7;
+    case 6:                                         /* DE: m16int */
+        return 1;
+    default:                                        /* DF: m16int, fild/fistp m64int */
+        return (op == 0x3d || op == 0x3f) ? 7 : 1;
+    }
+}
+#endif /* __Use_Original_Qemu (U834) */
+
 static inline void gen_op_ld_v(DisasContext *s, int idx, TCGv t0, TCGv a0)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check_ot(s, a0, idx);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_tl(tcg_ctx, t0, a0, s->mem_index, idx | MO_LE);
 }
 
 static inline void gen_op_st_v(DisasContext *s, int idx, TCGv t0, TCGv a0)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check_ot(s, a0, idx);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_st_tl(tcg_ctx, t0, a0, s->mem_index, idx | MO_LE);
 }
 
@@ -1915,6 +1983,11 @@ static void gen_op(DisasContext *s1, int op, MemOp ot, int d)
     } else if (!(s1->prefix & PREFIX_LOCK)) {
         gen_op_ld_v(s1, ot, s1->T0, s1->A0);
     }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    else {
+        gen_ac_check_ot(s1, s1->A0, ot);        /* LOCK: the atomic access below (U834) */
+    }
+#endif /* __Use_Original_Qemu (U834) */
     switch(op) {
     case OP_ADCL:
         gen_compute_eflags_c(s1, s1->tmp4);
@@ -2059,6 +2132,9 @@ static void gen_inc(DisasContext *s1, MemOp ot, int d, int c)
             gen_illegal_opcode(s1);
             return;
         }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+        gen_ac_check_ot(s1, s1->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
         tcg_gen_movi_tl(tcg_ctx, s1->T0, c > 0 ? 1 : -1);
         tcg_gen_atomic_add_fetch_tl(tcg_ctx, s1->T0, s1->A0, s1->T0,
                                     s1->mem_index, ot | MO_LE);
@@ -3662,6 +3738,9 @@ static void gen_jmp_rel_csize(DisasContext *s, int diff, int tb_num)
 static inline void gen_ldq_env_A0(DisasContext *s, int offset)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 7);        /* an 8-byte operand (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset);
 }
@@ -3669,6 +3748,9 @@ static inline void gen_ldq_env_A0(DisasContext *s, int offset)
 static inline void gen_stq_env_A0(DisasContext *s, int offset)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 7);        /* an 8-byte operand (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset);
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
 }
@@ -4926,6 +5008,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U645) */
     s->apx_promoted = false;
 #endif /* __Use_Original_Qemu (U645) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    s->ac_insn = s->ac;
+    s->ac_min = 0;
+#endif /* __Use_Original_Qemu (U834) */
     s->rip_offset = 0; /* for relative ip address */
     s->vex_l = 0;
     s->vex_v = 0;
@@ -5410,6 +5496,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 if (mod == 3) {
                     goto illegal_op;
                 }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+                gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
                 tcg_gen_movi_tl(tcg_ctx, s->T0, ~0);
                 tcg_gen_atomic_xor_fetch_tl(tcg_ctx, s->T0, s->A0, s->T0,
                                             s->mem_index, ot | MO_LE);
@@ -5921,6 +6010,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         } else {
             gen_lea_modrm(env, s, modrm);
             if (s->prefix & PREFIX_LOCK) {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+                gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
                 tcg_gen_atomic_fetch_add_tl(tcg_ctx, s->T1, s->A0, s->T0,
                                             s->mem_index, ot | MO_LE);
                 tcg_gen_add_tl(tcg_ctx, s->T0, s->T0, s->T1);
@@ -5954,6 +6046,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     goto illegal_op;
                 }
                 gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+                gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
                 tcg_gen_atomic_cmpxchg_tl(tcg_ctx, oldv, s->A0, cmpv, newv,
                                           s->mem_index, ot | MO_LE);
             } else {
@@ -6030,6 +6125,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
             if ((s->prefix & PREFIX_LOCK) &&
                 (tb_cflags(s->base.tb) & CF_PARALLEL)) {
                 gen_helper_cmpxchg8b(tcg_ctx, cpu_env, s->A0);
@@ -6531,6 +6629,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_lea_modrm(env, s, modrm);
             gen_op_mov_v_reg(s, ot, s->T0, reg);
             /* for xchg, lock is implicit */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
             tcg_gen_atomic_xchg_tl(tcg_ctx, s->T1, s->A0, s->T0,
                                    s->mem_index, ot | MO_LE);
             gen_op_mov_reg_v(s, ot, reg, s->T1);
@@ -6892,6 +6993,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 
                 tcg_gen_mov_tl(tcg_ctx, last_addr, ea);
                 gen_lea_v_seg(s, s->aflag, ea, a.def_seg, s->override);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+                gen_ac_check(s, s->A0, x87_ac_mask(s, op));
+#endif /* __Use_Original_Qemu (U834) */
 
                 x87_desc = x87_stack_desc(s, op, mod, rm);
                 if (x87_desc) {
@@ -8007,6 +8111,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         tcg_gen_movi_tl(tcg_ctx, s->tmp0, 1);
         tcg_gen_shl_tl(tcg_ctx, s->tmp0, s->tmp0, s->T1);
         if (s->prefix & PREFIX_LOCK) {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            gen_ac_check_ot(s, s->A0, ot);      /* the bit string's operand-size unit */
+#endif /* __Use_Original_Qemu (U834) */
             switch (op) {
             case 1: /* bts */
                 tcg_gen_atomic_fetch_or_tl(tcg_ctx, s->T0, s->A0, s->tmp0,
@@ -8474,6 +8581,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env,
                              offsetof(CPUX86State, ldt.selector));
             ot = mod == 3 ? dflag : MO_16;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            s->ac_min = 3;  /* Table 7-7: LDTR / TR contents, 4-byte aligned (U834) */
+#endif /* __Use_Original_Qemu (U834) */
             gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 1);
             break;
         case 2: /* lldt */
@@ -8496,6 +8606,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env,
                              offsetof(CPUX86State, tr.selector));
             ot = mod == 3 ? dflag : MO_16;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            s->ac_min = 3;  /* Table 7-7: LDTR / TR contents, 4-byte aligned (U834) */
+#endif /* __Use_Original_Qemu (U834) */
             gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 1);
             break;
         case 3: /* ltr */
@@ -8569,6 +8682,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
             gen_svm_check_intercept(s, SVM_EXIT_GDTR_READ);
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            /* Table 7-7: GDTR / IDTR contents need a 4-byte-aligned address; the limit and
+               base stores below are not checked one by one (U834) */
+            gen_ac_check(s, s->A0, 3);
+            s->ac_insn = false;
+#endif /* __Use_Original_Qemu (U834) */
             tcg_gen_ld32u_tl(tcg_ctx, s->T0,
                              cpu_env, offsetof(CPUX86State, gdt.limit));
 #if __Use_Original_Qemu != 1 /* ours (U704) */
@@ -8635,6 +8754,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
             gen_svm_check_intercept(s, SVM_EXIT_IDTR_READ);
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            /* Table 7-7: GDTR / IDTR contents need a 4-byte-aligned address; the limit and
+               base stores below are not checked one by one (U834) */
+            gen_ac_check(s, s->A0, 3);
+            s->ac_insn = false;
+#endif /* __Use_Original_Qemu (U834) */
             tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, idt.limit));
 #if __Use_Original_Qemu != 1 /* ours (U704) */
             if (CODE64(s)) {
@@ -9720,6 +9845,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            gen_ac_check(s, s->A0, 3);
+#endif /* __Use_Original_Qemu (U834) */
             tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
             gen_helper_ldmxcsr(tcg_ctx, cpu_env, s->tmp2_i32);
             break;
@@ -10182,6 +10310,10 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #ifdef CONFIG_SOFTMMU
     dc->mem_index = cpu_mmu_index(env, false);
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    dc->ac = (flags & HF_AC_MASK) && cpl == 3;
+    dc->ac_insn = dc->ac;
+#endif /* __Use_Original_Qemu (U834) */
     dc->cpuid_features = env->features[FEAT_1_EDX];
     dc->cpuid_ext_features = env->features[FEAT_1_ECX];
     dc->cpuid_ext2_features = env->features[FEAT_8000_0001_EDX];

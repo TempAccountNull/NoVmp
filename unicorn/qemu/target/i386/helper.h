@@ -467,6 +467,9 @@ DEF_HELPER_1(rdrand, tl, env)
 #if __Use_Original_Qemu != 1 /* ours (U835) */
 DEF_HELPER_1(rdseed, tl, env)
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+DEF_HELPER_3(ac_check, void, env, tl, i32)
+#endif /* __Use_Original_Qemu (U834) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 DEF_HELPER_4(evex_elem_unop, void, env, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U321) */

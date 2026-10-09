@@ -5223,6 +5223,17 @@ static void do_clear_cet_s(CPUX86State *env)
 
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): a misaligned FXSAVE / FXRSTOR / XSAVE* / XRSTOR operand is #GP(0), or
+     * with alignment checking #AC: "signaling of #AC is not guaranteed and may vary with
+     * implementation ... #AC might be signaled for a 2-byte misalignment, whereas a general
+     * protection exception might be signaled for all other misalignments" (SDM Vol2A FXSAVE,
+     * Vol2D XSAVE). Implementation choice, the i5-13600K's (cases_ac_hw): #AC when the address
+     * is not 4-byte aligned, #GP when it is but not 16 / 64-byte aligned.
+     */
+    x86_ac_check(env, ptr, 3, ra);
+#endif /* __Use_Original_Qemu (U834) */
     /* The operand must be 16 byte aligned */
     if (ptr & 0xf) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -5312,6 +5323,9 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    x86_ac_check(env, ptr, 3, ra);      /* #AC before #GP, as do_fxsave (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     /* The operand must be 64 byte aligned.  */
     if (ptr & 63) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -5486,6 +5500,9 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    x86_ac_check(env, ptr, 3, ra);      /* #AC before #GP, as do_fxsave (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     if (ptr & 63) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
@@ -5705,6 +5722,9 @@ static void do_xrstor_pkru(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 
 static void do_fxrstor(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    x86_ac_check(env, ptr, 3, ra);      /* #AC before #GP, as do_fxsave (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     /* The operand must be 16 byte aligned */
     if (ptr & 0xf) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -5968,6 +5988,9 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    x86_ac_check(env, ptr, 3, ra);      /* #AC before #GP, as do_fxsave (U834) */
+#endif /* __Use_Original_Qemu (U834) */
     /* The operand must be 64 byte aligned.  */
     if (ptr & 63) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -7583,6 +7606,9 @@ static void x86_vsib_elem_check(CPUX86State *env, target_ulong addr, int size,
 #define EVEX_DESC_N(d)     (((d) >> 8) & 0xff)
 #define EVEX_DESC_Z        (1 << 16)
 #define EVEX_DESC_ANY      (1 << 17)
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+#define EVEX_DESC_AC       (1 << 19)  /* the instruction reports #AC (emit.c.inc) */
+#endif /* __Use_Original_Qemu (U834) */
 
 static uint64_t evex_get_elem(ZMMReg *r, int esz, int i)
 {
@@ -7646,6 +7672,18 @@ void helper_evex_mload(CPUX86State *env, ZMMReg *d, target_ulong a0, uint64_t ma
         mask = (mask & evex_lanes(n)) ? 1 : 0;
         n = 1;
     }
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): exception classes E2-E10 report #AC "for 2, 4, or 8 byte memory
+     * access" (SDM Vol2A 2.8); a masked operand of that size (a scalar, a broadcast element,
+     * a narrow tuple) is checked when an element is read (a fully masked-off operand reads
+     * nothing).
+     */
+    if ((desc & EVEX_DESC_AC) && n * bytes <= 8 && (mask & evex_lanes(n))) {
+        x86_ac_check(env, a0, n * bytes - 1, ra);
+    }
+#endif /* __Use_Original_Qemu (U834) */
+
     for (i = 0; i < n; i++) {
         if (mask & (1ull << i)) {
             target_ulong addr = a0 + i * bytes;
@@ -7725,6 +7763,13 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
     int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
     int bytes = 1 << esz;
     struct uc_struct *uc = env->uc;
+
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /* a masked 2/4/8-byte operand with an active element: #AC first (as helper_evex_mload) */
+    if ((desc & EVEX_DESC_AC) && n * bytes <= 8 && (mask & evex_lanes(n))) {
+        x86_ac_check(env, a0, n * bytes - 1, ra);
+    }
+#endif /* __Use_Original_Qemu (U834) */
 
 #if __Use_Original_Qemu != 1 /* ours (U193) */
     /*

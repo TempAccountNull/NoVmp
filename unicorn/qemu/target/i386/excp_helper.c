@@ -1049,6 +1049,42 @@ void x86_check_canonical_range(CPUX86State *env, target_ulong addr, uint32_t siz
 }
 
 #endif /* __Use_Original_Qemu (U51/U52) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+/*
+ * NoVmp (ledger U834): alignment check, SDM Vol3A 7.15 "Event 17 - Alignment Check Exception
+ * (#AC)": with CR0.AM = 1, EFLAGS.AC = 1 and CPL = 3, a data (or stack) access whose address
+ * is not a multiple of its data type's alignment (Table 7-7: word 2, doubleword 4, quadword /
+ * double / double extended 8, ...) is a fault with error code 0, before the access. Code
+ * fetches and implicit supervisor accesses (descriptor tables, TSS, shadow stack) are never
+ * checked: they do not come through here. The translator calls helper_ac_check only in TBs
+ * translated with HF_AC_MASK (EFLAGS.AC AND CR0.AM, cpu_get_tb_cpu_state) at CPL3; the helpers
+ * that access memory themselves call x86_ac_check.
+ * Order (the SDM does not order faults of one instruction, Vol3A Table 7-2; i5-13600K,
+ * cases_ac_hw): a non-canonical first byte is #GP/#SS first (left to the access), then #AC,
+ * then the non-canonical last byte of a page-crossing access (U706) and #PF.
+ */
+bool x86_ac_enabled(CPUX86State *env)
+{
+    return (env->cr[0] & CR0_AM_MASK) && (env->eflags & AC_MASK) &&
+           (env->hflags & HF_CPL_MASK) == 3;
+}
+
+void x86_ac_check(CPUX86State *env, target_ulong addr, uint32_t mask, uintptr_t ra)
+{
+    if (!(addr & mask) || !x86_ac_enabled(env)) {
+        return;
+    }
+    if ((env->hflags & HF_CS64_MASK) && !x86_ip_is_canonical(env, addr)) {
+        return;     /* the access raises #GP/#SS(0) (U51) */
+    }
+    raise_exception_err_ra(env, EXCP11_ALGN, 0, ra);
+}
+
+void helper_ac_check(CPUX86State *env, target_ulong addr, uint32_t mask)
+{
+    x86_ac_check(env, addr, mask, GETPC());
+}
+#endif /* __Use_Original_Qemu (U834) */
 bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
                       MMUAccessType access_type, int mmu_idx,
                       bool probe, uintptr_t retaddr)

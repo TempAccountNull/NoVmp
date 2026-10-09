@@ -1,0 +1,57 @@
+# Alignment check (#AC, ledger U834): expected-value cases, Unicorn only, for what the i5-13600K
+# cannot show (AVX-512, Intel APX, CPL0). Run with CR0.AM = 1:
+#   emu-alltest --cases Emulator\data\cases_ac.txt --expect-only --avx512 --apx --cr0 0x40011
+# SDM Vol3A 7.15 (event 17): CR0.AM = 1, EFLAGS.AC = 1 and CPL = 3 enable the check; a misaligned
+# 2/4/8-byte data access faults with #AC(0) before the access. Vol2A 2.8: EVEX classes E2-E10 and
+# K21 (KMOV) report #AC "for 2, 4, or 8 byte memory access"; E1/E4 full vectors, E11 (VCVTPS2PH,
+# VCVTPH2PS) and E12 (VSIB) never do. APX PUSH2/POP2: #GP when RSP is not 16-byte aligned (APX
+# spec 9.1.3), no #AC row; CCMPscc / CTESTscc (APX-EVEX-CCMP) and PUSHP/POPP report #AC.
+#
+# --- the enabling conditions: CPL0 never checks; AC = 0 never checks
+mov eax, dword ptr [rsi+1] | rflags=0x40202 =>
+mov eax, dword ptr [rsi+1] | cpl=3 rflags=0x202 =>
+mov eax, dword ptr [rsi+1] | cpl=3 rflags=0x40202 => #AC
+mov eax, dword ptr [rsi+4] | cpl=3 rflags=0x40202 =>
+fxsave [rsi+2] | rflags=0x40202 => #GP
+fxsave [rsi+2] | cpl=3 rflags=0x40202 => #AC
+fxsave [rsi+4] | cpl=3 rflags=0x40202 => #GP
+# --- AVX-512: scalar and broadcast operands are checked, full vectors are not
+vmovss xmm16, dword ptr [rsi+2] | cpl=3 rflags=0x40202 => #AC
+vmovsd xmm16, qword ptr [rsi+4] | cpl=3 rflags=0x40202 => #AC
+vmovss xmm16, dword ptr [rsi+4] | cpl=3 rflags=0x40202 =>!
+.byte 0x62, 0xf1, 0x76, 0x08, 0x58, 0x86, 0x02, 0, 0, 0 | cpl=3 rflags=0x40202 => #AC
+vaddps zmm0, zmm1, dword ptr [rsi+2]{1to16} | cpl=3 rflags=0x40202 => #AC
+vaddpd zmm0, zmm1, qword ptr [rsi+4]{1to8} | cpl=3 rflags=0x40202 => #AC
+vaddps zmm0, zmm1, dword ptr [rsi+4]{1to16} | cpl=3 rflags=0x40202 =>!
+vbroadcastss zmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202 => #AC
+vmovups zmm0, zmmword ptr [rsi+4] | cpl=3 rflags=0x40202 =>!
+.byte 0x62, 0xf1, 0x7f, 0x48, 0x6f, 0x86, 0x01, 0, 0, 0 | cpl=3 rflags=0x40202 =>!
+.byte 0x62, 0xe1, 0x7c, 0x08, 0x11, 0x86, 0x04, 0, 0, 0 | cpl=3 rflags=0x40202 =>!
+vmovd dword ptr [rsi+2], xmm16 | cpl=3 rflags=0x40202 => #AC
+vmovq xmm16, qword ptr [rsi+4] | cpl=3 rflags=0x40202 => #AC
+vpmovzxbq zmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202 => #AC
+vpmovzxbd zmm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202 =>!
+.byte 0x62, 0xe3, 0x7d, 0x08, 0x1d, 0x86, 0x04, 0, 0, 0, 0 | cpl=3 rflags=0x40202 =>!
+vcvtph2ps zmm0, ymmword ptr [rsi+4] | cpl=3 rflags=0x40202 =>!
+.byte 0x62, 0xe2, 0x7d, 0x08, 0x13, 0x86, 0x04, 0, 0, 0 | cpl=3 rflags=0x40202 =>!
+# masked operands: an active element is checked, a fully masked-off operand reads nothing
+vmovss xmm16 {k1}, dword ptr [rsi+2] | cpl=3 rflags=0x40202 k1=1 => #AC
+vmovss xmm16 {k1}, dword ptr [rsi+2] | cpl=3 rflags=0x40202 k1=0 =>!
+vmovss dword ptr [rsi+2] {k1}, xmm16 | cpl=3 rflags=0x40202 k1=1 => #AC
+vmovss dword ptr [rsi+2] {k1}, xmm16 | cpl=3 rflags=0x40202 k1=0 =>!
+vaddps zmm0 {k1}, zmm1, dword ptr [rsi+2]{1to16} | cpl=3 rflags=0x40202 k1=0x8000 => #AC
+vaddps zmm0 {k1}, zmm1, dword ptr [rsi+2]{1to16} | cpl=3 rflags=0x40202 k1=0 =>!
+vmovups zmm0 {k1}, zmmword ptr [rsi+4] | cpl=3 rflags=0x40202 k1=0xFFFF =>!
+# opmask loads / stores (K21)
+kmovw k1, word ptr [rsi+1] | cpl=3 rflags=0x40202 => #AC
+.byte 0xc4, 0xe1, 0xf9, 0x90, 0x4e, 0x02 | cpl=3 rflags=0x40202 => #AC
+.byte 0xc4, 0xe1, 0xf8, 0x91, 0x4e, 0x04 | cpl=3 rflags=0x40202 => #AC
+.byte 0xc4, 0xe1, 0x79, 0x90, 0x4e, 0x01 | cpl=3 rflags=0x40202 =>!
+kmovw k1, word ptr [rsi+2] | cpl=3 rflags=0x40202 =>!
+# --- Intel APX: PUSH2 with RSP at 4 or 8 mod 16 is #GP (not #AC); PUSH2 aligned works at CPL3
+.byte 0x62, 0xf4, 0xf4, 0x18, 0xff, 0xf2 | cpl=3 rflags=0x40202 rsp=0x30029004 m+0x8FFC=0202040000000000 => #GP
+.byte 0x62, 0xf4, 0xf4, 0x18, 0xff, 0xf2 | cpl=3 rflags=0x40202 rsp=0x30029008 m+0x9000=0202040000000000 => #GP
+.byte 0x62, 0xf4, 0xf4, 0x18, 0xff, 0xf2 | cpl=3 rflags=0x40202 rcx=0xA rdx=0xB rsp=0x30029000 => rsp=0x30028FF0 m+0x8FF0=0B m+0x8FF8=0A
+# CCMPT dword ptr [rsi+2], ecx (EVEX map 4 39 /r, SCC = T): #AC; at [rsi+4] no fault
+.byte 0x62, 0xf4, 0x2c, 0x0a, 0x39, 0x4e, 0x02 | cpl=3 rflags=0x40202 => #AC
+.byte 0x62, 0xf4, 0x2c, 0x0a, 0x39, 0x4e, 0x04 | cpl=3 rflags=0x40202 =>!

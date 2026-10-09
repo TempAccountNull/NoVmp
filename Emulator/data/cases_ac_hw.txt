@@ -1,0 +1,246 @@
+# Alignment check (#AC, ledger U834): hardware cases, the i5-13600K at CPL3 under Windows (CR0.AM = 1)
+# against Unicorn at CPL3 (cpl=3) with CR0 = 40033h (emu-alltest's Windows CR0, AM included since
+# U834). RFLAGS.AC = 1 (rflags=0x40202) enables the check (SDM Vol3A 7.15, event 17): a data or
+# stack access whose address is not a multiple of its data type's alignment (Table 7-7) faults
+# before the access. Windows clears RFLAGS.AC while it dispatches the exception, so after a fault
+# the harness compares Unicorn's AC bit (docs\emu-alltest.md). RSI = MEM + 8000h, RDI = MEM + 9000h
+# (16-byte aligned). Run:
+#   emu-alltest --cases Emulator\data\cases_ac_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+#
+# --- the enabling conditions: AC = 0, a byte access, aligned accesses
+mov eax, dword ptr [rsi+1] | cpl=3 rflags=0x202
+mov eax, dword ptr [rsi+1] | cpl=3 rflags=0x40202
+mov al, byte ptr [rsi+1] | cpl=3 rflags=0x40202
+mov eax, dword ptr [rsi+4] | cpl=3 rflags=0x40202
+mov rax, qword ptr [rsi+8] | cpl=3 rflags=0x40202
+mov ax, word ptr [rsi+2] | cpl=3 rflags=0x40202
+mov eax, dword ptr [rsi+2] | cpl=3 rflags=0x50202
+pushfq; or qword ptr [rsp], 0x40000; popfq; mov eax, dword ptr [rsi+2] | cpl=3 rflags=0x202
+pushfq; and qword ptr [rsp], -0x40001; popfq; mov eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+# --- general-purpose operands: word 2, doubleword 4, quadword 8
+mov ax, word ptr [rsi+1] | cpl=3 rflags=0x40202
+mov rax, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+mov eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+mov dword ptr [rsi+2], eax | cpl=3 rflags=0x40202
+mov word ptr [rsi+1], fs | cpl=3 rflags=0x40202
+add dword ptr [rsi+2], eax | cpl=3 rflags=0x40202
+lock add dword ptr [rsi+2], eax | cpl=3 rflags=0x40202
+lock inc word ptr [rsi+1] | cpl=3 rflags=0x40202
+lock not dword ptr [rsi+2] | cpl=3 rflags=0x40202
+lock xadd qword ptr [rsi+4], rax | cpl=3 rflags=0x40202
+lock cmpxchg dword ptr [rsi+2], ecx | cpl=3 rflags=0x40202
+lock bts dword ptr [rsi+2], eax | cpl=3 rflags=0x40202
+xchg dword ptr [rsi+2], eax | cpl=3 rflags=0x40202
+xadd word ptr [rsi+1], ax | cpl=3 rflags=0x40202
+cmpxchg dword ptr [rsi+2], ecx | cpl=3 rflags=0x40202
+cmpxchg8b qword ptr [rsi+4] | cpl=3 rflags=0x40202
+lock cmpxchg8b qword ptr [rsi+4] | cpl=3 rflags=0x40202
+cmpxchg16b xmmword ptr [rsi+8] | cpl=3 rflags=0x40202
+not dword ptr [rsi+2] | cpl=3 rflags=0x40202
+neg qword ptr [rsi+4] | cpl=3 rflags=0x40202
+setz byte ptr [rsi+1] | cpl=3 rflags=0x40202
+cmovz eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+cmovnz eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+imul eax, dword ptr [rsi+2], 3 | cpl=3 rflags=0x40202
+movsx eax, word ptr [rsi+1] | cpl=3 rflags=0x40202
+movzx eax, word ptr [rsi+1] | cpl=3 rflags=0x40202
+movsxd rax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+lea eax, [rsi+1] | cpl=3 rflags=0x40202
+popcnt eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+movbe eax, dword ptr [rsi+1] | cpl=3 rflags=0x40202
+movbe qword ptr [rsi+4], rax | cpl=3 rflags=0x40202
+crc32 eax, dword ptr [rsi+1] | cpl=3 rflags=0x40202
+movnti qword ptr [rsi+4], rax | cpl=3 rflags=0x40202
+.byte 0x48, 0x0f, 0x38, 0xf9, 0x46, 0x04 | cpl=3 rflags=0x40202
+.byte 0x0f, 0x38, 0xf9, 0x46, 0x02 | cpl=3 rflags=0x40202
+andn eax, ebx, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+shlx eax, dword ptr [rsi+2], ebx | cpl=3 rflags=0x40202
+adcx eax, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+shl dword ptr [rsi+2], 1 | cpl=3 rflags=0x40202
+shld dword ptr [rsi+2], eax, 1 | cpl=3 rflags=0x40202
+div dword ptr [rsi+2] | cpl=3 rflags=0x40202 rdx=0 rax=1 m+0x8002=01000000
+mul word ptr [rsi+1] | cpl=3 rflags=0x40202
+bt dword ptr [rsi+1], eax | cpl=3 rflags=0x40202
+bt qword ptr [rsi+4], rax | cpl=3 rflags=0x40202
+bt word ptr [rsi+1], ax | cpl=3 rflags=0x40202
+bts dword ptr [rsi+2], 3 | cpl=3 rflags=0x40202
+lar eax, word ptr [rsi+1] | cpl=3 rflags=0x40202
+verr word ptr [rsi+1] | cpl=3 rflags=0x40202
+# --- stack (push/pop, CALL/RET, ENTER/LEAVE) with a misaligned RSP
+mov rbx, rsp; sub rsp, 4; push rax; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 2; push ax; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 1; push ax; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; pop rax; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; pushfq; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; push qword ptr [rsi]; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 8; push qword ptr [rsi+4]; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 8; pop qword ptr [rsi+4]; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; push 1; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 2; push fs; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; call qword ptr [rip]; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; ret; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; sub rsp, 4; enter 8, 0; mov rsp, rbx | cpl=3 rflags=0x40202
+mov rbx, rsp; mov rbp, rsp; sub rbp, 4; leave; mov rsp, rbx | cpl=3 rflags=0x40202
+# IRETQ / RETF from a frame at RSP = 4 mod 16 (built with AC = 0, then POPFQ sets AC): #AC on the
+# first pop; a frame that were popped would return to the UD2 at the end (#UD)
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x3c, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x2c, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x10, 0x02, 0x02, 0, 0, 0x48, 0x89, 0x4c, 0x24, 0x18, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x2b, 0, 0, 0, 0x68, 0x02, 0x02, 0x04, 0, 0x9d, 0x48, 0xcf, 0x0f, 0x0b | cpl=3
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x25, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x2c, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x68, 0x02, 0x02, 0x04, 0, 0x9d, 0x48, 0xcb, 0x0f, 0x0b | cpl=3
+# --- strings
+add rsi, 1; lodsw | cpl=3 rflags=0x40202
+add rsi, 2; lodsd | cpl=3 rflags=0x40202
+add rdi, 2; stosd | cpl=3 rflags=0x40202
+add rsi, 4; add rdi, 4; movsq | cpl=3 rflags=0x40202
+add rdi, 1; scasw | cpl=3 rflags=0x40202
+add rsi, 1; cmpsw | cpl=3 rflags=0x40202
+add rdi, 2; mov ecx, 2; rep stosd | cpl=3 rflags=0x40202
+add rdi, 2; xor ecx, ecx; rep stosd | cpl=3 rflags=0x40202
+# --- x87: m16 2, m32 4, m64 8, m80 (double extended and packed BCD) 8, environment / state 4
+fld dword ptr [rsi+2] | cpl=3 rflags=0x40202
+fld qword ptr [rsi+4] | cpl=3 rflags=0x40202
+.byte 0xdb, 0x6e, 0x04 | cpl=3 rflags=0x40202
+.byte 0xdb, 0x6e, 0x08 | cpl=3 rflags=0x40202
+.byte 0xd9, 0xe8, 0xdb, 0x7e, 0x04 | cpl=3 rflags=0x40202
+.byte 0xdf, 0x66, 0x02 | cpl=3 rflags=0x40202
+.byte 0xdf, 0x66, 0x04 | cpl=3 rflags=0x40202
+.byte 0xdf, 0x66, 0x08 | cpl=3 rflags=0x40202
+.byte 0xd9, 0xe8, 0xdf, 0x76, 0x04 | cpl=3 rflags=0x40202
+fild word ptr [rsi+1] | cpl=3 rflags=0x40202
+fild qword ptr [rsi+4] | cpl=3 rflags=0x40202
+fld1; fistp dword ptr [rsi+2] | cpl=3 rflags=0x40202
+fld1; fisttp word ptr [rsi+1] | cpl=3 rflags=0x40202
+fldcw word ptr [rsi+1] | cpl=3 rflags=0x40202 m+0x8000=007F03
+fnstcw word ptr [rsi+1] | cpl=3 rflags=0x40202
+fnstsw word ptr [rsi+1] | cpl=3 rflags=0x40202
+fadd dword ptr [rsi+2] | cpl=3 rflags=0x40202
+fiadd word ptr [rsi+1] | cpl=3 rflags=0x40202
+fnstenv [rsi+1] | cpl=3 rflags=0x40202
+fnstenv [rsi+2] | cpl=3 rflags=0x40202
+fnstenv [rsi+4] | cpl=3 rflags=0x40202
+data16 fnstenv [rsi+1] | cpl=3 rflags=0x40202
+data16 fnstenv [rsi+2] | cpl=3 rflags=0x40202
+fldenv [rsi+2] | cpl=3 rflags=0x40202
+fnsave [rsi+2] | cpl=3 rflags=0x40202
+fnsave [rsi+4] | cpl=3 rflags=0x40202
+fnsave [rsi+8] | cpl=3 rflags=0x40202
+frstor [rsi+2] | cpl=3 rflags=0x40202
+# --- FXSAVE / XSAVE family: #AC when not 4-byte aligned, else #GP (implementation-specific)
+fxsave [rsi+1] | cpl=3 rflags=0x40202
+fxsave [rsi+2] | cpl=3 rflags=0x40202
+fxsave [rsi+3] | cpl=3 rflags=0x40202
+fxsave [rsi+4] | cpl=3 rflags=0x40202
+fxsave [rsi+6] | cpl=3 rflags=0x40202
+fxsave [rsi+8] | cpl=3 rflags=0x40202
+fxsave [rsi+12] | cpl=3 rflags=0x40202
+fxsave [rsi+4] | cpl=3 rflags=0x202
+fxrstor [rsi+2] | cpl=3 rflags=0x40202
+fxrstor [rsi+4] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsave [rsi+0x41] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsave [rsi+0x42] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsave [rsi+0x44] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsave [rsi+0x50] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsave [rsi+0x60] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xrstor [rsi+0x42] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsavec [rsi+0x42] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsavec [rsi+0x48] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsaveopt [rsi+0x42] | cpl=3 rflags=0x40202
+mov eax, 3; xor edx, edx; xsaveopt [rsi+0x44] | cpl=3 rflags=0x40202
+# --- SSE / AVX: 2/4/8-byte operands are checked; 16/32-byte ones never (aligned forms #GP)
+movups xmm0, xmmword ptr [rsi+1] | cpl=3 rflags=0x40202
+movups xmm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+movups xmmword ptr [rsi+4], xmm0 | cpl=3 rflags=0x40202
+movdqu xmm0, xmmword ptr [rsi+1] | cpl=3 rflags=0x40202
+lddqu xmm0, xmmword ptr [rsi+1] | cpl=3 rflags=0x40202
+movaps xmm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+addps xmm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+movntps xmmword ptr [rsi+4], xmm0 | cpl=3 rflags=0x40202
+punpcklbw xmm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+pcmpistri xmm0, xmmword ptr [rsi+1], 0 | cpl=3 rflags=0x40202
+pcmpestri xmm0, xmmword ptr [rsi+1], 0 | cpl=3 rflags=0x40202
+movss xmm0, dword ptr [rsi+1] | cpl=3 rflags=0x40202
+movss dword ptr [rsi+2], xmm0 | cpl=3 rflags=0x40202
+movsd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+addss xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+addsd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+comiss xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+roundss xmm0, dword ptr [rsi+2], 0 | cpl=3 rflags=0x40202
+cvtps2pd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+cvtsi2sd xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+cvttsd2si eax, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+movd xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+movq xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+movq qword ptr [rsi+4], xmm0 | cpl=3 rflags=0x40202
+movlps xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+movhpd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+movhps qword ptr [rsi+4], xmm0 | cpl=3 rflags=0x40202
+movddup xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+insertps xmm0, dword ptr [rsi+2], 0 | cpl=3 rflags=0x40202
+extractps dword ptr [rsi+2], xmm0, 0 | cpl=3 rflags=0x40202
+pinsrw xmm0, word ptr [rsi+1], 0 | cpl=3 rflags=0x40202
+pinsrd xmm0, dword ptr [rsi+2], 0 | cpl=3 rflags=0x40202
+pinsrb xmm0, byte ptr [rsi+1], 0 | cpl=3 rflags=0x40202
+pextrd dword ptr [rsi+2], xmm0, 0 | cpl=3 rflags=0x40202
+pextrw word ptr [rsi+1], xmm0, 0 | cpl=3 rflags=0x40202
+pmovzxbq xmm0, word ptr [rsi+1] | cpl=3 rflags=0x40202
+pmovzxbw xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+ldmxcsr dword ptr [rsi+2] | cpl=3 rflags=0x40202 m+0x8000=00801F0000
+stmxcsr dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vldmxcsr dword ptr [rsi+2] | cpl=3 rflags=0x40202 m+0x8000=00801F0000
+vstmxcsr dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vmovups ymm0, ymmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vmovups xmm0, xmmword ptr [rsi+1] | cpl=3 rflags=0x40202
+vaddps ymm0, ymm1, ymmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vfmadd231ps xmm0, xmm1, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vpermq ymm0, ymmword ptr [rsi+4], 0 | cpl=3 rflags=0x40202
+vbroadcastf128 ymm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vinsertf128 ymm0, ymm0, xmmword ptr [rsi+4], 1 | cpl=3 rflags=0x40202
+vextractf128 xmmword ptr [rsi+4], ymm0, 1 | cpl=3 rflags=0x40202
+vmovss xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vmovsd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vmovq xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vmovd dword ptr [rsi+2], xmm0 | cpl=3 rflags=0x40202
+vmovlps xmm0, xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vaddss xmm0, xmm1, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vbroadcastss xmm0, dword ptr [rsi+1] | cpl=3 rflags=0x40202
+vbroadcastsd ymm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vpbroadcastw xmm0, word ptr [rsi+1] | cpl=3 rflags=0x40202
+vpbroadcastd xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vpbroadcastq ymm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vpbroadcastb xmm0, byte ptr [rsi+1] | cpl=3 rflags=0x40202
+vpmovzxbq ymm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vpmovzxbd xmm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+vpinsrw xmm0, xmm0, word ptr [rsi+1], 0 | cpl=3 rflags=0x40202
+vpextrq qword ptr [rsi+4], xmm0, 0 | cpl=3 rflags=0x40202
+# type 11 (F16C) and type 12 (VSIB) never report #AC; VMASKMOV / VPMASKMOV report none either
+vcvtph2ps xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vcvtph2ps ymm0, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vcvtps2ph qword ptr [rsi+4], xmm0, 0 | cpl=3 rflags=0x40202
+vpcmpeqd xmm1, xmm1, xmm1; vpgatherdd xmm0, dword ptr [rsi+xmm2*4+1], xmm1 | cpl=3 rflags=0x40202
+vpcmpeqd xmm1, xmm1, xmm1; vpmaskmovd xmm0, xmm1, xmmword ptr [rsi+4] | cpl=3 rflags=0x40202
+vpcmpeqd xmm1, xmm1, xmm1; vmaskmovps xmmword ptr [rsi+2], xmm1, xmm0 | cpl=3 rflags=0x40202
+# --- MMX: 4/8-byte operands; the #AC comes before the MMX state transition (TOP, tags unchanged)
+movq mm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+movd mm0, dword ptr [rsi+2] | cpl=3 rflags=0x40202
+paddb mm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+.byte 0x0f, 0x60, 0x46, 0x02 | cpl=3 rflags=0x40202
+pshufw mm0, qword ptr [rsi+4], 0 | cpl=3 rflags=0x40202
+movntq qword ptr [rsi+4], mm0 | cpl=3 rflags=0x40202
+cvtpi2ps xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+maskmovq mm0, mm1 | cpl=3 rflags=0x40202
+add rdi, 4; pcmpeqb mm1, mm1; maskmovq mm0, mm1 | cpl=3 rflags=0x40202
+# --- order: a non-canonical address is #GP first; an unmapped page is #AC first (not #PF)
+mov rax, 0x8000000000000001; mov ecx, dword ptr [rax] | cpl=3 rflags=0x40202
+mov eax, dword ptr [0x1001] | cpl=3 rflags=0x40202
+mov eax, dword ptr [0x1000] | cpl=3 rflags=0x40202
+# --- no data access: prefetch / CLFLUSH, a byte, the stack at 8
+prefetcht0 byte ptr [rsi+1] | cpl=3 rflags=0x40202
+clflush byte ptr [rsi+1] | cpl=3 rflags=0x40202
+mov rbx, rsi; inc rbx; xlatb | cpl=3 rflags=0x40202
+# --- documented deviations (docs\quirks.md): the i5-13600K reports #AC for MASKMOVDQU (SDM: type 4,
+# no #AC), and none for SGDT / SIDT / SLDT / STR / SMSW (SDM: #AC(0) for an unaligned reference)
+add rdi, 4; pcmpeqb xmm1, xmm1; maskmovdqu xmm0, xmm1 | cpl=3 rflags=0x40202  # known deviation: MASKMOVDQU-AC
+sgdt [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC
+sidt [rsi+6] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC
+sldt word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC
+sldt word ptr [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC
+str word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC
+smsw word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC

@@ -2675,6 +2675,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #endif /* __Use_Original_Qemu (U52) */
             /* 64 bit case */
             rsp = env->regs[R_ESP];
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            /* CALL far at CPL3 to the same level: the stack pushes are checked (#AC) (U834) */
+            x86_ac_check(env, rsp - 8, 7, GETPC());
+#endif /* __Use_Original_Qemu (U834) */
 #if __Use_Original_Qemu != 1 /* ours (U708) */
             far_probe_pushes(env, 0, rsp, ~(target_ulong)0, 8, 2, cpl, GETPC());
 #endif /* __Use_Original_Qemu (U708) */
@@ -2720,6 +2724,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
             }
 #endif /* __Use_Original_Qemu (U591/U707) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+            x86_ac_check(env, ssp + ((sp - (shift ? 4 : 2)) & sp_mask), shift ? 3 : 1, GETPC());
+#endif /* __Use_Original_Qemu (U834) */
 #if __Use_Original_Qemu != 1 /* ours (U708) */
             far_probe_pushes(env, ssp, sp, sp_mask, shift ? 4 : 2, 2, cpl, GETPC());
 #endif /* __Use_Original_Qemu (U708) */
@@ -3167,6 +3174,13 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
         ssp = 0;    /* SS.base is not used in 64-bit mode */
     }
 #endif /* __Use_Original_Qemu (U591) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    /*
+     * NoVmp (ledger U834): RET far / IRET at CPL3 pop their frame from the CPL3 stack: those
+     * pops are checked (#AC, operand size), before the first one.
+     */
+    x86_ac_check(env, shift == 2 ? sp : ssp + (sp & sp_mask), (2u << shift) - 1, retaddr);
+#endif /* __Use_Original_Qemu (U834) */
     new_eflags = 0; /* avoid warning */
 #ifdef TARGET_X86_64
     if (shift == 2) {

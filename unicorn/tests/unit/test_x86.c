@@ -20104,6 +20104,120 @@ static void test_x86_rg_rdrand_host(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U834: run 'ucode' at CPL3 (IRETQ from code_start with 'rflags'); the vector of the first
+ * exception (or -1) and the RIP it was taken at
+ */
+#define RG_AC_USER (code_start + 0x100)
+static int rg_ac_run(uc_engine *uc, nk_intr_t *intr, const char *ucode, size_t len,
+                     uint64_t rflags, uint64_t *rip)
+{
+    static const char iretq[] = "\x48\xcf";
+
+    OK(uc_mem_write(uc, code_start, iretq, 2));
+    OK(uc_mem_write(uc, RG_AC_USER, ucode, len));
+    tb2_iretq_frame(uc, RG_AC_USER, rflags);
+    nk_setreg(uc, UC_X86_REG_RSP, TB2_KSTACK);
+    nk_setreg(uc, UC_X86_REG_RBX, TB2_DATA);
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_emu_start(uc, code_start, RG_AC_USER + len, 0, 0));
+    *rip = nk_reg(uc, UC_X86_REG_RIP);
+    return intr->count ? (int)intr->intno : -1;
+}
+
+/*
+ * U834: #AC (SDM Vol3A 7.15) needs CR0.AM = 1, EFLAGS.AC = 1 and CPL = 3 together; the fault
+ * is taken at the instruction (RIP unchanged). The same code at the same address is
+ * retranslated when CR0.AM or EFLAGS.AC changes (TB flag HF_AC_MASK = AC AND AM), including
+ * an AC change by POPF inside the user code; at CPL0 nothing is checked.
+ */
+static void test_x86_rg_ac_conditions(void)
+{
+    static const char ld[] = "\x8b\x43\x01";                         /* mov eax, [rbx+1] */
+    static const char ld4[] = "\x8b\x43\x04";                        /* mov eax, [rbx+4] */
+    /* pushfq; and dword [rsp], ~40000h; popfq; mov eax, [rbx+1] */
+    static const char clr[] = "\x9c\x81\x24\x24\xff\xff\xfb\xff\x9d\x8b\x43\x01";
+    /* pushfq; or dword [rsp], 40000h; popfq; mov eax, [rbx+1] */
+    static const char set[] = "\x9c\x81\x0c\x24\x00\x00\x04\x00\x9d\x8b\x43\x01";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uint64_t cr0 = nk_reg(uc, UC_X86_REG_CR0) & ~(1ULL << 18), rip;
+    int v;
+
+    nk_setreg(uc, UC_X86_REG_CR0, cr0);                              /* AM = 0 */
+    v = rg_ac_run(uc, &intr, ld, 3, 0x40202, &rip);
+    TEST_CHECK(v == -1);
+    TEST_MSG("AM=0 AC=1 CPL3: %d", v);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0 | (1ULL << 18));               /* AM = 1 */
+    v = rg_ac_run(uc, &intr, ld, 3, 0x40202, &rip);
+    TEST_CHECK(v == 17 && rip == RG_AC_USER);
+    TEST_MSG("AM=1 AC=1 CPL3: %d at %" PRIx64, v, rip);
+    TEST_CHECK(rg_ac_run(uc, &intr, ld4, 3, 0x40202, &rip) == -1);  /* aligned */
+    TEST_CHECK(rg_ac_run(uc, &intr, ld, 3, 0x202, &rip) == -1);     /* AC = 0 */
+    nk_setreg(uc, UC_X86_REG_CR0, cr0);                              /* AM = 0 again */
+    TEST_CHECK(rg_ac_run(uc, &intr, ld, 3, 0x40202, &rip) == -1);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0 | (1ULL << 18));
+    v = rg_ac_run(uc, &intr, clr, sizeof(clr) - 1, 0x40202, &rip);  /* POPF clears AC */
+    TEST_CHECK(v == -1);
+    v = rg_ac_run(uc, &intr, set, sizeof(set) - 1, 0x202, &rip);    /* POPF sets AC */
+    TEST_CHECK(v == 17 && rip == RG_AC_USER + 9);
+    TEST_MSG("POPF sets AC: %d at %" PRIx64, v, rip);
+    OK(uc_close(uc));
+
+    /* CPL0 with CR0.AM = 1 and EFLAGS.AC = 1: no check */
+    uc = tb2_sys_open("\x8b\x43\x01", 3, &intr);
+    nk_setreg(uc, UC_X86_REG_CR0, nk_reg(uc, UC_X86_REG_CR0) | (1ULL << 18));
+    nk_setreg(uc, UC_X86_REG_RFLAGS, 0x40202);
+    nk_setreg(uc, UC_X86_REG_RBX, TB2_DATA);
+    OK(uc_emu_start(uc, code_start, code_start + 3, 0, 0));
+    TEST_CHECK(intr.count == 0);
+    OK(uc_close(uc));
+}
+
+/*
+ * U834: the instructions whose memory accesses run in helpers check alignment there:
+ * FXSAVE (#AC when not 4-byte aligned, else #GP when not 16-byte aligned: the i5-13600K's
+ * implementation-specific choice), FNSAVE (area 4-byte aligned), IRETQ and RETF at CPL3 (the
+ * frame pops), and a far CALL to the same privilege level (the pushes).
+ */
+static void test_x86_rg_ac_helpers(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        int expect;
+        const char *what;
+    } t[] = {
+        {"\x0f\xae\x43\x02", 4, 17, "fxsave [rbx+2]"},
+        {"\x0f\xae\x43\x08", 4, 13, "fxsave [rbx+8]"},
+        {"\x0f\xae\x43\x10", 4, -1, "fxsave [rbx+16]"},
+        {"\xdd\x73\x02", 3, 17, "fnsave [rbx+2]"},
+        {"\xdd\x73\x04", 3, -1, "fnsave [rbx+4]"},
+        {"\xdb\x6b\x04", 3, 17, "fld tword [rbx+4]"},
+        {"\xdb\x6b\x08", 3, -1, "fld tword [rbx+8]"},
+        /* RSP = TB2_USTACK - 4: iretq / retfq pop from a misaligned stack */
+        {"\x48\x83\xec\x04\x48\xcf", 6, 17, "sub rsp, 4; iretq"},
+        {"\x48\x83\xec\x04\x48\xcb", 6, 17, "sub rsp, 4; retfq"},
+        /* call far qword [rbx] (m16:64 = 0, 23h) from RSP - 4 */
+        {"\x48\x83\xec\x04\x48\xff\x1b", 7, 17, "sub rsp, 4; call far [rbx]"},
+    };
+    nk_intr_t intr;
+    uc_engine *uc;
+    uint64_t rip, fptr[2] = {0, 0x23}; /* m16:64 (offset, selector) */
+    size_t i;
+    int v;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc = tb2_sys_open("\x90", 1, &intr);
+        nk_setreg(uc, UC_X86_REG_CR0, nk_reg(uc, UC_X86_REG_CR0) | (1ULL << 18));
+        OK(uc_mem_write(uc, TB2_DATA, fptr, sizeof(fptr)));
+        v = rg_ac_run(uc, &intr, t[i].code, t[i].len, 0x40202, &rip);
+        TEST_CHECK(v == t[i].expect);
+        TEST_MSG("%s: %d (expected %d) at %" PRIx64, t[i].what, v, t[i].expect, rip);
+        OK(uc_close(uc));
+    }
+}
+
 /* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
@@ -20386,4 +20500,6 @@ TEST_LIST = {
     {"test_x86_rg_rdrand_seeded", test_x86_rg_rdrand_seeded},
     {"test_x86_rg_rdrand_context", test_x86_rg_rdrand_context},
     {"test_x86_rg_rdrand_host", test_x86_rg_rdrand_host},
+    {"test_x86_rg_ac_conditions", test_x86_rg_ac_conditions},
+    {"test_x86_rg_ac_helpers", test_x86_rg_ac_helpers},
     {NULL, NULL}};

@@ -113,11 +113,11 @@ namespace at
 {
 	// U540: Windows x64 runs with CR0 = 80050033h (PG|AM|WP|NE|ET|MP|PE). PG cannot be set
 	// (Unicorn's memory is a flat map without page tables); WP acts only on supervisor writes
-	// through paging; AM acts only with RFLAGS.AC = 1 at CPL3 and QEMU raises no alignment-check
-	// #AC (EXCP11_ALGN is never raised). PE|MP|ET|NE = 33h is the part that acts: NE = 1, so a
-	// pending unmasked x87 exception raises #MF (not FERR#) like on the host; MP only matters with
-	// CR0.TS = 1 (never set here).
-	constexpr uint64_t WINDOWS_CR0 = 0x33;
+	// through paging. PE|MP|ET|NE = 33h: NE = 1, so a pending unmasked x87 exception raises #MF
+	// (not FERR#) like on the host; MP only matters with CR0.TS = 1 (never set here).
+	// U834: AM (bit 18) acts since Unicorn raises the alignment-check exception: with RFLAGS.AC = 1
+	// at CPL3 (a cpl=3 case) a misaligned data access is #AC on both engines (cases_ac_hw).
+	constexpr uint64_t WINDOWS_CR0 = 0x40033;
 
 	// U540: the host's XCR0 (the value the OS wrote with XSETBV); 0 when CPUID.1:ECX.OSXSAVE = 0
 	// (XGETBV would #UD, the host has no XCR0)
@@ -446,7 +446,7 @@ namespace at
 			};
 			if ( !opt.expect_only )
 				show( "hardware", hw_xcr0, hw_cr0, opt.xcr0 ? "--xcr0" : host_x ? "host XGETBV(0)" : "Unicorn reset: host has no OSXSAVE",
-					  opt.cr0 ? "--cr0" : "Windows x64 PE|MP|ET|NE" );
+					  opt.cr0 ? "--cr0" : "Windows x64 PE|MP|ET|NE|AM" );
 			show( "expected-value", exp_xcr0, exp_cr0, opt.xcr0 ? "--xcr0" : "Unicorn reset", opt.cr0 ? "--cr0" : "Unicorn reset" );
 			// U835 (D8): the RDRAND/RDSEED source of every Unicorn engine of this run
 			if ( opt.rdrand == UC_X86_RDRAND_HOST ) std::printf( "rdrand: host DRNG (--HostSeed)\n" );
@@ -623,6 +623,10 @@ namespace at
 				hw_open = true;
 			}
 			hw.run( p, *st_in, h );
+			// U834: Windows clears RFLAGS.AC while it dispatches a user-mode exception (observed for
+			// #AC, #GP, #UD, ...: the context the VEH resumes has AC = 0), so after a hardware fault
+			// the host's AC bit is the OS's, not the CPU's: the fault state compares Unicorn's AC
+			if ( h.faulted && u.faulted ) h.s->rflags = ( h.s->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
 			bool same_fault = h.faulted == u.faulted && h.vector == u.vector;
 			std::string hd = case_fields( *st_in, *h.s ), ud = case_fields( *st_in, *u.s ), x = case_fields( *h.s, *u.s );
 			bool same = same_fault && x.empty();

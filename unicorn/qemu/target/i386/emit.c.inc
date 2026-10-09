@@ -433,6 +433,11 @@ static inline int vector_len(DisasContext *s, X86DecodedInsn *decode)
 #define EVEX_DESC_ANY       (1u << 17)
 #if __Use_Original_Qemu != 1 /* ours (U193) */
 #define EVEX_DESC_NOFS      (1u << 18)  /* E*NF masked store: probe every element (U193) */
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+/* the instruction reports #AC: the helper checks a 2/4/8-byte operand (U834) */
+#define EVEX_DESC_AC        (1u << 19)
+#define EVEX_AC(s)          ((s)->ac_insn ? EVEX_DESC_AC : 0u)
+#endif /* __Use_Original_Qemu (U834) */
 #endif /* __Use_Original_Qemu (U193) */
 
 static TCGv_ptr evex_env_ptr(DisasContext *s, int ofs)
@@ -511,7 +516,7 @@ static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp 
             p = evex_env_ptr(s, base);
             gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, kmask,
                                   tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz, nelem) |
-                                                   EVEX_DESC_ANY));
+                                                   EVEX_DESC_ANY | EVEX_AC(s)));
             tcg_temp_free_ptr(tcg_ctx, p);
         } else {
             gen_load_sse(s, s->tmp4, s->evex_esz, base, false);
@@ -546,7 +551,7 @@ static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp 
         }
         p = evex_env_ptr(s, op->offset - xmm_offset(op->ot));
         gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, fm,
-                              tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz, g)));
+                              tcg_constant_i32(tcg_ctx, EVEX_DESC(s->evex_esz, g) | EVEX_AC(s)));
         tcg_temp_free_ptr(tcg_ctx, p);
         tcg_temp_free_i64(tcg_ctx, t);
         tcg_temp_free_i64(tcg_ctx, fm);
@@ -560,7 +565,8 @@ static void gen_evex_load(DisasContext *s, X86DecodedInsn *decode, X86DecodedOp 
         desc = EVEX_DESC(ctz32(bytes / nelem), nelem);
     }
     p = evex_env_ptr(s, op->offset - xmm_offset(op->ot));
-    gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, kmask, tcg_constant_i32(tcg_ctx, desc));
+    gen_helper_evex_mload(tcg_ctx, cpu_env, p, s->A0, kmask,
+                          tcg_constant_i32(tcg_ctx, desc | EVEX_AC(s)));
     tcg_temp_free_ptr(tcg_ctx, p);
 }
 
@@ -946,7 +952,7 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 #endif /* __Use_Original_Qemu (U193) */
             gen_helper_evex_mstore(tcg_ctx, cpu_env, p, s->A0,
                                    kmask ? kmask : tcg_constant_i64(tcg_ctx, -1),
-                                   tcg_constant_i32(tcg_ctx, desc));
+                                   tcg_constant_i32(tcg_ctx, desc | EVEX_AC(s)));
             tcg_temp_free_ptr(tcg_ctx, p);
         } else {
             int dst = ZMM_OFFSET(op0->n);
@@ -4110,6 +4116,11 @@ static void gen_MASKMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     if (s->prefix & PREFIX_DATA) {
         gen_helper_maskmov_xmm(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, s->A0);
     } else {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+        /* MASKMOVQ: #AC for its 8-byte operand (SDM Vol3B Table 25-8); MASKMOVDQU is
+           exception type 4 (no #AC row, Vol2A Table 2-21) (U834) */
+        gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
         gen_helper_maskmov_mmx(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, s->A0);
     }
 }
@@ -4121,8 +4132,14 @@ static void gen_MOVBE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 
     /* M operand type does not load/store */
     if (decode->e.op0 == X86_TYPE_M) {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+        gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
         tcg_gen_qemu_st_tl(tcg_ctx, s->T0, s->A0, s->mem_index, ot | MO_BE);
     } else {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+        gen_ac_check_ot(s, s->A0, ot);
+#endif /* __Use_Original_Qemu (U834) */
         tcg_gen_qemu_ld_tl(tcg_ctx, s->T0, s->A0, s->mem_index, ot | MO_BE);
     }
 }
@@ -4166,6 +4183,9 @@ static void gen_MOVDIRI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check_ot(s, s->A0, decode->op[0].ot);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_st_tl(tcg_ctx, s->T0, s->A0, s->mem_index, decode->op[0].ot);
 }
 
@@ -4444,6 +4464,9 @@ static void gen_MOVQ(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 
     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, decode->op[2].offset);
     if (decode->op[0].has_ea) {
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+        gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
         tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
     } else {
         /*
@@ -5420,6 +5443,9 @@ static void gen_VINSERTPS_r(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
 static void gen_VINSERTPS_m(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 3);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
     gen_vinsertps(s, env, decode);
 }
@@ -5527,6 +5553,9 @@ static void gen_VMOVLPx_ld(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int vec_len = vector_len(s, decode);
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
     tcg_gen_gvec_mov(tcg_ctx, MO_64, decode->op[0].offset, decode->op[1].offset, vec_len, vec_len);
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, OP_PTR0, offsetof(ZMMReg, ZMM_Q(0)));
@@ -5536,6 +5565,9 @@ static void gen_VMOVLPx_st(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, OP_PTR2, offsetof(ZMMReg, ZMM_Q(0)));
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
 }
 
@@ -5544,6 +5576,9 @@ static void gen_VMOVSD_ld(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     TCGv_i64 zero = tcg_constant_i64(tcg_ctx, 0);
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 7);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
     tcg_gen_st_i64(tcg_ctx, zero, OP_PTR0, offsetof(ZMMReg, ZMM_Q(1)));
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, OP_PTR0, offsetof(ZMMReg, ZMM_Q(0)));
@@ -5564,6 +5599,9 @@ static void gen_VMOVSS_ld(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int vec_len = vector_len(s, decode);
 
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 3);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
     tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, decode->op[0].offset, vec_len, vec_len, 0);
     tcg_gen_st_i32(tcg_ctx, s->tmp2_i32, OP_PTR0, offsetof(ZMMReg, ZMM_L(0)));
@@ -5573,6 +5611,9 @@ static void gen_VMOVSS_st(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     tcg_gen_ld_i32(tcg_ctx, s->tmp2_i32, OP_PTR2, offsetof(ZMMReg, ZMM_L(0)));
+#if __Use_Original_Qemu != 1 /* ours (U834) */
+    gen_ac_check(s, s->A0, 3);
+#endif /* __Use_Original_Qemu (U834) */
     tcg_gen_qemu_st_i32(tcg_ctx, s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
 }
 

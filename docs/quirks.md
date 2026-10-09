@@ -115,6 +115,24 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - Hardware cases: `cases_backport_t1.txt` lines 308–309 (64-bit mode lines 305–306: #GP(0) on both).
 - Ledger: U460.
 
+### MASKMOVDQU-AC
+
+- Behaviour: MASKMOVDQU (66 0F F7) with the destination [RDI] not 8-byte aligned, CR0.AM = 1, EFLAGS.AC = 1, CPL = 3.
+- SDM: Vol2B MASKMOVDQU, "Other Exceptions: See Table 2-21, Exceptions Type 4" - type 4 has no #AC row (Vol2A Table 2-21, unlike types 3/5/6); Vol3A 7.15 names the 128-bit unaligned moves whose #AC "may or may not" be generated (MOVDQU, MOVUPS, MOVUPD, LDDQU), not MASKMOVDQU.
+- Emulator: no #AC (the selected bytes are stored).
+- i5-13600K: #AC (STATUS_DATATYPE_MISALIGNMENT) for [RDI] at 4 mod 8.
+- Hardware cases: `Emulator/data/cases_ac_hw.txt` line 240 (MASKMOVQ, whose #AC row the SDM has, Vol3B Table 25-8, matches: lines 237-238).
+- Ledger: U834.
+
+### SxDT-STR-SMSW-NO-AC
+
+- Behaviour: SGDT, SIDT, SLDT m16, STR m16 and SMSW m16 at CPL3 (Windows leaves CR4.UMIP = 0) with CR0.AM = 1, EFLAGS.AC = 1 and a misaligned operand.
+- SDM: Vol2B SGDT / SIDT / SLDT / STR / SMSW, Protected Mode Exceptions: "#AC(0) If alignment checking is enabled and an unaligned memory reference is made while CPL = 3"; Vol3A 7.15: "Storing the contents of the GDTR, IDTR, LDTR, or task register in memory while at privilege level 3 can generate an alignment violation"; Table 7-7: "GDTR, IDTR, LDTR, or Task Register Contents" 4, word 2.
+- Emulator: #AC(0) when the operand address is not a multiple of 4 (SGDT, SIDT, SLDT, STR) or 2 (SMSW).
+- i5-13600K: no #AC at any offset (+1, +2, +4, +6 tried); the stores are made.
+- Hardware cases: `Emulator/data/cases_ac_hw.txt` lines 241-246.
+- Ledger: U834.
+
 ## Host state (not SDM deviations)
 
 | tag | cases | reason |
@@ -122,6 +140,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 | `# host state: RDRAND/RDSEED values` | hwcheck_gate1 lines 82–84, 101–102 | random values (and, for the two `shr` lines, the flags computed from them) differ by nature; CF = 1 and the operand width are what the cases check |
 | `# host state: CPUID initial APIC ID` | hwcheck_gate1 line 68 | CPUID.1:EBX[31:24] is the APIC ID of the core the thread happens to run on; the profile holds one core's value |
 | `# host state: the host's GDTR/IDTR ...` | cases_fix3 lines 220–221 | SGDT/SIDT store the host's descriptor-table base and limit (Windows' kernel addresses), the emulator its own; the fault and which bytes get stored are checked by the expected-value lines next to them (U704) |
+| (no tag: the harness handles it) | every hardware case that faults with RFLAGS.AC = 1 (`cases_ac_hw.txt`) | Windows clears RFLAGS.AC while it dispatches a user-mode exception (seen for #AC, #GP and #UD: the context the VEH resumes has AC = 0), so after a hardware fault the host's AC bit is the OS's; emu-alltest compares Unicorn's AC bit there (U834, `docs/emu-alltest.md`) |
 | `# host state: WRUSS under host CR4.CET = 1` | cases_reach lines 275–276, cases_tsx_cet lines 29–30 | Windows runs with CR4.CET = 1, so WRUSS at CPL3 is #GP(0); the emulator has CR4.CET = 0, where the SDM gives #UD ("#UD If CR4.CET = 0") |
 
 ## SDM undefined, our choice
@@ -150,4 +169,8 @@ Where the SDM leaves the result open the emulator copies the i5-13600K. These ar
 | task switch step 15 token check (U754) | Vol3A 10.3 step 15 writes `expected_token_value = SSP ... shadow_stack_lock_cmpxchg8b(SSP, ...)` with the old SSP, while Table 10-1 and Vol1 18.2.4 require the token at the new task's SSP ("Address in Shadow stack token does not match SSP value from TSS") | the token at the 32-bit SSP from TSS offset 104 is checked and set busy (#TS(new TSS) otherwise); step 15's "IF (verifyCsLIP == 0) tempSSP = IA32_PL3_SSP" is applied literally (also for a new CPL < 3 reached without a frame); **not measured** | U754 |
 | SSP after SYSRET / SYSEXIT to compatibility mode (U753) | Vol2B: "SSP := IA32_PL3_SSP" without a width or 4-GB check | the full 64-bit IA32_PL3_SSP value; shadow-stack accesses in compatibility mode use its low 32 bits (Vol1 18.2.1); **not measured** | U753 |
 | XINUSE of CET_U / CET_S for XSAVES (U756) | Vol1 13.6: a component in its initial configuration may be saved with XSTATE_BV[i] = 0 or 1 | value-based like the other components: XSTATE_BV[11] = 1 iff IA32_U_CET or IA32_PL3_SSP is non-zero, XSTATE_BV[12] = 1 iff an IA32_PLi_SSP (i < 3) is non-zero; no modified optimization; **not measured** (XSAVES is CPL0-only) | U756 |
+| a misaligned FXSAVE / FXRSTOR / XSAVE / XSAVEC / XSAVEOPT / XRSTOR operand with alignment checking enabled (U834) | Vol2A FXSAVE / Vol2D XSAVE: "If the alignment check exception (#AC) is enabled (and the CPL is 3), signaling of #AC is not guaranteed and may vary with implementation ... #AC might be signaled for a 2-byte misalignment, whereas a general protection exception might be signaled for all other misalignments" | #AC(0) when the address is not 4-byte aligned, #GP(0) when it is but not 16 / 64-byte aligned (`cases_ac_hw.txt`: +1/+2/+3/+6 #AC, +4/+8/+12 #GP) | U834 |
+| unaligned 16/32-byte loads and stores (MOVUPS, MOVDQU, LDDQU, VMOVUPS, ...) with alignment checking (U834) | Vol3A 7.15: "alignment violations may or may not be generated depending on processor implementation when data addresses are not aligned on an 8-byte boundary"; Vol1 14.x: AVX "16 and 32-byte memory references will not generate #AC(0)" | no #AC; 2/4/8-byte operands (scalars, broadcast elements, MOVQ/MOVD, PINSR/PEXTR, PMOVZX/SX partial loads) are checked | U834 |
+| packed BCD (FBLD/FBSTP m80), 64-bit bit strings, m16:64 far pointers under alignment checking (U834) | Table 7-7 lists double extended 8, bit strings "2 or 4 depending on the operand-size attribute", far pointers 16:16 2 / 16:32 4; not these | m80 BCD 8 (as the i5-13600K), a 64-bit bit string 8 (its operand-size unit), m16:64 offset 8 then selector 2 (per part, as the smaller far pointers) | U834 |
+| order of #AC and the other faults of one instruction (U834) | Vol3A Table 7-2 does not order the faults raised while an instruction executes | a non-canonical first byte #GP/#SS(0) first, then #AC, then a page-crossing non-canonical last byte (U706) and #PF; a pending x87 #MF before; a faulting MMX instruction makes no x87 state transition (TOP, tags unchanged). The i5-13600K is not repeatable for a dword at 0000_7FFF_FFFF_FFFDh: #AC in 107 of 120 runs, #GP in 13; the emulator takes #AC and the line is not in the hardware file | U834 |
 | ENDBR64 with a REX2 prefix (F3 REX2(M0 = 1) 1E FA) (U758) | the APX spec does not mention ENDBR64; 3.1.2.1 makes REX2 applicable to every map-1 opcode outside rows 3xH/8xH and the XSAVE/XRSTOR family | an ENDBRANCH for the IBT tracker while REX2 is usable (CR4.OSXSAVE, XCR0[19]); the payload bits select nothing (as REX on F3 0F 1E FA; XED's ENDBR64 pattern has no REX2 restriction); with REX2 unusable, after a REX, with M0 = 0 or with the ENDBR32 encoding it is not an ENDBRANCH; **not measured** (the i5-13600K has no APX) | U758 |
