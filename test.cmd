@@ -105,6 +105,12 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq_post.txt" 
 rem AVX512-FP16 (ledger U330-U339): EVEX maps 5/6 and the FP16 forms of map 3 vs the independent
 rem SDM model ref_evex_fp16.py, Unicorn only with the AVX-512 opt-in (incl. UC_X86_AVX512_FP16).
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_fp16.txt" --avx512 --xcr0 0xE7 --expect-only
+rem AVX512_VBMI2, VPMULTISHIFTQB (AVX512_VBMI), AVX512_VNNI, AVX512_BF16 (ledger U550-U557) vs the
+rem independent SDM model ref_evex_m4a.py, Unicorn only: with every UC_X86_AVX512_* bit, and with
+rem AVX10.1 alone (every form is "<feature> OR AVX10.1", U371).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m4a.txt" --avx512 --xcr0 0xE7 --expect-only
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m4a.txt" --avx10 1 --xcr0 0xE7 --expect-only
+call :py_check "%ROOT%Emulator\tools\isa\ref_evex_m4a.py" --selftest
 rem Intel AVX10 (ledger U370-U376): AVX10.2 alone (no AVX512* CPUID bits) runs the AVX-512 forms
 rem and the AVX10.2 BF16 / MINMAX / VCOMX / saturating-conversion instructions vs the spec model
 rem ref_avx10_a.py (AVX10.2 spec 361050-007), Unicorn only. AVX10.1 alone (U371) runs the M1 EVEX
@@ -163,6 +169,11 @@ rem host's VEX.256 / VEX.128 / legacy forms with the same data (cases_evex_m4b_h
 rem Unicorn must match the i5-13600K (0 differing), and the CPU's results must match the model (--hwcmp).
 call :hw_zero cases_evex_m4b_hw
 call :py_hwcmp "%ROOT%Emulator\tools\isa\ref_evex_m4b.py" "%TESTS%\cases_evex_m4b_hw.log"
+rem ledger U555/U552/U553/U554/U557: the parts of the AVX512_VNNI / VBMI2 / VBMI / BF16 model the i5-13600K
+rem can run (cases_evex_m4a_hw.txt, ref_evex_m4a.py --hwgen): VEX AVX-VNNI, SHLD/SHRD r16/r32/r64, ROR r64,
+rem VFMADD231SS with MXCSR 9FC0h (one VDPBF16PS step); Unicorn == CPU (0 differing) and CPU == model (--hwcmp).
+call :hw_zero cases_evex_m4a_hw
+call :py_hwcmp "%ROOT%Emulator\tools\isa\ref_evex_m4a.py" "%TESTS%\cases_evex_m4a_hw.log"
 
 echo.
 if !FAILED! NEQ 0 (

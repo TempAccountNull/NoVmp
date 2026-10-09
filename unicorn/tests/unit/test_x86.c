@@ -15254,6 +15254,304 @@ static void test_x86_m4b_evex_gating(void)
 }
 /* ---- end U570-U575 (mb_) ---- */
 
+/*
+ * ---- NoVmp U550-U559: AVX512_VBMI2, VPMULTISHIFTQB, AVX512_VNNI, AVX512_BF16 (prefix m4a_) ----
+ * UC_CTL_X86_AVX512 bits UC_X86_AVX512_VBMI2 (0x400), _VNNI (0x800), _BF16 (0x1000): read-back,
+ * CPUID.(7,0):ECX[6] / ECX[11] / CPUID.(7,1):EAX[5]. Gating of every form at EVEX.512 and
+ * EVEX.128 (SDM Vol2C CPUID columns "<feature> OR AVX10.1", "(<feature> AND AVX512VL) OR
+ * AVX10.1"): bit off -> #UD (also with every other new bit), bit on -> runs, the bit alone (no
+ * AVX512VL) -> EVEX.512 only, AVX10.1 alone (no AVX512* bit, U371) -> every length, a strict
+ * CPUID profile without the bit -> #UD. Values: 64-element VPCOMPRESSB / VPEXPANDB (U551) and the
+ * VDPBF16PS FTZ boundary (U557); every form's results: Emulator/data/cases_evex_m4a.txt
+ * (ref_evex_m4a.py, an independent SDM model).
+ */
+#define M4A_DATA 0x200000
+#define M4A_BASE (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+#define M4A_ALLNEW (UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI | UC_X86_AVX512_BF16 |              \
+                    UC_X86_AVX512_VBMI)
+
+typedef struct M4aCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} M4aCtx;
+
+static void m4a_open(M4aCtx *c, int avx512, int avx10, const uc_x86_cpuid *prof, size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, M4A_DATA, 0x1000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the exception vector (6 = #UD) or -1 */
+static int m4a_run(M4aCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void m4a_cpuid(M4aCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    uint64_t v;
+
+    v = leaf;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = sub;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(m4a_run(c, "\x0f\xa2", 2) == -1);
+    OK(uc_reg_read(c->uc, UC_X86_REG_RAX, &v));
+    r[0] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RBX, &v));
+    r[1] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RCX, &v));
+    r[2] = (uint32_t)v;
+    OK(uc_reg_read(c->uc, UC_X86_REG_RDX, &v));
+    r[3] = (uint32_t)v;
+}
+
+/* U550 / U555 / U556: the mask bits, their CPUID bits, default off */
+static void test_x86_m4a_optin(void)
+{
+    static const struct {
+        int bit;
+        uint32_t sub, reg, mask;    /* CPUID.(7, sub) register (0 EAX .. 3 EDX), bit */
+    } m[] = {
+        {UC_X86_AVX512_VBMI2, 0, 2, 1u << 6},
+        {UC_X86_AVX512_VNNI, 0, 2, 1u << 11},
+        {UC_X86_AVX512_BF16, 1, 0, 1u << 5},
+    };
+    M4aCtx c;
+    uint32_t r[4];
+    size_t i;
+    int on;
+
+    for (i = 0; i < sizeof(m) / sizeof(m[0]); i++) {
+        m4a_open(&c, M4A_BASE, 0, NULL, 0);
+        m4a_cpuid(&c, 7, m[i].sub, r);
+        TEST_CHECK_(!(r[m[i].reg] & m[i].mask), "bit %x off: %08x", m[i].bit, r[m[i].reg]);
+        OK(uc_close(c.uc));
+        m4a_open(&c, M4A_BASE | m[i].bit, 0, NULL, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (M4A_BASE | m[i].bit));
+        m4a_cpuid(&c, 7, 0, r);
+        TEST_CHECK(r[0] >= m[i].sub);           /* the leaf-7 subleaf count */
+        m4a_cpuid(&c, 7, m[i].sub, r);
+        TEST_CHECK_((r[m[i].reg] & m[i].mask) != 0, "bit %x on: %08x", m[i].bit, r[m[i].reg]);
+        OK(uc_close(c.uc));
+        /* alone: implies AVX512F */
+        m4a_open(&c, m[i].bit, 0, NULL, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK(on == (UC_X86_AVX512_F | m[i].bit));
+        OK(uc_close(c.uc));
+    }
+    /* the default model has none of them */
+    m4a_open(&c, 0, 0, NULL, 0);
+    m4a_cpuid(&c, 7, 0, r);
+    TEST_CHECK(!(r[2] & ((1u << 6) | (1u << 11))));
+    m4a_cpuid(&c, 7, 1, r);
+    TEST_CHECK(!(r[0] & (1u << 5)));
+    OK(uc_close(c.uc));
+}
+
+/* every form: register operands zmm1, zmm2 (vvvv), zmm3; EVEX.512 and EVEX.128 */
+static const struct {
+    int bit;
+    const char *z, *x;
+    size_t len;
+    const char *name;
+} m4a_forms[] = {
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\x7d\x48\x62\xcb", "\x62\xf2\x7d\x08\x62\xcb", 6, "VPEXPANDB"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xfd\x48\x62\xcb", "\x62\xf2\xfd\x08\x62\xcb", 6, "VPEXPANDW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\x7d\x48\x63\xcb", "\x62\xf2\x7d\x08\x63\xcb", 6, "VPCOMPRESSB"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xfd\x48\x63\xcb", "\x62\xf2\xfd\x08\x63\xcb", 6, "VPCOMPRESSW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xed\x48\x70\xcb", "\x62\xf2\xed\x08\x70\xcb", 6, "VPSHLDVW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\x6d\x48\x71\xcb", "\x62\xf2\x6d\x08\x71\xcb", 6, "VPSHLDVD"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xed\x48\x71\xcb", "\x62\xf2\xed\x08\x71\xcb", 6, "VPSHLDVQ"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xed\x48\x72\xcb", "\x62\xf2\xed\x08\x72\xcb", 6, "VPSHRDVW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\x6d\x48\x73\xcb", "\x62\xf2\x6d\x08\x73\xcb", 6, "VPSHRDVD"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf2\xed\x48\x73\xcb", "\x62\xf2\xed\x08\x73\xcb", 6, "VPSHRDVQ"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\xed\x48\x70\xcb\x05", "\x62\xf3\xed\x08\x70\xcb\x05", 7,
+     "VPSHLDW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\x6d\x48\x71\xcb\x05", "\x62\xf3\x6d\x08\x71\xcb\x05", 7,
+     "VPSHLDD"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\xed\x48\x71\xcb\x05", "\x62\xf3\xed\x08\x71\xcb\x05", 7,
+     "VPSHLDQ"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\xed\x48\x72\xcb\x05", "\x62\xf3\xed\x08\x72\xcb\x05", 7,
+     "VPSHRDW"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\x6d\x48\x73\xcb\x05", "\x62\xf3\x6d\x08\x73\xcb\x05", 7,
+     "VPSHRDD"},
+    {UC_X86_AVX512_VBMI2, "\x62\xf3\xed\x48\x73\xcb\x05", "\x62\xf3\xed\x08\x73\xcb\x05", 7,
+     "VPSHRDQ"},
+    {UC_X86_AVX512_VBMI, "\x62\xf2\xed\x48\x83\xcb", "\x62\xf2\xed\x08\x83\xcb", 6,
+     "VPMULTISHIFTQB"},
+    {UC_X86_AVX512_VNNI, "\x62\xf2\x6d\x48\x50\xcb", "\x62\xf2\x6d\x08\x50\xcb", 6, "VPDPBUSD"},
+    {UC_X86_AVX512_VNNI, "\x62\xf2\x6d\x48\x51\xcb", "\x62\xf2\x6d\x08\x51\xcb", 6, "VPDPBUSDS"},
+    {UC_X86_AVX512_VNNI, "\x62\xf2\x6d\x48\x52\xcb", "\x62\xf2\x6d\x08\x52\xcb", 6, "VPDPWSSD"},
+    {UC_X86_AVX512_VNNI, "\x62\xf2\x6d\x48\x53\xcb", "\x62\xf2\x6d\x08\x53\xcb", 6, "VPDPWSSDS"},
+    {UC_X86_AVX512_BF16, "\x62\xf2\x6f\x48\x72\xcb", "\x62\xf2\x6f\x08\x72\xcb", 6,
+     "VCVTNE2PS2BF16"},
+    {UC_X86_AVX512_BF16, "\x62\xf2\x7e\x48\x72\xcb", "\x62\xf2\x7e\x08\x72\xcb", 6,
+     "VCVTNEPS2BF16"},
+    {UC_X86_AVX512_BF16, "\x62\xf2\x6e\x48\x52\xcb", "\x62\xf2\x6e\x08\x52\xcb", 6, "VDPBF16PS"},
+};
+
+#define M4A_NFORMS (sizeof(m4a_forms) / sizeof(m4a_forms[0]))
+
+/* run every form at 512 and 128 bits on one engine; want512 / want128: -1 runs, 6 #UD */
+static void m4a_check_all(int avx512, int avx10, const uc_x86_cpuid *prof, size_t nprof,
+                          int only_bit, int want512, int want128, const char *what)
+{
+    M4aCtx c;
+    size_t i;
+    int r;
+
+    m4a_open(&c, avx512, avx10, prof, nprof);
+    for (i = 0; i < M4A_NFORMS; i++) {
+        if (only_bit && m4a_forms[i].bit != only_bit) {
+            continue;
+        }
+        r = m4a_run(&c, m4a_forms[i].z, m4a_forms[i].len);
+        TEST_CHECK_(r == want512, "%s: %s EVEX.512 -> %d", what, m4a_forms[i].name, r);
+        r = m4a_run(&c, m4a_forms[i].x, m4a_forms[i].len);
+        TEST_CHECK_(r == want128, "%s: %s EVEX.128 -> %d", what, m4a_forms[i].name, r);
+    }
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_m4a_gating(void)
+{
+    static const int bits[] = {UC_X86_AVX512_VBMI2, UC_X86_AVX512_VBMI, UC_X86_AVX512_VNNI,
+                               UC_X86_AVX512_BF16};
+    /* strict profiles with AVX512F|DQ|BW|VL and with / without VBMI, VBMI2, VNNI, BF16 */
+    static const uc_x86_cpuid prof_on[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 1, 0xc0030020, (1u << 1) | (1u << 6) | (1u << 11), 0},
+        {0x7, 1, 1u << 5, 0, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    static const uc_x86_cpuid prof_off[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 1, 0xc0030020, 0, 0},
+        {0x7, 1, 0, 0, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    size_t i;
+
+    /* no AVX-512 at all, and AVX512F|DQ|BW|VL without the extension bits: #UD */
+    m4a_check_all(0, 0, NULL, 0, 0, 6, 6, "no AVX-512");
+    m4a_check_all(M4A_BASE, 0, NULL, 0, 0, 6, 6, "F|DQ|BW|VL");
+    for (i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
+        /* every other new bit but this one: still #UD */
+        m4a_check_all(M4A_BASE | (M4A_ALLNEW & ~bits[i]), 0, NULL, 0, bits[i], 6, 6, "others");
+        /* with the bit: every length */
+        m4a_check_all(M4A_BASE | bits[i], 0, NULL, 0, bits[i], -1, -1, "bit + VL");
+        /* the bit alone (implies AVX512F, no AVX512VL): EVEX.512 only */
+        m4a_check_all(bits[i], 0, NULL, 0, bits[i], -1, 6, "bit alone");
+    }
+    /* AVX10.1 alone ("OR AVX10.1", U371 translator copies): every form at every length */
+    m4a_check_all(0, UC_X86_AVX10_1, NULL, 0, 0, -1, -1, "AVX10.1");
+    /* strict CPUID profiles: the profile must show the bit (and the opt-in must add it) */
+    m4a_check_all(M4A_BASE | M4A_ALLNEW, 0, prof_on, 5, 0, -1, -1, "strict profile with");
+    m4a_check_all(M4A_BASE | M4A_ALLNEW, 0, prof_off, 5, 0, 6, 6, "strict profile without");
+    m4a_check_all(M4A_BASE, 0, prof_on, 5, 0, 6, 6, "profile bits without the opt-in");
+}
+
+/* U551 (64 elements: no shift by 64) and U557 (FTZ after rounding) values */
+static void test_x86_m4a_values(void)
+{
+    /* VPCOMPRESSB [rsi], zmm1 (no mask: all 64 bytes); VPEXPANDB zmm1{k1}, [rsi] */
+    static const char compress[] = "\x62\xf2\x7d\x48\x63\x0e";
+    static const char expand[] = "\x62\xf2\x7d\x49\x62\x0e";
+    /* VDPBF16PS xmm1, xmm2, xmm3 */
+    static const char dpbf16[] = "\x62\xf2\x6e\x08\x52\xcb";
+    uint8_t z[64], m[64], r[64];
+    uint32_t acc[4], s1[4], s2[4], out[16];
+    uint64_t rsi = M4A_DATA + 0x100, k = ~0ull;
+    M4aCtx c;
+    int i;
+
+    m4a_open(&c, M4A_BASE | M4A_ALLNEW, 0, NULL, 0);
+    for (i = 0; i < 64; i++) {
+        z[i] = (uint8_t)(0xA0 + i);
+        m[i] = 0x55;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_RSI, &rsi));
+    OK(uc_mem_write(c.uc, rsi, m, 64));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, z));
+    TEST_CHECK(m4a_run(&c, compress, 6) == -1);
+    OK(uc_mem_read(c.uc, rsi, r, 64));
+    TEST_CHECK(memcmp(r, z, 64) == 0);
+    /* expand with k1 = all ones: the 64 bytes back into zmm1 (zmm1 cleared first) */
+    memset(r, 0, 64);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, r));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k));
+    TEST_CHECK(m4a_run(&c, expand, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, r));
+    TEST_CHECK(memcmp(r, z, 64) == 0);
+    /*
+     * VDPBF16PS: acc 2^-126, low pair 2^-75 * -2^-75 = -2^-150: 2^-126 - 2^-150 is exact and
+     * below 2^-126 (tiny after rounding with an unbounded exponent): flushed to +0 (the
+     * i5-13600K VFMADD231SS with MXCSR.FTZ = DAZ = 1 gives +0, ref_evex_m4a.py --hwcmp);
+     * lane 1: 2^-126 - 2^-151 rounds to 2^-126 (not tiny); lane 2: 1 + 2*3 + 4*8 = 39;
+     * lane 3: a NaN in src1 low wins over src2 high (Table 5-4)
+     */
+    acc[0] = 0x00800000; s1[0] = 0x00001A00; s2[0] = 0x00009A00;
+    acc[1] = 0x00800000; s1[1] = 0x00001980; s2[1] = 0x00009A00;
+    acc[2] = 0x3F800000; s1[2] = 0x40004080; s2[2] = 0x40404100;
+    acc[3] = 0x3F800000; s1[3] = 0x3F807FA0; s2[3] = 0x7FC13F80;
+    memset(out, 0xEE, sizeof(out));
+    memcpy(out, acc, 16);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, out));
+    memset(out, 0, sizeof(out));
+    memcpy(out, s1, 16);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, out));
+    memcpy(out, s2, 16);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, out));
+    TEST_CHECK(m4a_run(&c, dpbf16, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM1, out));
+    TEST_CHECK(out[0] == 0x00000000);
+    TEST_CHECK(out[1] == 0x00800000);
+    TEST_CHECK(out[2] == 0x421C0000);
+    TEST_CHECK(out[3] == 0x7FE00000);
+    TEST_MSG("%08x %08x %08x %08x", out[0], out[1], out[2], out[3]);
+    for (i = 4; i < 16; i++) {
+        TEST_CHECK(out[i] == 0);                /* DEST[MAXVL-1:128] := 0 */
+    }
+    OK(uc_close(c.uc));
+}
+/* ---- end U550-U559 (m4a_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -15481,4 +15779,7 @@ TEST_LIST = {
     {"test_x86_m4b_vp2i_optin", test_x86_m4b_vp2i_optin},
     {"test_x86_m4b_vp2i_gating", test_x86_m4b_vp2i_gating},
     {"test_x86_m4b_evex_gating", test_x86_m4b_evex_gating},
+    {"test_x86_m4a_optin", test_x86_m4a_optin},
+    {"test_x86_m4a_gating", test_x86_m4a_gating},
+    {"test_x86_m4a_values", test_x86_m4a_values},
     {NULL, NULL}};
