@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 07:12 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `e58b2b0 alltest_baseline: refresh for U591/U594/U595 (10 intended rows)`). Do not edit by hand._
+_Generated 2026-10-09 09:10 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `35e1e6b U544 usage comments without the automatic --xcr0/--cr0; REP LODS load sensitivity in quirks.md`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
