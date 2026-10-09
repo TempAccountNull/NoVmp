@@ -147,6 +147,12 @@ Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )
 # Intel AMX (ledger U170-U180) vs the SDM model (ref_amx.py), Unicorn only with the AMX opt-in (the
 # host has no AMX); tile programs store their results to memory.
 Add-Exp 'cases_amx' 'cases_amx' 'amx expect' @( '--amx' )
+# ISE 319433-062 AMX families (ledger U720-U727): AMX-MOVRS (VEX + APX-promoted EVEX), AMX-FP8,
+# AMX-AVX512 (needs the AVX-512 state), XSAVES / XRSTORS of the AMX components, IA32_XSS - vs
+# ref_amx.py --cases2 (independent model of the ISE / SDM text), Unicorn only at CPL0 (cpl=3 lines
+# for the XSAVES / XRSTORS #GP); the model's hand-derived self-test runs as well.
+Add-Exp 'cases_amx2' 'cases_amx2' 'amx expect' @( '--amx', '--avx512', '--apx' )
+Add-PySelftest 'ref_amx_selftest' 'amx tools' 'ref_amx.py'
 # plan 1.15d milestone M1: EVEX instructions (moves, integer/logic, FP with {er}, compares into k,
 # broadcasts; masking, {1toN}, disp8*N, fault suppression, #UD) vs the SDM model ref_evex_m1.py.
 Add-Exp 'cases_evex_m1' 'cases_evex_m1' 'evex expect' @( '--avx512' )

@@ -16852,6 +16852,395 @@ static void test_x86_ax4_jmpabs(void)
 }
 /* ---- end U640-U689 (ax4_) ---- */
 
+/*
+ * ---- NoVmp U720-U727: AMX-FP8 / AMX-AVX512 / AMX-MOVRS (ISE 319433-062), XSAVES / XRSTORS,
+ * IA32_XSS (SDM Vol1 13.11-13.14) (prefix amx2_; uses the AmxT machine / ax_ helpers of the
+ * U170-U180 block) ----
+ * Expected values: Emulator/tools/isa/ref_amx.py --cinc2 (independent model of the ISE text) for
+ * the exception matrix (x86_amx2_vectors.inc); the numerics of every new instruction are the
+ * expected-value file Emulator/data/cases_amx2.txt (emu-alltest); the tests below compute their
+ * expectations from the ISE / SDM text they cite.
+ */
+#include "x86_amx2_vectors.inc"
+
+#define AMX2_AVX512 (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+
+static void amx2_open(AmxT *a, int mask, int avx512, int apx, const uc_x86_cpuid *prof,
+                      size_t nprof, int strict)
+{
+    memset(a, 0, sizeof(*a));
+    a->mode = UC_MODE_64;
+    a->pc = AX_CODE;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &a->uc));
+    OK(uc_ctl_set_cpu_model(a->uc, UC_CPU_X86_MAX));
+    if (mask) {
+        OK(uc_ctl_set_x86_amx(a->uc, mask));
+    }
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(a->uc, AMX2_AVX512));
+    }
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(a->uc, UC_X86_APX_F));
+    }
+    if (nprof) {
+        OK(uc_ctl_set_x86_cpuid(a->uc, prof, nprof));
+        OK(uc_ctl_set_x86_cpuid_strict(a->uc, strict));
+    }
+    OK(uc_mem_map(a->uc, AX_CODE, AX_CODE_SIZE, UC_PROT_ALL));
+    OK(uc_mem_map(a->uc, AX_DATA, AX_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_hook_add(a->uc, &a->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &a->cap, 1, 0));
+}
+
+static void amx2_cr0_ts(AmxT *a, int on)
+{
+    uint64_t cr0 = 0;
+    OK(uc_reg_read(a->uc, UC_X86_REG_CR0, &cr0));
+    cr0 = on ? (cr0 | 8) : (cr0 & ~8ULL);
+    OK(uc_reg_write(a->uc, UC_X86_REG_CR0, &cr0));
+}
+
+/* encodings (ISE 319433-062 opcode tables; the same bytes as ref_amx.py enc_f8 / enc_row) */
+static const uint8_t amx2_tdpbf8ps_012[] = {0xc4, 0xe5, 0x68, 0xfd, 0xc1};   /* tmm0, tmm1, tmm2 */
+static const uint8_t amx2_tdphf8ps_012[] = {0xc4, 0xe5, 0x69, 0xfd, 0xc1};
+static const uint8_t amx2_tilemovrow_z1_t1_i0[] = {0x62, 0xf3, 0x7d, 0x48, 0x07, 0xc9, 0x00};
+static const uint8_t amx2_tilemovrow_z1_t1_rdx[] = {0x62, 0xf2, 0x6d, 0x48, 0x4a, 0xc9};
+static const uint8_t amx2_tcvtrowd2ps_z1_t1_i0[] = {0x62, 0xf3, 0x7e, 0x48, 0x07, 0xc9, 0x00};
+static const uint8_t amx2_tileloaddrs_t1[] = {0xc4, 0xe2, 0x7b, 0x4a, 0x0c, 0x0e};  /* [rsi+rcx] */
+static const uint8_t amx2_xsaves[] = {0x48, 0x0f, 0xc7, 0x2e};   /* xsaves64 [rsi] */
+static const uint8_t amx2_xrstors[] = {0x48, 0x0f, 0xc7, 0x1e};  /* xrstors64 [rsi] */
+
+/* U720/U721: UC_X86_AMX_FP8 / AVX512 / MOVRS -> CPUID.(1EH,1):EAX[4] / [7] / [8] only; a strict
+   profile's 1EH.1 decides which of the families the translator offers */
+static void test_x86_amx2_optin(void)
+{
+    static const struct {
+        int mask;
+        uint32_t eax;
+    } t[] = {
+        {0, 0}, {UC_X86_AMX_TILE, 0}, {UC_X86_AMX_FP8, 0x10}, {UC_X86_AMX_AVX512, 0x80},
+        {UC_X86_AMX_MOVRS, 0x100}, {UC_X86_AMX_FP8 | UC_X86_AMX_INT8, 0x11},
+        {UC_X86_AMX_ALL, 0x19f},
+    };
+    /* leaf 1: AVX / XSAVE / OSXSAVE (every VEX form needs CPUID.1:ECX.AVX under a strict profile,
+       U68); leaf 0DH.0 keeps XCR0 18:17 / 7:5 (U120); 1EH.1 = AMX_FP8 only, then AVX512 | MOVRS */
+    uc_x86_cpuid prof[] = {
+        {0x0, 0, 0x1e, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0, 0, (1u << 26) | (1u << 27) | (1u << 28), (1u << 25) | (1u << 26)},
+        {0x7, 0, 0, 0, 0, (1u << 22) | (1u << 24) | (1u << 25)},
+        {0xd, 0, 0x600e7, 0x2b00, 0x2b00, 0},
+        {0x1e, 0, 1, 0x4010, 0, 0},
+        {0x1e, 1, 0x10, 0, 0, 0},
+    };
+    static const int spec[] = {0, 1, 4, 1, 1, 4, 2, 1, 4, -1};
+    uint8_t cfg[64];
+    AmxT a;
+    uint32_t r[4];
+    size_t i;
+    int mask, k, vec;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        amx2_open(&a, t[i].mask, 0, 0, NULL, 0, 0);
+        OK(uc_ctl_get_x86_amx(a.uc, &mask));
+        TEST_CHECK(mask == (t[i].mask ? (t[i].mask | UC_X86_AMX_TILE) : 0));
+        if (t[i].mask) {                    /* without AMX the basic level stays below 1EH */
+            ax_cpuid(&a, 0x1e, 1, r);
+            TEST_CHECK_(r[0] == t[i].eax && r[1] == 0 && r[2] == 0 && r[3] == 0,
+                        "mask %x: 1EH.1:EAX = %x", t[i].mask, r[0]);
+        }
+        ax_cpuid(&a, 0x7, 0, r);
+        TEST_CHECK(((r[3] >> 24) & 1) == (t[i].mask != 0));
+        ax_cpuid(&a, 0x7, 1, r);            /* nothing new in leaf 7 (FP16 / COMPLEX as before) */
+        TEST_CHECK_(((r[0] >> 21) & 1) == ((t[i].mask & UC_X86_AMX_FP16) != 0) &&
+                    ((r[3] >> 8) & 1) == ((t[i].mask & UC_X86_AMX_COMPLEX) != 0),
+                    "mask %x: 7.1 EAX %x EDX %x", t[i].mask, r[0], r[3]);
+        ax_close(&a);
+    }
+    /* U721: CPUID (1EH, 1) of a profile is its sub-leaf 1 (was sub-leaf 0, EAX = 1) */
+    ax_cfg_make(cfg, 0, spec);
+    for (k = 0; k < 2; k++) {
+        prof[5].eax = k ? 0x180 : 0x10;
+        amx2_open(&a, UC_X86_AMX_ALL, 1, 0, prof, sizeof(prof) / sizeof(prof[0]), 1);
+        ax_cpuid(&a, 0x1e, 1, r);
+        TEST_CHECK_(r[0] == prof[5].eax, "1EH.1:EAX = %x", r[0]);
+        ax_cpuid(&a, 0x1e, 0, r);
+        TEST_CHECK(r[0] == 1 && r[1] == 0x4010);
+        ax_cfg_set(&a, cfg);
+        vec = ax_run(&a, amx2_tdpbf8ps_012, sizeof(amx2_tdpbf8ps_012));
+        TEST_CHECK_(vec == (k ? 6 : -1), "profile %d: TDPBF8PS vector %d", k, vec);
+        ax_cfg_set(&a, cfg);
+        vec = ax_run(&a, amx2_tilemovrow_z1_t1_i0, sizeof(amx2_tilemovrow_z1_t1_i0));
+        TEST_CHECK_(vec == (k ? -1 : 6), "profile %d: TILEMOVROW vector %d", k, vec);
+        ax_cfg_set(&a, cfg);
+        ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+        ax_set(&a, UC_X86_REG_RCX, 4);
+        vec = ax_run(&a, amx2_tileloaddrs_t1, sizeof(amx2_tileloaddrs_t1));
+        TEST_CHECK_(vec == (k ? -1 : 6), "profile %d: TILELOADDRS vector %d", k, vec);
+        /* the profile hides AVX512F: EVEX is decoded for AMX-AVX512 (U725), VPADDD zmm is #UD */
+        {
+            static const uint8_t vpaddd[] = {0x62, 0xf1, 0x7d, 0x48, 0xfe, 0xc0};
+            TEST_CHECK(ax_run(&a, vpaddd, sizeof(vpaddd)) == 6);
+        }
+        ax_close(&a);
+    }
+}
+
+/* U722-U725: the exception matrix of ref_amx.py --cinc2 */
+static void test_x86_amx2_exceptions(void)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(x86_amx2_evecs) / sizeof(x86_amx2_evecs[0]); i++) {
+        const struct x86_amx2_evec *v = &x86_amx2_evecs[i];
+        uint8_t cfg[64], post[64], out[64];
+        AmxT a;
+        int vec;
+
+        ax_hex(v->cfg, cfg, 64);
+        ax_hex(v->post_cfg, post, 64);
+        amx2_open(&a, v->mask, v->avx512, v->apx, NULL, 0, 0);
+        if (v->xcr0) {
+            OK(uc_reg_write(a.uc, UC_X86_REG_XCR0, &v->xcr0));
+        }
+        ax_cfg_set(&a, cfg);
+        if (v->xfd) {
+            ax_msr_write(&a, 0x1c4, v->xfd);
+        }
+        if (!v->osxsave) {
+            uint64_t cr4 = 0;
+            OK(uc_reg_read(a.uc, UC_X86_REG_CR4, &cr4));
+            cr4 &= ~(1ULL << 18);
+            OK(uc_reg_write(a.uc, UC_X86_REG_CR4, &cr4));
+        }
+        if (v->cr0_ts) {
+            amx2_cr0_ts(&a, 1);
+        }
+        ax_set(&a, UC_X86_REG_RSI, AX_DATA + 0x1000);
+        ax_set(&a, UC_X86_REG_RDI, AX_DATA + 0x4000);
+        ax_set(&a, UC_X86_REG_RCX, 64);
+        ax_set(&a, UC_X86_REG_RDX, v->rdx);
+        vec = ax_run(&a, v->code, v->code_len);
+        TEST_CHECK_(vec == v->vec, "%s: vector %d, expected %d", v->name, vec, v->vec);
+        if (v->mask) {
+            TEST_CHECK_(ax_msr_read(&a, 0x1c5) == v->xfd_err, "%s: IA32_XFD_ERR %llx", v->name,
+                        (unsigned long long)ax_msr_read(&a, 0x1c5));
+        }
+        ax_cfg_get(&a, out);
+        TEST_CHECK_(memcmp(out, post, 64) == 0, "%s: TILECFG afterwards", v->name);
+        ax_close(&a);
+    }
+}
+
+/* U722/U724/U725: one hand-derived result per family (the full numerics: cases_amx2.txt) */
+static void test_x86_amx2_values(void)
+{
+    static const int spec1[] = {0, 1, 4, 1, 1, 4, 2, 1, 4, -1};
+    static const int spec2[] = {1, 3, 16, -1};
+    uint8_t cfg[64], tile[1024], zmm[64], mem[64];
+    uint64_t xfd_err;
+    AmxT a;
+    uint32_t d;
+    int i;
+
+    amx2_open(&a, UC_X86_AMX_ALL, 1, 0, NULL, 0, 0);
+    /* TDPBF8PS: E5M2 (1, 2, -1, 0.5) . (1, 1, 1, 4) = 1 + 2 - 1 + 2 = 4.0 (ISE Table 1-12) */
+    ax_cfg_make(cfg, 0, spec1);
+    ax_cfg_set(&a, cfg);
+    memset(tile, 0, sizeof(tile));
+    tile[0] = 0x3c; tile[1] = 0x40; tile[2] = 0xbc; tile[3] = 0x38;
+    ax_tile_set(&a, 1, tile);
+    tile[0] = 0x3c; tile[1] = 0x3c; tile[2] = 0x3c; tile[3] = 0x44;
+    ax_tile_set(&a, 2, tile);
+    memset(tile, 0, sizeof(tile));
+    ax_tile_set(&a, 0, tile);
+    TEST_CHECK(ax_run(&a, amx2_tdpbf8ps_012, sizeof(amx2_tdpbf8ps_012)) == -1);
+    ax_tile_get(&a, 0, tile);
+    memcpy(&d, tile, 4);
+    TEST_CHECK_(d == 0x40800000, "TDPBF8PS = %08x", d);
+    /* TDPHF8PS: E4M3 448 (7Eh) squared, three zero products: 200704 = 48440000h */
+    memset(tile, 0, sizeof(tile));
+    tile[0] = 0x7e;
+    ax_tile_set(&a, 1, tile);
+    ax_tile_set(&a, 2, tile);
+    memset(tile, 0, sizeof(tile));
+    ax_tile_set(&a, 0, tile);
+    TEST_CHECK(ax_run(&a, amx2_tdphf8ps_012, sizeof(amx2_tdphf8ps_012)) == -1);
+    ax_tile_get(&a, 0, tile);
+    memcpy(&d, tile, 4);
+    TEST_CHECK_(d == 0x48440000, "TDPHF8PS = %08x", d);
+    /* TCVTROWD2PS zmm1, tmm1, 0: 7FFFFFFFh -> 2^31, 1, -1, 1000001h -> 2^24 (RNE ties to even);
+       dwords 4..15 beyond colsb / 4 are zero */
+    ax_cfg_make(cfg, 0, spec2);
+    ax_cfg_set(&a, cfg);
+    memset(tile, 0, sizeof(tile));
+    {
+        static const uint32_t in[4] = {0x7fffffff, 1, 0xffffffff, 0x01000001};
+        memcpy(tile, in, 16);
+    }
+    ax_tile_set(&a, 1, tile);
+    memset(zmm, 0xab, 64);
+    OK(uc_reg_write(a.uc, UC_X86_REG_ZMM1, zmm));
+    TEST_CHECK(ax_run(&a, amx2_tcvtrowd2ps_z1_t1_i0, sizeof(amx2_tcvtrowd2ps_z1_t1_i0)) == -1);
+    OK(uc_reg_read(a.uc, UC_X86_REG_ZMM1, zmm));
+    {
+        static const uint32_t want[4] = {0x4f000000, 0x3f800000, 0xbf800000, 0x4b800000};
+        TEST_CHECK(memcmp(zmm, want, 16) == 0 && m0_all_bytes(zmm, 16, 48, 0));
+    }
+    /* TILEMOVROW zmm1, tmm1, edx: row_index = EDX & 0xf (FFFFFFF1h -> row 1), 16 bytes, rest 0 */
+    for (i = 0; i < 16; i++) {
+        tile[64 + i] = (uint8_t)(0x40 + i);
+    }
+    ax_tile_set(&a, 1, tile);
+    ax_cfg_set(&a, cfg);
+    ax_set(&a, UC_X86_REG_RDX, 0xfffffff1);
+    TEST_CHECK(ax_run(&a, amx2_tilemovrow_z1_t1_rdx, sizeof(amx2_tilemovrow_z1_t1_rdx)) == -1);
+    OK(uc_reg_read(a.uc, UC_X86_REG_ZMM1, zmm));
+    TEST_CHECK(memcmp(zmm, tile + 64, 16) == 0 && m0_all_bytes(zmm, 16, 48, 0));
+    /* row 3 >= rows: zmm1 := 0 */
+    ax_set(&a, UC_X86_REG_RDX, 3);
+    memset(zmm, 0xab, 64);
+    OK(uc_reg_write(a.uc, UC_X86_REG_ZMM1, zmm));
+    TEST_CHECK(ax_run(&a, amx2_tilemovrow_z1_t1_rdx, sizeof(amx2_tilemovrow_z1_t1_rdx)) == -1);
+    OK(uc_reg_read(a.uc, UC_X86_REG_ZMM1, zmm));
+    TEST_CHECK(m0_all_bytes(zmm, 0, 64, 0));
+    /* CR0.TS: AMX-E7/E8-EVEX #NM, IA32_XFD_ERR unchanged; TDP*F8PS (AMX-E4) has no CR0.TS */
+    ax_msr_write(&a, 0x1c5, 0);
+    amx2_cr0_ts(&a, 1);
+    TEST_CHECK(ax_run(&a, amx2_tilemovrow_z1_t1_i0, sizeof(amx2_tilemovrow_z1_t1_i0)) == 7);
+    xfd_err = ax_msr_read(&a, 0x1c5);
+    TEST_CHECK(xfd_err == 0);
+    ax_cfg_make(cfg, 0, spec1);
+    ax_cfg_set(&a, cfg);
+    TEST_CHECK(ax_run(&a, amx2_tdpbf8ps_012, sizeof(amx2_tdpbf8ps_012)) == -1);
+    amx2_cr0_ts(&a, 0);
+    /* TILELOADDRS tmm1, [rsi+rcx]: 3 rows of 16 bytes, the rest of tmm1 zero, start_row 0 */
+    ax_cfg_make(cfg, 0, spec2);
+    ax_cfg_set(&a, cfg);
+    memset(tile, 0x5a, sizeof(tile));
+    ax_tile_set(&a, 1, tile);
+    for (i = 0; i < 64; i++) {
+        mem[i] = (uint8_t)(i * 3 + 1);
+    }
+    OK(uc_mem_write(a.uc, AX_DATA, mem, 64));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    ax_set(&a, UC_X86_REG_RCX, 20);
+    TEST_CHECK(ax_run(&a, amx2_tileloaddrs_t1, sizeof(amx2_tileloaddrs_t1)) == -1);
+    ax_tile_get(&a, 1, tile);
+    for (i = 0; i < 3; i++) {
+        TEST_CHECK(memcmp(tile + 64 * i, mem + 20 * i, 16) == 0);
+        TEST_CHECK(m0_all_bytes(tile, 64 * i + 16, 48, 0));
+    }
+    TEST_CHECK(m0_all_bytes(tile, 192, 832, 0));
+    ax_close(&a);
+}
+
+/* U726/U727: XSAVES / XRSTORS (SDM Vol1 13.11 / 13.12 / 13.14, Vol2D) and IA32_XSS (13.3) */
+static void test_x86_amx2_xsaves(void)
+{
+    static const int spec[] = {2, 4, 32, 5, 16, 64, -1};
+    uint8_t cfg[64], tile[1024], back[1024], out[64], area[576 + 64 + 8192];
+    uint64_t q, xcomp, xstate;
+    AmxT a;
+    uint32_t r[4];
+    int t, i;
+
+    amx2_open(&a, UC_X86_AMX_ALL, 0, 0, NULL, 0, 0);
+    /* CPUID.(0DH,1): XSAVEOPT, XSAVEC, XGETBV1, XSAVES; neither PT (8) nor a reserved bit among
+       the supervisor components (CET_U / CET_S 11-12 may be added by wt/cet2) */
+    ax_cpuid(&a, 0xd, 1, r);
+    TEST_CHECK((r[0] & 0xf) == 0xf && (r[2] & ~0x1800u) == 0 && r[3] == 0);
+    TEST_CHECK(ax_xsetbv(&a, AX_XCR0) == -1);
+    ax_cpuid(&a, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x2380);                    /* XSAVES size of XCR0 | IA32_XSS */
+    /* XSAVES of TILECFG + TILEDATA: compacted, TILECFG at 576, TILEDATA at 640 */
+    ax_cfg_make(cfg, 0, spec);
+    ax_cfg_set(&a, cfg);
+    for (t = 0; t < 8; t++) {
+        for (i = 0; i < 1024; i++) {
+            tile[i] = (uint8_t)(i * 5 + t * 17 + 3);
+        }
+        ax_tile_set(&a, t, tile);
+    }
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);              /* XSAVES writes only XSTATE_BV / XCOMP_BV of the
+                                               header; XRSTORS #GPs on bytes 63:16 != 0 */
+    OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    ax_set(&a, UC_X86_REG_RAX, 0x60000);
+    ax_set(&a, UC_X86_REG_RDX, 0);
+    TEST_CHECK(ax_run(&a, amx2_xsaves, sizeof(amx2_xsaves)) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA, area, sizeof(area)));
+    memcpy(&xstate, area + 512, 8);
+    memcpy(&xcomp, area + 520, 8);
+    TEST_CHECK(xstate == 0x60000 && xcomp == 0x8000000000060000ULL);
+    TEST_CHECK(memcmp(area + 576, cfg, 64) == 0);
+    TEST_CHECK(m0_all_bytes(area, 0, 512, 0xcc));          /* legacy region untouched */
+    for (t = 0; t < 8; t++) {
+        ax_tile_get(&a, t, tile);
+        TEST_CHECK_(memcmp(area + 640 + 1024 * t, tile, 1024) == 0, "tmm%d saved", t);
+    }
+    /* TILERELEASE, then XRSTORS of the same area: TILECFG and TILEDATA back */
+    TEST_CHECK(ax_run(&a, ax_tilerelease, sizeof(ax_tilerelease)) == -1);
+    i = ax_run(&a, amx2_xrstors, sizeof(amx2_xrstors));
+    TEST_CHECK_(i == -1, "XRSTORS vector %d", i);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(memcmp(out, cfg, 64) == 0);
+    for (t = 0; t < 8; t++) {
+        ax_tile_get(&a, t, back);
+        TEST_CHECK_(memcmp(area + 640 + 1024 * t, back, 1024) == 0, "tmm%d restored", t);
+    }
+    /* XRSTORS: XCOMP_BV[63] = 0 -> #GP (no standard form); misaligned area -> #GP */
+    q = 0x60000;
+    OK(uc_mem_write(a.uc, AX_DATA + 520, &q, 8));
+    TEST_CHECK(ax_run(&a, amx2_xrstors, sizeof(amx2_xrstors)) == 13);
+    q = 0x8000000000060000ULL;
+    OK(uc_mem_write(a.uc, AX_DATA + 520, &q, 8));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA + 8);
+    TEST_CHECK(ax_run(&a, amx2_xsaves, sizeof(amx2_xsaves)) == 13);
+    TEST_CHECK(ax_run(&a, amx2_xrstors, sizeof(amx2_xrstors)) == 13);
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    /* XFD (13.14): XSAVES saves TILEDATA as if XINUSE[18] = 0, no #NM; XRSTORS loading it from
+       memory #NM with IA32_XFD_ERR = 40000h, state unchanged */
+    ax_msr_write(&a, 0x1c4, 0x40000);
+    TEST_CHECK(ax_run(&a, amx2_xsaves, sizeof(amx2_xsaves)) == -1);
+    OK(uc_mem_read(a.uc, AX_DATA + 512, &xstate, 8));
+    TEST_CHECK_(xstate == 0x20000, "XSAVES with XFD: XSTATE_BV %llx", (unsigned long long)xstate);
+    q = 0x60000;
+    OK(uc_mem_write(a.uc, AX_DATA + 512, &q, 8));
+    TEST_CHECK(ax_run(&a, ax_tilerelease, sizeof(ax_tilerelease)) == -1);
+    TEST_CHECK(ax_run(&a, amx2_xrstors, sizeof(amx2_xrstors)) == 7);
+    TEST_CHECK(ax_msr_read(&a, 0x1c5) == 0x40000);
+    ax_cfg_get(&a, out);
+    TEST_CHECK(m0_all_bytes(out, 0, 64, 0));               /* nothing loaded */
+    ax_msr_write(&a, 0x1c4, 0);
+    /* IA32_XSS (13.3): 0 is accepted; PT (not in this model) and reserved bits #GP */
+    TEST_CHECK(ax_wrmsr(&a, 0xda0, 0) == -1);
+    TEST_CHECK(ax_wrmsr(&a, 0xda0, 0x100) == 13);           /* PT */
+    TEST_CHECK(ax_wrmsr(&a, 0xda0, 1) == 13);               /* reserved */
+    TEST_CHECK(ax_wrmsr(&a, 0xda0, 1ULL << 63) == 13);
+    TEST_CHECK(ax_rdmsr(&a, 0xda0) == 0);
+    ax_close(&a);
+
+    /* the default model (Haswell) has no XSAVES: #UD, IA32_XSS #GP */
+    memset(&a, 0, sizeof(a));
+    a.mode = UC_MODE_64;
+    a.pc = AX_CODE;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &a.uc));
+    OK(uc_mem_map(a.uc, AX_CODE, AX_CODE_SIZE, UC_PROT_ALL));
+    OK(uc_mem_map(a.uc, AX_DATA, AX_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_hook_add(a.uc, &a.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &a.cap, 1, 0));
+    ax_set(&a, UC_X86_REG_RSI, AX_DATA);
+    TEST_CHECK(ax_run(&a, amx2_xsaves, sizeof(amx2_xsaves)) == 6);
+    TEST_CHECK(ax_run(&a, amx2_xrstors, sizeof(amx2_xrstors)) == 6);
+    TEST_CHECK(ax_wrmsr(&a, 0xda0, 0) == 13);
+    {
+        static const uint8_t rdmsr[] = {0x0f, 0x32};
+        ax_set(&a, UC_X86_REG_RCX, 0xda0);
+        TEST_CHECK(ax_run(&a, rdmsr, 2) == 13);
+    }
+    ax_close(&a);
+}
+/* ---- end U720-U727 (amx2_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -17099,4 +17488,8 @@ TEST_LIST = {
     {"test_x86_ax4_gating", test_x86_ax4_gating},
     {"test_x86_ax4_jmpabs", test_x86_ax4_jmpabs},
     {"test_x86_ax4_user_msr", test_x86_ax4_user_msr},
+    {"test_x86_amx2_optin", test_x86_amx2_optin},
+    {"test_x86_amx2_exceptions", test_x86_amx2_exceptions},
+    {"test_x86_amx2_values", test_x86_amx2_values},
+    {"test_x86_amx2_xsaves", test_x86_amx2_xsaves},
     {NULL, NULL}};
