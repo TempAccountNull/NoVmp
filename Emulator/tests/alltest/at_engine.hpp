@@ -174,7 +174,9 @@ namespace at
 	inline program build( const std::vector<uint8_t>& snippet, std::string* err )
 	{
 		static std::vector<uint8_t> pro = assemble( prologue_text(), CODE, err );
-		static std::vector<std::vector<uint8_t>> epi_cache( 64 );
+		// U759: snippets up to 255 bytes (the CPL0 CET sequences of cases_cet2.txt set up a GDT,
+		// CR4.CET and the CET MSRs themselves)
+		static std::vector<std::vector<uint8_t>> epi_cache( 256 );
 		program p;
 		if ( pro.empty() || snippet.size() >= epi_cache.size() ) return p;
 		uint64_t epi_addr = CODE + pro.size() + snippet.size();

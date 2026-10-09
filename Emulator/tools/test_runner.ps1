@@ -251,6 +251,9 @@ Add-Hw 'cases_sse_exc' 'hw sse' -Shards 8
 Add-Hw 'hwcheck_gate1' 'hw x87' -Exclusive
 Add-Hw 'cases_reach' 'hw x87'
 Add-Hw 'cases_tsx_cet' 'hw'
+# U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
+# the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
+Add-Hw 'cases_cet2_hw' 'hw cet'
 Add-Hw 'cases_fixes' 'hw'
 # ledger U475-U499: Tier-2/3 upstream QEMU backports and the PUSHF / LFENCE fixes, CPL3-reachable
 # behaviour (cases_backport_t2.txt, self-generated snippets): must be 0 differing against the i5-13600K.
@@ -280,6 +283,11 @@ Add-Hw 'cases_fixes2' 'hw'
 Add-Hw 'cases_fix3' 'hw'
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
+# U750-U760: CET on far CALL / RET far / IRETQ (call gates, supervisor tokens), SYSRET/SYSEXIT SSP,
+# WRMSR / XSAVES / XRSTORS of the CET MSRs (CET_U / CET_S) and ENDBR64 with REX2, as CPL0 sequences in
+# Unicorn only; expected values from the independent model ref_cet2.py (CR0.WP for CR4.CET, APX for REX2).
+Add-Exp 'cases_cet2' 'cases_cet2' 'cet expect' @( '--apx', '--cr0', '0x10011' )
+Add-PySelftest 'ref_cet2_selftest' 'cet tools' 'ref_cet2.py'
 # independent model ref_apx_core.py, Unicorn only with the APX opt-in (the host has no APX).
 Add-Exp 'cases_apx_core' 'cases_apx_core' 'apx expect' @( '--apx' )
 # U616: the APX extension of EVEX instructions (EVEX.B4 / X4 = ~U / R4 for GPRs), with AVX-512.

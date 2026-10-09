@@ -7854,6 +7854,903 @@ static void test_x86_cet_shadow_stack_paging(void)
 }
 
 /*
+ * ---- NoVmp U750-U758: CET on far transfers, task switches, XSAVES CET state, ENDBR64 + REX2 ----
+ * Expected values from the SDM pseudocode (Vol2 CALL, RET, IRET, SYSRET, SYSEXIT; Vol3A 10.3
+ * task switching; Vol1 13.5.9, 13.11, 13.12, 18.2.3; APX spec 3.1.2.1). The 64-bit sequences
+ * are modelled independently by Emulator/tools/isa/ref_cet2.py (cases_cet2.txt). Layout: GDT at
+ * 210000h (cet2_open64 / cet2_open32), TSS at 211000h (64-bit: RSP0 = 211800h), shadow stacks
+ * at 300000h-303FFFh, far pointers at 200100h. IDT event delivery (U755) is not reachable here:
+ * Unicorn reports exceptions and INT n to UC_HOOK_INTR instead of delivering them.
+ */
+#define CET2_GDT 0x210000ull
+#define CET2_TSS 0x211000ull
+#define CET2_PTR 0x200100ull
+
+/* 64-bit call gate (16 bytes) at GDT offset idx: sel:off, DPL dpl */
+static void cet2_gate(NvRun *r, uint32_t idx, uint16_t sel, uint64_t off, int dpl)
+{
+    uint64_t d[2];
+
+    d[0] = (off & 0xffff) | ((uint64_t)sel << 16) | ((uint64_t)(0x8c | (dpl << 5)) << 40) |
+           (((off >> 16) & 0xffff) << 48);
+    d[1] = off >> 32;
+    OK(uc_mem_write(r->uc, CET2_GDT + idx, d, sizeof(d)));
+}
+
+static void cet2_cet_on(NvRun *r)
+{
+    uint64_t cr0, cr4;
+
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x10000;                                     /* WP */
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR0, &cr0));
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1u << 23;                                    /* CET */
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR4, &cr4));
+}
+
+/*
+ * 64-bit mode, CPL0, CS = 08h of this GDT: 08h code64 DPL0, 10h data DPL0, 18h code32 DPL0
+ * (compatibility mode), 23h data DPL3, 2Bh code64 DPL3, 30h call gate (cet2_gate), 40h 64-bit
+ * TSS (TR, busy), 51h code64 DPL1, 59h data DPL1. CR0.WP and CR4.CET set, CET MSRs 0.
+ */
+static void cet2_open64_apx(NvRun *r, bool apx)
+{
+    static const uint64_t gdt[12] = {
+        0, 0x00209a0000000000ull, 0x0000920000000000ull, 0x00cf9a000000ffffull,
+        0x00cff2000000ffffull, 0x0020fa0000000000ull, 0, 0,
+        0x00008b0000000067ull | ((CET2_TSS & 0xffffff) << 16), 0,
+        0x0020ba0000000000ull, 0x0000b20000000000ull,
+    };
+    uc_x86_mmr gdtr = {0, CET2_GDT, sizeof(gdt) - 1, 0};
+    uc_x86_mmr tr = {0x40, CET2_TSS, 0x67, 0x8b00};
+
+    memset(r, 0, sizeof(*r));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &r->uc));
+    OK(uc_ctl_set_cpu_model(r->uc, UC_CPU_X86_MAX));
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(r->uc, UC_X86_APX_F));
+    }
+    OK(uc_mem_map(r->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x200000, 0x2000, UC_PROT_ALL));
+    OK(uc_hook_add(r->uc, &r->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &r->cap, 1, 0));
+    r->next = code_start;
+    OK(uc_mem_map(r->uc, CET2_GDT, 0x2000, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x300000, 0x4000, UC_PROT_ALL));
+    OK(uc_mem_write(r->uc, CET2_GDT, gdt, sizeof(gdt)));
+    OK(uc_reg_write(r->uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(r->uc, UC_X86_REG_TR, &tr));
+    nv_st64(r, CET2_TSS + 4, 0x211800);                 /* RSP0 */
+    nv_set(r, UC_X86_REG_RSP, 0x201e00);
+    /* CET still off: push 10h; push 201800h; pushfq; push 8; lea rax, [rip + 3]; push rax; iretq; nop */
+    OK(nv_run(r, "\x6a\x10\x68\x00\x18\x20\x00\x9c\x6a\x08\x48\x8d\x05\x03\x00\x00\x00"
+                 "\x50\x48\xcf\x90"));
+    TEST_CHECK(r->cap.count == 0 && nv_get(r, UC_X86_REG_CS) == 8);
+    cet2_cet_on(r);
+}
+
+#define cet2_open64(r) cet2_open64_apx((r), false)
+
+/* run code at the next slot until 'until' (CPL as it is) */
+static uc_err cet2_run_to(NvRun *r, const char *code, size_t len, uint64_t until)
+{
+    uint64_t a = r->next;
+
+    r->next += (len + 0x3f) & ~(uint64_t)0x3f;
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = a;
+    OK(uc_mem_write(r->uc, a, code, len));
+    return uc_emu_start(r->uc, a, until, 0, 0);
+}
+
+/*
+ * run code at CPL cpl (3: CS 2Bh / SS 23h, 1: CS 51h / SS 59h) with RSP = 201F00h: from another
+ * CPL through an IRETQ stub at r->next (the IRETQ at stub + 15), the code at r->next + 40h; already
+ * at that CPL the code starts directly
+ */
+static uc_err cet2_run_cpl(NvRun *r, int cpl, const char *code, size_t len)
+{
+    char stub[] = "\x6a\x23\x68\x00\x1f\x20\x00\x9c\x6a\x2b\x68\x00\x00\x00\x00\x48\xcf";
+    uint64_t sa = r->next, ca = r->next + 0x40;
+    uint32_t ca32 = (uint32_t)ca;
+
+    stub[1] = cpl == 3 ? 0x23 : 0x59;
+    stub[9] = cpl == 3 ? 0x2b : 0x51;
+    memcpy(stub + 11, &ca32, 4);
+    r->next += 0x40 + ((len + 0x3f) & ~(uint64_t)0x3f);
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = ca;
+    OK(uc_mem_write(r->uc, sa, stub, sizeof(stub) - 1));
+    OK(uc_mem_write(r->uc, ca, code, len));
+    if (nv_cpl(r) == cpl) {
+        nv_set(r, UC_X86_REG_RSP, 0x201f00);
+        return uc_emu_start(r->uc, ca, ca + len, 0, 0);
+    }
+    nv_set(r, UC_X86_REG_RSP, 0x201e00);
+    return uc_emu_start(r->uc, sa, ca + len, 0, 0);
+}
+
+#define cet2_run3(r, code) cet2_run_cpl((r), 3, (code), sizeof(code) - 1)
+
+/*
+ * 0: REX.W call far [rsi] (m16:64 at CET2_PTR = {callee, sel}); 3: rdsspq rdx; 8: jmp over the
+ * callee; 10: callee. RSP = 201800h. The return LIP is the slot + 3.
+ */
+static uc_err cet2_farcall(NvRun *r, uint16_t sel, const char *callee, size_t clen)
+{
+    char code[96];
+    uint64_t b = r->next;
+
+    memcpy(code, "\x48\xff\x1e\xf3\x48\x0f\x1e\xca\xeb", 9);
+    code[9] = (char)clen;
+    memcpy(code + 10, callee, clen);
+    nv_st64(r, CET2_PTR, b + 10);
+    OK(uc_mem_write(r->uc, CET2_PTR + 8, &sel, 2));
+    nv_set(r, UC_X86_REG_RSI, CET2_PTR);
+    nv_set(r, UC_X86_REG_RSP, 0x201800);
+    return nv_run_n(r, code, 10 + clen);
+}
+
+#define cet2_call(r, sel, callee) cet2_farcall((r), (sel), (callee), sizeof(callee) - 1)
+
+/* callees: rdsspq rcx; retfq | mov [rsp], rax; retfq | rdsspq rcx; mov [rcx+16], rbx; retfq |
+   rdsspq rcx; mov [rcx], rbx; retfq | mov eax, 1; incsspd eax; retfq */
+#define CET2_C_OK   "\xf3\x48\x0f\x1e\xc9\x48\xcb"
+#define CET2_C_RA   "\x48\x89\x04\x24\x48\xcb"
+#define CET2_C_CS   "\xf3\x48\x0f\x1e\xc9\x48\x89\x59\x10\x48\xcb"
+#define CET2_C_SSP  "\xf3\x48\x0f\x1e\xc9\x48\x89\x19\x48\xcb"
+#define CET2_C_MIS  "\xb8\x01\x00\x00\x00\xf3\x0f\xae\xe8\x48\xcb"
+
+/*
+ * NoVmp U750/U751: far CALL / RET far with shadow stacks at CPL0 (SDM Vol2 CALL CONFORMING/
+ * NONCONFORMING-CODE-SEGMENT and SAME-PRIVILEGE, RET RETURN-TO-SAME-PRIVILEGE-LEVEL)
+ */
+static void test_x86_cet2_far_call_ret(void)
+{
+    NvRun r;
+    uint64_t b;
+    uint32_t v32;
+
+    cet2_open64(&r);
+    nv_wrmsr(&r, 0x6a2, 1);                             /* IA32_S_CET.SH_STK_EN */
+
+    /* SSP 8-byte aligned: frame CS, LIP, SSP below it; RETF pops and checks it */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x300fe8);
+    TEST_CHECK(nv_ld64(&r, 0x300ff8) == 8 && nv_ld64(&r, 0x300ff0) == b + 3 &&
+               nv_ld64(&r, 0x300fe8) == 0x301000);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == 0x301000);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301000);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800);
+
+    /* SSP = 4 mod 8: 4 zero bytes at SSP - 4, frame from SSP AND NOT 7, the old SSP saved */
+    OK(uc_mem_write(r.uc, 0x301000, "\xa5\xa5\xa5\xa5\xa5\xa5\xa5\xa5", 8));
+    nv_set(&r, UC_X86_REG_SSP, 0x301004);
+    OK(cet2_call(&r, 8, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 0);
+    OK(uc_mem_read(r.uc, 0x301000, &v32, 4));
+    TEST_CHECK(v32 == 0);
+    OK(uc_mem_read(r.uc, 0x301004, &v32, 4));
+    TEST_CHECK(v32 == 0xa5a5a5a5);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x300fe8 && nv_ld64(&r, 0x300fe8) == 0x301004);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301004);
+
+    /* RETF faults leave RSP and SSP as before it: return address changed: #CP(FAR-RET/IRET) */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RAX, 0x1234);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_RA));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b + 14);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300fe8 && nv_get(&r, UC_X86_REG_RSP) == 0x2017f0);
+    /* ... the shadow-stack CS with a bit above 15 */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RBX, 0x10008);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_CS));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b + 19);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300fe8);
+    /* ... the popped SSP not 4-byte aligned */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RBX, 0x301002);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_SSP));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b + 18);
+    /* ... the popped SSP not canonical: #GP(0) */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RBX, 0x0000800000000000ull);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_SSP));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_get(&r, UC_X86_REG_RIP) == b + 18);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300fe8 && nv_get(&r, UC_X86_REG_RSP) == 0x2017f0);
+    /* ... SSP not 8-byte aligned at the RETF (INCSSPD by 4) */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_MIS));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b + 19);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300fec);
+
+    /* far CALL to a compatibility-mode code segment with SSP above 4 GB: #GP(0), nothing changed */
+    nv_set(&r, UC_X86_REG_SSP, 0x100001000ull);
+    b = r.next;
+    OK(cet2_call(&r, 0x18, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_get(&r, UC_X86_REG_RIP) == b);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x100001000ull);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800 && nv_get(&r, UC_X86_REG_CS) == 8);
+
+    /*
+     * U750 with fix3's U708: the shadow-stack slots are checked and probed before anything
+     * is pushed - a non-canonical shadow-stack frame (#GP(0)) or an unmapped one (the probe
+     * stops the run) leaves the data stack, RSP and SSP as they were
+     */
+    nv_st64(&r, 0x2017f8, 0x1111111111111111ull);
+    nv_st64(&r, 0x2017f0, 0x2222222222222222ull);
+    nv_set(&r, UC_X86_REG_SSP, 0x0000800000001000ull);
+    b = r.next;
+    OK(cet2_call(&r, 8, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_get(&r, UC_X86_REG_RIP) == b);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800 &&
+               nv_get(&r, UC_X86_REG_SSP) == 0x0000800000001000ull);
+    TEST_CHECK(nv_ld64(&r, 0x2017f8) == 0x1111111111111111ull &&
+               nv_ld64(&r, 0x2017f0) == 0x2222222222222222ull);
+    nv_set(&r, UC_X86_REG_SSP, 0x500000);
+    uc_assert_err(UC_ERR_READ_UNMAPPED, cet2_call(&r, 8, CET2_C_OK));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800 && nv_get(&r, UC_X86_REG_SSP) == 0x500000);
+    TEST_CHECK(nv_ld64(&r, 0x2017f8) == 0x1111111111111111ull &&
+               nv_ld64(&r, 0x2017f0) == 0x2222222222222222ull);
+
+    /* call gate to the same privilege: the same frame (LIP = RIP after the CALL) */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    b = r.next;
+    cet2_gate(&r, 0x30, 8, b + 10, 3);
+    OK(cet2_call(&r, 0x30, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RCX) == 0x300fe8);
+    TEST_CHECK(nv_ld64(&r, 0x300ff8) == 8 && nv_ld64(&r, 0x300ff0) == b + 3);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == 0x301000 && nv_get(&r, UC_X86_REG_SSP) == 0x301000);
+
+    /* shadow stacks off at CPL0: SSP and the shadow stack untouched, RDSSP a NOP */
+    nv_wrmsr(&r, 0x6a2, 0);
+    nv_st64(&r, 0x300ff0, 0);
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_set(&r, UC_X86_REG_RCX, 0x77);
+    nv_set(&r, UC_X86_REG_RDX, 0x77);
+    OK(cet2_call(&r, 8, CET2_C_OK));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301000);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x77 && nv_get(&r, UC_X86_REG_RDX) == 0x77);
+    TEST_CHECK(nv_ld64(&r, 0x300ff0) == 0);
+    OK(uc_close(r.uc));
+}
+
+/*
+ * NoVmp U750/U751/U752: 64-bit call gate CPL3 -> CPL0 and CPL1 -> CPL0, RETF back, IRETQ to an
+ * outer level (SDM Vol2 CALL MORE-PRIVILEGE, RET / IRET RETURN-TO-OUTER-PRIVILEGE-LEVEL; Vol1
+ * 18.2.3 supervisor shadow-stack token)
+ */
+static void test_x86_cet2_call_gate(void)
+{
+    /* 0: call far [rsi] (gate 33h); 3: rdsspq rdx; 8: jmp 17; 10: handler: rdsspq rcx; retfq */
+    static const char code[] = "\x48\xff\x1e\xf3\x48\x0f\x1e\xca\xeb\x07"
+                               "\xf3\x48\x0f\x1e\xc9\x48\xcb";
+    /* the same with the handler stopping at CPL0: rdsspq rcx; int3 */
+    static const char code_int3[] = "\x48\xff\x1e\xf3\x48\x0f\x1e\xca\xeb\x06"
+                                    "\xf3\x48\x0f\x1e\xc9\xcc";
+    NvRun r;
+    uint64_t ca, la57, adj;
+    uint16_t gsel = 0x33;
+    int i;
+
+    cet2_open64(&r);
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    la57 = (nv_get(&r, UC_X86_REG_RCX) >> 16) & 1;    /* LA_adjust width: 57 or 48 bits */
+    nv_wrmsr(&r, 0x6a2, 1);                             /* IA32_S_CET.SH_STK_EN */
+    nv_wrmsr(&r, 0x6a0, 1);                             /* IA32_U_CET.SH_STK_EN */
+    nv_wrmsr(&r, 0x6a4, 0x302ff8);                      /* IA32_PL0_SSP (token + frame: one 32-byte region) */
+    nv_st64(&r, 0x302ff8, 0x302ff8);                    /* free supervisor token */
+    nv_wrmsr(&r, 0x6a7, 0x301800);                      /* IA32_PL3_SSP */
+    nv_set(&r, UC_X86_REG_SSP, 0x303000);               /* CPL0 SSP: busy token the IRETQ frees */
+    nv_st64(&r, 0x303000, 0x303001);
+    OK(uc_mem_write(r.uc, CET2_PTR + 8, &gsel, 2));
+    nv_set(&r, UC_X86_REG_RSI, CET2_PTR);
+    ca = r.next + 0x40;
+    cet2_gate(&r, 0x30, 8, ca + 10, 3);
+    OK(cet2_run3(&r, code));
+    TEST_CHECK(r.cap.count == 0 && nv_cpl(&r) == 3);
+    TEST_CHECK(nv_ld64(&r, 0x303000) == 0x303000);      /* IRETQ to CPL3: token freed */
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x302ff8); /* handler: IA32_PL0_SSP, no frame from CPL3 */
+    TEST_CHECK(nv_rdmsr(&r, 0x6a7) == 0x301800);
+    TEST_CHECK(nv_ld64(&r, 0x302ff8) == 0x302ff8);      /* RETF to CPL3: token freed */
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == 0x301800 && nv_get(&r, UC_X86_REG_SSP) == 0x301800);
+    TEST_CHECK(nv_ld64(&r, 0x2117f8) == 0x23 && nv_ld64(&r, 0x2117f0) == 0x201f00 &&
+               nv_ld64(&r, 0x2117e8) == 0x2b && nv_ld64(&r, 0x2117e0) == ca + 3);
+
+    /* token checks at the CALL: #GP(0) at CPL3, SSP and IA32_PL3_SSP unchanged, nothing pushed */
+    nv_st64(&r, 0x2117e0, 0x5a5a5a5a5a5a5a5aull);
+    for (i = 0; i < 4; i++) {
+        /* misaligned, busy, another address, token and frame across a 32-byte boundary */
+        static const uint64_t pl0[4] = {0x302ffc, 0x302ff8, 0x302ff8, 0x303000};
+        static const uint64_t tok[4] = {0x302ffc, 0x302ff9, 0x302ff0, 0x303000};
+
+        nv_wrmsr(&r, 0x6a4, pl0[i]);
+        nv_st64(&r, pl0[i], tok[i]);
+        nv_set(&r, UC_X86_REG_SSP, 0x301900);
+        ca = r.next + 0x40;
+        cet2_gate(&r, 0x30, 8, ca + 10, 3);
+        OK(cet2_run3(&r, code));
+        TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_get(&r, UC_X86_REG_RIP) == ca);
+        TEST_CHECK(nv_cpl(&r) == 3 && nv_get(&r, UC_X86_REG_SSP) == 0x301900);
+        TEST_CHECK(nv_rdmsr(&r, 0x6a7) == 0x301800 && nv_ld64(&r, pl0[i]) == tok[i]);
+        TEST_CHECK(nv_ld64(&r, 0x2117e0) == 0x5a5a5a5a5a5a5a5aull);   /* RSP0 stack unwritten */
+    }
+
+    /* in the handler: token busy; IA32_PL3_SSP = LA_adjust(SSP) */
+    nv_wrmsr(&r, 0x6a4, 0x302ff8);
+    nv_st64(&r, 0x302ff8, 0x302ff8);
+    nv_set(&r, UC_X86_REG_SSP, 0x0100000000001000ull);
+    adj = la57 ? 0xff00000000001000ull : 0x1000;
+    ca = r.next + 0x40;
+    cet2_gate(&r, 0x30, 8, ca + 10, 3);
+    OK(cet2_run3(&r, code_int3));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 3 && nv_cpl(&r) == 0);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x302ff8 && nv_get(&r, UC_X86_REG_SSP) == 0x302ff8);
+    TEST_CHECK(nv_ld64(&r, 0x302ff8) == 0x302ff9);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a7) == adj);
+
+    /*
+     * CPL0 -> CPL1 by IRETQ (outer, RPL 1): the frame at SSP is popped (CS 51h, LIP, SSP of
+     * CPL1) and the busy token after it freed. Then CPL1 -> CPL0 through the gate pushes CS,
+     * LIP and SSP of CPL1 on the CPL0 shadow stack (old SS.DPL = 1); RETF back pops them.
+     */
+    nv_st64(&r, 0x302ff8, 0x302ff8);
+    nv_set(&r, UC_X86_REG_SSP, 0x303100);
+    ca = r.next + 0x40;
+    nv_st64(&r, 0x303100, 0x301c00);
+    nv_st64(&r, 0x303108, ca);
+    nv_st64(&r, 0x303110, 0x51);
+    nv_st64(&r, 0x303118, 0x303119);
+    cet2_gate(&r, 0x30, 8, ca + 10, 3);
+    OK(cet2_run_cpl(&r, 1, code, sizeof(code) - 1));
+    TEST_CHECK(r.cap.count == 0 && nv_cpl(&r) == 1);
+    TEST_CHECK(nv_ld64(&r, 0x303118) == 0x303118);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x302fe0);
+    TEST_CHECK(nv_ld64(&r, 0x302ff0) == 0x51 && nv_ld64(&r, 0x302fe8) == ca + 3 &&
+               nv_ld64(&r, 0x302fe0) == 0x301c00);
+    TEST_CHECK(nv_ld64(&r, 0x302ff8) == 0x302ff8);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == 0x301c00 && nv_get(&r, UC_X86_REG_SSP) == 0x301c00);
+    OK(uc_close(r.uc));
+}
+
+/*
+ * NoVmp U752: IRETQ at CPL0 to CPL0 (IA-32e: SS:RSP popped too) and to CPL3 (SDM Vol2 IRET
+ * RETURN-TO-SAME/OUTER-PRIVILEGE-LEVEL). Data frame at 201800h: RIP, CS 8, RFLAGS, RSP, SS 10h;
+ * shadow frame at SSP 301000h: SSP, LIP, CS, then a busy token at 301018h.
+ */
+static uc_err cet2_iretq(NvRun *r, uint64_t ssp, uint64_t prev, int64_t dlip)
+{
+    uint64_t b = r->next;
+
+    nv_set(r, UC_X86_REG_RSP, 0x201800);
+    nv_st64(r, 0x201800, b + 2);
+    nv_st64(r, 0x201808, 8);
+    nv_st64(r, 0x201810, 0x202);
+    nv_st64(r, 0x201818, 0x201900);
+    nv_st64(r, 0x201820, 0x10);
+    nv_set(r, UC_X86_REG_SSP, ssp);
+    nv_st64(r, ssp, prev);
+    nv_st64(r, ssp + 8, b + 2 + dlip);
+    nv_st64(r, ssp + 16, 8);
+    nv_st64(r, 0x301018, 0x301019);
+    /* iretq; rdsspq rdx */
+    return nv_run(r, "\x48\xcf\xf3\x48\x0f\x1e\xca");
+}
+
+static void test_x86_cet2_iret(void)
+{
+    NvRun r;
+    uint64_t b;
+
+    cet2_open64(&r);
+    nv_wrmsr(&r, 0x6a2, 1);
+    /* the popped SSP is elsewhere (an IST switch): the busy token at SSP + 24 is freed */
+    OK(cet2_iretq(&r, 0x301000, 0x301c00, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RDX) == 0x301c00);
+    TEST_CHECK(nv_ld64(&r, 0x301018) == 0x301018 && nv_get(&r, UC_X86_REG_RSP) == 0x201900);
+    /* the popped SSP is SSP + 24 (no stack switch): no token release */
+    OK(cet2_iretq(&r, 0x301000, 0x301018, 0));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RDX) == 0x301018);
+    TEST_CHECK(nv_ld64(&r, 0x301018) == 0x301019);
+    /* LIP mismatch, SSP not 8-byte aligned: #CP; popped SSP not canonical: #GP(0); unchanged */
+    b = r.next;
+    OK(cet2_iretq(&r, 0x301000, 0x301c00, 1));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301000 && nv_get(&r, UC_X86_REG_RSP) == 0x201800);
+    TEST_CHECK(nv_ld64(&r, 0x301018) == 0x301019);
+    OK(cet2_iretq(&r, 0x301004, 0x301c00, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_SSP) == 0x301004);
+    OK(cet2_iretq(&r, 0x301000, 0x0000800000000000ull, 0));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_get(&r, UC_X86_REG_SSP) == 0x301000);
+    /* shadow stacks off: no shadow-stack access */
+    nv_wrmsr(&r, 0x6a2, 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x77);
+    OK(cet2_iretq(&r, 0x301000, 0x301c00, 1));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RDX) == 0x77);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x301000 && nv_ld64(&r, 0x301018) == 0x301019);
+
+    /* IRETQ to CPL3 with supervisor shadow stacks: SSP not 8-byte aligned is #CP at the IRETQ */
+    nv_wrmsr(&r, 0x6a2, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x301004);
+    b = r.next;
+    OK(cet2_run3(&r, "\x90"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == b + 15);
+    TEST_CHECK(nv_cpl(&r) == 0);
+    /* user shadow stacks off: the busy token at SSP is freed, SSP itself is kept */
+    nv_set(&r, UC_X86_REG_SSP, 0x301000);
+    nv_st64(&r, 0x301000, 0x301001);
+    OK(cet2_run3(&r, "\x90"));
+    TEST_CHECK(r.cap.count == 0 && nv_cpl(&r) == 3);
+    TEST_CHECK(nv_ld64(&r, 0x301000) == 0x301000 && nv_get(&r, UC_X86_REG_SSP) == 0x301000);
+    OK(uc_close(r.uc));
+}
+
+/* NoVmp U753: SYSRET / SYSEXIT load SSP from IA32_PL3_SSP with user shadow stacks (SDM Vol2B) */
+static void test_x86_cet2_sysret_sysexit(void)
+{
+    NvRun r;
+    uint64_t b;
+    int u;
+
+    for (u = 0; u < 2; u++) {
+        cet2_open64(&r);
+        nv_wrmsr(&r, 0x6a0, u);
+        nv_wrmsr(&r, 0x6a7, 0x301800);
+        nv_wrmsr(&r, 0xc0000081, 0x001b000800000000ull);   /* STAR: SYSRET CS 2Bh, SS 23h */
+        nv_set(&r, UC_X86_REG_SSP, 0x303000);
+        nv_set(&r, UC_X86_REG_RDX, 0x77);
+        b = r.next;
+        nv_set(&r, UC_X86_REG_RCX, b + 3);
+        nv_set(&r, UC_X86_REG_R11, 0x202);
+        /* sysretq; rdsspq rdx */
+        OK(nv_run(&r, "\x48\x0f\x07\xf3\x48\x0f\x1e\xca"));
+        TEST_CHECK(r.cap.count == 0 && nv_cpl(&r) == 3);
+        TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == (u ? 0x301800 : 0x303000));
+        TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == (u ? 0x301800 : 0x77));
+        OK(uc_close(r.uc));
+
+        cet2_open64(&r);
+        nv_wrmsr(&r, 0x6a0, u);
+        nv_wrmsr(&r, 0x6a7, 0x301800);
+        nv_wrmsr(&r, 0x174, 8);                            /* SYSEXIT CS 2Bh, SS 33h */
+        nv_set(&r, UC_X86_REG_SSP, 0x303000);
+        nv_set(&r, UC_X86_REG_RBX, 0x77);
+        b = r.next;
+        nv_set(&r, UC_X86_REG_RDX, b + 3);
+        nv_set(&r, UC_X86_REG_RCX, 0x201f00);
+        /* REX.W sysexit; rdsspq rbx */
+        OK(nv_run(&r, "\x48\x0f\x35\xf3\x48\x0f\x1e\xcb"));
+        TEST_CHECK(r.cap.count == 0 && nv_cpl(&r) == 3);
+        TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == (u ? 0x301800 : 0x303000));
+        TEST_CHECK(nv_get(&r, UC_X86_REG_RBX) == (u ? 0x301800 : 0x77));
+        OK(uc_close(r.uc));
+    }
+}
+
+/*
+ * NoVmp U754: task switches with supervisor shadow stacks (SDM Vol3A 10.3 steps 3, 8 and 15,
+ * Table 10-1; Vol1 18.2.4). 32-bit protected mode: 08h code32, 10h data32, 18h TSS of task 1
+ * (TR, busy), 20h TSS of task 2 (limit 6Bh, SSP at offset 104), 28h a TSS with limit 67h.
+ */
+static uint64_t cet2_tss32_desc(uint32_t base, uint32_t limit, int busy)
+{
+    uint32_t lo = (base << 16) | (limit & 0xffff);
+    uint32_t hi = ((base >> 16) & 0xff) | ((busy ? 0x8bu : 0x89u) << 8) | (limit & 0xf0000) |
+                  (base & 0xff000000);
+
+    return lo | ((uint64_t)hi << 32);
+}
+
+static void cet2_open32(NvRun *r)
+{
+    uint64_t gdt[6];
+    uc_x86_mmr gdtr = {0, CET2_GDT, sizeof(gdt) - 1, 0};
+    uc_x86_mmr tr = {0x18, CET2_TSS, 0x6b, 0x8b00};
+    char code[] = "\xea\x00\x00\x00\x00\x08\x00\x66\xb8\x10\x00\x8e\xd0\x8e\xd8\x8e\xc0";
+    uint32_t to;
+
+    gdt[0] = 0;
+    gdt[1] = 0x00cf9a000000ffffull;
+    gdt[2] = 0x00cf92000000ffffull;
+    gdt[3] = cet2_tss32_desc((uint32_t)CET2_TSS, 0x6b, 1);
+    gdt[4] = cet2_tss32_desc((uint32_t)CET2_TSS + 0x200, 0x6b, 0);
+    gdt[5] = cet2_tss32_desc((uint32_t)CET2_TSS + 0x400, 0x67, 0);
+    nv_open(r, UC_MODE_32, UC_CPU_X86_MAX);
+    OK(uc_mem_map(r->uc, CET2_GDT, 0x2000, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x300000, 0x4000, UC_PROT_ALL));
+    OK(uc_mem_write(r->uc, CET2_GDT, gdt, sizeof(gdt)));
+    OK(uc_reg_write(r->uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(r->uc, UC_X86_REG_TR, &tr));
+    /* jmp 08h:next; mov ax, 10h; mov ss, ax; mov ds, ax; mov es, ax */
+    to = (uint32_t)r->next + 7;
+    memcpy(code + 1, &to, 4);
+    OK(nv_run_n(r, code, sizeof(code) - 1));
+    TEST_CHECK(r->cap.count == 0 && nv_get(r, UC_X86_REG_CS) == 8);
+    nv_set(r, UC_X86_REG_ESP, 0x201800);
+    cet2_cet_on(r);
+}
+
+/* TSS of task 2 at CET2_TSS + 200h: EIP, EFLAGS 2, ESP 201C00h, CS 8, SS/DS/ES 10h, SSP */
+static void cet2_task2(NvRun *r, uint32_t eip, uint32_t ssp)
+{
+    uint8_t t[0x6c];
+    uint32_t v;
+    uint16_t s;
+
+    memset(t, 0, sizeof(t));
+    memcpy(t + 0x20, &eip, 4);
+    v = 2;
+    memcpy(t + 0x24, &v, 4);
+    v = 0x201c00;
+    memcpy(t + 0x38, &v, 4);
+    s = 0x10;
+    memcpy(t + 0x48, &s, 2);                            /* ES */
+    memcpy(t + 0x50, &s, 2);                            /* SS */
+    memcpy(t + 0x54, &s, 2);                            /* DS */
+    s = 0x08;
+    memcpy(t + 0x4c, &s, 2);                            /* CS */
+    memcpy(t + 104, &ssp, 4);
+    OK(uc_mem_write(r->uc, CET2_TSS + 0x200, t, sizeof(t)));
+}
+
+/*
+ * NoVmp U752: 32-bit IRET to virtual-8086 mode (SDM Vol2 IRET RETURN-TO-VIRTUAL-8086-MODE):
+ * #GP(0) with CR4.CET and IA32_U_CET.SH_STK_EN or ENDBR_EN; with supervisor shadow stacks SSP
+ * must be 8-byte aligned (#CP) and the busy token at SSP is freed.
+ */
+static void test_x86_cet2_iret_vm86(void)
+{
+    NvRun r;
+    uint32_t frame[9], b;
+    uint64_t fl = 0;
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        cet2_open32(&r);
+        nv_wrmsr(&r, 0x6a0, i == 0 ? 1 : i == 1 ? 4 : 0);
+        nv_wrmsr(&r, 0x6a2, i >= 2 ? 1 : 0);
+        nv_set(&r, UC_X86_REG_SSP, i == 2 ? 0x300804 : 0x300800);
+        nv_st64(&r, 0x300800, 0x300801);
+        b = (uint32_t)r.next;
+        frame[0] = b + 1;           /* EIP (CS 0: linear = IP) */
+        frame[1] = 0;               /* CS */
+        frame[2] = 0x20002;         /* EFLAGS.VM */
+        frame[3] = 0x1800;          /* ESP */
+        frame[4] = 0x2000;          /* SS (base 20000h) */
+        frame[5] = frame[6] = frame[7] = frame[8] = 0;
+        OK(uc_mem_write(r.uc, 0x201800, frame, sizeof(frame)));
+        nv_set(&r, UC_X86_REG_ESP, 0x201800);
+        fl = 0;
+        /* iretd; nop */
+        OK(nv_run(&r, "\xcf\x90"));
+        OK(uc_reg_read(r.uc, UC_X86_REG_EFLAGS, &fl));
+        if (i < 2) {
+            TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && !(fl & 0x20000));
+        } else if (i == 2) {
+            TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && !(fl & 0x20000));
+            TEST_CHECK(nv_ld64(&r, 0x300800) == 0x300801);
+        } else {
+            TEST_CHECK(r.cap.count == 0 && (fl & 0x20000));
+            TEST_CHECK(nv_ld64(&r, 0x300800) == 0x300800);
+            TEST_CHECK(nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+        }
+        OK(uc_close(r.uc));
+    }
+}
+
+static void test_x86_cet2_task_switch(void)
+{
+    NvRun r;
+    uint32_t b, t2, v32;
+    uc_x86_mmr tr;
+
+    cet2_open32(&r);
+    nv_wrmsr(&r, 0x6a2, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_st64(&r, 0x302000, 0x302000);
+    /* task 2: rdsspd ecx; mov [200200h], ecx; iretd (NT = 1: back to task 1) */
+    t2 = (uint32_t)code_start + 0x3000;
+    OK(uc_mem_write(r.uc, t2, "\xf3\x0f\x1e\xc9\x89\x0d\x00\x02\x20\x00\xcf", 11));
+    cet2_task2(&r, t2, 0x302000);
+    /* task 1: call 20h:0 (TSS); rdsspd edx */
+    b = (uint32_t)r.next;
+    OK(nv_run(&r, "\x9a\x00\x00\x00\x00\x20\x00\xf3\x0f\x1e\xca"));
+    TEST_CHECK(r.cap.count == 0);
+    OK(uc_mem_read(r.uc, 0x200200, &v32, 4));
+    TEST_CHECK(v32 == 0x301fe8);                        /* task 2: below the frame */
+    TEST_CHECK(nv_ld64(&r, 0x301ff8) == 8 && nv_ld64(&r, 0x301ff0) == b + 7 &&
+               nv_ld64(&r, 0x301fe8) == 0x300800);      /* task 1's CS, LIP, SSP */
+    TEST_CHECK(nv_ld64(&r, 0x302000) == 0x302000);      /* the IRET freed the token */
+    TEST_CHECK(nv_get(&r, UC_X86_REG_EDX) == 0x300800 && nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+
+    /* CR4.CET = 1: a TSS with limit 67h is #TS(new TSS) before anything changes */
+    b = (uint32_t)r.next;
+    OK(nv_run(&r, "\x9a\x00\x00\x00\x00\x28\x00\x90"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 10 && nv_get(&r, UC_X86_REG_EIP) == b);
+    OK(uc_reg_read(r.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.selector == 0x18 && nv_get(&r, UC_X86_REG_SSP) == 0x300800);
+
+    /* IRET whose shadow-stack LIP does not match task 1's EIP: #CP in task 1's context */
+    OK(uc_mem_write(r.uc, t2, "\xc7\x05\xf0\x1f\x30\x00\x34\x12\x00\x00\xcf", 11));
+    cet2_task2(&r, t2, 0x302000);                       /* task 2 starts at t2 again */
+    b = (uint32_t)r.next;
+    OK(nv_run(&r, "\x9a\x00\x00\x00\x00\x20\x00\x90"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_EIP) == b + 7);
+    OK(uc_reg_read(r.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.selector == 0x18 && nv_get(&r, UC_X86_REG_SSP) == 0);
+    TEST_CHECK(nv_ld64(&r, 0x302000) == 0x302000);
+
+    /* busy token at the new task's SSP: #TS(new TSS) in task 2's context */
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_st64(&r, 0x302000, 0x302001);
+    cet2_task2(&r, t2, 0x302000);
+    OK(nv_run(&r, "\x9a\x00\x00\x00\x00\x20\x00\x90"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 10 && nv_get(&r, UC_X86_REG_EIP) == t2);
+    OK(uc_reg_read(r.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.selector == 0x20);
+    OK(uc_close(r.uc));
+
+    /* JMP to a task: no frame; the token is acquired and SSP is the TSS SSP */
+    cet2_open32(&r);
+    nv_wrmsr(&r, 0x6a2, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x300800);
+    nv_st64(&r, 0x302000, 0x302000);
+    OK(uc_mem_write(r.uc, t2, "\xf3\x0f\x1e\xc9\x90", 5));
+    cet2_task2(&r, t2, 0x302000);
+    OK(cet2_run_to(&r, "\xea\x00\x00\x00\x00\x20\x00", 7, t2 + 5));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_ECX) == 0x302000);
+    TEST_CHECK(nv_ld64(&r, 0x302000) == 0x302001 && nv_get(&r, UC_X86_REG_SSP) == 0x302000);
+    OK(uc_close(r.uc));
+}
+
+/*
+ * NoVmp U756/U757: CET state components for XSAVES / XRSTORS (SDM Vol1 13.5.9, 13.11, 13.12):
+ * 11 CET_U = IA32_U_CET, IA32_PL3_SSP; 12 CET_S = IA32_PL0..2_SSP; compacted format from 576.
+ */
+static void cet2_area(NvRun *r, uint64_t bv, uint64_t comp, const uint64_t *m, int n)
+{
+    uint8_t a[640];
+
+    memset(a, 0, sizeof(a));
+    memcpy(a + 512, &bv, 8);
+    memcpy(a + 520, &comp, 8);
+    memcpy(a + 576, m, n * 8);
+    OK(uc_mem_write(r->uc, 0x200400, a, sizeof(a)));
+}
+
+static void test_x86_cet2_xsaves(void)
+{
+    static const uint64_t img[5] = {1, 0x5000, 0x10, 0x20, 0x30};
+    NvRun r;
+    uint8_t a[640], cc[64];
+    uint64_t v, cr0, cr4;
+    int i;
+
+    cet2_open64(&r);
+    /* CPUID.(EAX=0DH,ECX=1): EAX[3] XSAVES, ECX[12:11] CET_S/CET_U; sub-leaves 11 and 12 */
+    nv_set(&r, UC_X86_REG_RAX, 0xd);
+    nv_set(&r, UC_X86_REG_RCX, 1);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RAX) & 8) && (nv_get(&r, UC_X86_REG_RCX) & 0x1800) == 0x1800);
+    nv_set(&r, UC_X86_REG_RAX, 0xd);
+    nv_set(&r, UC_X86_REG_RCX, 11);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 16 && nv_get(&r, UC_X86_REG_RBX) == 0 &&
+               nv_get(&r, UC_X86_REG_RCX) == 1 && nv_get(&r, UC_X86_REG_RDX) == 0);
+    nv_set(&r, UC_X86_REG_RAX, 0xd);
+    nv_set(&r, UC_X86_REG_RCX, 12);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 24 && nv_get(&r, UC_X86_REG_RCX) == 1);
+
+    /*
+     * U760: WRMSR checks CET MSR values for CPU canonicality (SDM Vol3A 4.5.3: the CPU's
+     * maximum linear-address width, 57 with CPUID.(7,0):ECX.LA57), not the paging mode:
+     * 0000800000000000h is accepted for IA32_U_CET / IA32_S_CET / IA32_PL3_SSP with LA57
+     * reported, 0100000000000000h is #GP(0) either way
+     */
+    nv_set(&r, UC_X86_REG_RAX, 7);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(nv_run(&r, "\x0f\xa2"));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) & (1u << 16));     /* the MAX model reports LA57 */
+    {
+        static const uint32_t msr[3] = {0x6a0, 0x6a2, 0x6a7};
+
+        for (i = 0; i < 3; i++) {
+            nv_set(&r, UC_X86_REG_RCX, msr[i]);
+            nv_set(&r, UC_X86_REG_RAX, 0);
+            nv_set(&r, UC_X86_REG_RDX, 0x8000);
+            OK(nv_run(&r, "\x0f\x30"));
+            TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, msr[i]) == 0x0000800000000000ull);
+            nv_set(&r, UC_X86_REG_RDX, 0x01000000);
+            OK(nv_run(&r, "\x0f\x30"));
+            TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+            TEST_CHECK(nv_rdmsr(&r, msr[i]) == 0x0000800000000000ull);
+            nv_wrmsr(&r, msr[i], 0);
+        }
+    }
+
+    /* IA32_XSS = 1800h; XSAVES saves the in-use CET components, header XSTATE_BV/XCOMP_BV only */
+    nv_wrmsr(&r, 0xda0, 0x1800);
+    TEST_CHECK(nv_rdmsr(&r, 0xda0) == 0x1800);
+    nv_wrmsr(&r, 0x6a0, 5);
+    nv_wrmsr(&r, 0x6a7, 0x7ffffff000ull);
+    nv_wrmsr(&r, 0x6a4, 0x1000);
+    nv_wrmsr(&r, 0x6a6, 0x2008);
+    memset(a, 0xcc, sizeof(a));
+    OK(uc_mem_write(r.uc, 0x200400, a, sizeof(a)));
+    nv_set(&r, UC_X86_REG_RAX, 0x1800);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    nv_set(&r, UC_X86_REG_RSI, 0x200400);
+    OK(nv_run(&r, "\x0f\xc7\x2e"));                     /* xsaves [rsi] */
+    TEST_CHECK(r.cap.count == 0);
+    OK(uc_mem_read(r.uc, 0x200400, a, sizeof(a)));
+    memset(cc, 0xcc, sizeof(cc));
+    TEST_CHECK(memcmp(a, cc, 64) == 0 && memcmp(a + 448, cc, 64) == 0 && memcmp(a + 528, cc, 48) == 0);
+    memcpy(&v, a + 512, 8);
+    TEST_CHECK(v == 0x1800);
+    memcpy(&v, a + 520, 8);
+    TEST_CHECK(v == 0x8000000000001800ull);
+    memcpy(&v, a + 576, 8);
+    TEST_CHECK(v == 5);
+    memcpy(&v, a + 584, 8);
+    TEST_CHECK(v == 0x7ffffff000ull);
+    memcpy(&v, a + 592, 8);
+    TEST_CHECK(v == 0x1000);
+    memcpy(&v, a + 600, 8);
+    TEST_CHECK(v == 0);
+    memcpy(&v, a + 608, 8);
+    TEST_CHECK(v == 0x2008);
+    /* CET_S in its initial configuration: XSTATE_BV[12] = 0 and its section not written */
+    nv_wrmsr(&r, 0x6a4, 0);
+    nv_wrmsr(&r, 0x6a6, 0);
+    memset(a, 0xcc, sizeof(a));
+    OK(uc_mem_write(r.uc, 0x200400, a, sizeof(a)));
+    OK(nv_run(&r, "\x0f\xc7\x2e"));
+    OK(uc_mem_read(r.uc, 0x200400, a, sizeof(a)));
+    memcpy(&v, a + 512, 8);
+    TEST_CHECK(v == 0x800 && memcmp(a + 592, cc, 24) == 0);
+
+    /* XRSTORS loads both components ... */
+    cet2_area(&r, 0x1800, 0x8000000000001800ull, img, 5);
+    nv_set(&r, UC_X86_REG_RAX, 0x1800);
+    OK(nv_run(&r, "\x0f\xc7\x1e"));                     /* xrstors [rsi] */
+    TEST_CHECK(r.cap.count == 0);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1 && nv_rdmsr(&r, 0x6a7) == 0x5000);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a4) == 0x10 && nv_rdmsr(&r, 0x6a5) == 0x20 &&
+               nv_rdmsr(&r, 0x6a6) == 0x30);
+    /* ... initialises one whose XSTATE_BV bit is 0 ... */
+    cet2_area(&r, 0x800, 0x8000000000001800ull, img, 5);
+    OK(nv_run(&r, "\x0f\xc7\x1e"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a4) == 0 && nv_rdmsr(&r, 0x6a6) == 0);
+    TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1);
+    /* ... and leaves one outside RFBM alone */
+    nv_wrmsr(&r, 0x6a4, 0x40);
+    cet2_area(&r, 0x1800, 0x8000000000001800ull, img, 5);
+    nv_set(&r, UC_X86_REG_RAX, 0x800);
+    OK(nv_run(&r, "\x0f\xc7\x1e"));
+    TEST_CHECK(r.cap.count == 0 && nv_rdmsr(&r, 0x6a4) == 0x40);
+
+    /* #GP(0) before anything is loaded */
+    nv_set(&r, UC_X86_REG_RAX, 0x1800);
+    for (i = 0; i < 8; i++) {
+        uint64_t m[5], bv = 0x1800, comp = 0x8000000000001800ull;
+
+        memcpy(m, img, sizeof(m));
+        m[0] = 2;                                       /* differs from the current value */
+        switch (i) {
+        case 0: m[0] = 0x41; break;                     /* IA32_U_CET bit 6 reserved */
+        case 1: m[3] = 0x22; break;                     /* IA32_PL1_SSP bits 1:0 */
+        case 2: m[2] = 0x0100000000000000ull; break;    /* IA32_PL0_SSP not canonical (57 bits) */
+        case 3: comp = 0x1800; break;                   /* XCOMP_BV[63] = 0 */
+        case 4: comp = 0x8000000000000800ull; break;    /* XSTATE_BV[12] not in XCOMP_BV */
+        case 5: comp = 0x8000000000003800ull; break;    /* XCOMP_BV[13] not in XCR0 | IA32_XSS */
+        case 6: break;                                  /* header byte 16 non-zero (below) */
+        case 7: break;                                  /* area not 64-byte aligned (below) */
+        }
+        cet2_area(&r, bv, comp, m, 5);
+        if (i == 6) {
+            OK(uc_mem_write(r.uc, 0x200400 + 528, "\x01", 1));
+        }
+        nv_set(&r, UC_X86_REG_RSI, i == 7 ? 0x200408 : 0x200400);
+        OK(nv_run(&r, "\x0f\xc7\x1e"));
+        TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+        TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1 && nv_rdmsr(&r, 0x6a4) == 0x40);
+    }
+    nv_set(&r, UC_X86_REG_RSI, 0x200400);
+
+    /* IA32_XSS = 0: nothing of CET in RFBM */
+    nv_wrmsr(&r, 0xda0, 0);
+    OK(nv_run(&r, "\x0f\xc7\x2e"));
+    OK(uc_mem_read(r.uc, 0x200400, a, sizeof(a)));
+    memcpy(&v, a + 512, 8);
+    TEST_CHECK(v == 0);
+    memcpy(&v, a + 520, 8);
+    TEST_CHECK(v == 0x8000000000000000ull);
+
+    /* fault order: CR0.TS #NM; CR4.OSXSAVE = 0 #UD; 66 / register forms #UD; CPL3 #GP(0) */
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 8;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR0, &cr0));
+    OK(nv_run(&r, "\x0f\xc7\x2e"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 7);
+    cr0 &= ~8ull;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR0, &cr0));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    cr4 &= ~(1ull << 18);
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\xc7\x1e"));
+    cr4 |= 1ull << 18;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\xc7\x2e"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\xc7\xe8"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\xc7\xd8"));
+    OK(cet2_run3(&r, "\x0f\xc7\x2e"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_cpl(&r) == 3);
+    OK(uc_close(r.uc));
+}
+
+/*
+ * NoVmp U758: F3 REX2(M0 = 1) 1E FA is ENDBR64 for the IBT tracker while REX2 is usable (APX
+ * spec 3.1.2.1; XED's ENDBR64 pattern has no REX2 restriction); a REX before REX2, REX2.M0 = 0,
+ * the ENDBR32 encoding or XCR0[APX_F] = 0 make the target not an ENDBRANCH: #CP(ENDBRANCH).
+ */
+static void test_x86_cet2_endbr_rex2(void)
+{
+    static const struct {
+        const char *t;
+        size_t n;
+        bool ok;
+    } tg[] = {
+        {"\xf3\xd5\x80\x1e\xfa\x90", 6, true},
+        {"\xf3\xd5\xf9\x1e\xfa\x90", 6, true},          /* W, R4, X4, B4, B3 set: no operand */
+        {"\x66\xf3\xd5\x80\x1e\xfa\x90", 7, true},
+        {"\xf3\x0f\x1e\xfa\x90", 5, true},
+        {"\xf3\xd5\x00\x1e\xfa\x90", 6, false},         /* M0 = 0: map 0 opcode 1E */
+        {"\xf3\x41\xd5\x80\x1e\xfa\x90", 7, false},     /* REX before REX2: #UD */
+        {"\xf3\xd5\x80\x1e\xfb\x90", 6, false},         /* ENDBR32 encoding */
+    };
+    NvRun r;
+    uint64_t t, xcr0;
+    size_t i;
+
+    cet2_open64_apx(&r, true);
+    nv_wrmsr(&r, 0x6a2, 4);                             /* IA32_S_CET.ENDBR_EN */
+    for (i = 0; i < sizeof(tg) / sizeof(tg[0]); i++) {
+        t = nv_ibt_target(&r, (int)i, tg[i].t, tg[i].n);
+        nv_set(&r, UC_X86_REG_RAX, t);
+        OK(cet2_run_to(&r, "\xff\xe0", 2, t + tg[i].n));
+        if (tg[i].ok) {
+            TEST_CHECK(r.cap.count == 0 && !(nv_rdmsr(&r, 0x6a2) & (1u << 11)));
+        } else {
+            TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == t);
+            nv_wrmsr(&r, 0x6a2, 4);                     /* tracker back to IDLE */
+        }
+    }
+    /* REX2 not usable (XCR0[APX_F] = 0): the instruction would be #UD, not an ENDBRANCH */
+    OK(uc_reg_read(r.uc, UC_X86_REG_XCR0, &xcr0));
+    xcr0 &= ~(1ull << 19);
+    OK(uc_reg_write(r.uc, UC_X86_REG_XCR0, &xcr0));
+    t = nv_ibt_target(&r, 8, tg[0].t, tg[0].n);
+    nv_set(&r, UC_X86_REG_RAX, t);
+    OK(cet2_run_to(&r, "\xff\xe0", 2, t + tg[0].n));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 21 && nv_get(&r, UC_X86_REG_RIP) == t);
+    OK(uc_close(r.uc));
+}
+
+/*
  * ---- NoVmp U127-U133: VEX-encoded opmask instructions (EVEX milestone K) ----
  * Expected values come from the independent SDM model Emulator/tools/isa/ref_opmask.py
  * (x86_opmask_vectors.inc): KAND/KANDN/KOR/KXOR/KXNOR/KADD (B/W/D/Q), KUNPCKBW/WD/DQ,
@@ -17957,6 +18854,14 @@ TEST_LIST = {
     {"test_x86_cet_call_ret", test_x86_cet_call_ret},
     {"test_x86_cet_ibt", test_x86_cet_ibt},
     {"test_x86_cet_shadow_stack_paging", test_x86_cet_shadow_stack_paging},
+    {"test_x86_cet2_far_call_ret", test_x86_cet2_far_call_ret},
+    {"test_x86_cet2_call_gate", test_x86_cet2_call_gate},
+    {"test_x86_cet2_iret", test_x86_cet2_iret},
+    {"test_x86_cet2_iret_vm86", test_x86_cet2_iret_vm86},
+    {"test_x86_cet2_sysret_sysexit", test_x86_cet2_sysret_sysexit},
+    {"test_x86_cet2_task_switch", test_x86_cet2_task_switch},
+    {"test_x86_cet2_xsaves", test_x86_cet2_xsaves},
+    {"test_x86_cet2_endbr_rex2", test_x86_cet2_endbr_rex2},
     {"test_x86_opmask_optin", test_x86_opmask_optin},
     {"test_x86_opmask_vectors", test_x86_opmask_vectors},
     {"test_x86_opmask_ud", test_x86_opmask_ud},
