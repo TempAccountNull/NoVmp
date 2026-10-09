@@ -16663,6 +16663,102 @@ static void test_x86_apx_evex(void)
 }
 /* ---- end U610-U616 (apx_) ---- */
 
+/*
+ * ---- NoVmp U640-U689: Intel APX parts 2/3 (ax4_) ----
+ * EVEX map 4 (promoted legacy instructions: NDD, NF, ZU) decoded with APX_F alone (no AVX-512),
+ * its #UD rules and the XCR0[19] / CR4.OSXSAVE gate (APX spec 355828-009 3.1.2.3.1, Table 3.8,
+ * Table 4.12). Uses the apx_ helpers above.
+ */
+#define AX4_ADD_R8_RAX_RBX "\x62\xf4\xbc\x18\x01\xd8"    /* add r8, rax, rbx (ND, W1)   */
+#define AX4_ADD_RAX_RBX    "\x62\xf4\xfc\x08\x01\xd8"    /* add rax, rbx     (ND = 0)   */
+#define AX4_INC_NF         "\x62\xf4\x7c\x0c\xff\xc0"    /* inc eax {nf}                 */
+
+static void test_x86_ax4_decode(void)
+{
+    ApxCtx c;
+    uint64_t fl;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);           /* APX without AVX-512 */
+    apx_set(&c, UC_X86_REG_RAX, 5);
+    apx_set(&c, UC_X86_REG_RBX, 7);
+    apx_set(&c, UC_X86_REG_R8, ~0ull);
+    TEST_CHECK(apx_run(&c, AX4_ADD_R8_RAX_RBX, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R8) == 12 && apx_get(&c, UC_X86_REG_RAX) == 5);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == 12);
+    /* 16-bit NDD (pp = 66): zero-extended; add r29w, ax, cx */
+    apx_set(&c, UC_X86_REG_RAX, 0xffffffffffff8000ull);
+    apx_set(&c, UC_X86_REG_RCX, 0x8001);
+    apx_set(&c, UC_X86_REG_R29, ~0ull);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x15\x10\x01\xc8", 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R29) == 1);
+    /* byte registers 4-7 are SPL..DIL: add sil, dil */
+    apx_set(&c, UC_X86_REG_RSI, 0x1210);
+    apx_set(&c, UC_X86_REG_RDI, 0x3405);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\x7c\x08\x00\xfe", 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RSI) == 0x1215);
+    /* NF: no flag changes */
+    apx_set(&c, UC_X86_REG_RAX, 0x7fffffff);
+    apx_set(&c, UC_X86_REG_EFLAGS, 0x8d7);
+    TEST_CHECK(apx_run(&c, AX4_INC_NF, 6) == -1);
+    fl = apx_get(&c, UC_X86_REG_EFLAGS);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_RAX) == 0x80000000 && (fl & 0x8d5) == 0x8d5);
+    /* #UD: reserved P2 bits, U = 0 with mod = 11b, V without ND, F2/F3/66/LOCK/REX before 62 */
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x88\x01\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x09\x01\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xf8\x08\x01\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xbc\x08\x01\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x66\x62\xf4\xfc\x08\x01\xd8", 7) == 6);
+    TEST_CHECK(apx_run(&c, "\xf3\x62\xf4\xfc\x08\x01\xd8", 7) == 6);
+    TEST_CHECK(apx_run(&c, "\xf0\x62\xf4\xfc\x08\x01\x18", 7) == 6);
+    TEST_CHECK(apx_run(&c, "\x48\x62\xf4\xfc\x08\x01\xd8", 7) == 6);
+    TEST_CHECK(apx_run(&c, "\x67\x62\xf4\xfc\x08\x01\xd8", 7) == -1);
+    /* NF on ADC, ND on DIV, pp = F3 on ADD, unlisted opcodes */
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x0c\x11\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xbc\x18\xf7\xf3", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfe\x08\x01\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x08\x89\xd8", 6) == 6);
+    TEST_CHECK(apx_run(&c, "\x62\xf4\xfc\x08\x05\xd8", 6) == 6);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_ax4_gating(void)
+{
+    static const uc_x86_cpuid no_apx[] = {
+        {7, 1, 0, 0, 0, 0},                                    /* CPUID.(7,1):EDX.APX_F = 0 */
+    };
+    ApxCtx c;
+    uint64_t xcr0;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == -1);
+    /* XCR0[19] = 0: #UD at run time (the TB translated before is not reused wrongly) */
+    TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
+    TEST_CHECK(apx_run(&c, AX4_INC_NF, 6) == 6);
+    TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
+    TEST_CHECK(apx_run(&c, AX4_INC_NF, 6) == -1);
+    OK(uc_close(c.uc));
+    /* no APX: 62 in 64-bit mode (BOUND) is #UD */
+    apx_open(&c, UC_MODE_64, 0, NULL, 0);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
+    OK(uc_close(c.uc));
+    /* AVX-512 without APX: EVEX map 4 #UD */
+    apx_open_avx512(&c, 0);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
+    OK(uc_close(c.uc));
+    /* a strict CPUID profile without APX_F hides it */
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, no_apx, sizeof(no_apx) / sizeof(no_apx[0]));
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
+    OK(uc_close(c.uc));
+    /* 32-bit mode: 62 F4 is BOUND with a register operand: #UD */
+    apx_open(&c, UC_MODE_32, UC_X86_APX_F, NULL, 0);
+    TEST_CHECK(apx_run(&c, AX4_ADD_RAX_RBX, 6) == 6);
+    OK(uc_close(c.uc));
+}
+/* ---- end U640-U689 (ax4_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -16906,4 +17002,6 @@ TEST_LIST = {
     {"test_x86_apx_gating", test_x86_apx_gating},
     {"test_x86_apx_rex2_decode", test_x86_apx_rex2_decode},
     {"test_x86_apx_evex", test_x86_apx_evex},
+    {"test_x86_ax4_decode", test_x86_ax4_decode},
+    {"test_x86_ax4_gating", test_x86_ax4_gating},
     {NULL, NULL}};

@@ -280,6 +280,16 @@ Add-Exp 'cases_apx_evex' 'cases_apx_evex' 'apx evex expect' @( '--apx', '--avx51
 # the CPU's results must also match the model (--hwcmp).
 Add-Suite 'cases_apx_core_hw' 'hw apx' 'hwnp' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_core_hw' ), '--apx' )
 Add-HwCmp 'ref_apx_core_hwcmp' 'hw apx' 'ref_apx_core.py' 'cases_apx_core_hw'
+# U640-U689 (Intel APX parts 2/3): EVEX map 4 (promoted legacy instructions with NDD / NF / ZU), the
+# APX conditional / PUSH2 / POP2 / JMPABS instructions, promoted map 2/3 and VEX instructions;
+# expected values from the independent model ref_apx_map4.py (Unicorn only, APX opt-in).
+Add-Exp 'cases_apx_map4' 'cases_apx_map4' 'apx expect' @( '--apx' )
+Add-PySelftest 'ref_apx_map4_selftest' 'apx tools' 'ref_apx_map4.py'
+# The same instructions with R0-R15 only: the i5-13600K runs the legacy equivalent (ND = 1: MOV + op +
+# MOVZX; NF = 1: inside PUSHFQ ... POPFQ), Unicorn the EVEX encoding ("~~" pairs, no CPUID profile),
+# 0 differing; the CPU's results must also match the model (--hwcmp).
+Add-Suite 'cases_apx_map4_hw' 'hw apx' 'hwnp' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_map4_hw' ), '--apx' )
+Add-HwCmp 'ref_apx_map4_hwcmp' 'hw apx' 'ref_apx_map4.py' 'cases_apx_map4_hw'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
