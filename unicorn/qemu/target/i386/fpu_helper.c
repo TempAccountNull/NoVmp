@@ -111,6 +111,65 @@ static inline void fpop(CPUX86State *env)
     env->fpstt = (env->fpstt + 1) & 7;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U480) */
+/*
+ * NoVmp (ledger U480): Unicorn reports memory it has not mapped only when an access is made,
+ * and a store or load then goes on (the exit is only requested), so an instruction would
+ * store or load part of its operand. Before anything is stored or loaded, a page Unicorn has
+ * not mapped is reported through a one-byte read of it (UC_HOOK_MEM_READ_UNMAPPED; #PF in
+ * emu-alltest, where the i5-13600K stores / loads nothing), as helper_evex_mstore does (U210);
+ * if no hook maps it, the instruction stops there.
+ */
+static void x86_access_unicorn_mapped(CPUX86State *env, target_ulong ptr, MMUAccessType type,
+                                      int mmu_idx, uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+    target_ulong paddr;
+
+    if (!tlb_vaddr_to_paddr(env, ptr, type, mmu_idx, &paddr) ||
+        uc->memory_mapping(uc, paddr) != NULL) {
+        return;
+    }
+    (void)cpu_ldub_data_ra(env, ptr, ra);
+    if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+        cpu_loop_exit_restore(uc->cpu, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U480) */
+
+/*
+ * backport d3e8b648ab / 4526f58a27 and the X86Access series (bc13c2dd01, 505e2ef744,
+ * 94f60f8f1c, 6d030aab29, c6e6d1508a, d5dc3a927a), done by probing instead of importing
+ * access.c (U480): every page of [ptr, ptr + len) is translated for 'type' before the
+ * instruction stores or loads anything, so a #PF on a later page leaves memory and the
+ * register state unchanged (upstream access_prepare()).
+ */
+static void x86_access_prepare(CPUX86State *env, target_ulong ptr, target_ulong len,
+                               MMUAccessType type, uintptr_t ra)
+{
+    int mmu_idx = cpu_mmu_index(env, false);
+    target_ulong p = ptr, l = len, n;
+
+    while (l) {
+        n = TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK);
+        if (n > l) {
+            n = l;
+        }
+        probe_access(env, p, (int)n, type, mmu_idx, ra);
+        p += n;
+        l -= n;
+    }
+#if __Use_Original_Qemu != 1 /* ours (U480) */
+    for (p = ptr, l = len; l; p += n, l -= n) {
+        n = TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK);
+        if (n > l) {
+            n = l;
+        }
+        x86_access_unicorn_mapped(env, p, type, mmu_idx, ra);
+    }
+#endif /* __Use_Original_Qemu (U480) */
+}
+
 static floatx80 do_fldt(CPUX86State *env, target_ulong ptr, uintptr_t retaddr)
 {
     CPU_LDoubleU temp;
@@ -912,7 +971,26 @@ void helper_fldt_ST0(CPUX86State *env, target_ulong ptr)
 
 void helper_fstt_ST0(CPUX86State *env, target_ulong ptr)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U480) */
+    /* backport d3e8b648ab: nothing is stored when any byte faults */
+    x86_access_prepare(env, ptr, 10, MMU_DATA_STORE, GETPC());
     do_fstt(env, ST0, ptr, GETPC());
+#else /* ours (U480) */
+    /*
+     * NoVmp (ledger U480): the SDM does not say whether FST/FSTP m80 may store part of its
+     * operand. The i5-13600K stores bits 63:0 and then bits 79:64 (emu-alltest
+     * cases_backport_t2: at a page end the low qword is written before the #PF on the last
+     * two bytes; with the qword itself crossing nothing is written), so each of the two
+     * stores is prepared on its own instead of upstream's whole-operand probe.
+     */
+    CPU_LDoubleU temp;
+
+    temp.d = ST0;
+    x86_access_prepare(env, ptr, 8, MMU_DATA_STORE, GETPC());
+    cpu_stq_data_ra(env, ptr, temp.l.lower, GETPC());
+    x86_access_prepare(env, ptr + 8, 2, MMU_DATA_STORE, GETPC());
+    cpu_stw_data_ra(env, ptr + 8, temp.l.upper, GETPC());
+#endif /* __Use_Original_Qemu (U480) */
 }
 
 void helper_fpush(CPUX86State *env)
@@ -1551,6 +1629,18 @@ void helper_fbld_ST0(CPUX86State *env, target_ulong ptr)
     ST0 = tmp;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U480) */
+/* FBSTP: store the 10-byte image as bytes 7:0, then bytes 9:8 (see helper_fbst_ST0) */
+static void fbst_commit(CPUX86State *env, target_ulong ptr, const uint8_t *img,
+                        uintptr_t ra)
+{
+    x86_access_prepare(env, ptr, 8, MMU_DATA_STORE, ra);
+    cpu_stq_data_ra(env, ptr, ldq_le_p(img), ra);
+    x86_access_prepare(env, ptr + 8, 2, MMU_DATA_STORE, ra);
+    cpu_stw_data_ra(env, ptr + 8, lduw_le_p(img + 8), ra);
+}
+#endif /* __Use_Original_Qemu (U480) */
+
 void helper_fbst_ST0(CPUX86State *env, target_ulong ptr)
 {
     int old_flags = save_exception_flags(env);
@@ -1558,6 +1648,20 @@ void helper_fbst_ST0(CPUX86State *env, target_ulong ptr)
     target_ulong mem_ref, mem_end;
     int64_t val;
     CPU_LDoubleU temp;
+
+#if __Use_Original_Qemu == 1 /* original QEMU (U480) */
+    /* backport 4526f58a27: nothing is stored when any byte faults */
+    x86_access_prepare(env, ptr, 10, MMU_DATA_STORE, GETPC());
+#define FBST_PUT(a, v) cpu_stb_data_ra(env, (a), (v), GETPC())
+#else /* ours (U480) */
+    /*
+     * NoVmp (ledger U480): the packed BCD image is built first and stored like FSTP m80:
+     * bytes 7:0, then bytes 9:8 (i5-13600K: at a page end the low qword is written before
+     * the #PF on bytes 9:8; the SDM does not say)
+     */
+    uint8_t img[10];
+#define FBST_PUT(a, v) (img[(a) - ptr] = (uint8_t)(v))
+#endif /* __Use_Original_Qemu (U480) */
 
     temp.d = ST0;
 
@@ -1572,20 +1676,23 @@ void helper_fbst_ST0(CPUX86State *env, target_ulong ptr)
 #endif /* __Use_Original_Qemu (U54) */
         set_float_exception_flags(float_flag_invalid, &env->fp_status);
         while (mem_ref < ptr + 7) {
-            cpu_stb_data_ra(env, mem_ref++, 0, GETPC());
+            FBST_PUT(mem_ref++, 0);
         }
-        cpu_stb_data_ra(env, mem_ref++, 0xc0, GETPC());
-        cpu_stb_data_ra(env, mem_ref++, 0xff, GETPC());
-        cpu_stb_data_ra(env, mem_ref++, 0xff, GETPC());
+        FBST_PUT(mem_ref++, 0xc0);
+        FBST_PUT(mem_ref++, 0xff);
+        FBST_PUT(mem_ref++, 0xff);
+#if __Use_Original_Qemu != 1 /* ours (U480) */
+        fbst_commit(env, ptr, img, GETPC());
+#endif /* __Use_Original_Qemu (U480) */
         merge_exception_flags(env, old_flags);
         return;
     }
     mem_end = mem_ref + 9;
     if (SIGND(temp)) {
-        cpu_stb_data_ra(env, mem_end, 0x80, GETPC());
+        FBST_PUT(mem_end, 0x80);
         val = -val;
     } else {
-        cpu_stb_data_ra(env, mem_end, 0x00, GETPC());
+        FBST_PUT(mem_end, 0x00);
     }
     while (mem_ref < mem_end) {
         if (val == 0) {
@@ -1594,13 +1701,17 @@ void helper_fbst_ST0(CPUX86State *env, target_ulong ptr)
         v = val % 100;
         val = val / 100;
         v = ((v / 10) << 4) | (v % 10);
-        cpu_stb_data_ra(env, mem_ref++, v, GETPC());
+        FBST_PUT(mem_ref++, v);
     }
     while (mem_ref < mem_end) {
-        cpu_stb_data_ra(env, mem_ref++, 0, GETPC());
+        FBST_PUT(mem_ref++, 0);
     }
+#if __Use_Original_Qemu != 1 /* ours (U480) */
+    fbst_commit(env, ptr, img, GETPC());
+#endif /* __Use_Original_Qemu (U480) */
     merge_exception_flags(env, old_flags);
 }
+#undef FBST_PUT
 
 /* 128-bit significand of log(2).  */
 #define ln2_sig_high 0xb17217f7d1cf79abULL
@@ -4243,6 +4354,8 @@ void helper_x87_ptrs(CPUX86State *env, uint32_t fop, target_ulong fdp, uint32_t 
 
 void helper_fstenv(CPUX86State *env, target_ulong ptr, int data32)
 {
+    /* backport d5dc3a927a (X86Access, U480): the whole image or nothing */
+    x86_access_prepare(env, ptr, data32 ? 28 : 14, MMU_DATA_STORE, GETPC());
     do_fstenv(env, ptr, data32, GETPC());
 #if __Use_Original_Qemu != 1 /* ours (U61) */
     /*
@@ -4315,8 +4428,20 @@ static void do_fldenv(CPUX86State *env, target_ulong ptr, int data32,
 
 void helper_fldenv(CPUX86State *env, target_ulong ptr, int data32)
 {
+    /*
+     * backport d5dc3a927a (X86Access, U480): nothing is loaded when any byte faults
+     * (upstream prepares this load as MMU_DATA_STORE; it is a load)
+     */
+    x86_access_prepare(env, ptr, data32 ? 28 : 14, MMU_DATA_LOAD, GETPC());
     do_fldenv(env, ptr, data32, GETPC());
 }
+
+/* offset of the register area in the FSAVE/FRSTOR image (U480, as do_fsave/do_frstor) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U480) */
+#define FSAVE_REGS_OFF(data32) ((target_ulong)14 << (data32))
+#else /* ours (U480) */
+#define FSAVE_REGS_OFF(data32) ((target_ulong)((data32) ? 28 : 14))   /* U63 */
+#endif /* __Use_Original_Qemu (U480) */
 
 static void do_fsave(CPUX86State *env, target_ulong ptr, int data32,
                      uintptr_t retaddr)
@@ -4343,6 +4468,8 @@ static void do_fsave(CPUX86State *env, target_ulong ptr, int data32,
 
 void helper_fsave(CPUX86State *env, target_ulong ptr, int data32)
 {
+    /* backport d5dc3a927a (X86Access, U480): the whole image or nothing */
+    x86_access_prepare(env, ptr, FSAVE_REGS_OFF(data32) + 80, MMU_DATA_STORE, GETPC());
     do_fsave(env, ptr, data32, GETPC());
 }
 
@@ -4368,6 +4495,8 @@ static void do_frstor(CPUX86State *env, target_ulong ptr, int data32,
 
 void helper_frstor(CPUX86State *env, target_ulong ptr, int data32)
 {
+    /* backport d5dc3a927a (X86Access, U480): nothing is loaded when any byte faults */
+    x86_access_prepare(env, ptr, FSAVE_REGS_OFF(data32) + 80, MMU_DATA_LOAD, GETPC());
     do_frstor(env, ptr, data32, GETPC());
 }
 
@@ -4798,6 +4927,8 @@ static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
 
+    /* backport 94f60f8f1c (X86Access, U480): the 512-byte image or nothing */
+    x86_access_prepare(env, ptr, sizeof(X86LegacyXSaveArea), MMU_DATA_STORE, ra);
     do_xsave_fpu(env, ptr, ra);
 
     if (env->cr[4] & CR4_OSFXSR_MASK) {
@@ -4840,6 +4971,26 @@ static uint64_t get_xinuse(CPUX86State *env)
     return inuse;
 }
 
+/*
+ * backport c6e6d1508a (X86Access, U480): end of the standard-format XSAVE area holding the
+ * components of 'mask' (upstream xsave_area_size(mask, false)): legacy area and header,
+ * then the end of the highest component.
+ */
+static target_ulong xsave_std_end(uint64_t mask)
+{
+    target_ulong end = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
+    int i;
+
+    for (i = 2; i < XSAVE_STATE_AREA_COUNT; i++) {
+        const ExtSaveArea *esa = &x86_ext_save_areas[i];
+
+        if (((mask >> i) & 1) && esa->size && esa->offset + esa->size > end) {
+            end = esa->offset + esa->size;
+        }
+    }
+    return end;
+}
+
 static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                      uint64_t inuse, uint64_t opt, uintptr_t ra)
 {
@@ -4872,6 +5023,8 @@ static void do_xsave(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     rfbm &= env->xcr0;
     opt &= rfbm;
 
+    /* backport c6e6d1508a (X86Access, U480): the whole area or nothing */
+    x86_access_prepare(env, ptr, xsave_std_end(opt), MMU_DATA_STORE, ra);
     if (opt & XSTATE_FP_MASK) {
         do_xsave_fpu(env, ptr, ra);
     }
@@ -5020,6 +5173,21 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     save = rfbm & inuse;
     if ((rfbm & XSTATE_SSE_MASK) && env->mxcsr != 0x1f80) {
         save |= XSTATE_SSE_MASK;
+    }
+    {
+        /* U480: the compacted area up to the last saved component, or nothing */
+        target_ulong at = next, end = next;
+
+        for (i = 2; i < 63; i++) {
+            if (rfbm & (1ULL << i)) {
+                at = xsave_comp_align(i, at);
+                if (save & (1ULL << i)) {
+                    end = at + xsave_comp_size(i);
+                }
+                at += xsave_comp_size(i);
+            }
+        }
+        x86_access_prepare(env, ptr, end, MMU_DATA_STORE, ra);
     }
     if (save & XSTATE_FP_MASK) {
         do_xsave_fpu(env, ptr, ra);
@@ -5189,6 +5357,8 @@ static void do_fxrstor(CPUX86State *env, target_ulong ptr, uintptr_t ra)
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
 
+    /* backport 94f60f8f1c (X86Access, U480): nothing is loaded when any byte faults */
+    x86_access_prepare(env, ptr, sizeof(X86LegacyXSaveArea), MMU_DATA_LOAD, ra);
 #if __Use_Original_Qemu != 1 /* ours (U40) */
     /* Reserved MXCSR bits fault before any state is loaded.  */
     if (env->cr[4] & CR4_OSFXSR_MASK) {
@@ -5263,6 +5433,21 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 #if __Use_Original_Qemu != 1 /* ours (U173) */
     xrstor_check_xfd(env, restore, ra);
 #endif /* __Use_Original_Qemu (U173) */
+    {
+        /* U480: nothing is loaded when any byte up to the last restored component faults */
+        target_ulong at = next, end = next;
+
+        for (i = 2; i < 63; i++) {
+            if (format & (1ULL << i)) {
+                at = xsave_comp_align(i, at);
+                if (restore & (1ULL << i)) {
+                    end = at + xsave_comp_size(i);
+                }
+                at += xsave_comp_size(i);
+            }
+        }
+        x86_access_prepare(env, ptr, end, MMU_DATA_LOAD, ra);
+    }
 
     if (restore & XSTATE_FP_MASK) {
         do_xrstor_fpu(env, ptr, ra);
@@ -5436,6 +5621,8 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
 #if __Use_Original_Qemu != 1 /* ours (U173) */
     xrstor_check_xfd(env, rfbm & xstate_bv, ra);
 #endif /* __Use_Original_Qemu (U173) */
+    /* backport c6e6d1508a (X86Access, U480): nothing is loaded when any byte faults */
+    x86_access_prepare(env, ptr, xsave_std_end(rfbm & xstate_bv), MMU_DATA_LOAD, ra);
     if (rfbm & XSTATE_FP_MASK) {
         if (xstate_bv & XSTATE_FP_MASK) {
             do_xrstor_fpu(env, ptr, ra);

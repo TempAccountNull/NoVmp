@@ -13344,6 +13344,93 @@ static void test_x86_bp_pks(void)
     TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
     OK(uc_close(uc));
 }
+
+/*
+ * U480 (backport d3e8b648ab / 4526f58a27 / X86Access series, done by probing): with 4-level
+ * paging and the page after TB2_DATA not present, FNSAVE / FNSTENV / FXSAVE / XSAVE across
+ * the page end take #PF and store nothing, FRSTOR / FLDENV / FXRSTOR / XRSTOR load nothing
+ * (i5-13600K, cases_backport_t2). FSTP m80 / FBSTP store the low qword first and fault on the
+ * last two bytes, as the i5-13600K does (the SDM does not say); TOP stays unchanged.
+ */
+static void test_x86_bp_x87_no_partial(void)
+{
+    /* each snippet: rsi = TB2_DATA (set below) */
+    static const struct {
+        const char *code;
+        size_t len;
+        uint32_t off;          /* operand offset in TB2_DATA's page */
+        int stored;            /* bytes expected written (low qword of FSTP/FBSTP) */
+    } t[] = {
+        {"\xdd\xb6\xc0\x0f\x00\x00", 6, 0xfc0, 0},                       /* fnsave [rsi+0xfc0] */
+        {"\xd9\xb6\xf0\x0f\x00\x00", 6, 0xff0, 0},                       /* fnstenv [rsi+0xff0] */
+        {"\x0f\xae\x86\x00\x0f\x00\x00", 7, 0xf00, 0},                   /* fxsave [rsi+0xf00] */
+        {"\xb8\x03\x00\x00\x00\x31\xd2\x0f\xae\xa6\x00\x0f\x00\x00", 14, 0xf00, 0}, /* xsave */
+        {"\xd9\xe8\xdb\xbe\xf8\x0f\x00\x00", 8, 0xff8, 8},               /* fld1; fstp m80 */
+        {"\xd9\xe8\xdb\xbe\xfa\x0f\x00\x00", 8, 0xffa, 0},               /* qword crosses */
+        {"\xd9\xe8\xdf\xb6\xf8\x0f\x00\x00", 8, 0xff8, 8},               /* fld1; fbstp m80 */
+    };
+    static const char frstor[] = "\xdd\xa6\xc0\x0f\x00\x00";          /* frstor [rsi+0xfc0] */
+    static const char fldenv[] = "\xd9\xa6\xf0\x0f\x00\x00";          /* fldenv [rsi+0xff0] */
+    static const char fxrstor[] = "\x0f\xae\x8e\x00\x0f\x00\x00";     /* fxrstor [rsi+0xf00] */
+    static const char xrstor[] = "\xb8\x03\x00\x00\x00\x31\xd2\x0f\xae\xae\xc0\x0d\x00\x00";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uint8_t page[0x1000], img[0x1000];
+    uint64_t cr4;
+    int slot = 0, j;
+    size_t i;
+
+    tb2_paging(uc, 3);
+    /* the page after TB2_DATA: mapped in Unicorn, not present in the page tables */
+    tb2_st64(uc, TB2_PT + 0x5000 + ((TB2_DATA + 0x1000 - TB2_SYS) >> 12) * 8, 0);
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 9) | (1u << 18));      /* OSFXSR, OSXSAVE */
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        memset(page, 0xa5, sizeof(page));
+        OK(uc_mem_write(uc, TB2_DATA, page, sizeof(page)));
+        nk_setreg(uc, UC_X86_REG_RSI, TB2_DATA);
+        nk_setreg(uc, UC_X86_REG_FPSW, 0);
+        nk_setreg(uc, UC_X86_REG_FPTAG, 0xffff);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, t[i].code, t[i].len) == 14);
+        TEST_CHECK(nk_reg(uc, UC_X86_REG_CR2) == TB2_DATA + 0x1000);
+        OK(uc_mem_read(uc, TB2_DATA, img, sizeof(img)));
+        for (j = 0; j < 0x1000; j++) {
+            int in_store = j >= (int)t[i].off && j < (int)t[i].off + t[i].stored;
+            if (!in_store && img[j] != 0xa5) {
+                break;
+            }
+        }
+        TEST_CHECK(j == 0x1000);
+        TEST_MSG("case %d: byte %03x changed", (int)i, j);
+        if (t[i].stored) {
+            /* low qword of 1.0 (FSTP) / BCD 1 (FBSTP); TOP = 7 (FLD1 done, no pop) */
+            TEST_CHECK(img[t[i].off] == (t[i].code[3] == '\xbe' ? 0x00 : 0x01));
+            TEST_CHECK(((nk_reg(uc, UC_X86_REG_FPSW) >> 11) & 7) == 7);
+        }
+    }
+    /* loads: an image with FCW = 027Fh in the present page; nothing may be loaded */
+    memset(page, 0, sizeof(page));
+    page[0xfc0] = 0x7f; page[0xfc1] = 0x02;                           /* FRSTOR FCW */
+    page[0xff0] = 0x7f; page[0xff1] = 0x02;                           /* FLDENV FCW */
+    page[0xf00] = 0x7f; page[0xf01] = 0x02;                           /* FXRSTOR FCW */
+    page[0xf18] = 0x80; page[0xf19] = 0x1f;                           /* MXCSR */
+    page[0xdc0] = 0x7f; page[0xdc1] = 0x02;                           /* XRSTOR FCW */
+    page[0xdd8] = 0x80; page[0xdd9] = 0x1f;
+    OK(uc_mem_write(uc, TB2_DATA, page, sizeof(page)));
+    nk_setreg(uc, UC_X86_REG_FPCW, 0x37f);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, frstor, sizeof(frstor) - 1) == 14);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_FPCW) == 0x37f);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, fldenv, sizeof(fldenv) - 1) == 14);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_FPCW) == 0x37f);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, fxrstor, sizeof(fxrstor) - 1) == 14);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_FPCW) == 0x37f);
+    /* XRSTOR at +0xdc0: legacy area and header (XSTATE_BV = 3 at +0xfc0) present, the
+       AVX area (not requested) on the absent page: no fault, the image loads */
+    tb2_st64(uc, TB2_DATA + 0xfc0, 3);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, xrstor, sizeof(xrstor) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_FPCW) == 0x27f);
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13557,4 +13644,5 @@ TEST_LIST = {
     {"test_x86_bp_sgdt_sidt_base", test_x86_bp_sgdt_sidt_base},
     {"test_x86_bp_iret_null_seg_keeps_base", test_x86_bp_iret_null_seg_keeps_base},
     {"test_x86_bp_pks", test_x86_bp_pks},
+    {"test_x86_bp_x87_no_partial", test_x86_bp_x87_no_partial},
     {NULL, NULL}};
