@@ -13463,6 +13463,47 @@ static void test_x86_bp_far_ret_call_cpl3_smap(void)
     TEST_CHECK(st[0] == code_start + 23 && st[1] == 0x23);
     OK(uc_close(uc));
 }
+
+/*
+ * U482 (backport 0d82d9e846): RF for REP string instructions. SDM Vol3B 20.3.1.1: the
+ * processor sets RF in the EFLAGS image of a trap or interrupt taken between iterations of a
+ * repeated string instruction, so an instruction breakpoint does not hit again on resume; RF
+ * is cleared when the instruction completes. Single-step (TF) over REP MOVSB, RCX = 3: the
+ * #DB after the first iteration sees RF = 1; resuming with TF = 0 finishes with RF = 0.
+ */
+static void test_x86_bp_rep_string_rf(void)
+{
+    static const char code[] = "\xf3\xa4";                      /* rep movsb */
+    M0 m;
+    uint64_t pc, fl;
+    uc_err err;
+
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    pc = m.pc;
+    OK(uc_mem_write(m.uc, pc, code, sizeof(code) - 1));
+    m0_set(&m, UC_X86_REG_RCX, 3);
+    m0_set(&m, UC_X86_REG_RSI, M0_DATA);
+    m0_set(&m, UC_X86_REG_RDI, M0_DATA + 0x100);
+    m0_set(&m, UC_X86_REG_RFLAGS, 0x302);                       /* TF */
+    m.cap.count = 0;
+    err = uc_emu_start(m.uc, pc, pc + sizeof(code) - 1, 0, 0);
+    OK(err);
+    TEST_CHECK(m.cap.count == 1 && m.cap.intno == 1);
+    TEST_CHECK(m0_get(&m, UC_X86_REG_RCX) == 2);
+    TEST_CHECK(m0_get(&m, UC_X86_REG_RIP) == pc);
+    fl = m0_get(&m, UC_X86_REG_RFLAGS);
+    TEST_CHECK(fl & 0x10000);
+    TEST_MSG("rflags after the first iteration %" PRIx64, fl);
+    m0_set(&m, UC_X86_REG_RFLAGS, fl & ~0x100ULL);
+    m.cap.count = 0;
+    OK(uc_emu_start(m.uc, pc, pc + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(m.cap.count == 0);
+    TEST_CHECK(m0_get(&m, UC_X86_REG_RCX) == 0);
+    fl = m0_get(&m, UC_X86_REG_RFLAGS);
+    TEST_CHECK(!(fl & 0x10000));
+    TEST_MSG("rflags at the end %" PRIx64, fl);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13678,4 +13719,5 @@ TEST_LIST = {
     {"test_x86_bp_pks", test_x86_bp_pks},
     {"test_x86_bp_x87_no_partial", test_x86_bp_x87_no_partial},
     {"test_x86_bp_far_ret_call_cpl3_smap", test_x86_bp_far_ret_call_cpl3_smap},
+    {"test_x86_bp_rep_string_rf", test_x86_bp_rep_string_rf},
     {NULL, NULL}};

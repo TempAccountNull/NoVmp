@@ -1420,6 +1420,22 @@ static inline void gen_jcc1(DisasContext *s, int b, TCGLabel *l1)
     }
 }
 
+static void gen_set_eflags(DisasContext *s, target_ulong mask);
+static void gen_reset_eflags(DisasContext *s, target_ulong mask);
+
+/*
+ * backport 0d82d9e846 (U482): a REP string instruction entered with RF = 1 (second or later
+ * iteration after a trap or interrupt) clears RF itself once it is done; gen_repz keeps
+ * gen_eob from clearing it between iterations. s->flags has HF_RF_MASK cleared by then, so
+ * the TB flags tell whether RF was set on entry.
+ */
+static void gen_rep_done_rf(DisasContext *s)
+{
+    if (s->base.tb->flags & HF_RF_MASK) {
+        gen_reset_eflags(s, RF_MASK);
+    }
+}
+
 /* XXX: does not work with gdbstub "ice" single step - not a
    serious problem */
 static TCGLabel *gen_jz_ecx_string(DisasContext *s)
@@ -1429,6 +1445,7 @@ static TCGLabel *gen_jz_ecx_string(DisasContext *s)
     TCGLabel *l2 = gen_new_label(tcg_ctx);
     gen_op_jnz_ecx(s, l1);
     gen_set_label(tcg_ctx, l2);
+    gen_rep_done_rf(s);     /* U482 */
     gen_jmp_rel_csize(s, 0, 1);
     gen_set_label(tcg_ctx, l1);
     return l2;
@@ -1534,6 +1551,14 @@ static void gen_repz(DisasContext *s, MemOp ot,
                      void (*fn)(DisasContext *s, MemOp ot))
 {
     TCGLabel *l2;
+    /*
+     * backport 0d82d9e846 (U482): RF = 1 between iterations, so a trap or interrupt after
+     * any iteration but the last sees RF = 1 (and an instruction breakpoint does not hit
+     * again); gen_eob must not clear it, the exit path does (gen_rep_done_rf)
+     */
+    bool had_rf = s->flags & HF_RF_MASK;
+
+    s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
     l2 = gen_jz_ecx_string(s);
     fn(s, ot);
@@ -1544,6 +1569,9 @@ static void gen_repz(DisasContext *s, MemOp ot,
      */
     if (s->repz_opt) {
         gen_op_jz_ecx(s, l2);
+    }
+    if (!had_rf) {
+        gen_set_eflags(s, RF_MASK);     /* U482 */
     }
     gen_jmp_rel_csize(s, -cur_insn_len(s), 0);
 }
@@ -1556,6 +1584,14 @@ static void gen_repz2(DisasContext *s, MemOp ot, int nz,
                       void (*fn)(DisasContext *s, MemOp ot))
 {
     TCGLabel *l2;
+    /*
+     * backport 0d82d9e846 (U482): RF = 1 between iterations, so a trap or interrupt after
+     * any iteration but the last sees RF = 1 (and an instruction breakpoint does not hit
+     * again); gen_eob must not clear it, the exit path does (gen_rep_done_rf)
+     */
+    bool had_rf = s->flags & HF_RF_MASK;
+
+    s->flags &= ~HF_RF_MASK;
     gen_update_cc_op(s);
     l2 = gen_jz_ecx_string(s);
     fn(s, ot);
@@ -1564,6 +1600,9 @@ static void gen_repz2(DisasContext *s, MemOp ot, int nz,
     gen_jcc1(s, (JCC_Z << 1) | (nz ^ 1), l2);
     if (s->repz_opt) {
         gen_op_jz_ecx(s, l2);
+    }
+    if (!had_rf) {
+        gen_set_eflags(s, RF_MASK);     /* U482 */
     }
     gen_jmp_rel_csize(s, -cur_insn_len(s), 0);
 }
@@ -3161,7 +3200,8 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr)
         gen_set_hflag(s, HF_INHIBIT_IRQ_MASK);
     }
 
-    if (s->base.tb->flags & HF_RF_MASK) {
+    /* backport 0d82d9e846 (U482): s->flags, which gen_repz clears for REP string */
+    if (s->flags & HF_RF_MASK) {
         gen_reset_eflags(s, RF_MASK);
     }
     if (recheck_tf) {
