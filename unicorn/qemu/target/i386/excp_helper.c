@@ -1136,10 +1136,19 @@ bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
 
+    /*
+     * backport of 3563362ddf (U771): handle_mmu_fault loads CR2 on a #PF; upstream sets CR2
+     * only when x86_cpu_tlb_fill raises the fault, never for a probe (SDM Vol3A 7.15: CR2 is
+     * loaded when the #PF is generated)
+     */
+    target_ulong probe_cr2 = env->cr[2];
+
     env->retaddr = retaddr;
     if (handle_mmu_fault(cs, addr, size, access_type, mmu_idx)) {
-        if (probe)
-	    return false;
+        if (probe) {
+            env->cr[2] = probe_cr2;     /* U771 */
+            return false;
+        }
 #if __Use_Original_Qemu != 1 /* ours (U51) */
         /* the MMU raises #GP only for non-canonical addresses (U51) */
         if (cs->exception_index == EXCP0D_GPF &&

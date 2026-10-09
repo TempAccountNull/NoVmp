@@ -19194,6 +19194,47 @@ static void test_x86_fx4_ts(void)
     fx4_is(r.uc, 13, 0x30, "call far through a DPL 0 gate from CPL3");
     OK(uc_close(r.uc));
 }
+/*
+ * U771: CR2 is loaded only when a #PF is raised (SDM Vol3A 7.15 Interrupt 14). A translation
+ * probe that does not fault (U709's x86_access_would_fault: a gather element on a not-present
+ * page while a data breakpoint of an earlier element is pending, so #DB is delivered instead)
+ * must leave CR2 alone. nv_paging_ss's map: DR0 = 302000h (4 bytes, R/W), element 2 at 380000h.
+ */
+static void test_x86_fx4_cr2_probe(void)
+{
+    /* mov rax, 302000h; mov dr0, rax; mov rax, F0401h; mov dr7, rax; vpgatherdd xmm0,
+       [rbx+xmm2], xmm1; nop */
+    static const char code[] = "\x48\xb8\x00\x20\x30\x00\x00\x00\x00\x00\x0f\x23\xc0"
+                               "\x48\xb8\x01\x04\x0f\x00\x00\x00\x00\x00\x0f\x23\xf8"
+                               "\xc4\xe2\x71\x90\x04\x13\x90";
+    uint32_t idx[4] = {0, 4, 0x7e000, 8}, ones[4] = {~0u, ~0u, ~0u, ~0u};
+    NvRun r;
+    uint64_t cr2 = 0x1234;
+    uc_x86_exception e;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR2, &cr2));
+    nv_set(&r, UC_X86_REG_RBX, 0x302000);
+    OK(uc_reg_write(r.uc, UC_X86_REG_XMM1, ones));
+    OK(uc_reg_write(r.uc, UC_X86_REG_XMM2, idx));
+    OK(nv_run(&r, code));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR2, &cr2));
+    e = fx4_exc(r.uc);
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 1 && e.vector == 1 && !e.has_address &&
+               cr2 == 0x1234);
+    TEST_MSG("pending #DB: intr %u/%u vector %d cr2 %" PRIx64 " (expected 1234)", r.cap.count,
+             r.cap.intno, e.vector, cr2);
+    /* the same gather without the breakpoint: the #PF loads CR2 */
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    OK(uc_reg_write(r.uc, UC_X86_REG_XMM1, ones));
+    OK(nv_run(&r, "\x0f\x23\xf8\xc4\xe2\x71\x90\x04\x13\x90"));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR2, &cr2));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14 && cr2 == 0x380000);
+    TEST_MSG("no breakpoint: intr %u/%u cr2 %" PRIx64, r.cap.count, r.cap.intno, cr2);
+    fx4_pf(r.uc, 0x0, 0x380000, "gather element 2 not present");
+    OK(uc_close(r.uc));
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -20988,4 +21029,5 @@ TEST_LIST = {
     {"test_x86_fx4_pf_codes", test_x86_fx4_pf_codes},
     {"test_x86_fx4_cp_codes", test_x86_fx4_cp_codes},
     {"test_x86_fx4_ts", test_x86_fx4_ts},
+    {"test_x86_fx4_cr2_probe", test_x86_fx4_cr2_probe},
     {NULL, NULL}};
