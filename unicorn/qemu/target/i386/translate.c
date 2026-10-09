@@ -3229,6 +3229,19 @@ static void gen_popa(DisasContext *s)
     gen_stack_update(s, 8 * size);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U701) */
+/* helper_probe_write on the stack slot FrameTemp (T1) - disp, 'size' bytes */
+static void gen_enter_probe(DisasContext *s, MemOp a_ot, int disp, int size)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    tcg_gen_subi_tl(tcg_ctx, s->A0, s->T1, disp);
+    gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
+    gen_helper_probe_write(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, size));
+}
+#endif /* __Use_Original_Qemu (U701) */
+
+#if __Use_Original_Qemu == 1 /* original QEMU (U701) */
 static void gen_enter(DisasContext *s, int esp_addend, int level)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -3269,6 +3282,64 @@ static void gen_enter(DisasContext *s, int esp_addend, int level)
     tcg_gen_subi_tl(tcg_ctx, s->T1, s->T1, esp_addend + size * level);
     gen_op_mov_reg_v(s, a_ot, R_ESP, s->T1);
 }
+#else /* ours (U701) */
+/*
+ * NoVmp (ledger U701): ENTER stores up to 32 stack slots; a fault on any of them, on a read of
+ * the previous frame, or on "a write using the final value of the stack pointer" (SDM Vol2A
+ * ENTER: #PF, #SS(0) for a non-canonical stack address) leaves memory, RSP and RBP unchanged
+ * (SDM Vol3A 6.15: the instruction is not executed). Checked in the order of the SDM pseudocode
+ * (push RBP, the level - 1 frame pointers read and pushed, FrameTemp pushed, the final RSP),
+ * before anything is stored; the frame pointers are kept in temporaries meanwhile.
+ */
+static void gen_enter(DisasContext *s, int esp_addend, int level)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    MemOp d_ot = mo_pushpop(s, s->dflag);
+    MemOp a_ot = CODE64(s) ? MO_64 : SS32(s) ? MO_32 : MO_16;
+    int size = 1 << d_ot;
+    TCGv frame[32];
+    int i;
+
+    /* FrameTemp = (R|E)SP - size into T1 */
+    tcg_gen_subi_tl(tcg_ctx, s->T1, cpu_regs[R_ESP], size);
+    level &= 31;
+    gen_enter_probe(s, a_ot, 0, size);
+    for (i = 1; i < level; ++i) {
+        frame[i] = tcg_temp_new(tcg_ctx);
+        tcg_gen_subi_tl(tcg_ctx, s->A0, cpu_regs[R_EBP], size * i);
+        gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
+        gen_op_ld_v(s, d_ot, frame[i], s->A0);
+        gen_enter_probe(s, a_ot, size * i, size);
+    }
+    if (level != 0) {
+        gen_enter_probe(s, a_ot, size * level, size);
+    }
+    /* the final stack pointer */
+    gen_enter_probe(s, a_ot, esp_addend + size * level, size);
+
+    /* nothing can fault from here: push BP, the frame pointers, FrameTemp */
+    gen_lea_v_seg(s, a_ot, s->T1, R_SS, -1);
+    gen_op_st_v(s, d_ot, cpu_regs[R_EBP], s->A0);
+    if (level != 0) {
+        for (i = 1; i < level; ++i) {
+            tcg_gen_subi_tl(tcg_ctx, s->A0, s->T1, size * i);
+            gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
+            gen_op_st_v(s, d_ot, frame[i], s->A0);
+            tcg_temp_free(tcg_ctx, frame[i]);
+        }
+        tcg_gen_subi_tl(tcg_ctx, s->A0, s->T1, size * level);
+        gen_lea_v_seg(s, a_ot, s->A0, R_SS, -1);
+        gen_op_st_v(s, d_ot, s->T1, s->A0);
+    }
+
+    /* Copy the FrameTemp value to EBP.  */
+    gen_op_mov_reg_v(s, d_ot, R_EBP, s->T1);
+
+    /* Compute the final value of ESP.  */
+    tcg_gen_subi_tl(tcg_ctx, s->T1, s->T1, esp_addend + size * level);
+    gen_op_mov_reg_v(s, a_ot, R_ESP, s->T1);
+}
+#endif /* __Use_Original_Qemu (U701) */
 
 static void gen_leave(DisasContext *s)
 {

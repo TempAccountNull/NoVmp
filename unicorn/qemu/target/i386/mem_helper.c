@@ -100,6 +100,101 @@ void helper_probe_vec_store(CPUX86State *env, target_ulong a0, void *src, uint32
 }
 #endif /* __Use_Original_Qemu (U592) */
 
+#if __Use_Original_Qemu != 1 /* ours (U701) */
+static void x86_probe_write_part(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
+                                 uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+    uint32_t off, n;
+    target_ulong p;
+
+    for (off = 0, p = a0; off < len; off += n, p += n) {
+        n = (uint32_t)(TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK));
+        if (n > len - off) {
+            n = len - off;
+        }
+        probe_access(env, p, (int)n, MMU_DATA_STORE, mmu_idx, ra);
+    }
+    for (off = 0, p = a0; off < len; off += n, p += n) {
+        target_ulong paddr;
+        MemoryRegion *mr;
+
+        n = (uint32_t)(TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK));
+        if (n > len - off) {
+            n = len - off;
+        }
+        if (!tlb_vaddr_to_paddr(env, p, MMU_DATA_STORE, mmu_idx, &paddr)) {
+            continue;
+        }
+        mr = uc->memory_mapping(uc, paddr);
+        if (mr == NULL) {
+            /* UC_HOOK_MEM_READ_UNMAPPED; no hook: the instruction stops in load_helper */
+            (void)cpu_ldub_mmuidx_ra(env, p, mmu_idx, ra);
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+            if (!tlb_vaddr_to_paddr(env, p, MMU_DATA_STORE, mmu_idx, &paddr)) {
+                continue;
+            }
+            mr = uc->memory_mapping(uc, paddr);     /* a hook mapped it */
+            if (mr == NULL) {
+                continue;
+            }
+        }
+        if (!(mr->perms & UC_PROT_WRITE)) {
+            /* store the byte that is there (read without hooks): UC_HOOK_MEM_WRITE_PROT */
+            int old_size = uc->size_recur_mem;
+            uint8_t b = 0;
+
+            uc->read_mem(&uc->address_space_memory, paddr, &b, 1);
+            uc->size_recur_mem = (int)len;      /* no UC_HOOK_MEM_WRITE for the probe */
+            cpu_stb_mmuidx_ra(env, p, b, mmu_idx, ra);
+            uc->size_recur_mem = old_size;
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+        }
+    }
+}
+
+/*
+ * NoVmp (ledger U701): fault if [a0, a0 + len) cannot be written, without writing anything
+ * (the bytes keep their values). For instructions that store several parts (ENTER, far CALL,
+ * ...): a page fault is reported before the first part is stored, "a program-state change does
+ * not normally accompany a page-fault exception, because the instruction that causes the
+ * exception to be generated is not executed" (SDM Vol3A 6.15, Interrupt 14), and for ENTER's
+ * check of its final stack pointer (SDM Vol2A ENTER). Every page is translated for a store
+ * (#PF with paging); a page Unicorn has not mapped is reported through a one-byte read of it
+ * (UC_HOOK_MEM_READ_UNMAPPED, as U480 does), a page mapped without UC_PROT_WRITE through a
+ * store of its own byte (UC_HOOK_MEM_WRITE_PROT); if no hook makes it accessible, the
+ * instruction stops here. Outside 64-bit mode the range wraps at 4 GiB (U490).
+ */
+void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t ra)
+{
+    int mmu_idx = cpu_mmu_index(env, false);
+
+    if (len == 0) {
+        return;
+    }
+    if (!(env->hflags & HF_CS64_MASK)) {
+        a0 = (uint32_t)a0;
+        if (a0 + len - 1 > 0xffffffffULL) {
+            uint32_t n = (uint32_t)(0x100000000ULL - a0);
+
+            x86_probe_write_part(env, a0, n, mmu_idx, ra);
+            x86_probe_write_part(env, 0, len - n, mmu_idx, ra);
+            return;
+        }
+    }
+    x86_probe_write_part(env, a0, len, mmu_idx, ra);
+}
+
+void helper_probe_write(CPUX86State *env, target_ulong a0, uint32_t len)
+{
+    x86_probe_write(env, a0, len, GETPC());
+}
+#endif /* __Use_Original_Qemu (U701) */
+
 
 void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)
 {

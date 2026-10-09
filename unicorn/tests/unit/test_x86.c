@@ -17390,6 +17390,77 @@ static void test_x86_fx3_flags_mem_hook(void)
     TEST_MSG("seto: err %u rflags %" PRIx64 " mem %" PRIx64 " hook %" PRIx64, err, fl, mem,
              fx3_hook_flags[0]);
 }
+
+/* UC_HOOK_MEM_UNMAPPED: map the page (zero-filled) and go on */
+static bool fx3_map_page(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                         int64_t value, void *user_data)
+{
+    return uc_mem_map(uc, address & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+/*
+ * U701: ENTER stores nothing when one of its stack slots, or a write at its final stack
+ * pointer, faults (SDM Vol2A ENTER, Vol3A 6.15). The stack page FX3_PG + 0x1000 is mapped,
+ * the page below it is not; the slots above the fault keep their A5h bytes.
+ */
+static void test_x86_fx3_enter(void)
+{
+    static const struct {
+        const char *code;   /* 4 bytes */
+        uint64_t rsp;
+        const char *what;
+    } t[] = {
+        {"\xc8\x00\x00\x03", FX3_PG + 0x1010, "enter 0, 3: third slot below the page"},
+        {"\xc8\x00\x00\x02", FX3_PG + 0x1008, "enter 0, 2: last slot below the page"},
+        {"\xc8\x00\x02\x00", FX3_PG + 0x1100, "enter 200h, 0: final RSP below the page"},
+        {"\xc8\x10\x00\x01", FX3_PG + 0x1018, "enter 10h, 1: final RSP below the page"},
+    };
+    size_t i;
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+            uc_engine *uc;
+            uc_hook h;
+            uc_err err;
+            uint8_t page[0x1000], img[0x1000];
+            uint64_t rsp = t[i].rsp, rbp = FX3_PG + 0x1800, v;
+            int j;
+
+            OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+            OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+            OK(uc_mem_write(uc, code_start, t[i].code, 4));
+            OK(uc_mem_map(uc, FX3_PG + 0x1000, 0x1000, UC_PROT_ALL));
+            memset(page, 0xa5, sizeof(page));
+            OK(uc_mem_write(uc, FX3_PG + 0x1000, page, sizeof(page)));
+            OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+            OK(uc_reg_write(uc, UC_X86_REG_RBP, &rbp));
+            if (pass == 1) {
+                OK(uc_hook_add(uc, &h, UC_HOOK_MEM_UNMAPPED, fx3_map_page, NULL, 1, 0));
+            }
+            err = uc_emu_start(uc, code_start, code_start + 4, 0, 0);
+            OK(uc_mem_read(uc, FX3_PG + 0x1000, img, sizeof(img)));
+            if (pass == 0) {
+                /* the fault: no slot written, RSP and RBP unchanged */
+                for (j = 0; j < 0x1000 && img[j] == 0xa5; j++) {
+                }
+                TEST_CHECK((err == UC_ERR_READ_UNMAPPED || err == UC_ERR_WRITE_UNMAPPED) &&
+                           j == 0x1000 && nk_reg(uc, UC_X86_REG_RSP) == rsp &&
+                           nk_reg(uc, UC_X86_REG_RBP) == rbp &&
+                           nk_reg(uc, UC_X86_REG_RIP) == code_start);
+                TEST_MSG("%s: err %u byte %03x changed rsp %" PRIx64 " rbp %" PRIx64, t[i].what,
+                         err, j, nk_reg(uc, UC_X86_REG_RSP), nk_reg(uc, UC_X86_REG_RBP));
+            } else {
+                /* a hook maps the page: ENTER completes; its first slot holds the old RBP */
+                OK(uc_mem_read(uc, rsp - 8, &v, 8));
+                TEST_CHECK(err == UC_ERR_OK && v == rbp && nk_reg(uc, UC_X86_REG_RBP) == rsp - 8);
+                TEST_MSG("hooked %s: err %u slot %" PRIx64 " rbp %" PRIx64, t[i].what, err, v,
+                         nk_reg(uc, UC_X86_REG_RBP));
+            }
+            OK(uc_close(uc));
+        }
+    }
+}
 /* ---- end U700-U719 (fx3_) ---- */
 
 TEST_LIST = {
@@ -17645,4 +17716,5 @@ TEST_LIST = {
     {"test_x86_amx2_xsaves", test_x86_amx2_xsaves},
     {"test_x86_fx3_flags_at_fault", test_x86_fx3_flags_at_fault},
     {"test_x86_fx3_flags_mem_hook", test_x86_fx3_flags_mem_hook},
+    {"test_x86_fx3_enter", test_x86_fx3_enter},
     {NULL, NULL}};

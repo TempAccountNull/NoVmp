@@ -159,3 +159,19 @@ add rcx, rdx; cmpxchg16b xmmword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1
 add rcx, rdx; adcx rax, qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
 add rcx, rdx; inc qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
 add rcx, rdx; neg qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+#
+# --- U701 ENTER faults before it stores anything: on a stack slot, a read of the previous frame,
+# or "a write using the final value of the stack pointer" (SDM Vol2A ENTER #PF; Vol3A 6.15).
+# RSP = CODE + F000h: the slots are in the code area (mapped, not compared), 30000000h - 1 and
+# below is not mapped on the host nor in Unicorn; the host builds its exception frame below
+# CODE + F000h. Before U701 Unicorn took no fault on the final-RSP check: 7 of these 10 differed.
+enter 0xFFFF, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0x8000, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xF000, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xF001, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xFFFF, 1 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xFFF0, 3 | cpl=3 rsp=0x3000F000 rbp=0x3000F100
+enter 16, 3 | cpl=3 rbp=0x30013F80
+enter 0xEFF8, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xEFF9, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234
+enter 0xEFFF, 0 | cpl=3 rsp=0x3000F000 rbp=0x1234

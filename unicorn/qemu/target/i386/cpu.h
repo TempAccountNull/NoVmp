@@ -2376,6 +2376,10 @@ void x86_cpu_update_phys_bits(X86CPU *cpu);
 void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint8_t *src,
                      uintptr_t ra);
 #endif /* __Use_Original_Qemu (U592) */
+#if __Use_Original_Qemu != 1 /* ours (U701) */
+/* mem_helper.c: fault if [a0, a0 + len) cannot be written; nothing is written */
+void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t ra);
+#endif /* __Use_Original_Qemu (U701) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */
