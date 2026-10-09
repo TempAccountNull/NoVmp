@@ -13531,6 +13531,30 @@ static void test_x86_bp_sysret_canonical(void)
     TEST_CHECK(m0_get(&m, UC_X86_REG_RFLAGS) & 0x400);
     m0_close(&m);
 }
+
+/*
+ * U484 (backport ed88bdcfbd): VEX in 16-bit protected mode (CS.D = 0, PE = 1). C5 F9 EF C0
+ * is VPXOR xmm0, xmm0, xmm0 there (SDM Vol2A 2.5: VEX is #UD only in real and virtual-8086
+ * mode, where C4/C5 are LES/LDS); before, it decoded as LDS with a register operand (#UD).
+ */
+static void test_x86_bp_vex_16bit_pm(void)
+{
+    static const uint64_t gdt[3] = {0, 0x00009A000000FFFFULL, 0x00CF92000000FFFFULL};
+    static const char vpxor[] = "\xc5\xf9\xef\xc0";
+    uc_x86_mmr gdtr = {0, M0_DATA + 0x1000, sizeof(gdt) - 1, 0};
+    uint64_t x[2] = {0x1111111111111111ULL, 0x2222222222222222ULL};
+    M0 m;
+
+    m0_open(&m, UC_MODE_32, 0, NULL, 0);
+    OK(uc_mem_write(m.uc, M0_DATA + 0x1000, gdt, sizeof(gdt)));
+    OK(uc_reg_write(m.uc, UC_X86_REG_GDTR, &gdtr));
+    m0_set(&m, UC_X86_REG_CS, 0x08);                    /* 16-bit code segment, base 0 */
+    OK(uc_reg_write(m.uc, UC_X86_REG_XMM0, x));
+    TEST_CHECK(m0_run(&m, vpxor, sizeof(vpxor) - 1) == -1);
+    OK(uc_reg_read(m.uc, UC_X86_REG_XMM0, x));
+    TEST_CHECK(x[0] == 0 && x[1] == 0);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13748,4 +13772,5 @@ TEST_LIST = {
     {"test_x86_bp_far_ret_call_cpl3_smap", test_x86_bp_far_ret_call_cpl3_smap},
     {"test_x86_bp_rep_string_rf", test_x86_bp_rep_string_rf},
     {"test_x86_bp_sysret_canonical", test_x86_bp_sysret_canonical},
+    {"test_x86_bp_vex_16bit_pm", test_x86_bp_vex_16bit_pm},
     {NULL, NULL}};

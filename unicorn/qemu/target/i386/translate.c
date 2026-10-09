@@ -3875,7 +3875,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif
     case 0xc5: /* 2-byte VEX */
     case 0xc4: /* 3-byte VEX */
-        if (CODE32(s) && !VM86(s)) {
+        /*
+         * backport ed88bdcfbd (U484): VEX is valid in 16-bit protected mode too;
+         * LES/LDS only in real and virtual-8086 mode (SDM Vol2A 2.5 exception class
+         * tables: VEX #UD 'Always in Real or Virtual-8086 mode')
+         */
+        if (PE(s) && !VM86(s)) {
             int vex2 = x86_ldub_code(env, s);
             s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
 

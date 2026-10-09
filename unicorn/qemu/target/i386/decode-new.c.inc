@@ -5761,10 +5761,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
     case 0xc5: /* 2-byte VEX */
     case 0xc4: /* 3-byte VEX */
         /*
-         * VEX prefixes cannot be used except in 32-bit mode.
-         * Otherwise the instruction is LES or LDS.
+         * backport ed88bdcfbd (U484): bits 6-7 of the first byte must be set except in
+         * 64-bit mode, otherwise the instruction is LES or LDS. Not allowed in real mode
+         * (or virtual-8086 mode); 16-bit protected mode supports VEX.
          */
-        if (CODE32(s) && !VM86(s)) {
+        if (PE(s) && !VM86(s)) {
             static const int pp_prefix[4] = {
                 0, PREFIX_DATA, PREFIX_REPZ, PREFIX_REPNZ
             };
