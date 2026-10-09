@@ -29,7 +29,8 @@ Generic EVEX wrappers (SDM pseudocode of every page):
 Floating point (exact rationals): IEEE binary32/64 with the four rounding modes, DAZ,
 FTZ (tiny, exact or not -> signed 0, UE+PE), flags IE DE ZE OE UE PE (MXCSR bits 0-5),
 underflow = tiny after rounding with unbounded exponent (Vol1 4.9.1.5), NaN rules of
-Vol1 Table 4-7 (SRC1 = vvvv first, SNaN quietened, invalid -> QNaN indefinite),
+Vol1 4.8.3.5 Table 4-8 (SSE/AVX: a NaN SRC1 = vvvv wins, also when both sources are
+NaNs; SNaN quietened; invalid -> QNaN indefinite; VMIN/VMAX return SRC2),
 unmasked exception -> #XM, destination unchanged, flags of the whole instruction set.
 
 Usage:
@@ -311,7 +312,7 @@ def fp_binop(op, a, b, f, mxcsr, rc=None):
 
 
 def fp_div(a, b, f, mxcsr, rc=None):
-    """DIVPS/DIVPD element: SRC1 / SRC2 (Vol1 4.9.1.3 #Z, Table 4-7 NaNs)."""
+    """DIVPS/DIVPD element: SRC1 / SRC2 (Vol1 4.9.1.3 #Z, Table 4-8 NaNs)."""
     if rc is None:
         rc = (mxcsr >> 13) & 3
     daz, ftz = bool(mxcsr & DAZ), bool(mxcsr & FTZ)
@@ -839,15 +840,6 @@ def is_nan(x, f):
     return classify(x, f)[0] in ("snan", "qnan")
 
 
-def no_nan_pairs(av, bv, f):
-    """Lanes where both sources are NaN are left out of the EVEX cases (SRC1 becomes 1.0):
-    the fork's SSE NaN propagation (QEMU float_2nan_prop_x87 on sse_status, see QEMU's own
-    TODO) returns the QNaN / larger significand, the SDM (Vol1 4.8.3.5, Table 4-7) and the
-    i5-13600K return SRC1. Known deviation of the shared SSE helpers, outside milestone M1."""
-    one = 0x3FF0000000000000 if f is F64 else 0x3F800000
-    return [one if is_nan(x, f) and is_nan(y, f) else x for x, y in zip(av, bv)] + av[len(bv):]
-
-
 def fp_vector(op, w, a, b, kmask, mxcsr, rc=None, sae=False):
     """per element op on the active lanes; returns (results list or None lanes, flags)"""
     f = F64 if w else F32
@@ -874,8 +866,6 @@ def gen_fp_case(name, opc, op, w, vl, dst, s1, s2, kreg=0, kval=None, z=0, mem=N
         avals = [rnd_fp(f) for _ in range(n)]
     if bvals is None:
         bvals = [rnd_fp(f) for _ in range(1 if (mem is not None and bcst) else n)]
-    if not (mem is None and s2 == s1):
-        avals = no_nan_pairs(avals, bvals * n if (mem is not None and bcst) else bvals, f)
     regs = {}
     regs[s1] = pack(avals, esz) + rnd_bytes(64 - vl)
     if dst not in regs:
@@ -1263,8 +1253,6 @@ def gen_generic(sp, vl, variant, dst=1, s1=2, s2=3, kreg=0, kval=None, z=0, imm=
         avals = [rnd_elem(esz, fp) for _ in range(n)]
     if bvals is None:
         bvals = [rnd_elem(esz, fp) for _ in range(1 if bcst else n)]
-    if fp and lay == "rvm" and sp["op"] in ("add", "sub", "mul", "div") and (mem or s1 != s2):
-        avals = no_nan_pairs(avals, bvals * n if bcst else bvals, F64 if w else F32)
     regs = {}
     # register numbers per layout: dst / src1 (vvvv) / src2 (r/m)
     if lay in ("rvm", "kvm", "rvmi"):
@@ -1486,6 +1474,54 @@ def gen_ext():
             emit(c)
 
 
+def two_nan_lanes(f, n):
+    """(SRC1, SRC2) lanes with NaNs in both sources (Vol1 Table 4-8 rows "SNaN and QNaN",
+    "Two SNaNs", "Two QNaNs") in both orders and signs, plus one-NaN and no-NaN lanes"""
+    if f is F32:
+        q1, q2, s1, s2 = 0x7FC00011, 0xFFC00022, 0x7F800033, 0xFF800044
+        one, two = 0x3F800000, 0x40000000
+    else:
+        q1, q2, s1, s2 = 0x7FF8000000000011, 0xFFF8000000000022, 0x7FF0000000000033, 0xFFF0000000000044
+        one, two = 0x3FF0000000000000, 0x4000000000000000
+    pairs = [(q1, q2), (q2, q1), (s1, q1), (q1, s1), (s1, s2), (s2, s1), (q2, s2), (s2, q2),
+             (q1, q1 ^ 0x10), (s1, s1 | 0x100), (q1, one), (one, q2), (s1, two), (two, s2),
+             (one, two), (q2, q2)]
+    pairs = pairs[:n]
+    return [x for x, _ in pairs], [y for _, y in pairs]
+
+
+def gen_two_nan():
+    """SSE/AVX two-NaN rule on the EVEX FP forms: SRC1 (vvvv) quietened for ADD/SUB/MUL/DIV,
+    SRC2 for MIN/MAX (instruction pseudocode); register, memory and {1toN} SRC2"""
+    comment("--- two-NaN lanes (Vol1 4.8.3.5 Table 4-8: SSE/AVX return SRC1, VMIN/VMAX SRC2)")
+    for name, opc, op, w in FP_FORMS:
+        f = F64 if w else F32
+        esz = 8 if w else 4
+        for vl in (16, 32, 64):
+            a, b = two_nan_lanes(f, vl // esz)
+            emit(gen_fp_case(name, opc, op, w, vl, 11, 12, 13, avals=a, bvals=b, title="two NaNs"))
+            emit(gen_fp_case(name, opc, op, w, vl, 7, 8, 0, mem=Mem(RSI, 0), avals=a, bvals=b,
+                             title="two NaNs mem"))
+        n = 64 // esz
+        a, _ = two_nan_lanes(f, n)
+        for bv in ((0x7FC00055 if f is F32 else 0x7FF8000000000055),
+                   (0xFF800066 if f is F32 else 0xFFF0000000000066)):
+            emit(gen_fp_case(name, opc, op, w, 64, 9, 10, 0, mem=Mem(RSI, 0), bcst=1, avals=a,
+                             bvals=[bv], title="two NaNs {1toN} %X" % bv))
+    for sp in EXT_FORMS:
+        if not sp.get("fp") or sp["layout"] != "rvm":
+            continue
+        esz = 8 if sp["w"] else 4
+        f = F64 if sp["w"] else F32
+        for vl in (16, 32, 64):
+            a, b = two_nan_lanes(f, vl // esz)
+            emit(gen_generic(sp, vl, "two NaNs", dst=24, s1=25, s2=27, avals=a, bvals=b))
+        a, b = two_nan_lanes(f, 64 // esz)
+        comment("%s two NaNs, memory SRC2 and {1toN} SRC2 (SNaN)" % sp["name"])
+        emit(gen_generic(sp, 64, "mem", dst=6, s1=8, s2=0, avals=a, bvals=b))
+        emit(gen_generic(sp, 64, "bcst", dst=7, s1=9, s2=0, avals=a, bvals=[b[2]]))
+
+
 # ---------------------------------------------------------------------------------------
 # self test (hand-derived values from the SDM rules)
 # ---------------------------------------------------------------------------------------
@@ -1681,6 +1717,7 @@ def main():
         gen_fault_suppression()
         gen_ud()
         gen_ext()
+        gen_two_nan()
         out = sys.stdout
         out.write("# EVEX milestone M1 (ledger U141-U153): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m1.py --cases (regenerate, do not edit). The i5-13600K has no\n")
