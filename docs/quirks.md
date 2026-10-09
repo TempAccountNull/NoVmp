@@ -103,7 +103,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - SDM: Vol2B PREFETCHW, Protected/Real-Address/Virtual-8086/Compatibility/64-Bit Mode Exceptions: "#UD If the LOCK prefix is used." Vol2A LOCK: PREFETCHW is not in the list of lockable instructions.
 - Emulator: #UD (U457, the old decoder's LOCK table).
 - i5-13600K: runs it (no #UD, no fault) for /1 with a memory or register operand; the other 0F 0D encodings (/0, /2, /7, register /0) with LOCK are #UD, as is LOCK PREFETCHNTA (0F 18 /0).
-- Hardware cases: `cases_backport_t1.txt` (the two `lock prefetchw` lines; the /0, /2, /7 lines match).
+- Hardware cases: `cases_backport_t1.txt` lines 197, 199 (the /0, /2, /7 lines next to them match).
 - Ledger: U457.
 
 ### SYSRET at CPL3 in compatibility mode
@@ -112,7 +112,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - SDM: Vol2B SYSRET Operation: `IF (CS.L ≠ 1) or (IA32_EFER.LMA ≠ 1) or (IA32_EFER.SCE ≠ 1) or (CR4.FRED = 1) THEN #UD; FI; IF (CPL ≠ 0) THEN #GP(0); FI;` and Compatibility Mode Exceptions: "#UD The SYSRET instruction is not recognized in compatibility mode."
 - Emulator: #UD (U460: Intel SYSCALL/SYSRET only in 64-bit mode).
 - i5-13600K: #GP(0) (Windows reports STATUS_PRIVILEGED_INSTRUCTION): the CPL check is made first. In 64-bit mode at CPL3 both give #GP(0).
-- Hardware cases: `cases_backport_t1.txt` (the two compatibility-mode `sysret` lines).
+- Hardware cases: `cases_backport_t1.txt` lines 308–309 (64-bit mode lines 305–306: #GP(0) on both).
 - Ledger: U460.
 
 ## Host state (not SDM deviations)

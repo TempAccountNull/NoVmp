@@ -149,6 +149,10 @@ rem behaviour (cases_backport_t2.txt, self-generated snippets): must be 0 differ
 call :hw_zero cases_backport_t2
 rem The CPL0-only parts of the same backports as expected-value cases from the SDM text.
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_backport_t2_sdm.txt" --expect-only
+rem U468: Tier 1 upstream QEMU backports (U453-U467): hardware lines (cpl=3 = Unicorn at CPL3 with the
+rem Windows GDT, U452; compatibility mode via CS 23h) and SDM expected values (STI/LSS + TF, MOV DR,
+rem compatibility-mode SYSCALL); known deviations LOCK PREFETCHW, SYSRET at CPL3 in compatibility mode.
+call :hw_zero cases_backport_t1
 
 echo.
 if !FAILED! NEQ 0 (
