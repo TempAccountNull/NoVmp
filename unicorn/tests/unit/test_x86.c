@@ -14291,11 +14291,9 @@ static void test_x86_bp_lock_new_decoder(void)
 {
     BpCpu c;
     uint32_t x0[4] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
-    uint64_t mm0 = 0x8877665544332211ULL;
 
     bp_open(&c, UC_MODE_64, -1);
     OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, x0));
-    OK(uc_reg_write(c.uc, UC_X86_REG_MM0, &mm0));
     bp_lock_ud(&c, "\xf0\x0f\x7e\x06", 4, "lock movd [rsi], mm0");
     bp_lock_ud(&c, "\xf0\x66\x0f\x7e\x06", 5, "lock movd [rsi], xmm0");
     bp_lock_ud(&c, "\xf0\x66\x0f\x3a\x14\x06\x01", 7, "lock pextrb [rsi], xmm0, 1");
@@ -14306,6 +14304,96 @@ static void test_x86_bp_lock_new_decoder(void)
     bp_lock_ud(&c, "\xf0\x66\x0f\xd6\x06", 5, "lock movq [rsi], xmm0");
     bp_lock_ud(&c, "\xf0\x0f\x11\x06", 4, "lock movups [rsi], xmm0");
     bp_lock_ud(&c, "\xf0\x66\x0f\xfe\xc1", 5, "lock paddd xmm0, xmm1");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U457: LOCK in the old decoder, SDM Vol2A LOCK list: the lockable instructions
+ * with a memory destination execute; everything else (other instructions,
+ * register destinations, CMP, BT, TEST, MUL, ...) is #UD and stores nothing.
+ */
+static void test_x86_bp_lock_old_decoder(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } ud[] = {
+        {"\xf0\x89\x06", 3, "lock mov [rsi], eax"},
+        {"\xf0\x03\x06", 3, "lock add eax, [rsi]"},
+        {"\xf0\x83\xc0\x01", 4, "lock add eax, 1"},
+        {"\xf0\x04\x01", 3, "lock add al, 1"},
+        {"\xf0\x83\x3e\x01", 4, "lock cmp dword [rsi], 1"},
+        {"\xf0\x39\x06", 3, "lock cmp [rsi], eax"},
+        {"\xf0\x85\x06", 3, "lock test [rsi], eax"},
+        {"\xf0\xf7\x06\x01\x00\x00\x00", 7, "lock test dword [rsi], 1"},
+        {"\xf0\xf7\x26", 3, "lock mul dword [rsi]"},
+        {"\xf0\xf7\xd8", 3, "lock neg eax"},
+        {"\xf0\xff\xc0", 3, "lock inc eax"},
+        {"\xf0\xff\x36", 3, "lock push qword [rsi]"},
+        {"\xf0\xd1\x26", 3, "lock shl dword [rsi], 1"},
+        {"\xf0\xc1\x06\x03", 4, "lock rol dword [rsi], 3"},
+        {"\xf0\x87\xc1", 3, "lock xchg ecx, eax"},
+        {"\xf0\x91", 2, "lock xchg ecx, eax (91)"},
+        {"\xf0\x0f\xa3\x06", 4, "lock bt [rsi], eax"},
+        {"\xf0\x0f\xba\x26\x03", 5, "lock bt dword [rsi], 3"},
+        {"\xf0\x0f\xab\xc8", 4, "lock bts eax, ecx"},
+        {"\xf0\x0f\xb1\xc8", 4, "lock cmpxchg eax, ecx"},
+        {"\xf0\x0f\xc1\xc8", 4, "lock xadd eax, ecx"},
+        {"\xf0\x0f\xc7\xf0", 4, "lock rdrand eax"},
+        {"\xf0\x0f\xb6\x06", 4, "lock movzx eax, byte [rsi]"},
+        {"\xf0\x0f\xaf\x06", 4, "lock imul eax, [rsi]"},
+        {"\xf0\x0f\x94\x06", 4, "lock sete [rsi]"},
+        {"\xf0\x0f\x44\x06", 4, "lock cmove eax, [rsi]"},
+        {"\xf0\x0f\xc3\x06", 4, "lock movnti [rsi], eax"},
+        {"\xf0\xd9\x06", 3, "lock fld dword [rsi]"},
+        {"\xf0\x90", 2, "lock nop"},
+        {"\xf0\x8d\x06", 3, "lock lea eax, [rsi]"},
+        {"\xf0\xc7\x06\x01\x00\x00\x00", 7, "lock mov dword [rsi], 1"},
+        {"\xf0\x0f\x0d\x0e", 4, "lock prefetchw [rsi]"},
+    };
+    static const struct {
+        const char *code;
+        size_t len;
+        uint32_t result;
+        const char *what;
+    } ok[] = {
+        {"\xf0\x01\x06", 3, 0x10000005, "lock add [rsi], eax"},
+        {"\xf0\x83\x06\x01", 4, 0x10000001, "lock add dword [rsi], 1"},
+        {"\xf0\x80\x0e\x01", 4, 0x10000001, "lock or byte [rsi], 1"},
+        {"\xf0\x29\x06", 3, 0x0ffffffb, "lock sub [rsi], eax"},
+        {"\xf0\x31\x06", 3, 0x10000005, "lock xor [rsi], eax"},
+        {"\xf0\xf7\x16", 3, 0xefffffff, "lock not dword [rsi]"},
+        {"\xf0\xf7\x1e", 3, 0xf0000000, "lock neg dword [rsi]"},
+        {"\xf0\xff\x06", 3, 0x10000001, "lock inc dword [rsi]"},
+        {"\xf0\xfe\x0e", 3, 0x100000ff, "lock dec byte [rsi]"},
+        {"\xf0\x87\x06", 3, 0x00000005, "lock xchg [rsi], eax"},
+        {"\xf0\x0f\xab\x06", 4, 0x10000020, "lock bts [rsi], eax"},
+        {"\xf0\x0f\xba\x2e\x03", 5, 0x10000008, "lock bts dword [rsi], 3"},
+        {"\xf0\x0f\xba\x3e\x1c", 5, 0x00000000, "lock btc dword [rsi], 28"},
+        {"\xf0\x0f\xc1\x06", 4, 0x10000005, "lock xadd [rsi], eax"},
+        {"\xf0\x0f\xb1\x0e", 4, 0x10000000, "lock cmpxchg [rsi], ecx (no match)"},
+    };
+    BpCpu c;
+    size_t i;
+
+    bp_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(ud) / sizeof(ud[0]); i++) {
+        bp_set(&c, UC_X86_REG_RAX, 5);
+        bp_lock_ud(&c, ud[i].code, ud[i].len, ud[i].what);
+    }
+    for (i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
+        uint32_t m = 0x10000000;
+
+        OK(uc_mem_write(c.uc, BP_DATA, &m, 4));
+        bp_set(&c, UC_X86_REG_RSI, BP_DATA);
+        bp_set(&c, UC_X86_REG_RAX, 5);
+        bp_set(&c, UC_X86_REG_RCX, 7);
+        OK(bp_run(&c, ok[i].code, ok[i].len));
+        OK(uc_mem_read(c.uc, BP_DATA, &m, 4));
+        TEST_CHECK(m == ok[i].result);
+        TEST_MSG("%s: [rsi] %08x, expected %08x", ok[i].what, m, ok[i].result);
+    }
     OK(uc_close(c.uc));
 }
 /* ---- end U450-U474 (bp_) ---- */
@@ -14523,4 +14611,5 @@ TEST_LIST = {
     {"test_x86_bp_rdpmc_gp", test_x86_bp_rdpmc_gp},
     {"test_x86_bp_vex_vvvv3_32", test_x86_bp_vex_vvvv3_32},
     {"test_x86_bp_lock_new_decoder", test_x86_bp_lock_new_decoder},
+    {"test_x86_bp_lock_old_decoder", test_x86_bp_lock_old_decoder},
     {NULL, NULL}};

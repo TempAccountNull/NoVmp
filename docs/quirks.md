@@ -97,6 +97,15 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
   - Elements 1 and 3 usually follow the orders (0, 1, 2, 3) and (2, 3, 0, 1). In about 10 % of the affected results the order within one pair is swapped.
   - The majority rule is t[j] := p[j^1] + p[j], element i := t[i] + t[i^2].
 
+### LOCK PREFETCHW
+
+- Behaviour: PREFETCHW m8 (0F 0D /1) with a LOCK prefix; also the register form 0F 0D /1 mod=11b (a NOP, U77).
+- SDM: Vol2B PREFETCHW, Protected/Real-Address/Virtual-8086/Compatibility/64-Bit Mode Exceptions: "#UD If the LOCK prefix is used." Vol2A LOCK: PREFETCHW is not in the list of lockable instructions.
+- Emulator: #UD (U457, the old decoder's LOCK table).
+- i5-13600K: runs it (no #UD, no fault) for /1 with a memory or register operand; the other 0F 0D encodings (/0, /2, /7, register /0) with LOCK are #UD, as is LOCK PREFETCHNTA (0F 18 /0).
+- Hardware cases: `cases_backport_t1.txt` (the two `lock prefetchw` lines; the /0, /2, /7 lines match).
+- Ledger: U457.
+
 ## Host state (not SDM deviations)
 
 | tag | cases | reason |

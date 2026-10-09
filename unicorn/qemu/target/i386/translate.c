@@ -3702,6 +3702,67 @@ static bool ibt_notrack(CPUX86State *env, DisasContext *s)
 }
 
 #endif /* __Use_Original_Qemu (U116) */
+#if __Use_Original_Qemu != 1 /* ours (U457) */
+/*
+ * NoVmp (ledger U457): may opcode B (0F xx = 1xx) carry LOCK? The SDM Vol2A LOCK list:
+ * ADD, ADC, AND, BTC, BTR, BTS, CMPXCHG, CMPXCHG8B, CMPXCHG16B, DEC, INC, NEG, NOT, OR,
+ * SBB, SUB, XOR, XADD and XCHG, and only their forms with a memory destination; every
+ * other instruction or form raises #UD. Upstream QEMU checks this per entry of its
+ * converted decoder (b609db9477, X86_SPECIAL_HasLock tags); this decoder has no entry
+ * table, so the list is applied before the opcode switch. The ModRM byte is only peeked
+ * (s->pc is restored). Opcodes routed to disas_insn_new (the list mirrors the switch at
+ * the end of disas_insn) are checked there; 0F 1A/1B check LOCK themselves (MPX BNDMOV
+ * with a memory destination is lockable too, SDM Vol2A BNDMOV; the hint-NOP forms #UD,
+ * U91/U92); LOCK MOV CR0 is the AMD CR8 alias only with CPUID.80000001H:ECX.CR8LEGACY.
+ */
+static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
+{
+    int modrm, mod, reg;
+
+    if ((b >= 0x10e && b <= 0x117) || (b >= 0x128 && b <= 0x12f) ||
+        (b >= 0x138 && b <= 0x13a) || (b >= 0x150 && b <= 0x179) ||
+        (b >= 0x17c && b <= 0x17f) || b == 0x1c2 || (b >= 0x1c4 && b <= 0x1c6) ||
+        (b >= 0x1d0 && b <= 0x1fe) || b == 0x11a || b == 0x11b) {
+        return true;
+    }
+    switch (b) {
+    case 0x00: case 0x01: case 0x08: case 0x09: case 0x10: case 0x11:
+    case 0x18: case 0x19: case 0x20: case 0x21: case 0x28: case 0x29:
+    case 0x30: case 0x31:
+    case 0x80: case 0x81: case 0x82: case 0x83:
+    case 0x86: case 0x87:
+    case 0xf6: case 0xf7: case 0xfe: case 0xff:
+    case 0x1ab: case 0x1b3: case 0x1bb: case 0x1ba:
+    case 0x1b0: case 0x1b1: case 0x1c0: case 0x1c1: case 0x1c7:
+    case 0x120: case 0x122:
+        break;
+    default:
+        return false;
+    }
+    modrm = x86_ldub_code(env, s);
+    s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
+    mod = (modrm >> 6) & 3;
+    reg = (modrm >> 3) & 7;
+    switch (b) {
+    case 0x80: case 0x81: case 0x82: case 0x83:
+        return mod != 3 && reg != 7;            /* not CMP */
+    case 0xf6: case 0xf7:
+        return mod != 3 && (reg == 2 || reg == 3);  /* NOT, NEG */
+    case 0xfe: case 0xff:
+        return mod != 3 && reg <= 1;            /* INC, DEC */
+    case 0x1ba:
+        return mod != 3 && reg >= 5;            /* BTS, BTR, BTC imm8 */
+    case 0x1c7:
+        return mod != 3 && reg == 1;            /* CMPXCHG8B/16B */
+    case 0x120: case 0x122:
+        return reg == 0 && !REX_R(s) &&
+               (s->cpuid_ext3_features & CPUID_EXT3_CR8LEG);
+    default:
+        return mod != 3;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U457) */
 static bool disas_insn(DisasContext *s, CPUState *cpu)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -3956,6 +4017,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     s->aflag = aflag;
     s->dflag = dflag;
 
+#if __Use_Original_Qemu != 1 /* ours (U457) */
+    /* NoVmp (ledger U457): LOCK on a non-lockable instruction or form: #UD */
+    if ((prefixes & PREFIX_LOCK) && !lock_prefix_ok(env, s, b)) {
+        goto illegal_op;
+    }
+#endif /* __Use_Original_Qemu (U457) */
     /* now check op code */
     switch (b) {
         /**************************/
