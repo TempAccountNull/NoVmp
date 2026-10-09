@@ -658,7 +658,24 @@ void helper_wrmsr(CPUX86State *env)
 
         valid = ((uint64_t)env->features[FEAT_XSAVE_XSS_HI] << 32) |
                 env->features[FEAT_XSAVE_XSS_LO];
+#if __Use_Original_Qemu == 1 /* original QEMU (U727) */
         env->xss = val & valid;
+#else /* ours (U727) */
+        /*
+         * NoVmp (ledger U727): SDM Vol1 13.2/13.3 - IA32_XSS exists only with CPUID.(EAX=0DH,
+         * ECX=1):EAX.XSAVES[3] ("an attempt to access the IA32_XSS MSR using RDMSR or WRMSR
+         * causes a #GP"), and "a bit can be set in the IA32_XSS MSR if and only if the
+         * corresponding bit is set in" CPUID.(0DH,1):EDX:ECX - WRMSR with any other bit #GP(0)
+         * (was: silently dropped). An API write (UC_X86_REG_MSR) is dropped instead, as U173.
+         */
+        if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVES) || (val & ~valid)) {
+            if (env->msr_api) {
+                break;
+            }
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        env->xss = val;
+#endif /* __Use_Original_Qemu (U727) */
         break;
     }
 #if __Use_Original_Qemu == 1 /* original QEMU (U173) */
@@ -1061,6 +1078,12 @@ void helper_rdmsr(CPUX86State *env)
         break;
 #endif /* __Use_Original_Qemu (U114) */
     case MSR_IA32_XSS:
+#if __Use_Original_Qemu != 1 /* ours (U727) */
+        /* NoVmp (ledger U727): no IA32_XSS without CPUID.(0DH,1):EAX.XSAVES (#GP, SDM 13.2) */
+        if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVES) && !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U727) */
         val = env->xss;
         break;
     case MSR_IA32_XFD:

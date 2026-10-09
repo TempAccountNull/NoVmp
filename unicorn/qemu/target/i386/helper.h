@@ -393,6 +393,11 @@ DEF_HELPER_FLAGS_3(xsetbv, TCG_CALL_NO_WG, void, env, i32, i64)
 #if __Use_Original_Qemu != 1 /* ours (U614) */
 DEF_HELPER_FLAGS_1(apx_check, TCG_CALL_NO_WG, void, env)
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U726) */
+DEF_HELPER_FLAGS_3(xsaves, TCG_CALL_NO_WG, void, env, tl, i64)
+/* XRSTORS loads the APX EGPRs R16-R31 like XRSTOR (TCG globals) */
+DEF_HELPER_3(xrstors, void, env, tl, i64)
+#endif /* __Use_Original_Qemu (U726) */
 #if __Use_Original_Qemu != 1 /* ours (U643) */
 /* PUSH2/POP2: #GP(0) unless RSP is 16-byte aligned (APX spec 355828-009 9.1.3/9.3.3) */
 DEF_HELPER_FLAGS_2(apx_rsp16, TCG_CALL_NO_WG, void, env, tl)

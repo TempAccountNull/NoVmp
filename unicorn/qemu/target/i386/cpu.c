@@ -716,8 +716,10 @@ static CPUCacheInfo legacy_l3_cache = {
 #if __Use_Original_Qemu == 1 /* original QEMU (U66) */
 #define TCG_XSAVE_FEATURES (CPUID_XSAVE_XSAVEOPT | CPUID_XSAVE_XGETBV1)
 #else /* ours (U66) */
-/* NoVmp (ledger U66): XSAVEC and the compacted form of XRSTOR are implemented */
-#define TCG_XSAVE_FEATURES (CPUID_XSAVE_XSAVEOPT | CPUID_XSAVE_XGETBV1 | CPUID_XSAVE_XSAVEC)
+/* NoVmp (ledger U66): XSAVEC and the compacted form of XRSTOR are implemented; U726 (was
+   without XSAVES): XSAVES, XRSTORS and IA32_XSS (CPUID.(EAX=0DH,ECX=1):EAX[3]) too */
+#define TCG_XSAVE_FEATURES (CPUID_XSAVE_XSAVEOPT | CPUID_XSAVE_XGETBV1 | CPUID_XSAVE_XSAVEC | \
+                            CPUID_XSAVE_XSAVES)
 #endif /* __Use_Original_Qemu (U66) */
           /* missing:
           CPUID_XSAVE_XSAVEC, CPUID_XSAVE_XSAVES */

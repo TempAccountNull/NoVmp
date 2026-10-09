@@ -5229,8 +5229,9 @@ static target_ulong xsave_comp_align(int i, target_ulong next)
 }
 #endif /* __Use_Original_Qemu (U172) */
 
+/* U726: ena = XCR0 (XSAVEC) or XCR0 | IA32_XSS (XSAVES); RFBM = EDX:EAX AND ena */
 static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
-                      uint64_t inuse, uintptr_t ra)
+                      uint64_t inuse, uint64_t ena, uintptr_t ra)
 {
     uint64_t save;
     target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
@@ -5242,7 +5243,7 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     if (ptr & 63) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
-    rfbm &= env->xcr0;
+    rfbm &= ena;
 #if __Use_Original_Qemu != 1 /* ours (U173) */
     /* XFD-disabled components: as if XINUSE[i] = 0, not saved (SDM Vol1 13.14) */
     inuse &= ~x86_cpu_xfd_armed(env);
@@ -5291,9 +5292,36 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 
 void helper_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
 {
-    do_xsavec(env, ptr, rfbm, get_xinuse(env), GETPC());
+    do_xsavec(env, ptr, rfbm, get_xinuse(env), env->xcr0, GETPC());
 }
 #endif /* __Use_Original_Qemu (U66) */
+#if __Use_Original_Qemu != 1 /* ours (U726) */
+/*
+ * NoVmp (ledger U726): XSAVES (SDM Vol1 13.11, Vol2D XSAVES): XSAVEC's operation (compacted
+ * format, XCOMP_BV = 8000000000000000h | RFBM, XSTATE_BV[i] = XINUSE[i] for RFBM[i] = 1, else
+ * 0; the init optimisation, XSTATE_BV[1] = 1 when MXCSR != 1F80h) with RFBM = EDX:EAX AND
+ * (XCR0 | IA32_XSS), so it also saves the supervisor state components enabled in IA32_XSS.
+ * #UD CR4.OSXSAVE = 0 (the CPUID / LOCK / prefix #UDs and CR0.TS #NM are the translator's),
+ * then #GP(0) if CPL > 0, then #GP(0) on a misaligned area. XFD-enabled components are saved
+ * as if XINUSE[i] = 0 (13.14). The modified optimisation is not implemented: XMODIFIED is all
+ * ones, which 13.6 allows ("a processor that does not do so implicitly maintains
+ * XMODIFIED[i] = 1"), so no XRSTOR_INFO is kept. This CPU model supports no supervisor state
+ * component (CPUID.(0DH,1):EDX:ECX = 0, IA32_XSS always 0); components added to IA32_XSS later
+ * are laid out by xsave_comp_size / do_xsave_comp like the user ones.
+ */
+void helper_xsaves(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
+{
+    uintptr_t ra = GETPC();
+
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->hflags & HF_CPL_MASK) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    do_xsavec(env, ptr, rfbm, get_xinuse(env), env->xcr0 | env->xss, ra);
+}
+#endif /* __Use_Original_Qemu (U726) */
 
 static void do_xrstor_fpu(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
@@ -5480,21 +5508,26 @@ static void xrstor_check_xfd(CPUX86State *env, uint64_t load, uintptr_t ra)
 #endif /* __Use_Original_Qemu (U173) */
 
 #if __Use_Original_Qemu != 1 /* ours (U66) */
-/* NoVmp (ledger U66): the compacted form of XRSTOR, see do_xsavec */
+/*
+ * NoVmp (ledger U66): the compacted form of XRSTOR, see do_xsavec. U726: also XRSTORS
+ * (xrstors = true): the components of XCR0 | IA32_XSS instead of XCR0 (rfbm is already
+ * EDX:EAX AND that), and no XSAVEC enumeration needed (XRSTORS has only this form).
+ */
 static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
-                              uint64_t xstate_bv, uintptr_t ra)
+                              uint64_t xstate_bv, bool xrstors, uintptr_t ra)
 {
     uint64_t xcomp_bv = cpu_ldq_data_ra(env, ptr + XO(header.xcomp_bv), ra);
     uint64_t format = xcomp_bv & ~(1ULL << 63), restore, init;
+    uint64_t ena = xrstors ? env->xcr0 | env->xss : env->xcr0;
     target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
     int i;
 
-    if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVEC)) {
+    if (!xrstors && !(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVEC)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);        /* compacted form not supported */
     }
-    /* SDM Vol1 13.8.2: XCOMP_BV[62:0] within XCR0, XSTATE_BV within XCOMP_BV[62:0],
-       bytes 63:16 of the header zero; all checked before any state is loaded */
-    if ((format & ~env->xcr0) || (xstate_bv & ~format)) {
+    /* SDM Vol1 13.8.2 / 13.12: XCOMP_BV[62:0] within XCR0 (| IA32_XSS), XSTATE_BV within
+       XCOMP_BV[62:0], bytes 63:16 of the header zero; all checked before any state is loaded */
+    if ((format & ~ena) || (xstate_bv & ~format)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
     for (i = 16; i < 64; i += 8) {
@@ -5673,7 +5706,7 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
 #else /* ours (U66) */
     /* XCOMP_BV[63] selects the compacted form (U66) */
     if ((int64_t)cpu_ldq_data_ra(env, ptr + XO(header.xcomp_bv), ra) < 0) {
-        do_xrstor_compact(env, ptr, rfbm, xstate_bv, ra);
+        do_xrstor_compact(env, ptr, rfbm, xstate_bv, false, ra);
         return;
     }
 #endif /* __Use_Original_Qemu (U66) */
@@ -5833,6 +5866,37 @@ void helper_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
 {
     do_xrstor(env, ptr, rfbm, GETPC());
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U726) */
+/*
+ * NoVmp (ledger U726): XRSTORS (SDM Vol1 13.12, Vol2D XRSTORS): the compacted form of XRSTOR
+ * (do_xrstor_compact: XCOMP_BV[62:0] within XCR0 | IA32_XSS, XSTATE_BV within XCOMP_BV, bytes
+ * 63:16 of the header 0, MXCSR, XFD #NM for a component loaded from memory, the AMX rules) with
+ * RFBM = EDX:EAX AND (XCR0 | IA32_XSS). #UD CR4.OSXSAVE = 0, #GP(0) CPL > 0, #GP(0) misaligned,
+ * #GP(0) XCOMP_BV[63] = 0 (no standard form). XRSTOR_INFO / XMODIFIED are not kept (see
+ * helper_xsaves).
+ */
+void helper_xrstors(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
+{
+    uintptr_t ra = GETPC();
+    uint64_t xstate_bv;
+
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->hflags & HF_CPL_MASK) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (ptr & 63) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    xstate_bv = cpu_ldq_data_ra(env, ptr + 512, ra);
+    if ((int64_t)cpu_ldq_data_ra(env, ptr + 512 + 8, ra) >= 0) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);        /* XCOMP_BV[63] = 0 */
+    }
+    do_xrstor_compact(env, ptr, rfbm & (env->xcr0 | env->xss), xstate_bv, true, ra);
+}
+#endif /* __Use_Original_Qemu (U726) */
 
 #if defined(CONFIG_USER_ONLY)
 void cpu_x86_fsave(CPUX86State *env, target_ulong ptr, int data32)

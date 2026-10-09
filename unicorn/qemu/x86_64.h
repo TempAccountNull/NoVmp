@@ -2687,6 +2687,10 @@
 #if __Use_Original_Qemu != 1 /* ours (U725) */
 #define helper_amx_rowop helper_amx_rowop_x86_64
 #endif /* __Use_Original_Qemu (U725) */
+#if __Use_Original_Qemu != 1 /* ours (U726) */
+#define helper_xsaves helper_xsaves_x86_64
+#define helper_xrstors helper_xrstors_x86_64
+#endif /* __Use_Original_Qemu (U726) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 #define helper_incssp helper_incssp_x86_64
 #define helper_saveprevssp helper_saveprevssp_x86_64

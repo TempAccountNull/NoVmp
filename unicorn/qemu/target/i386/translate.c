@@ -5762,6 +5762,41 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             break;
 
 #endif /* __Use_Original_Qemu (U66) */
+#if __Use_Original_Qemu != 1 /* ours (U726) */
+        /*
+         * NoVmp (ledger U726): NP 0F C7 /3 XRSTORS mem, NP 0F C7 /5 XSAVES mem (REX.W:
+         * XRSTORS64 / XSAVES64, the 64-bit x87 pointer format; SDM Vol2D). #UD: CPUID.(0DH,1):
+         * EAX.XSAVES[3] = 0, LOCK, a 66/F2/F3 prefix (the forms are NP), REX2 (APX 3.1.2.1),
+         * ModRM.mod = 11b; then #NM if CR0.TS = 1; CR4.OSXSAVE, CPL and the XSAVE area are
+         * checked by the helpers. XRSTORS ends the TB like XRSTOR (MPX / PKRU state).
+         */
+        case 3: /* XRSTORS (U726) */
+        case 5: /* XSAVES (U726) */
+            if (mod == 3
+                || (s->cpuid_xsave_features & CPUID_XSAVE_XSAVES) == 0
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            if (s->rex2) {
+                goto illegal_op;
+            }
+            if (s->flags & HF_TS_MASK) {
+                gen_exception(s, EXCP07_PREX);
+                break;
+            }
+            gen_lea_modrm(env, s, modrm);
+            tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
+                                  cpu_regs[R_EDX]);
+            gen_x87_fx64(s);
+            if (((modrm >> 3) & 7) == 5) {
+                gen_helper_xsaves(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
+            } else {
+                gen_helper_xrstors(tcg_ctx, cpu_env, s->A0, s->tmp1_i64);
+                s->base.is_jmp = DISAS_EOB_NEXT;
+            }
+            break;
+
+#endif /* __Use_Original_Qemu (U726) */
         case 7: /* RDSEED, RDPID with f3 prefix */
             if (mod != 3 ||
                 (s->prefix & (PREFIX_LOCK | PREFIX_REPNZ))) {
