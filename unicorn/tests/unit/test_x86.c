@@ -13555,6 +13555,37 @@ static void test_x86_bp_vex_16bit_pm(void)
     TEST_CHECK(x[0] == 0 && x[1] == 0);
     m0_close(&m);
 }
+
+/*
+ * U485 (backport 3fabbe0b7d, UD0/UD1 only): UD0 (0F FF /r) and UD1 (0F B9 /r) take a ModRM
+ * byte (SDM Vol2B UD; note 1: a processor decoding UD0 without it "would deliver an invalid-
+ * opcode exception instead of a fault on instruction fetch"). With the disp32 on the unmapped
+ * page after the code, the fetch fault wins; fully mapped, #UD.
+ */
+static void test_x86_bp_ud0_ud1_modrm(void)
+{
+    static const char ud1[] = "\x0f\xb9\x80\x00\x00\x00\x00";
+    static const char ud0[] = "\x0f\xff\x80\x00\x00\x00\x00";
+    const char *c[2] = {ud1, ud0};
+    uint64_t at = code_start + code_len - 3;
+    M0 m;
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        uc_err err;
+
+        m0_open(&m, UC_MODE_64, 0, NULL, 0);
+        TEST_CHECK(m0_run(&m, c[i], 7) == 6);
+        OK(uc_mem_write(m.uc, at, c[i], 3));
+        m.cap.count = 0;
+        err = uc_emu_start(m.uc, at, at + 7, 0, 0);
+        TEST_CHECK(err == UC_ERR_FETCH_UNMAPPED);
+        TEST_CHECK(m.cap.count == 0);
+        TEST_MSG("%s: err %d (%s), intr count %u", i ? "UD0" : "UD1", err, uc_strerror(err),
+                 m.cap.count);
+        m0_close(&m);
+    }
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13773,4 +13804,5 @@ TEST_LIST = {
     {"test_x86_bp_rep_string_rf", test_x86_bp_rep_string_rf},
     {"test_x86_bp_sysret_canonical", test_x86_bp_sysret_canonical},
     {"test_x86_bp_vex_16bit_pm", test_x86_bp_vex_16bit_pm},
+    {"test_x86_bp_ud0_ud1_modrm", test_x86_bp_ud0_ud1_modrm},
     {NULL, NULL}};

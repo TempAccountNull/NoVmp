@@ -8486,6 +8486,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x1d0: case 0x1d1: case 0x1d2: case 0x1d3: case 0x1d4: case 0x1d5: case 0x1d6: case 0x1d7: case 0x1d8: case 0x1d9: case 0x1da: case 0x1db: case 0x1dc: case 0x1dd: case 0x1de: case 0x1df: case 0x1e0: case 0x1e1: case 0x1e2: case 0x1e3: case 0x1e4: case 0x1e5: case 0x1e6: case 0x1e7: case 0x1e8: case 0x1e9: case 0x1ea: case 0x1eb: case 0x1ec: case 0x1ed: case 0x1ee: case 0x1ef: case 0x1f0: case 0x1f1: case 0x1f2: case 0x1f3: case 0x1f4: case 0x1f5: case 0x1f6: case 0x1f7: case 0x1f8: case 0x1f9: case 0x1fa: case 0x1fb: case 0x1fc: case 0x1fd: case 0x1fe:
         disas_insn_new(s, cpu, b);
         break;
+    case 0x1b9: /* UD1 Gv, Ev */
+    case 0x1ff: /* UD0 Gv, Ev */
+        /*
+         * backport 3fabbe0b7d, UD0/UD1 part only (U485): both take a ModRM byte (SDM Vol2B
+         * UD: "UD0 r32, r/m32 0F FF /r", "UD1 r32, r/m32 0F B9 /r"), so ModRM, SIB and the
+         * displacement are fetched before the #UD and a code fetch fault on them wins. (The
+         * 0F 0D register-form #UD of the same commit is not taken: SDM Table A-3, U77.)
+         */
+        modrm = x86_ldub_code(env, s);
+        (void)gen_lea_modrm_0(env, s, modrm, false);
+        goto illegal_op;
     default:
         goto unknown_op;
     }
