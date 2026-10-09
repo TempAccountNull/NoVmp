@@ -5835,7 +5835,18 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                     goto unknown_op;
                 }
             }
+#if __Use_Original_Qemu == 1 /* original QEMU (U455) */
+            /* QEMU 0db1b556e4: ignore V3 in 32-bit mode */
+            s->vex_v = (~vex3 >> 3) & (CODE64(s) ? 15 : 7);
+#else /* ours (U455) */
+            /*
+             * NoVmp (ledger U455): SDM Vol2A 2.3.5.6: outside 64-bit mode bit 6 (vvvv[3])
+             * is ignored when vvvv names a register (done where it is used, U93), but an
+             * instruction that does not use vvvv still needs 1111b, else #UD: s->vex_v
+             * keeps all four bits (i5-13600K: C4 E1 39 6F CA in compatibility mode is #UD).
+             */
             s->vex_v = (~vex3 >> 3) & 0xf;
+#endif /* __Use_Original_Qemu (U455) */
             s->vex_l = (vex3 >> 2) & 1;
             s->prefix |= pp_prefix[vex3 & 3] | PREFIX_VEX;
         }

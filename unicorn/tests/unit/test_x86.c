@@ -14236,6 +14236,38 @@ static void test_x86_bp_rdpmc_gp(void)
     TEST_CHECK(c.count == 0);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U455 (upstream QEMU 0db1b556e4 in the QEMU section; ours per SDM Vol2A 2.3.5.6
+ * and the i5-13600K): outside 64-bit mode vvvv[3] of the 3-byte VEX is ignored
+ * when vvvv names a register (xmm0-7), but an instruction that does not use
+ * vvvv still needs 1111b. 32-bit protected mode (WoW64-like).
+ */
+static void test_x86_bp_vex_vvvv3_32(void)
+{
+    BpCpu c;
+    uint32_t x2[4] = {1, 2, 3, 4}, x3[4] = {10, 20, 30, 40}, x10[4] = {100, 200, 300, 400};
+    uint32_t x1[4], exp[4] = {11, 22, 33, 44};
+    uint64_t xcr0 = 7;
+
+    bp_open(&c, UC_MODE_32, -1);
+    OK(uc_reg_write(c.uc, UC_X86_REG_XCR0, &xcr0));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM3, x3));
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM10, x10));
+    /* C4 E1 29 FE CB: VEX.vvvv = 1010b (xmm10 in 64-bit mode) -> vpaddd xmm1, xmm2, xmm3 */
+    OK(bp_run(&c, "\xc4\xe1\x29\xfe\xcb", 5));
+    OK(uc_reg_read(c.uc, UC_X86_REG_XMM1, x1));
+    TEST_CHECK(memcmp(x1, exp, 16) == 0);
+    TEST_MSG("vpaddd: xmm1 %u %u %u %u", x1[0], x1[1], x1[2], x1[3]);
+    /* C4 E1 39 6F CA: vmovdqa xmm1, xmm2 with vvvv = 1000b (not 1111b): #UD */
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, "\xc4\xe1\x39\x6f\xca", 5));
+    /* C4 E1 79 6F CA: vvvv = 1111b: runs */
+    OK(bp_run(&c, "\xc4\xe1\x79\x6f\xca", 5));
+    OK(uc_reg_read(c.uc, UC_X86_REG_XMM1, x1));
+    TEST_CHECK(memcmp(x1, x2, 16) == 0);
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14449,4 +14481,5 @@ TEST_LIST = {
     {"test_x86_bp_tcg_temp_overflow", test_x86_bp_tcg_temp_overflow},
     {"test_x86_bp_iret_vm86", test_x86_bp_iret_vm86},
     {"test_x86_bp_rdpmc_gp", test_x86_bp_rdpmc_gp},
+    {"test_x86_bp_vex_vvvv3_32", test_x86_bp_vex_vvvv3_32},
     {NULL, NULL}};
