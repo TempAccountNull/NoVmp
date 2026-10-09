@@ -320,8 +320,19 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
         new_eip = cpu_lduw_kernel_ra(env, tss_base + 0x0e, retaddr);
         new_eflags = cpu_lduw_kernel_ra(env, tss_base + 0x10, retaddr);
         for (i = 0; i < 8; i++) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U464) */
+            /* QEMU a5505f6b5b: bits 31:16 are merged from the old value below */
+            new_regs[i] = cpu_lduw_kernel_ra(env, tss_base + (0x12 + i * 2), retaddr);
+#else /* ours (U464) */
+            /*
+             * NoVmp (ledger U464): SDM Vol3A 10.6 "When the general-purpose registers
+             * are loaded or saved from a 16-bit TSS, the upper 16 bits of the registers
+             * are modified and not maintained": not kept (upstream keeps them); the
+             * value is not specified, FFFFh as before (docs/quirks.md, SDM undefined).
+             */
             new_regs[i] = cpu_lduw_kernel_ra(env, tss_base + (0x12 + i * 2),
                                              retaddr) | 0xffff0000;
+#endif /* __Use_Original_Qemu (U464) */
         }
         for (i = 0; i < 4; i++) {
             /* 2-byte slots (QEMU 28f6aa1178; SDM Vol3A Figure 10-10) */
@@ -436,11 +447,25 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
     env->eip = new_eip;
     eflags_mask = TF_MASK | AC_MASK | ID_MASK |
         IF_MASK | IOPL_MASK | VM_MASK | RF_MASK | NT_MASK;
+#if __Use_Original_Qemu == 1 /* original QEMU (U464) */
+    /* QEMU a5505f6b5b: a 16-bit TSS loads only bits 15:0 of the GPRs */
+    if (type & 8) {
+        cpu_load_eflags(env, new_eflags, eflags_mask);
+        for (i = 0; i < 8; i++) {
+            env->regs[i] = new_regs[i];
+        }
+    } else {
+        cpu_load_eflags(env, new_eflags, eflags_mask & 0xffff);
+        for (i = 0; i < 8; i++) {
+            env->regs[i] = (env->regs[i] & 0xffff0000) | new_regs[i];
+        }
+    }
+#else /* ours (U464) */
     if (!(type & 8)) {
         eflags_mask &= 0xffff;
     }
     cpu_load_eflags(env, new_eflags, eflags_mask);
-    /* XXX: what to do in 16 bit case? */
+    /* 16-bit TSS: bits 31:16 FFFFh from new_regs (U464, SDM Vol3A 10.6) */
     env->regs[R_EAX] = new_regs[0];
     env->regs[R_ECX] = new_regs[1];
     env->regs[R_EDX] = new_regs[2];
@@ -449,6 +474,7 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
     env->regs[R_EBP] = new_regs[5];
     env->regs[R_ESI] = new_regs[6];
     env->regs[R_EDI] = new_regs[7];
+#endif /* __Use_Original_Qemu (U464) */
     if (new_eflags & VM_MASK) {
         for (i = 0; i < 6; i++) {
             load_seg_vm(env, i, new_segs[i]);

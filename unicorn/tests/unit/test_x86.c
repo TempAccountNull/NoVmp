@@ -14713,6 +14713,44 @@ static void test_x86_bp_tss16_selectors(void)
              (unsigned long long)bp_get(&c, UC_X86_REG_EAX));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U464 (upstream QEMU a5505f6b5b in the QEMU section; ours per the SDM): a switch
+ * to a 16-bit task loads GPR bits 15:0 from the TSS; SDM Vol3A 10.6: "the upper
+ * 16 bits of the registers are modified and not maintained", so ours does not
+ * keep them (upstream does): they read FFFFh. EFLAGS bits 31:16 are kept.
+ */
+static void test_x86_bp_tss16_gpr_upper(void)
+{
+    static const int regs[8] = {UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
+                                UC_X86_REG_ESP, UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI};
+    BpCpu c;
+    uc_err e;
+    int i;
+
+    bp_task_setup(&c, 1, 0);
+    bp_put16(&c, BP_TSS_NEW + 0x0e, BP_TASK_EIP);
+    bp_put16(&c, BP_TSS_NEW + 0x10, 0x0002);
+    for (i = 0; i < 8; i++) {
+        bp_put16(&c, BP_TSS_NEW + 0x12 + 2 * i, (uint16_t)(0x1010 * (i + 1)));
+        bp_set(&c, regs[i], 0x12340000u + i);
+    }
+    bp_put16(&c, BP_TSS_NEW + 0x22, 0x10);
+    bp_put16(&c, BP_TSS_NEW + 0x24, 0x08);
+    bp_put16(&c, BP_TSS_NEW + 0x26, 0x10);
+    bp_put16(&c, BP_TSS_NEW + 0x28, 0x10);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xea\x00\x00\x00\x00\x40\x00", 7));
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, BP_TASK_EIP + 1, 0, 2);
+    TEST_CHECK(e == UC_ERR_OK && c.count == 0);
+    for (i = 0; i < 8; i++) {
+        uint32_t v = (uint32_t)bp_get(&c, regs[i]);
+
+        TEST_CHECK(v == (0xffff0000u | (uint16_t)(0x1010 * (i + 1))));
+        TEST_MSG("reg %d: %08x", i, v);
+    }
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14935,4 +14973,5 @@ TEST_LIST = {
     {"test_x86_bp_mov_dr", test_x86_bp_mov_dr},
     {"test_x86_bp_dr7_gd", test_x86_bp_dr7_gd},
     {"test_x86_bp_tss16_selectors", test_x86_bp_tss16_selectors},
+    {"test_x86_bp_tss16_gpr_upper", test_x86_bp_tss16_gpr_upper},
     {NULL, NULL}};
