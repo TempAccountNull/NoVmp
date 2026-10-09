@@ -2592,7 +2592,8 @@ static AddressParts gen_lea_modrm_0(CPUX86State *env, DisasContext *s,
 #if __Use_Original_Qemu != 1 /* ours (U144) */
             /* EVEX.V' selects VSIB index registers 16-31 (SDM Vol2A Table 2-33; U144) */
             if (is_vsib) {
-                index |= s->evex_v4;
+                /* U616: EVEX.X4 (APX) is not used by a VSIB index (Table 3.3 VIDX: V4 X3) */
+                index = (index & 15) | s->evex_v4;
             }
 #endif /* __Use_Original_Qemu (U144) */
             if (index == 4 && !is_vsib) {

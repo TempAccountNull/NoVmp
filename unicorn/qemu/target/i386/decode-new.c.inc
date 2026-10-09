@@ -4937,6 +4937,14 @@ static bool decode_op(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,
         if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_SSE) {
             op->n |= s->evex_rr;
         }
+        /*
+         * U616: with APX_F, EVEX.R4 (the R' bit) is bit 4 of a GPR in ModRM.reg (APX spec
+         * Table 3.3 "REG: EVEX.R4 EVEX.R3 modrm.reg ... GPR"); without APX validate_evex #UDs it.
+         */
+        if ((s->prefix & PREFIX_EVEX) && op->unit == X86_OP_INT &&
+            (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F)) {
+            op->n |= s->evex_rr;
+        }
 #endif /* __Use_Original_Qemu (U142) */
         break;
 
@@ -5896,9 +5904,38 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
         goto illegal;
     }
     if (CODE64(s)) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U616) */
         if ((reg_k || reg_gpr) && s->evex_rr) {
             goto illegal;
         }
+#else /* ours (U616) */
+        bool apx = (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F) != 0;
+
+        if ((reg_k || (reg_gpr && !apx)) && s->evex_rr) {
+            goto illegal;
+        }
+        /*
+         * NoVmp (ledger U616): the APX extension of EVEX instructions (APX spec 355828-009
+         * 3.1.2.3.3, Figure 3.5, Table 3.3): EVEX.B4 (P0[3]) is bit 4 of a GPR in ModRM.r/m and
+         * of the base, EVEX.X4 = ~EVEX.U (P1[2]) bit 4 of the index (ModRM.mod != 11b only:
+         * with mod = 11b U must be 1), EVEX.R4 (R') bit 4 of a GPR in ModRM.reg; unused bits
+         * are ignored (a vector r/m, a VSIB index, no index). Before APX is enabled B4 and X4
+         * keep their fixed values and R4 must be 1 for a GPR, else #UD (3.1.4.2.1): any of
+         * them set needs CR4.OSXSAVE = 1 and XCR0[19] = 1 at run time (helper_apx_check).
+         */
+        if (apx) {
+            bool b4 = (s->evex_p0 & 0x08) != 0, u0 = !(s->evex_p1 & 0x04);
+
+            if (u0 && (s->modrm >> 6) == 3) {
+                goto illegal;
+            }
+            if (b4 || u0 || (reg_gpr && s->evex_rr)) {
+                TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+                gen_helper_apx_check(tcg_ctx, cpu_env);
+            }
+        }
+#endif /* __Use_Original_Qemu (U616) */
         if (reg_k && REX_R(s)) {
             goto illegal;
         }
@@ -6151,12 +6188,17 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             int p0 = x86_ldub_code(env, s);
             int p1 = x86_ldub_code(env, s);
             int p2 = x86_ldub_code(env, s);
+            /*
+             * U616: with APX_F in 64-bit mode, P0[3] is EVEX.B4 and P1[2] is EVEX.U, X4 = ~U
+             * (APX spec 355828-009 3.1.2.3, Figure 3.5): validate_evex checks them.
+             */
+            bool apx_evex = CODE64(s) && (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F);
 
             if (s->prefix & (PREFIX_REPZ | PREFIX_REPNZ
                              | PREFIX_LOCK | PREFIX_DATA | PREFIX_REX)) {
                 goto illegal_op;
             }
-            if ((p0 & 0x08) || !(p1 & 0x04)) {
+            if (!apx_evex && ((p0 & 0x08) || !(p1 & 0x04))) {
                 goto illegal_op;
             }
             switch (p0 & 7) {
@@ -6195,6 +6237,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                 s->evex_rr = ~p0 & 0x10;
                 s->evex_x4 = (~p0 >> 2) & 0x10;
                 s->evex_v4 = (~p2 << 1) & 0x10;
+                if (apx_evex) {
+                    /* U616: bit 4 of the B (GPR r/m, base) and X (index) ids */
+                    s->rex_b |= (p0 & 0x08) << 1;
+                    s->rex_x |= (~p1 & 0x04) << 2;
+                }
             }
 #endif
             s->vex_w = (p1 >> 7) & 1;
