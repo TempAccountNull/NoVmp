@@ -189,6 +189,9 @@ typedef struct DisasContext {
     bool apx_zu;
     uint8_t apx_post;
     uint8_t apx_opc, apx_scc, apx_dfv;
+#if __Use_Original_Qemu != 1 /* ours (U642) */
+    uint8_t apx_pp;     /* EVEX.pp of a map 4 instruction with its own code (U642) */
+#endif /* __Use_Original_Qemu (U642) */
     uint8_t apx_nd, apx_nf;
     TCGv apx_flags, apx_cond;
 #endif /* __Use_Original_Qemu (U640) */
@@ -4249,13 +4252,44 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
         }
         break;
     case 0xfe: case 0xff:                            /* INC / DEC */
+#if __Use_Original_Qemu != 1 /* ours (U643) */
+        if (opc == 0xff && reg == 6 && mod == 3) {   /* PUSH2 (U643) */
+            goto push2_pop2;
+        }
+#endif /* __Use_Original_Qemu (U643) */
         if (reg >= 2) {
-            return APX_M4_UD;                        /* FF /6 mod 11b = PUSH2: U643 */
+            return APX_M4_UD;
         }
         b = opc;
         byte_op = opc == 0xfe;
         nd_ok = nf_ok = true;
         break;
+#if __Use_Original_Qemu != 1 /* ours (U643) */
+    case 0x8f:                                       /* POP2 (U643) */
+        if (reg != 0 || mod != 3) {
+            return APX_M4_UD;
+        }
+    push2_pop2:
+        /*
+         * PUSH2 / POP2 (3.1.3.1.1, Figure 3.6, Table 3.4, APX-EVEX-PP2 Table 4.18): pp = 0,
+         * ND = 1, NF = 0, P2 = 0 0 0 1 V4 0 0 0, mod = 11b (and U = 1, above); W = the PPX
+         * hint (no functional effect); "neither b64 nor v64 be RSP and, for POP2, b64 and v64
+         * be two different GPRs"; OSIZE is always 64 bits.
+         */
+        if (pp != 0 || !nd || (p2 & 0xf7) != 0x10) {
+            return APX_M4_UD;
+        }
+        {
+            int rb = (modrm & 7) | ((~p0 >> 2) & 8) | ((p0 & 0x08) << 1);
+
+            if (rb == R_ESP || v == R_ESP || (opc == 0x8f && rb == v)) {
+                return APX_M4_UD;
+            }
+        }
+        b = APX_OP_OWN;
+        nd_ok = true;
+        break;
+#endif /* __Use_Original_Qemu (U643) */
     case 0x24: case 0x2c: case 0xa5: case 0xad:      /* SHLD / SHRD (map 1 A4 AC A5 AD) */
         b = 0x100 | (opc == 0x24 ? 0xa4 : opc == 0x2c ? 0xac : opc);
         nd_ok = nf_ok = true;
@@ -4295,7 +4329,14 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
             byte_op = zu = true;
             break;
         }
-        return APX_M4_UD;                            /* CMOVcc / CFCMOVcc: U642 */
+#if __Use_Original_Qemu == 1 /* original QEMU (U642) */
+        return APX_M4_UD;
+#else /* ours (U642) */
+        /* NP / 66: CMOVcc ndd (ND = 1, NF = 0) and CFCMOVcc (the other three) (U642) */
+        b = APX_OP_OWN;
+        nd_ok = nf_ok = true;
+        break;
+#endif /* __Use_Original_Qemu (U642) */
     default:
         return APX_M4_UD;
     }
@@ -4363,7 +4404,10 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
     s->apx_nd = nd;
     s->apx_nf = nf;
     s->apx_opc = opc;
-    if (nd && nd_ok) {
+#if __Use_Original_Qemu != 1 /* ours (U642) */
+    s->apx_pp = pp;
+#endif /* __Use_Original_Qemu (U642) */
+    if (nd && nd_ok && b != APX_OP_OWN) {
         s->apx_ndd = v;
     }
     s->apx_zu = zu && nd;
@@ -4396,12 +4440,126 @@ static void gen_apx_setcc(CPUX86State *env, DisasContext *s, int modrm)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U642) */
+/*
+ * NoVmp (ledger U642): EVEX map 4 40+cc with pp = NP / 66 (APX spec 355828-009 3.1.3.2.2,
+ * Table 3.5 / Figure 8.3, APX-EVEX-CFCMOV Table 4.9; destination registers zero-extended,
+ * 3.1.2.4):
+ *   ND NF
+ *   0  0  CFCMOVcc reg, r/m       cc ? reg := r/m : reg := 0 (memory faults suppressed)
+ *   0  1  CFCMOVcc r/m, reg       cc ? r/m := reg : (register r/m := 0; memory: no access)
+ *   1  0  CMOVcc ndd, reg, r/m    temp := r/m (faults not suppressed); ndd := cc ? temp : reg
+ *   1  1  CFCMOVcc ndd, reg, r/m  cc ? ndd := r/m : ndd := reg (memory faults suppressed)
+ * "Memory faults are suppressed" = no access at all on the false path: the condition is
+ * computed first (without changing the lazy flags state) and a branch skips the access.
+ */
+static void gen_apx_cmov(CPUX86State *env, DisasContext *s, int modrm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    MemOp ot = s->dflag;
+    int bits = 8 << ot;
+    int mod = (modrm >> 6) & 3;
+    int reg = ((modrm >> 3) & 7) | REX_R(s);
+    int rm = (modrm & 7) | REX_B(s);
+    TCGv cond = tcg_temp_local_new(tcg_ctx);
+    TCGLabel *l_false, *l_end;
+
+    gen_apx_flags(s, cond);
+    gen_apx_cc(s, cond, cond, s->apx_opc & 15);
+    if (s->apx_nd && !s->apx_nf) {
+        TCGv zero = tcg_const_tl(tcg_ctx, 0);
+
+        gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 0);          /* T0 = r/m, may fault */
+        tcg_gen_movcond_tl(tcg_ctx, TCG_COND_NE, s->T0, cond, zero, s->T0, cpu_regs[reg]);
+        tcg_gen_extract_tl(tcg_ctx, cpu_regs[s->vex_v], s->T0, 0, bits);
+        tcg_temp_free(tcg_ctx, zero);
+        tcg_temp_free(tcg_ctx, cond);
+        return;
+    }
+    l_false = gen_new_label(tcg_ctx);
+    l_end = gen_new_label(tcg_ctx);
+    tcg_gen_brcondi_tl(tcg_ctx, TCG_COND_EQ, cond, 0, l_false);
+    /* condition true */
+    if (!s->apx_nd && s->apx_nf) {
+        gen_op_mov_v_reg(s, ot, s->T0, reg);
+        if (mod == 3) {
+            tcg_gen_extract_tl(tcg_ctx, cpu_regs[rm], s->T0, 0, bits);
+        } else {
+            gen_lea_modrm(env, s, modrm);
+            gen_op_st_v(s, ot, s->T0, s->A0);
+        }
+    } else {
+        gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 0);          /* T0 = r/m */
+        tcg_gen_extract_tl(tcg_ctx, cpu_regs[s->apx_nd ? s->vex_v : reg], s->T0, 0, bits);
+    }
+    tcg_gen_br(tcg_ctx, l_end);
+    /* condition false: no memory access */
+    gen_set_label(tcg_ctx, l_false);
+    if (s->apx_nd) {
+        tcg_gen_extract_tl(tcg_ctx, cpu_regs[s->vex_v], cpu_regs[reg], 0, bits);
+    } else if (!s->apx_nf) {
+        tcg_gen_movi_tl(tcg_ctx, cpu_regs[reg], 0);
+    } else if (mod == 3) {
+        tcg_gen_movi_tl(tcg_ctx, cpu_regs[rm], 0);
+    }
+    gen_set_label(tcg_ctx, l_end);
+    tcg_temp_free(tcg_ctx, cond);
+}
+
+#endif /* __Use_Original_Qemu (U642) */
+#if __Use_Original_Qemu != 1 /* ours (U643) */
+/*
+ * NoVmp (ledger U643): PUSH2 v64, b64 = "PUSH v64; PUSH b64", POP2 v64, b64 = "POP v64; POP
+ * b64" (APX spec 355828-009 Table 3.4, 9.1.3 / 9.3.3): #GP(0) unless RSP is 16-byte aligned;
+ * both values are read / written before RSP and the registers change, and the 16 aligned
+ * bytes lie in one page, so "either both written to memory or neither one is written".
+ */
+static void gen_apx_push2_pop2(DisasContext *s, int modrm)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int rb = (modrm & 7) | REX_B(s), rv = s->vex_v;
+
+    gen_helper_apx_rsp16(tcg_ctx, cpu_env, cpu_regs[R_ESP]);
+    if (s->apx_opc == 0xff) {
+        tcg_gen_subi_tl(tcg_ctx, s->tmp0, cpu_regs[R_ESP], 8);
+        gen_lea_v_seg(s, MO_64, s->tmp0, R_SS, -1);
+        gen_op_st_v(s, MO_64, cpu_regs[rv], s->A0);
+        tcg_gen_subi_tl(tcg_ctx, s->tmp0, cpu_regs[R_ESP], 16);
+        gen_lea_v_seg(s, MO_64, s->tmp0, R_SS, -1);
+        gen_op_st_v(s, MO_64, cpu_regs[rb], s->A0);
+        tcg_gen_subi_tl(tcg_ctx, cpu_regs[R_ESP], cpu_regs[R_ESP], 16);
+    } else {
+        gen_lea_v_seg(s, MO_64, cpu_regs[R_ESP], R_SS, -1);
+        gen_op_ld_v(s, MO_64, s->T0, s->A0);
+        tcg_gen_addi_tl(tcg_ctx, s->tmp0, cpu_regs[R_ESP], 8);
+        gen_lea_v_seg(s, MO_64, s->tmp0, R_SS, -1);
+        gen_op_ld_v(s, MO_64, s->T1, s->A0);
+        tcg_gen_mov_tl(tcg_ctx, cpu_regs[rv], s->T0);
+        tcg_gen_mov_tl(tcg_ctx, cpu_regs[rb], s->T1);
+        tcg_gen_addi_tl(tcg_ctx, cpu_regs[R_ESP], cpu_regs[R_ESP], 16);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U643) */
 /* the instructions of EVEX map 4 with their own code (APX_OP_OWN); false: #UD */
 static bool gen_apx_map4_own(CPUX86State *env, DisasContext *s)
 {
     int modrm = x86_ldub_code(env, s);
     int opc = s->apx_opc;
 
+#if __Use_Original_Qemu != 1 /* ours (U643) */
+    if (opc == 0xff || opc == 0x8f) {
+        gen_apx_push2_pop2(s, modrm);
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U643) */
+
+#if __Use_Original_Qemu != 1 /* ours (U642) */
+    if ((opc & 0xf0) == 0x40 && s->apx_pp != 3) {
+        gen_apx_cmov(env, s, modrm);
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U642) */
     if ((opc & 0xf0) == 0x40) {
         gen_apx_setcc(env, s, modrm);
         return true;

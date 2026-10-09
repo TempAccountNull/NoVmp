@@ -5899,6 +5899,19 @@ void helper_apx_check(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U643) */
+/*
+ * NoVmp (ledger U643): PUSH2 / POP2 "Alignment check: if (RSP % 16 != 0): #GP" before any
+ * stack access (APX spec 355828-009 9.1.3, 9.3.3; 3.1.3.1.1).
+ */
+void helper_apx_rsp16(CPUX86State *env, target_ulong rsp)
+{
+    if (rsp & 15) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+}
+
+#endif /* __Use_Original_Qemu (U643) */
 void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
 {
     uint32_t dummy, ena_lo, ena_hi;
