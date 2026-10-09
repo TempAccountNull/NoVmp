@@ -5695,7 +5695,12 @@ static void x86_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
 {
     X86CPU *cpu = X86_CPU(cs);
 
-    cpu->env.eip = tb->pc - tb->cs_base;
+    /* QEMU 15e207b9ed */
+    if (tb->flags & HF_CS64_MASK) {
+        cpu->env.eip = tb->pc;
+    } else {
+        cpu->env.eip = (uint32_t)(tb->pc - tb->cs_base);
+    }
 }
 
 int x86_cpu_pending_interrupt(CPUState *cs, int interrupt_request)

@@ -2460,10 +2460,20 @@ typedef X86CPU ArchCPU;
 static inline void cpu_get_tb_cpu_state(CPUX86State *env, target_ulong *pc,
                                         target_ulong *cs_base, uint32_t *flags)
 {
-    *cs_base = env->segs[R_CS].base;
-    *pc = *cs_base + env->eip;
     *flags = env->hflags |
         (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK));
+    /*
+     * backport of QEMU 15e207b9ed (the cpu.h/synchronize_from_tb half): in 64-bit
+     * mode CS.base is 0 for instruction fetch; elsewhere CS.base + EIP wraps at
+     * 4 GiB (SDM Vol3A 3.2.4, 3.4.4)
+     */
+    if (env->hflags & HF_CS64_MASK) {
+        *cs_base = 0;
+        *pc = env->eip;
+    } else {
+        *cs_base = env->segs[R_CS].base;
+        *pc = (uint32_t)(*cs_base + env->eip);
+    }
 }
 
 void do_cpu_init(X86CPU *cpu);

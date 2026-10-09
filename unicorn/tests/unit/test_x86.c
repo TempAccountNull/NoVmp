@@ -14812,6 +14812,52 @@ static void test_x86_bp_tss_save_old_format(void)
              bp_peek(&c, BP_TSS_OLD + 0x0e, 2));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U466 (upstream QEMU 15e207b9ed, the cpu_get_tb_cpu_state/synchronize_from_tb
+ * half): in 64-bit mode the CS base is not used for instruction fetch, also when
+ * the descriptor loaded into CS has a non-zero base field; outside 64-bit mode
+ * CS.base + EIP wraps at 4 GiB (SDM Vol3A 3.2.4, 3.4.4).
+ */
+static void test_x86_bp_cs_base_fetch(void)
+{
+    BpCpu c;
+    uc_err e;
+    /* 64-bit: push 48h; push BP_CODE+0x40; retfq (48h = code64 DPL0 with base 1000h) */
+    static const char far64[] = "\x6a\x48\x68\x40\x00\x01\x00\x48\xcb";
+    /* 32-bit: jmp far 0048h:00004000h (48h = code32 DPL0 with base FFFFF000h) */
+    static const char far32[] = "\xea\x00\x40\x00\x00\x48\x00";
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set_gdt_entry(&c, 9, bp_desc(0x1000, 0xfffff, 0x9b, 0xa));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\xb8\x01\x00\x00\x00", 5));   /* mov eax, 1 */
+    OK(uc_mem_write(c.uc, BP_CODE + 0x1040, "\xb8\x02\x00\x00\x00", 5)); /* base + RIP */
+    OK(uc_mem_write(c.uc, BP_CODE, far64, sizeof(far64) - 1));
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x45, 0, 4);
+    TEST_CHECK(e == UC_ERR_OK && bp_seg(&c, UC_X86_REG_CS) == 0x48);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_RAX) == 1 && bp_get(&c, UC_X86_REG_RIP) == BP_CODE + 0x45);
+    TEST_MSG("64-bit: err %d cs %04x rax %llx rip %llx", (int)e, bp_seg(&c, UC_X86_REG_CS),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RIP));
+    OK(uc_close(c.uc));
+
+    bp_open(&c, UC_MODE_32, -1);
+    bp_set_gdt_entry(&c, 9, bp_desc(0xfffff000, 0xfffff, 0x9b, 0xc));
+    bp_set(&c, UC_X86_REG_EAX, 0);
+    OK(uc_mem_write(c.uc, 0x3000, "\xb8\x01\x00\x00\x00", 5)); /* FFFFF000h + 4000h mod 2^32 */
+    OK(uc_mem_write(c.uc, BP_CODE, far32, sizeof(far32) - 1));
+    c.count = 0;
+    e = uc_emu_start(c.uc, BP_CODE, 0x3005, 0, 2);
+    TEST_CHECK(e == UC_ERR_OK && bp_seg(&c, UC_X86_REG_CS) == 0x48);
+    TEST_CHECK(bp_get(&c, UC_X86_REG_EAX) == 1 && bp_get(&c, UC_X86_REG_EIP) == 0x4005);
+    TEST_MSG("32-bit wrap: err %d cs %04x eax %llx eip %llx", (int)e, bp_seg(&c, UC_X86_REG_CS),
+             (unsigned long long)bp_get(&c, UC_X86_REG_EAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_EIP));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -15036,4 +15082,5 @@ TEST_LIST = {
     {"test_x86_bp_tss16_selectors", test_x86_bp_tss16_selectors},
     {"test_x86_bp_tss16_gpr_upper", test_x86_bp_tss16_gpr_upper},
     {"test_x86_bp_tss_save_old_format", test_x86_bp_tss_save_old_format},
+    {"test_x86_bp_cs_base_fetch", test_x86_bp_cs_base_fetch},
     {NULL, NULL}};
