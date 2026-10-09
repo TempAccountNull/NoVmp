@@ -125,9 +125,33 @@ static void x86_access_unicorn_mapped(CPUX86State *env, target_ulong ptr, MMUAcc
 {
     struct uc_struct *uc = env->uc;
     target_ulong paddr;
+    MemoryRegion *mr;
 
-    if (!tlb_vaddr_to_paddr(env, ptr, type, mmu_idx, &paddr) ||
-        uc->memory_mapping(uc, paddr) != NULL) {
+    if (!tlb_vaddr_to_paddr(env, ptr, type, mmu_idx, &paddr)) {
+        return;
+    }
+    mr = uc->memory_mapping(uc, paddr);
+    if (mr != NULL) {
+        /*
+         * U778: a page Unicorn maps read-only is reported before a store too, through a
+         * store of the byte that is there (UC_HOOK_MEM_WRITE_PROT, as x86_probe_write does,
+         * U701): FXSAVE / XSAVE* / FNSAVE / FNSTENV / FSTP m80 / FBSTP stored their parts
+         * on the writable page first. If no hook makes it writable, the store stops the
+         * instruction (U777) with nothing stored.
+         */
+        if (type == MMU_DATA_STORE && !(mr->perms & UC_PROT_WRITE)) {
+            int old_size = uc->size_recur_mem;
+            uint8_t b = 0;
+
+            uc->read_mem(&uc->address_space_memory, paddr, &b, 1);
+            uc->size_recur_mem = 1;         /* no UC_HOOK_MEM_WRITE for the probe */
+            cpu_stb_mmuidx_ra(env, ptr, b, mmu_idx, ra);
+            uc->size_recur_mem = old_size;
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 &&
+                !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+        }
         return;
     }
     (void)cpu_ldub_data_ra(env, ptr, ra);

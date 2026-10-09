@@ -19910,55 +19910,70 @@ static void test_x86_fx4_store_stop(void)
     TEST_MSG("store-stop cases: %d of %d checks failed", bad, (int)(3 * (sizeof(t) / sizeof(t[0]))));
 }
 
-static void test_x86_fx4_store_partial(void)
+/* operands crossing from page A into page B (the first 11: x86_access_prepare helpers, U778) */
+static const fx4_sc_t fx4_partial[] = {
+    {FX4_X87, 4, "\x0f\xae\x83\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "fxsave [rbx+0xf00]"},
+    {FX4_X87, 4, "\x48\x0f\xae\x83\x00\x0f\x00\x00", 8, 0, 0, FX4_PA, "fxsave64 [rbx+0xf00]"},
+    {FX4_X87, 4, "\x0f\xae\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsave [rbx+0xf00]"},
+    {FX4_X87, 4, "\x0f\xae\xb3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaveopt [rbx+0xf00]"},
+    {FX4_X87, 4, "\x0f\xc7\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsavec [rbx+0xf00]"},
+    {FX4_X87, 4, "\x0f\xc7\xab\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaves [rbx+0xf00]"},
+    {FX4_X87, 4, "\xdd\xb3\xa0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnsave [rbx+0xfa0]"},
+    {FX4_X87, 4, "\x66\xdd\xb3\xb0\x0f\x00\x00", 7, 0, 0, FX4_PA, "fnsave (16-bit) [rbx+0xfb0]"},
+    {FX4_X87, 4, "\xd9\xb3\xf0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstenv [rbx+0xff0]"},
+    {FX4_X87, 4, "\xdb\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp tbyte [rbx+0xffc]"},
+    {FX4_X87, 4, "\xdf\xb3\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fbstp tbyte [rbx+0xffc]"},
+    {FX4_X87, 4, "\xdd\x9b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp qword [rbx+0xffc]"},
+    {FX4_X87, 4, "\xdf\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fistp qword [rbx+0xffc]"},
+    {FX4_X87, 4, "\xdd\x8b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fisttp qword [rbx+0xffc]"},
+    {FX4_X87, 4, "\xd9\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstcw [rbx+0xfff]"},
+    {FX4_X87, 4, "\xdd\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstsw [rbx+0xfff]"},
+    {"", 0, "\x0f\xae\x9b\xfe\x0f\x00\x00", 7, 0, 0, FX4_PA, "stmxcsr [rbx+0xffe]"},
+    {"", 0, "\xf3\x0f\x7f\x83\xf8\x0f\x00\x00", 8, 0, 0, FX4_PA, "movdqu [rbx+0xff8]"},
+    {"", 0, "\xc5\xfe\x7f\x83\xf0\x0f\x00\x00", 8, 0, 0, FX4_PA, "vmovdqu [rbx+0xff0], ymm0"},
+    {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xe0\x0f\x00\x00", 10, 0, 1, FX4_PA,
+     "vmovdqu64 [rbx+0xfe0], zmm0"},
+    {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xc8\x0f\x00\x00", 10, 0, 1, FX4_PA,
+     "vmovdqu64 [rbx+0xfc8], zmm0"},
+    {"", 0, "\x48\x0f\xc3\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "movnti [rbx+0xffc], rax"},
+    {"", 0, "\xf0\x48\x01\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "lock add [rbx+0xffc], rax"},
+    {"", 0, "\x48\x0f\xc1\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "xadd [rbx+0xffc], rax"},
+    {"", 0, "\x48\x87\x83\xfc\x0f\x00\x00", 7, 0, 0, FX4_PA, "xchg [rbx+0xffc], rax"},
+    {"", 0, "\x48\x0f\xc7\x8b\x00\x00\x00\x00", 8, 0, 0, FX4_PA + 0x1000, "cmpxchg16b [rbx] (B)"},
+    {"", 0, "\x66\x0f\x38\xf8\x1c\x24", 6, 0, 0, FX4_PA + 0x1000, "movdir64b rbx, [rsp] (to B)"},
+    {"", 0, "\x48\x0f\x38\xf6\x03", 5, 1, 0, FX4_PA + 0x1000, "wrssq [rbx], rax (B)"},
+    /* call $+6 (CALL 0 is not pushed on the shadow stack); int3 skipped; nop */
+    {"", 0, "\xe8\x01\x00\x00\x00\xcc\x90", 7, 1, 0, FX4_PA, "call (shadow-stack push on B)"},
+    {"", 0, "\xf3\x0f\x01\xe8", 4, 1, 0, FX4_PA, "setssbsy (token on B)", FX4_PA + 0x1000},
+    {"", 0, "\xf3\x0f\xae\x33", 4, 1, 0, FX4_PA + 0x1000, "clrssbsy [rbx] (token on B)",
+     FX4_PA + 0x1001},
+    {"", 0, "\xf3\x0f\x01\x2b", 4, 1, 0, FX4_PA + 0x1000, "rstorssp [rbx] (token on B)",
+     FX4_PA + 0x1009},
+};
+#define FX4_NPARTIAL (sizeof(fx4_partial) / sizeof(fx4_partial[0]))
+
+static void fx4_store_cases(size_t first, size_t n, const char *what)
 {
-    static const fx4_sc_t t[] = {
-        {FX4_X87, 4, "\x0f\xae\x83\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "fxsave [rbx+0xf00]"},
-        {FX4_X87, 4, "\x48\x0f\xae\x83\x00\x0f\x00\x00", 8, 0, 0, FX4_PA, "fxsave64 [rbx+0xf00]"},
-        {FX4_X87, 4, "\x0f\xae\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsave [rbx+0xf00]"},
-        {FX4_X87, 4, "\x0f\xae\xb3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaveopt [rbx+0xf00]"},
-        {FX4_X87, 4, "\x0f\xc7\xa3\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsavec [rbx+0xf00]"},
-        {FX4_X87, 4, "\x0f\xc7\xab\x00\x0f\x00\x00", 7, 0, 0, FX4_PA, "xsaves [rbx+0xf00]"},
-        {FX4_X87, 4, "\xdd\xb3\xa0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnsave [rbx+0xfa0]"},
-        {FX4_X87, 4, "\x66\xdd\xb3\xb0\x0f\x00\x00", 7, 0, 0, FX4_PA, "fnsave (16-bit) [rbx+0xfb0]"},
-        {FX4_X87, 4, "\xd9\xb3\xf0\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstenv [rbx+0xff0]"},
-        {FX4_X87, 4, "\xdb\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp tbyte [rbx+0xffc]"},
-        {FX4_X87, 4, "\xdf\xb3\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fbstp tbyte [rbx+0xffc]"},
-        {FX4_X87, 4, "\xdd\x9b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fstp qword [rbx+0xffc]"},
-        {FX4_X87, 4, "\xdf\xbb\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fistp qword [rbx+0xffc]"},
-        {FX4_X87, 4, "\xdd\x8b\xfc\x0f\x00\x00", 6, 0, 0, FX4_PA, "fisttp qword [rbx+0xffc]"},
-        {FX4_X87, 4, "\xd9\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstcw [rbx+0xfff]"},
-        {FX4_X87, 4, "\xdd\xbb\xff\x0f\x00\x00", 6, 0, 0, FX4_PA, "fnstsw [rbx+0xfff]"},
-        {"", 0, "\x0f\xae\x9b\xfe\x0f\x00\x00", 7, 0, 0, FX4_PA, "stmxcsr [rbx+0xffe]"},
-        {"", 0, "\xf3\x0f\x7f\x83\xf8\x0f\x00\x00", 8, 0, 0, FX4_PA, "movdqu [rbx+0xff8]"},
-        {"", 0, "\xc5\xfe\x7f\x83\xf0\x0f\x00\x00", 8, 0, 0, FX4_PA, "vmovdqu [rbx+0xff0], ymm0"},
-        {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xe0\x0f\x00\x00", 10, 0, 1, FX4_PA,
-         "vmovdqu64 [rbx+0xfe0], zmm0"},
-        {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xc8\x0f\x00\x00", 10, 0, 1, FX4_PA,
-         "vmovdqu64 [rbx+0xfc8], zmm0"},
-        {"", 0, "\x48\x0f\xc3\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "movnti [rbx+0xffc], rax"},
-        {"", 0, "\xf0\x48\x01\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "lock add [rbx+0xffc], rax"},
-        {"", 0, "\x48\x0f\xc1\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "xadd [rbx+0xffc], rax"},
-        {"", 0, "\x48\x87\x83\xfc\x0f\x00\x00", 7, 0, 0, FX4_PA, "xchg [rbx+0xffc], rax"},
-        {"", 0, "\x48\x0f\xc7\x8b\x00\x00\x00\x00", 8, 0, 0, FX4_PA + 0x1000, "cmpxchg16b [rbx] (B)"},
-        {"", 0, "\x66\x0f\x38\xf8\x1c\x24", 6, 0, 0, FX4_PA + 0x1000, "movdir64b rbx, [rsp] (to B)"},
-        {"", 0, "\x48\x0f\x38\xf6\x03", 5, 1, 0, FX4_PA + 0x1000, "wrssq [rbx], rax (B)"},
-        /* call $+6 (CALL 0 is not pushed on the shadow stack); int3 skipped; nop */
-        {"", 0, "\xe8\x01\x00\x00\x00\xcc\x90", 7, 1, 0, FX4_PA, "call (shadow-stack push on B)"},
-        {"", 0, "\xf3\x0f\x01\xe8", 4, 1, 0, FX4_PA, "setssbsy (token on B)", FX4_PA + 0x1000},
-        {"", 0, "\xf3\x0f\xae\x33", 4, 1, 0, FX4_PA + 0x1000, "clrssbsy [rbx] (token on B)",
-         FX4_PA + 0x1001},
-        {"", 0, "\xf3\x0f\x01\x2b", 4, 1, 0, FX4_PA + 0x1000, "rstorssp [rbx] (token on B)",
-         FX4_PA + 0x1009},
-    };
     size_t i;
     int bad = 0;
 
-    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
-        bad += fx4_store_case(&t[i]);
+    for (i = first; i < first + n; i++) {
+        bad += fx4_store_case(&fx4_partial[i]);
     }
     TEST_CHECK(bad == 0);
-    TEST_MSG("partial-store audit: %d of %d checks failed", bad, (int)(3 * (sizeof(t) / sizeof(t[0]))));
+    TEST_MSG("%s: %d of %d checks failed", what, bad, (int)(3 * n));
+}
+
+/* U778: FXSAVE / XSAVE* / FNSAVE / FNSTENV / FSTP m80 / FBSTP into a read-only page B */
+static void test_x86_fx4_store_prepare(void)
+{
+    fx4_store_cases(0, 11, "x86_access_prepare stores");
+}
+
+/* U777-U780: every instruction of the table */
+static void test_x86_fx4_store_partial(void)
+{
+    fx4_store_cases(0, FX4_NPARTIAL, "partial-store audit");
 }
 /* ---- end U770-U789 (fx4_) ---- */
 
@@ -21758,4 +21773,5 @@ TEST_LIST = {
     {"test_x86_fx4_rep_cmps_restore", test_x86_fx4_rep_cmps_restore},
     {"test_x86_fx4_hook_flags", test_x86_fx4_hook_flags},
     {"test_x86_fx4_store_stop", test_x86_fx4_store_stop},
+    {"test_x86_fx4_store_prepare", test_x86_fx4_store_prepare},
     {NULL, NULL}};
