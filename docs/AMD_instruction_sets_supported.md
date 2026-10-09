@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 11:25 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U646 parts of the model in the module text`). Do not edit by hand._
+_Generated 2026-10-09 11:50 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `cabd3f5 U690 tools: apx_cov.py (independent APX decoder: case bytes -> manual form) and mkrows.py (verified_forms rows)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 

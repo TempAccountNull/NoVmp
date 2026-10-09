@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 11:25 (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U646 parts of the model in the module text`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 11:50 (HEAD `cabd3f5 U690 tools: apx_cov.py (independent APX decoder: case bytes -> manual form) and mkrows.py (verified_forms rows)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,7 +9,7 @@ _Generated 2026-10-09 11:25 (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U6
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1606 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 869, open item 76, not implemented yet 661)
+**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 1037, open item 76, not implemented yet 493)
 
 ## Currently being added
 
@@ -49,11 +49,13 @@ _Generated 2026-10-09 11:25 (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U6
     - ⬜ Suspected existing bug (found by the APX map-4 agent, unverified): some legacy paths (e.g. RCL/RCR with a memory operand) call gen_compute_eflags before a memory access that can fault; restore_state_to_opc puts back the instruction-start cc_op, so flags read back after a #PF may be wrong — write a hardware case (fault on the memory operand, check RFLAGS in the handler state) and fix if confirmed.
     - ⬜ APX part 1 leftovers: EVEX.R4 with a k register in ModRM.reg still #UD (spec: unused bits ignored once APX is enabled — decide); REX2-prefixed ENDBR64 (F3 D5 80 1E FA) not recognised by the IBT tracker (spec silent); XSAVES/XRSTORS absent; compatibility-mode D5 = AAD only unit-tested.
       - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
+      - ⏳ [agent, wt/amx2, U720–U749, started 2026-10-09] AMX-AVX512, AMX-FP8, AMX-TF32, AMX-MOVRS, leaf 1EH subleaves, XSAVES/XRSTORS framework (+ IA32_XSS, compacted format).
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
       - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
       - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
+        - ⏳ [agent, wt/cet2, U750–U769, started 2026-10-09] CET on far CALL/RET, IRET, interrupts/exceptions (incl. IST shadow stacks), SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; REX2 ENDBR64.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 

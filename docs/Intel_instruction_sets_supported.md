@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 11:25 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `eb49d0a ref_apx_map4.py: describe the U641-U646 parts of the model in the module text`). Do not edit by hand._
+_Generated 2026-10-09 11:50 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `cabd3f5 U690 tools: apx_cov.py (independent APX decoder: case bytes -> manual form) and mkrows.py (verified_forms rows)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 868, open item 57, not implemented yet 455) — 2682 forms
+**Totals (Intel families):** ✅ 1172 · ⏳ 130 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 1036, open item 57, not implemented yet 287) — 2682 forms
 
 ## Currently being added
 
@@ -46,11 +46,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
     - ⬜ Suspected existing bug (found by the APX map-4 agent, unverified): some legacy paths (e.g. RCL/RCR with a memory operand) call gen_compute_eflags before a memory access that can fault; restore_state_to_opc puts back the instruction-start cc_op, so flags read back after a #PF may be wrong — write a hardware case (fault on the memory operand, check RFLAGS in the handler state) and fix if confirmed.
     - ⬜ APX part 1 leftovers: EVEX.R4 with a k register in ModRM.reg still #UD (spec: unused bits ignored once APX is enabled — decide); REX2-prefixed ENDBR64 (F3 D5 80 1E FA) not recognised by the IBT tracker (spec silent); XSAVES/XRSTORS absent; compatibility-mode D5 = AAD only unit-tested.
       - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
+      - ⏳ [agent, wt/amx2, U720–U749, started 2026-10-09] AMX-AVX512, AMX-FP8, AMX-TF32, AMX-MOVRS, leaf 1EH subleaves, XSAVES/XRSTORS framework (+ IA32_XSS, compacted format).
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
       - ⬜ Fixes leftovers: LOCK 0F 0D: CPU #UD for every /r except /1 (PREFETCHW runs with LOCK), Unicorn runs all (14 forms); MPX bound-directory base uses BNDCFG[63:20] (SDM: [63:12]); VEX in 16-bit protected-mode code segments not decoded (SDM: only real/V86 #UD); 32-bit-mode hardware cases impossible in emu-alltest (64-bit snippets only); VEX.W in 32-bit mode for GPR forms untested; U129 KMOV 32-bit GPR mask now redundant.
       - ⬜ CET leftovers: shadow stack/IBT on far CALL/RET, interrupts/exceptions, IRET, SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; PKS ignored by the page walker.
+        - ⏳ [agent, wt/cet2, U750–U769, started 2026-10-09] CET on far CALL/RET, IRET, interrupts/exceptions (incl. IST shadow stacks), SYSCALL/SYSRET/SYSENTER/SYSEXIT, task switch; XSAVES CET_U/CET_S components; REX2 ENDBR64.
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
@@ -2009,26 +2011,26 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AMX_MOVRS | 2 | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) |  | ⬜ 2 queued |
 | AMX_TILE | 3 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 3 |  |
 | AMX_TILE_BASE | 4 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 4 |  |
-| APX_F | 33 | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ 33 queued |
-| APX_F_ADX | 2 | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) |  | ⬜ 2 queued |
-| APX_F_AMX | 3 | ❌ **cannot run** (APX_F_AMX not reported by this CPU) |  | ⬜ 3 queued |
-| APX_F_AMX_BASE | 2 | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) |  | ⬜ 2 queued |
+| APX_F | 33 | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ 32 | ⬜ 1 queued |
+| APX_F_ADX | 2 | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) | ✅ 2 |  |
+| APX_F_AMX | 3 | ❌ **cannot run** (APX_F_AMX not reported by this CPU) | ✅ 2 | ⬜ 1 queued |
+| APX_F_AMX_BASE | 2 | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) | ✅ 2 |  |
 | APX_F_AMX_MOVRS | 2 | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ 2 queued |
-| APX_F_BMI1 | 6 | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ 6 queued |
-| APX_F_BMI2 | 8 | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU; APX_F_BMI2_N3 not reported by this CPU) |  | ⬜ 8 queued |
+| APX_F_BMI1 | 6 | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ 6 |  |
+| APX_F_BMI2 | 8 | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU; APX_F_BMI2_N3 not reported by this CPU) | ✅ 8 |  |
 | APX_F_CET | 4 | ❌ **cannot run** (APX_F_CET not reported by this CPU) |  | ⏳ 2 · ⬜ 2 queued |
-| APX_F_CMPCCXADD | 22 | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ 22 queued |
+| APX_F_CMPCCXADD | 22 | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ 22 |  |
 | APX_F_ENQCMD | 2 | ❌ **cannot run** (APX_F_ENQCMD not reported by this CPU) |  | ⏳ 1 · ⬜ 1 queued |
 | APX_F_INVPCID | 1 | ❌ **cannot run** (APX_F_INVPCID not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_LZCNT | 1 | ❌ **cannot run** (APX_F_LZCNT not reported by this CPU; APX_F_LZCNT_N3 not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_MOVBE | 1 | ❌ **cannot run** (APX_F_MOVBE not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_MOVDIR64B | 1 | ❌ **cannot run** (APX_F_MOVDIR64B not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_MOVDIRI | 1 | ❌ **cannot run** (APX_F_MOVDIRI not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_MOVRS | 1 | ❌ **cannot run** (APX_F_MOVRS not reported by this CPU) |  | ⬜ 1 queued |
+| APX_F_LZCNT | 1 | ❌ **cannot run** (APX_F_LZCNT not reported by this CPU; APX_F_LZCNT_N3 not reported by this CPU) | ✅ 1 |  |
+| APX_F_MOVBE | 1 | ❌ **cannot run** (APX_F_MOVBE not reported by this CPU) | ✅ 1 |  |
+| APX_F_MOVDIR64B | 1 | ❌ **cannot run** (APX_F_MOVDIR64B not reported by this CPU) | ✅ 1 |  |
+| APX_F_MOVDIRI | 1 | ❌ **cannot run** (APX_F_MOVDIRI not reported by this CPU) | ✅ 1 |  |
+| APX_F_MOVRS | 1 | ❌ **cannot run** (APX_F_MOVRS not reported by this CPU) | ✅ 1 |  |
 | APX_F_MSR_IMM | 2 | ❌ **cannot run** (APX_F_MSR_IMM not reported by this CPU) |  | ⏳ 2 |
-| APX_F_N3 | 84 | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ 84 queued |
-| APX_F_POPCNT | 1 | ❌ **cannot run** (APX_F_POPCNT not reported by this CPU; APX_F_POPCNT_N3 not reported by this CPU) |  | ⬜ 1 queued |
-| APX_F_RAO_INT | 4 | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) |  | ⬜ 4 queued |
+| APX_F_N3 | 84 | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ 84 |  |
+| APX_F_POPCNT | 1 | ❌ **cannot run** (APX_F_POPCNT not reported by this CPU; APX_F_POPCNT_N3 not reported by this CPU) | ✅ 1 |  |
+| APX_F_RAO_INT | 4 | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ 4 |  |
 | APX_F_USER_MSR | 2 | ❌ **cannot run** (APX_F_USER_MSR not reported by this CPU) |  | ⬜ 2 queued |
 | APX_F_VMX | 2 | ❌ **cannot run** (APX_F_VMX not reported by this CPU) |  | ⏳ 2 |
 | AVX10_2_BF16 | 29 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ 27 | ⏳ 2 (wt/avx10_a, wt/avx10_b) |
@@ -2578,39 +2580,39 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| ADC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| ADD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| AND | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CRC32 | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| DEC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| DIV | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| IDIV | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| IMUL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| INC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| JMPABS | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD i… |
-| KMOVB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| KMOVD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| KMOVQ | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| KMOVW | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| MUL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| NEG | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| NOT | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| OR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| POPP | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD i… |
-| PUSHP | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks APX (REX2 prefix D5 = #UD in 64-bit mode): #UD i… |
-| RCL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| RCR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| ROL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| ROR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SAL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SAR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SBB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHLD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHRD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SUB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| XOR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| ADC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| ADD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| AND | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| CRC32 | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
+| DEC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| DIV | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| IDIV | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| IMUL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| INC | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| JMPABS | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| KMOVB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted KMOV (E… |  |
+| KMOVD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted KMOV (E… |  |
+| KMOVQ | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted KMOV (E… |  |
+| KMOVW | evex | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted KMOV (E… |  |
+| MUL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| NEG | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| NOT | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| OR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| POPP | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U614 Intel APX PUSHP/POPP (REX2… |  |
+| PUSHP | legacy | - | ❌ **cannot run** (APX_F not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U614 Intel APX PUSHP/POPP (REX2… |  |
+| RCL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| RCR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| ROL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| ROR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SAL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SAR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SBB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SHL | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SHLD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SHR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SHRD | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| SUB | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
+| XOR | evex | - | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
 
 </details>
 
@@ -2618,8 +2620,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| ADCX | evex | - | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| ADOX | evex | - | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| ADCX | evex | - | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
+| ADOX | evex | - | ❌ **cannot run** (APX_F_ADX not reported by this CPU; APX_F_ADX_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
@@ -2627,9 +2629,9 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TILELOADD | evex | - | ❌ **cannot run** (APX_F_AMX not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TILELOADD | evex | - | ❌ **cannot run** (APX_F_AMX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted AMX mem… |  |
 | TILELOADDT1 | evex | - | ❌ **cannot run** (APX_F_AMX not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TILESTORED | evex | - | ❌ **cannot run** (APX_F_AMX not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TILESTORED | evex | - | ❌ **cannot run** (APX_F_AMX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted AMX mem… |  |
 
 </details>
 
@@ -2637,8 +2639,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| LDTILECFG | evex | - | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| STTILECFG | evex | - | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| LDTILECFG | evex | - | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted AMX mem… |  |
+| STTILECFG | evex | - | ❌ **cannot run** (APX_F_AMX_BASE not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX-promoted AMX mem… |  |
 
 </details>
 
@@ -2646,8 +2648,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| TILELOADDRS | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TILELOADDRST1 | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TILELOADDRS | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): base instruction not implemented in this CPU model: AMX-MOVRS (TILEL… |
+| TILELOADDRST1 | evex | - | ❌ **cannot run** (APX_F_AMX_MOVRS not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): base instruction not implemented in this CPU model: AMX-MOVRS (TILEL… |
 
 </details>
 
@@ -2655,12 +2657,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| ANDN | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BEXTR | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BLSI | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BLSMSK | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BLSR | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TZCNT | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| ANDN | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| BEXTR | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| BLSI | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| BLSMSK | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| BLSR | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| TZCNT | evex | - | ❌ **cannot run** (APX_F_BMI1 not reported by this CPU; APX_F_BMI1_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
 
 </details>
 
@@ -2668,14 +2670,14 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| BZHI | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU; APX_F_BMI2_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| MULX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| PDEP | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| PEXT | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| RORX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SARX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHLX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SHRX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| BZHI | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU; APX_F_BMI2_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| MULX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| PDEP | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| PEXT | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| RORX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| SARX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| SHLX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
+| SHRX | evex | - | ❌ **cannot run** (APX_F_BMI2 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted BMI… |  |
 
 </details>
 
@@ -2694,28 +2696,28 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| CMPAEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPAXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPBEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPBXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPGEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPGXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPLEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPLXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNBEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNBXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNLEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNLXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNOXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNPXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNSXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPNZXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPOXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPPXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPSXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMPZXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| CMPAEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPAXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPBEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPBXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPGEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPGXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPLEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPLXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNBEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNBXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNLEXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNLXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNOXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNPXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNSXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPNZXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPOXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPPXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPSXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
+| CMPZXADD | evex | - | ❌ **cannot run** (APX_F_CMPCCXADD not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U646 Intel APX VEX-promoted CMP… |  |
 
 </details>
 
@@ -2732,7 +2734,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| INVPCID | evex | - | ❌ **cannot run** (APX_F_INVPCID not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
+| INVPCID | evex | - | ❌ **cannot run** (APX_F_INVPCID not reported by this CPU) |  | ⬜ queued — not implemented (cases_reach): base instruction not implemented in this CPU model: INVPCID is #UD w… |
 
 </details>
 
@@ -2740,7 +2742,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| LZCNT | evex | - | ❌ **cannot run** (APX_F_LZCNT not reported by this CPU; APX_F_LZCNT_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| LZCNT | evex | - | ❌ **cannot run** (APX_F_LZCNT not reported by this CPU; APX_F_LZCNT_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
 
 </details>
 
@@ -2748,7 +2750,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MOVBE | evex | - | ❌ **cannot run** (APX_F_MOVBE not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| MOVBE | evex | - | ❌ **cannot run** (APX_F_MOVBE not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
@@ -2756,7 +2758,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MOVDIR64B | evex | - | ❌ **cannot run** (APX_F_MOVDIR64B not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
+| MOVDIR64B | evex | - | ❌ **cannot run** (APX_F_MOVDIR64B not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
@@ -2764,7 +2766,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MOVDIRI | evex | - | ❌ **cannot run** (APX_F_MOVDIRI not reported by this CPU) |  | ⬜ queued — EVEX form not implemented (the i5-13600K lacks AVX-512) |
+| MOVDIRI | evex | - | ❌ **cannot run** (APX_F_MOVDIRI not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
@@ -2772,7 +2774,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MOVRS | evex | - | ❌ **cannot run** (APX_F_MOVRS not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| MOVRS | evex | - | ❌ **cannot run** (APX_F_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
@@ -2789,90 +2791,90 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| CCMPB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPF | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPT | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CCMPZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CFCMOVZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVA | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVAE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVG | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVGE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVNE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CMOVS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTF | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTT | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| CTESTZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| POP2 | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| POP2P | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| PUSH2 | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| PUSH2P | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETA | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETAE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETG | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETGE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETNE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| SETS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| CCMPB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPF | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPT | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CCMPZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CCMPscc (EVEX ma… |  |
+| CFCMOVB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CFCMOVZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CFCMOVcc (EVEX m… |  |
+| CMOVA | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVAE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVG | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVGE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVNE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CMOVS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U642 Intel APX CMOVcc NDD (EVEX… |  |
+| CTESTB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTF | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTNZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTT | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| CTESTZ | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U641 Intel APX CTESTscc (EVEX m… |  |
+| POP2 | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U643 Intel APX POP2 (EVEX map 4… |  |
+| POP2P | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U643 Intel APX POP2P (EVEX map … |  |
+| PUSH2 | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U643 Intel APX PUSH2 (EVEX map … |  |
+| PUSH2P | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U643 Intel APX PUSH2P (EVEX map… |  |
+| SETA | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETAE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETB | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETBE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETG | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETGE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETL | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETLE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETNE | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETNO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETNP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETNS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETO | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETP | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
+| SETS | evex | - | ❌ **cannot run** (APX_F_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 SETcc… |  |
 
 </details>
 
@@ -2880,7 +2882,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| POPCNT | evex | - | ❌ **cannot run** (APX_F_POPCNT not reported by this CPU; APX_F_POPCNT_N3 not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| POPCNT | evex | - | ❌ **cannot run** (APX_F_POPCNT not reported by this CPU; APX_F_POPCNT_N3 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640 Intel APX EVEX map 4 promo… |  |
 
 </details>
 
@@ -2888,10 +2890,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| AADD | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| AAND | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| AOR | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| AXOR | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| AADD | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
+| AAND | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
+| AOR | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
+| AXOR | evex | - | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U640/U645 Intel APX EVEX map 4 … |  |
 
 </details>
 
