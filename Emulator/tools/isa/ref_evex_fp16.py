@@ -113,11 +113,16 @@ Rules chosen where the SDM is silent or contradicts itself (page references are 
      negative value that rounds below 0 for the unsigned forms), NaN or INF -> integer
      indefinite (80..0h signed, FF..Fh unsigned) with IE. The VCVT[T]SH2USI page text is a copy
      of the signed one ("range limits of signed ..."): the unsigned range is used.
- 13. Scalar forms are LIG: cases use L'L = 0, 1, 2 without EVEX.b; L'L = 11b without EVEX.b on
-     a scalar form is not tested (Table 2-38 reserves 11b only as a vector length).
+ 13. Scalar forms are LIG: cases use L'L = 0, 1, 2 without EVEX.b, and (U869, appended at the
+     end of each mnemonic) L'L = 11b without EVEX.b, also ignored: Vol2A 2.7.10 "When EVEX is
+     used to encode scalar instructions, L'L is generally ignored"; the scalar FP16 pages are
+     EVEX.LLIG and their classes (E3, E3NF, E5 VMOVSH, E10) list no "instruction specific
+     EVEX.L'L restriction"; Table 2-38's "11b: Reserved (#UD)" is the vector-length encoding
+     (the SS/SD forms are tested the same way in cases_evex_m2_engine.txt).
      {sae} on reg-reg packed forms: L'L ignored, VL = 512 (Table 2-38/2-43); {er}: L'L = RC,
      VL = 512 (the M1 convention).
- 14. VMOVW is EVEX.128 only (E9NF "instruction specific L'L restriction"): L'L != 00b -> #UD.
+ 14. VMOVW is EVEX.128 only (E9NF "instruction specific L'L restriction"): L'L != 00b -> #UD
+     (01b, 10b and, U869, 11b).
  15. Whole-instruction flags (M1 convention): flags are ORed over the active lanes, then an
      unmasked IE/DE/ZE anywhere drops OE/UE/PE.
 
@@ -1734,6 +1739,60 @@ def gen_movw(sp, first):
     ud(sp, "EVEX.b (memory)", b=1, rm=Mem(RSI, 0))
 
 
+# ---- U869: scalar forms with EVEX.L'L = 11b and EVEX.b = 0 (LIG), VMOVW L'L = 11b #UD ----------
+def gen_ll11(sp):
+    """note 13 / 14: appended after every form of the mnemonic (the earlier cases keep their
+    random streams)"""
+    t = "L'L=11b without EVEX.b (LIG)"
+    if sp.lay in ("rvm", "rm", "fma", "krvm", "krm"):
+        if not sp.scalar:
+            return
+        emit(vcase(sp, 16, t, ll=3))
+        emit(vcase(sp, 16, t + " mem", mem=Mem(RSI, 0), ll=3))
+        emit(vcase(sp, 16, t + " {k} merge", kreg=2, kval=R.bits(64), ll=3))
+    elif sp.lay == "comi":
+        emit(comi_case(sp, t, R.h(), R.h(), ll=3, ra=R.randint(0, 31), rb=R.randint(0, 31)))
+        emit(comi_case(sp, t + " mem", R.h(), R.h(), mem=Mem(RSI, 2), ll=3))
+    elif sp.lay == "gdst":
+        emit(gdst_case(sp, t, R.h(), g=R.choice(SAFE_GPR), rx=R.randint(0, 31), ll=3))
+        emit(gdst_case(sp, t + " mem", R.h(), g=3, mem=Mem(RSI, 2), ll=3))
+    elif sp.lay == "gsrc":
+        dom = ("q" if sp.w else "dw") if sp.name == "VCVTSI2SH" else ("uq" if sp.w else "udw")
+        emit(gsrc_case(sp, t, R.val(dom), d=R.randint(0, 31), a=R.randint(0, 31), g=R.choice(SAFE_GPR),
+                       ll=3))
+        emit(gsrc_case(sp, t + " mem", R.val(dom), d=3, a=4, mem=Mem(RSI, 8 if sp.w else 4), ll=3))
+    elif sp.lay.startswith("movsh"):
+        c = Case("VMOVSH %s %s" % (sp.lay, t))
+        if sp.lay == "movsh_ld":
+            d = R.randint(0, 31)
+            c.set_zmm(d, R.bytes(64))
+            x = R.h()
+            c.mem[MEM_RSI + 2] = x.to_bytes(2, "little")
+            c.exp.append("zmm%d=%s" % (d, hexs(x.to_bytes(2, "little") + bytes(62))))
+            c.code = evex(5, 2, 0, 0x10, d, Mem(RSI, 2), ll=3, n=2)
+        elif sp.lay == "movsh_st":
+            r = R.randint(0, 31)
+            c.set_zmm(r, R.bytes(64))
+            c.mem[MEM_RSI + 2] = R.bytes(2)
+            c.exp.append("m+0x%X=%s" % (MEM_RSI + 2, hexs(c.zmm[r][:2])))
+            c.code = evex(5, 2, 0, 0x11, r, Mem(RSI, 2), ll=3, n=2)
+        else:
+            d, s1, s2 = 1, 2, 3
+            imgs = {}
+            for r in (s2, s1, d):
+                imgs[r] = R.bytes(64)
+                c.set_zmm(r, imgs[r])
+            c.exp.append("zmm%d=%s" % (d, hexs(imgs[s2][:2] + imgs[s1][2:16] + bytes(48))))
+            if sp.lay == "movsh_rr":
+                c.code = evex(5, 2, 0, 0x10, d, s2, vvvv=s1, ll=3)
+            else:
+                c.code = evex(5, 2, 0, 0x11, s2, d, vvvv=s1, ll=3)
+        emit(c)
+    elif sp.lay.startswith("movw"):
+        ud(sp, "EVEX.L'L=11b", ll=3)
+        ud(sp, "EVEX.L'L=11b (memory)", ll=3, rm=Mem(RSI, 0))
+
+
 # ---- fault suppression -----------------------------------------------------------------------
 def gen_fault_supp(sp):
     """packed load with the upper elements on the unmapped page MEM + 0x10000; scalar (E3/E10)
@@ -1811,6 +1870,8 @@ def gen_group(name):
             gen_movsh(sp, i == 0)
         elif sp.lay.startswith("movw"):
             gen_movw(sp, i == 0)
+    for sp in [f for f in FORMS if f.name == name]:
+        gen_ll11(sp)                                   # U869, after the earlier cases
     return list(OUT)
 
 
