@@ -90,6 +90,9 @@ DEF_HELPER_2(cmpxchg16b, void, env, tl)
 #if __Use_Original_Qemu != 1 /* ours (U73) */
 DEF_HELPER_3(movdir64b, void, env, tl, tl)
 #endif /* __Use_Original_Qemu (U73) */
+#if __Use_Original_Qemu != 1 /* ours (U851) */
+DEF_HELPER_FLAGS_2(wrxxbase_check, TCG_CALL_NO_WG, void, env, tl)
+#endif /* __Use_Original_Qemu (U851) */
 #endif
 #if __Use_Original_Qemu != 1 /* ours (U101) */
 DEF_HELPER_FLAGS_4(rao, TCG_CALL_NO_WG, void, env, tl, tl, i32)

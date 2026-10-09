@@ -292,6 +292,11 @@ Add-Hw 'cases_fix3' 'hw'
 # Unicorn only; expected values from the independent model ref_cet2.py (CR0.WP for CR4.CET, APX for REX2).
 Add-Exp 'cases_cet2' 'cases_cet2' 'cet expect' @( '--apx', '--cr0', '0x10011' )
 Add-PySelftest 'ref_cet2_selftest' 'cet tools' 'ref_cet2.py'
+# U850-U852: the emu-alltest sweep forms that stay out of the native run (WRFSBASE/WRGSBASE, SYSENTER's
+# entry check, LFS/LGS: host FS/GS or a kernel entry natively); expected values from the independent
+# SDM model ref_sweep_sdm.py.
+Add-Exp 'cases_sweep_sdm' 'cases_sweep_sdm' 'expect'
+Add-PySelftest 'ref_sweep_sdm_selftest' 'tools' 'ref_sweep_sdm.py'
 # independent model ref_apx_core.py, Unicorn only with the APX opt-in (the host has no APX).
 Add-Exp 'cases_apx_core' 'cases_apx_core' 'apx expect' @( '--apx' )
 # U616: the APX extension of EVEX instructions (EVEX.B4 / X4 = ~U / R4 for GPRs), with AVX-512.

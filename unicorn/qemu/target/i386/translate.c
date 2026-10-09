@@ -9838,6 +9838,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 if (modrm & 0x10) {
                     /* wr*base */
                     dst = base, src = treg;
+#if __Use_Original_Qemu != 1 /* ours (U851) */
+#ifdef TARGET_X86_64
+                    /* SDM WRFSBASE/WRGSBASE: #GP(0) for a non-(paging-)canonical 64-bit source */
+                    if (s->dflag != MO_32) {
+                        gen_helper_wrxxbase_check(tcg_ctx, cpu_env, src);
+                    }
+#endif
+#endif /* __Use_Original_Qemu (U851) */
                 } else {
                     /* rd*base */
                     dst = treg, src = base;

@@ -485,6 +485,27 @@ void helper_cr4_testbit(CPUX86State *env, uint32_t bit)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U851) */
+#ifdef TARGET_X86_64
+/*
+ * NoVmp (ledger U851): SDM Vol2D WRFSBASE/WRGSBASE, 64-bit mode exceptions: "#GP(0) If the source
+ * register contains a non-canonical address"; Vol3A 4.5.3: unlike WRMSR (CPU canonicality) these
+ * two check paging canonicality - 48 bits with 4-level paging, 57 with CR4.LA57 = 1. Called for
+ * the 64-bit operand only (a 32-bit source is zero-extended, always canonical), before the base
+ * changes. Upstream QEMU (7.2 translate.c, 11.1 gen_WRxxBASE) loads any value.
+ */
+void helper_wrxxbase_check(CPUX86State *env, target_ulong base)
+{
+    int shift = (env->cr[4] & CR4_LA57_MASK) ? 56 : 47;
+    int64_t sext = (int64_t)base >> shift;
+
+    if (sext != 0 && sext != -1) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+}
+#endif
+#endif /* __Use_Original_Qemu (U851) */
+
 target_ulong HELPER(rdrand)(CPUX86State *env)
 {
     target_ulong ret;

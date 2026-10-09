@@ -2101,7 +2101,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "match",legacy,"fsgsbase","rdfsbase rax","F3 48 0F AE C0 ",ok,ok,6,0,""
 "match",legacy,"fsgsbase","rdgsbase rax","F3 48 0F AE C8 ",ok,ok,6,0,""
 "not native-safe, unicorn runs (needs SDM check)",legacy,"fsgsbase","wrfsbase rax","F3 48 0F AE D0 ",,ok,6,0,"WRFSBASE/WRGSBASE: would replace the host thread's FS/GS base (GS base = the Windows TEB; expected values only)"
-"not native-safe, unicorn runs (needs SDM check)",legacy,"fsgsbase","wrgsbase rax","F3 48 0F AE D8 ",,ok,6,0,"WRFSBASE/WRGSBASE: would replace the host thread's FS/GS base (GS base = the Windows TEB; expected values only)"
+"not native-safe, unicorn runs (needs SDM check)",legacy,"fsgsbase","wrgsbase rax","F3 48 0F AE D8 ",,#13,6,0,"WRFSBASE/WRGSBASE: would replace the host thread's FS/GS base (GS base = the Windows TEB; expected values only)"
 "known deviation (docs/quirks.md)",legacy,"base","ptwrite rax","F3 48 0F AE E0 ",ok,#6,6,6,"known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6"
 "known deviation (docs/quirks.md)",legacy,"base","ptwrite qword ptr [rsi]","F3 48 0F AE 26 ",ok,#6,6,6,"known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6"
 "host lacks + unicorn #UD",legacy,"base","incsspq rax","F3 48 0F AE E8 ",#6,#6,6,0,""
