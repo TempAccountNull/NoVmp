@@ -4110,6 +4110,20 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xcf] = X86_OP_ENTRY3(EVEX_VGF2P8MULB, V,x, H,x, W,x, cpuid(EVEX_GFNI) ev_vl(EV_VLALL)
                            ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) p_66),
 #endif /* __Use_Original_Qemu (U572) */
+#if __Use_Original_Qemu != 1 /* ours (U573) */
+    /*
+     * NoVmp (ledger U573): VAESENC (DC), VAESENCLAST (DD), VAESDEC (DE), VAESDECLAST (DF)
+     * zmm1, zmm2, zmm3/m (SDM Vol2A 3-33 .. 3-52): EVEX.66.0F38.WIG, one AES round per 128-bit
+     * lane, Full Mem tuple, no masking (aaa / z #UD), class E4NF. The ops_sse.h AES-NI helpers
+     * of the legacy/VEX forms (SHIFT 1/2/3).
+     */
+#define EV_VAES(op) X86_OP_ENTRY3(op, V,x, H,x, W,x, cpuid(EVEX_VAES) ev_vl(EV_VLALL)                         ev_tt(FULL_MEM) ev_mask(NONE) ev_w(WIG) ev_es(32) ev_nf p_66)
+    [0xdc] = EV_VAES(EVEX_VAESENC),
+    [0xdd] = EV_VAES(EVEX_VAESENCLAST),
+    [0xde] = EV_VAES(EVEX_VAESDEC),
+    [0xdf] = EV_VAES(EVEX_VAESDECLAST),
+#undef EV_VAES
+#endif /* __Use_Original_Qemu (U573) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -5303,6 +5317,16 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
                (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_GFNI);
 #endif /* __Use_Original_Qemu (U572) */
+#if __Use_Original_Qemu != 1 /* ours (U573) */
+    case X86_FEAT_EVEX_VAES:
+        /*
+         * SDM Vol2A AESDEC/AESDECLAST/AESENC/AESENCLAST: "VAES (AVX512F OR AVX10.1)", "VAES
+         * (AVX512VL OR AVX10.1)" for EVEX.128/256 (AVX512VL: validate_evex); unlike the VEX
+         * forms the EVEX forms need neither the AES nor the AVX bit, and EVEX.128 needs VAES.
+         */
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
+               (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_VAES);
+#endif /* __Use_Original_Qemu (U573) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

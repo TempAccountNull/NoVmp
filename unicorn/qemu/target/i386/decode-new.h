@@ -237,6 +237,10 @@ typedef enum X86CPUIDFeature {
     /* EVEX GFNI forms: "(AVX512F OR AVX10.1) GFNI" (CPUID.(07H,0):ECX.GFNI[8]) */
     X86_FEAT_EVEX_GFNI,
 #endif /* __Use_Original_Qemu (U572) */
+#if __Use_Original_Qemu != 1 /* ours (U573) */
+    /* EVEX VAES forms: "VAES (AVX512F OR AVX10.1)" (CPUID.(07H,0):ECX.VAES[9]) */
+    X86_FEAT_EVEX_VAES,
+#endif /* __Use_Original_Qemu (U573) */
 } X86CPUIDFeature;
 
 /* Execution flags */

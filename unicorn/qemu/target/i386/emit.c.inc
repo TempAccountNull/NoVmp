@@ -5947,3 +5947,13 @@ static void gen_EVEX_VGF2P8AFFINEINVQB(DisasContext *s, CPUX86State *env, X86Dec
                                          tcg_constant8u_i32(tcg_ctx, decode->immediate));
 }
 #endif /* __Use_Original_Qemu (U572) */
+#if __Use_Original_Qemu != 1 /* ours (U573) */
+
+/* NoVmp (ledger U573): EVEX VAES forms, one AES round per 128-bit lane (ops_sse.h, SSE_FN3) */
+#define EVEX_VAES(uname, lname)                                                          static void gen_EVEX_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode) {                                                                                            TCGContext *tcg_ctx = s->uc->tcg_ctx;                                                                                                                                             SSE_FN3(s, decode, lname)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);              }
+EVEX_VAES(VAESENC, aesenc)
+EVEX_VAES(VAESENCLAST, aesenclast)
+EVEX_VAES(VAESDEC, aesdec)
+EVEX_VAES(VAESDECLAST, aesdeclast)
+#undef EVEX_VAES
+#endif /* __Use_Original_Qemu (U573) */
