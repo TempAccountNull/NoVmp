@@ -7755,6 +7755,24 @@ static bool evex_mapped(CPUX86State *env, target_ulong addr)
     return env->uc->memory_mapping(env->uc, paddr) != NULL;
 }
 
+/*
+ * U779: ... and writable: an element on a page Unicorn maps read-only is stored first too
+ * (UC_HOOK_MEM_WRITE_PROT; unhandled, the instruction stops with nothing stored, U777).
+ * Before, the elements on the writable page were stored and the read-only one only
+ * requested an exit (an EVEX.512 store across into a read-only page wrote its first part).
+ */
+static bool evex_writable(CPUX86State *env, target_ulong addr)
+{
+    target_ulong paddr;
+    MemoryRegion *mr;
+
+    if (!tlb_vaddr_to_paddr(env, addr, MMU_DATA_STORE, cpu_mmu_index(env, false), &paddr)) {
+        return true;                    /* page fault: raised by the real access */
+    }
+    mr = env->uc->memory_mapping(env->uc, paddr);
+    return mr != NULL && (mr->perms & UC_PROT_WRITE);
+}
+
 static void evex_store_elem(CPUX86State *env, ZMMReg *s, int esz, int i, target_ulong addr,
                             uintptr_t ra)
 {
@@ -7827,7 +7845,7 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
         target_ulong addr = a0 + i * bytes;
 
         if ((mask & (1ull << i)) &&
-            (!evex_mapped(env, addr) || !evex_mapped(env, addr + bytes - 1))) {
+            (!evex_writable(env, addr) || !evex_writable(env, addr + bytes - 1))) {
             evex_store_elem(env, s, esz, i, addr, ra);
             if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
                 cpu_loop_exit_restore(uc->cpu, ra);

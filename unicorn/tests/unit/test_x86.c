@@ -19935,6 +19935,8 @@ static const fx4_sc_t fx4_partial[] = {
      "vmovdqu64 [rbx+0xfe0], zmm0"},
     {"", 0, "\x62\xf1\xfe\x48\x7f\x83\xc8\x0f\x00\x00", 10, 0, 1, FX4_PA,
      "vmovdqu64 [rbx+0xfc8], zmm0"},
+    {"", 0, "\x62\xf2\x7e\x48\x35\x83\xf8\x0f\x00\x00", 10, 0, 1, FX4_PA,
+     "vpmovqd [rbx+0xff8], zmm0"},
     {"", 0, "\x48\x0f\xc3\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "movnti [rbx+0xffc], rax"},
     {"", 0, "\xf0\x48\x01\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "lock add [rbx+0xffc], rax"},
     {"", 0, "\x48\x0f\xc1\x83\xfc\x0f\x00\x00", 8, 0, 0, FX4_PA, "xadd [rbx+0xffc], rax"},
@@ -19968,6 +19970,22 @@ static void fx4_store_cases(size_t first, size_t n, const char *what)
 static void test_x86_fx4_store_prepare(void)
 {
     fx4_store_cases(0, 11, "x86_access_prepare stores");
+}
+
+/* U779: EVEX stores (helper_evex_mstore) into a read-only page B: the table's AVX-512 entries */
+static void test_x86_fx4_store_evex(void)
+{
+    size_t i;
+    int bad = 0, n = 0;
+
+    for (i = 0; i < FX4_NPARTIAL; i++) {
+        if (fx4_partial[i].avx512) {
+            bad += fx4_store_case(&fx4_partial[i]);
+            n += 3;
+        }
+    }
+    TEST_CHECK(bad == 0 && n == 9);
+    TEST_MSG("EVEX stores: %d of %d checks failed", bad, n);
 }
 
 /* U777-U780: every instruction of the table */
@@ -21774,4 +21792,5 @@ TEST_LIST = {
     {"test_x86_fx4_hook_flags", test_x86_fx4_hook_flags},
     {"test_x86_fx4_store_stop", test_x86_fx4_store_stop},
     {"test_x86_fx4_store_prepare", test_x86_fx4_store_prepare},
+    {"test_x86_fx4_store_evex", test_x86_fx4_store_evex},
     {NULL, NULL}};
