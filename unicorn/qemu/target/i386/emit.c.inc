@@ -4088,6 +4088,34 @@ static void gen_MOVBE(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+/*
+ * NoVmp (ledger U645): APX EVEX map 4 MOVBE (60: rv, rv/mv; 61: rv/mv, rv), which also has the
+ * register-register form ("MOVBE reg1, reg2", APX spec 3.1.2.3.1 2.(e)): T0 holds the source
+ * (a memory source loaded little-endian), its bytes are swapped and written back to operand 0
+ * (a memory destination stored little-endian): the same as a big-endian load / store.
+ */
+static void gen_MOVBE_APX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    switch (decode->op[0].ot) {
+    case MO_16:
+        tcg_gen_ext16u_tl(tcg_ctx, s->T0, s->T0);
+        tcg_gen_bswap16_tl(tcg_ctx, s->T0, s->T0);
+        break;
+    case MO_32:
+        tcg_gen_ext32u_tl(tcg_ctx, s->T0, s->T0);
+        tcg_gen_bswap32_tl(tcg_ctx, s->T0, s->T0);
+        break;
+    default:
+        tcg_gen_bswap64_i64(tcg_ctx, s->T0, s->T0);
+        break;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U645) */
+
 #if __Use_Original_Qemu != 1 /* ours (U72) */
 /*
  * NoVmp (ledger U72): MOVDIRI, a direct store (write-combining protocol on

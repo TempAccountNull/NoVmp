@@ -195,6 +195,10 @@ typedef struct DisasContext {
     uint8_t apx_nd, apx_nf;
     TCGv apx_flags, apx_cond;
 #endif /* __Use_Original_Qemu (U640) */
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+    /* decode-new: an APX-promoted EVEX form (EVEX map 4 from legacy maps 2/3, U645) */
+    bool apx_promoted;
+#endif /* __Use_Original_Qemu (U645) */
     bool vex_w; /* used by AVX even on 32-bit processors */
 #if __Use_Original_Qemu != 1 /* ours (U141) */
     /*
@@ -4610,6 +4614,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     s->apx_post = 0;
     s->apx_nd = s->apx_nf = 0;
 #endif /* __Use_Original_Qemu (U640) */
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+    s->apx_promoted = false;
+#endif /* __Use_Original_Qemu (U645) */
     s->rip_offset = 0; /* for relative ip address */
     s->vex_l = 0;
     s->vex_v = 0;

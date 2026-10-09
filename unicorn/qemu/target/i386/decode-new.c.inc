@@ -1209,6 +1209,107 @@ static void decode_MAP7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+/*
+ * NoVmp (ledger U645): Intel APX EVEX map 4, the instructions promoted from legacy maps 2 and 3
+ * (APX spec 355828-009 3.1.2.3.1 2.(e), the table of 3.1.5, chapter 6; the map 0/1 ones are
+ * decoded by apx_map4_decode in translate.c). pp = EVEX.pp (0 NP, 1 66, 2 F3, 3 F2):
+ *   60 /r NP/66 MOVBE rv, rv/mv   61 /r NP/66 MOVBE rv/mv, rv   (also ModRM.mod = 11b)
+ *   65 !(11) 66 WRUSSD/Q m, r     66 !(11) NP WRSSD/Q m, r
+ *   66 /r 66 ADCX, F3 ADOX ry, ry/my; ND = 1: ADCX/ADOX ry_n, ry_r, ry/my (NDD)
+ *   8A !(11) NP W0 MOVRS r8, m8   8B !(11) NP/66 MOVRS rv, mv
+ *   F0 /r NP CRC32 ry, r/m8       F1 /r NP/66 CRC32 ry, rv/mv
+ *   F8 !(11) 66 MOVDIR64B, F2 ENQCMD, F3 ENQCMDS; F8 11 F2 URDMSR, F3 UWRMSR (W0)
+ *   F9 !(11) NP MOVDIRI           FC !(11) NP AADD, 66 AAND, F3 AXOR, F2 AOR
+ * INVEPT / INVVPID / INVPCID (F3 F0 / F1 / F2) need VMX / INVPCID, which this CPU model does
+ * not implement: #UD, like every other combination. Byte registers 4-7 are SPL..DIL.
+ */
+static void decode_apx_map4(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry movbe_ld = X86_OP_ENTRY3(MOVBE_APX, G,v, E,v, None,None, cpuid(MOVBE));
+    static const X86OpEntry movbe_st = X86_OP_ENTRY3(MOVBE_APX, E,v, G,v, None,None, cpuid(MOVBE));
+    static const X86OpEntry adcx_nd = X86_OP_ENTRY3(ADCX, B,y, G,y, E,y, cpuid(ADX));
+    static const X86OpEntry adox_nd = X86_OP_ENTRY3(ADOX, B,y, G,y, E,y, cpuid(ADX));
+    static const X86OpEntry crc32_b = X86_OP_ENTRY2(CRC32, G,d, E,b, cpuid(SSE42));
+    static const X86OpEntry crc32_v = X86_OP_ENTRY2(CRC32, G,d, E,v, cpuid(SSE42));
+    int pp = s->evex_p1 & 3;
+    bool nd = (s->evex_p2 & 0x10) != 0;
+    bool mem;
+
+    *b = x86_ldub_code(env, s);
+    mem = (get_modrm(s, env) >> 6) != 3;
+    memset(entry, 0, sizeof(*entry));
+    s->apx_promoted = true;
+    s->prefix |= PREFIX_REX;            /* "GPR register ids [4,5,6,7] address [SPL..DIL]" */
+    switch (*b) {
+    case 0x60:
+        if (pp <= 1) {
+            *entry = movbe_ld;
+        }
+        break;
+    case 0x61:
+        if (pp <= 1) {
+            *entry = movbe_st;
+        }
+        break;
+    case 0x65:
+        if (pp == 1 && mem) {
+            *entry = opcodes_0F38_F0toFF[5][1];         /* WRUSSD / WRUSSQ */
+        }
+        break;
+    case 0x66:
+        if (pp == 0 && mem) {
+            *entry = opcodes_0F38_F0toFF[6][0];         /* WRSSD / WRSSQ */
+        } else if (pp == 1) {
+            *entry = nd ? adcx_nd : opcodes_0F38_F0toFF[6][1];
+        } else if (pp == 2) {
+            *entry = nd ? adox_nd : opcodes_0F38_F0toFF[6][2];
+        }
+        break;
+    case 0x8a:
+        if (pp == 0 && mem && !s->vex_w) {
+            *entry = opcodes_0F38_00toEF[0x8a];         /* MOVRS r8, m8 (W0) */
+        }
+        break;
+    case 0x8b:
+        if (pp <= 1 && mem) {
+            *entry = opcodes_0F38_00toEF[0x8b];         /* MOVRS rv, mv */
+        }
+        break;
+    case 0xf0:
+        if (pp == 0) {
+            *entry = crc32_b;
+        }
+        break;
+    case 0xf1:
+        if (pp <= 1) {
+            *entry = crc32_v;
+        }
+        break;
+    case 0xf8:
+        if (pp == 1 && mem) {
+            *entry = opcodes_0F38_F0toFF[8][1];         /* MOVDIR64B */
+        } else if (pp >= 2) {
+            /* F3: UWRMSR (11) / ENQCMDS, F2: URDMSR (11) / ENQCMD (group, by ModRM.mod) */
+            *entry = opcodes_0F38_F0toFF[8][pp == 2 ? 2 : 3];
+        }
+        break;
+    case 0xf9:
+        if (pp == 0 && mem) {
+            *entry = opcodes_0F38_F0toFF[9][0];         /* MOVDIRI */
+        }
+        break;
+    case 0xfc:
+        if (mem) {
+            *entry = opcodes_0F38_F0toFF[12][pp];       /* AADD AAND AXOR AOR */
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U645) */
 #if __Use_Original_Qemu != 1 /* ours (U79) */
 /*
  * NoVmp (ledger U79): reached from the 0F map table, i.e. legacy 0F 38 / 0F 3A.
@@ -4642,6 +4743,13 @@ static int evex_disp8_scale(DisasContext *s, X86OpEntry *e, X86DecodedOp *op)
 {
     int vl = s->evex_vl, esz = 1 << s->evex_esz;
 
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+    /* "When a promoted legacy or VEX instruction has a memory operand with an 8b
+       displacement (disp8), its scaling factor N is always 1" (APX spec 3.1.2.3) */
+    if (s->apx_promoted) {
+        return 1;
+    }
+#endif /* __Use_Original_Qemu (U645) */
     switch (e->evex_tt) {
     case X86_EVEX_TT_FULL:
         return s->evex_b ? esz : vl;
@@ -5238,9 +5346,16 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
     }
 #endif /* __Use_Original_Qemu (U79) */
 #if __Use_Original_Qemu != 1 /* ours (U142) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U645) */
     if ((s->prefix & PREFIX_EVEX) && !decode_evex_vl(s, env, e)) {
         return false;
     }
+#else /* ours (U645) */
+    /* APX-promoted forms have no EVEX vector length / tuple (U645) */
+    if ((s->prefix & PREFIX_EVEX) && !s->apx_promoted && !decode_evex_vl(s, env, e)) {
+        return false;
+    }
+#endif /* __Use_Original_Qemu (U645) */
 #endif /* __Use_Original_Qemu (U142) */
 
     /* First compute size of operands in order to initialize s->rip_offset.  */
@@ -5864,6 +5979,45 @@ illegal:
  *   aaa != 000b on forms without masking; aaa = 000b on gathers/scatters.
  * - #NM if CR0.TS = 1 (2.7.12); CR0.EM is not an EVEX condition.
  */
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+/*
+ * NoVmp (ledger U645): the #UD checks of an APX-promoted EVEX form (decode_apx_map4: EVEX map
+ * 4 instructions promoted from legacy maps 2/3), used instead of validate_evex and
+ * validate_vex: these GPR / memory instructions have no AVX-512 / XCR0[7:5] / CR0.TS
+ * conditions (APX spec 355828-009 3.1.2.3). Run-time XCR0[19] / CR4.OSXSAVE check first;
+ * mod = 11b needs U = 1; P2 = 0 0 0 ND V4 NF 0 0 with ND only for the NDD forms (ADCX/ADOX,
+ * B destination) and no NF (Table 4.12 APX-EVEX-INT, 4.7/4.8 CET, 4.11 ENQCMD, 4.17 MOVRS,
+ * 4.19 RAO-INT, 4.23 USER-MSR-EVEX); V must be 0 unless it is the NDD; URDMSR / UWRMSR W0.
+ */
+static bool validate_apx_promoted(DisasContext *s, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    X86OpEntry *e = &decode->e;
+    bool uses_v = e->op0 == X86_TYPE_B || e->op1 == X86_TYPE_B || e->op2 == X86_TYPE_B;
+    int p2 = s->evex_p2;
+
+    gen_helper_apx_check(tcg_ctx, cpu_env);
+    if (s->has_modrm && (s->modrm >> 6) == 3 && !(s->evex_p1 & 0x04)) {
+        goto illegal;
+    }
+    if ((s->evex_p0 & 7) == 4) {
+        if ((p2 & 0xe7) || ((p2 & 0x10) && e->op0 != X86_TYPE_B)) {
+            goto illegal;
+        }
+        if (!uses_v && s->vex_v != 0) {
+            goto illegal;
+        }
+        if ((e->gen == gen_URDMSR || e->gen == gen_UWRMSR) && s->vex_w) {
+            goto illegal;
+        }
+        return true;
+    }
+illegal:
+    gen_illegal_opcode(s);
+    return false;
+}
+
+#endif /* __Use_Original_Qemu (U645) */
 static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
 {
     X86OpEntry *e = &decode->e;
@@ -6223,6 +6377,14 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                 decode_func = decode_evex_map6;
                 break;
 #endif /* __Use_Original_Qemu (U333) */
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+            case 4: /* Intel APX: promoted legacy instructions (U645) */
+                if (!apx_evex) {
+                    goto illegal_op;
+                }
+                decode_func = decode_apx_map4;
+                break;
+#endif /* __Use_Original_Qemu (U645) */
             default:
                 goto illegal_op;
             }
@@ -6371,6 +6533,16 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+    /* Intel APX-promoted EVEX forms: their own checks, then the VEX/legacy code path (U645) */
+    if (s->apx_promoted) {
+        if (!validate_apx_promoted(s, &decode)) {
+            decode_temps_free(tcg_ctx, &decode);
+            return;
+        }
+        goto apx_promoted;
+    }
+#endif /* __Use_Original_Qemu (U645) */
 #if __Use_Original_Qemu != 1 /* ours (U145) */
     if (s->prefix & PREFIX_EVEX) {
         if (validate_evex(s, &decode)) {
@@ -6385,6 +6557,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
     if (!validate_vex(s, &decode)) {
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U645) */
+ apx_promoted:
+#endif /* __Use_Original_Qemu (U645) */
 #if __Use_Original_Qemu != 1 /* ours (U50) */
     /*
      * NoVmp (ledger U50): "If an x87 FPU floating-point exception is pending
