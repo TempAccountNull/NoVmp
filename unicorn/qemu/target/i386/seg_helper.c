@@ -669,6 +669,32 @@ static inline int x86_mmu_index_pl(CPUX86State *env, unsigned pl)
         ? MMU_KNOSMAP_IDX : MMU_KSMAP_IDX;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+/*
+ * NoVmp (ledger U708): far CALL pushes 2 (direct, same-privilege gate) or 4 + parameters
+ * (gate to an inner level, onto the new stack) slots; a #PF / #SS on a later slot left the
+ * earlier ones written (and Unicorn, whose store to a page it has not mapped only requests an
+ * exit, even completed the CALL). The n slots of 'size' bytes below sp are checked first, in
+ * push order and addressed as PUSHW_PL / PUSHL_PL / PUSHQ_PL do, at privilege level pl
+ * (x86_probe_write_mmu writes nothing). SDM Vol3A 6.15: the faulting instruction is not
+ * executed.
+ */
+static void far_probe_pushes(CPUX86State *env, target_ulong ssp, target_ulong sp,
+                             target_ulong sp_mask, int size, int n, unsigned pl, uintptr_t ra)
+{
+    int mmu_idx = x86_mmu_index_pl(env, pl);
+    int i;
+
+    for (i = 1; i <= n; i++) {
+        target_ulong s = sp - (target_ulong)size * i;
+        target_ulong a = size == 8 ? s : size == 4 ? SEG_ADDL(ssp, s, sp_mask)
+                                                   : (ssp) + (s & (sp_mask));
+
+        x86_probe_write_mmu(env, a, size, mmu_idx, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U708) */
+
 #define PUSHW_PL(ssp, sp, sp_mask, val, pl, ra)                          \
     {                                                                    \
         sp -= 2;                                                         \
@@ -1924,6 +1950,11 @@ void helper_lcall_real(CPUX86State *env, uint32_t new_cs, uint32_t new_eip,
     esp = env->regs[R_ESP];
     esp_mask = get_sp_mask(env->segs[R_SS].flags);
     ssp = env->segs[R_SS].base;
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+    /* real / virtual-8086 mode: the 2 slots at the current privilege level (U708) */
+    far_probe_pushes(env, ssp, esp, esp_mask, shift ? 4 : 2, 2, env->hflags & HF_CPL_MASK,
+                     GETPC());
+#endif /* __Use_Original_Qemu (U708) */
     if (shift) {
         PUSHL_RA(ssp, esp, esp_mask, env->segs[R_CS].selector, GETPC());
         PUSHL_RA(ssp, esp, esp_mask, next_eip, GETPC());
@@ -2007,6 +2038,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #endif /* __Use_Original_Qemu (U52) */
             /* 64 bit case */
             rsp = env->regs[R_ESP];
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+            far_probe_pushes(env, 0, rsp, ~(target_ulong)0, 8, 2, cpl, GETPC());
+#endif /* __Use_Original_Qemu (U708) */
             /* backport e136648c5c (U481): at the current CPL */
             PUSHQ_PL(rsp, env->segs[R_CS].selector, cpl, GETPC());
             PUSHQ_PL(rsp, next_eip, cpl, GETPC());
@@ -2042,6 +2076,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
             }
 #endif /* __Use_Original_Qemu (U591/U707) */
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+            far_probe_pushes(env, ssp, sp, sp_mask, shift ? 4 : 2, 2, cpl, GETPC());
+#endif /* __Use_Original_Qemu (U708) */
             /* backport e136648c5c (U481): at the current CPL */
             if (shift) {
                 PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
@@ -2206,6 +2243,7 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 
             old_sp_mask = get_sp_mask(env->segs[R_SS].flags);
             old_ssp = env->segs[R_SS].base;
+#if __Use_Original_Qemu == 1 /* original QEMU (U708) */
 #ifdef TARGET_X86_64
             if (shift == 2) {
                 /* XXX: verify if new stack address is canonical */
@@ -2236,6 +2274,49 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                     PUSHW_PL(ssp, sp, sp_mask, val, dpl, GETPC());
                 }
             }
+#else /* ours (U708) */
+            {
+                /*
+                 * U708: the parameters are read from the old stack (at CPL) first, then the
+                 * new stack's slots - SS, (E)SP, the parameters, CS, (E)IP - are checked
+                 * (far_probe_pushes), then everything is pushed: a fault leaves both stacks
+                 * as they were.
+                 */
+                uint32_t params[32];
+                int psize = shift == 2 ? 8 : shift == 1 ? 4 : 2;
+                int nparam = shift == 2 ? 0 : (int)param_count;
+
+                for (i = nparam - 1; i >= 0; i--) {
+                    params[i] = shift == 1
+                        ? cpu_ldl_data_ra(env, old_ssp + ((env->regs[R_ESP] + i * 4) &
+                                                          old_sp_mask), GETPC())
+                        : cpu_lduw_data_ra(env, old_ssp + ((env->regs[R_ESP] + i * 2) &
+                                                           old_sp_mask), GETPC());
+                }
+                far_probe_pushes(env, ssp, sp, sp_mask, psize, 4 + nparam, dpl, GETPC());
+#ifdef TARGET_X86_64
+                if (shift == 2) {
+                    /* backport e136648c5c (U481): new stack at the new CPL (dpl) */
+                    PUSHQ_PL(sp, env->segs[R_SS].selector, dpl, GETPC());
+                    PUSHQ_PL(sp, env->regs[R_ESP], dpl, GETPC());
+                    /* parameters aren't supported for 64-bit call gates */
+                } else
+#endif
+                if (shift == 1) {
+                    PUSHL_PL(ssp, sp, sp_mask, env->segs[R_SS].selector, dpl, GETPC());
+                    PUSHL_PL(ssp, sp, sp_mask, env->regs[R_ESP], dpl, GETPC());
+                    for (i = nparam - 1; i >= 0; i--) {
+                        PUSHL_PL(ssp, sp, sp_mask, params[i], dpl, GETPC());
+                    }
+                } else {
+                    PUSHW_PL(ssp, sp, sp_mask, env->segs[R_SS].selector, dpl, GETPC());
+                    PUSHW_PL(ssp, sp, sp_mask, env->regs[R_ESP], dpl, GETPC());
+                    for (i = nparam - 1; i >= 0; i--) {
+                        PUSHW_PL(ssp, sp, sp_mask, params[i], dpl, GETPC());
+                    }
+                }
+            }
+#endif /* __Use_Original_Qemu (U708) */
             new_stack = 1;
         } else {
             /* to same privilege */
@@ -2255,6 +2336,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #if __Use_Original_Qemu != 1 /* ours (U707) */
             offset = far_gate_target(env, offset, gate_bits, e1, e2, GETPC());
 #endif /* __Use_Original_Qemu (U707) */
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+            far_probe_pushes(env, ssp, sp, sp_mask, shift == 2 ? 8 : shift ? 4 : 2, 2, cpl,
+                             GETPC());
+#endif /* __Use_Original_Qemu (U708) */
         }
 
         /* backport e136648c5c (U481): new stack at dpl, else the current one at CPL */

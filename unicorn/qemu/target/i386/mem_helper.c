@@ -171,8 +171,13 @@ static void x86_probe_write_part(CPUX86State *env, target_ulong a0, uint32_t len
  */
 void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t ra)
 {
-    int mmu_idx = cpu_mmu_index(env, false);
+    x86_probe_write_mmu(env, a0, len, cpu_mmu_index(env, false), ra);
+}
 
+/* U708: the same with an explicit MMU index (stack pushes at another privilege level) */
+void x86_probe_write_mmu(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
+                         uintptr_t ra)
+{
     if (len == 0) {
         return;
     }
@@ -209,6 +214,14 @@ void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)
 
     oldv = cpu_ldq_data_ra(env, a0, ra);
     newv = (cmpv == oldv ? newv : oldv);
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+    /*
+     * U708: the destination is written either way; a store fault leaves EDX:EAX and ZF
+     * unchanged (SDM Vol3A 6.15). Unicorn's store to a page it has not mapped or maps
+     * read-only only requests an exit, so the helper went on and updated EDX:EAX / ZF.
+     */
+    x86_probe_write(env, a0, 8, ra);
+#endif /* __Use_Original_Qemu (U708) */
     /* always do the store */
     cpu_stq_data_ra(env, a0, newv, ra);
 
@@ -384,6 +397,9 @@ void helper_cmpxchg16b_unlocked(CPUX86State *env, target_ulong a0)
         newv = oldv;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+    x86_probe_write(env, a0, 16, ra);       /* as CMPXCHG8B (U708) */
+#endif /* __Use_Original_Qemu (U708) */
     cpu_stq_data_ra(env, a0 + 0, int128_getlo(newv), ra);
     cpu_stq_data_ra(env, a0 + 8, int128_gethi(newv), ra);
 

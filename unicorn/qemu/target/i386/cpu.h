@@ -2380,6 +2380,10 @@ void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint
 /* mem_helper.c: fault if [a0, a0 + len) cannot be written; nothing is written */
 void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t ra);
 #endif /* __Use_Original_Qemu (U701) */
+#if __Use_Original_Qemu != 1 /* ours (U708) */
+void x86_probe_write_mmu(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
+                         uintptr_t ra);
+#endif /* __Use_Original_Qemu (U708) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */

@@ -17579,6 +17579,105 @@ static void test_x86_fx3_far_limits(void)
         OK(uc_close(uc));
     }
 }
+
+/*
+ * U708: a far CALL whose second push faults pushes nothing and changes nothing: the stack page
+ * FX3_STK is mapped, the page below it is not; RSP = FX3_STK + 8 (or + 4 for 4-byte slots).
+ */
+#define FX3_STK 0x53001000ULL
+
+static void test_x86_fx3_far_call_pushes(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint8_t mem[16];
+        size_t mlen;
+        uint64_t rsp_off;
+        const char *what;
+    } t[] = {
+        {"\x48\xff\x1b", 3, {0x00, 0x11, 0, 0, 0, 0, 0, 0, 0x08, 0}, 10, 8,
+         "call far m16:64 to 08h (two 8-byte pushes)"},
+        {"\xff\x1b", 2, {0x00, 0x08, 0, 0, 0x18, 0}, 6, 4,
+         "call far m16:32 to 18h:800h (two 4-byte pushes)"},
+        {"\x48\xff\x1b", 3, {0, 0, 0, 0, 0, 0, 0, 0, 0x28, 0}, 10, 8,
+         "call far through a 64-bit gate (same privilege)"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        nk_intr_t intr;
+        uc_engine *uc = fx3_far_open(t[i].code, t[i].len, code_start + 0x200, &intr);
+        uint8_t page[0x1000], img[0x1000];
+        uint64_t rsp = FX3_STK + t[i].rsp_off;
+        uc_err err;
+        int j;
+
+        OK(uc_mem_map(uc, FX3_STK, 0x1000, UC_PROT_ALL));
+        memset(page, 0xa5, sizeof(page));
+        OK(uc_mem_write(uc, FX3_STK, page, sizeof(page)));
+        OK(uc_mem_write(uc, FX3_SYS + 0x4000, t[i].mem, t[i].mlen));
+        nk_setreg(uc, UC_X86_REG_RSP, rsp);
+        err = uc_emu_start(uc, code_start, code_start + 0x100, 0, 1);
+        OK(uc_mem_read(uc, FX3_STK, img, sizeof(img)));
+        for (j = 0; j < 0x1000 && img[j] == 0xa5; j++) {
+        }
+        TEST_CHECK((err == UC_ERR_READ_UNMAPPED || err == UC_ERR_WRITE_UNMAPPED) && j == 0x1000 &&
+                   nk_reg(uc, UC_X86_REG_RSP) == rsp &&
+                   nk_reg(uc, UC_X86_REG_RIP) == code_start &&
+                   (nk_reg(uc, UC_X86_REG_CS) & 0xffff) == 0);
+        TEST_MSG("%s: err %u byte %03x changed rsp %" PRIx64 " rip %" PRIx64 " cs %" PRIx64,
+                 t[i].what, err, j, nk_reg(uc, UC_X86_REG_RSP), nk_reg(uc, UC_X86_REG_RIP),
+                 nk_reg(uc, UC_X86_REG_CS));
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * U708: CMPXCHG8B / CMPXCHG16B on a read-only page: the destination store faults, so EDX:EAX
+ * and ZF keep their values (the compare fails: memory 1111...h, EDX:EAX 0).
+ */
+static void test_x86_fx3_cmpxchg_ro(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } t[] = {
+        {"\x0f\xc7\x0b", 3, "cmpxchg8b [rbx]"},
+        {"\x48\x0f\xc7\x0b", 4, "cmpxchg16b [rbx]"},
+        {"\xf0\x0f\xc7\x0b", 4, "lock cmpxchg8b [rbx]"},
+        {"\xf0\x48\x0f\xc7\x0b", 5, "lock cmpxchg16b [rbx]"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc_engine *uc;
+        uc_err err;
+        uint8_t m[16];
+        uint64_t rbx = FX3_PG, fl = 0x2, zero = 0;
+
+        memset(m, 0x11, sizeof(m));
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, code_start, t[i].code, t[i].len));
+        OK(uc_mem_map(uc, FX3_PG, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, FX3_PG, m, sizeof(m)));
+        OK(uc_mem_protect(uc, FX3_PG, 0x1000, UC_PROT_READ));
+        OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
+        OK(uc_reg_write(uc, UC_X86_REG_RAX, &zero));
+        OK(uc_reg_write(uc, UC_X86_REG_RDX, &zero));
+        OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &fl));
+        err = uc_emu_start(uc, code_start, code_start + t[i].len, 0, 0);
+        TEST_CHECK(err == UC_ERR_WRITE_PROT && nk_reg(uc, UC_X86_REG_RAX) == 0 &&
+                   nk_reg(uc, UC_X86_REG_RDX) == 0 &&
+                   nk_reg(uc, UC_X86_REG_RIP) == code_start);
+        TEST_MSG("%s: err %u rax %" PRIx64 " rdx %" PRIx64 " rip %" PRIx64 " rflags %" PRIx64,
+                 t[i].what, err, nk_reg(uc, UC_X86_REG_RAX), nk_reg(uc, UC_X86_REG_RDX),
+                 nk_reg(uc, UC_X86_REG_RIP), nk_reg(uc, UC_X86_REG_RFLAGS));
+        OK(uc_close(uc));
+    }
+}
 /* ---- end U700-U719 (fx3_) ---- */
 
 TEST_LIST = {
@@ -17836,4 +17935,6 @@ TEST_LIST = {
     {"test_x86_fx3_flags_mem_hook", test_x86_fx3_flags_mem_hook},
     {"test_x86_fx3_enter", test_x86_fx3_enter},
     {"test_x86_fx3_far_limits", test_x86_fx3_far_limits},
+    {"test_x86_fx3_far_call_pushes", test_x86_fx3_far_call_pushes},
+    {"test_x86_fx3_cmpxchg_ro", test_x86_fx3_cmpxchg_ro},
     {NULL, NULL}};
