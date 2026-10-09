@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 09:10 (HEAD `35e1e6b U544 usage comments without the automatic --xcr0/--cr0; REP LODS load sensitivity in quirks.md`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 09:19 (HEAD `9a9b425 U546 Keystone: MCAsmInfo::Radix defaults to 10; ks_option starts from decimal`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)

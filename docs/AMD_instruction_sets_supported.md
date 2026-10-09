@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 09:10 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `35e1e6b U544 usage comments without the automatic --xcr0/--cr0; REP LODS load sensitivity in quirks.md`). Do not edit by hand._
+_Generated 2026-10-09 09:19 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `9a9b425 U546 Keystone: MCAsmInfo::Radix defaults to 10; ks_option starts from decimal`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
