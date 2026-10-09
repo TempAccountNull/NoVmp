@@ -182,6 +182,35 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         cpu_x86_update_cr0(env, (uint32_t)t0);
         break;
     case 3:
+#if __Use_Original_Qemu == 1 /* original QEMU (U478) */
+        /* backport 3407259b20 + 24d84c7e48 (as upstream: SVM_EXIT_ERR) */
+        if ((env->efer & MSR_EFER_LMA) &&
+                (t0 & ((~0ULL) << env_archcpu(env)->phys_bits))) {
+            cpu_vmexit(env, SVM_EXIT_ERR, 0, GETPC());
+        }
+#else /* ours (U478) */
+        /*
+         * NoVmp (ledger U478, upstream 3407259b20 + 24d84c7e48 with the SDM
+         * exception): SDM Vol2B MOV CR, 64-Bit Mode Exceptions: "#GP(0) If an
+         * attempt is made to write a 1 to any reserved bit in CR3[63:MAXPHYADDR]"
+         * - a #GP, not an SVM exit (we are not an SVM guest). With CR4.PCIDE = 1
+         * bit 63 is the no-invalidate flag and is not written ("The instruction
+         * does not modify bit 63 of CR3"). MAXPHYADDR = phys_bits, the width the
+         * page walk uses for its reserved-bit checks.
+         */
+        if (env->efer & MSR_EFER_LMA) {
+            if (env->cr[4] & CR4_PCIDE_MASK) {
+                t0 &= ~(1ULL << 63);
+            }
+            if (t0 & ((~0ULL) << env_archcpu(env)->phys_bits)) {
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
+        }
+#endif /* __Use_Original_Qemu (U478) */
+        /* backport 3407259b20: without IA-32e mode CR3 is a 32-bit register */
+        if (!(env->efer & MSR_EFER_LMA)) {
+            t0 &= 0xffffffffUL;
+        }
         cpu_x86_update_cr3(env, t0);
         break;
     case 4:

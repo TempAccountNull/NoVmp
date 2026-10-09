@@ -1,0 +1,13 @@
+# Tier-2/3 upstream QEMU backports (ledger U475-U499): expected-value cases (SDM model, Unicorn only,
+# CPL0 64-bit mode as emu-alltest runs it; values derived from the SDM text quoted per group).
+#   emu-alltest --cases Emulator\data\cases_backport_t2_sdm.txt --expect-only
+#
+# --- U478 (backport 3407259b20 + 24d84c7e48, #GP per the SDM): SDM Vol2B MOV CR, 64-Bit Mode
+# Exceptions: "#GP(0) If an attempt is made to write a 1 to any reserved bit in CR3[63:MAXPHYADDR]".
+# MAXPHYADDR of the built-in model = 40 (CPUID.80000008H:EAX[7:0] = 28H). CR4.PCIDE = 0, so bit 63
+# is reserved too. Bits MAXPHYADDR-1:12 and the ignored bits 11:0 load without a fault.
+mov cr3, rax | rax=0x0000010000000000 => #GP
+mov cr3, rax | rax=0x0008000000001000 => #GP
+mov cr3, rax | rax=0x8000000000000000 => #GP
+mov cr3, rax | rax=0x000000FFFFFFF000 =>
+mov cr3, rax | rax=0x0000000000001FFF =>

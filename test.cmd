@@ -147,6 +147,8 @@ call :hw_zero cases_fixes
 rem ledger U475-U499: Tier-2/3 upstream QEMU backports and the PUSHF / LFENCE fixes, CPL3-reachable
 rem behaviour (cases_backport_t2.txt, self-generated snippets): must be 0 differing against the i5-13600K.
 call :hw_zero cases_backport_t2
+rem The CPL0-only parts of the same backports as expected-value cases from the SDM text.
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_backport_t2_sdm.txt" --expect-only
 
 echo.
 if !FAILED! NEQ 0 (
