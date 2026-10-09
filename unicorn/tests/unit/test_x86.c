@@ -12614,7 +12614,9 @@ static void hc_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
  * lanes 1..3 = 1.0, XMM0 preloaded with 0xA5 bytes. Returns the fault vector
  * (-1 = none); *lo = XMM0 bits 63:0, *mx = MXCSR afterwards. Without a
  * fault MXCSR comes from a following stmxcsr [rip+0xf3] (= code_start +
- * 0x100): the API register read does not fold the pending softfloat flags.
+ * 0x100), the guest-visible image; uc_reg_read(UC_X86_REG_MXCSR) folds the
+ * pending softfloat flags as STMXCSR does (U447), so it must give the same
+ * value (checked here); after a fault only the API read is available.
  */
 static int hc_run(uint32_t v, uint8_t imm, uint32_t mxcsr, uint64_t *lo, uint32_t *mx)
 {
@@ -12649,7 +12651,12 @@ static int hc_run(uint32_t v, uint8_t imm, uint32_t mxcsr, uint64_t *lo, uint32_
     if (intr.count) {
         OK(uc_reg_read(uc, UC_X86_REG_MXCSR, mx));
     } else {
+        uint32_t api = 0;
+
         OK(uc_mem_read(uc, code_start + 0x100, mx, 4));
+        OK(uc_reg_read(uc, UC_X86_REG_MXCSR, &api));     /* U447 (comment fixed in U864) */
+        TEST_CHECK(api == *mx);
+        TEST_MSG("stmxcsr %08x, uc_reg_read %08x", *mx, api);
     }
     *lo = x[0];
     OK(uc_close(uc));
