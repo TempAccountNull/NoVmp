@@ -2403,7 +2403,13 @@ uc_err uc_context_alloc(uc_engine *uc, uc_context **context)
 
     UC_INIT(uc);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U832) */
     *_context = g_malloc(size);
+#else /* ours (U832) */
+    /* NoVmp U832: zeroed, so register access to a never-saved context reads zeros (x86:
+       env->uc == NULL marks it as a context image, not the live CPU) */
+    *_context = g_malloc0(size);
+#endif /* __Use_Original_Qemu (U832) */
     if (*_context) {
         (*_context)->context_size = size - sizeof(uc_context);
         (*_context)->arch = uc->arch;

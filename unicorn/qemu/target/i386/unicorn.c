@@ -11,6 +11,16 @@
 #if __Use_Original_Qemu != 1 /* ours (U831) */
 #include "exec/exec-all.h" /* tlb_flush */
 #endif /* __Use_Original_Qemu (U831) */
+#if __Use_Original_Qemu != 1 /* ours (U832) */
+/*
+ * NoVmp (ledger U832): env is the live CPU, not a uc_context image (uc_context_reg_read/write
+ * run reg_read/reg_write on the image; uc_context_alloc zeroes it, a save copies env->uc)
+ */
+static bool x86_env_is_live(CPUX86State *env)
+{
+    return env->uc != NULL && env->uc->cpu != NULL && env->uc->cpu->env_ptr == env;
+}
+#endif /* __Use_Original_Qemu (U832) */
 
 #define FPST(n) (env->fpregs[(env->fpstt + (n)) & 7].d)
 
@@ -1568,7 +1578,9 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         CHECK_REG_TYPE(uint32_t);
         if (env->pkru != *(uint32_t *)value) {
             env->pkru = *(uint32_t *)value;
-            tlb_flush(env_cpu(env));
+            if (x86_env_is_live(env)) { /* U832: a uc_context image has no TLB */
+                tlb_flush(env_cpu(env));
+            }
         }
         return ret;
 #endif /* __Use_Original_Qemu (U831) */
@@ -2466,6 +2478,55 @@ static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
     return 0;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U832) */
+/*
+ * NoVmp (ledger U832): an x86 uc_context holds the whole CPUX86State. Unicorn's default
+ * (the bytes up to end_reset_fields) lost architectural state that QEMU keeps after that
+ * marker - IA32_XSS, IA32_UMWAIT_CONTROL, IA32_PASID, the MTRRs, IA32_MCG_CTL and the MCi
+ * banks - and uc_context_reg_read/write read env->features (APX/PKU gating, RDMSR) and wrote
+ * env->msr_api beyond the saved bytes. A restore copies the reset area plus that state, never
+ * the CPU model (features, CPUID data, caches) or the uc pointer, and flushes the TLB when
+ * state its translations depend on changed (CR0, CR3, CR4, EFER, PKRU, IA32_PKRS), as the
+ * instructions that write those registers do.
+ */
+static size_t x86_context_size(struct uc_struct *uc)
+{
+    (void)uc;
+    return sizeof(CPUX86State);
+}
+
+#define X86_CTX_COPY(f)                                                        \
+    memcpy((char *)env + offsetof(CPUX86State, f),                             \
+           context->data + offsetof(CPUX86State, f), sizeof(env->f))
+
+static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
+{
+    CPUX86State *env = uc->cpu->env_ptr;
+    target_ulong cr0 = env->cr[0], cr3 = env->cr[3], cr4 = env->cr[4];
+    uint64_t efer = env->efer;
+    uint32_t pkru = env->pkru, pkrs = env->pkrs;
+
+    if (context->context_size < sizeof(CPUX86State)) {
+        return UC_ERR_ARG;
+    }
+    memcpy(env, context->data, offsetof(CPUX86State, end_reset_fields));
+    X86_CTX_COPY(mtrr_fixed);
+    X86_CTX_COPY(mtrr_deftype);
+    X86_CTX_COPY(mtrr_var);
+    X86_CTX_COPY(mcg_ctl);
+    X86_CTX_COPY(mce_banks);
+    X86_CTX_COPY(xss);
+    X86_CTX_COPY(umwait);
+    X86_CTX_COPY(pasid);
+    if (env->cr[0] != cr0 || env->cr[3] != cr3 || env->cr[4] != cr4 || env->efer != efer ||
+        env->pkru != pkru || env->pkrs != pkrs) {
+        tlb_flush(uc->cpu);
+    }
+    return UC_ERR_OK;
+}
+#undef X86_CTX_COPY
+#endif /* __Use_Original_Qemu (U832) */
+
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
 {
@@ -2483,6 +2544,10 @@ void uc_init(struct uc_struct *uc)
     uc->x86_cpuid_changed = x86_cpuid_changed;
 #endif /* __Use_Original_Qemu (U120) */
     uc->cpu_context_size = offsetof(CPUX86State, end_reset_fields);
+#if __Use_Original_Qemu != 1 /* ours (U832) */
+    uc->context_size = x86_context_size;
+    uc->context_restore = x86_context_restore;
+#endif /* __Use_Original_Qemu (U832) */
     uc_common_init(uc);
 }
 

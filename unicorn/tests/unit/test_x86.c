@@ -19462,6 +19462,432 @@ static void test_x86_rg_pkru(void)
     OK(uc_close(uc));
 }
 
+/*
+ * U832: uc_context round trip. RgState is every register the test sets: ZMM0-31, K0-7, the AMX
+ * state, SSP and the CET MSRs, R16-R31, the x87 state, MXCSR, XCR0, IA32_XSS, PKRU and a few
+ * GPR / MSR controls. rg_state_set writes a state that depends on 'salt'; rg_state_get reads
+ * it back through uc_reg_read (engine) or uc_context_reg_read (context).
+ */
+#define RG_NMSR 11
+static const uint32_t rg_msr_ids[RG_NMSR] = {
+    0x6a0, /* IA32_U_CET */
+    0x6a2, /* IA32_S_CET */
+    0x6a4, /* IA32_PL0_SSP */
+    0x6a5, /* IA32_PL1_SSP */
+    0x6a6, /* IA32_PL2_SSP */
+    0x6a7, /* IA32_PL3_SSP */
+    0x6a8, /* IA32_INTERRUPT_SSP_TABLE_ADDR */
+    0xda0, /* IA32_XSS */
+    0x277, /* IA32_PAT (reset area) */
+    0x2ff, /* IA32_MTRR_DEF_TYPE (after QEMU's reset area) */
+    0xc0000103, /* IA32_TSC_AUX */
+};
+static const char *const rg_msr_names[RG_NMSR] = {
+    "IA32_U_CET", "IA32_S_CET", "IA32_PL0_SSP", "IA32_PL1_SSP", "IA32_PL2_SSP",
+    "IA32_PL3_SSP", "IA32_INTERRUPT_SSP_TABLE_ADDR", "IA32_XSS", "IA32_PAT",
+    "IA32_MTRR_DEF_TYPE", "IA32_TSC_AUX"};
+
+typedef struct {
+    uint64_t zmm[32][8];
+    uint64_t k[8];
+    uint8_t tilecfg[64];
+    uint8_t tmm[8][1024];
+    uint64_t ssp;
+    uint64_t msr[RG_NMSR];
+    uint64_t egpr[16];
+    uint8_t fp[8][10];
+    uint16_t fpcw, fpsw, fptag, fop, fcs, fds;
+    uint64_t fip, fdp;
+    uint32_t mxcsr;
+    uint64_t xcr0;
+    uint32_t pkru;
+    uint64_t rax, r15, rsp, rflags, fs_base;
+} RgState;
+
+static RgState rg_a, rg_b, rg_c;
+
+typedef uc_err (*rg_rd_fn)(void *h, int reg, void *v);
+static uc_err rg_rd_uc(void *h, int reg, void *v)
+{
+    return uc_reg_read((uc_engine *)h, reg, v);
+}
+static uc_err rg_rd_ctx(void *h, int reg, void *v)
+{
+    return uc_context_reg_read((uc_context *)h, reg, v);
+}
+
+static void rg_state_get(rg_rd_fn rd, void *h, RgState *s)
+{
+    int i;
+
+    memset(s, 0, sizeof(*s));
+    for (i = 0; i < 32; i++) {
+        OK(rd(h, UC_X86_REG_ZMM0 + i, s->zmm[i]));
+    }
+    for (i = 0; i < 8; i++) {
+        OK(rd(h, UC_X86_REG_K0 + i, &s->k[i]));
+        OK(rd(h, UC_X86_REG_TMM0 + i, s->tmm[i]));
+        OK(rd(h, UC_X86_REG_FP0 + i, s->fp[i]));
+    }
+    OK(rd(h, UC_X86_REG_TILECFG, s->tilecfg));
+    OK(rd(h, UC_X86_REG_SSP, &s->ssp));
+    for (i = 0; i < RG_NMSR; i++) {
+        uc_x86_msr m = {rg_msr_ids[i], 0};
+
+        OK(rd(h, UC_X86_REG_MSR, &m));
+        s->msr[i] = m.value;
+    }
+    for (i = 0; i < 16; i++) {
+        OK(rd(h, UC_X86_REG_R16 + i, &s->egpr[i]));
+    }
+    OK(rd(h, UC_X86_REG_FPCW, &s->fpcw));
+    OK(rd(h, UC_X86_REG_FPSW, &s->fpsw));
+    OK(rd(h, UC_X86_REG_FPTAG, &s->fptag));
+    OK(rd(h, UC_X86_REG_FOP, &s->fop));
+    OK(rd(h, UC_X86_REG_FCS, &s->fcs));
+    OK(rd(h, UC_X86_REG_FDS, &s->fds));
+    OK(rd(h, UC_X86_REG_FIP, &s->fip));
+    OK(rd(h, UC_X86_REG_FDP, &s->fdp));
+    OK(rd(h, UC_X86_REG_MXCSR, &s->mxcsr));
+    OK(rd(h, UC_X86_REG_XCR0, &s->xcr0));
+    OK(rd(h, UC_X86_REG_PKRU, &s->pkru));
+    OK(rd(h, UC_X86_REG_RAX, &s->rax));
+    OK(rd(h, UC_X86_REG_R15, &s->r15));
+    OK(rd(h, UC_X86_REG_RSP, &s->rsp));
+    OK(rd(h, UC_X86_REG_RFLAGS, &s->rflags));
+    OK(rd(h, UC_X86_REG_FS_BASE, &s->fs_base));
+}
+
+static void rg_wrmsr(uc_engine *uc, uint32_t id, uint64_t v)
+{
+    uc_x86_msr m = {id, v};
+
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &m));
+}
+
+/* salt 1 or 2: every field differs between the two states */
+static void rg_state_set(uc_engine *uc, int salt, uint64_t xcr0)
+{
+    uint8_t cfg[64], tile[1024], fp[10];
+    uint64_t z[8], v;
+    uint16_t w;
+    uint32_t d;
+    int i, j;
+
+    for (i = 0; i < 32; i++) {
+        for (j = 0; j < 8; j++) {
+            z[j] = ((uint64_t)salt << 56) | ((uint64_t)i << 8) | (uint64_t)j;
+        }
+        OK(uc_reg_write(uc, UC_X86_REG_ZMM0 + i, z));
+    }
+    for (i = 0; i < 8; i++) {
+        v = ((uint64_t)salt << 56) | (0x10u + (unsigned)i);
+        OK(uc_reg_write(uc, UC_X86_REG_K0 + i, &v));
+        for (j = 0; j < 1024; j++) {
+            tile[j] = (uint8_t)(salt * 31 + i * 7 + j);
+        }
+        OK(uc_reg_write(uc, UC_X86_REG_TMM0 + i, tile));
+        v = 0x8000000000000000ULL | ((uint64_t)salt << 40) | (uint64_t)i;
+        memcpy(fp, &v, 8);
+        w = (uint16_t)(0x3fff + salt * 16 + i);
+        memcpy(fp + 8, &w, 2);
+        OK(uc_reg_write(uc, UC_X86_REG_FP0 + i, fp));
+    }
+    /* palette 1, start_row 0, tile t: rows 1 + (t + salt) % 16, colsb 4 * (1 + (t + salt) % 16) */
+    memset(cfg, 0, sizeof(cfg));
+    cfg[0] = 1;
+    for (i = 0; i < 8; i++) {
+        cfg[16 + 2 * i] = (uint8_t)(4 * (1 + (i + salt) % 16));
+        cfg[48 + i] = (uint8_t)(1 + (i + salt) % 16);
+    }
+    OK(uc_reg_write(uc, UC_X86_REG_TILECFG, cfg));
+    v = 0x00007ff000000000ULL + (uint64_t)salt * 0x1000;
+    OK(uc_reg_write(uc, UC_X86_REG_SSP, &v));
+    rg_wrmsr(uc, 0x6a0, salt == 1 ? 0x5 : 0x6);
+    rg_wrmsr(uc, 0x6a2, salt == 1 ? 0x10 : 0x20);
+    for (i = 0; i < 4; i++) {
+        rg_wrmsr(uc, 0x6a4 + i, 0x0000700000001000ULL + (uint64_t)salt * 0x100 + (uint64_t)i * 0x10);
+    }
+    rg_wrmsr(uc, 0x6a8, 0x0000600000000000ULL + (uint64_t)salt * 0x40);
+    rg_wrmsr(uc, 0xda0, salt == 1 ? 0x1800 : 0);
+    rg_wrmsr(uc, 0x277, salt == 1 ? 0x0007040600070406ULL : 0x0000000000000606ULL);
+    rg_wrmsr(uc, 0x2ff, salt == 1 ? 0xc06 : 0x806);
+    rg_wrmsr(uc, 0xc0000103, (uint64_t)salt * 0x11);
+    for (i = 0; i < 16; i++) {
+        v = ((uint64_t)salt << 56) | (0x1600u + (unsigned)i);
+        OK(uc_reg_write(uc, UC_X86_REG_R16 + i, &v));
+    }
+    w = salt == 1 ? 0x067f : 0x0a7f;
+    OK(uc_reg_write(uc, UC_X86_REG_FPCW, &w));
+    w = (uint16_t)(salt << 11);
+    OK(uc_reg_write(uc, UC_X86_REG_FPSW, &w));
+    w = salt == 1 ? 0x0000 : 0xffff;
+    OK(uc_reg_write(uc, UC_X86_REG_FPTAG, &w));
+    w = (uint16_t)(0x100 * salt + 1);
+    OK(uc_reg_write(uc, UC_X86_REG_FOP, &w));
+    w = (uint16_t)(0x10 * salt);
+    OK(uc_reg_write(uc, UC_X86_REG_FCS, &w));
+    w = (uint16_t)(0x18 * salt);
+    OK(uc_reg_write(uc, UC_X86_REG_FDS, &w));
+    v = 0x401000ULL * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_FIP, &v));
+    v = 0x602000ULL * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_FDP, &v));
+    d = salt == 1 ? 0x1fc0 : 0x9f80;
+    OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &d));
+    d = salt == 1 ? 0x0000000c : 0x000000c0;
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &d));
+    v = 0x1111111111111111ULL * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &v));
+    v = 0x0f0f0f0f0f0f0f0fULL * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_R15, &v));
+    v = 0x7000ULL + 0x100 * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &v));
+    v = salt == 1 ? 0x202 : 0x246;
+    OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &v));
+    v = 0x10000ULL * (uint64_t)salt;
+    OK(uc_reg_write(uc, UC_X86_REG_FS_BASE, &v));
+    OK(uc_reg_write(uc, UC_X86_REG_XCR0, &xcr0)); /* last: TILECFG above needs XCR0[18:17] */
+}
+
+/* 1 when every field of x equals y; the differing fields are reported */
+static int rg_state_same(const RgState *x, const RgState *y, const char *what)
+{
+    int same = 1, i;
+
+#define RG_FIELD(f, name)                                                      \
+    if (memcmp(&x->f, &y->f, sizeof(x->f)) != 0) {                             \
+        TEST_MSG("%s: %s differs", what, name);                                \
+        same = 0;                                                              \
+    }
+    RG_FIELD(zmm, "ZMM0-31")
+    RG_FIELD(k, "K0-7")
+    RG_FIELD(tilecfg, "TILECFG")
+    RG_FIELD(tmm, "TMM0-7")
+    RG_FIELD(ssp, "SSP")
+    for (i = 0; i < RG_NMSR; i++) {
+        if (x->msr[i] != y->msr[i]) {
+            TEST_MSG("%s: %s %" PRIx64 " vs %" PRIx64, what, rg_msr_names[i], x->msr[i],
+                     y->msr[i]);
+            same = 0;
+        }
+    }
+    RG_FIELD(egpr, "R16-R31")
+    RG_FIELD(fp, "FP0-7")
+    RG_FIELD(fpcw, "FPCW")
+    RG_FIELD(fpsw, "FPSW")
+    RG_FIELD(fptag, "FPTAG")
+    RG_FIELD(fop, "FOP")
+    RG_FIELD(fcs, "FCS")
+    RG_FIELD(fds, "FDS")
+    RG_FIELD(fip, "FIP")
+    RG_FIELD(fdp, "FDP")
+    RG_FIELD(mxcsr, "MXCSR")
+    RG_FIELD(xcr0, "XCR0")
+    RG_FIELD(pkru, "PKRU")
+    RG_FIELD(rax, "RAX")
+    RG_FIELD(r15, "R15")
+    RG_FIELD(rsp, "RSP")
+    RG_FIELD(rflags, "RFLAGS")
+    RG_FIELD(fs_base, "FS_BASE")
+#undef RG_FIELD
+    return same;
+}
+
+/* 1 when every field of x differs from y (the second state really overwrote each one) */
+static int rg_state_all_differ(const RgState *x, const RgState *y)
+{
+    int differ = 1, i;
+
+#define RG_FIELD(f, name)                                                      \
+    if (memcmp(&x->f, &y->f, sizeof(x->f)) == 0) {                             \
+        TEST_MSG("state B: %s equals state A (not written?)", name);           \
+        differ = 0;                                                            \
+    }
+    RG_FIELD(zmm, "ZMM0-31")
+    RG_FIELD(k, "K0-7")
+    RG_FIELD(tilecfg, "TILECFG")
+    RG_FIELD(tmm, "TMM0-7")
+    RG_FIELD(ssp, "SSP")
+    for (i = 0; i < RG_NMSR; i++) {
+        if (x->msr[i] == y->msr[i]) {
+            TEST_MSG("state B: %s equals state A (%" PRIx64 ")", rg_msr_names[i], x->msr[i]);
+            differ = 0;
+        }
+    }
+    RG_FIELD(egpr, "R16-R31")
+    RG_FIELD(fp, "FP0-7")
+    RG_FIELD(fpcw, "FPCW")
+    RG_FIELD(fpsw, "FPSW")
+    RG_FIELD(fptag, "FPTAG")
+    RG_FIELD(fop, "FOP")
+    RG_FIELD(fcs, "FCS")
+    RG_FIELD(fds, "FDS")
+    RG_FIELD(fip, "FIP")
+    RG_FIELD(fdp, "FDP")
+    RG_FIELD(mxcsr, "MXCSR")
+    RG_FIELD(xcr0, "XCR0")
+    RG_FIELD(pkru, "PKRU")
+    RG_FIELD(rax, "RAX")
+    RG_FIELD(r15, "R15")
+    RG_FIELD(rsp, "RSP")
+    RG_FIELD(rflags, "RFLAGS")
+    RG_FIELD(fs_base, "FS_BASE")
+#undef RG_FIELD
+    return differ;
+}
+
+static uc_engine *rg_ctx_open(void)
+{
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
+                                     UC_X86_AVX512_VL));
+    OK(uc_ctl_set_x86_amx(uc, UC_X86_AMX_TILE));
+    OK(uc_ctl_set_x86_apx(uc, UC_X86_APX_F));
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    return uc;
+}
+
+/*
+ * State A saved, state B written over every field, the context restored: every field reads
+ * state A again (engine), the context itself reads state A (uc_context_reg_read), and the
+ * restored state is live: KMOVQ (needs XCR0[7:5], B had XCR0 = 3) and an APX REX2 move work.
+ */
+static void test_x86_rg_context_roundtrip(void)
+{
+    static const char kmov[] = "\xc4\xe1\xfb\x93\xc1"; /* kmovq rax, k1 */
+    static const char mov31[] = "\xd5\x4c\x89\xf8";    /* mov rax, r31 (REX2: R4 W R3) */
+    uc_engine *uc = rg_ctx_open();
+    uc_context *ctx, *fresh;
+    uint64_t xcr0_reset, v;
+    uc_err err;
+
+    OK(uc_reg_read(uc, UC_X86_REG_XCR0, &xcr0_reset));
+    TEST_CHECK((xcr0_reset & 0xe00e7) == 0xe00e7); /* x87 SSE AVX opmask ZMM AMX APX */
+    rg_state_set(uc, 1, xcr0_reset);
+    rg_state_get(rg_rd_uc, uc, &rg_a);
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    rg_state_set(uc, 2, 0x3);
+    rg_state_get(rg_rd_uc, uc, &rg_b);
+    TEST_CHECK(rg_state_all_differ(&rg_a, &rg_b));
+    /* with XCR0 = 3, KMOVQ is #UD */
+    OK(uc_mem_write(uc, code_start, kmov, sizeof(kmov) - 1));
+    err = uc_emu_start(uc, code_start, code_start + sizeof(kmov) - 1, 0, 0);
+    TEST_CHECK(err == UC_ERR_INSN_INVALID);
+    /* the context still holds state A */
+    rg_state_get(rg_rd_ctx, ctx, &rg_c);
+    TEST_CHECK(rg_state_same(&rg_a, &rg_c, "uc_context_reg_read"));
+    OK(uc_context_restore(uc, ctx));
+    rg_state_get(rg_rd_uc, uc, &rg_c);
+    TEST_CHECK(rg_state_same(&rg_a, &rg_c, "after restore"));
+    /* the restored state is live */
+    v = 0x7000;
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &v));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(kmov) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RAX, &v));
+    TEST_CHECK(v == rg_a.k[1]);
+    TEST_MSG("kmovq rax, k1: %016" PRIx64 " (k1 %016" PRIx64 ")", v, rg_a.k[1]);
+    OK(uc_mem_write(uc, code_start, mov31, sizeof(mov31) - 1));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(mov31) - 1, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RAX, &v));
+    TEST_CHECK(v == rg_a.egpr[15]);
+    TEST_MSG("mov rax, r31: %016" PRIx64 " (r31 %016" PRIx64 ")", v, rg_a.egpr[15]);
+    /* a context that was never saved reads zeros (and is not the live CPU) */
+    OK(uc_context_alloc(uc, &fresh));
+    v = 1;
+    OK(uc_context_reg_read(fresh, UC_X86_REG_RAX, &v));
+    TEST_CHECK(v == 0);
+    OK(uc_context_free(fresh));
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
+/*
+ * uc_context_reg_write: a write into a context changes the context only; restoring it then
+ * loads the value. PKRU written into a context flushes no TLB (an image has none).
+ */
+static void test_x86_rg_context_reg_write(void)
+{
+    uc_engine *uc = rg_ctx_open();
+    uc_context *ctx;
+    uint64_t z[8], k, r, xcr0;
+    uint32_t pk;
+    uc_x86_msr xss = {0xda0, 0};
+    int i;
+
+    OK(uc_reg_read(uc, UC_X86_REG_XCR0, &xcr0));
+    rg_state_set(uc, 1, xcr0);
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    for (i = 0; i < 8; i++) {
+        z[i] = 0xabcdef0000000000ULL | (uint64_t)i;
+    }
+    OK(uc_context_reg_write(ctx, UC_X86_REG_ZMM31, z));
+    k = 0x5a5a5a5a5a5a5a5aULL;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_K7, &k));
+    r = 0x3131313131313131ULL;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_R31, &r));
+    pk = 0x30;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_PKRU, &pk));
+    /* the engine is unchanged */
+    OK(uc_reg_read(uc, UC_X86_REG_K7, &k));
+    TEST_CHECK(k == ((1ULL << 56) | 0x17));
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 0xc);
+    OK(uc_context_restore(uc, ctx));
+    memset(z, 0, sizeof(z));
+    OK(uc_reg_read(uc, UC_X86_REG_ZMM31, z));
+    TEST_CHECK(z[0] == 0xabcdef0000000000ULL && z[7] == 0xabcdef0000000007ULL);
+    OK(uc_reg_read(uc, UC_X86_REG_K7, &k));
+    TEST_CHECK(k == 0x5a5a5a5a5a5a5a5aULL);
+    OK(uc_reg_read(uc, UC_X86_REG_R31, &r));
+    TEST_CHECK(r == 0x3131313131313131ULL);
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 0x30);
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &xss));
+    TEST_CHECK(xss.value == 0x1800);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
+/*
+ * A restore that changes PKRU flushes the TLB: the context has AD5; after PKRU = 0 a read of
+ * a key-5 user page fills the TLB; once the context is restored the same read takes #PF.
+ */
+static void test_x86_rg_context_tlb(void)
+{
+    static const char rd[] = "\x48\x8b\x04\x25\x00\x40\x00\x60"; /* mov rax, [TB2_DATA] */
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uc_context *ctx;
+    uint32_t pk;
+    uint64_t cr4;
+    int slot = 0;
+
+    tb2_paging(uc, (5ULL << 59) | 7);
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 22)); /* CR4.PKE */
+    pk = 1u << 10;                                   /* AD5 */
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == 14);
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    pk = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == -1);
+    OK(uc_context_restore(uc, ctx));
+    pk = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &pk));
+    TEST_CHECK(pk == 1u << 10);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, rd, sizeof(rd) - 1) == 14);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
 /* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
@@ -19737,4 +20163,7 @@ TEST_LIST = {
     {"test_x86_xm_scatter_write_hook", test_x86_xm_scatter_write_hook},
     {"test_x86_rg_mmx_regs", test_x86_rg_mmx_regs},
     {"test_x86_rg_pkru", test_x86_rg_pkru},
+    {"test_x86_rg_context_roundtrip", test_x86_rg_context_roundtrip},
+    {"test_x86_rg_context_reg_write", test_x86_rg_context_reg_write},
+    {"test_x86_rg_context_tlb", test_x86_rg_context_tlb},
     {NULL, NULL}};
