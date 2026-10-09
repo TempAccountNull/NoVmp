@@ -124,6 +124,10 @@
 /* VEX Intel AMX instructions: SDM Vol2A 2.10 exception classes AMX-E1..E6 */
 #define vex22 .vex_class = 22,
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+/* EVEX Intel AMX-AVX512 instructions: ISE 319433-062 3.6 classes AMX-E7-EVEX / AMX-E8-EVEX */
+#define vex23 .vex_class = 23,
+#endif /* __Use_Original_Qemu (U725) */
 
 #define avx2_256 .vex_special = X86_VEX_AVX2_256,
 #define sse4_novex .vex_class = 4, .vex_special = X86_VEX_NoVEX,
@@ -503,6 +507,65 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
     }
 }
 #endif /* __Use_Original_Qemu (U175) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+/*
+ * NoVmp (ledger U725): AMX-AVX512 (ISE 319433-062 3.7 opcode tables), EVEX.512.W0 with
+ * ModRM.mod = 11b only (11:rrr:bbb); any other pp or mod of these slots is undefined (#UD):
+ *   0F38 4A  F3 TCVTROWD2PS r32     66 TILEMOVROW r32    (mod != 11b: TILELOADDRS*, U723)
+ *   0F38 6D  F2 TCVTROWPS2BF16H r32 F3 TCVTROWPS2BF16L r32 NP TCVTROWPS2PHH r32
+ *            66 TCVTROWPS2PHL r32
+ *   0F3A 07  F3 TCVTROWD2PS imm8    F2 TCVTROWPS2BF16H imm8 NP TCVTROWPS2PHH imm8
+ *            66 TILEMOVROW imm8
+ *   0F3A 77  F3 TCVTROWPS2BF16L imm8 F2 TCVTROWPS2PHL imm8
+ * The r32 forms (AMX-E8-EVEX) name the GPR in EVEX.vvvv; the imm8 forms (AMX-E7-EVEX) carry
+ * the immediate as op3. The EVEX vector-length / tuple machinery does not apply (class 23,
+ * validate_amx_evex).
+ */
+static bool decode_evex_amx_avx512(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
+                                   uint8_t *b, bool map3)
+{
+#define AMX_R(name, pfx) X86_OP_ENTRY0(name, vex23 cpuid(AMX_AVX512) pfx)
+#define AMX_I(name, pfx) X86_OP_ENTRY4(name, None,None, None,None, None,None, \
+                                       vex23 cpuid(AMX_AVX512) pfx)
+    static const X86OpEntry r_4a[4] = {
+        [1] = AMX_R(TILEMOVROW, p_66),
+        [2] = AMX_R(TCVTROWD2PS, p_f3),
+    };
+    static const X86OpEntry r_6d[4] = {
+        [0] = AMX_R(TCVTROWPS2PHH, p_00),
+        [1] = AMX_R(TCVTROWPS2PHL, p_66),
+        [2] = AMX_R(TCVTROWPS2BF16L, p_f3),
+        [3] = AMX_R(TCVTROWPS2BF16H, p_f2),
+    };
+    static const X86OpEntry i_07[4] = {
+        [0] = AMX_I(TCVTROWPS2PHH, p_00),
+        [1] = AMX_I(TILEMOVROW, p_66),
+        [2] = AMX_I(TCVTROWD2PS, p_f3),
+        [3] = AMX_I(TCVTROWPS2BF16H, p_f2),
+    };
+    static const X86OpEntry i_77[4] = {
+        [2] = AMX_I(TCVTROWPS2BF16L, p_f3),
+        [3] = AMX_I(TCVTROWPS2PHL, p_f2),
+    };
+#undef AMX_R
+#undef AMX_I
+    const X86OpEntry *t = NULL;
+
+    if (map3) {
+        t = *b == 0x07 ? i_07 : *b == 0x77 ? i_77 : NULL;
+    } else {
+        t = *b == 0x4a ? r_4a : *b == 0x6d ? r_6d : NULL;
+    }
+    if (!t) {
+        return false;
+    }
+    memset(entry, 0, sizeof(*entry));
+    if ((get_modrm(s, env) >> 6) == 3) {
+        *entry = *decode_by_prefix(s, t);
+    }
+    return true;
+}
+#endif /* __Use_Original_Qemu (U725) */
 
 #if __Use_Original_Qemu != 1 /* ours (U86) */
 /*
@@ -4760,6 +4823,12 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         return;
     }
 #endif /* __Use_Original_Qemu (U646) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+    /* AMX-AVX512 r32 forms, 4A and 6D (U725) */
+    if (decode_evex_amx_avx512(s, env, entry, b, false)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U725) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
     if ((s->prefix & PREFIX_REPZ) && opcodes_evex_0F38_F3[*b].gen) {
         *entry = opcodes_evex_0F38_F3[*b];
@@ -4786,6 +4855,12 @@ static void decode_evex_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         return;
     }
 #endif /* __Use_Original_Qemu (U646) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+    /* AMX-AVX512 imm8 forms, 07 and 77 (U725) */
+    if (decode_evex_amx_avx512(s, env, entry, b, true)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U725) */
     *entry = opcodes_evex_0F3A[*b];
 #if __Use_Original_Qemu != 1 /* ours (U372) */
     decode_avx10_override(s, env, entry, b, opcodes_avx10_0F3A);
@@ -5462,8 +5537,12 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
         return false;
     }
 #else /* ours (U645) */
-    /* APX-promoted forms have no EVEX vector length / tuple (U645) */
-    if ((s->prefix & PREFIX_EVEX) && !s->apx_promoted && !decode_evex_vl(s, env, e)) {
+    /*
+     * APX-promoted forms have no EVEX vector length / tuple (U645); nor have the AMX-AVX512
+     * forms (class 23, U725: EVEX.LL' = 10b and the other fixed fields in validate_amx_evex)
+     */
+    if ((s->prefix & PREFIX_EVEX) && !s->apx_promoted && e->vex_class != 23 &&
+        !decode_evex_vl(s, env, e)) {
         return false;
     }
 #endif /* __Use_Original_Qemu (U645) */
@@ -6191,6 +6270,45 @@ illegal:
 }
 
 #endif /* __Use_Original_Qemu (U645) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+/*
+ * NoVmp (ledger U725): the static #UD conditions of AMX-E7-EVEX (imm8 forms) and AMX-E8-EVEX
+ * (r32 forms), ISE 319433-062 Table 3-2 (LOCK/66/F2/F3/REX before EVEX: while parsing 62h;
+ * the CPUID feature: has_cpuid_feature): IA32_EFER.LMA != 1 or CS.L != 1; EVEX.z != 0;
+ * EVEX.L'L != 10b; EVEX.b != 0; EVEX.aaa != 000b; EVEX.U (P1[2]) != 1; EVEX.V' != 1; E7 only:
+ * EVEX.vvvv != 1111b; EVEX.W1 (the forms are W0). The run-time conditions (CR4.OSXSAVE,
+ * XCR0, CR0.TS, XFD, TILECFG) are in helper_amx_rowop. With Intel APX, EVEX.B4 = 1 needs APX
+ * enabled (APX spec 3.1.4.2.1, as validate_evex, U616).
+ */
+static bool validate_amx_evex(DisasContext *s, X86DecodedInsn *decode)
+{
+    bool imm = decode->e.op3 == X86_TYPE_I;
+
+    if (!CODE64(s)) {
+        goto illegal;
+    }
+    if (s->evex_z || s->evex_ll != 2 || s->evex_b || s->evex_aaa) {
+        goto illegal;
+    }
+    if (!(s->evex_p1 & 0x04) || !(s->evex_p2 & 0x08)) {
+        goto illegal;
+    }
+    if ((imm && (s->vex_v & 15)) || s->vex_w) {
+        goto illegal;
+    }
+    if ((s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F) && (s->evex_p0 & 0x08)) {
+        TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+        gen_helper_apx_check(tcg_ctx, cpu_env);
+    }
+    return true;
+
+illegal:
+    gen_illegal_opcode(s);
+    return false;
+}
+
+#endif /* __Use_Original_Qemu (U725) */
 static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
 {
     X86OpEntry *e = &decode->e;
@@ -6734,6 +6852,16 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         goto apx_promoted;
     }
 #endif /* __Use_Original_Qemu (U645) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+    /* AMX-AVX512 (class 23): its own checks, no EVEX engine (masking/VL do not apply) */
+    if ((s->prefix & PREFIX_EVEX) && decode.e.vex_class == 23) {
+        if (validate_amx_evex(s, &decode)) {
+            decode.e.gen(s, env, &decode);
+        }
+        decode_temps_free(tcg_ctx, &decode);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U725) */
 #if __Use_Original_Qemu != 1 /* ours (U145) */
     if (s->prefix & PREFIX_EVEX) {
         if (validate_evex(s, &decode)) {

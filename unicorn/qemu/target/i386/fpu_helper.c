@@ -6746,6 +6746,130 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
 }
 #endif /* __Use_Original_Qemu (U177) */
 
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+/*
+ * NoVmp (ledger U725): AMX-AVX512 (ISE 319433-062 3.7) - TCVTROWD2PS, TCVTROWPS2BF16H/L,
+ * TCVTROWPS2PHH/L, TILEMOVROW, register (AMX-E8-EVEX) and immediate (AMX-E7-EVEX) forms.
+ * info = op | zmm << 8 | tmm << 16 (gen_amx_rowop), row = r32 or imm8. The run-time part of
+ * AMX-E7/E8-EVEX, in this order (the static #UDs came first, validate_amx_evex; the classes
+ * list no priority - the same choice as U175: XCR0 #UDs, then #NM, then the TILECFG #UDs):
+ *   #UD CR4.OSXSAVE != 1, XCR0[18:17] != 11b, XCR0[7:5] != 111b, XCR0[2:1] != 11b;
+ *   #NM CR0.TS = 1 (IA32_XFD_ERR unchanged, SDM Vol1 13.14), then #NM XFD[18] (XFD_ERR set);
+ *   #UD TILES_CONFIGURED = 0, tsrc not a valid tile / name >= max_names, tsrc.colsb % 4 != 0.
+ * ISE 319433-062 lists TILEMOVROW r32 as AMX-E7-EVEX and imm8 as AMX-E8-EVEX, the reverse of
+ * the TCVTROW* pages; E7's "EVEX.VVVV != 1111b" cannot apply to the form whose vvvv is the r32
+ * operand, so the classes are taken as for TCVTROW* (Intel XED amx-dmr-isa: TILEMOVROW imm8
+ * AMX-E7-EVEX, r32 AMX-E8-EVEX). Operation: row_index := row & 0xf; row_index >= tsrc.rows ->
+ * zmm1 := 0; else element i < tsrc.colsb / 4 (bytes < colsb for TILEMOVROW) converted, the
+ * rest zero; zero_tileconfig_start(). No MXCSR access, RNE, no SIMD exception.
+ */
+enum {
+    AMX_TCVTROWD2PS, AMX_TCVTROWPS2BF16H, AMX_TCVTROWPS2BF16L, AMX_TCVTROWPS2PHH,
+    AMX_TCVTROWPS2PHL, AMX_TILEMOVROW,
+};
+
+/* convert_fp32_to_bfloat16 (ISE 3.4), literally */
+static uint16_t amx_cvt_fp32_to_bf16(uint32_t x)
+{
+    if ((x & 0x7f800000) == 0) {                    /* zero or denormal: signed zero */
+        return (x >> 16) & 0x8000;
+    }
+    if ((x & 0x7fffffff) == 0x7f800000) {           /* infinity */
+        return x >> 16;
+    }
+    if ((x & 0x7f800000) == 0x7f800000) {           /* NaN: truncate, force QNaN */
+        return (x >> 16) | 0x0040;
+    }
+    return (x + 0x7fff + ((x >> 16) & 1)) >> 16;    /* normal: RNE by integer add */
+}
+
+/* vCvt_s2h with RNE: FP32 denormal inputs become FP16 zeros, FP16 denormal outputs kept */
+static uint16_t amx_cvt_fp32_to_fp16(uint32_t x)
+{
+    float_status st;
+
+    if ((x & 0x7f800000) == 0) {
+        return (x >> 16) & 0x8000;                  /* zero / denormal -> zero of its sign */
+    }
+    if ((x & 0x7f800000) == 0x7f800000 && (x & 0x007fffff)) {
+        /* NaN: quieted, the upper fraction bits kept (VCVTPS2PH, SDM Vol2C) */
+        return ((x >> 16) & 0x8000) | 0x7e00 | ((x >> 13) & 0x3ff);
+    }
+    memset(&st, 0, sizeof(st));
+    set_float_rounding_mode(float_round_nearest_even, &st);
+    return float32_to_float16(make_float32(x), true, &st);
+}
+
+void helper_amx_rowop(CPUX86State *env, uint32_t info, uint32_t row)
+{
+    const uint64_t avx512 = XSTATE_SSE_MASK | XSTATE_YMM_MASK | XSTATE_OPMASK_MASK |
+                            XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK;
+    uintptr_t ra = GETPC();
+    int op = info & 15;
+    unsigned z = (info >> 8) & 31, t = (info >> 16) & 31, r, i, cols;
+    ZMMReg res;
+
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK) ||
+        (env->xcr0 & XSTATE_AMX_MASK) != XSTATE_AMX_MASK ||
+        (env->xcr0 & avx512) != avx512) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->cr[0] & CR0_TS_MASK) {
+        raise_exception_ra(env, EXCP07_PREX, ra);
+    }
+    if (x86_cpu_xfd_armed(env) & XSTATE_XTILE_DATA_MASK) {
+        env->msr_xfd_err = env->msr_xfd & XSTATE_XTILE_DATA_MASK;
+        raise_exception_ra(env, EXCP07_PREX, ra);
+    }
+    if (!AMX_CONFIGURED(env) || !amx_tile_valid(env, t) || (AMX_COLSB(env, t) & 3)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    memset(&res, 0, sizeof(res));
+    r = row & 0xf;
+    cols = AMX_COLSB(env, t);
+    if (r < AMX_ROWS(env, t)) {
+        const uint8_t *src = AMX_ROW(env, t, r);
+
+        if (op == AMX_TILEMOVROW) {
+            for (i = 0; i < cols; i++) {
+                res.ZMM_B(i) = src[i];
+            }
+        } else {
+            for (i = 0; i < cols / 4; i++) {
+                uint32_t x = ldl_le_p(src + 4 * i);
+
+                switch (op) {
+                case AMX_TCVTROWD2PS: {
+                    float_status st;
+
+                    memset(&st, 0, sizeof(st));
+                    set_float_rounding_mode(float_round_nearest_even, &st);
+                    res.ZMM_L(i) = float32_val(int32_to_float32((int32_t)x, &st));
+                    break;
+                }
+                case AMX_TCVTROWPS2BF16H:
+                    res.ZMM_W(2 * i + 1) = amx_cvt_fp32_to_bf16(x);
+                    break;
+                case AMX_TCVTROWPS2BF16L:
+                    res.ZMM_W(2 * i) = amx_cvt_fp32_to_bf16(x);
+                    break;
+                case AMX_TCVTROWPS2PHH:
+                    res.ZMM_W(2 * i + 1) = amx_cvt_fp32_to_fp16(x);
+                    break;
+                case AMX_TCVTROWPS2PHL:
+                    res.ZMM_W(2 * i) = amx_cvt_fp32_to_fp16(x);
+                    break;
+                default:
+                    g_assert_not_reached();
+                }
+            }
+        }
+    }
+    env->xmm_regs[z] = res;
+    AMX_START_ROW(env) = 0;
+}
+#endif /* __Use_Original_Qemu (U725) */
+
 /* MMX/SSE */
 /* XXX: optimize by storing fptt and fptags in the static cpu state */
 

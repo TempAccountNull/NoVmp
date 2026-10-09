@@ -4867,6 +4867,18 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * P0[7:6] = 11b (EVEX.RX: BOUND's ModRM.mod = 11b would be #UD), else BOUND.
          * Without AVX512F the byte stays BOUND / #UD exactly as before.
          */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+        /*
+         * NoVmp (ledger U725): the AMX-AVX512 instructions are EVEX forms whose CPUID column is
+         * AMX-AVX512 alone (ISE 319433-062 3.7, V/N.E.): in 64-bit mode EVEX is decoded when
+         * CPUID.(1EH,1):EAX[7] is enumerated even if AVX512F is not (BOUND is #UD there anyway);
+         * every other EVEX form still checks its own CPUID feature and XCR0 in decode-new.
+         */
+        if (CODE64(s) && (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_AVX512)) {
+            disas_insn_new(s, cpu, b);
+            goto evex_done;
+        }
+#endif /* __Use_Original_Qemu (U725) */
         if ((s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
             (CODE64(s) || (PE(s) && !VM86(s)))) {
             int p0 = x86_ldub_code(env, s);

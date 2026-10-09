@@ -117,6 +117,9 @@ DEF_HELPER_2(amx_tilezero, void, env, i32)
 #if __Use_Original_Qemu != 1 /* ours (U177) */
 DEF_HELPER_2(amx_tmul, void, env, i32)
 #endif /* __Use_Original_Qemu (U177) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+DEF_HELPER_3(amx_rowop, void, env, i32, i32)
+#endif /* __Use_Original_Qemu (U725) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 DEF_HELPER_3(incssp, void, env, tl, i32)
 DEF_HELPER_1(saveprevssp, void, env)

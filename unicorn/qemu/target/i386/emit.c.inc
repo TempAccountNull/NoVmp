@@ -5862,6 +5862,70 @@ static void gen_TDPHF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     gen_amx_tmul(s, 11);
 }
 #endif /* __Use_Original_Qemu (U724) */
+#if __Use_Original_Qemu != 1 /* ours (U725) */
+
+/*
+ * NoVmp (ledger U725): AMX-AVX512 (ISE 319433-062 3.7), EVEX.512.W0, ModRM 11:rrr:bbb:
+ * zmm1 = ModRM.reg | EVEX.R | EVEX.R' (0..31), tmm2 = ModRM.r/m | EVEX.B | EVEX.X (a name
+ * >= max_names #UDs at run time), the row = r32 (EVEX.vvvv, a GPR 0..15; AMX-E8-EVEX) or imm8
+ * (AMX-E7-EVEX), "& 0xf" in the helper. validate_amx_evex did the static #UDs; everything that
+ * depends on CR4/XCR0/CR0.TS/IA32_XFD/TILECFG is checked by helper_amx_rowop.
+ * op: 0 TCVTROWD2PS, 1 TCVTROWPS2BF16H, 2 TCVTROWPS2BF16L, 3 TCVTROWPS2PHH,
+ * 4 TCVTROWPS2PHL, 5 TILEMOVROW (as in fpu_helper.c).
+ */
+static void gen_amx_rowop(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    uint32_t z = ((s->modrm >> 3) & 7) | REX_R(s) | s->evex_rr;
+    uint32_t t = (s->modrm & 7) | REX_B(s) | s->evex_x4;
+    TCGv_i32 row;
+
+    if (decode->e.op3 == X86_TYPE_I) {
+        row = tcg_constant_i32(tcg_ctx, decode->immediate & 0xff);
+    } else {
+        row = tcg_temp_new_i32(tcg_ctx);
+        tcg_gen_trunc_tl_i32(tcg_ctx, row, cpu_regs[s->vex_v & 15]);
+    }
+    gen_helper_amx_rowop(tcg_ctx, cpu_env,
+                         tcg_constant_i32(tcg_ctx, op | z << 8 | (t & 31) << 16), row);
+}
+
+/* TCVTROWD2PS zmm1, tmm2, r32 / imm8: EVEX.512.F3.0F38.W0 4A / EVEX.512.F3.0F3A.W0 07 ib */
+static void gen_TCVTROWD2PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 0);
+}
+
+/* TCVTROWPS2BF16H: EVEX.512.F2.0F38.W0 6D / EVEX.512.F2.0F3A.W0 07 ib */
+static void gen_TCVTROWPS2BF16H(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 1);
+}
+
+/* TCVTROWPS2BF16L: EVEX.512.F3.0F38.W0 6D / EVEX.512.F3.0F3A.W0 77 ib */
+static void gen_TCVTROWPS2BF16L(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 2);
+}
+
+/* TCVTROWPS2PHH: EVEX.512.NP.0F38.W0 6D / EVEX.512.NP.0F3A.W0 07 ib */
+static void gen_TCVTROWPS2PHH(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 3);
+}
+
+/* TCVTROWPS2PHL: EVEX.512.66.0F38.W0 6D / EVEX.512.F2.0F3A.W0 77 ib */
+static void gen_TCVTROWPS2PHL(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 4);
+}
+
+/* TILEMOVROW: EVEX.512.66.0F38.W0 4A / EVEX.512.66.0F3A.W0 07 ib */
+static void gen_TILEMOVROW(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_rowop(s, decode, 5);
+}
+#endif /* __Use_Original_Qemu (U725) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 
 /*
