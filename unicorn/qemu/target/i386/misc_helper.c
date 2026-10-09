@@ -435,6 +435,21 @@ static bool cet_canonical(CPUX86State *env, uint64_t v)
     return sext == 0 || sext == -1;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U760) */
+/*
+ * NoVmp (ledger U760): the canonical check of a CET MSR value (IA32_U_CET/S_CET
+ * EB_LEG_BITMAP_BASE, IA32_PLx_SSP, IA32_INTERRUPT_SSP_TABLE_ADDR) on WRMSR and XRSTORS
+ * is CPU canonicality (SDM Vol3A 4.5.3): relative to the maximum linear-address width
+ * the CPU reports (57 with CPUID.(7,0):ECX.LA57, else 48), not to the current paging
+ * mode - the check novmp_canonical does for the other MSRs. cet_canonical (CR4.LA57)
+ * stays for shadow-stack linear addresses.
+ */
+static bool cet_msr_canonical(CPUX86State *env, uint64_t v)
+{
+    return novmp_canonical(env, v);
+}
+
+#endif /* __Use_Original_Qemu (U760) */
 /*
  * NoVmp (ledger U114): WRMSR to a CET MSR (SDM Vol4 Table 2-2). The MSRs exist
  * with CET_SS or CET_IBT (without either they stay unknown MSRs: ignored, as
@@ -457,7 +472,7 @@ static bool cet_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
     case MSR_IA32_S_CET: {
         uint64_t valid = (ss ? 0x3ull : 0) | (ibt ? (0x3cull | ~0x3ffull) : 0);
 
-        if ((val & ~valid) || !cet_canonical(env, val) ||
+        if ((val & ~valid) || !cet_msr_canonical(env, val) ||   /* U760 */
             ((val & CET_SUPPRESS) && (val & CET_TRACKER))) {
             return false;
         }
@@ -471,7 +486,7 @@ static bool cet_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
     }
     case MSR_IA32_INT_SSP_TAB:
         if (ss) {
-            if (!cet_canonical(env, val)) {
+            if (!cet_msr_canonical(env, val)) {                    /* U760 */
                 return false;
             }
             env->int_ssp_table = val;
@@ -479,7 +494,7 @@ static bool cet_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
         return true;
     default: /* IA32_PL0_SSP .. IA32_PL3_SSP */
         if (ss) {
-            if ((val & 3) || !cet_canonical(env, val)) {
+            if ((val & 3) || !cet_msr_canonical(env, val)) {       /* U760 */
                 return false;
             }
             env->pl_ssp[msr - MSR_IA32_PL0_SSP] = val;
