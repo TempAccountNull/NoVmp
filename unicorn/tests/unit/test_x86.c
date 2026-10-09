@@ -13981,6 +13981,224 @@ static void test_x86_bp_tcg_temp_overflow(void)
     TEST_MSG("(b) rax %016llx, expected %08x", (unsigned long long)rax, eax_exp);
     free(code);
 }
+
+/*
+ * bp_ helpers (U453-U467): one engine with 4 MiB of RWX memory at 0, a GDT at
+ * BP_GDT, code at BP_CODE, stack below BP_STACK and data at BP_DATA. The
+ * interrupt hook records the first vector and the RIP/EIP it reports, then
+ * stops; raw Unicorn reports #UD as UC_ERR_INSN_INVALID instead.
+ *   GDT: 08h code32 DPL0, 10h data DPL0, 1Bh code32 DPL3, 23h data DPL3,
+ *        28h code64 DPL0, 33h code64 DPL3, 38h+ free for per-test descriptors.
+ * 32-bit mode: SS/DS/ES = 10h. 64-bit mode: reset leaves the SS cache zero, so
+ * the helpers that pop with the SS.B mask (IRETD) need a stack below 64 KiB.
+ */
+#define BP_STACK16 0xe000
+#define BP_GDT 0x2000
+#define BP_CODE 0x10000
+#define BP_STACK 0x80000
+#define BP_DATA 0x90000
+
+typedef struct BpCpu {
+    uc_engine *uc;
+    uc_mode mode;
+    uc_hook hook;
+    uint32_t count, intno;
+    uint64_t rip;
+    uint64_t next; /* bp_run: a fresh code address per snippet (no stale TBs) */
+} BpCpu;
+
+static uint64_t bp_desc(uint32_t base, uint32_t limit, uint32_t access, uint32_t flags)
+{
+    return (uint64_t)(limit & 0xffff) | ((uint64_t)(base & 0xffffff) << 16) |
+           ((uint64_t)(access & 0xff) << 40) | ((uint64_t)((limit >> 16) & 0xf) << 48) |
+           ((uint64_t)(flags & 0xf) << 52) | ((uint64_t)(base >> 24) << 56);
+}
+
+static void bp_intr_cb(uc_engine *uc, uint32_t intno, void *data)
+{
+    BpCpu *c = (BpCpu *)data;
+
+    if (c->count++ == 0) {
+        c->intno = intno;
+        if (c->mode == UC_MODE_64) {
+            OK(uc_reg_read(uc, UC_X86_REG_RIP, &c->rip));
+        } else {
+            uint32_t eip = 0;
+
+            OK(uc_reg_read(uc, UC_X86_REG_EIP, &eip));
+            c->rip = eip;
+        }
+    }
+    uc_emu_stop(uc);
+}
+
+static void bp_set_gdt_entry(BpCpu *c, int index, uint64_t desc)
+{
+    OK(uc_mem_write(c->uc, BP_GDT + 8 * index, &desc, 8));
+}
+
+static void bp_open(BpCpu *c, uc_mode mode, int model)
+{
+    uc_x86_mmr gdtr = {0, BP_GDT, 16 * 8 - 1, 0};
+
+    memset(c, 0, sizeof(*c));
+    c->mode = mode;
+    c->next = BP_CODE + 0x1000;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    if (model >= 0) {
+        OK(uc_ctl_set_cpu_model(c->uc, model));
+    }
+    OK(uc_mem_map(c->uc, 0, 0x400000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, bp_intr_cb, c, 1, 0));
+    if (mode != UC_MODE_16) {
+        bp_set_gdt_entry(c, 1, bp_desc(0, 0xfffff, 0x9b, 0xc));
+        bp_set_gdt_entry(c, 2, bp_desc(0, 0xfffff, 0x93, 0xc));
+        bp_set_gdt_entry(c, 3, bp_desc(0, 0xfffff, 0xfb, 0xc));
+        bp_set_gdt_entry(c, 4, bp_desc(0, 0xfffff, 0xf3, 0xc));
+        bp_set_gdt_entry(c, 5, bp_desc(0, 0xfffff, 0x9b, 0xa));
+        bp_set_gdt_entry(c, 6, bp_desc(0, 0xfffff, 0xfb, 0xa));
+        OK(uc_reg_write(c->uc, UC_X86_REG_GDTR, &gdtr));
+    }
+    if (mode == UC_MODE_32) {
+        /* SS/DS/ES from the GDT (flat, B = 1): reset leaves their caches zero (SP mask FFFFh) */
+        uint16_t sel = 0x10;
+
+        OK(uc_reg_write(c->uc, UC_X86_REG_SS, &sel));
+        OK(uc_reg_write(c->uc, UC_X86_REG_DS, &sel));
+        OK(uc_reg_write(c->uc, UC_X86_REG_ES, &sel));
+    }
+}
+
+static uint64_t bp_get(BpCpu *c, int reg)
+{
+    uint64_t v = 0;
+
+    if (c->mode != UC_MODE_64) {
+        uint32_t v32 = 0;
+
+        OK(uc_reg_read(c->uc, reg, &v32));
+        return v32;
+    }
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void bp_set(BpCpu *c, int reg, uint64_t v)
+{
+    if (c->mode != UC_MODE_64) {
+        uint32_t v32 = (uint32_t)v;
+
+        OK(uc_reg_write(c->uc, reg, &v32));
+        return;
+    }
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+static uint16_t bp_seg(BpCpu *c, int reg)
+{
+    uint16_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+/* write len bytes of code at addr and run until addr + len (at most 'count' insns) */
+static uc_err bp_run_at(BpCpu *c, uint64_t addr, const void *code, size_t len, size_t count)
+{
+    c->count = 0;
+    c->intno = 0;
+    c->rip = 0;
+    OK(uc_mem_write(c->uc, addr, code, len));
+    return uc_emu_start(c->uc, addr, addr + len, 0, count);
+}
+
+/* run len bytes at the next fresh address (64-byte slots) */
+static uc_err bp_run(BpCpu *c, const void *code, size_t len)
+{
+    uint64_t addr = c->next;
+
+    c->next += (len + 0x3f) & ~(uint64_t)0x3f;
+    return bp_run_at(c, addr, code, len, 0);
+}
+
+/*
+ * 64-bit mode, CPL3: an IRETQ stub at BP_CODE returns to BP_CODE + 0x100 with
+ * CS = 33h, SS = 23h, RSP = BP_STACK, RFLAGS = 202h; the code there runs at CPL3.
+ */
+static uc_err bp_run64_cpl3(BpCpu *c, const void *code, size_t len)
+{
+    uint64_t frame[5] = {BP_CODE + 0x100, 0x33, 0x202, BP_STACK, 0x23};
+    uint64_t rsp = BP_STACK - 0x100;
+
+    OK(uc_mem_write(c->uc, rsp, frame, sizeof(frame)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_RSP, &rsp));
+    OK(uc_mem_write(c->uc, BP_CODE, "\x48\xcf", 2));
+    OK(uc_mem_write(c->uc, BP_CODE + 0x100, code, len));
+    c->count = 0;
+    c->intno = 0;
+    c->rip = 0;
+    return uc_emu_start(c->uc, BP_CODE, BP_CODE + 0x100 + len, 0, 100);
+}
+
+/*
+ * U453 (upstream QEMU 36f634fe4a): IRET enters virtual-8086 mode only from CPL0
+ * outside long mode (SDM Vol2 IRET: PROTECTED-MODE "IF tempEFLAGS(VM) = 1 and
+ * CPL = 0"; IA-32e mode never loads VM).
+ */
+static void test_x86_bp_iret_vm86(void)
+{
+    BpCpu c;
+    uint32_t f32[9] = {0, 0x0100, 0x00020002, 0x800, 0, 0, 0, 0, 0};
+    uint32_t f3[5] = {BP_CODE + 0x40, 0x1b, 0x00000002, BP_STACK, 0x23};
+    /* CPL3: push 00020202h (VM|IF); push 1Bh; push BP_CODE+0x50; iretd */
+    uint8_t cpl3[] = {0x68, 0x02, 0x02, 0x02, 0x00, 0x6a, 0x1b, 0x68, 0x50, 0x00, 0x01, 0x00, 0xcf};
+    uint32_t f64[5] = {BP_CODE + 0x10, 0x28, 0x00023002, BP_STACK, 0x10};
+    uint32_t eflags;
+
+    /* (a) 32-bit protected mode, CPL0: IRETD with VM = 1 enters virtual-8086 mode */
+    bp_open(&c, UC_MODE_32, -1);
+    OK(uc_mem_write(c.uc, BP_STACK - 0x100, f32, sizeof(f32)));
+    bp_set(&c, UC_X86_REG_ESP, BP_STACK - 0x100);
+    OK(uc_mem_write(c.uc, 0x1000, "\x90", 1)); /* 0100:0000 */
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcf", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, 0x1001, 0, 2));
+    eflags = (uint32_t)bp_get(&c, UC_X86_REG_EFLAGS);
+    TEST_CHECK((eflags & 0x20000) != 0 && bp_seg(&c, UC_X86_REG_CS) == 0x0100);
+    TEST_MSG("(a) CPL0 IRETD VM=1: eflags %08x cs %04x", eflags, bp_seg(&c, UC_X86_REG_CS));
+    OK(uc_close(c.uc));
+
+    /* (b) 32-bit protected mode, CPL3: VM in the popped image is ignored */
+    bp_open(&c, UC_MODE_32, -1);
+    OK(uc_mem_write(c.uc, BP_STACK - 0x100, f3, sizeof(f3)));
+    bp_set(&c, UC_X86_REG_ESP, BP_STACK - 0x100);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcf", 1));                   /* to CPL3 */
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, cpl3, sizeof(cpl3)));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x50, "\xb8\x01\x00\x00\x00", 5)); /* mov eax, 1 */
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x55, 0, 10));
+    eflags = (uint32_t)bp_get(&c, UC_X86_REG_EFLAGS);
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_EAX) == 1);
+    TEST_CHECK((eflags & 0x20000) == 0 && bp_seg(&c, UC_X86_REG_CS) == 0x1b);
+    TEST_MSG("(b) CPL3 IRETD VM=1: eax %llx eflags %08x cs %04x intr %u/%u",
+             (unsigned long long)bp_get(&c, UC_X86_REG_EAX), eflags,
+             bp_seg(&c, UC_X86_REG_CS), c.count, c.intno);
+    OK(uc_close(c.uc));
+
+    /* (c) 64-bit mode, CPL0 (EFER.LMA = 1): IRETD with VM = 1, IOPL = 3 stays in 64-bit mode */
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_mem_write(c.uc, BP_STACK16, f64, sizeof(f64)));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK16);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcf", 1));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x10, "\xb8\x01\x00\x00\x00", 5));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x15, 0, 10));
+    eflags = (uint32_t)bp_get(&c, UC_X86_REG_EFLAGS);
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_CHECK((eflags & 0x20000) == 0 && (eflags & 0x3000) == 0x3000);
+    TEST_CHECK(bp_seg(&c, UC_X86_REG_CS) == 0x28 && bp_get(&c, UC_X86_REG_RSP) == BP_STACK);
+    TEST_MSG("(c) 64-bit CPL0 IRETD VM=1: rax %llx eflags %08x cs %04x rsp %llx",
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX), eflags,
+             bp_seg(&c, UC_X86_REG_CS), (unsigned long long)bp_get(&c, UC_X86_REG_RSP));
+    OK(uc_close(c.uc));
+}
 /* ---- end U450-U474 (bp_) ---- */
 
 TEST_LIST = {
@@ -14192,4 +14410,5 @@ TEST_LIST = {
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
     {"test_x86_cpuid_strict_default", test_x86_cpuid_strict_default},
     {"test_x86_bp_tcg_temp_overflow", test_x86_bp_tcg_temp_overflow},
+    {"test_x86_bp_iret_vm86", test_x86_bp_iret_vm86},
     {NULL, NULL}};

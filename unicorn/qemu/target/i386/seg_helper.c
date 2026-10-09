@@ -2244,7 +2244,13 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
             new_cs &= 0xffff;
             if (is_iret) {
                 POPL_RA(ssp, sp, sp_mask, new_eflags, retaddr);
-                if (new_eflags & VM_MASK) {
+                /*
+                 * backport of QEMU 36f634fe4a: virtual-8086 mode only from CPL 0
+                 * outside long mode (SDM Vol2 IRET, PROTECTED-MODE)
+                 */
+                bool allow_vm86 = ((env->hflags & HF_CPL_MASK) == 0) &&
+                                  !(env->hflags & HF_LMA_MASK);
+                if ((new_eflags & VM_MASK) && allow_vm86) {
                     goto return_to_vm86;
                 }
             }
