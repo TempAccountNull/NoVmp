@@ -561,10 +561,9 @@ static void test_r6()
 	std::vector<uint8_t> xr = assemble( r6_xrstor ), xs = assemble( r6_xsave ), ld = assemble( r6_ldmxcsr );
 	CHECK( !xr.empty() && !xs.empty() && !ld.empty(), "assembly" );
 	if ( xr.empty() || xs.empty() || ld.empty() ) return;
-	uint32_t host_mx = 0;
 	{
 		r6_result probe = r6_native( ld, 0, 0x1F80 );      // also proves the thunk runs natively
-		host_mx = probe.out[ 0 ];
+		( void ) probe;
 	}
 	struct c { const char* what; const std::vector<uint8_t>* code; uint64_t rfbm; uint32_t mx; };
 	const c cases[] = {
@@ -577,7 +576,10 @@ static void test_r6()
 	};
 	for ( const c& k : cases )
 	{
-		r6_result hw = r6_native( *k.code, k.rfbm, k.mx ), uc = r6_unicorn( *k.code, k.rfbm, k.mx, host_mx );
+		// U542: Unicorn starts from the host MXCSR of this very case, not the one sampled before the
+		// loop: the host's sticky flags can change in between (R6 alone, --only 6, sets PE there)
+		const uint32_t mx_now = _mm_getcsr();
+		r6_result hw = r6_native( *k.code, k.rfbm, k.mx ), uc = r6_unicorn( *k.code, k.rfbm, k.mx, mx_now );
 		// out[0] = MXCSR before (host-specific, not compared), out[1] = after, out[2..3] = XSAVE mxcsr/mask fields
 		bool same = hw.fault == uc.fault && ( hw.fault >= 0 || ( hw.out[ 1 ] == uc.out[ 1 ] && hw.out[ 2 ] == uc.out[ 2 ] && hw.out[ 3 ] == uc.out[ 3 ] ) );
 		auto show = [ & ]( const r6_result& r ) {
@@ -2606,41 +2608,41 @@ int main( int argc, char** argv )
 	unsigned maj = 0, min = 0;
 	uc_version( &maj, &min );
 	std::printf( "uc72_risk: Unicorn %u.%u, QEMU 7.2.22 branch (plan 1.5)\n\n", maj, min );
-	test_r1();
-	std::printf( "\n" );
-	test_r2();
-	std::printf( "\n" );
-	test_r3();
-	std::printf( "\n" );
-	test_r4();
-	std::printf( "\n" );
-	test_r5();
-	std::printf( "\n" );
-	test_r6();
-	std::printf( "\n" );
-	test_r7();
-	std::printf( "\n" );
-	test_r8();
-	std::printf( "\n" );
-	test_r9();
-	std::printf( "\n" );
-	test_r10();
-	std::printf( "\n" );
-	test_r11();
-	std::printf( "\n" );
-	test_r12();
-	std::printf( "\n" );
-	test_r13();
-	std::printf( "\n" );
-	test_r14();
-	std::printf( "\n" );
-	test_r15();
-	std::printf( "\n" );
-	test_r16();
-	std::printf( "\n" );
-	test_r17();
-	std::printf( "\n" );
-	test_r18();
+	// U542: `--only LIST` (section numbers and ranges, e.g. `--only 17` or `--only 1-16,18`) runs only
+	// those sections; test.cmd runs the long sections as separate suites side by side. Without it every
+	// section runs, with the same output as before.
+	void ( *const sections[] )() = { test_r1, test_r2, test_r3, test_r4, test_r5, test_r6, test_r7, test_r8, test_r9,
+									 test_r10, test_r11, test_r12, test_r13, test_r14, test_r15, test_r16, test_r17, test_r18 };
+	const int n_sections = int( sizeof( sections ) / sizeof( sections[ 0 ] ) );
+	bool selected[ 19 ] = {};
+	bool only = argc >= 3 && std::strcmp( argv[ 1 ], "--only" ) == 0;
+	if ( only )
+	{
+		const char* q = argv[ 2 ];
+		bool bad = !*q;
+		while ( *q && !bad )
+		{
+			char* end = nullptr;
+			long a = std::strtol( q, &end, 10 ), b = a;
+			if ( end == q ) { bad = true; break; }
+			q = end;
+			if ( *q == '-' ) { b = std::strtol( q + 1, &end, 10 ); if ( end == q + 1 ) { bad = true; break; } q = end; }
+			if ( a < 1 || b > n_sections || a > b ) { bad = true; break; }
+			for ( long i = a; i <= b; ++i ) selected[ i ] = true;
+			if ( *q == ',' ) ++q;
+			else if ( *q ) bad = true;
+		}
+		if ( bad ) { std::printf( "--only: bad section list \"%s\" (sections 1-%d, e.g. 1-16,18)\n", argv[ 2 ], n_sections ); return 2; }
+		std::printf( "only sections %s\n\n", argv[ 2 ] );
+	}
+	bool first = true;
+	for ( int i = 1; i <= n_sections; ++i )
+	{
+		if ( only && !selected[ i ] ) continue;
+		if ( !first ) std::printf( "\n" );
+		first = false;
+		sections[ i - 1 ]();
+	}
 	std::printf( "\n%s: %d failure(s)\n", g_failures ? "FAILED" : "SUCCESS", g_failures );
 	return g_failures ? 1 : 0;
 }

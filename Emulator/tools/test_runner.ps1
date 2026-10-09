@@ -69,7 +69,7 @@ function Add-Suite( [string]$Id, [string]$Groups, [string]$Kind, [string]$Exe, [
 {
 	$Suites.Add( [pscustomobject]@{
 			Id = $Id; Groups = @( $Groups -split ' ' | Where-Object { $_ } ); Kind = $Kind; Exe = $Exe; Args = @( $Arguments ); Note = $Note
-			Log = ''; Proc = $null; Watch = $null; Seconds = 0.0; Exit = $null; Pass = $false; Reason = ''; Lines = @(); Started = $false; Exclusive = $Exclusive
+			Log = ''; Proc = $null; Watch = $null; Seconds = 0.0; Exit = $null; Pass = $false; Reason = ''; Lines = @(); Started = $false; Exclusive = $Exclusive; Parent = ''
 		} )
 }
 function CaseFile( [string]$Name ) { return ( Join-Path $D "$Name.txt" ) }
@@ -111,7 +111,12 @@ Add-Suite 'unicorn-test_mem' 'unit' 'exit' 'unicorn-test_mem' @( '--skip', 'test
 	'skip unicorn-test_mem:test_mem_read_and_write_large_memory_block (needs UC_ARCH_ARM64; x86_64-only build)'
 # plan 1.5: QEMU 7.2 branch risks (long AVX2/FMA/VSIB blocks vs hardware, uc_context round trip,
 # old_exception / spurious #DF). Hardware reference runs self-generated code only.
-Add-Suite 'emu-uc72-risk' 'unit hw' 'exit' 'emu-uc72-risk' @()
+# U542: its sections R17 (x87 transcendentals) and R18 (x87 arithmetic) take most of the time; they
+# run as their own suites (emu-uc72-risk --only N); "test.cmd emu-uc72-risk" selects all three.
+Add-Suite 'emu-uc72-risk' 'unit hw' 'exit' 'emu-uc72-risk' @( '--only', '1-16' )
+Add-Suite 'emu-uc72-risk-r17' 'unit hw x87' 'exit' 'emu-uc72-risk' @( '--only', '17' )
+Add-Suite 'emu-uc72-risk-r18' 'unit hw x87' 'exit' 'emu-uc72-risk' @( '--only', '18' )
+foreach ( $s in $Suites ) { if ( $s.Id -like 'emu-uc72-risk*' ) { $s.Parent = 'emu-uc72-risk' } }
 # plan 1.9: emu-alltest quick run (every 7th form of the full x86-64 universe, host CPU vs Unicorn
 # UC_CPU_X86_MAX). Differences are the Phase 4/5 work list, reported in build\x64\Release\tests\alltest;
 # only harness errors fail. Full run: emu-alltest --full (baseline in Emulator\data\alltest_baseline).
@@ -279,7 +284,7 @@ else
 	{
 		$hit = $false
 		if ( $Groups.Contains( $n ) ) { foreach ( $id in $Groups[ $n ] ) { [void]$selected.Add( $id ) }; $hit = $true }
-		foreach ( $s in $Suites ) { if ( $s.Id.ToLowerInvariant() -eq $n ) { [void]$selected.Add( $s.Id ); $hit = $true } }
+		foreach ( $s in $Suites ) { if ( $s.Id.ToLowerInvariant() -eq $n -or $s.Parent.ToLowerInvariant() -eq $n ) { [void]$selected.Add( $s.Id ); $hit = $true } }
 		if ( -not $hit ) { Write-Output "[test] unknown suite or group ""$n"" (test.cmd list)"; Write-Output $Usage; exit 2 }
 	}
 }
@@ -513,6 +518,22 @@ foreach ( $s in $Run )
 	$st = Get-Stats $s
 	$sumTime += $s.Seconds
 	Write-Output ( $fmt -f $s.Id, $( if ( $s.Pass ) { 'ok' } else { 'FAILED' } ), $st.cases, $st.differing, $st.known, $st.host, $st.notobs, ( '{0:0.0}' -f $s.Seconds ) )
+	$s | Add-Member -NotePropertyName Stats -NotePropertyValue $st -Force
+}
+# a file split into shards / a test split into parts: one total row (counts summed, time summed)
+$parents = @( $Run | Where-Object { $_.Parent } | ForEach-Object { $_.Parent } | Select-Object -Unique )
+foreach ( $par in $parents )
+{
+	$parts = @( $Run | Where-Object { $_.Parent -eq $par } )
+	$tot = [ordered]@{}
+	foreach ( $f in 'cases', 'differing', 'known', 'host', 'notobs' )
+	{
+		$vals = @( $parts | ForEach-Object { $_.Stats[ $f ] } )
+		$tot[ $f ] = if ( @( $vals | Where-Object { $_ -ne '-' } ).Count -eq $vals.Count ) { ( $vals | ForEach-Object { [long]$_ } | Measure-Object -Sum ).Sum } else { '-' }
+	}
+	$ok = -not @( $parts | Where-Object { -not $_.Pass } ).Count
+	$t = ( $parts | ForEach-Object { $_.Seconds } | Measure-Object -Sum ).Sum
+	Write-Output ( $fmt -f ( "= $par ($( $parts.Count ))" ), $( if ( $ok ) { 'ok' } else { 'FAILED' } ), $tot.cases, $tot.differing, $tot.known, $tot.host, $tot.notobs, ( '{0:0.0}' -f $t ) )
 }
 Write-Output ( '[test] wall clock {0:0.0} s with {1} parallel job(s); the suites alone {2:0.0} s' -f $wall.Elapsed.TotalSeconds, $Jobs, $sumTime )
 
