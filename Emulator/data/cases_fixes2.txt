@@ -88,3 +88,15 @@ mov rax, 0x10000000000; mov cr3, rax => rax=0x10000000000
 mov rax, 0x1FFFFFFFF000; mov cr3, rax => rax=0x1FFFFFFFF000
 mov rax, 0x200000000000; mov cr3, rax => #GP rax=0x200000000000
 mov rax, 0x8000000000000; mov cr3, rax => #GP rax=0x8000000000000
+#
+# --- U594 SYSCALL is #UD while IA32_EFER.SCE = 0 (SDM Vol2B SYSCALL: "IF (CS.L != 1) or
+# (IA32_EFER.LMA != 1) or (IA32_EFER.SCE != 1) THEN #UD"). SYSCALL never runs natively (a real
+# system call); expected values only. With SCE = 1 Unicorn runs its UC_X86_INS_SYSCALL hooks (none
+# here) and goes on - Unicorn's API, not the SDM transition. CPL0: clear / set SCE with WRMSR first.
+mov ecx, 0xC0000080; rdmsr; and eax, 0xFFFFFFFE; wrmsr; syscall =>! #UD rcx=0xC0000080
+mov ecx, 0xC0000080; rdmsr; or eax, 1; wrmsr; syscall =>! rcx=0xC0000080
+mov ecx, 0xC0000080; rdmsr; and eax, 0xFFFFFFFE; wrmsr; sysret =>! #UD rcx=0xC0000080
+# the 64-bit reset state has SCE = 1 (RDMSR IA32_EFER bit 0); SYSRET with SCE = 0 above: #UD as before
+mov ecx, 0xC0000080; rdmsr; and eax, 1 =>! rax=1
+# cpl=3 (the harness sets SCE like Windows): no #UD
+syscall | cpl=3 =>! rax=0

@@ -179,6 +179,17 @@ static void reg_reset(struct uc_struct *uc)
                        HF_LMA_MASK | HF_OSFXSR_MASK;
         env->hflags &= ~(HF_ADDSEG_MASK);
         env->efer |= MSR_EFER_LMA | MSR_EFER_LME; // extended mode activated
+#if __Use_Original_Qemu != 1 /* ours (U594) */
+        /*
+         * NoVmp (ledger U594): SYSCALL is #UD with IA32_EFER.SCE = 0 (SDM Vol2B); a 64-bit
+         * OS (Windows, Linux) enables it, and Unicorn's UC_X86_INS_SYSCALL hook relies on
+         * SYSCALL running, so the 64-bit reset state has SCE = 1 (as WRMSR would allow it:
+         * only with CPUID.80000001H:EDX.SYSCALL).
+         */
+        if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_SYSCALL) {
+            env->efer |= MSR_EFER_SCE;
+        }
+#endif /* __Use_Original_Qemu (U594) */
 
         /* If we are operating in 64bit mode then add the Long Mode flag
          * to the CPUID feature flag

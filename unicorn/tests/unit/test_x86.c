@@ -15985,6 +15985,59 @@ static void test_x86_f2_maxphyaddr(void)
     }
 }
 
+/*
+ * U594 (ours, SDM Vol2B SYSCALL: "IF ... (IA32_EFER.SCE != 1) THEN #UD"): Unicorn's SYSCALL
+ * (the UC_X86_INS_SYSCALL hook) is #UD while IA32_EFER.SCE = 0; the 64-bit reset state has
+ * SCE = 1 (like a 64-bit OS), so the hook works out of the box.
+ */
+static uint32_t f2_syscalls;
+
+static void f2_syscall_cb(uc_engine *uc, void *user_data)
+{
+    f2_syscalls++;
+}
+
+static void test_x86_f2_syscall_sce(void)
+{
+    static const char code[] = "\x0f\x05\x90";    /* syscall; nop */
+    uc_engine *uc;
+    uc_hook h;
+    uc_x86_msr efer = {0xc0000080, 0};
+    uint64_t rip;
+    int pass;
+
+    for (pass = 0; pass < 3; pass++) {
+        uc_err err;
+
+        uc_common_setup(&uc, UC_ARCH_X86, UC_MODE_64, code, sizeof(code) - 1);
+        OK(uc_hook_add(uc, &h, UC_HOOK_INSN, f2_syscall_cb, NULL, 1, 0, UC_X86_INS_SYSCALL));
+        OK(uc_reg_read(uc, UC_X86_REG_MSR, &efer));
+        TEST_CHECK((efer.value & 0x501) == 0x501);  /* SCE, LME, LMA at reset */
+        TEST_MSG("reset EFER %llx", (unsigned long long)efer.value);
+        if (pass == 1) {
+            efer.value &= ~1ULL;                     /* SCE = 0 */
+            OK(uc_reg_write(uc, UC_X86_REG_MSR, &efer));
+        } else if (pass == 2) {
+            efer.value &= ~1ULL;
+            OK(uc_reg_write(uc, UC_X86_REG_MSR, &efer));
+            efer.value |= 1;                         /* and back to 1 */
+            OK(uc_reg_write(uc, UC_X86_REG_MSR, &efer));
+        }
+        f2_syscalls = 0;
+        err = uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0);
+        OK(uc_reg_read(uc, UC_X86_REG_RIP, &rip));
+        if (pass == 1) {
+            TEST_CHECK(err == UC_ERR_INSN_INVALID && f2_syscalls == 0 && rip == code_start);
+        } else {
+            TEST_CHECK(err == UC_ERR_OK && f2_syscalls == 1 &&
+                       rip == code_start + sizeof(code) - 1);
+        }
+        TEST_MSG("pass %d: err %u hooks %u rip %llx", pass, err, f2_syscalls,
+                 (unsigned long long)rip);
+        OK(uc_close(uc));
+    }
+}
+
 /* ---- end U590-U609 (f2_) ---- */
 
 TEST_LIST = {
@@ -16222,4 +16275,5 @@ TEST_LIST = {
     {"test_x86_f2_store_no_partial", test_x86_f2_store_no_partial},
     {"test_x86_f2_store_no_partial_paging", test_x86_f2_store_no_partial_paging},
     {"test_x86_f2_maxphyaddr", test_x86_f2_maxphyaddr},
+    {"test_x86_f2_syscall_sce", test_x86_f2_syscall_sce},
     {NULL, NULL}};

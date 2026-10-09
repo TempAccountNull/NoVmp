@@ -1088,6 +1088,19 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
     bool synced = false;
 
     HOOK_FOREACH_VAR_DECLARE;
+#if __Use_Original_Qemu != 1 /* ours (U594) */
+    /*
+     * NoVmp (ledger U594): SDM Vol2B SYSCALL: "IF (CS.L != 1) or (IA32_EFER.LMA != 1) or
+     * (IA32_EFER.SCE != 1) THEN #UD" (the CS.L/LMA part is U460, at translation). Unicorn's
+     * SYSCALL runs the UC_X86_INS_SYSCALL hooks instead of the system-call transition and
+     * ignored SCE (upstream QEMU's helper_syscall has this check). The 64-bit reset state
+     * sets SCE like every 64-bit OS (unicorn.c reg_reset), so the hook API is unchanged
+     * unless the guest or the user clears IA32_EFER.SCE.
+     */
+    if (!(env->efer & MSR_EFER_SCE)) {
+        raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U594) */
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
         if (hook->to_delete)
             continue;
