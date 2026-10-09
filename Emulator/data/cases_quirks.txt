@@ -26,11 +26,11 @@ vdppd xmm2, xmm0, xmm1, 0x32 | xmm0=000000000000F03F030A00000000F07F xmm1=040B00
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
 .byte 0x67, 0xf3, 0xaa | rcx=0x5555555500000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
 .byte 0x67, 0xf3, 0xae | rcx=0x7777777700000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
-# bit 6 X87_CMP_UNMASKED_IA_SETS_CC: #IA unmasked (FCW.IM = 0). SDM C3/C2/C0 (ZF/PF/CF) unchanged,
+# x87 compare unmasked #IA condition codes (U537): #IA unmasked (FCW.IM = 0). SDM C3/C2/C0 (ZF/PF/CF) unchanged,
 # hardware "unordered"
-fcom st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000
-fcomp st(1) | fcw=0x037E st0=3FFF:8000000000000000 st1=7FFF:C000000000000000
-fucompp | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000
-fcom qword ptr [rsi] | fcw=0x037E st0=3FFF:8000000000000000 m+0x8000=010000000000F87F
-fcomi st(0), st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000
-fucomip st(0), st(1) | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000
+fcom st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
+fcomp st(1) | fcw=0x037E st0=3FFF:8000000000000000 st1=7FFF:C000000000000000 # known deviation: x87 compare unmasked #IA condition codes
+fucompp | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
+fcom qword ptr [rsi] | fcw=0x037E st0=3FFF:8000000000000000 m+0x8000=010000000000F87F # known deviation: x87 compare unmasked #IA condition codes
+fcomi st(0), st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
+fucomip st(0), st(1) | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes

@@ -12005,14 +12005,12 @@ static void test_x86_hw_quirk_bits(void)
     /* REP 67h ECX=0 zero-extension (U536, quirk removed): SDM writes nothing (the
        i5-13600K zero-extends RCX/RSI/RDI, docs/quirks.md) */
     qk_rep_zero(0, 0);
-    /* bit 6 X87_CMP_UNMASKED_IA_SETS_CC: SDM keeps C3/C2/C0 (ZF/PF/CF), hardware 111 */
+    /* x87 compare unmasked #IA condition codes (U537, quirk removed): SDM keeps C3/C2/C0
+       (ZF/PF/CF) (the i5-13600K sets 111, docs/quirks.md) */
     qk_x87_cmp(0, 'c', 0x0000, 0);
-    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 'c', 0x4500, 0);
     qk_x87_cmp(0, 'i', 0x0000, 0);
-    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 'i', 0x0000, 0x45);
-    /* FTST has no IM condition in the SDM: "unordered" either way */
+    /* FTST has no IM condition in the SDM: "unordered" */
     qk_x87_cmp(0, 't', 0x4500, 0);
-    qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 't', 0x4500, 0);
     qk_cpuid_fdp();
 }
 /* ---- qk_ block end ---- */

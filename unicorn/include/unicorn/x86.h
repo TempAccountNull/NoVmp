@@ -64,10 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// FCOM/FCOMP/FCOMPP/FUCOM/FUCOMP/FUCOMPP and FCOMI/FCOMIP/FUCOMI/FUCOMIP raising an unmasked
-// #IA (FCW.IM = 0): the SDM leaves C3/C2/C0 (EFLAGS ZF/PF/CF) unchanged; the i5-13600K sets
-// them to "unordered" (111) anyway. FTST/FICOM always set "unordered" (SDM).
-#define UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC (1u << 6)
 // (V)DPPS unmasked SIMD FP exceptions (NoVmp ledger U446): the SDM
 // DPPS operation runs DP_Primitive on each 128-bit half in turn and invokes the #XM handler
 // after Temp2, after Temp3 and after Temp4 (the products only update the flags). Intel

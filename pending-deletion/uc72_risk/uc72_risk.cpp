@@ -1183,7 +1183,7 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 }
 
 // every documented i5-13600K deviation from the SDM, for the hardware comparisons
-static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC;
+static constexpr uint32_t X87_HW_QUIRKS = 0;     // U537: no quirk bit left for the x87 comparisons
 
 static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
 {
@@ -1277,12 +1277,30 @@ static const char* x87_known_deviation( const char* op, const uint8_t* in, const
 	const std::string mn = x87_mnemonic( op );
 	const uint16_t fsw_in = uint16_t( in[ 4 ] | ( in[ 5 ] << 8 ) );
 	const bool fcomi = mn == "fcomi" || mn == "fcomip" || mn == "fucomi" || mn == "fucomip";
+	const std::string ops = op;
+	const bool fcom = mn == "fcom" || mn == "fcomp" || mn == "fcompp" || mn == "fucom" || mn == "fucomp" || mn == "fucompp" ||
+					  ops == ".byte 0xdc, 0xd1" || ops == ".byte 0xdc, 0xd9" || ops == ".byte 0xde, 0xd1";     // FCOM2/FCOMP3/FCOMP5
 	// "FCOMI/FUCOMI C1": SDM C1 = 0, the i5-13600K leaves C1 as it was
 	if ( fcomi )
 	{
 		r11_result p = uc;
 		r11_set_fsw( p, uint16_t( ( r11_fsw( p ) & ~0x0200 ) | ( fsw_in & 0x0200 ) ) );
 		if ( r11_diff( hw, p, true ).empty() ) return "FCOMI/FUCOMI C1";
+	}
+	// "x87 compare unmasked #IA condition codes" (U537): with FCW.IM = 0 and #IA raised the SDM
+	// leaves C3/C2/C0 (FCOMI: ZF/PF/CF) unchanged, the i5-13600K sets "unordered" (111); FCOMI
+	// with the C1 deviation on top
+	if ( ( fcom || fcomi ) && !( in[ 0 ] & 0x01 ) && ( r11_fsw( uc ) & 0x0001 ) )
+	{
+		r11_result p = uc;
+		if ( fcomi )
+		{
+			p.ah |= 0x45;
+			r11_set_fsw( p, uint16_t( ( r11_fsw( p ) & ~0x0200 ) | ( fsw_in & 0x0200 ) ) );
+		}
+		else
+			r11_set_fsw( p, uint16_t( r11_fsw( p ) | 0x4500 ) );
+		if ( r11_diff( hw, p, true ).empty() ) return "x87 compare unmasked #IA condition codes";
 	}
 	// "FYL2XP1 below -1" (U533): a finite x = ST0 < -1 is #IA per the SDM (Vol1 Table 8-10); the
 	// i5-13600K raises no #IA and returns x itself with PE, or +-0 / +-inf (sign x XOR y) for

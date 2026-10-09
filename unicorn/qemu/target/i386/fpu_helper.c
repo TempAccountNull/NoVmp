@@ -1034,14 +1034,13 @@ static void x87_compare_end(CPUX86State *env, int old_flags)
  * FPUControlWord.IM = 1 THEN C3, C2, C0 := 111) and FCOMI/FCOMIP/FUCOMI/FUCOMIP
  * ("the status flags in the EFLAGS register are set only if the exception is
  * masked"; OF/SF/AF are cleared regardless). True when this result must leave
- * them unchanged: #IA raised and FCW.IM = 0, unless
- * UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC (the i5-13600K writes "unordered"
- * anyway). FTST and FICOM/FICOMP have no such condition (always "unordered").
+ * them unchanged: #IA raised and FCW.IM = 0 (U537: the only behaviour; the
+ * i5-13600K writes "unordered" anyway, documented in docs/quirks.md). FTST and
+ * FICOM/FICOMP have no such condition (always "unordered").
  */
 static bool x87_cmp_cc_kept(CPUX86State *env, int f)
 {
-    return (f & float_flag_invalid) && !(env->fpuc & 0x0001) &&
-           !(env->uc->x86_hw_quirks & UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC);
+    return (f & float_flag_invalid) && !(env->fpuc & 0x0001);
 }
 
 /* FSW condition codes of FCOM/FUCOM (im_rule) or FTST/FICOM (!im_rule), C1 = 0 */
