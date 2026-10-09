@@ -1145,28 +1145,6 @@ void helper_debug(CPUX86State *env)
     cpu_loop_exit(cs);
 }
 
-#if __Use_Original_Qemu != 1 /* ours (U430) */
-/*
- * NoVmp (ledger U430): zero-count exit of a REP string instruction with a 32-bit
- * address size in 64-bit mode (see gen_jz_ecx_string). The SDM writes nothing;
- * UC_X86_QUIRK_REP_ZERO_COUNT_ZX zero-extends the registers in 'zx' (1 << R_*)
- * as the i5-13600K does.
- */
-void helper_rep_zero_count_zx(CPUX86State *env, uint32_t zx)
-{
-    int r;
-
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_REP_ZERO_COUNT_ZX)) {
-        return;
-    }
-    for (r = 0; r < 8; r++) {
-        if (zx & (1u << r)) {
-            env->regs[r] = (uint32_t)env->regs[r];
-        }
-    }
-}
-
-#endif /* __Use_Original_Qemu (U430) */
 #if __Use_Original_Qemu != 1 /* ours (U110) */
 /*
  * NoVmp (ledger U110): XBEGIN outside 64-bit mode, #GP(0) if the fallback EIP

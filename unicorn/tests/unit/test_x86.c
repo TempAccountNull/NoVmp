@@ -12002,9 +12002,9 @@ static void test_x86_hw_quirk_bits(void)
     /* DPPD two NaN products (U535, quirk removed): SDM p0 + p1 in both elements (the
        i5-13600K gives p1 + p0 in element 1, docs/quirks.md) */
     qk_dppd(0, 0x7FF8000000000A01ULL);
-    /* bit 5 REP_ZERO_COUNT_ZX: SDM writes nothing, hardware zero-extends RCX/RSI/RDI */
+    /* REP 67h ECX=0 zero-extension (U536, quirk removed): SDM writes nothing (the
+       i5-13600K zero-extends RCX/RSI/RDI, docs/quirks.md) */
     qk_rep_zero(0, 0);
-    qk_rep_zero(UC_X86_QUIRK_REP_ZERO_COUNT_ZX, 1);
     /* bit 6 X87_CMP_UNMASKED_IA_SETS_CC: SDM keeps C3/C2/C0 (ZF/PF/CF), hardware 111 */
     qk_x87_cmp(0, 'c', 0x0000, 0);
     qk_x87_cmp(UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC, 'c', 0x4500, 0);

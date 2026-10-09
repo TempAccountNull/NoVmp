@@ -2,13 +2,15 @@
 # Only these self-generated snippets run natively.
 #
 # --- REP string, 67h (32-bit address size) in 64-bit mode, ECX = 0: upper halves of RSI/RDI/RCX?
-.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf3, 0xa5 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf3, 0xaa | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf3, 0x48, 0xab | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf3, 0xa6 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf2, 0xae | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
-.byte 0x67, 0xf3, 0xac | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000
+# SDM (REP Operation, WHILE CountReg != 0): nothing is written; the i5-13600K zero-extends
+# (docs/quirks.md "REP 67h ECX=0 zero-extension"; REP LODS takes the SDM path in ~5 % of runs)
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0xa5 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0xaa | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0x48, 0xab | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0xa6 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf2, 0xae | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0xac | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
 # same without 67h (RCX = 0): nothing should change
 .byte 0xf3, 0xa4 | rcx=0 rsi=0x30028000 rdi=0x30029000
 # 67h with ECX = 2 and dirty upper halves: element-wise result

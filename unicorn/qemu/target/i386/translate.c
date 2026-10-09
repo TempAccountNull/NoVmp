@@ -1422,7 +1422,6 @@ static inline void gen_jcc1(DisasContext *s, int b, TCGLabel *l1)
 
 /* XXX: does not work with gdbstub "ice" single step - not a
    serious problem */
-#if __Use_Original_Qemu == 1 /* original QEMU (U60) */
 static TCGLabel *gen_jz_ecx_string(DisasContext *s)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -1434,35 +1433,6 @@ static TCGLabel *gen_jz_ecx_string(DisasContext *s)
     gen_set_label(tcg_ctx, l1);
     return l2;
 }
-#else /* ours (U60) */
-/*
- * NoVmp (ledger U60, U430): a REP string instruction with a 32-bit address size
- * in 64-bit mode and ECX = 0. SDM REP Operation: WHILE CountReg != 0 ... OD, so
- * nothing is executed and no register is written (the default). The i5-13600K
- * writes its registers back at that width (emu-alltest --cases hwcheck_gate1:
- * MOVS -> RCX/RSI/RDI, STOS -> RCX/RDI, LODS/CMPS/SCAS -> RCX zero-extended;
- * Goldmont MSROM U045c-e): UC_X86_QUIRK_REP_ZERO_COUNT_ZX, checked at run time by
- * helper_rep_zero_count_zx. 'zx' is the mask of registers (1 << R_*) written back
- * on that exit; on the other exits they were already written at that width.
- */
-static TCGLabel *gen_jz_ecx_string(DisasContext *s, unsigned zx)
-{
-    TCGContext *tcg_ctx = s->uc->tcg_ctx;
-    TCGLabel *l1 = gen_new_label(tcg_ctx);
-    TCGLabel *l2 = gen_new_label(tcg_ctx);
-    gen_op_jnz_ecx(s, l1);
-    gen_set_label(tcg_ctx, l2);
-#ifdef TARGET_X86_64
-    if (CODE64(s) && s->aflag == MO_32 && zx) {
-        gen_helper_rep_zero_count_zx(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, zx));
-    }
-#endif
-    gen_jmp_rel_csize(s, 0, 1);
-    gen_set_label(tcg_ctx, l1);
-    return l2;
-}
-
-#endif /* __Use_Original_Qemu (U60) */
 
 static void gen_stos(DisasContext *s, MemOp ot)
 {
@@ -1549,27 +1519,6 @@ static void gen_outs(DisasContext *s, MemOp ot)
     gen_bpt_io(s, s->tmp2_i32, ot);
 }
 
-#if __Use_Original_Qemu != 1 /* ours (U60) */
-/* registers a REP string instruction writes back (see gen_jz_ecx_string) */
-static unsigned gen_string_regs(void (*fn)(DisasContext *s, MemOp ot))
-{
-    void (*movs)(DisasContext *, MemOp) = gen_movs, (*stos)(DisasContext *, MemOp) = gen_stos;
-    void (*lods)(DisasContext *, MemOp) = gen_lods, (*scas)(DisasContext *, MemOp) = gen_scas;
-    void (*cmps)(DisasContext *, MemOp) = gen_cmps;
-
-    if (fn == movs) {
-        return (1u << R_ECX) | (1u << R_ESI) | (1u << R_EDI);
-    }
-    if (fn == stos) {
-        return (1u << R_ECX) | (1u << R_EDI);
-    }
-    if (fn == lods || fn == scas || fn == cmps) {
-        return 1u << R_ECX;
-    }
-    return 0;                           /* INS/OUTS: not observable at CPL3, unchanged */
-}
-#endif /* __Use_Original_Qemu (U60) */
-
 #if __Use_Original_Qemu != 1 /* ours (U64) */
 /* NoVmp (U64): REX.W selects the 64-bit FIP/FDP format of the FXSAVE/XSAVE image */
 static void gen_x87_fx64(DisasContext *s)
@@ -1586,11 +1535,7 @@ static void gen_repz(DisasContext *s, MemOp ot,
 {
     TCGLabel *l2;
     gen_update_cc_op(s);
-#if __Use_Original_Qemu == 1 /* original QEMU (U60) */
     l2 = gen_jz_ecx_string(s);
-#else /* ours (U60) */
-    l2 = gen_jz_ecx_string(s, gen_string_regs(fn));
-#endif /* __Use_Original_Qemu (U60) */
     fn(s, ot);
     gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
     /*
@@ -1612,11 +1557,7 @@ static void gen_repz2(DisasContext *s, MemOp ot, int nz,
 {
     TCGLabel *l2;
     gen_update_cc_op(s);
-#if __Use_Original_Qemu == 1 /* original QEMU (U60) */
     l2 = gen_jz_ecx_string(s);
-#else /* ours (U60) */
-    l2 = gen_jz_ecx_string(s, gen_string_regs(fn));
-#endif /* __Use_Original_Qemu (U60) */
     fn(s, ot);
     gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
     gen_update_cc_op(s);

@@ -64,11 +64,6 @@ typedef enum uc_cpu_x86 {
 // each bit selects one measured i5-13600K behaviour instead. Where the SDM is silent or
 // says "undefined"/"implementation specific" the emulator follows the hardware without a
 // bit. All bits the i5-13600K needs: bits 0-6 (emu-alltest --quirks cpu). docs/quirks.md.
-// REP MOVS/STOS/LODS/CMPS/SCAS with a 32-bit address size (67h) in 64-bit mode and ECX = 0:
-// the SDM (REP Operation: WHILE CountReg != 0) writes no register; the i5-13600K zero-extends
-// RCX/RSI/RDI (MOVS), RCX/RDI (STOS), RCX (LODS/CMPS/SCAS). (REP LODS leaves RCX unchanged
-// in about 5% of hardware runs; the bit models the usual result.)
-#define UC_X86_QUIRK_REP_ZERO_COUNT_ZX (1u << 5)
 // FCOM/FCOMP/FCOMPP/FUCOM/FUCOMP/FUCOMPP and FCOMI/FCOMIP/FUCOMI/FUCOMIP raising an unmasked
 // #IA (FCW.IM = 0): the SDM leaves C3/C2/C0 (EFLAGS ZF/PF/CF) unchanged; the i5-13600K sets
 // them to "unordered" (111) anyway. FTST/FICOM always set "unordered" (SDM).
