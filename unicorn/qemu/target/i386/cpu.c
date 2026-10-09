@@ -1407,6 +1407,20 @@ ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT] = {
         .ecx = ESA_FEATURE_ALIGN64_MASK | ESA_FEATURE_XFD_MASK,
     },
 #endif /* __Use_Original_Qemu (U170) */
+#if __Use_Original_Qemu != 1 /* ours (U610) */
+    /*
+     * NoVmp (ledger U610): Intel APX EGPR state (APX spec 355828-009 3.1.4.3.2/3.1.4.3.3):
+     * CPUID.(EAX=0DH,ECX=19): EAX = 128 (R16-R31, 8 bytes each, Table 3.9), EBX = 960 (3C0H,
+     * the deprecated MPX area), ECX = 0 (user state, no 64-byte alignment in the compacted
+     * format, no XFD). In the compacted format it follows the components below 19.
+     */
+    [XSTATE_APX_BIT] = {
+        .feature = FEAT_7_1_EDX, .bits = CPUID_7_1_EDX_APX_F,
+        .offset = 0x3c0,
+        .size = 16 * 8,
+        .ecx = 0,
+    },
+#endif /* __Use_Original_Qemu (U610) */
 };
 
 uint32_t xsave_area_size(uint64_t mask, bool compacted)
@@ -4191,6 +4205,7 @@ static bool x86_cpuid_leaf_has_subleaves(uint32_t leaf)
     switch (leaf) {
     case 0x4: case 0x7: case 0xb: case 0xd: case 0xf: case 0x10: case 0x12: case 0x14:
     case 0x17: case 0x18: case 0x1b: case 0x1d: case 0x1f: case 0x20: case 0x23: case 0x24:
+    case 0x29: /* APX leaf, ECX = sub-leaf (U610) */
         return true;
     default:
         return false;
@@ -4817,6 +4832,22 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         }
         break;
 #endif /* __Use_Original_Qemu (U370) */
+#if __Use_Original_Qemu != 1 /* ours (U610) */
+    case 0x29:
+        /*
+         * NoVmp (ledger U610): Intel APX leaf (APX spec 355828-009 3.1.4.3.1): (29H,0) EAX =
+         * maximum sub-leaf = 0, EBX[0] = APX_NCI_NDD_NF (always present with APX_F), EBX[31:1],
+         * ECX, EDX reserved = 0. All zero without APX_F and for other sub-leaves.
+         */
+        *eax = 0;
+        *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        if ((env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_APX_F) && count == 0) {
+            *ebx = CPUID_29_0_EBX_APX_NCI_NDD_NF;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U610) */
     case 0x40000000:
         /*
          * CPUID code in kvm_arch_init_vcpu() ignores stuff
@@ -5617,6 +5648,23 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 0x24);
     }
 #endif /* __Use_Original_Qemu (U370) */
+#if __Use_Original_Qemu != 1 /* ours (U610) */
+    /*
+     * NoVmp (ledger U610): UC_CTL_X86_APX opts in to Intel APX after the TCG filter (APX spec
+     * 355828-009 3.1.4.3.1): CPUID.(EAX=7,ECX=1):EDX.APX_F[21] (leaf-7 level >= 1) and the
+     * APX leaf 29H (basic level >= 29H). "No processor will enumerate support for both Intel
+     * MPX and Intel APX" (3.1.4.3.3): MPX (7.0:EBX[14], state components 3-4) is withdrawn,
+     * so the U37 recomputation below derives component 19 in place of 3-4 at offset 3C0H.
+     * "Any Intel processor that enumerates support for APX_F ... will also enumerate CMOV".
+     */
+    if (uc->x86_apx) {
+        env->features[FEAT_7_1_EDX] |= CPUID_7_1_EDX_APX_F;
+        env->features[FEAT_7_0_EBX] &= ~CPUID_7_0_EBX_MPX;
+        env->features[FEAT_1_EDX] |= CPUID_CMOV;
+        env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+        env->cpuid_level = MAX(env->cpuid_level, 0x29);
+    }
+#endif /* __Use_Original_Qemu (U610) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

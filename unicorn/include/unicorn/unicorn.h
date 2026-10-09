@@ -749,6 +749,17 @@ typedef enum uc_control_type {
     // EBX[7:0] caps the version. Other values -> UC_ERR_ARG. Only before the engine is
     // initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_AVX10,
+    // x86 only (NoVmp U610): Intel APX (Advanced Performance Extensions, APX spec 355828-009)
+    // in the CPU model. UC_X86_APX_F (1) sets CPUID.(EAX=7,ECX=1):EDX.APX_F[21] and leaf 29H
+    // ((29H,0) EAX = 0, EBX[0] = APX_NCI_NDD_NF), withdraws MPX (7.0:EBX[14], components 3-4:
+    // no CPU enumerates both) and adds XSAVE state component 19 (EGPRs R16-R31, 128 bytes at
+    // 3C0H) for XCR0 / CPUID.(EAX=0DH) / the XSAVE family; reset XCR0 enables bit 19 (like
+    // every supported component, U120). REX2 (D5) in 64-bit mode then needs CR4.OSXSAVE = 1
+    // and XCR0[19] = 1 (else #UD, Table 3.8); UC_X86_REG_R16..R31 (+D/W/B) are readable and
+    // writable. 0 (default) = no APX: UC_CPU_X86_MAX and the i5-13600K profile are unchanged.
+    // Other values -> UC_ERR_ARG. Only before the engine is initialised, like
+    // UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_APX,
 } uc_control_type;
 
 // UC_CTL_X86_AVX512 values (NoVmp U128)
@@ -780,6 +791,9 @@ typedef enum uc_control_type {
 #define UC_X86_AVX10_2 2           // AVX10.2: + the AVX10.2 instructions; implies V1_AUX
 #define UC_X86_AVX10_VERSION 0xff  // bits 7:0 = version
 #define UC_X86_AVX10_V1_AUX 0x100  // CPUID.(24H,1):ECX.AVX10_V1_AUX[2] (with version >= 1)
+
+// UC_CTL_X86_APX values (NoVmp U610)
+#define UC_X86_APX_F 1             // APX foundation: EGPRs R16-R31, REX2, APX state component 19
 
 /*
 
@@ -892,6 +906,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_AVX10, 1), (version))
 #define uc_ctl_get_x86_avx10(uc, version)                                      \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_AVX10, 1), (version))
+#define uc_ctl_set_x86_apx(uc, on)                                             \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_APX, 1), (on))
+#define uc_ctl_get_x86_apx(uc, on)                                             \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_APX, 1), (on))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

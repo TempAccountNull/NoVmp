@@ -3341,6 +3341,25 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
+    case UC_CTL_X86_APX:
+        /* NoVmp U610: Intel APX (UC_X86_APX_F) or 0 = none; fixed once the CPU exists */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *on = va_arg(args, int *);
+            *on = uc->x86_apx;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int on = va_arg(args, int);
+            if (uc->init_done || (on & ~UC_X86_APX_F)) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_apx = on;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

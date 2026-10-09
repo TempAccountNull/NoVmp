@@ -608,6 +608,15 @@ typedef enum X86Seg {
 #define XSTATE_ARCH_LBR_MASK            (1ULL << XSTATE_ARCH_LBR_BIT)
 #define XSTATE_XTILE_CFG_MASK           (1ULL << XSTATE_XTILE_CFG_BIT)
 #define XSTATE_XTILE_DATA_MASK          (1ULL << XSTATE_XTILE_DATA_BIT)
+#if __Use_Original_Qemu != 1 /* ours (U610) */
+/*
+ * NoVmp (ledger U610): Intel APX extended GPR state R16-R31 (APX spec 355828-009 3.1.4.2.1,
+ * 3.1.4.3.2): XCR0 bit 19, 128 bytes at offset 960 (3C0H) of the standard-format area (the
+ * former MPX components 3-4, which a CPU with APX never enumerates).
+ */
+#define XSTATE_APX_BIT                  19
+#define XSTATE_APX_MASK                 (1ULL << XSTATE_APX_BIT)
+#endif /* __Use_Original_Qemu (U610) */
 
 #define XSTATE_DYNAMIC_MASK             (XSTATE_XTILE_DATA_MASK)
 
@@ -617,12 +626,22 @@ typedef enum X86Seg {
 #define ESA_FEATURE_ALIGN64_MASK        (1U << ESA_FEATURE_ALIGN64_BIT)
 #define ESA_FEATURE_XFD_MASK            (1U << ESA_FEATURE_XFD_BIT)
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U610) */
 #define CPUID_XSTATE_XCR0_MASK  (XSTATE_FP_MASK | XSTATE_SSE_MASK | \
                                  XSTATE_YMM_MASK | XSTATE_BNDREGS_MASK | \
                                  XSTATE_BNDCSR_MASK | XSTATE_OPMASK_MASK | \
                                  XSTATE_ZMM_Hi256_MASK | \
                                  XSTATE_Hi16_ZMM_MASK | XSTATE_PKRU_MASK | \
                                  XSTATE_XTILE_CFG_MASK | XSTATE_XTILE_DATA_MASK)
+#else /* ours (U610) */
+#define CPUID_XSTATE_XCR0_MASK  (XSTATE_FP_MASK | XSTATE_SSE_MASK | \
+                                 XSTATE_YMM_MASK | XSTATE_BNDREGS_MASK | \
+                                 XSTATE_BNDCSR_MASK | XSTATE_OPMASK_MASK | \
+                                 XSTATE_ZMM_Hi256_MASK | \
+                                 XSTATE_Hi16_ZMM_MASK | XSTATE_PKRU_MASK | \
+                                 XSTATE_XTILE_CFG_MASK | XSTATE_XTILE_DATA_MASK | \
+                                 XSTATE_APX_MASK)
+#endif /* __Use_Original_Qemu (U610) */
 
 #define CPUID_XSTATE_XSS_MASK   (XSTATE_ARCH_LBR_MASK)
 
@@ -1063,6 +1082,12 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define AVX10_1_7_0_EDX CPUID_7_0_EDX_AVX512_FP16
 #define AVX10_1_7_1_EAX CPUID_7_1_EAX_AVX512_BF16
 #endif /* __Use_Original_Qemu (U370) */
+#if __Use_Original_Qemu != 1 /* ours (U610) */
+/* Intel APX foundation (APX spec 355828-009 ch.2, 3.1.4.3.1): CPUID.(EAX=7,ECX=1):EDX[21] */
+#define CPUID_7_1_EDX_APX_F             (1U << 21)
+/* CPUID.(EAX=29H,ECX=0):EBX.APX_NCI_NDD_NF[0], always with APX_F on Intel CPUs */
+#define CPUID_29_0_EBX_APX_NCI_NDD_NF   (1U << 0)
+#endif /* __Use_Original_Qemu (U610) */
 
 /* CLZERO instruction */
 #define CPUID_8000_0008_EBX_CLZERO      (1U << 0)
@@ -1661,7 +1686,11 @@ typedef struct ExtSaveArea {
     uint32_t ecx;
 } ExtSaveArea;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U610) */
 #define XSAVE_STATE_AREA_COUNT (XSTATE_XTILE_DATA_BIT + 1)
+#else /* ours (U610) */
+#define XSAVE_STATE_AREA_COUNT (XSTATE_APX_BIT + 1)
+#endif /* __Use_Original_Qemu (U610) */
 
 extern ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT];
 
