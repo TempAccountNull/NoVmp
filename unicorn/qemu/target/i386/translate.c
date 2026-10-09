@@ -182,12 +182,13 @@ typedef struct DisasContext {
      * 3.1.2.4). apx_zu: ZU (IMUL 69/6B, SETcc with EVEX.ND = 1): the destination register is
      * zero-extended. apx_post: APX_POST_NF (EVEX.NF = 1: the status flags are restored after
      * the instruction) or APX_POST_CC (CCMPscc / CTESTscc: SCC false -> the DFV flags);
-     * apx_flags / apx_cond: the flags before the instruction and the SCC value (local temps).
+     * apx_flags / apx_cond: the flags before the instruction and the SCC value (local temps);
+     * apx_opc: the map 4 opcode byte, apx_scc / apx_dfv: CCMP / CTEST payload (U641).
      */
     int8_t apx_ndd;
     bool apx_zu;
     uint8_t apx_post;
-    uint8_t apx_scc, apx_dfv;
+    uint8_t apx_opc, apx_scc, apx_dfv;
     uint8_t apx_nd, apx_nf;
     TCGv apx_flags, apx_cond;
 #endif /* __Use_Original_Qemu (U640) */
@@ -4090,6 +4091,21 @@ static void gen_apx_pre(DisasContext *s)
 
     s->apx_flags = tcg_temp_local_new(tcg_ctx);
     gen_apx_flags(s, s->apx_flags);
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+    /*
+     * U641: CCMPscc / CTESTscc evaluate the source condition code on the flags before the
+     * CMP / TEST: SCC 1010b = always true (T), 1011b = always false (F), else the x86 cc
+     * (APX spec 355828-009 3.1.3.2.1).
+     */
+    if (s->apx_post == APX_POST_CC) {
+        s->apx_cond = tcg_temp_local_new(tcg_ctx);
+        if (s->apx_scc == 0xa || s->apx_scc == 0xb) {
+            tcg_gen_movi_tl(tcg_ctx, s->apx_cond, s->apx_scc == 0xa);
+        } else {
+            gen_apx_cc(s, s->apx_cond, s->apx_flags, s->apx_scc);
+        }
+    }
+#endif /* __Use_Original_Qemu (U641) */
 }
 
 /* After it: "setting EVEX.NF = 1 suppresses the update of status flags" (3.1.2.3.1 2.(c)) */
@@ -4097,6 +4113,27 @@ static void gen_apx_post(DisasContext *s)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+    /*
+     * U641: SCC true: the flags of the CMP / TEST; SCC false: "OF = EVEX.OF, SF = EVEX.SF,
+     * ZF = EVEX.ZF, CF = EVEX.CF, PF = EVEX.CF, AF = 0" (the DFV, P1[6:3]). The memory operand
+     * is read either way ("SCC evaluating to false does not suppress memory faults").
+     */
+    if (s->apx_post == APX_POST_CC) {
+        int dfv = s->apx_dfv;
+        TCGv fl = tcg_const_tl(tcg_ctx, ((dfv & 8) ? CC_O : 0) | ((dfv & 4) ? CC_S : 0) |
+                                        ((dfv & 2) ? CC_Z : 0) | ((dfv & 1) ? CC_C | CC_P : 0));
+        TCGv zero = tcg_const_tl(tcg_ctx, 0);
+
+        gen_compute_eflags(s);
+        tcg_gen_movcond_tl(tcg_ctx, TCG_COND_NE, cpu_cc_src, s->apx_cond, zero, cpu_cc_src, fl);
+        tcg_temp_free(tcg_ctx, fl);
+        tcg_temp_free(tcg_ctx, zero);
+        tcg_temp_free(tcg_ctx, s->apx_cond);
+        tcg_temp_free(tcg_ctx, s->apx_flags);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U641) */
     set_cc_op(s, CC_OP_EFLAGS);
     tcg_gen_mov_tl(tcg_ctx, cpu_cc_src, s->apx_flags);
     tcg_temp_free(tcg_ctx, s->apx_flags);
@@ -4114,6 +4151,9 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int p0, p1, p2, opc, modrm, mod, reg, pp, nd, nf, v, b;
     bool byte_op = false, nd_ok = false, nf_ok = false, zu = false;
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+    bool ccmp = false;
+#endif /* __Use_Original_Qemu (U641) */
     int prefixes = *pprefixes;
 
     p0 = x86_ldub_code(env, s);
@@ -4160,16 +4200,27 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
         nd_ok = true;
         nf_ok = (opc >> 3) != 2 && (opc >> 3) != 3;     /* not ADC/SBB */
         break;
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+    case 0x38: case 0x39: case 0x3a: case 0x3b:      /* CCMPscc (CMP 38-3B) */
+    case 0x84: case 0x85:                            /* CTESTscc (TEST 84/85) */
+        b = opc;
+        byte_op = !(opc & 1);
+        ccmp = true;
+        break;
+#endif /* __Use_Original_Qemu (U641) */
     case 0x69: case 0x6b:                            /* IMUL rv, rv/mv, iz/ib: ZU */
         b = opc;
         zu = nf_ok = true;
         break;
     case 0x80: case 0x81: case 0x83:                 /* group 1 */
-        if (reg == 7) {
-            return APX_M4_UD;                        /* CCMPscc: U641 */
-        }
         b = opc;
         byte_op = opc == 0x80;
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+        if (reg == 7) {
+            ccmp = true;                             /* CCMPscc (80/81/83 /7) */
+            break;
+        }
+#endif /* __Use_Original_Qemu (U641) */
         nd_ok = true;
         nf_ok = reg != 2 && reg != 3;
         break;
@@ -4183,8 +4234,9 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
         b = opc;
         byte_op = opc == 0xf6;
         switch (reg) {
-        case 0: case 1:
-            return APX_M4_UD;                        /* CTESTscc: U641 */
+        case 0: case 1:                              /* CTESTscc (F6/F7 /0 /1) */
+            ccmp = true;
+            break;
         case 2:                                      /* NOT */
             nd_ok = true;
             break;
@@ -4247,6 +4299,33 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
     default:
         return APX_M4_UD;
     }
+#if __Use_Original_Qemu != 1 /* ours (U641) */
+    /*
+     * U641: CCMPscc / CTESTscc (3.1.3.2.1, Figure 3.7, APX-EVEX-CCMP Table 4.6): P1 = W OF SF
+     * ZF CF U pp (the DFV in place of V), P2 = 0 0 0 ND=0 SC3..SC0: "any bit other than
+     * {SC3,SC2,SC1,SC0} is 1" #UD; mod = 11b needs U = 1 (checked above); pp as for CMP/TEST.
+     */
+    if (ccmp) {
+        if ((p2 & 0xf0) || (byte_op ? pp != 0 : pp > 1)) {
+            return APX_M4_UD;
+        }
+        s->rex_r = ((~p0 >> 4) & 8) | (~p0 & 0x10);
+        s->rex_x = ((~p0 >> 3) & 8) | ((~p1 & 0x04) << 2);
+        s->rex_b = ((~p0 >> 2) & 8) | ((p0 & 0x08) << 1);
+        s->vex_w = (p1 >> 7) & 1;
+        prefixes |= PREFIX_REX;
+        if (pp == 1) {
+            prefixes |= PREFIX_DATA;
+        }
+        s->apx_opc = opc;
+        s->apx_post = APX_POST_CC;
+        s->apx_scc = p2 & 15;
+        s->apx_dfv = (p1 >> 3) & 15;
+        *pprefixes = prefixes;
+        *pb = b;
+        return APX_M4_GO;
+    }
+#endif /* __Use_Original_Qemu (U641) */
     /* reserved payload bits: P2 = 0 0 0 ND V4 NF 0 0 ("any bit other than {V4,ND,NF}") */
     if (p2 & 0xe3) {
         return APX_M4_UD;
@@ -4283,7 +4362,7 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
     }
     s->apx_nd = nd;
     s->apx_nf = nf;
-    s->apx_scc = opc;
+    s->apx_opc = opc;
     if (nd && nd_ok) {
         s->apx_ndd = v;
     }
@@ -4303,7 +4382,7 @@ static void gen_apx_setcc(CPUX86State *env, DisasContext *s, int modrm)
     int rm = (modrm & 7) | REX_B(s);
 
     gen_apx_flags(s, s->T0);
-    gen_apx_cc(s, s->T0, s->T0, s->apx_scc & 15);
+    gen_apx_cc(s, s->T0, s->T0, s->apx_opc & 15);
     if ((modrm >> 6) == 3) {
         if (s->apx_zu) {
             tcg_gen_mov_tl(tcg_ctx, cpu_regs[rm], s->T0);
@@ -4321,7 +4400,7 @@ static void gen_apx_setcc(CPUX86State *env, DisasContext *s, int modrm)
 static bool gen_apx_map4_own(CPUX86State *env, DisasContext *s)
 {
     int modrm = x86_ldub_code(env, s);
-    int opc = s->apx_scc;
+    int opc = s->apx_opc;
 
     if ((opc & 0xf0) == 0x40) {
         gen_apx_setcc(env, s, modrm);
