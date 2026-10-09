@@ -17240,6 +17240,157 @@ static void test_x86_amx2_xsaves(void)
     ax_close(&a);
 }
 /* ---- end U720-U727 (amx2_) ---- */
+/* ---- U700-U719 (fx3_) ---- */
+#define FX3_PG 0x50000000ULL
+#define FX3_STATUS 0x8d5ULL     /* OF SF ZF AF PF CF */
+
+/* memory hooks record RFLAGS (the state a hook sees during the access) */
+static uint64_t fx3_hook_flags[4];
+static int fx3_hook_n;
+
+static void fx3_mem_hook(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                         int64_t value, void *user_data)
+{
+    uint64_t fl = 0;
+
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &fl));
+    if (fx3_hook_n < 4) {
+        fx3_hook_flags[fx3_hook_n] = fl;
+    }
+    fx3_hook_n++;
+}
+
+static void fx3_code_hook(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
+{
+}
+
+enum { FX3_UNMAPPED, FX3_READONLY, FX3_RW };
+enum { FX3_NOHOOK, FX3_CODEHOOK, FX3_MEMHOOK };
+
+/*
+ * runs 'code' (64-bit, CPL0) with RBX = FX3_PG holding 8000000000000001h, RCX = rcx, RDX = 2,
+ * RFLAGS = 2; the page is unmapped, read-only or read/write
+ */
+static uc_err fx3_run(const char *code, size_t len, int map, int hook, uint64_t rcx,
+                      uint64_t *rflags, uint64_t *rip, uint64_t *mem)
+{
+    uc_engine *uc;
+    uc_hook h;
+    uc_err err;
+    uint64_t v = 0x8000000000000001ULL, rbx = FX3_PG, rdx = 2, fl = 2;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    if (map != FX3_UNMAPPED) {
+        OK(uc_mem_map(uc, FX3_PG, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, FX3_PG, &v, 8));
+        if (map == FX3_READONLY) {
+            OK(uc_mem_protect(uc, FX3_PG, 0x1000, UC_PROT_READ));
+        }
+    }
+    OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &rcx));
+    OK(uc_reg_write(uc, UC_X86_REG_RDX, &rdx));
+    OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &fl));
+    fx3_hook_n = 0;
+    if (hook == FX3_CODEHOOK) {
+        OK(uc_hook_add(uc, &h, UC_HOOK_CODE, fx3_code_hook, NULL, 1, 0));
+    } else if (hook == FX3_MEMHOOK) {
+        OK(uc_hook_add(uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, fx3_mem_hook, NULL, 1, 0));
+    }
+    err = uc_emu_start(uc, code_start, code_start + len, 0, 0);
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, rflags));
+    OK(uc_reg_read(uc, UC_X86_REG_RIP, rip));
+    *mem = 0;
+    if (map != FX3_UNMAPPED) {
+        OK(uc_mem_read(uc, FX3_PG, mem, 8));
+    }
+    OK(uc_close(uc));
+    return err;
+}
+
+/*
+ * U700: an instruction that computed the flags (lazy state -> CC_OP_EFLAGS) before its memory
+ * access faults: the faulting state has the flags of the instruction start (SDM Vol3A 6.5),
+ * those of the instruction before it: CMP RCX, RDX (1 - 2: CF PF AF SF = 95h) or SHL RCX, 1
+ * (C000000000000001h: CF SF = 81h; AF undefined, not compared).
+ */
+static void test_x86_fx3_flags_at_fault(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        int map, hook;
+        uc_err err;
+        const char *what;
+    } t[] = {
+        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_READ_UNMAPPED, "rcl qword [rbx], 1 (load)"},
+        {"\xd3\x1b", 2, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_READ_UNMAPPED, "rcr dword [rbx], cl (load)"},
+        {"\x48\xd1\x13", 3, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "rcl qword [rbx], 1 (store)"},
+        {"\x66\xc1\x1b\x03", 4, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "rcr word [rbx], 3 (store)"},
+        {"\x0f\x90\x03", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "seto [rbx]"},
+        {"\x0f\x96\x03", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "setbe [rbx]"},
+        {"\x0f\x9a\x03", 3, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "setp [rbx]"},
+        {"\x0f\x9c\x03", 3, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "setl [rbx]"},
+        {"\x0f\x9e\x03", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "setle [rbx]"},
+        /* UC_HOOK_CODE: the hook prologue computes the flags before every instruction */
+        {"\x48\x8b\x03", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: mov rax, [rbx]"},
+        {"\x48\x03\x03", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: add rax, [rbx]"},
+        {"\x48\x89\x03", 3, FX3_READONLY, FX3_CODEHOOK, UC_ERR_WRITE_PROT, "hook: mov [rbx], rax"},
+        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: rcl qword [rbx], 1"},
+    };
+    static const struct {
+        const char *code;   /* 3 bytes */
+        uint64_t rcx, mask, flags;
+    } setter[2] = {
+        {"\x48\x39\xd1", 1, FX3_STATUS, 0x95},                              /* cmp rcx, rdx */
+        {"\x48\xd1\xe1", 0xc000000000000001ULL, FX3_STATUS & ~0x10ULL, 0x81}, /* shl rcx, 1 */
+    };
+    size_t i;
+    int k;
+
+    for (k = 0; k < 2; k++) {
+        for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+            char code[16];
+            uint64_t fl = 0, rip = 0, mem = 0;
+            uc_err err;
+
+            memcpy(code, setter[k].code, 3);
+            memcpy(code + 3, t[i].code, t[i].len);
+            err = fx3_run(code, 3 + t[i].len, t[i].map, t[i].hook, setter[k].rcx, &fl, &rip, &mem);
+            TEST_CHECK(err == t[i].err && (fl & setter[k].mask) == setter[k].flags &&
+                       rip == code_start + 3 &&
+                       (t[i].map != FX3_READONLY || mem == 0x8000000000000001ULL));
+            TEST_MSG("%s %s: err %u rflags %" PRIx64 " rip %" PRIx64 " mem %016" PRIx64,
+                     k ? "shl" : "cmp", t[i].what, err, fl, rip, mem);
+        }
+    }
+}
+
+/*
+ * U700: a memory hook during RCL's load and store sees the flags of the instruction start
+ * (95h); RCL itself completes: 8000000000000001h RCL 1 with CF = 1 = 3, CF = 1, OF = 1.
+ */
+static void test_x86_fx3_flags_mem_hook(void)
+{
+    uint64_t fl = 0, rip = 0, mem = 0;
+    uc_err err = fx3_run("\x48\x39\xd1\x48\xd1\x13", 6, FX3_RW, FX3_MEMHOOK, 1, &fl, &rip, &mem);
+
+    TEST_CHECK(err == UC_ERR_OK && rip == code_start + 6 && mem == 3 &&
+               (fl & FX3_STATUS) == 0x895 && fx3_hook_n == 2 &&
+               (fx3_hook_flags[0] & FX3_STATUS) == 0x95 && (fx3_hook_flags[1] & FX3_STATUS) == 0x95);
+    TEST_MSG("err %u rflags %" PRIx64 " mem %" PRIx64 " hooks %d: %" PRIx64 " %" PRIx64, err, fl,
+             mem, fx3_hook_n, fx3_hook_flags[0], fx3_hook_flags[1]);
+    /* SETO: the store hook sees 95h, then OF = 0 is stored */
+    mem = 0;
+    err = fx3_run("\x48\x39\xd1\x0f\x90\x03", 6, FX3_RW, FX3_MEMHOOK, 1, &fl, &rip, &mem);
+    TEST_CHECK(err == UC_ERR_OK && mem == 0x8000000000000000ULL && (fl & FX3_STATUS) == 0x95 &&
+               fx3_hook_n == 1 && (fx3_hook_flags[0] & FX3_STATUS) == 0x95);
+    TEST_MSG("seto: err %u rflags %" PRIx64 " mem %" PRIx64 " hook %" PRIx64, err, fl, mem,
+             fx3_hook_flags[0]);
+}
+/* ---- end U700-U719 (fx3_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -17492,4 +17643,6 @@ TEST_LIST = {
     {"test_x86_amx2_exceptions", test_x86_amx2_exceptions},
     {"test_x86_amx2_values", test_x86_amx2_values},
     {"test_x86_amx2_xsaves", test_x86_amx2_xsaves},
+    {"test_x86_fx3_flags_at_fault", test_x86_fx3_flags_at_fault},
+    {"test_x86_fx3_flags_mem_hook", test_x86_fx3_flags_mem_hook},
     {NULL, NULL}};

@@ -273,6 +273,9 @@ typedef struct DisasContext {
     sigjmp_buf jmpbuf;
     TCGOp *prev_insn_end;
     target_ulong prev_pc;
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+    TCGOp *insn_start_op;   /* this instruction's insn_start (its restore point, cc_op) */
+#endif /* __Use_Original_Qemu (U700) */
 } DisasContext;
 
 #define DISAS_EOB_ONLY         DISAS_TARGET_0
@@ -1129,6 +1132,29 @@ static void gen_compute_eflags(DisasContext *s)
         tcg_temp_free(tcg_ctx, zero);
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+/*
+ * NoVmp (ledger U700): a fault restores the cc_op recorded at the instruction start
+ * (restore_state_to_opc), but CC_SRC/CC_DST/... are the TCG globals as they are at the
+ * faulting access. gen_compute_eflags changes the lazy flags state from that cc_op to
+ * CC_OP_EFLAGS (CC_SRC := the flags, the other globals dead) without changing the flags; done
+ * before an access that can fault (SETcc m8, RCL/RCR m, the UC_HOOK_CODE prologue), a #PF
+ * there gave the old cc_op with the new CC_SRC: wrong flags in the faulting state (SDM Vol3A
+ * 6.5: a fault leaves the state as it was before the instruction) and in memory hooks
+ * (tlb_hook_state_sync restores to the instruction start). Called where only that
+ * value-preserving change has happened and before any access of the instruction: the restore
+ * point then records the new representation. Upstream QEMU computes these flags into
+ * temporaries (gen_prepare_cc rewrite) and uses the same tcg_set_insn_start_param for REP
+ * string instructions.
+ */
+static void gen_cc_op_restart(DisasContext *s)
+{
+    if (s->insn_start_op && s->cc_op != CC_OP_DYNAMIC) {
+        tcg_set_insn_start_param(s->insn_start_op, 1, s->cc_op);
+    }
+}
+#endif /* __Use_Original_Qemu (U700) */
 
 static void sync_eflags(DisasContext *s)
 {
@@ -2335,15 +2361,33 @@ static void gen_rotc_rm_T1(DisasContext *s, MemOp ot, int op1,
                            int is_right)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+    TCGv old_flags = NULL;
+#endif /* __Use_Original_Qemu (U700) */
     gen_compute_eflags(s);
     assert(s->cc_op == CC_OP_EFLAGS);
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+    /* a #PF on the load below restores CC_OP_EFLAGS with these flags (U700) */
+    gen_cc_op_restart(s);
+#endif /* __Use_Original_Qemu (U700) */
 
     /* load */
     if (op1 == OR_TMP0)
         gen_op_ld_v(s, ot, s->T0, s->A0);
     else
         gen_op_mov_v_reg(s, ot, s->T0, op1);
-    
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+    /*
+     * The helpers below write the new flags to CC_SRC; a memory destination is stored after
+     * them, so keep the flags of the instruction start in CC_SRC until the store is done
+     * (a store #PF restores CC_OP_EFLAGS with CC_SRC; U700).
+     */
+    if (op1 == OR_TMP0) {
+        old_flags = tcg_temp_new(tcg_ctx);
+        tcg_gen_mov_tl(tcg_ctx, old_flags, cpu_cc_src);
+    }
+#endif /* __Use_Original_Qemu (U700) */
+
     if (is_right) {
         switch (ot) {
         case MO_8:
@@ -2383,8 +2427,23 @@ static void gen_rotc_rm_T1(DisasContext *s, MemOp ot, int op1,
             tcg_abort();
         }
     }
+#if __Use_Original_Qemu == 1 /* original QEMU (U700) */
     /* store */
     gen_op_st_rm_T0_A0(s, ot, op1);
+#else /* ours (U700) */
+    if (old_flags) {
+        TCGv new_flags = tcg_temp_new(tcg_ctx);
+
+        tcg_gen_mov_tl(tcg_ctx, new_flags, cpu_cc_src);
+        tcg_gen_mov_tl(tcg_ctx, cpu_cc_src, old_flags);
+        gen_op_st_rm_T0_A0(s, ot, op1);
+        tcg_gen_mov_tl(tcg_ctx, cpu_cc_src, new_flags);
+        tcg_temp_free(tcg_ctx, new_flags);
+        tcg_temp_free(tcg_ctx, old_flags);
+    } else {
+        gen_op_st_rm_T0_A0(s, ot, op1);
+    }
+#endif /* __Use_Original_Qemu (U700) */
 }
 
 /* XXX: add faster immediate case */
@@ -4605,6 +4664,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                          pc_start);
         check_exit_request(tcg_ctx);
         gen_compute_eflags(s);
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+        gen_cc_op_restart(s);       /* before every access of the instruction (U700) */
+#endif /* __Use_Original_Qemu (U700) */
     }
 
     s->override = -1;
@@ -7479,6 +7541,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x190: case 0x191: case 0x192: case 0x193: case 0x194: case 0x195: case 0x196: case 0x197: case 0x198: case 0x199: case 0x19a: case 0x19b: case 0x19c: case 0x19d: case 0x19e: case 0x19f: /* setcc Gv */
         modrm = x86_ldub_code(env, s);
         gen_setcc1(s, b, s->T0);
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+        gen_cc_op_restart(s);       /* gen_setcc1 may have computed the flags (U700) */
+#endif /* __Use_Original_Qemu (U700) */
         gen_ldst_modrm(env, s, modrm, MO_8, OR_TMP0, 1);
         break;
     case 0x140: case 0x141: case 0x142: case 0x143: case 0x144: case 0x145: case 0x146: case 0x147: case 0x148: case 0x149: case 0x14a: case 0x14b: case 0x14c: case 0x14d: case 0x14e: case 0x14f: /* cmov Gv, Ev */
@@ -9929,6 +9994,9 @@ static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
     dc->prev_pc = dc->base.pc_next - dc->cs_base;
     dc->prev_insn_end = tcg_last_op(tcg_ctx);
     tcg_gen_insn_start(tcg_ctx, dc->base.pc_next, dc->cc_op);
+#if __Use_Original_Qemu != 1 /* ours (U700) */
+    dc->insn_start_op = tcg_last_op(tcg_ctx);
+#endif /* __Use_Original_Qemu (U700) */
 }
 
 static bool i386_tr_breakpoint_check(DisasContextBase *dcbase, CPUState *cpu,

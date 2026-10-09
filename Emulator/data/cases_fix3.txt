@@ -1,0 +1,161 @@
+# Fault-state fixes (ledger U700-U719), hand-written. Hardware lines (no "=>") run natively on the
+# i5-13600K (CPL3, Windows x64) and in Unicorn; expected-value lines ("=>") run in Unicorn only,
+# against the SDM:
+#   emu-alltest --cases Emulator\data\cases_fix3.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME. Only our own snippets run natively. [rsi+0x8000] = MEM + 10000h, the
+# first byte after the 64 KiB operand area: not mapped on the host (#PF) nor in Unicorn.
+# cpl=3: Unicorn also runs at CPL3 (Windows GDT: 23h code32, 2Bh data, 33h code64, all DPL3).
+#
+# --- U700 a #PF on the memory operand leaves the flags of the instruction start (SDM Vol3A 6.5:
+# the state is that before the faulting instruction). SETcc m8 and RCL/RCR m computed the flags
+# (lazy state -> CC_OP_EFLAGS) before the access; the fault restored the cc_op of the instruction
+# start with the new CC_SRC: wrong RFLAGS whenever the instruction before left a static cc_op
+# (CMP/ADD/INC/SHL/AND in the same translation block). Before U700: 58 of the 110 lines after the
+# setter comments differed (34 of the 80 SETcc lines: those whose condition is computed through
+# the full flags; 24 of the 30 RCL/RCR lines); the 30 control lines were already SAME.
+# after cmp rcx, rdx
+cmp rcx, rdx; seto byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setno byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setb byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setae byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; sete byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setne byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setbe byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; seta byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; sets byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setns byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setp byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setnp byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setl byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setge byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setle byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; setg byte ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcl qword ptr [rsi+0x8000], 1 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcr dword ptr [rsi+0x8000], 1 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcl byte ptr [rsi+0x8000], cl | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcr word ptr [rsi+0x8000], 3 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcl dword ptr [rsi+0x8000], 7 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rcr qword ptr [rsi+0x8000], cl | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+# after add rcx, rdx
+add rcx, rdx; seto byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setno byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setb byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setae byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; sete byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setne byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setbe byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; seta byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; sets byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setns byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setp byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setnp byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setl byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setge byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setle byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; setg byte ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcl qword ptr [rsi+0x8000], 1 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcr dword ptr [rsi+0x8000], 1 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcl byte ptr [rsi+0x8000], cl | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcr word ptr [rsi+0x8000], 3 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcl dword ptr [rsi+0x8000], 7 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rcr qword ptr [rsi+0x8000], cl | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+# after inc rcx
+inc rcx; seto byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setno byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setb byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setae byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; sete byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setne byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setbe byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; seta byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; sets byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setns byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setp byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setnp byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setl byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setge byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setle byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; setg byte ptr [rsi+0x8000] | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcl qword ptr [rsi+0x8000], 1 | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcr dword ptr [rsi+0x8000], 1 | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcl byte ptr [rsi+0x8000], cl | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcr word ptr [rsi+0x8000], 3 | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcl dword ptr [rsi+0x8000], 7 | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+inc rcx; rcr qword ptr [rsi+0x8000], cl | rcx=0xFFFFFFFFFFFFFFFF rax=3 rbx=2 cpl=3
+# after shl rcx, 1
+shl rcx, 1; seto byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setno byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setb byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setae byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; sete byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setne byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setbe byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; seta byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; sets byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setns byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setp byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setnp byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setl byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setge byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setle byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; setg byte ptr [rsi+0x8000] | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcl qword ptr [rsi+0x8000], 1 | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcr dword ptr [rsi+0x8000], 1 | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcl byte ptr [rsi+0x8000], cl | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcr word ptr [rsi+0x8000], 3 | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcl dword ptr [rsi+0x8000], 7 | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+shl rcx, 1; rcr qword ptr [rsi+0x8000], cl | rcx=0xC000000000000001 rax=3 rbx=2 cpl=3
+# after and rcx, rdx
+and rcx, rdx; seto byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setno byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setb byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setae byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; sete byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setne byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setbe byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; seta byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; sets byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setns byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setp byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setnp byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setl byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setge byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setle byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; setg byte ptr [rsi+0x8000] | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcl qword ptr [rsi+0x8000], 1 | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcr dword ptr [rsi+0x8000], 1 | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcl byte ptr [rsi+0x8000], cl | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcr word ptr [rsi+0x8000], 3 | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcl dword ptr [rsi+0x8000], 7 | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+and rcx, rdx; rcr qword ptr [rsi+0x8000], cl | rcx=0x80 rdx=0x80 rax=3 rbx=2 cpl=3
+# forms that read their memory operand before they compute the flags (unchanged)
+cmp rcx, rdx; cmovo rax, qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; cmovbe rax, qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; cmovl eax, dword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; cmovp rax, qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; adc qword ptr [rsi+0x8000], rax | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; sbb dword ptr [rsi+0x8000], eax | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; rol qword ptr [rsi+0x8000], 1 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; shl qword ptr [rsi+0x8000], cl | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; shld qword ptr [rsi+0x8000], rax, 3 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; bts qword ptr [rsi+0x8000], 3 | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; xadd qword ptr [rsi+0x8000], rax | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; cmpxchg16b xmmword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; adcx rax, qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; inc qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+cmp rcx, rdx; neg qword ptr [rsi+0x8000] | rcx=1 rdx=2 rax=3 rbx=2 cpl=3
+add rcx, rdx; cmovo rax, qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; cmovbe rax, qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; cmovl eax, dword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; cmovp rax, qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; adc qword ptr [rsi+0x8000], rax | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; sbb dword ptr [rsi+0x8000], eax | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; rol qword ptr [rsi+0x8000], 1 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; shl qword ptr [rsi+0x8000], cl | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; shld qword ptr [rsi+0x8000], rax, 3 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; bts qword ptr [rsi+0x8000], 3 | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; xadd qword ptr [rsi+0x8000], rax | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; cmpxchg16b xmmword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; adcx rax, qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; inc qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3
+add rcx, rdx; neg qword ptr [rsi+0x8000] | rcx=0x7FFFFFFFFFFFFFFF rdx=1 rax=3 rbx=2 cpl=3

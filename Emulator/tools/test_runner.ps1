@@ -275,6 +275,9 @@ Add-HwCmp 'ref_evex_m4a_hwcmp' 'hw evex' 'ref_evex_m4a.py' 'cases_evex_m4a_hw'
 # U590-U609 (plan 1.F.7): LSS/LFS/LGS m16:64, 64-bit stack width of IRET/RETF/far CALL, page-crossing
 # stores, MAXPHYADDR, SYSCALL and EFER.SCE, RDPMC; hardware lines at CPL3 + SDM expected values.
 Add-Hw 'cases_fixes2' 'hw'
+# U700-U719: the state at a fault (flags, destinations, partial stores) vs the i5-13600K, plus
+# expected values against the SDM where the host cannot show it.
+Add-Hw 'cases_fix3' 'hw'
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # independent model ref_apx_core.py, Unicorn only with the APX opt-in (the host has no APX).
