@@ -6915,7 +6915,16 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             compute_xmm_offset(&decode.op[0]);
         }
         gen_load(s, &decode, 1, s->T0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U703) */
         gen_load(s, &decode, 2, s->T1);
+#else /* ours (U703) */
+        /* VMASKMOVPS/PD and VPMASKMOVD/Q loads read only their selected elements (U703) */
+        if (!(decode.op[2].has_ea &&
+              (decode.e.gen == gen_VMASKMOVPS || decode.e.gen == gen_VMASKMOVPD ||
+               decode.e.gen == gen_VPMASKMOV))) {
+            gen_load(s, &decode, 2, s->T1);
+        }
+#endif /* __Use_Original_Qemu (U703) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U67) */
         decode.e.gen(s, env, &decode);
 #else /* ours (U67) */

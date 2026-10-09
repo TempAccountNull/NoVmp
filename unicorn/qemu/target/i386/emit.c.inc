@@ -3320,8 +3320,36 @@ BINARY_INT_SSE(PUNPCKHQDQ, punpckhqdq)
 BINARY_INT_SSE(VPACKUSDW,  packusdw)
 BINARY_INT_SSE(VPERMILPS,  vpermilps)
 BINARY_INT_SSE(VPERMILPD,  vpermilpd)
+#if __Use_Original_Qemu == 1 /* original QEMU (U703) */
 BINARY_INT_SSE(VMASKMOVPS, vpmaskmovd)
 BINARY_INT_SSE(VMASKMOVPD, vpmaskmovq)
+#else /* ours (U703) */
+/*
+ * NoVmp (ledger U703): the masked loads read their memory operand in the helper, element by
+ * element (only the selected ones); disas_insn_new does not load operand 2 for them.
+ */
+static void gen_VMASKMOVPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (!s->vex_l) {
+        gen_helper_vpmaskmovd_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, s->A0);
+    } else {
+        gen_helper_vpmaskmovd_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, s->A0);
+    }
+}
+
+static void gen_VMASKMOVPD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (!s->vex_l) {
+        gen_helper_vpmaskmovq_xmm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, s->A0);
+    } else {
+        gen_helper_vpmaskmovq_ymm(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, s->A0);
+    }
+}
+#endif /* __Use_Original_Qemu (U703) */
 
 BINARY_INT_SSE(PMULDQ,    pmuldq)
 
@@ -3473,7 +3501,18 @@ static void gen_##uname(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 VEXW_AVX(VPSLLV,    vpsllv)
 VEXW_AVX(VPSRLV,    vpsrlv)
 VEXW_AVX(VPSRAV,    vpsrav)
+#if __Use_Original_Qemu == 1 /* original QEMU (U703) */
 VEXW_AVX(VPMASKMOV, vpmaskmov)
+#else /* ours (U703) */
+static void gen_VPMASKMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    if (s->vex_w) {
+        gen_VMASKMOVPD(s, env, decode);
+    } else {
+        gen_VMASKMOVPS(s, env, decode);
+    }
+}
+#endif /* __Use_Original_Qemu (U703) */
 
 /* Same as above, but with extra arguments to the helper.  */
 static inline void gen_vsib_avx(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode,

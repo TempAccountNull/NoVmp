@@ -3037,6 +3037,7 @@ void glue(helper_vpmaskmovq_st, SUFFIX)(CPUX86State *env,
 }
 #endif /* __Use_Original_Qemu (U702) */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U703) */
 void glue(helper_vpmaskmovd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
@@ -3054,6 +3055,42 @@ void glue(helper_vpmaskmovq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
         d->Q(i) = (v->Q(i) >> 63) ? s->Q(i) : 0;
     }
 }
+#else /* ours (U703) */
+/*
+ * NoVmp (ledger U703): VMASKMOVPS/PD and VPMASKMOVD/Q loads read only the elements whose mask
+ * bit is 1: "faults will not occur due to referencing any memory location if the
+ * corresponding mask bit for that memory location is 0" (SDM Vol2B VMASKMOV / VPMASKMOV); the
+ * whole operand was read first, so an unselected element on an unmapped page faulted. All
+ * selected elements are read before the destination is written (a fault leaves it unchanged).
+ */
+void glue(helper_vpmaskmovd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, target_ulong a0)
+{
+    uintptr_t ra = GETPC();
+    uint32_t r[2 << SHIFT];
+    int i;
+
+    for (i = 0; i < (2 << SHIFT); i++) {
+        r[i] = (v->L(i) >> 31) ? cpu_ldl_data_ra(env, a0 + i * 4, ra) : 0;
+    }
+    for (i = 0; i < (2 << SHIFT); i++) {
+        d->L(i) = r[i];
+    }
+}
+
+void glue(helper_vpmaskmovq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, target_ulong a0)
+{
+    uintptr_t ra = GETPC();
+    uint64_t r[1 << SHIFT];
+    int i;
+
+    for (i = 0; i < (1 << SHIFT); i++) {
+        r[i] = (v->Q(i) >> 63) ? cpu_ldq_data_ra(env, a0 + i * 8, ra) : 0;
+    }
+    for (i = 0; i < (1 << SHIFT); i++) {
+        d->Q(i) = r[i];
+    }
+}
+#endif /* __Use_Original_Qemu (U703) */
 
 void glue(helper_vpgatherdd, SUFFIX)(CPUX86State *env,
         Reg *d, Reg *v, Reg *s, target_ulong a0, unsigned scale, target_ulong amask)

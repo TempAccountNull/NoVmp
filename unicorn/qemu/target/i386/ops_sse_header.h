@@ -440,8 +440,13 @@ DEF_HELPER_3(glue(vtestps, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_3(glue(vtestpd, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_4(glue(vpmaskmovd_st, SUFFIX), void, env, Reg, Reg, tl)
 DEF_HELPER_4(glue(vpmaskmovq_st, SUFFIX), void, env, Reg, Reg, tl)
+#if __Use_Original_Qemu == 1 /* original QEMU (U703) */
 DEF_HELPER_4(glue(vpmaskmovd, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpmaskmovq, SUFFIX), void, env, Reg, Reg, Reg)
+#else /* ours (U703) */
+DEF_HELPER_4(glue(vpmaskmovd, SUFFIX), void, env, Reg, Reg, tl)
+DEF_HELPER_4(glue(vpmaskmovq, SUFFIX), void, env, Reg, Reg, tl)
+#endif /* __Use_Original_Qemu (U703) */
 DEF_HELPER_7(glue(vpgatherdd, SUFFIX), void, env, Reg, Reg, Reg, tl, i32, tl)
 DEF_HELPER_7(glue(vpgatherdq, SUFFIX), void, env, Reg, Reg, Reg, tl, i32, tl)
 DEF_HELPER_7(glue(vpgatherqd, SUFFIX), void, env, Reg, Reg, Reg, tl, i32, tl)
