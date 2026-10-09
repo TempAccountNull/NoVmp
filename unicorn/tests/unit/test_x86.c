@@ -19351,6 +19351,329 @@ static void test_x86_fx4_rep_cmps_restore(void)
         }
     }
 }
+/*
+ * U774 audit (plan 1.F.14): Unicorn memory hooks restore the instruction-start cc_op in the
+ * middle of an instruction (tlb_hook_state_sync -> cpu_restore_state), and a fault restores it
+ * too. An instruction that changes the lazy flags (CC_SRC/CC_DST/cc_op) before one of its memory
+ * accesses gives the hook / the faulting state the old cc_op with the new CC_* values (U700:
+ * SETcc m8, RCL/RCR m). Every instruction below runs after each flag setter (a static cc_op of
+ * each kind, and none: the instruction starts the TB) on a data page that is read/write (no
+ * hook, memory hooks, memory + code hooks), read-only and unmapped:
+ *   - every memory hook sees the flags of the instruction start (the setter's result);
+ *   - with hooks the end state equals the run without hooks;
+ *   - a fault (Unicorn read-only / unmapped page) leaves RIP at the instruction, the flags and
+ *     the registers as after the setter, and the page unchanged (SDM Vol3A 6.5 / 6.15).
+ * Data page FX4_PG: RBX = +0, RSI = +100h, RDI = +200h, RSP = +800h.
+ */
+static void fx4_mem_hook(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                         int64_t value, void *user_data)
+{
+    fx4_mh_t *h = (fx4_mh_t *)user_data;
+    uint64_t fl = 0;
+
+    if (address < FX4_PG || address >= FX4_PG + 0x1000) {
+        return;     /* code fetches are not memory hooks; only the data page */
+    }
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &fl));
+    if (h->n < 64) {
+        h->fl[h->n] = fl;
+    }
+    h->n++;
+}
+
+static void fx4_nop_code_hook(uc_engine *uc, uint64_t address, uint32_t size, void *user_data)
+{
+}
+
+enum { FX4_RW, FX4_RW_MEMHOOK, FX4_RW_BOTHHOOKS, FX4_RO, FX4_UNMAPPED };
+
+#define FX4_NREG 11
+static const int fx4_regs[FX4_NREG] = {UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX,
+                                      UC_X86_REG_RBX, UC_X86_REG_RSP, UC_X86_REG_RSI,
+                                      UC_X86_REG_RDI, UC_X86_REG_R8,  UC_X86_REG_R9,
+                                      UC_X86_REG_RFLAGS, UC_X86_REG_RIP};
+
+typedef struct {
+    uc_err err;
+    uint64_t r[FX4_NREG];
+    uint8_t xmm0[16];
+    uint8_t page[0x1000];
+    fx4_mh_t h;
+} fx4_res_t;
+
+typedef struct {
+    const char *code;
+    size_t len;
+    uint64_t r8, r9;
+    const char *what;
+} fx4_setter_t;
+
+static uint64_t fx4_rcx = 2;     /* RCX: the REP count / shift count */
+
+static void fx4_flags_run(const fx4_setter_t *st, const char *insn, size_t ilen, int mode,
+                          int setter_only, fx4_res_t *res)
+{
+    uc_engine *uc;
+    uc_hook h1, h2;
+    char code[64];
+    size_t n = 0;
+    int i;
+    uint8_t page[0x1000];
+    uint64_t init[FX4_NREG] = {3, fx4_rcx, 0, FX4_PG, FX4_PG + 0x800, FX4_PG + 0x100,
+                               FX4_PG + 0x200,
+                               st->r8, st->r9, 2, 0};
+    uint8_t x[16];
+
+    memcpy(code, st->code, st->len);
+    n = st->len;
+    if (!setter_only) {
+        memcpy(code + n, insn, ilen);
+        n += ilen;
+    }
+    for (i = 0; i < 0x1000; i++) {
+        page[i] = (uint8_t)(i * 7 + 1);
+    }
+    for (i = 0; i < 16; i++) {
+        x[i] = (uint8_t)(0x40 + i);
+    }
+    memset(res, 0, sizeof(*res));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, n));
+    if (mode != FX4_UNMAPPED) {
+        OK(uc_mem_map(uc, FX4_PG, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(uc, FX4_PG, page, sizeof(page)));
+        if (mode == FX4_RO) {
+            OK(uc_mem_protect(uc, FX4_PG, 0x1000, UC_PROT_READ));
+        }
+    }
+    for (i = 0; i < FX4_NREG - 1; i++) {
+        OK(uc_reg_write(uc, fx4_regs[i], &init[i]));
+    }
+    OK(uc_reg_write(uc, UC_X86_REG_XMM0, x));
+    if (mode == FX4_RW_MEMHOOK || mode == FX4_RW_BOTHHOOKS) {
+        OK(uc_hook_add(uc, &h1, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, fx4_mem_hook, &res->h, 1,
+                       0));
+    }
+    if (mode == FX4_RW_BOTHHOOKS) {
+        OK(uc_hook_add(uc, &h2, UC_HOOK_CODE, fx4_nop_code_hook, NULL, 1, 0));
+    }
+    res->err = uc_emu_start(uc, code_start, code_start + n, 0, 0);
+    for (i = 0; i < FX4_NREG; i++) {
+        OK(uc_reg_read(uc, fx4_regs[i], &res->r[i]));
+    }
+    OK(uc_reg_read(uc, UC_X86_REG_XMM0, res->xmm0));
+    if (mode != FX4_UNMAPPED) {
+        OK(uc_mem_read(uc, FX4_PG, res->page, sizeof(res->page)));
+    }
+    OK(uc_close(uc));
+}
+
+static int fx4_flags_case(const fx4_setter_t *st, const char *insn, size_t ilen, const char *what)
+{
+    static fx4_res_t pre, ref, r;
+    static const char *mname[] = {"rw", "rw+memhook", "rw+mem+code hooks", "read-only",
+                                  "unmapped"};
+    uint64_t start, it1;
+    int mode, k, bad = 0;
+    /* REPE/REPNE CMPS (2 accesses per iteration) / SCAS (1): iteration 2 sees iteration 1's flags */
+    int per = strncmp(what, "rep", 3) ? 0 : strstr(what, "cmps") ? 2 : strstr(what, "scas") ? 1 : 0;
+
+    fx4_flags_run(st, insn, ilen, FX4_RW, 1, &pre);       /* the state at the instruction */
+    start = it1 = pre.r[9];
+    if (per) {
+        fx4_rcx = 1;
+        fx4_flags_run(st, insn, ilen, FX4_RW, 0, &ref);   /* one iteration */
+        fx4_rcx = 2;
+        it1 = ref.r[9];
+    }
+    fx4_flags_run(st, insn, ilen, FX4_RW, 0, &ref);
+    if (ref.err != UC_ERR_OK) {
+        TEST_CHECK(ref.err == UC_ERR_OK);
+        TEST_MSG("%s after %s: reference run err %u", what, st->what, ref.err);
+        return 1;
+    }
+    for (mode = FX4_RW_MEMHOOK; mode <= FX4_UNMAPPED; mode++) {
+        bool ok = true;
+        char why[160] = "";
+
+        fx4_flags_run(st, insn, ilen, mode, 0, &r);
+        /* hooks see the instruction-start status flags (REP CMPS/SCAS: of the iteration before) */
+        for (k = 0; k < r.h.n && k < 64; k++) {
+            uint64_t exp = per && k >= per ? it1 : start;
+
+            if ((r.h.fl[k] & FX4_STATUS) != (exp & FX4_STATUS)) {
+                ok = false;
+                snprintf(why, sizeof(why), "hook %d of %d sees rflags %" PRIx64 ", want %" PRIx64,
+                         k, r.h.n, r.h.fl[k], exp);
+                break;
+            }
+        }
+        if (ok && r.err == UC_ERR_OK) {
+            /* completed: the same end state as without hooks */
+            if (memcmp(r.r, ref.r, sizeof(r.r)) || memcmp(r.page, ref.page, sizeof(r.page)) ||
+                memcmp(r.xmm0, ref.xmm0, 16)) {
+                ok = false;
+                for (k = 0; k < FX4_NREG && r.r[k] == ref.r[k]; k++) {
+                }
+                snprintf(why, sizeof(why), "end state differs (reg #%d %" PRIx64 " vs %" PRIx64
+                         ", page %s)", k, k < FX4_NREG ? r.r[k] : 0,
+                         k < FX4_NREG ? ref.r[k] : 0,
+                         memcmp(r.page, ref.page, sizeof(r.page)) ? "differs" : "same");
+            }
+            if (ok && mode >= FX4_RO) {
+                ok = false;
+                snprintf(why, sizeof(why), "no fault on a %s page", mname[mode]);
+                if (mode == FX4_RO && memcmp(r.page, pre.page, sizeof(r.page)) == 0) {
+                    ok = true;      /* only loads: completes on a read-only page */
+                }
+            }
+        } else if (ok) {
+            /* faulted: RIP at the instruction, registers and flags as after the setter */
+            uint64_t ip = code_start + st->len;
+
+            if (r.r[10] != ip || (r.r[9] & FX4_STATUS) != (start & FX4_STATUS)) {
+                ok = false;
+                snprintf(why, sizeof(why), "fault %u: rip %" PRIx64 " (insn %" PRIx64
+                         ") rflags %" PRIx64 " start %" PRIx64, r.err, r.r[10], ip, r.r[9],
+                         start);
+            } else {
+                for (k = 0; k < 9 && r.r[k] == pre.r[k]; k++) {
+                }
+                if (k < 9 || memcmp(r.xmm0, pre.xmm0, 16)) {
+                    ok = false;
+                    snprintf(why, sizeof(why), "fault %u: register #%d %" PRIx64 " was %" PRIx64,
+                             r.err, k, k < 9 ? r.r[k] : 0, k < 9 ? pre.r[k] : 0);
+                } else if (mode != FX4_UNMAPPED && memcmp(r.page, pre.page, sizeof(r.page))) {
+                    ok = false;
+                    snprintf(why, sizeof(why), "fault %u: the page was written", r.err);
+                }
+            }
+        }
+        TEST_CHECK(ok);
+        TEST_MSG("%s after %s (%s): %s", what, st->what, mname[mode], why);
+        bad += !ok;
+    }
+    return bad;
+}
+
+static const fx4_setter_t fx4_setters[] = {
+    {"", 0, 1, 2, "nothing (TB start)"},
+    {"\x4d\x39\xc8", 3, 1, 2, "cmp r8, r9"},
+    {"\x4d\x01\xc8", 3, 0x7fffffffffffffffULL, 1, "add r8, r9"},
+    {"\x49\xff\xc0", 3, ~0ULL, 0, "inc r8"},
+    {"\x49\xd1\xe0", 3, 0xc000000000000001ULL, 0, "shl r8, 1"},
+    {"\x4d\x21\xc8", 3, 0x80, 0x80, "and r8, r9"},
+    {"\x4d\x0f\xaf\xc1", 4, 0x4000000000000000ULL, 4, "imul r8, r9"},
+    {"\xf3\x4d\x0f\xb8\xc1", 5, 0, 0, "popcnt r8, r9"},
+    {"\x66\x4d\x0f\x38\xf6\xc1", 6, ~0ULL, 1, "adcx r8, r9"},
+    {"\x4d\x0f\xa3\xc8", 4, 1, 0, "bt r8, r9"},
+    {"\xf9", 1, 0, 0, "stc"},
+    {"\x45\x31\xc0", 3, 5, 0, "xor r8d, r8d"},
+    {"\x49\xd3\xc0", 3, 0x8000000000000001ULL, 0, "rol r8, cl"},
+};
+
+static const struct {
+    const char *code;
+    size_t len;
+    const char *what;
+} fx4_flag_insns[] = {
+    {"\x48\x11\x03", 3, "adc [rbx], rax"},
+    {"\x48\x19\x03", 3, "sbb [rbx], rax"},
+    {"\x48\x13\x03", 3, "adc rax, [rbx]"},
+    {"\x48\x01\x03", 3, "add [rbx], rax"},
+    {"\x48\x39\x03", 3, "cmp [rbx], rax"},
+    {"\x48\x85\x03", 3, "test [rbx], rax"},
+    {"\x48\xff\x03", 3, "inc qword [rbx]"},
+    {"\x48\xff\x0b", 3, "dec qword [rbx]"},
+    {"\x48\xf7\x1b", 3, "neg qword [rbx]"},
+    {"\x48\xf7\x13", 3, "not qword [rbx]"},
+    {"\x48\x0f\xc1\x03", 4, "xadd [rbx], rax"},
+    {"\x48\x0f\xb1\x0b", 4, "cmpxchg [rbx], rcx"},
+    {"\x0f\xc7\x0b", 3, "cmpxchg8b [rbx]"},
+    {"\x48\x0f\xc7\x0b", 4, "cmpxchg16b [rbx]"},
+    {"\xf0\x48\x0f\xc1\x03", 5, "lock xadd [rbx], rax"},
+    {"\xf0\x48\x01\x03", 4, "lock add [rbx], rax"},
+    {"\xf0\x48\x11\x03", 4, "lock adc [rbx], rax"},
+    {"\xf0\x48\x19\x03", 4, "lock sbb [rbx], rax"},
+    {"\xf0\x48\x0f\xb1\x0b", 5, "lock cmpxchg [rbx], rcx"},
+    {"\xf0\x48\xff\x03", 4, "lock inc qword [rbx]"},
+    {"\xf0\x48\xf7\x1b", 4, "lock neg qword [rbx]"},
+    {"\xf0\x48\x0f\xab\x03", 5, "lock bts [rbx], rax"},
+    {"\xf0\x48\x0f\xba\x3b\x05", 6, "lock btc qword [rbx], 5"},
+    {"\x48\x0f\xa3\x03", 4, "bt [rbx], rax"},
+    {"\x48\x0f\xab\x03", 4, "bts [rbx], rax"},
+    {"\x48\x0f\xb3\x03", 4, "btr [rbx], rax"},
+    {"\x48\x0f\xbb\x03", 4, "btc [rbx], rax"},
+    {"\x48\x0f\xba\x2b\x05", 5, "bts qword [rbx], 5"},
+    {"\x48\x0f\xa4\x03\x03", 5, "shld [rbx], rax, 3"},
+    {"\x48\x0f\xa5\x03", 4, "shld [rbx], rax, cl"},
+    {"\x48\x0f\xad\x03", 4, "shrd [rbx], rax, cl"},
+    {"\x48\xd3\x23", 3, "shl qword [rbx], cl"},
+    {"\x48\xd1\x3b", 3, "sar qword [rbx], 1"},
+    {"\x48\xd3\x03", 3, "rol qword [rbx], cl"},
+    {"\x48\xd1\x0b", 3, "ror qword [rbx], 1"},
+    {"\x48\xd1\x13", 3, "rcl qword [rbx], 1"},
+    {"\x48\xd3\x1b", 3, "rcr qword [rbx], cl"},
+    {"\x0f\x92\x03", 3, "setb [rbx]"},
+    {"\x0f\x90\x03", 3, "seto [rbx]"},
+    {"\x0f\x9e\x03", 3, "setle [rbx]"},
+    {"\x48\x0f\x42\x03", 4, "cmovb rax, [rbx]"},
+    {"\x48\x0f\x4f\x03", 4, "cmovg rax, [rbx]"},
+    {"\x48\xa5", 2, "movsq"},
+    {"\x48\xa7", 2, "cmpsq"},
+    {"\x48\xaf", 2, "scasq"},
+    {"\x48\xad", 2, "lodsq"},
+    {"\x48\xab", 2, "stosq"},
+    {"\xf3\x48\xa5", 3, "rep movsq"},
+    {"\xf3\x48\xa7", 3, "repe cmpsq"},
+    {"\xf2\x48\xa7", 3, "repne cmpsq"},
+    {"\xf2\x48\xaf", 3, "repne scasq"},
+    {"\xf3\x48\xab", 3, "rep stosq"},
+    {"\xf3\x48\xad", 3, "rep lodsq"},
+    {"\xff\x33", 2, "push qword [rbx]"},
+    {"\x8f\x03", 2, "pop qword [rbx]"},
+    {"\x9c", 1, "pushfq"},
+    {"\x48\x87\x03", 3, "xchg [rbx], rax"},
+    {"\x48\xf7\x23", 3, "mul qword [rbx]"},
+    {"\x48\x0f\xaf\x03", 4, "imul rax, [rbx]"},
+    {"\xf3\x48\x0f\xb8\x03", 5, "popcnt rax, [rbx]"},
+    {"\xf3\x48\x0f\xbd\x03", 5, "lzcnt rax, [rbx]"},
+    {"\xf3\x48\x0f\xbc\x03", 5, "tzcnt rax, [rbx]"},
+    {"\x48\x0f\xbc\x03", 4, "bsf rax, [rbx]"},
+    {"\x48\x0f\xbd\x03", 4, "bsr rax, [rbx]"},
+    {"\x66\x48\x0f\x38\xf6\x03", 6, "adcx rax, [rbx]"},
+    {"\xf3\x48\x0f\x38\xf6\x03", 6, "adox rax, [rbx]"},
+    {"\xc4\xe2\xf0\xf2\x03", 5, "andn rax, rcx, [rbx]"},
+    {"\xc4\xe2\xf0\xf7\x03", 5, "bextr rax, [rbx], rcx"},
+    {"\xc4\xe2\xf8\xf3\x1b", 5, "blsi rax, [rbx]"},
+    {"\xc4\xe2\xf0\xf5\x03", 5, "bzhi rax, [rbx], rcx"},
+    {"\x66\x0f\x2f\x03", 4, "comisd xmm0, [rbx]"},
+    {"\x0f\x2e\x03", 3, "ucomiss xmm0, [rbx]"},
+    {"\x66\x0f\x38\x17\x03", 5, "ptest xmm0, [rbx]"},
+    {"\x66\x0f\x3a\x63\x03\x00", 6, "pcmpistri xmm0, [rbx], 0"},
+    {"\x66\x0f\x3a\x61\x03\x00", 6, "pcmpestri xmm0, [rbx], 0"},
+    {"\xdc\x13", 2, "fcom qword [rbx]"},
+    {"\xde\x1b", 2, "ficomp word [rbx]"},
+    {"\xc8\x10\x00\x01", 4, "enter 10h, 1"},
+};
+
+static void test_x86_fx4_hook_flags(void)
+{
+    size_t i, j;
+    int bad = 0, n = 0;
+
+    for (i = 0; i < sizeof(fx4_flag_insns) / sizeof(fx4_flag_insns[0]); i++) {
+        for (j = 0; j < sizeof(fx4_setters) / sizeof(fx4_setters[0]); j++) {
+            bad += fx4_flags_case(&fx4_setters[j], fx4_flag_insns[i].code, fx4_flag_insns[i].len,
+                                  fx4_flag_insns[i].what);
+            n += 4;
+        }
+    }
+    TEST_CHECK(bad == 0);
+    TEST_MSG("hook/fault flag audit: %d of %d checks failed", bad, n);
+}
 /* ---- end U770-U789 (fx4_) ---- */
 
 /*
@@ -21147,4 +21470,5 @@ TEST_LIST = {
     {"test_x86_fx4_ts", test_x86_fx4_ts},
     {"test_x86_fx4_cr2_probe", test_x86_fx4_cr2_probe},
     {"test_x86_fx4_rep_cmps_restore", test_x86_fx4_rep_cmps_restore},
+    {"test_x86_fx4_hook_flags", test_x86_fx4_hook_flags},
     {NULL, NULL}};

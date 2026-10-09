@@ -8194,6 +8194,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
         }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U776) */
         /* Delay all CC updates until after the store above.  Note that
            C is the result of the test, Z is unchanged, and the others
            are all undefined.  */
@@ -8223,6 +8224,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                ctz32(CC_C), 1);
             break;
         }
+#else /* ours (U776) */
+        /*
+         * U776: CF is the tested bit, ZF is unchanged, OF/SF/AF/PF are undefined (SDM Vol2A
+         * BT/BTS/BTR/BTC). They are kept unchanged too (docs/quirks.md "SDM undefined, our
+         * choice"; the i5-13600K keeps them): upstream's CC_OP_SAR shortcut after an arithmetic
+         * cc_op made them depend on the instruction before and on whether UC_HOOK_CODE was set
+         * (its prologue leaves CC_OP_EFLAGS). Still after the store above.
+         */
+        gen_compute_eflags(s);
+        tcg_gen_deposit_tl(tcg_ctx, cpu_cc_src, cpu_cc_src, s->tmp4, ctz32(CC_C), 1);
+#endif /* __Use_Original_Qemu (U776) */
         break;
     case 0x1bc: /* bsf / tzcnt */
     case 0x1bd: /* bsr / lzcnt */

@@ -84,3 +84,22 @@ cmp r8, r9; lock cmpxchg8b qword ptr [rsi] | r8=1 r9=2 m+0x8000=0100000000000000
 shl r8, 1; lock cmpxchg16b xmmword ptr [rsi] | r8=0xC000000000000001 m+0x8000=01000000000000000000000000000000
 imul r8, r9; cmpxchg8b qword ptr [rsi] | r8=0x4000000000000000 r9=4 rax=1 m+0x8000=0100000000000000
 and r8, r9; cmpxchg16b xmmword ptr [rsi] | r8=0x80 r9=0x80 m+0x8000=01000000000000000000000000000000
+#
+# --- U776 BT/BTS/BTR/BTC: CF = the bit, ZF unchanged, OF/SF/AF/PF undefined (SDM Vol2A BT); the
+# i5-13600K keeps them. Unicorn computed them with upstream's CC_OP_SAR shortcut whenever the
+# instruction before left an arithmetic cc_op in the same translation block (and kept them
+# otherwise, or under UC_HOOK_CODE); now they are always kept (docs/quirks.md "SDM undefined,
+# our choice"). Before U776: 10 of these 12 differed (the AND and POPCNT lines did not take the
+# shortcut).
+cmp r8, r9; bt qword ptr [rsi], rax | r8=1 r9=2 rax=3 m+0x8000=0100000000000000
+add r8, r9; bts qword ptr [rsi], rax | r8=0x7FFFFFFFFFFFFFFF r9=1 rax=3 m+0x8000=0100000000000000
+inc r8; btr qword ptr [rsi], rax | r8=0xFFFFFFFFFFFFFFFF rax=0 m+0x8000=0100000000000000
+shl r8, 1; btc qword ptr [rsi], rax | r8=0xC000000000000001 rax=1 m+0x8000=0100000000000000
+sar r8, 1; bts dword ptr [rsi], 5 | r8=0x8000000000000001 m+0x8000=0100000000000000
+and r8, r9; bt rax, rcx | r8=0x80 r9=0x80 rax=0x10 rcx=4
+cmp r8, r9; btc ax, cx | r8=1 r9=2 rax=0x10 rcx=4
+sub r8, r9; bt r8, 63 | r8=1 r9=2
+cmp r8, r9; lock bts qword ptr [rsi], rax | r8=1 r9=2 rax=9 m+0x8000=0100000000000000
+add r8d, r9d; lock btr dword ptr [rsi], 0 | r8=0x7FFFFFFF r9=1 m+0x8000=0100000000000000
+neg r8; bt word ptr [rsi], 15 | r8=5 m+0x8000=0080000000000000
+popcnt r8, r9; bt qword ptr [rsi], rax | r9=7 rax=0 m+0x8000=0100000000000000
