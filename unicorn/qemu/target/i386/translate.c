@@ -7150,7 +7150,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_update_cc_op(s);
         gen_update_eip_cur(s);
         gen_helper_rdpmc(tcg_ctx, cpu_env);
+#if __Use_Original_Qemu == 1 /* original QEMU (U595) */
         s->base.is_jmp = DISAS_NORETURN;
+#else /* ours (U595) */
+        /* the helper returns after reading the counter (it never did: always #UD) */
+#endif /* __Use_Original_Qemu (U595) */
         break;
 #if __Use_Original_Qemu != 1 /* ours (U113) */
     /*

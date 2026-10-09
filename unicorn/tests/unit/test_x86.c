@@ -14203,9 +14203,10 @@ static void test_x86_bp_iret_vm86(void)
 
 /*
  * U454 (upstream QEMU c45b426acd): RDPMC #GP(0) iff CPL > 0 and CR4.PCE = 0
- * (SDM Vol2B RDPMC). Where access is allowed the counter read is still
- * unimplemented here (#UD), see the ledger row.
+ * (SDM Vol2B RDPMC). Where access is allowed the counter is read (U595,
+ * test_x86_f2_rdpmc).
  */
+static void f2_pmu_profile(uc_engine *uc);
 static void test_x86_bp_rdpmc_gp(void)
 {
     BpCpu c;
@@ -14221,19 +14222,24 @@ static void test_x86_bp_rdpmc_gp(void)
              (unsigned long long)c.rip);
     OK(uc_close(c.uc));
 
-    /* CPL3, CR4.PCE = 1: no #GP (the read itself is unimplemented: #UD) */
+    /*
+     * CPL3, CR4.PCE = 1: no #GP (U595: the counter read is implemented; a profile with
+     * CPUID.0AH enumerates general-purpose counter 0, which reads 0)
+     */
     bp_open(&c, UC_MODE_64, -1);
+    f2_pmu_profile(c.uc);
     cr4 = bp_get(&c, UC_X86_REG_CR4) | 0x100;
     bp_set(&c, UC_X86_REG_CR4, cr4);
-    uc_assert_err(UC_ERR_INSN_INVALID, bp_run64_cpl3(&c, "\x0f\x33", 2));
+    OK(bp_run64_cpl3(&c, "\x0f\x33", 2));
     TEST_CHECK(c.count == 0);
     OK(uc_close(c.uc));
 
     /* CPL0, CR4.PCE = 0: no #GP */
     bp_open(&c, UC_MODE_64, -1);
+    f2_pmu_profile(c.uc);
     cr4 = bp_get(&c, UC_X86_REG_CR4) & ~(uint64_t)0x100;
     bp_set(&c, UC_X86_REG_CR4, cr4);
-    uc_assert_err(UC_ERR_INSN_INVALID, bp_run_at(&c, BP_CODE, "\x0f\x33", 2, 0));
+    OK(bp_run_at(&c, BP_CODE, "\x0f\x33", 2, 0));
     TEST_CHECK(c.count == 0);
     OK(uc_close(c.uc));
 }
@@ -16038,6 +16044,65 @@ static void test_x86_f2_syscall_sce(void)
     }
 }
 
+/*
+ * U595 (ours, SDM Vol2B RDPMC): the counter ECX selects is read (0: the emulator counts no
+ * events and its counters can never be enabled); an encoding CPUID does not enumerate is
+ * #GP(0). Profile: CPUID.0AH as on the i5-13600K (EAX 07300601h: version 1, 6 general-purpose
+ * counters; ECX 7: fixed counters 0-2; EDX[4:0] = 0). The model reports no PMU: all #GP.
+ */
+static void f2_pmu_profile(uc_engine *uc)
+{
+    uc_x86_cpuid prof[2] = {
+        {0, 0, 0x20, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {0xa, 0, 0x07300601, 0x000000ff, 0x00000007, 0x00008000},
+    };
+
+    OK(uc_ctl_set_x86_cpuid(uc, prof, 2));
+    OK(uc_ctl_set_x86_cpuid_strict(uc, 0));
+}
+
+static void test_x86_f2_rdpmc(void)
+{
+    static const struct {
+        uint64_t rcx;
+        int ok;
+    } t[] = {
+        {0, 1}, {5, 1}, {6, 0}, {0xffff, 0}, {0x40000000, 1}, {0x40000002, 1},
+        {0x40000003, 0}, {0x20000000, 0}, {0x80000000, 0}, {0x10000, 0},
+        {0xffffffff00000003ULL, 1}, {0xffffffff40000001ULL, 1},
+    };
+    BpCpu c;
+    size_t i;
+    int prof;
+
+    for (prof = 0; prof < 2; prof++) {
+        for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+            int expect_ok = prof && t[i].ok;
+
+            bp_open(&c, UC_MODE_64, -1);
+            if (prof) {
+                f2_pmu_profile(c.uc);
+            }
+            bp_set(&c, UC_X86_REG_RCX, t[i].rcx);
+            bp_set(&c, UC_X86_REG_RAX, 0x1111111111111111ULL);
+            bp_set(&c, UC_X86_REG_RDX, 0x2222222222222222ULL);
+            OK(bp_run(&c, "\x0f\x33", 2));
+            if (expect_ok) {
+                TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_RAX) == 0 &&
+                           bp_get(&c, UC_X86_REG_RDX) == 0);
+            } else {
+                TEST_CHECK(c.count == 1 && c.intno == 13 &&
+                           bp_get(&c, UC_X86_REG_RAX) == 0x1111111111111111ULL);
+            }
+            TEST_MSG("profile %d rcx %llx: intr %u/%u rax %llx rdx %llx", prof,
+                     (unsigned long long)t[i].rcx, c.count, c.intno,
+                     (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+                     (unsigned long long)bp_get(&c, UC_X86_REG_RDX));
+            OK(uc_close(c.uc));
+        }
+    }
+}
+
 /* ---- end U590-U609 (f2_) ---- */
 
 TEST_LIST = {
@@ -16276,4 +16341,5 @@ TEST_LIST = {
     {"test_x86_f2_store_no_partial_paging", test_x86_f2_store_no_partial_paging},
     {"test_x86_f2_maxphyaddr", test_x86_f2_maxphyaddr},
     {"test_x86_f2_syscall_sce", test_x86_f2_syscall_sce},
+    {"test_x86_f2_rdpmc", test_x86_f2_rdpmc},
     {NULL, NULL}};

@@ -363,9 +363,58 @@ void helper_rdpmc(CPUX86State *env)
     }
     cpu_svm_check_intercept_param(env, SVM_EXIT_RDPMC, 0, GETPC());
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U595) */
     /* currently unimplemented */
     qemu_log_mask(LOG_UNIMP, "x86: unimplemented rdpmc\n");
     raise_exception_err(env, EXCP06_ILLOP, 0);
+#else /* ours (U595) */
+    /*
+     * NoVmp (ledger U595): SDM Vol2B RDPMC reads the counter ECX selects into EDX:EAX (upper
+     * halves of RAX/RDX cleared, RCX[63:32] ignored) and is #GP(0) for "an unsupported PMC
+     * encoding". Which counters exist comes from CPUID (the profile when one is installed):
+     *  - CPUID.0AH:EAX[7:0] = 0 (the built-in models: QEMU's TCG has no PMU): no counter is
+     *    enumerated, every ECX is unsupported -> #GP(0);
+     *  - else ECX[31:16] = type, ECX[15:0] = index: type 0 general-purpose, index <
+     *    CPUID.0AH:EAX[15:8] or CPUID.23H.01H:EAX[index] = 1; type 4000H fixed-function,
+     *    index < CPUID.0AH:EDX[4:0] or CPUID.0AH:ECX[index] = 1 or CPUID.23H.01H:EBX[index]
+     *    = 1 (index <= 31); type 2000H (performance metrics) needs
+     *    IA32_PERF_CAPABILITIES.PERF_METRICS_AVAILABLE, which the emulator does not report;
+     *    any other type -> #GP(0).
+     * Counter model: the emulator counts no events. A counter only counts while it is
+     * enabled (IA32_PERFEVTSELx.EN / IA32_FIXED_CTR_CTRL with IA32_PERF_GLOBAL_CTRL, SDM
+     * Vol3B 22.2), the counters and their controls are 0 after reset (SDM Vol3A Table 12-1)
+     * and the emulator does not implement those MSRs (WRMSR to them is ignored, RDMSR reads
+     * 0), so no counter can be enabled and every supported counter reads 0 - the same value
+     * RDMSR returns for IA32_PMCx / IA32_FIXED_CTRx. Deterministic; documented in
+     * docs/quirks.md ("SDM undefined, our choice").
+     */
+    {
+        uint32_t ecx = (uint32_t)env->regs[R_ECX];
+        uint32_t type = ecx >> 16, idx = ecx & 0xffff;
+        uint32_t a, b, c, d, max, a23 = 0, b23 = 0, x;
+        bool ok = false;
+
+        cpu_x86_cpuid(env, 0xa, 0, &a, &b, &c, &d);
+        if (a & 0xff) {
+            cpu_x86_cpuid(env, 0, 0, &max, &b, &x, &x);
+            cpu_x86_cpuid(env, 0xa, 0, &a, &b, &c, &d);
+            if (max >= 0x23) {
+                cpu_x86_cpuid(env, 0x23, 1, &a23, &b23, &x, &x);
+            }
+            if (type == 0) {
+                ok = idx < ((a >> 8) & 0xff) || (idx <= 31 && ((a23 >> idx) & 1));
+            } else if (type == 0x4000) {
+                ok = idx < (d & 0x1f) ||
+                     (idx <= 31 && (((c >> idx) & 1) || ((b23 >> idx) & 1)));
+            }
+        }
+        if (!ok) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        env->regs[R_EAX] = 0;
+        env->regs[R_EDX] = 0;
+    }
+#endif /* __Use_Original_Qemu (U595) */
 }
 
 #if __Use_Original_Qemu != 1 /* ours (U103) */

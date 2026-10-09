@@ -100,3 +100,21 @@ mov ecx, 0xC0000080; rdmsr; and eax, 0xFFFFFFFE; wrmsr; sysret =>! #UD rcx=0xC00
 mov ecx, 0xC0000080; rdmsr; and eax, 1 =>! rax=1
 # cpl=3 (the harness sets SCE like Windows): no #UD
 syscall | cpl=3 =>! rax=0
+#
+# --- U595 RDPMC reads the counter ECX selects (SDM Vol2B RDPMC); was #UD "unimplemented". Counters
+# from CPUID.0AH (i5-13600K profile: version 1, 6 general-purpose counters, fixed counters 0-2 by the
+# ECX bitmap); an unsupported encoding is #GP(0). The emulator counts no events and its counter
+# controls cannot be enabled (MSRs not implemented), so every counter reads 0 (docs/quirks.md).
+# CPL0 expected values; at CPL3 under Windows (CR4.PCE = 0) RDPMC is #GP before ECX is looked at.
+rdpmc | rcx=0 rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rdx=0
+rdpmc | rcx=5 rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rdx=0
+rdpmc | rcx=0x40000000 rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rdx=0
+rdpmc | rcx=0x40000002 rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rdx=0
+rdpmc | rcx=0xFFFFFFFF00000001 rax=0xFFFFFFFFFFFFFFFF rdx=0xFFFFFFFFFFFFFFFF => rax=0 rdx=0
+rdpmc | rcx=6 => #GP
+rdpmc | rcx=0x40000003 => #GP
+rdpmc | rcx=0x20000000 => #GP
+rdpmc | rcx=0x80000000 => #GP
+rdpmc | rcx=0x10000 => #GP
+rdpmc | cpl=3 rcx=0x40000000
+rdpmc | cpl=3 rcx=6
