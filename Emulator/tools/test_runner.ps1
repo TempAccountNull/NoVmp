@@ -273,6 +273,8 @@ Add-Hw 'cases_fixes2' 'hw'
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # independent model ref_apx_core.py, Unicorn only with the APX opt-in (the host has no APX).
 Add-Exp 'cases_apx_core' 'cases_apx_core' 'apx expect' @( '--apx' )
+# U616: the APX extension of EVEX instructions (EVEX.B4 / X4 = ~U / R4 for GPRs), with AVX-512.
+Add-Exp 'cases_apx_evex' 'cases_apx_evex' 'apx evex expect' @( '--apx', '--avx512' )
 # The same instructions with R0-R15 only: legacy encoding on the i5-13600K vs the REX2 encoding on
 # Unicorn ("<legacy> ~~ <REX2>" pairs; --apx and NO CPUID profile, which would hide APX), 0 differing;
 # the CPU's results must also match the model (--hwcmp).

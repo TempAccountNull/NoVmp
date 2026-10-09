@@ -16588,6 +16588,79 @@ static void test_x86_apx_rex2_decode(void)
     TEST_CHECK(apx_run(&c, APX_ADD_R16_R17, 4) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U616: the APX extension of EVEX instructions - EVEX.B4 (P0[3]), EVEX.X4 = ~EVEX.U (P1[2],
+ * memory operands only) and EVEX.R4 for a GPR in ModRM.reg need APX enabled (XCR0[19] at run
+ * time, #UD otherwise) and are #UD without APX_F, as before.
+ */
+#define APX_BCST_B4 "\x62\xfa\x7d\x48\x7c\xd2"       /* vpbroadcastd zmm2, r18d */
+#define APX_BCST_B0 "\x62\xf2\x7d\x48\x7c\xd2"       /* vpbroadcastd zmm2, edx */
+#define APX_CVT_R4 "\x62\xe1\xff\x08\x2c\xc0"        /* vcvttsd2si r16, xmm0 */
+#define APX_PADD_U0 "\x62\xf1\x69\x48\xfe\x08"       /* vpaddd zmm1, zmm2, [rax], U = 0 */
+#define APX_PADD_U0_R "\x62\xf1\x69\x48\xfe\xcb"     /* vpaddd zmm1, zmm2, zmm3, U = 0 */
+
+static void apx_open_avx512(ApxCtx *c, int apx)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(c->uc, UC_X86_AVX512_F | UC_X86_AVX512_VL));
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(c->uc, apx));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, APX_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static void test_x86_apx_evex(void)
+{
+    ApxCtx c;
+    uint32_t z[16];
+    uint64_t xcr0, d[2] = {0x4053400000000000ull, 0};     /* 77.0 */
+    int i;
+
+    apx_open_avx512(&c, UC_X86_APX_F);
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK((xcr0 & 0x800e7) == 0x800e7);
+    apx_set(&c, UC_X86_REG_R18, 0xaaaaaaaa12345678ull);
+    apx_set(&c, UC_X86_REG_RDX, 0x9abcdef0);
+    TEST_CHECK(apx_run(&c, APX_BCST_B4, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM2, z));
+    for (i = 0; i < 16; i++) {
+        TEST_CHECK(z[i] == 0x12345678);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, d));
+    TEST_CHECK(apx_run(&c, APX_CVT_R4, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_R16) == 77);
+    apx_set(&c, UC_X86_REG_RAX, APX_DATA);
+    TEST_CHECK(apx_run(&c, APX_PADD_U0, 6) == -1);
+    TEST_CHECK(apx_run(&c, APX_PADD_U0_R, 6) == 6);              /* U = 0 needs mod != 11b */
+    /* XCR0[19] = 0: B4 / U = 0 / R4 (GPR) #UD; without them the instruction runs */
+    TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
+    TEST_CHECK(apx_run(&c, APX_BCST_B4, 6) == 6);
+    TEST_CHECK(apx_run(&c, APX_CVT_R4, 6) == 6);
+    apx_set(&c, UC_X86_REG_RAX, APX_DATA);
+    TEST_CHECK(apx_run(&c, APX_PADD_U0, 6) == 6);
+    apx_set(&c, UC_X86_REG_RDX, 0x9abcdef0);                      /* XSETBV took EDX */
+    TEST_CHECK(apx_run(&c, APX_BCST_B0, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM2, z));
+    TEST_CHECK(z[0] == 0x9abcdef0 && z[15] == 0x9abcdef0);
+    TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
+    TEST_CHECK(apx_run(&c, APX_BCST_B4, 6) == -1);
+    OK(uc_close(c.uc));
+
+    /* no APX: B4, U = 0 and R4 for a GPR stay #UD */
+    apx_open_avx512(&c, 0);
+    apx_set(&c, UC_X86_REG_RAX, APX_DATA);
+    TEST_CHECK(apx_run(&c, APX_BCST_B4, 6) == 6);
+    TEST_CHECK(apx_run(&c, APX_CVT_R4, 6) == 6);
+    TEST_CHECK(apx_run(&c, APX_PADD_U0, 6) == 6);
+    TEST_CHECK(apx_run(&c, APX_BCST_B0, 6) == -1);
+    OK(uc_close(c.uc));
+}
 /* ---- end U610-U616 (apx_) ---- */
 
 TEST_LIST = {
@@ -16832,4 +16905,5 @@ TEST_LIST = {
     {"test_x86_apx_xsave", test_x86_apx_xsave},
     {"test_x86_apx_gating", test_x86_apx_gating},
     {"test_x86_apx_rex2_decode", test_x86_apx_rex2_decode},
+    {"test_x86_apx_evex", test_x86_apx_evex},
     {NULL, NULL}};

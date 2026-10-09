@@ -45,6 +45,8 @@ comparison (--hwcmp) ignores them.
 Usage:
   python ref_apx_core.py --selftest     hand-derived checks of the model, exit 0 on pass
   python ref_apx_core.py --cases        Emulator/data/cases_apx_core.txt (stdout)
+  python ref_apx_core.py --evex         Emulator/data/cases_apx_evex.txt (stdout): the APX extension of
+                                        EVEX instructions (U616), run with --apx --avx512
   python ref_apx_core.py --hwgen        Emulator/data/cases_apx_core_hw.txt (stdout): pairs
                                         "<legacy bytes> ~~ <REX2 bytes>" with registers R0-R15 only:
                                         the i5-13600K runs the legacy encoding, Unicorn (--apx)
@@ -1564,6 +1566,110 @@ def selftest():
     return ok
 
 
+# --------------------------------------------------------------------------------------------
+# U616: the APX extension of existing EVEX instructions (3.1.2.3.3, Figure 3.5, Table 3.3)
+#   P0 = ~R3 ~X3 ~B3 ~R4 B4 m m m, P1 = W ~vvvv U p p (X4 = ~U), P2 = z L'L b ~V4 aaa
+#   B4: bit 4 of a GPR in ModRM.r/m and of the base; X4: bit 4 of the index (mod != 11b only;
+#   with mod = 11b U must be 1, else #UD); R4: bit 4 of a GPR in ModRM.reg; ignored for vector
+#   registers / a VSIB index (V4 X3 index) / no index. Expected values from the SDM pages of
+#   VMOVDQU64, VPBROADCASTD, VMOVD/VMOVQ, VCVTSS2SI, VCVTTSD2SI, VPEXTRD, VPINSRQ, VPADDD,
+#   VPGATHERDD (EVEX.128 writes zero bits MAXVL-1:128).
+# --------------------------------------------------------------------------------------------
+def evex(mmm, pp, w, ll, opc, tail, vvvv=0, R3=0, X3=0, B3=0, R4=0, B4=0, X4=0, V4=0, z=0, b=0, aaa=0):
+    p0 = ((R3 ^ 1) << 7) | ((X3 ^ 1) << 6) | ((B3 ^ 1) << 5) | ((R4 ^ 1) << 4) | (B4 << 3) | mmm
+    p1 = (w << 7) | (((~vvvv) & 15) << 3) | ((X4 ^ 1) << 2) | pp
+    p2 = (z << 7) | (ll << 5) | (b << 4) | ((V4 ^ 1) << 3) | aaa
+    return bytes([0x62, p0, p1, p2, opc]) + bytes(tail)
+
+
+def zhex(b):
+    return bytes(b).hex().upper()
+
+
+def evex_lines():
+    rng = random.Random(0x0A9C0DE3)
+    L = []
+    c = lambda s: L.append("# " + s)
+    rnd = lambda n: bytes(rng.getrandbits(8) for _ in range(n))
+    c("--- VMOVDQU64 zmm1, [r20 + r21*8 + 40H] (B4 base, X4 = ~U index, disp8*64) ---")
+    data = rnd(64)
+    r21 = 3
+    r20 = MEM + 0xA000 - r21 * 8 - 0x40
+    code = evex(1, 2, 1, 2, 0x6F, [0x4C, 0xEC, 0x01], B4=1, X4=1)
+    L.append("%s | r20=0x%X r21=0x%X m+0xA000=%s => zmm1=%s" % (dotbyte(code), r20, r21, zhex(data), zhex(data)))
+    c("--- the same with U = 1 (X4 = 0): index R5 = RBP ---")
+    code = evex(1, 2, 1, 2, 0x6F, [0x4C, 0xEC, 0x01], B4=1, X4=0)
+    L.append("%s | r20=0x%X rbp=0x%X m+0xA000=%s => zmm1=%s" % (dotbyte(code), r20, r21, zhex(data), zhex(data)))
+    c("--- VMOVDQU64 [r28 + r16*2], zmm5 (store; B4 + B3 base, X4 index) ---")
+    z5 = rnd(64)
+    r16 = 0x20
+    r28 = MEM + 0xB000 - r16 * 2
+    code = evex(1, 2, 1, 2, 0x7F, [0x2C, 0x44], B4=1, B3=1, X4=1)    # modrm 00 101 100, SIB 01 000 100
+    L.append("%s | r28=0x%X r16=0x%X zmm5=%s => m+0xB000=%s m+0xB020=%s" % (dotbyte(code), r28, r16, zhex(z5), zhex(z5[:32]), zhex(z5[32:])))
+    c("--- VPBROADCASTD zmm2, r18d (EVEX.512.66.0F38.W0 7C: B4 GPR r/m) ---")
+    v = rng.getrandbits(32)
+    code = evex(2, 1, 0, 2, 0x7C, [0xD2], B4=1)
+    L.append("%s | r18=0x%X => zmm2=%s" % (dotbyte(code), (rng.getrandbits(32) << 32) | v, zhex(v.to_bytes(4, "little") * 16)))
+    c("--- VMOVD r29d, xmm1 / VMOVQ xmm3, r30 (B4 B3 GPR r/m; EVEX.128 zeroes the upper bits) ---")
+    x1 = rnd(64)
+    code = evex(1, 1, 0, 0, 0x7E, [0xCD], B4=1, B3=1)
+    L.append("%s | zmm1=%s r29=0xFFFFFFFFFFFFFFFF => r29=0x%X" % (dotbyte(code), zhex(x1), int.from_bytes(x1[:4], "little")))
+    r30 = rng.getrandbits(64)
+    code = evex(1, 1, 1, 0, 0x6E, [0xDE], B4=1, B3=1)
+    L.append("%s | zmm3=%s r30=0x%X => zmm3=%s" % (dotbyte(code), zhex(rnd(64)), r30, zhex(r30.to_bytes(8, "little") + bytes(56))))
+    c("--- VCVTSS2SI r27, xmm1 / VCVTTSD2SI r16, xmm0 (R4 R3 / R4: GPR in ModRM.reg) ---")
+    f = struct.pack("<f", 1234.0)
+    code = evex(1, 2, 1, 0, 0x2D, [0xD9], R4=1, R3=1)
+    L.append("%s | xmm1=%s => r27=0x4D2" % (dotbyte(code), zhex(f + bytes(12))))
+    dd = struct.pack("<d", -77.0)
+    code = evex(1, 3, 1, 0, 0x2C, [0xC0], R4=1)
+    L.append("%s | xmm0=%s => r16=0x%X" % (dotbyte(code), zhex(dd + bytes(8)), (-77) & M64))
+    c("--- VPEXTRD r30d, xmm1, 2 / VPINSRQ xmm1, xmm2, r19, 1 (B4 GPR r/m) ---")
+    x1 = rnd(16)
+    code = evex(3, 1, 0, 0, 0x16, [0xCE, 0x02], B4=1, B3=1)
+    L.append("%s | xmm1=%s r30=0xFFFFFFFFFFFFFFFF => r30=0x%X" % (dotbyte(code), zhex(x1), int.from_bytes(x1[8:12], "little")))
+    x2 = rnd(64)
+    r19 = rng.getrandbits(64)
+    code = evex(3, 1, 1, 0, 0x22, [0xCB, 0x01], vvvv=2, B4=1)
+    L.append("%s | zmm1=%s zmm2=%s r19=0x%X => zmm1=%s" % (dotbyte(code), zhex(rnd(64)), zhex(x2), r19, zhex(x2[:8] + r19.to_bytes(8, "little") + bytes(48))))
+    c("--- vector r/m: B4 ignored (VPADDD zmm1, zmm2, zmm3 with B4 = 1) ---")
+    a, b_ = rnd(64), rnd(64)
+    s = b"".join(((int.from_bytes(a[i:i + 4], "little") + int.from_bytes(b_[i:i + 4], "little")) & mask(32)).to_bytes(4, "little") for i in range(0, 64, 4))
+    code = evex(1, 1, 0, 2, 0xFE, [0xCB], vvvv=2, B4=1)
+    L.append("%s | zmm2=%s zmm3=%s => zmm1=%s" % (dotbyte(code), zhex(a), zhex(b_), zhex(s)))
+    c("--- U = 0 with ModRM.mod = 11b: #UD ---")
+    code = evex(1, 1, 0, 2, 0xFE, [0xCB], vvvv=2, X4=1)
+    L.append("%s | zmm2=%s zmm3=%s => #UD" % (dotbyte(code), zhex(a), zhex(b_)))
+    c("--- memory without SIB: X4 (U = 0) ignored; VPADDD zmm1, zmm2, [r19] ---")
+    r19 = MEM + 0xC000
+    code = evex(1, 1, 0, 2, 0xFE, [0x0B], vvvv=2, B4=1, X4=1)
+    L.append("%s | zmm2=%s r19=0x%X m+0xC000=%s => zmm1=%s" % (dotbyte(code), zhex(a), r19, zhex(b_), zhex(s)))
+    c("--- VSIB: X4 (U = 0) not used; VPGATHERDD zmm1{k1}, [rax + zmm2*4] ---")
+    idx = [rng.randrange(0, 0x400) for _ in range(16)]
+    mem = bytearray(0x1000)
+    for i in range(0x1000):
+        mem[i] = rng.getrandbits(8)
+    gat = b"".join(mem[4 * k:4 * k + 4] for k in idx)
+    zi = b"".join(k.to_bytes(4, "little") for k in idx)
+    runs = " ".join("m+0x%X=%s" % (0xD000 + o, zhex(mem[o:o + 512])) for o in range(0, 0x1000, 512))
+    for x4 in (0, 1):
+        code = evex(2, 1, 0, 2, 0x90, [0x0C, 0x90], aaa=1, X4=x4)
+        L.append("%s | rax=0x%X zmm2=%s k1=0xFFFF %s => zmm1=%s k1=0x0" % (dotbyte(code), MEM + 0xD000, zhex(zi), runs, zhex(gat)))
+    c("--- RIP-relative with B4/X4 set (ignored): VMOVD xmm4, [rip - 4] ---")
+    code = evex(1, 1, 0, 0, 0x6E, [0x25, 0xFC, 0xFF, 0xFF, 0xFF], B4=1, X4=1)
+    L.append("%s => zmm4=%s" % (dotbyte(code), zhex(bytes([0xFC, 0xFF, 0xFF, 0xFF]) + bytes(60))))
+    return L
+
+
+def gen_evex(out):
+    out.write("# Intel APX part 1, ledger U616: the APX extension of EVEX instructions (EVEX.B4, EVEX.X4 =\n")
+    out.write("# ~EVEX.U, EVEX.R4 for GPRs). Expected values from Emulator/tools/isa/ref_apx_core.py --evex\n")
+    out.write("# (regenerate, do not edit); Unicorn only, APX and AVX-512 opt-ins:\n")
+    out.write("#   emu-alltest --cases Emulator\\data\\cases_apx_evex.txt --apx --avx512 --expect-only\n")
+    for l in evex_lines():
+        out.write(l + "\n")
+
+
 def main():
     if "--selftest" in sys.argv:
         ok = selftest()
@@ -1571,6 +1677,9 @@ def main():
         sys.exit(0 if ok else 1)
     if "--cases" in sys.argv:
         gen_cases(sys.stdout)
+        return
+    if "--evex" in sys.argv:
+        gen_evex(sys.stdout)
         return
     if "--hwgen" in sys.argv:
         gen_hw(sys.stdout)
