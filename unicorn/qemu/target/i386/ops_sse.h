@@ -384,6 +384,17 @@ void glue(helper_maskmov, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 {
     int i;
 
+#if __Use_Original_Qemu != 1 /* ours (U702) */
+    /*
+     * NoVmp (ledger U702): MASKMOVQ / (V)MASKMOVDQU store selected bytes of a 64/128-bit
+     * memory location; its page faults are taken before any byte is stored (a #PF on the
+     * second page left the first page's bytes written). The SDM promises no fault
+     * suppression for unselected bytes ("exceptions associated with addressing memory and
+     * page faults may still be signaled", even with a mask of all 0s); the i5-13600K checks
+     * the whole location, whatever the mask (cases_fix3).
+     */
+    x86_probe_write(env, a0, 8 << SHIFT, GETPC());
+#endif /* __Use_Original_Qemu (U702) */
     for (i = 0; i < (8 << SHIFT); i++) {
         if (s->B(i) & 0x80) {
             cpu_stb_data_ra(env, a0 + i, d->B(i), GETPC());
@@ -2946,6 +2957,7 @@ void glue(helper_vtestpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
     CC_SRC = ((zf >> 63) ? 0 : CC_Z) | ((cf >> 63) ? 0 : CC_C);
 }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U702) */
 void glue(helper_vpmaskmovd_st, SUFFIX)(CPUX86State *env,
                                         Reg *v, Reg *s, target_ulong a0)
 {
@@ -2969,6 +2981,61 @@ void glue(helper_vpmaskmovq_st, SUFFIX)(CPUX86State *env,
         }
     }
 }
+#else /* ours (U702) */
+/*
+ * NoVmp (ledger U702): VMASKMOVPS/PD m, VPMASKMOVD/Q m store their selected elements only
+ * after every one of them is known to be writable (x86_probe_store, U592): a #PF on a later
+ * element left the earlier ones stored; the i5-13600K stores none (cases_fix3), SDM Vol3A
+ * 6.15 (the faulting instruction is not executed). Elements whose mask bit is 0 are not
+ * accessed ("faults will not occur due to referencing any memory location if the
+ * corresponding mask bit for that memory location is 0", SDM Vol2B VMASKMOV).
+ */
+void glue(helper_vpmaskmovd_st, SUFFIX)(CPUX86State *env,
+                                        Reg *v, Reg *s, target_ulong a0)
+{
+    uintptr_t ra = GETPC();
+    int i;
+
+    for (i = 0; i < (2 << SHIFT); i++) {
+        if (v->L(i) >> 31) {
+            uint32_t x = s->L(i);
+            uint8_t b[4] = { (uint8_t)x, (uint8_t)(x >> 8), (uint8_t)(x >> 16),
+                             (uint8_t)(x >> 24) };
+
+            x86_probe_store(env, a0 + i * 4, 4, b, ra);
+        }
+    }
+    for (i = 0; i < (2 << SHIFT); i++) {
+        if (v->L(i) >> 31) {
+            cpu_stl_data_ra(env, a0 + i * 4, s->L(i), ra);
+        }
+    }
+}
+
+void glue(helper_vpmaskmovq_st, SUFFIX)(CPUX86State *env,
+                                        Reg *v, Reg *s, target_ulong a0)
+{
+    uintptr_t ra = GETPC();
+    int i, k;
+
+    for (i = 0; i < (1 << SHIFT); i++) {
+        if (v->Q(i) >> 63) {
+            uint64_t x = s->Q(i);
+            uint8_t b[8];
+
+            for (k = 0; k < 8; k++) {
+                b[k] = (uint8_t)(x >> (8 * k));
+            }
+            x86_probe_store(env, a0 + i * 8, 8, b, ra);
+        }
+    }
+    for (i = 0; i < (1 << SHIFT); i++) {
+        if (v->Q(i) >> 63) {
+            cpu_stq_data_ra(env, a0 + i * 8, s->Q(i), ra);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U702) */
 
 void glue(helper_vpmaskmovd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
