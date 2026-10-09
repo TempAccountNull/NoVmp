@@ -1,14 +1,14 @@
 # emu-alltest report
 
-Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1, quirks 0xff.
+Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 29 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 28 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 3013 |
+| match | 3008 |
 | differs | 0 |
 | unicorn-#UD (hw runs it) | 0 |
 | host lacks + unicorn #UD | 10170 |
@@ -17,54 +17,66 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | not native-safe, unicorn #UD | 6 |
 | privileged (CPL0 in raw unicorn; Phase 2 CPL3) | 100 |
 | harness error | 0 |
+| known deviation (docs/quirks.md) | 5 |
+| known deviation not observed (matches) | 0 |
+
+Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).
 
 ## Per ISA group (Capstone groups)
 
-| group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error |
-|---|---|---|---|---|---|---|---|---|---|
-| 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| avx | 438 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| avx+novlx | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| avx+pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| avx2 | 197 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 |
-| avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 |
-| avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 |
-| base | 1170 | 0 | 0 | 7343 | 4 | 165 | 6 | 76 | 0 |
-| bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 |
-| bwi+vlx | 0 | 0 | 0 | 292 | 0 | 0 | 0 | 0 | 0 |
-| cdi | 0 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
-| cmov | 97 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| cmov+fpu | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| dqi | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 0 | 0 |
-| dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 |
-| fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 130 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 |
-| rtm | 0 | 0 | 0 | 0 | 5 | 4 | 0 | 0 | 0 |
-| sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| sse1 | 94 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sse2 | 253 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| sse42 | 10 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| sse4a | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 |
-| ssse3 | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| vlx | 0 | 0 | 0 | 462 | 0 | 0 | 0 | 0 | 0 |
-| vm | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 |
-| xop | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 |
+| group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 |
+| avx | 438 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx+novlx | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx+pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx2 | 197 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| base | 1166 | 0 | 0 | 7343 | 4 | 165 | 6 | 76 | 0 | 4 | 0 |
+| bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bwi+vlx | 0 | 0 | 0 | 292 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cdi | 0 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cmov | 97 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cmov+fpu | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dqi | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 130 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fsgsbase | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| rtm | 0 | 0 | 0 | 0 | 5 | 4 | 0 | 0 | 0 | 0 | 0 |
+| sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| sse1 | 93 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| sse2 | 253 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| sse42 | 10 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| sse4a | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ssse3 | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| vlx | 0 | 0 | 0 | 462 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| vm | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 | 0 | 0 |
+| xop | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Differences (first iteration that differs)
 
+
+## Known deviations (docs/quirks.md)
+
+- `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, known deviation (docs/quirks.md), 5/6): known deviation: CVTPI2PS m64 x87 transition; iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
+- `ptwrite eax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite dword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite rax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite qword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6
 
 ## Manual forms not reachable by the sweep yet
 
