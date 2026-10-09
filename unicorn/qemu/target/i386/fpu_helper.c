@@ -6237,6 +6237,9 @@ enum {
     AMX_TDPBF16PS,                                          /* U178 */
     AMX_TDPFP16PS,                                          /* U179 */
     AMX_TCMMIMFP16PS, AMX_TCMMRLFP16PS,                     /* U180 */
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+    AMX_TDPBF8PS, AMX_TDPBHF8PS, AMX_TDPHBF8PS, AMX_TDPHF8PS,   /* U724 */
+#endif /* __Use_Original_Qemu (U724) */
 };
 
 /* AMX-E4 (SDM Vol2A 2.10) after amx_check_enabled; then the result tile is d */
@@ -6516,6 +6519,184 @@ static void amx_pair_cmm_rl(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
 }
 #endif /* __Use_Original_Qemu (U180) */
 
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+/*
+ * NoVmp (ledger U724): AMX-FP8 TDP[B,H,BH,HB]F8PS (ISE 319433-062 3.4, 3.7; FP8 formats 1.7,
+ * Table 1-12: E5M2 "BF8" bias 15 with infinities S.11111.00 and NaNs S.11111.{01,10,11};
+ * E4M3 "HF8" bias 7, no infinity, NaN S.1111.111 only). Per row m and column n the products
+ * of every k are summed exactly in fixed point (convert_bf8/hf8_to_int64: 2^16 * x / 2^9 * x;
+ * the int128 sum temp1.int128[n]) and rounded once by convert_int128_to_fp32 (RNE, factor 32
+ * / 18 / 25); then tsrcdest.fp32[n] + tmpf32 with "DAZ==0 ... FTZ==1", RNE (the description;
+ * also FP8 numerics 1.7.2 "as if MXCSR.DAZ is not set" for any input; FTZ as amx_fp_status,
+ * U596). No MXCSR access. Specials, ISE "INF Computation treatment" / "NaN treatment":
+ *   - a NaN among the elements used (tsrc1.row[m].float8[4k..4k+3], tsrc2.row[k].float8[4n..
+ *     4n+3] for every k) or in tsrcdest.row[m].fp32[n] -> FFC00000h (QNaN indefinite);
+ *   - INF * 0 and +INF + -INF -> FFC00000h; INF * finite non-zero (denormals included, DAZ =
+ *     0) and INF * INF -> INF with the XOR of the signs; INF + finite -> that INF;
+ *   - the final FP32 add: IEEE (INF + -INF -> FFC00000h).
+ * The magnitudes are below 2^32 (BF8 7 << 29), so every product fits in 64 bits; the sum of at
+ * most 64 of them needs 71 bits (a two's-complement 128-bit accumulator here) and its value
+ * (2^-32 .. 2^41) is a normal FP32, so convert_int128_to_fp32 never under- or overflows.
+ * The AVX10.2 FP8 conversion helpers (U400) are not used: AMX computes in fixed point.
+ */
+enum { AMX_FP8_FINITE, AMX_FP8_NAN, AMX_FP8_PINF, AMX_FP8_NINF };
+
+/* convert_bf8_to_int64 / convert_hf8_to_int64 -> sign and magnitude, or a special class */
+static int amx_fp8_fix(uint8_t x, bool hf8, uint64_t *mag, bool *neg)
+{
+    int exp, frac;
+    uint64_t mant;
+
+    *neg = (x >> 7) != 0;
+    if (hf8) {
+        exp = (x >> 3) & 15;
+        frac = x & 7;
+        if (exp == 15 && frac == 7) {
+            return AMX_FP8_NAN;
+        }
+        mant = exp ? (uint64_t)(frac | 8) : (uint64_t)frac;     /* set Jbit */
+    } else {
+        exp = (x >> 2) & 31;
+        frac = x & 3;
+        if (exp == 31) {
+            return frac ? AMX_FP8_NAN : (*neg ? AMX_FP8_NINF : AMX_FP8_PINF);
+        }
+        mant = exp ? (uint64_t)(frac | 4) : (uint64_t)frac;
+    }
+    *mag = mant << (exp ? exp - 1 : 0);                         /* e_count */
+    return AMX_FP8_FINITE;
+}
+
+/* (hi:lo) >> n, low 64 bits, 0 <= n < 128 */
+static uint64_t amx_shr128(uint64_t hi, uint64_t lo, int n)
+{
+    if (n == 0) {
+        return lo;
+    }
+    if (n < 64) {
+        return (lo >> n) | (hi << (64 - n));
+    }
+    return hi >> (n - 64);
+}
+
+/* convert_int128_to_fp32 (ISE 3.4): RNE of the integer (hi:lo) / 2^factor */
+static float32 amx_fix128_to_fp32(uint64_t hi, uint64_t lo, int factor)
+{
+    uint32_t sign = 0;
+    uint64_t mant, g, sticky;
+    int p, sh;
+
+    if (!hi && !lo) {
+        return float32_zero;
+    }
+    if ((int64_t)hi < 0) {                                      /* magnitude = -in */
+        sign = 1;
+        hi = ~hi + (lo == 0);
+        lo = ~lo + 1;
+    }
+    p = hi ? 127 - clz64(hi) : 63 - clz64(lo);                  /* Jbit_position */
+    if (p <= 23) {
+        mant = lo << (23 - p);                                  /* exact: G = sticky = 0 */
+        g = sticky = 0;
+    } else {
+        sh = p - 23;                                            /* Lbit at bit sh */
+        mant = amx_shr128(hi, lo, sh) & 0xffffff;
+        g = amx_shr128(hi, lo, sh - 1) & 1;                     /* Gbit */
+        /* sticky = OR of the bits below the Gbit (sh - 1 of them) */
+        if (sh - 1 < 64) {
+            sticky = (lo & ((1ULL << (sh - 1)) - 1)) != 0;
+        } else {
+            sticky = lo != 0 || (sh - 1 > 64 && (hi & ((1ULL << (sh - 1 - 64)) - 1)) != 0);
+        }
+    }
+    mant += g & ((mant & 1) | (sticky != 0));                   /* RndAdd1 */
+    return make_float32((sign << 31) |
+                        ((uint32_t)(127 + p - factor + (int)(mant >> 24)) << 23) |
+                        (uint32_t)(mant & 0x7fffff));
+}
+
+/* tsrcdest.fp32[n] + tmpf32: RNE, no DAZ, FTZ (U596 rule), MXCSR untouched */
+static float32 amx_add32_nodaz(float32 a, float32 b)
+{
+    float_status st;
+    float32 r;
+
+    amx_fp_status(&st);
+    r = amx_nan_result(float32_add(a, b, &st), &st);
+    return amx_ftz32(r);
+}
+
+static void amx_tmul_fp8(CPUX86State *env, int op, unsigned d, unsigned s1, unsigned s2)
+{
+    bool hf1 = op == AMX_TDPHBF8PS || op == AMX_TDPHF8PS;      /* tsrc1 E4M3 */
+    bool hf2 = op == AMX_TDPBHF8PS || op == AMX_TDPHF8PS;      /* tsrc2 E4M3 */
+    int factor = hf1 && hf2 ? 18 : !hf1 && !hf2 ? 32 : 25;
+    unsigned rows = AMX_ROWS(env, d), kk = AMX_COLSB(env, s1) / 4;
+    unsigned nn = AMX_COLSB(env, d) / 4, m, k, n, i;
+
+    for (m = 0; m < rows; m++) {
+        uint64_t hi[16], lo[16];
+        bool nan[16], pinf[16], ninf[16], inval[16];
+
+        for (n = 0; n < nn; n++) {
+            hi[n] = lo[n] = 0;
+            nan[n] = pinf[n] = ninf[n] = inval[n] = false;
+        }
+        for (k = 0; k < kk; k++) {
+            const uint8_t *a = AMX_ROW(env, s1, m) + 4 * k;
+            for (n = 0; n < nn; n++) {
+                const uint8_t *b = AMX_ROW(env, s2, k) + 4 * n;
+                for (i = 0; i < 4; i++) {
+                    uint64_t ma = 0, mb = 0, plo, phi;
+                    bool na, nb;
+                    int ca = amx_fp8_fix(a[i], hf1, &ma, &na);
+                    int cb = amx_fp8_fix(b[i], hf2, &mb, &nb);
+
+                    if (ca == AMX_FP8_NAN || cb == AMX_FP8_NAN) {
+                        nan[n] = true;
+                    } else if (ca != AMX_FP8_FINITE || cb != AMX_FP8_FINITE) {
+                        if ((ca == AMX_FP8_FINITE && ma == 0) ||
+                            (cb == AMX_FP8_FINITE && mb == 0)) {
+                            inval[n] = true;                    /* INF * 0 */
+                        } else if (na != nb) {
+                            ninf[n] = true;
+                        } else {
+                            pinf[n] = true;
+                        }
+                    } else {
+                        mulu64(&plo, &phi, ma, mb);             /* phi = 0: ma, mb < 2^32 */
+                        if (na != nb) {                         /* temp1 -= product */
+                            hi[n] -= phi + (lo[n] < plo);
+                            lo[n] -= plo;
+                        } else {                                /* temp1 += product */
+                            lo[n] += plo;
+                            hi[n] += phi + (lo[n] < plo);
+                        }
+                    }
+                }
+            }
+        }
+        for (n = 0; n < nn; n++) {
+            uint8_t *c = AMX_ROW(env, d, m) + 4 * n;
+            float32 acc = make_float32(ldl_le_p(c)), tmpf32;
+            uint32_t res;
+
+            if (nan[n] || float32_is_any_nan(acc) || inval[n] || (pinf[n] && ninf[n])) {
+                res = 0xffc00000u;                              /* QNaN indefinite */
+            } else {
+                tmpf32 = pinf[n] ? float32_infinity :
+                         ninf[n] ? float32_set_sign(float32_infinity, 1) :
+                         amx_fix128_to_fp32(hi[n], lo[n], factor);
+                res = float32_val(amx_add32_nodaz(acc, tmpf32));
+            }
+            stl_le_p(c, res);
+        }
+        memset(AMX_ROW(env, d, m) + 4 * nn, 0, AMX_P1_BYTES_PER_ROW - 4 * nn);
+    }
+    amx_tmul_finish(env, d);
+}
+#endif /* __Use_Original_Qemu (U724) */
+
 #if __Use_Original_Qemu != 1 /* ours (U177) */
 /* info = op | tsrcdest << 4 | tsrc1 << 8 | tsrc2 << 12 (each 0..15) */
 void helper_amx_tmul(CPUX86State *env, uint32_t info)
@@ -6551,6 +6732,14 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
         amx_tmul_fp(env, d, s1, s2, amx_cvt_fp16, amx_pair_cmm_rl);
         break;
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+    case AMX_TDPBF8PS:
+    case AMX_TDPBHF8PS:
+    case AMX_TDPHBF8PS:
+    case AMX_TDPHF8PS:
+        amx_tmul_fp8(env, op, d, s1, s2);
+        break;
+#endif /* __Use_Original_Qemu (U724) */
     default:
         g_assert_not_reached();
     }

@@ -1227,6 +1227,31 @@ static void decode_MAP7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+/*
+ * NoVmp (ledger U724): VEX map 5 (3-byte VEX, m-mmmm = 00101): only AMX-FP8 (ISE 319433-062
+ * TDP[B,H,BH,HB]F8PS), VEX.128.pp.MAP5.W0 FD 11:rrr:bbb: NP TDPBF8PS, F2 TDPBHF8PS, F3
+ * TDPHBF8PS, 66 TDPHF8PS (tsrcdest = ModRM.reg, tsrc1 = ModRM.r/m, tsrc2 = VEX.vvvv). The
+ * AMX-E4 static #UDs (64-bit mode, VEX.L1, W1) are those of validate_vex class 22; every
+ * other opcode or ModRM.mod != 11b is undefined (#UD).
+ */
+static void decode_VEX_MAP5(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry amx_fd_reg[4] = {
+        [0] = X86_OP_ENTRY0(TDPBF8PS,  vex22 cpuid(AMX_FP8) p_00),
+        [1] = X86_OP_ENTRY0(TDPHF8PS,  vex22 cpuid(AMX_FP8) p_66),
+        [2] = X86_OP_ENTRY0(TDPHBF8PS, vex22 cpuid(AMX_FP8) p_f3),
+        [3] = X86_OP_ENTRY0(TDPBHF8PS, vex22 cpuid(AMX_FP8) p_f2),
+    };
+
+    *b = x86_ldub_code(env, s);
+    memset(entry, 0, sizeof(*entry));
+    if (*b == 0xfd && (get_modrm(s, env) >> 6) == 3) {
+        *entry = *decode_by_prefix(s, amx_fd_reg);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U724) */
 #if __Use_Original_Qemu != 1 /* ours (U645) */
 /*
  * NoVmp (ledger U645): Intel APX EVEX map 4, the instructions promoted from legacy maps 2 and 3
@@ -6451,6 +6476,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                     decode_func = decode_MAP7;
                     break;
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+                case 0x05: /* map 5: AMX-FP8 TDP*F8PS (U724) */
+                    decode_func = decode_VEX_MAP5;
+                    break;
+#endif /* __Use_Original_Qemu (U724) */
                 default:   /* Reserved for future use.  */
                     goto unknown_op;
                 }

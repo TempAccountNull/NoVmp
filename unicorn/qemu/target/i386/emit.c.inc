@@ -5840,6 +5840,28 @@ static void gen_TCMMRLFP16PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *
     gen_amx_tmul(s, 7);
 }
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U724) */
+/* AMX-FP8: VEX.128.{NP,F2,F3,66}.MAP5.W0 FD 11:rrr:bbb (op numbers AMX_TDPBF8PS.. in fpu_helper.c) */
+static void gen_TDPBF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 8);
+}
+
+static void gen_TDPBHF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 9);
+}
+
+static void gen_TDPHBF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 10);
+}
+
+static void gen_TDPHF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 11);
+}
+#endif /* __Use_Original_Qemu (U724) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 
 /*
