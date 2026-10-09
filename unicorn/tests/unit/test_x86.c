@@ -14246,7 +14246,7 @@ static void test_x86_bp_rdpmc_gp(void)
 static void test_x86_bp_vex_vvvv3_32(void)
 {
     BpCpu c;
-    uint32_t x2[4] = {1, 2, 3, 4}, x3[4] = {10, 20, 30, 40}, x10[4] = {100, 200, 300, 400};
+    uint32_t x2[4] = {1, 2, 3, 4}, x3[4] = {10, 20, 30, 40};
     uint32_t x1[4], exp[4] = {11, 22, 33, 44};
     uint64_t xcr0 = 7;
 
@@ -14254,7 +14254,6 @@ static void test_x86_bp_vex_vvvv3_32(void)
     OK(uc_reg_write(c.uc, UC_X86_REG_XCR0, &xcr0));
     OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, x2));
     OK(uc_reg_write(c.uc, UC_X86_REG_XMM3, x3));
-    OK(uc_reg_write(c.uc, UC_X86_REG_XMM10, x10));
     /* C4 E1 29 FE CB: VEX.vvvv = 1010b (xmm10 in 64-bit mode) -> vpaddd xmm1, xmm2, xmm3 */
     OK(bp_run(&c, "\xc4\xe1\x29\xfe\xcb", 5));
     OK(uc_reg_read(c.uc, UC_X86_REG_XMM1, x1));
@@ -14266,6 +14265,47 @@ static void test_x86_bp_vex_vvvv3_32(void)
     OK(bp_run(&c, "\xc4\xe1\x79\x6f\xca", 5));
     OK(uc_reg_read(c.uc, UC_X86_REG_XMM1, x1));
     TEST_CHECK(memcmp(x1, x2, 16) == 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U456 (upstream QEMU b609db9477): LOCK on an instruction of the new decoder
+ * (0F-map SSE forms; none is lockable) is #UD, also with an integer memory
+ * destination, and nothing is stored (SDM Vol2A LOCK).
+ */
+static void bp_lock_ud(BpCpu *c, const char *code, size_t len, const char *what)
+{
+    uint8_t mem[16], zero[16] = {0};
+    uc_err e;
+
+    OK(uc_mem_write(c->uc, BP_DATA, zero, 16));
+    bp_set(c, UC_X86_REG_RSI, BP_DATA);
+    e = bp_run(c, code, len);
+    OK(uc_mem_read(c->uc, BP_DATA, mem, 16));
+    TEST_CHECK(e == UC_ERR_INSN_INVALID && memcmp(mem, zero, 16) == 0);
+    TEST_MSG("%s: uc_emu_start %d (expected #UD = %d), memory %s", what, (int)e,
+             (int)UC_ERR_INSN_INVALID, memcmp(mem, zero, 16) ? "written" : "unchanged");
+}
+
+static void test_x86_bp_lock_new_decoder(void)
+{
+    BpCpu c;
+    uint32_t x0[4] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+    uint64_t mm0 = 0x8877665544332211ULL;
+
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, x0));
+    OK(uc_reg_write(c.uc, UC_X86_REG_MM0, &mm0));
+    bp_lock_ud(&c, "\xf0\x0f\x7e\x06", 4, "lock movd [rsi], mm0");
+    bp_lock_ud(&c, "\xf0\x66\x0f\x7e\x06", 5, "lock movd [rsi], xmm0");
+    bp_lock_ud(&c, "\xf0\x66\x0f\x3a\x14\x06\x01", 7, "lock pextrb [rsi], xmm0, 1");
+    bp_lock_ud(&c, "\xf0\x66\x0f\x3a\x15\x06\x01", 7, "lock pextrw [rsi], xmm0, 1");
+    bp_lock_ud(&c, "\xf0\x66\x0f\x3a\x16\x06\x01", 7, "lock pextrd [rsi], xmm0, 1");
+    bp_lock_ud(&c, "\xf0\x66\x48\x0f\x3a\x16\x06\x01", 8, "lock pextrq [rsi], xmm0, 1");
+    bp_lock_ud(&c, "\xf0\x66\x0f\x3a\x17\x06\x01", 7, "lock extractps [rsi], xmm0, 1");
+    bp_lock_ud(&c, "\xf0\x66\x0f\xd6\x06", 5, "lock movq [rsi], xmm0");
+    bp_lock_ud(&c, "\xf0\x0f\x11\x06", 4, "lock movups [rsi], xmm0");
+    bp_lock_ud(&c, "\xf0\x66\x0f\xfe\xc1", 5, "lock paddd xmm0, xmm1");
     OK(uc_close(c.uc));
 }
 /* ---- end U450-U474 (bp_) ---- */
@@ -14482,4 +14522,5 @@ TEST_LIST = {
     {"test_x86_bp_iret_vm86", test_x86_bp_iret_vm86},
     {"test_x86_bp_rdpmc_gp", test_x86_bp_rdpmc_gp},
     {"test_x86_bp_vex_vvvv3_32", test_x86_bp_vex_vvvv3_32},
+    {"test_x86_bp_lock_new_decoder", test_x86_bp_lock_new_decoder},
     {NULL, NULL}};

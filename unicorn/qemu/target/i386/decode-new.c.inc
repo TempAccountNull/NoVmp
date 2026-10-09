@@ -94,6 +94,7 @@
 #define i64 .special = X86_SPECIAL_i64,
 #define o64 .special = X86_SPECIAL_o64,
 #define xchg .special = X86_SPECIAL_Locked,
+#define lock .special = X86_SPECIAL_HasLock,
 #define mmx .special = X86_SPECIAL_MMX,
 #define zext0 .special = X86_SPECIAL_ZExtOp0,
 #define zext2 .special = X86_SPECIAL_ZExtOp2,
@@ -4485,10 +4486,6 @@ static int decode_modrm(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 {
     int modrm = get_modrm(s, env);
     if ((modrm >> 6) == 3) {
-        if (s->prefix & PREFIX_LOCK) {
-            decode->e.gen = gen_illegal;
-            return 0xff;
-        }
         op->n = (modrm & 7);
         if (type != X86_TYPE_Q && type != X86_TYPE_N) {
             op->n |= REX_B(s);
@@ -5983,6 +5980,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         if (decode.op[0].has_ea) {
             s->prefix |= PREFIX_LOCK;
         }
+        decode.e.special = X86_SPECIAL_HasLock;
+        /* fallthrough */
+    case X86_SPECIAL_HasLock:
         break;
 
     case X86_SPECIAL_ProtMode:
@@ -6028,6 +6028,18 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         break;
     }
 
+    /*
+     * backport of QEMU b609db9477: LOCK is valid only on an instruction tagged as
+     * lockable with a memory destination, else #UD (SDM Vol2A LOCK). No decode-new
+     * entry is lockable here (the lockable integer forms are in the old decoder),
+     * so LOCK on any of them is #UD, before the VEX/EVEX checks.
+     */
+    if (s->prefix & PREFIX_LOCK) {
+        if (decode.e.special != X86_SPECIAL_HasLock || !decode.op[0].has_ea) {
+            goto illegal_op;
+        }
+    }
+
 #if __Use_Original_Qemu != 1 /* ours (U145) */
     if (s->prefix & PREFIX_EVEX) {
         if (validate_evex(s, &decode)) {
@@ -6069,9 +6081,6 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         gen_load_ea(s, &decode.mem, decode.e.vex_class == 12);
     }
     if (s->prefix & PREFIX_LOCK) {
-        if (decode.op[0].unit != X86_OP_INT || !decode.op[0].has_ea) {
-            goto illegal_op;
-        }
         gen_load(s, &decode, 2, s->T1);
         decode.e.gen(s, env, &decode);
     } else {
