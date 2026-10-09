@@ -1497,29 +1497,11 @@ void helper_fclex(CPUX86State *env)
 }
 
 void helper_fwait(CPUX86State *env)
-#if __Use_Original_Qemu == 1 /* original QEMU (U50) */
 {
     if (env->fpus & FPUS_SE) {
         fpu_raise_exception(env, GETPC());
     }
 }
-#else /* ours (U50) */
-{
-    if (env->fpus & FPUS_SE) {
-        fpu_raise_exception(env, GETPC());
-    }
-}
-
-/* NoVmp (ledger U50): CVTPI2PS xmm, m64 - pending #MF per the SDM unless the
-   hardware quirk is selected (no MMX transition, no x87 exception) */
-void helper_cvtpi2ps_m64_fwait(CPUX86State *env)
-{
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87) &&
-        (env->fpus & FPUS_SE)) {
-        fpu_raise_exception(env, GETPC());
-    }
-}
-#endif /* __Use_Original_Qemu (U50) */
 
 static void do_fninit(CPUX86State *env)
 {
@@ -6423,31 +6405,11 @@ void helper_ldmxcsr(CPUX86State *env, uint32_t val)
 }
 
 void helper_enter_mmx(CPUX86State *env)
-#if __Use_Original_Qemu == 1 /* original QEMU (U44) */
 {
     env->fpstt = 0;
     *(uint32_t *)(env->fptags) = 0;
     *(uint32_t *)(env->fptags + 4) = 0;
 }
-#else /* ours (U44) */
-{
-    env->fpstt = 0;
-    *(uint32_t *)(env->fptags) = 0;
-    *(uint32_t *)(env->fptags + 4) = 0;
-}
-
-/*
- * NoVmp (ledger U44): CVTPI2PS xmm, m64. The SDM's CVTPI2PS page makes the
- * instruction transition to MMX state with no exemption for the memory form;
- * the i5-13600K does not transition (UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87).
- */
-void helper_cvtpi2ps_m64_enter_mmx(CPUX86State *env)
-{
-    if (!(env->uc->x86_hw_quirks & UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87)) {
-        helper_enter_mmx(env);
-    }
-}
-#endif /* __Use_Original_Qemu (U44) */
 
 void helper_emms(CPUX86State *env)
 {

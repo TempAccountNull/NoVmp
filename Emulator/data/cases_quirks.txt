@@ -8,8 +8,8 @@
 fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
 fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
 fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
-# bit 1 CVTPI2PS_M64_KEEPS_X87: SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
-fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000
+# CVTPI2PS m64 x87 transition (U532): SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
+fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000 # known deviation: CVTPI2PS m64 x87 transition
 # bit 2 FYL2XP1_BELOW_M1: x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf
 fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000
 fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000

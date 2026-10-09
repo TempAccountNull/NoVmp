@@ -2192,7 +2192,6 @@
 #define helper_fwait helper_fwait_x86_64
 #if __Use_Original_Qemu != 1 /* ours (U50/U52) */
 #define helper_check_canonical_ip helper_check_canonical_ip_x86_64
-#define helper_cvtpi2ps_m64_fwait helper_cvtpi2ps_m64_fwait_x86_64
 #endif /* __Use_Original_Qemu (U50/U52) */
 #define helper_fninit helper_fninit_x86_64
 #define helper_fbld_ST0 helper_fbld_ST0_x86_64
@@ -2226,9 +2225,6 @@
 #define update_mxcsr_status update_mxcsr_status_x86_64
 #define helper_ldmxcsr helper_ldmxcsr_x86_64
 #define helper_enter_mmx helper_enter_mmx_x86_64
-#if __Use_Original_Qemu != 1 /* ours (U44) */
-#define helper_cvtpi2ps_m64_enter_mmx helper_cvtpi2ps_m64_enter_mmx_x86_64
-#endif /* __Use_Original_Qemu (U44) */
 #define helper_emms helper_emms_x86_64
 #define helper_movq helper_movq_x86_64
 #define helper_psrlw_mmx helper_psrlw_mmx_x86_64

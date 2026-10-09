@@ -3,3 +3,4 @@
 # are reported in the bucket "known deviation (docs/quirks.md)" instead of "differs" / "unicorn-#UD",
 # and in "known deviation not observed (matches)" when the run did not show the deviation.
 # One form per line: <form text exactly as in alltest.csv><TAB><docs/quirks.md entry name>
+cvtpi2ps xmm0, qword ptr [rsi]	CVTPI2PS m64 x87 transition

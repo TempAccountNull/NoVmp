@@ -3822,12 +3822,11 @@ static void gen_CVTPI2Px(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     /*
      * Only the MMX-register source transitions to MMX state. CVTPI2PD xmm, m64:
      * "does not cause a transition to MMX technology" (SDM Vol2 CVTPI2PD);
-     * CVTPI2PS xmm, m64: transition per the SDM, none on hardware (quirk).
+     * CVTPI2PS xmm, m64 transitions (its SDM page exempts no form; U532: the
+     * i5-13600K does not, a documented deviation in docs/quirks.md).
      */
-    if (!decode->op[2].has_ea) {
+    if (!decode->op[2].has_ea || !(s->prefix & PREFIX_DATA)) {
         gen_helper_enter_mmx(tcg_ctx, cpu_env);
-    } else if (!(s->prefix & PREFIX_DATA)) {
-        gen_helper_cvtpi2ps_m64_enter_mmx(tcg_ctx, cpu_env);
     }
 #endif /* __Use_Original_Qemu (U44) */
     if (s->prefix & PREFIX_DATA) {

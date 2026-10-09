@@ -13,7 +13,7 @@
 //   R7  x87 FCW/FSW as loaded by FLDCW/FLDENV/FRSTOR/FXRSTOR/XRSTOR (reserved bits, ES/B), vs hardware.
 //   R8  non-canonical data references fault (#GP / #SS) instead of aliasing into mapped memory.
 //   R9  MIN/MAX (SSE/AVX, scalar/packed) and F16C conversions under DAZ/FTZ, vs hardware.
-//   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), manual default and hardware quirks.
+//   R10 MMX <-> x87 aliasing (TOP/tags, ST(i) bits 79:64, CVTPI2Px m64), SDM vs hardware (known deviations).
 //   R11 x87 C1 rounding direction, precision control and stack overflow/underflow, every form vs hardware.
 //   R12 state after uc_open = SDM RESET state (FCW/FSW/FTW, MXCSR, DR6/DR7).
 //   R13 FPREM/FPREM1 quotient bits and remainders over random operands vs hardware.
@@ -997,7 +997,7 @@ static void test_r9()
 //
 // SDM Vol1 9.5.2: an MMX instruction (not EMMS) sets TOP=0 and all tags valid, and an MMX register
 // write sets bits 79:64 of the aliased x87 register to all ones. CVTPI2PD xmm, m64 makes no transition
-// (Vol2 CVTPI2PD); the CVTPI2PS page does not exempt its m64 form, the i5-13600K does (hardware quirk).
+// (Vol2 CVTPI2PD); the CVTPI2PS page does not exempt its m64 form, the i5-13600K does (docs/quirks.md deviation).
 // The x87 stack is made deterministic first (all registers 0.0, then 1.0/0.0/pi pushed: TOP=5), the
 // op runs, then FNSTENV + FXSAVE capture FCW/FSW/FTW, the abridged tags, ST0-7 (80 bits) and XMM0.
 // Thunk ABI: rcx = in { m64 at +0, xmm source at +16 }, rdx = out (64-aligned: fnstenv at +0, fxsave
@@ -1102,20 +1102,20 @@ static void test_r10()
 	};
 	uint8_t in[ 32 ];
 	for ( int i = 0; i < 32; ++i ) in[ i ] = uint8_t( 0x11 * ( i + 1 ) );
-	const uint32_t hw_quirks = UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87;
+	// U532: the emulator implements the SDM only; manual_differs = docs/quirks.md "CVTPI2PS m64 x87
+	// transition" (a known deviation: the SDM result must differ from the hardware there)
 	for ( const c& k : cases )
 	{
 		std::vector<uint8_t> code = assemble( r10_thunk( k.op ) );
 		CHECK( !code.empty(), "%s: assembly", k.op );
 		if ( code.empty() ) continue;
-		r10_result hw = r10_native( code, in ), man = r10_unicorn( code, in, 0 ), q = r10_unicorn( code, in, hw_quirks );
-		std::string d_man = r10_diff( hw, man ), d_q = r10_diff( hw, q );
+		r10_result hw = r10_native( code, in ), man = r10_unicorn( code, in, 0 );
+		std::string d_man = r10_diff( hw, man );
 		std::string name = k.op;
 		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
-		std::printf( "    %-58s hw ftw=%04X  manual: %-40s quirks: %s\n", name.c_str(), unsigned( hw.env[ 8 ] | ( hw.env[ 9 ] << 8 ) ),
-					 d_man.empty() ? "= hw" : ( k.manual_differs ? ( "SDM differs: " + d_man ) : d_man ).c_str(), d_q.empty() ? "= hw" : d_q.c_str() );
-		CHECK( d_q.empty(), "%s: Unicorn with hardware quirks differs from hardware (%s)", k.op, d_q.c_str() );
-		CHECK( k.manual_differs ? !d_man.empty() : d_man.empty(), "%s: Unicorn default (manual) %s", k.op,
+		std::printf( "    %-58s hw ftw=%04X  SDM: %s\n", name.c_str(), unsigned( hw.env[ 8 ] | ( hw.env[ 9 ] << 8 ) ),
+					 d_man.empty() ? "= hw" : ( k.manual_differs ? ( "known deviation (CVTPI2PS m64 x87 transition): " + d_man ) : d_man ).c_str() );
+		CHECK( k.manual_differs ? !d_man.empty() : d_man.empty(), "%s: Unicorn (SDM) %s", k.op,
 			   k.manual_differs ? "should follow the SDM, not hardware" : ( "differs from hardware: " + d_man ).c_str() );
 	}
 }
@@ -1183,8 +1183,7 @@ static r11_result r11_native( const std::vector<uint8_t>& code, const uint8_t in
 }
 
 // every documented i5-13600K deviation from the SDM, for the hardware comparisons
-static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87 |
-                                         UC_X86_QUIRK_FYL2XP1_BELOW_M1 | UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC;
+static constexpr uint32_t X87_HW_QUIRKS = UC_X86_QUIRK_FYL2XP1_BELOW_M1 | UC_X86_QUIRK_X87_CMP_UNMASKED_IA_SETS_CC;
 
 static r11_result r11_unicorn( const std::vector<uint8_t>& code, const uint8_t in[ 208 ], uint32_t quirks )
 {
@@ -1594,8 +1593,12 @@ static void test_r14()
 		std::string name = op;
 		for ( char& ch : name ) if ( ch == '\n' ) ch = ';';
 		bool same = hw == uc;
-		std::printf( "    %-40s hw: %-5s uc: %-5s %s\n", name.c_str(), name_of( hw ).c_str(), name_of( uc ).c_str(), same ? "ok" : "DIFFERS" );
-		if ( !same ) ++diffs;
+		// U532: docs/quirks.md "CVTPI2PS m64 x87 transition": the SDM takes the pending #MF, the
+		// i5-13600K runs the m64 form
+		bool known = !same && name == "cvtpi2ps xmm0, qword ptr [rcx + 64]" && hw == -1 && uc == 16;
+		std::printf( "    %-40s hw: %-5s uc: %-5s %s\n", name.c_str(), name_of( hw ).c_str(), name_of( uc ).c_str(),
+					 same ? "ok" : known ? "known deviation (CVTPI2PS m64 x87 transition)" : "DIFFERS" );
+		if ( !same && !known ) ++diffs;
 	}
 	CHECK( diffs == 0, "%d instructions differ in pending-#MF behaviour", diffs );
 	( void ) staged;
@@ -1606,7 +1609,7 @@ static void test_r14()
 // Unicorn only (user mode cannot set CR0/CR4 natively), expectations from the SDM Vol2 exception
 // tables: x87 with TS or EM -> #NM; MMX and the MMX-state SSE forms with TS -> #NM, with EM -> #UD;
 // the SSE side (CVT*PI*, MOVQ2DQ, MOVDQ2Q) with OSFXSR = 0 -> #UD, EMMS unaffected. Also the
-// manual-default #MF of CVTPI2PS xmm, m64 (no hardware quirk).
+// SDM #MF of CVTPI2PS xmm, m64 (U532: the only behaviour; the i5-13600K runs it, docs/quirks.md).
 
 static int r15_run( const char* text, uint64_t cr0_set, uint64_t cr0_clr, uint64_t cr4_clr, bool pending_mf, uint32_t quirks )
 {
@@ -1667,7 +1670,6 @@ static void test_r15()
 		{ "fwait", TS | MP, 0, 0, false, 0, 7, "WAIT, CR0.MP+TS" },
 		{ "fwait", TS, 0, 0, false, 0, -1, "WAIT, CR0.TS only runs" },
 		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, 16, "CVTPI2PS m64, pending, manual: #MF" },
-		{ "cvtpi2ps xmm0, qword ptr [rcx]", 0, 0, 0, true, 2, -1, "CVTPI2PS m64, pending, hw quirk: runs" },
 		{ "cvtpi2pd xmm0, qword ptr [rcx]", 0, 0, 0, true, 0, -1, "CVTPI2PD m64, pending: runs (SDM)" },
 	};
 	for ( const c& k : cases )

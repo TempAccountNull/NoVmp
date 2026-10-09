@@ -6030,17 +6030,16 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
      * and the processor encounters an MMX instruction, the processor
      * generates a #MF prior to executing the MMX instruction" (SDM Vol3
      * 14.5.1, Tables 24-4..24-9), before any memory access. CVTPI2PD xmm, m64
-     * takes no x87 exception (SDM); CVTPI2PS xmm, m64 does per its SDM page,
-     * not on hardware (UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87).
+     * takes no x87 exception (SDM); CVTPI2PS xmm, m64 does per its SDM page
+     * (U532: the i5-13600K does not, a documented deviation in docs/quirks.md).
      */
     if ((decode.e.special == X86_SPECIAL_MMX &&
          !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) ||
         decode.e.gen == gen_CVTPx2PI || decode.e.gen == gen_CVTTPx2PI ||
         decode.e.gen == gen_MOVq_dq || decode.e.gen == gen_EMMS ||
-        (decode.e.gen == gen_CVTPI2Px && !decode.op[2].has_ea)) {
+        (decode.e.gen == gen_CVTPI2Px &&
+         (!decode.op[2].has_ea || !(s->prefix & PREFIX_DATA)))) {
         gen_helper_fwait(tcg_ctx, cpu_env);
-    } else if (decode.e.gen == gen_CVTPI2Px && !(s->prefix & PREFIX_DATA)) {
-        gen_helper_cvtpi2ps_m64_fwait(tcg_ctx, cpu_env);
     }
 #endif /* __Use_Original_Qemu (U50) */
     if (decode.e.special == X86_SPECIAL_MMX &&

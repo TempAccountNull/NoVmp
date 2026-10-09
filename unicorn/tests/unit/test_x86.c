@@ -12000,9 +12000,9 @@ static void test_x86_hw_quirk_bits(void)
     /* FCOMI/FUCOMI C1 (U531, quirk removed): SDM C1 = 0 (the i5-13600K keeps C1 = 1,
        docs/quirks.md) */
     qk_fcomi(0, 0);
-    /* bit 1 CVTPI2PS_M64_KEEPS_X87: SDM TOP = 0, hardware keeps TOP = 7 */
+    /* CVTPI2PS m64 x87 transition (U532, quirk removed): SDM TOP = 0 (the i5-13600K
+       keeps TOP = 7, docs/quirks.md) */
     qk_cvtpi2ps(0, 0);
-    qk_cvtpi2ps(UC_X86_QUIRK_CVTPI2PS_M64_KEEPS_X87, 7);
     /* bit 2 FYL2XP1_BELOW_M1: SDM #IA (masked: indefinite, IE); hardware ST0 = x, PE */
     qk_fyl2xp1(0, 0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
     qk_fyl2xp1(UC_X86_QUIRK_FYL2XP1_BELOW_M1, 0, 0xC000, 0x8000000000000000ULL,

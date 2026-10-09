@@ -356,7 +356,6 @@ DEF_HELPER_1(fclex, void, env)
 DEF_HELPER_1(fwait, void, env)
 #if __Use_Original_Qemu != 1 /* ours (U50/U52) */
 DEF_HELPER_2(check_canonical_ip, void, env, tl)
-DEF_HELPER_1(cvtpi2ps_m64_fwait, void, env)
 #endif /* __Use_Original_Qemu (U50/U52) */
 DEF_HELPER_1(fninit, void, env)
 DEF_HELPER_2(fbld_ST0, void, env, tl)
@@ -416,9 +415,6 @@ DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)
 DEF_HELPER_2(ldmxcsr, void, env, i32)
 DEF_HELPER_1(update_mxcsr, void, env)
 DEF_HELPER_1(enter_mmx, void, env)
-#if __Use_Original_Qemu != 1 /* ours (U44) */
-DEF_HELPER_1(cvtpi2ps_m64_enter_mmx, void, env)
-#endif /* __Use_Original_Qemu (U44) */
 DEF_HELPER_1(emms, void, env)
 DEF_HELPER_3(movq, void, env, ptr, ptr)
 
