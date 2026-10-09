@@ -4101,6 +4101,15 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(NONE) ev_w(WSEL) ev_es(W)
                            ev_nf p_f2),
 #endif /* __Use_Original_Qemu (U571) */
+#if __Use_Original_Qemu != 1 /* ours (U572) */
+    /*
+     * NoVmp (ledger U572): VGF2P8MULB zmm1{k1}{z}, zmm2, zmm3/m (SDM Vol2A 3-431):
+     * EVEX.66.0F38.W0 CF, Full Mem tuple (no broadcast), byte masking, class E4 (memory fault
+     * suppression per byte). The U70 ops_sse.h helper of the legacy/VEX forms (SHIFT 1/2/3).
+     */
+    [0xcf] = X86_OP_ENTRY3(EVEX_VGF2P8MULB, V,x, H,x, W,x, cpuid(EVEX_GFNI) ev_vl(EV_VLALL)
+                           ev_tt(FULL_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) p_66),
+#endif /* __Use_Original_Qemu (U572) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -4235,6 +4244,19 @@ static const X86OpEntry opcodes_evex_0F3A[256] = {
     [0x0a] = X86_OP_GROUP0(EVEX_0F3A_0A),   /* + NP VRNDSCALESH (U337) */
     [0x0b] = X86_OP_ENTRY4(EVEX_VRNDSCALE, V,x, H,x, W,sd, EV_FPS(W1, SAE, ev_fp)),
 #endif /* __Use_Original_Qemu (U241) */
+#if __Use_Original_Qemu != 1 /* ours (U572) */
+    /*
+     * NoVmp (ledger U572): VGF2P8AFFINEQB (CE) / VGF2P8AFFINEINVQB (CF) zmm1{k1}{z}, zmm2,
+     * zmm3/m/m64bcst, imm8 (SDM Vol2A 3-426, 3-429): EVEX.66.0F3A.W1, Full tuple with qword
+     * {1toN} and disp8*N (evex_es 64), byte masking (evex_ds 8: KL = VL bytes), class E4NF
+     * (the whole memory operand is read whatever the mask). U70 ops_sse.h helpers.
+     */
+    [0xce] = X86_OP_ENTRY4(EVEX_VGF2P8AFFINEQB, V,x, H,x, W,x, cpuid(EVEX_GFNI) ev_vl(EV_VLALL)
+                           ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(64) ev_ds(8) ev_nf p_66),
+    [0xcf] = X86_OP_ENTRY4(EVEX_VGF2P8AFFINEINVQB, V,x, H,x, W,x, cpuid(EVEX_GFNI)
+                           ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_w(W1) ev_es(64) ev_ds(8)
+                           ev_nf p_66),
+#endif /* __Use_Original_Qemu (U572) */
 };
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 /*
@@ -5270,6 +5292,17 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
                (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_VP2INTERSECT);
 #endif /* __Use_Original_Qemu (U570) */
+#if __Use_Original_Qemu != 1 /* ours (U572) */
+    case X86_FEAT_EVEX_GFNI:
+        /*
+         * SDM Vol2A GF2P8AFFINEINVQB / GF2P8AFFINEQB / GF2P8MULB: "(AVX512F OR AVX10.1) GFNI",
+         * "(AVX512VL OR AVX10.1) GFNI" below 512 bits (AVX512VL: validate_evex); AVX10.1 sets
+         * the translator's AVX512F/VL copies (U371), GFNI keeps its own bit (AVX10.2 spec
+         * 361050-007 3.1.2 Note).
+         */
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F) &&
+               (s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_GFNI);
+#endif /* __Use_Original_Qemu (U572) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

@@ -5918,3 +5918,32 @@ static void gen_EVEX_VP2INTERSECT(DisasContext *s, CPUX86State *env, X86DecodedI
     decode->op[0].n = base;
 }
 #endif /* __Use_Original_Qemu (U571) */
+#if __Use_Original_Qemu != 1 /* ours (U572) */
+
+/*
+ * NoVmp (ledger U572): EVEX GFNI forms with the U70 ops_sse.h helpers at 128/256/512 bits
+ * (SSE_FN3); masking, {1to8} (VGF2P8AFFINE*) and the memory operand come from gen_evex_insn.
+ */
+static void gen_EVEX_VGF2P8MULB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, gf2p8mulb)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2);
+}
+
+static void gen_EVEX_VGF2P8AFFINEQB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, gf2p8affineqb)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                      tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+
+static void gen_EVEX_VGF2P8AFFINEINVQB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    SSE_FN3(s, decode, gf2p8affineinvqb)(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1, OP_PTR2,
+                                         tcg_constant8u_i32(tcg_ctx, decode->immediate));
+}
+#endif /* __Use_Original_Qemu (U572) */

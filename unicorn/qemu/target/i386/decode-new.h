@@ -233,6 +233,10 @@ typedef enum X86CPUIDFeature {
     /* AVX512F and CPUID.(07H,0):EDX.AVX512_VP2INTERSECT[8] (+ AVX512VL below 512 bits) */
     X86_FEAT_AVX512_VP2INTERSECT,
 #endif /* __Use_Original_Qemu (U570) */
+#if __Use_Original_Qemu != 1 /* ours (U572) */
+    /* EVEX GFNI forms: "(AVX512F OR AVX10.1) GFNI" (CPUID.(07H,0):ECX.GFNI[8]) */
+    X86_FEAT_EVEX_GFNI,
+#endif /* __Use_Original_Qemu (U572) */
 } X86CPUIDFeature;
 
 /* Execution flags */
