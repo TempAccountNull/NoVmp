@@ -13431,6 +13431,38 @@ static void test_x86_bp_x87_no_partial(void)
     TEST_CHECK(nk_reg(uc, UC_X86_REG_FPCW) == 0x27f);
     OK(uc_close(uc));
 }
+
+/*
+ * U481 (backport 0bd385e7e3 + e136648c5c): with CR4.SMAP = 1, RETF at CPL3 pops from the
+ * user stack and a far CALL at CPL3 pushes onto it as CPL3 data accesses, not supervisor
+ * ones (which SMAP would refuse on a user page).
+ */
+static void test_x86_bp_far_ret_call_cpl3_smap(void)
+{
+    /*
+     * iretq (to CPL3); push 0x23; lea rax, [rip+3]; push rax; retfq; nop;
+     * call far qword [TB2_DATA]; nop (the call's target)
+     */
+    static const char code[] = "\x48\xcf\x6a\x23\x48\x8d\x05\x03\x00\x00\x00\x50\x48\xcb\x90"
+                               "\x48\xff\x1c\x25\x00\x40\x00\x60\x90";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open(code, sizeof(code) - 1, &intr);
+    uint64_t fptr[2] = {code_start + 23, 0x23}, st[2] = {0, 0};
+
+    tb2_paging(uc, 7);
+    OK(uc_mem_write(uc, TB2_DATA, fptr, 10));
+    tb2_iretq_frame(uc, code_start + 2, 0x202);
+    nk_setreg(uc, UC_X86_REG_CR4, nk_reg(uc, UC_X86_REG_CR4) | (1u << 21));    /* SMAP */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR4) & (1u << 21));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(intr.count == 0);
+    TEST_MSG("intr %u at rip %" PRIx64, intr.intno, nk_reg(uc, UC_X86_REG_RIP));
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 0xffff) == 0x23);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RSP) == TB2_USTACK - 16);
+    OK(uc_mem_read(uc, TB2_USTACK - 16, st, sizeof(st)));
+    TEST_CHECK(st[0] == code_start + 23 && st[1] == 0x23);
+    OK(uc_close(uc));
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -13645,4 +13677,5 @@ TEST_LIST = {
     {"test_x86_bp_iret_null_seg_keeps_base", test_x86_bp_iret_null_seg_keeps_base},
     {"test_x86_bp_pks", test_x86_bp_pks},
     {"test_x86_bp_x87_no_partial", test_x86_bp_x87_no_partial},
+    {"test_x86_bp_far_ret_call_cpl3_smap", test_x86_bp_far_ret_call_cpl3_smap},
     {NULL, NULL}};

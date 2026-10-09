@@ -585,16 +585,47 @@ static int exception_has_error_code(int intno)
         cpu_stl_kernel_ra(env, SEG_ADDL(ssp, sp, sp_mask), (uint32_t)(val), ra); \
     }
 
+/*
+ * backport 0bd385e7e3 (U481): the stack pops of IRET and RET far are ordinary data
+ * accesses at the current privilege level, not supervisor accesses (with CR4.SMAP = 1 a
+ * CPL3 IRET/RETF from a user stack must not fault; at CPL3 U/S is checked).
+ */
 #define POPW_RA(ssp, sp, sp_mask, val, ra)                       \
     {                                                            \
-        val = cpu_lduw_kernel_ra(env, (ssp) + (sp & (sp_mask)), ra); \
+        val = cpu_lduw_data_ra(env, (ssp) + (sp & (sp_mask)), ra); \
         sp += 2;                                                 \
     }
 
 #define POPL_RA(ssp, sp, sp_mask, val, ra)                              \
     {                                                                   \
-        val = (uint32_t)cpu_ldl_kernel_ra(env, SEG_ADDL(ssp, sp, sp_mask), ra); \
+        val = (uint32_t)cpu_ldl_data_ra(env, SEG_ADDL(ssp, sp, sp_mask), ra); \
         sp += 4;                                                        \
+    }
+
+/*
+ * backport e136648c5c (U481): far CALL stack accesses at the privilege level of the stack
+ * they use - the current CPL, or the gate's DPL for the new (inner) stack - instead of
+ * supervisor accesses (upstream x86_mmu_index_pl()).
+ */
+static inline int x86_mmu_index_pl(CPUX86State *env, unsigned pl)
+{
+    return pl == 3 ? MMU_USER_IDX :
+        (!(env->hflags & HF_SMAP_MASK) || (env->eflags & AC_MASK))
+        ? MMU_KNOSMAP_IDX : MMU_KSMAP_IDX;
+}
+
+#define PUSHW_PL(ssp, sp, sp_mask, val, pl, ra)                          \
+    {                                                                    \
+        sp -= 2;                                                         \
+        cpu_stw_mmuidx_ra(env, (ssp) + (sp & (sp_mask)), (val),          \
+                          x86_mmu_index_pl(env, pl), ra);                \
+    }
+
+#define PUSHL_PL(ssp, sp, sp_mask, val, pl, ra)                          \
+    {                                                                    \
+        sp -= 4;                                                         \
+        cpu_stl_mmuidx_ra(env, SEG_ADDL(ssp, sp, sp_mask), (uint32_t)(val), \
+                          x86_mmu_index_pl(env, pl), ra);                \
     }
 
 #define PUSHW(ssp, sp, sp_mask, val) PUSHW_RA(ssp, sp, sp_mask, val, 0)
@@ -822,10 +853,18 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
         cpu_stq_kernel_ra(env, sp, (val), ra);  \
     }
 
+/* backport 0bd385e7e3 (U481): data access at the current privilege level */
 #define POPQ_RA(sp, val, ra)                    \
     {                                           \
-        val = cpu_ldq_kernel_ra(env, sp, ra);   \
+        val = cpu_ldq_data_ra(env, sp, ra);     \
         sp += 8;                                \
+    }
+
+/* backport e136648c5c (U481): push at privilege level 'pl' */
+#define PUSHQ_PL(sp, val, pl, ra)                                             \
+    {                                                                         \
+        sp -= 8;                                                              \
+        cpu_stq_mmuidx_ra(env, sp, (val), x86_mmu_index_pl(env, pl), ra);     \
     }
 
 #define PUSHQ(sp, val) PUSHQ_RA(sp, val, 0)
@@ -1808,8 +1847,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #endif /* __Use_Original_Qemu (U52) */
             /* 64 bit case */
             rsp = env->regs[R_ESP];
-            PUSHQ_RA(rsp, env->segs[R_CS].selector, GETPC());
-            PUSHQ_RA(rsp, next_eip, GETPC());
+            /* backport e136648c5c (U481): at the current CPL */
+            PUSHQ_PL(rsp, env->segs[R_CS].selector, cpl, GETPC());
+            PUSHQ_PL(rsp, next_eip, cpl, GETPC());
             /* from this point, not restartable */
             env->regs[R_ESP] = rsp;
             cpu_x86_load_seg_cache(env, R_CS, (new_cs & 0xfffc) | cpl,
@@ -1822,12 +1862,13 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             sp = env->regs[R_ESP];
             sp_mask = get_sp_mask(env->segs[R_SS].flags);
             ssp = env->segs[R_SS].base;
+            /* backport e136648c5c (U481): at the current CPL */
             if (shift) {
-                PUSHL_RA(ssp, sp, sp_mask, env->segs[R_CS].selector, GETPC());
-                PUSHL_RA(ssp, sp, sp_mask, next_eip, GETPC());
+                PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
+                PUSHL_PL(ssp, sp, sp_mask, next_eip, cpl, GETPC());
             } else {
-                PUSHW_RA(ssp, sp, sp_mask, env->segs[R_CS].selector, GETPC());
-                PUSHW_RA(ssp, sp, sp_mask, next_eip, GETPC());
+                PUSHW_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
+                PUSHW_PL(ssp, sp, sp_mask, next_eip, cpl, GETPC());
             }
 
             limit = get_seg_limit(e1, e2);
@@ -1979,28 +2020,31 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #ifdef TARGET_X86_64
             if (shift == 2) {
                 /* XXX: verify if new stack address is canonical */
-                PUSHQ_RA(sp, env->segs[R_SS].selector, GETPC());
-                PUSHQ_RA(sp, env->regs[R_ESP], GETPC());
+                /* backport e136648c5c (U481): new stack at the new CPL (dpl) */
+                PUSHQ_PL(sp, env->segs[R_SS].selector, dpl, GETPC());
+                PUSHQ_PL(sp, env->regs[R_ESP], dpl, GETPC());
                 /* parameters aren't supported for 64-bit call gates */
             } else
 #endif
             if (shift == 1) {
-                PUSHL_RA(ssp, sp, sp_mask, env->segs[R_SS].selector, GETPC());
-                PUSHL_RA(ssp, sp, sp_mask, env->regs[R_ESP], GETPC());
+                /* backport e136648c5c (U481): new stack at dpl, parameters at CPL */
+                PUSHL_PL(ssp, sp, sp_mask, env->segs[R_SS].selector, dpl, GETPC());
+                PUSHL_PL(ssp, sp, sp_mask, env->regs[R_ESP], dpl, GETPC());
                 for (i = param_count - 1; i >= 0; i--) {
-                    val = cpu_ldl_kernel_ra(env, old_ssp +
-                                            ((env->regs[R_ESP] + i * 4) &
-                                             old_sp_mask), GETPC());
-                    PUSHL_RA(ssp, sp, sp_mask, val, GETPC());
+                    val = cpu_ldl_data_ra(env, old_ssp +
+                                          ((env->regs[R_ESP] + i * 4) &
+                                           old_sp_mask), GETPC());
+                    PUSHL_PL(ssp, sp, sp_mask, val, dpl, GETPC());
                 }
             } else {
-                PUSHW_RA(ssp, sp, sp_mask, env->segs[R_SS].selector, GETPC());
-                PUSHW_RA(ssp, sp, sp_mask, env->regs[R_ESP], GETPC());
+                /* backport e136648c5c (U481): new stack at dpl, parameters at CPL */
+                PUSHW_PL(ssp, sp, sp_mask, env->segs[R_SS].selector, dpl, GETPC());
+                PUSHW_PL(ssp, sp, sp_mask, env->regs[R_ESP], dpl, GETPC());
                 for (i = param_count - 1; i >= 0; i--) {
-                    val = cpu_lduw_kernel_ra(env, old_ssp +
-                                             ((env->regs[R_ESP] + i * 2) &
-                                              old_sp_mask), GETPC());
-                    PUSHW_RA(ssp, sp, sp_mask, val, GETPC());
+                    val = cpu_lduw_data_ra(env, old_ssp +
+                                           ((env->regs[R_ESP] + i * 2) &
+                                            old_sp_mask), GETPC());
+                    PUSHW_PL(ssp, sp, sp_mask, val, dpl, GETPC());
                 }
             }
             new_stack = 1;
@@ -2013,18 +2057,21 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             new_stack = 0;
         }
 
+        /* backport e136648c5c (U481): new stack at dpl, else the current one at CPL */
 #ifdef TARGET_X86_64
         if (shift == 2) {
-            PUSHQ_RA(sp, env->segs[R_CS].selector, GETPC());
-            PUSHQ_RA(sp, next_eip, GETPC());
+            PUSHQ_PL(sp, env->segs[R_CS].selector, new_stack ? dpl : cpl, GETPC());
+            PUSHQ_PL(sp, next_eip, new_stack ? dpl : cpl, GETPC());
         } else
 #endif
         if (shift == 1) {
-            PUSHL_RA(ssp, sp, sp_mask, env->segs[R_CS].selector, GETPC());
-            PUSHL_RA(ssp, sp, sp_mask, next_eip, GETPC());
+            PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, new_stack ? dpl : cpl,
+                     GETPC());
+            PUSHL_PL(ssp, sp, sp_mask, next_eip, new_stack ? dpl : cpl, GETPC());
         } else {
-            PUSHW_RA(ssp, sp, sp_mask, env->segs[R_CS].selector, GETPC());
-            PUSHW_RA(ssp, sp, sp_mask, next_eip, GETPC());
+            PUSHW_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, new_stack ? dpl : cpl,
+                     GETPC());
+            PUSHW_PL(ssp, sp, sp_mask, next_eip, new_stack ? dpl : cpl, GETPC());
         }
 
         /* from this point, not restartable */
