@@ -24,6 +24,12 @@
 //                          the low bytes given are set; the rest keep their value)
 //   k0..k7=V               AVX-512 opmask registers (64-bit)
 //   m+OFF=HEXBYTES         operand memory at MEM + OFF (RSI/R14 = MEM + 0x8000, RDI = MEM + 0x9000)
+//   cpl=3                  (inputs only, a case option) Unicorn runs the thunk at CPL3 like the host:
+//                          Windows x64 GDT (23h code32 DPL3 = compatibility mode, 2Bh data DPL3,
+//                          33h code64 DPL3), entered by IRETQ from a CPL0 stub, IA32_EFER.SCE = 1.
+//                          A snippet may far-transfer to CS = 23h and back to 33h (heaven's gate);
+//                          a fault taken in compatibility mode resumes at the 64-bit epilogue in
+//                          both engines. Without it Unicorn runs at CPL0 (no GDT).
 // MXCSR is also settable from the snippet itself ("ldmxcsr [rsi] | m+0x8000=801F0000").
 // Default input state: GPRs 0 except RSP/RSI/RDI/R14, RFLAGS 0x202, FCW 037F, MXCSR 1F80, all else 0.
 //
@@ -402,9 +408,11 @@ namespace at
 			case_default( *st_in );
 			std::istringstream as( assigns );
 			std::string kv;
-			bool ok = true, ext = false;
+			bool ok = true, ext = false, cpl3 = false;
 			while ( as >> kv )
 			{
+				if ( kv == "cpl=3" ) { cpl3 = true; continue; }
+				if ( kv == "cpl=0" ) { cpl3 = false; continue; }
 				bool good = false;
 				try { good = case_assign( *st_in, kv, err, nullptr, &ext ); }
 				catch ( const std::exception& ) { err = "bad value in " + kv; }
@@ -451,6 +459,7 @@ namespace at
 			uc.amx = opt.amx;
 			uc.avx10 = opt.avx10;
 			uc.ext_regs = expect;
+			uc.cpl3 = cpl3;
 			if ( !uc.load( p, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
 			if ( expect )

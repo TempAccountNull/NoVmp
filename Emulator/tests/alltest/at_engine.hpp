@@ -29,6 +29,14 @@ namespace at
 	constexpr uint64_t EPI_STACK = DATA + 0x6000;
 	constexpr uint64_t MEM_PTR = MEM + 0x8000;                       // rsi / r14: [rsi], [rsi+rcx]
 	constexpr uint64_t MEM_DST = MEM + 0x9000;                       // rdi: string destination
+	// case option "cpl=3" (Unicorn only; the host always runs at CPL3): a Windows x64 GDT
+	// (10h code64 DPL0, 18h data DPL0, 23h code32 DPL3 = compatibility mode, 2Bh data DPL3,
+	// 33h code64 DPL3), a CPL0 stub that IRETQs to the thunk with CS = 33h / SS = 2Bh, and a
+	// compatibility-mode gate (push 33h; push epilogue; retf) used to resume after a fault
+	// taken in compatibility mode. Unicorn-only page, never compared.
+	constexpr uint64_t SYS_PAGE = 0x30040000, SYS_SIZE = 0x1000;
+	constexpr uint64_t SYS_GDT = SYS_PAGE, SYS_STUB = SYS_PAGE + 0x800, SYS_GATE = SYS_PAGE + 0x900;
+	constexpr uint16_t SEL_CODE32_R3 = 0x23, SEL_DATA_R3 = 0x2B, SEL_CODE64_R3 = 0x33;
 
 	constexpr uint64_t S_GPR = 0x000, S_RFLAGS = 0x080, S_FX = 0x100, S_YMMH = 0x300, S_ENV = 0x400;
 
@@ -244,6 +252,9 @@ namespace at
 			// a trap (single step) leaves TF set in the context: clear it before resuming
 			ep->ContextRecord->EFlags &= ~0x100u;
 			ep->ContextRecord->Rip = g().resume;
+			// a snippet that switched to compatibility mode (far transfer to CS = 23h) faulted
+			// there: the epilogue is 64-bit code, so resume with the 64-bit user CS (33h)
+			if ( ep->ContextRecord->SegCs == SEL_CODE32_R3 ) ep->ContextRecord->SegCs = SEL_CODE64_R3;
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 		static int vector_of( DWORD code, uint64_t info1 )
@@ -253,6 +264,10 @@ namespace at
 				case STATUS_INTEGER_DIVIDE_BY_ZERO: case STATUS_INTEGER_OVERFLOW: return 0;
 				case STATUS_SINGLE_STEP: return 1;
 				case STATUS_BREAKPOINT: return 3;
+				// a trap taken in compatibility mode (CS = 23h, cpl=3 cases) is reported with the
+				// WOW64 codes STATUS_WX86_SINGLE_STEP / STATUS_WX86_BREAKPOINT
+				case 0x4000001E: return 1;
+				case 0x4000001F: return 3;
 				case STATUS_ILLEGAL_INSTRUCTION: return 6;
 				case STATUS_PRIVILEGED_INSTRUCTION: return 13;
 				case STATUS_ACCESS_VIOLATION: return info1 == ~0ull ? 13 : 14;   // #GP reports address -1
@@ -299,6 +314,29 @@ namespace at
 			uc_mem_map( uc_, DATA, DATA_SIZE, UC_PROT_READ | UC_PROT_WRITE );
 			uc_mem_map( uc_, MEM, MEM_SIZE, UC_PROT_READ | UC_PROT_WRITE );
 			uc_mem_write( uc_, CODE, p.code.data(), p.code.size() );
+			if ( cpl3 )
+			{
+				// Windows x64 GDT layout; flat descriptors (64-bit code: L = 1, D = 0)
+				const uint64_t gdt[ 7 ] = { 0, 0, 0x00209B0000000000ull, 0x00CF93000000FFFFull, 0x00CFFB000000FFFFull,
+											 0x00CFF3000000FFFFull, 0x0020FB0000000000ull };
+				uc_mem_map( uc_, SYS_PAGE, SYS_SIZE, UC_PROT_ALL );
+				uc_mem_write( uc_, SYS_GDT, gdt, sizeof( gdt ) );
+				uc_x86_mmr gdtr = { 0, SYS_GDT, sizeof( gdt ) - 1, 0 };
+				uc_reg_write( uc_, UC_X86_REG_GDTR, &gdtr );
+				// CPL0 stub: mov rax, rsp; push 2Bh; push rax; push 202h; push 33h; push CODE; iretq
+				const uint8_t stub[] = { 0x48, 0x89, 0xE0, 0x6A, SEL_DATA_R3, 0x50, 0x68, 0x02, 0x02, 0x00, 0x00, 0x6A, SEL_CODE64_R3,
+										 0x68, uint8_t( CODE ), uint8_t( CODE >> 8 ), uint8_t( CODE >> 16 ), uint8_t( CODE >> 24 ), 0x48, 0xCF };
+				uc_mem_write( uc_, SYS_STUB, stub, sizeof( stub ) );
+				// compatibility-mode gate (32-bit code): push 33h; push epilogue; retf
+				const uint32_t epi = uint32_t( p.epilogue_at );
+				const uint8_t gate[] = { 0x6A, SEL_CODE64_R3, 0x68, uint8_t( epi ), uint8_t( epi >> 8 ), uint8_t( epi >> 16 ), uint8_t( epi >> 24 ), 0xCB };
+				uc_mem_write( uc_, SYS_GATE, gate, sizeof( gate ) );
+				// IA32_EFER.SCE = 1 as under Windows (SYSCALL/SYSRET enabled)
+				uc_x86_msr efer = { 0xC0000080, 0 };
+				uc_reg_read( uc_, UC_X86_REG_MSR, &efer );
+				efer.value |= 1;
+				uc_reg_write( uc_, UC_X86_REG_MSR, &efer );
+			}
 			uc_hook h;
 			uc_hook_add( uc_, &h, UC_HOOK_INTR, ( void* ) on_intr, this, 1, 0 );
 			uc_hook_add( uc_, &h, UC_HOOK_INSN_INVALID, ( void* ) on_invalid, this, 1, 0 );
@@ -328,12 +366,13 @@ namespace at
 			in_ = &in;
 			ext_in_done_ = ext_out_done_ = false;
 			pending_epilogue_ = false;
-			uc_err e = uc_emu_start( uc_, CODE, prog_->ret_at, 0, 0 );
+			uc_err e = uc_emu_start( uc_, cpl3 ? SYS_STUB : CODE, prog_->ret_at, 0, 0 );
 			if ( e && pending_epilogue_ )
 			{
 				// an unmapped access inside the snippet stopped the run (#PF): save the state at
 				// the faulting instruction by running the epilogue, as the native VEH path does
-				e = uc_emu_start( uc_, prog_->epilogue_at, prog_->ret_at, 0, 0 );
+				uint64_t fl = 0; uc_reg_read( uc_, UC_X86_REG_RFLAGS, &fl ); fl &= ~0x100ull; uc_reg_write( uc_, UC_X86_REG_RFLAGS, &fl );
+				e = uc_emu_start( uc_, resume_target(), prog_->ret_at, 0, 0 );
 			}
 			if ( e ) r.err = std::string( "uc_emu_start: " ) + uc_strerror( e );
 			uc_mem_read( uc_, DATA, data.data(), data.size() );
@@ -350,10 +389,22 @@ namespace at
 		{
 			if ( !cur_->faulted ) { cur_->faulted = true; cur_->vector = vec; cur_->fault_rip = rip; }
 		}
+		// the epilogue, or in CPL3 mode with CS = 23h (a snippet in compatibility mode) the gate
+		// that far-returns to the 64-bit epilogue
+		uint64_t resume_target()
+		{
+			if ( cpl3 )
+			{
+				uint16_t cs = 0;
+				uc_reg_read( uc_, UC_X86_REG_CS, &cs );
+				if ( cs == SEL_CODE32_R3 ) return SYS_GATE;
+			}
+			return prog_->epilogue_at;
+		}
 		bool resume_if_in_snippet( uint64_t rip )
 		{
 			if ( rip < prog_->snippet_begin || rip >= prog_->snippet_end ) return false;
-			uint64_t to = prog_->epilogue_at;
+			uint64_t to = resume_target();
 			uc_reg_write( uc_, UC_X86_REG_RIP, &to );
 			// clear TF so a single-step trap does not repeat inside the epilogue
 			uint64_t fl = 0; uc_reg_read( uc_, UC_X86_REG_RFLAGS, &fl ); fl &= ~0x100ull; uc_reg_write( uc_, UC_X86_REG_RFLAGS, &fl );
@@ -433,6 +484,7 @@ namespace at
 		int amx = 0;             // UC_CTL_X86_AMX mask (0 = off, the default)
 		int avx10 = 0;           // UC_CTL_X86_AVX10 version (0 = off, the default)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) through code hooks
+		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
 	private:
 		int model_;
 		const program* prog_ = nullptr;
