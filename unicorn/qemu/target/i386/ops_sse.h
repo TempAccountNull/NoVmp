@@ -689,31 +689,18 @@ void glue(helper_cvtps2ph, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, int mode)
         r = float32_to_float16(s->ZMM_S(i), true, &st);
         f = get_float_exception_flags(&st);
         /*
-         * NoVmp (ledger U441): with the underflow exception unmasked, #U is
-         * reported for every non-zero tiny result, exact or not (Vol1 4.9.1.5,
-         * 11.5.2.5; Table 14-12 unmasked: "#UE=1"); softfloat only raises it
-         * for tiny and inexact (the masked rule). An exact tiny result is a
-         * non-zero FP16 denormal.
+         * NoVmp (ledger U442, trimmed in U865): unmasked #O / #U come from the
+         * softfloat core since U445 (UE for every non-zero tiny result, exact or
+         * not; OE; PE from the rounding to the 11-bit FP16 significand with an
+         * unbounded exponent, which for a normal FP32 source is "FP32 fraction
+         * bits 12:0 non-zero"), so U441 (#U for an exact FP16-denormal result)
+         * and U442's PE recomputation for normal sources were no-ops. A
+         * denormal FP32 source (DE, DAZ = 0) with UM = 0 still gives DE, UE and
+         * PE (Vol1 Table 14-14 note 1): its normalised significand may fit in
+         * 11 bits, where the core reports no PE.
          */
-        if (um && !(f & float_flag_inexact) && (r & 0x7c00) == 0 && (r & 0x03ff) != 0) {
-            f |= float_flag_underflow;
-        }
-        /*
-         * NoVmp (ledger U442): unmasked #O / #U. The handler's result is the
-         * source rounded to the 11-bit FP16 significand with an unbounded
-         * exponent (Vol1 4.9.1.5, 4.9.1.6: "inexact result ... along with
-         * unmasked overflow or underflow ... the OE or UE flag and the PE flag
-         * are set"), so PE means that rounding is inexact (FP32 fraction bits
-         * 12:0 non-zero), not that the bounded denormal/infinity is. A
-         * denormal FP32 source (DE, DAZ = 0) gives DE, UE and PE (Vol1 Table
-         * 14-14 note 1). i5-13600K: 2^-25 and 65536 -> UE / OE without PE.
-         */
-        if (((f & float_flag_overflow) && !(env->mxcsr & (1 << 10))) ||
-            ((f & float_flag_underflow) && um)) {
-            f &= ~float_flag_inexact;
-            if ((s->ZMM_S(i) & 0x1fff) || (f & float_flag_input_denormal_used)) {
-                f |= float_flag_inexact;
-            }
+        if (um && (f & float_flag_input_denormal_used)) {
+            f |= float_flag_inexact;
         }
         flags |= f;
         d->ZMM_H(i) = r;
