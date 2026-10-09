@@ -121,7 +121,7 @@ def main():
             rows.append("%s\t%s\tud\tbase instruction not implemented in this CPU model: %s is #UD with and "
                         "without the APX opt-in (%s, %s; #UD lines: %s)%s" % (
                             mn, enc, NOT_IMPL[mn], NOT_IMPL_WHERE[mn], NOT_IMPL_U[mn], where or "none",
-                            "; CPL0 form (its CPL3 fault is a Phase 2 item, D6)" if fl & 1 else ""))
+                            "; CPL0 form (its CPL3 fault is a Phase 3 item, D6)" if fl & 1 else ""))
             summ[fam]["not implemented"] += 1
             lists["not implemented"].append("%s %s" % (mn, enc))
             continue

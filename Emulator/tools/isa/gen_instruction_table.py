@@ -5,14 +5,20 @@ status from the full emu-alltest run (alltest.csv, Unicorn vs the i5-13600K) plu
 hardware-verified ledger items that the sweep cannot express (CHANGES_LEDGER.md).
 
   ✅ implemented and identical to the i5-13600K (or the SDM where the CPU deviates: docs/quirks.md)
-  ⏳ implemented, open item (difference under decision, CPL3 check in Phase 2, SDM vectors pending)
+  ⏳ implemented, open item (difference under decision, CPL3 check in Phase 3, SDM vectors pending)
   ⬜ not implemented / not reachable yet
 
 usage: python gen_instruction_table.py <alltest.csv> <isa_manual_forms.tsv> <out.md> [verified_forms.tsv]
 
 verified_forms.tsv (default: next to isa_manual_forms.tsv) holds the hardware verdicts for rows the
 sweep cannot reach or only reaches with a #UD representative (plan 1.15b, evidence in
-Emulator\\data\\cases_reach.txt); it applies to rows the sweep alone leaves ⬜.
+Emulator\\data\\cases_reach.txt and the expected-value case files). U790: a verified_forms row applies
+to a row the sweep alone leaves ⬜ and also takes over a ⏳ row whose only open item is what the row
+proves: "CPL0 instruction" (the sweep's privileged bucket) or "SDM-vector check pending"; a CPL0 form
+keeps a note that its CPL3 fault is a Phase 3 item (D6). Rows with a CPU difference, a harness error,
+a partial result or a decided OVERRIDES entry keep their status. A CPL0 row the sweep cannot reach is
+⬜ (not implemented / not verified) unless verified_forms.tsv or OVERRIDES proves it. VCMP pseudo-op
+rows (VCMPEQPS, VCMPLT_OQSH, ...) take the status of their base form (VCMPPS/PD/SS/SD/PH/SH).
 """
 import csv
 import os
@@ -54,10 +60,10 @@ OVERRIDES = {
     'ptwrite': ('✅', 'SDM #UD (CPUID.14 = 0, U534; the CPU executes it: docs/quirks.md)'),
     'xsavec': ('✅', 'U66 compacted format'),
     'xsavec64': ('✅', 'U66'),
-    'xsaves': ('⏳', 'CPL0: #GP at CPL3 in Phase 2 (D6); compacted format shared with U66'),
-    'xsaves64': ('⏳', 'CPL0: Phase 2 (D6)'),
-    'xrstors': ('⏳', 'CPL0: Phase 2 (D6)'),
-    'xrstors64': ('⏳', 'CPL0: Phase 2 (D6)'),
+    'xsaves': ('⏳', 'CPL0: #GP at CPL3 in Phase 3 (D6); compacted format shared with U66'),
+    'xsaves64': ('⏳', 'CPL0: Phase 3 (D6)'),
+    'xrstors': ('⏳', 'CPL0: Phase 3 (D6)'),
+    'xrstors64': ('⏳', 'CPL0: Phase 3 (D6)'),
     'rdrand': ('✅', 'U65 host entropy (RtlGenRandom), CF/flags per SDM'),
     'rdseed': ('✅', 'U65'),
     'cpuid': ('✅', 'U68 i5-13600K profile + UC_CTL_X86_CPUID(_STRICT); only per-core APIC IDs vary'),
@@ -83,17 +89,18 @@ OVERRIDES = {
     'vrcpss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtps': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
     'vrsqrtss': ('✅', 'U81 analytic Intel 12-bit model; 2^32 inputs x 6 MXCSR == CPU'),
-    'invpcid': ('⏳', 'CPL0: #GP at CPL3 in Phase 2 (D6); #UD today'),
-    'hreset': ('⏳', 'CPU: #GP at CPL3 even with CPUID bit 0 (Phase 2, D6)'),
-    'rdtsc': ('⏳', 'TSC determinism hook: Phase 2'),
-    'rdtscp': ('⏳', 'TSC/TSC_AUX: Phase 2'),
-    'rdpid': ('⏳', 'TSC_AUX value: Phase 2 environment'),
-    'rdgsbase': ('⏳', 'value = TEB base: Phase 2 environment'),
-    'sgdt': ('⏳', 'values: Phase 2 environment'),
-    'sidt': ('⏳', 'values: Phase 2 environment'),
-    'sldt': ('⏳', 'values: Phase 2 environment'),
-    'str': ('⏳', 'values: Phase 2 environment'),
-    'smsw': ('⏳', 'CR0 value: Phase 2 environment'),
+    # U790: INVPCID and HRESET are not implemented (#UD in this CPU model): ⬜ until a verified_forms row proves them
+    'invpcid': ('⬜', 'not implemented (#UD in this CPU model); CPL0: #GP(0) at CPL3 is a Phase 3 item (D6)'),
+    'hreset': ('⬜', 'not implemented (#UD in this CPU model); the i5-13600K raises #GP at CPL3 even with CPUID bit 0 (Phase 3, D6)'),
+    'rdtsc': ('⏳', 'TSC determinism hook: Phase 3'),
+    'rdtscp': ('⏳', 'TSC/TSC_AUX: Phase 3'),
+    'rdpid': ('⏳', 'TSC_AUX value: Phase 3 environment'),
+    'rdgsbase': ('⏳', 'value = TEB base: Phase 3 environment'),
+    'sgdt': ('⏳', 'values: Phase 3 environment'),
+    'sidt': ('⏳', 'values: Phase 3 environment'),
+    'sldt': ('⏳', 'values: Phase 3 environment'),
+    'str': ('⏳', 'values: Phase 3 environment'),
+    'smsw': ('⏳', 'CR0 value: Phase 3 environment'),
 }
 
 
@@ -121,9 +128,17 @@ VERIFIED_STATUS = {
     'ok': ('✅', 'identical to the i5-13600K (cases_reach)'),
     'sdm': ('✅', 'implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors'),
     'ud': ('⬜', 'not implemented (cases_reach)'),
-    'cpl0': ('⏳', 'CPL0 instruction (cases_reach): CPL3 fault in Phase 2 (D6)'),
+    'cpl0': ('⏳', 'CPL0 instruction (cases_reach): CPL3 fault in Phase 3 (D6)'),
     'oos': ('⬜', 'out of scope'),
+    # U790: implemented, with a decided open item named in the note (e.g. a stand-in where the SDM gives only a bound)
+    'open': ('⏳', 'not bit-exact / decided open item'),
 }
+
+# U790: sweep/rule kinds whose ⏳ a verified_forms row may replace (the row proves that open item)
+TAKEOVER = {'priv', 'sdm_pending'}
+CPL3_NOTE = ' — CPL0 form: its CPL3 fault (vs the i5-13600K) is a Phase 3 item (D6)'
+# U790: VCMP pseudo-op names (imm8 predicate) -> base form; 'x' excluded as in resolve()
+VCMP_ALIAS = re.compile(r'(v?cmp)([a-z_]+?)(ps|pd|ss|sd|ph|sh)')
 
 
 def load_verified(path):
@@ -196,19 +211,20 @@ def status_from(b):
         b.get('not native-safe, unicorn runs (needs SDM check)', 0)
     ud = b.get('host lacks + unicorn #UD', 0) + b.get('not native-safe, unicorn #UD', 0)
     err = b.get('harness error', 0)
+    # U790: the third value is the kind of result (TAKEOVER: a verified_forms row may replace it)
     if diff:
-        return '⏳', 'differs from the CPU on %d of %d forms' % (diff, n)
+        return '⏳', 'differs from the CPU on %d of %d forms' % (diff, n), 'diff'
     if priv:
-        return '⏳', 'CPL0 instruction (%d forms): CPL3 fault check in Phase 2 (D6)' % priv
+        return '⏳', 'CPL0 instruction (%d forms): CPL3 fault check in Phase 3 (D6)' % priv, 'priv'
     if err:
-        return '⏳', 'harness error on %d forms' % err
+        return '⏳', 'harness error on %d forms' % err, 'err'
     if m == n:
-        return '✅', 'identical to the i5-13600K (%d forms)' % n
+        return '✅', 'identical to the i5-13600K (%d forms)' % n, 'match'
     if ud == n:
-        return '⬜', 'not implemented (%d forms #UD; the i5-13600K lacks it)' % n
+        return '⬜', 'not implemented (%d forms #UD; the i5-13600K lacks it)' % n, 'ud'
     if sdm and not ud:
         return '⏳', 'implemented; %d forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check pending%s' % (
-            sdm, ', %d identical' % m if m else '')
+            sdm, ', %d identical' % m if m else ''), 'sdm_pending'
     parts = []
     if m:
         parts.append('%d identical' % m)
@@ -216,7 +232,7 @@ def status_from(b):
         parts.append('%d SDM-vector check pending' % sdm)
     if ud:
         parts.append('%d not implemented' % ud)
-    return '⏳', 'partial: ' + ', '.join(parts)
+    return '⏳', 'partial: ' + ', '.join(parts), 'partial'
 
 
 # ---- CPU support: does the i5-13600K (our CPU) execute the instruction? -------------------------
@@ -361,30 +377,54 @@ def main():
     totals = defaultdict(int)
     cpuid = load_cpuid(os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])), 'cpuid_i5-13600k.txt'))
     impl_unsup = defaultdict(int)
+    pre = OrderedDict()
+    takeover = defaultdict(int)
     for (mn, enc), r in rows.items():
-        fam = family(sorted(r['isa'])[0])
         swept_enc = 'vex' if enc == 'xop' else enc
         b, alias = resolve(sweep, mn, swept_enc)
+        kind = 'rule'
         if mn in INVALID_64 and enc == 'legacy':
             st, note = '✅', '#UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample)'
         elif re.fullmatch(r'cmpn?[a-z]{1,2}xadd', mn) and enc == 'vex' and 'APX' not in ''.join(r['isa']):
             st, note = '⏳', 'implemented (QEMU 7.2 CMPccXADD + U14 port fixes); not on the i5-13600K and no Capstone form: SDM-vector test pending (Phase 3/5)'
+            kind = 'sdm_pending'
         elif mn in OVERRIDES and enc == 'evex' and (not b or all(k == 'host lacks + unicorn #UD' for k in b)):
             st, note = '⬜', 'EVEX form not implemented (the i5-13600K lacks AVX-512)'
         elif mn in OVERRIDES:
             st, note = OVERRIDES[mn]
+            kind = 'override'
         elif b:
-            st, note = status_from(b)
+            st, note, kind = status_from(b)
         elif r['cpl0']:
-            st, note = '⏳', 'CPL0 instruction, not reachable by the sweep: CPL3 fault in Phase 2 (D6)'
+            # U790: only verified_forms.tsv / OVERRIDES can prove a CPL0 form the sweep cannot reach
+            st, note = '⬜', 'CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not verified yet (CPL3 fault: Phase 3, D6)'
+            kind = 'cpl0'
         else:
             st, note = '⬜', 'not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b)'
         if alias and st != '⬜':
             note += ' — ' + alias
-        if st == '⬜' and (mn, enc) in verified:
+        if (mn, enc) in verified and (st == '⬜' or kind in TAKEOVER):
             vst, vnote = verified[(mn, enc)]
+            if st != '⬜':
+                takeover['%s %s -> %s' % (st, kind, vst)] += 1
             st, note = VERIFIED_STATUS[vst][0], VERIFIED_STATUS[vst][1] + (': ' + vnote if vnote else '')
+            if (r['cpl0'] or kind == 'priv') and vst in ('ok', 'sdm', 'open'):
+                note += CPL3_NOTE
             vcount[vst] += 1
+        pre[(mn, enc)] = [st, note]
+    # U790: VCMP pseudo-op rows the sweep / verified_forms leave ⬜ take their base form's status
+    aliased = defaultdict(int)
+    for (mn, enc), v in pre.items():
+        m = VCMP_ALIAS.fullmatch(mn)
+        if v[0] != '⬜' or not m or m.group(2) == 'x':
+            continue
+        base = m.group(1) + m.group(3)
+        if (base, enc) in pre and pre[(base, enc)][0] != '⬜':
+            v[0], v[1] = pre[(base, enc)][0], pre[(base, enc)][1] + ' — %s imm8 predicate alias (same opcode)' % base.upper()
+            aliased['%s %s' % (enc, v[0])] += 1
+    for (mn, enc), r in rows.items():
+        fam = family(sorted(r['isa'])[0])
+        st, note = pre[(mn, enc)]
         on_cpu, why = row_on_cpu(mn, r['isa'], cpuid)
         if not on_cpu:
             impl = {'✅': 'implemented per the manual (SDM-vector verified)',
@@ -412,8 +452,8 @@ def main():
         out.append('- Rows the sweep cannot reach, verified one by one against the i5-13600K '
                    '(`Emulator\\data\\cases_reach.txt` → `Emulator\\data\\verified_forms.tsv`): '
                    '✅ identical %d  ·  ⬜ #UD in both (CPU lacks it / not enabled) %d  ·  '
-                   '⏳ CPL0 %d  ·  ⬜ out of scope (AMD / VIA / non-SDM) %d\n' % (
-                       vcount['ok'], vcount['ud'], vcount['cpl0'], vcount['oos']))
+                   '⏳ CPL0 %d  ·  ⬜ out of scope (AMD / VIA / non-SDM) %d  ·  ✅ SDM vectors %d  ·  ⏳ open item %d\n' % (
+                       vcount['ok'], vcount['ud'], vcount['cpl0'], vcount['oos'], vcount['sdm'], vcount['open']))
     out.append('### Microcode, firmware-modelled and decided behaviour\n')
     for line in MICROCODE:
         out.append(line)
@@ -466,6 +506,7 @@ def main():
     json.dump({'totals': dict(totals), 'unsupported_impl': dict(impl_unsup), 'rows': rows_json},
               open(os.path.splitext(sys.argv[3])[0] + '.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount), 'unsupported', dict(impl_unsup))
+    print('takeover', dict(takeover), 'vcmp-alias', dict(aliased))
 
 
 MICROCODE = [
@@ -475,15 +516,15 @@ MICROCODE = [
     '- ✅ FSQRT / FCOM / FXAM / FIST — hardware uops (not MSROM); fork matches hardware.',
     '- ✅ x87 environment / save images — FNSTENV/FNSAVE mask afterwards (U61), reserved FFFF (U62), FNSAVE REX.W (U63), FIP/FOP/FDP + FCS/FDS deprecation model (U64), no FIP update by FNSTSW AX / DB E0, E1, E4 and FIP update by FNOP like the CPU (U90).',
     '- ✅ x87 condition codes — trig stack fault clears C2 (U57), F2XM1(±0) clears C1 (U58), special operands and unmasked exceptions (U54).',
-    '- ✅ XSAVE family — XSAVE/XSAVEOPT/XRSTOR match; XSAVEC + compacted XRSTOR (U66); XSAVES/XRSTORS ⏳ CPL3 in Phase 2.',
+    '- ✅ XSAVE family — XSAVE/XSAVEOPT/XRSTOR match; XSAVEC + compacted XRSTOR (U66); XSAVES/XRSTORS ⏳ CPL3 in Phase 3.',
     '- ✅ String microcode — REP + 67h with ECX = 0 writes nothing (SDM, U536; the CPU zero-extends RCX/RSI/RDI: docs/quirks.md).',
     '- ✅ RDRAND / RDSEED — host entropy (RtlGenRandom), flags per SDM (U65).',
     '- ✅ CPUID — i5-13600K profile (94 rows), override table + strict #UD switch (U68).',
     '- ✅ #XM — unmasked SSE exceptions with CR4.OSXMMEXCPT (U67).',
     '- ✅ RCPPS / RSQRTPS / RCPSS / RSQRTSS (+ VEX) — F10 solved (U81): RN(1/midpoint) over the top 11 mantissa bits, RN(1/sqrt(midpoint)) over the top 10 bits + exponent parity, 12 fraction bits, exact integer arithmetic; all 2^32 inputs x 6 MXCSR settings identical to the CPU.',
     '- ✅ Pure SDM (U531-U539, user decision 2026-10-08): no hardware-quirk switch; the i5-13600K deviations (FCOMI C1, CVTPI2PS m64, FYL2XP1 below −1, PTWRITE, DPPD two NaN products, REP 67h ECX=0, x87 compare unmasked #IA, DPPS step grouping) are documented in docs/quirks.md and tagged in the hardware case files.',
-    '- ⏳ RDTSC / RDTSCP determinism hook — Phase 2 (emulator side).',
-    '- ⬜ Microcode-assisted CPL0 paths (VMX, SMX, SGX, SMM) — exact CPL3 faults only (D6), Phase 2/5.',
+    '- ⏳ RDTSC / RDTSCP determinism hook — Phase 3 (emulator side).',
+    '- ⬜ Microcode-assisted CPL0 paths (VMX, SMX, SGX, SMM) — exact CPL3 faults only (D6), Phase 3/5.',
 ]
 
 DECODE = [
@@ -493,7 +534,7 @@ DECODE = [
     '- ✅ Group 11 (C6/C7) reg ≠ 0 #UD (U78).',
     '- ✅ VEX validity: MMX-only forms, 38/3A escapes, VZEROUPPER pp, scalar VEX.LIG, reserved vvvv, VEX128 (U79).',
     '- ✅ Sweeps with 0 decode differences: 0F map 2,855 · one-byte map 2,108 · 0F38/0F3A 5,120 · VEX C4 49,152 · VEX C5 + prefixed VEX 8,190 · EVEX/XOP 9.',
-    '- ⏳ CPL3-only faults (LLDT, LTR, LGDT, LIDT, LMSW, CLTS, INVD, WBINVD, MOV CR/DR, RDMSR, WRMSR, RDPMC, SWAPGS, CLAC, STAC, MONITOR, MWAIT, IN/OUT/INS/OUTS, HLT, CLI, STI, INVPCID, WRUSS, XSAVES, XRSTORS, HRESET) — Phase 2 (D6).',
+    '- ⏳ CPL3-only faults (LLDT, LTR, LGDT, LIDT, LMSW, CLTS, INVD, WBINVD, MOV CR/DR, RDMSR, WRMSR, RDPMC, SWAPGS, CLAC, STAC, MONITOR, MWAIT, IN/OUT/INS/OUTS, HLT, CLI, STI, INVPCID, WRUSS, XSAVES, XRSTORS, HRESET) — Phase 3 (D6).',
     '- ✅ Undefined flags (MUL/IMUL SF ZF AF PF, SHLD/SHRD/rotates OF AF for count > 1, ANDN/BEXTR PF AF SF) — SDM "undefined", masked by the sweep (manual wins).',
 ]
 
