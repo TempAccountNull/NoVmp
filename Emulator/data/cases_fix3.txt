@@ -208,3 +208,20 @@ vpmaskmovd xmm0, xmm1, xmmword ptr [rsi+0x8000] | cpl=3 xmm0=1111111111111111111
 vmaskmovpd ymm0, ymm1, ymmword ptr [rsi+0x8000] | cpl=3 xmm0=11111111111111111111111111111111 ymmh0=22222222222222222222222222222222
 vmaskmovps ymmword ptr [rsi+0x8000], ymm1, ymm0 | cpl=3 xmm0=11111111111111111111111111111111
 vmaskmovps ymm0, ymm1, ymmword ptr [rsi+0x7ff0] | cpl=3 xmm0=11111111111111111111111111111111 ymmh0=22222222222222222222222222222222 xmm1=FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF ymmh1=000000000000000000000000FFFFFFFF m+0xFFE0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
+#
+# --- U704 SGDT/SIDT m in 64-bit mode store their 10-byte operand as bytes 7:0 (limit, base
+# bits 47:0) and then bytes 9:8, as the other 10-byte stores (FSTP m80, FBSTP: U480): with bytes
+# 9:8 on a not-present page the i5-13600K stores bytes 7:0 and faults (120 of 120 runs); the SDM
+# does not say how such a store is split (docs\quirks.md, our choice). Unicorn stored the limit
+# and then the 8-byte base (only the limit written). The stored base and limit are the host's
+# GDTR/IDTR on the hardware, so the bytes are checked by the expected-value lines (Unicorn's
+# CPL3 GDT at 30040000h, limit 37h; IDTR 0). Before U704 the 2 untagged hardware lines and 3 of
+# the 4 expected-value lines differed.
+sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's GDTR (a different base and limit) is what gets stored
+sidt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's IDTR (a different base and limit) is what gets stored
+sgdt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
+sidt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
+sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF m+0xFFF8=3700000004300000
+sidt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF m+0xFFF8=0000000000000000
+sgdt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF
+sgdt [rsi+0x7ff6] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => m+0xFFF6=37000000043000000000

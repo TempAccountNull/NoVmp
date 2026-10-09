@@ -3241,6 +3241,28 @@ static void gen_enter_probe(DisasContext *s, MemOp a_ot, int disp, int size)
 }
 #endif /* __Use_Original_Qemu (U701) */
 
+#if __Use_Original_Qemu != 1 /* ours (U704) */
+/*
+ * NoVmp (ledger U704): SGDT/SIDT m in 64-bit mode (T0 = the limit, A0 = the operand): the 10-byte
+ * operand is stored as bytes 7:0 (limit, base[47:0]) and then bytes 9:8 (base[63:48]), like
+ * the other 10-byte stores (FSTP m80, FBSTP, U480): when only bytes 9:8 are on a not-present
+ * page the i5-13600K stores bytes 7:0 and faults (120 of 120 runs, cases_fix3); the SDM does
+ * not specify how a store across a page boundary is split (docs/quirks.md, our choice). QEMU
+ * stored the limit and then the 8-byte base, so the limit was written when the base faulted.
+ */
+static void gen_st_dtr64(DisasContext *s, int base_ofs)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    tcg_gen_ld_tl(tcg_ctx, s->T1, cpu_env, base_ofs);
+    tcg_gen_deposit_tl(tcg_ctx, s->T0, s->T0, s->T1, 16, 48);
+    gen_op_st_v(s, MO_64, s->T0, s->A0);
+    gen_add_A0_im(s, 8);
+    tcg_gen_shri_tl(tcg_ctx, s->T1, s->T1, 48);
+    gen_op_st_v(s, MO_16, s->T1, s->A0);
+}
+#endif /* __Use_Original_Qemu (U704) */
+
 #if __Use_Original_Qemu == 1 /* original QEMU (U701) */
 static void gen_enter(DisasContext *s, int esp_addend, int level)
 {
@@ -8370,6 +8392,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_lea_modrm(env, s, modrm);
             tcg_gen_ld32u_tl(tcg_ctx, s->T0,
                              cpu_env, offsetof(CPUX86State, gdt.limit));
+#if __Use_Original_Qemu != 1 /* ours (U704) */
+            if (CODE64(s)) {
+                gen_st_dtr64(s, offsetof(CPUX86State, gdt.base));
+                break;
+            }
+#endif /* __Use_Original_Qemu (U704) */
             gen_op_st_v(s, MO_16, s->T0, s->A0);
             gen_add_A0_im(s, 2);
             tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, gdt.base));
@@ -8429,6 +8457,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_svm_check_intercept(s, SVM_EXIT_IDTR_READ);
             gen_lea_modrm(env, s, modrm);
             tcg_gen_ld32u_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, idt.limit));
+#if __Use_Original_Qemu != 1 /* ours (U704) */
+            if (CODE64(s)) {
+                gen_st_dtr64(s, offsetof(CPUX86State, idt.base));
+                break;
+            }
+#endif /* __Use_Original_Qemu (U704) */
             gen_op_st_v(s, MO_16, s->T0, s->A0);
             gen_add_A0_im(s, 2);
             tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, idt.base));
