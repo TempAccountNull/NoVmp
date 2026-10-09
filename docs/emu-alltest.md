@@ -63,6 +63,23 @@ test.cmd [--release | --debug] [-j N | --jobs N | --serial] [-v | --verbose] [li
 - **Results do not depend on the parallel load:** hardware suites compare architectural results, never timing. Checked case by case (every verdict and every hw/uc/exp line) for every suite: the serial test.cmd before U540 vs the parallel runs — identical except the documented RDRAND values of loose cases, host-state tags (APIC ID, RDRAND) and the REP LODS tag above.
 - **Tiers** (plan 1.H.3): while working on an area run only its group(s); a harness-only change: only the affected files (same cases, same counts); before a push that changes emulator code: the full `test.cmd` at 100%.
 
+## Prepared native runs (U850)
+
+The sweep runs a form on the host CPU only when nothing it does can leave our regions (CODE / DATA / MEM at 0x30000000) or touch host state. Most forms get there with the random state alone (memory operands on RSI / R14 = MEM + 8000h, RDI = MEM + 9000h). The rest get a prepared state on top of the random one (`at_universe.hpp` `prepare_native`, `pin_base`, `patch_moffs`; applied by `at_main.cpp` `apply_setup`, identically for both engines), and Unicorn runs them at CPL3 with the Windows GDT (`cpl=3`, as the host):
+
+| forms | prepared |
+|---|---|
+| memory operand on another GPR base (the map-0F 38h/3Ah forms the sweep finds with the tail byte 5Bh as ModRM = `[rbx+0]`: AES*, SHA*, ADCX/ADOX, CRC32, MOVBE, MOVDIRI, MOVDIR64B, GF2P8*, PBLENDW, PEXTRD/Q, PMAXUW, PABSD, PHSUBD, WRSS) | the base register := MEM + 8000h (an index other than RCX := 0) |
+| `MOV moffs` (A0–A3) | the 8-byte absolute address (0x5BC0 from the tail bytes, never mapped) is rewritten to MEM + 8000h; the form text shows the new address |
+| Jcc, JRCXZ, LOOP/LOOPE/LOOPNE, JMP/CALL rel32, XBEGIN, INT3, INT1 | branch layout (`program::ctl`): the snippet sits between two 100h-byte pads, the rest of CODE is HLT (F4h). A taken branch stops at its target: CPL3 HLT is #GP(0) with RIP = the HLT, in both engines |
+| JMP/CALL r64 / m64, RET [imm16], RETF/RETFQ [imm16], far JMP/CALL m16:xx | the register, the memory operand or the stack slot at RSP holds LAND = CODE + 8000h (HLT); far forms the selector 33h (the host's CS); RSP := STACK_TOP − 100h for the forms that pop. A 16-bit RETF / m16:16 target (8000h) is below 64 KiB, never mapped under Windows: #PF in both |
+| PUSH, PUSHF, POP, POPF, ENTER, LEAVE | RSP := STACK_TOP − 100h for the forms that pop; POPF: TF cleared in the popped image (a trap in the epilogue), every other RFLAGS bit but RF compared; LEAVE: RBP := STACK_TOP − 100h; ENTER with a nesting level > 0: RBP inside the test stack; PUSH Sreg: outcome only (the selector is the environment's) |
+| LSS | the selector after the offset := 2Bh (the host's own SS, as in `cases_fixes2.txt`) |
+
+For a branch-layout form a fault anywhere but the prologue and epilogue belongs to the snippet (native: the vectored handler, only on the running thread while the snippet runs; Unicorn: the INTR / unmapped hooks), and the comparison adds the fault RIP (not for INT3 / INT1: UC_HOOK_INTR reports the next RIP, Windows the INT3) and the whole state at that fault. The test stack is compared from the lower of input and output RSP when nothing faulted (an RSP below the stack, ENTER 5BC0h, compares all of it).
+
+Forms that stay out, with the reason in the CSV `detail` column: SYSCALL / SYSENTER (a real kernel entry), INT n (Windows' IDT decides natively; Unicorn delivers INT n to UC_HOOK_INTR without an IDT), WRFSBASE / WRGSBASE (the host thread's FS/GS base; GS base = the TEB), LFS / LGS (the host thread's FS/GS selector and base), XBEGIN when the host has RTM. WRUSSD/WRUSSQ are CPL0-only (SDM: #GP(0) at CPL > 0) and counted as privileged.
+
 ## Quirks
 
 `--quirks` and the UC_CTL_X86_HW_QUIRKS control are being removed (plan 1.G, pure SDM). Hardware cases where the i5-13600K deviates from the SDM are tagged `# known deviation: <name>` (documented in `docs\quirks.md`); host-state differences (RDRAND values, APIC ID, …) are tagged `# host state: <reason>`. Both are counted separately so every file reports 0 unexplained differences.

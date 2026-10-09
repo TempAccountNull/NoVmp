@@ -37,6 +37,15 @@ namespace at
 	constexpr uint64_t SYS_PAGE = 0x30040000, SYS_SIZE = 0x1000;
 	constexpr uint64_t SYS_GDT = SYS_PAGE, SYS_STUB = SYS_PAGE + 0x800, SYS_GATE = SYS_PAGE + 0x900;
 	constexpr uint16_t SEL_CODE32_R3 = 0x23, SEL_DATA_R3 = 0x2B, SEL_CODE64_R3 = 0x33;
+	// U850: branch layout (sweep forms that transfer control, program::ctl). The CODE region is filled
+	// with HLT (F4h) in both engines: CPL3 HLT is #GP(0) with RIP = its own address (fault-like), so a
+	// transfer that leaves the snippet stops at its target and both engines report that address. LAND
+	// is the target the sweep gives indirect transfers and returns (CALL/JMP r/m, RET, RETF, far CALL/
+	// JMP m16:xx); the snippet sits between two HLT pads (CTL_PAD each), so a rel8 target lands in a pad
+	// and a rel32 target beyond the program in the fill.
+	constexpr uint64_t LAND = CODE + 0x8000;
+	constexpr size_t CTL_PAD = 0x100;
+	constexpr uint8_t CTL_FILL = 0xF4;
 
 	constexpr uint64_t S_GPR = 0x000, S_RFLAGS = 0x080, S_FX = 0x100, S_YMMH = 0x300, S_ENV = 0x400;
 
@@ -167,34 +176,78 @@ namespace at
 	{
 		std::vector<uint8_t> code;
 		uint64_t snippet_begin = 0, snippet_end = 0, epilogue_at = 0, ret_at = 0;
+		// U850: branch layout: prologue, JMP over a HLT pad, snippet, JMP over a HLT pad, epilogue;
+		// the rest of CODE is HLT. A fault anywhere but the prologue [CODE, prologue_end) and the
+		// epilogue [epilogue_at, CODE + code.size()) belongs to the snippet (see in_trap_range).
+		bool ctl = false;
+		uint64_t prologue_end = 0;
+		uint8_t fill = 0xCC;       // the CODE bytes outside the program (native; Unicorn: 0 unless ctl)
+		// a fault at this RIP is the snippet's: resume at the epilogue
+		bool in_trap_range( uint64_t rip ) const
+		{
+			if ( !ctl ) return rip >= snippet_begin && rip < snippet_end;
+			if ( rip >= CODE && rip < prologue_end ) return false;
+			if ( rip >= epilogue_at && rip < CODE + code.size() ) return false;
+			if ( rip >= SYS_PAGE && rip < SYS_PAGE + SYS_SIZE ) return false;   // Unicorn's CPL0 stub / gate
+			return true;
+		}
 	};
 
+	inline std::vector<uint8_t> epilogue_bytes( uint64_t epi_addr, std::string* err )
+	{
+		std::vector<uint8_t> epi = { 0x48, 0xA3 };   // mov [moffs64], rax  - a true absolute store of the guest rax
+		for ( int i = 0; i < 8; ++i ) epi.push_back( uint8_t( ( OUT_BLK + S_GPR ) >> ( 8 * i ) ) );
+		std::vector<uint8_t> rest = assemble( epilogue_text(), epi_addr + epi.size(), err );
+		if ( rest.empty() ) return {};
+		epi.insert( epi.end(), rest.begin(), rest.end() );
+		return epi;
+	}
+
+	inline void put_jmp32( std::vector<uint8_t>& code, size_t over )   // E9 rel32: skip 'over' bytes
+	{
+		code.push_back( 0xE9 );
+		for ( int i = 0; i < 4; ++i ) code.push_back( uint8_t( uint32_t( over ) >> ( 8 * i ) ) );
+	}
+
 	// The prologue is fixed; the epilogue only depends on where it starts. Both are assembled
-	// once per snippet length and cached.
-	inline program build( const std::vector<uint8_t>& snippet, std::string* err )
+	// once per snippet length and cached. ctl (U850): the branch layout of program::ctl.
+	inline program build( const std::vector<uint8_t>& snippet, std::string* err, bool ctl = false )
 	{
 		static std::vector<uint8_t> pro = assemble( prologue_text(), CODE, err );
 		// U759: snippets up to 255 bytes (the CPL0 CET sequences of cases_cet2.txt set up a GDT,
 		// CR4.CET and the CET MSRs themselves)
-		static std::vector<std::vector<uint8_t>> epi_cache( 256 );
+		static std::vector<std::vector<uint8_t>> epi_cache( 256 ), epi_cache_ctl( 256 );
 		program p;
 		if ( pro.empty() || snippet.size() >= epi_cache.size() ) return p;
-		uint64_t epi_addr = CODE + pro.size() + snippet.size();
-		auto& epi = epi_cache[ snippet.size() ];
+		const size_t jmp = ctl ? 5 : 0, pad = ctl ? CTL_PAD : 0;
+		uint64_t snip_addr = CODE + pro.size() + jmp + pad;
+		uint64_t epi_addr = snip_addr + snippet.size() + jmp + pad;
+		auto& epi = ( ctl ? epi_cache_ctl : epi_cache )[ snippet.size() ];
 		if ( epi.empty() )
 		{
-			epi = { 0x48, 0xA3 };   // mov [moffs64], rax  - a true absolute store of the guest rax
-			for ( int i = 0; i < 8; ++i ) epi.push_back( uint8_t( ( OUT_BLK + S_GPR ) >> ( 8 * i ) ) );
-			std::vector<uint8_t> rest = assemble( epilogue_text(), epi_addr + epi.size(), err );
-			if ( rest.empty() ) { epi.clear(); return p; }
-			epi.insert( epi.end(), rest.begin(), rest.end() );
+			epi = epilogue_bytes( epi_addr, err );
+			if ( epi.empty() ) return p;
 		}
 		p.code = pro;
+		if ( ctl )
+		{
+			put_jmp32( p.code, pad );
+			p.code.insert( p.code.end(), pad, CTL_FILL );
+		}
 		p.code.insert( p.code.end(), snippet.begin(), snippet.end() );
+		if ( ctl )
+		{
+			put_jmp32( p.code, pad );
+			p.code.insert( p.code.end(), pad, CTL_FILL );
+		}
 		p.code.insert( p.code.end(), epi.begin(), epi.end() );
-		p.snippet_begin = CODE + pro.size();
-		p.snippet_end = p.epilogue_at = epi_addr;
+		p.snippet_begin = snip_addr;
+		p.snippet_end = snip_addr + snippet.size();
+		p.epilogue_at = epi_addr;
 		p.ret_at = CODE + p.code.size() - 1;
+		p.ctl = ctl;
+		p.prologue_end = CODE + pro.size() + jmp;
+		if ( ctl ) p.fill = CTL_FILL;
 		return p;
 	}
 
@@ -242,14 +295,18 @@ namespace at
 		}
 		void run( const program& p, const state& in, result& r )
 		{
-			std::memset( code_, 0xCC, CODE_SIZE );
+			std::memset( code_, p.fill, CODE_SIZE );
 			std::memcpy( code_, p.code.data(), p.code.size() );
 			FlushInstructionCache( GetCurrentProcess(), code_, CODE_SIZE );
 			std::memset( data_, 0, DATA_SIZE );
 			write_blocks( data_, mem_, in );
 			g().lo = p.snippet_begin; g().hi = p.snippet_end; g().resume = p.epilogue_at;
 			g().faulted = false; g().code = 0; g().rip = 0;
+			// U850: a branch-layout snippet may fault outside its own bytes (at its target: the HLT
+			// fill, or an unmapped address below 64 KiB); only this thread, only while it runs
+			g().prog = &p; g().tid = GetCurrentThreadId(); g().active = true;
 			( ( void( * )() ) code_ )();
+			g().active = false; g().prog = nullptr;
 			r.ran = true;
 			r.faulted = g().faulted;
 			r.vector = g().faulted ? vector_of( g().code, g().info1 ) : -1;
@@ -265,12 +322,17 @@ namespace at
 			read_blocks( data_, mem_, *r.s );
 		}
 	private:
-		struct globals { uint64_t lo, hi, resume, rip, info1; DWORD code; bool faulted; };
+		struct globals { uint64_t lo, hi, resume, rip, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active; };
 		static globals& g() { static globals x{}; return x; }
 		static LONG CALLBACK veh( EXCEPTION_POINTERS* ep )
 		{
 			uint64_t rip = ep->ContextRecord->Rip;
-			if ( rip < g().lo || rip >= g().hi ) return EXCEPTION_CONTINUE_SEARCH;
+			if ( g().active && g().prog && g().prog->ctl )
+			{
+				// U850: branch layout - everything but the prologue / epilogue, on the running thread
+				if ( GetCurrentThreadId() != g().tid || !g().prog->in_trap_range( rip ) ) return EXCEPTION_CONTINUE_SEARCH;
+			}
+			else if ( rip < g().lo || rip >= g().hi ) return EXCEPTION_CONTINUE_SEARCH;
 			g().faulted = true;
 			g().code = ep->ExceptionRecord->ExceptionCode;
 			g().info1 = ep->ExceptionRecord->NumberParameters >= 2 ? ep->ExceptionRecord->ExceptionInformation[ 1 ] : 0;
@@ -361,6 +423,11 @@ namespace at
 			uc_mem_map( uc_, CODE, CODE_SIZE, UC_PROT_ALL );
 			uc_mem_map( uc_, DATA, DATA_SIZE, UC_PROT_READ | UC_PROT_WRITE );
 			uc_mem_map( uc_, MEM, MEM_SIZE, UC_PROT_READ | UC_PROT_WRITE );
+			if ( p.ctl )   // U850: the HLT fill of the branch layout, as natively
+			{
+				std::vector<uint8_t> fill( CODE_SIZE, p.fill );
+				uc_mem_write( uc_, CODE, fill.data(), fill.size() );
+			}
 			uc_mem_write( uc_, CODE, p.code.data(), p.code.size() );
 			if ( cpl3 )
 			{
@@ -451,7 +518,7 @@ namespace at
 		}
 		bool resume_if_in_snippet( uint64_t rip )
 		{
-			if ( rip < prog_->snippet_begin || rip >= prog_->snippet_end ) return false;
+			if ( !prog_->in_trap_range( rip ) ) return false;   // U850: the branch layout's wider range
 			uint64_t to = resume_target();
 			uc_reg_write( uc_, UC_X86_REG_RIP, &to );
 			// clear TF so a single-step trap does not repeat inside the epilogue
@@ -478,7 +545,7 @@ namespace at
 			auto* self = ( unicorn_engine* ) user;
 			uint64_t rip = 0; uc_reg_read( uc, UC_X86_REG_RIP, &rip );
 			self->fault( rip, 14 );
-			if ( rip >= self->prog_->snippet_begin && rip < self->prog_->snippet_end ) self->pending_epilogue_ = true;
+			if ( self->prog_->in_trap_range( rip ) ) self->pending_epilogue_ = true;   // U850: branch layout too
 			return false;
 		}
 		static void on_ext( uc_engine* uc, uint64_t addr, uint32_t, void* user )

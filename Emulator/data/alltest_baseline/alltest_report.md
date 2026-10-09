@@ -2,20 +2,20 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 24 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 120 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 3008 |
+| match | 3190 |
 | differs | 0 |
 | unicorn-#UD (hw runs it) | 0 |
-| host lacks + unicorn #UD | 10170 |
-| host lacks, unicorn runs (needs SDM check) | 16 |
-| not native-safe, unicorn runs (needs SDM check) | 199 |
-| not native-safe, unicorn #UD | 6 |
-| privileged (CPL0 in raw unicorn; Phase 2 CPL3) | 100 |
+| host lacks + unicorn #UD | 10174 |
+| host lacks, unicorn runs (needs SDM check) | 20 |
+| not native-safe, unicorn runs (needs SDM check) | 13 |
+| not native-safe, unicorn #UD | 0 |
+| privileged (CPL0 in raw unicorn; Phase 2 CPL3) | 102 |
 | harness error | 0 |
 | known deviation (docs/quirks.md) | 5 |
 | known deviation not observed (matches) | 0 |
@@ -27,8 +27,8 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 3dnow | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| adx | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
-| aes | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 |
+| adx | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx | 438 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+aes | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx+novlx | 186 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -37,7 +37,7 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| base | 1166 | 0 | 0 | 7343 | 4 | 165 | 6 | 76 | 0 | 4 | 0 |
+| base | 1322 | 0 | 0 | 7347 | 4 | 9 | 0 | 78 | 0 | 4 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -54,15 +54,15 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pfi | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| rtm | 0 | 0 | 0 | 0 | 5 | 4 | 0 | 0 | 0 | 0 | 0 |
-| sha | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| rtm | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sha | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse1 | 93 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | sse2 | 253 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse3 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| sse41 | 90 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
-| sse42 | 10 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| sse41 | 94 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sse42 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | sse4a | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
-| ssse3 | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| ssse3 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | vlx | 0 | 0 | 0 | 462 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | vm | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 | 0 | 0 |
 | xop | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |

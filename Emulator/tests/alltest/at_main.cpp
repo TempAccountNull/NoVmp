@@ -34,6 +34,11 @@
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
+// U850: control transfers, stack forms, LSS and memory operands on a base other than RSI/R14/RDI
+// run natively with a prepared state on top of the random one (at_universe.hpp prepare_native /
+// pin_base / patch_moffs): targets in a HLT landing area (program::ctl), popped values on the test
+// stack, the host's own CS 33h / SS 2Bh, the base register pointing into the operand memory; Unicorn
+// runs those at CPL3 with the Windows GDT. docs\emu-alltest.md "Prepared native runs".
 // Every form lands in exactly one bucket (see BUCKETS below); the report lists them per ISA group,
 // plus the manual's forms that the sweep cannot reach yet (Emulator\data\isa_manual_forms.tsv).
 #include "at_universe.hpp"
@@ -174,6 +179,20 @@ namespace at
 		for ( auto& b : s.stack ) b = uint8_t( g_rng() );
 	}
 
+	// U850: the form's prepared values on top of the random state (both engines get the same input)
+	static void apply_setup( const form& f, state& s )
+	{
+		for ( auto& [ r, v ] : f.pins ) s.gpr[ r ] = v;
+		for ( auto& [ a, b ] : f.pokes )
+			for ( size_t k = 0; k < b.size(); ++k )
+			{
+				uint64_t at = a + k;
+				if ( at >= MEM && at < MEM + MEM_SIZE ) s.mem[ at - MEM ] = b[ k ];
+				else if ( at >= STACK_LO && at < STACK_TOP ) s.stack[ at - STACK_LO ] = b[ k ];
+			}
+		if ( f.clear_tf_at >= STACK_LO && f.clear_tf_at + 1 < STACK_TOP ) s.stack[ f.clear_tf_at + 1 - STACK_LO ] &= uint8_t( ~1u );
+	}
+
 	// ── comparison ──────────────────────────────────────────────────────────────────────────
 	static bool approx_lanes( const uint8_t* a, const uint8_t* b, int n )
 	{
@@ -203,7 +222,16 @@ namespace at
 						   u.faulted ? ( "vector " + std::to_string( u.vector ) ).c_str() : "ok" );
 			return b;
 		}
-		if ( h.faulted || f.kind == 2 ) return "";
+		// U850: a branch-layout form stops at its target (CPL3 HLT in the landing area: #GP with RIP =
+		// the target) or faults on the transfer itself; both engines report the RIP, and the state at
+		// that fault is complete (the transfer has retired, or not started), so it is compared too.
+		// INT3 / INT1: UC_HOOK_INTR reports the next RIP, Windows the INT3 itself: RIP not compared.
+		if ( f.ctl && h.faulted && !f.softint && h.fault_rip != u.fault_rip )
+		{
+			std::snprintf( b, sizeof( b ), "fault rip hw=%016llX uc=%016llX; ", ( unsigned long long ) h.fault_rip, ( unsigned long long ) u.fault_rip );
+			d += b;
+		}
+		if ( ( h.faulted && !f.ctl ) || f.kind == 2 ) return d;
 		uint64_t fm = f.flag_mask;
 		if ( f.shift_op )
 		{
@@ -252,8 +280,13 @@ namespace at
 			std::snprintf( b, sizeof( b ), "mem[+0x%zX] hw=%02X uc=%02X; ", k, hs.mem[ k ], us.mem[ k ] );
 			d += b;
 		}
+		// the test stack from RSP up (natively, Windows writes the exception frame below RSP). U850:
+		// without a fault nothing writes below RSP, so a form that moved RSP down (ENTER, PUSH, CALL)
+		// or up (POP, RET) is compared from the lower of input and output RSP; an RSP below the test
+		// stack (ENTER 5BC0h) compares all of it, one above none of it
 		uint64_t rsp = us.gpr[ RSP ];
-		size_t from = ( rsp >= STACK_LO && rsp <= STACK_TOP ) ? size_t( rsp - STACK_LO ) : sizeof( hs.stack );
+		if ( !h.faulted ) rsp = std::min( rsp, in.gpr[ RSP ] );
+		size_t from = rsp > STACK_TOP ? sizeof( hs.stack ) : rsp < STACK_LO ? 0 : size_t( rsp - STACK_LO );
 		for ( size_t k = from; k < sizeof( hs.stack ); k++ )
 			if ( hs.stack[ k ] != us.stack[ k ] ) { d += "stack differs; "; break; }
 		return d;
@@ -273,15 +306,17 @@ namespace at
 	{
 		form_result fr;
 		std::string err;
-		program p = build( f.bytes, &err );
+		program p = build( f.bytes, &err, f.ctl );   // U850: branch layout for control transfers
 		if ( p.code.empty() ) { fr.b = HARNESS_ERROR; fr.detail = "build: " + err; return fr; }
 		unicorn_engine uc( UC_CPU_X86_MAX );
+		uc.cpl3 = f.uc_cpl3;   // U850: control-transfer / stack / LSS forms: CPL3 with the Windows GDT, like the host
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		auto in = std::make_unique<state>();
 		bool hw_ud_all = true, uc_ud_all = true, any_diff = false;
 		for ( int it = 0; it < iters; ++it )
 		{
 			rnd_state( *in, it );
+			apply_setup( f, *in );
 			result u;
 			uc.run( *in, u );
 			if ( !u.ran && !u.faulted ) { fr.b = HARNESS_ERROR; fr.detail = u.err; return fr; }

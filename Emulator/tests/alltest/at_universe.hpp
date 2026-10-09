@@ -5,6 +5,7 @@
 // mnemonic + operand-class signature. Ported from the old difftest (emu_extentions/tests).
 #pragma once
 #include <capstone/capstone.h>
+#include <intrin.h>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -28,12 +29,211 @@ namespace at
 		int shift_op = 0, op_bits = 0, count_kind = 0;
 		uint8_t imm = 0;
 		uint16_t fsw_mask = 0xFFFF;            // x87: C0/C2/C3 are undefined after most instructions
+		// U850: forms that run natively only with a prepared input state (control transfers, stack
+		// forms, LSS, memory operands on a base other than RSI/R14/RDI). Applied on top of the random
+		// state, identically for both engines (at_main.cpp apply_setup).
+		bool ctl = false;                      // branch layout (program::ctl): HLT landing area, fault RIP + state compared
+		bool softint = false;                  // INT3 / INT1: Unicorn's UC_HOOK_INTR reports the next RIP, so the RIP is not compared
+		bool uc_cpl3 = false;                  // Unicorn runs the thunk at CPL3 (Windows GDT), like the host
+		std::vector<std::pair<int, uint64_t>> pins;                    // GPR (at::reg) := value
+		std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pokes;  // bytes at an address in MEM or the test stack
+		uint64_t clear_tf_at = 0;              // POPF: clear TF (bit 8) of the image popped from here
 	};
 
 	inline bool has_group( const cs_insn& i, uint8_t g )
 	{
 		for ( int k = 0; k < i.detail->groups_count; k++ ) if ( i.detail->groups[ k ] == g ) return true;
 		return false;
+	}
+
+	// ── U850: prepared native runs ─────────────────────────────────────────────────────────────
+	// Capstone 64/32-bit GPR -> at::reg, -1 for anything else
+	inline int gpr_of( unsigned r )
+	{
+		static const unsigned r64[ 16 ] = { X86_REG_RAX, X86_REG_RCX, X86_REG_RDX, X86_REG_RBX, X86_REG_RSP, X86_REG_RBP, X86_REG_RSI, X86_REG_RDI,
+											X86_REG_R8, X86_REG_R9, X86_REG_R10, X86_REG_R11, X86_REG_R12, X86_REG_R13, X86_REG_R14, X86_REG_R15 };
+		static const unsigned r32[ 16 ] = { X86_REG_EAX, X86_REG_ECX, X86_REG_EDX, X86_REG_EBX, X86_REG_ESP, X86_REG_EBP, X86_REG_ESI, X86_REG_EDI,
+											X86_REG_R8D, X86_REG_R9D, X86_REG_R10D, X86_REG_R11D, X86_REG_R12D, X86_REG_R13D, X86_REG_R14D, X86_REG_R15D };
+		for ( int k = 0; k < 16; ++k ) if ( r == r64[ k ] || r == r32[ k ] ) return k;
+		return -1;
+	}
+
+	inline std::vector<uint8_t> le_bytes( uint64_t v, int n )
+	{
+		std::vector<uint8_t> b;
+		for ( int k = 0; k < n; ++k ) b.push_back( uint8_t( k < 8 ? v >> ( 8 * k ) : 0 ) );
+		return b;
+	}
+
+	// the host CPU has RTM (CPUID.(EAX=7,ECX=0):EBX[11]): XBEGIN would start a real transaction there
+	inline bool host_rtm()
+	{
+		int r[ 4 ] = {};
+		__cpuid( r, 0 );
+		if ( r[ 0 ] < 7 ) return false;
+		__cpuidex( r, 7, 0 );
+		return ( r[ 1 ] >> 11 ) & 1;
+	}
+
+	// a memory operand on a GPR base other than RSI/R14/RDI: pin the base to MEM_PTR (and an index
+	// other than RCX, which is bounded, to 0) so the access lands in the operand memory
+	inline bool pin_base( const x86_op_mem& m, form& f )
+	{
+		int b = gpr_of( m.base ), ix = m.index == X86_REG_INVALID ? -2 : gpr_of( m.index );
+		if ( b < 0 || b == RSP || ix == -1 || ix == RSP || ix == b || m.segment != X86_REG_INVALID ) return false;
+		if ( m.disp < -0x7000 || m.disp > 0x7000 ) return false;
+		f.pins.push_back( { b, MEM_PTR } );
+		if ( ix >= 0 && ix != RCX ) f.pins.push_back( { ix, 0 } );
+		return true;
+	}
+
+	// the address a memory operand reaches with the harness pointers (RSI/R14 = MEM_PTR, RDI =
+	// MEM_DST, another base pinned to MEM_PTR, any index pinned to 0); false when not in MEM
+	inline bool mem_ea( const x86_op_mem& m, form& f, uint64_t& ea )
+	{
+		if ( m.segment != X86_REG_INVALID ) return false;
+		uint64_t base;
+		if ( m.base == X86_REG_RSI || m.base == X86_REG_ESI || m.base == X86_REG_R14 || m.base == X86_REG_R14D ) base = MEM_PTR;
+		else if ( m.base == X86_REG_RDI || m.base == X86_REG_EDI ) base = MEM_DST;
+		else
+		{
+			int b = gpr_of( m.base );
+			if ( b < 0 || b == RSP ) return false;
+			f.pins.push_back( { b, MEM_PTR } );
+			base = MEM_PTR;
+		}
+		if ( m.index != X86_REG_INVALID )
+		{
+			int ix = gpr_of( m.index );
+			if ( ix < 0 || ix == RSP || ix == gpr_of( m.base ) ) return false;
+			f.pins.push_back( { ix, 0 } );
+		}
+		ea = base + uint64_t( m.disp );
+		return ea >= MEM && ea + 16 <= MEM + MEM_SIZE;
+	}
+
+	// MOV moffs (A0-A3, no 67h): the sweep's absolute 8-byte address comes from the tail bytes
+	// (0x5BC0, never mapped); point it at MEM_PTR so the form moves data like the [rsi] forms
+	inline void patch_moffs( uint8_t* b, size_t len )
+	{
+		size_t k = 0;
+		bool a32 = false;
+		while ( k < len && ( b[ k ] == 0x66 || b[ k ] == 0x67 || b[ k ] == 0xF2 || b[ k ] == 0xF3 || b[ k ] == 0xF0 || b[ k ] == 0x2E ||
+							 b[ k ] == 0x3E || b[ k ] == 0x26 || b[ k ] == 0x36 || b[ k ] == 0x64 || b[ k ] == 0x65 ) )
+		{
+			a32 = a32 || b[ k ] == 0x67;
+			++k;
+		}
+		if ( k < len && ( b[ k ] & 0xF0 ) == 0x40 ) ++k;
+		if ( a32 || k + 9 > len || b[ k ] < 0xA0 || b[ k ] > 0xA3 ) return;
+		for ( int n = 0; n < 8; ++n ) b[ k + 1 + n ] = uint8_t( MEM_PTR >> ( 8 * n ) );
+	}
+
+	// Control transfers, stack forms and LSS: the input values that keep the native run inside our
+	// regions (targets in the HLT landing area, popped values on the test stack, selectors of the
+	// host's own CS 33h / SS 2Bh). Returns false (form untouched) for anything else.
+	inline bool prepare_native( const cs_insn& i, form& f )
+	{
+		const auto& x = i.detail->x86;
+		const bool w = ( x.rex & 8 ) != 0, o16 = x.prefix[ 2 ] == 0x66;
+		const uint64_t sp = STACK_TOP - 0x100;   // RSP for the forms that pop
+		const cs_x86_op* op0 = x.op_count > 0 ? &x.operands[ 0 ] : nullptr;
+		const cs_x86_op* op1 = x.op_count > 1 ? &x.operands[ 1 ] : nullptr;
+		form t = f;   // work on a copy: a form that cannot be prepared stays untouched
+		auto is_sreg = []( unsigned r ) { return r == X86_REG_CS || r == X86_REG_DS || r == X86_REG_ES || r == X86_REG_FS || r == X86_REG_GS || r == X86_REG_SS; };
+		auto done = [ & ]() { t.uc_cpl3 = true; f = std::move( t ); return true; };
+		switch ( i.id )
+		{
+			case X86_INS_JMP: case X86_INS_CALL:
+				t.ctl = true;
+				if ( !op0 || op0->type == X86_OP_IMM ) return done();
+				if ( op0->type == X86_OP_REG )
+				{
+					int r = gpr_of( op0->reg );
+					if ( r < 0 || r == RSP ) return false;
+					t.pins.push_back( { r, LAND } );
+					return done();
+				}
+				{
+					uint64_t ea;
+					if ( !mem_ea( op0->mem, t, ea ) ) return false;
+					t.pokes.push_back( { ea, le_bytes( LAND, 8 ) } );
+					return done();
+				}
+			case X86_INS_LJMP: case X86_INS_LCALL:   // m16:64 (REX.W), m16:32, m16:16 (66h): offset, then CS 33h
+			{
+				if ( !op0 || op0->type != X86_OP_MEM ) return false;
+				uint64_t ea;
+				if ( !mem_ea( op0->mem, t, ea ) ) return false;
+				std::vector<uint8_t> v = le_bytes( LAND, w ? 8 : o16 ? 2 : 4 ), sel = le_bytes( SEL_CODE64_R3, 2 );
+				v.insert( v.end(), sel.begin(), sel.end() );
+				t.pokes.push_back( { ea, v } );
+				t.ctl = true;
+				return done();
+			}
+			case X86_INS_RET:
+				t.ctl = true;
+				t.pins.push_back( { RSP, sp } );
+				t.pokes.push_back( { sp, le_bytes( LAND, 8 ) } );
+				return done();
+			case X86_INS_RETF: case X86_INS_RETFQ:   // RIP then CS 33h, each of the operand size
+			{
+				const int n = w ? 8 : o16 ? 2 : 4;
+				std::vector<uint8_t> v = le_bytes( LAND, n ), sel = le_bytes( SEL_CODE64_R3, n );
+				v.insert( v.end(), sel.begin(), sel.end() );
+				t.ctl = true;
+				t.pins.push_back( { RSP, sp } );
+				t.pokes.push_back( { sp, v } );
+				return done();
+			}
+			case X86_INS_XBEGIN:
+				if ( host_rtm() ) return false;   // the caller gives the reason
+				t.ctl = true;
+				return done();
+			case X86_INS_INT3: case X86_INS_INT1:
+				t.ctl = t.softint = true;
+				return done();
+			case X86_INS_PUSH:
+				if ( op0 && op0->type == X86_OP_REG && is_sreg( op0->reg ) ) t.kind = 2;   // the selector value is the environment's
+				return done();
+			case X86_INS_PUSHF: case X86_INS_PUSHFQ:
+				return done();
+			case X86_INS_POP:
+				if ( !op0 || ( op0->type == X86_OP_REG && ( is_sreg( op0->reg ) || gpr_of( op0->reg ) == RSP ) ) ) return false;
+				t.pins.push_back( { RSP, sp } );
+				return done();
+			case X86_INS_POPF: case X86_INS_POPFQ:
+				// TF cleared in the popped image (a trap in the epilogue); every other bit is compared
+				// but RF (POPF clears it): CF PF AF ZF SF TF IF DF OF IOPL NT VM AC VIF VIP ID
+				t.pins.push_back( { RSP, sp } );
+				t.clear_tf_at = sp;
+				t.flag_mask = 0x3E7FD5;
+				return done();
+			case X86_INS_ENTER:
+				// nesting level > 0 copies frame pointers from [RBP - 8k]: RBP inside the test stack
+				if ( op1 && op1->type == X86_OP_IMM && ( op1->imm & 0x1F ) ) t.pins.push_back( { RBP, STACK_TOP - 0x80 } );
+				return done();
+			case X86_INS_LEAVE:
+				t.pins.push_back( { RBP, sp } );
+				return done();
+			case X86_INS_LSS:   // m16:64 (REX.W) / m16:32 / m16:16 (66h): random offset, then SS 2Bh (the host's own SS)
+			{
+				if ( !op0 || !op1 || op0->type != X86_OP_REG || gpr_of( op0->reg ) == RSP || op1->type != X86_OP_MEM ) return false;
+				if ( op0->reg == X86_REG_SP || op0->reg == X86_REG_SPL ) return false;
+				uint64_t ea;
+				if ( !mem_ea( op1->mem, t, ea ) ) return false;
+				t.pokes.push_back( { ea + ( w ? 8 : o16 ? 2 : 4 ), le_bytes( SEL_DATA_R3, 2 ) } );
+				return done();
+			}
+			default:
+				// Jcc, JRCXZ, LOOP/LOOPE/LOOPNE: rel8/rel32 targets in the HLT pads / fill
+				if ( has_group( i, X86_GRP_BRANCH_RELATIVE ) && op0 && op0->type == X86_OP_IMM && x.op_count == 1 )
+				{
+					t.ctl = true;
+					return done();
+				}
+				return false;
+		}
 	}
 
 	class universe
@@ -48,8 +248,11 @@ namespace at
 
 		std::vector<form> forms;
 
-		bool consider( const uint8_t* buf, size_t len, const char* cls )
+		bool consider( const uint8_t* in, size_t len, const char* cls )
 		{
+			std::vector<uint8_t> local( in, in + len );
+			patch_moffs( local.data(), len );   // U850
+			const uint8_t* buf = local.data();
 			cs_insn* insn = nullptr;
 			size_t n = cs_disasm( cs_, buf, len, CODE, 1, &insn );
 			if ( n == 0 ) return false;
@@ -160,6 +363,9 @@ namespace at
 				case X86_INS_WBINVD: case X86_INS_INVLPG: case X86_INS_INVPCID: case X86_INS_RDMSR: case X86_INS_WRMSR:
 				case X86_INS_SWAPGS: case X86_INS_MONITOR: case X86_INS_MWAIT: case X86_INS_XSETBV: case X86_INS_RDPMC:
 				case X86_INS_CLAC: case X86_INS_STAC: case X86_INS_XRSTORS: case X86_INS_XRSTORS64: case X86_INS_XSAVES: case X86_INS_XSAVES64:
+				// U850: WRUSS is CPL0-only (SDM Vol2B WRUSSD/WRUSSQ: "IF CPL > 0 THEN #GP(0)" after the
+				// CR4.CET check); Capstone gives it no privilege group
+				case X86_INS_WRUSSD: case X86_INS_WRUSSQ:
 					f.privileged = true; break;
 				default: break;
 			}
@@ -169,28 +375,48 @@ namespace at
 					unsigned r = x.operands[ k ].reg;
 					if ( ( r >= X86_REG_CR0 && r <= X86_REG_CR15 ) || ( r >= X86_REG_DR0 && r <= X86_REG_DR15 ) ) f.privileged = true;
 				}
-			if ( has_group( i, X86_GRP_JUMP ) || has_group( i, X86_GRP_CALL ) || has_group( i, X86_GRP_RET ) ||
-				 has_group( i, X86_GRP_INT ) || has_group( i, X86_GRP_IRET ) || has_group( i, X86_GRP_BRANCH_RELATIVE ) )
-				bad( "control transfer" );
-			switch ( i.id )
+			// U850: control transfers, stack forms and LSS run natively with a prepared state
+			// (prepare_native); the forms that stay out get their own reason first
+			const bool prepared = !f.privileged && prepare_native( i, f );
+			if ( !prepared )
 			{
-				case X86_INS_SYSCALL: case X86_INS_SYSENTER: case X86_INS_SYSEXIT: case X86_INS_SYSRET:
-				case X86_INS_INT: case X86_INS_INT1: case X86_INS_INT3: case X86_INS_INTO:
-				case X86_INS_XBEGIN: case X86_INS_WRFSBASE: case X86_INS_WRGSBASE:
-				case X86_INS_LFS: case X86_INS_LGS: case X86_INS_LSS:
-				case X86_INS_PUSH: case X86_INS_POP: case X86_INS_PUSHF: case X86_INS_PUSHFQ: case X86_INS_POPF:
-				case X86_INS_POPFQ: case X86_INS_ENTER: case X86_INS_LEAVE:
-					bad( "control/stack/segment" ); break;
-				default: break;
-			}
-			cs_regs rr, ww; uint8_t nr = 0, nw = 0;
-			if ( cs_regs_access( cs_, &i, rr, &nr, ww, &nw ) == CS_ERR_OK )
-				for ( int k = 0; k < nw; k++ )
+				switch ( i.id )
 				{
-					unsigned r = ww[ k ];
-					if ( r == X86_REG_RSP || r == X86_REG_ESP || r == X86_REG_SP || r == X86_REG_SPL || r == X86_REG_RIP ) bad( "writes rsp/rip" );
-					if ( r == X86_REG_CS || r == X86_REG_SS || r == X86_REG_DS || r == X86_REG_ES || r == X86_REG_FS || r == X86_REG_GS ) bad( "writes a segment register" );
+					case X86_INS_XBEGIN:
+						bad( "XBEGIN: the host CPU has RTM (a real transaction natively)" ); break;
+					case X86_INS_SYSCALL: case X86_INS_SYSENTER:
+						bad( "SYSCALL/SYSENTER: a real Windows kernel entry natively (expected values only)" ); break;
+					case X86_INS_INT:
+						bad( "INT n: Windows' IDT decides natively (a DPL3 gate is a real kernel entry); Unicorn hands INT n to UC_HOOK_INTR without IDT delivery" ); break;
+					case X86_INS_WRFSBASE: case X86_INS_WRGSBASE:
+						bad( "WRFSBASE/WRGSBASE: would replace the host thread's FS/GS base (GS base = the Windows TEB; expected values only)" ); break;
+					case X86_INS_LFS: case X86_INS_LGS:
+						bad( "LFS/LGS: would replace the host thread's FS/GS selector and base (expected values only)" ); break;
+					default: break;
 				}
+				if ( has_group( i, X86_GRP_JUMP ) || has_group( i, X86_GRP_CALL ) || has_group( i, X86_GRP_RET ) ||
+					 has_group( i, X86_GRP_INT ) || has_group( i, X86_GRP_IRET ) || has_group( i, X86_GRP_BRANCH_RELATIVE ) )
+					bad( "control transfer" );
+				switch ( i.id )
+				{
+					case X86_INS_SYSCALL: case X86_INS_SYSENTER: case X86_INS_SYSEXIT: case X86_INS_SYSRET:
+					case X86_INS_INT: case X86_INS_INT1: case X86_INS_INT3: case X86_INS_INTO:
+					case X86_INS_XBEGIN: case X86_INS_WRFSBASE: case X86_INS_WRGSBASE:
+					case X86_INS_LFS: case X86_INS_LGS: case X86_INS_LSS:
+					case X86_INS_PUSH: case X86_INS_POP: case X86_INS_PUSHF: case X86_INS_PUSHFQ: case X86_INS_POPF:
+					case X86_INS_POPFQ: case X86_INS_ENTER: case X86_INS_LEAVE:
+						bad( "control/stack/segment" ); break;
+					default: break;
+				}
+				cs_regs rr, ww; uint8_t nr = 0, nw = 0;
+				if ( cs_regs_access( cs_, &i, rr, &nr, ww, &nw ) == CS_ERR_OK )
+					for ( int k = 0; k < nw; k++ )
+					{
+						unsigned r = ww[ k ];
+						if ( r == X86_REG_RSP || r == X86_REG_ESP || r == X86_REG_SP || r == X86_REG_SPL || r == X86_REG_RIP ) bad( "writes rsp/rip" );
+						if ( r == X86_REG_CS || r == X86_REG_SS || r == X86_REG_DS || r == X86_REG_ES || r == X86_REG_FS || r == X86_REG_GS ) bad( "writes a segment register" );
+					}
+			}
 			for ( int k = 0; k < x.op_count; k++ )
 			{
 				if ( x.operands[ k ].type != X86_OP_MEM ) continue;
@@ -200,8 +426,14 @@ namespace at
 				// can never reach the test's own process memory
 				bool ok_base = m.base == X86_REG_RSI || m.base == X86_REG_R14 || m.base == X86_REG_RDI ||
 							   m.base == X86_REG_ESI || m.base == X86_REG_R14D || m.base == X86_REG_EDI || m.base == X86_REG_INVALID;
+				// U850: any other GPR base (the sweep's map-0F 38h/3Ah forms decode the tail byte 5Bh as
+				// ModRM [rbx+0]) is pinned to MEM_PTR, like RSI/R14; a random index other than RCX is
+				// pinned to 0
+				if ( !ok_base && pin_base( m, f ) ) ok_base = true;
 				if ( !ok_base ) bad( "memory operand based on a random register" );
-				if ( m.base == X86_REG_INVALID && m.index == X86_REG_INVALID ) bad( "absolute memory operand" );
+				// U850: a moffs operand was re-pointed at MEM_PTR (patch_moffs)
+				bool in_mem = m.disp >= int64_t( MEM ) && m.disp + 64 <= int64_t( MEM + MEM_SIZE );
+				if ( m.base == X86_REG_INVALID && m.index == X86_REG_INVALID && !in_mem ) bad( "absolute memory operand" );
 			}
 
 			switch ( i.id )
