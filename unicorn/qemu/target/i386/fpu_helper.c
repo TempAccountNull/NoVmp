@@ -5082,6 +5082,94 @@ static uint64_t get_xinuse_apx(CPUX86State *env)
     return acc ? XSTATE_APX_MASK : 0;
 }
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+/*
+ * NoVmp (ledger U756): CET supervisor state components (SDM Vol1 13.5.9), managed only by
+ * XSAVES / XRSTORS (IA32_XSS[12:11]):
+ *   11 CET_U (16 bytes): bytes 7:0 IA32_U_CET, bytes 15:8 IA32_PL3_SSP;
+ *   12 CET_S (24 bytes): bytes 8i+7:8i IA32_PLi_SSP, i = 0..2.
+ * IA32_S_CET and IA32_INTERRUPT_SSP_TABLE_ADDR are not XSAVE-managed (13.5.9, footnote).
+ * Initial configuration (13.6): all of the component's MSRs 0; XINUSE is value-based
+ * like U124/U172/U612. XRSTORS checks every value it would load first (cet_xrstor_check,
+ * #GP(0) on a value WRMSR refuses) and then loads them as WRMSR does.
+ */
+static uint64_t get_xinuse_cet(CPUX86State *env)
+{
+    uint64_t r = 0;
+
+    if (env->u_cet | env->pl_ssp[3]) {
+        r |= XSTATE_CET_U_MASK;
+    }
+    if (env->pl_ssp[0] | env->pl_ssp[1] | env->pl_ssp[2]) {
+        r |= XSTATE_CET_S_MASK;
+    }
+    return r;
+}
+
+static void do_xsave_cet_u(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    cpu_stq_data_ra(env, ptr, env->u_cet, ra);
+    cpu_stq_data_ra(env, ptr + 8, env->pl_ssp[3], ra);
+}
+
+static void do_xsave_cet_s(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        cpu_stq_data_ra(env, ptr + 8 * i, env->pl_ssp[i], ra);
+    }
+}
+
+/* XRSTORS: #GP(0) before anything is loaded when a value would be refused by WRMSR */
+static void cet_xrstor_check(CPUX86State *env, uint64_t restore, target_ulong at_u,
+                             target_ulong at_s, uintptr_t ra)
+{
+    bool ok = true;
+    int i;
+
+    if (restore & XSTATE_CET_U_MASK) {
+        ok &= x86_cet_msr_ok(env, MSR_IA32_U_CET, cpu_ldq_data_ra(env, at_u, ra));
+        ok &= x86_cet_msr_ok(env, MSR_IA32_PL3_SSP, cpu_ldq_data_ra(env, at_u + 8, ra));
+    }
+    if (restore & XSTATE_CET_S_MASK) {
+        for (i = 0; i < 3; i++) {
+            ok &= x86_cet_msr_ok(env, MSR_IA32_PL0_SSP + i,
+                                 cpu_ldq_data_ra(env, at_s + 8 * i, ra));
+        }
+    }
+    if (!ok) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+}
+
+static void do_xrstor_cet_u(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    x86_cet_msr_load(env, MSR_IA32_U_CET, cpu_ldq_data_ra(env, ptr, ra));
+    x86_cet_msr_load(env, MSR_IA32_PL3_SSP, cpu_ldq_data_ra(env, ptr + 8, ra));
+}
+
+static void do_xrstor_cet_s(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        x86_cet_msr_load(env, MSR_IA32_PL0_SSP + i, cpu_ldq_data_ra(env, ptr + 8 * i, ra));
+    }
+}
+
+static void do_clear_cet_u(CPUX86State *env)
+{
+    env->u_cet = 0;
+    env->pl_ssp[3] = 0;
+    cpu_sync_cet_hflags(env);
+}
+
+static void do_clear_cet_s(CPUX86State *env)
+{
+    env->pl_ssp[0] = env->pl_ssp[1] = env->pl_ssp[2] = 0;
+}
+#endif /* __Use_Original_Qemu (U756) */
 
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
@@ -5136,6 +5224,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     inuse &= ~XSTATE_APX_MASK;
     inuse |= get_xinuse_apx(env);
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+    /* CET_U / CET_S: value-based (see get_xinuse_cet) */
+    inuse &= ~(XSTATE_CET_U_MASK | XSTATE_CET_S_MASK);
+    inuse |= get_xinuse_cet(env);
+#endif /* __Use_Original_Qemu (U756) */
     return inuse;
 }
 
@@ -5309,6 +5402,10 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
 #if __Use_Original_Qemu != 1 /* ours (U612) */
     case XSTATE_APX_BIT:        do_xsave_apx(env, at, ra); break;
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+    case XSTATE_CET_U_BIT:      do_xsave_cet_u(env, at, ra); break;
+    case XSTATE_CET_S_BIT:      do_xsave_cet_s(env, at, ra); break;
+#endif /* __Use_Original_Qemu (U756) */
     default:                 break;
     }
 }
@@ -5404,9 +5501,8 @@ void helper_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
  * then #GP(0) if CPL > 0, then #GP(0) on a misaligned area. XFD-enabled components are saved
  * as if XINUSE[i] = 0 (13.14). The modified optimisation is not implemented: XMODIFIED is all
  * ones, which 13.6 allows ("a processor that does not do so implicitly maintains
- * XMODIFIED[i] = 1"), so no XRSTOR_INFO is kept. This CPU model supports no supervisor state
- * component (CPUID.(0DH,1):EDX:ECX = 0, IA32_XSS always 0); components added to IA32_XSS later
- * are laid out by xsave_comp_size / do_xsave_comp like the user ones.
+ * XMODIFIED[i] = 1"), so no XRSTOR_INFO is kept. Supervisor state components are laid out by
+ * xsave_comp_size / do_xsave_comp like the user ones; U756 adds CET_U / CET_S (IA32_XSS[12:11]).
  */
 void helper_xsaves(CPUX86State *env, target_ulong ptr, uint64_t rfbm)
 {
@@ -5643,6 +5739,9 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     xrstor_check_xfd(env, restore, ra);
 #endif /* __Use_Original_Qemu (U173) */
     {
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+        target_ulong at_cet_u = 0, at_cet_s = 0;   /* CET_U / CET_S offsets (U756) */
+#endif /* __Use_Original_Qemu (U756) */
         /* U480: nothing is loaded when any byte up to the last restored component faults */
         target_ulong at = next, end = next;
 
@@ -5652,10 +5751,20 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                 if (restore & (1ULL << i)) {
                     end = at + xsave_comp_size(i);
                 }
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+                if (i == XSTATE_CET_U_BIT) {
+                    at_cet_u = ptr + at;
+                } else if (i == XSTATE_CET_S_BIT) {
+                    at_cet_s = ptr + at;
+                }
+#endif /* __Use_Original_Qemu (U756) */
                 at += xsave_comp_size(i);
             }
         }
         x86_access_prepare(env, ptr, end, MMU_DATA_LOAD, ra);
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+        cet_xrstor_check(env, restore, at_cet_u, at_cet_s, ra);
+#endif /* __Use_Original_Qemu (U756) */
     }
 
     if (restore & XSTATE_FP_MASK) {
@@ -5722,6 +5831,14 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     do_xrstor_apx(env, ptr + next, ra);
                     break;
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+                case XSTATE_CET_U_BIT:
+                    do_xrstor_cet_u(env, ptr + next, ra);
+                    break;
+                case XSTATE_CET_S_BIT:
+                    do_xrstor_cet_s(env, ptr + next, ra);
+                    break;
+#endif /* __Use_Original_Qemu (U756) */
                 default:
                     break;
                 }
@@ -5743,6 +5860,14 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                 do_clear_apx(env);
                 break;
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+            case XSTATE_CET_U_BIT:
+                do_clear_cet_u(env);
+                break;
+            case XSTATE_CET_S_BIT:
+                do_clear_cet_s(env);
+                break;
+#endif /* __Use_Original_Qemu (U756) */
             case XSTATE_YMM_BIT:
                 do_clear_ymmh(env);
                 break;

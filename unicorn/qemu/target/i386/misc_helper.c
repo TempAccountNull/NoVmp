@@ -504,6 +504,35 @@ static bool cet_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
 }
 
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+/*
+ * NoVmp (ledger U756): XRSTORS loads the CET_U / CET_S MSRs (IA32_U_CET, IA32_PLi_SSP) as
+ * WRMSR does (SDM Vol1 13.12: #GP "if it would load any element of that component with
+ * an unsupported value"; 18.2.3: "The WRMSR and XRSTORS instructions require the address
+ * specified in the IA32_PLx_SSP MSR ... to be 4 byte aligned"). x86_cet_msr_ok applies
+ * cet_wrmsr's checks without writing (XRSTORS checks every value before loading any);
+ * x86_cet_msr_load is the write.
+ */
+bool x86_cet_msr_ok(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    bool ss = env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK;
+    bool ibt = env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT;
+
+    if (msr == MSR_IA32_U_CET || msr == MSR_IA32_S_CET) {
+        uint64_t valid = (ss ? 0x3ull : 0) | (ibt ? (0x3cull | ~0x3ffull) : 0);
+
+        return !(val & ~valid) && cet_msr_canonical(env, val) &&
+               !((val & CET_SUPPRESS) && (val & CET_TRACKER));
+    }
+    return !ss || (!(val & 3) && cet_msr_canonical(env, val));
+}
+
+void x86_cet_msr_load(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    cet_wrmsr(env, msr, val);
+}
+
+#endif /* __Use_Original_Qemu (U756) */
 void helper_wrmsr(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);

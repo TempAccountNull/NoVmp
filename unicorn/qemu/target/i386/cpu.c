@@ -1373,6 +1373,23 @@ ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT] = {
           { .feature = FEAT_7_0_ECX, .bits = CPUID_7_0_ECX_PKU,
             .offset = offsetof(X86XSaveArea, pkru_state),
             .size = sizeof(XSavePKRU) },
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+    /*
+     * NoVmp (ledger U756): CET_U (IA32_U_CET, IA32_PL3_SSP) and CET_S (IA32_PL0-2_SSP),
+     * supervisor components (SDM Vol1 13.5.9): CPUID.(EAX=0DH,ECX=11/12): EAX = 16 / 24,
+     * EBX = 0, ECX[0] = 1 (IA32_XSS). Supported with CET_SS or CET_IBT (x86_cpu_esa_supported).
+     */
+    [XSTATE_CET_U_BIT] = {
+        .feature = FEAT_7_0_ECX, .bits = CPUID_7_0_ECX_CET_SHSTK,
+        .offset = 0,
+        .size = 16,
+    },
+    [XSTATE_CET_S_BIT] = {
+        .feature = FEAT_7_0_ECX, .bits = CPUID_7_0_ECX_CET_SHSTK,
+        .offset = 0,
+        .size = 24,
+    },
+#endif /* __Use_Original_Qemu (U756) */
     [XSTATE_ARCH_LBR_BIT] = {
         .feature = FEAT_7_0_EDX, .bits = CPUID_7_0_EDX_ARCH_LBR,
         .offset = 0,
@@ -5134,6 +5151,13 @@ static bool x86_cpu_esa_supported(CPUX86State *env, int i)
     if (env->features[esa->feature] & esa->bits) {
         return true;
     }
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+    /* CET_U / CET_S: "CET_SS or CET_IBT" (QEMU 11.1 x86_ext_save_areas) */
+    if ((i == XSTATE_CET_U_BIT || i == XSTATE_CET_S_BIT) &&
+        (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT)) {
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U756) */
     return i >= XSTATE_OPMASK_BIT && i <= XSTATE_Hi16_ZMM_BIT &&
            (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10);
 }

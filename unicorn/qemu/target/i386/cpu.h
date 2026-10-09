@@ -617,6 +617,13 @@ typedef enum X86Seg {
 #define XSTATE_APX_BIT                  19
 #define XSTATE_APX_MASK                 (1ULL << XSTATE_APX_BIT)
 #endif /* __Use_Original_Qemu (U610) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+/* NoVmp (ledger U756): CET supervisor state components (SDM Vol1 13.5.9) */
+#define XSTATE_CET_U_BIT                11
+#define XSTATE_CET_S_BIT                12
+#define XSTATE_CET_U_MASK               (1ULL << XSTATE_CET_U_BIT)
+#define XSTATE_CET_S_MASK               (1ULL << XSTATE_CET_S_BIT)
+#endif /* __Use_Original_Qemu (U756) */
 
 #define XSTATE_DYNAMIC_MASK             (XSTATE_XTILE_DATA_MASK)
 
@@ -643,7 +650,12 @@ typedef enum X86Seg {
                                  XSTATE_APX_MASK)
 #endif /* __Use_Original_Qemu (U610) */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U756) */
 #define CPUID_XSTATE_XSS_MASK   (XSTATE_ARCH_LBR_MASK)
+#else /* ours (U756) */
+/* NoVmp (ledger U756): + CET_U / CET_S (IA32_XSS[12:11], SDM Vol1 13.3) */
+#define CPUID_XSTATE_XSS_MASK   (XSTATE_ARCH_LBR_MASK | XSTATE_CET_U_MASK | XSTATE_CET_S_MASK)
+#endif /* __Use_Original_Qemu (U756) */
 
 /* CPUID feature words */
 typedef enum FeatureWord {
@@ -2248,6 +2260,11 @@ void cpu_sync_bndcs_hflags(CPUX86State *env);
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 void cpu_sync_cet_hflags(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U756) */
+/* misc_helper.c: a CET MSR value WRMSR accepts / the WRMSR write itself (XRSTORS, U756) */
+bool x86_cet_msr_ok(CPUX86State *env, uint32_t msr, uint64_t val);
+void x86_cet_msr_load(CPUX86State *env, uint32_t msr, uint64_t val);
+#endif /* __Use_Original_Qemu (U756) */
 
 /* this function must always be used to load data in the segment
    cache: it synchronizes the hflags with the segment cache values */
