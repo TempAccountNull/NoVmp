@@ -15761,6 +15761,152 @@ static void test_x86_f2_stack64(void)
              c.intno, (unsigned long long)rip, (unsigned long long)rsp);
     OK(uc_close(c.uc));
 }
+/*
+ * U592 (ours, SDM Vol3A 6.5): a store that crosses into a page that faults writes nothing,
+ * also when the CPU-visible store is a sequence of 8-byte stores (MOVDQU, VMOVDQU ymm).
+ * Unicorn flat memory: 0x10000 mapped (A5 filled), 0x11000 unmapped or read-only; then
+ * 4-level paging with the next page not present (#PF).
+ */
+#define F2_PG 0x10000
+static uint32_t f2_unmapped_calls;
+
+static bool f2_map_on_write(uc_engine *uc, uc_mem_type type, uint64_t address, int size,
+                            int64_t value, void *user_data)
+{
+    f2_unmapped_calls++;
+    if (type != UC_MEM_WRITE_UNMAPPED) {
+        return false;
+    }
+    return uc_mem_map(uc, address & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+static void test_x86_f2_store_no_partial(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint32_t off, n;    /* operand offset in the page, operand size */
+        const char *what;
+    } t[] = {
+        {"\x48\x89\x83\xfc\x0f\x00\x00", 7, 0xffc, 8, "mov [rbx+0xffc], rax"},
+        {"\x89\x83\xfe\x0f\x00\x00", 6, 0xffe, 4, "mov [rbx+0xffe], eax"},
+        {"\xf3\x0f\x7f\x83\xf8\x0f\x00\x00", 8, 0xff8, 16, "movdqu [rbx+0xff8], xmm0"},
+        {"\xf3\x0f\x7f\x83\xfc\x0f\x00\x00", 8, 0xffc, 16, "movdqu [rbx+0xffc], xmm0"},
+        {"\x0f\x11\x83\xf1\x0f\x00\x00", 7, 0xff1, 16, "movups [rbx+0xff1], xmm0"},
+        {"\xc5\xfe\x7f\x83\xf0\x0f\x00\x00", 8, 0xff0, 32, "vmovdqu [rbx+0xff0], ymm0"},
+        {"\xc5\xfe\x7f\x83\xe8\x0f\x00\x00", 8, 0xfe8, 32, "vmovdqu [rbx+0xfe8], ymm0"},
+        {"\xd9\xe8\xdd\x9b\xfc\x0f\x00\x00", 8, 0xffc, 8, "fld1; fstp qword [rbx+0xffc]"},
+        {"\x66\x0f\xd6\x83\xfc\x0f\x00\x00", 8, 0xffc, 8, "movq [rbx+0xffc], xmm0"},
+    };
+    uint8_t page[0x1000], img[0x1000], ones[32];
+    size_t i;
+    int pass, j;
+
+    memset(ones, 0x11, sizeof(ones));
+    for (pass = 0; pass < 3; pass++) {
+        for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+            uc_engine *uc;
+            uc_hook h;
+            uc_err err;
+            uint64_t rbx = F2_PG, rax = 0x1111111111111111ULL;
+
+            OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+            OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
+            OK(uc_mem_map(uc, F2_PG, 0x1000, UC_PROT_ALL));
+            if (pass == 1) {
+                OK(uc_mem_map(uc, F2_PG + 0x1000, 0x1000, UC_PROT_READ));
+            }
+            f2_unmapped_calls = 0;
+            if (pass == 2) {
+                OK(uc_hook_add(uc, &h, UC_HOOK_MEM_UNMAPPED, f2_map_on_write, NULL, 1, 0));
+            }
+            memset(page, 0xa5, sizeof(page));
+            OK(uc_mem_write(uc, F2_PG, page, sizeof(page)));
+            OK(uc_mem_write(uc, code_start, t[i].code, t[i].len));
+            OK(uc_reg_write(uc, UC_X86_REG_RBX, &rbx));
+            OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
+            OK(uc_reg_write(uc, UC_X86_REG_XMM0, ones));
+            OK(uc_reg_write(uc, UC_X86_REG_YMM0, ones));
+            {
+                uint16_t ftw = 0xffff;  /* empty x87 stack (Unicorn's reset tags are "valid") */
+
+                OK(uc_reg_write(uc, UC_X86_REG_FPTAG, &ftw));
+            }
+            err = uc_emu_start(uc, code_start, code_start + t[i].len, 0, 0);
+            OK(uc_mem_read(uc, F2_PG, img, sizeof(img)));
+            if (pass < 2) {
+                /* the store faults: nothing on the first page changes */
+                TEST_CHECK(err == (pass == 0 ? UC_ERR_WRITE_UNMAPPED : UC_ERR_WRITE_PROT));
+                for (j = 0; j < 0x1000 && img[j] == 0xa5; j++) {
+                }
+                TEST_CHECK(j == 0x1000);
+                TEST_MSG("pass %d %s: err %u, byte %03x changed", pass, t[i].what, err, j);
+                if (t[i].code[0] == '\xd9') {
+                    /* FLD1 done, the FSTP neither stored nor popped: TOP = 7 */
+                    uint16_t fsw = 0;
+
+                    OK(uc_reg_read(uc, UC_X86_REG_FPSW, &fsw));
+                    TEST_CHECK(((fsw >> 11) & 7) == 7 && (fsw & 0x7f) == 0);
+                    TEST_MSG("pass %d %s: fsw %04x", pass, t[i].what, fsw);
+                }
+            } else {
+                /* a hook maps the page: the whole operand is stored, one hook call */
+                uint8_t hi[32];
+
+                TEST_CHECK(err == UC_ERR_OK && f2_unmapped_calls == 1);
+                TEST_MSG("pass 2 %s: err %u calls %u", t[i].what, err, f2_unmapped_calls);
+                OK(uc_mem_read(uc, F2_PG + 0x1000, hi, 32));
+                if (t[i].code[0] != '\xd9') {   /* FSTP stores 1.0, not the 11h bytes */
+                    uint32_t n1 = 0x1000 - t[i].off;
+
+                    TEST_CHECK(memcmp(img + t[i].off, ones, n1) == 0 &&
+                               memcmp(hi, ones, t[i].n - n1) == 0);
+                    TEST_MSG("pass 2 %s: stored bytes differ", t[i].what);
+                }
+            }
+            OK(uc_close(uc));
+        }
+    }
+}
+
+/* the same with 4-level paging: the next page is not present (#PF, CR2 = its address) */
+static void test_x86_f2_store_no_partial_paging(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+    } t[] = {
+        {"\x48\x89\x86\xfc\x0f\x00\x00", 7},              /* mov [rsi+0xffc], rax */
+        {"\xf3\x0f\x7f\x86\xf8\x0f\x00\x00", 8},          /* movdqu [rsi+0xff8], xmm0 */
+        {"\xc5\xfe\x7f\x86\xf0\x0f\x00\x00", 8},          /* vmovdqu [rsi+0xff0], ymm0 */
+        {"\xc5\xfe\x7f\x86\xf8\x0f\x00\x00", 8},          /* vmovdqu [rsi+0xff8], ymm0 */
+    };
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    uint8_t page[0x1000], img[0x1000];
+    uint64_t cr4;
+    int slot = 0, j;
+    size_t i;
+
+    tb2_paging(uc, 3);
+    tb2_st64(uc, TB2_PT + 0x5000 + ((TB2_DATA + 0x1000 - TB2_SYS) >> 12) * 8, 0);
+    cr4 = nk_reg(uc, UC_X86_REG_CR4);
+    nk_setreg(uc, UC_X86_REG_CR4, cr4 | (1u << 9) | (1u << 18));      /* OSFXSR, OSXSAVE */
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        memset(page, 0xa5, sizeof(page));
+        OK(uc_mem_write(uc, TB2_DATA, page, sizeof(page)));
+        nk_setreg(uc, UC_X86_REG_RSI, TB2_DATA);
+        nk_setreg(uc, UC_X86_REG_RAX, 0x1111111111111111ULL);
+        TEST_CHECK(tb2_exec(uc, &intr, slot++, t[i].code, t[i].len) == 14);
+        TEST_CHECK(nk_reg(uc, UC_X86_REG_CR2) == TB2_DATA + 0x1000);
+        OK(uc_mem_read(uc, TB2_DATA, img, sizeof(img)));
+        for (j = 0; j < 0x1000 && img[j] == 0xa5; j++) {
+        }
+        TEST_CHECK(j == 0x1000);
+        TEST_MSG("case %d: byte %03x changed", (int)i, j);
+    }
+    OK(uc_close(uc));
+}
 
 /* ---- end U590-U609 (f2_) ---- */
 
@@ -15996,4 +16142,6 @@ TEST_LIST = {
     {"test_x86_m4a_values", test_x86_m4a_values},
     {"test_x86_f2_lss_rexw", test_x86_f2_lss_rexw},
     {"test_x86_f2_stack64", test_x86_f2_stack64},
+    {"test_x86_f2_store_no_partial", test_x86_f2_store_no_partial},
+    {"test_x86_f2_store_no_partial_paging", test_x86_f2_store_no_partial_paging},
     {NULL, NULL}};

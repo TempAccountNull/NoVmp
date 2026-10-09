@@ -2316,6 +2316,11 @@ bool x86_uintr_deliverable(CPUX86State *env);
 void x86_uintr_deliver(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+/* mem_helper.c: fault a store before any byte of it is written (Unicorn-unmapped too) */
+void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint8_t *src,
+                     uintptr_t ra);
+#endif /* __Use_Original_Qemu (U592) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */

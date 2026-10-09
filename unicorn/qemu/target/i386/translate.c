@@ -3462,10 +3462,46 @@ static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(XMMReg, XMM_Q(1)));
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+/*
+ * NoVmp (ledger U592): before the 8-byte stores of an unaligned 16/32-byte vector store, an
+ * operand that crosses a page has its second page checked first (helper_probe_vec_store),
+ * so a fault there leaves memory unchanged. The test is inline; the helper runs only for
+ * page-crossing operands. An aligned store (MOVAPS & co.) cannot cross a page, and its
+ * misalignment #GP must come first.
+ */
+static void gen_vec_store_probe(DisasContext *s, int offset, int len)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGLabel *skip = gen_new_label(tcg_ctx);
+    /* the branch ends the basic block: carry A0 over it in a local temp */
+    TCGv a0_keep = tcg_temp_local_new(tcg_ctx);
+    TCGv t = tcg_temp_new(tcg_ctx);
+    TCGv_ptr p;
+
+    tcg_gen_mov_tl(tcg_ctx, a0_keep, s->A0);
+    tcg_gen_andi_tl(tcg_ctx, t, s->A0, TARGET_PAGE_SIZE - 1);
+    tcg_gen_brcondi_tl(tcg_ctx, TCG_COND_LEU, t, TARGET_PAGE_SIZE - len, skip);
+    tcg_temp_free(tcg_ctx, t);
+    p = tcg_temp_new_ptr(tcg_ctx);
+    tcg_gen_addi_ptr(tcg_ctx, p, cpu_env, offset);
+    gen_helper_probe_vec_store(tcg_ctx, cpu_env, a0_keep, p, tcg_constant_i32(tcg_ctx, len));
+    tcg_temp_free_ptr(tcg_ctx, p);
+    gen_set_label(tcg_ctx, skip);
+    tcg_gen_mov_tl(tcg_ctx, s->A0, a0_keep);
+    tcg_temp_free(tcg_ctx, a0_keep);
+}
+#endif /* __Use_Original_Qemu (U592) */
+
 static inline void gen_sto_env_A0(DisasContext *s, int offset, bool align)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int mem_index = s->mem_index;
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+    if (!align) {
+        gen_vec_store_probe(s, offset, 16);
+    }
+#endif /* __Use_Original_Qemu (U592) */
     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(XMMReg, XMM_Q(0)));
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
                         MO_LEUQ | (align ? MO_ALIGN_16 : 0));
@@ -3497,6 +3533,11 @@ static void gen_sty_env_A0(DisasContext *s, int offset, bool align)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int mem_index = s->mem_index;
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+    if (!align) {
+        gen_vec_store_probe(s, offset, 32);
+    }
+#endif /* __Use_Original_Qemu (U592) */
     tcg_gen_ld_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(YMMReg, YMM_Q(0)));
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
                         MO_LEUQ | (align ? MO_ALIGN_32 : 0));

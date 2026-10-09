@@ -25,6 +25,80 @@
 #include "qemu/int128.h"
 #include "qemu/atomic128.h"
 #include "tcg/tcg.h"
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+#include "uc_priv.h"
+#endif /* __Use_Original_Qemu (U592) */
+
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+/*
+ * NoVmp (ledger U592): a store that the emulator splits (the 8-byte parts of a 16/32-byte
+ * SSE/AVX store) or performs inside a helper (x87 FST/FIST, which then pops) must fault
+ * before anything changes, as the CPU does (SDM Vol3A 6.5: the state is that before the
+ * faulting instruction; emu-alltest cases_fixes2). Every page of [a0, a0 + len) is translated
+ * for a store first (#PF with paging); a page that Unicorn has not mapped, or maps read-only,
+ * gets the first operand byte on it stored now - the UC_HOOK_MEM_WRITE_UNMAPPED / _PROT event
+ * the plain store would raise. If no hook maps the page the instruction stops here with
+ * nothing written (and nothing popped); if one does, the byte is stored again by the access.
+ * 'src' is the little-endian image of the operand that is about to be stored.
+ */
+void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint8_t *src,
+                     uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+    int mmu_idx = cpu_mmu_index(env, false);
+    uint32_t off, n;
+    target_ulong p;
+
+    if (len == 0) {
+        return;
+    }
+    if (!(env->hflags & HF_CS64_MASK) && a0 + len - 1 > 0xffffffffULL) {
+        return;     /* wraps at 4 GiB outside 64-bit mode: left to the stores (U490) */
+    }
+    for (off = 0, p = a0; off < len; off += n, p += n) {
+        n = (uint32_t)(TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK));
+        if (n > len - off) {
+            n = len - off;
+        }
+        probe_access(env, p, (int)n, MMU_DATA_STORE, mmu_idx, ra);
+    }
+    for (off = 0, p = a0; off < len; off += n, p += n) {
+        target_ulong paddr;
+        MemoryRegion *mr;
+
+        n = (uint32_t)(TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK));
+        if (n > len - off) {
+            n = len - off;
+        }
+        if (!tlb_vaddr_to_paddr(env, p, MMU_DATA_STORE, mmu_idx, &paddr)) {
+            continue;
+        }
+        mr = uc->memory_mapping(uc, paddr);
+        if (mr == NULL || !(mr->perms & UC_PROT_WRITE)) {
+            int old_size = uc->size_recur_mem;
+
+            uc->size_recur_mem = (int)len;      /* no UC_HOOK_MEM_WRITE for the probe */
+            cpu_stb_mmuidx_ra(env, p, src[off], mmu_idx, ra);
+            uc->size_recur_mem = old_size;
+            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+                cpu_loop_exit_restore(uc->cpu, ra);
+            }
+        }
+    }
+}
+
+/*
+ * NoVmp (ledger U592): a 16/32-byte SSE/AVX store (gen_sto_env_A0 / gen_sty_env_A0) is a
+ * sequence of 8-byte stores, so one that crosses into a page that faults stored its first
+ * part (upstream 46c684c862 makes the 128-bit case one i128 access that translates both
+ * pages first - not available with our TCG; its 256-bit store is still two halves).
+ * Called (inline test in gen_vec_store_probe) only when the operand crosses a page.
+ */
+void helper_probe_vec_store(CPUX86State *env, target_ulong a0, void *src, uint32_t len)
+{
+    x86_probe_store(env, a0, len, (const uint8_t *)src, GETPC());
+}
+#endif /* __Use_Original_Qemu (U592) */
 
 
 void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)

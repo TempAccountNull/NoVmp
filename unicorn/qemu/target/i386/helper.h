@@ -78,6 +78,9 @@ DEF_HELPER_1(rsm, void, env)
 DEF_HELPER_2(into, void, env, int)
 DEF_HELPER_2(cmpxchg8b_unlocked, void, env, tl)
 DEF_HELPER_2(cmpxchg8b, void, env, tl)
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+DEF_HELPER_4(probe_vec_store, void, env, tl, ptr, i32)
+#endif /* __Use_Original_Qemu (U592) */
 #ifdef TARGET_X86_64
 DEF_HELPER_2(cmpxchg16b_unlocked, void, env, tl)
 DEF_HELPER_2(cmpxchg16b, void, env, tl)

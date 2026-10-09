@@ -2625,6 +2625,37 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
                                  BP_MEM_WRITE, retaddr);
         }
 
+#if __Use_Original_Qemu != 1 /* ours (U592) */
+        /*
+         * NoVmp (ledger U592): the first page passed Unicorn's mapped/writable checks above,
+         * the second one is only checked when its first byte is stored, after the bytes on the
+         * first page (an exit request, not a fault): a MOV/FSTP m64/... across into memory
+         * Unicorn has not mapped (or mapped read-only) wrote part of its operand. The CPU stores
+         * nothing when either page faults (SDM Vol3A 6.5: a fault is reported before the
+         * faulting instruction changes the state; emu-alltest cases_fixes2). So that byte is
+         * stored first (the same UC_HOOK_MEM_WRITE_UNMAPPED / _PROT event as before); if no
+         * hook maps the page, nothing has been written. If a hook maps it, the loop below
+         * stores every byte (that one again).
+         */
+        if (size2 != 0) {
+            hwaddr paddr2 = entry2->paddr;
+            MemoryRegion *mr2 = uc->memory_mapping(uc, paddr2);
+
+            if (mr2 == NULL || !(mr2->perms & UC_PROT_WRITE)) {
+                int i2 = (int)(size - size2);
+                uint8_t first2 = memop_big_endian(op) ? (uint8_t)(val >> (((size - 1) * 8) - (i2 * 8)))
+                                                      : (uint8_t)(val >> (i2 * 8));
+
+                old_size = uc->size_recur_mem;
+                uc->size_recur_mem = size;      /* no UC_HOOK_MEM_WRITE for the probe */
+                helper_ret_stb_mmu(env, page2, first2, oi, retaddr);
+                uc->size_recur_mem = old_size;
+                if (uc->invalid_error != UC_ERR_OK) {
+                    return;
+                }
+            }
+        }
+#endif /* __Use_Original_Qemu (U592) */
         /*
          * XXX: not efficient, but simple.
          * This loop must go in the forward direction to avoid issues

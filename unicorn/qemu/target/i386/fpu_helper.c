@@ -941,6 +941,24 @@ void helper_x87_store(CPUX86State *env, target_ulong a0, uint32_t kind)
         env->x87_nopop = 1;
         return;
     }
+    /*
+     * NoVmp (ledger U592): the store is made here, inside the helper, so a page fault on it -
+     * or memory Unicorn has not mapped, which only requests an exit - left the FPU flags set,
+     * the pop and the FIP/FDP update done (and a page-crossing operand half written).
+     * i5-13600K: #PF with nothing stored and TOP/FSW/FIP unchanged (cases_fixes2). The
+     * destination is probed before anything changes.
+     */
+    {
+        uint64_t img = cpu_to_le64(v);
+        uint32_t len = (kind == X87ST_I16 || kind == X87ST_T16) ? 2 :
+                       (kind == X87ST_F32 || kind == X87ST_I32 || kind == X87ST_T32) ? 4 : 8;
+
+        int f_now = get_float_exception_flags(s);
+
+        set_float_exception_flags(old_flags, s);   /* as on entry if the probe faults */
+        x86_probe_store(env, a0, len, (const uint8_t *)&img, ra);
+        set_float_exception_flags(f_now, s);
+    }
     merge_exception_flags(env, old_flags);
     switch (kind) {
     case X87ST_F32:
