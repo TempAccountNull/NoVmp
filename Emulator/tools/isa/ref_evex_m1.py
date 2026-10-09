@@ -210,8 +210,12 @@ def round_frac(q, quantum, rc, negative):
     return fl, True
 
 
-def encode_value(v, f, rc, ftz):
-    """round the exact non-zero rational v to format f: (bits, flags)"""
+def encode_value(v, f, rc, ftz, unm_u=False, unm_o=False):
+    """round the exact non-zero rational v to format f: (bits, flags). unm_u / unm_o: MXCSR.UM /
+    OM = 0 (never with {er}): an unmasked underflow (Vol1 4.9.1.5, 11.5.2.5: "the tiny result",
+    exact or not, FTZ not applied) or overflow (4.9.1.4) reports UE / OE with PE from the
+    rounding to the format's precision with an unbounded exponent; the result itself is not
+    delivered (#XM), so the returned bits are only a placeholder"""
     neg = v < 0
     q = -v if neg else v
     sign = (1 << (f.bits - 1)) if neg else 0
@@ -221,6 +225,10 @@ def encode_value(v, f, rc, ftz):
     cnt_u, inexact_u = round_frac(q, Fraction(2) ** (e - f.fbits), rc, neg)
     ru = cnt_u * Fraction(2) ** (e - f.fbits)
     tiny = ru < Fraction(2) ** f.emin
+    if tiny and unm_u:
+        return sign, UE | (PE if inexact_u else 0)
+    if unm_o and ru >= Fraction(2) ** (f.emax + 1):
+        return sign | (((1 << f.ebits) - 1) << f.fbits), OE | (PE if inexact_u else 0)
     if tiny and ftz:
         # FTZ (Vol1 10.2.3.3): an underflow condition (a tiny result, exact or not) returns
         # a zero with the sign of the true result and sets UE and PE (the i5-13600K does
@@ -257,6 +265,8 @@ def encode_value(v, f, rc, ftz):
 
 def fp_binop(op, a, b, f, mxcsr, rc=None):
     """op in add/sub/mul; a = SRC1, b = SRC2 (bit patterns). Returns (bits, flags)."""
+    unm_u = rc is None and not (mxcsr & 0x800)
+    unm_o = rc is None and not (mxcsr & 0x400)
     if rc is None:
         rc = (mxcsr >> 13) & 3
     daz, ftz = bool(mxcsr & DAZ), bool(mxcsr & FTZ)
@@ -296,7 +306,7 @@ def fp_binop(op, a, b, f, mxcsr, rc=None):
             if ca == "zero" and cb == "zero" and sa == sb:
                 return (signbit if sa else 0), flags
             return (signbit if rc == 1 else 0), flags
-        r, fl = encode_value(s, f, rc, ftz)
+        r, fl = encode_value(s, f, rc, ftz, unm_u, unm_o)
         return r, flags | fl
     # mul
     sgn = sa ^ sb
@@ -307,12 +317,14 @@ def fp_binop(op, a, b, f, mxcsr, rc=None):
     p = va * vb
     if p == 0:
         return (signbit if sgn else 0), flags
-    r, fl = encode_value(p, f, rc, ftz)
+    r, fl = encode_value(p, f, rc, ftz, unm_u, unm_o)
     return r, flags | fl
 
 
 def fp_div(a, b, f, mxcsr, rc=None):
     """DIVPS/DIVPD element: SRC1 / SRC2 (Vol1 4.9.1.3 #Z, Table 4-8 NaNs)."""
+    unm_u = rc is None and not (mxcsr & 0x800)
+    unm_o = rc is None and not (mxcsr & 0x400)
     if rc is None:
         rc = (mxcsr >> 13) & 3
     daz, ftz = bool(mxcsr & DAZ), bool(mxcsr & FTZ)
@@ -343,7 +355,7 @@ def fp_div(a, b, f, mxcsr, rc=None):
         return sgn, flags
     if cb == "zero":
         return sgn | inf_bits, flags | ZE
-    r, fl = encode_value(va / vb, f, rc, ftz)
+    r, fl = encode_value(va / vb, f, rc, ftz, unm_u, unm_o)
     return r, flags | fl
 
 
@@ -1522,6 +1534,105 @@ def gen_two_nan():
         emit(gen_generic(sp, 64, "bcst", dst=7, s1=9, s2=0, avals=a, bvals=[b[2]]))
 
 
+def ou_lanes(f, op):
+    """(SRC1, SRC2) lanes: exact tiny, inexact tiny, exact overflow, inexact overflow, normal"""
+    if f is F32:
+        p2 = lambda e, m=0: ((e + 127) << 23) | m           # 2^e * (1 + m / 2^23)
+        big = (0x7F7FFFFF, 0x7F7FFFFF)
+    else:
+        p2 = lambda e, m=0: ((e + 1023) << 52) | m
+        big = (0x7FEFFFFFFFFFFFFF, 0x7FEFFFFFFFFFFFFF)
+    lo = -130 if f is F32 else -1030                         # below emin, above the denormals' floor
+    if op == "mul":
+        return [(p2(lo // 2), p2(lo - lo // 2)),             # 2^lo exact, tiny
+                (p2(lo // 2, 3), p2(lo - lo // 2, 5)),       # tiny, inexact at the bottom
+                (p2(80 if f is F32 else 600), p2(60 if f is F32 else 500)),          # 2^140 / 2^1100: exact overflow
+                (p2(80 if f is F32 else 600, 7), p2(60 if f is F32 else 500, 9)),    # inexact overflow
+                (p2(0, 1), p2(1))]                           # normal
+    if op == "div":
+        return [(p2(lo // 2), p2(-(lo - lo // 2))),
+                (p2(lo // 2, 3), p2(-(lo - lo // 2), 5)),
+                (p2(80 if f is F32 else 600), p2(-60 if f is F32 else -500)),
+                (p2(80 if f is F32 else 600, 7), p2(-60 if f is F32 else -500, 9)),
+                (p2(0, 1), p2(1))]
+    # add / sub: SRC1 - SRC2 of two neighbouring small normals is an exact denormal; x - x = 0
+    # raises nothing; the sum of two maxima overflows exactly (unbounded rounding exact); max plus
+    # a small value overflows only when the rounding (RU / RNE carry) goes up, inexact
+    emin = -126 if f is F32 else -1022
+    if op == "add":
+        return [(p2(emin, 1), p2(emin) | (1 << (f.bits - 1))),   # 2^emin*(1+u) + -2^emin: exact tiny
+                (p2(emin, 1), p2(emin, 1) | (1 << (f.bits - 1))),  # 0: no exception
+                big,
+                (big[0], p2(f.emax - 30)),
+                (p2(0, 1), p2(1))]
+    return [(p2(emin, 1), p2(emin)),
+            (p2(emin, 3), p2(emin, 3)),
+            (big[0], big[1] | (1 << (f.bits - 1))),
+            (big[0], p2(f.emax - 30) | (1 << (f.bits - 1))),
+            (p2(0, 1), p2(1))]
+
+
+ONE_OF = {32: 0x3F800000, 64: 0x3FF0000000000000}
+TWO_OF = {32: 0x40000000, 64: 0x4000000000000000}
+
+
+def gen_unmasked_ou():
+    """MXCSR.UM / OM = 0 on the EVEX PS/PD forms (U445 on EVEX, SDM Vol1 11.5.2.4/11.5.2.5):
+    an active lane with an unmasked overflow / underflow raises #XM with the destination
+    unchanged and the flags of every active lane set (OE/UE with PE from the unbounded-exponent
+    rounding; an exact tiny result raises #U); the other lanes are exact (1 op 2), so every
+    flag comes from the lane under test; FTZ does not apply while UM = 0; masked-off lanes
+    raise nothing; {er} masks everything"""
+    comment("--- unmasked #O / #U (MXCSR.UM / OM = 0) on EVEX PS/PD (U445; Vol1 4.9.1.4/4.9.1.5, 11.5.2)")
+    mxs = (0x1780, 0x1B80, 0x1380, 0x9780, 0x3780, 0x5B80, 0x7380)
+    forms = [(name, opc, op, w) for name, opc, op, w in FP_FORMS]
+    for name, opc, op, w in forms:
+        f = F64 if w else F32
+        esz = 8 if w else 4
+        for vl in (16, 64):
+            n = vl // esz
+            lanes = ou_lanes(f, op)
+            for k, (la, lb) in enumerate(lanes):
+                a = [ONE_OF[f.bits]] * n
+                b = [TWO_OF[f.bits]] * n
+                a[1 % n], b[1 % n] = la, lb
+                for mx in mxs:
+                    emit(gen_fp_case(name, opc, op, w, vl, 11, 12, 13, avals=a, bvals=b, mxcsr=mx,
+                                     title="lane %d mxcsr=%X" % (k, mx)))
+                # the same lane masked off: nothing raised for it
+                emit(gen_fp_case(name, opc, op, w, vl, 11, 12, 13, avals=a, bvals=b, mxcsr=0x1380,
+                                 kreg=2, kval=((1 << n) - 1) & ~2, title="lane %d masked off, UM=OM=0" % k))
+                # zeroing, lane active
+                emit(gen_fp_case(name, opc, op, w, vl, 11, 12, 13, avals=a, bvals=b, mxcsr=0x1380,
+                                 kreg=2, kval=2, z=1, title="lane %d {z} active, UM=OM=0" % k))
+        # {er}: SAE masks #O / #U
+        n = 64 // esz
+        a = [ONE_OF[f.bits]] * n
+        b = [TWO_OF[f.bits]] * n
+        for k, (la, lb) in enumerate(ou_lanes(f, op)[:4]):
+            a[k], b[k] = la, lb
+        emit(gen_fp_case(name, opc, op, w, 64, 17, 18, 19, avals=a, bvals=b, rc=1, mxcsr=0x1380,
+                         title="{rd-sae} UM=OM=0, no #XM"))
+        # memory / {1toN} source
+        emit(gen_fp_case(name, opc, op, w, 64, 7, 8, 0, mem=Mem(RSI, 0), avals=a, bvals=b,
+                         mxcsr=0x1780, title="mem UM=0"))
+    for sp in EXT_FORMS:
+        if sp.get("op") != "div":
+            continue
+        esz = 8 if sp["w"] else 4
+        f = F64 if sp["w"] else F32
+        n = 64 // esz
+        for k, (la, lb) in enumerate(ou_lanes(f, "div")):
+            a = [ONE_OF[f.bits]] * n
+            b = [TWO_OF[f.bits]] * n
+            a[3], b[3] = la, lb
+            for mx in mxs:
+                emit(gen_generic(sp, 64, "lane %d mxcsr=%X" % (k, mx), dst=24, s1=25, s2=27,
+                                 avals=a, bvals=b, mxcsr=mx))
+            emit(gen_generic(sp, 64, "lane %d masked off" % k, dst=24, s1=25, s2=27, avals=a,
+                             bvals=b, mxcsr=0x1380, kreg=3, kval=((1 << n) - 1) & ~8))
+
+
 # ---------------------------------------------------------------------------------------
 # self test (hand-derived values from the SDM rules)
 # ---------------------------------------------------------------------------------------
@@ -1718,6 +1829,7 @@ def main():
         gen_ud()
         gen_ext()
         gen_two_nan()
+        gen_unmasked_ou()
         out = sys.stdout
         out.write("# EVEX milestone M1 (ledger U141-U153): expected values from the independent SDM model\n")
         out.write("# Emulator/tools/isa/ref_evex_m1.py --cases (regenerate, do not edit). The i5-13600K has no\n")
