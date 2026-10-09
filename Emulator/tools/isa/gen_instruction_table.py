@@ -235,6 +235,28 @@ def status_from(b):
     return '⏳', 'partial: ' + ', '.join(parts), 'partial'
 
 
+def refine_sweep(b, on_cpu, verified_row, st, note):
+    """U850: two cases where the sweep's ⏳ is not an open item.
+    (a) a row the i5-13600K runs (on_cpu) whose swept forms are identical except encodings that both
+        the CPU and Unicorn reject with #UD ('host lacks + unicorn #UD', e.g. F3 0F 38 F0/F1 that
+        Capstone names MOVBE): identical to the CPU;
+    (b) the forms left are SDM-pending only (not native-safe / host lacks, Unicorn runs) and
+        verified_forms.tsv has an 'sdm' row (expected-value cases from an independent SDM model)."""
+    n = sum(b.values())
+    m = b.get('match', 0) + b.get('known deviation (docs/quirks.md)', 0) + b.get('known deviation not observed (matches)', 0)
+    both_ud = b.get('host lacks + unicorn #UD', 0)
+    sdm = b.get('host lacks, unicorn runs (needs SDM check)', 0) + b.get('not native-safe, unicorn runs (needs SDM check)', 0)
+    if on_cpu and m and m + both_ud == n:
+        return '✅', 'identical to the i5-13600K (%d forms; %d more encodings #UD on both)' % (m, both_ud)
+    if verified_row and verified_row[0] == 'sdm' and sdm and m + both_ud + sdm == n and (m or not both_ud):
+        vnote = verified_row[1]
+        pre = ('implemented; not run natively by the sweep (host state): verified against SDM-pseudocode vectors'
+               if on_cpu else VERIFIED_STATUS['sdm'][1])
+        return '✅', '%s%s (%d forms)%s' % (pre, (': ' + vnote) if vnote else '', sdm,
+                                         ', %d identical to the i5-13600K' % m if m else '')
+    return st, note
+
+
 # ---- CPU support: does the i5-13600K (our CPU) execute the instruction? -------------------------
 # Evaluated against the captured CPUID profile (Emulator/data/cpuid_i5-13600k.txt), SDM Vol2 CPUID
 # bit numbering. Rows of an unsupported family are marked a cross (never a checkmark), whatever the
@@ -395,6 +417,13 @@ def main():
             kind = 'override'
         elif b:
             st, note, kind = status_from(b)
+            if st == '⏳' and kind == 'partial':   # U853: identical up to encodings both reject / SDM-verified leftovers
+                on_cpu0, _ = row_on_cpu(mn, r['isa'], cpuid)
+                st2, note2 = refine_sweep(b, on_cpu0, verified.get((mn, enc)), st, note)
+                if st2 != st:
+                    st, note, kind = st2, note2, 'refined'
+                    if 'SDM-pseudocode' in note:
+                        vcount['sdm'] += 1
         elif r['cpl0']:
             # U790: only verified_forms.tsv / OVERRIDES can prove a CPL0 form the sweep cannot reach
             st, note = '⬜', 'CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not verified yet (CPL3 fault: Phase 3, D6)'

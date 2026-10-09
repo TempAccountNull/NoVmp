@@ -1,7 +1,9 @@
 # Hardware-verified status for instruction-table rows the emu-alltest sweep cannot reach or only reaches
 # with a #UD representative (plan 1.15b). Read by Emulator\tools\isa\gen_instruction_table.py; a row
 # applies when the sweep alone leaves the row ⬜, or replaces a ⏳ "CPL0 instruction" / "SDM-vector check pending" row
-# (U790: the row proves that open item; CPL0 forms keep a Phase 3 CPL3 note). Evidence: Emulator\data\cases_reach.txt run with
+# (U790: the row proves that open item; CPL0 forms keep a Phase 3 CPL3 note); U850: an "sdm" row also applies when the only
+# forms the sweep could not compare with the CPU are SDM-pending ones (e.g. WRFSBASE/WRGSBASE, LFS/LGS, which would change the
+# host thread's FS/GS natively). Evidence: Emulator\data\cases_reach.txt run with
 #   emu-alltest --cases Emulator\data\cases_reach.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 # status: ok   = implemented, identical to the i5-13600K (✅)
 #         sdm  = implemented, the i5-13600K lacks it: verified against SDM-pseudocode vectors (Emulator\data\cases_*.txt "=>" lines, unit tests) (✅)
@@ -1327,3 +1329,7 @@ vrsqrtbf16	evex	open	U373 stand-in: correctly rounded BF16 (the AVX10.2 spec giv
 # U790: implemented CPL0 forms the sweep cannot reach (raw Unicorn runs at CPL0); the CPL3 #GP is a Phase 3 item (D6)
 enqcmds	legacy	sdm	U112 ENQCMDS: SDM-pseudocode expectations + unit test test_x86_enqcmd (ZF = 1 retry, nothing written; #GP for source bits 30:20 and at CPL3) + cases_tsx_cet_max.txt "=>" (45/45, run by hand: not a test.cmd suite); strict i5-13600K profile #UD == CPU
 loadiwkey	legacy	sdm	U100 Key Locker LOADIWKEY: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests (keylocker_aes128 / _wide256 / _faults / _cpl3) + cases_keylocker.txt "=>" (LOADIWKEY then ENCODEKEY128 of the FIPS-197 key); strict i5-13600K profile #UD == CPU
+lfs	legacy	sdm	natively it would replace the host thread's FS selector and base (emu-alltest sweep: not native-safe, U850); independent SDM model ref_sweep_sdm.py + cases_sweep_sdm.txt 39 LFS "=>" lines (r16/r32/r64 = m16:16/m16:32/m16:64, CPL3 Windows GDT: NULL, data/readable-code DPL3, DPL0, beyond the limit, LDT selectors), 0 differing in test.cmd; cases_fixes2.txt U590
+lgs	legacy	sdm	natively it would replace the host thread's GS selector and base (the TEB) (emu-alltest sweep: not native-safe, U850); independent SDM model ref_sweep_sdm.py + cases_sweep_sdm.txt 39 LGS "=>" lines (r16/r32/r64 = m16:16/m16:32/m16:64, CPL3 Windows GDT: NULL, data/readable-code DPL3, DPL0, beyond the limit, LDT selectors), 0 differing in test.cmd; cases_fixes2.txt U590
+wrfsbase	legacy	sdm	natively it would replace the host thread's FS base (emu-alltest sweep: not native-safe, U850); independent SDM model ref_sweep_sdm.py + cases_sweep_sdm.txt 43 WRFSBASE "=>" lines (r32 zero-extension, r64 48-bit paging-canonical #GP(0) (U851), CPL0 and cpl=3, LOCK and CR4.FSGSBASE = 0 #UD), 0 differing in test.cmd
+wrgsbase	legacy	sdm	natively it would replace the host thread's GS base (the TEB) (emu-alltest sweep: not native-safe, U850); independent SDM model ref_sweep_sdm.py + cases_sweep_sdm.txt 43 WRGSBASE "=>" lines (r32 zero-extension, r64 48-bit paging-canonical #GP(0) (U851), CPL0 and cpl=3, LOCK and CR4.FSGSBASE = 0 #UD), 0 differing in test.cmd
