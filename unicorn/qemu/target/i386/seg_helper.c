@@ -2372,6 +2372,55 @@ void helper_load_seg(CPUX86State *env, int seg_reg, int selector)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U805) */
+/*
+ * NoVmp (ledger U805): LKGS r/m16 (SDM Vol2A LKGS Operation; the translator has checked 64-bit
+ * mode, CPL 0 and CPUID): MOV to GS except that the descriptor's base goes to
+ * IA32_KERNEL_GS_BASE (bits 63:32 cleared) and the GS base in the descriptor cache is kept. A
+ * null selector (0-3) loads GS.selector, marks GS null and clears IA32_KERNEL_GS_BASE. Otherwise
+ * #GP(selector) if the index is outside the GDT/LDT limit, if the descriptor is not a data or
+ * readable code segment or "SRC.RPL > descriptor.DPL" (LKGS has no conforming-code exemption
+ * and no CPL test, CPL being 0); #NP(selector) if not present; the accessed bit is set in the
+ * descriptor as by MOV to GS (helper_load_seg).
+ */
+void helper_lkgs(CPUX86State *env, uint32_t selector)
+{
+    uintptr_t ra = GETPC();
+    uint32_t e1, e2;
+    SegmentCache *dt;
+    target_ulong ptr;
+    int index;
+
+    selector &= 0xffff;
+    if ((selector & 0xfffc) == 0) {
+        cpu_x86_load_seg_cache(env, R_GS, selector, env->segs[R_GS].base, 0, 0);
+        env->kernelgsbase = 0;
+        return;
+    }
+    dt = (selector & 4) ? &env->ldt : &env->gdt;
+    index = selector & ~7;
+    if ((index + 7) > dt->limit) {
+        raise_exception_err_ra(env, EXCP0D_GPF, selector & 0xfffc, ra);
+    }
+    ptr = dt->base + index;
+    e1 = cpu_ldl_kernel_ra(env, ptr, ra);
+    e2 = cpu_ldl_kernel_ra(env, ptr + 4, ra);
+    if (!(e2 & DESC_S_MASK) || (e2 & (DESC_CS_MASK | DESC_R_MASK)) == DESC_CS_MASK ||
+        (int)(selector & 3) > (int)((e2 >> DESC_DPL_SHIFT) & 3)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, selector & 0xfffc, ra);
+    }
+    if (!(e2 & DESC_P_MASK)) {
+        raise_exception_err_ra(env, EXCP0B_NOSEG, selector & 0xfffc, ra);
+    }
+    if (!(e2 & DESC_A_MASK)) {
+        e2 |= DESC_A_MASK;
+        cpu_stl_kernel_ra(env, ptr + 4, e2, ra);
+    }
+    cpu_x86_load_seg_cache(env, R_GS, selector, env->segs[R_GS].base, get_seg_limit(e1, e2), e2);
+    env->kernelgsbase = get_seg_base(e1, e2);
+}
+
+#endif /* __Use_Original_Qemu (U805) */
 #if __Use_Original_Qemu != 1 /* ours (U707) */
 /*
  * NoVmp (ledger U707): far JMP / CALL to a code segment in IA-32e mode: "IF L-Bit = 1 and

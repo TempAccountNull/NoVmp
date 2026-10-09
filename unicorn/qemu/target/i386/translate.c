@@ -8690,6 +8690,26 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
             set_cc_op(s, CC_OP_EFLAGS);
             break;
+#if __Use_Original_Qemu != 1 /* ours (U805) */
+        /*
+         * NoVmp (ledger U805): F2 0F 00 /6 LKGS r/m16 (SDM Vol2A LKGS; XED fred-isa:
+         * f2_refining_prefix, mode64). #UD outside 64-bit mode, at CPL > 0 (LKGS: "IF CPL > 0
+         * ... THEN #UD"), without CPUID.(07H,1):EAX.LKGS[18], with LOCK, and without F2 (NP /
+         * F3 0F 00 /6 is undefined). The selector is read as 16 bits (register or memory);
+         * helper_lkgs does the descriptor checks and loads; the TB ends after it.
+         */
+        case 6: /* lkgs */
+            if (!(s->prefix & PREFIX_REPNZ) || !CODE64(s) || CPL(s) != 0
+                || !(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_LKGS)
+                || (s->prefix & PREFIX_LOCK)) {
+                goto illegal_op;
+            }
+            gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
+            tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
+            gen_helper_lkgs(tcg_ctx, cpu_env, s->tmp2_i32);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+#endif /* __Use_Original_Qemu (U805) */
         default:
             goto unknown_op;
         }

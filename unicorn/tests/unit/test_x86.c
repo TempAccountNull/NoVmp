@@ -22230,6 +22230,93 @@ static void test_x86_si_hreset(void)
     TEST_CHECK(si_run(&c, SI_HRESET, 6) == 6);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U805: LKGS r/m16 (F2 0F 00 /6): CPUID.(7,1):EAX[18]; IA32_KERNEL_GS_BASE := descriptor base,
+ * GS.selector loaded, GS base kept, accessed bit set; null selector; #GP / #NP with the
+ * selector as error code and nothing changed; #UD at CPL3 (the U111 nv_ GDT with CPL3 code),
+ * outside 64-bit mode and with a strict profile hiding LKGS.
+ */
+static void si_lkgs_gdt(SiCtx *c)
+{
+    static const uint64_t gdt[6] = {
+        0,
+        0x12cf9234567800ffull | 0xff00,         /* 08h data RW, base 12345678h, not accessed */
+        0x00209a0000000000ull,                  /* 10h code64 DPL0 */
+        0x0000f20000000000ull,                  /* 18h data DPL3 */
+        0x00cf1a000000ffffull,                  /* 20h code execute/read, not present */
+        0x0020f80000000000ull,                  /* 28h code64 DPL3 execute-only */
+    };
+    uc_x86_mmr gdtr = {0, SI_DATA + 0x3000, sizeof(gdt) - 1, 0};
+
+    OK(uc_mem_write(c->uc, SI_DATA + 0x3000, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_GDTR, &gdtr));
+}
+
+static void test_x86_si_lkgs(void)
+{
+    static const uc_x86_cpuid no_lkgs[] = {
+        {7, 1, 0, 0, 0, 0},
+    };
+    uint64_t e2;
+    uint32_t r[4];
+    SiCtx c;
+
+    si_open(&c, 0, 0, 0, NULL, 0);
+    si_cpuid(&c, 7, 1, r);
+    TEST_CHECK(r[0] & (1u << 18));
+    si_lkgs_gdt(&c);
+    si_set(&c, UC_X86_REG_GS_BASE, 0x7777000);
+    si_wrmsr(&c, 0xc0000102, 0xffffffff00000000ull);
+    si_set(&c, UC_X86_REG_RCX, 0xffff0008);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == -1);           /* lkgs cx */
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0x12345678);
+    TEST_CHECK(si_get(&c, UC_X86_REG_GS) == 8);
+    TEST_CHECK(si_get(&c, UC_X86_REG_GS_BASE) == 0x7777000);
+    e2 = si_ld64(&c, SI_DATA + 0x3008);
+    TEST_CHECK((e2 & (1ull << 40)) != 0);                             /* accessed */
+    TEST_MSG("descriptor %016" PRIx64, e2);
+    /* memory operand: lkgs word ptr [rax] -> null selector 3 */
+    si_st64(&c, SI_DATA + 0x100, 3);
+    si_set(&c, UC_X86_REG_RAX, SI_DATA + 0x100);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\x30", 4) == -1);
+    TEST_CHECK(si_rdmsr(&c, 0xc0000102) == 0 && si_get(&c, UC_X86_REG_GS) == 3);
+    TEST_CHECK(si_get(&c, UC_X86_REG_GS_BASE) == 0x7777000);
+    /* execute-only code (28h) #GP, not present (20h) #NP, beyond the limit #GP: nothing changes */
+    si_set(&c, UC_X86_REG_RCX, 0x28);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 13);
+    si_set(&c, UC_X86_REG_RCX, 0x20);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 11);
+    si_set(&c, UC_X86_REG_RCX, 0x30);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 13);
+    TEST_CHECK(si_get(&c, UC_X86_REG_GS) == 3 && si_rdmsr(&c, 0xc0000102) == 0);
+    /* RPL 3 > DPL 0 (data 08h) #GP; DPL3 data 18h with RPL 3 loads (base 0) */
+    si_set(&c, UC_X86_REG_RCX, 0x0b);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 13);
+    si_set(&c, UC_X86_REG_RCX, 0x1b);
+    si_wrmsr(&c, 0xc0000102, 0x5555);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == -1);
+    TEST_CHECK(si_get(&c, UC_X86_REG_GS) == 0x1b && si_rdmsr(&c, 0xc0000102) == 0);
+    /* NP 0F 00 /6 is #UD */
+    TEST_CHECK(si_run(&c, "\x0f\x00\xf1", 3) == 6);
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: #UD */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 6);
+    OK(uc_close(c.uc));
+
+    /* a strict profile hiding LKGS: #UD */
+    si_open(&c, 0, 0, 0, no_lkgs, 1);
+    si_set(&c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(si_run(&c, "\xf2\x0f\x00\xf1", 4) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U800-U829 (si_) ---- */
 
 TEST_LIST = {
@@ -22538,4 +22625,5 @@ TEST_LIST = {
     {"test_x86_si_msrlist", test_x86_si_msrlist},
     {"test_x86_si_msr_imm", test_x86_si_msr_imm},
     {"test_x86_si_hreset", test_x86_si_hreset},
+    {"test_x86_si_lkgs", test_x86_si_lkgs},
     {NULL, NULL}};

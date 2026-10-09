@@ -2,7 +2,8 @@ r"""Independent reference model + expected-value case generator (ledger U800-U82
 
   * AVX512DQ VPMOVD2M / VPMOVQ2M / VPMOVM2D / VPMOVM2Q (U800)       -> Emulator\data\cases_sysins_dq.txt
   * CPL0 system instructions, MAX model, no opt-in                  -> Emulator\data\cases_sysins.txt
-      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803), HRESET (U804)
+      WRMSRNS (U801), RDMSRLIST / WRMSRLIST (U802), RDMSR / WRMSRNS imm32 VEX (U803), HRESET (U804),
+      LKGS (U805)
   * the same, Intel APX EVEX forms (--apx)                          -> Emulator\data\cases_sysins_apx.txt
       RDMSR / WRMSRNS imm32 EVEX map 7 (U803)
 
@@ -40,6 +41,12 @@ System instructions, from:
     IA32_HRESET_ENABLE (17DAH: bit 0, 31:1 and 63:32 reserved; "only the bits enumerated by
     CPUID.20H.00H:EBX can be set"); XED hreset-isa.xed.txt (MOD = 3, REG = 0, RM = 0,
     f3_refining_prefix).
+  * SDM Vol2A LKGS (F2 0F 00 /6, 64-bit mode only; Operation: CPL > 0 #UD; null selector:
+    GS.selector := SRC, IA32_KERNEL_GS_BASE := 0; index outside the table limit, not a data or
+    readable code segment, or SRC.RPL > DPL: #GP(selector); not present #NP(selector);
+    IA32_KERNEL_GS_BASE := descriptor.base (63:32 cleared), the GS base not modified); Vol1
+    Table 21-22 (CPUID.(07H,1):EAX[18]); Vol3A 3.4.5 descriptor layout; MOV (to GS) for the
+    accessed bit; Vol2A LGDT (64-bit: 2-byte limit, 8-byte base); MOV r16, Sreg (low 16 bits).
   * SDM Vol4 Table 2-2 MSR layouts used by the cases: IA32_KERNEL_GS_BASE (C0000102H, canonical),
     IA32_UMWAIT_CONTROL (E1H: bit 1 and 63:32 reserved), IA32_PASID (D93H: 30:20 and 63:32
     reserved), IA32_UARCH_MISC_CTL (1B01H: 63:1 reserved). An MSR write that sets a reserved bit is
@@ -251,6 +258,8 @@ def msr_check(msr, val):
         return False
     if msr == 0x17DA:                           # IA32_HRESET_ENABLE: CPUID.20H.0:EBX = 1
         return (val & ~1 & M64) == 0
+    if msr == 0xC0000101:                       # IA32_GS_BASE
+        return canonical(val)
     raise ValueError('MSR %X not in the model' % msr)
 
 
@@ -284,6 +293,8 @@ class Machine:
         self.msr = {}
         self.mem = {}
         self.cpl = 0
+        self.gdtr = (0, 0)
+        self.gs_sel = 0
         for k, v in inputs.items():
             if k in self.r:
                 self.r[k] = v
@@ -299,10 +310,11 @@ class Machine:
                 raise ValueError(k)
 
     def snapshot(self):
-        return dict(self.r), self.rflags, dict(self.mem), dict(self.msr)
+        return dict(self.r), self.rflags, dict(self.mem), dict(self.msr), self.gdtr, self.gs_sel
 
     def restore(self, s):
         self.r, self.rflags, self.mem, self.msr = dict(s[0]), s[1], dict(s[2]), dict(s[3])
+        self.gdtr, self.gs_sel = s[4], s[5]
 
 
 def i_mov32(reg, imm):
@@ -430,10 +442,87 @@ def i_hreset(imm, prefix=b'', mand=b'\xf3', rex=b'', modrm=0xC0):
     return enc, f
 
 
+def i_wrmsr():
+    """WRMSR (0F 30): MSR[ECX] := EDX:EAX (the same checks as WRMSRNS)."""
+    e, f = i_wrmsrns()
+    return b'\x0f\x30', f
+
+
+def i_lgdt():
+    """LGDT [RSI] (0F 01 16), 64-bit: limit = 2 bytes, base = 8 bytes."""
+    def f(m):
+        a = m.r['rsi']
+        lim = ld64(m, a) & 0xFFFF
+        m.gdtr = (ld64(m, a + 2), lim)
+    return b'\x0f\x01\x16', f
+
+
+def i_mov_gs(reg):
+    """MOV r16, GS (66 [41] 8C /5 mod = 11): the low 16 bits only."""
+    n = REGS.index(reg)
+
+    def f(m):
+        m.r[reg] = (m.r[reg] & ~0xFFFF & M64) | m.gs_sel
+    return b'\x66' + (b'\x41' if n >= 8 else b'') + bytes([0x8C, 0xE8 | (n & 7)]), f
+
+
+def lkgs_op(m, sel):
+    """SDM Vol2A LKGS Operation (64-bit mode, CPL 0)."""
+    sel &= 0xFFFF
+    if (sel & 0xFFFC) == 0:
+        m.gs_sel = sel
+        m.msr[0xC0000102] = 0
+        return
+    if sel & 4:                                 # no LDT in the cases (LDTR null, limit 0)
+        raise Fault('#GP')
+    base, limit = m.gdtr
+    index = sel & ~7
+    if index + 7 > limit:
+        raise Fault('#GP')
+    d = ld64(m, base + index)
+    s, typ, dpl, p = (d >> 44) & 1, (d >> 40) & 15, (d >> 45) & 3, (d >> 47) & 1
+    code, readable = typ & 8, typ & 2
+    if not s or (code and not readable) or (sel & 3) > dpl:
+        raise Fault('#GP')
+    if not p:
+        raise Fault('#NP')
+    if not typ & 1:                             # accessed bit, as MOV to GS
+        m.mem[base + index + 5] = (d >> 40 & 0xFF) | 1
+    m.gs_sel = sel
+    m.msr[0xC0000102] = ((d >> 16) & 0xFFFFFF) | (((d >> 56) & 0xFF) << 24)
+
+
+def i_lkgs(reg=None, disp=None, prefix=b'', mand=b'\xf2'):
+    """LKGS r/m16 (F2 0F 00 /6): register form (reg) or [RSI + disp8]."""
+    if reg is not None:
+        n = REGS.index(reg)
+        enc = prefix + mand + (b'\x41' if n >= 8 else b'') + b'\x0f\x00' + bytes([0xF0 | (n & 7)])
+    else:
+        enc = prefix + mand + b'\x0f\x00\x76' + bytes([disp & 0xFF])
+    ud = b'\xf0' in prefix or mand != b'\xf2'
+
+    def f(m):
+        if ud or m.cpl:                         # LKGS: CPL > 0 is #UD
+            raise Fault('#UD')
+        if reg is not None:
+            sel = m.r[reg] & 0xFFFF
+        else:
+            a = m.r['rsi'] + disp
+            sel = ld64(m, a) & 0xFFFF
+        lkgs_op(m, sel)
+    return enc, f
+
+
+def desc(base, limit, typ, dpl, p=1, s=1, g=1, db=1):
+    """A legacy segment descriptor (SDM Vol3A 3.4.5)."""
+    return ((limit & 0xFFFF) | ((base & 0xFFFFFF) << 16) | (typ << 40) | (s << 44) | (dpl << 45) |
+            (p << 47) | (((limit >> 16) & 15) << 48) | (db << 54) | (g << 55) | ((base >> 24) << 56))
+
+
 def run_case(ins, inputs):
     """Run the instruction list on the model; returns the case line."""
     m = Machine(inputs)
-    r0, f0, mem0, _ = m.snapshot()
+    r0, f0, mem0 = m.snapshot()[:3]
     code = b''.join(e for e, _ in ins)
     fault = None
     for _, f in ins:
@@ -591,6 +680,47 @@ def cases_sys():
                {'prefix': b'\xf0'}):
         a(run_case([i_hreset(0, **kw)], {'rax': 0}))
     a(run_case([i_hreset(0)], {'rax': 0, 'cpl': 3}))
+
+    # ---- LKGS (U805)
+    gdt = [0,
+           desc(0x12345678, 0xFFFFF, 0x2, 0),           # 08h data RW DPL0, not accessed
+           desc(0xFEDCBA98, 0xFFFFF, 0x3, 3),           # 10h data RW DPL3, accessed
+           desc(0, 0xFFFFF, 0x8, 0),                    # 18h code execute-only
+           desc(0x00ABCDEF, 0x0FFFF, 0xA, 0, g=0),      # 20h code execute/read, not accessed
+           desc(0x11111111, 0xFFFFF, 0x3, 0, p=0),      # 28h data, not present
+           desc(0x22222222, 0x0FFFF, 0x2, 0, s=0),      # 30h system (LDT)
+           desc(0x33333333, 0xFFFFF, 0xF, 0)]           # 38h conforming readable code DPL0
+    gdt_img = b''.join(d.to_bytes(8, 'little') for d in gdt)
+    gdtr_img = (len(gdt_img) - 1).to_bytes(2, 'little') + (MEM_PTR + 0x100).to_bytes(8, 'little')
+    g = {'m+0x8000': gdtr_img, 'm+0x8100': gdt_img}
+    rdk = [i_mov32('rcx', 0xC0000102), i_rdmsr()]
+    a('# --- LKGS r/m16 (F2 0F 00 /6), U805: GDT at MEM+8100h (LGDT [RSI] first); the descriptor')
+    a('# base goes to IA32_KERNEL_GS_BASE (read back with RDMSR), GS.selector is loaded (MOV R8W, GS),')
+    a('# the GS base is kept, the accessed bit is set in the descriptor')
+    for sel in (0x08, 0x10, 0x13, 0x20):
+        a(run_case([i_lgdt(), i_mov32('rcx', sel), i_lkgs('rcx'), i_mov_gs('r8')] + rdk,
+                   dict(g, r8=0xAAAAAAAAAAAAAAAA)))
+    a(run_case([i_lgdt(), i_lkgs(disp=0x40), i_mov_gs('r8')] + rdk,
+               dict(g, **{'m+0x8040': b'\x08\x00'})))
+    a(run_case([i_lgdt(), i_mov32('r9', 0xFFFF0020), i_lkgs('r9', prefix=b'\x66'), i_mov_gs('r8')] + rdk,
+               dict(g)))
+    a('# the GS base (IA32_GS_BASE, C0000101H) is not changed')
+    a(run_case([i_lgdt(), i_mov32('rcx', 0xC0000101), i_mov32('rax', 0x55AA0000), i_mov32('rdx', 0),
+                i_wrmsr(), i_mov32('rbx', 0x08), i_lkgs('rbx'), i_mov32('rax', 0), i_rdmsr()], dict(g)))
+    a('# null selector (0-3): GS.selector := SRC, IA32_KERNEL_GS_BASE := 0, no descriptor access')
+    for sel in (0, 3):
+        a(run_case([i_lgdt(), i_mov32('rcx', 0x08), i_lkgs('rcx'), i_mov32('rcx', sel), i_lkgs('rcx'),
+                    i_mov_gs('r8')] + rdk, dict(g)))
+    a('# #GP(selector): beyond the GDT limit, LDT (TI = 1, LDTR null), execute-only code, system')
+    a('# descriptor, RPL > DPL (data, and conforming code: LKGS has no conforming exemption);')
+    a('# #NP(selector): not present')
+    for sel in (0x40, 0xF8, 0x0C, 0x18, 0x30, 0x0B, 0x3B, 0x28):
+        a(run_case([i_lgdt(), i_mov32('rcx', sel), i_lkgs('rcx')], dict(g)))
+    a('# #UD: CPL3, LOCK, NP / F3 0F 00 /6')
+    a(run_case([i_lkgs('rcx')], {'rcx': 0, 'cpl': 3}))
+    a(run_case([i_lkgs('rcx', prefix=b'\xf0')], {'rcx': 0}))
+    a(run_case([i_lkgs('rcx', mand=b'')], {'rcx': 0}))
+    a(run_case([i_lkgs('rcx', mand=b'\xf3')], {'rcx': 0}))
     return lines
 
 
@@ -651,6 +781,9 @@ def cases_hw():
     a('.byte %s | rax=0x0 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
     a('.byte %s | rax=0x1 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
     a('.byte %s | rax=0x0 cpl=3' % bytelist(i_hreset(0, modrm=0xC1)[0]))
+    a('# LKGS (U805): CPUID.(07H,1):EAX[18] = 0 on this CPU (and CPL3) -> #UD on both')
+    a('.byte %s | rcx=0x2B cpl=3' % bytelist(i_lkgs('rcx')[0]))
+    a('.byte %s | m+0x8040=2B00 cpl=3' % bytelist(i_lkgs(disp=0x40)[0]))
     return lines
 
 

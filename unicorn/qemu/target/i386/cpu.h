@@ -1088,6 +1088,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* WRMSRNS (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[19]) */
 #define CPUID_7_1_EAX_WRMSRNS           (1U << 19)
 #endif /* __Use_Original_Qemu (U801) */
+#if __Use_Original_Qemu != 1 /* ours (U805) */
+/* LKGS (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[18]) */
+#define CPUID_7_1_EAX_LKGS              (1U << 18)
+#endif /* __Use_Original_Qemu (U805) */
 #if __Use_Original_Qemu != 1 /* ours (U802) */
 /* RDMSRLIST, WRMSRLIST and IA32_BARRIER (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[27]) */
 #define CPUID_7_1_EAX_MSRLIST           (1U << 27)

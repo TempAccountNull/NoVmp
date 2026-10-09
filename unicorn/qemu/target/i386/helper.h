@@ -435,6 +435,9 @@ DEF_HELPER_3(wrmsr_imm, void, env, i32, tl)
 #if __Use_Original_Qemu != 1 /* ours (U804) */
 DEF_HELPER_1(hreset, void, env)
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U805) */
+DEF_HELPER_2(lkgs, void, env, i32)
+#endif /* __Use_Original_Qemu (U805) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */
 DEF_HELPER_1(clui, void, env)
