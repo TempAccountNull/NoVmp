@@ -240,16 +240,19 @@ def classify(rest):
     rest = rest.split("#  ")[0]
     if "=>!" in rest:
         return "loose"
-    m = re.search(r"=>\s*(#[A-Z]+)", rest)
-    if m:
-        return "ud" if m.group(1) == "#UD" else "fault"
     if "=>" in rest:
+        # U790: the fault token may follow listed state changes ("=> rax=... #GP": a case whose
+        # setup instructions ran before the faulting one)
+        f = [t for t in rest.split("=>", 1)[1].split() if re.fullmatch(r"#[A-Z]+|#[0-9]+", t)]
+        if f:
+            return "ud" if f[0] == "#UD" else "fault"
         return "value"
     return "?"
 
 
 FILES = ["cases_apx_core.txt", "cases_apx_core_hw.txt", "cases_apx_evex.txt", "cases_apx_map4.txt",
-         "cases_apx_map4_hw.txt", "cases_apx_map4_ext.txt", "cases_apx_map4_sweep.txt"]
+         "cases_apx_map4_hw.txt", "cases_apx_map4_ext.txt", "cases_apx_map4_sweep.txt",
+         "cases_apx_sys.txt"]   # U790: JMPABS, ENQCMD(S), URDMSR/UWRMSR, WRSS*/WRUSS*, TILELOADDT1
 
 
 def main():

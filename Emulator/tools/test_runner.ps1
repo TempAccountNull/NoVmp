@@ -307,6 +307,11 @@ Add-PySelftest 'ref_apx_map4_selftest' 'apx tools' 'ref_apx_map4.py'
 Add-Exp 'cases_apx_map4_sweep' 'cases_apx_map4_sweep' 'apx expect' @( '--apx' )
 # U646: the APX-promoted KMOV* and AMX forms need AVX-512 and AMX as well.
 Add-Exp 'cases_apx_map4_ext' 'cases_apx_map4_ext' 'apx evex amx expect' @( '--apx', '--avx512', '--amx' )
+# U790 (plan 1.F.13): the ten APX forms without a case before - JMPABS inside the snippet, EVEX ENQCMD/ENQCMDS,
+# URDMSR/UWRMSR (IA32_USER_MSR_CTL), WRSSD/Q + WRUSSD/Q (CR0.WP + CR4.CET + IA32_S_CET set inline at CPL0),
+# TILELOADDT1; expected values from the independent model ref_apx_cases.py (Unicorn only).
+Add-Exp 'cases_apx_sys' 'cases_apx_sys' 'apx amx cet expect' @( '--apx', '--amx' )
+Add-PySelftest 'ref_apx_cases_selftest' 'apx tools' 'ref_apx_cases.py'
 # The same instructions with R0-R15 only: the i5-13600K runs the legacy equivalent (ND = 1: MOV + op +
 # MOVZX; NF = 1: inside PUSHFQ ... POPFQ), Unicorn the EVEX encoding ("~~" pairs, no CPUID profile),
 # 0 differing; the CPU's results must also match the model (--hwcmp).

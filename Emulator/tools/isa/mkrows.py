@@ -13,16 +13,18 @@ D = sys.argv[1]
 
 NOT_IMPL = {
     "invept": "VMX (INVEPT)", "invvpid": "VMX (INVVPID)", "invpcid": "INVPCID",
-    "tileloaddrs": "AMX-MOVRS (TILELOADDRS)", "tileloaddrst1": "AMX-MOVRS (TILELOADDRST1)",
     "rdmsr": "MSR-IMM (RDMSR imm32)", "wrmsrns": "MSR-IMM (WRMSRNS imm32)",
 }
 NOT_IMPL_WHERE = {
     "invept": "EVEX map 4 F3 F0", "invvpid": "EVEX map 4 F3 F1", "invpcid": "EVEX map 4 F3 F2",
-    "tileloaddrs": "EVEX map 2 F2 4A", "tileloaddrst1": "EVEX map 2 66 4A",
     "rdmsr": "EVEX map 7 F2 F6 /0", "wrmsrns": "EVEX map 7 F3 F6 /0",
 }
-NOT_IMPL_U = {"invept": "U645", "invvpid": "U645", "invpcid": "U645", "tileloaddrs": "U646",
-              "tileloaddrst1": "U646", "rdmsr": "U646", "wrmsrns": "U646"}
+NOT_IMPL_U = {"invept": "U645", "invvpid": "U645", "invpcid": "U645", "rdmsr": "U646", "wrmsrns": "U646"}
+# U790: forms whose verified_forms.tsv row lives in another block (no APX-block row from here):
+# the APX-promoted TILELOADDRS/T1 (U722/U723) are verified by cases_amx2.txt (U720-U725 rows)
+ELSEWHERE = {"tileloaddrs": "U720-U725 rows (cases_amx2.txt)", "tileloaddrst1": "U720-U725 rows (cases_amx2.txt)"}
+# U790: the forms covered by cases_apx_sys.txt (independent model ref_apx_cases.py)
+U790 = set("jmpabs enqcmd enqcmds urdmsr uwrmsr wrssd wrssq wrussd wrussq tileloaddt1".split())
 
 U640 = set("add or adc sbb and sub xor inc dec not neg mul imul div idiv rol ror rcl rcr shl sal shr sar "
            "shld shrd popcnt tzcnt lzcnt".split())
@@ -80,6 +82,7 @@ FILE_DESC = {
     "cases_apx_map4_hw.txt": ("cases_apx_map4_hw.txt %d hardware pair(s)", ""),
     "cases_apx_map4_ext.txt": ('cases_apx_map4_ext.txt %d "=>"', "(--apx --avx512 --amx)"),
     "cases_apx_map4_sweep.txt": ('cases_apx_map4_sweep.txt %d "=>!" decode-sweep runs', "(gen_apx_map4_sweep.py, spec == XED)"),
+    "cases_apx_sys.txt": ('cases_apx_sys.txt %d "=>"', "(--apx --amx, ref_apx_cases.py)"),
 }
 
 
@@ -108,13 +111,17 @@ def main():
     lists = defaultdict(list)
     for mn, enc, isa, fl, c in forms:
         fam = isa.split("+")[0]
+        if mn in ELSEWHERE and enc == "evex":
+            summ[fam]["row elsewhere"] += 1
+            lists["row elsewhere"].append("%s %s: %s" % (mn, enc, ELSEWHERE[mn]))
+            continue
         if mn in NOT_IMPL and enc == "evex":
             ud = sum(v.get("ud", 0) for v in c.values())
             where = ", ".join("%s %d" % (f, v["ud"]) for f, v in c.items() if v.get("ud"))
             rows.append("%s\t%s\tud\tbase instruction not implemented in this CPU model: %s is #UD with and "
                         "without the APX opt-in (%s, %s; #UD lines: %s)%s" % (
                             mn, enc, NOT_IMPL[mn], NOT_IMPL_WHERE[mn], NOT_IMPL_U[mn], where or "none",
-                            "; CPL0 form: gen_instruction_table.py keeps its CPL0 status and ignores this row" if (fl & 1) and mn != "invpcid" else ""))
+                            "; CPL0 form (its CPL3 fault is a Phase 2 item, D6)" if fl & 1 else ""))
             summ[fam]["not implemented"] += 1
             lists["not implemented"].append("%s %s" % (mn, enc))
             continue
@@ -126,6 +133,8 @@ def main():
                 "%s{%s}" % (f, ",".join("%s:%d" % kv for kv in sorted(v.items()))) for f, v in c.items()) or "no case line"))
             continue
         u, desc, model = group(mn)
+        if mn in U790:
+            u, model = u + "/U790", "ref_apx_cases.py; #UD rules: ref_apx_map4.py"
         parts = []
         for f in apx_cov.FILES:
             if f not in c:

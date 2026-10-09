@@ -18709,6 +18709,110 @@ static void test_x86_fx3_vsib_pending_db(void)
 }
 /* ---- end U700-U719 (fx3_) ---- */
 
+/*
+ * ---- NoVmp U790 (plan 1.F.13, axc_): the APX-promoted WRSSD/WRSSQ (EVEX NP MAP4 66) and
+ * WRUSSD/WRUSSQ (EVEX 66 MAP4 65) on shadow-stack pages (APX spec 355828-009 Tables 4.7 / 4.8,
+ * SDM Vol2D WRSS / WRUSS, Vol3A 5.6.1). Expected values from the SDM text: WRSS at CPL0 needs
+ * a supervisor shadow-stack page, at CPL3 a user one; WRUSS is a user-mode shadow-stack store
+ * (CPL0 only, #GP(0) at CPL3); any other page type is #PF. Paging as nv_paging_ss: 300000h
+ * user shadow-stack page, 301000h supervisor shadow-stack page, 302000h ordinary page.
+ */
+static void axc_open(NvRun *r, bool apx)
+{
+    memset(r, 0, sizeof(*r));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &r->uc));
+    OK(uc_ctl_set_cpu_model(r->uc, UC_CPU_X86_MAX));
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(r->uc, UC_X86_APX_F));
+    }
+    OK(uc_mem_map(r->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x200000, 0x2000, UC_PROT_ALL));
+    OK(uc_hook_add(r->uc, &r->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &r->cap, 1, 0));
+    r->next = code_start;
+}
+
+static void test_x86_axc_wrss_paging(void)
+{
+    NvRun r;
+    uint64_t cr2;
+
+    axc_open(&r, true);
+    nv_paging_ss(&r);
+    nv_wrmsr(&r, 0x6a2, 3);                           /* IA32_S_CET: SH_STK_EN | WR_SHSTK_EN */
+
+    /* CPL0 WRSSQ / WRSSD: supervisor shadow-stack page stored, user / ordinary page #PF */
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x301800);
+    OK(nv_run(&r, "\x62\xf4\xfc\x08\x66\x02"));        /* wrssq [rdx], rax */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301800) == 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RAX, 0xaabbccdd99887766ull);
+    OK(nv_run(&r, "\x62\xf4\x7c\x08\x66\x02"));        /* wrssd [rdx], eax: 4 bytes */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301800) == 0x1122334499887766ull);
+    nv_set(&r, UC_X86_REG_R17, 0x0102030405060708ull);
+    nv_set(&r, UC_X86_REG_R18, 0x301808);
+    OK(nv_run(&r, "\x62\xec\xfc\x08\x66\x0a"));        /* wrssq [r18], r17 */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301808) == 0x0102030405060708ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x300800);
+    OK(nv_run(&r, "\x62\xf4\xfc\x08\x66\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR2, &cr2));
+    TEST_CHECK(cr2 == 0x300800 && nv_ld64(&r, 0x300800) == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x302800);
+    OK(nv_run(&r, "\x62\xf4\xfc\x08\x66\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14 && nv_ld64(&r, 0x302800) == 0);
+
+    /* CPL0 WRUSSQ / WRUSSD (user-mode access): user shadow-stack page stored, others #PF */
+    nv_set(&r, UC_X86_REG_RAX, 0x8877665544332211ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x300808);
+    OK(nv_run(&r, "\x62\xf4\xfd\x08\x65\x02"));        /* wrussq [rdx], rax */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300808) == 0x8877665544332211ull);
+    nv_set(&r, UC_X86_REG_RAX, 0xffffffffcafef00dull);
+    OK(nv_run(&r, "\x62\xf4\x7d\x08\x65\x02"));        /* wrussd [rdx], eax */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300808) == 0x88776655cafef00dull);
+    nv_set(&r, UC_X86_REG_R20, 0x0f1e2d3c4b5a6978ull);
+    nv_set(&r, UC_X86_REG_R19, 0x300810);
+    OK(nv_run(&r, "\x62\xec\xfd\x08\x65\x23"));        /* wrussq [r19], r20 */
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300810) == 0x0f1e2d3c4b5a6978ull);
+    nv_set(&r, UC_X86_REG_RDX, 0x301810);
+    OK(nv_run(&r, "\x62\xf4\xfd\x08\x65\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR2, &cr2));
+    TEST_CHECK(cr2 == 0x301810 && nv_ld64(&r, 0x301810) == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x302810);
+    OK(nv_run(&r, "\x62\xf4\xfd\x08\x65\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14 && nv_ld64(&r, 0x302810) == 0);
+
+    /*
+     * CPL3 (supervisor shadow stacks off, IA32_U_CET = SH_STK_EN | WR_SHSTK_EN, IA32_PL3_SSP
+     * on the user page): WRSSQ to the user shadow-stack page stored, to the supervisor one #PF;
+     * WRUSSQ #GP(0)
+     */
+    nv_wrmsr(&r, 0x6a2, 0);
+    nv_wrmsr(&r, 0x6a0, 3);
+    nv_wrmsr(&r, 0x6a7, 0x300f00);
+    nv_set(&r, UC_X86_REG_RAX, 0x5555aaaa5555aaaaull);
+    nv_set(&r, UC_X86_REG_RDX, 0x300900);
+    OK(nv_run3(&r, "\x62\xf4\xfc\x08\x66\x02"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0 && nv_ld64(&r, 0x300900) == 0x5555aaaa5555aaaaull);
+    nv_set(&r, UC_X86_REG_RDX, 0x301900);
+    OK(nv_run3(&r, "\x62\xf4\xfc\x08\x66\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14 && nv_ld64(&r, 0x301900) == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x300908);
+    OK(nv_run3(&r, "\x62\xf4\xfd\x08\x65\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13 && nv_ld64(&r, 0x300908) == 0);
+    OK(uc_close(r.uc));
+
+    /* without the APX opt-in the EVEX forms are #UD */
+    axc_open(&r, false);
+    nv_paging_ss(&r);
+    nv_wrmsr(&r, 0x6a2, 3);
+    nv_set(&r, UC_X86_REG_RDX, 0x301800);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x62\xf4\xfc\x08\x66\x02"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x62\xf4\xfd\x08\x65\x02"));
+    OK(uc_close(r.uc));
+}
+/* ---- end U790 (axc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -18975,4 +19079,5 @@ TEST_LIST = {
     {"test_x86_fx3_far_call_pushes", test_x86_fx3_far_call_pushes},
     {"test_x86_fx3_cmpxchg_ro", test_x86_fx3_cmpxchg_ro},
     {"test_x86_fx3_vsib_pending_db", test_x86_fx3_vsib_pending_db},
+    {"test_x86_axc_wrss_paging", test_x86_axc_wrss_paging},
     {NULL, NULL}};
