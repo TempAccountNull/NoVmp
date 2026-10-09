@@ -13862,6 +13862,23 @@ static void test_x86_bp_lcall_real_eip(void)
     TEST_MSG("err %d, fetch at %016" PRIx64, err, at);
     OK(uc_close(uc));
 }
+
+/*
+ * U498/U499 (backport 9f07e47a5e, CPUID part): CPUID.(EAX=07H,ECX=0):EBX[22] (the withdrawn
+ * PCOMMIT) is reserved and reads 0 on MAX; 66 0F AE F8 is #UD (i5-13600K: #UD).
+ */
+static void test_x86_bp_no_pcommit(void)
+{
+    uint32_t r[4];
+    M0 m;
+
+    tb2_cpuid_model(UC_CPU_X86_MAX, 7, 0, r);
+    TEST_CHECK(!(r[1] & (1u << 22)));
+    TEST_MSG("MAX 7.0 ebx %08x", r[1]);
+    m0_open(&m, UC_MODE_64, 0, NULL, 0);
+    TEST_CHECK(m0_run(&m, "\x66\x0f\xae\xf8", 4) == 6);
+    m0_close(&m);
+}
 /* ---- end U475-U499 (tb2_) ---- */
 
 TEST_LIST = {
@@ -14090,4 +14107,5 @@ TEST_LIST = {
     {"test_x86_bp_lfence_sse2", test_x86_bp_lfence_sse2},
     {"test_x86_bp_callgate_rsp0_canonical", test_x86_bp_callgate_rsp0_canonical},
     {"test_x86_bp_lcall_real_eip", test_x86_bp_lcall_real_eip},
+    {"test_x86_bp_no_pcommit", test_x86_bp_no_pcommit},
     {NULL, NULL}};

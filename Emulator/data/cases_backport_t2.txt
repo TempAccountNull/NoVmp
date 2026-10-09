@@ -75,3 +75,7 @@ prefetchw [rsi]
 # U482); the epilogue's PUSHFQ must not copy RF (SDM Vol2B PUSHF). RCX = 3 -> 2, one byte moved.
 pushfq; or dword ptr [rsp], 0x100; popfq; rep movsb | rcx=3 m+0x8000=010203
 pushfq; or dword ptr [rsp], 0x100; popfq; rep stosd | rcx=4 rax=0x11223344
+#
+# --- U498/U499 (backport 9f07e47a5e, CPUID part): PCOMMIT withdrawn: 66 0F AE F8 #UD; CPUID 7.0 (profile)
+.byte 0x66, 0x0f, 0xae, 0xf8
+mov eax, 7; xor ecx, ecx; cpuid
