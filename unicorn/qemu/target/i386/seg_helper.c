@@ -1714,6 +1714,46 @@ void helper_load_seg(CPUX86State *env, int seg_reg, int selector)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+/*
+ * NoVmp (ledger U707): far JMP / CALL to a code segment in IA-32e mode: "IF L-Bit = 1 and
+ * D-BIT = 1 and IA32_EFER.LMA = 1 THEN GP(new code segment selector)" (SDM Vol2A JMP / CALL,
+ * CONFORMING- and NONCONFORMING-CODE-SEGMENT, the first check); QEMU loaded such a segment.
+ */
+static void far_check_l_d(CPUX86State *env, int sel, uint32_t e2, uintptr_t ra)
+{
+    if ((env->hflags & HF_LMA_MASK) && (e2 & DESC_L_MASK) && (e2 & DESC_B_MASK)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, sel & 0xfffc, ra);
+    }
+}
+
+/*
+ * NoVmp (ledger U707): the target of a far JMP / CALL through a call gate: a 16-bit gate's
+ * offset is "tempEIP AND 0000FFFFH"; outside IA-32e mode it must be within the target code
+ * segment's limit, a 64-bit gate's target must be canonical; #GP(0) either way (SDM Vol2A
+ * JMP CALL-GATE / CALL "IF CallGate(InstructionPointer) not within code segment limit THEN
+ * #GP(0)", "IF (CallGate(InstructionPointer) is non-canonical) THEN #GP(0)"; JMP 64-Bit Mode
+ * Exceptions "#GP(0) If target offset in destination operand is non-canonical"). Returns the
+ * (masked) offset. QEMU did not mask a far CALL's 286-gate offset, did not limit-check the
+ * CALL gate's target and checked neither gate kind for a canonical 64-bit target.
+ */
+static target_ulong far_gate_target(CPUX86State *env, target_ulong offset, int gate_bits,
+                                    uint32_t e1, uint32_t e2, uintptr_t ra)
+{
+    if (gate_bits == 16) {
+        offset &= 0xffff;
+    }
+    if (gate_bits == 64) {
+        if (!x86_ip_is_canonical(env, offset)) {
+            raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+        }
+    } else if (offset > get_seg_limit(e1, e2)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    return offset;
+}
+#endif /* __Use_Original_Qemu (U707) */
+
 /* protected mode jump */
 void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                            target_ulong next_eip)
@@ -1732,6 +1772,9 @@ void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
         if (!(e2 & DESC_CS_MASK)) {
             raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+        far_check_l_d(env, new_cs, e2, GETPC());
+#endif /* __Use_Original_Qemu (U707) */
         dpl = (e2 >> DESC_DPL_SHIFT) & 3;
         if (e2 & DESC_C_MASK) {
             /* conforming code segment */
@@ -1846,10 +1889,16 @@ void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 raise_exception_err_ra(env, EXCP0D_GPF, gate_cs & 0xfffc, GETPC());
             }
             limit = get_seg_limit(e1, e2);
+#if __Use_Original_Qemu == 1 /* original QEMU (U707) */
             if (new_eip > limit &&
                 (!(env->hflags & HF_LMA_MASK) || !(e2 & DESC_L_MASK))) {
                 raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
             }
+#else /* ours (U707) */
+            new_eip = far_gate_target(env, new_eip,
+                                      (env->efer & MSR_EFER_LMA) ? 64 : type == 12 ? 32 : 16,
+                                      e1, e2, GETPC());
+#endif /* __Use_Original_Qemu (U707) */
             cpu_x86_load_seg_cache(env, R_CS, (gate_cs & 0xfffc) | cpl,
                                    get_seg_base(e1, e2), limit, e2);
             env->eip = new_eip;
@@ -1904,6 +1953,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #endif /* __Use_Original_Qemu (U591) */
     uint32_t val, limit, old_sp_mask;
     target_ulong ssp, old_ssp, offset, sp;
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+    int gate_bits = 32;     /* 16, 32 or 64: the call gate's size */
+#endif /* __Use_Original_Qemu (U707) */
 
     LOG_PCALL("lcall %04x:" TARGET_FMT_lx " s=%d\n", new_cs, new_eip, shift);
     LOG_PCALL_STATE(env_cpu(env));
@@ -1919,6 +1971,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
         if (!(e2 & DESC_CS_MASK)) {
             raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+        far_check_l_d(env, new_cs, e2, GETPC());
+#endif /* __Use_Original_Qemu (U707) */
         dpl = (e2 >> DESC_DPL_SHIFT) & 3;
         if (e2 & DESC_C_MASK) {
             /* conforming code segment */
@@ -1973,6 +2028,20 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             sp_mask = x86_stack_mask64(env, env->segs[R_SS].flags);
             ssp = (env->hflags & HF_CS64_MASK) ? 0 : env->segs[R_SS].base;
 #endif /* __Use_Original_Qemu (U591) */
+#if __Use_Original_Qemu != 1 /* ours (U591/U707) */
+            /*
+             * SDM Vol2A CALL (CONFORMING/NONCONFORMING-CODE-SEGMENT): the limit is checked
+             * only "IF (IA32_EFER.LMA = 0 or target mode = Compatibility mode)": a 64-bit
+             * target (Windows' 33h has limit 0) is not limit-checked, as for far JMP above
+             * (U591). U707: "... THEN #GP(0)", before anything is pushed (QEMU pushed the
+             * return address first and raised #GP(new code segment selector)).
+             */
+            limit = get_seg_limit(e1, e2);
+            if (new_eip > limit &&
+                (!(env->hflags & HF_LMA_MASK) || !(e2 & DESC_L_MASK))) {
+                raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+            }
+#endif /* __Use_Original_Qemu (U591/U707) */
             /* backport e136648c5c (U481): at the current CPL */
             if (shift) {
                 PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
@@ -1983,19 +2052,11 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             }
 
             limit = get_seg_limit(e1, e2);
-#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U591/U707) */
             if (new_eip > limit) {
-#else /* ours (U591) */
-            /*
-             * SDM Vol2A CALL (CONFORMING/NONCONFORMING-CODE-SEGMENT): the limit is checked
-             * only "IF (IA32_EFER.LMA = 0 or target mode = Compatibility mode)": a 64-bit
-             * target (Windows' 33h has limit 0) is not limit-checked, as for far JMP above
-             */
-            if (new_eip > limit &&
-                (!(env->hflags & HF_LMA_MASK) || !(e2 & DESC_L_MASK))) {
-#endif /* __Use_Original_Qemu (U591) */
                 raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
             }
+#endif /* __Use_Original_Qemu (U591/U707) */
             /* from this point, not restartable */
             SET_ESP(sp, sp_mask);
             cpu_x86_load_seg_cache(env, R_CS, (new_cs & 0xfffc) | cpl,
@@ -2033,6 +2094,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             break;
         }
         shift = type >> 3;
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+        gate_bits = (env->efer & MSR_EFER_LMA) ? 64 : shift ? 32 : 16;
+#endif /* __Use_Original_Qemu (U707) */
 
         if (dpl < cpl || dpl < rpl) {
             raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
@@ -2133,6 +2197,10 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 sp_mask = get_sp_mask(ss_e2);
                 ssp = get_seg_base(ss_e1, ss_e2);
             }
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+            /* after the new stack's checks, before anything is pushed (SDM CALL) */
+            offset = far_gate_target(env, offset, gate_bits, e1, e2, GETPC());
+#endif /* __Use_Original_Qemu (U707) */
 
             /* push_size = ((param_count * 2) + 8) << shift; */
 
@@ -2184,6 +2252,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             ssp = env->segs[R_SS].base;
             /* push_size = (4 << shift); */
             new_stack = 0;
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+            offset = far_gate_target(env, offset, gate_bits, e1, e2, GETPC());
+#endif /* __Use_Original_Qemu (U707) */
         }
 
         /* backport e136648c5c (U481): new stack at dpl, else the current one at CPL */
@@ -2303,6 +2374,23 @@ static inline void validate_seg(CPUX86State *env, int seg_reg, int cpl)
 }
 
 /* protected mode iret */
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+/*
+ * NoVmp (ledger U707): RET far / IRET: "IF the return instruction pointer is not within the
+ * return code segment limit THEN #GP(0)" (SDM Vol2B RET, Vol2A IRET), checked for a return
+ * to legacy / compatibility-mode code (a 64-bit code segment has no limit check; its RIP must
+ * be canonical, U52), before the segment registers and RSP change. QEMU did not check.
+ */
+static void ret_check_eip_limit(CPUX86State *env, target_ulong new_eip, uint32_t e1,
+                                uint32_t e2, uintptr_t retaddr)
+{
+    if ((!(env->hflags & HF_LMA_MASK) || !(e2 & DESC_L_MASK)) &&
+        new_eip > get_seg_limit(e1, e2)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, retaddr);
+    }
+}
+#endif /* __Use_Original_Qemu (U707) */
+
 static inline void helper_ret_protected(CPUX86State *env, int shift,
                                         int is_iret, int addend,
                                         uintptr_t retaddr)
@@ -2419,6 +2507,9 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
     if (rpl == cpl && (!(env->hflags & HF_CS64_MASK) ||
                        ((env->hflags & HF_CS64_MASK) && !is_iret))) {
         /* return to same privilege level */
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+        ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
+#endif /* __Use_Original_Qemu (U707) */
         cpu_x86_load_seg_cache(env, R_CS, new_cs,
                        get_seg_base(e1, e2),
                        get_seg_limit(e1, e2),
@@ -2451,6 +2542,9 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
             /* NULL ss is allowed in long mode if cpl != 3 */
             /* XXX: test CS64? */
             if ((env->hflags & HF_LMA_MASK) && rpl != 3) {
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+                ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
+#endif /* __Use_Original_Qemu (U707) */
                 cpu_x86_load_seg_cache(env, R_SS, new_ss,
                                        0, 0xffffffff,
                                        DESC_G_MASK | DESC_B_MASK | DESC_P_MASK |
@@ -2481,6 +2575,9 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
             if (!(ss_e2 & DESC_P_MASK)) {
                 raise_exception_err_ra(env, EXCP0B_NOSEG, new_ss & 0xfffc, retaddr);
             }
+#if __Use_Original_Qemu != 1 /* ours (U707) */
+            ret_check_eip_limit(env, new_eip, e1, e2, retaddr);
+#endif /* __Use_Original_Qemu (U707) */
             cpu_x86_load_seg_cache(env, R_SS, new_ss,
                                    get_seg_base(ss_e1, ss_e2),
                                    get_seg_limit(ss_e1, ss_e2),

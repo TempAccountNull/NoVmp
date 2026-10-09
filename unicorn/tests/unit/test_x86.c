@@ -17461,6 +17461,124 @@ static void test_x86_fx3_enter(void)
         }
     }
 }
+
+/*
+ * U707 far transfers (64-bit mode, CPL0): GDT at FX3_SYS with
+ *   08h 64-bit code, 10h data, 18h 32-bit code limit FFFh (byte granular),
+ *   20h 64-bit code with L = 1 and D = 1, 28h a 64-bit call gate to 08h:'gate_off' (16 bytes)
+ * stack at FX3_SYS + 8000h, pre-filled with A5h; runs one instruction (count 1).
+ */
+#define FX3_SYS 0x52000000ULL
+
+static uc_engine *fx3_far_open(const char *code, size_t len, uint64_t gate_off, nk_intr_t *intr)
+{
+    uint64_t gdt[7] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00409A0000000FFFULL,
+                       0x00EF9A000000FFFFULL, 0, 0};
+    uc_x86_mmr gdtr = {0, FX3_SYS, sizeof(gdt) - 1, 0};
+    uint8_t fill[0x100];
+    uc_engine *uc;
+    uc_hook h;
+
+    gdt[5] = (gate_off & 0xffff) | (0x08ULL << 16) | (0x8C00ULL << 32) |
+             ((gate_off >> 16 & 0xffff) << 48);
+    gdt[6] = gate_off >> 32;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, code, len));
+    OK(uc_mem_map(uc, FX3_SYS, 0x10000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, FX3_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    memset(fill, 0xa5, sizeof(fill));
+    OK(uc_mem_write(uc, FX3_SYS + 0x8000 - 0x80, fill, sizeof(fill)));
+    nk_setreg(uc, UC_X86_REG_RSP, FX3_SYS + 0x8000);
+    nk_setreg(uc, UC_X86_REG_RBX, FX3_SYS + 0x4000);
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, intr, 1, 0));
+    return uc;
+}
+
+/* the 32 bytes below RSP (FX3_SYS + 8000h) still A5h: nothing pushed */
+static bool fx3_stack_untouched(uc_engine *uc)
+{
+    uint8_t b[32];
+    int i;
+
+    OK(uc_mem_read(uc, FX3_SYS + 0x8000 - 32, b, sizeof(b)));
+    for (i = 0; i < 32; i++) {
+        if (b[i] != 0xa5) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * U707: far CALL / JMP / RET / IRET limit and target checks: #GP(0) before anything is
+ * pushed or loaded (SDM Vol2A CALL/JMP, Vol2B RET, Vol2A IRET). The error code (0 instead of
+ * the selector for CALL) is not visible through the Unicorn API; the tests check the fault,
+ * RIP / CS / RSP and the stack bytes.
+ */
+static void test_x86_fx3_far_limits(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint8_t mem[16];    /* at RBX */
+        size_t mlen;
+        uint64_t gate_off;
+        int stack_ret;      /* 1: RETF frame at RSP (EIP 2000h, CS 18h); 2: IRETQ frame */
+        const char *what;
+    } t[] = {
+        {"\xff\x1b", 2, {0x00, 0x20, 0, 0, 0x18, 0}, 6, 0, 0,
+         "call far m16:32 to 18h:2000h (limit FFFh)"},
+        {"\xff\x2b", 2, {0x00, 0x20, 0, 0, 0x18, 0}, 6, 0, 0,
+         "jmp far m16:32 to 18h:2000h (limit FFFh)"},
+        {"\xff\x2b", 2, {0x00, 0x11, 0, 0, 0x20, 0}, 6, 0, 0,
+         "jmp far to 20h (L = 1, D = 1)"},
+        {"\xff\x1b", 2, {0x00, 0x11, 0, 0, 0x20, 0}, 6, 0, 0,
+         "call far to 20h (L = 1, D = 1)"},
+        {"\x48\xff\x1b", 3, {0, 0, 0, 0, 0, 0, 0, 0, 0x28, 0}, 10, 0x8000000000000000ULL, 0,
+         "call far through a 64-bit gate to a non-canonical RIP"},
+        {"\x48\xff\x2b", 3, {0, 0, 0, 0, 0, 0, 0, 0, 0x28, 0}, 10, 0x8000000000000000ULL, 0,
+         "jmp far through a 64-bit gate to a non-canonical RIP"},
+        {"\xcb", 1, {0}, 0, 0, 1, "retf to 18h:2000h (limit FFFh)"},
+        {"\x48\xcf", 2, {0}, 0, 0, 2, "iretq to 18h:2000h (limit FFFh)"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        nk_intr_t intr;
+        uc_engine *uc = fx3_far_open(t[i].code, t[i].len, t[i].gate_off, &intr);
+        uint64_t rsp = FX3_SYS + 0x8000, rip, cs;
+        bool untouched;
+
+        if (t[i].mlen) {
+            OK(uc_mem_write(uc, FX3_SYS + 0x4000, t[i].mem, t[i].mlen));
+        }
+        if (t[i].stack_ret) {
+            uint64_t frame[5] = {0x2000, 0x18, 2, FX3_SYS + 0x7000, 0x10};
+            uint32_t retf32[2] = {0x2000, 0x18};
+
+            rsp = FX3_SYS + 0x7f00;
+            nk_setreg(uc, UC_X86_REG_RSP, rsp);
+            if (t[i].stack_ret == 1) {
+                OK(uc_mem_write(uc, rsp, retf32, sizeof(retf32)));
+            } else {
+                OK(uc_mem_write(uc, rsp, frame, sizeof(frame)));
+            }
+        }
+        OK(uc_emu_start(uc, code_start, code_start + 0x100, 0, 1));
+        rip = nk_reg(uc, UC_X86_REG_RIP);
+        cs = nk_reg(uc, UC_X86_REG_CS) & 0xffff;
+        untouched = fx3_stack_untouched(uc);
+        TEST_CHECK(intr.count == 1 && intr.intno == 13 && rip == code_start && cs == 0 &&
+                   nk_reg(uc, UC_X86_REG_RSP) == rsp && untouched);
+        TEST_MSG("%s: intr %d/%u rip %" PRIx64 " cs %" PRIx64 " rsp %" PRIx64 " stack %s",
+                 t[i].what, intr.count, intr.intno, rip, cs, nk_reg(uc, UC_X86_REG_RSP),
+                 untouched ? "untouched" : "written");
+        OK(uc_close(uc));
+    }
+}
 /* ---- end U700-U719 (fx3_) ---- */
 
 TEST_LIST = {
@@ -17717,4 +17835,5 @@ TEST_LIST = {
     {"test_x86_fx3_flags_at_fault", test_x86_fx3_flags_at_fault},
     {"test_x86_fx3_flags_mem_hook", test_x86_fx3_flags_mem_hook},
     {"test_x86_fx3_enter", test_x86_fx3_enter},
+    {"test_x86_fx3_far_limits", test_x86_fx3_far_limits},
     {NULL, NULL}};
