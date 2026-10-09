@@ -10,9 +10,11 @@
 //   --cases FILE     hand-written snippets with a chosen input state (see at_cases.hpp); a line
 //                    with "=> expectations" is an expected-value case (Unicorn only, vs the SDM)
 //                    [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] (Unicorn CPUID
-//                    profile, strict #UD, XCR0, CR0; --cr0 0x33 = PE|MP|ET|NE as under Windows
-//                    x64, so pending x87 exceptions raise #MF; PG must stay clear: flat Unicorn
-//                    memory). U435: with --cpuid, strict #UD is the default (Unicorn turns
+//                    profile, strict #UD, XCR0, CR0). U540: without --xcr0/--cr0, hardware cases
+//                    get the host's XCR0 (XGETBV) and CR0 33h = PE|MP|ET|NE as under Windows x64
+//                    (pending x87 exceptions raise #MF), expected-value cases Unicorn's reset
+//                    XCR0/CR0; --xcr0 V / --cr0 V override both (PG must stay clear: flat Unicorn
+//                    memory); the effective values are printed first. U435: with --cpuid, strict #UD is the default (Unicorn turns
 //                    UC_CTL_X86_CPUID_STRICT on while a profile is installed); --no-strict writes
 //                    0 (hidden features still execute), --strict writes 1 explicitly
 //   --expect-only    with --cases: run only the expected-value ("=>") lines
@@ -371,6 +373,18 @@ int main( int argc, char** argv )
 	std::printf( "emu-alltest: Unicorn %u.%u UC_CPU_X86_MAX vs host CPU | mode %s | iterations %d | sample 1/%d\n",
 				 maj, min, full ? "full" : "quick", iters, sample );
 	std::printf( "  output: %s\n", out_dir.c_str() );
+	{
+		// U540: the sweep runs Unicorn in its reset state (UC_CPU_X86_MAX, no profile, no opt-in);
+		// printed with the host's XCR0 for comparison
+		unicorn_engine pe( UC_CPU_X86_MAX );
+		uint64_t ex = 0, ec = 0;
+		std::string perr;
+		if ( pe.probe( ex, ec, perr ) )
+			std::printf( "  machine state: Unicorn XCR0=0x%llX CR0=0x%llX (reset); host XCR0=0x%llX (XGETBV(0))\n", ( unsigned long long ) ex,
+						 ( unsigned long long ) ec, ( unsigned long long ) host_xcr0() );
+		else
+			std::printf( "  machine state: %s\n", perr.c_str() );
+	}
 
 	// universe
 	auto t0 = std::chrono::steady_clock::now();

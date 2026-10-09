@@ -314,8 +314,9 @@ namespace at
 	{
 	public:
 		explicit unicorn_engine( int model ) : model_( model ) {}
-		// one engine per form (fresh translation cache), reused across that form's iterations
-		bool load( const program& p, std::string& err )
+		// a fresh engine with the CPU model, the opt-ins, the CPUID profile / strict setting and the
+		// XCR0 / CR0 writes (0 = not written: Unicorn's reset value) applied, nothing mapped yet
+		bool open_configured( std::string& err )
 		{
 			close();
 			uc_err e = uc_open( UC_ARCH_X86, UC_MODE_64, &uc_ );
@@ -333,6 +334,25 @@ namespace at
 			if ( strict >= 0 ) uc_ctl_set_x86_cpuid_strict( uc_, strict );
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
 			if ( cr0 ) uc_reg_write( uc_, UC_X86_REG_CR0, &cr0 );
+			return true;
+		}
+		// U540: the XCR0 / CR0 an engine with this configuration starts from (printed at the start
+		// of a --cases run: the effective machine state, reset values included)
+		bool probe( uint64_t& xcr0_out, uint64_t& cr0_out, std::string& err )
+		{
+			bool ok = open_configured( err );
+			if ( ok && ( uc_reg_read( uc_, UC_X86_REG_XCR0, &xcr0_out ) != UC_ERR_OK || uc_reg_read( uc_, UC_X86_REG_CR0, &cr0_out ) != UC_ERR_OK ) )
+			{
+				err = "uc_reg_read XCR0/CR0 failed";
+				ok = false;
+			}
+			close();
+			return ok;
+		}
+		// one engine per form (fresh translation cache), reused across that form's iterations
+		bool load( const program& p, std::string& err )
+		{
+			if ( !open_configured( err ) ) return false;
 			uc_mem_map( uc_, CODE, CODE_SIZE, UC_PROT_ALL );
 			uc_mem_map( uc_, DATA, DATA_SIZE, UC_PROT_READ | UC_PROT_WRITE );
 			uc_mem_map( uc_, MEM, MEM_SIZE, UC_PROT_READ | UC_PROT_WRITE );

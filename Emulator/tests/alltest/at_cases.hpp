@@ -58,9 +58,15 @@
 //   An empty expectation ("nop =>") means: no fault, nothing changed.
 //
 // Options: --expect-only skips every line without "=>". --cpuid FILE / --strict / --no-strict /
-// --xcr0 V configure Unicorn for both kinds of case (U435: a --cpuid profile is strict by
-// default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0). U539: Unicorn implements the SDM only,
-// for both kinds of case (no quirk switch; hardware deviations are tags, below). --avx512 opts
+// --xcr0 V / --cr0 V configure Unicorn for both kinds of case (U435: a --cpuid profile is strict by
+// default, --no-strict writes UC_CTL_X86_CPUID_STRICT = 0).
+// Machine state (U540, plan 1.H.2): a hardware case runs Unicorn with this machine's OS-owned
+// state: XCR0 = the host's XCR0 (XGETBV ECX = 0, what Windows wrote with XSETBV) and CR0 = 33h
+// (Windows x64's CR0 without the bits that cannot act here, see WINDOWS_CR0); an expected-value
+// case keeps Unicorn's reset XCR0 / CR0 (the reset XCR0 enables every state component the CPU
+// model, the opt-ins and the CPUID profile support). --xcr0 V / --cr0 V (V != 0) override both
+// kinds. The effective values are printed first ("machine state: ...").
+// U539: Unicorn implements the SDM only, for both kinds of case (no quirk switch; hardware deviations are tags, below). --avx512 opts
 // Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, before the engine is
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
@@ -90,11 +96,30 @@
 #include <cctype>
 #include <cstddef>
 #include <fstream>
+#include <intrin.h>
 #include <map>
 #include <sstream>
 
 namespace at
 {
+	// U540: Windows x64 runs with CR0 = 80050033h (PG|AM|WP|NE|ET|MP|PE). PG cannot be set
+	// (Unicorn's memory is a flat map without page tables); WP acts only on supervisor writes
+	// through paging; AM acts only with RFLAGS.AC = 1 at CPL3 and QEMU raises no alignment-check
+	// #AC (EXCP11_ALGN is never raised). PE|MP|ET|NE = 33h is the part that acts: NE = 1, so a
+	// pending unmasked x87 exception raises #MF (not FERR#) like on the host; MP only matters with
+	// CR0.TS = 1 (never set here).
+	constexpr uint64_t WINDOWS_CR0 = 0x33;
+
+	// U540: the host's XCR0 (the value the OS wrote with XSETBV); 0 when CPUID.1:ECX.OSXSAVE = 0
+	// (XGETBV would #UD, the host has no XCR0)
+	static uint64_t host_xcr0()
+	{
+		int r[ 4 ] = {};
+		__cpuid( r, 1 );
+		if ( !( r[ 2 ] & ( 1 << 27 ) ) ) return 0;
+		return _xgetbv( 0 );
+	}
+
 	static void case_default( state& s )
 	{
 		std::memset( &s, 0, sizeof( s ) );
@@ -303,8 +328,9 @@ namespace at
 		return v;
 	}
 
-	// cr0: Unicorn's CR0 for the cases (0 = Unicorn default, PE only). Windows x64 runs with NE = 1:
-	// pending unmasked x87 exceptions raise #MF, not FERR#; use 0x33 (PE|MP|ET|NE), never PG (flat map)
+	// xcr0 / cr0: explicit overrides (--xcr0 V / --cr0 V) for both kinds of case; 0 = automatic
+	// (U540: hardware cases host XCR0 / WINDOWS_CR0, expected-value cases Unicorn's reset value).
+	// Never PG in cr0 (flat map).
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; };
@@ -369,6 +395,28 @@ namespace at
 	{
 		std::ifstream f( path );
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
+		// U540 (plan 1.H.2): XCR0 / CR0 per kind of case (0 = not written: Unicorn's reset value)
+		const uint64_t host_x = host_xcr0();
+		const uint64_t hw_xcr0 = opt.xcr0 ? opt.xcr0 : host_x, hw_cr0 = opt.cr0 ? opt.cr0 : WINDOWS_CR0;
+		const uint64_t exp_xcr0 = opt.xcr0, exp_cr0 = opt.cr0;
+		{
+			// the effective values as an engine of this run starts with them (reset values included)
+			auto show = [ & ]( const char* kind, uint64_t x, uint64_t c, const char* xsrc, const char* csrc )
+			{
+				unicorn_engine pe( UC_CPU_X86_MAX );
+				pe.cpuid = opt.cpuid; pe.strict = opt.strict; pe.xcr0 = x; pe.cr0 = c;
+				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10;
+				uint64_t ex = 0, ec = 0;
+				std::string perr;
+				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }
+				std::printf( "machine state: %s cases XCR0=0x%llX (%s) CR0=0x%llX (%s)\n", kind, ( unsigned long long ) ex, xsrc,
+							 ( unsigned long long ) ec, csrc );
+			};
+			if ( !opt.expect_only )
+				show( "hardware", hw_xcr0, hw_cr0, opt.xcr0 ? "--xcr0" : host_x ? "host XGETBV(0)" : "Unicorn reset: host has no OSXSAVE",
+					  opt.cr0 ? "--cr0" : "Windows x64 PE|MP|ET|NE" );
+			show( "expected-value", exp_xcr0, exp_cr0, opt.xcr0 ? "--xcr0" : "Unicorn reset", opt.cr0 ? "--cr0" : "Unicorn reset" );
+		}
 		native_engine hw;
 		bool hw_open = false;
 		std::string err;
@@ -454,7 +502,9 @@ namespace at
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX );
-			uc.cpuid = opt.cpuid; uc.strict = opt.strict; uc.xcr0 = opt.xcr0; uc.cr0 = opt.cr0;
+			uc.cpuid = opt.cpuid; uc.strict = opt.strict;
+			uc.xcr0 = expect ? exp_xcr0 : hw_xcr0;   // U540
+			uc.cr0 = expect ? exp_cr0 : hw_cr0;
 			uc.avx512 = opt.avx512;
 			uc.amx = opt.amx;
 			uc.avx10 = opt.avx10;
