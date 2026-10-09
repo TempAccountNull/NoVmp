@@ -57,7 +57,7 @@ test.cmd [--release | --debug] [-j N | --jobs N | --serial] [-v | --verbose] [li
 - **NAME** = a group or one suite id; several at once (`test.cmd evex x87`); no NAME (or `all`) = every suite, the full gate. `test.cmd list` prints the groups, the suites and their commands. Unknown names/options: message + usage, exit 2.
 - **Groups:** `unit` (Unicorn unit tests + emu-uc72-risk), `sweep` (emu-alltest quick run), `selftest`, `expect` (every expected-value file), `evex`, `amx`, `fp16`, `avx10`, `ext` (Key Locker / SHA-SM / VNNI-IFMA), `sse`, `nan`, `x87`, `hw` (everything compared with the host CPU), `quirks`, `backport`, `tools` (check_decode_dups.py). A suite can be in several groups.
 - **Parallel:** the suites are independent processes; up to N run at once (default NUMBER_OF_PROCESSORS, `--serial` = 1), longest first (the previous run's times, `logs\times.tsv`). Each writes its own log `build\x64\<config>\tests\logs\<suite>.log`; after the run each suite's key lines (command, machine state, summary, tags) are printed in suite order, `-v` prints whole logs.
-- **Verdicts** are the old test.cmd rules: exit status 0; hardware files (`hw`): `differing: 0` + exit 0 + a strict CPUID profile; `expect_selftest_bad`: `cases: 6, differing: 6` + exit 1. A crash (negative exit status) now fails a suite (the old `if errorlevel 1` let it pass).
+- **Verdicts** are the old test.cmd rules: exit status 0; hardware files (`hw`): `differing: 0` + exit 0 + a strict CPUID profile; `expect_selftest_bad`: `cases: 7, differing: 7` + exit 1 (U772: 7 with the wrong error code). A crash (negative exit status) now fails a suite (the old `if errorlevel 1` let it pass).
 - **Summary table:** suite, result, cases, differing, known deviations, host state, tagged-not-observed, time; a total row for a split suite; wall clock vs the sum of the suite times. Then `[test] OK: all suites passed` (exit 0) or `[test] FAILED: N suite(s) failed` (exit 1), as before.
 - **Split suites:** `cases_sse_exc` runs as 8 shards (`emu-alltest --shard K/8`, contiguous blocks of its 174028 case lines; `test.cmd cases_sse_exc` selects all 8); `emu-uc72-risk` runs as three parts (`emu-uc72-risk --only 1-16`, `--only 17`, `--only 18`; R18 alone is the longest suite; `test.cmd emu-uc72-risk` selects all three). The summary adds a total row per split suite.
 - **Run alone:** `hwcheck_gate1` and `cases_quirks` run first, each with nothing beside it: they contain the tagged REP LODS (67h, ECX = 0) case, whose CPU result depends on what runs on the other logical processors (docs\quirks.md "REP 67h ECX=0 zero-extension"; measured with 200 runs each: SDM path taken 8/200 serially with the old binary, 7/200 serially, 26/200 with 8 copies side by side). A tagged case never fails a run, but alone it keeps the same rate as the serial test.cmd.
@@ -88,6 +88,14 @@ Forms that stay out, with the reason in the CSV `detail` column: SYSCALL / SYSEN
 ## Paired hardware cases (U614)
 
 A hardware case `<host asm> ~~ <unicorn asm> | <inputs>` runs the first snippet on the host CPU and the second on Unicorn and compares the two results like any hardware case. `Emulator\data\cases_apx_core_hw.txt` uses it to run each instruction's legacy encoding on the i5-13600K against its REX2 encoding on Unicorn (`--apx`, no CPUID profile, which would hide APX); test.cmd's `:hw_apx` requires `differing: 0`.
+
+## Exception error codes (U772)
+
+In an expected-value case the fault token may carry the error code in parentheses: `#GP(0)`, `#SS(0)`, `#GP(0x30)`, `#CP(2)`, `#PF(0x6)` (a C literal). Unicorn's error code is read in the `UC_HOOK_INTR` callback with `UC_CTL_X86_EXCEPTION` (U770, `uc_ctl_get_x86_exception`: vector, error code, #PF linear address) and must then equal it; the `uc:` line prints it as `fault #13(0x0)`. Without parentheses only the vector is compared, as before. Exceptions without an error code (INT n, #UD, #DE, ...) never match a token with one, and neither does a #PF that Unicorn reports for memory it has not mapped (a Unicorn memory error, not an x86 exception: only a #PF from the page walk with CR0.PG = 1 has an error code). Hardware cases compare the vector only: the Windows exception record does not carry the CPU's error code. Example (`Emulator\data\cases_fix4.txt`):
+
+```
+mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC => #SS(0)
+```
 
 ## Output
 

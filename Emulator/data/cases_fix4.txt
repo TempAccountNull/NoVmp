@@ -1,0 +1,27 @@
+# fix4 (ledger U770-U789), hand-written. Hardware lines (no "=>") run natively on the i5-13600K
+# (CPL3, Windows x64) and in Unicorn; expected-value lines ("=>") run in Unicorn only, against the
+# SDM:
+#   emu-alltest --cases Emulator\data\cases_fix4.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME. Only our own snippets run natively. [rsi+0x8000] = MEM + 10000h, the
+# first byte after the 64 KiB operand area: not mapped on the host (#PF) nor in Unicorn.
+# cpl=3: Unicorn also runs at CPL3 (Windows GDT: 10h code64 DPL0, 18h data DPL0, 23h code32 DPL3,
+# 2Bh data DPL3, 33h code64 DPL3, limit 37h).
+#
+# --- U772 exception error codes: an expected-value fault token may carry the error code,
+# "#GP(0)" (Unicorn's UC_CTL_X86_EXCEPTION record, U770). SDM Vol1 3.3.7.1 (non-canonical: #SS(0)
+# for a stack reference, else #GP(0)); Vol2A MOV / JMP / CALL protected-mode exceptions
+# (#GP(selector) with the RPL bits cleared); Vol2 CLI / HLT / RDMSR / MOV CR at CPL3 #GP(0);
+# Vol2 MOVDQA misaligned #GP(0).
+mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC => #SS(0)
+mov rax, qword ptr [rcx] | rcx=0x8000000000000000 => #GP(0)
+movdqa xmm0, xmmword ptr [rsi+1] => #GP(0)
+mov ax, 0x18; mov ds, ax | cpl=3 => rax=0x18 #GP(0x18)
+mov ax, 0x43; mov ss, ax | cpl=3 => rax=0x43 #GP(0x40)
+mov ax, 0x2b; mov ss, ax | cpl=3 => rax=0x2b
+.byte 0xff, 0x2e | cpl=3 m+0x8000=000000004000 => #GP(0x40)
+.byte 0xff, 0x1e | cpl=3 m+0x8000=000000001000 => #GP(0x10)
+cli | cpl=3 => #GP(0)
+hlt | cpl=3 => #GP(0)
+rdmsr | cpl=3 rcx=0x10 => #GP(0)
+mov cr0, rax | cpl=3 => #GP(0)
+ud2 => #UD

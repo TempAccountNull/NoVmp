@@ -11,7 +11,7 @@
 # Every suite writes its own log, build\x64\<config>\tests\logs\<id>.log, and is judged by the rules
 # test.cmd used before (U541): an exit status of 0 (unit tests, expected-value files, python
 # checks), "differing: 0" + exit 0 + a strict CPUID profile (hardware files, formerly :hw_zero),
-# "cases: 6, differing: 6" + exit 1 (the deliberately wrong expectations, formerly :expect_bad).
+# "cases: 7, differing: 7" + exit 1 (the deliberately wrong expectations, formerly :expect_bad).
 # The suites are independent processes; hardware suites compare architectural results (never
 # timing), so running them side by side cannot change a result. Longest suites start first (the
 # previous run's times, logs\times.tsv). cases_sse_exc runs as 8 shards (emu-alltest --shard K/8,
@@ -65,7 +65,7 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 
 # ---------------------------------------------------------------------------------------- suites
 # Kind: exit = pass on exit status 0 | hw = hardware file (differing: 0, exit 0, strict profile) |
-#       bad = expect_selftest_bad (6 of 6 reported, exit 1) | py = python check (exit status 0)
+#       bad = expect_selftest_bad (7 of 7 reported, exit 1) | py = python check (exit status 0)
 $Suites = New-Object System.Collections.Generic.List[object]
 function Add-Suite( [string]$Id, [string]$Groups, [string]$Kind, [string]$Exe, [string[]]$Arguments, [string]$Note = '', [bool]$Exclusive = $false )
 {
@@ -136,7 +136,7 @@ foreach ( $s in $Suites ) { if ( $s.Id -like 'emu-uc72-risk*' ) { $s.Parent = 'e
 # only harness errors fail. Full run: emu-alltest --full (baseline in Emulator\data\alltest_baseline).
 Add-Suite 'emu-alltest-quick' 'sweep hw' 'exit' 'emu-alltest' @()
 # plan 1.15a: expected-value ("SDM vector") cases - Unicorn only, compared to hand-derived SDM results;
-# any difference or unparsable line fails. The deliberately wrong file must be caught (6 of 6, exit 1).
+# any difference or unparsable line fails. The deliberately wrong file must be caught (7 of 7, exit 1; U772: + a wrong error code).
 # U539: the emulator implements the Intel SDM only (no quirk switch). Hardware files tag the cases
 # where the i5-13600K deviates from the SDM ("# known deviation: NAME", docs\quirks.md).
 Add-Exp 'expect_selftest' 'expect_selftest' 'selftest expect'
@@ -285,6 +285,9 @@ Add-Hw 'cases_fixes2' 'hw'
 # U700-U719: the state at a fault (flags, destinations, partial stores) vs the i5-13600K, plus
 # expected values against the SDM where the host cannot show it.
 Add-Hw 'cases_fix3' 'hw'
+# U770-U789: exception error codes in expected-value cases ("#GP(0)", UC_CTL_X86_EXCEPTION), flags and
+# partial stores at a fault or a memory hook, LOCK 0F 0D; hardware lines vs the i5-13600K.
+Add-Hw 'cases_fix4' 'hw'
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # U750-U760: CET on far CALL / RET far / IRETQ (call gates, supervisor tokens), SYSRET/SYSEXIT SSP,
@@ -346,7 +349,7 @@ if ( $List )
 	Write-Output "[test] groups (test.cmd NAME [NAME ...]; no NAME = every suite):"
 	Write-Output ( '  {0,-10} {1}' -f 'all', "every suite ($($Suites.Count))" )
 	foreach ( $g in $Groups.Keys ) { Write-Output ( '  {0,-10} {1}' -f $g, ( $Groups[ $g ] -join ' ' ) ) }
-	Write-Output "[test] suites (id, kind, command; exit = exit status 0, hw = hardware file: differing 0, bad = 6 of 6 wrong expectations reported, py = python check):"
+	Write-Output "[test] suites (id, kind, command; exit = exit status 0, hw = hardware file: differing 0, bad = 7 of 7 wrong expectations reported, py = python check):"
 	foreach ( $s in $Suites )
 	{
 		$shown = @( $s.Args | ForEach-Object { if ( $_.StartsWith( $Root ) ) { $_.Substring( $Root.Length + 1 ) } else { $_ } } ) -join ' '
@@ -481,7 +484,7 @@ function Complete-Suite( $s )
 		}
 		'bad'
 		{
-			if ( -not ( $lines | Where-Object { $_.StartsWith( 'cases: 6, differing: 6' ) } ) ) { $s.Reason = 'wrong expectations not all detected' }
+			if ( -not ( $lines | Where-Object { $_.StartsWith( 'cases: 7, differing: 7' ) } ) ) { $s.Reason = 'wrong expectations not all detected' }
 			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
 		}
 		default { if ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" } }

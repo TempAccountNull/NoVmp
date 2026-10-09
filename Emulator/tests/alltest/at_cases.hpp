@@ -42,6 +42,9 @@
 // Expectations:
 //   fault token   #DE #DB #NMI #BP #OF #BR #UD #NM #DF #TS #NP #SS #GP #PF #MF #AC #MC #XM #VE #CP,
 //                 or #N (decimal vector). No fault token = the case must complete without a fault.
+//                 U772: an error code may follow in parentheses, "#GP(0)", "#SS(0)", "#CP(2)",
+//                 "#GP(0x30)" (C literal): Unicorn's error code (UC_CTL_X86_EXCEPTION) must then
+//                 be that value; without one only the vector is compared.
 //                 On a fault the state is saved at the faulting instruction (as in hardware cases).
 //   "=>"  strict  the expected state is the input state with the listed assignments applied, and
 //                 EVERY checked field must match it: whatever is not listed must be unchanged.
@@ -359,13 +362,26 @@ namespace at
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */ };
 
-	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
-	static int fault_vector( const std::string& t )
+	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token. U772: an error code may follow
+	// in parentheses, "#GP(0)", "#SS(0)", "#PF(0x6)", "#13(0x30)", stored in *ec (else -1)
+	static int fault_vector( const std::string& t, int64_t* ec = nullptr )
 	{
 		static const char* names[] = { "DE", "DB", "NMI", "BP", "OF", "BR", "UD", "NM", "DF", "", "TS", "NP", "SS", "GP", "PF", "",
 									   "MF", "AC", "MC", "XM", "VE", "CP" };
+		if ( ec ) *ec = -1;
 		if ( t.size() < 2 || t[ 0 ] != '#' ) return -1;
 		std::string n = t.substr( 1 );
+		size_t par = n.find( '(' );
+		if ( par != std::string::npos )
+		{
+			if ( !ec || n.back() != ')' || par + 2 >= n.size() ) return -1;
+			std::string v = n.substr( par + 1, n.size() - par - 2 );
+			char* end = nullptr;
+			unsigned long long x = std::strtoull( v.c_str(), &end, 0 );
+			if ( !end || *end || x > 0xFFFFFFFFull ) return -1;
+			*ec = int64_t( x );
+			n = n.substr( 0, par );
+		}
 		for ( char& c : n ) c = char( std::toupper( ( unsigned char ) c ) );
 		for ( int v = 0; v < int( sizeof( names ) / sizeof( names[ 0 ] ) ); ++v )
 			if ( names[ v ][ 0 ] && n == names[ v ] ) return v;
@@ -392,7 +408,13 @@ namespace at
 		on( offsetof( state, mem ), sizeof( state::mem ) );
 	}
 
-	static std::string fault_text( bool faulted, int vector ) { return faulted ? "fault #" + std::to_string( vector ) + " " : ""; }
+	static std::string fault_text( bool faulted, int vector, int64_t ec = -1 )
+	{
+		if ( !faulted ) return "";
+		std::string s = "fault #" + std::to_string( vector );
+		if ( ec >= 0 ) s += "(" + hx( uint64_t( ec ) ) + ")";   // U772: the error code
+		return s + " ";
+	}
 
 	// U530: trailing tag of a hardware case, "# known deviation: NAME" (a CPU-vs-SDM deviation
 	// documented in docs\quirks.md; the emulator implements the SDM) or "# host state: REASON"
@@ -545,6 +567,7 @@ namespace at
 			std::vector<uint8_t> listed( expect ? sizeof( state ) : 0, 0 );
 			bool exp_fault = false;
 			int exp_vector = -1;
+			int64_t exp_ec = -1;     // U772: "#GP(0)": the error code must match too
 			if ( expect )
 			{
 				std::istringstream es( rhs );
@@ -553,10 +576,11 @@ namespace at
 				{
 					if ( tok[ 0 ] == '#' )
 					{
-						int v = fault_vector( tok );
+						int64_t ec = -1;
+						int v = fault_vector( tok, &ec );
 						if ( v < 0 ) { err = "unknown fault " + tok; ok = false; }
 						else if ( exp_fault ) { err = "more than one fault token"; ok = false; }
-						else { exp_fault = true; exp_vector = v; }
+						else { exp_fault = true; exp_vector = v; exp_ec = ec; }
 						continue;
 					}
 					try { ok = case_assign( *st_exp, tok, err, &listed, nullptr ); }
@@ -603,15 +627,15 @@ namespace at
 				const uint8_t* us = ( const uint8_t* ) u.s.get();
 				uint8_t* ms = ( uint8_t* ) masked.get();
 				for ( size_t b = 0; b < care.size(); ++b ) if ( care[ b ] ) ms[ b ] = us[ b ];
-				bool same_fault = exp_fault == u.faulted && exp_vector == u.vector;
+				bool same_fault = exp_fault == u.faulted && exp_vector == u.vector && ( exp_ec < 0 || exp_ec == u.error_code );
 				std::string ed = case_fields( *st_in, *st_exp ), ud = case_fields( *st_in, *u.s ), x = case_fields( *st_exp, *masked );
 				bool same = same_fault && x.empty() && u.err.empty();
 				differ += !same;
 				exp_differ += !same;
 				++exp_n;
 				std::printf( "[%d] %s %s\n", n, same ? "SAME" : "DIFF", line.c_str() );
-				std::printf( "    exp%s: %s%s\n", loose ? "!" : "", fault_text( exp_fault, exp_vector ).c_str(), ed.c_str() );
-				std::printf( "    uc: %s%s\n", fault_text( u.faulted, u.vector ).c_str(), ud.c_str() );
+				std::printf( "    exp%s: %s%s\n", loose ? "!" : "", fault_text( exp_fault, exp_vector, exp_ec ).c_str(), ed.c_str() );
+				std::printf( "    uc: %s%s\n", fault_text( u.faulted, u.vector, exp_ec >= 0 ? u.error_code : -1 ).c_str(), ud.c_str() );
 				if ( !u.err.empty() ) std::printf( "    uc error: %s\n", u.err.c_str() );
 				if ( !same ) std::printf( "    uc vs exp:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
 				++n;

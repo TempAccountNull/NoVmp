@@ -88,6 +88,7 @@ namespace at
 		bool ran = false;
 		bool faulted = false;
 		int vector = -1;            // x86 vector; Unicorn exact, native mapped from the NTSTATUS
+		int64_t error_code = -1;    // U772: Unicorn's error code (UC_CTL_X86_EXCEPTION), -1 = none / native
 		uint64_t fault_rip = 0;
 		std::string err;
 	};
@@ -502,9 +503,9 @@ namespace at
 		}
 	private:
 		void close() { if ( uc_ ) uc_close( uc_ ); uc_ = nullptr; }
-		void fault( uint64_t rip, int vec )
+		void fault( uint64_t rip, int vec, int64_t ec = -1 )
 		{
-			if ( !cur_->faulted ) { cur_->faulted = true; cur_->vector = vec; cur_->fault_rip = rip; }
+			if ( !cur_->faulted ) { cur_->faulted = true; cur_->vector = vec; cur_->fault_rip = rip; cur_->error_code = ec; }
 		}
 		// the epilogue, or in CPL3 mode with CS = 23h (a snippet in compatibility mode) the gate
 		// that far-returns to the 64-bit epilogue
@@ -531,7 +532,11 @@ namespace at
 		{
 			auto* self = ( unicorn_engine* ) user;
 			uint64_t rip = 0; uc_reg_read( uc, UC_X86_REG_RIP, &rip );
-			self->fault( rip, int( intno ) );
+			// U772: the error code of the exception (UC_CTL_X86_EXCEPTION, U770), for "#GP(0)" etc.
+			uc_x86_exception e{};
+			int64_t ec = -1;
+			if ( uc_ctl_get_x86_exception( uc, &e ) == UC_ERR_OK && e.vector == int( intno ) && e.has_error_code ) ec = e.error_code;
+			self->fault( rip, int( intno ), ec );
 			if ( !self->resume_if_in_snippet( rip ) ) uc_emu_stop( uc );
 		}
 		static bool on_invalid( uc_engine* uc, void* user )
