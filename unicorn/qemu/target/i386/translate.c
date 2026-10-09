@@ -199,6 +199,15 @@ typedef struct DisasContext {
     /* decode-new: an APX-promoted EVEX form (EVEX map 4 from legacy maps 2/3, U645) */
     bool apx_promoted;
 #endif /* __Use_Original_Qemu (U645) */
+#if __Use_Original_Qemu != 1 /* ours (U793) */
+    /*
+     * NoVmp (ledger U793): CPUID.(EAX=29H,ECX=0):EBX.APX_NCI_NDD_NF[0] as the CPU reports it (a
+     * strict UC_CTL_X86_CPUID profile narrows it like every feature word); the model reports it
+     * with APX_F (U610). It gates the APX forms whose CPUID column names it (apx_map4_decode,
+     * validate_apx_promoted).
+     */
+    bool apx_nci;
+#endif /* __Use_Original_Qemu (U793) */
     bool vex_w; /* used by AVX even on 32-bit processors */
 #if __Use_Original_Qemu != 1 /* ours (U141) */
     /*
@@ -4629,6 +4638,18 @@ static int apx_map4_decode(CPUX86State *env, DisasContext *s, int *pprefixes, in
     default:
         return APX_M4_UD;
     }
+#if __Use_Original_Qemu != 1 /* ours (U793) */
+    /*
+     * NoVmp (ledger U793): the CPUID column of every map 4 instruction decoded here except
+     * PUSH2/POP2 ("APX_F") reads "APX_F and APX_NCI_NDD_NF" (APX spec 355828-009 6.x / 8.x: ADC
+     * ADD AND CMOVcc DEC DIV IDIV IMUL INC MUL NEG NOT OR RCL RCR ROL ROR SAR SBB SHL SHLD SHR
+     * SHRD SUB XOR POPCNT LZCNT TZCNT, CCMPscc CFCMOVcc CTESTscc SETcc), and "If the APX_F or
+     * any instruction-specific CPUID feature flag is 0" is #UD (Tables 4.6, 4.9, 4.12).
+     */
+    if (!s->apx_nci && opc != 0x8f && !(opc == 0xff && reg == 6)) {
+        return APX_M4_UD;
+    }
+#endif /* __Use_Original_Qemu (U793) */
 #if __Use_Original_Qemu != 1 /* ours (U641) */
     /*
      * U641: CCMPscc / CTESTscc (3.1.3.2.1, Figure 3.7, APX-EVEX-CCMP Table 4.6): P1 = W OF SF
@@ -10157,6 +10178,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U100) */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U793) */
+    dc->apx_nci = (x86_cpuid_profile_mask(env, 0x29, 0, 1) & CPUID_29_0_EBX_APX_NCI_NDD_NF) != 0;
+#endif /* __Use_Original_Qemu (U793) */
 #if __Use_Original_Qemu != 1 /* ours (U720) */
     /* AMX features enumerated only in leaf 1EH (U720); a strict profile narrows them (U721) */
     dc->cpuid_1e_1_eax_features = x86_cpu_amx_1e_1_eax(env) &

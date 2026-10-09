@@ -18865,7 +18865,96 @@ static void test_x86_axc_evex_r4_kreg(void)
     OK(uc_close(c.uc));
 }
 
-/* ---- end U790-U791 (axc_) ---- */
+/*
+ * U793: CPUID.(EAX=29H,ECX=0):EBX.APX_NCI_NDD_NF[0] gates the forms whose APX spec CPUID column
+ * names it ("If the APX_F or any instruction-specific CPUID feature flag is 0": #UD): every
+ * promoted map 0/1 instruction of EVEX map 4 and the NCIs (not PUSH2/POP2), ADCX/ADOX with
+ * ND = 1, the BMI forms with NF = 1; REX2 and the other promoted forms (CRC32, ADCX ND = 0, ANDN
+ * NF = 0) need APX_F only. The model always reports the bit with APX_F (spec 3.1.4.3.1), so a
+ * strict CPUID profile copied from the model with only 29H.EBX[0] cleared shows the gate.
+ */
+#define AXC_CRC32       "\x62\xf4\x7c\x08\xf1\xc3"      /* crc32 eax, ebx                     */
+#define AXC_ADCX        "\x62\xf4\x7d\x08\x66\xc3"      /* adcx eax, ebx                      */
+#define AXC_ADCX_ND     "\x62\xf4\x75\x18\x66\xc3"      /* adcx ecx, eax, ebx (ND = 1)        */
+#define AXC_ANDN        "\x62\xf2\x74\x08\xf2\xc3"      /* andn eax, ecx, ebx                 */
+#define AXC_ANDN_NF     "\x62\xf2\x74\x0c\xf2\xc3"      /* andn eax, ecx, ebx {nf}            */
+#define AXC_CCMPZ       "\x62\xf4\x84\x04\x39\xd8"      /* ccmpz {dfv=} rax, rbx              */
+#define AXC_SETZ_ZU     "\x62\xf4\x7f\x18\x44\xc0"      /* setz.zu eax                        */
+#define AXC_ADD_ND      "\x62\xf4\xbc\x18\x01\xd8"      /* add r8, rax, rbx                   */
+#define AXC_ADD         "\x62\xf4\xfc\x08\x01\xd8"      /* add rax, rbx (EVEX, ND = 0)        */
+#define AXC_REX2_ADD    "\xd5\x18\x01\xc0"              /* add r16, rax (REX2: APX_F only)    */
+
+/* the model's own CPUID (APX opt-in, no profile) as a profile, with 29H.EBX replaced */
+static size_t axc_model_profile(uc_x86_cpuid *p, size_t max, uint32_t ebx29)
+{
+    static const uint32_t ext[] = {0x80000000, 0x80000001, 0x80000002, 0x80000003, 0x80000004,
+                                   0x80000005, 0x80000006, 0x80000007, 0x80000008};
+    ApxCtx c;
+    size_t n = 0, k;
+    uint32_t leaf, sub, nsub;
+
+    apx_open(&c, UC_MODE_64, UC_X86_APX_F, NULL, 0);
+    for (k = 0; k < 0x2a + sizeof(ext) / sizeof(ext[0]); k++) {
+        leaf = k < 0x2a ? (uint32_t)k : ext[k - 0x2a];
+        nsub = leaf == 0xd ? 20 : (leaf == 7 || leaf == 0x1e || leaf == 0x24) ? 2 : 1;
+        for (sub = 0; sub < nsub && n < max; sub++) {
+            apx_set(&c, UC_X86_REG_RAX, leaf);
+            apx_set(&c, UC_X86_REG_RCX, sub);
+            TEST_CHECK(apx_run(&c, "\x0f\xa2", 2) == -1);
+            p[n].leaf = leaf;
+            p[n].subleaf = sub;
+            p[n].eax = (uint32_t)apx_get(&c, UC_X86_REG_RAX);
+            p[n].ebx = (uint32_t)apx_get(&c, UC_X86_REG_RBX);
+            p[n].ecx = (uint32_t)apx_get(&c, UC_X86_REG_RCX);
+            p[n].edx = (uint32_t)apx_get(&c, UC_X86_REG_RDX);
+            if (leaf == 0x29 && sub == 0) {
+                TEST_CHECK(p[n].ebx == 1);          /* reported with APX_F (U610) */
+                p[n].ebx = ebx29;
+            }
+            n++;
+        }
+    }
+    OK(uc_close(c.uc));
+    return n;
+}
+
+static void test_x86_axc_apx_nci_ndd_nf(void)
+{
+    static uc_x86_cpuid prof[96];
+    ApxCtx c;
+    size_t n;
+    int nci;
+
+    for (nci = 1; nci >= 0; nci--) {
+        int want = nci ? -1 : 6;
+
+        n = axc_model_profile(prof, sizeof(prof) / sizeof(prof[0]), (uint32_t)nci);
+        TEST_CHECK(n > 0x2a && n < sizeof(prof) / sizeof(prof[0]));
+        apx_open(&c, UC_MODE_64, UC_X86_APX_F, prof, n);    /* strict by default (U435) */
+        apx_set(&c, UC_X86_REG_RAX, 0x29);
+        apx_set(&c, UC_X86_REG_RCX, 0);
+        TEST_CHECK(apx_run(&c, "\x0f\xa2", 2) == -1);
+        TEST_CHECK(apx_get(&c, UC_X86_REG_RBX) == (uint64_t)nci);
+        apx_set(&c, UC_X86_REG_RAX, 7);
+        apx_set(&c, UC_X86_REG_RCX, 1);
+        TEST_CHECK(apx_run(&c, "\x0f\xa2", 2) == -1);
+        TEST_CHECK((apx_get(&c, UC_X86_REG_RDX) >> 21) & 1);   /* APX_F stays */
+        /* gated by APX_NCI_NDD_NF */
+        TEST_CHECK(apx_run(&c, AXC_ADD_ND, 6) == want);
+        TEST_CHECK(apx_run(&c, AXC_ADD, 6) == want);
+        TEST_CHECK(apx_run(&c, AXC_CCMPZ, 6) == want);
+        TEST_CHECK(apx_run(&c, AXC_SETZ_ZU, 6) == want);
+        TEST_CHECK(apx_run(&c, AXC_ADCX_ND, 6) == want);
+        TEST_CHECK(apx_run(&c, AXC_ANDN_NF, 6) == want);
+        /* APX_F (+ the base feature) only */
+        TEST_CHECK(apx_run(&c, AXC_REX2_ADD, 4) == -1);
+        TEST_CHECK(apx_run(&c, AXC_CRC32, 6) == -1);
+        TEST_CHECK(apx_run(&c, AXC_ADCX, 6) == -1);
+        TEST_CHECK(apx_run(&c, AXC_ANDN, 6) == -1);
+        OK(uc_close(c.uc));
+    }
+}
+/* ---- end U790-U793 (axc_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -19135,4 +19224,5 @@ TEST_LIST = {
     {"test_x86_fx3_vsib_pending_db", test_x86_fx3_vsib_pending_db},
     {"test_x86_axc_wrss_paging", test_x86_axc_wrss_paging},
     {"test_x86_axc_evex_r4_kreg", test_x86_axc_evex_r4_kreg},
+    {"test_x86_axc_apx_nci_ndd_nf", test_x86_axc_apx_nci_ndd_nf},
     {NULL, NULL}};

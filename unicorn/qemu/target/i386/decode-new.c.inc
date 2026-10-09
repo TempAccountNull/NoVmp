@@ -6208,6 +6208,12 @@ static bool validate_apx_promoted(DisasContext *s, X86DecodedInsn *decode)
         if ((p2 & 0xe7) || ((p2 & 0x10) && e->op0 != X86_TYPE_B)) {
             goto illegal;
         }
+#if __Use_Original_Qemu != 1 /* ours (U793) */
+        /* U793: ADCX / ADOX {ND=1}: CPUID "APX_F and ADX and APX_NCI_NDD_NF" (APX 6.4 / 6.6) */
+        if ((p2 & 0x10) && !s->apx_nci) {
+            goto illegal;
+        }
+#endif /* __Use_Original_Qemu (U793) */
         if (!uses_v && s->vex_v != 0) {
             goto illegal;
         }
@@ -6233,6 +6239,15 @@ static bool validate_apx_promoted(DisasContext *s, X86DecodedInsn *decode)
         if ((p2 & 0xf3) || ((p2 & 0x04) && !nf_ok)) {
             goto illegal;
         }
+#if __Use_Original_Qemu != 1 /* ours (U793) */
+        /*
+         * U793: ANDN BEXTR BLSI BLSMSK BLSR BZHI: "APX_NCI_NDD_NF**" - "if SW is using the NF=1
+         * form, then APX_NCI_NDD_NF does need to be enumerated" (APX 6.8 note); NF = 0 does not
+         */
+        if ((p2 & 0x04) && !s->apx_nci) {
+            goto illegal;
+        }
+#endif /* __Use_Original_Qemu (U793) */
         if (!uses_v && s->vex_v != 0) {
             goto illegal;
         }
