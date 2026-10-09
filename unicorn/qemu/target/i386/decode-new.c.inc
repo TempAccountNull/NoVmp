@@ -6356,7 +6356,15 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
 #else /* ours (U616) */
         bool apx = (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F) != 0;
 
-        if ((reg_k || (reg_gpr && !apx)) && s->evex_rr) {
+        /*
+         * NoVmp (ledger U791): R' = 1 (EVEX.R4) with a k register in ModRM.reg is #UD while APX
+         * is not enabled (SDM Vol2A Table 2-41; APX spec 355828-009 3.1.4.2.1: "EVEX payload
+         * fields retain their current meanings if APX is not enabled"); with APX enabled it is
+         * an unused bit and ignored (3.1.2.3.3: "If any of the bits R4, B4, and X4 is not used
+         * by an EVEX instruction, it is ignored"): the run-time check below. R3 (EVEX.R = 1 for
+         * a k register) keeps its #UD.
+         */
+        if ((reg_k || reg_gpr) && !apx && s->evex_rr) {
             goto illegal;
         }
         /*
@@ -6374,7 +6382,7 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
             if (u0 && (s->modrm >> 6) == 3) {
                 goto illegal;
             }
-            if (b4 || u0 || (reg_gpr && s->evex_rr)) {
+            if (b4 || u0 || ((reg_gpr || reg_k) && s->evex_rr)) {   /* U791: + R4 with a k reg */
                 TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
                 gen_helper_apx_check(tcg_ctx, cpu_env);

@@ -18811,7 +18811,61 @@ static void test_x86_axc_wrss_paging(void)
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x62\xf4\xfd\x08\x65\x02"));
     OK(uc_close(r.uc));
 }
-/* ---- end U790 (axc_) ---- */
+
+/*
+ * U791: EVEX.R4 (R' = 1) with a k register in ModRM.reg (VPCMPEQD k, zmm2, zmm3, EVEX.512.66.0F.W0
+ * 76): #UD while APX is not enabled (SDM Vol2A Table 2-41; APX spec 3.1.4.2.1), ignored once it is
+ * (APX spec 3.1.2.3.3: an unused R4 is ignored; the k register number is ModRM.reg); EVEX.R (R3)
+ * with a k register stays #UD.
+ */
+#define AXC_PCMPEQD_K1      "\x62\xf1\x6d\x48\x76\xcb"     /* vpcmpeqd k1, zmm2, zmm3           */
+#define AXC_PCMPEQD_K1_R4   "\x62\xe1\x6d\x48\x76\xcb"     /* the same with R4 = 1              */
+#define AXC_PCMPEQD_K5_R4   "\x62\xe1\x6d\x48\x76\xeb"     /* vpcmpeqd k5, ... with R4 = 1      */
+#define AXC_PCMPEQD_K1_R3   "\x62\x71\x6d\x48\x76\xcb"     /* R3 = 1 (EVEX.R = 0 encoded): #UD   */
+
+static void test_x86_axc_evex_r4_kreg(void)
+{
+    ApxCtx c;
+    uint32_t z2[16], z3[16];
+    uint64_t xcr0;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        z2[i] = 0x01020304u * (uint32_t)(i + 1);
+        z3[i] = (i % 3 == 0) ? z2[i] : ~z2[i];      /* equal in lanes 0, 3, 6, 9, 12, 15 */
+    }
+    apx_open_avx512(&c, UC_X86_APX_F);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, z2));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, z3));
+    xcr0 = apx_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK((xcr0 & 0x800e7) == 0x800e7);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
+    apx_set(&c, UC_X86_REG_K5, 0);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K5_R4, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K5) == 0x9249);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R3, 6) == 6);
+    /* XCR0[19] = 0 (APX not enabled): the SDM rule, R4 = 1 #UD; R4 = 0 runs */
+    TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == 6);
+    apx_set(&c, UC_X86_REG_K1, 0);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
+    TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == -1);
+    OK(uc_close(c.uc));
+
+    /* no APX in the CPU model: R4 = 1 with a k register #UD (SDM Table 2-41) */
+    apx_open_avx512(&c, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, z2));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, z3));
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == 6);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U790-U791 (axc_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -19080,4 +19134,5 @@ TEST_LIST = {
     {"test_x86_fx3_cmpxchg_ro", test_x86_fx3_cmpxchg_ro},
     {"test_x86_fx3_vsib_pending_db", test_x86_fx3_vsib_pending_db},
     {"test_x86_axc_wrss_paging", test_x86_axc_wrss_paging},
+    {"test_x86_axc_evex_r4_kreg", test_x86_axc_evex_r4_kreg},
     {NULL, NULL}};
