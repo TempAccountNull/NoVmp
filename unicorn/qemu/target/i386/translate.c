@@ -3957,7 +3957,7 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
  * NoVmp (ledger U614): the opcodes a REX2 prefix may not precede (APX spec 355828-009
  * 3.1.2.1), B = the main opcode byte (+ 100H for REX2.M0 = 1, legacy map 1):
  *  - legacy map 0 rows 4xH, 7xH, AxH and ExH, map 1 rows 3xH and 8xH ("reserved under REX2
- *    and triggers #UD"). A1H (JMPABS, 3.1.3.3) is left to APX part 3 and stays #UD here;
+ *    and triggers #UD"). A1H with W = 0 is JMPABS (3.1.3.3, U644: taken before this check);
  *  - after REX2.M0 = 0 the escape 0FH ("REX2 prefix followed by 0x0F triggers #UD") and
  *    every prefix byte - 66H, 67H, F0H, F2H, F3H, the segment overrides, REX 4xH, VEX
  *    C4H/C5H, EVEX 62H, REX2 D5H - "must #UD, because none of those bytes is the opcode of
@@ -4776,6 +4776,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             s->rex_x = ((p & 0x02) << 2) | ((p & 0x20) >> 1);
             s->rex_b = ((p & 0x01) << 3) | (p & 0x10);
             b = x86_ldub_code(env, s) | ((p & 0x80) ? 0x100 : 0);
+#if __Use_Original_Qemu != 1 /* ours (U644) */
+            /*
+             * NoVmp (ledger U644): JMPABS target64 = REX2 with M0 = 0 and W = 0, opcode A1
+             * (APX spec 355828-009 3.1.3.3, Table 3.6, chapter 7.1, APX-LEGACY-JMPABS Table
+             * 4.20): the other payload bits are ignored, 66/67/F0/F2/F3 before it #UD (REX:
+             * above), segment overrides are ignored; W = 1 stays reserved (row Ax: #UD).
+             */
+            if (b == 0xa1 && !(p & 0x08)) {
+                if (prefixes & (PREFIX_DATA | PREFIX_ADR | PREFIX_LOCK
+                                | PREFIX_REPZ | PREFIX_REPNZ)) {
+                    goto illegal_op;
+                }
+                b = APX_OP_JMPABS;
+                break;
+            }
+#endif /* __Use_Original_Qemu (U644) */
             if (rex2_reserved(b)) {
                 goto illegal_op;
             }
@@ -9560,6 +9576,23 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         }
         break;
 #endif /* __Use_Original_Qemu (U640) */
+#if __Use_Original_Qemu != 1 /* ours (U644) */
+    case APX_OP_JMPABS:
+        /*
+         * NoVmp (ledger U644): JMPABS target64 (APX spec 7.1.3): "tempRIP = target64; IF
+         * tempRIP is not canonical THEN #GP(0) ELSE RIP = tempRIP" - a direct jump (no IBT
+         * tracking), 11 bytes, no flags affected.
+         */
+        {
+            uint64_t target = x86_ldq_code(env, s);
+
+            tcg_gen_movi_tl(tcg_ctx, s->T0, target);
+            gen_check_canonical_ip(s, s->T0);
+            gen_op_jmp_v(s, s->T0);
+            s->base.is_jmp = DISAS_JUMP;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U644) */
     default:
         goto unknown_op;
     }
