@@ -3664,12 +3664,74 @@ static inline void gen_stq_env_A0(DisasContext *s, int offset)
     tcg_gen_qemu_st_i64(tcg_ctx, s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U706) */
+/*
+ * NoVmp (ledger U706): a 16/32/64-byte vector load is a sequence of 8-byte loads; in 64-bit
+ * mode an operand whose first byte is canonical and whose last byte is not is #GP/#SS(0)
+ * before its first part is read (the i5-13600K; QEMU read the first part: #PF on a
+ * not-present canonical page). Returns the address of the first 8-byte load: A0, or the
+ * operand's last byte when the operand crosses into the non-canonical range, so that the
+ * first load takes the canonical fault (U51 picks #GP or #SS). No branch (the callers' temps
+ * stay live) and no helper call: the canonical width (48 or 57 bits, CR4.LA57) is read at run
+ * time. An aligned operand cannot cross a page; outside 64-bit mode addresses are 32-bit.
+ */
+static TCGv gen_vec_load_addr(DisasContext *s, int len)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv addr = tcg_temp_new(tcg_ctx);
+    TCGv last = tcg_temp_new(tcg_ctx);
+    TCGv n = tcg_temp_new(tcg_ctx);
+    TCGv hi = tcg_temp_new(tcg_ctx);
+    TCGv zero = tcg_constant_tl(tcg_ctx, 0);
+
+    /* n = 47 + 9 * CR4.LA57: bits 63:n of a canonical address are all equal */
+    tcg_gen_ld_tl(tcg_ctx, n, cpu_env, offsetof(CPUX86State, cr[4]));
+    tcg_gen_extract_tl(tcg_ctx, n, n, 12, 1);
+    tcg_gen_muli_tl(tcg_ctx, n, n, 9);
+    tcg_gen_addi_tl(tcg_ctx, n, n, 47);
+    tcg_gen_addi_tl(tcg_ctx, last, s->A0, len - 1);
+    /* the last byte, if its bits 63:n are not 0 ... */
+    tcg_gen_shr_tl(tcg_ctx, hi, last, n);
+    tcg_gen_movcond_tl(tcg_ctx, TCG_COND_NE, addr, hi, zero, last, s->A0);
+    /* ... while those of the first byte are 0 (a high canonical A0 cannot cross upwards) */
+    tcg_gen_shr_tl(tcg_ctx, hi, s->A0, n);
+    tcg_gen_movcond_tl(tcg_ctx, TCG_COND_NE, addr, hi, zero, s->A0, addr);
+    tcg_temp_free(tcg_ctx, hi);
+    tcg_temp_free(tcg_ctx, n);
+    tcg_temp_free(tcg_ctx, last);
+    return addr;
+}
+
+/* the first load's address: A0, or gen_vec_load_addr for an unaligned 64-bit operand */
+static TCGv gen_vec_load_first(DisasContext *s, bool align, int len)
+{
+    /* UC_TLB_VIRTUAL bypasses the x86 MMU: no canonical rule (as x86_ip_is_canonical) */
+    if (align || !CODE64(s) ||
+        s->uc->cpu->cc->tlb_fill != s->uc->cpu->cc->tlb_fill_cpu) {
+        return s->A0;
+    }
+    return gen_vec_load_addr(s, len);
+}
+#endif /* __Use_Original_Qemu (U706) */
+
 static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int mem_index = s->mem_index;
+#if __Use_Original_Qemu == 1 /* original QEMU (U706) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
                         MO_LEUQ | (align ? MO_ALIGN_16 : 0));
+#else /* ours (U706) */
+    {
+        TCGv first = gen_vec_load_first(s, align, 16);
+
+        tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, first, mem_index,
+                            MO_LEUQ | (align ? MO_ALIGN_16 : 0));
+        if (first != s->A0) {
+            tcg_temp_free(tcg_ctx, first);
+        }
+    }
+#endif /* __Use_Original_Qemu (U706) */
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(XMMReg, XMM_Q(0)));
     tcg_gen_addi_tl(tcg_ctx, s->tmp0, s->A0, 8);
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->tmp0, mem_index, MO_LEUQ);
@@ -3728,8 +3790,20 @@ static void gen_ldy_env_A0(DisasContext *s, int offset, bool align)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     int mem_index = s->mem_index;
+#if __Use_Original_Qemu == 1 /* original QEMU (U706) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
                         MO_LEUQ | (align ? MO_ALIGN_32 : 0));
+#else /* ours (U706) */
+    {
+        TCGv first = gen_vec_load_first(s, align, 32);
+
+        tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, first, mem_index,
+                            MO_LEUQ | (align ? MO_ALIGN_32 : 0));
+        if (first != s->A0) {
+            tcg_temp_free(tcg_ctx, first);
+        }
+    }
+#endif /* __Use_Original_Qemu (U706) */
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(YMMReg, YMM_Q(0)));
     tcg_gen_addi_tl(tcg_ctx, s->tmp0, s->A0, 8);
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->tmp0, mem_index, MO_LEUQ);
@@ -3777,8 +3851,20 @@ static void gen_ldz_env_A0(DisasContext *s, int offset, bool align)
     int mem_index = s->mem_index;
     int i;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U706) */
     tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, s->A0, mem_index,
                         MO_LEUQ | (align ? MO_ALIGN_64 : 0));
+#else /* ours (U706) */
+    {
+        TCGv first = gen_vec_load_first(s, align, 64);
+
+        tcg_gen_qemu_ld_i64(tcg_ctx, s->tmp1_i64, first, mem_index,
+                            MO_LEUQ | (align ? MO_ALIGN_64 : 0));
+        if (first != s->A0) {
+            tcg_temp_free(tcg_ctx, first);
+        }
+    }
+#endif /* __Use_Original_Qemu (U706) */
     tcg_gen_st_i64(tcg_ctx, s->tmp1_i64, cpu_env, offset + offsetof(ZMMReg, ZMM_Q(0)));
     for (i = 1; i < 8; i++) {
         tcg_gen_addi_tl(tcg_ctx, s->tmp0, s->A0, 8 * i);

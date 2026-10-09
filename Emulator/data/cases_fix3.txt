@@ -231,8 +231,9 @@ sgdt [rsi+0x7ff6] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => m+0xFFF6=
 # a memory source is read before the stack check, so a #PF leaves FSW, the tags and the
 # registers unchanged (also with FCW.IM = 0); a masked store response stores the indefinite
 # before FSW/C1/the stack change; an unmasked one (FCW = 37Eh) does not access memory (no
-# #PF). FSTP m80 [rsi+0x7ff8] is left out: its qword ends at the page end, where the
-# i5-13600K is not repeatable (docs\quirks.md, U480). Before U705: 23 of these 24 differed.
+# #PF). Left out because the i5-13600K is not repeatable there (docs\quirks.md): FSTP m80
+# [rsi+0x7ff8] (its qword ends at the page end, U480) and the unmasked FSTP m32 to the
+# unmapped page (no fault in 31 of 40 runs, #PF in 9). Before U705: all 23 differed.
 fadd dword ptr [rsi+0x8000] | cpl=3
 fcomp dword ptr [rsi+0x8000] | cpl=3
 fcom qword ptr [rsi+0x8000] | cpl=3
@@ -248,7 +249,6 @@ fist dword ptr [rsi+0x8000] | cpl=3
 fisttp qword ptr [rsi+0x8000] | cpl=3
 .byte 0xdb, 0xbe, 0x00, 0x80, 0x00, 0x00 | cpl=3
 .byte 0xdf, 0xb6, 0x00, 0x80, 0x00, 0x00 | cpl=3
-fstp dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
 fstp dword ptr [rsi+0x7ffe] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
 fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x8000] | cpl=3
 fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fild qword ptr [rsi+0x8000] | cpl=3
@@ -257,3 +257,37 @@ fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; .byte 0xdf, 0xa6, 0x00, 0x80, 0x
 fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x8000] | cpl=3 fcw=0x37E
 fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld1; fld dword ptr [rsi+0x7ffe] | cpl=3
 fadd dword ptr [rsi+0x7ffe] | cpl=3
+#
+# --- U706 a 64-bit data access whose first byte is canonical and whose last byte is not (an
+# operand across 0000_7FFF_FFFF_FFFFh; the canonical page is not present on the host and not
+# mapped in Unicorn) is #GP(0) before any byte is accessed (SDM Vol1 3.3.7.1, Vol2 "#GP(0) If
+# the memory address is in a non-canonical form"); Unicorn took the #PF of the canonical page.
+# Instructions the CPU splits itself (LSS / JMP FAR m16:64, FXSAVE/FXRSTOR, x87 m80) fault
+# on their lowest part first: #PF. FLD m80, FSTP m80 and FBLD are left out: the host gives
+# #PF or #GP from run to run (docs\quirks.md; FBLD read its bytes from the highest one down
+# and gave #GP). Before U706: 14 of these 23 hardware lines and the expected-value line differed.
+mov rax, qword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
+mov eax, dword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFE
+mov ax, word ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFF
+mov qword ptr [rcx], rax | cpl=3 rcx=0x00007FFFFFFFFFF9
+add qword ptr [rcx], rax | cpl=3 rcx=0x00007FFFFFFFFFFC
+movdqu xmm0, xmmword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF8
+movdqu xmm0, xmmword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF4
+movdqu xmmword ptr [rcx], xmm0 | cpl=3 rcx=0x00007FFFFFFFFFF8
+vmovdqu ymm0, ymmword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF0
+vmovdqu ymmword ptr [rcx], ymm0 | cpl=3 rcx=0x00007FFFFFFFFFE8
+movq xmm0, qword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
+paddb xmm0, xmmword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF8
+fxrstor [rcx] | cpl=3 rcx=0x00007FFFFFFFFE00
+fxsave [rcx] | cpl=3 rcx=0x00007FFFFFFFFE00
+lodsq | cpl=3 rsi=0x00007FFFFFFFFFFC
+stosq | cpl=3 rdi=0x00007FFFFFFFFFFC
+movsq | cpl=3 rsi=0x00007FFFFFFFFFFC
+cmpxchg8b qword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
+.byte 0x48, 0x0f, 0xb2, 0x01 | cpl=3 rcx=0x00007FFFFFFFFFF8
+.byte 0x48, 0xff, 0x29 | cpl=3 rcx=0x00007FFFFFFFFFF8
+vpgatherdd xmm0, [rcx+xmm2*1], xmm1 | cpl=3 rcx=0x00007FFFFFFFFFFC xmm0=11111111111111111111111111111111 xmm1=FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF xmm2=00000000000000000000000000000000
+vpgatherdd xmm0, [rcx+xmm2*1], xmm1 | cpl=3 rcx=0x00007FFFFFFFFFFE xmm0=11111111111111111111111111111111 xmm1=FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF xmm2=00000000000000000000000000000000
+mov rax, qword ptr [rcx] | cpl=3 rcx=0xFFFF7FFFFFFFFFFC
+# a stack reference (RSP base) is #SS(0) (U51); Windows reports #SS as an access violation, so expected value:
+mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC => #SS

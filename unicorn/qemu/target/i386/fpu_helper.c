@@ -150,6 +150,7 @@ static void x86_access_prepare(CPUX86State *env, target_ulong ptr, target_ulong 
     int mmu_idx = cpu_mmu_index(env, false);
     target_ulong p = ptr, l = len, n;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U706) */
     while (l) {
         n = TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK);
         if (n > l) {
@@ -159,15 +160,23 @@ static void x86_access_prepare(CPUX86State *env, target_ulong ptr, target_ulong 
         p += n;
         l -= n;
     }
-#if __Use_Original_Qemu != 1 /* ours (U480) */
-    for (p = ptr, l = len; l; p += n, l -= n) {
+#else /* ours (U480/U706) */
+    /*
+     * U706: page by page in address order, each page translated and (Unicorn) checked for
+     * being mapped before the next one: these helpers' instructions (FXSAVE/FXRSTOR, XSAVE,
+     * FSAVE/FRSTOR, FLDENV/FSTENV, FBLD, ...) are split by the CPU into parts, and the i5-13600K
+     * reports the fault of the lowest part first (FBLD across 0000_7FFF_FFFF_FFFFh: #PF on the
+     * not-present canonical page, not #GP; cases_fix3). Nothing is stored or loaded yet.
+     */
+    for (; l; p += n, l -= n) {
         n = TARGET_PAGE_SIZE - (p & ~TARGET_PAGE_MASK);
         if (n > l) {
             n = l;
         }
+        probe_access(env, p, (int)n, type, mmu_idx, ra);
         x86_access_unicorn_mapped(env, p, type, mmu_idx, ra);
     }
-#endif /* __Use_Original_Qemu (U480) */
+#endif /* __Use_Original_Qemu (U706) */
 }
 
 static floatx80 do_fldt(CPUX86State *env, target_ulong ptr, uintptr_t retaddr)
@@ -1702,7 +1711,7 @@ void helper_fbld_ST0(CPUX86State *env, target_ulong ptr)
     uint64_t val;
     unsigned int v;
     int i;
-
+#if __Use_Original_Qemu == 1 /* original QEMU (U706) */
     val = 0;
     for (i = 8; i >= 0; i--) {
         v = cpu_ldub_data_ra(env, ptr + i, GETPC());
@@ -1712,6 +1721,27 @@ void helper_fbld_ST0(CPUX86State *env, target_ulong ptr)
     if (cpu_ldub_data_ra(env, ptr + 9, GETPC()) & 0x80) {
         tmp = floatx80_chs(tmp);
     }
+#else /* ours (U706) */
+    /*
+     * U706: the 10-byte operand is read as bytes 7:0 and then bytes 9:8 (as FLD m80): an
+     * operand across a page boundary faults on its lower part first (i5-13600K: FBLD across
+     * 0000_7FFF_FFFF_FFFFh is #PF on the not-present canonical page, not #GP). QEMU read the
+     * bytes from the highest one down.
+     */
+    uintptr_t ra = GETPC();
+    uint64_t lo = cpu_ldq_data_ra(env, ptr, ra);
+    uint16_t hi = cpu_lduw_data_ra(env, ptr + 8, ra);
+
+    val = 0;
+    for (i = 8; i >= 0; i--) {
+        v = i < 8 ? (uint8_t)(lo >> (8 * i)) : (uint8_t)hi;
+        val = (val * 100) + ((v >> 4) * 10) + (v & 0xf);
+    }
+    tmp = int64_to_floatx80(val, &env->fp_status);
+    if ((hi >> 8) & 0x80) {
+        tmp = floatx80_chs(tmp);
+    }
+#endif /* __Use_Original_Qemu (U706) */
     fpush(env);
     ST0 = tmp;
 }

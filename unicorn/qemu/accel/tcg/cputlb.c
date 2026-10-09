@@ -1780,6 +1780,15 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         cpu_tcg_unaligned_access(env_cpu(env), addr, access_type,
                                  mmu_idx, retaddr);
     }
+#if __Use_Original_Qemu != 1 /* ours (U706) */
+#if defined(TARGET_I386)
+    /* a page-crossing access that ends in the non-canonical range: #GP/#SS(0) first (U706) */
+    if (size > 1 && !code_read &&
+        unlikely((addr & ~TARGET_PAGE_MASK) + size - 1 >= TARGET_PAGE_SIZE)) {
+        x86_check_canonical_range(env, addr, (uint32_t)size, retaddr);
+    }
+#endif
+#endif /* __Use_Original_Qemu (U706) */
 
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(env->uc, tlb_addr, addr)) {
@@ -2393,6 +2402,15 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         cpu_tcg_unaligned_access(env_cpu(env), addr, MMU_DATA_STORE,
                                  mmu_idx, retaddr);
     }
+#if __Use_Original_Qemu != 1 /* ours (U706) */
+#if defined(TARGET_I386)
+    /* a page-crossing store that ends in the non-canonical range: #GP/#SS(0) first (U706) */
+    if (size > 1 &&
+        unlikely((addr & ~TARGET_PAGE_MASK) + size - 1 >= TARGET_PAGE_SIZE)) {
+        x86_check_canonical_range(env, addr, (uint32_t)size, retaddr);
+    }
+#endif
+#endif /* __Use_Original_Qemu (U706) */
 
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(env->uc, tlb_addr, addr)) {

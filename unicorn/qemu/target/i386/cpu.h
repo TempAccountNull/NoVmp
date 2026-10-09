@@ -2411,6 +2411,11 @@ void host_vendor_fms(char *vendor, int *family, int *model, int *stepping);
 bool x86_ip_is_canonical(CPUX86State *env, target_ulong ip);
 
 #endif /* __Use_Original_Qemu (U52) */
+#if __Use_Original_Qemu != 1 /* ours (U706) */
+/* excp_helper.c: #GP/#SS(0) for a 64-bit access whose last byte is not canonical */
+void x86_check_canonical_range(CPUX86State *env, target_ulong addr, uint32_t size,
+                               uintptr_t ra);
+#endif /* __Use_Original_Qemu (U706) */
 bool x86_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                       MMUAccessType access_type, int mmu_idx,
                       bool probe, uintptr_t retaddr);

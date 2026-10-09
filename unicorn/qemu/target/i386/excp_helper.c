@@ -1011,6 +1011,43 @@ void helper_check_canonical_ip(CPUX86State *env, target_ulong ip)
     }
 }
 
+/*
+ * NoVmp (ledger U706): a data access in 64-bit mode whose first byte is canonical and whose
+ * last byte is not (an operand across 0000_7FFF_FFFF_FFFFh) is a non-canonical reference:
+ * #GP(0), #SS(0) for a stack reference (U51), before any byte is accessed (SDM Vol1 3.3.7.1;
+ * Vol2 "#GP(0) If the memory address is in a non-canonical form"). The i5-13600K raises it even
+ * when the canonical part is on a not-present page (MOV, MOVDQU, VMOVDQU, the string
+ * instructions, CMPXCHG8B, ...: cases_fix3); QEMU accessed the canonical page first (#PF).
+ * Called by load_helper / store_helper for page-crossing accesses (the translator's split
+ * vector loads aim their first part at the last byte instead: gen_vec_load_addr). Instructions
+ * that the CPU itself splits (FLD m80, FBLD, far pointers, FXSAVE/FXRSTOR, ...) fault on their
+ * parts in order.
+ */
+void x86_check_canonical_range(CPUX86State *env, target_ulong addr, uint32_t size,
+                               uintptr_t ra)
+{
+    CPUState *cs = env_cpu(env);
+    int shift = env->cr[4] & CR4_LA57_MASK ? 56 : 47;
+    int64_t first = (int64_t)addr >> shift;
+    int64_t last = (int64_t)(addr + size - 1) >> shift;
+    int excp = EXCP0D_GPF;
+
+    if (!(env->hflags & HF_CS64_MASK) || size < 2 ||
+        env->uc->cpu->cc->tlb_fill != env->uc->cpu->cc->tlb_fill_cpu) {
+        return;     /* compatibility mode: 32-bit addresses; UC_TLB_VIRTUAL: no canonical rule */
+    }
+    if (!(first == 0 || first == -1) || last == 0 || last == -1) {
+        return;     /* a non-canonical first byte faults in the MMU (U51) */
+    }
+    if (ra && cpu_restore_state(cs, ra, true)) {
+        if (x86_canonical_fault_is_ss(env, addr)) {
+            excp = EXCP0C_STACK;
+        }
+        raise_exception_err(env, excp, 0);
+    }
+    raise_exception_err_ra(env, excp, 0, ra);
+}
+
 #endif /* __Use_Original_Qemu (U51/U52) */
 bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
                       MMUAccessType access_type, int mmu_idx,
