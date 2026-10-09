@@ -598,7 +598,34 @@ static int exception_has_error_code(int intno)
 
 /* in 64-bit machines, this can overflow. So this segment addition macro
  * can be used to trim the value to 32-bit whenever needed */
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
 #define SEG_ADDL(ssp, sp, sp_mask) ((uint32_t)((ssp) + (sp & (sp_mask))))
+#else /* ours (U591) */
+/*
+ * NoVmp (ledger U591): a 64-bit all-ones sp_mask is the 64-bit stack pointer of 64-bit mode
+ * (SDM Vol2B POP: "in 64-bit mode, the size of the stack pointer is always 64 bits"), also
+ * for the 16/32-bit pops and pushes of RETF/IRET/far CALL there: no 32-bit wrap of the
+ * address. Every other mask (FFFFh, FFFFFFFFh: SS.B outside 64-bit mode) wraps as before.
+ */
+#define SEG_ADDL(ssp, sp, sp_mask)                                              \
+    ((target_ulong)(sp_mask) == ~(target_ulong)0 ? (target_ulong)((ssp) + (sp)) \
+                                                 : (target_ulong)(uint32_t)((ssp) + ((sp) & (sp_mask))))
+
+/*
+ * NoVmp (ledger U591): the stack of a far transfer that starts in 64-bit mode is RSP with all
+ * 64 bits and SS.base 0 (SDM Vol1 7.3.1.5, Vol3A 3.4.4), whatever the operand size and SS.B
+ * (Unicorn's reset leaves the SS cache zero: B = 0 would mean SP, a 16-bit stack pointer).
+ */
+static inline target_ulong x86_stack_mask64(CPUX86State *env, uint32_t ss_flags)
+{
+#ifdef TARGET_X86_64
+    if (env->hflags & HF_CS64_MASK) {
+        return ~(target_ulong)0;
+    }
+#endif
+    return get_sp_mask(ss_flags);
+}
+#endif /* __Use_Original_Qemu (U591) */
 
 /* XXX: add a is_user flag to have proper security support */
 #define PUSHW_RA(ssp, sp, sp_mask, val, ra)                      \
@@ -1855,7 +1882,13 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 {
     int new_stack, i;
     uint32_t e1, e2, cpl, dpl, rpl, selector, param_count;
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
     uint32_t ss = 0, ss_e1 = 0, ss_e2 = 0, type, ss_dpl, sp_mask;
+#else /* ours (U591) */
+    /* sp_mask all ones (64 bits) = the 64-bit stack pointer of 64-bit mode (SEG_ADDL) */
+    uint32_t ss = 0, ss_e1 = 0, ss_e2 = 0, type, ss_dpl;
+    target_ulong sp_mask;
+#endif /* __Use_Original_Qemu (U591) */
     uint32_t val, limit, old_sp_mask;
     target_ulong ssp, old_ssp, offset, sp;
 
@@ -1919,8 +1952,14 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
 #endif
         {
             sp = env->regs[R_ESP];
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
             sp_mask = get_sp_mask(env->segs[R_SS].flags);
             ssp = env->segs[R_SS].base;
+#else /* ours (U591) */
+            /* CALL FAR m16:32 / m16:16 in 64-bit mode pushes through RSP (SS.base 0) */
+            sp_mask = x86_stack_mask64(env, env->segs[R_SS].flags);
+            ssp = (env->hflags & HF_CS64_MASK) ? 0 : env->segs[R_SS].base;
+#endif /* __Use_Original_Qemu (U591) */
             /* backport e136648c5c (U481): at the current CPL */
             if (shift) {
                 PUSHL_PL(ssp, sp, sp_mask, env->segs[R_CS].selector, cpl, GETPC());
@@ -1931,7 +1970,17 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             }
 
             limit = get_seg_limit(e1, e2);
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
             if (new_eip > limit) {
+#else /* ours (U591) */
+            /*
+             * SDM Vol2A CALL (CONFORMING/NONCONFORMING-CODE-SEGMENT): the limit is checked
+             * only "IF (IA32_EFER.LMA = 0 or target mode = Compatibility mode)": a 64-bit
+             * target (Windows' 33h has limit 0) is not limit-checked, as for far JMP above
+             */
+            if (new_eip > limit &&
+                (!(env->hflags & HF_LMA_MASK) || !(e2 & DESC_L_MASK))) {
+#endif /* __Use_Original_Qemu (U591) */
                 raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
             }
             /* from this point, not restartable */
@@ -2110,7 +2159,15 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
         } else {
             /* to same privilege */
             sp = env->regs[R_ESP];
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
             sp_mask = get_sp_mask(env->segs[R_SS].flags);
+#else /* ours (U591) */
+            /*
+             * a 64-bit call gate (IA-32e mode, shift 2) pushes 8-byte slots through RSP; SS.B
+             * must not truncate RSP afterwards (SET_ESP)
+             */
+            sp_mask = shift == 2 ? ~(target_ulong)0 : get_sp_mask(env->segs[R_SS].flags);
+#endif /* __Use_Original_Qemu (U591) */
             ssp = env->segs[R_SS].base;
             /* push_size = (4 << shift); */
             new_stack = 0;
@@ -2249,10 +2306,20 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
     } else
 #endif
     {
+#if __Use_Original_Qemu == 1 /* original QEMU (U591) */
         sp_mask = get_sp_mask(env->segs[R_SS].flags);
+#else /* ours (U591) */
+        /* RETF/IRET with a 16/32-bit operand in 64-bit mode still pop through RSP */
+        sp_mask = x86_stack_mask64(env, env->segs[R_SS].flags);
+#endif /* __Use_Original_Qemu (U591) */
     }
     sp = env->regs[R_ESP];
     ssp = env->segs[R_SS].base;
+#if __Use_Original_Qemu != 1 /* ours (U591) */
+    if (env->hflags & HF_CS64_MASK) {
+        ssp = 0;    /* SS.base is not used in 64-bit mode */
+    }
+#endif /* __Use_Original_Qemu (U591) */
     new_eflags = 0; /* avoid warning */
 #ifdef TARGET_X86_64
     if (shift == 2) {

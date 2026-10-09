@@ -13990,8 +13990,8 @@ static void test_x86_bp_tcg_temp_overflow(void)
  * stops; raw Unicorn reports #UD as UC_ERR_INSN_INVALID instead.
  *   GDT: 08h code32 DPL0, 10h data DPL0, 1Bh code32 DPL3, 23h data DPL3,
  *        28h code64 DPL0, 33h code64 DPL3, 38h+ free for per-test descriptors.
- * 32-bit mode: SS/DS/ES = 10h. 64-bit mode: reset leaves the SS cache zero, so
- * the helpers that pop with the SS.B mask (IRETD) need a stack below 64 KiB.
+ * 32-bit mode: SS/DS/ES = 10h. 64-bit mode: reset leaves the SS cache zero (B = 0);
+ * since U591 IRETD/RETF/far CALL use the 64-bit RSP there (BP_STACK16 is not needed).
  */
 #define BP_STACK16 0xe000
 #define BP_GDT 0x2000
@@ -15605,6 +15605,163 @@ static void test_x86_f2_lss_rexw(void)
     }
 }
 
+/*
+ * U591 (ours, SDM Vol2B POP / Vol1 7.3.1.5): in 64-bit mode RETF/IRET/far CALL with a
+ * 16/32-bit operand size still use the 64-bit RSP (SS.B and SS.base ignored). Cases: the
+ * zeroed SS cache after reset (B = 0) with RSP above 64 KiB, and RSP above 4 GiB with a
+ * flat SS (B = 1); also the RSP update of a same-privilege 64-bit call gate.
+ */
+#define F2_HI 0x100000000ULL /* 64 KiB mapped above 4 GiB */
+#define F2_HI_RSP (F2_HI + 0x8000)
+
+static void f2_open_hi(BpCpu *c, int load_ss)
+{
+    bp_open(c, UC_MODE_64, -1);
+    OK(uc_mem_map(c->uc, F2_HI, 0x10000, UC_PROT_ALL));
+    if (load_ss) {
+        uint16_t sel = 0x10;
+
+        OK(uc_reg_write(c->uc, UC_X86_REG_SS, &sel));
+    }
+}
+
+static void test_x86_f2_stack64(void)
+{
+    BpCpu c;
+    uint64_t rsp, rip;
+    uint32_t f32[5];
+    uint16_t f16[2];
+    uint32_t got[2];
+    uint8_t far_ptr[6];
+    uint64_t gate[2];
+
+    /* (a) IRETD at CPL0, SS cache zero (B = 0), RSP = BP_STACK (above 64 KiB) */
+    bp_open(&c, UC_MODE_64, -1);
+    f32[0] = BP_CODE + 0x40; f32[1] = 0x28; f32[2] = 0x2; f32[3] = BP_STACK - 0x40; f32[4] = 0x10;
+    OK(uc_mem_write(c.uc, BP_STACK, f32, sizeof(f32)));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcf", 1));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == BP_STACK - 0x40 &&
+               bp_seg(&c, UC_X86_REG_CS) == 0x28 && bp_seg(&c, UC_X86_REG_SS) == 0x10);
+    TEST_MSG("(a) IRETD zero SS cache: intr %u/%u rip %llx rsp %llx cs %04x ss %04x", c.count,
+             c.intno, (unsigned long long)rip, (unsigned long long)rsp,
+             bp_seg(&c, UC_X86_REG_CS), bp_seg(&c, UC_X86_REG_SS));
+    OK(uc_close(c.uc));
+
+    /* (b) IRETD at CPL0, flat SS (B = 1), RSP above 4 GiB */
+    f2_open_hi(&c, 1);
+    f32[3] = 0x12345678;
+    OK(uc_mem_write(c.uc, F2_HI_RSP, f32, sizeof(f32)));
+    bp_set(&c, UC_X86_REG_RSP, F2_HI_RSP);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcf", 1));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == 0x12345678);
+    TEST_MSG("(b) IRETD RSP > 4 GiB: intr %u/%u rip %llx rsp %llx", c.count, c.intno,
+             (unsigned long long)rip, (unsigned long long)rsp);
+    OK(uc_close(c.uc));
+
+    /* (c) RETF (32-bit operand), same privilege, RSP above 4 GiB: RSP + 8, all 64 bits */
+    f2_open_hi(&c, 1);
+    OK(uc_mem_write(c.uc, F2_HI_RSP, f32, 8));
+    bp_set(&c, UC_X86_REG_RSP, F2_HI_RSP);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xcb", 1));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == F2_HI_RSP + 8 &&
+               bp_seg(&c, UC_X86_REG_CS) == 0x28);
+    TEST_MSG("(c) RETF RSP > 4 GiB: intr %u/%u rip %llx rsp %llx", c.count, c.intno,
+             (unsigned long long)rip, (unsigned long long)rsp);
+    OK(uc_close(c.uc));
+
+    /* (d) RETF 16-bit operand (66 CB), zero SS cache, RSP = BP_STACK: RSP + 4 */
+    bp_open(&c, UC_MODE_64, -1);
+    f16[0] = 0x40; f16[1] = 0x28;   /* the 16-bit IP: code at 40h */
+    OK(uc_mem_write(c.uc, BP_STACK, f16, sizeof(f16)));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE, "\x66\xcb", 2));
+    OK(uc_mem_write(c.uc, 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == 0x41 && rsp == BP_STACK + 4);
+    TEST_MSG("(d) RETF16 zero SS cache: intr %u/%u rip %llx rsp %llx", c.count, c.intno,
+             (unsigned long long)rip, (unsigned long long)rsp);
+    OK(uc_close(c.uc));
+
+    /* (e) CALL FAR m16:32 (FF 1B), RSP above 4 GiB: CS:EIP pushed at RSP - 8, RSP - 8 */
+    f2_open_hi(&c, 1);
+    far_ptr[0] = 0x40; far_ptr[1] = 0x00; far_ptr[2] = 0x01; far_ptr[3] = 0x00; /* BP_CODE+0x40 */
+    far_ptr[4] = 0x28; far_ptr[5] = 0x00;
+    OK(uc_mem_write(c.uc, BP_DATA, far_ptr, sizeof(far_ptr)));
+    bp_set(&c, UC_X86_REG_RBX, BP_DATA);
+    bp_set(&c, UC_X86_REG_RSP, F2_HI_RSP);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xff\x1b", 2));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    memset(got, 0, sizeof(got));
+    OK(uc_mem_read(c.uc, F2_HI_RSP - 8, got, sizeof(got)));
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == F2_HI_RSP - 8 &&
+               got[0] == BP_CODE + 2 && (got[1] & 0xffff) == 0);
+    TEST_MSG("(e) CALL FAR m16:32 RSP > 4 GiB: intr %u/%u rip %llx rsp %llx pushed %08x %08x",
+             c.count, c.intno, (unsigned long long)rip, (unsigned long long)rsp, got[0], got[1]);
+    OK(uc_close(c.uc));
+
+    /* (f) same-privilege 64-bit call gate (48h -> code64 28h), RSP above 4 GiB: RSP - 16 */
+    f2_open_hi(&c, 1);
+    gate[0] = (uint64_t)((BP_CODE + 0x40) & 0xffff) | ((uint64_t)0x28 << 16) |
+              ((uint64_t)0x8c << 40) | ((uint64_t)((BP_CODE + 0x40) >> 16) << 48);
+    gate[1] = 0;
+    OK(uc_mem_write(c.uc, BP_GDT + 8 * 9, gate, sizeof(gate)));
+    far_ptr[0] = 0; far_ptr[1] = 0; far_ptr[2] = 0; far_ptr[3] = 0;
+    far_ptr[4] = 0x48; far_ptr[5] = 0x00;
+    OK(uc_mem_write(c.uc, BP_DATA, far_ptr, sizeof(far_ptr)));
+    bp_set(&c, UC_X86_REG_RBX, BP_DATA);
+    bp_set(&c, UC_X86_REG_RSP, F2_HI_RSP);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xff\x1b", 2));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == F2_HI_RSP - 16);
+    TEST_MSG("(f) call gate RSP > 4 GiB: intr %u/%u rip %llx rsp %llx", c.count, c.intno,
+             (unsigned long long)rip, (unsigned long long)rsp);
+    OK(uc_close(c.uc));
+
+    /*
+     * (g) CALL FAR m16:32 to a 64-bit code segment with limit 0 (like Windows' 33h): no limit
+     * check for a 64-bit target (SDM Vol2A CALL: only with LMA = 0 or a compatibility-mode
+     * target)
+     */
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set_gdt_entry(&c, 11, 0x00209B0000000000ULL);
+    far_ptr[0] = 0x40; far_ptr[1] = 0x00; far_ptr[2] = 0x01; far_ptr[3] = 0x00;
+    far_ptr[4] = 0x58; far_ptr[5] = 0x00;
+    OK(uc_mem_write(c.uc, BP_DATA, far_ptr, sizeof(far_ptr)));
+    bp_set(&c, UC_X86_REG_RBX, BP_DATA);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    OK(uc_mem_write(c.uc, BP_CODE, "\xff\x1b", 2));
+    OK(uc_mem_write(c.uc, BP_CODE + 0x40, "\x90", 1));
+    OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x41, 0, 2));
+    rsp = bp_get(&c, UC_X86_REG_RSP);
+    rip = bp_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(c.count == 0 && rip == BP_CODE + 0x41 && rsp == BP_STACK - 8 &&
+               bp_seg(&c, UC_X86_REG_CS) == 0x58);
+    TEST_MSG("(g) CALL FAR to a limit-0 64-bit CS: intr %u/%u rip %llx rsp %llx", c.count,
+             c.intno, (unsigned long long)rip, (unsigned long long)rsp);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U590-U609 (f2_) ---- */
 
 TEST_LIST = {
@@ -15838,4 +15995,5 @@ TEST_LIST = {
     {"test_x86_m4a_gating", test_x86_m4a_gating},
     {"test_x86_m4a_values", test_x86_m4a_values},
     {"test_x86_f2_lss_rexw", test_x86_f2_lss_rexw},
+    {"test_x86_f2_stack64", test_x86_f2_stack64},
     {NULL, NULL}};
