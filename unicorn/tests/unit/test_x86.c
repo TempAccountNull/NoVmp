@@ -19950,6 +19950,160 @@ static void test_x86_rg_cpuid_0d1_ebx(void)
     TEST_CHECK(r[0] != 0 && r[1] == 0);
 }
 
+/* U835: the seeded model's n-th value (n = 1, 2, ...), an independent SplitMix64 */
+static uint64_t rg_splitmix(uint64_t seed, uint64_t n)
+{
+    uint64_t z = seed + n * 0x9e3779b97f4a7c15ULL;
+
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+/* rdrand rax; pushfq; pop r8; rdseed rbx; pushfq; pop r9; rdrand ecx; rdrand dx */
+static const char rg_rdrand_code[] = "\x48\x0f\xc7\xf0\x9c\x41\x58\x48\x0f\xc7\xfb\x9c\x41\x59"
+                                     "\x0f\xc7\xf1\x66\x0f\xc7\xf2";
+
+static void rg_rdrand_run(uc_engine *uc, uint64_t r[6])
+{
+    uint64_t v = 0x7000, ones = ~0ULL;
+
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &v));
+    OK(uc_reg_write(uc, UC_X86_REG_RCX, &ones));
+    OK(uc_reg_write(uc, UC_X86_REG_RDX, &ones));
+    OK(uc_emu_start(uc, code_start, code_start + sizeof(rg_rdrand_code) - 1, 0, 0));
+    r[0] = nk_reg(uc, UC_X86_REG_RAX);
+    r[1] = nk_reg(uc, UC_X86_REG_RBX);
+    r[2] = nk_reg(uc, UC_X86_REG_RCX);
+    r[3] = nk_reg(uc, UC_X86_REG_RDX);
+    r[4] = nk_reg(uc, UC_X86_REG_R8);  /* RFLAGS after RDRAND */
+    r[5] = nk_reg(uc, UC_X86_REG_R9);  /* RFLAGS after RDSEED */
+}
+
+static uc_engine *rg_rdrand_open(int set, int mode, uint64_t seed)
+{
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (set) {
+        OK(uc_ctl_set_x86_rdrand(uc, mode, seed)); /* before init */
+    }
+    OK(uc_mem_map(uc, code_start, 0x8000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, rg_rdrand_code, sizeof(rg_rdrand_code) - 1));
+    return uc;
+}
+
+/*
+ * U835 (decision D8): UC_CTL_X86_RDRAND. Default = seeded model, seed 0: RDRAND and RDSEED
+ * draw SplitMix64(seed + n * 9E3779B97F4A7C15h), n = 1, 2, ... in program order, truncated to
+ * the operand size (a 32-bit destination zero-extends, a 16-bit one keeps bits 63:16), CF = 1
+ * and OF SF ZF AF PF = 0. Same seed -> same values; another seed -> other values; writing the
+ * control after init restarts the sequence; invalid modes are rejected.
+ */
+static void test_x86_rg_rdrand_seeded(void)
+{
+    uc_engine *uc;
+    uint64_t r[6], r2[6], seed = 1;
+    int mode = -1;
+
+    uc = rg_rdrand_open(0, 0, 0);
+    OK(uc_ctl_get_x86_rdrand(uc, &mode, &seed));
+    TEST_CHECK(mode == UC_X86_RDRAND_SEEDED && seed == 0);
+    rg_rdrand_run(uc, r);
+    TEST_CHECK(r[0] == rg_splitmix(0, 1) && r[0] == 0xe220a8397b1dcdafULL);
+    TEST_CHECK(r[1] == rg_splitmix(0, 2));
+    TEST_CHECK(r[2] == (uint32_t)rg_splitmix(0, 3));
+    TEST_CHECK(r[3] == (0xffffffffffff0000ULL | (uint16_t)rg_splitmix(0, 4)));
+    TEST_CHECK((r[4] & 0x8d5) == 1 && (r[5] & 0x8d5) == 1); /* CF = 1, OF SF ZF AF PF = 0 */
+    TEST_MSG("rax %016" PRIx64 " rbx %016" PRIx64 " rcx %016" PRIx64 " rdx %016" PRIx64
+             " flags %" PRIx64 " %" PRIx64, r[0], r[1], r[2], r[3], r[4], r[5]);
+    /* the same program again continues the sequence (values 5..8) */
+    rg_rdrand_run(uc, r);
+    TEST_CHECK(r[0] == rg_splitmix(0, 5) && r[1] == rg_splitmix(0, 6));
+    /* written after init: the sequence restarts from the new seed */
+    OK(uc_ctl_set_x86_rdrand(uc, UC_X86_RDRAND_SEEDED, 0x1234));
+    rg_rdrand_run(uc, r);
+    TEST_CHECK(r[0] == rg_splitmix(0x1234, 1) && r[1] == rg_splitmix(0x1234, 2));
+    OK(uc_ctl_get_x86_rdrand(uc, &mode, &seed));
+    TEST_CHECK(mode == UC_X86_RDRAND_SEEDED && seed == 0x1234);
+    TEST_CHECK(uc_ctl_set_x86_rdrand(uc, 2, 0) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_rdrand(uc, -1, 0) == UC_ERR_ARG);
+    OK(uc_close(uc));
+
+    /* written before init: two engines with the same seed draw the same values */
+    uc = rg_rdrand_open(1, UC_X86_RDRAND_SEEDED, 0xfeedULL);
+    rg_rdrand_run(uc, r);
+    OK(uc_close(uc));
+    uc = rg_rdrand_open(1, UC_X86_RDRAND_SEEDED, 0xfeedULL);
+    rg_rdrand_run(uc, r2);
+    OK(uc_close(uc));
+    TEST_CHECK(memcmp(r, r2, sizeof(r)) == 0);
+    TEST_CHECK(r[0] == rg_splitmix(0xfeed, 1));
+    /* another seed: other values */
+    uc = rg_rdrand_open(1, UC_X86_RDRAND_SEEDED, 0xbeefULL);
+    rg_rdrand_run(uc, r2);
+    OK(uc_close(uc));
+    TEST_CHECK(r2[0] != r[0] && r2[1] != r[1]);
+}
+
+/*
+ * U835: the seed and the draw count are part of uc_context: a context saved after the first
+ * run replays the second run's values after a restore, also when the mode was switched to
+ * the host DRNG (or reseeded) in between.
+ */
+static void test_x86_rg_rdrand_context(void)
+{
+    uc_engine *uc = rg_rdrand_open(1, UC_X86_RDRAND_SEEDED, 77);
+    uc_context *ctx;
+    uint64_t r[6], second[6], again[6], seed = 0;
+    int mode = -1;
+
+    rg_rdrand_run(uc, r);
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    rg_rdrand_run(uc, second);
+    TEST_CHECK(second[0] == rg_splitmix(77, 5));
+    OK(uc_ctl_set_x86_rdrand(uc, UC_X86_RDRAND_HOST, 0));
+    rg_rdrand_run(uc, again);
+    OK(uc_context_restore(uc, ctx));
+    OK(uc_ctl_get_x86_rdrand(uc, &mode, &seed));
+    TEST_CHECK(mode == UC_X86_RDRAND_SEEDED && seed == 77);
+    rg_rdrand_run(uc, again);
+    TEST_CHECK(memcmp(second, again, sizeof(second)) == 0);
+    TEST_MSG("second run %016" PRIx64 " %016" PRIx64 ", replay %016" PRIx64 " %016" PRIx64,
+             second[0], second[1], again[0], again[1]);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
+/*
+ * U835: UC_X86_RDRAND_HOST takes the values from the host CPU's RDRAND / RDSEED (the build
+ * host, an i5-13600K, has both): values differ between draws and engines, the flags are
+ * CF = 1 / others 0 on success, or CF = 0 with a 0 destination when the host DRNG reports an
+ * underflow (allowed for RDSEED; never seen for RDRAND).
+ */
+static void test_x86_rg_rdrand_host(void)
+{
+    uc_engine *uc = rg_rdrand_open(1, UC_X86_RDRAND_HOST, 0);
+    uint64_t r[6], r2[6], seed = 1;
+    int mode = -1, i, ok_seed = 0;
+
+    OK(uc_ctl_get_x86_rdrand(uc, &mode, &seed));
+    TEST_CHECK(mode == UC_X86_RDRAND_HOST && seed == 0);
+    rg_rdrand_run(uc, r);
+    TEST_CHECK((r[4] & 0x8d5) == 1);
+    TEST_CHECK(r[0] != rg_splitmix(0, 1));
+    TEST_CHECK((r[5] & 0x8d5) == 1 || ((r[5] & 0x8d5) == 0 && r[1] == 0));
+    for (i = 0; i < 4; i++) {
+        rg_rdrand_run(uc, r2);
+        TEST_CHECK((r2[4] & 0x8d5) == 1 && r2[0] != r[0]);
+        ok_seed += (r2[5] & 1) != 0;
+    }
+    TEST_CHECK(ok_seed > 0); /* RDSEED succeeded at least once */
+    OK(uc_close(uc));
+}
+
 /* ---- end U830-U849 (rg_) ---- */
 
 TEST_LIST = {
@@ -20229,4 +20383,7 @@ TEST_LIST = {
     {"test_x86_rg_context_reg_write", test_x86_rg_context_reg_write},
     {"test_x86_rg_context_tlb", test_x86_rg_context_tlb},
     {"test_x86_rg_cpuid_0d1_ebx", test_x86_rg_cpuid_0d1_ebx},
+    {"test_x86_rg_rdrand_seeded", test_x86_rg_rdrand_seeded},
+    {"test_x86_rg_rdrand_context", test_x86_rg_rdrand_context},
+    {"test_x86_rg_rdrand_host", test_x86_rg_rdrand_host},
     {NULL, NULL}};

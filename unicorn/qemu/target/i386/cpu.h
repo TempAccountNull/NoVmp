@@ -2100,6 +2100,15 @@ typedef struct CPUX86State {
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     uint64_t pasid;   /* IA32_PASID (D93H): 19:0 PASID, 31 valid */
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U835) */
+    /*
+     * NoVmp (ledger U835): RDRAND/RDSEED source (UC_CTL_X86_RDRAND). Kept across a CPU reset
+     * (configuration, like the CPU model) and carried by uc_context (U832 restore list).
+     */
+    uint64_t rdrand_seed;   /* the seeded model's seed */
+    uint64_t rdrand_count;  /* values drawn since the seed was set */
+    uint8_t rdrand_host;    /* 1 = the host CPU's DRNG (UC_X86_RDRAND_HOST) */
+#endif /* __Use_Original_Qemu (U835) */
 
     TPRAccess tpr_access_type;
 

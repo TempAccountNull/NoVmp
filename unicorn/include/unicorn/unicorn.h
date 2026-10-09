@@ -768,7 +768,24 @@ typedef enum uc_control_type {
     // Other values -> UC_ERR_ARG. Only before the engine is initialised, like
     // UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_APX,
+    // x86 only (NoVmp U835, decision D8): where RDRAND and RDSEED take their values.
+    // UC_X86_RDRAND_SEEDED (the default, seed 0): a deterministic model - the n-th value
+    // drawn (n = 0, 1, ...; RDRAND and RDSEED share one sequence) is SplitMix64 of
+    // seed + (n + 1) * 9E3779B97F4A7C15h, truncated to the operand size, and CF = 1 (the
+    // instruction always succeeds). The seed and the count of values drawn are CPU state:
+    // uc_context_save / uc_context_restore carry them, so a restored context replays the same
+    // values. UC_X86_RDRAND_HOST: the host CPU's DRNG - RDRAND / RDSEED executed on the host
+    // (selected at run time from the host CPUID), value and CF as the host returns them (CF = 0
+    // and 0 on a host DRNG underflow); without the host instruction, the OS generator with
+    // CF = 1. Writing sets the mode and the seed and restarts the sequence (count 0); it can
+    // be done at any time. Other modes -> UC_ERR_ARG.
+    // Write: @args = (int mode, uint64_t seed); Read: @args = (int *mode, uint64_t *seed)
+    UC_CTL_X86_RDRAND,
 } uc_control_type;
+
+// UC_CTL_X86_RDRAND modes (NoVmp U835)
+#define UC_X86_RDRAND_SEEDED 0     // deterministic seeded model (default)
+#define UC_X86_RDRAND_HOST 1       // the host CPU's hardware DRNG
 
 // UC_CTL_X86_AVX512 values (NoVmp U128)
 #define UC_X86_AVX512_F 1  // AVX512F (state components 5-7, opmask W forms)
@@ -921,6 +938,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_APX, 1), (on))
 #define uc_ctl_get_x86_apx(uc, on)                                             \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_APX, 1), (on))
+#define uc_ctl_set_x86_rdrand(uc, mode, seed)                                  \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_RDRAND, 2), (int)(mode), (uint64_t)(seed))
+#define uc_ctl_get_x86_rdrand(uc, mode, seed)                                  \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_RDRAND, 2), (int *)(mode), (uint64_t *)(seed))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

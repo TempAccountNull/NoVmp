@@ -326,6 +326,12 @@ Add-PySelftest 'ref_apx_cases_selftest' 'apx tools' 'ref_apx_cases.py'
 # 0 differing; the CPU's results must also match the model (--hwcmp).
 Add-Suite 'cases_apx_map4_hw' 'hw apx' 'hwnp' 'emu-alltest' @( '--cases', ( CaseFile 'cases_apx_map4_hw' ), '--apx' )
 Add-HwCmp 'ref_apx_map4_hwcmp' 'hw apx' 'ref_apx_map4.py' 'cases_apx_map4_hw'
+# U835 (decision D8): RDRAND/RDSEED source. The default seeded model (SplitMix64, seed 0; values
+# from an independent SplitMix64), an explicit seed (--rdrand-seed), and the host DRNG (--HostSeed:
+# flags only, the values are the host's).
+Add-Exp 'cases_rdrand' 'cases_rdrand' 'rdrand expect'
+Add-Exp 'cases_rdrand_seed' 'cases_rdrand_seed' 'rdrand expect' @( '--rdrand-seed', '0x1234' )
+Add-Exp 'cases_rdrand_host' 'cases_rdrand_host' 'rdrand expect' @( '--HostSeed' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

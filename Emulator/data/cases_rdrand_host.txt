@@ -1,0 +1,8 @@
+# RDRAND / RDSEED from the host DRNG (ledger U835, --HostSeed): loose expected-value cases, Unicorn
+# only, run with
+#   emu-alltest --cases Emulator/data/cases_rdrand_host.txt --expect-only --HostSeed
+# The values are the host CPU's (not checkable); RDRAND succeeds (CF = 1, OF SF ZF AF PF = 0). RDSEED
+# may underflow on hardware (CF = 0, destination 0), so only RDRAND's flags are pinned.
+rdrand rax | rflags=0xAD6 =>! rflags=0x203
+rdrand ecx | rflags=0xAD6 =>! rflags=0x203
+rdrand dx | rflags=0xAD6 =>! rflags=0x203

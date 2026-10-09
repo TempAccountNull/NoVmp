@@ -3366,6 +3366,35 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
+    case UC_CTL_X86_RDRAND:
+        /* NoVmp U835 (D8): RDRAND/RDSEED source; any time (the CPU copy is updated after init) */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mode = va_arg(args, int *);
+            uint64_t *seed = va_arg(args, uint64_t *);
+            if (uc->init_done && uc->x86_rdrand_sync) {
+                uc->x86_rdrand_sync(uc, 0);     /* a context restore may have changed it */
+            }
+            *mode = uc->x86_rdrand_mode;
+            *seed = uc->x86_rdrand_seed;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mode = va_arg(args, int);
+            uint64_t seed = va_arg(args, uint64_t);
+            if (mode != UC_X86_RDRAND_SEEDED && mode != UC_X86_RDRAND_HOST) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_rdrand_mode = mode;
+                uc->x86_rdrand_seed = seed;
+                if (uc->init_done && uc->x86_rdrand_sync) {
+                    uc->x86_rdrand_sync(uc, 1);
+                }
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

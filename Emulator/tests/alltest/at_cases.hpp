@@ -356,7 +356,8 @@ namespace at
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
-					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */ };
+					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
+					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */ };
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token
 	static int fault_vector( const std::string& t )
@@ -436,6 +437,7 @@ namespace at
 				unicorn_engine pe( UC_CPU_X86_MAX );
 				pe.cpuid = opt.cpuid; pe.strict = opt.strict; pe.xcr0 = x; pe.cr0 = c;
 				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx;
+				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
 				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }
@@ -446,6 +448,9 @@ namespace at
 				show( "hardware", hw_xcr0, hw_cr0, opt.xcr0 ? "--xcr0" : host_x ? "host XGETBV(0)" : "Unicorn reset: host has no OSXSAVE",
 					  opt.cr0 ? "--cr0" : "Windows x64 PE|MP|ET|NE" );
 			show( "expected-value", exp_xcr0, exp_cr0, opt.xcr0 ? "--xcr0" : "Unicorn reset", opt.cr0 ? "--cr0" : "Unicorn reset" );
+			// U835 (D8): the RDRAND/RDSEED source of every Unicorn engine of this run
+			if ( opt.rdrand == UC_X86_RDRAND_HOST ) std::printf( "rdrand: host DRNG (--HostSeed)\n" );
+			else std::printf( "rdrand: seeded, seed 0x%llX (--seeded, the default)\n", ( unsigned long long ) opt.rdrand_seed );
 		}
 		native_engine hw;
 		bool hw_open = false;
@@ -581,6 +586,8 @@ namespace at
 			uc.amx = opt.amx;
 			uc.avx10 = opt.avx10;
 			uc.apx = opt.apx;
+			uc.rdrand = opt.rdrand;   // U835
+			uc.rdrand_seed = opt.rdrand_seed;
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
 			if ( !uc.load( p_uc, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }

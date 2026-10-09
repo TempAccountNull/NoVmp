@@ -2474,9 +2474,32 @@ static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
     if (cpu == NULL) {
         return -1;
     }
+#if __Use_Original_Qemu != 1 /* ours (U835) */
+    /* NoVmp (ledger U835): UC_CTL_X86_RDRAND written before init (default: seeded, seed 0) */
+    cpu->env.rdrand_host = uc->x86_rdrand_mode == UC_X86_RDRAND_HOST;
+    cpu->env.rdrand_seed = uc->x86_rdrand_seed;
+    cpu->env.rdrand_count = 0;
+#endif /* __Use_Original_Qemu (U835) */
 
     return 0;
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U835) */
+/* NoVmp (ledger U835): UC_CTL_X86_RDRAND after init (uc.c) */
+static void x86_rdrand_sync(struct uc_struct *uc, int to_cpu)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    if (to_cpu) {
+        env->rdrand_host = uc->x86_rdrand_mode == UC_X86_RDRAND_HOST;
+        env->rdrand_seed = uc->x86_rdrand_seed;
+        env->rdrand_count = 0;
+    } else {
+        uc->x86_rdrand_mode = env->rdrand_host ? UC_X86_RDRAND_HOST : UC_X86_RDRAND_SEEDED;
+        uc->x86_rdrand_seed = env->rdrand_seed;
+    }
+}
+#endif /* __Use_Original_Qemu (U835) */
 
 #if __Use_Original_Qemu != 1 /* ours (U832) */
 /*
@@ -2518,6 +2541,11 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
     X86_CTX_COPY(xss);
     X86_CTX_COPY(umwait);
     X86_CTX_COPY(pasid);
+#if __Use_Original_Qemu != 1 /* ours (U835) */
+    X86_CTX_COPY(rdrand_seed);  /* a restore replays the same RDRAND/RDSEED values */
+    X86_CTX_COPY(rdrand_count);
+    X86_CTX_COPY(rdrand_host);
+#endif /* __Use_Original_Qemu (U835) */
     if (env->cr[0] != cr0 || env->cr[3] != cr3 || env->cr[4] != cr4 || env->efer != efer ||
         env->pkru != pkru || env->pkrs != pkrs) {
         tlb_flush(uc->cpu);
@@ -2548,6 +2576,9 @@ void uc_init(struct uc_struct *uc)
     uc->context_size = x86_context_size;
     uc->context_restore = x86_context_restore;
 #endif /* __Use_Original_Qemu (U832) */
+#if __Use_Original_Qemu != 1 /* ours (U835) */
+    uc->x86_rdrand_sync = x86_rdrand_sync;
+#endif /* __Use_Original_Qemu (U835) */
     uc_common_init(uc);
 }
 

@@ -6120,7 +6120,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_RDSEED)) {
                 goto illegal_op;
             }
+#if __Use_Original_Qemu == 1 /* original QEMU (U835) */
             goto do_rdrand;
+#else /* ours (U835) */
+            /* NoVmp (ledger U835): RDSEED has its own helper (host mode runs host RDSEED) */
+            if (tb_cflags(s->base.tb) & CF_USE_ICOUNT) {
+                gen_io_start(tcg_ctx);
+                s->base.is_jmp = DISAS_TOO_MANY;
+            }
+            gen_helper_rdseed(tcg_ctx, s->T0, cpu_env);
+            rm = (modrm & 7) | REX_B(s);
+            gen_op_mov_reg_v(s, dflag, rm, s->T0);
+            set_cc_op(s, CC_OP_EFLAGS);
+            break;
+#endif /* __Use_Original_Qemu (U835) */
 
         case 6: /* RDRAND */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
@@ -6145,7 +6158,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 !(s->cpuid_ext_features & CPUID_EXT_RDRAND)) {
                 goto illegal_op;
             }
+#if __Use_Original_Qemu == 1 /* original QEMU (U835) */
         do_rdrand:
+#endif /* __Use_Original_Qemu (U835) */
             if (tb_cflags(s->base.tb) & CF_USE_ICOUNT) {
                 gen_io_start(tcg_ctx);
                 s->base.is_jmp = DISAS_TOO_MANY;

@@ -506,6 +506,7 @@ void helper_wrxxbase_check(CPUX86State *env, target_ulong base)
 #endif
 #endif /* __Use_Original_Qemu (U851) */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U835) */
 target_ulong HELPER(rdrand)(CPUX86State *env)
 {
     target_ulong ret;
@@ -523,6 +524,89 @@ target_ulong HELPER(rdrand)(CPUX86State *env)
     env->cc_src = CC_C;
     return ret;
 }
+#else /* ours (U835) */
+/*
+ * NoVmp (ledger U835, decision D8): RDRAND / RDSEED source, UC_CTL_X86_RDRAND.
+ * Seeded (default): the n-th value drawn is SplitMix64(seed + (n + 1) * golden gamma)
+ * (Steele, Lea, Flood 2014), CF = 1; seed and count live in env (uc_context carries them).
+ * Host: the host CPU's RDRAND / RDSEED (chosen at run time from the host CPUID), CF as the
+ * host returns it; the OS generator (CF = 1 unless it fails) when the host lacks it.
+ * Both: CF = the success bit, OF SF ZF AF PF = 0 (SDM Vol2B RDRAND/RDSEED), destination 0
+ * on failure. The translator truncates the value to the operand size.
+ */
+#if defined(_MSC_VER) && defined(_M_X64)
+#include <intrin.h>
+#include <immintrin.h>
+#endif
+
+static uint64_t x86_rdrand_seeded(CPUX86State *env)
+{
+    uint64_t z = env->rdrand_seed + ++env->rdrand_count * 0x9e3779b97f4a7c15ULL;
+
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return z ^ (z >> 31);
+}
+
+/* host DRNG: 1 = success (*v valid), 0 = the host instruction reported CF = 0 */
+static int x86_rdrand_host(uint64_t *v, bool seed)
+{
+#if defined(_MSC_VER) && defined(_M_X64)
+    static int has_rdrand = -1, has_rdseed = -1;
+
+    if (has_rdrand < 0) {
+        int r[4];
+
+        __cpuid(r, 0);
+        if (r[0] >= 7) {
+            __cpuidex(r, 7, 0);
+            has_rdseed = (r[1] >> 18) & 1;
+        } else {
+            has_rdseed = 0;
+        }
+        __cpuid(r, 1);
+        has_rdrand = (r[2] >> 30) & 1;
+    }
+    if (seed ? has_rdseed : has_rdrand) {
+        unsigned __int64 x = 0;
+        int ok = seed ? _rdseed64_step(&x) : _rdrand64_step(&x);
+
+        *v = ok ? (uint64_t)x : 0;
+        return ok;
+    }
+#endif
+    *v = 0;
+    if (qemu_guest_getrandom(v, sizeof(*v)) < 0) {
+        *v = 0;
+        return 0;
+    }
+    return 1;
+}
+
+static target_ulong x86_rdrand_draw(CPUX86State *env, bool seed)
+{
+    uint64_t v;
+
+    if (!env->rdrand_host) {
+        v = x86_rdrand_seeded(env);
+    } else if (!x86_rdrand_host(&v, seed)) {
+        env->cc_src = 0;            /* failure: CF = 0, destination 0 */
+        return 0;
+    }
+    env->cc_src = CC_C;             /* success: CF = 1, the other flags 0 */
+    return (target_ulong)v;
+}
+
+target_ulong HELPER(rdrand)(CPUX86State *env)
+{
+    return x86_rdrand_draw(env, false);
+}
+
+target_ulong HELPER(rdseed)(CPUX86State *env)
+{
+    return x86_rdrand_draw(env, true);
+}
+#endif /* __Use_Original_Qemu (U835) */
 
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 /*

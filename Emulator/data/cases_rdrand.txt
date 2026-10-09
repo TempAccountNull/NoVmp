@@ -1,0 +1,17 @@
+# RDRAND / RDSEED source (ledger U835, decision D8): expected-value cases, Unicorn only.
+# The default UC_CTL_X86_RDRAND mode is the seeded model with seed 0: the n-th value an engine
+# draws (n = 1, 2, ...; RDRAND and RDSEED share the sequence) is SplitMix64(seed + n *
+# 9E3779B97F4A7C15h), truncated to the operand size; CF = 1, OF SF ZF AF PF = 0 (SDM Vol2B
+# RDRAND / RDSEED: "CF = 1 ... OF, SF, ZF, AF, PF = 0"). Each case runs on a fresh engine, so its
+# first draw is n = 1. Values from an independent SplitMix64 (Steele, Lea, Flood 2014; the same
+# formula as unicorn/tests/unit/test_x86.c rg_splitmix). Run:
+#   emu-alltest --cases Emulator/data/cases_rdrand.txt --expect-only
+rdrand rax => rax=0xE220A8397B1DCDAF rflags=0x203
+rdseed rax => rax=0xE220A8397B1DCDAF rflags=0x203
+rdrand rax | rflags=0xAD7 => rax=0xE220A8397B1DCDAF rflags=0x203
+rdseed rbx | rflags=0xAD6 => rbx=0xE220A8397B1DCDAF rflags=0x203
+rdrand eax | rax=0xFFFFFFFFFFFFFFFF => rax=0x7B1DCDAF rflags=0x203
+rdrand ax | rax=0xFFFFFFFFFFFFFFFF => rax=0xFFFFFFFFFFFFCDAF rflags=0x203
+rdseed r9d | r9=0xFFFFFFFFFFFFFFFF => r9=0x7B1DCDAF rflags=0x203
+rdseed r10w | r10=0x1111111111111111 => r10=0x111111111111CDAF rflags=0x203
+rdrand rax; rdseed rbx; rdrand rcx => rax=0xE220A8397B1DCDAF rbx=0x6E789E6AA1B965F4 rcx=0x06C45D188009454F rflags=0x203

@@ -1,0 +1,5 @@
+# RDRAND / RDSEED with an explicit seed (ledger U835): expected-value cases, Unicorn only, run with
+#   emu-alltest --cases Emulator/data/cases_rdrand_seed.txt --expect-only --rdrand-seed 0x1234
+# SplitMix64(0x1234 + n * 9E3779B97F4A7C15h), n = 1 (see cases_rdrand.txt); CF = 1, others 0.
+rdrand rax => rax=0x5F642F87D5E23888 rflags=0x203
+rdseed rcx => rcx=0x5F642F87D5E23888 rflags=0x203
