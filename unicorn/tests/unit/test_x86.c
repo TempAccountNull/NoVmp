@@ -14889,6 +14889,370 @@ static void test_x86_bp_canonical_ss_cs_base(void)
 }
 /* ---- end U450-U474 (bp_) ---- */
 
+/*
+ * ---- NoVmp U570-U575: AVX512_VP2INTERSECT, EVEX GFNI / VAES / VPCLMULQDQ (prefix mb_) ----
+ * Gating per the SDM CPUID columns (UC_X86_AVX512_VP2INTERSECT; AVX512F / AVX512VL; "OR
+ * AVX10.1" for GFNI/VAES/VPCLMULQDQ but not for VP2INTERSECT; strict CPUID profiles hiding
+ * GFNI / VAES / VPCLMULQDQ / AVX512_VP2INTERSECT), the k-pair destination in 32-bit mode, and
+ * every EVEX.512 result against the same engine's (hardware-verified) VEX.256 forms, half by
+ * half. Instruction values and #UD/#PF rules: Emulator/data/cases_evex_m4b.txt (independent
+ * model ref_evex_m4b.py).
+ */
+#define MB_DATA 0x200000
+#define MB_BASE (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL)
+#define MB_EDX_VP2I (1u << 8)
+
+typedef struct MbCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} MbCtx;
+
+/* prof != NULL: a strict CPUID profile (written explicitly) and XCR0 = E7h */
+static void mb_open(MbCtx *c, uc_mode mode, int avx512, int avx10, const uc_x86_cpuid *prof,
+                    size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, MB_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the exception vector (6 = #UD) or -1 */
+static int mb_run(MbCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void mb_cpuid7(MbCtx *c, uint32_t r[4])
+{
+    uint64_t v = 7;
+    int regs[4] = {UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX};
+    int i;
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(mb_run(c, "\x0f\xa2", 2) == -1);
+    for (i = 0; i < 4; i++) {
+        v = 0;
+        OK(uc_reg_read(c->uc, regs[i], &v));
+        r[i] = (uint32_t)v;
+    }
+}
+
+/* U570: UC_X86_AVX512_VP2INTERSECT (0x10000): read-back, CPUID.(7,0):EDX[8], default off */
+static void test_x86_m4b_vp2i_optin(void)
+{
+    MbCtx c;
+    uint32_t r[4];
+    int on = -1;
+    uc_engine *uc;
+
+    mb_open(&c, UC_MODE_64, MB_BASE, 0, NULL, 0);
+    mb_cpuid7(&c, r);
+    TEST_CHECK_(!(r[3] & MB_EDX_VP2I), "without the bit: EDX = %08x", r[3]);
+    OK(uc_close(c.uc));
+    mb_open(&c, UC_MODE_64, UC_X86_AVX512_VP2INTERSECT, 0, NULL, 0);
+    OK(uc_ctl_get_x86_avx512(c.uc, &on));
+    TEST_CHECK_(on == (UC_X86_AVX512_F | UC_X86_AVX512_VP2INTERSECT), "read back %x", on);
+    mb_cpuid7(&c, r);
+    TEST_CHECK_((r[3] & MB_EDX_VP2I) != 0, "with the bit: EDX = %08x", r[3]);
+    TEST_CHECK_((r[1] & (1u << 16)) != 0, "AVX512F implied: EBX = %08x", r[1]);
+    OK(uc_close(c.uc));
+    /* AVX10 alone does not enumerate it (not part of AVX10.1, AVX10.2 spec Table 3.2) */
+    mb_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0);
+    mb_cpuid7(&c, r);
+    TEST_CHECK_(!(r[3] & MB_EDX_VP2I), "AVX10.1 alone: EDX = %08x", r[3]);
+    OK(uc_close(c.uc));
+    /* the default has none; an unknown high bit is still rejected */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_get_x86_avx512(uc, &on));
+    TEST_CHECK(on == 0);
+    TEST_CHECK(uc_ctl_set_x86_avx512(uc, 0x40000000) == UC_ERR_ARG);
+    OK(uc_close(uc));
+}
+
+/* VP2INTERSECTD k2, zmm2, zmm3 / ymm (EVEX.F2.0F38.W0 68 /r) */
+#define MB_VP2D_512 "\x62\xf2\x6f\x48\x68\xd3"
+#define MB_VP2D_256 "\x62\xf2\x6f\x28\x68\xd3"
+/* VP2INTERSECTQ k7, zmm1, zmm2 (pair k6, k7) */
+#define MB_VP2Q_K7 "\x62\xf2\xf7\x48\x68\xfa"
+
+/* VP2INTERSECTD k2, zmm2, zmm3 with zmm2 = {0..15}, zmm3 = {15, 3, 100, 3, ...}: k2/k3 */
+static int mb_vp2d_ok(MbCtx *c)
+{
+    uint32_t a[16], b[16];
+    uint64_t k2 = 0x1111, k3 = 0x2222, want2 = 0, want3 = 0;
+    int i, j;
+
+    for (i = 0; i < 16; i++) {
+        a[i] = (uint32_t)i;
+        b[i] = (i & 1) ? 3u : (uint32_t)(15 - i) * 7u + 100u;
+    }
+    b[0] = 15;
+    for (i = 0; i < 16; i++) {
+        for (j = 0; j < 16; j++) {
+            if (a[i] == b[j]) {
+                want2 |= 1ULL << i;
+                want3 |= 1ULL << j;
+            }
+        }
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM3, b));
+    OK(uc_reg_write(c->uc, UC_X86_REG_K2, &k2));
+    OK(uc_reg_write(c->uc, UC_X86_REG_K3, &k3));
+    if (mb_run(c, MB_VP2D_512, 6) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_K2, &k2));
+    OK(uc_reg_read(c->uc, UC_X86_REG_K3, &k3));
+    TEST_MSG("k2 %llx (want %llx) k3 %llx (want %llx)", (unsigned long long)k2,
+             (unsigned long long)want2, (unsigned long long)k3, (unsigned long long)want3);
+    return k2 == want2 && k3 == want3 && want2 == 0x8008 && want3 == 0xAAAB;
+}
+
+/*
+ * U570/U571: VP2INTERSECT gating (SDM Vol2C: "AVX512F AVX512_VP2INTERSECT" for EVEX.512,
+ * "AVX512VL AVX512_VP2INTERSECT" for EVEX.128/256; no AVX10.1 alternative), strict profiles,
+ * and the k pair in 32-bit mode.
+ */
+static void test_x86_m4b_vp2i_gating(void)
+{
+    static const uc_x86_cpuid prof_novp2i[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    static const uc_x86_cpuid prof_vp2i[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0xc0030020, 0, MB_EDX_VP2I},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    MbCtx c;
+    uint64_t a[8], b[8], k6 = 1, k7 = 2;
+    int i;
+
+    /* AVX-512 without the bit: #UD */
+    mb_open(&c, UC_MODE_64, MB_BASE, 0, NULL, 0);
+    TEST_CHECK(mb_run(&c, MB_VP2D_512, 6) == 6);
+    OK(uc_close(c.uc));
+    /* with it: EVEX.512 and EVEX.256 */
+    mb_open(&c, UC_MODE_64, MB_BASE | UC_X86_AVX512_VP2INTERSECT, 0, NULL, 0);
+    TEST_CHECK(mb_vp2d_ok(&c));
+    TEST_CHECK(mb_run(&c, MB_VP2D_256, 6) == -1);
+    OK(uc_close(c.uc));
+    /* without AVX512VL: EVEX.512 runs, EVEX.256 #UD */
+    mb_open(&c, UC_MODE_64, UC_X86_AVX512_VP2INTERSECT, 0, NULL, 0);
+    TEST_CHECK(mb_vp2d_ok(&c));
+    TEST_CHECK(mb_run(&c, MB_VP2D_256, 6) == 6);
+    OK(uc_close(c.uc));
+    /* AVX10.1 alone: #UD (CPUID.(7,0):EDX[8] is required) */
+    mb_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0);
+    TEST_CHECK(mb_run(&c, MB_VP2D_512, 6) == 6);
+    TEST_CHECK(mb_run(&c, MB_VP2D_256, 6) == 6);
+    OK(uc_close(c.uc));
+    /* AVX10.1 + the bit (no AVX512VL CPUID bit): AVX10.1 gives the 256-bit length too */
+    mb_open(&c, UC_MODE_64, UC_X86_AVX512_VP2INTERSECT, UC_X86_AVX10_1, NULL, 0);
+    TEST_CHECK(mb_vp2d_ok(&c));
+    TEST_CHECK(mb_run(&c, MB_VP2D_256, 6) == -1);
+    OK(uc_close(c.uc));
+    /* a strict profile without EDX[8] hides it; with EDX[8] it runs */
+    mb_open(&c, UC_MODE_64, MB_BASE | UC_X86_AVX512_VP2INTERSECT, 0, prof_novp2i, 4);
+    TEST_CHECK(mb_run(&c, MB_VP2D_512, 6) == 6);
+    OK(uc_close(c.uc));
+    mb_open(&c, UC_MODE_64, MB_BASE | UC_X86_AVX512_VP2INTERSECT, 0, prof_vp2i, 4);
+    TEST_CHECK(mb_vp2d_ok(&c));
+    OK(uc_close(c.uc));
+    /* 32-bit mode: VP2INTERSECTQ k7, zmm1, zmm2 writes the pair k6 (src1) / k7 (src2) */
+    mb_open(&c, UC_MODE_32, MB_BASE | UC_X86_AVX512_VP2INTERSECT, 0, NULL, 0);
+    for (i = 0; i < 8; i++) {
+        a[i] = 0x100000000ULL * (uint64_t)i + 5;
+    }
+    for (i = 0; i < 8; i++) {
+        b[i] = i == 7 ? a[2] : (i == 0 ? a[6] : 5);
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM2, b));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K6, &k6));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K7, &k7));
+    TEST_CHECK(mb_run(&c, MB_VP2Q_K7, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K6, &k6));
+    OK(uc_reg_read(c.uc, UC_X86_REG_K7, &k7));
+    /* a[0] = 5 matches b[1..6]; a[2] = b[7]; a[6] = b[0] */
+    TEST_CHECK_(k6 == 0x45 && k7 == 0xFF, "k6 %llx k7 %llx", (unsigned long long)k6,
+                (unsigned long long)k7);
+    OK(uc_close(c.uc));
+}
+
+/* EVEX.512 zmm1, zmm2, zmm3 / EVEX.128 / VEX.256 ymm4, ymm2, ymm3 / VEX.256 ymm9, ymm7, ymm8 /
+   VEX.128 xmm4, xmm2, xmm3 of one operation */
+typedef struct MbOp {
+    const char *name;
+    int fam;            /* 0 GFNI, 1 VAES, 2 VPCLMULQDQ */
+    const char *e512, *e128, *v256, *v256h, *v128;
+    size_t le, lv;
+} MbOp;
+
+static const MbOp mb_ops[] = {
+    {"VGF2P8MULB", 0, "\x62\xf2\x6d\x48\xcf\xcb", "\x62\xf2\x6d\x08\xcf\xcb", "\xc4\xe2\x6d\xcf\xe3",
+     "\xc4\x42\x45\xcf\xc8", "\xc4\xe2\x69\xcf\xe3", 6, 5},
+    {"VGF2P8AFFINEQB", 0, "\x62\xf3\xed\x48\xce\xcb\x5a", "\x62\xf3\xed\x08\xce\xcb\x5a",
+     "\xc4\xe3\xed\xce\xe3\x5a", "\xc4\x43\xc5\xce\xc8\x5a", "\xc4\xe3\xe9\xce\xe3\x5a", 7, 6},
+    {"VGF2P8AFFINEINVQB", 0, "\x62\xf3\xed\x48\xcf\xcb\xa5", "\x62\xf3\xed\x08\xcf\xcb\xa5",
+     "\xc4\xe3\xed\xcf\xe3\xa5", "\xc4\x43\xc5\xcf\xc8\xa5", "\xc4\xe3\xe9\xcf\xe3\xa5", 7, 6},
+    {"VAESENC", 1, "\x62\xf2\x6d\x48\xdc\xcb", "\x62\xf2\x6d\x08\xdc\xcb", "\xc4\xe2\x6d\xdc\xe3",
+     "\xc4\x42\x45\xdc\xc8", "\xc4\xe2\x69\xdc\xe3", 6, 5},
+    {"VAESENCLAST", 1, "\x62\xf2\x6d\x48\xdd\xcb", "\x62\xf2\x6d\x08\xdd\xcb",
+     "\xc4\xe2\x6d\xdd\xe3", "\xc4\x42\x45\xdd\xc8", "\xc4\xe2\x69\xdd\xe3", 6, 5},
+    {"VAESDEC", 1, "\x62\xf2\x6d\x48\xde\xcb", "\x62\xf2\x6d\x08\xde\xcb", "\xc4\xe2\x6d\xde\xe3",
+     "\xc4\x42\x45\xde\xc8", "\xc4\xe2\x69\xde\xe3", 6, 5},
+    {"VAESDECLAST", 1, "\x62\xf2\x6d\x48\xdf\xcb", "\x62\xf2\x6d\x08\xdf\xcb",
+     "\xc4\xe2\x6d\xdf\xe3", "\xc4\x42\x45\xdf\xc8", "\xc4\xe2\x69\xdf\xe3", 6, 5},
+    {"VPCLMULQDQ", 2, "\x62\xf3\x6d\x48\x44\xcb\x11", "\x62\xf3\x6d\x08\x44\xcb\x11",
+     "\xc4\xe3\x6d\x44\xe3\x11", "\xc4\x43\x45\x44\xc8\x11", "\xc4\xe3\x69\x44\xe3\x11", 7, 6},
+};
+
+/* EVEX.512 result == VEX.256 on the low and on the high half of the same sources */
+static int mb_vs_vex(MbCtx *c, const MbOp *op, uint32_t seed)
+{
+    uint8_t a[64], b[64], r[64], lo[32], hi[32];
+    uint32_t x = seed;
+    int i;
+
+    for (i = 0; i < 64; i++) {
+        x = x * 1103515245u + 12345u;
+        a[i] = (uint8_t)(x >> 16);
+        x = x * 1103515245u + 12345u;
+        b[i] = (uint8_t)(x >> 16);
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, a));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM3, b));
+    if (mb_run(c, op->e512, op->le) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM1, r));
+    if (mb_run(c, op->v256, op->lv) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_YMM4, lo));
+    OK(uc_reg_write(c->uc, UC_X86_REG_YMM7, a + 32));
+    OK(uc_reg_write(c->uc, UC_X86_REG_YMM8, b + 32));
+    if (mb_run(c, op->v256h, op->lv) != -1) {
+        return 0;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_YMM9, hi));
+    TEST_MSG("%s seed %u", op->name, seed);
+    return memcmp(r, lo, 32) == 0 && memcmp(r + 32, hi, 32) == 0;
+}
+
+/*
+ * U572-U574: EVEX GFNI / VAES / VPCLMULQDQ gating (SDM CPUID columns "(AVX512F OR AVX10.1)
+ * GFNI", "VAES (AVX512F OR AVX10.1)", "VPCLMULQDQ (AVX512F OR AVX10.1)", AVX512VL for
+ * EVEX.128/256) and EVEX.512 == VEX.256 per half.
+ */
+static void test_x86_m4b_evex_gating(void)
+{
+    /* leaf 1 ECX: PCLMULQDQ, AES, XSAVE, OSXSAVE, AVX; leaf 7 EBX: AVX2, AVX512F/DQ/BW/VL */
+#define MB_PROF(ecx7)                                                                  \
+    {                                                                                  \
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},                             \
+        {0x1, 0, 0x906a0, 0, 0x1e000002, 0x06000000},                                  \
+        {0x7, 0, 0, 0xc0030020, (ecx7), 0},                                            \
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},                                               \
+    }
+    static const uc_x86_cpuid prof_all[] = MB_PROF(0x700);
+    static const uc_x86_cpuid prof_nogfni[] = MB_PROF(0x600);
+    static const uc_x86_cpuid prof_novaes[] = MB_PROF(0x500);
+    static const uc_x86_cpuid prof_noclmul[] = MB_PROF(0x300);
+#undef MB_PROF
+    static const struct {
+        const uc_x86_cpuid *p;
+        int hidden;     /* family hidden by the profile, -1 none */
+    } profs[] = {{prof_all, -1}, {prof_nogfni, 0}, {prof_novaes, 1}, {prof_noclmul, 2}};
+    MbCtx c;
+    size_t i, j;
+
+    for (i = 0; i < sizeof(mb_ops) / sizeof(mb_ops[0]); i++) {
+        const MbOp *op = &mb_ops[i];
+
+        /* no AVX-512 opt-in: the EVEX forms #UD, the VEX forms run */
+        mb_open(&c, UC_MODE_64, 0, 0, NULL, 0);
+        TEST_CHECK_(mb_run(&c, op->e512, op->le) == 6, "%s EVEX without AVX-512", op->name);
+        TEST_CHECK_(mb_run(&c, op->e128, op->le) == 6, "%s EVEX.128 without AVX-512", op->name);
+        TEST_CHECK_(mb_run(&c, op->v256, op->lv) == -1, "%s VEX.256", op->name);
+        OK(uc_close(c.uc));
+        /* AVX512F only: EVEX.512 runs, EVEX.128 needs AVX512VL */
+        mb_open(&c, UC_MODE_64, UC_X86_AVX512_F, 0, NULL, 0);
+        TEST_CHECK_(mb_vs_vex(&c, op, 1), "%s F: EVEX.512 == VEX.256", op->name);
+        TEST_CHECK_(mb_run(&c, op->e128, op->le) == 6, "%s F: EVEX.128 #UD", op->name);
+        OK(uc_close(c.uc));
+        /* F|DQ|BW|VL: every length; values against the VEX forms */
+        mb_open(&c, UC_MODE_64, MB_BASE, 0, NULL, 0);
+        for (j = 2; j < 6; j++) {
+            TEST_CHECK_(mb_vs_vex(&c, op, (uint32_t)j * 7919u), "%s EVEX.512 == VEX.256", op->name);
+        }
+        TEST_CHECK_(mb_run(&c, op->e128, op->le) == -1, "%s EVEX.128 with VL", op->name);
+        OK(uc_close(c.uc));
+        /* AVX10.1 alone ("OR AVX10.1"): every length */
+        mb_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0);
+        TEST_CHECK_(mb_vs_vex(&c, op, 77), "%s AVX10.1: EVEX.512 == VEX.256", op->name);
+        TEST_CHECK_(mb_run(&c, op->e128, op->le) == -1, "%s AVX10.1: EVEX.128", op->name);
+        OK(uc_close(c.uc));
+        /* strict profiles: hiding the family's own bit #UDs its EVEX forms (EVEX.128 too) */
+        for (j = 0; j < sizeof(profs) / sizeof(profs[0]); j++) {
+            int hid = profs[j].hidden == op->fam;
+
+            mb_open(&c, UC_MODE_64, MB_BASE, 0, profs[j].p, 4);
+            TEST_CHECK_(mb_run(&c, op->e512, op->le) == (hid ? 6 : -1), "%s profile %d EVEX.512",
+                        op->name, (int)j);
+            TEST_CHECK_(mb_run(&c, op->e128, op->le) == (hid ? 6 : -1), "%s profile %d EVEX.128",
+                        op->name, (int)j);
+            /*
+             * VEX.128 VAESENC needs AES + AVX and VEX.128 VPCLMULQDQ PCLMULQDQ + AVX, so they
+             * still run with VAES / VPCLMULQDQ hidden; VEX GFNI needs GFNI
+             */
+            TEST_CHECK_(mb_run(&c, op->v128, op->lv) == (hid && op->fam == 0 ? 6 : -1),
+                        "%s profile %d VEX.128", op->name, (int)j);
+            TEST_CHECK_(mb_run(&c, op->v256, op->lv) == (hid ? 6 : -1), "%s profile %d VEX.256",
+                        op->name, (int)j);
+            OK(uc_close(c.uc));
+        }
+    }
+}
+/* ---- end U570-U575 (mb_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -15113,4 +15477,7 @@ TEST_LIST = {
     {"test_x86_bp_tss_save_old_format", test_x86_bp_tss_save_old_format},
     {"test_x86_bp_cs_base_fetch", test_x86_bp_cs_base_fetch},
     {"test_x86_bp_canonical_ss_cs_base", test_x86_bp_canonical_ss_cs_base},
+    {"test_x86_m4b_vp2i_optin", test_x86_m4b_vp2i_optin},
+    {"test_x86_m4b_vp2i_gating", test_x86_m4b_vp2i_gating},
+    {"test_x86_m4b_evex_gating", test_x86_m4b_evex_gating},
     {NULL, NULL}};

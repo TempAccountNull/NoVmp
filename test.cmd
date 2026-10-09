@@ -89,6 +89,11 @@ call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_dq.txt" --avx
 rem AVX512CD (ledger U320-U321): VPCONFLICTD/Q, VPLZCNTD/Q, VPBROADCASTMB2Q/MW2D vs the SDM
 rem model ref_evex_m3_cd.py, Unicorn only with the AVX-512 opt-in (F|DQ|BW|VL|CD).
 call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m3_cd.txt" --avx512 --xcr0 0xE7 --expect-only
+rem EVEX milestone M4 (ledger U570-U575): AVX512_VP2INTERSECT (k-pair destination) and the EVEX forms of
+rem GFNI, VAES and VPCLMULQDQ (masking, {1toN}, disp8*N, E4/E4NF memory, #UD) vs the independent SDM model
+rem ref_evex_m4b.py, Unicorn only with the AVX-512 opt-in (incl. UC_X86_AVX512_VP2INTERSECT).
+call :suite emu-alltest --cases "%ROOT%Emulator\data\cases_evex_m4b.txt" --avx512 --xcr0 0xE7 --expect-only
+call :py_check "%ROOT%Emulator\tools\isa\ref_evex_m4b.py" --selftest
 rem EVEX milestone M2 conversions / FP specials / shifts (ledger U230-U241): VCVT* (incl. the
 rem AVX512DQ QQ forms), VRCP14/VRSQRT14, VGETEXP, VGETMANT, VSCALEF, VFIXUPIMM, VRNDSCALE,
 rem VPSLL/VPSRL/VPSRA by xmm, VPROLV/VPRORV vs the SDM model ref_evex_m2_cvt.py, Unicorn only.
@@ -153,6 +158,11 @@ rem U468: Tier 1 upstream QEMU backports (U453-U467): hardware lines (cpl=3 = Un
 rem Windows GDT, U452; compatibility mode via CS 23h) and SDM expected values (STI/LSS + TF, MOV DR,
 rem compatibility-mode SYSCALL); known deviations LOCK PREFETCHW, SYSRET at CPL3 in compatibility mode.
 call :hw_zero cases_backport_t1
+rem ledger U572-U575: the GFNI / VAES / VPCLMULQDQ operation of every EVEX case of cases_evex_m4b.txt on the
+rem host's VEX.256 / VEX.128 / legacy forms with the same data (cases_evex_m4b_hw.txt, ref_evex_m4b.py --hwgen):
+rem Unicorn must match the i5-13600K (0 differing), and the CPU's results must match the model (--hwcmp).
+call :hw_zero cases_evex_m4b_hw
+call :py_hwcmp "%ROOT%Emulator\tools\isa\ref_evex_m4b.py" "%TESTS%\cases_evex_m4b_hw.log"
 
 echo.
 if !FAILED! NEQ 0 (
@@ -199,6 +209,25 @@ if errorlevel 1 (
     set /a FAILED+=1
 ) else (
     echo [test] %~nx1 passed
+)
+exit /b 0
+
+:py_hwcmp
+rem %1 = model script, %2 = emu-alltest log of its hardware file: python %1 --hwcmp %2 must exit 0
+echo.
+echo [test] ===== python %~nx1 --hwcmp %~nx2 ^(model vs the host CPU^)
+where python >nul 2>nul
+if errorlevel 1 (
+    echo [test] python not found - %~nx1 cannot run
+    set /a FAILED+=1
+    exit /b 0
+)
+python -I %1 --hwcmp %2
+if errorlevel 1 (
+    echo [test] %~nx1 --hwcmp FAILED
+    set /a FAILED+=1
+) else (
+    echo [test] %~nx1 --hwcmp passed
 )
 exit /b 0
 
