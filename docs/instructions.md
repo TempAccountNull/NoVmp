@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-08 15:21 (HEAD `5d478e4 docs/quirks.md: bit 7 UC_X86_QUIRK_DPPS_PARALLEL_STEPS (U446)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-08 18:33 (HEAD `c6be68b Merge integ/avx10: AVX512-FP16, AVX10 enumeration + AVX10.2 (A and B)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,7 +9,7 @@ _Generated 2026-10-08 15:21 (HEAD `5d478e4 docs/quirks.md: bit 7 UC_X86_QUIRK_DP
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1606 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 611, open item 76, not implemented yet 919)
+**All forms:** ✅ 1173 · ⏳ 132 · ⬜ 0 · ❌ 1606 (implemented per the manual 835, open item 76, not implemented yet 695)
 
 ## Currently being added
 
@@ -45,10 +45,6 @@ _Generated 2026-10-08 15:21 (HEAD `5d478e4 docs/quirks.md: bit 7 UC_X86_QUIRK_DP
       - ⬜ avx10_b leftovers: U400 provisional UC_CTL_X86_AVX10 → replace by avx10_a enumeration; spec conflicts followed: FP8 bias forms truncate (pseudocode) though the text says RNE for denormals, VCVT2PS2PHX RZ overflow = max finite (IEEE) though helper pseudocode says inf — re-check against the next spec revision; 38 XED-only forms (MAP5 HF6/BF4/PS2HF8 conversions, VPMOVSSDB, VUNPACKB, AMX TOP*, TILEMOVCOL, MAP6 BSRMOV*) not in any Intel publication → not implemented (oos); AMX-AVX512/AMX-FP8/AMX-MOVRS open; 32-bit mode only unit-tested.
   - ⏳ 1.15e AVX10.x, AMX, APX — AMX (VEX) done; AVX10 after M1–M4; APX after the EVEX decoder.
       - ⬜ AMX leftovers: EVEX AMX-AVX512 (TCVTROWD2PS, TCVTROWPS2BF16H/L, TCVTROWPS2PHH/L, TILEMOVROW) after M1; APX-promoted tile loads/stores; AMX-FP8 (TDPBF8PS/TDPBHF8PS/TDPHBF8PS/TDPHF8PS); AMX-TF32 (TMMULTF32PS); AMX-MOVRS (TILELOADDRS/TILELOADDRST1); XSAVES/XRSTORS (fork has none); x86_cpuid_leaf_has_subleaves not updated for 1EH.
-  - ⬜ 1.15f AMD/VIA-only forms (XOP, FMA4, TBM, 3DNow!, SSE4A, LWP, CLZERO, MONITORX, RDPRU, MCOMMIT, INVLPGB/TLBSYNC, VIA PadLock/ACE) — your decision 2026-10-07: implement, but only AFTER every Intel instruction (1.15a–e) is done; the host is Intel so these are tested against the AMD/VIA manuals only.
-    - ⬜ New switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set, like `__Use_Original_Qemu`): AMD/VIA-only instructions decode only when it is 1; with 0 they are #UD as on Intel (also re-gates what QEMU already has, e.g. 3DNow!, SSE4A, FEMMS).
-    - ⬜ You download the handbooks into `emulator\Amd Handbooks\` (list given 2026-10-07): AMD APM Vol 2 #24593, Vol 3 #24594, Vol 4 #26568, Vol 5 #26569, LWP spec #43724, VIA PadLock Programming Guide (+ ACE/RNG/PHE docs).
-    - ⬜ Then agents implement them family by family (manual first, then QEMU/asmjit/XED), each with expected-value cases.
       - ⬜ Key Locker leftovers: KeySource 1 (random IWKey), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate, AESKLE = 0 in SMM.
       - ⬜ MOVRS leftovers: EVEX VMOVRSB/W/D/Q (AVX10) and AMX-MOVRS.
       - ⬜ UINTR leftovers (no local APIC in Unicorn): IPIs to other APIC IDs / other vectors dropped, notification with IF=0 dropped instead of pending, x2APIC, XSAVES user-interrupt state, CET effects, STI/MOV SS shadow distinction.
@@ -57,7 +53,7 @@ _Generated 2026-10-08 15:21 (HEAD `5d478e4 docs/quirks.md: bit 7 UC_X86_QUIRK_DP
       - ⬜ SGX model ("present but disabled" → ENCLU #GP at CPL3); PCONFIG needs CPUID leaf 1BH (raise MAX level — your decision); GETSEC leaves beyond CAPABILITIES need a TXT chipset model.
       - ⬜ Harness: hardware case files must run with `--strict` (non-strict MAX now runs TSX/WAITPKG/ENQCMD where the CPU #UDs); hwcheck_gate1 too (done 2026-10-08: 6 known diffs).
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 223 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 255 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
