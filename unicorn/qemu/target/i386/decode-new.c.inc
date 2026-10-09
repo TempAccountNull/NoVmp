@@ -4645,9 +4645,36 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #endif /* __Use_Original_Qemu (U230) */
 #endif /* __Use_Original_Qemu (U148) */
 
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+/* EVEX in 64-bit mode on a CPU with Intel APX: the VEX-promoted forms exist (U646) */
+static bool apx_vex_promoted(DisasContext *s)
+{
+    return CODE64(s) && (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F);
+}
+
+/*
+ * Intel APX: EVEX map 7 (APX spec 3.1.5): F8 11:000:bbb F2 URDMSR r64, imm32 / F3 UWRMSR imm32,
+ * r64 (W0), promoted from VEX map 7 (decode_MAP7). F6 /0 RDMSR / WRMSRNS with an immediate
+ * (MSR-IMM) are not implemented by this CPU model (#UD).
+ */
+static void decode_apx_map7(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    s->apx_promoted = true;
+    decode_MAP7(s, env, entry, b);
+}
+
+#endif /* __Use_Original_Qemu (U646) */
 static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+    /* Intel APX: KMOVB/W/D/Q promoted from VEX map 1 90-93 (APX spec 3.1.2.3.2, 3.1.5) */
+    if (apx_vex_promoted(s) && *b >= 0x90 && *b <= 0x93) {
+        s->apx_promoted = true;
+        decode_0F_KMOV(s, env, entry, b);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U646) */
     *entry = opcodes_evex_0F[*b];
 #if __Use_Original_Qemu != 1 /* ours (U372) */
     decode_avx10_override(s, env, entry, b, opcodes_avx10_0F);
@@ -4657,6 +4684,37 @@ static void decode_evex_0F(DisasContext *s, CPUX86State *env, X86OpEntry *entry,
 static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+    /*
+     * Intel APX: VEX map 2 instructions promoted to EVEX map 2 (APX spec 3.1.2.3.2, the table
+     * of 3.1.5): ANDN BEXTR BLSI BLSMSK BLSR BZHI MULX PDEP PEXT SARX SHLX SHRX (F2-F7, the
+     * VEX forms: exception class 13 entries), CMPccXADD (E0-EF), LDTILECFG / STTILECFG (49
+     * memory) and TILELOADD / TILELOADDT1 / TILESTORED (4B). TILELOADDRS[T1] (4A) is not
+     * implemented by this CPU model (#UD).
+     */
+    if (apx_vex_promoted(s) &&
+        ((*b >= 0xe0 && *b <= 0xef) || *b == 0xf2 || *b == 0xf3 || (*b >= 0xf5 && *b <= 0xf7) ||
+         *b == 0x49 || *b == 0x4b)) {
+        int row;
+
+        s->apx_promoted = true;
+        memset(entry, 0, sizeof(*entry));
+        if (*b == 0x49 || *b == 0x4b) {
+            if ((get_modrm(s, env) >> 6) != 3) {
+                decode_0F38_AMX(s, env, entry, b);
+            }
+        } else if (*b < 0xf0) {
+            *entry = opcodes_0F38_00toEF[*b];
+        } else {
+            row = (s->prefix & PREFIX_REPZ) ? 2 : (s->prefix & PREFIX_REPNZ) ? 3 :
+                  (s->prefix & PREFIX_DATA) ? 1 : 0;
+            if (opcodes_0F38_F0toFF[*b & 15][row].vex_class == 13) {
+                *entry = opcodes_0F38_F0toFF[*b & 15][row];
+            }
+        }
+        return;
+    }
+#endif /* __Use_Original_Qemu (U646) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
     if ((s->prefix & PREFIX_REPZ) && opcodes_evex_0F38_F3[*b].gen) {
         *entry = opcodes_evex_0F38_F3[*b];
@@ -4675,6 +4733,14 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
 static void decode_evex_0F3A(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
     *b = x86_ldub_code(env, s);
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+    /* Intel APX: RORX promoted from VEX map 3 F0 (APX spec 3.1.2.3.2, the table of 3.1.5) */
+    if (apx_vex_promoted(s) && *b == 0xf0) {
+        s->apx_promoted = true;
+        *entry = opcodes_0F3A[0xf0];
+        return;
+    }
+#endif /* __Use_Original_Qemu (U646) */
     *entry = opcodes_evex_0F3A[*b];
 #if __Use_Original_Qemu != 1 /* ours (U372) */
     decode_avx10_override(s, env, entry, b, opcodes_avx10_0F3A);
@@ -6012,6 +6078,54 @@ static bool validate_apx_promoted(DisasContext *s, X86DecodedInsn *decode)
         }
         return true;
     }
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+    /*
+     * U646: VEX instructions promoted to EVEX (3.1.2.3.2, Figure 3.4: P2 = 0 0 L 0 V4 NF 0 0;
+     * APX-EVEX-BMI / -CMPCCXADD / -KMOV Tables 4.5/4.10/4.16, USER-MSR-EVEX 4.23, AMX):
+     * every promoted form is L0; NF only on ANDN BEXTR BLSI BLSMSK BLSR BZHI (then the status
+     * flags are kept, apx_post); V != 0 unless it names a GPR (MULX writes it); KMOV: XCR0
+     * opmask state enabled, ModRM.reg k with R3 = 1 #UD, then CR0.TS #NM; AMX: W0. The
+     * GPR-only forms have no CR0.TS condition.
+     */
+    {
+        bool nf_ok = e->gen == gen_ANDN || e->gen == gen_BEXTR || e->gen == gen_BZHI ||
+                     e->gen == gen_BLSI || e->gen == gen_BLSMSK || e->gen == gen_BLSR;
+
+        uses_v |= e->gen == gen_MULX;
+        if ((p2 & 0xf3) || ((p2 & 0x04) && !nf_ok)) {
+            goto illegal;
+        }
+        if (!uses_v && s->vex_v != 0) {
+            goto illegal;
+        }
+        switch (e->vex_class) {
+        case 20:
+        case 21:
+            if (!(s->flags & HF_OPMASK_EN_MASK)) {
+                goto illegal;
+            }
+            if ((e->op0 == X86_TYPE_K || e->op2 == X86_TYPE_K) && (REX_R(s) & 8)) {
+                goto illegal;
+            }
+            if (s->flags & HF_TS_MASK) {
+                gen_NM_exception(s);
+                return false;
+            }
+            break;
+        case 22:
+            if (s->vex_w) {
+                goto illegal;
+            }
+            break;
+        default:
+            break;
+        }
+        if (p2 & 0x04) {
+            s->apx_post = APX_POST_NF;
+        }
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U646) */
 illegal:
     gen_illegal_opcode(s);
     return false;
@@ -6385,6 +6499,14 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
                 decode_func = decode_apx_map4;
                 break;
 #endif /* __Use_Original_Qemu (U645) */
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+            case 7: /* Intel APX: URDMSR / UWRMSR imm32 promoted from VEX map 7 (U646) */
+                if (!apx_evex) {
+                    goto illegal_op;
+                }
+                decode_func = decode_apx_map7;
+                break;
+#endif /* __Use_Original_Qemu (U646) */
             default:
                 goto illegal_op;
             }
@@ -6540,6 +6662,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             decode_temps_free(tcg_ctx, &decode);
             return;
         }
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+        if (s->apx_post) {
+            gen_apx_pre(s);         /* EVEX.NF = 1 (U646) */
+        }
+#endif /* __Use_Original_Qemu (U646) */
         goto apx_promoted;
     }
 #endif /* __Use_Original_Qemu (U645) */
@@ -6652,6 +6779,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         }
 #endif /* __Use_Original_Qemu (U44) */
     }
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+    if (s->apx_post) {
+        gen_apx_post(s);            /* EVEX.NF = 1: the status flags restored (U646) */
+    }
+#endif /* __Use_Original_Qemu (U646) */
     decode_temps_free(tcg_ctx, &decode);
     return;
  illegal_op:

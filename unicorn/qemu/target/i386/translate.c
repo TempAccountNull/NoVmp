@@ -3634,6 +3634,13 @@ static void gen_ldz_env_A0(DisasContext *s, int offset, bool align)
 #endif /* __Use_Original_Qemu (U142) */
 
 #include "decode-new.h"
+#if __Use_Original_Qemu != 1 /* ours (U646) */
+/* Intel APX: the EVEX.NF wrapper (defined with the map 4 decoder below) for decode-new (U646) */
+#define APX_POST_NF 1
+#define APX_POST_CC 2
+static void gen_apx_pre(DisasContext *s);
+static void gen_apx_post(DisasContext *s);
+#endif /* __Use_Original_Qemu (U646) */
 #include "emit.c.inc"
 #include "decode-new.c.inc"
 #if __Use_Original_Qemu != 1 /* ours (U46/U50/U52/U57) */
@@ -3999,8 +4006,6 @@ static bool rex2_reserved(int b)
  * registers), the operand size from W / pp = 66H, NDD (apx_ndd), ZU (apx_zu) and NF
  * (apx_post); those promoted from maps 2 and 3 are decoded by decode-new.
  */
-#define APX_POST_NF 1
-#define APX_POST_CC 2
 enum { APX_M4_UD, APX_M4_NEW, APX_M4_GO };
 #define APX_OP_OWN    0x300    /* pseudo opcodes of the main switch */
 #define APX_OP_JMPABS 0x301
