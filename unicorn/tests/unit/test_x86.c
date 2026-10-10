@@ -6464,7 +6464,8 @@ static void uintr_setup_tables(uc_engine *uc, uint64_t upid_lo)
 {
     uint64_t uitt[4] = {1 | (5 << 8), NK_UPID, 1 | (7 << 8), NK_UPID2};
     uint64_t upid[2] = {upid_lo, 0};
-    uint64_t upid2[2] = {0xecULL << 16, 0};
+    /* U962: NDST[15:8] = 1 (xAPIC mode): no APIC has that ID */
+    uint64_t upid2[2] = {(1ULL << 40) | (0xecULL << 16), 0};
 
     OK(uc_mem_write(uc, NK_UITT, uitt, sizeof(uitt)));
     OK(uc_mem_write(uc, NK_UPID, upid, sizeof(upid)));
@@ -6472,6 +6473,8 @@ static void uintr_setup_tables(uc_engine *uc, uint64_t upid_lo)
     nk_wrmsr(uc, 0x98a, NK_UITT | 1);           /* IA32_UINTR_TT: UITTADDR, SENDUIPI enable */
     nk_wrmsr(uc, 0x988, 1 | (0x40ULL << 32));   /* IA32_UINTR_MISC: UITTSZ 1, UINV 40H */
     nk_wrmsr(uc, 0x989, NK_UPID);               /* IA32_UINTR_PD */
+    /* U962: notifications go through the local APIC: software-enable it (SVR) */
+    nk_wrmsr(uc, 0x80f, 0x1ff);
 }
 
 /* U104: SENDUIPI posting, self notification (NV = UINV) and its #GP / #UD conditions */
@@ -6493,24 +6496,27 @@ static void test_x86_uintr_senduipi(void)
     OK(uc_mem_read(uc, NK_UPID, u, sizeof(u)));
     TEST_CHECK(u[0] == (0x40ULL << 16) && u[1] == 0);
     TEST_CHECK(nk_rdmsr(uc, 0x985) == (1ULL << 5));
-    /* NV != UINV: posted, ON set, the IPI is not a notification (dropped) */
+    /* NV ECH to xAPIC ID 1 (U962: an ordinary IPI that reaches no APIC): posted, ON set */
     nk_setreg(uc, UC_X86_REG_RCX, 1);
     TEST_CHECK(nk_fault(uc, &intr, send_rcx, 5) == -1);
     OK(uc_mem_read(uc, NK_UPID2, u, sizeof(u)));
-    TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == (1ULL << 7));
+    TEST_CHECK(u[0] == ((1ULL << 40) | (0xecULL << 16) | 1) && u[1] == (1ULL << 7));
     TEST_CHECK(nk_rdmsr(uc, 0x985) == (1ULL << 5));
     /* ON already set: only PIR is updated */
     OK(uc_mem_write(uc, NK_UITT + 16, "\x01\x09", 2));          /* UV = 9 */
     TEST_CHECK(nk_fault(uc, &intr, send_rcx, 5) == -1);
     OK(uc_mem_read(uc, NK_UPID2, u, sizeof(u)));
-    TEST_CHECK(u[0] == ((0xecULL << 16) | 1) && u[1] == ((1ULL << 7) | (1ULL << 9)));
-    /* self notification while RFLAGS.IF = 0: posted, ON stays 1, UIRR unchanged */
+    TEST_CHECK(u[0] == ((1ULL << 40) | (0xecULL << 16) | 1) &&
+               u[1] == ((1ULL << 7) | (1ULL << 9)));
+    /* self notification while RFLAGS.IF = 0: posted, ON stays 1, UIRR unchanged; U962: the
+       notification IPI waits in the IRR (vector 40H) */
     nk_wrmsr(uc, 0x985, 0);
     nk_setreg(uc, UC_X86_REG_EFLAGS, 0x2);
     TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == -1);
     OK(uc_mem_read(uc, NK_UPID, u, sizeof(u)));
     TEST_CHECK(u[0] == ((0x40ULL << 16) | 1) && u[1] == (1ULL << 5));
     TEST_CHECK(nk_rdmsr(uc, 0x985) == 0);
+    TEST_CHECK(nk_rdmsr(uc, 0x822) == 1);
     /* #GP: index > UITTSZ, invalid UITTE, reserved UPID bits */
     nk_setreg(uc, UC_X86_REG_RAX, 2);
     TEST_CHECK(nk_fault(uc, &intr, send_rax, 4) == 13);
@@ -24618,6 +24624,1210 @@ static void test_x86_xp_er(void)
 }
 /* ---- end U990-U1019 (xp_) ---- */
 
+/* ---- NoVmp U960-U989 tests (ap_): local APIC / x2APIC, IPIs, UINTR notifications ---- */
+/*
+ * NoVmp (ledgers U960-U963): the local APIC model (apic_model.c, docs/apic.md). Expected
+ * values from the SDM (Vol3A chapter 13, local APIC and x2APIC; chapter 9, user interrupts):
+ * specification-validated - the i5-13600K's local APIC cannot be read from user mode.
+ * Guest code runs at CPL0 in 64-bit mode; every run uses a fresh 64-byte code slot.
+ */
+#define AP_DATA 0x70000000ULL
+#define AP_DATA_SIZE 0x10000
+#define AP_STACK (AP_DATA + 0x8000)
+#define AP_X2APIC_ON 0xfee00c00ULL     /* IA32_APIC_BASE: base FEE00000H, EN, EXTD */
+
+typedef struct {
+    int count;
+    uint32_t intno[8];
+    uc_x86_exception exc[8];
+    uint64_t rip[8];
+} ap_intr_t;
+
+typedef struct {
+    uc_engine *uc;
+    uc_hook hook;
+    ap_intr_t intr;
+    uint64_t pc;
+} ap_cpu;
+
+typedef struct {
+    uint8_t b[192];
+    size_t n;
+} ap_code;
+
+/* records the event and stops the emulation (RIP stays at the event) */
+static void ap_hook_intr(uc_engine *uc, uint32_t intno, void *user_data)
+{
+    ap_intr_t *r = (ap_intr_t *)user_data;
+
+    if (r->count < 8) {
+        r->intno[r->count] = intno;
+        OK(uc_ctl_get_x86_exception(uc, &r->exc[r->count]));
+        OK(uc_reg_read(uc, UC_X86_REG_RIP, &r->rip[r->count]));
+    }
+    r->count++;
+    uc_emu_stop(uc);
+}
+
+static void ap_set(ap_cpu *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+static uint64_t ap_get(ap_cpu *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+/* host API MSR access (invalid writes are dropped, never #GP) */
+static void ap_wmsr(ap_cpu *c, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m = {msr, v};
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_MSR, &m));
+}
+
+static uint64_t ap_msr(ap_cpu *c, uint32_t msr)
+{
+    uc_x86_msr m = {msr, 0};
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static void ap_open_cpu(ap_cpu *c, bool hook)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, AP_DATA, AP_DATA_SIZE, UC_PROT_ALL));
+    ap_set(c, UC_X86_REG_RSP, AP_STACK);
+    if (hook) {
+        OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, ap_hook_intr, &c->intr, 1, 0));
+    }
+    c->pc = code_start;
+}
+
+/* x2APIC mode, APIC software-enabled (SVR 1FFH), RFLAGS.IF as given */
+static void ap_x2apic(ap_cpu *c, bool if_flag)
+{
+    ap_wmsr(c, 0x1b, AP_X2APIC_ON);
+    ap_wmsr(c, 0x80f, 0x1ff);
+    ap_set(c, UC_X86_REG_EFLAGS, if_flag ? 0x202 : 0x2);
+}
+
+static void ap_emit(ap_code *k, const void *s, size_t n)
+{
+    TEST_CHECK(k->n + n <= sizeof(k->b));
+    memcpy(k->b + k->n, s, n);
+    k->n += n;
+}
+
+static void ap_emit32(ap_code *k, uint8_t op, uint32_t v)
+{
+    uint8_t b[5] = {op, (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+
+    ap_emit(k, b, 5);
+}
+
+/* mov ecx, msr; mov eax, lo; mov edx, hi; wrmsr */
+static void ap_wr(ap_code *k, uint32_t msr, uint64_t v)
+{
+    ap_emit32(k, 0xb9, msr);
+    ap_emit32(k, 0xb8, (uint32_t)v);
+    ap_emit32(k, 0xba, (uint32_t)(v >> 32));
+    ap_emit(k, "\x0f\x30", 2);
+}
+
+/* mov ecx, msr; rdmsr */
+static void ap_rd(ap_code *k, uint32_t msr)
+{
+    ap_emit32(k, 0xb9, msr);
+    ap_emit(k, "\x0f\x32", 2);
+}
+
+/*
+ * runs the code from a fresh slot: -1 = ran to the end, else the vector the hook saw first
+ * (an exception or an external interrupt), 6 for UC_ERR_INSN_INVALID, -2 for UC_ERR_EXCEPTION
+ */
+static int ap_exec(ap_cpu *c, const ap_code *k)
+{
+    uint64_t at = c->pc;
+    uc_err e;
+
+    c->pc += (k->n + 0x3f) & ~(uint64_t)0x3f;
+    TEST_CHECK(c->pc <= code_start + code_len);
+    memset(&c->intr, 0, sizeof(c->intr));
+    OK(uc_mem_write(c->uc, at, k->b, k->n));
+    e = uc_emu_start(c->uc, at, at + k->n, 0, 0);
+    if (e == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (e == UC_ERR_EXCEPTION) {
+        return -2;
+    }
+    OK(e);
+    return c->intr.count ? (int)c->intr.intno[0] : -1;
+}
+
+static int ap_x(ap_cpu *c, const char *code, size_t n)
+{
+    ap_code k = {{0}, 0};
+
+    ap_emit(&k, code, n);
+    return ap_exec(c, &k);
+}
+
+/* one guest WRMSR: -1 or the fault / interrupt vector */
+static int ap_gwr(ap_cpu *c, uint32_t msr, uint64_t v)
+{
+    ap_code k = {{0}, 0};
+
+    ap_wr(&k, msr, v);
+    return ap_exec(c, &k);
+}
+
+/* one guest RDMSR: -1 (value in *v) or the fault vector */
+static int ap_grd(ap_cpu *c, uint32_t msr, uint64_t *v)
+{
+    ap_code k = {{0}, 0};
+    int r;
+
+    ap_rd(&k, msr);
+    r = ap_exec(c, &k);
+    *v = (ap_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)ap_get(c, UC_X86_REG_RAX);
+    return r;
+}
+
+static void ap_cpuid(ap_cpu *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    ap_set(c, UC_X86_REG_RAX, leaf);
+    ap_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(ap_x(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)ap_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)ap_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)ap_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)ap_get(c, UC_X86_REG_RDX);
+}
+
+/* bit 'v' of a 256-bit APIC register at MSR base (810H ISR, 818H TMR, 820H IRR) */
+static int ap_bit(ap_cpu *c, uint32_t base, int v)
+{
+    return (int)((ap_msr(c, base + (uint32_t)(v >> 5)) >> (v & 31)) & 1);
+}
+
+static uint64_t ap_esr(ap_cpu *c)
+{
+    ap_wmsr(c, 0x828, 0);           /* the write loads the errors logged since the last one */
+    return ap_msr(c, 0x828);
+}
+
+/* U960: power-up state, CPUID, register access rules in xAPIC and x2APIC mode */
+static void test_x86_ap_reset_state(void)
+{
+    static const uint32_t ro[] = {0x802, 0x803, 0x80a, 0x80d, 0x810, 0x817, 0x818, 0x820,
+                                  0x827, 0x839};
+    static const uint32_t rsvd[] = {0x800, 0x801, 0x804, 0x809, 0x80c, 0x80e, 0x829, 0x82e,
+                                    0x831, 0x83a, 0x83d, 0x840, 0x8ff};
+    uint32_t r[4];
+    uint64_t v;
+    ap_cpu c;
+    size_t i;
+
+    ap_open_cpu(&c, true);
+    /* IA32_APIC_BASE after reset: FEE00000H, EN = 1, EXTD = 0, BSP = 1 (13.4.4, 13.12.5.1) */
+    TEST_CHECK(ap_grd(&c, 0x1b, &v) == -1 && v == 0xfee00900ULL);
+    TEST_MSG("IA32_APIC_BASE %016" PRIx64, v);
+    ap_cpuid(&c, 1, 0, r);
+    TEST_CHECK(r[2] & (1u << 21));                 /* CPUID.01H:ECX.x2APIC */
+    TEST_CHECK(r[3] & (1u << 9));                  /* CPUID.01H:EDX.APIC */
+    TEST_CHECK((r[2] & (1u << 24)) == 0);          /* no TSC-deadline timer */
+    /* xAPIC mode: every x2APIC MSR #GP (13.12.2) */
+    TEST_CHECK(ap_grd(&c, 0x802, &v) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x808, 0) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x40) == 13);
+    /* to x2APIC mode: BSP kept, the registers at their reset values (13.4.7.1) */
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    TEST_CHECK(ap_grd(&c, 0x1b, &v) == -1 && v == 0xfee00d00ULL);
+    TEST_CHECK(ap_grd(&c, 0x802, &v) == -1 && v == 0);
+    ap_cpuid(&c, 0xb, 0, r);
+    TEST_CHECK(r[3] == 0);                         /* CPUID.0BH:EDX = x2APIC ID */
+    TEST_CHECK(ap_grd(&c, 0x803, &v) == -1 && v == 0x01060015ULL);
+    TEST_CHECK(ap_grd(&c, 0x808, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x80a, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x80d, &v) == -1 && v == 1);     /* LDR: cluster 0, 1 << ID[3:0] */
+    TEST_CHECK(ap_grd(&c, 0x80f, &v) == -1 && v == 0xff);  /* SVR: software-disabled */
+    for (i = 0; i < 24; i++) {
+        TEST_CHECK(ap_msr(&c, 0x810 + (uint32_t)i) == 0);
+    }
+    TEST_CHECK(ap_grd(&c, 0x828, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x82f, &v) == -1 && v == 0x10000);
+    for (i = 0x832; i <= 0x837; i++) {
+        TEST_CHECK(ap_grd(&c, (uint32_t)i, &v) == -1 && v == 0x10000);
+    }
+    TEST_CHECK(ap_grd(&c, 0x830, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x838, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x839, &v) == -1 && v == 0);
+    TEST_CHECK(ap_grd(&c, 0x83e, &v) == -1 && v == 0);
+    /* RDMSR of the write-only EOI / SELF IPI registers and of reserved addresses #GP */
+    TEST_CHECK(ap_grd(&c, 0x80b, &v) == 13);
+    TEST_CHECK(ap_grd(&c, 0x83f, &v) == 13);
+    for (i = 0; i < sizeof(rsvd) / sizeof(rsvd[0]); i++) {
+        TEST_CHECK(ap_grd(&c, rsvd[i], &v) == 13);
+        TEST_CHECK(ap_gwr(&c, rsvd[i], 0) == 13);
+        TEST_MSG("msr %x", rsvd[i]);
+    }
+    /* WRMSR of read-only registers #GP (Table 13-6 note 1) */
+    for (i = 0; i < sizeof(ro) / sizeof(ro[0]); i++) {
+        TEST_CHECK(ap_gwr(&c, ro[i], 0) == 13);
+        TEST_MSG("msr %x", ro[i]);
+    }
+    /* reserved bits (13.12.1.3): TPR[31:8], bits 63:32, EOI / ESR non-zero, SVR[9], ICR[12],
+       DCR[2], SELF IPI[31:8], LVT timer[18] (no TSC deadline), LVT LINT0[17], LVT error[8] */
+    TEST_CHECK(ap_gwr(&c, 0x808, 0x100) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x808, 0x100000000ULL) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x80b, 1) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x828, 4) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x80f, 0x2ff) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x1040) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x83e, 0x4) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x140) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x832, 0x40000) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x835, 0x20000) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x837, 0x100) == 13);
+    /* nothing above changed the registers */
+    TEST_CHECK(ap_msr(&c, 0x808) == 0 && ap_msr(&c, 0x80f) == 0xff && ap_msr(&c, 0x830) == 0);
+    TEST_CHECK(ap_msr(&c, 0x83e) == 0 && ap_msr(&c, 0x832) == 0x10000);
+    /* writable fields: SVR (vector, enable, EOI-broadcast suppression), DCR, LVTs */
+    TEST_CHECK(ap_gwr(&c, 0x80f, 0x11ff) == -1 && ap_msr(&c, 0x80f) == 0x11ff);
+    TEST_CHECK(ap_gwr(&c, 0x83e, 0xb) == -1 && ap_msr(&c, 0x83e) == 0xb);
+    TEST_CHECK(ap_gwr(&c, 0x832, 0x200ef) == -1 && ap_msr(&c, 0x832) == 0x200ef);
+    /* LINT0: polarity, trigger, NMI delivery mode; delivery status (12) / remote IRR (14) RO */
+    TEST_CHECK(ap_gwr(&c, 0x835, 0x1f4ef) == -1 && ap_msr(&c, 0x835) == 0x1a4ef);
+    TEST_CHECK(ap_gwr(&c, 0x82f, 0x2f1) == -1 && ap_msr(&c, 0x82f) == 0x2f1);
+    /* software disable (SVR[8] = 0) masks every LVT entry; unmasking is ignored (13.4.7.2) */
+    TEST_CHECK(ap_gwr(&c, 0x80f, 0xff) == -1);
+    TEST_CHECK(ap_msr(&c, 0x832) == 0x300ef && ap_msr(&c, 0x82f) == 0x102f1);
+    TEST_CHECK(ap_gwr(&c, 0x837, 0x33) == -1 && ap_msr(&c, 0x837) == 0x10033);
+    OK(uc_close(c.uc));
+}
+
+/* U960: IA32_APIC_BASE EN / EXTD transitions (Figure 13-27), reserved bits, CPUID.01H:EDX.APIC */
+static void test_x86_ap_base_transitions(void)
+{
+    uint32_t r[4], maxphy;
+    uint64_t v;
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_cpuid(&c, 0x80000008, 0, r);
+    maxphy = r[0] & 0xff;
+    /* reserved: bits 7:0, bit 9, bits 63:MAXPHYADDR; EN = 0 with EXTD = 1 is invalid */
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00801ULL) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00a00ULL) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00800ULL | (1ULL << maxphy)) == 13);
+    TEST_MSG("MAXPHYADDR %u", maxphy);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00400ULL) == 13);
+    TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00900ULL);
+    /* the base field below MAXPHYADDR is writable; the BSP flag is not changed by WRMSR */
+    TEST_CHECK(ap_gwr(&c, 0x1b, (1ULL << (maxphy - 1)) | 0xfec00800ULL) == -1);
+    TEST_CHECK(ap_msr(&c, 0x1b) == ((1ULL << (maxphy - 1)) | 0xfec00900ULL));
+    /* xAPIC -> x2APIC -> (x2APIC -> xAPIC #GP) -> disabled */
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x808, 0x20) == -1 && ap_msr(&c, 0x808) == 0x20);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00800ULL) == 13);
+    TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00d00ULL);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00000ULL) == -1);
+    TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00100ULL);
+    ap_cpuid(&c, 1, 0, r);
+    TEST_CHECK((r[3] & (1u << 9)) == 0);           /* 13.4.3: CPUID APIC flag 0 while EN = 0 */
+    TEST_CHECK(ap_grd(&c, 0x808, &v) == 13);
+    /* disabled -> x2APIC #GP; disabled -> xAPIC -> x2APIC: the state was not preserved */
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00800ULL) == -1);
+    ap_cpuid(&c, 1, 0, r);
+    TEST_CHECK(r[3] & (1u << 9));
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    TEST_CHECK(ap_msr(&c, 0x808) == 0 && ap_msr(&c, 0x80f) == 0xff);
+    /* the host API drops invalid writes without an exception */
+    ap_wmsr(&c, 0x1b, 0xfee00800ULL);
+    TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00d00ULL);
+    ap_wmsr(&c, 0x808, 0x1234);
+    TEST_CHECK(ap_msr(&c, 0x808) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* U960: TPR <-> CR8 (13.8.6.1), PPR, MOV CR8 reserved bits */
+static void test_x86_ap_tpr_cr8(void)
+{
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, false);
+    ap_set(&c, UC_X86_REG_RAX, 5);
+    TEST_CHECK(ap_x(&c, "\x44\x0f\x22\xc0", 4) == -1);             /* mov cr8, rax */
+    TEST_CHECK(ap_msr(&c, 0x808) == 0x50 && ap_msr(&c, 0x80a) == 0x50);
+    TEST_CHECK(ap_gwr(&c, 0x808, 0x3a) == -1);
+    TEST_CHECK(ap_msr(&c, 0x80a) == 0x3a);                         /* PPR = TPR with ISR empty */
+    ap_set(&c, UC_X86_REG_RAX, 0x77);
+    TEST_CHECK(ap_x(&c, "\x44\x0f\x20\xc0", 4) == -1);             /* mov rax, cr8 */
+    TEST_CHECK(ap_get(&c, UC_X86_REG_RAX) == 3);
+    ap_set(&c, UC_X86_REG_RAX, 0x10);
+    TEST_CHECK(ap_x(&c, "\x44\x0f\x22\xc0", 4) == 13);             /* CR8[63:4] reserved */
+    TEST_CHECK(ap_msr(&c, 0x808) == 0x3a);
+    OK(uc_close(c.uc));
+}
+
+/* expects one external interrupt 'vector' reported to UC_HOOK_INTR at RIP 'rip' */
+static void ap_check_ext(ap_cpu *c, int got, int vector, uint64_t rip)
+{
+    TEST_CHECK(got == vector);
+    TEST_CHECK(c->intr.count == 1 && c->intr.exc[0].vector == vector &&
+               c->intr.exc[0].external == 1 && c->intr.exc[0].software == 0 &&
+               c->intr.exc[0].has_error_code == 0);
+    TEST_CHECK(rip == 0 || c->intr.rip[0] == rip);
+    TEST_MSG("got %d, expected %d; rip %" PRIx64 " expected %" PRIx64, got, vector,
+             c->intr.rip[0], rip);
+}
+
+/* U960: self IPIs through SELF IPI and the ICR (shorthands, physical, logical, broadcast) */
+static void test_x86_ap_self_ipi(void)
+{
+    ap_code k = {{0}, 0};
+    uint64_t at;
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, true);
+    /* SELF IPI 40H: logged in the IRR by the WRMSR, delivered at the next boundary */
+    ap_wr(&k, 0x83f, 0x40);
+    ap_emit(&k, "\x41\xb0\x01", 3);                                /* mov r8b, 1 */
+    at = c.pc;
+    ap_set(&c, UC_X86_REG_R8, 0);
+    ap_check_ext(&c, ap_exec(&c, &k), 0x40, at + 17);
+    TEST_CHECK(ap_get(&c, UC_X86_REG_R8) == 0);
+    TEST_CHECK(ap_bit(&c, 0x810, 0x40) == 1 && ap_bit(&c, 0x820, 0x40) == 0);
+    TEST_CHECK(ap_bit(&c, 0x818, 0x40) == 0);                      /* edge */
+    TEST_CHECK(ap_msr(&c, 0x80a) == 0x40);                         /* PPR = ISRV class */
+    ap_wmsr(&c, 0x80b, 0);                                         /* EOI */
+    TEST_CHECK(ap_bit(&c, 0x810, 0x40) == 0 && ap_msr(&c, 0x80a) == 0);
+    /* ICR: Self shorthand; physical to its own ID 0; all including self; broadcast FFFFFFFFH;
+       logical cluster 0 bit 0 (its LDR = 1); level trigger is sent as edge */
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x40050), 0x50, 0);
+    TEST_CHECK(ap_msr(&c, 0x830) == 0x40050);
+    ap_wmsr(&c, 0x80b, 0);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x51), 0x51, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x80052), 0x52, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0xffffffff00000053ULL), 0x53, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x0000000100000854ULL), 0x54, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0xc055), 0x55, 0);
+    TEST_CHECK(ap_bit(&c, 0x818, 0x55) == 0);
+    TEST_CHECK(ap_msr(&c, 0x830) == 0xc055);                       /* ICR reads back */
+    ap_wmsr(&c, 0x80b, 0);
+    /* not addressed: all excluding self, another physical ID, another cluster, a logical ID
+       bit it does not have - nothing arrives, no error is logged (13.8.1) */
+    TEST_CHECK(ap_gwr(&c, 0x830, 0xc0056) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x0000000500000057ULL) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x0001000100000858ULL) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x0000000200000859ULL) == -1);
+    TEST_CHECK(ap_msr(&c, 0x822) == 0 && ap_esr(&c) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* U960: IRR/ISR priority, TPR/PPR masking, EOI, IF = 0 pending (13.8.3, 13.8.4, 13.8.5) */
+static void test_x86_ap_priority_eoi(void)
+{
+    uint64_t at;
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, false);                          /* RFLAGS.IF = 0: interrupts stay pending */
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x31) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x52) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x5a) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x90) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x90) == -1);     /* collapsed into the same IRR bit */
+    TEST_CHECK(ap_msr(&c, 0x821) == (1u << 17) && ap_msr(&c, 0x822) == ((1u << 18) | (1u << 26)));
+    TEST_CHECK(ap_msr(&c, 0x824) == (1u << 16));
+    TEST_CHECK(ap_gwr(&c, 0x808, 0x50) == -1);
+    /* STI: delivered after the instruction following STI (interrupt shadow), highest first */
+    at = c.pc;
+    ap_check_ext(&c, ap_x(&c, "\xfb\x90\x90", 3), 0x90, at + 2);
+    TEST_CHECK(ap_msr(&c, 0x80a) == 0x90 && ap_bit(&c, 0x810, 0x90) == 1);
+    /* class 5 <= PPR class 9 and TPR class 5: nothing until EOI and a lower TPR */
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_msr(&c, 0x80a) == 0x50);
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);
+    ap_check_ext(&c, ap_gwr(&c, 0x808, 0x40), 0x5a, 0);
+    TEST_CHECK(ap_msr(&c, 0x80a) == 0x50);                         /* ISRV 5AH: PPR 50H */
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);                        /* 52H: same class */
+    ap_wmsr(&c, 0x80b, 0);
+    at = c.pc;
+    ap_check_ext(&c, ap_x(&c, "\x90", 1), 0x52, at);              /* before the NOP */
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);                        /* 31H: class 3 < 4 */
+    ap_check_ext(&c, ap_gwr(&c, 0x808, 0x2f), 0x31, 0);
+    /* nested: a higher class interrupts the handler before its EOI (13.8.4) */
+    ap_check_ext(&c, ap_gwr(&c, 0x83f, 0x60), 0x60, 0);
+    TEST_CHECK(ap_bit(&c, 0x810, 0x31) == 1 && ap_bit(&c, 0x810, 0x60) == 1);
+    ap_wmsr(&c, 0x80b, 0);                                         /* clears 60H only */
+    TEST_CHECK(ap_bit(&c, 0x810, 0x31) == 1 && ap_bit(&c, 0x810, 0x60) == 0);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_msr(&c, 0x810 + 1) == 0 && ap_msr(&c, 0x80a) == 0x2f);
+    ap_wmsr(&c, 0x80b, 0);                                         /* ISR empty: no effect */
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);
+    OK(uc_close(c.uc));
+}
+
+/* U960: NMI IPIs: not masked by RFLAGS.IF or the PPR, blocked until IRET (SDM Vol3A 7.7) */
+static void test_x86_ap_nmi(void)
+{
+    static const uint64_t gdt[3] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    uint64_t frame[5], rsp = AP_STACK - 0x100, at;
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, false);
+    OK(uc_mem_write(c.uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    TEST_CHECK(ap_gwr(&c, 0x808, 0xf0) == -1);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x400), 2, 0);              /* NMI to ID 0 */
+    TEST_CHECK(ap_msr(&c, 0x810 + 0) == 0);                        /* bypasses IRR / ISR */
+    /* a second NMI is held while NMIs are blocked; IRETQ ends the blocking */
+    TEST_CHECK(ap_gwr(&c, 0x830, 0xffffffff00000400ULL) == -1);    /* broadcast */
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1);
+    frame[0] = c.pc + 2;
+    frame[1] = 0x08;
+    frame[2] = 0x2;
+    frame[3] = AP_STACK;
+    frame[4] = 0x10;
+    OK(uc_mem_write(c.uc, rsp, frame, sizeof(frame)));
+    ap_set(&c, UC_X86_REG_RSP, rsp);
+    at = c.pc;
+    ap_check_ext(&c, ap_x(&c, "\x48\xcf\x90", 3), 2, at + 2);      /* iretq; nop */
+    /* NMI to a software-disabled APIC is still accepted (13.4.7.2) */
+    TEST_CHECK(ap_gwr(&c, 0x80f, 0xff) == -1);
+    frame[0] = c.pc + 2;
+    OK(uc_mem_write(c.uc, rsp, frame, sizeof(frame)));
+    ap_set(&c, UC_X86_REG_RSP, rsp);
+    TEST_CHECK(ap_x(&c, "\x48\xcf\x90", 3) == -1);                 /* unblock */
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x400), 2, 0);
+    OK(uc_close(c.uc));
+}
+
+/* U960: ESR (13.5.3), the LVT error interrupt, lowest priority, software-disabled APIC */
+static void test_x86_ap_errors(void)
+{
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, true);
+    TEST_CHECK(ap_esr(&c) == 0);
+    /* SELF IPI with an illegal vector: Send + Receive Illegal Vector, no IRR bit */
+    TEST_CHECK(ap_gwr(&c, 0x83f, 5) == -1);
+    TEST_CHECK(ap_msr(&c, 0x828) == 0);            /* the ESR changes only when written */
+    TEST_CHECK(ap_esr(&c) == 0x60 && ap_msr(&c, 0x820) == 0);
+    TEST_CHECK(ap_esr(&c) == 0);
+    /* fixed IPI, illegal vector: to itself 60H; to an absent ID only Send Illegal Vector */
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x7) == -1 && ap_esr(&c) == 0x60);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x0000000900000007ULL) == -1 && ap_esr(&c) == 0x20);
+    /* lowest priority (x2APIC ICR delivery mode 001b): not sent, Redirectable IPI only */
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x140) == -1 && ap_esr(&c) == 0x10);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x103) == -1 && ap_esr(&c) == 0x10);
+    TEST_CHECK(ap_msr(&c, 0x822) == 0);
+    /* the LVT error interrupt: once per arming (the ESR write re-arms it) */
+    TEST_CHECK(ap_gwr(&c, 0x837, 0x33) == -1);
+    ap_check_ext(&c, ap_gwr(&c, 0x83f, 3), 0x33, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 3) == -1);        /* not re-armed: no second interrupt */
+    TEST_CHECK(ap_esr(&c) == 0x60);
+    ap_check_ext(&c, ap_gwr(&c, 0x83f, 4), 0x33, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_esr(&c) == 0x60);
+    /* masked: errors still logged, no interrupt */
+    TEST_CHECK(ap_gwr(&c, 0x837, 0x10033) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 1) == -1 && ap_esr(&c) == 0x60);
+    /* an illegal LVT error vector: Receive Illegal Vector, nothing delivered */
+    TEST_CHECK(ap_gwr(&c, 0x837, 0x0e) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 2) == -1 && ap_esr(&c) == 0x60);
+    TEST_CHECK(ap_msr(&c, 0x820) == 0);
+    /* software-disabled: fixed interrupts are discarded, IRR / ISR contents are held */
+    ap_set(&c, UC_X86_REG_EFLAGS, 0x2);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x70) == -1 && ap_bit(&c, 0x820, 0x70) == 1);
+    TEST_CHECK(ap_gwr(&c, 0x80f, 0xff) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x71) == -1 && ap_bit(&c, 0x820, 0x71) == 0);
+    ap_set(&c, UC_X86_REG_EFLAGS, 0x202);
+    TEST_CHECK(ap_x(&c, "\x90", 1) == -1 && ap_bit(&c, 0x820, 0x70) == 1);
+    ap_check_ext(&c, ap_gwr(&c, 0x80f, 0x1ff), 0x70, 0);
+    OK(uc_close(c.uc));
+}
+
+/* U960: what the model does not implement stops the emulation (docs/apic.md) */
+static void test_x86_ap_unsupported(void)
+{
+    static const uint64_t icr[] = {0x200, 0x500, 0x4500, 0x608, 0x300, 0x700, 0x40400,
+                                   0x80400};
+    uc_x86_exception e;
+    uint64_t at;
+    ap_cpu c;
+    size_t i;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, true);
+    ap_check_ext(&c, ap_gwr(&c, 0x830, 0x41), 0x41, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    /* SMI, INIT, INIT level, start-up, the reserved modes 011b / 111b, NMI to self /
+       all including self (Table 13-3 invalid): UC_ERR_INSN_INVALID at the WRMSR, ICR kept */
+    for (i = 0; i < sizeof(icr) / sizeof(icr[0]); i++) {
+        at = c.pc;
+        TEST_CHECK(ap_gwr(&c, 0x830, icr[i]) == 6);
+        TEST_CHECK(ap_get(&c, UC_X86_REG_RIP) == at + 15);
+        OK(uc_ctl_get_x86_exception(c.uc, &e));
+        TEST_CHECK(e.vector == -1);
+        TEST_CHECK(ap_msr(&c, 0x830) == 0x41);
+        TEST_MSG("icr %" PRIx64, icr[i]);
+    }
+    /* a non-zero timer initial count would start the timer */
+    at = c.pc;
+    TEST_CHECK(ap_gwr(&c, 0x838, 1000) == 6 && ap_get(&c, UC_X86_REG_RIP) == at + 15);
+    TEST_CHECK(ap_msr(&c, 0x838) == 0);
+    TEST_CHECK(ap_gwr(&c, 0x838, 0) == -1);
+    /* the host API drops them */
+    ap_wmsr(&c, 0x830, 0x500);
+    ap_wmsr(&c, 0x838, 5);
+    TEST_CHECK(ap_msr(&c, 0x830) == 0x41 && ap_msr(&c, 0x838) == 0);
+    OK(uc_close(c.uc));
+}
+
+/* U960: no UC_HOOK_INTR: an external interrupt stops the emulation like an exception */
+static void test_x86_ap_no_hook(void)
+{
+    uc_x86_exception e;
+    ap_cpu c;
+
+    ap_open_cpu(&c, false);
+    ap_x2apic(&c, true);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0xa0) == -2);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 0xa0 && e.external == 1);
+    TEST_CHECK(ap_bit(&c, 0x810, 0xa0) == 1);
+    OK(uc_close(c.uc));
+}
+
+/* U960: uc_context_save / restore carry the APIC state and re-evaluate pending interrupts */
+static void test_x86_ap_context(void)
+{
+    uc_context *ctx;
+    ap_cpu c;
+
+    ap_open_cpu(&c, true);
+    ap_x2apic(&c, false);
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x66) == -1);
+    ap_set(&c, UC_X86_REG_EFLAGS, 0x202);
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    ap_check_ext(&c, ap_x(&c, "\x90", 1), 0x66, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK(ap_msr(&c, 0x823) == 0 && ap_x(&c, "\x90", 1) == -1);
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(ap_bit(&c, 0x820, 0x66) == 1);
+    ap_check_ext(&c, ap_x(&c, "\x90", 1), 0x66, 0);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+}
+
+/* U961: an engine with x2APIC ID 'id', on the APIC bus of 'peer' (NULL: none) */
+static void ap_open_on(ap_cpu *c, uint32_t id, ap_cpu *peer)
+{
+    ap_open_cpu(c, true);
+    OK(uc_ctl_set_x86_apic_id(c->uc, id));
+    if (peer) {
+        OK(uc_ctl_set_x86_apic_bus(c->uc, peer->uc));
+    }
+}
+
+/* U961: UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID: IDs, CPUID, BSP, LDR, leave, close */
+static void test_x86_ap_bus_api(void)
+{
+    ap_cpu a, b, c;
+    uint32_t id, r[4];
+
+    ap_open_cpu(&a, true);
+    ap_open_cpu(&b, true);
+    TEST_CHECK(uc_ctl_set_x86_apic_bus(b.uc, b.uc) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_apic_bus(b.uc, a.uc) == UC_ERR_ARG);  /* both have ID 0 */
+    TEST_CHECK(uc_ctl_set_x86_apic_id(b.uc, 0xffffffffu) == UC_ERR_ARG);
+    OK(uc_ctl_get_x86_apic_id(b.uc, &id));
+    TEST_CHECK(id == 0);
+    OK(uc_ctl_set_x86_apic_id(b.uc, 0x123));
+    OK(uc_ctl_get_x86_apic_id(b.uc, &id));
+    TEST_CHECK(id == 0x123);
+    OK(uc_ctl_set_x86_apic_bus(b.uc, a.uc));
+    OK(uc_ctl_set_x86_apic_bus(b.uc, a.uc));                        /* already there */
+    TEST_CHECK(uc_ctl_set_x86_apic_id(a.uc, 0x123) == UC_ERR_ARG);  /* taken on the bus */
+    /* the peer that created the bus stays the BSP, the joining engine is an AP */
+    TEST_CHECK(ap_msr(&a, 0x1b) == 0xfee00900ULL && ap_msr(&b, 0x1b) == 0xfee00800ULL);
+    /* CPUID.01H:EBX[31:24] = ID[7:0]; CPUID.0BH:EDX = the x2APIC ID where leaf 0BH exists */
+    ap_cpuid(&b, 1, 0, r);
+    TEST_CHECK((r[1] >> 24) == 0x23);
+    ap_cpuid(&b, 0xb, 0, r);
+    TEST_CHECK((r[0] | r[1] | r[2] | r[3]) == 0 || r[3] == 0x123);
+    TEST_MSG("CPUID.0BH.0: %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
+    /* x2APIC mode: 802H = ID, LDR = (ID[19:4] << 16) | 1 << ID[3:0] (13.12.10.2) */
+    ap_wmsr(&b, 0x1b, AP_X2APIC_ON);
+    TEST_CHECK(ap_msr(&b, 0x802) == 0x123 && ap_msr(&b, 0x80d) == 0x00120008);
+    TEST_CHECK(ap_msr(&b, 0x1b) == 0xfee00c00ULL);
+    OK(uc_ctl_set_x86_apic_id(b.uc, 0x45));
+    TEST_CHECK(ap_msr(&b, 0x802) == 0x45 && ap_msr(&b, 0x80d) == 0x00040020);
+    /* a third engine, ID given before the CPU exists, joins through b */
+    ap_open_on(&c, 0x7, &b);
+    ap_wmsr(&c, 0x1b, AP_X2APIC_ON);
+    ap_wmsr(&c, 0x80f, 0x1ff);
+    ap_x2apic(&a, false);
+    ap_wmsr(&b, 0x80f, 0x1ff);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000004500000041ULL) == -1);    /* to b */
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000700000042ULL) == -1);    /* to c */
+    TEST_CHECK(ap_bit(&b, 0x820, 0x41) == 1 && ap_bit(&c, 0x820, 0x42) == 1);
+    /* b leaves: no longer reached; c closes: an IPI to its ID reaches nobody */
+    OK(uc_ctl_set_x86_apic_bus(b.uc, NULL));
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000004500000043ULL) == -1);
+    TEST_CHECK(ap_bit(&b, 0x820, 0x43) == 0);
+    OK(uc_close(c.uc));
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000700000044ULL) == -1);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0xc0045) == -1);                  /* all excluding self */
+    TEST_CHECK(ap_msr(&a, 0x822) == 0 && ap_esr(&a) == 0);
+    OK(uc_close(b.uc));
+    OK(uc_close(a.uc));
+}
+
+/* U961: IPIs between two vCPUs: fixed, pending with IF = 0, reply, NMI, invalid destination */
+static void test_x86_ap_cross_ipi(void)
+{
+    ap_code k = {{0}, 0};
+    uint64_t at;
+    ap_cpu a, b;
+
+    ap_open_on(&a, 0, NULL);
+    ap_open_on(&b, 1, &a);
+    ap_x2apic(&a, true);
+    ap_x2apic(&b, false);
+    /* a -> b, fixed 45H: logged in the IRR of b, nothing at a (a keeps running) */
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000045ULL) == -1);
+    TEST_CHECK(ap_bit(&b, 0x820, 0x45) == 1 && ap_msr(&a, 0x822) == 0);
+    TEST_CHECK(ap_bit(&b, 0x818, 0x45) == 0);
+    /* b: RFLAGS.IF = 0 keeps it pending; after STI it is taken behind the interrupt shadow */
+    TEST_CHECK(ap_x(&b, "\x90", 1) == -1);
+    at = b.pc;
+    ap_check_ext(&b, ap_x(&b, "\xfb\x90\x90", 3), 0x45, at + 2);
+    TEST_CHECK(ap_bit(&b, 0x810, 0x45) == 1 && ap_bit(&b, 0x820, 0x45) == 0);
+    /* the "handler" of b answers a with 46H and signals EOI */
+    ap_wr(&k, 0x830, 0x46);
+    ap_wr(&k, 0x80b, 0);
+    TEST_CHECK(ap_exec(&b, &k) == -1);
+    TEST_CHECK(ap_msr(&b, 0x812) == 0 && ap_bit(&a, 0x820, 0x46) == 1);
+    ap_check_ext(&a, ap_x(&a, "\x90", 1), 0x46, 0);
+    /* no APIC has ID 7: discarded, no error at either end */
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000700000047ULL) == -1);
+    TEST_CHECK(ap_msr(&b, 0x822) == 0 && ap_esr(&a) == 0 && ap_esr(&b) == 0);
+    /* illegal vector to b: a logs Send, b Receive Illegal Vector */
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000009ULL) == -1);
+    TEST_CHECK(ap_esr(&a) == 0x20 && ap_esr(&b) == 0x40 && ap_msr(&b, 0x820) == 0);
+    /* NMI a -> b: taken by b even with IF = 0 */
+    ap_set(&b, UC_X86_REG_EFLAGS, 0x2);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000400ULL) == -1);
+    ap_check_ext(&b, ap_x(&b, "\x90", 1), 2, 0);
+    /* b software-disabled: fixed IPIs discarded; b globally disabled: NMIs discarded too */
+    ap_wmsr(&b, 0x80f, 0xff);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000048ULL) == -1);
+    TEST_CHECK(ap_bit(&b, 0x820, 0x48) == 0);
+    ap_wmsr(&b, 0x1b, 0xfee00000ULL);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000400ULL) == -1);
+    TEST_CHECK(ap_x(&b, "\x90", 1) == -1);
+    /* b back in xAPIC mode, software-enabled through the API: a physical x2APIC message to
+       ID 1 reaches it (its x2APIC ID); logical messages do not (xAPIC LDR not modelled) */
+    ap_wmsr(&b, 0x1b, 0xfee00800ULL);
+    ap_wmsr(&b, 0x80f, 0x1ff);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x0000000100000049ULL) == -1);
+    TEST_CHECK(ap_gwr(&a, 0x830, 0x000000020000084aULL) == -1);
+    TEST_CHECK(ap_bit(&b, 0x820, 0x49) == 1 && ap_bit(&b, 0x820, 0x4a) == 0);
+    OK(uc_close(b.uc));
+    OK(uc_close(a.uc));
+}
+
+/* U961: four vCPUs (two x2APIC clusters): broadcast, shorthands, logical / physical sets */
+static void test_x86_ap_multi_vcpu(void)
+{
+    static const uint32_t ids[4] = {0, 1, 0x10, 0x11};
+    static const uint32_t ldr[4] = {0x1, 0x2, 0x00010001, 0x00010002};
+    static const struct {
+        uint64_t icr;
+        unsigned to;            /* bit i: vCPU i receives */
+    } sends[] = {
+        {0xffffffff00000060ULL, 0xf},   /* physical broadcast */
+        {0x00000000000c0061ULL, 0xe},   /* all excluding self */
+        {0x0001000300000862ULL, 0xc},   /* logical cluster 1, logical IDs bits 0 and 1 */
+        {0x0000000200000863ULL, 0x2},   /* logical cluster 0, bit 1 */
+        {0xffffffff00000864ULL, 0xf},   /* logical broadcast */
+        {0x0000001100000065ULL, 0x8},   /* physical 11H */
+        {0x0000001200000066ULL, 0x0},   /* physical 12H: nobody */
+        {0x0001000400000867ULL, 0x0},   /* logical cluster 1, bit 2: nobody */
+        {0x0000000000080068ULL, 0xf},   /* all including self */
+    };
+    ap_cpu v[4];
+    size_t i, j;
+    int n;
+
+    for (i = 0; i < 4; i++) {
+        ap_open_on(&v[i], ids[i], i ? &v[0] : NULL);
+        ap_x2apic(&v[i], false);
+        TEST_CHECK(ap_msr(&v[i], 0x80d) == ldr[i]);
+        TEST_CHECK(ap_msr(&v[i], 0x1b) == (i ? 0xfee00c00ULL : 0xfee00d00ULL));
+    }
+    for (i = 0; i < sizeof(sends) / sizeof(sends[0]); i++) {
+        TEST_CHECK(ap_gwr(&v[0], 0x830, sends[i].icr) == -1);
+        for (j = 0; j < 4; j++) {
+            TEST_CHECK(ap_bit(&v[j], 0x820, (int)(sends[i].icr & 0xff)) ==
+                       (int)((sends[i].to >> j) & 1));
+            TEST_MSG("icr %016" PRIx64 " vcpu %u", sends[i].icr, (unsigned)j);
+        }
+    }
+    /* each vCPU takes its interrupts highest first, one per EOI */
+    for (j = 0; j < 4; j++) {
+        ap_set(&v[j], UC_X86_REG_EFLAGS, 0x202);
+        for (n = 0x68; n >= 0x60; n--) {
+            bool mine = false;
+
+            for (i = 0; i < sizeof(sends) / sizeof(sends[0]); i++) {
+                if ((int)(sends[i].icr & 0xff) == n && ((sends[i].to >> j) & 1)) {
+                    mine = true;
+                }
+            }
+            if (mine) {
+                ap_check_ext(&v[j], ap_x(&v[j], "\x90", 1), n, 0);
+                ap_wmsr(&v[j], 0x80b, 0);
+            }
+        }
+        TEST_CHECK(ap_x(&v[j], "\x90", 1) == -1);
+    }
+    /* a chain run round-robin: v1 -> v2 -> v3 -> v0, each IPI sent from the handler */
+    TEST_CHECK(ap_gwr(&v[0], 0x830, 0x0000000100000071ULL) == -1);
+    for (i = 1; i <= 4; i++) {
+        ap_cpu *c = &v[i & 3];
+        ap_code k = {{0}, 0};
+
+        ap_check_ext(c, ap_x(c, "\x90", 1), (int)(0x70 + i), 0);
+        if (i < 4) {
+            ap_wr(&k, 0x830, ((uint64_t)ids[(i + 1) & 3] << 32) | (0x71 + i));
+            ap_wr(&k, 0x80b, 0);
+            TEST_CHECK(ap_exec(c, &k) == -1);
+        }
+    }
+    for (i = 0; i < 4; i++) {
+        OK(uc_close(v[i].uc));
+    }
+}
+
+/*
+ * U962: UINTR notifications through the local APIC. A page shared by the engines (the same
+ * host buffer mapped with uc_mem_map_ptr) holds the UITT (+0) and the UPID (+0x100).
+ */
+#define AP_SHARED 0x71000000ULL
+#define AP_UITT AP_SHARED
+#define AP_UPID (AP_SHARED + 0x100)
+
+static void ap_upid(ap_cpu *c, uint64_t lo, uint64_t pir)
+{
+    uint64_t u[2] = {lo, pir};
+
+    OK(uc_mem_write(c->uc, AP_UPID, u, sizeof(u)));
+}
+
+static void ap_upid_read(ap_cpu *c, uint64_t u[2])
+{
+    OK(uc_mem_read(c->uc, AP_UPID, u, 2 * sizeof(uint64_t)));
+}
+
+/* sender: UITT entry 0 (V, UV 3) -> AP_UPID; receiver: UINV and IA32_UINTR_PD */
+static void ap_uintr_setup(ap_cpu *snd, ap_cpu *rcv, int uinv)
+{
+    uint64_t uitte[2] = {1 | (3 << 8), AP_UPID};
+
+    OK(uc_mem_write(snd->uc, AP_UITT, uitte, sizeof(uitte)));
+    ap_wmsr(snd, 0x98a, AP_UITT | 1);                  /* IA32_UINTR_TT, SENDUIPI enabled */
+    ap_wmsr(snd, 0x988, 0x55ULL << 32);               /* UITTSZ 0; the sender's own UINV 55H */
+    ap_wmsr(rcv, 0x988, (uint64_t)uinv << 32);
+    ap_wmsr(rcv, 0x989, AP_UPID);
+    ap_wmsr(rcv, 0x985, 0);
+}
+
+/* U962: SENDUIPI on one vCPU notifies another through an ordinary IPI (SDM Vol2B SENDUIPI,
+   Vol3A 9.5): identification at the target, pending while its RFLAGS.IF = 0, x2APIC / xAPIC
+   destinations, NV other than the target's UINV, CR4.UINTR = 0 at the target */
+static void test_x86_ap_uintr_cross(void)
+{
+    void *page = calloc(1, 0x1000);
+    uint64_t u[2], cr4;
+    ap_cpu a, b;
+
+    ap_open_on(&a, 0, NULL);
+    ap_open_on(&b, 1, &a);
+    OK(uc_mem_map_ptr(a.uc, AP_SHARED, 0x1000, UC_PROT_ALL, page));
+    OK(uc_mem_map_ptr(b.uc, AP_SHARED, 0x1000, UC_PROT_ALL, page));
+    ap_x2apic(&a, true);
+    ap_x2apic(&b, true);
+    ap_uintr_setup(&a, &b, 0x40);
+    TEST_CHECK(ap_get(&b, UC_X86_REG_CR4) & (1ULL << 25));     /* CR4.UINTR */
+    /* a: SENDUIPI 0 -> UPID NV 40H, NDST 1 (x2APIC mode: the 32-bit ID) */
+    ap_upid(&a, 1ULL << 32 | 0x40ULL << 16, 0);
+    ap_set(&a, UC_X86_REG_RAX, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_upid_read(&b, u);
+    TEST_CHECK(u[0] == (1ULL << 32 | 0x40ULL << 16 | 1) && u[1] == (1ULL << 3));  /* ON, PIR[3] */
+    TEST_CHECK(ap_bit(&b, 0x820, 0x40) == 1 && ap_msr(&a, 0x822) == 0);
+    /* b: the vector is UINV: EOI, ON := 0, PIR -> UIRR; no interrupt is delivered */
+    TEST_CHECK(ap_x(&b, "\x90", 1) == -1 && b.intr.count == 0);
+    ap_upid_read(&b, u);
+    TEST_CHECK(u[0] == (1ULL << 32 | 0x40ULL << 16) && u[1] == 0);
+    TEST_CHECK(ap_msr(&b, 0x985) == (1ULL << 3));
+    TEST_CHECK(ap_msr(&b, 0x812) == 0 && ap_msr(&b, 0x822) == 0);   /* not in ISR / IRR */
+    /* b with RFLAGS.IF = 0: the notification waits in the IRR, processed after STI */
+    ap_wmsr(&b, 0x985, 0);
+    ap_set(&b, UC_X86_REG_EFLAGS, 0x2);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    TEST_CHECK(ap_x(&b, "\x90", 1) == -1);
+    ap_upid_read(&b, u);
+    TEST_CHECK((u[0] & 1) == 1 && u[1] == (1ULL << 3) && ap_msr(&b, 0x985) == 0);
+    TEST_CHECK(ap_bit(&b, 0x820, 0x40) == 1);
+    TEST_CHECK(ap_x(&b, "\xfb\x90\x90", 3) == -1 && b.intr.count == 0);
+    ap_upid_read(&b, u);
+    TEST_CHECK((u[0] & 1) == 0 && u[1] == 0 && ap_msr(&b, 0x985) == (1ULL << 3));
+    /* NV 41H is not the UINV of b: an ordinary interrupt there; the UPID stays posted */
+    ap_upid(&a, 1ULL << 32 | 0x41ULL << 16, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_check_ext(&b, ap_x(&b, "\x90", 1), 0x41, 0);
+    ap_wmsr(&b, 0x80b, 0);
+    ap_upid_read(&b, u);
+    TEST_CHECK((u[0] & 1) == 1 && u[1] == (1ULL << 3));
+    /* CR4.UINTR = 0 at b: no identification, vector 40H is an ordinary interrupt */
+    cr4 = ap_get(&b, UC_X86_REG_CR4);
+    ap_set(&b, UC_X86_REG_CR4, cr4 & ~(1ULL << 25));
+    ap_upid(&a, 1ULL << 32 | 0x40ULL << 16, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_check_ext(&b, ap_x(&b, "\x90", 1), 0x40, 0);
+    ap_wmsr(&b, 0x80b, 0);
+    ap_set(&b, UC_X86_REG_CR4, cr4);
+    /* SN = 1 or ON = 1: posted only, no IPI */
+    ap_upid(&a, 1ULL << 32 | 0x40ULL << 16 | 2, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    TEST_CHECK(ap_msr(&b, 0x822) == 0);
+    /* a in xAPIC mode: the destination is the 8-bit ID NDST[15:8] */
+    ap_wmsr(&a, 0x1b, 0xfee00000ULL);
+    ap_wmsr(&a, 0x1b, 0xfee00800ULL);
+    ap_wmsr(&a, 0x80f, 0x1ff);
+    ap_wmsr(&b, 0x985, 0);
+    ap_upid(&a, 0x100ULL << 32 | 0x40ULL << 16, 0);                 /* NDST[15:8] = 1 */
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    TEST_CHECK(ap_x(&b, "\x90", 1) == -1 && ap_msr(&b, 0x985) == (1ULL << 3));
+    /* NDST = 1 in xAPIC mode means ID NDST[15:8] = 0: a itself, whose UINV is 55H */
+    ap_upid(&a, 1ULL << 32 | 0x40ULL << 16, 0);
+    ap_check_ext(&a, ap_x(&a, "\xf3\x0f\xc7\xf0", 4), 0x40, 0);
+    /* a globally disabled: SENDUIPI posts, no IPI leaves */
+    ap_wmsr(&a, 0x80b, 0);
+    ap_wmsr(&a, 0x1b, 0xfee00000ULL);
+    ap_upid(&a, 0x100ULL << 32 | 0x40ULL << 16, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_upid_read(&b, u);
+    TEST_CHECK((u[0] & 1) == 1 && ap_msr(&b, 0x822) == 0);
+    OK(uc_close(b.uc));
+    OK(uc_close(a.uc));
+    free(page);
+}
+
+/* U962: a self notification with RFLAGS.IF = 0 is pending, not dropped (single vCPU) */
+static void test_x86_ap_uintr_if0(void)
+{
+    void *page = calloc(1, 0x1000);
+    uint64_t u[2];
+    ap_cpu a;
+
+    ap_open_cpu(&a, true);
+    OK(uc_mem_map_ptr(a.uc, AP_SHARED, 0x1000, UC_PROT_ALL, page));
+    ap_x2apic(&a, false);
+    ap_uintr_setup(&a, &a, 0x40);
+    ap_upid(&a, 0x40ULL << 16, 0);                                 /* NDST 0: itself */
+    ap_set(&a, UC_X86_REG_RAX, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_upid_read(&a, u);
+    TEST_CHECK(u[0] == (0x40ULL << 16 | 1) && u[1] == (1ULL << 3));
+    TEST_CHECK(ap_msr(&a, 0x985) == 0 && ap_bit(&a, 0x820, 0x40) == 1);
+    /* the TPR also holds it back: class 4 <= TPR class 4 */
+    TEST_CHECK(ap_gwr(&a, 0x808, 0x40) == -1);
+    TEST_CHECK(ap_x(&a, "\xfb\x90\x90", 3) == -1 && ap_msr(&a, 0x985) == 0);
+    TEST_CHECK(ap_gwr(&a, 0x808, 0x30) == -1 && a.intr.count == 0);
+    ap_upid_read(&a, u);
+    TEST_CHECK(u[0] == (0x40ULL << 16) && u[1] == 0 && ap_msr(&a, 0x985) == (1ULL << 3));
+    TEST_CHECK(ap_msr(&a, 0x812) == 0);
+    OK(uc_close(a.uc));
+    free(page);
+}
+
+/* U962: SENDUIPI on vCPU a, vCPU b at CPL3 with UIF = 1: notification and user-interrupt
+   delivery happen at the same instruction boundary of b (SDM Vol3A 9.5.2, 9.4.2) */
+static void test_x86_ap_uintr_cross_delivery(void)
+{
+    static const uint64_t gdt[4] = {0, 0, 0x00CFF2000000FFFFULL, 0x00AFFA000000FFFFULL};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    void *page = calloc(1, 0x1000);
+    uint64_t frame[5], rsp = AP_STACK - 0x100, handler = code_start + 0x3800, u[2], at;
+    ap_cpu a, b;
+
+    ap_open_on(&a, 0, NULL);
+    ap_open_on(&b, 1, &a);
+    OK(uc_mem_map_ptr(a.uc, AP_SHARED, 0x1000, UC_PROT_ALL, page));
+    OK(uc_mem_map_ptr(b.uc, AP_SHARED, 0x1000, UC_PROT_ALL, page));
+    ap_x2apic(&a, true);
+    ap_x2apic(&b, true);
+    ap_uintr_setup(&a, &b, 0x40);
+    ap_upid(&a, 1ULL << 32 | 0x40ULL << 16, 0);
+    /* b: handler "pop rbx; uiret"; IRETQ to CPL3 (CS 1BH, SS 13H, IF = 1), then STUI */
+    OK(uc_mem_write(b.uc, handler, "\x5b\xf3\x0f\x01\xec", 5));
+    ap_wmsr(&b, 0x986, handler);                                   /* IA32_UINTR_HANDLER */
+    ap_wmsr(&b, 0x987, 0x80);                                      /* UISTACKADJUST */
+    OK(uc_mem_write(b.uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(b.uc, UC_X86_REG_GDTR, &gdtr));
+    frame[0] = b.pc + 2;
+    frame[1] = 0x1b;
+    frame[2] = 0x202;
+    frame[3] = AP_STACK;
+    frame[4] = 0x13;
+    OK(uc_mem_write(b.uc, rsp, frame, sizeof(frame)));
+    ap_set(&b, UC_X86_REG_RSP, rsp);
+    TEST_CHECK(ap_x(&b, "\x48\xcf\xf3\x0f\x01\xef", 6) == -1);    /* iretq; stui */
+    TEST_CHECK((ap_get(&b, UC_X86_REG_CS) & 3) == 3);
+    /* a sends; b takes the notification and the user interrupt before its first instruction */
+    ap_set(&a, UC_X86_REG_RAX, 0);
+    TEST_CHECK(ap_x(&a, "\xf3\x0f\xc7\xf0", 4) == -1);
+    ap_set(&b, UC_X86_REG_RBX, 0);
+    ap_set(&b, UC_X86_REG_R15, 0);
+    at = b.pc;
+    TEST_CHECK(ap_x(&b, "\x90\x41\xbf\x01\x00\x00\x00", 7) == -1 && b.intr.count == 0);
+    TEST_CHECK(ap_get(&b, UC_X86_REG_RBX) == 3);                   /* the user vector, UV */
+    TEST_CHECK(ap_get(&b, UC_X86_REG_R15) == 1);                   /* returned to the slot */
+    TEST_CHECK(ap_get(&b, UC_X86_REG_RSP) == AP_STACK);
+    OK(uc_mem_read(b.uc, AP_STACK - 0x80 - 24, u, sizeof(u)));
+    TEST_CHECK(u[0] == at);                                        /* the interrupted RIP */
+    TEST_CHECK(ap_msr(&b, 0x985) == 0 && ap_msr(&b, 0x812) == 0);
+    ap_upid_read(&b, u);
+    TEST_CHECK(u[0] == (1ULL << 32 | 0x40ULL << 16) && u[1] == 0);
+    OK(uc_close(b.uc));
+    OK(uc_close(a.uc));
+    free(page);
+}
+
+/*
+ * U963: IDT delivery (UC_CTL_X86_EVENT_DELIVERY). CPL0 system state: GDT (08H 64-bit code,
+ * 10H data), IDT at AP_IDT, handlers at AP_HND that record into AP_MARK and IRETQ.
+ */
+#define AP_IDT (AP_DATA + 0x1000)
+#define AP_MARK (AP_DATA + 0x3000)
+#define AP_HND (code_start + 0x3000)
+
+static void ap_gate(ap_cpu *c, int v, uint64_t off)
+{
+    uint8_t g[16] = {(uint8_t)off, (uint8_t)(off >> 8), 0x08, 0, 0, 0x8e,
+                     (uint8_t)(off >> 16), (uint8_t)(off >> 24),
+                     (uint8_t)(off >> 32), (uint8_t)(off >> 40), (uint8_t)(off >> 48),
+                     (uint8_t)(off >> 56), 0, 0, 0, 0};
+
+    OK(uc_mem_write(c->uc, AP_IDT + 16 * (uint64_t)v, g, sizeof(g)));
+}
+
+static void ap_emit_d32(ap_code *k, uint32_t v)
+{
+    uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
+
+    ap_emit(k, b, 4);
+}
+
+/* mov rax, [rsp + d8]; mov [AP_MARK + m], rax */
+static void ap_h_save(ap_code *k, int d8, int m)
+{
+    uint8_t ld[5] = {0x48, 0x8b, 0x44, 0x24, (uint8_t)d8};
+
+    ap_emit(k, ld, 5);
+    ap_emit(k, "\x48\x89\x04\x25", 4);
+    ap_emit_d32(k, (uint32_t)(AP_MARK + m));
+}
+
+/* inc qword [AP_MARK + m] */
+static void ap_h_inc(ap_code *k, int m)
+{
+    ap_emit(k, "\x48\xff\x04\x25", 4);
+    ap_emit_d32(k, (uint32_t)(AP_MARK + m));
+}
+
+static uint64_t ap_mark(ap_cpu *c, int m)
+{
+    uint64_t v;
+
+    OK(uc_mem_read(c->uc, AP_MARK + m, &v, 8));
+    return v;
+}
+
+/* handlers: 60H external (frame, RFLAGS inside, RSP, count, EOI), 2 NMI (count), 13 #GP
+   (error code, RIP; skips 2 bytes), 6 #UD (RIP; skips 2 bytes), 80H INT n (return RIP) */
+static void ap_sys(ap_cpu *c)
+{
+    static const uint64_t gdt[3] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    uc_x86_mmr idtr = {0, AP_IDT, 0xfff, 0};
+    uint64_t frame[5], rsp = AP_STACK - 0x100, h = AP_HND;
+    ap_code k;
+
+    OK(uc_mem_write(c->uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(c->uc, UC_X86_REG_IDTR, &idtr));
+    /* 60H */
+    memset(&k, 0, sizeof(k));
+    ap_h_save(&k, 0, 0);
+    ap_h_save(&k, 8, 8);
+    ap_h_save(&k, 16, 16);
+    ap_emit(&k, "\x9c\x58\x48\x89\x04\x25", 6);                    /* pushfq; pop rax; mov */
+    ap_emit_d32(&k, (uint32_t)(AP_MARK + 24));
+    ap_emit(&k, "\x48\x89\x24\x25", 4);                            /* mov [m+32], rsp */
+    ap_emit_d32(&k, (uint32_t)(AP_MARK + 32));
+    ap_h_inc(&k, 40);
+    ap_emit(&k, "\xb9\x0b\x08\x00\x00\x31\xc0\x31\xd2\x0f\x30", 11);  /* EOI */
+    ap_emit(&k, "\x48\xcf", 2);
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, 0x60, h);
+    /* 2 */
+    h += 0x100;
+    memset(&k, 0, sizeof(k));
+    ap_h_inc(&k, 48);
+    ap_emit(&k, "\x48\xcf", 2);
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, 2, h);
+    /* 13: error code, faulting RIP, skip the 2-byte instruction */
+    h += 0x100;
+    memset(&k, 0, sizeof(k));
+    ap_h_save(&k, 0, 56);
+    ap_h_save(&k, 8, 64);
+    ap_emit(&k, "\x58\x48\x83\x04\x24\x02\x48\xcf", 8);            /* pop; add [rsp],2; iretq */
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, 13, h);
+    /* 6 */
+    h += 0x100;
+    memset(&k, 0, sizeof(k));
+    ap_h_save(&k, 0, 72);
+    ap_emit(&k, "\x48\x83\x04\x24\x02\x48\xcf", 7);
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, 6, h);
+    /* 80H */
+    h += 0x100;
+    memset(&k, 0, sizeof(k));
+    ap_h_save(&k, 0, 80);
+    ap_emit(&k, "\x48\xcf", 2);
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, 0x80, h);
+    /* CS = 08H, SS = 10H, RSP = AP_STACK, RFLAGS.IF = 1: IRETQ */
+    frame[0] = c->pc + 2;
+    frame[1] = 0x08;
+    frame[2] = 0x202;
+    frame[3] = AP_STACK;
+    frame[4] = 0x10;
+    OK(uc_mem_write(c->uc, rsp, frame, sizeof(frame)));
+    ap_set(c, UC_X86_REG_RSP, rsp);
+    TEST_CHECK(ap_x(c, "\x48\xcf", 2) == -1);
+    TEST_CHECK(ap_get(c, UC_X86_REG_RSP) == AP_STACK);
+}
+
+/* U963: external interrupts, NMI, #GP, #UD and INT n through the guest IDT */
+static void test_x86_ap_idt_delivery(void)
+{
+    ap_code k = {{0}, 0};
+    uc_x86_exception e;
+    uint64_t at;
+    ap_cpu c;
+    int mask;
+
+    ap_open_cpu(&c, true);
+    TEST_CHECK(uc_ctl_set_x86_event_delivery(c.uc, 4) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_INTR_IDT | UC_X86_DELIVER_EXC_IDT));
+    OK(uc_ctl_get_x86_event_delivery(c.uc, &mask));
+    TEST_CHECK(mask == 3);
+    ap_x2apic(&c, true);
+    ap_sys(&c);
+    /* SELF IPI 60H: interrupt gate 60H, frame RIP/CS/RFLAGS, IF = 0 in the handler, EOI, IRETQ */
+    ap_wr(&k, 0x83f, 0x60);
+    ap_emit(&k, "\x41\xbe\x01\x00\x00\x00", 6);                    /* mov r14d, 1 */
+    at = c.pc;
+    TEST_CHECK(ap_exec(&c, &k) == -1 && c.intr.count == 0);
+    TEST_CHECK(ap_mark(&c, 40) == 1);
+    TEST_CHECK(ap_mark(&c, 0) == at + 17 && ap_mark(&c, 8) == 0x08);
+    TEST_CHECK((ap_mark(&c, 16) & 0x200) != 0 && (ap_mark(&c, 24) & 0x200) == 0);
+    TEST_CHECK(ap_mark(&c, 32) == AP_STACK - 40);
+    TEST_CHECK(ap_get(&c, UC_X86_REG_R14) == 1 && ap_get(&c, UC_X86_REG_RSP) == AP_STACK);
+    TEST_CHECK(ap_msr(&c, 0x813) == 0);                            /* EOI done */
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 0x60 && e.external == 1);
+    /* NMI: gate 2; IRETQ unblocks, a second NMI is taken too */
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x400) == -1 && ap_mark(&c, 48) == 1);
+    TEST_CHECK(ap_gwr(&c, 0x830, 0x400) == -1 && ap_mark(&c, 48) == 2);
+    /* #GP(0) from WRMSR to a reserved x2APIC MSR: gate 13 with the error code */
+    memset(&k, 0, sizeof(k));
+    ap_wr(&k, 0x800, 0);
+    ap_emit(&k, "\x41\xbf\x07\x00\x00\x00", 6);                    /* mov r15d, 7 */
+    at = c.pc;
+    TEST_CHECK(ap_exec(&c, &k) == -1 && c.intr.count == 0);
+    TEST_CHECK(ap_mark(&c, 56) == 0 && ap_mark(&c, 64) == at + 15);
+    TEST_CHECK(ap_get(&c, UC_X86_REG_R15) == 7);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 13 && e.has_error_code == 1 && e.external == 0);
+    /* #UD (UD2): the guest handler, not UC_ERR_INSN_INVALID */
+    at = c.pc;
+    TEST_CHECK(ap_x(&c, "\x0f\x0b\x41\xbf\x09\x00\x00\x00", 8) == -1);
+    TEST_CHECK(ap_mark(&c, 72) == at && ap_get(&c, UC_X86_REG_R15) == 9);
+    /* INT 80H: gate 80H, return RIP after the instruction */
+    at = c.pc;
+    TEST_CHECK(ap_x(&c, "\xcd\x80\x41\xbd\x05\x00\x00\x00", 8) == -1);
+    TEST_CHECK(ap_mark(&c, 80) == at + 2 && ap_get(&c, UC_X86_REG_R13) == 5);
+    /* exceptions through the IDT, external interrupts to UC_HOOK_INTR */
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    ap_check_ext(&c, ap_gwr(&c, 0x83f, 0x61), 0x61, 0);
+    ap_wmsr(&c, 0x80b, 0);
+    at = c.pc;
+    TEST_CHECK(ap_x(&c, "\xcd\x80", 2) == -1 && ap_mark(&c, 80) == at + 2);
+    /* external interrupts through the IDT, exceptions Unicorn style */
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_INTR_IDT));
+    TEST_CHECK(ap_gwr(&c, 0x83f, 0x60) == -1 && ap_mark(&c, 40) == 2);
+    TEST_CHECK(ap_x(&c, "\x0f\x0b", 2) == 6);
+    TEST_CHECK(ap_x(&c, "\xcd\x80", 2) == 0x80);
+    /* a triple fault (IDT limit covers vectors 0-7 only): UC_ERR_EXCEPTION, the #DF recorded */
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    {
+        uc_x86_mmr idtr = {0, AP_IDT, 0x7f, 0};
+
+        OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+    }
+    TEST_CHECK(ap_x(&c, "\xcd\x80", 2) == -2);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 8 && e.has_error_code == 1 && e.error_code == 0);
+    TEST_MSG("last event %d", e.vector);
+    OK(uc_close(c.uc));
+}
+/* ---- end U960-U989 (ap_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -24947,4 +26157,21 @@ TEST_LIST = {
     {"test_x86_xp_4fmaps", test_x86_xp_4fmaps},
     {"test_x86_xp_pf", test_x86_xp_pf},
     {"test_x86_xp_er", test_x86_xp_er},
+    {"test_x86_ap_reset_state", test_x86_ap_reset_state},
+    {"test_x86_ap_base_transitions", test_x86_ap_base_transitions},
+    {"test_x86_ap_tpr_cr8", test_x86_ap_tpr_cr8},
+    {"test_x86_ap_self_ipi", test_x86_ap_self_ipi},
+    {"test_x86_ap_priority_eoi", test_x86_ap_priority_eoi},
+    {"test_x86_ap_nmi", test_x86_ap_nmi},
+    {"test_x86_ap_errors", test_x86_ap_errors},
+    {"test_x86_ap_unsupported", test_x86_ap_unsupported},
+    {"test_x86_ap_no_hook", test_x86_ap_no_hook},
+    {"test_x86_ap_context", test_x86_ap_context},
+    {"test_x86_ap_bus_api", test_x86_ap_bus_api},
+    {"test_x86_ap_cross_ipi", test_x86_ap_cross_ipi},
+    {"test_x86_ap_multi_vcpu", test_x86_ap_multi_vcpu},
+    {"test_x86_ap_uintr_cross", test_x86_ap_uintr_cross},
+    {"test_x86_ap_uintr_if0", test_x86_ap_uintr_if0},
+    {"test_x86_ap_uintr_cross_delivery", test_x86_ap_uintr_cross_delivery},
+    {"test_x86_ap_idt_delivery", test_x86_ap_idt_delivery},
     {NULL, NULL}};
