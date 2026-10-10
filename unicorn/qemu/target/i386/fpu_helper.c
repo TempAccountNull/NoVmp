@@ -9309,24 +9309,29 @@ static uint64_t evf_from_int(const EvFmt *f, int64_t v)
  * DAZ/FTZ rules, but not the exact approximation (Intel's reference RECIP14.c is not part of
  * the SDM and not available here). Implemented stand-in (well inside the bound; NOT
  * necessarily the silicon's bits): the exact 1/x (1/sqrt(x)) rounded to nearest even to the
- * destination precision with an unbounded exponent; overflow -> inf; a tiny VRCP14 result is
- * then denormalized (nearest even at the denormal quantum: the SDM's "mantissa shifted right
- * by one or two bits") or, with FTZ, a zero of the source's sign. MXCSR.RC ignored, no MXCSR
+ * destination precision with an unbounded exponent; overflow -> inf; a VRCP14 result that is
+ * tiny after that rounding (SDM Vol1 4.9.1.5) is, with FTZ, a zero of the source's sign,
+ * otherwise (U940, decision A9: the SDM's "correct underflow result is written") the exact 1/x
+ * rounded to nearest even ONCE at the denormal quantum (the SDM's "mantissa shifted right by
+ * one or two bits"; U236 rounded to p bits first and then again at the quantum, which differs
+ * in 3144378 of the 16777215 FP32 underflow inputs). MXCSR.RC ignored, no MXCSR
  * flag, no #XM; DAZ: a denormal source is a zero of its sign; 0 -> inf (sign kept), inf -> 0
  * (sign kept), SNaN -> QNaN, QNaN -> itself; RSQRT14: -0 -> -inf, any other negative -> QNaN
  * indefinite. 1/x is formed in the next wider format (float64 / float128): the binary
- * expansion of 1/m (m < 2^p) has no run of p + 1 equal bits, so that rounding cannot meet a
- * p-bit midpoint and the result is the correctly rounded one.
+ * expansion of 1/m (m < 2^p) has no run of p equal bits, so that rounding cannot meet a
+ * midpoint at any quantum at or above 2^-(p+1) of the leading bit (p bits, or the 1-2 bits
+ * shorter denormal) and the result is the correctly rounded one.
  */
 
 /*
  * round sig (normalised: bit 63 set; value = sig * 2^(e - 63), sticky = bits below) to the
- * format's precision (RNE, unbounded exponent), then overflow / denormalize / FTZ
+ * format's precision (RNE, unbounded exponent), then overflow / FTZ / denormal (U940: one
+ * rounding of sig at the denormal quantum)
  */
 static uint64_t evf_round_rcp(const EvFmt *f, uint64_t sign, int e, uint64_t sig, bool sticky,
                               bool ftz)
 {
-    int sh = 63 - f->fbits;
+    int sh = 63 - f->fbits, e0 = e;
     uint64_t r = sig >> sh, rem = sig & ((1ull << sh) - 1), half = 1ull << (sh - 1);
 
     if (rem > half || (rem == half && (sticky || (r & 1)))) {
@@ -9340,16 +9345,17 @@ static uint64_t evf_round_rcp(const EvFmt *f, uint64_t sign, int e, uint64_t sig
         return sign | f->emask;
     }
     if (e < 1 - f->bias) {
-        int s2 = 1 - f->bias - e;
+        /* U940: the quantum 2^(1 - bias - fbits) is 2^s2 units of sig */
+        int s2 = (1 - f->bias - f->fbits) - (e0 - 63);
         uint64_t r2, rem2, half2;
 
-        if (ftz || s2 > f->fbits + 1) {
+        if (ftz || s2 > 63) {
             return sign;                /* FTZ, or below half the smallest denormal */
         }
-        r2 = r >> s2;
-        rem2 = r & ((1ull << s2) - 1);
+        r2 = sig >> s2;
+        rem2 = sig & ((1ull << s2) - 1);
         half2 = 1ull << (s2 - 1);
-        if (rem2 > half2 || (rem2 == half2 && (r2 & 1))) {
+        if (rem2 > half2 || (rem2 == half2 && (sticky || (r2 & 1)))) {
             r2++;                       /* 2^fbits: the smallest normal, same bits */
         }
         return sign | r2;

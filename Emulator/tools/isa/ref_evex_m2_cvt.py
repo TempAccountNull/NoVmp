@@ -345,8 +345,9 @@ def cvt_i2f(x, nbits, sgn, fd, ctx):
 
 def rcp_policy_round(v, f, ftz):
     """RCP14 stand-in rounding: RNE to p bits with an unbounded exponent; overflow -> inf;
-    a tiny result is then denormalized (RNE at the denormal quantum) or, with FTZ, flushed
-    to a signed zero. No flags."""
+    a result tiny after that rounding is, with FTZ, a signed zero, otherwise (U940, decision
+    A9: "correct underflow result") the exact value rounded ONCE (RNE) at the denormal
+    quantum. No flags."""
     neg = v < 0
     q = -v if neg else v
     sign = f.sign if neg else 0
@@ -360,7 +361,7 @@ def rcp_policy_round(v, f, ftz):
     if r < Fraction(2) ** f.emin:
         if ftz:
             return sign
-        c2, _ = round_frac(r, Fraction(2) ** (f.emin - f.fbits), 0, neg)
+        c2, _ = round_frac(q, Fraction(2) ** (f.emin - f.fbits), 0, neg)   # U940: exact value
         return sign | c2           # c2 == 2^fbits gives the smallest normal (same bits)
     return exact_bits(-r if neg else r, f)
 
