@@ -22796,9 +22796,12 @@ static void test_x86_pc_tme_msrs(void)
     TEST_CHECK(pc_wrmsr(&c, 0x982, act) == -1);
     TEST_CHECK(pc_rdmsr(&c, 0x982) == (act | 3));
     TEST_CHECK(pc_rdmsr(&c, 0x87) == 15);                           /* 2^(6-2)-1, TDX 0 */
-    /* locked: IA32_TME_ACTIVATE and the exclusion MSRs #GP, even with the same value */
-    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == 13);
-    TEST_CHECK(pc_wrmsr(&c, 0x982, 0) == 13);
+    /* locked (U1022): an IA32_TME_ACTIVATE write is ignored (SDM Vol4), also with reserved
+       bits; the exclusion MSRs #GP(0) (SDM Vol4 983H / 984H) */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 1ull << 63) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == (act | 3));
     TEST_CHECK(pc_wrmsr(&c, 0x983, 0xfffff00800ull) == 13);
     TEST_CHECK(pc_wrmsr(&c, 0x984, 0) == 13);
     TEST_CHECK(pc_rdmsr(&c, 0x984) == 0x7654321000ull);
@@ -22815,7 +22818,8 @@ static void test_x86_pc_tme_msrs(void)
     TEST_CHECK(pc_wrmsr(&c, 0x982, 0x80000000ull | (1ull << 48)) == -1);
     TEST_CHECK(pc_rdmsr(&c, 0x982) == (0x80000001ull | (1ull << 48)));
     TEST_CHECK(pc_rdmsr(&c, 0x87) == 0);
-    TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == (0x80000001ull | (1ull << 48)));
     OK(uc_close(c.uc));
 
     /* TME without TME-MK keys (k = 0), bypass (bit 31): locked x..x011b, no KeyIDs */
@@ -22830,14 +22834,25 @@ static void test_x86_pc_tme_msrs(void)
     TEST_CHECK(pc_rdmsr(&c, 0x87) == 63);
     OK(uc_close(c.uc));
 
-    /* a model without TME_EN: unknown MSRs (WRMSR ignored, RDMSR 0) */
+    /* a model without TME_EN (U1022): RDMSR / WRMSR of the five MSRs #GP(0); API reads 0 */
     pc_open_mode(&c, UC_MODE_64, UC_CPU_X86_HASWELL);
     pc_cpuid(&c, 7, 0, r);
     TEST_CHECK(!(r[2] & (1u << 13)));
-    TEST_CHECK(pc_wrmsr(&c, 0x982, 1ull << 63) == -1);
-    TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == -1);
-    v = pc_rdmsr(&c, 0x982);
-    TEST_CHECK(v == 0 && pc_rdmsr(&c, 0x981) == 0);
+    {
+        static const uint32_t msrs[] = {0x87, 0x981, 0x982, 0x983, 0x984};
+
+        for (i = 0; i < sizeof(msrs) / sizeof(msrs[0]); i++) {
+            TEST_CHECK(pc_wrmsr(&c, msrs[i], 0) == 13);
+            pc_set(&c, UC_X86_REG_RCX, msrs[i]);
+            TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+            m.rid = msrs[i];
+            m.value = 0x1234;
+            OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+            TEST_CHECK(m.value == 0);
+        }
+    }
+    v = 2;
+    TEST_CHECK(pc_wrmsr(&c, 0x982, v) == 13);
     OK(uc_close(c.uc));
 }
 

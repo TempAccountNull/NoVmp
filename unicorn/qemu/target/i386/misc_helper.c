@@ -431,10 +431,15 @@ static bool novmp_canonical(CPUX86State *env, uint64_t addr)
 /*
  * NoVmp (ledger U1020): the TME / TME-MK MSRs, present with CPUID.(07H,0):ECX.TME_EN[13] (SDM
  * Vol1 Table 21-22, Vol4 Table 2-2 981H-984H and 87H; Intel Architecture Memory Encryption
- * Technologies Specification 336907-007 rev. 1.7, 4.1-4.2). Without TME_EN they stay unknown
- * MSRs (ignored, read 0), like every MSR the model does not report.
+ * Technologies Specification 336907-007 rev. 1.7, 4.1-4.2). U1022: without TME_EN, RDMSR and
+ * WRMSR of these MSRs raise #GP(0) (SDM Vol4 2.1: an MSR the processor does not support "will
+ * generate an exception"; MKTME Table 4-3 "WRMSR when not enumerated. #GP(0)"); an API access
+ * is dropped / reads 0.
  *   IA32_TME_CAPABILITY (981H): NOVMP_TME_CAPABILITY, read-only (WRMSR #GP(0)).
- *   IA32_TME_ACTIVATE (982H), Table 4-3: #GP(0) while locked (bit 0), for reserved bits 30:8,
+ *   IA32_TME_ACTIVATE (982H): U1022: a write while locked (bit 0) is ignored - SDM Vol4 Table 2-2
+ *     982H: "Any write to the following MSRs will be ignored after they are locked"; the MKTME
+ *     spec's Table 4-3 says #GP(0) instead (docs/quirks.md "Specification conflicts": the SDM
+ *     wins). Table 4-3 otherwise: #GP(0) for reserved bits 30:8,
  *     47:40, 63:52 (and 31 without bypass support, 63:32 without TME-MK), for a policy (7:4)
  *     whose IA32_TME_CAPABILITY bit is 0 or that selects an integrity algorithm (capability bits
  *     1 and 3; rev. 1.6 / SDM Vol4: "not allowed to be used for TME ... will result in #GP"),
@@ -490,7 +495,10 @@ static bool tme_activate_write(CPUX86State *env, uint64_t val)
         rsvd |= 1ULL << 31;                 /* TME encryption bypass not supported */
     }
     rsvd |= maxk ? MAKE_64BIT_MASK(52, 12) : MAKE_64BIT_MASK(32, 32);
-    if ((env->tme_activate & 1) || (val & rsvd)) {
+    if (env->tme_activate & 1) {
+        return true;                        /* locked: ignored (SDM Vol4, U1022) */
+    }
+    if (val & rsvd) {
         return false;
     }
     if (policy > 3 || !((cap >> policy) & 1) || policy == 1 || policy == 3) {
@@ -975,8 +983,8 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_TME_EXCLUDE_MASK:
     case MSR_IA32_TME_EXCLUDE_BASE:
     case MSR_IA32_MKTME_KEYID_PARTITIONING:
-        /* NoVmp (ledger U1020): see tme_wrmsr; an API write that would #GP is dropped */
-        if (tme_enumerated(env) && !tme_wrmsr(env, (uint32_t)env->regs[R_ECX], val) &&
+        /* NoVmp (ledger U1020, U1022): see tme_wrmsr; an API write that would #GP is dropped */
+        if ((!tme_enumerated(env) || !tme_wrmsr(env, (uint32_t)env->regs[R_ECX], val)) &&
             !env->msr_api) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
@@ -1391,7 +1399,11 @@ void helper_rdmsr(CPUX86State *env)
     case MSR_IA32_TME_EXCLUDE_MASK:
     case MSR_IA32_TME_EXCLUDE_BASE:
     case MSR_IA32_MKTME_KEYID_PARTITIONING:
-        val = tme_rdmsr(env, (uint32_t)env->regs[R_ECX]);   /* NoVmp (ledger U1020) */
+        /* NoVmp (ledger U1020): tme_rdmsr; U1022: #GP(0) without TME_EN (API read: 0) */
+        if (!tme_enumerated(env) && !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        val = tme_rdmsr(env, (uint32_t)env->regs[R_ECX]);
         break;
 #endif /* __Use_Original_Qemu (U1020) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
