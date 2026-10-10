@@ -719,6 +719,15 @@ typedef enum uc_control_type {
     // VPDPBUSD, VPDPBUSDS, VPDPWSSD, VPDPWSSDS).
     // NoVmp U556: UC_X86_AVX512_BF16 adds CPUID.(EAX=7,ECX=1):EAX.AVX512_BF16[5]
     // (VCVTNE2PS2BF16, VCVTNEPS2BF16, VDPBF16PS); the leaf-7 subleaf count becomes >= 1.
+    // NoVmp U990: the Intel Xeon Phi-only families (Knights Landing / Knights Mill; SDM
+    // 325383-092 Vol2D chapter 8, CPUID bits in Vol1 Tables 21-19..21-21 "Intel Xeon Phi only"):
+    // UC_X86_AVX512_4VNNIW adds CPUID.(EAX=7,ECX=0):EDX.AVX512_4VNNIW[2] (VP4DPWSSD,
+    // VP4DPWSSDS), UC_X86_AVX512_4FMAPS EDX.AVX512_4FMAPS[3] (V4FMADDPS/SS, V4FNMADDPS/SS),
+    // UC_X86_AVX512_ER EBX.AVX512ER[27] (VEXP2PS/PD, VRCP28PS/PD/SS/SD, VRSQRT28PS/PD/SS/SD),
+    // UC_X86_AVX512_PF EBX.AVX512PF[26] (VGATHERPF0/1 and VSCATTERPF0/1 DPS/QPS/DPD/QPD) and
+    // UC_X86_AVX512_PREFETCHWT1 ECX.PREFETCHWT1[0] (0F 0D /2, a NOP hint either way: only the
+    // enumeration changes). None of them is part of AVX10 (UC_CTL_X86_AVX10 does not add
+    // them). Default off: UC_CPU_X86_MAX and the i5-13600K profile are unchanged.
     UC_CTL_X86_AVX512,
     // x86 only (NoVmp U170): Intel AMX in the CPU model, a mask of UC_X86_AMX_* below.
     // UC_X86_AMX_TILE adds CPUID.(EAX=7,ECX=0):EDX.AMX_TILE, state components 17-18
@@ -845,6 +854,11 @@ typedef enum uc_control_type {
 #define UC_X86_AVX512_VBMI2 0x400 // + AVX512_VBMI2 (CPUID.7.0:ECX[6]) (NoVmp U550)
 #define UC_X86_AVX512_VNNI 0x800 // + AVX512_VNNI (CPUID.7.0:ECX[11]) (NoVmp U555)
 #define UC_X86_AVX512_BF16 0x1000 // + AVX512_BF16 (CPUID.7.1:EAX[5]) (NoVmp U556)
+#define UC_X86_AVX512_4VNNIW 0x20000 // + AVX512_4VNNIW (CPUID.7.0:EDX[2], Xeon Phi) (NoVmp U990)
+#define UC_X86_AVX512_4FMAPS 0x40000 // + AVX512_4FMAPS (CPUID.7.0:EDX[3], Xeon Phi) (NoVmp U990)
+#define UC_X86_AVX512_ER 0x80000 // + AVX512ER (CPUID.7.0:EBX[27], Xeon Phi) (NoVmp U990)
+#define UC_X86_AVX512_PF 0x100000 // + AVX512PF (CPUID.7.0:EBX[26], Xeon Phi) (NoVmp U990)
+#define UC_X86_AVX512_PREFETCHWT1 0x200000 // + PREFETCHWT1 (CPUID.7.0:ECX[0], Xeon Phi) (NoVmp U990)
 
 // UC_CTL_X86_AMX values (NoVmp U170)
 #define UC_X86_AMX_TILE 1     // AMX-TILE: TILECFG/TILEDATA, LDTILECFG..TILEZERO

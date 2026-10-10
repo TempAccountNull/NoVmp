@@ -76,7 +76,9 @@
 // deviations are tags, below). --avx512 opts Unicorn in to AVX-512
 // (UC_CTL_X86_AVX512 = AVX512F|DQ|BW|VL|CD|IFMA|VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, before the engine is
 // initialised; reset XCR0 then has 7:5 set) for opmask/EVEX expected-value cases, e.g.
-// Emulator\data\cases_opmask.txt. --amx
+// Emulator\data\cases_opmask.txt. U990: --xeonphi adds the Intel Xeon Phi-only families
+// (UC_X86_AVX512_4VNNIW|4FMAPS|ER|PF|PREFETCHWT1, AVX512F implied; --avx512 alone leaves them off)
+// for Emulator\data\cases_xeonphi.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory). --avx10 N opts in
 // to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; AVX-512 CPUID bits stay off unless

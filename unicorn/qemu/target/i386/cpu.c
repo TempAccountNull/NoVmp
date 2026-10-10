@@ -5853,6 +5853,31 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
     }
 #endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U990) */
+    /*
+     * NoVmp (ledger U990): the Intel Xeon Phi-only families (SDM 325383-092 Vol1 Tables
+     * 21-19..21-21, each bit "Intel Xeon Phi only"; instructions in Vol2D chapter 8):
+     * CPUID.(EAX=7,ECX=0):EDX.AVX512_4VNNIW[2], EDX.AVX512_4FMAPS[3], EBX.AVX512PF[26],
+     * EBX.AVX512ER[27] and ECX.PREFETCHWT1[0], each only with its UC_CTL_X86_AVX512 bit
+     * (default off). A strict profile narrows the translator's copy as for every leaf-7 bit
+     * (U68). Not part of AVX10 (AVX10.2 spec 361050-007 Table 3.2).
+     */
+    if (uc->x86_avx512 & UC_X86_AVX512_4VNNIW) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_4VNNIW;
+    }
+    if (uc->x86_avx512 & UC_X86_AVX512_4FMAPS) {
+        env->features[FEAT_7_0_EDX] |= CPUID_7_0_EDX_AVX512_4FMAPS;
+    }
+    if (uc->x86_avx512 & UC_X86_AVX512_ER) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512ER;
+    }
+    if (uc->x86_avx512 & UC_X86_AVX512_PF) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX512PF;
+    }
+    if (uc->x86_avx512 & UC_X86_AVX512_PREFETCHWT1) {
+        env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_PREFETCHWT1;
+    }
+#endif /* __Use_Original_Qemu (U990) */
 #if __Use_Original_Qemu != 1 /* ours (U370) */
     /*
      * NoVmp (ledger U370): UC_CTL_X86_AVX10 opts in to AVX10 after the TCG filter:

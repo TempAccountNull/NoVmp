@@ -3293,7 +3293,8 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             }
 #else /* ours (U330) */
             /* U330: + FP16 (implies BW: SDM Vol1 15.2.2); U570: + VP2INTERSECT;
-             * U550: + VBMI2; U555: + VNNI; U556: + BF16 */
+             * U550: + VBMI2; U555: + VNNI; U556: + BF16; U990: + the Xeon Phi families
+             * 4VNNIW, 4FMAPS, ER, PF and PREFETCHWT1 */
             if (uc->init_done ||
                 (on & ~(UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
                         UC_X86_AVX512_VL | UC_X86_AVX512_CD | UC_X86_AVX512_IFMA |
@@ -3301,7 +3302,9 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                         UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 |
                         UC_X86_AVX512_VP2INTERSECT |
                         UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |
-                        UC_X86_AVX512_BF16))) {
+                        UC_X86_AVX512_BF16 | UC_X86_AVX512_4VNNIW |
+                        UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER | UC_X86_AVX512_PF |
+                        UC_X86_AVX512_PREFETCHWT1))) {
                 err = UC_ERR_ARG;
             } else {
                 if (on & UC_X86_AVX512_FP16) {

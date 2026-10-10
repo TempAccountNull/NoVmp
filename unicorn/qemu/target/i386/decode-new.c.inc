@@ -6008,6 +6008,22 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_AVX512_BF16) &&
                (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512F);
 #endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U990) */
+    /*
+     * NoVmp (ledger U990): the Xeon Phi families, SDM 325383-092 Vol2D chapter 8 CPUID columns
+     * "AVX512_4VNNIW", "AVX512_4FMAPS", "AVX512ER", "AVX512PF" (no AVX10 alternative): the
+     * translator's copies of CPUID.(07H,0) (strict profiles narrow them, U68); AVX512F is
+     * implied by the UC_CTL_X86_AVX512 opt-in and its state by HF_AVX512_EN (validate_evex).
+     */
+    case X86_FEAT_AVX512_4VNNIW:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_4VNNIW);
+    case X86_FEAT_AVX512_4FMAPS:
+        return (s->cpuid_7_0_edx_features & CPUID_7_0_EDX_AVX512_4FMAPS);
+    case X86_FEAT_AVX512ER:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512ER);
+    case X86_FEAT_AVX512PF:
+        return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_AVX512PF);
+#endif /* __Use_Original_Qemu (U990) */
 
     case X86_FEAT_3DNOW:
         return (s->cpuid_ext2_features & CPUID_EXT2_3DNOW);

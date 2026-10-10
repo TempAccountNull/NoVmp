@@ -268,6 +268,13 @@ typedef enum X86CPUIDFeature {
 #if __Use_Original_Qemu != 1 /* ours (U556) */
     X86_FEAT_AVX512_BF16,   /* CPUID.(07H,1):EAX[5] */
 #endif /* __Use_Original_Qemu (U556) */
+#if __Use_Original_Qemu != 1 /* ours (U990) */
+    /* Intel Xeon Phi only (SDM 325383-092 Vol1 Tables 21-19/21-21, Vol2D chapter 8) */
+    X86_FEAT_AVX512_4VNNIW, /* CPUID.(07H,0):EDX[2] */
+    X86_FEAT_AVX512_4FMAPS, /* CPUID.(07H,0):EDX[3] */
+    X86_FEAT_AVX512ER,      /* CPUID.(07H,0):EBX[27] */
+    X86_FEAT_AVX512PF,      /* CPUID.(07H,0):EBX[26] */
+#endif /* __Use_Original_Qemu (U990) */
 } X86CPUIDFeature;
 
 /* Execution flags */

@@ -22633,6 +22633,23 @@ static void test_x86_si_pbndkb(void)
 #define PC_CAP 0x3f68000000full     /* model IA32_TME_CAPABILITY (algorithms 3:0, bypass, 6, 63) */
 
 typedef struct PcCtx {
+ * ---- NoVmp U990-U1019: Intel Xeon Phi-only families (prefix xp_) ----
+ * AVX512_4VNNIW, AVX512_4FMAPS, AVX512ER, AVX512PF and PREFETCHWT1 (SDM 325383-092 Vol2D
+ * chapter 8; CPUID bits Vol1 Tables 21-19..21-21): the UC_CTL_X86_AVX512 opt-in bits, their
+ * CPUID enumeration, gating (default off, strict profiles, no AVX10 alternative) and the
+ * encoding rules the expected-value file cannot reach. Instruction values and #UD / #PF /
+ * #XM rules: Emulator/data/cases_xeonphi.txt (independent model ref_xeonphi.py).
+ */
+#define XP_DATA 0x200000
+#define XP_ALL (UC_X86_AVX512_4VNNIW | UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER |              \
+                UC_X86_AVX512_PF | UC_X86_AVX512_PREFETCHWT1)
+#define XP_AVX512 (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL |  \
+                   UC_X86_AVX512_CD | UC_X86_AVX512_IFMA | UC_X86_AVX512_VPOPCNTDQ |         \
+                   UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 |          \
+                   UC_X86_AVX512_VP2INTERSECT | UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |  \
+                   UC_X86_AVX512_BF16)
+
+typedef struct XpCtx {
     uc_engine *uc;
     X86IntrCapture cap;
     uc_hook hook;
@@ -22671,6 +22688,42 @@ static int pc_run(PcCtx *c, const char *code, size_t len)
     TEST_CHECK(len <= 0x80);
     c->cap.count = 0;
     c->cap.intno = 0;
+} XpCtx;
+
+/* prof != NULL: a strict CPUID profile (written explicitly) and XCR0 = E7h */
+static void xp_open(XpCtx *c, uc_mode mode, int avx512, int avx10, const uc_x86_cpuid *prof,
+                    size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, XP_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the exception vector (6 = #UD) or -1 */
+static int xp_run(XpCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
     OK(uc_mem_write(c->uc, pc, code, len));
     err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
     if (err == UC_ERR_INSN_INVALID) {
@@ -24114,6 +24167,113 @@ static void test_x86_sm_pmu(void)
     OK(uc_close(c.uc));
 }
 /* ---- end U900-U929 (sm_) ---- */
+    OK(err);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void xp_cpuid7(XpCtx *c, uint32_t r[4])
+{
+    uint64_t v = 7;
+    int regs[4] = {UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX};
+    int i;
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_RAX, &v));
+    v = 0;
+    OK(uc_reg_write(c->uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(xp_run(c, "\x0f\xa2", 2) == -1);
+    for (i = 0; i < 4; i++) {
+        v = 0;
+        OK(uc_reg_read(c->uc, regs[i], &v));
+        r[i] = (uint32_t)v;
+    }
+}
+
+/* CPUID.(7,0) bits of the Xeon Phi families: EBX[26] PF, EBX[27] ER, ECX[0] PREFETCHWT1,
+ * EDX[2] 4VNNIW, EDX[3] 4FMAPS (SDM 325383-092 Vol1 Tables 21-19, 21-20, 21-21) */
+static const struct {
+    int bit;
+    int reg;        /* 1 EBX, 2 ECX, 3 EDX */
+    uint32_t mask;
+    const char *name;
+} xp_bits[] = {
+    {UC_X86_AVX512_4VNNIW, 3, 1u << 2, "AVX512_4VNNIW"},
+    {UC_X86_AVX512_4FMAPS, 3, 1u << 3, "AVX512_4FMAPS"},
+    {UC_X86_AVX512_ER, 1, 1u << 27, "AVX512ER"},
+    {UC_X86_AVX512_PF, 1, 1u << 26, "AVX512PF"},
+    {UC_X86_AVX512_PREFETCHWT1, 2, 1u << 0, "PREFETCHWT1"},
+};
+
+/* the Xeon Phi CPUID bits present in r (bit i = xp_bits[i]) */
+static int xp_present(const uint32_t r[4])
+{
+    int i, m = 0;
+
+    for (i = 0; i < (int)(sizeof(xp_bits) / sizeof(xp_bits[0])); i++) {
+        if (r[xp_bits[i].reg] & xp_bits[i].mask) {
+            m |= 1 << i;
+        }
+    }
+    return m;
+}
+
+/*
+ * U990: UC_X86_AVX512_4VNNIW / 4FMAPS / ER / PF / PREFETCHWT1: read-back (AVX512F implied),
+ * exactly the one CPUID.(7,0) bit each, default off (also with every other AVX-512 bit and
+ * with AVX10.2), and PREFETCHWT1 (0F 0D /2) a NOP hint with or without its bit, #UD with LOCK
+ */
+static void test_x86_xp_optin(void)
+{
+    XpCtx c;
+    uint32_t r[4];
+    int on = -1, i;
+
+    /* default (no opt-in), every other AVX-512 bit, AVX10.2: none of the bits */
+    xp_open(&c, UC_MODE_64, 0, 0, NULL, 0);
+    xp_cpuid7(&c, r);
+    TEST_CHECK_(xp_present(r) == 0, "default: EBX %08x ECX %08x EDX %08x", r[1], r[2], r[3]);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, XP_AVX512, 0, NULL, 0);
+    xp_cpuid7(&c, r);
+    TEST_CHECK_(xp_present(r) == 0, "--avx512: EBX %08x ECX %08x EDX %08x", r[1], r[2], r[3]);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0);
+    xp_cpuid7(&c, r);
+    TEST_CHECK_(xp_present(r) == 0, "AVX10.2: EBX %08x ECX %08x EDX %08x", r[1], r[2], r[3]);
+    OK(uc_close(c.uc));
+    /* each bit alone: read back with AVX512F, its own CPUID bit only */
+    for (i = 0; i < (int)(sizeof(xp_bits) / sizeof(xp_bits[0])); i++) {
+        xp_open(&c, UC_MODE_64, xp_bits[i].bit, 0, NULL, 0);
+        OK(uc_ctl_get_x86_avx512(c.uc, &on));
+        TEST_CHECK_(on == (UC_X86_AVX512_F | xp_bits[i].bit), "%s: read back %x", xp_bits[i].name,
+                    on);
+        xp_cpuid7(&c, r);
+        TEST_CHECK_(xp_present(r) == (1 << i), "%s: EBX %08x ECX %08x EDX %08x", xp_bits[i].name,
+                    r[1], r[2], r[3]);
+        TEST_CHECK_((r[1] & (1u << 16)) != 0, "%s: AVX512F implied, EBX %08x", xp_bits[i].name,
+                    r[1]);
+        OK(uc_close(c.uc));
+    }
+    /* all of them with the rest of AVX-512 */
+    xp_open(&c, UC_MODE_64, XP_AVX512 | XP_ALL, 0, NULL, 0);
+    OK(uc_ctl_get_x86_avx512(c.uc, &on));
+    TEST_CHECK_(on == (XP_AVX512 | XP_ALL), "all: read back %x", on);
+    xp_cpuid7(&c, r);
+    TEST_CHECK_(xp_present(r) == 0x1f, "all: EBX %08x ECX %08x EDX %08x", r[1], r[2], r[3]);
+    /* PREFETCHWT1 m8 (0F 0D /2): a NOP hint; LOCK #UD (SDM Vol2D 8-3) */
+    TEST_CHECK(xp_run(&c, "\x0f\x0d\x16", 3) == -1);
+    TEST_CHECK(xp_run(&c, "\xf0\x0f\x0d\x16", 4) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, 0, 0, NULL, 0);
+    TEST_CHECK(xp_run(&c, "\x0f\x0d\x16", 3) == -1);
+    OK(uc_close(c.uc));
+    /* an unknown bit next to them is still rejected */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    TEST_CHECK(uc_ctl_set_x86_avx512(c.uc, XP_ALL | 0x400000) == UC_ERR_ARG);
+    OK(uc_ctl_get_x86_avx512(c.uc, &on));
+    TEST_CHECK(on == 0);
+    OK(uc_close(c.uc));
+}
+/* ---- end U990-U1019 (xp_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -24439,4 +24599,5 @@ TEST_LIST = {
     {"test_x86_sm_msr_present", test_x86_sm_msr_present},
     {"test_x86_sm_msr_values", test_x86_sm_msr_values},
     {"test_x86_sm_pmu", test_x86_sm_pmu},
+    {"test_x86_xp_optin", test_x86_xp_optin},
     {NULL, NULL}};

@@ -939,6 +939,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* AVX-512 Vector Length Extensions */
 #define CPUID_7_0_EBX_AVX512VL          (1U << 31)
 
+#if __Use_Original_Qemu != 1 /* ours (U990) */
+/* PREFETCHWT1 (Intel Xeon Phi only; SDM 325383-092 Vol1 Table 21-20) */
+#define CPUID_7_0_ECX_PREFETCHWT1       (1U << 0)
+#endif /* __Use_Original_Qemu (U990) */
 /* AVX-512 Vector Byte Manipulation Instruction */
 #define CPUID_7_0_ECX_AVX512_VBMI       (1U << 1)
 /* User-Mode Instruction Prevention */

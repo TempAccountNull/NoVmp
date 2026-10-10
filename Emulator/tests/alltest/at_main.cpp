@@ -520,12 +520,16 @@ int main( int argc, char** argv )
 			copt.shard_n = sl == std::string::npos ? 0 : std::atoi( v.substr( sl + 1 ).c_str() );
 			if ( copt.shard_n < 1 || copt.shard_k < 1 || copt.shard_k > copt.shard_n ) { std::printf( "--shard K/N: 1 <= K <= N\n" ); return 2; }
 		}
-		else if ( a == "--avx512" ) copt.avx512 = UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_CD |
+		else if ( a == "--avx512" ) copt.avx512 |= UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_CD |
 												  UC_X86_AVX512_IFMA |
 												  UC_X86_AVX512_VPOPCNTDQ | UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI |
 												  UC_X86_AVX512_FP16 | /* U330: + FP16 */
 												  UC_X86_AVX512_VP2INTERSECT | /* U570: + VP2INTERSECT */
 												  UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI | UC_X86_AVX512_BF16; /* U558 */
+		// U990: --xeonphi adds the Intel Xeon Phi-only families (AVX512_4VNNIW, AVX512_4FMAPS, AVX512ER,
+		// AVX512PF, PREFETCHWT1; AVX512F implied) to the UC_CTL_X86_AVX512 mask; --avx512 alone keeps them off
+		else if ( a == "--xeonphi" ) copt.avx512 |= UC_X86_AVX512_F | UC_X86_AVX512_4VNNIW | UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER |
+												   UC_X86_AVX512_PF | UC_X86_AVX512_PREFETCHWT1;
 		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
 		else if ( a == "--apx" ) copt.apx = UC_X86_APX_F;
@@ -543,7 +547,7 @@ int main( int argc, char** argv )
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );
