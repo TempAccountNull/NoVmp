@@ -553,6 +553,8 @@ namespace at
 			if ( avx10 && uc_ctl_set_x86_avx10( uc_, avx10 ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_avx10 failed"; return false; }
 			// APX opt-in (emu-alltest --apx, UC_CTL_X86_APX = UC_X86_APX_F, U610): same rule
 			if ( apx && uc_ctl_set_x86_apx( uc_, apx ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_apx failed"; return false; }
+			// U1181: platform-feature opt-ins (emu-alltest --x86-features N, UC_CTL_X86_FEATURES = N): same rule
+			if ( x86_features && uc_ctl_set_x86_features( uc_, x86_features ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_features failed"; return false; }
 			// U835 (D8): RDRAND/RDSEED source, --seeded (default, deterministic) or --HostSeed
 			if ( uc_ctl_set_x86_rdrand( uc_, rdrand, rdrand_seed ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_rdrand failed"; return false; }
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
@@ -825,6 +827,7 @@ namespace at
 		int amx = 0;             // UC_CTL_X86_AMX mask (0 = off, the default)
 		int avx10 = 0;           // UC_CTL_X86_AVX10 version (0 = off, the default)
 		int apx = 0;             // UC_CTL_X86_APX (0 = off, the default; UC_X86_APX_F = --apx)
+		int x86_features = 0;    // UC_CTL_X86_FEATURES mask (0 = none, the default; --x86-features N, U1181)
 		int rdrand = UC_X86_RDRAND_SEEDED;   // UC_CTL_X86_RDRAND (U835): --seeded (default) / --HostSeed
 		uint64_t rdrand_seed = 0;            // the seeded model's seed (--rdrand-seed N)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks

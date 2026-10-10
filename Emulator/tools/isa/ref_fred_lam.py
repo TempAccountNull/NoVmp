@@ -22,6 +22,7 @@ stacks: CR4.CET and IA32_S_CET.SH_STK_EN), uss (user shadow stacks), s_cet (IA32
 Usage:
   python -I ref_fred_lam.py --selftest   hand-derived checks of the model (exit 0 on pass)
   python -I ref_fred_lam.py --unit       print the expected values used by the unit tests
+  python -I ref_fred_lam.py --write      regenerate Emulator\data\cases_lam.txt (CRLF)
 """
 import sys
 
@@ -381,11 +382,60 @@ def unit():
     print('INT3 CPL0: rip %x rsp %x frame %s' % (s['rip'], s['rsp'], [hex(x) for x in fr]))
 
 
+# ------------------------------------------------------------------------- LAM expected-value cases
+MEM_PTR = 0x30020000 + 0x8000          # emu-alltest operand memory: RSI = MEM + 0x8000
+
+
+def lam_cases():
+    """cases_lam.txt: loads / stores through pointers with metadata, Unicorn only, CPL0, paging off
+    (IA-32e mode, 4-level linear addresses: the MAX model's CR4.LA57 = 0). The snippet sets the CR3
+    LAM bit(s), accesses [RBX] and restores CR3 (a fault stops it before the restore)."""
+    out = []
+    val = 0x1122334455667788
+    mem = ''.join('%02x' % ((val >> (8 * i)) & 0xff) for i in range(8))
+    metas = [0, 0x0001, 0x5a12, 0x7fff, 0x7e00, 0x0200, 0x0012, 0x4000, 0x7e01]
+    for name, cr3bits, setbits in (('none', 0, ''), ('LAM48', 1 << 62, 'bts rax, 62; '),
+                                   ('LAM57', 1 << 61, 'bts rax, 61; '),
+                                   ('LAM57 over LAM48', 3 << 61, 'bts rax, 61; bts rax, 62; ')):
+        out.append('# --- %s (CR3 bits 62:61 = %d%d)' % (name, (cr3bits >> 62) & 1, (cr3bits >> 61) & 1))
+        for hi47 in (0, 1):
+            for m in metas:
+                ptr = MEM_PTR | (m << 48) | (hi47 << 47)
+                ok, masked = lam_access_ok(ptr, cr3bits, False, False)
+                asm = 'mov rcx, cr3; mov rax, rcx; %smov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx' % setbits
+                if ok:
+                    if masked != MEM_PTR:
+                        continue            # canonical but another (unmapped) address
+                    out.append('%s | rbx=0x%X m+0x8000=%s =>! rdx=0x%X' % (asm, ptr, mem, val))
+                    sto = asm.replace('mov rdx, qword ptr [rbx]', 'mov qword ptr [rbx + 8], rdx')
+                    out.append('%s | rbx=0x%X rdx=0x%X =>! m+0x8008=%s' % (sto, ptr, val, mem))
+                else:
+                    out.append('%s | rbx=0x%X =>! #GP(0)' % (asm, ptr))
+    return out
+
+
+def write_cases():
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.normpath(os.path.join(here, '..', '..', 'data', 'cases_lam.txt'))
+    head = ['# LAM (linear-address masking, ledger U1180-U1181): expected values from the independent model',
+            '# Emulator/tools/isa/ref_fred_lam.py (lam_mask / lam_access_ok, SDM 325462-092 Vol3A 4.4.2 / 4.5.1);',
+            '# regenerate with --write, do not edit. Unicorn only, MAX model with UC_X86_FEATURE_LAM, CPL0, paging',
+            '# off (4-level linear addresses): emu-alltest --cases Emulator\\data\\cases_lam.txt --x86-features 8 --expect-only']
+    lines = head + lam_cases()
+    with open(path, 'wb') as f:
+        f.write(('\r\n'.join(lines) + '\r\n').encode('ascii'))
+    print('wrote %s (%d cases)' % (path, len([l for l in lines if not l.startswith('#')])))
+
+
 if __name__ == '__main__':
     if '--selftest' in sys.argv:
         r = selftest()
         print('ref_fred_lam selftest: %s' % ('OK' if r else 'FAILED'))
         sys.exit(0 if r else 1)
+    if '--write' in sys.argv:
+        write_cases()
+        sys.exit(0)
     if '--unit' in sys.argv:
         unit()
         sys.exit(0)

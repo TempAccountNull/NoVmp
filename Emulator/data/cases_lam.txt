@@ -1,0 +1,98 @@
+# LAM (linear-address masking, ledger U1180-U1181): expected values from the independent model
+# Emulator/tools/isa/ref_fred_lam.py (lam_mask / lam_access_ok, SDM 325462-092 Vol3A 4.4.2 / 4.5.1);
+# regenerate with --write, do not edit. Unicorn only, MAX model with UC_X86_FEATURE_LAM, CPL0, paging
+# off (4-level linear addresses): emu-alltest --cases Emulator\data\cases_lam.txt --x86-features 8 --expect-only
+# --- none (CR3 bits 62:61 = 00)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x30028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x30028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01800030028000 =>! #GP(0)
+# --- LAM48 (CR3 bits 62:61 = 10)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x30028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x30028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x1000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x5A12000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x7FFF000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x7E00000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x200000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x12000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x4000000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x7E01000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01800030028000 =>! #GP(0)
+# --- LAM57 (CR3 bits 62:61 = 01)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x30028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x30028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x7E00000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x200000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x4000000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01800030028000 =>! #GP(0)
+# --- LAM57 over LAM48 (CR3 bits 62:61 = 11)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x30028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x30028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x7E00000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x200000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000000030028000 m+0x8000=8877665544332211 =>! rdx=0x1122334455667788
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov qword ptr [rbx + 8], rdx; mov cr3, rcx | rbx=0x4000000030028000 rdx=0x1122334455667788 =>! m+0x8008=8877665544332211
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01000030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x1800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x5A12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7FFF800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E00800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x200800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x12800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x4000800030028000 =>! #GP(0)
+mov rcx, cr3; mov rax, rcx; bts rax, 61; bts rax, 62; mov cr3, rax; mov rdx, qword ptr [rbx]; mov cr3, rcx | rbx=0x7E01800030028000 =>! #GP(0)

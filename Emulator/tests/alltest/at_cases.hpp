@@ -370,6 +370,7 @@ namespace at
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
+					   int x86_features = 0;   /* U1181: --x86-features N (UC_CTL_X86_FEATURES) */
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
 					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
@@ -722,7 +723,7 @@ namespace at
 			{
 				unicorn_engine pe( UC_CPU_X86_MAX );
 				pe.cpuid = opt.cpuid; pe.strict = opt.strict; pe.xcr0 = x; pe.cr0 = c;
-				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx;
+				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx; pe.x86_features = opt.x86_features;
 				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
@@ -1028,6 +1029,7 @@ namespace at
 			uc.amx = opt.amx;
 			uc.avx10 = opt.avx10;
 			uc.apx = opt.apx;
+			uc.x86_features = opt.x86_features;   // U1181
 			uc.rdrand = opt.rdrand;   // U835
 			uc.rdrand_seed = opt.rdrand_seed;
 			uc.ext_regs = expect;
