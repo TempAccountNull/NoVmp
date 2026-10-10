@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 17:03 (HEAD `a39c23a gen_instruction_table: rows identical up to #UD-on-both encodings, SDM-verified leftovers (U853)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 17:04 (HEAD `82d0c49 Ledger U850-U853 (sweep runs 182 of the 205 not-native-safe forms natively, WRFSBASE/WRGSBASE and SYSENTER #GP fixes, table rules); docs refresh`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -32,7 +32,7 @@ _Generated 2026-10-09 17:03 (HEAD `a39c23a gen_instruction_table: rows identical
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
       - ⬜ SGX "present but disabled" model and GETSEC TXT leaves (decision, new); PCONFIG leaf 1BH (A4) [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 404 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 408 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

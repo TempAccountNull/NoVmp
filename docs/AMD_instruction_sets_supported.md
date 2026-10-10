@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-09 17:03 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `a39c23a gen_instruction_table: rows identical up to #UD-on-both encodings, SDM-verified leftovers (U853)`). Do not edit by hand._
+_Generated 2026-10-09 17:04 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `82d0c49 Ledger U850-U853 (sweep runs 182 of the 205 not-native-safe forms natively, WRFSBASE/WRGSBASE and SYSENTER #GP fixes, table rules); docs refresh`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
