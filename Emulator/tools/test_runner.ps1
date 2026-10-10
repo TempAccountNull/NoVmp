@@ -255,6 +255,9 @@ Add-Hw 'cases_sse_exc' 'hw sse' -Shards 8
 Add-Hw 'hwcheck_gate1' 'hw x87' -Exclusive
 Add-Hw 'cases_reach' 'hw x87'
 Add-Hw 'cases_tsx_cet' 'hw'
+# U879: the TSX / WAITPKG / ENQCMD / CET / SMX / PCONFIG expected values of U110-U116 on UC_CPU_X86_MAX (no
+# CPUID profile: the i5-13600K's hides these features; cases_tsx_cet.txt above is the hardware side).
+Add-Exp 'cases_tsx_cet_max' 'cases_tsx_cet_max' 'expect'
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'

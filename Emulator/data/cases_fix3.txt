@@ -289,8 +289,9 @@ cmpxchg8b qword ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
 vpgatherdd xmm0, [rcx+xmm2*1], xmm1 | cpl=3 rcx=0x00007FFFFFFFFFFC xmm0=11111111111111111111111111111111 xmm1=FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF xmm2=00000000000000000000000000000000
 vpgatherdd xmm0, [rcx+xmm2*1], xmm1 | cpl=3 rcx=0x00007FFFFFFFFFFE xmm0=11111111111111111111111111111111 xmm1=FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF xmm2=00000000000000000000000000000000
 mov rax, qword ptr [rcx] | cpl=3 rcx=0xFFFF7FFFFFFFFFFC
-# a stack reference (RSP base) is #SS(0) (U51); Windows reports #SS as an access violation, so expected value:
-mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC => #SS
+# a stack reference (RSP base) is #SS(0) (U51); since U773 the harness tells a Windows #SS from a #PF
+# (access type 3), so this is a hardware line (U879; it was an expected value):
+mov rax, qword ptr [rsp+rcx] | rcx=0x00007FFFCFFEC0FC
 #
 # --- U709 per-element faults of AVX2 gathers (verified, unchanged): an element with a non-canonical
 # address is #GP(0) after the elements below it completed (mask bits cleared), a not-present
