@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 17:40 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `034174f U807: PBNDKB (NP 0F 01 C7), IA32_TSE_CAPABILITY, CPUID.(07H,1):EBX.PBNDKB[1]`). Do not edit by hand._
+_Generated 2026-10-10 00:38 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `be7cfdd alltest baseline: pconfig row after U1021 (host lacks, unicorn runs: #GP(0) without TME activation)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
@@ -2290,7 +2290,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| PCONFIG | legacy | - | ❌ **cannot run** (CPUID.7H:EDX[18] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U113 GETSEC/PCONFIG: SDM-pseudo… |  |
+| PCONFIG | legacy | - | ❌ **cannot run** (CPUID.7H:EDX[18] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1020-U1022 PCONFIG (NP 0F 01 C… |  |
 
 </details>
 
