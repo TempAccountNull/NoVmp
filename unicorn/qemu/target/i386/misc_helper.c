@@ -1059,6 +1059,16 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
 {
     uint32_t nbank = env->mcg_cap & 0xff;
 
+#if __Use_Original_Qemu != 1 /* ours (U1123) */
+    /*
+     * NoVmp (ledger U1123): the x2APIC MSRs 800H-8FFH exist with CPUID.01H:ECX.x2APIC[21] (SDM Vol3A
+     * 13.12.1, Vol4 Table 2-2 "If CPUID.01H:ECX.[21] = 1"), as the CPU reports it (a strict profile
+     * that hides x2APIC removes them); which of them are registers is the APIC model's business
+     */
+    if (msr >= 0x800 && msr <= 0x8ff) {
+        return MF_1ECX(CPUID_EXT_X2APIC);
+    }
+#endif /* __Use_Original_Qemu (U1123) */
     switch (msr) {
     case MSR_IA32_TSC:                      /* 05_01H; Vol3B 18.17: CPUID.01H:EDX.TSC */
         return MF_1EDX(CPUID_TSC);
@@ -1506,8 +1516,13 @@ void helper_wrmsr(CPUX86State *env)
         ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
 
 #if __Use_Original_Qemu != 1 /* ours (U960) */
-    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c) */
-    if (x86_apic_msr_write(env, (uint32_t)env->regs[R_ECX], val, GETPC())) {
+    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c). U1123: only
+       when the MSR exists for the CPU as reported (msr_present: 1BH with CPUID.01H:EDX.APIC,
+       800H-8FFH with CPUID.01H:ECX.x2APIC, a strict profile counts), else the U905 refusal below
+       (#GP(0), UC_ERR_EXCEPTION for the API); was: the APIC handler ran first and ignored a
+       profile that hides APIC / x2APIC */
+    if (msr_present(env, (uint32_t)env->regs[R_ECX]) &&
+        x86_apic_msr_write(env, (uint32_t)env->regs[R_ECX], val, GETPC())) {
         return;
     }
 #endif /* __Use_Original_Qemu (U960) */
@@ -2094,8 +2109,10 @@ void helper_rdmsr(CPUX86State *env)
         return;
 
 #if __Use_Original_Qemu != 1 /* ours (U960) */
-    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c) */
-    if (x86_apic_msr_read(env, (uint32_t)env->regs[R_ECX], &val, GETPC())) {
+    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c); U1123: only
+       when the MSR exists for the CPU as reported (msr_present), else the U905 refusal below */
+    if (msr_present(env, (uint32_t)env->regs[R_ECX]) &&
+        x86_apic_msr_read(env, (uint32_t)env->regs[R_ECX], &val, GETPC())) {
         env->regs[R_EAX] = (uint32_t)(val);
         env->regs[R_EDX] = (uint32_t)(val >> 32);
         return;
