@@ -5913,9 +5913,11 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
      * 361050-007 p.21, SDM 092 Vol1 16-2): with AVX10 the CPUID instruction reports AVX,
      * AVX2 and the AVX-512 flags of Table 16-2 (AVX10_ENUM_*). The instructions already run
      * through "AVX512x OR AVX10.1" (U371) and the state components 5-7 follow AVX512F, so
-     * availability, enumeration and XCR0 stay consistent. Not implied: AVX512VL (not in the
-     * table), VAES/GFNI/VPCLMULQDQ (discrete flags), VP2INTERSECT and the Xeon Phi families
-     * (U570, U990). UC_CTL_X86_AVX512 reads back unchanged; a CPUID profile is returned as given.
+     * availability, enumeration and XCR0 stay consistent. U1096: AVX512VL is reported too - not
+     * in Table 16-2 / Table 3.2, a hardware / SDE-based choice (user decision 2026-10-10; SDE
+     * 10.13.1 -dmr and real AVX10 CPUs report it; docs/quirks.md). Not implied: VAES/GFNI/
+     * VPCLMULQDQ (discrete flags), VP2INTERSECT and the Xeon Phi families (U570, U990).
+     * UC_CTL_X86_AVX512 reads back unchanged; a CPUID profile is returned as given.
      */
     if (uc->x86_avx10) {
         env->features[FEAT_1_ECX] |= CPUID_EXT_AVX;

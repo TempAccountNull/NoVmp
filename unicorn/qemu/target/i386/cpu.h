@@ -1184,10 +1184,12 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /*
  * the AVX-512 CPUID feature flags a CPU with AVX10 enumerates (AVX10.2 spec 361050-007 p.21
  * Table 3.2, SDM 092 Vol1 16-2 Table 16-2): F, CD, BW, DQ, VBMI, IFMA, VNNI, BF16, VPOPCNTDQ,
- * VBMI2, BITALG, FP16. AVX512VL is not in the table (only the translator's AVX10 copy above
- * has it: AVX10 runs every vector length); VAES/GFNI/VPCLMULQDQ keep their discrete flags.
+ * VBMI2, BITALG, FP16; VAES/GFNI/VPCLMULQDQ keep their discrete flags. U1096: plus AVX512VL
+ * (7.0:EBX[31]) - NOT spec text (neither table lists it; AVX10 runs every vector length) but a
+ * hardware / SDE-based choice (user decision 2026-10-10): real AVX10 CPUs and SDE 10.13.1 -dmr
+ * report it.
  */
-#define AVX10_ENUM_7_0_EBX (AVX10_1_7_0_EBX & ~CPUID_7_0_EBX_AVX512VL)
+#define AVX10_ENUM_7_0_EBX AVX10_1_7_0_EBX
 #define AVX10_ENUM_7_0_ECX AVX10_1_7_0_ECX
 #define AVX10_ENUM_7_0_EDX AVX10_1_7_0_EDX
 #define AVX10_ENUM_7_1_EAX AVX10_1_7_1_EAX

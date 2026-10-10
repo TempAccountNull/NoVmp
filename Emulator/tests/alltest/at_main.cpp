@@ -28,7 +28,7 @@
 //                    [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]; Unicorn only, own code only;
 //                    --profile N also works with a quick/--full run (whole-run profile)
 //   --avx10 N        with --cases: Unicorn opts in to Intel AVX10 version N (UC_CTL_X86_AVX10 = N,
-//                    1 or 2; CPUID then reports the AVX-512 flags of AVX10.2 Table 3.2, U1090) for the AVX10 expected-value cases
+//                    1 or 2; CPUID then reports the AVX-512 flags of AVX10.2 Table 3.2, U1090, and AVX512VL, U1096) for the AVX10 expected-value cases
 //   --apx            with --cases: Unicorn opts in to Intel APX (UC_CTL_X86_APX = UC_X86_APX_F, reset
 //                    XCR0 with bit 19; keys r16..r31) for the APX cases; the host has none
 //   --native-under-sde FILE  with --cases --expect-only (U1040), pass 1 of the SDE cross-check: the

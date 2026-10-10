@@ -764,8 +764,9 @@ typedef enum uc_control_type {
     // vector lengths, whatever UC_CTL_X86_AVX512 says. NoVmp U1090 (plan 1.J.19, AVX10.2
     // spec 361050-007 p.21, SDM 092 Vol1 16-2): the CPUID instruction then also reports AVX,
     // AVX2 and those AVX-512 flags (Table 16-2: AVX512F/CD/BW/DQ, AVX512_VBMI/IFMA/VNNI/BF16/
-    // VPOPCNTDQ/VBMI2/BITALG/FP16); not AVX512VL (not in the table), not VP2INTERSECT or the
-    // Xeon Phi bits; UC_CTL_X86_AVX512 reads back as written. VAES/GFNI/VPCLMULQDQ EVEX forms
+    // VPOPCNTDQ/VBMI2/BITALG/FP16) and, U1096, AVX512VL (not in the table: a hardware / SDE
+    // 10.13.1 -dmr based choice, user decision 2026-10-10); not VP2INTERSECT or the Xeon Phi
+    // bits; UC_CTL_X86_AVX512 reads back as written. VAES/GFNI/VPCLMULQDQ EVEX forms
     // still need their own bits. A strict CPUID profile without 7.1:EDX[19] hides AVX10; its 24H.0
     // EBX[7:0] caps the version. Other values -> UC_ERR_ARG. Only before the engine is
     // initialised, like UC_CTL_CPU_MODEL. Write: @args = (int); Read: @args = (int *)

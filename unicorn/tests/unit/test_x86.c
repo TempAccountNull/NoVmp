@@ -13325,8 +13325,8 @@ static void test_x86_avx10_optin(void)
     TEST_CHECK(r[0] >= 0x24);
     a10_cpuid(&c, 7, 0, r);
     TEST_CHECK(r[0] >= 1);
-    /* U1090: AVX512F reported with AVX10 (Table 16-2), AVX512VL not (vx_ block has the rest) */
-    TEST_CHECK((r[1] & ((1u << 16) | (1u << 31))) == (1u << 16));
+    /* U1090: AVX512F reported with AVX10 (Table 16-2); U1096: AVX512VL too (vx_ block) */
+    TEST_CHECK((r[1] & ((1u << 16) | (1u << 31))) == ((1u << 16) | (1u << 31)));
     a10_cpuid(&c, 7, 1, r);
     TEST_CHECK(r[3] & (1u << 19));
     a10_cpuid(&c, 0x24, 0, r);
@@ -13387,7 +13387,7 @@ static void test_x86_avx10_gating(void)
     TEST_CHECK(a10_run(&c, A10_KANDW, 4) == 6);
     OK(uc_close(c.uc));
 
-    /* AVX-512 off, AVX10.1 on: AVX512F at 512/256/128 bits (no AVX512VL bit), opmask W/B/D */
+    /* AVX-512 off, AVX10.1 on: AVX512F at 512/256/128 bits (AVX512VL opt-in off), opmask W/B/D */
     a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0, 0);
     TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
     TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Y, 32));
@@ -26426,8 +26426,9 @@ static void test_x86_ig_context_msr(void)
 /*
  * ---- NoVmp U1090-U1119: AVX10 enumeration (plan 1.J.19-1.J.22) (vx_) ----
  * U1090: with UC_CTL_X86_AVX10 the CPUID instruction reports AVX, AVX2 and the AVX-512 flags of
- * AVX10.2 spec 361050-007 p.21 Table 3.2 / SDM 092 Vol1 Table 16-2; not AVX512VL, not
- * VP2INTERSECT, not the Xeon Phi bits (U990); XCR0[7:5] enabled; UC_CTL_X86_AVX512 unchanged.
+ * AVX10.2 spec 361050-007 p.21 Table 3.2 / SDM 092 Vol1 Table 16-2, plus AVX512VL (U1096: not in
+ * the tables, SDE 10.13.1 -dmr / hardware based, user decision 2026-10-10); not VP2INTERSECT,
+ * not the Xeon Phi bits (U990); XCR0[7:5] enabled; UC_CTL_X86_AVX512 unchanged.
  */
 static void vx_check_avx10_flags(A10Ctx *c, int expect)
 {
@@ -26446,11 +26447,11 @@ static void vx_check_avx10_flags(A10Ctx *c, int expect)
         TEST_CHECK((r70[2] & ecx) == ecx);                           /* VBMI, VBMI2, VNNI, BITALG, VPOPCNTDQ */
         TEST_CHECK((r70[3] >> 23) & 1);                              /* AVX512_FP16 */
         TEST_CHECK((r71[0] >> 5) & 1);                               /* AVX512_BF16 */
+        TEST_CHECK((r70[1] >> 31) & 1);                              /* AVX512VL (U1096) */
     } else {
-        TEST_CHECK((r70[1] & ebx & ~(1u << 5)) == 0);
+        TEST_CHECK((r70[1] & ebx & ~(1u << 5)) == 0 && !((r70[1] >> 31) & 1));
         TEST_CHECK((r70[2] & ecx) == 0 && !((r70[3] >> 23) & 1) && !((r71[0] >> 5) & 1));
     }
-    TEST_CHECK(!((r70[1] >> 31) & 1));                               /* AVX512VL: not in Table 16-2 */
     TEST_CHECK((r70[1] & ((1u << 26) | (1u << 27))) == 0);           /* AVX512PF / ER */
     TEST_CHECK((r70[2] & 1) == 0);                                   /* PREFETCHWT1 */
     TEST_CHECK((r70[3] & ((1u << 2) | (1u << 3) | (1u << 8))) == 0); /* 4VNNIW, 4FMAPS, VP2INTERSECT */
