@@ -4489,12 +4489,14 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U404) */
     /*
      * NoVmp (ledger U404): VCVT2PS2PHX (spec 9.2), "AVX10.2 OR AVX10_V1_AUX", 66 W0, Full
-     * tuple (m32bcst), {k1}{z} per FP16 result, {er}; MXCSR flags as if masked, never #XM, no
-     * memory fault suppression: gen_avx10b_cvt2ps2phx does the masking and the MXCSR update.
+     * tuple (m32bcst), {k1}{z} per FP16 result, {er}: gen_avx10b_cvt2ps2phx does the masking
+     * and the MXCSR update. U1091: exception class E2 (spec rev 6.0+, ACE 1.15 8.3.4): memory
+     * fault suppression (FP32 element j of SRC2 feeds FP16 result j, mask bit j: the engine's
+     * VL/4 elements), unmasked SIMD exceptions -> #XM (the U404 E4NF model had evex_nofs).
      */
     [0x67] = X86_OP_ENTRY3(EVEX_VCVT2PS2PHX, V,x, H,x, W,x, cpuid(AVX10_V1_AUX)
                            ev_vl(EV_VLALL) ev_tt(FULL) ev_mask(MZ) ev_rc(ER) ev_w(W0) ev_es(32)
-                           .evex_nofs = 1, p_66),
+                           p_66),
 #endif /* __Use_Original_Qemu (U404) */
 #if __Use_Original_Qemu != 1 /* ours (U405) */
     [0x50] = X86_OP_GROUP0(EVEX_0F38_50),

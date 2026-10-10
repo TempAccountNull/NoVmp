@@ -2720,8 +2720,8 @@ static void gen_EVEX_VCVTHF82PH(DisasContext *s, CPUX86State *env, X86DecodedIns
 
 /*
  * NoVmp (ledger U404): VCVT2PS2PHX: the helper converts the active elements only (no flag
- * from a masked-off one), merges/zeroes per FP16 word and updates MXCSR as if every
- * exception were masked (never #XM); {er}: static rounding, no flags. desc: bits 7:0 VL in
+ * from a masked-off one), merges/zeroes per FP16 word and updates MXCSR; U1091 (class E2):
+ * #XM on an unmasked exception, destination unchanged; {er}: static rounding, no flags. desc: bits 7:0 VL in
  * bytes, bit 8 zeroing, bits 14:12 = {er} rounding control + 1 (0 = MXCSR.RC).
  */
 static void gen_EVEX_VCVT2PS2PHX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

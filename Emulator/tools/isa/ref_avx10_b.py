@@ -21,8 +21,9 @@ any C implementation:
   VCVT2PH2BF8[S] VCVT2PH2HF8[S]     (0F38/MAP5 74/18/1B F2)  two sources, VL result bytes
   VCVTBIASPH2BF8[S] VCVTBIASPH2HF8[S] (0F38/MAP5 74/18/1B NP) bias = src1.byte[2i]
   VCVTHF82PH        (MAP5 F2 1E)     exact E4M3 -> FP16
-  VCVT2PS2PHX       (0F38 66 67)     IEEE FP32 -> FP16 per MXCSR.RC / {er}, DAZ, no FTZ,
-                                     flags as if masked, never #XM
+  VCVT2PS2PHX       (0F38 66 67)     IEEE FP32 -> FP16 per MXCSR.RC / {er}, DAZ, no FTZ;
+                                     exception class E2 (spec rev 6.0+, ACE 1.15 8.3.4; U1091):
+                                     unmasked exception of an active element -> #XM
   VPDPB[SS,SU,UU]D[S] (0F38 50/51)   via ref_vnni_ifma_ne.vpdpb (the VEX model, U85)
   VPDPW[SU,US,UU]D[S] (0F38 D2/D3)   via ref_vnni_ifma_ne.vpdpw (U86)
   VDPPHPS           (0F38 NP 52)     fma32 (DAZ=FTZ=1, RNE) of ref_amx (U178): odd pair first
@@ -33,9 +34,10 @@ any C implementation:
 
 Generic EVEX wrappers as in ref_evex_m1.py (MASK, BCST, DEST[MAXVL-1:VL] := 0), plus:
   the FP8 down-conversions mask per destination byte (KL = VL/8) and zero above the bytes
-  written; VCVT2PS2PHX masks per FP16 word; classes E4NF / E9NF (FP8, VMPSADBW, VMOVD/W,
-  VCVT2PS2PHX: "does not support memory fault suppression") fault on any element of the
-  memory operand; E4 (VCVTHF82PH, VNNI, VDPPHPS, VMOVRS) suppress faults of masked-off ones.
+  written; VCVT2PS2PHX masks per FP16 word; classes E4NF / E9NF (FP8, VMPSADBW, VMOVD/W)
+  fault on any element of the memory operand; E4 (VCVTHF82PH, VNNI, VDPPHPS, VMOVRS) and E2
+  (VCVT2PS2PHX since spec rev 6.0, U1091; before: E4NF, "does not support memory fault
+  suppression") suppress faults of masked-off ones.
 
 Usage:
   python ref_avx10_b.py --selftest          hand-derived checks + exhaustive FP16 checks of the
@@ -219,7 +221,13 @@ def cvt_hf8_to_fp16(x):
 
 def cvt_fp32_to_fp16(x, mxcsr, rc=None):
     """VCVT2PS2PHX element: IEEE binary32 -> binary16 with MXCSR.RC (or {er}), MXCSR.DAZ
-    for the input, no FTZ; returns (bits, flags)"""
+    for the input, no FTZ; returns (bits, flags). Class E2 (U1091): with MXCSR.UM / OM = 0
+    (no {er}) a tiny / overflowing result reports UE / OE with PE from the rounding with an
+    unbounded exponent (encode_value unm_u / unm_o; the bits are then a placeholder, #XM);
+    an FP32 denormal source (DAZ = 0) gives DE, UE and PE, the SDM VCVTPS2PH rule that the
+    VCVTPS2PHX model (ref_evex_fp16.py) uses as well"""
+    unm_u = rc is None and not (mxcsr & 0x800)
+    unm_o = rc is None and not (mxcsr & 0x400)
     if rc is None:
         rc = (mxcsr >> 13) & 3
     daz = bool(mxcsr & 0x40)
@@ -232,13 +240,12 @@ def cvt_fp32_to_fp16(x, mxcsr, rc=None):
         return sign | 0x7C00, 0
     if cls == "zero":
         return sign, 0
-    flags = 0
     if cls == "denorm":
         if daz:
             return sign, 0
-        flags |= DE
-    bits, fl = encode_value(v, F16, rc, False)
-    return bits, flags | fl
+        bits, _ = encode_value(v, F16, rc, False)
+        return bits, DE | UE | PE
+    return encode_value(v, F16, rc, False, unm_u, unm_o)
 
 
 # --------------------------------------------------------------------------------------
@@ -393,7 +400,9 @@ def model_cvthf82ph(old, src, vl, kmask, zero):
 
 
 def model_cvt2ps2phx(old, s1, s2, vl, kmask, zero, mxcsr, rc=None):
-    """returns (image, new mxcsr); {er} (rc given): no flag"""
+    """returns (image, new mxcsr, fault); {er} (rc given): no flag, no #XM. Class E2 (U1091):
+    an unmasked exception of an active element -> fault "#XM", image None (destination
+    unchanged), the flags still set except that an unmasked IE/DE/ZE drops OE/UE/PE"""
     n = vl // 2
     out = bytearray(64)
     flags = 0
@@ -407,7 +416,12 @@ def model_cvt2ps2phx(old, s1, s2, vl, kmask, zero, mxcsr, rc=None):
         out[2 * i:2 * i + 2] = r.to_bytes(2, "little")
     if rc is not None:
         flags = 0
-    return bytes(out), mxcsr | flags
+    unm = 0 if rc is not None else flags & ~(mxcsr >> 7) & 0x3F
+    if unm & (IE | DE | ZE):
+        flags &= ~(OE | UE | PE)
+    if unm:
+        return None, mxcsr | flags, "#XM"
+    return bytes(out), mxcsr | flags, None
 
 
 def mask_dwords(old, res, vl, kmask, zero, esz=4):
@@ -735,7 +749,8 @@ def f32_vec(n):
 
 
 def gen_cvt2ps2phx():
-    comment("--- VCVT2PS2PHX (spec 9.2): FP32 -> FP16, MXCSR flags as if masked, no #XM, {er}")
+    comment("--- VCVT2PS2PHX (spec 9.2): FP32 -> FP16, {er}; exception class E2 (spec rev 6.0+, U1091): "
+            "unmasked exception -> #XM, fault suppression")
     mxcsrs = [0x1F80, 0x3F80, 0x5F80, 0x7F80, 0x1FC0, 0x9F80, 0x1F00, 0x0000, 0x8040]
     for vl in (16, 32, 64):
         for var in ("reg", "merge", "zero", "mem", "bcst", "alias", "hi"):
@@ -772,10 +787,11 @@ def gen_cvt2ps2phx():
                     c.set_zmm(dst, old)
                 c.mxcsr = mx
                 c.code = evex(2, 1, 0, 0x67, dst, rm, vvvv=r1, ll=VL_LL[vl], b=b, z=zero, aaa=aaa, n=n)
-                img, mxo = model_cvt2ps2phx(old, s1, s2v, vl, kmask, zero, mx)
-                c.exp.append("zmm%d=%s" % (dst, hexs(img)))
+                img, mxo, fault = model_cvt2ps2phx(old, s1, s2v, vl, kmask, zero, mx)
+                c.exp.append("zmm%d=%s" % (dst, hexs(img if img is not None else old)))
                 if mxo != mx:
                     c.exp.append("mxcsr=0x%X" % mxo)
+                c.fault = fault
                 emit(c)
     comment("VCVT2PS2PHX {er}: register form, 512 bits, static rounding, no MXCSR flag")
     for rc in range(4):
@@ -789,33 +805,36 @@ def gen_cvt2ps2phx():
                 c.k[6] = kmask
             c.mxcsr = 0x1F80 ^ (((rc + 1) & 3) << 13)
             c.code = evex(2, 1, 0, 0x67, 1, 3, vvvv=2, ll=rc, b=1, z=masked, aaa=6 if masked else 0)
-            img, _ = model_cvt2ps2phx(old, s1, s2, 64, kmask, masked, c.mxcsr, rc)
+            img, _, _ = model_cvt2ps2phx(old, s1, s2, 64, kmask, masked, c.mxcsr, rc)
             c.exp.append("zmm1=%s" % hexs(img))
             emit(c)
-    comment("VCVT2PS2PHX: a masked-off SNaN raises no IE; unmasked IM = 0 still no #XM")
+    comment("VCVT2PS2PHX: a masked-off SNaN raises no IE; an active one with IM = 0: #XM (class E2, U1091)")
     c = Case("VCVT2PS2PHX xmm masked-off SNaN")
     s1 = (0x7F800001).to_bytes(4, "little") * 4
     s2 = (0x3F800000).to_bytes(4, "little") * 4 + bytes(48)
     c.set_zmm(1, bytes(64)); c.set_zmm(2, s1 + bytes(48)); c.set_zmm(3, s2)
     c.k[1] = 0x0F
     c.code = evex(2, 1, 0, 0x67, 1, 3, vvvv=2, ll=0, aaa=1)
-    img, mxo = model_cvt2ps2phx(bytes(64), s1 + bytes(48), s2, 16, 0x0F, 0, 0x1F80)
+    img, mxo, _ = model_cvt2ps2phx(bytes(64), s1 + bytes(48), s2, 16, 0x0F, 0, 0x1F80)
     c.exp.append("zmm1=%s" % hexs(img))
     emit(c)
-    c = Case("VCVT2PS2PHX xmm SNaN with MXCSR.IM = 0: IE set, no #XM")
+    c = Case("VCVT2PS2PHX xmm SNaN with MXCSR.IM = 0: IE set, #XM, destination unchanged")
     c.set_zmm(1, bytes(64)); c.set_zmm(2, s1 + bytes(48)); c.set_zmm(3, s2)
     c.mxcsr = 0x1F00
     c.code = evex(2, 1, 0, 0x67, 1, 3, vvvv=2, ll=0)
-    img, mxo = model_cvt2ps2phx(bytes(64), s1 + bytes(48), s2, 16, None, 0, 0x1F00)
-    c.exp.append("zmm1=%s" % hexs(img))
+    img, mxo, fault = model_cvt2ps2phx(bytes(64), s1 + bytes(48), s2, 16, None, 0, 0x1F00)
+    assert fault == "#XM" and img is None
+    c.exp.append("zmm1=%s" % hexs(bytes(64)))
     c.exp.append("mxcsr=0x%X" % mxo)
+    c.fault = fault
     emit(c)
-    comment("VCVT2PS2PHX: no memory fault suppression (#PF with every element masked off)")
-    c = Case("VCVT2PS2PHX zmm k=0 [unmapped] #PF")
-    c.set_zmm(1, rnd_bytes(64))
+    comment("VCVT2PS2PHX: memory fault suppression (class E2, U1091; the U404 E4NF model gave #PF here)")
+    c = Case("VCVT2PS2PHX zmm k=0 [unmapped]: suppressed, no #PF")
+    old = rnd_bytes(64)
+    c.set_zmm(1, old)
     c.k[3] = 0
     c.code = evex(2, 1, 0, 0x67, 1, Mem(RSI, 0x10000 - MEM_RSI - 32, disp32=True), vvvv=2, ll=2, aaa=3)
-    c.fault = "#PF"
+    c.exp.append("zmm1=%s" % hexs(old))
     emit(c)
     for title, kw in (("W1 #UD", dict(w=1)), ("EVEX.b on xmm reg-reg? {er} -> 512", None),
                       ("NP prefix slot #UD", dict(pp=0)), ("F3 prefix slot #UD", dict(pp=2)),
@@ -1453,6 +1472,12 @@ def selftest():
     chk("fp32->fp16 denormal RU", cvt_fp32_to_fp16(0x00000001, 0x5F80), (0x0001, DE | UE | PE))
     chk("fp32->fp16 denormal DAZ", cvt_fp32_to_fp16(0x80000001, 0x1FC0), (0x8000, 0))
     chk("fp32->fp16 SNaN", cvt_fp32_to_fp16(0x7FA00001, 0x1F80), (0x7F00, IE))
+    # U1091 (class E2): unmasked UM / OM report the unbounded-exponent rounding (#XM follows)
+    chk("fp32->fp16 2^-24 UM=0 exact tiny: UE only", cvt_fp32_to_fp16(0x33800000, 0x1780)[1], UE)
+    chk("fp32->fp16 65536 OM=0: OE only", cvt_fp32_to_fp16(0x47800000, 0x1B80)[1], OE)
+    chk("fp32->fp16 2^-24 {er}: no unmasked rule", cvt_fp32_to_fp16(0x33800000, 0x1780, 0), (0x0001, 0))
+    chk("cvt2ps2phx IM=0 SNaN -> #XM", model_cvt2ps2phx(bytes(64), (0x7FA00001).to_bytes(4, "little") * 16,
+                                                       bytes(64), 16, None, 0, 0x1F00)[1:], (0x1F01, "#XM"))
     # VMPSADBW spec example shape: zero data -> zero
     chk("mpsadbw zeros", model_mpsadbw(bytes(64), bytes(64), bytes(64), 16, None, 0, 0)[:16], bytes(16))
     # exhaustive: rational model == literal spec 5.1 pseudocode
