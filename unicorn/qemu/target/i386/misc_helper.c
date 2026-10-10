@@ -1691,9 +1691,11 @@ void helper_wrmsr(CPUX86State *env)
          * causes a #GP"), and "a bit can be set in the IA32_XSS MSR if and only if the
          * corresponding bit is set in" CPUID.(0DH,1):EDX:ECX - WRMSR with any other bit #GP(0)
          * (was: silently dropped). An API write (UC_X86_REG_MSR) is dropped instead, as U173.
+         * U1122: and returns UC_ERR_EXCEPTION (msr_api_err), the U905 contract (was: UC_ERR_OK).
          */
         if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVES) || (val & ~valid)) {
             if (env->msr_api) {
+                env->msr_api_err = 1;   /* U1122 */
                 break;
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1722,6 +1724,7 @@ void helper_wrmsr(CPUX86State *env)
         if ((env->features[FEAT_XSAVE] & CPUID_D_1_EAX_XFD) &&
             (val & ~x86_cpu_xfd_supported(env))) {
             if (env->msr_api) {
+                env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                 break;
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1739,6 +1742,7 @@ void helper_wrmsr(CPUX86State *env)
             if (env->msr_api) {
                 /* an API write of a reserved value is dropped, no #GP longjmp (U878); since
                    U906 msr_write_ok refuses it first (UC_ERR_EXCEPTION, U1063) */
+                env->msr_api_err = 1;   /* U1122 */
                 break;
             }
 #endif /* __Use_Original_Qemu (U878) */
@@ -1768,6 +1772,7 @@ void helper_wrmsr(CPUX86State *env)
         if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
             if ((val & 0xffe) || !novmp_canonical(env, val)) {
                 if (env->msr_api) {
+                    env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                     break;      /* API write of a reserved value: dropped (U878) */
                 }
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1780,6 +1785,7 @@ void helper_wrmsr(CPUX86State *env)
         if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
             if (val & ~1ULL) {
                 if (env->msr_api) {
+                    env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                     break;      /* API write of a reserved value: dropped (U878) */
                 }
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1793,9 +1799,14 @@ void helper_wrmsr(CPUX86State *env)
         /*
          * NoVmp (ledger U802): IA32_BARRIER (2FH) exists with CPUID.(07H,1):EAX.MSRLIST[27] and
          * is read-only (SDM Vol4): WRMSR #GP(0) (an API write is dropped). Without MSRLIST it
-         * stays an unknown MSR (ignored, as before).
+         * stays an unknown MSR (ignored, as before). U1122: an API write returns UC_ERR_EXCEPTION
+         * (msr_api_err, U905; msr_write_ok refuses it first since U906).
          */
-        if ((env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_MSRLIST) && !env->msr_api) {
+        if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_MSRLIST) {
+            if (env->msr_api) {
+                env->msr_api_err = 1;
+                break;
+            }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
         break;
@@ -1811,6 +1822,7 @@ void helper_wrmsr(CPUX86State *env)
         if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_HRESET) {
             if (val & ~(uint64_t)CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET) {
                 if (env->msr_api) {
+                    env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                     break;
                 }
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1821,8 +1833,13 @@ void helper_wrmsr(CPUX86State *env)
 #endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
     case MSR_IA32_TSE_CAPABILITY:
-        /* NoVmp (ledger U807): read-only with PBNDKB: WRMSR #GP(0) (an API write is dropped) */
-        if ((env->features[FEAT_7_1_EBX] & CPUID_7_1_EBX_PBNDKB) && !env->msr_api) {
+        /* NoVmp (ledger U807): read-only with PBNDKB: WRMSR #GP(0) (an API write is dropped;
+           U1122: with UC_ERR_EXCEPTION, msr_api_err - msr_write_ok refuses it first since U906) */
+        if (env->features[FEAT_7_1_EBX] & CPUID_7_1_EBX_PBNDKB) {
+            if (env->msr_api) {
+                env->msr_api_err = 1;
+                break;
+            }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
         break;
@@ -1889,6 +1906,7 @@ void helper_wrmsr(CPUX86State *env)
                 break;
             }
             if (gp && env->msr_api) {
+                env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                 break;          /* API write of a reserved value: dropped (U878) */
             }
             if (gp) {
@@ -1910,6 +1928,7 @@ void helper_wrmsr(CPUX86State *env)
         }
         if (val & ~0xfffffffdull) {
             if (env->msr_api) {
+                env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                 break;
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1925,8 +1944,13 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_PL2_SSP:
     case MSR_IA32_PL3_SSP:
     case MSR_IA32_INT_SSP_TAB:
-        /* NoVmp (ledger U114): CET MSRs, see cet_wrmsr; #GP(0) on an invalid value */
-        if (!cet_wrmsr(env, (uint32_t)env->regs[R_ECX], val) && !env->msr_api) {
+        /* NoVmp (ledger U114): CET MSRs, see cet_wrmsr; #GP(0) on an invalid value (U1122: an
+           API write UC_ERR_EXCEPTION, msr_api_err - msr_write_ok refuses it first since U906) */
+        if (!cet_wrmsr(env, (uint32_t)env->regs[R_ECX], val)) {
+            if (env->msr_api) {
+                env->msr_api_err = 1;
+                break;
+            }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
         break;
@@ -1943,6 +1967,7 @@ void helper_wrmsr(CPUX86State *env)
         }
         if (val & ~0x800fffffull) {
             if (env->msr_api) {
+                env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                 break;
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1963,6 +1988,7 @@ void helper_wrmsr(CPUX86State *env)
          */
         if ((val & 0xffc) || !novmp_canonical(env, val)) {
             if (env->msr_api) {
+                env->msr_api_err = 1;   /* U1122: UC_ERR_EXCEPTION (U905) */
                 break;
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());

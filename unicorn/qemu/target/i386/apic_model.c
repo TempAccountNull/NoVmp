@@ -596,7 +596,8 @@ static void QEMU_NORETURN apic_unsupported(CPUX86State *env, uintptr_t ra)
 /*
  * Validates an ICR value before it is written (x2APIC: 13.12.9 and Table 13-3): SMI, INIT,
  * start-up and the reserved delivery modes, and NMI with the Self / All-Including-Self
- * shorthands (invalid combinations), are not modelled. Returns false for the host API.
+ * shorthands (invalid combinations), are not modelled. Returns false for the host API, which
+ * then gets UC_ERR_EXCEPTION (msr_api_err, U1122; was: the write dropped with UC_ERR_OK).
  */
 static bool apic_icr_supported(CPUX86State *env, uint64_t icr, uintptr_t ra)
 {
@@ -607,6 +608,7 @@ static bool apic_icr_supported(CPUX86State *env, uint64_t icr, uintptr_t ra)
         return true;
     }
     if (env->msr_api) {
+        env->msr_api_err = 1;           /* U1122: UC_ERR_EXCEPTION (U905) */
         return false;
     }
     apic_unsupported(env, ra);
@@ -896,8 +898,10 @@ bool x86_apic_msr_write(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t 
         break;
     case 0x838:
         if (val) {
-            /* a non-zero initial count starts the timer, which is not modelled */
+            /* a non-zero initial count starts the timer, which is not modelled (U1122: the
+               host API gets UC_ERR_EXCEPTION, msr_api_err; was: dropped with UC_ERR_OK) */
             if (env->msr_api) {
+                env->msr_api_err = 1;
                 return true;
             }
             apic_unsupported(env, ra);
