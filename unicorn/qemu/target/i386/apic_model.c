@@ -715,8 +715,13 @@ static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
         env->apic_ldr = ((id & 0xffff0) << 12) | (1u << (id & 0xf));
         env->apic_icr &= 0xffffffffULL;
     }
-    /* the BSP flag is the processor's role, set at reset: not changed by WRMSR */
-    env->apic_base = (val & ~(rsvd | APIC_BASE_BSP)) | (old & APIC_BASE_BSP);
+    /*
+     * U1127: the BSP flag (bit 8) is written like the other fields. SDM 092 Vol4 Table 2-2 1BH:
+     * "8 BSP Flag (R/W)"; Vol3A 13.4.4 gives only its value after power-up / reset (1 on the BSP,
+     * 0 on the APs; reset still sets it from the processor's role, x86_apic_reset) and names no
+     * read-only rule. Was: kept, WRMSR could not change it.
+     */
+    env->apic_base = val & ~rsvd;
     x86_apic_update(env);
 }
 

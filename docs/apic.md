@@ -56,6 +56,9 @@ enabled, xAPIC mode,
 LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
 
 ### IA32_APIC_BASE (1BH; 13.4.4, 13.12.1, Figure 13-27, Table 13-5)
+- Exists with CPUID.01H:EDX.APIC, and 800H-8FFH with CPUID.01H:ECX.x2APIC, as the CPU reports them (a
+  strict UC_CTL_X86_CPUID profile that hides a bit removes the MSRs: #GP(0), UC_ERR_EXCEPTION for the
+  host API; U1123).
 - Reserved bits (#GP(0)): 7:0, 9, 63:MAXPHYADDR (MAXPHYADDR = the CPU's physical-address width,
   CPUID 80000008H), and 10 (EXTD) when CPUID.01H:ECX.x2APIC = 0.
 - Invalid transitions (#GP(0)): to EN = 0 / EXTD = 1; x2APIC -> xAPIC; disabled -> x2APIC.
@@ -63,7 +66,10 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
   reads 0 while EN = 0 (13.4.3).
 - xAPIC -> x2APIC: LDR = (x2APIC ID[19:4] << 16) | (1 << x2APIC ID[3:0]) (13.12.10.2), ICR[63:32]
   cleared (not preserved, 13.12.5); everything else kept.
-- The BSP flag (bit 8) is the processor's role: WRMSR does not change it.
+- The BSP flag (bit 8) is read/write (U1127; SDM 092 Vol4 Table 2-2 1BH "8 BSP Flag (R/W)"; Vol3A
+  13.4.4 gives only its power-up / reset value): WRMSR stores it like the other fields, a reset sets it
+  again from the processor's role (BSP 1, an AP on a bus 0). Software keeps it with read-modify-write.
+  (Before U1127: kept, WRMSR could not change it.)
 - The base field is stored; nothing is mapped there (xAPIC MMIO is not modelled).
 
 ### x2APIC MSRs 800H-8FFH (Table 13-6, 13.12.1.3, 13.12.2)

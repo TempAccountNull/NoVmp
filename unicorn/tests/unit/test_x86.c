@@ -24727,7 +24727,8 @@ static void ap_open_cpu(ap_cpu *c, bool hook)
 /* x2APIC mode, APIC software-enabled (SVR 1FFH), RFLAGS.IF as given */
 static void ap_x2apic(ap_cpu *c, bool if_flag)
 {
-    ap_wmsr(c, 0x1b, AP_X2APIC_ON);
+    /* U1127: the BSP flag is R/W - keep it as an OS does (read-modify-write) */
+    ap_wmsr(c, 0x1b, (ap_msr(c, 0x1b) & 0x100) | AP_X2APIC_ON);
     ap_wmsr(c, 0x80f, 0x1ff);
     ap_set(c, UC_X86_REG_EFLAGS, if_flag ? 0x202 : 0x2);
 }
@@ -24862,8 +24863,8 @@ static void test_x86_ap_reset_state(void)
     TEST_CHECK(ap_grd(&c, 0x802, &v) == 13);
     TEST_CHECK(ap_gwr(&c, 0x808, 0) == 13);
     TEST_CHECK(ap_gwr(&c, 0x83f, 0x40) == 13);
-    /* to x2APIC mode: BSP kept, the registers at their reset values (13.4.7.1) */
-    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    /* to x2APIC mode (BSP written as read, U1127), the registers at their reset values (13.4.7.1) */
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON | 0x100) == -1);
     TEST_CHECK(ap_grd(&c, 0x1b, &v) == -1 && v == 0xfee00d00ULL);
     TEST_CHECK(ap_grd(&c, 0x802, &v) == -1 && v == 0);
     ap_cpuid(&c, 0xb, 0, r);
@@ -24945,25 +24946,27 @@ static void test_x86_ap_base_transitions(void)
     TEST_MSG("MAXPHYADDR %u", maxphy);
     TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00400ULL) == 13);
     TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00900ULL);
-    /* the base field below MAXPHYADDR is writable; the BSP flag is not changed by WRMSR */
+    /* the base field below MAXPHYADDR is writable; U1127: so is the BSP flag (Vol4 "(R/W)") */
     TEST_CHECK(ap_gwr(&c, 0x1b, (1ULL << (maxphy - 1)) | 0xfec00800ULL) == -1);
+    TEST_CHECK(ap_msr(&c, 0x1b) == ((1ULL << (maxphy - 1)) | 0xfec00800ULL));
+    TEST_CHECK(ap_gwr(&c, 0x1b, (1ULL << (maxphy - 1)) | 0xfec00900ULL) == -1);
     TEST_CHECK(ap_msr(&c, 0x1b) == ((1ULL << (maxphy - 1)) | 0xfec00900ULL));
-    /* xAPIC -> x2APIC -> (x2APIC -> xAPIC #GP) -> disabled */
-    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    /* xAPIC -> x2APIC -> (x2APIC -> xAPIC #GP) -> disabled (BSP kept by the writes, U1127) */
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON | 0x100) == -1);
     TEST_CHECK(ap_gwr(&c, 0x808, 0x20) == -1 && ap_msr(&c, 0x808) == 0x20);
-    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00800ULL) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00900ULL) == 13);
     TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00d00ULL);
-    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00000ULL) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00100ULL) == -1);
     TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00100ULL);
     ap_cpuid(&c, 1, 0, r);
     TEST_CHECK((r[3] & (1u << 9)) == 0);           /* 13.4.3: CPUID APIC flag 0 while EN = 0 */
     TEST_CHECK(ap_grd(&c, 0x808, &v) == 13);
     /* disabled -> x2APIC #GP; disabled -> xAPIC -> x2APIC: the state was not preserved */
-    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == 13);
-    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00800ULL) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON | 0x100) == 13);
+    TEST_CHECK(ap_gwr(&c, 0x1b, 0xfee00900ULL) == -1);
     ap_cpuid(&c, 1, 0, r);
     TEST_CHECK(r[3] & (1u << 9));
-    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
+    TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON | 0x100) == -1);
     TEST_CHECK(ap_msr(&c, 0x808) == 0 && ap_msr(&c, 0x80f) == 0xff);
     /* the host API: an invalid write is not made and returns UC_ERR_EXCEPTION (U905 / U1062) */
     {
@@ -26323,7 +26326,7 @@ static void test_x86_ig_apic_api(void)
     TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00901ULL) == UC_ERR_EXCEPTION);   /* reserved bit 0 */
     TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00400ULL) == UC_ERR_EXCEPTION);   /* EN = 0, EXTD = 1 */
     TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00900ULL);
-    OK(ig_wmsr(uc, 0x1b, 0xfee00c00ULL));                           /* xAPIC -> x2APIC */
+    OK(ig_wmsr(uc, 0x1b, 0xfee00d00ULL));                           /* xAPIC -> x2APIC */
     TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
     TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00800ULL) == UC_ERR_EXCEPTION);   /* x2APIC -> xAPIC */
     TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
@@ -26365,7 +26368,7 @@ static void test_x86_ig_context_msr(void)
 
     OK(uc_mem_map(uc, 0x1000, 0x1000, UC_PROT_ALL));
     OK(uc_hook_add(uc, &h, UC_HOOK_INTR, ig_intr_cb, &intr, 1, 0));
-    OK(ig_wmsr(uc, 0x1b, 0xfee00c00ULL));                           /* x2APIC mode */
+    OK(ig_wmsr(uc, 0x1b, 0xfee00d00ULL));                           /* x2APIC mode, BSP */
     OK(ig_wmsr(uc, 0x80f, 0x1ff));                                  /* software-enabled */
     OK(uc_context_alloc(uc, &ctx));
     OK(uc_context_save(uc, ctx));
