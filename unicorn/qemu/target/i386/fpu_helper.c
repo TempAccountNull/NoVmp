@@ -6898,23 +6898,34 @@ static float32 amx_cvt_fp16(uint16_t h)
  * bits 15:0 (fp16[2k]) and FP16 imaginary part in bits 31:16 (fp16[2k+1]). SDM Vol2B:
  *   TCMMIMFP16PS: temp1[2n] += A.im * B.re; temp1[2n+1] += A.re * B.im
  *   TCMMRLFP16PS: temp1[2n] += A.re * B.re; temp1[2n+1] += (-A.im) * B.im
- * ("-" negates the FP16 value, i.e. flips its sign bit, before cvt_fp16_to_fp32).
+ * ("-" negates the FP16 value, i.e. flips its sign bit, before cvt_fp16_to_fp32; U1075: not a NaN).
+ */
+/*
+ * NoVmp (ledger U1075, SDE-resolved ambiguity AMB-5, docs/quirks.md): the SDM does not say which
+ * NaN the FP32 operations of AMX-COMPLEX return, nor what "-" does to a NaN imaginary part; Intel
+ * SDE 10.13.1 (-gnr) gives (user decision 2026-10-10: follow SDE there):
+ * - TCMMIMFP16PS: when both partial sums are NaN the horizontal add returns the A.re * B.im one;
+ *   the partial sums are kept in that order (temp1[2n] = A.re * B.im chain, temp1[2n+1] = A.im *
+ *   B.re chain), which changes nothing else (a + b = b + a for every non-NaN value);
+ * - TCMMRLFP16PS: the negation of tsrc1.fp16[2k+1] leaves a NaN unchanged.
  */
 static void amx_pair_cmm_im(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
                             uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy)
 {
-    *ex = a1;
-    *ey = b0;
-    *ox = a0;
-    *oy = b1;
+    *ex = a0;
+    *ey = b1;
+    *ox = a1;
+    *oy = b0;
 }
 
 static void amx_pair_cmm_rl(uint16_t a0, uint16_t a1, uint16_t b0, uint16_t b1,
                             uint16_t *ex, uint16_t *ey, uint16_t *ox, uint16_t *oy)
 {
+    bool a1_nan = (a1 & 0x7c00) == 0x7c00 && (a1 & 0x03ff);    /* U1075: -NaN = NaN */
+
     *ex = a0;
     *ey = b0;
-    *ox = a1 ^ 0x8000;
+    *ox = a1_nan ? a1 : a1 ^ 0x8000;
     *oy = b1;
 }
 #endif /* __Use_Original_Qemu (U180) */

@@ -585,19 +585,28 @@ class Amx:
             (cvt_fp16_to_fp32(a >> 16), cvt_fp16_to_fp32(b >> 16))))
 
     def TCMMIMFP16PS(self, d, s1, s2):
-        # temp1[2n+0] = fma32(., s1o, s2e); temp1[2n+1] = fma32(., s1e, s2o)
+        # SDM: temp1[2n+0] = fma32(., s1o, s2e); temp1[2n+1] = fma32(., s1e, s2o).
+        # U1075 (SDE-resolved ambiguity AMB-5, docs/quirks.md): the two partial sums are kept in
+        # the other order (s1e * s2o first), which changes only the NaN that the horizontal add
+        # returns when both are NaN (the SDM does not specify it): Intel SDE 10.13.1 returns the
+        # A.re * B.im one. Every non-NaN result is the same (a + b = b + a).
         self.check_e4(d, s1, s2)
         self._fp_dot(d, s1, s2, lambda a, b: (
-            (cvt_fp16_to_fp32(a >> 16), cvt_fp16_to_fp32(b & 0xFFFF)),
-            (cvt_fp16_to_fp32(a & 0xFFFF), cvt_fp16_to_fp32(b >> 16))))
+            (cvt_fp16_to_fp32(a & 0xFFFF), cvt_fp16_to_fp32(b >> 16)),
+            (cvt_fp16_to_fp32(a >> 16), cvt_fp16_to_fp32(b & 0xFFFF))))
 
     def TCMMRLFP16PS(self, d, s1, s2):
         # s1o = cvt_fp16_to_fp32(-tsrc1.fp16[2k+1]); temp1[2n+0] = fma32(., s1e, s2e);
         # temp1[2n+1] = fma32(., s1o, s2o)
+        # U1075 (SDE-resolved ambiguity AMB-5): the "-" does not change a NaN (Intel SDE 10.13.1;
+        # the SDM does not say what negating a NaN does here)
         self.check_e4(d, s1, s2)
+
+        def neg(h):
+            return h if (h & 0x7C00) == 0x7C00 and (h & 0x3FF) else h ^ 0x8000
         self._fp_dot(d, s1, s2, lambda a, b: (
             (cvt_fp16_to_fp32(a & 0xFFFF), cvt_fp16_to_fp32(b & 0xFFFF)),
-            (cvt_fp16_to_fp32((a >> 16) ^ 0x8000), cvt_fp16_to_fp32(b >> 16))))
+            (cvt_fp16_to_fp32(neg(a >> 16)), cvt_fp16_to_fp32(b >> 16))))
 
 
 # --------------------------------------------------------------------------
