@@ -128,7 +128,23 @@ static void gen_FP16_FMA(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
 #if __Use_Original_Qemu != 1 /* ours (U335) */
 
 /* NoVmp (ledger U335): conversions (the scalar forms share the packed generators) */
-FP16_GEN_CVT(CVTPH2PS, FP16_T_F16, FP16_T_F32, 0)       /* VCVTPH2PSX, VCVTSH2SS */
+#if __Use_Original_Qemu != 1 /* ours (U1070) */
+/*
+ * NoVmp (ledger U1070): VCVTPH2PSX, VCVTSH2SS. SDM Vol2C VCVTPH2PS/VCVTPH2PSX: "If case of a
+ * denormal operand, the correct normal result is returned. MXCSR.DAZ is ignored and is treated
+ * as if it 0. No denormal exception is reported on MXCSR."; its exception list "EVEX-encoded
+ * instructions: Invalid." - VCVTPH2PSX without {1toN} reports no DE (Intel SDE 10.13.1 agrees).
+ * The broadcast form keeps DE here ("EVEX-encoded instructions with broadcast (VCVTPH2PSX):
+ * Invalid, Denormal"). VCVTSH2SS (scalar, its own page: "Invalid, Denormal") keeps DE.
+ */
+static void gen_FP16_CVTPH2PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    bool bcst = s->evex_b && (s->modrm >> 6) != 3;     /* {1toN}: EVEX.b with a memory source */
+    uint32_t extra = (!(decode->e.evex_vl & X86_EVEX_LIG) && !bcst) ? FP16_D_NODE : 0;
+
+    gen_fp16_call(s, decode, FP16_OP_CVT, FP16_CVT(FP16_T_F16, FP16_T_F32), extra);
+}
+#endif /* __Use_Original_Qemu (U1070) */
 FP16_GEN_CVT(CVTPH2PD, FP16_T_F16, FP16_T_F64, 0)       /* VCVTPH2PD, VCVTSH2SD */
 FP16_GEN_CVT(CVTPS2PH, FP16_T_F32, FP16_T_F16, 0)       /* VCVTPS2PHX, VCVTSS2SH */
 FP16_GEN_CVT(CVTPD2PH, FP16_T_F64, FP16_T_F16, 0)       /* VCVTPD2PH, VCVTSD2SH */

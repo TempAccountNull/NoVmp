@@ -281,3 +281,13 @@ Lookup order (AGENT_RULES): the Intel SDM wins over the other Intel documents. T
 |---|---|---|---|---|
 | WRMSR to IA32_TME_ACTIVATE (982H) while its lock bit is set | SDM 325462-092 Vol4 Table 2-2 982H: "This MSR is used to lock the MSRs listed below. Any write to the following MSRs will be ignored after they are locked." | Intel Architecture Memory Encryption Technologies Specification 336907-005 (rev. 1.5) and -007 (rev. 1.7) Table 4-3: "WRMSR while lock status = 1. #GP(0)" | ignored (no fault, the MSR unchanged, also with reserved bits set). IA32_TME_EXCLUDE_MASK / _BASE keep #GP(0) when locked: SDM Vol4 983H / 984H says so explicitly ("If lock=1, then WRMSR to IA32_TME_EXCLUDE_MASK/IA32_TME_EXCLUDE_BASE MSRs will result in #GP"), which both documents agree on. **Not measured**: the i5-13600K reports no TME_EN and the MSRs need CPL0 | U1022 |
 | PCONFIG target identifiers in CPUID.1BH | SDM 092 Vol2B PCONFIG: TME-MK "target identifier 1", TSE "target identifier 2"; SDM 092 Vol1 21-67 (stale): "The only target identifier currently defined is 1" | ISE 319433-060 6.2.1.1 and -062 p.1-48: 1 = TME-MK, 2 = TSE | sub-leaf 0 reports EBX = 1 (TME-MK) and ECX = 2 (TSE, with PBNDKB / IA32_TSE_CAPABILITY, U807) | U1021 |
+
+## Intel SDE cross-check decisions (U1040 cross-check, user decisions 2026-10-10)
+
+The expected-value case files were run a second time under Intel SDE 10.13.1 (`emulator\Intel docs\sde-external-10.13.1-2026-07-28-win`, only `emu-alltest` with our own generated snippets; report `emulator\notes\sde_crosscheck_report_2026-10-10.md`). SDE results are **SDE-validated, never hardware-validated** (the i5-13600K lacks these instructions); the SDM wins any disagreement. These are not CPU deviations and carry no hardware-case tag.
+
+### Decided by the SDM (SDE only as supplementary confirmation)
+
+| behaviour | SDM | emulator | SDE 10.13.1 | cases | ledger |
+|---|---|---|---|---|---|
+| VCVTPH2PSX without {1toN}, FP16 denormal input (EB-1, an emulator bug) | Vol2C VCVTPH2PS/VCVTPH2PSX: "If case of a denormal operand, the correct normal result is returned. MXCSR.DAZ is ignored and is treated as if it 0. No denormal exception is reported on MXCSR."; SIMD Floating-Point Exceptions: "EVEX-encoded instructions: Invalid." | no MXCSR.DE (was: DE, from the model's misreading of the broadcast line below); VCVTSH2SS (own page, "Invalid, Denormal") keeps DE | `-spr`: no DE (the 21 cases agree with the SDM) | `cases_evex_fp16.txt` VCVTPH2PSX (cross-check case lines 3960-4001 before U1070) | U1070 |

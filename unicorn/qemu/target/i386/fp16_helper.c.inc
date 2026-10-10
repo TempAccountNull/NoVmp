@@ -792,7 +792,7 @@ static uint64_t fp16_cvt(CPUX86State *env, Fp16Ctx *c, int st, int dt, uint64_t 
             return fp16_res(c, uint64_to_float16(v, &c->st));
         }
     case FP16_T_F32:
-        return fp16_widen(c, v, false, true);
+        return fp16_widen(c, v, false, !(desc & FP16_D_NODE));     /* U1070: VCVTPH2PSX */
     case FP16_T_F64:
         return fp16_widen(c, v, true, true);
     case FP16_T_I16:

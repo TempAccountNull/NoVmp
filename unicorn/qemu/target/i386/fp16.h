@@ -52,6 +52,8 @@ enum {
 #define FP16_D_Z        (1u << 17)
 #define FP16_D_SCALAR   (1u << 18)
 #define FP16_D_TRUNC    (1u << 19)
+/* U1070: FP16 -> FP32 conversion that reports no denormal exception (VCVTPH2PSX) */
+#define FP16_D_NODE     (1u << 20)
 #define FP16_D_IMM(x)   ((uint32_t)((x) & 0xff) << 24)
 
 #define FP16_DESC_OP(d)     ((d) & 0xff)
