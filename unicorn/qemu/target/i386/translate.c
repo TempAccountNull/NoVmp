@@ -8889,6 +8889,34 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             break;
         }
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U1172) */
+        /*
+         * NoVmp (ledger U1172): F2 0F 01 CA ERETS, F3 0F 01 CA ERETU (SDM 092 Vol2A 3-298 / 3-301;
+         * XED fred-isa: f2 / f3_refining_prefix, mode64), decoded only with CPUID.(07H,1):EAX.FRED
+         * (otherwise the prefixed encoding stays what it was, CLAC). #UD outside 64-bit mode, at
+         * CPL > 0 and with LOCK; the helpers check CR4.FRED and raise the single-step trap. The
+         * TB ends after them without the generic RF / interrupt-shadow handling of gen_eob (they
+         * load RF from the stack and establish STI blocking themselves).
+         */
+        if ((s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) && modrm == 0xca &&
+            (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED)) {
+            if (!CODE64(s) || CPL(s) != 0 || (s->prefix & PREFIX_LOCK)) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            if (s->prefix & PREFIX_REPNZ) {
+                gen_helper_erets(tcg_ctx, cpu_env);
+            } else {
+                gen_helper_eretu(tcg_ctx, cpu_env);
+            }
+            set_cc_op(s, CC_OP_EFLAGS);
+            gen_update_cc_op(s);
+            tcg_gen_exit_tb(tcg_ctx, NULL, 0);
+            s->base.is_jmp = DISAS_NORETURN;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U1172) */
         switch (modrm) {
         CASE_MODRM_MEM_OP(0): /* sgdt */
             if (s->flags & HF_UMIP_MASK && !check_cpl0(s)) {

@@ -899,7 +899,8 @@ typedef enum uc_control_type {
     // IA-32e mode) FRED event delivery (SDM 092 Vol3A 8.3) replaces IDT delivery for the events
     // UC_CTL_X86_EVENT_DELIVERY delivers to the guest, and the SYSCALL / SYSENTER transitions of
     // UC_X86_SYSCALL_SDM (the UC_X86_INS_SYSCALL / SYSENTER hooks run after it); SWAPGS, SYSRET,
-    // SYSEXIT, SETSSBSY and CLRSSBSY are #UD.
+    // SYSEXIT, SETSSBSY and CLRSSBSY are #UD. U1172: ERETS / ERETU (F2 / F3 0F 01 CA; without
+    // FRED the prefixed encoding keeps its old meaning).
     // Default off: CPUID, CR4 and the MSR list are unchanged.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)

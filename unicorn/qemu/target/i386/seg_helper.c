@@ -1596,6 +1596,244 @@ static void x86_fred_event(CPUX86State *env, int intno, int is_int, int error_co
 }
 
 #endif /* __Use_Original_Qemu (U1171) */
+#if __Use_Original_Qemu != 1 /* ours (U1172) */
+/*
+ * NoVmp (ledger U1172): ERETS (F2 0F 01 CA) and ERETU (F3 0F 01 CA), SDM 325462-092 Vol2A 3-298..3-304
+ * and Vol3A 8.4 (FRED spec 346446-009 chapter 6, A.2, A.3). The translator raised #UD outside 64-bit
+ * mode, at CPL > 0 and with LOCK; here #UD if CR4.FRED = 0. Both add 8 to RSP (the error code) and
+ * pop RIP, CS, RFLAGS, RSP, SS - supervisor data reads of the current stack, #SS(0) for a slot that
+ * is not paging canonical - then check them (#GP(0)) before anything changes:
+ *  - ERETS: RIP paging canonical; CS image & FFFFFFFF_FFF8FFFFH = CS selector; RFLAGS image &
+ *    FFFFFFFF_FFC2802AH = 2; SS image & FFF8FFFFH = SS selector; new CSL = min(CSL, CS[17:16]); with
+ *    supervisor shadow stacks SSP 8-byte aligned, then SSP / LIP / CS popped from the shadow stack
+ *    (#CP(FAR-RET/IRET) unless CS and LIP equal the regular-stack images and the SSP image is 4-byte
+ *    aligned; #GP(0) unless it is CPU canonical; #CP if the CSL decreases and SSP after the pops
+ *    differs from IA32_FRED_SSP[CSL]); loads RIP, RFLAGS (RF included), RSP, CSL, SSP; IBT tracker
+ *    := WAIT_FOR_ENDBRANCH for CS[18] = 1 with supervisor IBT not suppressed; STI blocking for SS[16]
+ *    = 1, RFLAGS.IF = 1 and no blocking by STI before; NMIs unblocked for SS[18] = 1;
+ *  - ERETU: #GP(0) if CSL > 0 (before the pops); CS image & FFFFFFFF_FFFF0003H = 3; RFLAGS image &
+ *    FFFFFFFF_FFC2B02AH = 2 (IOPL 0 too); SS image & FFF80003H = 3; CS / SS = IA32_STAR[63:48] + 16 /
+ *    + 8: the standard 64-bit CPL3 descriptors, = IA32_STAR[63:48] / + 8: the standard
+ *    compatibility-mode ones (CS.D = 1), otherwise both loaded from the GDT / LDT with IRET's checks
+ *    (null selector #GP(0); index, type, DPL, D+L #GP(selector); not present #NP / #SS(selector));
+ *    RIP paging canonical for 64-bit mode, else RIP / RSP truncated to 32 bits and RIP within the CS
+ *    limit; with user shadow stacks a compatibility-mode return needs IA32_PL3_SSP[63:32] = 0; with
+ *    supervisor shadow stacks SSP must equal IA32_FRED_SSP0 (IA32_PL0_SSP) (#CP); loads RIP, RFLAGS,
+ *    RSP, CS, SS (CPL 3), swaps GS.base with IA32_KERNEL_GS_BASE, SSP := IA32_PL3_SSP with user
+ *    shadow stacks; NMIs unblocked for SS[18] = 1. The data segments are not checked (8.4.2.3).
+ * Both end with the single-step trap (#DB, DR6.BS) when RFLAGS.TF was 1 before them or SS[17] = 1
+ * and the new RFLAGS.TF = 1 (8.4.1.3 / 8.4.2.3); the TB ends after them (fred_eret_end).
+ */
+static uint64_t fred_pop8(CPUX86State *env, uint64_t a, uintptr_t ra)
+{
+    if (!cet2_canonical(env, a)) {
+        raise_exception_err_ra(env, EXCP0C_STACK, 0, ra);
+    }
+    return cpu_ldq_mmuidx_ra(env, a, cpu_mmu_index(env, false), ra);
+}
+
+static void fred_eret_pop(CPUX86State *env, uint64_t f[5], uintptr_t ra)
+{
+    uint64_t rsp = env->regs[R_ESP] + 8;
+    int i;
+
+    for (i = 0; i < 5; i++) {
+        f[i] = fred_pop8(env, rsp + 8 * i, ra);
+    }
+}
+
+/* the end of ERETS / ERETU: NMI unblocking and the single-step trap (old TF, or SS[17] and new TF) */
+static void fred_eret_end(CPUX86State *env, uint64_t tss, bool old_tf)
+{
+    if (tss & (1ull << 18)) {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+    if (old_tf || ((tss & (1ull << 17)) && (env->eflags & TF_MASK))) {
+        helper_single_step(env);
+    }
+}
+
+#define FRED_ERET_RFLAGS_MASK (TF_MASK | IF_MASK | IOPL_MASK | NT_MASK | RF_MASK | AC_MASK | \
+                               VIF_MASK | VIP_MASK | ID_MASK)
+
+void helper_erets(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint64_t f[5], new_rip, tcs, nfl, new_rsp, tss, new_ssp = 0;
+    int csl = env->fred_config & 3, new_csl;
+    bool sss = cet2_ss_en(env, 0, false);
+    bool old_tf = env->eflags & TF_MASK;
+    bool sti_before = (env->hflags & HF_INHIBIT_IRQ_MASK) && env->fred_sti;
+
+    if (!x86_fred_enabled(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    fred_eret_pop(env, f, ra);
+    new_rip = f[0];
+    tcs = f[1];
+    nfl = f[2];
+    new_rsp = f[3];
+    tss = f[4];
+    if (!cet2_canonical(env, new_rip) ||
+        (tcs & 0xFFFFFFFFFFF8FFFFull) != env->segs[R_CS].selector ||
+        (nfl & 0xFFFFFFFFFFC2802Aull) != 2 ||
+        (tss & 0xFFF8FFFFull) != env->segs[R_SS].selector) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    new_csl = (int)((tcs >> 16) & 3) < csl ? (int)((tcs >> 16) & 3) : csl;
+    if (sss) {
+        uint64_t ssp = env->ssp, lip, scs;
+
+        if (ssp & 7) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+        }
+        new_ssp = cet2_ld8(env, ssp, true, false, ra);
+        lip = cet2_ld8(env, ssp + 8, true, false, ra);
+        scs = cet2_ld8(env, ssp + 16, true, false, ra);
+        ssp += 24;
+        if (scs != tcs || lip != new_rip || (new_ssp & 3)) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+        }
+        if (cet2_la_adjust(env, new_ssp) != new_ssp) {
+            raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+        }
+        if (new_csl < csl && (csl ? env->fred_ssp[csl] : env->pl_ssp[0]) != ssp) {
+            raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+        }
+    }
+    env->eip = new_rip;
+    cpu_load_eflags(env, (int)nfl, FRED_ERET_RFLAGS_MASK);
+    env->regs[R_ESP] = new_rsp;
+    env->fred_config = (env->fred_config & ~3ull) | (uint64_t)new_csl;
+    if (sss) {
+        env->ssp = new_ssp;
+    }
+    if ((env->cr[4] & CR4_CET_MASK) && (env->s_cet & CET_ENDBR_EN) &&
+        !(env->s_cet & CET_SUPPRESS) && (tcs & (1ull << 18))) {
+        env->s_cet |= CET_TRACKER;
+    }
+    cpu_sync_cet_hflags(env);
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    if ((tss & (1ull << 16)) && (env->eflags & IF_MASK) && !sti_before) {
+        env->hflags |= HF_INHIBIT_IRQ_MASK;
+        env->fred_sti = 1;
+    }
+    fred_eret_end(env, tss, old_tf);
+}
+
+/* ERETU case 3: CS and SS from the GDT / LDT as IRET does it (Vol2A IRET, ERETU exceptions) */
+static void fred_eretu_load(CPUX86State *env, uint32_t cs, uint32_t ss, uint32_t *e1, uint32_t *e2,
+                            uint32_t *s1, uint32_t *s2, uintptr_t ra)
+{
+    if ((cs & 0xfffc) == 0) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    if (load_segment_ra(env, e1, e2, cs, ra) != 0 ||
+        !(*e2 & DESC_S_MASK) || !(*e2 & DESC_CS_MASK) ||
+        ((*e2 & DESC_L_MASK) && (*e2 & DESC_B_MASK))) {
+        raise_exception_err_ra(env, EXCP0D_GPF, cs & 0xfffc, ra);
+    }
+    if ((*e2 & DESC_C_MASK) ? (((*e2 >> DESC_DPL_SHIFT) & 3) > 3)
+                            : (((*e2 >> DESC_DPL_SHIFT) & 3) != 3)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, cs & 0xfffc, ra);
+    }
+    if (!(*e2 & DESC_P_MASK)) {
+        raise_exception_err_ra(env, EXCP0B_NOSEG, cs & 0xfffc, ra);
+    }
+    if ((ss & 0xfffc) == 0) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    if (load_segment_ra(env, s1, s2, ss, ra) != 0 ||
+        !(*s2 & DESC_S_MASK) || (*s2 & DESC_CS_MASK) || !(*s2 & DESC_W_MASK) ||
+        ((*s2 >> DESC_DPL_SHIFT) & 3) != 3) {
+        raise_exception_err_ra(env, EXCP0D_GPF, ss & 0xfffc, ra);
+    }
+    if (!(*s2 & DESC_P_MASK)) {
+        raise_exception_err_ra(env, EXCP0C_STACK, ss & 0xfffc, ra);
+    }
+}
+
+void helper_eretu(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint64_t f[5], new_rip, tcs, nfl, new_rsp, tss, gsb;
+    uint32_t cs, ss, hi, e1 = 0, e2, s1 = 0, s2, cslim = 0xffffffff;
+    bool old_tf = env->eflags & TF_MASK, l64, table = false;
+
+    if (!x86_fred_enabled(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->fred_config & 3) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    fred_eret_pop(env, f, ra);
+    new_rip = f[0];
+    tcs = f[1];
+    nfl = f[2];
+    new_rsp = f[3];
+    tss = f[4];
+    if ((tcs & 0xFFFFFFFFFFFF0003ull) != 3 || (nfl & 0xFFFFFFFFFFC2B02Aull) != 2 ||
+        (tss & 0xFFF80003ull) != 3) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    cs = tcs & 0xffff;
+    ss = tss & 0xffff;
+    hi = (env->star >> 48) & 0xffff;
+    if (cs == ((hi + 16) & 0xffff) && ss == ((hi + 8) & 0xffff)) {
+        e2 = DESC_G_MASK | DESC_P_MASK | DESC_S_MASK | (3 << DESC_DPL_SHIFT) | DESC_CS_MASK |
+             DESC_R_MASK | DESC_A_MASK | DESC_L_MASK;
+        s2 = DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
+             DESC_W_MASK | DESC_A_MASK;
+    } else if (cs == hi && ss == ((hi + 8) & 0xffff)) {
+        e2 = DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
+             DESC_CS_MASK | DESC_R_MASK | DESC_A_MASK;
+        s2 = DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
+             DESC_W_MASK | DESC_A_MASK;
+    } else {
+        fred_eretu_load(env, cs, ss, &e1, &e2, &s1, &s2, ra);
+        table = true;
+        cslim = get_seg_limit(e1, e2);
+    }
+    l64 = (e2 & DESC_L_MASK) != 0;
+    if (l64) {
+        if (!cet2_canonical(env, new_rip)) {
+            raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+        }
+    } else {
+        new_rip = (uint32_t)new_rip;
+        if (new_rip > cslim) {
+            raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+        }
+        new_rsp = (uint32_t)new_rsp;
+    }
+    if (cet2_ss_en(env, 3, false) && !l64 && (env->pl_ssp[3] >> 32)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+    if (cet2_ss_en(env, 0, false) && env->pl_ssp[0] != env->ssp) {
+        raise_exception_err_ra(env, EXCP15_CP, CP_FAR_RET_IRET, ra);
+    }
+    env->eip = new_rip;
+    cpu_load_eflags(env, (int)nfl, FRED_ERET_RFLAGS_MASK);
+    env->regs[R_ESP] = new_rsp;
+    if (table) {
+        cpu_x86_load_seg_cache(env, R_CS, cs, get_seg_base(e1, e2), get_seg_limit(e1, e2), e2);
+        cpu_x86_load_seg_cache(env, R_SS, ss, get_seg_base(s1, s2), get_seg_limit(s1, s2), s2);
+    } else {
+        cpu_x86_load_seg_cache(env, R_CS, cs, 0, 0xffffffff, e2);
+        cpu_x86_load_seg_cache(env, R_SS, ss, 0, 0xffffffff, s2);
+    }
+    gsb = env->segs[R_GS].base;
+    env->segs[R_GS].base = env->kernelgsbase;
+    env->kernelgsbase = gsb;
+    if (cet2_ss_en(env, 3, false)) {
+        env->ssp = env->pl_ssp[3];
+    }
+    cpu_sync_cet_hflags(env);
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    fred_eret_end(env, tss, old_tf);
+}
+
+#endif /* __Use_Original_Qemu (U1172) */
 /* protected mode interrupt */
 static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
                                    int error_code, unsigned int next_eip,
