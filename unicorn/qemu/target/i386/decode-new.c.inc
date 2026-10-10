@@ -7107,16 +7107,41 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         }
     }
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U873) */
     if (decode.e.special == X86_SPECIAL_MMX &&
         !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
         gen_helper_enter_mmx(tcg_ctx, cpu_env);
     }
+#else /* ours (U873) */
+    /*
+     * NoVmp (ledger U873): the x87-to-MMX transition (TOP = 0, all tags valid) is made after
+     * the memory operand is accessed: an MMX instruction whose load or store faults (#PF, or
+     * memory Unicorn has not mapped) leaves TOP and the tag word as they were (SDM Vol3A 6.5:
+     * a fault restores the state of before the faulting instruction; i5-13600K for loads,
+     * docs/quirks.md "MMX store fault TOP" for stores). A store destination is probed for a
+     * write first (helper_probe_write); the register sources are not changed by the
+     * transition. MASKMOVQ makes it after its store (gen_MASKMOV).
+     */
+    bool mmx_enter = decode.e.special == X86_SPECIAL_MMX &&
+                     !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA));
+#endif /* __Use_Original_Qemu (U873) */
 
     if (decode.op[0].has_ea || decode.op[1].has_ea || decode.op[2].has_ea) {
         gen_load_ea(s, &decode.mem, decode.e.vex_class == 12);
     }
+#if __Use_Original_Qemu != 1 /* ours (U873) */
+    if (mmx_enter && decode.op[0].has_ea) {
+        gen_helper_probe_write(tcg_ctx, cpu_env, s->A0,
+                               tcg_constant_i32(tcg_ctx, 1 << decode.op[0].ot));
+    }
+#endif /* __Use_Original_Qemu (U873) */
     if (s->prefix & PREFIX_LOCK) {
         gen_load(s, &decode, 2, s->T1);
+#if __Use_Original_Qemu != 1 /* ours (U873) */
+        if (mmx_enter && decode.e.gen != gen_MASKMOV) {
+            gen_helper_enter_mmx(tcg_ctx, cpu_env);
+        }
+#endif /* __Use_Original_Qemu (U873) */
         decode.e.gen(s, env, &decode);
     } else {
         if (decode.op[0].unit == X86_OP_MMX) {
@@ -7135,6 +7160,11 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
             gen_load(s, &decode, 2, s->T1);
         }
 #endif /* __Use_Original_Qemu (U703) */
+#if __Use_Original_Qemu != 1 /* ours (U873) */
+        if (mmx_enter && decode.e.gen != gen_MASKMOV) {
+            gen_helper_enter_mmx(tcg_ctx, cpu_env);     /* after the load (U873) */
+        }
+#endif /* __Use_Original_Qemu (U873) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U67) */
         decode.e.gen(s, env, &decode);
 #else /* ours (U67) */

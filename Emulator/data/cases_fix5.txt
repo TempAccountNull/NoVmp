@@ -218,3 +218,38 @@ pinsrw mm0, word ptr [rsi+0x7ffe], 1
 .byte 0x0f, 0x62, 0x46, 0x01 | cpl=3 rflags=0x40202
 punpcklbw xmm0, xmmword ptr [rsi+0x7ff8]
 punpckldq xmm0, xmmword ptr [rsi+0x7ff0] | m+0xFFF0=0102030405060708090A0B0C0D0E0F10
+#
+# --- U873 an MMX instruction whose memory operand faults makes no x87-to-MMX transition: TOP and the
+# tag word keep their values (SDM Vol3A 6.5: a fault leaves the state of before the instruction;
+# i5-13600K). Before U873 the transition (TOP = 0, all tags valid) was made before the access (U834
+# had moved only the #AC check in front of it). FLD1 first: TOP = 7, only ST0 valid.
+# Stores (MOVD/MOVQ/MOVNTQ m, mm): the i5-13600K is not repeatable - in about 87 % of the runs it sets
+# TOP = 0 and keeps the tags, otherwise it leaves both (the SDM); tagged, docs\quirks.md.
+fld1; paddb mm0, qword ptr [rsi+0x8000]
+fld1; paddb mm0, qword ptr [rsi+0x7ffc]
+fld1; movq mm1, qword ptr [rsi+0x8000]
+fld1; movd mm1, dword ptr [rsi+0x8000]
+fld1; pshufw mm0, qword ptr [rsi+0x8000], 0x1b
+fld1; pinsrw mm0, word ptr [rsi+0x8000], 1
+fld1; pmaddwd mm0, qword ptr [rsi+0x8000]
+fld1; psllq mm0, qword ptr [rsi+0x8000]
+fld1; pcmpeqb mm2, qword ptr [rsi+0x8000]
+fld1; .byte 0x0f, 0x62, 0x86, 0x00, 0x80, 0x00, 0x00
+fld1; .byte 0x0f, 0x38, 0x00, 0x86, 0x00, 0x80, 0x00, 0x00
+fld1; .byte 0x0f, 0x3a, 0x0f, 0x86, 0x00, 0x80, 0x00, 0x00, 0x03
+fld1; movq qword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
+fld1; movq qword ptr [rsi+0x7ffc], mm0 | m+0xFFFC=AAAAAAAA # known deviation: MMX store fault TOP
+fld1; movd dword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
+fld1; movntq qword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
+fld1; cvtps2pi mm0, qword ptr [rsi+0x8000]
+fld1; cvttps2pi mm0, qword ptr [rsi+0x8000]
+fld1; cvtpd2pi mm0, xmmword ptr [rsi+0x8000]
+fld1; cvtpi2pd xmm0, qword ptr [rsi+0x8000]
+fld1; cvtpi2ps xmm0, qword ptr [rsi+0x8000]
+fld1; paddb mm0, qword ptr [rsi+0x8000] | cpl=3 rflags=0x40202
+fld1; paddb mm0, qword ptr [rsi+0x7fff] | cpl=3 rflags=0x40202
+fld1; paddb mm0, qword ptr [rsi+0x7ff8] | m+0xFFF8=0102030405060708
+fld1; movq qword ptr [rsi+0x7ff8], mm0
+# MASKMOVQ (expected value: its WC store is not repeatable on the host, U702): no transition on #PF
+fld1; maskmovq mm0, mm1 | rdi=0x30030000 => #PF fsw=0x3800 st0=3FFF:8000000000000000 ftw=0x80
+fld1; maskmovq mm0, mm1 | rdi=0x30028000 => ftw=0xFF st7=3FFF:8000000000000000

@@ -150,6 +150,15 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - Hardware cases: `cases_fix4.txt` lines 54–67 (REPE/REPNE CMPSQ, CMPSD, SCASQ, SCASB after nine different flag setters); the four lines after them (no fault) match.
 - Ledger: U774.
 
+### MMX store fault TOP
+
+- Behaviour: an MMX store (MOVD m32, mm / MOVQ m64, mm / MOVNTQ m64, mm) whose destination faults (#PF on a not-present page, also when only its last bytes are on it), with x87 state that is not already the MMX state (here FLD1 first: TOP = 7, only R7 valid).
+- SDM: Vol3A 6.5: "When a fault is reported, the processor restores the machine state to the state prior to the beginning of execution of the faulting instruction"; the x87-to-MMX transition (Vol1 9.5.1: TOP = 0, all tags valid) belongs to the faulting instruction, so TOP and the tag word keep their values.
+- Emulator: TOP and the tag word unchanged (the transition is made after the access, U873); loads and MASKMOVQ the same.
+- i5-13600K: not repeatable. In about 87 % of the runs (35/40, 34/40, 36/40, 35/40 for the four forms, 2026-10-09) TOP = 0 while the tag word keeps its value (a partial transition); otherwise TOP and the tags are unchanged (the SDM). Every MMX load that faults leaves both unchanged (40/40).
+- Hardware cases: `cases_fix5.txt` lines 240–243 (tagged; a run where the CPU takes the SDM path reports them "not observed").
+- Ledger: U873.
+
 ## Host state (not SDM deviations)
 
 | tag | cases | reason |

@@ -4122,6 +4122,10 @@ static void gen_MASKMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
         gen_ac_check(s, s->A0, 7);
 #endif /* __Use_Original_Qemu (U834) */
         gen_helper_maskmov_mmx(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, s->A0);
+#if __Use_Original_Qemu != 1 /* ours (U873) */
+        /* the x87-to-MMX transition after the store: none when it faults (U873) */
+        gen_helper_enter_mmx(tcg_ctx, cpu_env);
+#endif /* __Use_Original_Qemu (U873) */
     }
 }
 
