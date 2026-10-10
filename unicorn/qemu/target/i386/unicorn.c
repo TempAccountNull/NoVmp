@@ -2704,6 +2704,29 @@ static uc_err x86_tse_key(struct uc_struct *uc, int keyid, struct uc_x86_mktme_k
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1120) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+/* NoVmp (ledger U1128): UC_CTL_X86_ITD_CLASS - the host-set Thread Director classification */
+static uc_err x86_itd_class(struct uc_struct *uc, int set, int *cls)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    if (!set) {
+        *cls = env->itd_valid ? env->itd_class : -1;
+        return UC_ERR_OK;
+    }
+    if (*cls == -1) {
+        env->itd_valid = 0;
+        env->itd_class = 0;
+        return UC_ERR_OK;
+    }
+    if (*cls < 0 || *cls >= NOVMP_ITD_CLASSES || !(env->itd_thread_config & 1)) {
+        return UC_ERR_ARG;
+    }
+    env->itd_class = (uint8_t)*cls;
+    env->itd_valid = 1;
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1128) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2735,6 +2758,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
     uc->x86_tse_key = x86_tse_key;
 #endif /* __Use_Original_Qemu (U1120) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    uc->x86_itd_class = x86_itd_class;
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

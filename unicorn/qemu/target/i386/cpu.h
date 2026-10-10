@@ -411,6 +411,13 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U804) */
 #define MSR_IA32_HRESET_ENABLE          0x17da  /* SDM Vol4: bits CPUID.20H.0:EBX may set */
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+/* Intel Thread Director (SDM 092 Vol3B 17.6.8-17.6.10, Vol4), with CPUID.06H:EAX[23] */
+#define MSR_IA32_THREAD_FEEDBACK_CHAR   0x17d2  /* R/O: class ID 7:0, Valid 63 */
+#define MSR_IA32_HW_FEEDBACK_THREAD_CONFIG 0x17d4  /* bit 0 enable ITD on this LP, 63:1 rsvd */
+#define CPUID_6_EAX_THREAD_DIRECTOR     (1U << 23)
+#define NOVMP_ITD_CLASSES               4       /* CPUID.06H:ECX[15:8], a model value */
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
 #define MSR_IA32_TSE_CAPABILITY         0x9f1   /* SDM Vol4: R/O, with PBNDKB */
 #endif /* __Use_Original_Qemu (U807) */
@@ -2146,6 +2153,17 @@ typedef struct CPUX86State {
 #if __Use_Original_Qemu != 1 /* ours (U804) */
     uint64_t msr_hreset_enable;     /* IA32_HRESET_ENABLE (17DAH), reset 0 */
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    /*
+     * NoVmp (ledger U1128): Intel Thread Director state of this logical processor (with
+     * UC_X86_FEATURE_ITD; SDM 092 Vol3B 17.6.8-17.6.11): IA32_HW_FEEDBACK_THREAD_CONFIG (reset 0,
+     * "default 0") and the ITD history - itd_valid = 1 once the (host-set, UC_CTL_X86_ITD_CLASS)
+     * classification itd_class exists; HRESET EAX[0], clearing THREAD_CONFIG[0] and a reset clear it.
+     */
+    uint64_t itd_thread_config;
+    uint8_t itd_valid;
+    uint8_t itd_class;
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;

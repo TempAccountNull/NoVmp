@@ -1024,6 +1024,7 @@ static bool msr_feat(CPUX86State *env, FeatureWord w, uint32_t bit, uint32_t lea
 #define MF_X1EDX(b) msr_feat(env, FEAT_8000_0001_EDX, (b), 0x80000001, 0, 3)
 #define MF_X1ECX(b) msr_feat(env, FEAT_8000_0001_ECX, (b), 0x80000001, 0, 2)
 #define MF_D1EAX(b) msr_feat(env, FEAT_XSAVE, (b), 0xd, 1, 0)
+#define MF_6EAX(b)  msr_feat(env, FEAT_6_EAX, (b), 6, 0, 0)       /* U1128 */
 
 /*
  * CPUID.80000001H:EDX.LM[29] of the model: a strict profile does not hide it - the engine runs in
@@ -1155,6 +1156,11 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return MF_7EDX(CPUID_7_0_EDX_ARCH_LBR);
     case MSR_IA32_HRESET_ENABLE:
         return MF_71EAX(CPUID_7_1_EAX_HRESET);
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    case MSR_IA32_THREAD_FEEDBACK_CHAR:      /* Vol1 Table 21-16: with CPUID.06H:EAX[23] */
+    case MSR_IA32_HW_FEEDBACK_THREAD_CONFIG:
+        return MF_6EAX(CPUID_6_EAX_THREAD_DIRECTOR);
+#endif /* __Use_Original_Qemu (U1128) */
     case MSR_IA32_TSE_CAPABILITY:
         return MF_71EBX(CPUID_7_1_EBX_PBNDKB);
     case MSR_IA32_UINTR_RR:
@@ -1375,6 +1381,12 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
         return false;
     case MSR_IA32_HRESET_ENABLE:
         return !(val & ~(uint64_t)CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET);
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    case MSR_IA32_THREAD_FEEDBACK_CHAR:      /* R/O (Vol3B 17.6.10, Vol4) */
+        return false;
+    case MSR_IA32_HW_FEEDBACK_THREAD_CONFIG: /* 63:1 reserved */
+        return !(val & ~1ULL);
+#endif /* __Use_Original_Qemu (U1128) */
     case MSR_IA32_UMWAIT_CONTROL:
         return !(val & ~0xfffffffdull);
     case MSR_IA32_PASID:
@@ -1846,6 +1858,20 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    case MSR_IA32_HW_FEEDBACK_THREAD_CONFIG:
+        /*
+         * NoVmp (ledger U1128): bit 0 enables ITD on this logical processor (msr_access_ok checked
+         * presence and the reserved bits). Vol3B 17.6.8: when the OS clears it, "the hardware
+         * also clears the history of the logical processor".
+         */
+        env->itd_thread_config = val;
+        if (!(val & 1)) {
+            env->itd_valid = 0;
+            env->itd_class = 0;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
     case MSR_IA32_TSE_CAPABILITY:
         /* NoVmp (ledger U807): read-only with PBNDKB: WRMSR #GP(0) (an API write is dropped;
@@ -2361,6 +2387,20 @@ void helper_rdmsr(CPUX86State *env)
         val = env->msr_hreset_enable;
         break;
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    case MSR_IA32_HW_FEEDBACK_THREAD_CONFIG:
+        val = env->itd_thread_config;
+        break;
+    case MSR_IA32_THREAD_FEEDBACK_CHAR:
+        /*
+         * NoVmp (ledger U1128): Vol3B 17.6.10: the class ID is produced while THREAD_CONFIG[0] = 1;
+         * Valid (63) = 1 only with an ITD history the (host-set) classification created; with
+         * Valid = 0 the class ID is "to be ignored" - the model reads 0 then.
+         */
+        val = ((env->itd_thread_config & 1) && env->itd_valid) ?
+              ((1ULL << 63) | env->itd_class) : 0;
+        break;
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
     case MSR_IA32_TSE_CAPABILITY:
         /*
@@ -3510,13 +3550,25 @@ void helper_wrmsr_imm(CPUX86State *env, uint32_t msr, target_ulong val)
 /*
  * NoVmp (ledger U804): HRESET (SDM Vol2A): #GP(0) if (EAX AND NOT IA32_HRESET_ENABLE) != 0 (the
  * CPL check is the translator's); otherwise it resets the selected prediction history, which
- * the emulator does not keep: nothing else happens (EAX = 0 is a NOP anyway).
+ * the emulator does not keep: nothing else happens (EAX = 0 is a NOP anyway). U1128: with
+ * UC_X86_FEATURE_ITD the Intel Thread Director history (EAX[0]) exists and is cleared.
  */
 void helper_hreset(CPUX86State *env)
 {
     if ((uint32_t)env->regs[R_EAX] & ~env->msr_hreset_enable) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    /*
+     * NoVmp (ledger U1128): EAX[0] resets the Intel Thread Director history of this logical
+     * processor (CPUID.20H.0:EBX[0]; Vol3B 17.6.10/17.6.11: IA32_THREAD_FEEDBACK_CHAR.Valid is
+     * cleared). The state exists with UC_X86_FEATURE_ITD; without it the fields stay 0.
+     */
+    if (env->regs[R_EAX] & CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET) {
+        env->itd_valid = 0;
+        env->itd_class = 0;
+    }
+#endif /* __Use_Original_Qemu (U1128) */
 }
 #endif /* __Use_Original_Qemu (U804) */
 #if __Use_Original_Qemu != 1 /* ours (U806) */

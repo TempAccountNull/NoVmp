@@ -3458,7 +3458,7 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *mask = uc->x86_features;
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
-            if (uc->init_done || (mask & ~UC_X86_FEATURE_TSE)) {
+            if (uc->init_done || (mask & ~(UC_X86_FEATURE_TSE | UC_X86_FEATURE_ITD))) {
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_features = mask;
@@ -3480,6 +3480,28 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             UC_INIT(uc);
             err = key ? uc->x86_tse_key(uc, keyid, key) : UC_ERR_ARG;
             restore_jit_state(uc);
+        }
+        break;
+
+    case UC_CTL_X86_ITD_CLASS:
+        /* NoVmp U1128: the Thread Director classification (host-set), UC_X86_FEATURE_ITD only */
+        if (uc->arch != UC_ARCH_X86 || !uc->x86_itd_class ||
+            !(uc->x86_features & UC_X86_FEATURE_ITD)) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *cls = va_arg(args, int *);
+
+            UC_INIT(uc);
+            err = cls ? uc->x86_itd_class(uc, 0, cls) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int cls = va_arg(args, int);
+
+            UC_INIT(uc);
+            err = uc->x86_itd_class(uc, 1, &cls);
+            restore_jit_state(uc);
+        } else {
+            err = UC_ERR_ARG;
         }
         break;
 

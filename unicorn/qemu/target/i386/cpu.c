@@ -4671,6 +4671,13 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *ebx = 0;
         *ecx = 0;
         *edx = 0;
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+        /* NoVmp (ledger U1128): Thread Director (UC_X86_FEATURE_ITD): ECX[15:8] = the number of
+           ITD classes (SDM 092 Vol1 Table 21-16; a model value, platform-specific) */
+        if (*eax & CPUID_6_EAX_THREAD_DIRECTOR) {
+            *ecx = NOVMP_ITD_CLASSES << 8;
+        }
+#endif /* __Use_Original_Qemu (U1128) */
         break;
     case 7:
         /* Structured Extended Feature Flags Enumeration Leaf */
@@ -5944,6 +5951,17 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 0x29);
     }
 #endif /* __Use_Original_Qemu (U610) */
+#if __Use_Original_Qemu != 1 /* ours (U1128) */
+    /*
+     * NoVmp (ledger U1128): UC_CTL_X86_FEATURES UC_X86_FEATURE_ITD opts in to the per-thread Intel
+     * Thread Director state: CPUID.06H:EAX.THREAD_DIRECTOR[23] (the HFI bit 19 stays 0: the
+     * feedback table is not modelled). HRESET (U804) is reported by the model already.
+     */
+    if (uc->x86_features & UC_X86_FEATURE_ITD) {
+        env->features[FEAT_6_EAX] |= CPUID_6_EAX_THREAD_DIRECTOR;
+        env->cpuid_level = MAX(env->cpuid_level, 6);
+    }
+#endif /* __Use_Original_Qemu (U1128) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

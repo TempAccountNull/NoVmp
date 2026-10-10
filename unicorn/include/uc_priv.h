@@ -455,6 +455,8 @@ struct uc_struct {
     // UC_CTL_X86_TSE_KEY (the CPU's TSE key table entry 'keyid')
     int x86_features;
     uc_err (*x86_tse_key)(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key);
+    // NoVmp U1128: UC_CTL_X86_ITD_CLASS (set = 1: write *cls; set = 0: read into *cls)
+    uc_err (*x86_itd_class)(struct uc_struct *uc, int set, int *cls);
     // NoVmp U961: the local APIC bus shared with other engines (apic_model.c), NULL = alone;
     // UC_CTL_X86_APIC_ID (x86_apic_id_set = 1 once given); x86_apic_ap = 1: not the BSP
     void *x86_apic_bus;

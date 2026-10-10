@@ -873,8 +873,16 @@ typedef enum uc_control_type {
     // 50:36 = 63) and PCONFIG leaves 1 (TSE_KEY_PROGRAM) and 2 (TSE_KEY_PROGRAM_WRAPPED, the
     // unwrap of a PBNDKB bind structure with the model's platform key) program the TSE key
     // table (read with UC_CTL_X86_TSE_KEY). Without it IA32_TSE_CAPABILITY reads 0 and every
-    // TSE leaf ends in #GP(0). The emulator never encrypts storage with these keys. Only
-    // before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
+    // TSE leaf ends in #GP(0). The emulator never encrypts storage with these keys.
+    // NoVmp U1128: UC_X86_FEATURE_ITD: the per-logical-processor Intel Thread Director state
+    // (SDM 092 Vol3B 17.6.8-17.6.11): CPUID.06H:EAX.THREAD_DIRECTOR[23] and ECX[15:8] = 4 classes
+    // (a model value), IA32_HW_FEEDBACK_THREAD_CONFIG (17D4H, bit 0 enables ITD on this logical
+    // processor) and IA32_THREAD_FEEDBACK_CHAR (17D2H, R/O: class ID 7:0, Valid 63) with the ITD
+    // history that HRESET (EAX[0], IA32_HRESET_ENABLE[0]) and clearing 17D4H[0] reset (Valid := 0).
+    // How a thread is classified is platform-specific and not modelled: the host sets the
+    // classification result with UC_CTL_X86_ITD_CLASS. The Hardware Feedback Interface (06H:EAX[19],
+    // 17D0H/17D1H, the HFI table, package thermal bits) is not modelled.
+    // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
     // x86 only (NoVmp U1120): one entry of the TSE key table PCONFIG leaves 1 / 2 program (not
@@ -887,10 +895,22 @@ typedef enum uc_control_type {
     // names the two keys without offsets). A CPU reset clears the table, a uc_context carries it.
     // Read: @args = (int keyid, uc_x86_mktme_key *)
     UC_CTL_X86_TSE_KEY,
+    // x86 only (NoVmp U1128): the Intel Thread Director classification of this logical
+    // processor, with UC_X86_FEATURE_ITD only (UC_ERR_ARG otherwise). The classification is
+    // platform-specific (SDM 092 Vol3B 17.6.10: hardware sets Valid once it has enough history);
+    // the host plays the hardware classifier: writing class 0..3 records an ITD history that
+    // makes IA32_THREAD_FEEDBACK_CHAR read Valid = 1 with that class ID, -1 = not enough history
+    // (Valid = 0). A class is accepted only while IA32_HW_FEEDBACK_THREAD_CONFIG[0] = 1 (the
+    // processor classifies only enabled logical processors; UC_ERR_ARG otherwise). Reading returns
+    // the class of a valid history, else -1. HRESET with EAX[0] = 1 (allowed by
+    // IA32_HRESET_ENABLE[0]), clearing IA32_HW_FEEDBACK_THREAD_CONFIG[0] and a CPU reset clear
+    // the history; a uc_context carries it. Write: @args = (int cls); Read: @args = (int *cls)
+    UC_CTL_X86_ITD_CLASS,
 } uc_control_type;
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)
 #define UC_X86_FEATURE_TSE 1       // TSE engine: IA32_TSE_CAPABILITY, PCONFIG leaves 1 and 2
+#define UC_X86_FEATURE_ITD 2       // Intel Thread Director per-thread state and history (U1128)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
@@ -1092,6 +1112,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_FEATURES, 1), (int *)(mask))
 #define uc_ctl_get_x86_tse_key(uc, keyid, key)                                 \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_TSE_KEY, 2), (int)(keyid), (key))
+#define uc_ctl_set_x86_itd_class(uc, cls)                                      \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_ITD_CLASS, 1), (int)(cls))
+#define uc_ctl_get_x86_itd_class(uc, cls)                                      \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_ITD_CLASS, 1), (int *)(cls))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;
