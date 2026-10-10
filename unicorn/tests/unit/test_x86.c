@@ -23469,6 +23469,67 @@ static void test_x86_fx5_context_writes(void)
     OK(uc_close(uc));
 }
 /* ---- end of NoVmp fix5 tests ---- */
+/*
+ * ---- NoVmp U900-U929: SYSCALL / SYSENTER / SYSEXIT / SYSRET and the MSR model (sm_) ----
+ * Expected values from the SDM (Vol2B SYSCALL / SYSENTER / SYSEXIT / SYSRET Operation, Vol4
+ * Table 2-2); the case file cases_sysmsr.txt comes from the independent model
+ * Emulator\tools\isa\ref_sysmsr.py.
+ */
+typedef struct SmCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+} SmCtx;
+
+/* an engine in the given mode / CPU model (-1 = default) with code_start mapped */
+static void sm_open(SmCtx *c, uc_mode mode, int model)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    if (model >= 0) {
+        OK(uc_ctl_set_cpu_model(c->uc, model));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static uint64_t sm_get(SmCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void sm_set(SmCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/*
+ * U900: SYSENTER that is not the first instruction of its TB, no UC_X86_INS_SYSENTER hook:
+ * EIP continues after SYSENTER (it advanced the TB's start address before: the stale EIP ran
+ * the bytes of MOV EAX, 1 again from offset 2).
+ */
+static void test_x86_sm_sysenter_rip(void)
+{
+    /* mov eax, 1; sysenter; nop */
+    static const char code[] = "\xb8\x01\x00\x00\x00\x0f\x34\x90";
+    SmCtx c;
+    uc_err err;
+
+    sm_open(&c, UC_MODE_64, -1);
+    OK(uc_mem_write(c.uc, code_start, code, sizeof(code) - 1));
+    err = uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK && c.cap.count == 0);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RIP) == code_start + sizeof(code) - 1);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("err %s intr %u rip %llx rax %llx", uc_strerror(err), c.cap.count,
+             (unsigned long long)sm_get(&c, UC_X86_REG_RIP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+}
+/* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -23785,4 +23846,5 @@ TEST_LIST = {
     {"test_x86_fx5_mstore_write_once", test_x86_fx5_mstore_write_once},
     {"test_x86_fx5_partial_reads", test_x86_fx5_partial_reads},
     {"test_x86_fx5_context_writes", test_x86_fx5_context_writes},
+    {"test_x86_sm_sysenter_rip", test_x86_sm_sysenter_rip},
     {NULL, NULL}};

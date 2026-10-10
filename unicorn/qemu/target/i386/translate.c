@@ -8590,6 +8590,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (!PE(s)) {
             gen_exception_gpf(s);
         } else {
+#if __Use_Original_Qemu != 1 /* ours (U900) */
+            /*
+             * NoVmp (ledger U900): helper_sysenter reads EIP (Unicorn advances it by the
+             * instruction length when no transition is made, and the #GP(0) / hook paths need
+             * the instruction's address) and the flags: sync both first, as for SYSCALL. Before,
+             * a SYSENTER that was not the first instruction of its TB advanced the TB's start
+             * address (stale EIP) when no UC_X86_INS_SYSENTER hook was registered.
+             */
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+#endif /* __Use_Original_Qemu (U900) */
             gen_helper_sysenter(tcg_ctx, cpu_env, cur_insn_len_i32(s));
             s->base.is_jmp = DISAS_EOB_ONLY;
         }
