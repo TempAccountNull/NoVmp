@@ -462,7 +462,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "privileged (CPL0; CPL3 check in Phase 3)",legacy,"vm","vmlaunch","0F 01 C2 ",,#6,6,0,""
 "privileged (CPL0; CPL3 check in Phase 3)",legacy,"vm","vmresume","0F 01 C3 ",,#6,6,0,""
 "privileged (CPL0; CPL3 check in Phase 3)",legacy,"vm","vmxoff","0F 01 C4 ",,#6,6,0,""
-"host lacks + unicorn #UD",legacy,"base","pconfig","0F 01 C5 ",#6,#6,6,0,""
+"host lacks, unicorn runs (needs SDM check)",legacy,"base","pconfig","0F 01 C5 ",#6,#13,6,6,"iter 0: outcome hw=vector 6 uc=vector 13"
 "match",legacy,"base","sgdt [rsi]","0F 01 06 ",ok,ok,6,0,""
 "privileged (CPL0; CPL3 check in Phase 3)",legacy,"sse3","monitor","0F 01 C8 ",,#13,6,0,""
 "privileged (CPL0; CPL3 check in Phase 3)",legacy,"sse3","mwait","0F 01 C9 ",,#13,6,0,""
