@@ -2,14 +2,14 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 75 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 26 s.
 
 ## Buckets
 
 | bucket | forms |
 |---|---|
-| match | 3190 |
-| differs | 0 |
+| match | 3188 |
+| differs | 1 |
 | unicorn-#UD (hw runs it) | 0 |
 | host lacks + unicorn #UD | 10152 |
 | invalid encoding, #UD on both | 22 |
@@ -18,10 +18,10 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | not native-safe, unicorn #UD | 0 |
 | privileged (CPL0; CPL3 check in Phase 3) | 102 |
 | harness error | 0 |
-| known deviation (docs/quirks.md) | 5 |
+| known deviation (docs/quirks.md) | 6 |
 | known deviation not observed (matches) | 0 |
 
-Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).
+Known deviations: 6 forms listed in `Emulator\data\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).
 
 ## Per ISA group (Capstone groups)
 
@@ -38,7 +38,7 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| base | 1322 | 0 | 0 | 7341 | 6 | 4 | 9 | 0 | 78 | 0 | 4 | 0 |
+| base | 1321 | 1 | 0 | 7341 | 6 | 4 | 9 | 0 | 78 | 0 | 4 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -50,7 +50,7 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | dqi+vlx | 0 | 0 | 0 | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fc16 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | fma4 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| fpu | 130 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| fpu | 129 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | fsgsbase | 4 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
 | mmx | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | pclmul | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -70,9 +70,11 @@ Known deviations: 5 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 
 ## Differences (first iteration that differs)
 
+- `bsf eax, dword ptr [rsi]` (base, differs, 1/6): iter 0: rax hw=8000000000000000 uc=0000000000000000 (in 8000000000000000); 
 
 ## Known deviations (docs/quirks.md)
 
+- `fyl2xp1` (fpu, known deviation (docs/quirks.md), 3/6): known deviation: FYL2XP1 below -1; iter 0: x87 fcw/fsw/ftw hw=037F/0820/FF03 uc=037F/0801/FF0B (fsw mask BAFF); st(0) differs; 
 - `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, known deviation (docs/quirks.md), 5/6): known deviation: CVTPI2PS m64 x87 transition; iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
 - `ptwrite eax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6
 - `ptwrite dword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE without PT; iter 0: outcome hw=ok uc=vector 6

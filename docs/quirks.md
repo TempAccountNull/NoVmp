@@ -38,7 +38,7 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - SDM: Vol1 8.5.1.2, Table 8-10 "Invalid Arithmetic Operations and the Masked Responses to Them": "FYL2XP1: operand more negative than –1" → #IA; masked response "Return the QNaN floating-point indefinite value to the destination operand". #IA has priority over #D (Vol1 4.9.2).
 - Emulator: #IA for every finite x < −1, also with y = ±0 / ±∞ (U432).
 - i5-13600K: x is an ordinary operand: no #IA; result x itself with PE, ±0 / ±∞ (sign of x XOR y) for y = ±0 / ±∞, and a denormal y raises #D first (unmasked: nothing stored).
-- Hardware cases: `cases_quirks.txt` lines 15–19; emu-uc72-risk R17 (special operands: 2376 of 29400 FYL2XP1 cases) and R18 (360 cases).
+- Hardware cases: `cases_quirks.txt` lines 15–19; emu-uc72-risk R17 (special operands: 2376 of 29400 FYL2XP1 cases) and R18 (360 cases); `alltest_known_deviations.tsv` `fyl2xp1` (U931: the --full inputs since U931 reach x < −1 with ST(1) valid in 3 of 6 iterations; the earlier inputs never did).
 - Ledger: U53/U432 (quirk bit 2), removed in U533.
 
 ### PTWRITE without PT

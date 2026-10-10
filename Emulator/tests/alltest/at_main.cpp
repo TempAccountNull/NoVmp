@@ -51,7 +51,6 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
-#include <random>
 #include <sstream>
 
 namespace at
@@ -154,7 +153,58 @@ namespace at
 	}
 
 	// ── randomized state (ported from the old difftest) ───────────────────────────────────
-	static std::mt19937_64 g_rng( 0x5EED1234 );
+	// U931: xoshiro256** 1.0 (Blackman & Vigna 2018, the public-domain reference algorithm), each
+	// state word from SplitMix64 (Steele, Lea & Flood 2014; the seeding the xoshiro authors
+	// recommend). Replaces one std::mt19937_64 for the whole run (34.6% self time of a --full run,
+	// one call per random byte): the operand memory, the test stack, integer XMM/YMM lanes and raw
+	// x87 registers are filled 8 bytes per draw; every other draw is still one 64-bit output used as
+	// before (% N, & 1, truncation), so each shaping rule below keeps its distribution. Seeded per
+	// form (FNV-1a 64 of its bytes) and iteration: an input state depends only on (form, iteration),
+	// so --filter / --sample / the quick run give a form the same inputs as --full.
+	struct xoshiro256ss
+	{
+		uint64_t s[ 4 ] = {};
+		static uint64_t splitmix64( uint64_t& x )
+		{
+			uint64_t z = ( x += 0x9E3779B97F4A7C15ull );
+			z = ( z ^ ( z >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
+			z = ( z ^ ( z >> 27 ) ) * 0x94D049BB133111EBull;
+			return z ^ ( z >> 31 );
+		}
+		void seed( uint64_t v ) { for ( auto& w : s ) w = splitmix64( v ); }
+		uint64_t operator()()
+		{
+			const uint64_t r = _rotl64( s[ 1 ] * 5, 7 ) * 9, t = s[ 1 ] << 17;
+			s[ 2 ] ^= s[ 0 ];
+			s[ 3 ] ^= s[ 1 ];
+			s[ 1 ] ^= s[ 2 ];
+			s[ 0 ] ^= s[ 3 ];
+			s[ 2 ] ^= t;
+			s[ 3 ] = _rotl64( s[ 3 ], 45 );
+			return r;
+		}
+		void fill( uint8_t* p, size_t n )   // little-endian bytes of successive draws
+		{
+			size_t k = 0;
+			for ( ; k + 8 <= n; k += 8 ) { const uint64_t v = ( *this )(); std::memcpy( p + k, &v, 8 ); }
+			if ( k < n ) { const uint64_t v = ( *this )(); std::memcpy( p + k, &v, n - k ); }
+		}
+	};
+	static xoshiro256ss g_rng;
+
+	// the form's seed: FNV-1a 64 of its encoding, mixed with the old fixed seed 5EED1234h
+	static uint64_t form_seed( const form& f )
+	{
+		uint64_t h = 0xCBF29CE484222325ull;
+		for ( uint8_t b : f.bytes ) { h ^= b; h *= 0x100000001B3ull; }
+		return h ^ 0x5EED1234;
+	}
+	// iteration 'iter' of a form: the SplitMix64 mix of (form seed + iter) seeds the four words
+	static void seed_iter( uint64_t fs, int iter )
+	{
+		uint64_t t = fs + uint64_t( iter );
+		g_rng.seed( xoshiro256ss::splitmix64( t ) );
+	}
 
 	static uint64_t rnd_gpr()
 	{
@@ -218,7 +268,7 @@ namespace at
 		{
 			uint8_t v[ 32 ];
 			int mode = ( i + iter ) % 3;
-			if ( mode == 0 ) for ( auto& b : v ) b = uint8_t( g_rng() );
+			if ( mode == 0 ) g_rng.fill( v, sizeof( v ) );
 			else rnd_float_bytes( v, 32, mode == 2 );
 			std::memcpy( s.fx + 160 + i * 16, v, 16 );
 			std::memcpy( s.ymmh[ i ], v + 16, 16 );
@@ -231,7 +281,7 @@ namespace at
 		for ( int i = 0; i < 8; i++ )
 		{
 			uint8_t* st = s.fx + 32 + 16 * i;
-			if ( g_rng() % 3 == 0 ) for ( int k = 0; k < 10; k++ ) st[ k ] = uint8_t( g_rng() );
+			if ( g_rng() % 3 == 0 ) g_rng.fill( st, 10 );
 			else
 			{
 				double d = ( double( g_rng() % 2000001 ) - 1000000.0 ) / double( 1 + g_rng() % 1000 );
@@ -243,10 +293,10 @@ namespace at
 				std::memcpy( st, &man, 8 ); std::memcpy( st + 8, &ex, 2 );
 			}
 		}
-		for ( auto& b : s.mem ) b = uint8_t( g_rng() );
+		g_rng.fill( s.mem, sizeof( s.mem ) );
 		rnd_float_bytes( s.mem + 0x8000, 256, iter & 1 );
 		rnd_float_bytes( s.mem + 0x9000, 256, !( iter & 1 ) );
-		for ( auto& b : s.stack ) b = uint8_t( g_rng() );
+		g_rng.fill( s.stack, sizeof( s.stack ) );
 	}
 
 	// U850: the form's prepared values on top of the random state (both engines get the same input)
@@ -389,8 +439,10 @@ namespace at
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		auto in = std::make_unique<state>();
 		bool hw_ud_all = true, uc_ud_all = true, any_diff = false;
+		const uint64_t fs = form_seed( f );   // U931
 		for ( int it = 0; it < iters; ++it )
 		{
+			seed_iter( fs, it );
 			rnd_state( *in, it );
 			apply_setup( f, *in );
 			result u;

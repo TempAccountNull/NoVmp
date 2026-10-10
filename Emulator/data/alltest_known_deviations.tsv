@@ -8,3 +8,4 @@ ptwrite eax	PTWRITE without PT
 ptwrite dword ptr [rsi]	PTWRITE without PT
 ptwrite rax	PTWRITE without PT
 ptwrite qword ptr [rsi]	PTWRITE without PT
+fyl2xp1	FYL2XP1 below -1
