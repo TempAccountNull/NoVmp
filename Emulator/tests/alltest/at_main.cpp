@@ -56,12 +56,82 @@
 
 namespace at
 {
-	enum bucket { MATCH, DIFF, UC_MISSING, HOST_LACKS_UC_UD, HOST_LACKS_UC_RUNS, NOT_NATIVE_UC_RUNS, NOT_NATIVE_UC_UD, PRIV, HARNESS_ERROR,
+	// U930: INVALID_ENC_UD split off HOST_LACKS_UC_UD (both #UD on an instruction the host has, see
+	// host_has_insn); PRIV renamed (the CPL3 fault check is a Phase 3 item, D6)
+	enum bucket { MATCH, DIFF, UC_MISSING, HOST_LACKS_UC_UD, INVALID_ENC_UD, HOST_LACKS_UC_RUNS, NOT_NATIVE_UC_RUNS, NOT_NATIVE_UC_UD, PRIV, HARNESS_ERROR,
 				  KNOWN_DEV, KNOWN_DEV_NOT_OBSERVED, BUCKET_COUNT };
 	static const char* k_bucket_name[ BUCKET_COUNT ] = {
-		"match", "differs", "unicorn-#UD (hw runs it)", "host lacks + unicorn #UD", "host lacks, unicorn runs (needs SDM check)",
-		"not native-safe, unicorn runs (needs SDM check)", "not native-safe, unicorn #UD", "privileged (CPL0 in raw unicorn; Phase 2 CPL3)", "harness error",
+		"match", "differs", "unicorn-#UD (hw runs it)", "host lacks + unicorn #UD", "invalid encoding, #UD on both", "host lacks, unicorn runs (needs SDM check)",
+		"not native-safe, unicorn runs (needs SDM check)", "not native-safe, unicorn #UD", "privileged (CPL0; CPL3 check in Phase 3)", "harness error",
 		"known deviation (docs/quirks.md)", "known deviation not observed (matches)" };
+
+	// ── U930: does the host CPU have the instruction? (splits "both #UD") ────────────────────────
+	// the host's CPUID bit (runtime __cpuidex, never assumed): reg 0..3 = EAX..EDX
+	static bool host_cpuid_bit( unsigned leaf, unsigned sub, int reg, int b )
+	{
+		int r[ 4 ] = {};
+		__cpuid( r, int( leaf & 0x80000000u ) );
+		if ( unsigned( r[ 0 ] ) < leaf ) return false;
+		__cpuidex( r, int( leaf ), int( sub ) );
+		return ( unsigned( r[ reg ] ) >> b ) & 1;
+	}
+
+	// a Capstone ISA group (form::groups) -> 1 the host reports the feature, 0 it does not, -1 not a
+	// feature group ("base", "novlx", ...: says nothing about the host). SDM Vol. 2A CPUID bit numbering.
+	static int host_group( const std::string& g )
+	{
+		struct bit { const char* g; unsigned leaf, sub; int reg, b; };
+		static const bit k[] = {
+			{ "fpu", 1, 0, 3, 0 }, { "cmov", 1, 0, 3, 15 }, { "mmx", 1, 0, 3, 23 }, { "sse1", 1, 0, 3, 25 }, { "sse2", 1, 0, 3, 26 },
+			{ "sse3", 1, 0, 2, 0 }, { "pclmul", 1, 0, 2, 1 }, { "vm", 1, 0, 2, 5 }, { "ssse3", 1, 0, 2, 9 }, { "fma", 1, 0, 2, 12 },
+			{ "sse41", 1, 0, 2, 19 }, { "sse42", 1, 0, 2, 20 }, { "aes", 1, 0, 2, 25 }, { "avx", 1, 0, 2, 28 }, { "fc16", 1, 0, 2, 29 },
+			{ "fsgsbase", 7, 0, 1, 0 }, { "bmi", 7, 0, 1, 3 }, { "avx2", 7, 0, 1, 5 }, { "bmi2", 7, 0, 1, 8 }, { "rtm", 7, 0, 1, 11 },
+			{ "avx512", 7, 0, 1, 16 }, { "dqi", 7, 0, 1, 17 }, { "adx", 7, 0, 1, 19 }, { "pfi", 7, 0, 1, 26 }, { "eri", 7, 0, 1, 27 },
+			{ "cdi", 7, 0, 1, 28 }, { "sha", 7, 0, 1, 29 }, { "bwi", 7, 0, 1, 30 }, { "vlx", 7, 0, 1, 31 },
+			{ "sse4a", 0x80000001u, 0, 2, 6 }, { "xop", 0x80000001u, 0, 2, 11 }, { "fma4", 0x80000001u, 0, 2, 16 }, { "tbm", 0x80000001u, 0, 2, 21 },
+			{ "3dnow", 0x80000001u, 0, 3, 31 } };
+		for ( const bit& e : k )
+			if ( g == e.g ) return host_cpuid_bit( e.leaf, e.sub, e.reg, e.b ) ? 1 : 0;
+		return -1;
+	}
+
+	// the mnemonic (first word of the form text after prefix words), as gen_instruction_table.py keys it
+	static std::string form_mnemonic( const form& f )
+	{
+		static const char* prefix_words[] = { "rep", "repe", "repz", "repne", "repnz", "lock", "xacquire", "xrelease", "bnd", "notrack", "data16" };
+		std::istringstream ws( f.text );
+		std::string w;
+		while ( ws >> w )
+			if ( std::find_if( std::begin( prefix_words ), std::end( prefix_words ), [ & ]( const char* p ) { return w == p; } ) == std::end( prefix_words ) )
+				return w;
+		return "";
+	}
+
+	// true when the host CPU has the instruction (so a #UD on both engines is the encoding / the rule,
+	// not a missing feature): an EVEX form needs AVX512F or AVX10 (CPUID.(07H,1):EDX[19]); Capstone
+	// tags some legacy forms only "base", so those mnemonics are listed with their CPUID bit (UD0/UD1/
+	// UD2 are #UD by definition on every CPU); otherwise every feature group of the form must be on the
+	// host and at least one must be a feature group. run(): also when another form of the same
+	// mnemonic and class ran natively in this run.
+	static bool host_has_insn( const form& f )
+	{
+		if ( f.cls == "evex" ) return host_cpuid_bit( 7, 0, 1, 16 ) || host_cpuid_bit( 7, 1, 3, 19 );
+		struct mbit { const char* mn; unsigned leaf; int reg, b; };   // leaf 0 = every CPU
+		static const mbit m[] = { { "ud0", 0, 0, 0 }, { "ud1", 0, 0, 0 }, { "ud2", 0, 0, 0 }, { "movbe", 1, 2, 22 }, { "vmread", 1, 2, 5 }, { "vmwrite", 1, 2, 5 } };
+		const std::string mn = form_mnemonic( f );
+		for ( const mbit& e : m )
+			if ( mn == e.mn ) return e.leaf == 0 || host_cpuid_bit( e.leaf, 0, e.reg, e.b );
+		bool any = false;
+		std::istringstream gs( f.groups );
+		std::string g;
+		while ( std::getline( gs, g, '+' ) )
+		{
+			int h = host_group( g );
+			if ( h == 0 ) return false;
+			any = any || h == 1;
+		}
+		return any;
+	}
 
 	// U530: Emulator\data\alltest_known_deviations.tsv, "<form text>\t<docs/quirks.md name>" per line
 	// ('#' comments): forms where the i5-13600K deviates from the SDM the emulator implements. Such a
@@ -499,6 +569,19 @@ int main( int argc, char** argv )
 	double run_s = std::chrono::duration<double>( std::chrono::steady_clock::now() - t1 ).count();
 	if ( bench_profile ) { prof.stop(); prof.report( bench_profile ); }
 
+	// U930: "#UD on both" on an instruction the host has -> invalid encoding (e.g. F3 0F 38 F0/F1,
+	// which Capstone names MOVBE; VSIB gathers whose index, mask and destination overlap). The host
+	// has it: host_has_insn (runtime CPUID), or another form of the same mnemonic and class (x87 =
+	// legacy) ran natively in this run (with --filter / --sample only the forms run count)
+	{
+		auto mc = []( const form& f ) { return form_mnemonic( f ) + "|" + ( f.cls == "x87" ? std::string( "legacy" ) : f.cls ); };
+		std::set<std::string> ran;
+		for ( auto& r : rows )
+			if ( r.r.b == MATCH || r.r.b == DIFF || r.r.b == UC_MISSING || r.r.b == KNOWN_DEV || r.r.b == KNOWN_DEV_NOT_OBSERVED ) ran.insert( mc( *r.f ) );
+		for ( auto& r : rows )
+			if ( r.r.b == HOST_LACKS_UC_UD && ( host_has_insn( *r.f ) || ran.count( mc( *r.f ) ) ) ) r.r.b = INVALID_ENC_UD;
+	}
+
 	// CSV
 	{
 		std::ofstream csv( out_dir + "\\alltest.csv" );
@@ -554,7 +637,7 @@ int main( int argc, char** argv )
 	md << "). Run: **" << rows.size() << " forms** in " << int( run_s ) << " s.\n\n## Buckets\n\n| bucket | forms |\n|---|---|\n";
 	for ( int b = 0; b < BUCKET_COUNT; ++b ) md << "| " << k_bucket_name[ b ] << " | " << count[ b ] << " |\n";
 	md << "\nKnown deviations: " << known_dev.size() << " forms listed in `Emulator\\data\\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).\n";
-	md << "\n## Per ISA group (Capstone groups)\n\n| group | match | differs | unicorn #UD | host lacks + uc #UD | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n";
+	md << "\n## Per ISA group (Capstone groups)\n\n| group | match | differs | unicorn #UD | host lacks + uc #UD | invalid enc., #UD both | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
 	for ( auto& [ g, c ] : per_group )
 	{
 		md << "| " << g;

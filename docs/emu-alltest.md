@@ -64,6 +64,23 @@ test.cmd [--release | --debug] [-j N | --jobs N | --serial] [-v | --verbose] [li
 - **Results do not depend on the parallel load:** hardware suites compare architectural results, never timing. Checked case by case (every verdict and every hw/uc/exp line) for every suite: the serial test.cmd before U540 vs the parallel runs — identical except the documented RDRAND values of loose cases, host-state tags (APIC ID, RDRAND) and the REP LODS tag above.
 - **Tiers** (plan 1.H.3): while working on an area run only its group(s); a harness-only change: only the affected files (same cases, same counts); before a push that changes emulator code: the full `test.cmd` at 100%.
 
+## Sweep buckets (quick / `--full`)
+
+Every form of the sweep lands in exactly one bucket (`at_main.cpp` `k_bucket_name`; the CSV `bucket` column, the report's bucket table and per-group columns; `Emulator\tools\isa\gen_instruction_table.py` reads the exact strings):
+
+| bucket | meaning |
+|---|---|
+| `match` | the host CPU and Unicorn give the same architectural result in every iteration |
+| `differs` | at least one iteration differs (the CSV `detail` column has the first one) |
+| `unicorn-#UD (hw runs it)` | the host runs it, Unicorn raises #UD in every iteration |
+| `host lacks + unicorn #UD` | #UD on both in every iteration and the host CPU does not have the instruction (e.g. every EVEX form on the i5-13600K, AMD FMA4/XOP, AVX-512 opmask VEX forms) |
+| `invalid encoding, #UD on both` | (U930) #UD on both in every iteration on an instruction the host CPU has: an encoding the SDM makes invalid (F3 0F 38 F0/F1, which Capstone names MOVBE; VEX VSIB gathers whose destination, index and mask overlap) or #UD by definition (UD0/UD1/UD2; VMREAD outside VMX operation). "The host has it": the host's runtime CPUID for the form's Capstone ISA group (an EVEX form needs AVX512F or AVX10; MOVBE, VMREAD/VMWRITE and UD0/1/2, which Capstone tags only `base`, by mnemonic), or another form of the same mnemonic and class ran natively in the same run (with `--filter` / `--sample` only the forms run count). Before U930 these were part of `host lacks + unicorn #UD` |
+| `host lacks, unicorn runs (needs SDM check)` | the host #UDs, Unicorn runs it: checked against SDM vectors instead (verified_forms.tsv) |
+| `not native-safe, unicorn runs (needs SDM check)` / `not native-safe, unicorn #UD` | the form cannot run natively (reason in `detail`); Unicorn's outcome |
+| `privileged (CPL0; CPL3 check in Phase 3)` | a CPL0 instruction: Unicorn runs it at CPL0, never natively; the CPL3 fault (vs the host) is a Phase 3 item (D6). Was `privileged (CPL0 in raw unicorn; Phase 2 CPL3)` before U930 |
+| `harness error` | the snippet could not be built or run (fails the run) |
+| `known deviation (docs/quirks.md)` / `known deviation not observed (matches)` | a form listed in `Emulator\data\alltest_known_deviations.tsv` that differs / matches |
+
 ## Prepared native runs (U850)
 
 The sweep runs a form on the host CPU only when nothing it does can leave our regions (CODE / DATA / MEM at 0x30000000) or touch host state. Most forms get there with the random state alone (memory operands on RSI / R14 = MEM + 8000h, RDI = MEM + 9000h). The rest get a prepared state on top of the random one (`at_universe.hpp` `prepare_native`, `pin_base`, `patch_moffs`; applied by `at_main.cpp` `apply_setup`, identically for both engines), and Unicorn runs them at CPL3 with the Windows GDT (`cpl=3`, as the host):

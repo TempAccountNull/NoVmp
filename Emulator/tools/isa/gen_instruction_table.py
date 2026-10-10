@@ -207,7 +207,9 @@ def status_from(b):
     priv = sum(v for k, v in b.items() if k.startswith('privileged'))
     sdm = b.get('host lacks, unicorn runs (needs SDM check)', 0) + \
         b.get('not native-safe, unicorn runs (needs SDM check)', 0)
-    ud = b.get('host lacks + unicorn #UD', 0) + b.get('not native-safe, unicorn #UD', 0)
+    # U930: 'invalid encoding, #UD on both' (the CPU has the instruction) was part of 'host lacks + unicorn #UD'
+    inv = b.get('invalid encoding, #UD on both', 0)
+    ud = b.get('host lacks + unicorn #UD', 0) + b.get('not native-safe, unicorn #UD', 0) + inv
     err = b.get('harness error', 0)
     # U790: the third value is the kind of result (TAKEOVER: a verified_forms row may replace it)
     if diff:
@@ -219,6 +221,8 @@ def status_from(b):
     if m == n:
         return '✅', 'identical to the i5-13600K (%d forms)' % n, 'match'
     if ud == n:
+        if inv == n:   # U930: every swept encoding is invalid (both #UD); no valid form reached
+            return '⬜', 'no valid encoding reached by the sweep (%d forms #UD on both the i5-13600K and Unicorn: invalid encodings)' % n, 'ud'
         return '⬜', 'not implemented (%d forms #UD; the i5-13600K lacks it)' % n, 'ud'
     if sdm and not ud:
         return '⏳', 'implemented; %d forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check pending%s' % (
@@ -236,13 +240,13 @@ def status_from(b):
 def refine_sweep(b, on_cpu, verified_row, st, note):
     """U850: two cases where the sweep's ⏳ is not an open item.
     (a) a row the i5-13600K runs (on_cpu) whose swept forms are identical except encodings that both
-        the CPU and Unicorn reject with #UD ('host lacks + unicorn #UD', e.g. F3 0F 38 F0/F1 that
-        Capstone names MOVBE): identical to the CPU;
+        the CPU and Unicorn reject with #UD ('invalid encoding, #UD on both' since U930, before that part
+        of 'host lacks + unicorn #UD'; e.g. F3 0F 38 F0/F1 that Capstone names MOVBE): identical to the CPU;
     (b) the forms left are SDM-pending only (not native-safe / host lacks, Unicorn runs) and
         verified_forms.tsv has an 'sdm' row (expected-value cases from an independent SDM model)."""
     n = sum(b.values())
     m = b.get('match', 0) + b.get('known deviation (docs/quirks.md)', 0) + b.get('known deviation not observed (matches)', 0)
-    both_ud = b.get('host lacks + unicorn #UD', 0)
+    both_ud = b.get('invalid encoding, #UD on both', 0)
     sdm = b.get('host lacks, unicorn runs (needs SDM check)', 0) + b.get('not native-safe, unicorn runs (needs SDM check)', 0)
     if on_cpu and m and m + both_ud == n:
         return '✅', 'identical to the i5-13600K (%d forms; %d more encodings #UD on both)' % (m, both_ud)
@@ -408,7 +412,7 @@ def main():
         elif re.fullmatch(r'cmpn?[a-z]{1,2}xadd', mn) and enc == 'vex' and 'APX' not in ''.join(r['isa']):
             st, note = '⏳', 'implemented (QEMU 7.2 CMPccXADD + U14 port fixes); not on the i5-13600K and no Capstone form: SDM-vector test pending (Phase 3/5)'
             kind = 'sdm_pending'
-        elif mn in OVERRIDES and enc == 'evex' and (not b or all(k == 'host lacks + unicorn #UD' for k in b)):
+        elif mn in OVERRIDES and enc == 'evex' and (not b or all(k in ('host lacks + unicorn #UD', 'invalid encoding, #UD on both') for k in b)):
             st, note = '⬜', 'EVEX form not implemented (the i5-13600K lacks AVX-512)'
         elif mn in OVERRIDES:
             st, note = OVERRIDES[mn]
