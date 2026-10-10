@@ -910,6 +910,209 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
     return false;
 }
 
+#endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U906) */
+/*
+ * NoVmp (ledger U906, decision A2): the values WRMSR refuses (SDM Vol2D WRMSR: "#GP(0) If the value
+ * in EDX:EAX sets bits that are reserved in the MSR specified by ECX", "If the source register
+ * contains a non-canonical address and ECX specifies one of the following MSRs: IA32_DS_AREA,
+ * IA32_FS_BASE, IA32_GS_BASE, IA32_KERNEL_GS_BASE, IA32_LSTAR, IA32_SYSENTER_EIP,
+ * IA32_SYSENTER_ESP"; canonical = CPU canonical, Vol3A 4.5.3), checked before anything changes:
+ *  - read-only MSRs (Table 2-2 "R/O"): IA32_PLATFORM_ID, MSR_SMI_COUNT, IA32_MTRRCAP (Vol3A
+ *    14.11.1 "#GP"), IA32_PERF_STATUS, IA32_ARCH_CAPABILITIES, IA32_CORE_CAPABILITIES and
+ *    IA32_MCG_CAP (Vol3B: "the effect of writing ... is undefined" - our choice: #GP like the
+ *    other R/O MSRs); the write-only IA32_PRED_CMD / IA32_FLUSH_CMD are #GP for RDMSR (not
+ *    stated by the SDM; our choice);
+ *  - IA32_BIOS_SIGN_ID 31:0, IA32_APIC_BASE 7:0, 9, 10 (without x2APIC) and 63:MAXPHYADDR,
+ *    IA32_FEATURE_CONTROL (bits of absent features; any write once Lock = 1), IA32_SPEC_CTRL
+ *    (IBRS/STIBP/SSBD as enumerated; the leaf 7.2 bits are not modelled), IA32_PRED_CMD /
+ *    IA32_FLUSH_CMD 63:1, IA32_TSX_CTRL 63:2, IA32_PERF_CTL 63:16 (bit 32 is mobile-only),
+ *    IA32_DEBUGCTL (5:3, 63:16 and the bits of absent features), IA32_MCG_STATUS (11:4, 63:13,
+ *    LMCE_S / SEAM_NR without MCG_CAP[27] / [12]), IA32_MCi_STATUS / ADDR / MISC (Vol3B 16.3.2:
+ *    software may write only zeros), the MTRRs and IA32_PAT (Vol3A 14.11: memory types 0, 1, 4,
+ *    5, 6 (+ 7 = UC- in the PAT), reserved bits, bits at or above MAXPHYADDR), IA32_EFER (7:1,
+ *    9, 63:12 and the bits of absent features; LMA is read-only and ignored; LME cannot change
+ *    while CR0.PG = 1, Vol3A 5.8.5), IA32_FMASK 63:32 and IA32_TSC_AUX 63:32 (Vol3A Figure 6-14
+ *    / Vol3B 18.17.2: 32-bit fields);
+ *  - canonical: IA32_SYSENTER_ESP/EIP, IA32_LSTAR, IA32_FS_BASE, IA32_GS_BASE,
+ *    IA32_KERNEL_GS_BASE.
+ * Not checked (the SDM states no #GP): IA32_STAR (Figure 6-14 prints 31:0 "Reserved", but the
+ * field is AMD's legacy SYSCALL EIP and no #GP is stated), IA32_CSTAR, IA32_SYSENTER_CS (31:16
+ * "can be read and written", 63:32 "writes ignored"), IA32_MISC_ENABLE (per-bit, model-specific
+ * conditions), IA32_MCG_CTL / IA32_MCi_CTL (implementation-specific values). The MSRs with checks
+ * of their own (IA32_XSS, IA32_XFD, IA32_PKRS, CET, UINTR, IA32_BNDCFGS, ...) keep them; an API
+ * access now gets UC_ERR_EXCEPTION from them too.
+ */
+static bool msr_memtype_ok(uint64_t v, bool pat)
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        uint8_t t = v >> (8 * i);
+        if (t == 2 || t == 3 || t > (pat ? 7 : 6)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    uint64_t phys_mask = ~((1ULL << env_archcpu(env)->phys_bits) - 1);
+    uint64_t valid;
+
+    switch (msr) {
+    case MSR_IA32_PLATFORM_ID_NV:
+    case MSR_SMI_COUNT:
+    case MSR_MTRRcap:
+    case MSR_IA32_PERF_STATUS:
+    case MSR_IA32_ARCH_CAPABILITIES:
+    case MSR_IA32_CORE_CAPABILITY:
+    case MSR_MCG_CAP:
+        return false;
+    case MSR_IA32_UCODE_REV:
+        return !(val & 0xffffffffULL);
+    case MSR_IA32_APICBASE:
+        valid = MSR_IA32_APICBASE_BSP | MSR_IA32_APICBASE_ENABLE |
+                (MF_1ECX(CPUID_EXT_X2APIC) ? MSR_IA32_APICBASE_EXTD : 0) |
+                (~phys_mask & ~0xfffULL);
+        return !(val & ~valid);
+    case MSR_IA32_FEATURE_CONTROL:
+        valid = FEATURE_CONTROL_LOCKED |
+                ((MF_1ECX(CPUID_EXT_VMX) && MF_1ECX(CPUID_EXT_SMX)) ? 2 : 0) |
+                (MF_1ECX(CPUID_EXT_VMX) ? FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX : 0) |
+                (MF_1ECX(CPUID_EXT_SMX) ? 0xff00 : 0) |
+                (MF_7ECX(CPUID_7_0_ECX_SGX_LC_NV) ? (1ULL << 17) : 0) |
+                (MF_7EBX(CPUID_7_0_EBX_SGX_NV) ? (1ULL << 18) : 0) |
+                ((env->mcg_cap & MCG_LMCE_P) ? FEATURE_CONTROL_LMCE : 0);
+        return !(env->msr_ia32_feature_control & FEATURE_CONTROL_LOCKED) && !(val & ~valid);
+    case MSR_IA32_SPEC_CTRL:
+        valid = (MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL) ? 1 : 0) |
+                (MF_7EDX(CPUID_7_0_EDX_STIBP) ? 2 : 0) |
+                (MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL_SSBD) ? 4 : 0);
+        return !(val & ~valid);
+    case MSR_IA32_PRED_CMD:
+    case MSR_IA32_FLUSH_CMD_NV:
+        return !(val & ~1ULL);
+    case MSR_IA32_TSX_CTRL:
+        return !(val & ~3ULL);
+    case MSR_IA32_PERF_CTL_NV:
+        return !(val & ~0xffffULL);
+    case MSR_IA32_DEBUGCTL_NV:
+        valid = 0x1 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x2000 |
+                (MF_7ECX(1U << 24) ? 0x4 : 0) |                    /* bus-lock detection */
+                (MF_7EBX(CPUID_7_0_EBX_RTM) ? 0x8000 : 0);         /* RTM_DEBUG */
+        {
+            uint32_t a, b, c, d;
+            cpu_x86_cpuid(env, 0xa, 0, &a, &b, &c, &d);
+            if (MF_1ECX(CPUID_EXT_PDCM) && (a & 0xff) > 1) {
+                valid |= 0x1800;                                    /* FREEZE_*_ON_PMI */
+            }
+        }
+        return !(val & ~valid);
+    case MSR_MCG_STATUS:
+        valid = 0x7 | ((env->mcg_cap & MCG_LMCE_P) ? 0x8 : 0) |
+                ((env->mcg_cap & (1ULL << 12)) ? 0x1000 : 0);
+        return !(val & ~valid);
+    case MSR_MTRRdefType:
+        return !(val & ~0xcffULL) && msr_memtype_ok(val & 0xff, false);
+    case MSR_MTRRfix64K_00000:
+    case MSR_MTRRfix16K_80000:
+    case MSR_MTRRfix16K_A0000:
+        return msr_memtype_ok(val, false);
+    case MSR_PAT:
+        return msr_memtype_ok(val, true);
+    case MSR_EFER:
+        valid = MSR_EFER_LMA |
+                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_SYSCALL) ? MSR_EFER_SCE : 0) |
+                (msr_lm(env) ? MSR_EFER_LME : 0) |
+                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_NX) ? MSR_EFER_NXE : 0) |
+                ((env->features[FEAT_8000_0001_ECX] & CPUID_EXT3_SVM) ? MSR_EFER_SVME : 0) |
+                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_FFXSR) ? MSR_EFER_FFXSR : 0);
+        if (val & ~valid) {
+            return false;
+        }
+        return !((val ^ env->efer) & MSR_EFER_LME) || !(env->cr[0] & CR0_PG_MASK);
+#ifdef TARGET_X86_64
+    case MSR_LSTAR:
+    case MSR_FSBASE:
+    case MSR_GSBASE:
+    case MSR_KERNELGSBASE:
+        return novmp_canonical(env, val);
+    case MSR_FMASK:
+        return !(val >> 32);
+#endif
+    case MSR_IA32_SYSENTER_ESP:
+    case MSR_IA32_SYSENTER_EIP:
+        return novmp_canonical(env, val);
+    case MSR_TSC_AUX:
+        return !(val >> 32);
+    /*
+     * the MSRs whose own checks live in helper_wrmsr's switch (U103, U104, U111, U112, U114, U173,
+     * U727, U783, U802, U804, U807): the same rules here, so that an API access gets
+     * UC_ERR_EXCEPTION and never reaches a guest #GP raised outside translated code
+     */
+    case MSR_IA32_XSS:
+        return !(val & ~(((uint64_t)env->features[FEAT_XSAVE_XSS_HI] << 32) |
+                         env->features[FEAT_XSAVE_XSS_LO]));
+    case MSR_IA32_XFD:
+    case MSR_IA32_XFD_ERR:
+        return !(val & ~x86_cpu_xfd_supported(env));
+    case MSR_IA32_PKRS:
+        return !(val >> 32);
+    case MSR_IA32_USER_MSR_CTL:
+        return !(val & 0xffe) && novmp_canonical(env, val);
+    case MSR_IA32_UARCH_MISC_CTL:
+        return !(val & ~1ULL);
+    case MSR_IA32_BARRIER:
+    case MSR_IA32_TSE_CAPABILITY:
+        return false;
+    case MSR_IA32_HRESET_ENABLE:
+        return !(val & ~(uint64_t)CPUID_20_0_EBX_THREAD_DIRECTOR_HRESET);
+    case MSR_IA32_UMWAIT_CONTROL:
+        return !(val & ~0xfffffffdull);
+    case MSR_IA32_PASID:
+        return !(val & ~0x800fffffull);
+    case MSR_IA32_BNDCFGS:
+        return !(val & 0xffc) && novmp_canonical(env, val);
+    case MSR_IA32_U_CET:
+    case MSR_IA32_S_CET:
+    case MSR_IA32_PL0_SSP:
+    case MSR_IA32_PL1_SSP:
+    case MSR_IA32_PL2_SSP:
+    case MSR_IA32_PL3_SSP:
+        return x86_cet_msr_ok(env, msr, val);
+    case MSR_IA32_INT_SSP_TAB:
+        return novmp_canonical(env, val);
+    case MSR_IA32_UINTR_HANDLER:
+    case MSR_IA32_UINTR_STACKADJUST:
+        return novmp_canonical(env, val);
+    case MSR_IA32_UINTR_MISC:
+        return !(val >> 40);
+    case MSR_IA32_UINTR_PD:
+        return novmp_canonical(env, val) && !(val & 0x3f);
+    case MSR_IA32_UINTR_TT:
+        return novmp_canonical(env, val & ~0xfULL) && !(val & 0xe);
+    default:
+        break;
+    }
+    if (msr >= MSR_MTRRphysBase(0) && msr <= MSR_MTRRphysMask(MSR_MTRRcap_VCNT - 1)) {
+        if (msr & 1) {
+            return !(val & (0x7ffULL | phys_mask));                     /* PHYSMASK */
+        }
+        return !(val & (0xf00ULL | phys_mask)) && msr_memtype_ok(val & 0xff, false);
+    }
+    if (msr >= MSR_MTRRfix4K_C0000 && msr <= MSR_MTRRfix4K_F8000) {
+        return msr_memtype_ok(val, false);
+    }
+    if (msr >= MSR_MC0_CTL && msr < MSR_MC0_CTL + 4 * (env->mcg_cap & 0xff) && (msr & 3)) {
+        return val == 0;                                                /* STATUS / ADDR / MISC */
+    }
+    return true;
+}
+
+#endif /* __Use_Original_Qemu (U906) */
+#if __Use_Original_Qemu != 1 /* ours (U905) */
 /*
  * The access check of RDMSR / WRMSR (after the UC_HOOK_INSN hooks): false = no access. A guest
  * access raises #GP(0); an API access (msr_api) sets msr_api_err instead.
@@ -917,7 +1120,10 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
 static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t val,
                           uintptr_t ra)
 {
-    if (msr_present(env, msr)) {
+    /* U906: the value WRMSR refuses; RDMSR of a write-only MSR */
+    if (msr_present(env, msr) &&
+        (write ? msr_write_ok(env, msr, val)
+               : (msr != MSR_IA32_PRED_CMD && msr != MSR_IA32_FLUSH_CMD_NV))) {
         return true;
     }
     if (env->msr_api) {
@@ -1012,7 +1218,12 @@ void helper_wrmsr(CPUX86State *env)
         break;
 #endif /* __Use_Original_Qemu (U905) */
     case MSR_IA32_SYSENTER_CS:
+#if __Use_Original_Qemu == 1 /* original QEMU (U906) */
         env->sysenter_cs = val & 0xffff;
+#else /* ours (U906) */
+        /* SDM Vol4: 15:0 selector, 31:16 "can be read and written", 63:32 writes ignored */
+        env->sysenter_cs = (uint32_t)val;
+#endif /* __Use_Original_Qemu (U906) */
         break;
     case MSR_IA32_SYSENTER_ESP:
         env->sysenter_esp = val;

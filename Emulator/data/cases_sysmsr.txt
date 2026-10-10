@@ -145,3 +145,76 @@ rdmsr | rcx=0xC0000103 =>!
 rdmsr | rcx=0xC0000104 rax=0x1111 rdx=0x2222 => #GP(0)
 wrmsr | rcx=0xC0000104 rax=0 rdx=0 => #GP(0)
 rdmsr | rcx=0xC0010117 =>!
+# --- WRMSR value rules (U906): reserved bits, CPU-canonical addresses (57 bits: LA57), read-only MSRs,
+# memory types (MTRR 0/1/4/5/6, PAT also 7). A refused value: #GP(0), nothing changes; an accepted one is
+# read back (RAX/RDX). Guards: MAXPHYADDR 40, IA32_EFER = 501h, IA32_MCG_CAP = 100010Ah.
+mov eax, 0x80000008; cpuid =>! rax=0x3928
+mov ecx, 0xc0000080; rdmsr =>! rax=0x501 rdx=0
+mov ecx, 0x179; rdmsr =>! rax=0x100010A rdx=0
+wrmsr | rcx=0x17 rax=0x0 rdx=0x0 => #GP(0)
+wrmsr | rcx=0xFE rax=0x0 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x179 rax=0x10A rdx=0x0 => #GP(0)
+wrmsr | rcx=0x198 rax=0x0 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x8B rax=0x0 rdx=0x1 =>!
+wrmsr | rcx=0x8B rax=0x1 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1B rax=0xFEE00900 rdx=0x0 =>!
+wrmsr | rcx=0x1B rax=0xFEE00801 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1B rax=0xFEE00C00 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1B rax=0xFEE00800 rdx=0x100 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x3A rax=0xFF00 rdx=0x0 =>! rax=0xFF00 rdx=0x0
+wrmsr | rcx=0x3A rax=0x4 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x3A rax=0x100000 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x174 rax=0xABCD0010 rdx=0x0 =>! rax=0xABCD0010 rdx=0x0
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x174 rax=0x10 rdx=0x1 =>! rax=0x10 rdx=0x0
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x175 rax=0x0 rdx=0xFF8000 =>! rax=0x0 rdx=0xFF8000
+wrmsr | rcx=0x175 rax=0x0 rdx=0x1000000 => #GP(0)
+wrmsr | rcx=0x176 rax=0x0 rdx=0xFE000000 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x17A rax=0x7 rdx=0x0 =>! rax=0x7 rdx=0x0
+wrmsr | rcx=0x17A rax=0x8 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x17A rax=0x10 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x199 rax=0x1234 rdx=0x0 =>! rax=0x1234 rdx=0x0
+wrmsr | rcx=0x199 rax=0x0 rdx=0x1 => #GP(0)
+wrmsr | rcx=0x199 rax=0x10000 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x1D9 rax=0xA7C3 rdx=0x0 =>! rax=0xA7C3 rdx=0x0
+wrmsr | rcx=0x1D9 rax=0x4 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1D9 rax=0x800 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1D9 rax=0x10000 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x200 rax=0xFFFFF006 rdx=0xFF =>! rax=0xFFFFF006 rdx=0xFF
+wrmsr | rcx=0x200 rax=0x2 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x200 rax=0x106 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x200 rax=0x6 rdx=0x100 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x201 rax=0xFFFFF800 rdx=0xFF =>! rax=0xFFFFF800 rdx=0xFF
+wrmsr | rcx=0x201 rax=0x801 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x201 rax=0x800 rdx=0x100 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x250 rax=0x60504 rdx=0x6050401 =>! rax=0x60504 rdx=0x6050401
+wrmsr | rcx=0x250 rax=0x0 rdx=0x7000000 => #GP(0)
+wrmsr | rcx=0x26F rax=0x3 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x2FF rax=0xC06 rdx=0x0 =>! rax=0xC06 rdx=0x0
+wrmsr | rcx=0x2FF rax=0x7 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x2FF rax=0x106 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x2FF rax=0x1006 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x277 rax=0x70406 rdx=0x70406 =>! rax=0x70406 rdx=0x70406
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x277 rax=0x0 rdx=0x7000000 =>! rax=0x0 rdx=0x7000000
+wrmsr | rcx=0x277 rax=0x8 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x277 rax=0x200 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x401 rax=0x1 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x401 rax=0x0 rdx=0x0 =>! rax=0x0 rdx=0x0
+wrmsr | rcx=0x403 rax=0x0 rdx=0x80000000 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000080 rax=0x501 rdx=0x0 =>! rax=0x501 rdx=0x0
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000080 rax=0x101 rdx=0x0 =>! rax=0x501 rdx=0x0
+wrmsr | rcx=0xC0000080 rax=0x503 rdx=0x0 => #GP(0)
+wrmsr | rcx=0xC0000080 rax=0x2501 rdx=0x0 => #GP(0)
+wrmsr | rcx=0xC0000080 rax=0x4501 rdx=0x0 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000082 rax=0x0 rdx=0x8000 =>! rax=0x0 rdx=0x8000
+wrmsr | rcx=0xC0000082 rax=0x0 rdx=0x1000000 => #GP(0)
+wrmsr | rcx=0xC0000100 rax=0x0 rdx=0xFE000000 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000101 rax=0x1000 rdx=0xFF000000 =>! rax=0x1000 rdx=0xFF000000
+wrmsr | rcx=0xC0000102 rax=0x0 rdx=0x2000000 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000084 rax=0xFFFFFFFF rdx=0x0 =>! rax=0xFFFFFFFF rdx=0x0
+wrmsr | rcx=0xC0000084 rax=0x0 rdx=0x1 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000103 rax=0xFFFFFFFF rdx=0x0 =>! rax=0xFFFFFFFF rdx=0x0
+wrmsr | rcx=0xC0000103 rax=0x0 rdx=0x1 => #GP(0)
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000081 rax=0xFFFFFFFF rdx=0xFFFFFFFF =>! rax=0xFFFFFFFF rdx=0xFFFFFFFF
+wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000083 rax=0x0 rdx=0x80000000 =>! rax=0x0 rdx=0x80000000
+# IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)
+wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0

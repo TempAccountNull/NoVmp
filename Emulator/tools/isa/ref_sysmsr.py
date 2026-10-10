@@ -478,6 +478,149 @@ def cases_msr_present(a):
             a('wrmsr | rcx=%s rax=0 rdx=0 => #GP(0)' % hx(msr))
 
 
+# ---- WRMSR value rules (U906) --------------------------------------------------------------------
+MAXPHYADDR = 40                     # MAX model: CPUID.80000008H:EAX[7:0] = 28H (guard case)
+EFER_RESET = 0x501                  # the harness's 64-bit state: SCE | LME | LMA (guard case)
+MCG_CAP = 0x100010A                 # MAX: 10 banks, MCG_CTL_P, MCG_SER_P (guard case)
+MEMTYPES_MTRR = (0, 1, 4, 5, 6)     # Vol3A Table 14-8
+MEMTYPES_PAT = (0, 1, 4, 5, 6, 7)   # Vol3A Table 14-10
+
+
+def canon57(v):
+    return canonical(v, 57)         # Vol3A 4.5.3: WRMSR checks CPU canonicality (LA57 enumerated)
+
+
+def types_ok(v, allowed, nbytes=8):
+    return all(((v >> (8 * i)) & 0xFF) in allowed for i in range(nbytes))
+
+
+def wrmsr_result(msr, val, cur=None):
+    """the value RDMSR returns after WRMSR msr := val, or Fault (#GP(0))"""
+    phys = (M64 << MAXPHYADDR) & M64
+    c = lambda leaf, sub, reg, bit: cpuid_bit(leaf, sub, reg, bit)
+    gp = Fault('#GP', 0)
+    if msr in (0x17, 0xFE, 0x179, 0x198):                   # R/O (MCG_CAP: our choice)
+        raise gp
+    if msr == 0x8B:                                          # BIOS_SIGN_ID 31:0 reserved
+        if val & 0xFFFFFFFF:
+            raise gp
+        return None                                          # reads the microcode revision
+    if msr == 0x1B:                                          # APIC_BASE (no x2APIC in MAX)
+        if val & (0xFF | 0x200 | 0x400 | phys):
+            raise gp
+        return None                                          # no local APIC: not stored
+    if msr == 0x3A:                                          # FEATURE_CONTROL: SMX only in MAX
+        valid = 1 | (0xFF00 if c(1, 0, 2, 6) else 0) | (4 if c(1, 0, 2, 5) else 0)
+        if val & ~valid or (cur or 0) & 1:
+            raise gp
+        return val
+    if msr == 0x174:                                         # 31:16 R/W, 63:32 ignored
+        return val & 0xFFFFFFFF
+    if msr in (0x175, 0x176, 0xC0000082, 0xC0000100, 0xC0000101, 0xC0000102):
+        if not canon57(val):
+            raise gp
+        return val
+    if msr == 0x17A:                                         # MCG_STATUS 2:0 (LMCE_S/SEAM_NR absent)
+        if val & ~0x7:
+            raise gp
+        return val
+    if msr == 0x199:                                         # PERF_CTL 15:0
+        if val & ~0xFFFF:
+            raise gp
+        return val
+    if msr == 0x1D9:                                         # DEBUGCTL: no BLD, no PDCM; RTM_DEBUG
+        valid = 0x1 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x2000 | (0x8000 if c(7, 0, 1, 11) else 0)
+        if val & ~valid:
+            raise gp
+        return val
+    if 0x200 <= msr <= 0x20F:
+        if msr & 1:
+            if val & (0x7FF | phys):
+                raise gp
+        elif val & (0xF00 | phys) or not types_ok(val & 0xFF, MEMTYPES_MTRR, 1):
+            raise gp
+        return val
+    if msr in (0x250, 0x258, 0x259) or 0x268 <= msr <= 0x26F:
+        if not types_ok(val, MEMTYPES_MTRR):
+            raise gp
+        return val
+    if msr == 0x2FF:
+        if val & ~0xCFF or not types_ok(val & 0xFF, MEMTYPES_MTRR, 1):
+            raise gp
+        return val
+    if msr == 0x277:
+        if not types_ok(val, MEMTYPES_PAT):
+            raise gp
+        return val
+    if 0x400 <= msr < 0x400 + 4 * (MCG_CAP & 0xFF):
+        if msr & 3 and val:                                  # STATUS / ADDR / MISC: zeros only
+            raise gp
+        return val if msr & 3 else None
+    if msr == 0xC0000080:                                    # EFER: SCE LME NXE SVME; LMA read-only
+        valid = 0x1 | 0x100 | 0x400 | (0x800 if c(0x80000001, 0, 3, 20) else 0) | \
+            (0x1000 if c(0x80000001, 0, 2, 2) else 0) | (0x4000 if c(0x80000001, 0, 3, 25) else 0)
+        if val & ~valid:
+            raise gp
+        return (val & ~0x400) | (EFER_RESET & 0x400)
+    if msr in (0xC0000084, 0xC0000103):                      # FMASK, TSC_AUX: 63:32 reserved
+        if val >> 32:
+            raise gp
+        return val
+    if msr in (0xC0000081, 0xC0000083):                      # STAR, CSTAR: no #GP stated
+        return val
+    raise AssertionError('msr %x not modelled' % msr)
+
+
+def cases_msr_values(a):
+    a('# --- WRMSR value rules (U906): reserved bits, CPU-canonical addresses (57 bits: LA57), read-only MSRs,')
+    a('# memory types (MTRR 0/1/4/5/6, PAT also 7). A refused value: #GP(0), nothing changes; an accepted one is')
+    a('# read back (RAX/RDX). Guards: MAXPHYADDR 40, IA32_EFER = 501h, IA32_MCG_CAP = 100010Ah.')
+    a('mov eax, 0x80000008; cpuid =>! rax=0x3928')
+    a('mov ecx, 0xc0000080; rdmsr =>! rax=0x501 rdx=0')
+    a('mov ecx, 0x179; rdmsr =>! rax=0x100010A rdx=0')
+    tests = [
+        (0x17, 0), (0xFE, 0), (0x179, 0x10A), (0x198, 0), (0x8B, 0x100000000), (0x8B, 1),
+        (0x1B, 0xFEE00900), (0x1B, 0xFEE00801), (0x1B, 0xFEE00C00), (0x1B, 0x100FEE00800),
+        (0x3A, 0xFF00), (0x3A, 0x4), (0x3A, 0x100000),
+        (0x174, 0xABCD0010), (0x174, 0x100000010),
+        (0x175, 0x00FF800000000000), (0x175, 0x0100000000000000), (0x176, 0xFE00000000000000),
+        (0x17A, 0x7), (0x17A, 0x8), (0x17A, 0x10),
+        (0x199, 0x1234), (0x199, 0x100000000), (0x199, 0x10000),
+        (0x1D9, 0xA7C3), (0x1D9, 0x4), (0x1D9, 0x800), (0x1D9, 0x10000),
+        (0x200, 0xFFFFFFF006), (0x200, 0x2), (0x200, 0x106), (0x200, 0x10000000006),
+        (0x201, 0xFFFFFFF800), (0x201, 0x801), (0x201, 0x10000000800),
+        (0x250, 0x0605040100060504), (0x250, 0x0700000000000000), (0x26F, 0x3),
+        (0x2FF, 0xC06), (0x2FF, 0x7), (0x2FF, 0x106), (0x2FF, 0x1006),
+        (0x277, 0x0007040600070406), (0x277, 0x0700000000000000), (0x277, 0x8), (0x277, 0x200),
+        (0x401, 0x1), (0x401, 0), (0x403, 0x8000000000000000),
+        (0xC0000080, 0x501), (0xC0000080, 0x101), (0xC0000080, 0x503), (0xC0000080, 0x2501),
+        (0xC0000080, 0x4501),
+        (0xC0000082, 0x0000800000000000), (0xC0000082, 0x0100000000000000), (0xC0000100, 0xFE00000000000000),
+        (0xC0000101, 0xFF00000000001000), (0xC0000102, 0x0200000000000000),
+        (0xC0000084, 0xFFFFFFFF), (0xC0000084, 0x100000000), (0xC0000103, 0xFFFFFFFF), (0xC0000103, 0x100000000),
+        (0xC0000081, M64), (0xC0000083, 0x8000000000000000),
+    ]
+    for msr, val in tests:
+        lo, hi = val & 0xFFFFFFFF, val >> 32
+        try:
+            rd = wrmsr_result(msr, val)
+        except Fault as f:
+            a('wrmsr | rcx=%s rax=%s rdx=%s => %s' % (hx(msr), hx(lo), hx(hi), f.token()))
+            continue
+        if rd is None:
+            a('wrmsr | rcx=%s rax=%s rdx=%s =>!' % (hx(msr), hx(lo), hx(hi)))
+        else:
+            a('wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=%s rax=%s rdx=%s =>! rax=%s rdx=%s' % (
+                hx(msr), hx(lo), hx(hi), hx(rd & 0xFFFFFFFF), hx(rd >> 32)))
+    a('# IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)')
+    a('wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0')
+    try:
+        wrmsr_result(0x3A, 0, cur=0xFF01)
+        raise AssertionError('locked FEATURE_CONTROL must #GP')
+    except Fault:
+        pass
+
+
 def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
@@ -494,6 +637,7 @@ def cases_all():
     cases_sysret(a)
     cases_sysexit(a)
     cases_msr_present(a)
+    cases_msr_values(a)
     return lines
 
 

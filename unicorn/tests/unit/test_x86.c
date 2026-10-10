@@ -6914,7 +6914,10 @@ static void test_x86_waitpkg(void)
     nv_set(&r, UC_X86_REG_RDX, 0);
     OK(nv_run(&r, "\x0f\x30"));
     TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
-    nv_wrmsr(&r, 0xe1, 0x100000000ull);
+    {   /* U906: the API write is refused (UC_ERR_EXCEPTION), not stored */
+        uc_x86_msr m = {0xe1, 0x100000000ull};
+        uc_assert_err(UC_ERR_EXCEPTION, uc_reg_write(r.uc, UC_X86_REG_MSR, &m));
+    }
     TEST_CHECK(nv_rdmsr(&r, 0xe1) == 0x401);
     nv_set(&r, UC_X86_REG_RAX, 0x800);
     OK(nv_run(&r, "\x0f\x30"));
@@ -7373,8 +7376,11 @@ static void test_x86_cet_shadow_stack(void)
     TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
     TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 0x300808);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x48\x0f\x38\xf6\x02"));
-    /* the API cannot store an invalid MSR value (dropped) */
-    nv_wrmsr(&r, 0x6a0, 0x40);
+    /* the API cannot store an invalid MSR value (refused: UC_ERR_EXCEPTION, U906) */
+    {
+        uc_x86_msr m = {0x6a0, 0x40};
+        uc_assert_err(UC_ERR_EXCEPTION, uc_reg_write(r.uc, UC_X86_REG_MSR, &m));
+    }
     TEST_CHECK(nv_rdmsr(&r, 0x6a0) == 1);
 
     /* CR4.CET = 0: WRUSS #UD at any CPL (the i5-13600K profile state) */
@@ -22065,10 +22071,13 @@ static void test_x86_si_msrlist(void)
     TEST_CHECK(si_get(&c, UC_X86_REG_RCX) == 0xff00000000000002ull);
     TEST_CHECK(si_get(&c, UC_X86_REG_RAX) == 0xaaaa && si_get(&c, UC_X86_REG_RDX) == 0xdddd);
     TEST_CHECK(si_rdmsr(&c, 0x1b01) == 0);
-    /* WRMSR to IA32_BARRIER #GP(0); an API write is dropped; RDMSR reads 0 */
+    /* WRMSR to IA32_BARRIER #GP(0); an API write is refused (UC_ERR_EXCEPTION, U906); RDMSR reads 0 */
     si_set(&c, UC_X86_REG_RCX, 0x2f);
     TEST_CHECK(si_run(&c, "\x0f\x30", 2) == 13);
-    si_wrmsr(&c, 0x2f, 0x1234);
+    {
+        uc_x86_msr m = {0x2f, 0x1234};
+        uc_assert_err(UC_ERR_EXCEPTION, uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    }
     TEST_CHECK(si_rdmsr(&c, 0x2f) == 0);
     /* RSI not 8-byte aligned: #GP(0), RCX unchanged */
     si_set(&c, UC_X86_REG_RSI, tab + 4);
@@ -22217,7 +22226,10 @@ static void test_x86_si_hreset(void)
     si_set(&c, UC_X86_REG_RAX, 3);
     TEST_CHECK(si_run(&c, SI_HRESET, 6) == 13);
     TEST_CHECK(si_run(&c, "\x0f\x30", 2) == 13);               /* IA32_HRESET_ENABLE = 3 */
-    si_wrmsr(&c, 0x17da, 2);                                   /* API: dropped */
+    {   /* API: refused (UC_ERR_EXCEPTION, U906) */
+        uc_x86_msr m = {0x17da, 2};
+        uc_assert_err(UC_ERR_EXCEPTION, uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    }
     TEST_CHECK(si_rdmsr(&c, 0x17da) == 1);
     si_set(&c, UC_X86_REG_RAX, 0);
     TEST_CHECK(si_run(&c, "\xf3\x0f\x3a\xf0\xc1\x00", 6) == 6);
@@ -23938,6 +23950,109 @@ static void test_x86_sm_msr_present(void)
     TEST_CHECK(sm_insn_msr(&c, 0x1234, 0, &v) == -1 && hits == 1 && v == 0x0000222200005a5aULL);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U906: the values WRMSR refuses (MAX model: MAXPHYADDR 40, LA57 CPU canonical 57 bits): #GP(0)
+ * and the MSR unchanged; the API gets UC_ERR_EXCEPTION. read = the value RDMSR returns after a
+ * successful write (~0 = not compared).
+ */
+static void test_x86_sm_msr_values(void)
+{
+    const struct {
+        uint32_t msr;
+        uint64_t val;
+        int ok;
+        uint64_t read;
+    } t[] = {
+        {0x17, 0, 0, 0}, {0xfe, 0, 0, 0}, {0x179, 0x10a, 0, 0}, {0x198, 0, 0, 0},
+        {0x8b, 0x100000000ULL, 1, ~0ULL}, {0x8b, 1, 0, 0},
+        {0x1b, 0xfee00900, 1, ~0ULL}, {0x1b, 0xfee00801, 0, 0}, {0x1b, 0xfee00c00, 0, 0},
+        {0x1b, 0x10000000000ULL | 0xfee00800, 0, 0},
+        {0x3a, 0xff00, 1, 0xff00}, {0x3a, 0x4, 0, 0}, {0x3a, 0x100000, 0, 0},
+        {0x174, 0xabcd0010, 1, 0xabcd0010}, {0x174, 0x100000010ULL, 1, 0x10},
+        {0x175, 0x00ff800000000000ULL, 1, 0x00ff800000000000ULL},
+        {0x175, 0x0100000000000000ULL, 0, 0}, {0x176, 0xfe00000000000000ULL, 0, 0},
+        {0x17a, 0x7, 1, 0x7}, {0x17a, 0x8, 0, 0}, {0x17a, 0x10, 0, 0},
+        {0x199, 0x1234, 1, 0x1234}, {0x199, 0x100000000ULL, 0, 0}, {0x199, 0x10000, 0, 0},
+        {0x1d9, 0xa7c3, 1, 0xa7c3}, {0x1d9, 0x4, 0, 0}, {0x1d9, 0x800, 0, 0}, {0x1d9, 0x10000, 0, 0},
+        {0x200, 0xfffffff006ULL, 1, 0xfffffff006ULL}, {0x200, 0x2, 0, 0}, {0x200, 0x106, 0, 0},
+        {0x200, 0x10000000006ULL, 0, 0}, {0x201, 0xfffffff800ULL, 1, 0xfffffff800ULL},
+        {0x201, 0x801, 0, 0}, {0x201, 0x10000000800ULL, 0, 0},
+        {0x250, 0x0605040100060504ULL, 1, 0x0605040100060504ULL}, {0x250, 0x0700000000000000ULL, 0, 0},
+        {0x26f, 0x03, 0, 0}, {0x2ff, 0xc06, 1, 0xc06}, {0x2ff, 0x07, 0, 0}, {0x2ff, 0x106, 0, 0},
+        {0x2ff, 0x1006, 0, 0},
+        {0x277, 0x0007040600070406ULL, 1, 0x0007040600070406ULL}, {0x277, 0x0700000000000000ULL, 1,
+        0x0700000000000000ULL}, {0x277, 0x08, 0, 0}, {0x277, 0x0200, 0, 0},
+        {0x401, 0x1, 0, 0}, {0x401, 0, 1, 0}, {0x403, 0x8000000000000000ULL, 0, 0},
+        {0xc0000080, 0x501, 1, 0x501}, {0xc0000080, 0x101, 1, 0x501}, {0xc0000080, 0x503, 0, 0},
+        {0xc0000080, 0x2501, 0, 0}, {0xc0000080, 0x4501, 0, 0},
+        {0xc0000082, 0x0000800000000000ULL, 1, 0x0000800000000000ULL},
+        {0xc0000082, 0x0100000000000000ULL, 0, 0}, {0xc0000100, 0xfe00000000000000ULL, 0, 0},
+        {0xc0000101, 0xff00000000001000ULL, 1, 0xff00000000001000ULL},
+        {0xc0000102, 0x0200000000000000ULL, 0, 0}, {0xc0000084, 0xffffffff, 1, 0xffffffff},
+        {0xc0000084, 0x100000000ULL, 0, 0}, {0xc0000103, 0xffffffff, 1, 0xffffffff},
+        {0xc0000103, 0x100000000ULL, 0, 0}, {0xc0000081, 0xffffffffffffffffULL, 1, ~0ULL},
+        {0xda0, 0x1, 0, 0}, {0xd93, 0x40000000, 0, 0}, {0xd90, 0x4, 0, 0}, {0x6e1, 0x100000000ULL, 0, 0},
+        {0x17da, 0x2, 0, 0}, {0x1b01, 0x2, 0, 0}, {0x1c, 0x2, 0, 0}, {0x6a8, 0x0100000000000000ULL, 0, 0},
+    };
+    SmCtx c;
+    size_t i;
+
+    sm_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint64_t v = t[i].val, before = 0, after = 0;
+        uc_x86_msr m;
+
+        TEST_CHECK(sm_insn_msr(&c, t[i].msr, 0, &before) == -1);
+        m.rid = t[i].msr;
+        m.value = t[i].val;
+        if (t[i].ok) {
+            TEST_CHECK(sm_insn_msr(&c, t[i].msr, 1, &v) == -1);
+            TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK);
+            TEST_CHECK(sm_insn_msr(&c, t[i].msr, 0, &after) == -1);
+            TEST_CHECK(t[i].read == ~0ULL || after == t[i].read);
+        } else {
+            TEST_CHECK(sm_insn_msr(&c, t[i].msr, 1, &v) == 13);
+            TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+            TEST_CHECK(sm_insn_msr(&c, t[i].msr, 0, &after) == -1);
+            TEST_CHECK(t[i].msr == 0x8b || after == before);
+        }
+        TEST_MSG("msr %x value %llx: before %llx after %llx", t[i].msr, (unsigned long long)t[i].val,
+                 (unsigned long long)before, (unsigned long long)after);
+    }
+    /* IA32_FEATURE_CONTROL locked: any later write #GP(0) */
+    {
+        uint64_t v = 0xff01;
+
+        TEST_CHECK(sm_insn_msr(&c, 0x3a, 1, &v) == -1);
+        v = 0;
+        TEST_CHECK(sm_insn_msr(&c, 0x3a, 1, &v) == 13);
+    }
+    OK(uc_close(c.uc));
+
+    /*
+     * the named models list IBRS / IBPB / ARCH_CAPABILITIES (Cascadelake-Server), but the
+     * emulator's CPUID does not report them (TCG has none of those features): IA32_SPEC_CTRL,
+     * IA32_PRED_CMD and IA32_ARCH_CAPABILITIES do not exist there
+     */
+    sm_open(&c, UC_MODE_64, UC_CPU_X86_CASCADELAKE_SERVER);
+    {
+        uint64_t v = 0;
+        uint32_t edx;
+
+        OK(uc_mem_write(c.uc, code_start, "\x0f\xa2", 2));
+        sm_set(&c, UC_X86_REG_RAX, 7);
+        sm_set(&c, UC_X86_REG_RCX, 0);
+        OK(uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+        edx = (uint32_t)sm_get(&c, UC_X86_REG_RDX);
+        TEST_CHECK(!(edx & (1u << 26)) && !(edx & (1u << 29)));
+        TEST_MSG("CPUID.7.0:EDX %x", edx);
+        TEST_CHECK(sm_insn_msr(&c, 0x48, 0, &v) == 13);
+        TEST_CHECK(sm_insn_msr(&c, 0x49, 1, &v) == 13);
+        TEST_CHECK(sm_insn_msr(&c, 0x10a, 0, &v) == 13);
+    }
+    OK(uc_close(c.uc));
+}
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -24262,4 +24377,5 @@ TEST_LIST = {
     {"test_x86_sm_sysret_flags", test_x86_sm_sysret_flags},
     {"test_x86_sm_sysexit", test_x86_sm_sysexit},
     {"test_x86_sm_msr_present", test_x86_sm_msr_present},
+    {"test_x86_sm_msr_values", test_x86_sm_msr_values},
     {NULL, NULL}};
