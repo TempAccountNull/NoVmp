@@ -158,8 +158,13 @@ target_ulong helper_read_crN(CPUX86State *env, int reg)
         break;
     case 8:
         if (!(env->hflags2 & HF2_VINTR_MASK)) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U960) */
             // val = cpu_get_apic_tpr(env_archcpu(env)->apic_state);
             val = 0;
+#else /* ours (U960) */
+            /* SDM Vol3A 13.8.6.1: CR8[3:0] = TPR[7:4] of the local APIC */
+            val = x86_apic_get_cr8(env);
+#endif /* __Use_Original_Qemu (U960) */
         } else {
             val = env->v_tpr;
         }
@@ -230,12 +235,27 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         cpu_x86_update_cr4(env, (uint32_t)t0);
         break;
     case 8:
+#if __Use_Original_Qemu == 1 /* original QEMU (U960) */
 #if 0
         if (!(env->hflags2 & HF2_VINTR_MASK)) {
             cpu_set_apic_tpr(env_archcpu(env)->apic_state, t0);
         }
 #endif
         env->v_tpr = t0 & 0x0f;
+#else /* ours (U960) */
+        /*
+         * SDM Vol3A 13.8.6.1 / Vol2B MOV CR: bits 63:4 of CR8 are reserved (#GP(0) if set);
+         * the write loads TPR[7:4] = CR8[3:0], TPR[3:0] = 0 of the local APIC.
+         */
+        if (t0 & ~(target_ulong)0xf) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        if (env->hflags2 & HF2_VINTR_MASK) {
+            env->v_tpr = t0 & 0x0f;
+        } else {
+            x86_apic_set_cr8(env, t0);
+        }
+#endif /* __Use_Original_Qemu (U960) */
         break;
     default:
         env->cr[reg] = t0;
@@ -1438,6 +1458,12 @@ void helper_wrmsr(CPUX86State *env)
     val = ((uint32_t)env->regs[R_EAX]) |
         ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
 
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c) */
+    if (x86_apic_msr_write(env, (uint32_t)env->regs[R_ECX], val, GETPC())) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U960) */
 #if __Use_Original_Qemu != 1 /* ours (U905) */
     if (!msr_access_ok(env, (uint32_t)env->regs[R_ECX], true, val, wrmsr_ra)) {
         return;
@@ -1985,6 +2011,14 @@ void helper_rdmsr(CPUX86State *env)
     if (skip_rdmsr)
         return;
 
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c) */
+    if (x86_apic_msr_read(env, (uint32_t)env->regs[R_ECX], &val, GETPC())) {
+        env->regs[R_EAX] = (uint32_t)(val);
+        env->regs[R_EDX] = (uint32_t)(val >> 32);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U960) */
 #if __Use_Original_Qemu != 1 /* ours (U905) */
     if (!msr_access_ok(env, (uint32_t)env->regs[R_ECX], false, 0, rdmsr_ra)) {
         return;

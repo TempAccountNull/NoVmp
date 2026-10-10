@@ -2139,6 +2139,29 @@ typedef struct CPUX86State {
      */
     X86MktmeKey mktme_keys[NOVMP_MKTME_MAX_KEYS + 1];
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    /*
+     * NoVmp (ledger U960): the local APIC (apic_model.c, SDM Vol3A ch. 13), reset by
+     * x86_apic_reset. The IRR / TMR words and the error words may also be written by
+     * another vCPU on the APIC bus (atomic updates); the rest only by this vCPU.
+     */
+    uint64_t apic_base;             /* IA32_APIC_BASE */
+    uint64_t apic_icr;              /* ICR (830H) */
+    uint32_t apic_tpr;
+    uint32_t apic_ldr;
+    uint32_t apic_dfr;              /* xAPIC MMIO register: reset value only */
+    uint32_t apic_svr;
+    uint32_t apic_esr;              /* the ESR as loaded by the last write to it */
+    uint32_t apic_esr_latch;        /* errors logged since that write */
+    uint32_t apic_err_new;          /* errors the LVT error interrupt has not seen yet */
+    uint32_t apic_err_armed;        /* 1: the next error signals the LVT error interrupt */
+    uint32_t apic_lvt[7];           /* CMCI, timer, thermal, perf. mon., LINT0, LINT1, error */
+    uint32_t apic_tmict;            /* timer initial count */
+    uint32_t apic_tdcr;             /* timer divide configuration */
+    uint32_t apic_isr[8];
+    uint32_t apic_tmr[8];
+    uint32_t apic_irr[8];
+#endif /* __Use_Original_Qemu (U960) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -2517,6 +2540,21 @@ bool x86_uintr_deliverable(CPUX86State *env);
 void x86_uintr_deliver(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+/* apic_model.c: the local APIC (ledger U960, docs/apic.md) */
+void x86_apic_reset(CPUX86State *env);
+uint32_t x86_apic_id(CPUX86State *env);
+void x86_apic_cpuid_fixup(CPUX86State *env, uint32_t index, uint32_t *eax, uint32_t *ebx,
+                          uint32_t *ecx, uint32_t *edx);
+bool x86_apic_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val, uintptr_t ra);
+bool x86_apic_msr_write(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t ra);
+uint64_t x86_apic_get_cr8(CPUX86State *env);
+void x86_apic_set_cr8(CPUX86State *env, uint64_t val);
+void x86_apic_update(CPUX86State *env);
+int x86_apic_acknowledge(CPUX86State *env);
+void x86_apic_eoi(CPUX86State *env);
+void QEMU_NORETURN x86_apic_deliver_event(CPUX86State *env, int vector);
+#endif /* __Use_Original_Qemu (U960) */
 #if __Use_Original_Qemu != 1 /* ours (U860) */
 /*
  * cpu.c (ledger U860): the x87 pointer bits of the effective CPUID.(EAX=07H,ECX=0):EBX

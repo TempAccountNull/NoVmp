@@ -2172,7 +2172,18 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
     switch (interrupt_request) {
     case CPU_INTERRUPT_POLL:
         cs->interrupt_request &= ~CPU_INTERRUPT_POLL;
+#if __Use_Original_Qemu == 1 /* original QEMU (U960) */
         // apic_poll_irq(cpu->apic_state);
+#else /* ours (U960) */
+        /*
+         * the local APIC got a message: re-evaluate it (error interrupt, CPU_INTERRUPT_HARD)
+         * and take what is now deliverable at this same instruction boundary
+         */
+        x86_apic_update(env);
+        if (x86_cpu_exec_interrupt(cs, cs->interrupt_request)) {
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U960) */
         break;
     case CPU_INTERRUPT_SIPI:
         do_cpu_sipi(cpu);
@@ -2186,7 +2197,12 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         cpu_svm_check_intercept_param(env, SVM_EXIT_NMI, 0, 0);
         cs->interrupt_request &= ~CPU_INTERRUPT_NMI;
         env->hflags2 |= HF2_NMI_MASK;
+#if __Use_Original_Qemu == 1 /* original QEMU (U960) */
         do_interrupt_x86_hardirq(env, EXCP02_NMI, 1);
+#else /* ours (U960) */
+        /* an NMI from the local APIC (SDM Vol3A 7.7: NMIs blocked until the next IRET) */
+        x86_apic_deliver_event(env, EXCP02_NMI);
+#endif /* __Use_Original_Qemu (U960) */
         break;
     case CPU_INTERRUPT_MCE:
         cs->interrupt_request &= ~CPU_INTERRUPT_MCE;
@@ -2196,11 +2212,19 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         cpu_svm_check_intercept_param(env, SVM_EXIT_INTR, 0, 0);
         cs->interrupt_request &= ~(CPU_INTERRUPT_HARD |
                                    CPU_INTERRUPT_VIRQ);
+#if __Use_Original_Qemu == 1 /* original QEMU (U960) */
         // intno = cpu_get_pic_interrupt(env);
         intno = 0;
         //qemu_log_mask(CPU_LOG_TB_IN_ASM,
         //              "Servicing hardware INT=0x%02x\n", intno);
         do_interrupt_x86_hardirq(env, intno, 1);
+#else /* ours (U960) */
+        /* INTR from the local APIC: acknowledge (IRR -> ISR, SDM Vol3A 13.8.4) and deliver */
+        intno = x86_apic_acknowledge(env);
+        if (intno >= 0) {
+            x86_apic_deliver_event(env, intno);
+        }
+#endif /* __Use_Original_Qemu (U960) */
         break;
     case CPU_INTERRUPT_VIRQ:
         /* FIXME: this should respect TPR */

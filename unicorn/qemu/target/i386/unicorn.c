@@ -2635,6 +2635,10 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
     X86_CTX_COPY(rdrand_count);
     X86_CTX_COPY(rdrand_host);
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    /* the restored local APIC state decides CPU_INTERRUPT_HARD (apic_model.c) */
+    x86_apic_update(env);
+#endif /* __Use_Original_Qemu (U960) */
     if (env->cr[0] != cr0 || env->cr[3] != cr3 || env->cr[4] != cr4 || env->efer != efer ||
         env->pkru != pkru || env->pkrs != pkrs) {
         tlb_flush(uc->cpu);

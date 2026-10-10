@@ -627,7 +627,8 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_EXT_XSAVE | /* CPUID_EXT_OSXSAVE is dynamic */   \
           CPUID_EXT_MOVBE | CPUID_EXT_AES | CPUID_EXT_HYPERVISOR | \
           CPUID_EXT_RDRAND | CPUID_EXT_AVX | CPUID_EXT_F16C | \
-          CPUID_EXT_FMA | CPUID_EXT_SMX /* U113 */)
+          CPUID_EXT_FMA | CPUID_EXT_SMX /* U113 */ | \
+          CPUID_EXT_X2APIC /* U960: local x2APIC (apic_model.c) */)
 #endif /* __Use_Original_Qemu (U113) */
           /* missing:
           CPUID_EXT_DTES64, CPUID_EXT_DSCPL, CPUID_EXT_VMX, CPUID_EXT_SMX,
@@ -4357,6 +4358,9 @@ static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
         *ebx = x86_cpuid_profile_xsave_size(uc, env->xcr0);
     }
 #endif /* __Use_Original_Qemu (U125) */
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    x86_apic_cpuid_fixup(env, index, eax, ebx, ecx, edx);   /* local APIC state (U960) */
+#endif /* __Use_Original_Qemu (U960) */
     return true;
 }
 
@@ -5259,6 +5263,9 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *edx = 0;
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    x86_apic_cpuid_fixup(env, index, eax, ebx, ecx, edx);   /* local APIC state (U960) */
+#endif /* __Use_Original_Qemu (U960) */
 }
 
 #if __Use_Original_Qemu != 1 /* ours (U370) */
@@ -5421,6 +5428,10 @@ static void x86_cpu_reset(CPUState *dev)
     env->mtrr_deftype = 0;
     memset(env->mtrr_var, 0, sizeof(env->mtrr_var));
     memset(env->mtrr_fixed, 0, sizeof(env->mtrr_fixed));
+#if __Use_Original_Qemu != 1 /* ours (U960) */
+    /* the local APIC after power-up / reset (SDM Vol3A 13.4.7.1, 13.12.5.1) */
+    x86_apic_reset(env);
+#endif /* __Use_Original_Qemu (U960) */
 }
 
 static void mce_init(X86CPU *cpu)

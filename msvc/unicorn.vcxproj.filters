@@ -42,6 +42,7 @@
     <ClCompile Include="..\unicorn\qemu\accel\tcg\tb-maint.c"><Filter>qemu\accel\tcg</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\softmmu\unicorn_vtlb.c"><Filter>qemu\softmmu</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\hw\i386\x86.c"><Filter>qemu\hw\i386</Filter></ClCompile>
+    <ClCompile Include="..\unicorn\qemu\target\i386\apic_model.c"><Filter>qemu\target\i386</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\target\i386\arch_memory_mapping.c"><Filter>qemu\target\i386</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\target\i386\bpt_helper.c"><Filter>qemu\target\i386</Filter></ClCompile>
     <ClCompile Include="..\unicorn\qemu\target\i386\cc_helper.c"><Filter>qemu\target\i386</Filter></ClCompile>

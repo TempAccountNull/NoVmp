@@ -76,13 +76,15 @@ typedef struct uc_x86_cpuid {
 // (NoVmp ledger U770). Unicorn reports an exception to UC_HOOK_INTR with its vector only; this
 // record adds what the CPU would push or load when delivering it (SDM Vol3A 7.13 "Error Code",
 // Table 7-1; 7.15 "Interrupt 14": CR2). Read-only.
+// NoVmp U960: also the last external interrupt the local APIC delivered (a fixed interrupt's
+// vector, or 2 for an NMI) with external = 1; docs/apic.md.
 typedef struct uc_x86_exception {
     int32_t vector;          // 0-255, -1 = none since the outermost uc_emu_start began
     uint8_t has_error_code;  // 1: the vector delivers an error code (#DF #TS #NP #SS #GP #PF
                              //    #AC #CP) and the event is not INT n / INT3 / INTO
     uint8_t software;        // 1: INT n, INT3 or INTO (no error code); 0: an exception
     uint8_t has_address;     // 1: #PF: 'address' is the faulting linear address (CR2)
-    uint8_t reserved;
+    uint8_t external;        // 1: an external interrupt / NMI from the local APIC (NoVmp U960)
     uint32_t error_code;     // the error code when has_error_code = 1, else 0
     uint64_t address;        // the #PF linear address when has_address = 1, else 0
 } uc_x86_exception;
