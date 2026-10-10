@@ -18964,6 +18964,7 @@ static void test_x86_axc_apx_nci_ndd_nf(void)
     }
 }
 /* ---- end U790-U793 (axc_) ---- */
+/*
  * ---- x87misc (xm_) block: ledger U860-U889 ----
  * U860: FDP/FCS/FDS follow the effective CPUID.(EAX=07H,ECX=0):EBX[6] (FDP_EXCPTN_ONLY)
  * and EBX[13] (FCS/FDS deprecated), SDM Vol1 8.1.8. Profiles: the i5-13600K leaves 0/1/7
