@@ -1849,26 +1849,36 @@ static void test_x86_opmask_registers(void)
     OK(uc_close(uc));
 }
 
+/*
+ * NoVmp U905 (MSR model): the QEMU 7.2 MSR state (IA32_XFD/XFD_ERR, IA32_PKRS, the arch LBR
+ * MSRs, IA32_XSS) exists only where the CPU model enumerates it (SDM Vol4 Table 2-2): the
+ * test uses UC_CPU_X86_MAX with AMX (XFD) and values the MSRs accept (XFD: the XFD-capable
+ * TILEDATA bit 18 only, SDM Vol1 13.14). No model has arch LBRs (CPUID.(7,0):EDX[19]): those
+ * MSRs are #GP(0) for RDMSR/WRMSR, UC_ERR_EXCEPTION for the API. Was: the default model, any
+ * value stored in MSRs that model does not have.
+ */
 static void test_x86_qemu72_msr_state(void)
 {
     uc_engine *uc;
     uc_x86_msr msr;
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_amx(uc, UC_X86_AMX_TILE));
 
     msr.rid = TEST_MSR_IA32_XFD;
-    msr.value = 0x12345678abcdef00ULL;
+    msr.value = 1ULL << 18;
     OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
     msr.value = 0;
     OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0x12345678abcdef00ULL);
+    TEST_CHECK(msr.value == 1ULL << 18);
 
     msr.rid = TEST_MSR_IA32_XFD_ERR;
-    msr.value = 0xfedcba9876543210ULL;
+    msr.value = 1ULL << 18;
     OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
     msr.value = 0;
     OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0xfedcba9876543210ULL);
+    TEST_CHECK(msr.value == 1ULL << 18);
 
     msr.rid = TEST_MSR_IA32_PKRS;
     msr.value = 0xa5a55a5aULL;
@@ -1879,45 +1889,26 @@ static void test_x86_qemu72_msr_state(void)
 
     msr.rid = TEST_MSR_ARCH_LBR_CTL;
     msr.value = 0x19;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
-    msr.value = 0;
-    OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0x19);
-
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_write(uc, UC_X86_REG_MSR, &msr));
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_read(uc, UC_X86_REG_MSR, &msr));
     msr.rid = TEST_MSR_ARCH_LBR_DEPTH;
-    msr.value = 32;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
-    msr.value = 0;
-    OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 32);
-
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_read(uc, UC_X86_REG_MSR, &msr));
     msr.rid = TEST_MSR_ARCH_LBR_FROM_0 + 3;
-    msr.value = 0x1111222233334444ULL;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
-    msr.value = 0;
-    OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0x1111222233334444ULL);
-
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_read(uc, UC_X86_REG_MSR, &msr));
     msr.rid = TEST_MSR_ARCH_LBR_TO_0 + 3;
-    msr.value = 0x5555666677778888ULL;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
-    msr.value = 0;
-    OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0x5555666677778888ULL);
-
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_read(uc, UC_X86_REG_MSR, &msr));
     msr.rid = TEST_MSR_ARCH_LBR_INFO_0 + 3;
-    msr.value = 0x9999aaaabbbbccccULL;
+    uc_assert_err(UC_ERR_EXCEPTION, uc_reg_read(uc, UC_X86_REG_MSR, &msr));
+
+    /* IA32_XSS: the supported bits (CET_U, CET_S) are kept; unsupported ones never stored */
+    msr.rid = TEST_MSR_IA32_XSS;
+    msr.value = 0x1800;
     OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
+    msr.value = UINT64_MAX;
+    uc_reg_write(uc, UC_X86_REG_MSR, &msr);
     msr.value = 0;
     OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK(msr.value == 0x9999aaaabbbbccccULL);
-
-    msr.rid = TEST_MSR_IA32_XSS;
-    msr.value = UINT64_MAX;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &msr));
-    msr.value = UINT64_MAX;
-    OK(uc_reg_read(uc, UC_X86_REG_MSR, &msr));
-    TEST_CHECK((msr.value & ~(1ULL << 15)) == 0);
+    TEST_CHECK(msr.value == 0x1800);
 
     OK(uc_close(uc));
 }
@@ -10690,10 +10681,14 @@ static void test_x86_amx_xfd(void)
     TEST_CHECK(ax_run(&a, code, n) == -1);
     ax_close(&a);
 
-    /* without the opt-in the MSRs keep QEMU's store/return behaviour and have no effect */
+    /*
+     * without the opt-in there is no IA32_XFD (CPUID.(0DH,1):EAX.XFD[4] = 0): WRMSR / RDMSR #GP(0)
+     * (U905, SDM Vol1 13.14; was: QEMU's store/return behaviour)
+     */
     ax_open(&a, UC_MODE_64, 0, NULL, 0);
-    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x12345678abcdef00ULL) == -1);
-    TEST_CHECK(ax_rdmsr(&a, 0x1c4) == 0x12345678abcdef00ULL);
+    TEST_CHECK(ax_wrmsr(&a, 0x1c4, 0x12345678abcdef00ULL) == 13);
+    ax_set(&a, UC_X86_REG_RCX, 0x1c4);
+    TEST_CHECK(ax_run(&a, (const uint8_t *)"\x0f\x32", 2) == 13);
     memset(area, 0xcc, sizeof(area));
     memset(area + 512, 0, 64);
     OK(uc_mem_write(a.uc, AX_DATA, area, sizeof(area)));
@@ -23861,6 +23856,88 @@ static void test_x86_sm_sysexit(void)
         OK(uc_close(c.uc));
     }
 }
+
+/* RDMSR / WRMSR of ECX = msr at a fresh address: the vector (13 = #GP) or -1 */
+static int sm_insn_msr(SmCtx *c, uint32_t msr, int write, uint64_t *v)
+{
+    uc_err err;
+
+    c->cap.count = 0;
+    sm_set(c, UC_X86_REG_RCX, msr);
+    sm_set(c, UC_X86_REG_RAX, write ? (uint32_t)*v : 0x1111);
+    sm_set(c, UC_X86_REG_RDX, write ? (uint32_t)(*v >> 32) : 0x2222);
+    OK(uc_mem_write(c->uc, code_start, write ? "\x0f\x30" : "\x0f\x32", 2));
+    err = uc_emu_start(c->uc, code_start, code_start + 2, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK);
+    if (!write && !c->cap.count) {
+        *v = (sm_get(c, UC_X86_REG_RAX) & 0xffffffffULL) | (sm_get(c, UC_X86_REG_RDX) << 32);
+    }
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static int sm_rdmsr_hook_cb(uc_engine *uc, void *user)
+{
+    uint64_t v = 0x5a5a;
+
+    (*(int *)user)++;
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &v));
+    return 1;      /* the hook handles the access */
+}
+
+/*
+ * U905: the MSR list of the CPU model. Default model (Haswell): an address no table defines
+ * (1234H) and MSRs of features the model lacks (IA32_TSC_ADJUST, IA32_XFD, IA32_PKRS, the arch
+ * LBR MSRs, IA32_UMWAIT_CONTROL) are #GP(0) for RDMSR and WRMSR, registers unchanged, and
+ * UC_ERR_EXCEPTION for uc_reg_read/write; Table 2-2 MSRs the emulator did not model exist
+ * (IA32_TIME_STAMP_COUNTER, IA32_PLATFORM_ID, IA32_PERF_CTL, IA32_DEBUGCTL); a RDMSR hook that
+ * returns 1 handles an unknown MSR (no #GP); IA32_TSC: RDTSC follows a WRMSR to it.
+ */
+static void test_x86_sm_msr_present(void)
+{
+    static const uint32_t absent[] = {0x1234, 0x3b, 0x1c4, 0x6e1, 0x14ce, 0x1500, 0xe1, 0x40000000,
+                                      0xc0000104, 0x345, 0xc1, 0x186, 0x38f};
+    static const uint32_t present[] = {0x10, 0x17, 0x1b, 0x8b, 0xfe, 0x174, 0x179, 0x198, 0x199,
+                                       0x1a0, 0x1d9, 0x277, 0x2ff, 0x200, 0x400, 0xc0000080,
+                                       0xc0000082, 0xc0000103};
+    SmCtx c;
+    uc_x86_msr m;
+    uc_hook hh;
+    uint64_t v, t0, t1;
+    int hits = 0;
+    size_t i;
+
+    sm_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(absent) / sizeof(absent[0]); i++) {
+        v = 0;
+        TEST_CHECK(sm_insn_msr(&c, absent[i], 0, &v) == 13);
+        TEST_CHECK(sm_get(&c, UC_X86_REG_RAX) == 0x1111 && sm_get(&c, UC_X86_REG_RDX) == 0x2222);
+        TEST_CHECK(sm_insn_msr(&c, absent[i], 1, &v) == 13);
+        m.rid = absent[i];
+        m.value = 0;
+        TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_MSG("absent MSR %x", absent[i]);
+    }
+    for (i = 0; i < sizeof(present) / sizeof(present[0]); i++) {
+        TEST_CHECK(sm_insn_msr(&c, present[i], 0, &v) == -1);
+        m.rid = present[i];
+        TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK);
+        TEST_MSG("present MSR %x", present[i]);
+    }
+    /* IA32_TIME_STAMP_COUNTER: written 1000000000000h, RDTSC continues from there */
+    v = 0x1000000000000ULL;
+    TEST_CHECK(sm_insn_msr(&c, 0x10, 1, &v) == -1);
+    OK(uc_mem_write(c.uc, code_start, "\x0f\x31", 2));
+    OK(uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+    t0 = (sm_get(&c, UC_X86_REG_RAX) & 0xffffffffULL) | (sm_get(&c, UC_X86_REG_RDX) << 32);
+    TEST_CHECK(sm_insn_msr(&c, 0x10, 0, &t1) == -1);
+    TEST_CHECK(t0 >= 0x1000000000000ULL && t0 < 0x1000000000000ULL + (1ULL << 40) && t1 >= t0);
+    TEST_MSG("tsc after write: rdtsc %llx rdmsr %llx", (unsigned long long)t0, (unsigned long long)t1);
+    /* a RDMSR hook returning 1 handles the unknown MSR */
+    OK(uc_hook_add(c.uc, &hh, UC_HOOK_INSN, sm_rdmsr_hook_cb, &hits, 1, 0, UC_X86_INS_RDMSR));
+    TEST_CHECK(sm_insn_msr(&c, 0x1234, 0, &v) == -1 && hits == 1 && v == 0x0000222200005a5aULL);
+    OK(uc_close(c.uc));
+}
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -24184,4 +24261,5 @@ TEST_LIST = {
     {"test_x86_sm_sysenter", test_x86_sm_sysenter},
     {"test_x86_sm_sysret_flags", test_x86_sm_sysret_flags},
     {"test_x86_sm_sysexit", test_x86_sm_sysexit},
+    {"test_x86_sm_msr_present", test_x86_sm_msr_present},
     {NULL, NULL}};

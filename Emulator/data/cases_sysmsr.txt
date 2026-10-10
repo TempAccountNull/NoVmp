@@ -70,3 +70,78 @@ mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov rcx, 0x1000; mov rdx, 0x
 # there PUSH CS (0Eh) writes the selector at ECX - 4 = MEM + 90FCh (only its 2 low bytes are checked: the SDM
 # allows a 16-bit store), then SYSENTER back to 64-bit mode CPL0 at k (IA32_SYSENTER_ESP = the old RSP)
 mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov rax, rsp; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr; lea rdx, [rip + u]; mov rax, 0x5555555500000000; or rdx, rax; mov rcx, 0xAAAAAAAA30029100; .byte 0x0f, 0x35; u: .byte 0x0e; sysenter; k: nop =>! m+0x90FC=2300
+# --- the MSR list of the CPU model (U905): Vol2B RDMSR / Vol2D WRMSR "#GP(0) If the value in ECX specifies a
+# reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model's CPUID
+# (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.
+mov eax, 1; cpuid =>! rcx=0xFED8324B rdx=0xFCBFBFD
+mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C107AC rdx=0x114820
+mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF
+mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD
+mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0 rbx=0 rcx=0 rdx=0
+mov eax, 6; cpuid =>! rcx=0
+rdmsr | rcx=0x10 =>!
+rdmsr | rcx=0x17 =>!
+rdmsr | rcx=0x1B =>!
+rdmsr | rcx=0x3A =>!
+rdmsr | rcx=0x3B rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x3B rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x48 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x48 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x8B =>!
+rdmsr | rcx=0x9E rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x9E rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0xC1 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0xC1 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0xE1 =>!
+rdmsr | rcx=0xE7 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0xE7 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0xFE =>!
+rdmsr | rcx=0x174 =>!
+rdmsr | rcx=0x175 =>!
+rdmsr | rcx=0x176 =>!
+rdmsr | rcx=0x179 =>!
+rdmsr | rcx=0x17A =>!
+rdmsr | rcx=0x186 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x186 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x198 =>!
+rdmsr | rcx=0x199 =>!
+rdmsr | rcx=0x1A0 =>!
+rdmsr | rcx=0x1C4 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x1C4 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x1D9 =>!
+rdmsr | rcx=0x200 =>!
+rdmsr | rcx=0x250 =>!
+rdmsr | rcx=0x277 =>!
+rdmsr | rcx=0x2FF =>!
+rdmsr | rcx=0x345 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x345 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x38F rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x38F rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x6A0 =>!
+rdmsr | rcx=0x6A4 =>!
+rdmsr | rcx=0x6E0 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x6E0 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x6E1 =>!
+rdmsr | rcx=0xD90 =>!
+rdmsr | rcx=0xD93 =>!
+rdmsr | rcx=0xDA0 =>!
+rdmsr | rcx=0x1234 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x1234 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x14CE rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x14CE rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x1500 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x1500 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x40000000 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x40000000 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0xC0000080 =>!
+rdmsr | rcx=0xC0000081 =>!
+rdmsr | rcx=0xC0000082 =>!
+rdmsr | rcx=0xC0000083 =>!
+rdmsr | rcx=0xC0000084 =>!
+rdmsr | rcx=0xC0000100 =>!
+rdmsr | rcx=0xC0000101 =>!
+rdmsr | rcx=0xC0000102 =>!
+rdmsr | rcx=0xC0000103 =>!
+rdmsr | rcx=0xC0000104 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0xC0000104 rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0xC0010117 =>!

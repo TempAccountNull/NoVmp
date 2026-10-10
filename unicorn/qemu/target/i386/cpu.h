@@ -2037,6 +2037,10 @@ typedef struct CPUX86State {
     uint64_t msr_user_msr_ctl;      /* IA32_USER_MSR_CTL (1CH) */
     uint64_t msr_uarch_misc_ctl;    /* IA32_UARCH_MISC_CTL (1B01H) */
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    uint64_t msr_perf_ctl;          /* IA32_PERF_CTL (199H): stored, no P-states */
+    uint64_t msr_debugctl;          /* IA32_DEBUGCTL (1D9H): stored, no LBR/BTF/BTS */
+#endif /* __Use_Original_Qemu (U905) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* NoVmp (ledger U104): user-interrupt state (SDM Vol3A 9.3.1), cleared by reset */
     uint64_t uintr_rr;              /* UIRR */
@@ -2199,6 +2203,10 @@ typedef struct CPUX86State {
      */
     uint8_t msr_api;
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    /* NoVmp (ledger U905): set when an msr_api access would #GP(0): uc_reg_* returns UC_ERR_EXCEPTION */
+    uint8_t msr_api_err;
+#endif /* __Use_Original_Qemu (U905) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     uint64_t pasid;   /* IA32_PASID (D93H): 19:0 PASID, 31 valid */
 #endif /* __Use_Original_Qemu (U112) */

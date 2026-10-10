@@ -304,8 +304,15 @@ static int x86_msr_read(CPUX86State *env, uc_x86_msr *msr)
     helper_rdmsr(env);
 #else /* ours (U111) */
     env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
+    env->msr_api_err = 0;           /* U905 */
     helper_rdmsr(env);
     env->msr_api = 0;
+    if (env->msr_api_err) {         /* U905: #GP(0) for an instruction: no access */
+        env->regs[R_EAX] = eax;
+        env->regs[R_ECX] = ecx;
+        env->regs[R_EDX] = edx;
+        return -1;
+    }
 #endif /* __Use_Original_Qemu (U111) */
 
     msr->value = ((uint32_t)env->regs[R_EAX]) |
@@ -333,8 +340,15 @@ static int x86_msr_write(CPUX86State *env, uc_x86_msr *msr)
     helper_wrmsr(env);
 #else /* ours (U111) */
     env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
+    env->msr_api_err = 0;           /* U905 */
     helper_wrmsr(env);
     env->msr_api = 0;
+    if (env->msr_api_err) {         /* U905: #GP(0) for an instruction: nothing written */
+        env->regs[R_ECX] = ecx;
+        env->regs[R_EAX] = eax;
+        env->regs[R_EDX] = edx;
+        return -1;
+    }
 #endif /* __Use_Original_Qemu (U111) */
 
     env->regs[R_ECX] = ecx;
@@ -810,7 +824,15 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
             break;
         case UC_X86_REG_MSR:
             CHECK_REG_TYPE(uc_x86_msr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
             x86_msr_read(env, (uc_x86_msr *)value);
+#else /* ours (U905) */
+            if (x86_msr_read(env, (uc_x86_msr *)value)) {
+                /* the instruction would #GP(0): no such MSR or a refused value (U905);
+                   not UC_ERR_ARG, which CHECK_RET_DEPRECATE turns into UC_ERR_OK */
+                ret = UC_ERR_EXCEPTION;
+            }
+#endif /* __Use_Original_Qemu (U905) */
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);
@@ -1208,7 +1230,15 @@ uc_err reg_read(void *_env, int mode, unsigned int regid, void *value,
             break;
         case UC_X86_REG_MSR:
             CHECK_REG_TYPE(uc_x86_msr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
             x86_msr_read(env, (uc_x86_msr *)value);
+#else /* ours (U905) */
+            if (x86_msr_read(env, (uc_x86_msr *)value)) {
+                /* the instruction would #GP(0): no such MSR or a refused value (U905);
+                   not UC_ERR_ARG, which CHECK_RET_DEPRECATE turns into UC_ERR_OK */
+                ret = UC_ERR_EXCEPTION;
+            }
+#endif /* __Use_Original_Qemu (U905) */
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);
@@ -1861,7 +1891,15 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
             break;
         case UC_X86_REG_MSR:
             CHECK_REG_TYPE(uc_x86_msr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
             x86_msr_write(env, (uc_x86_msr *)value);
+#else /* ours (U905) */
+            if (x86_msr_write(env, (uc_x86_msr *)value)) {
+                /* the instruction would #GP(0): no such MSR or a refused value (U905);
+                   not UC_ERR_ARG, which CHECK_RET_DEPRECATE turns into UC_ERR_OK */
+                ret = UC_ERR_EXCEPTION;
+            }
+#endif /* __Use_Original_Qemu (U905) */
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);
@@ -2289,7 +2327,15 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
             break;
         case UC_X86_REG_MSR:
             CHECK_REG_TYPE(uc_x86_msr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
             x86_msr_write(env, (uc_x86_msr *)value);
+#else /* ours (U905) */
+            if (x86_msr_write(env, (uc_x86_msr *)value)) {
+                /* the instruction would #GP(0): no such MSR or a refused value (U905);
+                   not UC_ERR_ARG, which CHECK_RET_DEPRECATE turns into UC_ERR_OK */
+                ret = UC_ERR_EXCEPTION;
+            }
+#endif /* __Use_Original_Qemu (U905) */
             break;
         case UC_X86_REG_MXCSR:
             CHECK_REG_TYPE(uint32_t);

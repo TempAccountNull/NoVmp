@@ -264,6 +264,18 @@ void helper_flush_page(CPUX86State *env, target_ulong addr)
     tlb_flush_page(env_cpu(env), addr);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+/*
+ * NoVmp (ledger U905): the time-stamp counter RDTSC, RDTSCP and RDMSR 10H read: the host-time
+ * counter plus IA32_TSC_ADJUST, which a WRMSR to IA32_TIME_STAMP_COUNTER moves by the delta
+ * written (SDM Vol3B 18.17.3: a write to the TSC changes IA32_TSC_ADJUST by the same amount)
+ */
+static uint64_t msr_tsc_now(CPUX86State *env)
+{
+    return cpu_get_tsc(env) + env->tsc_offset + env->tsc_adjust;
+}
+
+#endif /* __Use_Original_Qemu (U905) */
 void helper_rdtsc(CPUX86State *env)
 {
     uint64_t val;
@@ -302,7 +314,11 @@ void helper_rdtsc(CPUX86State *env)
     }
 
     if (!skip_rdtsc) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
         val = cpu_get_tsc(env) + env->tsc_offset;
+#else /* ours (U905) */
+        val = msr_tsc_now(env);         /* IA32_TSC_ADJUST included (U905) */
+#endif /* __Use_Original_Qemu (U905) */
         env->regs[R_EAX] = (uint32_t)(val);
         env->regs[R_EDX] = (uint32_t)(val >> 32);
     }
@@ -346,7 +362,11 @@ void helper_rdtscp(CPUX86State *env)
     }
 
     if (!skip_rdtscp) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U905) */
         val = cpu_get_tsc(env) + env->tsc_offset;
+#else /* ours (U905) */
+        val = msr_tsc_now(env);         /* IA32_TSC_ADJUST included (U905) */
+#endif /* __Use_Original_Qemu (U905) */
         env->regs[R_EAX] = (uint32_t)(val);
         env->regs[R_EDX] = (uint32_t)(val >> 32);
 
@@ -682,6 +702,233 @@ void x86_cet_msr_load(CPUX86State *env, uint32_t msr, uint64_t val)
 }
 
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+/*
+ * NoVmp (ledger U905, decision A2): the MSR list of the CPU model. SDM Vol2B RDMSR / Vol2D WRMSR:
+ * "#GP(0) If the value in ECX specifies a reserved or unimplemented MSR address" - before, every
+ * MSR the emulator does not model read 0 and ignored writes. An MSR exists when SDM Vol4 Table 2-2
+ * enumerates it for the model: the CPUID condition printed there (the model's feature word, hidden
+ * by a strict UC_CTL_X86_CPUID profile exactly as the translator hides instructions,
+ * x86_cpuid_profile_mask) or, for the MSRs Table 2-2 gives only a DisplayFamily_DisplayModel, the
+ * vendor and family of the model (Intel, family 6 or 0FH); the model-specific MSR_SMI_COUNT (34H,
+ * Tables 2-6/2-20 and later: Nehalem/Silvermont and newer) on Intel family 6 from model 1AH;
+ * IA32_VM_HSAVE_PA (C0010117H, AMD APM) with CPUID.80000001H:ECX.SVM. Any other address is
+ * #GP(0). A UC_X86_INS_RDMSR / UC_X86_INS_WRMSR hook that returns 1 handles the access itself
+ * (no #GP), as before. uc_reg_read / uc_reg_write (UC_X86_REG_MSR) never raise a guest fault:
+ * the access is not made and the API returns UC_ERR_EXCEPTION (msr_api_err).
+ */
+#define MSR_IA32_PLATFORM_ID_NV     0x17
+#define MSR_IA32_PERF_CTL_NV        0x199
+#define MSR_IA32_DEBUGCTL_NV        0x1d9
+#define MSR_IA32_FLUSH_CMD_NV       0x10b
+#define CPUID_7_0_EDX_L1D_FLUSH_NV  (1U << 28)
+#define CPUID_7_0_EBX_TSC_ADJUST_NV (1U << 1)
+#define CPUID_7_0_EBX_SGX_NV        (1U << 2)
+#define CPUID_7_0_ECX_SGX_LC_NV     (1U << 30)
+
+/* a CPUID feature of the model, hidden by a strict profile (as the translator) */
+static bool msr_feat(CPUX86State *env, FeatureWord w, uint32_t bit, uint32_t leaf,
+                     uint32_t sub, int reg)
+{
+    return (env->features[w] & bit) && (x86_cpuid_profile_mask(env, leaf, sub, reg) & bit);
+}
+
+#define MF_1EDX(b)  msr_feat(env, FEAT_1_EDX, (b), 1, 0, 3)
+#define MF_1ECX(b)  msr_feat(env, FEAT_1_ECX, (b), 1, 0, 2)
+#define MF_7EBX(b)  msr_feat(env, FEAT_7_0_EBX, (b), 7, 0, 1)
+#define MF_7ECX(b)  msr_feat(env, FEAT_7_0_ECX, (b), 7, 0, 2)
+#define MF_7EDX(b)  msr_feat(env, FEAT_7_0_EDX, (b), 7, 0, 3)
+#define MF_71EAX(b) msr_feat(env, FEAT_7_1_EAX, (b), 7, 1, 0)
+#define MF_71EBX(b) msr_feat(env, FEAT_7_1_EBX, (b), 7, 1, 1)
+#define MF_71EDX(b) msr_feat(env, FEAT_7_1_EDX, (b), 7, 1, 3)
+#define MF_X1EDX(b) msr_feat(env, FEAT_8000_0001_EDX, (b), 0x80000001, 0, 3)
+#define MF_X1ECX(b) msr_feat(env, FEAT_8000_0001_ECX, (b), 0x80000001, 0, 2)
+#define MF_D1EAX(b) msr_feat(env, FEAT_XSAVE, (b), 0xd, 1, 0)
+
+/*
+ * CPUID.80000001H:EDX.LM[29] of the model: a strict profile does not hide it - the engine runs in
+ * IA-32e mode whatever the profile says (Unicorn's 64-bit mode sets it in the model, U594)
+ */
+static bool msr_lm(CPUX86State *env)
+{
+    return (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) || (env->hflags & HF_LMA_MASK);
+}
+
+/* DisplayFamily / DisplayModel of the model (SDM Vol2A CPUID, Figure 3-6) */
+static int msr_family(CPUX86State *env)
+{
+    int f = (env->cpuid_version >> 8) & 0xf;
+
+    return f == 0xf ? f + ((env->cpuid_version >> 20) & 0xff) : f;
+}
+
+static int msr_model(CPUX86State *env)
+{
+    int f = (env->cpuid_version >> 8) & 0xf, m = (env->cpuid_version >> 4) & 0xf;
+
+    return (f == 6 || f == 0xf) ? m | ((env->cpuid_version >> 12) & 0xf0) : m;
+}
+
+/* Table 2-2 "06_xxH" / "0F_xxH" MSRs: an Intel P6-family or later model */
+static bool msr_intel_p6(CPUX86State *env)
+{
+    return IS_INTEL_CPU(env) && msr_family(env) >= 6;
+}
+
+static bool msr_present(CPUX86State *env, uint32_t msr)
+{
+    uint32_t nbank = env->mcg_cap & 0xff;
+
+    switch (msr) {
+    case MSR_IA32_TSC:                      /* 05_01H; Vol3B 18.17: CPUID.01H:EDX.TSC */
+        return MF_1EDX(CPUID_TSC);
+    case MSR_IA32_PLATFORM_ID_NV:           /* 06_01H */
+    case MSR_IA32_PERF_STATUS:              /* 0F_03H */
+    case MSR_IA32_PERF_CTL_NV:              /* 0F_03H */
+    case MSR_IA32_MISC_ENABLE:              /* no MSR-level condition (Intel) */
+    case MSR_IA32_DEBUGCTL_NV:              /* 06_0EH */
+        return msr_intel_p6(env);
+    case MSR_IA32_UCODE_REV:                /* IA32_BIOS_SIGN_ID, 06_01H (AMD: patch level) */
+        return true;
+    case MSR_IA32_APICBASE:                 /* 06_01H, with the local APIC */
+        return MF_1EDX(CPUID_APIC);
+    case MSR_SMI_COUNT:                     /* model-specific: Nehalem / Silvermont and later */
+        return IS_INTEL_CPU(env) && msr_family(env) == 6 && msr_model(env) >= 0x1a;
+    case MSR_IA32_FEATURE_CONTROL:          /* "if any one enumeration condition ... holds" */
+        return MF_1ECX(CPUID_EXT_VMX) || MF_1ECX(CPUID_EXT_SMX) ||
+               MF_7EBX(CPUID_7_0_EBX_SGX_NV) || MF_7ECX(CPUID_7_0_ECX_SGX_LC_NV) ||
+               (env->mcg_cap & MCG_LMCE_P);
+    case MSR_TSC_ADJUST:
+        return MF_7EBX(CPUID_7_0_EBX_TSC_ADJUST_NV);
+    case MSR_IA32_SPEC_CTRL:                /* IBRS, STIBP, SSBD (leaf 7.2 is not modelled) */
+        return MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL) || MF_7EDX(CPUID_7_0_EDX_STIBP) ||
+               MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL_SSBD);
+    case MSR_IA32_PRED_CMD:
+        return MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL);
+    case MSR_IA32_FLUSH_CMD_NV:
+        return MF_7EDX(CPUID_7_0_EDX_L1D_FLUSH_NV);
+    case MSR_IA32_ARCH_CAPABILITIES:
+        return MF_7EDX(CPUID_7_0_EDX_ARCH_CAPABILITIES);
+    case MSR_IA32_CORE_CAPABILITY:
+        return MF_7EDX(CPUID_7_0_EDX_CORE_CAPABILITY);
+    case MSR_IA32_TSX_CTRL:
+        return MF_7EDX(CPUID_7_0_EDX_ARCH_CAPABILITIES) &&
+               (env->features[FEAT_ARCH_CAPABILITIES] & ARCH_CAP_TSX_CTRL_MSR);
+    case MSR_IA32_USER_MSR_CTL:
+    case MSR_IA32_UARCH_MISC_CTL:           /* modelled with USER_MSR (U103) */
+        return MF_71EDX(CPUID_7_1_EDX_USER_MSR);
+    case MSR_IA32_BARRIER:
+        return MF_71EAX(CPUID_7_1_EAX_MSRLIST);
+    case MSR_IA32_UMWAIT_CONTROL:
+        return MF_7ECX(CPUID_7_0_ECX_WAITPKG);
+    case MSR_MTRRcap:
+    case MSR_MTRRdefType:
+    case MSR_MTRRfix64K_00000:
+    case MSR_MTRRfix16K_80000:
+    case MSR_MTRRfix16K_A0000:
+        return MF_1EDX(CPUID_MTRR);
+    case MSR_IA32_SYSENTER_CS:
+    case MSR_IA32_SYSENTER_ESP:
+    case MSR_IA32_SYSENTER_EIP:
+        return MF_1EDX(CPUID_SEP);
+    case MSR_MCG_CAP:
+    case MSR_MCG_STATUS:
+        return MF_1EDX(CPUID_MCA);
+    case MSR_MCG_CTL:
+        return MF_1EDX(CPUID_MCA) && (env->mcg_cap & MCG_CTL_P);
+    case MSR_IA32_XFD:
+    case MSR_IA32_XFD_ERR:
+        return MF_D1EAX(CPUID_D_1_EAX_XFD);
+    case MSR_PAT:
+        return MF_1EDX(CPUID_PAT);
+    case MSR_IA32_U_CET:
+    case MSR_IA32_S_CET:
+        return MF_7ECX(CPUID_7_0_ECX_CET_SHSTK) || MF_7EDX(CPUID_7_0_EDX_CET_IBT);
+    case MSR_IA32_PL0_SSP:
+    case MSR_IA32_PL1_SSP:
+    case MSR_IA32_PL2_SSP:
+    case MSR_IA32_PL3_SSP:
+    case MSR_IA32_INT_SSP_TAB:
+        return MF_7ECX(CPUID_7_0_ECX_CET_SHSTK);
+    case MSR_IA32_TSCDEADLINE:
+        return MF_1ECX(CPUID_EXT_TSC_DEADLINE_TIMER);
+    case MSR_IA32_PKRS:
+        return MF_7ECX(CPUID_7_0_ECX_PKS);
+    case MSR_IA32_BNDCFGS:
+        return MF_7EBX(CPUID_7_0_EBX_MPX);
+    case MSR_IA32_PASID:
+        return MF_7ECX(CPUID_7_0_ECX_ENQCMD);
+    case MSR_IA32_XSS:
+        return MF_D1EAX(CPUID_XSAVE_XSAVES);
+    case MSR_ARCH_LBR_CTL:
+    case MSR_ARCH_LBR_DEPTH:
+        return MF_7EDX(CPUID_7_0_EDX_ARCH_LBR);
+    case MSR_IA32_HRESET_ENABLE:
+        return MF_71EAX(CPUID_7_1_EAX_HRESET);
+    case MSR_IA32_TSE_CAPABILITY:
+        return MF_71EBX(CPUID_7_1_EBX_PBNDKB);
+    case MSR_IA32_UINTR_RR:
+    case MSR_IA32_UINTR_HANDLER:
+    case MSR_IA32_UINTR_STACKADJUST:
+    case MSR_IA32_UINTR_MISC:
+    case MSR_IA32_UINTR_PD:
+    case MSR_IA32_UINTR_TT:
+        return MF_7EDX(CPUID_7_0_EDX_UINTR);
+    case MSR_EFER:                          /* CPUID.80000001H:EDX[20] || EDX[29] */
+        return MF_X1EDX(CPUID_EXT2_NX) || msr_lm(env);
+#ifdef TARGET_X86_64
+    case MSR_STAR:
+    case MSR_LSTAR:
+    case MSR_CSTAR:
+    case MSR_FMASK:
+    case MSR_FSBASE:
+    case MSR_GSBASE:
+    case MSR_KERNELGSBASE:
+        return msr_lm(env);
+#endif
+    case MSR_TSC_AUX:
+        return MF_X1EDX(CPUID_EXT2_RDTSCP) || MF_7ECX(CPUID_7_0_ECX_RDPID);
+    case MSR_VM_HSAVE_PA:
+        return MF_X1ECX(CPUID_EXT3_SVM);
+    default:
+        break;
+    }
+    if (msr >= MSR_MTRRphysBase(0) && msr <= MSR_MTRRphysMask(MSR_MTRRcap_VCNT - 1)) {
+        return MF_1EDX(CPUID_MTRR);
+    }
+    if (msr >= MSR_MTRRfix4K_C0000 && msr <= MSR_MTRRfix4K_F8000) {
+        return MF_1EDX(CPUID_MTRR);
+    }
+    if (msr >= MSR_MC0_CTL && msr < MSR_MC0_CTL + 4 * nbank) {
+        return MF_1EDX(CPUID_MCA);           /* "If IA32_MCG_CAP.CNT > i" */
+    }
+    if ((msr >= MSR_ARCH_LBR_FROM_0 && msr < MSR_ARCH_LBR_FROM_0 + ARCH_LBR_NR_ENTRIES) ||
+        (msr >= MSR_ARCH_LBR_TO_0 && msr < MSR_ARCH_LBR_TO_0 + ARCH_LBR_NR_ENTRIES) ||
+        (msr >= MSR_ARCH_LBR_INFO_0 && msr < MSR_ARCH_LBR_INFO_0 + ARCH_LBR_NR_ENTRIES)) {
+        return MF_7EDX(CPUID_7_0_EDX_ARCH_LBR);
+    }
+    return false;
+}
+
+/*
+ * The access check of RDMSR / WRMSR (after the UC_HOOK_INSN hooks): false = no access. A guest
+ * access raises #GP(0); an API access (msr_api) sets msr_api_err instead.
+ */
+static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t val,
+                          uintptr_t ra)
+{
+    if (msr_present(env, msr)) {
+        return true;
+    }
+    if (env->msr_api) {
+        env->msr_api_err = 1;
+        return false;
+    }
+    raise_exception_ra(env, EXCP0D_GPF, ra);
+    return false;
+}
+
+#endif /* __Use_Original_Qemu (U905) */
 void helper_wrmsr(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);
@@ -690,6 +937,9 @@ void helper_wrmsr(CPUX86State *env)
     struct hook *hook;
     int skip_wrmsr = 0;
     bool synced = false;
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    uintptr_t wrmsr_ra = GETPC();
+#endif /* __Use_Original_Qemu (U905) */
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_MSR, 1, GETPC());
 
@@ -725,7 +975,42 @@ void helper_wrmsr(CPUX86State *env)
     val = ((uint32_t)env->regs[R_EAX]) |
         ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
 
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    if (!msr_access_ok(env, (uint32_t)env->regs[R_ECX], true, val, wrmsr_ra)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U905) */
     switch ((uint32_t)env->regs[R_ECX]) {
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    /* NoVmp (ledger U905): MSRs of Table 2-2 the emulator did not model (stored, no side effect) */
+    case MSR_IA32_TSC:
+        env->tsc_adjust += val - msr_tsc_now(env);
+        break;
+    case MSR_TSC_ADJUST:
+        env->tsc_adjust = val;
+        break;
+    case MSR_IA32_FEATURE_CONTROL:
+        env->msr_ia32_feature_control = val;
+        break;
+    case MSR_IA32_SPEC_CTRL:
+        env->spec_ctrl = val;
+        break;
+    case MSR_IA32_TSX_CTRL:
+        env->tsx_ctrl = (uint32_t)val;
+        break;
+    case MSR_IA32_PERF_CTL_NV:
+        env->msr_perf_ctl = val;
+        break;
+    case MSR_IA32_DEBUGCTL_NV:
+        env->msr_debugctl = val;
+        break;
+    case MSR_IA32_PLATFORM_ID_NV:
+    case MSR_IA32_PRED_CMD:             /* IBPB: no prediction state is kept */
+    case MSR_IA32_FLUSH_CMD_NV:         /* L1D_FLUSH: no cache is modelled */
+    case MSR_IA32_TSCDEADLINE:          /* no local APIC: never in TSC-deadline mode */
+    case MSR_IA32_UCODE_REV:
+        break;
+#endif /* __Use_Original_Qemu (U905) */
     case MSR_IA32_SYSENTER_CS:
         env->sysenter_cs = val & 0xffff;
         break;
@@ -1186,6 +1471,9 @@ void helper_rdmsr(CPUX86State *env)
     struct hook *hook;
     int skip_rdmsr = 0;
     bool synced = false;
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    uintptr_t rdmsr_ra = GETPC();
+#endif /* __Use_Original_Qemu (U905) */
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_MSR, 0, GETPC());
 
@@ -1218,7 +1506,48 @@ void helper_rdmsr(CPUX86State *env)
     if (skip_rdmsr)
         return;
 
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    if (!msr_access_ok(env, (uint32_t)env->regs[R_ECX], false, 0, rdmsr_ra)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U905) */
     switch ((uint32_t)env->regs[R_ECX]) {
+#if __Use_Original_Qemu != 1 /* ours (U905) */
+    /* NoVmp (ledger U905): MSRs of Table 2-2 the emulator did not model */
+    case MSR_IA32_TSC:
+        val = msr_tsc_now(env);
+        break;
+    case MSR_TSC_ADJUST:
+        val = env->tsc_adjust;
+        break;
+    case MSR_IA32_FEATURE_CONTROL:
+        val = env->msr_ia32_feature_control;
+        break;
+    case MSR_IA32_SPEC_CTRL:
+        val = env->spec_ctrl;
+        break;
+    case MSR_IA32_TSX_CTRL:
+        val = env->tsx_ctrl;
+        break;
+    case MSR_IA32_PERF_CTL_NV:
+        val = env->msr_perf_ctl;
+        break;
+    case MSR_IA32_DEBUGCTL_NV:
+        val = env->msr_debugctl;
+        break;
+    case MSR_IA32_ARCH_CAPABILITIES:
+        val = env->features[FEAT_ARCH_CAPABILITIES];
+        break;
+    case MSR_IA32_CORE_CAPABILITY:
+        val = env->features[FEAT_CORE_CAPABILITY];
+        break;
+    case MSR_IA32_PLATFORM_ID_NV:       /* platform ID 0 (52:50) */
+    case MSR_IA32_PRED_CMD:
+    case MSR_IA32_FLUSH_CMD_NV:
+    case MSR_IA32_TSCDEADLINE:          /* not in TSC-deadline mode: reads 0 (Vol3A 13.5.4.1) */
+        val = 0;
+        break;
+#endif /* __Use_Original_Qemu (U905) */
     case MSR_IA32_SYSENTER_CS:
         val = env->sysenter_cs;
         break;

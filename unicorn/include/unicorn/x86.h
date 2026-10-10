@@ -108,6 +108,10 @@ typedef struct uc_x86_mmr {
 
 // Model-Specific Register structure, use this with UC_X86_REG_MSR (as the
 // register ID) in call to uc_reg_write/uc_reg_read() to manipulate MSRs.
+// NoVmp U905/U906: the access follows RDMSR / WRMSR (any CPL, UC_X86_INS_RDMSR/WRMSR hooks
+// run) but never raises a guest exception: where the instruction would raise #GP(0) - an
+// MSR the CPU model does not have, a value WRMSR refuses (reserved bits, non-canonical
+// address, a read-only MSR) - nothing is read or written and the call returns\r\n// UC_ERR_EXCEPTION (the #GP(0) the instruction would raise; UC_ERR_ARG is reserved by\r\n// Unicorn for unknown register ids, which it still reports as UC_ERR_OK with a warning).
 typedef struct uc_x86_msr {
     uint32_t rid;   // MSR id
     uint64_t value; // MSR value

@@ -401,6 +401,83 @@ def cases_sysexit(a):
     a('%s =>! m+0x90FC=%s' % (asm, (cs).to_bytes(2, 'little').hex().upper()))
 
 
+# ---- the MSR list (U905): SDM Vol4 Table 2-2 enumeration conditions ---------------------------------
+# CPUID of the harness's CPU model (UC_CPU_X86_MAX, no profile, CPL0), pinned by the guard cases below.
+MAX_CPUID = {
+    (1, 0): (0x00080660, None, 0xFED8324B, 0x0FCBFBFD),
+    (7, 0): (None, 0x219C6FF9, 0xB8C107AC, 0x00114820),
+    (0xD, 1): (0x0000000F, None, None, None),
+    (0x80000001, 0): (None, None, 0x00000175, 0xEDD3FBFD),
+}
+MAX_FAMILY_MODEL = (6, 0x6A)        # leaf 1 EAX 80660h: family 6, model 6AH (Icelake-Server)
+MAX_MCG_CAP = None                  # unknown to the model: the MCi banks are probed only at bank 0
+
+
+def cpuid_bit(leaf, sub, reg, bit, cpuid=MAX_CPUID):
+    v = cpuid[(leaf, sub)][reg]
+    return bool((v >> bit) & 1)
+
+
+def msr_present(msr, cpuid=MAX_CPUID, fam_model=MAX_FAMILY_MODEL, intel=True):
+    """Table 2-2 condition of the MSRs the cases use (None: not modelled here)"""
+    c = lambda leaf, sub, reg, bit: cpuid_bit(leaf, sub, reg, bit, cpuid)
+    p6 = intel and fam_model[0] >= 6
+    table = {
+        0x10: c(1, 0, 3, 4),                                     # TSC (05_01H; CPUID.01H:EDX.TSC)
+        0x17: p6, 0x8B: True, 0x198: p6, 0x199: p6, 0x1A0: p6, 0x1D9: p6,
+        0x1B: c(1, 0, 3, 9),                                     # APIC
+        0x3A: c(1, 0, 2, 5) or c(1, 0, 2, 6) or c(7, 0, 1, 2) or c(7, 0, 2, 30),   # VMX SMX SGX SGX_LC
+        0x3B: c(7, 0, 1, 1),                                     # TSC_ADJUST
+        0x48: c(7, 0, 3, 26) or c(7, 0, 3, 27) or c(7, 0, 3, 31),
+        0xE1: c(7, 0, 2, 5),                                     # WAITPKG
+        0xE7: None, 0xE8: None,                                  # CPUID.06H:ECX[0] (leaf 6 ECX = 0)
+        0xFE: c(1, 0, 3, 12), 0x2FF: c(1, 0, 3, 12), 0x200: c(1, 0, 3, 12), 0x250: c(1, 0, 3, 12),
+        0x174: c(1, 0, 3, 11), 0x175: c(1, 0, 3, 11), 0x176: c(1, 0, 3, 11),
+        0x179: c(1, 0, 3, 14), 0x17A: c(1, 0, 3, 14),
+        0x1C4: c(0xD, 1, 0, 4),                                  # XFD
+        0x277: c(1, 0, 3, 16),                                   # PAT
+        0x345: c(1, 0, 2, 15),                                   # PDCM
+        0x6A0: c(7, 0, 2, 7) or c(7, 0, 3, 20), 0x6A4: c(7, 0, 2, 7),
+        0x6E0: c(1, 0, 2, 24), 0x6E1: c(7, 0, 2, 31),
+        0xD90: c(7, 0, 1, 14), 0xD93: c(7, 0, 2, 29), 0xDA0: c(0xD, 1, 0, 3),
+        0x14CE: c(7, 0, 3, 19), 0x1500: c(7, 0, 3, 19),
+        0xC0000080: c(0x80000001, 0, 3, 20) or True,             # NX || LM (64-bit mode)
+        0xC0000081: True, 0xC0000082: True, 0xC0000083: True, 0xC0000084: True,
+        0xC0000100: True, 0xC0000101: True, 0xC0000102: True,    # LM: the harness runs in 64-bit mode
+        0xC0000103: c(0x80000001, 0, 3, 27) or c(7, 0, 2, 22),   # RDTSCP || RDPID
+        0xC0010117: c(0x80000001, 0, 2, 2),                      # AMD SVM: IA32_VM_HSAVE_PA
+        0xC1: False, 0x186: False, 0x38F: False,                 # CPUID.0AH:EAX[7:0] = 0 (no PMU)
+        0x1234: False, 0x40000000: False, 0xC0000104: False, 0x9E: False,
+    }
+    return table.get(msr)
+
+
+def cases_msr_present(a):
+    a('# --- the MSR list of the CPU model (U905): Vol2B RDMSR / Vol2D WRMSR "#GP(0) If the value in ECX specifies a')
+    a('# reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model\'s CPUID')
+    a('# (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.')
+    a('mov eax, 1; cpuid =>! rcx=0xFED8324B rdx=0xFCBFBFD')
+    a('mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C107AC rdx=0x114820')
+    a('mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF')
+    a('mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD')
+    a('mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0 rbx=0 rcx=0 rdx=0')
+    a('mov eax, 6; cpuid =>! rcx=0')
+    for msr in sorted(k for k in (0x10, 0x17, 0x1B, 0x3A, 0x3B, 0x48, 0x8B, 0xC1, 0xE1, 0xFE, 0x174, 0x175, 0x176,
+                                  0x179, 0x17A, 0x186, 0x198, 0x199, 0x1A0, 0x1C4, 0x1D9, 0x200, 0x250, 0x277,
+                                  0x2FF, 0x345, 0x38F, 0x6A0, 0x6A4, 0x6E0, 0x6E1, 0xD90, 0xD93, 0xDA0, 0x14CE,
+                                  0x1500, 0x1234, 0x40000000, 0x9E, 0xC0000080, 0xC0000081, 0xC0000082,
+                                  0xC0000083, 0xC0000084, 0xC0000100, 0xC0000101, 0xC0000102, 0xC0000103,
+                                  0xC0000104, 0xC0010117, 0xE7)):
+        p = msr_present(msr)
+        if p is None:
+            p = False
+        if p:
+            a('rdmsr | rcx=%s =>!' % hx(msr))
+        else:
+            a('rdmsr | rcx=%s rax=0x1111 rdx=0x2222 => #GP(0)' % hx(msr))
+            a('wrmsr | rcx=%s rax=0 rdx=0 => #GP(0)' % hx(msr))
+
+
 def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
@@ -416,6 +493,7 @@ def cases_all():
     cases_sysenter(a)
     cases_sysret(a)
     cases_sysexit(a)
+    cases_msr_present(a)
     return lines
 
 
