@@ -801,6 +801,86 @@ static void gen_EVEX_CX(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 {
 }
 #endif /* __Use_Original_Qemu (U213) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+
+/*
+ * NoVmp (ledgers U991, U992): the 4-iteration Xeon Phi forms (SDM 325383-092 Vol2D 8-4 .. 8-7,
+ * 8-16 .. 8-19; X86OpEntry.evex_blk4). "The entire memory operand is loaded if any of the 16
+ * lowest significant mask bits is set to 1 or if a 'no masking' encoding is used" (the SS forms:
+ * "the least significant mask bit"), else nothing is read and nothing faults (memory fault
+ * suppression); a 16-byte access never reports #AC (E2/E4: "2, 4, or 8 byte memory access").
+ * helper_evex_4blk then computes the destination register (merging / zeroing per element; SS:
+ * DEST[511:128] := 0) from the four block registers zmm(vvvv & ~3) .. +3; the FP forms check
+ * the MXCSR exceptions after each step there (#XM before the destination is written).
+ * desc (fpu_helper.c EVEX_4BLK_*): bits 2:0 the operation (0 VP4DPWSSD, 1 VP4DPWSSDS, 2
+ * V4FMADDPS, 3 V4FNMADDPS, 4 V4FMADDSS, 5 V4FNMADDSS), bit 8 zeroing-masking, bit 9 DEST is
+ * one of the block registers, bits 11:10 its position in the block.
+ */
+static void gen_evex_4blk(DisasContext *s, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    int dst = decode->op[0].n, base = decode->op[1].n & ~3;
+    bool scalar = (decode->e.evex_vl & X86_EVEX_LIG) != 0;
+    TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+    TCGv_i64 any = tcg_temp_new_i64(tcg_ctx);
+    TCGv_ptr pd, pb, pm;
+    uint32_t desc = s->evex_z ? 1u << 8 : 0;
+
+    switch (decode->b) {
+    case 0x52:
+        desc |= 0;
+        break;
+    case 0x53:
+        desc |= 1;
+        break;
+    case 0x9a:
+        desc |= 2;
+        break;
+    case 0xaa:
+        desc |= 3;
+        break;
+    case 0x9b:
+        desc |= 4;
+        break;
+    default:            /* 0xab */
+        desc |= 5;
+        break;
+    }
+    if (dst >= base && dst < base + 4) {
+        desc |= (1u << 9) | ((uint32_t)(dst - base) << 10);
+    }
+    if (s->evex_aaa) {
+        tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+    } else {
+        tcg_gen_movi_i64(tcg_ctx, k, -1);
+    }
+    gen_load_ea(s, &decode->mem, false);
+    /* both quadwords of the operand when an element is active, else none */
+    tcg_gen_andi_i64(tcg_ctx, any, k, scalar ? 1 : 0xffff);
+    tcg_gen_setcondi_i64(tcg_ctx, TCG_COND_NE, any, any, 0);
+    tcg_gen_neg_i64(tcg_ctx, any, any);
+    pm = evex_env_ptr(s, offsetof(CPUX86State, xmm_t0));
+    gen_helper_evex_mload(tcg_ctx, cpu_env, pm, s->A0, any,
+                          tcg_constant_i32(tcg_ctx, EVEX_DESC(MO_64, 2)));
+    pd = evex_env_ptr(s, ZMM_OFFSET(dst));
+    pb = evex_env_ptr(s, ZMM_OFFSET(base));
+    gen_helper_evex_4blk(tcg_ctx, cpu_env, pd, pb, pm, k, tcg_constant_i32(tcg_ctx, desc));
+    tcg_temp_free_ptr(tcg_ctx, pd);
+    tcg_temp_free_ptr(tcg_ctx, pb);
+    tcg_temp_free_ptr(tcg_ctx, pm);
+    tcg_temp_free_i64(tcg_ctx, any);
+    tcg_temp_free_i64(tcg_ctx, k);
+}
+
+/* the gen functions of the 4-iteration forms: everything is done by gen_evex_4blk */
+static void gen_EVEX_VP4DPWSSD(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+
+static void gen_EVEX_VP4DPWSSDS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+#endif /* __Use_Original_Qemu (U991) */
 
 static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
@@ -839,6 +919,13 @@ static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
         return;
     }
 #endif /* __Use_Original_Qemu (U250) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+    /* NoVmp (ledger U991): the 4-iteration Xeon Phi forms (gen_evex_4blk) */
+    if (e->evex_blk4) {
+        gen_evex_4blk(s, decode);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U991) */
     if (has_mem) {
         gen_load_ea(s, &decode->mem, e->vex_class == 12);
         if (e->evex_align) {

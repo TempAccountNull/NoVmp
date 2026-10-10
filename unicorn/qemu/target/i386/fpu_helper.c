@@ -7900,6 +7900,78 @@ void helper_evex_neutral(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint64_t mask, 
     }
 }
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+
+/*
+ * NoVmp (ledgers U991, U992): the 4-iteration Xeon Phi instructions (SDM 325383-092 Vol2D
+ * chapter 8; emit.c.inc gen_evex_4blk loads the 16-byte memory operand m and gives the opmask
+ * k, all ones without a writemask). blk points at the four block registers zmm(vvvv & ~3) ..
+ * +3, d at the destination register; the block is copied first, so a destination inside it
+ * reads as the pseudocode says (below). desc: bits 2:0 the operation, bit 8 zeroing-masking,
+ * bit 9 DEST is a block register, bits 11:10 its position in the block.
+ */
+#define EVEX_4BLK_Z       (1u << 8)
+#define EVEX_4BLK_DIN     (1u << 9)
+#define EVEX_4BLK_DPOS(d) (((d) >> 10) & 3)
+
+/*
+ * VP4DPWSSD (op 0) / VP4DPWSSDS (op 1), 8-16 .. 8-19: FOR i (16 dwords) IF k1[i]: FOR m = 0..3:
+ * t := SRC2.dword[m]; DEST.dword[i] := DEST.dword[i] + reg[base+m].word[2i] * t.word[0] +
+ * reg[base+m].word[2i+1] * t.word[1] (signed words, dword wrap-around; SIGNED_DWORD_SATURATE
+ * of the sum for VP4DPWSSDS, after each step); masked-off: 0 (zeroing) or unchanged. DEST is
+ * updated in place in the pseudocode, so when DEST is block register m the step m words are
+ * the partly accumulated DEST.dword[i] (taken literally; no other SDM text covers that case).
+ */
+static void evex_4vnniw(ZMMReg *r, const ZMMReg blk[4], const ZMMReg *m, uint64_t k,
+                        uint32_t desc)
+{
+    bool sat = (desc & 7) == 1;
+    int dpos = (desc & EVEX_4BLK_DIN) ? (int)EVEX_4BLK_DPOS(desc) : -1;
+    int i, j;
+
+    for (i = 0; i < 16; i++) {
+        int64_t acc;
+
+        if (!((k >> i) & 1)) {
+            if (desc & EVEX_4BLK_Z) {
+                r->ZMM_L(i) = 0;
+            }
+            continue;
+        }
+        acc = (int32_t)r->ZMM_L(i);
+        for (j = 0; j < 4; j++) {
+            uint32_t t = m->ZMM_L(j);
+            uint32_t a = j == dpos ? (uint32_t)acc : blk[j].ZMM_L(i);
+
+            acc += (int64_t)(int16_t)(a & 0xffff) * (int16_t)(t & 0xffff) +
+                   (int64_t)(int16_t)(a >> 16) * (int16_t)(t >> 16);
+            if (sat) {
+                acc = acc > INT32_MAX ? INT32_MAX : acc < INT32_MIN ? INT32_MIN : acc;
+            } else {
+                acc = (int32_t)(uint32_t)acc;
+            }
+        }
+        r->ZMM_L(i) = (uint32_t)acc;
+    }
+}
+
+void helper_evex_4blk(CPUX86State *env, ZMMReg *d, ZMMReg *blk, ZMMReg *m, uint64_t k,
+                      uint32_t desc)
+{
+    ZMMReg r = *d, src[4];
+
+    memcpy(src, blk, sizeof(src));
+    switch (desc & 7) {
+    case 0:
+    case 1:
+        evex_4vnniw(&r, src, m, k, desc);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+    *d = r;
+}
+#endif /* __Use_Original_Qemu (U991) */
 #if __Use_Original_Qemu != 1 /* ours (U250) */
 
 /*

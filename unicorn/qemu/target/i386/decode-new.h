@@ -537,6 +537,14 @@ struct X86OpEntry {
      */
     unsigned     evex_ds:3;
 #endif /* __Use_Original_Qemu (U230) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+    /*
+     * NoVmp (ledger U991): a 4-iteration Xeon Phi form (VP4DPWSSD/S, V4F[N]MADDPS/SS): a
+     * source block of four registers (EVEX.vvvv & ~3) and a 16-byte memory operand read whole
+     * when any element is active; gen_evex_insn hands the whole instruction to gen_evex_4blk
+     */
+    unsigned     evex_blk4:1;
+#endif /* __Use_Original_Qemu (U991) */
 };
 typedef struct X86DecodedOp {
     int8_t n;

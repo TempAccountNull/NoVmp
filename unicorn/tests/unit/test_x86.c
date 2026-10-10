@@ -24273,6 +24273,166 @@ static void test_x86_xp_optin(void)
     TEST_CHECK(on == 0);
     OK(uc_close(c.uc));
 }
+/* VP4DPWSSD zmm0, zmm4+3, [rsi] / VP4DPWSSDS (EVEX.512.F2.0F38.W0 52 / 53, vvvv = 4) */
+#define XP_4DPWSSD "\x62\xf2\x5f\x48\x52\x06"
+#define XP_4DPWSSDS "\x62\xf2\x5f\x48\x53\x06"
+/* VP4DPWSSD zmm0{k1}, zmm4+3, [rsi] */
+#define XP_4DPWSSD_K1 "\x62\xf2\x5f\x49\x52\x06"
+
+typedef struct XpReads {
+    int count, bytes;
+} XpReads;
+
+static void xp_read_cb(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value,
+                       void *user_data)
+{
+    XpReads *r = (XpReads *)user_data;
+
+    if (address >= XP_DATA && address < XP_DATA + 0x4000) {
+        r->count++;
+        r->bytes += size;
+    }
+}
+
+/* zmm0 = acc, zmm4..7 = block, [XP_DATA] = 4 dwords (word pairs), RSI = XP_DATA */
+static void xp_vnniw_setup(XpCtx *c, uint32_t acc, uint32_t blk, const uint32_t mem[4])
+{
+    uint32_t v[16];
+    uint64_t rsi = XP_DATA;
+    int i, r;
+
+    for (i = 0; i < 16; i++) {
+        v[i] = acc;
+    }
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM0, v));
+    for (r = 0; r < 4; r++) {
+        for (i = 0; i < 16; i++) {
+            v[i] = blk + (uint32_t)r;
+        }
+        OK(uc_reg_write(c->uc, UC_X86_REG_ZMM4 + r, v));
+    }
+    OK(uc_mem_write(c->uc, XP_DATA, mem, 16));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ESI, &rsi));    /* RSI upper half stays 0 */
+}
+
+/* SDM 8-16 / 8-19 pseudocode for one lane of xp_vnniw_setup's registers (block r = blk + r) */
+static uint32_t xp_ref_dpwssd(uint32_t acc, uint32_t blk, const uint32_t mem[4], bool sat)
+{
+    int64_t d = (int32_t)acc;
+    int m;
+
+    for (m = 0; m < 4; m++) {
+        uint32_t a = blk + (uint32_t)m;
+
+        d += (int64_t)(int16_t)(a & 0xffff) * (int16_t)(mem[m] & 0xffff) +
+             (int64_t)(int16_t)(a >> 16) * (int16_t)(mem[m] >> 16);
+        if (sat) {
+            d = d > 0x7fffffffLL ? 0x7fffffffLL : d < -0x80000000LL ? -0x80000000LL : d;
+        } else {
+            d = (int32_t)(uint32_t)d;
+        }
+    }
+    return (uint32_t)d;
+}
+
+static uint32_t xp_zmm_lane(XpCtx *c, int reg, int lane)
+{
+    uint32_t v[16];
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM0 + reg, v));
+    return v[lane];
+}
+
+/*
+ * U991: AVX512_4VNNIW gating (CPUID.(7,0):EDX[2]; no AVX10 alternative; strict profiles), the
+ * block base vvvv & ~3 in 32-bit mode, saturation, and the memory operand read whole (16 bytes)
+ * exactly when an element of k1[15:0] is active (SDM 092 Vol2D 8-16 .. 8-19)
+ */
+static void test_x86_xp_4vnniw(void)
+{
+    static const uc_x86_cpuid prof_no[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0x00010000, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    static const uc_x86_cpuid prof_yes[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0x00010000, 0, 1u << 2},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    /* word pairs (lo, hi): (1, 2), (3, -1), (-2, 5), (7, 0) */
+    static const uint32_t mem[4] = {0x00020001, 0xffff0003, 0x0005fffe, 0x00000007};
+    XpCtx c;
+    XpReads rd = {0, 0};
+    uc_hook h;
+    uint64_t k1;
+    int64_t want = 100;
+    int m;
+
+    /* block register r holds (lo, hi) = (0x10 + r, 0) for every lane: blk = 0x10 */
+    for (m = 0; m < 4; m++) {
+        want += (int64_t)(0x10 + m) * (int16_t)(mem[m] & 0xffff);
+    }
+    /* AVX-512 without the bit, AVX10.2: #UD */
+    xp_open(&c, UC_MODE_64, XP_AVX512, 0, NULL, 0);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == 6);
+    OK(uc_close(c.uc));
+    /* the bit alone (AVX512F implied) */
+    xp_open(&c, UC_MODE_64, UC_X86_AVX512_4VNNIW, 0, NULL, 0);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == -1);
+    TEST_CHECK_(xp_zmm_lane(&c, 0, 0) == (uint32_t)want && xp_zmm_lane(&c, 0, 15) == (uint32_t)want,
+                "lane 0 %x lane 15 %x want %x", xp_zmm_lane(&c, 0, 0), xp_zmm_lane(&c, 0, 15),
+                (uint32_t)want);
+    /* VP4DPWSSDS saturates after each step (steps 0 and 2 reach 0x7fffffff, steps 1 and 3
+     * come back down: 0x7ffc800d); VP4DPWSSD wraps around */
+    xp_vnniw_setup(&c, 0x7fffff00, 0x7fff7fff, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSDS, 6) == -1);
+    TEST_CHECK_(xp_zmm_lane(&c, 0, 3) == xp_ref_dpwssd(0x7fffff00, 0x7fff7fff, mem, true) &&
+                xp_ref_dpwssd(0x7fffff00, 0x7fff7fff, mem, true) == 0x7ffc800du,
+                "sat %x", xp_zmm_lane(&c, 0, 3));
+    xp_vnniw_setup(&c, 0x7fffff00, 0x7fff7fff, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == -1);
+    TEST_CHECK_(xp_zmm_lane(&c, 0, 3) == xp_ref_dpwssd(0x7fffff00, 0x7fff7fff, mem, false),
+                "wrap %x", xp_zmm_lane(&c, 0, 3));
+    /* memory: k1[15:0] = 0 -> no read; k1[0] = 1 -> the 16 bytes */
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, xp_read_cb, &rd, 1, 0));
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    k1 = 0xffff0000ull;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD_K1, 6) == -1);
+    TEST_CHECK_(rd.bytes == 0, "k1[15:0] = 0: %d bytes read", rd.bytes);
+    TEST_CHECK(xp_zmm_lane(&c, 0, 0) == 100);
+    k1 = 0x8000;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD_K1, 6) == -1);
+    TEST_CHECK_(rd.bytes == 16, "k1[15] = 1: %d bytes read", rd.bytes);
+    TEST_CHECK(xp_zmm_lane(&c, 0, 0) == 100 && xp_zmm_lane(&c, 0, 15) == (uint32_t)want);
+    OK(uc_close(c.uc));
+    /* strict profiles: without EDX[2] #UD, with it the instruction runs */
+    xp_open(&c, UC_MODE_64, XP_AVX512 | XP_ALL, 0, prof_no, 4);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, XP_AVX512 | XP_ALL, 0, prof_yes, 4);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, XP_4DPWSSD, 6) == -1);
+    TEST_CHECK(xp_zmm_lane(&c, 0, 7) == (uint32_t)want);
+    OK(uc_close(c.uc));
+    /* 32-bit mode: VP4DPWSSD zmm0, zmm6 (block zmm4..7), [esi] */
+    xp_open(&c, UC_MODE_32, UC_X86_AVX512_4VNNIW, 0, NULL, 0);
+    xp_vnniw_setup(&c, 100, 0x10, mem);
+    TEST_CHECK(xp_run(&c, "\x62\xf2\x4f\x48\x52\x06", 6) == -1);
+    TEST_CHECK_(xp_zmm_lane(&c, 0, 9) == (uint32_t)want, "32-bit %x", xp_zmm_lane(&c, 0, 9));
+    OK(uc_close(c.uc));
+}
 /* ---- end U990-U1019 (xp_) ---- */
 
 TEST_LIST = {
@@ -24600,4 +24760,5 @@ TEST_LIST = {
     {"test_x86_sm_msr_values", test_x86_sm_msr_values},
     {"test_x86_sm_pmu", test_x86_sm_pmu},
     {"test_x86_xp_optin", test_x86_xp_optin},
+    {"test_x86_xp_4vnniw", test_x86_xp_4vnniw},
     {NULL, NULL}};

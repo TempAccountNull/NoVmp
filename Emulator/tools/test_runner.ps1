@@ -375,6 +375,12 @@ Add-PySelftest 'ref_sysmsr_selftest' 'sysmsr tools' 'ref_sysmsr.py'
 # U907: the architectural PMU MSRs as storage, with a CPUID profile that enumerates a version-4 PMU
 # (cpuid_sysmsr_pmu.txt: the i5-13600K capture with leaf 0AH replaced), non-strict (MAX features)
 Add-Exp 'cases_sysmsr_pmu' 'cases_sysmsr_pmu' 'sysmsr expect' @( '--cpuid', ( Join-Path $D 'cpuid_sysmsr_pmu.txt' ), '--no-strict' )
+# U990-U995 (agent xeonphi): the Intel Xeon Phi-only families (AVX512_4VNNIW, AVX512_4FMAPS, AVX512ER,
+# AVX512PF, PREFETCHWT1) with --xeonphi; expected values from the independent model ref_xeonphi.py
+# (Unicorn only, the host has no AVX-512); cases_xeonphi_off: every form #UD with --avx512 alone.
+Add-Exp 'cases_xeonphi' 'cases_xeonphi' 'evex xeonphi expect' @( '--xeonphi' )
+Add-Exp 'cases_xeonphi_off' 'cases_xeonphi_off' 'evex xeonphi expect' @( '--avx512' )
+Add-PySelftest 'ref_xeonphi_selftest' 'xeonphi tools' 'ref_xeonphi.py'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

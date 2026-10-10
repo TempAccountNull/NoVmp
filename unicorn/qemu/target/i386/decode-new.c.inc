@@ -3741,7 +3741,7 @@ static void decode_EVEX_0F38_D3(DisasContext *s, CPUX86State *env, X86OpEntry *e
 /*
  * NoVmp (ledger U407): 0F38 52: NP = VDPPHPS (spec 10.1), AVX10.2, EVEX.W0, Full tuple
  * (m32bcst), {k1}{z}, class E4 (66 = VPDPWSSD, AVX512_VNNI: U555; F3 = VDPBF16PS,
- * AVX512_BF16: U557; F2 = VP4DPWSSD, AVX512_4VNNIW, not implemented: #UD).
+ * AVX512_BF16: U557; F2 = VP4DPWSSD, AVX512_4VNNIW: opcodes_evex_0F38_F2, U991).
  */
 static void decode_EVEX_0F38_52(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
 {
@@ -4521,7 +4521,7 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
                            ev_nf p_66),
 #endif /* __Use_Original_Qemu (U554) */
 #if __Use_Original_Qemu != 1 /* ours (U555) */
-    /* 53: 66 VPDPWSSDS (F2 = VP4DPWSSDS, AVX512_4VNNIW, not implemented: #UD) */
+    /* 53: 66 VPDPWSSDS (F2 = VP4DPWSSDS, AVX512_4VNNIW: opcodes_evex_0F38_F2, U991) */
     [0x53] = X86_OP_ENTRY3(EVEX_VPDPWSSDS, V,x, H,x, W,x, EV_VNNI512 p_66),
 #endif /* __Use_Original_Qemu (U555) */
 };
@@ -4737,6 +4737,26 @@ static const X86OpEntry opcodes_evex_0F38_F3_DQ[2][2] = {
     },
 };
 #endif /* __Use_Original_Qemu (U800) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+/*
+ * NoVmp (ledgers U991, U992): EVEX.F2.0F38 forms of the Xeon Phi 4-iteration families (SDM
+ * 325383-092 Vol2D chapter 8) whose opcode bytes hold 66 forms in opcodes_evex_0F38 (52/53
+ * VPDPWSSD/S, 9A/9B/AA/AB FMA); decode_evex_0F38 takes them first. zmm1{k1}{z}, zmm2+3 (a
+ * block of four registers starting at EVEX.vvvv & ~3, the 5-bit register index), m128 only
+ * (ModRM.mod = 11b #UD: an M operand), Tuple1_4X (disp8*N with N = 16, ISE 319433-062 Table
+ * 1-11: the Mem128 tuple; EVEX.b is then #UD, as each page also says), EVEX.W0; the packed
+ * forms are EVEX.512 only. gen_evex_4blk does the whole instruction (X86OpEntry.evex_blk4).
+ * VP4DPWSSD (52) / VP4DPWSSDS (53): AVX512_4VNNIW, "See Type E4" (8-17, 8-19).
+ */
+#define EV_4VNNIW(op) X86_OP_ENTRY3(op, V,x, H,x, M,dq, cpuid(AVX512_4VNNIW)                 \
+                      ev_vl(X86_EVEX_VL512) ev_tt(MEM128) ev_mask(MZ) ev_w(W0) ev_es(32)      \
+                      .evex_blk4 = 1, p_f2)
+static const X86OpEntry opcodes_evex_0F38_F2[256] = {
+    [0x52] = EV_4VNNIW(EVEX_VP4DPWSSD),
+    [0x53] = EV_4VNNIW(EVEX_VP4DPWSSDS),
+};
+#undef EV_4VNNIW
+#endif /* __Use_Original_Qemu (U991) */
 #if __Use_Original_Qemu != 1 /* ours (U325) */
 /*
  * NoVmp (ledger U325): EVEX.66.0F38.W0 forms whose opcode byte holds an AVX512BW W1 form in
@@ -4940,6 +4960,12 @@ static void decode_evex_0F38(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         return;
     }
 #endif /* __Use_Original_Qemu (U800) */
+#if __Use_Original_Qemu != 1 /* ours (U991) */
+    if ((s->prefix & PREFIX_REPNZ) && opcodes_evex_0F38_F2[*b].gen) {
+        *entry = opcodes_evex_0F38_F2[*b];
+        return;
+    }
+#endif /* __Use_Original_Qemu (U991) */
 #if __Use_Original_Qemu != 1 /* ours (U325) */
     if ((s->prefix & PREFIX_DATA) && !s->vex_w && opcodes_evex_0F38_66W0[*b].gen) {
         *entry = opcodes_evex_0F38_66W0[*b];
