@@ -204,3 +204,17 @@ movss dword ptr [rsi+0x7ffc], xmm1
 movq qword ptr [rsi+0x7ff8], xmm1
 movd dword ptr [rsi+0x7ffc], mm1
 pinsrw mm0, word ptr [rsi+0x7ffe], 1
+#
+# --- U872 PUNPCKLBW / PUNPCKLWD / PUNPCKLDQ mm, mm/m32 (NP 0F 60/61/62, SDM Vol2B): a doubleword source.
+# Before U872 it was read as 8 bytes: #PF on a doubleword in the last 4 bytes, #AC for one at offset 4
+# (the i5-13600K: neither). The 66 forms read m128 (#PF across the end on both).
+.byte 0x0f, 0x60, 0x86, 0xfc, 0x7f, 0x00, 0x00 | st0=FFFF:8877665544332211 m+0xFFFC=A1B2C3D4
+.byte 0x0f, 0x61, 0x86, 0xfc, 0x7f, 0x00, 0x00 | st0=FFFF:8877665544332211 m+0xFFFC=A1B2C3D4
+.byte 0x0f, 0x62, 0x86, 0xfc, 0x7f, 0x00, 0x00 | st0=FFFF:8877665544332211 m+0xFFFC=A1B2C3D4
+.byte 0x0f, 0x60, 0x46, 0x04 | cpl=3 rflags=0x40202 st0=FFFF:8877665544332211 m+0x8004=A1B2C3D4
+.byte 0x0f, 0x61, 0x46, 0x04 | cpl=3 rflags=0x40202
+.byte 0x0f, 0x62, 0x46, 0x04 | cpl=3 rflags=0x40202
+.byte 0x0f, 0x60, 0x46, 0x02 | cpl=3 rflags=0x40202
+.byte 0x0f, 0x62, 0x46, 0x01 | cpl=3 rflags=0x40202
+punpcklbw xmm0, xmmword ptr [rsi+0x7ff8]
+punpckldq xmm0, xmmword ptr [rsi+0x7ff0] | m+0xFFF0=0102030405060708090A0B0C0D0E0F10

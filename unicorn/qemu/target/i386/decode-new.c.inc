@@ -5660,6 +5660,19 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
         e->s2 = s->vex_w ? X86_SIZE_sd : X86_SIZE_ss;
     }
 #endif /* __Use_Original_Qemu (U870) */
+#if __Use_Original_Qemu != 1 /* ours (U872) */
+    /*
+     * NoVmp (ledger U872): PUNPCKLBW / PUNPCKLWD / PUNPCKLDQ mm, mm/m32 (NP 0F 60/61/62, SDM
+     * Vol2B): the MMX form reads a doubleword (only the low halves are interleaved); QEMU read
+     * 8 bytes: #PF on a doubleword in the last 4 bytes of a page and #AC for one at offset 4
+     * (i5-13600K: neither). The 66 forms read m128.
+     */
+    if (e->special == X86_SPECIAL_MMX &&
+        !(s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ)) &&
+        (e->gen == gen_PUNPCKLBW || e->gen == gen_PUNPCKLWD || e->gen == gen_PUNPCKLDQ)) {
+        e->s2 = X86_SIZE_d;
+    }
+#endif /* __Use_Original_Qemu (U872) */
 #if __Use_Original_Qemu != 1 /* ours (U142) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U645) */
     if ((s->prefix & PREFIX_EVEX) && !decode_evex_vl(s, env, e)) {
