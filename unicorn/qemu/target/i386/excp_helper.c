@@ -229,6 +229,9 @@ G_NORETURN void helper_icebp(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
     /* FRED: privileged software exception (type 5), no event data ("without setting any bits in
        DR6", SDM 092 Vol2A INT1); the translator stored the instruction length */
+    /* U1182: event data 0 - 325462-092 Vol3A 8.3.2.1 p. 8-8 defines #DB event data only by
+       B3-B0 / BLD / BD / BS / RTM, none of which INT1 sets, and "For any other events ... zero";
+       user decision 2026-10-10, docs/quirks.md "SDM self-conflicts, our reading" */
     env->fred_kind = 5;
     env->fred_swexc = 0;
     env->fred_nested = 0;

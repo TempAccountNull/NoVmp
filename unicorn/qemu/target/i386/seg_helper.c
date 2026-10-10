@@ -1417,6 +1417,13 @@ static void x86_fred_deliver(CPUX86State *env, int vector, int type, uint32_t er
     uint64_t cfg = env->fred_config;
     int cpl = env->hflags & HF_CPL_MASK;
     int old_csl = cpl == 3 ? 0 : (int)(cfg & 3);
+    /*
+     * U1182: the error code of every #GP / #SS raised by this delivery (new RIP, SSP alignment,
+     * stack slots): SDM 325462-092 Vol3A 8.3.4 p. 8-11 ("it will be 1 for event types external
+     * interrupt, non-maskable interrupt, hardware exception, or privileged software exception
+     * (INT1)", else 0), not the "#GP(0)" of the 8.3.5 pseudocode (p. 8-12 new RIP, p. 8-13 new
+     * SSP) - user decision 2026-10-10, docs/quirks.md "SDM self-conflicts, our reading".
+     */
     int ext = (type == FRED_T_EXTINT || type == FRED_T_NMI || type == FRED_T_HWEXC ||
                type == FRED_T_PRIVSW) ? 1 : 0;
     bool df = type == FRED_T_HWEXC && vector == EXCP08_DBLE;
@@ -2367,6 +2374,9 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
      * unless the guest or the user clears IA32_EFER.SCE.
      */
     /* U1171: with CR4.FRED = 1 IA32_EFER.SCE is not consulted (SDM 092 Vol2B SYSCALL Operation) */
+    /* U1182: the Operation (325462-092 Vol2B pp. 4-698/4-699: SCE is tested only in the
+       "CR4.FRED = 0" branch) wins over the 64-Bit Mode Exceptions list (p. 4-700: "#UD If
+       IA32_EFER.SCE = 0.") - user decision 2026-10-10, docs/quirks.md "SDM self-conflicts" */
     if (!(env->efer & MSR_EFER_SCE) && !x86_fred_enabled(env)) {
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
     }

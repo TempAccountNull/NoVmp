@@ -8897,6 +8897,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * CPL > 0 and with LOCK; the helpers check CR4.FRED and raise the single-step trap. The
          * TB ends after them without the generic RF / interrupt-shadow handling of gen_eob (they
          * load RF from the stack and establish STI blocking themselves).
+         * U1182: ERETU outside 64-bit mode is #UD per its Operation (Vol2A p. 3-301: "IF
+         * CR4.FRED = 0 OR CS.L = 0 OR CPL > 0 THEN #UD") and exception lists (3-303 / 3-304:
+         * "not recognized"), not "Valid" as its opcode table (3-301) says for compatibility /
+         * legacy mode - user decision 2026-10-10, docs/quirks.md "SDM self-conflicts".
          */
         if ((s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) && modrm == 0xca &&
             (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED)) {
