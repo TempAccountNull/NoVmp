@@ -293,6 +293,9 @@ Add-Hw 'cases_bsf_zero_hw' 'hw'
 # U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
 # (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
 Add-Hw 'cases_fix5' 'hw'
+# U870/U871 audit: every EVEX form whose memory operand at VL 128 / LIG is smaller than 16 bytes, ending at the
+# last mapped byte: no fault (only the element is accessed); expected values, Unicorn only.
+Add-Exp 'cases_fix5_evex' 'cases_fix5_evex' 'evex avx10 expect' @( '--avx512', '--avx10', '2' )
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # U750-U760: CET on far CALL / RET far / IRETQ (call gates, supervisor tokens), SYSRET/SYSEXIT SSP,

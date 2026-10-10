@@ -105,3 +105,102 @@ vfnmsub231ss xmm0, xmm1, dword ptr [rsi+2] | cpl=3 rflags=0x40202 xmm0=0000803F0
 vfnmsub231sd xmm0, xmm1, qword ptr [rsi+4] | cpl=3 rflags=0x40202 xmm0=000000000000F03F000000000000F03F ymmh0=33333333333333333333333333333333 xmm1=00000000000008400000000000000840
 vfnmsub231ss xmm0, xmm1, dword ptr [rsi+4] | cpl=3 rflags=0x40202 xmm0=0000803F0000803F0000803F0000803F ymmh0=33333333333333333333333333333333 xmm1=00004040000040400000404000004040
 vfnmsub231sd xmm0, xmm1, qword ptr [rsi+8] | cpl=3 rflags=0x40202 xmm0=000000000000F03F000000000000F03F ymmh0=33333333333333333333333333333333 xmm1=00000000000008400000000000000840
+#
+# --- U871 (V)CVTDQ2PD xmm1, xmm2/m64 (SDM Vol2A): an 8-byte source (16 for the ymm form). Before U871
+# it was read as 16 (32) bytes: #PF on the pair in the last 8 bytes, no #AC for a misaligned one
+# (5 of these 6 lines differed before U871).
+vcvtdq2pd xmm0, qword ptr [rsi+0x7ff8] | m+0xFFF8=0100000002000000
+cvtdq2pd xmm0, qword ptr [rsi+0x7ff8] | m+0xFFF8=FFFFFFFF00000080
+vcvtdq2pd ymm0, xmmword ptr [rsi+0x7ff0] | m+0xFFF0=01000000020000000300000004000000 ymmh0=33333333333333333333333333333333
+cvtdq2pd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+vcvtdq2pd xmm0, qword ptr [rsi+4] | cpl=3 rflags=0x40202
+cvtdq2pd xmm0, qword ptr [rsi+8] | cpl=3 rflags=0x40202
+# --- U870/U871 audit: the other VEX / legacy SSE / MMX forms with a memory operand smaller than 16 bytes,
+# the operand ending at the last mapped byte: no fault on either engine (all SAME before and after;
+# the EVEX forms are in cases_fix5_evex.txt, expected values).
+vaddss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vaddsd xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vsqrtss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vsqrtsd xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vrcpss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vrsqrtss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vminss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vmaxsd xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vcmpss xmm0, xmm1, dword ptr [rsi+0x7ffc], 1
+vcmpsd xmm0, xmm1, qword ptr [rsi+0x7ff8], 1
+vroundss xmm0, xmm1, dword ptr [rsi+0x7ffc], 1
+vroundsd xmm0, xmm1, qword ptr [rsi+0x7ff8], 1
+vcvtss2sd xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vcvtsd2ss xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vcvtsi2ss xmm0, xmm1, dword ptr [rsi+0x7ffc]
+vcvtsi2sd xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vcvtss2si eax, dword ptr [rsi+0x7ffc]
+vcvttsd2si rax, qword ptr [rsi+0x7ff8]
+vcomiss xmm0, dword ptr [rsi+0x7ffc]
+vucomisd xmm0, qword ptr [rsi+0x7ff8]
+vmovss xmm0, dword ptr [rsi+0x7ffc]
+vmovsd xmm0, qword ptr [rsi+0x7ff8]
+vmovss dword ptr [rsi+0x7ffc], xmm0
+vmovsd qword ptr [rsi+0x7ff8], xmm0
+vinsertps xmm0, xmm1, dword ptr [rsi+0x7ffc], 0x10
+vextractps dword ptr [rsi+0x7ffc], xmm1, 1
+vbroadcastss xmm0, dword ptr [rsi+0x7ffc]
+vbroadcastss ymm0, dword ptr [rsi+0x7ffc]
+vbroadcastsd ymm0, qword ptr [rsi+0x7ff8]
+vpbroadcastb xmm0, byte ptr [rsi+0x7fff]
+vpbroadcastw ymm0, word ptr [rsi+0x7ffe]
+vpbroadcastd xmm0, dword ptr [rsi+0x7ffc]
+vpbroadcastq ymm0, qword ptr [rsi+0x7ff8]
+vcvtph2ps xmm0, qword ptr [rsi+0x7ff8]
+vcvtps2ph qword ptr [rsi+0x7ff8], xmm1, 0
+vpinsrb xmm0, xmm1, byte ptr [rsi+0x7fff], 3
+vpinsrw xmm0, xmm1, word ptr [rsi+0x7ffe], 3
+vpinsrd xmm0, xmm1, dword ptr [rsi+0x7ffc], 3
+vpinsrq xmm0, xmm1, qword ptr [rsi+0x7ff8], 1
+vpextrb byte ptr [rsi+0x7fff], xmm1, 3
+vpextrw word ptr [rsi+0x7ffe], xmm1, 3
+vpextrd dword ptr [rsi+0x7ffc], xmm1, 3
+vpextrq qword ptr [rsi+0x7ff8], xmm1, 1
+vmovd xmm0, dword ptr [rsi+0x7ffc]
+vmovq xmm0, qword ptr [rsi+0x7ff8]
+vmovq qword ptr [rsi+0x7ff8], xmm1
+vmovlps xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vmovhpd xmm0, xmm1, qword ptr [rsi+0x7ff8]
+vmovlps qword ptr [rsi+0x7ff8], xmm1
+vmovddup xmm0, qword ptr [rsi+0x7ff8]
+vcvtps2pd xmm0, qword ptr [rsi+0x7ff8]
+vpmovsxbd xmm0, dword ptr [rsi+0x7ffc]
+vpmovzxbq xmm0, word ptr [rsi+0x7ffe]
+vpmovsxwq xmm0, dword ptr [rsi+0x7ffc]
+vpmovzxbw xmm0, qword ptr [rsi+0x7ff8]
+vpmovzxbq ymm0, dword ptr [rsi+0x7ffc]
+vpmovsxdq ymm0, xmmword ptr [rsi+0x7ff0]
+addss xmm0, dword ptr [rsi+0x7ffc]
+sqrtsd xmm0, qword ptr [rsi+0x7ff8]
+roundss xmm0, dword ptr [rsi+0x7ffc], 1
+roundsd xmm0, qword ptr [rsi+0x7ff8], 1
+cvtss2sd xmm0, dword ptr [rsi+0x7ffc]
+cvtsd2ss xmm0, qword ptr [rsi+0x7ff8]
+cvtsi2ss xmm0, dword ptr [rsi+0x7ffc]
+cvttss2si eax, dword ptr [rsi+0x7ffc]
+comiss xmm0, dword ptr [rsi+0x7ffc]
+rcpss xmm0, dword ptr [rsi+0x7ffc]
+insertps xmm0, dword ptr [rsi+0x7ffc], 0x10
+extractps dword ptr [rsi+0x7ffc], xmm1, 1
+pinsrb xmm0, byte ptr [rsi+0x7fff], 3
+pinsrw xmm0, word ptr [rsi+0x7ffe], 3
+pextrw word ptr [rsi+0x7ffe], xmm1, 3
+pmovsxbq xmm0, word ptr [rsi+0x7ffe]
+pmovzxbd xmm0, dword ptr [rsi+0x7ffc]
+cvtps2pd xmm0, qword ptr [rsi+0x7ff8]
+movddup xmm0, qword ptr [rsi+0x7ff8]
+cvtpi2pd xmm0, qword ptr [rsi+0x7ff8]
+cvtps2pi mm0, qword ptr [rsi+0x7ff8]
+cvttps2pi mm0, qword ptr [rsi+0x7ff8]
+cvtpi2ps xmm0, qword ptr [rsi+0x7ff8] # known deviation: CVTPI2PS m64 x87 transition
+movlpd xmm0, qword ptr [rsi+0x7ff8]
+movhps qword ptr [rsi+0x7ff8], xmm1
+movss dword ptr [rsi+0x7ffc], xmm1
+movq qword ptr [rsi+0x7ff8], xmm1
+movd dword ptr [rsi+0x7ffc], mm1
+pinsrw mm0, word ptr [rsi+0x7ffe], 1

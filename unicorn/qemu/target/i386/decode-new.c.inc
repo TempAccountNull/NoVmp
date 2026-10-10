@@ -1741,7 +1741,16 @@ static void decode_0FE6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, ui
     static const X86OpEntry opcodes_0FE6[4] = {
         {},
         X86_OP_ENTRY2(VCVTTPD2DQ,  V,x, W,x,      vex2),
+#if __Use_Original_Qemu == 1 /* original QEMU (U871) */
         X86_OP_ENTRY2(VCVTDQ2PD,   V,x, W,x,      vex5),
+#else /* ours (U871) */
+        /*
+         * NoVmp (ledger U871): (V)CVTDQ2PD xmm1, xmm2/m64 / ymm1, xmm2/m128 (SDM Vol2A): the
+         * source is half the vector length, as for VCVTPS2PD. W,x read 16 (32) bytes: #PF
+         * on a doubleword pair in the last 8 bytes of a page (i5-13600K: no fault).
+         */
+        X86_OP_ENTRY2(VCVTDQ2PD,   V,x, W,xh,     vex5),
+#endif /* __Use_Original_Qemu (U871) */
         X86_OP_ENTRY2(VCVTPD2DQ,   V,x, W,x,      vex2),
     };
     *entry = *decode_by_prefix(s, opcodes_0FE6);
