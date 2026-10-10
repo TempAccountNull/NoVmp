@@ -23785,6 +23785,35 @@ static void test_x86_sm_sysenter(void)
              (unsigned long long)sm_get(&c, UC_X86_REG_CS));
     OK(uc_close(c.uc));
 }
+
+/*
+ * U903: SYSRET loads RFLAGS := (R11 AND 3C7FD7H) OR 2: RF and VM (and the reserved bits) 0,
+ * VIF / VIP from R11. R11 = all ones but TF (no single-step trap).
+ */
+static void test_x86_sm_sysret_flags(void)
+{
+    SmCtx c;
+    int w;
+
+    for (w = 0; w < 2; w++) {
+        sm_open(&c, UC_MODE_64, -1);
+        /* sysretq / sysret (to compatibility mode: the target is below 4 GB) */
+        OK(uc_mem_write(c.uc, code_start, w ? "\x48\x0f\x07" : "\x0f\x07\x90", 3));
+        OK(uc_mem_write(c.uc, SM_HANDLER, "\x90", 1));
+        sm_wrmsr(&c, 0xC0000081, 0x0023001000000000ULL);
+        sm_set(&c, UC_X86_REG_RCX, SM_HANDLER);
+        sm_set(&c, UC_X86_REG_R11, 0xFFFFFFFFFFFFFEFFULL);
+        OK(uc_emu_start(c.uc, code_start, SM_HANDLER, 0, 0));
+        TEST_CHECK(c.cap.count == 0 && sm_get(&c, UC_X86_REG_RIP) == SM_HANDLER);
+        TEST_CHECK(sm_get(&c, UC_X86_REG_RFLAGS) == 0x3C7ED7);
+        TEST_CHECK((sm_get(&c, UC_X86_REG_CS) & 0xffff) == (w ? 0x33 : 0x23) &&
+                   (sm_get(&c, UC_X86_REG_SS) & 0xffff) == 0x2B);
+        TEST_MSG("rex.w %d: rflags %llx cs %llx", w, (unsigned long long)sm_get(&c, UC_X86_REG_RFLAGS),
+                 (unsigned long long)sm_get(&c, UC_X86_REG_CS));
+        OK(uc_close(c.uc));
+    }
+}
+
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -24106,4 +24135,5 @@ TEST_LIST = {
     {"test_x86_sm_syscall", test_x86_sm_syscall},
     {"test_x86_sm_syscall_cet", test_x86_sm_syscall_cet},
     {"test_x86_sm_sysenter", test_x86_sm_sysenter},
+    {"test_x86_sm_sysret_flags", test_x86_sm_sysret_flags},
     {NULL, NULL}};

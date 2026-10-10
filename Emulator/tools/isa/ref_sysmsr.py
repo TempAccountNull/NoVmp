@@ -340,6 +340,67 @@ def cases_sysenter(a):
     a('%s =>! #CP(3)' % asm2)
 
 
+# ---- SDM Vol2B SYSRET / SYSEXIT (the parts U903 / U904 change) ------------------------------------
+def sysret_rflags(r11):
+    """RFLAGS := (R11 & 3C7FD7H) | 2"""
+    return (r11 & 0x3C7FD7) | 2
+
+
+def canonical(v, bits=48):
+    top = (v & M64) >> (bits - 1)
+    return top == 0 or top == (1 << (65 - bits)) - 1
+
+
+def sysexit(sysenter_cs, rcx, rdx, opsize, cpl=0, paging_bits=48):
+    """returns (rsp, rip, cs, ss) or raises Fault"""
+    if ((sysenter_cs >> 2) & 0x3FFF) == 0 or cpl != 0:
+        raise Fault('#GP', 0)
+    if opsize == 64:
+        if not canonical(rcx, paging_bits) or not canonical(rdx, paging_bits):
+            raise Fault('#GP', 0)
+        cs = ((sysenter_cs & 0xFFFF) + 32) & 0xFFFF
+        rsp, rip = rcx & M64, rdx & M64
+    else:
+        cs = ((sysenter_cs & 0xFFFF) + 16) & 0xFFFF
+        rsp, rip = rcx & 0xFFFFFFFF, rdx & 0xFFFFFFFF
+    cs |= 3
+    return rsp, rip, cs, (cs + 8) & 0xFFFF
+
+
+def cases_sysret(a):
+    a('# --- SYSRET RFLAGS (U903): (R11 AND 3C7FD7H) OR 2 - RF, VM and the reserved bits 0, VIF/VIP from R11.')
+    a('# SYSRETQ to label u at CPL3; R15 = PUSHFQ image there (RF / VM clear in any PUSHFQ image), RBX = CS')
+    for r11 in (0xFFFFFFFFFFFFFEFF, 0x0000000000030202, 0x00000000001A0ED7, 0x00000000FFC08AD5, 0x0000000000240246):
+        fl = sysret_rflags(r11)
+        asm = '; '.join([wrmsr_imm(MSR_STAR, 0x0023001000000000), 'lea rcx, [rip + u]; mov r11, %s' % hx(r11),
+                         SYSRETQ, 'u: pushfq; pop r15; mov ebx, cs'])
+        a('%s =>! rbx=0x33 r15=%s' % (asm, hx(pushfq_image(fl))))
+
+
+def cases_sysexit(a):
+    a('# --- SYSEXIT (U904): #GP(0) if IA32_SYSENTER_CS[15:2] = 0 (RPL-only selectors too); REX.W with RCX or RDX')
+    a('# not canonical (4-level paging: 48 bits) #GP(0); nothing changes')
+    for cs, rcx, rdx, w in ((1, 0x1000, 0x2000, 64), (3, 0x1000, 0x2000, 32), (0x10000, 0x1000, 0x2000, 64),
+                            (0x10, 0x0000800000000000, 0x2000, 64), (0x10, 0x1000, 0xFFFF7FFFFFFFF000, 64)):
+        try:
+            sysexit(cs, rcx, rdx, w)
+            raise AssertionError('sysexit must fault')
+        except Fault as f:
+            ins = '.byte 0x48, 0x0f, 0x35' if w == 64 else SYSEXIT32
+            a('%s; mov rcx, %s; mov rdx, %s; %s =>! %s rcx=%s rdx=%s' % (
+                wrmsr_imm(0x174, cs), hx(rcx), hx(rdx), ins, f.token(), hx(rcx), hx(rdx)))
+    a('# 32-bit operand size: RSP := ECX, RIP := EDX (bits 63:32 ignored) -> compatibility mode CS 23h at label u;')
+    a('# there PUSH CS (0Eh) writes the selector at ECX - 4 = MEM + 90FCh (only its 2 low bytes are checked: the SDM')
+    a('# allows a 16-bit store), then SYSENTER back to 64-bit mode CPL0 at k (IA32_SYSENTER_ESP = the old RSP)')
+    rsp, rip, cs, ss = sysexit(0x10, 0xAAAAAAAA00000000 | (MEM + 0x9100), 0x5555555500000000 | 0x30000000, 32)
+    asm = '; '.join([wrmsr_imm(0x174, 0x10), wrmsr_label(0x176, 'k'),
+                     'mov rax, rsp; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr',
+                     'lea rdx, [rip + u]; mov rax, 0x5555555500000000; or rdx, rax',
+                     'mov rcx, 0xAAAAAAAA%08X' % (MEM + 0x9100), SYSEXIT32,
+                     'u: .byte 0x0e', 'sysenter', 'k: nop'])
+    a('%s =>! m+0x90FC=%s' % (asm, (cs).to_bytes(2, 'little').hex().upper()))
+
+
 def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
@@ -353,6 +414,7 @@ def cases_all():
     a('#   emu-alltest --cases Emulator\\data\\cases_sysmsr.txt --expect-only')
     cases_syscall(a)
     cases_sysenter(a)
+    cases_sysret(a)
     return lines
 
 

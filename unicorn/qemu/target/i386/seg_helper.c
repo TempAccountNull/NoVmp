@@ -1945,9 +1945,21 @@ void helper_sysret(CPUX86State *env, int dflag)
                                DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
                                DESC_W_MASK | DESC_A_MASK);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U903) */
         cpu_load_eflags(env, (uint32_t)(env->regs[11]), TF_MASK | AC_MASK
                         | ID_MASK | IF_MASK | IOPL_MASK | VM_MASK | RF_MASK |
                         NT_MASK);
+#else /* ours (U903) */
+        /*
+         * NoVmp (ledger U903): SDM Vol2B SYSRET: "RFLAGS := (R11 & 3C7FD7H) | 2 (* Clear RF, VM,
+         * reserved bits; set bit 1 *)"; footnote: "Regardless of the value of R11, the RF and VM
+         * flags are always 0 in RFLAGS after execution of SYSRET". Upstream loads RF and VM from
+         * R11 (VM = 1 in 64-bit mode) and keeps the old VIF / VIP, which 3C7FD7H loads from R11.
+         */
+        cpu_load_eflags(env, (uint32_t)env->regs[11] & 0x3C7FD7,
+                        TF_MASK | AC_MASK | ID_MASK | IF_MASK | IOPL_MASK | VM_MASK |
+                        RF_MASK | NT_MASK | VIF_MASK | VIP_MASK);
+#endif /* __Use_Original_Qemu (U903) */
 #if __Use_Original_Qemu != 1 /* ours (U753) */
         /*
          * NoVmp (ledger U753): SDM Vol2B SYSRET: "CPL := 3; IF ShadowStackEnabled(CPL) SSP :=
