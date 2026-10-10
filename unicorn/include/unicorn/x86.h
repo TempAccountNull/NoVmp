@@ -87,6 +87,18 @@ typedef struct uc_x86_exception {
     uint64_t address;        // the #PF linear address when has_address = 1, else 0
 } uc_x86_exception;
 
+// One TME-MK key table entry, read with UC_CTL_X86_MKTME_KEY (NoVmp ledger U1021).
+#define UC_X86_MKTME_TME 0         // the KeyID uses the TME behaviour (reset, KEYID_CLEAR_KEY)
+#define UC_X86_MKTME_KEY 1         // encrypt with the programmed key (KEYID_SET_KEY_DIRECT/RANDOM)
+#define UC_X86_MKTME_NO_ENCRYPT 2  // KEYID_NO_ENCRYPT
+typedef struct uc_x86_mktme_key {
+    uint8_t mode;           // UC_X86_MKTME_*
+    uint8_t random;         // mode KEY: 1 = KEYID_SET_KEY_RANDOM, 0 = KEYID_SET_KEY_DIRECT
+    uint16_t enc_alg;       // mode KEY: the ENC_ALG bit (bit i = IA32_TME_CAPABILITY algorithm i)
+    uint8_t data_key[32];   // mode KEY: 16 (AES-XTS-128) or 32 (AES-XTS-256) bytes, the rest 0
+    uint8_t tweak_key[32];  // mode KEY: the tweak key, same sizes
+} uc_x86_mktme_key;
+
 typedef struct uc_x86_mmr {
     uint16_t selector; /* not used by GDTR and IDTR */
     uint64_t base;     /* handle 32 or 64 bit CPUs */

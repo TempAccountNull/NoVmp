@@ -9124,8 +9124,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         /*
          * NoVmp (ledger U113): PCONFIG, NP 0F 01 C5 (SDM Vol2 PCONFIG). #UD if
          * CPUID.7.0:EDX.PCONFIG[18] = 0 or CPL > 0 (also virtual-8086 mode),
-         * with LOCK or 66/F2/F3. No CPU model TCG builds reports PCONFIG (it
-         * would need CPUID leaf 1BH); the run-time part is helper_pconfig.
+         * with LOCK or 66/F2/F3; the run-time part is helper_pconfig. U1021: the
+         * MAX model reports PCONFIG with CPUID leaf 1BH (TME-MK, TSE); the
+         * helper sets RAX and the flags (ZF = failure, CF/PF/AF/OF/SF cleared),
+         * so EIP is synced first and CC_OP becomes EFLAGS.
          * ENCLS (0F 01 CF), ENCLU (0F 01 D7) and ENCLV (0F 01 C0) stay #UD:
          * no model reports SGX (CPUID.7.0:EBX[2] / 12H.0:EAX.SGX1 = 0), the
          * first check of each, and ENCLV also needs VMX operation.
@@ -9138,7 +9140,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
             gen_update_cc_op(s);
+            gen_update_eip_cur(s);              /* U1021 */
             gen_helper_pconfig(tcg_ctx, cpu_env);
+            set_cc_op(s, CC_OP_EFLAGS);         /* U1021 */
             break;
 #endif /* __Use_Original_Qemu (U113) */
 #if __Use_Original_Qemu != 1 /* ours (U110) */

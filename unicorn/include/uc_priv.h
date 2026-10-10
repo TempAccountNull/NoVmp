@@ -446,6 +446,8 @@ struct uc_struct {
     // NoVmp U835: UC_CTL_X86_RDRAND after init: to_cpu = 1 copies x86_rdrand_mode/seed into
     // the CPU (count 0), 0 copies the CPU's current mode/seed back into them
     void (*x86_rdrand_sync)(struct uc_struct *uc, int to_cpu);
+    // NoVmp U1021: UC_CTL_X86_MKTME_KEY (the CPU's TME-MK key table entry 'keyid')
+    uc_err (*x86_mktme_key)(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key);
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.

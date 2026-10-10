@@ -7106,7 +7106,9 @@ static void test_x86_smx_pconfig_sgx(void)
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x37"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\x0f\x37"));
 
-    /* PCONFIG (not reported), ENCLS/ENCLU/ENCLV (no SGX, no VMX): #UD at CPL0 and CPL3 */
+    /* PCONFIG (U1021: reported; its CPL0 #GP(0) is in test_x86_pc_pconfig): #UD at CPL3 - the
+       CPU is still at CPL3 after the nv_run3 above; ENCLS/ENCLU/ENCLV (no SGX, no VMX): #UD */
+    TEST_CHECK(nv_cpl(&r) == 3);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xc5"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xc5"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xcf"));
@@ -22616,12 +22618,14 @@ typedef struct PcCtx {
     X86IntrCapture cap;
     uc_hook hook;
     uint64_t pc;
+    int real;           /* UC_MODE_16 (real-address mode): 32-bit register names, no error code */
 } PcCtx;
 
 static void pc_open_mode(PcCtx *c, uc_mode mode, int model)
 {
     memset(c, 0, sizeof(*c));
     c->pc = code_start;
+    c->real = mode == UC_MODE_16;
     OK(uc_open(UC_ARCH_X86, mode, &c->uc));
     OK(uc_ctl_set_cpu_model(c->uc, model));
     OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
@@ -22657,22 +22661,42 @@ static int pc_run(PcCtx *c, const char *code, size_t len)
     TEST_MSG("uc_emu_start: %s", uc_strerror(err));
     if (c->cap.count && c->cap.intno == 13) {
         OK(uc_ctl_get_x86_exception(c->uc, &e));
-        TEST_CHECK(e.vector == 13 && e.has_error_code && e.error_code == 0);
+        TEST_CHECK(e.vector == 13 && (c->real || (e.has_error_code && e.error_code == 0)));
     }
     return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+/* in real-address mode the 64-bit register names are mapped to the 32-bit ones */
+static int pc_reg(PcCtx *c, int reg)
+{
+    if (c->real) {
+        switch (reg) {
+        case UC_X86_REG_RAX:
+            return UC_X86_REG_EAX;
+        case UC_X86_REG_RBX:
+            return UC_X86_REG_EBX;
+        case UC_X86_REG_RCX:
+            return UC_X86_REG_ECX;
+        case UC_X86_REG_RDX:
+            return UC_X86_REG_EDX;
+        default:
+            break;
+        }
+    }
+    return reg;
 }
 
 static uint64_t pc_get(PcCtx *c, int reg)
 {
     uint64_t v = 0;
 
-    OK(uc_reg_read(c->uc, reg, &v));
+    OK(uc_reg_read(c->uc, pc_reg(c, reg), &v));
     return v;
 }
 
 static void pc_set(PcCtx *c, int reg, uint64_t v)
 {
-    OK(uc_reg_write(c->uc, reg, &v));
+    OK(uc_reg_write(c->uc, pc_reg(c, reg), &v));
 }
 
 /* WRMSR / RDMSR executed by the CPU (CPL0): the vector or -1 */
@@ -22814,6 +22838,264 @@ static void test_x86_pc_tme_msrs(void)
     TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == -1);
     v = pc_rdmsr(&c, 0x982);
     TEST_CHECK(v == 0 && pc_rdmsr(&c, 0x981) == 0);
+    OK(uc_close(c.uc));
+}
+
+#define PC_PCONFIG "\x0f\x01\xc5"
+
+/* MKTME_KEY_PROGRAM_STRUCT (SDM Vol2B Table 4-16) at 'a' */
+static void pc_kps(PcCtx *c, uint64_t a, unsigned keyid, unsigned cmd, unsigned alg,
+                   const uint8_t *k1, const uint8_t *k2, uint8_t fill)
+{
+    uint8_t s[192];
+    uint32_t ctrl = cmd | (alg << 8);
+
+    memset(s, fill, sizeof(s));
+    s[0] = (uint8_t)keyid;
+    s[1] = (uint8_t)(keyid >> 8);
+    memcpy(s + 2, &ctrl, 4);
+    memcpy(s + 64, k1, 64);
+    memcpy(s + 128, k2, 64);
+    OK(uc_mem_write(c->uc, a, s, sizeof(s)));
+}
+
+/* PCONFIG leaf 'leaf', RBX = rbx: the vector or -1; on success RAX = 0 and ZF/CF/PF/AF/OF/SF = 0 */
+static int pc_pconfig(PcCtx *c, uint32_t leaf, uint64_t rbx)
+{
+    uint64_t rax = c->real ? leaf : 0xabcd000000000000ull | leaf;
+    int v;
+
+    pc_set(c, UC_X86_REG_RAX, rax);
+    pc_set(c, UC_X86_REG_RBX, rbx);
+    pc_set(c, UC_X86_REG_EFLAGS, 0xed7);
+    v = pc_run(c, PC_PCONFIG, 3);
+    if (v == -1) {
+        TEST_CHECK(pc_get(c, UC_X86_REG_RAX) == 0);
+        TEST_CHECK(pc_get(c, UC_X86_REG_EFLAGS) == 0x602);
+    } else {
+        TEST_CHECK(pc_get(c, UC_X86_REG_RAX) == rax);
+    }
+    return v;
+}
+
+static uc_x86_mktme_key pc_key(PcCtx *c, int keyid)
+{
+    uc_x86_mktme_key k;
+
+    memset(&k, 0xcc, sizeof(k));
+    OK(uc_ctl_get_x86_mktme_key(c->uc, keyid, &k));
+    return k;
+}
+
+static int pc_zero(const uint8_t *p, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (p[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * U1021: PCONFIG (NP 0F 01 C5) MKTME_KEY_PROGRAM on the MAX model: CPUID.(07H,0):EDX[18], leaf
+ * 1BH (sub-leaf 0 = targets 1 TME-MK and 2 TSE, sub-leaf 1 invalid); #GP(0) before activation;
+ * KEYID_SET_KEY_DIRECT with AES-XTS-256 / -128 (only the algorithm's key bytes are used, bytes
+ * 63:6 ignored), KEYID_SET_KEY_RANDOM = the next RDRAND values (seeded source, compared with a
+ * second engine's RDRAND results) XOR the software entropy, KEYID_CLEAR_KEY, KEYID_NO_ENCRYPT, read
+ * through UC_CTL_X86_MKTME_KEY; RAX := 0 and the flags; every #GP(0) row of the Operation leaves
+ * RAX and the table unchanged; the structure read faults (unmapped) only after the alignment
+ * check; the TSE leaves end in #GP(0) (IA32_TSE_CAPABILITY = 0) after leaf 1 has read its
+ * structure; LOCK / 66 / F2 / F3 #UD; uc_context carries the table; real-address mode: DS:EBX,
+ * the DS limit, leaf 1 #GP(0) (was #UD in U113).
+ */
+static void test_x86_pc_pconfig(void)
+{
+    const uint64_t act = 2 | 0x20 | (6ull << 32) | (2ull << 36) | (0xfull << 48);
+    const uint64_t s0 = PC_DATA + 0x1000;
+    uint8_t k1[64], k2[64], rnd[64];
+    uc_x86_mktme_key k;
+    uc_context *ctx;
+    uint32_t r[4];
+    uint64_t v;
+    int i;
+    PcCtx c, d;
+
+    for (i = 0; i < 64; i++) {
+        k1[i] = (uint8_t)(i * 7 + 1);
+        k2[i] = (uint8_t)(i * 11 + 3);
+    }
+    pc_open(&c);
+    pc_cpuid(&c, 7, 0, r);
+    TEST_CHECK(r[3] & (1u << 18));
+    pc_cpuid(&c, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x1b);
+    pc_cpuid(&c, 0x1b, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 1 && r[2] == 2 && r[3] == 0);
+    pc_cpuid(&c, 0x1b, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+    pc_cpuid(&c, 0x1b, 5, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 0 && r[3] == 0);
+
+    /* before activation: #GP(0); EAX > 2 #GP(0) */
+    pc_kps(&c, s0, 1, 0, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == 13);
+    TEST_CHECK(pc_pconfig(&c, 3, s0) == 13);
+    TEST_CHECK(pc_pconfig(&c, 0xffffffff, s0) == 13);
+    k = pc_key(&c, 1);
+    TEST_CHECK(k.mode == UC_X86_MKTME_TME && k.enc_alg == 0 && pc_zero(k.data_key, 32));
+
+    /* activate: k = 6, p = 2 (KeyIDs 1..15), all four MK algorithms */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == -1);
+    /* KEYID_SET_KEY_DIRECT, AES-XTS-256 (ENC_ALG bit 2): 32-byte keys; bytes 63:6 ignored */
+    pc_kps(&c, s0, 5, 0, 4, k1, k2, 0xa5);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 5);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.random == 0 && k.enc_alg == 4);
+    TEST_CHECK(memcmp(k.data_key, k1, 32) == 0 && memcmp(k.tweak_key, k2, 32) == 0);
+    /* AES-XTS-128 (bit 0): 16 bytes used, the rest of the 64-byte fields ignored */
+    pc_kps(&c, s0, 6, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 6);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.enc_alg == 1);
+    TEST_CHECK(memcmp(k.data_key, k1, 16) == 0 && pc_zero(k.data_key + 16, 16));
+    TEST_CHECK(memcmp(k.tweak_key, k2, 16) == 0 && pc_zero(k.tweak_key + 16, 16));
+    /* AES-XTS-128 with integrity (bit 1), AES-XTS-256 with integrity (bit 3) */
+    pc_kps(&c, s0, 8, 0, 2, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    TEST_CHECK(pc_key(&c, 8).enc_alg == 2);
+    pc_kps(&c, s0, 9, 0, 8, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 9);
+    TEST_CHECK(k.enc_alg == 8 && memcmp(k.data_key, k1, 32) == 0);
+
+    /* KEYID_SET_KEY_RANDOM, AES-XTS-256: data key = RDRAND values 1-4, tweak key = 5-8 (the
+       seeded source, seed 0, nothing drawn before), each XOR the entropy; RDRAND then gives 9 */
+    pc_open(&d);
+    for (i = 0; i < 9; i++) {
+        TEST_CHECK(pc_run(&d, "\x48\x0f\xc7\xf0", 4) == -1);      /* rdrand rax */
+        v = pc_get(&d, UC_X86_REG_RAX);
+        if (i < 8) {
+            memcpy(rnd + 8 * i, &v, 8);
+        }
+    }
+    OK(uc_close(d.uc));
+    pc_kps(&c, s0, 7, 1, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 7);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.random == 1 && k.enc_alg == 4);
+    for (i = 0; i < 32; i++) {
+        TEST_CHECK(k.data_key[i] == (uint8_t)(rnd[i] ^ k1[i]));
+        TEST_CHECK(k.tweak_key[i] == (uint8_t)(rnd[32 + i] ^ k2[i]));
+    }
+    TEST_CHECK(pc_run(&c, "\x48\x0f\xc7\xf0", 4) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RAX) == v);                     /* the 9th value */
+
+    /* KEYID_CLEAR_KEY -> TME behaviour; KEYID_NO_ENCRYPT; ENC_ALG still checked for both */
+    pc_kps(&c, s0, 5, 2, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 5);
+    TEST_CHECK(k.mode == UC_X86_MKTME_TME && k.enc_alg == 0 && pc_zero(k.data_key, 32) &&
+               pc_zero(k.tweak_key, 32));
+    pc_kps(&c, s0, 6, 3, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    k = pc_key(&c, 6);
+    TEST_CHECK(k.mode == UC_X86_MKTME_NO_ENCRYPT && pc_zero(k.data_key, 32));
+    pc_kps(&c, s0, 6, 2, 0, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == 13);
+    TEST_CHECK(pc_key(&c, 6).mode == UC_X86_MKTME_NO_ENCRYPT);
+
+    /* #GP(0) rows: nothing changes (KeyID 9 keeps its key) */
+    {
+        static const struct {
+            unsigned keyid, cmd, alg, rsvd;
+        } bad[] = {
+            {9, 0, 4, 1}, {9, 4, 4, 0}, {9, 0xff, 4, 0}, {0, 0, 4, 0}, {64, 0, 4, 0},
+            {16, 0, 4, 0}, {32, 3, 4, 0}, {63, 2, 4, 0}, {0x4009, 0, 4, 0}, {9, 0, 0, 0},
+            {9, 0, 5, 0}, {9, 0, 0x10, 0}, {9, 0, 0x8000, 0},
+        };
+        size_t j;
+
+        for (j = 0; j < sizeof(bad) / sizeof(bad[0]); j++) {
+            uint32_t ctrl;
+
+            pc_kps(&c, s0, bad[j].keyid, bad[j].cmd, bad[j].alg, k2, k1, 0);
+            ctrl = bad[j].cmd | (bad[j].alg << 8) | (bad[j].rsvd << 24);
+            OK(uc_mem_write(c.uc, s0 + 2, &ctrl, 4));
+            TEST_CHECK(pc_pconfig(&c, 0, s0) == 13);
+            TEST_MSG("bad row %u", (unsigned)j);
+        }
+        k = pc_key(&c, 9);
+        TEST_CHECK(k.enc_alg == 8 && memcmp(k.data_key, k1, 32) == 0);
+    }
+    /* alignment / canonical #GP(0) before the read; unmapped structure: the read faults */
+    pc_kps(&c, s0, 10, 0, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0 + 0x40) == 13);
+    TEST_CHECK(pc_pconfig(&c, 0, s0 + 1) == 13);
+    TEST_CHECK(pc_pconfig(&c, 0, 0x0000800000000000ull) == 13);
+    TEST_CHECK(pc_pconfig(&c, 0, 0x500040) == 13);                  /* unmapped, misaligned */
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    pc_set(&c, UC_X86_REG_RBX, 0x500000);
+    OK(uc_mem_write(c.uc, c.pc, PC_PCONFIG, 3));
+    TEST_CHECK(uc_emu_start(c.uc, c.pc, c.pc + 3, 0, 0) == UC_ERR_READ_UNMAPPED);
+    TEST_CHECK(pc_key(&c, 10).mode == UC_X86_MKTME_TME);
+    c.pc += 0x80;
+    /* prefixes */
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    pc_set(&c, UC_X86_REG_RBX, s0);
+    TEST_CHECK(pc_run(&c, "\xf0\x0f\x01\xc5", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xc5", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xc5", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xc5", 4) == 6);
+    TEST_CHECK(pc_key(&c, 10).mode == UC_X86_MKTME_TME);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    TEST_CHECK(pc_key(&c, 10).mode == UC_X86_MKTME_KEY);
+
+    /* TSE leaves (target 2 reported, IA32_TSE_CAPABILITY = 0): leaf 1 reads its structure (an
+       unmapped one faults there) and then #GP(0); leaf 2 #GP(0) without a memory access */
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+    TEST_CHECK(pc_pconfig(&c, 1, s0 + 0x80) == 13);
+    pc_set(&c, UC_X86_REG_RAX, 1);
+    pc_set(&c, UC_X86_REG_RBX, 0x500000);
+    OK(uc_mem_write(c.uc, c.pc, PC_PCONFIG, 3));
+    TEST_CHECK(uc_emu_start(c.uc, c.pc, c.pc + 3, 0, 0) == UC_ERR_READ_UNMAPPED);
+    c.pc += 0x80;
+    pc_set(&c, UC_X86_REG_RCX, 0x500000);
+    TEST_CHECK(pc_pconfig(&c, 2, 0x4000000) == 13);
+
+    /* UC_CTL_X86_MKTME_KEY: KeyID 0 always TME, 64 out of range; uc_context carries the table */
+    TEST_CHECK(pc_key(&c, 0).mode == UC_X86_MKTME_TME);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_mktme_key(c.uc, 64, &k));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_mktme_key(c.uc, -1, &k));
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    pc_kps(&c, s0, 9, 3, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, s0) == -1);
+    TEST_CHECK(pc_key(&c, 9).mode == UC_X86_MKTME_NO_ENCRYPT);
+    OK(uc_context_restore(c.uc, ctx));
+    k = pc_key(&c, 9);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.enc_alg == 8);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+
+    /* real-address mode: DS:EBX (DS = 2000h -> base 20000h), the 64 KiB limit, leaf 1 #GP(0) */
+    pc_open_mode(&c, UC_MODE_16, UC_CPU_X86_MAX);
+    OK(uc_mem_map(c.uc, 0x20000, 0x10000, UC_PROT_ALL));
+    pc_set(&c, UC_X86_REG_DS, 0x2000);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == -1);
+    pc_kps(&c, 0x20100, 3, 0, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, 0x100) == -1);
+    k = pc_key(&c, 3);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && memcmp(k.data_key, k1, 32) == 0);
+    pc_kps(&c, 0x2ff00, 4, 0, 4, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, 0xff00) == -1);                     /* EBX + 191 = FFBFh */
+    TEST_CHECK(pc_key(&c, 4).mode == UC_X86_MKTME_KEY);
+    TEST_CHECK(pc_pconfig(&c, 0, 0x10000) == 13);                    /* beyond the DS limit */
+    TEST_CHECK(pc_pconfig(&c, 0, 0xfffff00) == 13);
+    TEST_CHECK(pc_pconfig(&c, 1, 0x100) == 13);
+    TEST_CHECK(pc_pconfig(&c, 2, 0x100) == 13);
     OK(uc_close(c.uc));
 }
 /* ---- end U1020-U1039 (pc_) ---- */
@@ -23128,4 +23410,5 @@ TEST_LIST = {
     {"test_x86_si_invpcid", test_x86_si_invpcid},
     {"test_x86_si_pbndkb", test_x86_si_pbndkb},
     {"test_x86_pc_tme_msrs", test_x86_pc_tme_msrs},
+    {"test_x86_pc_pconfig", test_x86_pc_pconfig},
     {NULL, NULL}};

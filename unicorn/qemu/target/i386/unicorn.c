@@ -2554,6 +2554,25 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
 }
 #undef X86_CTX_COPY
 #endif /* __Use_Original_Qemu (U832) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+/* NoVmp (ledger U1021): UC_CTL_X86_MKTME_KEY */
+static uc_err x86_mktme_key(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+    const X86MktmeKey *e;
+
+    if (keyid < 0 || keyid > NOVMP_MKTME_MAX_KEYS) {
+        return UC_ERR_ARG;
+    }
+    e = &env->mktme_keys[keyid];
+    key->mode = e->mode;
+    key->random = e->random;
+    key->enc_alg = e->enc_alg;
+    memcpy(key->data_key, e->data_key, sizeof(key->data_key));
+    memcpy(key->tweak_key, e->tweak_key, sizeof(key->tweak_key));
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1021) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2579,6 +2598,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U835) */
     uc->x86_rdrand_sync = x86_rdrand_sync;
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+    uc->x86_mktme_key = x86_mktme_key;
+#endif /* __Use_Original_Qemu (U1021) */
     uc_common_init(uc);
 }
 

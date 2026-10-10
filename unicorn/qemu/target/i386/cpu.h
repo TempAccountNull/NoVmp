@@ -433,6 +433,16 @@ typedef enum X86Seg {
                                          ((uint64_t)NOVMP_TME_MAX_KEYID_BITS << 32) | \
                                          ((uint64_t)NOVMP_MKTME_MAX_KEYS << 36))
 #endif /* __Use_Original_Qemu (U1020) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+/* one TME-MK key table entry (PCONFIG MKTME_KEY_PROGRAM); same meaning as uc_x86_mktme_key */
+typedef struct X86MktmeKey {
+    uint8_t mode;           /* 0 = TME behaviour (reset, KEYID_CLEAR_KEY), 1 = key, 2 = no encryption */
+    uint8_t random;         /* mode 1: 1 = KEYID_SET_KEY_RANDOM, 0 = KEYID_SET_KEY_DIRECT */
+    uint16_t enc_alg;       /* mode 1: the ENC_ALG bit */
+    uint8_t data_key[32];   /* mode 1: 16 (AES-XTS-128) or 32 (AES-XTS-256) bytes, the rest 0 */
+    uint8_t tweak_key[32];
+} X86MktmeKey;
+#endif /* __Use_Original_Qemu (U1021) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -2109,6 +2119,13 @@ typedef struct CPUX86State {
     uint64_t tme_exclude_mask;      /* IA32_TME_EXCLUDE_MASK (983H) */
     uint64_t tme_exclude_base;      /* IA32_TME_EXCLUDE_BASE (984H) */
 #endif /* __Use_Original_Qemu (U1020) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+    /*
+     * NoVmp (ledger U1021): the TME-MK key table PCONFIG programs (SDM Vol2B PCONFIG: "discarded
+     * on reset", not software-visible; UC_CTL_X86_MKTME_KEY reads it), index = KeyID.
+     */
+    X86MktmeKey mktme_keys[NOVMP_MKTME_MAX_KEYS + 1];
+#endif /* __Use_Original_Qemu (U1021) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -2536,6 +2553,10 @@ uint64_t x86_cpu_xfd_armed(CPUX86State *env);
 /* cpu.c: the model's CPUID.(EAX=1EH,ECX=1):EAX (AMX feature enumeration) */
 uint32_t x86_cpu_amx_1e_1_eax(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U720) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+/* int_helper.c: n bytes from the RDRAND source (U835), false = the host DRNG failed */
+bool x86_rdrand_bytes(CPUX86State *env, uint8_t *buf, size_t n);
+#endif /* __Use_Original_Qemu (U1021) */
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx);

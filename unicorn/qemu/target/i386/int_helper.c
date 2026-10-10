@@ -607,6 +607,30 @@ target_ulong HELPER(rdseed)(CPUX86State *env)
     return x86_rdrand_draw(env, true);
 }
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+/*
+ * NoVmp (ledger U1021): n bytes from the RDRAND source for instructions that use the hardware
+ * RNG internally (PCONFIG KEYID_SET_KEY_RANDOM): one 64-bit RDRAND value per 8 bytes, little-
+ * endian, in order; seeded mode draws from the shared sequence (and advances its count), host
+ * mode returns false when the host DRNG fails (CF = 0). RFLAGS are not touched.
+ */
+bool x86_rdrand_bytes(CPUX86State *env, uint8_t *buf, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i += 8) {
+        uint64_t v;
+
+        if (!env->rdrand_host) {
+            v = x86_rdrand_seeded(env);
+        } else if (!x86_rdrand_host(&v, false)) {
+            return false;
+        }
+        stq_le_p(buf + i, v);
+    }
+    return true;
+}
+#endif /* __Use_Original_Qemu (U1021) */
 
 #if __Use_Original_Qemu != 1 /* ours (U321) */
 /*

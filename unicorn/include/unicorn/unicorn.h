@@ -790,6 +790,14 @@ typedef enum uc_control_type {
     // errors (UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_PROT, ...) are not x86 exceptions and do
     // not change it. Read: @args = (uc_x86_exception *)
     UC_CTL_X86_EXCEPTION,
+    // x86 only (NoVmp U1021): one entry of the TME-MK key table that PCONFIG MKTME_KEY_PROGRAM
+    // programs (SDM Vol2B PCONFIG). The table is not software-visible on hardware; this read is
+    // for tests and tools. KeyID 0..63 (the model's MK_TME_MAX_KEYS; KeyID 0 always reads the TME
+    // behaviour, mode 0); other KeyIDs -> UC_ERR_ARG. A CPU reset clears the table, a successful
+    // IA32_TME_ACTIVATE write with Hardware Encryption Enable resets it to the TME behaviour, a
+    // uc_context carries it. The emulator does not encrypt memory with these keys.
+    // Read: @args = (int keyid, uc_x86_mktme_key *)
+    UC_CTL_X86_MKTME_KEY,
 } uc_control_type;
 
 // UC_CTL_X86_RDRAND modes (NoVmp U835)
@@ -953,6 +961,8 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_RDRAND, 2), (int *)(mode), (uint64_t *)(seed))
 #define uc_ctl_get_x86_exception(uc, exc)                                      \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EXCEPTION, 1), (exc))
+#define uc_ctl_get_x86_mktme_key(uc, keyid, key)                               \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_MKTME_KEY, 2), (int)(keyid), (key))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

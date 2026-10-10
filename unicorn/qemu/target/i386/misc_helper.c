@@ -503,6 +503,10 @@ static bool tme_activate_write(CPUX86State *env, uint64_t val)
         env->tme_activate = (val & ~3ULL) | 1;          /* TME disabled, locked: x..x01b */
     } else if (!(val & 4)) {
         env->tme_activate = val | 3;                    /* new TME key, locked: x..x011b */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+        /* "All KeyIDs default to TME behavior on activation of TME-MK" (SDM Vol2B PCONFIG) */
+        memset(env->mktme_keys, 0, sizeof(env->mktme_keys));
+#endif /* __Use_Original_Qemu (U1021) */
     } else if (k == 0) {
         env->tme_activate = val & ~3ULL;                /* no saved key: x..x100b */
     }                                                   /* else: write not committed */
@@ -1613,22 +1617,10 @@ void helper_getsec(CPUX86State *env)
 }
 
 /*
- * NoVmp (ledger U113): PCONFIG at CPL0 (the translator raised #UD before).
- * CPUID leaf 1BH enumerates no PCONFIG target, so every leaf faults: in
- * real-address mode the TSE leaves (EAX = 1, 2) are #UD ("not supported in
- * real-address mode"); otherwise #GP(0) - MKTME_KEY_PROGRAM (0) without the
- * TME-MK target, TSE_KEY_PROGRAM(_WRAPPED) (1, 2) without the TSE target, any
- * other EAX an unsupported leaf (SDM Vol2 PCONFIG exceptions).
+ * NoVmp (ledger U113, replaced by U1021): helper_pconfig is now the PCONFIG Operation at the end
+ * of this file (U113 raised #UD for the TSE leaves in real-address mode; the SDM 092 Operation
+ * checks the target first and raises #GP(0)).
  */
-void helper_pconfig(CPUX86State *env)
-{
-    uint32_t leaf = (uint32_t)env->regs[R_EAX];
-
-    if (!(env->cr[0] & CR0_PE_MASK) && (leaf == 1 || leaf == 2)) {
-        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
-    }
-    raise_exception_ra(env, EXCP0D_GPF, GETPC());
-}
 
 #endif /* __Use_Original_Qemu (U113) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
@@ -2824,3 +2816,231 @@ entropy_error:
     CC_SRC = CC_Z;
 }
 #endif /* __Use_Original_Qemu (U807) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+/*
+ * NoVmp (ledger U1021): PCONFIG (NP 0F 01 C5), SDM 325462-092 Vol2B PCONFIG Operation; CPL 0, the
+ * CPUID bit, LOCK / 66 / F2 / F3 are checked by the translator (#UD). Then:
+ *   EAX > 2: #GP(0). Each leaf needs its target in CPUID.1BH (the leaf as CPUID reports it, so a
+ *   CPUID profile counts): the model enumerates target 1 (TME-MK) only.
+ *   Leaf 0 MKTME_KEY_PROGRAM: #GP(0) unless IA32_TME_ACTIVATE is locked [0], enabled [1] with
+ *   MK_TME_KEYID_BITS [35:32] != 0; #GP(0) if the linear address DS:RBX (64-bit mode: RBX,
+ *   non-canonical #GP(0); otherwise DS.base + EBX, 32 bits, with the DS null-selector / limit
+ *   checks of a data read) is not 256-byte aligned; the 192-byte MKTME_KEY_PROGRAM_STRUCT is read
+ *   (#PF); #GP(0) if KEYID_CTRL[31:24] != 0, COMMAND > 3, KEYID = 0 or > MK_TME_MAX_KEYS,
+ *   KEYID[15:k] != 0, KEYID[k-1:k-p] != 0 (p = TDX_RESERVED_KEYID_BITS; the model has no SEAM),
+ *   ENC_ALG does not set exactly one bit or not one of IA32_TME_ACTIVATE[63:48]. Bytes 63:6 and
+ *   the key-field bytes beyond the algorithm's key size (16 for AES-XTS-128, 32 for AES-XTS-256)
+ *   are ignored. The key table lock is always acquired (one logical processor: DEVICE_BUSY (5)
+ *   cannot occur). KEYID_SET_KEY_DIRECT: the keys from KEY_FIELD_1 / KEY_FIELD_2;
+ *   KEYID_SET_KEY_RANDOM: data key then tweak key from the RDRAND source (U835, x86_rdrand_bytes),
+ *   each XOR the software entropy - ENTROPY_ERROR (2) only when the host DRNG fails in
+ *   UC_X86_RDRAND_HOST mode; KEYID_CLEAR_KEY: the KeyID uses the TME behaviour again;
+ *   KEYID_NO_ENCRYPT: no encryption. Success: RAX := 0, ZF := 0; failure: RAX := reason, ZF := 1;
+ *   CF, PF, AF, OF, SF := 0 in both cases.
+ *   Leaf 1 TSE_KEY_PROGRAM / leaf 2 TSE_KEY_PROGRAM_WRAPPED (SDM 092 Vol2B; target identifier 2,
+ *   which the model reports in CPUID.1BH with PBNDKB, U807): #GP(0) without the TSE target and
+ *   outside 64-bit mode. Leaf 1: #GP(0) for RBX not 256-byte aligned (or not canonical), the
+ *   192-byte TSE_KEY_PROGRAM_STRUCT is read (#PF), #GP(0) for KEYID_CTRL[31:24] != 0, COMMAND > 1,
+ *   KEYID > TSE_MAX_KEYS, ENC_ALG not exactly one bit of IA32_TSE_CAPABILITY[15:0]. Leaf 2: #GP(0)
+ *   for RBX[23:16] != 0 or RCX not 256-byte aligned, RBX[15:0] > TSE_MAX_KEYS, RBX[39:24] not
+ *   exactly one bit of IA32_TSE_CAPABILITY[15:0]. The model's IA32_TSE_CAPABILITY is 0 (U807: no
+ *   algorithm, TSE_MAX_KEYS 0, the model has no TSE engine), so the ENC_ALG check always fails:
+ *   every TSE leaf ends in #GP(0) at the latest there, and the TSE key-table update and the
+ *   TSE_BIND_STRUCT unwrap (leaf 2 never reaches its 256-byte read) are unreachable - not
+ *   implemented.
+ * The key table (CPUX86State.mktme_keys, reset area) is not software-visible; UC_CTL_X86_MKTME_KEY
+ * reads it. Not modelled: the memory encryption itself (see U1020), VMX non-root operation ("enable
+ * PCONFIG", PCONFIG-exiting bitmap: the emulator has no VMX), SEAM.
+ */
+
+/* CPUID.1BH (as CPUID reports it, a profile included) lists target identifier 'id' */
+static bool pconfig_target(CPUX86State *env, uint32_t id)
+{
+    uint32_t a, b, c, d, sub;
+
+    cpu_x86_cpuid(env, 0, 0, &a, &b, &c, &d);
+    if (a < 0x1b) {
+        return false;
+    }
+    for (sub = 0; sub < 256; sub++) {
+        cpu_x86_cpuid(env, 0x1b, sub, &a, &b, &c, &d);
+        if ((a & 0xfff) == 0) {
+            return false;                   /* invalid, and so is every later sub-leaf */
+        }
+        if ((a & 0xfff) == 1 && (b == id || c == id || d == id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool pconfig_canonical(CPUX86State *env, uint64_t a)
+{
+    int bits = (env->cr[4] & CR4_LA57_MASK) ? 57 : 48;
+
+    return (uint64_t)((int64_t)(a << (64 - bits)) >> (64 - bits)) == a;
+}
+
+/*
+ * The linear address of the structure: 64-bit mode RBX (#GP(0) if not canonical); otherwise
+ * DS.base + EBX (32 bits), #GP(0) for a null DS in protected mode or when the 'len' bytes at EBX
+ * are outside the DS limit (expand-up: last byte <= limit; expand-down data: first byte > limit,
+ * last byte <= FFFFh / FFFFFFFFh by DS.B).
+ */
+static uint64_t pconfig_linear(CPUX86State *env, uint64_t reg, uint32_t len, uintptr_t ra)
+{
+    SegmentCache *ds = &env->segs[R_DS];
+    uint32_t off = (uint32_t)reg, last = off + len - 1;
+
+    if (env->hflags & HF_CS64_MASK) {
+        if (!pconfig_canonical(env, reg)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        return reg;
+    }
+    if ((env->cr[0] & CR0_PE_MASK) && (ds->selector & 0xfffc) == 0) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (last < off) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if ((env->cr[0] & CR0_PE_MASK) && !(ds->flags & DESC_CS_MASK) && (ds->flags & DESC_E_MASK)) {
+        uint32_t top = (ds->flags & DESC_B_MASK) ? 0xffffffffu : 0xffffu;
+
+        if (off <= ds->limit || last > top) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+    } else if (last > ds->limit) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    return (uint32_t)(ds->base + off);
+}
+
+static void pconfig_load(CPUX86State *env, uint64_t lin, uint8_t *s, int n, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < n; i += 8) {
+        stq_le_p(s + i, cpu_ldq_data_ra(env, lin + i, ra));
+        msrlist_unicorn_stop(env, ra);      /* unmapped: stops like a #PF (U802) */
+    }
+}
+
+static int pconfig_popcount16(uint32_t v)
+{
+    int n = 0;
+
+    for (v &= 0xffff; v; v &= v - 1) {
+        n++;
+    }
+    return n;
+}
+
+void helper_pconfig(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+    uint64_t act = env->tme_activate, lin;
+    uint8_t s[192], dk[32], tk[32];
+    unsigned k, p, cmd, keyid, alg, n, i;
+    uint32_t ctrl;
+    X86MktmeKey *e;
+
+    if (leaf > 2) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (leaf != 0) {
+        /* TSE_KEY_PROGRAM / TSE_KEY_PROGRAM_WRAPPED, IA32_TSE_CAPABILITY = 0 (U807) */
+        const uint64_t tse_cap = 0;
+        unsigned tse_max = (unsigned)(tse_cap >> 36) & 0x7fff;
+        uint64_t rbx = env->regs[R_EBX];
+
+        if (!pconfig_target(env, 2) || !(env->hflags & HF_CS64_MASK)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        if (leaf == 1) {
+            if ((rbx & 0xff) || !pconfig_canonical(env, rbx)) {
+                raise_exception_ra(env, EXCP0D_GPF, ra);
+            }
+            pconfig_load(env, rbx, s, 192, ra);
+            ctrl = ldl_le_p(s + 2);
+            keyid = lduw_le_p(s);
+            alg = (ctrl >> 8) & 0xffff;
+            if ((ctrl >> 24) || (ctrl & 0xff) > 1 || keyid > tse_max) {
+                raise_exception_ra(env, EXCP0D_GPF, ra);
+            }
+        } else {
+            if (((rbx >> 16) & 0xff) || (env->regs[R_ECX] & 0xff) || (rbx & 0xffff) > tse_max) {
+                raise_exception_ra(env, EXCP0D_GPF, ra);
+            }
+            alg = (unsigned)(rbx >> 24) & 0xffff;
+        }
+        if (pconfig_popcount16(alg) != 1 || !(alg & (unsigned)tse_cap)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        /* unreachable while IA32_TSE_CAPABILITY[15:0] = 0: no TSE engine in the model */
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (!pconfig_target(env, 1)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    k = (unsigned)(act >> 32) & 0xf;
+    p = (unsigned)(act >> 36) & 0xf;
+    if (!(act & 1) || !(act & 2) || k == 0) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    lin = pconfig_linear(env, env->regs[R_EBX], 192, ra);
+    if (lin & 0xff) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    pconfig_load(env, lin, s, 192, ra);
+    keyid = lduw_le_p(s);
+    ctrl = ldl_le_p(s + 2);
+    cmd = ctrl & 0xff;
+    alg = (ctrl >> 8) & 0xffff;
+    if ((ctrl >> 24) || cmd > 3) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (keyid == 0 || keyid > NOVMP_MKTME_MAX_KEYS || (keyid >> k)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (p && ((keyid >> (k - p)) & ((1u << p) - 1))) {      /* not in SEAM */
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    if (pconfig_popcount16(alg) != 1 || !(alg & (unsigned)(act >> 48))) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    /* the key table lock: always acquired (one logical processor; DEVICE_BUSY cannot occur) */
+    n = (alg & 3) ? 16 : 32;                /* AES-XTS-128 (+integrity): 16, -256: 32 bytes */
+    e = &env->mktme_keys[keyid];
+    switch (cmd) {
+    case 0:                                 /* KEYID_SET_KEY_DIRECT */
+    case 1:                                 /* KEYID_SET_KEY_RANDOM */
+        memset(dk, 0, sizeof(dk));
+        memset(tk, 0, sizeof(tk));
+        if (cmd == 1) {
+            if (!x86_rdrand_bytes(env, dk, n) || !x86_rdrand_bytes(env, tk, n)) {
+                env->regs[R_EAX] = 2;       /* ENTROPY_ERROR; the table is not changed */
+                CC_SRC = CC_Z;
+                return;
+            }
+        }
+        for (i = 0; i < n; i++) {
+            dk[i] ^= s[64 + i];
+            tk[i] ^= s[128 + i];
+        }
+        e->mode = 1;
+        e->random = (uint8_t)cmd;
+        e->enc_alg = (uint16_t)alg;
+        memcpy(e->data_key, dk, sizeof(dk));
+        memcpy(e->tweak_key, tk, sizeof(tk));
+        break;
+    default:                                /* KEYID_CLEAR_KEY (2) / KEYID_NO_ENCRYPT (3) */
+        memset(e, 0, sizeof(*e));
+        e->mode = cmd == 2 ? 0 : 2;
+        break;
+    }
+    env->regs[R_EAX] = 0;
+    CC_SRC = 0;
+}
+#endif /* __Use_Original_Qemu (U1021) */

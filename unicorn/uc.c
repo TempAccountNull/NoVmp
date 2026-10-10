@@ -3419,6 +3419,22 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U770) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+    case UC_CTL_X86_MKTME_KEY:
+        /* NoVmp U1021: one TME-MK key table entry (PCONFIG); the CPU is created if needed */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_READ || !uc->x86_mktme_key) {
+            err = UC_ERR_ARG;
+        } else {
+            int keyid = va_arg(args, int);
+            struct uc_x86_mktme_key *key = va_arg(args, struct uc_x86_mktme_key *);
+
+            UC_INIT(uc);
+            err = key ? uc->x86_mktme_key(uc, keyid, key) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1021) */
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

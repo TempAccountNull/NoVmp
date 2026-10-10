@@ -694,7 +694,7 @@ static CPUCacheInfo legacy_l3_cache = {
 #else /* ours (U74) */
 #define TCG_7_0_EDX_FEATURES (CPUID_7_0_EDX_SERIALIZE | CPUID_7_0_EDX_UINTR /* U104 */ | \
           CPUID_7_0_EDX_TSX_LDTRK /* U110 */ | CPUID_7_0_EDX_RTM_ALWAYS_ABORT /* U110 */ | \
-          CPUID_7_0_EDX_CET_IBT /* U116 */)
+          CPUID_7_0_EDX_CET_IBT /* U116 */ | CPUID_7_0_EDX_PCONFIG /* U1021 */)
 #endif /* __Use_Original_Qemu (U74) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U71) */
 #define TCG_7_1_EAX_FEATURES CPUID_7_1_EAX_CMPCCXADD
@@ -4958,6 +4958,31 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 #endif /* __Use_Original_Qemu (U170) */
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+    case 0x1B:
+        /*
+         * NoVmp (ledger U1021): PCONFIG information leaf (SDM Vol1 Table 21-64 / 21-65; target
+         * identifiers: Vol2B PCONFIG and ISE 319433-062 p.1-48 - 1 = TME-MK, 2 = TSE; Vol1's "the
+         * only target identifier currently defined is 1" is stale), valid with
+         * CPUID.(07H,0):EDX.PCONFIG[18]: sub-leaf 0 = type 1 (target identifiers), EBX = 1 (TME-MK,
+         * with TME_EN, U1020), ECX = 2 (TSE, with PBNDKB / IA32_TSE_CAPABILITY, U807), EDX = 0;
+         * sub-leaf 1 = type 0 (invalid), so every later sub-leaf is invalid too (all zero).
+         */
+        *eax = 0;
+        *ebx = 0;
+        *ecx = 0;
+        *edx = 0;
+        if ((env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_PCONFIG) && count == 0) {
+            if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_TME) {
+                *ebx = 1;
+            }
+            if (env->features[FEAT_7_1_EBX] & CPUID_7_1_EBX_PBNDKB) {
+                *ecx = 2;
+            }
+            *eax = (*ebx | *ecx) ? 1 : 0;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1021) */
 #if __Use_Original_Qemu != 1 /* ours (U804) */
     case 0x20:
         /*
@@ -5595,6 +5620,12 @@ static void x86_cpu_expand_features(X86CPU *cpu)
             x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x19);
         }
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U1021) */
+        /* PCONFIG requires CPUID[0x1B] (SDM Vol1: "valid if ... MAX_LEAF >= 1BH") */
+        if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_PCONFIG) {
+            x86_cpu_adjust_level(cpu, &env->cpuid_min_level, 0x1B);
+        }
+#endif /* __Use_Original_Qemu (U1021) */
 #if __Use_Original_Qemu != 1 /* ours (U804) */
         /* HRESET requires CPUID[0x20] (SDM Vol1: "Processor History Reset Leaf ... is valid") */
         if (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_HRESET) {
