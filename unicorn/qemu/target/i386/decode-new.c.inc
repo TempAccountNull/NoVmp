@@ -3758,6 +3758,32 @@ static void decode_EVEX_0F38_52(DisasContext *s, CPUX86State *env, X86OpEntry *e
 #if __Use_Original_Qemu != 1 /* ours (U557) */
 #undef EV_DPBF16PS
 #endif /* __Use_Original_Qemu (U557) */
+#if __Use_Original_Qemu != 1 /* ours (U993) */
+/*
+ * NoVmp (ledger U993): AVX512PF (SDM 325383-092 Vol2D 8-12 .. 8-15, 8-36 .. 8-39):
+ * EVEX.512.66.0F38 C6 (dword indices) / C7 (qword indices), W0 = PS / W1 = PD data, ModRM.reg
+ * /1 VGATHERPF0, /2 VGATHERPF1, /5 VSCATTERPF0, /6 VSCATTERPF1 (other values: no instruction,
+ * #UD); vm32z / vm32y / vm64z {k1}, "Tuple1 Scalar" (disp8*N with N = the data size, EVEX.W),
+ * class E12NP (Table 2-64): VSIB (vex_class 12: ModRM.rm = 100b, no 16-bit addressing, EVEX.V'
+ * extends the index), k0 #UD, EVEX.z #UD, EVEX.vvvv = 1111b, EVEX.b #UD, EVEX.L'L = 10b.
+ * "The instruction is a hint", "No FP nor memory faults", "The mask is left unchanged":
+ * gen_EVEX_PREFETCHPF does nothing.
+ */
+static void decode_EVEX_0F38_C6(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry pf = X86_OP_ENTRY3(EVEX_PREFETCHPF, None,None, None,None, M,x,
+                                               vex12 cpuid(AVX512PF) ev_vl(X86_EVEX_VL512)
+                                               ev_tt(T1S) ev_mask(KREQ) ev_w(WSEL) ev_es(W)
+                                               p_66);
+    int reg = (get_modrm(s, env) >> 3) & 7;
+
+    if (reg == 1 || reg == 2 || reg == 5 || reg == 6) {
+        *entry = pf;
+    } else {
+        memset(entry, 0, sizeof(*entry));
+    }
+}
+#endif /* __Use_Original_Qemu (U993) */
 #if __Use_Original_Qemu != 1 /* ours (U408) */
 /*
  * NoVmp (ledger U408): 0F3A 42: F3 = VMPSADBW (spec 10.2), AVX10.2, EVEX.W0, Full Mem
@@ -4524,6 +4550,10 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     /* 53: 66 VPDPWSSDS (F2 = VP4DPWSSDS, AVX512_4VNNIW: opcodes_evex_0F38_F2, U991) */
     [0x53] = X86_OP_ENTRY3(EVEX_VPDPWSSDS, V,x, H,x, W,x, EV_VNNI512 p_66),
 #endif /* __Use_Original_Qemu (U555) */
+#if __Use_Original_Qemu != 1 /* ours (U993) */
+    [0xc6] = X86_OP_GROUP0(EVEX_0F38_C6),   /* AVX512PF, dword indices */
+    [0xc7] = X86_OP_GROUP0(EVEX_0F38_C6),   /* AVX512PF, qword indices */
+#endif /* __Use_Original_Qemu (U993) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {

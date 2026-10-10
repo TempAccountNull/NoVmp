@@ -1486,6 +1486,19 @@ static void gen_EVEX_VSCATTER(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_vsib(s, decode, &decode->op[2], gen_helper_evex_scatter);
 }
 #endif /* __Use_Original_Qemu (U251) */
+#if __Use_Original_Qemu != 1 /* ours (U993) */
+
+/*
+ * NoVmp (ledger U993): AVX512PF VGATHERPF0/1 and VSCATTERPF0/1 DPS/QPS/DPD/QPD (SDM 325383-092
+ * Vol2D 8-12 .. 8-15, 8-36 .. 8-39, class E12NP): prefetch hints without architectural effect
+ * ("may happen in any order (or not at all)", "No FP nor memory faults may be produced", "The
+ * mask is left unchanged"): no memory access, no fault, no state change; the #UD conditions
+ * are decoded (decode_EVEX_0F38_C6, validate_evex).
+ */
+static void gen_EVEX_PREFETCHPF(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+#endif /* __Use_Original_Qemu (U993) */
 #if __Use_Original_Qemu != 1 /* ours (U194) */
 
 /*

@@ -24483,6 +24483,56 @@ static void test_x86_xp_4fmaps(void)
     TEST_CHECK_(rd.bytes == 16, "k1[0] = 1: %d bytes read", rd.bytes);
     OK(uc_close(c.uc));
 }
+/* VGATHERPF0DPS [rsi + zmm1*1]{k1} (EVEX.512.66.0F38.W0 C6 /1) and VSCATTERPF1QPD [rsi + zmm1*8]{k1}
+ * (W1 C7 /6) */
+#define XP_GPF0DPS "\x62\xf2\x7d\x49\xc6\x0c\x0e"
+#define XP_SPF1QPD "\x62\xf2\xfd\x49\xc7\x34\xce"
+
+static void xp_access_cb(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value,
+                         void *user_data)
+{
+    ((XpReads *)user_data)->count++;
+}
+
+/*
+ * U993: AVX512PF gating (CPUID.(7,0):EBX[26]; ER does not enable it), no data access at all (no
+ * UC_HOOK_MEM_READ / WRITE even for mapped element addresses), k1 unchanged, and the E12NP #UD
+ * for a 16-bit address size (32-bit mode, 67h), which the 64-bit case file cannot encode
+ */
+static void test_x86_xp_pf(void)
+{
+    uint32_t idx[16];
+    uint64_t rsi = XP_DATA, k1 = 0xffffffffffffffffull, kr = 0;
+    XpCtx c;
+    XpReads acc = {0, 0};
+    uc_hook h;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        idx[i] = (uint32_t)(i * 64);        /* mapped addresses XP_DATA + 64 i */
+    }
+    xp_open(&c, UC_MODE_64, XP_AVX512 | UC_X86_AVX512_ER, 0, NULL, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_GPF0DPS, 7) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, UC_X86_AVX512_PF, 0, NULL, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ESI, &rsi));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, idx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, xp_access_cb, &acc, 1, 0));
+    TEST_CHECK(xp_run(&c, XP_GPF0DPS, 7) == -1);
+    TEST_CHECK(xp_run(&c, XP_SPF1QPD, 7) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_K1, &kr));
+    TEST_CHECK_(acc.count == 0, "%d data accesses", acc.count);
+    TEST_CHECK_(kr == k1, "k1 %llx", (unsigned long long)kr);
+    OK(uc_close(c.uc));
+    /* 32-bit mode: [esi + zmm1] runs; with 67h (16-bit addressing) #UD */
+    xp_open(&c, UC_MODE_32, UC_X86_AVX512_PF, 0, NULL, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_GPF0DPS, 7) == -1);
+    TEST_CHECK(xp_run(&c, "\x67" XP_GPF0DPS, 8) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U990-U1019 (xp_) ---- */
 
 TEST_LIST = {
@@ -24812,4 +24862,5 @@ TEST_LIST = {
     {"test_x86_xp_optin", test_x86_xp_optin},
     {"test_x86_xp_4vnniw", test_x86_xp_4vnniw},
     {"test_x86_xp_4fmaps", test_x86_xp_4fmaps},
+    {"test_x86_xp_pf", test_x86_xp_pf},
     {NULL, NULL}};
