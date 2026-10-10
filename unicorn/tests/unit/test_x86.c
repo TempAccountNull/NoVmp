@@ -25223,9 +25223,15 @@ static void test_x86_ap_unsupported(void)
     TEST_CHECK(ap_gwr(&c, 0x838, 1000) == 6 && ap_get(&c, UC_X86_REG_RIP) == at + 15);
     TEST_CHECK(ap_msr(&c, 0x838) == 0);
     TEST_CHECK(ap_gwr(&c, 0x838, 0) == -1);
-    /* the host API drops them */
-    ap_wmsr(&c, 0x830, 0x500);
-    ap_wmsr(&c, 0x838, 5);
+    /* the host API: not written, UC_ERR_EXCEPTION (U1122, the U905 contract; was UC_ERR_OK) */
+    {
+        uc_x86_msr m = {0x830, 0x500};
+
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        m.rid = 0x838;
+        m.value = 5;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    }
     TEST_CHECK(ap_msr(&c, 0x830) == 0x41 && ap_msr(&c, 0x838) == 0);
     OK(uc_close(c.uc));
 }
@@ -26621,6 +26627,627 @@ static void test_x86_vx_v2aux_ctl(void)
 }
 /* ---- end U1090-U1119 (vx_) ---- */
 
+/*
+ * ---- NoVmp U1120-U1149: opt-in TSE engine, ... (ts_) ----
+ * Expected values from SDM 325462-092 Vol2B PBNDKB (4-238..4-241) / PCONFIG (4-271..4-281) and
+ * Vol4 9F1H; the PBNDKB -> PCONFIG round trip depends only on the model's platform key; the
+ * leaf-2 unwrap is also checked against bind structures made with Windows CNG (si_cng_bind).
+ */
+#define TS_DATA PC_DATA
+#define TS_CAP 0x000003f000000001ull    /* NOVMP_TSE_CAPABILITY: algorithm bit 0, TSE_MAX_KEYS 63 */
+
+/* a 64-bit CPL0 engine (pc_ helpers) with the UC_CTL_X86_FEATURES mask 'feat' */
+static void ts_open(PcCtx *c, int feat)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c->uc, feat));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, TS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static uc_x86_mktme_key ts_key(PcCtx *c, int keyid)
+{
+    uc_x86_mktme_key k;
+
+    memset(&k, 0xcc, sizeof(k));
+    OK(uc_ctl_get_x86_tse_key(c->uc, keyid, &k));
+    return k;
+}
+
+/* PCONFIG leaf 2 with RBX = ctl, RCX = bind: the vector or -1; RAX / RFLAGS in *rax / *fl */
+static int ts_wrapped(PcCtx *c, uint64_t ctl, uint64_t bind, uint64_t *rax, uint64_t *fl)
+{
+    int v;
+
+    pc_set(c, UC_X86_REG_RAX, 0xabcd000000000002ull);
+    pc_set(c, UC_X86_REG_RBX, ctl);
+    pc_set(c, UC_X86_REG_RCX, bind);
+    pc_set(c, UC_X86_REG_EFLAGS, 0xed7);
+    v = pc_run(c, PC_PCONFIG, 3);
+    *rax = pc_get(c, UC_X86_REG_RAX);
+    *fl = pc_get(c, UC_X86_REG_EFLAGS);
+    return v;
+}
+
+/* PBNDKB of the input structure at 'in' into 'out': the vector or -1 */
+static int ts_pbndkb(PcCtx *c, uint64_t in, uint64_t out)
+{
+    pc_set(c, UC_X86_REG_RBX, in);
+    pc_set(c, UC_X86_REG_RCX, out);
+    return pc_run(c, "\x0f\x01\xc7", 3);
+}
+
+/*
+ * U1120: UC_CTL_X86_FEATURES / UC_X86_FEATURE_TSE: default off (IA32_TSE_CAPABILITY 0, every TSE
+ * leaf #GP(0), UC_CTL_X86_TSE_KEY refused); only before the engine is initialised; unknown bits
+ * refused; with the opt-in IA32_TSE_CAPABILITY = 3F0_0000_0001H (key sources 23:16 = 0) and still
+ * read-only; CPUID.1BH unchanged; a strict profile that hides PBNDKB but lists target 2 makes the
+ * capability 0 again (audit D5, our choice).
+ */
+static void test_x86_ts_tse_optin(void)
+{
+    static const uc_x86_cpuid prof[] = {
+        {0, 0, 0x1b, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0, 1u << 5},                            /* MSR */
+        {7, 0, 1, 0, 0, 1u << 18},
+        {7, 1, 0, 0, 0, 0},
+        {0x1b, 0, 1, 0, 2, 0},
+    };
+    const uint64_t s0 = TS_DATA + 0x1000;
+    uint8_t k1[64], k2[64];
+    uc_x86_mktme_key k;
+    uc_engine *uc;
+    uint32_t r[4];
+    int mask, i;
+    PcCtx c;
+
+    for (i = 0; i < 64; i++) {
+        k1[i] = (uint8_t)(i + 1);
+        k2[i] = (uint8_t)(0x80 + i);
+    }
+    /* default: no TSE engine */
+    pc_open(&c);
+    OK(uc_ctl_get_x86_features(c.uc, &mask));
+    TEST_CHECK(mask == 0);
+    TEST_CHECK(pc_rdmsr(&c, 0x9f1) == 0);
+    pc_kps(&c, s0, 1, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_tse_key(c.uc, 1, &k));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_TSE));
+    OK(uc_close(c.uc));
+    /* unknown bits */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_features(uc, 0x80000000));
+    OK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_TSE));
+    OK(uc_ctl_get_x86_features(uc, &mask));
+    TEST_CHECK(mask == UC_X86_FEATURE_TSE);
+    OK(uc_close(uc));
+
+    /* the opt-in */
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    TEST_CHECK(pc_rdmsr(&c, 0x9f1) == TS_CAP);
+    TEST_CHECK(((pc_rdmsr(&c, 0x9f1) >> 16) & 0xff) == 0);            /* key sources: none */
+    TEST_CHECK(pc_wrmsr(&c, 0x9f1, TS_CAP) == 13);                     /* read-only */
+    TEST_CHECK(pc_wrmsr(&c, 0x9f1, 0) == 13);
+    pc_cpuid(&c, 0x1b, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 1 && r[2] == 2 && r[3] == 0);
+    k = ts_key(&c, 1);
+    TEST_CHECK(k.mode == UC_X86_MKTME_TME && pc_zero(k.data_key, 32));
+    pc_kps(&c, s0, 1, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    TEST_CHECK(ts_key(&c, 1).mode == UC_X86_MKTME_KEY);
+    OK(uc_close(c.uc));
+
+    /* a strict profile without PBNDKB, CPUID.1BH listing target 2: 9F1H absent, capability 0 */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_TSE));
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof, sizeof(prof) / sizeof(prof[0])));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c.uc, TS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    pc_set(&c, UC_X86_REG_RCX, 0x9f1);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    pc_kps(&c, s0, 1, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+    TEST_CHECK(ts_key(&c, 1).mode == UC_X86_MKTME_TME);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1120: PCONFIG leaf 1 TSE_KEY_PROGRAM (SDM 092 Vol2B 4-273 / 4-278) with the opt-in:
+ * TSE_SET_KEY_DIRECT (KeyID 0 and TSE_MAX_KEYS = 63 accepted; 32 key bytes used, bytes 63:6 and
+ * the upper key-field bytes ignored), TSE_NO_ENCRYPT; every #GP(0) row leaves RAX and the table
+ * unchanged; alignment / canonical #GP(0) before the read; an unmapped structure faults on the
+ * read; outside 64-bit mode (compatibility mode is not reachable here: 32-bit engine) #GP(0); a
+ * uc_context carries the table.
+ */
+static void test_x86_ts_tse_key_program(void)
+{
+    const uint64_t s0 = TS_DATA + 0x1000;
+    uint8_t k1[64], k2[64];
+    uc_x86_mktme_key k;
+    uc_context *ctx;
+    size_t j;
+    int i;
+    PcCtx c;
+    static const struct {
+        unsigned keyid, cmd, alg, rsvd;
+    } bad[] = {
+        {9, 0, 1, 1}, {9, 0, 1, 0x80}, {9, 2, 1, 0}, {9, 3, 1, 0}, {9, 0xff, 1, 0},
+        {64, 0, 1, 0}, {0xffff, 1, 1, 0}, {9, 0, 0, 0}, {9, 0, 2, 0}, {9, 0, 3, 0},
+        {9, 0, 0x8000, 0}, {9, 1, 0, 0}, {9, 1, 2, 0},
+    };
+
+    for (i = 0; i < 64; i++) {
+        k1[i] = (uint8_t)(i * 5 + 2);
+        k2[i] = (uint8_t)(i * 13 + 7);
+    }
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    pc_kps(&c, s0, 0, 0, 1, k1, k2, 0x5a);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    k = ts_key(&c, 0);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.random == 0 && k.enc_alg == 1);
+    TEST_CHECK(memcmp(k.data_key, k1, 32) == 0 && memcmp(k.tweak_key, k2, 32) == 0);
+    pc_kps(&c, s0, 63, 0, 1, k2, k1, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    k = ts_key(&c, 63);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && memcmp(k.data_key, k2, 32) == 0 &&
+               memcmp(k.tweak_key, k1, 32) == 0);
+    pc_kps(&c, s0, 9, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    /* TSE_NO_ENCRYPT: algorithm still checked, keys not used */
+    pc_kps(&c, s0, 63, 1, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    k = ts_key(&c, 63);
+    TEST_CHECK(k.mode == UC_X86_MKTME_NO_ENCRYPT && k.enc_alg == 0 && pc_zero(k.data_key, 32) &&
+               pc_zero(k.tweak_key, 32));
+    /* #GP(0) rows: KeyID 9 keeps its key */
+    for (j = 0; j < sizeof(bad) / sizeof(bad[0]); j++) {
+        uint32_t ctrl;
+
+        pc_kps(&c, s0, bad[j].keyid, bad[j].cmd, bad[j].alg, k2, k1, 0);
+        ctrl = bad[j].cmd | (bad[j].alg << 8) | (bad[j].rsvd << 24);
+        OK(uc_mem_write(c.uc, s0 + 2, &ctrl, 4));
+        TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+        TEST_MSG("bad row %u", (unsigned)j);
+    }
+    k = ts_key(&c, 9);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && memcmp(k.data_key, k1, 32) == 0);
+    /* alignment / canonical before the read; unmapped structure faults on the read */
+    pc_kps(&c, s0, 10, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0 + 0x80) == 13);
+    TEST_CHECK(pc_pconfig(&c, 1, s0 + 8) == 13);
+    TEST_CHECK(pc_pconfig(&c, 1, 0x0000800000000000ull) == 13);
+    TEST_CHECK(pc_pconfig(&c, 1, 0x500040) == 13);
+    pc_set(&c, UC_X86_REG_RAX, 1);
+    pc_set(&c, UC_X86_REG_RBX, 0x500000);
+    OK(uc_mem_write(c.uc, c.pc, PC_PCONFIG, 3));
+    TEST_CHECK(uc_emu_start(c.uc, c.pc, c.pc + 3, 0, 0) == UC_ERR_READ_UNMAPPED);
+    c.pc += 0x80;
+    TEST_CHECK(ts_key(&c, 10).mode == UC_X86_MKTME_TME);
+    /* UC_CTL_X86_TSE_KEY range; uc_context carries the table */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_tse_key(c.uc, 64, &k));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_tse_key(c.uc, -1, &k));
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    pc_kps(&c, s0, 9, 1, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    TEST_CHECK(ts_key(&c, 9).mode == UC_X86_MKTME_NO_ENCRYPT);
+    OK(uc_context_restore(c.uc, ctx));
+    k = ts_key(&c, 9);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && memcmp(k.data_key, k1, 32) == 0);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+
+    /* outside 64-bit mode: #GP(0) (32-bit protected mode engine) */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_TSE));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c.uc, TS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    pc_kps(&c, s0, 1, 0, 1, k1, k2, 0);
+    pc_set(&c, UC_X86_REG_EAX, 1);
+    pc_set(&c, UC_X86_REG_EBX, s0);
+    TEST_CHECK(pc_run(&c, PC_PCONFIG, 3) == 13);
+    pc_set(&c, UC_X86_REG_EAX, 2);
+    pc_set(&c, UC_X86_REG_ECX, s0);
+    TEST_CHECK(pc_run(&c, PC_PCONFIG, 3) == 13);
+    TEST_CHECK(ts_key(&c, 1).mode == UC_X86_MKTME_TME);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1120: PBNDKB -> PCONFIG leaf 2 TSE_KEY_PROGRAM_WRAPPED round trip (SDM 092 Vol2B 4-238..4-240,
+ * 4-274/4-275, 4-279): PBNDKB wraps known keys under a challenge; software restores
+ * USER_SUPP_CHALLENGE; leaf 2 unwraps them into the TSE key table (data key = decrypted bytes
+ * 31:0, tweak key = 63:32), RAX := 0, ZF := 0, CF/PF/AF/OF/SF := 0. The challenge left zeroed,
+ * a wrong challenge, a flipped MAC / IV / ciphertext / KEY_GENERATION_CTRL bit: RAX := 7
+ * (UNWRAP_FAILURE), ZF := 1, the other flags 0, the table unchanged. KEY_GENERATION_CTRL = 1
+ * (random keys) unwraps too. #GP(0) rows in the pseudocode's order, the 256-byte read faulting
+ * only after the RBX / RCX / KeyID / ENC_ALG checks. Windows: a bind structure made with CNG
+ * (independent HMAC-SHA256 / AES-256-GCM) from the platform key (32 zero bytes) unwraps to its
+ * keys, so the decrypt path does not only invert our own encrypt path.
+ */
+static void test_x86_ts_tse_wrapped(void)
+{
+    const uint64_t in = TS_DATA + 0x2000, out = TS_DATA + 0x2100;
+    const uint64_t ctl = 1ull << 24;                                /* ENC_ALG bit 0 */
+    uint8_t s[256], o[256], b[256], chal[32];
+    uint64_t rax, fl;
+    uc_x86_mktme_key k;
+    int i, kg;
+    PcCtx c;
+
+    for (i = 0; i < 32; i++) {
+        chal[i] = (uint8_t)(0xc0 ^ (i * 3));
+    }
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    for (kg = 0; kg < 2; kg++) {
+        memset(s, 0, sizeof(s));
+        for (i = 0; i < 64; i++) {
+            s[64 + i] = (uint8_t)(i * 9 + 1 + kg);                 /* data key || tweak key */
+        }
+        memcpy(s + 128, chal, 32);
+        s[160] = (uint8_t)kg;
+        OK(uc_mem_write(c.uc, in, s, sizeof(s)));
+        TEST_CHECK(ts_pbndkb(&c, in, out) == -1);
+        TEST_CHECK(pc_get(&c, UC_X86_REG_RAX) == 0);
+        OK(uc_mem_read(c.uc, out, o, sizeof(o)));
+        TEST_CHECK(pc_zero(o + 128, 32) && o[160] == kg);
+        /* the challenge still zeroed: the wrapping key differs - UNWRAP_FAILURE */
+        TEST_CHECK(ts_wrapped(&c, ctl | (5 + kg), out, &rax, &fl) == -1);
+        TEST_CHECK(rax == 7 && fl == 0x642);
+        TEST_CHECK(ts_key(&c, 5 + kg).mode == UC_X86_MKTME_TME);
+        /* restored challenge: unwrapped */
+        OK(uc_mem_write(c.uc, out + 128, chal, 32));
+        TEST_CHECK(ts_wrapped(&c, ctl | 0xffffff0000000000ull | (5 + kg), out, &rax, &fl) == -1);
+        TEST_CHECK(rax == 0 && fl == 0x602);
+        k = ts_key(&c, 5 + kg);
+        TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.random == 0 && k.enc_alg == 1);
+        if (kg == 0) {
+            TEST_CHECK(memcmp(k.data_key, s + 64, 32) == 0 && memcmp(k.tweak_key, s + 96, 32) == 0);
+        } else {
+            /* random keys: s + 64 XOR 64 random bytes (any equal 32-byte half is ~2^-256) */
+            TEST_CHECK(memcmp(k.data_key, s + 64, 32) != 0 && memcmp(k.tweak_key, s + 96, 32) != 0);
+        }
+    }
+    /* KeyID 0 accepted; the same structure programs another KeyID */
+    TEST_CHECK(ts_wrapped(&c, ctl | 0, out, &rax, &fl) == -1 && rax == 0);
+    TEST_CHECK(ts_key(&c, 0).mode == UC_X86_MKTME_KEY);
+    TEST_CHECK(memcmp(ts_key(&c, 0).data_key, ts_key(&c, 6).data_key, 32) == 0);
+
+    /* tampering: RAX = 7, ZF = 1, KeyID 7 never programmed */
+    OK(uc_mem_read(c.uc, out, o, sizeof(o)));
+    {
+        static const int flip[] = {0, 15, 24, 35, 64, 127, 128, 159, 160};
+        size_t j;
+
+        for (j = 0; j < sizeof(flip) / sizeof(flip[0]); j++) {
+            memcpy(b, o, sizeof(b));
+            b[flip[j]] ^= flip[j] == 160 ? 1 : 0x10;
+            OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+            TEST_CHECK(ts_wrapped(&c, ctl | 7, out, &rax, &fl) == -1);
+            TEST_CHECK(rax == 7 && fl == 0x642);
+            TEST_MSG("flipped byte %d", flip[j]);
+        }
+        TEST_CHECK(ts_key(&c, 7).mode == UC_X86_MKTME_TME);
+    }
+    /* #GP(0) rows (RAX unchanged), in pseudocode order */
+    OK(uc_mem_write(c.uc, out, o, sizeof(o)));
+    TEST_CHECK(ts_wrapped(&c, ctl | (1u << 16) | 7, out, &rax, &fl) == 13);     /* RBX[23:16] */
+    TEST_CHECK(rax == 0xabcd000000000002ull);
+    TEST_CHECK(ts_wrapped(&c, ctl | 7, out + 0x40, &rax, &fl) == 13);           /* alignment */
+    TEST_CHECK(ts_wrapped(&c, ctl | 64, out, &rax, &fl) == 13);                 /* KeyID */
+    TEST_CHECK(ts_wrapped(&c, 7, out, &rax, &fl) == 13);                        /* ENC_ALG 0 */
+    TEST_CHECK(ts_wrapped(&c, (2ull << 24) | 7, out, &rax, &fl) == 13);         /* not in cap */
+    TEST_CHECK(ts_wrapped(&c, (3ull << 24) | 7, out, &rax, &fl) == 13);         /* two bits */
+    TEST_CHECK(ts_wrapped(&c, ctl | 7, 0x0000800000000000ull, &rax, &fl) == 13);
+    TEST_CHECK(ts_wrapped(&c, (2ull << 24) | 7, 0x500000, &rax, &fl) == 13);    /* no read */
+    pc_set(&c, UC_X86_REG_RAX, 2);
+    pc_set(&c, UC_X86_REG_RBX, ctl | 7);
+    pc_set(&c, UC_X86_REG_RCX, 0x500000);
+    OK(uc_mem_write(c.uc, c.pc, PC_PCONFIG, 3));
+    TEST_CHECK(uc_emu_start(c.uc, c.pc, c.pc + 3, 0, 0) == UC_ERR_READ_UNMAPPED);
+    c.pc += 0x80;
+    {
+        static const int rsvd[] = {16, 23, 36, 63, 161, 200, 255};
+        size_t j;
+
+        for (j = 0; j < sizeof(rsvd) / sizeof(rsvd[0]); j++) {
+            memcpy(b, o, sizeof(b));
+            b[rsvd[j]] = 1;
+            OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+            TEST_CHECK(ts_wrapped(&c, ctl | 7, out, &rax, &fl) == 13);
+            TEST_MSG("reserved byte %d", rsvd[j]);
+        }
+        memcpy(b, o, sizeof(b));
+        b[160] = 2;                                                  /* KEY_GENERATION_CTRL > 1 */
+        OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+        TEST_CHECK(ts_wrapped(&c, ctl | 7, out, &rax, &fl) == 13);
+    }
+    TEST_CHECK(ts_key(&c, 7).mode == UC_X86_MKTME_TME);
+    OK(uc_close(c.uc));
+
+    /* without the opt-in (capability 0): KeyID 0 passes, #GP(0) at ENC_ALG, nothing read */
+    pc_open(&c);
+    TEST_CHECK(ts_wrapped(&c, ctl | 0, 0x500000, &rax, &fl) == 13);
+    OK(uc_close(c.uc));
+
+#ifdef _WIN32
+    /* a bind structure made with Windows CNG: arbitrary IV and keys, the platform key (zeros) */
+    {
+        static const uint8_t zero_key[32];
+        uint8_t keys[64], aad[176], ct[64], tag[16];
+
+        ts_open(&c, UC_X86_FEATURE_TSE);
+        memset(b, 0, sizeof(b));
+        for (i = 0; i < 64; i++) {
+            keys[i] = (uint8_t)(0x31 * i + 0x17);
+        }
+        for (i = 0; i < 12; i++) {
+            b[24 + i] = (uint8_t)(0xa0 + i);
+        }
+        memcpy(b + 128, chal, 32);
+        memcpy(aad, b + 16, 48);
+        memcpy(aad + 48, b + 128, 128);
+        TEST_CHECK(si_cng_bind(zero_key, b + 128, 32, b + 24, aad, 176, keys, 64, ct, tag));
+        memcpy(b, tag, 16);
+        memcpy(b + 64, ct, 64);
+        OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+        TEST_CHECK(ts_wrapped(&c, ctl | 33, out, &rax, &fl) == -1);
+        TEST_CHECK(rax == 0 && fl == 0x602);
+        k = ts_key(&c, 33);
+        TEST_CHECK(k.mode == UC_X86_MKTME_KEY && memcmp(k.data_key, keys, 32) == 0 &&
+                   memcmp(k.tweak_key, keys + 32, 32) == 0);
+        OK(uc_close(c.uc));
+    }
+#endif
+}
+
+/*
+ * U1122: the U905 API contract for the MSR handlers that dropped a refused host write with
+ * UC_ERR_OK: CET (IA32_U_CET reserved bits, IA32_PL0_SSP misaligned), IA32_XSS with a bit outside
+ * CPUID.(0DH,1):EDX:ECX, IA32_TSE_CAPABILITY and IA32_BARRIER (read-only), IA32_HRESET_ENABLE
+ * bit 1, IA32_UMWAIT_CONTROL bit 1, IA32_PASID bit 30, IA32_BNDCFGS bit 2: uc_reg_write returns
+ * UC_ERR_EXCEPTION and the MSR keeps its value (the APIC ICR / timer cases are in
+ * test_x86_ap_unsupported).
+ */
+static void test_x86_ts_msr_api_refused(void)
+{
+    static const struct {
+        uint32_t msr;
+        uint64_t val;
+    } t[] = {
+        {0x6a0, 0x40}, {0x6a4, 0x1001}, {0xda0, 1}, {0x9f1, 1}, {0x2f, 0}, {0x17da, 2},
+        {0xe1, 2}, {0xd93, 1ull << 30}, {0xd90, 4},
+    };
+    uc_x86_msr m;
+    uint64_t before;
+    size_t i;
+    PcCtx c;
+
+    pc_open(&c);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        m.rid = t[i].msr;
+        m.value = 0x5a5a;
+        before = uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK ? m.value : ~0ull;
+        m.rid = t[i].msr;
+        m.value = t[i].val;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_MSG("MSR %x", t[i].msr);
+        if (before != ~0ull) {
+            m.value = 0x5a5a;
+            OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+            TEST_CHECK(m.value == before);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/* a 64-bit CPL0 engine with the strict CPUID profile 'prof' (pc_ helpers) */
+static void ts_open_prof(PcCtx *c, int feat, const uc_x86_cpuid *prof, size_t n)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c->uc, feat));
+    OK(uc_ctl_set_x86_cpuid(c->uc, prof, n));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, TS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/*
+ * U1123: the local-APIC MSRs follow the CPU as reported (the U905 MSR list, msr_present): a
+ * strict CPUID profile that hides CPUID.01H:ECX.x2APIC[21] removes 800H-8FFH (RDMSR / WRMSR
+ * #GP(0), the host API UC_ERR_EXCEPTION - before, the API reached them in xAPIC mode); one that
+ * hides CPUID.01H:EDX.APIC[9] removes IA32_APIC_BASE (1BH) too. Without a profile the API still
+ * reaches the x2APIC registers in xAPIC mode (U960, unchanged).
+ */
+static void test_x86_ts_apic_profile(void)
+{
+    static const uc_x86_cpuid no_x2[] = {
+        {0, 0, 1, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0, (1u << 5) | (1u << 9)},
+    };
+    static const uc_x86_cpuid no_apic[] = {
+        {0, 0, 1, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 1u << 21, 1u << 5},
+    };
+    uc_x86_msr m;
+    PcCtx c;
+
+    /* no profile: xAPIC mode, the API reads the x2APIC version register */
+    pc_open(&c);
+    m.rid = 0x803;
+    m.value = 0;
+    OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == 0x01060015ULL);
+    OK(uc_close(c.uc));
+
+    /* x2APIC hidden: 1BH stays, 800H-8FFH are gone */
+    ts_open_prof(&c, 0, no_x2, 2);
+    TEST_CHECK(pc_rdmsr(&c, 0x1b) == 0xfee00900ULL);
+    pc_set(&c, UC_X86_REG_RCX, 0x803);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x808, 0x10) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00d00ULL) == 13);        /* EXTD reserved without x2APIC */
+    m.rid = 0x803;
+    m.value = 0x5555;
+    TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION && m.value == 0x5555);
+    m.rid = 0x808;
+    m.value = 0x10;
+    TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    OK(uc_close(c.uc));
+
+    /* APIC hidden: 1BH is gone as well */
+    ts_open_prof(&c, 0, no_apic, 2);
+    pc_set(&c, UC_X86_REG_RCX, 0x1b);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00900ULL) == 13);
+    m.rid = 0x1b;
+    m.value = 0x5555;
+    TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION && m.value == 0x5555);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1126: an MSR access to a uc_context that was allocated but never saved (U832: zeroed, no CPU
+ * model): refused with UC_ERR_EXCEPTION, nothing read or written (was: a NULL dereference of
+ * env->uc in helper_rdmsr / helper_wrmsr); after uc_context_save the same access works.
+ */
+static void test_x86_ts_context_never_saved(void)
+{
+    uc_x86_msr m = {0x1b, 0x55};
+    uc_context *ctx;
+    uc_engine *uc;
+    uint64_t v = 1;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_context_alloc(uc, &ctx));
+    TEST_CHECK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION && m.value == 0x55);
+    m.rid = 0xc0000080;
+    m.value = 0x500;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    OK(uc_context_reg_read(ctx, UC_X86_REG_RCX, &v));
+    TEST_CHECK(v == 0);
+    OK(uc_context_reg_read(ctx, UC_X86_REG_RAX, &v));
+    TEST_CHECK(v == 0);
+    OK(uc_context_save(uc, ctx));
+    m.rid = 0x1b;
+    m.value = 0;
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == 0xfee00900ULL);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+
+#define TS_HRESET "\xf3\x0f\x3a\xf0\xc0\x00"
+
+/*
+ * U1128: UC_X86_FEATURE_ITD (SDM 092 Vol1 Table 21-16, Vol3B 17.6.8-17.6.11, Vol2A HRESET):
+ * default off (CPUID.06H:EAX[23] = 0, 17D2H / 17D4H #GP(0), UC_CTL_X86_ITD_CLASS refused); with
+ * the opt-in EAX[23] = 1 (HFI bit 19 = 0), ECX[15:8] = 4 classes; IA32_HW_FEEDBACK_THREAD_CONFIG
+ * reset 0, bits 63:1 reserved; IA32_THREAD_FEEDBACK_CHAR read-only, Valid only with a history
+ * (the host-set classification, only while THREAD_CONFIG[0] = 1); HRESET EAX[0] #GP(0) unless
+ * IA32_HRESET_ENABLE[0], EAX = 0 a NOP, EAX[0] enabled clears the history; clearing
+ * THREAD_CONFIG[0] clears it; a uc_context carries it; API writes of 17D2H refused.
+ */
+static void test_x86_ts_itd(void)
+{
+    const uint64_t valid = 0x8000000000000000ull;
+    uc_context *ctx;
+    uc_x86_msr m;
+    uint32_t r[4];
+    int cls;
+    PcCtx c;
+
+    pc_open(&c);
+    pc_cpuid(&c, 6, 0, r);
+    TEST_CHECK(!(r[0] & (1u << 23)) && r[2] == 0);
+    pc_set(&c, UC_X86_REG_RCX, 0x17d2);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    pc_set(&c, UC_X86_REG_RCX, 0x17d4);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_itd_class(c.uc, &cls));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_itd_class(c.uc, 0));
+    OK(uc_close(c.uc));
+
+    ts_open(&c, UC_X86_FEATURE_ITD);
+    pc_cpuid(&c, 6, 0, r);
+    TEST_CHECK((r[0] & (1u << 23)) && !(r[0] & (1u << 19)) && r[1] == 0 && r[2] == 0x400 &&
+               r[3] == 0);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d4) == 0 && pc_rdmsr(&c, 0x17d2) == 0);
+    OK(uc_ctl_get_x86_itd_class(c.uc, &cls));
+    TEST_CHECK(cls == -1);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_itd_class(c.uc, 2));     /* THREAD_CONFIG[0] = 0 */
+    TEST_CHECK(pc_wrmsr(&c, 0x17d4, 2) == 13);                         /* reserved bit */
+    TEST_CHECK(pc_wrmsr(&c, 0x17d4, 1) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d4) == 1 && pc_rdmsr(&c, 0x17d2) == 0);  /* no history yet */
+    OK(uc_ctl_set_x86_itd_class(c.uc, 2));
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == (valid | 2));
+    TEST_CHECK(pc_wrmsr(&c, 0x17d2, 0) == 13);                         /* read-only */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_itd_class(c.uc, 4));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_itd_class(c.uc, -2));
+    OK(uc_ctl_get_x86_itd_class(c.uc, &cls));
+    TEST_CHECK(cls == 2);
+    /* HRESET */
+    pc_set(&c, UC_X86_REG_RAX, 1);
+    TEST_CHECK(pc_run(&c, TS_HRESET, 6) == 13);                        /* not enabled */
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == (valid | 2));
+    TEST_CHECK(pc_wrmsr(&c, 0x17da, 1) == -1);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(pc_run(&c, TS_HRESET, 6) == -1);                        /* EAX = 0: NOP */
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == (valid | 2));
+    pc_set(&c, UC_X86_REG_RAX, 1);
+    TEST_CHECK(pc_run(&c, TS_HRESET, 6) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == 0);
+    OK(uc_ctl_get_x86_itd_class(c.uc, &cls));
+    TEST_CHECK(cls == -1);
+    /* clearing THREAD_CONFIG[0] clears the history; enabling again does not restore it */
+    OK(uc_ctl_set_x86_itd_class(c.uc, 3));
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == (valid | 3));
+    TEST_CHECK(pc_wrmsr(&c, 0x17d4, 0) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x17d4, 1) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == 0);
+    /* -1: not enough history */
+    OK(uc_ctl_set_x86_itd_class(c.uc, 1));
+    OK(uc_ctl_set_x86_itd_class(c.uc, -1));
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == 0);
+    /* a uc_context carries the state */
+    OK(uc_ctl_set_x86_itd_class(c.uc, 1));
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    pc_set(&c, UC_X86_REG_RAX, 1);
+    TEST_CHECK(pc_run(&c, TS_HRESET, 6) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == 0);
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(pc_rdmsr(&c, 0x17d2) == (valid | 1));
+    OK(uc_context_free(ctx));
+    /* the host API */
+    m.rid = 0x17d2;
+    m.value = 0;
+    TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    m.rid = 0x17d4;
+    m.value = 3;
+    TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1120-U1149 (ts_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -26980,4 +27607,11 @@ TEST_LIST = {
     {"test_x86_ig_tme_api", test_x86_ig_tme_api},
     {"test_x86_ig_apic_api", test_x86_ig_apic_api},
     {"test_x86_ig_context_msr", test_x86_ig_context_msr},
+    {"test_x86_ts_tse_optin", test_x86_ts_tse_optin},
+    {"test_x86_ts_tse_key_program", test_x86_ts_tse_key_program},
+    {"test_x86_ts_tse_wrapped", test_x86_ts_tse_wrapped},
+    {"test_x86_ts_msr_api_refused", test_x86_ts_msr_api_refused},
+    {"test_x86_ts_apic_profile", test_x86_ts_apic_profile},
+    {"test_x86_ts_context_never_saved", test_x86_ts_context_never_saved},
+    {"test_x86_ts_itd", test_x86_ts_itd},
     {NULL, NULL}};
