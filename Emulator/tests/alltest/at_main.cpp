@@ -449,6 +449,10 @@ namespace at
 		uc.rdrand = g_rdrand;
 		uc.rdrand_seed = g_rdrand_seed;
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
+		// U1124: every iteration starts from the state after load (was: iteration n + 1 started
+		// from where iteration n left the CPU - a privileged form that changed CPL / CS ran its
+		// later iterations at that CPL)
+		if ( !uc.snapshot( err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		auto in = std::make_unique<state>();
 		bool hw_ud_all = true, uc_ud_all = true, any_diff = false;
 		const uint64_t fs = form_seed( f );   // U931

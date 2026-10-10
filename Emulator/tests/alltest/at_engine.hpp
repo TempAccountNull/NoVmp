@@ -628,9 +628,21 @@ namespace at
 			prog_ = &p;
 			return true;
 		}
+		// U1124: the CPU state every later run() starts from - the state after load() (reset values,
+		// the opt-ins, CPL0, or the cpl=3 GDT / EFER.SCE setup), saved as a uc_context (registers
+		// only: the memory regions are rewritten by run()). The --full sweep calls it once per form,
+		// so an iteration's CPL / CS / CR / MSR / RDRAND-count changes (privileged forms) do not
+		// carry into the next iteration: the input state depends on (form, iteration) only.
+		bool snapshot( std::string& err )
+		{
+			if ( !ctx0_ && uc_context_alloc( uc_, &ctx0_ ) != UC_ERR_OK ) { ctx0_ = nullptr; err = "uc_context_alloc failed"; return false; }
+			if ( uc_context_save( uc_, ctx0_ ) != UC_ERR_OK ) { err = "uc_context_save failed"; return false; }
+			return true;
+		}
 		~unicorn_engine() { close(); }
 		void run( const state& in, result& r )
 		{
+			if ( ctx0_ && uc_context_restore( uc_, ctx0_ ) != UC_ERR_OK ) { r.err = "uc_context_restore failed"; return; }   // U1124
 			std::vector<uint8_t> data( DATA_SIZE, 0 ), mem( MEM_SIZE );
 			write_blocks( data.data(), mem.data(), in );
 			uc_mem_write( uc_, DATA, data.data(), data.size() );
@@ -659,7 +671,13 @@ namespace at
 			in_ = nullptr;
 		}
 	private:
-		void close() { if ( uc_ ) uc_close( uc_ ); uc_ = nullptr; }
+		void close()
+		{
+			if ( ctx0_ ) uc_context_free( ctx0_ );   // U1124
+			ctx0_ = nullptr;
+			if ( uc_ ) uc_close( uc_ );
+			uc_ = nullptr;
+		}
 		void fault( uint64_t rip, int vec, int64_t ec = -1 )
 		{
 			if ( !cur_->faulted ) { cur_->faulted = true; cur_->vector = vec; cur_->fault_rip = rip; cur_->error_code = ec; }
@@ -760,6 +778,7 @@ namespace at
 		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
 		bool pending_epilogue_ = false, ext_in_done_ = false, ext_out_done_ = false;
 		uc_engine* uc_ = nullptr;
+		uc_context* ctx0_ = nullptr;   // U1124: snapshot() state, restored by every run()
 		const state* in_ = nullptr;
 	public:
 		std::vector<uc_x86_cpuid> cpuid;
