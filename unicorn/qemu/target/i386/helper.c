@@ -21,6 +21,21 @@
 #include "cpu.h"
 #include "exec/exec-all.h"
 #include "sysemu/tcg.h"
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+#include "uc_priv.h"
+
+/*
+ * NoVmp (ledger U878): env is a uc_context image (uc_context_reg_write), not the engine's CPU:
+ * it has no CPUState of its own (env_cpu() points outside the buffer), so the CR updates below
+ * change only the image; uc_context_restore flushes the live TLB when CR0/CR3/CR4/EFER changed
+ * (U832).
+ */
+static bool x86_env_is_image(CPUX86State *env)
+{
+    return env->uc != NULL && env->uc->cpu != NULL && env->uc->cpu->env_ptr != NULL &&
+           env->uc->cpu->env_ptr != env;
+}
+#endif /* __Use_Original_Qemu (U878) */
 
 void cpu_sync_avx_hflag(CPUX86State *env)
 {
@@ -185,10 +200,17 @@ void cpu_x86_update_cr0(CPUX86State *env, uint32_t new_cr0)
     int pe_state;
 
     qemu_log_mask(CPU_LOG_MMU, "CR0 update: CR0=0x%08x\n", new_cr0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     if ((new_cr0 & (CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK)) !=
         (env->cr[0] & (CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK))) {
         tlb_flush(CPU(cpu));
     }
+#else /* ours (U878) */
+    if ((new_cr0 & (CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK)) !=
+        (env->cr[0] & (CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK)) && !x86_env_is_image(env)) {
+        tlb_flush(CPU(cpu));
+    }
+#endif /* __Use_Original_Qemu (U878) */
 
 #ifdef TARGET_X86_64
     if (!(env->cr[0] & CR0_PG_MASK) && (new_cr0 & CR0_PG_MASK) &&
@@ -227,7 +249,11 @@ void cpu_x86_update_cr0(CPUX86State *env, uint32_t new_cr0)
 void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3)
 {
     env->cr[3] = new_cr3;
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     if (env->cr[0] & CR0_PG_MASK) {
+#else /* ours (U878) */
+    if ((env->cr[0] & CR0_PG_MASK) && !x86_env_is_image(env)) {
+#endif /* __Use_Original_Qemu (U878) */
         qemu_log_mask(CPU_LOG_MMU,
                         "CR3 update: CR3=" TARGET_FMT_lx "\n", new_cr3);
         tlb_flush(env_cpu(env));
@@ -241,11 +267,19 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
 #if defined(DEBUG_MMU)
     printf("CR4 update: %08x -> %08x\n", (uint32_t)env->cr[4], new_cr4);
 #endif
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     if ((new_cr4 ^ env->cr[4]) &
         (CR4_PGE_MASK | CR4_PAE_MASK | CR4_PSE_MASK |
          CR4_SMEP_MASK | CR4_SMAP_MASK | CR4_LA57_MASK)) {
         tlb_flush(env_cpu(env));
     }
+#else /* ours (U878) */
+    if (((new_cr4 ^ env->cr[4]) &
+         (CR4_PGE_MASK | CR4_PAE_MASK | CR4_PSE_MASK |
+          CR4_SMEP_MASK | CR4_SMAP_MASK | CR4_LA57_MASK)) && !x86_env_is_image(env)) {
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U878) */
 
     /* Clear bits we're going to recompute.  */
     hflags = env->hflags & ~(HF_OSFXSR_MASK | HF_SMAP_MASK | HF_UMIP_MASK);

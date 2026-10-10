@@ -23370,6 +23370,104 @@ static void test_x86_fx5_partial_reads(void)
              tr1.flags);
     OK(uc_close(uc));
 }
+
+/*
+ * U878: uc_context_reg_write of CR0 / CR3 / CR4, DR0-DR3 / DR7 and MSRs writes the context
+ * image only (no TLB flush, breakpoint insertion or WRMSR hook on the live CPU, whose
+ * env_cpu() the image does not have: those calls crashed); uc_context_restore applies the live
+ * side effects (TLB flush, U832; the debug-register breakpoints of the restored DR7).
+ */
+static void test_x86_fx5_context_writes(void)
+{
+    static const char nops[] = "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90"
+                               "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90";
+    uc_engine *uc = fx5_open(UC_MODE_64, 0);
+    uc_context *ctx, *ctx0;
+    uc_x86_msr pkrs = {0x6e1, 0};
+    uint64_t cr0, cr4, v;
+    uc_hook h;
+    Fx5Log log;
+
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, fx5_intr_cb, &log, 1, 0));
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_alloc(uc, &ctx0));
+    OK(uc_context_save(uc, ctx));
+    OK(uc_context_save(uc, ctx0));
+    cr0 = fx5_get(uc, UC_X86_REG_CR0);
+    cr4 = fx5_get(uc, UC_X86_REG_CR4);
+
+    /* CR0.WP and CR4.PGE toggle (a TLB flush on the live CPU), CR0.TS set, CR3 */
+    v = (cr0 ^ (1ULL << 16)) | (1ULL << 3);
+    OK(uc_context_reg_write(ctx, UC_X86_REG_CR0, &v));
+    v = cr4 ^ (1ULL << 7);
+    OK(uc_context_reg_write(ctx, UC_X86_REG_CR4, &v));
+    v = 0x5000;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_CR3, &v));
+    /* DR0 = FX5_CODE + 0x10, DR7.L0 = 1 (instruction breakpoint) */
+    v = FX5_CODE + 0x10;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_DR0, &v));
+    v = 1;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_DR7, &v));
+    /* IA32_PKRS (a TLB flush on the live CPU) */
+    pkrs.value = 5;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &pkrs));
+
+    /* the live CPU is unchanged */
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_CR0) == cr0 && fx5_get(uc, UC_X86_REG_CR4) == cr4);
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_DR7) == 0x400);
+    pkrs.value = 99;
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &pkrs));
+    TEST_CHECK(pkrs.value == 0);
+    /* the context reads back the new values */
+    OK(uc_context_reg_read(ctx, UC_X86_REG_CR0, &v));
+    TEST_CHECK(v == ((cr0 ^ (1ULL << 16)) | (1ULL << 3)));
+    OK(uc_context_reg_read(ctx, UC_X86_REG_DR7, &v));
+    TEST_CHECK(v == 0x401);
+    pkrs.value = 0;
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &pkrs));
+    TEST_CHECK(pkrs.value == 5);
+
+    /* restore: the values and their side effects */
+    OK(uc_context_restore(uc, ctx));
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_CR0) == ((cr0 ^ (1ULL << 16)) | (1ULL << 3)));
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_CR4) == (cr4 ^ (1ULL << 7)));
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_CR3) == 0x5000);
+    pkrs.value = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &pkrs));
+    TEST_CHECK(pkrs.value == 5);
+    /* CR0.TS = 1: MOVAPS is #NM */
+    log.intr = 0;
+    OK(fx5_run(uc, "\x0f\x28\xc1", 3));
+    TEST_CHECK(log.intr == 1 && log.intno == 7);
+    TEST_MSG("movaps after the restore: interrupts %d, vector %d", log.intr, log.intno);
+    /* DR0/DR7: the instruction breakpoint at FX5_CODE + 0x10 fires */
+    v = cr0 & ~(1ULL << 3);
+    OK(uc_reg_write(uc, UC_X86_REG_CR0, &v));
+    log.intr = 0;
+    OK(fx5_run(uc, nops, sizeof(nops) - 1));
+    TEST_CHECK(log.intr == 1 && log.intno == 1 && fx5_get(uc, UC_X86_REG_RIP) == FX5_CODE + 0x10);
+    TEST_MSG("nops after the restore: interrupts %d, vector %d, rip %" PRIx64, log.intr, log.intno,
+             fx5_get(uc, UC_X86_REG_RIP));
+    /* restoring the context without breakpoints removes the live one */
+    OK(uc_context_restore(uc, ctx0));
+    TEST_CHECK(fx5_get(uc, UC_X86_REG_DR7) == 0x400);
+    log.intr = 0;
+    OK(fx5_run(uc, nops, sizeof(nops) - 1));
+    TEST_CHECK(log.intr == 0);
+    TEST_MSG("nops after restoring DR7 = 400h: interrupts %d, vector %d", log.intr, log.intno);
+
+    /* an API write of a reserved IA32_PKRS value (bits 63:32) is dropped (no #GP longjmp) */
+    pkrs.value = 1ULL << 32;
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &pkrs));
+    pkrs.value = 99;
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &pkrs));
+    TEST_CHECK(pkrs.value == 0);
+
+    OK(uc_context_free(ctx));
+    OK(uc_context_free(ctx0));
+    OK(uc_close(uc));
+}
 /* ---- end of NoVmp fix5 tests ---- */
 
 TEST_LIST = {
@@ -23686,4 +23784,5 @@ TEST_LIST = {
     {"test_x86_fx5_probe_write_unmapped", test_x86_fx5_probe_write_unmapped},
     {"test_x86_fx5_mstore_write_once", test_x86_fx5_mstore_write_once},
     {"test_x86_fx5_partial_reads", test_x86_fx5_partial_reads},
+    {"test_x86_fx5_context_writes", test_x86_fx5_context_writes},
     {NULL, NULL}};

@@ -696,6 +696,11 @@ void helper_wrmsr(CPUX86State *env)
     HOOK_FOREACH_VAR_DECLARE;
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
     {
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+        if (env->msr_api == 2) {
+            break;      /* a write into a uc_context image runs no WRMSR hook (U878) */
+        }
+#endif /* __Use_Original_Qemu (U878) */
         if (hook->to_delete)
             continue;
         if (!HOOK_BOUND_CHECK(hook, env->eip))
@@ -904,10 +909,21 @@ void helper_wrmsr(CPUX86State *env)
 #endif /* __Use_Original_Qemu (U173) */
     case MSR_IA32_PKRS:
         if (val & 0xffffffff00000000ull) {
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+            if (env->msr_api) {
+                break;  /* an API write of a reserved value is dropped, no #GP longjmp (U878) */
+            }
+#endif /* __Use_Original_Qemu (U878) */
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
         env->pkrs = val;
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
         tlb_flush(cs);
+#else /* ours (U878) */
+        if (env->msr_api != 2) {
+            tlb_flush(cs);  /* an image has no TLB: the restore flushes (U832/U878) */
+        }
+#endif /* __Use_Original_Qemu (U878) */
         break;
     case MSR_ARCH_LBR_CTL:
         env->msr_lbr_ctl = val;
@@ -923,6 +939,9 @@ void helper_wrmsr(CPUX86State *env)
         /* SDM Vol4: bit 0 enable, 11:1 reserved, 63:12 canonical bitmap address */
         if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
             if ((val & 0xffe) || !novmp_canonical(env, val)) {
+                if (env->msr_api) {
+                    break;      /* API write of a reserved value: dropped (U878) */
+                }
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
             }
             env->msr_user_msr_ctl = val;
@@ -932,6 +951,9 @@ void helper_wrmsr(CPUX86State *env)
         /* SDM Vol4: bit 0 DOITM, 63:1 reserved (modelled with USER_MSR, U103) */
         if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_USER_MSR) {
             if (val & ~1ULL) {
+                if (env->msr_api) {
+                    break;      /* API write of a reserved value: dropped (U878) */
+                }
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
             }
             env->msr_uarch_misc_ctl = val;
@@ -995,7 +1017,9 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_UINTR_RR:
         if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
             env->uintr_rr = val;
-            x86_uintr_update_request(env);
+            if (env->msr_api != 2) {
+                x86_uintr_update_request(env);  /* an image: on restore (U878) */
+            }
         }
         break;
     case MSR_IA32_UINTR_HANDLER:
@@ -1028,6 +1052,9 @@ void helper_wrmsr(CPUX86State *env)
                 gp = !novmp_canonical(env, val & ~0xfULL) || (val & 0xe);
                 env->uintr_tt = gp ? env->uintr_tt : val;
                 break;
+            }
+            if (gp && env->msr_api) {
+                break;          /* API write of a reserved value: dropped (U878) */
             }
             if (gp) {
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
@@ -1148,7 +1175,12 @@ void helper_wrmsr(CPUX86State *env)
 
 void helper_rdmsr(CPUX86State *env)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     X86CPU *x86_cpu = env_archcpu(env);
+#else /* ours (U878) */
+    /* a uc_context image (msr_api == 2) has no X86CPU of its own: the engine's model (U878) */
+    X86CPU *x86_cpu = env->msr_api == 2 ? X86_CPU(env->uc->cpu) : env_archcpu(env);
+#endif /* __Use_Original_Qemu (U878) */
     uint64_t val;
     uc_engine *uc = env->uc;
     struct hook *hook;
@@ -1160,6 +1192,11 @@ void helper_rdmsr(CPUX86State *env)
     HOOK_FOREACH_VAR_DECLARE;
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
     {
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+        if (env->msr_api == 2) {
+            break;      /* a read of a uc_context image runs no RDMSR hook (U878) */
+        }
+#endif /* __Use_Original_Qemu (U878) */
         if (hook->to_delete)
             continue;
         if (!HOOK_BOUND_CHECK(hook, env->eip))

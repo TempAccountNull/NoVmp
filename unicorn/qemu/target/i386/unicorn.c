@@ -277,6 +277,22 @@ static void reg_reset(struct uc_struct *uc)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+/*
+ * NoVmp (ledger U878): DR0-DR3 / DR7 through the register API. Into a uc_context image the
+ * value is only stored (x86_store_dr would insert the breakpoint into the CPUState the image
+ * does not have); uc_context_restore re-inserts the live breakpoints from the restored DR7.
+ */
+static void x86_reg_store_dr(CPUX86State *env, int reg, target_ulong v)
+{
+    if (!x86_env_is_live(env)) {
+        env->dr[reg] = reg == 7 ? (v | DR7_FIXED_1) : v;
+        return;
+    }
+    x86_store_dr(env, reg, v);
+}
+#endif /* __Use_Original_Qemu (U878) */
+
 static int x86_msr_read(CPUX86State *env, uc_x86_msr *msr)
 {
     uint64_t ecx = env->regs[R_ECX];
@@ -287,7 +303,7 @@ static int x86_msr_read(CPUX86State *env, uc_x86_msr *msr)
 #if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_rdmsr(env);
 #else /* ours (U111) */
-    env->msr_api = 1;
+    env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
     helper_rdmsr(env);
     env->msr_api = 0;
 #endif /* __Use_Original_Qemu (U111) */
@@ -316,7 +332,7 @@ static int x86_msr_write(CPUX86State *env, uc_x86_msr *msr)
 #if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_wrmsr(env);
 #else /* ours (U111) */
-    env->msr_api = 1;
+    env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
     helper_wrmsr(env);
     env->msr_api = 0;
 #endif /* __Use_Original_Qemu (U111) */
@@ -1644,8 +1660,12 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         case UC_X86_REG_DR3:
         case UC_X86_REG_DR7:
             CHECK_REG_TYPE(uint32_t);
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
             x86_store_dr(env, regid - UC_X86_REG_DR0,
                          *(uint32_t *)value);
+#else /* ours (U878) */
+            x86_reg_store_dr(env, regid - UC_X86_REG_DR0, *(uint32_t *)value);
+#endif /* __Use_Original_Qemu (U878) */
             break;
         case UC_X86_REG_DR4:
         case UC_X86_REG_DR5:
@@ -1899,8 +1919,12 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
         case UC_X86_REG_DR3:
         case UC_X86_REG_DR7:
             CHECK_REG_TYPE(uint64_t);
+#if __Use_Original_Qemu == 1 /* original QEMU (U878) */
             x86_store_dr(env, regid - UC_X86_REG_DR0,
                          *(uint64_t *)value);
+#else /* ours (U878) */
+            x86_reg_store_dr(env, regid - UC_X86_REG_DR0, *(uint64_t *)value);
+#endif /* __Use_Original_Qemu (U878) */
             break;
         case UC_X86_REG_DR4:
         case UC_X86_REG_DR5:
@@ -2532,7 +2556,26 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
     if (context->context_size < sizeof(CPUX86State)) {
         return UC_ERR_ARG;
     }
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+    /*
+     * NoVmp (ledger U878): the debug-register breakpoints are objects of the live CPUState;
+     * env->cpu_breakpoint[] holds pointers to them. Remove the live ones (DR7 = 400h) before
+     * the copy, never adopt the image's pointers, and insert the ones of the restored DR7
+     * after it (cpu_x86_update_dr7 also recomputes HF_IOBPT). Before, the old breakpoints
+     * stayed in the CPU and the image's (possibly freed) pointers were taken over.
+     */
+    cpu_x86_update_dr7(env, 0);
+#endif /* __Use_Original_Qemu (U878) */
     memcpy(env, context->data, offsetof(CPUX86State, end_reset_fields));
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+    {
+        target_ulong dr7 = env->dr[7];
+
+        memset(env->cpu_breakpoint, 0, sizeof(env->cpu_breakpoint));
+        env->dr[7] = DR7_FIXED_1;
+        cpu_x86_update_dr7(env, (uint32_t)dr7);
+    }
+#endif /* __Use_Original_Qemu (U878) */
     X86_CTX_COPY(mtrr_fixed);
     X86_CTX_COPY(mtrr_deftype);
     X86_CTX_COPY(mtrr_var);
@@ -2550,6 +2593,9 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
         env->pkru != pkru || env->pkrs != pkrs) {
         tlb_flush(uc->cpu);
     }
+#if __Use_Original_Qemu != 1 /* ours (U878) */
+    x86_uintr_update_request(env);  /* the restored UIRR (U878; an image write does not) */
+#endif /* __Use_Original_Qemu (U878) */
     return UC_ERR_OK;
 }
 #undef X86_CTX_COPY
