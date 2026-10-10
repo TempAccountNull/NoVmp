@@ -409,9 +409,20 @@ def cases_sysexit(a):
 
 # ---- the MSR list (U905): SDM Vol4 Table 2-2 enumeration conditions ---------------------------------
 # CPUID of the harness's CPU model (UC_CPU_X86_MAX, no profile, CPL0), pinned by the guard cases below.
+# U1061 (integration): the features merged beside U900-U929 add, per SDM Vol2A CPUID Tables 1-20 / 1-21
+# (leaf 1) and Vol1 Table 21-22 (leaf 7) / Vol2A Table 3-8:
+#   CPUID.01H:ECX[21] x2APIC      - the local x2APIC (U960, apic_model.c)
+#   CPUID.(07H,0):ECX[13] TME_EN  - the TME / TME-MK MSRs (U1020)
+#   CPUID.(07H,0):EDX[18] PCONFIG - PCONFIG MKTME_KEY_PROGRAM (U1021)
+# Unchanged: CPUID.01H:EDX[9] APIC (IA32_APIC_BASE.EN = 1 at reset, 13.4.3); the Xeon Phi bits
+# (07H EBX[26] AVX512PF, EBX[27] AVX512ER, ECX[0] PREFETCHWT1, EDX[2] AVX512_4VNNIW, EDX[3]
+# AVX512_4FMAPS, U990) are opt-ins (UC_CTL_X86_AVX512) the harness does not set; leaf 7 EBX is unchanged.
+X2APIC_1ECX = 1 << 21
+TME_EN_7ECX = 1 << 13
+PCONFIG_7EDX = 1 << 18
 MAX_CPUID = {
-    (1, 0): (0x00080660, None, 0xFED8324B, 0x0FCBFBFD),
-    (7, 0): (None, 0x219C6FF9, 0xB8C107AC, 0x00114820),
+    (1, 0): (0x00080660, None, 0xFED8324B | X2APIC_1ECX, 0x0FCBFBFD),
+    (7, 0): (None, 0x219C6FF9, 0xB8C107AC | TME_EN_7ECX, 0x00114820 | PCONFIG_7EDX),
     (0xD, 1): (0x0000000F, None, None, None),
     (0x80000001, 0): (None, None, 0x00000175, 0xEDD3FBFD),
 }
@@ -462,8 +473,8 @@ def cases_msr_present(a):
     a('# --- the MSR list of the CPU model (U905): Vol2B RDMSR / Vol2D WRMSR "#GP(0) If the value in ECX specifies a')
     a('# reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model\'s CPUID')
     a('# (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.')
-    a('mov eax, 1; cpuid =>! rcx=0xFED8324B rdx=0xFCBFBFD')
-    a('mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C107AC rdx=0x114820')
+    a('mov eax, 1; cpuid =>! rcx=%s rdx=%s' % (hx(MAX_CPUID[(1, 0)][2]), hx(MAX_CPUID[(1, 0)][3])))
+    a('mov eax, 7; xor ecx, ecx; cpuid =>! rbx=%s rcx=%s rdx=%s' % tuple(hx(v) for v in MAX_CPUID[(7, 0)][1:]))
     a('mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF')
     a('mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD')
     a('mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0 rbx=0 rcx=0 rdx=0')
@@ -490,6 +501,7 @@ EFER_RESET = 0x501                  # the harness's 64-bit state: SCE | LME | LM
 MCG_CAP = 0x100010A                 # MAX: 10 banks, MCG_CTL_P, MCG_SER_P (guard case)
 MEMTYPES_MTRR = (0, 1, 4, 5, 6)     # Vol3A Table 14-8
 MEMTYPES_PAT = (0, 1, 4, 5, 6, 7)   # Vol3A Table 14-10
+APIC_BASE_RESET = 0xFEE00900        # Vol3A 13.4.4 / 13.12.5.1: base FEE00000H, BSP, EN = 1, EXTD = 0 (guard case)
 
 
 def canon57(v):
@@ -511,10 +523,17 @@ def wrmsr_result(msr, val, cur=None):
         if val & 0xFFFFFFFF:
             raise gp
         return None                                          # reads the microcode revision
-    if msr == 0x1B:                                          # APIC_BASE (no x2APIC in MAX)
-        if val & (0xFF | 0x200 | 0x400 | phys):
+    if msr == 0x1B:                                          # APIC_BASE (U1061: x2APIC enumerated)
+        # Vol4 Table 2-2 1BH: 7:0 and 9 reserved, 10 EXTD (x2APIC only), 63:MAXPHYADDR reserved;
+        # Vol3A 13.12.5.1 / Figure 13-27: EN = 0 EXTD = 1 is invalid; x2APIC -> xAPIC and disabled ->
+        # x2APIC are illegal transitions (#GP); xAPIC -> x2APIC (EXTD := 1) is valid
+        rsvd = 0xFF | 0x200 | (0 if c(1, 0, 2, 21) else 0x400) | phys
+        old = APIC_BASE_RESET if cur is None else cur
+        en, extd = (val >> 11) & 1, (val >> 10) & 1
+        oen, oextd = (old >> 11) & 1, (old >> 10) & 1
+        if val & rsvd or (not en and extd) or (oen and oextd and en and not extd) or                 (not oen and en and extd):
             raise gp
-        return None                                          # no local APIC: not stored
+        return None                                          # bit 8 (BSP) not compared
     if msr == 0x3A:                                          # FEATURE_CONTROL: SMX only in MAX
         valid = 1 | (0xFF00 if c(1, 0, 2, 6) else 0) | (4 if c(1, 0, 2, 5) else 0)
         if val & ~valid or (cur or 0) & 1:
@@ -584,6 +603,7 @@ def cases_msr_values(a):
     a('mov eax, 0x80000008; cpuid =>! rax=0x3928')
     a('mov ecx, 0xc0000080; rdmsr =>! rax=0x501 rdx=0')
     a('mov ecx, 0x179; rdmsr =>! rax=0x100010A rdx=0')
+    a('mov ecx, 0x1b; rdmsr =>! rax=%s rdx=0' % hx(APIC_BASE_RESET))
     tests = [
         (0x17, 0), (0xFE, 0), (0x179, 0x10A), (0x198, 0), (0x8B, 0x100000000), (0x8B, 1),
         (0x1B, 0xFEE00900), (0x1B, 0xFEE00801), (0x1B, 0xFEE00C00), (0x1B, 0x100FEE00800),
@@ -627,6 +647,18 @@ def cases_msr_values(a):
     a('# the same MSR read by an existing one (IA32_USER_MSR_CTL itself, 1CH: byte 3 bit 4): RBX = its value')
     a('.byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1c '
       'rbx=0x5555 m+0x8003=10 => rbx=0x30028001')
+    a('# IA32_APIC_BASE state transitions (U1061, Vol3A 13.12.5.1 Figure 13-27): xAPIC -> x2APIC, then the illegal')
+    a('# x2APIC -> xAPIC; xAPIC -> disabled, then the illegal disabled -> x2APIC (RAX: the first WRMSR did not fault)')
+    for first, second in ((0xFEE00C00, 0xFEE00800), (0xFEE00000, 0xFEE00C00)):
+        cur = APIC_BASE_RESET
+        wrmsr_result(0x1B, first, cur)
+        try:
+            wrmsr_result(0x1B, second, first)
+            raise AssertionError('APIC_BASE %x -> %x must #GP' % (first, second))
+        except Fault as f:
+            # RAX = the second value: the first WRMSR did not fault
+            a('wrmsr; mov eax, %s; wrmsr | rcx=0x1B rax=%s rdx=0 =>! %s rax=%s' % (hx(second), hx(first), f.token(),
+                                                                                hx(second)))
     a('# IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)')
     a('wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0')
     try:
@@ -919,6 +951,18 @@ def selftest():
     m.wrmsr(0x186, 0x5300C0)
     m.wrmsr(0x38D, 0x30)
     check(m.rdmsr(0x392) == (1 << 63) | (1 << 33) | 1, 'INUSE')
+    # IA32_APIC_BASE (U1061): from the reset state (xAPIC mode) EN = EXTD = 1 is valid; hand-checked rows
+    for cur, val, ok in ((0xFEE00900, 0xFEE00C00, True), (0xFEE00900, 0xFEE00400, False),
+                         (0xFEE00D00, 0xFEE00800, False), (0xFEE00100, 0xFEE00C00, False),
+                         (0xFEE00100, 0xFEE00800, True), (0xFEE00D00, 0xFEE00000, True),
+                         (0xFEE00900, 0xFEE00A00, False)):
+        try:
+            wrmsr_result(0x1B, val, cur)
+            check(ok, 'APIC_BASE %x -> %x valid' % (cur, val))
+        except Fault:
+            check(not ok, 'APIC_BASE %x -> %x #GP' % (cur, val))
+    check(MAX_CPUID[(1, 0)][2] == 0xFEF8324B and MAX_CPUID[(7, 0)][2] == 0xB8C127AC and
+          MAX_CPUID[(7, 0)][3] == 0x154820, 'CPUID guards (hand: + bit 21, + bit 13, + bit 18)')
     # the generator runs and every case has an expectation
     lines = cases_all() + cases_pmu()
     check(all(l.startswith('#') or '=>' in l for l in lines), 'every case line has =>')

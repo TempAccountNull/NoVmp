@@ -73,8 +73,8 @@ mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov ecx, 0x176; lea rax, [ri
 # --- the MSR list of the CPU model (U905): Vol2B RDMSR / Vol2D WRMSR "#GP(0) If the value in ECX specifies a
 # reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model's CPUID
 # (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.
-mov eax, 1; cpuid =>! rcx=0xFED8324B rdx=0xFCBFBFD
-mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C107AC rdx=0x114820
+mov eax, 1; cpuid =>! rcx=0xFEF8324B rdx=0xFCBFBFD
+mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C127AC rdx=0x154820
 mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF
 mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD
 mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0 rbx=0 rcx=0 rdx=0
@@ -151,6 +151,7 @@ rdmsr | rcx=0xC0010117 =>!
 mov eax, 0x80000008; cpuid =>! rax=0x3928
 mov ecx, 0xc0000080; rdmsr =>! rax=0x501 rdx=0
 mov ecx, 0x179; rdmsr =>! rax=0x100010A rdx=0
+mov ecx, 0x1b; rdmsr =>! rax=0xFEE00900 rdx=0
 wrmsr | rcx=0x17 rax=0x0 rdx=0x0 => #GP(0)
 wrmsr | rcx=0xFE rax=0x0 rdx=0x0 => #GP(0)
 wrmsr | rcx=0x179 rax=0x10A rdx=0x0 => #GP(0)
@@ -159,7 +160,7 @@ wrmsr | rcx=0x8B rax=0x0 rdx=0x1 =>!
 wrmsr | rcx=0x8B rax=0x1 rdx=0x0 => #GP(0)
 wrmsr | rcx=0x1B rax=0xFEE00900 rdx=0x0 =>!
 wrmsr | rcx=0x1B rax=0xFEE00801 rdx=0x0 => #GP(0)
-wrmsr | rcx=0x1B rax=0xFEE00C00 rdx=0x0 => #GP(0)
+wrmsr | rcx=0x1B rax=0xFEE00C00 rdx=0x0 =>!
 wrmsr | rcx=0x1B rax=0xFEE00800 rdx=0x100 => #GP(0)
 wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0x3A rax=0xFF00 rdx=0x0 =>! rax=0xFF00 rdx=0x0
 wrmsr | rcx=0x3A rax=0x4 rdx=0x0 => #GP(0)
@@ -222,5 +223,9 @@ wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000083 rax=0x0 rdx=0x80000000
 .byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1234 rbx=0x5555 m+0x8246=10 => #GP(0)
 # the same MSR read by an existing one (IA32_USER_MSR_CTL itself, 1CH: byte 3 bit 4): RBX = its value
 .byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1c rbx=0x5555 m+0x8003=10 => rbx=0x30028001
+# IA32_APIC_BASE state transitions (U1061, Vol3A 13.12.5.1 Figure 13-27): xAPIC -> x2APIC, then the illegal
+# x2APIC -> xAPIC; xAPIC -> disabled, then the illegal disabled -> x2APIC (RAX: the first WRMSR did not fault)
+wrmsr; mov eax, 0xFEE00800; wrmsr | rcx=0x1B rax=0xFEE00C00 rdx=0 =>! #GP(0) rax=0xFEE00800
+wrmsr; mov eax, 0xFEE00C00; wrmsr | rcx=0x1B rax=0xFEE00000 rdx=0 =>! #GP(0) rax=0xFEE00C00
 # IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)
 wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0
