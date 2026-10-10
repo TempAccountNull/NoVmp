@@ -1,19 +1,19 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 16:33 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `0d8908f U868: VPERMI2x/VPERMT2x/VPTERNLOG read DEST through ev_dsrc`). Do not edit by hand._
+_Generated 2026-10-09 17:03 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `a39c23a gen_instruction_table: rows identical up to #UD-on-both encodings, SDM-verified leftovers (U853)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1172 · ⏳ 129 · ⬜ 1 · ❌ 1380 (of which implemented per the manual 1256, open item 41, not implemented yet 83) — 2682 forms
+**Totals (Intel families):** ✅ 1237 · ⏳ 64 · ⬜ 1 · ❌ 1380 (of which implemented per the manual 1256, open item 41, not implemented yet 83) — 2682 forms
 
 ## Currently being added
 
   - ⏳ Last Phase-1 wave (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
     - ⏳ [agent, wt/sysins, U800–U829] AVX512DQ VPMOVD2M/Q2M/M2D/M2Q; CPL0 WRMSRNS, RDMSRLIST/WRMSRLIST, MSR-IMM, PBNDKB, HRESET, LKGS, INVPCID.
     - ⏳ [agent, wt/regs, U830–U849] uc_reg MM0–MM7 + PKRU (4.2); uc_context round-trip tests (4.3/4.7); CPUID 0DH.1 EBX without XSAVEC (M0 leftover); #AC alignment check (5.4, 1.H.5); RDRAND/RDSEED seeded vs host source (D8, 5.2.9).
-    - ⏳ [agent, wt/sweepmem, U850–U859] the 205 "not native-safe" sweep forms run against the CPU with a valid memory base / in-buffer targets (≈67 ⏳ legacy rows); new --full baseline.
+      - ⬜ sweepmem leftovers: SYSENTER without a hook advances RIP from a stale value when it is not the first instruction of its TB (with A1); INT n needs an IDT-delivery mode (U755 leftover); LFS/LGS SDM text "and" vs pseudocode "or" for RPL/CPL > DPL (model follows the pseudocode); rename the "host lacks + unicorn #UD" bucket (also covers encodings both reject).
   - ⏳ 1.15d EVEX / AVX-512: M0–M5 merged; open = VPMOVD2M/Q2M/M2D/M2Q (not implemented), Xeon-Phi families (A3) [audit 2026-10-09]
       - ⬜ M0 leftover: 0DH.1 EBX = 0 on models without XSAVEC (SDM 13.2) + update the test that pins it; profile 0DH.1 EBX kept as captured (documented) [audit 2026-10-09]
       - ⬜ M2 leftovers: scatter hook (U866), disp8 note (U867), ev_dsrc (U868) done; open: helper_evex_mstore pre-pass stores an unmapped element twice for the write hook, some store probes report READ_UNMAPPED instead of WRITE_UNMAPPED (code reading, add a test); E4NF/E6NF unconfirmable without an AVX-512 host.
@@ -36,8 +36,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | family | forms | **Done** | **Implementing** |
 |---|---|---|---|
 | ? | 17 | ✅ 17 |  |
-| ADOX_ADCX | 2 |  | ⏳ 2 |
-| AES | 6 |  | ⏳ 6 |
+| ADOX_ADCX | 2 | ✅ 2 |  |
+| AES | 6 | ✅ 6 |  |
 | AVX | 381 | ✅ 381 |  |
 | AVX2 | 20 | ✅ 20 |  |
 | AVX2GATHER | 8 | ✅ 8 |  |
@@ -60,17 +60,17 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | FXSAVE | 2 | ✅ 2 |  |
 | FXSAVE64 | 2 | ✅ 2 |  |
 | GFNI | 3 | ✅ 3 |  |
-| I186 | 19 | ✅ 12 | ⏳ 7 |
+| I186 | 19 | ✅ 15 | ⏳ 4 |
 | I286PROTECTED | 9 | ✅ 5 | ⏳ 4 |
 | I286REAL | 7 |  | ⏳ 7 |
-| I386 | 47 | ✅ 41 | ⏳ 6 |
+| I386 | 47 | ✅ 44 | ⏳ 3 |
 | I486 | 1 |  | ⏳ 1 |
 | I486REAL | 7 | ✅ 4 | ⏳ 3 |
-| I86 | 88 | ✅ 48 | ⏳ 40 |
+| I86 | 88 | ✅ 79 | ⏳ 9 |
 | INVPCID | 1 |  | ⬜ 1 queued |
 | LAHF | 2 | ✅ 2 |  |
-| LONGMODE | 14 | ✅ 8 | ⏳ 6 |
-| MOVBE | 1 |  | ⏳ 1 |
+| LONGMODE | 14 | ✅ 11 | ⏳ 3 |
+| MOVBE | 1 | ✅ 1 |  |
 | MOVDIR64B | 1 | ✅ 1 |  |
 | MOVDIRI | 1 | ✅ 1 |  |
 | PAUSE | 1 | ✅ 1 |  |
@@ -87,20 +87,20 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | RDRAND | 1 | ✅ 1 |  |
 | RDSEED | 1 | ✅ 1 |  |
 | RDTSCP | 1 |  | ⏳ 1 |
-| RDWRFSGS | 4 | ✅ 1 | ⏳ 3 |
+| RDWRFSGS | 4 | ✅ 3 | ⏳ 1 |
 | SEP | 3 |  | ⏳ 3 |
 | SERIALIZE | 1 | ✅ 1 |  |
-| SHA | 7 |  | ⏳ 7 |
+| SHA | 7 | ✅ 7 |  |
 | SMAP | 2 |  | ⏳ 2 |
 | SSE | 110 | ✅ 110 |  |
 | SSE2 | 129 | ✅ 129 |  |
 | SSE3 | 10 | ✅ 10 |  |
 | SSE3X87 | 1 | ✅ 1 |  |
-| SSE4 | 48 | ✅ 44 | ⏳ 4 |
-| SSE42 | 6 | ✅ 5 | ⏳ 1 |
+| SSE4 | 48 | ✅ 48 |  |
+| SSE42 | 6 | ✅ 6 |  |
 | SSEMXCSR | 2 | ✅ 2 |  |
 | SSE_PREFETCH | 4 | ✅ 4 |  |
-| SSSE3 | 16 | ✅ 14 | ⏳ 2 |
+| SSSE3 | 16 | ✅ 16 |  |
 | VMFUNC | 1 |  | ⏳ 1 |
 | VTX | 12 |  | ⏳ 12 |
 | X87 | 79 | ✅ 79 |  |
@@ -139,8 +139,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| ADCX | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| ADOX | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| ADCX | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| ADOX | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
 
 </details>
 
@@ -148,12 +148,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| AESDEC | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| AESDECLAST | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| AESENC | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| AESENCLAST | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| AESIMC | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| AESKEYGENASSIST | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| AESDEC | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| AESDECLAST | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| AESENC | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| AESENCLAST | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| AESIMC | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| AESKEYGENASSIST | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 
 </details>
 
@@ -868,15 +868,15 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
 | BOUND | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
-| ENTER | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| ENTER | legacy | - | ✅ identical to the i5-13600K (2 forms) |  |
 | IMUL | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
 | INSB | legacy | - |  | ⏳ open item — CPL0 instruction (3 forms): CPL3 fault check in Phase 3 (D6) |
 | INSW | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| LEAVE | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| LEAVE | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | OUTSB | legacy | - |  | ⏳ open item — CPL0 instruction (3 forms): CPL3 fault check in Phase 3 (D6) |
 | OUTSW | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 | POPAW | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
-| PUSH | legacy | - |  | ⏳ open item — implemented; 7 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PUSH | legacy | - | ✅ identical to the i5-13600K (7 forms) |  |
 | PUSHAW | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
 | RCL | legacy | - | ✅ identical to the i5-13600K (23 forms) |  |
 | RCR | legacy | - | ✅ identical to the i5-13600K (22 forms) |  |
@@ -936,10 +936,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | IRETD | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 | JCXZ | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
 | JECXZ | legacy | - | ✅ identical to the i5-13600K (cases_reach): 67 E3 rel8 (ECX = 0 with RCX[63:32] != 0 taken) |  |
-| LFS | legacy | - |  | ⏳ open item — implemented; 3 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| LGS | legacy | - |  | ⏳ open item — implemented; 3 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| LFS | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: natively it would replace the host thread's FS sele… |  |
+| LGS | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: natively it would replace the host thread's GS sele… |  |
 | LODSD | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
-| LSS | legacy | - |  | ⏳ open item — implemented; 3 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| LSS | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | MOVSD | legacy | 128 | ✅ identical to the i5-13600K (6 forms) |  |
 | MOVSX | legacy | - | ✅ identical to the i5-13600K (12 forms) |  |
 | MOVZX | legacy | - | ✅ identical to the i5-13600K (12 forms) |  |
@@ -1006,7 +1006,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | ADC | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
 | ADD | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
 | AND | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
-| CALL | legacy | - |  | ⏳ open item — implemented; 8 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| CALL | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
 | CBW | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | CLC | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | CLD | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
@@ -1025,39 +1025,39 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | IN | legacy | - |  | ⏳ open item — CPL0 instruction (6 forms): CPL3 fault check in Phase 3 (D6) |
 | INC | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
 | INT | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| INT1 | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| INT3 | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| INT1 | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
+| INT3 | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | INTO | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
 | IRET | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| JA | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JAE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JB | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JBE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JG | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JGE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JL | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JLE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JMP | legacy | - |  | ⏳ open item — implemented; 8 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JNE | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JNO | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JNP | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JNS | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JO | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JP | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| JS | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| LCALL | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| JA | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JAE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JB | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JBE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JG | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JGE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JL | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JLE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JMP | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
+| JNE | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JNO | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JNP | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JNS | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JO | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JP | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| JS | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
+| LCALL | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | LDS | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
 | LEA | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | LES | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
-| LJMP | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| LJMP | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | LODSB | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | LODSW | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
-| LOOP | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| LOOPE | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| LOOPNE | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| LOOP | legacy | - | ✅ identical to the i5-13600K (2 forms) |  |
+| LOOPE | legacy | - | ✅ identical to the i5-13600K (2 forms) |  |
+| LOOPNE | legacy | - | ✅ identical to the i5-13600K (2 forms) |  |
 | MOV | legacy | - |  | ⏳ open item — CPL0 instruction (8 forms): CPL3 fault check in Phase 3 (D6) |
-| MOVABS | legacy | - |  | ⏳ open item — implemented; 8 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| MOVABS | legacy | - | ✅ identical to the i5-13600K (9 forms) |  |
 | MOVSB | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | MOVSW | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | MUL | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
@@ -1067,11 +1067,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | OR | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
 | OUT | legacy | - |  | ⏳ open item — CPL0 instruction (6 forms): CPL3 fault check in Phase 3 (D6) |
 | POP | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| POPF | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| PUSHF | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| RET | legacy | - |  | ⏳ open item — implemented; 9 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| RETF | legacy | - |  | ⏳ open item — implemented; 5 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| RETFQ | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| POPF | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
+| PUSHF | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
+| RET | legacy | - | ✅ identical to the i5-13600K (9 forms) |  |
+| RETF | legacy | - | ✅ identical to the i5-13600K (5 forms) |  |
+| RETFQ | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
 | SALC | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
 | SBB | legacy | - | ✅ identical to the i5-13600K (20 forms) |  |
 | SCASB | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
@@ -1115,12 +1115,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | CMPSQ | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | CQO | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | IRETQ | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| JRCXZ | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| JRCXZ | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
 | LODSQ | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | MOVSQ | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | MOVSXD | legacy | - | ✅ identical to the i5-13600K (6 forms) |  |
-| POPFQ | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| PUSHFQ | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| POPFQ | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
+| PUSHFQ | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | SCASQ | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | STOSQ | legacy | - | ✅ identical to the i5-13600K (3 forms) |  |
 | SWAPGS | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
@@ -1132,7 +1132,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| MOVBE | legacy | - |  | ⏳ open item — partial: 8 SDM-vector check pending, 2 not implemented |
+| MOVBE | legacy | - | ✅ identical to the i5-13600K (8 forms; 2 more encodings #UD on both) |  |
 
 </details>
 
@@ -1334,8 +1334,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 |---|---|---|---|---|
 | RDFSBASE | legacy | - | ✅ identical to the i5-13600K (2 forms) |  |
 | RDGSBASE | legacy | - |  | ⏳ open item — value = TEB base: Phase 3 environment |
-| WRFSBASE | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| WRGSBASE | legacy | - |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| WRFSBASE | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: natively it would replace the host thread's FS base… |  |
+| WRGSBASE | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: natively it would replace the host thread's GS base… |  |
 
 </details>
 
@@ -1361,13 +1361,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| SHA1MSG1 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA1MSG2 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA1NEXTE | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA1RNDS4 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA256MSG1 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA256MSG2 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| SHA256RNDS2 | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| SHA1MSG1 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA1MSG2 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA1NEXTE | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA1RNDS4 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA256MSG1 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA256MSG2 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| SHA256RNDS2 | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 
 </details>
 
@@ -1674,11 +1674,11 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | MPSADBW | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PACKUSDW | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PBLENDVB | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
-| PBLENDW | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PBLENDW | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PCMPEQQ | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PEXTRB | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
-| PEXTRD | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| PEXTRQ | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PEXTRD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
+| PEXTRQ | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PHMINPOSUW | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PINSRB | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PINSRD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
@@ -1686,7 +1686,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | PMAXSB | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PMAXSD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PMAXUD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
-| PMAXUW | legacy | 128 |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PMAXUW | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PMINSB | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PMINSD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PMINUD | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
@@ -1717,7 +1717,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| CRC32 | legacy | - |  | ⏳ open item — implemented; 4 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| CRC32 | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
 | PCMPESTRI | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PCMPESTRM | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
 | PCMPGTQ | legacy | 128 | ✅ identical to the i5-13600K (2 forms) |  |
@@ -1751,13 +1751,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
 | PABSB | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
-| PABSD | legacy | 64/128 |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PABSD | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PABSW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PALIGNR | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PHADDD | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PHADDSW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PHADDW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
-| PHSUBD | legacy | 64/128 |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PHSUBD | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PHSUBSW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PHSUBW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |
 | PMADDUBSW | legacy | 64/128 | ✅ identical to the i5-13600K (4 forms) |  |

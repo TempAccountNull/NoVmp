@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-09 16:33 (HEAD `0d8908f U868: VPERMI2x/VPERMT2x/VPTERNLOG read DEST through ev_dsrc`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-09 17:03 (HEAD `a39c23a gen_instruction_table: rows identical up to #UD-on-both encodings, SDM-verified leftovers (U853)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,14 +9,14 @@ _Generated 2026-10-09 16:33 (HEAD `0d8908f U868: VPERMI2x/VPERMT2x/VPTERNLOG rea
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1606 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1173 · ⏳ 131 · ⬜ 1 · ❌ 1606 (implemented per the manual 1258, open item 54, not implemented yet 294)
+**All forms:** ✅ 1238 · ⏳ 66 · ⬜ 1 · ❌ 1606 (implemented per the manual 1258, open item 54, not implemented yet 294)
 
 ## Currently being added
 
   - ⏳ Last Phase-1 wave (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
     - ⏳ [agent, wt/sysins, U800–U829] AVX512DQ VPMOVD2M/Q2M/M2D/M2Q; CPL0 WRMSRNS, RDMSRLIST/WRMSRLIST, MSR-IMM, PBNDKB, HRESET, LKGS, INVPCID.
     - ⏳ [agent, wt/regs, U830–U849] uc_reg MM0–MM7 + PKRU (4.2); uc_context round-trip tests (4.3/4.7); CPUID 0DH.1 EBX without XSAVEC (M0 leftover); #AC alignment check (5.4, 1.H.5); RDRAND/RDSEED seeded vs host source (D8, 5.2.9).
-    - ⏳ [agent, wt/sweepmem, U850–U859] the 205 "not native-safe" sweep forms run against the CPU with a valid memory base / in-buffer targets (≈67 ⏳ legacy rows); new --full baseline.
+      - ⬜ sweepmem leftovers: SYSENTER without a hook advances RIP from a stale value when it is not the first instruction of its TB (with A1); INT n needs an IDT-delivery mode (U755 leftover); LFS/LGS SDM text "and" vs pseudocode "or" for RPL/CPL > DPL (model follows the pseudocode); rename the "host lacks + unicorn #UD" bucket (also covers encodings both reject).
   - ⏳ 1.15d EVEX / AVX-512: M0–M5 merged; open = VPMOVD2M/Q2M/M2D/M2Q (not implemented), Xeon-Phi families (A3) [audit 2026-10-09]
       - ⬜ M0 leftover: 0DH.1 EBX = 0 on models without XSAVEC (SDM 13.2) + update the test that pins it; profile 0DH.1 EBX kept as captured (documented) [audit 2026-10-09]
       - ⬜ M2 leftovers: scatter hook (U866), disp8 note (U867), ev_dsrc (U868) done; open: helper_evex_mstore pre-pass stores an unmapped element twice for the write hook, some store probes report READ_UNMAPPED instead of WRITE_UNMAPPED (code reading, add a test); E4NF/E6NF unconfirmable without an AVX-512 host.
