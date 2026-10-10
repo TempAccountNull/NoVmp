@@ -875,9 +875,11 @@ typedef enum uc_control_type {
     // x86 only (NoVmp U1120): opt-in platform features, a mask of UC_X86_FEATURE_* below
     // (default 0: none, the CPU model as before). UC_X86_FEATURE_TSE: the model's TSE engine
     // (Total Storage Encryption, SDM 092 Vol2B PCONFIG / Vol4 9F1H): IA32_TSE_CAPABILITY reads
-    // 0000_03F0_0000_0001H (bit 0 = the one encryption algorithm, "256-bit AES-XTS" in the
-    // historical definition of ISE 319433-051..-060 only; key sources 23:16 = 0; TSE_MAX_KEYS
-    // 50:36 = 63) and PCONFIG leaves 1 (TSE_KEY_PROGRAM) and 2 (TSE_KEY_PROGRAM_WRAPPED, the
+    // 0000_03F0_0000_0001H - a model value, not architecture (NoVmp U1129): bit 0 = the one
+    // encryption algorithm, 256-bit AES-XTS per ISE 319433-060 6.2.2 Table 6-1 p. 6-2 (the layout
+    // is also SDM 092 Vol4 9F1H; ISE -062 / SDM 092 name no bit meanings); key sources 23:16 = 0
+    // (no encoding is defined); TSE_MAX_KEYS 50:36 = 63; reserved 35:24 / 63:51 = 0) and PCONFIG
+    // leaves 1 (TSE_KEY_PROGRAM) and 2 (TSE_KEY_PROGRAM_WRAPPED, the
     // unwrap of a PBNDKB bind structure with the model's platform key) program the TSE key
     // table (read with UC_CTL_X86_TSE_KEY). Without it IA32_TSE_CAPABILITY reads 0 and every
     // TSE leaf ends in #GP(0). The emulator never encrypts storage with these keys.

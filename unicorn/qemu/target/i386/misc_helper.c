@@ -1471,6 +1471,17 @@ static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t v
  * 9F1H "If CPUID.07H.01H:EBX.PBNDKB[1] = 1") they see 0 - our choice: the SDM does not tie the
  * TSE target of CPUID.1BH to PBNDKB (tse audit 2026-10-10 D5).
  */
+/*
+ * U1129: the opt-in value keeps the architectural layout (ISE 319433-060 6.2.2 Table 6-1 p. 6-2,
+ * SDM 092 Vol4 9F1H p. 2-69): reserved bits 35:24 and 63:51 zero, exactly one algorithm bit in
+ * 15:0, no key source in 23:16 (no encoding is defined), TSE_MAX_KEYS within 50:36.
+ */
+typedef char novmp_tse_cap_rsvd_35_24[((NOVMP_TSE_CAPABILITY >> 24) & 0xfff) == 0 ? 1 : -1];
+typedef char novmp_tse_cap_rsvd_63_51[(NOVMP_TSE_CAPABILITY >> 51) == 0 ? 1 : -1];
+typedef char novmp_tse_cap_keysrc[((NOVMP_TSE_CAPABILITY >> 16) & 0xff) == 0 ? 1 : -1];
+typedef char novmp_tse_cap_alg[(NOVMP_TSE_CAPABILITY & 0xffff) == 1 ? 1 : -1];
+typedef char novmp_tse_cap_max[NOVMP_TSE_MAX_KEYS <= 0x7fff ? 1 : -1];
+
 static uint64_t x86_tse_capability(CPUX86State *env)
 {
     if (!env->uc || !(env->uc->x86_features & UC_X86_FEATURE_TSE) ||
@@ -4026,8 +4037,11 @@ static int pconfig_popcount16(uint32_t v)
 }
 
 /*
- * NoVmp (ledger U1120): PCONFIG leaves 1 TSE_KEY_PROGRAM and 2 TSE_KEY_PROGRAM_WRAPPED, SDM
- * 325462-092 Vol2B 4-273..4-281 (Operation 4-278 / 4-279), in the pseudocode's order:
+ * NoVmp (ledger U1120, U1129): PCONFIG leaves 1 TSE_KEY_PROGRAM and 2 TSE_KEY_PROGRAM_WRAPPED,
+ * SDM 325462-092 Vol2B 4-273..4-281 (Tables 4-17 / 4-18, Operation 4-278 / 4-279) and ISE
+ * 319433-060 chapter 2 PCONFIG (Table 2-3 "TSE_KEY_PROGRAM_STRUCT Format" p. 2-20, Table 2-4
+ * "TSE_KEY_PROGRAM_WRAPPED Control Input" p. 2-21, Operation pp. 2-25..2-27; the same rules), in
+ * the pseudocode's order:
  *   both: #GP(0) without the TSE target (2) in CPUID.1BH or outside 64-bit mode.
  *   Leaf 1: #GP(0) if RBX is not 256-byte aligned (or not canonical: "If a memory operand is
  *   non-canonical form"); the 192-byte TSE_KEY_PROGRAM_STRUCT is read (#PF); #GP(0) for
@@ -4035,7 +4049,8 @@ static int pconfig_popcount16(uint32_t v)
  *   pseudocode has no zero check, unlike MKTME_KEY_PROGRAM), ENC_ALG not exactly one bit or not
  *   in IA32_TSE_CAPABILITY[15:0]. TSE_SET_KEY_DIRECT: data key = KEY_FIELD_1, tweak key =
  *   KEY_FIELD_2, NOVMP_TSE_KEY_BYTES of each ("the number of bytes used ... depends on selected
- *   encryption algorithm": 32 for bit 0, whose 256-bit meaning is historical, ISE -051..-060);
+ *   encryption algorithm": 32 for bit 0 = 256-bit AES-XTS, ISE -060 6.2.2 p. 6-2; SDM 092 Vol2B
+ *   4-274 NOTES "32 bytes for AES-XTS 256");
  *   TSE_NO_ENCRYPT: no encryption, keys and algorithm not used.
  *   Leaf 2: #GP(0) if RBX[23:16] != 0 or RCX is not 256-byte aligned, RBX[15:0] > TSE_MAX_KEYS,
  *   RBX[39:24] not exactly one bit of IA32_TSE_CAPABILITY[15:0] (RBX[63:40] ignored), RCX not

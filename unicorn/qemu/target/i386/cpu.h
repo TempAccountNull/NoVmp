@@ -452,17 +452,21 @@ typedef struct X86MktmeKey {
 #endif /* __Use_Original_Qemu (U1021) */
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
 /*
- * NoVmp (ledger U1120): the model's IA32_TSE_CAPABILITY (9F1H, SDM 092 Vol4 2-69) with
- * UC_X86_FEATURE_TSE: bit 0 the one encryption algorithm (its meaning, "256-bit AES-XTS", is the
- * historical definition of ISE 319433-051..-060 6.2.2 / 11.2.2, not carried into SDM 092; PCONFIG
- * only checks that ENC_ALG sets exactly this bit), 23:16 key sources 0 (no encoding is defined
- * anywhere and no instruction field selects a key source), TSE_MAX_KEYS 50:36 = 63 (our choice;
- * Vol4 "the maximum number of keys available", while the PCONFIG pseudocode accepts KeyIDs
- * 0..TSE_MAX_KEYS, i.e. TSE_MAX_KEYS + 1 identifiers - the table has 64 entries). Without the
- * opt-in the MSR reads 0 (U807).
+ * NoVmp (ledger U1120, U1129): the model's IA32_TSE_CAPABILITY (9F1H) with UC_X86_FEATURE_TSE.
+ * Layout (architecture): ISE 319433-060 6.2.2 Table 6-1 p. 6-2 and SDM 325462-092 Vol4 9F1H
+ * p. 2-69 - 15:0 supported encryption algorithms (bitmap), 23:16 TSE engine key sources supported,
+ * 35:24 reserved, 50:36 TSE_MAX_KEYS, 63:51 reserved. Bit 0 = 256-bit AES-XTS: ISE -060 6.2.2
+ * p. 6-2 ("As of this writing, the only supported algorithm is 256-bit AES-XTS, which is
+ * enumerated by setting bit 0"; also -051..-058); ISE -062 dropped the TSE chapter (revision -061,
+ * p. vi: "can be found in the SDM") and SDM 092 Vol4 gives no bit meanings. The VALUES are our
+ * implementation choice, not architecture (a platform reports its own): bit 0 only; key sources
+ * 0 (the manuals define the field but no encoding, and no instruction field selects a key
+ * source); TSE_MAX_KEYS 63 (the PCONFIG pseudocode accepts KeyIDs 0..TSE_MAX_KEYS - 64 table
+ * entries); both reserved fields 0 (checked at build time in misc_helper.c). Without the opt-in
+ * the MSR reads 0 (U807).
  */
 #define NOVMP_TSE_MAX_KEYS              63
-#define NOVMP_TSE_KEY_BYTES             32      /* algorithm bit 0: 256-bit keys (historical) */
+#define NOVMP_TSE_KEY_BYTES             32      /* bit 0 = AES-XTS-256: 32-byte data / tweak keys */
 #define NOVMP_TSE_CAPABILITY            (1ULL | ((uint64_t)NOVMP_TSE_MAX_KEYS << 36))
 #endif /* __Use_Original_Qemu (U1120) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
