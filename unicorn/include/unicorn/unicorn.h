@@ -902,6 +902,11 @@ typedef enum uc_control_type {
     // SYSEXIT, SETSSBSY and CLRSSBSY are #UD. U1172: ERETS / ERETU (F2 / F3 0F 01 CA; without
     // FRED the prefixed encoding keeps its old meaning).
     // Default off: CPUID, CR4 and the MSR list are unchanged.
+    // NoVmp U1180: UC_X86_FEATURE_LAM: linear-address masking (SDM 092 Vol3A 4.4):
+    // CPUID.(07H,1):EAX.LAM[26], CR3.LAM_U57[61] / LAM_U48[62], CR4.LAM_SUP[28]; 64-bit data linear
+    // addresses are masked before the canonicality check and paging (CR2 and the paging walk see the
+    // masked address; instruction fetches, RIP loads, INVLPG / INVPCID operands are not masked).
+    // Default off.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
@@ -932,6 +937,7 @@ typedef enum uc_control_type {
 #define UC_X86_FEATURE_TSE 1       // TSE engine: IA32_TSE_CAPABILITY, PCONFIG leaves 1 and 2
 #define UC_X86_FEATURE_ITD 2       // Intel Thread Director per-thread state and history (U1128)
 #define UC_X86_FEATURE_FRED 4      // FRED transitions, CR4.FRED, the FRED MSRs (U1170)
+#define UC_X86_FEATURE_LAM 8       // linear-address masking: CPUID LAM, CR3[62:61], CR4[28] (U1180)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)

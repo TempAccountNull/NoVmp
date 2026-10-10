@@ -3459,9 +3459,9 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *mask = uc->x86_features;
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
-            /* U1170: + UC_X86_FEATURE_FRED */
+            /* U1170: + UC_X86_FEATURE_FRED, U1180: + UC_X86_FEATURE_LAM */
             if (uc->init_done || (mask & ~(UC_X86_FEATURE_TSE | UC_X86_FEATURE_ITD |
-                                           UC_X86_FEATURE_FRED))) {
+                                           UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM))) {
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_features = mask;

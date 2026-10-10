@@ -1972,6 +1972,12 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
                 env->cr[4] &= ~CR4_FRED_MASK;
             }
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+            /* the full CR3 (LAM_U57 / LAM_U48) is stored here: TLB entries may depend on it */
+            if (regid == UC_X86_REG_CR3 && x86_lam_cpuid(env)) {
+                tlb_flush(env_cpu(env));
+            }
+#endif /* __Use_Original_Qemu (U1180) */
             break;
         case UC_X86_REG_DR0:
         case UC_X86_REG_DR1:

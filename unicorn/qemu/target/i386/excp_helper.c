@@ -505,6 +505,18 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
            addr, is_write1, is_user, env->eip);
 #endif
     is_write = is_write1 & 1;
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /*
+     * NoVmp (ledger U1180): LAM (SDM 092 Vol3A 4.4.2, 4.4.3, 4.5.1) - a data address is masked
+     * before the canonicality check and paging; CR2 gets the masked address. Instruction fetches
+     * are not masked. The TLB entry is made for the address the access used (lam_va).
+     */
+    target_ulong lam_va = addr;
+
+    if (is_write1 != MMU_INST_FETCH) {
+        addr = x86_lam_mask(env, addr);
+    }
+#endif /* __Use_Original_Qemu (U1180) */
 
     a20_mask = x86_get_a20_mask(env);
     if (!(env->cr[0] & CR0_PG_MASK)) {
@@ -562,8 +574,14 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
             }
 
             if (la57) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1180) */
                 pml5e_addr = ((env->cr[3] & ~0xfff) +
                         (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
+#else /* ours (U1180) */
+                /* CR3[62:61] are the LAM_U57 / LAM_U48 controls, not address bits (SDM 092 Vol3A 4.4.1) */
+                pml5e_addr = ((env->cr[3] & ~(0xfffULL | CR3_LAM_U57_MASK | CR3_LAM_U48_MASK)) +
+                        (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
+#endif /* __Use_Original_Qemu (U1180) */
                 pml5e_addr = get_hphys(cs, pml5e_addr, MMU_DATA_STORE, NULL);
                 pml5e = x86_ldq_phys(cs, pml5e_addr);
                 if (!(pml5e & PG_PRESENT_MASK)) {
@@ -848,7 +866,11 @@ do_check_protect_pse36:
 
     /* Even if 4MB pages, we map only one 4KB page in the cache to
        avoid filling it too fast */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1180) */
     vaddr = addr & TARGET_PAGE_MASK;
+#else /* ours (U1180) */
+    vaddr = lam_va & TARGET_PAGE_MASK;
+#endif /* __Use_Original_Qemu (U1180) */
     paddr &= TARGET_PAGE_MASK;
     assert(prot & (1 << is_write1));
 
@@ -1105,8 +1127,11 @@ void x86_check_canonical_range(CPUX86State *env, target_ulong addr, uint32_t siz
 {
     CPUState *cs = env_cpu(env);
     int shift = env->cr[4] & CR4_LA57_MASK ? 56 : 47;
-    int64_t first = (int64_t)addr >> shift;
-    int64_t last = (int64_t)(addr + size - 1) >> shift;
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /* LAM: canonicality after masking (Vol3A 4.5.1) */
+    int64_t first = (int64_t)x86_lam_mask(env, addr) >> shift;
+    int64_t last = (int64_t)x86_lam_mask(env, addr + size - 1) >> shift;
+#endif /* __Use_Original_Qemu (U1180) */
     int excp = EXCP0D_GPF;
 
     if (!(env->hflags & HF_CS64_MASK) || size < 2 ||
@@ -1151,7 +1176,8 @@ void x86_ac_check(CPUX86State *env, target_ulong addr, uint32_t mask, uintptr_t 
     if (!(addr & mask) || !x86_ac_enabled(env)) {
         return;
     }
-    if ((env->hflags & HF_CS64_MASK) && !x86_ip_is_canonical(env, addr)) {
+    /* U1180: the canonicality of the LAM-masked address */
+    if ((env->hflags & HF_CS64_MASK) && !x86_ip_is_canonical(env, x86_lam_mask(env, addr))) {
         return;     /* the access raises #GP/#SS(0) (U51) */
     }
     raise_exception_err_ra(env, EXCP11_ALGN, 0, ra);

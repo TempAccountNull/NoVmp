@@ -248,6 +248,15 @@ void cpu_x86_update_cr0(CPUX86State *env, uint32_t new_cr0)
    the PDPT */
 void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /*
+     * NoVmp (ledger U1180): the TLB keeps translations under the unmasked (LAM) address, so a
+     * change of the LAM controls invalidates them even without paging
+     */
+    if (((new_cr3 ^ env->cr[3]) & (CR3_LAM_U57_MASK | CR3_LAM_U48_MASK)) && !x86_env_is_image(env)) {
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U1180) */
     env->cr[3] = new_cr3;
 #if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     if (env->cr[0] & CR0_PG_MASK) {
@@ -337,6 +346,15 @@ void cpu_x86_update_cr4(CPUX86State *env, uint64_t new_cr4)
         new_cr4 &= ~CR4_FRED_MASK;
     }
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /* CR4.LAM_SUP only with CPUID.(07H,1):EAX.LAM; a change invalidates the (unmasked) TLB entries */
+    if (!x86_lam_cpuid(env)) {
+        new_cr4 &= ~(uint64_t)CR4_LAM_SUP_MASK;
+    }
+    if (((new_cr4 ^ env->cr[4]) & CR4_LAM_SUP_MASK) && !x86_env_is_image(env)) {
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U1180) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;
@@ -383,8 +401,14 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cs, vaddr addr,
             }
 
             if (la57) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1180) */
                 pml5e_addr = ((env->cr[3] & ~0xfff) +
                         (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
+#else /* ours (U1180) */
+                /* CR3[62:61] are the LAM_U57 / LAM_U48 controls, not address bits (SDM 092 Vol3A 4.4.1) */
+                pml5e_addr = ((env->cr[3] & ~(0xfffULL | CR3_LAM_U57_MASK | CR3_LAM_U48_MASK)) +
+                        (((addr >> 48) & 0x1ff) << 3)) & a20_mask;
+#endif /* __Use_Original_Qemu (U1180) */
                 pml5e = x86_ldq_phys(cs, pml5e_addr);
                 if (!(pml5e & PG_PRESENT_MASK)) {
                     return -1;

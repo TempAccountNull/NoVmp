@@ -3173,6 +3173,60 @@ static inline bool x86_fred_enabled(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+/*
+ * NoVmp (ledger U1180): linear-address masking (SDM 325462-092 Vol3A 4.4; ISE 319433-051 chapter 6
+ * for the history): CPUID.(07H,1):EAX.LAM[26] (the UC_X86_FEATURE_LAM opt-in), CR3.LAM_U57[61],
+ * CR3.LAM_U48[62], CR4.LAM_SUP[28]. x86_lam_mask: a 64-bit data linear address in IA-32e mode is
+ * masked before the canonicality check and paging - bit 63 selects user (0: LAM_U57 -> LAM57, else
+ * LAM_U48 -> LAM48) or supervisor (1: LAM_SUP -> LAM57 with 5-level paging, LAM48 with 4-level);
+ * LAM48 replaces bits 62:48 with bit 47, LAM57 bits 62:57 with bit 56 (4.4.2). Instruction
+ * fetches, RIP loads and the INVLPG / INVPCID operands are never masked (4.4, 4.4.3).
+ */
+#define CPUID_7_1_EAX_LAM               (1U << 26)
+#define CR4_LAM_SUP_MASK                (1U << 28)
+#define CR3_LAM_U57_MASK                (1ULL << 61)
+#define CR3_LAM_U48_MASK                (1ULL << 62)
+
+static inline bool x86_lam_cpuid(CPUX86State *env)
+{
+    return (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_LAM) &&
+           (x86_cpuid_profile_mask(env, 7, 1, 0) & CPUID_7_1_EAX_LAM);
+}
+
+/* LAM enabled for user or supervisor addresses (any of the three control bits) */
+static inline bool x86_lam_active(CPUX86State *env)
+{
+    return (env->hflags & HF_LMA_MASK) &&
+           ((env->cr[3] & (CR3_LAM_U57_MASK | CR3_LAM_U48_MASK)) ||
+            (env->cr[4] & CR4_LAM_SUP_MASK)) &&
+           x86_lam_cpuid(env);
+}
+
+static inline target_ulong x86_lam_mask(CPUX86State *env, target_ulong a)
+{
+    int w;
+
+    if (!(env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_LAM) || !x86_lam_active(env)) {
+        return a;
+    }
+    if ((int64_t)a < 0) {
+        if (!(env->cr[4] & CR4_LAM_SUP_MASK)) {
+            return a;
+        }
+        w = (env->cr[4] & CR4_LA57_MASK) ? 56 : 47;
+    } else if (env->cr[3] & CR3_LAM_U57_MASK) {
+        w = 56;
+    } else if (env->cr[3] & CR3_LAM_U48_MASK) {
+        w = 47;
+    } else {
+        return a;
+    }
+    return (a & (1ULL << 63)) |
+           ((uint64_t)((int64_t)((uint64_t)a << (63 - w)) >> (63 - w)) & ~(1ULL << 63));
+}
+
+#endif /* __Use_Original_Qemu (U1180) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;
@@ -3232,6 +3286,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~CR4_FRED_MASK;
     }
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /* CR4.LAM_SUP (bit 28) with CPUID.(07H,1):EAX.LAM (SDM 092 Vol3A 4.4.1) */
+    if (x86_lam_cpuid(env)) {
+        reserved_bits &= ~(uint64_t)CR4_LAM_SUP_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1180) */
     return reserved_bits;
 }
 

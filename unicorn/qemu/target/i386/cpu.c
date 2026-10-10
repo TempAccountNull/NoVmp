@@ -5998,6 +5998,14 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 7);
     }
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /* NoVmp (ledger U1180): UC_X86_FEATURE_LAM opts in to LAM: CPUID.(07H,1):EAX.LAM[26] (Vol3A 4.4.1) */
+    if (uc->x86_features & UC_X86_FEATURE_LAM) {
+        env->features[FEAT_7_1_EAX] |= CPUID_7_1_EAX_LAM;
+        env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+        env->cpuid_level = MAX(env->cpuid_level, 7);
+    }
+#endif /* __Use_Original_Qemu (U1180) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

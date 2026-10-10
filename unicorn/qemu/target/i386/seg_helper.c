@@ -1399,7 +1399,8 @@ static bool fred_fault_vector(int v)
 static void fred_probe(CPUX86State *env, uint64_t a, uint32_t len, int mmu_idx, int excp, int ext,
                        uintptr_t ra)
 {
-    if (!cet2_canonical(env, a)) {
+    /* U1180: canonical after LAM masking (a data access, SDM 092 Vol3A 4.5.1) */
+    if (!cet2_canonical(env, x86_lam_mask(env, a))) {
         raise_exception_err_ra(env, excp, ext, ra);
     }
     x86_probe_write_la(env, a, len, mmu_idx, ra);
@@ -1626,7 +1627,8 @@ static void x86_fred_event(CPUX86State *env, int intno, int is_int, int error_co
  */
 static uint64_t fred_pop8(CPUX86State *env, uint64_t a, uintptr_t ra)
 {
-    if (!cet2_canonical(env, a)) {
+    /* U1180: canonical after LAM masking */
+    if (!cet2_canonical(env, x86_lam_mask(env, a))) {
         raise_exception_err_ra(env, EXCP0C_STACK, 0, ra);
     }
     return cpu_ldq_mmuidx_ra(env, a, cpu_mmu_index(env, false), ra);

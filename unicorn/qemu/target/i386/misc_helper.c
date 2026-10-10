@@ -220,7 +220,9 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
             if (env->cr[4] & CR4_PCIDE_MASK) {
                 t0 &= ~(1ULL << 63);
             }
-            if (t0 & ((~0ULL) << env_archcpu(env)->phys_bits)) {
+            /* U1180: with LAM, CR3[62:61] are LAM_U48 / LAM_U57, not reserved (Vol3A 4.4.1) */
+            if (t0 & ((~0ULL) << env_archcpu(env)->phys_bits) &
+                ~(x86_lam_cpuid(env) ? (CR3_LAM_U57_MASK | CR3_LAM_U48_MASK) : 0)) {
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
             }
         }
@@ -313,6 +315,17 @@ void helper_invlpg(CPUX86State *env, target_ulong addr)
 
 void helper_flush_page(CPUX86State *env, target_ulong addr)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+    /*
+     * NoVmp (ledger U1180): INVLPG's operand is not LAM-masked (SDM 092 Vol3A 4.4.3) but the TLB
+     * holds the entries of masked accesses under their unmasked addresses: with LAM active every
+     * entry that may translate this page goes (a full flush - invalidating more is allowed)
+     */
+    if (x86_lam_active(env)) {
+        tlb_flush(env_cpu(env));
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1180) */
     tlb_flush_page(env_cpu(env), addr);
 }
 
@@ -3740,6 +3753,13 @@ void helper_invpcid(CPUX86State *env, target_ulong type, target_ulong lo, target
     switch (type) {
     case 0:
         if (pcid == cur) {
+#if __Use_Original_Qemu != 1 /* ours (U1180) */
+            /* LAM active: the entries of masked accesses are under unmasked addresses (U1180) */
+            if (x86_lam_active(env)) {
+                tlb_flush(env_cpu(env));
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1180) */
             tlb_flush_page(env_cpu(env), hi);
         }
         break;
