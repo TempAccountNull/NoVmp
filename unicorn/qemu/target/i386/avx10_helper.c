@@ -101,22 +101,23 @@ static int bf16_relation(uint16_t a, uint16_t b, float_status *st)
     }
 }
 
-/* VGETEXPBF16 (7.7.3 getexp_bf16): floor(log2|x|); the pseudocode's literal paths */
+/*
+ * VGETEXPBF16 (7.7.3 getexp_bf16): floor(log2|x|). U1092 (SDE-resolved ambiguity, docs/quirks.md):
+ * the pseudocode special-cases only +INF, so -INF would fall through to "((src & 0x7F80) >> 7) -
+ * 127" = 128.0, while the description's GETEXP(x) = floor(log2(|x|)) gives +INF; SDE 10.13.1
+ * returns +INF (as SDM VGETEXPPH). Both infinities -> +INF.
+ */
 static uint16_t bf16_getexp(uint16_t a, float_status *st)
 {
     if (bf16_nan(a)) {
         return bf16_quiet(a);
     }
-    if (a == BF16_INF) {
-        return BF16_INF;                                /* "src is positive infinity" */
+    if (bf16_inf(a)) {
+        return BF16_INF;                                /* +INF; -INF: U1092 */
     }
     if (bf16_zero_or_denormal(a)) {
         return BF16_SIGN | BF16_INF;                    /* -INF (DAZ) */
     }
-    /*
-     * "tmp := ((src & 0x7F80) >> 7) - 127": every other input, -INF included (-> 128.0;
-     * only +INF is special-cased by the pseudocode)
-     */
     return int32_to_bfloat16((int32_t)((a & BF16_EXP) >> 7) - 127, st);
 }
 
@@ -131,6 +132,15 @@ static uint16_t bf16_getmant(uint16_t a, int sc, int interv)
     if (bf16_nan(a)) {
         return bf16_quiet(a);
     }
+    /*
+     * U1092 (SDE-resolved ambiguity): "Denormal BF16 input operands are treated as zeros (DAZ)"
+     * (7.8.2) against the pseudocode's "IF src is denormal: dst.fraction := 0" (7.8.3 lines
+     * 22-23, which keeps the exponent path); SDE 10.13.1 treats a denormal as the zero of its
+     * sign (+1.0 / signed_one), as the description says.
+     */
+    a = bf16_daz(a);
+    exp = (a & BF16_EXP) >> 7;
+    frac = a & BF16_FRAC;
     if (a == 0 || a == BF16_INF) {                      /* +0 or +INF */
         return BF16_ONE;
     }
@@ -144,9 +154,6 @@ static uint16_t bf16_getmant(uint16_t a, int sc, int interv)
         if (sc & 2) {
             return BF16_INDEFINITE;
         }
-    }
-    if (exp == 0) {                                     /* denormal: fraction := 0 */
-        frac = 0;
     }
     unbiased = exp - 127;
     switch (interv) {
@@ -169,8 +176,10 @@ static uint16_t bf16_getmant(uint16_t a, int sc, int interv)
 /*
  * VREDUCEBF16 (7.13.3 reduce_bf16_ne): src - 2^-m * ROUND(2^m * src, RNE) (DAZ), the
  * difference rounded RNE with FTZ; imm8[3:0] is not used (always RNE). The scaled and
- * rounded values and the difference are exact in float64 (8 significant bits, m <= 15);
- * +-INF gives INF - INF = QNaN indefinite.
+ * rounded values and the difference are exact in float64 (8 significant bits, m <= 15).
+ * U1092 (SDE-resolved ambiguity): +-INF -> +0 (the pseudocode's INF - INF would be the QNaN
+ * indefinite, the description's "0 <= |zmm1| < 2^(exp2-M-1)" a finite value; SDE 10.13.1
+ * gives +0, as SDM VREDUCEPH Table 5-28).
  */
 static uint16_t bf16_reduce(CPUX86State *env, uint16_t a, int m, float_status *st)
 {
@@ -181,7 +190,7 @@ static uint16_t bf16_reduce(CPUX86State *env, uint16_t a, int m, float_status *s
         return bf16_quiet(a);
     }
     if (bf16_inf(a)) {
-        return BF16_INDEFINITE;
+        return 0;                                       /* U1092 */
     }
     f64_exact_status(env, &ex);
     x = bfloat16_to_float64(bf16_daz(a), &ex);
@@ -363,8 +372,11 @@ void helper_avx10_bf16(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2, uint
 
 /*
  * VF[N]M{ADD,SUB}{132,213,231}BF16 (7.5.3): a * b OP c with one rounding (RNE, DAZ, FTZ);
- * a, b, c are chosen by the caller from the form. The negated forms negate a ("a := -a",
- * also the sign of a NaN a), the SUB forms subtract c. NaN priority a, b, c (quietened).
+ * a, b, c are chosen by the caller from the form. The negated forms negate a ("a := -a"),
+ * the SUB forms subtract c. NaN priority a, b, c (quietened). U1092 (SDE-resolved ambiguity):
+ * a NaN a keeps its sign in the negated forms (the description negates "the infinite precision
+ * intermediate product", the pseudocode the operand; SDE 10.13.1 does not flip the NaN, as the
+ * SDM VFNMADD* NaN rules).
  */
 void helper_avx10_bf16_fma(CPUX86State *env, ZMMReg *d, ZMMReg *pa, ZMMReg *pb, ZMMReg *pc,
                            uint32_t desc)
@@ -377,8 +389,8 @@ void helper_avx10_bf16_fma(CPUX86State *env, ZMMReg *d, ZMMReg *pa, ZMMReg *pb, 
     for (i = 0; i < n; i++) {
         uint16_t a = pa->ZMM_W(i), b = pb->ZMM_W(i), c = pc->ZMM_W(i), r;
 
-        if (neg) {
-            a ^= BF16_SIGN;
+        if (neg && !bf16_nan(a)) {
+            a ^= BF16_SIGN;                             /* U1092: not a NaN */
         }
         if (bf16_nan(a)) {
             r = bf16_quiet(a);
@@ -746,13 +758,21 @@ void helper_avx10_vcomx(CPUX86State *env, ZMMReg *s1, ZMMReg *s2, uint32_t desc)
  * Saturating conversions (spec chapter 12, helper functions 5.3; U376). Each helper of 5.3
  * is executed as printed (AMBIGUOUS points in Emulator/tools/isa/ref_avx10_a.py):
  *   IE  := NaN or +-Inf or OutOfDestRepresentation (per MXCSR.RC / {er} for the rounding forms)
- *   NaN -> 0; x >(=) HI or +Inf -> MAX; x <(=) LO or -Inf -> MIN (no PE in these branches,
- *   except VCVTTPH2IBS whose '// PE=1' is an action like its '// IE=1');
+ *   NaN -> 0; x >(=) HI or +Inf -> MAX; x <(=) LO or -Inf -> MIN (PE in these branches for a
+ *   finite in-range x that is not the saturated value, U1092; always for VCVTTPH2IBS whose
+ *   '// PE=1' is an action like its '// IE=1');
  *   otherwise x is rounded (RC, or RTZ for the truncating forms) and PE := inexact and not
  *   OutOfDestRepresentation; convert_DP_to_DW_UnSignedInteger_TruncateSaturate also sets PE
  *   for x < 0 or x > 2^32 - 1. Typos taken as their evident intent: the QW signed saturation
  *   bounds are 2^63 - 1 / -2^63 (printed 2^31 - 1 / -2^31 and "<= EXP"), W = 64 in the DP->QW
  *   unsigned helper, src.fp16 for "src.bf16" in the FP16 unsigned truncating helper.
+ * U1092 (SDE-resolved ambiguities, docs/quirks.md): every helper's header says "When a
+ * conversion is inexact, floating-point precision exception is raised", its saturation
+ * branches set no PE: an inexact saturated result that is not out of range (2^31 - 0.5 ->
+ * 7FFFFFFFh, -0.5 -> 0 unsigned, 127.25 -> 7Fh) sets PE (SDE 10.13.1 does); VCVTPS2IUBS
+ * (convert_fp32_to_unsigned_byte_saturate, whose header is a copy of the BF16 one) takes the
+ * MXCSR.RC-dependent range of its FP16 sibling (255.5 RNE -> IE, as SDE and the page's "cannot
+ * be represented" rule). Kept as printed (spec unambiguous): DP -> unsigned DW extra PE.
  * Byte results are zero-extended into their word (BF16, FP16 sources) or dword (FP32) lane.
  * DAZ: FP32/FP64 sources follow MXCSR.DAZ (SDM Vol1 10.2.3.4), FP16 sources never, BF16
  * sources always (no flags, no MXCSR: the BF16 forms raise no exception).
@@ -792,9 +812,9 @@ static const Avx10SatCvt avx10_satcvt[] = {
     /* AVX10_CVT_B_S_T16: convert_fp16_to_signed_byte_truncate_saturate ('// PE=1') */
     { true, 8, OOD_RANGE, B(129, 1, 0), B(128, 0, 0), B(127, 0, 0), B(128, 1, 0),
       true, true, true, false, float_round_to_zero },
-    /* AVX10_CVT_B_U_R32: convert_fp32_to_unsigned_byte_saturate (RC-independent range) */
-    { false, 8, OOD_RANGE, B(1, 1, 0), B(256, 0, 0), B(255, 0, 0), B(0, 0, 0),
-      false, false, false, false, -1 },
+    /* AVX10_CVT_B_U_R32: convert_fp32_to_unsigned_byte_saturate (U1092: RC-dependent range) */
+    { false, 8, OOD_UBYTE_RC, {0}, {0}, B(255, 0, 0), B(0, 0, 0), true, true,
+      false, false, -1 },
     /* AVX10_CVT_B_U_T32: convert_fp32_to_unsigned_byte_truncate_saturate */
     { false, 8, OOD_RANGE, B(1, 1, 0), B(256, 0, 0), B(255, 0, 0), B(0, 0, 0),
       false, false, false, false, float_round_to_zero },
@@ -949,10 +969,13 @@ static uint64_t avx10_satcvt1(CPUX86State *env, int key, int fmt, uint64_t src, 
 
     if (inf ? !neg : (c->hi_incl ? !avx10_lt(x, c->hi, &ex) : !avx10_le(x, c->hi, &ex))) {
         r = maxv;
-        pe |= c->pe_sat;
+        /* U1092: an inexact in-range saturation sets PE */
+        pe |= c->pe_sat || (!inf && !ood && !avx10_le(x, (Avx10Bound){ maxv, false, 0 }, &ex));
     } else if (inf ? neg : (c->lo_incl ? avx10_le(x, c->lo, &ex) : avx10_lt(x, c->lo, &ex))) {
+        Avx10Bound lo = c->sign ? (Avx10Bound){ minv, true, 0 } : (Avx10Bound){ 0, false, 0 };
+
         r = minv;
-        pe |= c->pe_sat;
+        pe |= c->pe_sat || (!inf && !ood && avx10_lt(x, lo, &ex));     /* U1092 */
     } else {
         set_float_rounding_mode(rmode, &ex);
         r64 = float64_round_to_int(x64, &ex);

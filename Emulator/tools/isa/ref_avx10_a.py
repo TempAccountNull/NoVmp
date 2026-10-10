@@ -64,6 +64,13 @@ AMBIGUOUS spec points: inputs whose expected value depends on an ambiguous / con
 point are kept OUT of the ordinary cases (each lane function returns an "ambiguous" marker; the
 generator replaces such inputs by 1.0) and are tested only in the "AMBIGUOUS-nn" cases at the end
 of the file; search this file for "AMBIGUOUS:" for every decision and its spec line.
+SDE-RESOLVED (U1092, plan 1.J item AMB-3/AMB-7, user decision 2026-10-10): where the spec text is
+genuinely ambiguous the expectation follows Intel SDE 10.13.1 (docs/quirks.md "SDE-resolved
+ambiguities"): 01/05/06 an inexact in-range saturated conversion sets PE; 04 VCVTPS2IUBS uses the
+MXCSR.RC-dependent range; 08 VGETEXPBF16(-Inf) = +Inf; 09 VGETMANTBF16 denormal = zero; 10
+VREDUCEBF16(+-Inf) = +0; 13 no NaN sign flip in VFNM*BF16; 15 VCOMX* with L'L = 01b/10b execute.
+Their cases are titled "SDE-RESOLVED-nn"; the markers still keep those inputs out of the ordinary
+cases. 03 (DP -> unsigned DW extra PE) is printed unambiguously and stays as printed.
 
 Usage:
   python ref_avx10_a.py --selftest   hand-derived checks of the model, exit 0 on pass
@@ -516,7 +523,7 @@ def bf_sqrt(a):
     return fp_sqrt(a, BF16, BF_MX, RNE)[0]
 
 
-def bf_fma(order, negp, negz, d, s2, s3, literal=True):
+def bf_fma(order, negp, negz, d, s2, s3, literal=False):
     """spec 7.5.3: 132 a=DEST b=SRC3 c=SRC2 / 213 a=SRC2 b=DEST c=SRC3 / 231 a=SRC2 b=SRC3 c=DEST"""
     if order == 132:
         a, b, c, ai = d, s3, s2, 0
@@ -528,7 +535,8 @@ def bf_fma(order, negp, negz, d, s2, s3, literal=True):
     nat = fp_fma(a, b, c, BF16, BF_MX, RNE, negp, negz, lit_neg_x=False)[0]
     # AMBIGUOUS: spec 7.5.3 line 19 'IF *negative form*: a := -a' negates a NaN a as well
     # (sign of the propagated NaN flipped); SDM Vol1 Table 14-17 returns Q(x) unnegated for
-    # -(x*y)+z. Literal pseudocode chosen (flipped); such inputs only in AMBIGUOUS-13.
+    # -(x*y)+z. U1092: SDE-resolved (SDE 10.13.1 keeps the sign, as the description's "negated
+    # ... intermediate product"): not flipped (literal=False); such inputs only in SDE-RESOLVED-13.
     return (lit if literal else nat), (ai if lit != nat else None)
 
 
@@ -616,7 +624,8 @@ def bf_getexp(x, literal=True):
         return BF16.inf
     # AMBIGUOUS: spec 7.7.3 handles only +Inf; -Inf falls through to line 9-11 and returns
     # (0xFF - 127) = 128.0 (4300h); description 'floor(log2(|x|))' and SDM VGETEXPPH Table 5-14
-    # give +Inf. Literal pseudocode chosen; tested only in AMBIGUOUS-08.
+    # give +Inf. U1092: SDE-resolved (SDE 10.13.1: +Inf) -> the callers use literal=False;
+    # tested only in SDE-RESOLVED-08.
     return int_to_bf16(((x & 0x7F80) >> 7) - 127)
 
 
@@ -644,8 +653,8 @@ def bf_getmant(x, imm, literal=True):
     if c == "denorm":
         # AMBIGUOUS: spec 7.8.3 lines 22-23 keep a denormal on the computation path with
         # fraction := 0 (exponent field 0 -> unbiased -127, odd), whereas the description's
-        # DAZ would make it a zero (-> 1.0 / signed_one). Literal pseudocode chosen;
-        # tested only in AMBIGUOUS-09.
+        # DAZ would make it a zero (-> 1.0 / signed_one). U1092: SDE-resolved (SDE 10.13.1:
+        # +-1.0, the zero path) -> literal=False; tested only in SDE-RESOLVED-09.
         frac = 0
     odd = (exp - 127) & 1
     sigbit = (frac >> 6) & 1
@@ -662,8 +671,8 @@ def bf_reduce(x, imm, literal=True):
     c, s, v = classify(x, BF16)
     if c == "inf":
         # AMBIGUOUS: spec 7.13.3 computes src - 2^-m*ROUND(2^m*src) = Inf - Inf -> QNaN
-        # indefinite; SDM VREDUCEPH Table 5-28 returns +0.0 for +-Inf. Literal chosen
-        # (FFC0h); tested only in AMBIGUOUS-10.
+        # indefinite; SDM VREDUCEPH Table 5-28 returns +0.0 for +-Inf. U1092: SDE-resolved
+        # (SDE 10.13.1: +0) -> literal=False; tested only in SDE-RESOLVED-10.
         return BF16.qnan_indef if literal else 0
     if c == "zero":
         return 0                                     # (+-0) - (+-0) = +0 (RNE)
@@ -925,6 +934,14 @@ HELPERS = {
     "QW_U_PD": (False, 64, _rng(-1, P2(64)), lambda v: v >= P2(64), lambda v: v <= 0, False, False),
 }
 
+# the helpers as printed (U1092: HELPERS above has the SDE-resolved VCVTPS2IUBS range)
+HELPERS_PRINTED = dict(HELPERS)
+HELPERS_PRINTED["B_U_R32"] = (False, 8, _rng(-1, 256), lambda v: v > 255, lambda v: v < 0, False, False)
+# U1092 (SDE-resolved ambiguity 04): VCVTPS2IUBS takes the MXCSR.RC-dependent range of the FP16
+# helper (the page: "If a converted result cannot be represented ... invalid"; SDE 10.13.1: IE
+# for 255.5 RNE, -0.7 RNE)
+HELPERS["B_U_R32"] = (False, 8, ood_ubyte_rc, lambda v: v >= 255, lambda v: v <= 0, False, False)
+
 # BF16 -> byte helpers (spec L4410-L4560): no flags, RNE or RTZ, '> 127' / '< -128' / '> 255' / '< 0'
 BF_HELPERS = {
     "BF_S_R": (True, lambda v: v > 127, lambda v: v < -128, RNE),
@@ -934,9 +951,12 @@ BF_HELPERS = {
 }
 
 
-def cvt_literal(key, x, f, rc):
-    """literal execution of a spec 5.3 helper: (integer result masked to width, flags)"""
-    signed, wbits, ood, hi, lo, pe_sat, extra = HELPERS[key]
+def cvt_literal(key, x, f, rc, resolved=True):
+    """execution of a spec 5.3 helper: (integer result masked to width, flags). resolved (U1092,
+    SDE-resolved ambiguities 01/04/05/06): an inexact saturated result that is not out of range
+    sets PE ("When a conversion is inexact, floating-point precision exception is raised"), and
+    VCVTPS2IUBS uses the RC-dependent range of its FP16 sibling; resolved=False: as printed"""
+    signed, wbits, ood, hi, lo, pe_sat, extra = (HELPERS if resolved else HELPERS_PRINTED)[key]
     mask = (1 << wbits) - 1
     hiv = (1 << (wbits - 1)) - 1 if signed else mask
     lov = (1 << (wbits - 1)) if signed else 0
@@ -950,10 +970,14 @@ def cvt_literal(key, x, f, rc):
         flags |= PE                                  # spec L5741-L5743 (DW_U_PD only)
     if nan:
         return 0, flags
+    hival = hiv
+    loval = -(1 << (wbits - 1)) if signed else 0
     if (inf and not s) or (not inf and hi(v)):
-        return hiv, flags | (PE if pe_sat else 0)
+        pe = pe_sat or (resolved and not inf and not o and v != hival)
+        return hiv, flags | (PE if pe else 0)
     if (inf and s) or (not inf and lo(v)):
-        return lov, flags | (PE if pe_sat else 0)
+        pe = pe_sat or (resolved and not inf and not o and v != loval)
+        return lov, flags | (PE if pe else 0)
     r = round_int(v, rc)
     if r != v and not o:
         flags |= PE
@@ -1002,11 +1026,12 @@ def cvt_lane(key, x, f, rc, mxcsr):
         # every SIMD FP source operand. DAZ applied (denormal -> 0, no PE); AMBIGUOUS-07 only.
         x = x & f.signbit
         amb = True
+    r0, f0 = cvt_literal(key, x, f, rc, resolved=False)
     r1, f1 = cvt_literal(key, x, f, rc)
     signed, wbits = HELPERS[key][0], HELPERS[key][1]
     r2, f2 = cvt_natural(signed, wbits, x, f, rc)
-    if (r1, f1) != (r2, f2):
-        amb = True
+    if (r1, f1) != (r2, f2) or (r0, f0) != (r2, f2):
+        amb = True                                   # U1092: also the SDE-resolved points
     return r1, f1, (0 if amb else None)
 
 
@@ -1301,17 +1326,17 @@ BF_SPECS = [
             lambda: rnd_fp(BF16) & 0x7FFF if RNG.getrandbits(3) else rnd_fp(BF16)),
     bf_spec("VSCALEFBF16", 6, 0, 0x2C, "rvm", lambda s, ctx: (bf_scalef(s[0], s[1]), 0, None)),
     bf_spec("VGETEXPBF16", 6, 0, 0x42, "rm",
-            lambda s, ctx: (bf_getexp(s[0]), 0, None if bf_getexp(s[0]) == bf_getexp(s[0], False) else 0)),
+            lambda s, ctx: (bf_getexp(s[0], False), 0, None if bf_getexp(s[0]) == bf_getexp(s[0], False) else 0)),
     bf_spec("VRCPBF16", 6, 0, 0x4C, "rm",
             lambda s, ctx: (bf_rcp(s[0]), 0, None if bf_rcp(s[0]) == bf_rcp(s[0], False) else 0)),
     bf_spec("VRSQRTBF16", 6, 0, 0x4E, "rm", lambda s, ctx: (bf_rsqrt(s[0]), 0, None),
             lambda: rnd_fp(BF16) & 0x7FFF if RNG.getrandbits(3) else rnd_fp(BF16)),
     bf_spec("VGETMANTBF16", 3, 3, 0x26, "rm",
-            lambda s, ctx: (bf_getmant(s[0], ctx["imm"]), 0,
+            lambda s, ctx: (bf_getmant(s[0], ctx["imm"], False), 0,
                             None if bf_getmant(s[0], ctx["imm"]) == bf_getmant(s[0], ctx["imm"], False) else 0),
             imm=True, imm_gen=lambda: RNG.getrandbits(4)),
     bf_spec("VREDUCEBF16", 3, 3, 0x56, "rm",
-            lambda s, ctx: (bf_reduce(s[0], ctx["imm"]), 0,
+            lambda s, ctx: (bf_reduce(s[0], ctx["imm"], False), 0,
                             None if bf_reduce(s[0], ctx["imm"]) == bf_reduce(s[0], ctx["imm"], False) else 0),
             imm=True, imm_gen=lambda: RNG.getrandbits(4) << 4),
     bf_spec("VRNDSCALEBF16", 3, 3, 0x08, "rm", lambda s, ctx: (bf_rndscale(s[0], ctx["imm"]), 0, None),
@@ -1940,28 +1965,29 @@ def gen_ambiguous():
         sp = sps[name]
         KL = 64 // max(sp["sesz"], sp["desz"])
         vals = (vals * KL)[:KL]
-        emit(vcase(sp, 64, "reg", 10, 0, 11, b=vals, allow_amb=True, title="AMBIGUOUS-%s" % tag, **kw))
+        title = tag if tag.startswith("SDE-") else "AMBIGUOUS-%s" % tag
+        emit(vcase(sp, 64, "reg", 10, 0, 11, b=vals, allow_amb=True, title=title, **kw))
 
     eb = exact_bits
-    amb("01 saturation branch without PE", "VCVTTPD2DQS",
+    amb("SDE-RESOLVED-01 inexact saturation: PE", "VCVTTPD2DQS",
         [eb(P2(31) - HALF, F64), eb(-P2(31) - HALF, F64), eb(P2(31) - 1, F64), eb(-P2(31), F64)])
-    amb("01 saturation branch without PE", "VCVTPS2IBS",
+    amb("SDE-RESOLVED-01 inexact saturation: PE", "VCVTPS2IBS",
         [eb(Fraction(1273, 10), F32), eb(Fraction(-257, 2), F32), eb(Fraction(1271, 10), F32), eb(-128, F32)])
     amb("02 VCVTTPH2IBS '// PE=1' in saturation branches", "VCVTTPH2IBS",
         [eb(127, FP16), eb(-128, FP16), FP16.inf, FP16.signbit | FP16.inf, eb(300, FP16), eb(Fraction(1275, 10), FP16)])
-    amb("03 VCVTTPD2UDQS extra PE rule", "VCVTTPD2UDQS",
+    amb("03 VCVTTPD2UDQS extra PE rule (printed; spec kept, SDE 10.13.1 differs)", "VCVTTPD2UDQS",
         [eb(-1, F64), eb(Fraction(-11, 2), F64), eb(P2(32), F64), F64.inf, F64.signbit | F64.inf,
          eb(P2(32) - HALF, F64), eb(Fraction(-1, 2), F64), eb(P2(33), F64)])
-    amb("04 VCVTPS2IUBS RC-independent range", "VCVTPS2IUBS",
+    amb("SDE-RESOLVED-04 VCVTPS2IUBS RC-dependent range", "VCVTPS2IUBS",
         [eb(Fraction(2553, 10), F32), eb(Fraction(511, 2), F32), eb(Fraction(-3, 10), F32), eb(Fraction(-7, 10), F32)])
-    amb("04 VCVTPS2IUBS RC-independent range, RU", "VCVTPS2IUBS",
+    amb("SDE-RESOLVED-04 VCVTPS2IUBS RC-dependent range, RU", "VCVTPS2IUBS",
         [eb(Fraction(2552, 10), F32), eb(Fraction(-1, 10), F32), eb(Fraction(2549, 10), F32)], mxcsr=0x5F80)
-    amb("05 unsigned (-1,0) saturation branch without PE", "VCVTTPS2UDQS", [eb(Fraction(-1, 2), F32)])
-    amb("05 unsigned (-1,0) saturation branch without PE", "VCVTTPS2UQQS", [eb(Fraction(-3, 4), F32)])
-    amb("05 unsigned (-1,0) saturation branch without PE", "VCVTTPH2IUBS", [eb(Fraction(-1, 2), FP16)])
-    amb("05 unsigned (-1,0) saturation branch without PE", "VCVTPH2IUBS", [eb(Fraction(-1, 4), FP16)])
-    amb("05 unsigned (-1,0) saturation branch without PE", "VCVTTPD2UQQS", [eb(Fraction(-1, 2), F64)])
-    amb("06 VCVTPH2IBS RNE 127.25 / -128.5", "VCVTPH2IBS", [eb(Fraction(509, 4), FP16), eb(Fraction(-257, 2), FP16)])
+    amb("SDE-RESOLVED-05 unsigned (-1,0) saturation: PE", "VCVTTPS2UDQS", [eb(Fraction(-1, 2), F32)])
+    amb("SDE-RESOLVED-05 unsigned (-1,0) saturation: PE", "VCVTTPS2UQQS", [eb(Fraction(-3, 4), F32)])
+    amb("SDE-RESOLVED-05 unsigned (-1,0) saturation: PE", "VCVTTPH2IUBS", [eb(Fraction(-1, 2), FP16)])
+    amb("SDE-RESOLVED-05 unsigned (-1,0) saturation: PE", "VCVTPH2IUBS", [eb(Fraction(-1, 4), FP16)])
+    amb("SDE-RESOLVED-05 unsigned (-1,0) saturation: PE", "VCVTTPD2UQQS", [eb(Fraction(-1, 2), F64)])
+    amb("SDE-RESOLVED-06 VCVTPH2IBS RNE 127.25 / -128.5: PE", "VCVTPH2IBS", [eb(Fraction(509, 4), FP16), eb(Fraction(-257, 2), FP16)])
     amb("07 DAZ on FP32/FP64 conversion inputs (applied)", "VCVTTPS2DQS", [1, F32.signbit | 0x7FFFFF],
         mxcsr=MXCSR_DEFAULT | DAZ)
     amb("07 DAZ on FP32/FP64 conversion inputs (applied)", "VCVTTPD2QQS", [1, F64.signbit | 5],
@@ -1971,20 +1997,20 @@ def gen_ambiguous():
     emit(scvt_case("VCVTTSS2SIS", 2, 0x6D, F32, 0, "DW_S", 0x00000003, mxcsr=MXCSR_DEFAULT | DAZ, allow_amb=True,
                    title="AMBIGUOUS-07 DAZ"))
     emit(scvt_case("VCVTTSD2USIS", 3, 0x6C, F64, 0, "DW_U_PD", eb(-3, F64), allow_amb=True,
-                   title="AMBIGUOUS-03 extra PE"))
+                   title="AMBIGUOUS-03 extra PE (printed; spec kept, SDE 10.13.1 differs)"))
     emit(scvt_case("VCVTTSD2SIS", 3, 0x6D, F64, 0, "DW_S", eb(P2(31) - HALF, F64), allow_amb=True,
-                   title="AMBIGUOUS-01 saturation branch without PE"))
+                   title="SDE-RESOLVED-01 inexact saturation: PE"))
     # BF16
     bsp = {s["name"]: s for s in BF_SPECS}
     emit(vcase(bsp["VGETEXPBF16"], 16, "reg", 1, 0, 2, b=[0xFF80, 0x7F80, 0xFF80, 0x0001, 0xFF80, 0x8000, 0x3F80,
-                                                        0xFF80], allow_amb=True, title="AMBIGUOUS-08 -Inf -> 128.0"))
+                                                        0xFF80], allow_amb=True, title="SDE-RESOLVED-08 -Inf -> +Inf"))
     for imm in (0x00, 0x01, 0x02, 0x03, 0x04, 0x08):
         emit(vcase(bsp["VGETMANTBF16"], 16, "reg", 3, 0, 4, imm=imm,
                    b=[0x0001, 0x8001, 0x007F, 0x807F, 0x0040, 0x8040, 0x0000, 0x8000], allow_amb=True,
-                   title="AMBIGUOUS-09 denormal inputs"))
+                   title="SDE-RESOLVED-09 denormal inputs as zeros"))
     emit(vcase(bsp["VREDUCEBF16"], 16, "reg", 5, 0, 6, imm=0x20, b=[0x7F80, 0xFF80, 0x3FC0, 0x7F80, 0x4049, 0xFF80,
                                                                  0x0000, 0x8000], allow_amb=True,
-               title="AMBIGUOUS-10 +-Inf -> QNaN indefinite"))
+               title="SDE-RESOLVED-10 +-Inf -> +0"))
     for imm in (0x11, 0x23, 0x0B):
         emit(vcase(bsp["VREDUCEBF16"], 16, "reg", 5, 0, 6, imm=imm, b=[0x3FC0, 0xBFC0, 0x4020, 0xC020, 0x3FA0,
                                                                     0x4049, 0xC049, 0x3F90], allow_amb=True,
@@ -2009,7 +2035,7 @@ def gen_ambiguous():
             else:
                 d, a, b = [0x7FC5, 0x3F80, 0x7FC5, 0x3F80, 0x4000, 0x7F82, 0x4000, 0x3F80], nanv, ones
             emit(vcase(sp, 16, "reg", 11, 12, 13, d=d, a=a, b=b, allow_amb=True,
-                       title="AMBIGUOUS-13 NaN in a of a negated form: sign flipped"))
+                       title="SDE-RESOLVED-13 NaN in a of a negated form keeps its sign"))
     # FMA broadcast of the memory operand (SRC3) for 132 / 231
     for nm, base, negp, negz in (("VFMADD", 0x98, False, False), ("VFNMSUB", 0x9E, True, True)):
         for order, off in ((132, 0), (231, 0x20)):
@@ -2018,12 +2044,19 @@ def gen_ambiguous():
                 return r, 0, a_
             sp = bf_spec("%s%dBF16" % (nm, order), 6, 0, base + off, "fma", fn, g_bf_near)
             emit(vcase(sp, 32, "bcst", 14, 15, kreg=3, kval=RNG.getrandbits(16), title="AMBIGUOUS-14 {1to16} = SRC3"))
-    # VCOMX L'L != 00b
+    # VCOMX L'L != 00b (U1092 SDE-resolved: executes, LIG; L'L = 11b: the generic scalar rule)
     for form, ll in ((COMX_FORMS[0], 1), (COMX_FORMS[3], 2), (COMX_FORMS[4], 1)):
-        name, mmm, pp, w, opc = form[:5]
-        c = Case("%s L'L=%d (encoding 'LLIG' but '#UD if EVEX.LL != 00b') AMBIGUOUS-15" % (name, ll))
+        name, mmm, pp, w, opc, f, sq, dz = form
+        a, b = f.one, exact_bits(2, f)
+        rel, fl = comx(a, b, f, MXCSR_DEFAULT, sq, dz)
+        c = Case("%s L'L=%d (encoding 'LLIG', text '#UD if EVEX.LL != 00b') SDE-RESOLVED-15: executes"
+                 % (name, ll))
+        c.zmm[1] = pack([a], f.esz) + bytes(64 - f.esz)
+        c.zmm[2] = pack([b], f.esz) + bytes(64 - f.esz)
+        c.inp.append("rflags=0x202")
+        c.exp.append("rflags=0x%X" % (0x202 | COMX_FL[rel]))
+        assert not fl
         c.code = evex(mmm, pp, w, opc, 1, 2, ll=ll)
-        c.fault = "#UD"
         emit(c)
     emit(comx_case(COMX_FORMS[4], 1, 0, mxcsr=MXCSR_DEFAULT | DAZ, title="AMBIGUOUS-16 FP16 denormal not DAZ'd, DE"))
     emit(comx_case(COMX_FORMS[5], 0x8001, 0x8000, mxcsr=MXCSR_DEFAULT | DAZ,
@@ -2097,13 +2130,22 @@ def selftest():
     chk("fma one rounding", bf_fma(213, False, False, 0x3F81, 0x3F81, 0xBF82)[0], 0x3880)
     chk("fma nan priority b", bf_fma(132, False, False, 0x3F80, 0x7FC2, 0x7FC3)[0], 0x7FC3)  # 132: b = SRC3
     chk("fma inf*0 + qnan", bf_fma(213, False, False, 0x7F80, 0x0000, 0x7FC7)[0], 0x7FC7)    # Table 14-17
-    chk("fnmadd nan literal flip", bf_fma(213, True, False, 0x3F80, 0x7FC0, 0x3F80)[0], 0xFFC0)
+    chk("fnmadd nan literal flip", bf_fma(213, True, False, 0x3F80, 0x7FC0, 0x3F80, True)[0], 0xFFC0)
+    chk("fnmadd nan kept (U1092)", bf_fma(213, True, False, 0x3F80, 0x7FC0, 0x3F80)[0], 0x7FC0)
     chk("fnmsub zero sign", bf_fma(213, True, True, 0x0000, 0x3F80, 0x0000)[0], 0x8000)
     # --- VGETEXP / VGETMANT / VREDUCE / VRNDSCALE / VSCALEF / VFPCLASS
     chk("getexp 1.5", bf_getexp(0x3FC0), 0x0000)
     chk("getexp 2^-126", bf_getexp(0x0080), 0xC2FC)
     chk("getexp den", bf_getexp(0x0001), 0xFF80)
     chk("getexp -inf literal", bf_getexp(0xFF80), 0x4300)
+    chk("getexp -inf resolved (U1092)", bf_getexp(0xFF80, False), 0x7F80)
+    chk("getmant denormal resolved (U1092)", bf_getmant(0x8001, 0x01, False), 0xBF80)
+    chk("reduce -inf resolved (U1092)", bf_reduce(0xFF80, 0x20, False), 0x0000)
+    chk("cvt sat inexact PE (U1092)", cvt_literal("DW_S", exact_bits(P2(31) - HALF, F64), F64, RZ), (0x7FFFFFFF, PE))
+    chk("cvt sat printed (U1092)", cvt_literal("DW_S", exact_bits(P2(31) - HALF, F64), F64, RZ, False), (0x7FFFFFFF, 0))
+    chk("cvt IUBS 255.5 RNE IE (U1092)", cvt_literal("B_U_R32", exact_bits(Fraction(511, 2), F32), F32, RNE), (0xFF, IE))
+    chk("cvt IUBS -0.3 RNE PE (U1092)", cvt_literal("B_U_R32", exact_bits(Fraction(-3, 10), F32), F32, RNE), (0, PE))
+    chk("cvt UDQS(PD) -3 printed extra PE", cvt_literal("DW_U_PD", exact_bits(-3, F64), F64, RZ), (0, IE | PE))
     chk("getmant 6.0 [1,2)", bf_getmant(0x40C0, 0x00), 0x3FC0)
     chk("getmant 6.0 [.5,1)", bf_getmant(0x40C0, 0x02), 0x3F40)
     chk("getmant -6 sc=01", bf_getmant(0xC0C0, 0x04), 0x3FC0)
@@ -2199,11 +2241,13 @@ def selftest():
     chk("DW_S -2^31-256", cvt_literal("DW_S", e32(-P2(31) - 256), F32, RZ), (0x80000000, IE))
     chk("DW_S nan", cvt_literal("DW_S", F32.qnan_indef, F32, RZ), (0, IE))
     chk("DW_S -1.5", cvt_literal("DW_S", e32(Fraction(-3, 2)), F32, RZ), (0xFFFFFFFF, PE))
-    chk("DW_S fp64 2^31-0.5 (literal, no PE)", cvt_literal("DW_S", e64(P2(31) - HALF), F64, RZ), (0x7FFFFFFF, 0))
-    chk("DW_S fp64 -2^31-0.5 (literal)", cvt_literal("DW_S", e64(-P2(31) - HALF), F64, RZ), (0x80000000, 0))
+    chk("DW_S fp64 2^31-0.5 (literal, no PE)", cvt_literal("DW_S", e64(P2(31) - HALF), F64, RZ, False), (0x7FFFFFFF, 0))
+    chk("DW_S fp64 -2^31-0.5 (literal)", cvt_literal("DW_S", e64(-P2(31) - HALF), F64, RZ, False), (0x80000000, 0))
+    chk("DW_S fp64 -2^31-0.5 (U1092: PE)", cvt_literal("DW_S", e64(-P2(31) - HALF), F64, RZ), (0x80000000, PE))
     chk("DW_S fp64 -2^31-1", cvt_literal("DW_S", e64(-P2(31) - 1), F64, RZ), (0x80000000, IE))
     chk("DW_U -1", cvt_literal("DW_U", e32(-1), F32, RZ), (0, IE))
-    chk("DW_U -0.5 (literal)", cvt_literal("DW_U", e32(-HALF), F32, RZ), (0, 0))
+    chk("DW_U -0.5 (literal)", cvt_literal("DW_U", e32(-HALF), F32, RZ, False), (0, 0))
+    chk("DW_U -0.5 (U1092: PE)", cvt_literal("DW_U", e32(-HALF), F32, RZ), (0, PE))
     chk("DW_U 2^32", cvt_literal("DW_U", e32(P2(32)), F32, RZ), (0xFFFFFFFF, IE))
     chk("DW_U 2^32-256", cvt_literal("DW_U", e32(P2(32) - 256), F32, RZ), (0xFFFFFF00, 0))
     chk("DW_U_PD -0.5", cvt_literal("DW_U_PD", e64(-HALF), F64, RZ), (0, PE))
@@ -2218,18 +2262,20 @@ def selftest():
     chk("QW_U_PD -inf", cvt_literal("QW_U_PD", F64.signbit | F64.inf, F64, RZ), (0, IE))
     chk("B_S_R 127.5 RNE", cvt_literal("B_S_R", e32(Fraction(255, 2)), F32, RNE), (0x7F, IE))
     chk("B_S_R 126.5 RNE", cvt_literal("B_S_R", e32(Fraction(253, 2)), F32, RNE), (126, PE))
-    chk("B_S_R -128.5 RNE (literal)", cvt_literal("B_S_R", e32(Fraction(-257, 2)), F32, RNE), (0x80, 0))
+    chk("B_S_R -128.5 RNE (literal)", cvt_literal("B_S_R", e32(Fraction(-257, 2)), F32, RNE, False), (0x80, 0))
+    chk("B_S_R -128.5 RNE (U1092: PE)", cvt_literal("B_S_R", e32(Fraction(-257, 2)), F32, RNE), (0x80, PE))
     chk("B_S_R 126.2 RU", cvt_literal("B_S_R", e32(Fraction(631, 5)), F32, RU), (127, PE))
     chk("B_S_R 127.2 RU", cvt_literal("B_S_R", e32(Fraction(636, 5)), F32, RU), (0x7F, IE))
     chk("B_S_R -128.2 RD", cvt_literal("B_S_R", e32(Fraction(-641, 5)), F32, RD), (0x80, IE))
     chk("B_S_R -5 ", cvt_literal("B_S_R", e32(-5), F32, RNE), (0xFB, 0))
-    chk("B_S_T32 -128.9", cvt_literal("B_S_T32", e32(Fraction(-1289, 10)), F32, RZ), (0x80, 0))
+    chk("B_S_T32 -128.9 (literal)", cvt_literal("B_S_T32", e32(Fraction(-1289, 10)), F32, RZ, False), (0x80, 0))
+    chk("B_S_T32 -128.9 (U1092: PE)", cvt_literal("B_S_T32", e32(Fraction(-1289, 10)), F32, RZ), (0x80, PE))
     chk("B_S_T16 127.0 (literal PE)", cvt_literal("B_S_T16", e16(127), FP16, RZ), (0x7F, PE))
     chk("B_S_T16 +inf", cvt_literal("B_S_T16", FP16.inf, FP16, RZ), (0x7F, IE | PE))
     chk("B_U_R16 255.5 RNE", cvt_literal("B_U_R16", e16(Fraction(511, 2)), FP16, RNE), (0xFF, IE))
     chk("B_U_R16 254.5 RNE", cvt_literal("B_U_R16", e16(Fraction(509, 2)), FP16, RNE), (254, PE))
     chk("B_U_R16 -0.25 RD", cvt_literal("B_U_R16", e16(Fraction(-1, 4)), FP16, RD), (0, IE))
-    chk("B_U_R32 255.5 RNE (literal)", cvt_literal("B_U_R32", e32(Fraction(511, 2)), F32, RNE), (0xFF, 0))
+    chk("B_U_R32 255.5 RNE (literal)", cvt_literal("B_U_R32", e32(Fraction(511, 2)), F32, RNE, False), (0xFF, 0))
     chk("B_U_T16 0.75", cvt_literal("B_U_T16", e16(Fraction(3, 4)), FP16, RZ), (0, PE))
     chk("BF_S_R 2.5", bf_cvt_literal("BF_S_R", 0x4020), 2)
     chk("BF_S_R -2.5", bf_cvt_literal("BF_S_R", 0xC020), 0xFE)

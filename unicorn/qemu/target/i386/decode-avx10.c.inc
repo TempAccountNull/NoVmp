@@ -76,9 +76,6 @@ static void decode_A10_MAP5_2F(DisasContext *s, CPUX86State *env, X86OpEntry *en
         {},
     };
     *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2F);
-    if (s->evex_ll && (s->prefix & PREFIX_REPZ)) {
-        memset(entry, 0, sizeof(*entry));               /* VCOMXSH: EVEX.LL != 00b #UD */
-    }
 }
 
 /* ---- U374: MINMAX (spec ch.11) ---- */
@@ -110,7 +107,13 @@ static void decode_A10_0F3A_53(DisasContext *s, CPUX86State *env, X86OpEntry *en
     }
 }
 
-/* ---- U375: VCOMX / VUCOMX (spec ch.8): LLIG but "#UD if EVEX.LL != 00b" (8.1.2) ---- */
+/*
+ * ---- U375: VCOMX / VUCOMX (spec ch.8) ----
+ * U1092 (SDE-resolved ambiguity, docs/quirks.md): the encodings read "EVEX.LLIG" while the
+ * descriptions say "#UD If ... EVEX.L != 0, or EVEX.LL != 00B" (8.1.2); SDE 10.13.1 executes
+ * L'L = 01b / 10b, so the forms are LIG like every other EVEX scalar instruction (U375 had #UD
+ * for any L'L != 00b). L'L = 11b follows the generic EVEX scalar rule (SDM Table 2-38).
+ */
 
 /* 0F 2E/2F: F3 W0 VUCOMXSS/VCOMXSS, F2 W1 VUCOMXSD/VCOMXSD (NP/66: VUCOMISS/D, VCOMISS/D) */
 static void decode_A10_0F_2E(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -121,9 +124,6 @@ static void decode_A10_0F_2E(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         X86_OP_ENTRY3(VUCOMXSD, None,None, V,x, W,q, A10_CX(64) ev_w(W1)),
     };
     *entry = *decode_by_prefix(s, opcodes_A10_0F_2E);
-    if (s->evex_ll) {
-        memset(entry, 0, sizeof(*entry));
-    }
 }
 
 static void decode_A10_0F_2F(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
@@ -134,9 +134,6 @@ static void decode_A10_0F_2F(DisasContext *s, CPUX86State *env, X86OpEntry *entr
         X86_OP_ENTRY3(VCOMXSD, None,None, V,x, W,q, A10_CX(64) ev_w(W1)),
     };
     *entry = *decode_by_prefix(s, opcodes_A10_0F_2F);
-    if (s->evex_ll) {
-        memset(entry, 0, sizeof(*entry));
-    }
 }
 
 /* MAP5 2E: F3 W0 VUCOMXSH (NP: VUCOMISH, AVX512-FP16) */
@@ -149,9 +146,6 @@ static void decode_A10_MAP5_2E(DisasContext *s, CPUX86State *env, X86OpEntry *en
         {},
     };
     *entry = *decode_by_prefix(s, opcodes_A10_MAP5_2E);
-    if (s->evex_ll && entry->gen) {
-        memset(entry, 0, sizeof(*entry));
-    }
 }
 
 /* ---- U376: saturating conversions (spec ch.12), EVEX map 5 68-6D ---- */
