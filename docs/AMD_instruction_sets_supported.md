@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-10 07:21 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / at_main.cpp changes of agent/sdecheck applied after the merge`). Do not edit by hand._
+_Generated 2026-10-10 12:15 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `73872687 Ledger U1120-U1128 (agent/tsemix: TSE opt-in, BSF/BSR flags per SDM 092, MSR API errors, APIC gating, context MSR, BSP R/W, Thread Director, alltest per-iteration state + baseline)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
@@ -8,7 +8,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 - A switch `__use_AMD_instruction_set__` (default 0 = Intel instruction set) will gate them: with 0 they are #UD as on Intel.
 - Some (3DNow!, SSE4a, FEMMS) already exist in QEMU and run under the non-strict MAX model; under the i5-13600K profile with `--strict` they are #UD like the CPU.
 
-**Totals:** 229 forms, implemented per the manual 15, not implemented yet 211
+**Totals:** 213 forms, implemented per the manual 14, not implemented yet 196
 
 
 ## Instructions your i5-13600K can run (3 forms)
@@ -36,14 +36,13 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 ### Instructions that can't be supported for now:
 
-**226 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
+**210 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
 
 #### By family
 
 | family | forms | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|
 | 3DNOW | 25 | ❌ **cannot run** (AMD 3DNow!) |  | ⏳ 1 · ⬜ 24 queued |
-| ACE_1 | 16 | ❌ **cannot run** (VIA/Zhaoxin ACE; AMX_AVX512 not reported by this CPU) | ✅ 1 | ⬜ 15 queued |
 | AMD_INVLPGB | 2 | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ 2 queued |
 | CLZERO | 1 | ❌ **cannot run** (AMD CLZERO) |  | ⬜ 1 queued |
 | FMA4 | 20 | ❌ **cannot run** (AMD FMA4) |  | ⬜ 20 queued |
@@ -92,29 +91,6 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 | PI2FW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
 | PMULHRW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
 | PSWAPD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-
-</details>
-
-<details><summary><b>ACE_1</b> (16 forms)</summary>
-
-| instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
-|---|---|---|---|---|---|
-| BSRINIT | vex | - | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — out of scope: not in the Intel SDM (XED ACE_1 extension) |
-| BSRMOVF | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BSRMOVH | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| BSRMOVL | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TILEMOVCOL | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TILEMOVROW | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE; AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
-| TOP2BF16PS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4BSSD | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4BSUD | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4BUSD | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4BUUD | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4MXBF8PS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4MXBHF8PS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4MXBSSPS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4MXHBF8PS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
-| TOP4MXHF8PS | evex | 512 | ❌ **cannot run** (VIA/Zhaoxin ACE) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
 
 </details>
 

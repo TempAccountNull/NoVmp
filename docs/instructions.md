@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-10 07:21 (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / at_main.cpp changes of agent/sdecheck applied after the merge`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-10 12:15 (HEAD `73872687 Ledger U1120-U1128 (agent/tsemix: TSE opt-in, BSF/BSR flags per SDM 092, MSR API errors, APIC gating, context MSR, BSP R/W, Thread Director, alltest per-iteration state + baseline)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,7 +9,7 @@ _Generated 2026-10-10 07:21 (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / 
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1606 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1239 · ⏳ 66 · ⬜ 0 · ❌ 1606 (implemented per the manual 1295, open item 64, not implemented yet 247)
+**All forms:** ✅ 1239 · ⏳ 66 · ⬜ 0 · ❌ 1606 (implemented per the manual 1309, open item 71, not implemented yet 226)
 
 ## Currently being added
 
@@ -21,7 +21,7 @@ _Generated 2026-10-10 07:21 (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / 
       - ⬜ VRCP14/VRSQRT14 (U236) are a correctly-rounded stand-in, not bit-exact: the SDM gives only the 2^-14 bound and refers to RECIP14.c (not available) — derive Intel's table-free algorithm analytically like U81 (RCPPS/RSQRTPS) did, or keep as an open item; never a measured table.
       - ⬜ M3 leftovers: VPMOVD2M/VPMOVQ2M/VPMOVM2D/VPMOVM2Q done (U800); VREDUCE DAZ on C4 watch list; BW 32-bit → 1.I [audit 2026-10-09]
       - ⬜ M4 leftovers: Xeon-Phi families (A3); EVEX_VAES macro readability; 32-bit → 1.I [audit 2026-10-09]
-      - ⬜ fp16 leftovers: scalar FP16 L'L=11b = LIG per SDM (U869 cases; XED rejects it — if hardware ever shows #UD, quirks.md for SS/SD/SH); VRCP/VRSQRT PH → A9; ambiguities C4.
+      - ⬜ fp16 leftovers: scalar EVEX L'L=11b without EVEX.b = #UD (U1071, AMB-1, SDM Table 2-38, as SDE/XED; supersedes the U869 LIG reading; VCOMX too, U1097); VRCP/VRSQRT PH → A9 (AMB-2 open); ambiguities C4.
     - ⬜ APX leftovers: INVPCID + MSR-IMM done (U803/U806); sweep for promoted maps 1/2/3/7; INVEPT/INVVPID (VMX decision); VMX/SMM/LBR/PT not modelled; CPUID.29H:EBX[0] done (U793) [audit 2026-10-09]
       - ⬜ AMX leftovers 2: AMX-TF32 (decision); UINTR XSAVES component; APX TILELOADDRS EVEX.R4 check; cases_amx2 run with --avx10 only; PT/PASID/HDC/LBR/HWP components not modelled [audit 2026-10-09]
       - ⬜ Key Locker leftovers: KeySource 1 (via the D8 RNG source), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate; AESKLE in SMM deferred [audit 2026-10-09]
@@ -30,7 +30,7 @@ _Generated 2026-10-10 07:21 (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / 
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
       - ⬜ SGX "present but disabled" model and GETSEC TXT leaves (decision, new); PCONFIG leaf 1BH (A4) [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 486 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 511 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

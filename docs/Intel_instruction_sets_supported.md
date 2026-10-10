@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-10 07:21 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / at_main.cpp changes of agent/sdecheck applied after the merge`). Do not edit by hand._
+_Generated 2026-10-10 12:15 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `73872687 Ledger U1120-U1128 (agent/tsemix: TSE opt-in, BSF/BSR flags per SDM 092, MSR API errors, APIC gating, context MSR, BSP R/W, Thread Director, alltest per-iteration state + baseline)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1380 (of which implemented per the manual 1293, open item 51, not implemented yet 36) — 2682 forms
+**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1396 (of which implemented per the manual 1308, open item 58, not implemented yet 30) — 2698 forms
 
 ## Currently being added
 
@@ -18,7 +18,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
       - ⬜ VRCP14/VRSQRT14 (U236) are a correctly-rounded stand-in, not bit-exact: the SDM gives only the 2^-14 bound and refers to RECIP14.c (not available) — derive Intel's table-free algorithm analytically like U81 (RCPPS/RSQRTPS) did, or keep as an open item; never a measured table.
       - ⬜ M3 leftovers: VPMOVD2M/VPMOVQ2M/VPMOVM2D/VPMOVM2Q done (U800); VREDUCE DAZ on C4 watch list; BW 32-bit → 1.I [audit 2026-10-09]
       - ⬜ M4 leftovers: Xeon-Phi families (A3); EVEX_VAES macro readability; 32-bit → 1.I [audit 2026-10-09]
-      - ⬜ fp16 leftovers: scalar FP16 L'L=11b = LIG per SDM (U869 cases; XED rejects it — if hardware ever shows #UD, quirks.md for SS/SD/SH); VRCP/VRSQRT PH → A9; ambiguities C4.
+      - ⬜ fp16 leftovers: scalar EVEX L'L=11b without EVEX.b = #UD (U1071, AMB-1, SDM Table 2-38, as SDE/XED; supersedes the U869 LIG reading; VCOMX too, U1097); VRCP/VRSQRT PH → A9 (AMB-2 open); ambiguities C4.
     - ⬜ APX leftovers: INVPCID + MSR-IMM done (U803/U806); sweep for promoted maps 1/2/3/7; INVEPT/INVVPID (VMX decision); VMX/SMM/LBR/PT not modelled; CPUID.29H:EBX[0] done (U793) [audit 2026-10-09]
       - ⬜ AMX leftovers 2: AMX-TF32 (decision); UINTR XSAVES component; APX TILELOADDRS EVEX.R4 check; cases_amx2 run with --avx10 only; PT/PASID/HDC/LBR/HWP components not modelled [audit 2026-10-09]
       - ⬜ Key Locker leftovers: KeySource 1 (via the D8 RNG source), IWKeyBackup MSRs, MSR_FEATURE_CONFIG gate; AESKLE in SMM deferred [audit 2026-10-09]
@@ -122,7 +122,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | FSTCW | legacy | - | ✅ identical to the i5-13600K (cases_reach): 9B D9 /7 (FWAIT + FNSTCW) |  |
 | FSTENV | legacy | - | ✅ U61/U62/U64 |  |
 | FSTSW | legacy | - | ✅ identical to the i5-13600K (cases_reach): 9B DD /7, 9B DF E0 (FWAIT + FNSTSW; FIP per U90) |  |
-| LOCK | legacy | - | ✅ identical to the i5-13600K (cases_reach): F0 prefix (memory: locked; register: #UD) |  |
+| LOCK | legacy | - | ✅ identical to the i5-13600K (cases_reach): F0 prefix (memory: locked; register: #UD); SDE-validated (Intel SDE 10.13.1 -future/-gn… |  |
 | NOTRACK | legacy | - | ✅ identical to the i5-13600K (cases_reach): 3E on indirect JMP/CALL: ignored (IBT not enabled) |  |
 | REP | legacy | - | ✅ identical to the i5-13600K (cases_reach): F3 prefix (string ops) |  |
 | REPE | legacy | - | ✅ identical to the i5-13600K (cases_reach): F3 prefix (CMPS/SCAS) |  |
@@ -1927,12 +1927,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 ### Instructions that can't be supported for now:
 
-**1380 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
+**1396 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
 
 #### By family
 
 | family | forms | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|
+| ACE_1 | 16 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU; AMX_AVX512 not reported by this CPU) | ✅ 1 | ⬜ 15 queued |
 | AVX_IFMA | 2 | ❌ **cannot run** (CPUID.7H.1:EAX[23] = 0 on this CPU) | ✅ 2 |  |
 | AVX_NE_CONVERT | 7 | ❌ **cannot run** (CPUID.7H.1:EDX[5] = 0 on this CPU) | ✅ 7 |  |
 | AVX_VNNI_INT16 | 6 | ❌ **cannot run** (CPUID.7H.1:EDX[10] = 0 on this CPU) | ✅ 6 |  |
@@ -1951,7 +1952,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | LKGS | 1 | ❌ **cannot run** (CPUID.7H.1:EAX[18] = 0 on this CPU) | ✅ 1 |  |
 | MONITOR | 2 | ❌ **cannot run** (CPUID.1H:ECX[3] = 0 on this CPU) |  | ⏳ 2 |
 | MOVRS | 2 | ❌ **cannot run** (CPUID.7H.1:EAX[31] = 0 on this CPU) | ✅ 2 |  |
-| MPX | 7 | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ 7 |  |
+| MPX | 7 | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ 7 |
 | MSRLIST | 2 | ❌ **cannot run** (CPUID.7H.1:EAX[27] = 0 on this CPU) | ✅ 2 |  |
 | MSR_IMM | 2 | ❌ **cannot run** (CPUID.7H.1:ECX[5] = 0 on this CPU) | ✅ 2 |  |
 | PBNDKB | 1 | ❌ **cannot run** (CPUID.7H.1:EBX[1] = 0 on this CPU) | ✅ 1 |  |
@@ -2004,41 +2005,64 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | APX_F_RAO_INT | 4 | ❌ **cannot run** (APX_F_RAO_INT not reported by this CPU) | ✅ 4 |  |
 | APX_F_USER_MSR | 2 | ❌ **cannot run** (APX_F_USER_MSR not reported by this CPU) | ✅ 2 |  |
 | APX_F_VMX | 2 | ❌ **cannot run** (APX_F_VMX not reported by this CPU) |  | ⬜ 2 queued |
-| AVX10_2_BF16 | 29 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ 27 | ⏳ 2 (wt/avx10_a, wt/avx10_b) |
-| AVX10_MOVRS | 4 | ❌ **cannot run** (AVX10_MOVRS not reported by this CPU) | ✅ 4 |  |
-| AVX10_V2_AUX | 21 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ 21 (wt/avx10_a, wt/avx10_b) |
+| AVX10_2_BF16 | 29 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 27 | ⏳ 2 (wt/avx10_a, wt/avx10_b) |
+| AVX10_MOVRS | 4 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND MOVRS) | ✅ 4 |  |
+| AVX10_V2_AUX | 21 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ 21 |  |
 | AVX512BW | 112 | ❌ **cannot run** (CPUID.7H:EBX[30] = 0 on this CPU) | ✅ 112 |  |
 | AVX512CD | 6 | ❌ **cannot run** (CPUID.7H:EBX[28] = 0 on this CPU) | ✅ 6 |  |
 | AVX512DQ | 69 | ❌ **cannot run** (CPUID.7H:EBX[17] = 0 on this CPU) | ✅ 69 |  |
 | AVX512ER | 10 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ 10 |
-| AVX512F | 479 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) | ✅ 469 | ⏳ 10 (M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather) |
+| AVX512F | 479 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU; CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 469 | ⏳ 10 (M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather) |
 | AVX512PF | 16 | ❌ **cannot run** (CPUID.7H:EBX[26] = 0 on this CPU) | ✅ 16 |  |
 | AVX512_4FMAPS | 4 | ❌ **cannot run** (CPUID.7H:EDX[3] = 0 on this CPU) | ✅ 4 |  |
 | AVX512_4VNNIW | 2 | ❌ **cannot run** (CPUID.7H:EDX[2] = 0 on this CPU) | ✅ 2 |  |
 | AVX512_BF16 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[5] = 0 on this CPU) | ✅ 3 |  |
 | AVX512_BITALG | 3 | ❌ **cannot run** (CPUID.7H:ECX[12] = 0 on this CPU) | ✅ 3 |  |
-| AVX512_COM_EF | 6 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ 6 |  |
-| AVX512_FP16 | 170 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) | ✅ 166 | ⏳ 4 (wt/fp16) |
-| AVX512_FP16_CONVERT | 1 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ 1 |  |
-| AVX512_FP8_CONVERT | 13 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ 13 |  |
+| AVX512_COM_EF | 6 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 6 |  |
+| AVX512_FP16 | 170 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU; CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 166 | ⏳ 4 (wt/fp16) |
+| AVX512_FP16_CONVERT | 1 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ 1 |  |
+| AVX512_FP8_CONVERT | 13 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ 13 |  |
 | AVX512_GFNI | 3 | ❌ **cannot run** (AVX512_GFNI not reported by this CPU) | ✅ 3 |  |
 | AVX512_IFMA | 2 | ❌ **cannot run** (CPUID.7H:EBX[21] = 0 on this CPU) | ✅ 2 |  |
-| AVX512_MEDIAX | 1 | ❌ **cannot run** (AVX512_MEDIAX not reported by this CPU) | ✅ 1 |  |
-| AVX512_MINMAX | 7 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ 7 |  |
-| AVX512_SAT_CVT | 12 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ 12 |  |
-| AVX512_SAT_CVT_DS | 12 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ 12 |  |
+| AVX512_MEDIAX | 1 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 1 |  |
+| AVX512_MINMAX | 7 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 7 |  |
+| AVX512_SAT_CVT | 12 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 12 |  |
+| AVX512_SAT_CVT_DS | 12 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 12 |  |
 | AVX512_VAES | 4 | ❌ **cannot run** (AVX512_VAES not reported by this CPU) | ✅ 4 |  |
 | AVX512_VBMI | 4 | ❌ **cannot run** (CPUID.7H:ECX[1] = 0 on this CPU) | ✅ 4 |  |
 | AVX512_VBMI2 | 16 | ❌ **cannot run** (CPUID.7H:ECX[6] = 0 on this CPU) | ✅ 16 |  |
 | AVX512_VNNI | 4 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 4 |  |
-| AVX512_VNNI_FP16 | 1 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 1 |  |
-| AVX512_VNNI_INT16 | 6 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 6 |  |
-| AVX512_VNNI_INT8 | 6 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ 6 |  |
+| AVX512_VNNI_FP16 | 1 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 1 |  |
+| AVX512_VNNI_INT16 | 6 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ 6 |  |
+| AVX512_VNNI_INT8 | 6 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ 6 |  |
 | AVX512_VP2INTERSECT | 2 | ❌ **cannot run** (CPUID.7H:EDX[8] = 0 on this CPU) | ✅ 2 |  |
 | AVX512_VPCLMULQDQ | 1 | ❌ **cannot run** (AVX512_VPCLMULQDQ not reported by this CPU) | ✅ 1 |  |
 | AVX512_VPOPCNTDQ | 2 | ❌ **cannot run** (CPUID.7H:ECX[14] = 0 on this CPU) | ✅ 2 |  |
 
 #### Per instruction
+
+<details><summary><b>ACE_1</b> (16 forms)</summary>
+
+| instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
+|---|---|---|---|---|---|
+| BSRINIT | vex | - | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not implemented (cases_reach): U1094 ACE 1.15 tile instruction (CPUID.(07H,1):ECX[11] ACE, chapters… |
+| BSRMOVF | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| BSRMOVH | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| BSRMOVL | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TILEMOVCOL | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TILEMOVROW | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU; AMX_AVX512 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+| TOP2BF16PS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4BSSD | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4BSUD | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4BUSD | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4BUUD | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4MXBF8PS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4MXBHF8PS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4MXBSSPS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4MXHBF8PS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+| TOP4MXHF8PS | evex | 512 | ❌ **cannot run** (CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU) |  | ⬜ queued — not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b) |
+
+</details>
 
 <details><summary><b>AVX_IFMA</b> (2 forms)</summary>
 
@@ -2242,7 +2266,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
 | MOVRS | legacy | - | ❌ **cannot run** (CPUID.7H.1:EAX[31] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U102 MOVRS: SDM/spec-pseudocode… |  |
-| PREFETCHRST2 | legacy | - | ❌ **cannot run** (CPUID.7H.1:EAX[31] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (cases_reach): 0F 18 /4: NOP without MOVRS |  |
+| PREFETCHRST2 | legacy | - | ❌ **cannot run** (CPUID.7H.1:EAX[31] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (cases_reach): 0F 18 /4: NOP without MOVRS; SDE-validated (Intel SDE 10.13.1 -futu… |  |
 
 </details>
 
@@ -2250,13 +2274,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| BNDCL | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (2 forms) |  |
-| BNDCN | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (2 forms) |  |
-| BNDCU | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (2 forms) |  |
-| BNDLDX | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (1 forms) |  |
-| BNDMK | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (1 forms) |  |
-| BNDMOV | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (3 forms) |  |
-| BNDSTX | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (1 forms) |  |
+| BNDCL | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDCN | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDCU | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDLDX | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDMK | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDMOV | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
+| BNDSTX | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[14] = 0 on this CPU) |  | ⏳ open item — the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is hardware-checked; feature-enabled semantics… |
 
 </details>
 
@@ -2307,7 +2331,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| PREFETCHWT1 | legacy | - | ❌ **cannot run** (CPUID.7H:ECX[0] = 0 on this CPU) | ✅ per manual (SDM vectors) — identical to the i5-13600K (1 forms) |  |
+| PREFETCHWT1 | legacy | - | ❌ **cannot run** (CPUID.7H:ECX[0] = 0 on this CPU) | ✅ absent-feature behaviour identical to the i5-13600K (NOP / hint) — the i5-13600K lacks the feature: the CPU and the emulator execute the encoding with the absent-feat… |  |
 
 </details>
 
@@ -2326,10 +2350,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| XABORT | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 TSX: SDM-pseudocode expect… |  |
-| XBEGIN | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 TSX: SDM-pseudocode expect… |  |
-| XEND | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 TSX: SDM-pseudocode expect… |  |
-| XTEST | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 TSX: SDM-pseudocode expect… |  |
+| XABORT | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 RTM always-abort model (ev… |  |
+| XBEGIN | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 RTM always-abort model (ev… |  |
+| XEND | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 RTM always-abort model (ev… |  |
+| XTEST | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U110 RTM always-abort model (ev… |  |
 
 </details>
 
@@ -2890,35 +2914,35 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VADDBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCMPBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCOMISBF16 | evex | 128 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VDIVBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMADD132BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMADD213BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMADD231BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMSUB132BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMSUB213BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFMSUB231BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMADD132BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMADD213BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMADD231BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMSUB132BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMSUB213BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFNMSUB231BF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VFPCLASSBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VGETEXPBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VGETMANTBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMAXBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMULBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VRCPBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) |  | ⏳ open item — not bit-exact / decided open item: U373 documented architectural compliance (decision A9, U940-U943, docs/reciprocal.md… |
-| VREDUCEBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VRNDSCALEBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VRSQRTBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) |  | ⏳ open item — not bit-exact / decided open item: U373 documented architectural compliance (decision A9, U940-U943, docs/reciprocal.md… |
-| VSCALEFBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VSQRTBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VSUBBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX10_2_BF16 not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VADDBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCMPBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCOMISBF16 | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VDIVBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMADD132BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMADD213BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMADD231BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMSUB132BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMSUB213BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFMSUB231BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMADD132BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMADD213BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMADD231BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMSUB132BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMSUB213BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFNMSUB231BF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VFPCLASSBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VGETEXPBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VGETMANTBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMAXBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMULBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VRCPBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) |  | ⏳ open item — not bit-exact / decided open item: U373 documented architectural compliance (decision A9, U940-U943, docs/reciprocal.md… |
+| VREDUCEBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VRNDSCALEBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VRSQRTBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) |  | ⏳ open item — not bit-exact / decided open item: U373 documented architectural compliance (decision A9, U940-U943, docs/reciprocal.md… |
+| VSCALEFBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VSQRTBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VSUBBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
 
 </details>
 
@@ -2926,10 +2950,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VMOVRSB | evex | 128/256/512 | ❌ **cannot run** (AVX10_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
-| VMOVRSD | evex | 128/256/512 | ❌ **cannot run** (AVX10_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
-| VMOVRSQ | evex | 128/256/512 | ❌ **cannot run** (AVX10_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
-| VMOVRSW | evex | 128/256/512 | ❌ **cannot run** (AVX10_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
+| VMOVRSB | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND MOVRS) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
+| VMOVRSD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND MOVRS) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
+| VMOVRSQ | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND MOVRS) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
+| VMOVRSW | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND MOVRS) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U409 EVEX VMOVRS* (AVX10 and MO… |  |
 
 </details>
 
@@ -2937,27 +2961,27 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCVTBF42HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBF62HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBF82BF4S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBF82BF6S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBF82PS | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBIASPS2BF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBIASPS2BF8S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBIASPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTBIASPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTHF62HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTHF82BF4S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTHF82HF6S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTHF82PS | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTPS2BF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTPS2BF8S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTROPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VCVTROPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VPMOVSSDB | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
-| VUNPACKB | evex | 128/256/512 | ❌ **cannot run** (AVX10_V2_AUX not reported by this CPU) |  | ⏳ being implemented (wt/avx10_a, wt/avx10_b) |
+| VCVTBF42HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBF62HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBF82BF4S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBF82BF6S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBF82PS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBIASPS2BF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBIASPS2BF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBIASPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTBIASPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTHF62HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTHF82BF4S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTHF82HF6S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTHF82PS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTPS2BF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTPS2BF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTROPS2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VCVTROPS2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VPMOVSSDB | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
+| VUNPACKB | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10 AND AVX10_V2_AUX) | ✅ per specification (independent model) — implemented; the i5-13600K lacks it: specification-validated against an independent model: U1095 AVX10_V2_AUX… |  |
 
 </details>
 
@@ -3483,7 +3507,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | VMINSS | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U190-U201 EVEX (AVX512F; scalar… |  |
 | VMOVAPD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U141-U159 EVEX (AVX512F, VL 128… |  |
 | VMOVAPS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U141-U159 EVEX (AVX512F, VL 128… |  |
-| VMOVD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) |  | ⏳ being implemented (M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather) |
+| VMOVD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU; CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) |  | ⏳ being implemented (M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather) |
 | VMOVDDUP | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U210-U215 EVEX (AVX512F/DQ, VL … |  |
 | VMOVDQA32 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U141-U159 EVEX (AVX512F, VL 128… |  |
 | VMOVDQA64 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U141-U159 EVEX (AVX512F, VL 128… |  |
@@ -3739,12 +3763,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCOMXSD | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCOMXSH | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCOMXSS | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VUCOMXSD | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VUCOMXSH | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VUCOMXSS | evex | 128 | ❌ **cannot run** (AVX512_COM_EF not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCOMXSD | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCOMXSH | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCOMXSS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VUCOMXSD | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VUCOMXSH | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VUCOMXSS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
 
 </details>
 
@@ -3904,7 +3928,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | VMINPH | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
 | VMINSH | evex | 128 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
 | VMOVSH | evex | 128 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
-| VMOVW | evex | 128 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU; AVX512_MOVZXC not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
+| VMOVW | evex | 128 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU; CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
 | VMULPH | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
 | VMULSH | evex | 128 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U330-U339 AVX512-FP16 (maps 5/6… |  |
 | VRCPPH | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U337 documented architectural compliance (decision A9, U940-U943, docs/reciprocal.md… |
@@ -3929,7 +3953,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCVT2PS2PHX | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:EDX[23] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U404 AVX10.2 VCVT2PS2PHX (VL 12… |  |
+| VCVT2PS2PHX | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U404 AVX10.2 VCVT2PS2PHX (VL 12… |  |
 
 </details>
 
@@ -3937,19 +3961,19 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCVT2PH2BF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVT2PH2BF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVT2PH2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVT2PH2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTBIASPH2BF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTBIASPH2BF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTBIASPH2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTBIASPH2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTHF82PH | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U403 AVX10.2 VCVTHF82PH (VL 128… |  |
-| VCVTPH2BF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTPH2BF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTPH2HF8 | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
-| VCVTPH2HF8S | evex | 128/256/512 | ❌ **cannot run** (AVX512_FP8_CONVERT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVT2PH2BF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVT2PH2BF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVT2PH2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVT2PH2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTBIASPH2BF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTBIASPH2BF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTBIASPH2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTBIASPH2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTHF82PH | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U403 AVX10.2 VCVTHF82PH (VL 128… |  |
+| VCVTPH2BF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTPH2BF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTPH2HF8 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
+| VCVTPH2HF8S | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U402 AVX10.2 FP16->FP8 (VL 128/… |  |
 
 </details>
 
@@ -3976,7 +4000,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VMPSADBW | evex | 128/256/512 | ❌ **cannot run** (AVX512_MEDIAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U408 AVX10.2 EVEX VMPSADBW (VL … |  |
+| VMPSADBW | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U408 AVX10.2 EVEX VMPSADBW (VL … |  |
 
 </details>
 
@@ -3984,13 +4008,13 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VMINMAXBF16 | evex | 128/256/512 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXPD | evex | 128/256/512 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXPH | evex | 128/256/512 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXPS | evex | 128/256/512 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXSD | evex | 128 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXSH | evex | 128 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VMINMAXSS | evex | 128 | ❌ **cannot run** (AVX512_MINMAX not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXBF16 | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXPD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXPH | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXPS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXSD | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXSH | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VMINMAXSS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
 
 </details>
 
@@ -3998,18 +4022,18 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCVTBF162IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTBF162IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTPH2IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTPH2IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTPS2IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTPS2IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTBF162IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTBF162IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPH2IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPH2IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2IBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2IUBS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTBF162IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTBF162IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTPH2IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTPH2IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTPS2IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTPS2IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTBF162IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTBF162IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPH2IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPH2IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2IBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2IUBS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
 
 </details>
 
@@ -4017,18 +4041,18 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VCVTTPD2DQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPD2QQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPD2UDQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPD2UQQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2DQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2QQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2UDQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTPS2UQQS | evex | 128/256/512 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTSD2SIS | evex | 128 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTSD2USIS | evex | 128 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTSS2SIS | evex | 128 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
-| VCVTTSS2USIS | evex | 128 | ❌ **cannot run** (AVX512_SAT_CVT_DS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPD2DQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPD2QQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPD2UDQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPD2UQQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2DQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2QQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2UDQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTPS2UQQS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTSD2SIS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTSD2USIS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTSS2SIS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
+| VCVTTSS2USIS | evex | 128 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U372-U376 AVX10.2 (maps 5/6 + 0… |  |
 
 </details>
 
@@ -4092,7 +4116,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VDPPHPS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U407 AVX10.2 VDPPHPS (VL 128/25… |  |
+| VDPPHPS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U407 AVX10.2 VDPPHPS (VL 128/25… |  |
 
 </details>
 
@@ -4100,12 +4124,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VPDPWSUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPWSUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPWUSD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPWUSDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPWUUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPWUUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWSUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWSUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWUSD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWUSDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWUUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPWUUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
 
 </details>
 
@@ -4113,12 +4137,12 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VPDPBSSD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPBSSDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPBSUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPBSUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPBUUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
-| VPDPBUUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H:ECX[11] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBSSD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBSSDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBSUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBSUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBUUD | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
+| VPDPBUUDS | evex | 128/256/512 | ❌ **cannot run** (CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2 OR AVX10_V1_AUX) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U405/U406 AVX10.2 EVEX VNNI (VL… |  |
 
 </details>
 
