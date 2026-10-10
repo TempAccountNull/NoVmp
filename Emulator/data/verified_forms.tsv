@@ -148,7 +148,7 @@ monitorx	legacy	oos	AMD MONITORX
 mwaitx	legacy	oos	AMD MONITORX
 movrs	legacy	sdm	U102 MOVRS: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 prefetchrst2	legacy	ok	0F 18 /4: NOP without MOVRS
-pconfig	legacy	sdm	U113 GETSEC/PCONFIG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+pconfig	legacy	sdm	U1020-U1022 PCONFIG (NP 0F 01 C5, CPUID.(7,0):EDX[18] + leaf 1BH targets 1 TME-MK / 2 TSE on the MAX model, TME_EN + IA32_TME_CAPABILITY/ACTIVATE/EXCLUDE_MASK/EXCLUDE_BASE/MKTME_KEYID_PARTITIONING): independent SDM 092 / MKTME 336907-007 model (ref_pconfig.py) + cases_pconfig.txt "=>" (126: MSR rows of Table 4-3, every MKTME_KEY_PROGRAM #GP(0) row, #PF, success RAX/flags, TSE leaves #GP(0), prefix and cpl=3 #UD) + unit tests test_x86_pc_tme_msrs / test_x86_pc_pconfig (key table through UC_CTL_X86_MKTME_KEY, RANDOM keys vs RDRAND, real-address mode) + test_x86_smx_pconfig_sgx; i5-13600K (no PCONFIG / TME_EN) #UD / #GP at CPL3 == strict profile (cases_pconfig_hw.txt, cases_tsx_cet.txt); memory encryption itself not modelled
 rdpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
 wrpkru	legacy	ud	PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both
 ud1	legacy	ok	0F B9 /r: #UD (its defined behaviour)

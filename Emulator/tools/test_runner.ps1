@@ -352,6 +352,12 @@ Add-Exp 'cases_sysins' 'cases_sysins' 'sysins expect'
 # U803: their Intel APX EVEX forms (MSR-IMM EVEX map 7, ...), with the APX opt-in
 Add-Exp 'cases_sysins_apx' 'cases_sysins_apx' 'sysins apx expect' @( '--apx' )
 Add-Hw 'cases_sysins_hw' 'hw sysins'
+# U1020-U1022 (agent pconfig): PCONFIG MKTME_KEY_PROGRAM / TSE leaves and the TME / TME-MK MSRs, MAX
+# model at CPL0, expected values from the independent model ref_pconfig.py; at CPL3 against the
+# i5-13600K with its strict profile (no PCONFIG / TME_EN there: #UD / #GP on both).
+Add-PySelftest 'ref_pconfig_selftest' 'pconfig tools' 'ref_pconfig.py'
+Add-Exp 'cases_pconfig' 'cases_pconfig' 'pconfig expect'
+Add-Hw 'cases_pconfig_hw' 'hw pconfig'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
