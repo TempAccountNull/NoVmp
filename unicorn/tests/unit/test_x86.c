@@ -24433,6 +24433,56 @@ static void test_x86_xp_4vnniw(void)
     TEST_CHECK_(xp_zmm_lane(&c, 0, 9) == (uint32_t)want, "32-bit %x", xp_zmm_lane(&c, 0, 9));
     OK(uc_close(c.uc));
 }
+/* V4FMADDPS zmm0, zmm4+3, [rsi] (EVEX.512.F2.0F38.W0 9A) / V4FMADDSS xmm0{k1}, xmm4+3, [rsi] (9B) */
+#define XP_4FMADDPS "\x62\xf2\x5f\x48\x9a\x06"
+#define XP_4FMADDSS_K1 "\x62\xf2\x5f\x09\x9b\x06"
+
+/*
+ * U992: AVX512_4FMAPS gating (CPUID.(7,0):EDX[3]; 4VNNIW does not enable it), one rounding per
+ * step (1 + 4 * 2^-24 added one step at a time stays 1.0 under RNE, a single sum would not),
+ * and the SS form reading its 16 bytes only when k1[0] = 1 (SDM 092 Vol2D 8-4 .. 8-7)
+ */
+static void test_x86_xp_4fmaps(void)
+{
+    static const float one = 1.0f;
+    float v[16], mem[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    uint64_t rsi = XP_DATA, k1;
+    XpCtx c;
+    XpReads rd = {0, 0};
+    uc_hook h;
+    int i, r;
+
+    xp_open(&c, UC_MODE_64, XP_AVX512 | UC_X86_AVX512_4VNNIW, 0, NULL, 0);
+    TEST_CHECK(xp_run(&c, XP_4FMADDPS, 6) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, UC_X86_AVX512_4FMAPS, 0, NULL, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ESI, &rsi));
+    OK(uc_mem_write(c.uc, XP_DATA, mem, 16));
+    for (i = 0; i < 16; i++) {
+        v[i] = one;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM0, v));
+    for (i = 0; i < 16; i++) {
+        v[i] = 0x1p-24f;            /* each product is half an ulp of 1.0: ties to even */
+    }
+    for (r = 4; r < 8; r++) {
+        OK(uc_reg_write(c.uc, UC_X86_REG_ZMM0 + r, v));
+    }
+    TEST_CHECK(xp_run(&c, XP_4FMADDPS, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, v));
+    TEST_CHECK_(v[0] == 1.0f && v[15] == 1.0f, "per-step rounding: %a %a", v[0], v[15]);
+    /* SS: k1[0] = 0 -> no read and element 0 unchanged; k1[0] = 1 -> 16 bytes */
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_READ, xp_read_cb, &rd, 1, 0));
+    k1 = 0xfffe;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_4FMADDSS_K1, 6) == -1);
+    TEST_CHECK_(rd.bytes == 0, "k1[0] = 0: %d bytes read", rd.bytes);
+    k1 = 1;
+    OK(uc_reg_write(c.uc, UC_X86_REG_K1, &k1));
+    TEST_CHECK(xp_run(&c, XP_4FMADDSS_K1, 6) == -1);
+    TEST_CHECK_(rd.bytes == 16, "k1[0] = 1: %d bytes read", rd.bytes);
+    OK(uc_close(c.uc));
+}
 /* ---- end U990-U1019 (xp_) ---- */
 
 TEST_LIST = {
@@ -24761,4 +24811,5 @@ TEST_LIST = {
     {"test_x86_sm_pmu", test_x86_sm_pmu},
     {"test_x86_xp_optin", test_x86_xp_optin},
     {"test_x86_xp_4vnniw", test_x86_xp_4vnniw},
+    {"test_x86_xp_4fmaps", test_x86_xp_4fmaps},
     {NULL, NULL}};

@@ -4751,11 +4751,29 @@ static const X86OpEntry opcodes_evex_0F38_F3_DQ[2][2] = {
 #define EV_4VNNIW(op) X86_OP_ENTRY3(op, V,x, H,x, M,dq, cpuid(AVX512_4VNNIW)                 \
                       ev_vl(X86_EVEX_VL512) ev_tt(MEM128) ev_mask(MZ) ev_w(W0) ev_es(32)      \
                       .evex_blk4 = 1, p_f2)
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+/*
+ * NoVmp (ledger U992): V4FMADDPS (9A) / V4FNMADDPS (AA) EVEX.512 and V4FMADDSS (9B) /
+ * V4FNMADDSS (AB) EVEX.LLIG, AVX512_4FMAPS, "See Type E2" for both (8-5, 8-7): MXCSR flags and
+ * #XM, checked after each of the four FMAs in helper_evex_4blk.
+ */
+#define EV_4FMAPS(op, vl) X86_OP_ENTRY3(op, V,x, H,x, M,dq, cpuid(AVX512_4FMAPS) ev_vl(vl)    \
+                          ev_tt(MEM128) ev_mask(MZ) ev_w(W0) ev_es(32) .evex_blk4 = 1, p_f2)
+#endif /* __Use_Original_Qemu (U992) */
 static const X86OpEntry opcodes_evex_0F38_F2[256] = {
     [0x52] = EV_4VNNIW(EVEX_VP4DPWSSD),
     [0x53] = EV_4VNNIW(EVEX_VP4DPWSSDS),
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+    [0x9a] = EV_4FMAPS(EVEX_V4FMADDPS, X86_EVEX_VL512),
+    [0x9b] = EV_4FMAPS(EVEX_V4FMADDSS, X86_EVEX_LIG),
+    [0xaa] = EV_4FMAPS(EVEX_V4FNMADDPS, X86_EVEX_VL512),
+    [0xab] = EV_4FMAPS(EVEX_V4FNMADDSS, X86_EVEX_LIG),
+#endif /* __Use_Original_Qemu (U992) */
 };
 #undef EV_4VNNIW
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+#undef EV_4FMAPS
+#endif /* __Use_Original_Qemu (U992) */
 #endif /* __Use_Original_Qemu (U991) */
 #if __Use_Original_Qemu != 1 /* ours (U325) */
 /*

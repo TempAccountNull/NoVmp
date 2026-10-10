@@ -880,6 +880,24 @@ static void gen_EVEX_VP4DPWSSD(DisasContext *s, CPUX86State *env, X86DecodedInsn
 static void gen_EVEX_VP4DPWSSDS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
 }
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+
+static void gen_EVEX_V4FMADDPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+
+static void gen_EVEX_V4FNMADDPS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+
+static void gen_EVEX_V4FMADDSS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+
+static void gen_EVEX_V4FNMADDSS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+}
+#endif /* __Use_Original_Qemu (U992) */
 #endif /* __Use_Original_Qemu (U991) */
 
 static void gen_evex_insn(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

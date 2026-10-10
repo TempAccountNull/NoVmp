@@ -7955,6 +7955,51 @@ static void evex_4vnniw(ZMMReg *r, const ZMMReg blk[4], const ZMMReg *m, uint64_
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+/*
+ * NoVmp (ledger U992): V4FMADDPS (op 2), V4FNMADDPS (3), V4FMADDSS (4), V4FNMADDSS (5), 8-4 ..
+ * 8-7: tmpdest := dest; FOR j = 0..3: FOR i active: tmpdest[i] := RoundFPControl_MXCSR(
+ * tmpdest[i] + reg[base+j][i] * msrc[j]) (negative forms: tmpdest[i] - reg * msrc): one rounding
+ * per FMA (softfloat muladd, x = reg, y = msrc, z = tmpdest: NaN priority Q(x), Q(y), Q(z),
+ * Vol1 Table 14-17; MXCSR.RC, DAZ, FTZ, U445 unmasked #U/#O responses from sse_status).
+ * "Rounding is performed at every FMA boundary. Exceptions are also taken sequentially": the
+ * flags of step j are closed by sse_fp_step (an unmasked IE/DE/ZE drops that step's OE/UE/PE,
+ * Vol1 11.5.2) and an unmasked one raises #XM there (sse_fp_step_raise: MXCSR keeps the flags
+ * of steps 0..j, the destination is not written). Masked-off elements are not computed (no
+ * flags); zeroing-masking clears them. The block is the registers before the instruction (dest
+ * := tmpdest only at the end). SS: element 0 (k1[0]), DEST[127:32] kept, DEST[511:128] := 0.
+ */
+static void evex_4fmaps(CPUX86State *env, ZMMReg *r, const ZMMReg blk[4], const ZMMReg *m,
+                        uint64_t k, uint32_t desc, uintptr_t ra)
+{
+    int op = desc & 7, n = op >= 4 ? 1 : 16, i, j, acc = 0;
+    int negp = (op == 3 || op == 5) ? float_muladd_negate_product : 0;
+
+    env->xm_saved_flags = get_float_exception_flags(&env->sse_status);
+    set_float_exception_flags(0, &env->sse_status);
+    for (j = 0; j < 4; j++) {
+        for (i = 0; i < n; i++) {
+            if ((k >> i) & 1) {
+                r->ZMM_S(i) = float32_muladd(blk[j].ZMM_S(i), m->ZMM_S(j), r->ZMM_S(i), negp,
+                                             &env->sse_status);
+            }
+        }
+        if (sse_fp_step(env, &acc)) {
+            sse_fp_step_raise(env, acc, ra);
+        }
+    }
+    set_float_exception_flags(env->xm_saved_flags | acc, &env->sse_status);
+    for (i = 0; i < n; i++) {
+        if (!((k >> i) & 1) && (desc & EVEX_4BLK_Z)) {
+            r->ZMM_S(i) = 0;
+        }
+    }
+    if (n == 1) {
+        memset(&r->ZMM_Q(2), 0, sizeof(ZMMReg) - 16);
+    }
+}
+#endif /* __Use_Original_Qemu (U992) */
+
 void helper_evex_4blk(CPUX86State *env, ZMMReg *d, ZMMReg *blk, ZMMReg *m, uint64_t k,
                       uint32_t desc)
 {
@@ -7966,6 +8011,14 @@ void helper_evex_4blk(CPUX86State *env, ZMMReg *d, ZMMReg *blk, ZMMReg *m, uint6
     case 1:
         evex_4vnniw(&r, src, m, k, desc);
         break;
+#if __Use_Original_Qemu != 1 /* ours (U992) */
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+        evex_4fmaps(env, &r, src, m, k, desc, GETPC());
+        break;
+#endif /* __Use_Original_Qemu (U992) */
     default:
         g_assert_not_reached();
     }
