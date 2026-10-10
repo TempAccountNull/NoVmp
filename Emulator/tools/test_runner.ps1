@@ -367,6 +367,11 @@ Add-Hw 'cases_sysins_hw' 'hw sysins'
 Add-PySelftest 'ref_pconfig_selftest' 'pconfig tools' 'ref_pconfig.py'
 Add-Exp 'cases_pconfig' 'cases_pconfig' 'pconfig expect'
 Add-Hw 'cases_pconfig_hw' 'hw pconfig'
+# U900-U929 (agent sysmsr): the SYSCALL / SYSENTER / SYSRET / SYSEXIT transitions and the MSR model,
+# MAX model, expected values from the independent model ref_sysmsr.py (Unicorn only: the transitions
+# would enter the host kernel, and WRMSR/RDMSR are CPL0 instructions).
+Add-Exp 'cases_sysmsr' 'cases_sysmsr' 'sysmsr expect'
+Add-PySelftest 'ref_sysmsr_selftest' 'sysmsr tools' 'ref_sysmsr.py'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

@@ -91,15 +91,17 @@ mov rax, 0x8000000000000; mov cr3, rax => #GP rax=0x8000000000000
 #
 # --- U594 SYSCALL is #UD while IA32_EFER.SCE = 0 (SDM Vol2B SYSCALL: "IF (CS.L != 1) or
 # (IA32_EFER.LMA != 1) or (IA32_EFER.SCE != 1) THEN #UD"). SYSCALL never runs natively (a real
-# system call); expected values only. With SCE = 1 Unicorn runs its UC_X86_INS_SYSCALL hooks (none
-# here) and goes on - Unicorn's API, not the SDM transition. CPL0: clear / set SCE with WRMSR first.
+# system call); expected values only. CPL0: clear / set SCE with WRMSR first. With SCE = 1 SYSCALL
+# makes the SDM transition (U901): RCX := the next RIP, R11 := RFLAGS (CMP EBX, EBX: 246h), RIP :=
+# IA32_LSTAR (here the label after SYSCALL; RCX - label = 0).
 mov ecx, 0xC0000080; rdmsr; and eax, 0xFFFFFFFE; wrmsr; syscall =>! #UD rcx=0xC0000080
-mov ecx, 0xC0000080; rdmsr; or eax, 1; wrmsr; syscall =>! rcx=0xC0000080
+mov ecx, 0xC0000080; rdmsr; or eax, 1; wrmsr; mov ecx, 0xC0000082; lea rax, [rip + l1]; mov rdx, rax; shr rdx, 32; wrmsr; cmp ebx, ebx; syscall; l1: lea rdx, [rip + l1]; sub rcx, rdx =>! rcx=0 r11=0x246
 mov ecx, 0xC0000080; rdmsr; and eax, 0xFFFFFFFE; wrmsr; sysret =>! #UD rcx=0xC0000080
 # the 64-bit reset state has SCE = 1 (RDMSR IA32_EFER bit 0); SYSRET with SCE = 0 above: #UD as before
 mov ecx, 0xC0000080; rdmsr; and eax, 1 =>! rax=1
-# cpl=3 (the harness sets SCE like Windows): no #UD
-syscall | cpl=3 =>! rax=0
+# CPL3 -> CPL0 (U901): SYSRETQ to CPL3 (IA32_STAR[63:48] = 23h: CS 33h), then SYSCALL back to CPL0
+# (IA32_STAR[47:32] = 10h: CS 10h, SS 18h) at IA32_LSTAR = the label after it
+mov ecx, 0xC0000081; xor eax, eax; mov edx, 0x00230010; wrmsr; mov ecx, 0xC0000082; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; lea rcx, [rip + u]; mov r11d, 0x202; .byte 0x48, 0x0f, 0x07; u: mov ebx, cs; syscall; k: mov ebp, cs; mov r8d, ss =>! rbx=0x33 rbp=0x10 r8=0x18
 #
 # --- U595 RDPMC reads the counter ECX selects (SDM Vol2B RDPMC); was #UD "unimplemented". Counters
 # from CPUID.0AH (i5-13600K profile: version 1, 6 general-purpose counters, fixed counters 0-2 by the

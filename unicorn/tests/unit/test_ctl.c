@@ -327,6 +327,8 @@ static void test_tlb_clear(void)
 
     uc_common_setup(&uc, UC_ARCH_X86, UC_MODE_64, code, sizeof(code) - 1);
     OK(uc_mem_map(uc, 0x200000, 0x1000, UC_PROT_ALL));
+    /* NoVmp U901: the hook stands in for the system call - Unicorn's hook-only SYSCALL */
+    OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
 
     OK(uc_ctl_tlb_mode(uc, UC_TLB_VIRTUAL));
     OK(uc_hook_add(uc, &hook1, UC_HOOK_TLB_FILL, test_tlb_clear_tlb, &tlbcount,

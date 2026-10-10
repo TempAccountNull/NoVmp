@@ -1728,7 +1728,122 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
 }
 #endif
 
+#if __Use_Original_Qemu != 1 /* ours (U901) */
+/*
+ * NoVmp (ledger U901, decision A1): the UC_X86_INS_SYSCALL / UC_X86_INS_SYSENTER hooks after an
+ * SDM transition. insn_eip is the instruction's address (the hooks' range check). The state is
+ * already the new one (the translator synced EIP and the flags before the helper), so it is not
+ * restored to the instruction as Unicorn's hook-only mode does (cpu_restore_state would put EIP
+ * back to the instruction). The hooks see the kernel-entry state and may change it; whatever
+ * they leave is where execution resumes.
+ */
+static void sys_entry_hooks(CPUX86State *env, int insn, target_ulong insn_eip)
+{
+    struct hook *hook;
+    uc_engine *uc = env->uc;
+
+    HOOK_FOREACH_VAR_DECLARE;
+    HOOK_FOREACH(uc, hook, UC_HOOK_INSN) {
+        if (hook->to_delete) {
+            continue;
+        }
+        if (!HOOK_BOUND_CHECK(hook, insn_eip)) {
+            continue;
+        }
+        if (hook->insn == insn) {
+            JIT_CALLBACK_GUARD(((uc_cb_insn_syscall_t)hook->callback)(uc, hook->user_data));
+        }
+        if (uc->stop_request) {
+            break;
+        }
+    }
+}
+
+#endif /* __Use_Original_Qemu (U901) */
 #ifdef TARGET_X86_64
+#if __Use_Original_Qemu != 1 /* ours (U901) */
+/*
+ * NoVmp (ledger U901, decision A1): SYSCALL as the SDM defines it (Vol2B SYSCALL Operation, CR4.FRED
+ * = 0: the CPU model has no FRED), the default UC_CTL_X86_SYSCALL_MODE. The #UD checks (not 64-bit
+ * mode: translator, U460; IA32_EFER.SCE = 0: helper_syscall, U594) come first; then
+ *   RCX := RIP (the next instruction); R11 := RFLAGS; RFLAGS := RFLAGS AND NOT(IA32_FMASK)
+ *   (the reserved bits keep their fixed values: bit 1 stays 1);
+ *   CS.Selector := IA32_STAR[47:32] AND FFFCH, base 0, limit FFFFFH with G = 1, type 11, S = 1,
+ *   DPL 0, P = 1, L = 1, D = 0; SS.Selector := IA32_STAR[47:32] + 8 (as printed: not masked),
+ *   base 0, limit FFFFFH with G = 1, type 3, S = 1, DPL 0, P = 1, B = 1; CPL := 0;
+ *   CET: IF ShadowStackEnabled(old CPL) THEN IA32_PL3_SSP := LA_adjust(SSP); IF
+ *   ShadowStackEnabled(0) THEN SSP := 0; IF EndbranchEnabled(0) THEN IA32_S_CET.TRACKER :=
+ *   WAIT_FOR_ENDBRANCH, SUPPRESS := 0;
+ *   RIP := IA32_LSTAR (WRMSR keeps it canonical).
+ * R11 is the RFLAGS image as it is (Intel: "R11 := RFLAGS"; RF too - RF is cleared afterwards
+ * like at the end of any instruction, by gen_eob, unless IA32_FMASK clears it first). Upstream
+ * QEMU's helper_syscall clears RF in R11 (AMD's pseudocode) and lost the arithmetic flags when
+ * masking (cpu_load_eflags on env->eflags alone). The single-step trap after SYSCALL uses the new
+ * TF (translator: gen_eob_worker recheck_tf, upstream). Outside 64-bit mode SYSCALL only runs on a
+ * non-Intel CPU model (U460); that keeps upstream QEMU's legacy / compatibility-mode transition
+ * (AMD APM: IA32_CSTAR, legacy-mode IA32_STAR[31:0]). The UC_X86_INS_SYSCALL hooks run after the
+ * transition (sys_entry_hooks).
+ */
+static void syscall_sdm(CPUX86State *env, int next_eip_addend)
+{
+    target_ulong insn_eip = env->eip;
+    int selector = (env->star >> 32) & 0xffff;
+    int cpl = env->hflags & HF_CPL_MASK;
+
+    if (env->hflags & HF_CS64_MASK) {
+        uint32_t fl = cpu_compute_eflags(env);
+        bool ss_old = cet2_ss_en(env, cpl, false);
+
+        env->regs[R_ECX] = env->eip + next_eip_addend;
+        env->regs[11] = fl;
+        cpu_load_eflags(env, fl & ~(uint32_t)env->fmask,
+                        TF_MASK | IF_MASK | IOPL_MASK | NT_MASK | RF_MASK | VM_MASK |
+                        AC_MASK | VIF_MASK | VIP_MASK | ID_MASK);
+        if (ss_old) {
+            env->pl_ssp[3] = cet2_la_adjust(env, env->ssp);
+        }
+        cpu_x86_load_seg_cache(env, R_CS, selector & 0xfffc, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_P_MASK | DESC_S_MASK | DESC_CS_MASK |
+                               DESC_R_MASK | DESC_A_MASK | DESC_L_MASK);
+        cpu_x86_load_seg_cache(env, R_SS, (selector + 8) & 0xffff, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                               DESC_W_MASK | DESC_A_MASK);
+        if (cet2_ss_en(env, 0, false)) {
+            env->ssp = 0;
+        }
+        if (cet2_ibt_en(env, 0, false)) {
+            cet2_ibt_wait(env, 0);
+        }
+        env->eip = env->lstar;
+    } else if (env->hflags & HF_LMA_MASK) {
+        /* upstream QEMU (non-Intel model, compatibility mode) */
+        env->regs[R_ECX] = env->eip + next_eip_addend;
+        env->regs[11] = cpu_compute_eflags(env) & ~RF_MASK;
+        env->eflags &= ~(env->fmask | RF_MASK);
+        cpu_load_eflags(env, env->eflags, 0);
+        cpu_x86_load_seg_cache(env, R_CS, selector & 0xfffc, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_P_MASK | DESC_S_MASK | DESC_CS_MASK |
+                               DESC_R_MASK | DESC_A_MASK | DESC_L_MASK);
+        cpu_x86_load_seg_cache(env, R_SS, (selector + 8) & 0xfffc, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                               DESC_W_MASK | DESC_A_MASK);
+        env->eip = env->cstar;
+    } else {
+        /* upstream QEMU (non-Intel model, legacy mode) */
+        env->regs[R_ECX] = (uint32_t)(env->eip + next_eip_addend);
+        env->eflags &= ~(IF_MASK | RF_MASK | VM_MASK);
+        cpu_x86_load_seg_cache(env, R_CS, selector & 0xfffc, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                               DESC_CS_MASK | DESC_R_MASK | DESC_A_MASK);
+        cpu_x86_load_seg_cache(env, R_SS, (selector + 8) & 0xfffc, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                               DESC_W_MASK | DESC_A_MASK);
+        env->eip = (uint32_t)env->star;
+    }
+    sys_entry_hooks(env, UC_X86_INS_SYSCALL, insn_eip);
+}
+
+#endif /* __Use_Original_Qemu (U901) */
 void helper_syscall(CPUX86State *env, int next_eip_addend)
 {
     // Unicorn: call registered syscall hooks
@@ -1750,6 +1865,13 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
     }
 #endif /* __Use_Original_Qemu (U594) */
+#if __Use_Original_Qemu != 1 /* ours (U901) */
+    /* NoVmp (ledger U901): the SDM transition unless UC_CTL_X86_SYSCALL_MODE is hook-only */
+    if (uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
+        syscall_sdm(env, next_eip_addend);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U901) */
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
         if (hook->to_delete)
             continue;

@@ -1321,6 +1321,8 @@ static void test_x86_64_syscall(void)
     uint64_t r_rax = 0x100;
 
     uc_common_setup(&uc, UC_ARCH_X86, UC_MODE_64, code, sizeof(code) - 1);
+    /* NoVmp U901: the hook emulates the system call - Unicorn's hook-only SYSCALL */
+    OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
     OK(uc_reg_write(uc, UC_X86_REG_RAX, &r_rax));
     OK(uc_hook_add(uc, &hook, UC_HOOK_INSN, test_x86_64_syscall_callback, NULL,
                    1, 0, UC_X86_INS_SYSCALL));
@@ -3985,6 +3987,8 @@ static void test_x86_mmu(void)
         "\x0C\x25\x00\x40\x00\x00\xB8\x3C\x00\x00\x00\x0F\x05";
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    /* NoVmp U901: the hook emulates the system calls - Unicorn's hook-only SYSCALL */
+    OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
     OK(uc_ctl_tlb_mode(uc, UC_TLB_CPU));
     OK(uc_hook_add(uc, &h1, UC_HOOK_INSN, &test_x86_mmu_callback, &parrent_done,
                    1, 0, UC_X86_INS_SYSCALL));
@@ -4058,6 +4062,8 @@ static void test_x86_read_virtual(void)
         "\x0C\x25\x00\x40\x00\x00\xB8\x3C\x00\x00\x00\x0F\x05";
 
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    /* NoVmp U901: the hook emulates the system calls - Unicorn's hook-only SYSCALL */
+    OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
     OK(uc_ctl_tlb_mode(uc, UC_TLB_CPU));
     OK(uc_hook_add(uc, &h1, UC_HOOK_INSN, &test_x86_mmu_callback, &parrent_done,
                    1, 0, UC_X86_INS_SYSCALL));
@@ -15440,8 +15446,9 @@ static void test_x86_bp_syscall_modes(void)
     BpCpu c;
     uc_hook h;
 
-    /* 64-bit mode: the SYSCALL hook runs (Unicorn's SYSCALL) */
+    /* 64-bit mode: the SYSCALL hook runs (Unicorn's hook-only SYSCALL, U901) */
     bp_open(&c, UC_MODE_64, -1);
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_HOOK_ONLY));
     OK(uc_hook_add(c.uc, &h, UC_HOOK_INSN, bp_syscall_cb, NULL, 1, 0, UC_X86_INS_SYSCALL));
     bp_syscall_hits = 0;
     OK(bp_run(&c, "\x0f\x05", 2));
@@ -16943,6 +16950,8 @@ static void test_x86_f2_syscall_sce(void)
         uc_err err;
 
         uc_common_setup(&uc, UC_ARCH_X86, UC_MODE_64, code, sizeof(code) - 1);
+        /* U901: the hook API as U594 tested it (Unicorn's hook-only SYSCALL) */
+        OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
         OK(uc_hook_add(uc, &h, UC_HOOK_INSN, f2_syscall_cb, NULL, 1, 0, UC_X86_INS_SYSCALL));
         OK(uc_reg_read(uc, UC_X86_REG_MSR, &efer));
         TEST_CHECK((efer.value & 0x501) == 0x501);  /* SCE, LME, LMA at reset */
@@ -23529,6 +23538,175 @@ static void test_x86_sm_sysenter_rip(void)
              (unsigned long long)sm_get(&c, UC_X86_REG_RAX));
     OK(uc_close(c.uc));
 }
+
+#define SM_HANDLER (code_start + 0x100)
+
+static void sm_wrmsr(SmCtx *c, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m;
+
+    m.rid = msr;
+    m.value = v;
+    OK(uc_reg_write(c->uc, UC_X86_REG_MSR, &m));
+}
+
+static uint64_t sm_rdmsr(SmCtx *c, uint32_t msr)
+{
+    uc_x86_msr m;
+
+    m.rid = msr;
+    m.value = 0;
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+/* a UC_X86_INS_SYSCALL / SYSENTER hook: records the state it sees; ret = 1: RIP := RCX */
+typedef struct SmHook {
+    int calls, ret;
+    uint64_t rip, rcx, r11, rsp, cs, ss;
+} SmHook;
+
+static void sm_sys_hook(uc_engine *uc, void *user)
+{
+    SmHook *h = (SmHook *)user;
+
+    h->calls++;
+    OK(uc_reg_read(uc, UC_X86_REG_RIP, &h->rip));
+    OK(uc_reg_read(uc, UC_X86_REG_RCX, &h->rcx));
+    OK(uc_reg_read(uc, UC_X86_REG_R11, &h->r11));
+    OK(uc_reg_read(uc, UC_X86_REG_RSP, &h->rsp));
+    h->cs = h->ss = 0;
+    OK(uc_reg_read(uc, UC_X86_REG_CS, &h->cs));
+    OK(uc_reg_read(uc, UC_X86_REG_SS, &h->ss));
+    h->cs &= 0xffff;
+    h->ss &= 0xffff;
+    if (h->ret) {
+        OK(uc_reg_write(uc, UC_X86_REG_RIP, &h->rcx));
+    }
+}
+
+/*
+ * U901: SYSCALL, SDM transition (default UC_CTL_X86_SYSCALL_MODE): RCX = next RIP, R11 = RFLAGS
+ * (the arithmetic flags too), RFLAGS AND NOT IA32_FMASK (bit 1 stays), CS = IA32_STAR[47:32]
+ * AND FFFCh, SS = IA32_STAR[47:32] + 8 (not masked), RIP = IA32_LSTAR; the hooks see that state
+ * and may return to RCX; the hook-only mode keeps Unicorn's old behaviour; SCE = 0 #UD in both.
+ */
+static void test_x86_sm_syscall(void)
+{
+    /* syscall; mov eax, 7 */
+    static const char code[] = "\x0f\x05\xb8\x07\x00\x00\x00";
+    SmCtx c;
+    SmHook h;
+    uc_hook hh;
+    int mode = -1;
+
+    sm_open(&c, UC_MODE_64, -1);
+    OK(uc_ctl_get_x86_syscall_mode(c.uc, &mode));
+    TEST_CHECK(mode == UC_X86_SYSCALL_SDM);
+    TEST_CHECK(uc_ctl_set_x86_syscall_mode(c.uc, 2) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_syscall_mode(c.uc, -1) == UC_ERR_ARG);
+    OK(uc_mem_write(c.uc, code_start, code, sizeof(code) - 1));
+    OK(uc_mem_write(c.uc, SM_HANDLER, "\x90", 1));
+    sm_wrmsr(&c, 0xC0000082, SM_HANDLER);              /* IA32_LSTAR */
+    sm_wrmsr(&c, 0xC0000081, 0x0023001300000000ULL);   /* IA32_STAR: SYSCALL 13h, SYSRET 23h */
+    sm_wrmsr(&c, 0xC0000084, 0x40701);                 /* IA32_FMASK: AC DF IF TF CF */
+    sm_set(&c, UC_X86_REG_RFLAGS, 0x240ED7);           /* ID AC OF DF IF SF ZF AF PF CF */
+    sm_set(&c, UC_X86_REG_RCX, 0x1111);
+    sm_set(&c, UC_X86_REG_R11, 0x2222);
+    OK(uc_emu_start(c.uc, code_start, SM_HANDLER, 0, 0));
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RIP) == SM_HANDLER);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RCX) == code_start + 2);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_R11) == 0x240ED7);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RFLAGS) == 0x2008D6);
+    TEST_CHECK((sm_get(&c, UC_X86_REG_CS) & 0xffff) == 0x10);
+    TEST_CHECK((sm_get(&c, UC_X86_REG_SS) & 0xffff) == 0x1B);
+    TEST_MSG("rip %llx rcx %llx r11 %llx rflags %llx cs %llx ss %llx",
+             (unsigned long long)sm_get(&c, UC_X86_REG_RIP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_RCX),
+             (unsigned long long)sm_get(&c, UC_X86_REG_R11),
+             (unsigned long long)sm_get(&c, UC_X86_REG_RFLAGS),
+             (unsigned long long)sm_get(&c, UC_X86_REG_CS),
+             (unsigned long long)sm_get(&c, UC_X86_REG_SS));
+
+    /* the hook runs after the transition and sees the handler's state */
+    memset(&h, 0, sizeof(h));
+    OK(uc_hook_add(c.uc, &hh, UC_HOOK_INSN, sm_sys_hook, &h, 1, 0, UC_X86_INS_SYSCALL));
+    sm_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(uc_emu_start(c.uc, code_start, SM_HANDLER, 0, 0));
+    TEST_CHECK(h.calls == 1 && h.rip == SM_HANDLER && h.rcx == code_start + 2 &&
+               h.r11 == 0x202 && h.cs == 0x10 && h.ss == 0x1B);
+    TEST_MSG("hook: calls %d rip %llx rcx %llx r11 %llx cs %llx ss %llx", h.calls,
+             (unsigned long long)h.rip, (unsigned long long)h.rcx, (unsigned long long)h.r11,
+             (unsigned long long)h.cs, (unsigned long long)h.ss);
+    /* a hook that sets RIP := RCX resumes after SYSCALL (at CPL 0, CS 10h) */
+    memset(&h, 0, sizeof(h));
+    h.ret = 1;
+    sm_set(&c, UC_X86_REG_RAX, 0);
+    OK(uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(h.calls == 1 && sm_get(&c, UC_X86_REG_RAX) == 7 &&
+               sm_get(&c, UC_X86_REG_RIP) == code_start + sizeof(code) - 1);
+
+    /* hook-only mode: the hook sees RIP = SYSCALL, RIP then advances, RCX/R11/CS unchanged */
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_HOOK_ONLY));
+    OK(uc_ctl_get_x86_syscall_mode(c.uc, &mode));
+    TEST_CHECK(mode == UC_X86_SYSCALL_HOOK_ONLY);
+    memset(&h, 0, sizeof(h));
+    sm_set(&c, UC_X86_REG_RCX, 0x1111);
+    sm_set(&c, UC_X86_REG_R11, 0x2222);
+    sm_set(&c, UC_X86_REG_RAX, 0);
+    OK(uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(h.calls == 1 && h.rip == code_start && sm_get(&c, UC_X86_REG_RAX) == 7 &&
+               sm_get(&c, UC_X86_REG_RCX) == 0x1111 && sm_get(&c, UC_X86_REG_R11) == 0x2222);
+    TEST_MSG("hook-only: calls %d rip %llx rcx %llx", h.calls, (unsigned long long)h.rip,
+             (unsigned long long)sm_get(&c, UC_X86_REG_RCX));
+
+    /* IA32_EFER.SCE = 0: #UD in both modes, the hook does not run */
+    sm_wrmsr(&c, 0xC0000080, sm_rdmsr(&c, 0xC0000080) & ~1ULL);
+    memset(&h, 0, sizeof(h));
+    uc_assert_err(UC_ERR_INSN_INVALID, uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_SDM));
+    uc_assert_err(UC_ERR_INSN_INVALID, uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+    TEST_CHECK(h.calls == 0 && sm_get(&c, UC_X86_REG_RIP) == code_start);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U901: SYSCALL's CET rules (MAX model, CR4.CET = 1, IA32_S_CET = SH_STK_EN | ENDBR_EN, CPL 0):
+ * IA32_PL3_SSP := LA_adjust(SSP) (57-bit: bits 63:57 := bit 56), SSP := 0, the CPL 0 tracker
+ * WAIT_FOR_ENDBRANCH: ENDBR64 at the handler makes it IDLE, anything else is #CP(ENDBRANCH).
+ */
+static void test_x86_sm_syscall_cet(void)
+{
+    SmCtx c;
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        sm_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+        OK(uc_mem_write(c.uc, code_start, "\x0f\x05", 2));
+        OK(uc_mem_write(c.uc, SM_HANDLER, pass ? "\x90\x90\x90\x90" : "\xf3\x0f\x1e\xfa", 4));
+        sm_set(&c, UC_X86_REG_CR0, sm_get(&c, UC_X86_REG_CR0) | (1ULL << 16));   /* WP */
+        sm_set(&c, UC_X86_REG_CR4, sm_get(&c, UC_X86_REG_CR4) | (1ULL << 23));   /* CET */
+        sm_wrmsr(&c, 0x6A2, 5);                            /* IA32_S_CET: SH_STK_EN, ENDBR_EN */
+        sm_wrmsr(&c, 0xC0000082, SM_HANDLER);
+        sm_set(&c, UC_X86_REG_SSP, 0x0100000000001000ULL);
+        if (pass == 0) {
+            OK(uc_emu_start(c.uc, code_start, SM_HANDLER + 4, 0, 0));
+            TEST_CHECK(c.cap.count == 0 && sm_get(&c, UC_X86_REG_RIP) == SM_HANDLER + 4);
+            TEST_CHECK(sm_rdmsr(&c, 0x6A2) == 5);         /* tracker IDLE again */
+        } else {
+            OK(uc_emu_start(c.uc, code_start, SM_HANDLER + 4, 0, 0));
+            TEST_CHECK(c.cap.count == 1 && c.cap.intno == 21);
+            TEST_CHECK(sm_rdmsr(&c, 0x6A2) == (5 | (1ULL << 11)));   /* WAIT_FOR_ENDBRANCH */
+        }
+        TEST_CHECK(sm_rdmsr(&c, 0x6A7) == 0xFF00000000001000ULL);    /* IA32_PL3_SSP */
+        TEST_CHECK(sm_get(&c, UC_X86_REG_SSP) == 0);
+        TEST_MSG("pass %d: intr %u/%u s_cet %llx pl3_ssp %llx ssp %llx", pass, c.cap.count,
+                 c.cap.intno, (unsigned long long)sm_rdmsr(&c, 0x6A2),
+                 (unsigned long long)sm_rdmsr(&c, 0x6A7),
+                 (unsigned long long)sm_get(&c, UC_X86_REG_SSP));
+        OK(uc_close(c.uc));
+    }
+}
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -23847,4 +24025,6 @@ TEST_LIST = {
     {"test_x86_fx5_partial_reads", test_x86_fx5_partial_reads},
     {"test_x86_fx5_context_writes", test_x86_fx5_context_writes},
     {"test_x86_sm_sysenter_rip", test_x86_sm_sysenter_rip},
+    {"test_x86_sm_syscall", test_x86_sm_syscall},
+    {"test_x86_sm_syscall_cet", test_x86_sm_syscall_cet},
     {NULL, NULL}};

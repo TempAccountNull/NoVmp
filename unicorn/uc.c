@@ -3438,6 +3438,27 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U901) */
+    case UC_CTL_X86_SYSCALL_MODE:
+        /* NoVmp U901 (A1): SDM SYSCALL / SYSENTER transition (default) or the hook-only mode */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mode = va_arg(args, int *);
+            *mode = uc->x86_syscall_mode;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mode = va_arg(args, int);
+            if (mode != UC_X86_SYSCALL_SDM && mode != UC_X86_SYSCALL_HOOK_ONLY) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_syscall_mode = mode;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U901) */
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

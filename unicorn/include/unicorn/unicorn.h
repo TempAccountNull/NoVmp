@@ -798,7 +798,27 @@ typedef enum uc_control_type {
     // uc_context carries it. The emulator does not encrypt memory with these keys.
     // Read: @args = (int keyid, uc_x86_mktme_key *)
     UC_CTL_X86_MKTME_KEY,
+    // x86 only (NoVmp U901, decision A1): how SYSCALL executes.
+    // UC_X86_SYSCALL_SDM (the default): the SDM Vol2B transition: #UD unless 64-bit mode and
+    // IA32_EFER.SCE = 1; RCX := the next RIP, R11 := RFLAGS, RFLAGS := RFLAGS AND NOT
+    // IA32_FMASK, CS := IA32_STAR[47:32] AND FFFCh / SS := IA32_STAR[47:32] + 8 with the fixed
+    // flat descriptors (CPL 0, CS.L = 1), RIP := IA32_LSTAR, and the CET rules (IA32_PL3_SSP :=
+    // LA_adjust(SSP) when shadow stacks are on at the old CPL, SSP := 0 when they are on at
+    // CPL 0, the CPL 0 IBT tracker := WAIT_FOR_ENDBRANCH). UC_X86_INS_SYSCALL hooks run after
+    // the transition and see the kernel-entry state (RIP = the handler, RCX = the return
+    // address, R11 = the saved RFLAGS); the hook's address range is checked against the
+    // instruction's address. A hook that changes registers (RIP included) resumes from them,
+    // e.g. RIP := RCX to return to the caller.
+    // UC_X86_SYSCALL_HOOK_ONLY: Unicorn's behaviour before U901: after the same #UD checks the
+    // hooks run with RIP = the instruction, then RIP advances past it and nothing else
+    // changes (without a hook the instruction is a NOP). Can be changed at any time.
+    // Other values -> UC_ERR_ARG. Write: @args = (int); Read: @args = (int *)
+    UC_CTL_X86_SYSCALL_MODE,
 } uc_control_type;
+
+// UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
+#define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
+#define UC_X86_SYSCALL_HOOK_ONLY 1 // Unicorn's hook-only SYSCALL
 
 // UC_CTL_X86_RDRAND modes (NoVmp U835)
 #define UC_X86_RDRAND_SEEDED 0     // deterministic seeded model (default)
@@ -963,6 +983,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EXCEPTION, 1), (exc))
 #define uc_ctl_get_x86_mktme_key(uc, keyid, key)                               \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_MKTME_KEY, 2), (int)(keyid), (key))
+#define uc_ctl_set_x86_syscall_mode(uc, mode)                                  \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SYSCALL_MODE, 1), (int)(mode))
+#define uc_ctl_get_x86_syscall_mode(uc, mode)                                  \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SYSCALL_MODE, 1), (int *)(mode))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;
