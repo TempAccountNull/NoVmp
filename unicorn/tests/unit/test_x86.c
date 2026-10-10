@@ -23975,7 +23975,9 @@ static void test_x86_sm_msr_values(void)
     } t[] = {
         {0x17, 0, 0, 0}, {0xfe, 0, 0, 0}, {0x179, 0x10a, 0, 0}, {0x198, 0, 0, 0},
         {0x8b, 0x100000000ULL, 1, ~0ULL}, {0x8b, 1, 0, 0},
-        {0x1b, 0xfee00900, 1, ~0ULL}, {0x1b, 0xfee00801, 0, 0}, {0x1b, 0xfee00c00, 0, 0},
+        {0x1b, 0xfee00900, 1, ~0ULL}, {0x1b, 0xfee00801, 0, 0},
+        /* U1062: xAPIC -> x2APIC is valid with CPUID.01H:ECX.x2APIC (U960), Vol3A 13.12.5.1 */
+        {0x1b, 0xfee00c00, 1, ~0ULL},
         {0x1b, 0x10000000000ULL | 0xfee00800, 0, 0},
         {0x3a, 0xff00, 1, 0xff00}, {0x3a, 0x4, 0, 0}, {0x3a, 0x100000, 0, 0},
         {0x174, 0xabcd0010, 1, 0xabcd0010}, {0x174, 0x100000010ULL, 1, 0x10},
@@ -24685,7 +24687,7 @@ static uint64_t ap_get(ap_cpu *c, int reg)
     return v;
 }
 
-/* host API MSR access (invalid writes are dropped, never #GP) */
+/* host API MSR access (never #GP; an invalid access returns UC_ERR_EXCEPTION, U1062) */
 static void ap_wmsr(ap_cpu *c, uint32_t msr, uint64_t v)
 {
     uc_x86_msr m = {msr, v};
@@ -24956,11 +24958,17 @@ static void test_x86_ap_base_transitions(void)
     TEST_CHECK(r[3] & (1u << 9));
     TEST_CHECK(ap_gwr(&c, 0x1b, AP_X2APIC_ON) == -1);
     TEST_CHECK(ap_msr(&c, 0x808) == 0 && ap_msr(&c, 0x80f) == 0xff);
-    /* the host API drops invalid writes without an exception */
-    ap_wmsr(&c, 0x1b, 0xfee00800ULL);
-    TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00d00ULL);
-    ap_wmsr(&c, 0x808, 0x1234);
-    TEST_CHECK(ap_msr(&c, 0x808) == 0);
+    /* the host API: an invalid write is not made and returns UC_ERR_EXCEPTION (U905 / U1062) */
+    {
+        uc_x86_msr m = {0x1b, 0xfee00800ULL};
+
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(ap_msr(&c, 0x1b) == 0xfee00d00ULL);
+        m.rid = 0x808;
+        m.value = 0x1234;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(ap_msr(&c, 0x808) == 0);
+    }
     OK(uc_close(c.uc));
 }
 
@@ -26286,6 +26294,34 @@ static void test_x86_ig_tme_api(void)
     OK(uc_context_free(ctx));
     OK(uc_close(uc));
 }
+/*
+ * U1062: the local APIC MSRs through the host API (MAX model, xAPIC mode after reset): the API
+ * reaches 800H-8FFH in any mode (docs/apic.md), but an access the instruction would #GP(0) -
+ * reserved or write-only address, reserved bit, illegal IA32_APIC_BASE transition - is not made
+ * and returns UC_ERR_EXCEPTION (U905 contract; U960 dropped it with UC_ERR_OK).
+ */
+static void test_x86_ig_apic_api(void)
+{
+    uc_engine *uc = ig_open();
+    uc_x86_msr m = {0x831, 0x5555};
+
+    TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00900ULL);
+    TEST_CHECK(uc_reg_read(uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION && m.value == 0x5555);
+    m.rid = 0x80b;                                                  /* EOI: write-only */
+    TEST_CHECK(uc_reg_read(uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION && m.value == 0x5555);
+    OK(ig_wmsr(uc, 0x808, 0x40));                                   /* xAPIC mode: API reaches TPR */
+    TEST_CHECK(ig_wmsr(uc, 0x808, 0x140) == UC_ERR_EXCEPTION);      /* reserved bit 8 */
+    TEST_CHECK(ig_wmsr(uc, 0x808, 1ULL << 32) == UC_ERR_EXCEPTION); /* 63:32 reserved */
+    TEST_CHECK(ig_msr(uc, 0x808) == 0x40);
+    TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00901ULL) == UC_ERR_EXCEPTION);   /* reserved bit 0 */
+    TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00400ULL) == UC_ERR_EXCEPTION);   /* EN = 0, EXTD = 1 */
+    TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00900ULL);
+    OK(ig_wmsr(uc, 0x1b, 0xfee00c00ULL));                           /* xAPIC -> x2APIC */
+    TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
+    TEST_CHECK(ig_wmsr(uc, 0x1b, 0xfee00800ULL) == UC_ERR_EXCEPTION);   /* x2APIC -> xAPIC */
+    TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
+    OK(uc_close(uc));
+}
 /* ---- end U1060-U1069 (integ_) ---- */
 
 TEST_LIST = {
@@ -26642,4 +26678,5 @@ TEST_LIST = {
     {"test_x86_rc_legacy", test_x86_rc_legacy},
     {"test_x86_rc_bounds", test_x86_rc_bounds},
     {"test_x86_ig_tme_api", test_x86_ig_tme_api},
+    {"test_x86_ig_apic_api", test_x86_ig_apic_api},
     {NULL, NULL}};

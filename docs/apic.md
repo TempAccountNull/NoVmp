@@ -91,8 +91,10 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
   CPUID.01H:ECX.TSC_DEADLINE = 0).
 - SVR[8] = 0 (software-disabled) sets every LVT mask bit; writes cannot clear them (13.4.7.2).
 - The **host API** (`uc_reg_read` / `uc_reg_write` with `UC_X86_REG_MSR`) reaches 800H-8FFH in
-  any APIC mode (the xAPIC MMIO page is not modelled) and drops an invalid write instead of
-  raising #GP (the convention of the other MSRs). The ICR is interpreted in the xAPIC format
+  any APIC mode (the xAPIC MMIO page is not modelled). An access the instruction would refuse
+  with #GP(0) (a reserved or write-only address, a reserved bit, an illegal IA32_APIC_BASE
+  transition) is not made and returns `UC_ERR_EXCEPTION`, the U905 contract of every MSR (U1062;
+  before: dropped with `UC_ERR_OK`). The ICR is interpreted in the xAPIC format
   (destination in bits 63:56) when written through the API in xAPIC mode.
 
 ### TPR, PPR, CR8 (13.8.3.1, 13.8.6.1)

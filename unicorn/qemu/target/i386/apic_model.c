@@ -650,6 +650,20 @@ void x86_apic_send_notification(CPUX86State *env, int vector, uint32_t ndst)
     x86_apic_update(env);
 }
 
+/*
+ * #GP(0) of RDMSR / WRMSR. U1062: a host API access (msr_api) sets msr_api_err instead - the
+ * access is not made and uc_reg_read / uc_reg_write return UC_ERR_EXCEPTION, the U905 contract of
+ * every other MSR (was: dropped with UC_ERR_OK).
+ */
+static void apic_gp(CPUX86State *env, uintptr_t ra)
+{
+    if (env->msr_api) {
+        env->msr_api_err = 1;
+        return;
+    }
+    raise_exception_ra(env, EXCP0D_GPF, ra);
+}
+
 /* ---- IA32_APIC_BASE (13.4.4, 13.12.1, 13.12.5) ---- */
 static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
 {
@@ -663,9 +677,7 @@ static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
         (!en && extd) ||                        /* EN = 0, EXTD = 1: invalid state */
         (oen && oextd && en && !extd) ||        /* x2APIC -> xAPIC */
         (!oen && en && extd)) {                 /* disabled -> x2APIC */
-        if (!env->msr_api) {
-            raise_exception_ra(env, EXCP0D_GPF, ra);
-        }
+        apic_gp(env, ra);
         return;
     }
     if (oen && !en) {
@@ -776,9 +788,7 @@ bool x86_apic_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val, uintptr_t 
     }
     return true;
 gp:
-    if (!env->msr_api) {
-        raise_exception_ra(env, EXCP0D_GPF, ra);
-    }
+    apic_gp(env, ra);
     *val = 0;
     return true;
 }
@@ -889,9 +899,7 @@ bool x86_apic_msr_write(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t 
     x86_apic_update(env);
     return true;
 gp:
-    if (!env->msr_api) {
-        raise_exception_ra(env, EXCP0D_GPF, ra);
-    }
+    apic_gp(env, ra);
     return true;
 }
 
