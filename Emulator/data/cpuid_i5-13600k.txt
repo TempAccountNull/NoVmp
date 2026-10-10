@@ -6,8 +6,8 @@
 # vCPU and invents the topology (0BH/1FH). A feature absent here is NOT proof that the physical processor lacks it;
 # never use this file to infer the bare host or the emulated model.
 # Role: gate-test profile for hardware cases run inside this VMware guest (file name kept for test_runner.ps1).
-# Capture method: emu-alltest --cases Emulator/data/cpuid_capture.txt at ledger U68 (commit e53dbfa8); unpinned, the
-# native run happened to land on vCPU 5; no XGETBV, topology, BIOS or OS record. Microcode 0x129 as reported inside
+# Capture method: emu-alltest --cases Emulator/data/cpuid_capture.txt at ledger U68 (commit e53dbfa8); unpinned: leaves 01H/0BH
+# came from vCPU 5 and leaf 1FH from vCPU 6 (x2APIC IDs, checked against a pinned capture 2026-10-10); no XGETBV, topology, BIOS or OS record. Microcode 0x129 as reported inside
 # the guest (may be virtualized). A bare-host profile, when captured, goes to cpuid_i5-13600k_bare_host.txt
 # (capture tool: emulator/capture/host/README.md); this file is never overwritten by it.
 # Format: leaf subleaf eax ebx ecx edx (hex), one row per leaf/sub-leaf; lines starting with # are ignored.
