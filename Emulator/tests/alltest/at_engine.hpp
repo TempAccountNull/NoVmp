@@ -11,6 +11,7 @@
 #include <unicorn/unicorn.h>
 #include <keystone/keystone.h>
 #include <windows.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +49,14 @@ namespace at
 	constexpr uint8_t CTL_FILL = 0xF4;
 
 	constexpr uint64_t S_GPR = 0x000, S_RFLAGS = 0x080, S_FX = 0x100, S_YMMH = 0x300, S_ENV = 0x400;
+	// U1040 (--native-under-sde): extra state of the native thunk when it runs under Intel SDE with an
+	// emulated CPU that has AVX-512 / AVX10 (ZMM0-31, K0-7) or APX (R16-R31) state, in the same IN_BLK /
+	// OUT_BLK after the FNSTENV image. The load / save code sits in two stubs at the top of CODE that
+	// the prologue's VINSERTI128 block / the epilogue's VEXTRACTI128 block jump to (same bytes count,
+	// so the snippet and the epilogue keep their addresses). Never used without --native-under-sde.
+	constexpr uint64_t S_EXT_ZMM = 0x500, S_EXT_K = 0xD00, S_EXT_EGPR = 0xD40;
+	constexpr uint64_t EXT_LOAD_STUB = CODE + 0xE000, EXT_SAVE_STUB = CODE + 0xE800;
+	static_assert( S_EXT_ZMM + 32 * 64 <= S_EXT_K && S_EXT_K + 8 * 8 <= S_EXT_EGPR && S_EXT_EGPR + 16 * 8 <= 0x1000, "ext blocks overlap" );
 
 	enum reg { RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15 };
 	inline const char* reg_name( int i )
@@ -138,6 +147,23 @@ namespace at
 	// accesses go through rax = DATA.
 	inline std::string at( uint64_t addr ) { return "[rax + " + hx( addr - DATA ) + "]"; }
 
+	// the YMM upper halves in (prologue) / out (epilogue); U1040: also the blocks --native-under-sde
+	// replaces with a jump to its load / save stub
+	inline std::string ymmh_load_text()
+	{
+		std::string s;
+		for ( int i = 0; i < 16; ++i )
+			s += "vinserti128 ymm" + std::to_string( i ) + ", ymm" + std::to_string( i ) + ", xmmword ptr " + at( IN_BLK + S_YMMH + i * 16 ) + ", 1\n";
+		return s;
+	}
+	inline std::string ymmh_save_text()
+	{
+		std::string s;
+		for ( int i = 0; i < 16; ++i )
+			s += "vextracti128 xmmword ptr " + at( OUT_BLK + S_YMMH + i * 16 ) + ", ymm" + std::to_string( i ) + ", 1\n";
+		return s;
+	}
+
 	inline std::string prologue_text()
 	{
 		std::string s = "mov rax, " + hx( DATA ) + "\n";
@@ -148,8 +174,7 @@ namespace at
 		for ( int i = 6; i < 16; ++i ) s += "movdqu xmmword ptr " + at( HOST + 0x80 + ( i - 6 ) * 16 ) + ", xmm" + std::to_string( i ) + "\n";
 		s += "mov rsp, qword ptr " + at( IN_BLK + S_GPR + RSP * 8 ) + "\n";
 		s += "fxrstor64 " + at( IN_BLK + S_FX ) + "\n";
-		for ( int i = 0; i < 16; ++i )
-			s += "vinserti128 ymm" + std::to_string( i ) + ", ymm" + std::to_string( i ) + ", xmmword ptr " + at( IN_BLK + S_YMMH + i * 16 ) + ", 1\n";
+		s += ymmh_load_text();
 		s += "push qword ptr " + at( IN_BLK + S_RFLAGS ) + "\npopfq\n";
 		for ( int i = 1; i < 16; ++i )
 			if ( i != RSP ) s += std::string( "mov " ) + reg_name( i ) + ", qword ptr " + at( IN_BLK + S_GPR + i * 8 ) + "\n";
@@ -163,8 +188,7 @@ namespace at
 		for ( int i = 1; i < 16; ++i ) s += "mov qword ptr " + at( OUT_BLK + S_GPR + i * 8 ) + ", " + reg_name( i ) + "\n";
 		s += "mov rsp, " + hx( EPI_STACK ) + "\npushfq\npop qword ptr " + at( OUT_BLK + S_RFLAGS ) + "\npush 0x202\npopfq\n";
 		s += "fxsave64 " + at( OUT_BLK + S_FX ) + "\n";
-		for ( int i = 0; i < 16; ++i )
-			s += "vextracti128 xmmword ptr " + at( OUT_BLK + S_YMMH + i * 16 ) + ", ymm" + std::to_string( i ) + ", 1\n";
+		s += ymmh_save_text();
 		s += "fnstenv " + at( OUT_BLK + S_ENV ) + "\nfninit\n";
 		s += "fldcw word ptr " + at( HOST + 0x48 ) + "\nldmxcsr dword ptr " + at( HOST + 0x4C ) + "\n";
 		const char* hs[] = { "rbx", "rbp", "rdi", "rsi", "r12", "r13", "r14", "r15" };
@@ -295,13 +319,18 @@ namespace at
 			if ( veh_ ) RemoveVectoredExceptionHandler( veh_ );
 			for ( void* p : { ( void* ) code_, ( void* ) data_, ( void* ) mem_ } ) if ( p ) VirtualFree( p, 0, MEM_RELEASE );
 		}
+		// U1040 (--native-under-sde): the native CPU (Intel SDE's emulated CPU) has ZMM0-31 / K0-7
+		// (ext_zmm) or APX R16-R31 (ext_apx) state; the thunk then moves it like Unicorn's code hooks
+		bool ext_zmm = false, ext_apx = false;
 		void run( const program& p, const state& in, result& r )
 		{
 			std::memset( code_, p.fill, CODE_SIZE );
 			std::memcpy( code_, p.code.data(), p.code.size() );
+			if ( ( ext_zmm || ext_apx ) && !patch_ext( p, r.err ) ) { r.ran = false; return; }
 			FlushInstructionCache( GetCurrentProcess(), code_, CODE_SIZE );
 			std::memset( data_, 0, DATA_SIZE );
 			write_blocks( data_, mem_, in );
+			if ( ext_zmm || ext_apx ) write_ext( in );
 			g().lo = p.snippet_begin; g().hi = p.snippet_end; g().resume = p.epilogue_at;
 			g().faulted = false; g().code = 0; g().rip = 0;
 			// U850: a branch-layout snippet may fault outside its own bytes (at its target: the HLT
@@ -324,8 +353,128 @@ namespace at
 			r.fault_info0 = g().faulted ? g().info0 : 0;
 			r.fault_info1 = g().faulted ? g().info1 : 0;
 			read_blocks( data_, mem_, *r.s );
+			if ( ext_zmm || ext_apx ) read_ext( *r.s );
 		}
 	private:
+		// U1040: ZMM0-31 as 64-byte images (ZMM0-15 from the XMM, YMMH and ZMMH parts of the state)
+		void write_ext( const state& in )
+		{
+			uint8_t* b = data_ + ( IN_BLK - DATA );
+			for ( int i = 0; i < 32; ++i )
+			{
+				uint8_t* z = b + S_EXT_ZMM + 64 * i;
+				if ( i < 16 ) { std::memcpy( z, in.xmm( i ), 16 ); std::memcpy( z + 16, in.ymmh[ i ], 16 ); std::memcpy( z + 32, in.zmmh[ i ], 32 ); }
+				else std::memcpy( z, in.zmmx[ i - 16 ], 64 );
+			}
+			std::memcpy( b + S_EXT_K, in.k, sizeof( in.k ) );
+			std::memcpy( b + S_EXT_EGPR, in.egpr, sizeof( in.egpr ) );
+		}
+		void read_ext( state& s )
+		{
+			const uint8_t* b = data_ + ( OUT_BLK - DATA );
+			if ( ext_zmm )
+			{
+				for ( int i = 0; i < 32; ++i )
+				{
+					const uint8_t* z = b + S_EXT_ZMM + 64 * i;
+					if ( i < 16 ) std::memcpy( s.zmmh[ i ], z + 32, 32 );
+					else std::memcpy( s.zmmx[ i - 16 ], z, 64 );
+				}
+				std::memcpy( s.k, b + S_EXT_K, sizeof( s.k ) );
+			}
+			if ( ext_apx ) std::memcpy( s.egpr, b + S_EXT_EGPR, sizeof( s.egpr ) );
+		}
+		static void put_jmp( uint8_t* at_code, uint64_t from, uint64_t to )   // E9 rel32 at address 'from'
+		{
+			int32_t rel = int32_t( int64_t( to ) - int64_t( from + 5 ) );
+			at_code[ 0 ] = 0xE9;
+			std::memcpy( at_code + 1, &rel, 4 );
+		}
+		// APX: MOV r16..r31, [rax + disp32] (load, opcode 8Bh) / MOV [rax + disp32], r16..r31 (store, 89h)
+		// with REX2 (D5h; payload M0 R4 X4 B4 W R3 X3 B3 = 0 1 0 0 1 R3 0 0). Keystone has no APX.
+		static void apx_moves( std::vector<uint8_t>& v, uint64_t blk, bool load )
+		{
+			for ( int j = 0; j < 16; ++j )
+			{
+				uint32_t disp = uint32_t( blk + S_EXT_EGPR + 8 * j - DATA );
+				v.push_back( 0xD5 );
+				v.push_back( uint8_t( 0x48 | ( ( j >> 3 ) << 2 ) ) );
+				v.push_back( load ? 0x8B : 0x89 );
+				v.push_back( uint8_t( 0x80 | ( ( j & 7 ) << 3 ) ) );   // mod 10, reg = j & 7, rm = rax
+				for ( int k = 0; k < 4; ++k ) v.push_back( uint8_t( disp >> ( 8 * k ) ) );
+			}
+		}
+		// VMOVDQU64 zmm0..31, [rax + disp32] (EVEX.512.F3.0F.W1 6F /r) / VMOVDQU64 [rax + disp32], zmm (7F /r),
+		// then KMOVQ k0..7, [rax + disp32] (VEX.L0.0F.W1 90 /r) / KMOVQ [rax + disp32], k (91 /r). Encoded here:
+		// Keystone rejects them (KS_ERR_ASM_MISSINGFEATURE).
+		static void zmm_k_moves( std::vector<uint8_t>& v, uint64_t blk, bool load )
+		{
+			auto disp = [ & ]( uint64_t a ) { const uint32_t d = uint32_t( a - DATA ); for ( int k = 0; k < 4; ++k ) v.push_back( uint8_t( d >> ( 8 * k ) ) ); };
+			for ( int i = 0; i < 32; ++i )
+			{
+				// P0 = R' X' B' R'' 0 0 m1 m0 (R, X, B, R' stored inverted; X = B = 0: base rax, no index; map 0F)
+				const uint8_t p0 = uint8_t( ( ( ( i >> 3 ) & 1 ) ? 0 : 0x80 ) | 0x40 | 0x20 | ( ( ( i >> 4 ) & 1 ) ? 0 : 0x10 ) | 0x01 );
+				v.push_back( 0x62 );
+				v.push_back( p0 );
+				v.push_back( 0xFE );   // W = 1, vvvv = 1111 (none), 1, pp = 10 (F3)
+				v.push_back( 0x48 );   // z = 0, L'L = 10 (512), b = 0, V' = 1 (inverted 0), aaa = 000
+				v.push_back( load ? 0x6F : 0x7F );
+				v.push_back( uint8_t( 0x80 | ( ( i & 7 ) << 3 ) ) );   // mod 10 (disp32), reg = i & 7, rm = rax
+				disp( blk + S_EXT_ZMM + 64 * i );
+			}
+			for ( int i = 0; i < 8; ++i )
+			{
+				v.push_back( 0xC4 );
+				v.push_back( 0xE1 );   // R X B = 1 1 1 (inverted 0), m-mmmm = 00001 (0F)
+				v.push_back( 0xF8 );   // W = 1, vvvv = 1111, L = 0, pp = 00
+				v.push_back( load ? 0x90 : 0x91 );
+				v.push_back( uint8_t( 0x80 | ( i << 3 ) ) );
+				disp( blk + S_EXT_K + 8 * i );
+			}
+		}
+		// the prologue's VINSERTI128 block and the epilogue's VEXTRACTI128 block become a jump to a stub
+		// that does the same plus the ZMM / K / R16-R31 moves and jumps back (rax = DATA in both places)
+		bool patch_ext( const program& p, std::string& err )
+		{
+			if ( ext_ld_.empty() )   // the blocks and stub bodies do not depend on the snippet: once
+			{
+				ext_ld_ = assemble( ymmh_load_text(), CODE, &err );
+				ext_sv_ = assemble( ymmh_save_text(), CODE, &err );
+				if ( ext_ld_.empty() || ext_sv_.empty() )
+				{
+					ext_ld_.clear();
+					err = "ext: assembling the YMMH blocks: " + err;
+					return false;
+				}
+				ext_ls_ = ext_ld_;   // the stub first does what the block it replaces did
+				ext_ss_ = ext_sv_;
+				if ( ext_zmm ) { zmm_k_moves( ext_ls_, IN_BLK, true ); zmm_k_moves( ext_ss_, OUT_BLK, false ); }
+				if ( ext_apx ) { apx_moves( ext_ls_, IN_BLK, true ); apx_moves( ext_ss_, OUT_BLK, false ); }
+			}
+			const std::vector<uint8_t>& ld = ext_ld_;
+			const std::vector<uint8_t>& sv = ext_sv_;
+			auto find = [ & ]( const std::vector<uint8_t>& blk, size_t from ) -> size_t {
+				auto it = std::search( p.code.begin() + std::ptrdiff_t( from ), p.code.end(), blk.begin(), blk.end() );
+				return it == p.code.end() ? SIZE_MAX : size_t( it - p.code.begin() );
+			};
+			const size_t lo = find( ld, 0 ), so = find( sv, size_t( p.epilogue_at - CODE ) );
+			if ( lo == SIZE_MAX || so == SIZE_MAX ) { err = "ext: YMMH block not found in the thunk"; return false; }
+			std::vector<uint8_t> ls = ext_ls_, ss = ext_ss_;
+			ls.resize( ls.size() + 5 ); put_jmp( ls.data() + ls.size() - 5, EXT_LOAD_STUB + ls.size() - 5, CODE + lo + ld.size() );
+			ss.resize( ss.size() + 5 ); put_jmp( ss.data() + ss.size() - 5, EXT_SAVE_STUB + ss.size() - 5, CODE + so + sv.size() );
+			if ( ls.size() > EXT_SAVE_STUB - EXT_LOAD_STUB || ss.size() > CODE + CODE_SIZE - EXT_SAVE_STUB || p.code.size() > EXT_LOAD_STUB - CODE )
+			{
+				err = "ext: stubs or thunk too large";
+				return false;
+			}
+			std::memcpy( code_ + ( EXT_LOAD_STUB - CODE ), ls.data(), ls.size() );
+			std::memcpy( code_ + ( EXT_SAVE_STUB - CODE ), ss.data(), ss.size() );
+			std::memset( code_ + lo, 0x90, ld.size() );
+			std::memset( code_ + so, 0x90, sv.size() );
+			put_jmp( code_ + lo, CODE + lo, EXT_LOAD_STUB );
+			put_jmp( code_ + so, CODE + so, EXT_SAVE_STUB );
+			return true;
+		}
 		struct globals { uint64_t lo, hi, resume, rip, info0, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active; };
 		static globals& g() { static globals x{}; return x; }
 		static LONG CALLBACK veh( EXCEPTION_POINTERS* ep )
@@ -377,6 +526,7 @@ namespace at
 		}
 		uint8_t* code_ = nullptr; uint8_t* data_ = nullptr; uint8_t* mem_ = nullptr;
 		PVOID veh_ = nullptr;
+		std::vector<uint8_t> ext_ld_, ext_sv_, ext_ls_, ext_ss_;   // U1040: cached blocks and stub bodies
 	};
 
 	// ── Unicorn ─────────────────────────────────────────────────────────────────────────────
