@@ -253,3 +253,19 @@ fld1; movq qword ptr [rsi+0x7ff8], mm0
 # MASKMOVQ (expected value: its WC store is not repeatable on the host, U702): no transition on #PF
 fld1; maskmovq mm0, mm1 | rdi=0x30030000 => #PF fsw=0x3800 st0=3FFF:8000000000000000 ftw=0x80
 fld1; maskmovq mm0, mm1 | rdi=0x30028000 => ftw=0xFF st7=3FFF:8000000000000000
+#
+# --- U874 CVTPD2PI / CVTTPD2PI mm, xmm/m128 (66 0F 2D / 2C): #GP(0) when the m128 source is not
+# 16-byte aligned (SDM Vol3B Table 25-4, legacy SIMD/MMX instructions with FP exception and 16-byte
+# alignment). Before U874 the MMX-state decode (class 0) checked no alignment. The fault comes before
+# the x87-to-MMX transition (FLD1 first). The PS forms read m64 (no alignment rule).
+cvtpd2pi mm0, xmmword ptr [rsi+8] | m+0x8000=000000000000F03F0000000000000040
+cvttpd2pi mm0, xmmword ptr [rsi+8] | m+0x8000=000000000000F03F0000000000000040
+cvtpd2pi mm0, xmmword ptr [rsi+4]
+cvttpd2pi mm0, xmmword ptr [rsi+1]
+fld1; cvtpd2pi mm0, xmmword ptr [rsi+8]
+fld1; cvttpd2pi mm0, xmmword ptr [rsi+0xc]
+cvtpd2pi mm0, xmmword ptr [rsi+0x10] | m+0x8010=000000000000F03F0000000000000040
+cvttpd2pi mm0, xmmword ptr [rsi] | m+0x8000=0000000000000CC00000000000001240
+cvtps2pi mm0, qword ptr [rsi+4] | m+0x8004=0000803F00000040
+cvttps2pi mm0, qword ptr [rsi+2]
+cvtpd2pi mm0, xmmword ptr [rsi+8] | cpl=3 rflags=0x40202

@@ -221,8 +221,24 @@ static void gen_load_sse(DisasContext *s, TCGv temp, MemOp ot, int dest_ofs, boo
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U874) */
+static void gen_CVTPx2PI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode);
+static void gen_CVTTPx2PI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode);
+#endif /* __Use_Original_Qemu (U874) */
+
 static bool sse_needs_alignment(DisasContext *s, X86DecodedInsn *decode, MemOp ot)
 {
+#if __Use_Original_Qemu != 1 /* ours (U874) */
+    /*
+     * NoVmp (ledger U874): CVTPD2PI / CVTTPD2PI mm, xmm/m128 (66 0F 2D / 2C): #GP(0) when the
+     * m128 source is not 16-byte aligned (SDM Vol3B Table 25-4, "Legacy SIMD/MMX Instructions
+     * with FP Exception and 16-Byte Alignment", listed for CVTPD2PI, CVTTPD2PI; i5-13600K:
+     * #GP). Their MMX-state decode has exception class 0, which never checked it.
+     */
+    if ((decode->e.gen == gen_CVTPx2PI || decode->e.gen == gen_CVTTPx2PI) && ot >= MO_128) {
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U874) */
     switch (decode->e.vex_class) {
     case 2:
     case 4:
