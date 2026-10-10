@@ -72,6 +72,7 @@ $Suites = @(
 	@( 'cases_sha_sm', 'cases_sha_sm', @(), 'arl', @() ),
 	@( 'cases_vnni_ifma', 'cases_vnni_ifma', @(), 'future', @() ),
 	@( 'cases_dp_nan_sdm', 'cases_dp_nan_sdm', @(), 'rpl', @() ),
+	@( 'cases_dp_nan_sdm_sse41', 'cases_dp_nan_sdm', @(), 'rpl', @( '-sse41', '1' ) ),   # DPPS/DPPD by SDE's own SSE4.1 emulation (the host has SSE4.1)
 	@( 'cases_evex_m2_gather', 'cases_evex_m2_gather', @( '--avx512' ), 'spr', @() ),
 	@( 'cases_evex_m2_engine', 'cases_evex_m2_engine', @( '--avx512' ), 'spr', @() ),
 	@( 'cases_evex_m2_perm', 'cases_evex_m2_perm', @( '--avx512' ), 'spr', @() ),
