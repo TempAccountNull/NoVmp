@@ -23814,6 +23814,53 @@ static void test_x86_sm_sysret_flags(void)
     }
 }
 
+/*
+ * U904: SYSEXIT. #GP(0) if IA32_SYSENTER_CS[15:2] = 0 (selectors 1-3 too); REX.W with a
+ * non-canonical RCX or RDX (4-level paging: 48 bits) #GP(0), nothing changes; a 32-bit operand
+ * size loads RSP := ECX, RIP := EDX (bits 63:32 ignored), compatibility mode CS 23h.
+ */
+static void test_x86_sm_sysexit(void)
+{
+    const struct {
+        uint64_t cs, rcx, rdx;
+        int rexw, gp;
+    } t[] = {
+        {0x0003, 0x2000, SM_HANDLER, 1, 1},
+        {0x0001, 0x2000, SM_HANDLER, 0, 1},
+        {0x0010, 0x0000800000000000ULL, SM_HANDLER, 1, 1},
+        {0x0010, 0x2000, 0xFFFF7FFFFFFFF000ULL, 1, 1},
+        {0x0010, 0xFFFF800000002000ULL, SM_HANDLER, 1, 0},
+        {0x0010, 0xAAAAAAAA00002000ULL, 0x5555555500000000ULL | SM_HANDLER, 0, 0},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        SmCtx c;
+
+        sm_open(&c, UC_MODE_64, -1);
+        OK(uc_mem_write(c.uc, code_start, t[i].rexw ? "\x48\x0f\x35" : "\x0f\x35\x90", 3));
+        OK(uc_mem_write(c.uc, SM_HANDLER, "\x90", 1));
+        sm_wrmsr(&c, 0x174, t[i].cs);
+        sm_set(&c, UC_X86_REG_RCX, t[i].rcx);
+        sm_set(&c, UC_X86_REG_RDX, t[i].rdx);
+        sm_set(&c, UC_X86_REG_RSP, 0x7000);
+        OK(uc_emu_start(c.uc, code_start, SM_HANDLER, 0, 0));
+        if (t[i].gp) {
+            TEST_CHECK(c.cap.count == 1 && c.cap.intno == 13 && sm_get(&c, UC_X86_REG_RSP) == 0x7000 &&
+                       sm_get(&c, UC_X86_REG_RIP) == code_start &&
+                       (sm_get(&c, UC_X86_REG_CS) & 3) == 0);
+        } else {
+            TEST_CHECK(c.cap.count == 0 && sm_get(&c, UC_X86_REG_RIP) == SM_HANDLER);
+            TEST_CHECK(sm_get(&c, UC_X86_REG_RSP) == (t[i].rexw ? t[i].rcx : (uint32_t)t[i].rcx));
+            TEST_CHECK((sm_get(&c, UC_X86_REG_CS) & 0xffff) == (t[i].rexw ? 0x33 : 0x23));
+        }
+        TEST_MSG("case %u: intr %u/%u rip %llx rsp %llx cs %llx", (unsigned)i, c.cap.count, c.cap.intno,
+                 (unsigned long long)sm_get(&c, UC_X86_REG_RIP),
+                 (unsigned long long)sm_get(&c, UC_X86_REG_RSP),
+                 (unsigned long long)sm_get(&c, UC_X86_REG_CS));
+        OK(uc_close(c.uc));
+    }
+}
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -24136,4 +24183,5 @@ TEST_LIST = {
     {"test_x86_sm_syscall_cet", test_x86_sm_syscall_cet},
     {"test_x86_sm_sysenter", test_x86_sm_sysenter},
     {"test_x86_sm_sysret_flags", test_x86_sm_sysret_flags},
+    {"test_x86_sm_sysexit", test_x86_sm_sysexit},
     {NULL, NULL}};

@@ -3804,14 +3804,36 @@ void helper_sysexit(CPUX86State *env, int dflag)
     int cpl;
 
     cpl = env->hflags & HF_CPL_MASK;
+#if __Use_Original_Qemu == 1 /* original QEMU (U904) */
     if (env->sysenter_cs == 0 || cpl != 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
     }
+#else /* ours (U904) */
+    /*
+     * NoVmp (ledger U904): SDM Vol2B SYSEXIT: "IF IA32_SYSENTER_CS[15:2] = 0 OR CR0.PE = 0 OR CPL != 0
+     * THEN #GP(0)" (upstream tests the whole MSR against 0: selectors 1-3 passed); 64-Bit Mode
+     * Exceptions: "#GP(0) If RCX or RDX contains a non-canonical address" - checked for the return to
+     * 64-bit mode (REX.W; with a 32-bit operand size ECX / EDX are loaded and always canonical),
+     * relative to the current paging mode as SYSRET's RCX check (U483), before anything changes.
+     */
+    if ((env->sysenter_cs & 0xfffc) == 0 || cpl != 0) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+    if (dflag == 2 && (!cet2_canonical(env, env->regs[R_ECX]) ||
+                       !cet2_canonical(env, env->regs[R_EDX]))) {
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U904) */
 #ifdef TARGET_X86_64
     if (dflag == 2) {
         cpu_x86_load_seg_cache(env, R_CS, ((env->sysenter_cs + 32) & 0xfffc) |
                                3, 0, 0xffffffff,
+#if __Use_Original_Qemu == 1 /* original QEMU (U904) */
                                DESC_G_MASK | DESC_B_MASK | DESC_P_MASK |
+#else /* ours (U904) */
+                               /* SDM: "CS.L := 1; CS.D := 0 (* Required if CS.L = 1 *)" */
+                               DESC_G_MASK | DESC_P_MASK |
+#endif /* __Use_Original_Qemu (U904) */
                                DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
                                DESC_CS_MASK | DESC_R_MASK | DESC_A_MASK |
                                DESC_L_MASK);
@@ -3834,8 +3856,19 @@ void helper_sysexit(CPUX86State *env, int dflag)
                                DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
                                DESC_W_MASK | DESC_A_MASK);
     }
+#if __Use_Original_Qemu == 1 /* original QEMU (U904) */
     env->regs[R_ESP] = env->regs[R_ECX];
     env->eip = env->regs[R_EDX];
+#else /* ours (U904) */
+    /* SDM: 64-bit operand size: RSP := RCX, RIP := RDX; else RSP := ECX, RIP := EDX (bits 63:32 0) */
+    if (dflag == 2) {
+        env->regs[R_ESP] = env->regs[R_ECX];
+        env->eip = env->regs[R_EDX];
+    } else {
+        env->regs[R_ESP] = (uint32_t)env->regs[R_ECX];
+        env->eip = (uint32_t)env->regs[R_EDX];
+    }
+#endif /* __Use_Original_Qemu (U904) */
 #if __Use_Original_Qemu != 1 /* ours (U753) */
     /* NoVmp (ledger U753): SDM Vol2B SYSEXIT: CPL := 3; IF ShadowStackEnabled(CPL) SSP := IA32_PL3_SSP */
     if (cet2_ss_en(env, 3, env->eflags & VM_MASK)) {

@@ -415,6 +415,7 @@ def cases_all():
     cases_syscall(a)
     cases_sysenter(a)
     cases_sysret(a)
+    cases_sysexit(a)
     return lines
 
 

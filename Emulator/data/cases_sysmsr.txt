@@ -59,3 +59,14 @@ mov ecx, 0xC0000081; mov eax, 0x0; mov edx, 0x230010; wrmsr; lea rcx, [rip + u];
 mov ecx, 0xC0000081; mov eax, 0x0; mov edx, 0x230010; wrmsr; lea rcx, [rip + u]; mov r11, 0x1A0ED7; .byte 0x48, 0x0f, 0x07; u: pushfq; pop r15; mov ebx, cs =>! rbx=0x33 r15=0x180ED7
 mov ecx, 0xC0000081; mov eax, 0x0; mov edx, 0x230010; wrmsr; lea rcx, [rip + u]; mov r11, 0xFFC08AD5; .byte 0x48, 0x0f, 0x07; u: pushfq; pop r15; mov ebx, cs =>! rbx=0x33 r15=0xAD7
 mov ecx, 0xC0000081; mov eax, 0x0; mov edx, 0x230010; wrmsr; lea rcx, [rip + u]; mov r11, 0x240246; .byte 0x48, 0x0f, 0x07; u: pushfq; pop r15; mov ebx, cs =>! rbx=0x33 r15=0x240246
+# --- SYSEXIT (U904): #GP(0) if IA32_SYSENTER_CS[15:2] = 0 (RPL-only selectors too); REX.W with RCX or RDX
+# not canonical (4-level paging: 48 bits) #GP(0); nothing changes
+mov ecx, 0x174; mov eax, 0x1; mov edx, 0x0; wrmsr; mov rcx, 0x1000; mov rdx, 0x2000; .byte 0x48, 0x0f, 0x35 =>! #GP(0) rcx=0x1000 rdx=0x2000
+mov ecx, 0x174; mov eax, 0x3; mov edx, 0x0; wrmsr; mov rcx, 0x1000; mov rdx, 0x2000; .byte 0x0f, 0x35 =>! #GP(0) rcx=0x1000 rdx=0x2000
+mov ecx, 0x174; mov eax, 0x10000; mov edx, 0x0; wrmsr; mov rcx, 0x1000; mov rdx, 0x2000; .byte 0x48, 0x0f, 0x35 =>! #GP(0) rcx=0x1000 rdx=0x2000
+mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov rcx, 0x800000000000; mov rdx, 0x2000; .byte 0x48, 0x0f, 0x35 =>! #GP(0) rcx=0x800000000000 rdx=0x2000
+mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov rcx, 0x1000; mov rdx, 0xFFFF7FFFFFFFF000; .byte 0x48, 0x0f, 0x35 =>! #GP(0) rcx=0x1000 rdx=0xFFFF7FFFFFFFF000
+# 32-bit operand size: RSP := ECX, RIP := EDX (bits 63:32 ignored) -> compatibility mode CS 23h at label u;
+# there PUSH CS (0Eh) writes the selector at ECX - 4 = MEM + 90FCh (only its 2 low bytes are checked: the SDM
+# allows a 16-bit store), then SYSENTER back to 64-bit mode CPL0 at k (IA32_SYSENTER_ESP = the old RSP)
+mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov rax, rsp; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr; lea rdx, [rip + u]; mov rax, 0x5555555500000000; or rdx, rax; mov rcx, 0xAAAAAAAA30029100; .byte 0x0f, 0x35; u: .byte 0x0e; sysenter; k: nop =>! m+0x90FC=2300
