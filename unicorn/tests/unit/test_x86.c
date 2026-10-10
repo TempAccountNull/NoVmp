@@ -22601,6 +22601,223 @@ static void test_x86_si_pbndkb(void)
 }
 /* ---- end U800-U829 (si_) ---- */
 
+/*
+ * ---- NoVmp U1020-U1039: TME / TME-MK MSRs, PCONFIG (pc_) ----
+ * Expected values from the Intel Architecture Memory Encryption Technologies Specification
+ * 336907-007 (rev. 1.7) 4.1-4.2 and SDM 325462-092 Vol1 Table 21-22 / Vol4 Table 2-2 / Vol2B
+ * PCONFIG; the expected-value cases cases_pconfig.txt come from the independent model
+ * Emulator\tools\isa\ref_pconfig.py.
+ */
+#define PC_DATA 0x200000
+#define PC_CAP 0x3f68000000full     /* model IA32_TME_CAPABILITY (algorithms 3:0, bypass, 6, 63) */
+
+typedef struct PcCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} PcCtx;
+
+static void pc_open_mode(PcCtx *c, uc_mode mode, int model)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, model));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, PC_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static void pc_open(PcCtx *c)
+{
+    pc_open_mode(c, UC_MODE_64, UC_CPU_X86_MAX);
+}
+
+/* run a snippet at a fresh address: the vector (6 = #UD) or -1; a #GP must have error code 0 */
+static int pc_run(PcCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_x86_exception e;
+    uc_err err;
+
+    c->pc += 0x80;
+    if (c->pc + 0x80 > code_start + code_len) {
+        c->pc = code_start;
+    }
+    TEST_CHECK(len <= 0x80);
+    c->cap.count = 0;
+    c->cap.intno = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    if (c->cap.count && c->cap.intno == 13) {
+        OK(uc_ctl_get_x86_exception(c->uc, &e));
+        TEST_CHECK(e.vector == 13 && e.has_error_code && e.error_code == 0);
+    }
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static uint64_t pc_get(PcCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void pc_set(PcCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* WRMSR / RDMSR executed by the CPU (CPL0): the vector or -1 */
+static int pc_wrmsr(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RCX, msr);
+    pc_set(c, UC_X86_REG_RAX, (uint32_t)v);
+    pc_set(c, UC_X86_REG_RDX, v >> 32);
+    return pc_run(c, "\x0f\x30", 2);
+}
+
+static uint64_t pc_rdmsr(PcCtx *c, uint32_t msr)
+{
+    pc_set(c, UC_X86_REG_RCX, msr);
+    TEST_CHECK(pc_run(c, "\x0f\x32", 2) == -1);
+    return (pc_get(c, UC_X86_REG_RAX) & 0xffffffffu) | (pc_get(c, UC_X86_REG_RDX) << 32);
+}
+
+static void pc_cpuid(PcCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    pc_set(c, UC_X86_REG_RAX, leaf);
+    pc_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(pc_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)pc_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)pc_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)pc_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)pc_get(c, UC_X86_REG_RDX);
+}
+
+/*
+ * U1020: CPUID.(07H,0):ECX.TME_EN[13] on the MAX model; IA32_TME_CAPABILITY (981H, R/O);
+ * IA32_TME_ACTIVATE (982H) per MKTME spec Table 4-3 (every #GP row, the x..x01b / x..x011b /
+ * x..x100b / not-committed outcomes, the lock); IA32_TME_EXCLUDE_MASK / _BASE (983H / 984H:
+ * reserved bits, contiguous mask, #GP once locked); IA32_MKTME_KEYID_PARTITIONING (87H, R/O);
+ * API writes that would #GP are dropped; a uc_context restore brings back the unlocked state;
+ * a model without TME_EN (Haswell) leaves the MSRs unknown (ignored, read 0).
+ */
+static void test_x86_pc_tme_msrs(void)
+{
+    static const uint64_t bad_act[] = {
+        1ull << 8, 1ull << 30, 1ull << 40, 1ull << 47, 1ull << 52, 1ull << 63, /* reserved */
+        0x10, 0x30, 0x40, 0xf0,                     /* policy: integrity (1, 3), not enumerated */
+        2 | (7ull << 32),                           /* MK_TME_KEYID_BITS > MK_TME_MAX_KEYID_BITS */
+        1ull << 32,                                 /* KeyID bits without Hardware Encryption Enable */
+        2 | (1ull << 32) | (2ull << 36),            /* TDX_RESERVED_KEYID_BITS > MK_TME_KEYID_BITS */
+    };
+    const uint64_t act = 2 | 0x20 | (6ull << 32) | (2ull << 36) | (5ull << 48);
+    uint64_t v;
+    uc_x86_msr m;
+    uc_context *ctx;
+    uint32_t r[4];
+    size_t i;
+    PcCtx c;
+
+    pc_open(&c);
+    pc_cpuid(&c, 7, 0, r);
+    TEST_CHECK(r[2] & (1u << 13));
+    TEST_CHECK(pc_rdmsr(&c, 0x981) == PC_CAP);
+    TEST_CHECK(pc_wrmsr(&c, 0x981, 0) == 13);                   /* read-only */
+    TEST_CHECK(pc_rdmsr(&c, 0x87) == 0);                        /* unlocked: 0 */
+    TEST_CHECK(pc_wrmsr(&c, 0x87, 0) == 13);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0 && pc_rdmsr(&c, 0x983) == 0 && pc_rdmsr(&c, 0x984) == 0);
+
+    /* IA32_TME_ACTIVATE #GP rows: nothing changes */
+    for (i = 0; i < sizeof(bad_act) / sizeof(bad_act[0]); i++) {
+        TEST_CHECK(pc_wrmsr(&c, 0x982, bad_act[i]) == 13);
+        TEST_MSG("IA32_TME_ACTIVATE %" PRIx64, bad_act[i]);
+        TEST_CHECK(pc_rdmsr(&c, 0x982) == 0);
+    }
+    /* key select = 1 (restore from storage): no saved key -> not enabled, not locked x..x100b */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0x26) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0x24);
+    /* ... with MK_TME_KEYID_BITS > 0: write not committed */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0x2e | (3ull << 32) | (1ull << 48)) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0x24);
+    TEST_CHECK(pc_rdmsr(&c, 0x87) == 0);
+
+    /* exclusion range (MAXPHYADDR 40 on the MAX model): reserved bits, contiguous mask */
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xff00000800ull | 1) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xff00000800ull | 0x400) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0x1ff00000800ull) == 13);        /* bit 40 */
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xff0f000800ull) == 13);         /* gap */
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0x7f00000800ull) == 13);         /* bit 39 clear */
+    TEST_CHECK(pc_rdmsr(&c, 0x983) == 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xfffff00800ull) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x983) == 0xfffff00800ull);
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0x800) == -1);                   /* TMEEMASK 0 */
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xfffff00800ull) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x984, 0x800) == 13);                   /* bit 11 reserved */
+    TEST_CHECK(pc_wrmsr(&c, 0x984, 0x10000000000ull) == 13);        /* bit 40 */
+    TEST_CHECK(pc_wrmsr(&c, 0x984, 0x7654321000ull) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x984) == 0x7654321000ull);
+
+    /* activation (AES-XTS-256 for TME, 6 KeyID bits, 2 of them TDX, MK algorithms 128 + 256) */
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == (act | 3));
+    TEST_CHECK(pc_rdmsr(&c, 0x87) == 15);                           /* 2^(6-2)-1, TDX 0 */
+    /* locked: IA32_TME_ACTIVATE and the exclusion MSRs #GP, even with the same value */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, act) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x983, 0xfffff00800ull) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x984, 0) == 13);
+    TEST_CHECK(pc_rdmsr(&c, 0x984) == 0x7654321000ull);
+    /* an API write is dropped */
+    m.rid = 0x982;
+    m.value = 0;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == (act | 3));
+    /* a context saved before the activation restores the unlocked MSR */
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0x24 && pc_rdmsr(&c, 0x87) == 0);
+    OK(uc_context_free(ctx));
+    /* enable = 0: locked with TME disabled (x..x01b), MK fields zero */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0x80000000ull | (1ull << 48)) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == (0x80000001ull | (1ull << 48)));
+    TEST_CHECK(pc_rdmsr(&c, 0x87) == 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == 13);
+    OK(uc_close(c.uc));
+
+    /* TME without TME-MK keys (k = 0), bypass (bit 31): locked x..x011b, no KeyIDs */
+    pc_open(&c);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 0x80000002ull) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0x80000003ull && pc_rdmsr(&c, 0x87) == 0);
+    OK(uc_close(c.uc));
+
+    /* k = 6, p = 0: 63 KeyIDs */
+    pc_open(&c);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 2 | (6ull << 32) | (1ull << 50)) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x87) == 63);
+    OK(uc_close(c.uc));
+
+    /* a model without TME_EN: unknown MSRs (WRMSR ignored, RDMSR 0) */
+    pc_open_mode(&c, UC_MODE_64, UC_CPU_X86_HASWELL);
+    pc_cpuid(&c, 7, 0, r);
+    TEST_CHECK(!(r[2] & (1u << 13)));
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 1ull << 63) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 2) == -1);
+    v = pc_rdmsr(&c, 0x982);
+    TEST_CHECK(v == 0 && pc_rdmsr(&c, 0x981) == 0);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1020-U1039 (pc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -22910,4 +23127,5 @@ TEST_LIST = {
     {"test_x86_si_lkgs", test_x86_si_lkgs},
     {"test_x86_si_invpcid", test_x86_si_invpcid},
     {"test_x86_si_pbndkb", test_x86_si_pbndkb},
+    {"test_x86_pc_tme_msrs", test_x86_pc_tme_msrs},
     {NULL, NULL}};

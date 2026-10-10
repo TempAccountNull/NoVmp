@@ -427,6 +427,143 @@ static bool novmp_canonical(CPUX86State *env, uint64_t addr)
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+/*
+ * NoVmp (ledger U1020): the TME / TME-MK MSRs, present with CPUID.(07H,0):ECX.TME_EN[13] (SDM
+ * Vol1 Table 21-22, Vol4 Table 2-2 981H-984H and 87H; Intel Architecture Memory Encryption
+ * Technologies Specification 336907-007 rev. 1.7, 4.1-4.2). Without TME_EN they stay unknown
+ * MSRs (ignored, read 0), like every MSR the model does not report.
+ *   IA32_TME_CAPABILITY (981H): NOVMP_TME_CAPABILITY, read-only (WRMSR #GP(0)).
+ *   IA32_TME_ACTIVATE (982H), Table 4-3: #GP(0) while locked (bit 0), for reserved bits 30:8,
+ *     47:40, 63:52 (and 31 without bypass support, 63:32 without TME-MK), for a policy (7:4)
+ *     whose IA32_TME_CAPABILITY bit is 0 or that selects an integrity algorithm (capability bits
+ *     1 and 3; rev. 1.6 / SDM Vol4: "not allowed to be used for TME ... will result in #GP"),
+ *     MK_TME_KEYID_BITS (35:32) > MK_TME_MAX_KEYID_BITS, MK_TME_KEYID_BITS > 0 with Hardware
+ *     Encryption Enable (bit 1) = 0, TDX_RESERVED_KEYID_BITS (39:36) > MK_TME_KEYID_BITS.
+ *     Otherwise: enable = 0 -> locked, TME disabled (RDMSR x..x01b); enable = 1, key select (bit
+ *     2) = 0 -> a new TME key, locked, enabled (x..x011b) - the key is internal to the hardware
+ *     (not software-visible, nothing is drawn from the RDRAND source), the RNG never fails here;
+ *     enable = 1, key select = 1 -> "restore the TME key from storage": the model has no
+ *     standby/resume storage (bit 3 "save key" is kept in the MSR and has no other effect), so
+ *     this is the "zero key restored" row: not enabled, not locked, x..x100b with
+ *     MK_TME_KEYID_BITS = 0, "write not committed" (MSR unchanged) with MK_TME_KEYID_BITS > 0.
+ *     The lock is cleared only by a CPU reset (reset area of CPUX86State).
+ *   IA32_TME_EXCLUDE_MASK / _BASE (983H / 984H): #GP(0) while IA32_TME_ACTIVATE is locked, for
+ *     reserved bits (MASK 10:0, BASE 11:0, both 63:MAXPHYADDR) and for a TMEEMASK that is not a
+ *     contiguous region (its set bits must run from MAXPHYADDR-1 down without a gap; 0 = whole
+ *     space). MAXPHYADDR = CPUID.80000008H:EAX[7:0] (cpu->phys_bits): writes are possible only
+ *     before activation, when no KeyID / TDX reduction applies yet.
+ *   IA32_MKTME_KEYID_PARTITIONING (87H, R/O, WRMSR #GP(0)): 0 while unlocked; locked: NUM_MKTME_
+ *     KEYIDS = 2^(k-p) - 1 (KeyIDs 1 .. 2^(k-p)-1: the TDX bits are taken from the most significant
+ *     KeyID bit downward), at most MK_TME_MAX_KEYS; NUM_TDX_PRIV_KEYIDS = 0 - the field is
+ *     "supported on all parts that enumerate support for SEAM mode" (SDM Vol4) and the model has
+ *     no SEAM.
+ * Not modelled: memory encryption itself (KeyID bits of physical addresses select nothing; every
+ * KeyID reads and writes the same plain-text memory), the MAXPHYADDR reduction by
+ * TDX_RESERVED_KEYID_BITS outside SEAM (SDM Vol4 2.1), the exclusion range's effect,
+ * MK_TME_CORE_ACTIVATE (9FFH, model-specific "BIOS only" MSR) and IA32_TME_CLEAR_SAVED_KEY
+ * (9FBH: capability bit 30 = 0).
+ */
+static bool tme_enumerated(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_TME) != 0;
+}
+
+/* bits MAXPHYADDR-1:12 */
+static uint64_t tme_pa_field(CPUX86State *env)
+{
+    int m = env_archcpu(env)->phys_bits;
+
+    return MAKE_64BIT_MASK(12, m - 12);
+}
+
+/* false = #GP(0) */
+static bool tme_activate_write(CPUX86State *env, uint64_t val)
+{
+    const uint64_t cap = NOVMP_TME_CAPABILITY;
+    unsigned maxk = (unsigned)(cap >> 32) & 0xf;
+    unsigned policy = (unsigned)(val >> 4) & 0xf;
+    unsigned k = (unsigned)(val >> 32) & 0xf, p = (unsigned)(val >> 36) & 0xf;
+    uint64_t rsvd = MAKE_64BIT_MASK(8, 23) | MAKE_64BIT_MASK(40, 8);
+
+    if (!(cap & (1ULL << 31))) {
+        rsvd |= 1ULL << 31;                 /* TME encryption bypass not supported */
+    }
+    rsvd |= maxk ? MAKE_64BIT_MASK(52, 12) : MAKE_64BIT_MASK(32, 32);
+    if ((env->tme_activate & 1) || (val & rsvd)) {
+        return false;
+    }
+    if (policy > 3 || !((cap >> policy) & 1) || policy == 1 || policy == 3) {
+        return false;
+    }
+    if (k > maxk || (k && !(val & 2)) || p > k) {
+        return false;
+    }
+    if (!(val & 2)) {
+        env->tme_activate = (val & ~3ULL) | 1;          /* TME disabled, locked: x..x01b */
+    } else if (!(val & 4)) {
+        env->tme_activate = val | 3;                    /* new TME key, locked: x..x011b */
+    } else if (k == 0) {
+        env->tme_activate = val & ~3ULL;                /* no saved key: x..x100b */
+    }                                                   /* else: write not committed */
+    return true;
+}
+
+/* false = #GP(0) */
+static bool tme_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    uint64_t field = tme_pa_field(env), f;
+
+    switch (msr) {
+    case MSR_IA32_TME_ACTIVATE:
+        return tme_activate_write(env, val);
+    case MSR_IA32_TME_EXCLUDE_MASK:
+        f = val & field;
+        if ((env->tme_activate & 1) || (val & ~(field | (1ULL << 11))) ||
+            (f && f != (field & ~((f & -f) - 1)))) {
+            return false;
+        }
+        env->tme_exclude_mask = val;
+        return true;
+    case MSR_IA32_TME_EXCLUDE_BASE:
+        if ((env->tme_activate & 1) || (val & ~field)) {
+            return false;
+        }
+        env->tme_exclude_base = val;
+        return true;
+    default:                                /* IA32_TME_CAPABILITY, PARTITIONING: R/O */
+        return false;
+    }
+}
+
+static uint64_t tme_rdmsr(CPUX86State *env, uint32_t msr)
+{
+    uint64_t act = env->tme_activate;
+    unsigned k = (unsigned)(act >> 32) & 0xf, p = (unsigned)(act >> 36) & 0xf;
+    uint64_t n;
+
+    if (!tme_enumerated(env)) {
+        return 0;
+    }
+    switch (msr) {
+    case MSR_IA32_TME_CAPABILITY:
+        return NOVMP_TME_CAPABILITY;
+    case MSR_IA32_TME_ACTIVATE:
+        return act;
+    case MSR_IA32_TME_EXCLUDE_MASK:
+        return env->tme_exclude_mask;
+    case MSR_IA32_TME_EXCLUDE_BASE:
+        return env->tme_exclude_base;
+    default:                                /* IA32_MKTME_KEYID_PARTITIONING */
+        if (!(act & 1) || k == 0) {
+            return 0;
+        }
+        n = (1ULL << (k - p)) - 1;
+        return MIN(n, (uint64_t)NOVMP_MKTME_MAX_KEYS);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1020) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
 static bool cet_canonical(CPUX86State *env, uint64_t v)
 {
@@ -828,6 +965,19 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U807) */
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+    case MSR_IA32_TME_CAPABILITY:
+    case MSR_IA32_TME_ACTIVATE:
+    case MSR_IA32_TME_EXCLUDE_MASK:
+    case MSR_IA32_TME_EXCLUDE_BASE:
+    case MSR_IA32_MKTME_KEYID_PARTITIONING:
+        /* NoVmp (ledger U1020): see tme_wrmsr; an API write that would #GP is dropped */
+        if (tme_enumerated(env) && !tme_wrmsr(env, (uint32_t)env->regs[R_ECX], val) &&
+            !env->msr_api) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1020) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* user-interrupt MSRs (SDM Vol3A 9.3.2), present with CPUID.(07H,0):EDX.UINTR */
     case MSR_IA32_UINTR_RR:
@@ -1231,6 +1381,15 @@ void helper_rdmsr(CPUX86State *env)
         val = 0;
         break;
 #endif /* __Use_Original_Qemu (U807) */
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+    case MSR_IA32_TME_CAPABILITY:
+    case MSR_IA32_TME_ACTIVATE:
+    case MSR_IA32_TME_EXCLUDE_MASK:
+    case MSR_IA32_TME_EXCLUDE_BASE:
+    case MSR_IA32_MKTME_KEYID_PARTITIONING:
+        val = tme_rdmsr(env, (uint32_t)env->regs[R_ECX]);   /* NoVmp (ledger U1020) */
+        break;
+#endif /* __Use_Original_Qemu (U1020) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     case MSR_IA32_UINTR_RR:
         val = env->uintr_rr;

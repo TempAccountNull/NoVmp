@@ -414,6 +414,25 @@ typedef enum X86Seg {
 #if __Use_Original_Qemu != 1 /* ours (U807) */
 #define MSR_IA32_TSE_CAPABILITY         0x9f1   /* SDM Vol4: R/O, with PBNDKB */
 #endif /* __Use_Original_Qemu (U807) */
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+/* TME / TME-MK MSRs (SDM Vol4 Table 2-2; MKTME spec 336907-007 4.1-4.2), with CPUID.(7,0):ECX.TME_EN */
+#define MSR_IA32_MKTME_KEYID_PARTITIONING 0x87  /* R/O: NUM_MKTME_KEYIDS 31:0, NUM_TDX_PRIV_KEYIDS 63:32 */
+#define MSR_IA32_TME_CAPABILITY         0x981   /* R/O */
+#define MSR_IA32_TME_ACTIVATE           0x982   /* lock 0, enable 1, key select 2, save 3, ... */
+#define MSR_IA32_TME_EXCLUDE_MASK       0x983
+#define MSR_IA32_TME_EXCLUDE_BASE       0x984
+/*
+ * The model's IA32_TME_CAPABILITY: AES-XTS-128 [0], AES-XTS-128 with integrity [1], AES-XTS-256
+ * [2], AES-XTS-256 with integrity [3], TME encryption bypass supported [31], MK_TME_MAX_KEYID_BITS
+ * 35:32 = 6, MK_TME_MAX_KEYS 50:36 = 63 (= 2^6 - 1, so every KeyID value the 6 bits can encode
+ * exists); bit 28 (non-zero KeyIDs SEAM-private) and bit 30 (IA32_TME_CLEAR_SAVED_KEY) clear.
+ */
+#define NOVMP_TME_MAX_KEYID_BITS        6
+#define NOVMP_MKTME_MAX_KEYS            63
+#define NOVMP_TME_CAPABILITY            (0xfULL | (1ULL << 31) | \
+                                         ((uint64_t)NOVMP_TME_MAX_KEYID_BITS << 32) | \
+                                         ((uint64_t)NOVMP_MKTME_MAX_KEYS << 36))
+#endif /* __Use_Original_Qemu (U1020) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -932,6 +951,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_ECX_AVX512VNNI        (1U << 11)
 /* Support for VPOPCNT[B,W] and VPSHUFBITQMB */
 #define CPUID_7_0_ECX_AVX512BITALG      (1U << 12)
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+/* TME_EN: IA32_TME_CAPABILITY, IA32_TME_ACTIVATE, IA32_TME_EXCLUDE_MASK/BASE (SDM Vol1 Table 21-22) */
+#define CPUID_7_0_ECX_TME               (1U << 13)
+#endif /* __Use_Original_Qemu (U1020) */
 /* POPCNT for vectors of DW/QW */
 #define CPUID_7_0_ECX_AVX512_VPOPCNTDQ  (1U << 14)
 /* 5-level Page Tables */
@@ -2077,6 +2100,15 @@ typedef struct CPUX86State {
     uint64_t pl_ssp[4];
     uint64_t int_ssp_table;
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U1020) */
+    /*
+     * NoVmp (ledger U1020): TME / TME-MK MSRs, reset 0 ("The lock is reset when CPU is reset",
+     * MKTME spec 336907-007 4.2.1); a uc_context carries them (reset area).
+     */
+    uint64_t tme_activate;          /* IA32_TME_ACTIVATE (982H) */
+    uint64_t tme_exclude_mask;      /* IA32_TME_EXCLUDE_MASK (983H) */
+    uint64_t tme_exclude_base;      /* IA32_TME_EXCLUDE_BASE (984H) */
+#endif /* __Use_Original_Qemu (U1020) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
