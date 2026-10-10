@@ -2519,6 +2519,10 @@ void x86_cpu_update_phys_bits(X86CPU *cpu);
 void x86_probe_store(CPUX86State *env, target_ulong a0, uint32_t len, const uint8_t *src,
                      uintptr_t ra);
 #endif /* __Use_Original_Qemu (U592) */
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+/* mem_helper.c: report a page Unicorn has not mapped / maps read-only for a store (no store) */
+void x86_store_probe(CPUX86State *env, target_ulong p, int mmu_idx, uintptr_t ra);
+#endif /* __Use_Original_Qemu (U876) */
 #if __Use_Original_Qemu != 1 /* ours (U701) */
 /* mem_helper.c: fault if [a0, a0 + len) cannot be written; nothing is written */
 void x86_probe_write(CPUX86State *env, target_ulong a0, uint32_t len, uintptr_t ra);

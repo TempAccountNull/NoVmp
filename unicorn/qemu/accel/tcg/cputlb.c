@@ -2388,6 +2388,9 @@ store_memop(void *haddr, uint64_t val, MemOp op)
  */
 static void store_helper_stop(struct uc_struct *uc, uintptr_t retaddr)
 {
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+    uc->store_probe = false;    /* a write probe that stops the instruction ends here (U876) */
+#endif /* __Use_Original_Qemu (U876) */
     if (uc->nested_level > 0 && !uc->cpu->stopped) {
         cpu_loop_exit_restore(uc->cpu, retaddr);
     }
@@ -2555,6 +2558,16 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+    /*
+     * NoVmp (ledger U876): a write probe (x86_store_probe): the UC_HOOK_MEM_WRITE_UNMAPPED /
+     * _PROT hooks above have run (a hook may have mapped the page or made it writable) and
+     * UC_HOOK_MEM_WRITE did not (size_recur_mem); nothing is stored.
+     */
+    if (unlikely(uc->store_probe)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U876) */
     if (uc->snapshot_level && mr->ram && mr->priority < uc->snapshot_level) {
         mr = memory_cow(uc, mr, paddr & TARGET_PAGE_MASK, TARGET_PAGE_SIZE);
         if (!mr) {

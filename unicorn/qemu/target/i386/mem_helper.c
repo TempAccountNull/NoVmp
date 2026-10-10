@@ -100,6 +100,34 @@ void helper_probe_vec_store(CPUX86State *env, target_ulong a0, void *src, uint32
 }
 #endif /* __Use_Original_Qemu (U592) */
 
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+/*
+ * NoVmp (ledger U876): report a page Unicorn has not mapped, or maps without UC_PROT_WRITE,
+ * for a store that is about to be made: UC_HOOK_MEM_WRITE_UNMAPPED / UC_HOOK_MEM_WRITE_PROT,
+ * the event the store itself raises, with no UC_HOOK_MEM_WRITE event and nothing stored (a
+ * one-byte store with uc->store_probe set: store_helper returns after those hooks). If a hook
+ * maps the page or makes it writable the instruction goes on; otherwise it stops here
+ * (UC_ERR_WRITE_UNMAPPED / UC_ERR_WRITE_PROT). p has already been translated for a store
+ * (probe_access: #PF first). The probes before (U480, U701, U193) read a byte of an unmapped
+ * page (UC_HOOK_MEM_READ_UNMAPPED, UC_ERR_READ_UNMAPPED) or stored the byte that was there.
+ */
+void x86_store_probe(CPUX86State *env, target_ulong p, int mmu_idx, uintptr_t ra)
+{
+    struct uc_struct *uc = env->uc;
+    int old_size = uc->size_recur_mem;
+    bool old_probe = uc->store_probe;
+
+    uc->size_recur_mem = 1;         /* no UC_HOOK_MEM_WRITE for the probe */
+    uc->store_probe = true;
+    cpu_stb_mmuidx_ra(env, p, 0, mmu_idx, ra);
+    uc->store_probe = old_probe;
+    uc->size_recur_mem = old_size;
+    if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
+        cpu_loop_exit_restore(uc->cpu, ra);
+    }
+}
+#endif /* __Use_Original_Qemu (U876) */
+
 #if __Use_Original_Qemu != 1 /* ours (U701) */
 static void x86_probe_write_part(CPUX86State *env, target_ulong a0, uint32_t len, int mmu_idx,
                                  uintptr_t ra)
@@ -127,32 +155,13 @@ static void x86_probe_write_part(CPUX86State *env, target_ulong a0, uint32_t len
             continue;
         }
         mr = uc->memory_mapping(uc, paddr);
-        if (mr == NULL) {
-            /* UC_HOOK_MEM_READ_UNMAPPED; no hook: the instruction stops in load_helper */
-            (void)cpu_ldub_mmuidx_ra(env, p, mmu_idx, ra);
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
-            }
-            if (!tlb_vaddr_to_paddr(env, p, MMU_DATA_STORE, mmu_idx, &paddr)) {
-                continue;
-            }
-            mr = uc->memory_mapping(uc, paddr);     /* a hook mapped it */
-            if (mr == NULL) {
-                continue;
-            }
-        }
-        if (!(mr->perms & UC_PROT_WRITE)) {
-            /* store the byte that is there (read without hooks): UC_HOOK_MEM_WRITE_PROT */
-            int old_size = uc->size_recur_mem;
-            uint8_t b = 0;
-
-            uc->read_mem(&uc->address_space_memory, paddr, &b, 1);
-            uc->size_recur_mem = (int)len;      /* no UC_HOOK_MEM_WRITE for the probe */
-            cpu_stb_mmuidx_ra(env, p, b, mmu_idx, ra);
-            uc->size_recur_mem = old_size;
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
-            }
+        /*
+         * U876: not mapped / not writable: UC_HOOK_MEM_WRITE_UNMAPPED / _PROT through a write
+         * probe (before: a one-byte read, UC_HOOK_MEM_READ_UNMAPPED, or a store of the byte
+         * that was there)
+         */
+        if (mr == NULL || !(mr->perms & UC_PROT_WRITE)) {
+            x86_store_probe(env, p, mmu_idx, ra);
         }
     }
 }

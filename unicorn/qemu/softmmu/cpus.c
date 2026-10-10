@@ -94,6 +94,9 @@ static int tcg_cpu_exec(struct uc_struct *uc)
         if (cpu_can_run(cpu)) {
             uc->quit_request = false;
             uc->size_recur_mem = 0;
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+            uc->store_probe = false;
+#endif /* __Use_Original_Qemu (U876) */
             r = cpu_exec(uc, cpu);
 
             // quit current TB but continue emulating?

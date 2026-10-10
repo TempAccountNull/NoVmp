@@ -117,8 +117,8 @@ static inline void fpop(CPUX86State *env)
  * and a store or load then goes on (the exit is only requested), so an instruction would
  * store or load part of its operand. Before anything is stored or loaded, a page Unicorn has
  * not mapped is reported through a one-byte read of it (UC_HOOK_MEM_READ_UNMAPPED; #PF in
- * emu-alltest, where the i5-13600K stores / loads nothing), as helper_evex_mstore does (U210);
- * if no hook maps it, the instruction stops there.
+ * emu-alltest, where the i5-13600K stores / loads nothing) before a load, through a write
+ * probe before a store (U876); if no hook maps it, the instruction stops there.
  */
 static void x86_access_unicorn_mapped(CPUX86State *env, target_ulong ptr, MMUAccessType type,
                                       int mmu_idx, uintptr_t ra)
@@ -131,27 +131,21 @@ static void x86_access_unicorn_mapped(CPUX86State *env, target_ulong ptr, MMUAcc
         return;
     }
     mr = uc->memory_mapping(uc, paddr);
-    if (mr != NULL) {
-        /*
-         * U778: a page Unicorn maps read-only is reported before a store too, through a
-         * store of the byte that is there (UC_HOOK_MEM_WRITE_PROT, as x86_probe_write does,
-         * U701): FXSAVE / XSAVE* / FNSAVE / FNSTENV / FSTP m80 / FBSTP stored their parts
-         * on the writable page first. If no hook makes it writable, the store stops the
-         * instruction (U777) with nothing stored.
-         */
-        if (type == MMU_DATA_STORE && !(mr->perms & UC_PROT_WRITE)) {
-            int old_size = uc->size_recur_mem;
-            uint8_t b = 0;
-
-            uc->read_mem(&uc->address_space_memory, paddr, &b, 1);
-            uc->size_recur_mem = 1;         /* no UC_HOOK_MEM_WRITE for the probe */
-            cpu_stb_mmuidx_ra(env, ptr, b, mmu_idx, ra);
-            uc->size_recur_mem = old_size;
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 &&
-                !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
-            }
+    /*
+     * U778/U876: before a store, a page that is not mapped or that Unicorn maps read-only is
+     * reported as the store reports it (UC_HOOK_MEM_WRITE_UNMAPPED / _PROT through
+     * x86_store_probe), nothing stored: FXSAVE / XSAVE* / FNSAVE / FNSTENV / FSTP m80 / FBSTP
+     * stored their parts on the writable page first. If no hook makes it writable the
+     * instruction stops (U777) with nothing stored. (U480 read a byte of an unmapped page,
+     * UC_HOOK_MEM_READ_UNMAPPED, before stores too; U778 stored the byte of a read-only one.)
+     */
+    if (type == MMU_DATA_STORE) {
+        if (mr == NULL || !(mr->perms & UC_PROT_WRITE)) {
+            x86_store_probe(env, ptr, mmu_idx, ra);
         }
+        return;
+    }
+    if (mr != NULL) {
         return;
     }
     (void)cpu_ldub_data_ra(env, ptr, ra);
@@ -7755,17 +7749,6 @@ static void evex_probe_write(CPUX86State *env, target_ulong addr, int size, uint
     }
 }
 
-/* Unicorn: is the guest-physical page behind a (probed) virtual address mapped? */
-static bool evex_mapped(CPUX86State *env, target_ulong addr)
-{
-    target_ulong paddr;
-
-    if (!tlb_vaddr_to_paddr(env, addr, MMU_DATA_STORE, cpu_mmu_index(env, false), &paddr)) {
-        return true;                    /* page fault: raised by the real access */
-    }
-    return env->uc->memory_mapping(env->uc, paddr) != NULL;
-}
-
 /*
  * U779: ... and writable: an element on a page Unicorn maps read-only is stored first too
  * (UC_HOOK_MEM_WRITE_PROT; unhandled, the instruction stops with nothing stored, U777).
@@ -7805,9 +7788,10 @@ static void evex_store_elem(CPUX86State *env, ZMMReg *s, int esz, int i, target_
 
 /*
  * Masked store: only the elements whose mask bit is set are written. Every one of them is
- * probed first (#PF), and an element on memory Unicorn has not mapped is stored first:
- * if no UC_HOOK_MEM_WRITE_UNMAPPED hook maps it, the instruction stops there and memory is
- * unchanged (a plain Unicorn store would only request the exit and go on writing).
+ * probed first (#PF), and an element on memory Unicorn has not mapped (or maps read-only) is
+ * reported first through a write probe (x86_store_probe, U876; before: stored in full): if no
+ * UC_HOOK_MEM_WRITE_UNMAPPED / _PROT hook makes it writable, the instruction stops there and
+ * memory is unchanged (a plain Unicorn store would only request the exit and go on writing).
  */
 void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t mask,
                         uint32_t desc)
@@ -7815,7 +7799,6 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
     uintptr_t ra = GETPC();
     int esz = EVEX_DESC_ESZ(desc), n = EVEX_DESC_N(desc), i;
     int bytes = 1 << esz;
-    struct uc_struct *uc = env->uc;
 
 #if __Use_Original_Qemu != 1 /* ours (U834) */
     /* a masked 2/4/8-byte operand with an active element: #AC first (as helper_evex_mload) */
@@ -7839,11 +7822,15 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
         target_ulong last = a0 + n * bytes - 1;
 
         evex_probe_write(env, a0, n * bytes, ra);
-        if (!evex_mapped(env, a0) || !evex_mapped(env, last)) {
-            (void)cpu_ldub_data_ra(env, evex_mapped(env, a0) ? last : a0, ra);
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
-            }
+        /*
+         * U876: reported as the store reports them (UC_HOOK_MEM_WRITE_UNMAPPED / _PROT through
+         * x86_store_probe, nothing stored); before, through a one-byte read (READ_UNMAPPED)
+         */
+        if (!evex_writable(env, a0)) {
+            x86_store_probe(env, a0, cpu_mmu_index(env, false), ra);
+        }
+        if (!evex_writable(env, last)) {
+            x86_store_probe(env, last, cpu_mmu_index(env, false), ra);
         }
     }
 #endif /* __Use_Original_Qemu (U193) */
@@ -7855,11 +7842,18 @@ void helper_evex_mstore(CPUX86State *env, ZMMReg *s, target_ulong a0, uint64_t m
     for (i = 0; i < n; i++) {
         target_ulong addr = a0 + i * bytes;
 
-        if ((mask & (1ull << i)) &&
-            (!evex_writable(env, addr) || !evex_writable(env, addr + bytes - 1))) {
-            evex_store_elem(env, s, esz, i, addr, ra);
-            if (uc->invalid_error != UC_ERR_OK && uc->nested_level > 0 && !uc->cpu->stopped) {
-                cpu_loop_exit_restore(uc->cpu, ra);
+        /*
+         * NoVmp (ledger U876): an active element on a page that is not mapped / not writable is
+         * reported through a write probe (x86_store_probe), not stored: the store below then
+         * raises the one UC_HOOK_MEM_WRITE event of the element (before, this pass stored it
+         * in full, so the write hook saw it twice).
+         */
+        if (mask & (1ull << i)) {
+            if (!evex_writable(env, addr)) {
+                x86_store_probe(env, addr, cpu_mmu_index(env, false), ra);
+            }
+            if (!evex_writable(env, addr + bytes - 1)) {
+                x86_store_probe(env, addr + bytes - 1, cpu_mmu_index(env, false), ra);
             }
         }
     }

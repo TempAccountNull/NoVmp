@@ -1111,6 +1111,9 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
     uc->invalid_error = UC_ERR_OK;
     uc->emulation_done = false;
     uc->size_recur_mem = 0;
+#if __Use_Original_Qemu != 1 /* ours (U876) */
+    uc->store_probe = false;
+#endif /* __Use_Original_Qemu (U876) */
     uc->timed_out = false;
     uc->first_tb = true;
 

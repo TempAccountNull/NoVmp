@@ -8103,7 +8103,8 @@ static void test_x86_cet2_far_call_ret(void)
     TEST_CHECK(nv_ld64(&r, 0x2017f8) == 0x1111111111111111ull &&
                nv_ld64(&r, 0x2017f0) == 0x2222222222222222ull);
     nv_set(&r, UC_X86_REG_SSP, 0x500000);
-    uc_assert_err(UC_ERR_READ_UNMAPPED, cet2_call(&r, 8, CET2_C_OK));
+    /* U876: the shadow-stack write probe reports the unmapped page as a write */
+    uc_assert_err(UC_ERR_WRITE_UNMAPPED, cet2_call(&r, 8, CET2_C_OK));
     TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800 && nv_get(&r, UC_X86_REG_SSP) == 0x500000);
     TEST_CHECK(nv_ld64(&r, 0x2017f8) == 0x1111111111111111ull &&
                nv_ld64(&r, 0x2017f0) == 0x2222222222222222ull);
@@ -23114,6 +23115,188 @@ static void test_x86_pc_pconfig(void)
     OK(uc_close(c.uc));
 }
 /* ---- end U1020-U1039 (pc_) ---- */
+/* ---- NoVmp fix5 tests (U876-U878), helpers fx5_ ---- */
+#define FX5_CODE 0x10000ULL
+#define FX5_DATA 0x20000ULL      /* one page; FX5_DATA + 0x1000 is not mapped */
+
+typedef struct Fx5Log {
+    int n, writes, mapped, intr, intno;
+    int type[16];
+    uint64_t addr[16];
+    uint64_t waddr[16];
+    int wsize[16];
+} Fx5Log;
+
+static bool fx5_unmapped_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                            int64_t value, void *user)
+{
+    Fx5Log *l = (Fx5Log *)user;
+
+    if (l->n < 16) {
+        l->type[l->n] = (int)type;
+        l->addr[l->n] = addr;
+    }
+    l->n++;
+    return false;
+}
+
+static bool fx5_map_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                       int64_t value, void *user)
+{
+    Fx5Log *l = (Fx5Log *)user;
+
+    if (l->n < 16) {
+        l->type[l->n] = (int)type;
+        l->addr[l->n] = addr;
+    }
+    l->n++;
+    l->mapped++;
+    return uc_mem_map(uc, addr & ~0xfffULL, 0x1000, UC_PROT_ALL) == UC_ERR_OK;
+}
+
+static void fx5_write_cb(uc_engine *uc, uc_mem_type type, uint64_t addr, int size,
+                         int64_t value, void *user)
+{
+    Fx5Log *l = (Fx5Log *)user;
+
+    if (l->writes < 16) {
+        l->waddr[l->writes] = addr;
+        l->wsize[l->writes] = size;
+    }
+    l->writes++;
+}
+
+static void fx5_intr_cb(uc_engine *uc, uint32_t intno, void *user)
+{
+    Fx5Log *l = (Fx5Log *)user;
+
+    l->intr++;
+    l->intno = (int)intno;
+    uc_emu_stop(uc);
+}
+
+static uc_engine *fx5_open(uc_mode mode, int avx512)
+{
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, mode, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW |
+                                         UC_X86_AVX512_VL));
+    }
+    OK(uc_mem_map(uc, FX5_CODE, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_map(uc, FX5_DATA, 0x1000, UC_PROT_ALL));
+    return uc;
+}
+
+static uc_err fx5_run(uc_engine *uc, const char *code, size_t len)
+{
+    OK(uc_mem_write(uc, FX5_CODE, code, len));
+    return uc_emu_start(uc, FX5_CODE, FX5_CODE + len, 0, 0);
+}
+
+static void fx5_set(uc_engine *uc, int reg, uint64_t v)
+{
+    OK(uc_reg_write(uc, reg, &v));
+}
+
+static uint64_t fx5_get(uc_engine *uc, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(uc, reg, &v));
+    return v;
+}
+
+/*
+ * U876: a store that is checked before it is made (MMX store, U873 helper_probe_write; ENTER's
+ * frame, U701; FXSAVE, U480 x86_access_prepare; the E*NF pre-pass of an EVEX masked store,
+ * U193) reports memory Unicorn has not mapped as UC_MEM_WRITE_UNMAPPED / UC_ERR_WRITE_UNMAPPED,
+ * as the store itself would; before, the probe read a byte (UC_MEM_READ_UNMAPPED).
+ */
+static void test_x86_fx5_probe_write_unmapped(void)
+{
+    static const struct {
+        const char *name, *code;
+        size_t len;
+        int reg;
+        uint64_t val;
+        uint64_t k1;
+    } cs[] = {
+        {"movq [rax], mm0", "\x0f\x7f\x00", 3, UC_X86_REG_RAX, FX5_DATA + 0x1000, 0},
+        {"movd [rax], mm0", "\x0f\x7e\x00", 3, UC_X86_REG_RAX, FX5_DATA + 0xffe, 0},
+        {"enter 0x10, 0", "\xc8\x10\x00\x00", 4, UC_X86_REG_RSP, FX5_DATA + 0x1100, 0},
+        {"fxsave [rax]", "\x0f\xae\x00", 3, UC_X86_REG_RAX, FX5_DATA + 0xf00, 0},
+        /* VEXTRACTF32X4 [rax]{k1}, zmm0, 0: element 0 active (mapped), 2-3 masked off (not mapped) */
+        {"vextractf32x4 [rax]{k1}", "\x62\xf3\x7d\x49\x19\x00\x00", 7, UC_X86_REG_RAX,
+         FX5_DATA + 0xff8, 1},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cs) / sizeof(cs[0]); i++) {
+        uc_engine *uc = fx5_open(UC_MODE_64, cs[i].k1 != 0);
+        uc_hook h;
+        Fx5Log log;
+        uc_err err;
+        uint8_t m[8];
+
+        memset(&log, 0, sizeof(log));
+        memset(m, 0x5a, sizeof(m));
+        OK(uc_mem_write(uc, FX5_DATA + 0xff8, m, sizeof(m)));
+        OK(uc_hook_add(uc, &h, UC_HOOK_MEM_UNMAPPED, fx5_unmapped_cb, &log, 1, 0));
+        fx5_set(uc, cs[i].reg, cs[i].val);
+        if (cs[i].k1) {
+            fx5_set(uc, UC_X86_REG_K1, cs[i].k1);
+        }
+        err = fx5_run(uc, cs[i].code, cs[i].len);
+        TEST_CHECK(err == UC_ERR_WRITE_UNMAPPED);
+        TEST_CHECK(log.n == 1 && log.type[0] == UC_MEM_WRITE_UNMAPPED);
+        TEST_MSG("%s: err %d (%s), events %d, first type %d", cs[i].name, (int)err, uc_strerror(err),
+                 log.n, log.n ? log.type[0] : -1);
+        /* nothing stored on the mapped page */
+        OK(uc_mem_read(uc, FX5_DATA + 0xff8, m, sizeof(m)));
+        TEST_CHECK(m[0] == 0x5a && m[7] == 0x5a);
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * U876: an EVEX masked store (helper_evex_mstore) whose active element is on memory a
+ * UC_HOOK_MEM_WRITE_UNMAPPED hook maps: the pre-pass reports it without storing it, so the
+ * UC_HOOK_MEM_WRITE hook sees each active element once (before: the element on the new page
+ * twice, once from the pre-pass store and once from the store itself).
+ */
+static void test_x86_fx5_mstore_write_once(void)
+{
+    /* VMOVDQU32 [rax]{k1}, zmm0: dword elements 0-3 at FX5_DATA + 0xff0, 4-15 on the next page */
+    static const char code[] = "\x62\xf1\x7e\x49\x7f\x00";
+    uc_engine *uc = fx5_open(UC_MODE_64, 1);
+    uint32_t z[16], v = 0;
+    uc_hook h1, h2;
+    Fx5Log log;
+    int j;
+
+    for (j = 0; j < 16; j++) {
+        z[j] = 0xC0DE0000u + (uint32_t)j;
+    }
+    OK(uc_reg_write(uc, UC_X86_REG_ZMM0, z));
+    fx5_set(uc, UC_X86_REG_K1, 0x0011);            /* elements 0 and 4 */
+    fx5_set(uc, UC_X86_REG_RAX, FX5_DATA + 0xff0);
+    memset(&log, 0, sizeof(log));
+    OK(uc_hook_add(uc, &h1, UC_HOOK_MEM_WRITE_UNMAPPED, fx5_map_cb, &log, 1, 0));
+    OK(uc_hook_add(uc, &h2, UC_HOOK_MEM_WRITE, fx5_write_cb, &log, FX5_DATA, FX5_DATA + 0x1fff));
+    OK(fx5_run(uc, code, sizeof(code) - 1));
+    TEST_CHECK(log.mapped == 1);
+    TEST_CHECK(log.writes == 2);
+    TEST_MSG("write events %d, mapped %d", log.writes, log.mapped);
+    TEST_CHECK(log.waddr[0] == FX5_DATA + 0xff0 && log.wsize[0] == 4);
+    TEST_CHECK(log.writes < 2 || (log.waddr[1] == FX5_DATA + 0x1000 && log.wsize[1] == 4));
+    OK(uc_mem_read(uc, FX5_DATA + 0x1000, &v, 4));
+    TEST_CHECK(v == 0xC0DE0004u);
+    OK(uc_close(uc));
+}
+/* ---- end of NoVmp fix5 tests ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -23426,4 +23609,6 @@ TEST_LIST = {
     {"test_x86_si_pbndkb", test_x86_si_pbndkb},
     {"test_x86_pc_tme_msrs", test_x86_pc_tme_msrs},
     {"test_x86_pc_pconfig", test_x86_pc_pconfig},
+    {"test_x86_fx5_probe_write_unmapped", test_x86_fx5_probe_write_unmapped},
+    {"test_x86_fx5_mstore_write_once", test_x86_fx5_mstore_write_once},
     {NULL, NULL}};
