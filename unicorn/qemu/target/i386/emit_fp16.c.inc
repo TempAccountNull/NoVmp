@@ -134,13 +134,14 @@ static void gen_FP16_FMA(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
  * denormal operand, the correct normal result is returned. MXCSR.DAZ is ignored and is treated
  * as if it 0. No denormal exception is reported on MXCSR."; its exception list "EVEX-encoded
  * instructions: Invalid." - VCVTPH2PSX without {1toN} reports no DE (Intel SDE 10.13.1 agrees).
- * The broadcast form keeps DE here ("EVEX-encoded instructions with broadcast (VCVTPH2PSX):
- * Invalid, Denormal"). VCVTSH2SS (scalar, its own page: "Invalid, Denormal") keeps DE.
+ * U1073 (SDE-resolved ambiguity AMB-8, docs/quirks.md): the {1toN} form neither - its exception
+ * line "EVEX-encoded instructions with broadcast (VCVTPH2PSX): Invalid, Denormal" conflicts with
+ * the Description and the SDM does not resolve it; Intel SDE 10.13.1 (-spr) reports no DE.
+ * VCVTSH2SS (scalar, its own page: "Invalid, Denormal") keeps DE.
  */
 static void gen_FP16_CVTPH2PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
-    bool bcst = s->evex_b && (s->modrm >> 6) != 3;     /* {1toN}: EVEX.b with a memory source */
-    uint32_t extra = (!(decode->e.evex_vl & X86_EVEX_LIG) && !bcst) ? FP16_D_NODE : 0;
+    uint32_t extra = !(decode->e.evex_vl & X86_EVEX_LIG) ? FP16_D_NODE : 0;
 
     gen_fp16_call(s, decode, FP16_OP_CVT, FP16_CVT(FP16_T_F16, FP16_T_F32), extra);
 }

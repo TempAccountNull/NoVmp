@@ -64,7 +64,9 @@ Rules chosen where the SDM is silent or contradicts itself (page references are 
      MXCSR" and the exception list "EVEX-encoded instructions: Invalid." -> no DE without
      broadcast (U1070; Intel SDE 10.13.1 agrees: the earlier model reported DE, an emulator bug
      found by the U1040 cross-check). With {1toN} the list says "EVEX-encoded instructions with
-     broadcast (VCVTPH2PSX): Invalid, Denormal" -> DE is reported for a broadcast FP16 denormal.
+     broadcast (VCVTPH2PSX): Invalid, Denormal", which conflicts with the Description; the SDM
+     does not resolve it -> no DE either (U1073, SDE-resolved ambiguity AMB-8: Intel SDE 10.13.1
+     reports none; docs/quirks.md).
      F16C VCVTPH2PS (hardware cross-check) reports no DE.
   2. VF[C]MADDCPH / VF[C]MULCPH / ...CSH (5-180..5-190): the opcode table descriptions call
      the F3 (non-C) forms "complex conjugate" but the Operation pseudocode makes the F2 'C'
@@ -286,7 +288,6 @@ class Env:
         self.um = not self.sae and not masked_all and not (mxcsr & UM_BIT)
         self.om = not self.sae and not masked_all and not (mxcsr & 0x400)
         self.daz = bool(mxcsr & DAZ)
-        self.bcst = False         # U1070: {1toN} memory broadcast (VCVTPH2PSX reports DE only then)
 
 
 # ---------------------------------------------------------------------------------------
@@ -959,7 +960,7 @@ form("VFMULCSH", M6, PF3, 0xD7, 0, "rvm", _cplx(0, 0), sdom="c", adom="c", ddom=
      rcsae="er", exc="IUOPD", cplx=True, rounds=True)
 
 # conversions FP <-> FP
-form("VCVTPH2PSX", M6, P66, 0x13, 0, "rm", lambda env, j, d, a, b, imm: cvt_widen(b, F32, env.bcst), sdom="h",
+form("VCVTPH2PSX", M6, P66, 0x13, 0, "rm", lambda env, j, d, a, b, imm: cvt_widen(b, F32, False), sdom="h",
      ddom="s", rcsae="sae", exc="ID")
 form("VCVTSH2SS", M6, NP, 0x13, 0, "rvm", lambda env, j, d, a, b, imm: cvt_widen(b, F32, True), scalar=True,
      sdom="h", adom="s", ddom="s", rcsae="sae", exc="ID")
@@ -1118,7 +1119,6 @@ def vcase(sp, vl, title, d=1, a=2, b=3, kreg=0, kval=None, z=0, mem=None, bcst=0
     if mxcsr != MXCSR_DEFAULT:
         c.mxcsr = mxcsr
     env = Env(mxcsr, rc=rc, sae=sae, masked_all=sp.cplx)
-    env.bcst = bool(bcst)
     kmask = kval if kreg else None
     res, flags = [], 0
     for j in range(KL):
