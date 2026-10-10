@@ -11,6 +11,11 @@
 #         cpl0 = CPL0 instruction, the CPL3 fault differs until Phase 3 (D6) (⏳)
 #         oos  = out of scope: not an Intel instruction on this target (⬜)
 #         open = implemented, open item named in the note, e.g. a stand-in where the SDM gives only a bound (⏳)
+#         spec = implemented, the i5-13600K lacks it: specification-validated against an independent model of the non-SDM
+#                Intel document the note names (e.g. ACE 1.15) (✅, always applies; U1094)
+#         absent = the i5-13600K lacks the feature; CPU and emulator both execute the absent-feature behaviour (NOP / hint),
+#                  the only hardware evidence (✅, always applies; U1094)
+#         absent_open = as absent, the feature-enabled semantics have an open item (⏳, always applies; U1094)
 # mnemonic\tencoding\tstatus\tnote
 pavgusb	legacy	oos	AMD 3DNow!
 pf2id	legacy	oos	AMD 3DNow!
@@ -38,6 +43,13 @@ pmulhrw	legacy	oos	AMD 3DNow!
 pswapd	legacy	oos	AMD 3DNow!
 addr32	legacy	ok	67 prefix (LEA eax, [esi])
 bnd	legacy	ok	F2 on branches: plain branch without MPX
+bndcl	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndcn	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndcu	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndldx	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndmk	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndmov	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
+bndstx	legacy	absent_open	U1094 MPX absent (CPUID.7H:EBX[14] = 0 on the i5-13600K and in the emulator under its profile; SDM Vol1 13.3: without MPX enabled the encodings "operate as NOP"): the sweep match is NOP vs NOP and validates only that path; the MPX-enabled semantics (U91 LOCK #UD, U92 ModRM, U782/U783 BNDCFGU/BNDCFGS) have unit tests only, SDM-vector cases pending (refs review 2026-10-09)
 data16	legacy	ok	66 prefix
 fclex	legacy	ok	9B DB E2 (FWAIT + FNCLEX; pending #MF with CR0.NE)
 finit	legacy	ok	9B DB E3 (FWAIT + FNINIT)
@@ -51,7 +63,7 @@ repne	legacy	ok	F2 prefix (CMPS/SCAS)
 repnz	legacy	ok	F2 prefix (CMPS/SCAS)
 repz	legacy	ok	F3 prefix (CMPS/SCAS)
 rex64	legacy	ok	REX.W prefix
-bsrinit	vex	oos	not in the Intel SDM (XED ACE_1 extension)
+bsrinit	vex	ud	U1094 ACE 1.15 tile instruction (CPUID.(07H,1):ECX[11] ACE, chapters 10-14; XED ISA set ACE_1): not implemented - needs palette 2, the block scale register (XSAVE component 20) and the TOP*/BSR* operations (LEFT TO IMPLEMENT); #UD on the i5-13600K and in the emulator
 vgatherdpd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
 vgatherdps	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
 vgatherqpd	vex	ok	VEX 128/256, D/Q index x D/Q data, full and partial masks, mid-gather #PF, index/mask = dest #UD
@@ -159,10 +171,11 @@ aand	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.
 aor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 axor	legacy	sdm	U101 RAO-INT: SDM/spec-pseudocode reference (ref_keylocker_misc.py) + unit tests + cases_keylocker.txt "=>"; strict i5-13600K profile #UD == CPU
 rdpru	legacy	oos	AMD RDPRU
-xabort	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
-xbegin	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
-xend	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
-xtest	legacy	sdm	U110 TSX: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+prefetchwt1	legacy	absent	U1094 PREFETCHWT1 is a hint with no architectural effect (SDM 092 Vol2D 8-2: "merely a hint and does not affect program behavior"); the only hardware evidence is that the i5-13600K (no PREFETCHWT1) and the emulator both execute 0F 0D /2 as a NOP (sweep, 1 form); LOCK 0F 0D #UD (U457). No SDM-vector case exists
+xabort	legacy	sdm	U110 RTM always-abort model (every XBEGIN aborts at once: EAX = 0, RIP = the fallback; CPUID RTM_ALWAYS_ABORT reported; no transactional execution is modelled): SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xbegin	legacy	sdm	U110 RTM always-abort model (every XBEGIN aborts at once: EAX = 0, RIP = the fallback; CPUID RTM_ALWAYS_ABORT reported; no transactional execution is modelled): SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xend	legacy	sdm	U110 RTM always-abort model (every XBEGIN aborts at once: EAX = 0, RIP = the fallback; CPUID RTM_ALWAYS_ABORT reported; no transactional execution is modelled): SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
+xtest	legacy	sdm	U110 RTM always-abort model (every XBEGIN aborts at once: EAX = 0, RIP = the fallback; CPUID RTM_ALWAYS_ABORT reported; no transactional execution is modelled): SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU
 encls	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclu	legacy	ud	the i5-13600K lacks SGX: #UD in both
 enclv	legacy	ud	the i5-13600K lacks SGX: #UD in both

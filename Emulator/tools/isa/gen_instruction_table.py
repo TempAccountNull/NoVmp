@@ -130,7 +130,24 @@ VERIFIED_STATUS = {
     'oos': ('⬜', 'out of scope'),
     # U790: implemented, with a decided open item named in the note (e.g. a stand-in where the SDM gives only a bound)
     'open': ('⏳', 'not bit-exact / decided open item'),
+    # U1094 (plan 1.J.22, refs review 2026-10-09: status-label honesty). These three always apply (they
+    # replace a sweep "identical" that only compared the absent-feature behaviour, or name a non-SDM spec):
+    # implemented and checked against an independent model of the Intel / ACE document named in the note
+    'spec': ('✅', 'implemented; the i5-13600K lacks it: specification-validated against an independent model'),
+    # the i5-13600K lacks the feature and so does the emulator under the CPU profile: both execute the
+    # encoding with the absent-feature behaviour (NOP / hint), which is the only hardware evidence
+    'absent': ('✅', 'the i5-13600K lacks the feature: the CPU and the emulator execute the encoding with '
+                    'the absent-feature behaviour (NOP / hint), identical'),
+    # as 'absent', but the feature-enabled semantics have an open item (named in the note)
+    'absent_open': ('⏳', 'the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is '
+                         'hardware-checked; feature-enabled semantics open'),
 }
+# U1094: the wrapper text of a row the i5-13600K cannot run, per verified status (default by ✅/⏳/⬜)
+UNSUP_IMPL = {
+    'spec': 'implemented per the specification (spec-model verified)',
+    'absent': 'implemented; only the absent-feature form is hardware-checked',
+}
+ALWAYS_APPLY = {'spec', 'absent', 'absent_open'}
 
 # U790: sweep/rule kinds whose ⏳ a verified_forms row may replace (the row proves that open item)
 TAKEOVER = {'priv', 'sdm_pending'}
@@ -296,6 +313,7 @@ CPUID_BIT = {
     'LKGS': (7, 1, 0, 18), 'WRMSRNS': (7, 1, 0, 19), 'AMX_FP16': (7, 1, 0, 21), 'HRESET': (7, 1, 0, 22),
     'AVX_IFMA': (7, 1, 0, 23), 'MSRLIST': (7, 1, 0, 27), 'MOVRS': (7, 1, 0, 31),
     'PBNDKB': (7, 1, 1, 1), 'MSR_IMM': (7, 1, 2, 5),
+    'AVX10': (7, 1, 3, 19),
     'AVX_VNNI_INT8': (7, 1, 3, 4), 'AVX_NE_CONVERT': (7, 1, 3, 5), 'AMX_COMPLEX': (7, 1, 3, 8),
     'AVX_VNNI_INT16': (7, 1, 3, 10), 'ICACHE_PREFETCH': (7, 1, 3, 14), 'USER_MSR': (7, 1, 3, 15),
     'XSAVEOPT': (0xd, 1, 0, 0), 'XSAVEC': (0xd, 1, 0, 1), 'XSAVES': (0xd, 1, 0, 3),
@@ -311,9 +329,35 @@ CPU_NOT = {
     'LWP': 'AMD LWP', 'CLZERO': 'AMD CLZERO', 'MONITORX': 'AMD MONITORX', 'RDPRU': 'AMD RDPRU',
     'MCOMMIT': 'AMD MCOMMIT', 'AMD': 'AMD-only', 'AMD_INVLPGB': 'AMD INVLPGB', 'SVM': 'AMD SVM',
     'SNP': 'AMD SEV-SNP', 'VIA_PADLOCK_AES': 'VIA PadLock', 'VIA_PADLOCK_SHA': 'VIA PadLock',
-    'VIA_PADLOCK_RNG': 'VIA PadLock', 'VIA_PADLOCK_MONTMUL': 'VIA PadLock', 'ACE_1': 'VIA/Zhaoxin ACE',
+    'VIA_PADLOCK_RNG': 'VIA PadLock', 'VIA_PADLOCK_MONTMUL': 'VIA PadLock',
     'TDX': 'Intel TDX (server, VMX root only)', 'IBHF': 'not reported by this CPU',
 }
+# U1094: XED ISA sets of the AVX10.2 / ACE instructions and their enumeration (AVX10.2 spec 361050-007
+# ch.2, ACE 1.15 3.1). The prefix match on CPUID_BIT gave AVX512_VNNI_INT8/INT16 and AVX512_VNNI_FP16 the
+# AVX512_VNNI bit and AVX512_FP16_CONVERT the AVX512_FP16 bit; ACE_1 (the ACE tile instructions, XED
+# ISA set ACE_1) was listed as VIA/Zhaoxin.
+AVX10_FAMILY = {
+    'AVX10_2_BF16': 'AVX10.2', 'AVX512_SAT_CVT': 'AVX10.2', 'AVX512_SAT_CVT_DS': 'AVX10.2',
+    'AVX512_MINMAX': 'AVX10.2', 'AVX512_COM_EF': 'AVX10.2', 'AVX512_MEDIAX': 'AVX10.2',
+    'AVX512_MOVZXC': 'AVX10.2', 'AVX512_VNNI_FP16': 'AVX10.2',
+    'AVX512_FP8_CONVERT': 'AVX10.2 OR AVX10_V1_AUX', 'AVX512_VNNI_INT8': 'AVX10.2 OR AVX10_V1_AUX',
+    'AVX512_VNNI_INT16': 'AVX10.2 OR AVX10_V1_AUX', 'AVX512_FP16_CONVERT': 'AVX10.2 OR AVX10_V1_AUX',
+    'AVX10_MOVRS': 'AVX10 AND MOVRS', 'AVX10_V2_AUX': 'AVX10 AND AVX10_V2_AUX',
+}
+
+
+def avx10_on_cpu(fam, cpuid):
+    """U1094: AVX10 = CPUID.(07H,1):EDX[19]; version = (24H,0):EBX[7:0]; AVX10_V1_AUX / AVX10_V2_AUX =
+    (24H,1):ECX[2] / [3]; MOVRS = (07H,1):EAX[31]"""
+    req = AVX10_FAMILY[fam]
+    l71 = cpuid.get((7, 1), [0, 0, 0, 0])
+    if not (l71[3] >> 19) & 1:
+        return False, 'CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs %s' % req
+    ver = cpuid.get((0x24, 0), [0, 0, 0, 0])[1] & 0xFF
+    ecx = cpuid.get((0x24, 1), [0, 0, 0, 0])[2]
+    ok = {'AVX10.2': ver >= 2, 'AVX10.2 OR AVX10_V1_AUX': ver >= 2 or (ecx >> 2) & 1,
+          'AVX10 AND MOVRS': (l71[0] >> 31) & 1, 'AVX10 AND AVX10_V2_AUX': (ecx >> 3) & 1}[req]
+    return (True, '') if ok else (False, 'AVX10 version %d on this CPU; the instruction needs %s' % (ver, req))
 OS_OFF = {
     'PKU': 'the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode',
 }
@@ -335,6 +379,12 @@ def load_cpuid(path):
 def family_on_cpu(fam, cpuid):
     if fam in CPU_FIXED:
         return CPU_FIXED[fam]
+    if fam in AVX10_FAMILY:                                 # U1094
+        return avx10_on_cpu(fam, cpuid)
+    if fam == 'ACE_1':                                      # U1094: ACE 1.15 3.1
+        if (cpuid.get((7, 1), [0, 0, 0, 0])[2] >> 11) & 1:
+            return True, ''
+        return False, 'CPUID.7H.1:ECX[11] (ACE, AI Compute Extensions tile instructions) = 0 on this CPU'
     if fam in ALWAYS:
         return True, ''
     if fam in CPU_NOT:
@@ -434,7 +484,7 @@ def main():
             st, note = '⬜', 'not reachable by the sweep yet (no Capstone form; decoder plan 5.3/5.3b)'
         if alias and st != '⬜':
             note += ' — ' + alias
-        if (mn, enc) in verified and (st == '⬜' or kind in TAKEOVER):
+        if (mn, enc) in verified and (st == '⬜' or kind in TAKEOVER or verified[(mn, enc)][0] in ALWAYS_APPLY):
             vst, vnote = verified[(mn, enc)]
             if st != '⬜':
                 takeover['%s %s -> %s' % (st, kind, vst)] += 1
@@ -442,7 +492,7 @@ def main():
             if (r['cpl0'] or kind == 'priv') and vst in ('ok', 'sdm', 'open'):
                 note += CPL3_NOTE
             vcount[vst] += 1
-        pre[(mn, enc)] = [st, note]
+        pre[(mn, enc)] = [st, note, verified.get((mn, enc), ('', ''))[0]]
     # U790: VCMP pseudo-op rows the sweep / verified_forms leave ⬜ take their base form's status
     aliased = defaultdict(int)
     for (mn, enc), v in pre.items():
@@ -455,12 +505,14 @@ def main():
             aliased['%s %s' % (enc, v[0])] += 1
     for (mn, enc), r in rows.items():
         fam = family(sorted(r['isa'])[0])
-        st, note = pre[(mn, enc)]
+        st, note, vst = pre[(mn, enc)]
         on_cpu, why = row_on_cpu(mn, r['isa'], cpuid)
         if not on_cpu:
             impl = {'✅': 'implemented per the manual (SDM-vector verified)',
                     '⏳': 'implemented per the manual, open item',
                     '⬜': 'not implemented yet'}[st]
+            if st == '✅' and vst in UNSUP_IMPL:            # U1094
+                impl = UNSUP_IMPL[vst]
             impl_unsup[st] += 1
             note = '**NOT SUPPORTED on our i5-13600K** (%s) — %s: %s' % (why or 'not reported by this CPU', impl, note)
             st = '❌'

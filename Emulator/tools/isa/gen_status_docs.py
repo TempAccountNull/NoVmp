@@ -82,7 +82,9 @@ def impl_kind(row):
     n = row['note']
     if row['status'] != '❌':
         return row['status']
-    if 'implemented per the manual (SDM-vector verified)' in n:
+    # U1094: rows checked against an independent model of a non-SDM spec, or only in the absent-feature form
+    if ('implemented per the manual (SDM-vector verified)' in n or 'spec-model verified' in n or
+            'only the absent-feature form is hardware-checked' in n):
         return '❌ (implemented per manual)'
     if 'implemented per the manual, open item' in n:
         return '❌ (implemented, open item)'
@@ -107,6 +109,10 @@ def done_cell(row):
     if st != '✅':
         return ''
     if why:
+        if 'spec-model verified' in row['note']:            # U1094
+            return '✅ per specification (independent model) — ' + short(detail, 110)
+        if 'only the absent-feature form is hardware-checked' in row['note']:
+            return '✅ absent-feature behaviour identical to the i5-13600K (NOP / hint) — ' + short(detail, 100)
         return '✅ per manual (SDM vectors) — ' + short(detail, 110)
     return '✅ ' + short(detail, 130)
 
