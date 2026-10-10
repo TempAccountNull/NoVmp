@@ -2697,6 +2697,12 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     uc->x86_mktme_key = x86_mktme_key;
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U961) */
+    uc->x86_apic_join = x86_apic_join;
+    uc->x86_apic_set_id = x86_apic_set_id;
+    uc->x86_apic_get_id = x86_apic_get_id;
+    uc->x86_apic_leave = x86_apic_leave;
+#endif /* __Use_Original_Qemu (U961) */
     uc_common_init(uc);
 }
 

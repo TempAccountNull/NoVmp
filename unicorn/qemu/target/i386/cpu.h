@@ -2555,6 +2555,13 @@ int x86_apic_acknowledge(CPUX86State *env);
 void x86_apic_eoi(CPUX86State *env);
 void QEMU_NORETURN x86_apic_deliver_event(CPUX86State *env, int vector);
 #endif /* __Use_Original_Qemu (U960) */
+#if __Use_Original_Qemu != 1 /* ours (U961) */
+/* apic_model.c: the APIC bus between engines (UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID) */
+int x86_apic_join(struct uc_struct *uc, struct uc_struct *peer);  /* a uc_err */
+int x86_apic_set_id(struct uc_struct *uc, uint32_t id);            /* a uc_err */
+uint32_t x86_apic_get_id(struct uc_struct *uc);
+void x86_apic_leave(struct uc_struct *uc);
+#endif /* __Use_Original_Qemu (U961) */
 #if __Use_Original_Qemu != 1 /* ours (U860) */
 /*
  * cpu.c (ledger U860): the x87 pointer bits of the effective CPUID.(EAX=07H,ECX=0):EBX

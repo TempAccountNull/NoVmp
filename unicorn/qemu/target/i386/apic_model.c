@@ -134,13 +134,16 @@ static bool apic_has_x2apic(CPUX86State *env)
 
 /*
  * The vCPU's x2APIC ID (13.12.5.1: initialised by hardware; 13.12.8.1: equal to CPUID.0BH:EDX,
- * its bits 7:0 to CPUID.01H:EBX[31:24]). A UC_CTL_X86_CPUID profile without an explicit
- * UC_CTL_X86_APIC_ID supplies it (leaf 0BH sub-leaf 0 EDX, else leaf 1 EBX[31:24]).
+ * its bits 7:0 to CPUID.01H:EBX[31:24]): UC_CTL_X86_APIC_ID if given, else a UC_CTL_X86_CPUID
+ * profile's (leaf 0BH sub-leaf 0 EDX, else leaf 1 EBX[31:24]), else the CPU model's (0).
  */
 uint32_t x86_apic_id(CPUX86State *env)
 {
     struct uc_struct *uc = env->uc;
 
+    if (uc && uc->x86_apic_id_set) {
+        return uc->x86_apic_id;                 /* UC_CTL_X86_APIC_ID (U961) */
+    }
     if (uc && uc->x86_cpuid_count) {
         size_t i;
         const struct uc_x86_cpuid *l1 = NULL;
@@ -164,12 +167,19 @@ uint32_t x86_apic_id(CPUX86State *env)
 void x86_apic_cpuid_fixup(CPUX86State *env, uint32_t index, uint32_t *eax, uint32_t *ebx,
                           uint32_t *ecx, uint32_t *edx)
 {
-    (void)eax;
-    (void)ebx;
-    (void)ecx;
+    struct uc_struct *uc = env->uc;
+
     /* 13.4.3: with IA32_APIC_BASE[11] = 0 the CPUID feature flag for the APIC is 0 */
     if (index == 1 && !(env->apic_base & APIC_BASE_EN)) {
         *edx &= ~CPUID_APIC;
+    }
+    /* an explicit UC_CTL_X86_APIC_ID: initial APIC ID / x2APIC ID (13.12.8.1, U961) */
+    if (uc && uc->x86_apic_id_set) {
+        if (index == 1) {
+            *ebx = (*ebx & 0x00ffffffu) | (uc->x86_apic_id << 24);
+        } else if ((index == 0xb || index == 0x1f) && (*eax | *ebx | *ecx | *edx)) {
+            *edx = uc->x86_apic_id;
+        }
     }
 }
 
@@ -350,7 +360,137 @@ static void apic_regs_reset(CPUX86State *env)
 void x86_apic_reset(CPUX86State *env)
 {
     apic_regs_reset(env);
-    env->apic_base = APIC_BASE_RESET | APIC_BASE_EN | APIC_BASE_BSP;
+    env->apic_base = APIC_BASE_RESET | APIC_BASE_EN |
+                     ((env->uc && env->uc->x86_apic_ap) ? 0 : APIC_BASE_BSP);
+}
+
+/*
+ * ---- the APIC bus (U961): local APICs of several engines (one vCPU each) ----
+ * UC_CTL_X86_APIC_BUS connects engines; an IPI reaches every APIC on the bus of its sender
+ * (13.6.3, the system bus of 13.8.1). The engines run one at a time (round-robin on one host
+ * thread); a message for another engine sets its IRR (atomic) and CPU_INTERRUPT_POLL, which it
+ * evaluates at its next instruction boundary - when the host next runs it.
+ */
+typedef struct X86ApicBus {
+    int n, cap;
+    struct uc_struct **cpu;
+} X86ApicBus;
+
+static CPUX86State *apic_env_of(struct uc_struct *uc)
+{
+    return uc->cpu ? (CPUX86State *)uc->cpu->env_ptr : NULL;
+}
+
+/* another APIC on this engine's bus (or the peer itself) already has 'id' */
+static bool apic_id_taken(struct uc_struct *uc, struct uc_struct *peer, uint32_t id)
+{
+    X86ApicBus *bus = peer ? (X86ApicBus *)peer->x86_apic_bus : (X86ApicBus *)uc->x86_apic_bus;
+    int i;
+
+    if (peer && !bus) {
+        return apic_env_of(peer) && x86_apic_id(apic_env_of(peer)) == id;
+    }
+    for (i = 0; bus && i < bus->n; i++) {
+        if (bus->cpu[i] != uc && apic_env_of(bus->cpu[i]) &&
+            x86_apic_id(apic_env_of(bus->cpu[i])) == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t x86_apic_get_id(struct uc_struct *uc)
+{
+    CPUX86State *env = apic_env_of(uc);
+
+    return env ? x86_apic_id(env) : uc->x86_apic_id;
+}
+
+void x86_apic_leave(struct uc_struct *uc)
+{
+    X86ApicBus *bus = (X86ApicBus *)uc->x86_apic_bus;
+    int i;
+
+    if (!bus) {
+        return;
+    }
+    for (i = 0; i < bus->n; i++) {
+        if (bus->cpu[i] == uc) {
+            memmove(&bus->cpu[i], &bus->cpu[i + 1], (bus->n - i - 1) * sizeof(bus->cpu[0]));
+            bus->n--;
+            break;
+        }
+    }
+    uc->x86_apic_bus = NULL;
+    if (bus->n == 0) {
+        g_free(bus->cpu);
+        g_free(bus);
+    }
+}
+
+static void apic_bus_add(X86ApicBus *bus, struct uc_struct *uc)
+{
+    if (bus->n == bus->cap) {
+        bus->cap = bus->cap ? bus->cap * 2 : 4;
+        bus->cpu = g_renew(struct uc_struct *, bus->cpu, bus->cap);
+    }
+    bus->cpu[bus->n++] = uc;
+    uc->x86_apic_bus = bus;
+}
+
+/*
+ * UC_CTL_X86_APIC_BUS: connect this engine's APIC to the bus of 'peer' (created with the peer
+ * as its first member if it has none); NULL disconnects. The x2APIC IDs on a bus must differ.
+ * An engine that joins an existing bus is an AP: IA32_APIC_BASE.BSP = 0 (the reset value of
+ * this engine from now on); the peer that creates the bus keeps its flag.
+ */
+int x86_apic_join(struct uc_struct *uc, struct uc_struct *peer)
+{
+    X86ApicBus *bus;
+    CPUX86State *env = apic_env_of(uc);
+
+    if (peer == uc || !env || (peer && !apic_env_of(peer))) {
+        return peer ? UC_ERR_ARG : UC_ERR_OK;
+    }
+    if (!peer) {
+        x86_apic_leave(uc);
+        return UC_ERR_OK;
+    }
+    if (peer->x86_apic_bus && peer->x86_apic_bus == uc->x86_apic_bus) {
+        return UC_ERR_OK;
+    }
+    if (apic_id_taken(uc, peer, x86_apic_id(env))) {
+        return UC_ERR_ARG;
+    }
+    x86_apic_leave(uc);
+    bus = (X86ApicBus *)peer->x86_apic_bus;
+    if (!bus) {
+        bus = g_new0(X86ApicBus, 1);
+        apic_bus_add(bus, peer);
+    }
+    apic_bus_add(bus, uc);
+    uc->x86_apic_ap = 1;
+    env->apic_base &= ~APIC_BASE_BSP;
+    return UC_ERR_OK;
+}
+
+/*
+ * UC_CTL_X86_APIC_ID after the CPU exists: FFFF_FFFFH is reserved (13.12.1.3) and the IDs on
+ * a bus must be unique. In x2APIC mode the LDR follows the new ID (13.12.10.2).
+ */
+int x86_apic_set_id(struct uc_struct *uc, uint32_t id)
+{
+    CPUX86State *env = apic_env_of(uc);
+
+    if (id == 0xffffffffu || (env && apic_id_taken(uc, NULL, id))) {
+        return UC_ERR_ARG;
+    }
+    uc->x86_apic_id = id;
+    uc->x86_apic_id_set = 1;
+    if (env && apic_x2(env)) {
+        env->apic_ldr = ((id & 0xffff0) << 12) | (1u << (id & 0xf));
+    }
+    return UC_ERR_OK;
 }
 
 /* ---- sending interrupts (13.6, 13.12.9, 13.12.10) ---- */
@@ -398,8 +538,21 @@ static bool apic_match(CPUX86State *src, CPUX86State *dst, const ApicMsg *m)
 /* the system bus: every local APIC the message reaches (13.6.3, 13.8.1 step 1) */
 static void apic_bus_send(CPUX86State *src, const ApicMsg *m)
 {
-    if (apic_match(src, src, m)) {
-        apic_accept(src, m->mode, m->vector, false);
+    X86ApicBus *bus = (X86ApicBus *)src->uc->x86_apic_bus;
+    int i;
+
+    if (!bus) {
+        if (apic_match(src, src, m)) {
+            apic_accept(src, m->mode, m->vector, false);
+        }
+        return;
+    }
+    for (i = 0; i < bus->n; i++) {
+        CPUX86State *dst = apic_env_of(bus->cpu[i]);
+
+        if (dst && apic_match(src, dst, m)) {
+            apic_accept(dst, m->mode, m->vector, false);
+        }
     }
 }
 

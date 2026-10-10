@@ -524,6 +524,12 @@ uc_err uc_close(uc_engine *uc)
         return UC_ERR_OK;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U961) */
+    /* leave the local APIC bus before the CPU goes away */
+    if (uc->x86_apic_leave) {
+        uc->x86_apic_leave(uc);
+    }
+#endif /* __Use_Original_Qemu (U961) */
     // Flush all translation buffers or we leak memory allocated by MMU
     uc->tb_flush(uc);
 
@@ -3441,6 +3447,57 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U1021) */
+
+#if __Use_Original_Qemu != 1 /* ours (U961) */
+    case UC_CTL_X86_APIC_BUS:
+        /* NoVmp U961: connect the local APIC to another engine's APIC bus (apic_model.c) */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_WRITE) {
+            err = UC_ERR_ARG;
+        } else {
+            uc_engine *peer = va_arg(args, uc_engine *);
+
+            if (peer && peer->arch != UC_ARCH_X86) {
+                err = UC_ERR_ARG;
+                break;
+            }
+            UC_INIT(uc);
+            if (peer && !peer->init_done) {
+                err = uc_init_engine(peer);
+            }
+            if (err == UC_ERR_OK) {
+                err = (uc_err)uc->x86_apic_join(uc, peer);
+            }
+            restore_jit_state(uc);
+        }
+        break;
+
+    case UC_CTL_X86_APIC_ID:
+        /* NoVmp U961: the vCPU's x2APIC ID */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            uint32_t *id = va_arg(args, uint32_t *);
+
+            UC_INIT(uc);
+            *id = uc->x86_apic_get_id(uc);
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            uint32_t id = va_arg(args, uint32_t);
+
+            if (uc->init_done) {
+                err = (uc_err)uc->x86_apic_set_id(uc, id);
+            } else if (id == 0xffffffffu) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_apic_id = id;
+                uc->x86_apic_id_set = 1;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U961) */
 #if __Use_Original_Qemu != 1 /* ours (U901) */
     case UC_CTL_X86_SYSCALL_MODE:
         /* NoVmp U901 (A1): SDM SYSCALL / SYSENTER transition (default) or the hook-only mode */

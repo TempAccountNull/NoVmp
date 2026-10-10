@@ -798,6 +798,8 @@ typedef enum uc_control_type {
     // outermost uc_emu_start begins (nested calls from hooks keep it). Unicorn's own memory
     // errors (UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_PROT, ...) are not x86 exceptions and do
     // not change it. Read: @args = (uc_x86_exception *)
+    // NoVmp U960: an external interrupt / NMI the local APIC delivered is recorded too, with
+    // external = 1 (docs/apic.md).
     UC_CTL_X86_EXCEPTION,
     // x86 only (NoVmp U1021): one entry of the TME-MK key table that PCONFIG MKTME_KEY_PROGRAM
     // programs (SDM Vol2B PCONFIG). The table is not software-visible on hardware; this read is
@@ -829,6 +831,24 @@ typedef enum uc_control_type {
     // else changes (without a hook the instruction is a NOP). Can be changed at any time.
     // Other values -> UC_ERR_ARG. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_SYSCALL_MODE,
+    // x86 only (NoVmp U961): connect this engine's local APIC to the APIC bus of another x86
+    // engine (Unicorn runs one CPU per engine; several engines on one bus form a
+    // multiprocessor): IPIs (ICR, SELF IPI, SENDUIPI notifications) reach every APIC on the
+    // sender's bus. The peer's bus is created with the peer as first member if it has none;
+    // peer = NULL disconnects. The x2APIC IDs on a bus must differ (UC_ERR_ARG otherwise; set
+    // them with UC_CTL_X86_APIC_ID first). The joining engine becomes an AP
+    // (IA32_APIC_BASE.BSP = 0). Initialises both engines. Run the engines one at a time (for
+    // example round-robin from one host thread); an IPI to another engine is pending in its
+    // IRR and taken when that engine next runs. Guest memory is not shared by the bus: map
+    // the same host memory into each engine with uc_mem_map_ptr where the guests share data
+    // (SENDUIPI's UPID). uc_close disconnects. Write: @args = (uc_engine *peer)
+    UC_CTL_X86_APIC_BUS,
+    // x86 only (NoVmp U961): the vCPU's x2APIC ID (initial APIC ID): x2APIC MSR 802H,
+    // CPUID.0BH/1FH:EDX, CPUID.01H:EBX[31:24] = bits 7:0, the xAPIC ID = bits 7:0. Default:
+    // a UC_CTL_X86_CPUID profile's leaf 0BH (else leaf 1) value, else 0. FFFFFFFFH, or an ID
+    // another APIC on the bus has -> UC_ERR_ARG. Reading initialises the engine.
+    // Write: @args = (uint32_t id); Read: @args = (uint32_t *id)
+    UC_CTL_X86_APIC_ID,
 } uc_control_type;
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
@@ -1007,6 +1027,12 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SYSCALL_MODE, 1), (int)(mode))
 #define uc_ctl_get_x86_syscall_mode(uc, mode)                                  \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SYSCALL_MODE, 1), (int *)(mode))
+#define uc_ctl_set_x86_apic_bus(uc, peer)                                      \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_APIC_BUS, 1), (uc_engine *)(peer))
+#define uc_ctl_set_x86_apic_id(uc, id)                                         \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_APIC_ID, 1), (uint32_t)(id))
+#define uc_ctl_get_x86_apic_id(uc, id)                                         \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_APIC_ID, 1), (uint32_t *)(id))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

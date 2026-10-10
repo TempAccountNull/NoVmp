@@ -14,11 +14,44 @@ IA32_APIC_BASE, TPR, LDR, DFR (reset value only), SVR, ESR (+ the error latch), 
 entries (CMCI, timer, thermal, performance monitoring, LINT0, LINT1, error), timer initial count
 and divide configuration, and the 256-bit IRR / ISR / TMR. The x2APIC ID is not stored: it is the
 vCPU's initial APIC ID (`x86_apic_id`), the same value CPUID reports (CPUID.0BH:EDX, and its bits
-7:0 in CPUID.01H:EBX[31:24]); with a `UC_CTL_X86_CPUID` profile the profile's leaf 0BH (else
-leaf 1) supplies it.
+7:0 in CPUID.01H:EBX[31:24]): `UC_CTL_X86_APIC_ID` if given, else the `UC_CTL_X86_CPUID` profile's
+leaf 0BH (else leaf 1) value, else the CPU model's (0). The xAPIC ID is its bits 7:0.
+
+### Several vCPUs: engines on an APIC bus (U961)
+Unicorn runs one CPU per `uc_engine`, and its TCG state, memory map, hooks and context API are
+all per engine. Two designs were weighed:
+- one engine with N CPU states: every API that names "the CPU" (`uc_reg_*`, contexts, hooks,
+  `uc_emu_start`, the TB cache, the TLB) would need a vCPU selector and a scheduler inside
+  `uc_emu_start` - a rewrite of Unicorn's single-CPU core;
+- **several engines sharing an APIC bus** (chosen): each engine stays an ordinary Unicorn
+  instance; `UC_CTL_X86_APIC_BUS` connects their local APICs. The host drives the engines
+  (for example round-robin from one host thread with `uc_emu_start(..., count)`), exactly as a
+  scheduler would run vCPUs. Guest memory the vCPUs share is mapped into each engine from the
+  same host buffer with `uc_mem_map_ptr`.
+
+API:
+- `uc_ctl_set_x86_apic_id(uc, id)` / `uc_ctl_get_x86_apic_id(uc, &id)` (`UC_CTL_X86_APIC_ID`): the
+  vCPU's x2APIC ID; CPUID.01H:EBX[31:24] and CPUID.0BH/1FH:EDX follow it. FFFF_FFFFH is reserved
+  (13.12.1.3) and IDs on one bus must differ (`UC_ERR_ARG`). Changing it in x2APIC mode
+  re-derives the LDR. Reading initialises the engine.
+- `uc_ctl_set_x86_apic_bus(uc, peer)` (`UC_CTL_X86_APIC_BUS`): joins the bus of `peer` (created
+  with the peer as its first member if it has none); `NULL` leaves; `uc_close` leaves. The
+  joining engine is an AP: its IA32_APIC_BASE.BSP is 0 (also after a reset); the creator keeps
+  BSP = 1.
+- An IPI reaches every APIC on the sender's bus whose destination matches. For another engine
+  the IRR bit (and TMR bit) are set atomically and the target gets `CPU_INTERRUPT_POLL` plus a
+  TB-exit request; it evaluates its APIC at its next instruction boundary, i.e. when the host
+  next runs it (immediately if it is running on another host thread).
+- Concurrency: the IRR / TMR / error words and the interrupt-request word are updated with
+  atomic operations, but QEMU's own updates of the interrupt-request word are not atomic, so
+  running bus members concurrently on several host threads is **not validated**; the tests run
+  them one at a time from one thread. Joining / leaving / closing must not race with running
+  engines. Translated code is per engine: guest code written through a shared mapping by one
+  engine is not invalidated in another engine's TB cache.
 
 ### Reset (13.4.7.1, 13.12.5.1)
-IA32_APIC_BASE = FEE00900H (base FEE00000H, EN = 1, EXTD = 0, BSP = 1): enabled, xAPIC mode,
+IA32_APIC_BASE = FEE00900H (base FEE00000H, EN = 1, EXTD = 0, BSP = 1; an AP on a bus: FEE00800H):
+enabled, xAPIC mode,
 **software-disabled** (SVR = 000000FFH). IRR / ISR / TMR / ICR / LDR / TPR / timer registers 0,
 LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
 
@@ -141,4 +174,5 @@ Not modelled, without a stop (documented here instead):
 `unicorn/tests/unit/test_x86.c`, block `ap_` (U960-U989): `test_x86_ap_reset_state`,
 `test_x86_ap_base_transitions`, `test_x86_ap_tpr_cr8`, `test_x86_ap_self_ipi`,
 `test_x86_ap_priority_eoi`, `test_x86_ap_nmi`, `test_x86_ap_errors`, `test_x86_ap_unsupported`,
-`test_x86_ap_no_hook`, `test_x86_ap_context`.
+`test_x86_ap_no_hook`, `test_x86_ap_context`, `test_x86_ap_bus_api`, `test_x86_ap_cross_ipi`,
+`test_x86_ap_multi_vcpu`.
