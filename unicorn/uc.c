@@ -3448,6 +3448,42 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1120) */
+    case UC_CTL_X86_FEATURES:
+        /* NoVmp U1120: opt-in platform features (UC_X86_FEATURE_*); fixed once the CPU exists */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mask = va_arg(args, int *);
+            *mask = uc->x86_features;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mask = va_arg(args, int);
+            if (uc->init_done || (mask & ~UC_X86_FEATURE_TSE)) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_features = mask;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_TSE_KEY:
+        /* NoVmp U1120: one TSE key table entry (PCONFIG leaves 1 / 2), UC_X86_FEATURE_TSE only */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_READ || !uc->x86_tse_key ||
+            !(uc->x86_features & UC_X86_FEATURE_TSE)) {
+            err = UC_ERR_ARG;
+        } else {
+            int keyid = va_arg(args, int);
+            struct uc_x86_mktme_key *key = va_arg(args, struct uc_x86_mktme_key *);
+
+            UC_INIT(uc);
+            err = key ? uc->x86_tse_key(uc, keyid, key) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1120) */
 
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     case UC_CTL_X86_APIC_BUS:

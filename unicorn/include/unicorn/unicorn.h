@@ -865,7 +865,32 @@ typedef enum uc_control_type {
     // UC_ERR_EXCEPTION. UC_CTL_X86_EXCEPTION still records every event. Any time.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_EVENT_DELIVERY,
+    // x86 only (NoVmp U1120): opt-in platform features, a mask of UC_X86_FEATURE_* below
+    // (default 0: none, the CPU model as before). UC_X86_FEATURE_TSE: the model's TSE engine
+    // (Total Storage Encryption, SDM 092 Vol2B PCONFIG / Vol4 9F1H): IA32_TSE_CAPABILITY reads
+    // 0000_03F0_0000_0001H (bit 0 = the one encryption algorithm, "256-bit AES-XTS" in the
+    // historical definition of ISE 319433-051..-060 only; key sources 23:16 = 0; TSE_MAX_KEYS
+    // 50:36 = 63) and PCONFIG leaves 1 (TSE_KEY_PROGRAM) and 2 (TSE_KEY_PROGRAM_WRAPPED, the
+    // unwrap of a PBNDKB bind structure with the model's platform key) program the TSE key
+    // table (read with UC_CTL_X86_TSE_KEY). Without it IA32_TSE_CAPABILITY reads 0 and every
+    // TSE leaf ends in #GP(0). The emulator never encrypts storage with these keys. Only
+    // before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
+    // Write: @args = (int mask); Read: @args = (int *mask)
+    UC_CTL_X86_FEATURES,
+    // x86 only (NoVmp U1120): one entry of the TSE key table PCONFIG leaves 1 / 2 program (not
+    // software-visible on hardware; for tests and tools), with UC_X86_FEATURE_TSE only
+    // (UC_ERR_ARG otherwise). KeyID 0..63 (TSE_MAX_KEYS; KeyID 0 is accepted by PCONFIG, SDM
+    // 092 Vol2B 4-278/4-279 rejects only KeyID > TSE_MAX_KEYS). mode UC_X86_MKTME_TME (0) = not
+    // programmed since reset, UC_X86_MKTME_KEY = TSE_SET_KEY_DIRECT / an unwrapped key,
+    // UC_X86_MKTME_NO_ENCRYPT = TSE_NO_ENCRYPT; random is always 0. For leaf 2 the 64 decrypted
+    // bytes are split data key = bytes 31:0, tweak key = bytes 63:32 (our inference: the SDM
+    // names the two keys without offsets). A CPU reset clears the table, a uc_context carries it.
+    // Read: @args = (int keyid, uc_x86_mktme_key *)
+    UC_CTL_X86_TSE_KEY,
 } uc_control_type;
+
+// UC_CTL_X86_FEATURES bits (NoVmp U1120)
+#define UC_X86_FEATURE_TSE 1       // TSE engine: IA32_TSE_CAPABILITY, PCONFIG leaves 1 and 2
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
@@ -1061,6 +1086,12 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_EVENT_DELIVERY, 1), (int)(mask))
 #define uc_ctl_get_x86_event_delivery(uc, mask)                                \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EVENT_DELIVERY, 1), (int *)(mask))
+#define uc_ctl_set_x86_features(uc, mask)                                      \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_FEATURES, 1), (int)(mask))
+#define uc_ctl_get_x86_features(uc, mask)                                      \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_FEATURES, 1), (int *)(mask))
+#define uc_ctl_get_x86_tse_key(uc, keyid, key)                                 \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_TSE_KEY, 2), (int)(keyid), (key))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

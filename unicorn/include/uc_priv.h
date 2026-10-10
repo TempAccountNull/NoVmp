@@ -451,6 +451,10 @@ struct uc_struct {
     void (*x86_rdrand_sync)(struct uc_struct *uc, int to_cpu);
     // NoVmp U1021: UC_CTL_X86_MKTME_KEY (the CPU's TME-MK key table entry 'keyid')
     uc_err (*x86_mktme_key)(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key);
+    // NoVmp U1120: UC_CTL_X86_FEATURES mask (UC_X86_FEATURE_*, fixed once the CPU exists) and
+    // UC_CTL_X86_TSE_KEY (the CPU's TSE key table entry 'keyid')
+    int x86_features;
+    uc_err (*x86_tse_key)(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key);
     // NoVmp U961: the local APIC bus shared with other engines (apic_model.c), NULL = alone;
     // UC_CTL_X86_APIC_ID (x86_apic_id_set = 1 once given); x86_apic_ap = 1: not the BSP
     void *x86_apic_bus;

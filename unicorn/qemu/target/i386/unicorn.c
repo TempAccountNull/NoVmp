@@ -2669,6 +2669,25 @@ static uc_err x86_mktme_key(struct uc_struct *uc, int keyid, struct uc_x86_mktme
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1120) */
+/* NoVmp (ledger U1120): UC_CTL_X86_TSE_KEY */
+static uc_err x86_tse_key(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+    const X86MktmeKey *e;
+
+    if (keyid < 0 || keyid > NOVMP_TSE_MAX_KEYS) {
+        return UC_ERR_ARG;
+    }
+    e = &env->tse_keys[keyid];
+    key->mode = e->mode;
+    key->random = e->random;
+    key->enc_alg = e->enc_alg;
+    memcpy(key->data_key, e->data_key, sizeof(key->data_key));
+    memcpy(key->tweak_key, e->tweak_key, sizeof(key->tweak_key));
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1120) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2697,6 +2716,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     uc->x86_mktme_key = x86_mktme_key;
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1120) */
+    uc->x86_tse_key = x86_tse_key;
+#endif /* __Use_Original_Qemu (U1120) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

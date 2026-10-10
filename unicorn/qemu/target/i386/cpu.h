@@ -443,6 +443,21 @@ typedef struct X86MktmeKey {
     uint8_t tweak_key[32];
 } X86MktmeKey;
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1120) */
+/*
+ * NoVmp (ledger U1120): the model's IA32_TSE_CAPABILITY (9F1H, SDM 092 Vol4 2-69) with
+ * UC_X86_FEATURE_TSE: bit 0 the one encryption algorithm (its meaning, "256-bit AES-XTS", is the
+ * historical definition of ISE 319433-051..-060 6.2.2 / 11.2.2, not carried into SDM 092; PCONFIG
+ * only checks that ENC_ALG sets exactly this bit), 23:16 key sources 0 (no encoding is defined
+ * anywhere and no instruction field selects a key source), TSE_MAX_KEYS 50:36 = 63 (our choice;
+ * Vol4 "the maximum number of keys available", while the PCONFIG pseudocode accepts KeyIDs
+ * 0..TSE_MAX_KEYS, i.e. TSE_MAX_KEYS + 1 identifiers - the table has 64 entries). Without the
+ * opt-in the MSR reads 0 (U807).
+ */
+#define NOVMP_TSE_MAX_KEYS              63
+#define NOVMP_TSE_KEY_BYTES             32      /* algorithm bit 0: 256-bit keys (historical) */
+#define NOVMP_TSE_CAPABILITY            (1ULL | ((uint64_t)NOVMP_TSE_MAX_KEYS << 36))
+#endif /* __Use_Original_Qemu (U1120) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -2155,6 +2170,15 @@ typedef struct CPUX86State {
      */
     X86MktmeKey mktme_keys[NOVMP_MKTME_MAX_KEYS + 1];
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1120) */
+    /*
+     * NoVmp (ledger U1120): the TSE key table PCONFIG leaves 1 / 2 program with UC_X86_FEATURE_TSE
+     * (SDM 092 Vol2B: "shared by all logical processors in a platform", not software-visible;
+     * UC_CTL_X86_TSE_KEY reads it), index = KeyID 0..TSE_MAX_KEYS. Our choice: cleared by a CPU
+     * reset (the SDM states no reset value), carried by a uc_context (reset area).
+     */
+    X86MktmeKey tse_keys[NOVMP_TSE_MAX_KEYS + 1];
+#endif /* __Use_Original_Qemu (U1120) */
 #if __Use_Original_Qemu != 1 /* ours (U960) */
     /*
      * NoVmp (ledger U960): the local APIC (apic_model.c, SDM Vol3A ch. 13), reset by
