@@ -6571,6 +6571,16 @@ static bool validate_apx_promoted(DisasContext *s, X86DecodedInsn *decode)
             if ((e->op0 == X86_TYPE_K || e->op2 == X86_TYPE_K) && (REX_R(s) & 8)) {
                 goto illegal;
             }
+#if __Use_Original_Qemu != 1 /* ours (U1072) */
+            /*
+             * U1072: R4 = 1 (EVEX.R' = 0) with a k register in ModRM.reg #UD as well (SDM Vol2A
+             * Table 2-41; APX spec 3.1.2.3.3 "all other payload bits have the same meanings as
+             * they do now"; user decision 2026-10-10, AMB-6) - it was ignored here since U646
+             */
+            if ((e->op0 == X86_TYPE_K || e->op2 == X86_TYPE_K) && s->evex_rr) {
+                goto illegal;
+            }
+#endif /* __Use_Original_Qemu (U1072) */
             if (s->flags & HF_TS_MASK) {
                 gen_NM_exception(s);
                 return false;
@@ -6683,14 +6693,18 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
         bool apx = (s->cpuid_7_1_edx_features & CPUID_7_1_EDX_APX_F) != 0;
 
         /*
-         * NoVmp (ledger U791): R' = 1 (EVEX.R4) with a k register in ModRM.reg is #UD while APX
-         * is not enabled (SDM Vol2A Table 2-41; APX spec 355828-009 3.1.4.2.1: "EVEX payload
-         * fields retain their current meanings if APX is not enabled"); with APX enabled it is
-         * an unused bit and ignored (3.1.2.3.3: "If any of the bits R4, B4, and X4 is not used
-         * by an EVEX instruction, it is ignored"): the run-time check below. R3 (EVEX.R = 1 for
-         * a k register) keeps its #UD.
+         * NoVmp (ledger U1072, reverts U791): R' = 0 (EVEX.R4 = 1) with a k register in
+         * ModRM.reg is #UD, with or without APX: SDM Vol2A Table 2-41 "EVEX.R' ... ModRM.reg
+         * encodes k-reg or GPR: If 0" (#UD). APX spec 355828-009 3.1.2.3.3: "Except for the B4
+         * and U bits, all other payload bits have the same meanings as they do now in the EVEX
+         * prefix" - APX gives R' (R4) a new meaning only for a GPR in ModRM.reg (Table 3.3 REG:
+         * "GPR, Vector"); for a k register its current meaning is that #UD condition, so the
+         * later sentence "If any of the bits R4, B4, and X4 is not used by an EVEX instruction,
+         * it is ignored" does not apply to it (U791 had read it as an unused, ignored bit). User
+         * decision 2026-10-10 (AMB-6); Intel SDE 10.13.1 (-dmr, APX) raises #UD as well. A GPR in
+         * ModRM.reg uses R4 under APX (run-time XCR0[19] check below), #UD without APX_F.
          */
-        if ((reg_k || reg_gpr) && !apx && s->evex_rr) {
+        if ((reg_k || (reg_gpr && !apx)) && s->evex_rr) {
             goto illegal;
         }
         /*
@@ -6708,7 +6722,7 @@ static bool validate_evex(DisasContext *s, X86DecodedInsn *decode)
             if (u0 && (s->modrm >> 6) == 3) {
                 goto illegal;
             }
-            if (b4 || u0 || ((reg_gpr || reg_k) && s->evex_rr)) {   /* U791: + R4 with a k reg */
+            if (b4 || u0 || (reg_gpr && s->evex_rr)) {      /* U1072: a k reg with R4 #UDs above */
                 TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
                 gen_helper_apx_check(tcg_ctx, cpu_env);

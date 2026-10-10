@@ -1668,8 +1668,10 @@ def ext_lines(rng):
               Ev(0x92, 1, Reg(0), mapid=1, pp=2), Ev(0x92, 1, Reg(0), mapid=1, w=1), Ev(0x93, 1, Reg(0), mapid=1, ubit=0),
               Ev(0x92, 1, Reg(0), mapid=1, p2or=0x80), Ev(0x92, 1, Reg(0), mapid=1, p2or=0x01)):
         L.append(line_ud(e.rex2(), "rbx=0x%X" % MEM_PTR))
-    # R4 with a k register (ignored) and V4 (must be 0)
-    L.append("%s | r16=0x1234 => k1=0x1234" % dotbyte(Ev(0x92, 1 | 16, Reg(16), mapid=1).rex2()))
+    # R4 = 1 with a k register in ModRM.reg: #UD (U1072, reverts U791: SDM Vol2A Table 2-41 "EVEX.R'
+    # ... ModRM.reg encodes k-reg or GPR: If 0" #UD; APX spec 3.1.2.3.3 "all other payload bits
+    # have the same meanings as they do now"); V4 (must be 0)
+    L.append("%s | r16=0x1234 => #UD" % dotbyte(Ev(0x92, 1 | 16, Reg(16), mapid=1).rex2()))
     L.append(line_ud(Ev(0x92, 1, Reg(16), mapid=1, v=16).rex2()))
     c("--- AMX (EVEX map 2 49 / 4B, APX-promoted): LDTILECFG [r16]; TILELOADD tmm0, [r17 + r18];"
       " TILESTORED [r19 + r20], tmm0; STTILECFG [r21]; TILERELEASE (VEX) ---")

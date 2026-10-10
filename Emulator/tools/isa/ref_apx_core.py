@@ -1658,20 +1658,26 @@ def evex_lines():
     c("--- RIP-relative with B4/X4 set (ignored): VMOVD xmm4, [rip - 4] ---")
     code = evex(1, 1, 0, 0, 0x6E, [0x25, 0xFC, 0xFF, 0xFF, 0xFF], B4=1, X4=1)
     L.append("%s => zmm4=%s" % (dotbyte(code), zhex(bytes([0xFC, 0xFF, 0xFF, 0xFF]) + bytes(60))))
-    # U791: a k register in ModRM.reg does not use R4 (Table 3.3 REG: GPR / vector): with APX
-    # enabled the bit is ignored (3.1.2.3.3); R3 (EVEX.R) with a k register stays #UD (SDM Table 2-41)
+    # U1072 (reverts U791): R4 (EVEX.R') = 1 with a k register in ModRM.reg is #UD also with APX
+    # enabled. APX spec 355828-009 3.1.2.3.3: "Except for the B4 and U bits, all other payload bits
+    # have the same meanings as they do now in the EVEX prefix" - R' keeps the SDM Vol2A Table 2-41
+    # meaning "ModRM.reg encodes k-reg or GPR: #UD if 0" for a k register (APX redefines it only
+    # for a GPR, Table 3.3 REG); the "not used ... ignored" sentence does not override a bit whose
+    # current meaning is a #UD condition. R3 (EVEX.R) with a k register stays #UD as well.
     rk = random.Random(0x0791)
     a = bytes(rk.getrandbits(8) for _ in range(64))
     eq = [0, 3, 4, 9, 15]
     b_ = b"".join(a[4 * i:4 * i + 4] if i in eq else bytes(x ^ 0x5A for x in a[4 * i:4 * i + 4]) for i in range(16))
     km = sum(1 << i for i in eq)
-    c("--- k register in ModRM.reg with R4 = 1 (U791): ignored with APX enabled; VPCMPEQD k1, zmm2, zmm3 (EVEX.512.66.0F.W0 76) ---")
+    c("--- k register in ModRM.reg with R4 = 1 (U1072, reverts U791): #UD also with APX enabled (SDM Table 2-41,"
+      " APX spec 3.1.2.3.3); VPCMPEQD k1, zmm2, zmm3 (EVEX.512.66.0F.W0 76): R4 = 0 runs, R4 = 1 #UD ---")
     for r4 in (0, 1):
         code = evex(1, 1, 0, 2, 0x76, [0xCB], vvvv=2, R4=r4)
-        L.append("%s | zmm2=%s zmm3=%s k1=0xFFFF => k1=0x%X" % (dotbyte(code), zhex(a), zhex(b_), km))
-    c("--- ... VPCMPEQD k5, zmm2, zmm3 with R4 = 1 and a k register written: k5 (not k21) ---")
+        L.append("%s | zmm2=%s zmm3=%s k1=0xFFFF => %s" % (dotbyte(code), zhex(a), zhex(b_),
+                                                          "#UD" if r4 else "k1=0x%X" % km))
+    c("--- ... VPCMPEQD k5, zmm2, zmm3 with R4 = 1: #UD (U1072) ---")
     code = evex(1, 1, 0, 2, 0x76, [0xEB], vvvv=2, R4=1)
-    L.append("%s | zmm2=%s zmm3=%s => k5=0x%X" % (dotbyte(code), zhex(a), zhex(b_), km))
+    L.append("%s | zmm2=%s zmm3=%s => #UD" % (dotbyte(code), zhex(a), zhex(b_)))
     c("--- ... R3 = 1 with a k register: #UD (unchanged, SDM Table 2-41) ---")
     code = evex(1, 1, 0, 2, 0x76, [0xCB], vvvv=2, R3=1)
     L.append("%s | zmm2=%s zmm3=%s => #UD" % (dotbyte(code), zhex(a), zhex(b_)))

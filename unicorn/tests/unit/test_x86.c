@@ -20326,10 +20326,10 @@ static void test_x86_axc_wrss_paging(void)
 }
 
 /*
- * U791: EVEX.R4 (R' = 1) with a k register in ModRM.reg (VPCMPEQD k, zmm2, zmm3, EVEX.512.66.0F.W0
- * 76): #UD while APX is not enabled (SDM Vol2A Table 2-41; APX spec 3.1.4.2.1), ignored once it is
- * (APX spec 3.1.2.3.3: an unused R4 is ignored; the k register number is ModRM.reg); EVEX.R (R3)
- * with a k register stays #UD.
+ * U791, reverted by U1072: EVEX.R4 (R' = 1) with a k register in ModRM.reg (VPCMPEQD k, zmm2,
+ * zmm3, EVEX.512.66.0F.W0 76) is #UD whether APX is enabled or not (SDM Vol2A Table 2-41; APX spec
+ * 3.1.2.3.3 "all other payload bits have the same meanings as they do now"); EVEX.R (R3) with a
+ * k register stays #UD; R4 = 0 runs.
  */
 #define AXC_PCMPEQD_K1      "\x62\xf1\x6d\x48\x76\xcb"     /* vpcmpeqd k1, zmm2, zmm3           */
 #define AXC_PCMPEQD_K1_R4   "\x62\xe1\x6d\x48\x76\xcb"     /* the same with R4 = 1              */
@@ -20352,11 +20352,15 @@ static void test_x86_axc_evex_r4_kreg(void)
     OK(uc_reg_write(c.uc, UC_X86_REG_ZMM3, z3));
     xcr0 = apx_get(&c, UC_X86_REG_XCR0);
     TEST_CHECK((xcr0 & 0x800e7) == 0x800e7);
-    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == -1);
-    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
+    /* U1072: APX enabled - R4 = 1 with a k register #UD, k1 / k5 unchanged; R4 = 0 runs */
+    apx_set(&c, UC_X86_REG_K1, 0);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == 6);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0);
     apx_set(&c, UC_X86_REG_K5, 0);
-    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K5_R4, 6) == -1);
-    TEST_CHECK(apx_get(&c, UC_X86_REG_K5) == 0x9249);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K5_R4, 6) == 6);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K5) == 0);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1, 6) == -1);
+    TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
     TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R3, 6) == 6);
     /* XCR0[19] = 0 (APX not enabled): the SDM rule, R4 = 1 #UD; R4 = 0 runs */
     TEST_CHECK(apx_xsetbv(&c, xcr0 & ~(1ull << 19)) == -1);
@@ -20365,7 +20369,7 @@ static void test_x86_axc_evex_r4_kreg(void)
     TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1, 6) == -1);
     TEST_CHECK(apx_get(&c, UC_X86_REG_K1) == 0x9249);
     TEST_CHECK(apx_xsetbv(&c, xcr0) == -1);
-    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == -1);
+    TEST_CHECK(apx_run(&c, AXC_PCMPEQD_K1_R4, 6) == 6);              /* U1072: still #UD */
     OK(uc_close(c.uc));
 
     /* no APX in the CPU model: R4 = 1 with a k register #UD (SDM Table 2-41) */
