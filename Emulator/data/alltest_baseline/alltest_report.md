@@ -2,7 +2,7 @@
 
 Unicorn 2.1 `UC_CPU_X86_MAX` vs host CPU. Mode **full**, 6 iterations per form, sample 1/1.
 
-Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 39 s.
+Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441, x87 137, ). Run: **13504 forms** in 16 s.
 
 ## Buckets
 
@@ -11,9 +11,9 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | match | 3189 |
 | differs | 0 |
 | unicorn-#UD (hw runs it) | 0 |
-| host lacks + unicorn #UD | 10152 |
+| host lacks + unicorn #UD | 10151 |
 | invalid encoding, #UD on both | 22 |
-| host lacks, unicorn runs (needs SDM check) | 20 |
+| host lacks, unicorn runs (needs SDM check) | 21 |
 | not native-safe, unicorn runs (needs SDM check) | 13 |
 | not native-safe, unicorn #UD | 0 |
 | privileged (CPL0; CPL3 check in Phase 3) | 102 |
@@ -38,7 +38,7 @@ Known deviations: 6 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 | avx2+novlx | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512 | 0 | 0 | 0 | 1122 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | avx512+vlx | 0 | 0 | 0 | 622 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| base | 1322 | 0 | 0 | 7341 | 6 | 4 | 9 | 0 | 78 | 0 | 4 | 0 |
+| base | 1322 | 0 | 0 | 7340 | 6 | 5 | 9 | 0 | 78 | 0 | 4 | 0 |
 | bmi | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bmi2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | bwi | 0 | 0 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
