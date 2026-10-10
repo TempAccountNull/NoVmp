@@ -3519,6 +3519,28 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U901) */
+
+#if __Use_Original_Qemu != 1 /* ours (U963) */
+    case UC_CTL_X86_EVENT_DELIVERY:
+        /* NoVmp U963: IDT delivery of external interrupts / exceptions (opt-in) */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *mask = va_arg(args, int *);
+            *mask = uc->x86_event_delivery;
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int mask = va_arg(args, int);
+            if (mask & ~(UC_X86_DELIVER_INTR_IDT | UC_X86_DELIVER_EXC_IDT)) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_event_delivery = mask;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U963) */
     case UC_CTL_X86_CPUID_STRICT:
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;

@@ -337,6 +337,26 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
 
     // printf(">> exception index = %u\n", cpu->exception_index); qq
 
+#if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U963) */
+    {
+        /*
+         * NoVmp (ledger U963): UC_CTL_X86_EVENT_DELIVERY with UC_X86_DELIVER_EXC_IDT - an
+         * exception or software interrupt is delivered through the guest IDT (QEMU's
+         * x86_cpu_do_interrupt, SDM Vol3A 7.12 / 7.14) instead of the Unicorn hooks. External
+         * interrupts on their way to UC_HOOK_INTR (x86_ext_hook) keep the hook path.
+         */
+        bool x86_ext = uc->x86_ext_hook;
+
+        uc->x86_ext_hook = 0;
+        if (!x86_ext && cpu->exception_index >= 0 && cpu->exception_index < EXCP_INTERRUPT &&
+            (uc->x86_event_delivery & UC_X86_DELIVER_EXC_IDT)) {
+            CPU_GET_CLASS(cpu)->do_interrupt(cpu);
+            cpu->exception_index = -1;
+            *ret = EXCP_INTERRUPT;
+            return false;
+        }
+    }
+#endif /* __Use_Original_Qemu (U963) */
     if (cpu->uc->stop_interrupt && cpu->uc->stop_interrupt(cpu->uc, cpu->exception_index)) {
         // Unicorn: call registered invalid instruction callbacks
         catched = false;

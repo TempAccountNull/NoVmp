@@ -2553,7 +2553,7 @@ void x86_apic_set_cr8(CPUX86State *env, uint64_t val);
 void x86_apic_update(CPUX86State *env);
 int x86_apic_acknowledge(CPUX86State *env);
 void x86_apic_eoi(CPUX86State *env);
-void QEMU_NORETURN x86_apic_deliver_event(CPUX86State *env, int vector);
+void x86_apic_deliver_event(CPUX86State *env, int vector);
 #endif /* __Use_Original_Qemu (U960) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
 /* apic_model.c: the APIC bus between engines (UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID) */

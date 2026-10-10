@@ -849,11 +849,25 @@ typedef enum uc_control_type {
     // another APIC on the bus has -> UC_ERR_ARG. Reading initialises the engine.
     // Write: @args = (uint32_t id); Read: @args = (uint32_t *id)
     UC_CTL_X86_APIC_ID,
+    // x86 only (NoVmp U963): how events reach the guest, a mask of UC_X86_DELIVER_* (default 0:
+    // Unicorn style, every event goes to UC_HOOK_INTR / UC_HOOK_INSN_INVALID).
+    // UC_X86_DELIVER_INTR_IDT: external interrupts from the local APIC (fixed vectors, NMI) are
+    // delivered through the guest IDT (SDM Vol3A 7.12, 7.14: gates, stack switch, IST, CET
+    // shadow stacks) instead of UC_HOOK_INTR. UC_X86_DELIVER_EXC_IDT: exceptions and INT n /
+    // INT3 / INTO / INT1 are delivered through the IDT too; UC_HOOK_INTR and
+    // UC_HOOK_INSN_INVALID are then not called for them (a #UD goes to the guest's handler), a
+    // fault during delivery becomes #DF, and a triple fault (shutdown) stops the emulation with
+    // UC_ERR_EXCEPTION. UC_CTL_X86_EXCEPTION still records every event. Any time.
+    // Write: @args = (int mask); Read: @args = (int *mask)
+    UC_CTL_X86_EVENT_DELIVERY,
 } uc_control_type;
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
 #define UC_X86_SYSCALL_HOOK_ONLY 1 // Unicorn's hook-only SYSCALL / SYSENTER
+// UC_CTL_X86_EVENT_DELIVERY bits (NoVmp U963)
+#define UC_X86_DELIVER_INTR_IDT 1  // external interrupts / NMI through the guest IDT
+#define UC_X86_DELIVER_EXC_IDT 2   // exceptions and software interrupts through the guest IDT
 
 // UC_CTL_X86_RDRAND modes (NoVmp U835)
 #define UC_X86_RDRAND_SEEDED 0     // deterministic seeded model (default)
@@ -1033,6 +1047,10 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_APIC_ID, 1), (uint32_t)(id))
 #define uc_ctl_get_x86_apic_id(uc, id)                                         \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_APIC_ID, 1), (uint32_t *)(id))
+#define uc_ctl_set_x86_event_delivery(uc, mask)                                \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_EVENT_DELIVERY, 1), (int)(mask))
+#define uc_ctl_get_x86_event_delivery(uc, mask)                                \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_EVENT_DELIVERY, 1), (int *)(mask))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

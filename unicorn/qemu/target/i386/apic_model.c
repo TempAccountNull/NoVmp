@@ -896,12 +896,13 @@ gp:
 }
 
 /*
- * Delivers an external interrupt (vector from the local APIC, or 2 for an NMI) to the core.
- * Default (Unicorn style): like an exception, the vector goes to UC_HOOK_INTR with RIP at the
- * interrupted instruction boundary, and UC_CTL_X86_EXCEPTION reports it with external = 1;
- * without a UC_HOOK_INTR hook the emulation stops with UC_ERR_EXCEPTION.
+ * Delivers an external interrupt (vector from the local APIC, or 2 for an NMI) to the core;
+ * UC_CTL_X86_EXCEPTION reports it with external = 1. With UC_X86_DELIVER_INTR_IDT (U963): through
+ * the guest IDT as a hardware interrupt (SDM Vol3A 7.12, 7.14; no error code). Default (Unicorn
+ * style): like an exception, the vector goes to UC_HOOK_INTR with RIP at the interrupted
+ * instruction boundary; without a UC_HOOK_INTR hook the emulation stops with UC_ERR_EXCEPTION.
  */
-void QEMU_NORETURN x86_apic_deliver_event(CPUX86State *env, int vector)
+void x86_apic_deliver_event(CPUX86State *env, int vector)
 {
     CPUState *cs = env_cpu(env);
     struct uc_x86_exception *e = &env->uc->x86_exc;
@@ -909,6 +910,11 @@ void QEMU_NORETURN x86_apic_deliver_event(CPUX86State *env, int vector)
     memset(e, 0, sizeof(*e));
     e->vector = vector;
     e->external = 1;
+    if (env->uc->x86_event_delivery & UC_X86_DELIVER_INTR_IDT) {
+        do_interrupt_x86_hardirq(env, vector, 1);
+        return;
+    }
+    env->uc->x86_ext_hook = 1;      /* not an exception for UC_X86_DELIVER_EXC_IDT */
     cs->exception_index = vector;
     env->error_code = 0;
     env->exception_is_int = 0;

@@ -115,12 +115,31 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
   until the next IRET (SDM Vol3A 7.7).
 - Spurious interrupts (13.9) do not arise: acknowledge and priority evaluation are one step at an
   instruction boundary, so there is no INTR/INTA window. The SVR vector is stored only.
-- Delivery of the accepted interrupt (Unicorn has no IDT delivery for exceptions): the vector is
-  handed to `UC_HOOK_INTR` like an exception, with RIP at the interrupted instruction boundary;
+- Delivery of the accepted interrupt, by default (Unicorn has no IDT delivery for exceptions;
+  opt-in IDT delivery: see below): the vector is handed to `UC_HOOK_INTR` like an exception, with RIP at the interrupted instruction boundary;
   `UC_CTL_X86_EXCEPTION` reports it with `external = 1` (the former `reserved` byte of
   `uc_x86_exception`). The hook plays the interrupt handler: the ISR bit stays set until an EOI
   (guest WRMSR 80BH, or the host writing MSR 80BH = 0). Without a `UC_HOOK_INTR` hook the
   emulation stops with `UC_ERR_EXCEPTION`, as for an unhandled exception.
+
+### IDT delivery, opt-in (U963)
+`uc_ctl_set_x86_event_delivery(uc, mask)` (`UC_CTL_X86_EVENT_DELIVERY`, any time, default 0):
+- `UC_X86_DELIVER_INTR_IDT`: an interrupt the local APIC dispatches (fixed vector, or NMI = 2) is
+  delivered through the guest IDT as a hardware interrupt (QEMU's `do_interrupt_x86_hardirq`: SDM
+  Vol3A 7.12 / 7.14 gates, privilege and stack switch, IST, CET shadow stacks (U755), no error
+  code) instead of `UC_HOOK_INTR`; the handler signals EOI itself.
+- `UC_X86_DELIVER_EXC_IDT`: exceptions and INT n / INT3 / INTO / INT1 are delivered through the
+  IDT too (QEMU's `x86_cpu_do_interrupt`); `UC_HOOK_INTR` and `UC_HOOK_INSN_INVALID` are not
+  called for them (a #UD reaches the guest's handler, so an instruction the emulator does not
+  implement is no longer reported as `UC_ERR_INSN_INVALID`). A fault during delivery is handled
+  per Table 7-3 (#DF); a triple fault (shutdown) stops the emulation with `UC_ERR_EXCEPTION`, the
+  #DF stays in `UC_CTL_X86_EXCEPTION`.
+- The bits are independent: with `EXC_IDT` alone, external interrupts still go to `UC_HOOK_INTR`;
+  with `INTR_IDT` alone, exceptions do.
+- `UC_CTL_X86_EXCEPTION` records every event in both modes (external interrupts with
+  `external = 1`).
+- Not modelled: the EXT bit (bit 0) in the error code of a fault raised while delivering an
+  external interrupt (QEMU sets it for no event).
 
 ### Errors (13.5.3)
 - ESR bits used: 4 Redirectable IPI, 5 Send Illegal Vector, 6 Receive Illegal Vector. Bit 7
@@ -168,6 +187,26 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
 - Not modelled: the EXT bit in the error code of a fault during notification processing (9.5.2);
   notifications sent by agents other than SENDUIPI (devices); posted-interrupt virtualization.
 
+### Foundation for VMX / TDX (SDM Vol3C chapter 32)
+The model keeps every APIC access behind a few entry points, which the planned APIC
+virtualization can intercept or reuse:
+- `x86_apic_msr_read` / `x86_apic_msr_write`: the only path to 800H-8FFH and IA32_APIC_BASE -
+  where "virtualize x2APIC mode", "APIC-register virtualization", the MSR bitmaps and TPR / EOI /
+  self-IPI virtualization (32.1.2-32.1.5, 32.5) hook in;
+- `x86_apic_get_cr8` / `x86_apic_set_cr8`: "use TPR shadow" (32.3);
+- `apic_ppr` / `apic_deliverable` (priority evaluation): the same rules evaluate the virtual-APIC
+  page (VPPR, RVI / SVI, 32.1.3 and 32.2.1);
+- `x86_apic_acknowledge`: the INTA point for "external-interrupt exiting" with "acknowledge
+  interrupt on exit";
+- `x86_uintr_notification_ident` at the acknowledge: the pattern for posted-interrupt
+  notification vectors (32.6) and user-interrupt notification virtualization (32.2.3);
+- `apic_send_icr` + the bus: IPI virtualization (32.1.6) and posted-interrupt notifications to
+  other vCPUs;
+- `x86_apic_deliver_event` with `UC_X86_DELIVER_INTR_IDT`: event delivery for a guest that runs
+  its own IDT (virtual-interrupt delivery, 32.2.2, ends in the same IDT delivery).
+TDX guests run with x2APIC only, which this model provides. The APIC-access page (32.4) needs
+the xAPIC MMIO interface, which is not modelled yet.
+
 ### Not modelled (operations that need these stop the emulation)
 These stop `uc_emu_start` with `UC_ERR_INSN_INVALID`, RIP at the instruction, no state changed
 (`UC_CTL_X86_EXCEPTION` vector stays -1); a host-API write of the same value is dropped:
@@ -199,3 +238,5 @@ Not modelled, without a stop (documented here instead):
 `test_x86_ap_uintr_cross_delivery` (CPL3 user-interrupt delivery on the other vCPU); the U104 tests
 `test_x86_uintr_senduipi` / `test_x86_uintr_delivery` and `Emulator/data/cases_keylocker.txt`
 (SENDUIPI lines) run with the APIC enabled.
+IDT delivery: `test_x86_ap_idt_delivery` (external interrupt, NMI, #GP with error code, #UD,
+INT n, mixed masks, triple fault).

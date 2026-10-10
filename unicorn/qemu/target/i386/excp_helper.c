@@ -71,6 +71,12 @@ static int check_exception(CPUX86State *env, int intno, int *error_code,
 
         qemu_log_mask(CPU_LOG_RESET, "Triple fault\n");
 
+#if __Use_Original_Qemu != 1 /* ours (U963) */
+        /* shutdown with IDT event delivery (UC_X86_DELIVER_EXC_IDT): UC_ERR_EXCEPTION */
+        if (env->uc->x86_event_delivery & UC_X86_DELIVER_EXC_IDT) {
+            env->uc->invalid_error = UC_ERR_EXCEPTION;
+        }
+#endif /* __Use_Original_Qemu (U963) */
         qemu_system_reset_request(env->uc);
         return EXCP_HLT;
     }

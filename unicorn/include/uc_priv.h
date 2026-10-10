@@ -461,6 +461,10 @@ struct uc_struct {
     int (*x86_apic_set_id)(struct uc_struct *uc, uint32_t id);           // a uc_err
     uint32_t (*x86_apic_get_id)(struct uc_struct *uc);
     void (*x86_apic_leave)(struct uc_struct *uc);
+    // NoVmp U963: UC_CTL_X86_EVENT_DELIVERY mask; x86_ext_hook = 1 while an external interrupt
+    // travels from x86_apic_deliver_event to UC_HOOK_INTR (cpu_handle_exception)
+    int x86_event_delivery;
+    int x86_ext_hook;
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.
