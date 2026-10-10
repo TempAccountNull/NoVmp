@@ -922,7 +922,8 @@ def gen_4fmaps(rnd):
             case(evex(3, 0, opc, 0, Mem(), vvvv=4, ll=1, n=16), [], ["#UD"],
                  "%s EVEX.L'L = 01b: #UD (EVEX.512 only)" % name)
         else:
-            # LLIG: L'L = 01b / 10b / 11b all run as the scalar form
+            # LLIG: L'L = 01b / 10b run as the scalar form; L'L = 11b is #UD (U1071: SDM Vol2A
+            # Table 2-38 "11b: Reserved (#UD)", user decision 2026-10-10, AMB-1)
             regs = {0: join([o(5)] + [0x11111111] * 15, 4), 4: join([o(1)] * 16, 4),
                     5: join([o(2)] * 16, 4), 6: join([o(3)] * 16, 4), 7: join([o(4)] * 16, 4)}
             mem = join([o(1), o(1), o(1), o(1)], 4)
@@ -930,6 +931,11 @@ def gen_4fmaps(rnd):
                 enc = evex(3, 0, opc, 0, Mem(), vvvv=4, ll=ll, n=16)
                 res, mxo, _ = m_4fmaps(regs[0], [regs[4 + m] for m in range(4)], mem, None, False,
                                        neg, True, MXCSR_DEFAULT)
+                if ll == 3:
+                    case(enc, [zmm_in(r, v) for r, v in sorted(regs.items())] +
+                         ["m+0x%X=%s" % (MEM_RSI, hexs(mem))], ["#UD"],
+                         "%s EVEX.L'L = 11b without EVEX.b: #UD (Table 2-38)" % name)
+                    continue
                 case(enc, [zmm_in(r, v) for r, v in sorted(regs.items())] +
                      ["m+0x%X=%s" % (MEM_RSI, hexs(mem))],
                      [zmm_in(0, res)] + (["mxcsr=0x%X" % mxo] if mxo != MXCSR_DEFAULT else []),

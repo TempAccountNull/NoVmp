@@ -5721,6 +5721,19 @@ static bool decode_evex_vl(DisasContext *s, CPUX86State *env, X86OpEntry *e)
         }
 #endif /* __Use_Original_Qemu (U332) */
         if (e->evex_vl & X86_EVEX_LIG) {
+#if __Use_Original_Qemu != 1 /* ours (U1071) */
+            /*
+             * NoVmp (ledger U1071, supersedes U869's LIG reading of 11b): a scalar (LIG) form
+             * with L'L = 11b and no EVEX.b is #UD - SDM Vol2A Table 2-38, "Load+op Instructions
+             * w/ memory source" / vector length: "11b: Reserved (#UD)"; 2.7.10 "L'L is generally
+             * ignored" covers 00b..10b only (user decision 2026-10-10 on the U1040 SDE
+             * cross-check, AMB-1; Intel SDE 10.13.1 and XED agree). With EVEX.b on a register
+             * form L'L is the rounding control (above) and stays valid.
+             */
+            if (s->evex_ll == 3) {
+                return false;
+            }
+#endif /* __Use_Original_Qemu (U1071) */
             vl = 16;
         } else if (s->evex_ll == 3 || !(e->evex_vl & (1 << s->evex_ll))) {
             return false;

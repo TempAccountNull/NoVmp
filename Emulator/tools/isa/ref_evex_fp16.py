@@ -115,12 +115,12 @@ Rules chosen where the SDM is silent or contradicts itself (page references are 
      negative value that rounds below 0 for the unsigned forms), NaN or INF -> integer
      indefinite (80..0h signed, FF..Fh unsigned) with IE. The VCVT[T]SH2USI page text is a copy
      of the signed one ("range limits of signed ..."): the unsigned range is used.
- 13. Scalar forms are LIG: cases use L'L = 0, 1, 2 without EVEX.b, and (U869, appended at the
-     end of each mnemonic) L'L = 11b without EVEX.b, also ignored: Vol2A 2.7.10 "When EVEX is
-     used to encode scalar instructions, L'L is generally ignored"; the scalar FP16 pages are
-     EVEX.LLIG and their classes (E3, E3NF, E5 VMOVSH, E10) list no "instruction specific
-     EVEX.L'L restriction"; Table 2-38's "11b: Reserved (#UD)" is the vector-length encoding
-     (the SS/SD forms are tested the same way in cases_evex_m2_engine.txt).
+ 13. Scalar forms are LIG for L'L = 0, 1, 2 without EVEX.b (the cases use them). L'L = 11b
+     without EVEX.b is #UD (U1071, user decision 2026-10-10 on the U1040 SDE cross-check, AMB-1:
+     Vol2A Table 2-38 "11b: Reserved (#UD)", as Intel SDE 10.13.1; supersedes U869, which read
+     2.7.10 "When EVEX is used to encode scalar instructions, L'L is generally ignored" as LIG
+     for 11b too). The U869 cases appended at the end of each mnemonic keep their inputs and
+     expect #UD (the SS/SD forms likewise in cases_evex_m2_engine.txt / cases_evex_m3_dq.txt).
      {sae} on reg-reg packed forms: L'L ignored, VL = 512 (Table 2-38/2-43); {er}: L'L = RC,
      VL = 512 (the M1 convention).
  14. VMOVW is EVEX.128 only (E9NF "instruction specific L'L restriction"): L'L != 00b -> #UD
@@ -1743,11 +1743,14 @@ def gen_movw(sp, first):
     ud(sp, "EVEX.b (memory)", b=1, rm=Mem(RSI, 0))
 
 
-# ---- U869: scalar forms with EVEX.L'L = 11b and EVEX.b = 0 (LIG), VMOVW L'L = 11b #UD ----------
+# ---- U869 / U1071: scalar forms with EVEX.L'L = 11b and EVEX.b = 0 #UD, VMOVW L'L = 11b #UD ------
 def gen_ll11(sp):
     """note 13 / 14: appended after every form of the mnemonic (the earlier cases keep their
-    random streams)"""
-    t = "L'L=11b without EVEX.b (LIG)"
+    random streams). U1071: the scalar cases are built as before (same inputs, same random
+    draws) and expect #UD (Vol2A Table 2-38 "11b: Reserved (#UD)")."""
+    global OUT
+    t = "L'L=11b without EVEX.b #UD"
+    mark = len(OUT)
     if sp.lay in ("rvm", "rm", "fma", "krvm", "krm"):
         if not sp.scalar:
             return
@@ -1795,6 +1798,10 @@ def gen_ll11(sp):
     elif sp.lay.startswith("movw"):
         ud(sp, "EVEX.L'L=11b", ll=3)
         ud(sp, "EVEX.L'L=11b (memory)", ll=3, rm=Mem(RSI, 0))
+    for c in OUT[mark:]:                               # U1071: every L'L = 11b case is #UD
+        if not isinstance(c, str):
+            c.exp = []
+            c.fault = "#UD"
 
 
 # ---- fault suppression -----------------------------------------------------------------------

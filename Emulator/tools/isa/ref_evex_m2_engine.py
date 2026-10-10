@@ -450,9 +450,15 @@ def gen_scalar_arith():
                 G(variant="mem", dst=10, s1=11, kreg=5, kval=kb | 0xF0,
                   title="%s mem merge k1[0]=%d" % (sp["name"], kb))
             G(variant="mem", dst=12, s1=13, title="%s mem" % sp["name"])
-            # L'L is ignored without EVEX.b (scalar: LIG)
+            # L'L = 01b / 10b without EVEX.b: the scalar form (LIG); L'L = 11b: #UD (U1071, Vol2A
+            # Table 2-38 "11b: Reserved (#UD)"; user decision 2026-10-10, AMB-1, as Intel SDE)
             for ll in (1, 2, 3):
-                G(variant="reg", dst=14, s1=15, s2=16, ll=ll, title="%s L'L=%d ignored" % (sp["name"], ll))
+                c = gen_case(sp, 16, no_nan_pair=two, variant="reg", dst=14, s1=15, s2=16, ll=ll,
+                             title="%s L'L=%d %s" % (sp["name"], ll, "#UD" if ll == 3 else "ignored"))
+                if ll == 3:
+                    c.exp = []
+                    c.fault = "#UD"
+                emit(c)
             # destination = each source
             G(variant="reg", dst=18, s1=18, s2=19, title="%s dst=src1" % sp["name"])
             G(variant="reg", dst=19, s1=18, s2=19, kreg=1, kval=1, title="%s dst=src2" % sp["name"])

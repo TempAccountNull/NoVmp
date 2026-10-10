@@ -33,6 +33,10 @@ Model notes (SDM pseudocode taken literally):
             RC (imm8[1:0], or MXCSR.RC when imm8[2] = 1); PE from the inexact ROUND unless
             SPE (imm8[3]); NaN -> quietened (IE for SNaN); +-INF -> +0; zero result +0
             (-0 when rounding down), Table 5-27. No DAZ/FTZ/DE/UE step in the pseudocode.
+  L'L       scalar forms (EVEX.LLIG): L'L = 00b/01b/10b run the scalar form; L'L = 11b without
+            EVEX.b is #UD (U1071, user decision 2026-10-10 on the U1040 SDE cross-check, AMB-1:
+            SDM Vol2A Table 2-38 "11b: Reserved (#UD)", as Intel SDE 10.13.1). The random L'L
+            of the scalar cases is kept; the L'L = 11b ones expect #UD.
   CVT       int64 -> FP rounded (PE); FP -> int64/uint64 rounded (or truncated), NaN/INF/out
             of range -> IE and 8000000000000000h (signed) / FFFFFFFFFFFFFFFFh (unsigned);
             DAZ zeroes a denormal source (checked against the i5-13600K with the SSE forms).
@@ -401,6 +405,11 @@ def gen(sp, vl, variant, dst=1, s1=2, s2=3, kreg=0, kval=None, z=0, imm=None, av
     else:
         c.code = evex(sp["mmm"], sp["pp"], w, sp["opc"], dst, rm, vvvv=s1, ll=ll, b=b, z=z,
                       aaa=kreg, imm=imm, n=nn)
+    if scalar and ll == 3 and not b:
+        # U1071: L'L = 11b without EVEX.b is #UD (Vol2A Table 2-38 "11b: Reserved (#UD)")
+        c.title += " (L'L=11b: #UD)"
+        c.exp = []
+        c.fault = "#UD"
     return c
 
 
