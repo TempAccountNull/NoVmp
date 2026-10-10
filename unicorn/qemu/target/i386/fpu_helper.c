@@ -6640,6 +6640,9 @@ enum {
 #if __Use_Original_Qemu != 1 /* ours (U724) */
     AMX_TDPBF8PS, AMX_TDPBHF8PS, AMX_TDPHBF8PS, AMX_TDPHF8PS,   /* U724 */
 #endif /* __Use_Original_Qemu (U724) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    AMX_TMMULTF32PS = 12,                                       /* U1150 (gen_TMMULTF32PS) */
+#endif /* __Use_Original_Qemu (U1150) */
 };
 
 /* AMX-E4 (SDM Vol2A 2.10) after amx_check_enabled; then the result tile is d */
@@ -7108,6 +7111,65 @@ static void amx_tmul_fp8(CPUX86State *env, int op, unsigned d, unsigned s1, unsi
 }
 #endif /* __Use_Original_Qemu (U724) */
 
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+/*
+ * NoVmp (ledger U1150): AMX-TF32 TMMULTF32PS tsrcdest, tsrc1, tsrc2 as last defined by ISE
+ * 319433-060 3.7, pp. 3-32/3-33 (withdrawn in -062; opt-in UC_X86_AMX_TF32 only).
+ * UNVERIFIED: PSEUDOCODE SELF-CONTRADICTORY. The Description (p. 3-32) says "Input single
+ * precision denormals are always handled and not treated as zero", the Operation comments
+ * (p. 3-33) say "FP32 FMA with DAZ=FTZ=1, RNE rounding" for the k-loop and "DAZ=FTZ=1, RNE
+ * rounding" for the final add. Chosen reading: the Operation, i.e. exactly the FP32 arithmetic
+ * of TDPBF16PS (amx_fma32 / amx_add32, U178/U596): the ISE's only executable statement of this
+ * arithmetic for AMX-TF32 is TTMMULTF32PS's "fma32(temp1.fp32[n], s1e, s2e, daz=1, ftz=1, sae=1,
+ * rc=RNE)" (ISE -058 p. 3-48, the same feature), and the TDPFP16PS line "Handle FP16 denorms.
+ * Not forcing input FP16 denorms to 0." that the Operation was copied from was dropped. The
+ * other reading (no DAZ, FTZ only) is recorded in docs/quirks.md. Per row m:
+ *   temp1[0 .. N-1] := 0
+ *   for k (ascending), for n: a := silence_snan_fp32(tsrc1.row[m].fp32[k]), b likewise from
+ *     tsrc2.row[k].fp32[n]; temp1[n] := fma32(temp1[n], zero_lower_mantissa_bits_fp32(a),
+ *     zero_lower_mantissa_bits_fp32(b)) (one rounding: "FP32 FMA")
+ *   tsrcdest.row[m].fp32[n] := add32(tsrcdest.row[m].fp32[n], temp1[n]); write_row_and_zero
+ *     (the undefined "tmp" of the ISE's write_row_and_zero call is this row).
+ * zero_upper_rows, zero_tileconfig_start. No MXCSR access, RNE, no exceptions. NaN results as
+ * the other AMX FP operations (U178): the first NaN of x, y, acc (a, b for the add), quieted;
+ * invalid -> FFC00000h. The SNaN is silenced before the 13 low fraction bits are cleared, so a
+ * NaN stays a NaN.
+ */
+static float32 amx_tf32(uint32_t x)
+{
+    if ((x & 0x7f800000u) == 0x7f800000u && (x & 0x007fffffu) && !(x & 0x00400000u)) {
+        x |= 0x00400000u;                       /* silence_snan_fp32 */
+    }
+    return make_float32(x & 0xffffe000u);       /* zero_lower_mantissa_bits_fp32: x[31:13] */
+}
+
+static void amx_tmul_tf32(CPUX86State *env, unsigned d, unsigned s1, unsigned s2)
+{
+    unsigned rows = AMX_ROWS(env, d), kk = AMX_COLSB(env, s1) / 4;
+    unsigned nn = AMX_COLSB(env, d) / 4, m, k, n;
+
+    for (m = 0; m < rows; m++) {
+        float32 temp1[16];
+        for (n = 0; n < nn; n++) {
+            temp1[n] = float32_zero;
+        }
+        for (k = 0; k < kk; k++) {
+            float32 a = amx_tf32(ldl_le_p(AMX_ROW(env, s1, m) + 4 * k));
+            for (n = 0; n < nn; n++) {
+                float32 b = amx_tf32(ldl_le_p(AMX_ROW(env, s2, k) + 4 * n));
+                temp1[n] = amx_fma32(temp1[n], a, b);
+            }
+        }
+        for (n = 0; n < nn; n++) {
+            uint8_t *c = AMX_ROW(env, d, m) + 4 * n;
+            stl_le_p(c, float32_val(amx_add32(make_float32(ldl_le_p(c)), temp1[n])));
+        }
+        memset(AMX_ROW(env, d, m) + 4 * nn, 0, AMX_P1_BYTES_PER_ROW - 4 * nn);
+    }
+    amx_tmul_finish(env, d);
+}
+#endif /* __Use_Original_Qemu (U1150) */
+
 #if __Use_Original_Qemu != 1 /* ours (U177) */
 /* info = op | tsrcdest << 4 | tsrc1 << 8 | tsrc2 << 12 (each 0..15) */
 void helper_amx_tmul(CPUX86State *env, uint32_t info)
@@ -7151,6 +7213,11 @@ void helper_amx_tmul(CPUX86State *env, uint32_t info)
         amx_tmul_fp8(env, op, d, s1, s2);
         break;
 #endif /* __Use_Original_Qemu (U724) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    case AMX_TMMULTF32PS:
+        amx_tmul_tf32(env, d, s1, s2);
+        break;
+#endif /* __Use_Original_Qemu (U1150) */
     default:
         g_assert_not_reached();
     }

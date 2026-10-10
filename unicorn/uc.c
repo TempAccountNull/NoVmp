@@ -3334,7 +3334,8 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *mask = uc->x86_amx;
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
-            if (uc->init_done || (mask & ~UC_X86_AMX_ALL)) {
+            /* U1150: + UC_X86_AMX_TF32 (explicit opt-in, not in UC_X86_AMX_ALL) */
+            if (uc->init_done || (mask & ~(UC_X86_AMX_ALL | UC_X86_AMX_TF32))) {
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_amx = mask ? (mask | UC_X86_AMX_TILE) : 0;

@@ -457,6 +457,16 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         [1] = X86_OP_ENTRY0(TCMMIMFP16PS, vex22 cpuid(AMX_COMPLEX) p_66),
     };
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    /*
+     * AMX-TF32 (ISE 319433-060 3.7 p. 3-32, opt-in UC_X86_AMX_TF32): 48 11:rrr:bbb 66
+     * TMMULTF32PS. NP 48 was TTMMULTF32PS (AMX-TRANSPOSE AND AMX-TF32, ISE -058 p. 3-48,
+     * withdrawn with AMX-TRANSPOSE in -059): not implemented, #UD like every other pp / mod.
+     */
+    static const X86OpEntry amx_48_reg[4] = {
+        [1] = X86_OP_ENTRY0(TMMULTF32PS,  vex22 cpuid(AMX_TF32) p_66),
+    };
+#endif /* __Use_Original_Qemu (U1150) */
     int mod = get_modrm(s, env) >> 6;
 
     memset(entry, 0, sizeof(*entry));
@@ -502,6 +512,13 @@ static void decode_0F38_AMX(DisasContext *s, CPUX86State *env, X86OpEntry *entry
         }
         break;
 #endif /* __Use_Original_Qemu (U180) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    case 0x48:
+        if (mod == 3) {
+            *entry = *decode_by_prefix(s, amx_48_reg);
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1150) */
     default:
         break;
     }
@@ -727,6 +744,10 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
     [0x45] = X86_OP_ENTRY3(VPSRLV,      V,x,  H,x,       W,x,  vex6 cpuid(AVX2) p_66),
     [0x46] = X86_OP_ENTRY3(VPSRAV,      V,x,  H,x,       W,x,  vex6 chk(W0) cpuid(AVX2) p_66),
     [0x47] = X86_OP_ENTRY3(VPSLLV,      V,x,  H,x,       W,x,  vex6 cpuid(AVX2) p_66),
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    /* AMX-TF32 TMMULTF32PS (VEX only, opt-in; decode_0F38_AMX) */
+    [0x48] = X86_OP_GROUP0(0F38_AMX),
+#endif /* __Use_Original_Qemu (U1150) */
 #if __Use_Original_Qemu != 1 /* ours (U175) */
     /* Intel AMX (VEX only, decode_0F38_AMX) */
     [0x49] = X86_OP_GROUP0(0F38_AMX),
@@ -6042,6 +6063,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_AMX_MOVRS:
         return (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_MOVRS);
 #endif /* __Use_Original_Qemu (U720) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    case X86_FEAT_AMX_TF32:
+        return (s->cpuid_1e_1_eax_features & CPUID_1E_1_EAX_AMX_TF32);
+#endif /* __Use_Original_Qemu (U1150) */
 #endif /* __Use_Original_Qemu (U175) */
 #if __Use_Original_Qemu != 1 /* ours (U321) */
     case X86_FEAT_AVX512CD:

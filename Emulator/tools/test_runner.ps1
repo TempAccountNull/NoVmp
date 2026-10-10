@@ -153,6 +153,11 @@ Add-Exp 'cases_amx' 'cases_amx' 'amx expect' @( '--amx' )
 # for the XSAVES / XRSTORS #GP); the model's hand-derived self-test runs as well.
 Add-Exp 'cases_amx2' 'cases_amx2' 'amx expect' @( '--amx', '--avx512', '--apx' )
 Add-PySelftest 'ref_amx_selftest' 'amx tools' 'ref_amx.py'
+# U1150: AMX-TF32 TMMULTF32PS (ISE 319433-060 3.7, withdrawn in -062; explicit opt-in --amx-tf32,
+# UNVERIFIED: self-contradictory pseudocode, the Operation's DAZ = FTZ = 1 reading, docs/quirks.md) vs
+# ref_amx_tf32.py --cases (independent model of the ISE text); Unicorn only (no CPU, no SDE support).
+Add-Exp 'cases_amx_tf32' 'cases_amx_tf32' 'amx expect' @( '--amx', '--amx-tf32' )
+Add-PySelftest 'ref_amx_tf32_selftest' 'amx tools' 'ref_amx_tf32.py'
 # plan 1.15d milestone M1: EVEX instructions (moves, integer/logic, FP with {er}, compares into k,
 # broadcasts; masking, {1toN}, disp8*N, fault suppression, #UD) vs the SDM model ref_evex_m1.py.
 Add-Exp 'cases_evex_m1' 'cases_evex_m1' 'evex expect' @( '--avx512' )

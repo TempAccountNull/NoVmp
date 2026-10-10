@@ -6182,6 +6182,13 @@ static void gen_TDPHF8PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
     gen_amx_tmul(s, 11);
 }
 #endif /* __Use_Original_Qemu (U724) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+/* AMX-TF32 (opt-in, unverified): VEX.128.66.0F38.W0 48 11:rrr:bbb (AMX_TMMULTF32PS = 12 in fpu_helper.c) */
+static void gen_TMMULTF32PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_amx_tmul(s, 12);
+}
+#endif /* __Use_Original_Qemu (U1150) */
 #if __Use_Original_Qemu != 1 /* ours (U725) */
 
 /*

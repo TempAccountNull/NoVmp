@@ -1260,6 +1260,7 @@ tilestored	evex	0	APX_F_AMX	44
 tilestored	vex	0	AMX_TILE	60
 tilezero	vex	0	AMX_TILE_BASE	60
 tlbsync	legacy	0	AMD_INVLPGB	41
+tmmultf32ps	vex	0	AMX_TF32	44
 top2bf16ps	evex	512	ACE_1	44
 top4bssd	evex	512	ACE_1	44
 top4bsud	evex	512	ACE_1	44

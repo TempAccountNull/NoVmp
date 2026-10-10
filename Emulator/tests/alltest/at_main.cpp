@@ -24,6 +24,8 @@
 //                    VPOPCNTDQ|BITALG|VBMI|FP16|VP2INTERSECT|VBMI2|VNNI|BF16, reset XCR0 with 7:5) for opmask/EVEX expected-value cases; the host CPU has none
 //   --amx            with --cases: Unicorn opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL,
 //                    reset XCR0 with 18:17) for the AMX expected-value cases; the host has none
+//   --amx-tf32       with --cases: also UC_X86_AMX_TF32 (U1150; AMX-TF32 TMMULTF32PS, withdrawn ISE
+//                    319433-060 feature, unverified; never part of --amx) for cases_amx_tf32.txt
 //   --bench          performance benchmark (at_bench.hpp, ledger U500): [--reps N] [--filter S]
 //                    [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]; Unicorn only, own code only;
 //                    --profile N also works with a quick/--full run (whole-run profile)
@@ -541,7 +543,8 @@ int main( int argc, char** argv )
 		// AVX512PF, PREFETCHWT1; AVX512F implied) to the UC_CTL_X86_AVX512 mask; --avx512 alone keeps them off
 		else if ( a == "--xeonphi" ) copt.avx512 |= UC_X86_AVX512_F | UC_X86_AVX512_4VNNIW | UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER |
 												   UC_X86_AVX512_PF | UC_X86_AVX512_PREFETCHWT1;
-		else if ( a == "--amx" ) copt.amx = UC_X86_AMX_ALL;
+		else if ( a == "--amx" ) copt.amx |= UC_X86_AMX_ALL;   // U1150: |= (was =), so --amx-tf32 may come first
+		else if ( a == "--amx-tf32" ) copt.amx |= UC_X86_AMX_TF32;   // U1150: explicit opt-in, not part of --amx
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
 		else if ( a == "--apx" ) copt.apx = UC_X86_APX_F;
 		// U835 (decision D8): RDRAND/RDSEED source. --seeded = the deterministic model (default),
@@ -562,7 +565,7 @@ int main( int argc, char** argv )
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );

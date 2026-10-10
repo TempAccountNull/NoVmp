@@ -4499,6 +4499,8 @@ uint64_t x86_cpu_xfd_armed(CPUX86State *env)
  * both"); AMX_FP8 (4), AMX_AVX512 (7) and AMX_MOVRS (8) exist only here and come from the
  * UC_CTL_X86_AMX mask. Bits 6:5 are reserved (5 was AMX-TRANSPOSE, 6 AMX-TF32: both removed
  * from the ISE). 0 without AMX_TILE.
+ * U1150: bit 6 AMX-TF32 (ISE 319433-060 Table 1-3, p. 1-27) only with the explicit
+ * UC_X86_AMX_TF32 opt-in (TMMULTF32PS, unverified); bit 5 stays 0.
  */
 uint32_t x86_cpu_amx_1e_1_eax(CPUX86State *env)
 {
@@ -4529,6 +4531,11 @@ uint32_t x86_cpu_amx_1e_1_eax(CPUX86State *env)
     if (mask & UC_X86_AMX_MOVRS) {
         eax |= CPUID_1E_1_EAX_AMX_MOVRS;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+    if (mask & UC_X86_AMX_TF32) {
+        eax |= CPUID_1E_1_EAX_AMX_TF32;
+    }
+#endif /* __Use_Original_Qemu (U1150) */
     return eax;
 }
 #endif /* __Use_Original_Qemu (U720) */

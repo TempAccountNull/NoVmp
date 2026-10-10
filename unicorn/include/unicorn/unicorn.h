@@ -746,8 +746,15 @@ typedef enum uc_control_type {
     // AMX-MOVRS (1EH.1:EAX[8]: TILELOADDRS, TILELOADDRST1; with UC_CTL_X86_APX also the
     // EVEX forms) - ISE 319433-062 Table 1-3, enumerated only in leaf 1EH. The AMX-AVX512
     // instructions also need the AVX-512 state (XCR0[7:5] = 111b, AMX-E7/E8-EVEX), i.e.
-    // UC_CTL_X86_AVX512 or UC_CTL_X86_AVX10 as well. AMX-TF32 (TMMULTF32PS) is not offered:
-    // ISE 319433-062 removed it (CPUID.1EH.01H:EAX[6] reserved).
+    // UC_CTL_X86_AVX512 or UC_CTL_X86_AVX10 as well. AMX-TF32 (TMMULTF32PS) is not part of
+    // UC_X86_AMX_ALL: ISE 319433-062 removed it (CPUID.1EH.01H:EAX[6] reserved).
+    // NoVmp U1150: UC_X86_AMX_TF32 (explicit opt-in only, default off) adds AMX-TF32 as last
+    // defined by ISE 319433-060 3.7 (pp. 3-32/3-33; withdrawn in -062): CPUID.(1EH,1):EAX[6]
+    // (-060 Table 1-3, p. 1-27) and TMMULTF32PS tmm1, tmm2, tmm3 (VEX.128.66.0F38.W0 48
+    // 11:rrr:bbb, AMX-E4). UNVERIFIED: the ISE pseudocode contradicts its own description on
+    // input denormals; the emulator follows the Operation (FP32 FMA / add with DAZ = FTZ = 1,
+    // as TDPBF16PS), the other reading is recorded in docs/quirks.md. No product or Intel SDE
+    // 10.13.1 implements it.
     UC_CTL_X86_AMX,
     // x86 only (NoVmp U370): Intel AVX10 in the CPU model (AVX10.2 spec 361050-007 3.1.2,
     // Table 3.1). The value is the AVX10 version, UC_X86_AVX10_1 or UC_X86_AVX10_2, plus
@@ -954,6 +961,9 @@ typedef enum uc_control_type {
 #define UC_X86_AMX_AVX512 64  // + AMX-AVX512: TCVTROW*, TILEMOVROW (EVEX; U720)
 #define UC_X86_AMX_MOVRS 128  // + AMX-MOVRS: TILELOADDRS, TILELOADDRST1 (U720)
 #define UC_X86_AMX_ALL 255
+// + AMX-TF32: TMMULTF32PS (U1150; withdrawn ISE 319433-060 feature, unverified: its pseudocode is
+// self-contradictory; explicit opt-in only, never part of UC_X86_AMX_ALL)
+#define UC_X86_AMX_TF32 256
 
 // UC_CTL_X86_AVX10 values (NoVmp U370)
 #define UC_X86_AVX10_1 1           // AVX10.1: the AVX-512 instruction set (Table 3.2)

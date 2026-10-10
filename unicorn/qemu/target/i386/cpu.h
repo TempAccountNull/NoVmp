@@ -1091,6 +1091,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_1E_1_EAX_AMX_AVX512       (1U << 7)
 #define CPUID_1E_1_EAX_AMX_MOVRS        (1U << 8)
 #endif /* __Use_Original_Qemu (U720) */
+#if __Use_Original_Qemu != 1 /* ours (U1150) */
+/* AMX-TF32 (TMMULTF32PS): ISE 319433-060 Table 1-3 p. 1-27 (reserved since -062; opt-in only) */
+#define CPUID_1E_1_EAX_AMX_TF32         (1U << 6)
+#endif /* __Use_Original_Qemu (U1150) */
 /* AMX state components 17 (TILECFG) and 18 (TILEDATA): enabled together or not at all */
 #define XSTATE_AMX_MASK                 (XSTATE_XTILE_CFG_MASK | XSTATE_XTILE_DATA_MASK)
 #endif /* __Use_Original_Qemu (U170) */
