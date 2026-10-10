@@ -25828,6 +25828,386 @@ static void test_x86_ap_idt_delivery(void)
 }
 /* ---- end U960-U989 (ap_) ---- */
 
+/*
+ * ---- NoVmp U940-U959 (decision A9, rc_): approximate reciprocal / reciprocal square root ----
+ * VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD, VRCPPH/SH, VRSQRTPH/SH, VRCPBF16, VRSQRTBF16 and the
+ * legacy RCPPS/RSQRTPS. Expected values: the SDM special-case tables (Vol2C Tables 5-24..5-26,
+ * 5-32..5-36, AVX10.2 spec Tables 7.2/7.3) and the documented stand-in (correctly rounded; see
+ * docs/reciprocal.md) from the independent model Emulator\tools\isa\ref_rcp.py; RCPPS/RSQRTPS
+ * values are the i5-13600K's (U81). rc_bounds checks the documented error bounds directly
+ * (every FP16 / BF16 input, a stride sample of FP32), independent of any model.
+ */
+#define RC_DATA 0x200000
+
+typedef struct RcCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+} RcCtx;
+
+/* avx512: UC_CTL_X86_AVX512 mask (0 = none); avx10: AVX10 version (0 = none) */
+static void rc_open(RcCtx *c, int avx512, int avx10)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/*
+ * zmm0 := op(zmm1) (or op(zmm2, zmm1) for the scalar forms): src = zmm1 (64 bytes), s1 = zmm2,
+ * d0 = the old zmm0; returns the new zmm0 in out; checks no exception and MXCSR unchanged
+ */
+static void rc_run(RcCtx *c, const uint8_t *insn, size_t n, const void *src, const void *s1,
+                   const void *d0, uint32_t mxcsr, void *out)
+{
+    static const uint8_t zero[64];
+    uint32_t mx = mxcsr, mx2 = 0;
+    uc_err err;
+
+    OK(uc_mem_write(c->uc, code_start, insn, n));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM1, src));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, s1 ? s1 : zero));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM0, d0 ? d0 : zero));
+    OK(uc_reg_write(c->uc, UC_X86_REG_MXCSR, &mx));
+    c->cap.count = 0;
+    err = uc_emu_start(c->uc, code_start, code_start + n, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    TEST_CHECK(c->cap.count == 0);                 /* never #XM: no SIMD FP exception */
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM0, out));
+    OK(uc_reg_read(c->uc, UC_X86_REG_MXCSR, &mx2));
+    TEST_CHECK(mx2 == mxcsr);                      /* MXCSR flags not affected */
+    TEST_MSG("MXCSR %08X -> %08X", mxcsr, mx2);
+}
+
+/* the U236 stand-in vs the SDM tables (Table 5-25), DAZ / FTZ, RC and unmasked exceptions ignored */
+static void test_x86_rc_rcp14_tables(void)
+{
+    static const uint8_t vrcp14ps[] = {0x62, 0xF2, 0x7D, 0x48, 0x4C, 0xC1};     /* vrcp14ps zmm0, zmm1 */
+    static const uint32_t in[16] = {
+        0x00000000, 0x80000000, 0x00200000, 0x00200001, 0x7F000000, 0x7F7FFFFF, 0x7E800001, 0x807FFFFF,
+        0x3F800000, 0x40400000, 0x7F800000, 0xFF800000, 0x7F800001, 0xFFC00001, 0x00000001, 0x3FC00000};
+    static const struct {
+        uint32_t mxcsr;
+        uint32_t r[16];
+    } t[] = {
+        /* +0 -> +INF, -0 -> -INF, 2^-128 -> INF (Table 5-25 "0 <= X <= 2^-128"), the next
+           denormal -> finite, 2^127 -> 2^-127 (denormal), max -> underflow (shifted mantissa),
+           2^126(1+2^-23) -> underflow, -max denormal -> finite, 1 -> 1, 3 -> 1/3, +-INF -> +-0,
+           SNaN -> QNaN, QNaN -> itself, min denormal -> INF, 1.5 -> 2/3 */
+        {0x1F80, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
+                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        /* DAZ: every denormal source is a signed zero */
+        {0x1FC0, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F800000, 0x00400000, 0x00200000, 0x007FFFFF, 0xFF800000,
+                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        /* FTZ: underflow results are zeros of the operand's sign */
+        {0x9F80, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00000000, 0x00000000, 0x00000000, 0xFE800001,
+                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        /* RC = toward zero, every exception unmasked, every flag set: as the default */
+        {0x6000, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
+                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        {0x7FBF, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
+                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+    };
+    RcCtx c;
+    uint32_t out[16];
+    size_t k;
+    int i;
+
+    rc_open(&c, UC_X86_AVX512_F, 0);
+    for (k = 0; k < sizeof(t) / sizeof(t[0]); k++) {
+        rc_run(&c, vrcp14ps, sizeof(vrcp14ps), in, NULL, NULL, t[k].mxcsr, out);
+        for (i = 0; i < 16; i++) {
+            TEST_CHECK(out[i] == t[k].r[i]);
+            TEST_MSG("MXCSR %04X lane %d: x %08X got %08X expected %08X", t[k].mxcsr, i, in[i], out[i],
+                     t[k].r[i]);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/* VRSQRT14PD vs Tables 5-32/5-34: X < 0 (incl. -INF, a negative denormal) -> QNaN indefinite,
+   -0 -> -INF, +INF -> +0, 2^-2n -> 2^n, any denormal -> normal; DAZ */
+static void test_x86_rc_rsqrt14_tables(void)
+{
+    static const uint8_t vrsqrt14pd[] = {0x62, 0xF2, 0xFD, 0x48, 0x4E, 0xC1};   /* vrsqrt14pd zmm0, zmm1 */
+    static const uint64_t in[8] = {0xFFF0000000000000ULL, 0x8000000000000001ULL, 0x8000000000000000ULL,
+                                   0x7FF0000000000000ULL, 0x3FD0000000000000ULL, 0x0000000000000001ULL,
+                                   0x4000000000000000ULL, 0x7FEFFFFFFFFFFFFFULL};
+    static const uint64_t r0[8] = {0xFFF8000000000000ULL, 0xFFF8000000000000ULL, 0xFFF0000000000000ULL, 0,
+                                   0x4000000000000000ULL, 0x6180000000000000ULL, 0x3FE6A09E667F3BCDULL,
+                                   0x1FF0000000000000ULL};
+    static const uint64_t rdaz[8] = {0xFFF8000000000000ULL, 0xFFF0000000000000ULL, 0xFFF0000000000000ULL, 0,
+                                     0x4000000000000000ULL, 0x7FF0000000000000ULL, 0x3FE6A09E667F3BCDULL,
+                                     0x1FF0000000000000ULL};
+    RcCtx c;
+    uint64_t out[8];
+    int i;
+
+    rc_open(&c, UC_X86_AVX512_F, 0);
+    rc_run(&c, vrsqrt14pd, sizeof(vrsqrt14pd), in, NULL, NULL, 0x1F80, out);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(out[i] == r0[i]);
+        TEST_MSG("lane %d: got %016llX expected %016llX", i, (unsigned long long)out[i],
+                 (unsigned long long)r0[i]);
+    }
+    rc_run(&c, vrsqrt14pd, sizeof(vrsqrt14pd), in, NULL, NULL, 0x1FC0, out);
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(out[i] == rdaz[i]);
+        TEST_MSG("DAZ lane %d: got %016llX expected %016llX", i, (unsigned long long)out[i],
+                 (unsigned long long)rdaz[i]);
+    }
+    OK(uc_close(c.uc));
+}
+
+/* scalar forms: lane 0 computed, bits 127:esz from SRC1 (zmm2), bits 511:128 zero; FTZ / DAZ */
+static void test_x86_rc_scalar(void)
+{
+    static const uint8_t vrcp14ss[] = {0x62, 0xF2, 0x6D, 0x08, 0x4D, 0xC1};     /* vrcp14ss xmm0, xmm2, xmm1 */
+    static const uint8_t vrsqrt14sd[] = {0x62, 0xF2, 0xED, 0x08, 0x4F, 0xC1};   /* vrsqrt14sd xmm0, xmm2, xmm1 */
+    static const uint8_t vrcp14sd[] = {0x62, 0xF2, 0xED, 0x08, 0x4D, 0xC1};     /* vrcp14sd xmm0, xmm2, xmm1 */
+    static const uint8_t vrcpsh[] = {0x62, 0xF6, 0x6D, 0x08, 0x4D, 0xC1};       /* vrcpsh xmm0, xmm2, xmm1 */
+    static const uint8_t vrsqrtsh[] = {0x62, 0xF6, 0x6D, 0x08, 0x4F, 0xC1};     /* vrsqrtsh xmm0, xmm2, xmm1 */
+    uint64_t src[8], s1[8], d0[8], out[8];
+    RcCtx c;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        src[i] = 0x1111111111111111ULL * (i + 1);
+        s1[i] = 0xA5A5A5A500000000ULL + i;
+        d0[i] = 0xDEADBEEFDEADBEEFULL;
+    }
+    rc_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_FP16, 0);
+    src[0] = 0x7E800001;                            /* 2^126 (1 + 2^-23): underflow */
+    rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1F80, out);
+    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0x007FFFFF));
+    TEST_CHECK(out[1] == s1[1] && out[2] == 0 && out[7] == 0);
+    rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x9F80, out);   /* FTZ */
+    TEST_CHECK(out[0] == (s1[0] & 0xFFFFFFFF00000000ULL));
+    /* U940: one rounding at the denormal quantum (U236's p-bit-then-shift gave 004D765A /
+       000A3991B2C34BA6) */
+    src[0] = 0x7ED38264;
+    rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1F80, out);
+    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0x004D7659));
+    src[0] = 0x7FD90976DE723B2FULL;
+    rc_run(&c, vrcp14sd, sizeof(vrcp14sd), src, s1, d0, 0x1F80, out);
+    TEST_CHECK(out[0] == 0x000A3991B2C34BA7ULL && out[1] == s1[1]);
+    src[0] = 0x807FFFFF;                            /* negative denormal: DAZ -> -INF */
+    rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1FC0, out);
+    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0xFF800000));
+    src[0] = 0x8000000000000001ULL;                 /* -denormal: QNaN indefinite; DAZ: -INF */
+    rc_run(&c, vrsqrt14sd, sizeof(vrsqrt14sd), src, s1, d0, 0x1F80, out);
+    TEST_CHECK(out[0] == 0xFFF8000000000000ULL && out[1] == s1[1] && out[2] == 0);
+    rc_run(&c, vrsqrt14sd, sizeof(vrsqrt14sd), src, s1, d0, 0x1FC0, out);
+    TEST_CHECK(out[0] == 0xFFF0000000000000ULL);
+    src[0] = 0x0101;                                /* FP16 denormal: never DAZ'd */
+    rc_run(&c, vrcpsh, sizeof(vrcpsh), src, s1, d0, 0x9FC0, out);
+    TEST_CHECK(out[0] == ((s1[0] & ~0xFFFFULL) | 0x7BF8) && out[1] == s1[1] && out[2] == 0);
+    rc_run(&c, vrsqrtsh, sizeof(vrsqrtsh), src, s1, d0, 0x9FC0, out);
+    TEST_CHECK(out[0] == ((s1[0] & ~0xFFFFULL) | 0x5BFC));
+    OK(uc_close(c.uc));
+}
+
+/* VRCPPH / VRSQRTPH (Tables 5-26 / 5-36): FP16 denormals never DAZ'd, results never FTZ'd */
+static void test_x86_rc_fp16(void)
+{
+    static const uint8_t vrcpph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4C, 0xC1};       /* vrcpph zmm0, zmm1 */
+    static const uint8_t vrsqrtph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4E, 0xC1};     /* vrsqrtph zmm0, zmm1 */
+    static const uint16_t in[16] = {0x0000, 0x8000, 0x0100, 0x0101, 0x7C00, 0xFC00, 0x7BFF, 0xFF80,
+                                    0x3C00, 0x0001, 0xBC00, 0x7D00, 0x2C00, 0x0400, 0x8001, 0x4000};
+    static const uint16_t rcp[16] = {0x7C00, 0xFC00, 0x7C00, 0x7BF8, 0x0000, 0x8000, 0x0100, 0xFF80,
+                                     0x3C00, 0x7C00, 0xBC00, 0x7F00, 0x4C00, 0x7400, 0xFC00, 0x3800};
+    static const uint16_t rsq[16] = {0x7C00, 0xFC00, 0x5C00, 0x5BFC, 0x0000, 0xFE00, 0x1C00, 0xFF80,
+                                     0x3C00, 0x6C00, 0xFE00, 0x7F00, 0x4400, 0x5800, 0xFE00, 0x39A8};
+    static const uint32_t mx[3] = {0x1F80, 0x9FC0, 0x6000};
+    uint16_t src[32], out[32];
+    RcCtx c;
+    int i, k;
+
+    for (i = 0; i < 32; i++) {
+        src[i] = i < 16 ? in[i] : 0x3C00;           /* 1.0 in the upper lanes */
+    }
+    rc_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_BW | UC_X86_AVX512_FP16, 0);
+    for (k = 0; k < 3; k++) {
+        rc_run(&c, vrcpph, sizeof(vrcpph), src, NULL, NULL, mx[k], out);
+        for (i = 0; i < 32; i++) {
+            TEST_CHECK(out[i] == (i < 16 ? rcp[i] : 0x3C00));
+            TEST_MSG("VRCPPH MXCSR %04X lane %d: got %04X", mx[k], i, out[i]);
+        }
+        rc_run(&c, vrsqrtph, sizeof(vrsqrtph), src, NULL, NULL, mx[k], out);
+        for (i = 0; i < 32; i++) {
+            TEST_CHECK(out[i] == (i < 16 ? rsq[i] : 0x3C00));
+            TEST_MSG("VRSQRTPH MXCSR %04X lane %d: got %04X", mx[k], i, out[i]);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/* VRCPBF16 / VRSQRTBF16 (AVX10.2 Tables 7.2 / 7.3): DAZ, FTZ, RNE, MXCSR not consulted */
+static void test_x86_rc_bf16(void)
+{
+    static const uint8_t vrcpbf16[] = {0x62, 0xF6, 0x7C, 0x48, 0x4C, 0xC1};     /* vrcpbf16 zmm0, zmm1 */
+    static const uint8_t vrsqrtbf16[] = {0x62, 0xF6, 0x7C, 0x48, 0x4E, 0xC1};   /* vrsqrtbf16 zmm0, zmm1 */
+    static const uint16_t in[16] = {0x0000, 0x8000, 0x0001, 0x8040, 0x7F80, 0xFF80, 0x7F7F, 0x7E80,
+                                    0x3F80, 0x0080, 0xBF80, 0x7F81, 0x3E80, 0x4040, 0x7EFF, 0x4080};
+    static const uint16_t rcp[16] = {0x7F80, 0xFF80, 0x7F80, 0xFF80, 0x0000, 0x8000, 0x0000, 0x0080,
+                                     0x3F80, 0x7E80, 0xBF80, 0x7FC1, 0x4080, 0x3EAB, 0x0000, 0x3E80};
+    static const uint16_t rsq[16] = {0x7F80, 0xFF80, 0x7F80, 0xFF80, 0x0000, 0xFFC0, 0x1F80, 0x2000,
+                                     0x3F80, 0x5F00, 0xFFC0, 0x7FC1, 0x4000, 0x3F14, 0x1FB5, 0x3F00};
+    static const uint32_t mx[3] = {0x1F80, 0x9FC0, 0x6000};
+    uint16_t src[32], out[32];
+    RcCtx c;
+    int i, k;
+
+    for (i = 0; i < 32; i++) {
+        src[i] = i < 16 ? in[i] : 0x3F80;
+    }
+    rc_open(&c, 0, UC_X86_AVX10_2);
+    for (k = 0; k < 3; k++) {
+        rc_run(&c, vrcpbf16, sizeof(vrcpbf16), src, NULL, NULL, mx[k], out);
+        for (i = 0; i < 32; i++) {
+            TEST_CHECK(out[i] == (i < 16 ? rcp[i] : 0x3F80));
+            TEST_MSG("VRCPBF16 MXCSR %04X lane %d: got %04X", mx[k], i, out[i]);
+        }
+        rc_run(&c, vrsqrtbf16, sizeof(vrsqrtbf16), src, NULL, NULL, mx[k], out);
+        for (i = 0; i < 32; i++) {
+            TEST_CHECK(out[i] == (i < 16 ? rsq[i] : 0x3F80));
+            TEST_MSG("VRSQRTBF16 MXCSR %04X lane %d: got %04X", mx[k], i, out[i]);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/* legacy RCPPS / RSQRTPS (U81, hardware-validated): the i5-13600K's values; SDM tiny guarantees */
+static void test_x86_rc_legacy(void)
+{
+    static const uint8_t rcpps[] = {0x0F, 0x53, 0xC1}, rsqrtps[] = {0x0F, 0x52, 0xC1};
+    static const uint32_t in[8] = {0x3F800000, 0x40400000, 0x00800000, 0x7E7FE800,
+                                   0x7E800C01, 0xBF800000, 0x00000001, 0x7FA00000};
+    static const uint32_t rcp[8] = {0x3F7FF000, 0x3EAAA000, 0x7E7FF000, 0x00801000,
+                                    0x00000000, 0xBF7FF000, 0x7F800000, 0x7FE00000};
+    static const uint32_t rsq[8] = {0x3F7FF000, 0x3F13C800, 0x5EFFF000, 0x20000800,
+                                    0x1FFFF000, 0xFFC00000, 0x7F800000, 0x7FE00000};
+    uint32_t src[16], out[16];
+    RcCtx c;
+    int i, h;
+
+    memset(src, 0, sizeof(src));
+    rc_open(&c, 0, 0);
+    for (h = 0; h < 2; h++) {
+        memcpy(src, in + 4 * h, 16);
+        rc_run(&c, rcpps, sizeof(rcpps), src, NULL, NULL, 0x1F80, out);
+        for (i = 0; i < 4; i++) {
+            TEST_CHECK(out[i] == rcp[4 * h + i]);
+            TEST_MSG("RCPPS %08X: got %08X expected %08X", in[4 * h + i], out[i], rcp[4 * h + i]);
+        }
+        rc_run(&c, rsqrtps, sizeof(rsqrtps), src, NULL, NULL, 0x1F80, out);
+        for (i = 0; i < 4; i++) {
+            TEST_CHECK(out[i] == rsq[4 * h + i]);
+            TEST_MSG("RSQRTPS %08X: got %08X expected %08X", in[4 * h + i], out[i], rsq[4 * h + i]);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/* value of a binary16 / bfloat16 / binary32 encoding (finite) as a double */
+static double rc_val(uint32_t x, int bits, int p)
+{
+    int eb = bits - p, bias = (1 << (eb - 1)) - 1, e = (int)((x >> (p - 1)) & ((1u << eb) - 1));
+    double m = (double)(x & ((1u << (p - 1)) - 1)), v;
+
+    v = e ? (m + (double)(1u << (p - 1))) : m;      /* denormal: exponent field read as 1 */
+    for (e = (e ? e : 1) - bias - (p - 1); e > 0; e--) {
+        v *= 2.0;
+    }
+    for (; e < 0; e++) {
+        v *= 0.5;
+    }
+    return ((x >> (bits - 1)) & 1) ? -v : v;
+}
+
+/*
+ * the documented error bounds, model-free: every positive finite input whose result is normal
+ * must have |r*x - 1| < B (rcp) resp. (1-B)^2 < r^2*x < (1+B)^2 (rsqrt), B = 2^-14 (VRCP14PS /
+ * VRSQRT14PS, FP32 stride sample), 2^-11 + 2^-14 (FP16, every input), 2^-8 + 2^-14 (BF16, every
+ * input). Products of these short significands are exact or within 2^-53 in double.
+ */
+static void rc_bounds_one(const uint8_t *insn, int bits, int p, int rsq, double b, int avx10,
+                          uint64_t stride, uint64_t count)
+{
+    uint8_t s8[64], o8[64];
+    int lanes = 512 / bits, esz = bits / 8, i, eb = bits - p;
+    uint64_t k, x = 0, bad = 0, n = 0;
+    uint32_t emax = (1u << eb) - 1;
+    RcCtx c;
+
+    rc_open(&c, avx10 ? 0 : (UC_X86_AVX512_F | UC_X86_AVX512_BW | UC_X86_AVX512_FP16), avx10);
+    for (k = 0; k < count; k += lanes) {
+        for (i = 0; i < lanes; i++) {
+            uint32_t v = (uint32_t)((x + (uint64_t)i * stride) & ((bits == 32) ? 0xFFFFFFFFULL : 0xFFFF));
+            memcpy(s8 + i * esz, &v, esz);
+        }
+        x += (uint64_t)lanes * stride;
+        rc_run(&c, insn, 6, s8, NULL, NULL, 0x1F80, o8);
+        for (i = 0; i < lanes; i++) {
+            uint32_t xi = 0, ri = 0, ex, rex;
+            double xv, rv, q;
+
+            memcpy(&xi, s8 + i * esz, esz);
+            memcpy(&ri, o8 + i * esz, esz);
+            ex = (xi >> (p - 1)) & emax;
+            rex = (ri >> (p - 1)) & emax;
+            if ((xi >> (bits - 1)) & 1 || ex == emax || (xi & ((1u << (bits - 1)) - 1)) == 0 ||
+                (bits == 16 && p == 8 && ex == 0) || rex == 0 || rex == emax) {
+                continue;                           /* sign / NaN / INF / zero / DAZ, non-normal result */
+            }
+            xv = rc_val(xi, bits, p);
+            rv = rc_val(ri, bits, p);
+            n++;
+            if (rsq) {
+                q = rv * rv * xv;
+                if (!(q > (1.0 - b) * (1.0 - b) && q < (1.0 + b) * (1.0 + b))) {
+                    bad++;
+                }
+            } else {
+                q = rv * xv - 1.0;
+                if (!(q < b && -q < b)) {
+                    bad++;
+                }
+            }
+        }
+    }
+    TEST_CHECK(bad == 0 && n > 0);
+    TEST_MSG("%d-bit %s: %llu of %llu normal results outside the bound", bits, rsq ? "rsqrt" : "rcp",
+             (unsigned long long)bad, (unsigned long long)n);
+    OK(uc_close(c.uc));
+}
+
+static void test_x86_rc_bounds(void)
+{
+    static const uint8_t vrcp14ps[] = {0x62, 0xF2, 0x7D, 0x48, 0x4C, 0xC1}, vrsqrt14ps[] = {0x62, 0xF2, 0x7D, 0x48, 0x4E, 0xC1};
+    static const uint8_t vrcpph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4C, 0xC1}, vrsqrtph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4E, 0xC1};
+    static const uint8_t vrcpbf[] = {0x62, 0xF6, 0x7C, 0x48, 0x4C, 0xC1}, vrsqrtbf[] = {0x62, 0xF6, 0x7C, 0x48, 0x4E, 0xC1};
+    const double b14 = 1.0 / 16384.0, bph = 1.0 / 2048.0 + b14, bbf = 1.0 / 256.0 + b14;
+
+    rc_bounds_one(vrcpph, 16, 11, 0, bph, 0, 1, 65536);
+    rc_bounds_one(vrsqrtph, 16, 11, 1, bph, 0, 1, 65536);
+    rc_bounds_one(vrcpbf, 16, 8, 0, bbf, UC_X86_AVX10_2, 1, 65536);
+    rc_bounds_one(vrsqrtbf, 16, 8, 1, bbf, UC_X86_AVX10_2, 1, 65536);
+    /* FP32: 65536 inputs, stride 65521 (prime): every exponent, many mantissas */
+    rc_bounds_one(vrcp14ps, 32, 24, 0, b14, 0, 65521, 65536);
+    rc_bounds_one(vrsqrt14ps, 32, 24, 1, b14, 0, 65521, 65536);
+}
+/* ---- end U940-U959 (rc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -26174,4 +26554,11 @@ TEST_LIST = {
     {"test_x86_ap_uintr_if0", test_x86_ap_uintr_if0},
     {"test_x86_ap_uintr_cross_delivery", test_x86_ap_uintr_cross_delivery},
     {"test_x86_ap_idt_delivery", test_x86_ap_idt_delivery},
+    {"test_x86_rc_rcp14_tables", test_x86_rc_rcp14_tables},
+    {"test_x86_rc_rsqrt14_tables", test_x86_rc_rsqrt14_tables},
+    {"test_x86_rc_scalar", test_x86_rc_scalar},
+    {"test_x86_rc_fp16", test_x86_rc_fp16},
+    {"test_x86_rc_bf16", test_x86_rc_bf16},
+    {"test_x86_rc_legacy", test_x86_rc_legacy},
+    {"test_x86_rc_bounds", test_x86_rc_bounds},
     {NULL, NULL}};
