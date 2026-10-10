@@ -223,8 +223,10 @@ punpckldq xmm0, xmmword ptr [rsi+0x7ff0] | m+0xFFF0=0102030405060708090A0B0C0D0E
 # tag word keep their values (SDM Vol3A 6.5: a fault leaves the state of before the instruction;
 # i5-13600K). Before U873 the transition (TOP = 0, all tags valid) was made before the access (U834
 # had moved only the #AC check in front of it). FLD1 first: TOP = 7, only ST0 valid.
-# Stores (MOVD/MOVQ/MOVNTQ m, mm): the i5-13600K is not repeatable - in about 87 % of the runs it sets
-# TOP = 0 and keeps the tags, otherwise it leaves both (the SDM); tagged, docs\quirks.md.
+# Stores (MOVD/MOVQ/MOVNTQ m, mm) run from the default x87 state (TOP = 0, all tags empty): after FLD1
+# (TOP = 7) the host's P-cores set TOP = 0 on the #PF and its E-cores change nothing (runtorun report
+# 2026-10-09, docs\quirks.md "MMX #PF x87 transition (P-core)"), so those core-dependent lines are not
+# in this gate file; from the default state both core types leave the tags empty.
 fld1; paddb mm0, qword ptr [rsi+0x8000]
 fld1; paddb mm0, qword ptr [rsi+0x7ffc]
 fld1; movq mm1, qword ptr [rsi+0x8000]
@@ -237,10 +239,10 @@ fld1; pcmpeqb mm2, qword ptr [rsi+0x8000]
 fld1; .byte 0x0f, 0x62, 0x86, 0x00, 0x80, 0x00, 0x00
 fld1; .byte 0x0f, 0x38, 0x00, 0x86, 0x00, 0x80, 0x00, 0x00
 fld1; .byte 0x0f, 0x3a, 0x0f, 0x86, 0x00, 0x80, 0x00, 0x00, 0x03
-fld1; movq qword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
-fld1; movq qword ptr [rsi+0x7ffc], mm0 | m+0xFFFC=AAAAAAAA # known deviation: MMX store fault TOP
-fld1; movd dword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
-fld1; movntq qword ptr [rsi+0x8000], mm0 # known deviation: MMX store fault TOP
+movq qword ptr [rsi+0x8000], mm0
+movq qword ptr [rsi+0x7ffc], mm0 | m+0xFFFC=AAAAAAAA
+movd dword ptr [rsi+0x8000], mm0
+movntq qword ptr [rsi+0x8000], mm0
 fld1; cvtps2pi mm0, qword ptr [rsi+0x8000]
 fld1; cvttps2pi mm0, qword ptr [rsi+0x8000]
 fld1; cvtpd2pi mm0, xmmword ptr [rsi+0x8000]
