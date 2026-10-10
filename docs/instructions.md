@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-10 06:42 (HEAD `07a44976 U1064: alltest baseline: syscall, wrmsr, rdmsr, sysretq rows after the sysmsr merge (U901, U903, U905)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-10 06:46 (HEAD `8af516e6 cpuid_i5-13600k.txt header: leaves 01H/0BH from vCPU 5, 1FH from vCPU 6 (unpinned capture)`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
