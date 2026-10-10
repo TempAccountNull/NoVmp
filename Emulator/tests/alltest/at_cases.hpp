@@ -112,7 +112,10 @@
 #include <fstream>
 #include <intrin.h>
 #include <map>
+#include <set>
 #include <sstream>
+#include <tlhelp32.h>
+#include <cwchar>
 
 namespace at
 {
@@ -363,7 +366,164 @@ namespace at
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
-					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */ };
+					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
+					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */ };
+
+	// U1040: one --native-under-sde result per expected-value line: "L <line> <hash> run <faulted> <vector>
+	// [OFF:HEX ...]" (the bytes of 'state' that differ from the input state), "L <line> <hash> skip
+	// <reason>" or "L <line> <hash> error <message>"; <line> = index among the file's case lines,
+	// <hash> = FNV-1a of the line (so a results file of another case file or an edited line is noticed)
+	struct sde_rec { int kind = 0; /* 1 run, 2 not checked, 3 error */ uint64_t hash = 0; bool faulted = false; int vector = -1; std::string text; };
+	static uint64_t fnv1a( const std::string& s )
+	{
+		uint64_t h = 0xCBF29CE484222325ull;
+		for ( unsigned char c : s ) { h ^= c; h *= 0x100000001B3ull; }
+		return h;
+	}
+	static std::string state_diff( const state& in, const state& out )
+	{
+		const uint8_t* a = ( const uint8_t* ) &in;
+		const uint8_t* b = ( const uint8_t* ) &out;
+		std::string s;
+		char t[ 4 ];
+		for ( size_t i = 0; i < sizeof( state ); )
+		{
+			if ( a[ i ] == b[ i ] ) { ++i; continue; }
+			size_t j = i;
+			while ( j < sizeof( state ) && j - i < 256 && a[ j ] != b[ j ] ) ++j;
+			s += " " + std::to_string( i ) + ":";
+			for ( size_t k = i; k < j; ++k ) { std::snprintf( t, sizeof( t ), "%02X", b[ k ] ); s += t; }
+			i = j;
+		}
+		return s;
+	}
+	static bool apply_diff( state& s, const std::string& d )
+	{
+		uint8_t* p = ( uint8_t* ) &s;
+		std::istringstream is( d );
+		for ( std::string tok; is >> tok; )
+		{
+			const size_t c = tok.find( ':' );
+			if ( c == std::string::npos || ( tok.size() - c - 1 ) % 2 ) return false;
+			const size_t off = std::stoull( tok.substr( 0, c ) ), n = ( tok.size() - c - 1 ) / 2;
+			if ( off + n > sizeof( state ) ) return false;
+			for ( size_t k = 0; k < n; ++k ) p[ off + k ] = uint8_t( std::stoul( tok.substr( c + 1 + 2 * k, 2 ), nullptr, 16 ) );
+		}
+		return true;
+	}
+	static bool load_sde_results( const std::string& path, std::map<size_t, sde_rec>& recs, std::vector<std::string>& header )
+	{
+		std::ifstream f( path );
+		if ( !f ) return false;
+		for ( std::string l; std::getline( f, l ); )
+		{
+			if ( !l.empty() && l.back() == '\r' ) l.pop_back();
+			if ( l.rfind( "# ", 0 ) == 0 ) { header.push_back( "sde results " + l.substr( 2 ) ); continue; }
+			std::istringstream is( l );
+			std::string L, kind, hash;
+			size_t no = 0;
+			if ( !( is >> L >> no >> hash >> kind ) || L != "L" ) continue;
+			sde_rec r;
+			r.hash = std::stoull( hash, nullptr, 16 );
+			if ( kind == "run" ) { r.kind = 1; int fl = 0; is >> fl >> r.vector; r.faulted = fl != 0; }
+			else r.kind = kind == "skip" ? 2 : 3;
+			std::getline( is, r.text );
+			if ( r.kind != 1 ) r.text.erase( 0, r.text.find_first_not_of( ' ' ) );
+			recs[ no ] = r;
+		}
+		return true;
+	}
+
+	// U1040 (--native-under-sde): the CPU Intel SDE presents to the process (its emulated CPUID and
+	// XCR0, read natively), printed at the start of the run; decides which extra state the native
+	// thunk moves (ZMM0-31/K0-7 with AVX-512 or AVX10 and XCR0 7:5 + 2:1 set, R16-R31 with APX_F and
+	// XCR0 bit 19)
+	struct sde_cpu { bool zmm = false, apx = false; uint64_t xcr0 = 0; };
+	// the image name of the parent process ("" when unknown): under Intel SDE it is Pin's launcher
+	// pin.exe (sde.exe -> pin.exe -> the application; Pin's VM DLLs are not in the loader's module list)
+	static std::wstring parent_image()
+	{
+		HANDLE h = CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 );
+		if ( h == INVALID_HANDLE_VALUE ) return L"";
+		const DWORD me = GetCurrentProcessId();
+		DWORD ppid = 0;
+		std::wstring name;
+		PROCESSENTRY32W e{};
+		e.dwSize = sizeof( e );
+		for ( BOOL ok = Process32FirstW( h, &e ); ok; ok = Process32NextW( h, &e ) )
+			if ( e.th32ProcessID == me ) { ppid = e.th32ParentProcessID; break; }
+		e.dwSize = sizeof( e );
+		for ( BOOL ok = ppid ? Process32FirstW( h, &e ) : FALSE; ok; ok = Process32NextW( h, &e ) )
+			if ( e.th32ProcessID == ppid ) { name = e.szExeFile; break; }
+		CloseHandle( h );
+		return name;
+	}
+	static sde_cpu sde_probe( std::string& text )
+	{
+		sde_cpu c;
+		auto add = [ & ]( const char* fmt, auto... a ) { char b[ 512 ]; std::snprintf( b, sizeof( b ), fmt, a... ); text += b; };
+		int r[ 4 ] = {};
+		__cpuid( r, 0 );
+		const unsigned max_leaf = unsigned( r[ 0 ] );
+		char vendor[ 13 ] = {};
+		std::memcpy( vendor, &r[ 1 ], 4 ); std::memcpy( vendor + 4, &r[ 3 ], 4 ); std::memcpy( vendor + 8, &r[ 2 ], 4 );
+		__cpuid( r, 1 );
+		const unsigned sig = unsigned( r[ 0 ] );
+		const bool osxsave = ( r[ 2 ] >> 27 ) & 1;
+		auto leaf = [ & ]( unsigned l, unsigned s, int* o ) { if ( l <= max_leaf ) __cpuidex( o, int( l ), int( s ) ); else std::memset( o, 0, 16 ); };
+		int l70[ 4 ], l71[ 4 ], l19[ 4 ], l24[ 4 ], ld0[ 4 ], l1e1[ 4 ];
+		leaf( 7, 0, l70 ); leaf( 7, 1, l71 ); leaf( 0x19, 0, l19 ); leaf( 0x24, 0, l24 ); leaf( 0xD, 0, ld0 ); leaf( 0x1E, 1, l1e1 );
+		c.xcr0 = osxsave ? _xgetbv( 0 ) : 0;
+		const bool avx512f = ( l70[ 1 ] >> 16 ) & 1, avx10 = ( l71[ 3 ] >> 19 ) & 1, apx = ( l71[ 3 ] >> 21 ) & 1;
+		c.zmm = ( avx512f || avx10 ) && ( c.xcr0 & 0xE6 ) == 0xE6;
+		c.apx = apx && ( c.xcr0 & 0x80000 );
+		add( "native engine: Intel SDE (--native-under-sde); results of the native side are SDE-validated, not hardware-validated\n" );
+		add( "sde cpu: %s max leaf %XH signature %08X, XCR0 (XGETBV 0) = 0x%llX\n", vendor, max_leaf, sig, ( unsigned long long ) c.xcr0 );
+		add( "sde cpuid: (7,0) EBX=%08X ECX=%08X EDX=%08X | (7,1) EAX=%08X EDX=%08X | (0Dh,0) EAX=%08X | (19h,0) EBX=%08X | (1Eh,1) EAX=%08X | (24h,0) EBX=%08X\n",
+					 unsigned( l70[ 1 ] ), unsigned( l70[ 2 ] ), unsigned( l70[ 3 ] ), unsigned( l71[ 0 ] ), unsigned( l71[ 3 ] ), unsigned( ld0[ 0 ] ), unsigned( l19[ 1 ] ),
+					 unsigned( l1e1[ 0 ] ), unsigned( l24[ 1 ] ) );
+		add( "sde state: AVX512F %d, AVX10 %d (version %u), APX_F %d -> native thunk moves ZMM0-31/K0-7: %s, R16-R31: %s\n", avx512f, avx10,
+					 unsigned( l24[ 1 ] & 0xFF ), apx, c.zmm ? "yes" : "no", c.apx ? "yes" : "no" );
+		std::printf( "%s", text.c_str() );
+		return c;
+	}
+
+	// U1040: which Unicorn-only state a key needs on the native side: 1 = ZMM/K (zmm*, zmmh*, k*,
+	// xmm16-31, ymmh16-31), 2 = APX R16-R31, 0 = none
+	static int ext_need( const std::string& kv )
+	{
+		const std::string k = kv.substr( 0, kv.find( '=' ) );
+		auto num_after = [ & ]( size_t pl ) { return k.size() > pl && k.find_first_not_of( "0123456789", pl ) == std::string::npos ? std::stoi( k.substr( pl ) ) : -1; };
+		if ( k.rfind( "zmm", 0 ) == 0 ) return 1;
+		if ( k.size() == 2 && k[ 0 ] == 'k' && k[ 1 ] >= '0' && k[ 1 ] <= '7' ) return 1;
+		if ( k.rfind( "xmm", 0 ) == 0 && num_after( 3 ) >= 16 ) return 1;
+		if ( k.rfind( "ymmh", 0 ) == 0 && num_after( 4 ) >= 16 ) return 1;
+		if ( k.size() == 3 && k[ 0 ] == 'r' && num_after( 1 ) >= 16 ) return 2;
+		return 0;
+	}
+
+	// U1040: expected-value snippets were written for Unicorn only; before one runs natively (under SDE)
+	// its bytes are scanned for what must never run on the host or would end the SDE process. A plain
+	// byte scan (no decoder: APX / AVX10.2 encodings are newer than our Capstone), so a match inside an
+	// immediate or displacement also excludes the case (conservative). "" = may run.
+	static std::string sde_unsafe( const std::vector<uint8_t>& b )
+	{
+		const size_t n = b.size();
+		for ( size_t i = 0; i < n; ++i )
+		{
+			const uint8_t c = b[ i ], c1 = i + 1 < n ? b[ i + 1 ] : 0, c2 = i + 2 < n ? b[ i + 2 ] : 0;
+			if ( c == 0x0F && ( c1 == 0x05 || c1 == 0x34 ) ) return "SYSCALL/SYSENTER bytes (a real kernel entry)";
+			// INT n with a vector Windows x64 lets CPL3 use: 29h fast fail (ends the process), 2Bh callback
+			// return, 2Ch assertion, 2Dh debug service, 2Eh system call. Any other INT n is #GP (gate DPL 0),
+			// INT3 / INTO-style vectors 3, 4 are delivered as exceptions: they may run.
+			if ( c == 0xCD && ( c1 == 0x29 || ( c1 >= 0x2B && c1 <= 0x2E ) ) ) return "INT 29h/2Bh-2Eh bytes (a Windows kernel entry from CPL3)";
+			if ( c == 0xD5 && ( c1 & 0x80 ) && ( c2 == 0x05 || c2 == 0x34 || c2 == 0xAE ) ) return "REX2 map-1 05h/34h/AEh bytes";
+			// F3 0F AE /0-/3 with mod = 11: RD/WR FS/GS BASE (SDE ends the process, -fsgs_abort; WRGSBASE would
+			// move the host thread's TEB)
+			if ( c == 0x0F && c1 == 0xAE && ( c2 >> 6 ) == 3 && ( ( c2 >> 3 ) & 7 ) <= 3 ) return "RD/WR FS/GS BASE bytes (SDE -fsgs_abort; the host thread's FS/GS base)";
+		}
+		return "";
+	}
 
 	// U1050: run-to-run measurement of hardware cases. --hw-repeat N runs each hardware case's native
 	// snippet N times (the first run is the one compared with Unicorn, as without the option) and
@@ -574,6 +734,73 @@ namespace at
 		}
 		native_engine hw;
 		bool hw_open = false;
+		// U1040: pass 1, --native-under-sde FILE: the "native" engine is Intel SDE's emulated CPU (the whole
+		// process runs under sde.exe; refused otherwise, so a hardware result is never labelled SDE): only
+		// the native side of each expected-value line runs, its result goes to FILE. Pass 2, --sde-results
+		// FILE (a normal run): Unicorn runs as always and is also compared with FILE's results. Two passes
+		// because Unicorn's own JIT under SDE's Pin runs at about one case per second.
+		int sde_n = 0, sde_agree = 0, sde_disagree = 0, sde_errors = 0, sde_exp_agree = 0, sde_written = 0;
+		std::map<std::string, int> sde_skip;
+		FILE* sde_file = nullptr;
+		std::map<size_t, sde_rec> sde_recs;
+		std::set<size_t> sde_done;   // pass 1: case lines FILE already has (resume)
+		if ( !opt.sde_out.empty() )
+		{
+			const std::wstring parent = parent_image();
+			if ( _wcsicmp( parent.c_str(), L"pin.exe" ) )
+			{
+				std::printf( "--native-under-sde: the parent process is \"%ls\", not pin.exe: this process does not run under Intel SDE (sde.exe -<cpu> -- emu-alltest.exe ...)\n",
+							 parent.c_str() );
+				return 2;
+			}
+			if ( !opt.expect_only ) { std::printf( "--native-under-sde needs --expect-only (it runs the native side of the expected-value lines only)\n" ); return 2; }
+			std::string text;
+			const sde_cpu c = sde_probe( text );
+			hw.ext_zmm = c.zmm;
+			hw.ext_apx = c.apx;
+			// resume: SDE ends the whole process on some conditions (an AMX #UD it reports as "AMX Exception",
+			// a memory error of an emulated access, ...). Each line is marked "P <line>" before it runs; a
+			// rerun with the same FILE keeps the finished lines, records a marked line without a result as
+			// "error SDE ended the process" and goes on with the next one.
+			{
+				std::ifstream old( opt.sde_out );
+				std::map<size_t, uint64_t> pending;
+				for ( std::string l; std::getline( old, l ); )
+				{
+					if ( !l.empty() && l.back() == '\r' ) l.pop_back();
+					std::istringstream is( l );
+					std::string k, hash;
+					size_t no = 0;
+					if ( !( is >> k >> no >> hash ) ) continue;
+					if ( k == "P" ) pending[ no ] = std::stoull( hash, nullptr, 16 );
+					else if ( k == "L" ) { sde_done.insert( no ); pending.erase( no ); }
+				}
+				const bool resume = old.is_open() && !old.bad();
+				old.close();
+				if ( fopen_s( &sde_file, opt.sde_out.c_str(), resume ? "ab" : "wb" ) || !sde_file ) { std::printf( "cannot write %s\n", opt.sde_out.c_str() ); return 2; }
+				if ( !resume )
+				{
+					std::fprintf( sde_file, "# emu-alltest --native-under-sde results (U1040) of %s\n", path.c_str() );
+					std::istringstream ts( text );
+					for ( std::string l; std::getline( ts, l ); ) std::fprintf( sde_file, "# %s\n", l.c_str() );
+				}
+				for ( auto& [ no, hash ] : pending )
+				{
+					std::fprintf( sde_file, "L %zu %016llX error SDE ended the process at this line\n", no, ( unsigned long long ) hash );
+					sde_done.insert( no );
+					std::printf( "resume: case line %zu ended the previous SDE run\n", no );
+				}
+				if ( resume ) std::printf( "resume: %zu case lines already in %s\n", sde_done.size(), opt.sde_out.c_str() );
+				std::fflush( sde_file );
+			}
+		}
+		if ( !opt.sde_in.empty() )
+		{
+			std::vector<std::string> header;
+			if ( !load_sde_results( opt.sde_in, sde_recs, header ) ) { std::printf( "cannot read %s\n", opt.sde_in.c_str() ); return 2; }
+			std::printf( "sde results: %s (%zu lines); results of the native side are SDE-validated, not hardware-validated\n", opt.sde_in.c_str(), sde_recs.size() );
+			for ( auto& h : header ) std::printf( "%s\n", h.c_str() );
+		}
 		std::string err;
 		// U1050: --hw-repeat / --hw-cpu (run-to-run measurement); the logical CPUs and their core types
 		const bool hw_measure = opt.hw_repeat > 1 || !opt.hw_cpu.empty() || opt.hw_load > 0;
@@ -637,6 +864,7 @@ namespace at
 			if ( !line.empty() && line.back() == '\r' ) line.pop_back();
 			if ( line.empty() || line[ 0 ] == '#' ) continue;
 			if ( const size_t cl = case_line++; cl < shard_lo || cl >= shard_hi ) continue;   // U543: another shard's line
+			const size_t line_no = case_line - 1;   // U1040: the key of a --native-under-sde result
 			std::string tag_name, tag_kind = case_tag( line, tag_name );
 			if ( !tag_kind.empty() && ( line.find( "=>" ) != std::string::npos || tag_name.empty() ) )
 			{
@@ -678,10 +906,12 @@ namespace at
 			std::istringstream as( assigns );
 			std::string kv;
 			bool ok = true, ext = false, cpl3 = false;
+			int need = 0;   // U1040: Unicorn-only state the case uses (ext_need)
 			while ( as >> kv )
 			{
 				if ( kv == "cpl=3" ) { cpl3 = true; continue; }
 				if ( kv == "cpl=0" ) { cpl3 = false; continue; }
+				need |= ext_need( kv );
 				bool good = false;
 				try { good = case_assign( *st_in, kv, err, nullptr, &ext ); }
 				catch ( const std::exception& ) { err = "bad value in " + kv; }
@@ -714,6 +944,7 @@ namespace at
 						else { exp_fault = true; exp_vector = v; exp_ec = ec; }
 						continue;
 					}
+					need |= ext_need( tok );
 					try { ok = case_assign( *st_exp, tok, err, &listed, nullptr ); }
 					catch ( const std::exception& ) { err = "bad value in " + tok; ok = false; }
 				}
@@ -723,6 +954,56 @@ namespace at
 			if ( bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
 			program p = build( bytes, &err );
 			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
+			// U1040: pass 1 (--native-under-sde FILE): only the native side, on SDE's CPU, into FILE
+			if ( expect && sde_file )
+			{
+				if ( sde_done.count( line_no ) ) { ++n; continue; }   // resume: already in FILE
+				std::string why;
+				if ( ( need & 1 ) && !hw.ext_zmm ) why = "ZMM/K state: the SDE CPU has no AVX-512/AVX10 state";
+				else if ( ( need & 2 ) && !hw.ext_apx ) why = "R16-R31: the SDE CPU has no APX state";
+				else if ( st_in->mxcsr() & ~0xFFFFu ) why = "MXCSR reserved bits (FXRSTOR64 #GP in the native prologue)";
+				// U1041: SDE 10.13.1 ends the process (an unhandled X87_INVALID_OPERATION inside its own
+				// sde-mix-mt.dll) instead of delivering an unmasked SIMD exception of an instruction it
+				// emulates: all 258 "=> #XM" EVEX lines of cases_evex_m1.txt did, no other line did. Such a
+				// line (a 62h byte in the snippet) is not run; SSE/AVX #XM lines run on the host CPU.
+				else if ( exp_fault && exp_vector == 19 && std::find( bytes.begin(), bytes.end(), uint8_t( 0x62 ) ) != bytes.end() )
+					why = "expected #XM of an EVEX instruction (SDE 10.13.1 ends the process: internal X87_INVALID_OPERATION)";
+				else why = sde_unsafe( bytes );
+				const unsigned long long hsh = ( unsigned long long ) fnv1a( line );
+				if ( !why.empty() )
+				{
+					++sde_skip[ why ];
+					std::fprintf( sde_file, "L %zu %016llX skip %s\n", line_no, hsh, why.c_str() );
+					std::printf( "[%d] NOT CHECKED (%s) %s\n", n, why.c_str(), line.c_str() );
+				}
+				else
+				{
+					if ( !hw_open )
+					{
+						if ( !hw.open( err ) ) { std::printf( "native engine: %s\n", err.c_str() ); return 2; }
+						hw_open = true;
+					}
+					std::fprintf( sde_file, "P %zu %016llX\n", line_no, hsh );   // resume marker (see above)
+					std::fflush( sde_file );
+					result h;
+					hw.run( p, *st_in, h );
+					if ( !h.ran )
+					{
+						++sde_errors;
+						std::fprintf( sde_file, "L %zu %016llX error %s\n", line_no, hsh, h.err.c_str() );
+						std::printf( "[%d] ERROR %s %s\n", n, h.err.c_str(), line.c_str() );
+					}
+					else
+					{
+						++sde_written;
+						std::fprintf( sde_file, "L %zu %016llX run %d %d%s\n", line_no, hsh, h.faulted ? 1 : 0, h.faulted ? h.vector : -1, state_diff( *st_in, *h.s ).c_str() );
+						std::printf( "[%d] RAN %s\n    sde: %s%s\n", n, line.c_str(), fault_text( h.faulted, h.vector ).c_str(), case_fields( *st_in, *h.s ).c_str() );
+					}
+				}
+				std::fflush( sde_file );
+				++n;
+				continue;
+			}
 			// U614: the Unicorn snippet of a "~~" pair (else the same program)
 			program p_uc = p;
 			if ( pair != std::string::npos )
@@ -769,6 +1050,53 @@ namespace at
 				std::printf( "    uc: %s%s\n", fault_text( u.faulted, u.vector, exp_ec >= 0 ? u.error_code : -1 ).c_str(), ud.c_str() );
 				if ( !u.err.empty() ) std::printf( "    uc error: %s\n", u.err.c_str() );
 				if ( !same ) std::printf( "    uc vs exp:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
+				// U1040: pass 2 (--sde-results FILE): the same snippet and input state as run on Intel SDE's CPU
+				// (pass 1), compared with Unicorn on the bytes this expectation checks (strict: every checked field;
+				// loose: the listed ones) and the fault vector. A second, labelled reference; the "=>" verdict above
+				// is unchanged.
+				if ( !opt.sde_in.empty() )
+				{
+					auto rec = sde_recs.find( line_no );
+					if ( rec == sde_recs.end() || rec->second.hash != fnv1a( line ) )
+					{
+						++sde_errors;
+						std::printf( "    sde: ERROR no result for this line in %s (another case file, or the line changed)\n", opt.sde_in.c_str() );
+					}
+					else if ( rec->second.kind != 1 )
+					{
+						if ( rec->second.kind == 2 || rec->second.text.rfind( "SDE ended the process", 0 ) == 0 ) ++sde_skip[ rec->second.text ];   // SDE's own stop: not checkable
+						else ++sde_errors;
+						std::printf( "    sde: %s (%s)\n", rec->second.kind == 2 || rec->second.text.rfind( "SDE ended the process", 0 ) == 0 ? "NOT CHECKED" : "ERROR", rec->second.text.c_str() );
+					}
+					else
+					{
+						result h;
+						*h.s = *st_in;
+						if ( !apply_diff( *h.s, rec->second.text ) ) { ++sde_errors; std::printf( "    sde: ERROR bad result record\n" ); ++n; continue; }
+						h.faulted = rec->second.faulted;
+						h.vector = rec->second.vector;
+						++sde_n;
+						// as for hardware cases (U834): after a fault the host's RFLAGS.AC is the OS's
+						if ( h.faulted && u.faulted ) h.s->rflags = ( h.s->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
+						auto ms = std::make_unique<state>( *u.s );
+						auto me = std::make_unique<state>( *st_exp );
+						const uint8_t* hs = ( const uint8_t* ) h.s.get();
+						uint8_t* msb = ( uint8_t* ) ms.get();
+						uint8_t* meb = ( uint8_t* ) me.get();
+						for ( size_t b = 0; b < care.size(); ++b ) if ( care[ b ] ) { msb[ b ] = hs[ b ]; meb[ b ] = hs[ b ]; }
+						const bool sf = h.faulted == u.faulted && h.vector == u.vector;
+						const bool ef = h.faulted == exp_fault && h.vector == exp_vector;
+						const std::string xs = case_fields( *u.s, *ms ), xe = case_fields( *st_exp, *me );
+						const bool agree = sf && xs.empty(), eagree = ef && xe.empty();
+						sde_agree += agree;
+						sde_disagree += !agree;
+						sde_exp_agree += eagree;
+						std::printf( "    sde: %s%s\n", fault_text( h.faulted, h.vector ).c_str(), case_fields( *st_in, *h.s ).c_str() );
+						if ( agree ) std::printf( "    uc vs sde: AGREE%s\n", eagree ? "" : " (exp differs from both)" );
+						else std::printf( "    uc vs sde: DISAGREE%s%s | exp vs sde: %s%s%s\n", sf ? "" : " (fault differs)", xs.c_str(), eagree ? "AGREE" : "DISAGREE",
+										  ef ? "" : " (fault differs)", xe.c_str() );
+					}
+				}
 				++n;
 				continue;
 			}
@@ -863,6 +1191,18 @@ namespace at
 			std::printf( "cpuid: profile (%zu entries), strict %s\n", opt.cpuid.size(), opt.strict < 0 ? "on (default with a profile)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );
 		if ( exp_n || exp_errors || skipped )
 			std::printf( "expected-value cases: %d, differing: %d, errors: %d, skipped (no \"=>\"): %d\n", exp_n, exp_differ, exp_errors, skipped );
+		// U1040: the SDE cross-check of the expected-value cases (does not change the exit status)
+		int sde_skip_n = 0;
+		for ( auto& [ k, v ] : sde_skip ) sde_skip_n += v;
+		if ( sde_file )
+		{
+			std::fclose( sde_file );
+			std::printf( "sde native run: ran %d, not checked %d, errors %d -> %s\n", sde_written, sde_skip_n, sde_errors, opt.sde_out.c_str() );
+		}
+		if ( !opt.sde_in.empty() )
+			std::printf( "sde cases: %d, uc agrees with sde: %d, uc disagrees with sde: %d, exp agrees with sde: %d, not checked: %d, errors: %d\n", sde_n,
+						 sde_agree, sde_disagree, sde_exp_agree, sde_skip_n, sde_errors );
+		for ( auto& [ k, v ] : sde_skip ) std::printf( "sde not checked: %s: %d\n", k.c_str(), v );
 		return ( exp_differ || exp_errors ) ? 1 : 0;
 	}
 }
