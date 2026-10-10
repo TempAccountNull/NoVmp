@@ -3191,6 +3191,29 @@ static target_ulong far_gate_target(CPUX86State *env, target_ulong offset, int g
 }
 #endif /* __Use_Original_Qemu (U707) */
 
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+/*
+ * NoVmp (ledger U1173): with FRED transitions enabled no far transfer enters compatibility mode
+ * at CPL 0 (SDM 092 Vol3A 8.5.2; Vol2A JMP / CALL CONFORMING- / NONCONFORMING-CODE-SEGMENT "IF
+ * CR4.FRED = 1 and CPL = 0 and L-bit = 0 THEN GP(new code segment selector)", Vol2A IRET, Vol2B
+ * RET): #GP(selector), after the DPL checks and before the present check.
+ */
+static void fred_far_check_l(CPUX86State *env, int sel, uint32_t e2, int cpl, uintptr_t ra)
+{
+    if (cpl == 0 && !(e2 & DESC_L_MASK) && x86_fred_enabled(env)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, sel & 0xfffc, ra);
+    }
+}
+
+/* ... and no call gate is usable: "... or CR4.FRED = 1 THEN #GP(call gate selector)" */
+static void fred_far_check_gate(CPUX86State *env, int sel, uintptr_t ra)
+{
+    if (x86_fred_enabled(env)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, sel & 0xfffc, ra);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1173) */
 /* protected mode jump */
 void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                            target_ulong next_eip)
@@ -3228,6 +3251,9 @@ void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
             }
         }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+        fred_far_check_l(env, new_cs, e2, cpl, GETPC());
+#endif /* __Use_Original_Qemu (U1173) */
         if (!(e2 & DESC_P_MASK)) {
             raise_exception_err_ra(env, EXCP0B_NOSEG, new_cs & 0xfffc, GETPC());
         }
@@ -3274,6 +3300,9 @@ void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
             if ((dpl < cpl) || (dpl < rpl)) {
                 raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
             }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+            fred_far_check_gate(env, new_cs, GETPC());
+#endif /* __Use_Original_Qemu (U1173) */
             if (!(e2 & DESC_P_MASK)) {
                 raise_exception_err_ra(env, EXCP0B_NOSEG, new_cs & 0xfffc, GETPC());
             }
@@ -3437,6 +3466,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                 raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
             }
         }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+        fred_far_check_l(env, new_cs, e2, cpl, GETPC());
+#endif /* __Use_Original_Qemu (U1173) */
         if (!(e2 & DESC_P_MASK)) {
             raise_exception_err_ra(env, EXCP0B_NOSEG, new_cs & 0xfffc, GETPC());
         }
@@ -3574,6 +3606,9 @@ void helper_lcall_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
         if (dpl < cpl || dpl < rpl) {
             raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+        fred_far_check_gate(env, new_cs, GETPC());
+#endif /* __Use_Original_Qemu (U1173) */
         /* check valid bit */
         if (!(e2 & DESC_P_MASK)) {
             raise_exception_err_ra(env, EXCP0B_NOSEG,  new_cs & 0xfffc, GETPC());
@@ -4016,6 +4051,15 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
     if (rpl < cpl) {
         raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, retaddr);
     }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+    /*
+     * NoVmp (ledger U1173): "IF ... RPL < CPL or (CR4.FRED = 1 and ... RPL > CPL) THEN
+     * #GP(selector)" (SDM 092 Vol2A IRET, Vol2B RET; Vol3A 8.5.2): no CPL change with FRED
+     */
+    if (rpl > cpl && x86_fred_enabled(env)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, retaddr);
+    }
+#endif /* __Use_Original_Qemu (U1173) */
     dpl = (e2 >> DESC_DPL_SHIFT) & 3;
     if (e2 & DESC_C_MASK) {
         if (dpl > rpl) {
@@ -4026,6 +4070,12 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
             raise_exception_err_ra(env, EXCP0D_GPF, new_cs & 0xfffc, retaddr);
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1173) */
+    /* "IF CR4.FRED = 1 and CPL = 0 and L-bit is 0 ... THEN #GP(selector)" */
+    if (env->hflags & HF_LMA_MASK) {
+        fred_far_check_l(env, new_cs, e2, cpl, retaddr);
+    }
+#endif /* __Use_Original_Qemu (U1173) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U52) */
     if (!(e2 & DESC_P_MASK)) {
         raise_exception_err_ra(env, EXCP0B_NOSEG, new_cs & 0xfffc, retaddr);
