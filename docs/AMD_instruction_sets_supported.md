@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-10 06:46 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `8af516e6 cpuid_i5-13600k.txt header: leaves 01H/0BH from vCPU 5, 1FH from vCPU 6 (unpinned capture)`). Do not edit by hand._
+_Generated 2026-10-10 07:21 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `e4580b0e U1040-U1042 harness: at_cases.hpp / at_main.cpp changes of agent/sdecheck applied after the merge`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
