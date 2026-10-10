@@ -14,6 +14,7 @@
 | `--shard K/N` | with `--cases`: only the K-th of N contiguous blocks of the case lines (U543); the N runs together are the whole file in order, the case numbers restart per block |
 | `--bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE]` | performance benchmark (U500, `at_bench.hpp`): 13 workloads of our own code, Unicorn only — integer/branch, AVX/FMA, SSE integer, x87, REP strings, TLB misses, self-modifying code, 4096 short TBs, code/count/memory-hook overhead, short `uc_emu_start` calls, `uc_open` churn. Cold and warm median of N (default 5) fresh engines, Minsn/s from a calibrated instruction count, and an FNV-1a hash of the complete guest end state that must not change between builds. Pinned to logical CPU C (default 4) at high priority |
 | `--profile N` | with `--bench` (per workload) or a quick/`--full` run (whole run): in-process sampling profiler, the N hottest functions self and inclusive (PDBs next to the exe; `[jit]` = TCG-generated code) |
+| `--hw-repeat N [--hw-cpu SPEC] [--hw-load N]` | with `--cases`: run-to-run measurement of the hardware cases (U1050), below |
 
 ## Machine-state options (apply to `--cases` runs)
 
@@ -101,6 +102,17 @@ The sweep runs a form on the host CPU only when nothing it does can leave our re
 For a branch-layout form a fault anywhere but the prologue and epilogue belongs to the snippet (native: the vectored handler, only on the running thread while the snippet runs; Unicorn: the INTR / unmapped hooks), and the comparison adds the fault RIP (not for INT3 / INT1: UC_HOOK_INTR reports the next RIP, Windows the INT3) and the whole state at that fault. The test stack is compared from the lower of input and output RSP when nothing faulted (an RSP below the stack, ENTER 5BC0h, compares all of it).
 
 Forms that stay out, with the reason in the CSV `detail` column: SYSCALL / SYSENTER (a real kernel entry), INT n (Windows' IDT decides natively; Unicorn delivers INT n to UC_HOOK_INTR without an IDT), WRFSBASE / WRGSBASE (the host thread's FS/GS base; GS base = the TEB), LFS / LGS (the host thread's FS/GS selector and base), XBEGIN when the host has RTM. WRUSSD/WRUSSQ are CPL0-only (SDM: #GP(0) at CPL > 0) and counted as privileged.
+
+## Run-to-run measurement (U1050)
+
+`--hw-repeat N` runs each hardware case's native snippet N times (the first run is the one compared with Unicorn, so verdicts and summary lines are those of a normal run) and prints, after the case, every distinct host outcome with its count: the vector, for an access violation the Windows access type and address (CR2), the RIP offset and every field that changed. Each run is labelled with the core class it ran on:
+
+- **This machine's Windows is a VMware guest** (VMware BIOS and 440BX board, 8 vCPUs as 2 sockets x 4 cores, CPUID.1:ECX[31] hypervisor bit hidden, CPUID.1AH reading 0; checked 2026-10-09). Its vCPUs run on whichever physical core of the i5-13600K the host schedules: a P-core (Raptor Cove) or an E-core (Gracemont). The guest cannot read the core type, and pinning a vCPU does not pin a physical core.
+- So each run is classified by a timing probe taken just before and just after it: a dependent chain of four "add rax, 1" plus dec/jnz (our own 25 bytes, 1024 iterations, the lowest of 3 tries) in TSC ticks per iteration. On this host the values fall in two separate bands: 0.6-1.5 ticks (one iteration per clock: P-core) and 3.5-4.2 ticks (four clocks per iteration: E-core), with nothing between them (8 vCPUs x 2000 tries). The label is `[P]` / `[E]` when both probes agree, `[~]` when they disagree, `[?]` outside both bands, and `*` when the logical CPU number changed during the run. The probe is empirical for this host, not a CPU specification; on bare metal CPUID.1AH names the core type (printed at the start).
+- `--hw-cpu SPEC` pins the native runs to logical CPUs (vCPUs here): a number or a comma list, `all` (rotate over every CPU of the process), `P` / `E` (the CPUs of that CPUID.1AH core type, bare metal only). Each outcome line lists the logical CPUs it was seen on (`cpus: n:count`).
+- `--hw-load N` runs N busy threads (the probe's chain) beside the native runs, so the guest's vCPUs compete for the host's cores.
+
+Use it for cases whose hardware result differs between runs: an outcome that follows the core class is an implementation difference between the two core types of the hybrid i5-13600K, not noise. Measured with it (2026-10-09, 2000 runs per case, 306 cases): the run-to-run differences of MASKMOVDQU, the MMX x87 state transition, FLD/FSTP m80 / FBLD / FBSTP across 0000_7FFF_FFFF_FFFFh and the unmasked #IS store all follow the core class (P-class runs with the P outcome 99.98%, E-class runs with the E outcome 97-98%; the rest are runs whose vCPU moved between the probe and the run).
 
 ## Quirks
 

@@ -31,6 +31,11 @@
 //                    1 or 2; the AVX512* CPUID bits stay off) for the AVX10 expected-value cases
 //   --apx            with --cases: Unicorn opts in to Intel APX (UC_CTL_X86_APX = UC_X86_APX_F, reset
 //                    XCR0 with bit 19; keys r16..r31) for the APX cases; the host has none
+//   --hw-repeat N    with --cases: run each hardware case natively N times and print every distinct
+//                    host outcome with its count per core type (U1050, run-to-run measurement)
+//   --hw-cpu SPEC    with --cases: pin the native runs to a logical CPU / a comma list / "all" /
+//                    "P" / "E" (rotating; U1050); without it they are not pinned
+//   --hw-load N      with --hw-repeat: N busy threads beside the native runs (U1050)
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -529,13 +534,16 @@ int main( int argc, char** argv )
 		else if ( a == "--seeded" ) copt.rdrand = UC_X86_RDRAND_SEEDED;
 		else if ( a == "--rdrand-seed" ) { copt.rdrand = UC_X86_RDRAND_SEEDED; copt.rdrand_seed = std::stoull( val(), nullptr, 0 ); }
 		else if ( a == "--HostSeed" ) copt.rdrand = UC_X86_RDRAND_HOST;
+		else if ( a == "--hw-repeat" ) { copt.hw_repeat = std::stoi( val() ); if ( copt.hw_repeat < 1 ) { std::printf( "--hw-repeat N: N >= 1\n" ); return 2; } }   // U1050
+		else if ( a == "--hw-cpu" ) copt.hw_cpu = val();   // U1050
+		else if ( a == "--hw-load" ) copt.hw_load = std::stoi( val() );   // U1050
 		else if ( a == "--bench" ) bench = true;
 		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
 		else if ( a == "--scale" ) bench_scale = std::stod( val() );
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--amx] [--avx10 N] [--apx] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );

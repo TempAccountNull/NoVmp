@@ -360,7 +360,103 @@ namespace at
 	// 0 = --no-strict, 1 = --strict
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
-					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */ };
+					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
+					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */ };
+
+	// U1050: run-to-run measurement of hardware cases. --hw-repeat N runs each hardware case's native
+	// snippet N times (the first run is the one compared with Unicorn, as without the option) and
+	// prints every distinct host outcome with its count, split by the core class the run was on, and
+	// the logical CPUs it was seen on. The i5-13600K is hybrid (P-cores Raptor Cove, E-cores
+	// Gracemont); CPUID.1AH:EAX[31:24] (40h Core, 20h Atom) names the core type on bare metal, but this
+	// machine's Windows runs as a VMware guest whose 8 vCPUs move between the host's physical cores
+	// (CPUID.1AH reads 0 there). So each run is classified by a timing probe (core_probe) taken just
+	// before and just after it: "P" / "E" (both probes agree), "~" (they disagree: the vCPU moved
+	// or the run was preempted), "?" (no class). --hw-cpu pins the native runs to logical CPUs (vCPUs
+	// in a guest): a number or a comma list, "all" (rotate over every CPU of the process), "P" / "E"
+	// (rotate over the CPUs of that CPUID.1AH core type: bare metal only). --hw-load N runs N
+	// busy threads (the probe's ADD chain) beside the native runs, so a guest's vCPUs compete for the
+	// host's cores. Measurement only: verdicts and summary lines are unchanged.
+	struct host_cpu { int cpu; int type; };
+	static const char* core_name( int type ) { return type == 0x40 ? "P" : type == 0x20 ? "E" : "?"; }
+	// U1050: core class from the throughput of a dependent chain of four "add rax, 1" + dec/jnz
+	// (our own 25 bytes, 1024 iterations, the lowest of 3 tries in TSC ticks per iteration). Measured
+	// on this machine (2026-10-09, 8 vCPUs x 2000 tries): two separate bands, 0.6-1.5 ticks (one
+	// iteration per clock: the P-core's renamer handles the ADD chain, at 3.5-5.1 GHz) and 3.5-4.2
+	// ticks (four clocks per iteration at about 3.4-3.9 GHz, as an E-core); between them nothing.
+	// Empirical only: it tells the two classes apart on this host, it is not a CPU specification.
+	struct core_probe
+	{
+		uint8_t* code = nullptr;
+		core_probe()
+		{
+			static const uint8_t chain[] = { 0x48, 0x31, 0xC0,                       // xor rax, rax
+											 0x48, 0x83, 0xC0, 0x01, 0x48, 0x83, 0xC0, 0x01,   // 4 x add rax, 1
+											 0x48, 0x83, 0xC0, 0x01, 0x48, 0x83, 0xC0, 0x01,
+											 0x48, 0xFF, 0xC9,                       // dec rcx
+											 0x75, 0xEB,                             // jnz -> the first add
+											 0xC3 };                                 // ret
+			code = ( uint8_t* ) VirtualAlloc( nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE );
+			if ( code ) { std::memcpy( code, chain, sizeof( chain ) ); FlushInstructionCache( GetCurrentProcess(), code, sizeof( chain ) ); }
+		}
+		~core_probe() { if ( code ) VirtualFree( code, 0, MEM_RELEASE ); }
+		uint64_t spin( uint64_t n ) const { return ( ( uint64_t( * )( uint64_t ) ) code )( n ); }
+		double ticks_per_iter() const
+		{
+			if ( !code ) return 0;
+			double best = 1e30;
+			for ( int k = 0; k < 3; ++k )
+			{
+				const uint64_t t0 = __rdtsc();
+				spin( 1024 );
+				const uint64_t t1 = __rdtsc();
+				const double t = double( t1 - t0 ) / 1024;
+				if ( t >= 0.3 && t < best ) best = t;   // a TSC step of the guest gives nonsense (< 0.3)
+			}
+			return best;
+		}
+		static char cls( double t ) { return t >= 0.3 && t < 2.4 ? 'P' : t >= 2.8 && t < 5.5 ? 'E' : '?'; }
+	};
+	static int core_type_here() { int r[ 4 ] = {}; __cpuidex( r, 0, 0 ); if ( r[ 0 ] < 0x1A ) return 0; __cpuidex( r, 0x1A, 0 ); return ( r[ 0 ] >> 24 ) & 0xFF; }
+	static std::vector<host_cpu> host_cpus()
+	{
+		std::vector<host_cpu> v;
+		DWORD_PTR pm = 0, sm = 0;
+		if ( !GetProcessAffinityMask( GetCurrentProcess(), &pm, &sm ) ) return v;
+		HANDLE t = GetCurrentThread();
+		for ( int c = 0; c < int( sizeof( DWORD_PTR ) * 8 ); ++c )
+		{
+			if ( !( pm >> c & 1 ) ) continue;
+			SetThreadAffinityMask( t, DWORD_PTR( 1 ) << c );
+			SwitchToThread();
+			v.push_back( { int( GetCurrentProcessorNumber() ) == c ? c : -1 - c, core_type_here() } );
+		}
+		SetThreadAffinityMask( t, pm );
+		return v;
+	}
+	// the CPUs --hw-cpu SPEC selects (empty = not pinned)
+	static std::vector<int> hw_pin_list( const std::string& spec, const std::vector<host_cpu>& cpus, std::string& err )
+	{
+		std::vector<int> pin;
+		if ( spec.empty() || spec == "none" ) return pin;
+		for ( const host_cpu& c : cpus )
+			if ( c.cpu >= 0 && ( spec == "all" || ( spec == "P" && c.type == 0x40 ) || ( spec == "E" && c.type == 0x20 ) ) ) pin.push_back( c.cpu );
+		if ( spec != "all" && spec != "P" && spec != "E" )
+		{
+			std::istringstream ss( spec );
+			std::string tok;
+			while ( std::getline( ss, tok, ',' ) )
+			{
+				char* end = nullptr;
+				long c = std::strtol( tok.c_str(), &end, 10 );
+				bool found = false;
+				for ( const host_cpu& h : cpus ) found |= h.cpu == c;
+				if ( tok.empty() || *end || !found ) { err = "--hw-cpu: no logical CPU " + tok + " in the process affinity mask"; return {}; }
+				pin.push_back( int( c ) );
+			}
+		}
+		if ( pin.empty() ) err = "--hw-cpu " + spec + ": no such CPU";
+		return pin;
+	}
 
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token. U772: an error code may follow
 	// in parentheses, "#GP(0)", "#SS(0)", "#PF(0x6)", "#13(0x30)", stored in *ec (else -1)
@@ -477,6 +573,39 @@ namespace at
 		native_engine hw;
 		bool hw_open = false;
 		std::string err;
+		// U1050: --hw-repeat / --hw-cpu (run-to-run measurement); the logical CPUs and their core types
+		const bool hw_measure = opt.hw_repeat > 1 || !opt.hw_cpu.empty() || opt.hw_load > 0;
+		std::vector<host_cpu> cpus;
+		std::vector<int> pin;
+		if ( hw_measure && !opt.expect_only )
+		{
+			cpus = host_cpus();
+			pin = hw_pin_list( opt.hw_cpu, cpus, err );
+			if ( !err.empty() ) { std::printf( "%s\n", err.c_str() ); return 2; }
+			std::printf( "hw runs: %d per hardware case, %s:", opt.hw_repeat, pin.empty() ? "not pinned" : ( "pinned (--hw-cpu " + opt.hw_cpu + ")" ).c_str() );
+			for ( int c : pin ) std::printf( " %d", c );
+			std::printf( "\nhost CPUs:" );
+			for ( const host_cpu& c : cpus ) std::printf( " %d%s", c.cpu < 0 ? -1 - c.cpu : c.cpu, c.cpu < 0 ? "(pin failed)" : core_name( c.type ) );
+			std::printf( "\n" );
+		}
+		core_probe probe;
+		// U1050: --hw-load N busy threads (the probe's chain), stopped when run_cases returns
+		struct load_threads
+		{
+			std::vector<HANDLE> t;
+			volatile LONG stop = 0;
+			const core_probe* pr = nullptr;
+			static DWORD WINAPI body( void* p ) { auto* l = ( load_threads* ) p; while ( !l->stop ) l->pr->spin( 1 << 16 ); return 0; }
+			void start( int n, const core_probe& p ) { pr = &p; for ( int k = 0; k < n; ++k ) if ( HANDLE h = CreateThread( nullptr, 0, body, this, 0, nullptr ) ) t.push_back( h ); }
+			~load_threads() { stop = 1; for ( HANDLE h : t ) { WaitForSingleObject( h, INFINITE ); CloseHandle( h ); } }
+		} load;
+		if ( hw_measure && !opt.expect_only )
+		{
+			if ( opt.hw_load > 0 ) load.start( opt.hw_load, probe );
+			int cid[ 4 ] = {};
+			__cpuidex( cid, 0x1A, 0 );
+			std::printf( "core probe: ADD-chain ticks/iteration P < 2.4 <= ? < 2.8 <= E < 5.5; CPUID.1AH:EAX = 0x%X; load threads: %d\n", unsigned( cid[ 0 ] ), int( load.t.size() ) );
+		}
 		std::string line;
 		int n = 0, differ = 0;
 		int exp_n = 0, exp_differ = 0, exp_errors = 0, skipped = 0;
@@ -646,7 +775,52 @@ namespace at
 				if ( !hw.open( err ) ) { std::printf( "native engine: %s\n", err.c_str() ); return 2; }
 				hw_open = true;
 			}
-			hw.run( p, *st_in, h );
+			std::string hw_report;   // U1050
+			if ( !hw_measure ) hw.run( p, *st_in, h );
+			else
+			{
+				// U1050: N native runs; the first one is compared with Unicorn below. Outcome = the
+				// vector, for an access violation the Windows access type and address, and every
+				// field that changed; counted per core type, with the logical CPUs seen.
+				struct tally { int count = 0; std::map<int, int> per_cpu; };
+				std::map<std::string, tally> outcomes;
+				int moved = 0;
+				for ( int k = 0; k < opt.hw_repeat; ++k )
+				{
+					result r;
+					result& rr = k == 0 ? h : r;
+					if ( !pin.empty() ) { SetThreadAffinityMask( GetCurrentThread(), DWORD_PTR( 1 ) << pin[ size_t( k ) % pin.size() ] ); SwitchToThread(); }
+					const char cb = core_probe::cls( probe.ticks_per_iter() );
+					const int before = int( GetCurrentProcessorNumber() );
+					hw.run( p, *st_in, rr );
+					const int after = int( GetCurrentProcessorNumber() );
+					const char ca = core_probe::cls( probe.ticks_per_iter() );
+					moved += before != after;
+					const char cc = cb == ca ? cb : '~';
+					std::string key = std::string( "[" ) + cc + ( before != after ? "*" : "" ) + "] ";
+					if ( rr.faulted )
+					{
+						key += "fault #" + std::to_string( rr.vector );
+						if ( rr.vector == 14 || rr.vector == 13 || rr.vector == 12 ) key += " (av " + hx( rr.fault_info0 ) + " " + hx( rr.fault_info1 ) + ")";
+						key += " rip+" + hx( rr.fault_rip - CODE ) + " ";
+					}
+					key += case_fields( *st_in, *rr.s );
+					tally& t = outcomes[ key ];
+					++t.count;
+					++t.per_cpu[ before ];
+				}
+				if ( !pin.empty() ) { DWORD_PTR pm = 0, sm = 0; GetProcessAffinityMask( GetCurrentProcess(), &pm, &sm ); SetThreadAffinityMask( GetCurrentThread(), pm ); }
+				char b[ 96 ];
+				std::snprintf( b, sizeof( b ), "    hw runs: %d, distinct outcomes: %zu, moved during a run: %d\n", opt.hw_repeat, outcomes.size(), moved );
+				hw_report = b;
+				for ( auto& [ key, t ] : outcomes )
+				{
+					std::snprintf( b, sizeof( b ), "      %5d x ", t.count );
+					hw_report += b + key + "\n            cpus:";
+					for ( auto& [ c, m ] : t.per_cpu ) { std::snprintf( b, sizeof( b ), " %d:%d", c, m ); hw_report += b; }
+					hw_report += "\n";
+				}
+			}
 			// U834: Windows clears RFLAGS.AC while it dispatches a user-mode exception (observed for
 			// #AC, #GP, #UD, ...: the context the VEH resumes has AC = 0), so after a hardware fault
 			// the host's AC bit is the OS's, not the CPU's: the fault state compares Unicorn's AC
@@ -670,6 +844,7 @@ namespace at
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
+			if ( !hw_report.empty() ) std::printf( "%s", hw_report.c_str() );
 			++n;
 		}
 		// U530: "differing" counts only untagged cases (hardware and expected-value); tagged hardware

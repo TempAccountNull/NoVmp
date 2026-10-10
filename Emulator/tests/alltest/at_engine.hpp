@@ -90,6 +90,7 @@ namespace at
 		int vector = -1;            // x86 vector; Unicorn exact, native mapped from the NTSTATUS
 		int64_t error_code = -1;    // U772: Unicorn's error code (UC_CTL_X86_EXCEPTION), -1 = none / native
 		uint64_t fault_rip = 0;
+		uint64_t fault_info0 = 0, fault_info1 = 0;   // U1050: native only, the Windows access-violation access type / address
 		std::string err;
 	};
 
@@ -320,6 +321,8 @@ namespace at
 				if ( !( ( *q >= 0xD8 && *q <= 0xDF ) || *q == 0x9B ) ) r.vector = 19;
 			}
 			r.fault_rip = g().rip;
+			r.fault_info0 = g().faulted ? g().info0 : 0;
+			r.fault_info1 = g().faulted ? g().info1 : 0;
 			read_blocks( data_, mem_, *r.s );
 		}
 	private:
