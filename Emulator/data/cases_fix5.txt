@@ -431,3 +431,30 @@ imul rax, rcx, -2147483648 | rcx=0x4000000000000000 rflags=0xad7 => rflags=0xA07
 imul r8, r9; setz cl | r8=0x4000000000000000 r9=4 rflags=0x202 => r8=0x0 rflags=0xA07
 mul rcx; cmovz rdx, rbx | rax=0x8000000000000000 rcx=2 rbx=7 rflags=0x202 => rax=0x0 rdx=0x1 rflags=0xA07
 imul eax, ecx, 0; setnz dl | rcx=5 rax=9 rflags=0xad7 => rax=0x0 rdx=0x1 rflags=0x206
+#
+# --- U880 FSTP m80 / FBSTP whose bytes 7:0 cross 0000_7FFF_FFFF_FFFFh (k = 3..9 of the 10 bytes
+# non-canonical, start 0x7FFF_FFFF_FFF9 .. 0x7FFF_FFFF_FFFF): #GP(0) on both core types of the host
+# (runtorun report 2026-10-09, section 4: 100 %); the emulator prepared bytes 7:0 with the page probe
+# only (#PF on the not-present canonical page). Now x86_check_canonical_range(ptr, 8) first, as
+# FLD m80 / FBLD and the 8-byte forms. k = 1, 2 (only bytes 9:8 non-canonical): P-core #PF, E-core
+# #GP (core-dependent: expected values, the emulator keeps the P-core #PF, docs\quirks.md U706 row).
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF9
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFA
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFB
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFD
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFE
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFF
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF9
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFA
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFB
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFD
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFE
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFF
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC =>! #GP(0)
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFFC =>! #GP(0)
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF7 =>! #PF
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF7 =>! #PF
+fld1; fstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF8 =>! #PF
+fld1; fbstp tbyte ptr [rcx] | cpl=3 rcx=0x00007FFFFFFFFFF8 =>! #PF

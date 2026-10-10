@@ -1100,6 +1100,12 @@ void helper_fstt_ST0(CPUX86State *env, target_ulong ptr)
     CPU_LDoubleU temp;
 
     temp.d = ST0;
+    /*
+     * U880: bytes 7:0 across 0000_7FFF_FFFF_FFFFh are a non-canonical reference: #GP(0) before
+     * the page of the canonical part is probed (#PF), as FLD m80 and the 8-byte forms do
+     * (U706); both core types of the i5-13600K (runtorun report 2026-10-09, section 4)
+     */
+    x86_check_canonical_range(env, ptr, 8, GETPC());
     x86_access_prepare(env, ptr, 8, MMU_DATA_STORE, GETPC());
     cpu_stq_data_ra(env, ptr, temp.l.lower, GETPC());
     x86_access_prepare(env, ptr + 8, 2, MMU_DATA_STORE, GETPC());
@@ -1769,6 +1775,7 @@ void helper_fbld_ST0(CPUX86State *env, target_ulong ptr)
 static void fbst_commit(CPUX86State *env, target_ulong ptr, const uint8_t *img,
                         uintptr_t ra)
 {
+    x86_check_canonical_range(env, ptr, 8, ra);     /* bytes 7:0 non-canonical: #GP(0) (U880) */
     x86_access_prepare(env, ptr, 8, MMU_DATA_STORE, ra);
     cpu_stq_data_ra(env, ptr, ldq_le_p(img), ra);
     x86_access_prepare(env, ptr + 8, 2, MMU_DATA_STORE, ra);
