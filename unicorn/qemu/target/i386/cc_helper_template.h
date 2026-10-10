@@ -211,7 +211,18 @@ static int glue(compute_all_mul, SUFFIX)(DATA_TYPE dst, target_long src1)
     cf = (src1 != 0);
     pf = parity_table[(uint8_t)dst];
     af = 0; /* undefined */
+#if __Use_Original_Qemu == 1 /* original QEMU (U875) */
     zf = (dst == 0) * CC_Z;
+#else /* ours (U875) */
+    /*
+     * NoVmp (ledger U875): MUL / IMUL leave SF, ZF, AF and PF undefined (SDM Vol2A). Our choice
+     * (docs/quirks.md, "SDM undefined"), the i5-13600K's rule for every form and width:
+     * SF = the sign bit of the low half of the product (dst), PF = the parity of its low byte,
+     * AF = 0 and ZF = 0, also when the low half is 0 (QEMU: ZF = (dst == 0)). With a zero low
+     * half the CPU is not repeatable (ZF = 1 in about 13 % of the runs); 0 is its usual value.
+     */
+    zf = 0;
+#endif /* __Use_Original_Qemu (U875) */
     sf = lshift(dst, 8 - DATA_BITS) & CC_S;
     of = cf * CC_O;
     return cf | pf | af | zf | sf | of;

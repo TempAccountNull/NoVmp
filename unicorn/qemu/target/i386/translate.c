@@ -1417,6 +1417,11 @@ static CCPrepare gen_prepare_eflags_z(DisasContext *s, TCGv reg)
     case CC_OP_POPCNT:
         return (CCPrepare) { .cond = TCG_COND_EQ, .reg = cpu_cc_src,
                              .mask = -1 };
+#if __Use_Original_Qemu != 1 /* ours (U875) */
+    /* MUL / IMUL: ZF = 0 (compute_all_mul, U875) */
+    case CC_OP_MULB: case CC_OP_MULW: case CC_OP_MULL: case CC_OP_MULQ:
+        return (CCPrepare) { .cond = TCG_COND_NEVER, .mask = -1 };
+#endif /* __Use_Original_Qemu (U875) */
     default:
         {
             MemOp size = (s->cc_op - CC_OP_ADDB) & 3;
