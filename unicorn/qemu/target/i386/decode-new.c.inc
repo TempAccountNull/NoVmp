@@ -5601,6 +5601,17 @@ static bool decode_evex_vl(DisasContext *s, CPUX86State *env, X86OpEntry *e)
     return true;
 }
 #endif /* __Use_Original_Qemu (U142) */
+#if __Use_Original_Qemu != 1 /* ours (U870) */
+/* NoVmp (ledger U870): the VEX scalar FMA forms (66 0F38 99/9B/9D/9F, A9/AB/AD/AF, B9/BB/BD/BF) */
+static bool vex_fma_scalar(const X86OpEntry *e)
+{
+    return e->gen == gen_VFMADD132Sx || e->gen == gen_VFMADD213Sx || e->gen == gen_VFMADD231Sx ||
+           e->gen == gen_VFMSUB132Sx || e->gen == gen_VFMSUB213Sx || e->gen == gen_VFMSUB231Sx ||
+           e->gen == gen_VFNMADD132Sx || e->gen == gen_VFNMADD213Sx ||
+           e->gen == gen_VFNMADD231Sx || e->gen == gen_VFNMSUB132Sx ||
+           e->gen == gen_VFNMSUB213Sx || e->gen == gen_VFNMSUB231Sx;
+}
+#endif /* __Use_Original_Qemu (U870) */
 
 static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_func,
                         X86DecodedInsn *decode)
@@ -5627,6 +5638,19 @@ static bool decode_insn(DisasContext *s, CPUX86State *env, X86DecodeFunc decode_
         s->vex_l = 0;
     }
 #endif /* __Use_Original_Qemu (U79) */
+#if __Use_Original_Qemu != 1 /* ours (U870) */
+    /*
+     * NoVmp (ledger U870): VFMADD/VFMSUB/VFNMADD/VFNMSUB 132/213/231 SS/SD are VEX.LIG with an
+     * xmm3/m32 (W0) or xmm3/m64 (W1) source (SDM Vol2C). QEMU decoded W,x: the memory operand
+     * was read as 16 bytes (32 with VEX.L = 1), so an element in the last bytes of a page
+     * faulted on the next one and a misaligned element raised no #AC (i5-13600K: no #PF, #AC);
+     * VEX.L = 1 also kept bits 255:128 of the destination (DEST[MAXVL-1:128] := 0).
+     */
+    if ((s->prefix & PREFIX_VEX) && vex_fma_scalar(e)) {
+        s->vex_l = 0;
+        e->s2 = s->vex_w ? X86_SIZE_sd : X86_SIZE_ss;
+    }
+#endif /* __Use_Original_Qemu (U870) */
 #if __Use_Original_Qemu != 1 /* ours (U142) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U645) */
     if ((s->prefix & PREFIX_EVEX) && !decode_evex_vl(s, env, e)) {

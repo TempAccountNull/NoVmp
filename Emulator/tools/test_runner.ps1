@@ -290,6 +290,9 @@ Add-Hw 'cases_fix3' 'hw'
 Add-Hw 'cases_fix4' 'hw'
 # U932: BSF/BSR with a zero source leave the whole destination unchanged (32-bit too) vs the i5-13600K.
 Add-Hw 'cases_bsf_zero_hw' 'hw'
+# U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
+# (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
+Add-Hw 'cases_fix5' 'hw'
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # U750-U760: CET on far CALL / RET far / IRETQ (call gates, supervisor tokens), SYSRET/SYSEXIT SSP,
