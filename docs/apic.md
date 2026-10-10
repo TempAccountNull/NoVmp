@@ -96,6 +96,10 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
   transition) is not made and returns `UC_ERR_EXCEPTION`, the U905 contract of every MSR (U1062;
   before: dropped with `UC_ERR_OK`). The ICR is interpreted in the xAPIC format
   (destination in bits 63:56) when written through the API in xAPIC mode.
+- `uc_context_reg_write` of an APIC MSR into a `uc_context` image is a plain store into the image
+  (U1063, the U878 rule): MAXPHYADDR and the APIC ID come from the engine's CPU, no ICR / SELF IPI
+  message is sent from an image and the live CPU is not touched; `uc_context_restore` re-evaluates
+  the restored APIC.
 
 ### TPR, PPR, CR8 (13.8.3.1, 13.8.6.1)
 - MOV CR8 writes TPR[7:4] = CR8[3:0], TPR[3:0] = 0; MOV from CR8 reads TPR[7:4]. CR8[63:4] set:

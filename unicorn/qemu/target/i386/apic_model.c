@@ -120,6 +120,24 @@ static int apic_fls256(const uint32_t *tab)
     return -1;
 }
 
+/*
+ * NoVmp (ledger U1063): a uc_context image (uc_context_reg_write / _read of UC_X86_REG_MSR,
+ * msr_api == 2, U878) is a copy of CPUX86State without its own X86CPU / CPUState: the model's
+ * constants (MAXPHYADDR, the model's APIC ID) come from the engine's CPU, and a write is a plain
+ * store - nothing touches the live CPU (interrupt_request, kicks) or the APIC bus (no ICR / SELF
+ * IPI message is sent from an image); uc_context_restore re-evaluates the restored APIC
+ * (x86_apic_update). Before: env_archcpu / env_cpu of the image pointed in front of it.
+ */
+static bool apic_image(CPUX86State *env)
+{
+    return env->msr_api == 2;
+}
+
+static X86CPU *apic_cpu(CPUX86State *env)
+{
+    return apic_image(env) ? X86_CPU(env->uc->cpu) : env_archcpu(env);
+}
+
 static bool apic_x2(CPUX86State *env)
 {
     return (env->apic_base & (APIC_BASE_EN | APIC_BASE_EXTD)) == (APIC_BASE_EN | APIC_BASE_EXTD);
@@ -160,7 +178,7 @@ uint32_t x86_apic_id(CPUX86State *env)
             return l1->ebx >> 24;
         }
     }
-    return env_archcpu(env)->apic_id;
+    return apic_cpu(env)->apic_id;                  /* U1063: an image: the engine's CPU */
 }
 
 /* CPUID adjustments for the local APIC (called with the effective leaf) */
@@ -293,8 +311,12 @@ static void apic_error_interrupt(CPUX86State *env)
  */
 void x86_apic_update(CPUX86State *env)
 {
-    CPUState *cs = env_cpu(env);
+    CPUState *cs;
 
+    if (apic_image(env)) {
+        return;                                 /* U1063: evaluated on restore */
+    }
+    cs = env_cpu(env);
     apic_error_interrupt(env);
     if (apic_deliverable(env) >= 0) {
         apic_or((uint32_t *)&cs->interrupt_request, CPU_INTERRUPT_HARD);
@@ -669,7 +691,7 @@ static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
 {
     uint64_t old = env->apic_base;
     uint64_t rsvd = 0x2ffULL | (apic_has_x2apic(env) ? 0 : APIC_BASE_EXTD) |
-                    (~0ULL << env_archcpu(env)->phys_bits);
+                    (~0ULL << apic_cpu(env)->phys_bits);      /* U1063 */
     bool en = (val & APIC_BASE_EN) != 0, extd = (val & APIC_BASE_EXTD) != 0;
     bool oen = (old & APIC_BASE_EN) != 0, oextd = (old & APIC_BASE_EXTD) != 0;
 
@@ -868,7 +890,9 @@ bool x86_apic_msr_write(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t 
             return true;
         }
         env->apic_icr = val;
-        apic_send_icr(env, val);
+        if (!apic_image(env)) {
+            apic_send_icr(env, val);            /* U1063: an image stores the ICR only */
+        }
         break;
     case 0x838:
         if (val) {
@@ -890,7 +914,9 @@ bool x86_apic_msr_write(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t 
         if (val & ~0xffULL) {
             goto gp;
         }
-        apic_self_ipi(env, (int)val);
+        if (!apic_image(env)) {
+            apic_self_ipi(env, (int)val);       /* U1063: no message from an image */
+        }
         break;
     default:
         /* read-only registers (WRMSR #GP, Table 13-6 note 1) and reserved addresses */

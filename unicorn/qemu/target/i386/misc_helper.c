@@ -714,6 +714,18 @@ static bool novmp_canonical(CPUX86State *env, uint64_t addr)
 }
 
 #endif /* __Use_Original_Qemu (U103) */
+#if __Use_Original_Qemu != 1 /* ours (U1063) */
+/*
+ * NoVmp (ledger U1063): the X86CPU of the model for an MSR access. A uc_context image
+ * (msr_api == 2, U878) has none of its own (env_archcpu would point in front of the image): the
+ * engine's CPU, as helper_rdmsr does since U878.
+ */
+static X86CPU *msr_cpu(CPUX86State *env)
+{
+    return env->msr_api == 2 ? X86_CPU(env->uc->cpu) : env_archcpu(env);
+}
+
+#endif /* __Use_Original_Qemu (U1063) */
 #if __Use_Original_Qemu != 1 /* ours (U1020) */
 /*
  * NoVmp (ledger U1020): the TME / TME-MK MSRs, present with CPUID.(07H,0):ECX.TME_EN[13] (SDM
@@ -765,7 +777,7 @@ static bool tme_enumerated(CPUX86State *env)
 /* bits MAXPHYADDR-1:12 */
 static uint64_t tme_pa_field(CPUX86State *env)
 {
-    int m = env_archcpu(env)->phys_bits;
+    int m = msr_cpu(env)->phys_bits;                /* U1063: an image: the engine's CPU */
 
     return MAKE_64BIT_MASK(12, m - 12);
 }
@@ -1242,7 +1254,7 @@ static bool msr_memtype_ok(uint64_t v, bool pat)
 
 static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
 {
-    uint64_t phys_mask = ~((1ULL << env_archcpu(env)->phys_bits) - 1);
+    uint64_t phys_mask = ~((1ULL << msr_cpu(env)->phys_bits) - 1);     /* U1063 */
     uint64_t valid;
 
     switch (msr) {
@@ -1707,7 +1719,9 @@ void helper_wrmsr(CPUX86State *env)
         if (val & 0xffffffff00000000ull) {
 #if __Use_Original_Qemu != 1 /* ours (U878) */
             if (env->msr_api) {
-                break;  /* an API write of a reserved value is dropped, no #GP longjmp (U878) */
+                /* an API write of a reserved value is dropped, no #GP longjmp (U878); since
+                   U906 msr_write_ok refuses it first (UC_ERR_EXCEPTION, U1063) */
+                break;
             }
 #endif /* __Use_Original_Qemu (U878) */
             raise_exception_ra(env, EXCP0D_GPF, GETPC());

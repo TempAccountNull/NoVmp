@@ -23484,9 +23484,10 @@ static void test_x86_fx5_context_writes(void)
     TEST_CHECK(log.intr == 0);
     TEST_MSG("nops after restoring DR7 = 400h: interrupts %d, vector %d", log.intr, log.intno);
 
-    /* an API write of a reserved IA32_PKRS value (bits 63:32) is dropped (no #GP longjmp) */
+    /* an API write of a reserved IA32_PKRS value (bits 63:32): no #GP longjmp; since U906 the
+       write is refused with UC_ERR_EXCEPTION and nothing changes (U905 API contract, U1063) */
     pkrs.value = 1ULL << 32;
-    OK(uc_reg_write(uc, UC_X86_REG_MSR, &pkrs));
+    TEST_CHECK(uc_reg_write(uc, UC_X86_REG_MSR, &pkrs) == UC_ERR_EXCEPTION);
     pkrs.value = 99;
     OK(uc_reg_read(uc, UC_X86_REG_MSR, &pkrs));
     TEST_CHECK(pkrs.value == 0);
@@ -26322,6 +26323,102 @@ static void test_x86_ig_apic_api(void)
     TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
     OK(uc_close(uc));
 }
+static void ig_intr_cb(uc_engine *uc, uint32_t intno, void *user)
+{
+    (void)uc;
+    (void)intno;
+    (*(int *)user)++;
+}
+
+/* two NOPs at 1000h with IF = 1: the number of interrupts taken */
+static int ig_run_nops(uc_engine *uc, int *count)
+{
+    uint64_t fl = 0x202;
+
+    *count = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_EFLAGS, &fl));
+    OK(uc_mem_write(uc, 0x1000, "\x90\x90", 2));
+    OK(uc_emu_start(uc, 0x1000, 0x1002, 0, 0));
+    return *count;
+}
+
+/*
+ * U1063: MSR writes into a uc_context image (U878: plain stores, the side effects on restore)
+ * after the merge of U905/U906 (value checks), U960 (local APIC) and U1020 (TME): the checks use
+ * the engine's model (MAXPHYADDR 40 on MAX: MTRR / APIC_BASE / TME_EXCLUDE reserved bits), the
+ * APIC registers are stored without touching the live CPU (no interrupt request, no ICR / SELF
+ * IPI message); uc_context_restore brings the stored values, the IPIs never happen.
+ */
+static void test_x86_ig_context_msr(void)
+{
+    uc_engine *uc = ig_open();
+    uc_context *ctx;
+    uc_x86_msr m;
+    uc_hook h;
+    int intr = 0;
+
+    OK(uc_mem_map(uc, 0x1000, 0x1000, UC_PROT_ALL));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, ig_intr_cb, &intr, 1, 0));
+    OK(ig_wmsr(uc, 0x1b, 0xfee00c00ULL));                           /* x2APIC mode */
+    OK(ig_wmsr(uc, 0x80f, 0x1ff));                                  /* software-enabled */
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+
+    /* TPR, ICR (fixed 66H to APIC ID 0 = this CPU), SELF IPI 67H, EOI into the image */
+    m.rid = 0x808;
+    m.value = 0x20;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.rid = 0x830;
+    m.value = 0x66;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.rid = 0x83f;
+    m.value = 0x67;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.rid = 0x80b;
+    m.value = 0;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.rid = 0x808;
+    m.value = 0;
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == 0x20);
+    m.rid = 0x830;
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == 0x66);
+    m.rid = 0x823;                                                  /* IRR 7FH:60H */
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == 0);
+    /* the live CPU: unchanged, nothing pending */
+    TEST_CHECK(ig_msr(uc, 0x808) == 0 && ig_msr(uc, 0x830) == 0 && ig_msr(uc, 0x823) == 0);
+    TEST_CHECK(ig_run_nops(uc, &intr) == 0);
+
+    /* value checks with the engine's MAXPHYADDR (40) */
+    m.rid = 0x200;                                                  /* IA32_MTRR_PHYSBASE0 */
+    m.value = 0xfffffff006ULL;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.value = 0x10000000006ULL;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    m.rid = 0x1b;
+    m.value = 0x10000000000ULL | 0xfee00c00ULL;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    m.rid = 0x984;                                                  /* IA32_TME_EXCLUDE_BASE */
+    m.value = 0xfffffff000ULL;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    m.value = 0x10000000000ULL;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    m.rid = 0x6e1;                                                  /* IA32_PKRS 63:32 reserved */
+    m.value = 1ULL << 32;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    TEST_CHECK(ig_msr(uc, 0x200) == 0 && ig_msr(uc, 0x984) == 0);
+
+    /* restore: the stored values; no IPI was sent */
+    OK(uc_context_restore(uc, ctx));
+    TEST_CHECK(ig_msr(uc, 0x808) == 0x20 && ig_msr(uc, 0x830) == 0x66 && ig_msr(uc, 0x823) == 0);
+    TEST_CHECK(ig_msr(uc, 0x200) == 0xfffffff006ULL && ig_msr(uc, 0x984) == 0xfffffff000ULL);
+    TEST_CHECK(ig_msr(uc, 0x1b) == 0xfee00d00ULL);
+    TEST_CHECK(ig_run_nops(uc, &intr) == 0);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
 /* ---- end U1060-U1069 (integ_) ---- */
 
 TEST_LIST = {
@@ -26679,4 +26776,5 @@ TEST_LIST = {
     {"test_x86_rc_bounds", test_x86_rc_bounds},
     {"test_x86_ig_tme_api", test_x86_ig_tme_api},
     {"test_x86_ig_apic_api", test_x86_ig_apic_api},
+    {"test_x86_ig_context_msr", test_x86_ig_context_msr},
     {NULL, NULL}};
