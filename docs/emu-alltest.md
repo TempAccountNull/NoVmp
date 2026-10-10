@@ -27,6 +27,7 @@ These set **real architectural state** defined by the SDM — they are not test 
 | `--xcr0 V` | XCR0 (written with `uc_reg_write`) for both kinds of case | XCR0 is the OS-set register (XSETBV) that enables x87/SSE/AVX/AVX-512/AMX state; it decides whether AVX/AVX-512/AMX instructions run or #UD. Not given (or 0) = automatic (U540, below). Needed only to test the XCR0 gating itself (a component *disabled*, e.g. AVX state off → VEX #UD). |
 | `--cr0 V` | CR0 for both kinds of case | Not given (or 0) = automatic (U540, below). PG must stay clear (Unicorn memory is flat). |
 | `--avx512` | `UC_CTL_X86_AVX512` = F\|DQ\|BW\|VL\|CD\|IFMA\|VPOPCNTDQ\|BITALG\|VBMI\|FP16 before the engine starts | AVX-512 is opt-in (off in MAX and in the i5-13600K profile, which has none). |
+| `--xeonphi` | adds `UC_X86_AVX512_4VNNIW`\|`4FMAPS`\|`ER`\|`PF`\|`PREFETCHWT1` (AVX512F implied) to the `UC_CTL_X86_AVX512` mask (U990) | The Intel Xeon Phi-only families (SDM 092 Vol2D chapter 8) are opt-in on top of AVX-512; `--avx512` alone leaves them off (`Emulator\data\cases_xeonphi.txt` / `cases_xeonphi_off.txt`). |
 | `--amx` | `UC_CTL_X86_AMX` = all AMX parts | AMX is opt-in. |
 | `--avx10 N` | `UC_CTL_X86_AVX10` = N (1 or 2) | AVX10 is opt-in; the AVX512* CPUID bits stay off unless `--avx512` is given too. |
 | `--apx` | `UC_CTL_X86_APX` = `UC_X86_APX_F` (ledger U610) | Intel APX is opt-in (the i5-13600K has none): CPUID.(7,1):EDX.APX_F, leaf 29H, XSAVE component 19 (R16-R31), REX2. The case keys `r16`..`r31` move R16-R31 like the ZMM/K state (Unicorn only). |
