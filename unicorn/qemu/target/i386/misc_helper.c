@@ -3231,37 +3231,27 @@ static void user_msr_check(CPUX86State *env, target_ulong msr, bool write, uintp
     }
 }
 
+/*
+ * NoVmp (ledger U908): the access goes through x86_msr_access (U802): RAX, RCX and RDX are put back
+ * when RDMSR / WRMSR faults (an MSR the model lacks is #GP(0) since U905), so a faulting URDMSR /
+ * UWRMSR leaves them unchanged (before, the fault kept ECX = the MSR number and, for UWRMSR,
+ * EDX:EAX = the value).
+ */
 target_ulong helper_urdmsr(CPUX86State *env, target_ulong msr)
 {
-    target_ulong rax = env->regs[R_EAX], rcx = env->regs[R_ECX], rdx = env->regs[R_EDX];
-    uint64_t val;
-
     user_msr_check(env, msr, false, GETPC());
-    env->regs[R_ECX] = (uint32_t)msr;
-    helper_rdmsr(env);
-    val = (uint32_t)env->regs[R_EAX] | ((uint64_t)(uint32_t)env->regs[R_EDX] << 32);
-    env->regs[R_EAX] = rax;
-    env->regs[R_ECX] = rcx;
-    env->regs[R_EDX] = rdx;
-    return val;
+    return x86_msr_access(env, (uint32_t)msr, 0, false);
 }
 
 void helper_uwrmsr(CPUX86State *env, target_ulong msr, target_ulong val)
 {
     uintptr_t ra = GETPC();
-    target_ulong rax = env->regs[R_EAX], rcx = env->regs[R_ECX], rdx = env->regs[R_EDX];
 
     user_msr_check(env, msr, true, ra);
     if (msr != MSR_IA32_UARCH_MISC_CTL || (val & ~(target_ulong)1)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
-    env->regs[R_ECX] = (uint32_t)msr;
-    env->regs[R_EAX] = (uint32_t)val;
-    env->regs[R_EDX] = (uint32_t)((uint64_t)val >> 32);
-    helper_wrmsr(env);
-    env->regs[R_EAX] = rax;
-    env->regs[R_ECX] = rcx;
-    env->regs[R_EDX] = rdx;
+    x86_msr_access(env, (uint32_t)msr, val, true);
 }
 #endif /* __Use_Original_Qemu (U103) */
 #if __Use_Original_Qemu != 1 /* ours (U802) */

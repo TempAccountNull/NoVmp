@@ -2,6 +2,12 @@ r"""Independent reference model + expected-value case generator (ledger U900-U92
 
   * SYSCALL (U901), SYSENTER (U902), SYSRET (U903), SYSEXIT (U904): the SDM transitions, MAX model,
     64-bit mode, CPL0 / CPL3 snippets                                -> Emulator\data\cases_sysmsr.txt
+  * the MSR list of the CPU model (U905: SDM Vol4 Table 2-2 enumeration conditions evaluated on the
+    MAX model's CPUID), the WRMSR value rules (U906: reserved bits, read-only MSRs, memory types,
+    CPU-canonical addresses), URDMSR leaving RAX/RCX/RDX unchanged on a fault (U908)
+                                                                     -> Emulator\data\cases_sysmsr.txt
+  * the architectural performance-monitoring MSRs as storage and RDPMC (U907; SDM Vol3B 21.2, Vol4
+    Table 2-2, Vol2B RDPMC), CPUID profile cpuid_sysmsr_pmu.txt      -> Emulator\data\cases_sysmsr_pmu.txt
 
 Written from the Intel manuals only (the emulator's C sources were not read for the expected values;
 no CPU measurements - SYSCALL / SYSENTER would enter the Windows kernel natively and SYSRET / SYSEXIT /
@@ -612,6 +618,15 @@ def cases_msr_values(a):
         else:
             a('wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=%s rax=%s rdx=%s =>! rax=%s rdx=%s' % (
                 hx(msr), hx(lo), hx(hi), hx(rd & 0xFFFFFFFF), hx(rd >> 32)))
+    a('# --- URDMSR (U908): an MSR the bitmap allows but the model lacks is #GP(0) from the RDMSR access, and the')
+    a('# faulting instruction leaves RAX/RCX/RDX unchanged. IA32_USER_MSR_CTL (1CH) = bitmap MEM + 8000H | ENABLE')
+    a('# (WRMSR first); URDMSR rbx, r8 (F2 REX.R 0F 38 F8 C3); bitmap bit 1234H = byte 246H bit 4')
+    assert msr_present(0x1234) is False
+    a('.byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1234 '
+      'rbx=0x5555 m+0x8246=10 => #GP(0)')
+    a('# the same MSR read by an existing one (IA32_USER_MSR_CTL itself, 1CH: byte 3 bit 4): RBX = its value')
+    a('.byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1c '
+      'rbx=0x5555 m+0x8003=10 => rbx=0x30028001')
     a('# IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)')
     a('wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0')
     try:

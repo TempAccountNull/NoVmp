@@ -216,5 +216,11 @@ wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000103 rax=0xFFFFFFFF rdx=0x0
 wrmsr | rcx=0xC0000103 rax=0x0 rdx=0x1 => #GP(0)
 wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000081 rax=0xFFFFFFFF rdx=0xFFFFFFFF =>! rax=0xFFFFFFFF rdx=0xFFFFFFFF
 wrmsr; xor eax, eax; xor edx, edx; rdmsr | rcx=0xC0000083 rax=0x0 rdx=0x80000000 =>! rax=0x0 rdx=0x80000000
+# --- URDMSR (U908): an MSR the bitmap allows but the model lacks is #GP(0) from the RDMSR access, and the
+# faulting instruction leaves RAX/RCX/RDX unchanged. IA32_USER_MSR_CTL (1CH) = bitmap MEM + 8000H | ENABLE
+# (WRMSR first); URDMSR rbx, r8 (F2 REX.R 0F 38 F8 C3); bitmap bit 1234H = byte 246H bit 4
+.byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1234 rbx=0x5555 m+0x8246=10 => #GP(0)
+# the same MSR read by an existing one (IA32_USER_MSR_CTL itself, 1CH: byte 3 bit 4): RBX = its value
+.byte 0x0f, 0x30, 0xf2, 0x44, 0x0f, 0x38, 0xf8, 0xc3 | rax=0x30028001 rcx=0x1c rdx=0 r8=0x1c rbx=0x5555 m+0x8003=10 => rbx=0x30028001
 # IA32_FEATURE_CONTROL with Lock = 1: every later write #GP(0)
 wrmsr; xor eax, eax; wrmsr | rcx=0x3A rax=0xFF01 rdx=0 =>! #GP(0) rax=0
