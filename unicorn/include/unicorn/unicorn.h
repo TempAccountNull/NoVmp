@@ -799,6 +799,7 @@ typedef enum uc_control_type {
     // Read: @args = (int keyid, uc_x86_mktme_key *)
     UC_CTL_X86_MKTME_KEY,
     // x86 only (NoVmp U901, decision A1): how SYSCALL executes.
+    // x86 only (NoVmp U901, decision A1): how SYSCALL (and SYSENTER, U902) execute.
     // UC_X86_SYSCALL_SDM (the default): the SDM Vol2B transition: #UD unless 64-bit mode and
     // IA32_EFER.SCE = 1; RCX := the next RIP, R11 := RFLAGS, RFLAGS := RFLAGS AND NOT
     // IA32_FMASK, CS := IA32_STAR[47:32] AND FFFCh / SS := IA32_STAR[47:32] + 8 with the fixed
@@ -809,16 +810,21 @@ typedef enum uc_control_type {
     // address, R11 = the saved RFLAGS); the hook's address range is checked against the
     // instruction's address. A hook that changes registers (RIP included) resumes from them,
     // e.g. RIP := RCX to return to the caller.
-    // UC_X86_SYSCALL_HOOK_ONLY: Unicorn's behaviour before U901: after the same #UD checks the
-    // hooks run with RIP = the instruction, then RIP advances past it and nothing else
-    // changes (without a hook the instruction is a NOP). Can be changed at any time.
+    // NoVmp U902: the same for SYSENTER: #GP(0) if IA32_SYSENTER_CS[15:2] = 0 (and with CR0.PE
+    // = 0); RFLAGS.VM/IF := 0, RSP/RIP := IA32_SYSENTER_ESP/EIP (bits 31:0 outside IA-32e mode),
+    // CS := IA32_SYSENTER_CS AND FFFCh, SS := CS + 8 (CPL 0; CS.L = 1 in IA-32e mode, else
+    // CS.D = 1), the CET rules as for SYSCALL (IA32_PL3_SSP := SSP outside IA-32e mode); the
+    // UC_X86_INS_SYSENTER hooks run after it.
+    // UC_X86_SYSCALL_HOOK_ONLY: Unicorn's behaviour before U901/U902: after the same #UD / #GP(0)
+    // checks the hooks run with RIP = the instruction, then RIP advances past it and nothing
+    // else changes (without a hook the instruction is a NOP). Can be changed at any time.
     // Other values -> UC_ERR_ARG. Write: @args = (int); Read: @args = (int *)
     UC_CTL_X86_SYSCALL_MODE,
 } uc_control_type;
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
-#define UC_X86_SYSCALL_HOOK_ONLY 1 // Unicorn's hook-only SYSCALL
+#define UC_X86_SYSCALL_HOOK_ONLY 1 // Unicorn's hook-only SYSCALL / SYSENTER
 
 // UC_CTL_X86_RDRAND modes (NoVmp U835)
 #define UC_X86_RDRAND_SEEDED 0     // deterministic seeded model (default)

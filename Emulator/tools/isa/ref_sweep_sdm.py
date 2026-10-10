@@ -14,7 +14,9 @@ no CPU measurements):
     #GP if [they] would load a base address with an address that is not paging canonical. Thus, if
     4-level paging is active, these instructions do not allow loading of addresses that are 57-bit
     canonical but not 48-bit canonical" (unlike WRMSR, which checks CPU canonicality).
-  * Vol2B SYSENTER: "IF CR0.PE = 0 OR (CR4.FRED = 0 AND IA32_SYSENTER_CS[15:2] = 0) THEN #GP(0)".
+  * Vol2B SYSENTER: "IF CR0.PE = 0 OR (CR4.FRED = 0 AND IA32_SYSENTER_CS[15:2] = 0) THEN #GP(0)";
+    then (U902) "RSP := IA32_SYSENTER_ESP; RIP := IA32_SYSENTER_EIP" (IA-32e mode), "CS.Selector :=
+    IA32_SYSENTER_CS[15:0] AND FFFCH", "SS.Selector := CS.Selector + 8".
   * Vol2A LDS/LES/LFS/LGS/LSS, 64-bit mode: the operand is m16:16 (66h), m16:32 (no prefix) or
     m16:64 (REX.W), offset first; "DEST := Offset(SRC)" (a 16-bit destination keeps bits 63:16, a
     32-bit one is zero-extended); FS/GS with a NULL selector: loaded, no check; with a non-NULL
@@ -76,6 +78,13 @@ def rdbase(base, opsize):
 # ---- SYSENTER entry check (Vol2B) ----
 def sysenter_faults(sysenter_cs, pe=True, fred=False):
     return (not pe) or ((not fred) and ((sysenter_cs >> 2) & 0x3FFF) == 0)
+
+
+def sysenter_selectors(sysenter_cs):
+    """U902 (Vol2B SYSENTER Operation): CS.Selector := IA32_SYSENTER_CS[15:0] AND FFFCH;
+    SS.Selector := CS.Selector + 8 (a 16-bit selector)"""
+    cs = sysenter_cs & 0xFFFC
+    return cs, (cs + 8) & 0xFFFF
 
 
 # ---- LFS / LGS in 64-bit mode (Vol2A) ----
@@ -182,16 +191,18 @@ def lines(parts=PARTS):
             a('mov rax, cr4; btr rax, 16; mov cr4, rax; %s rbx | rbx=0x1000 =>! %s' % (rd, f.name))
     if 'sysenter' in parts:
         a('#')
-        a('# --- SYSENTER: #GP(0) when IA32_SYSENTER_CS[15:2] = 0 (CR4.FRED = 0); the transition itself is')
-        a('# Unicorn\'s UC_X86_INS_SYSENTER hook API (plan decision A1): without a hook it continues after')
-        a('# SYSENTER, so a non-NULL selector is checked only for "no fault" (loose)')
+        a('# --- SYSENTER: #GP(0) when IA32_SYSENTER_CS[15:2] = 0 (CR4.FRED = 0); otherwise the transition')
+        a('# (U902): IA32_SYSENTER_EIP = label k, IA32_SYSENTER_ESP = RSP; at k RBX = CS, RBP = SS')
         for cs in (0, 1, 2, 3, 4, 8, 0x10, 0xFFFC, 0xFFFF):
             if sysenter_faults(cs):
                 a('mov ecx, 0x174; mov eax, %s; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=%s rcx=0x174 rdx=0'
                   % (hx(cs), hx(cs)))
             else:
-                a('mov ecx, 0x174; mov eax, %s; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=%s rcx=0x174 rdx=0'
-                  % (hx(cs), hx(cs)))
+                ncs, nss = sysenter_selectors(cs)
+                a('mov ecx, 0x174; mov eax, %s; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; '
+                  'mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; '
+                  'wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=%s rbp=%s'
+                  % (hx(cs), hx(ncs), hx(nss)))
         assert not sysenter_faults(SYSENTER_CS_RESET)
     if 'lfslgs' in parts:
         a('#')
@@ -248,6 +259,8 @@ def self_test():
     check(all(sysenter_faults(c) for c in (0, 1, 2, 3)) and not any(sysenter_faults(c) for c in (4, 8, 0x10, 0xFFFC)),
           'sysenter cs rule')
     check(sysenter_faults(8, pe=False) and not sysenter_faults(0, fred=True), 'sysenter PE / FRED')
+    check(sysenter_selectors(0x13) == (0x10, 0x18) and sysenter_selectors(0xFFFF) == (0xFFFC, 4),
+          'sysenter selectors (RPL dropped, SS wraps at 16 bits)')
     # LFS/LGS selector checks
     check(load_fsgs(0, 3) is None and load_fsgs(3, 3) is None, 'null selectors load')
     check(load_fsgs(0x2B, 3) is None and load_fsgs(0x28, 3) is None, 'data DPL3')

@@ -3677,6 +3677,64 @@ void helper_lret_protected(CPUX86State *env, int shift, int addend)
     helper_ret_protected(env, shift, 0, addend, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U902) */
+/*
+ * NoVmp (ledger U902, decision A1): SYSENTER as the SDM defines it (Vol2B SYSENTER Operation,
+ * CR4.FRED = 0), the default UC_CTL_X86_SYSCALL_MODE. The #GP(0) checks (CR0.PE = 0: translator;
+ * IA32_SYSENTER_CS[15:2] = 0: U852) come first; then
+ *   RFLAGS.VM := 0; RFLAGS.IF := 0 (RF is cleared too: it is 0 after any completed instruction);
+ *   IA-32e mode: RSP := IA32_SYSENTER_ESP, RIP := IA32_SYSENTER_EIP; otherwise ESP / EIP := bits
+ *   31:0 of them;
+ *   CS.Selector := IA32_SYSENTER_CS[15:0] AND FFFCH, base 0, limit FFFFFH with G = 1, type 11,
+ *   S = 1, DPL 0, P = 1; IA-32e mode: L = 1, D = 0 (64-bit mode, also from compatibility mode),
+ *   else L = 0, D = 1;
+ *   CET: IF ShadowStackEnabled(CPL) THEN IA32_PL3_SSP := SSP (IA32_EFER.LMA = 0) or
+ *   LA_adjust(SSP); CPL := 0; IF ShadowStackEnabled(0) THEN SSP := 0; IF EndbranchEnabled(0)
+ *   THEN IA32_S_CET.TRACKER := WAIT_FOR_ENDBRANCH, SUPPRESS := 0. The old CPL's test follows
+ *   the pseudocode's order: RFLAGS.VM is already 0 there (a SYSENTER from virtual-8086 mode is
+ *   judged by IA32_U_CET like CPL 3 code);
+ *   SS.Selector := CS.Selector + 8 (16 bits), base 0, limit FFFFFH with G = 1, type 3, S = 1,
+ *   DPL 0, P = 1, B = 1.
+ * Upstream QEMU's helper_sysenter tests the whole MSR against 0 (U852) and has no CET part.
+ * The UC_X86_INS_SYSENTER hooks run after the transition (sys_entry_hooks).
+ */
+static void sysenter_sdm(CPUX86State *env)
+{
+    target_ulong insn_eip = env->eip;
+    int cpl = env->hflags & HF_CPL_MASK;
+    bool lma = (env->hflags & HF_LMA_MASK) != 0;
+    uint32_t sel = env->sysenter_cs & 0xfffc;
+    bool ss_old;
+
+    env->eflags &= ~(VM_MASK | IF_MASK | RF_MASK);
+    ss_old = cet2_ss_en(env, cpl, false);
+    if (lma) {
+        env->regs[R_ESP] = env->sysenter_esp;
+        env->eip = env->sysenter_eip;
+    } else {
+        env->regs[R_ESP] = (uint32_t)env->sysenter_esp;
+        env->eip = (uint32_t)env->sysenter_eip;
+    }
+    if (ss_old) {
+        env->pl_ssp[3] = lma ? cet2_la_adjust(env, env->ssp) : env->ssp;
+    }
+    cpu_x86_load_seg_cache(env, R_CS, sel, 0, 0xffffffff,
+                           DESC_G_MASK | DESC_P_MASK | DESC_S_MASK | DESC_CS_MASK |
+                           DESC_R_MASK | DESC_A_MASK |
+                           (lma ? DESC_L_MASK : DESC_B_MASK));
+    cpu_x86_load_seg_cache(env, R_SS, (sel + 8) & 0xffff, 0, 0xffffffff,
+                           DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                           DESC_W_MASK | DESC_A_MASK);
+    if (cet2_ss_en(env, 0, false)) {
+        env->ssp = 0;
+    }
+    if (cet2_ibt_en(env, 0, false)) {
+        cet2_ibt_wait(env, 0);
+    }
+    sys_entry_hooks(env, UC_X86_INS_SYSENTER, insn_eip);
+}
+
+#endif /* __Use_Original_Qemu (U902) */
 void helper_sysenter(CPUX86State *env, int next_eip_addend)
 {
     // Unicorn: call registered SYSENTER hooks
@@ -3693,13 +3751,20 @@ void helper_sysenter(CPUX86State *env, int next_eip_addend)
      * had dropped the check (upstream QEMU's helper_sysenter tests the whole MSR against 0, so
      * selectors 1-3 would pass there). The protected-mode reset state has an OS-like
      * IA32_SYSENTER_CS (unicorn.c reg_reset, U852), so the UC_X86_INS_SYSENTER hook API is
-     * unchanged unless the guest or the user loads a NULL selector; the transition itself stays
-     * that hook API (plan decision A1), as for SYSCALL (U594).
+     * unchanged unless the guest or the user loads a NULL selector. The transition itself is
+     * sysenter_sdm (U902) unless UC_CTL_X86_SYSCALL_MODE selects the hook-only API.
      */
     if ((env->sysenter_cs & 0xfffc) == 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
     }
 #endif /* __Use_Original_Qemu (U852) */
+#if __Use_Original_Qemu != 1 /* ours (U902) */
+    /* NoVmp (ledger U902): the SDM transition unless UC_CTL_X86_SYSCALL_MODE is hook-only */
+    if (uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
+        sysenter_sdm(env);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U902) */
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN) {
         if (hook->to_delete)
             continue;

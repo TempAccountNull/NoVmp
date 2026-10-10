@@ -244,6 +244,102 @@ def cases_syscall(a):
     a('%s =>! r8=%s r9=%s' % (asm, hx(n['msr'][MSR_PL3_SSP]), hx(n['msr'][MSR_U_CET])))
 
 
+# ---- SDM Vol2B SYSENTER (CR4.FRED = 0) ----------------------------------------------------------
+def sysenter(st):
+    """st: dict with sysenter_cs/esp/eip, rflags, cpl, lma, ssp, msr, cr4_cet, pe"""
+    if not st.get('pe', True) or ((st['sysenter_cs'] >> 2) & 0x3FFF) == 0:
+        raise Fault('#GP', 0)
+    n = dict(st)
+    n['msr'] = dict(st['msr'])
+    n['rflags'] = st['rflags'] & ~(VM | IF | RF)
+    if st['lma']:
+        n['rsp'], n['rip'] = st['sysenter_esp'], st['sysenter_eip']
+    else:
+        n['rsp'], n['rip'] = st['sysenter_esp'] & 0xFFFFFFFF, st['sysenter_eip'] & 0xFFFFFFFF
+    n['cs'] = st['sysenter_cs'] & 0xFFFC
+    n['cs_l'] = 1 if st['lma'] else 0
+    if ss_enabled(n, st['cpl']):          # RFLAGS.VM is already 0 here (pseudocode order)
+        n['msr'][MSR_PL3_SSP] = la_adjust(st['ssp']) if st['lma'] else st['ssp']
+    n['cpl'] = 0
+    if ss_enabled(n, 0):
+        n['ssp'] = 0
+    if ibt_enabled(n, 0):
+        n['msr'][MSR_S_CET] = (n['msr'].get(MSR_S_CET, 0) & ~(1 << 10)) | CET_TRACKER
+    n['ss'] = (n['cs'] + 8) & 0xFFFF
+    return n
+
+
+def sysenter_state(**kw):
+    st = dict(sysenter_cs=0x10, sysenter_esp=0, sysenter_eip=0, rflags=0x202, cpl=0, lma=True, ssp=0,
+              msr={}, cr4_cet=False, pe=True)
+    st.update(kw)
+    return st
+
+
+SYSEXIT32 = '.byte 0x0f, 0x35'
+
+
+def cases_sysenter(a):
+    a('# --- SYSENTER (U902): the SDM transition (64-bit mode). IA32_SYSENTER_EIP = label k, IA32_SYSENTER_ESP =')
+    a('# RSP - 100h (RBP = the old RSP); after it R15 = PUSHFQ image, R12/R13 = CS/SS, R14 = RBP - RSP = 100h')
+    for cs, fl_in in ((0x10, 0x00000ED7), (0x13, 0x00243AD7), (0x08, 0x00000202), (0xFFFF, 0x00040246),
+                      (0x23, 0x00200ED6)):
+        n = sysenter(sysenter_state(sysenter_cs=cs, rflags=popfq_image(fl_in)))
+        asm = '; '.join([
+            wrmsr_imm(0x174, cs), wrmsr_label(0x176, 'k'),
+            'mov rbp, rsp; lea rax, [rsp - 0x100]; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr',
+            'mov rax, %s; push rax; popfq' % hx(fl_in), 'sysenter',
+            'k: pushfq; pop r15; mov r12d, cs; mov r13d, ss; mov r14, rbp; sub r14, rsp'])
+        a('%s =>! r15=%s r12=%s r13=%s r14=0x100' % (asm, hx(pushfq_image(n['rflags'])), hx(n['cs']), hx(n['ss'])))
+    a('# IA32_SYSENTER_ESP/EIP bits 63:32 are used in IA-32e mode: RSP = FFFF8000_12345678h (no stack use after it)')
+    n = sysenter(sysenter_state(sysenter_esp=0xFFFF800012345678, sysenter_eip='k'))
+    asm = '; '.join([wrmsr_imm(0x175, 0xFFFF800012345678), wrmsr_label(0x176, 'k'), 'mov rbp, rsp', 'sysenter',
+                     'k: mov rbx, rsp; mov rsp, rbp'])
+    a('%s =>! rbx=%s' % (asm, hx(n['rsp'])))
+    a('# CPL3 (compatibility mode, entered with SYSEXIT, IA32_SYSENTER_CS = 10h: CS 23h, SS 2Bh) -> 64-bit mode CPL0:')
+    a('# RBX = CS in compatibility mode, R12/R13 = CS/SS after SYSENTER, R14 = RSP - (RBP - 100h) = 0')
+    n = sysenter(sysenter_state(sysenter_cs=0x10, cpl=3))
+    asm = '; '.join([
+        wrmsr_imm(0x174, 0x10), wrmsr_label(0x176, 'k'),
+        'mov rbp, rsp; lea rax, [rsp - 0x100]; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr',
+        'lea rdx, [rip + u]; mov rcx, rsp', SYSEXIT32,
+        'u: mov ebx, cs; sysenter',
+        'k: mov r12d, cs; mov r13d, ss; lea r14, [rbp - 0x100]; sub r14, rsp; neg r14'])
+    a('%s =>! rbx=0x23 r12=%s r13=%s r14=0' % (asm, hx(n['cs']), hx(n['ss'])))
+    a('# the same from 64-bit mode CPL3 (SYSEXIT REX.W: CS 33h)')
+    asm = asm.replace(SYSEXIT32, '.byte 0x48, 0x0f, 0x35')
+    a('%s =>! rbx=0x33 r12=%s r13=%s r14=0' % (asm, hx(n['cs']), hx(n['ss'])))
+    a('# IA32_SYSENTER_CS[15:2] = 0: #GP(0), nothing changes')
+    for cs in (0, 3, 0x10000):
+        try:
+            sysenter(sysenter_state(sysenter_cs=cs & 0xFFFF))
+            raise AssertionError('sysenter must fault')
+        except Fault as f:
+            a('%s; sysenter =>! %s rcx=0x174 rax=%s rdx=%s' % (wrmsr_imm(0x174, cs), f.token(), hx(cs & 0xFFFFFFFF),
+                                                             hx(cs >> 32)))
+
+    a('# --- SYSENTER CET (U902), as for SYSCALL above: T = MEM + 9FF8h (SETSSBSY), P = IA32_PL3_SSP')
+    T = MEM + 0x9FF8
+    P = 0x7FFF12345670
+    for s_cet in (CET_SH_STK_EN | CET_ENDBR_EN, 0):
+        msr = {MSR_S_CET: s_cet, MSR_PL0_SSP: T, MSR_PL3_SSP: P}
+        ssp = T if s_cet & CET_SH_STK_EN else 0
+        n = sysenter(sysenter_state(cr4_cet=True, msr=msr, ssp=ssp))
+        setss = [SETSSBSY] if s_cet & CET_SH_STK_EN else []
+        asm = '; '.join([CET_ON, wrmsr_imm(MSR_S_CET, s_cet), wrmsr_imm(MSR_PL0_SSP, T), wrmsr_imm(MSR_PL3_SSP, P)]
+                        + setss + [wrmsr_label(0x176, 'k'), 'mov rbp, rsp; mov rax, rsp; mov rdx, rax; shr rdx, 32; '
+                                   'mov ecx, 0x175; wrmsr', 'mov ebp, 0x5555', 'sysenter',
+                                   'k: ' + ENDBR64, RDSSPQ_RBP, rdmsr_to(MSR_PL3_SSP, 'r8'), rdmsr_to(MSR_S_CET, 'r9')])
+        tok = T | 1 if s_cet & CET_SH_STK_EN else T
+        rbp = n['ssp'] if ss_enabled(n, 0) else 0x5555
+        s_after = n['msr'][MSR_S_CET] & ~CET_TRACKER
+        a('%s | m+0x9FF8=%s =>! rbp=%s r8=%s r9=%s m+0x9FF8=%s' % (
+            asm, le64(T), hx(rbp), hx(n['msr'][MSR_PL3_SSP]), hx(s_after), le64(tok)))
+    asm2 = '; '.join([CET_ON, wrmsr_imm(MSR_S_CET, CET_ENDBR_EN), wrmsr_label(0x176, 'k'),
+                      'mov rax, rsp; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr', 'sysenter', 'k: nop'])
+    a('%s =>! #CP(3)' % asm2)
+
+
 def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
@@ -256,6 +352,7 @@ def cases_all():
     a('# only, MAX model, 64-bit mode; without cpl=3 the snippet starts at CPL0:')
     a('#   emu-alltest --cases Emulator\\data\\cases_sysmsr.txt --expect-only')
     cases_syscall(a)
+    cases_sysenter(a)
     return lines
 
 
@@ -300,6 +397,24 @@ def selftest():
     check(n['msr'][MSR_PL3_SSP] == 0x2000 and n['ssp'] == 0x2000, 'CPL3 save, no CPL0 shadow stack')
     n = syscall(base_state(cr4_cet=False, msr={MSR_S_CET: 5, MSR_PL3_SSP: 9}, ssp=0x2000))
     check(n['msr'][MSR_PL3_SSP] == 9 and n['ssp'] == 0x2000, 'CR4.CET = 0: no CET effect')
+    # SYSENTER
+    n = sysenter(sysenter_state(sysenter_cs=0x13, sysenter_esp=0x1234567890, sysenter_eip=0xFFFFFFFF80001000,
+                                rflags=0x30A02 | VM, lma=False))
+    check(n['cs'] == 0x10 and n['ss'] == 0x18 and n['rsp'] == 0x34567890 and n['rip'] == 0x80001000,
+          'sysenter legacy: selectors, 32-bit ESP/EIP')
+    check(n['rflags'] == 0x802 and n['cpl'] == 0, 'sysenter clears VM IF RF')
+    n = sysenter(sysenter_state(sysenter_cs=0xFFFF, sysenter_esp=0xFFFF800000000000, lma=True))
+    check(n['ss'] == 4 and n['rsp'] == 0xFFFF800000000000, 'sysenter SS wrap, 64-bit RSP')
+    for cs in (0, 1, 2, 3):
+        try:
+            sysenter(sysenter_state(sysenter_cs=cs))
+            check(False, 'sysenter #GP %d' % cs)
+        except Fault as f:
+            check(f.token() == '#GP(0)', 'sysenter #GP(0)')
+    n = sysenter(sysenter_state(cr4_cet=True, msr={MSR_U_CET: 1, MSR_S_CET: 4}, ssp=0x0100000000000008, cpl=3,
+                                lma=False))
+    check(n['msr'][MSR_PL3_SSP] == 0x0100000000000008 and n['msr'][MSR_S_CET] == 4 | CET_TRACKER,
+          'sysenter legacy: PL3_SSP := SSP (no LA_adjust), tracker')
     check(popfq_image(0xFFFFFFFF) == 0x247FD7 and pushfq_image(0x30202) == 0x202, 'popfq / pushfq images')
     # the generator runs and every case has an expectation
     lines = cases_all()

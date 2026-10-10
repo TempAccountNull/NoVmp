@@ -109,18 +109,17 @@ mov rbx, 0x1000; wrgsbase rbx; wrgsbase rdx; rdgsbase rcx | rdx=0x3000 rcx=0x5A5
 mov rax, cr4; btr rax, 16; mov cr4, rax; wrgsbase rbx | rbx=0x1000 =>! #UD
 mov rax, cr4; btr rax, 16; mov cr4, rax; rdgsbase rbx | rbx=0x1000 =>! #UD
 #
-# --- SYSENTER: #GP(0) when IA32_SYSENTER_CS[15:2] = 0 (CR4.FRED = 0); the transition itself is
-# Unicorn's UC_X86_INS_SYSENTER hook API (plan decision A1): without a hook it continues after
-# SYSENTER, so a non-NULL selector is checked only for "no fault" (loose)
+# --- SYSENTER: #GP(0) when IA32_SYSENTER_CS[15:2] = 0 (CR4.FRED = 0); otherwise the transition
+# (U902): IA32_SYSENTER_EIP = label k, IA32_SYSENTER_ESP = RSP; at k RBX = CS, RBP = SS
 mov ecx, 0x174; mov eax, 0x0; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=0x0 rcx=0x174 rdx=0
 mov ecx, 0x174; mov eax, 0x1; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=0x1 rcx=0x174 rdx=0
 mov ecx, 0x174; mov eax, 0x2; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=0x2 rcx=0x174 rdx=0
 mov ecx, 0x174; mov eax, 0x3; mov edx, 0; wrmsr; sysenter | rdx=0x77 => #GP rax=0x3 rcx=0x174 rdx=0
-mov ecx, 0x174; mov eax, 0x4; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=0x4 rcx=0x174 rdx=0
-mov ecx, 0x174; mov eax, 0x8; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=0x8 rcx=0x174 rdx=0
-mov ecx, 0x174; mov eax, 0x10; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=0x10 rcx=0x174 rdx=0
-mov ecx, 0x174; mov eax, 0xFFFC; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=0xFFFC rcx=0x174 rdx=0
-mov ecx, 0x174; mov eax, 0xFFFF; mov edx, 0; wrmsr; sysenter | rdx=0x77 =>! rax=0xFFFF rcx=0x174 rdx=0
+mov ecx, 0x174; mov eax, 0x4; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=0x4 rbp=0xC
+mov ecx, 0x174; mov eax, 0x8; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=0x8 rbp=0x10
+mov ecx, 0x174; mov eax, 0x10; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=0x10 rbp=0x18
+mov ecx, 0x174; mov eax, 0xFFFC; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=0xFFFC rbp=0x4
+mov ecx, 0x174; mov eax, 0xFFFF; mov edx, 0; wrmsr; mov ecx, 0x176; lea rax, [rip + k]; mov rdx, rax; shr rdx, 32; wrmsr; mov ecx, 0x175; mov rax, rsp; mov rdx, rax; shr rdx, 32; wrmsr; sysenter; k: mov ebx, cs; mov ebp, ss | rdx=0x77 =>! rcx=0x175 rbx=0xFFFC rbp=0x4
 #
 # --- LFS / LGS r16/r32/r64, m16:16/m16:32/m16:64 at CPL3 (Windows GDT): DEST := offset, FS/GS := selector;
 # the selector checks of the 64-bit mode pseudocode. RAX = all ones before (r16 keeps bits 63:16).

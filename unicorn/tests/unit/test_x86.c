@@ -1708,6 +1708,8 @@ static void test_x86_sysenter(void)
     int called = 0;
 
     uc_common_setup(&uc, UC_ARCH_X86, UC_MODE_32, code, sizeof(code) - 1);
+    /* NoVmp U902: the hook stands in for the kernel entry - Unicorn's hook-only SYSENTER */
+    OK(uc_ctl_set_x86_syscall_mode(uc, UC_X86_SYSCALL_HOOK_ONLY));
 
     OK(uc_hook_add(uc, &h, UC_HOOK_INSN, test_x86_sysenter_hook, &called, 1, 0,
                    UC_X86_INS_SYSENTER));
@@ -23516,9 +23518,9 @@ static void sm_set(SmCtx *c, int reg, uint64_t v)
 }
 
 /*
- * U900: SYSENTER that is not the first instruction of its TB, no UC_X86_INS_SYSENTER hook:
- * EIP continues after SYSENTER (it advanced the TB's start address before: the stale EIP ran
- * the bytes of MOV EAX, 1 again from offset 2).
+ * U900: SYSENTER that is not the first instruction of its TB, no UC_X86_INS_SYSENTER hook,
+ * hook-only mode (U902): EIP continues after SYSENTER (it advanced the TB's start address
+ * before: the stale EIP ran the bytes of MOV EAX, 1 again from offset 2).
  */
 static void test_x86_sm_sysenter_rip(void)
 {
@@ -23528,6 +23530,7 @@ static void test_x86_sm_sysenter_rip(void)
     uc_err err;
 
     sm_open(&c, UC_MODE_64, -1);
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_HOOK_ONLY));
     OK(uc_mem_write(c.uc, code_start, code, sizeof(code) - 1));
     err = uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0);
     TEST_CHECK(err == UC_ERR_OK && c.cap.count == 0);
@@ -23706,6 +23709,81 @@ static void test_x86_sm_syscall_cet(void)
                  (unsigned long long)sm_get(&c, UC_X86_REG_SSP));
         OK(uc_close(c.uc));
     }
+}
+
+/*
+ * U902: SYSENTER, SDM transition (default mode). 64-bit mode: RSP/RIP := IA32_SYSENTER_ESP/EIP
+ * (64 bits), CS := IA32_SYSENTER_CS AND FFFCh, SS := CS + 8, IF/VM := 0, the other flags kept;
+ * the hook sees that state. 32-bit protected mode: only bits 31:0 of ESP/EIP. Hook-only mode:
+ * Unicorn's old behaviour. A NULL selector (bits 15:2 = 0): #GP(0) in both modes.
+ */
+static void test_x86_sm_sysenter(void)
+{
+    /* mov eax, 7; sysenter */
+    static const char code[] = "\xb8\x07\x00\x00\x00\x0f\x34";
+    SmCtx c;
+    SmHook h;
+    uc_hook hh;
+
+    sm_open(&c, UC_MODE_64, -1);
+    OK(uc_mem_write(c.uc, code_start, code, sizeof(code) - 1));
+    OK(uc_mem_write(c.uc, SM_HANDLER, "\x90", 1));
+    sm_wrmsr(&c, 0x174, 0x0013);                        /* RPL 3 in the MSR: CS 10h, SS 18h */
+    sm_wrmsr(&c, 0x175, 0xFFFF800012345678ULL);
+    sm_wrmsr(&c, 0x176, SM_HANDLER);
+    sm_set(&c, UC_X86_REG_RFLAGS, 0x8D7 | 0x200 | 0x40000);   /* IF, AC, arithmetic flags */
+    memset(&h, 0, sizeof(h));
+    OK(uc_hook_add(c.uc, &hh, UC_HOOK_INSN, sm_sys_hook, &h, 1, 0, UC_X86_INS_SYSENTER));
+    OK(uc_emu_start(c.uc, code_start, SM_HANDLER, 0, 0));
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RIP) == SM_HANDLER && sm_get(&c, UC_X86_REG_RAX) == 7);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RSP) == 0xFFFF800012345678ULL);
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RFLAGS) == (0x8D7 | 0x40000));
+    TEST_CHECK((sm_get(&c, UC_X86_REG_CS) & 0xffff) == 0x10 &&
+               (sm_get(&c, UC_X86_REG_SS) & 0xffff) == 0x18);
+    TEST_CHECK(h.calls == 1 && h.rip == SM_HANDLER && h.rsp == 0xFFFF800012345678ULL &&
+               h.cs == 0x10 && h.ss == 0x18);
+    TEST_MSG("rip %llx rsp %llx rflags %llx cs %llx; hook %d rip %llx",
+             (unsigned long long)sm_get(&c, UC_X86_REG_RIP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_RSP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_RFLAGS),
+             (unsigned long long)sm_get(&c, UC_X86_REG_CS), h.calls, (unsigned long long)h.rip);
+    /* hook-only: the hook sees RIP = SYSENTER, RIP advances, RSP / CS unchanged */
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_HOOK_ONLY));
+    memset(&h, 0, sizeof(h));
+    sm_set(&c, UC_X86_REG_RSP, 0x5000);
+    OK(uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(h.calls == 1 && h.rip == code_start + 5 && sm_get(&c, UC_X86_REG_RSP) == 0x5000 &&
+               sm_get(&c, UC_X86_REG_RIP) == code_start + sizeof(code) - 1);
+    /* NULL selector: #GP(0) in both modes, no hook */
+    sm_wrmsr(&c, 0x174, 0x0003);
+    memset(&h, 0, sizeof(h));
+    OK(uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(c.cap.count == 1 && c.cap.intno == 13 && h.calls == 0);
+    OK(uc_ctl_set_x86_syscall_mode(c.uc, UC_X86_SYSCALL_SDM));
+    c.cap.count = 0;
+    OK(uc_emu_start(c.uc, code_start, code_start + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(c.cap.count == 1 && c.cap.intno == 13 && h.calls == 0);
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode: bits 31:0 of the MSRs, CS.D = 1 (32-bit code at the handler) */
+    sm_open(&c, UC_MODE_32, -1);
+    OK(uc_mem_write(c.uc, code_start, code, sizeof(code) - 1));
+    /* inc eax (40h in 32-bit code) at the handler */
+    OK(uc_mem_write(c.uc, SM_HANDLER, "\x40", 1));
+    sm_wrmsr(&c, 0x174, 0x0008);
+    sm_wrmsr(&c, 0x175, 0x0000000100002000ULL);
+    sm_wrmsr(&c, 0x176, 0x0000000100000000ULL | SM_HANDLER);
+    OK(uc_emu_start(c.uc, code_start, SM_HANDLER + 1, 0, 0));
+    TEST_CHECK(sm_get(&c, UC_X86_REG_EIP) == SM_HANDLER + 1 && sm_get(&c, UC_X86_REG_ESP) == 0x2000 &&
+               sm_get(&c, UC_X86_REG_EAX) == 8);
+    TEST_CHECK((sm_get(&c, UC_X86_REG_CS) & 0xffff) == 0x08 &&
+               (sm_get(&c, UC_X86_REG_SS) & 0xffff) == 0x10);
+    TEST_MSG("32-bit: eip %llx esp %llx eax %llx cs %llx",
+             (unsigned long long)sm_get(&c, UC_X86_REG_EIP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_ESP),
+             (unsigned long long)sm_get(&c, UC_X86_REG_EAX),
+             (unsigned long long)sm_get(&c, UC_X86_REG_CS));
+    OK(uc_close(c.uc));
 }
 /* ---- end U900-U929 (sm_) ---- */
 
@@ -24027,4 +24105,5 @@ TEST_LIST = {
     {"test_x86_sm_sysenter_rip", test_x86_sm_sysenter_rip},
     {"test_x86_sm_syscall", test_x86_sm_syscall},
     {"test_x86_sm_syscall_cet", test_x86_sm_syscall_cet},
+    {"test_x86_sm_sysenter", test_x86_sm_sysenter},
     {NULL, NULL}};
