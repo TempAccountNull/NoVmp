@@ -220,6 +220,10 @@ Add-Exp 'cases_opmask_avx10_1' 'cases_opmask' 'avx10 expect' @( '--avx10', '1' )
 # AVX10.2 (avx10_b, ledger U400-U412): FP8 conversions, VCVT2PS2PHX, EVEX VNNI-INT8/INT16, VDPPHPS,
 # VMPSADBW, VMOVRS*, zero-extending VMOVD/VMOVW, EVEX SM4 vs the independent model ref_avx10_b.py.
 Add-Exp 'cases_avx10_b' 'cases_avx10_b' 'avx10 expect' @( '--avx10', '2' )
+# AVX10_V2_AUX (ACE 1.15 chapter 9, ledger U1095): FP32 -> FP8 (RTNE / RTO / bias), FP8 -> FP32, FP8 <->
+# FP4 / FP6, VPMOVSSDB, VUNPACKB vs the independent model ref_ace_aux.py (AVX10.2 + UC_X86_AVX10_V2_AUX).
+Add-Exp 'cases_avx10_v2aux' 'cases_avx10_v2aux' 'avx10 expect' @( '--avx10', '0x202' )
+Add-PySelftest 'ref_ace_aux_selftest' 'avx10 tools' 'ref_ace_aux.py'
 # U445 x U147 / U236 / U373 / U404: MXCSR.UM / OM = 0 must not reach the forms that behave as if every
 # MXCSR exception were masked ({er} / {sae}, VRCP14, BF16, VCVT2PS2PHX); hand-derived cases.
 Add-Exp 'cases_evex_sae_unmasked' 'cases_evex_sae_unmasked' 'avx10 evex expect' @( '--avx10', '2' )

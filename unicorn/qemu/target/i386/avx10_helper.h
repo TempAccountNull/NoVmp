@@ -71,5 +71,15 @@ enum {
     AVX10_CVT_BF_U_T,       /* convert_bf16_to_unsigned_byte_truncate_saturate */
 };
 
+/* U1095: AVX10_V2_AUX (ACE 1.15 ch.9) helper operations (desc operation) */
+#define ACE_RNE  0
+#define ACE_RTO  1
+#define ACE_BIAS 2
+#define ACE_PS2F8_HF8   0x01            /* E4M3 result (else E5M2) */
+#define ACE_PS2F8_SAT   0x02            /* saturating */
+#define ACE_PS2F8_RND(r) ((r) << 2)     /* ACE_RNE / ACE_RTO / ACE_BIAS */
+enum { ACE_NARROW_BF4, ACE_NARROW_HF4, ACE_NARROW_BF6, ACE_NARROW_HF6 };
+enum { ACE_WIDEN_BF4, ACE_WIDEN_BF6, ACE_WIDEN_HF6 };
+
 #endif /* __Use_Original_Qemu (U372-U399) */
 #endif /* NOVMP_AVX10_HELPER_H */

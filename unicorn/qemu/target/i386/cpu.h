@@ -1168,6 +1168,8 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_24_0_EBX_AVX10_VL_MASK    (7U << 16)
 /* CPUID.(24H,1):ECX.AVX10_V1_AUX[2] */
 #define CPUID_24_1_ECX_AVX10_V1_AUX     (1U << 2)
+/* CPUID.(24H,1):ECX.AVX10_V2_AUX[3] (ACE 1.15 3.1; U1095) */
+#define CPUID_24_1_ECX_AVX10_V2_AUX     (1U << 3)
 /* the AVX-512 families AVX10.1 includes (Table 3.2), per CPUID word */
 #define AVX10_1_7_0_EBX (CPUID_7_0_EBX_AVX512F | CPUID_7_0_EBX_AVX512DQ |              \
                          CPUID_7_0_EBX_AVX512IFMA | CPUID_7_0_EBX_AVX512CD |           \

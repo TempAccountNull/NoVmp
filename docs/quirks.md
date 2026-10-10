@@ -234,6 +234,29 @@ Kept as printed (the text is clear; SDE 10.13.1 differs, recorded as "SDE deviat
 | 03: VCVTTPD2UDQS / VCVTTSD2USIS r32 extra PE | convert_DP_to_DW_UnSignedInteger_TruncateSaturate: `IF (src.fp64 < 0) \|\| (src.fp64 > EXP - 1): // Signal PE=1` (also with IE) | -3.0 -> 0, IE only; 2^32 and +Inf -> FFFFFFFFh, IE only; -0.5 -> 0, PE | IE and PE (-0.5: PE) |
 | PE together with IE for an out-of-range rounding conversion (VCVTPS2IBS 127.5 RNE, VCVTPS2IUBS 255.5 RNE / -0.7 RNE / 255.3 RU) | every rounding helper: `IF (src != float(TMP)) && (NOT OutOfDestRepresentation) : PE=1` | IE and PE | IE only |
 
+## AVX10_V2_AUX (ACE 1.15): gaps and resolutions
+
+The 21 AVX10_V2_AUX instructions (CPUID.(EAX=24H,ECX=1):ECX[3], "Requires AVX10") are defined only by the "AI Compute Extensions (ACE) Specification" 1.15 (x86 Ecosystem Advisory Group, 05/15/2026; `emulator\Intel docs\ACE_v1_Specification_public_1_15.pdf`): 3.1 CPUID, 4.3, 5 exception classes, 6.2 encodings, chapter 9 operations, 16.1 / 16.3 / 16.4 helper pseudocode. The emulator executes the helper pseudocode as printed (`avx10_helper.c`, U1095; independent model `Emulator/tools/isa/ref_ace_aux.py`, which also derives every conversion from exact rationals and the chapter-9 descriptions: RTNE, RTO, FP8 <-> FP32 / FP4 / FP6, VUNPACKB agree exhaustively or on a 40k-input FP32 sample). Encodings cross-checked with XED (`xed-main\datafiles\avx10-2-aux`). Behaviour checked with Intel SDE 10.13.1 `-future-ag` (AVX10.2 + AVX10_V1_AUX + AVX10_V2_AUX): SDE-validated, not hardware-validated. Opt-in: `UC_CTL_X86_AVX10` with `UC_X86_AVX10_V2_AUX` (0x200) and a version; `emu-alltest --avx10 0x202`. Cases: `cases_avx10_v2aux.txt`.
+
+Gaps of ACE 1.15 and how they are closed:
+
+| gap | ACE 1.15 text | resolution | evidence |
+|---|---|---|---|
+| G1: which bits of operand 2 are the "bias" of VCVTBIASPS2[B,H]F8[S] | 9.2.5 refers to `vcvtbiasps2f8` ("separate 3-operand form with VVVV"), which is not printed; 9.2.6 "Bias rounding term is Operand 2"; the 16.1 helpers take `bias & 1FFFFFh` (E5M2) / `bias & FFFFFh` (E4M3) | SDE-resolved: bias = SRC1.dword[i][7:0] placed in the 8 bits below the result LSB: `<< 13` (E5M2, 21 truncated bits), `<< 12` (E4M3, 20 truncated bits) - the FP32 analogue of the FP16 forms' byte bias | SDE probe (single bias bits per lane, src mantissas all-ones / zero / half): only bits 7:0 of the dword of the same lane act, bit 7 = half an LSB |
+| G2: destination field of VCVT[B,H]F82BF4S, VCVTBF82BF6S / VCVTHF82HF6S, VPMOVSSDB | the operand tables say "Operand 1 MODRM.REG(w), Operand 2 MODRM.R/M(r)", while the Form column of BF4S and VPMOVSSDB has a memory destination ("xmm1/m64, xmm2", "xmm1/m32 {k1}{z}, xmm2"), possible only in ModRM.r/m; BF6S "xmm1, xmm2" does not decide | destination = ModRM.r/m, source = ModRM.reg for all five (the Form column; XED REG0 = XMM_B3 / MEM0 written) | XED; SDE agrees on every register and memory case |
+| G3: FP32 -> E4M3 BIAS, saturating, result in the S.1111.111 encoding (480 <= \|x\| < 512 after the bias) | 16.1 fp32_to_fp8_e4m3 BIAS path has no clamp (the RTNE / RTO paths and the FP16 helper clamp to max_normal); 9.2.1 SAT table: greater than max -> "+-max_E4M3" | clamped to max_normal (S.1111.110) | SDE agrees (`R1` cases) |
+| G4 / G5: FP32 -> FP8 BIAS with a subnormal result | 16.1: E4M3 "newexp <= 0 -> 0" (no subnormals, against 9.2.1 "FTZ is not obeyed and is always assumed FTZ=0"); E5M2 adds the bias at the FP32 mantissa position and then shifts (the bias is not aligned to the result LSB) - the AVX10.2 spec's own FP16 helper (361050-007 5.1 convert_fp16_to_hf8_bias) aligns it ("bias rounding should be done after aligning to the destination format") | SDE-resolved: a subnormal result is floor(\|x\| / LSB + bias_byte / 256) (no lower cutoff) | SDE: every BIAS case of the random set (17 lanes with subnormal results) and the `G4` cases |
+
+Where ACE 1.15 is clear and SDE 10.13.1 differs, the emulator keeps ACE (recorded as "SDE deviates from the spec"):
+
+| point | ACE 1.15 | SDE 10.13.1 -future-ag | emulator |
+|---|---|---|---|
+| FP8 NaN / Inf -> FP4 (VCVTBF82BF4S, VCVTHF82BF4S) | 16.3 fp8_e5m2_to_fp4_e2m1: "NaN/Inf -> e_o, m_o = 0x3, 0x1" (sign kept); fp8_e4m3_to_fp4_e2m1: NaN (S.1111.111) -> 0x3, 0x1 | NaN -> 1000b (also for positive NaNs); Inf -> +-6.0 as ACE | +-6.0 (S.11.1) |
+| FP8 NaN / Inf -> FP6 (VCVTBF82BF6S) and E4M3 e = 15 -> E2M3 (VCVTHF82HF6S, inputs 79h-7Fh, F9h-FFh) | 16.3: "NaN/Inf ... clamp to FP6 max" / "NaN/max ... clamp to FP6 max" (sign kept) | 100000b for E5M2 NaN and for every E4M3 input with e = 15 and m != 0 (288.0 ... 448.0 and NaN); 78h (256.0) -> max as ACE | +-max (S.111.11 / S.11.111) |
+| VUNPACKB with a reserved imm8 (size field 0/1, start beyond the size's limit, imm8[7:6] != 0) | 9.9.1 / 9.9.4: "All unused encodings are RESERVED ... however no #UD or #GP is enforced"; the pseudocode conditions them (size = max(imm8[4:2], 2), start clamped) | destination left unchanged, no fault | the conditioned result |
+
+Defined by ACE 1.15 chapters 10-14 but not implemented here: the ACE tile instructions (XED ISA set ACE_1: TILEMOVROW/COL, TCVTROW*, BSRINIT/BSRMOVF/H/L, TOP4MX*, TOP2BF16PS, TOP4B*; palette 2 and the BSR state) - LEFT TO IMPLEMENT.
+
 ## Specification revisions (the newest Intel document wins)
 
 Where a later revision of an Intel document changed a definition, the emulator follows the newest one (user decision 2026-10-10: no runtime mode for the older definition). The superseded definitions are recorded here.

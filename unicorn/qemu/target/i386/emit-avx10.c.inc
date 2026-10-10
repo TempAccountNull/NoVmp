@@ -236,6 +236,123 @@ static void gen_VCVTTSD2SIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *d
     gen_avx10_cvts(s, decode, AVX10_CVT_DW_S, AVX10_CVT_QW_S, AVX10_FMT_FP64);
 }
 
+/*
+ * ---- U1095: AVX10_V2_AUX (ACE 1.15 chapter 9) ----
+ * The engine (gen_evex_insn) loads / broadcasts the sources with fault suppression where the
+ * class has it, masks per destination element and zeroes DEST above the destination size; the
+ * helpers compute the result elements of the vector length. n = elements of the destination.
+ */
+static void gen_ace_ps2f8(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    bool bias = ((op >> 2) & 3) == ACE_BIAS;
+
+    gen_helper_ace_ps2f8(tcg_ctx, cpu_env, OP_PTR0, bias ? OP_PTR1 : OP_PTR2, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, AVX10_DESC(op, 0, s->evex_vl / 4, 0)));
+}
+
+#define ACE_PS2F8_GEN(name, op)                                                       \
+static void gen_##name(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)     \
+{                                                                                     \
+    gen_ace_ps2f8(s, decode, op);                                                     \
+}
+ACE_PS2F8_GEN(VCVTPS2BF8, 0)
+ACE_PS2F8_GEN(VCVTPS2BF8S, ACE_PS2F8_SAT)
+ACE_PS2F8_GEN(VCVTPS2HF8, ACE_PS2F8_HF8)
+ACE_PS2F8_GEN(VCVTPS2HF8S, ACE_PS2F8_HF8 | ACE_PS2F8_SAT)
+ACE_PS2F8_GEN(VCVTROPS2HF8, ACE_PS2F8_HF8 | ACE_PS2F8_RND(ACE_RTO))
+ACE_PS2F8_GEN(VCVTROPS2HF8S, ACE_PS2F8_HF8 | ACE_PS2F8_SAT | ACE_PS2F8_RND(ACE_RTO))
+ACE_PS2F8_GEN(VCVTBIASPS2BF8, ACE_PS2F8_RND(ACE_BIAS))
+ACE_PS2F8_GEN(VCVTBIASPS2BF8S, ACE_PS2F8_SAT | ACE_PS2F8_RND(ACE_BIAS))
+ACE_PS2F8_GEN(VCVTBIASPS2HF8, ACE_PS2F8_HF8 | ACE_PS2F8_RND(ACE_BIAS))
+ACE_PS2F8_GEN(VCVTBIASPS2HF8S, ACE_PS2F8_HF8 | ACE_PS2F8_SAT | ACE_PS2F8_RND(ACE_BIAS))
+#undef ACE_PS2F8_GEN
+
+static void gen_VCVTBF82PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_f82ps(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, AVX10_DESC(0, 0, s->evex_vl / 4, 0)));
+}
+
+static void gen_VCVTHF82PS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_f82ps(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, AVX10_DESC(1, 0, s->evex_vl / 4, 0)));
+}
+
+/* FP8 -> FP4 / FP6 (op[0] the ModRM.r/m destination, op[2] the ModRM.reg source) */
+static void gen_ace_narrow(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_narrow(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                          tcg_constant_i32(tcg_ctx, AVX10_DESC(op, 0, s->evex_vl, 0)));
+}
+
+static void gen_VCVTBF82BF4S(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_narrow(s, decode, ACE_NARROW_BF4);
+}
+
+static void gen_VCVTHF82BF4S(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_narrow(s, decode, ACE_NARROW_HF4);
+}
+
+static void gen_VCVTBF82BF6S(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_narrow(s, decode, ACE_NARROW_BF6);
+}
+
+static void gen_VCVTHF82HF6S(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_narrow(s, decode, ACE_NARROW_HF6);
+}
+
+/* FP4 / FP6 -> E4M3 */
+static void gen_ace_widen(DisasContext *s, X86DecodedInsn *decode, int op)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_widen(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                         tcg_constant_i32(tcg_ctx, AVX10_DESC(op, 0, s->evex_vl, 0)));
+}
+
+static void gen_VCVTBF42HF8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_widen(s, decode, ACE_WIDEN_BF4);
+}
+
+static void gen_VCVTBF62HF8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_widen(s, decode, ACE_WIDEN_BF6);
+}
+
+static void gen_VCVTHF62HF8(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_ace_widen(s, decode, ACE_WIDEN_HF6);
+}
+
+static void gen_VPMOVSSDB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_pmovssdb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                            tcg_constant_i32(tcg_ctx, AVX10_DESC(0, 0, s->evex_vl / 4, 0)));
+}
+
+static void gen_VUNPACKB(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_helper_ace_unpackb(tcg_ctx, cpu_env, OP_PTR0, OP_PTR2,
+                           tcg_constant_i32(tcg_ctx, AVX10_DESC(0, decode->immediate, s->evex_vl, 0)));
+}
+
 static void gen_VCVTTSD2USIS(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     gen_avx10_cvts(s, decode, AVX10_CVT_DW_U_PD, AVX10_CVT_QW_U_PD, AVX10_FMT_FP64);

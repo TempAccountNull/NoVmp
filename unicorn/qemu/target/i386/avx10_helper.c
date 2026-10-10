@@ -1024,4 +1024,554 @@ target_ulong helper_avx10_cvts(CPUX86State *env, ZMMReg *s, uint32_t desc)
 
     return avx10_satcvt1(env, key, fmt, avx10_get(s, avx10_fmt[fmt].bytes, 0), true);
 }
+
+/* ---------------------------------------------------------------------------------------
+ * U1095: AVX10_V2_AUX (CPUID.(24H,1):ECX[3]; "AI Compute Extensions (ACE) Specification" 1.15,
+ * chapter 9 and the helper pseudocode of 16.1 / 16.3 / 16.4, transcribed literally; the
+ * independent model is Emulator/tools/isa/ref_ace_aux.py). No MXCSR, no SIMD FP exception: DAZ
+ * is assumed for FP32 and FP8 sources (FP32 / FP8 denormals are zeros), FTZ is not (the FP8 /
+ * FP6 / FP4 results keep their subnormals). Points where the pseudocode contradicts its own
+ * description are recorded in docs/quirks.md "AVX10_V2_AUX (ACE 1.15): gaps and resolutions": R1 the e = 15, m = 7 encoding of a
+ * saturating FP32 -> E4M3 BIAS conversion is clamped to max_normal; G1 (SDE-resolved) the bias of
+ * element i is SRC1.dword[i][7:0] in the 8 bits below the destination LSB (<< 13 for E5M2, << 12
+ * for E4M3); G4/G5 (SDE-resolved) a subnormal BIAS result is floor(|x| / LSB + bias / 256).
+ * --------------------------------------------------------------------------------------- */
+static uint32_t ace_lowmask(int n)
+{
+    return n >= 32 ? 0xffffffffu : (1u << n) - 1;
+}
+
+/* G5: floor(mant / 2^shift + byte / 256) - a subnormal BIAS result, the bias byte aligned to
+   the 8 bits below the destination LSB (mant = J.mantissa of the FP32 source) */
+static uint32_t ace_sub_bias(uint32_t mant, int shift, uint32_t byte)
+{
+    if (shift >= 32) {
+        return 0;                                       /* mant / 2^shift < 2^-8 */
+    }
+    return (uint32_t)((((uint64_t)mant << 8) + ((uint64_t)byte << shift)) >> (shift + 8));
+}
+
+/* fp32_to_fp8_e5m2 (16.1) */
+static uint8_t ace_fp32_to_e5m2(uint32_t i, bool sat, int rnd, uint32_t bias)
+{
+    uint32_t s_i = i >> 31, e_i = (i >> 23) & 0xff, m_i = i & 0x7fffff;
+    uint32_t e_o = 0, m_o = 0;
+    int newexp;
+
+    if (e_i == 0xff) {                                  /* Inf or NaN */
+        if (sat) {
+            if (m_i == 0) {
+                e_o = 0x1e, m_o = 0x3;                  /* clamp to max_normal */
+            } else {
+                e_o = 0x1f, m_o = 0x2 | ((m_i >> 21) & 1);
+            }
+        } else {
+            e_o = 0x1f;
+            m_o = m_i ? (0x2 | ((m_i >> 21) & 1)) : 0;
+        }
+    } else if (e_i == 0) {                              /* zero or denormal: DAZ */
+        e_o = m_o = 0;
+    } else if (rnd == ACE_RNE) {
+        newexp = (int)e_i - 127 + 15;
+        if (newexp >= 31) {
+            e_o = sat ? 0x1e : 0x1f;
+            m_o = sat ? 0x3 : 0;
+        } else if (newexp <= 0) {
+            if (22 - newexp <= 24) {
+                uint32_t mant = m_i | 0x800000;
+                int shift = 22 - newexp;
+                uint32_t low = mant & ace_lowmask(shift), half = 1u << (shift - 1);
+
+                m_o = mant >> shift;
+                if (low > half || (low == half && (m_o & 1))) {
+                    m_o++;
+                    if ((m_o & 0x3) == 0) {
+                        e_o++;
+                    }
+                }
+            }
+        } else {
+            e_o = newexp;
+            m_o = m_i >> 21;
+            if ((m_i & 0x100000) && ((m_i & 0x1fffff) > 0x100000 || (m_o & 1)) &&
+                !(sat && e_o == 0x1e && m_o == 0x3)) {
+                m_o++;
+                if ((m_o & 0x3) == 0) {
+                    e_o++;
+                }
+            }
+        }
+    } else if ((int)e_i - 127 + 15 <= 0) {              /* BIAS, subnormal result (G5) */
+        uint32_t n = ace_sub_bias(m_i | 0x800000, 22 - ((int)e_i - 127 + 15), (bias >> 13) & 0xff);
+
+        e_o = n >= 4 ? 1 : 0;
+        m_o = n >= 4 ? n - 4 : n;
+    } else {                                            /* BIAS */
+        uint32_t e_b = e_i, m_b = m_i + (bias & 0x1fffff);
+
+        if (m_b & 0xff800000) {
+            e_b++;
+        }
+        m_b &= 0x7fffff;
+        newexp = (int)e_b - 127 + 15;
+        if (newexp >= 31) {
+            e_o = sat ? 0x1e : 0x1f;
+            m_o = sat ? 0x3 : 0;
+        } else if (newexp <= 0) {
+            if (22 - newexp <= 24) {
+                m_o = (m_b | 0x800000) >> (22 - newexp);
+            }
+        } else {
+            e_o = newexp;
+            m_o = m_b >> 21;
+        }
+    }
+    return (uint8_t)((s_i << 7) | ((e_o & 0x1f) << 2) | (m_o & 0x3));
+}
+
+/* fp32_to_fp8_e4m3 (16.1); R1: the BIAS path clamps like the other saturating paths */
+static uint8_t ace_fp32_to_e4m3(uint32_t i, bool sat, int rnd, uint32_t bias)
+{
+    uint32_t s_i = i >> 31, e_i = (i >> 23) & 0xff, m_i = i & 0x7fffff;
+    uint32_t e_o = 0, m_o = 0;
+    int newexp;
+
+    if (e_i == 0xff) {                                  /* Inf or NaN: E4M3 has no Inf */
+        e_o = 0xf, m_o = (sat && m_i == 0) ? 0x6 : 0x7;
+    } else if (e_i == 0) {
+        e_o = m_o = 0;
+    } else if (rnd == ACE_RNE) {
+        newexp = (int)e_i - 127 + 7;
+        if (newexp >= 16) {
+            e_o = 0xf, m_o = sat ? 0x6 : 0x7;
+        } else if (newexp <= 0) {
+            if (21 - newexp <= 24) {
+                uint32_t mant = m_i | 0x800000;
+                int shift = 21 - newexp;
+                uint32_t low = mant & ace_lowmask(shift), half = 1u << (shift - 1);
+
+                m_o = mant >> shift;
+                if (low > half || (low == half && (m_o & 1))) {
+                    m_o++;
+                    if ((m_o & 0x7) == 0) {
+                        e_o++;
+                    }
+                }
+            }
+        } else {
+            e_o = newexp;
+            m_o = m_i >> 20;
+            if (sat && e_o == 0xf && m_o == 0x7) {
+                m_o = 0x6;
+            }
+            if ((m_i & 0x80000) && ((m_i & 0xfffff) > 0x80000 || (m_o & 1))) {
+                bool clamp_sat = sat && e_o == 0xf && m_o == 0x6;
+                bool clamp_nan = !sat && e_o == 0xf && m_o == 0x7;
+
+                if (!(clamp_sat || clamp_nan)) {
+                    m_o++;
+                    if ((m_o & 0x7) == 0) {
+                        e_o++;
+                    }
+                }
+            }
+        }
+    } else if (rnd == ACE_RTO) {
+        newexp = (int)e_i - 127 + 7;
+        if (newexp >= 16) {
+            e_o = 0xf, m_o = sat ? 0x6 : 0x7;
+        } else if (newexp <= 0) {
+            if (21 - newexp <= 24) {
+                uint32_t mant = m_i | 0x800000;
+                int shift = 21 - newexp;
+
+                m_o = (mant >> shift) | ((mant & ace_lowmask(shift)) ? 1 : 0);
+            } else {
+                m_o = 1;
+            }
+        } else {
+            e_o = newexp;
+            m_o = (m_i >> 20) | ((m_i & 0xfffff) ? 1 : 0);
+            if (sat && e_o == 0xf && m_o == 0x7) {
+                m_o = 0x6;
+            }
+        }
+    } else if ((int)e_i - 127 + 7 <= 0) {               /* BIAS, subnormal result (G4/G5) */
+        uint32_t n = ace_sub_bias(m_i | 0x800000, 21 - ((int)e_i - 127 + 7), (bias >> 12) & 0xff);
+
+        e_o = n >= 8 ? 1 : 0;
+        m_o = n >= 8 ? n - 8 : n;
+    } else {                                            /* BIAS */
+        uint32_t e_b = e_i, m_b = m_i + (bias & 0xfffff);
+
+        if (m_b & 0xff800000) {
+            e_b++;
+        }
+        m_b &= 0x7fffff;
+        newexp = (int)e_b - 127 + 7;
+        if (newexp >= 16) {
+            e_o = 0xf, m_o = sat ? 0x6 : 0x7;
+        } else if (newexp <= 0) {
+            e_o = m_o = 0;
+        } else {
+            e_o = newexp;
+            m_o = m_b >> 20;
+            if (sat && e_o == 0xf && m_o == 0x7) {
+                m_o = 0x6;                              /* R1 */
+            }
+        }
+    }
+    return (uint8_t)((s_i << 7) | ((e_o & 0xf) << 3) | (m_o & 0x7));
+}
+
+/* fp8_e5m2_to_fp32 / fp8_e4m3_to_fp32 (16.3): exact */
+static uint32_t ace_e5m2_to_fp32(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 2) & 0x1f, m_i = i & 3, e_o, m_o;
+
+    if (e_i == 0x1f) {
+        e_o = 0xff;
+        m_o = m_i ? (m_i | 0x2) << 21 : 0;
+    } else if (e_i == 0) {
+        if (m_i == 0) {
+            e_o = m_o = 0;
+        } else if (m_i == 1) {
+            e_o = 127 - 16, m_o = 0;
+        } else {
+            e_o = 127 - 15, m_o = (m_i & 1) << 22;
+        }
+    } else {
+        e_o = e_i + (127 - 15), m_o = m_i << 21;
+    }
+    return (s_i << 31) | ((e_o & 0xff) << 23) | m_o;
+}
+
+static uint32_t ace_e4m3_to_fp32(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 3) & 0xf, m_i = i & 7, e_o, m_o;
+
+    if (e_i == 0xf && m_i == 7) {
+        e_o = 0xff, m_o = (m_i | 4) << 20;
+    } else if (e_i == 0xf) {
+        e_o = e_i + (127 - 7), m_o = m_i << 20;
+    } else if (e_i == 0) {
+        if (m_i == 0) {
+            e_o = m_o = 0;
+        } else if (m_i == 1) {
+            e_o = 127 - 9, m_o = 0;
+        } else if ((m_i & 4) == 0) {
+            e_o = 127 - 8, m_o = (m_i & 1) << 22;
+        } else {
+            e_o = 127 - 7, m_o = (m_i & 3) << 21;
+        }
+    } else {
+        e_o = e_i + (127 - 7), m_o = m_i << 20;
+    }
+    return (s_i << 31) | ((e_o & 0xff) << 23) | m_o;
+}
+
+/* RTNE of a (1 + hidden) mantissa shifted right; the carry check of the 16.3 helpers */
+static void ace_rtne_sub(uint32_t mant, int shift, uint32_t carry_mask, uint32_t *e_o, uint32_t *m_o)
+{
+    uint32_t low = mant & ace_lowmask(shift), half = 1u << (shift - 1);
+
+    *m_o = mant >> shift;
+    if (low > half || (low == half && (*m_o & 1))) {
+        (*m_o)++;
+        if ((*m_o & carry_mask) == 0) {
+            (*e_o)++;
+        }
+    }
+}
+
+/* fp8_e5m2_to_fp6_e3m2 (16.3) */
+static uint8_t ace_e5m2_to_e3m2(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 2) & 0x1f, m_i = i & 3, e_o = 0, m_o = 0;
+    int reb = 15 - 3, new_exp = (int)e_i - reb;
+
+    if (e_i == 0x1f || (int)e_i > reb + 7 || ((int)e_i == reb + 7 && m_i > 3)) {
+        e_o = 7, m_o = 3;                               /* NaN / Inf / overflow: clamp */
+    } else if (e_i == 0) {
+        e_o = m_o = 0;                                  /* zero / subnormal: zero */
+    } else if (new_exp <= 0) {
+        if (1 - new_exp <= 3) {
+            ace_rtne_sub(m_i | 4, 1 - new_exp, 3, &e_o, &m_o);
+        }
+    } else {
+        e_o = new_exp, m_o = m_i;
+    }
+    return (uint8_t)((s_i << 5) | ((e_o & 7) << 2) | (m_o & 3));
+}
+
+/* fp8_e4m3_to_fp6_e2m3 (16.3) */
+static uint8_t ace_e4m3_to_e2m3(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 3) & 0xf, m_i = i & 7, e_o = 0, m_o = 0;
+    int reb = 7 - 1, new_exp = (int)e_i - reb;
+
+    if (e_i == 0xf || (int)e_i > reb + 3) {
+        e_o = 3, m_o = 7;                               /* NaN / max / overflow: clamp */
+    } else if (e_i == 0 && m_i == 0) {
+        e_o = m_o = 0;
+    } else if (new_exp <= 0) {
+        if (1 - new_exp <= 4) {
+            ace_rtne_sub(m_i | 8, 1 - new_exp, 7, &e_o, &m_o);
+        }
+    } else {
+        e_o = new_exp, m_o = m_i;
+    }
+    return (uint8_t)((s_i << 5) | ((e_o & 3) << 3) | (m_o & 7));
+}
+
+/* fp8_e4m3_to_fp4_e2m1 (16.3): RTNE by "i + 1 + m_i[2]" in the normal range */
+static uint8_t ace_e4m3_to_e2m1(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 3) & 0xf, m_i = i & 7, e_o = 0, m_o = 0;
+    int reb = 7 - 1, new_exp = (int)e_i - reb;
+
+    if ((e_i == 0xf && m_i == 7) || (int)e_i > reb + 3 || ((int)e_i == reb + 3 && m_i > 4)) {
+        e_o = 3, m_o = 1;
+    } else if (e_i == 0) {
+        e_o = m_o = 0;
+    } else if (new_exp <= 0) {
+        if (3 - new_exp <= 4) {
+            ace_rtne_sub(m_i | 8, 3 - new_exp, 1, &e_o, &m_o);
+        }
+    } else {
+        uint32_t rnex = i + 1 + ((m_i >> 2) & 1);
+
+        e_o = ((rnex & 0x78) >> 3) - reb;
+        m_o = (rnex & 7) >> 2;
+    }
+    return (uint8_t)((s_i << 3) | ((e_o & 3) << 1) | (m_o & 1));
+}
+
+/* fp8_e5m2_to_fp4_e2m1 (16.3): RTNE by "i + m_i[1]" in the normal range */
+static uint8_t ace_e5m2_to_e2m1(uint8_t i)
+{
+    uint32_t s_i = i >> 7, e_i = (i >> 2) & 0x1f, m_i = i & 3, e_o = 0, m_o = 0;
+    int reb = 15 - 1, new_exp = (int)e_i - reb;
+
+    if (e_i == 0x1f || (int)e_i > reb + 3 || ((int)e_i == reb + 3 && m_i > 2)) {
+        e_o = 3, m_o = 1;
+    } else if (e_i == 0 && m_i == 0) {
+        e_o = m_o = 0;
+    } else if (new_exp <= 0) {
+        if (2 - new_exp <= 3) {
+            ace_rtne_sub(m_i | 4, 2 - new_exp, 1, &e_o, &m_o);
+        }
+    } else {
+        uint32_t rnex = i + ((m_i >> 1) & 1);
+
+        e_o = ((rnex & 0x7c) >> 2) - reb;
+        m_o = (rnex & 3) >> 1;
+    }
+    return (uint8_t)((s_i << 3) | ((e_o & 3) << 1) | (m_o & 1));
+}
+
+/* fp4_e2m1_to_fp8_e4m3 / fp6_e3m2_to_fp8_e4m3 / fp6_e2m3_to_fp8_e4m3 (16.4): exact */
+static uint8_t ace_e2m1_to_e4m3(uint32_t i)
+{
+    static const uint8_t lut[8] = { 0x00, 0x30, 0x38, 0x3c, 0x40, 0x44, 0x48, 0x4c };
+
+    return lut[i & 7] | (((i >> 3) & 1) << 7);
+}
+
+static uint8_t ace_e3m2_to_e4m3(uint32_t i)
+{
+    uint32_t s_i = (i >> 5) & 1, e_i = (i >> 2) & 7, m_i = i & 3, e_o, m_o;
+
+    if (e_i == 0) {
+        if (m_i == 0) {
+            e_o = m_o = 0;
+        } else if (m_i == 1) {
+            e_o = 3, m_o = 0;
+        } else {
+            e_o = 4, m_o = (m_i & 1) << 2;
+        }
+    } else {
+        e_o = e_i + 4, m_o = m_i << 1;
+    }
+    return (uint8_t)((s_i << 7) | ((e_o & 0xf) << 3) | (m_o & 7));
+}
+
+static uint8_t ace_e2m3_to_e4m3(uint32_t i)
+{
+    uint32_t s_i = (i >> 5) & 1, e_i = (i >> 3) & 3, m_i = i & 7, e_o, m_o;
+
+    if (e_i == 0) {
+        if (m_i == 0) {
+            e_o = m_o = 0;
+        } else if (m_i == 1) {
+            e_o = 4, m_o = 0;
+        } else if (m_i <= 3) {
+            e_o = 5, m_o = (m_i & 1) << 2;
+        } else {
+            e_o = 6, m_o = (m_i & 3) << 1;
+        }
+    } else {
+        e_o = e_i + 6, m_o = m_i;
+    }
+    return (uint8_t)((s_i << 7) | ((e_o & 0xf) << 3) | (m_o & 7));
+}
+
+/*
+ * VCVT[RO,BIAS]PS2[B,H]F8[S] (9.2.5): byte i (i < n = VL/32) of the result from SRC2.fp32[i]
+ * (the engine has read / broadcast it), the bias byte SRC1.dword[i][7:0] (G1). The engine masks per
+ * result byte and zeroes DEST above VL/4. desc: op = ACE_PS2F8_*, n.
+ */
+void helper_ace_ps2f8(CPUX86State *env, ZMMReg *d, ZMMReg *s1, ZMMReg *s2, uint32_t desc)
+{
+    int op = AVX10_DESC_OP(desc), n = AVX10_DESC_N(desc), i;
+    int rnd = (op >> 2) & 3;
+    bool hf8 = op & ACE_PS2F8_HF8, sat = op & ACE_PS2F8_SAT;
+    uint8_t r[16];
+
+    for (i = 0; i < n; i++) {
+        uint32_t t = s2->ZMM_L(i);
+        uint32_t b = rnd == ACE_BIAS ? (s1->ZMM_L(i) & 0xff) << (hf8 ? 12 : 13) : 0;   /* G1 */
+
+        r[i] = hf8 ? ace_fp32_to_e4m3(t, sat, rnd, b) : ace_fp32_to_e5m2(t, sat, rnd, b);
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = r[i];
+    }
+}
+
+/* VCVTBF82PS / VCVTHF82PS (9.3.5): dword i (i < n = VL/32) from SRC.byte[i] */
+void helper_ace_f82ps(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int n = AVX10_DESC_N(desc), i;
+    bool hf8 = AVX10_DESC_OP(desc);
+    uint32_t r[16];
+
+    for (i = 0; i < n; i++) {
+        r[i] = hf8 ? ace_e4m3_to_fp32(s->ZMM_B(i)) : ace_e5m2_to_fp32(s->ZMM_B(i));
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_L(i) = r[i];
+    }
+}
+
+/*
+ * FP8 -> FP4 / FP6 (9.4.5, 9.6.5), no masking: n = VL/8 source bytes; FP4 results nibble-packed
+ * (n/2 bytes; the engine zeroes DEST above VL/2), FP6 results 6-bit packed (n*6/8 bytes, the
+ * rest of the n-byte destination zeroed here: "dest[MAXVL-1:VL*6/8] = 0").
+ */
+void helper_ace_narrow(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int op = AVX10_DESC_OP(desc), n = AVX10_DESC_N(desc), i;
+    uint8_t src[64], out[64];
+
+    for (i = 0; i < n; i++) {
+        src[i] = s->ZMM_B(i);
+    }
+    memset(out, 0, sizeof(out));
+    for (i = 0; i < n; i++) {
+        uint32_t r;
+        int bit;
+
+        switch (op) {
+        case ACE_NARROW_BF4:
+            out[i / 2] |= ace_e5m2_to_e2m1(src[i]) << (4 * (i & 1));
+            break;
+        case ACE_NARROW_HF4:
+            out[i / 2] |= ace_e4m3_to_e2m1(src[i]) << (4 * (i & 1));
+            break;
+        default:
+            r = op == ACE_NARROW_BF6 ? ace_e5m2_to_e3m2(src[i]) : ace_e4m3_to_e2m3(src[i]);
+            bit = 6 * i;
+            out[bit / 8] |= (uint8_t)(r << (bit & 7));
+            if ((bit & 7) > 2) {
+                out[bit / 8 + 1] |= (uint8_t)(r >> (8 - (bit & 7)));
+            }
+            break;
+        }
+    }
+    for (i = 0; i < (op <= ACE_NARROW_HF4 ? n / 2 : n); i++) {
+        d->ZMM_B(i) = out[i];
+    }
+}
+
+/* FP4 / FP6 -> E4M3 (9.5.5, 9.7.5): byte i (i < n = VL/8) from the i-th nibble / 6-bit field */
+void helper_ace_widen(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int op = AVX10_DESC_OP(desc), n = AVX10_DESC_N(desc), i;
+    uint8_t src[64], out[64];
+
+    for (i = 0; i < 64; i++) {
+        src[i] = s->ZMM_B(i);
+    }
+    for (i = 0; i < n; i++) {
+        uint32_t t;
+        int bit;
+
+        if (op == ACE_WIDEN_BF4) {
+            out[i] = ace_e2m1_to_e4m3(src[i / 2] >> (4 * (i & 1)));
+            continue;
+        }
+        bit = 6 * i;
+        t = src[bit / 8] >> (bit & 7);
+        if ((bit & 7) > 2) {
+            t |= (uint32_t)src[bit / 8 + 1] << (8 - (bit & 7));
+        }
+        t &= 0x3f;
+        out[i] = op == ACE_WIDEN_BF6 ? ace_e3m2_to_e4m3(t) : ace_e2m3_to_e4m3(t);
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = out[i];
+    }
+}
+
+/* VPMOVSSDB (9.8.5): byte i (i < n = VL/32) = SRC.dword[i] saturated to [-127, 127] */
+void helper_ace_pmovssdb(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int n = AVX10_DESC_N(desc), i;
+    uint8_t r[16];
+
+    for (i = 0; i < n; i++) {
+        int32_t v = (int32_t)s->ZMM_L(i);
+
+        r[i] = (uint8_t)(v > 127 ? 127 : v < -127 ? -127 : v);
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = r[i];
+    }
+}
+
+/*
+ * VUNPACKB (9.9.4): size = max(imm8[4:2], 2), start = imm8[1:0] (size 2), min(imm8[1:0], 1)
+ * (size 3, 4), 0 (size 5-7); byte i (i < n = VL/8) = the size-bit field at bit
+ * (start * n + i) * size of SRC, zero- or (imm8[5]) sign-extended. Reserved encodings (imm8[7:6],
+ * size 0/1) are conditioned as printed: no #UD.
+ */
+void helper_ace_unpackb(CPUX86State *env, ZMMReg *d, ZMMReg *s, uint32_t desc)
+{
+    int imm = AVX10_DESC_IMM(desc), n = AVX10_DESC_N(desc), i;
+    int size = (imm >> 2) & 7, start, sx = (imm >> 5) & 1;
+    uint8_t src[72], out[64];
+
+    if (size < 2) {
+        size = 2;
+    }
+    start = size == 2 ? (imm & 3) : size <= 4 ? MIN(imm & 3, 1) : 0;
+    memset(src, 0, sizeof(src));
+    for (i = 0; i < 64; i++) {
+        src[i] = s->ZMM_B(i);
+    }
+    for (i = 0; i < n; i++) {
+        int j = (start * n + i) * size;
+        uint32_t e = (src[j / 8] | ((uint32_t)src[j / 8 + 1] << 8)) >> (j & 7);
+
+        e &= (1u << size) - 1;
+        if (sx && (e >> (size - 1))) {
+            e |= 0xffu << size;
+        }
+        out[i] = (uint8_t)e;
+    }
+    for (i = 0; i < n; i++) {
+        d->ZMM_B(i) = out[i];
+    }
+}
 #endif /* __Use_Original_Qemu (U372-U399) */

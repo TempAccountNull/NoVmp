@@ -4776,6 +4776,15 @@ static const X86OpEntry opcodes_evex_0F38_F3[256] = {
                            ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W1) ev_es(64) p_f3),
     [0x3a] = X86_OP_ENTRY3(EVEX_VPBROADCASTM, V,x, None,None, KU,w, cpuid(AVX512CD)
                            ev_vl(EV_VLALL) ev_mask(NONE) ev_w(W0) ev_es(32) p_f3),
+    /*
+     * NoVmp (ledger U1095): VPMOVSSDB xmm1/m32/m64/m128 {k1}{z}, x/y/zmm2 (ACE 1.15 6.2.11, 9.8;
+     * AVX10_V2_AUX): destination ModRM.r/m (the Form column and XED; the operand table's
+     * "MODRM.REG(w)" contradicts the memory form, gap G2), Quarter Mem, byte writemask, class
+     * E6 (masked store with fault suppression, EVEX.z with a memory destination #UD), EVEX.vvvv
+     * reserved (#UD unless 1111b), no EVEX.b. 66 0F38 41 has no EVEX form.
+     */
+    [0x41] = X86_OP_ENTRY3(VPMOVSSDB, W,xq, None,None, V,x, cpuid(AVX10_V2_AUX) ev_vl(EV_VLALL)
+                           ev_tt(QUARTER_MEM) ev_mask(MZ) ev_w(W0) ev_es(8) p_f3),
 };
 #endif /* __Use_Original_Qemu (U321) */
 #if __Use_Original_Qemu != 1 /* ours (U800) */
@@ -6062,6 +6071,11 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
         /* "AVX10 AND SM4" (ISE 319433-062): AVX10 version >= 1 and CPUID.(07H,1):EAX.SM4[2] */
         return s->avx10_version >= 1 && (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_SM4);
 #endif /* __Use_Original_Qemu (U412) */
+#if __Use_Original_Qemu != 1 /* ours (U1095) */
+    case X86_FEAT_AVX10_V2_AUX:
+        /* XED avx10_v2_aux.24.1.ecx.3 AND avx10_enabled.7.1.edx[19] (U371 copy, U1095) */
+        return s->avx10_v2_aux;
+#endif /* __Use_Original_Qemu (U1095) */
 #if __Use_Original_Qemu != 1 /* ours (U570) */
     case X86_FEAT_AVX512_VP2INTERSECT:
         /*

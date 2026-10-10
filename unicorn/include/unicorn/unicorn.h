@@ -757,7 +757,8 @@ typedef enum uc_control_type {
     // 0), EBX = version | 70000h (bits 18:16 "reserved at 1", the former VL128/256/512
     // bits); (24H,1) ECX.AVX10_V1_AUX[2] for AVX10.2 ("Intel CPUs which support AVX10.2
     // will include an enumeration for AVX10_V1_AUX") or when UC_X86_AVX10_V1_AUX is
-    // given. AVX10 implies the AVX-512 state (components 5-7 for XCR0, CPUID 0DH, the
+    // given; (24H,1) ECX.AVX10_V2_AUX[3] only with UC_X86_AVX10_V2_AUX (U1095; then (24H,0)
+    // EAX = 1 too). AVX10 implies the AVX-512 state (components 5-7 for XCR0, CPUID 0DH, the
     // XSAVE family; reset XCR0 enables them) and every AVX-512 family of AVX10.1 (Table
     // 3.2: F, CD, BW, DQ, VBMI, IFMA, VNNI, BF16, VPOPCNTDQ, VBMI2, BITALG, FP16) at all
     // vector lengths, whatever UC_CTL_X86_AVX512 says. NoVmp U1090 (plan 1.J.19, AVX10.2
@@ -913,6 +914,11 @@ typedef enum uc_control_type {
 #define UC_X86_AVX10_2 2           // AVX10.2: + the AVX10.2 instructions; implies V1_AUX
 #define UC_X86_AVX10_VERSION 0xff  // bits 7:0 = version
 #define UC_X86_AVX10_V1_AUX 0x100  // CPUID.(24H,1):ECX.AVX10_V1_AUX[2] (with version >= 1)
+// NoVmp U1095: CPUID.(24H,1):ECX.AVX10_V2_AUX[3] (with version >= 1): the OCP format
+// conversions of the "AI Compute Extensions (ACE) Specification" 1.15 chapter 9 (VCVT[RO,BIAS]PS2
+// [B,H]F8[S], VCVT[B,H]F82PS, VCVT[B,H]F82BF4S, VCVTBF42HF8, VCVTBF82BF6S, VCVTHF82HF6S,
+// VCVT[B,H]F62HF8, VPMOVSSDB, VUNPACKB); "Requires AVX10" (ACE 3.1); never implied by a version
+#define UC_X86_AVX10_V2_AUX 0x200
 
 // UC_CTL_X86_APX values (NoVmp U610)
 #define UC_X86_APX_F 1             // APX foundation: EGPRs R16-R31, REX2, APX state component 19

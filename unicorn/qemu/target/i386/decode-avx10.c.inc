@@ -216,6 +216,76 @@ static void decode_A10_MAP5_6D(DisasContext *s, CPUX86State *env, X86OpEntry *en
     *entry = *decode_by_prefix(s, ops[s->vex_w]);
 }
 
+/*
+ * ---- U1095: AVX10_V2_AUX (ACE 1.15 6.2 encodings, cross-checked with XED avx10-2-aux; ch.9) ----
+ * FP32 -> FP8 (MAP5 38-3B): result byte i from FP32 element i: Full tuple (m32bcst), E4 (fault
+ * suppression per FP32 element), destination VL/4 bytes (xq, byte writemask: ev_ds 8); the
+ * BIAS forms read the bias dwords from EVEX.vvvv. FP8 -> FP32 (MAP5 NP 36): Quarter Mem, E4.
+ * FP4 -> FP8 (MAP5 NP W0 37): Half Mem, E4NF. FP6 -> FP8 (MAP5 66 37) and FP8 -> FP6 (MAP5 F3
+ * 3C / 3E): register only (E7NM: U operands). FP8 -> FP4 (MAP5 F3 3D): destination ModRM.r/m
+ * (register or a VL/2-bit store, gap G2), no writemask, E4NF. VUNPACKB (0F3A NP 3D ib): Full
+ * Mem, E4NF. No EVEX.b except m32bcst of the FP32 sources (the engine #UDs it on the others).
+ */
+#define ACE_AUX(tt, es, m, w) cpuid(AVX10_V2_AUX) ev_vl(A10_VLALL) ev_tt(tt) ev_mask(m) ev_w(w) \
+                              ev_es(es)
+#define ACE_PS2F8(op)  X86_OP_ENTRY3(op, V,xq, None,None, W,x, ACE_AUX(FULL, 32, MZ, W0) ev_ds(8))
+#define ACE_BPS2F8(op) X86_OP_ENTRY3(op, V,xq, H,x, W,x, ACE_AUX(FULL, 32, MZ, W0) ev_ds(8))
+
+/* MAP5 38-3B: NP VCVTBIASPS2*, 66 VCVTROPS2HF8[S], F3 VCVTPS2*; 38 HF8, 39 BF8, 3A HF8S, 3B BF8S */
+A10_SLOT(ACE_MAP5_38, ACE_BPS2F8(VCVTBIASPS2HF8), ACE_PS2F8(VCVTROPS2HF8), ACE_PS2F8(VCVTPS2HF8), {})
+A10_SLOT(ACE_MAP5_39, ACE_BPS2F8(VCVTBIASPS2BF8), {}, ACE_PS2F8(VCVTPS2BF8), {})
+A10_SLOT(ACE_MAP5_3A, ACE_BPS2F8(VCVTBIASPS2HF8S), ACE_PS2F8(VCVTROPS2HF8S), ACE_PS2F8(VCVTPS2HF8S),
+         {})
+A10_SLOT(ACE_MAP5_3B, ACE_BPS2F8(VCVTBIASPS2BF8S), {}, ACE_PS2F8(VCVTPS2BF8S), {})
+/* MAP5 F3 3C / 3E: VCVTHF82HF6S (W0) / VCVTBF82BF6S (W1), destination ModRM.r/m (XED, G2) */
+A10_SLOT(ACE_MAP5_3C, {}, {}, X86_OP_ENTRY3(VCVTHF82HF6S, U,x, None,None, V,x, ACE_AUX(NONE, 8, NONE, W0)),
+         {})
+A10_SLOT(ACE_MAP5_3E, {}, {}, X86_OP_ENTRY3(VCVTBF82BF6S, U,x, None,None, V,x, ACE_AUX(NONE, 8, NONE, W1)),
+         {})
+/* 0F3A NP W0 3D ib: VUNPACKB */
+A10_SLOT(ACE_0F3A_3D, X86_OP_ENTRY4(VUNPACKB, V,x, None,None, W,x, ACE_AUX(FULL_MEM, 8, MZ, W0)
+                                    .evex_nofs = 1,), {}, {}, {})
+
+/* MAP5 NP 36: W1 VCVTBF82PS, W0 VCVTHF82PS */
+static void decode_ACE_MAP5_36(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry ops[2][4] = {
+        { X86_OP_ENTRY3(VCVTHF82PS, V,x, None,None, W,xq, ACE_AUX(QUARTER_MEM, 32, MZ, W0)),
+          {}, {}, {} },
+        { X86_OP_ENTRY3(VCVTBF82PS, V,x, None,None, W,xq, ACE_AUX(QUARTER_MEM, 32, MZ, W1)),
+          {}, {}, {} },
+    };
+    *entry = *decode_by_prefix(s, ops[s->vex_w]);
+}
+
+/* MAP5 37: NP W0 VCVTBF42HF8; 66 W1 VCVTBF62HF8, 66 W0 VCVTHF62HF8 */
+static void decode_ACE_MAP5_37(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry ops[2][4] = {
+        { X86_OP_ENTRY3(VCVTBF42HF8, V,x, None,None, W,xh, ACE_AUX(HALF_MEM, 8, MZ, W0)
+                        .evex_nofs = 1,),
+          X86_OP_ENTRY3(VCVTHF62HF8, V,x, None,None, U,x, ACE_AUX(NONE, 8, MZ, W0)), {}, {} },
+        { {},
+          X86_OP_ENTRY3(VCVTBF62HF8, V,x, None,None, U,x, ACE_AUX(NONE, 8, MZ, W1)), {}, {} },
+    };
+    *entry = *decode_by_prefix(s, ops[s->vex_w]);
+}
+
+/* MAP5 F3 3D: W1 VCVTBF82BF4S, W0 VCVTHF82BF4S (destination ModRM.r/m, VL/2 bits) */
+static void decode_ACE_MAP5_3D(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry ops[2][4] = {
+        { {}, {}, X86_OP_ENTRY3(VCVTHF82BF4S, W,xh, None,None, V,x, ACE_AUX(HALF_MEM, 8, NONE, W0)
+                                .evex_nofs = 1,), {} },
+        { {}, {}, X86_OP_ENTRY3(VCVTBF82BF4S, W,xh, None,None, V,x, ACE_AUX(HALF_MEM, 8, NONE, W1)
+                                .evex_nofs = 1,), {} },
+    };
+    *entry = *decode_by_prefix(s, ops[s->vex_w]);
+}
+#undef ACE_PS2F8
+#undef ACE_BPS2F8
+#undef ACE_AUX
+
 /* ---- tables ---- */
 static const X86OpEntry opcodes_avx10_0F[256] = {
     /* U375 */
@@ -233,6 +303,8 @@ static const X86OpEntry opcodes_avx10_0F3A[256] = {
     /* U374 */
     [0x52] = X86_OP_GROUP0(A10_0F3A_52),
     [0x53] = X86_OP_GROUP0(A10_0F3A_53),
+    /* U1095 */
+    [0x3d] = X86_OP_GROUP0(ACE_0F3A_3D),
 };
 
 static const X86OpEntry opcodes_avx10_map5[256] = {
@@ -254,6 +326,16 @@ static const X86OpEntry opcodes_avx10_map5[256] = {
     [0x6b] = X86_OP_GROUP0(A10_MAP5_6B),
     [0x6c] = X86_OP_GROUP0(A10_MAP5_6C),
     [0x6d] = X86_OP_GROUP0(A10_MAP5_6D),
+    /* U1095 */
+    [0x36] = X86_OP_GROUP0(ACE_MAP5_36),
+    [0x37] = X86_OP_GROUP0(ACE_MAP5_37),
+    [0x38] = X86_OP_GROUP0(ACE_MAP5_38),
+    [0x39] = X86_OP_GROUP0(ACE_MAP5_39),
+    [0x3a] = X86_OP_GROUP0(ACE_MAP5_3A),
+    [0x3b] = X86_OP_GROUP0(ACE_MAP5_3B),
+    [0x3c] = X86_OP_GROUP0(ACE_MAP5_3C),
+    [0x3d] = X86_OP_GROUP0(ACE_MAP5_3D),
+    [0x3e] = X86_OP_GROUP0(ACE_MAP5_3E),
 };
 
 static const X86OpEntry opcodes_avx10_map6[256] = {

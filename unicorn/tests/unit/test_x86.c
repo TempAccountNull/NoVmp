@@ -13309,7 +13309,7 @@ static void test_x86_avx10_optin(void)
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, 3));
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, UC_X86_AVX10_V1_AUX));
-    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, 0x200 | UC_X86_AVX10_1));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, 0x400 | UC_X86_AVX10_1)); /* 0x200: V2_AUX (U1095) */
     uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(c.uc, -1));
     OK(uc_ctl_set_x86_avx10(c.uc, UC_X86_AVX10_1 | UC_X86_AVX10_V1_AUX));
     OK(uc_ctl_get_x86_avx10(c.uc, &v));
@@ -26539,6 +26539,78 @@ static void test_x86_vx_salc_udb(void)
     TEST_CHECK(a10_run(&c, "\x0f\x32", 2) == 13);     /* RDMSR 151H: #GP(0) */
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1095: AVX10_V2_AUX (UC_X86_AVX10_V2_AUX, CPUID.(24H,1):ECX[3], ACE 1.15 3.1): accepted with an
+ * AVX10 version only; enumerated in leaf 24H; its instructions #UD without it (AVX10.2 alone),
+ * run with AVX10.1 or AVX10.2 plus the bit; a strict profile without ECX[3] hides them. Values:
+ * Emulator/data/cases_avx10_v2aux.txt (ref_ace_aux.py).
+ */
+#define VX_VCVTPS2BF8_X "\x62\xf5\x7e\x08\x39\xca"     /* VCVTPS2BF8 xmm1, xmm2 */
+#define VX_VPMOVSSDB_X  "\x62\xf2\x7e\x08\x41\xd1"     /* VPMOVSSDB xmm1, xmm2 */
+#define VX_VUNPACKB_X   "\x62\xf3\x7c\x08\x3d\xca\x08" /* VUNPACKB xmm1, xmm2, 08h (2-bit) */
+
+static void test_x86_vx_v2aux_ctl(void)
+{
+    static const uc_x86_cpuid prof_hide[] = {
+        {0x0, 0, 0x24, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x000b0671, 0, (1u << 26) | (1u << 27) | (1u << 28), 0},
+        {0x7, 0, 1, (1u << 16) | (1u << 31), 0, 0},
+        {0x7, 1, 0, 0, 0, 1u << 19},
+        {0xd, 0, 0xe7, 0, 0, 0},
+        {0x24, 0, 1, 0x70002, 0, 0},
+        {0x24, 1, 0, 0, 4, 0},
+    };
+    uint32_t r[4], a[4] = { 0x3f800000, 0x7f800000, 0x00000001, 0xc3f00000 };
+    uint32_t d[4];
+    uc_engine *uc;
+    A10Ctx c;
+    int v = -1;
+
+    /* values: V2_AUX only together with an AVX10 version */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(uc, UC_X86_AVX10_V2_AUX));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_avx10(uc, 0x400 | UC_X86_AVX10_2));
+    OK(uc_ctl_set_x86_avx10(uc, UC_X86_AVX10_1 | UC_X86_AVX10_V2_AUX));
+    OK(uc_ctl_get_x86_avx10(uc, &v));
+    TEST_CHECK(v == (UC_X86_AVX10_1 | UC_X86_AVX10_V2_AUX));
+    OK(uc_close(uc));
+
+    /* AVX10.2 alone: 24H.1 ECX = 4 (V1_AUX only), the V2_AUX instructions #UD */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0, 0);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[2] == 4);
+    TEST_CHECK(a10_run(&c, VX_VCVTPS2BF8_X, 6) == 6);
+    TEST_CHECK(a10_run(&c, VX_VPMOVSSDB_X, 6) == 6);
+    TEST_CHECK(a10_run(&c, VX_VUNPACKB_X, 7) == 6);
+    OK(uc_close(c.uc));
+
+    /* AVX10.1 + V2_AUX: 24H.0 EAX = 1, 24H.1 ECX = 8; the instructions run */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1 | UC_X86_AVX10_V2_AUX, NULL, 0, 0);
+    a10_cpuid(&c, 0x24, 0, r);
+    TEST_CHECK(r[0] == 1 && r[1] == 0x70001);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[0] == 0 && r[1] == 0 && r[2] == 8 && r[3] == 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM2, a));
+    TEST_CHECK(a10_run(&c, VX_VCVTPS2BF8_X, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_XMM1, d));
+    /* 1.0 -> 3Ch, +Inf -> 7Ch, a denormal -> 0 (DAZ), -480.0 = -1.111b x 2^8 -> E5M2 tie, to even:
+       -512.0 = E0h */
+    TEST_CHECK_(d[0] == 0xe0007c3c && d[1] == 0 && d[2] == 0 && d[3] == 0, "%08x %08x", d[0], d[1]);
+    OK(uc_close(c.uc));
+
+    /* AVX10.2 + V2_AUX: 24H.1 ECX = 0Ch */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2 | UC_X86_AVX10_V2_AUX, NULL, 0, 0);
+    a10_cpuid(&c, 0x24, 1, r);
+    TEST_CHECK(r[2] == 0xc);
+    TEST_CHECK(a10_run(&c, VX_VUNPACKB_X, 7) == -1);
+    OK(uc_close(c.uc));
+
+    /* a strict profile without 24H.1 ECX[3] hides them */
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2 | UC_X86_AVX10_V2_AUX, prof_hide, 7, 1);
+    TEST_CHECK(a10_run(&c, VX_VCVTPS2BF8_X, 6) == 6);
+    OK(uc_close(c.uc));
+}
 /* ---- end U1090-U1119 (vx_) ---- */
 
 TEST_LIST = {
@@ -26754,6 +26826,7 @@ TEST_LIST = {
     {"test_x86_avx10b_values", test_x86_avx10b_values},
     {"test_x86_avx10b_fault_suppression", test_x86_avx10b_fault_suppression},
     {"test_x86_vx_avx10_cpuid", test_x86_vx_avx10_cpuid},
+    {"test_x86_vx_v2aux_ctl", test_x86_vx_v2aux_ctl},
     {"test_x86_vx_salc_udb", test_x86_vx_salc_udb},
     {"test_x86_sse_unmasked_ou", test_x86_sse_unmasked_ou},
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},

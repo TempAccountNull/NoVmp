@@ -519,6 +519,15 @@ DEF_HELPER_4(avx10_vcomx, void, env, ptr, ptr, i32)
 DEF_HELPER_4(avx10_cvt, void, env, ptr, ptr, i32)
 DEF_HELPER_3(avx10_cvts, tl, env, ptr, i32)
 #endif /* __Use_Original_Qemu (U373-U399) */
+#if __Use_Original_Qemu != 1 /* ours (U1095) */
+/* NoVmp: AVX10_V2_AUX (ACE 1.15 chapter 9; avx10_helper.c) */
+DEF_HELPER_5(ace_ps2f8, void, env, ptr, ptr, ptr, i32)
+DEF_HELPER_4(ace_f82ps, void, env, ptr, ptr, i32)
+DEF_HELPER_4(ace_narrow, void, env, ptr, ptr, i32)
+DEF_HELPER_4(ace_widen, void, env, ptr, ptr, i32)
+DEF_HELPER_4(ace_pmovssdb, void, env, ptr, ptr, i32)
+DEF_HELPER_4(ace_unpackb, void, env, ptr, ptr, i32)
+#endif /* __Use_Original_Qemu (U1095) */
 #if __Use_Original_Qemu != 1 /* ours (U552) */
 DEF_HELPER_5(evex_vbmi2_shd, void, env, ptr, ptr, ptr, i32)
 #endif /* __Use_Original_Qemu (U552) */

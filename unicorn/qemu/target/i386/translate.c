@@ -275,6 +275,9 @@ typedef struct DisasContext {
     uint8_t avx10_version;
     bool avx10_v1_aux;
 #endif /* __Use_Original_Qemu (U371) */
+#if __Use_Original_Qemu != 1 /* ours (U1095) */
+    bool avx10_v2_aux;          /* CPUID.(24H,1):ECX.AVX10_V2_AUX[3] (ACE 1.15) */
+#endif /* __Use_Original_Qemu (U1095) */
     struct uc_struct *uc;
 
     /* TCG local temps */
@@ -10611,6 +10614,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
      */
     dc->avx10_version = 0;
     dc->avx10_v1_aux = false;
+    dc->avx10_v2_aux = false;                       /* U1095 */
     if ((env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10) &&
         (x86_cpuid_profile_mask(env, 7, 1, 3) & CPUID_7_1_EDX_AVX10)) {
         int v = env->uc->x86_avx10;
@@ -10620,6 +10624,10 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
         dc->avx10_v1_aux = ((v & UC_X86_AVX10_V1_AUX) || dc->avx10_version >= 2) &&
                            (x86_cpuid_profile_mask(env, 0x24, 1, 2) &
                             CPUID_24_1_ECX_AVX10_V1_AUX);
+        /* U1095: AVX10_V2_AUX "Requires AVX10" (ACE 1.15 3.1); a strict profile hides it */
+        dc->avx10_v2_aux = (v & UC_X86_AVX10_V2_AUX) && dc->avx10_version >= 1 &&
+                           (x86_cpuid_profile_mask(env, 0x24, 1, 2) &
+                            CPUID_24_1_ECX_AVX10_V2_AUX);
     }
     if (dc->avx10_version >= 1) {
         dc->cpuid_7_0_ebx_features |= AVX10_1_7_0_EBX;

@@ -5020,12 +5020,15 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         if (env->features[FEAT_7_1_EDX] & CPUID_7_1_EDX_AVX10) {
             int v = env->uc->x86_avx10;
             bool aux = (v & UC_X86_AVX10_V1_AUX) || (v & UC_X86_AVX10_VERSION) >= 2;
+            /* (24H,1) ECX.AVX10_V2_AUX[3] with UC_X86_AVX10_V2_AUX (ACE 1.15 3.1, U1095) */
+            bool aux2 = (v & UC_X86_AVX10_V2_AUX) != 0;
 
             if (count == 0) {
-                *eax = aux ? 1 : 0;
+                *eax = (aux || aux2) ? 1 : 0;
                 *ebx = (v & UC_X86_AVX10_VERSION) | CPUID_24_0_EBX_AVX10_VL_MASK;
-            } else if (count == 1 && aux) {
-                *ecx = CPUID_24_1_ECX_AVX10_V1_AUX;
+            } else if (count == 1) {
+                *ecx = (aux ? CPUID_24_1_ECX_AVX10_V1_AUX : 0) |
+                       (aux2 ? CPUID_24_1_ECX_AVX10_V2_AUX : 0);
             }
         }
         break;

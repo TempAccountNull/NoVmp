@@ -3345,8 +3345,8 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
     case UC_CTL_X86_AVX10:
-        /* NoVmp U370: AVX10 version (1 or 2) | UC_X86_AVX10_V1_AUX, 0 = none; fixed once
-           the CPU exists */
+        /* NoVmp U370: AVX10 version (1 or 2) | UC_X86_AVX10_V1_AUX (| UC_X86_AVX10_V2_AUX,
+           U1095), 0 = none; fixed once the CPU exists */
         if (uc->arch != UC_ARCH_X86) {
             err = UC_ERR_ARG;
         } else if (rw == UC_CTL_IO_READ) {
@@ -3356,7 +3356,8 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             int version = va_arg(args, int);
             int v = version & UC_X86_AVX10_VERSION;
             if (uc->init_done ||
-                (version & ~(UC_X86_AVX10_VERSION | UC_X86_AVX10_V1_AUX)) ||
+                (version & ~(UC_X86_AVX10_VERSION | UC_X86_AVX10_V1_AUX |
+                             UC_X86_AVX10_V2_AUX)) ||
                 v > UC_X86_AVX10_2 || (version && !v)) {
                 err = UC_ERR_ARG;
             } else {
