@@ -721,7 +721,8 @@ static bool novmp_canonical(CPUX86State *env, uint64_t addr)
  * Technologies Specification 336907-007 rev. 1.7, 4.1-4.2). U1022: without TME_EN, RDMSR and
  * WRMSR of these MSRs raise #GP(0) (SDM Vol4 2.1: an MSR the processor does not support "will
  * generate an exception"; MKTME Table 4-3 "WRMSR when not enumerated. #GP(0)"); an API access
- * is dropped / reads 0.
+ * is dropped / reads 0. U1060: the MSRs are in the U905 MSR list (msr_present); an API access
+ * that would #GP(0) returns UC_ERR_EXCEPTION and changes nothing.
  *   IA32_TME_CAPABILITY (981H): NOVMP_TME_CAPABILITY, read-only (WRMSR #GP(0)).
  *   IA32_TME_ACTIVATE (982H): U1022: a write while locked (bit 0) is ignored - SDM Vol4 Table 2-2
  *     982H: "Any write to the following MSRs will be ignored after they are locked"; the MKTME
@@ -1157,6 +1158,22 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return MF_X1EDX(CPUID_EXT2_RDTSCP) || MF_7ECX(CPUID_7_0_ECX_RDPID);
     case MSR_VM_HSAVE_PA:
         return MF_X1ECX(CPUID_EXT3_SVM);
+#if __Use_Original_Qemu != 1 /* ours (U1060) */
+    /*
+     * NoVmp (ledger U1060): the TME / TME-MK MSRs of U1020. SDM Vol4 Table 2-2 981H-984H: "If
+     * CPUID.07H.00H:ECX[13] = 1"; 87H has no comment-column condition there (its fields are
+     * "supported on all parts that enumerate support for Intel TME-MK"), MKTME spec 336907-007
+     * 4.1.1: "CPUID.TME ... enumerates the existence of these five architectural MSRs" (981H-984H
+     * and 87H). The model's IA32_TME_CAPABILITY enumerates TME-MK (MK_TME_MAX_KEYID_BITS = 6),
+     * so all five follow TME_EN, as U1020 / U1022 gate them.
+     */
+    case MSR_IA32_MKTME_KEYID_PARTITIONING:
+    case MSR_IA32_TME_CAPABILITY:
+    case MSR_IA32_TME_ACTIVATE:
+    case MSR_IA32_TME_EXCLUDE_MASK:
+    case MSR_IA32_TME_EXCLUDE_BASE:
+        return MF_7ECX(CPUID_7_0_ECX_TME);
+#endif /* __Use_Original_Qemu (U1060) */
     default:
         break;
     }
@@ -1784,10 +1801,17 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_TME_EXCLUDE_MASK:
     case MSR_IA32_TME_EXCLUDE_BASE:
     case MSR_IA32_MKTME_KEYID_PARTITIONING:
-        /* NoVmp (ledger U1020, U1022): see tme_wrmsr; an API write that would #GP is dropped */
-        if ((!tme_enumerated(env) || !tme_wrmsr(env, (uint32_t)env->regs[R_ECX], val)) &&
-            !env->msr_api) {
-            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        /*
+         * NoVmp (ledger U1020, U1022): see tme_wrmsr. U1060: presence is checked by the U905
+         * MSR list (msr_present); an API write that would #GP(0) writes nothing and returns
+         * UC_ERR_EXCEPTION (msr_api_err), as every access U905 / U906 refuse (was: dropped, OK)
+         */
+        if (!tme_enumerated(env) || !tme_wrmsr(env, (uint32_t)env->regs[R_ECX], val)) {
+            if (env->msr_api) {
+                env->msr_api_err = 1;
+            } else {
+                raise_exception_ra(env, EXCP0D_GPF, GETPC());
+            }
         }
         break;
 #endif /* __Use_Original_Qemu (U1020) */
@@ -2278,7 +2302,7 @@ void helper_rdmsr(CPUX86State *env)
     case MSR_IA32_TME_EXCLUDE_MASK:
     case MSR_IA32_TME_EXCLUDE_BASE:
     case MSR_IA32_MKTME_KEYID_PARTITIONING:
-        /* NoVmp (ledger U1020): tme_rdmsr; U1022: #GP(0) without TME_EN (API read: 0) */
+        /* NoVmp (ledger U1020): tme_rdmsr; U1022: #GP(0) without TME_EN (U1060: msr_present) */
         if (!tme_enumerated(env) && !env->msr_api) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }

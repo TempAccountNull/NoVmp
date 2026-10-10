@@ -22757,7 +22757,8 @@ static void pc_cpuid(PcCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
  * x..x100b / not-committed outcomes, the lock); IA32_TME_EXCLUDE_MASK / _BASE (983H / 984H:
  * reserved bits, contiguous mask, #GP once locked); IA32_MKTME_KEYID_PARTITIONING (87H, R/O);
  * API writes that would #GP are dropped; a uc_context restore brings back the unlocked state;
- * a model without TME_EN (Haswell) leaves the MSRs unknown (ignored, read 0).
+ * a model without TME_EN (Haswell): RDMSR / WRMSR #GP(0); the API gets UC_ERR_EXCEPTION (U905 MSR
+ * list, U1060).
  */
 static void test_x86_pc_tme_msrs(void)
 {
@@ -22859,7 +22860,8 @@ static void test_x86_pc_tme_msrs(void)
     TEST_CHECK(pc_rdmsr(&c, 0x87) == 63);
     OK(uc_close(c.uc));
 
-    /* a model without TME_EN (U1022): RDMSR / WRMSR of the five MSRs #GP(0); API reads 0 */
+    /* a model without TME_EN (U1022): RDMSR / WRMSR of the five MSRs #GP(0); the API gets
+       UC_ERR_EXCEPTION and m.value is not written (U905 MSR list, U1060; was: reads 0) */
     pc_open_mode(&c, UC_MODE_64, UC_CPU_X86_HASWELL);
     pc_cpuid(&c, 7, 0, r);
     TEST_CHECK(!(r[2] & (1u << 13)));
@@ -22872,8 +22874,9 @@ static void test_x86_pc_tme_msrs(void)
             TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
             m.rid = msrs[i];
             m.value = 0x1234;
-            OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
-            TEST_CHECK(m.value == 0);
+            TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+            TEST_CHECK(m.value == 0x1234);
+            TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
         }
     }
     v = 2;
@@ -26207,6 +26210,83 @@ static void test_x86_rc_bounds(void)
     rc_bounds_one(vrsqrt14ps, 32, 24, 1, b14, 0, 65521, 65536);
 }
 /* ---- end U940-U959 (rc_) ---- */
+/*
+ * ---- NoVmp U1060-U1069 (integ_): integration of fix5 / sysmsr / xeonphi / apic / rcp14 / pconfig ----
+ */
+/* an engine with the MAX model in 64-bit mode */
+static uc_engine *ig_open(void)
+{
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    return uc;
+}
+
+static uint64_t ig_msr(uc_engine *uc, uint32_t msr)
+{
+    uc_x86_msr m = {msr, 0x5555};
+
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static uc_err ig_wmsr(uc_engine *uc, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m = {msr, v};
+
+    return uc_reg_write(uc, UC_X86_REG_MSR, &m);
+}
+
+/*
+ * U1060: the TME / TME-MK MSRs through the API on the MAX model (TME_EN): a write the
+ * instruction would refuse with #GP(0) returns UC_ERR_EXCEPTION and changes nothing (U905
+ * contract; U1020 dropped it); accepted writes are stored; a uc_context image takes a plain
+ * store, the activation (lock) reaches the live CPU only on restore.
+ */
+static void test_x86_ig_tme_api(void)
+{
+    const uint64_t cap = 0xfULL | (1ULL << 31) | (6ULL << 32) | (63ULL << 36);
+    const uint64_t act = 2 | 0x20 | (6ULL << 32) | (2ULL << 36) | (5ULL << 48);
+    uc_engine *uc = ig_open();
+    uc_context *ctx;
+    uc_x86_msr m;
+
+    TEST_CHECK(ig_msr(uc, 0x981) == cap);
+    TEST_CHECK(ig_wmsr(uc, 0x981, 0) == UC_ERR_EXCEPTION);          /* read-only */
+    TEST_CHECK(ig_wmsr(uc, 0x87, 0) == UC_ERR_EXCEPTION);           /* read-only */
+    TEST_CHECK(ig_wmsr(uc, 0x982, 1ULL << 8) == UC_ERR_EXCEPTION);  /* reserved bit */
+    TEST_CHECK(ig_wmsr(uc, 0x982, 0x10) == UC_ERR_EXCEPTION);       /* integrity policy */
+    TEST_CHECK(ig_msr(uc, 0x982) == 0);
+    TEST_CHECK(ig_wmsr(uc, 0x983, 0xff0f000800ULL) == UC_ERR_EXCEPTION);   /* gap */
+    TEST_CHECK(ig_msr(uc, 0x983) == 0);
+    OK(ig_wmsr(uc, 0x983, 0xfffff00800ULL));
+    TEST_CHECK(ig_msr(uc, 0x983) == 0xfffff00800ULL);
+    OK(ig_wmsr(uc, 0x984, 0x7654321000ULL));
+    TEST_CHECK(ig_wmsr(uc, 0x984, 0x800) == UC_ERR_EXCEPTION);      /* bit 11 reserved */
+    TEST_CHECK(ig_msr(uc, 0x984) == 0x7654321000ULL);
+
+    /* the activation written into a context image: the live MSRs stay unlocked */
+    OK(uc_context_alloc(uc, &ctx));
+    OK(uc_context_save(uc, ctx));
+    m.rid = 0x982;
+    m.value = act;
+    OK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(ig_msr(uc, 0x982) == 0 && ig_msr(uc, 0x87) == 0);
+    m.value = 0;
+    OK(uc_context_reg_read(ctx, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == (act | 3));
+    m.rid = 0x984;
+    m.value = 0;
+    TEST_CHECK(uc_context_reg_write(ctx, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);  /* locked */
+    OK(uc_context_restore(uc, ctx));
+    TEST_CHECK(ig_msr(uc, 0x982) == (act | 3) && ig_msr(uc, 0x87) == 15);
+    TEST_CHECK(ig_wmsr(uc, 0x984, 0) == UC_ERR_EXCEPTION);           /* locked */
+    TEST_CHECK(ig_msr(uc, 0x984) == 0x7654321000ULL);
+    OK(uc_context_free(ctx));
+    OK(uc_close(uc));
+}
+/* ---- end U1060-U1069 (integ_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -26561,4 +26641,5 @@ TEST_LIST = {
     {"test_x86_rc_bf16", test_x86_rc_bf16},
     {"test_x86_rc_legacy", test_x86_rc_legacy},
     {"test_x86_rc_bounds", test_x86_rc_bounds},
+    {"test_x86_ig_tme_api", test_x86_ig_tme_api},
     {NULL, NULL}};
