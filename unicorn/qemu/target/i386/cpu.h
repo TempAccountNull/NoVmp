@@ -1645,7 +1645,12 @@ typedef struct {
 #endif
 #endif /* __Use_Original_Qemu (U611) */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U907) */
 #define MAX_FIXED_COUNTERS 3
+#else /* ours (U907) */
+/* NoVmp (ledger U907): IA32_FIXED_CTR0-6 (SDM Vol4 Table 2-2, 309H-30FH) */
+#define MAX_FIXED_COUNTERS 7
+#endif /* __Use_Original_Qemu (U907) */
 #define MAX_GP_COUNTERS    (MSR_IA32_PERF_STATUS - MSR_P6_EVNTSEL0)
 
 #define TARGET_INSN_START_EXTRA_WORDS 1

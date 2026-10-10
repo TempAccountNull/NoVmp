@@ -372,6 +372,9 @@ Add-Hw 'cases_pconfig_hw' 'hw pconfig'
 # would enter the host kernel, and WRMSR/RDMSR are CPL0 instructions).
 Add-Exp 'cases_sysmsr' 'cases_sysmsr' 'sysmsr expect'
 Add-PySelftest 'ref_sysmsr_selftest' 'sysmsr tools' 'ref_sysmsr.py'
+# U907: the architectural PMU MSRs as storage, with a CPUID profile that enumerates a version-4 PMU
+# (cpuid_sysmsr_pmu.txt: the i5-13600K capture with leaf 0AH replaced), non-strict (MAX features)
+Add-Exp 'cases_sysmsr_pmu' 'cases_sysmsr_pmu' 'sysmsr expect' @( '--cpuid', ( Join-Path $D 'cpuid_sysmsr_pmu.txt' ), '--no-strict' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

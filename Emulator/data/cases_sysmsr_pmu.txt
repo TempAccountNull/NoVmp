@@ -1,0 +1,53 @@
+# Architectural performance-monitoring MSRs as storage (ledger U907): expected values from the independent
+# model Emulator/tools/isa/ref_sysmsr.py (regenerate with --write, do not edit). Unicorn only, MAX model with
+# the CPUID profile Emulator\data\cpuid_sysmsr_pmu.txt (leaf 0AH: version 4, 8 x 48-bit counters, 3 x 48-bit
+# fixed counters, AnyThread deprecated), non-strict:
+#   emu-alltest --cases Emulator\data\cases_sysmsr_pmu.txt --cpuid Emulator\data\cpuid_sysmsr_pmu.txt --no-strict --expect-only
+# SDM Vol4 Table 2-2, Vol3B 21.2 (21.2.1 IA32_PMCx: "the lower-order 32 bits ... may be written with any value, and
+# the high-order bits are sign-extended from the value of bit 31"; fixed counters: "bits beyond the width ... are
+# reserved"), Vol2B RDPMC. Nothing counts: every counter keeps the value written (no event model).
+mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0x7300804 rbx=0 rcx=0 rdx=0x8603
+# IA32_PMC0: EAX sign-extended to 48 bits, EDX ignored; RDPMC reads it
+mov ecx, 0xC1; mov eax, 0x80000000; mov edx, 0x1234; wrmsr; mov ecx, 0xC1; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x0; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000000 r9=0xFFFF80000000
+mov ecx, 0xC2; mov eax, 0x80000001; mov edx, 0x1234; wrmsr; mov ecx, 0xC2; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x1; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000001 r9=0xFFFF80000001
+mov ecx, 0xC3; mov eax, 0x80000002; mov edx, 0x1234; wrmsr; mov ecx, 0xC3; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x2; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000002 r9=0xFFFF80000002
+mov ecx, 0xC4; mov eax, 0x80000003; mov edx, 0x1234; wrmsr; mov ecx, 0xC4; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000003 r9=0xFFFF80000003
+mov ecx, 0xC5; mov eax, 0x80000004; mov edx, 0x1234; wrmsr; mov ecx, 0xC5; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x4; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000004 r9=0xFFFF80000004
+mov ecx, 0xC6; mov eax, 0x80000005; mov edx, 0x1234; wrmsr; mov ecx, 0xC6; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x5; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000005 r9=0xFFFF80000005
+mov ecx, 0xC7; mov eax, 0x80000006; mov edx, 0x1234; wrmsr; mov ecx, 0xC7; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x6; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000006 r9=0xFFFF80000006
+mov ecx, 0xC8; mov eax, 0x80000007; mov edx, 0x1234; wrmsr; mov ecx, 0xC8; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x7; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFF80000007 r9=0xFFFF80000007
+mov ecx, 0xC1; mov eax, 0x7FFFFFFF; mov edx, 0x0; wrmsr; mov ecx, 0xC1; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x0; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0x7FFFFFFF r9=0x7FFFFFFF
+# IA32_PMC8 / IA32_PERFEVTSEL8 / IA32_A_PMC0 / IA32_PERF_CAPABILITIES do not exist
+mov ecx, 0xC9; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! #GP(0)
+mov ecx, 0x18E; mov eax, 0x0; mov edx, 0x0; wrmsr =>! #GP(0)
+mov ecx, 0x4C1; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! #GP(0)
+mov ecx, 0x345; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! #GP(0)
+# IA32_PERFEVTSELx: 63:32 reserved, AnyThread (21) deprecated
+mov ecx, 0x186; mov eax, 0x4300C0; mov edx, 0x0; wrmsr; mov ecx, 0x186; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0x4300C0
+mov ecx, 0x18D; mov eax, 0xFFDFFFFF; mov edx, 0x0; wrmsr; mov ecx, 0x18D; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0xFFDFFFFF
+mov ecx, 0x186; mov eax, 0x2000C0; mov edx, 0x0; wrmsr =>! #GP(0)
+mov ecx, 0x186; mov eax, 0xC0; mov edx, 0x1; wrmsr =>! #GP(0)
+# IA32_FIXED_CTR0-2: 48 bits, bits 63:48 reserved; RDPMC 40000000H+m
+mov ecx, 0x309; mov eax, 0xFFFFFFFF; mov edx, 0xFFFF; wrmsr; mov ecx, 0x309; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x40000000; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0xFFFFFFFFFFFF r9=0xFFFFFFFFFFFF
+mov ecx, 0x30B; mov eax, 0x56789ABC; mov edx, 0x1234; wrmsr; mov ecx, 0x30B; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x40000002; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! r8=0x123456789ABC r9=0x123456789ABC
+mov ecx, 0x30A; mov eax, 0x0; mov edx, 0x10000; wrmsr =>! #GP(0)
+mov ecx, 0x30C; mov eax, 0x0; mov edx, 0x0; wrmsr =>! #GP(0)
+mov ecx, 0x40000003; rdpmc; shl rdx, 32; or rax, rdx; mov r9, rax =>! #GP(0)
+# IA32_FIXED_CTR_CTRL: EN_OS, EN_USR, PMI of counters 0-2
+mov ecx, 0x38D; mov eax, 0xBBB; mov edx, 0x0; wrmsr; mov ecx, 0x38D; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0xBBB
+mov ecx, 0x38D; mov eax, 0x4; mov edx, 0x0; wrmsr =>! #GP(0)
+mov ecx, 0x38D; mov eax, 0xB000; mov edx, 0x0; wrmsr =>! #GP(0)
+# IA32_PERF_GLOBAL_CTRL: the enumerated counters
+mov ecx, 0x38F; mov eax, 0xFF; mov edx, 0x7; wrmsr; mov ecx, 0x38F; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0x7000000FF
+mov ecx, 0x38F; mov eax, 0x100; mov edx, 0x0; wrmsr =>! #GP(0)
+mov ecx, 0x38F; mov eax, 0x0; mov edx, 0x8; wrmsr =>! #GP(0)
+# IA32_PERF_GLOBAL_STATUS: R/O; 391H sets and 390H clears its bits
+mov ecx, 0x38E; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x38E; mov eax, 0x0; mov edx, 0x0; wrmsr =>! #GP(0) r8=0x0
+mov ecx, 0x391; mov eax, 0x83; mov edx, 0x4C000007; wrmsr; mov ecx, 0x38E; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x390; mov eax, 0x1; mov edx, 0x4000000; wrmsr; mov ecx, 0x38E; rdmsr; shl rdx, 32; or rax, rdx; mov r9, rax; mov ecx, 0x390; rdmsr; shl rdx, 32; or rax, rdx; mov r10, rax; mov ecx, 0x391; rdmsr; shl rdx, 32; or rax, rdx; mov r11, rax =>! r8=0x4C00000700000083 r9=0x4800000700000082 r10=0x0 r11=0x0
+mov ecx, 0x391; mov eax, 0x0; mov edx, 0x20000000; wrmsr; mov ecx, 0x38E; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0x2000000000000000
+mov ecx, 0x391; mov eax, 0x0; mov edx, 0x80000000; wrmsr =>! #GP(0)
+mov ecx, 0x390; mov eax, 0x0; mov edx, 0x80000000; wrmsr =>! 
+mov ecx, 0x390; mov eax, 0x0; mov edx, 0x10000; wrmsr =>! #GP(0)
+# IA32_PERF_GLOBAL_INUSE (R/O): event select [7:0] != 0, fixed enable bits, PMI (INT / PMI) in use
+mov ecx, 0x186; mov eax, 0x5300C0; mov edx, 0x0; wrmsr; mov ecx, 0x18A; mov eax, 0x4300C0; mov edx, 0x0; wrmsr; mov ecx, 0x38D; mov eax, 0x30; mov edx, 0x0; wrmsr; mov ecx, 0x392; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0x8000000200000011
+mov ecx, 0x38D; mov eax, 0x800; mov edx, 0x0; wrmsr; mov ecx, 0x392; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x392; mov eax, 0x0; mov edx, 0x0; wrmsr =>! #GP(0) r8=0x8000000000000000

@@ -24053,6 +24053,66 @@ static void test_x86_sm_msr_values(void)
     }
     OK(uc_close(c.uc));
 }
+/*
+ * U907: the architectural PMU MSRs as storage, PMU from a (non-strict) CPUID profile: version 4,
+ * 8 counters of 48 bits, 3 fixed counters of 40 bits, AnyThread allowed (EDX[15] = 0).
+ */
+static void test_x86_sm_pmu(void)
+{
+    const uc_x86_cpuid prof[2] = {
+        {0, 0, 0x20, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {0xa, 0, 0x07300804, 0, 0, (40 << 5) | 3},
+    };
+    SmCtx c;
+    uint64_t v;
+
+    sm_open(&c, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof, 2));
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    /* IA32_PMC3: EAX sign-extended into the 48-bit counter; RDPMC 3 reads it */
+    v = 0x0000123480000007ULL;
+    TEST_CHECK(sm_insn_msr(&c, 0xc4, 1, &v) == -1);
+    TEST_CHECK(sm_insn_msr(&c, 0xc4, 0, &v) == -1 && v == 0x0000ffff80000007ULL);
+    sm_set(&c, UC_X86_REG_RCX, 3);
+    OK(uc_mem_write(c.uc, code_start, "\x0f\x33", 2));
+    OK(uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RAX) == 0x80000007 && sm_get(&c, UC_X86_REG_RDX) == 0xffff);
+    /* IA32_FIXED_CTR2: 40 bits; RDPMC 40000002H */
+    v = 0xffffffffffULL;
+    TEST_CHECK(sm_insn_msr(&c, 0x30b, 1, &v) == -1);
+    v = 0x10000000000ULL;
+    TEST_CHECK(sm_insn_msr(&c, 0x30b, 1, &v) == 13);
+    sm_set(&c, UC_X86_REG_RCX, 0x40000002);
+    OK(uc_mem_write(c.uc, code_start, "\x0f\x33", 2));
+    OK(uc_emu_start(c.uc, code_start, code_start + 2, 0, 0));
+    TEST_CHECK(sm_get(&c, UC_X86_REG_RAX) == 0xffffffff && sm_get(&c, UC_X86_REG_RDX) == 0xff);
+    /* AnyThread allowed (version 4, EDX[15] = 0): PERFEVTSEL bit 21, FIXED_CTR_CTRL bit 2 */
+    v = 0x6000c0;
+    TEST_CHECK(sm_insn_msr(&c, 0x187, 1, &v) == -1);
+    v = 0xfff;
+    TEST_CHECK(sm_insn_msr(&c, 0x38d, 1, &v) == -1);
+    /* IA32_PERF_GLOBAL_INUSE: PERFEVTSEL1, fixed 0-2, PMI */
+    TEST_CHECK(sm_insn_msr(&c, 0x392, 0, &v) == -1 && v == 0x8000000700000002ULL);
+    TEST_MSG("inuse %llx", (unsigned long long)v);
+    /* STATUS_SET / STATUS_RESET */
+    v = 0x4000000000000081ULL;
+    TEST_CHECK(sm_insn_msr(&c, 0x391, 1, &v) == -1);
+    v = 0x80;
+    TEST_CHECK(sm_insn_msr(&c, 0x390, 1, &v) == -1);
+    TEST_CHECK(sm_insn_msr(&c, 0x38e, 0, &v) == -1 && v == 0x4000000000000001ULL);
+    /* the API writes and reads them too */
+    {
+        uc_x86_msr m = {0xc1, 0x1234};
+
+        OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+        m.value = 0;
+        OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+        TEST_CHECK(m.value == 0x1234);
+        m.rid = 0x38e;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    }
+    OK(uc_close(c.uc));
+}
 /* ---- end U900-U929 (sm_) ---- */
 
 TEST_LIST = {
@@ -24378,4 +24438,5 @@ TEST_LIST = {
     {"test_x86_sm_sysexit", test_x86_sm_sysexit},
     {"test_x86_sm_msr_present", test_x86_sm_msr_present},
     {"test_x86_sm_msr_values", test_x86_sm_msr_values},
+    {"test_x86_sm_pmu", test_x86_sm_pmu},
     {NULL, NULL}};

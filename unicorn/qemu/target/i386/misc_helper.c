@@ -374,6 +374,238 @@ void helper_rdtscp(CPUX86State *env)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U907) */
+/*
+ * NoVmp (ledger U907, decision A17): the architectural performance-monitoring MSRs (SDM Vol4 Table
+ * 2-2, Vol3B 21.2 "Architectural Performance Monitoring") as storage, enumerated by CPUID leaf 0AH
+ * as the guest sees it (the built-in models report version 0: no PMU; a UC_CTL_X86_CPUID profile can
+ * report one, as for RDPMC, U595):
+ *   IA32_PMCx (C1H+x) and IA32_PERFEVTSELx (186H+x) for x < CPUID.0AH:EAX[15:8] or
+ *   CPUID.23H.01H:EAX[x] (x <= 9: Table 2-2 lists PMC0-9); IA32_A_PMCx (4C1H+x) only with
+ *   CPUID.23H.01H:EAX[x] (IA32_PERF_CAPABILITIES.FW_WRITE reads 0); IA32_FIXED_CTRm (309H+m, m <=
+ *   6) for m < CPUID.0AH:EDX[4:0], CPUID.0AH:ECX[m] or CPUID.23H.01H:EBX[m]; IA32_FIXED_CTR_CTRL
+ *   (38DH) with version > 1; IA32_PERF_GLOBAL_STATUS (38EH, R/O) and IA32_PERF_GLOBAL_CTRL (38FH)
+ *   with version > 0; 390H (IA32_PERF_GLOBAL_OVF_CTRL, versions 2-3, IA32_PERF_GLOBAL_STATUS_RESET
+ *   from version 4) with version > 1; IA32_PERF_GLOBAL_STATUS_SET (391H) and
+ *   IA32_PERF_GLOBAL_INUSE (392H, R/O) with version > 3; IA32_PERF_CAPABILITIES (345H, R/O, reads
+ *   0) with CPUID.01H:ECX.PDCM.
+ * Writes: IA32_PMCx takes EAX sign-extended from bit 31 (Vol3B 21.2.1: EDX is ignored), kept to the
+ * counter width CPUID.0AH:EAX[23:16]; IA32_A_PMCx / IA32_FIXED_CTRm: bits at or above the width
+ * (CPUID.0AH:EAX[23:16] / EDX[12:5]) are reserved (#GP(0)); IA32_PERFEVTSELx: 63:32 reserved, AnyThread
+ * (21) only with version > 2 and CPUID.0AH:EDX[15] = 0 (Vol3B: "a non-zero write of a field that is
+ * introduced in a later ... version results in #GP"); IA32_FIXED_CTR_CTRL: EN_OS / EN_USR / PMI (and
+ * AnyThread as above) of the enumerated counters 0-3 (Table 2-2 defines no fields for 4-6);
+ * IA32_PERF_GLOBAL_CTRL: the enumerated counters; 390H clears and 391H sets bits of
+ * IA32_PERF_GLOBAL_STATUS (overflow bits of the enumerated counters, 58-59 from version 4, 61 from
+ * version 3, 62, and 63 for 390H only); both read 0 (our choice: their bits act on write).
+ * Nothing counts (no event model): the counters keep the values written, no overflow or PMI ever
+ * happens, IA32_PERF_GLOBAL_INUSE is computed from the event selects / FIXED_CTR_CTRL. RDPMC reads
+ * the stored counter (U907, was 0).
+ */
+#define PMU_GP_MAX      10
+#define PMU_FIX_MAX     MAX_FIXED_COUNTERS
+
+typedef struct X86Pmu {
+    int version;
+    uint32_t gp, fix, a_pmc;        /* counters present (bit x) */
+    int gp_width, fix_width;
+    bool anythread;
+} X86Pmu;
+
+static void x86_pmu(CPUX86State *env, X86Pmu *p)
+{
+    uint32_t a, b, c, d, max, a23 = 0, b23 = 0, x;
+    int i;
+
+    memset(p, 0, sizeof(*p));
+    cpu_x86_cpuid(env, 0, 0, &max, &x, &x, &x);
+    if (max < 0xa) {
+        return;
+    }
+    cpu_x86_cpuid(env, 0xa, 0, &a, &b, &c, &d);
+    p->version = a & 0xff;
+    if (!p->version) {
+        return;
+    }
+    if (max >= 0x23) {
+        cpu_x86_cpuid(env, 0x23, 1, &a23, &b23, &x, &x);
+    }
+    for (i = 0; i < PMU_GP_MAX; i++) {
+        if (i < (int)((a >> 8) & 0xff) || ((a23 >> i) & 1)) {
+            p->gp |= 1u << i;
+        }
+        if ((a23 >> i) & 1) {
+            p->a_pmc |= 1u << i;
+        }
+    }
+    for (i = 0; i < PMU_FIX_MAX; i++) {
+        if (i < (int)(d & 0x1f) || ((c >> i) & 1) || ((b23 >> i) & 1)) {
+            p->fix |= 1u << i;
+        }
+    }
+    p->gp_width = (a >> 16) & 0xff;
+    p->fix_width = (d >> 5) & 0xff;
+    p->anythread = p->version > 2 && !(d & (1u << 15));
+}
+
+static uint64_t pmu_width_mask(int w)
+{
+    return w >= 64 ? ~0ULL : (1ULL << w) - 1;
+}
+
+/* IA32_PERF_GLOBAL_STATUS bits that exist (390H / 391H act on them) */
+static uint64_t pmu_status_bits(const X86Pmu *p, bool set)
+{
+    return p->gp | ((uint64_t)p->fix << 32) | (p->version > 3 ? (3ULL << 58) : 0) |
+           (p->version > 2 ? (1ULL << 61) : 0) | (1ULL << 62) | (set ? 0 : (1ULL << 63));
+}
+
+/* 0: not a PMU MSR of this model; 1: present */
+static bool pmu_msr(CPUX86State *env, uint32_t msr, const X86Pmu *p)
+{
+    if (msr == 0x345) {
+        return (env->features[FEAT_1_ECX] & CPUID_EXT_PDCM) &&
+               (x86_cpuid_profile_mask(env, 1, 0, 2) & CPUID_EXT_PDCM);
+    }
+    if (msr >= MSR_P6_PERFCTR0 && msr < MSR_P6_PERFCTR0 + PMU_GP_MAX) {
+        return (p->gp >> (msr - MSR_P6_PERFCTR0)) & 1;
+    }
+    if (msr >= 0x4c1 && msr < 0x4c1 + PMU_GP_MAX) {
+        return (p->a_pmc >> (msr - 0x4c1)) & 1;
+    }
+    if (msr >= MSR_P6_EVNTSEL0 && msr < MSR_P6_EVNTSEL0 + PMU_GP_MAX) {
+        return (p->gp >> (msr - MSR_P6_EVNTSEL0)) & 1;
+    }
+    if (msr >= MSR_CORE_PERF_FIXED_CTR0 && msr < MSR_CORE_PERF_FIXED_CTR0 + PMU_FIX_MAX) {
+        return (p->fix >> (msr - MSR_CORE_PERF_FIXED_CTR0)) & 1;
+    }
+    switch (msr) {
+    case MSR_CORE_PERF_FIXED_CTR_CTRL:
+    case MSR_CORE_PERF_GLOBAL_OVF_CTRL:     /* 390H */
+        return p->version > 1;
+    case MSR_CORE_PERF_GLOBAL_STATUS:
+    case MSR_CORE_PERF_GLOBAL_CTRL:
+        return p->version > 0;
+    case 0x391:
+    case 0x392:
+        return p->version > 3;
+    default:
+        return false;
+    }
+}
+
+static uint64_t pmu_fixed_ctrl_valid(const X86Pmu *p)
+{
+    uint64_t v = 0;
+    int m;
+
+    for (m = 0; m < 4; m++) {
+        if ((p->fix >> m) & 1) {
+            v |= (uint64_t)(0xb | (p->anythread ? 4 : 0)) << (4 * m);
+        }
+    }
+    return v;
+}
+
+/* the value check of a PMU MSR (false: #GP(0)) */
+static bool pmu_write_ok(CPUX86State *env, uint32_t msr, uint64_t val, const X86Pmu *p)
+{
+    if (msr == 0x345 || msr == MSR_CORE_PERF_GLOBAL_STATUS || msr == 0x392) {
+        return false;                                   /* R/O */
+    }
+    if (msr >= MSR_P6_PERFCTR0 && msr < MSR_P6_PERFCTR0 + PMU_GP_MAX) {
+        return true;                                    /* EAX sign-extended, EDX ignored */
+    }
+    if (msr >= 0x4c1 && msr < 0x4c1 + PMU_GP_MAX) {
+        return !(val & ~pmu_width_mask(p->gp_width));
+    }
+    if (msr >= MSR_P6_EVNTSEL0 && msr < MSR_P6_EVNTSEL0 + PMU_GP_MAX) {
+        return !(val & ~(0xffffffffULL & ~(p->anythread ? 0 : (1ULL << 21))));
+    }
+    if (msr >= MSR_CORE_PERF_FIXED_CTR0 && msr < MSR_CORE_PERF_FIXED_CTR0 + PMU_FIX_MAX) {
+        return !(val & ~pmu_width_mask(p->fix_width));
+    }
+    switch (msr) {
+    case MSR_CORE_PERF_FIXED_CTR_CTRL:
+        return !(val & ~pmu_fixed_ctrl_valid(p));
+    case MSR_CORE_PERF_GLOBAL_CTRL:
+        return !(val & ~(p->gp | ((uint64_t)p->fix << 32)));
+    case MSR_CORE_PERF_GLOBAL_OVF_CTRL:
+        return !(val & ~pmu_status_bits(p, false));
+    case 0x391:
+        return !(val & ~pmu_status_bits(p, true));
+    default:
+        return true;
+    }
+}
+
+static void pmu_write(CPUX86State *env, uint32_t msr, uint64_t val, const X86Pmu *p)
+{
+    if (msr >= MSR_P6_PERFCTR0 && msr < MSR_P6_PERFCTR0 + PMU_GP_MAX) {
+        env->msr_gp_counters[msr - MSR_P6_PERFCTR0] =
+            (uint64_t)(int64_t)(int32_t)val & pmu_width_mask(p->gp_width);
+    } else if (msr >= 0x4c1 && msr < 0x4c1 + PMU_GP_MAX) {
+        env->msr_gp_counters[msr - 0x4c1] = val;
+    } else if (msr >= MSR_P6_EVNTSEL0 && msr < MSR_P6_EVNTSEL0 + PMU_GP_MAX) {
+        env->msr_gp_evtsel[msr - MSR_P6_EVNTSEL0] = val;
+    } else if (msr >= MSR_CORE_PERF_FIXED_CTR0 && msr < MSR_CORE_PERF_FIXED_CTR0 + PMU_FIX_MAX) {
+        env->msr_fixed_counters[msr - MSR_CORE_PERF_FIXED_CTR0] = val;
+    } else if (msr == MSR_CORE_PERF_FIXED_CTR_CTRL) {
+        env->msr_fixed_ctr_ctrl = val;
+    } else if (msr == MSR_CORE_PERF_GLOBAL_CTRL) {
+        env->msr_global_ctrl = val;
+    } else if (msr == MSR_CORE_PERF_GLOBAL_OVF_CTRL) {
+        env->msr_global_status &= ~val;
+    } else if (msr == 0x391) {
+        env->msr_global_status |= val;
+    }
+}
+
+static uint64_t pmu_read(CPUX86State *env, uint32_t msr, const X86Pmu *p)
+{
+    if (msr >= MSR_P6_PERFCTR0 && msr < MSR_P6_PERFCTR0 + PMU_GP_MAX) {
+        return env->msr_gp_counters[msr - MSR_P6_PERFCTR0];
+    }
+    if (msr >= 0x4c1 && msr < 0x4c1 + PMU_GP_MAX) {
+        return env->msr_gp_counters[msr - 0x4c1];
+    }
+    if (msr >= MSR_P6_EVNTSEL0 && msr < MSR_P6_EVNTSEL0 + PMU_GP_MAX) {
+        return env->msr_gp_evtsel[msr - MSR_P6_EVNTSEL0];
+    }
+    if (msr >= MSR_CORE_PERF_FIXED_CTR0 && msr < MSR_CORE_PERF_FIXED_CTR0 + PMU_FIX_MAX) {
+        return env->msr_fixed_counters[msr - MSR_CORE_PERF_FIXED_CTR0];
+    }
+    switch (msr) {
+    case MSR_CORE_PERF_FIXED_CTR_CTRL:
+        return env->msr_fixed_ctr_ctrl;
+    case MSR_CORE_PERF_GLOBAL_CTRL:
+        return env->msr_global_ctrl;
+    case MSR_CORE_PERF_GLOBAL_STATUS:
+        return env->msr_global_status;
+    case 0x392: {
+        /* Vol3B 21.2.6: PERFEVTSELn[7:0] != 0; the fixed counter's enable bits != 0; PMI in use */
+        uint64_t v = 0;
+        bool pmi = false;
+        int i;
+
+        for (i = 0; i < PMU_GP_MAX; i++) {
+            if ((p->gp >> i) & 1) {
+                v |= (uint64_t)((env->msr_gp_evtsel[i] & 0xff) != 0) << i;
+                pmi |= (env->msr_gp_evtsel[i] >> 20) & 1;
+            }
+        }
+        for (i = 0; i < 4; i++) {
+            v |= (uint64_t)(((env->msr_fixed_ctr_ctrl >> (4 * i)) & 3) != 0) << (32 + i);
+            pmi |= (env->msr_fixed_ctr_ctrl >> (4 * i + 3)) & 1;
+        }
+        return v | ((uint64_t)pmi << 63);
+    }
+    default:
+        return 0;                                       /* 345H, 390H, 391H */
+    }
+}
+
+#endif /* __Use_Original_Qemu (U907) */
 void helper_rdpmc(CPUX86State *env)
 {
     /* backport of QEMU c45b426acd: #GP(0) if CPL > 0 and CR4.PCE = 0 (SDM Vol2 RDPMC) */
@@ -406,7 +638,8 @@ void helper_rdpmc(CPUX86State *env)
      * and the emulator does not implement those MSRs (WRMSR to them is ignored, RDMSR reads
      * 0), so no counter can be enabled and every supported counter reads 0 - the same value
      * RDMSR returns for IA32_PMCx / IA32_FIXED_CTRx. Deterministic; documented in
-     * docs/quirks.md ("SDM undefined, our choice").
+     * docs/quirks.md ("SDM undefined, our choice"). U907: the MSRs are storage now and RDPMC
+     * reads the value last written (still nothing counts).
      */
     {
         uint32_t ecx = (uint32_t)env->regs[R_ECX];
@@ -431,8 +664,22 @@ void helper_rdpmc(CPUX86State *env)
         if (!ok) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
-        env->regs[R_EAX] = 0;
-        env->regs[R_EDX] = 0;
+#if __Use_Original_Qemu != 1 /* ours (U907) */
+        /* NoVmp (ledger U907): the stored counter (the PMU MSRs are storage, nothing counts) */
+        {
+            X86Pmu p;
+            uint64_t v = 0;
+
+            x86_pmu(env, &p);
+            if (type == 0 && idx < PMU_GP_MAX) {
+                v = env->msr_gp_counters[idx] & pmu_width_mask(p.gp_width);
+            } else if (type == 0x4000 && idx < PMU_FIX_MAX) {
+                v = env->msr_fixed_counters[idx] & pmu_width_mask(p.fix_width);
+            }
+            env->regs[R_EAX] = (uint32_t)v;
+            env->regs[R_EDX] = (uint32_t)(v >> 32);
+        }
+#endif /* __Use_Original_Qemu (U907) */
     }
 #endif /* __Use_Original_Qemu (U595) */
 }
@@ -1126,6 +1373,16 @@ static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t v
                : (msr != MSR_IA32_PRED_CMD && msr != MSR_IA32_FLUSH_CMD_NV))) {
         return true;
     }
+#if __Use_Original_Qemu != 1 /* ours (U907) */
+    {
+        X86Pmu p;
+
+        x86_pmu(env, &p);
+        if (pmu_msr(env, msr, &p) && (!write || pmu_write_ok(env, msr, val, &p))) {
+            return true;
+        }
+    }
+#endif /* __Use_Original_Qemu (U907) */
     if (env->msr_api) {
         env->msr_api_err = 1;
         return false;
@@ -1633,6 +1890,17 @@ void helper_wrmsr(CPUX86State *env)
         cpu_sync_bndcs_hflags(env);
         break;
     default:
+#if __Use_Original_Qemu != 1 /* ours (U907) */
+        {   /* the architectural PMU MSRs (storage) */
+            X86Pmu p;
+
+            x86_pmu(env, &p);
+            if (pmu_msr(env, (uint32_t)env->regs[R_ECX], &p)) {
+                pmu_write(env, (uint32_t)env->regs[R_ECX], val, &p);
+                break;
+            }
+        }
+#endif /* __Use_Original_Qemu (U907) */
         if ((uint32_t)env->regs[R_ECX] >= MSR_ARCH_LBR_FROM_0 &&
             (uint32_t)env->regs[R_ECX] <
             MSR_ARCH_LBR_FROM_0 + ARCH_LBR_NR_ENTRIES) {
@@ -2004,6 +2272,17 @@ void helper_rdmsr(CPUX86State *env)
         break;
 #endif /* __Use_Original_Qemu (U104) */
     default:
+#if __Use_Original_Qemu != 1 /* ours (U907) */
+        {   /* the architectural PMU MSRs (storage) */
+            X86Pmu p;
+
+            x86_pmu(env, &p);
+            if (pmu_msr(env, (uint32_t)env->regs[R_ECX], &p)) {
+                val = pmu_read(env, (uint32_t)env->regs[R_ECX], &p);
+                break;
+            }
+        }
+#endif /* __Use_Original_Qemu (U907) */
         if ((uint32_t)env->regs[R_ECX] >= MSR_ARCH_LBR_FROM_0 &&
             (uint32_t)env->regs[R_ECX] <
             MSR_ARCH_LBR_FROM_0 + ARCH_LBR_NR_ENTRIES) {

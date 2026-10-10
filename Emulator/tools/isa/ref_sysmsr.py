@@ -621,6 +621,192 @@ def cases_msr_values(a):
         pass
 
 
+# ---- architectural performance monitoring MSRs as storage (U907) ---------------------------------------
+# CPUID.0AH of Emulator\data\cpuid_sysmsr_pmu.txt: EAX 07300804h (version 4, 8 counters, 48 bits), EDX 8603h
+# (3 fixed counters, 48 bits, AnyThread deprecated); CPUID.23H not enumerated (leaf 23H not in the profile).
+PMU = dict(version=4, gp=8, gp_width=48, fix=3, fix_width=48, anythread=False)
+
+
+class PmuModel:
+    def __init__(self, p=PMU):
+        self.p = p
+        self.pmc = [0] * 10
+        self.sel = [0] * 10
+        self.fix = [0] * 7
+        self.fctrl = 0
+        self.gctrl = 0
+        self.status = 0
+
+    def status_bits(self, set_):
+        p = self.p
+        v = ((1 << p['gp']) - 1) | (((1 << p['fix']) - 1) << 32) | (1 << 62)
+        if p['version'] > 3:
+            v |= 3 << 58
+        if p['version'] > 2:
+            v |= 1 << 61
+        if not set_:
+            v |= 1 << 63
+        return v
+
+    def present(self, msr):
+        p = self.p
+        if 0xC1 <= msr < 0xC1 + 10:
+            return msr - 0xC1 < p['gp']
+        if 0x186 <= msr < 0x186 + 10:
+            return msr - 0x186 < p['gp']
+        if 0x309 <= msr < 0x309 + 7:
+            return msr - 0x309 < p['fix']
+        if msr in (0x38D, 0x390):
+            return p['version'] > 1
+        if msr in (0x38E, 0x38F):
+            return p['version'] > 0
+        if msr in (0x391, 0x392):
+            return p['version'] > 3
+        return False                                         # 345H (no PDCM), 4C1H+ (no CPUID.23H)
+
+    def wrmsr(self, msr, val):
+        p = self.p
+        if not self.present(msr) or msr in (0x38E, 0x392):
+            raise Fault('#GP', 0)
+        if 0xC1 <= msr < 0xCB:                               # EAX sign-extended, EDX ignored
+            v = val & 0xFFFFFFFF
+            if v & 0x80000000:
+                v |= M64 & ~0xFFFFFFFF
+            self.pmc[msr - 0xC1] = v & ((1 << p['gp_width']) - 1)
+        elif 0x186 <= msr < 0x190:
+            valid = 0xFFFFFFFF & ~(0 if p['anythread'] else 1 << 21)
+            if val & ~valid:
+                raise Fault('#GP', 0)
+            self.sel[msr - 0x186] = val
+        elif 0x309 <= msr < 0x310:
+            if val >> p['fix_width']:
+                raise Fault('#GP', 0)
+            self.fix[msr - 0x309] = val
+        elif msr == 0x38D:
+            valid = 0
+            for m in range(min(p['fix'], 4)):
+                valid |= (0xB | (4 if p['anythread'] else 0)) << (4 * m)
+            if val & ~valid:
+                raise Fault('#GP', 0)
+            self.fctrl = val
+        elif msr == 0x38F:
+            if val & ~(((1 << p['gp']) - 1) | (((1 << p['fix']) - 1) << 32)):
+                raise Fault('#GP', 0)
+            self.gctrl = val
+        elif msr == 0x390:
+            if val & ~self.status_bits(False):
+                raise Fault('#GP', 0)
+            self.status &= ~val
+        elif msr == 0x391:
+            if val & ~self.status_bits(True):
+                raise Fault('#GP', 0)
+            self.status |= val
+
+    def rdmsr(self, msr):
+        if not self.present(msr):
+            raise Fault('#GP', 0)
+        if 0xC1 <= msr < 0xCB:
+            return self.pmc[msr - 0xC1]
+        if 0x186 <= msr < 0x190:
+            return self.sel[msr - 0x186]
+        if 0x309 <= msr < 0x310:
+            return self.fix[msr - 0x309]
+        if msr == 0x392:
+            v, pmi = 0, False
+            for i in range(self.p['gp']):
+                v |= int((self.sel[i] & 0xFF) != 0) << i
+                pmi |= bool(self.sel[i] >> 20 & 1)
+            for i in range(min(self.p['fix'], 4)):
+                v |= int((self.fctrl >> (4 * i)) & 3 != 0) << (32 + i)
+                pmi |= bool(self.fctrl >> (4 * i + 3) & 1)
+            return v | (int(pmi) << 63)
+        return {0x38D: self.fctrl, 0x38F: self.gctrl, 0x38E: self.status}.get(msr, 0)
+
+    def rdpmc(self, ecx):
+        t, i = ecx >> 16, ecx & 0xFFFF
+        if t == 0 and i < self.p['gp']:
+            return self.pmc[i]
+        if t == 0x4000 and i < self.p['fix']:
+            return self.fix[i]
+        raise Fault('#GP', 0)
+
+
+def pmu_case(a, steps, note=None):
+    """steps: list of ('w', msr, val) / ('r', msr, reg) / ('p', ecx, reg); one snippet, fresh model.
+    A faulting step ends the case with the fault (registers as before the faulting step)."""
+    m = PmuModel()
+    asm, exp, fault = [], [], None
+    for s in steps:
+        if s[0] == 'w':
+            asm.append('mov ecx, %s; mov eax, %s; mov edx, %s; wrmsr' % (hx(s[1]), hx(s[2] & 0xFFFFFFFF), hx(s[2] >> 32)))
+            try:
+                m.wrmsr(s[1], s[2])
+            except Fault as f:
+                fault = f
+                break
+        else:
+            op = 'rdmsr' if s[0] == 'r' else 'rdpmc'
+            asm.append('mov ecx, %s; %s; shl rdx, 32; or rax, rdx; mov %s, rax' % (hx(s[1]), op, s[2]))
+            try:
+                v = m.rdmsr(s[1]) if s[0] == 'r' else m.rdpmc(s[1])
+            except Fault as f:
+                fault = f
+                break
+            exp.append('%s=%s' % (s[2], hx(v)))
+    if note:
+        a('# ' + note)
+    a('%s =>! %s' % ('; '.join(asm), ' '.join(([fault.token()] if fault else []) + exp)))
+
+
+def cases_pmu():
+    lines = []
+    a = lines.append
+    a('# Architectural performance-monitoring MSRs as storage (ledger U907): expected values from the independent')
+    a('# model Emulator/tools/isa/ref_sysmsr.py (regenerate with --write, do not edit). Unicorn only, MAX model with')
+    a('# the CPUID profile Emulator\\data\\cpuid_sysmsr_pmu.txt (leaf 0AH: version 4, 8 x 48-bit counters, 3 x 48-bit')
+    a('# fixed counters, AnyThread deprecated), non-strict:')
+    a('#   emu-alltest --cases Emulator\\data\\cases_sysmsr_pmu.txt --cpuid Emulator\\data\\cpuid_sysmsr_pmu.txt --no-strict --expect-only')
+    a('# SDM Vol4 Table 2-2, Vol3B 21.2 (21.2.1 IA32_PMCx: "the lower-order 32 bits ... may be written with any value, and')
+    a('# the high-order bits are sign-extended from the value of bit 31"; fixed counters: "bits beyond the width ... are')
+    a('# reserved"), Vol2B RDPMC. Nothing counts: every counter keeps the value written (no event model).')
+    a('mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0x7300804 rbx=0 rcx=0 rdx=0x8603')
+    for x in range(8):
+        pmu_case(a, [('w', 0xC1 + x, 0x0000123480000000 | x), ('r', 0xC1 + x, 'r8'), ('p', x, 'r9')],
+                 'IA32_PMC%d: EAX sign-extended to 48 bits, EDX ignored; RDPMC reads it' % x if x == 0 else None)
+    pmu_case(a, [('w', 0xC1, 0x7FFFFFFF), ('r', 0xC1, 'r8'), ('p', 0, 'r9')])
+    pmu_case(a, [('r', 0xC9, 'r8')], 'IA32_PMC8 / IA32_PERFEVTSEL8 / IA32_A_PMC0 / IA32_PERF_CAPABILITIES do not exist')
+    pmu_case(a, [('w', 0x18E, 0)])
+    pmu_case(a, [('r', 0x4C1, 'r8')])
+    pmu_case(a, [('r', 0x345, 'r8')])
+    pmu_case(a, [('w', 0x186, 0x4300C0), ('r', 0x186, 'r8')], 'IA32_PERFEVTSELx: 63:32 reserved, AnyThread (21) deprecated')
+    pmu_case(a, [('w', 0x18D, 0xFFDFFFFF), ('r', 0x18D, 'r8')])
+    pmu_case(a, [('w', 0x186, 0x2000C0)])
+    pmu_case(a, [('w', 0x186, 0x1000000C0)])
+    pmu_case(a, [('w', 0x309, 0xFFFFFFFFFFFF), ('r', 0x309, 'r8'), ('p', 0x40000000, 'r9')],
+             'IA32_FIXED_CTR0-2: 48 bits, bits 63:48 reserved; RDPMC 40000000H+m')
+    pmu_case(a, [('w', 0x30B, 0x123456789ABC), ('r', 0x30B, 'r8'), ('p', 0x40000002, 'r9')])
+    pmu_case(a, [('w', 0x30A, 0x1000000000000)])
+    pmu_case(a, [('w', 0x30C, 0)])
+    pmu_case(a, [('p', 0x40000003, 'r9')])
+    pmu_case(a, [('w', 0x38D, 0xBBB), ('r', 0x38D, 'r8')], 'IA32_FIXED_CTR_CTRL: EN_OS, EN_USR, PMI of counters 0-2')
+    pmu_case(a, [('w', 0x38D, 0x4)])
+    pmu_case(a, [('w', 0x38D, 0xB000)])
+    pmu_case(a, [('w', 0x38F, 0x7000000FF), ('r', 0x38F, 'r8')], 'IA32_PERF_GLOBAL_CTRL: the enumerated counters')
+    pmu_case(a, [('w', 0x38F, 0x100)])
+    pmu_case(a, [('w', 0x38F, 0x800000000)])
+    pmu_case(a, [('r', 0x38E, 'r8'), ('w', 0x38E, 0)], 'IA32_PERF_GLOBAL_STATUS: R/O; 391H sets and 390H clears its bits')
+    pmu_case(a, [('w', 0x391, 0x4C00000700000083), ('r', 0x38E, 'r8'), ('w', 0x390, 0x0400000000000001),
+                 ('r', 0x38E, 'r9'), ('r', 0x390, 'r10'), ('r', 0x391, 'r11')])
+    pmu_case(a, [('w', 0x391, 0x2000000000000000), ('r', 0x38E, 'r8')])
+    pmu_case(a, [('w', 0x391, 0x8000000000000000)])
+    pmu_case(a, [('w', 0x390, 0x8000000000000000)])
+    pmu_case(a, [('w', 0x390, 0x0001000000000000)])
+    pmu_case(a, [('w', 0x186, 0x5300C0), ('w', 0x18A, 0x4300C0), ('w', 0x38D, 0x30), ('r', 0x392, 'r8')],
+             'IA32_PERF_GLOBAL_INUSE (R/O): event select [7:0] != 0, fixed enable bits, PMI (INT / PMI) in use')
+    pmu_case(a, [('w', 0x38D, 0x800), ('r', 0x392, 'r8'), ('w', 0x392, 0)])
+    return lines
+
+
 def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
@@ -701,8 +887,25 @@ def selftest():
     check(n['msr'][MSR_PL3_SSP] == 0x0100000000000008 and n['msr'][MSR_S_CET] == 4 | CET_TRACKER,
           'sysenter legacy: PL3_SSP := SSP (no LA_adjust), tracker')
     check(popfq_image(0xFFFFFFFF) == 0x247FD7 and pushfq_image(0x30202) == 0x202, 'popfq / pushfq images')
+    # PMU (hand-derived from Vol3B 21.2)
+    m = PmuModel()
+    m.wrmsr(0xC1, 0x0000123480000005)
+    check(m.rdmsr(0xC1) == 0x0000FFFF80000005 and m.rdpmc(0) == 0x0000FFFF80000005, 'PMC sign extension, 48 bits')
+    for msr, val in ((0x186, 1 << 21), (0x186, 1 << 32), (0x30A, 1 << 48), (0x38D, 4), (0x38F, 0x100),
+                     (0x38E, 0), (0x392, 0), (0x391, 1 << 63), (0x390, 1 << 48), (0xC9, 0)):
+        try:
+            m.wrmsr(msr, val)
+            check(False, 'PMU #GP %x %x' % (msr, val))
+        except Fault:
+            pass
+    m.wrmsr(0x391, (1 << 62) | 3)
+    m.wrmsr(0x390, 1)
+    check(m.rdmsr(0x38E) == (1 << 62) | 2 and m.rdmsr(0x390) == 0, 'status set / reset')
+    m.wrmsr(0x186, 0x5300C0)
+    m.wrmsr(0x38D, 0x30)
+    check(m.rdmsr(0x392) == (1 << 63) | (1 << 33) | 1, 'INUSE')
     # the generator runs and every case has an expectation
-    lines = cases_all()
+    lines = cases_all() + cases_pmu()
     check(all(l.startswith('#') or '=>' in l for l in lines), 'every case line has =>')
     if fails:
         for f in fails:
@@ -717,6 +920,7 @@ def main():
         sys.exit(selftest())
     if '--write' in sys.argv:
         write_file('cases_sysmsr.txt', cases_all())
+        write_file('cases_sysmsr_pmu.txt', cases_pmu())
         return
     print(__doc__)
     sys.exit(2)
