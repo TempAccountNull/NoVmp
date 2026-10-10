@@ -223,6 +223,17 @@ Add-Exp 'cases_avx10_b' 'cases_avx10_b' 'avx10 expect' @( '--avx10', '2' )
 # U445 x U147 / U236 / U373 / U404: MXCSR.UM / OM = 0 must not reach the forms that behave as if every
 # MXCSR exception were masked ({er} / {sae}, VRCP14, BF16, VCVT2PS2PHX); hand-derived cases.
 Add-Exp 'cases_evex_sae_unmasked' 'cases_evex_sae_unmasked' 'avx10 evex expect' @( '--avx10', '2' )
+# decision A9 (U940-U959): approximate reciprocals VRCP14* / VRSQRT14* / VRCPPH / VRSQRTPH / VRCPSH / VRSQRTSH
+# (every VL, masking, memory, {1toN}, nine MXCSR settings, special values and boundaries; with AVX-512
+# and with AVX10.1 alone), every FP16 encoding, VRCPBF16 / VRSQRTBF16 (every BF16 encoding, AVX10.2)
+# vs the independent model ref_rcp.py (documented stand-in, docs\reciprocal.md); the legacy RCPPS /
+# RSQRTPS / RCPSS / RSQRTSS (+ VEX) as hardware cases against the i5-13600K (0 differing).
+Add-Exp 'cases_rcp' 'cases_rcp' 'evex fp16 rcp expect' @( '--avx512' )
+Add-Exp 'cases_rcp_avx10_1' 'cases_rcp' 'avx10 evex rcp expect' @( '--avx10', '1' )
+Add-Exp 'cases_rcp_f16_all' 'cases_rcp_f16_all' 'evex fp16 rcp expect' @( '--avx512' )
+Add-Exp 'cases_rcp_bf16' 'cases_rcp_bf16' 'avx10 rcp expect' @( '--avx10', '2' )
+Add-PySelftest 'ref_rcp_selftest' 'rcp tools' 'ref_rcp.py'
+Add-Hw 'cases_rcp_hw' 'hw sse rcp'
 # ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding source
 # (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory, unmasked
 # exceptions; must be 0 differing against the i5-13600K.
