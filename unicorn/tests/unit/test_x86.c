@@ -22633,23 +22633,6 @@ static void test_x86_si_pbndkb(void)
 #define PC_CAP 0x3f68000000full     /* model IA32_TME_CAPABILITY (algorithms 3:0, bypass, 6, 63) */
 
 typedef struct PcCtx {
- * ---- NoVmp U990-U1019: Intel Xeon Phi-only families (prefix xp_) ----
- * AVX512_4VNNIW, AVX512_4FMAPS, AVX512ER, AVX512PF and PREFETCHWT1 (SDM 325383-092 Vol2D
- * chapter 8; CPUID bits Vol1 Tables 21-19..21-21): the UC_CTL_X86_AVX512 opt-in bits, their
- * CPUID enumeration, gating (default off, strict profiles, no AVX10 alternative) and the
- * encoding rules the expected-value file cannot reach. Instruction values and #UD / #PF /
- * #XM rules: Emulator/data/cases_xeonphi.txt (independent model ref_xeonphi.py).
- */
-#define XP_DATA 0x200000
-#define XP_ALL (UC_X86_AVX512_4VNNIW | UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER |              \
-                UC_X86_AVX512_PF | UC_X86_AVX512_PREFETCHWT1)
-#define XP_AVX512 (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL |  \
-                   UC_X86_AVX512_CD | UC_X86_AVX512_IFMA | UC_X86_AVX512_VPOPCNTDQ |         \
-                   UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 |          \
-                   UC_X86_AVX512_VP2INTERSECT | UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |  \
-                   UC_X86_AVX512_BF16)
-
-typedef struct XpCtx {
     uc_engine *uc;
     X86IntrCapture cap;
     uc_hook hook;
@@ -22688,42 +22671,6 @@ static int pc_run(PcCtx *c, const char *code, size_t len)
     TEST_CHECK(len <= 0x80);
     c->cap.count = 0;
     c->cap.intno = 0;
-} XpCtx;
-
-/* prof != NULL: a strict CPUID profile (written explicitly) and XCR0 = E7h */
-static void xp_open(XpCtx *c, uc_mode mode, int avx512, int avx10, const uc_x86_cpuid *prof,
-                    size_t nprof)
-{
-    memset(c, 0, sizeof(*c));
-    c->pc = code_start;
-    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
-    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
-    if (avx512) {
-        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
-    }
-    if (avx10) {
-        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
-    }
-    if (nprof) {
-        uint64_t xcr0 = 0xe7;
-        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
-        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
-        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
-    }
-    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
-    OK(uc_mem_map(c->uc, XP_DATA, 0x4000, UC_PROT_ALL));
-    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
-}
-
-/* one snippet from a fresh address: the exception vector (6 = #UD) or -1 */
-static int xp_run(XpCtx *c, const char *code, size_t len)
-{
-    uint64_t pc = c->pc;
-    uc_err err;
-
-    c->pc += 0x40;
-    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
-    c->cap.count = 0;
     OK(uc_mem_write(c->uc, pc, code, len));
     err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
     if (err == UC_ERR_INSN_INVALID) {
@@ -24167,6 +24114,70 @@ static void test_x86_sm_pmu(void)
     OK(uc_close(c.uc));
 }
 /* ---- end U900-U929 (sm_) ---- */
+
+/*
+ * ---- NoVmp U990-U1019: Intel Xeon Phi-only families (prefix xp_) ----
+ * AVX512_4VNNIW, AVX512_4FMAPS, AVX512ER, AVX512PF and PREFETCHWT1 (SDM 325383-092 Vol2D
+ * chapter 8; CPUID bits Vol1 Tables 21-19..21-21): the UC_CTL_X86_AVX512 opt-in bits, their
+ * CPUID enumeration, gating (default off, strict profiles, no AVX10 alternative) and the
+ * encoding rules the expected-value file cannot reach. Instruction values and #UD / #PF /
+ * #XM rules: Emulator/data/cases_xeonphi.txt (independent model ref_xeonphi.py).
+ */
+#define XP_DATA 0x200000
+#define XP_ALL (UC_X86_AVX512_4VNNIW | UC_X86_AVX512_4FMAPS | UC_X86_AVX512_ER |              \
+                UC_X86_AVX512_PF | UC_X86_AVX512_PREFETCHWT1)
+#define XP_AVX512 (UC_X86_AVX512_F | UC_X86_AVX512_DQ | UC_X86_AVX512_BW | UC_X86_AVX512_VL |  \
+                   UC_X86_AVX512_CD | UC_X86_AVX512_IFMA | UC_X86_AVX512_VPOPCNTDQ |         \
+                   UC_X86_AVX512_BITALG | UC_X86_AVX512_VBMI | UC_X86_AVX512_FP16 |          \
+                   UC_X86_AVX512_VP2INTERSECT | UC_X86_AVX512_VBMI2 | UC_X86_AVX512_VNNI |  \
+                   UC_X86_AVX512_BF16)
+
+typedef struct XpCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} XpCtx;
+
+/* prof != NULL: a strict CPUID profile (written explicitly) and XCR0 = E7h */
+static void xp_open(XpCtx *c, uc_mode mode, int avx512, int avx10, const uc_x86_cpuid *prof,
+                    size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, avx512));
+    }
+    if (avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, avx10));
+    }
+    if (nprof) {
+        uint64_t xcr0 = 0xe7;
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_reg_write(c->uc, UC_X86_REG_XCR0, &xcr0));
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 1));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, XP_DATA, 0x4000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* one snippet from a fresh address: the exception vector (6 = #UD) or -1 */
+static int xp_run(XpCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    TEST_CHECK(len <= 0x40 && c->pc <= code_start + code_len);
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
     OK(err);
     return c->cap.count ? (int)c->cap.intno : -1;
 }
