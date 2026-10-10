@@ -19409,6 +19409,7 @@ typedef struct {
 } fx4_setter_t;
 
 static uint64_t fx4_rcx = 2;     /* RCX: the REP count / shift count */
+static int fx4_apx;               /* 1: UC_CTL_X86_APX (the APX part of the audit) */
 
 static void fx4_flags_run(const fx4_setter_t *st, const char *insn, size_t ilen, int mode,
                           int setter_only, fx4_res_t *res)
@@ -19439,6 +19440,9 @@ static void fx4_flags_run(const fx4_setter_t *st, const char *insn, size_t ilen,
     memset(res, 0, sizeof(*res));
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
     OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    if (fx4_apx) {
+        OK(uc_ctl_set_x86_apx(uc, UC_X86_APX_F));
+    }
     OK(uc_mem_map(uc, code_start, 0x1000, UC_PROT_ALL));
     OK(uc_mem_write(uc, code_start, code, n));
     if (mode != FX4_UNMAPPED) {
@@ -19673,6 +19677,51 @@ static void test_x86_fx4_hook_flags(void)
     }
     TEST_CHECK(bad == 0);
     TEST_MSG("hook/fault flag audit: %d of %d checks failed", bad, n);
+}
+static const struct {
+    const char *code;
+    size_t len;
+    const char *what;
+} fx4_flag_insns_apx[] = {
+    {"\x62\xf4\x84\x02\x39\x03", 6, "ccmpb {dfv=} [rbx], rax"},
+    {"\x62\xf4\x84\x0b\x39\x03", 6, "ccmpf {dfv=} [rbx], rax"},
+    {"\x62\xf4\xac\x0a\x39\x03", 6, "ccmpt {dfv=of,cf} [rbx], rax"},
+    {"\x62\xf4\x84\x04\x85\x03", 6, "ctestz {dfv=} [rbx], rax"},
+    {"\x62\xf4\xfc\x0c\x01\x03", 6, "{nf} add [rbx], rax"},
+    {"\x62\xf4\xfc\x0c\x29\x03", 6, "{nf} sub [rbx], rax"},
+    {"\x62\xf4\xb4\x18\x03\x03", 6, "add r9, rax, [rbx] (NDD)"},
+    {"\x62\xf4\xb4\x18\x13\x03", 6, "adc r9, rax, [rbx] (NDD)"},
+    {"\x62\xf4\xb4\x18\x11\x03", 6, "adc r9, [rbx], rax (NDD, memory source)"},
+    {"\x62\xf4\xb4\x1c\x03\x03", 6, "{nf} add r9, rax, [rbx] (NDD)"},
+    {"\x62\xf4\xb4\x18\xd3\x13", 6, "rcl r9, [rbx], cl (NDD)"},
+    {"\x62\xf4\xfc\x08\xd3\x13", 6, "rcl [rbx], cl (EVEX, no NDD)"},
+    {"\x62\xf4\xb4\x18\x44\x03", 6, "cmove r9, rax, [rbx] (NDD)"},
+    {"\x62\xf4\xfc\x0c\xf7\x23", 6, "{nf} mul qword [rbx]"},
+    {"\x62\xf4\xfc\x08\xf7\x1b", 6, "neg qword [rbx] (EVEX)"},
+    {"\x62\xf4\xfc\x18\x40\x03", 6, "cfcmovo rax, [rbx] (ND)"},
+};
+
+/*
+ * U774-U776 audit, APX part (UC_CTL_X86_APX): CCMPscc / CTESTscc (the source condition is
+ * evaluated from the flags before the access, U641), NF and NDD forms with a memory operand, the
+ * EVEX RCL/RCR (U700 class) and CFCMOVcc: the same checks as test_x86_fx4_hook_flags.
+ */
+static void test_x86_fx4_hook_flags_apx(void)
+{
+    size_t i, j;
+    int bad = 0, n = 0;
+
+    fx4_apx = 1;
+    for (i = 0; i < sizeof(fx4_flag_insns_apx) / sizeof(fx4_flag_insns_apx[0]); i++) {
+        for (j = 0; j < sizeof(fx4_setters) / sizeof(fx4_setters[0]); j++) {
+            bad += fx4_flags_case(&fx4_setters[j], fx4_flag_insns_apx[i].code,
+                                  fx4_flag_insns_apx[i].len, fx4_flag_insns_apx[i].what);
+            n += 4;
+        }
+    }
+    fx4_apx = 0;
+    TEST_CHECK(bad == 0);
+    TEST_MSG("hook/fault flag audit (APX): %d of %d checks failed", bad, n);
 }
 /*
  * U777 audit (plan 1.F.14): instructions that store several parts or change state after a
@@ -21952,4 +22001,5 @@ TEST_LIST = {
     {"test_x86_fx4_store_amx", test_x86_fx4_store_amx},
     {"test_x86_fx4_mpx_bndcfg", test_x86_fx4_mpx_bndcfg},
     {"test_x86_fx4_mpx_bndcfg_load", test_x86_fx4_mpx_bndcfg_load},
+    {"test_x86_fx4_hook_flags_apx", test_x86_fx4_hook_flags_apx},
     {NULL, NULL}};
