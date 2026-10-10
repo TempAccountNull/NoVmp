@@ -26486,6 +26486,59 @@ static void test_x86_vx_avx10_cpuid(void)
     TEST_CHECK(mask == UC_X86_AVX512_F);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1093 (plan 1.J.22, refs review 2026-10-09, SDM 252046-081 / 325383-089 changes):
+ * - opcode D6: UDB (#UD) in 64-bit mode, SALC in the other modes (SDM 092 Vol2B UD, Vol3B 25.15
+ *   "IF (CF=1) THEN AL:=FF; ELSE AL=0"; flags unchanged);
+ * - INVD / WBINVD at CPL0: no-ops; LOCK #UD. The new INVD #GP(0) conditions (SDM 092 Vol2A 3-484:
+ *   MSR_BIOS_DONE[0] with CPUID.07H.01H:EAX[30] = 1, SEAM range protected, processor reserved memory
+ *   protections active) cannot arise in the model: CPUID.07H.01H:EAX[30] = 0, MSR_BIOS_DONE (151H)
+ *   does not exist (RDMSR #GP), no SEAM, no PRMRR/SGX.
+ */
+#define VX_SALC "\xd6"
+
+static void test_x86_vx_salc_udb(void)
+{
+    A10Ctx c;
+    uint64_t v;
+    uint32_t r[4];
+
+    /* 32-bit protected mode: SALC */
+    a10_open(&c, UC_MODE_32, 0, 0, NULL, 0, 0);
+    v = 0x12345601;
+    OK(uc_reg_write(c.uc, UC_X86_REG_EAX, &v));
+    v = 0x203;                                          /* CF = 1 */
+    OK(uc_reg_write(c.uc, UC_X86_REG_EFLAGS, &v));
+    TEST_CHECK(a10_run(&c, VX_SALC, 1) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EAX, &v));
+    TEST_CHECK_((uint32_t)v == 0x123456ff, "eax %llx", (unsigned long long)v);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &v));
+    TEST_CHECK((v & 0x8d5) == 0x001);                   /* flags unchanged */
+    v = 0x2c2;                                          /* CF = 0, ZF/SF set */
+    OK(uc_reg_write(c.uc, UC_X86_REG_EFLAGS, &v));
+    TEST_CHECK(a10_run(&c, VX_SALC, 1) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EAX, &v));
+    TEST_CHECK_((uint32_t)v == 0x12345600, "eax %llx", (unsigned long long)v);
+    OK(uc_reg_read(c.uc, UC_X86_REG_EFLAGS, &v));
+    TEST_CHECK((v & 0x8d5) == 0x0c0);
+    OK(uc_close(c.uc));
+
+    /* 64-bit mode: UDB */
+    a10_open(&c, UC_MODE_64, 0, 0, NULL, 0, 0);
+    TEST_CHECK(a10_run(&c, VX_SALC, 1) == 6);
+    /* INVD / WBINVD at CPL0: no fault; LOCK: #UD */
+    TEST_CHECK(a10_run(&c, "\x0f\x08", 2) == -1);
+    TEST_CHECK(a10_run(&c, "\x0f\x09", 2) == -1);
+    TEST_CHECK(a10_run(&c, "\xf0\x0f\x08", 3) == 6);
+    /* the MSR_BIOS_DONE condition cannot arise: no INVD_DISABLE_POST_BIOS_DONE, no MSR 151H */
+    a10_cpuid(&c, 7, 1, r);
+    TEST_CHECK(!((r[0] >> 30) & 1));
+    v = 0x151;
+    OK(uc_reg_write(c.uc, UC_X86_REG_RCX, &v));
+    TEST_CHECK(a10_run(&c, "\x0f\x32", 2) == 13);     /* RDMSR 151H: #GP(0) */
+    OK(uc_close(c.uc));
+}
 /* ---- end U1090-U1119 (vx_) ---- */
 
 TEST_LIST = {
@@ -26701,6 +26754,7 @@ TEST_LIST = {
     {"test_x86_avx10b_values", test_x86_avx10b_values},
     {"test_x86_avx10b_fault_suppression", test_x86_avx10b_fault_suppression},
     {"test_x86_vx_avx10_cpuid", test_x86_vx_avx10_cpuid},
+    {"test_x86_vx_salc_udb", test_x86_vx_salc_udb},
     {"test_x86_sse_unmasked_ou", test_x86_sse_unmasked_ou},
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},
