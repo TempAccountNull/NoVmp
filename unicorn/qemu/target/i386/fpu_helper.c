@@ -5811,6 +5811,9 @@ static void xrstor_check_xfd(CPUX86State *env, uint64_t load, uintptr_t ra)
 
     if (xfd) {
         env->msr_xfd_err = xfd;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = xfd;   /* FRED #NM event data = IA32_XFD_ERR (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP07_PREX, ra);
     }
 }
@@ -6438,6 +6441,9 @@ static void amx_check_tiledata(CPUX86State *env, uintptr_t ra)
     amx_check_enabled(env, ra);
     if (x86_cpu_xfd_armed(env) & XSTATE_XTILE_DATA_MASK) {
         env->msr_xfd_err = env->msr_xfd & XSTATE_XTILE_DATA_MASK;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = env->msr_xfd_err;   /* FRED #NM event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP07_PREX, ra);
     }
     if (!AMX_CONFIGURED(env)) {
@@ -7309,6 +7315,9 @@ void helper_amx_rowop(CPUX86State *env, uint32_t info, uint32_t row)
     }
     if (x86_cpu_xfd_armed(env) & XSTATE_XTILE_DATA_MASK) {
         env->msr_xfd_err = env->msr_xfd & XSTATE_XTILE_DATA_MASK;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = env->msr_xfd_err;   /* FRED #NM event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP07_PREX, ra);
     }
     if (!AMX_CONFIGURED(env) || !amx_tile_valid(env, t) || (AMX_COLSB(env, t) & 3)) {

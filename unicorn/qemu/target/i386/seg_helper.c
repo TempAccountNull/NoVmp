@@ -1331,6 +1331,271 @@ static void cet2_event(CPUX86State *env, bool inner, int cpl, int dpl, uint32_t 
 }
 
 #endif /* __Use_Original_Qemu (U755) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+/*
+ * NoVmp (ledger U1171): FRED event delivery (SDM 325462-092 Vol3A 8.3, pseudocode 8.3.5; FRED spec
+ * 346446-009 chapter 5, A.1, B). With CR4.FRED = 1 (IA-32e mode) it replaces IDT event delivery -
+ * for exceptions and INT n / INT3 / INTO / INT1 with UC_X86_DELIVER_EXC_IDT, for external
+ * interrupts and NMIs with UC_X86_DELIVER_INTR_IDT (Unicorn style without them: UC_HOOK_INTR, as
+ * before) - and the SDM transitions of SYSCALL / SYSENTER (UC_X86_SYSCALL_SDM).
+ *  - event type (8.3.2.1): 0 external interrupt, 2 NMI, 3 hardware exception, 4 INT n, 5 INT1,
+ *    6 INT3 / INTO, 7 SYSCALL (vector 1) / SYSENTER (vector 2); the instruction length is saved
+ *    for 4-7, whose saved RIP is the next instruction;
+ *  - new RIP: IA32_FRED_CONFIG & ~FFFH (+ 256 for an event at CPL 0), paging canonical or #GP;
+ *  - stack level (8.3.1.2, Appendix B): 0 for an event at CPL 3 that is neither nested nor #DF;
+ *    else external interrupt IA32_FRED_CONFIG[10:9], exception / INT1 / INT3 / INTO / NMI
+ *    IA32_FRED_STKLVLS[2v+1:2v], others 0; new CSL = max(event SL, old CSL); RSP := IA32_FRED_RSPi
+ *    when CPL or CSL changes, else (RSP - IA32_FRED_CONFIG[8:6] * 64) & ~3FH; with supervisor shadow
+ *    stacks SSP := IA32_FRED_SSPi (IA32_PL0_SSP for 0; #GP if bit 2 is set) or SSP -
+ *    (IA32_FRED_CONFIG & 8);
+ *  - the 64-byte frame (Figure 8-1): 0, event data (#PF: CR2; #DB: B3-B0 / BD / BS of this #DB; #NM
+ *    from XFD: IA32_XFD_ERR; NMI and others: 0 - no NMI-source reporting), augmented SS (16: STI
+ *    blocking for a hardware exception, 17: INT n / SYSCALL / SYSENTER, 18: NMI, 63:32 event
+ *    information: vector, type, 64-bit mode, nested, length), RSP, RFLAGS (RF = 1 for faults other
+ *    than instruction breakpoints), augmented CS (17:16 old CSL, 18 the supervisor IBT tracker),
+ *    RIP, error code;
+ *  - with supervisor shadow stacks and an event at CPL 0: 4 zero bytes at SSP - 4, SSP & ~7, then
+ *    CS (64-bit augmented), LIP, old SSP (8.3.2.2);
+ *  - faults during delivery (8.3.4): every stack slot is checked (paging canonical: #SS for the
+ *    regular stack, #GP for the shadow stack, with error code EXT = 1 for event types 0, 2, 3, 5)
+ *    and probed (#PF) before anything is written or loaded, so a fault leaves the registers as
+ *    they were; the exception raised meanwhile is "nested" (fred_delivering -> fred_nested in
+ *    raise_interrupt2): event information bit 58 (not for #DF), stack level as at CPL 0, and the
+ *    augmented-CS bit 18 / SS bit 16 of the original event;
+ *  - new context (8.3.1.3, 8.3.3): from CPL 3 CS := IA32_STAR[47:32] & FFFCH, SS := CS + 8 (fixed
+ *    flat descriptors, DPL 0, CS.L = 1), GS.base <-> IA32_KERNEL_GS_BASE, IA32_PL3_SSP :=
+ *    LA_adjust(SSP) with user shadow stacks; RFLAGS := 2; IA32_S_CET.TRACKER / SUPPRESS := 0 with
+ *    supervisor IBT; the interrupt shadow ends.
+ * Not modelled: the enclave bit (56, no SGX), NMI-source reporting, VMX (event injection, nested
+ * exception support), LASS (not in the model), RF for traps after a partial REP iteration, pending
+ * debug traps (none are kept). NMI blocking is set by the caller (x86_cpu_exec_interrupt).
+ */
+#define FRED_T_EXTINT 0
+#define FRED_T_NMI    2
+#define FRED_T_HWEXC  3
+#define FRED_T_SWINT  4
+#define FRED_T_PRIVSW 5
+#define FRED_T_SWEXC  6
+#define FRED_T_OTHER  7
+
+static bool fred_soft_type(int t)
+{
+    return t == FRED_T_SWINT || t == FRED_T_PRIVSW || t == FRED_T_SWEXC || t == FRED_T_OTHER;
+}
+
+/* exceptions that are faults (SDM 092 Vol3A Table 7-1): RF is saved as 1 (8.3.2.1) */
+static bool fred_fault_vector(int v)
+{
+    switch (v) {
+    case 0: case 5: case 6: case 7: case 10: case 11: case 12: case 13: case 14: case 16:
+    case 17: case 19: case 20: case 21:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* the slot at 'a' of a stack FRED delivery writes: paging canonical, else excp(ext); probed (#PF) */
+static void fred_probe(CPUX86State *env, uint64_t a, uint32_t len, int mmu_idx, int excp, int ext,
+                       uintptr_t ra)
+{
+    if (!cet2_canonical(env, a)) {
+        raise_exception_err_ra(env, excp, ext, ra);
+    }
+    x86_probe_write_la(env, a, len, mmu_idx, ra);
+}
+
+/*
+ * FRED event delivery of 'vector' with event 'type'. next_ip: the RIP saved for the soft types
+ * (the next instruction), len their instruction length; nested: an exception encountered during
+ * FRED delivery; ra: the helper's return address (0 outside translated code).
+ */
+static void x86_fred_deliver(CPUX86State *env, int vector, int type, uint32_t error_code,
+                             uint64_t next_ip, int len, bool nested, uintptr_t ra)
+{
+    uint64_t cfg = env->fred_config;
+    int cpl = env->hflags & HF_CPL_MASK;
+    int old_csl = cpl == 3 ? 0 : (int)(cfg & 3);
+    int ext = (type == FRED_T_EXTINT || type == FRED_T_NMI || type == FRED_T_HWEXC ||
+               type == FRED_T_PRIVSW) ? 1 : 0;
+    bool df = type == FRED_T_HWEXC && vector == EXCP08_DBLE;
+    bool sss = cet2_ss_en(env, 0, false);
+    bool uss = cpl == 3 && cet2_ss_en(env, 3, false);
+    int mmu = (env->hflags & HF_SMAP_MASK) ? MMU_KSMAP_IDX : MMU_KNOSMAP_IDX;
+    uint64_t old_rip = fred_soft_type(type) ? next_ip : env->eip;
+    uint64_t old_ssp = env->ssp;
+    uint64_t rfl = cpu_compute_eflags(env);
+    uint64_t data = 0, acs, ass, info, new_rip, new_rsp, new_ssp = 0, p, frame[8];
+    int esl, new_csl, i;
+
+    /* the old context and the event (8.3.2.1) */
+    if (type == FRED_T_HWEXC) {
+        if (vector == EXCP0E_PAGE) {
+            data = env->cr[2];
+        } else if (vector == EXCP01_DB || vector == EXCP07_PREX) {
+            data = env->fred_evdata;
+        }
+        if (fred_fault_vector(vector) || (vector == EXCP01_DB && (data & DR6_BD))) {
+            rfl |= RF_MASK;
+        }
+    }
+    if (!nested && !df) {
+        /* augmented CS bit 18 and SS bit 16 of this event; a nested exception (or the #DF it
+           became) saves those of the original event (8.3.2.1) */
+        env->fred_cs18 = cpl == 0 && type != FRED_T_SWINT && type != FRED_T_OTHER &&
+                         (env->cr[4] & CR4_CET_MASK) && (env->s_cet & CET_ENDBR_EN) &&
+                         (env->s_cet & CET_TRACKER);
+        env->fred_ss16 = type == FRED_T_HWEXC && (env->hflags & HF_INHIBIT_IRQ_MASK) &&
+                         env->fred_sti;
+    }
+    acs = env->segs[R_CS].selector | ((uint64_t)old_csl << 16) | ((uint64_t)env->fred_cs18 << 18);
+    ass = env->segs[R_SS].selector;
+    if (type == FRED_T_HWEXC && env->fred_ss16) {
+        ass |= 1ull << 16;
+    }
+    if (type == FRED_T_SWINT || type == FRED_T_OTHER) {
+        ass |= 1ull << 17;
+    }
+    if (type == FRED_T_NMI) {
+        ass |= 1ull << 18;
+    }
+    info = (vector & 0xff) | ((uint64_t)type << 16) |
+           ((env->hflags & HF_CS64_MASK) ? 1ull << 25 : 0) | ((nested && !df) ? 1ull << 26 : 0) |
+           (fred_soft_type(type) ? (uint64_t)(len & 0xf) << 28 : 0);
+    ass |= info << 32;
+
+    /* the new context (8.3.1) */
+    env->fred_delivering = 1;
+    new_rip = (cfg & ~0xfffull) + (cpl == 3 ? 0 : 256);
+    if (!cet2_canonical(env, new_rip)) {
+        raise_exception_err_ra(env, EXCP0D_GPF, ext, ra);
+    }
+    if (cpl == 3 && !nested && !df) {
+        esl = 0;
+    } else if (type == FRED_T_EXTINT) {
+        esl = (cfg >> 9) & 3;
+    } else if (type == FRED_T_HWEXC || type == FRED_T_SWEXC || type == FRED_T_PRIVSW ||
+               type == FRED_T_NMI) {
+        esl = (env->fred_stklvls >> (2 * (vector & 31))) & 3;
+    } else {
+        esl = 0;
+    }
+    new_csl = esl > old_csl ? esl : old_csl;
+    if (cpl == 3 || new_csl > old_csl) {
+        new_rsp = env->fred_rsp[new_csl];
+    } else {
+        new_rsp = (env->regs[R_ESP] - (cfg & 0x1c0)) & ~0x3full;
+    }
+    if (sss) {
+        if (cpl == 3 || new_csl > old_csl) {
+            new_ssp = new_csl ? env->fred_ssp[new_csl] : env->pl_ssp[0];
+            if (new_ssp & 4) {
+                raise_exception_err_ra(env, EXCP0D_GPF, ext, ra);
+            }
+        } else {
+            new_ssp = env->ssp - (cfg & 8);
+        }
+    }
+
+    /* every slot checked and probed before anything changes (8.3.4) */
+    frame[0] = 0;
+    frame[1] = data;
+    frame[2] = ass;
+    frame[3] = env->regs[R_ESP];
+    frame[4] = rfl;
+    frame[5] = acs;
+    frame[6] = old_rip;
+    frame[7] = error_code & 0xffff;
+    for (i = 0; i < 8; i++) {
+        fred_probe(env, new_rsp - 8 * (i + 1), 8, mmu, EXCP0C_STACK, ext, ra);
+    }
+    p = new_ssp;
+    if (sss && cpl == 0) {
+        fred_probe(env, p - 4, 4, MMU_SS_KSMAP_IDX, EXCP0D_GPF, ext, ra);
+        p &= ~7ull;
+        for (i = 1; i <= 3; i++) {
+            fred_probe(env, p - 8 * i, 8, MMU_SS_KSMAP_IDX, EXCP0D_GPF, ext, ra);
+        }
+    }
+
+    /* the stacks (8.3.2) */
+    for (i = 0; i < 8; i++) {
+        cpu_stq_mmuidx_ra(env, new_rsp - 8 * (i + 1), frame[i], mmu, ra);
+    }
+    if (sss && cpl == 0) {
+        cpu_stl_mmuidx_ra(env, new_ssp - 4, 0, MMU_SS_KSMAP_IDX, ra);
+        cpu_stq_mmuidx_ra(env, p - 8, acs, MMU_SS_KSMAP_IDX, ra);
+        cpu_stq_mmuidx_ra(env, p - 16, old_rip, MMU_SS_KSMAP_IDX, ra);
+        cpu_stq_mmuidx_ra(env, p - 24, old_ssp, MMU_SS_KSMAP_IDX, ra);
+        p -= 24;
+    }
+
+    /* the new context and the additional state (8.3.1.3, 8.3.3) */
+    env->fred_delivering = 0;
+    if (cpl == 3) {
+        uint32_t sel = (env->star >> 32) & 0xfffc;
+        uint64_t gsb = env->segs[R_GS].base;
+
+        cpu_x86_load_seg_cache(env, R_CS, sel, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_P_MASK | DESC_S_MASK | DESC_CS_MASK |
+                               DESC_R_MASK | DESC_A_MASK | DESC_L_MASK);
+        cpu_x86_load_seg_cache(env, R_SS, (sel + 8) & 0xffff, 0, 0xffffffff,
+                               DESC_G_MASK | DESC_B_MASK | DESC_P_MASK | DESC_S_MASK |
+                               DESC_W_MASK | DESC_A_MASK);
+        env->segs[R_GS].base = env->kernelgsbase;
+        env->kernelgsbase = gsb;
+    }
+    env->eip = new_rip;
+    cpu_load_eflags(env, 2, -1);
+    env->regs[R_ESP] = new_rsp - 64;
+    env->fred_config = (cfg & ~3ull) | (uint64_t)new_csl;
+    if (sss) {
+        env->ssp = (cpl == 0) ? p : new_ssp;
+    }
+    if (uss) {
+        env->pl_ssp[3] = cet2_la_adjust(env, old_ssp);
+    }
+    if ((env->cr[4] & CR4_CET_MASK) && (env->s_cet & CET_ENDBR_EN)) {
+        env->s_cet &= ~(CET_TRACKER | CET_SUPPRESS);
+    }
+    cpu_sync_cet_hflags(env);
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+}
+
+/* an exception / software interrupt / external interrupt or NMI on its way to FRED delivery */
+static void x86_fred_event(CPUX86State *env, int intno, int is_int, int error_code,
+                           target_ulong next_eip, int is_hw)
+{
+    int type, len = 0;
+    bool nested = false;
+    uint64_t next_ip = 0;
+    uint32_t ec = 0;
+
+    if (is_hw) {
+        type = intno == EXCP02_NMI ? FRED_T_NMI : FRED_T_EXTINT;
+    } else if (is_int) {
+        type = env->fred_kind == FRED_T_SWEXC ? FRED_T_SWEXC : FRED_T_SWINT;
+        next_ip = next_eip;
+        len = (int)(next_eip - env->eip);
+    } else if (env->fred_kind == FRED_T_PRIVSW && intno == EXCP01_DB) {
+        /* INT1: helper_icebp left RIP after the instruction; the event "occurs" at INT1 */
+        type = FRED_T_PRIVSW;
+        len = env->fred_insn_len;
+        next_ip = env->eip;
+        env->eip -= len;
+    } else {
+        type = FRED_T_HWEXC;
+        nested = env->fred_nested;
+        if (exception_has_error_code(intno)) {
+            ec = (uint32_t)error_code;
+        }
+    }
+    env->fred_kind = FRED_T_HWEXC;
+    x86_fred_deliver(env, intno, type, ec, next_ip, len, nested, 0);
+    env->fred_nested = 0;
+}
+
+#endif /* __Use_Original_Qemu (U1171) */
 /* protected mode interrupt */
 static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
                                    int error_code, unsigned int next_eip,
@@ -1861,10 +2126,26 @@ void helper_syscall(CPUX86State *env, int next_eip_addend)
      * sets SCE like every 64-bit OS (unicorn.c reg_reset), so the hook API is unchanged
      * unless the guest or the user clears IA32_EFER.SCE.
      */
-    if (!(env->efer & MSR_EFER_SCE)) {
+    /* U1171: with CR4.FRED = 1 IA32_EFER.SCE is not consulted (SDM 092 Vol2B SYSCALL Operation) */
+    if (!(env->efer & MSR_EFER_SCE) && !x86_fred_enabled(env)) {
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
     }
 #endif /* __Use_Original_Qemu (U594) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /*
+     * NoVmp (ledger U1171): CR4.FRED = 1: "FRED event delivery of SYSCALL" (SDM 092 Vol2B SYSCALL,
+     * Vol3A 8.5.4): event type 7, vector 1, the instruction length saved; the UC_X86_INS_SYSCALL
+     * hooks run after it, as after the U901 transition. Not in the hook-only mode.
+     */
+    if (x86_fred_enabled(env) && uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
+        target_ulong insn_eip = env->eip;
+
+        x86_fred_deliver(env, 1, FRED_T_OTHER, 0, env->eip + next_eip_addend, next_eip_addend,
+                         false, GETPC());
+        sys_entry_hooks(env, UC_X86_INS_SYSCALL, insn_eip);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1171) */
 #if __Use_Original_Qemu != 1 /* ours (U901) */
     /* NoVmp (ledger U901): the SDM transition unless UC_CTL_X86_SYSCALL_MODE is hook-only */
     if (uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
@@ -1903,6 +2184,12 @@ void helper_sysret(CPUX86State *env, int dflag)
     if (!(env->efer & MSR_EFER_SCE)) {
         raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
     }
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* SDM 092 Vol2B SYSRET: "... or (CR4.FRED = 1) THEN #UD" (Vol3A 8.5.1) */
+    if (x86_fred_enabled(env)) {
+        raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U1171) */
     cpl = env->hflags & HF_CPL_MASK;
     if (!(env->cr[0] & CR0_PE_MASK) || cpl != 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
@@ -2100,6 +2387,13 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
     }
 #endif
 
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* CR4.FRED = 1: FRED event delivery replaces IDT event delivery (SDM 092 Vol3A 8.3) */
+    if (x86_fred_enabled(env)) {
+        x86_fred_event(env, intno, is_int, error_code, next_eip, is_hw);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1171) */
     if (env->cr[0] & CR0_PE_MASK) {
         if (env->hflags & HF_GUEST_MASK) {
             handle_even_inj(env, intno, is_int, error_code, is_hw, 0);
@@ -3799,10 +4093,22 @@ void helper_sysenter(CPUX86State *env, int next_eip_addend)
      * unchanged unless the guest or the user loads a NULL selector. The transition itself is
      * sysenter_sdm (U902) unless UC_CTL_X86_SYSCALL_MODE selects the hook-only API.
      */
-    if ((env->sysenter_cs & 0xfffc) == 0) {
+    /* U1171: "IF CR0.PE = 0 OR (CR4.FRED = 0 AND IA32_SYSENTER_CS[15:2] = 0) THEN #GP(0)" */
+    if ((env->sysenter_cs & 0xfffc) == 0 && !x86_fred_enabled(env)) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());
     }
 #endif /* __Use_Original_Qemu (U852) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* NoVmp (ledger U1171): CR4.FRED = 1: FRED event delivery of SYSENTER (type 7, vector 2) */
+    if (x86_fred_enabled(env) && uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
+        target_ulong insn_eip = env->eip;
+
+        x86_fred_deliver(env, 2, FRED_T_OTHER, 0, env->eip + next_eip_addend, next_eip_addend,
+                         false, GETPC());
+        sys_entry_hooks(env, UC_X86_INS_SYSENTER, insn_eip);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1171) */
 #if __Use_Original_Qemu != 1 /* ours (U902) */
     /* NoVmp (ledger U902): the SDM transition unless UC_CTL_X86_SYSCALL_MODE is hook-only */
     if (uc->x86_syscall_mode != UC_X86_SYSCALL_HOOK_ONLY) {
@@ -3837,6 +4143,12 @@ void helper_sysexit(CPUX86State *env, int dflag)
     int cpl;
 
     cpl = env->hflags & HF_CPL_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* SDM 092 Vol2B SYSEXIT: "IF CR4.FRED = 1 THEN #UD" first (Vol3A 8.5.1) */
+    if (x86_fred_enabled(env)) {
+        raise_exception_err_ra(env, EXCP06_ILLOP, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U1171) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U904) */
     if (env->sysenter_cs == 0 || cpl != 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());

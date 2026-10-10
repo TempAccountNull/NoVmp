@@ -151,6 +151,19 @@ static void QEMU_NORETURN raise_interrupt2(CPUX86State *env, int intno,
     /* an MSR access of RDMSRLIST / WRMSRLIST / MSR-IMM faulted: its RAX/RCX/RDX are back (U802) */
     x86_msr_swap_restore(env);
 #endif /* __Use_Original_Qemu (U802) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /*
+     * NoVmp (ledger U1171): FRED bookkeeping (seg_helper.c x86_fred_event): the event type of this
+     * event (SDM 092 Vol3A 8.3.2.1: 3 hardware exception, 4 INT n, 6 INT3 / INTO), whether it was
+     * encountered during FRED event delivery (8.3.4), its event data (#DB, XFD #NM)
+     */
+    env->fred_kind = is_int ? (env->fred_swexc ? 6 : 4) : 3;
+    env->fred_swexc = 0;
+    env->fred_nested = env->fred_delivering;
+    env->fred_delivering = 0;
+    env->fred_evdata = env->fred_evdata_next;
+    env->fred_evdata_next = 0;
+#endif /* __Use_Original_Qemu (U1171) */
     if (!is_int) {
         cpu_svm_check_intercept_param(env, SVM_EXIT_EXCP_BASE + intno,
                                       error_code, retaddr);
@@ -213,6 +226,16 @@ G_NORETURN void helper_icebp(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U770) */
     x86_record_exception(env, EXCP01_DB, 0, 0);     /* INT1: a #DB, not a software INT n */
 #endif /* __Use_Original_Qemu (U770) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* FRED: privileged software exception (type 5), no event data ("without setting any bits in
+       DR6", SDM 092 Vol2A INT1); the translator stored the instruction length */
+    env->fred_kind = 5;
+    env->fred_swexc = 0;
+    env->fred_nested = 0;
+    env->fred_delivering = 0;
+    env->fred_evdata = 0;
+    env->fred_evdata_next = 0;
+#endif /* __Use_Original_Qemu (U1171) */
 
     cs->exception_index = EXCP01_DB;
     env->error_code = 0;

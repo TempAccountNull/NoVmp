@@ -99,10 +99,23 @@ void helper_into(CPUX86State *env, int next_eip_addend)
 
     eflags = cpu_cc_compute_all(env, CC_OP);
     if (eflags & CC_O) {
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_swexc = 1;    /* FRED event type 6, software exception (SDM 092 Vol3A 8.3.2.1) */
+#endif /* __Use_Original_Qemu (U1171) */
         raise_interrupt(env, EXCP04_INTO, 1, 0, next_eip_addend);
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+/* NoVmp (ledger U1171): SWAPGS is #UD with CR4.FRED = 1 (SDM 092 Vol3A 8.5.1, Vol2B SWAPGS) */
+void helper_fred_ud_check(CPUX86State *env)
+{
+    if (x86_fred_enabled(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1171) */
 void helper_cpuid(CPUX86State *env)
 {
     uint32_t eax, ebx, ecx, edx;
@@ -2960,6 +2973,12 @@ void helper_wrss(CPUX86State *env, target_ulong addr, target_ulong val,
 /* SETSSBSY / CLRSSBSY: common #UD / #GP checks (there is no CR4.FRED here) */
 static void cet_busy_check(CPUX86State *env, uintptr_t ra)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /* SDM 092 Vol2B SETSSBSY / Vol2A CLRSSBSY: "IF CR4.CET = 0 OR CR4.FRED = 1 THEN #UD" */
+    if (x86_fred_enabled(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+#endif /* __Use_Original_Qemu (U1171) */
     if (!(env->cr[4] & CR4_CET_MASK) || !(env->s_cet & CET_SH_STK_EN)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }

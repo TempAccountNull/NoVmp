@@ -2200,6 +2200,22 @@ typedef struct CPUX86State {
     uint8_t itd_valid;
     uint8_t itd_class;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+    /*
+     * NoVmp (ledger U1171): FRED event delivery bookkeeping (seg_helper.c x86_fred_event; not
+     * architectural state). fred_kind: the event type of the exception / software interrupt raised
+     * last (raise_interrupt2: 3 hardware exception, 4 INT n, 6 INT3 / INTO; helper_icebp: 5 INT1);
+     * fred_swexc: set before INT3 / INTO raise (type 6 instead of 4); fred_delivering: a FRED
+     * delivery is in progress, fred_nested: the exception raised last was encountered during one;
+     * fred_evdata_next / fred_evdata: the event data of a #DB / an XFD #NM being raised / raised
+     * last; fred_insn_len: the length of INT1 (stored by the translator); fred_cs18 / fred_ss16:
+     * augmented-CS bit 18 / SS bit 16 of the event being delivered (a nested exception saves the
+     * original event's); fred_sti: the interrupt shadow comes from STI (1) or MOV / POP SS (0).
+     */
+    uint8_t fred_kind, fred_swexc, fred_delivering, fred_nested;
+    uint8_t fred_insn_len, fred_cs18, fred_ss16, fred_sti;
+    uint64_t fred_evdata_next, fred_evdata;
+#endif /* __Use_Original_Qemu (U1171) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;

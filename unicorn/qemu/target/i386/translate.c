@@ -3214,6 +3214,13 @@ static void gen_movl_seg_T0(DisasContext *s, X86Seg seg_reg, bool inhibit_irq)
      * might have been set above.
      */
     if (inhibit_irq) {
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+        /* FRED: this shadow is blocking by MOV / POP SS, not by STI */
+        if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
+                            offsetof(CPUX86State, fred_sti));
+        }
+#endif /* __Use_Original_Qemu (U1171) */
         s->base.is_jmp = DISAS_EOB_INHIBIT_IRQ;
         s->flags &= ~HF_TF_MASK;
     }
@@ -8456,6 +8463,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         }
         break;
     case 0xcc: /* int3 */
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+        /* FRED: INT3 is a software exception, event type 6, not INT n (SDM 092 Vol3A 8.3.2.1) */
+        if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
+                            offsetof(CPUX86State, fred_swexc));
+        }
+#endif /* __Use_Original_Qemu (U1171) */
         gen_interrupt(s, EXCP03_INT3);
         break;
     case 0xcd: /* int N */
@@ -8475,6 +8489,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_svm_check_intercept(s, SVM_EXIT_ICEBP);
         gen_update_cc_op(s);
         gen_update_eip_next(s);
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+        /* FRED saves the length of INT1 (SDM 092 Vol3A 8.3.2.1) */
+        if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, cur_insn_len(s)), cpu_env,
+                            offsetof(CPUX86State, fred_insn_len));
+        }
+#endif /* __Use_Original_Qemu (U1171) */
         gen_helper_icebp(tcg_ctx, cpu_env);
         s->base.is_jmp = DISAS_NORETURN;
         break;
@@ -8486,6 +8507,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0xfb: /* sti */
         if (check_iopl(s)) {
             gen_set_eflags(s, IF_MASK);
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+            /* FRED: the interrupt shadow is blocking by STI (augmented SS bit 16, 8.3.2.1) */
+            if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+                tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
+                                offsetof(CPUX86State, fred_sti));
+            }
+#endif /* __Use_Original_Qemu (U1171) */
             /* interruptions are enabled only the first insn after sti */
             gen_update_eip_next(s);
             gen_eob_inhibit_irq(s, true);
@@ -8638,6 +8666,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_update_eip_cur(s);
 #endif /* __Use_Original_Qemu (U900) */
             gen_helper_sysenter(tcg_ctx, cpu_env, cur_insn_len_i32(s));
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+            /*
+             * FRED: "A single-step trap will never be pending following FRED event delivery"
+             * (SDM 092 Vol3A 8.3.3): the trap follows the RFLAGS.TF after the instruction (FRED
+             * clears it; SYSENTER without FRED does not change TF, so this is the same then)
+             */
+            if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+                gen_eob_worker(s, false, true);
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1171) */
             s->base.is_jmp = DISAS_EOB_ONLY;
         }
         break;
@@ -9380,6 +9419,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         case 0xf8: /* swapgs */
 #ifdef TARGET_X86_64
             if (CODE64(s)) {
+#if __Use_Original_Qemu != 1 /* ours (U1171) */
+                /* "IF CS.L != 1 OR CR4.FRED = 1 THEN #UD" before the CPL check (Vol2B SWAPGS) */
+                if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+                    gen_update_cc_op(s);
+                    gen_update_eip_cur(s);
+                    gen_helper_fred_ud_check(tcg_ctx, cpu_env);
+                }
+#endif /* __Use_Original_Qemu (U1171) */
                 if (check_cpl0(s)) {
                     tcg_gen_mov_tl(tcg_ctx, s->T0, cpu_seg_base[R_GS]);
                     tcg_gen_ld_tl(tcg_ctx, cpu_seg_base[R_GS], cpu_env,

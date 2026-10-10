@@ -228,6 +228,9 @@ void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra)
     cpu_reset_interrupt(cs, CPU_INTERRUPT_DEBUG);
     if (check_hw_breakpoints(env, false)) {
         env->eflags |= RF_MASK;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = env->dr[6] & 0xf;   /* FRED #DB event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP01_DB, ra);
     }
 }
@@ -243,6 +246,9 @@ void breakpoint_handler(CPUState *cs)
         if (cs->watchpoint_hit->flags & BP_CPU) {
             cs->watchpoint_hit = NULL;
             if (check_hw_breakpoints(env, false)) {
+                #if __Use_Original_Qemu != 1 /* ours (U1171) */
+                env->fred_evdata_next = env->dr[6] & 0xf;   /* FRED #DB event data (U1171) */
+                #endif /* __Use_Original_Qemu (U1171) */
                 raise_exception(env, EXCP01_DB);
             } else {
                 cpu_loop_exit_noexc(cs);
@@ -253,6 +259,9 @@ void breakpoint_handler(CPUState *cs)
             if (bp->pc == env->eip) {
                 if (bp->flags & BP_CPU) {
                     check_hw_breakpoints(env, true);
+                    #if __Use_Original_Qemu != 1 /* ours (U1171) */
+                    env->fred_evdata_next = env->dr[6] & 0xf;   /* FRED #DB event data (U1171) */
+                    #endif /* __Use_Original_Qemu (U1171) */
                     raise_exception(env, EXCP01_DB);
                 }
                 break;
@@ -265,6 +274,9 @@ void helper_single_step(CPUX86State *env)
 {
     check_hw_breakpoints(env, true);
     env->dr[6] |= DR6_BS;
+    #if __Use_Original_Qemu != 1 /* ours (U1171) */
+    env->fred_evdata_next = (env->dr[6] & 0xf) | DR6_BS;   /* FRED #DB event data (U1171) */
+    #endif /* __Use_Original_Qemu (U1171) */
     raise_exception(env, EXCP01_DB);
 }
 
@@ -320,6 +332,9 @@ target_ulong helper_get_dr(CPUX86State *env, int reg)
     if (env->dr[7] & DR7_GD) {
         env->dr[7] &= ~DR7_GD;
         env->dr[6] |= DR6_BD;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = DR6_BD;   /* FRED #DB event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP01_DB, GETPC());
     }
 
@@ -339,6 +354,9 @@ void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
     if (env->dr[7] & DR7_GD) {
         env->dr[7] &= ~DR7_GD;
         env->dr[6] |= DR6_BD;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = DR6_BD;   /* FRED #DB event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception_ra(env, EXCP01_DB, GETPC());
     }
 
@@ -369,6 +387,9 @@ void helper_bpt_io(CPUX86State *env, uint32_t port,
     if (hit) {
         env->dr[6] = (env->dr[6] & ~0xf) | hit;
         env->eip = next_eip;
+        #if __Use_Original_Qemu != 1 /* ours (U1171) */
+        env->fred_evdata_next = hit;   /* FRED #DB event data (U1171) */
+        #endif /* __Use_Original_Qemu (U1171) */
         raise_exception(env, EXCP01_DB);
     }
 }

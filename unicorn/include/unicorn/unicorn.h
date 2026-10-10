@@ -895,7 +895,11 @@ typedef enum uc_control_type {
     // spec 346446-009): CPUID.(07H,1):EAX.FRED[17] (and LKGS[18], which every FRED CPU reports),
     // CR4.FRED (bit 32), the FRED MSRs IA32_FRED_RSP0-3 (1CCH-1CFH), IA32_FRED_STKLVLS (1D0H),
     // IA32_FRED_SSP1-3 (1D1H-1D3H), IA32_FRED_CONFIG (1D4H) and IA32_PL0_SSP as IA32_FRED_SSP0
-    // (reset 0, reserved-bit / alignment / canonical #GP on writes).
+    // (reset 0, reserved-bit / alignment / canonical #GP on writes). U1171: with CR4.FRED = 1 (in
+    // IA-32e mode) FRED event delivery (SDM 092 Vol3A 8.3) replaces IDT delivery for the events
+    // UC_CTL_X86_EVENT_DELIVERY delivers to the guest, and the SYSCALL / SYSENTER transitions of
+    // UC_X86_SYSCALL_SDM (the UC_X86_INS_SYSCALL / SYSENTER hooks run after it); SWAPGS, SYSRET,
+    // SYSEXIT, SETSSBSY and CLRSSBSY are #UD.
     // Default off: CPUID, CR4 and the MSR list are unchanged.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
