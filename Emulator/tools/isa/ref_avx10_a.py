@@ -2058,6 +2058,26 @@ def gen_ambiguous():
         assert not fl
         c.code = evex(mmm, pp, w, opc, 1, 2, ll=ll)
         emit(c)
+    # VCOMX L'L = 11b (U1097, user decision 2026-10-10): the generic EVEX scalar rule of U1071 (AMB-1, SDM Vol2A
+    # Table 2-38 "11b: Reserved (#UD)") applies to VCOMX / VUCOMX as well, as Intel SDE: #UD without EVEX.b; with
+    # EVEX.b on a register form L'L is the rounding-control field and the instruction executes ({sae}).
+    for form in (COMX_FORMS[0], COMX_FORMS[3], COMX_FORMS[4]):
+        name, mmm, pp, w, opc, f, sq, dz = form
+        c = Case("%s L'L=3 no EVEX.b (generic scalar rule, Table 2-38, U1071 / U1097) -> #UD" % name)
+        c.code = evex(mmm, pp, w, opc, 1, 2, ll=3)
+        c.fault = "#UD"
+        emit(c)
+    name, mmm, pp, w, opc, f, sq, dz = COMX_FORMS[2]
+    a, b = f.one, exact_bits(2, f)
+    rel, fl = comx(a, b, f, MXCSR_DEFAULT, sq, dz)
+    c = Case("%s L'L=3 {sae} (L'L is the rounding-control field with EVEX.b, U1097): executes" % name)
+    c.zmm[1] = pack([a], f.esz) + bytes(64 - f.esz)
+    c.zmm[2] = pack([b], f.esz) + bytes(64 - f.esz)
+    c.inp.append("rflags=0x202")
+    c.exp.append("rflags=0x%X" % (0x202 | COMX_FL[rel]))
+    assert not fl
+    c.code = evex(mmm, pp, w, opc, 1, 2, ll=3, b=1)
+    emit(c)
     emit(comx_case(COMX_FORMS[4], 1, 0, mxcsr=MXCSR_DEFAULT | DAZ, title="AMBIGUOUS-16 FP16 denormal not DAZ'd, DE"))
     emit(comx_case(COMX_FORMS[5], 0x8001, 0x8000, mxcsr=MXCSR_DEFAULT | DAZ,
                    title="AMBIGUOUS-16 FP16 denormal not DAZ'd, DE"))
