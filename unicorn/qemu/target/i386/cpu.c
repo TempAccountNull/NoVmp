@@ -5985,6 +5985,19 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 6);
     }
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /*
+     * NoVmp (ledger U1170): UC_X86_FEATURE_FRED opts in to FRED: CPUID.(07H,1):EAX.FRED[17] (leaf-7
+     * level >= 1). "Any Intel processor that enumerates support for FRED transitions will also
+     * enumerate support for LKGS" (SDM 092 Vol3A 8.2.1): LKGS[18] (U805) too. NMI-source reporting
+     * (EAX[20]) is not offered (SDM 092 Vol3A 8.3.2.1: then the NMI event data is zero).
+     */
+    if (uc->x86_features & UC_X86_FEATURE_FRED) {
+        env->features[FEAT_7_1_EAX] |= CPUID_7_1_EAX_FRED | CPUID_7_1_EAX_LKGS;
+        env->cpuid_level_func7 = MAX(env->cpuid_level_func7, 1);
+        env->cpuid_level = MAX(env->cpuid_level, 7);
+    }
+#endif /* __Use_Original_Qemu (U1170) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

@@ -260,7 +260,11 @@ void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3)
     }
 }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1170) */
 void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
+#else /* ours (U1170) */
+void cpu_x86_update_cr4(CPUX86State *env, uint64_t new_cr4)
+#endif /* __Use_Original_Qemu (U1170) */
 {
     uint32_t hflags;
 
@@ -327,6 +331,12 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4)
         new_cr4 &= ~CR4_CET_MASK;
     }
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /* CR4.FRED only with CPUID.(07H,1):EAX.FRED (SDM 092 Vol3A 8.2.2), like the bits above */
+    if (!x86_fred_cpuid(env)) {
+        new_cr4 &= ~CR4_FRED_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1170) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;

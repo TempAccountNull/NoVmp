@@ -891,6 +891,12 @@ typedef enum uc_control_type {
     // How a thread is classified is platform-specific and not modelled: the host sets the
     // classification result with UC_CTL_X86_ITD_CLASS. The Hardware Feedback Interface (06H:EAX[19],
     // 17D0H/17D1H, the HFI table, package thermal bits) is not modelled.
+    // NoVmp U1170: UC_X86_FEATURE_FRED: flexible return and event delivery (SDM 092 Vol3A ch. 8, FRED
+    // spec 346446-009): CPUID.(07H,1):EAX.FRED[17] (and LKGS[18], which every FRED CPU reports),
+    // CR4.FRED (bit 32), the FRED MSRs IA32_FRED_RSP0-3 (1CCH-1CFH), IA32_FRED_STKLVLS (1D0H),
+    // IA32_FRED_SSP1-3 (1D1H-1D3H), IA32_FRED_CONFIG (1D4H) and IA32_PL0_SSP as IA32_FRED_SSP0
+    // (reset 0, reserved-bit / alignment / canonical #GP on writes).
+    // Default off: CPUID, CR4 and the MSR list are unchanged.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
@@ -920,6 +926,7 @@ typedef enum uc_control_type {
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)
 #define UC_X86_FEATURE_TSE 1       // TSE engine: IA32_TSE_CAPABILITY, PCONFIG leaves 1 and 2
 #define UC_X86_FEATURE_ITD 2       // Intel Thread Director per-thread state and history (U1128)
+#define UC_X86_FEATURE_FRED 4      // FRED transitions, CR4.FRED, the FRED MSRs (U1170)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)

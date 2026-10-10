@@ -1966,6 +1966,12 @@ uc_err reg_write(void *_env, int mode, unsigned int regid, const void *value,
             CHECK_REG_TYPE(uint64_t);
         write_cr64:
             env->cr[regid - UC_X86_REG_CR0] = *(uint64_t *)value;
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+            /* CR4.FRED (bit 32) only exists with FRED enumerated (SDM 092 Vol3A 8.2.2) */
+            if (regid == UC_X86_REG_CR4 && !x86_fred_cpuid(env)) {
+                env->cr[4] &= ~CR4_FRED_MASK;
+            }
+#endif /* __Use_Original_Qemu (U1170) */
             break;
         case UC_X86_REG_DR0:
         case UC_X86_REG_DR1:

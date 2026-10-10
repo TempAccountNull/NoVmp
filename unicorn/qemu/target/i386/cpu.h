@@ -1165,6 +1165,22 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 /* LKGS (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[18]) */
 #define CPUID_7_1_EAX_LKGS              (1U << 18)
 #endif /* __Use_Original_Qemu (U805) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+/*
+ * FRED (SDM 325462-092 Vol3A 8.2; FRED spec 346446-009 4.1-4.3): CPUID.(EAX=07H,ECX=1):EAX.FRED[17],
+ * CR4.FRED = bit 32, the FRED MSRs 1CCH-1D4H (IA32_FRED_SSP0 is IA32_PL0_SSP, 6A4H)
+ */
+#define CPUID_7_1_EAX_FRED              (1U << 17)
+#define CR4_FRED_MASK                   (1ULL << 32)
+#define MSR_IA32_FRED_RSP0              0x1cc
+#define MSR_IA32_FRED_RSP3              0x1cf
+#define MSR_IA32_FRED_STKLVLS           0x1d0
+#define MSR_IA32_FRED_SSP1              0x1d1
+#define MSR_IA32_FRED_SSP3              0x1d3
+#define MSR_IA32_FRED_CONFIG            0x1d4
+/* IA32_FRED_CONFIG: reserved bits 2, 5:4, 11 (Vol3A 8.2.3) */
+#define FRED_CONFIG_RESERVED            0x834ull
+#endif /* __Use_Original_Qemu (U1170) */
 #if __Use_Original_Qemu != 1 /* ours (U802) */
 /* RDMSRLIST, WRMSRLIST and IA32_BARRIER (SDM Vol1 Table 21-22: CPUID.(EAX=07H,ECX=1):EAX[27]) */
 #define CPUID_7_1_EAX_MSRLIST           (1U << 27)
@@ -2106,6 +2122,18 @@ typedef struct CPUX86State {
     uint64_t uintr_tt;              /* UITTADDR | SENDUIPI enable */
     uint8_t uintr_uif;              /* UIF */
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /*
+     * NoVmp (ledger U1170): the FRED MSRs (SDM 092 Vol3A 8.2.3): "The RESET state of each of the new
+     * MSRs is zero. INIT does not change the value of the FRED MSRs" (hence in the INIT-preserved
+     * area). fred_config = IA32_FRED_CONFIG; its bits 1:0 are the current stack level (CSL).
+     * fred_ssp[1..3] = IA32_FRED_SSP1..3; IA32_FRED_SSP0 is IA32_PL0_SSP (pl_ssp[0]).
+     */
+    uint64_t fred_rsp[4];
+    uint64_t fred_ssp[4];
+    uint64_t fred_stklvls;
+    uint64_t fred_config;
+#endif /* __Use_Original_Qemu (U1170) */
 
     /* End of state preserved by INIT (dummy marker).  */
     int end_init_save;
@@ -2751,7 +2779,12 @@ void breakpoint_handler(CPUState *cs);
 /* will be suppressed */
 void cpu_x86_update_cr0(CPUX86State *env, uint32_t new_cr0);
 void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1170) */
 void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4);
+#else /* ours (U1170) */
+/* CR4 has bits above 31 (CR4.FRED = bit 32, SDM 092 Vol3A 2.5) */
+void cpu_x86_update_cr4(CPUX86State *env, uint64_t new_cr4);
+#endif /* __Use_Original_Qemu (U1170) */
 void cpu_x86_update_dr7(CPUX86State *env, uint32_t new_dr7);
 
 /* hw/pc.c */
@@ -3105,6 +3138,25 @@ void x86_cpu_xsave_all_areas(X86CPU *cpu, void *buf, uint32_t buflen);
 uint32_t xsave_area_size(uint64_t mask, bool compacted);
 void x86_update_hflags(CPUX86State* env);
 
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+/*
+ * NoVmp (ledger U1170): FRED as the CPU reports it - CPUID.(07H,1):EAX.FRED[17] of the model (the
+ * UC_X86_FEATURE_FRED opt-in), hidden by a strict UC_CTL_X86_CPUID profile exactly as the
+ * translator hides instructions (x86_cpuid_profile_mask)
+ */
+static inline bool x86_fred_cpuid(CPUX86State *env)
+{
+    return (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_FRED) &&
+           (x86_cpuid_profile_mask(env, 7, 1, 0) & CPUID_7_1_EAX_FRED);
+}
+
+/* FRED transitions enabled: CR4.FRED = 1 (SDM 092 Vol3A 8.2.2; only in IA-32e mode, Vol3A 8.1) */
+static inline bool x86_fred_enabled(CPUX86State *env)
+{
+    return (env->cr[4] & CR4_FRED_MASK) && (env->hflags & HF_LMA_MASK) && x86_fred_cpuid(env);
+}
+
+#endif /* __Use_Original_Qemu (U1170) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;
@@ -3158,6 +3210,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~(uint64_t)CR4_SMXE_MASK;
     }
 #endif /* __Use_Original_Qemu (U113) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /* CR4.FRED (bit 32) exists with CPUID.(07H,1):EAX.FRED (SDM 092 Vol3A 8.2.2) */
+    if (x86_fred_cpuid(env)) {
+        reserved_bits &= ~CR4_FRED_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1170) */
     return reserved_bits;
 }
 

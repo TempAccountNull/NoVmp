@@ -219,6 +219,16 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         cpu_x86_update_cr3(env, t0);
         break;
     case 4:
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+        /*
+         * NoVmp (ledger U1170): "Execution of the MOV to CR4 instruction outside 64-bit mode clears
+         * CR4[63:32]" (SDM 092 Vol3A 8.2.2): the source is 32 bits there (the translator passes the
+         * whole register, whose upper half compatibility mode may have kept from 64-bit mode)
+         */
+        if (!(env->hflags & HF_CS64_MASK)) {
+            t0 = (uint32_t)t0;
+        }
+#endif /* __Use_Original_Qemu (U1170) */
         if (t0 & cr4_reserved_bits(env)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
@@ -232,7 +242,16 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
             (env->hflags & HF_CS64_MASK)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U1170) */
         cpu_x86_update_cr4(env, (uint32_t)t0);
+#else /* ours (U1170) */
+        /*
+         * NoVmp (ledger U1170): all 64 bits (CR4.FRED = bit 32; the reserved-bit check above has
+         * refused it without FRED). Outside 64-bit mode the operand is 32 bits wide, so MOV to CR4
+         * there clears CR4[63:32] (SDM 092 Vol3A 8.2.2).
+         */
+        cpu_x86_update_cr4(env, t0);
+#endif /* __Use_Original_Qemu (U1170) */
         break;
     case 8:
 #if __Use_Original_Qemu == 1 /* original QEMU (U960) */
@@ -1136,11 +1155,31 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
     case MSR_IA32_S_CET:
         return MF_7ECX(CPUID_7_0_ECX_CET_SHSTK) || MF_7EDX(CPUID_7_0_EDX_CET_IBT);
     case MSR_IA32_PL0_SSP:
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+        /* also IA32_FRED_SSP0: "supported by any processor that enumerates FRED" (Vol3A 8.2.3) */
+        if (MF_71EAX(CPUID_7_1_EAX_FRED)) {
+            return true;
+        }
+#endif /* __Use_Original_Qemu (U1170) */
+        /* fall through */
     case MSR_IA32_PL1_SSP:
     case MSR_IA32_PL2_SSP:
     case MSR_IA32_PL3_SSP:
     case MSR_IA32_INT_SSP_TAB:
         return MF_7ECX(CPUID_7_0_ECX_CET_SHSTK);
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /* NoVmp (ledger U1170): the FRED MSRs 1CCH-1D4H with CPUID.(07H,1):EAX.FRED[17] (Vol3A 8.2.1) */
+    case MSR_IA32_FRED_RSP0:
+    case MSR_IA32_FRED_RSP0 + 1:
+    case MSR_IA32_FRED_RSP0 + 2:
+    case MSR_IA32_FRED_RSP3:
+    case MSR_IA32_FRED_STKLVLS:
+    case MSR_IA32_FRED_SSP1:
+    case MSR_IA32_FRED_SSP1 + 1:
+    case MSR_IA32_FRED_SSP3:
+    case MSR_IA32_FRED_CONFIG:
+        return MF_71EAX(CPUID_7_1_EAX_FRED);
+#endif /* __Use_Original_Qemu (U1170) */
     case MSR_IA32_TSCDEADLINE:
         return MF_1ECX(CPUID_EXT_TSC_DEADLINE_TIMER);
     case MSR_IA32_PKRS:
@@ -1399,9 +1438,36 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
     case MSR_IA32_PL1_SSP:
     case MSR_IA32_PL2_SSP:
     case MSR_IA32_PL3_SSP:
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+        /* IA32_FRED_SSP0 without CET: bits 1:0 reserved, CPU canonical (Vol3A 8.2.3) */
+        if (msr == MSR_IA32_PL0_SSP && !(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK)) {
+            return !(val & 3) && novmp_canonical(env, val);
+        }
+#endif /* __Use_Original_Qemu (U1170) */
         return x86_cet_msr_ok(env, msr, val);
     case MSR_IA32_INT_SSP_TAB:
         return novmp_canonical(env, val);
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /*
+     * NoVmp (ledger U1170): SDM 092 Vol3A 8.2.3 - "A write to this MSR ... causes a #GP if its operand
+     * sets any reserved bits or if it is not CPU canonical": IA32_FRED_CONFIG (reserved 2, 5:4, 11),
+     * IA32_FRED_RSPi (bits 5:0 must be 0: 64-byte aligned), IA32_FRED_SSPi, i = 1..3 (bits 2:0
+     * reserved). IA32_FRED_STKLVLS has no reserved bit (32 2-bit fields).
+     */
+    case MSR_IA32_FRED_CONFIG:
+        return !(val & FRED_CONFIG_RESERVED) && novmp_canonical(env, val);
+    case MSR_IA32_FRED_RSP0:
+    case MSR_IA32_FRED_RSP0 + 1:
+    case MSR_IA32_FRED_RSP0 + 2:
+    case MSR_IA32_FRED_RSP3:
+        return !(val & 0x3f) && novmp_canonical(env, val);
+    case MSR_IA32_FRED_SSP1:
+    case MSR_IA32_FRED_SSP1 + 1:
+    case MSR_IA32_FRED_SSP3:
+        return !(val & 7) && novmp_canonical(env, val);
+    case MSR_IA32_FRED_STKLVLS:
+        return true;
+#endif /* __Use_Original_Qemu (U1170) */
     case MSR_IA32_UINTR_HANDLER:
     case MSR_IA32_UINTR_STACKADJUST:
         return novmp_canonical(env, val);
@@ -2005,8 +2071,35 @@ void helper_wrmsr(CPUX86State *env)
             }
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+        /* IA32_FRED_SSP0 on a CPU with FRED but without CET shadow stacks (msr_write_ok checked it) */
+        if ((uint32_t)env->regs[R_ECX] == MSR_IA32_PL0_SSP &&
+            !(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK)) {
+            env->pl_ssp[0] = val;
+        }
+#endif /* __Use_Original_Qemu (U1170) */
         break;
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    /* NoVmp (ledger U1170): the FRED MSRs (values checked by msr_write_ok, Vol3A 8.2.3) */
+    case MSR_IA32_FRED_RSP0:
+    case MSR_IA32_FRED_RSP0 + 1:
+    case MSR_IA32_FRED_RSP0 + 2:
+    case MSR_IA32_FRED_RSP3:
+        env->fred_rsp[(uint32_t)env->regs[R_ECX] - MSR_IA32_FRED_RSP0] = val;
+        break;
+    case MSR_IA32_FRED_SSP1:
+    case MSR_IA32_FRED_SSP1 + 1:
+    case MSR_IA32_FRED_SSP3:
+        env->fred_ssp[(uint32_t)env->regs[R_ECX] - MSR_IA32_FRED_SSP1 + 1] = val;
+        break;
+    case MSR_IA32_FRED_STKLVLS:
+        env->fred_stklvls = val;
+        break;
+    case MSR_IA32_FRED_CONFIG:
+        env->fred_config = val;
+        break;
+#endif /* __Use_Original_Qemu (U1170) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     case MSR_IA32_PASID:
         /*
@@ -2352,6 +2445,25 @@ void helper_rdmsr(CPUX86State *env)
         val = env->int_ssp_table;
         break;
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U1170) */
+    case MSR_IA32_FRED_RSP0:
+    case MSR_IA32_FRED_RSP0 + 1:
+    case MSR_IA32_FRED_RSP0 + 2:
+    case MSR_IA32_FRED_RSP3:
+        val = env->fred_rsp[(uint32_t)env->regs[R_ECX] - MSR_IA32_FRED_RSP0];
+        break;
+    case MSR_IA32_FRED_SSP1:
+    case MSR_IA32_FRED_SSP1 + 1:
+    case MSR_IA32_FRED_SSP3:
+        val = env->fred_ssp[(uint32_t)env->regs[R_ECX] - MSR_IA32_FRED_SSP1 + 1];
+        break;
+    case MSR_IA32_FRED_STKLVLS:
+        val = env->fred_stklvls;
+        break;
+    case MSR_IA32_FRED_CONFIG:
+        val = env->fred_config;
+        break;
+#endif /* __Use_Original_Qemu (U1170) */
     case MSR_IA32_XSS:
 #if __Use_Original_Qemu != 1 /* ours (U727) */
         /* NoVmp (ledger U727): no IA32_XSS without CPUID.(0DH,1):EAX.XSAVES (#GP, SDM 13.2) */
