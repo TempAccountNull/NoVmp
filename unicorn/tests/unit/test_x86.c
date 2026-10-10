@@ -13325,7 +13325,8 @@ static void test_x86_avx10_optin(void)
     TEST_CHECK(r[0] >= 0x24);
     a10_cpuid(&c, 7, 0, r);
     TEST_CHECK(r[0] >= 1);
-    TEST_CHECK((r[1] & ((1u << 16) | (1u << 31))) == 0); /* AVX512F/VL bits stay as set */
+    /* U1090: AVX512F reported with AVX10 (Table 16-2), AVX512VL not (vx_ block has the rest) */
+    TEST_CHECK((r[1] & ((1u << 16) | (1u << 31))) == (1u << 16));
     a10_cpuid(&c, 7, 1, r);
     TEST_CHECK(r[3] & (1u << 19));
     a10_cpuid(&c, 0x24, 0, r);
@@ -13526,7 +13527,8 @@ static void test_x86_avx10b_ctl(void)
     OK(uc_ctl_set_x86_avx10(uc, 2));
     OK(uc_ctl_get_x86_avx10(uc, &v));
     TEST_CHECK(v == 2);
-    /* U370: AVX10 leaves UC_CTL_X86_AVX512 (and the AVX512* CPUID bits) alone */
+    /* U370: AVX10 leaves UC_CTL_X86_AVX512 alone (U1090: the CPUID instruction reports the
+       AVX-512 bits of AVX10.2 spec Table 3.2, the opt-in mask reads back as written) */
     OK(uc_ctl_get_x86_avx512(uc, &mask));
     TEST_CHECK(mask == 0);
     OK(uc_close(uc));
@@ -26421,6 +26423,71 @@ static void test_x86_ig_context_msr(void)
 }
 /* ---- end U1060-U1069 (integ_) ---- */
 
+/*
+ * ---- NoVmp U1090-U1119: AVX10 enumeration (plan 1.J.19-1.J.22) (vx_) ----
+ * U1090: with UC_CTL_X86_AVX10 the CPUID instruction reports AVX, AVX2 and the AVX-512 flags of
+ * AVX10.2 spec 361050-007 p.21 Table 3.2 / SDM 092 Vol1 Table 16-2; not AVX512VL, not
+ * VP2INTERSECT, not the Xeon Phi bits (U990); XCR0[7:5] enabled; UC_CTL_X86_AVX512 unchanged.
+ */
+static void vx_check_avx10_flags(A10Ctx *c, int expect)
+{
+    uint32_t r1[4], r70[4], r71[4];
+    const uint32_t ebx = (1u << 5) | (1u << 16) | (1u << 17) | (1u << 21) | (1u << 28) | (1u << 30);
+    const uint32_t ecx = (1u << 1) | (1u << 6) | (1u << 11) | (1u << 12) | (1u << 14);
+
+    a10_cpuid(c, 1, 0, r1);
+    a10_cpuid(c, 7, 0, r70);
+    a10_cpuid(c, 7, 1, r71);
+    TEST_MSG("1:ECX %08x 7.0: EBX %08x ECX %08x EDX %08x 7.1:EAX %08x", r1[2], r70[1], r70[2],
+             r70[3], r71[0]);
+    TEST_CHECK((r1[2] >> 28) & 1);                                  /* AVX */
+    if (expect) {
+        TEST_CHECK((r70[1] & ebx) == ebx);                           /* AVX2, F, DQ, IFMA, CD, BW */
+        TEST_CHECK((r70[2] & ecx) == ecx);                           /* VBMI, VBMI2, VNNI, BITALG, VPOPCNTDQ */
+        TEST_CHECK((r70[3] >> 23) & 1);                              /* AVX512_FP16 */
+        TEST_CHECK((r71[0] >> 5) & 1);                               /* AVX512_BF16 */
+    } else {
+        TEST_CHECK((r70[1] & ebx & ~(1u << 5)) == 0);
+        TEST_CHECK((r70[2] & ecx) == 0 && !((r70[3] >> 23) & 1) && !((r71[0] >> 5) & 1));
+    }
+    TEST_CHECK(!((r70[1] >> 31) & 1));                               /* AVX512VL: not in Table 16-2 */
+    TEST_CHECK((r70[1] & ((1u << 26) | (1u << 27))) == 0);           /* AVX512PF / ER */
+    TEST_CHECK((r70[2] & 1) == 0);                                   /* PREFETCHWT1 */
+    TEST_CHECK((r70[3] & ((1u << 2) | (1u << 3) | (1u << 8))) == 0); /* 4VNNIW, 4FMAPS, VP2INTERSECT */
+}
+
+static void test_x86_vx_avx10_cpuid(void)
+{
+    A10Ctx c;
+    int mask = -1;
+
+    a10_open(&c, UC_MODE_64, 0, 0, NULL, 0, 0);
+    vx_check_avx10_flags(&c, 0);
+    OK(uc_close(c.uc));
+
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_1, NULL, 0, 0);
+    vx_check_avx10_flags(&c, 1);
+    TEST_CHECK((a10_xcr0(&c) & 0xe7) == 0xe7);
+    OK(uc_ctl_get_x86_avx512(c.uc, &mask));
+    TEST_CHECK(mask == 0);
+    /* the instructions behind the reported flags run (AVX512F and AVX512BW opmask forms) */
+    TEST_CHECK(a10_vpaddd_ok(&c, A10_VPADDD_Z, 64));
+    TEST_CHECK(a10_run(&c, A10_KANDD, 5) == -1);
+    OK(uc_close(c.uc));
+
+    a10_open(&c, UC_MODE_64, 0, UC_X86_AVX10_2, NULL, 0, 0);
+    vx_check_avx10_flags(&c, 1);
+    OK(uc_close(c.uc));
+
+    /* AVX512F opted in as well: the same flags, the mask reads back as written */
+    a10_open(&c, UC_MODE_64, UC_X86_AVX512_F, UC_X86_AVX10_2, NULL, 0, 0);
+    vx_check_avx10_flags(&c, 1);
+    OK(uc_ctl_get_x86_avx512(c.uc, &mask));
+    TEST_CHECK(mask == UC_X86_AVX512_F);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1090-U1119 (vx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -26633,6 +26700,7 @@ TEST_LIST = {
     {"test_x86_avx10b_gating", test_x86_avx10b_gating},
     {"test_x86_avx10b_values", test_x86_avx10b_values},
     {"test_x86_avx10b_fault_suppression", test_x86_avx10b_fault_suppression},
+    {"test_x86_vx_avx10_cpuid", test_x86_vx_avx10_cpuid},
     {"test_x86_sse_unmasked_ou", test_x86_sse_unmasked_ou},
     {"test_x86_sse_dpps_steps", test_x86_sse_dpps_steps},
     {"test_x86_mxcsr_api", test_x86_mxcsr_api},

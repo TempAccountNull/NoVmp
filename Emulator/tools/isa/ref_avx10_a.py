@@ -1870,7 +1870,7 @@ def gen_gating():
     comment("=== E. AVX10.2 alone enables the AVX-512 (M1) forms; #UD encoding rules")
     m1 = dict(name="VADDPS", mmm=1, pp=0, w=0, opc=0x58, lay="rvm", sesz=4, desz=4, mx="mxcsr", safe=F32.one,
               gen=lambda: rnd_fp(F32, -20, 20), fn=lambda s, ctx: fp_binop("add", s[0], s[1], F32, ctx["mxcsr"]) + (None,))
-    emit(vcase(m1, 64, "reg", 1, 2, 3, title="(AVX512F form, AVX512F CPUID bit off)"))
+    emit(vcase(m1, 64, "reg", 1, 2, 3, title="(AVX512F form, AVX512F not opted in; AVX10 reports it, U1090)"))
     emit(vcase(m1, 32, "reg", 17, 30, 9, kreg=3, kval=0xA5, title="(AVX512VL form)"))
     emit(vcase(m1, 16, "mem", 4, 5, kreg=7, kval=0x9, z=1, title="(AVX512VL form)"))
     emit(vcase(m1, 64, "bcst", 8, 31, kreg=2, kval=0x5A5A))
@@ -2273,7 +2273,7 @@ def main():
         out.write("# AVX10.2 group avx10_a: expected values from the independent spec model\n")
         out.write("# Emulator/tools/isa/ref_avx10_a.py --cases (regenerate, do not edit). Sources: Intel AVX10.2 spec\n")
         out.write("# 361050-007 (rev 7.0) + SDM 092. The i5-13600K has no AVX10: expected-value cases only, run with\n")
-        out.write("# AVX10.2 alone (the AVX-512 CPUID bits stay off):\n")
+        out.write("# AVX10.2 alone (no --avx512; AVX10 reports the AVX-512 CPUID flags of Table 3.2, U1090):\n")
         out.write("#   emu-alltest --cases Emulator%sdata%scases_avx10_a.txt --avx10 2 --expect-only\n" % (BS, BS))
         out.write("# RSI = R14 = MEM + 0x8000. Cases titled AMBIGUOUS-nn test an ambiguous spec point (see the\n")
         out.write("# AMBIGUOUS: comments in ref_avx10_a.py); every other case avoids those inputs.\n")

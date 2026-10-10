@@ -81,8 +81,8 @@
 // for Emulator\data\cases_xeonphi.txt. --amx
 // opts in to Intel AMX (UC_CTL_X86_AMX = UC_X86_AMX_ALL) for Emulator\data\cases_amx.txt; the tile
 // state itself is not a checked field (the cases store their results to memory). --avx10 N opts in
-// to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; AVX-512 CPUID bits stay off unless
-// --avx512 is given too) for Emulator\data\cases_avx10_a.txt. --apx opts in to Intel APX
+// to Intel AVX10 version N (UC_CTL_X86_AVX10 = N, 1 or 2; CPUID then also reports the AVX-512
+// flags of AVX10.2 spec Table 3.2, U1090) for Emulator\data\cases_avx10_a.txt. --apx opts in to Intel APX
 // (UC_CTL_X86_APX = UC_X86_APX_F; reset XCR0 then has bit 19) for Emulator\data\cases_apx_core.txt:
 // the r16..r31 keys move R16-R31 like the ZMM/K state (and are checked fields of a strict case).
 // Paired hardware case (U614, APX): "<host asm> ~~ <unicorn asm> | <inputs>" runs the first

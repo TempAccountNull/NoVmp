@@ -5902,6 +5902,26 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 0x24);
     }
 #endif /* __Use_Original_Qemu (U370) */
+#if __Use_Original_Qemu != 1 /* ours (U1090) */
+    /*
+     * NoVmp (ledger U1090, plan 1.J.19; supersedes the U370 "AVX512* bits stay as
+     * UC_CTL_X86_AVX512 sets them"): "Any processor that enumerates support for Intel AVX10
+     * will also enumerate support for Intel AVX, Intel AVX2, and Intel AVX-512" (AVX10.2 spec
+     * 361050-007 p.21, SDM 092 Vol1 16-2): with AVX10 the CPUID instruction reports AVX,
+     * AVX2 and the AVX-512 flags of Table 16-2 (AVX10_ENUM_*). The instructions already run
+     * through "AVX512x OR AVX10.1" (U371) and the state components 5-7 follow AVX512F, so
+     * availability, enumeration and XCR0 stay consistent. Not implied: AVX512VL (not in the
+     * table), VAES/GFNI/VPCLMULQDQ (discrete flags), VP2INTERSECT and the Xeon Phi families
+     * (U570, U990). UC_CTL_X86_AVX512 reads back unchanged; a CPUID profile is returned as given.
+     */
+    if (uc->x86_avx10) {
+        env->features[FEAT_1_ECX] |= CPUID_EXT_AVX;
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_AVX2 | AVX10_ENUM_7_0_EBX;
+        env->features[FEAT_7_0_ECX] |= AVX10_ENUM_7_0_ECX;
+        env->features[FEAT_7_0_EDX] |= AVX10_ENUM_7_0_EDX;
+        env->features[FEAT_7_1_EAX] |= AVX10_ENUM_7_1_EAX;
+    }
+#endif /* __Use_Original_Qemu (U1090) */
 #if __Use_Original_Qemu != 1 /* ours (U610) */
     /*
      * NoVmp (ledger U610): UC_CTL_X86_APX opts in to Intel APX after the TCG filter (APX spec

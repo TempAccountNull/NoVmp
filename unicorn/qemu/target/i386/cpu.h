@@ -1178,6 +1178,18 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define AVX10_1_7_0_EDX CPUID_7_0_EDX_AVX512_FP16
 #define AVX10_1_7_1_EAX CPUID_7_1_EAX_AVX512_BF16
 #endif /* __Use_Original_Qemu (U370) */
+#if __Use_Original_Qemu != 1 /* ours (U1090) */
+/*
+ * the AVX-512 CPUID feature flags a CPU with AVX10 enumerates (AVX10.2 spec 361050-007 p.21
+ * Table 3.2, SDM 092 Vol1 16-2 Table 16-2): F, CD, BW, DQ, VBMI, IFMA, VNNI, BF16, VPOPCNTDQ,
+ * VBMI2, BITALG, FP16. AVX512VL is not in the table (only the translator's AVX10 copy above
+ * has it: AVX10 runs every vector length); VAES/GFNI/VPCLMULQDQ keep their discrete flags.
+ */
+#define AVX10_ENUM_7_0_EBX (AVX10_1_7_0_EBX & ~CPUID_7_0_EBX_AVX512VL)
+#define AVX10_ENUM_7_0_ECX AVX10_1_7_0_ECX
+#define AVX10_ENUM_7_0_EDX AVX10_1_7_0_EDX
+#define AVX10_ENUM_7_1_EAX AVX10_1_7_1_EAX
+#endif /* __Use_Original_Qemu (U1090) */
 #if __Use_Original_Qemu != 1 /* ours (U610) */
 /* Intel APX foundation (APX spec 355828-009 ch.2, 3.1.4.3.1): CPUID.(EAX=7,ECX=1):EDX[21] */
 #define CPUID_7_1_EDX_APX_F             (1U << 21)
