@@ -32,7 +32,10 @@ Model notes (SDM pseudocode taken literally):
   VREDUCE   SRC - 2^-M * ROUND(2^M * SRC) exactly, the subtraction rounded under the same
             RC (imm8[1:0], or MXCSR.RC when imm8[2] = 1); PE from the inexact ROUND unless
             SPE (imm8[3]); NaN -> quietened (IE for SNaN); +-INF -> +0; zero result +0
-            (-0 when rounding down), Table 5-27. No DAZ/FTZ/DE/UE step in the pseudocode.
+            (-0 when rounding down), Table 5-27. No DAZ/DE/UE step in the pseudocode.
+            U1074 (SDE-resolved ambiguity AMB-4, docs/quirks.md): with MXCSR.FTZ = 1 a denormal
+            result is flushed to a zero of its sign, no flag (Intel SDE 10.13.1); the SDM lists
+            only "Invalid, Precision" and defines FTZ as the masked underflow response.
   L'L       scalar forms (EVEX.LLIG): L'L = 00b/01b/10b run the scalar form; L'L = 11b without
             EVEX.b is #UD (U1071, user decision 2026-10-10 on the U1040 SDE cross-check, AMB-1:
             SDM Vol2A Table 2-38 "11b: Reserved (#UD)", as Intel SDE 10.13.1). The random L'L
@@ -206,6 +209,8 @@ def m_reduce(x, f, imm, mxcsr):
     if d == 0:
         return zero, flags
     bits, _ = encode_value(d, f, rc, False)
+    if mxcsr & FTZ and (bits & ~sb_) < (1 << f.fbits):
+        bits &= sb_                                # U1074: FTZ flushes a denormal result, no flag
     return bits, flags
 
 

@@ -8968,7 +8968,23 @@ void helper_evex_reduce(CPUX86State *env, ZMMReg *d, ZMMReg *s, ZMMReg *u, uint3
         n = 1;
     }
     for (i = 0; i < n; i++) {
-        evex_set_elem(&r, esz, i, evex_reduce1(env, evex_get_elem(s, esz, i), esz == MO_64, imm));
+#if __Use_Original_Qemu != 1 /* ours (U1074) */
+        /*
+         * NoVmp (ledger U1074, SDE-resolved ambiguity AMB-4, docs/quirks.md): with MXCSR.FTZ = 1 a
+         * denormal reduced result becomes a zero of its sign, with no flag of its own. VREDUCE
+         * lists only "Invalid, Precision" and its pseudocode has no FTZ step, while Vol1
+         * 10.2.3.3 defines FTZ as the masked underflow response: not resolved by the SDM;
+         * Intel SDE 10.13.1 (-spr) flushes (user decision 2026-10-10: follow SDE there).
+         */
+        uint64_t v = evex_reduce1(env, evex_get_elem(s, esz, i), esz == MO_64, imm);
+        uint64_t sbit = esz == MO_64 ? 1ull << 63 : 1ull << 31;
+        uint64_t fmask = esz == MO_64 ? (1ull << 52) - 1 : (1ull << 23) - 1;
+
+        if ((env->mxcsr & 0x8000) && (v & ~sbit) != 0 && (v & ~sbit) <= fmask) {
+            v &= sbit;
+        }
+        evex_set_elem(&r, esz, i, v);
+#endif /* __Use_Original_Qemu (U1074) */
     }
     if (desc & EVEX_DQ_SCALAR) {
         memcpy(d, &r, 16);
