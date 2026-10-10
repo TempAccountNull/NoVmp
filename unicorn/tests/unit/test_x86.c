@@ -23296,6 +23296,80 @@ static void test_x86_fx5_mstore_write_once(void)
     TEST_CHECK(v == 0xC0DE0004u);
     OK(uc_close(uc));
 }
+
+/*
+ * U877: an instruction that reads several parts changes nothing when a later part faults
+ * (SDM Vol3A 6.5 / 7.5: the state of before the instruction): BNDMOV bnd, m128 with its upper
+ * half on memory Unicorn has not mapped; POPAD (32-bit) with a later slot not mapped; LTR whose
+ * busy-bit store hits a read-only GDT page (UC_ERR_WRITE_PROT).
+ */
+static void test_x86_fx5_partial_reads(void)
+{
+    static const uint64_t aa = 0xAAAAAAAAAAAAAAAAULL;
+    uc_x86_msr bndcfgs = {0xd90, 1};
+    uc_x86_mmr gdtr = {0, 0x30000, 0x3f, 0}, tr0, tr1;
+    uint32_t desc[4] = {0x00000067, 0x00008900, 0, 0};
+    uint8_t slots[16];
+    uint64_t v[2];
+    uc_engine *uc;
+    uc_err err;
+
+    /* BNDMOV bnd1, [rcx]: LB at FX5_DATA + 0xff8 (mapped), UB on the next page (not mapped) */
+    uc = fx5_open(UC_MODE_64, 0);
+    fx5_set(uc, UC_X86_REG_CR4, fx5_get(uc, UC_X86_REG_CR4) | (1ULL << 18));
+    fx5_set(uc, UC_X86_REG_XCR0, 0x1b);
+    OK(uc_reg_write(uc, UC_X86_REG_MSR, &bndcfgs));
+    fx5_set(uc, UC_X86_REG_RAX, 0x1234);
+    OK(fx5_run(uc, "\xf3\x0f\x1b\x48\x10", 5));             /* bndmk bnd1, [rax+0x10] */
+    OK(uc_mem_write(uc, FX5_DATA + 0xff8, &aa, 8));
+    fx5_set(uc, UC_X86_REG_RCX, FX5_DATA + 0xff8);
+    err = fx5_run(uc, "\x66\x0f\x1a\x09", 4);               /* bndmov bnd1, [rcx] */
+    TEST_CHECK(err == UC_ERR_READ_UNMAPPED);
+    fx5_set(uc, UC_X86_REG_RDX, FX5_DATA);
+    OK(fx5_run(uc, "\x66\x0f\x1b\x0a", 4));                 /* bndmov [rdx], bnd1 */
+    OK(uc_mem_read(uc, FX5_DATA, v, sizeof(v)));
+    TEST_CHECK(v[0] == 0x1234 && v[1] == ~(uint64_t)0x1244);
+    TEST_MSG("BND1 after the faulting BNDMOV: LB %016" PRIx64 " UB %016" PRIx64, v[0], v[1]);
+    OK(uc_close(uc));
+
+    /* POPAD (32-bit): EDI, ESI, EBP at ESP + 0..8 mapped, EBX at ESP + 16 not mapped */
+    uc = fx5_open(UC_MODE_32, 0);
+    memset(slots, 0xa5, sizeof(slots));
+    OK(uc_mem_write(uc, FX5_DATA + 0xff0, slots, sizeof(slots)));
+    fx5_set(uc, UC_X86_REG_EDI, 0x11111111);
+    fx5_set(uc, UC_X86_REG_ESI, 0x22222222);
+    fx5_set(uc, UC_X86_REG_EBP, 0x33333333);
+    fx5_set(uc, UC_X86_REG_EBX, 0x44444444);
+    fx5_set(uc, UC_X86_REG_ESP, FX5_DATA + 0xff0);
+    err = fx5_run(uc, "\x61", 1);                           /* popad */
+    TEST_CHECK(err == UC_ERR_READ_UNMAPPED);
+    TEST_CHECK((uint32_t)fx5_get(uc, UC_X86_REG_EDI) == 0x11111111 &&
+               (uint32_t)fx5_get(uc, UC_X86_REG_ESI) == 0x22222222 &&
+               (uint32_t)fx5_get(uc, UC_X86_REG_EBP) == 0x33333333 &&
+               (uint32_t)fx5_get(uc, UC_X86_REG_EBX) == 0x44444444 &&
+               (uint32_t)fx5_get(uc, UC_X86_REG_ESP) == FX5_DATA + 0xff0);
+    TEST_MSG("after the faulting POPAD: EDI %08x ESI %08x EBP %08x",
+             (uint32_t)fx5_get(uc, UC_X86_REG_EDI), (uint32_t)fx5_get(uc, UC_X86_REG_ESI),
+             (uint32_t)fx5_get(uc, UC_X86_REG_EBP));
+    OK(uc_close(uc));
+
+    /* LTR ax (selector 10h, an available 64-bit TSS) with the GDT on a read-only page */
+    uc = fx5_open(UC_MODE_64, 0);
+    OK(uc_mem_map(uc, 0x30000, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, 0x30010, desc, sizeof(desc)));
+    OK(uc_mem_protect(uc, 0x30000, 0x1000, UC_PROT_READ));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_read(uc, UC_X86_REG_TR, &tr0));
+    err = fx5_run(uc, "\x66\xb8\x10\x00\x0f\x00\xd8", 7);   /* mov ax, 0x10; ltr ax */
+    TEST_CHECK(err == UC_ERR_WRITE_PROT);
+    OK(uc_reg_read(uc, UC_X86_REG_TR, &tr1));
+    TEST_CHECK(tr1.selector == tr0.selector && tr1.base == tr0.base &&
+               tr1.limit == tr0.limit && tr1.flags == tr0.flags);
+    TEST_MSG("err %d; TR before %04x/%" PRIx64 "/%x/%x after %04x/%" PRIx64 "/%x/%x", (int)err,
+             tr0.selector, tr0.base, tr0.limit, tr0.flags, tr1.selector, tr1.base, tr1.limit,
+             tr1.flags);
+    OK(uc_close(uc));
+}
 /* ---- end of NoVmp fix5 tests ---- */
 
 TEST_LIST = {
@@ -23611,4 +23685,5 @@ TEST_LIST = {
     {"test_x86_pc_pconfig", test_x86_pc_pconfig},
     {"test_x86_fx5_probe_write_unmapped", test_x86_fx5_probe_write_unmapped},
     {"test_x86_fx5_mstore_write_once", test_x86_fx5_mstore_write_once},
+    {"test_x86_fx5_partial_reads", test_x86_fx5_partial_reads},
     {NULL, NULL}};

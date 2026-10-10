@@ -3345,6 +3345,7 @@ static void gen_popa(DisasContext *s)
     int size = 1 << d_ot;
     int i;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U877) */
     for (i = 0; i < 8; i++) {
         /* ESP is not reloaded */
         if (7 - i == R_ESP) {
@@ -3355,6 +3356,33 @@ static void gen_popa(DisasContext *s)
         gen_op_ld_v(s, d_ot, s->T0, s->A0);
         gen_op_mov_reg_v(s, d_ot, 7 - i, s->T0);
     }
+#else /* ours (U877) */
+    /*
+     * NoVmp (ledger U877): every slot is read before a register changes: a fault on a later pop
+     * (#SS / #PF, or memory Unicorn has not mapped) left the registers popped before it written
+     * (SDM Vol3A 6.5: a fault leaves the state of before the instruction).
+     */
+    {
+        TCGv v[8] = { 0 };
+
+        for (i = 0; i < 8; i++) {
+            if (7 - i == R_ESP) {       /* ESP is not reloaded */
+                continue;
+            }
+            v[i] = tcg_temp_new(tcg_ctx);
+            tcg_gen_addi_tl(tcg_ctx, s->A0, cpu_regs[R_ESP], i * size);
+            gen_lea_v_seg(s, s_ot, s->A0, R_SS, -1);
+            gen_op_ld_v(s, d_ot, v[i], s->A0);
+        }
+        for (i = 0; i < 8; i++) {
+            if (7 - i == R_ESP) {
+                continue;
+            }
+            gen_op_mov_reg_v(s, d_ot, 7 - i, v[i]);
+            tcg_temp_free(tcg_ctx, v[i]);
+        }
+    }
+#endif /* __Use_Original_Qemu (U877) */
 
     gen_stack_update(s, 8 * size);
 }
@@ -9526,6 +9554,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     }
                 } else {
                     gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu == 1 /* original QEMU (U877) */
                     if (CODE64(s)) {
                         tcg_gen_qemu_ld_i64(tcg_ctx, cpu_bndl[reg], s->A0,
                                             s->mem_index, MO_LEUQ);
@@ -9539,6 +9568,27 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                         tcg_gen_qemu_ld_i64(tcg_ctx, cpu_bndu[reg], s->A0,
                                             s->mem_index, MO_LEUL);
                     }
+#else /* ours (U877) */
+                    /*
+                     * NoVmp (ledger U877): both bounds are read before BNDi changes: the
+                     * lower bound went straight into BNDi.LB, so a fault on the upper half
+                     * (#PF, or memory Unicorn has not mapped) left a new LB with the old UB
+                     * (SDM Vol3A 6.5: a fault leaves the state of before the instruction).
+                     */
+                    {
+                        TCGv_i64 lb = tcg_temp_new_i64(tcg_ctx);
+                        TCGv_i64 ub = tcg_temp_new_i64(tcg_ctx);
+                        MemOp half = CODE64(s) ? MO_LEUQ : MO_LEUL;
+
+                        tcg_gen_qemu_ld_i64(tcg_ctx, lb, s->A0, s->mem_index, half);
+                        tcg_gen_addi_tl(tcg_ctx, s->A0, s->A0, CODE64(s) ? 8 : 4);
+                        tcg_gen_qemu_ld_i64(tcg_ctx, ub, s->A0, s->mem_index, half);
+                        tcg_gen_mov_i64(tcg_ctx, cpu_bndl[reg], lb);
+                        tcg_gen_mov_i64(tcg_ctx, cpu_bndu[reg], ub);
+                        tcg_temp_free_i64(tcg_ctx, lb);
+                        tcg_temp_free_i64(tcg_ctx, ub);
+                    }
+#endif /* __Use_Original_Qemu (U877) */
                     /* bnd registers are now in-use */
                     gen_set_hflag(s, HF_MPX_IU_MASK);
                 }

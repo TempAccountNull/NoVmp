@@ -2184,6 +2184,7 @@ void helper_ltr(CPUX86State *env, int selector)
         if (!(e2 & DESC_P_MASK)) {
             raise_exception_err_ra(env, EXCP0B_NOSEG, selector & 0xfffc, GETPC());
         }
+#if __Use_Original_Qemu == 1 /* original QEMU (U877) */
 #ifdef TARGET_X86_64
         if (env->hflags & HF_LMA_MASK) {
             uint32_t e3, e4;
@@ -2202,6 +2203,36 @@ void helper_ltr(CPUX86State *env, int selector)
         }
         e2 |= DESC_TSS_BUSY_MASK;
         cpu_stl_kernel_ra(env, ptr + 4, e2, GETPC());
+#else /* ours (U877) */
+        /*
+         * NoVmp (ledger U877): the descriptor is marked busy before TR is loaded (SDM Vol2A
+         * LTR Operation: "TSSsegmentDescriptor(busy) := 1; TaskRegister := ..."): the store
+         * came last, so when it faulted (a read-only GDT page: #PF with CR0.WP, or memory
+         * Unicorn maps read-only) TR had already changed.
+         */
+        {
+            uint32_t e3 = 0;
+
+#ifdef TARGET_X86_64
+            if (env->hflags & HF_LMA_MASK) {
+                uint32_t e4;
+
+                e3 = cpu_ldl_kernel_ra(env, ptr + 8, GETPC());
+                e4 = cpu_ldl_kernel_ra(env, ptr + 12, GETPC());
+                if ((e4 >> DESC_TYPE_SHIFT) & 0xf) {
+                    raise_exception_err_ra(env, EXCP0D_GPF, selector & 0xfffc, GETPC());
+                }
+            }
+#endif
+            cpu_stl_kernel_ra(env, ptr + 4, e2 | DESC_TSS_BUSY_MASK, GETPC());
+            load_seg_cache_raw_dt(&env->tr, e1, e2);
+#ifdef TARGET_X86_64
+            if (env->hflags & HF_LMA_MASK) {
+                env->tr.base |= (target_ulong)e3 << 32;
+            }
+#endif
+        }
+#endif /* __Use_Original_Qemu (U877) */
     }
     env->tr.selector = selector;
 }
