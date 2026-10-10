@@ -1,5 +1,16 @@
-# CPUID of the reference machine (i5-13600K, microcode 0x129, this Windows host), captured with
-# emu-alltest --cases Emulator/data/cpuid_capture.txt. leaf subleaf eax ebx ecx edx (hex)
+# ENVIRONMENT: VMware guest CPUID capture on an Intel Core i5-13600K host (captured from guest vCPU 5).
+# NOT a bare-host capture. Relabelled 2026-10-10 after the hybrid CPUID diagnostic
+# (emulator\notes\hybrid_cpuid_2026-10-10.md): the values match the VMware guest (8 vCPUs as 2 sockets x 4
+# cores), not the physical host (6 P-cores + 8 E-cores). VMware masks or modifies CPUID: it hides the hybrid bit
+# (07H:EDX[15]), leaf 1AH core types, Thread Director (06H), PCONFIG and TME, reports P-core cache sizes on every
+# vCPU and invents the topology (0BH/1FH). A feature absent here is NOT proof that the physical processor lacks it;
+# never use this file to infer the bare host or the emulated model.
+# Role: gate-test profile for hardware cases run inside this VMware guest (file name kept for test_runner.ps1).
+# Capture method: emu-alltest --cases Emulator/data/cpuid_capture.txt at ledger U68 (commit e53dbfa8); unpinned, the
+# native run happened to land on vCPU 5; no XGETBV, topology, BIOS or OS record. Microcode 0x129 as reported inside
+# the guest (may be virtualized). A bare-host profile, when captured, goes to cpuid_i5-13600k_bare_host.txt
+# (capture tool: emulator/capture/host/README.md); this file is never overwritten by it.
+# Format: leaf subleaf eax ebx ecx edx (hex), one row per leaf/sub-leaf; lines starting with # are ignored.
 00000000 00 00000020 756E6547 6C65746E 49656E69
 00000001 00 000B0671 05040800 7FFA3223 1F8BFBFF
 00000002 00 00FEFF01 000000F0 00000000 00000000
