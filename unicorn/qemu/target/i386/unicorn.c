@@ -303,6 +303,15 @@ static int x86_msr_read(CPUX86State *env, uc_x86_msr *msr)
 #if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_rdmsr(env);
 #else /* ours (U111) */
+    if (env->uc == NULL) {
+        /*
+         * U1126: a uc_context allocated but never saved (U832: zeroed, env->uc == NULL) holds no
+         * CPU model, no feature words and no engine: the MSR access is refused (UC_ERR_EXCEPTION)
+         * instead of running helper_rdmsr on it (was: a NULL dereference of env->uc).
+         */
+        env->regs[R_ECX] = ecx;
+        return -1;
+    }
     env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
     env->msr_api_err = 0;           /* U905 */
     helper_rdmsr(env);
@@ -339,6 +348,13 @@ static int x86_msr_write(CPUX86State *env, uc_x86_msr *msr)
 #if __Use_Original_Qemu == 1 /* original QEMU (U111) */
     helper_wrmsr(env);
 #else /* ours (U111) */
+    if (env->uc == NULL) {
+        /* U1126: a never-saved uc_context: refused, nothing written (see x86_msr_read) */
+        env->regs[R_ECX] = ecx;
+        env->regs[R_EAX] = eax;
+        env->regs[R_EDX] = edx;
+        return -1;
+    }
     env->msr_api = x86_env_is_live(env) ? 1 : 2;    /* 2: a uc_context image (U878) */
     env->msr_api_err = 0;           /* U905 */
     helper_wrmsr(env);
