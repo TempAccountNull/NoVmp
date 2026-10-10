@@ -8314,7 +8314,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             /* For bsr/bsf, only the Z bit is defined and it is related
                to the input and not the result.  */
             tcg_gen_mov_tl(tcg_ctx, cpu_cc_dst, s->T0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1121) */
             set_cc_op(s, CC_OP_LOGICB + ot);
+#endif /* __Use_Original_Qemu (U1121) */
 
             /* ??? The manual says that the output is undefined when the
                input is zero, but real hardware leaves it unchanged, and
@@ -8329,6 +8331,33 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             } else {
                 tcg_gen_ctz_tl(tcg_ctx, s->T0, s->T0, cpu_regs[reg]);
             }
+#if __Use_Original_Qemu != 1 /* ours (U1121) */
+            /*
+             * NoVmp (ledger U1121): SDM 325383-092 Vol2A BSF / BSR "Flags Affected": "The ZF flag
+             * is set to 1 if the source operand is 0; otherwise, the ZF flag is cleared. The PF
+             * flag is set to 1 if the number of bits set in the source operand is even; otherwise,
+             * it is cleared. The CF, OF, SF, and AF flags are all cleared." (SDM 086 and earlier:
+             * CF, OF, SF, AF, PF "undefined".) QEMU took SF and PF from the source's sign and low
+             * byte (CC_OP_LOGIC on the source). The i5-13600K deviates in PF (docs/quirks.md
+             * "BSF/BSR PF"): it gives the parity of the result's low byte (the bit index).
+             * cc_dst still holds the zero-extended source for U932 below; the flags go to cc_src
+             * (CC_OP_EFLAGS).
+             */
+            {
+                TCGv t = tcg_temp_new(tcg_ctx);
+                TCGv zero = tcg_const_tl(tcg_ctx, 0);
+
+                tcg_gen_ctpop_tl(tcg_ctx, t, cpu_cc_dst);
+                tcg_gen_not_tl(tcg_ctx, t, t);
+                tcg_gen_andi_tl(tcg_ctx, t, t, 1);
+                tcg_gen_shli_tl(tcg_ctx, cpu_cc_src, t, ctz32(CC_P));      /* PF: even count */
+                tcg_gen_setcond_tl(tcg_ctx, TCG_COND_EQ, t, cpu_cc_dst, zero);
+                tcg_gen_shli_tl(tcg_ctx, t, t, ctz32(CC_Z));
+                tcg_gen_or_tl(tcg_ctx, cpu_cc_src, cpu_cc_src, t);         /* ZF: zero source */
+                tcg_temp_free(tcg_ctx, zero);
+                tcg_temp_free(tcg_ctx, t);
+            }
+#endif /* __Use_Original_Qemu (U1121) */
 #if __Use_Original_Qemu != 1 /* ours (U932) */
             /* SDM: the destination is undefined for a zero source; the i5-13600K leaves the
                whole register unchanged, also bits 63:32 of a 32-bit destination (no
@@ -8342,9 +8371,13 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                                    cpu_regs[reg], zx);
                 tcg_temp_free(tcg_ctx, zero);
                 tcg_temp_free(tcg_ctx, zx);
+                set_cc_op(s, CC_OP_EFLAGS);         /* U1121: after the last use of cc_dst */
                 break;
             }
 #endif /* __Use_Original_Qemu (U932) */
+#if __Use_Original_Qemu != 1 /* ours (U1121) */
+            set_cc_op(s, CC_OP_EFLAGS);
+#endif /* __Use_Original_Qemu (U1121) */
         }
         gen_op_mov_reg_v(s, ot, reg, s->T0);
         break;

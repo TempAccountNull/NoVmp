@@ -1,0 +1,96 @@
+# U1121 (agent tsemix), hand-written: BSF / BSR with a NON-ZERO source vs the i5-13600K - the
+# flags. Hardware lines only (no "=>"): each runs natively (CPL3, Windows x64) and in Unicorn, the
+# whole state (RFLAGS included) is compared.
+#   emu-alltest --cases Emulator\data\cases_bsf_flags_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# SDM 325383-092 Vol2A BSF / BSR "Flags Affected": ZF = 1 for a zero source, else 0; "The PF flag
+# is set to 1 if the number of bits set in the source operand is even; otherwise, it is cleared.
+# The CF, OF, SF, and AF flags are all cleared." (SDM 086 and earlier: CF, OF, SF, AF and PF
+# "undefined".) The emulator implements SDM 092. The i5-13600K agrees in ZF, CF, OF, SF, AF (0
+# whatever the input flags; 0x202 / 0xAD7 inputs below) but gives PF = the parity of the low byte
+# of the RESULT (the bit index): lines where the two PF rules differ carry
+# "# known deviation: BSF/BSR PF" (docs/quirks.md).
+# Measured 2026-10-10 with emu-alltest --hw-repeat 400 (U1050), once idle and once with
+# --hw-load 7: 94 cases, 75200 runs, one outcome per case on every run. Only the 66 cases that
+# ran on both core classes ([P] and [E] runs, the same result) are here (hardware-validated);
+# the other 28 (same rule, P-core runs only) stay out (attribution: P-core only).
+# At the end: expected-value lines ("=>", Unicorn only) with the SDM 092 flags and the flag
+# consumers after BSF/BSR (SETcc, CMOVcc read CC_OP_EFLAGS).
+
+bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0x202 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0x202
+bsf ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0x202
+bsf ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0xAD7
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0x202
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0xAD7
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x3 rflags=0x202
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0xAD7
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0x202 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0x202
+bsf eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0xFFFFFFFF rflags=0x202
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0xAD7
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF
+bsr ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0x202
+bsr ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsr ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0x202
+bsr ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0xAD7
+bsr ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0x202
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0x202
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x3 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0x202
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0xAD7
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0x202
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0xAD7
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0x202 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0xFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0x202
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0xAD7
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0x202
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0xAD7
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf r9d, dword ptr [rsi] | r9=0 m+0x8000=00010000 rflags=0xAD7
+bsr r9, qword ptr [rsi] | r9=0 m+0x8000=0100000000000080 rflags=0x202
+#
+# --- expected values (Unicorn only, SDM 092 rule): PF = even bit count of the source
+bsf ax, cx | rax=0 rcx=0x300 rflags=0xAD7 =>! rax=0x8 rflags=0x206
+bsr ax, cx | rax=0 rcx=0x300 rflags=0x202 =>! rax=0x9 rflags=0x206
+bsf eax, ecx | rax=0 rcx=0x80000000 rflags=0xAD7 =>! rax=0x1F rflags=0x202
+bsr rax, rcx | rax=0 rcx=0x8000000000000001 rflags=0xAD7 =>! rax=0x3F rflags=0x206
+bsf rax, rcx | rax=0 rcx=0x7 rflags=0x202 =>! rax=0x0 rflags=0x202
+bsr r9, qword ptr [rsi] | r9=0 m+0x8000=0100000000000080 rflags=0x202 =>! r9=0x3F rflags=0x206
+bsf eax, ecx | rax=0x1234 rcx=0 rflags=0xAD7 =>! rax=0x1234 rflags=0x246
+bsf ax, cx; setp dl; sets dh; setz bl; setc bh | rax=0 rcx=0x300 rdx=0 rbx=0 rflags=0xAD7 =>! rax=0x8 rdx=0x1 rbx=0x0
+bsr rax, rcx; setnp dl; setnz bl | rax=0 rcx=0x8000000000000000 rdx=0 rbx=0 rflags=0x206 =>! rax=0x3F rdx=0x1 rbx=0x1
+bsr eax, ecx; cmovp esi, ecx; cmovnp edi, ecx | rcx=0x7 rsi=0 rdi=0 rflags=0x206 =>! rax=0x2 rsi=0x0 rdi=0x7
