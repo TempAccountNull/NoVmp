@@ -66,6 +66,7 @@ Usage:
   python ref_xeonphi.py --cases [--only F,..] Emulator/data/cases_xeonphi.txt (stdout); F in
                                               4vnniw, 4fmaps, pf, er (default: all)
   python ref_xeonphi.py --offcases [--only ..] Emulator/data/cases_xeonphi_off.txt (stdout)
+  python ref_xeonphi.py --stress N            N random cases per packed ER form (one-off sweep)
 """
 
 import argparse
@@ -345,7 +346,7 @@ def rne_exp2(v, f):
     fl = t.numerator // t.denominator
     rem = t - fl
     margin = t * Fraction(1, 10 ** 110)
-    if abs(rem - Fraction(1, 2)) <= margin or rem <= margin or 1 - rem <= margin:
+    if abs(rem - Fraction(1, 2)) <= margin:
         raise ArithmeticError("exp2 too close to a rounding boundary: %r" % v)
     c = fl + (1 if rem > Fraction(1, 2) else 0)
     return rne_exact(Fraction(c) * Fraction(2) ** (e - f.fbits), f)
@@ -1130,6 +1131,33 @@ def gen_er(rnd):
                  "%s EVEX.L'L = 10b: LLIG" % name)
 
 
+def gen_stress(rnd, count):
+    """--stress N: N cases per packed ER form, every lane random over the whole input range
+    (all exponents and both signs; EXP2 also fractions with up to 52 bits): a one-off
+    documented-compliance sweep of the C implementation against this model (not in the gate)"""
+    comment("--- AVX512ER stress: %d random cases per packed form (ledger U994)" % count)
+    for name, opc, op, f, scalar in ER_FORMS:
+        if scalar:
+            continue
+        w = 1 if f is F64 else 0
+        for _ in range(count):
+            vals = []
+            for _ in range(64 // f.size):
+                if op == "exp2" and rnd.random() < 0.7:
+                    e = rnd.randint(-70, 10)
+                    v = (rnd.getrandbits(1) * f.signbit) | (((e + f.bias) << f.fbits) |
+                                                           rnd.getrandbits(f.fbits))
+                else:
+                    v = rnd.getrandbits(f.bits)
+                vals.append(v)
+            src = join(vals, f.size)
+            res, mxo, fault = m_er(op, f, src, None, False, bytes(64), MXCSR_DEFAULT, False)
+            exp = [zmm_in(0, res)] if res != bytes(64) else []
+            if mxo != MXCSR_DEFAULT:
+                exp.append("mxcsr=0x%X" % mxo)
+            case(evex(1, w, opc, 0, 1), [zmm_in(1, src)], exp)
+
+
 GENS = {"4vnniw": gen_4vnniw, "4fmaps": gen_4fmaps, "pf": gen_pf, "er": gen_er}
 
 
@@ -1179,6 +1207,7 @@ def main():
     ap.add_argument("--cases", action="store_true")
     ap.add_argument("--offcases", action="store_true")
     ap.add_argument("--only", default="4vnniw,4fmaps,pf,er")
+    ap.add_argument("--stress", type=int, default=0)
     a = ap.parse_args()
     only = set(a.only.split(","))
     try:
@@ -1187,7 +1216,9 @@ def main():
         pass
     if a.selftest:
         return selftest()
-    if a.cases:
+    if a.stress:
+        gen_stress(random.Random(0x57E55), a.stress)
+    elif a.cases:
         gen_cases(only)
     elif a.offcases:
         gen_offcases(only)

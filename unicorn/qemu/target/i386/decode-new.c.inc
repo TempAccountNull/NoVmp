@@ -3784,6 +3784,34 @@ static void decode_EVEX_0F38_C6(DisasContext *s, CPUX86State *env, X86OpEntry *e
     }
 }
 #endif /* __Use_Original_Qemu (U993) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+/*
+ * NoVmp (ledger U994): AVX512ER (SDM 325383-092 Vol2D 8-8 .. 8-35), 66.0F38: C8 VEXP2PS/PD, CA
+ * VRCP28PS/PD, CC VRSQRT28PS/PD: EVEX.512 only, zmm1{k1}{z}, zmm2/m512/m32bcst|m64bcst {sae},
+ * EVEX.vvvv reserved, Full tuple, class E2 (MXCSR flags, #XM; ev_fp); CB VRCP28SS/SD, CD
+ * VRSQRT28SS/SD: EVEX.LLIG xmm1{k1}{z}, xmm2, xmm3/m32|m64 {sae}, Tuple1 Scalar, class E3.
+ * EVEX.W0 = PS/SS, W1 = PD/SD.
+ */
+#define EV_ER(op) X86_OP_ENTRY3(op, V,x, None,None, W,x, cpuid(AVX512ER) ev_vl(X86_EVEX_VL512) \
+                  ev_tt(FULL) ev_mask(MZ) ev_rc(SAE) ev_w(WSEL) ev_es(W) ev_fp p_66)
+#define EV_ERS(op, w, sz) X86_OP_ENTRY3(op, V,x, H,x, W,sz, cpuid(AVX512ER) ev_vl(X86_EVEX_LIG) \
+                  ev_tt(T1S) ev_mask(MZ) ev_rc(SAE) ev_w(w) ev_es(W) ev_fp p_66)
+static void decode_EVEX_0F38_CB(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes[2] = { EV_ERS(EVEX_VRCP28, W0, ss), EV_ERS(EVEX_VRCP28, W1, sd) };
+
+    *entry = opcodes[s->vex_w];
+}
+
+static void decode_EVEX_0F38_CD(DisasContext *s, CPUX86State *env, X86OpEntry *entry, uint8_t *b)
+{
+    static const X86OpEntry opcodes[2] = { EV_ERS(EVEX_VRSQRT28, W0, ss),
+                                           EV_ERS(EVEX_VRSQRT28, W1, sd) };
+
+    *entry = opcodes[s->vex_w];
+}
+#undef EV_ERS
+#endif /* __Use_Original_Qemu (U994) */
 #if __Use_Original_Qemu != 1 /* ours (U408) */
 /*
  * NoVmp (ledger U408): 0F3A 42: F3 = VMPSADBW (spec 10.2), AVX10.2, EVEX.W0, Full Mem
@@ -4554,6 +4582,13 @@ static const X86OpEntry opcodes_evex_0F38[256] = {
     [0xc6] = X86_OP_GROUP0(EVEX_0F38_C6),   /* AVX512PF, dword indices */
     [0xc7] = X86_OP_GROUP0(EVEX_0F38_C6),   /* AVX512PF, qword indices */
 #endif /* __Use_Original_Qemu (U993) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+    [0xc8] = EV_ER(EVEX_VEXP2),
+    [0xca] = EV_ER(EVEX_VRCP28),
+    [0xcb] = X86_OP_GROUP0(EVEX_0F38_CB),
+    [0xcc] = EV_ER(EVEX_VRSQRT28),
+    [0xcd] = X86_OP_GROUP0(EVEX_0F38_CD),
+#endif /* __Use_Original_Qemu (U994) */
 };
 
 static const X86OpEntry opcodes_evex_0F3A[256] = {
@@ -4829,6 +4864,9 @@ static const X86OpEntry opcodes_evex_0F38_66W0[256] = {
 #if __Use_Original_Qemu != 1 /* ours (U555) */
 #undef EV_VNNI512
 #endif /* __Use_Original_Qemu (U555) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+#undef EV_ER
+#endif /* __Use_Original_Qemu (U994) */
 #if __Use_Original_Qemu != 1 /* ours (U372) */
 #include "decode-avx10.c.inc"
 #endif /* __Use_Original_Qemu (U372) */

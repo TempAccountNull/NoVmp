@@ -9580,12 +9580,347 @@ static uint64_t evex_rndscale(CPUX86State *env, const EvFmt *f, uint64_t x, int 
     return s | ((uint64_t)(l - m + f->bias) << f->fbits) | (q & f->fmask);
 }
 #endif /* __Use_Original_Qemu (U241) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+
+/*
+ * NoVmp (ledger U994): AVX512ER VRCP28PS/PD/SS/SD, VRSQRT28PS/PD/SS/SD, VEXP2PS/PD (SDM
+ * 325383-092 Vol2D 8-8 .. 8-35). The SDM gives the special cases (Tables 8-1 .. 8-10), the error
+ * bounds (relative error < 2^-28 for RCP28/RSQRT28, the PS/SS results then "rounded to < 2^-23
+ * relative error"; < 2^-23 for EXP2) and refers to an Intel web reference implementation for the
+ * exact bits, which is not available here. Implemented (documented architectural compliance, NOT
+ * bit-exact to Xeon Phi silicon): the exact 1/x, 1/sqrt(x), 2^x rounded to nearest even to the
+ * destination format, which is inside every bound. Common rules of the pages: "Denormal input
+ * values are treated as zeros and do not signal #DE, irrespective of MXCSR.DAZ. Denormal results
+ * are flushed to zeros and do not signal #UE, irrespective of MXCSR.FTZ"; MXCSR.RC is not used
+ * (no {er} form); flags only as listed: VRCP28 / VRSQRT28 "Invalid (if SNaN input),
+ * Divide-by-zero" (VRSQRT28 also #I for a negative non-zero source, -inf included), VEXP2
+ * "Invalid (if SNaN input), Overflow" (no PE: the SDM does not list Precision). A NaN source
+ * returns QNaN(src).
+ */
+
+/* VRCP28: +-0 / denormal -> +-inf (#Z); +-inf -> +-0; |x| > 2^126 (2^1022) -> +-0 (the exact
+ * 1/x is tiny; softfloat's correctly rounded quotient is then a denormal or zero, never the
+ * smallest normal, since 1/x <= 2^-emin * (1 - 2^-p) there) */
+static uint64_t evex_rcp28(CPUX86State *env, const EvFmt *f, uint64_t x)
+{
+    uint64_t s = x & f->sign, q;
+    float_status st = { 0 };
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x)) {
+        float_raise(float_flag_divbyzero, &env->sse_status);
+        return s | f->emask;
+    }
+    if (evf_isinf(f, x)) {
+        return s;
+    }
+    set_float_rounding_mode(float_round_nearest_even, &st);
+    q = f->bits == 64 ? float64_div(float64_one, x, &st)
+                      : float32_div(float32_one, (float32)x, &st);
+    return evf_expzero(f, q) ? s : q;
+}
+
+/* a * b * c < / == / > 2^t (-1 / 0 / 1) for a, b < 2^64, c < 2^64: a 192-bit product */
+static int evex_er_cmp3(uint64_t a, uint64_t b, uint64_t c, int t)
+{
+    uint64_t l0, h0, l1, h1, l2, h2, w[3];
+    int i, top;
+
+    mulu64(&l0, &h0, a, b);             /* a*b = h0:l0 */
+    mulu64(&l1, &h1, l0, c);            /* l0*c */
+    mulu64(&l2, &h2, h0, c);            /* h0*c << 64 */
+    w[0] = l1;
+    w[1] = h1 + l2;
+    w[2] = h2 + (w[1] < l2);
+    for (i = 2; i >= 0 && !w[i]; i--) {
+    }
+    if (i < 0) {
+        return -1;
+    }
+    top = 64 * i + 63 - clz64(w[i]);    /* the product's highest set bit */
+    if (top != t) {
+        return top < t ? -1 : 1;
+    }
+    w[i] &= ~(1ull << (top & 63));
+    for (; i >= 0; i--) {
+        if (w[i]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * VRSQRT28: NaN -> QNaN (#I for SNaN); +-0 / +-denormal -> +-inf (#Z); x < 0 (-inf included) ->
+ * QNaN indefinite (#I); +inf -> +0; else the correctly rounded 1/sqrt(x) by exact integer
+ * comparisons: x = M * 2^(2h) with M < 2^(p+1), y = 2^-h * r, r = 1/sqrt(M); Y * 2^(g-p) <= r
+ * <=> Y^2 * M <= 2^(2(p-g)) (a 192-bit comparison); a host double guess of r (its error is a
+ * few ulps) fixes g and Y, the comparisons correct Y to floor(r * 2^(p-g)) with 2^(p-1) <= Y <
+ * 2^p, then the midpoint (2Y + 1) * 2^(g-p-1) decides the rounding (never a tie: (2Y+1)^2 * M
+ * is not a power of two for Y >= 1).
+ */
+static uint64_t evex_rsqrt28(CPUX86State *env, const EvFmt *f, uint64_t x)
+{
+    int p = f->fbits + 1, ex, h, g, c;
+    uint64_t m, y;
+    double mant;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_expzero(f, x)) {
+        float_raise(float_flag_divbyzero, &env->sse_status);
+        return (x & f->sign) | f->emask;
+    }
+    if (x & f->sign) {
+        float_raise(float_flag_invalid, &env->sse_status);
+        return f->indef;
+    }
+    if (evf_isinf(f, x)) {
+        return 0;
+    }
+    m = (x & f->fmask) | (f->fmask + 1);
+    ex = (int)((x & f->emask) >> f->fbits) - f->bias - f->fbits;
+    if (ex & 1) {
+        m <<= 1;
+        ex--;
+    }
+    h = ex / 2;
+    mant = frexp(1.0 / sqrt((double)m), &g);       /* guess: r = mant * 2^g, mant in [1/2, 1) */
+    y = (uint64_t)ldexp(mant, p);
+    for (;;) {
+        while (evex_er_cmp3(y, y, m, 2 * (p - g)) > 0) {
+            y--;                                    /* y * 2^(g-p) > r */
+        }
+        while (evex_er_cmp3(y + 1, y + 1, m, 2 * (p - g)) <= 0) {
+            y++;
+        }
+        if (y < (1ull << (p - 1))) {
+            g--;
+            y <<= 1;
+        } else if (y >= (1ull << p)) {
+            g++;
+            y >>= 1;
+        } else {
+            break;
+        }
+    }
+    c = evex_er_cmp3(2 * y + 1, 2 * y + 1, m, 2 * (p + 1 - g));
+    if (c < 0 || (c == 0 && (y & 1))) {
+        y++;                                        /* r above the midpoint */
+        if (y == (1ull << p)) {
+            y >>= 1;
+            g++;
+        }
+    }
+    /* y = Y * 2^(g - p - h) = (Y / 2^(p-1)) * 2^(g - 1 - h) */
+    return ((uint64_t)(g - 1 - h + f->bias) << f->fbits) | (y & f->fmask);
+}
+
+/*
+ * VEXP2: fixed-point arithmetic with 192 fraction bits (EvFx.w[3] the integer part, w[2..0] the
+ * fraction, most significant first): 2^f = exp(f * ln 2) for the fraction f of x, with ln 2 =
+ * sum 1/(k 2^k) and exp(y) = sum y^k / k! (both summed until the terms vanish); the computed
+ * 2^f is within 2^-180 of the exact value (every operation truncates by at most 2^-192, fewer
+ * than 400 operations). Its p-bit rounding is the correctly rounded 2^x unless 2^x lies within
+ * 2^-180 (relative) of a rounding midpoint: 2^x is irrational for a non-integral x, and the model
+ * (ref_xeonphi.py, exp at 130 decimal digits) checks every case against that margin.
+ */
+typedef struct EvFx {
+    uint64_t w[4];
+} EvFx;
+
+static void evfx_add(EvFx *a, const EvFx *b)
+{
+    uint64_t c = 0;
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        uint64_t s = a->w[i] + b->w[i];
+        uint64_t c2 = s < a->w[i];
+
+        a->w[i] = s + c;
+        c = c2 | (a->w[i] < s);
+    }
+}
+
+/* a / d for a small divisor, truncated */
+static void evfx_div(EvFx *a, uint32_t d)
+{
+    uint64_t rem = 0;
+    int i;
+
+    for (i = 3; i >= 0; i--) {
+        uint64_t hi = (rem << 32) | (a->w[i] >> 32), lo;
+
+        rem = hi % d;
+        hi /= d;
+        lo = (rem << 32) | (a->w[i] & 0xffffffffull);
+        rem = lo % d;
+        a->w[i] = (hi << 32) | (lo / d);
+    }
+}
+
+/* a * b for a, b < 2^64 (integer parts), truncated to 192 fraction bits */
+static void evfx_mul(EvFx *r, const EvFx *a, const EvFx *b)
+{
+    uint64_t p[9] = { 0 };
+    int i, j;
+
+    for (i = 0; i < 4; i++) {
+        uint64_t carry = 0;
+
+        for (j = 0; j < 4; j++) {
+            uint64_t lo, hi;
+
+            mulu64(&lo, &hi, a->w[i], b->w[j]);
+            lo += carry;
+            hi += lo < carry;
+            p[i + j] += lo;
+            hi += p[i + j] < lo;
+            carry = hi;
+        }
+        for (j = i + 4; carry && j < 9; j++) {
+            p[j] += carry;
+            carry = p[j] < carry;
+        }
+    }
+    for (i = 0; i < 4; i++) {
+        r->w[i] = p[i + 3];
+    }
+}
+
+static bool evfx_zero(const EvFx *a)
+{
+    return !(a->w[0] | a->w[1] | a->w[2] | a->w[3]);
+}
+
+static uint64_t evex_exp2(CPUX86State *env, const EvFmt *f, uint64_t x)
+{
+    int p = f->fbits + 1, ex, k, n, sh;
+    uint64_t m, ip, flo, fhi, sig, rest;
+    bool neg = (x & f->sign) != 0, up;
+    EvFx ln2 = { { 0 } }, t, y, sum, term;
+
+    if (evf_isnan(f, x)) {
+        if (!(x & f->quiet)) {
+            float_raise(float_flag_invalid, &env->sse_status);
+        }
+        return x | f->quiet;
+    }
+    if (evf_isinf(f, x)) {
+        return neg ? 0 : f->emask;
+    }
+    if (evf_expzero(f, x)) {
+        return f->one;                              /* +-0, denormal (a zero): 2^0 = 1.0 */
+    }
+    m = (x & f->fmask) | (f->fmask + 1);
+    ex = (int)((x & f->emask) >> f->fbits) - f->bias;   /* |x| = 1.m * 2^ex */
+    if (ex >= 11) {                                 /* |x| >= 2048 */
+        if (neg) {
+            return 0;                               /* denormal result flushed to +0 */
+        }
+        float_raise(float_flag_overflow, &env->sse_status);
+        return f->emask;
+    }
+    if (ex < -60) {
+        return f->one;                              /* |2^x - 1| < 2^-60.5: rounds to 1.0 */
+    }
+    /* |x| = m * 2^-sh: integer part ip, fraction fhi:flo (128 bits); 13 <= sh <= 112 */
+    sh = f->fbits - ex;
+    if (sh < 64) {
+        ip = m >> sh;
+        fhi = (m & ((1ull << sh) - 1)) << (64 - sh);
+        flo = 0;
+    } else {
+        ip = 0;
+        fhi = sh == 64 ? m : m >> (sh - 64);
+        flo = sh == 64 ? 0 : m << (128 - sh);
+    }
+    if (!fhi && !flo) {
+        n = neg ? -(int)ip : (int)ip;               /* an integer N: 2^N exact */
+    } else if (neg) {                               /* x = -(ip + fr) = -(ip + 1) + (1 - fr) */
+        n = -(int)ip - 1;
+        flo = -flo;
+        fhi = ~fhi + (flo == 0);
+    } else {
+        n = (int)ip;
+    }
+    /* n = floor(x): x >= emax + 1 <=> n > emax; x < emin <=> n < emin */
+    if (n > f->bias) {
+        float_raise(float_flag_overflow, &env->sse_status);
+        return f->emask;
+    }
+    if (n < 1 - f->bias) {
+        return 0;
+    }
+    if (!fhi && !flo) {
+        return (uint64_t)(n + f->bias) << f->fbits;
+    }
+    /* ln 2 = sum_{k >= 1} 2^-k / k */
+    t.w[3] = 1;
+    t.w[2] = t.w[1] = t.w[0] = 0;
+    for (k = 1;; k++) {
+        t.w[0] = (t.w[0] >> 1) | (t.w[1] << 63);
+        t.w[1] = (t.w[1] >> 1) | (t.w[2] << 63);
+        t.w[2] = (t.w[2] >> 1) | (t.w[3] << 63);
+        t.w[3] >>= 1;
+        if (evfx_zero(&t)) {
+            break;
+        }
+        term = t;
+        evfx_div(&term, (uint32_t)k);
+        evfx_add(&ln2, &term);
+    }
+    /* y = f * ln 2; exp(y) */
+    t.w[3] = 0;
+    t.w[2] = fhi;
+    t.w[1] = flo;
+    t.w[0] = 0;
+    evfx_mul(&y, &t, &ln2);
+    sum.w[3] = 1;
+    sum.w[2] = sum.w[1] = sum.w[0] = 0;
+    term = sum;
+    for (k = 1; ; k++) {
+        evfx_mul(&t, &term, &y);
+        evfx_div(&t, (uint32_t)k);
+        if (evfx_zero(&t)) {
+            break;
+        }
+        term = t;
+        evfx_add(&sum, &term);
+    }
+    /* sum = 2^f in (1, 2): the p - 1 fraction bits, then nearest even on the rest */
+    sig = sum.w[2] >> (64 - (p - 1));
+    rest = sum.w[2] << (p - 1);                     /* bits below, first: the rounding bit */
+    up = (rest >> 63) && ((rest << 1) || sum.w[1] || sum.w[0] || (sig & 1));
+    sig += up;
+    if (sig >> (p - 1)) {                           /* rounded up to 2.0 */
+        sig = 0;
+        n++;
+    }
+    if (n > f->bias) {
+        float_raise(float_flag_overflow, &env->sse_status);
+        return f->emask;
+    }
+    return ((uint64_t)(n + f->bias) << f->fbits) | sig;
+}
+#endif /* __Use_Original_Qemu (U994) */
 #if __Use_Original_Qemu != 1 /* ours (U236) */
 
 /*
  * desc (U236-U241): bits 3:0 operation (0 VRCP14, 1 VRSQRT14, 2 VGETEXP, 3 VGETMANT,
  * 4 VRNDSCALE), bits 7:4 element size, bits 15:8 element count, bits 23:16 imm8.
  */
+/* U994: 5 VRCP28, 6 VRSQRT28, 7 VEXP2 (AVX512ER) */
 static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
 {
     const EvFmt *f = evfmt((desc >> 4) & 0xf);
@@ -9608,6 +9943,14 @@ static uint64_t evex_fp1_elem(CPUX86State *env, uint32_t desc, uint64_t x)
     case 4:
         return evex_rndscale(env, f, x, imm);
 #endif /* __Use_Original_Qemu (U241) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+    case 5:
+        return evex_rcp28(env, f, x);
+    case 6:
+        return evex_rsqrt28(env, f, x);
+    case 7:
+        return evex_exp2(env, f, x);
+#endif /* __Use_Original_Qemu (U994) */
     default:
         g_assert_not_reached();
     }

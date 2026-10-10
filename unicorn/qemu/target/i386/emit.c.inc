@@ -2548,6 +2548,29 @@ static void gen_EVEX_VRSQRT14(DisasContext *s, CPUX86State *env, X86DecodedInsn 
     gen_evex_fp1(s, decode, 1, 2, 0);
 }
 #endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U994) */
+
+/*
+ * NoVmp (ledger U994): AVX512ER through the one-source element helpers (helper_evex_fp1 /
+ * _fp1s: 5 VRCP28, 6 VRSQRT28, 7 VEXP2; fpu_helper.c evex_rcp28 / evex_rsqrt28 / evex_exp2):
+ * packed zmm1{k1}{z}, zmm2/m512/{1toN}{sae}; scalar xmm1{k1}{z}, xmm2, xmm3/m{sae} (bits 127:esz
+ * from xmm2). Masking, {1toN}, {sae} and the MXCSR / #XM frame come from gen_evex_insn (evex_fp).
+ */
+static void gen_EVEX_VRCP28(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 5, 2, 0);
+}
+
+static void gen_EVEX_VRSQRT28(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 6, 2, 0);
+}
+
+static void gen_EVEX_VEXP2(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_evex_fp1(s, decode, 7, 2, 0);
+}
+#endif /* __Use_Original_Qemu (U994) */
 #if __Use_Original_Qemu != 1 /* ours (U237) */
 
 static void gen_EVEX_VGETEXP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

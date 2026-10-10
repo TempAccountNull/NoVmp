@@ -24533,6 +24533,78 @@ static void test_x86_xp_pf(void)
     TEST_CHECK(xp_run(&c, "\x67" XP_GPF0DPS, 8) == 6);
     OK(uc_close(c.uc));
 }
+/* VRCP28PS zmm0, zmm1 (EVEX.512.66.0F38.W0 CA) and with {sae}; VEXP2PD zmm0, zmm1 (W1 C8) */
+#define XP_RCP28PS "\x62\xf2\x7d\x48\xca\xc1"
+#define XP_RCP28PS_SAE "\x62\xf2\x7d\x18\xca\xc1"
+#define XP_EXP2PD "\x62\xf2\xfd\x48\xc8\xc1"
+
+/*
+ * U994: AVX512ER gating (CPUID.(7,0):EBX[27]; PF does not enable it; strict profiles), the
+ * documented-compliance values (1/3 correctly rounded; 2^0.5 against the C library's sqrt(2),
+ * both correctly rounded), #Z with ZM = 0 -> #XM and the destination unchanged, {sae} (no flag)
+ */
+static void test_x86_xp_er(void)
+{
+    static const uc_x86_cpuid prof_no[] = {
+        {0x0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x1, 0, 0x906a0, 0, 0x1c000000, 0x06000000},
+        {0x7, 0, 0, 0x00010000, 0, 0},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+    };
+    float a[16], r[16];
+    double d[8], dr[8];
+    uint32_t mx = 0x1d80, mxo = 0, f5 = 0;     /* ZM = 0 */
+    uint64_t bits = 0, bits7 = 0;
+    XpCtx c;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        a[i] = 3.0f;
+    }
+    xp_open(&c, UC_MODE_64, XP_AVX512 | UC_X86_AVX512_PF, 0, NULL, 0);
+    TEST_CHECK(xp_run(&c, XP_RCP28PS, 6) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, XP_AVX512 | XP_ALL, 0, prof_no, 4);
+    TEST_CHECK(xp_run(&c, XP_RCP28PS, 6) == 6);
+    OK(uc_close(c.uc));
+    xp_open(&c, UC_MODE_64, UC_X86_AVX512_ER, 0, NULL, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, a));
+    TEST_CHECK(xp_run(&c, XP_RCP28PS, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, r));
+    TEST_CHECK_(r[0] == 1.0f / 3.0f && r[15] == 1.0f / 3.0f, "1/3: %a", r[0]);
+    for (i = 0; i < 8; i++) {
+        d[i] = 0.5;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, d));
+    TEST_CHECK(xp_run(&c, XP_EXP2PD, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, dr));
+    memcpy(&bits, &dr[0], 8);
+    memcpy(&bits7, &dr[7], 8);
+    /* sqrt(2) correctly rounded: 1.6A09E667F3BCC908B2F...h -> ...F3BCDh */
+    TEST_CHECK_(bits == 0x3ff6a09e667f3bcdull && bits7 == bits, "2^0.5: %llx",
+                (unsigned long long)bits);
+    /* a zero lane with ZM = 0: #XM (or #UD while CR4.OSXMMEXCPT = 0), DEST unchanged, ZE set */
+    a[5] = 0.0f;
+    for (i = 0; i < 16; i++) {
+        r[i] = 7.0f;
+    }
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM1, a));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ZMM0, r));
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mx));
+    i = xp_run(&c, XP_RCP28PS, 6);
+    TEST_CHECK_(i == 19 || i == 6, "ZM = 0: vector %d", i);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, r));
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxo));
+    TEST_CHECK_(r[0] == 7.0f && (mxo & 0x3f) == 4, "dest %a mxcsr %x", r[0], mxo);
+    /* {sae}: no flag, no fault, lane 5 = +inf */
+    OK(uc_reg_write(c.uc, UC_X86_REG_MXCSR, &mx));
+    TEST_CHECK(xp_run(&c, XP_RCP28PS_SAE, 6) == -1);
+    OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, r));
+    OK(uc_reg_read(c.uc, UC_X86_REG_MXCSR, &mxo));
+    memcpy(&f5, &r[5], 4);
+    TEST_CHECK_(f5 == 0x7f800000u && mxo == mx, "sae: %x mxcsr %x", f5, mxo);
+    OK(uc_close(c.uc));
+}
 /* ---- end U990-U1019 (xp_) ---- */
 
 TEST_LIST = {
@@ -24863,4 +24935,5 @@ TEST_LIST = {
     {"test_x86_xp_4vnniw", test_x86_xp_4vnniw},
     {"test_x86_xp_4fmaps", test_x86_xp_4fmaps},
     {"test_x86_xp_pf", test_x86_xp_pf},
+    {"test_x86_xp_er", test_x86_xp_er},
     {NULL, NULL}};
