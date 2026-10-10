@@ -148,6 +148,26 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
 - SELF IPI (83FH): a self-targeted, edge-triggered fixed interrupt; logged in the IRR when the WRMSR
   completes and delivered at the next instruction boundary that allows it.
 
+### User-interrupt notifications (U962; SDM Vol2B SENDUIPI, Vol3A 9.5)
+- SENDUIPI posts in the UPID (unchanged, U104) and, when it sets ON, sends "an ordinary IPI with
+  vector NV" through its local APIC: to the 32-bit physical APIC ID NDST in x2APIC mode, to the
+  8-bit ID NDST[15:8] in xAPIC mode; fixed, edge, no shorthand, so it reaches any vCPU on the APIC
+  bus (or nobody: discarded). A globally disabled APIC (EN = 0) sends nothing (13.4.3: "as if no
+  APIC"); NV 0-15 follows the ICR error rules.
+- The receiving vCPU treats it like any fixed interrupt: IRR, PPR, RFLAGS.IF, interrupt shadow
+  (pending, not dropped, while IF = 0 or the PPR blocks it). When its APIC dispatches the vector
+  and CR4.UINTR = IA32_EFER.LMA = 1 and the vector is UINV, user-interrupt notification
+  identification writes 0 to EOI and notification processing (9.5.2: ON := 0, PIR -> UIRR, with
+  supervisor accesses to the UPID at IA32_UINTR_PD) follows at the same boundary; no event is
+  delivered. Any other vector (or CR4.UINTR = 0) is an ordinary interrupt.
+- A notification needs a software-enabled APIC at the receiver (SVR[8] = 1; reset leaves it
+  disabled, see Reset). The U104 tests and `cases_keylocker.txt` enable it (x2APIC mode +
+  SVR 1FFH, or the host API's SVR write).
+- Several vCPUs share the UITT / UPID through memory mapped into each engine from the same host
+  buffer (`uc_mem_map_ptr`).
+- Not modelled: the EXT bit in the error code of a fault during notification processing (9.5.2);
+  notifications sent by agents other than SENDUIPI (devices); posted-interrupt virtualization.
+
 ### Not modelled (operations that need these stop the emulation)
 These stop `uc_emu_start` with `UC_ERR_INSN_INVALID`, RIP at the instruction, no state changed
 (`UC_CTL_X86_EXCEPTION` vector stays -1); a host-API write of the same value is dropped:
@@ -175,4 +195,7 @@ Not modelled, without a stop (documented here instead):
 `test_x86_ap_base_transitions`, `test_x86_ap_tpr_cr8`, `test_x86_ap_self_ipi`,
 `test_x86_ap_priority_eoi`, `test_x86_ap_nmi`, `test_x86_ap_errors`, `test_x86_ap_unsupported`,
 `test_x86_ap_no_hook`, `test_x86_ap_context`, `test_x86_ap_bus_api`, `test_x86_ap_cross_ipi`,
-`test_x86_ap_multi_vcpu`.
+`test_x86_ap_multi_vcpu`, `test_x86_ap_uintr_cross`, `test_x86_ap_uintr_if0`,
+`test_x86_ap_uintr_cross_delivery` (CPL3 user-interrupt delivery on the other vCPU); the U104 tests
+`test_x86_uintr_senduipi` / `test_x86_uintr_delivery` and `Emulator/data/cases_keylocker.txt`
+(SENDUIPI lines) run with the APIC enabled.

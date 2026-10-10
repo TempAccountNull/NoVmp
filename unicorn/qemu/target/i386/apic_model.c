@@ -624,6 +624,32 @@ static void apic_self_ipi(CPUX86State *env, int vector)
     apic_bus_send(env, &m);
 }
 
+/*
+ * U962: the user-interrupt notification of SENDUIPI (SDM Vol2B SENDUIPI): an ordinary fixed,
+ * edge-triggered IPI to a physical APIC ID, no shorthand - x2APIC mode: the 32-bit ID NDST;
+ * xAPIC mode: the 8-bit ID NDST[15:8]. A globally disabled local APIC (EN = 0) is as if absent
+ * and sends nothing (13.4.3). Vectors 0-15 follow the ICR rules (13.5.3).
+ */
+void x86_apic_send_notification(CPUX86State *env, int vector, uint32_t ndst)
+{
+    ApicMsg m;
+
+    if (!(env->apic_base & APIC_BASE_EN)) {
+        return;
+    }
+    m.mode = APIC_DM_FIXED;
+    m.vector = vector;
+    m.shorthand = APIC_SH_NONE;
+    m.logical = false;
+    m.x2 = apic_x2(env);
+    m.dest = m.x2 ? ndst : ((ndst >> 8) & 0xff);
+    if (vector < 16) {
+        apic_error(env, APIC_ESR_SEND_ILL);
+    }
+    apic_bus_send(env, &m);
+    x86_apic_update(env);
+}
+
 /* ---- IA32_APIC_BASE (13.4.4, 13.12.1, 13.12.5) ---- */
 static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
 {

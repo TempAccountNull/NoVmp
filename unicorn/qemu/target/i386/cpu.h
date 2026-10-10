@@ -2562,6 +2562,11 @@ int x86_apic_set_id(struct uc_struct *uc, uint32_t id);            /* a uc_err *
 uint32_t x86_apic_get_id(struct uc_struct *uc);
 void x86_apic_leave(struct uc_struct *uc);
 #endif /* __Use_Original_Qemu (U961) */
+#if __Use_Original_Qemu != 1 /* ours (U962) */
+/* SENDUIPI notifications through the local APIC (apic_model.c, seg_helper.c) */
+void x86_apic_send_notification(CPUX86State *env, int vector, uint32_t ndst);
+bool x86_uintr_notification_ident(CPUX86State *env, int vector);
+#endif /* __Use_Original_Qemu (U962) */
 #if __Use_Original_Qemu != 1 /* ours (U860) */
 /*
  * cpu.c (ledger U860): the x87 pointer bits of the effective CPUID.(EAX=07H,ECX=0):EBX

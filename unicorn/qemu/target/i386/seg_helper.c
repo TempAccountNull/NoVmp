@@ -2222,6 +2222,15 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
         /* INTR from the local APIC: acknowledge (IRR -> ISR, SDM Vol3A 13.8.4) and deliver */
         intno = x86_apic_acknowledge(env);
         if (intno >= 0) {
+            /*
+             * U962: a user-interrupt notification is consumed here (SDM Vol3A 9.5.1); nothing
+             * was delivered, so what it recognized (a user interrupt, 9.5.2) or anything else
+             * pending is taken at this same boundary
+             */
+            if (x86_uintr_notification_ident(env, intno)) {
+                x86_cpu_exec_interrupt(cs, cs->interrupt_request);
+                return true;
+            }
             x86_apic_deliver_event(env, intno);
         }
 #endif /* __Use_Original_Qemu (U960) */
@@ -4141,11 +4150,15 @@ void helper_check_io(CPUX86State *env, uint32_t addr, uint32_t size)
  * x86_cpu_pending_interrupt whenever the CPU loop looks at interrupts, which
  * includes every TB that ends with STUI, UIRET, SENDUIPI, WRMSR, MOV CR4,
  * IRET/SYSRET and the like).
- * Not modelled: the local APIC (an IPI that SENDUIPI sends to another APIC
- * ID, with a vector other than UINV, or while RFLAGS.IF = 0 is dropped),
- * external user-interrupt notifications, the XSAVES user-interrupt state
- * component, CET shadow-stack / IBT effects, MOV SS vs STI blocking (both
- * block here), enclaves, TSX aborts, and the WB / canonical checks of the
+ * U962: SENDUIPI sends its notification as an ordinary IPI through the local
+ * APIC (apic_model.c, to any APIC ID on the APIC bus); the receiving vCPU
+ * identifies it when its APIC dispatches the vector (x86_uintr_notification_ident,
+ * from x86_cpu_exec_interrupt): pending in the IRR while RFLAGS.IF = 0, an
+ * ordinary interrupt when the vector is not UINV.
+ * Not modelled: notifications from agents other than SENDUIPI (devices), the
+ * XSAVES user-interrupt state component, CET shadow-stack / IBT effects, MOV SS
+ * vs STI blocking (both block here), enclaves, TSX aborts, the EXT bit of a
+ * fault during notification processing, and the WB / canonical checks of the
  * stack accesses (QEMU does not model those for any instruction).
  */
 static bool uintr_canonical(CPUX86State *env, uint64_t addr)
@@ -4259,6 +4272,23 @@ static void uintr_notification(CPUX86State *env, uintptr_t ra)
     }
 }
 
+/*
+ * U962: user-interrupt notification identification (SDM Vol3A 9.5.1) for the vector the local
+ * APIC just dispatched: with CR4.UINTR = IA32_EFER.LMA = 1 and vector = UINV, write 0 to EOI
+ * and do notification processing (9.5.2, supervisor accesses; a fault there is raised at this
+ * boundary). Returns false when the interrupt is to be delivered normally.
+ */
+bool x86_uintr_notification_ident(CPUX86State *env, int vector)
+{
+    if (!(env->cr[4] & CR4_UINTR_MASK) || !(env->efer & MSR_EFER_LMA) ||
+        vector != (int)((env->uintr_misc >> 32) & 0xff)) {
+        return false;
+    }
+    x86_apic_eoi(env);
+    uintr_notification(env, 0);
+    return true;
+}
+
 void helper_senduipi(CPUX86State *env, target_ulong reg)
 {
     uintptr_t ra = GETPC();
@@ -4293,17 +4323,11 @@ void helper_senduipi(CPUX86State *env, target_ulong reg)
         cpu_stq_mmuidx_ra(env, upid, upid_lo, idx, ra);
         cpu_stq_mmuidx_ra(env, upid + 8, upid_hi, idx, ra);
         /*
-         * Ordinary IPI, vector NV, to xAPIC ID NDST[15:8] (this fork has no
-         * x2APIC). Only a self-IPI that is a user-interrupt notification
-         * (NV = UINV, CR4.UINTR = IA32_EFER.LMA = 1) and that the CPU accepts
-         * at once (RFLAGS.IF = 1) is modelled; any other IPI is dropped.
+         * U962: "send ordinary IPI with vector tempUPID.NV to 32-bit physical APIC ID
+         * tempUPID.NDST" (x2APIC mode) / "to 8-bit physical APIC ID tempUPID.NDST[15:8]"
+         * (xAPIC mode), through the local APIC (apic_model.c)
          */
-        if (((upid_lo >> 40) & 0xff) == (env_archcpu(env)->apic_id & 0xff) &&
-            ((upid_lo >> 16) & 0xff) == ((env->uintr_misc >> 32) & 0xff) &&
-            (env->efer & MSR_EFER_LMA) && (env->eflags & IF_MASK) &&
-            !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
-            uintr_notification(env, ra);
-        }
+        x86_apic_send_notification(env, (int)((upid_lo >> 16) & 0xff), (uint32_t)(upid_lo >> 32));
     } else {
         cpu_stq_mmuidx_ra(env, upid, upid_lo, idx, ra);
         cpu_stq_mmuidx_ra(env, upid + 8, upid_hi, idx, ra);
