@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-09 17:04 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `82d0c49 Ledger U850-U853 (sweep runs 182 of the 205 not-native-safe forms natively, WRFSBASE/WRGSBASE and SYSENTER #GP fixes, table rules); docs refresh`). Do not edit by hand._
+_Generated 2026-10-09 17:30 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `f52da39 test_x86.c: restore the comment opener of the x87misc (xm_) block`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
@@ -12,10 +12,9 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
   - ⏳ Last Phase-1 wave (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
     - ⏳ [agent, wt/sysins, U800–U829] AVX512DQ VPMOVD2M/Q2M/M2D/M2Q; CPL0 WRMSRNS, RDMSRLIST/WRMSRLIST, MSR-IMM, PBNDKB, HRESET, LKGS, INVPCID.
-    - ⏳ [agent, wt/regs, U830–U849] uc_reg MM0–MM7 + PKRU (4.2); uc_context round-trip tests (4.3/4.7); CPUID 0DH.1 EBX without XSAVEC (M0 leftover); #AC alignment check (5.4, 1.H.5); RDRAND/RDSEED seeded vs host source (D8, 5.2.9).
+      - ⬜ regs leftovers: scalar FMA (VFMADD*SS/SD …) memory operand reads 16 bytes (decoded W,x: wrong #PF near a page end, missing #AC); an MMX memory operand that takes #PF still applies the x87→MMX transition (TOP=0, tags valid); CVTPD2PI/CVTTPD2PI m128 misaligned: CPU #GP, Unicorn none; #AC not covered for VCOMPRESS/VPCOMPRESS stores and MPX BND memory forms; uc_context_reg_write of CR0/CR3/CR4/EFER/MSR into a context calls live-CPU update functions; two CPU-vs-SDM deviations need your sign-off (MASKMOVDQU-AC, SxDT-STR-SMSW-NO-AC, quirks.md).
       - ⬜ sweepmem leftovers: SYSENTER without a hook advances RIP from a stale value when it is not the first instruction of its TB (with A1); INT n needs an IDT-delivery mode (U755 leftover); LFS/LGS SDM text "and" vs pseudocode "or" for RPL/CPL > DPL (model follows the pseudocode); rename the "host lacks + unicorn #UD" bucket (also covers encodings both reject).
   - ⏳ 1.15d EVEX / AVX-512: M0–M5 merged; open = VPMOVD2M/Q2M/M2D/M2Q (not implemented), Xeon-Phi families (A3) [audit 2026-10-09]
-      - ⬜ M0 leftover: 0DH.1 EBX = 0 on models without XSAVEC (SDM 13.2) + update the test that pins it; profile 0DH.1 EBX kept as captured (documented) [audit 2026-10-09]
       - ⬜ M2 leftovers: scatter hook (U866), disp8 note (U867), ev_dsrc (U868) done; open: helper_evex_mstore pre-pass stores an unmapped element twice for the write hook, some store probes report READ_UNMAPPED instead of WRITE_UNMAPPED (code reading, add a test); E4NF/E6NF unconfirmable without an AVX-512 host.
       - ⬜ VRCP14/VRSQRT14 (U236) are a correctly-rounded stand-in, not bit-exact: the SDM gives only the 2^-14 bound and refers to RECIP14.c (not available) — derive Intel's table-free algorithm analytically like U81 (RCPPS/RSQRTPS) did, or keep as an open item; never a measured table.
       - ⬜ M3 leftovers: implement VPMOVD2M/VPMOVQ2M/VPMOVM2D/VPMOVM2Q (AVX512DQ, EVEX.F3.0F38 39/38); VREDUCE DAZ on C4 watch list; BW 32-bit → 1.I [audit 2026-10-09]
