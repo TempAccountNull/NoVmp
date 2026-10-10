@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-10 12:15 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `73872687 Ledger U1120-U1128 (agent/tsemix: TSE opt-in, BSF/BSR flags per SDM 092, MSR API errors, APIC gating, context MSR, BSP R/W, Thread Director, alltest per-iteration state + baseline)`). Do not edit by hand._
+_Generated 2026-10-10 16:43 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `03eaf840 Ledger U1150-U1151 (agent/amxtf32: AMX-TF32 TMMULTF32PS opt-in, reading B, unverified; SDE probe)`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1396 (of which implemented per the manual 1308, open item 58, not implemented yet 30) — 2698 forms
+**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1308, open item 59, not implemented yet 30) — 2699 forms
 
 ## Currently being added
 
@@ -1927,7 +1927,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 ### Instructions that can't be supported for now:
 
-**1396 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
+**1397 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
 
 #### By family
 
@@ -1981,6 +1981,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AMX_FP8 | 4 | ❌ **cannot run** (AMX_FP8 not reported by this CPU) | ✅ 4 |  |
 | AMX_INT8 | 4 | ❌ **cannot run** (CPUID.7H:EDX[25] = 0 on this CPU) | ✅ 4 |  |
 | AMX_MOVRS | 2 | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ 2 |  |
+| AMX_TF32 | 1 | ❌ **cannot run** (AMX_TF32 not reported by this CPU) |  | ⏳ 1 |
 | AMX_TILE | 3 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 3 |  |
 | AMX_TILE_BASE | 4 | ❌ **cannot run** (CPUID.7H:EDX[24] = 0 on this CPU) | ✅ 4 |  |
 | APX_F | 33 | ❌ **cannot run** (APX_F not reported by this CPU; APX_F_N3 not reported by this CPU) | ✅ 33 |  |
@@ -2547,6 +2548,14 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 |---|---|---|---|---|---|
 | TILELOADDRS | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
 | TILELOADDRST1 | vex | - | ❌ **cannot run** (AMX_MOVRS not reported by this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U720-U725 Intel AMX ISE 319433-… |  |
+
+</details>
+
+<details><summary><b>AMX_TF32</b> (1 forms)</summary>
+
+| instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
+|---|---|---|---|---|---|
+| TMMULTF32PS | vex | - | ❌ **cannot run** (AMX_TF32 not reported by this CPU) |  | ⏳ open item — not bit-exact / decided open item: U1150 AMX-TF32 (ISE 319433-060 3.7 pp. 3-32/3-33; withdrawn in ISE -062, no product,… |
 
 </details>
 

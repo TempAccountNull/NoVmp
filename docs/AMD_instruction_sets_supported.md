@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-10 12:15 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `73872687 Ledger U1120-U1128 (agent/tsemix: TSE opt-in, BSF/BSR flags per SDM 092, MSR API errors, APIC gating, context MSR, BSP R/W, Thread Director, alltest per-iteration state + baseline)`). Do not edit by hand._
+_Generated 2026-10-10 16:43 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `03eaf840 Ledger U1150-U1151 (agent/amxtf32: AMX-TF32 TMMULTF32PS opt-in, reading B, unverified; SDE probe)`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
