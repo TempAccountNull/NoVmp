@@ -785,7 +785,7 @@ bucket,class,groups,form,bytes,hw,unicorn,iters,iters_diff,detail
 "match",legacy,"base","btc eax, eax","0F BB C0 ",ok,ok,6,0,""
 "match",legacy,"base","btc dword ptr [rsi], eax","0F BB 06 ",ok,ok,6,0,""
 "match",legacy,"base","bsf eax, eax","0F BC C0 ",ok,ok,6,0,""
-"differs",legacy,"base","bsf eax, dword ptr [rsi]","0F BC 06 ",ok,ok,6,1,"iter 0: rax hw=8000000000000000 uc=0000000000000000 (in 8000000000000000); "
+"match",legacy,"base","bsf eax, dword ptr [rsi]","0F BC 06 ",ok,ok,6,0,""
 "match",legacy,"base","bsr eax, eax","0F BD C0 ",ok,ok,6,0,""
 "match",legacy,"base","bsr eax, dword ptr [rsi]","0F BD 06 ",ok,ok,6,0,""
 "match",legacy,"base","movsx eax, al","0F BE C0 ",ok,ok,6,0,""

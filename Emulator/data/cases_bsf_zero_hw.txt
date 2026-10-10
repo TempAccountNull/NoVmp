@@ -1,0 +1,39 @@
+# U932 (agent rng), hand-written: BSF / BSR with a zero source vs the i5-13600K. Hardware lines only
+# (no "=>"): each runs natively (CPL3, Windows x64) and in Unicorn, the whole state is compared.
+#   emu-alltest --cases Emulator\data\cases_bsf_zero_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME. Only our own snippets run natively.
+# SDM Vol2A BSF / BSR: "If the content of the source operand is 0, the content of the destination
+# operand is undefined." docs/quirks.md "SDM undefined, our choice": the emulator copies the CPU,
+# which leaves the whole 64-bit destination register unchanged, also for a 32-bit operand (no
+# zero-extension of bits 63:32). Found by emu-alltest --full after U931 (bsf eax, dword ptr [rsi],
+# RAX = 8000000000000000h, [rsi] = 0: hardware kept RAX, Unicorn wrote 0).
+#
+# --- 32-bit operand, zero source: destination unchanged (bits 63:32 too)
+bsf eax, ecx | rax=0x8000000000000000 rcx=0
+bsf eax, ecx | rax=0xFFFFFFFF12345678 rcx=0xFFFFFFFF00000000
+bsr eax, ecx | rax=0x8000000000000000 rcx=0
+bsr eax, ecx | rax=0xFFFFFFFF12345678 rcx=0xFFFFFFFF00000000
+bsf eax, eax | rax=0x8000000000000000
+bsr eax, eax | rax=0xABCDEF0100000000
+bsf r9d, r10d | r9=0x0123456789ABCDEF r10=0x7FFFFFFF00000000
+bsr r9d, r10d | r9=0x0123456789ABCDEF r10=0x7FFFFFFF00000000
+bsf eax, dword ptr [rsi] | rax=0x8000000000000000 m+0x8000=00000000FFFFFFFF
+bsr eax, dword ptr [rsi] | rax=0x8000000000000000 m+0x8000=00000000FFFFFFFF
+bsf r15d, dword ptr [rsi] | r15=0xFFFFFFFFFFFFFFFF m+0x8000=00000000
+bsr r15d, dword ptr [rsi] | r15=0xFFFFFFFFFFFFFFFF m+0x8000=00000000
+#
+# Non-zero source: not here. The index is written zero-extended on both, but the undefined flags
+# differ (i5-13600K: SF = 0 and PF from the result; Unicorn: SF and PF from the source), a separate
+# open item (the sweep compares only ZF of BSF/BSR).
+#
+# --- 16- and 64-bit operands, zero source: destination unchanged
+bsf ax, cx | rax=0x1122334455667788 rcx=0xFFFFFFFFFFFF0000
+bsr ax, cx | rax=0x1122334455667788 rcx=0xFFFFFFFFFFFF0000
+bsf ax, word ptr [rsi] | rax=0x1122334455667788 m+0x8000=0000FFFF
+bsf rax, rcx | rax=0x1122334455667788 rcx=0
+bsr rax, rcx | rax=0x1122334455667788 rcx=0
+bsf rax, qword ptr [rsi] | rax=0x8000000000000001 m+0x8000=0000000000000000
+#
+# --- TZCNT / LZCNT (defined for a zero source: the operand size, zero-extended), for contrast
+tzcnt eax, ecx | rax=0xFFFFFFFFFFFFFFFF rcx=0
+lzcnt eax, ecx | rax=0xFFFFFFFFFFFFFFFF rcx=0

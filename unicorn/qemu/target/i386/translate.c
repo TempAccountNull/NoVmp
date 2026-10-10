@@ -8293,6 +8293,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             } else {
                 tcg_gen_ctz_tl(tcg_ctx, s->T0, s->T0, cpu_regs[reg]);
             }
+#if __Use_Original_Qemu != 1 /* ours (U932) */
+            /* SDM: the destination is undefined for a zero source; the i5-13600K leaves the
+               whole register unchanged, also bits 63:32 of a 32-bit destination (no
+               zero-extension; cases_bsf_zero_hw.txt): keep the register when the source
+               (cc_dst, zero-extended) is 0, else write the index zero-extended. */
+            if (ot == MO_32) {
+                TCGv zx = tcg_temp_new(tcg_ctx);
+                TCGv zero = tcg_const_tl(tcg_ctx, 0);
+                tcg_gen_ext32u_tl(tcg_ctx, zx, s->T0);
+                tcg_gen_movcond_tl(tcg_ctx, TCG_COND_EQ, cpu_regs[reg], cpu_cc_dst, zero,
+                                   cpu_regs[reg], zx);
+                tcg_temp_free(tcg_ctx, zero);
+                tcg_temp_free(tcg_ctx, zx);
+                break;
+            }
+#endif /* __Use_Original_Qemu (U932) */
         }
         gen_op_mov_reg_v(s, ot, reg, s->T0);
         break;

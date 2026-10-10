@@ -288,6 +288,8 @@ Add-Hw 'cases_fix3' 'hw'
 # U770-U789: exception error codes in expected-value cases ("#GP(0)", UC_CTL_X86_EXCEPTION), flags and
 # partial stores at a fault or a memory hook, LOCK 0F 0D; hardware lines vs the i5-13600K.
 Add-Hw 'cases_fix4' 'hw'
+# U932: BSF/BSR with a zero source leave the whole destination unchanged (32-bit too) vs the i5-13600K.
+Add-Hw 'cases_bsf_zero_hw' 'hw'
 # U610-U616 (plan 1.15e, Intel APX part 1): EGPRs R16-R31 through REX2, REX2 decode / #UD rules, APX
 # state (XSAVE component 19), CPUID, the APX extension of EVEX instructions; expected values from the
 # U750-U760: CET on far CALL / RET far / IRETQ (call gates, supervisor tokens), SYSRET/SYSEXIT SSP,
