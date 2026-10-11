@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-10 18:40 (HEAD `3c341387 Ledger U1170-U1182 (agent/fredlam: FRED opt-in, event delivery, ERETS/ERETU, far-transfer restrictions, LAM opt-in, cases_lam, SDM self-conflict decisions)`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-10 21:40 (HEAD `1c390995 Ledger: U1220-U1226 (agent/sdetests) and U1240-U1243 (agent/amb2), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -9,7 +9,7 @@ _Generated 2026-10-10 18:40 (HEAD `3c341387 Ledger U1170-U1182 (agent/fredlam: F
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1607 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1239 · ⏳ 66 · ⬜ 0 · ❌ 1607 (implemented per the manual 1309, open item 72, not implemented yet 226)
+**All forms:** ✅ 1239 · ⏳ 66 · ⬜ 0 · ❌ 1607 (implemented per the manual 1323, open item 58, not implemented yet 226)
 
 ## Currently being added
 
@@ -30,7 +30,7 @@ _Generated 2026-10-10 18:40 (HEAD `3c341387 Ledger U1170-U1182 (agent/fredlam: F
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
       - ⬜ SGX "present but disabled" model and GETSEC TXT leaves (decision, new); PCONFIG leaf 1BH (A4) [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 527 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 538 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

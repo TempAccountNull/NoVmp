@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-10 18:40 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `3c341387 Ledger U1170-U1182 (agent/fredlam: FRED opt-in, event delivery, ERETS/ERETU, far-transfer restrictions, LAM opt-in, cases_lam, SDM self-conflict decisions)`). Do not edit by hand._
+_Generated 2026-10-10 21:40 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `1c390995 Ledger: U1220-U1226 (agent/sdetests) and U1240-U1243 (agent/amb2), merged and verified`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
