@@ -473,6 +473,23 @@ def egetkey(root, platform, secs, kr):
     return 0, derivekey(root, kd)
 
 
+def ewb(base_pk, ver, page, linaddr, eid, flags, pcmd_eid):
+    """EWB (Vol3D p. 41-69..41-73) with the model's MAC-header layout (SECINFO 0, EID 64, RSVD 72,
+    LINADDR 112) and GCM IV = (TMP_VER << 32) as 12 little-endian bytes: (ciphertext, PCMD).
+    'flags' = SECINFO.FLAGS bytes 0-1 (R W X PENDING MODIFIED PR, PT)."""
+    hdr = bytearray(128)
+    hdr[0:2] = flags
+    struct.pack_into('<Q', hdr, 64, eid)
+    struct.pack_into('<Q', hdr, 112, linaddr)
+    iv = bytes(4) + struct.pack('<Q', ver)
+    ct, tag = gcm(base_pk, iv, bytes(hdr), page)
+    pcmd = bytearray(128)
+    pcmd[0:2] = flags
+    struct.pack_into('<Q', pcmd, 64, pcmd_eid)
+    pcmd[112:128] = tag
+    return ct, bytes(pcmd)
+
+
 # ---------------------------------------------------------------------------------------------
 # The test enclave of the unit tests (test_x86.c sgx_ block)
 # ---------------------------------------------------------------------------------------------
@@ -650,9 +667,12 @@ def test_vectors():
     kr_rep = bytearray(512)
     struct.pack_into('<H', kr_rep, 0, KEYNAME_REPORT)
     _, repkey = egetkey(bytes(16), pf, secs, bytes(kr_rep))
+    # EWB of the data page (offset 4000H, RW PT_REG) of a fresh test enclave: EID 1 (the first
+    # ECREATE), TMP_VER 1 (the first EWB), CR_BASE_PK 0
+    ct, pcmd = ewb(bytes(16), 1, bytes(range(256)) * 16, ENC_BASE + OFF_DATA, 1, bytes([3, 2]), 1)
     return dict(n=n, d=d, mrenclave=mre, sigstruct=ss, mrsigner=mrsigner, token=tok,
                 tokkey=tokkey, targetinfo=bytes(ti), report=report, kr_seal=bytes(kr_seal),
-                seal_key=seal, report_key=repkey)
+                seal_key=seal, report_key=repkey, ewb_data=ct, ewb_pcmd=pcmd)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -713,6 +733,12 @@ def selftest():
     check('EGETKEY PROVISION_KEY without ATTRIBUTES.PROVISIONKEY: SGX_INVALID_ATTRIBUTE',
           egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_ATTRIBUTE)
     struct.pack_into('<H', kr, 0, 5)
+    pt, tag = gcm(bytes(16), bytes(4) + struct.pack('<Q', 1),
+                  bytes([3, 2]) + bytes(62) + struct.pack('<Q', 1) + bytes(40) +
+                  struct.pack('<Q', ENC_BASE + OFF_DATA) + bytes(8),
+                  v['ewb_data'], decrypt=True)
+    check('EWB vector decrypts (ELDU) to the data page with the PCMD MAC',
+          pt == bytes(range(256)) * 16 and tag == v['ewb_pcmd'][112:128])
     check('EGETKEY KEYNAME 5: SGX_INVALID_KEYNAME',
           egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_KEYNAME)
     try:
@@ -746,6 +772,8 @@ def cinc_text():
     out.append(c_bytes('sgxv_kr_seal', v['kr_seal']))
     out.append(c_bytes('sgxv_seal_key', v['seal_key']))
     out.append(c_bytes('sgxv_report_key', v['report_key']))
+    out.append(c_bytes('sgxv_ewb_data', v['ewb_data']))
+    out.append(c_bytes('sgxv_ewb_pcmd', v['ewb_pcmd']))
     for off, si, content, measured in enclave_pages():
         if any(content):
             out.append(c_bytes('sgxv_page_%04x' % off, content))

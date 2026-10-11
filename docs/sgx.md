@@ -55,12 +55,12 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | TCS (Table 38-6), TCS.FLAGS (Table 38-7) | 3D 38.8 p.38-7 | impl (U1262 / U1263) |
 | SSA frame: XSAVE / pad / MISC / GPRSGX (Tables 38-8, 38-9), EXITINFO (Table 38-10), vectors (Table 38-11), MISC EXINFO (Tables 38-12, 38-13) | 3D 38.9 p.38-8..38-11 | impl (U1263) |
 | PAGEINFO (Table 38-15), SECINFO (Tables 38-16..38-18) | 3D 38.11-38.12 p.38-12..38-13 | impl (U1262) |
-| PCMD (Table 38-19) | 3D 38.13 p.38-13 | plan |
+| PCMD (Table 38-19) | 3D 38.13 p.38-13 | impl (U1265) |
 | SIGSTRUCT (Table 38-20), RSA-3072 e = 3, EMSA-PKCS1-v1.5 SHA-256, q1 / q2 | 3D 38.14 p.38-13..38-14 | impl (U1262) |
 | EINITTOKEN (Table 38-21) | 3D 38.15 p.38-15 | impl (U1262) |
 | REPORT (Table 38-22), REPORTDATA, TARGETINFO (Table 38-23) | 3D 38.16-38.17 p.38-15..38-16 | impl (U1264) |
 | KEYREQUEST (Table 38-24), KEYNAME (Table 38-25), KEYPOLICY (Table 38-26) | 3D 38.18 p.38-17..38-18 | impl (U1264) |
-| Version Array (Table 38-27) | 3D 38.19 p.38-18 | impl (U1262: EPA; slots with EWB / ELD) |
+| Version Array (Table 38-27) | 3D 38.19 p.38-18 | impl (U1262: EPA; U1265: EWB / ELDB / ELDU slots) |
 | CET state save frame (Table 38-14), CET_ATTRIBUTES (Table 38-5), PT_SS_FIRST / PT_SS_REST | 3D 37.8 p.37-5..37-6, 38.10 p.38-11 | no: CPUID.12H.1:EAX[6] (ATTRIBUTES.CET) is not enumerated, so these fields are reserved |
 | KSS: ATTRIBUTES.KSS, CONFIGID / CONFIGSVN / ISVFAMILYID / ISVEXTPRODID, KEYPOLICY bits 5:2 | 3D 39.4.1.3 p.39-6, 38.18.2 | no: ATTRIBUTES.KSS[7] is not enumerated (the reserved-field checks of ECREATE / EINIT / EGETKEY apply) |
 | AEX-Notify: ATTRIBUTES.AEXNOTIFY[10], TCS.FLAGS.AEXNOTIFY, SSA.GPRSGX.AEXNOTIFY, EDECCSSA | 3D 39.2.3.2 p.39-5, EDECCSSA p.41-83 | no: not enumerated (12H.0:EAX[11] = 0, 12H.1 bit 10 = 0) |
@@ -92,9 +92,9 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | EREMOVE (3) | p.41-62..41-64 | impl (U1262) |
 | EDBGRD (4) / EDBGWR (5) | p.41-30..41-37 | impl (U1262) |
 | EEXTEND (6) | p.41-38..41-40 | impl (U1262) |
-| ELDB (7) / ELDU (8): AES-GCM decrypt with CR_BASE_PK, MAC compare | p.41-49..41-53 | plan; CR_BASE_PK **ph** |
+| ELDB (7) / ELDU (8): AES-GCM decrypt with CR_BASE_PK, MAC compare | p.41-49..41-53 | impl (U1265); CR_BASE_PK **ph** |
 | EBLOCK (9), EPA (0AH), ETRACK (0CH) | p.41-22..41-24, 41-60..41-61, 41-65..41-66 | impl (U1262; tracking model: our choice) |
-| EWB (0BH): AES-GCM encrypt, PCMD, VA slot | p.41-69..41-73 | plan |
+| EWB (0BH): AES-GCM encrypt, PCMD, VA slot | p.41-69..41-73 | impl (U1265); TMP_VER = CR_PAGING_VERSION + 1 (our model) |
 | EAUG (0DH), EMODPR (0EH), EMODT (0FH) (SGX2) | p.41-18..41-21, 41-54..41-59 | plan |
 | EUPDATESVN (18H) | p.41-67..41-68 | no: 12H.0:EAX[10] not enumerated (microcode SVN update has no meaning in the model) |
 | ENCLS leaves of SGX oversubscription (ERDINFO, ETRACKC, ELDBC/ELDUC, EINCVIRTCHILD, EDECVIRTCHILD) and ENCLV | not in SDM 092 Vol3D; ENCLV | **def** (VMX agent, plan 1.J.12) |
@@ -123,7 +123,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | MRSIGNER = SHA256(SIGSTRUCT.MODULUS) (384 bytes as stored) | EINIT p.41-45; 39.4.1.2 p.39-7 | impl (U1262) |
 | RSA-3072 signature check (e = 3, PKCS#1 v1.5 / RFC 3447 DigestInfo SHA-256) over SIGSTRUCT bytes 0-127 and 900-1027 ("Signed" column) using q1, q2 | 38.14 p.38-13..38-14; EINIT p.41-44 | impl (U1262; q1 / q2 use: our reading) |
 | AES-CMAC-128 (EINITTOKEN.MAC over bytes 0-191, REPORT.MAC over bytes 0-383) | EINIT p.41-46; EREPORT p.41-115 | impl (U1262: EINITTOKEN; U1264: REPORT) |
-| AES-GCM (EWB / ELDU): key CR_BASE_PK, counter "TMP_VER << 32", 128-byte MAC header (SECINFO, LINADDR, EID, ...), 4096-byte page | EWB p.41-72; ELDB p.41-51 | plan; the exact GCM IV formation and MAC-header byte layout are not fully specified -> our layout, documented (section 3) |
+| AES-GCM (EWB / ELDU): key CR_BASE_PK, counter "TMP_VER << 32", 128-byte MAC header (SECINFO, LINADDR, EID, ...), 4096-byte page | EWB p.41-72; ELDB p.41-51 | impl (U1265): our IV / MAC-header layout (docs/quirks.md); CR_BASE_PK **ph** |
 | derivekey(KEYDEPENDENCIES): "derivation data and package specific value" | EGETKEY p.41-99, 41-104; EINIT p.41-46 | **ph** (U1262: AES-CMAC with the host root key over our 648-byte layout) |
 
 ### 1.7 GETSEC / SMX (2D chapter 7)
@@ -268,7 +268,22 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
   SEAL / REPORT keys of the test enclave (`x86_sgx_vectors.inc`); its self test checks that the
   REPORT MAC verifies with the EGETKEY report key and the error codes.
 
-### 2.7 Validation (U1262)
+### 2.7 EPC paging (U1265)
+- EWB: the operand checks of p. 41-70/41-71, BLOCKED (SGX_PAGE_NOT_BLOCKED), the tracking model
+  (an ETRACK of the enclave after the EBLOCK, else SGX_NOT_TRACKED), SGX_CHILD_PRESENT for a SECS
+  with pages; AES-GCM-128 with CR_BASE_PK over the page, the 128-byte MAC header as AAD; the
+  ciphertext to PAGEINFO.SRCPGE, the PCMD (SECINFO flags, ENCLAVEID, MAC), PAGEINFO.LINADDR, the
+  version (CR_PAGING_VERSION + 1) to the VA slot (CF / SGX_VA_SLOT_OCCUPIED when it held one); the
+  EPCM entry becomes invalid.
+- ELDB / ELDU: the checks of p. 41-50/41-51, the MAC header from the PCMD and PAGEINFO (EID of
+  PAGEINFO.SECS for REG / TCS / TRIM pages), the decrypted page written to the EPC, the MAC compared
+  (SGX_MAC_COMPARE_FAIL, the EPCM entry stays invalid), the VA slot cleared, the EPCM entry from the
+  header with ENCLAVESECS = the PAGEINFO.SECS page (38.5.3.2); ELDB marks REG / TCS / TRIM pages
+  BLOCKED (counted as tracked: they had no translations).
+- Validation: ref_sgx.py `ewb` (same layout) gives the ciphertext and PCMD of the test enclave's
+  data page; its self test decrypts it back.
+
+### 2.8 Validation (U1262)
 - `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
   AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
   generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over
@@ -304,6 +319,7 @@ Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
   is generated"): the model raises the SGX-induced #PF.
 - EGETKEY EINITTOKEN_KEY: the description requires "SECS.MRSIGNER equal IA32_SGXLEPUBKEYHASH", the
   Operation does not check it (the model follows the Operation).
+- EWB "IF (EBLOCK is not correct) THEN #GP(0)": the condition is not defined (the model has none).
 - The key derivation function and the platform keys (root key, CR_SEAL_FUSES, CR_SGXOWNEREPOCH,
   CR_CPUSVN, CR_REPORT_KEYID, CR_BASE_PK, Intel's LE signer hash): model placeholders - does the
   user have an Intel document that specifies any of them?

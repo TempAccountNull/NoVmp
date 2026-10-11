@@ -1617,6 +1617,237 @@ static void sgx_edbg(SgxOp *o, bool wr)
 }
 
 /* ---------------------------------------------------------------------------------------------
+ * EPC paging (U1265): EWB (Vol3D p. 41-69..41-73), ELDB / ELDU (p. 41-49..41-53)
+ * ------------------------------------------------------------------------------------------- */
+
+/* PAGEINFO (Table 38-15) and PCMD (Table 38-19) */
+#define PI_LINADDR      0
+#define PI_SRCPGE       8
+#define PI_PCMD         16      /* overlaid on SECINFO */
+#define PI_SECS         24
+#define PCMD_SECINFO    0
+#define PCMD_ENCLAVEID  64
+#define PCMD_RESERVED   72      /* 40 bytes */
+#define PCMD_MAC        112
+
+/*
+ * The 128-byte MAC header of EWB / ELDB / ELDU ("TMP_HEADER": SECINFO, RSVD, LINADDR, EID; "MAC
+ * Header", 128 bytes - the byte layout is not in the SDM). The model (docs/sgx.md 3): SECINFO at 0
+ * (64 bytes), EID at 64, RSVD (the PCMD's 40 reserved bytes) at 72, LINADDR at 112, zero at 120.
+ */
+#define MH_SECINFO      0
+#define MH_EID          64
+#define MH_RSVD         72
+#define MH_LINADDR      112
+
+/* SECINFO.FLAGS (Table 38-17) of an EPCM entry: R W X PENDING MODIFIED PR in bits 5:0, PT 15:8 */
+static void sgx_epcm_flags(const X86SgxEpcm *m, uint8_t si[64])
+{
+    memset(si, 0, 64);
+    si[0] = (m->r ? 1 : 0) | (m->w ? 2 : 0) | (m->x ? 4 : 0) | (m->pending ? 8 : 0) |
+            (m->modified ? 16 : 0) | (m->pr ? 32 : 0);
+    si[1] = m->pt;
+}
+
+/*
+ * AES_GCM_ENC / AES_GCM_DEC(CR_BASE_PK, TMP_VER << 32, TMP_HEADER, 128, page, 4096): the "GCM
+ * counter" TMP_VER << 32 as the 96-bit IV, little-endian (bytes 0-3 zero, 4-11 TMP_VER) - our
+ * reading, docs/sgx.md 3. CR_BASE_PK is the host-provided paging key (placeholder).
+ */
+static void sgx_page_crypt(CPUX86State *env, uint64_t ver, const uint8_t hdr[128],
+                           const uint8_t *in, uint8_t *out, uint8_t tag[16], bool dec)
+{
+    uint8_t iv[12];
+
+    memset(iv, 0, 4);
+    stq_le_p(iv + 4, ver);
+    sgx_gcm(env->sgx->base_pk, iv, hdr, 128, in, 4096, out, tag, dec);
+}
+
+/* the "VASLOT" operand: 8-byte aligned (#GP(0)), resolves within the EPC (#PF) */
+static uint64_t sgx_va_slot(SgxOp *o, uint64_t *la)
+{
+    uint64_t pa;
+
+    *la = sgx_la(o, sgx_reg(o, R_EDX), 8, true);
+    if (*la & 7) {
+        sgx_gp(o);
+    }
+    sgx_epc_operand(o, *la, true, &pa);
+    return pa;
+}
+
+/* EWB (EAX = 0BH): invalidate an EPC page and write it out encrypted, its version in a VA slot */
+static void sgx_ewb(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 32, true);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa, va_la, va_pa, src, pcmd, eid = 0, pcmd_eid = 0, ver;
+    uint8_t hdr[128], page[4096], pc[128];
+    X86SgxEpcm *m, *va;
+
+    if ((rbx & 31) || (rcx & 0xfff)) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    va_pa = sgx_va_slot(o, &va_la);
+    if ((pa & ~0xfffULL) == (va_pa & ~0xfffULL)) {
+        sgx_gp(o);
+    }
+    src = sgx_ld64(o, rbx + PI_SRCPGE);
+    pcmd = sgx_ld64(o, rbx + PI_PCMD);
+    if (sgx_ld64(o, rbx + PI_LINADDR) || sgx_ld64(o, rbx + PI_SECS)) {
+        sgx_gp(o);
+    }
+    if (!o->m64) {
+        src = (uint32_t)src;
+        pcmd = (uint32_t)pcmd;
+    }
+    if ((pcmd & 127) || (src & 0xfff)) {
+        sgx_gp(o);
+    }
+    src = sgx_la(o, src, 4096, true);
+    pcmd = sgx_la(o, pcmd, 128, true);
+    if (!m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    va = sgx_epcm(env, va_pa);
+    if (!va->valid || va->pt != SGX_PT_VA) {
+        sgx_pf(o, va_la, true);
+    }
+    /* "IF (EBLOCK is not correct) THEN #GP(0)": no condition beyond BLOCKED / tracking is given
+       (docs/quirks.md); the model has none */
+    o->flags = 0;
+    env->regs[R_EAX] = 0;
+    memset(hdr, 0, sizeof(hdr));
+    if (m->pt == SGX_PT_REG || m->pt == SGX_PT_TCS || m->pt == SGX_PT_TRIM) {
+        if (!m->blocked) {
+            env->regs[R_EAX] = SGX_PAGE_NOT_BLOCKED;
+            o->flags = CC_Z;
+            return;
+        }
+        /* tracking (the model): an ETRACK of the enclave after the EBLOCK; a page ELDB loaded
+           blocked has had no translations (bepoch = ~0) */
+        if (m->bepoch != ~0ULL && sgx_pld64(env, m->secs + SECS_EPOCH) <= m->bepoch) {
+            env->regs[R_EAX] = SGX_NOT_TRACKED;
+            o->flags = CC_Z;
+            return;
+        }
+        eid = pcmd_eid = sgx_pld64(env, m->secs + SECS_EID);
+    } else if (m->pt == SGX_PT_SECS) {
+        if (sgx_child_present(env, pa & ~0xfffULL)) {
+            env->regs[R_EAX] = SGX_CHILD_PRESENT;
+            o->flags = CC_Z;
+            return;
+        }
+        pcmd_eid = sgx_pld64(env, (pa & ~0xfffULL) + SECS_EID);
+    }
+    stq_le_p(hdr + MH_EID, eid);
+    stq_le_p(hdr + MH_LINADDR, m->addr);
+    sgx_epcm_flags(m, hdr + MH_SECINFO);
+    sgx_pread(env, pa & ~0xfffULL, page, sizeof(page));
+    ver = ++env->sgx->paging_version;           /* TMP_VER (CR_PAGING_VERSION, our model) */
+    memset(pc, 0, sizeof(pc));
+    sgx_page_crypt(env, ver, hdr, page, page, pc + PCMD_MAC, false);
+    sgx_epcm_flags(m, pc + PCMD_SECINFO);
+    stq_le_p(pc + PCMD_ENCLAVEID, pcmd_eid);
+    sgx_stbuf(o, src, page, sizeof(page));
+    sgx_stbuf(o, pcmd, pc, sizeof(pc));
+    sgx_st64(o, rbx + PI_LINADDR, m->addr);
+    if (sgx_pld64(env, va_pa)) {
+        env->regs[R_EAX] = SGX_VA_SLOT_OCCUPIED;
+        o->flags = CC_C;
+    }
+    sgx_pst64(env, va_pa, ver);
+    m->valid = 0;
+}
+
+/*
+ * ELDB (EAX = 07H) / ELDU (EAX = 08H): load an evicted page, verify its MAC and version. EPCM
+ * ENCLAVESECS (not in the commit list of the Operation) is the PAGEINFO.SECS page, as 38.5.3.2
+ * says ("The physical address of SECS associated with each EPC page is cached ... when the page is
+ * loaded to EPC via ENCLS[ELDB] or ENCLS[ELDU]"); a SECS page is its own (as ECREATE), a VA page
+ * has none.
+ */
+static void sgx_eld(SgxOp *o, bool blocked)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 32, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa, va_la, va_pa, src, secs, pcmd, secs_pa = 0, ver;
+    uint8_t hdr[128], page[4096], pc[128], tag[16];
+    X86SgxEpcm *m, *va;
+    int pt;
+
+    if ((rbx & 31) || (rcx & 0xfff)) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    va_pa = sgx_va_slot(o, &va_la);
+    src = sgx_ld64(o, rbx + PI_SRCPGE);
+    secs = sgx_ld64(o, rbx + PI_SECS);
+    pcmd = sgx_ld64(o, rbx + PI_PCMD);
+    if (!o->m64) {
+        src = (uint32_t)src;
+        pcmd = (uint32_t)pcmd;
+        secs = (uint32_t)secs;
+    }
+    if ((pcmd & 127) || (src & 0xfff)) {
+        sgx_gp(o);
+    }
+    src = sgx_la(o, src, 4096, false);
+    pcmd = sgx_la(o, pcmd, 128, false);
+    if (m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    va = sgx_epcm(env, va_pa);
+    if (!va->valid || va->pt != SGX_PT_VA) {
+        sgx_pf(o, va_la, true);
+    }
+    sgx_ldbuf(o, pcmd, pc, sizeof(pc));
+    memset(hdr, 0, sizeof(hdr));
+    memcpy(hdr + MH_SECINFO, pc + PCMD_SECINFO, 64);
+    memcpy(hdr + MH_RSVD, pc + PCMD_RESERVED, 40);
+    stq_le_p(hdr + MH_LINADDR, sgx_ld64(o, rbx + PI_LINADDR));
+    pt = pc[PCMD_SECINFO + 1];
+    if (pt == SGX_PT_REG || pt == SGX_PT_TCS || pt == SGX_PT_TRIM) {
+        if (secs & 0xfff) {
+            sgx_gp(o);
+        }
+        sgx_epc_operand(o, sgx_la(o, secs, 4096, true), true, &secs_pa);
+        stq_le_p(hdr + MH_EID, sgx_pld64(env, secs_pa + SECS_EID));
+    } else if (secs) {
+        sgx_gp(o);
+    }
+    sgx_ldbuf(o, src, page, sizeof(page));
+    ver = sgx_pld64(env, va_pa);
+    sgx_page_crypt(env, ver, hdr, page, page, tag, true);
+    sgx_pwrite(env, pa, page, sizeof(page));    /* "DS:RCX := ... AES_GCM_DEC" before the MAC check */
+    o->flags = 0;
+    if (memcmp(tag, pc + PCMD_MAC, 16)) {
+        env->regs[R_EAX] = SGX_MAC_COMPARE_FAIL;
+        o->flags = CC_Z;
+        return;
+    }
+    sgx_pst64(env, va_pa, 0);
+    memset(m, 0, sizeof(*m));
+    m->r = hdr[MH_SECINFO] & 1;
+    m->w = (hdr[MH_SECINFO] >> 1) & 1;
+    m->x = (hdr[MH_SECINFO] >> 2) & 1;
+    m->pending = (hdr[MH_SECINFO] >> 3) & 1;
+    m->modified = (hdr[MH_SECINFO] >> 4) & 1;
+    m->pr = (hdr[MH_SECINFO] >> 5) & 1;
+    m->pt = pt;
+    m->addr = ldq_le_p(hdr + MH_LINADDR);
+    m->secs = pt == SGX_PT_SECS ? pa : secs_pa;
+    m->blocked = blocked && pt != SGX_PT_SECS && pt != SGX_PT_VA;
+    m->bepoch = m->blocked ? ~0ULL : 0;
+    m->valid = 1;
+    env->regs[R_EAX] = 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
  * ENCLS (Vol3D p. 41-8..41-9)
  * ------------------------------------------------------------------------------------------- */
 
@@ -1681,17 +1912,26 @@ void helper_encls(CPUX86State *env)
     case 0x06:
         sgx_eextend(&o);
         break;
+    case 0x07:
+        sgx_eld(&o, true);
+        break;
+    case 0x08:
+        sgx_eld(&o, false);
+        break;
     case 0x09:
         sgx_eblock(&o);
         break;
     case 0x0a:
         sgx_epa(&o);
         break;
+    case 0x0b:
+        sgx_ewb(&o);
+        break;
     case 0x0c:
         sgx_etrack(&o);
         break;
     default:
-        sgx_gp(&o);     /* 07H, 08H, 0BH (ELDB, ELDU, EWB) and SGX2: U1265 / U1266 */
+        sgx_gp(&o);     /* SGX2 (0DH-0FH): U1266 */
         break;
     }
     if (!(o.flags & CC_Z)) {
