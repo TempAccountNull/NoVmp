@@ -289,6 +289,9 @@ void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra)
     }
     cs->watchpoint_hit = NULL;
     cpu_reset_interrupt(cs, CPU_INTERRUPT_DEBUG);
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    x86_vmx_db_snapshot(env);       /* VMX: DR6 / DR7 before this #DB (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
     if (check_hw_breakpoints(env, false)) {
         env->eflags |= RF_MASK;
         #if __Use_Original_Qemu != 1 /* ours (U1171) */
@@ -308,6 +311,9 @@ void breakpoint_handler(CPUState *cs)
     if (cs->watchpoint_hit) {
         if (cs->watchpoint_hit->flags & BP_CPU) {
             cs->watchpoint_hit = NULL;
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+            x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB */
+#endif /* __Use_Original_Qemu (U1305) */
             if (check_hw_breakpoints(env, false)) {
                 #if __Use_Original_Qemu != 1 /* ours (U1171) */
                 env->fred_evdata_next = env->dr[6] & 0xf;   /* FRED #DB event data (U1171) */
@@ -321,6 +327,9 @@ void breakpoint_handler(CPUState *cs)
         QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
             if (bp->pc == env->eip) {
                 if (bp->flags & BP_CPU) {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+                    x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB */
+#endif /* __Use_Original_Qemu (U1305) */
                     check_hw_breakpoints(env, true);
                     #if __Use_Original_Qemu != 1 /* ours (U1171) */
                     env->fred_evdata_next = env->dr[6] & 0xf;   /* FRED #DB event data (U1171) */
@@ -335,6 +344,9 @@ void breakpoint_handler(CPUState *cs)
 
 void helper_single_step(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    x86_vmx_db_snapshot(env);       /* VMX: DR6 / DR7 before this #DB (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
     check_hw_breakpoints(env, true);
     env->dr[6] |= DR6_BS;
     #if __Use_Original_Qemu != 1 /* ours (U1171) */
@@ -393,6 +405,9 @@ target_ulong helper_get_dr(CPUX86State *env, int reg)
      * (SDM Vol3B 20.2.4, 20.3.1.3)
      */
     if (env->dr[7] & DR7_GD) {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
         env->dr[7] &= ~DR7_GD;
         env->dr[6] |= DR6_BD;
         #if __Use_Original_Qemu != 1 /* ours (U1171) */
@@ -415,6 +430,9 @@ void helper_set_dr(CPUX86State *env, int reg, target_ulong t0)
     }
 
     if (env->dr[7] & DR7_GD) {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
         env->dr[7] &= ~DR7_GD;
         env->dr[6] |= DR6_BD;
         #if __Use_Original_Qemu != 1 /* ours (U1171) */
@@ -448,6 +466,9 @@ void helper_bpt_io(CPUX86State *env, uint32_t port,
     }
 
     if (hit) {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
         env->dr[6] = (env->dr[6] & ~0xf) | hit;
         env->eip = next_eip;
         #if __Use_Original_Qemu != 1 /* ours (U1171) */

@@ -8760,6 +8760,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                             offsetof(CPUX86State, fred_swexc));
         }
 #endif /* __Use_Original_Qemu (U1171) */
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        /* VMX: INT3 is a software exception (type 6) too (Vol3C 30.2.2) */
+        if (!(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) &&
+            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
+                            offsetof(CPUX86State, fred_swexc));
+        }
+#endif /* __Use_Original_Qemu (U1305) */
         gen_interrupt(s, EXCP03_INT3);
         break;
     case 0xcd: /* int N */
@@ -8786,6 +8794,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                             offsetof(CPUX86State, fred_insn_len));
         }
 #endif /* __Use_Original_Qemu (U1171) */
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        /* VMX: the length of INT1 (VM-exit instruction length, Vol3C 30.2.5) */
+        if (!(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) &&
+            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, cur_insn_len(s)), cpu_env,
+                            offsetof(CPUX86State, fred_insn_len));
+        }
+#endif /* __Use_Original_Qemu (U1305) */
         gen_helper_icebp(tcg_ctx, cpu_env);
         s->base.is_jmp = DISAS_NORETURN;
         break;

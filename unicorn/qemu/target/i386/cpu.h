@@ -493,6 +493,15 @@ typedef struct X86VmxState {
      */
     uint8_t monitor_armed, mwait_wait;
 #endif /* __Use_Original_Qemu (U1304) */
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    /*
+     * U1305: HLT ended by a VMX event (the VM exit saves the HLT activity state); NMI unblocking due
+     * to IRET (30.2.3); DR6 / DR7 and CR2 before a #DB / #PF changed them (restored when the
+     * exception causes a VM exit directly, 30.1)
+     */
+    uint8_t hlt_wake, iret_nmi, db_snap;
+    uint64_t db_dr6, db_dr7, pf_cr2;
+#endif /* __Use_Original_Qemu (U1305) */
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -3495,6 +3504,20 @@ void x86_vmx_mwait_check(CPUX86State *env, uintptr_t ra);
 void x86_vmx_loadiwkey_check(CPUX86State *env, uint32_t src1, uint32_t src2, uintptr_t ra);
 void x86_vmx_pconfig_check(CPUX86State *env, uintptr_t ra);
 void x86_vmx_pbndkb_check(CPUX86State *env, uintptr_t ra);
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+/* U1305: events in VMX non-root operation */
+void x86_vmx_delivery_start(CPUX86State *env, int intno, int is_int, int error_code,
+                            target_ulong next_eip, int is_hw);
+void x86_vmx_db_snapshot(CPUX86State *env);
+void x86_vmx_exception(CPUX86State *env, int intno, int type, int error_code, int len, int back,
+                       uintptr_t ra);
+void x86_vmx_iret_start(CPUX86State *env);
+bool x86_vmx_iret_end(CPUX86State *env);
+void x86_vmx_task_switch(CPUX86State *env, int tss_selector, int source, uintptr_t ra);
+void x86_vmx_interrupt(CPUX86State *env, int req);
+bool x86_vmx_intr_unmasked(CPUX86State *env);
+void x86_vmx_hlt(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1305) */
 #define VMX_EXIT_HLT     12
 #define VMX_EXIT_RDPMC   15
 #define VMX_EXIT_RDTSC   16

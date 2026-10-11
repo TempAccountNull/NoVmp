@@ -1208,6 +1208,7 @@ typedef struct VmxExit {
     uint32_t insn_len, insn_info;
     bool gla_valid, gpa_valid, len_valid, info_valid;
     bool rf_zero;               /* RFLAGS.RF saved as 0 (instruction exits, 30.3.3) */
+    bool block_nmi;             /* U1305: a VM exit caused by an NMI blocks NMIs (30.5) */
 } VmxExit;
 
 static void vmx_exit_init(VmxExit *e, uint32_t reason, uint64_t qual)
@@ -2201,6 +2202,8 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.delivering = 0;
     env_cpu(env)->halted = 0;
     env->vmx.mwait_wait = 0;            /* U1304 */
+    env->vmx.hlt_wake = 0;              /* U1305 */
+    env->vmx.iret_nmi = 0;
     tlb_flush(env_cpu(env));
 }
 
@@ -2273,8 +2276,9 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     }
     vmcs_put(env, VMCS_GUEST_RFLAGS, rflags);
     /* 30.3.4 non-register state */
-    if (env_cpu(env)->halted && !env->vmx.mwait_wait) {
-        act = 1;            /* U1304: waiting after MWAIT is the active state (30.1 footnote 3) */
+    if ((env_cpu(env)->halted && !env->vmx.mwait_wait) || env->vmx.hlt_wake) {
+        act = 1;            /* U1304: waiting after MWAIT is the active state (30.1 footnote 3);
+                               U1305: HLT ended by the event causing the VM exit */
     }
     vmcs_put(env, VMCS_GUEST_ACTIVITY, act);
     if (env->hflags & HF_INHIBIT_IRQ_MASK) {
@@ -2324,6 +2328,10 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
     }
     if (e->len_valid) {
         vmcs_put(env, VMCS_EXIT_INSN_LEN, e->insn_len);
+    } else if (env->vmx.delivering && ((env->vmx.idtv_info >> 8) & 7) >= 4 &&
+               ((env->vmx.idtv_info >> 8) & 7) <= 6) {
+        /* U1305: during the delivery of a software interrupt / exception: its length (30.2.5) */
+        vmcs_put(env, VMCS_EXIT_INSN_LEN, env->vmx.idtv_len);
     }
     if (e->info_valid) {
         vmcs_put(env, VMCS_EXIT_INSN_INFO, e->insn_info);
@@ -2337,6 +2345,9 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
     cnt = vmcs_get(env, VMCS_EXIT_MSR_STORE_CNT);
     if (!vmx_store_msr_list(env, vmcs_get(env, VMCS_EXIT_MSR_STORE), cnt)) {
         vmx_abort(env, 1);
+    }
+    if (e->block_nmi) {
+        env->hflags2 |= HF2_NMI_MASK;   /* U1305: after the guest state was saved (30.5) */
     }
     /* 30.5: IA-32e mode with "host address-space size" 0 is a VMX abort (6) */
     if (vmx_long_mode(env) && !(env->vmx.exit_ctls & EXIT_HOST_64)) {
@@ -2529,6 +2540,7 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
     if (!(info >> 31) || ((info >> 8) & 7) == 7) {
         env_cpu(env)->halted = vmcs_get(env, VMCS_GUEST_ACTIVITY) == 1;
         env->vmx.mwait_wait = 0;        /* U1304 */
+        env->vmx.hlt_wake = 0;          /* U1305 */
     }
     /* 29.7.4 the VMX-preemption timer */
     if (env->vmx.pin & PIN_PREEMPT_TIMER) {
@@ -2560,31 +2572,18 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
  * than debug traps, lower than SMI / INIT), VMX-preemption timer (above NMI window), NMI window,
  * interrupt window (below NMI, above external interrupts).
  */
+static void vmx_boundary_exits(CPUX86State *env);     /* U1305 */
+static bool vmx_intr_window(CPUX86State *env);
+
 void helper_vmx_boundary(CPUX86State *env)
 {
     VmxExit e;
-    CPUState *cs = env_cpu(env);
 
     if (!env->vmx.nonroot) {
         return;
     }
-    if (env->vmx.mtf_pending) {
-        env->vmx.mtf_pending = 0;
-        vmx_exit_init(&e, EXIT_REASON_MTF, 0);
-        vmx_vmexit(env, &e);
-    }
-    if (env->vmx.timer_on && vmx_timer_value(env) == 0) {
-        vmx_exit_init(&e, EXIT_REASON_PREEMPT_TIMER, 0);
-        env->vmx.timer_on = 1;
-        vmx_vmexit(env, &e);
-    }
-    if ((env->vmx.proc & PROC_NMI_WINDOW) && !env->vmx.vnmi_blocked &&
-        !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
-        vmx_exit_init(&e, EXIT_REASON_NMI_WINDOW, 0);
-        vmx_vmexit(env, &e);
-    }
-    if ((env->vmx.proc & PROC_INTR_WINDOW) && (env->eflags & IF_MASK) &&
-        !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
+    vmx_boundary_exits(env);            /* pending MTF, timer, NMI window (U1305: shared) */
+    if (vmx_intr_window(env)) {
         vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
         vmx_vmexit(env, &e);
     }
@@ -2592,7 +2591,8 @@ void helper_vmx_boundary(CPUX86State *env)
     if (env->vmx.proc & PROC_MTF) {
         env->vmx.mtf_pending = 1;
     }
-    (void)cs;
+    env->vmx.hlt_wake = 0;
+    env->vmx.iret_nmi = 0;
 }
 
 /* VMCALL / VMXON / ... in VMX non-root operation: unconditional VM exits (28.1.2) */
@@ -3111,6 +3111,299 @@ void helper_vmx_insn(CPUX86State *env, uint32_t kind, uint32_t info, target_ulon
     if (ex) {
         x86_vmx_insn_exit(env, reason, q, info, inf, ra);
     }
+}
+
+/*
+ * ---- U1305: events in VMX non-root operation (Vol3C 28.2 pp. 28-6 to 28-8, 28.4, 30.1-30.3) ----
+ * Exceptions and the exception bitmap (with the #PF error-code mask / match), NMIs ("NMI exiting",
+ * virtual NMIs, IRET), external interrupts ("external-interrupt exiting", "acknowledge interrupt on
+ * exit"), task switches, the original-event information of every event delivered in VMX non-root
+ * operation (30.2.4), the HLT activity state left by VMX events.
+ */
+
+/* hardware exceptions that deliver an error code (Vol3A Table 7-1) */
+static bool vmx_exc_has_ec(int v)
+{
+    return v == EXCP08_DBLE || (v >= EXCP0A_TSS && v <= EXCP0E_PAGE) || v == EXCP11_ALGN ||
+           v == EXCP15_CP;
+}
+
+/* the event information format (Tables 27-20 / 27-21) for an event of type 'type' */
+static uint32_t vmx_event_info(CPUX86State *env, int vec, uint32_t type)
+{
+    uint32_t info = (vec & 0xff) | (type << 8) | (1u << 31);
+
+    if (type == 3 && vmx_exc_has_ec(vec) && (env->cr[0] & CR0_PE_MASK)) {
+        info |= 1u << 11;
+    }
+    return info;
+}
+
+/*
+ * The delivery of an event through the IDT begins (do_interrupt_all): its original-event
+ * information, used if a VM exit occurs during the delivery (30.2.4). An event injected by VM entry
+ * was recorded by vmx_inject (29.6.1.2). The processor is active once it delivers an event (30.1).
+ */
+void x86_vmx_delivery_start(CPUX86State *env, int intno, int is_int, int error_code,
+                            target_ulong next_eip, int is_hw)
+{
+    X86VmxState *v = &env->vmx;
+    uint32_t type, len = 0;
+
+    if (!v->nonroot) {
+        return;
+    }
+    v->hlt_wake = 0;
+    if (v->inj_active) {
+        return;
+    }
+    if (is_hw) {
+        type = intno == EXCP02_NMI ? 2 : 0;
+    } else if (is_int) {
+        type = env->fred_kind == 6 ? 6 : 4;         /* INT3 / INTO: software exception */
+        len = (uint32_t)(next_eip - env->eip);
+    } else if (env->fred_kind == 5) {
+        type = 5;                                   /* INT1: privileged software exception */
+        len = env->fred_insn_len;
+    } else {
+        type = 3;
+    }
+    v->delivering = 1;
+    v->idtv_info = vmx_event_info(env, intno, type);
+    v->idtv_err = (uint32_t)error_code;
+    v->idtv_len = len;
+}
+
+/* debug-exception state before a #DB updated it (restored if the #DB causes a VM exit, 30.1) */
+void x86_vmx_db_snapshot(CPUX86State *env)
+{
+    env->vmx.db_dr6 = env->dr[6];
+    env->vmx.db_dr7 = env->dr[7];
+    env->vmx.db_snap = 1;
+}
+
+/*
+ * An exception in VMX non-root operation (raise_interrupt2, helper_icebp): a VM exit if its bit in
+ * the exception bitmap says so (28.2; for #PF the bit is reversed when PFEC & PFEC_MASK !=
+ * PFEC_MATCH). type: 3 hardware, 5 INT1, 6 INT3 / INTO (4, INT n, never exits by the bitmap); len:
+ * the instruction length of types 5 / 6; back: bytes to step RIP back to the instruction (INT1).
+ * Returns if there is no VM exit. A VM exit caused directly by #PF leaves CR2, by #DB leaves DR6 /
+ * DR7 unmodified; the exit qualification is the #PF linear address / the #DB conditions (Table
+ * 30-1); bit 12 of the exiting-event information is "NMI unblocking due to IRET" (30.2.3).
+ */
+void x86_vmx_exception(CPUX86State *env, int intno, int type, int error_code, int len, int back,
+                       uintptr_t ra)
+{
+    X86VmxState *v = &env->vmx;
+    bool db = v->db_snap;
+    VmxExit e;
+    bool ex;
+
+    v->db_snap = 0;
+    if (!v->nonroot || type == 4 || intno < 0 || intno > 31) {
+        return;
+    }
+    ex = (v->exc_bitmap >> intno) & 1;
+    if (intno == EXCP0E_PAGE && type == 3 && ((uint32_t)error_code & v->pfec_mask) != v->pfec_match) {
+        ex = !ex;
+    }
+    if (!ex) {
+        return;
+    }
+    if (ra) {
+        cpu_restore_state(env_cpu(env), ra, true);
+    }
+    env->eip -= back;
+    vmx_exit_init(&e, EXIT_REASON_EXCEPTION_NMI, 0);
+    e.intr_info = vmx_event_info(env, intno, (uint32_t)type);
+    e.intr_err = (uint32_t)error_code;
+    if (type == 3 && intno == EXCP0E_PAGE) {
+        e.qual = vmx_la_trunc(env, env->cr[2]);
+        env->cr[2] = v->pf_cr2;
+    } else if (type == 3 && intno == EXCP01_DB) {
+        e.qual = env->fred_evdata & 0x600f;         /* B3-B0, BD, BS */
+        if (db) {
+            env->dr[6] = v->db_dr6;
+            env->dr[7] = v->db_dr7;
+        }
+    }
+    if (type == 5 || type == 6) {
+        e.len_valid = true;
+        e.insn_len = (uint32_t)len;
+    }
+    if (v->iret_nmi && !v->delivering && intno != EXCP08_DBLE) {
+        e.intr_info |= 1u << 12;
+    }
+    v->iret_nmi = 0;
+    vmx_vmexit(env, &e);
+}
+
+/* IRET in VMX non-root operation (28.3): NMI or virtual-NMI unblocking at its start (also if it faults) */
+void x86_vmx_iret_start(CPUX86State *env)
+{
+    X86VmxState *v = &env->vmx;
+
+    if (!v->nonroot) {
+        return;
+    }
+    v->iret_nmi = 0;
+    if (!(v->pin & PIN_NMI_EXIT)) {
+        if (env->hflags2 & HF2_NMI_MASK) {
+            v->iret_nmi = 1;
+            env->hflags2 &= ~HF2_NMI_MASK;
+        }
+    } else if (v->pin & PIN_VIRTUAL_NMI) {
+        if (v->vnmi_blocked) {
+            v->iret_nmi = 1;
+            v->vnmi_blocked = 0;
+        }
+    }
+}
+
+/* the end of IRET: false if IRET must leave the blocking by NMI alone ("NMI exiting" = 1, 28.3) */
+bool x86_vmx_iret_end(CPUX86State *env)
+{
+    env->vmx.iret_nmi = 0;
+    return !(env->vmx.nonroot && (env->vmx.pin & PIN_NMI_EXIT));
+}
+
+/*
+ * A task switch in VMX non-root operation (28.4.2): after the checks of the task gate and of the
+ * new TSS descriptor, a VM exit (9) with the qualification of Table 30-2 (the TSS selector; source
+ * 0 CALL, 1 IRET, 2 JMP, 3 task gate in the IDT); none of the task-switch state changes happen
+ */
+void x86_vmx_task_switch(CPUX86State *env, int tss_selector, int source, uintptr_t ra)
+{
+    VmxExit e;
+    uint32_t src;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    /* QEMU's sources: 0 JMP, 1 IRET, 2 CALL (event delivery through a task gate calls with CALL) */
+    if (source == 2) {
+        src = env->vmx.delivering ? 3 : 0;
+    } else {
+        src = source == 1 ? 1 : 2;
+    }
+    if (ra) {
+        cpu_restore_state(env_cpu(env), ra, true);
+    }
+    vmx_exit_init(&e, EXIT_REASON_TASK_SWITCH, (uint32_t)(tss_selector & 0xffff) | (src << 30));
+    if (src != 3) {
+        e.len_valid = true;
+        e.insn_len = env->vmx.insn_len;
+    }
+    vmx_vmexit(env, &e);
+}
+
+/* the interrupt window (28.2): RFLAGS.IF = 1, no blocking by STI / MOV SS */
+static bool vmx_intr_window(CPUX86State *env)
+{
+    return (env->vmx.proc & PROC_INTR_WINDOW) && (env->eflags & IF_MASK) &&
+           !(env->hflags & HF_INHIBIT_IRQ_MASK);
+}
+
+static bool vmx_nmi_window(CPUX86State *env)
+{
+    return (env->vmx.proc & PROC_NMI_WINDOW) && !env->vmx.vnmi_blocked &&
+           !(env->hflags & HF_INHIBIT_IRQ_MASK);
+}
+
+/* the VMX events of an instruction boundary above NMIs: pending MTF, timer, NMI window (28.2) */
+static void vmx_boundary_exits(CPUX86State *env)
+{
+    VmxExit e;
+
+    if (env->vmx.mtf_pending) {
+        env->vmx.mtf_pending = 0;
+        vmx_exit_init(&e, EXIT_REASON_MTF, 0);
+        vmx_vmexit(env, &e);
+    }
+    if (env->vmx.timer_on && vmx_timer_value(env) == 0) {
+        vmx_exit_init(&e, EXIT_REASON_PREEMPT_TIMER, 0);
+        vmx_vmexit(env, &e);
+    }
+    if (vmx_nmi_window(env)) {
+        vmx_exit_init(&e, EXIT_REASON_NMI_WINDOW, 0);
+        vmx_vmexit(env, &e);
+    }
+}
+
+/*
+ * x86_cpu_exec_interrupt in VMX non-root operation for the request 'req' (CPU_INTERRUPT_*): the VMX
+ * events in the priority of 28.2 - pending MTF / timer / NMI window, an NMI ("NMI exiting": VM exit
+ * 0 with NMI information; the exit blocks NMIs, 30.5), the interrupt window, an external interrupt
+ * ("external-interrupt exiting": VM exit 1; with "acknowledge interrupt on exit" the local APIC is
+ * acknowledged and the vector saved, else the interrupt stays pending). Returns if the request is
+ * handled as outside VMX operation.
+ */
+void x86_vmx_interrupt(CPUX86State *env, int req)
+{
+    CPUState *cs = env_cpu(env);
+    X86VmxState *v = &env->vmx;
+    VmxExit e;
+    int vec;
+
+    if (!v->nonroot || (req != CPU_INTERRUPT_NMI && req != CPU_INTERRUPT_HARD)) {
+        return;
+    }
+    vmx_boundary_exits(env);
+    if (req == CPU_INTERRUPT_NMI) {
+        if (v->pin & PIN_NMI_EXIT) {
+            cs->interrupt_request &= ~CPU_INTERRUPT_NMI;
+            vmx_exit_init(&e, EXIT_REASON_EXCEPTION_NMI, 0);
+            e.intr_info = 2 | (2u << 8) | (1u << 31);
+            e.block_nmi = true;
+            vmx_vmexit(env, &e);
+        }
+        return;
+    }
+    if (vmx_intr_window(env)) {
+        vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
+        vmx_vmexit(env, &e);
+    }
+    if (v->pin & PIN_EXT_INTR) {
+        vmx_exit_init(&e, EXIT_REASON_EXT_INTR, 0);
+        if (v->exit_ctls & EXIT_ACK_INTR) {
+            vec = x86_apic_acknowledge(env);
+            if (vec < 0) {
+                return;                     /* nothing deliverable any more */
+            }
+            e.intr_info = (uint32_t)vec | (1u << 31);
+        }
+        vmx_vmexit(env, &e);
+    }
+}
+
+/* the interrupt request filter (x86_cpu_pending_interrupt): "external-interrupt exiting" ignores IF */
+bool x86_vmx_intr_unmasked(CPUX86State *env)
+{
+    return env->vmx.nonroot && (env->vmx.pin & PIN_EXT_INTR) &&
+           !(env->hflags & HF_INHIBIT_IRQ_MASK);
+}
+
+/*
+ * HLT in VMX non-root operation (after "HLT exiting" was checked): the VMX events that end the HLT
+ * state at once (28.2: pending MTF - 28.5.2 MTF after HLT -, the timer, the NMI window, the interrupt
+ * window) exit with the HLT activity state saved and RIP after the HLT (30.1, 30.3.4). Otherwise HLT
+ * halts as outside VMX operation (the emulation run ends there).
+ */
+void x86_vmx_hlt(CPUX86State *env)
+{
+    VmxExit e;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    env->vmx.hlt_wake = 1;
+    vmx_boundary_exits(env);
+    if (vmx_intr_window(env)) {
+        vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
+        vmx_vmexit(env, &e);
+    }
+    env->vmx.hlt_wake = 0;
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

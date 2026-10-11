@@ -6230,6 +6230,11 @@ int x86_cpu_pending_interrupt(CPUState *cs, int interrupt_request)
             return CPU_INTERRUPT_NMI;
         } else if (interrupt_request & CPU_INTERRUPT_MCE) {
             return CPU_INTERRUPT_MCE;
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        } else if ((interrupt_request & CPU_INTERRUPT_HARD) && x86_vmx_intr_unmasked(env)) {
+            /* "external-interrupt exiting": RFLAGS.IF does not block (SDM 092 Vol3C 28.4.1) */
+            return CPU_INTERRUPT_HARD;
+#endif /* __Use_Original_Qemu (U1305) */
         } else if ((interrupt_request & CPU_INTERRUPT_HARD) &&
                    (((env->hflags2 & HF2_VINTR_MASK) &&
                      (env->hflags2 & HF2_HIF_MASK)) ||

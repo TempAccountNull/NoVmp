@@ -733,6 +733,10 @@ static void switch_tss_ra(CPUX86State *env, int tss_selector,
         raise_exception_err_ra(env, EXCP0A_TSS, tss_selector & 0xfffc, retaddr);
     }
 #endif /* __Use_Original_Qemu (U754) */
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    /* VMX non-root operation: after the checks of 28.4.2 steps 1-4, a VM exit (9) */
+    x86_vmx_task_switch(env, tss_selector, source, retaddr);
+#endif /* __Use_Original_Qemu (U1305) */
     old_type = (env->tr.flags >> DESC_TYPE_SHIFT) & 0xf;
     if (old_type & 8) {
         old_tss_limit_max = 103;
@@ -2779,6 +2783,10 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
         next_eip = x86_sgx_aex(env, intno, is_int, is_hw, error_code, next_eip);
     }
 #endif /* __Use_Original_Qemu (U1263) */
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    /* VMX non-root operation: the original-event information of this delivery (Vol3C 30.2.4) */
+    x86_vmx_delivery_start(env, intno, is_int, error_code, next_eip, is_hw);
+#endif /* __Use_Original_Qemu (U1305) */
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
     /* CR4.FRED = 1: FRED event delivery replaces IDT event delivery (SDM 092 Vol3A 8.3) */
     if (x86_fred_enabled(env)) {
@@ -2875,6 +2883,11 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
     if (!interrupt_request) {
         return false;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    /* VMX non-root operation: MTF / timer / NMI window, NMI exiting, interrupt window, external-
+       interrupt exiting in the priority of Vol3C 28.2 (vmx_helper.c) */
+    x86_vmx_interrupt(env, interrupt_request);
+#endif /* __Use_Original_Qemu (U1305) */
 
     /* Don't process multiple interrupt requests in a single call.
      * This is required to make icount-driven execution deterministic.
@@ -4053,6 +4066,9 @@ void helper_iret_real(CPUX86State *env, int shift)
     target_ulong ssp;
     int eflags_mask;
 
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    x86_vmx_iret_start(env);    /* NMI / virtual-NMI unblocking in VMX non-root operation (28.3) */
+#endif /* __Use_Original_Qemu (U1305) */
     sp_mask = 0xffff; /* XXXX: use SS segment size? */
     sp = env->regs[R_ESP];
     ssp = env->segs[R_SS].base;
@@ -4083,7 +4099,13 @@ void helper_iret_real(CPUX86State *env, int shift)
         eflags_mask &= 0xffff;
     }
     cpu_load_eflags(env, new_eflags, eflags_mask);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1305) */
     env->hflags2 &= ~HF2_NMI_MASK;
+#else /* ours (U1305) */
+    if (x86_vmx_iret_end(env)) {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1305) */
 }
 
 static inline void validate_seg(CPUX86State *env, int seg_reg, int cpl)
@@ -4451,6 +4473,9 @@ void helper_iret_protected(CPUX86State *env, int shift, int next_eip)
     int tss_selector, type;
     uint32_t e1, e2;
 
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    x86_vmx_iret_start(env);    /* NMI / virtual-NMI unblocking in VMX non-root operation (28.3) */
+#endif /* __Use_Original_Qemu (U1305) */
     /* specific case for TSS */
     if (env->eflags & NT_MASK) {
 #ifdef TARGET_X86_64
@@ -4474,7 +4499,13 @@ void helper_iret_protected(CPUX86State *env, int shift, int next_eip)
     } else {
         helper_ret_protected(env, shift, 1, 0, GETPC());
     }
+#if __Use_Original_Qemu == 1 /* original QEMU (U1305) */
     env->hflags2 &= ~HF2_NMI_MASK;
+#else /* ours (U1305) */
+    if (x86_vmx_iret_end(env)) {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1305) */
 }
 
 void helper_lret_protected(CPUX86State *env, int shift, int addend)

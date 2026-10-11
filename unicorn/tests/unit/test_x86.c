@@ -33591,6 +33591,153 @@ static void test_x86_vmx_io_msr(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1305: the exception bitmap (SDM 092 Vol3C 28.2, 30.2.2, 30.2.4, 30.3.3) with IDT event delivery.
+ * UD2 with bit 6: VM exit 0, exiting-event information 80000306H (hardware exception, no error
+ * code), RIP of the UD2; INT3 with bit 3: software exception 80000603H, VM-exit instruction length 1,
+ * RIP of the INT3; INT 3 (CD 03) is a software interrupt: no exit by the bitmap, delivered (the
+ * handler's CPUID exits); #PF with bit 14 and PFEC_MASK = PFEC_MATCH = 0: qualification = the
+ * linear address, error code 0, CR2 unchanged; with PFEC_MASK = 1, PFEC_MATCH = 1 the bit is reversed
+ * (no exit, delivered, CR2 loaded); #GP during the delivery of INT 81H through an empty IDT entry:
+ * exit 0 with #GP (IDT bit in the error code) and the original-event information 80000481H, VM-exit
+ * instruction length 2; single-step #DB with bit 1: qualification BS (4000H), DR6 unchanged, RIP
+ * after the NOP.
+ */
+static void test_x86_vmx_exc_bitmap(void)
+{
+    PcCtx c;
+    uint64_t fl, dr6;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 3, VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x4004, (1u << 6) | (1u << 3) | (1u << 14) | (1u << 13) | (1u << 1));
+    vmx_resume_regs(&c, "\x90\x0f\x0b", 3, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000306u);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1 && (vmx_r(&c, 0x4408) >> 31) == 0);
+    vmx_resume_regs(&c, "\xcc", 1, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000603u);
+    TEST_CHECK(vmx_r(&c, 0x440c) == 1 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\xcd\x03", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    /* #PF: [40000000H] is not mapped (PDPT entry 1 not present) */
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    pc_set(&c, UC_X86_REG_CR2, 0x5555);
+    vmx_resume_regs(&c, "\x8b\x00", 2, 0x40000000, 0, 0, 0);       /* MOV EAX, [RAX] */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000b0eu);
+    TEST_CHECK(vmx_r(&c, 0x6400) == 0x40000000 && vmx_r(&c, 0x4406) == 0);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR2) == 0x5555);
+    vmx_w(&c, 0x4006, 1);
+    vmx_w(&c, 0x4008, 1);
+    vmx_resume_regs(&c, "\x8b\x00", 2, 0x40000000, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR2) == 0x40000000);
+    vmx_w(&c, 0x4006, 0);
+    vmx_w(&c, 0x4008, 0);
+    /* #GP while delivering INT 81H (empty IDT entry): original event = the software interrupt */
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\xcd\x81", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000b0du);
+    dr6 = vmx_r(&c, 0x4406);
+    fl = vmx_r(&c, 0x4408);
+    /* the error code: IDT bit 1, EXT 0 (bits 15:3 not checked: the model's 64-bit IDT #GP error
+       code is its own, outside this VMX block) */
+    TEST_CHECK((dr6 & 3) == 2 && fl == 0x80000481u);
+    TEST_MSG("err %llx idtv %llx", (unsigned long long)dr6, (unsigned long long)fl);
+    TEST_CHECK(vmx_r(&c, 0x440c) == 2 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_MSG("info %llx err %llx idtv %llx len %llu", (unsigned long long)vmx_r(&c, 0x4404),
+             (unsigned long long)vmx_r(&c, 0x4406), (unsigned long long)vmx_r(&c, 0x4408),
+             (unsigned long long)vmx_r(&c, 0x440c));
+    /* single-step #DB after a NOP */
+    dr6 = pc_get(&c, UC_X86_REG_DR6);
+    vmx_w(&c, 0x6820, 0x102);
+    vmx_resume_regs(&c, "\x90\x90", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000301u);
+    TEST_CHECK(vmx_r(&c, 0x6400) == 0x4000 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_DR6) == dr6);
+    TEST_MSG("qual %llx rip %llx dr6 %llx/%llx", (unsigned long long)vmx_r(&c, 0x6400),
+             (unsigned long long)vmx_r(&c, 0x681e), (unsigned long long)pc_get(&c, UC_X86_REG_DR6),
+             (unsigned long long)dr6);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1305: external interrupts and NMIs in VMX non-root operation (28.2, 28.4.1, 30.2.2, 30.3.4) with
+ * the local APIC in x2APIC mode and MSR bitmaps that let the guest use the APIC MSRs. External-
+ * interrupt exiting with "acknowledge interrupt on exit": a self IPI (vector 40H) with RFLAGS.IF = 0
+ * exits (1) after the WRMSR with exiting-event information 80000040H; without acknowledge the
+ * information is invalid and the interrupt stays pending: the next VM entry exits at once and
+ * acknowledges it then. Interrupt-window exiting with IF = 1 exits (7) before the first instruction.
+ * NMI exiting: an NMI IPI to the own APIC exits (0) with 80000202H. Virtual NMIs: NMI-window exiting
+ * waits while virtual-NMI blocking is set (saved in interruptibility bit 3), exits (8) once it is
+ * clear. The monitor trap flag after HLT: exit 37 with activity state HLT and RIP after the HLT.
+ */
+static void test_x86_vmx_intr_nmi(void)
+{
+    PcCtx c;
+    uint64_t fl, base, id;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1b, &base) == -1);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1b, (base & 0x100) | 0xfee00c00ull) == -1);
+    TEST_CHECK(vmx_wrmsr(&c, 0x80f, 0x1ff) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x802, &id) == -1);
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    /* external-interrupt exiting + acknowledge interrupt on exit, IF = 0 */
+    vmx_w(&c, 0x4000, 0x16 | 1);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 15));
+    vmx_resume_regs(&c, "\x0f\x30\x90\x0f\xa2", 5, 0x40, 0x83f, 0, 0);     /* WRMSR SELF_IPI */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 1 && vmx_r(&c, 0x4404) == 0x80000040u);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 2);
+    TEST_MSG("exit %llu info %llx rip %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x4404), (unsigned long long)vmx_r(&c, 0x681e));
+    /* without acknowledge: information invalid, the interrupt stays pending */
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200);
+    vmx_resume_regs(&c, "\x0f\x30\x90\x0f\xa2", 5, 0x51, 0x83f, 0, 0);    /* class 5 > PPR (40H in service) */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 1 && (vmx_r(&c, 0x4404) >> 31) == 0);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 15));
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 1 && vmx_r(&c, 0x4404) == 0x80000051u);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    vmx_w(&c, 0x4000, 0x16);
+    /* interrupt-window exiting with IF = 1 */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28) | (1u << 2));
+    vmx_w(&c, 0x6820, 0x202);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 7 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    vmx_w(&c, 0x6820, 2);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28));
+    /* NMI exiting: an NMI IPI to the own APIC (physical destination = the x2APIC ID) */
+    vmx_w(&c, 0x4000, 0x16 | 8);
+    vmx_resume_regs(&c, "\x0f\x30\x90\x0f\xa2", 5, 0x400, 0x830, id, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000202u);
+    TEST_CHECK((vmx_r(&c, 0x4824) & 8) == 0);
+    TEST_MSG("exit %llu info %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x4404));
+    /* virtual NMIs and NMI-window exiting */
+    vmx_w(&c, 0x4000, 0x16 | 8 | 0x20);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28) | (1u << 22));
+    vmx_w(&c, 0x4824, 8);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && (vmx_r(&c, 0x4824) & 8));
+    vmx_w(&c, 0x4824, 0);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 8 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    vmx_w(&c, 0x4000, 0x16);
+    /* MTF after HLT: activity state HLT, RIP after the HLT */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28) | (1u << 27));
+    vmx_resume_regs(&c, "\xf4\x0f\xa2", 3, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 37 && vmx_r(&c, 0x4826) == 1);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    TEST_MSG("exit %llu activity %llu rip %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x4826), (unsigned long long)vmx_r(&c, 0x681e));
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34025,4 +34172,6 @@ TEST_LIST = {
     {"test_x86_vmx_cr_dr", test_x86_vmx_cr_dr},
     {"test_x86_vmx_cond_exits", test_x86_vmx_cond_exits},
     {"test_x86_vmx_io_msr", test_x86_vmx_io_msr},
+    {"test_x86_vmx_exc_bitmap", test_x86_vmx_exc_bitmap},
+    {"test_x86_vmx_intr_nmi", test_x86_vmx_intr_nmi},
     {NULL, NULL}};

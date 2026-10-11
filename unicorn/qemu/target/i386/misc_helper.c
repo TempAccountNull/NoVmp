@@ -2865,6 +2865,9 @@ void helper_hlt(CPUX86State *env, int next_eip_addend)
     env->vmx.mwait_wait = 0;
 #endif /* __Use_Original_Qemu (U1304) */
     env->eip += next_eip_addend;
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    x86_vmx_hlt(env);   /* VMX events that end HLT at once: VM exit, activity state HLT */
+#endif /* __Use_Original_Qemu (U1305) */
 
     do_hlt(cpu);
 }

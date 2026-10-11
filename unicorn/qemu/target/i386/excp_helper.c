@@ -184,9 +184,31 @@ static void QEMU_NORETURN raise_interrupt2(CPUX86State *env, int intno,
     if (!is_int) {
         cpu_svm_check_intercept_param(env, SVM_EXIT_EXCP_BASE + intno,
                                       error_code, retaddr);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1305) */
         intno = check_exception(env, intno, &error_code, retaddr);
+#else /* ours (U1305) */
+        /*
+         * VMX non-root operation: the exception bitmap (SDM 092 Vol3C 28.2) before the #DF
+         * escalation - an exception during event delivery exits with the original event (30.2.4);
+         * a #DF the escalation produces exits directly, without an original event
+         */
+        x86_vmx_exception(env, intno, 3, error_code, 0, 0, retaddr);
+        {
+            int first = intno;
+
+            intno = check_exception(env, intno, &error_code, retaddr);
+            if (intno == EXCP08_DBLE && first != EXCP08_DBLE && env->vmx.nonroot) {
+                env->vmx.delivering = 0;
+                x86_vmx_exception(env, EXCP08_DBLE, 3, 0, 0, 0, retaddr);
+            }
+        }
+#endif /* __Use_Original_Qemu (U1305) */
     } else {
         cpu_svm_check_intercept_param(env, SVM_EXIT_SWINT, 0, retaddr);
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        /* INT3 / INTO (type 6) by the exception bitmap; INT n (type 4) never */
+        x86_vmx_exception(env, intno, env->fred_kind, 0, next_eip_addend, 0, retaddr);
+#endif /* __Use_Original_Qemu (U1305) */
     }
 #if __Use_Original_Qemu != 1 /* ours (U770) */
     x86_record_exception(env, intno, is_int, error_code);
@@ -236,6 +258,12 @@ void raise_exception_ra(CPUX86State *env, int exception_index, uintptr_t retaddr
 G_NORETURN void helper_icebp(CPUX86State *env)
 {
     CPUState *cs = env_cpu(env);
+
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+    /* VMX non-root operation: INT1 is a privileged software exception (type 5) for the exception
+       bitmap; a VM exit saves the RIP of the INT1 and its length (30.2.5, 30.3.3) */
+    x86_vmx_exception(env, EXCP01_DB, 5, 0, env->fred_insn_len, env->fred_insn_len, 0);
+#endif /* __Use_Original_Qemu (U1305) */
 
     /* end the instruction as gen_eob() would: no IRQ shadow, RF cleared */
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
@@ -961,6 +989,9 @@ do_check_protect_pse36:
                  env->vm_vmcb + offsetof(struct vmcb, control.exit_info_2),
                  addr);
     } else {
+#if __Use_Original_Qemu != 1 /* ours (U1305) */
+        env->vmx.pf_cr2 = env->cr[2];       /* a #PF exiting by the bitmap leaves CR2 (30.1) */
+#endif /* __Use_Original_Qemu (U1305) */
         env->cr[2] = addr;
     }
     env->error_code = error_code;

@@ -104,8 +104,9 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | priority of faults and VM exits | Vol3C 28.1.1 pp. 28-1 / 28-2 | every exit site | done (U1304) for the instruction exits |
 | conditional instruction exits (CLTS, HLT, IN/OUT/INS/OUTS with I/O bitmaps, INVLPG, INVPCID, LGDT/LIDT/LLDT/LTR/SGDT/SIDT/SLDT/STR, LMSW, LOADIWKEY, MONITOR, MOV CR0/3/4/8, MOV DR, MWAIT, PAUSE, PCONFIG, RDMSR / WRMSR / WRMSRNS / RDMSRLIST / WRMSRLIST / URDMSR / UWRMSR with MSR bitmaps, RDPMC, RDRAND, RDSEED, RDTSC, RDTSCP, TPAUSE, UMWAIT, VMREAD, VMWRITE, WBINVD, WBNOINVD, XRSTORS, XSAVES) | Vol3C 28.1.3 pp. 28-2 to 28-6 | helpers of each instruction; `translate.c` / `emit.c.inc` gen_vmx_insn -> helper_vmx_insn | done (U1304); ENCLS: pending (SGX); PAUSE-loop exiting: not offered |
 | exit qualifications and instruction information of these exits | Vol3C 30.2.1 Tables 30-1 to 30-7, 30.2.5 Tables 30-8 to 30-14 | vmx_vmexit callers | done (U1304) for the instruction exits (Tables 30-3 to 30-5, 30-8 to 30-16); debug / #PF / task switch / EPT: with their exits |
-| changed behaviour in non-root operation (CR0 / CR4 shadows, CR8 / TPR shadow, RDTSC / RDTSCP / RDMSR TSC offsetting and scaling, IRET and NMI blocking, enable-controls #UD for RDTSCP / INVPCID / XSAVES / UMWAIT / TPAUSE / UMONITOR / PCONFIG / RDMSRLIST / WRMSRLIST / PBNDKB, MOV to CR3 PDPTEs, ...) | Vol3C 28.3 pp. 28-8 to 28-15 | helpers of each instruction | done (U1304): CR0 / CR4 shadows and masks (MOV CR, CLTS, LMSW, SMSW), unrestricted-guest CR0 checks, TSC offsetting / scaling, WRMSR 79H, the enable-control #UDs; CR8 / TPR shadow: stage 7; IRET / NMI blocking: U1305; MOV to CR3 with EPT: stage 6 |
-| exception bitmap, #PF error-code mask / match, triple fault, external interrupts (acknowledge interrupt on exit), NMIs, interrupt window, NMI window, task switches | Vol3C 28.2 pp. 28-6 to 28-8; 28.4 pp. 28-15 / 28-16 | `excp_helper.c` raise path, `seg_helper.c` x86_cpu_exec_interrupt / switch_tss | planned |
+| changed behaviour in non-root operation (CR0 / CR4 shadows, CR8 / TPR shadow, RDTSC / RDTSCP / RDMSR TSC offsetting and scaling, IRET and NMI blocking, enable-controls #UD for RDTSCP / INVPCID / XSAVES / UMWAIT / TPAUSE / UMONITOR / PCONFIG / RDMSRLIST / WRMSRLIST / PBNDKB, MOV to CR3 PDPTEs, ...) | Vol3C 28.3 pp. 28-8 to 28-15 | helpers of each instruction | done (U1304): CR0 / CR4 shadows and masks (MOV CR, CLTS, LMSW, SMSW), unrestricted-guest CR0 checks, TSC offsetting / scaling, WRMSR 79H, the enable-control #UDs; CR8 / TPR shadow: stage 7; IRET / NMI blocking: done (U1305); MOV to CR3 with EPT: stage 6 |
+| exception bitmap, #PF error-code mask / match, triple fault, external interrupts (acknowledge interrupt on exit), NMIs, interrupt window, NMI window, task switches | Vol3C 28.2 pp. 28-6 to 28-8; 28.4 pp. 28-15 / 28-16 | `excp_helper.c` raise path, `seg_helper.c` x86_cpu_exec_interrupt / switch_tss | done (U1305) |
+| original-event (IDT-vectoring) information of every event delivered in non-root operation, NMI unblocking due to IRET, IRET with NMI exiting / virtual NMIs, the HLT activity state left by VMX events | Vol3C 30.2.3, 30.2.4, 28.3 IRET, 30.1, 30.3.4 | `vmx_helper.c` x86_vmx_delivery_start / x86_vmx_iret_* / x86_vmx_hlt | done (U1305) |
 
 ### Stage 6 - EPT, VPID
 | requirement | SDM 092 | code | status |
@@ -243,3 +244,32 @@ translator and passed to the helpers.
 - TSC scaling: ((TSC * multiplier) >> 48) + offset with a 128-bit product. UMWAIT / TPAUSE compare their
   deadline with the guest TSC; their wait takes no time in the model, so the physical-delay conversion
   of 28.3 has no visible effect.
+
+### Events in VMX non-root operation (U1305)
+- Exceptions: raise_interrupt2 consults the exception bitmap (#PF: reversed when PFEC & PFEC_MASK !=
+  PFEC_MATCH) before the #DF escalation, so an exception met while delivering another event exits with
+  the original event (30.2.4); a #DF produced by the escalation is checked again and exits without an
+  original event; a triple fault exits (U1303). Event types: hardware exception 3, INT1 5 (helper_icebp),
+  INT3 / INTO 6 (the FRED software-exception marker of U1171, set with VMX too), INT n 4 (never exits by
+  the bitmap). The exiting-event error code is valid for hardware exceptions with an error code outside
+  real-address mode. A VM exit caused directly by #PF leaves CR2 unchanged (qualification = the linear
+  address), by #DB leaves DR6 / DR7 unchanged (qualification = B3-B0 / BD / BS as the #DB raise computed
+  them; BLD / RTM are not modelled).
+- Original-event information: every IDT delivery in non-root operation records the event (type,
+  vector, error code, the instruction length of software events, which the VM exit stores as the VM-exit
+  instruction length); the record ends when the delivery completes. Events delivered to UC_HOOK_INTR
+  instead of the guest IDT are not delivered by the model, so nothing is recorded for them.
+- IRET: with "NMI exiting" 0 it unblocks NMIs at its start (also if it faults); with "NMI exiting" 1 it
+  leaves blocking by NMI alone and, with virtual NMIs, clears virtual-NMI blocking at its start; a fault
+  of that IRET that exits by the bitmap reports bit 12 (NMI unblocking due to IRET).
+- Interrupts at an instruction boundary (x86_cpu_exec_interrupt): pending MTF, VMX-preemption timer, NMI
+  window, then an NMI (NMI exiting: exit 0 with information 80000202H, NMIs blocked after the exit), the
+  interrupt window, then an external interrupt (external-interrupt exiting: RFLAGS.IF ignored; blocking
+  by STI / MOV SS still applies - our choice where 28.4.1 leaves it implementation-specific; with
+  "acknowledge interrupt on exit" the local APIC is acknowledged and the vector saved, else the
+  interrupt stays pending and the information is invalid).
+- Task switches (CALL / JMP / IRET through a TSS or task gate, a task gate in the IDT) exit (9) after
+  the checks of 28.4.2 steps 1-4 with the qualification of Table 30-2; nothing of the switch happens.
+- HLT: the VMX events that end the HLT state at once (pending MTF, an expired timer, NMI window,
+  interrupt window) exit from HLT with activity state HLT and RIP after the HLT. Otherwise HLT ends the
+  emulation run as outside VMX operation (Unicorn has no wake-up source while halted).
