@@ -30526,6 +30526,7 @@ typedef struct SgxEnv {
     SgxCtx c;
     uint64_t pt_next;
     uc_context *cpl0;
+    uint64_t xfrm;                      /* SECS.ATTRIBUTES.XFRM of sgx_build (0: 3) (U1269) */
 } SgxEnv;
 
 static void sgx_wq(SgxEnv *e, uint64_t a, uint64_t v)
@@ -30703,7 +30704,7 @@ static void sgx_secs_src(SgxEnv *e, uint64_t attr)
     sgx_wq(e, SGX_SECSSRC + 8, SGXV_BASE);
     sgx_wq(e, SGX_SECSSRC + 16, 1 | (1ULL << 32));          /* SSAFRAMESIZE 1, MISCSELECT 1 */
     sgx_wq(e, SGX_SECSSRC + 48, attr);
-    sgx_wq(e, SGX_SECSSRC + 56, 3);
+    sgx_wq(e, SGX_SECSSRC + 56, e->xfrm ? e->xfrm : 3);
 }
 
 static int sgx_ecreate(SgxEnv *e)
@@ -31760,6 +31761,86 @@ static void test_x86_gs_smx(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1269: the SSA XSAVE area and the synthetic extended state with CR4.OSXSAVE = 1 (Vol3D 40.3.2,
+ * 40.4 item 1, EENTER / ERESUME XFRM checks p. 41-90 / 41-120). XCR0 = 7 (x87 | SSE | AVX):
+ * an XFRM = 7 enclave's AEX saves YMM0 (XMM part at 160, YMM_Hi128 at 576 of the standard form,
+ * XSTATE_BV bit 2), loads the INIT state for all of YMM0 and restores XCR0; ERESUME's XRSTOR gives
+ * the enclave YMM0 back. An XFRM = 3 enclave leaves YMM0[255:128] unchanged at the AEX (only
+ * XFRM components are set to INIT) and clears XMM0. XFRM not a subset of XCR0: EENTER #GP(0).
+ */
+static void sgx_osxsave(SgxEnv *e, uint32_t xcr0)
+{
+    /* mov rax, cr4; bts rax, 18; mov cr4, rax; xor ecx, ecx; xor edx, edx; mov eax, xcr0; xsetbv */
+    uint8_t code[23] = {0x0f, 0x20, 0xe0, 0x48, 0x0f, 0xba, 0xe8, 0x12, 0x0f, 0x22, 0xe0, 0x31, 0xc9,
+                        0x31, 0xd2, 0xb8, 0, 0, 0, 0, 0x0f, 0x01, 0xd1};
+
+    memcpy(code + 16, &xcr0, 4);
+    TEST_CHECK(sgx_run(&e->c, (const char *)code, sizeof(code)) == -1);
+    TEST_CHECK(sgx_get(&e->c, UC_X86_REG_XCR0) == xcr0);
+}
+
+static void test_x86_sgx_xfrm_osxsave(void)
+{
+    uc_x86_sgx_platform p;
+    uint8_t y[32], z[32], b[16], zero[32] = {0};
+    SgxEnv e;
+    uint64_t bv;
+    int i;
+
+    for (i = 0; i < 32; i++) {
+        y[i] = (uint8_t)(0x40 + i);
+    }
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_osxsave(&e, 7);
+    OK(uc_context_save(e.c.uc, e.cpl0));
+    e.xfrm = 7;
+    sgx_build(&e, 6, 0);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 0);
+    TEST_CHECK(sgx_rq(&e, SGX_EPC_BASE + 56) == 7);                     /* SECS.XFRM */
+    sgx_to_cpl3(&e);
+    OK(uc_reg_write(e.c.uc, UC_X86_REG_YMM0, y));
+    TEST_CHECK(sgx_eenter(&e, 1, 0, 0) == 6);                           /* UD2: AEX */
+    OK(uc_reg_read(e.c.uc, UC_X86_REG_YMM0, z));
+    TEST_CHECK(!memcmp(z, zero, 32));
+    bv = sgx_rq(&e, SGX_SSA0_PA + 512);
+    TEST_CHECK_((bv & 4) && !(bv & ~7ULL), "XSTATE_BV %llx", (unsigned long long)bv);
+    OK(uc_mem_read(e.c.uc, SGX_SSA0_PA + 160, b, 16));
+    TEST_CHECK(!memcmp(b, y, 16));
+    OK(uc_mem_read(e.c.uc, SGX_SSA0_PA + 576, b, 16));
+    TEST_CHECK(!memcmp(b, y + 16, 16));
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_XCR0) == 7);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);                          /* handler: RIP += 2 */
+    TEST_CHECK(sgx_eresume(&e) == -1 && sgx_cssa(&e) == 0);
+    OK(uc_reg_read(e.c.uc, UC_X86_REG_YMM0, z));
+    TEST_CHECK(!memcmp(z, y, 32));                                      /* XRSTOR of ERESUME */
+    sgx_to_cpl0(&e);
+    sgx_osxsave(&e, 3);
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 13);                          /* XFRM 7 not in XCR0 3 */
+    sgx_env_close(&e);
+
+    /* XFRM = 3 with XCR0 = 7: the AEX leaves YMM0[255:128] alone */
+    sgx_env_open(&e, &p);
+    sgx_osxsave(&e, 7);
+    OK(uc_context_save(e.c.uc, e.cpl0));
+    sgx_build(&e, 6, 0);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 0);
+    sgx_to_cpl3(&e);
+    OK(uc_reg_write(e.c.uc, UC_X86_REG_YMM0, y));
+    TEST_CHECK(sgx_eenter(&e, 1, 0, 0) == 6);
+    OK(uc_reg_read(e.c.uc, UC_X86_REG_YMM0, z));
+    TEST_CHECK(!memcmp(z, zero, 16) && !memcmp(z + 16, y + 16, 16));
+    bv = sgx_rq(&e, SGX_SSA0_PA + 512);
+    TEST_CHECK(!(bv & ~3ULL));
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_XCR0) == 7);
+    sgx_env_close(&e);
+}
+
+
 /* ---- end U1260-U1299 (sgx_) ---- */
 
 TEST_LIST = {
@@ -32177,4 +32258,5 @@ TEST_LIST = {
     {"test_x86_sgx_ewb_eld", test_x86_sgx_ewb_eld},
     {"test_x86_sgx_sgx2", test_x86_sgx_sgx2},
     {"test_x86_gs_smx", test_x86_gs_smx},
+    {"test_x86_sgx_xfrm_osxsave", test_x86_sgx_xfrm_osxsave},
     {NULL, NULL}};
