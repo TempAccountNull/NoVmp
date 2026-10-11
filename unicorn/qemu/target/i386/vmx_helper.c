@@ -5,6 +5,8 @@
  * B (VMCS field encodings) and C (basic exit reasons), compared with SDM 093 where change document
  * 252046-085 lists changes. Opt-in UC_X86_FEATURE_VMX (default off).
  *
+ * U1302: VMX operation (VMXON / VMXOFF), the VMCS lifecycle (VMCLEAR / VMPTRLD / VMPTRST), VMREAD /
+ * VMWRITE, VMfail, INVEPT / INVVPID in VMX root operation, VMCALL in VMX root operation.
  * U1301: the capability set of the model (docs/vmx.md "Capability set", our choice) and the VMX
  * capability MSRs 480H-492H (Appendix A; Vol4 Table 2-2 pp. 2-46 to 2-48); the VMCS field table
  * (Appendix B) that IA32_VMX_VMCS_ENUM is computed from.
@@ -12,7 +14,9 @@
 #include "qemu/osdep.h"
 #if __Use_Original_Qemu != 1 /* ours (U1301): whole file */
 #include "cpu.h"
+#include "exec/helper-proto.h"
 #include "exec/exec-all.h"
+#include "exec/cpu_ldst.h"
 #include "uc_priv.h"
 #include <unicorn/unicorn.h>
 
@@ -426,6 +430,513 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
         break;
     }
     return true;
+}
+
+/*
+ * ---- U1302: VMX operation, VMCS lifecycle and access (Vol3C 26.7, 27.1-27.2, 27.11, 33) ----
+ */
+
+static bool x86_vmx_canonical(CPUX86State *env, uint64_t a);
+
+/* VM-instruction error numbers (Vol3C 33.4 Table 33-1, pp. 33-30 / 33-31) */
+#define VMXERR_VMCALL_ROOT          1
+#define VMXERR_VMCLEAR_ADDR         2
+#define VMXERR_VMCLEAR_VMXON        3
+#define VMXERR_VMLAUNCH_NONCLEAR    4
+#define VMXERR_VMRESUME_NONLAUNCHED 5
+#define VMXERR_ENTRY_CTLS           7
+#define VMXERR_ENTRY_HOST           8
+#define VMXERR_VMPTRLD_ADDR         9
+#define VMXERR_VMPTRLD_VMXON        10
+#define VMXERR_VMPTRLD_REV          11
+#define VMXERR_FIELD                12
+#define VMXERR_VMXON_ROOT           15
+#define VMXERR_ENTRY_MOVSS          26
+#define VMXERR_INVEPT_INVVPID       28
+
+#define VMCS_VM_INSTRUCTION_ERROR   0x4400
+#define VMX_NO_VMCS                 (~0ull)
+#define VMCS_LAUNCH_OFFSET          8       /* our VMCS region layout (docs/vmx.md) */
+
+/*
+ * MAXPHYADDR for VMX pointers: CPUID.80000008H:EAX[7:0], reduced by IA32_TME_ACTIVATE[39:36] when
+ * IA32_TME_ACTIVATE[0] = 1 (Vol3C 27.1 footnote 2 p. 27-1; 33.3 VMCLEAR footnote 2 p. 33-11)
+ */
+static int vmx_maxphyaddr(CPUX86State *env)
+{
+    int w = env_archcpu(env)->phys_bits;
+
+    if (env->tme_activate & 1) {
+        w -= (env->tme_activate >> 36) & 0xf;
+    }
+    return w;
+}
+
+/* a physical address within MAXPHYADDR (bit 48 of IA32_VMX_BASIC is 0) */
+static bool vmx_paddr_ok(CPUX86State *env, uint64_t a)
+{
+    return !(a >> vmx_maxphyaddr(env));
+}
+
+/* a VMXON / VMCS pointer: 4-KByte aligned, within MAXPHYADDR (27.1 p. 27-1, 27.11.5 p. 27-34) */
+static bool vmx_ptr_ok(CPUX86State *env, uint64_t a)
+{
+    return !(a & 0xfff) && vmx_paddr_ok(env, a);
+}
+
+static uint32_t vmx_ldl(CPUX86State *env, uint64_t pa)
+{
+    return x86_ldl_phys(env_cpu(env), pa);
+}
+
+static uint64_t vmx_ldq(CPUX86State *env, uint64_t pa)
+{
+    return x86_ldq_phys(env_cpu(env), pa);
+}
+
+static void vmx_stl(CPUX86State *env, uint64_t pa, uint32_t v)
+{
+    x86_stl_phys(env_cpu(env), pa, v);
+}
+
+static void vmx_stq(CPUX86State *env, uint64_t pa, uint64_t v)
+{
+    x86_stq_phys(env_cpu(env), pa, v);
+}
+
+/* the width mask of a field (encoding bits 14:13: 0 16-bit, 1 64-bit, 2 32-bit, 3 natural) */
+static uint64_t vmx_width_mask(uint32_t enc)
+{
+    switch ((enc >> 13) & 3) {
+    case 0:
+        return 0xffffull;
+    case 2:
+        return 0xffffffffull;
+    default:
+        return ~0ull;
+    }
+}
+
+/* read / write a field of the VMCS at 'ptr' by its full encoding (internal: the field exists) */
+static uint64_t vmcs_read(CPUX86State *env, uint64_t ptr, uint32_t enc)
+{
+    int high, slot = x86_vmx_field_slot(env, enc, &high);
+
+    g_assert(slot >= 0 && !high);
+    return vmx_ldq(env, ptr + slot) & vmx_width_mask(enc);
+}
+
+static void vmcs_write(CPUX86State *env, uint64_t ptr, uint32_t enc, uint64_t v)
+{
+    int high, slot = x86_vmx_field_slot(env, enc, &high);
+
+    g_assert(slot >= 0 && !high);
+    vmx_stq(env, ptr + slot, v & vmx_width_mask(enc));
+}
+
+/* the current VMCS (fields of the VMCS the processor operates on) */
+static uint64_t vmcs_get(CPUX86State *env, uint32_t enc)
+{
+    return vmcs_read(env, env->vmx.vmcs_ptr, enc);
+}
+
+static void vmcs_put(CPUX86State *env, uint32_t enc, uint64_t v)
+{
+    vmcs_write(env, env->vmx.vmcs_ptr, enc, v);
+}
+
+/*
+ * VMsucceed / VMfailInvalid / VMfailValid (Vol3C 33.2 p. 33-2): CF, PF, AF, ZF, SF, OF; the
+ * translator continues with CC_OP_EFLAGS
+ */
+static void vmx_succeed(CPUX86State *env)
+{
+    CC_SRC = 0;
+}
+
+static void vmx_fail_invalid(CPUX86State *env)
+{
+    CC_SRC = CC_C;
+}
+
+static void vmx_fail_valid(CPUX86State *env, uint32_t err)
+{
+    CC_SRC = CC_Z;
+    vmcs_put(env, VMCS_VM_INSTRUCTION_ERROR, err);
+}
+
+static void vmx_fail(CPUX86State *env, uint32_t err)
+{
+    if (env->vmx.vmcs_ptr != VMX_NO_VMCS) {
+        vmx_fail_valid(env, err);
+    } else {
+        vmx_fail_invalid(env);
+    }
+}
+
+static int vmx_cpl(CPUX86State *env)
+{
+    return env->hflags & HF_CPL_MASK;
+}
+
+/* "(CR0.PE = 0) or (RFLAGS.VM = 1) or (IA32_EFER.LMA = 1 and CS.L = 0)": #UD (33.3) */
+static bool vmx_bad_mode(CPUX86State *env)
+{
+    return !(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK) ||
+           ((env->hflags & HF_LMA_MASK) && !(env->hflags & HF_CS64_MASK));
+}
+
+/* CR0 and CR4 values supported in VMX operation (26.8 pp. 26-3 / 26-4, A.7 / A.8 p. A-7) */
+static bool vmx_cr0_ok(CPUX86State *env, uint64_t cr0, bool unrestricted)
+{
+    uint64_t fixed0 = VMX_CR0_FIXED0;
+
+    if (unrestricted) {
+        fixed0 &= ~(uint64_t)(CR0_PE_MASK | CR0_PG_MASK);
+    }
+    return (cr0 & fixed0) == fixed0 && !(cr0 & ~VMX_CR0_FIXED1);
+}
+
+static bool vmx_cr4_ok(CPUX86State *env, uint64_t cr4)
+{
+    return (cr4 & VMX_CR4_FIXED0) == VMX_CR4_FIXED0 && !(cr4 & cr4_reserved_bits(env));
+}
+
+/*
+ * MOV to CR0 / CR4, CLTS and LMSW in VMX operation: a value outside the fixed bits is #GP(0)
+ * (26.8 p. 26-3); in VMX non-root operation with "unrestricted guest" CR0.PE / CR0.PG may be 0
+ * (26.8 notes, p. 26-4). Called by helper_write_crN.
+ */
+bool x86_vmx_cr_write_ok(CPUX86State *env, int reg, uint64_t v)
+{
+    if (!env->vmx.on) {
+        return true;
+    }
+    if (reg == 0) {
+        return vmx_cr0_ok(env, v, false);
+    }
+    return vmx_cr4_ok(env, v);
+}
+
+/* the register named by bits 6:3 / 31:28 of a VM-exit instruction-information value */
+#define VMX_INFO_REG1(i)    (((i) >> 3) & 15)
+#define VMX_INFO_REG2(i)    (((i) >> 28) & 15)
+#define VMX_INFO_ISREG(i)   (((i) >> 10) & 1)
+
+/* VMX operand size: 64 bits in 64-bit mode, else 32 bits (33.3: CS.D ignored) */
+static bool vmx_op64(CPUX86State *env)
+{
+    return (env->hflags & HF_CS64_MASK) != 0;
+}
+
+static uint64_t vmx_reg(CPUX86State *env, int r)
+{
+    return vmx_op64(env) ? env->regs[r] : (uint32_t)env->regs[r];
+}
+
+/*
+ * VMXON / VMXOFF / VMCLEAR / VMPTRLD / VMPTRST / VMCALL (Vol3C 33.3). op: VMX_OP_*; a0: the linear
+ * address of the m64 operand; info / qual: the VM-exit instruction information / exit
+ * qualification of the instruction (for VM exits in VMX non-root operation, U1303).
+ */
+void helper_vmx_op(CPUX86State *env, uint32_t op, target_ulong a0, uint32_t info,
+                   target_ulong qual)
+{
+    uintptr_t ra = GETPC();
+    uint64_t addr;
+    uint32_t rev;
+
+    if (op == VMX_OP_VMCALL) {
+        /* VMCALL p. 33-9: the order of its checks differs */
+        if (!env->vmx.on) {
+            raise_exception_ra(env, EXCP06_ILLOP, ra);
+        }
+        if ((env->eflags & VM_MASK) ||
+            ((env->hflags & HF_LMA_MASK) && !(env->hflags & HF_CS64_MASK))) {
+            raise_exception_ra(env, EXCP06_ILLOP, ra);
+        }
+        if (vmx_cpl(env)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        /* no dual-monitor treatment of SMIs and SMM (IA32_VMX_BASIC[49] = 0) */
+        vmx_fail(env, VMXERR_VMCALL_ROOT);
+        return;
+    }
+    if (op == VMX_OP_VMXON) {
+        /* VMXON pp. 33-28 / 33-29 */
+        if (vmx_bad_mode(env) || !(env->cr[4] & CR4_VMXE_MASK)) {
+            raise_exception_ra(env, EXCP06_ILLOP, ra);
+        }
+        if (env->vmx.on) {
+            if (vmx_cpl(env)) {
+                raise_exception_ra(env, EXCP0D_GPF, ra);
+            }
+            vmx_fail(env, VMXERR_VMXON_ROOT);
+            return;
+        }
+        /* the model is never in SMX operation (no GETSEC[SENTER]): bit 2 enables VMXON */
+        if (vmx_cpl(env) || env->a20_mask != -1 ||
+            !vmx_cr0_ok(env, env->cr[0], false) || !vmx_cr4_ok(env, env->cr[4]) ||
+            !(env->msr_ia32_feature_control & FEATURE_CONTROL_LOCKED) ||
+            !(env->msr_ia32_feature_control & FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        addr = cpu_ldq_data_ra(env, a0, ra);
+        if (!vmx_ptr_ok(env, addr)) {
+            vmx_fail_invalid(env);
+            return;
+        }
+        rev = vmx_ldl(env, addr);
+        if ((rev & 0x7fffffffu) != VMX_REVISION_ID || (rev >> 31)) {
+            vmx_fail_invalid(env);
+            return;
+        }
+        /*
+         * enter VMX operation with no current VMCS; INIT / A20M blocking: the model has neither
+         * INIT nor A20M (a20_mask is all ones); there is no address-range monitoring state to
+         * clear (MONITOR stores nothing); no Intel PT
+         */
+        env->vmx.on = 1;
+        env->vmx.vmxon_ptr = addr;
+        env->vmx.vmcs_ptr = VMX_NO_VMCS;
+        vmx_succeed(env);
+        return;
+    }
+
+    /* VMXOFF, VMCLEAR, VMPTRLD, VMPTRST */
+    if (!env->vmx.on || vmx_bad_mode(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (vmx_cpl(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    switch (op) {
+    case VMX_OP_VMXOFF:
+        /* pp. 33-26 / 33-27: no dual-monitor treatment, so no VMfail 23 */
+        env->vmx.on = 0;
+        env->vmx.vmcs_ptr = VMX_NO_VMCS;
+        vmx_succeed(env);
+        break;
+    case VMX_OP_VMCLEAR:
+        /* pp. 33-11 / 33-12 */
+        addr = cpu_ldq_data_ra(env, a0, ra);
+        if (!vmx_ptr_ok(env, addr)) {
+            vmx_fail(env, VMXERR_VMCLEAR_ADDR);
+        } else if (addr == env->vmx.vmxon_ptr) {
+            vmx_fail(env, VMXERR_VMCLEAR_VMXON);
+        } else {
+            vmx_stl(env, addr + VMCS_LAUNCH_OFFSET, 0);     /* launch state "clear" */
+            if (addr == env->vmx.vmcs_ptr) {
+                env->vmx.vmcs_ptr = VMX_NO_VMCS;
+            }
+            vmx_succeed(env);
+        }
+        break;
+    case VMX_OP_VMPTRLD:
+        /* pp. 33-17 / 33-18 */
+        addr = cpu_ldq_data_ra(env, a0, ra);
+        if (!vmx_ptr_ok(env, addr)) {
+            vmx_fail(env, VMXERR_VMPTRLD_ADDR);
+        } else if (addr == env->vmx.vmxon_ptr) {
+            vmx_fail(env, VMXERR_VMPTRLD_VMXON);
+        } else {
+            rev = vmx_ldl(env, addr);
+            /* rev[31] = 1 is accepted: the 1-setting of "VMCS shadowing" is supported */
+            if ((rev & 0x7fffffffu) != VMX_REVISION_ID) {
+                vmx_fail(env, VMXERR_VMPTRLD_REV);
+            } else {
+                env->vmx.vmcs_ptr = addr;
+                vmx_succeed(env);
+            }
+        }
+        break;
+    case VMX_OP_VMPTRST:
+        /* pp. 33-19 / 33-20 */
+        cpu_stq_data_ra(env, a0, env->vmx.vmcs_ptr, ra);
+        vmx_succeed(env);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+}
+
+/*
+ * VMREAD / VMWRITE (Vol3C 27.11.2 pp. 27-32 / 27-33; 33.3 pp. 33-21 to 33-25). The encoding is in
+ * the register named by info[31:28]; the other operand is the register info[6:3] (info[10] = 1) or
+ * memory at a0. Operand size: 64 bits in 64-bit mode, 32 bits outside IA-32e mode.
+ */
+void helper_vmread(CPUX86State *env, target_ulong a0, uint32_t info, target_ulong qual)
+{
+    uintptr_t ra = GETPC();
+    uint64_t enc, ptr, v;
+    int slot, high;
+
+    if (!env->vmx.on || vmx_bad_mode(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (vmx_cpl(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    ptr = env->vmx.vmcs_ptr;
+    if (ptr == VMX_NO_VMCS) {
+        vmx_fail_invalid(env);
+        return;
+    }
+    enc = vmx_reg(env, VMX_INFO_REG2(info));
+    slot = x86_vmx_field_slot(env, enc, &high);
+    if (slot < 0) {
+        vmx_fail_valid(env, VMXERR_FIELD);
+        return;
+    }
+    v = vmx_ldq(env, ptr + slot) & vmx_width_mask((uint32_t)enc);
+    if (high) {
+        v >>= 32;                               /* high access type: bits 63:32 in 31:0 */
+    } else if (!vmx_op64(env)) {
+        v = (uint32_t)v;                        /* outside IA-32e mode: bits 31:0 */
+    }
+    if (VMX_INFO_ISREG(info)) {
+        env->regs[VMX_INFO_REG1(info)] = vmx_op64(env) ? v : (uint32_t)v;
+    } else if (vmx_op64(env)) {
+        cpu_stq_data_ra(env, a0, v, ra);
+    } else {
+        cpu_stl_data_ra(env, a0, (uint32_t)v, ra);
+    }
+    vmx_succeed(env);
+}
+
+void helper_vmwrite(CPUX86State *env, target_ulong a0, uint32_t info, target_ulong qual)
+{
+    uintptr_t ra = GETPC();
+    uint64_t enc, ptr, v, old;
+    int slot, high;
+
+    if (!env->vmx.on || vmx_bad_mode(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (vmx_cpl(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    ptr = env->vmx.vmcs_ptr;
+    if (ptr == VMX_NO_VMCS) {
+        vmx_fail_invalid(env);
+        return;
+    }
+    /* "faults resulting from accessing a memory source operand occur ... before determining if
+       the destination VMCS field is supported" (33.3 VMWRITE, p. 33-24) */
+    if (VMX_INFO_ISREG(info)) {
+        v = vmx_reg(env, VMX_INFO_REG1(info));
+    } else if (vmx_op64(env)) {
+        v = cpu_ldq_data_ra(env, a0, ra);
+    } else {
+        v = cpu_ldl_data_ra(env, a0, ra);
+    }
+    enc = vmx_reg(env, VMX_INFO_REG2(info));
+    slot = x86_vmx_field_slot(env, enc, &high);
+    if (slot < 0) {
+        vmx_fail_valid(env, VMXERR_FIELD);
+        return;
+    }
+    /* IA32_VMX_MISC[29] = 1: the VM-exit information fields are writable (no error 13) */
+    if (high) {
+        old = vmx_ldq(env, ptr + slot);
+        v = (old & 0xffffffffull) | ((uint64_t)(uint32_t)v << 32);
+    } else if (!vmx_op64(env)) {
+        v = (uint32_t)v;                        /* full access outside IA-32e mode: 63:32 := 0 */
+    }
+    vmx_stq(env, ptr + slot, v & vmx_width_mask((uint32_t)enc));
+    vmx_succeed(env);
+}
+
+/* the linear address a0 + n of an operand (32-bit wrap-around outside 64-bit mode) */
+static target_ulong vmx_addr_add(CPUX86State *env, target_ulong a0, int n)
+{
+    return vmx_op64(env) ? a0 + n : (uint32_t)(a0 + n);
+}
+
+/*
+ * INVEPT (vpid = 0) / INVVPID (vpid = 1) (Vol3C 33.3 pp. 33-3 to 33-8; 31.4.3 p. 31-22). The
+ * type is in the register info[31:28], the 128-bit descriptor at a0. The model keeps no
+ * translation across an invalidation it is asked for: every type flushes the whole TLB (an
+ * invalidation of more than the specified mappings is allowed, 33.3 / 31.4.3).
+ */
+void helper_invept(CPUX86State *env, target_ulong a0, uint32_t info, target_ulong qual,
+                   uint32_t vpid)
+{
+    uintptr_t ra = GETPC();
+    uint64_t type, lo, hi;
+
+    if (!env->vmx.on || vmx_bad_mode(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (vmx_cpl(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    type = vmx_reg(env, VMX_INFO_REG2(info));
+    if (!vpid) {
+        /* A.10: bit 25 single-context (type 1), bit 26 all-context (type 2) */
+        if (type != 1 && type != 2) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+        lo = cpu_ldq_data_ra(env, a0, ra);
+        (void)cpu_ldq_data_ra(env, vmx_addr_add(env, a0, 8), ra);
+        if (type == 1 && !x86_vmx_eptp_ok(env, lo)) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+    } else {
+        /* A.10: bits 40-43, types 0-3 */
+        if (type > 3) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+        lo = cpu_ldq_data_ra(env, a0, ra);
+        hi = cpu_ldq_data_ra(env, vmx_addr_add(env, a0, 8), ra);
+        if (lo >> 16) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+        if ((type == 0 || type == 1 || type == 3) && !(lo & 0xffff)) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+        if (type == 0 && !x86_vmx_canonical(env, hi)) {
+            vmx_fail(env, VMXERR_INVEPT_INVVPID);
+            return;
+        }
+    }
+    tlb_flush(env_cpu(env));
+    vmx_succeed(env);
+}
+
+/*
+ * The EPTP checks of VM entry (Vol3C 29.2.1.1 p. 29-4; Table 27-9 p. 27-17): memory type UC (0) or
+ * WB (6) (A.10 bits 8, 14), page-walk length 4 or 5 (bits 6, 7), A/D enable allowed (bit 21),
+ * bit 7 (supervisor shadow-stack control) 0 (A.10 bit 23 = 0), bits 11:8 reserved, the address
+ * within MAXPHYADDR
+ */
+bool x86_vmx_eptp_ok(CPUX86State *env, uint64_t eptp)
+{
+    uint64_t mt = eptp & 7, wl = (eptp >> 3) & 7;
+
+    if (mt != 0 && mt != 6) {
+        return false;
+    }
+    if (wl != 3 && wl != 4) {
+        return false;
+    }
+    if (eptp & 0xf80) {
+        return false;
+    }
+    return vmx_paddr_ok(env, eptp & ~0xfffull);
+}
+
+/* canonical for the CPU's linear-address width (CPUID.80000008H:EAX[15:8]; Vol3A 4.5) */
+static bool x86_vmx_canonical(CPUX86State *env, uint64_t a)
+{
+    int la = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 57 : 48;
+
+    return (uint64_t)((int64_t)(a << (64 - la)) >> (64 - la)) == a;
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

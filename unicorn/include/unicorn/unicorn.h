@@ -919,7 +919,9 @@ typedef enum uc_control_type {
     // A-C; docs/vmx.md): CPUID.01H:ECX.VMX[5], CR4.VMXE, IA32_FEATURE_CONTROL bit 2, the VMX
     // capability MSRs 480H-492H (the model's capability set, docs/vmx.md); CPUID.80000001H:ECX.SVM
     // is withdrawn. Only on an Intel 64 CPU model (GenuineIntel with CPUID.80000001H:EDX.LM); not
-    // together with UC_X86_FEATURE_FRED yet (UC_ERR_ARG). Default off.
+    // together with UC_X86_FEATURE_FRED or UC_CTL_X86_APX yet (UC_ERR_ARG). U1302: VMXON, VMXOFF,
+    // VMCLEAR, VMPTRLD, VMPTRST, VMREAD, VMWRITE, INVEPT, INVVPID, VMCALL in VMX root operation; the
+    // VMCS data live in the VMCS region in guest memory (docs/vmx.md). Default off.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,

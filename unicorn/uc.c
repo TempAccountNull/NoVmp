@@ -3407,6 +3407,10 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             int on = va_arg(args, int);
             if (uc->init_done || (on & ~UC_X86_APX_F)) {
                 err = UC_ERR_ARG;
+            } else if (on && (uc->x86_features & UC_X86_FEATURE_VMX)) {
+                /* U1302: APX with VMX needs the VM-exit extended instruction-information field
+                   (APX spec 355828-009 3.1.4.4.1), not modelled yet (docs/vmx.md) */
+                err = UC_ERR_ARG;
             } else {
                 uc->x86_apx = on;
             }
@@ -3492,6 +3496,9 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                                            UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM |
                                            UC_X86_FEATURE_SGX | UC_X86_FEATURE_SMX |
                                            UC_X86_FEATURE_VMX))) {
+                err = UC_ERR_ARG;
+            } else if ((mask & UC_X86_FEATURE_VMX) && uc->x86_apx) {
+                /* U1302: VMX with APX: see UC_CTL_X86_APX (docs/vmx.md) */
                 err = UC_ERR_ARG;
             } else if ((mask & UC_X86_FEATURE_VMX) && (mask & UC_X86_FEATURE_FRED)) {
                 /*

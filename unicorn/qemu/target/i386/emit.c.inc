@@ -4560,6 +4560,37 @@ static void gen_INVPCID(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
 }
 
 #endif /* __Use_Original_Qemu (U806) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+/*
+ * NoVmp (ledger U1302, docs/vmx.md): INVEPT / INVVPID (SDM 092 Vol3C 33.3). No translation-time
+ * check: #UD (VMX operation, mode), the VM exit and #GP (CPL) are the helper's, in the order of the
+ * Operation section. The instruction information (Table 30-9) carries the type register as Reg2.
+ */
+static void gen_invept_common(DisasContext *s, X86DecodedInsn *decode, int vpid)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    target_ulong qual;
+    uint32_t info = vmx_mem_info(s, &decode->mem, &qual) | ((uint32_t)(decode->op[1].n & 15) << 28);
+
+    gen_update_cc_op(s);
+    gen_update_eip_cur(s);
+    gen_helper_invept(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, info),
+                      tcg_constant_tl(tcg_ctx, qual), tcg_constant_i32(tcg_ctx, vpid));
+    set_cc_op(s, CC_OP_EFLAGS);
+    s->base.is_jmp = DISAS_EOB_NEXT;
+}
+
+static void gen_INVEPT(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_invept_common(s, decode, 0);
+}
+
+static void gen_INVVPID(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
+{
+    gen_invept_common(s, decode, 1);
+}
+
+#endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U804) */
 /* NoVmp (ledger U804): HRESET imm8 (imm8 ignored): #GP(0) at CPL > 0 / virtual-8086, then EAX */
 static void gen_HRESET(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)

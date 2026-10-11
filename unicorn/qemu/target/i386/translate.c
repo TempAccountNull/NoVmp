@@ -2979,6 +2979,45 @@ static void gen_lea_modrm(CPUX86State *env, DisasContext *s, int modrm)
     gen_lea_v_seg(s, s->aflag, ea, a.def_seg, s->override);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+/*
+ * NoVmp (ledger U1302, docs/vmx.md): the VM-exit instruction information of a memory operand
+ * (SDM 092 Vol3C 30.2.5 Tables 30-9, 30-14, 30-15 pp. 30-18 to 30-23: scaling 1:0, address size
+ * 9:7, segment 17:15, index 21:18 / invalid 22, base 26:23 / invalid 27) and its exit qualification
+ * (30.2.1 p. 30-6: the displacement; RIP-relative: displacement + the RIP of the next instruction,
+ * which gen_lea_modrm_0 has already folded into disp)
+ */
+static uint32_t vmx_mem_info(DisasContext *s, const AddressParts *a, target_ulong *qual)
+{
+    int seg = s->override >= 0 ? s->override : a->def_seg;
+    uint32_t info = ((uint32_t)(s->aflag - MO_16) << 7) | ((uint32_t)(seg & 7) << 15);
+
+    if (a->index >= 0) {
+        info |= (a->scale & 3) | ((uint32_t)(a->index & 15) << 18);
+    } else {
+        info |= 1u << 22;
+    }
+    if (a->base >= 0) {
+        info |= (uint32_t)(a->base & 15) << 23;
+    } else {
+        info |= 1u << 27;
+    }
+    *qual = a->disp;
+    return info;
+}
+
+/* the linear address of a VMX instruction's memory operand into s->A0; its information / qualification */
+static uint32_t gen_vmx_lea(CPUX86State *env, DisasContext *s, int modrm, target_ulong *qual)
+{
+    AddressParts a = gen_lea_modrm_0(env, s, modrm, false);
+    uint32_t info = vmx_mem_info(s, &a, qual);
+    TCGv ea = gen_lea_modrm_1(s, a, false);
+
+    gen_lea_v_seg(s, s->aflag, ea, a.def_seg, s->override);
+    return info;
+}
+
+#endif /* __Use_Original_Qemu (U1302) */
 static void gen_nop_modrm(CPUX86State *env, DisasContext *s, int modrm)
 {
     (void)gen_lea_modrm_0(env, s, modrm, false);
@@ -6254,6 +6293,43 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x1c7: /* cmpxchg8b */
         modrm = x86_ldub_code(env, s);
         mod = (modrm >> 6) & 3;
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+        /*
+         * NoVmp (ledger U1302, docs/vmx.md): the memory forms of 0F C7 /6 and /7 with
+         * CPUID.01H:ECX.VMX (SDM 092 Vol3C 33.3; XED: VMXON f3_refining_prefix IGNORE66, VMCLEAR
+         * osz_refining_prefix, VMPTRLD / VMPTRST no_refining_prefix): F3 /6 VMXON, 66 /6 VMCLEAR,
+         * NP /6 VMPTRLD, NP /7 VMPTRST; LOCK, F2 #UD. The operand is always 64 bits.
+         */
+        if (mod != 3 && ((modrm >> 3) & 7) >= 6 && (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+            int op;
+            target_ulong qual;
+            uint32_t info;
+
+            if (s->prefix & (PREFIX_LOCK | PREFIX_REPNZ)) {
+                goto illegal_op;
+            }
+            if (((modrm >> 3) & 7) == 7) {
+                if (s->prefix & (PREFIX_REPZ | PREFIX_DATA)) {
+                    goto illegal_op;
+                }
+                op = VMX_OP_VMPTRST;
+            } else if (s->prefix & PREFIX_REPZ) {
+                op = VMX_OP_VMXON;
+            } else if (s->prefix & PREFIX_DATA) {
+                op = VMX_OP_VMCLEAR;
+            } else {
+                op = VMX_OP_VMPTRLD;
+            }
+            info = gen_vmx_lea(env, s, modrm, &qual);
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_vmx_op(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, op), s->A0,
+                              tcg_constant_i32(tcg_ctx, info), tcg_constant_tl(tcg_ctx, qual));
+            set_cc_op(s, CC_OP_EFLAGS);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U1302) */
         switch ((modrm >> 3) & 7) {
         case 1: /* CMPXCHG8, CMPXCHG16 */
             if (mod == 3) {
@@ -9031,6 +9107,28 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_op_st_v(s, CODE64(s) + MO_32, s->T0, s->A0);
             break;
 
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+        /*
+         * NoVmp (ledger U1302, docs/vmx.md): 0F 01 C1 VMCALL, C4 VMXOFF (SDM 092 Vol3C 33.3), decoded
+         * with CPUID.01H:ECX.VMX; 66 / F2 / F3 / LOCK #UD (the SDM is silent; XED: no_refining_prefix). Every
+         * other check is the helper's (VMX operation is runtime state).
+         */
+        case 0xc1: /* vmcall */
+        case 0xc4: /* vmxoff */
+            if (!(s->cpuid_ext_features & CPUID_EXT_VMX) ||
+                (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_vmx_op(tcg_ctx, cpu_env,
+                              tcg_constant_i32(tcg_ctx, modrm == 0xc1 ? VMX_OP_VMCALL : VMX_OP_VMXOFF),
+                              tcg_constant_tl(tcg_ctx, 0), tcg_constant_i32(tcg_ctx, 0),
+                              tcg_constant_tl(tcg_ctx, 0));
+            set_cc_op(s, CC_OP_EFLAGS);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+#endif /* __Use_Original_Qemu (U1302) */
         case 0xc8: /* monitor */
             if (!(s->cpuid_ext_features & CPUID_EXT_MONITOR) || CPL(s) != 0) {
                 goto illegal_op;
@@ -10616,6 +10714,45 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x1c2:
     case 0x1c4: case 0x1c5: case 0x1c6:
     case 0x1d0: case 0x1d1: case 0x1d2: case 0x1d3: case 0x1d4: case 0x1d5: case 0x1d6: case 0x1d7: case 0x1d8: case 0x1d9: case 0x1da: case 0x1db: case 0x1dc: case 0x1dd: case 0x1de: case 0x1df: case 0x1e0: case 0x1e1: case 0x1e2: case 0x1e3: case 0x1e4: case 0x1e5: case 0x1e6: case 0x1e7: case 0x1e8: case 0x1e9: case 0x1ea: case 0x1eb: case 0x1ec: case 0x1ed: case 0x1ee: case 0x1ef: case 0x1f0: case 0x1f1: case 0x1f2: case 0x1f3: case 0x1f4: case 0x1f5: case 0x1f6: case 0x1f7: case 0x1f8: case 0x1f9: case 0x1fa: case 0x1fb: case 0x1fc: case 0x1fd: case 0x1fe:
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+        /*
+         * NoVmp (ledger U1302, docs/vmx.md): NP 0F 78 VMREAD r/m, r and NP 0F 79 VMWRITE r, r/m
+         * (SDM 092 Vol3C 33.3 pp. 33-21 / 33-24) with CPUID.01H:ECX.VMX; the prefixed forms stay
+         * with the decoder (66 / F2 0F 78 / 79: EXTRQ / INSERTQ of AMD, #UD here). LOCK #UD. The
+         * instruction information names the registers (Table 30-15): Reg1 = r/m (bit 10: register
+         * form), Reg2 = ModRM.reg, which holds the field encoding.
+         */
+        if ((b == 0x178 || b == 0x179) && (s->cpuid_ext_features & CPUID_EXT_VMX) &&
+            !(s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+            target_ulong qual = 0;
+            uint32_t info;
+
+            if (s->prefix & PREFIX_LOCK) {
+                goto illegal_op;
+            }
+            modrm = x86_ldub_code(env, s);
+            reg = ((modrm >> 3) & 7) | REX_R(s);
+            if ((modrm >> 6) == 3) {
+                info = (1u << 10) | ((uint32_t)((modrm & 7) | REX_B(s)) << 3);
+                tcg_gen_movi_tl(tcg_ctx, s->A0, 0);
+            } else {
+                info = gen_vmx_lea(env, s, modrm, &qual);
+            }
+            info |= (uint32_t)(reg & 15) << 28;
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            if (b == 0x178) {
+                gen_helper_vmread(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, info),
+                                  tcg_constant_tl(tcg_ctx, qual));
+            } else {
+                gen_helper_vmwrite(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, info),
+                                   tcg_constant_tl(tcg_ctx, qual));
+            }
+            set_cc_op(s, CC_OP_EFLAGS);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U1302) */
         disas_insn_new(s, cpu, b);
         break;
     case 0x1b9: /* UD1 Gv, Ev */

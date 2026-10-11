@@ -67,16 +67,16 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 3 - VMX operation, VMCS lifecycle and access
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| VMXON: #UD (register operand, CR0.PE = 0, CR4.VMXE = 0, RFLAGS.VM, compatibility mode), #GP (CPL, A20M, CR0 / CR4 fixed bits, IA32_FEATURE_CONTROL), VMfailInvalid (alignment, MAXPHYADDR, revision / bit 31), VMfail 15 in root, VM exit in non-root | Vol3C 33.3 VMXON pp. 33-28 to 33-30; 27.11.5 p. 27-34 | `vmx_helper.c` helper_vmxon; `translate.c` F3 0F C7 /6 | planned |
-| VMXOFF: leave VMX operation, VMfail 23 not reachable (no dual-monitor treatment) | Vol3C 33.3 VMXOFF pp. 33-26 / 33-27 | helper_vmxoff; `translate.c` 0F 01 C4 | planned |
-| VMCLEAR (errors 2, 3; launch state clear; current pointer invalidated) | Vol3C 33.3 VMCLEAR pp. 33-11 / 33-12; 27.1 p. 27-1; 27.11.3 p. 27-34 | helper_vmclear; `translate.c` 66 0F C7 /6 | planned |
-| VMPTRLD (errors 9, 10, 11; shadow-VMCS indicator) / VMPTRST | Vol3C 33.3 pp. 33-17 to 33-20; 27.2 p. 27-3 | helper_vmptrld / helper_vmptrst; `translate.c` NP 0F C7 /6, /7 | planned |
-| VMREAD / VMWRITE: every field of Appendix B with its width (16 / 32 / 64 / natural, full / high access), 64-bit mode vs outside IA-32e mode operand size, error 12 (unsupported field), error 13 (not reachable: IA32_VMX_MISC[29] = 1), VMfailInvalid | Vol3C 27.11.2 pp. 27-32 / 27-33; 33.3 VMREAD pp. 33-21 / 33-22, VMWRITE pp. 33-24 / 33-25; Vol3D Appendix B pp. B-1 to B-13 | `vmx_helper.c` vmx_field table, helper_vmread / helper_vmwrite; `translate.c` NP 0F 78 / 79 | planned |
-| VMsucceed / VMfailInvalid / VMfailValid flag settings and VM-instruction error numbers | Vol3C 33.2 p. 33-2; 33.4 Table 33-1 pp. 33-30 / 33-31 | vmx_succeed / vmx_fail_invalid / vmx_fail_valid | planned |
-| CR0 / CR4 fixed bits in VMX operation: CLTS, LMSW, MOV CR #GP | Vol3C 26.8 pp. 26-3 / 26-4; Appendix A.7 / A.8 p. A-7 | `misc_helper.c` helper_write_crN | planned |
-| VMCALL in VMX root operation: VMfail 1 (no dual-monitor treatment) | Vol3C 33.3 VMCALL pp. 33-9 / 33-10 | helper_vmcall | planned |
-| VMFUNC outside non-root: #UD | Vol3C 33.3 VMFUNC p. 33-13 | helper_vmfunc | planned |
-| INVEPT / INVVPID in root: #UD, #GP, VMfail 28, invalidation | Vol3C 33.3 pp. 33-3 to 33-8; 31.4.3 p. 31-22 | helper_invept / helper_invvpid; `decode-new.c.inc` 66 0F 38 80 / 81 | planned |
+| VMXON: #UD (register operand, CR0.PE = 0, CR4.VMXE = 0, RFLAGS.VM, compatibility mode), #GP (CPL, A20M, CR0 / CR4 fixed bits, IA32_FEATURE_CONTROL), VMfailInvalid (alignment, MAXPHYADDR, revision / bit 31), VMfail 15 in root, VM exit in non-root | Vol3C 33.3 VMXON pp. 33-28 to 33-30; 27.11.5 p. 27-34 | `vmx_helper.c` helper_vmxon; `translate.c` F3 0F C7 /6 | done (U1302) |
+| VMXOFF: leave VMX operation, VMfail 23 not reachable (no dual-monitor treatment) | Vol3C 33.3 VMXOFF pp. 33-26 / 33-27 | helper_vmxoff; `translate.c` 0F 01 C4 | done (U1302) |
+| VMCLEAR (errors 2, 3; launch state clear; current pointer invalidated) | Vol3C 33.3 VMCLEAR pp. 33-11 / 33-12; 27.1 p. 27-1; 27.11.3 p. 27-34 | helper_vmclear; `translate.c` 66 0F C7 /6 | done (U1302) |
+| VMPTRLD (errors 9, 10, 11; shadow-VMCS indicator) / VMPTRST | Vol3C 33.3 pp. 33-17 to 33-20; 27.2 p. 27-3 | helper_vmptrld / helper_vmptrst; `translate.c` NP 0F C7 /6, /7 | done (U1302) |
+| VMREAD / VMWRITE: every field of Appendix B with its width (16 / 32 / 64 / natural, full / high access), 64-bit mode vs outside IA-32e mode operand size, error 12 (unsupported field), error 13 (not reachable: IA32_VMX_MISC[29] = 1), VMfailInvalid | Vol3C 27.11.2 pp. 27-32 / 27-33; 33.3 VMREAD pp. 33-21 / 33-22, VMWRITE pp. 33-24 / 33-25; Vol3D Appendix B pp. B-1 to B-13 | `vmx_helper.c` vmx_field table, helper_vmread / helper_vmwrite; `translate.c` NP 0F 78 / 79 | done (U1302) |
+| VMsucceed / VMfailInvalid / VMfailValid flag settings and VM-instruction error numbers | Vol3C 33.2 p. 33-2; 33.4 Table 33-1 pp. 33-30 / 33-31 | vmx_succeed / vmx_fail_invalid / vmx_fail_valid | done (U1302) |
+| CR0 / CR4 fixed bits in VMX operation: CLTS, LMSW, MOV CR #GP | Vol3C 26.8 pp. 26-3 / 26-4; Appendix A.7 / A.8 p. A-7 | `misc_helper.c` helper_write_crN | done (U1302) |
+| VMCALL in VMX root operation: VMfail 1 (no dual-monitor treatment) | Vol3C 33.3 VMCALL pp. 33-9 / 33-10 | helper_vmcall | done (U1302) |
+| VMFUNC outside non-root: #UD | Vol3C 33.3 VMFUNC p. 33-13 | helper_vmfunc | planned (U1302: still undecoded, #UD) |
+| INVEPT / INVVPID in root: #UD, #GP, VMfail 28, invalidation | Vol3C 33.3 pp. 33-3 to 33-8; 31.4.3 p. 31-22 | helper_invept / helper_invvpid; `decode-new.c.inc` 66 0F 38 80 / 81 | done (U1302) |
 | shadow VMCS (VMREAD / VMWRITE in non-root via the link pointer, VMREAD / VMWRITE bitmaps) | Vol3C 27.10 p. 27-31; 28.1.3 VMREAD / VMWRITE p. 28-5; 33.3 | helper_vmread / helper_vmwrite | planned |
 
 ### Stage 4 - VM entry, VM exit, VMLAUNCH / VMRESUME / VMCALL / VMFUNC, preemption timer
@@ -156,3 +156,25 @@ revision identifier and shadow-VMCS indicator, 4-7: VMX-abort indicator (both ar
 VMCLEAR writes only the launch state. Because nothing is cached, "active" VMCSs need no write-back and VMXOFF
 corrupts nothing (Vol3C 27.11.1 allows corruption; VM-instruction error 6 is therefore never produced - our
 choice). Software that writes a VMCS region with ordinary stores changes the fields (undefined by the SDM).
+
+### Decoding (U1302)
+With CPUID.01H:ECX.VMX the translator decodes: 0F 01 C1 VMCALL and C4 VMXOFF (66 / F2 / F3 / LOCK #UD:
+the SDM gives no prefix rule, XED decodes them only without a refining prefix), F3 0F C7 /6 VMXON (66
+ignored, XED IGNORE66), 66 0F C7 /6 VMCLEAR, NP 0F C7 /6 VMPTRLD, NP 0F C7 /7 VMPTRST (memory forms;
+F2 / LOCK #UD), NP 0F 78 VMREAD, NP 0F 79 VMWRITE (LOCK #UD; the 66 / F2 forms keep their old decoding),
+66 0F 38 80 INVEPT and 81 INVVPID (memory only). VMLAUNCH, VMRESUME and VMFUNC follow in U1303. The
+VM-exit instruction information (30.2.5 Tables 30-9, 30-14, 30-15) and exit qualification (30.2.1, the
+displacement; RIP-relative: displacement + next RIP) of these instructions are computed by the
+translator and passed to the helpers.
+
+### Not modelled / pending
+- APX together with VMX: the VM-exit extended instruction-information field (2406H) and 5-bit register
+  IDs (APX spec 355828-009 3.1.4.4.1), EVEX-promoted INVEPT / INVVPID: pending; the opt-ins APX
+  (UC_CTL_X86_APX) and UC_X86_FEATURE_VMX are refused together (UC_ERR_ARG).
+- FRED together with VMX: stage 8; refused together (UC_ERR_ARG).
+- VMXOFF and active VMCSs: the VMCS data stay valid in memory (our choice; Vol3C 27.11.1 allows
+  corruption), so VM-instruction error 6 never occurs.
+- SMX operation (GETSEC[SENTER]) does not exist in the model: VMXON is enabled by IA32_FEATURE_CONTROL
+  bit 2 only. A20M and INIT are not modelled (nothing to block); MONITOR keeps no armed state (nothing
+  to clear).
+

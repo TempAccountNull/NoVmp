@@ -845,6 +845,15 @@ static const X86OpEntry opcodes_0F38_00toEF[240] = {
      * 64-bit in 64-bit mode (whatever REX.W), else 32-bit; memory only (M: the operand is not
      * pre-loaded, gen_INVPCID checks CPL first and reads the descriptor itself).
      */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+    /*
+     * NoVmp (ledger U1302, docs/vmx.md): 66 0F 38 80 /r INVEPT, 81 /r INVVPID r32/r64, m128 (SDM 092
+     * Vol3C 33.3 pp. 33-3 / 33-6) with CPUID.01H:ECX.VMX; memory only. The helper reads the type
+     * register (64 bits in 64-bit mode, else 32) and the descriptor itself, after its checks.
+     */
+    [0x80] = X86_OP_ENTRY3(INVEPT,       None,None, G,q, M,b, cpuid(VMX) p_66),
+    [0x81] = X86_OP_ENTRY3(INVVPID,      None,None, G,q, M,b, cpuid(VMX) p_66),
+#endif /* __Use_Original_Qemu (U1302) */
     [0x82] = X86_OP_ENTRY3(INVPCID,      None,None, G,q, M,b, cpuid(INVPCID) p_66),
 #endif /* __Use_Original_Qemu (U806) */
     [0x8a] = X86_OP_ENTRY3(MOVRS,        G,b,  None,None, M,b, cpuid(MOVRS) o64 p_00_66),
@@ -6024,6 +6033,10 @@ static bool has_cpuid_feature(DisasContext *s, X86CPUIDFeature cpuid)
     case X86_FEAT_HRESET:
         return (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_HRESET);
 #endif /* __Use_Original_Qemu (U804) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+    case X86_FEAT_VMX:
+        return (s->cpuid_ext_features & CPUID_EXT_VMX);
+#endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U806) */
     case X86_FEAT_INVPCID:
         return (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_INVPCID);

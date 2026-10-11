@@ -450,6 +450,25 @@ typedef struct X86MktmeKey {
     uint8_t tweak_key[32];
 } X86MktmeKey;
 #endif /* __Use_Original_Qemu (U1021) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+/*
+ * NoVmp (ledger U1302, docs/vmx.md): the VMX state of a logical processor (SDM 092 Vol3C 26.3, 27.1).
+ * on: in VMX operation (VMXON .. VMXOFF); nonroot: in VMX non-root operation; vmxon_ptr: the VMXON
+ * pointer; vmcs_ptr: the current-VMCS pointer (FFFFFFFF_FFFFFFFFH: none). The VMCS data live in
+ * the VMCS regions in memory (no VMCS state is kept on the processor).
+ */
+typedef struct X86VmxState {
+    uint8_t on;
+    uint8_t nonroot;
+    uint64_t vmxon_ptr;
+    uint64_t vmcs_ptr;
+} X86VmxState;
+
+/* helper_vmx_op operations */
+enum {
+    VMX_OP_VMXON, VMX_OP_VMXOFF, VMX_OP_VMCLEAR, VMX_OP_VMPTRLD, VMX_OP_VMPTRST, VMX_OP_VMCALL,
+};
+#endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
 /*
  * NoVmp (ledger U1120, U1129, U1130): the model's IA32_TSE_CAPABILITY (9F1H), UC_X86_FEATURE_TSE.
@@ -2363,6 +2382,9 @@ typedef struct CPUX86State {
     uint8_t sgx_int_fault;          /* the #BP / #DB being raised is INT3 / INT1 inside an enclave */
     uint8_t sgx_implicit;           /* ERESUME's XRSTOR: TLB fills of CR_XSAVE_PAGE_n are implicit */
 #endif /* __Use_Original_Qemu (U1263) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+    X86VmxState vmx;                /* VMX operation (vmx_helper.c, docs/vmx.md) */
+#endif /* __Use_Original_Qemu (U1302) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -3378,6 +3400,8 @@ static inline bool x86_vmx_cpuid(CPUX86State *env)
 bool x86_vmx_msr_exists(CPUX86State *env, uint32_t msr);
 bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val);
 int x86_vmx_field_slot(CPUX86State *env, uint64_t enc, int *high);
+bool x86_vmx_cr_write_ok(CPUX86State *env, int reg, uint64_t v);   /* U1302 */
+bool x86_vmx_eptp_ok(CPUX86State *env, uint64_t eptp);
 #endif /* __Use_Original_Qemu (U1301) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {

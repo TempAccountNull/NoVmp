@@ -197,6 +197,12 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
 #endif /* __Use_Original_Qemu (U114) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+        /* VMX operation: CR0 bits fixed by IA32_VMX_CR0_FIXED0/1 (SDM 092 Vol3C 26.8 p. 26-3) */
+        if (!x86_vmx_cr_write_ok(env, 0, (uint32_t)t0)) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U1302) */
         cpu_x86_update_cr0(env, (uint32_t)t0);
         break;
     case 3:
@@ -247,6 +253,12 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         if (t0 & cr4_reserved_bits(env)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+        /* VMX operation: CR4.VMXE fixed to 1 (IA32_VMX_CR4_FIXED0, Vol3C 26.8 p. 26-3) */
+        if (!x86_vmx_cr_write_ok(env, 4, t0)) {
+            raise_exception_ra(env, EXCP0D_GPF, GETPC());
+        }
+#endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
         /* CR4.CET can be set only if CR0.WP = 1 */
         if ((t0 & CR4_CET_MASK) && !(env->cr[0] & CR0_WP_MASK)) {

@@ -32473,6 +32473,424 @@ static void test_x86_vmx_optin(void)
     OK(uc_close(c.uc));
 }
 
+#define VMX_PTR     (VMX_DATA + 0x0000)     /* m64 operands */
+#define VMX_VMXON   (VMX_DATA + 0x1000)     /* VMXON region */
+#define VMX_VMCS_A  (VMX_DATA + 0x2000)
+#define VMX_VMCS_B  (VMX_DATA + 0x3000)
+#define VMX_PT      (VMX_DATA + 0xa000)     /* PML4, PDPT, PD */
+#define VMX_FLAGS   0x8d5ull                /* CF PF AF ZF SF OF (VMsucceed / VMfail, 33.2) */
+
+static void vmx_wq(PcCtx *c, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(c->uc, a, &v, 8));
+}
+
+static uint64_t vmx_rq(PcCtx *c, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(c->uc, a, &v, 8));
+    return v;
+}
+
+/*
+ * A 64-bit CPL0 engine ready for VMXON: identity paging of 0-4 MB (2-MByte pages), CR0 with PE,
+ * NE, PG (IA32_VMX_CR0_FIXED0), CR4 with PAE and VMXE, IA32_FEATURE_CONTROL locked with bit 2,
+ * revision identifier 1 in the VMXON region and in VMCS A and B
+ */
+static void vmx_root_open(PcCtx *c)
+{
+    uint32_t rev = 1;
+
+    vmx_open(c, UC_X86_FEATURE_VMX);
+    vmx_wq(c, VMX_PT, (VMX_PT + 0x1000) | 3);
+    vmx_wq(c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 3);
+    vmx_wq(c, VMX_PT + 0x2000, 0x83);
+    vmx_wq(c, VMX_PT + 0x2008, 0x200000 | 0x83);
+    pc_set(c, UC_X86_REG_CR4, pc_get(c, UC_X86_REG_CR4) | 0x2020);
+    pc_set(c, UC_X86_REG_CR3, VMX_PT);
+    pc_set(c, UC_X86_REG_CR0, pc_get(c, UC_X86_REG_CR0) | 0x80000020ull);
+    TEST_CHECK(vmx_wrmsr(c, 0x3a, 5) == -1);
+    OK(uc_mem_write(c->uc, VMX_VMXON, &rev, 4));
+    OK(uc_mem_write(c->uc, VMX_VMCS_A, &rev, 4));
+    OK(uc_mem_write(c->uc, VMX_VMCS_B, &rev, 4));
+}
+
+/* a VMX instruction with the m64 operand [RAX] = ptr: the vector or -1; *fl = the result flags */
+static int vmx_mem_op(PcCtx *c, const char *code, size_t len, uint64_t ptr, uint64_t *fl)
+{
+    int r;
+
+    vmx_wq(c, VMX_PTR, ptr);
+    pc_set(c, UC_X86_REG_RAX, VMX_PTR);
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);        /* the six flags set: VMsucceed must clear them */
+    r = pc_run(c, code, len);
+    *fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+    return r;
+}
+
+#define VMXON_RAX       "\xf3\x0f\xc7\x30"
+#define VMCLEAR_RAX     "\x66\x0f\xc7\x30"
+#define VMPTRLD_RAX     "\x0f\xc7\x30"
+#define VMPTRST_RAX     "\x0f\xc7\x38"
+
+static int vmx_vmxon(PcCtx *c, uint64_t ptr, uint64_t *fl)
+{
+    return vmx_mem_op(c, VMXON_RAX, 4, ptr, fl);
+}
+
+static int vmx_vmclear(PcCtx *c, uint64_t ptr, uint64_t *fl)
+{
+    return vmx_mem_op(c, VMCLEAR_RAX, 4, ptr, fl);
+}
+
+static int vmx_vmptrld(PcCtx *c, uint64_t ptr, uint64_t *fl)
+{
+    return vmx_mem_op(c, VMPTRLD_RAX, 3, ptr, fl);
+}
+
+/* VMPTRST [RAX]: the stored pointer */
+static uint64_t vmx_vmptrst(PcCtx *c)
+{
+    uint64_t fl;
+
+    vmx_wq(c, VMX_PTR, 0x5a5a5a5a5a5a5a5aull);
+    pc_set(c, UC_X86_REG_RAX, VMX_PTR);
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
+    TEST_CHECK(pc_run(c, VMPTRST_RAX, 3) == -1);
+    fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+    TEST_CHECK(fl == 0);
+    return vmx_rq(c, VMX_PTR);
+}
+
+/* VMREAD RAX, RCX (register form): the vector or -1; the value in *v, the flags in *fl */
+static int vmx_vmread(PcCtx *c, uint64_t enc, uint64_t *v, uint64_t *fl)
+{
+    int r;
+
+    pc_set(c, UC_X86_REG_RCX, enc);
+    pc_set(c, UC_X86_REG_RAX, 0x1111111111111111ull);
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
+    r = pc_run(c, "\x0f\x78\xc8", 3);
+    *v = pc_get(c, UC_X86_REG_RAX);
+    *fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+    return r;
+}
+
+/* VMWRITE RCX, RAX (register form) */
+static int vmx_vmwrite(PcCtx *c, uint64_t enc, uint64_t v, uint64_t *fl)
+{
+    int r;
+
+    pc_set(c, UC_X86_REG_RCX, enc);
+    pc_set(c, UC_X86_REG_RAX, v);
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
+    r = pc_run(c, "\x0f\x79\xc8", 3);
+    *fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+    return r;
+}
+
+/* a field value that must read back, and the VM-instruction error field */
+static uint64_t vmx_read_ok(PcCtx *c, uint64_t enc)
+{
+    uint64_t v, fl;
+
+    TEST_CHECK(vmx_vmread(c, enc, &v, &fl) == -1 && fl == 0);
+    TEST_MSG("VMREAD %llx: flags %llx", (unsigned long long)enc, (unsigned long long)fl);
+    return v;
+}
+
+static void vmx_write_ok(PcCtx *c, uint64_t enc, uint64_t v)
+{
+    uint64_t fl;
+
+    TEST_CHECK(vmx_vmwrite(c, enc, v, &fl) == -1 && fl == 0);
+    TEST_MSG("VMWRITE %llx: flags %llx", (unsigned long long)enc, (unsigned long long)fl);
+}
+
+/* VMfailValid(err): ZF = 1 and the VM-instruction error field (4400H) = err */
+static void vmx_check_failvalid(PcCtx *c, uint64_t fl, uint32_t err)
+{
+    TEST_CHECK(fl == 0x40);
+    TEST_MSG("flags %llx, expected ZF", (unsigned long long)fl);
+    TEST_CHECK(vmx_read_ok(c, 0x4400) == err);
+    TEST_MSG("VM-instruction error %llx, expected %u", (unsigned long long)vmx_read_ok(c, 0x4400), err);
+}
+
+/*
+ * U1302: VMXON / VMXOFF / VMCLEAR / VMPTRLD / VMPTRST (SDM 092 Vol3C 33.3; 27.1 launch / current
+ * state; 33.2 VMsucceed / VMfail; 33.4 error numbers). Outside VMX operation every VMX instruction
+ * but VMXON is #UD; VMXON: #UD with CR4.VMXE = 0, #GP(0) with an unlocked IA32_FEATURE_CONTROL or
+ * CR0 outside IA32_VMX_CR0_FIXED0 (NE = 0), VMfailInvalid for a misaligned / beyond-MAXPHYADDR
+ * pointer or a revision identifier mismatch (also bit 31 = 1); in VMX root operation VMXON fails
+ * with error 15; VMCLEAR errors 2 / 3, VMPTRLD errors 9 / 10 / 11 (VMfailInvalid without a current
+ * VMCS); VMPTRST stores FFFFFFFF_FFFFFFFFH without a current VMCS; VMCLEAR of the current VMCS
+ * invalidates the current pointer; CR0.PE / NE / PG and CR4.VMXE cannot be cleared in VMX operation
+ * (26.8); VMCALL in VMX root operation: error 1; VMXOFF leaves VMX operation.
+ */
+static void test_x86_vmx_lifecycle(void)
+{
+    PcCtx c;
+    uint64_t fl, v, cr0, cr4;
+    uint32_t rev;
+
+    vmx_root_open(&c);
+    cr0 = pc_get(&c, UC_X86_REG_CR0);
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    /* outside VMX operation */
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == 6);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A, &fl) == 6);
+    TEST_CHECK(pc_run(&c, VMPTRST_RAX, 3) == 6);
+    TEST_CHECK(vmx_vmread(&c, 0x4400, &v, &fl) == 6);
+    TEST_CHECK(vmx_vmwrite(&c, 0x4400, 0, &fl) == 6);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == 6);             /* VMXOFF */
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc1", 3) == 6);             /* VMCALL */
+    pc_set(&c, UC_X86_REG_RCX, 2);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0, &fl) == 6);  /* INVEPT */
+    /* VMXON: #UD without CR4.VMXE, #GP(0) with CR0.NE = 0 or an unlocked IA32_FEATURE_CONTROL */
+    pc_set(&c, UC_X86_REG_CR4, cr4 & ~0x2000ull);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 6);
+    pc_set(&c, UC_X86_REG_CR4, cr4);
+    pc_set(&c, UC_X86_REG_CR0, cr0 & ~0x20ull);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
+    pc_set(&c, UC_X86_REG_CR0, cr0);
+    OK(uc_close(c.uc));
+    vmx_open(&c, UC_X86_FEATURE_VMX);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | 0x2020);
+    pc_set(&c, UC_X86_REG_CR3, VMX_PT);
+    vmx_wq(&c, VMX_PT, (VMX_PT + 0x1000) | 3);
+    vmx_wq(&c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 3);
+    vmx_wq(&c, VMX_PT + 0x2000, 0x83);
+    vmx_wq(&c, VMX_PT + 0x2008, 0x200000 | 0x83);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x80000020ull);
+    rev = 1;
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);        /* IA32_FEATURE_CONTROL = 0 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 1) == -1);               /* locked, VMX outside SMX off */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
+    OK(uc_close(c.uc));
+
+    vmx_root_open(&c);
+    /* VMfailInvalid: misaligned, beyond MAXPHYADDR, revision mismatch, bit 31 */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON + 8, &fl) == -1 && fl == 1);
+    TEST_CHECK(vmx_vmxon(&c, 1ull << 52, &fl) == -1 && fl == 1);
+    rev = 2;
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    rev = 0x80000001u;
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    rev = 1;
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    /* in VMX root operation: CR4.VMXE and CR0.PE / NE / PG fixed (#GP(0)) */
+    TEST_CHECK(vmx_mov_cr4(&c, cr4 & ~0x2000ull) == 13);
+    pc_set(&c, UC_X86_REG_RAX, cr0 & ~0x20ull);
+    TEST_CHECK(pc_run(&c, "\x0f\x22\xc0", 3) == 13);        /* MOV CR0, RAX */
+    pc_set(&c, UC_X86_REG_RAX, cr0 & ~0x80000000ull);
+    TEST_CHECK(pc_run(&c, "\x0f\x22\xc0", 3) == 13);
+    pc_set(&c, UC_X86_REG_RAX, cr0 | 8);                    /* CR0.TS is flexible */
+    TEST_CHECK(pc_run(&c, "\x0f\x22\xc0", 3) == -1);
+    TEST_CHECK(pc_run(&c, "\x0f\x06", 2) == -1);            /* CLTS */
+    /* no current VMCS */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);   /* VMfail(15) -> invalid */
+    TEST_CHECK(vmx_vmptrst(&c) == ~0ull);
+    TEST_CHECK(vmx_vmread(&c, 0x4400, &v, &fl) == -1 && fl == 1 && v == 0x1111111111111111ull);
+    TEST_CHECK(vmx_vmwrite(&c, 0x4400, 0, &fl) == -1 && fl == 1);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc1", 3) == -1);        /* VMCALL: VMfail(1) -> invalid */
+    TEST_CHECK((pc_get(&c, UC_X86_REG_RFLAGS) & VMX_FLAGS) == 1);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A + 0x10, &fl) == -1 && fl == 1);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    /* VMCLEAR, VMPTRLD: current VMCS A */
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrst(&c) == VMX_VMCS_A);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 15);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc1", 3) == -1);        /* VMCALL: error 1 */
+    vmx_check_failvalid(&c, pc_get(&c, UC_X86_REG_RFLAGS) & VMX_FLAGS, 1);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMXON, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 3);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A + 0x800, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 2);
+    TEST_CHECK(vmx_vmclear(&c, 1ull << 52, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 2);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMXON, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 10);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B + 4, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 9);
+    rev = 7;
+    OK(uc_mem_write(c.uc, VMX_VMCS_B, &rev, 4));
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 11);
+    TEST_CHECK(vmx_vmptrst(&c) == VMX_VMCS_A);              /* failed VMPTRLD kept A */
+    /* a shadow VMCS (bit 31 = 1) can be made current ("VMCS shadowing" is supported) */
+    rev = 0x80000001u;
+    OK(uc_mem_write(c.uc, VMX_VMCS_B, &rev, 4));
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrst(&c) == VMX_VMCS_B);
+    /* VMCLEAR of the current VMCS makes the pointer invalid */
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrst(&c) == ~0ull);
+    TEST_CHECK(vmx_vmread(&c, 0x4400, &v, &fl) == -1 && fl == 1);
+    /* VMXOFF: VMX instructions are #UD again and CR4.VMXE may be cleared */
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == -1);
+    TEST_CHECK((pc_get(&c, UC_X86_REG_RFLAGS) & VMX_FLAGS) == 0);
+    TEST_CHECK(vmx_vmread(&c, 0x4400, &v, &fl) == 6);
+    TEST_CHECK(vmx_mov_cr4(&c, cr4 & ~0x2000ull) == -1);
+    /* prefixes: 66 / F2 0F 01 C4, F2 0F C7 /6 and 66 0F C7 /7 are #UD */
+    TEST_CHECK(vmx_mov_cr4(&c, cr4) == -1);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xc4", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xc4", 4) == 6);
+    TEST_CHECK(vmx_mem_op(&c, "\xf2\x0f\xc7\x30", 4, VMX_VMXON, &fl) == 6);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\xc7\x38", 4, 0, &fl) == 6);
+    /* 66 F3 0F C7 /6 is VMXON (XED IGNORE66) */
+    TEST_CHECK(vmx_mem_op(&c, "\x66\xf3\x0f\xc7\x30", 5, VMX_VMXON, &fl) == -1 && fl == 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == -1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1302: VMREAD / VMWRITE (SDM 092 Vol3C 27.11.2 pp. 27-32 / 27-33, 33.3; Appendix B). Widths:
+ * 16-bit (bits 15:0 written, zero-extended on read), 32-bit, 64-bit full and high access, natural
+ * width; register and memory forms; error 12 for an encoding of no supported field (a field outside
+ * the capability set, bit 12, bits 63:15, the high access type of a non-64-bit field); VM-exit
+ * information fields are writable (IA32_VMX_MISC[29] = 1); each VMCS keeps its own data.
+ */
+static void test_x86_vmx_vmread_vmwrite(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_root_open(&c);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    /* 16-bit: guest ES selector */
+    vmx_write_ok(&c, 0x0800, 0xffffffff00012345ull);
+    TEST_CHECK(vmx_read_ok(&c, 0x0800) == 0x2345);
+    /* 32-bit: primary processor-based controls */
+    vmx_write_ok(&c, 0x4002, 0xfedcba9812345678ull);
+    TEST_CHECK(vmx_read_ok(&c, 0x4002) == 0x12345678);
+    /* 64-bit: TSC offset, full and high access */
+    vmx_write_ok(&c, 0x2010, 0x0123456789abcdefull);
+    TEST_CHECK(vmx_read_ok(&c, 0x2010) == 0x0123456789abcdefull);
+    TEST_CHECK(vmx_read_ok(&c, 0x2011) == 0x01234567);
+    vmx_write_ok(&c, 0x2011, 0xffffffffdeadbeefull);
+    TEST_CHECK(vmx_read_ok(&c, 0x2010) == 0xdeadbeef89abcdefull);
+    /* natural width: guest RIP */
+    vmx_write_ok(&c, 0x681e, 0xffff800012345678ull);
+    TEST_CHECK(vmx_read_ok(&c, 0x681e) == 0xffff800012345678ull);
+    /* VM-exit information fields are writable (IA32_VMX_MISC[29]) */
+    vmx_write_ok(&c, 0x4402, 0x12);
+    TEST_CHECK(vmx_read_ok(&c, 0x4402) == 0x12);
+    /* error 12 */
+    TEST_CHECK(vmx_vmwrite(&c, 0x200e, 0, &fl) == -1);            /* PML address: not offered */
+    vmx_check_failvalid(&c, fl, 12);
+    TEST_CHECK(vmx_vmread(&c, 0x4003, &v, &fl) == -1 && v == 0x1111111111111111ull);
+    vmx_check_failvalid(&c, fl, 12);                              /* high access of a 32-bit field */
+    TEST_CHECK(vmx_vmread(&c, 0x1800, &v, &fl) == -1);           /* bit 12 */
+    vmx_check_failvalid(&c, fl, 12);
+    TEST_CHECK(vmx_vmread(&c, 0x100000800ull, &v, &fl) == -1);   /* bits 63:15 */
+    vmx_check_failvalid(&c, fl, 12);
+    TEST_CHECK(vmx_vmread(&c, 0x2052, &v, &fl) == -1);           /* injected-event data: FRED */
+    vmx_check_failvalid(&c, fl, 12);
+    /* every field of the capability set exists (docs/vmx.md; a sample of each table) */
+    vmx_write_ok(&c, 0x0000, 1);            /* VPID */
+    vmx_write_ok(&c, 0x0002, 0xf2);         /* posted-interrupt notification vector */
+    vmx_write_ok(&c, 0x0810, 0x3031);       /* guest interrupt status */
+    vmx_write_ok(&c, 0x201a, 0x1e);         /* EPTP */
+    vmx_write_ok(&c, 0x2024, 0x5000);       /* EPTP-list address */
+    vmx_write_ok(&c, 0x2034, 1);            /* tertiary controls */
+    vmx_write_ok(&c, 0x203e, 0);            /* PCONFIG-exiting bitmap */
+    vmx_write_ok(&c, 0x2402, 0);            /* MSR data (MSR-list control offered) */
+    vmx_write_ok(&c, 0x482e, 7);            /* preemption timer value */
+    vmx_write_ok(&c, 0x6c16, 0x401000);     /* host RIP */
+    TEST_CHECK(vmx_read_ok(&c, 0x0810) == 0x3031);
+    /* memory forms: VMREAD [RAX], RCX / VMWRITE RCX, [RAX] */
+    vmx_wq(&c, VMX_PTR, 0x7766554433221100ull);
+    pc_set(&c, UC_X86_REG_RAX, VMX_PTR);
+    pc_set(&c, UC_X86_REG_RCX, 0x6802);     /* guest CR3 */
+    TEST_CHECK(pc_run(&c, "\x0f\x79\x08", 3) == -1);
+    TEST_CHECK(vmx_read_ok(&c, 0x6802) == 0x7766554433221100ull);
+    pc_set(&c, UC_X86_REG_RAX, VMX_PTR + 8);
+    pc_set(&c, UC_X86_REG_RCX, 0x0800);
+    TEST_CHECK(pc_run(&c, "\x0f\x78\x08", 3) == -1);
+    TEST_CHECK(vmx_rq(&c, VMX_PTR + 8) == 0x2345);
+    /* a second VMCS keeps its own data */
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    vmx_write_ok(&c, 0x0800, 0x77);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_read_ok(&c, 0x0800) == 0x2345);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1302: INVEPT / INVVPID in VMX root operation (SDM 092 Vol3C 33.3 pp. 33-3 to 33-8): unsupported
+ * type, an EPTP that VM entry would refuse (type 1), a descriptor with bits 63:16 set, VPID 0 (types
+ * 0, 1, 3) and a non-canonical address (type 0): VMfail(28); supported cases VMsucceed.
+ */
+static void test_x86_vmx_invept(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_root_open(&c);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    /* no current VMCS: VMfailInvalid */
+    pc_set(&c, UC_X86_REG_RCX, 3);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0, &fl) == -1 && fl == 1);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    /* INVEPT: the descriptor's EPTP is in its first 8 bytes ([RAX] = VMX_PTR) */
+    pc_set(&c, UC_X86_REG_RCX, 3);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);
+    pc_set(&c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);
+    pc_set(&c, UC_X86_REG_RCX, 2);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0, &fl) == -1 && fl == 0);
+    pc_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x1e, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x26, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x18, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x19, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* memory type 1 */
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x2e, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* walk length 6 */
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, 0x100000 | 0x9e, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* bit 7: not supported */
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x80\x08", 5, (1ull << 52) | 0x1e, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);
+    /* INVVPID: descriptor VPID in bits 15:0, linear address in bits 127:64 */
+    pc_set(&c, UC_X86_REG_RCX, 0);
+    vmx_wq(&c, VMX_PTR + 8, 0x1000);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 1, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* VPID 0 */
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 0x10001, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* bits 63:16 */
+    vmx_wq(&c, VMX_PTR + 8, 0x0000800000000000ull);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 1, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);                              /* not canonical */
+    pc_set(&c, UC_X86_REG_RCX, 2);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 0, &fl) == -1 && fl == 0);
+    pc_set(&c, UC_X86_REG_RCX, 3);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 1, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);
+    pc_set(&c, UC_X86_REG_RCX, 4);
+    TEST_CHECK(vmx_mem_op(&c, "\x66\x0f\x38\x81\x08", 5, 1, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 28);
+    /* register operand form: #UD */
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x38\x80\xc8", 5) == 6);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -32898,4 +33316,7 @@ TEST_LIST = {
     {"test_x86_idterr_ext64", test_x86_idterr_ext64},
     {"test_x86_idterr_cs64", test_x86_idterr_cs64},
     {"test_x86_vmx_optin", test_x86_vmx_optin},
+    {"test_x86_vmx_lifecycle", test_x86_vmx_lifecycle},
+    {"test_x86_vmx_vmread_vmwrite", test_x86_vmx_vmread_vmwrite},
+    {"test_x86_vmx_invept", test_x86_vmx_invept},
     {NULL, NULL}};

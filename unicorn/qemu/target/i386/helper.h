@@ -465,6 +465,13 @@ DEF_HELPER_4(invpcid, void, env, tl, tl, tl)
 #if __Use_Original_Qemu != 1 /* ours (U807) */
 DEF_HELPER_1(pbndkb, void, env)
 #endif /* __Use_Original_Qemu (U807) */
+#if __Use_Original_Qemu != 1 /* ours (U1302) */
+/* VMX instructions (vmx_helper.c, docs/vmx.md) */
+DEF_HELPER_5(vmx_op, void, env, i32, tl, i32, tl)
+DEF_HELPER_4(vmread, void, env, tl, i32, tl)
+DEF_HELPER_4(vmwrite, void, env, tl, i32, tl)
+DEF_HELPER_5(invept, void, env, tl, i32, tl, i32)
+#endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */
 DEF_HELPER_1(clui, void, env)
