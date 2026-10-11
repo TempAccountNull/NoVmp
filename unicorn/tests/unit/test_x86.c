@@ -27532,6 +27532,229 @@ static void test_x86_tf32_values(void)
 }
 /* ---- end U1150-U1169 (tf32_) ---- */
 
+/*
+ * ---- NoVmp U1129-U1149: TSE architectural rules re-validated against the ISE (tsefix_) ----
+ * One test per rule of Intel ISE 319433-060 (November 2025; public:
+ * https://cdrdv2-public.intel.com/869288/319433-060-architecture-instruction-set-extensions-programming-reference.pdf)
+ * chapter 2 PCONFIG - Table 2-3 "TSE_KEY_PROGRAM_STRUCT Format" (p. 2-20), Table 2-4
+ * "TSE_KEY_PROGRAM_WRAPPED Control Input" (p. 2-21), Operation (pp. 2-25..2-27) - and chapter 6
+ * section 6.2.2 Table 6-1 "TSE Capability MSR Fields" (p. 6-2); the same rules in SDM 325462-092
+ * Vol2B PCONFIG Tables 4-17 / 4-18 (pp. 4-273 / 4-274), Operation (pp. 4-278 / 4-279) and Vol4
+ * 9F1H (p. 2-69). Uses the ts_ / pc_ helpers above (opt-in UC_X86_FEATURE_TSE).
+ */
+#define TSEFIX_ALG0 1u                  /* the one supported algorithm of the model's capability */
+
+/* a TSE bind structure at 'out' that PCONFIG leaf 2 unwraps (PBNDKB, challenge restored) */
+static void tsefix_bind(PcCtx *c, uint64_t in, uint64_t out)
+{
+    uint8_t s[256];
+    int i;
+
+    memset(s, 0, sizeof(s));
+    for (i = 0; i < 64; i++) {
+        s[64 + i] = (uint8_t)(0x40 + i);
+    }
+    for (i = 0; i < 32; i++) {
+        s[128 + i] = (uint8_t)(0x90 ^ i);
+    }
+    OK(uc_mem_write(c->uc, in, s, sizeof(s)));
+    TEST_CHECK(ts_pbndkb(c, in, out) == -1);
+    OK(uc_mem_write(c->uc, out + 128, s + 128, 32));
+}
+
+/*
+ * U1129: IA32_TSE_CAPABILITY layout (ISE -060 6.2.2 Table 6-1 p. 6-2; SDM 092 Vol4 9F1H p. 2-69):
+ * 15:0 supported algorithms (bitmap), 23:16 key sources, 35:24 reserved, 50:36 TSE_MAX_KEYS,
+ * 63:51 reserved. The model's opt-in value keeps both reserved fields 0, reports one algorithm
+ * (bit 0) and no key source (both values are our implementation choice, not architecture), and
+ * TSE_MAX_KEYS is the limit both leaves enforce ("#GP if the KeyID exceeds the maximum enumerated
+ * in the TSE_MAX_KEYS field"): KeyID 63 accepted, 64 #GP(0), in leaf 1 and leaf 2.
+ */
+static void test_x86_tsefix_cap_layout(void)
+{
+    const uint64_t s0 = TS_DATA + 0x1000, in = TS_DATA + 0x2000, out = TS_DATA + 0x2100;
+    uint8_t k1[64], k2[64];
+    uint64_t cap, rax, fl;
+    unsigned max;
+    PcCtx c;
+
+    memset(k1, 0x11, sizeof(k1));
+    memset(k2, 0x22, sizeof(k2));
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    cap = pc_rdmsr(&c, 0x9f1);
+    TEST_CHECK(cap == TS_CAP);
+    TEST_CHECK(((cap >> 24) & 0xfff) == 0);                 /* 35:24 reserved */
+    TEST_CHECK((cap >> 51) == 0);                           /* 63:51 reserved */
+    TEST_CHECK(((cap >> 16) & 0xff) == 0);                  /* key sources: none reported */
+    TEST_CHECK((cap & 0xffff) == TSEFIX_ALG0);              /* exactly one algorithm */
+    max = (unsigned)(cap >> 36) & 0x7fff;
+    TEST_CHECK(max == 63);
+    pc_kps(&c, s0, max, 0, TSEFIX_ALG0, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    pc_kps(&c, s0, max + 1, 0, TSEFIX_ALG0, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+    tsefix_bind(&c, in, out);
+    TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | max, out, &rax, &fl) == -1);
+    TEST_CHECK(rax == 0);
+    TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | (max + 1), out, &rax, &fl) == 13);
+    TEST_CHECK(rax == 0xabcd000000000002ull);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1129: ENC_ALG one-hot and supported-bit rule (ISE -060 Table 2-3 p. 2-20 ENC_ALG = KEYID_CTRL
+ * bits 23:8 and Table 2-4 p. 2-21 ENC_ALG = RBX bits 39:24: "The leaf function causes a #GP if
+ * ENC_ALG does not set exactly one bit or if it sets a bit whose corresponding bit is not set in
+ * IA32_TSE_CAPABILITY"): for both leaves every single bit 0..15 (only the capability's bit 0
+ * passes), 0, bit 0 plus each other bit, FFFFh; for leaf 1 with both commands (the check does not
+ * depend on COMMAND). A #GP leaves RAX and the key table unchanged; leaf 2 rejects before reading
+ * the bind structure (unmapped RCX: #GP(0), no read fault).
+ */
+static void test_x86_tsefix_enc_alg(void)
+{
+    const uint64_t s0 = TS_DATA + 0x1000, in = TS_DATA + 0x2000, out = TS_DATA + 0x2100;
+    uint8_t k1[64], k2[64];
+    uint64_t rax, fl;
+    unsigned b, cmd, alg;
+    PcCtx c;
+
+    memset(k1, 0x33, sizeof(k1));
+    memset(k2, 0x44, sizeof(k2));
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    tsefix_bind(&c, in, out);
+    for (b = 0; b < 17; b++) {
+        /* b < 16: the single bit b; b = 16: no bit */
+        alg = b < 16 ? 1u << b : 0;
+        for (cmd = 0; cmd < 2; cmd++) {
+            pc_kps(&c, s0, 7, cmd, alg, k1, k2, 0);
+            TEST_CHECK(pc_pconfig(&c, 1, s0) == (alg == TSEFIX_ALG0 ? -1 : 13));
+            TEST_MSG("leaf 1 cmd %u ENC_ALG %04x", cmd, alg);
+        }
+        TEST_CHECK(ts_wrapped(&c, ((uint64_t)alg << 24) | 8, out, &rax, &fl) ==
+                   (alg == TSEFIX_ALG0 ? -1 : 13));
+        TEST_MSG("leaf 2 ENC_ALG %04x", alg);
+        if (alg != TSEFIX_ALG0) {
+            TEST_CHECK(ts_wrapped(&c, ((uint64_t)alg << 24) | 9, 0x500000, &rax, &fl) == 13);
+            TEST_CHECK(rax == 0xabcd000000000002ull);
+        }
+    }
+    /* two or more bits, the supported one among them: #GP(0) */
+    for (b = 1; b < 16; b++) {
+        alg = TSEFIX_ALG0 | (1u << b);
+        pc_kps(&c, s0, 10, 0, alg, k1, k2, 0);
+        TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+        TEST_CHECK(ts_wrapped(&c, ((uint64_t)alg << 24) | 10, out, &rax, &fl) == 13);
+        TEST_MSG("ENC_ALG %04x", alg);
+    }
+    pc_kps(&c, s0, 10, 0, 0xffff, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+    TEST_CHECK(ts_wrapped(&c, (0xffffull << 24) | 10, out, &rax, &fl) == 13);
+    TEST_CHECK(ts_key(&c, 10).mode == UC_X86_MKTME_TME);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1129: reserved and ignored fields (ISE -060 Table 2-3 p. 2-20: KEYID_CTRL bits 31:24 "Reserved,
+ * must be zero", bytes 6..63 "Not used"; Operation p. 2-25 "IF TMP_KEY_STRUCT.KEYID_CTRL sets any
+ * reserved bits THEN #GP(0)", "COMMAND > 1 THEN #GP(0)"; Table 2-4 p. 2-21: RBX bits 23:16
+ * "Reserved, must be zero" (#GP(0)), bits 63:40 "Not used"; Table 2-5 / Operation pp. 2-21, 2-27:
+ * bind structure bytes 23:16, 63:36 and BTDATA bytes 127:33 must be zero, KEY_GENERATION_CTRL > 1
+ * #GP(0)). Each reserved bit / byte alone gives #GP(0) with RAX and the table unchanged; the
+ * ignored ones change nothing; of each 64-byte key field only the algorithm's 32 bytes are used
+ * (SDM 092 Vol2B 4-274 NOTES: "uses the number of bytes required by the selected encryption
+ * algorithm (e.g., 32 bytes for AES-XTS 256) and ignores the upper bytes").
+ */
+static void test_x86_tsefix_reserved(void)
+{
+    const uint64_t s0 = TS_DATA + 0x1000, in = TS_DATA + 0x2000, out = TS_DATA + 0x2100;
+    uint8_t k1[64], k2[64], b[256], o[256];
+    uc_x86_mktme_key k;
+    uint64_t rax, fl;
+    uint32_t ctrl;
+    unsigned i;
+    PcCtx c;
+
+    for (i = 0; i < 64; i++) {
+        k1[i] = (uint8_t)(i + 0x10);
+        k2[i] = (uint8_t)(0xf0 - i);
+    }
+    ts_open(&c, UC_X86_FEATURE_TSE);
+    /* leaf 1: KEYID_CTRL bits 31:24, one at a time; COMMAND 2..255 (sampled) */
+    for (i = 24; i < 32; i++) {
+        pc_kps(&c, s0, 3, 0, TSEFIX_ALG0, k1, k2, 0);
+        ctrl = TSEFIX_ALG0 << 8 | (1u << i);
+        OK(uc_mem_write(c.uc, s0 + 2, &ctrl, 4));
+        TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+        TEST_MSG("KEYID_CTRL bit %u", i);
+    }
+    for (i = 2; i < 256; i += 23) {
+        pc_kps(&c, s0, 3, i, TSEFIX_ALG0, k1, k2, 0);
+        TEST_CHECK(pc_pconfig(&c, 1, s0) == 13);
+        TEST_MSG("COMMAND %u", i);
+    }
+    TEST_CHECK(ts_key(&c, 3).mode == UC_X86_MKTME_TME);
+    /* leaf 1: bytes 6..63 not used (fill FFh), key fields: 32 of 64 bytes used */
+    pc_kps(&c, s0, 3, 0, TSEFIX_ALG0, k1, k2, 0xff);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    k = ts_key(&c, 3);
+    TEST_CHECK(k.mode == UC_X86_MKTME_KEY && k.enc_alg == TSEFIX_ALG0);
+    TEST_CHECK(memcmp(k.data_key, k1, 32) == 0 && memcmp(k.tweak_key, k2, 32) == 0);
+    memset(k1 + 32, 0xa5, 32);
+    memset(k2 + 32, 0x5a, 32);
+    pc_kps(&c, s0, 4, 0, TSEFIX_ALG0, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 1, s0) == -1);
+    k = ts_key(&c, 4);
+    TEST_CHECK(memcmp(k.data_key, k1, 32) == 0 && memcmp(k.tweak_key, k2, 32) == 0);
+
+    /* leaf 2: RBX bits 23:16 one at a time (#GP before any read); bits 63:40 ignored */
+    tsefix_bind(&c, in, out);
+    for (i = 16; i < 24; i++) {
+        TEST_CHECK(ts_wrapped(&c, (1ull << i) | ((uint64_t)TSEFIX_ALG0 << 24) | 5, 0x500000,
+                              &rax, &fl) == 13);
+        TEST_CHECK(rax == 0xabcd000000000002ull);
+        TEST_MSG("RBX bit %u", i);
+    }
+    TEST_CHECK(ts_key(&c, 5).mode == UC_X86_MKTME_TME);
+    for (i = 40; i < 64; i++) {
+        TEST_CHECK(ts_wrapped(&c, (1ull << i) | ((uint64_t)TSEFIX_ALG0 << 24) | 5, out,
+                              &rax, &fl) == -1);
+        TEST_CHECK(rax == 0 && fl == 0x602);
+        TEST_MSG("RBX bit %u", i);
+    }
+    TEST_CHECK(ts_key(&c, 5).mode == UC_X86_MKTME_KEY);
+    /* leaf 2: RCX bits 7:0 (256-byte alignment) one at a time */
+    for (i = 0; i < 8; i++) {
+        TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | 6, out | (1ull << i), &rax,
+                              &fl) == 13);
+        TEST_MSG("RCX bit %u", i);
+    }
+    /* leaf 2: each reserved byte of the bind structure, KEY_GENERATION_CTRL 2..FFh */
+    OK(uc_mem_read(c.uc, out, o, sizeof(o)));
+    for (i = 16; i < 256; i++) {
+        if ((i >= 24 && i < 36) || (i >= 64 && i < 161)) {
+            continue;                       /* IV, BTENCDATA, challenge, KEY_GENERATION_CTRL */
+        }
+        memcpy(b, o, sizeof(b));
+        b[i] = 0x80;
+        OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+        TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | 6, out, &rax, &fl) == 13);
+        TEST_MSG("bind byte %u", i);
+    }
+    for (i = 2; i < 256; i += 51) {
+        memcpy(b, o, sizeof(b));
+        b[160] = (uint8_t)i;
+        OK(uc_mem_write(c.uc, out, b, sizeof(b)));
+        TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | 6, out, &rax, &fl) == 13);
+        TEST_MSG("KEY_GENERATION_CTRL %u", i);
+    }
+    TEST_CHECK(ts_key(&c, 6).mode == UC_X86_MKTME_TME);
+    OK(uc_mem_write(c.uc, out, o, sizeof(o)));
+    TEST_CHECK(ts_wrapped(&c, ((uint64_t)TSEFIX_ALG0 << 24) | 6, out, &rax, &fl) == -1);
+    TEST_CHECK(ts_key(&c, 6).mode == UC_X86_MKTME_KEY);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1129-U1149 (tsefix_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -27901,4 +28124,7 @@ TEST_LIST = {
     {"test_x86_tf32_optin", test_x86_tf32_optin},
     {"test_x86_tf32_exceptions", test_x86_tf32_exceptions},
     {"test_x86_tf32_values", test_x86_tf32_values},
+    {"test_x86_tsefix_cap_layout", test_x86_tsefix_cap_layout},
+    {"test_x86_tsefix_enc_alg", test_x86_tsefix_enc_alg},
+    {"test_x86_tsefix_reserved", test_x86_tsefix_reserved},
     {NULL, NULL}};
