@@ -29506,6 +29506,175 @@ static void test_x86_st_nx_fetch(void)
         OK(uc_close(r.uc));
     }
 }
+
+/*
+ * T-11 (U1224, tests only): translated code is never stale and the API never changes guest state. (a)-(c) the
+ * emulator API changes the bytes at an address that already ran (unmap + map + write, the decommit /
+ * recommit pattern of Pin's win_code_on_reused_memory.cpp; unmap + map_ptr of a new host buffer; a
+ * plain uc_mem_write): the new instruction runs. (d) / (e) guest self-modifying code by SDM 093 Vol3A
+ * 11.1.3 p. 11-5 OPTION 1 ("Store modified code (as data) into code segment; Jump to new code or an
+ * intermediate location; Execute new code") and OPTION 2 ("... Execute a serializing instruction;
+ * (* For example, CPUID instruction *) Execute new code"); 14.6 p. 14-18. (f) with paging: the PTE of
+ * a linear page that already ran is pointed at another physical page (by the host, as another agent
+ * would) and INVLPG / MOV CR3 invalidate the old translation (5.10.4.1 p. 5-48: INVLPG "invalidates any
+ * TLB entries that are for a page number corresponding to the linear address"; 11.3 p. 11-19: INVLPG,
+ * MOV to CR3 are serializing): the next fetch runs the new page. (g) / test_x86_st_unmap_paging:
+ * uc_mem_unmap / uc_mem_map of the physical page behind a linear page with paging on (memory_unmap
+ * hands the guest-physical range to uc_invalidate_tb, which translates a linear address; since U1222
+ * that lookup no longer raises a #PF, so CR2 stays): the new bytes run, a freed and reused RAM range
+ * included, and nothing reaches the released memory.
+ */
+#define ST_SMC 0x500000ULL
+#define ST_PTE(la) (0x404000 + (((la) - 0x200000) >> 12) * 8)
+
+static uint64_t st_run_eax(uc_engine *uc, uint64_t at, size_t len)
+{
+    uint64_t rax = 0;
+
+    OK(uc_reg_write(uc, UC_X86_REG_RAX, &rax));
+    OK(uc_emu_start(uc, at, at + len, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_RAX, &rax));
+    return rax;
+}
+
+static void test_x86_st_smc_remap(void)
+{
+    static uint8_t host[0x1000];
+    NvRun r;
+    uc_engine *uc;
+    uint64_t rax, cr2;
+    int i;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, ST_SMC, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, ST_SMC, "\xb8\x01\x00\x00\x00", 5));
+    for (i = 0; i < 3; i++) {     /* executed several times: translated and cached */
+        TEST_CHECK(st_run_eax(uc, ST_SMC, 5) == 1);
+    }
+    /* (a) unmap, map again, new bytes */
+    OK(uc_mem_unmap(uc, ST_SMC, 0x1000));
+    OK(uc_mem_map(uc, ST_SMC, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, ST_SMC, "\xb8\x02\x00\x00\x00", 5));
+    TEST_CHECK(st_run_eax(uc, ST_SMC, 5) == 2);
+    /* (b) unmap, map a different host buffer (no uc_mem_write) */
+    memset(host, 0x90, sizeof(host));
+    memcpy(host, "\xb8\x03\x00\x00\x00", 5);
+    OK(uc_mem_unmap(uc, ST_SMC, 0x1000));
+    OK(uc_mem_map_ptr(uc, ST_SMC, 0x1000, UC_PROT_ALL, host));
+    TEST_CHECK(st_run_eax(uc, ST_SMC, 5) == 3);
+    /* (c) a plain write over the cached code */
+    OK(uc_mem_write(uc, ST_SMC, "\xb8\x04\x00\x00\x00", 5));
+    TEST_CHECK(st_run_eax(uc, ST_SMC, 5) == 4);
+    /* (d) OPTION 1: MOV BYTE PTR [RIP+3], 5; JMP +0; MOV EAX, 1 (its imm8 is the patched byte) */
+    OK(uc_mem_write(uc, ST_SMC + 0x100, "\xc6\x05\x03\x00\x00\x00\x05\xeb\x00\xb8\x01\x00\x00\x00", 14));
+    TEST_CHECK(st_run_eax(uc, ST_SMC + 0x100, 14) == 5);
+    /* ... the original byte restored by the host: 1, then the guest patch again: 5 */
+    OK(uc_mem_write(uc, ST_SMC + 0x10a, "\x01", 1));
+    TEST_CHECK(st_run_eax(uc, ST_SMC + 0x109, 5) == 1);
+    TEST_CHECK(st_run_eax(uc, ST_SMC + 0x100, 14) == 5);
+    /* (e) OPTION 2: MOV BYTE PTR [RIP+5], 6; XOR EAX, EAX; CPUID; MOV EAX, 1 */
+    OK(uc_mem_write(uc, ST_SMC + 0x200, "\xc6\x05\x05\x00\x00\x00\x06\x31\xc0\x0f\xa2\xb8\x01\x00\x00\x00", 16));
+    TEST_CHECK(st_run_eax(uc, ST_SMC + 0x200, 16) == 6);
+    OK(uc_close(uc));
+
+    /* (f) paging: linear 309000h -> physical 307000h (MOV EAX, 7; RET), then 308000h (MOV EAX, 8) */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    OK(uc_mem_map(r.uc, 0x307000, 0x2000, UC_PROT_ALL));
+    OK(uc_mem_write(r.uc, 0x307000, "\xb8\x07\x00\x00\x00\xc3", 6));
+    OK(uc_mem_write(r.uc, 0x308000, "\xb8\x08\x00\x00\x00\xc3", 6));
+    nv_st64(&r, ST_PTE(0x309000), 0x307000 | 7);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_RCX, 0x309000);
+    /* CALL RCX twice (translated, TLB filled) */
+    OK(nv_run(&r, "\xff\xd1\xff\xd1"));
+    rax = nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(r.cap.count == 0 && rax == 7);
+    TEST_MSG("first: count %u vector %u RAX %" PRIx64, r.cap.count, r.cap.intno, rax);
+    /* the PTE now names 308000h; INVLPG [RCX]; CALL RCX */
+    nv_st64(&r, ST_PTE(0x309000), 0x308000 | 7);
+    OK(nv_run(&r, "\x0f\x01\x39\xff\xd1"));
+    rax = nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(r.cap.count == 0 && rax == 8);
+    TEST_MSG("INVLPG: count %u vector %u RAX %" PRIx64, r.cap.count, r.cap.intno, rax);
+    /* back to 307000h, MOV RAX, CR3; MOV CR3, RAX; CALL RCX */
+    nv_st64(&r, ST_PTE(0x309000), 0x307000 | 7);
+    OK(nv_run(&r, "\x0f\x20\xd8\x0f\x22\xd8\xff\xd1"));
+    rax = nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(r.cap.count == 0 && rax == 7);
+    TEST_MSG("MOV CR3: count %u vector %u RAX %" PRIx64, r.cap.count, r.cap.intno, rax);
+    /* (g) paging stays on; the physical page 307000h behind linear 309000h is unmapped and mapped again
+       with new bytes by the API (no guest store, no INVLPG): the next fetch through the unchanged
+       translation runs the new bytes; the API leaves CR2 alone (linear 307000h is not mapped here) */
+    for (i = 9; i < 13; i++) {   /* repeated: a freed RAM range is handed out again */
+        char code[6] = {(char)0xb8, 0, 0, 0, 0, (char)0xc3};
+
+        code[1] = (char)i;
+        nv_set(&r, UC_X86_REG_CR2, 0x1234);
+        OK(uc_mem_unmap(r.uc, 0x307000, 0x1000));
+        OK(uc_mem_map(r.uc, 0x307000, 0x1000, UC_PROT_ALL));
+        OK(uc_mem_write(r.uc, 0x307000, code, 6));
+        cr2 = nv_get(&r, UC_X86_REG_CR2);
+        TEST_CHECK(cr2 == 0x1234);
+        TEST_MSG("CR2 after unmap / map: %" PRIx64, cr2);
+        OK(nv_run(&r, "\xff\xd1"));
+        rax = nv_get(&r, UC_X86_REG_RAX);
+        TEST_CHECK(r.cap.count == 0 && rax == (uint64_t)i);
+        TEST_MSG("remap %d under paging: count %u vector %u RAX %" PRIx64, i, r.cap.count,
+                 r.cap.intno, rax);
+    }
+    OK(uc_close(r.uc));
+}
+
+/*
+ * T-11 (U1224, tests only): after uc_mem_unmap of a physical page that a linear page still maps (paging on, no
+ * INVLPG), a read or fetch through that linear page finds no memory - the same result as for a
+ * translation to a physical address that was never mapped (the control, linear 30A000h -> physical
+ * 30B000h) - and never the released memory through a stale TLB entry or stale translated code.
+ */
+static void test_x86_st_unmap_paging(void)
+{
+    NvRun r;
+    uc_err e_rd, e_fx, err;
+    uint64_t rax, rbx;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    OK(uc_mem_map(r.uc, 0x307000, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(r.uc, 0x307000, "\xb8\x07\x00\x00\x00\xc3", 6));
+    nv_st64(&r, 0x307800, 0x1122334455667788ull);
+    nv_st64(&r, ST_PTE(0x309000), 0x307000 | 7);
+    nv_st64(&r, ST_PTE(0x30a000), 0x30b000 | 7);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    /* the control: no memory behind the translation */
+    nv_set(&r, UC_X86_REG_RDX, 0x30a800);
+    e_rd = nv_run(&r, "\x48\x8b\x1a");
+    nv_set(&r, UC_X86_REG_RCX, 0x30a000);
+    e_fx = nv_run(&r, "\xff\xd1");
+    TEST_CHECK(e_rd != UC_ERR_OK && e_fx != UC_ERR_OK);
+    TEST_MSG("control: read %u (%s), fetch %u (%s)", e_rd, uc_strerror(e_rd), e_fx, uc_strerror(e_fx));
+    /* fetch and read through linear 309000h (TLB filled, block translated) */
+    nv_set(&r, UC_X86_REG_RCX, 0x309000);
+    nv_set(&r, UC_X86_REG_RDX, 0x309800);
+    OK(nv_run(&r, "\xff\xd1\x48\x8b\x1a"));
+    rax = nv_get(&r, UC_X86_REG_RAX);
+    rbx = nv_get(&r, UC_X86_REG_RBX);
+    TEST_CHECK(r.cap.count == 0 && rax == 7 && rbx == 0x1122334455667788ull);
+    /* unmap the physical page only */
+    OK(uc_mem_unmap(r.uc, 0x307000, 0x1000));
+    nv_set(&r, UC_X86_REG_RBX, 0);
+    err = nv_run(&r, "\x48\x8b\x1a");
+    rbx = nv_get(&r, UC_X86_REG_RBX);
+    TEST_CHECK(err == e_rd && rbx == 0);
+    TEST_MSG("read after unmap: %u (%s), RBX %" PRIx64 " (expected %u)", err, uc_strerror(err), rbx, e_rd);
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    err = nv_run(&r, "\xff\xd1");
+    rax = nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(err == e_fx && rax == 0);
+    TEST_MSG("fetch after unmap: %u (%s), RAX %" PRIx64 " (expected %u)", err, uc_strerror(err), rax, e_fx);
+    OK(uc_close(r.uc));
+}
 /* ---- end U1220-U1239 (st_) ---- */
 
 TEST_LIST = {
@@ -29898,4 +30067,6 @@ TEST_LIST = {
     {"test_x86_fl_eret_legacy", test_x86_fl_eret_legacy},
     {"test_x86_st_xsetbv_profile", test_x86_st_xsetbv_profile},
     {"test_x86_st_nx_fetch", test_x86_st_nx_fetch},
+    {"test_x86_st_smc_remap", test_x86_st_smc_remap},
+    {"test_x86_st_unmap_paging", test_x86_st_unmap_paging},
     {NULL, NULL}};
