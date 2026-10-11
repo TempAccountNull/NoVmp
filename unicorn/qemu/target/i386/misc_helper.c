@@ -1473,7 +1473,7 @@ static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t v
  */
 /*
  * U1129: the opt-in value keeps the architectural layout (ISE 319433-060 6.2.2 Table 6-1 p. 6-2,
- * SDM 092 Vol4 9F1H p. 2-69): reserved bits 35:24 and 63:51 zero, exactly one algorithm bit in
+ * SDM 092/093 Vol4 9F1H p. 2-69): reserved bits 35:24 and 63:51 zero, exactly one algorithm bit in
  * 15:0, no key source in 23:16 (no encoding is defined), TSE_MAX_KEYS within 50:36.
  */
 typedef char novmp_tse_cap_rsvd_35_24[((NOVMP_TSE_CAPABILITY >> 24) & 0xfff) == 0 ? 1 : -1];
@@ -4038,7 +4038,8 @@ static int pconfig_popcount16(uint32_t v)
 
 /*
  * NoVmp (ledger U1120, U1129): PCONFIG leaves 1 TSE_KEY_PROGRAM and 2 TSE_KEY_PROGRAM_WRAPPED,
- * SDM 325462-092 Vol2B 4-273..4-281 (Tables 4-17 / 4-18, Operation 4-278 / 4-279) and ISE
+ * SDM 092 / 093 Vol2B 4-273..4-281 (Tables 4-17 / 4-18, Operation 4-278 / 4-279; 093 unchanged,
+ * U1130) and ISE
  * 319433-060 chapter 2 PCONFIG (Table 2-3 "TSE_KEY_PROGRAM_STRUCT Format" p. 2-20, Table 2-4
  * "TSE_KEY_PROGRAM_WRAPPED Control Input" p. 2-21, Operation pp. 2-25..2-27; the same rules), in
  * the pseudocode's order:

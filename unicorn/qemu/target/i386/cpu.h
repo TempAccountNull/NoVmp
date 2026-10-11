@@ -452,13 +452,13 @@ typedef struct X86MktmeKey {
 #endif /* __Use_Original_Qemu (U1021) */
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
 /*
- * NoVmp (ledger U1120, U1129): the model's IA32_TSE_CAPABILITY (9F1H) with UC_X86_FEATURE_TSE.
- * Layout (architecture): ISE 319433-060 6.2.2 Table 6-1 p. 6-2 and SDM 325462-092 Vol4 9F1H
+ * NoVmp (ledger U1120, U1129, U1130): the model's IA32_TSE_CAPABILITY (9F1H), UC_X86_FEATURE_TSE.
+ * Layout (architecture): ISE 319433-060 6.2.2 Table 6-1 p. 6-2 and SDM 092 / 093 Vol4 9F1H
  * p. 2-69 - 15:0 supported encryption algorithms (bitmap), 23:16 TSE engine key sources supported,
  * 35:24 reserved, 50:36 TSE_MAX_KEYS, 63:51 reserved. Bit 0 = 256-bit AES-XTS: ISE -060 6.2.2
  * p. 6-2 ("As of this writing, the only supported algorithm is 256-bit AES-XTS, which is
  * enumerated by setting bit 0"; also -051..-058); ISE -062 dropped the TSE chapter (revision -061,
- * p. vi: "can be found in the SDM") and SDM 092 Vol4 gives no bit meanings. The VALUES are our
+ * p. vi: "can be found in the SDM") and SDM 092/093 Vol4 give no bit meanings. The VALUES are our
  * implementation choice, not architecture (a platform reports its own): bit 0 only; key sources
  * 0 (the manuals define the field but no encoding, and no instruction field selects a key
  * source); TSE_MAX_KEYS 63 (the PCONFIG pseudocode accepts KeyIDs 0..TSE_MAX_KEYS - 64 table

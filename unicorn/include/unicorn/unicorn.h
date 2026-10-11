@@ -877,7 +877,7 @@ typedef enum uc_control_type {
     // (Total Storage Encryption, SDM 092 Vol2B PCONFIG / Vol4 9F1H): IA32_TSE_CAPABILITY reads
     // 0000_03F0_0000_0001H - a model value, not architecture (NoVmp U1129): bit 0 = the one
     // encryption algorithm, 256-bit AES-XTS per ISE 319433-060 6.2.2 Table 6-1 p. 6-2 (the layout
-    // is also SDM 092 Vol4 9F1H; ISE -062 / SDM 092 name no bit meanings); key sources 23:16 = 0
+    // is also SDM 092/093 Vol4 9F1H; ISE -062 / SDM 092/093 name no bit meanings); key sources 23:16 = 0
     // (no encoding is defined); TSE_MAX_KEYS 50:36 = 63; reserved 35:24 / 63:51 = 0) and PCONFIG
     // leaves 1 (TSE_KEY_PROGRAM) and 2 (TSE_KEY_PROGRAM_WRAPPED, the
     // unwrap of a PBNDKB bind structure with the model's platform key) program the TSE key
