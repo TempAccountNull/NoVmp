@@ -249,7 +249,30 @@ SDE lanes - the source of SDE's 15-17 significant bits).
   (verified_forms.tsv 5th column, U1244). Never hardware-validated: the i5-13600K has no AVX-512.
 - `Emulator/tools/isa/rcp_exhaustive.c` checks the correctly rounded stand-in: since U1245 its VRCP14 /
   VRSQRT14 sweeps report the reference's (expected) differences; it remains valid for FP16 / BF16.
-- AVX512ER (VRCP28*, VRSQRT28*, VEXP2*, U994): not adopted yet; Intel's RECIP28EXP2.c returns +0 for VEXP2PD
-  inputs in [1024 - 2^-25, 1024) (0x408FFFFFFFFC0000 .. 0x408FFFFFFFFFFFFF, a signed overflow of its scale),
-  outside the documented 2^-23 bound; the architecturally required result there is an open question for
-  the user (AMB-2 report 2026-10-11).
+- AVX512ER (VRCP28*, VRSQRT28*, VEXP2*, U994): adopted in U1247, section 10.
+
+## 10. AVX512ER VRCP28* / VRSQRT28* / VEXP2*: Intel's reference implementation adopted (U1247, U1248)
+
+User decisions 2026-10-11 (VRCP28PS/PD/SS/SD, VRSQRT28PS/PD/SS/SD, VEXP2PS/PD; ledger U994 for the forms).
+
+- Code: `unicorn/qemu/target/i386/intel_recip28exp2.c.inc` = Intel's RECIP28EXP2.c (article 671685, SHA-256
+  20e14b1a...27ba1) without its usage examples and typedefs, Intel's BSD-3 notice verbatim, provenance
+  block; `evex_er` (fpu_helper.c, `ours (U1247)`) runs RCP28S/D, RSQRT28S/D, EXP2S/D with the host MXCSR at
+  1F80H and raises their returned flags (invalid, divide-by-zero, overflow) in the guest MXCSR. Not built with
+  `__Use_Original_Qemu=1`. It replaces the U994 correctly rounded stand-in (still the documented model of
+  ref_xeonphi.py's selftest).
+- SDM gap, our choice (user decision 2026-10-11): VEXP2PD of x in [1024 - 2^-25, 1024) returns
+  0x7FEFFFFFE0000000 without a flag; the reference returns +0 there (a signed overflow of `tmp.u << 29`,
+  outside the documented 2^-23 bound; docs/quirks.md has the measured table). 1024 and above: +INF with
+  Overflow, as the reference.
+- Validation against Intel's original file (AMB-2 harness, amb2ref_new.exe vs amb2ref.exe): VRCP28PS,
+  VRSQRT28PS and VEXP2PS on every one of the 2^32 FP32 inputs - 0 differing, special-case lanes identical, the
+  MXCSR flags equal in all 268,435,456 vectors each; FP32 stratified 1,253,376 and FP64 stratified 10,027,008
+  inputs x MXCSR 1F80 / 9FC0 / 7F80 (DAZ / FTZ / RC must not matter) - 0 differing except the 2 VEXP2PD
+  SDM-gap inputs of the sample; no NoVmp or reference result outside the documented bounds (worst: RCP28PS
+  2^-23.98, RSQRT28PS 2^-23.97, VEXP2PS 2^-23.31, RCP28PD 2^-28.38, RSQRT28PD 2^-28.82, VEXP2PD 2^-23.33).
+  Intel SDE does not run AVX512ER: no SDE evidence. test.cmd: cases_xeonphi (expected values = the original
+  reference's output, `Emulator/data/intel_ref28_values.txt` via `intel_ref28.py`), cases_xeonphi_off, unit
+  tests test_x86_xp_er and test_x86_amb2_exp2d_gap.
+- Labels: status **documented compliance**, evidence label **reference-matched (Intel reference)**
+  (`reference-matched-intel`), never "+ SDE", never hardware-validated.

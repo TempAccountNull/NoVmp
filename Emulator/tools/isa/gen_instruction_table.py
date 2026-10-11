@@ -161,6 +161,11 @@ EVIDENCE_LABELS = {
                    'not bit-exact on SDE alone)',
     'reference-matched': 'reference-matched (bit-identical to Intel\'s published reference implementation, article '
                          '671685, on every tested input, and to Intel SDE; not hardware-validated)',
+    # U1248: the Intel reference alone (Intel SDE does not run these forms, e.g. AVX512ER)
+    'reference-matched-intel': 'reference-matched (Intel reference): bit-identical to Intel\'s published reference '
+                               'implementation, article 671685, on every tested input except the documented '
+                               'SDM-wins / SDM-gap inputs named in the note; Intel SDE does not run these forms; '
+                               'not hardware-validated)',
 }
 
 # U790: sweep/rule kinds whose ⏳ a verified_forms row may replace (the row proves that open item)
