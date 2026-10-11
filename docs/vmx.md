@@ -111,11 +111,11 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 6 - EPT, VPID
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| EPTP format and checks, 4- and 5-level EPT walks, 1-GByte / 2-MByte pages, execute-only, mode-based execute control | Vol3C 27.6.11 p. 27-17; 31.3.2 pp. 31-3 to 31-10 | `excp_helper.c` get_hphys -> vmx_ept_translate | planned |
-| EPT misconfigurations / violations, qualification, guest-linear / guest-physical address, prioritization | Vol3C 31.3.3 pp. 31-10 to 31-16; 30.2.1 Table 30-7 | vmx_ept_translate | planned |
-| EPT accessed / dirty flags | Vol3C 31.3.5 pp. 31-18 / 31-19 | vmx_ept_translate | planned |
-| guest PDPTEs with EPT (PAE paging) | Vol3C 29.3.1.6, 29.3.2.4; 28.3 MOV to CR3 | vmx_load_guest, helper_write_crN | planned |
-| VPID / INVVPID / INVEPT and the TLB: the model caches no translation across a VM entry, a VM exit, an INVEPT or an INVVPID (the whole TLB is flushed), which every invalidation rule allows | Vol3C 31.1 p. 31-1; 31.4 pp. 31-20 to 31-26 | vmx_flush | planned |
+| EPTP format and checks, 4- and 5-level EPT walks, 1-GByte / 2-MByte pages, execute-only, mode-based execute control | Vol3C 27.6.11 p. 27-17; 31.3.2 pp. 31-3 to 31-10 | `excp_helper.c` get_hphys -> x86_vmx_ept_translate | done (U1306) |
+| EPT misconfigurations / violations, qualification, guest-linear / guest-physical address, prioritization | Vol3C 31.3.3 pp. 31-10 to 31-16; 30.2.1 Table 30-7 | x86_vmx_ept_translate | done (U1306) |
+| EPT accessed / dirty flags | Vol3C 31.3.5 pp. 31-18 / 31-19 | x86_vmx_ept_translate | done (U1306) |
+| guest PDPTEs with EPT (PAE paging) | Vol3C 29.3.1.6, 29.3.2.4; 28.3 MOV to CR3; 30.3.4 | vmx_load_guest, vmx_save_guest, helper_write_crN -> x86_vmx_pdpte_load | done (U1306) |
+| VPID / INVVPID / INVEPT and the TLB: the model caches no translation across a VM entry, a VM exit, an INVEPT or an INVVPID (the whole TLB is flushed), which every invalidation rule allows | Vol3C 31.1 p. 31-1; 31.4 pp. 31-20 to 31-26 | VM entry / exit, helper_invept, helper_vmfunc: tlb_flush | done (U1302-U1306) |
 
 ### Stage 7 - APIC virtualization (local APIC model, `docs/apic.md`)
 | requirement | SDM 092 | code | status |
@@ -273,3 +273,30 @@ translator and passed to the helpers.
 - HLT: the VMX events that end the HLT state at once (pending MTF, an expired timer, NMI window,
   interrupt window) exit from HLT with activity state HLT and RIP after the HLT. Otherwise HLT ends the
   emulation run as outside VMX operation (Unicorn has no wake-up source while halted).
+
+### EPT (U1306)
+- With "enable EPT" every guest-physical address of VMX non-root operation goes through
+  x86_vmx_ept_translate (QEMU's get_hphys hook, the place of SVM's nested paging): a 4- or 5-level walk
+  (EPTP[5:3]; with 4 levels a guest-physical address above bit 47 is an EPT violation), 1-GByte and
+  2-MByte pages, execute-only entries (no misconfiguration for X without R), mode-based execute control
+  (bit 10 executes user-mode linear addresses; an entry is present with bit 10 alone), the EPT A/D flags
+  (EPTP[6]: A in every entry used, D in the entry that maps a page written; guest paging-structure
+  accesses are then writes). Misconfigurations: W without R, reserved bits (the address bits from
+  MAXPHYADDR, bits 7:3 / 6:3 of non-leaf entries, the address bits below a large page), memory types 2, 3,
+  7. Violations: not present, or the access not allowed by the AND of the entries.
+- The EPT-violation qualification (Table 30-7): access type (paging-structure accesses are reads, with
+  EPT A/D flags reads and writes), the R / W / X (and with MBEC the user-execute) permissions (0 when an
+  entry is not present), guest-linear address valid (not for PDPTE loads), translation of the linear
+  address (bit 8) vs. a paging-structure access, and - advanced information, EPT_VPID_CAP bit 22 - user
+  / read-write / execute-disable of the linear address (bits 9-11), NMI unblocking due to IRET (bit 12).
+  The guest-physical and guest-linear address fields; RFLAGS.RF is saved as 1 outside event delivery.
+- The EPT translation is folded into the model's TLB entries (the permissions narrow the entry); VM entry,
+  VM exit, INVEPT, INVVPID and VMFUNC EPTP switching flush the whole TLB, which every invalidation rule
+  of 31.4 allows.
+- PAE paging with EPT keeps the PDPTE registers: VM entry loads them from the guest PDPTE fields, MOV to
+  CR0 / CR3 / CR4 loads them through EPT as Vol3A 5.4.1 says (a present PDPTE with a reserved bit is
+  #GP(0) before the register changes), the PAE page walk uses them, VM exits save them.
+- Not modelled: the guest paging-structure A / D writes of the model's page walk are not checked against
+  the EPT write permission (the walk checks each paging-structure access as a read, or as a write with
+  EPT A/D flags); page-modification logging, sub-page write permissions, EPT-violation #VE, supervisor
+  shadow-stack control, guest-paging verification are not offered by the capability set.

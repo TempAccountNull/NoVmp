@@ -216,6 +216,9 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
 #endif /* __Use_Original_Qemu (U1302) */
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+        x86_vmx_pdpte_load(env, 0, (uint32_t)t0, GETPC());    /* EPT: PDPTEs (Vol3A 5.4.1) */
+#endif /* __Use_Original_Qemu (U1306) */
         cpu_x86_update_cr0(env, (uint32_t)t0);
         break;
     case 3:
@@ -250,6 +253,9 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         if (!(env->efer & MSR_EFER_LMA)) {
             t0 &= 0xffffffffUL;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+        x86_vmx_pdpte_load(env, 3, t0, GETPC());              /* EPT: PDPTEs (Vol3A 5.4.1) */
+#endif /* __Use_Original_Qemu (U1306) */
         cpu_x86_update_cr3(env, t0);
         break;
     case 4:
@@ -294,6 +300,7 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
          * refused it without FRED). Outside 64-bit mode the operand is 32 bits wide, so MOV to CR4
          * there clears CR4[63:32] (SDM 092 Vol3A 8.2.2).
          */
+        x86_vmx_pdpte_load(env, 4, t0, GETPC());              /* U1306: EPT PDPTEs (5.4.1) */
         cpu_x86_update_cr4(env, t0);
 #endif /* __Use_Original_Qemu (U1170) */
         break;

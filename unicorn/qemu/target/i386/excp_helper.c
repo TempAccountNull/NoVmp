@@ -321,6 +321,12 @@ static hwaddr get_hphys(CPUState *cs, hwaddr gphys, MMUAccessType access_type,
     uint32_t page_offset;
     int page_size;
 
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+    /* VMX non-root operation with "enable EPT": the EPT walk (vmx_helper.c, Vol3C 31.3) */
+    if (env->vmx.nonroot && (env->vmx.proc2 & (1u << 1))) {
+        return x86_vmx_ept_translate(env, gphys, access_type, prot, prot ? 0 : 1);
+    }
+#endif /* __Use_Original_Qemu (U1306) */
     if (likely(!(env->hflags2 & HF2_NPT_MASK))) {
         return gphys;
     }
@@ -571,6 +577,11 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
         addr = x86_lam_mask(env, addr);
     }
 #endif /* __Use_Original_Qemu (U1180) */
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+    /* EPT: the linear address of the walk; without paging every address is user-mode, R/W */
+    env->vmx.ept_gla = addr;
+    env->vmx.ept_lattr = 3;
+#endif /* __Use_Original_Qemu (U1306) */
 
     a20_mask = x86_get_a20_mask(env);
     if (!(env->cr[0] & CR0_PG_MASK)) {
@@ -706,8 +717,16 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
             /* XXX: load them when cr3 is loaded ? */
             pdpe_addr = ((env->cr[3] & 0xffffffe0ULL /* U495 */) + ((addr >> 27) & 0x18)) &
                 a20_mask;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1306) */
             pdpe_addr = get_hphys(cs, pdpe_addr, MMU_DATA_STORE, false);
             pdpe = x86_ldq_phys(cs, pdpe_addr);
+#else /* ours (U1306) */
+            /* PAE paging with EPT in VMX non-root operation: the PDPTE registers (Vol3A 5.4.1) */
+            if (!x86_vmx_pdpte(env, (int)((addr >> 30) & 3), &pdpe)) {
+                pdpe_addr = get_hphys(cs, pdpe_addr, MMU_DATA_STORE, false);
+                pdpe = x86_ldq_phys(cs, pdpe_addr);
+            }
+#endif /* __Use_Original_Qemu (U1306) */
             if (!(pdpe & PG_PRESENT_MASK)) {
                 goto do_fault;
             }
@@ -908,6 +927,10 @@ do_check_protect_pse36:
         assert(!is_write);
         prot &= ~PAGE_WRITE;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+    env->vmx.ept_lattr = ((ptep & PG_USER_MASK) ? 1 : 0) | ((ptep & PG_RW_MASK) ? 2 : 0) |
+                         ((ptep & PG_NX_MASK) ? 4 : 0);
+#endif /* __Use_Original_Qemu (U1306) */
 
  do_mapping:
 

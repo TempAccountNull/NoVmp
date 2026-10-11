@@ -1209,6 +1209,7 @@ typedef struct VmxExit {
     bool gla_valid, gpa_valid, len_valid, info_valid;
     bool rf_zero;               /* RFLAGS.RF saved as 0 (instruction exits, 30.3.3) */
     bool block_nmi;             /* U1305: a VM exit caused by an NMI blocks NMIs (30.5) */
+    bool rf_one;                /* U1306: RFLAGS.RF saved as 1 (EPT exits outside delivery, 30.3.3) */
 } VmxExit;
 
 static void vmx_exit_init(VmxExit *e, uint32_t reason, uint64_t qual)
@@ -2058,6 +2059,15 @@ static void vmx_load_guest(CPUX86State *env)
     } else {
         env->hflags2 &= ~HF2_NMI_MASK;
     }
+    /* U1306: PAE paging with EPT: the PDPTE registers from the guest PDPTE fields (29.3.2.4) */
+    env->vmx.pdpte_valid = 0;
+    if ((env->vmx.proc2 & PROC2_EPT) && (env->cr[0] & CR0_PG_MASK) &&
+        (env->cr[4] & CR4_PAE_MASK) && !(env->efer & MSR_EFER_LMA)) {
+        for (i = 0; i < 4; i++) {
+            env->vmx.pdpte[i] = vmcs_get(env, VMCS_GUEST_PDPTE0 + 2 * i);
+        }
+        env->vmx.pdpte_valid = 1;
+    }
 }
 
 /* 29.4 / 30.6: load the MSRs of an MSR-load area; 0 = success, else the failing entry (1-based) */
@@ -2274,6 +2284,9 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     if (e->rf_zero) {
         rflags &= ~(uint64_t)RF_MASK;
     }
+    if (e->rf_one) {
+        rflags |= RF_MASK;
+    }
     vmcs_put(env, VMCS_GUEST_RFLAGS, rflags);
     /* 30.3.4 non-register state */
     if ((env_cpu(env)->halted && !env->vmx.mwait_wait) || env->vmx.hlt_wake) {
@@ -2293,6 +2306,13 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     vmcs_put(env, VMCS_GUEST_PENDING_DBG, 0);
     if (exit & EXIT_SAVE_TIMER) {
         vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
+    }
+    /* U1306: EPT with PAE paging: the PDPTE registers in use (30.3.4) */
+    if ((env->vmx.proc2 & PROC2_EPT) && env->vmx.pdpte_valid && (env->cr[0] & CR0_PG_MASK) &&
+        (env->cr[4] & CR4_PAE_MASK) && !(env->efer & MSR_EFER_LMA)) {
+        for (i = 0; i < 4; i++) {
+            vmcs_put(env, VMCS_GUEST_PDPTE0 + 2 * i, env->vmx.pdpte[i]);
+        }
     }
 }
 
@@ -3404,6 +3424,210 @@ void x86_vmx_hlt(CPUX86State *env)
         vmx_vmexit(env, &e);
     }
     env->vmx.hlt_wake = 0;
+}
+
+/*
+ * ---- U1306: EPT (Vol3C 31.3 pp. 31-2 to 31-19; exit qualification Table 30-7) ----
+ * Guest-physical addresses of VMX non-root operation with "enable EPT" are translated by a 4- or
+ * 5-level EPT walk (EPTP bits 5:3), with 1-GByte / 2-MByte pages, execute-only entries (EPT_VPID_CAP
+ * bit 0), mode-based execute control (bit 10 = execute for user-mode linear addresses) and EPT
+ * accessed / dirty flags (EPTP bit 6). The guest paging-structure accesses of a linear-address
+ * translation are reads (writes with EPT A/D flags, 31.3.3.2); the final access is the instruction's.
+ */
+#define EXIT_REASON_EPT_VIOLATION   48
+#define EXIT_REASON_EPT_MISCONFIG   49
+#define EPT_ADDR_MASK               0x000ffffffffff000ull
+
+/*
+ * Translates gpa for access_type (MMU_DATA_LOAD / STORE / INST_FETCH). kind: 0 the access of a
+ * linear address itself (*prot narrowed by the EPT permissions), 1 a guest paging-structure entry,
+ * 2 a PDPTE load by MOV to CR (a read without a guest-linear address, 31.3.3.2, Table 30-7 bit 7).
+ * Returns the physical address; an EPT violation / misconfiguration is a VM exit.
+ */
+hwaddr x86_vmx_ept_translate(CPUX86State *env, uint64_t gpa, int access_type, int *prot, int kind)
+{
+    X86VmxState *v = &env->vmx;
+    CPUState *cs = env_cpu(env);
+    uint64_t eptp = v->eptp, table, e = 0, ea, perm = 0x407, rsvd, size = 0;
+    int levels = (int)((eptp >> 3) & 7) + 1, l, m = vmx_maxphyaddr(env);
+    bool ad = (eptp >> 6) & 1, mbec = (v->proc2 & PROC2_MBEC) != 0, final = kind == 0;
+    bool write, fetch, present_all = true, ok;
+    uint32_t user_la = v->ept_lattr & 1;
+    VmxExit x;
+
+    write = access_type == MMU_DATA_STORE;
+    fetch = access_type == MMU_INST_FETCH;
+    if (!final) {
+        /* guest paging-structure accesses: writes with EPT A/D flags; PDPTE loads: reads */
+        write = kind == 1 && ad;
+        fetch = false;
+    }
+    rsvd = EPT_ADDR_MASK & ~((1ull << m) - 1);
+    table = eptp & EPT_ADDR_MASK;
+    if (levels == 4 && (gpa >> 48)) {
+        present_all = false;
+        goto violation;
+    }
+    for (l = levels; l >= 1; l--) {
+        int shift = 12 + 9 * (l - 1);
+        bool leaf;
+
+        ea = table + ((gpa >> shift) & 0x1ff) * 8;
+        e = x86_ldq_phys(cs, ea);
+        if (!(e & 7) && !(mbec && (e & (1ull << 10)))) {
+            present_all = false;
+            goto violation;
+        }
+        leaf = l == 1 || ((l == 2 || l == 3) && (e & (1ull << 7)));
+        /* 31.3.3.1: write without read, reserved bits, reserved memory types */
+        if ((!(e & 1) && (e & 2)) || (e & rsvd)) {
+            goto misconfig;
+        }
+        if (!leaf && (e & (l >= 4 ? 0xf8ull : 0x78ull))) {
+            goto misconfig;
+        }
+        if (leaf && l > 1 && (e & ((1ull << shift) - 1) & EPT_ADDR_MASK)) {
+            goto misconfig;
+        }
+        if (leaf) {
+            uint64_t mt = (e >> 3) & 7;
+
+            if (mt == 2 || mt == 3 || mt == 7) {
+                goto misconfig;
+            }
+        }
+        perm &= e;
+        if (ad && !(e & (1ull << 8))) {
+            e |= 1ull << 8;
+            x86_stq_phys(cs, ea, e);
+        }
+        if (leaf) {
+            size = 1ull << shift;
+            break;
+        }
+        table = e & EPT_ADDR_MASK;
+    }
+    /* 31.3.3.2: the privileges of the access */
+    ok = true;
+    if (fetch) {
+        ok = (mbec && user_la) ? (perm >> 10) & 1 : (perm >> 2) & 1;
+    } else {
+        ok = (perm & 1) != 0;
+        if (write && !(perm & 2)) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        goto violation;
+    }
+    if (ad && write && !(e & (1ull << 9))) {
+        e |= 1ull << 9;
+        x86_stq_phys(cs, ea, e);
+    }
+    if (final && prot) {
+        if (!(perm & 1)) {
+            *prot &= ~PAGE_READ;
+        }
+        if (!(perm & 2)) {
+            *prot &= ~PAGE_WRITE;
+        }
+        if (!((mbec && user_la) ? (perm >> 10) & 1 : (perm >> 2) & 1)) {
+            *prot &= ~PAGE_EXEC;
+        }
+    }
+    return (e & EPT_ADDR_MASK & ~(size - 1)) | (gpa & (size - 1));
+
+violation:
+    if (env->retaddr) {
+        cpu_restore_state(cs, env->retaddr, true);
+    }
+    vmx_exit_init(&x, EXIT_REASON_EPT_VIOLATION, 0);
+    x.qual = (access_type == MMU_INST_FETCH && final) ? 4 : (write ? (kind == 1 ? 3 : 2) : 1);
+    if (present_all) {
+        x.qual |= (perm & 7) << 3;
+        if (mbec) {
+            x.qual |= ((perm >> 10) & 1) << 6;
+        }
+    }
+    if (kind != 2) {
+        x.qual |= 1u << 7;                          /* guest-linear address valid */
+        x.gla_valid = true;
+        x.gla = vmx_la_trunc(env, v->ept_gla);
+    }
+    if (final) {
+        x.qual |= 1u << 8;
+        x.qual |= (uint64_t)(v->ept_lattr & 7) << 9;    /* user, read/write, execute-disable */
+    }
+    if (v->iret_nmi && !v->delivering) {
+        x.qual |= 1u << 12;
+    }
+    v->iret_nmi = 0;
+    x.gpa_valid = true;
+    x.gpa = gpa;
+    x.rf_one = !v->delivering;
+    vmx_vmexit(env, &x);
+
+misconfig:
+    if (env->retaddr) {
+        cpu_restore_state(cs, env->retaddr, true);
+    }
+    vmx_exit_init(&x, EXIT_REASON_EPT_MISCONFIG, 0);
+    x.gpa_valid = true;
+    x.gpa = gpa;
+    x.rf_one = !v->delivering;
+    vmx_vmexit(env, &x);
+}
+
+/* the PDPTE registers of PAE paging with EPT (Vol3A 5.4.1): true with *pdpte = PDPTE i */
+bool x86_vmx_pdpte(CPUX86State *env, int i, uint64_t *pdpte)
+{
+    if (!env->vmx.nonroot || !(env->vmx.proc2 & PROC2_EPT) || !env->vmx.pdpte_valid) {
+        return false;
+    }
+    *pdpte = env->vmx.pdpte[i & 3];
+    return true;
+}
+
+/*
+ * MOV to CR3 under PAE paging, MOV to CR0 / CR4 after which PAE paging is in use and which modifies
+ * CR0.CD / NW / PG, CR4.PAE / PGE / PSE / SMEP (Vol3A 5.4.1), in VMX non-root operation with EPT:
+ * before the register changes, the PDPTEs are loaded from the (new) CR3 through EPT (28.3 MOV to
+ * CR3; a read without a guest-linear address); a present PDPTE with a reserved bit (2:1, 8:5,
+ * 63:M, M not reduced) is #GP(0) and nothing changes. reg / val: the CR written and its new value.
+ */
+void x86_vmx_pdpte_load(CPUX86State *env, int reg, uint64_t val, uintptr_t ra)
+{
+    uint64_t cr0 = reg == 0 ? val : env->cr[0], cr3 = reg == 3 ? val : env->cr[3];
+    uint64_t cr4 = reg == 4 ? val : env->cr[4], p[4], gpa, rsvd;
+    int i, m;
+
+    if (!env->vmx.nonroot || !(env->vmx.proc2 & PROC2_EPT)) {
+        return;
+    }
+    if (!(cr0 & CR0_PG_MASK) || !(cr4 & CR4_PAE_MASK) || (env->efer & MSR_EFER_LME)) {
+        env->vmx.pdpte_valid = 0;               /* no PAE paging after the write */
+        return;
+    }
+    /* CR0.CD = bit 30, CR0.NW = bit 29 */
+    if (reg == 0 && !((cr0 ^ env->cr[0]) & ((1ull << 30) | (1ull << 29) | CR0_PG_MASK))) {
+        return;
+    }
+    if (reg == 4 && !((cr4 ^ env->cr[4]) &
+                      (CR4_PAE_MASK | CR4_PGE_MASK | CR4_PSE_MASK | CR4_SMEP_MASK))) {
+        return;
+    }
+    m = env_archcpu(env)->phys_bits;
+    rsvd = 0x1e6ull | (m < 64 ? ~0ull << m : 0);
+    env->retaddr = ra;
+    for (i = 0; i < 4; i++) {
+        gpa = (cr3 & 0xffffffe0ull) + 8 * i;
+        p[i] = x86_ldq_phys(env_cpu(env), x86_vmx_ept_translate(env, gpa, MMU_DATA_LOAD, NULL, 2));
+        if ((p[i] & 1) && (p[i] & rsvd)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+    }
+    memcpy(env->vmx.pdpte, p, sizeof(p));
+    env->vmx.pdpte_valid = 1;
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

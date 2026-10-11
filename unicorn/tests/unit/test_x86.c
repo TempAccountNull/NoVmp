@@ -33738,6 +33738,99 @@ static void test_x86_vmx_intr_nmi(void)
     OK(uc_close(c.uc));
 }
 
+#define VMX_EPT_PML4 (VMX_DATA + 0x14000)
+#define VMX_EPT_PDPT (VMX_DATA + 0x15000)
+#define VMX_EPT_PD   (VMX_DATA + 0x16000)
+#define VMX_EPT_PT   (VMX_DATA + 0x17000)  /* the 4-KByte EPT PTEs of 200000H-3FFFFFH */
+
+/*
+ * EPT identity map of 0-4 MB for the guest: 0-2 MB one 2-MByte page, 2-4 MB 4-KByte pages (EPT PT),
+ * all RWX, memory type WB; "enable EPT" with EPTP = PML4 | WB | 4-level (| A/D flags)
+ */
+static void vmx_ept_setup(PcCtx *c, int ad)
+{
+    int i;
+
+    vmx_wq(c, VMX_EPT_PML4, VMX_EPT_PDPT | 7);
+    vmx_wq(c, VMX_EPT_PDPT, VMX_EPT_PD | 7);
+    vmx_wq(c, VMX_EPT_PD, 0x0 | 0x80 | 0x30 | 7);
+    vmx_wq(c, VMX_EPT_PD + 8, VMX_EPT_PT | 7);
+    for (i = 0; i < 512; i++) {
+        vmx_wq(c, VMX_EPT_PT + 8 * i, (0x200000ull + 0x1000ull * i) | 0x30 | 7);
+    }
+    vmx_w(c, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(c, 0x401e, 1u << 1);
+    vmx_w(c, 0x201a, VMX_EPT_PML4 | 0x1e | (ad ? 0x40 : 0));
+}
+
+/* the EPT PTE of guest-physical address a (200000H-3FFFFFH) */
+#define VMX_EPT_PTE(a) (VMX_EPT_PT + 8 * (((a) - 0x200000ull) >> 12))
+
+/*
+ * U1306: EPT (SDM 092 Vol3C 31.3; exit qualification Table 30-7). With an identity EPT the guest runs
+ * (CPUID exits). A write to a page whose EPT PTE allows read / execute only: EPT violation (48),
+ * qualification data write | readable | executable | guest-linear address valid | translation of a
+ * linear address | read/write page (supervisor, not execute-disable) = 5AAH, guest-physical and
+ * guest-linear address, RIP of the instruction, RFLAGS.RF saved as 1; a read of a not-present page:
+ * 581H (no permission bits). A write-only EPT PTE (bit 1 without bit 0) is an EPT misconfiguration
+ * (49, the guest-physical address). The guest's PML4 page not present in EPT: the first fetch's page
+ * walk exits with a data read of the paging structure (qualification 81H: bit 8 clear). EPT
+ * accessed / dirty flags (EPTP bit 6): the walk sets A in the entries used and D in the PTE written.
+ */
+static void test_x86_vmx_ept(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup(&c);
+    vmx_ept_setup(&c, 0);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    TEST_MSG("exit %llu qual %llx gpa %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x6400), (unsigned long long)vmx_r(&c, 0x2400));
+    /* write to a read / execute-only page */
+    vmx_wq(&c, VMX_EPT_PTE(VMX_SCRATCH), VMX_SCRATCH | 0x30 | 5);
+    vmx_resume_regs(&c, "\x89\x00", 2, VMX_SCRATCH, 0, 0, 0);       /* MOV [RAX], EAX */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48 && vmx_r(&c, 0x6400) == 0x5aa);
+    TEST_CHECK(vmx_r(&c, 0x2400) == VMX_SCRATCH && vmx_r(&c, 0x640a) == VMX_SCRATCH);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC && (vmx_r(&c, 0x6820) & 0x10000));
+    TEST_MSG("exit %llu qual %llx gpa %llx gla %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x6400), (unsigned long long)vmx_r(&c, 0x2400),
+             (unsigned long long)vmx_r(&c, 0x640a));
+    vmx_w(&c, 0x6820, 2);
+    /* a read of a not-present page */
+    vmx_wq(&c, VMX_EPT_PTE(VMX_SCRATCH), 0);
+    vmx_resume_regs(&c, "\x8b\x00", 2, VMX_SCRATCH + 8, 0, 0, 0);   /* MOV EAX, [RAX] */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48 && vmx_r(&c, 0x6400) == 0x581);
+    TEST_CHECK(vmx_r(&c, 0x2400) == VMX_SCRATCH + 8);
+    TEST_MSG("qual %llx", (unsigned long long)vmx_r(&c, 0x6400));
+    vmx_w(&c, 0x6820, 2);
+    /* write-only: EPT misconfiguration */
+    vmx_wq(&c, VMX_EPT_PTE(VMX_SCRATCH), VMX_SCRATCH | 0x30 | 2);
+    vmx_resume_regs(&c, "\x8b\x00", 2, VMX_SCRATCH + 0x10, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 49 && vmx_r(&c, 0x2400) == VMX_SCRATCH + 0x10);
+    vmx_w(&c, 0x6820, 2);
+    vmx_wq(&c, VMX_EPT_PTE(VMX_SCRATCH), VMX_SCRATCH | 0x30 | 7);
+    /* the guest PML4 (VMX_PT) not present in EPT: the page walk of the first fetch exits */
+    vmx_wq(&c, VMX_EPT_PTE(VMX_PT), 0);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48 && vmx_r(&c, 0x6400) == 0x81);
+    TEST_CHECK(vmx_r(&c, 0x2400) == VMX_PT + 8 * ((VMX_GUEST_PC >> 39) & 0x1ff));
+    TEST_MSG("qual %llx gpa %llx", (unsigned long long)vmx_r(&c, 0x6400),
+             (unsigned long long)vmx_r(&c, 0x2400));
+    vmx_w(&c, 0x6820, 2);
+    vmx_wq(&c, VMX_EPT_PTE(VMX_PT), VMX_PT | 0x30 | 7);
+    /* EPT accessed / dirty flags */
+    vmx_w(&c, 0x201a, VMX_EPT_PML4 | 0x1e | 0x40);
+    vmx_resume_regs(&c, "\x89\x00\x0f\xa2", 4, VMX_SCRATCH, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK((vmx_rq(&c, VMX_EPT_PML4) & 0x100) && (vmx_rq(&c, VMX_EPT_PD + 8) & 0x100));
+    TEST_CHECK((vmx_rq(&c, VMX_EPT_PTE(VMX_SCRATCH)) & 0x300) == 0x300);
+    TEST_CHECK((vmx_rq(&c, VMX_EPT_PTE(VMX_GUEST_PC)) & 0x300) == 0x100);
+    TEST_MSG("pte %llx code pte %llx", (unsigned long long)vmx_rq(&c, VMX_EPT_PTE(VMX_SCRATCH)),
+             (unsigned long long)vmx_rq(&c, VMX_EPT_PTE(VMX_GUEST_PC)));
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34174,4 +34267,5 @@ TEST_LIST = {
     {"test_x86_vmx_io_msr", test_x86_vmx_io_msr},
     {"test_x86_vmx_exc_bitmap", test_x86_vmx_exc_bitmap},
     {"test_x86_vmx_intr_nmi", test_x86_vmx_intr_nmi},
+    {"test_x86_vmx_ept", test_x86_vmx_ept},
     {NULL, NULL}};

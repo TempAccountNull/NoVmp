@@ -502,6 +502,16 @@ typedef struct X86VmxState {
     uint8_t hlt_wake, iret_nmi, db_snap;
     uint64_t db_dr6, db_dr7, pf_cr2;
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+    /*
+     * U1306: EPT - the linear address being translated and its paging attributes (bit 0 user-mode,
+     * bit 1 read/write, bit 2 execute-disable) for the EPT-violation qualification; the PDPTE
+     * registers of PAE paging with EPT (Vol3A 5.4.1, Vol3C 29.3.2.4)
+     */
+    uint64_t ept_gla;
+    uint8_t ept_lattr, pdpte_valid;
+    uint64_t pdpte[4];
+#endif /* __Use_Original_Qemu (U1306) */
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -3518,6 +3528,12 @@ void x86_vmx_interrupt(CPUX86State *env, int req);
 bool x86_vmx_intr_unmasked(CPUX86State *env);
 void x86_vmx_hlt(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1306) */
+/* U1306: EPT */
+hwaddr x86_vmx_ept_translate(CPUX86State *env, uint64_t gpa, int access_type, int *prot, int kind);
+bool x86_vmx_pdpte(CPUX86State *env, int i, uint64_t *pdpte);
+void x86_vmx_pdpte_load(CPUX86State *env, int reg, uint64_t val, uintptr_t ra);
+#endif /* __Use_Original_Qemu (U1306) */
 #define VMX_EXIT_HLT     12
 #define VMX_EXIT_RDPMC   15
 #define VMX_EXIT_RDTSC   16
