@@ -34074,6 +34074,35 @@ static void test_x86_vmx_fred(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1310: pending debug exceptions after VM entry (SDM 092 Vol3C 29.7.3). A VM entry without injection
+ * and with BS in the guest pending-debug-exceptions field delivers a #DB before the first guest
+ * instruction; with bit 1 of the exception bitmap it exits (0, 80000301H, qualification BS = 4000H, RIP
+ * of the first instruction). An enabled-breakpoint pending exception with B0 (1001H) gives
+ * qualification 1. With blocking by MOV SS the pending exception is not delivered (CPUID exits).
+ */
+static void test_x86_vmx_pending_dbg(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x4004, 1u << 1);
+    vmx_w(&c, 0x6822, 0x4000);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000301u);
+    TEST_CHECK(vmx_r(&c, 0x6400) == 0x4000 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_CHECK(vmx_r(&c, 0x6822) == 0);
+    vmx_w(&c, 0x6822, 0x1001);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x6400) == 1);
+    vmx_w(&c, 0x6822, 0x1001);
+    vmx_w(&c, 0x4824, 2);                   /* blocking by MOV SS */
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34515,4 +34544,5 @@ TEST_LIST = {
     {"test_x86_vmx_apicv_access", test_x86_vmx_apicv_access},
     {"test_x86_vmx_apicv_posted", test_x86_vmx_apicv_posted},
     {"test_x86_vmx_fred", test_x86_vmx_fred},
+    {"test_x86_vmx_pending_dbg", test_x86_vmx_pending_dbg},
     {NULL, NULL}};

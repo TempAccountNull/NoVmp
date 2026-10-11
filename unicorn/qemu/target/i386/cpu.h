@@ -533,6 +533,10 @@ typedef struct X86VmxState {
     uint64_t exit2_ctls, inj_data, idtv_data;
     uint8_t inj_sti;
 #endif /* __Use_Original_Qemu (U1309) */
+#if __Use_Original_Qemu != 1 /* ours (U1310) */
+    /* U1310: pending debug exceptions loaded by VM entry (B3-B0, enabled breakpoint, BS; 29.7.3) */
+    uint64_t pdbg;
+#endif /* __Use_Original_Qemu (U1310) */
 } X86VmxState;
 
 /* helper_vmx_op operations */

@@ -2314,6 +2314,7 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.mwait_wait = 0;            /* U1304 */
     env->vmx.hlt_wake = 0;              /* U1305 */
     env->vmx.iret_nmi = 0;
+    env->vmx.pdbg = 0;                  /* U1310 */
     env->vmx.trap_pending = 0;          /* U1307 */
     env->vmx.apic_write_pending = 0;
     env->vmx.apic_va_valid = 0;
@@ -2708,6 +2709,22 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
         env_cpu(env)->halted = vmcs_get(env, VMCS_GUEST_ACTIVITY) == 1;
         env->vmx.mwait_wait = 0;        /* U1304 */
         env->vmx.hlt_wake = 0;          /* U1305 */
+    }
+    /*
+     * U1310: 29.7.3 - valid pending debug exceptions (BS or enabled breakpoint) are delivered after a VM
+     * entry that injects nothing (or a pending MTF VM exit), unless blocked by MOV SS (then "held
+     * pending or lost as would normally be the case": the model loses them) and outside shutdown /
+     * wait-for-SIPI; an injecting VM entry leaves none (the MOV-SS software-event cases are not modelled)
+     */
+    env->vmx.pdbg = 0;
+    {
+        uint64_t pend = vmcs_get(env, VMCS_GUEST_PENDING_DBG);
+        uint32_t act = vmcs_get(env, VMCS_GUEST_ACTIVITY);
+
+        if ((!(info >> 31) || ((info >> 8) & 7) == 7) && (pend & ((1u << 14) | (1u << 12))) &&
+            !(vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) & 2) && act != 2 && act != 3) {
+            env->vmx.pdbg = pend | (1ull << 63);    /* bit 63: marks "pending" when B3-B0 / BS = 0 */
+        }
     }
     /* 29.7.4 the VMX-preemption timer */
     if (env->vmx.pin & PIN_PREEMPT_TIMER) {
@@ -3521,6 +3538,21 @@ static void vmx_boundary_exits(CPUX86State *env)
         env->vmx.mtf_pending = 0;
         vmx_exit_init(&e, EXIT_REASON_MTF, 0);
         vmx_vmexit(env, &e);
+    }
+    /*
+     * U1310: debug exceptions left pending by VM entry (29.7.3): a #DB with the priority of a trap on
+     * the previous instruction - after TPR-threshold and pending MTF VM exits, before the timer, NMIs,
+     * interrupts and the windows; DR6 gets B3-B0 and BS as the model's #DB raise sets them; the #DB
+     * exits by the exception bitmap like any other (the qualification B3-B0 / BS, DR6 unchanged)
+     */
+    if (env->vmx.pdbg) {
+        uint64_t p = env->vmx.pdbg & 0x400f;
+
+        env->vmx.pdbg = 0;
+        x86_vmx_db_snapshot(env);
+        env->dr[6] = (env->dr[6] & ~0x400full) | p;
+        env->fred_evdata_next = p;
+        raise_exception(env, EXCP01_DB);
     }
     if (env->vmx.timer_on && vmx_timer_value(env) == 0) {
         vmx_exit_init(&e, EXIT_REASON_PREEMPT_TIMER, 0);

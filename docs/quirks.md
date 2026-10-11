@@ -364,6 +364,7 @@ VMX (U1300-U1399, `docs/vmx.md`) is implemented as described there. The followin
 | MONITOR armed state | Vol3C 30.2.1, p. 30-6: the MWAIT exit qualification says whether address-range monitoring is armed | MONITOR arms, a completed MWAIT disarms; stores to the monitored range, UMONITOR and other disarming events are not tracked (U1304) |
 | APIC-access page: guest-physical accesses | Vol3C 32.4.6.1, p. 32-14: a guest-physical access (e.g. a guest paging-structure read through EPT) to the APIC-access page is always an APIC-access VM exit | only linear accesses are checked; a guest paging structure placed on the APIC-access page is read from memory (U1307) |
 | APIC-access page: REP string instructions | Vol3C 32.4.1, p. 32-9: an operation is one iteration of a REP string instruction; APIC-write emulation follows each operation | the whole REP instruction is one operation: APIC-write emulation runs after the instruction (U1307) |
+| VMX: pending debug exceptions saved by VM exits | Vol3C 30.3.4, pp. 30-27 / 30-28: VM exits with reason TPR below threshold, virtualized EOI, APIC write, MTF (and INIT / SMI / machine check) save the debug exceptions pending at the exit; a pending MTF VM exit has priority over debug traps (28.5.2) | the field is saved as 0; a single-step / data-breakpoint #DB is raised at the end of its instruction, before the MTF VM exit of that boundary (U1303 / U1310) |
 
 ## Intel SDE cross-check decisions (U1040 cross-check, user decisions 2026-10-10)
 

@@ -89,7 +89,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | loading guest state (CRs, DR7, MSRs, segments, RIP / RSP / RFLAGS, PDPTEs, non-register state, monitor clear) | Vol3C 29.3.2 pp. 29-16 to 29-19; 29.3.3 p. 29-19 | vmx_load_guest | done (U1303) |
 | VM-entry MSR-load list -> exit reason 34, qualification = entry number | Vol3C 29.4 pp. 29-19 / 29-20 | vmx_load_msrs | done (U1303) |
 | VM-entry failure after guest loading (load host state, exit reason bit 31) | Vol3C 29.8 pp. 29-28 / 29-29 | vmx_entry_fail | done (U1303) |
-| event injection (types, error code, instruction length, real-address mode guests), VM exits during injection, pending MTF | Vol3C 29.6 pp. 29-20 to 29-24 | vmx_inject | done (U1303); pending debug exceptions after VM entry: planned (stage 5) |
+| event injection (types, error code, instruction length, real-address mode guests), VM exits during injection, pending MTF | Vol3C 29.6 pp. 29-20 to 29-24 | vmx_inject | done (U1303); pending debug exceptions after VM entry (29.7.3): done (U1310) |
 | interruptibility / activity state, pending debug exceptions, window exits and TPR threshold right after entry | Vol3C 29.7 pp. 29-24 to 29-28 | vmx_entry_special | partly (U1303: interruptibility, HLT activity, MTF, timer, windows at the first boundary); TPR threshold: stage 7 |
 | VM exit: architectural state before the exit, exit reason, qualification, guest-linear / physical address, event information, original-event (IDT-vectoring) information, instruction length / information | Vol3C 30.1-30.2 pp. 30-1 to 30-22; Appendix C pp. C-1 to C-4 | `vmx_helper.c` vmx_vmexit | done for the exits of U1303 (instruction exits, triple fault, timer, MTF, windows); event exits: stage 5 |
 | saving guest state, MSR-store list, loading host state, MSR-load list, VMX abort | Vol3C 30.3-30.7 pp. 30-22 to 30-35 | vmx_save_guest / vmx_load_host / vmx_abort | done (U1303); pending debug exceptions saved as 0 |
@@ -138,7 +138,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1307: 16 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1310: 18 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -360,3 +360,12 @@ translator and passed to the helpers.
   FRED are original events of type 7.
 - ERETS / ERETU (28.3): with "NMI exiting" 1 they leave blocking by NMI alone; with virtual NMIs they
   clear virtual-NMI blocking for augmented SS bit 18.
+
+### Pending debug exceptions (U1310)
+- 29.7.3: a VM entry that injects nothing (or only a pending MTF VM exit), outside shutdown /
+  wait-for-SIPI and without blocking by MOV SS, takes valid pending debug exceptions (BS or enabled
+  breakpoint in the guest field) as a #DB at the first boundary - after TPR-threshold and MTF VM exits,
+  before the timer, NMIs, interrupts and the windows. DR6 gets B3-B0 / BS as the model's #DB raise sets
+  them; the exception bitmap applies (qualification B3-B0 / BS). With blocking by MOV SS the model loses
+  them ("held pending or lost as would normally be the case"); the MOV-SS cases of injected software
+  events are not modelled. VM exits save the pending-debug-exceptions field as 0 (docs/quirks.md).
