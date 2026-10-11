@@ -409,6 +409,9 @@ Add-Exp 'cases_lam' 'cases_lam' 'lam expect' @( '--x86-features', '8' )
 Add-PySelftest 'ref_sgx_selftest' 'sgx tools' 'ref_sgx.py'
 # U1268 (agent sgxforms): the SGX / SMX opt-in gates (CPUID 12H, ENCLS / ENCLU / GETSEC faults), SDM expectations
 Add-Exp 'cases_sgx' 'cases_sgx' 'sgx expect' @( '--x86-features', '48' )
+# U1300-U1399 (vmx): VMX reference model (field encodings, capability classes, exit qualifications,
+# bitmaps, EPT walk, virtual APIC; specification-validated) - the values of the vmx_ unit tests
+Add-PySelftest 'ref_vmx_selftest' 'vmx tools' 'ref_vmx.py'
 # U907: the architectural PMU MSRs as storage, with a CPUID profile that enumerates a version-4 PMU
 # (cpuid_sysmsr_pmu.txt: the i5-13600K capture with leaf 0AH replaced), non-strict (MAX features)
 Add-Exp 'cases_sysmsr_pmu' 'cases_sysmsr_pmu' 'sysmsr expect' @( '--cpuid', ( Join-Path $D 'cpuid_sysmsr_pmu.txt' ), '--no-strict' )
