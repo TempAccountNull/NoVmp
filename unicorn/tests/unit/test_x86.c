@@ -30145,6 +30145,1574 @@ static void test_x86_st_reset_xcr0_profile(void)
 }
 /* ---- end U1220-U1239 (st_) ---- */
 
+/* ---- U1260-U1299 (sgx_): Intel SGX model (docs/sgx.md); specification-validated only ---- */
+
+#define SGX_EPC_BASE 0x80000000ULL
+#define SGX_EPC_SIZE 0x100000ULL           /* 256 EPC pages */
+#define SGX_DATA 0x200000ULL
+#define SGX_CODE 0x1000ULL                 /* code_start .. code_start + code_len */
+#define SGX_FC 0x3a                        /* IA32_FEATURE_CONTROL */
+#define SGX_FC_LOCK 1ULL
+#define SGX_FC_LE_WR (1ULL << 17)
+#define SGX_FC_SGX (1ULL << 18)
+
+typedef struct SgxCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} SgxCtx;
+
+/* the platform the tests use: EPC 80000000H, 1 MB; the LE hash reset value 00 01 02 .. 1F */
+static void sgx_platform(uc_x86_sgx_platform *p)
+{
+    int i;
+
+    memset(p, 0, sizeof(*p));
+    p->epc_base = SGX_EPC_BASE;
+    p->epc_size = SGX_EPC_SIZE;
+    for (i = 0; i < 32; i++) {
+        p->le_pubkey_hash[i] = (uint8_t)i;
+    }
+    p->svn_sinit = 0x5a;
+}
+
+/* a 64-bit CPL0 engine (UC_CPU_X86_MAX), with UC_X86_FEATURE_SGX when 'feat' */
+static void sgx_open_cfg(SgxCtx *c, int feat, const uc_x86_sgx_platform *p)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = SGX_CODE;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (feat) {
+        OK(uc_ctl_set_x86_features(c->uc, UC_X86_FEATURE_SGX));
+    }
+    if (p) {
+        OK(uc_ctl_set_x86_sgx_platform(c->uc, p));
+    }
+    OK(uc_mem_map(c->uc, SGX_CODE, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, SGX_DATA, 0x100000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static void sgx_open(SgxCtx *c, int feat)
+{
+    uc_x86_sgx_platform p;
+
+    sgx_platform(&p);
+    sgx_open_cfg(c, feat, feat ? &p : NULL);
+}
+
+static uint64_t sgx_get(SgxCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void sgx_set(SgxCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* run a snippet at the next 128-byte slot: the vector raised (6 = #UD) or -1 */
+static int sgx_run(SgxCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x80;
+    if (c->pc + 0x80 > SGX_CODE + code_len) {
+        c->pc = SGX_CODE;
+    }
+    c->cap.count = 0;
+    c->cap.intno = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void sgx_cpuid(SgxCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    sgx_set(c, UC_X86_REG_RAX, leaf);
+    sgx_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(sgx_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)sgx_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)sgx_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)sgx_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)sgx_get(c, UC_X86_REG_RDX);
+}
+
+/* the host API MSR access: UC_ERR_OK or UC_ERR_EXCEPTION (the access an instruction refuses) */
+static uc_err sgx_wrmsr_api(SgxCtx *c, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m = {msr, v};
+
+    return uc_reg_write(c->uc, UC_X86_REG_MSR, &m);
+}
+
+static uc_err sgx_rdmsr_api(SgxCtx *c, uint32_t msr, uint64_t *v)
+{
+    uc_x86_msr m = {msr, 0};
+    uc_err err = uc_reg_read(c->uc, UC_X86_REG_MSR, &m);
+
+    *v = m.value;
+    return err;
+}
+
+/* WRMSR / RDMSR by the guest (CPL0): the vector or -1 */
+static int sgx_wrmsr(SgxCtx *c, uint32_t msr, uint64_t v)
+{
+    sgx_set(c, UC_X86_REG_RCX, msr);
+    sgx_set(c, UC_X86_REG_RAX, (uint32_t)v);
+    sgx_set(c, UC_X86_REG_RDX, v >> 32);
+    return sgx_run(c, "\x0f\x30", 2);
+}
+
+static int sgx_rdmsr(SgxCtx *c, uint32_t msr, uint64_t *v)
+{
+    int r;
+
+    sgx_set(c, UC_X86_REG_RCX, msr);
+    r = sgx_run(c, "\x0f\x32", 2);
+    *v = (sgx_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)sgx_get(c, UC_X86_REG_RAX);
+    return r;
+}
+
+/*
+ * U1261: enumeration (SDM 092 Vol1 Tables 21-19 / 21-20 / 21-47..21-49, Vol3D 37.7). Without the
+ * opt-in nothing changes (07H.0:EBX[2] = ECX[30] = 0, leaf 12H all zero); with it SGX, SGX_LC and
+ * leaf 12H: SGX1 | SGX2, MISCSELECT EXINFO, the model's sizes 2^31 / 2^36, the ECREATE attribute
+ * mask (DEBUG, MODE64BIT, PROVISIONKEY, EINITTOKEN_KEY; XFRM = the XCR0 bits of 0DH.0), the EPC
+ * section (type 1, property 1), invalid sub-leaves after it.
+ */
+static void test_x86_sgx_cpuid(void)
+{
+    uint32_t r[4], x[4];
+    SgxCtx c;
+
+    sgx_open(&c, 0);
+    sgx_cpuid(&c, 7, 0, r);
+    TEST_CHECK(!(r[1] & 4) && !(r[2] & (1u << 30)));
+    sgx_cpuid(&c, 0, 0, x);
+    if (x[0] >= 0x12) {
+        sgx_cpuid(&c, 0x12, 0, r);
+        TEST_CHECK(!r[0] && !r[1] && !r[2] && !r[3]);
+    }
+    OK(uc_close(c.uc));
+
+    sgx_open(&c, 1);
+    sgx_cpuid(&c, 0, 0, r);
+    TEST_CHECK(r[0] >= 0x12);
+    sgx_cpuid(&c, 7, 0, r);
+    TEST_CHECK((r[1] & 4) && (r[2] & (1u << 30)));
+    sgx_cpuid(&c, 0x12, 0, r);
+    TEST_CHECK(r[0] == 3 && r[1] == 1 && r[2] == 0 && r[3] == 0x241f);
+    TEST_MSG("12H.0 = %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
+    sgx_cpuid(&c, 0xd, 0, x);
+    sgx_cpuid(&c, 0x12, 1, r);
+    TEST_CHECK(r[0] == 0x36 && r[1] == 0 && r[2] == (x[0] | 3) && r[3] == (x[3] & 0x7fffffffu));
+    TEST_MSG("12H.1 = %08x %08x %08x %08x (0DH.0 %08x/%08x)", r[0], r[1], r[2], r[3], x[0], x[3]);
+    sgx_cpuid(&c, 0x12, 2, r);
+    TEST_CHECK(r[0] == 0x80000001u && r[1] == 0 && r[2] == 0x00100001u && r[3] == 0);
+    TEST_MSG("12H.2 = %08x %08x %08x %08x", r[0], r[1], r[2], r[3]);
+    sgx_cpuid(&c, 0x12, 3, r);
+    TEST_CHECK(!r[0] && !r[1] && !r[2] && !r[3]);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1261: UC_CTL_X86_SGX_PLATFORM / UC_CTL_X86_SGX_EPCM. A misaligned EPC, a reserved byte or a
+ * write after init are refused; the platform reads back; the EPC is mapped RAM; the EPCM of a fresh
+ * EPC page is invalid; addresses outside the EPC and engines without the opt-in are refused. An EPC
+ * above MAXPHYADDR is dropped (no EPC section: 12H.2 invalid, epc_size reads 0).
+ */
+static void test_x86_sgx_platform_ctl(void)
+{
+    uc_x86_sgx_platform p, q;
+    uc_x86_sgx_epcm e;
+    uint8_t b[8];
+    uint32_t r[4];
+    SgxCtx c;
+
+    sgx_platform(&p);
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    q = p;
+    q.epc_base |= 0x800;
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_sgx_platform(c.uc, &q));
+    q = p;
+    q.epc_size = 0x1800;
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_sgx_platform(c.uc, &q));
+    q = p;
+    q.reserved[3] = 1;
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_sgx_platform(c.uc, &q));
+    OK(uc_close(c.uc));
+
+    sgx_open(&c, 1);
+    OK(uc_ctl_get_x86_sgx_platform(c.uc, &q));
+    TEST_CHECK(q.epc_base == SGX_EPC_BASE && q.epc_size == SGX_EPC_SIZE && q.svn_sinit == 0x5a);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_sgx_platform(c.uc, &p));      /* initialised */
+    OK(uc_mem_read(c.uc, SGX_EPC_BASE + SGX_EPC_SIZE - 8, b, 8));
+    OK(uc_ctl_get_x86_sgx_epcm(c.uc, SGX_EPC_BASE + 0x3123, &e));
+    TEST_CHECK(e.valid == 0);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_sgx_epcm(c.uc, SGX_EPC_BASE + SGX_EPC_SIZE, &e));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_sgx_epcm(c.uc, SGX_EPC_BASE - 1, &e));
+    OK(uc_close(c.uc));
+
+    sgx_open(&c, 0);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_get_x86_sgx_epcm(c.uc, SGX_EPC_BASE, &e));
+    OK(uc_close(c.uc));
+
+    q = p;
+    q.epc_base = 1ULL << 51;                /* above any MAXPHYADDR of the model */
+    sgx_open_cfg(&c, 1, &q);
+    sgx_cpuid(&c, 0x12, 2, r);
+    TEST_CHECK(!r[0] && !r[1] && !r[2] && !r[3]);
+    OK(uc_ctl_get_x86_sgx_platform(c.uc, &q));
+    TEST_CHECK(q.epc_size == 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1261: the SGX MSRs (SDM 092 Vol4 Table 2-2 3AH, 8CH-8FH, 500H; Vol3D 39.1.4, 42.2, 42.11.3).
+ * IA32_FEATURE_CONTROL accepts bits 17 / 18 only with SGX_LC / SGX; IA32_SGXLEPUBKEYHASH0-3 read the
+ * platform reset value and are writable only with FEATURE_CONTROL = LOCK | LE_WR; 90H / 91H are not
+ * modelled (#GP); IA32_SGX_SVN_STATUS is R/O (Lock 0 before any SGX instruction, SGX_SVN_SINIT with
+ * SMX). Without the opt-in all of them are #GP and FEATURE_CONTROL[18] is reserved.
+ */
+static void test_x86_sgx_msr(void)
+{
+    uint64_t v;
+    SgxCtx c;
+
+    sgx_open(&c, 0);
+    TEST_CHECK(sgx_rdmsr(&c, 0x8c, &v) == 13);
+    TEST_CHECK(sgx_rdmsr(&c, 0x500, &v) == 13);
+    TEST_CHECK(sgx_wrmsr(&c, SGX_FC, SGX_FC_SGX) == 13);
+    OK(uc_close(c.uc));
+
+    sgx_open(&c, 1);
+    TEST_CHECK(sgx_rdmsr(&c, 0x8c, &v) == -1 && v == 0x0706050403020100ULL);
+    TEST_CHECK(sgx_rdmsr(&c, 0x8f, &v) == -1 && v == 0x1f1e1d1c1b1a1918ULL);
+    TEST_CHECK(sgx_rdmsr(&c, 0x90, &v) == 13);
+    TEST_CHECK(sgx_rdmsr(&c, 0x91, &v) == 13);
+    TEST_CHECK(sgx_rdmsr(&c, 0x500, &v) == -1 && v == 0x5a0000ULL);
+    TEST_CHECK(sgx_wrmsr(&c, 0x500, 0) == 13);
+    TEST_CHECK(sgx_wrmsr(&c, 0x8c, 1) == 13);                     /* FEATURE_CONTROL unlocked */
+    TEST_CHECK(sgx_wrmsr(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LE_WR | (1ULL << 19)) == 13);
+    TEST_CHECK(sgx_wrmsr(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LE_WR) == -1);
+    TEST_CHECK(sgx_wrmsr(&c, 0x8c, 1) == 13);                     /* not locked yet */
+    TEST_CHECK(sgx_wrmsr(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LE_WR | SGX_FC_LOCK) == -1);
+    TEST_CHECK(sgx_wrmsr(&c, 0x8d, 0x1122334455667788ULL) == -1);
+    TEST_CHECK(sgx_rdmsr(&c, 0x8d, &v) == -1 && v == 0x1122334455667788ULL);
+    TEST_CHECK(sgx_wrmsr(&c, SGX_FC, SGX_FC_SGX) == 13);          /* locked */
+    OK(sgx_rdmsr_api(&c, 0x8d, &v));
+    TEST_CHECK(v == 0x1122334455667788ULL);
+    OK(uc_close(c.uc));
+
+    /* locked without LE_WR: read-only (the host API refuses like the instruction) */
+    sgx_open(&c, 1);
+    OK(sgx_wrmsr_api(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LOCK));
+    uc_assert_err(UC_ERR_EXCEPTION, sgx_wrmsr_api(&c, 0x8e, 5));
+    OK(sgx_rdmsr_api(&c, 0x8e, &v));
+    TEST_CHECK(v == 0x1716151413121110ULL);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1261: INVD with processor reserved memory protections active (SDM 092 Vol3D 39.6.5): our
+ * activation rule - an EPC section and IA32_FEATURE_CONTROL.LOCK = SGX_ENABLE = 1. Before, and
+ * without an EPC, INVD stays a CPL0 no-op; WBINVD is never affected.
+ */
+static void test_x86_sgx_invd(void)
+{
+    uc_x86_sgx_platform p;
+    SgxCtx c;
+
+    sgx_open(&c, 1);
+    TEST_CHECK(sgx_run(&c, "\x0f\x08", 2) == -1);
+    OK(sgx_wrmsr_api(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LOCK));
+    TEST_CHECK(sgx_run(&c, "\x0f\x08", 2) == 13);
+    TEST_CHECK(sgx_run(&c, "\x0f\x09", 2) == -1);
+    OK(uc_close(c.uc));
+
+    sgx_platform(&p);
+    p.epc_size = 0;
+    sgx_open_cfg(&c, 1, &p);
+    OK(sgx_wrmsr_api(&c, SGX_FC, SGX_FC_SGX | SGX_FC_LOCK));
+    TEST_CHECK(sgx_run(&c, "\x0f\x08", 2) == -1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1262: the test enclave of Emulator/tools/isa/ref_sgx.py (MRENCLAVE, the signed SIGSTRUCT, the
+ * launch token and the page contents are computed there from the SDM, independently of the C
+ * model): ELRANGE 10000000H + 64 KB, 64-bit, SSAFRAMESIZE 1, MISCSELECT EXINFO; pages TCS (0000H,
+ * measured), SSA x 2 (1000H, 2000H), code (3000H, R-X, measured), data (4000H, measured), data2
+ * (5000H).
+ */
+#include "x86_sgx_vectors.inc"
+
+#define SGX_PT_POOL 0x100000ULL            /* page-table pages (physical, not mapped) */
+#define SGX_GDT (SGX_DATA + 0x0000)
+#define SGX_PAGEINFO (SGX_DATA + 0x1000)
+#define SGX_SECINFO (SGX_DATA + 0x1100)
+#define SGX_SRC (SGX_DATA + 0x2000)
+#define SGX_SIG (SGX_DATA + 0x3000)
+#define SGX_TOKEN (SGX_DATA + 0x4000)
+#define SGX_SECSSRC (SGX_DATA + 0x5000)
+#define SGX_SCRATCH (SGX_DATA + 0x6000)
+#define SGX_STACK (SGX_DATA + 0xff000)
+#define SGX_SECS_LA 0x30000000ULL          /* linear address of the SECS (EPC slot 0) */
+#define SGX_EPC_LA 0x30000000ULL           /* EPC slot n at SGX_EPC_LA + n * 4 KB */
+#define SGX_ENC_SLOT 1                     /* enclave page k at EPC slot 1 + k */
+
+typedef struct SgxEnv {
+    SgxCtx c;
+    uint64_t pt_next;
+    uc_context *cpl0;
+} SgxEnv;
+
+static void sgx_wq(SgxEnv *e, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(e->c.uc, a, &v, 8));
+}
+
+static uint64_t sgx_rq(SgxEnv *e, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(e->c.uc, a, &v, 8));
+    return v;
+}
+
+static uint64_t sgx_pt_alloc(SgxEnv *e)
+{
+    static const uint8_t zero[4096];
+    uint64_t p = e->pt_next;
+
+    e->pt_next += 0x1000;
+    TEST_CHECK(e->pt_next <= SGX_PT_POOL + 0x100000);
+    OK(uc_mem_write(e->c.uc, p, zero, sizeof(zero)));
+    return p;
+}
+
+/* 4-level paging: map the 4 KB page 'la' to 'pa' (P, R/W, U/S; NX clear) */
+static void sgx_map(SgxEnv *e, uint64_t la, uint64_t pa)
+{
+    uint64_t t = SGX_PT_POOL, ent;
+    int lvl;
+
+    for (lvl = 3; lvl > 0; lvl--) {
+        uint64_t a = t + ((la >> (12 + 9 * lvl)) & 0x1ff) * 8;
+
+        ent = sgx_rq(e, a);
+        if (!(ent & 1)) {
+            ent = sgx_pt_alloc(e) | 7;
+            sgx_wq(e, a, ent);
+        }
+        t = ent & 0x000ffffffffff000ULL;
+    }
+    sgx_wq(e, t + ((la >> 12) & 0x1ff) * 8, pa | 7);
+}
+
+/*
+ * The SGX test machine: 64-bit, CPL0, 4-level paging (identity map of the code and data; the EPC
+ * at SGX_EPC_LA; the enclave pages at their ELRANGE addresses), a GDT with CPL0 / CPL3 64-bit code
+ * and data, CR0.NE, CR4.OSFXSR, IA32_FEATURE_CONTROL = LOCK | SGX_ENABLE | LE_WR. A CPL0 context
+ * is saved (sgx_to_cpl0 restores it).
+ */
+static void sgx_env_open(SgxEnv *e, const uc_x86_sgx_platform *p)
+{
+    uint64_t gdt[5] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
+                       0x00AFFA000000FFFFULL};
+    uc_x86_mmr gdtr = {0, SGX_GDT, sizeof(gdt) - 1, 0};
+    uc_x86_msr efer = {0xc0000080, 0};
+    uint64_t a, v;
+    int i;
+
+    memset(e, 0, sizeof(*e));
+    sgx_open_cfg(&e->c, 1, p);
+    OK(uc_mem_map(e->c.uc, SGX_PT_POOL, 0x100000, UC_PROT_ALL));
+    e->pt_next = SGX_PT_POOL;
+    sgx_pt_alloc(e);                                        /* the PML4 */
+    for (a = SGX_CODE; a < SGX_CODE + code_len; a += 0x1000) {
+        sgx_map(e, a, a);
+    }
+    for (a = SGX_DATA; a < SGX_DATA + 0x100000; a += 0x1000) {
+        sgx_map(e, a, a);
+    }
+    for (i = 0; i < 64; i++) {
+        sgx_map(e, SGX_EPC_LA + 0x1000ULL * i, SGX_EPC_BASE + 0x1000ULL * i);
+    }
+    for (i = 0; i < 16; i++) {
+        sgx_map(e, SGXV_BASE + 0x1000ULL * i, SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + i));
+    }
+    OK(uc_mem_write(e->c.uc, SGX_GDT, gdt, sizeof(gdt)));
+    OK(uc_reg_write(e->c.uc, UC_X86_REG_GDTR, &gdtr));
+    sgx_set(&e->c, UC_X86_REG_CR3, SGX_PT_POOL);
+    sgx_set(&e->c, UC_X86_REG_CR4, sgx_get(&e->c, UC_X86_REG_CR4) | 0x20 | 0x200);   /* PAE, OSFXSR */
+    OK(uc_reg_read(e->c.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 8;
+    OK(uc_reg_write(e->c.uc, UC_X86_REG_MSR, &efer));
+    v = (sgx_get(&e->c, UC_X86_REG_CR0) | 0x80000021ULL) & ~(1ULL << 3);  /* PG, NE, PE; TS = 0 */
+    sgx_set(&e->c, UC_X86_REG_CR0, v);
+    sgx_set(&e->c, UC_X86_REG_RSP, SGX_STACK);
+    OK(sgx_wrmsr_api(&e->c, SGX_FC, SGX_FC_LOCK | SGX_FC_SGX | SGX_FC_LE_WR));
+    OK(uc_context_alloc(e->c.uc, &e->cpl0));
+    OK(uc_context_save(e->c.uc, e->cpl0));
+}
+
+static void sgx_env_close(SgxEnv *e)
+{
+    OK(uc_context_free(e->cpl0));
+    OK(uc_close(e->c.uc));
+}
+
+/*
+ * CPL3 through IRETQ (64-bit code 23H, stack 1BH, RFLAGS 2): in 64-bit mode the Unicorn API
+ * changes only the selector of CS / SS / DS / ES (no descriptor load, no CPL change)
+ */
+static void sgx_to_cpl3(SgxEnv *e)
+{
+    uint64_t frame[5] = {SGX_CODE + 0x40, 0x23, 0x2, SGX_STACK - 0x800, 0x1b};
+    uint64_t rsp = SGX_STACK - 0x100;
+
+    OK(uc_mem_write(e->c.uc, rsp, frame, sizeof(frame)));
+    sgx_set(&e->c, UC_X86_REG_RSP, rsp);
+    OK(uc_mem_write(e->c.uc, SGX_CODE, "\x48\xcf", 2));
+    OK(uc_emu_start(e->c.uc, SGX_CODE, SGX_CODE + 0x40, 0, 2));
+    TEST_CHECK(sgx_get(&e->c, UC_X86_REG_RIP) == SGX_CODE + 0x40 &&
+               (sgx_get(&e->c, UC_X86_REG_CS) & 3) == 3);
+    e->c.pc = SGX_CODE + 0x80;
+}
+
+/* back to the CPL0 state saved at open (the SGX package state - EPC, EPCM - is not part of it) */
+static void sgx_to_cpl0(SgxEnv *e)
+{
+    OK(uc_context_restore(e->c.uc, e->cpl0));
+}
+
+/* ENCLS with RAX / RBX / RCX / RDX: the vector or -1 */
+static int sgx_encls(SgxEnv *e, uint64_t leaf, uint64_t rbx, uint64_t rcx, uint64_t rdx)
+{
+    sgx_set(&e->c, UC_X86_REG_RAX, leaf);
+    sgx_set(&e->c, UC_X86_REG_RBX, rbx);
+    sgx_set(&e->c, UC_X86_REG_RCX, rcx);
+    sgx_set(&e->c, UC_X86_REG_RDX, rdx);
+    return sgx_run(&e->c, "\x0f\x01\xcf", 3);
+}
+
+static uint64_t sgx_rflags(SgxEnv *e)
+{
+    return sgx_get(&e->c, UC_X86_REG_EFLAGS);
+}
+
+/* the exception record of the last fault (vector, error code, #PF address) */
+static void sgx_exc(SgxEnv *e, int vector, uint32_t ec, uint64_t cr2)
+{
+    uc_x86_exception x;
+
+    OK(uc_ctl_get_x86_exception(e->c.uc, &x));
+    TEST_CHECK(x.vector == vector && x.error_code == ec && (vector != 14 || x.address == cr2));
+    TEST_MSG("exception %d ec %x addr %llx, expected %d ec %x addr %llx", x.vector, x.error_code,
+             (unsigned long long)x.address, vector, ec, (unsigned long long)cr2);
+}
+
+#define SGX_PF_W_SGX (1u | 2u | 0x8000u)        /* P, W, SGX */
+#define SGX_PF_R_SGX (1u | 0x8000u)
+
+static void sgx_secinfo_w(SgxEnv *e, uint64_t flags)
+{
+    uint8_t si[64] = {0};
+
+    memcpy(si, &flags, 8);
+    OK(uc_mem_write(e->c.uc, SGX_SECINFO, si, 64));
+}
+
+static void sgx_pageinfo_w(SgxEnv *e, uint64_t linaddr, uint64_t src, uint64_t secinfo,
+                           uint64_t secs)
+{
+    uint64_t pi[4] = {linaddr, src, secinfo, secs};
+
+    OK(uc_mem_write(e->c.uc, SGX_PAGEINFO, pi, sizeof(pi)));
+}
+
+/* the SECS source of the test enclave with ATTRIBUTES[63:0] = 'attr', XFRM = 3 */
+static void sgx_secs_src(SgxEnv *e, uint64_t attr)
+{
+    static const uint8_t zero[4096];
+
+    OK(uc_mem_write(e->c.uc, SGX_SECSSRC, zero, sizeof(zero)));
+    sgx_wq(e, SGX_SECSSRC + 0, SGXV_SIZE);
+    sgx_wq(e, SGX_SECSSRC + 8, SGXV_BASE);
+    sgx_wq(e, SGX_SECSSRC + 16, 1 | (1ULL << 32));          /* SSAFRAMESIZE 1, MISCSELECT 1 */
+    sgx_wq(e, SGX_SECSSRC + 48, attr);
+    sgx_wq(e, SGX_SECSSRC + 56, 3);
+}
+
+static int sgx_ecreate(SgxEnv *e)
+{
+    sgx_secinfo_w(e, 0x000);                                /* PT_SECS */
+    sgx_pageinfo_w(e, 0, SGX_SECSSRC, SGX_SECINFO, 0);
+    return sgx_encls(e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0);
+}
+
+/* EADD the enclave page at offset 'off' (content 'src' or zeros), then EEXTEND it if 'measure' */
+static void sgx_add_page(SgxEnv *e, uint64_t off, const uint8_t *src, uint64_t flags, int measure)
+{
+    static const uint8_t zero[4096];
+    uint64_t k;
+
+    OK(uc_mem_write(e->c.uc, SGX_SRC, src ? src : zero, 4096));
+    sgx_secinfo_w(e, flags);
+    sgx_pageinfo_w(e, SGXV_BASE + off, SGX_SRC, SGX_SECINFO, SGX_SECS_LA);
+    TEST_CHECK(sgx_encls(e, 1, SGX_PAGEINFO, SGXV_BASE + off, 0) == -1);
+    for (k = 0; measure && k < 4096; k += 256) {
+        TEST_CHECK(sgx_encls(e, 6, SGX_SECS_LA, SGXV_BASE + off + k, 0) == -1);
+    }
+}
+
+/* build the ref_sgx.py enclave (ECREATE, EADD, EEXTEND; no EINIT); 'skip' = an EEXTEND to omit */
+static void sgx_build(SgxEnv *e, uint64_t attr, int skip_extend_of_data)
+{
+    sgx_secs_src(e, attr);
+    TEST_CHECK(sgx_ecreate(e) == -1);
+    sgx_add_page(e, 0x0000, sgxv_page_0000, 0x100, 1);         /* TCS */
+    sgx_add_page(e, 0x1000, NULL, 0x203, 0);                    /* SSA frame 0, RW */
+    sgx_add_page(e, 0x2000, NULL, 0x203, 0);                    /* SSA frame 1, RW */
+    sgx_add_page(e, 0x3000, sgxv_page_3000, 0x205, 1);         /* code, R-X */
+    sgx_add_page(e, 0x4000, sgxv_page_4000, 0x203, !skip_extend_of_data);   /* data, RW */
+    sgx_add_page(e, 0x5000, NULL, 0x203, 0);                    /* data2, RW */
+}
+
+/* EINIT with the SIGSTRUCT of ref_sgx.py and 'token' (NULL: VALID = 0): RAX */
+static uint64_t sgx_einit(SgxEnv *e, const uint8_t *sig, const uint8_t *token)
+{
+    static const uint8_t zero[304];
+
+    OK(uc_mem_write(e->c.uc, SGX_SIG, sig, 1808));
+    OK(uc_mem_write(e->c.uc, SGX_TOKEN, token ? token : zero, 304));
+    TEST_CHECK(sgx_encls(e, 2, SGX_SIG, SGX_SECS_LA, SGX_TOKEN) == -1);
+    return sgx_get(&e->c, UC_X86_REG_RAX);
+}
+
+/* IA32_SGXLEPUBKEYHASH0-3 := 'h' (FEATURE_CONTROL.LE_WR is set by sgx_env_open) */
+static void sgx_set_lehash(SgxEnv *e, const uint8_t h[32])
+{
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        uint64_t v;
+
+        memcpy(&v, h + 8 * i, 8);
+        OK(sgx_wrmsr_api(&e->c, 0x8c + i, v));
+    }
+}
+
+/*
+ * U1262: ECREATE / EADD / EEXTEND / EINIT (SDM 092 Vol3D p. 41-13..41-48) - the measurement of the
+ * ref_sgx.py enclave, its signature check (RSA-3072 via q1 / q2), MRSIGNER, ISVPRODID / ISVSVN,
+ * ATTRIBUTES.INIT; the launch-control paths: EINITTOKEN.VALID = 0 needs MRSIGNER =
+ * IA32_SGXLEPUBKEYHASH (else SGX_INVALID_EINITTOKEN 16); a valid token (MACed with the derived
+ * launch key of the model - placeholder derivation, docs/sgx.md 3) launches with the reset hash;
+ * the error codes of a bad header (1), a bad signature (8), a wrong measurement (4), a tampered
+ * token MAC (16); a second EINIT and an EADD after EINIT are #GP(0).
+ */
+static void test_x86_sgx_build_einit(void)
+{
+    uc_x86_sgx_platform p;
+    uc_x86_sgx_epcm m;
+    uint8_t sig[1808], tok[304], b[32];
+    uint64_t v;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    /* (a) VALID = 0 token, LE hash = MRSIGNER */
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE, &m));
+    TEST_CHECK(m.valid && m.pt == 0 && m.enclavesecs == SGX_EPC_BASE);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE + 0x1000 * (SGX_ENC_SLOT + 3), &m));
+    TEST_CHECK(m.valid && m.pt == 2 && m.r && !m.w && m.x && m.enclavesecs == SGX_EPC_BASE &&
+               m.enclaveaddress == SGXV_BASE + 0x3000);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE + 0x1000 * SGX_ENC_SLOT, &m));
+    TEST_CHECK(m.valid && m.pt == 1 && !m.r && !m.w && !m.x);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 16);           /* SGX_INVALID_EINITTOKEN */
+    TEST_CHECK((sgx_rflags(&e) & 0x8d5) == 0x40);                    /* ZF only */
+    memcpy(sig, sgxv_sigstruct, sizeof(sig));
+    sig[4] ^= 1;
+    TEST_CHECK(sgx_einit(&e, sig, NULL) == 1);                        /* SGX_INVALID_SIG_STRUCT */
+    memcpy(sig, sgxv_sigstruct, sizeof(sig));
+    sig[600] ^= 0x10;
+    TEST_CHECK(sgx_einit(&e, sig, NULL) == 8);                        /* SGX_INVALID_SIGNATURE */
+    memcpy(sig, sgxv_sigstruct, sizeof(sig));
+    sig[1100] ^= 1;                                                    /* q1 */
+    TEST_CHECK(sgx_einit(&e, sig, NULL) == 8);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 0);
+    TEST_CHECK((sgx_rflags(&e) & 0x8d5) == 0);
+    OK(uc_mem_read(e.c.uc, SGX_EPC_BASE + 64, b, 32));
+    TEST_CHECK(!memcmp(b, sgxv_mrenclave, 32));
+    OK(uc_mem_read(e.c.uc, SGX_EPC_BASE + 128, b, 32));
+    TEST_CHECK(!memcmp(b, sgxv_mrsigner, 32));
+    v = sgx_rq(&e, SGX_EPC_BASE + 256);
+    TEST_CHECK((v & 0xffffffff) == 0x00071234);                       /* ISVPRODID, ISVSVN */
+    TEST_CHECK(sgx_rq(&e, SGX_EPC_BASE + 48) == 7);                   /* INIT | DEBUG | MODE64 */
+    TEST_CHECK(sgx_encls(&e, 2, SGX_SIG, SGX_SECS_LA, SGX_TOKEN) == 13);   /* initialized */
+    sgx_secinfo_w(&e, 0x203);
+    sgx_pageinfo_w(&e, SGXV_BASE + 0x6000, SGX_SRC, SGX_SECINFO, SGX_SECS_LA);
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE + 0x6000, 0) == 13);
+    OK(sgx_rdmsr_api(&e.c, 0x500, &v));
+    TEST_CHECK(v & 1);                                                 /* Lock after a success */
+    sgx_env_close(&e);
+
+    /* (b) a valid launch token with the reset LE hash (00 01 .. 1F) */
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);
+    memcpy(tok, sgxv_token, sizeof(tok));
+    tok[300] ^= 1;
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, tok) == 16);             /* MAC */
+    memcpy(tok, sgxv_token, sizeof(tok));
+    tok[4] = 1;
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, tok) == 16);             /* reserved */
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, sgxv_token) == 0);
+    sgx_env_close(&e);
+
+    /* (c) one EEXTEND missing: SGX_INVALID_MEASUREMENT; the token's DEBUG with a production
+       enclave: SGX_INVALID_EINITTOKEN */
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 1);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 4);
+    sgx_env_close(&e);
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 4, 0);
+    memcpy(tok, sgxv_token, sizeof(tok));
+    tok[240] |= 2;                                                     /* MASKEDATTRIBUTESLE.DEBUG */
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, tok) == 16);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1262: ECREATE / EADD checks (Vol3D p. 41-13..41-29): alignment #GP(0); an operand that does not
+ * resolve within the EPC, and a valid EPC page, #PF with PFEC = P | W | SGX[15] and CR2 = the
+ * linear address; PAGEINFO.LINADDR / SECS != 0, SECINFO.PT != PT_SECS, a SIZE that is no power of
+ * 2, BASEADDR not aligned, SSAFRAMESIZE too small, a reserved SECS byte, attribute bit 0 (INIT) or
+ * 3, XFRM[1:0] != 3, an unsupported MISCSELECT bit: #GP(0). EADD of a page outside ELRANGE,
+ * SECINFO.PT = PT_VA, W without R: #GP(0); a TCS keeps R/W/X = 0.
+ */
+static void test_x86_sgx_ecreate_eadd_checks(void)
+{
+    uc_x86_sgx_platform p;
+    uint64_t v;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_secs_src(&e, 6);
+    sgx_secinfo_w(&e, 0);
+    sgx_pageinfo_w(&e, 0, SGX_SECSSRC, SGX_SECINFO, 0);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO + 8, SGX_SECS_LA, 0) == 13);    /* RBX % 32 */
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA + 8, 0) == 13);    /* RCX % 4096 */
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SCRATCH, 0) == 14);        /* not EPC */
+    sgx_exc(&e, 14, SGX_PF_W_SGX, SGX_SCRATCH);
+    sgx_pageinfo_w(&e, 0x1000, SGX_SECSSRC, SGX_SECINFO, 0);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* LINADDR */
+    sgx_pageinfo_w(&e, 0, SGX_SECSSRC, SGX_SECINFO, 0);
+    sgx_secinfo_w(&e, 0x200);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* PT_REG */
+    sgx_secinfo_w(&e, 0x40);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* reserved flag */
+    sgx_secinfo_w(&e, 0);
+    sgx_wq(&e, SGX_SECSSRC, 0x18000);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* SIZE not 2^n */
+    sgx_wq(&e, SGX_SECSSRC, 0x1000);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* SIZE < 8 KB */
+    sgx_secs_src(&e, 6);
+    sgx_wq(&e, SGX_SECSSRC + 8, SGXV_BASE + 0x8000);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* BASEADDR */
+    sgx_secs_src(&e, 6);
+    sgx_wq(&e, SGX_SECSSRC + 16, 0 | (1ULL << 32));
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* SSAFRAMESIZE 0 */
+    sgx_secs_src(&e, 6);
+    sgx_wq(&e, SGX_SECSSRC + 16, 1 | (2ULL << 32));
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* MISCSELECT[1] */
+    sgx_secs_src(&e, 6);
+    sgx_wq(&e, SGX_SECSSRC + 0x400, 1);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* reserved byte */
+    sgx_secs_src(&e, 7);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* INIT */
+    sgx_secs_src(&e, 0xe);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* bit 3 */
+    sgx_secs_src(&e, 6);
+    sgx_wq(&e, SGX_SECSSRC + 56, 1);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* XFRM = 1 */
+    sgx_secs_src(&e, 2);                                                     /* 32-bit enclave */
+    sgx_wq(&e, SGX_SECSSRC + 8, 0x100000000ULL);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 13);        /* BASEADDR >= 4 GB */
+    sgx_secs_src(&e, 6);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == -1);
+    TEST_CHECK(sgx_encls(&e, 0, SGX_PAGEINFO, SGX_SECS_LA, 0) == 14);        /* valid page */
+    sgx_exc(&e, 14, SGX_PF_W_SGX, SGX_SECS_LA);
+    /* EADD */
+    sgx_secinfo_w(&e, 0x203);
+    sgx_pageinfo_w(&e, SGXV_BASE + SGXV_SIZE, SGX_SRC, SGX_SECINFO, SGX_SECS_LA);
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE, 0) == 13);          /* outside ELRANGE */
+    sgx_pageinfo_w(&e, SGXV_BASE, SGX_SRC, SGX_SECINFO, SGX_SECS_LA + 0x1000);
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE, 0) == 14);          /* SECS invalid */
+    sgx_exc(&e, 14, SGX_PF_R_SGX, SGX_SECS_LA + 0x1000);
+    sgx_pageinfo_w(&e, SGXV_BASE, SGX_SRC, SGX_SECINFO, SGX_SECS_LA);
+    sgx_secinfo_w(&e, 0x303);
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE, 0) == 13);          /* PT_VA */
+    sgx_secinfo_w(&e, 0x202);
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE, 0) == 13);          /* W without R */
+    sgx_secinfo_w(&e, 0x107);
+    OK(uc_mem_write(e.c.uc, SGX_SRC, sgxv_page_0000, 4096));
+    TEST_CHECK(sgx_encls(&e, 1, SGX_PAGEINFO, SGXV_BASE, 0) == -1);          /* TCS, RWX given */
+    v = 0;
+    {
+        uc_x86_sgx_epcm m;
+
+        OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE + 0x1000 * SGX_ENC_SLOT, &m));
+        TEST_CHECK(m.valid && m.pt == 1 && !m.r && !m.w && !m.x);
+    }
+    TEST_CHECK(sgx_encls(&e, 6, SGX_SECS_LA, SGXV_BASE + 0x80, 0) == 13);    /* EEXTEND % 256 */
+    TEST_CHECK(sgx_encls(&e, 6, SGX_SECS_LA + 0x1000, SGXV_BASE, 0) == 13);  /* wrong SECS */
+    TEST_CHECK(sgx_encls(&e, 6, SGX_SECS_LA, SGXV_BASE + 0x1000, 0) == 14);  /* invalid page */
+    sgx_env_close(&e);
+}
+
+/*
+ * U1262: ENCLS itself (Vol3D p. 41-8..41-9): #UD without the opt-in, with 66 / F3 / LOCK, at CPL3;
+ * #GP(0) with IA32_FEATURE_CONTROL not locked or SGX_ENABLE = 0, an unsupported leaf (10H, 18H
+ * EUPDATESVN - not enumerated), CR0.PG = 0.
+ */
+static void test_x86_sgx_encls_gates(void)
+{
+    uc_x86_sgx_platform p;
+    SgxEnv e;
+    SgxCtx c;
+
+    sgx_open(&c, 0);
+    TEST_CHECK(sgx_run(&c, "\x0f\x01\xcf", 3) == 6);
+    OK(uc_close(c.uc));
+
+    sgx_platform(&p);
+    sgx_open_cfg(&c, 1, &p);                    /* FEATURE_CONTROL 0 */
+    sgx_set(&c, UC_X86_REG_RAX, 0x0c);
+    TEST_CHECK(sgx_run(&c, "\x0f\x01\xcf", 3) == 13);
+    OK(sgx_wrmsr_api(&c, SGX_FC, SGX_FC_LOCK));
+    TEST_CHECK(sgx_run(&c, "\x0f\x01\xcf", 3) == 13);
+    OK(uc_close(c.uc));
+
+    sgx_env_open(&e, &p);
+    TEST_CHECK(sgx_run(&e.c, "\x66\x0f\x01\xcf", 4) == 6);
+    TEST_CHECK(sgx_run(&e.c, "\xf3\x0f\x01\xcf", 4) == 6);
+    TEST_CHECK(sgx_run(&e.c, "\xf0\x0f\x01\xcf", 4) == 6);
+    TEST_CHECK(sgx_encls(&e, 0x10, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_encls(&e, 0x18, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_encls(&e, 0x10000000cULL, 0, SGX_SECS_LA, 0) == 14);   /* EAX = 0CH (ETRACK) */
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, 0, 0) == 6);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1262: non-enclave accesses to the EPC (Vol3D 38.1 / 38.5.1, EEXIT p. 41-96): the abort page -
+ * reads return all ones (also for a SECS and a free page), writes are dropped (the host sees the
+ * page unchanged), an instruction fetch returns the fixed pattern (FF FF: #UD).
+ */
+static void test_x86_sgx_abort_page(void)
+{
+    uc_x86_sgx_platform p;
+    uint64_t v = 0x1122334455667788ULL;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    OK(uc_mem_write(e.c.uc, SGX_EPC_BASE + 0xa000, &v, 8));
+    sgx_set(&e.c, UC_X86_REG_RSI, SGX_EPC_LA + 0xa000);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x8b\x06", 3) == -1);                     /* mov rax, [rsi] */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == ~0ULL);
+    sgx_set(&e.c, UC_X86_REG_RDX, 5);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x89\x16", 3) == -1);                     /* mov [rsi], rdx */
+    TEST_CHECK(sgx_rq(&e, SGX_EPC_BASE + 0xa000) == v);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x8b\x06", 3) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == ~0ULL);
+    TEST_CHECK(sgx_run(&e.c, "\xff\xe6", 2) == 6);                          /* jmp rsi */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_EPC_LA + 0xa000);
+    sgx_build(&e, 6, 0);
+    sgx_set(&e.c, UC_X86_REG_RSI, SGXV_BASE + 0x4000);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x8b\x06", 3) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == ~0ULL);
+    sgx_set(&e.c, UC_X86_REG_RSI, SGX_SECS_LA);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x8b\x06", 3) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == ~0ULL);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1262: EREMOVE, EPA, EBLOCK, ETRACK (Vol3D p. 41-22..41-24, 41-60..41-66): EREMOVE of a SECS
+ * with children SGX_CHILD_PRESENT (13, ZF); of a free page RAX = 0; children first, then the SECS.
+ * EPA: RBX != PT_VA #GP(0), a valid page #PF; EBLOCK: success, SGX_BLKSTATE (3, CF), a SECS
+ * SGX_PG_IS_SECS (18, CF), a VA page SGX_NOTBLOCKABLE (5, CF), a free page SGX_PG_INVLD (6, ZF);
+ * ETRACK: success on a SECS, #PF on another page type.
+ */
+static void test_x86_sgx_eremove_epa_eblock(void)
+{
+    uc_x86_sgx_platform p;
+    uc_x86_sgx_epcm m;
+    SgxEnv e;
+    int k;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);
+    TEST_CHECK(sgx_encls(&e, 3, 0, SGX_SECS_LA, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 13 && (sgx_rflags(&e) & 0x41) == 0x40);
+    TEST_CHECK(sgx_encls(&e, 0x0a, 2, SGX_EPC_LA + 0x10000, 0) == 13);      /* RBX = PT_REG */
+    TEST_CHECK(sgx_encls(&e, 0x0a, 3, SGX_EPC_LA + 0x10000, 0) == -1);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE + 0x10000, &m));
+    TEST_CHECK(m.valid && m.pt == 3);
+    TEST_CHECK(sgx_encls(&e, 0x0a, 3, SGX_EPC_LA + 0x10000, 0) == 14);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGXV_BASE + 0x4000, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 0 && (sgx_rflags(&e) & 0x41) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE + 0x1000 * (SGX_ENC_SLOT + 4), &m));
+    TEST_CHECK(m.blocked);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGXV_BASE + 0x4000, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 3 && (sgx_rflags(&e) & 0x41) == 0x01);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGX_SECS_LA, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 18 && (sgx_rflags(&e) & 0x41) == 0x01);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGX_EPC_LA + 0x10000, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 5 && (sgx_rflags(&e) & 0x41) == 0x01);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGX_EPC_LA + 0x11000, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 6 && (sgx_rflags(&e) & 0x41) == 0x40);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGX_SECS_LA, 0) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGXV_BASE + 0x4000, 0) == 14);
+    for (k = 0; k < 6; k++) {
+        TEST_CHECK(sgx_encls(&e, 3, 0, SGXV_BASE + 0x1000 * k, 0) == -1);
+        TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    }
+    TEST_CHECK(sgx_encls(&e, 3, 0, SGX_SECS_LA, 0) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_EPC_BASE, &m));
+    TEST_CHECK(!m.valid);
+    TEST_CHECK(sgx_encls(&e, 3, 0, SGX_SECS_LA, 0) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(sgx_encls(&e, 3, 0, SGX_EPC_LA + 0x10000, 0) == -1);         /* the VA page */
+    sgx_env_close(&e);
+}
+
+/*
+ * U1262: EDBGRD / EDBGWR (Vol3D p. 41-30..41-37) on a debug enclave: a data qword read and
+ * written back; TCS.FLAGS writable (DBGOPTIN), another TCS offset #GP(0), a read beyond the TCS
+ * fields (our SGX_TCS_LIMIT 88) #GP(0); a VA slot reads all ones / 0 (occupied / empty); a
+ * production enclave #GP(0); misaligned #GP(0); a free page #PF.
+ */
+static void test_x86_sgx_edbg(void)
+{
+    uc_x86_sgx_platform p;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGXV_BASE + 0x4008, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_RBX) == 0x0f0e0d0c0b0a0908ULL);
+    TEST_CHECK(sgx_encls(&e, 5, 0x1122334455667788ULL, SGXV_BASE + 0x4008, 0) == -1);
+    TEST_CHECK(sgx_rq(&e, SGX_EPC_BASE + 0x1000 * (SGX_ENC_SLOT + 4) + 8) == 0x1122334455667788ULL);
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGXV_BASE + 0x4004, 0) == 13);
+    TEST_CHECK(sgx_encls(&e, 5, 1, SGXV_BASE + 8, 0) == -1);                /* TCS.FLAGS */
+    TEST_CHECK(sgx_rq(&e, SGX_EPC_BASE + 0x1000 * SGX_ENC_SLOT + 8) == 1);
+    TEST_CHECK(sgx_encls(&e, 5, 1, SGXV_BASE + 16, 0) == 13);               /* TCS.OSSA */
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGXV_BASE + 16, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RBX) == 0x1000);
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGXV_BASE + 88, 0) == 13);
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGX_SECS_LA, 0) == 14);                  /* SECS: #PF */
+    TEST_CHECK(sgx_encls(&e, 0x0a, 3, SGX_EPC_LA + 0x10000, 0) == -1);
+    sgx_wq(&e, SGX_EPC_BASE + 0x10010, 0x5000);                             /* a used VA slot */
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGX_EPC_LA + 0x10010, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RBX) == ~0ULL);
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGX_EPC_LA + 0x10018, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RBX) == 0);
+    TEST_CHECK(sgx_encls(&e, 5, 0, SGX_EPC_LA + 0x10018, 0) == 14);         /* EDBGWR to a VA */
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGX_EPC_LA + 0x11000, 0) == 14);         /* free page */
+    sgx_env_close(&e);
+
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 4, 0);                                                      /* production */
+    TEST_CHECK(sgx_encls(&e, 4, 0, SGXV_BASE + 0x4008, 0) == 13);
+    TEST_CHECK(sgx_encls(&e, 5, 0, SGXV_BASE + 0x4008, 0) == 13);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1263: enclave execution. The test enclave is entered with ENCLU at SGX_ENCLU_AT (CPL 3); its
+ * code (ref_sgx.py enclave_code) ends every command with EEXIT to the RCX of the entry, so a run
+ * stops at SGX_ENCLU_AT + 3. An AEX leaves RIP = AEP (SGX_AEP); the UC_HOOK_INTR capture stops
+ * there (a #UD stops with UC_ERR_INSN_INVALID).
+ */
+#define SGX_ENCLU_AT (SGX_CODE + 0x400)
+#define SGX_AEP (SGX_CODE + 0x500)
+#define SGX_TCS_PA (SGX_EPC_BASE + 0x1000ULL * SGX_ENC_SLOT)
+#define SGX_SSA0_PA (SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + 1))
+#define SGX_GPR0_PA (SGX_SSA0_PA + 0x1000 - 184)
+#define SGX_DATA_PA (SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + 4))
+#define SGX_GPR_RDI 56
+#define SGX_GPR_R14 112
+#define SGX_GPR_R15 120
+#define SGX_GPR_RFLAGS 128
+#define SGX_GPR_RIP 136
+#define SGX_GPR_URSP 144
+#define SGX_GPR_EXITINFO 160
+#define SGX_GPR_FSBASE 168
+
+/* ENCLU at SGX_ENCLU_AT with RAX / RBX / RCX / RDI / RSI / RDX: the vector raised (6 = #UD) or -1 */
+static int sgx_enclu(SgxEnv *e, uint64_t rax, uint64_t rbx, uint64_t rcx, uint64_t rdi,
+                     uint64_t rsi, uint64_t rdx)
+{
+    uc_err err;
+
+    sgx_set(&e->c, UC_X86_REG_RAX, rax);
+    sgx_set(&e->c, UC_X86_REG_RBX, rbx);
+    sgx_set(&e->c, UC_X86_REG_RCX, rcx);
+    sgx_set(&e->c, UC_X86_REG_RDI, rdi);
+    sgx_set(&e->c, UC_X86_REG_RSI, rsi);
+    sgx_set(&e->c, UC_X86_REG_RDX, rdx);
+    OK(uc_mem_write(e->c.uc, SGX_ENCLU_AT, "\x0f\x01\xd7", 3));
+    e->c.cap.count = 0;
+    e->c.cap.intno = 0;
+    err = uc_emu_start(e->c.uc, SGX_ENCLU_AT, SGX_ENCLU_AT + 3, 0, 100000);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK_(err == UC_ERR_OK, "uc_emu_start: %s", uc_strerror(err));
+    return e->c.cap.count ? (int)e->c.cap.intno : -1;
+}
+
+/* EENTER the test enclave with command 'cmd' (RSI / RDX its operands) */
+static int sgx_eenter(SgxEnv *e, uint64_t cmd, uint64_t rsi, uint64_t rdx)
+{
+    return sgx_enclu(e, 2, SGXV_BASE, SGX_AEP, cmd, rsi, rdx);
+}
+
+static int sgx_eresume(SgxEnv *e)
+{
+    return sgx_enclu(e, 3, SGXV_BASE, SGX_AEP, 0, 0, 0);
+}
+
+static uint32_t sgx_cssa(SgxEnv *e)
+{
+    return (uint32_t)sgx_rq(e, SGX_TCS_PA + 24);
+}
+
+/* TCS.CSSA := v (the test's direct EPC write; NSSA stays) */
+static void sgx_set_cssa(SgxEnv *e, uint32_t v)
+{
+    OK(uc_mem_write(e->c.uc, SGX_TCS_PA + 24, &v, 4));
+}
+
+/* the address of command 'cmd''s body in the enclave code ("83 ff cmd 75 rel8" before it) */
+static uint64_t sgx_cmd_addr(int cmd)
+{
+    int i;
+
+    for (i = 0; i + 5 < 4096; i++) {
+        if (sgxv_page_3000[i] == 0x83 && sgxv_page_3000[i + 1] == 0xff &&
+            sgxv_page_3000[i + 2] == cmd && sgxv_page_3000[i + 3] == 0x75) {
+            return SGXV_BASE + 0x3000 + i + 5;
+        }
+    }
+    TEST_CHECK(0);
+    return 0;
+}
+
+/* an initialised debug enclave (DEBUG | MODE64BIT, launched with the LE hash = MRSIGNER); CPL 3 */
+static void sgx_ready(SgxEnv *e, uint64_t dbgoptin)
+{
+    uc_x86_sgx_platform p;
+
+    sgx_platform(&p);
+    sgx_env_open(e, &p);
+    sgx_build(e, 6, 0);
+    sgx_set_lehash(e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(e, sgxv_sigstruct, NULL) == 0);
+    if (dbgoptin) {
+        TEST_CHECK(sgx_encls(e, 5, 1, SGXV_BASE + 8, 0) == -1);      /* TCS.FLAGS.DBGOPTIN */
+    }
+    sgx_to_cpl3(e);
+}
+
+/*
+ * U1263: ENCLU (Vol3D p. 41-10) and the EENTER / EEXIT round trip (p. 41-87..41-98). Gates: CPL 0
+ * #UD, a 66H prefix #UD, an unsupported leaf (08H) #GP(0), EEXIT / EREPORT outside an enclave
+ * #GP(0). EENTER: RAX = CSSA, RCX = the next RIP; inside: FS = the TCS segment (OFSBASE, read
+ * through fs:[0]), the data page through the EPCM (INC twice); EEXIT: RIP = RBX, RCX = AEP, FS
+ * restored, TCS available, U_RSP in the SSA; a non-enclave read of an enclave page is the abort
+ * page. The EENTER checks: RBX misaligned #GP(0), RBX outside the EPC and RBX on a PT_REG page
+ * #PF (P | U | SGX, CR2 = RBX), an AEP that is not canonical #GP(0), CSSA = NSSA #GP(0), a busy
+ * TCS #GP(0), an enclave without EINIT #GP(0).
+ */
+static void test_x86_sgx_eenter_eexit(void)
+{
+    uc_x86_sgx_platform p;
+    uint64_t rsp, v;
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    TEST_CHECK(sgx_run(&e.c, "\x66\x0f\x01\xd7", 4) == 6);
+    TEST_CHECK(sgx_enclu(&e, 8, 0, 0, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_enclu(&e, 4, SGX_CODE, 0, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_enclu(&e, 0, 0, 0, 0, 0, 0) == 13);
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    TEST_CHECK(sgx_eenter(&e, 3, 0, 0) == -1);                          /* CMD_INC */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_ENCLU_AT + 3);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 4 && sgx_get(&e.c, UC_X86_REG_RCX) == SGX_AEP &&
+               sgx_get(&e.c, UC_X86_REG_R15) == SGX_ENCLU_AT + 3);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0x0706050403020101ULL);
+    TEST_CHECK(sgx_rq(&e, SGX_DATA_PA) == 0x0706050403020101ULL);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_FS) == 0 && sgx_get(&e.c, UC_X86_REG_FS_BASE) == 0);
+    TEST_CHECK(sgx_rq(&e, SGX_TCS_PA) == 0 && sgx_rq(&e, SGX_TCS_PA + 40) == SGX_AEP);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_URSP) == rsp);
+    TEST_CHECK(sgx_eenter(&e, 3, 0, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0x0706050403020102ULL);
+    TEST_CHECK(sgx_eenter(&e, 15, 0, 0) == -1);                         /* CMD_FSREAD */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0x0706050403020102ULL);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);                          /* CMD_EXIT */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 4 && sgx_cssa(&e) == 0);
+    /* non-enclave access to the data page: all ones read, the write dropped */
+    sgx_set(&e.c, UC_X86_REG_RBX, 0x55);
+    TEST_CHECK(sgx_run(&e.c, "\x48\x8b\x04\x25\x00\x40\x00\x10\x48\x89\x1c\x25\x08\x40\x00\x10",
+                       16) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == ~0ULL);
+    TEST_CHECK(sgx_rq(&e, SGX_DATA_PA + 8) == 0x0f0e0d0c0b0a0908ULL);
+    /* the EENTER checks */
+    TEST_CHECK(sgx_enclu(&e, 2, SGXV_BASE + 8, SGX_AEP, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_enclu(&e, 2, SGX_DATA, SGX_AEP, 0, 0, 0) == 14);
+    sgx_exc(&e, 14, 0x8005, SGX_DATA);
+    TEST_CHECK(sgx_enclu(&e, 2, SGXV_BASE + 0x3000, SGX_AEP, 0, 0, 0) == 14);
+    sgx_exc(&e, 14, 0x8005, SGXV_BASE + 0x3000);
+    TEST_CHECK(sgx_enclu(&e, 2, SGXV_BASE, 0x0000800000000000ULL, 0, 0, 0) == 13);
+    sgx_set_cssa(&e, 2);                                     /* CSSA = NSSA */
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 13);
+    sgx_set_cssa(&e, 0);
+    sgx_wq(&e, SGX_TCS_PA, 1);                                          /* STATE = active */
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 13);
+    sgx_wq(&e, SGX_TCS_PA, 0);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);
+    sgx_to_cpl0(&e);
+    TEST_CHECK(sgx_run(&e.c, "\x0f\x01\xd7", 3) == 6);                  /* CPL 0 */
+    sgx_env_close(&e);
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);                                                /* no EINIT */
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 13);
+    v = sgx_rq(&e, SGX_TCS_PA);
+    TEST_CHECK(v == 0);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1263: AEX (Vol3D 40.3, 40.4.1) and ERESUME (p. 41-117..41-128). UD2 in the enclave: #UD with
+ * RIP = AEP, the synthetic state (RAX = 3, RBX = TCS, RCX = AEP, RDX / RSI / RDI / R8-R15 = 0, RSP
+ * = U_RSP, CF..OF = 0, FCW 037FH, MXCSR 1FB0H), CSSA = 1; SSA frame 0: the x87 / SSE state of the
+ * enclave (FCW, MXCSR), RDI, R15, RIP of the UD2,
+ * RFLAGS.RF = 1 and TF = 0, FS base, EXITINFO = valid | type 3 | vector 6, XSTATE_BV within XFRM
+ * and header bytes 23:8 = 0. EENTER with CSSA = 1 runs the enclave's handler (R14 = EXITINFO, SSA
+ * RIP += 2); ERESUME continues after the UD2 (EEXIT to the first entry's RCX) and pops the frame.
+ * CPUID is #UD inside (Table 39-1). An SSA XSTATE_BV outside XFRM makes ERESUME #GP(0).
+ */
+static void test_x86_sgx_aex_eresume(void)
+{
+    uint64_t ud2 = sgx_cmd_addr(1), rsp, fcw;
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    TEST_CHECK(sgx_eresume(&e) == 13);                                  /* CSSA = 0 */
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    fcw = sgx_get(&e.c, UC_X86_REG_FPCW) & 0xffff;
+    sgx_set(&e.c, UC_X86_REG_EFLAGS, 0x8d7);
+    TEST_CHECK(sgx_eenter(&e, 1, 0x1111, 0x2222) == 6);                 /* CMD_UD2 */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_AEP);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 3 && sgx_get(&e.c, UC_X86_REG_RBX) == SGXV_BASE &&
+               sgx_get(&e.c, UC_X86_REG_RCX) == SGX_AEP && sgx_get(&e.c, UC_X86_REG_RDX) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_RSI) == 0 && sgx_get(&e.c, UC_X86_REG_RDI) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_R15) == 0 && sgx_get(&e.c, UC_X86_REG_RSP) == rsp);
+    TEST_CHECK((sgx_rflags(&e) & 0x108d5) == 0);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_FPCW) == 0x37f && sgx_get(&e.c, UC_X86_REG_MXCSR) == 0x1fb0);
+    TEST_CHECK(sgx_cssa(&e) == 1 && sgx_rq(&e, SGX_TCS_PA) == 0);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RDI) == 1 &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_R15) == SGX_ENCLU_AT + 3 &&
+               sgx_rq(&e, SGX_GPR0_PA + 48) == 0x1111 && sgx_rq(&e, SGX_GPR0_PA + 16) == 0x2222);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == ud2);
+    TEST_CHECK_((sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RFLAGS) & 0x10100) == 0x10000, "SSA RFLAGS %llx",
+                (unsigned long long)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RFLAGS));
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_FSBASE) == SGXV_BASE + 0x4000);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u);
+    TEST_CHECK((sgx_rq(&e, SGX_SSA0_PA + 512) & ~3ULL) == 0 && sgx_rq(&e, SGX_SSA0_PA + 520) == 0 &&
+               sgx_rq(&e, SGX_SSA0_PA + 528) == 0);
+    TEST_CHECK_((uint16_t)sgx_rq(&e, SGX_SSA0_PA) == fcw, "SSA FCW %llx, FCW at entry %llx",
+                (unsigned long long)sgx_rq(&e, SGX_SSA0_PA), (unsigned long long)fcw);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_SSA0_PA + 24) == 0x1f80);       /* MXCSR saved */
+    /* the handler: EENTER with CSSA = 1 */
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0x80000306u);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == ud2 + 2 && sgx_cssa(&e) == 1);
+    /* ERESUME: continues after the UD2 and exits to the first entry's next instruction */
+    TEST_CHECK(sgx_eresume(&e) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_ENCLU_AT + 3 && sgx_cssa(&e) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_RDI) == 1 && sgx_get(&e.c, UC_X86_REG_RAX) == 4);
+    /* CPUID inside (Table 39-1); ERESUME with a bad XSAVE header */
+    TEST_CHECK(sgx_eenter(&e, 2, 0, 0) == 6);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == sgx_cmd_addr(2));
+    sgx_wq(&e, SGX_SSA0_PA + 512, sgx_rq(&e, SGX_SSA0_PA + 512) | 4);
+    TEST_CHECK(sgx_eresume(&e) == 13 && sgx_cssa(&e) == 1 && sgx_rq(&e, SGX_TCS_PA) == 0);
+    sgx_wq(&e, SGX_SSA0_PA + 512, sgx_rq(&e, SGX_SSA0_PA + 512) & 3);
+    sgx_wq(&e, SGX_SSA0_PA + 520, 1);                                   /* XCOMP_BV */
+    TEST_CHECK(sgx_eresume(&e) == 13);
+    sgx_wq(&e, SGX_SSA0_PA + 520, 0);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);                          /* handler: RIP += 2 */
+    TEST_CHECK(sgx_eresume(&e) == -1 && sgx_cssa(&e) == 0);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1263: enclave-mode access control (Vol3D 38.3, 38.5; AEX EXITINFO / EXINFO with MISCSELECT[0]).
+ * Reads outside ELRANGE: ordinary memory as is, an EPC page (the SECS) the abort page. A read of
+ * the TCS page and a write to the R-X code page in ELRANGE: #PF with P | U | SGX (+ W), CR2 bits
+ * 11:0 cleared, EXINFO.MADDR = the full address and ERRCD = PFEC; an ELRANGE page without an EPC
+ * page behind it (#PF), a jump outside ELRANGE #GP(0) (EXINFO 0 / 0).
+ */
+static void test_x86_sgx_enclave_access(void)
+{
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    sgx_wq(&e, SGX_DATA + 0x10, 0xabcdef);
+    TEST_CHECK(sgx_eenter(&e, 6, SGX_DATA + 0x10, 0) == -1);            /* CMD_READ */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0xabcdef);
+    TEST_CHECK(sgx_eenter(&e, 6, SGX_SECS_LA, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == ~0ULL);
+    TEST_CHECK(sgx_eenter(&e, 6, SGXV_BASE + 0x18, 0) == 14);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_CR2) == SGXV_BASE);
+    sgx_exc(&e, 14, 0x8005, SGXV_BASE);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x8000030eu &&
+               sgx_rq(&e, SGX_GPR0_PA - 16) == SGXV_BASE + 0x18 &&
+               sgx_rq(&e, SGX_GPR0_PA - 8) == 0x8005);
+    sgx_set_cssa(&e, 0);                                     /* drop the frame */
+    TEST_CHECK(sgx_eenter(&e, 7, SGXV_BASE + 0x3008, 1) == 14);         /* CMD_WRITE */
+    sgx_exc(&e, 14, 0x8007, SGXV_BASE + 0x3000);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA - 16) == SGXV_BASE + 0x3008 &&
+               sgx_rq(&e, SGX_GPR0_PA - 8) == 0x8007);
+    sgx_set_cssa(&e, 0);
+    TEST_CHECK(sgx_eenter(&e, 6, SGXV_BASE + 0x6000, 0) == 14);
+    sgx_exc(&e, 14, 0x8005, SGXV_BASE + 0x6000);
+    sgx_set_cssa(&e, 0);
+    TEST_CHECK(sgx_eenter(&e, 8, SGX_CODE + 0x800, 0) == 13);           /* CMD_JMP */
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x8000030du &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == SGX_CODE + 0x800 &&
+               sgx_rq(&e, SGX_GPR0_PA - 16) == 0 && sgx_rq(&e, SGX_GPR0_PA - 8) == 0);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_AEP && sgx_cssa(&e) == 1);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1263: debugging (Vol3D 43.2-43.4). Opt-out entry: INT3 is #UD (EXITINFO vector 6), POPF cannot
+ * set TF, TF = 1 at EENTER is masked inside and a single-step #DB follows EEXIT (DR6.BS). Opt-in
+ * entry (TCS.FLAGS.DBGOPTIN set with EDBGWR): INT3 is a fault-class #BP (EXITINFO type 6, SSA.RIP
+ * = the INT3, SSA RFLAGS.RF = 1); TF = 1 at EENTER pends a #DB after it, which exits the enclave
+ * (EXITINFO vector 1, SSA.RIP = OENTRY) with TF unchanged.
+ */
+static void test_x86_sgx_enclave_debug(void)
+{
+    uint64_t int3 = sgx_cmd_addr(9);
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    TEST_CHECK(sgx_eenter(&e, 9, 0, 0) == 6);                           /* CMD_INT3 */
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u);
+    sgx_set_cssa(&e, 0);
+    TEST_CHECK(sgx_eenter(&e, 11, 0, 0) == -1);                         /* CMD_POPF_TF */
+    TEST_CHECK(!(sgx_get(&e.c, UC_X86_REG_R14) & 0x100));
+    sgx_set(&e.c, UC_X86_REG_EFLAGS, 0x302);                            /* TF, IF */
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_ENCLU_AT + 3 &&
+               (sgx_get(&e.c, UC_X86_REG_DR6) & 0x4000) && (sgx_rflags(&e) & 0x100) &&
+               sgx_cssa(&e) == 0);
+    sgx_env_close(&e);
+
+    sgx_ready(&e, 1);
+    TEST_CHECK(sgx_eenter(&e, 9, 0, 0) == 3);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_AEP);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000603u &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == int3 &&
+               (sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RFLAGS) & 0x10000));
+    sgx_set_cssa(&e, 0);
+    sgx_set(&e.c, UC_X86_REG_EFLAGS, 0x102);                            /* TF */
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_AEP && (sgx_rflags(&e) & 0x100));
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000301u &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == SGXV_BASE + 0x3000 &&
+               !(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RFLAGS) & 0x10100));
+    sgx_env_close(&e);
+}
+
+/*
+ * U1264: EREPORT / EGETKEY (Vol3D p. 41-99..41-116) of the debug test enclave, against
+ * ref_sgx.py (REPORT of Table 38-22 with the MAC of the TARGETINFO enclave's report key; the
+ * SEAL_KEY of a KEYREQUEST with KEYPOLICY.MRENCLAVE; the REPORT_KEY that verifies that MAC - the
+ * derivation itself is the model's placeholder, docs/sgx.md 3). Error codes leave the output
+ * unmodified with ZF = 1: ISVSVN beyond the enclave (SGX_INVALID_ISVSVN), PROVISION_KEY /
+ * EINITTOKEN_KEY without the attribute (SGX_INVALID_ATTRIBUTE), KEYNAME 5 (SGX_INVALID_KEYNAME).
+ * #GP(0): a reserved KEYREQUEST byte, KEYPOLICY.CONFIGID without KSS, a reserved TARGETINFO byte,
+ * EGETKEY outside an enclave.
+ */
+#define SGX_DATA2_PA (SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + 5))
+
+static void sgx_keyreq(SgxEnv *e, const uint8_t *kr, uint16_t name, uint16_t isvsvn)
+{
+    uint8_t b[512];
+
+    if (kr) {
+        memcpy(b, kr, sizeof(b));
+    } else {
+        memset(b, 0, sizeof(b));
+        memcpy(b, &name, 2);
+        memcpy(b + 4, &isvsvn, 2);
+    }
+    OK(uc_mem_write(e->c.uc, SGX_DATA2_PA + 0x600, b, sizeof(b)));
+}
+
+static void test_x86_sgx_ereport_egetkey(void)
+{
+    uint8_t rd[64], b[432], k[16];
+    SgxEnv e;
+    int i;
+
+    sgx_ready(&e, 0);
+    TEST_CHECK(sgx_enclu(&e, 1, SGXV_BASE + 0x5600, SGXV_BASE + 0x5800, 0, 0, 0) == 13);
+    for (i = 0; i < 64; i++) {
+        rd[i] = (uint8_t)i;
+    }
+    OK(uc_mem_write(e.c.uc, SGX_DATA2_PA, sgxv_targetinfo, 512));
+    OK(uc_mem_write(e.c.uc, SGX_DATA2_PA + 0x200, rd, 64));
+    TEST_CHECK(sgx_eenter(&e, 4, 0, 0) == -1);                          /* CMD_EREPORT */
+    OK(uc_mem_read(e.c.uc, SGX_DATA2_PA + 0x400, b, 432));
+    TEST_CHECK(!memcmp(b, sgxv_report, 432));
+    TEST_CHECK(!memcmp(b + 416, sgxv_report + 416, 16));
+    sgx_keyreq(&e, sgxv_kr_seal, 0, 0);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1);                          /* CMD_EGETKEY */
+    OK(uc_mem_read(e.c.uc, SGX_DATA2_PA + 0x800, k, 16));
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0 && !memcmp(k, sgxv_seal_key, 16) &&
+               (sgx_rflags(&e) & 0x8d5) == 0);
+    sgx_keyreq(&e, NULL, 3, 0);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1);
+    OK(uc_mem_read(e.c.uc, SGX_DATA2_PA + 0x800, k, 16));
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0 && !memcmp(k, sgxv_report_key, 16));
+    sgx_keyreq(&e, NULL, 4, 8);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 64 && (sgx_rflags(&e) & 0x8d5) == 0x40);
+    OK(uc_mem_read(e.c.uc, SGX_DATA2_PA + 0x800, k, 16));
+    TEST_CHECK(!memcmp(k, sgxv_report_key, 16));                       /* unmodified */
+    sgx_keyreq(&e, NULL, 1, 0);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1 && sgx_get(&e.c, UC_X86_REG_R14) == 2);
+    sgx_keyreq(&e, NULL, 0, 0);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1 && sgx_get(&e.c, UC_X86_REG_R14) == 2);
+    sgx_keyreq(&e, NULL, 5, 0);
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == -1 && sgx_get(&e.c, UC_X86_REG_R14) == 256);
+    sgx_keyreq(&e, NULL, 4, 0);
+    OK(uc_mem_write(e.c.uc, SGX_DATA2_PA + 0x600 + 100, "\x01", 1));
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == 13);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x8000030du);
+    sgx_set_cssa(&e, 0);
+    sgx_keyreq(&e, NULL, 4, 0);
+    OK(uc_mem_write(e.c.uc, SGX_DATA2_PA + 0x600 + 2, "\x08", 1));      /* KEYPOLICY.CONFIGID */
+    TEST_CHECK(sgx_eenter(&e, 5, 0, 0) == 13);
+    sgx_set_cssa(&e, 0);
+    OK(uc_mem_write(e.c.uc, SGX_DATA2_PA + 49, "\x01", 1));             /* TARGETINFO reserved */
+    TEST_CHECK(sgx_eenter(&e, 4, 0, 0) == 13);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1265: EPC paging (Vol3D EWB p. 41-69, ELDB / ELDU p. 41-49). The debug enclave's data page:
+ * EWB before EBLOCK (SGX_PAGE_NOT_BLOCKED), before ETRACK (SGX_NOT_TRACKED); after both the
+ * ciphertext and PCMD equal ref_sgx.py's (MAC-header layout and GCM IV: the model's reading,
+ * docs/sgx.md 3), PAGEINFO.LINADDR, the VA slot (version 1), the EPCM entry invalid; EWB of the
+ * SECS with children (SGX_CHILD_PRESENT); RCX and RDX on one page #GP(0). ELDU with a wrong
+ * version (SGX_MAC_COMPARE_FAIL), then ELDU restores the page (EPCM R W, SECS binding: the
+ * enclave increments it again), clears the slot; ELDU of a valid page #PF; an occupied VA slot
+ * (CF, SGX_VA_SLOT_OCCUPIED, version 2 stored); ELDB loads the page blocked.
+ */
+#define SGX_VA_LA (SGX_EPC_LA + 0x10000)
+#define SGX_VA_PA (SGX_EPC_BASE + 0x10000)
+#define SGX_PCMD SGX_SCRATCH
+
+static void sgx_pageinfo_pcmd(SgxEnv *e, uint64_t linaddr, uint64_t secs)
+{
+    sgx_pageinfo_w(e, linaddr, SGX_SRC, SGX_PCMD, secs);
+}
+
+static void test_x86_sgx_ewb_eld(void)
+{
+    uc_x86_sgx_platform p;
+    uc_x86_sgx_epcm m;
+    uint8_t b[4096];
+    uint64_t v = 5;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_build(&e, 6, 0);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv_sigstruct, NULL) == 0);
+    TEST_CHECK(sgx_encls(&e, 0x0a, 3, SGX_VA_LA, 0) == -1);              /* EPA */
+    sgx_pageinfo_pcmd(&e, 0, 0);
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 10 && (sgx_rflags(&e) & 0x8d5) == 0x40);
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGXV_BASE + 0x4000, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 0);                        /* EBLOCK */
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 11);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGX_SECS_LA, 0) == -1);            /* ETRACK */
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 0x10000) == 14);
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGX_VA_LA, SGX_VA_LA + 8) == 13);
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 0 && (sgx_rflags(&e) & 0x8d5) == 0);
+    OK(uc_mem_read(e.c.uc, SGX_SRC, b, 4096));
+    TEST_CHECK(!memcmp(b, sgxv_ewb_data, 4096));
+    OK(uc_mem_read(e.c.uc, SGX_PCMD, b, 128));
+    TEST_CHECK(!memcmp(b, sgxv_ewb_pcmd, 128));
+    TEST_CHECK(sgx_rq(&e, SGX_PAGEINFO) == SGXV_BASE + 0x4000 && sgx_rq(&e, SGX_VA_PA + 8) == 1);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_DATA_PA, &m));
+    TEST_CHECK(!m.valid);
+    sgx_pageinfo_pcmd(&e, 0, 0);
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGX_SECS_LA, SGX_VA_LA + 16) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 13);                       /* child present */
+    /* ELDU */
+    sgx_wq(&e, SGX_VA_PA + 8, 2);
+    sgx_pageinfo_pcmd(&e, SGXV_BASE + 0x4000, SGX_SECS_LA);
+    TEST_CHECK(sgx_encls(&e, 8, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 9 && (sgx_rflags(&e) & 0x8d5) == 0x40);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_DATA_PA, &m));
+    TEST_CHECK(!m.valid);
+    sgx_wq(&e, SGX_VA_PA + 8, 1);
+    TEST_CHECK(sgx_encls(&e, 8, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 0 && (sgx_rflags(&e) & 0x8d5) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_DATA_PA, &m));
+    TEST_CHECK(m.valid && m.r && m.w && !m.x && !m.blocked && m.pt == 2 &&
+               m.enclavesecs == SGX_EPC_BASE && m.enclaveaddress == SGXV_BASE + 0x4000);
+    TEST_CHECK(sgx_rq(&e, SGX_VA_PA + 8) == 0 && sgx_rq(&e, SGX_DATA_PA) == 0x0706050403020100ULL);
+    TEST_CHECK(sgx_encls(&e, 8, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 8) == 14);
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 3, 0, 0) == -1);                          /* CMD_INC */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0x0706050403020101ULL);
+    sgx_to_cpl0(&e);
+    /* an occupied VA slot; ELDB */
+    TEST_CHECK(sgx_encls(&e, 9, 0, SGXV_BASE + 0x4000, 0) == -1);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGX_SECS_LA, 0) == -1);
+    OK(uc_mem_write(e.c.uc, SGX_VA_PA + 24, &v, 8));
+    sgx_pageinfo_pcmd(&e, 0, 0);
+    TEST_CHECK(sgx_encls(&e, 0x0b, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 24) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RAX) == 12 && (sgx_rflags(&e) & 0x8d5) == 1 &&
+               sgx_rq(&e, SGX_VA_PA + 24) == 2);
+    sgx_pageinfo_pcmd(&e, SGXV_BASE + 0x4000, SGX_SECS_LA);
+    TEST_CHECK(sgx_encls(&e, 7, SGX_PAGEINFO, SGXV_BASE + 0x4000, SGX_VA_LA + 24) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_DATA_PA, &m));
+    TEST_CHECK(m.valid && m.blocked);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1266: SGX2 (Vol3D EAUG p. 41-18, EMODPR p. 41-54, EMODT p. 41-57, EACCEPT p. 41-74, EMODPE
+ * p. 41-109, EACCEPTCOPY p. 41-79). EAUG adds a zeroed PENDING R/W page (SRCPAGE != 0, a SECINFO
+ * - CET pages only - and a LINADDR outside ELRANGE are #GP(0)); the enclave cannot touch it before
+ * EACCEPT (#PF), then reads / writes it; a second EACCEPT mismatches; EMODPE adds X; EMODPR
+ * restricts to R (R = 0 with W = 1 #GP(0), a PENDING page SGX_PAGE_NOT_MODIFIABLE) and its EACCEPT
+ * needs an ETRACK first (SGX_NOT_TRACKED); EMODT to PT_TRIM, EACCEPT, EREMOVE; EACCEPTCOPY fills
+ * an EAUG page from the data page with R-X, and mismatches on an accepted page; EACCEPT outside an
+ * enclave #GP(0).
+ */
+#define SGX_SI_ENC (SGXV_BASE + 0x5100)         /* SECINFOs in the data2 page */
+
+static void sgx_si_enc(SgxEnv *e, int slot, uint8_t flags, uint8_t pt)
+{
+    uint8_t si[64] = {0};
+
+    si[0] = flags;
+    si[1] = pt;
+    OK(uc_mem_write(e->c.uc, SGX_DATA2_PA + 0x100 + 64 * slot, si, 64));
+}
+
+static int sgx_eaug(SgxEnv *e, uint64_t la)
+{
+    uint64_t pi[4] = {la, 0, 0, SGX_SECS_LA};
+
+    OK(uc_mem_write(e->c.uc, SGX_PAGEINFO, pi, sizeof(pi)));
+    return sgx_encls(e, 0x0d, SGX_PAGEINFO, la, 0);
+}
+
+#define SGX_SLOT_PA(k) (SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + (k)))
+
+static void test_x86_sgx_sgx2(void)
+{
+    uc_x86_sgx_epcm m;
+    uint64_t pi[4] = {SGXV_BASE + 0x6000, SGX_SRC, 0, SGX_SECS_LA};
+    uint8_t b[4096];
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    sgx_to_cpl0(&e);
+    OK(uc_mem_write(e.c.uc, SGX_PAGEINFO, pi, sizeof(pi)));
+    TEST_CHECK(sgx_encls(&e, 0x0d, SGX_PAGEINFO, SGXV_BASE + 0x6000, 0) == 13);   /* SRCPAGE */
+    pi[1] = 0;
+    pi[2] = SGX_SECINFO;
+    OK(uc_mem_write(e.c.uc, SGX_PAGEINFO, pi, sizeof(pi)));
+    TEST_CHECK(sgx_encls(&e, 0x0d, SGX_PAGEINFO, SGXV_BASE + 0x6000, 0) == 13);   /* SECINFO */
+    pi[0] = SGXV_BASE + SGXV_SIZE;
+    pi[2] = 0;
+    OK(uc_mem_write(e.c.uc, SGX_PAGEINFO, pi, sizeof(pi)));
+    TEST_CHECK(sgx_encls(&e, 0x0d, SGX_PAGEINFO, SGXV_BASE + 0x6000, 0) == 13);   /* LINADDR */
+    TEST_CHECK(sgx_eaug(&e, SGXV_BASE + 0x6000) == -1);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_SLOT_PA(6), &m));
+    TEST_CHECK(m.valid && m.pending && m.r && m.w && !m.x && m.pt == 2 &&
+               m.enclaveaddress == SGXV_BASE + 0x6000 && m.enclavesecs == SGX_EPC_BASE);
+    TEST_CHECK(sgx_eaug(&e, SGXV_BASE + 0x7000) == -1);
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_enclu(&e, 5, SGX_SI_ENC, SGXV_BASE + 0x6000, 0, 0, 0) == 13);
+    TEST_CHECK(sgx_eenter(&e, 6, SGXV_BASE + 0x6000, 0) == 14);         /* pending */
+    sgx_set_cssa(&e, 0);
+    sgx_si_enc(&e, 0, 0x0b, 2);                                          /* R W PENDING, REG */
+    TEST_CHECK(sgx_eenter(&e, 12, SGX_SI_ENC, SGXV_BASE + 0x6000) == -1);   /* CMD_EACCEPT */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_R14) == 0 && (sgx_rflags(&e) & 0x8d5) == 0);
+    TEST_CHECK(sgx_eenter(&e, 7, SGXV_BASE + 0x6008, 0x1234) == -1);    /* CMD_WRITE */
+    TEST_CHECK(sgx_eenter(&e, 6, SGXV_BASE + 0x6008, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 0x1234);
+    TEST_CHECK(sgx_eenter(&e, 12, SGX_SI_ENC, SGXV_BASE + 0x6000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 19 && (sgx_rflags(&e) & 0x40));
+    sgx_si_enc(&e, 1, 0x04, 2);                                          /* X */
+    TEST_CHECK(sgx_eenter(&e, 13, SGX_SI_ENC + 64, SGXV_BASE + 0x6000) == -1);  /* CMD_EMODPE */
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_SLOT_PA(6), &m));
+    TEST_CHECK(m.r && m.w && m.x && !m.pending);
+    /* EMODPR to R */
+    sgx_to_cpl0(&e);
+    sgx_secinfo_w(&e, 0x002);
+    TEST_CHECK(sgx_encls(&e, 0x0e, SGX_SECINFO, SGXV_BASE + 0x6000, 0) == 13);
+    sgx_secinfo_w(&e, 0x201);
+    TEST_CHECK(sgx_encls(&e, 0x0e, SGX_SECINFO, SGXV_BASE + 0x7000, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 20);                     /* pending */
+    TEST_CHECK(sgx_encls(&e, 0x0e, SGX_SECINFO, SGXV_BASE + 0x6000, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_SLOT_PA(6), &m));
+    TEST_CHECK(m.r && !m.w && !m.x && m.pr);
+    sgx_to_cpl3(&e);
+    sgx_si_enc(&e, 2, 0x21, 2);                                          /* R PR, REG */
+    TEST_CHECK(sgx_eenter(&e, 12, SGX_SI_ENC + 128, SGXV_BASE + 0x6000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 11);                     /* not tracked */
+    sgx_to_cpl0(&e);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGX_SECS_LA, 0) == -1);           /* ETRACK */
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 12, SGX_SI_ENC + 128, SGXV_BASE + 0x6000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 0);
+    TEST_CHECK(sgx_eenter(&e, 7, SGXV_BASE + 0x6008, 1) == 14);         /* now read-only */
+    sgx_set_cssa(&e, 0);
+    /* EMODT to PT_TRIM, EACCEPT, EREMOVE */
+    sgx_to_cpl0(&e);
+    sgx_secinfo_w(&e, 0x400);
+    TEST_CHECK(sgx_encls(&e, 0x0f, SGX_SECINFO, SGXV_BASE + 0x6000, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(sgx_encls(&e, 0x0c, 0, SGX_SECS_LA, 0) == -1);
+    sgx_to_cpl3(&e);
+    sgx_si_enc(&e, 3, 0x10, 4);                                          /* MODIFIED, TRIM */
+    TEST_CHECK(sgx_eenter(&e, 12, SGX_SI_ENC + 192, SGXV_BASE + 0x6000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 0);
+    sgx_to_cpl0(&e);
+    TEST_CHECK(sgx_encls(&e, 3, 0, SGXV_BASE + 0x6000, 0) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_RAX) == 0);                      /* EREMOVE */
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_SLOT_PA(6), &m));
+    TEST_CHECK(!m.valid);
+    /* EACCEPTCOPY into the pending page 7000H from the data page, R-X */
+    sgx_to_cpl3(&e);
+    sgx_si_enc(&e, 4, 0x05, 2);
+    sgx_set(&e.c, UC_X86_REG_R8, SGXV_BASE + 0x4000);
+    TEST_CHECK(sgx_eenter(&e, 14, SGX_SI_ENC + 256, SGXV_BASE + 0x7000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 0);
+    OK(uc_ctl_get_x86_sgx_epcm(e.c.uc, SGX_SLOT_PA(7), &m));
+    TEST_CHECK(m.r && !m.w && m.x && !m.pending);
+    OK(uc_mem_read(e.c.uc, SGX_SLOT_PA(7), b, 4096));
+    TEST_CHECK(!memcmp(b, sgxv_page_4000, 4096));
+    sgx_set(&e.c, UC_X86_REG_R8, SGXV_BASE + 0x4000);
+    TEST_CHECK(sgx_eenter(&e, 14, SGX_SI_ENC + 256, SGXV_BASE + 0x7000) == -1 &&
+               sgx_get(&e.c, UC_X86_REG_R14) == 19);
+    sgx_env_close(&e);
+}
+
+/*
+ * U1267: GETSEC (SDM 092 Vol2D ch. 7). Without UC_X86_FEATURE_SMX (U113): #UD with CR4.SMXE = 0,
+ * CAPABILITIES = 0, every other leaf #UD. With it (an SMX processor without a TXT chipset):
+ * CAPABILITIES EBX = 0 -> 1FCH (leaves 2-8, no chipset), EBX = 1 -> 0; PARAMETERS -> the Table 7-10
+ * defaults (type 1 / 2 / 3, then NULL with EBX / ECX unmodified; EAX[63:32] of the input ignored);
+ * leaves 1 and 9 #UD; ENTERACCS, EXITAC, SENTER, SEXIT, SMCTRL, WAKEUP #GP(0).
+ */
+static int gs_getsec(SgxCtx *c, uint64_t rax, uint64_t rbx)
+{
+    sgx_set(c, UC_X86_REG_RAX, rax);
+    sgx_set(c, UC_X86_REG_RBX, rbx);
+    return sgx_run(c, "\x0f\x37", 2);
+}
+
+static void test_x86_gs_smx(void)
+{
+    SgxCtx c;
+    uint64_t leaf;
+
+    sgx_open(&c, 0);
+    TEST_CHECK(gs_getsec(&c, 0, 0) == 6);                                   /* CR4.SMXE = 0 */
+    sgx_set(&c, UC_X86_REG_CR4, sgx_get(&c, UC_X86_REG_CR4) | (1u << 14));
+    TEST_CHECK(gs_getsec(&c, 0, 0) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_CHECK(gs_getsec(&c, 6, 0) == 6);
+    OK(uc_close(c.uc));
+
+    memset(&c, 0, sizeof(c));
+    c.pc = SGX_CODE;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_SMX));
+    OK(uc_mem_map(c.uc, SGX_CODE, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(gs_getsec(&c, 0, 0) == 6);
+    sgx_set(&c, UC_X86_REG_CR4, sgx_get(&c, UC_X86_REG_CR4) | (1u << 14));
+    TEST_CHECK(gs_getsec(&c, 0, 0) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0x1fc);
+    TEST_CHECK(gs_getsec(&c, 0, 1) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0);
+    sgx_set(&c, UC_X86_REG_RCX, 0x55);
+    TEST_CHECK(gs_getsec(&c, 0x100000006ULL, 0) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 1 &&
+               sgx_get(&c, UC_X86_REG_RBX) == 0xffffffffULL && sgx_get(&c, UC_X86_REG_RCX) == 0);
+    sgx_set(&c, UC_X86_REG_RCX, 0x55);
+    TEST_CHECK(gs_getsec(&c, 6, 1) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0x8002 &&
+               sgx_get(&c, UC_X86_REG_RBX) == 1 && sgx_get(&c, UC_X86_REG_RCX) == 0x55);
+    TEST_CHECK(gs_getsec(&c, 6, 2) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0x103);
+    TEST_CHECK(gs_getsec(&c, 6, 3) == -1 && sgx_get(&c, UC_X86_REG_RAX) == 0 &&
+               sgx_get(&c, UC_X86_REG_RBX) == 3);
+    TEST_CHECK(gs_getsec(&c, 1, 0) == 6);
+    TEST_CHECK(gs_getsec(&c, 9, 0) == 6);
+    for (leaf = 2; leaf <= 8; leaf++) {
+        if (leaf != 6) {
+            TEST_CHECK_(gs_getsec(&c, leaf, 0) == 13, "GETSEC leaf %d", (int)leaf);
+        }
+    }
+    TEST_CHECK(sgx_run(&c, "\x66\x0f\x37", 3) == 6);                        /* 66H prefix */
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U1260-U1299 (sgx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -30541,4 +32109,22 @@ TEST_LIST = {
     {"test_x86_st_smc_remap", test_x86_st_smc_remap},
     {"test_x86_st_unmap_paging", test_x86_st_unmap_paging},
     {"test_x86_st_reset_xcr0_profile", test_x86_st_reset_xcr0_profile},
+    {"test_x86_sgx_cpuid", test_x86_sgx_cpuid},
+    {"test_x86_sgx_platform_ctl", test_x86_sgx_platform_ctl},
+    {"test_x86_sgx_msr", test_x86_sgx_msr},
+    {"test_x86_sgx_invd", test_x86_sgx_invd},
+    {"test_x86_sgx_build_einit", test_x86_sgx_build_einit},
+    {"test_x86_sgx_ecreate_eadd_checks", test_x86_sgx_ecreate_eadd_checks},
+    {"test_x86_sgx_encls_gates", test_x86_sgx_encls_gates},
+    {"test_x86_sgx_abort_page", test_x86_sgx_abort_page},
+    {"test_x86_sgx_eremove_epa_eblock", test_x86_sgx_eremove_epa_eblock},
+    {"test_x86_sgx_edbg", test_x86_sgx_edbg},
+    {"test_x86_sgx_eenter_eexit", test_x86_sgx_eenter_eexit},
+    {"test_x86_sgx_aex_eresume", test_x86_sgx_aex_eresume},
+    {"test_x86_sgx_enclave_access", test_x86_sgx_enclave_access},
+    {"test_x86_sgx_enclave_debug", test_x86_sgx_enclave_debug},
+    {"test_x86_sgx_ereport_egetkey", test_x86_sgx_ereport_egetkey},
+    {"test_x86_sgx_ewb_eld", test_x86_sgx_ewb_eld},
+    {"test_x86_sgx_sgx2", test_x86_sgx_sgx2},
+    {"test_x86_gs_smx", test_x86_gs_smx},
     {NULL, NULL}};
