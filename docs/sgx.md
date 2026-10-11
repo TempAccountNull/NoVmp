@@ -95,7 +95,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | ELDB (7) / ELDU (8): AES-GCM decrypt with CR_BASE_PK, MAC compare | p.41-49..41-53 | impl (U1265); CR_BASE_PK **ph** |
 | EBLOCK (9), EPA (0AH), ETRACK (0CH) | p.41-22..41-24, 41-60..41-61, 41-65..41-66 | impl (U1262; tracking model: our choice) |
 | EWB (0BH): AES-GCM encrypt, PCMD, VA slot | p.41-69..41-73 | impl (U1265); TMP_VER = CR_PAGING_VERSION + 1 (our model) |
-| EAUG (0DH), EMODPR (0EH), EMODT (0FH) (SGX2) | p.41-18..41-21, 41-54..41-59 | plan |
+| EAUG (0DH), EMODPR (0EH), EMODT (0FH) (SGX2) | p.41-18..41-21, 41-54..41-59 | impl (U1266) |
 | EUPDATESVN (18H) | p.41-67..41-68 | no: 12H.0:EAX[10] not enumerated (microcode SVN update has no meaning in the model) |
 | ENCLS leaves of SGX oversubscription (ERDINFO, ETRACKC, ELDBC/ELDUC, EINCVIRTCHILD, EDECVIRTCHILD) and ENCLV | not in SDM 092 Vol3D; ENCLV | **def** (VMX agent, plan 1.J.12) |
 | ENCLS-exiting bitmap / VM exits | ENCLS p.41-8; 42.5 p.42-3 | **def** (VMX) |
@@ -110,7 +110,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | EENTER (2) | p.41-87..41-95 | impl (U1263) |
 | ERESUME (3) | p.41-117..41-128 | impl (U1263; TMP_NOTIFY = 0) |
 | EEXIT (4) | p.41-96..41-98 | impl (U1263) |
-| EACCEPT (5), EMODPE (6), EACCEPTCOPY (7) (SGX2) | p.41-74..41-82, 41-109..41-111 | plan |
+| EACCEPT (5), EMODPE (6), EACCEPTCOPY (7) (SGX2) | p.41-74..41-82, 41-109..41-111 | impl (U1266) |
 | EVERIFYREPORT2 (8) | p.41-129..41-130 | no: 12H.0:EAX[7] not enumerated (needs TDX SEAMREPORT / CR_REPORT_MAC_KEY) |
 | EDECCSSA (9) | p.41-83..41-86 | no (AEX-Notify not enumerated) |
 | AEX: SSA save (GPRSGX, XSAVE with XFRM, EXITINFO, MISC.EXINFO), synthetic state (Table 40-1), FS/GS / XCR0 / TF restore, CSSA++, TCS inactive, flush | 3D 40.1-40.4 p.40-1..40-8; 42.6 p.42-4; 42.7.5 p.42-8 | impl (U1263) |
@@ -184,9 +184,9 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 - Decode: NP 0F 01 CF routes to `helper_encls` only when the model enumerates SGX (else #UD as
   before); LOCK / 66 / F2 / F3 #UD (VEX cannot encode 0F 01); REX, segment and address-size
   overrides ignored. The helper checks the Operation order of p. 41-8/41-9 (#UD, then #GP(0) for
-  IA32_FEATURE_CONTROL, an unsupported leaf - the model enumerates leaves 00H-0FH; 07H, 08H, 0BH
-  (ELDB, ELDU, EWB) and 0DH-0FH (SGX2) follow in later commits and are #GP(0) until then;
-  EUPDATESVN 18H is not enumerated - CR0.PG = 0, an expand-down DS outside 64-bit mode). 64-bit
+  IA32_FEATURE_CONTROL, an unsupported leaf - the model enumerates leaves 00H-0FH (07H, 08H, 0BH:
+  U1265; 0DH-0FH: U1266); EUPDATESVN 18H is not enumerated - CR0.PG = 0, an expand-down DS
+  outside 64-bit mode). 64-bit
   mode = IA32_EFER.LMA = 1 and CS.L = 1 (the translator's CS64 flag).
 - Operands: DS-relative effective addresses (32-bit outside 64-bit mode, DS limit / write
   checks); explicit non-EPC operands (PAGEINFO, SECINFO, source pages, SIGSTRUCT, EINITTOKEN) are
@@ -283,7 +283,17 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 - Validation: ref_sgx.py `ewb` (same layout) gives the ciphertext and PCMD of the test enclave's
   data page; its self test decrypts it back.
 
-### 2.8 Validation (U1262)
+### 2.8 SGX2 (U1266)
+- EAUG adds a zeroed PENDING PT_REG R/W page to an initialized enclave (a PAGEINFO.SECINFO is only
+  for CET shadow-stack pages and is #GP(0): CPUID.12H.01H:EAX[6] = 0); EMODPR restricts R / W / X
+  and sets PR, EMODT changes the type to PT_TCS / PT_TRIM and sets MODIFIED (both record the
+  tracking epoch); EACCEPT accepts a PENDING / PR / MODIFIED state that matches its SECINFO (an
+  ETRACK after EMODPR / EMODT, TCS content checks), EMODPE extends R / W / X, EACCEPTCOPY copies a
+  page of the enclave into a PENDING page and sets its permissions. The concurrency conditions
+  (SGX_EPC_PAGE_CONFLICT, "page in use", "locked") never occur with one logical processor.
+- The SDM typos read as noted in docs/quirks.md (U1266).
+
+### 2.9 Validation (U1262)
 - `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
   AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
   generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over

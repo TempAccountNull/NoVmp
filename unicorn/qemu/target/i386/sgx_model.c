@@ -1848,13 +1848,169 @@ static void sgx_eld(SgxOp *o, bool blocked)
 }
 
 /* ---------------------------------------------------------------------------------------------
+ * SGX2 ENCLS leaves (U1266): EAUG (Vol3D p. 41-18..41-21), EMODPR (p. 41-54..41-56), EMODT
+ * (p. 41-57..41-59). The model has one logical processor: the concurrency conditions
+ * (SGX_EPC_PAGE_CONFLICT, "locked" operands) never occur.
+ * ------------------------------------------------------------------------------------------- */
+
+/* EAUG (EAX = 0DH): add a zeroed, PENDING page to an initialized enclave */
+static void sgx_eaug(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t pi = sgx_la(o, sgx_reg(o, R_EBX), 32, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    static const uint8_t zero[4096];
+    uint64_t pa, secs_ea, secinfo, linaddr, secs, base;
+    uint8_t si[64];
+    X86SgxEpcm *m, *sm;
+
+    if ((pi & 31) || (rcx & 0xfff)) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    secs_ea = sgx_ld64(o, pi + 24);
+    secinfo = sgx_ld64(o, pi + 16);
+    linaddr = sgx_ld64(o, pi);
+    if (!o->m64) {
+        secs_ea = (uint32_t)secs_ea;
+        secinfo = (uint32_t)secinfo;
+    }
+    if (secinfo && (secinfo & 63)) {
+        sgx_gp(o);
+    }
+    if ((secs_ea & 0xfff) || (linaddr & 0xfff)) {
+        sgx_gp(o);
+    }
+    if (sgx_ld64(o, pi + 8)) {
+        sgx_gp(o);                                  /* SRCPAGE must be 0 */
+    }
+    sm = sgx_epc_operand(o, sgx_la(o, secs_ea, 4096, true), true, &secs);
+    if (m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    if (secinfo) {
+        /* a SECINFO is only for PT_SS_FIRST / PT_SS_REST, which need CPUID.12H.01H:EAX[6] (CET
+           in enclaves) - not enumerated: always #GP(0) after the read */
+        sgx_ldbuf(o, sgx_la(o, secinfo, 64, false), si, 64);
+        sgx_gp(o);
+    }
+    if (!sm->valid || sm->pt != SGX_PT_SECS) {
+        sgx_pf(o, secs_ea, true);
+    }
+    if (!sgx_secs_initialized(env, secs)) {
+        sgx_gp(o);
+    }
+    base = sgx_pld64(env, secs + SECS_BASEADDR);
+    if (linaddr < base || linaddr - base >= sgx_pld64(env, secs + SECS_SIZE)) {
+        sgx_gp(o);
+    }
+    sgx_pwrite(env, pa, zero, sizeof(zero));
+    memset(m, 0, sizeof(*m));
+    m->r = 1;
+    m->w = 1;
+    m->pt = SGX_PT_REG;
+    m->addr = linaddr;
+    m->pending = 1;
+    m->secs = secs;
+    m->valid = 1;
+}
+
+/* EMODPR (EAX = 0EH): restrict the permissions of a PT_REG page (PR := 1) */
+static void sgx_emodpr(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 64, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa;
+    uint8_t si[64];
+    X86SgxEpcm *m;
+
+    if (rbx & 63) {
+        sgx_gp(o);
+    }
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    sgx_ldbuf(o, rbx, si, 64);
+    if (sgx_secinfo_rsvd(si) || (!SI_R(si) && SI_W(si))) {
+        sgx_gp(o);
+    }
+    if (!m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    o->flags = 0;
+    if (m->pending || m->modified) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_PAGE_NOT_MODIFIABLE;
+        return;
+    }
+    if (m->pt != SGX_PT_REG) {
+        sgx_pf(o, rcx, true);
+    }
+    if (!sgx_secs_initialized(env, m->secs)) {
+        sgx_gp(o);
+    }
+    m->pr = 1;
+    m->r &= SI_R(si);
+    m->w &= SI_W(si);
+    m->x &= SI_X(si);
+    m->mepoch = sgx_pld64(env, m->secs + SECS_EPOCH);  /* the tracking model */
+    env->regs[R_EAX] = 0;
+}
+
+/* EMODT (EAX = 0FH): change the type of a page to PT_TCS / PT_TRIM (MODIFIED := 1) */
+static void sgx_emodt(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 64, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa;
+    uint8_t si[64];
+    X86SgxEpcm *m;
+
+    if (rbx & 63) {
+        sgx_gp(o);
+    }
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    sgx_ldbuf(o, rbx, si, 64);
+    if (sgx_secinfo_rsvd(si) || (SI_PT(si) != SGX_PT_TCS && SI_PT(si) != SGX_PT_TRIM)) {
+        sgx_gp(o);
+    }
+    if (!m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    if (!(m->pt == SGX_PT_REG || (m->pt == SGX_PT_TCS && SI_PT(si) == SGX_PT_TRIM))) {
+        sgx_pf(o, rcx, true);
+    }
+    o->flags = 0;
+    if (m->pending || m->modified) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_PAGE_NOT_MODIFIABLE;
+        return;
+    }
+    if (!sgx_secs_initialized(env, m->secs)) {
+        sgx_gp(o);
+    }
+    m->pr = 0;
+    m->modified = 1;
+    m->r = m->w = m->x = 0;
+    m->pt = SI_PT(si);
+    m->mepoch = sgx_pld64(env, m->secs + SECS_EPOCH);  /* the tracking model */
+    env->regs[R_EAX] = 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
  * ENCLS (Vol3D p. 41-8..41-9)
  * ------------------------------------------------------------------------------------------- */
 
 /* the leaves the model enumerates: SGX1 (00H-0CH), SGX2 (0DH-0FH); EUPDATESVN (18H) is not */
 static bool sgx_encls_leaf_valid(uint32_t leaf)
 {
-    return leaf <= 0x0c;
+    return leaf <= 0x0f;
 }
 
 /*
@@ -1930,8 +2086,17 @@ void helper_encls(CPUX86State *env)
     case 0x0c:
         sgx_etrack(&o);
         break;
+    case 0x0d:
+        sgx_eaug(&o);
+        break;
+    case 0x0e:
+        sgx_emodpr(&o);
+        break;
+    case 0x0f:
+        sgx_emodt(&o);
+        break;
     default:
-        sgx_gp(&o);     /* SGX2 (0DH-0FH): U1266 */
+        sgx_gp(&o);     /* not reached: the leaf was checked above */
         break;
     }
     if (!(o.flags & CC_Z)) {
@@ -2169,6 +2334,201 @@ static void sgx_egetkey(SgxOp *o)
     sgx_stbuf(o, out, key, 16);
     env->regs[R_EAX] = 0;
     o->flags = 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * SGX2 ENCLU leaves (U1266): EACCEPT (Vol3D p. 41-74..41-78), EMODPE (p. 41-109..41-111),
+ * EACCEPTCOPY (p. 41-79..41-82). One logical processor: "page in use" never occurs.
+ * ------------------------------------------------------------------------------------------- */
+
+/* an enclave operand of the SGX2 leaves: within CR_ELRANGE (#GP(0)), resolves within the EPC (#PF) */
+static X86SgxEpcm *sgx2_operand(SgxOp *o, uint64_t la, bool write, uint64_t *pa)
+{
+    if (la - o->env->sgx_elbase >= o->env->sgx_elsize) {
+        sgx_gp(o);
+    }
+    return sgx_epc_operand(o, la, write, pa);
+}
+
+/*
+ * The SECINFO page checks of EACCEPT / EMODPE / EACCEPTCOPY: VALID, R, not PENDING / MODIFIED /
+ * BLOCKED, PT_REG, the current enclave, at its ENCLAVEADDRESS (the page of DS:RBX - EACCEPT's
+ * "(DS:RBX & FFFH)" and EACCEPTCOPY's "DS:RBX" read as the page address, docs/quirks.md); else #PF
+ */
+static void sgx2_secinfo_page(SgxOp *o, X86SgxEpcm *m, uint64_t la)
+{
+    if (!m->valid || !m->r || m->pending || m->modified || m->blocked || m->pt != SGX_PT_REG ||
+        m->secs != o->env->sgx_secs || m->addr != (la & ~0xfffULL)) {
+        sgx_pf(o, la, false);
+    }
+}
+
+/* EACCEPT (ENCLU[5]): accept an EAUG / EMODPR / EMODT change of a page of the running enclave */
+static void sgx_eaccept(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 64, false);
+    uint64_t rcx, pa, tpa;
+    uint8_t si[64];
+    X86SgxEpcm *m, *sm;
+    int pt;
+
+    if (rbx & 63) {
+        sgx_gp(o);
+    }
+    sm = sgx2_operand(o, rbx, false, &pa);
+    sgx2_secinfo_page(o, sm, rbx);
+    sgx_ldbuf(o, rbx, si, 64);
+    if (sgx_secinfo_rsvd(si)) {
+        sgx_gp(o);
+    }
+    rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, false);
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx2_operand(o, rcx, false, &tpa);
+    /* the legal PT / PENDING / MODIFIED / PR combinations (CPUID.12H.01H:EAX[6] = 0) */
+    pt = SI_PT(si);
+    if (!((pt == SGX_PT_REG && (SI_PR(si) || SI_PENDING(si)) && !SI_MODIFIED(si)) ||
+          ((pt == SGX_PT_TCS || pt == SGX_PT_TRIM) && !SI_PR(si) && !SI_PENDING(si) &&
+           SI_MODIFIED(si)))) {
+        sgx_gp(o);
+    }
+    if (!m->valid || m->blocked ||
+        (m->pt != SGX_PT_REG && m->pt != SGX_PT_TCS && m->pt != SGX_PT_TRIM) ||
+        m->secs != env->sgx_secs) {
+        sgx_pf(o, rcx, false);
+    }
+    o->flags = 0;
+    if (m->addr != rcx || m->pending != SI_PENDING(si) || m->modified != SI_MODIFIED(si) ||
+        m->r != SI_R(si) || m->w != SI_W(si) || m->x != SI_X(si) || m->pt != pt) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_PAGE_ATTRIBUTES_MISMATCH;
+        return;
+    }
+    /* tracking (the model): an ETRACK of the enclave after the EMODPR / EMODT */
+    if ((m->pr || m->modified) && sgx_pld64(env, m->secs + SECS_EPOCH) <= m->mepoch) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_NOT_TRACKED;
+        return;
+    }
+    if (pt == SGX_PT_TCS) {
+        uint8_t tcs[4096];
+
+        sgx_pread(env, tpa & ~0xfffULL, tcs, sizeof(tcs));
+        if (!sgx_zero(tcs + TCS_RESERVED, 4096 - TCS_RESERVED)) {
+            sgx_gp(o);
+        }
+        /* TCS.PREVSSP is checked with CET_SS; it lies before RESERVED and is not otherwise used */
+        if ((ldq_le_p(tcs + TCS_FLAGS) & 1) ||
+            ldl_le_p(tcs + TCS_CSSA) >= ldl_le_p(tcs + TCS_NSSA) || ldq_le_p(tcs + TCS_AEP) ||
+            ldq_le_p(tcs + TCS_STATE) ||
+            ((env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) &&
+             ldq_le_p(tcs + TCS_PREVSSP))) {
+            sgx_gp(o);
+        }
+        if (!(sgx_pld64(env, m->secs + SECS_ATTRIBUTES) & SGX_ATTR_MODE64BIT) &&
+            (((ldl_le_p(tcs + TCS_FSLIMIT) & 0xfff) != 0xfff) ||
+             ((ldl_le_p(tcs + TCS_GSLIMIT) & 0xfff) != 0xfff))) {
+            sgx_gp(o);
+        }
+    }
+    m->pending = 0;
+    m->modified = 0;
+    m->pr = 0;
+    env->regs[R_EAX] = 0;
+}
+
+/* EMODPE (ENCLU[6]): extend the permissions of a PT_REG page of the running enclave */
+static void sgx_emodpe(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 64, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, false);
+    uint64_t pa;
+    uint8_t si[64];
+    X86SgxEpcm *m, *sm;
+
+    if (rbx & 63) {
+        sgx_gp(o);
+    }
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    if (rbx - env->sgx_elbase >= env->sgx_elsize || rcx - env->sgx_elbase >= env->sgx_elsize) {
+        sgx_gp(o);
+    }
+    sm = sgx2_operand(o, rbx, false, &pa);
+    m = sgx2_operand(o, rcx, false, &pa);
+    sgx2_secinfo_page(o, sm, rbx);
+    sgx_ldbuf(o, rbx, si, 64);
+    if (sgx_secinfo_rsvd(si)) {
+        sgx_gp(o);
+    }
+    if (!m->valid || m->pending || m->modified || m->blocked || m->pt != SGX_PT_REG ||
+        m->secs != env->sgx_secs || m->addr != rcx) {
+        sgx_pf(o, rcx, false);
+    }
+    if (!m->r && !SI_R(si) && SI_W(si)) {
+        sgx_gp(o);
+    }
+    m->r |= SI_R(si);
+    m->w |= SI_W(si);
+    m->x |= SI_X(si);
+}
+
+/* EACCEPTCOPY (ENCLU[7]): initialize a PENDING page from a page of the enclave and accept it */
+static void sgx_eacceptcopy(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 64, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t rdx = sgx_la(o, sgx_reg(o, R_EDX), 4096, false);
+    uint64_t pa, dpa, spa;
+    uint8_t si[64], page[4096];
+    X86SgxEpcm *sm, *d, *s;
+
+    if (rbx & 63) {
+        sgx_gp(o);
+    }
+    if ((rcx & 0xfff) || (rdx & 0xfff)) {
+        sgx_gp(o);
+    }
+    if (rbx - env->sgx_elbase >= env->sgx_elsize || rcx - env->sgx_elbase >= env->sgx_elsize ||
+        rdx - env->sgx_elbase >= env->sgx_elsize) {
+        sgx_gp(o);
+    }
+    sm = sgx_epc_operand(o, rbx, false, &pa);
+    d = sgx_epc_operand(o, rcx, true, &dpa);
+    s = sgx_epc_operand(o, rdx, false, &spa);
+    sgx2_secinfo_page(o, sm, rbx);
+    sgx_ldbuf(o, rbx, si, 64);
+    if (sgx_secinfo_rsvd(si) || (!SI_R(si) && SI_W(si)) || SI_PT(si) != SGX_PT_REG) {
+        sgx_gp(o);
+    }
+    /* the source checks name "EPCM(DS:RCX).R", the destination checks "EPCM(DS:RDX).BLOCKED":
+       read as the source's R and the destination's BLOCKED (docs/quirks.md) */
+    if (!s->valid || !s->r || s->pending || s->modified || s->blocked || s->pt != SGX_PT_REG ||
+        s->secs != env->sgx_secs || s->addr != rdx) {
+        sgx_pf(o, rdx, false);
+    }
+    o->flags = CC_Z;
+    env->regs[R_EAX] = SGX_PAGE_ATTRIBUTES_MISMATCH;
+    if (!d->valid || !d->pending || d->modified || d->blocked || d->pt != SGX_PT_REG ||
+        d->secs != env->sgx_secs) {
+        return;
+    }
+    if (!d->r || !d->w || d->x || d->pt != SI_PT(si) || d->addr != rcx) {
+        return;
+    }
+    sgx_pread(env, spa & ~0xfffULL, page, sizeof(page));
+    sgx_pwrite(env, dpa & ~0xfffULL, page, sizeof(page));
+    d->r = SI_R(si);
+    d->w = SI_W(si);
+    d->x = SI_X(si);
+    d->pending = 0;
+    o->flags = 0;
+    env->regs[R_EAX] = 0;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -2853,16 +3213,25 @@ void helper_enclu(CPUX86State *env, uint32_t len)
     case 4:
         sgx_eexit(&o);
         break;
+    case 5:
+        sgx_eaccept(&o);
+        env->eip = o.next_eip;
+        break;
+    case 6:
+        sgx_emodpe(&o);
+        env->eip = o.next_eip;
+        break;
     default:
-        sgx_gp(&o);     /* EACCEPT, EMODPE, EACCEPTCOPY: U1266 */
+        sgx_eacceptcopy(&o);
+        env->eip = o.next_eip;
         break;
     }
     if (leaf != 3) {
         env->eflags &= ~RF_MASK;
     }
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
-    if (leaf != 1 || !(o.flags & CC_Z)) {
-        env->sgx_svn_lock = 1;      /* not after an EGETKEY error code (42.11.3) */
+    if (!((leaf == 1 || leaf == 5 || leaf == 7) && (o.flags & CC_Z))) {
+        env->sgx_svn_lock = 1;      /* not after an error code (42.11.3) */
     }
     CC_SRC = o.flags;
     CC_OP = CC_OP_EFLAGS;
