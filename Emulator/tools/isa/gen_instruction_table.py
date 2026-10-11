@@ -141,11 +141,17 @@ VERIFIED_STATUS = {
     # as 'absent', but the feature-enabled semantics have an open item (named in the note)
     'absent_open': ('⏳', 'the i5-13600K lacks the feature: only the absent-feature behaviour (NOP) is '
                          'hardware-checked; feature-enabled semantics open'),
+    # U1243 (AMB-2, decision A9): an instruction whose documents give only an error bound and special
+    # cases (approximate reciprocals), checked against an independent model of exactly those
+    # requirements; the result bits inside the bound are the documented stand-in's, NOT Intel's
+    'doc': ('✅', 'implemented; documented compliance (the documented error bound and special cases, '
+                   'independent model; NOT bit-exact)'),
 }
 # U1094: the wrapper text of a row the i5-13600K cannot run, per verified status (default by ✅/⏳/⬜)
 UNSUP_IMPL = {
     'spec': 'implemented per the specification (spec-model verified)',
     'absent': 'implemented; only the absent-feature form is hardware-checked',
+    'doc': 'implemented per the manual (documented compliance, not bit-exact)',   # U1243
 }
 ALWAYS_APPLY = {'spec', 'absent', 'absent_open'}
 
@@ -535,8 +541,9 @@ def main():
         out.append('- Rows the sweep cannot reach, verified one by one against the i5-13600K '
                    '(`Emulator\\data\\cases_reach.txt` → `Emulator\\data\\verified_forms.tsv`): '
                    '✅ identical %d  ·  ⬜ #UD in both (CPU lacks it / not enabled) %d  ·  '
-                   '⏳ CPL0 %d  ·  ⬜ out of scope (AMD / VIA / non-SDM) %d  ·  ✅ SDM vectors %d  ·  ⏳ open item %d\n' % (
-                       vcount['ok'], vcount['ud'], vcount['cpl0'], vcount['oos'], vcount['sdm'], vcount['open']))
+                   '⏳ CPL0 %d  ·  ⬜ out of scope (AMD / VIA / non-SDM) %d  ·  ✅ SDM vectors %d  ·  ⏳ open item %d%s\n' % (
+                       vcount['ok'], vcount['ud'], vcount['cpl0'], vcount['oos'], vcount['sdm'], vcount['open'],
+                       ('  ·  ✅ documented compliance %d' % vcount.get('doc', 0)) if vcount.get('doc', 0) else ''))   # U1243
     out.append('### Microcode, firmware-modelled and decided behaviour\n')
     for line in MICROCODE:
         out.append(line)
