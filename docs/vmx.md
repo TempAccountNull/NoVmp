@@ -75,28 +75,28 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | VMsucceed / VMfailInvalid / VMfailValid flag settings and VM-instruction error numbers | Vol3C 33.2 p. 33-2; 33.4 Table 33-1 pp. 33-30 / 33-31 | vmx_succeed / vmx_fail_invalid / vmx_fail_valid | done (U1302) |
 | CR0 / CR4 fixed bits in VMX operation: CLTS, LMSW, MOV CR #GP | Vol3C 26.8 pp. 26-3 / 26-4; Appendix A.7 / A.8 p. A-7 | `misc_helper.c` helper_write_crN | done (U1302) |
 | VMCALL in VMX root operation: VMfail 1 (no dual-monitor treatment) | Vol3C 33.3 VMCALL pp. 33-9 / 33-10 | helper_vmcall | done (U1302) |
-| VMFUNC outside non-root: #UD | Vol3C 33.3 VMFUNC p. 33-13 | helper_vmfunc | planned (U1302: still undecoded, #UD) |
+| VMFUNC outside non-root: #UD | Vol3C 33.3 VMFUNC p. 33-13 | helper_vmfunc | done (U1303) |
 | INVEPT / INVVPID in root: #UD, #GP, VMfail 28, invalidation | Vol3C 33.3 pp. 33-3 to 33-8; 31.4.3 p. 31-22 | helper_invept / helper_invvpid; `decode-new.c.inc` 66 0F 38 80 / 81 | done (U1302) |
-| shadow VMCS (VMREAD / VMWRITE in non-root via the link pointer, VMREAD / VMWRITE bitmaps) | Vol3C 27.10 p. 27-31; 28.1.3 VMREAD / VMWRITE p. 28-5; 33.3 | helper_vmread / helper_vmwrite | planned |
+| shadow VMCS (VMREAD / VMWRITE in non-root via the link pointer, VMREAD / VMWRITE bitmaps) | Vol3C 27.10 p. 27-31; 28.1.3 VMREAD / VMWRITE p. 28-5; 33.3 | helper_vmread / helper_vmwrite (vmx_shadow_check) | done (U1303) |
 
 ### Stage 4 - VM entry, VM exit, VMLAUNCH / VMRESUME / VMCALL / VMFUNC, preemption timer
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| basic VM-entry checks (#UD, #GP, VMfailInvalid, error 26 MOV SS blocking, errors 4 / 5, shadow VMCS current) | Vol3C 29.1 p. 29-2; 33.3 VMLAUNCH/VMRESUME pp. 33-14 to 33-16 | `vmx_helper.c` helper_vmlaunch | planned |
-| checks on VMX controls (execution, exit, entry, event injection) -> error 7 | Vol3C 29.2.1.1-29.2.1.3 pp. 29-3 to 29-7 | vmx_check_controls | planned |
-| checks on host state (CRs, MSRs, segments, address-space size) -> error 8 | Vol3C 29.2.2-29.2.4 pp. 29-7 / 29-8 | vmx_check_host | planned |
-| checks on guest state (CRs, DR7, MSRs, segments, descriptor tables, RIP / RFLAGS, non-register state, PDPTEs) -> exit reason 33 with bit 31 | Vol3C 29.3.1.1-29.3.1.6 pp. 29-9 to 29-16; 093 29.3.1.1 (DR7) | vmx_check_guest | planned |
-| loading guest state (CRs, DR7, MSRs, segments, RIP / RSP / RFLAGS, PDPTEs, non-register state, monitor clear) | Vol3C 29.3.2 pp. 29-16 to 29-19; 29.3.3 p. 29-19 | vmx_load_guest | planned |
-| VM-entry MSR-load list -> exit reason 34, qualification = entry number | Vol3C 29.4 pp. 29-19 / 29-20 | vmx_load_msrs | planned |
-| VM-entry failure after guest loading (load host state, exit reason bit 31) | Vol3C 29.8 pp. 29-28 / 29-29 | vmx_entry_fail | planned |
-| event injection (types, error code, instruction length, real-address mode guests), VM exits during injection, pending MTF | Vol3C 29.6 pp. 29-20 to 29-24 | vmx_inject | planned |
-| interruptibility / activity state, pending debug exceptions, window exits and TPR threshold right after entry | Vol3C 29.7 pp. 29-24 to 29-28 | vmx_entry_special | planned |
-| VM exit: architectural state before the exit, exit reason, qualification, guest-linear / physical address, event information, original-event (IDT-vectoring) information, instruction length / information | Vol3C 30.1-30.2 pp. 30-1 to 30-22; Appendix C pp. C-1 to C-4 | `vmx_helper.c` vmx_vmexit | planned |
-| saving guest state, MSR-store list, loading host state, MSR-load list, VMX abort | Vol3C 30.3-30.7 pp. 30-22 to 30-35 | vmx_save_guest / vmx_load_host / vmx_abort | planned |
-| VMCALL / VMLAUNCH / VMRESUME / VMX instructions / CPUID / GETSEC / INVD / XSETBV unconditional exits | Vol3C 28.1.2 p. 28-2 | helpers of each instruction | planned |
-| VMFUNC: #UD conditions, EPTP switching (EPTP list, EPTP index), VM exit 59 | Vol3C 28.5.7 pp. 28-20 to 28-22 | helper_vmfunc | planned |
-| VMX-preemption timer (count, expiry exit 52, save value, priority, activity states) | Vol3C 28.5.1 p. 28-16; 29.7.4 p. 29-26; 30.3.4 | vmx_timer | planned |
-| monitor trap flag | Vol3C 28.5.2 pp. 28-17 / 28-18 | vmx_mtf | planned |
+| basic VM-entry checks (#UD, #GP, VMfailInvalid, error 26 MOV SS blocking, errors 4 / 5, shadow VMCS current) | Vol3C 29.1 p. 29-2; 33.3 VMLAUNCH/VMRESUME pp. 33-14 to 33-16 | `vmx_helper.c` helper_vmlaunch | done (U1303) |
+| checks on VMX controls (execution, exit, entry, event injection) -> error 7 | Vol3C 29.2.1.1-29.2.1.3 pp. 29-3 to 29-7 | vmx_check_controls | done (U1303) |
+| checks on host state (CRs, MSRs, segments, address-space size) -> error 8 | Vol3C 29.2.2-29.2.4 pp. 29-7 / 29-8 | vmx_check_host | done (U1303) |
+| checks on guest state (CRs, DR7, MSRs, segments, descriptor tables, RIP / RFLAGS, non-register state, PDPTEs) -> exit reason 33 with bit 31 | Vol3C 29.3.1.1-29.3.1.6 pp. 29-9 to 29-16; 093 29.3.1.1 (DR7) | vmx_check_guest | done (U1303); see "Not modelled" for the activity states and SMM |
+| loading guest state (CRs, DR7, MSRs, segments, RIP / RSP / RFLAGS, PDPTEs, non-register state, monitor clear) | Vol3C 29.3.2 pp. 29-16 to 29-19; 29.3.3 p. 29-19 | vmx_load_guest | done (U1303) |
+| VM-entry MSR-load list -> exit reason 34, qualification = entry number | Vol3C 29.4 pp. 29-19 / 29-20 | vmx_load_msrs | done (U1303) |
+| VM-entry failure after guest loading (load host state, exit reason bit 31) | Vol3C 29.8 pp. 29-28 / 29-29 | vmx_entry_fail | done (U1303) |
+| event injection (types, error code, instruction length, real-address mode guests), VM exits during injection, pending MTF | Vol3C 29.6 pp. 29-20 to 29-24 | vmx_inject | done (U1303); pending debug exceptions after VM entry: planned (stage 5) |
+| interruptibility / activity state, pending debug exceptions, window exits and TPR threshold right after entry | Vol3C 29.7 pp. 29-24 to 29-28 | vmx_entry_special | partly (U1303: interruptibility, HLT activity, MTF, timer, windows at the first boundary); TPR threshold: stage 7 |
+| VM exit: architectural state before the exit, exit reason, qualification, guest-linear / physical address, event information, original-event (IDT-vectoring) information, instruction length / information | Vol3C 30.1-30.2 pp. 30-1 to 30-22; Appendix C pp. C-1 to C-4 | `vmx_helper.c` vmx_vmexit | done for the exits of U1303 (instruction exits, triple fault, timer, MTF, windows); event exits: stage 5 |
+| saving guest state, MSR-store list, loading host state, MSR-load list, VMX abort | Vol3C 30.3-30.7 pp. 30-22 to 30-35 | vmx_save_guest / vmx_load_host / vmx_abort | done (U1303); pending debug exceptions saved as 0 |
+| VMCALL / VMLAUNCH / VMRESUME / VMX instructions / CPUID / GETSEC / INVD / XSETBV unconditional exits | Vol3C 28.1.2 p. 28-2 | helpers of each instruction | done (U1303) |
+| VMFUNC: #UD conditions, EPTP switching (EPTP list, EPTP index), VM exit 59 | Vol3C 28.5.7 pp. 28-20 to 28-22 | helper_vmfunc | done (U1303); the new EPTP takes effect with EPT (stage 6) |
+| VMX-preemption timer (count, expiry exit 52, save value, priority, activity states) | Vol3C 28.5.1 p. 28-16; 29.7.4 p. 29-26; 30.3.4 | vmx_timer | done (U1303): evaluated at TB boundaries (time-based, not cycle-exact) |
+| monitor trap flag | Vol3C 28.5.2 pp. 28-17 / 28-18 | vmx_mtf | done (U1303); HLT / exceptions with MTF: stage 5 |
 
 ### Stage 5 - exiting controls
 | requirement | SDM 092 | code | status |
@@ -177,4 +177,40 @@ translator and passed to the helpers.
 - SMX operation (GETSEC[SENTER]) does not exist in the model: VMXON is enabled by IA32_FEATURE_CONTROL
   bit 2 only. A20M and INIT are not modelled (nothing to block); MONITOR keeps no armed state (nothing
   to clear).
+
+### VM entries and VM exits (U1303)
+- VM entry (helper_vmlaunch): the checks of 29.1 (in order), 29.2 (controls -> error 7, host state -> error
+  8) and 29.3.1 (guest state -> VM-entry failure, exit reason 33 with bit 31; qualification 2 PDPTEs,
+  3 NMI injection with STI blocking, 4 VMCS link pointer, else 0) are all made before any guest state is
+  loaded (29.3 lets checking and loading happen in any order); then the guest state (29.3.2), the
+  VM-entry MSR-load area (29.4: failure -> exit reason 34, qualification = the entry number), the
+  launch state, the activity state, the preemption timer, event injection (29.6). A VM entry clears the
+  whole TLB (VPIDs are not used to keep translations, 31.4).
+- The VMCS controls are cached at VM entry (27.11.1 lets the processor keep VMCS data); a VM exit
+  writes every field it changes to the VMCS region.
+- VM exit (vmx_vmexit): 30.2 exit information (unused information fields keep their value: "undefined"),
+  30.3 guest state, 30.4 MSR-store area, 30.5 host state, 30.6 MSR-load area, 30.7 VMX abort (abort
+  indicator at offset 4; the VMX-abort shutdown stops the emulation with UC_ERR_EXCEPTION and leaves
+  the vCPU halted; only a CPU reset leaves it).
+- Instruction exits restore the state to the instruction's start; the VM-exit instruction length comes
+  from the translator (insn_start word 2), so prefixes count. RFLAGS.RF is saved as 0 (30.3.3).
+- The model's "unusable" segment is a segment register whose cached P bit is 0 (what QEMU keeps for a
+  null-selector load). VM entry loads an unusable segment with P = 0 (base / limit per 29.3.2.2, the
+  undefined parts: limit 0); a VM exit saves P = 0 as unusable (30.3.2).
+- STI blocking and MOV-SS blocking: QEMU keeps one interrupt shadow; with VMX enumerated the translator
+  records which instruction set it (the FRED marker of U1171), so the interruptibility state saves and
+  loads bits 0 and 1 separately. As for FRED, QEMU sets the shadow for every STI, also with IF already 1.
+- Event injection: the event is delivered as the model delivers events of its kind (UC_CTL_X86_EVENT_DELIVERY:
+  through the guest IDT, or to UC_HOOK_INTR / UC_HOOK_INSN_INVALID); the pushed RIP and error code follow
+  29.6.1.1 (RIP + VM-entry instruction length for types 4-6; the error code only with bit 11, also for a
+  vector that normally has one, IA32_VMX_BASIC[56] = 1).
+- VMX non-root operation uses QEMU's HF_GUEST_MASK translation flag (SVM is withdrawn with VMX, so the flag
+  is unambiguous); the SVM code paths that depend on it are skipped in VMX non-root operation. Every TB of
+  non-root code starts with helper_vmx_boundary (instruction boundary: pending MTF, VMX-preemption timer,
+  NMI window, interrupt window, in the priority of 28.2); with the monitor trap flag every TB holds one
+  instruction (VM entry flushes the TB cache when it sets the control).
+- The VMX-preemption timer counts the model's TSC (host time) >> 5; it is evaluated at TB boundaries, so
+  expiry is time-based, not instruction-exact (a value of 0 exits before the first guest instruction).
+- Unconditional exits (28.1.2): CPUID (before the UC_HOOK_INSN CPUID hooks), GETSEC (with CR4.SMXE = 1),
+  INVD, XSETBV (after its #UD and CPL checks), the VMX instructions, VMCALL; triple fault (28.2).
 

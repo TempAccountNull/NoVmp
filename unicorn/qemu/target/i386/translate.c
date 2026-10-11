@@ -3254,8 +3254,10 @@ static void gen_movl_seg_T0(DisasContext *s, X86Seg seg_reg, bool inhibit_irq)
      */
     if (inhibit_irq) {
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
-        /* FRED: this shadow is blocking by MOV / POP SS, not by STI */
-        if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+        /* FRED: this shadow is blocking by MOV / POP SS, not by STI; U1303: VMX too (the
+           interruptibility state, SDM 092 Vol3C Table 27-3) */
+        if ((s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) ||
+            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
             tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
                             offsetof(CPUX86State, fred_sti));
         }
@@ -8661,8 +8663,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (check_iopl(s)) {
             gen_set_eflags(s, IF_MASK);
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
-            /* FRED: the interrupt shadow is blocking by STI (augmented SS bit 16, 8.3.2.1) */
-            if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
+            /* FRED: the interrupt shadow is blocking by STI (augmented SS bit 16, 8.3.2.1); U1303:
+               VMX too (interruptibility state) */
+            if ((s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) ||
+                (s->cpuid_ext_features & CPUID_EXT_VMX)) {
                 tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
                                 offsetof(CPUX86State, fred_sti));
             }
@@ -9113,6 +9117,30 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * with CPUID.01H:ECX.VMX; 66 / F2 / F3 / LOCK #UD (the SDM is silent; XED: no_refining_prefix). Every
          * other check is the helper's (VMX operation is runtime state).
          */
+        case 0xc2: /* vmlaunch (U1303) */
+        case 0xc3: /* vmresume (U1303) */
+            if (!(s->cpuid_ext_features & CPUID_EXT_VMX) ||
+                (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_vmlaunch(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, modrm == 0xc2),
+                                cur_insn_len_i32(s));
+            /* VMfail: the next instruction (the helper set RIP); success: the helper left the TB */
+            set_cc_op(s, CC_OP_EFLAGS);
+            s->base.is_jmp = DISAS_EOB_ONLY;
+            break;
+        case 0xd4: /* vmfunc (U1303): NP 0F 01 D4 */
+            if (!(s->cpuid_ext_features & CPUID_EXT_VMX) ||
+                (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_vmfunc(tcg_ctx, cpu_env);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
         case 0xc1: /* vmcall */
         case 0xc4: /* vmxoff */
             if (!(s->cpuid_ext_features & CPUID_EXT_VMX) ||
@@ -9707,6 +9735,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x109: /* wbinvd */
         if (check_cpl0(s)) {
             gen_svm_check_intercept(s, (b & 2) ? SVM_EXIT_INVD : SVM_EXIT_WBINVD);
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+            /* VMX non-root operation: INVD exits unconditionally (SDM 092 Vol3C 28.1.2) */
+            if (b == 0x108 && GUEST(s) && (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+                gen_update_cc_op(s);
+                gen_update_eip_cur(s);
+                gen_helper_vmx_uncond_exit(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, VMX_EXIT_INVD));
+            }
+#endif /* __Use_Original_Qemu (U1303) */
             /* nothing to do */
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
             /* SGX: INVD #GP(0) once processor reserved memory protections are active (U1261) */
@@ -11074,6 +11110,20 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 
 static void i386_tr_tb_start(DisasContextBase *db, CPUState *cpu)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    DisasContext *dc = container_of(db, DisasContext, base);
+
+    /*
+     * VMX non-root operation (HF_GUEST_MASK without SVM, docs/vmx.md): every TB start is an
+     * instruction boundary where the VMX events are evaluated (MTF, VMX-preemption timer, NMI /
+     * interrupt windows; SDM 092 Vol3C 28.2, 28.5)
+     */
+    if (GUEST(dc) && (dc->cpuid_ext_features & CPUID_EXT_VMX)) {
+        TCGContext *tcg_ctx = dc->uc->tcg_ctx;
+
+        gen_helper_vmx_boundary(tcg_ctx, cpu_env);
+    }
+#endif /* __Use_Original_Qemu (U1303) */
 }
 
 static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
@@ -11083,7 +11133,12 @@ static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
 
     dc->prev_pc = dc->base.pc_next - dc->cs_base;
     dc->prev_insn_end = tcg_last_op(tcg_ctx);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1303) */
     tcg_gen_insn_start(tcg_ctx, dc->base.pc_next, dc->cc_op);
+#else /* ours (U1303) */
+    /* word 2: the instruction length, set once the instruction is decoded (VMX, U1303) */
+    tcg_gen_insn_start(tcg_ctx, dc->base.pc_next, dc->cc_op, 0);
+#endif /* __Use_Original_Qemu (U1303) */
 #if __Use_Original_Qemu != 1 /* ours (U700) */
     dc->insn_start_op = tcg_last_op(tcg_ctx);
 #endif /* __Use_Original_Qemu (U700) */
@@ -11124,6 +11179,21 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 
     if (disas_insn(dc, cpu)) {
         target_ulong pc_next = dc->pc;
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+        /* the VM-exit instruction length of a VM exit in this instruction (restore_state_to_opc) */
+        if (dc->insn_start_op) {
+            tcg_set_insn_start_param(dc->insn_start_op, 2, pc_next - dc->base.pc_next);
+        }
+        /*
+         * VMX non-root operation with the monitor trap flag (SDM 092 Vol3C 28.5.2): one instruction
+         * per TB, so that the boundary after each instruction is a TB start (helper_vmx_boundary).
+         * VM entry flushes the TBs when it sets the control (vmx_helper.c).
+         */
+        if (GUEST(dc) && dc->base.is_jmp == DISAS_NEXT &&
+            (((CPUX86State *)cpu->env_ptr)->vmx.proc & (1u << 27))) {
+            dc->base.is_jmp = DISAS_TOO_MANY;
+        }
+#endif /* __Use_Original_Qemu (U1303) */
         dc->base.pc_next = pc_next;
 
         if (dc->base.is_jmp == DISAS_NEXT) {
@@ -11208,6 +11278,9 @@ void restore_state_to_opc(CPUX86State *env, TranslationBlock *tb,
     int cc_op = data[1];
     target_ulong new_pc;
 
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    env->vmx.insn_len = data[2];    /* the instruction's length (VM-exit instruction length) */
+#endif /* __Use_Original_Qemu (U1303) */
     if (TARGET_TB_PCREL) {
         target_ulong pc = env->eip + tb->cs_base;
 

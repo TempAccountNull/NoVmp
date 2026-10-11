@@ -462,6 +462,30 @@ typedef struct X86VmxState {
     uint8_t nonroot;
     uint64_t vmxon_ptr;
     uint64_t vmcs_ptr;
+    /*
+     * U1303: the controls of the current VM entry (cached at VM entry: the processor may keep VMCS
+     * data on the processor, Vol3C 27.11.1), and VMX non-root state: virtual-NMI blocking, a pending
+     * MTF VM exit, the VMX-preemption timer (deadline in units of TSC >> 5), the event being
+     * delivered (original-event identification, 30.2.4), the injected event being delivered
+     * (error code / pushed RIP of 29.6.1.1), the VMX-abort indicator, the length of the instruction
+     * being executed (insn_start word 2, for the VM-exit instruction length).
+     */
+    uint32_t pin, proc, proc2, exit_ctls, entry_ctls;
+    uint64_t proc3;
+    uint32_t exc_bitmap, pfec_mask, pfec_match, cr3_count, tpr_threshold;
+    uint64_t cr0_mask, cr4_mask, cr0_shadow, cr4_shadow, cr3_target[4];
+    uint64_t io_a, io_b, msr_bitmap, tsc_offset, tsc_mult, vapic, apic_access, eptp, vmfunc;
+    uint64_t eptp_list, vmread_bmp, vmwrite_bmp, xss_bmp, pconfig_bmp, link_ptr, pi_desc;
+    uint64_t eoi_exit[4];
+    uint16_t vpid, pi_nv;
+    uint8_t vnmi_blocked, mtf_pending, timer_on, delivering;
+    uint8_t inj_active, inj_has_ec, inject_type;
+    uint32_t abort;
+    uint64_t timer_deadline;
+    uint32_t idtv_info, idtv_err, idtv_len;
+    uint32_t inj_ec;
+    uint64_t inj_push_rip;
+    uint32_t insn_len;
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -1797,7 +1821,13 @@ typedef struct {
 #endif /* __Use_Original_Qemu (U907) */
 #define MAX_GP_COUNTERS    (MSR_IA32_PERF_STATUS - MSR_P6_EVNTSEL0)
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1303) */
 #define TARGET_INSN_START_EXTRA_WORDS 1
+#else /* ours (U1303) */
+/* NoVmp (ledger U1303): word 1 cc_op, word 2 the instruction length (the VM-exit instruction
+   length of VMX exits, SDM 092 Vol3C 30.2.5; docs/vmx.md) */
+#define TARGET_INSN_START_EXTRA_WORDS 2
+#endif /* __Use_Original_Qemu (U1303) */
 
 #define NB_OPMASK_REGS 8
 
@@ -3402,6 +3432,19 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val);
 int x86_vmx_field_slot(CPUX86State *env, uint64_t enc, int *high);
 bool x86_vmx_cr_write_ok(CPUX86State *env, int reg, uint64_t v);   /* U1302 */
 bool x86_vmx_eptp_ok(CPUX86State *env, uint64_t eptp);
+/* U1303 */
+G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qual,
+                                  uint32_t info, bool info_valid, uintptr_t ra);
+void x86_vmx_uncond_exit(CPUX86State *env, uint32_t reason, uintptr_t ra);
+G_NORETURN void x86_vmx_triple_fault(CPUX86State *env);
+bool x86_msr_vmx_access(CPUX86State *env, uint32_t msr, uint64_t *val, bool write);
+bool x86_msr_value_ok(CPUX86State *env, uint32_t msr, uint64_t val);
+bool x86_efer_value_ok(CPUX86State *env, uint64_t efer);
+void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_code);
+#define VMX_EXIT_CPUID   10   /* Appendix C basic exit reasons used outside vmx_helper.c */
+#define VMX_EXIT_GETSEC  11
+#define VMX_EXIT_INVD    13
+#define VMX_EXIT_XSETBV  55
 #endif /* __Use_Original_Qemu (U1301) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {

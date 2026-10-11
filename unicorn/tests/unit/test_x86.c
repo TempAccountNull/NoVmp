@@ -32891,6 +32891,400 @@ static void test_x86_vmx_invept(void)
     OK(uc_close(c.uc));
 }
 
+#define VMX_ENTRY_PC (VMX_DATA + 0x7000)    /* VMLAUNCH / VMRESUME; host RIP = the next instruction */
+#define VMX_GUEST_PC (VMX_DATA + 0x8000)    /* guest code */
+#define VMX_HOST_RSP (VMX_DATA + 0x6f00)
+#define VMX_GUEST_RSP (VMX_DATA + 0x9f00)
+#define VMX_MSR_AREA (VMX_DATA + 0x5000)
+
+/* VMWRITE that must succeed (register form, by a fresh snippet) */
+static void vmx_w(PcCtx *c, uint32_t enc, uint64_t v)
+{
+    vmx_write_ok(c, enc, v);
+}
+
+static uint64_t vmx_r(PcCtx *c, uint32_t enc)
+{
+    return vmx_read_ok(c, enc);
+}
+
+/*
+ * VMXON, VMCLEAR / VMPTRLD VMCS A and a complete VMCS for a 64-bit guest at VMX_GUEST_PC (CPL0,
+ * flat segments, the host's CR0 / CR3 / CR4, IA-32e mode guest) with the TRUE_* default settings
+ * of the controls; host: 64-bit, RIP = VMX_ENTRY_PC + 3 (after a 3-byte VMLAUNCH / VMRESUME)
+ */
+static void vmx_setup(PcCtx *c)
+{
+    uint64_t fl;
+    int i;
+
+    vmx_root_open(c);
+    TEST_CHECK(vmx_vmxon(c, VMX_VMXON, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmclear(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrld(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    vmx_w(c, 0x4000, 0x16);                 /* pin-based: default1 */
+    vmx_w(c, 0x4002, 0x04006172);           /* primary: default1 of TRUE_PROCBASED */
+    vmx_w(c, 0x4004, 0);                    /* exception bitmap */
+    vmx_w(c, 0x400a, 0);                    /* CR3-target count */
+    vmx_w(c, 0x400c, 0x36dfb | 0x200);      /* exit: default1 (TRUE) + host address-space size */
+    vmx_w(c, 0x400e, 0);
+    vmx_w(c, 0x4010, 0);
+    vmx_w(c, 0x4012, 0x11fb | 0x200);       /* entry: default1 (TRUE) + IA-32e mode guest */
+    vmx_w(c, 0x4014, 0);
+    vmx_w(c, 0x4016, 0);                    /* no injection */
+    vmx_w(c, 0x6000, 0);                    /* CR0 / CR4 guest/host masks */
+    vmx_w(c, 0x6002, 0);
+    /* host state */
+    vmx_w(c, 0x6c00, pc_get(c, UC_X86_REG_CR0));
+    vmx_w(c, 0x6c02, pc_get(c, UC_X86_REG_CR3));
+    vmx_w(c, 0x6c04, pc_get(c, UC_X86_REG_CR4));
+    vmx_w(c, 0x0c00, 0);                    /* ES */
+    vmx_w(c, 0x0c02, 0x08);                 /* CS */
+    vmx_w(c, 0x0c04, 0x10);                 /* SS */
+    vmx_w(c, 0x0c06, 0);                    /* DS */
+    vmx_w(c, 0x0c08, 0);                    /* FS */
+    vmx_w(c, 0x0c0a, 0);                    /* GS */
+    vmx_w(c, 0x0c0c, 0x18);                 /* TR */
+    for (i = 0; i < 5; i++) {
+        vmx_w(c, 0x6c06 + 2 * i, 0);        /* FS, GS, TR, GDTR, IDTR bases */
+    }
+    vmx_w(c, 0x4c00, 0);
+    vmx_w(c, 0x6c10, 0);
+    vmx_w(c, 0x6c12, 0);
+    vmx_w(c, 0x6c14, VMX_HOST_RSP);
+    vmx_w(c, 0x6c16, VMX_ENTRY_PC + 3);
+    /* guest state */
+    vmx_w(c, 0x6800, pc_get(c, UC_X86_REG_CR0));
+    vmx_w(c, 0x6802, pc_get(c, UC_X86_REG_CR3));
+    vmx_w(c, 0x6804, pc_get(c, UC_X86_REG_CR4));
+    vmx_w(c, 0x681a, 0x400);                /* DR7 */
+    vmx_w(c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(c, 0x681e, VMX_GUEST_PC);
+    vmx_w(c, 0x6820, 2);                    /* RFLAGS */
+    for (i = 0; i < 8; i++) {
+        vmx_w(c, 0x0800 + 2 * i, 0);
+        vmx_w(c, 0x4800 + 2 * i, 0);
+        vmx_w(c, 0x4814 + 2 * i, 0x10000);  /* unusable */
+        vmx_w(c, 0x6806 + 2 * i, 0);
+    }
+    vmx_w(c, 0x0802, 0x08);                 /* CS: 64-bit code, type 11, S, P, L, G */
+    vmx_w(c, 0x4802, 0xffffffff);
+    vmx_w(c, 0x4816, 0xa09b);
+    vmx_w(c, 0x0804, 0x10);                 /* SS: data, type 3, S, P, D/B, G */
+    vmx_w(c, 0x4804, 0xffffffff);
+    vmx_w(c, 0x4818, 0xc093);
+    vmx_w(c, 0x080e, 0x18);                 /* TR: busy 64-bit TSS */
+    vmx_w(c, 0x480e, 0x67);
+    vmx_w(c, 0x4822, 0x8b);
+    vmx_w(c, 0x4810, 0xffff);               /* GDTR / IDTR limits, bases 0 */
+    vmx_w(c, 0x4812, 0xffff);
+    vmx_w(c, 0x6816, 0);
+    vmx_w(c, 0x6818, 0);
+    vmx_w(c, 0x4824, 0);                    /* interruptibility */
+    vmx_w(c, 0x4826, 0);                    /* activity: active */
+    vmx_w(c, 0x6822, 0);                    /* pending debug exceptions */
+    vmx_w(c, 0x2800, ~0ull);                /* VMCS link pointer */
+    vmx_w(c, 0x2801, 0xffffffff);
+    vmx_w(c, 0x482a, 0);
+    vmx_w(c, 0x6824, 0);
+    vmx_w(c, 0x6826, 0);
+    vmx_w(c, 0x2802, 0);                    /* guest IA32_DEBUGCTL */
+}
+
+/*
+ * VMLAUNCH (launch = 1) or VMRESUME at VMX_ENTRY_PC with the guest code 'g' at VMX_GUEST_PC: runs
+ * until the host RIP (VMX_ENTRY_PC + 3) - after a VMfail too - or an event stops it. The vector
+ * of a stopping event or -1; *fl = the flags.
+ */
+static int vmx_enter(PcCtx *c, int launch, const char *g, size_t gl, uint64_t *fl)
+{
+    uc_err err;
+
+    if (g) {
+        OK(uc_mem_write(c->uc, VMX_GUEST_PC, g, gl));
+    }
+    OK(uc_mem_write(c->uc, VMX_ENTRY_PC, launch ? "\x0f\x01\xc2" : "\x0f\x01\xc3", 3));
+    c->cap.count = 0;
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
+    err = uc_emu_start(c->uc, VMX_ENTRY_PC, VMX_ENTRY_PC + 3, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    *fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+/*
+ * U1303: VMLAUNCH / VMRESUME and the VM-entry failures of 29.1 / 29.2 (VMfailInvalid without a
+ * current VMCS or with a shadow VMCS; VMfailValid errors 4, 5, 7, 8, 26) and of 29.3 / 29.4 (VM-entry
+ * failure: exit reason 33 / 34 with bit 31, qualification 0 / 4 / the MSR entry; host state loaded,
+ * launch state unchanged); a successful VM entry, the unconditional VM exits of 28.1.2 (CPUID 10,
+ * INVD 13, VMCALL 18, XSETBV 55) with the exit reason, qualification, instruction length and the
+ * saved guest RIP / RFLAGS (RF = 0), the host state after the VM exit (RIP, RSP, RFLAGS = 2, CPL 0),
+ * the VMCS launch state (VMLAUNCH error 4 afterwards, VMRESUME works).
+ */
+static void test_x86_vmx_entry_exit(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_root_open(&c);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1 && fl == 1);     /* no current VMCS */
+    OK(uc_close(c.uc));
+
+    vmx_setup(&c);
+    /* 29.1: VMRESUME of a clear VMCS (5) */
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 5);
+    /* 29.2.1: a reserved pin-based control at 0 (bit 1) -> 7 */
+    vmx_w(&c, 0x4000, 0x14);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x4000, 0x16);
+    /* 29.2.3: host CS selector 0 -> 8 */
+    vmx_w(&c, 0x0c02, 0);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 8);
+    vmx_w(&c, 0x0c02, 0x08);
+    /* 29.3.1.4: guest RFLAGS bit 1 = 0 -> VM-entry failure 33 */
+    vmx_w(&c, 0x6820, 0);
+    vmx_w(&c, 0x4402, 0);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == VMX_ENTRY_PC + 3);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == VMX_HOST_RSP);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 2);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u);
+    TEST_CHECK(vmx_r(&c, 0x6400) == 0);
+    vmx_w(&c, 0x6820, 2);
+    /* 29.3.1.5: an invalid VMCS link pointer (the current VMCS) -> qualification 4 */
+    vmx_w(&c, 0x2800, VMX_VMCS_A);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u && vmx_r(&c, 0x6400) == 4);
+    vmx_w(&c, 0x2800, ~0ull);
+    /* 29.4: the VM-entry MSR-load area: entry 2 is IA32_FS_BASE -> exit reason 34, qualification 2 */
+    vmx_wq(&c, VMX_MSR_AREA, 0x1d9);                         /* IA32_DEBUGCTL := 0 */
+    vmx_wq(&c, VMX_MSR_AREA + 8, 0);
+    vmx_wq(&c, VMX_MSR_AREA + 16, 0xc0000100ull); vmx_wq(&c, VMX_MSR_AREA + 24, 0);
+    vmx_w(&c, 0x200a, VMX_MSR_AREA);
+    vmx_w(&c, 0x4014, 2);
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000022u && vmx_r(&c, 0x6400) == 2);
+    vmx_w(&c, 0x4014, 0);
+    /* the launch state stayed clear */
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 5);
+
+    /* a VM entry: the guest executes CPUID -> VM exit 10 */
+    pc_set(&c, UC_X86_REG_RSP, 0x1234);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == VMX_ENTRY_PC + 3);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == VMX_HOST_RSP);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 2);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK(vmx_r(&c, 0x6400) == 0);
+    TEST_CHECK(vmx_r(&c, 0x440c) == 2);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_CHECK(vmx_r(&c, 0x681c) == VMX_GUEST_RSP);
+    TEST_CHECK(vmx_r(&c, 0x6820) == 2);
+    TEST_CHECK((vmx_r(&c, 0x4016) >> 31) == 0);
+    TEST_CHECK(vmx_r(&c, 0x4408) >> 31 == 0);
+    /* VMLAUNCH again: 4; VMRESUME re-executes the CPUID */
+    TEST_CHECK(vmx_enter(&c, 1, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 4);
+    vmx_w(&c, 0x4402, 0);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    /* guest RFLAGS.RF = 1 is saved as 0 for an instruction exit (30.3.3) */
+    vmx_w(&c, 0x6820, 0x10002);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x6820) == 2);
+    vmx_w(&c, 0x6820, 2);
+    /* NOP; INVD -> 13 (guest RIP of the INVD, length 2) */
+    TEST_CHECK(vmx_enter(&c, 0, "\x90\x0f\x08", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 13 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1 &&
+               vmx_r(&c, 0x440c) == 2);
+    /* VMCALL -> 18, length 3 */
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\x01\xc1", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 18 && vmx_r(&c, 0x440c) == 3);
+    /* XSETBV -> 55 (CR4.OSXSAVE = 1 in the guest) */
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\x01\xd1", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 55 && vmx_r(&c, 0x440c) == 3);
+    /* a prefixed CPUID: the length counts the prefixes (2E 3E 0F A2) */
+    TEST_CHECK(vmx_enter(&c, 0, "\x2e\x3e\x0f\xa2", 4, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x440c) == 4);
+    /* the guest state saved by the exit: CS / SS / TR, CR0 / CR3 / CR4 */
+    TEST_CHECK(vmx_r(&c, 0x0802) == 0x08 && vmx_r(&c, 0x4816) == 0xa09b);
+    TEST_CHECK(vmx_r(&c, 0x4818) == 0xc093 && vmx_r(&c, 0x4822) == 0x8b);
+    TEST_CHECK(vmx_r(&c, 0x4814) == 0x10000);                    /* ES unusable */
+    TEST_CHECK(vmx_r(&c, 0x6800) == pc_get(&c, UC_X86_REG_CR0));
+    TEST_CHECK(vmx_r(&c, 0x6804) == pc_get(&c, UC_X86_REG_CR4));
+    TEST_CHECK((vmx_r(&c, 0x4012) >> 9) & 1);                    /* IA-32e mode guest stored */
+    /* the host state: CS 08H, 64-bit, CPL 0; VMX instructions work again */
+    v = pc_get(&c, UC_X86_REG_CS);
+    TEST_CHECK(v == 0x08);
+    TEST_CHECK(vmx_vmptrst(&c) == VMX_VMCS_A);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1303: the VMX instructions in VMX non-root operation (28.1.2, 28.1.3): VM exits with the
+ * instruction information of Tables 30-14 / 30-15 and the displacement as qualification (VMPTRLD
+ * [RAX+10H]: exit 21, qualification 10H, information 64-bit address size, DS, no index, base RAX;
+ * VMREAD RAX, RCX without VMCS shadowing: exit 23, register form, Reg1 = RAX, Reg2 = RCX); INVEPT
+ * (50) and INVVPID (53); VMXON (27) and VMXOFF (26); the VMX-preemption timer with value 0 exits
+ * before the first guest instruction (52) and "save VMX-preemption timer value" stores 0; an
+ * injected pending MTF VM exit (type 7, vector 0) exits before the first instruction (37).
+ */
+static void test_x86_vmx_nonroot_insn(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup(&c);
+    /* the first entry: CPUID (launch) */
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    /* VMPTRLD [RAX+10H] (0F C7 70 10) */
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\xc7\x70\x10", 4, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 21 && vmx_r(&c, 0x6400) == 0x10 && vmx_r(&c, 0x440c) == 4);
+    TEST_CHECK(vmx_r(&c, 0x440e) == ((2u << 7) | (3u << 15) | (1u << 22) | (0u << 23)));
+    TEST_MSG("info %llx", (unsigned long long)vmx_r(&c, 0x440e));
+    /* VMREAD RAX, RCX (0F 78 C8): register form */
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\x78\xc8", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 23 && vmx_r(&c, 0x6400) == 0);
+    TEST_CHECK((vmx_r(&c, 0x440e) & ((1u << 10) | (0xfu << 3) | (0xfu << 28))) ==
+               ((1u << 10) | (0u << 3) | (1u << 28)));
+    /* VMWRITE RBX, [RSI+RDI*4+0x200] (0F 79 9C BE 00 02 00 00): Table 30-15 */
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\x79\x9c\xbe\x00\x02\x00\x00", 8, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 25 && vmx_r(&c, 0x6400) == 0x200 && vmx_r(&c, 0x440c) == 8);
+    TEST_CHECK(vmx_r(&c, 0x440e) == (2u | (2u << 7) | (3u << 15) | (7u << 18) | (6u << 23) |
+                                     (3u << 28)));
+    TEST_MSG("info %llx", (unsigned long long)vmx_r(&c, 0x440e));
+    /* INVEPT RCX, [RAX] / INVVPID: 50 / 53 */
+    TEST_CHECK(vmx_enter(&c, 0, "\x66\x0f\x38\x80\x08", 5, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 50 && (vmx_r(&c, 0x440e) >> 28) == 1);
+    TEST_CHECK(vmx_enter(&c, 0, "\x66\x0f\x38\x81\x08", 5, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 53);
+    /* VMXON [RAX] in VMX non-root operation: 27; VMXOFF: 26 */
+    TEST_CHECK(vmx_enter(&c, 0, "\xf3\x0f\xc7\x30", 4, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 27);
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\x01\xc4", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 26);
+    /* the VMX-preemption timer, value 0: exit 52 before the guest's first instruction */
+    vmx_w(&c, 0x4000, 0x16 | 0x40);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 22));
+    vmx_w(&c, 0x482e, 0);
+    TEST_CHECK(vmx_enter(&c, 0, "\x0f\xa2", 2, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 52 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_CHECK(vmx_r(&c, 0x482e) == 0);
+    /* "save VMX-preemption timer value" without the timer: VMfailValid(7) */
+    vmx_w(&c, 0x4000, 0x16);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200);
+    /* a pending MTF VM exit injected by VM entry (type 7, vector 0): exit 37 before CPUID */
+    vmx_w(&c, 0x4016, 0x80000700u);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 37 && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_CHECK((vmx_r(&c, 0x4016) >> 31) == 0);                   /* valid bit cleared */
+    /* the monitor trap flag: exit 37 after the first instruction (NOP) */
+    vmx_w(&c, 0x4002, 0x04006172 | (1u << 27));
+    TEST_CHECK(vmx_enter(&c, 0, "\x90\x0f\xa2", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 37 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    OK(uc_close(c.uc));
+}
+
+#define VMX_GDT (VMX_DATA + 0xe000)
+#define VMX_IDT (VMX_DATA + 0xd000)
+
+/* a 64-bit interrupt gate (type 14, DPL 0, CS 08H) for vector v to handler h in the guest IDT */
+static void vmx_idt_gate(PcCtx *c, int v, uint64_t h)
+{
+    vmx_wq(c, VMX_IDT + 16 * v, (h & 0xffff) | (0x08ull << 16) | (0x8e00ull << 32) |
+                                ((h >> 16 & 0xffff) << 48));
+    vmx_wq(c, VMX_IDT + 16 * v + 8, h >> 32);
+}
+
+/*
+ * U1303: event injection (29.6). With IDT event delivery (UC_X86_DELIVER_EXC_IDT): an injected
+ * hardware exception #GP with error code 1234H goes through the guest IDT - the handler (CPUID ->
+ * VM exit) sees RIP = the guest RIP, CS, RFLAGS and the error code on its stack; a software
+ * interrupt (type 4, vector 80H, VM-entry instruction length 2) pushes RIP + 2; a privileged
+ * software exception (type 5, vector 1, length 1) pushes RIP + 1 without a DPL check; a hardware
+ * exception without the deliver-error-code bit pushes no error code (IA32_VMX_BASIC[56] = 1). The
+ * original-event information of the following VM exit is invalid (the delivery completed).
+ * With the default UC_HOOK_INTR delivery the hook sees the injected vector.
+ */
+static void test_x86_vmx_inject(void)
+{
+    PcCtx c;
+    uint64_t fl, sp;
+
+    vmx_setup(&c);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    vmx_wq(&c, VMX_GDT + 8, 0x00af9b000000ffffull);     /* 64-bit code */
+    vmx_wq(&c, VMX_GDT + 16, 0x00cf93000000ffffull);    /* data */
+    vmx_w(&c, 0x6816, VMX_GDT);
+    vmx_w(&c, 0x6818, VMX_IDT);
+    vmx_w(&c, 0x4812, 0xfff);
+    OK(uc_mem_write(c.uc, VMX_GUEST_PC + 0x100, "\x0f\xa2", 2));   /* handler: CPUID */
+    vmx_idt_gate(&c, 13, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(&c, 0x80, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(&c, 1, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(&c, 6, VMX_GUEST_PC + 0x100);
+    /* #GP(1234H) */
+    vmx_w(&c, 0x4016, 0x80000b0du);
+    vmx_w(&c, 0x4018, 0x1234);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90", 1, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(sp == ((VMX_GUEST_RSP & ~0xfull) - 48));
+    TEST_CHECK(vmx_rq(&c, sp) == 0x1234 && vmx_rq(&c, sp + 8) == VMX_GUEST_PC &&
+               vmx_rq(&c, sp + 16) == 0x08 && vmx_rq(&c, sp + 24) == 2);
+    TEST_CHECK((vmx_r(&c, 0x4408) >> 31) == 0 && (vmx_r(&c, 0x4016) >> 31) == 0);
+    /* INT 80H (type 4, length 2): RIP + 2 pushed, no error code */
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x80000480u);
+    vmx_w(&c, 0x401a, 2);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_rq(&c, sp) == VMX_GUEST_PC + 2);
+    /* INT1 (type 5, vector 1, length 1) */
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x80000501u);
+    vmx_w(&c, 0x401a, 1);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_rq(&c, sp) == VMX_GUEST_PC + 1);
+    /* #UD (type 3) without an error code */
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x80000306u);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(sp == ((VMX_GUEST_RSP & ~0xfull) - 40) && vmx_rq(&c, sp) == VMX_GUEST_PC);
+    /* a hardware exception with vector 13 but no error code (bit 11 clear): none pushed */
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x8000030du);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(sp == ((VMX_GUEST_RSP & ~0xfull) - 40) && vmx_rq(&c, sp) == VMX_GUEST_PC);
+    OK(uc_close(c.uc));
+
+    /* UC_HOOK_INTR delivery: the hook sees vector 13 in VMX non-root operation (#UD would go to
+       UC_HOOK_INSN_INVALID) */
+    vmx_setup(&c);
+    vmx_w(&c, 0x4016, 0x80000b0du);
+    vmx_w(&c, 0x4018, 0);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90", 1, &fl) == 13);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == VMX_GUEST_PC);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -33319,4 +33713,7 @@ TEST_LIST = {
     {"test_x86_vmx_lifecycle", test_x86_vmx_lifecycle},
     {"test_x86_vmx_vmread_vmwrite", test_x86_vmx_vmread_vmwrite},
     {"test_x86_vmx_invept", test_x86_vmx_invept},
+    {"test_x86_vmx_entry_exit", test_x86_vmx_entry_exit},
+    {"test_x86_vmx_nonroot_insn", test_x86_vmx_nonroot_insn},
+    {"test_x86_vmx_inject", test_x86_vmx_inject},
     {NULL, NULL}};

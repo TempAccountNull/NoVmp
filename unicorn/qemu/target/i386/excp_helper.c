@@ -65,6 +65,15 @@ static int check_exception(CPUX86State *env, int intno, int *error_code,
                 env->old_exception, intno);
 
     if (env->old_exception == EXCP08_DBLE) {
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+        /* VMX non-root operation: a triple fault is a VM exit (SDM 092 Vol3C 28.2) */
+        if (env->vmx.nonroot) {
+            if (retaddr) {
+                cpu_restore_state(env_cpu(env), retaddr, true);
+            }
+            x86_vmx_triple_fault(env);
+        }
+#endif /* __Use_Original_Qemu (U1303) */
         if (env->hflags & HF_GUEST_MASK) {
             cpu_vmexit(env, SVM_EXIT_SHUTDOWN, 0, retaddr); /* does not return */
         }
@@ -134,6 +143,14 @@ static void x86_record_exception(CPUX86State *env, int intno, int is_int, int er
 }
 
 #endif /* __Use_Original_Qemu (U770) */
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+/* U1303: an event injected by VM entry, for UC_CTL_X86_EXCEPTION (vmx_helper.c) */
+void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_code)
+{
+    x86_record_exception(env, intno, is_int, error_code);
+}
+
+#endif /* __Use_Original_Qemu (U1303) */
 /*
  * Signal an interruption. It is executed in the main CPU loop.
  * is_int is TRUE if coming from the int instruction. next_eip is the

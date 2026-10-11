@@ -921,7 +921,10 @@ typedef enum uc_control_type {
     // is withdrawn. Only on an Intel 64 CPU model (GenuineIntel with CPUID.80000001H:EDX.LM); not
     // together with UC_X86_FEATURE_FRED or UC_CTL_X86_APX yet (UC_ERR_ARG). U1302: VMXON, VMXOFF,
     // VMCLEAR, VMPTRLD, VMPTRST, VMREAD, VMWRITE, INVEPT, INVVPID, VMCALL in VMX root operation; the
-    // VMCS data live in the VMCS region in guest memory (docs/vmx.md). Default off.
+    // VMCS data live in the VMCS region in guest memory (docs/vmx.md). U1303: VMLAUNCH / VMRESUME
+    // (VM entries, VM exits, VMX non-root operation), VMFUNC; events injected by VM entry are
+    // delivered as UC_CTL_X86_EVENT_DELIVERY delivers events; a VMX abort stops the emulation with
+    // UC_ERR_EXCEPTION. Default off.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,

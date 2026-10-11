@@ -6483,6 +6483,11 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
     if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
         raise_exception_ra(env, EXCP06_ILLOP, GETPC());
     }
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* VMX non-root operation: XSETBV exits unconditionally (SDM 092 Vol3C 28.1.2), after the #UD
+       and the CPL check (28.1.1), before the value checks */
+    x86_vmx_uncond_exit(env, VMX_EXIT_XSETBV, GETPC());
+#endif /* __Use_Original_Qemu (U1303) */
 
     /* Only XCR0 is defined at present; the FPU may not be disabled.  */
     if (ecx != 0 || (mask & XSTATE_FP_MASK) == 0) {

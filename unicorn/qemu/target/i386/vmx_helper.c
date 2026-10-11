@@ -5,6 +5,10 @@
  * B (VMCS field encodings) and C (basic exit reasons), compared with SDM 093 where change document
  * 252046-085 lists changes. Opt-in UC_X86_FEATURE_VMX (default off).
  *
+* U1303: VM entries and exits, VMLAUNCH / VMRESUME / VMFUNC, the VMX-preemption timer, unconditional
+ * exits, the non-root paths of the VMX instructions.
+ * U1303: VM entries and exits (chapters 29, 30), VMLAUNCH / VMRESUME / VMFUNC, the VMX-preemption
+ * timer, the unconditional VM exits (28.1.2) and the non-root paths of the VMX instructions.
  * U1302: VMX operation (VMXON / VMXOFF), the VMCS lifecycle (VMCLEAR / VMPTRLD / VMPTRST), VMREAD /
  * VMWRITE, VMfail, INVEPT / INVVPID in VMX root operation, VMCALL in VMX root operation.
  * U1301: the capability set of the model (docs/vmx.md "Capability set", our choice) and the VMX
@@ -19,6 +23,8 @@
 #include "exec/cpu_ldst.h"
 #include "uc_priv.h"
 #include <unicorn/unicorn.h>
+
+void x86_store_dr(CPUX86State *env, int reg, target_ulong t0);    /* bpt_helper.c */
 
 /*
  * ---- the capability set (docs/vmx.md, our choice) ----
@@ -437,6 +443,8 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
  */
 
 static bool x86_vmx_canonical(CPUX86State *env, uint64_t a);
+void x86_vmx_check_insn_exit(CPUX86State *env, uint32_t op, uint32_t info, uint64_t qual,
+                             uintptr_t ra);
 
 /* VM-instruction error numbers (Vol3C 33.4 Table 33-1, pp. 33-30 / 33-31) */
 #define VMXERR_VMCALL_ROOT          1
@@ -651,6 +659,7 @@ void helper_vmx_op(CPUX86State *env, uint32_t op, target_ulong a0, uint32_t info
         if (!env->vmx.on) {
             raise_exception_ra(env, EXCP06_ILLOP, ra);
         }
+        x86_vmx_check_insn_exit(env, op, info, qual, ra);   /* U1303: non-root: VM exit 18 */
         if ((env->eflags & VM_MASK) ||
             ((env->hflags & HF_LMA_MASK) && !(env->hflags & HF_CS64_MASK))) {
             raise_exception_ra(env, EXCP06_ILLOP, ra);
@@ -668,6 +677,7 @@ void helper_vmx_op(CPUX86State *env, uint32_t op, target_ulong a0, uint32_t info
             raise_exception_ra(env, EXCP06_ILLOP, ra);
         }
         if (env->vmx.on) {
+            x86_vmx_check_insn_exit(env, op, info, qual, ra);   /* U1303: VM exit 27 */
             if (vmx_cpl(env)) {
                 raise_exception_ra(env, EXCP0D_GPF, ra);
             }
@@ -707,6 +717,7 @@ void helper_vmx_op(CPUX86State *env, uint32_t op, target_ulong a0, uint32_t info
     if (!env->vmx.on || vmx_bad_mode(env)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
+    x86_vmx_check_insn_exit(env, op, info, qual, ra);       /* U1303: VM exits 26, 19, 21, 22 */
     if (vmx_cpl(env)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
@@ -761,6 +772,28 @@ void helper_vmx_op(CPUX86State *env, uint32_t op, target_ulong a0, uint32_t info
 }
 
 /*
+ * U1303: VMREAD / VMWRITE in VMX non-root operation (28.1.3 p. 28-5, 33.3): a VM exit unless "VMCS
+ * shadowing" is 1, the encoding register has no bit set in 63:15 (31:15 outside 64-bit mode) and the
+ * VMREAD / VMWRITE bitmap bit of encoding bits 14:0 is 0; otherwise the access goes to the VMCS
+ * referenced by the VMCS link pointer
+ */
+static void vmx_shadow_check(CPUX86State *env, bool write, uint32_t info, target_ulong qual,
+                             uintptr_t ra)
+{
+    uint64_t enc, bmp;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    enc = vmx_reg(env, VMX_INFO_REG2(info));
+    bmp = write ? env->vmx.vmwrite_bmp : env->vmx.vmread_bmp;
+    if (!(env->vmx.proc2 & (1u << 14)) || (enc >> 15) ||
+        ((vmx_ldl(env, bmp | ((enc & 0x7fff) >> 3)) >> (enc & 7)) & 1)) {
+        x86_vmx_insn_exit(env, write ? 25 : 23, VMX_INFO_ISREG(info) ? 0 : qual, info, true, ra);
+    }
+}
+
+/*
  * VMREAD / VMWRITE (Vol3C 27.11.2 pp. 27-32 / 27-33; 33.3 pp. 33-21 to 33-25). The encoding is in
  * the register named by info[31:28]; the other operand is the register info[6:3] (info[10] = 1) or
  * memory at a0. Operand size: 64 bits in 64-bit mode, 32 bits outside IA-32e mode.
@@ -774,10 +807,11 @@ void helper_vmread(CPUX86State *env, target_ulong a0, uint32_t info, target_ulon
     if (!env->vmx.on || vmx_bad_mode(env)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
+    vmx_shadow_check(env, false, info, qual, ra);      /* U1303: VM exit 23 or the shadow VMCS */
     if (vmx_cpl(env)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
-    ptr = env->vmx.vmcs_ptr;
+    ptr = env->vmx.nonroot ? env->vmx.link_ptr : env->vmx.vmcs_ptr;
     if (ptr == VMX_NO_VMCS) {
         vmx_fail_invalid(env);
         return;
@@ -813,10 +847,11 @@ void helper_vmwrite(CPUX86State *env, target_ulong a0, uint32_t info, target_ulo
     if (!env->vmx.on || vmx_bad_mode(env)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
     }
+    vmx_shadow_check(env, true, info, qual, ra);       /* U1303: VM exit 25 or the shadow VMCS */
     if (vmx_cpl(env)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
-    ptr = env->vmx.vmcs_ptr;
+    ptr = env->vmx.nonroot ? env->vmx.link_ptr : env->vmx.vmcs_ptr;
     if (ptr == VMX_NO_VMCS) {
         vmx_fail_invalid(env);
         return;
@@ -867,6 +902,9 @@ void helper_invept(CPUX86State *env, target_ulong a0, uint32_t info, target_ulon
 
     if (!env->vmx.on || vmx_bad_mode(env)) {
         raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->vmx.nonroot) {                            /* U1303: VM exits 50 / 53 */
+        x86_vmx_insn_exit(env, vpid ? 53 : 50, qual, info, true, ra);
     }
     if (vmx_cpl(env)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -937,6 +975,1675 @@ static bool x86_vmx_canonical(CPUX86State *env, uint64_t a)
     int la = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 57 : 48;
 
     return (uint64_t)((int64_t)(a << (64 - la)) >> (64 - la)) == a;
+}
+
+/*
+ * ---- U1303: VM entries, VM exits, VMLAUNCH / VMRESUME / VMCALL / VMFUNC, preemption timer ----
+ * Vol3C chapters 29 (VM entries) and 30 (VM exits), 28.1.2 (unconditional exits), 28.5.1 (timer),
+ * 28.5.7 (VM functions). The controls of the current VM entry are cached in env->vmx (the
+ * processor may keep VMCS data on the processor, 27.11.1); every VMCS field written by a VM exit
+ * goes to the VMCS region.
+ */
+
+/* VMCS encodings used below (Appendix B) */
+#define VMCS_VPID               0x0000
+#define VMCS_PI_NV              0x0002
+#define VMCS_GUEST_ES_SEL       0x0800      /* +2 * n: ES CS SS DS FS GS LDTR TR */
+#define VMCS_GUEST_INTR_STATUS  0x0810
+#define VMCS_HOST_ES_SEL        0x0c00      /* +2 * n: ES CS SS DS FS GS TR */
+#define VMCS_IO_BITMAP_A        0x2000
+#define VMCS_IO_BITMAP_B        0x2002
+#define VMCS_MSR_BITMAP         0x2004
+#define VMCS_EXIT_MSR_STORE     0x2006
+#define VMCS_EXIT_MSR_LOAD      0x2008
+#define VMCS_ENTRY_MSR_LOAD     0x200a
+#define VMCS_TSC_OFFSET         0x2010
+#define VMCS_VAPIC_ADDR         0x2012
+#define VMCS_APIC_ACCESS_ADDR   0x2014
+#define VMCS_PI_DESC            0x2016
+#define VMCS_VMFUNC_CTLS        0x2018
+#define VMCS_EPTP               0x201a
+#define VMCS_EOI_EXIT0          0x201c
+#define VMCS_EPTP_LIST          0x2024
+#define VMCS_VMREAD_BITMAP      0x2026
+#define VMCS_VMWRITE_BITMAP     0x2028
+#define VMCS_XSS_EXIT_BITMAP    0x202c
+#define VMCS_TSC_MULTIPLIER     0x2032
+#define VMCS_PROC3              0x2034
+#define VMCS_PCONFIG_BITMAP     0x203e
+#define VMCS_GPA                0x2400
+#define VMCS_LINK_PTR           0x2800
+#define VMCS_GUEST_DEBUGCTL     0x2802
+#define VMCS_GUEST_PAT          0x2804
+#define VMCS_GUEST_EFER         0x2806
+#define VMCS_GUEST_PDPTE0       0x280a
+#define VMCS_HOST_PAT           0x2c00
+#define VMCS_HOST_EFER          0x2c02
+#define VMCS_PIN                0x4000
+#define VMCS_PROC               0x4002
+#define VMCS_EXC_BITMAP         0x4004
+#define VMCS_PFEC_MASK          0x4006
+#define VMCS_PFEC_MATCH         0x4008
+#define VMCS_CR3_COUNT          0x400a
+#define VMCS_EXIT_CTLS          0x400c
+#define VMCS_EXIT_MSR_STORE_CNT 0x400e
+#define VMCS_EXIT_MSR_LOAD_CNT  0x4010
+#define VMCS_ENTRY_CTLS         0x4012
+#define VMCS_ENTRY_MSR_LOAD_CNT 0x4014
+#define VMCS_ENTRY_INTR_INFO    0x4016
+#define VMCS_ENTRY_EXC_ERR      0x4018
+#define VMCS_ENTRY_INSN_LEN     0x401a
+#define VMCS_TPR_THRESHOLD      0x401c
+#define VMCS_PROC2              0x401e
+#define VMCS_EXIT_REASON        0x4402
+#define VMCS_EXIT_INTR_INFO     0x4404
+#define VMCS_EXIT_INTR_ERR      0x4406
+#define VMCS_IDTV_INFO          0x4408
+#define VMCS_IDTV_ERR           0x440a
+#define VMCS_EXIT_INSN_LEN      0x440c
+#define VMCS_EXIT_INSN_INFO     0x440e
+#define VMCS_GUEST_ES_LIMIT     0x4800      /* +2 * n: ES CS SS DS FS GS LDTR TR GDTR IDTR */
+#define VMCS_GUEST_ES_AR        0x4814      /* +2 * n: ES CS SS DS FS GS LDTR TR */
+#define VMCS_GUEST_INTERRUPTIBILITY 0x4824
+#define VMCS_GUEST_ACTIVITY     0x4826
+#define VMCS_GUEST_SYSENTER_CS  0x482a
+#define VMCS_PREEMPT_TIMER      0x482e
+#define VMCS_HOST_SYSENTER_CS   0x4c00
+#define VMCS_CR0_MASK           0x6000
+#define VMCS_CR4_MASK           0x6002
+#define VMCS_CR0_SHADOW         0x6004
+#define VMCS_CR4_SHADOW         0x6006
+#define VMCS_CR3_TARGET0        0x6008
+#define VMCS_EXIT_QUAL          0x6400
+#define VMCS_GUEST_LINEAR       0x640a
+#define VMCS_GUEST_CR0          0x6800
+#define VMCS_GUEST_CR3          0x6802
+#define VMCS_GUEST_CR4          0x6804
+#define VMCS_GUEST_ES_BASE      0x6806      /* +2 * n: ES CS SS DS FS GS LDTR TR GDTR IDTR */
+#define VMCS_GUEST_DR7          0x681a
+#define VMCS_GUEST_RSP          0x681c
+#define VMCS_GUEST_RIP          0x681e
+#define VMCS_GUEST_RFLAGS       0x6820
+#define VMCS_GUEST_PENDING_DBG  0x6822
+#define VMCS_GUEST_SYSENTER_ESP 0x6824
+#define VMCS_GUEST_SYSENTER_EIP 0x6826
+#define VMCS_HOST_CR0           0x6c00
+#define VMCS_HOST_CR3           0x6c02
+#define VMCS_HOST_CR4           0x6c04
+#define VMCS_HOST_FS_BASE       0x6c06
+#define VMCS_HOST_GS_BASE       0x6c08
+#define VMCS_HOST_TR_BASE       0x6c0a
+#define VMCS_HOST_GDTR_BASE     0x6c0c
+#define VMCS_HOST_IDTR_BASE     0x6c0e
+#define VMCS_HOST_SYSENTER_ESP  0x6c10
+#define VMCS_HOST_SYSENTER_EIP  0x6c12
+#define VMCS_HOST_RSP           0x6c14
+#define VMCS_HOST_RIP           0x6c16
+
+/* controls (Tables 27-5 to 27-8, 27-14, 27-17) */
+#define PIN_EXT_INTR            (1u << 0)
+#define PIN_NMI_EXIT            (1u << 3)
+#define PIN_VIRTUAL_NMI         (1u << 5)
+#define PIN_PREEMPT_TIMER       (1u << 6)
+#define PIN_POSTED_INTR         (1u << 7)
+#define PROC_INTR_WINDOW        (1u << 2)
+#define PROC_TSC_OFFSET         (1u << 3)
+#define PROC_HLT                (1u << 7)
+#define PROC_INVLPG             (1u << 9)
+#define PROC_MWAIT              (1u << 10)
+#define PROC_RDPMC              (1u << 11)
+#define PROC_RDTSC              (1u << 12)
+#define PROC_CR3_LOAD           (1u << 15)
+#define PROC_CR3_STORE          (1u << 16)
+#define PROC_TERTIARY           (1u << 17)
+#define PROC_CR8_LOAD           (1u << 19)
+#define PROC_CR8_STORE          (1u << 20)
+#define PROC_TPR_SHADOW         (1u << 21)
+#define PROC_NMI_WINDOW         (1u << 22)
+#define PROC_MOV_DR             (1u << 23)
+#define PROC_UNCOND_IO          (1u << 24)
+#define PROC_IO_BITMAPS         (1u << 25)
+#define PROC_MTF                (1u << 27)
+#define PROC_MSR_BITMAPS        (1u << 28)
+#define PROC_MONITOR            (1u << 29)
+#define PROC_PAUSE              (1u << 30)
+#define PROC_SECONDARY          (1u << 31)
+#define PROC2_APIC_ACCESS       (1u << 0)
+#define PROC2_EPT               (1u << 1)
+#define PROC2_DESC_TABLE        (1u << 2)
+#define PROC2_RDTSCP            (1u << 3)
+#define PROC2_X2APIC            (1u << 4)
+#define PROC2_VPID              (1u << 5)
+#define PROC2_WBINVD            (1u << 6)
+#define PROC2_UNRESTRICTED      (1u << 7)
+#define PROC2_APIC_REG          (1u << 8)
+#define PROC2_VID               (1u << 9)
+#define PROC2_RDRAND            (1u << 11)
+#define PROC2_INVPCID           (1u << 12)
+#define PROC2_VMFUNC            (1u << 13)
+#define PROC2_SHADOW_VMCS       (1u << 14)
+#define PROC2_RDSEED            (1u << 16)
+#define PROC2_XSAVES            (1u << 20)
+#define PROC2_MBEC              (1u << 22)
+#define PROC2_TSC_SCALING       (1u << 25)
+#define PROC2_USER_WAIT         (1u << 26)
+#define PROC2_PCONFIG           (1u << 27)
+#define EXIT_SAVE_DEBUG         (1u << 2)
+#define EXIT_HOST_64            (1u << 9)
+#define EXIT_ACK_INTR           (1u << 15)
+#define EXIT_SAVE_PAT           (1u << 18)
+#define EXIT_LOAD_PAT           (1u << 19)
+#define EXIT_SAVE_EFER          (1u << 20)
+#define EXIT_LOAD_EFER          (1u << 21)
+#define EXIT_SAVE_TIMER         (1u << 22)
+#define ENTRY_LOAD_DEBUG        (1u << 2)
+#define ENTRY_IA32E             (1u << 9)
+#define ENTRY_SMM               (1u << 10)
+#define ENTRY_DEACT_DUAL        (1u << 11)
+#define ENTRY_LOAD_PAT          (1u << 14)
+#define ENTRY_LOAD_EFER         (1u << 15)
+
+/* basic exit reasons (Appendix C) */
+#define EXIT_REASON_EXCEPTION_NMI   0
+#define EXIT_REASON_EXT_INTR        1
+#define EXIT_REASON_TRIPLE_FAULT    2
+#define EXIT_REASON_INTR_WINDOW     7
+#define EXIT_REASON_NMI_WINDOW      8
+#define EXIT_REASON_TASK_SWITCH     9
+#define EXIT_REASON_CPUID           10
+#define EXIT_REASON_GETSEC          11
+#define EXIT_REASON_HLT             12
+#define EXIT_REASON_INVD            13
+#define EXIT_REASON_VMCALL          18
+#define EXIT_REASON_VMCLEAR         19
+#define EXIT_REASON_VMLAUNCH        20
+#define EXIT_REASON_VMPTRLD         21
+#define EXIT_REASON_VMPTRST         22
+#define EXIT_REASON_VMREAD          23
+#define EXIT_REASON_VMRESUME        24
+#define EXIT_REASON_VMWRITE         25
+#define EXIT_REASON_VMXOFF          26
+#define EXIT_REASON_VMXON           27
+#define EXIT_REASON_INVALID_GUEST   33
+#define EXIT_REASON_MSR_LOADING     34
+#define EXIT_REASON_MTF             37
+#define EXIT_REASON_INVEPT          50
+#define EXIT_REASON_PREEMPT_TIMER   52
+#define EXIT_REASON_INVVPID         53
+#define EXIT_REASON_XSETBV          55
+#define EXIT_REASON_VMFUNC          59
+#define EXIT_REASON_ENTRY_FAIL      (1u << 31)
+
+#define MSR_IA32_DEBUGCTL_VMX        0x1d9   /* IA32_DEBUGCTL */
+#define MSR_IA32_SMM_MONITOR_CTL_NV  0x9b    /* written only in SMM (29.4, 30.6) */
+#define MSR_IA32_SMBASE_NV           0x9e    /* read only in SMM (30.4) */
+
+/* SGX as the CPU reports it (29.3.1.5: the enclave-interruption bit needs CPUID.07H:EBX.SGX[2]) */
+static bool x86_vmx_sgx(CPUX86State *env)
+{
+    return vmx_feat(env, FEAT_7_0_EBX, 1u << 2, 7, 0, 1);
+}
+
+/* the description of a VM exit (30.2); fields not marked valid are left unmodified (undefined) */
+typedef struct VmxExit {
+    uint32_t reason;
+    uint64_t qual;
+    uint64_t gla, gpa;
+    uint32_t intr_info, intr_err;
+    uint32_t insn_len, insn_info;
+    bool gla_valid, gpa_valid, len_valid, info_valid;
+    bool rf_zero;               /* RFLAGS.RF saved as 0 (instruction exits, 30.3.3) */
+} VmxExit;
+
+static void vmx_exit_init(VmxExit *e, uint32_t reason, uint64_t qual)
+{
+    memset(e, 0, sizeof(*e));
+    e->reason = reason;
+    e->qual = qual;
+    e->intr_info = 0;           /* exiting-event identification: invalid */
+}
+
+static bool vmx_long_mode(CPUX86State *env)
+{
+    return (env->hflags & HF_LMA_MASK) != 0;
+}
+
+/* the linear-address width N (CPUID.80000008H:EAX[15:8]) */
+static int vmx_la_width(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 57 : 48;
+}
+
+/* bits 63:N of a value are identical (29.3.1.4: RIP and SSP; no canonicality of bit N-1) */
+static bool vmx_upper_same(CPUX86State *env, uint64_t v)
+{
+    int n = vmx_la_width(env);
+    uint64_t top = v >> n;
+
+    return top == 0 || top == (~0ull >> n);
+}
+
+/* each of bits 63:N set to bit N-1 (30.5.1 / 30.5.2: loaded host addresses) */
+static uint64_t vmx_sext(CPUX86State *env, uint64_t v)
+{
+    int n = vmx_la_width(env);
+
+    return (uint64_t)((int64_t)(v << (64 - n)) >> (64 - n));
+}
+
+/* QEMU segment flags <-> VMCS access rights (Table 27-2: bits 23:8 of the descriptor's high dword) */
+static uint32_t vmx_flags_to_ar(const SegmentCache *sc, bool unusable)
+{
+    uint32_t ar = (sc->flags >> 8) & 0xf0ff;
+
+    return unusable ? (ar | (1u << 16)) : ar;
+}
+
+static uint32_t vmx_ar_to_flags(uint32_t ar)
+{
+    uint32_t f = (ar & 0xf0ff) << 8;
+
+    if (ar & (1u << 16)) {
+        f &= ~DESC_P_MASK;          /* the model's "unusable": P = 0 (a null-loaded segment) */
+    }
+    return f;
+}
+
+/* a segment register is unusable when it was loaded with a null selector: P = 0 in the cache */
+static bool vmx_seg_unusable(CPUX86State *env, int seg)
+{
+    return !(env->segs[seg].flags & DESC_P_MASK);
+}
+
+/* WRMSR / RDMSR for the VMX MSR lists (misc_helper.c, no hooks, no #GP): false = would #GP */
+static bool vmx_wrmsr(CPUX86State *env, uint32_t msr, uint64_t v)
+{
+    return x86_msr_vmx_access(env, msr, &v, true);
+}
+
+static bool vmx_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *v)
+{
+    return x86_msr_vmx_access(env, msr, v, false);
+}
+
+/* the valid memory types of a PAT value (29.2.2 / 29.3.1.1: 0, 1, 4, 5, 6, 7 in each byte) */
+static bool vmx_pat_ok(uint64_t v)
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        uint8_t t = v >> (8 * i);
+        if (t == 2 || t == 3 || t > 7) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* CR3 bits reserved for the Intel 64 architecture: 63:MAXPHYADDR (29.2.2, 29.3.1.1) */
+static bool vmx_cr3_ok(CPUX86State *env, uint64_t cr3)
+{
+    return !(cr3 >> vmx_maxphyaddr(env));
+}
+
+/* ---- cached controls ---- */
+static void vmx_load_controls(CPUX86State *env)
+{
+    X86VmxState *v = &env->vmx;
+    int i;
+
+    v->pin = vmcs_get(env, VMCS_PIN);
+    v->proc = vmcs_get(env, VMCS_PROC);
+    v->proc2 = (v->proc & PROC_SECONDARY) ? vmcs_get(env, VMCS_PROC2) : 0;
+    v->proc3 = (v->proc & PROC_TERTIARY) ? vmcs_get(env, VMCS_PROC3) : 0;
+    v->exit_ctls = vmcs_get(env, VMCS_EXIT_CTLS);
+    v->entry_ctls = vmcs_get(env, VMCS_ENTRY_CTLS);
+    v->exc_bitmap = vmcs_get(env, VMCS_EXC_BITMAP);
+    v->pfec_mask = vmcs_get(env, VMCS_PFEC_MASK);
+    v->pfec_match = vmcs_get(env, VMCS_PFEC_MATCH);
+    v->cr3_count = vmcs_get(env, VMCS_CR3_COUNT);
+    for (i = 0; i < 4; i++) {
+        v->cr3_target[i] = vmcs_get(env, VMCS_CR3_TARGET0 + 2 * i);
+    }
+    v->cr0_mask = vmcs_get(env, VMCS_CR0_MASK);
+    v->cr4_mask = vmcs_get(env, VMCS_CR4_MASK);
+    v->cr0_shadow = vmcs_get(env, VMCS_CR0_SHADOW);
+    v->cr4_shadow = vmcs_get(env, VMCS_CR4_SHADOW);
+    v->io_a = vmcs_get(env, VMCS_IO_BITMAP_A);
+    v->io_b = vmcs_get(env, VMCS_IO_BITMAP_B);
+    v->msr_bitmap = vmcs_get(env, VMCS_MSR_BITMAP);
+    v->tsc_offset = vmcs_get(env, VMCS_TSC_OFFSET);
+    v->tsc_mult = vmcs_get(env, VMCS_TSC_MULTIPLIER);
+    v->vapic = vmcs_get(env, VMCS_VAPIC_ADDR);
+    v->apic_access = vmcs_get(env, VMCS_APIC_ACCESS_ADDR);
+    v->tpr_threshold = vmcs_get(env, VMCS_TPR_THRESHOLD);
+    v->eptp = vmcs_get(env, VMCS_EPTP);
+    v->vpid = vmcs_get(env, VMCS_VPID);
+    v->vmfunc = (v->proc2 & PROC2_VMFUNC) ? vmcs_get(env, VMCS_VMFUNC_CTLS) : 0;
+    v->eptp_list = vmcs_get(env, VMCS_EPTP_LIST);
+    v->vmread_bmp = vmcs_get(env, VMCS_VMREAD_BITMAP);
+    v->vmwrite_bmp = vmcs_get(env, VMCS_VMWRITE_BITMAP);
+    v->xss_bmp = vmcs_get(env, VMCS_XSS_EXIT_BITMAP);
+    v->pconfig_bmp = vmcs_get(env, VMCS_PCONFIG_BITMAP);
+    v->link_ptr = vmcs_get(env, VMCS_LINK_PTR);
+    v->pi_nv = vmcs_get(env, VMCS_PI_NV);
+    v->pi_desc = vmcs_get(env, VMCS_PI_DESC);
+    for (i = 0; i < 4; i++) {
+        v->eoi_exit[i] = vmcs_get(env, VMCS_EOI_EXIT0 + 2 * i);
+    }
+}
+
+/* ---- 29.2.1 checks on the VMX controls: false = VMfailValid(7) ---- */
+
+/* a control word against its capability: bits of allowed0 must be 1, bits outside allowed1 0 */
+static bool vmx_ctl_ok(uint64_t v, uint64_t allowed0, uint64_t allowed1)
+{
+    return (v & allowed0) == allowed0 && !(v & ~allowed1);
+}
+
+/* a 4-KByte aligned physical address within MAXPHYADDR */
+static bool vmx_page_ok(CPUX86State *env, uint64_t a)
+{
+    return !(a & 0xfff) && vmx_paddr_ok(env, a);
+}
+
+/* an MSR area: 16-byte aligned, the address and its last byte within MAXPHYADDR (29.2.1.2) */
+static bool vmx_msr_area_ok(CPUX86State *env, uint64_t a, uint32_t count)
+{
+    if (!count) {
+        return true;
+    }
+    return !(a & 0xf) && vmx_paddr_ok(env, a) &&
+           vmx_paddr_ok(env, a + (uint64_t)count * 16 - 1) &&
+           a + (uint64_t)count * 16 - 1 >= a;
+}
+
+static bool vmx_check_controls(CPUX86State *env)
+{
+    X86VmxState *v = &env->vmx;
+    uint32_t pin = vmcs_get(env, VMCS_PIN), proc = vmcs_get(env, VMCS_PROC);
+    uint32_t proc2 = (proc & PROC_SECONDARY) ? vmcs_get(env, VMCS_PROC2) : 0;
+    uint64_t proc3 = (proc & PROC_TERTIARY) ? vmcs_get(env, VMCS_PROC3) : 0;
+    uint32_t exit = vmcs_get(env, VMCS_EXIT_CTLS), entry = vmcs_get(env, VMCS_ENTRY_CTLS);
+    uint32_t info, type, vec, len;
+
+    /* 29.2.1.1 VM-execution control fields (with the TRUE capability MSRs, A.3) */
+    if (!vmx_ctl_ok(pin, VMX_PIN_TRUE0, VMX_PIN_ALLOWED1) ||
+        !vmx_ctl_ok(proc, VMX_PROC_TRUE0, VMX_PROC_ALLOWED1) ||
+        !vmx_ctl_ok(proc2, 0, VMX_PROC2_ALLOWED1) ||
+        !vmx_ctl_ok(proc3, 0, vmx_proc3_allowed1(env))) {
+        return false;
+    }
+    if (vmcs_get(env, VMCS_CR3_COUNT) > 4) {
+        return false;
+    }
+    if ((proc & PROC_IO_BITMAPS) &&
+        (!vmx_page_ok(env, vmcs_get(env, VMCS_IO_BITMAP_A)) ||
+         !vmx_page_ok(env, vmcs_get(env, VMCS_IO_BITMAP_B)))) {
+        return false;
+    }
+    if ((proc & PROC_MSR_BITMAPS) && !vmx_page_ok(env, vmcs_get(env, VMCS_MSR_BITMAP))) {
+        return false;
+    }
+    if ((proc & PROC_TPR_SHADOW) && !vmx_page_ok(env, vmcs_get(env, VMCS_VAPIC_ADDR))) {
+        return false;
+    }
+    if ((proc2 & PROC2_APIC_ACCESS) && !vmx_page_ok(env, vmcs_get(env, VMCS_APIC_ACCESS_ADDR))) {
+        return false;
+    }
+    if ((proc2 & PROC2_VMFUNC) && (vmcs_get(env, VMCS_VMFUNC_CTLS) & 1) &&
+        !vmx_page_ok(env, vmcs_get(env, VMCS_EPTP_LIST))) {
+        return false;
+    }
+    if ((proc2 & PROC2_SHADOW_VMCS) &&
+        (!vmx_page_ok(env, vmcs_get(env, VMCS_VMREAD_BITMAP)) ||
+         !vmx_page_ok(env, vmcs_get(env, VMCS_VMWRITE_BITMAP)))) {
+        return false;
+    }
+    if ((proc & PROC_TPR_SHADOW) && !(proc2 & PROC2_VID) &&
+        (vmcs_get(env, VMCS_TPR_THRESHOLD) >> 4)) {
+        return false;
+    }
+    if ((proc & PROC_TPR_SHADOW) && !(proc2 & (PROC2_APIC_ACCESS | PROC2_VID)) &&
+        (vmcs_get(env, VMCS_TPR_THRESHOLD) & 0xf) >
+        ((vmx_ldl(env, vmcs_get(env, VMCS_VAPIC_ADDR) + 0x80) >> 4) & 0xf)) {
+        return false;
+    }
+    if (!(pin & PIN_NMI_EXIT) && (pin & PIN_VIRTUAL_NMI)) {
+        return false;
+    }
+    if (!(pin & PIN_VIRTUAL_NMI) && (proc & PROC_NMI_WINDOW)) {
+        return false;
+    }
+    if (!(proc & PROC_TPR_SHADOW) && (proc2 & (PROC2_X2APIC | PROC2_APIC_REG | PROC2_VID))) {
+        return false;
+    }
+    if ((proc2 & PROC2_X2APIC) && (proc2 & PROC2_APIC_ACCESS)) {
+        return false;
+    }
+    if ((proc2 & PROC2_VID) && !(pin & PIN_EXT_INTR)) {
+        return false;
+    }
+    if (pin & PIN_POSTED_INTR) {
+        uint64_t pi = vmcs_get(env, VMCS_PI_DESC);
+
+        if (!(proc2 & PROC2_VID) || !(exit & EXIT_ACK_INTR) ||
+            (vmcs_get(env, VMCS_PI_NV) >> 8) || (pi & 0x3f) || !vmx_paddr_ok(env, pi)) {
+            return false;
+        }
+    }
+    if ((proc2 & PROC2_VPID) && vmcs_get(env, VMCS_VPID) == 0) {
+        return false;
+    }
+    if ((proc2 & PROC2_EPT) && !x86_vmx_eptp_ok(env, vmcs_get(env, VMCS_EPTP))) {
+        return false;
+    }
+    if (!(proc2 & PROC2_EPT) && (proc2 & (PROC2_UNRESTRICTED | PROC2_MBEC))) {
+        return false;
+    }
+    if (proc2 & PROC2_VMFUNC) {
+        uint64_t f = vmcs_get(env, VMCS_VMFUNC_CTLS);
+
+        if (f & ~VMX_VMFUNC_ALLOWED1) {
+            return false;
+        }
+        if ((f & 1) && !(proc2 & PROC2_EPT)) {
+            return false;
+        }
+    }
+    if ((proc2 & PROC2_TSC_SCALING) && vmcs_get(env, VMCS_TSC_MULTIPLIER) == 0) {
+        return false;
+    }
+    /* 29.2.1.2 VM-exit control fields */
+    if (!vmx_ctl_ok(exit, VMX_EXIT_TRUE0, VMX_EXIT_ALLOWED1)) {
+        return false;
+    }
+    if (!(pin & PIN_PREEMPT_TIMER) && (exit & EXIT_SAVE_TIMER)) {
+        return false;
+    }
+    if (!vmx_msr_area_ok(env, vmcs_get(env, VMCS_EXIT_MSR_STORE),
+                         vmcs_get(env, VMCS_EXIT_MSR_STORE_CNT)) ||
+        !vmx_msr_area_ok(env, vmcs_get(env, VMCS_EXIT_MSR_LOAD),
+                         vmcs_get(env, VMCS_EXIT_MSR_LOAD_CNT))) {
+        return false;
+    }
+    /* 29.2.1.3 VM-entry control fields */
+    if (!vmx_ctl_ok(entry, VMX_ENTRY_TRUE0, VMX_ENTRY_ALLOWED1)) {
+        return false;
+    }
+    info = vmcs_get(env, VMCS_ENTRY_INTR_INFO);
+    if (info >> 31) {
+        type = (info >> 8) & 7;
+        vec = info & 0xff;
+        if (type == 1) {
+            return false;
+        }
+        /* type 7: the 1-setting of "monitor trap flag" is supported; no FRED: vector 0 only */
+        if ((type == 2 && vec != 2) || (type == 3 && vec > 31) || (type == 7 && vec != 0)) {
+            return false;
+        }
+        /* deliver-error-code bit: IA32_VMX_BASIC[56] = 1, so only the must-be-0 rules apply */
+        if (info & (1u << 11)) {
+            if (type != 3) {
+                return false;
+            }
+            if ((proc2 & PROC2_UNRESTRICTED) &&
+                !(vmcs_get(env, VMCS_GUEST_CR0) & CR0_PE_MASK)) {
+                return false;
+            }
+            if (vmcs_get(env, VMCS_ENTRY_EXC_ERR) >> 16) {
+                return false;
+            }
+        }
+        /* bit 13 (nested exception): IA32_VMX_BASIC[58] = 0; reserved 30:14 and 12 */
+        if (info & 0x7fffd000u) {
+            return false;
+        }
+        len = vmcs_get(env, VMCS_ENTRY_INSN_LEN);
+        if ((type == 4 || type == 5 || type == 6) && len > 15) {
+            return false;               /* 0 allowed: IA32_VMX_MISC[30] = 1 */
+        }
+    }
+    if (!vmx_msr_area_ok(env, vmcs_get(env, VMCS_ENTRY_MSR_LOAD),
+                         vmcs_get(env, VMCS_ENTRY_MSR_LOAD_CNT))) {
+        return false;
+    }
+    /* outside SMM: "entry to SMM" and "deactivate dual-monitor treatment" 0 (also reserved) */
+    if (entry & (ENTRY_SMM | ENTRY_DEACT_DUAL)) {
+        return false;
+    }
+    (void)v;
+    return true;
+}
+
+/* ---- 29.2.2-29.2.4 checks on the host-state area: false = VMfailValid(8) ---- */
+static bool vmx_check_host(CPUX86State *env)
+{
+    uint32_t exit = vmcs_get(env, VMCS_EXIT_CTLS), entry = vmcs_get(env, VMCS_ENTRY_CTLS);
+    uint64_t cr0 = vmcs_get(env, VMCS_HOST_CR0), cr4 = vmcs_get(env, VMCS_HOST_CR4);
+    bool host64 = (exit & EXIT_HOST_64) != 0;
+    int i;
+
+    /* 29.2.2: CR0 / CR4 fixed bits (CR0.NW / CD are never checked: FIXED1 allows them) */
+    if (!vmx_cr0_ok(env, cr0 & 0xffffffffull, false) || (cr0 >> 32) || !vmx_cr4_ok(env, cr4)) {
+        return false;
+    }
+    if ((cr4 & CR4_CET_MASK) && !(cr0 & CR0_WP_MASK)) {
+        return false;
+    }
+    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_HOST_CR3))) {
+        return false;
+    }
+    if (!x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_SYSENTER_ESP)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_SYSENTER_EIP))) {
+        return false;
+    }
+    if ((exit & EXIT_LOAD_PAT) && !vmx_pat_ok(vmcs_get(env, VMCS_HOST_PAT))) {
+        return false;
+    }
+    if (exit & EXIT_LOAD_EFER) {
+        uint64_t efer = vmcs_get(env, VMCS_HOST_EFER);
+
+        if (!x86_efer_value_ok(env, efer) ||
+            !!(efer & MSR_EFER_LMA) != host64 || !!(efer & MSR_EFER_LME) != host64) {
+            return false;
+        }
+    }
+    /* 29.2.3: selectors (RPL and TI 0; CS and TR not null; SS not null outside 64-bit hosts) */
+    for (i = 0; i < 7; i++) {
+        if (vmcs_get(env, VMCS_HOST_ES_SEL + 2 * i) & 7) {
+            return false;
+        }
+    }
+    if (vmcs_get(env, VMCS_HOST_ES_SEL + 2 * R_CS) == 0 ||
+        vmcs_get(env, VMCS_HOST_ES_SEL + 12) == 0) {               /* TR */
+        return false;
+    }
+    if (!host64 && vmcs_get(env, VMCS_HOST_ES_SEL + 2 * R_SS) == 0) {
+        return false;
+    }
+    if (!x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_FS_BASE)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_GS_BASE)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_GDTR_BASE)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_IDTR_BASE)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_TR_BASE))) {
+        return false;
+    }
+    /* 29.2.4: address-space size */
+    if (!vmx_long_mode(env)) {
+        if ((entry & ENTRY_IA32E) || host64) {
+            return false;
+        }
+    } else if (!host64) {
+        return false;
+    }
+    if (!host64) {
+        if ((entry & ENTRY_IA32E) || (cr4 & CR4_PCIDE_MASK) || (cr4 & CR4_FRED_MASK) ||
+            (vmcs_get(env, VMCS_HOST_RIP) >> 32)) {
+            return false;
+        }
+    } else {
+        if (!(cr4 & CR4_PAE_MASK) || !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_RIP))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * ---- 29.3.1 checks on the guest-state area: 0 = pass, else the exit qualification + 1 of the
+ * VM-entry failure (29.8: 0 in most cases, 2 PDPTEs, 3 NMI injection with STI blocking, 4 VMCS
+ * link pointer) ----
+ */
+#define VMX_GUEST_OK    (-1)
+
+static bool vmx_seg_limit_g_ok(uint32_t limit, uint32_t ar)
+{
+    if ((limit & 0xfff) != 0xfff && (ar & (1u << 15))) {
+        return false;
+    }
+    if ((limit >> 20) && !(ar & (1u << 15))) {
+        return false;
+    }
+    return true;
+}
+
+/* PDPTE checks of MOV to CR3 with PAE paging (Vol3A 5.4.1): present entries, reserved bits */
+static bool vmx_pdpte_ok(CPUX86State *env, uint64_t e)
+{
+    uint64_t rsvd = 0x1e6ull | ~((1ull << env_archcpu(env)->phys_bits) - 1);
+
+    return !(e & 1) || !(e & rsvd);
+}
+
+static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
+{
+    uint32_t entry = vmcs_get(env, VMCS_ENTRY_CTLS), pin = vmcs_get(env, VMCS_PIN);
+    bool ug = (proc2 & PROC2_UNRESTRICTED) != 0, ia32e = (entry & ENTRY_IA32E) != 0;
+    uint64_t cr0 = vmcs_get(env, VMCS_GUEST_CR0), cr4 = vmcs_get(env, VMCS_GUEST_CR4);
+    uint64_t rflags = vmcs_get(env, VMCS_GUEST_RFLAGS), rip = vmcs_get(env, VMCS_GUEST_RIP);
+    uint32_t intr = vmcs_get(env, VMCS_ENTRY_INTR_INFO);
+    uint32_t itype = (intr >> 8) & 7, ivec = intr & 0xff;
+    bool inject = intr >> 31;
+    uint32_t act = vmcs_get(env, VMCS_GUEST_ACTIVITY);
+    uint32_t irs = vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY);
+    uint64_t pend = vmcs_get(env, VMCS_GUEST_PENDING_DBG);
+    uint32_t sel[8], lim[8], ar[8];
+    uint64_t base[8];
+    bool v86 = (rflags & VM_MASK) != 0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        sel[i] = vmcs_get(env, VMCS_GUEST_ES_SEL + 2 * i);
+        lim[i] = vmcs_get(env, VMCS_GUEST_ES_LIMIT + 2 * i);
+        ar[i] = vmcs_get(env, VMCS_GUEST_ES_AR + 2 * i);
+        base[i] = vmcs_get(env, VMCS_GUEST_ES_BASE + 2 * i);
+    }
+#define AR_UNUSABLE(a) (((a) >> 16) & 1)
+#define AR_TYPE(a) ((a) & 0xf)
+#define AR_S(a) (((a) >> 4) & 1)
+#define AR_DPL(a) (((a) >> 5) & 3)
+#define AR_P(a) (((a) >> 7) & 1)
+#define AR_L(a) (((a) >> 13) & 1)
+#define AR_DB(a) (((a) >> 14) & 1)
+
+    /* 29.3.1.1 control registers, debug registers, MSRs */
+    if (cr0 >> 32) {
+        return 0;
+    }
+    if (!vmx_cr0_ok(env, cr0, ug)) {
+        return 0;
+    }
+    if ((cr0 & CR0_PG_MASK) && !(cr0 & CR0_PE_MASK)) {
+        return 0;
+    }
+    if (!vmx_cr4_ok(env, cr4)) {
+        return 0;
+    }
+    if ((cr4 & CR4_CET_MASK) && !(cr0 & CR0_WP_MASK)) {
+        return 0;
+    }
+    if ((entry & ENTRY_LOAD_DEBUG) &&
+        !x86_msr_value_ok(env, MSR_IA32_DEBUGCTL_VMX, vmcs_get(env, VMCS_GUEST_DEBUGCTL))) {
+        return 0;
+    }
+    if (ia32e && (!(cr0 & CR0_PG_MASK) || !(cr4 & CR4_PAE_MASK))) {
+        return 0;
+    }
+    if (!ia32e && ((cr4 & CR4_PCIDE_MASK) || (cr4 & CR4_FRED_MASK))) {
+        return 0;
+    }
+    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_GUEST_CR3))) {
+        return 0;
+    }
+    /* SDM 093 29.3.1.1: the bits reserved in DR7 (the model's DR7: bits 63:32, no Intel PT) */
+    if ((entry & ENTRY_LOAD_DEBUG) && (vmcs_get(env, VMCS_GUEST_DR7) >> 32)) {
+        return 0;
+    }
+    if (!x86_vmx_canonical(env, vmcs_get(env, VMCS_GUEST_SYSENTER_ESP)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_GUEST_SYSENTER_EIP))) {
+        return 0;
+    }
+    if ((entry & ENTRY_LOAD_PAT) && !vmx_pat_ok(vmcs_get(env, VMCS_GUEST_PAT))) {
+        return 0;
+    }
+    if (entry & ENTRY_LOAD_EFER) {
+        uint64_t efer = vmcs_get(env, VMCS_GUEST_EFER);
+
+        if (!x86_efer_value_ok(env, efer) || !!(efer & MSR_EFER_LMA) != ia32e) {
+            return 0;
+        }
+        if ((cr0 & CR0_PG_MASK) && !!(efer & MSR_EFER_LMA) != !!(efer & MSR_EFER_LME)) {
+            return 0;
+        }
+    }
+
+    /* 29.3.1.2 segment registers (ES CS SS DS FS GS LDTR TR = 0..7) */
+    if (sel[7] & 4) {
+        return 0;
+    }
+    if (!AR_UNUSABLE(ar[6]) && (sel[6] & 4)) {
+        return 0;
+    }
+    if (!v86 && !ug && (sel[R_SS] & 3) != (sel[R_CS] & 3)) {
+        return 0;
+    }
+    if (v86) {
+        for (i = 0; i < 6; i++) {
+            if (base[i] != (uint64_t)sel[i] << 4 || lim[i] != 0xffff || ar[i] != 0xf3) {
+                return 0;
+            }
+        }
+    }
+    if (!x86_vmx_canonical(env, base[7]) || !x86_vmx_canonical(env, base[R_FS]) ||
+        !x86_vmx_canonical(env, base[R_GS])) {
+        return 0;
+    }
+    if (!AR_UNUSABLE(ar[6]) && !x86_vmx_canonical(env, base[6])) {
+        return 0;
+    }
+    if (base[R_CS] >> 32) {
+        return 0;
+    }
+    if ((!AR_UNUSABLE(ar[R_SS]) && (base[R_SS] >> 32)) ||
+        (!AR_UNUSABLE(ar[R_DS]) && (base[R_DS] >> 32)) ||
+        (!AR_UNUSABLE(ar[R_ES]) && (base[R_ES] >> 32))) {
+        return 0;
+    }
+    if (!v86) {
+        for (i = 0; i < 6; i++) {
+            uint32_t a = ar[i];
+            bool cs = i == R_CS;
+
+            if (!cs && AR_UNUSABLE(a)) {
+                continue;
+            }
+            /* Type */
+            if (cs) {
+                uint32_t t = AR_TYPE(a);
+                if (!(t == 9 || t == 11 || t == 13 || t == 15 || (ug && t == 3))) {
+                    return 0;
+                }
+            } else if (i == R_SS) {
+                if (AR_TYPE(a) != 3 && AR_TYPE(a) != 7) {
+                    return 0;
+                }
+            } else {
+                if (!(AR_TYPE(a) & 1) || ((AR_TYPE(a) & 8) && !(AR_TYPE(a) & 2))) {
+                    return 0;
+                }
+            }
+            if (!AR_S(a) || !AR_P(a) || (a & 0xf00) || (a & 0xfffe0000u)) {
+                return 0;
+            }
+            if (!vmx_seg_limit_g_ok(lim[i], a)) {
+                return 0;
+            }
+        }
+        /* DPL */
+        if (AR_TYPE(ar[R_CS]) == 3 && AR_DPL(ar[R_CS]) != 0) {
+            return 0;
+        }
+        if ((AR_TYPE(ar[R_CS]) == 9 || AR_TYPE(ar[R_CS]) == 11) &&
+            AR_DPL(ar[R_CS]) != AR_DPL(ar[R_SS])) {
+            return 0;
+        }
+        if ((AR_TYPE(ar[R_CS]) == 13 || AR_TYPE(ar[R_CS]) == 15) &&
+            AR_DPL(ar[R_CS]) > AR_DPL(ar[R_SS])) {
+            return 0;
+        }
+        if (!ug && AR_DPL(ar[R_SS]) != (sel[R_SS] & 3)) {
+            return 0;
+        }
+        if ((AR_TYPE(ar[R_CS]) == 3 || !(cr0 & CR0_PE_MASK)) && AR_DPL(ar[R_SS]) != 0) {
+            return 0;
+        }
+        for (i = 0; i < 6; i++) {
+            if (i == R_CS || i == R_SS || ug || AR_UNUSABLE(ar[i])) {
+                continue;
+            }
+            if (AR_TYPE(ar[i]) <= 11 && AR_DPL(ar[i]) < (sel[i] & 3)) {
+                return 0;
+            }
+        }
+        /* CS.D/B with IA-32e mode and CS.L */
+        if (ia32e && AR_L(ar[R_CS]) && AR_DB(ar[R_CS])) {
+            return 0;
+        }
+    }
+    /* TR */
+    if (ia32e ? AR_TYPE(ar[7]) != 11 : (AR_TYPE(ar[7]) != 3 && AR_TYPE(ar[7]) != 11)) {
+        return 0;
+    }
+    if (AR_S(ar[7]) || !AR_P(ar[7]) || (ar[7] & 0xf00) || AR_UNUSABLE(ar[7]) ||
+        (ar[7] & 0xfffe0000u) || !vmx_seg_limit_g_ok(lim[7], ar[7])) {
+        return 0;
+    }
+    /* LDTR */
+    if (!AR_UNUSABLE(ar[6])) {
+        if (AR_TYPE(ar[6]) != 2 || AR_S(ar[6]) || !AR_P(ar[6]) || (ar[6] & 0xf00) ||
+            (ar[6] & 0xfffe0000u) || !vmx_seg_limit_g_ok(lim[6], ar[6])) {
+            return 0;
+        }
+    }
+
+    /* 29.3.1.3 GDTR / IDTR */
+    if (!x86_vmx_canonical(env, vmcs_get(env, VMCS_GUEST_ES_BASE + 16)) ||
+        !x86_vmx_canonical(env, vmcs_get(env, VMCS_GUEST_ES_BASE + 18)) ||
+        (vmcs_get(env, VMCS_GUEST_ES_LIMIT + 16) >> 16) ||
+        (vmcs_get(env, VMCS_GUEST_ES_LIMIT + 18) >> 16)) {
+        return 0;
+    }
+
+    /* 29.3.1.4 RIP, RFLAGS */
+    if (!(ia32e && AR_L(ar[R_CS]))) {
+        if (rip >> 32) {
+            return 0;
+        }
+    } else if (!vmx_upper_same(env, rip)) {
+        return 0;
+    }
+    if ((rflags >> 22) || (rflags & ((1u << 15) | (1u << 5) | (1u << 3))) || !(rflags & 2)) {
+        return 0;
+    }
+    if (v86 && (ia32e || !(cr0 & CR0_PE_MASK))) {
+        return 0;
+    }
+    if (inject && itype == 0 && !(rflags & IF_MASK)) {
+        return 0;
+    }
+
+    /* 29.3.1.5 non-register state: activity (IA32_VMX_MISC: active and HLT) */
+    if (act > 1) {
+        return 0;
+    }
+    if (act == 1 && AR_DPL(ar[R_SS]) != 0) {
+        return 0;
+    }
+    if (act != 0 && (irs & 3)) {
+        return 0;
+    }
+    if (inject && act == 1) {
+        if (!(itype == 0 || itype == 2 || (itype == 3 && (ivec == 1 || ivec == 18)) ||
+              (itype == 7 && ivec == 0))) {
+            return 0;
+        }
+    }
+    /* interruptibility state */
+    if (irs >> 5) {
+        return 0;
+    }
+    if ((irs & 3) == 3) {
+        return 0;
+    }
+    if ((irs & 1) && !(rflags & IF_MASK)) {
+        return 0;
+    }
+    if (inject && (itype == 0 || itype == 2) && (irs & 3)) {
+        return (itype == 2 && (irs & 1)) ? 3 + 1 : 0;   /* qualification 3: NMI with STI blocking */
+    }
+    if (irs & 4) {
+        return 0;                       /* blocking by SMI: the processor is never in SMM here */
+    }
+    if ((pin & PIN_VIRTUAL_NMI) && inject && itype == 2 && (irs & 8)) {
+        return 0;
+    }
+    if ((irs & 16) && ((irs & 2) || !x86_vmx_sgx(env))) {
+        return 0;
+    }
+    /* pending debug exceptions */
+    if (pend & ~(0xfull | (1ull << 11) | (1ull << 12) | (1ull << 14) | (1ull << 16))) {
+        return 0;
+    }
+    if ((irs & 3) || act == 1) {
+        bool tf = (rflags & TF_MASK) != 0;
+        bool btf = (vmcs_get(env, VMCS_GUEST_DEBUGCTL) & 2) != 0;
+        bool bs = (pend >> 14) & 1;
+
+        if (tf && !btf && !bs) {
+            return 0;
+        }
+        if ((!tf || btf) && bs) {
+            return 0;
+        }
+    }
+    if (pend & (1ull << 16)) {
+        if ((pend & ~((1ull << 16) | (1ull << 12))) != 0 || !(pend & (1ull << 12)) ||
+            !(env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_RTM) || (irs & 2)) {
+            return 0;
+        }
+    }
+    /* VMCS link pointer: qualification 4 */
+    {
+        uint64_t link = vmcs_get(env, VMCS_LINK_PTR);
+
+        if (link != ~0ull) {
+            uint32_t rev;
+
+            if ((link & 0xfff) || !vmx_paddr_ok(env, link) || link == env->vmx.vmcs_ptr) {
+                return 4 + 1;
+            }
+            rev = vmx_ldl(env, link);
+            if ((rev & 0x7fffffffu) != VMX_REVISION_ID ||
+                (rev >> 31) != ((proc2 & PROC2_SHADOW_VMCS) ? 1u : 0u)) {
+                return 4 + 1;
+            }
+        }
+    }
+    /* 29.3.1.6 PDPTEs of a PAE-paging guest: qualification 2 */
+    if ((cr0 & CR0_PG_MASK) && (cr4 & CR4_PAE_MASK) && !ia32e) {
+        for (i = 0; i < 4; i++) {
+            uint64_t e = (proc2 & PROC2_EPT)
+                ? vmcs_get(env, VMCS_GUEST_PDPTE0 + 2 * i)
+                : vmx_ldq(env, (vmcs_get(env, VMCS_GUEST_CR3) & ~0x1full) + 8 * i);
+
+            if (!vmx_pdpte_ok(env, e)) {
+                return 2 + 1;
+            }
+        }
+    }
+#undef AR_UNUSABLE
+#undef AR_TYPE
+#undef AR_S
+#undef AR_DPL
+#undef AR_P
+#undef AR_L
+#undef AR_DB
+    return VMX_GUEST_OK;
+}
+
+/* ---- loading processor state (29.3.2 guest, 30.5 host) ---- */
+
+/* CR0 / CR4 / EFER / CR3 in this order; the TLB is flushed by the caller */
+static void vmx_set_cr(CPUX86State *env, uint64_t cr0, uint64_t cr3, uint64_t cr4, uint64_t efer)
+{
+    cpu_x86_update_cr4(env, cr4);
+    cpu_x86_update_cr0(env, (uint32_t)cr0);
+    cpu_load_efer(env, efer);
+    cpu_x86_update_cr3(env, cr3);
+}
+
+static void vmx_set_seg(CPUX86State *env, SegmentCache *sc, uint32_t sel, uint64_t base,
+                        uint32_t limit, uint32_t flags)
+{
+    sc->selector = sel;
+    sc->base = base;
+    sc->limit = limit;
+    sc->flags = flags;
+}
+
+/* CR0 bits never modified by VM entries / exits (29.3.2.1, 30.5.1): ET, 15:6, 17, 28:19, NW, CD */
+#define VMX_CR0_KEEP  (0x10ull | 0xffc0ull | 0x20000ull | 0x1ff80000ull | 0x60000000ull)
+
+static void vmx_load_guest(CPUX86State *env)
+{
+    uint32_t entry = env->vmx.entry_ctls;
+    bool ia32e = (entry & ENTRY_IA32E) != 0;
+    uint64_t cr0 = (vmcs_get(env, VMCS_GUEST_CR0) & ~VMX_CR0_KEEP) | (env->cr[0] & VMX_CR0_KEEP);
+    uint64_t efer = env->efer;
+    uint32_t irs = vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY);
+    int i;
+
+    /* 29.3.2.1 */
+    if (entry & ENTRY_LOAD_EFER) {
+        efer = vmcs_get(env, VMCS_GUEST_EFER);
+    } else {
+        efer = ia32e ? (efer | MSR_EFER_LMA) : (efer & ~MSR_EFER_LMA);
+        if (cr0 & CR0_PG_MASK) {
+            efer = ia32e ? (efer | MSR_EFER_LME) : (efer & ~MSR_EFER_LME);
+        }
+    }
+    vmx_set_cr(env, cr0, vmcs_get(env, VMCS_GUEST_CR3), vmcs_get(env, VMCS_GUEST_CR4), efer);
+    if (entry & ENTRY_LOAD_DEBUG) {
+        uint64_t dr7 = vmcs_get(env, VMCS_GUEST_DR7);
+
+        x86_store_dr(env, 7, (dr7 & ~0xd000ull) | 0x400);
+        env->msr_debugctl = vmcs_get(env, VMCS_GUEST_DEBUGCTL);
+    }
+    env->sysenter_cs = vmcs_get(env, VMCS_GUEST_SYSENTER_CS);
+    env->sysenter_esp = vmcs_get(env, VMCS_GUEST_SYSENTER_ESP);
+    env->sysenter_eip = vmcs_get(env, VMCS_GUEST_SYSENTER_EIP);
+    if (entry & ENTRY_LOAD_PAT) {
+        env->pat = vmcs_get(env, VMCS_GUEST_PAT);
+    }
+    /* 29.3.2.2 segment and descriptor-table registers */
+    for (i = 0; i < 6; i++) {
+        uint32_t ar = vmcs_get(env, VMCS_GUEST_ES_AR + 2 * i);
+        uint64_t base = vmcs_get(env, VMCS_GUEST_ES_BASE + 2 * i);
+        uint32_t limit = vmcs_get(env, VMCS_GUEST_ES_LIMIT + 2 * i);
+
+        if ((ar >> 16) & 1) {
+            /* unusable: base, limit, rest of the AR undefined except SS.DPL, SS.B, SS base 3:0,
+               the FS / GS bases, bits 63:32 of the SS / DS / ES bases (our choice: base kept with
+               those rules, limit 0) */
+            if (i == R_SS) {
+                base &= ~0xfull;
+            }
+            if (i == R_SS || i == R_DS || i == R_ES) {
+                base = (uint32_t)base;
+            }
+            if (i == R_SS) {
+                ar |= 1u << 14;
+            }
+            if (i == R_CS) {
+                limit = vmcs_get(env, VMCS_GUEST_ES_LIMIT + 2 * R_CS);
+            } else {
+                limit = 0;
+            }
+        }
+        vmx_set_seg(env, &env->segs[i], vmcs_get(env, VMCS_GUEST_ES_SEL + 2 * i), base, limit,
+                    vmx_ar_to_flags(ar));
+    }
+    vmx_set_seg(env, &env->ldt, vmcs_get(env, VMCS_GUEST_ES_SEL + 12),
+                vmcs_get(env, VMCS_GUEST_ES_BASE + 12), vmcs_get(env, VMCS_GUEST_ES_LIMIT + 12),
+                vmx_ar_to_flags(vmcs_get(env, VMCS_GUEST_ES_AR + 12)));
+    vmx_set_seg(env, &env->tr, vmcs_get(env, VMCS_GUEST_ES_SEL + 14),
+                vmcs_get(env, VMCS_GUEST_ES_BASE + 14), vmcs_get(env, VMCS_GUEST_ES_LIMIT + 14),
+                vmx_ar_to_flags(vmcs_get(env, VMCS_GUEST_ES_AR + 14)));
+    env->gdt.base = vmcs_get(env, VMCS_GUEST_ES_BASE + 16);
+    env->gdt.limit = vmcs_get(env, VMCS_GUEST_ES_LIMIT + 16);
+    env->idt.base = vmcs_get(env, VMCS_GUEST_ES_BASE + 18);
+    env->idt.limit = vmcs_get(env, VMCS_GUEST_ES_LIMIT + 18);
+    /* 29.3.2.3 RIP, RSP, RFLAGS */
+    env->regs[R_ESP] = vmcs_get(env, VMCS_GUEST_RSP);
+    env->eip = vmcs_get(env, VMCS_GUEST_RIP);
+    cpu_load_eflags(env, (uint32_t)vmcs_get(env, VMCS_GUEST_RFLAGS), ~0);
+    x86_update_hflags(env);
+    /* 29.7.1 interruptibility (the injecting case is handled by vmx_inject) */
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    if (irs & 3) {
+        env->hflags |= HF_INHIBIT_IRQ_MASK;
+        env->fred_sti = irs & 1;
+    }
+    if (env->vmx.pin & PIN_VIRTUAL_NMI) {
+        env->vmx.vnmi_blocked = (irs >> 3) & 1;
+    } else if (irs & 8) {
+        env->hflags2 |= HF2_NMI_MASK;
+    } else {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+}
+
+/* 29.4 / 30.6: load the MSRs of an MSR-load area; 0 = success, else the failing entry (1-based) */
+static uint32_t vmx_load_msr_list(CPUX86State *env, uint64_t area, uint32_t count)
+{
+    uint32_t i;
+
+    for (i = 0; i < count; i++) {
+        uint64_t idx = vmx_ldq(env, area + 16 * (uint64_t)i);
+        uint64_t data = vmx_ldq(env, area + 16 * (uint64_t)i + 8);
+        uint32_t msr = (uint32_t)idx;
+
+        if ((idx >> 32) || msr == MSR_FSBASE || msr == MSR_GSBASE || (msr >> 8) == 8 ||
+            msr == MSR_IA32_SMM_MONITOR_CTL_NV || !vmx_wrmsr(env, msr, data)) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+/* 30.4: store the MSRs of the VM-exit MSR-store area; false = VMX abort 1 */
+static bool vmx_store_msr_list(CPUX86State *env, uint64_t area, uint32_t count)
+{
+    uint32_t i;
+
+    for (i = 0; i < count; i++) {
+        uint64_t idx = vmx_ldq(env, area + 16 * (uint64_t)i), v;
+        uint32_t msr = (uint32_t)idx;
+
+        if ((idx >> 32) || (msr >> 8) == 8 || msr == MSR_IA32_SMBASE_NV || !vmx_rdmsr(env, msr, &v)) {
+            return false;
+        }
+        vmx_stq(env, area + 16 * (uint64_t)i + 8, v);
+    }
+    return true;
+}
+
+/*
+ * 30.7 VMX abort: the abort indicator at offset 4 of the current VMCS, then the VMX-abort shutdown
+ * state (only RESET leaves it): the model stops the emulation with UC_ERR_EXCEPTION and keeps the
+ * vCPU halted (docs/vmx.md)
+ */
+static G_NORETURN void vmx_abort(CPUX86State *env, uint32_t indicator)
+{
+    CPUState *cs = env_cpu(env);
+
+    vmx_stl(env, env->vmx.vmcs_ptr + 4, indicator);
+    env->vmx.abort = indicator;
+    env->vmx.nonroot = 0;
+    env->hflags &= ~HF_GUEST_MASK;
+    cs->halted = 1;
+    if (env->uc->invalid_error == UC_ERR_OK) {
+        env->uc->invalid_error = UC_ERR_EXCEPTION;
+    }
+    cs->exception_index = EXCP_HLT;
+    cpu_loop_exit(cs);
+}
+
+/* 30.5 loading host state (also for VM-entry failures, 29.8) */
+static void vmx_load_host(CPUX86State *env)
+{
+    uint32_t exit = env->vmx.exit_ctls;
+    bool host64 = (exit & EXIT_HOST_64) != 0;
+    uint64_t cr0, cr3, cr4, efer;
+    uint32_t cs_flags, data_flags;
+    int i, mpa = vmx_maxphyaddr(env);
+
+    /* 30.5.1 */
+    cr0 = (vmcs_get(env, VMCS_HOST_CR0) & ~VMX_CR0_KEEP & 0xffffffffull) |
+          (env->cr[0] & VMX_CR0_KEEP);
+    cr3 = (vmcs_get(env, VMCS_HOST_CR3) & ((1ull << mpa) - 1)) | (env->cr[3] & ~((1ull << mpa) - 1));
+    cr4 = vmcs_get(env, VMCS_HOST_CR4);
+    if (host64) {
+        cr4 |= CR4_PAE_MASK;
+    } else {
+        cr4 &= ~(uint64_t)(CR4_PCIDE_MASK | CR4_FRED_MASK);
+    }
+    if (exit & EXIT_LOAD_EFER) {
+        efer = vmcs_get(env, VMCS_HOST_EFER);
+    } else {
+        efer = host64 ? (env->efer | MSR_EFER_LMA | MSR_EFER_LME)
+                      : (env->efer & ~(uint64_t)(MSR_EFER_LMA | MSR_EFER_LME));
+    }
+    vmx_set_cr(env, cr0, cr3, cr4, efer);
+    x86_store_dr(env, 7, 0x400);
+    env->msr_debugctl = 0;
+    env->sysenter_cs = vmcs_get(env, VMCS_HOST_SYSENTER_CS);
+    env->sysenter_esp = vmx_sext(env, vmcs_get(env, VMCS_HOST_SYSENTER_ESP));
+    env->sysenter_eip = vmx_sext(env, vmcs_get(env, VMCS_HOST_SYSENTER_EIP));
+    if (exit & EXIT_LOAD_PAT) {
+        env->pat = vmcs_get(env, VMCS_HOST_PAT);
+    }
+    /* 30.5.2 segments: CS type 11 S=1 DPL 0 P L=host64 D=!host64 G; data type 3 S=1 P D G */
+    cs_flags = DESC_P_MASK | DESC_S_MASK | DESC_CS_MASK | DESC_R_MASK | DESC_A_MASK | DESC_G_MASK |
+               (host64 ? DESC_L_MASK : DESC_B_MASK);
+    data_flags = DESC_P_MASK | DESC_S_MASK | DESC_W_MASK | DESC_A_MASK | DESC_G_MASK | DESC_B_MASK;
+    for (i = 0; i < 6; i++) {
+        uint32_t sel = vmcs_get(env, VMCS_HOST_ES_SEL + 2 * i);
+        uint64_t base = 0;
+
+        if (i == R_FS) {
+            base = vmx_sext(env, vmcs_get(env, VMCS_HOST_FS_BASE));
+        } else if (i == R_GS) {
+            base = vmx_sext(env, vmcs_get(env, VMCS_HOST_GS_BASE));
+        }
+        if (i == R_CS) {
+            vmx_set_seg(env, &env->segs[i], sel, 0, 0xffffffff, cs_flags);
+        } else if (sel == 0) {
+            /* unusable (our choice for the undefined parts: limit 0; SS keeps D = 1) */
+            vmx_set_seg(env, &env->segs[i], 0, base, 0,
+                        i == R_SS ? DESC_B_MASK : 0);
+        } else {
+            vmx_set_seg(env, &env->segs[i], sel, base, 0xffffffff, data_flags);
+        }
+    }
+    vmx_set_seg(env, &env->tr, vmcs_get(env, VMCS_HOST_ES_SEL + 12),
+                vmx_sext(env, vmcs_get(env, VMCS_HOST_TR_BASE)), 0x67,
+                DESC_P_MASK | (11u << DESC_TYPE_SHIFT));
+    vmx_set_seg(env, &env->ldt, 0, 0, 0, 0);
+    env->gdt.base = vmx_sext(env, vmcs_get(env, VMCS_HOST_GDTR_BASE));
+    env->gdt.limit = 0xffff;
+    env->idt.base = vmx_sext(env, vmcs_get(env, VMCS_HOST_IDTR_BASE));
+    env->idt.limit = 0xffff;
+    /* 30.5.3 */
+    env->eip = vmcs_get(env, VMCS_HOST_RIP);
+    env->regs[R_ESP] = vmcs_get(env, VMCS_HOST_RSP);
+    cpu_load_eflags(env, 0x2, ~0);
+    env->hflags &= ~(HF_GUEST_MASK | HF_INHIBIT_IRQ_MASK);
+    x86_update_hflags(env);
+    /* 30.5.4 PDPTEs of a PAE-paging host: VMX abort 2 if MOV to CR3 would #GP */
+    if ((cr4 & CR4_PAE_MASK) && !host64 && (cr0 & CR0_PG_MASK)) {
+        for (i = 0; i < 4; i++) {
+            if (!vmx_pdpte_ok(env, vmx_ldq(env, (cr3 & ~0x1full) + 8 * i))) {
+                vmx_abort(env, 2);
+            }
+        }
+    }
+    /* 30.5.5: active, no STI / MOV-SS blocking, no pending debug exceptions; the TLB */
+    env->vmx.nonroot = 0;
+    env->vmx.timer_on = 0;
+    env->vmx.mtf_pending = 0;
+    env->vmx.delivering = 0;
+    env_cpu(env)->halted = 0;
+    tlb_flush(env_cpu(env));
+}
+
+/* ---- the VMX-preemption timer (28.5.1, 29.7.4): counts down 1 per change of TSC bit 5 ---- */
+#define VMX_TIMER_RATE  5
+
+static uint64_t vmx_tsc(CPUX86State *env)
+{
+    return cpu_get_tsc(env) + env->tsc_adjust;
+}
+
+static uint32_t vmx_timer_value(CPUX86State *env)
+{
+    uint64_t now;
+
+    if (!env->vmx.timer_on) {
+        return 0;
+    }
+    now = vmx_tsc(env) >> VMX_TIMER_RATE;
+    return now >= env->vmx.timer_deadline ? 0 : (uint32_t)(env->vmx.timer_deadline - now);
+}
+
+/* ---- 30.2-30.3 saving guest state and recording the exit ---- */
+static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
+{
+    uint32_t exit = env->vmx.exit_ctls;
+    uint32_t irs = 0, act = 0;
+    uint64_t rflags = cpu_compute_eflags(env);
+    int i;
+
+    vmcs_put(env, VMCS_GUEST_CR0, env->cr[0]);
+    vmcs_put(env, VMCS_GUEST_CR3, env->cr[3]);
+    vmcs_put(env, VMCS_GUEST_CR4, env->cr[4]);
+    if (exit & EXIT_SAVE_DEBUG) {
+        vmcs_put(env, VMCS_GUEST_DR7, env->dr[7]);
+        vmcs_put(env, VMCS_GUEST_DEBUGCTL, env->msr_debugctl);
+    }
+    if (exit & EXIT_SAVE_PAT) {
+        vmcs_put(env, VMCS_GUEST_PAT, env->pat);
+    }
+    if (exit & EXIT_SAVE_EFER) {
+        vmcs_put(env, VMCS_GUEST_EFER, env->efer);
+    }
+    vmcs_put(env, VMCS_GUEST_SYSENTER_CS, env->sysenter_cs);
+    vmcs_put(env, VMCS_GUEST_SYSENTER_ESP, env->sysenter_esp);
+    vmcs_put(env, VMCS_GUEST_SYSENTER_EIP, env->sysenter_eip);
+    /* 30.3.2 segments: the unusable bit from the model's "P = 0"; bits 31:17, 11:8 cleared */
+    for (i = 0; i < 8; i++) {
+        const SegmentCache *sc = i < 6 ? &env->segs[i] : (i == 6 ? &env->ldt : &env->tr);
+        bool unusable = i == 7 ? false : !(sc->flags & DESC_P_MASK);
+        uint64_t base = sc->base;
+
+        if (unusable && (i == R_SS || i == R_DS || i == R_ES)) {
+            base = (uint32_t)base;
+        }
+        vmcs_put(env, VMCS_GUEST_ES_SEL + 2 * i, sc->selector);
+        vmcs_put(env, VMCS_GUEST_ES_BASE + 2 * i, base);
+        vmcs_put(env, VMCS_GUEST_ES_LIMIT + 2 * i, sc->limit);
+        vmcs_put(env, VMCS_GUEST_ES_AR + 2 * i, vmx_flags_to_ar(sc, unusable));
+    }
+    vmcs_put(env, VMCS_GUEST_ES_BASE + 16, env->gdt.base);
+    vmcs_put(env, VMCS_GUEST_ES_LIMIT + 16, env->gdt.limit);
+    vmcs_put(env, VMCS_GUEST_ES_BASE + 18, env->idt.base);
+    vmcs_put(env, VMCS_GUEST_ES_LIMIT + 18, env->idt.limit);
+    /* 30.3.3 */
+    vmcs_put(env, VMCS_GUEST_RIP, env->eip);
+    vmcs_put(env, VMCS_GUEST_RSP, env->regs[R_ESP]);
+    if (e->rf_zero) {
+        rflags &= ~(uint64_t)RF_MASK;
+    }
+    vmcs_put(env, VMCS_GUEST_RFLAGS, rflags);
+    /* 30.3.4 non-register state */
+    if (env_cpu(env)->halted) {
+        act = 1;
+    }
+    vmcs_put(env, VMCS_GUEST_ACTIVITY, act);
+    if (env->hflags & HF_INHIBIT_IRQ_MASK) {
+        irs |= env->fred_sti ? 1 : 2;
+    }
+    if (env->vmx.pin & PIN_VIRTUAL_NMI) {
+        irs |= env->vmx.vnmi_blocked ? 8 : 0;
+    } else if (env->hflags2 & HF2_NMI_MASK) {
+        irs |= 8;
+    }
+    vmcs_put(env, VMCS_GUEST_INTERRUPTIBILITY, irs);
+    vmcs_put(env, VMCS_GUEST_PENDING_DBG, 0);
+    if (exit & EXIT_SAVE_TIMER) {
+        vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
+    }
+}
+
+/*
+ * The VM exit itself (30.1-30.6). The caller has put the logical processor's state at the point of
+ * the exit (RIP of the instruction, of the interrupted boundary, ...).
+ */
+static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t cnt, bad;
+
+    /* 30.2: exit information; the valid bit of the injected-event identification; IA-32e guest */
+    vmcs_put(env, VMCS_EXIT_REASON, e->reason);
+    vmcs_put(env, VMCS_EXIT_QUAL, e->qual);
+    if (e->gla_valid) {
+        vmcs_put(env, VMCS_GUEST_LINEAR, e->gla);
+    }
+    if (e->gpa_valid) {
+        vmcs_put(env, VMCS_GPA, e->gpa);
+    }
+    vmcs_put(env, VMCS_EXIT_INTR_INFO, e->intr_info);
+    if (e->intr_info & (1u << 11)) {
+        vmcs_put(env, VMCS_EXIT_INTR_ERR, e->intr_err);
+    }
+    if (env->vmx.delivering) {
+        vmcs_put(env, VMCS_IDTV_INFO, env->vmx.idtv_info);
+        if (env->vmx.idtv_info & (1u << 11)) {
+            vmcs_put(env, VMCS_IDTV_ERR, env->vmx.idtv_err);
+        }
+    } else {
+        vmcs_put(env, VMCS_IDTV_INFO, 0);
+    }
+    if (e->len_valid) {
+        vmcs_put(env, VMCS_EXIT_INSN_LEN, e->insn_len);
+    }
+    if (e->info_valid) {
+        vmcs_put(env, VMCS_EXIT_INSN_INFO, e->insn_info);
+    }
+    vmcs_put(env, VMCS_ENTRY_INTR_INFO, vmcs_get(env, VMCS_ENTRY_INTR_INFO) & ~(1u << 31));
+    vmcs_put(env, VMCS_ENTRY_CTLS, (vmcs_get(env, VMCS_ENTRY_CTLS) & ~ENTRY_IA32E) |
+                                   (vmx_long_mode(env) ? ENTRY_IA32E : 0));
+    /* 30.3 */
+    vmx_save_guest(env, e);
+    /* 30.4 */
+    cnt = vmcs_get(env, VMCS_EXIT_MSR_STORE_CNT);
+    if (!vmx_store_msr_list(env, vmcs_get(env, VMCS_EXIT_MSR_STORE), cnt)) {
+        vmx_abort(env, 1);
+    }
+    /* 30.5: IA-32e mode with "host address-space size" 0 is a VMX abort (6) */
+    if (vmx_long_mode(env) && !(env->vmx.exit_ctls & EXIT_HOST_64)) {
+        vmx_abort(env, 6);
+    }
+    vmx_load_host(env);
+    /* 30.6 */
+    cnt = vmcs_get(env, VMCS_EXIT_MSR_LOAD_CNT);
+    bad = vmx_load_msr_list(env, vmcs_get(env, VMCS_EXIT_MSR_LOAD), cnt);
+    if (bad) {
+        vmx_abort(env, 4);
+    }
+    cs->exception_index = -1;
+    env->old_exception = -1;
+    cpu_loop_exit(cs);
+}
+
+/*
+ * A fault-like VM exit for an instruction (28.1): the state is restored to the instruction's start
+ * (its length from the translator, insn_start word 2), RFLAGS.RF saved as 0 (30.3.3)
+ */
+G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qual,
+                                  uint32_t info, bool info_valid, uintptr_t ra)
+{
+    VmxExit e;
+
+    if (ra) {
+        cpu_restore_state(env_cpu(env), ra, true);
+    }
+    vmx_exit_init(&e, reason, qual);
+    e.len_valid = true;
+    e.insn_len = env->vmx.insn_len;
+    e.info_valid = info_valid;
+    e.insn_info = info;
+    e.rf_zero = true;
+    vmx_vmexit(env, &e);
+}
+
+/* ---- 29.8 VM-entry failure after the guest-state checks ---- */
+static G_NORETURN void vmx_entry_fail(CPUX86State *env, uint32_t reason, uint64_t qual)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t bad;
+
+    vmcs_put(env, VMCS_EXIT_REASON, reason | EXIT_REASON_ENTRY_FAIL);
+    vmcs_put(env, VMCS_EXIT_QUAL, qual);
+    vmx_load_host(env);
+    bad = vmx_load_msr_list(env, vmcs_get(env, VMCS_EXIT_MSR_LOAD),
+                            vmcs_get(env, VMCS_EXIT_MSR_LOAD_CNT));
+    if (bad) {
+        vmx_abort(env, 4);
+    }
+    cs->exception_index = -1;
+    cpu_loop_exit(cs);
+}
+
+/*
+ * ---- 29.6 event injection ----
+ * The event is delivered in the guest context as the model delivers events of that kind
+ * (UC_CTL_X86_EVENT_DELIVERY: through the guest IDT, or to UC_HOOK_INTR); a pending MTF VM exit
+ * (type 7, vector 0) is made pending. Returns only if nothing is delivered.
+ */
+static void vmx_inject(CPUX86State *env, uint32_t info)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t type = (info >> 8) & 7, vec = info & 0xff;
+    uint32_t len = vmcs_get(env, VMCS_ENTRY_INSN_LEN);
+    uint32_t ec = vmcs_get(env, VMCS_ENTRY_EXC_ERR);
+
+    if (type == 7) {
+        env->vmx.mtf_pending = 1;       /* 29.6.2 */
+        return;
+    }
+    /* 29.7.1: no blocking by STI or MOV SS after an injecting VM entry; NMI blocking */
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    if (type == 2) {
+        if (env->vmx.pin & PIN_VIRTUAL_NMI) {
+            env->vmx.vnmi_blocked = 1;
+        } else {
+            env->hflags2 |= HF2_NMI_MASK;
+        }
+    }
+    /* the original event if its delivery causes a VM exit (29.6.1.2, 30.2.4) */
+    env->vmx.delivering = 1;
+    env->vmx.idtv_info = info & ~(1u << 12);
+    env->vmx.idtv_err = ec;
+    env->vmx.idtv_len = len;
+    env->vmx.inject_type = type;
+    /* 29.6.1.1: the error code (bit 11) and the RIP pushed (+ length for software events) */
+    env->vmx.inj_active = 1;
+    env->vmx.inj_has_ec = (info >> 11) & 1;
+    env->vmx.inj_ec = ec;
+    env->vmx.inj_push_rip = env->eip + ((type == 4 || type == 5 || type == 6) ? len : 0);
+    env->old_exception = -1;
+    if (type == 0 || type == 2) {
+        /* an external interrupt / NMI: delivered as the local APIC delivers one (docs/apic.md) */
+        x86_apic_deliver_event(env, vec);
+        cs->exception_index = -1;
+        cpu_loop_exit(cs);
+    }
+    cs->exception_index = vec;
+    env->error_code = env->vmx.inj_has_ec ? (int)ec : 0;
+    /* INT n / INT3 / INTO: the DPL check of software events (29.6.1.1); INT1 (type 5): none */
+    env->exception_is_int = (type == 4 || type == 6) ? 1 : 0;
+    env->exception_next_eip = env->vmx.inj_push_rip;
+    x86_vmx_record_event(env, vec, env->exception_is_int, env->error_code);
+    cpu_loop_exit(cs);
+}
+
+/*
+ * ---- VMLAUNCH / VMRESUME (Vol3C 33.3 pp. 33-14 to 33-16, chapter 29) ----
+ * next_len: the instruction's length (a VMfail continues with the next instruction).
+ */
+void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
+{
+    uintptr_t ra = GETPC();
+    uint32_t launch_state, info, bad, proc2;
+    int q;
+
+    if (!env->vmx.on || vmx_bad_mode(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (env->vmx.nonroot) {
+        x86_vmx_insn_exit(env, launch ? EXIT_REASON_VMLAUNCH : EXIT_REASON_VMRESUME, 0, 0, false,
+                          ra);
+    }
+    if (vmx_cpl(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    env->eip += next_len;               /* a VMfail passes to the next instruction */
+    /* 29.1 basic checks */
+    if (env->vmx.vmcs_ptr == VMX_NO_VMCS || (vmx_ldl(env, env->vmx.vmcs_ptr) >> 31)) {
+        vmx_fail_invalid(env);
+        return;
+    }
+    if ((env->hflags & HF_INHIBIT_IRQ_MASK) && !env->fred_sti) {
+        vmx_fail_valid(env, VMXERR_ENTRY_MOVSS);
+        return;
+    }
+    launch_state = vmx_ldl(env, env->vmx.vmcs_ptr + VMCS_LAUNCH_OFFSET);
+    if (launch && launch_state != 0) {
+        vmx_fail_valid(env, VMXERR_VMLAUNCH_NONCLEAR);
+        return;
+    }
+    if (!launch && launch_state != 1) {
+        vmx_fail_valid(env, VMXERR_VMRESUME_NONLAUNCHED);
+        return;
+    }
+    /* 29.2 controls and host state */
+    if (!vmx_check_controls(env)) {
+        vmx_fail_valid(env, VMXERR_ENTRY_CTLS);
+        return;
+    }
+    if (!vmx_check_host(env)) {
+        vmx_fail_valid(env, VMXERR_ENTRY_HOST);
+        return;
+    }
+    vmx_load_controls(env);
+    /* 29.3 guest state (checked before anything is loaded: an order 29.3 allows) */
+    proc2 = env->vmx.proc2;
+    q = vmx_check_guest(env, proc2);
+    if (q != VMX_GUEST_OK) {
+        vmx_entry_fail(env, EXIT_REASON_INVALID_GUEST, q ? q - 1 : 0);
+    }
+    vmx_load_guest(env);
+    env->vmx.nonroot = 1;
+    env->hflags |= HF_GUEST_MASK;
+    env->vmx.delivering = 0;
+    env->vmx.mtf_pending = 0;
+    tlb_flush(env_cpu(env));
+    /* 29.4 MSR loading */
+    bad = vmx_load_msr_list(env, vmcs_get(env, VMCS_ENTRY_MSR_LOAD),
+                            vmcs_get(env, VMCS_ENTRY_MSR_LOAD_CNT));
+    if (bad) {
+        env->vmx.nonroot = 0;
+        env->hflags &= ~HF_GUEST_MASK;
+        vmx_entry_fail(env, EXIT_REASON_MSR_LOADING, bad);
+    }
+    /* step 5: launch state */
+    if (launch) {
+        vmx_stl(env, env->vmx.vmcs_ptr + VMCS_LAUNCH_OFFSET, 1);
+    }
+    /* 29.7.2 activity state (HLT unless injecting) */
+    info = vmcs_get(env, VMCS_ENTRY_INTR_INFO);
+    if (!(info >> 31) || ((info >> 8) & 7) == 7) {
+        env_cpu(env)->halted = vmcs_get(env, VMCS_GUEST_ACTIVITY) == 1;
+    }
+    /* 29.7.4 the VMX-preemption timer */
+    if (env->vmx.pin & PIN_PREEMPT_TIMER) {
+        env->vmx.timer_on = 1;
+        env->vmx.timer_deadline = (vmx_tsc(env) >> VMX_TIMER_RATE) +
+                                  (uint32_t)vmcs_get(env, VMCS_PREEMPT_TIMER);
+    }
+    /* the monitor trap flag needs one instruction per TB (translate.c): retranslate */
+    if (env->vmx.proc & PROC_MTF) {
+        tb_flush(env_cpu(env));
+    }
+    /* 28.5.2: an injected vectored event with "monitor trap flag" makes an MTF VM exit pending */
+    if ((info >> 31) && ((info >> 8) & 7) != 7 && (env->vmx.proc & PROC_MTF)) {
+        env->vmx.mtf_pending = 1;
+    }
+    /* 29.6 event injection */
+    if (info >> 31) {
+        vmx_inject(env, info);
+    }
+    /* no injection: events due right after VM entry are evaluated at the first boundary */
+    env_cpu(env)->exception_index = -1;
+    cpu_loop_exit(env_cpu(env));
+}
+
+/*
+ * The VMX events of an instruction boundary in VMX non-root operation (28.2, 28.5.1, 28.5.2, 29.7):
+ * called by the translator at the start of every TB of non-root code (a boundary; each TB is one
+ * instruction while the monitor trap flag is set). Priority (28.2 / 29.7): pending MTF VM exit (higher
+ * than debug traps, lower than SMI / INIT), VMX-preemption timer (above NMI window), NMI window,
+ * interrupt window (below NMI, above external interrupts).
+ */
+void helper_vmx_boundary(CPUX86State *env)
+{
+    VmxExit e;
+    CPUState *cs = env_cpu(env);
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    if (env->vmx.mtf_pending) {
+        env->vmx.mtf_pending = 0;
+        vmx_exit_init(&e, EXIT_REASON_MTF, 0);
+        vmx_vmexit(env, &e);
+    }
+    if (env->vmx.timer_on && vmx_timer_value(env) == 0) {
+        vmx_exit_init(&e, EXIT_REASON_PREEMPT_TIMER, 0);
+        env->vmx.timer_on = 1;
+        vmx_vmexit(env, &e);
+    }
+    if ((env->vmx.proc & PROC_NMI_WINDOW) && !env->vmx.vnmi_blocked &&
+        !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
+        vmx_exit_init(&e, EXIT_REASON_NMI_WINDOW, 0);
+        vmx_vmexit(env, &e);
+    }
+    if ((env->vmx.proc & PROC_INTR_WINDOW) && (env->eflags & IF_MASK) &&
+        !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
+        vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
+        vmx_vmexit(env, &e);
+    }
+    /* the monitor trap flag: an MTF VM exit is pending after this instruction (28.5.2) */
+    if (env->vmx.proc & PROC_MTF) {
+        env->vmx.mtf_pending = 1;
+    }
+    (void)cs;
+}
+
+/* VMCALL / VMXON / ... in VMX non-root operation: unconditional VM exits (28.1.2) */
+void x86_vmx_check_insn_exit(CPUX86State *env, uint32_t op, uint32_t info, uint64_t qual,
+                             uintptr_t ra)
+{
+    static const uint8_t reason[] = {
+        [VMX_OP_VMXON] = EXIT_REASON_VMXON, [VMX_OP_VMXOFF] = EXIT_REASON_VMXOFF,
+        [VMX_OP_VMCLEAR] = EXIT_REASON_VMCLEAR, [VMX_OP_VMPTRLD] = EXIT_REASON_VMPTRLD,
+        [VMX_OP_VMPTRST] = EXIT_REASON_VMPTRST, [VMX_OP_VMCALL] = EXIT_REASON_VMCALL,
+    };
+    bool mem = op == VMX_OP_VMXON || op == VMX_OP_VMCLEAR || op == VMX_OP_VMPTRLD ||
+               op == VMX_OP_VMPTRST;
+
+    if (env->vmx.nonroot) {
+        x86_vmx_insn_exit(env, reason[op], mem ? qual : 0, info, mem, ra);
+    }
+}
+
+/*
+ * VMFUNC (Vol3C 33.3 p. 33-13, 28.5.7): #UD outside VMX non-root operation, with "enable VM
+ * functions" 0 or EAX >= 64; a function not enabled: VM exit 59; EPTP switching (function 0).
+ */
+void helper_vmfunc(CPUX86State *env)
+{
+    uintptr_t ra = GETPC();
+    uint32_t eax = (uint32_t)env->regs[R_EAX];
+    uint32_t ecx = (uint32_t)env->regs[R_ECX];
+    uint64_t eptp;
+
+    if (!env->vmx.nonroot || !(env->vmx.proc2 & PROC2_VMFUNC) || eax >= 64) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    if (!((env->vmx.vmfunc >> eax) & 1)) {
+        x86_vmx_insn_exit(env, EXIT_REASON_VMFUNC, 0, 0, false, ra);
+    }
+    /* 28.5.7.3 EPTP switching */
+    if (ecx >= 512) {
+        x86_vmx_insn_exit(env, EXIT_REASON_VMFUNC, 0, 0, false, ra);
+    }
+    eptp = vmx_ldq(env, env->vmx.eptp_list + 8 * (uint64_t)ecx);
+    if (!x86_vmx_eptp_ok(env, eptp) || ((eptp ^ env->vmx.eptp) & 0x38)) {
+        x86_vmx_insn_exit(env, EXIT_REASON_VMFUNC, 0, 0, false, ra);
+    }
+    env->vmx.eptp = eptp;
+    vmcs_put(env, VMCS_EPTP, eptp);
+    tlb_flush(env_cpu(env));            /* new EPT paging structures; no flags modified */
+}
+
+/* an instruction that exits unconditionally in VMX non-root operation (CPUID, GETSEC, INVD, XSETBV) */
+void x86_vmx_uncond_exit(CPUX86State *env, uint32_t reason, uintptr_t ra)
+{
+    if (env->vmx.nonroot) {
+        x86_vmx_insn_exit(env, reason, 0, 0, false, ra);
+    }
+}
+
+void helper_vmx_uncond_exit(CPUX86State *env, uint32_t reason)
+{
+    x86_vmx_uncond_exit(env, reason, GETPC());
+}
+
+/*
+ * 28.2 triple fault in VMX non-root operation: a VM exit (2) instead of shutdown; the saved RIP and
+ * RFLAGS are those the double fault would have pushed (30.3.3), i.e. the current state
+ */
+G_NORETURN void x86_vmx_triple_fault(CPUX86State *env)
+{
+    VmxExit e;
+
+    vmx_exit_init(&e, EXIT_REASON_TRIPLE_FAULT, 0);
+    env->vmx.delivering = 0;
+    vmx_vmexit(env, &e);
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

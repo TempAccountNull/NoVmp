@@ -124,6 +124,10 @@ void helper_cpuid(CPUX86State *env)
     int skip_cpuid = 0;
     bool synced = false;
     cpu_svm_check_intercept_param(env, SVM_EXIT_CPUID, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* VMX non-root operation: CPUID exits unconditionally (SDM 092 Vol3C 28.1.2), before the hooks */
+    x86_vmx_uncond_exit(env, VMX_EXIT_CPUID, GETPC());
+#endif /* __Use_Original_Qemu (U1303) */
 
     // Unicorn: call registered CPUID hooks
     HOOK_FOREACH_VAR_DECLARE;
@@ -1599,6 +1603,54 @@ static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t v
 }
 
 #endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+/*
+ * NoVmp (ledger U1303, docs/vmx.md): MSR access for the VMX transitions (vmx_helper.c).
+ * x86_efer_value_ok: the reserved bits of IA32_EFER only (VM-entry / host-state checks, SDM 092
+ * Vol3C 29.2.2 / 29.3.1.1: "bits reserved in the IA32_EFER MSR must be 0"; not the LME-with-paging
+ * rule of WRMSR, which concerns the current state). x86_msr_value_ok: "one that could be written by
+ * WRMSR without fault at CPL 0" for the current state. x86_msr_vmx_access: RDMSR / WRMSR as the
+ * MSR-load / -store areas perform them (29.4, 30.4, 30.6) - no UC_HOOK_INSN hook, a #GP(0) becomes
+ * false (msr_api = 3: the live CPU, like the host API, without its hooks).
+ */
+bool x86_efer_value_ok(CPUX86State *env, uint64_t efer)
+{
+    return msr_write_ok(env, MSR_EFER, (efer & ~MSR_EFER_LME) | (env->efer & MSR_EFER_LME)) ||
+           (!(env->cr[0] & CR0_PG_MASK) && msr_write_ok(env, MSR_EFER, efer));
+}
+
+bool x86_msr_value_ok(CPUX86State *env, uint32_t msr, uint64_t val)
+{
+    return msr_present(env, msr) && msr_write_ok(env, msr, val);
+}
+
+bool x86_msr_vmx_access(CPUX86State *env, uint32_t msr, uint64_t *val, bool write)
+{
+    uint64_t ecx = env->regs[R_ECX], eax = env->regs[R_EAX], edx = env->regs[R_EDX];
+    uint8_t api = env->msr_api, err = env->msr_api_err;
+    bool ok;
+
+    env->regs[R_ECX] = msr;
+    env->regs[R_EAX] = (uint32_t)*val;
+    env->regs[R_EDX] = (uint32_t)(*val >> 32);
+    env->msr_api = 3;
+    env->msr_api_err = 0;
+    if (write) {
+        helper_wrmsr(env);
+    } else {
+        helper_rdmsr(env);
+        *val = (uint32_t)env->regs[R_EAX] | ((uint64_t)(uint32_t)env->regs[R_EDX] << 32);
+    }
+    ok = !env->msr_api_err;
+    env->msr_api = api;
+    env->msr_api_err = err;
+    env->regs[R_ECX] = ecx;
+    env->regs[R_EAX] = eax;
+    env->regs[R_EDX] = edx;
+    return ok;
+}
+
+#endif /* __Use_Original_Qemu (U1303) */
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
 /*
  * NoVmp (ledger U1120): IA32_TSE_CAPABILITY as the CPU has it: NOVMP_TSE_CAPABILITY with the
@@ -1646,8 +1698,9 @@ void helper_wrmsr(CPUX86State *env)
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
     {
 #if __Use_Original_Qemu != 1 /* ours (U878) */
-        if (env->msr_api == 2) {
-            break;      /* a write into a uc_context image runs no WRMSR hook (U878) */
+        if (env->msr_api == 2 || env->msr_api == 3) {
+            break;      /* a write into a uc_context image runs no WRMSR hook (U878); U1303: nor
+                           the MSR-load area of a VMX transition */
         }
 #endif /* __Use_Original_Qemu (U878) */
         if (hook->to_delete)
@@ -2292,8 +2345,9 @@ void helper_rdmsr(CPUX86State *env)
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
     {
 #if __Use_Original_Qemu != 1 /* ours (U878) */
-        if (env->msr_api == 2) {
-            break;      /* a read of a uc_context image runs no RDMSR hook (U878) */
+        if (env->msr_api == 2 || env->msr_api == 3) {
+            break;      /* a read of a uc_context image runs no RDMSR hook (U878); U1303: nor the
+                           MSR-store area of a VM exit */
         }
 #endif /* __Use_Original_Qemu (U878) */
         if (hook->to_delete)
@@ -2939,6 +2993,13 @@ static void smx_getsec(CPUX86State *env, uintptr_t ra)
 #endif /* __Use_Original_Qemu (U1267) */
 void helper_getsec(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* VMX non-root operation: a VM exit if CR4.SMXE = 1, whatever CPL and EAX (Vol3C 28.1.2
+       footnote 1); #UD with CR4.SMXE = 0 */
+    if (env->cr[4] & CR4_SMXE_MASK) {
+        x86_vmx_uncond_exit(env, VMX_EXIT_GETSEC, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U1303) */
 #if __Use_Original_Qemu != 1 /* ours (U1267) */
     if (env->uc->x86_features & UC_X86_FEATURE_SMX) {
         smx_getsec(env, GETPC());

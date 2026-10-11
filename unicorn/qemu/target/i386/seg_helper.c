@@ -1872,6 +1872,15 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
     } else {
         old_eip = env->eip;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* an event injected by VM entry: its error code and pushed RIP (SDM 092 Vol3C 29.6.1.1) */
+    if (env->vmx.inj_active) {
+        env->vmx.inj_active = 0;
+        has_error_code = env->vmx.inj_has_ec;
+        error_code = env->vmx.inj_ec;
+        old_eip = env->vmx.inj_push_rip;
+    }
+#endif /* __Use_Original_Qemu (U1303) */
 
     dt = &env->idt;
     if (intno * 8 + 7 > dt->limit) {
@@ -2199,6 +2208,15 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     } else {
         old_eip = env->eip;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* an event injected by VM entry: its error code and pushed RIP (SDM 092 Vol3C 29.6.1.1) */
+    if (env->vmx.inj_active) {
+        env->vmx.inj_active = 0;
+        has_error_code = env->vmx.inj_has_ec;
+        error_code = env->vmx.inj_ec;
+        old_eip = env->vmx.inj_push_rip;
+    }
+#endif /* __Use_Original_Qemu (U1303) */
 
     dt = &env->idt;
     if (intno * 16 + 15 > dt->limit) {
@@ -2659,6 +2677,13 @@ static void do_interrupt_real(CPUX86State *env, int intno, int is_int,
     } else {
         old_eip = env->eip;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* an event injected by VM entry into a real-address-mode guest: the pushed RIP (29.6.1.3) */
+    if (env->vmx.inj_active) {
+        env->vmx.inj_active = 0;
+        old_eip = (uint32_t)env->vmx.inj_push_rip;
+    }
+#endif /* __Use_Original_Qemu (U1303) */
     old_cs = env->segs[R_CS].selector;
     /* XXX: use SS segment size? */
     PUSHW(ssp, esp, 0xffff, cpu_compute_eflags(env));
@@ -2762,7 +2787,12 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
     }
 #endif /* __Use_Original_Qemu (U1171) */
     if (env->cr[0] & CR0_PE_MASK) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1303) */
         if (env->hflags & HF_GUEST_MASK) {
+#else /* ours (U1303) */
+        /* HF_GUEST_MASK is VMX non-root operation too (docs/vmx.md): the SVM VMCB is not used */
+        if ((env->hflags & HF_GUEST_MASK) && !env->vmx.nonroot) {
+#endif /* __Use_Original_Qemu (U1303) */
             handle_even_inj(env, intno, is_int, error_code, is_hw, 0);
         }
 #ifdef TARGET_X86_64
@@ -2775,13 +2805,26 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
                                    is_hw);
         }
     } else {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1303) */
         if (env->hflags & HF_GUEST_MASK) {
+#else /* ours (U1303) */
+        if ((env->hflags & HF_GUEST_MASK) && !env->vmx.nonroot) {
+#endif /* __Use_Original_Qemu (U1303) */
             handle_even_inj(env, intno, is_int, error_code, is_hw, 1);
         }
         do_interrupt_real(env, intno, is_int, error_code, next_eip);
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U1303) */
+    /* VMX: the event was delivered (no VM exit during its delivery, 30.2.4) */
+    env->vmx.delivering = 0;
+    env->vmx.inj_active = 0;
+#endif /* __Use_Original_Qemu (U1303) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1303) */
     if (env->hflags & HF_GUEST_MASK) {
+#else /* ours (U1303) */
+    if ((env->hflags & HF_GUEST_MASK) && !env->vmx.nonroot) {
+#endif /* __Use_Original_Qemu (U1303) */
         CPUState *cs = CPU(cpu);
         uint32_t event_inj = x86_ldl_phys(cs, env->vm_vmcb +
                                       offsetof(struct vmcb,

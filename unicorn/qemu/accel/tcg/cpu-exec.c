@@ -458,6 +458,11 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
             env->old_exception = -1;
         }
 #endif
+#if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U1303) */
+        /* VMX: the hook played the handler: the event (injected or not) has been delivered */
+        env->vmx.delivering = 0;
+        env->vmx.inj_active = 0;
+#endif /* __Use_Original_Qemu (U1303) */
         // Unicorn: If un-catched interrupt, stop executions.
         if (!catched) {
             // printf("AAAAAAAAAAAA\n"); qq
