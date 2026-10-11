@@ -27755,6 +27755,338 @@ static void test_x86_tsefix_reserved(void)
 }
 /* ---- end U1129-U1149 (tsefix_) ---- */
 
+/*
+ * ---- NoVmp U1200-U1219: XSAVE / XRSTOR / XSAVEOPT with CR0.TS, CPUID 40000000H (xs_) ----
+ * Expected values from the Intel SDM 325462-092 (093 identical for these pages): Vol2D XRSTOR
+ * p. 6-52 / 6-53, XSAVE p. 6-59 / 6-60, XSAVEOPT p. 6-65 / 6-66 ("#NM If CR0.TS[bit 3] = 1.";
+ * "#UD If CPUID.01H:ECX.XSAVE[26] = 0. If CR4.OSXSAVE[bit 18] = 0. If the LOCK prefix is used.");
+ * the order of #UD and #NM within Vol3A Table 7-2 priority class 9 is implementation-dependent
+ * (p. 7-10): decode #UD first, then #NM, then CR4.OSXSAVE (docs/quirks.md, as XSAVEC / XSAVES).
+ */
+#define XS_DATA 0x200000
+
+typedef struct XsCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} XsCtx;
+
+static void xs_open(XsCtx *c, int avx512)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, 1));   /* AVX512F */
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, XS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static uint64_t xs_get(XsCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void xs_set(XsCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* CR0.TS (bit 3) / CR4.OSXSAVE (bit 18) through the API */
+static void xs_cr(XsCtx *c, int reg, uint64_t bit, int on)
+{
+    uint64_t v = xs_get(c, reg);
+
+    xs_set(c, reg, on ? (v | bit) : (v & ~bit));
+}
+
+/* run a snippet at a fresh address: the vector (6 = #UD) or -1; *at = the snippet's address */
+static int xs_run(XsCtx *c, const char *code, size_t len, uint64_t *at)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x40;
+    if (c->pc + 0x40 > code_start + code_len) {
+        c->pc = code_start;
+    }
+    TEST_CHECK(len <= 0x40);
+    if (at) {
+        *at = pc;
+    }
+    c->cap.count = 0;
+    c->cap.intno = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void xs_cpuid(XsCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    xs_set(c, UC_X86_REG_RAX, leaf);
+    xs_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(xs_run(c, "\x0f\xa2", 2, NULL) == -1);
+    r[0] = (uint32_t)xs_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)xs_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)xs_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)xs_get(c, UC_X86_REG_RDX);
+}
+
+/* the XSAVE area at XS_DATA: 4 KiB of A5h, or a legacy image with XSTATE_BV = 0 (XRSTOR) */
+static void xs_fill(XsCtx *c, int image)
+{
+    uint8_t m[0x1000];
+
+    memset(m, image ? 0 : 0xa5, sizeof(m));
+    if (image) {
+        m[0] = 0x7f;   /* FCW 037FH */
+        m[1] = 0x03;
+        m[0x18] = 0x80;   /* MXCSR 1F80H */
+        m[0x19] = 0x1f;
+    }
+    OK(uc_mem_write(c->uc, XS_DATA, m, sizeof(m)));
+}
+
+static int xs_area_is(XsCtx *c, uint8_t v)
+{
+    uint8_t m[0x1000];
+    size_t i;
+
+    OK(uc_mem_read(c->uc, XS_DATA, m, sizeof(m)));
+    for (i = 0; i < sizeof(m); i++) {
+        if (m[i] != v) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static const struct {
+    const char *name;
+    const char *code;
+    size_t len;
+    int restore;
+} xs_forms[] = {
+    {"xsave [rsi]", "\x0f\xae\x26", 3, 0},
+    {"xsave64 [rsi]", "\x48\x0f\xae\x26", 4, 0},
+    {"xrstor [rsi]", "\x0f\xae\x2e", 3, 1},
+    {"xrstor64 [rsi]", "\x48\x0f\xae\x2e", 4, 1},
+    {"xsaveopt [rsi]", "\x0f\xae\x36", 3, 0},
+    {"xsaveopt64 [rsi]", "\x48\x0f\xae\x36", 4, 0},
+};
+
+/*
+ * U1201: CR0.TS = 1 -> #NM at the instruction, nothing stored / loaded; CR0.TS = 0 -> the
+ * instruction completes (XSAVE / XSAVEOPT: XSTATE_BV[2:0] of RFBM 7 written, bits 7:3 kept; XRSTOR with
+ * XSTATE_BV = 0: XMM0 back to its initial value 0). Before U1201 only XSAVEC / XSAVES / XRSTORS
+ * checked CR0.TS.
+ */
+static void test_x86_xs_ts_nm(void)
+{
+    const uint8_t pat[16] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                             0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01};
+    uint8_t x[16], hdr;
+    uint64_t at;
+    size_t i;
+    XsCtx c;
+
+    for (i = 0; i < sizeof(xs_forms) / sizeof(xs_forms[0]); i++) {
+        xs_open(&c, 0);
+        xs_set(&c, UC_X86_REG_RSI, XS_DATA);
+        xs_set(&c, UC_X86_REG_RAX, 7);
+        xs_set(&c, UC_X86_REG_RDX, 0);
+        OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, pat));
+        /* TS = 1: #NM, RIP at the instruction, no memory or register change */
+        xs_fill(&c, xs_forms[i].restore);
+        xs_cr(&c, UC_X86_REG_CR0, 8, 1);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, &at) == 7);
+        TEST_MSG("%s with CR0.TS = 1", xs_forms[i].name);
+        TEST_CHECK(xs_get(&c, UC_X86_REG_RIP) == at);
+        TEST_CHECK(xs_forms[i].restore || xs_area_is(&c, 0xa5));
+        OK(uc_reg_read(c.uc, UC_X86_REG_XMM0, x));
+        TEST_CHECK(memcmp(x, pat, sizeof(x)) == 0);
+        TEST_MSG("%s: XMM0 changed with CR0.TS = 1", xs_forms[i].name);
+        /* TS = 0: completes */
+        xs_cr(&c, UC_X86_REG_CR0, 8, 0);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, NULL) == -1);
+        TEST_MSG("%s with CR0.TS = 0", xs_forms[i].name);
+        if (xs_forms[i].restore) {
+            OK(uc_reg_read(c.uc, UC_X86_REG_XMM0, x));
+            TEST_CHECK(x[0] == 0 && memcmp(x, x + 1, sizeof(x) - 1) == 0);
+        } else {
+            OK(uc_mem_read(c.uc, XS_DATA + 0x200, &hdr, 1));
+            /* Vol1 13.7 (p. 13-19): "If RFBM[i] = 0, XSTATE_BV[i] is not changed." (A5h) */
+            TEST_CHECK((hdr & ~7) == 0xa0 && !xs_area_is(&c, 0xa5));
+            TEST_MSG("%s: XSTATE_BV byte %02x", xs_forms[i].name, hdr);
+        }
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * U1201: order. The decode #UD conditions (LOCK; CPUID.01H:ECX.XSAVE = 0; for XSAVEOPT
+ * CPUID.(0DH,1):EAX.XSAVEOPT = 0) come before #NM; CR4.OSXSAVE = 0 with CR0.TS = 1 gives #NM
+ * (implementation-dependent order, docs/quirks.md), with CR0.TS = 0 #UD.
+ */
+static void test_x86_xs_ts_order(void)
+{
+    /* strict profiles: leaf 1 without XSAVE (ECX[26]); leaf 0DH.1 without XSAVEOPT (EAX[0]) */
+    static const uc_x86_cpuid no_xsave[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x00000201, 0x078bfbff},
+    };
+    static const uc_x86_cpuid no_xsaveopt[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 7, 0x340, 0x340, 0},
+        {0xd, 1, 0, 0, 0, 0},
+    };
+    size_t i;
+    XsCtx c;
+
+    for (i = 0; i < sizeof(xs_forms) / sizeof(xs_forms[0]); i++) {
+        char lock[8];
+
+        xs_open(&c, 0);
+        xs_set(&c, UC_X86_REG_RSI, XS_DATA);
+        xs_set(&c, UC_X86_REG_RAX, 7);
+        xs_set(&c, UC_X86_REG_RDX, 0);
+        xs_fill(&c, xs_forms[i].restore);
+        xs_cr(&c, UC_X86_REG_CR0, 8, 1);
+        /* LOCK: #UD before #NM */
+        lock[0] = (char)0xf0;
+        memcpy(lock + 1, xs_forms[i].code, xs_forms[i].len);
+        TEST_CHECK(xs_run(&c, lock, xs_forms[i].len + 1, NULL) == 6);
+        TEST_MSG("lock %s with CR0.TS = 1", xs_forms[i].name);
+        /* CR4.OSXSAVE = 0: #NM while CR0.TS = 1, #UD after CLTS */
+        xs_cr(&c, UC_X86_REG_CR4, 1ULL << 18, 0);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, NULL) == 7);
+        TEST_MSG("%s with CR4.OSXSAVE = 0, CR0.TS = 1", xs_forms[i].name);
+        TEST_CHECK(xs_run(&c, "\x0f\x06", 2, NULL) == -1);   /* CLTS (CPL0) */
+        TEST_CHECK((xs_get(&c, UC_X86_REG_CR0) & 8) == 0);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, NULL) == 6);
+        TEST_MSG("%s with CR4.OSXSAVE = 0, CR0.TS = 0", xs_forms[i].name);
+        OK(uc_close(c.uc));
+
+        /* CPUID.01H:ECX.XSAVE = 0 (strict profile): #UD before #NM */
+        xs_open(&c, 0);
+        OK(uc_ctl_set_x86_cpuid(c.uc, no_xsave, 2));
+        xs_set(&c, UC_X86_REG_RSI, XS_DATA);
+        xs_cr(&c, UC_X86_REG_CR0, 8, 1);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, NULL) == 6);
+        TEST_MSG("%s without CPUID XSAVE, CR0.TS = 1", xs_forms[i].name);
+        OK(uc_close(c.uc));
+
+        /* CPUID.(0DH,1):EAX.XSAVEOPT = 0: XSAVEOPT #UD before #NM; XSAVE / XRSTOR #NM */
+        xs_open(&c, 0);
+        OK(uc_ctl_set_x86_cpuid(c.uc, no_xsaveopt, 4));
+        xs_set(&c, UC_X86_REG_RSI, XS_DATA);
+        xs_cr(&c, UC_X86_REG_CR0, 8, 1);
+        TEST_CHECK(xs_run(&c, xs_forms[i].code, xs_forms[i].len, NULL) ==
+                   (strstr(xs_forms[i].name, "xsaveopt") ? 6 : 7));
+        TEST_MSG("%s without CPUID XSAVEOPT, CR0.TS = 1", xs_forms[i].name);
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * U1202: the model path (no CPUID profile) treats 40000000H-4FFFFFFFH as out of range: the data of
+ * the highest basic leaf (SDM 092 Vol1 21.1.3 p. 21-2), with and without the AVX-512 opt-in, for
+ * sub-leaves 0 and 1 (ECX is passed on); before U1202 40000000H / 40000001H returned 0. The
+ * profile path is unchanged (U68): an input above the profile's highest basic leaf returns that
+ * leaf.
+ */
+static void test_x86_xs_cpuid_hv_range(void)
+{
+    static const uint32_t in[] = {0x40000000, 0x40000001, 0x40000002, 0x40000010, 0x4fffffff, 0x5f};
+    static const uc_x86_cpuid prof[] = {
+        {0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x20, 0, 0, 1, 0, 0},
+    };
+    uint32_t r[4], top[4], max;
+    size_t i;
+    int avx, sub;
+    XsCtx c;
+
+    for (avx = 0; avx < 2; avx++) {
+        xs_open(&c, avx);
+        xs_cpuid(&c, 0, 0, r);
+        max = r[0];
+        TEST_CHECK(max >= 7 && max < 0x5f);
+        TEST_MSG("highest basic leaf %x", max);
+        for (sub = 0; sub < 2; sub++) {
+            xs_cpuid(&c, max, (uint32_t)sub, top);
+            TEST_CHECK(sub || (top[0] | top[1] | top[2] | top[3]) != 0);
+            for (i = 0; i < sizeof(in) / sizeof(in[0]); i++) {
+                xs_cpuid(&c, in[i], (uint32_t)sub, r);
+                TEST_CHECK(memcmp(r, top, sizeof(r)) == 0);
+                TEST_MSG("avx512 %d: CPUID %08x.%d = %08x %08x %08x %08x, leaf %x = %08x %08x %08x %08x",
+                         avx, in[i], sub, r[0], r[1], r[2], r[3], max, top[0], top[1], top[2], top[3]);
+            }
+        }
+        OK(uc_close(c.uc));
+    }
+    /* the profile path */
+    xs_open(&c, 0);
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof, 2));
+    for (i = 0; i < sizeof(in) / sizeof(in[0]); i++) {
+        xs_cpuid(&c, in[i], 0, r);
+        TEST_CHECK(r[0] == 0 && r[1] == 1 && r[2] == 0 && r[3] == 0);
+        TEST_MSG("profile: CPUID %08x = %08x %08x %08x %08x", in[i], r[0], r[1], r[2], r[3]);
+    }
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1203: XGETBV ECX = 1 (SDM 092 Vol2D XGETBV p. 6-36 / 6-37): XINUSE when CPUID.(0DH,1):
+ * EAX.XGETBV1[2] = 1, else #GP(0); a strict profile without XGETBV1 decides (before U1203 the
+ * model's bit was read and XINUSE returned); a non-strict profile lets the model's feature run
+ * (UC_CTL_X86_CPUID_STRICT = 0, U435). ECX = 2 is #GP(0) everywhere.
+ */
+static void test_x86_xs_xgetbv1_profile(void)
+{
+    static const uc_x86_cpuid no_xgetbv1[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 7, 0x340, 0x340, 0},
+        {0xd, 1, 0xb, 0, 0, 0},
+    };
+    int strict;
+    XsCtx c;
+
+    xs_open(&c, 0);
+    xs_set(&c, UC_X86_REG_RCX, 1);
+    TEST_CHECK(xs_run(&c, "\x0f\x01\xd0", 3, NULL) == -1);
+    xs_set(&c, UC_X86_REG_RCX, 2);
+    TEST_CHECK(xs_run(&c, "\x0f\x01\xd0", 3, NULL) == 13);
+    OK(uc_close(c.uc));
+    for (strict = 1; strict >= 0; strict--) {
+        xs_open(&c, 0);
+        OK(uc_ctl_set_x86_cpuid(c.uc, no_xgetbv1, 4));
+        OK(uc_ctl_set_x86_cpuid_strict(c.uc, strict));
+        xs_set(&c, UC_X86_REG_RCX, 1);
+        TEST_CHECK(xs_run(&c, "\x0f\x01\xd0", 3, NULL) == (strict ? 13 : -1));
+        TEST_MSG("strict %d", strict);
+        xs_set(&c, UC_X86_REG_RCX, 0);
+        TEST_CHECK(xs_run(&c, "\x0f\x01\xd0", 3, NULL) == -1);
+        TEST_CHECK(xs_get(&c, UC_X86_REG_RAX) == 7 && xs_get(&c, UC_X86_REG_RDX) == 0);
+        OK(uc_close(c.uc));
+    }
+}
+/* ---- end U1200-U1219 (xs_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -28127,4 +28459,8 @@ TEST_LIST = {
     {"test_x86_tsefix_cap_layout", test_x86_tsefix_cap_layout},
     {"test_x86_tsefix_enc_alg", test_x86_tsefix_enc_alg},
     {"test_x86_tsefix_reserved", test_x86_tsefix_reserved},
+    {"test_x86_xs_ts_nm", test_x86_xs_ts_nm},
+    {"test_x86_xs_ts_order", test_x86_xs_ts_order},
+    {"test_x86_xs_cpuid_hv_range", test_x86_xs_cpuid_hv_range},
+    {"test_x86_xs_xgetbv1_profile", test_x86_xs_xgetbv1_profile},
     {NULL, NULL}};
