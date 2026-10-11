@@ -560,7 +560,11 @@ namespace at
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
 			if ( strict >= 0 ) uc_ctl_set_x86_cpuid_strict( uc_, strict );
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
-			if ( cr0 ) uc_reg_write( uc_, UC_X86_REG_CR0, &cr0 );
+			// U1200 (ts_hooks): the thunk's prologue (FXRSTOR64, VINSERTI128) and epilogue (FXSAVE64,
+			// FNSTENV, ...) would raise #NM with CR0.TS = 1 (SDM 092 Vol3A 2.5: TS = 1 makes x87 / SSE /
+			// AVX instructions raise #NM), so the engine starts with TS clear and on_ts sets it for the
+			// snippet only
+			if ( cr0 ) { const uint64_t c0 = ts_hooks ? ( cr0 & ~CR0_TS ) : cr0; uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ); }
 			return true;
 		}
 		// U540: the XCR0 / CR0 an engine with this configuration starts from (printed at the start
@@ -625,6 +629,12 @@ namespace at
 				if ( p.epilogue_at != p.snippet_begin )
 					uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ext, this, p.epilogue_at, p.epilogue_at );
 			}
+			if ( ts_hooks )   // U1200: CR0.TS for the snippet only (on_ts)
+			{
+				uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ts, this, p.snippet_begin, p.snippet_begin );
+				if ( p.epilogue_at != p.snippet_begin )
+					uc_hook_add( uc_, &h, UC_HOOK_CODE, ( void* ) on_ts, this, p.epilogue_at, p.epilogue_at );
+			}
 			prog_ = &p;
 			return true;
 		}
@@ -652,6 +662,7 @@ namespace at
 			cur_ = &r;
 			in_ = &in;
 			ext_in_done_ = ext_out_done_ = false;
+			ts_in_done_ = false;   // U1200
 			pending_epilogue_ = false;
 			uc_err e = uc_emu_start( uc_, cpl3 ? SYS_STUB : CODE, prog_->ret_at, 0, 0 );
 			if ( e && pending_epilogue_ )
@@ -775,7 +786,32 @@ namespace at
 						if ( uc_reg_read( uc, UC_X86_REG_R16 + i, &out.egpr[ i ] ) != UC_ERR_OK ) self->ext_err( "uc_reg_read R" + std::to_string( 16 + i ) );
 			}
 		}
+		// U1200 (ts_hooks, --cases runs only): at the snippet's first instruction CR0.TS is set when the
+		// configured CR0 (--cr0) has it; at the epilogue's first instruction it is cleared whenever it is
+		// set (by on_ts or by the snippet itself, MOV CR0), so the state save runs. The translator reads
+		// CR0.TS at translation time (hflags HF_TS_MASK, part of the TB key), so after the CR0 write the
+		// hook writes RIP = its own address: Unicorn leaves the current block and the next one is
+		// translated with the new CR0.TS. The second visit finds nothing to change (no loop).
+		static void on_ts( uc_engine* uc, uint64_t addr, uint32_t, void* user )
+		{
+			auto* self = ( unicorn_engine* ) user;
+			if ( !self->cur_ ) return;
+			uint64_t c0 = 0;
+			if ( uc_reg_read( uc, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK ) { self->ext_err( "uc_reg_read CR0 (ts hook)" ); return; }
+			uint64_t want = c0;
+			if ( addr == self->prog_->snippet_begin && !self->ts_in_done_ )
+			{
+				self->ts_in_done_ = true;
+				if ( self->cr0 & CR0_TS ) want = c0 | CR0_TS;
+			}
+			else if ( addr == self->prog_->epilogue_at ) want = c0 & ~CR0_TS;
+			if ( want == c0 ) return;
+			uint64_t rip = addr;
+			if ( uc_reg_write( uc, UC_X86_REG_CR0, &want ) != UC_ERR_OK || uc_reg_write( uc, UC_X86_REG_RIP, &rip ) != UC_ERR_OK )
+				self->ext_err( "uc_reg_write CR0/RIP (ts hook)" );
+		}
 		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
+		bool ts_in_done_ = false;   // U1200
 		bool pending_epilogue_ = false, ext_in_done_ = false, ext_out_done_ = false;
 		uc_engine* uc_ = nullptr;
 		uc_context* ctx0_ = nullptr;   // U1124: snapshot() state, restored by every run()
@@ -793,6 +829,10 @@ namespace at
 		uint64_t rdrand_seed = 0;            // the seeded model's seed (--rdrand-seed N)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
+		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
+		// sweep (CR0 11h, never TS) is untouched
+		bool ts_hooks = false;
+		static constexpr uint64_t CR0_TS = 8;   // CR0.TS, bit 3 (SDM 092 Vol3A 2.5)
 	private:
 		int model_;
 		const program* prog_ = nullptr;

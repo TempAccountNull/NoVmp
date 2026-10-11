@@ -70,6 +70,12 @@
 // case keeps Unicorn's reset XCR0 / CR0 (the reset XCR0 enables every state component the CPU
 // model, the opt-ins and the CPUID profile support). --xcr0 V / --cr0 V (V != 0) override both
 // kinds. The effective values are printed first ("machine state: ...").
+// U1200: CR0.TS acts on the snippet only. With TS = 1 the thunk itself (FXRSTOR64 / VINSERTI128 in
+// the prologue, FXSAVE64 / FNSTENV in the epilogue) would raise #NM, so Unicorn starts with TS clear,
+// a code hook at the snippet's first instruction sets it when --cr0 has it (e.g. --cr0 0x10019), and
+// a hook at the epilogue's first instruction clears it before the state save, also when the snippet
+// set it itself (MOV CR0). Each hook that changes CR0 writes RIP = its own address, so the block is
+// translated again with the new CR0.TS. --full never sets this (its CR0 is 11h).
 // --shard K/N (U543) runs only the K-th of N contiguous blocks of the case lines (the N runs together
 // are the whole file in order; the case numbers [n] restart in each block).
 // U539: Unicorn implements the SDM only, for both kinds of case (no quirk switch; hardware
@@ -721,8 +727,8 @@ namespace at
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
 				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }
-				std::printf( "machine state: %s cases XCR0=0x%llX (%s) CR0=0x%llX (%s)\n", kind, ( unsigned long long ) ex, xsrc,
-							 ( unsigned long long ) ec, csrc );
+				std::printf( "machine state: %s cases XCR0=0x%llX (%s) CR0=0x%llX (%s)%s\n", kind, ( unsigned long long ) ex, xsrc,
+							 ( unsigned long long ) ec, csrc, ( ec & unicorn_engine::CR0_TS ) ? " - CR0.TS set for the snippet only (U1200)" : "" );
 			};
 			if ( !opt.expect_only )
 				show( "hardware", hw_xcr0, hw_cr0, opt.xcr0 ? "--xcr0" : host_x ? "host XGETBV(0)" : "Unicorn reset: host has no OSXSAVE",
@@ -1026,6 +1032,7 @@ namespace at
 			uc.rdrand_seed = opt.rdrand_seed;
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
+			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
 			if ( !uc.load( p_uc, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
 			if ( expect )

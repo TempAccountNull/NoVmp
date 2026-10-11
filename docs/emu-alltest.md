@@ -25,7 +25,7 @@ These set **real architectural state** defined by the SDM — they are not test 
 | `--cpuid FILE` | a CPUID profile (e.g. `Emulator\data\cpuid_i5-13600k.txt`) | Unicorn reports exactly that CPU's CPUID leaves. Since U435 a profile is **strict by default**: features the profile hides raise #UD. |
 | `--strict` / `--no-strict` | `UC_CTL_X86_CPUID_STRICT` = 1 / 0 | explicit override of the U435 default; `--no-strict` lets hidden features execute (only for testing the profile mechanism). |
 | `--xcr0 V` | XCR0 (written with `uc_reg_write`) for both kinds of case | XCR0 is the OS-set register (XSETBV) that enables x87/SSE/AVX/AVX-512/AMX state; it decides whether AVX/AVX-512/AMX instructions run or #UD. Not given (or 0) = automatic (U540, below). Needed only to test the XCR0 gating itself (a component *disabled*, e.g. AVX state off → VEX #UD). |
-| `--cr0 V` | CR0 for both kinds of case | Not given (or 0) = automatic (U540, below). PG must stay clear (Unicorn memory is flat). |
+| `--cr0 V` | CR0 for both kinds of case | Not given (or 0) = automatic (U540, below). PG must stay clear (Unicorn memory is flat). CR0.TS (bit 3) acts on the snippet only (U1200, below). |
 | `--avx512` | `UC_CTL_X86_AVX512` = F\|DQ\|BW\|VL\|CD\|IFMA\|VPOPCNTDQ\|BITALG\|VBMI\|FP16 before the engine starts | AVX-512 is opt-in (off in MAX and in the i5-13600K profile, which has none). |
 | `--xeonphi` | adds `UC_X86_AVX512_4VNNIW`\|`4FMAPS`\|`ER`\|`PF`\|`PREFETCHWT1` (AVX512F implied) to the `UC_CTL_X86_AVX512` mask (U990) | The Intel Xeon Phi-only families (SDM 092 Vol2D chapter 8) are opt-in on top of AVX-512; `--avx512` alone leaves them off (`Emulator\data\cases_xeonphi.txt` / `cases_xeonphi_off.txt`). |
 | `--amx` | `UC_CTL_X86_AMX` = all AMX parts | AMX is opt-in. |
@@ -50,6 +50,14 @@ Without `--xcr0` / `--cr0`, emu-alltest derives the state per kind of case and p
 **What test.cmd passed before U540, and why it could go:** `--xcr0 7` on every hardware file (= the host's XGETBV value; without it the profile's reset XCR0 would be 207h), `--cr0 0x33` on cases_reach (= the new default), `--xcr0 0xE7` on the 17 AVX-512/AVX10 expected-value files and `--xcr0 0x60007` on cases_amx (the reset values 2FFh / 6021Fh additionally enable MPX and PKRU state, which no case uses). All 20 are removed; every file gives exactly the same cases and results (U540 check: old serial test.cmd output vs the new run, case by case).
 
 **When `--xcr0` / `--cr0` are still needed:** to test the XCR0 gating itself (a component disabled) or another CR0 (e.g. NE = 0 → FERR#). They apply to both kinds of case.
+
+**CR0.TS in `--cases` runs (U1200).** With CR0.TS = 1 the thunk itself cannot run: its prologue (FXRSTOR64, VINSERTI128) and epilogue (FXSAVE64, VEXTRACTI128, FNSTENV, FNINIT, ...) are x87 / SSE / AVX instructions, which raise #NM while TS = 1 (SDM 092 Vol3A 2.5, p. 2-17). The `--cases` runner therefore sets `unicorn_engine::ts_hooks`:
+- the engine starts with the configured CR0 minus TS (`--cr0 0x10019` is written as 10011h);
+- a code hook at the snippet's first instruction sets CR0.TS when the configured CR0 has it;
+- a code hook at the epilogue's first instruction clears CR0.TS before the state save, whoever set it (the hook above, or the snippet with MOV CR0 at CPL0). Before U1200 the epilogue of a snippet that set TS raised #NM itself, so such a line reported #NM even when the snippet's own instruction completed (`notes\sdeida\probes\xsave_ts2.log`: a plain `nop` line ended in #NM), and the state was not saved;
+- each hook that changes CR0 also writes RIP = its own address: the translator reads CR0.TS when it translates a block (hflags HF_TS_MASK, part of the block key), so Unicorn leaves the current block and translates the next one with the new CR0.TS. The second visit of a hook finds nothing to change.
+
+The machine-state line prints the configured CR0 with "CR0.TS set for the snippet only (U1200)". The flag is set by the `--cases` runner only: the quick / `--full` sweep (CR0 11h) is unchanged.
 
 ## test.cmd: selective and parallel runs (U541–U543, plan 1.H.3)
 
