@@ -32927,12 +32927,20 @@ static uint64_t vmx_r(PcCtx *c, uint32_t enc)
  * flat segments, the host's CR0 / CR3 / CR4, IA-32e mode guest) with the TRUE_* default settings
  * of the controls; host: 64-bit, RIP = VMX_ENTRY_PC + 3 (after a 3-byte VMLAUNCH / VMRESUME)
  */
+static void vmx_vmcs_init(PcCtx *c);
+
 static void vmx_setup_f(PcCtx *c, int feat)
+{
+    vmx_root_open_f(c, feat);
+    vmx_vmcs_init(c);
+}
+
+/* U1314: the VMXON / VMCS part of vmx_setup_f for an engine prepared otherwise */
+static void vmx_vmcs_init(PcCtx *c)
 {
     uint64_t fl;
     int i;
 
-    vmx_root_open_f(c, feat);
     TEST_CHECK(vmx_vmxon(c, VMX_VMXON, &fl) == -1 && fl == 0);
     TEST_CHECK(vmx_vmclear(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
     TEST_CHECK(vmx_vmptrld(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
@@ -34495,6 +34503,219 @@ static void test_x86_vmx_encls(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1314: events incident to enclave mode without an enclave (SDM 092 Vol3C 30.2.1 p. 30-4, 30.3.4
+ * p. 30-27, 29.3.1.5): pending debug exceptions (BS) made pending by a VM entry with guest
+ * interruptibility bit 4 - the #DB exit (exception bitmap) sets exit-reason bit 27 and saves bit 4;
+ * without bit 4 neither. An injected #UD with bit 4 whose IDT delivery faults (IDT limit 15, #GP in
+ * the exception bitmap): exit 0 with bit 27, IDT-vectoring information = the #UD; without bit 4 no
+ * bit 27. Bit 4 with blocking by MOV SS: VM-entry failure (exit reason 33 | bit 31).
+ */
+static void test_x86_vmx_sgx_enc_events(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_SGX);
+    vmx_w(&c, 0x4004, (1u << 1) | (1u << 13));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x6822, 0x4000);
+    vmx_w(&c, 0x4824, 16);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == (1u << 27) && vmx_r(&c, 0x4404) == 0x80000301u);
+    TEST_CHECK(vmx_r(&c, 0x4824) & 16);
+    TEST_MSG("exit %llx irs %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x4824));
+    vmx_w(&c, 0x6822, 0x4000);
+    vmx_w(&c, 0x4824, 0);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && !(vmx_r(&c, 0x4824) & 16));
+    /* an injected #UD, delivery through an IDT of 16 bytes: #GP during the delivery */
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    vmx_w(&c, 0x4812, 0xf);
+    vmx_w(&c, 0x4016, 0x80000306u);
+    vmx_w(&c, 0x4824, 16);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == (1u << 27) && vmx_r(&c, 0x4404) == 0x80000b0du &&
+               vmx_r(&c, 0x4408) == 0x80000306u && (vmx_r(&c, 0x4824) & 16));
+    TEST_MSG("exit %llx info %llx idtv %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x4404), (unsigned long long)vmx_r(&c, 0x4408));
+    vmx_w(&c, 0x4016, 0x80000306u);
+    vmx_w(&c, 0x4824, 0);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4408) == 0x80000306u &&
+               !(vmx_r(&c, 0x4824) & 16));
+    /* bit 4 with blocking by MOV SS */
+    vmx_w(&c, 0x4016, 0);
+    vmx_w(&c, 0x4824, 16 | 2);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1314: the sgx_ test machine (the ref_sgx.py debug enclave after EINIT; TCS.FLAGS.DBGOPTIN =
+ * 'optin') with UC_X86_FEATURE_VMX, in VMX root operation with VMCS A for a CPL-3 guest on the
+ * machine's paging that starts at SGX_ENCLU_AT (CS 23H, SS 1BH of the sgx_ GDT). 'p' is a PcCtx view
+ * of the same engine (its own UC_HOOK_INTR capture) for the vmx_ helpers.
+ */
+#define VMX_SGX_EPT (SGX_DATA + 0x14000)   /* EPT PML4, PDPT, PD 0-1 GB, PD 2-3 GB */
+
+static void vmx_sgx_open(SgxEnv *e, PcCtx *p, int optin)
+{
+    uint64_t gdt[5] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
+                       0x00AFFA000000FFFFULL};
+    uc_x86_mmr gdtr = {0, SGX_GDT, sizeof(gdt) - 1, 0};
+    uc_x86_msr efer = {0xc0000080, 0};
+    uc_x86_sgx_platform pl;
+    uint32_t rev = 1;
+    uint64_t a, v;
+    int i;
+
+    memset(e, 0, sizeof(*e));
+    sgx_platform(&pl);
+    e->c.pc = SGX_CODE;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &e->c.uc));
+    OK(uc_ctl_set_cpu_model(e->c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(e->c.uc, UC_X86_FEATURE_SGX | UC_X86_FEATURE_VMX));
+    OK(uc_ctl_set_x86_sgx_platform(e->c.uc, &pl));
+    OK(uc_mem_map(e->c.uc, SGX_CODE, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(e->c.uc, SGX_DATA, 0x100000, UC_PROT_ALL));
+    OK(uc_hook_add(e->c.uc, &e->c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &e->c.cap, 1, 0));
+    OK(uc_mem_map(e->c.uc, SGX_PT_POOL, 0x100000, UC_PROT_ALL));
+    e->pt_next = SGX_PT_POOL;
+    sgx_pt_alloc(e);
+    for (a = SGX_CODE; a < SGX_CODE + code_len; a += 0x1000) {
+        sgx_map(e, a, a);
+    }
+    for (a = SGX_DATA; a < SGX_DATA + 0x100000; a += 0x1000) {
+        sgx_map(e, a, a);
+    }
+    for (i = 0; i < 64; i++) {
+        sgx_map(e, SGX_EPC_LA + 0x1000ULL * i, SGX_EPC_BASE + 0x1000ULL * i);
+    }
+    for (i = 0; i < 16; i++) {
+        sgx_map(e, SGXV_BASE + 0x1000ULL * i, SGX_EPC_BASE + 0x1000ULL * (SGX_ENC_SLOT + i));
+    }
+    OK(uc_mem_write(e->c.uc, SGX_GDT, gdt, sizeof(gdt)));
+    OK(uc_reg_write(e->c.uc, UC_X86_REG_GDTR, &gdtr));
+    sgx_set(&e->c, UC_X86_REG_CR3, SGX_PT_POOL);
+    sgx_set(&e->c, UC_X86_REG_CR4, sgx_get(&e->c, UC_X86_REG_CR4) | 0x20 | 0x200);
+    OK(uc_reg_read(e->c.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 8;
+    OK(uc_reg_write(e->c.uc, UC_X86_REG_MSR, &efer));
+    v = (sgx_get(&e->c, UC_X86_REG_CR0) | 0x80000021ULL) & ~(1ULL << 3);
+    sgx_set(&e->c, UC_X86_REG_CR0, v);
+    sgx_set(&e->c, UC_X86_REG_RSP, SGX_STACK);
+    OK(sgx_wrmsr_api(&e->c, SGX_FC, SGX_FC_LOCK | SGX_FC_SGX | SGX_FC_LE_WR | 4));
+    OK(uc_context_alloc(e->c.uc, &e->cpl0));
+    OK(uc_context_save(e->c.uc, e->cpl0));
+    sgx_build(e, 6, 0);
+    sgx_set_lehash(e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(e, sgxv_sigstruct, NULL) == 0);
+    if (optin) {
+        TEST_CHECK(sgx_encls(e, 5, 1, SGXV_BASE + 8, 0) == -1);      /* TCS.FLAGS.DBGOPTIN */
+    }
+    memset(p, 0, sizeof(*p));
+    p->uc = e->c.uc;
+    p->pc = SGX_CODE + 0x2000;
+    OK(uc_hook_add(p->uc, &p->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &p->cap, 1, 0));
+    pc_set(p, UC_X86_REG_CR4, pc_get(p, UC_X86_REG_CR4) | 0x2000);
+    OK(uc_mem_write(p->uc, VMX_VMXON, &rev, 4));
+    OK(uc_mem_write(p->uc, VMX_VMCS_A, &rev, 4));
+    vmx_vmcs_init(p);
+    vmx_w(p, 0x0802, 0x23);
+    vmx_w(p, 0x4816, 0xa0fb);
+    vmx_w(p, 0x0804, 0x1b);
+    vmx_w(p, 0x4818, 0xc0f3);
+    vmx_w(p, 0x6816, SGX_GDT);
+    vmx_w(p, 0x4810, sizeof(gdt) - 1);
+    vmx_w(p, 0x6c0c, SGX_GDT);
+}
+
+/* the guest: ENCLU EENTER of the test enclave with command 'cmd' (RSI = 'rsi'); VMLAUNCH if 'launch' */
+static void vmx_sgx_eenter(PcCtx *p, int launch, uint64_t cmd, uint64_t rsi)
+{
+    uint64_t fl;
+
+    OK(uc_mem_write(p->uc, SGX_ENCLU_AT, "\x0f\x01\xd7", 3));
+    vmx_w(p, 0x681e, SGX_ENCLU_AT);
+    vmx_w(p, 0x681c, SGX_STACK - 0x800);
+    vmx_w(p, 0x6820, 2);
+    pc_set(p, UC_X86_REG_RAX, 2);
+    pc_set(p, UC_X86_REG_RBX, SGXV_BASE);
+    pc_set(p, UC_X86_REG_RCX, SGX_AEP);
+    pc_set(p, UC_X86_REG_RDI, cmd);
+    pc_set(p, UC_X86_REG_RSI, rsi);
+    pc_set(p, UC_X86_REG_RDX, 0);
+    TEST_CHECK(vmx_enter(p, launch, NULL, 0, &fl) == -1 && fl == 0);
+}
+
+/* EPT: GPA 0-1 GB in 2-MByte pages but 400000H-5FFFFFH, the EPC 2-MByte page at 80000000H */
+static void vmx_sgx_ept(PcCtx *p)
+{
+    int i;
+
+    vmx_wq(p, VMX_SGX_EPT, (VMX_SGX_EPT + 0x1000) | 7);
+    vmx_wq(p, VMX_SGX_EPT + 0x1000, (VMX_SGX_EPT + 0x2000) | 7);
+    vmx_wq(p, VMX_SGX_EPT + 0x1010, (VMX_SGX_EPT + 0x3000) | 7);
+    for (i = 0; i < 512; i++) {
+        vmx_wq(p, VMX_SGX_EPT + 0x2000 + 8 * i, i == 2 ? 0 : (0x200000ull * i) | 0xb7);
+    }
+    vmx_wq(p, VMX_SGX_EPT + 0x3000, 0x80000000ull | 0xb7);
+    vmx_w(p, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(p, 0x401e, 1u << 1);
+    vmx_w(p, 0x201a, VMX_SGX_EPT | 0x1e);
+}
+
+/*
+ * U1314: VM exits in enclave mode (SDM 092 Vol3C 30.1 p. 30-3, 30.2.1, 30.2.5, 30.3.3, 30.3.4; Vol3D
+ * 42.6). UD2 inside the enclave with #UD in the exception bitmap: the AEX first (SSA EXITINFO
+ * 80000306H, SSA RIP = the UD2, CSSA = 1, the synthetic state RAX = 3 / RBX = TCS / RCX = AEP), then
+ * the VM exit: reason 0 | bit 27, interruption information 80000306H, guest RIP = AEP, RF and CF..OF
+ * saved 0, interruptibility bit 4, VM-exit instruction length / information and I/O RCX cleared. A
+ * read from the enclave (CMD_READ) of a page whose guest-physical address EPT does not map: EPT
+ * violation 48 | bit 27, guest-linear and guest-physical address with bits 11:0 cleared, RIP = AEP,
+ * SSA EXITINFO 0 (no exception information).
+ */
+static void test_x86_vmx_sgx_exit(void)
+{
+    SgxEnv e;
+    PcCtx p;
+    uint64_t ud2 = sgx_cmd_addr(1);
+
+    vmx_sgx_open(&e, &p, 0);
+    vmx_w(&p, 0x4004, 1u << 6);
+    vmx_w(&p, 0x440c, 7);
+    vmx_w(&p, 0x440e, 0x55);
+    vmx_w(&p, 0x6402, 0x66);
+    vmx_sgx_eenter(&p, 1, 1, 0);
+    TEST_CHECK(pc_get(&p, UC_X86_REG_RAX) == 3 && pc_get(&p, UC_X86_REG_RBX) == SGXV_BASE &&
+               pc_get(&p, UC_X86_REG_RCX) == SGX_AEP);         /* before VMREAD changes RAX / RCX */
+    TEST_CHECK(vmx_r(&p, 0x4402) == (1u << 27) && vmx_r(&p, 0x4404) == 0x80000306u);
+    TEST_MSG("exit %llx info %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x4404));
+    TEST_CHECK(vmx_r(&p, 0x681e) == SGX_AEP && (vmx_r(&p, 0x6820) & 0x108d5) == 0);
+    TEST_CHECK((vmx_r(&p, 0x4824) & 16) && vmx_r(&p, 0x440c) == 0 && vmx_r(&p, 0x440e) == 0 &&
+               vmx_r(&p, 0x6402) == 0);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == ud2 && sgx_cssa(&e) == 1 &&
+               sgx_rq(&e, SGX_TCS_PA) == 0);
+    /* EPT violation inside the enclave */
+    sgx_set_cssa(&e, 0);
+    sgx_map(&e, 0x40000000ull, 0x400000);
+    vmx_sgx_ept(&p);
+    vmx_sgx_eenter(&p, 0, 6, 0x40000010ull);
+    TEST_CHECK(vmx_r(&p, 0x4402) == ((1u << 27) | 48) && (vmx_r(&p, 0x6400) & 0x187) == 0x181);
+    TEST_CHECK(vmx_r(&p, 0x2400) == 0x400000 && vmx_r(&p, 0x640a) == 0x40000000ull);
+    TEST_MSG("exit %llx qual %llx gpa %llx gla %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x6400), (unsigned long long)vmx_r(&p, 0x2400),
+             (unsigned long long)vmx_r(&p, 0x640a));
+    TEST_CHECK(vmx_r(&p, 0x681e) == SGX_AEP && (vmx_r(&p, 0x4824) & 16) && vmx_r(&p, 0x440c) == 0);
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0 && sgx_cssa(&e) == 1);
+    sgx_env_close(&e);
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34942,4 +35163,6 @@ TEST_LIST = {
     {"test_x86_vmx_prefix_guest", test_x86_vmx_prefix_guest},
     {"test_x86_vmx_prefix_misc", test_x86_vmx_prefix_misc},
     {"test_x86_vmx_encls", test_x86_vmx_encls},
+    {"test_x86_vmx_sgx_enc_events", test_x86_vmx_sgx_enc_events},
+    {"test_x86_vmx_sgx_exit", test_x86_vmx_sgx_exit},
     {NULL, NULL}};

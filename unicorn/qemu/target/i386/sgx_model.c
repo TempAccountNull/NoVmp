@@ -763,6 +763,9 @@ static void QEMU_NORETURN sgx_pf(SgxOp *o, uint64_t la, bool write)
     uint32_t ec = PG_ERROR_P_MASK | SGX_PFEC_SGX | (write ? PG_ERROR_W_MASK : 0) |
                   ((env->hflags & HF_CPL_MASK) == 3 ? PG_ERROR_U_MASK : 0);
 
+#if __Use_Original_Qemu != 1 /* ours (U1314) */
+    env->vmx.pf_cr2 = env->cr[2];       /* VMX: a #PF exiting by the bitmap leaves CR2 (Vol3C 30.1) */
+#endif /* __Use_Original_Qemu (U1314) */
     env->cr[2] = env->sgx_enclave_mode ? la & ~0xfffULL : la;
     raise_exception_err_ra(env, EXCP0E_PAGE, ec, o->ra);
 }
@@ -3283,6 +3286,9 @@ static int sgx_enclave_access(CPUX86State *env, uint64_t la, uint64_t pa, int ac
              (env->cr[4] & CR4_SMEP_MASK))) {
             ec |= PG_ERROR_I_D_MASK;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1314) */
+        env->vmx.pf_cr2 = env->cr[2];   /* VMX: a #PF exiting by the bitmap leaves CR2 (Vol3C 30.1) */
+#endif /* __Use_Original_Qemu (U1314) */
         env->cr[2] = la;
         env->error_code = ec;
         cs->exception_index = EXCP0E_PAGE;

@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1313: 23 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1314: 25 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -391,3 +391,22 @@ translator and passed to the helpers.
   them; the exception bitmap applies (qualification B3-B0 / BS). With blocking by MOV SS the model loses
   them ("held pending or lost as would normally be the case"); the MOV-SS cases of injected software
   events are not modelled. VM exits save the pending-debug-exceptions field as 0 (docs/quirks.md).
+
+### Intel SGX in VMX operation (U1313-U1316; the SGX model: docs/sgx.md)
+- ENCLS exiting (U1313): see Stage 8. ENCLV, its exiting control / bitmap and SGX-conflict VM exits
+  are not in SDM 092 / 093 (ISE 319433-062 removed them): not modelled, ENCLV stays #UD.
+- VM exits in enclave mode (U1314; Vol3C 30.1 p. 30-3, 30.2.1, 30.2.5, 30.3.3, 30.3.4; Vol3D 42.6):
+  vmx_vmexit first runs the AEX (sgx_model.c x86_sgx_aex) - an exception VM exit hands the SSA its
+  vector / error code (EXITINFO, MISCSELECT EXINFO with the #PF address; CR2 itself stays as 30.1
+  says), every other VM exit is an AEX without exception information - and then saves the state the
+  AEX left: RIP = AEP, RFLAGS with CF..OF and RF 0, the synthetic GPRs. Exit-reason bit 27 and guest
+  interruptibility bit 4 are set; the VM-exit instruction length / information and the I/O RCX / RSI /
+  RDI / RIP fields are cleared; bits 11:0 of the #PF and APIC-access qualifications, of the
+  EPT-violation guest-linear address and of the EPT guest-physical address are cleared.
+- Events incident to enclave mode outside enclave mode (U1314): a VM exit during the delivery of an
+  event whose AEX preceded it, or due to / during the delivery of an event injected or made pending
+  (pending debug exceptions, 29.7.3) by a VM entry with guest interruptibility bit 4, sets bit 27 and
+  bit 4 (nothing is cleared). FRED event delivery of such an event saves the enclave bit (29.6.1.1,
+  29.7.3) - the same flag the AEX sets (env->sgx_enc_event).
+- SGX-induced #PF (an EPC operand of a leaf, the enclave access control) remember CR2 for a #PF that
+  exits by the exception bitmap (30.1), as the paging #PF does.

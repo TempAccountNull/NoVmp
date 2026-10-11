@@ -1252,6 +1252,7 @@ typedef struct VmxExit {
     bool rf_zero;               /* RFLAGS.RF saved as 0 (instruction exits, 30.3.3) */
     bool block_nmi;             /* U1305: a VM exit caused by an NMI blocks NMIs (30.5) */
     bool rf_one;                /* U1306: RFLAGS.RF saved as 1 (EPT exits outside delivery, 30.3.3) */
+    bool enc;                   /* U1314: interruptibility bit 4 "enclave interruption" (30.3.4) */
 } VmxExit;
 
 static void vmx_exit_init(VmxExit *e, uint32_t reason, uint64_t qual)
@@ -2416,6 +2417,9 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     if (env->hflags & HF_INHIBIT_IRQ_MASK) {
         irs |= env->fred_sti ? 1 : 2;
     }
+    if (e->enc) {
+        irs |= 16;                      /* U1314: enclave interruption */
+    }
     if (env->vmx.pin & PIN_VIRTUAL_NMI) {
         irs |= env->vmx.vnmi_blocked ? 8 : 0;
     } else if (env->hflags2 & HF2_NMI_MASK) {
@@ -2449,6 +2453,63 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
 }
 
 /*
+ * U1314: Intel SGX and VM exits (SDM 092 Vol3C 30.1 p. 30-3, 30.2.1 pp. 30-4 to 30-11, 30.2.5
+ * pp. 30-16 / 30-17, 30.3.3, 30.3.4; Vol3D 42.6 p. 42-4). A VM exit in enclave mode: the AEX first
+ * (sgx_model.c; an exception VM exit gives the SSA its vector / error code - a #PF its address -
+ * every other VM exit is an exit without exception information), then the VM exit saves the state
+ * the AEX left (RIP = AEP, RFLAGS.RF = 0), sets exit-reason bit 27 and interruptibility bit 4, clears
+ * the VM-exit instruction length / information and the I/O RCX / RSI / RDI / RIP fields, and bits
+ * 11:0 of the #PF and APIC-access qualifications, of the EPT-violation guest-linear address and of
+ * the EPT guest-physical address. A VM exit due to or incident to the delivery of an event incident
+ * to enclave mode (the AEX before its delivery, or an event injected / made pending by VM entry
+ * with interruptibility bit 4: env->sgx_enc_event) sets bit 27 and bit 4 only. Returns true for a
+ * VM exit in enclave mode.
+ */
+static bool vmx_sgx_exit(CPUX86State *env, VmxExit *e)
+{
+    uint32_t basic = e->reason & 0xffff, type = (e->intr_info >> 8) & 7, vec = e->intr_info & 0xff;
+    bool exc = basic == EXIT_REASON_EXCEPTION_NMI && (e->intr_info >> 31) && type == 3;
+
+    e->enc = env->sgx_enc_event != 0;
+    env->sgx_enc_event = 0;
+    if (!env->sgx_enclave_mode) {
+        if (e->enc) {
+            e->reason |= 1u << 27;
+        }
+        return false;
+    }
+    if (exc) {
+        uint64_t cr2 = env->cr[2];
+
+        if (vec == EXCP0E_PAGE) {
+            env->cr[2] = e->qual;       /* the faulting address for EXINFO.MADDR (CR2 stays) */
+        }
+        x86_sgx_aex(env, (int)vec, 0, 0, (e->intr_info & (1u << 11)) ? (int)e->intr_err : 0,
+                    env->eip);
+        env->cr[2] = cr2;
+    } else {
+        x86_sgx_aex(env, -1, 0, 1, 0, env->eip);
+    }
+    env->sgx_enc_event = 0;
+    e->enc = true;
+    e->reason |= 1u << 27;
+    e->rf_zero = true;
+    e->rf_one = false;
+    e->len_valid = true;
+    e->insn_len = 0;
+    e->info_valid = true;
+    e->insn_info = 0;
+    if ((exc && vec == EXCP0E_PAGE) || basic == 44) {   /* APIC access */
+        e->qual &= ~0xfffull;
+    }
+    if (basic == 48) {
+        e->gla &= ~0xfffull;
+    }
+    e->gpa &= ~0xfffull;
+    return true;
+}
+
+/*
  * The VM exit itself (30.1-30.6). The caller has put the logical processor's state at the point of
  * the exit (RIP of the instruction, of the interrupted boundary, ...).
  */
@@ -2456,6 +2517,7 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
 {
     CPUState *cs = env_cpu(env);
     uint32_t cnt, bad;
+    bool enclave = vmx_sgx_exit(env, e);    /* U1314 */
 
     /* 30.2: exit information; the valid bit of the injected-event identification; IA-32e guest */
     vmcs_put(env, VMCS_EXIT_REASON, e->reason);
@@ -2490,6 +2552,11 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
     }
     if (e->info_valid) {
         vmcs_put(env, VMCS_EXIT_INSN_INFO, e->insn_info);
+    }
+    if (enclave) {
+        for (cnt = 0; cnt < 4; cnt++) {
+            vmcs_put(env, 0x6402 + 2 * cnt, 0);     /* U1314: I/O RCX, RSI, RDI, RIP cleared */
+        }
     }
     vmcs_put(env, VMCS_ENTRY_INTR_INFO, vmcs_get(env, VMCS_ENTRY_INTR_INFO) & ~(1u << 31));
     vmcs_put(env, VMCS_ENTRY_CTLS, (vmcs_get(env, VMCS_ENTRY_CTLS) & ~ENTRY_IA32E) |
@@ -2588,6 +2655,8 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
         env->vmx.mtf_pending = 1;       /* 29.6.2 */
         return;
     }
+    /* U1314: guest interruptibility bit 4 - the event is incident to enclave mode (29.6.1.1, 30.2.1) */
+    env->sgx_enc_event = (vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) >> 4) & 1;
     /* U1309: FRED event delivery of the injected event (29.6.1.1): its event data, STI blocking
        from the guest interruptibility state, the nested-exception bit */
     env->vmx.inj_data = vmx_fred(env) ? vmcs_get(env, 0x2052) : 0;
@@ -2619,6 +2688,7 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
         /* U1309: SYSCALL (1) / SYSENTER (2) with FRED event delivery: RIP + length pushed */
         env->vmx.idtv_info = info & ~(1u << 12);
         x86_fred_inject_other(env, vec, env->eip + len, (int)len);
+        env->sgx_enc_event = 0;         /* U1314 */
         env->vmx.delivering = 0;
         env->vmx.inj_active = 0;
         cs->exception_index = -1;
@@ -2738,6 +2808,9 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
         if ((!(info >> 31) || ((info >> 8) & 7) == 7) && (pend & ((1u << 14) | (1u << 12))) &&
             !(vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) & 2) && act != 2 && act != 3) {
             env->vmx.pdbg = pend | (1ull << 63);    /* bit 63: marks "pending" when B3-B0 / BS = 0 */
+            if (vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) & 16) {
+                env->vmx.pdbg |= 1ull << 62;            /* U1314: incident to enclave mode */
+            }
         }
     }
     /* 29.7.4 the VMX-preemption timer */
@@ -3577,11 +3650,13 @@ static void vmx_boundary_exits(CPUX86State *env)
      */
     if (env->vmx.pdbg) {
         uint64_t p = env->vmx.pdbg & 0x400f;
+        bool enc = (env->vmx.pdbg >> 62) & 1;  /* U1314 */
 
         env->vmx.pdbg = 0;
         x86_vmx_db_snapshot(env);
         env->dr[6] = (env->dr[6] & ~0x400full) | p;
         env->fred_evdata_next = p;
+        env->sgx_enc_event = enc;       /* U1314: made pending with interruptibility bit 4 */
         raise_exception(env, EXCP01_DB);
     }
     if (env->vmx.timer_on && vmx_timer_value(env) == 0) {
