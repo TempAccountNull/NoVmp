@@ -243,6 +243,12 @@ Add-Exp 'cases_rcp_f16_all' 'cases_rcp_f16_all' 'evex fp16 rcp expect' @( '--avx
 Add-Exp 'cases_rcp_bf16' 'cases_rcp_bf16' 'avx10 rcp expect' @( '--avx10', '2' )
 Add-PySelftest 'ref_rcp_selftest' 'rcp tools' 'ref_rcp.py'
 Add-Hw 'cases_rcp_hw' 'hw sse rcp'
+# AMB-2 (plan 1.J.32, ledger U1240): every reciprocal form's documented special-case rows and threshold
+# boundaries (7 MXCSR settings, scalar merging, VL128/256 masks) and the SDE labelled-reference input sample
+# vs the analytic model of ref_amb2.py, whose selftest checks the model against the documented requirements
+# (bound, special cases, DAZ/FTZ) with an independent checker and cross-checks ref_rcp.py.
+Add-Exp 'cases_amb2' 'cases_amb2' 'avx10 evex fp16 rcp expect' @( '--avx10', '2' )
+Add-PySelftest 'ref_amb2_selftest' 'rcp tools' 'ref_amb2.py'
 # ledger U440-U442: F16C VCVTPS2PH/VCVTPH2PS hardware cases (gen_cases_f16c.py): every rounding source
 # (imm8 / MXCSR.RC), FTZ/DAZ, denormal/tiny/overflow/NaN/inf, both VL, register and memory, unmasked
 # exceptions; must be 0 differing against the i5-13600K.

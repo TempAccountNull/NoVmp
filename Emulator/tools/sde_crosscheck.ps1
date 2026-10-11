@@ -87,6 +87,11 @@ $Suites = @(
 	@( 'cases_evex_fp16', 'cases_evex_fp16', @( '--avx512' ), 'spr', @() ),
 	@( 'cases_avx10_a', 'cases_avx10_a', @( '--avx10', '2' ), 'dmr', @() ),
 	@( 'cases_avx10_b', 'cases_avx10_b', @( '--avx10', '2' ), 'dmr', @() ),
+	# U1240 (AMB-2): the reciprocal files (labelled reference for the A9 stand-ins; ref_amb2.py --sde-report)
+	@( 'cases_amb2', 'cases_amb2', @( '--avx10', '2' ), 'dmr', @() ),
+	@( 'cases_rcp', 'cases_rcp', @( '--avx512' ), 'spr', @() ),
+	@( 'cases_rcp_f16_all', 'cases_rcp_f16_all', @( '--avx512' ), 'spr', @() ),
+	@( 'cases_rcp_bf16', 'cases_rcp_bf16', @( '--avx10', '2' ), 'dmr', @() ),
 	@( 'cases_evex_sae_unmasked', 'cases_evex_sae_unmasked', @( '--avx10', '2' ), 'dmr', @() ),
 	@( 'cases_backport_t2_sdm', 'cases_backport_t2_sdm', @(), 'rpl', @() ),
 	@( 'cases_backport_t1', 'cases_backport_t1', @( '--cpuid', $Cpuid ), 'rpl', @() ),
