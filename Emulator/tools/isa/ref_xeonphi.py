@@ -72,6 +72,8 @@ Usage:
 import argparse
 import random
 import sys
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))   # U1247: python -I
+import intel_ref28 as IREF28   # U1247
 from decimal import Context, Decimal, ROUND_HALF_EVEN
 from fractions import Fraction
 
@@ -519,8 +521,10 @@ def m_4fmaps(dest, block, mem, kmask, zero, neg, scalar, mx):
 
 
 def m_er(op, f, src, kmask, zero, dest, mx, sae, scalar=False, src1=None):
-    """packed (KL = 64 / size) or scalar ER: (result bytes or None on #XM, mxcsr, fault)"""
-    fn = ER_OPS[op]
+    """packed (KL = 64 / size) or scalar ER: (result bytes or None on #XM, mxcsr, fault). U1247: the element
+    values and flags are Intel's reference (intel_ref28.py); ER_OPS stays the documented model of the selftest"""
+    rname = IREF28.name_of(op, f.bits)
+    fn = lambda x, ff: IREF28.value(rname, x)   # noqa: E731
     n = 1 if scalar else 64 // f.size
     s = lanes(src, f.size)
     d = lanes(dest, f.size)
@@ -1044,8 +1048,8 @@ def er_values(rnd, op, f, n, kind):
 def gen_er(rnd):
     comment("--- AVX512ER (ledger U994): VEXP2PS/PD (66.0F38 C8), VRCP28PS/PD (CA), VRCP28SS/SD (CB),")
     comment("VRSQRT28PS/PD (CC), VRSQRT28SS/SD (CD) (SDM 092 Vol2D 8-8 .. 8-35). MODEL CHOICE (the SDM")
-    comment("gives only the error bound and Tables 8-1..8-10): the exact 1/x, 1/sqrt(x), 2^x rounded to")
-    comment("nearest even (documented compliance, NOT bit-exact to silicon); DAZ/FTZ always, MXCSR.RC")
+    comment("gives only the error bound and Tables 8-1..8-10). U1247: the values and flags are Intel's reference")
+    comment("implementation (RECIP28EXP2.c, intel_ref28.py; documented compliance, not hardware-validated); DAZ/FTZ always, MXCSR.RC")
     comment("unused; flags IE (SNaN; RSQRT28 negative), ZE (zero/denormal input), OE (EXP2 overflow).")
     for name, opc, op, f, scalar in ER_FORMS:
         w = 1 if f is F64 else 0
@@ -1135,6 +1139,18 @@ def gen_er(rnd):
             case(evex(1, w, opc, 3, 5, vvvv=9, ll=2), [zmm_in(9, src1), zmm_in(5, src)],
                  [zmm_in(3, res)] + (["mxcsr=0x%X" % mxo] if mxo != MXCSR_DEFAULT else []),
                  "%s EVEX.L'L = 10b: LLIG" % name)
+
+    # U1247: VEXP2PD around 1024 (SDM gap, user decision 2026-10-11)
+    comment("U1247 VEXP2PD around 1024: [1024 - 2^-25, 1024) -> 0x7FEFFFFFE0000000 without a flag (SDM gap,")
+    comment("user decision 2026-10-11; Intel's reference returns +0 there); 1024 and above +INF with OE")
+    for vals in ([0x408FFFFFFFFBFFFF, 0x408FFFFFFFFC0000, 0x408FFFFFFFFC0001, 0x408FFFFFFFFE0000,
+                  0x408FFFFFFFFFFFFE, 0x408FFFFFFFFFFFFF, 0x408FF00000000000, 0x3FE0000000000000],
+                 [0x408FFFFFFFFFFFFF, 0x4090000000000000, 0x4090000000000001, 0xC08FFFFFFFFFFFFF,
+                  0xC090000000000000, 0x408FFFFFFFFC0000, 0xC08FFFFFFFFC0000, 0x408FFFFFFFF80000]):
+        src = join(vals, 8)
+        res, mxo, fault = m_er("exp2", F64, src, None, False, bytes(64), MXCSR_DEFAULT, False)
+        case(evex(1, 1, 0xC8, 0, 1), [zmm_in(1, src)],
+             [zmm_in(0, res)] + (["mxcsr=0x%X" % mxo] if mxo != MXCSR_DEFAULT else []), "VEXP2PD near 1024")
 
 
 def gen_stress(rnd, count):

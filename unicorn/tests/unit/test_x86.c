@@ -24573,11 +24573,12 @@ static void test_x86_xp_pf(void)
 #define XP_RCP28PS "\x62\xf2\x7d\x48\xca\xc1"
 #define XP_RCP28PS_SAE "\x62\xf2\x7d\x18\xca\xc1"
 #define XP_EXP2PD "\x62\xf2\xfd\x48\xc8\xc1"
+#include "x86_er_ref.inc"   /* U1247: Intel reference values (intel_ref28.py --unit-inc) */
 
 /*
  * U994: AVX512ER gating (CPUID.(7,0):EBX[27]; PF does not enable it; strict profiles), the
- * documented-compliance values (1/3 correctly rounded; 2^0.5 against the C library's sqrt(2),
- * both correctly rounded), #Z with ZM = 0 -> #XM and the destination unchanged, {sae} (no flag)
+ * values (U1247: Intel's reference implementation - 1/3 (= the correctly rounded value) and 2^0.5 as
+ * the reference's 24-bit EXP2D result), #Z with ZM = 0 -> #XM and the destination unchanged, {sae} (no flag)
  */
 static void test_x86_xp_er(void)
 {
@@ -24616,8 +24617,8 @@ static void test_x86_xp_er(void)
     OK(uc_reg_read(c.uc, UC_X86_REG_ZMM0, dr));
     memcpy(&bits, &dr[0], 8);
     memcpy(&bits7, &dr[7], 8);
-    /* sqrt(2) correctly rounded: 1.6A09E667F3BCC908B2F...h -> ...F3BCDh */
-    TEST_CHECK_(bits == 0x3ff6a09e667f3bcdull && bits7 == bits, "2^0.5: %llx",
+    /* U1247: Intel's reference EXP2D(0.5) (its 24-bit mantissa; the correctly rounded U994 value was ...F3BCDh) */
+    TEST_CHECK_(bits == ERREF_EXP2D_3FE0000000000000 && bits7 == bits, "2^0.5: %llx",
                 (unsigned long long)bits);
     /* a zero lane with ZM = 0: #XM (or #UD while CR4.OSXMMEXCPT = 0), DEST unchanged, ZE set */
     a[5] = 0.0f;
@@ -26605,6 +26606,51 @@ static void test_x86_amb2_tiny(void)
     TEST_CHECK(cnt[0] == 4094 && cnt[2] == 2 * 255 && cnt[3] == 256);
     TEST_MSG("counts %llu %llu %llu", (unsigned long long)cnt[0], (unsigned long long)cnt[2], (unsigned long long)cnt[3]);
     OK(uc_close(c.uc));
+}
+/* U1247: VEXP2PD around 1024 (SDM 092 Vol2D 8-8 bound < 2^-23, Overflow; SDM gap, user decision 2026-10-11):
+   [1024 - 2^-25, 1024) -> 0x7FEFFFFFE0000000 without a flag (Intel's reference returns +0 there), 1024 -> +INF
+   with OE, the lanes below 2^1024 the reference values */
+static void test_x86_amb2_exp2d_gap(void)
+{
+    static const uint8_t vexp2pd[] = {0x62, 0xF2, 0xFD, 0x48, 0xC8, 0xC1};    /* vexp2pd zmm0, zmm1 */
+    static const uint64_t in[8] = {0x408FFFFFFFFBFFFFULL, 0x408FFFFFFFFC0000ULL, 0x408FFFFFFFFC0001ULL,
+                                   0x408FFFFFFFFE0000ULL, 0x408FFFFFFFFFFFFEULL, 0x408FFFFFFFFFFFFFULL,
+                                   0x408FF00000000000ULL, 0x3FE0000000000000ULL};
+    static const uint64_t want[8] = {ERREF_EXP2D_408FFFFFFFFBFFFF, 0x7FEFFFFFE0000000ULL, 0x7FEFFFFFE0000000ULL,
+                                     0x7FEFFFFFE0000000ULL, 0x7FEFFFFFE0000000ULL, 0x7FEFFFFFE0000000ULL,
+                                     0x7FD0000000000000ULL, ERREF_EXP2D_3FE0000000000000};
+    uint64_t src[8], out[8];
+    uint32_t mx = 0x1F80, mx2 = 0;
+    uc_engine *uc;
+    int i, pass;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(uc, UC_X86_AVX512_F | UC_X86_AVX512_ER));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, vexp2pd, sizeof(vexp2pd)));
+    for (pass = 0; pass < 2; pass++) {
+        memcpy(src, in, sizeof(src));
+        if (pass) {
+            src[0] = 0x4090000000000000ULL;               /* 1024: +INF, Overflow */
+        }
+        mx = 0x1F80;
+        OK(uc_reg_write(uc, UC_X86_REG_ZMM1, src));
+        OK(uc_reg_write(uc, UC_X86_REG_MXCSR, &mx));
+        OK(uc_emu_start(uc, code_start, code_start + sizeof(vexp2pd), 0, 0));
+        OK(uc_reg_read(uc, UC_X86_REG_ZMM0, out));
+        OK(uc_reg_read(uc, UC_X86_REG_MXCSR, &mx2));
+        for (i = 0; i < 8; i++) {
+            uint64_t w = (pass && i == 0) ? 0x7FF0000000000000ULL : want[i];
+
+            TEST_CHECK(out[i] == w);
+            TEST_MSG("pass %d lane %d: x %llX got %llX expected %llX", pass, i, (unsigned long long)src[i],
+                     (unsigned long long)out[i], (unsigned long long)w);
+        }
+        TEST_CHECK(mx2 == (pass ? 0x1F88u : 0x1F80u));    /* no flag in the gap; OE for 1024 */
+        TEST_MSG("pass %d MXCSR %04X", pass, mx2);
+    }
+    OK(uc_close(uc));
 }
 /* ---- end U1241 (amb2_) ---- */
 /*
@@ -32075,6 +32121,7 @@ TEST_LIST = {
     {"test_x86_amb2_rows", test_x86_amb2_rows},
     {"test_x86_amb2_fp64_bound", test_x86_amb2_fp64_bound},
     {"test_x86_amb2_tiny", test_x86_amb2_tiny},
+    {"test_x86_amb2_exp2d_gap", test_x86_amb2_exp2d_gap},
     {"test_x86_ig_tme_api", test_x86_ig_tme_api},
     {"test_x86_ig_apic_api", test_x86_ig_apic_api},
     {"test_x86_ig_context_msr", test_x86_ig_context_msr},

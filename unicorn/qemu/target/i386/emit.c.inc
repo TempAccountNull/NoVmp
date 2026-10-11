@@ -2552,7 +2552,7 @@ static void gen_EVEX_VRSQRT14(DisasContext *s, CPUX86State *env, X86DecodedInsn 
 
 /*
  * NoVmp (ledger U994): AVX512ER through the one-source element helpers (helper_evex_fp1 /
- * _fp1s: 5 VRCP28, 6 VRSQRT28, 7 VEXP2; fpu_helper.c evex_rcp28 / evex_rsqrt28 / evex_exp2):
+ * _fp1s: 5 VRCP28, 6 VRSQRT28, 7 VEXP2; fpu_helper.c evex_er, Intel reference since U1247):
  * packed zmm1{k1}{z}, zmm2/m512/{1toN}{sae}; scalar xmm1{k1}{z}, xmm2, xmm3/m{sae} (bits 127:esz
  * from xmm2). Masking, {1toN}, {sae} and the MXCSR / #XM frame come from gen_evex_insn (evex_fp).
  */
