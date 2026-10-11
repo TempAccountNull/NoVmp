@@ -2214,6 +2214,10 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.mwait_wait = 0;            /* U1304 */
     env->vmx.hlt_wake = 0;              /* U1305 */
     env->vmx.iret_nmi = 0;
+    env->vmx.trap_pending = 0;          /* U1307 */
+    env->vmx.apic_write_pending = 0;
+    env->vmx.apic_va_valid = 0;
+    env->vmx.vintr_pending = 0;
     tlb_flush(env_cpu(env));
 }
 
@@ -2306,6 +2310,10 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     vmcs_put(env, VMCS_GUEST_PENDING_DBG, 0);
     if (exit & EXIT_SAVE_TIMER) {
         vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
+    }
+    /* U1307: the guest interrupt status (30.3.4) */
+    if (env->vmx.proc2 & PROC2_VID) {
+        vmcs_put(env, VMCS_GUEST_INTR_STATUS, env->vmx.rvi | ((uint32_t)env->vmx.svi << 8));
     }
     /* U1306: EPT with PAE paging: the PDPTE registers in use (30.3.4) */
     if ((env->vmx.proc2 & PROC2_EPT) && env->vmx.pdpte_valid && (env->cr[0] & CR0_PG_MASK) &&
@@ -2410,6 +2418,13 @@ G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qu
     e.insn_info = info;
     vmx_insn_exit_e(env, &e, ra);
 }
+
+static void vmx_apic_traps(CPUX86State *env);         /* U1307 */
+static void vmx_vintr_deliver(CPUX86State *env);
+static void vmx_ppr_virt(CPUX86State *env);
+static void vmx_eval_vintr(CPUX86State *env);
+static bool vmx_posted_intr(CPUX86State *env, int vec);
+static uint32_t vapic_rd(CPUX86State *env, uint32_t off);
 
 /* ---- 29.8 VM-entry failure after the guest-state checks ---- */
 static G_NORETURN void vmx_entry_fail(CPUX86State *env, uint32_t reason, uint64_t qual)
@@ -2568,9 +2583,31 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
         env->vmx.timer_deadline = (vmx_tsc(env) >> VMX_TIMER_RATE) +
                                   (uint32_t)vmcs_get(env, VMCS_PREEMPT_TIMER);
     }
-    /* the monitor trap flag needs one instruction per TB (translate.c): retranslate */
-    if (env->vmx.proc & PROC_MTF) {
+    /* the monitor trap flag needs one instruction per TB (translate.c): retranslate; U1307: so
+       does APIC-access virtualization (APIC-write emulation after each instruction) */
+    if ((env->vmx.proc & PROC_MTF) || (env->vmx.proc2 & PROC2_APIC_ACCESS)) {
         tb_flush(env_cpu(env));
+    }
+    /* U1307: 29.3.3 VM entry clears address-range monitoring; APIC virtualization state */
+    env->vmx.monitor_armed = 0;
+    env->vmx.trap_pending = 0;
+    env->vmx.apic_write_pending = 0;
+    env->vmx.apic_va_valid = 0;
+    env->vmx.vintr_pending = 0;
+    if (env->vmx.proc2 & PROC2_VID) {
+        /* 29.3.2.5: RVI / SVI from the guest interrupt status, PPR virtualization, evaluation */
+        uint32_t gis = vmcs_get(env, VMCS_GUEST_INTR_STATUS);
+
+        env->vmx.rvi = gis & 0xff;
+        env->vmx.svi = (gis >> 8) & 0xff;
+        vmx_ppr_virt(env);
+        vmx_eval_vintr(env);
+    } else if ((env->vmx.proc & PROC_TPR_SHADOW) && (env->vmx.proc2 & PROC2_APIC_ACCESS) &&
+               (env->vmx.tpr_threshold & 0xf) > ((vapic_rd(env, 0x80) >> 4) & 0xf)) {
+        /* 29.7.7: a VM exit right after VM entry (after any injection), before other events */
+        env->vmx.trap_pending = 1;
+        env->vmx.trap_reason = 43;
+        env->vmx.trap_qual = 0;
     }
     /* 28.5.2: an injected vectored event with "monitor trap flag" makes an MTF VM exit pending */
     if ((info >> 31) && ((info >> 8) & 7) != 7 && (env->vmx.proc & PROC_MTF)) {
@@ -2607,6 +2644,7 @@ void helper_vmx_boundary(CPUX86State *env)
         vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
         vmx_vmexit(env, &e);
     }
+    vmx_vintr_deliver(env);             /* U1307: a recognized virtual interrupt (32.2.2) */
     /* the monitor trap flag: an MTF VM exit is pending after this instruction (28.5.2) */
     if (env->vmx.proc & PROC_MTF) {
         env->vmx.mtf_pending = 1;
@@ -2880,6 +2918,9 @@ uint64_t x86_vmx_cr_read(CPUX86State *env, int reg, uint64_t val)
     }
     if (reg == 4) {
         return (val & ~env->vmx.cr4_mask) | (env->vmx.cr4_shadow & env->vmx.cr4_mask);
+    }
+    if (reg == 8) {
+        return x86_vmx_cr8_read(env, val);      /* U1307: "use TPR shadow" (32.3) */
     }
     return val;
 }
@@ -3335,6 +3376,7 @@ static void vmx_boundary_exits(CPUX86State *env)
 {
     VmxExit e;
 
+    vmx_apic_traps(env);                /* U1307: APIC-write emulation, trap-like VM exits */
     if (env->vmx.mtf_pending) {
         env->vmx.mtf_pending = 0;
         vmx_exit_init(&e, EXIT_REASON_MTF, 0);
@@ -3358,7 +3400,7 @@ static void vmx_boundary_exits(CPUX86State *env)
  * acknowledged and the vector saved, else the interrupt stays pending). Returns if the request is
  * handled as outside VMX operation.
  */
-void x86_vmx_interrupt(CPUX86State *env, int req)
+bool x86_vmx_interrupt(CPUX86State *env, int req)
 {
     CPUState *cs = env_cpu(env);
     X86VmxState *v = &env->vmx;
@@ -3366,7 +3408,7 @@ void x86_vmx_interrupt(CPUX86State *env, int req)
     int vec;
 
     if (!v->nonroot || (req != CPU_INTERRUPT_NMI && req != CPU_INTERRUPT_HARD)) {
-        return;
+        return false;
     }
     vmx_boundary_exits(env);
     if (req == CPU_INTERRUPT_NMI) {
@@ -3377,23 +3419,30 @@ void x86_vmx_interrupt(CPUX86State *env, int req)
             e.block_nmi = true;
             vmx_vmexit(env, &e);
         }
-        return;
+        return false;
     }
     if (vmx_intr_window(env)) {
         vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
         vmx_vmexit(env, &e);
     }
+    vmx_vintr_deliver(env);             /* U1307: above external interrupts (32.2.2) */
     if (v->pin & PIN_EXT_INTR) {
         vmx_exit_init(&e, EXIT_REASON_EXT_INTR, 0);
         if (v->exit_ctls & EXIT_ACK_INTR) {
             vec = x86_apic_acknowledge(env);
             if (vec < 0) {
-                return;                     /* nothing deliverable any more */
+                return true;                /* nothing deliverable any more */
+            }
+            /* U1307: the posted-interrupt notification vector (32.6): no VM exit */
+            if ((v->pin & PIN_POSTED_INTR) && vmx_posted_intr(env, vec)) {
+                vmx_vintr_deliver(env);
+                return true;
             }
             e.intr_info = (uint32_t)vec | (1u << 31);
         }
         vmx_vmexit(env, &e);
     }
+    return false;
 }
 
 /* the interrupt request filter (x86_cpu_pending_interrupt): "external-interrupt exiting" ignores IF */
@@ -3423,6 +3472,7 @@ void x86_vmx_hlt(CPUX86State *env)
         vmx_exit_init(&e, EXIT_REASON_INTR_WINDOW, 0);
         vmx_vmexit(env, &e);
     }
+    vmx_vintr_deliver(env);             /* U1307: virtual interrupts wake HLT (32.2.2) */
     env->vmx.hlt_wake = 0;
 }
 
@@ -3628,6 +3678,375 @@ void x86_vmx_pdpte_load(CPUX86State *env, int reg, uint64_t val, uintptr_t ra)
     }
     memcpy(env->vmx.pdpte, p, sizeof(p));
     env->vmx.pdpte_valid = 1;
+}
+
+/*
+ * ---- U1307: APIC virtualization and virtual interrupts (Vol3C chapter 32 pp. 32-1 to 32-18) ----
+ * The virtual-APIC page (VTPR 080H, VPPR 0A0H, VEOI 0B0H, VISR 100H-170H, VIRR 200H-270H, VICR
+ * 300H / 310H), the guest interrupt status (RVI, SVI), TPR / PPR / EOI / self-IPI virtualization,
+ * evaluation and delivery of virtual interrupts, CR8 with "use TPR shadow" (32.3), memory-mapped
+ * accesses to the APIC-access page (32.4), MSR-based accesses with "virtualize x2APIC mode" (32.5),
+ * posted-interrupt processing (32.6). Trap-like VM exits (TPR below threshold 43, virtualized EOI
+ * 45, APIC write 56) are taken at the next instruction boundary, before any other event.
+ */
+#define EXIT_REASON_TPR_BELOW       43
+#define EXIT_REASON_APIC_ACCESS     44
+#define EXIT_REASON_VIRT_EOI        45
+#define EXIT_REASON_APIC_WRITE      56
+
+static uint32_t vapic_rd(CPUX86State *env, uint32_t off)
+{
+    return vmx_ldl(env, env->vmx.vapic + off);
+}
+
+static void vapic_wr(CPUX86State *env, uint32_t off, uint32_t val)
+{
+    vmx_stl(env, env->vmx.vapic + off, val);
+}
+
+/* bit vec of the 256-bit VISR (base 100H) / VIRR (base 200H): offset base | ((vec & E0H) >> 1) */
+static void vapic_bit(CPUX86State *env, uint32_t base, int vec, bool set)
+{
+    uint32_t off = base | ((vec & 0xe0) >> 1), w = vapic_rd(env, off);
+
+    w = set ? (w | (1u << (vec & 31))) : (w & ~(1u << (vec & 31)));
+    vapic_wr(env, off, w);
+}
+
+static int vapic_highest(CPUX86State *env, uint32_t base)
+{
+    int i;
+    uint32_t w;
+
+    for (i = 7; i >= 0; i--) {
+        w = vapic_rd(env, base | (i << 4));
+        if (w) {
+            return i * 32 + 31 - clz32(w);
+        }
+    }
+    return -1;
+}
+
+static void vmx_trap_exit(CPUX86State *env, uint32_t reason, uint64_t qual)
+{
+    env->vmx.trap_pending = 1;
+    env->vmx.trap_reason = reason;
+    env->vmx.trap_qual = qual;
+}
+
+/* 32.1.3 PPR virtualization */
+static void vmx_ppr_virt(CPUX86State *env)
+{
+    uint32_t vtpr = vapic_rd(env, 0x80), svi = env->vmx.svi;
+
+    vapic_wr(env, 0xa0, ((vtpr >> 4) & 0xf) >= (svi >> 4) ? (vtpr & 0xff) : (svi & 0xf0));
+}
+
+/* 32.2.1 evaluation of pending virtual interrupts */
+static void vmx_eval_vintr(CPUX86State *env)
+{
+    env->vmx.vintr_pending = !(env->vmx.proc & PROC_INTR_WINDOW) &&
+                             (env->vmx.rvi >> 4) > ((vapic_rd(env, 0xa0) >> 4) & 0xf);
+}
+
+/* 32.1.2 TPR virtualization */
+static void vmx_tpr_virt(CPUX86State *env)
+{
+    if (!(env->vmx.proc2 & PROC2_VID)) {
+        if (((vapic_rd(env, 0x80) >> 4) & 0xf) < (env->vmx.tpr_threshold & 0xf)) {
+            vmx_trap_exit(env, EXIT_REASON_TPR_BELOW, 0);
+        }
+    } else {
+        vmx_ppr_virt(env);
+        vmx_eval_vintr(env);
+    }
+}
+
+/* 32.1.4 EOI virtualization */
+static void vmx_eoi_virt(CPUX86State *env)
+{
+    int vec = env->vmx.svi, h;
+
+    vapic_bit(env, 0x100, vec, false);
+    h = vapic_highest(env, 0x100);
+    env->vmx.svi = h < 0 ? 0 : h;
+    vmx_ppr_virt(env);
+    if ((env->vmx.eoi_exit[vec >> 6] >> (vec & 63)) & 1) {
+        vmx_trap_exit(env, EXIT_REASON_VIRT_EOI, (uint64_t)vec);
+    } else {
+        vmx_eval_vintr(env);
+    }
+}
+
+/* 32.1.5 self-IPI virtualization */
+static void vmx_self_ipi_virt(CPUX86State *env, int vec)
+{
+    vapic_bit(env, 0x200, vec, true);
+    if (vec > env->vmx.rvi) {
+        env->vmx.rvi = vec;
+    }
+    vmx_eval_vintr(env);
+}
+
+/*
+ * 32.2.2 delivery of a recognized virtual interrupt at an instruction boundary (RFLAGS.IF = 1, no
+ * STI / MOV-SS blocking, "interrupt-window exiting" 0): the guest interrupt status and the virtual-APIC
+ * page are updated and the vector is delivered as the model delivers external interrupts. Returns
+ * only if nothing is delivered.
+ */
+static void vmx_vintr_deliver(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+    int vec, h;
+
+    if (!env->vmx.vintr_pending || !(env->vmx.proc2 & PROC2_VID) ||
+        !(env->eflags & IF_MASK) || (env->hflags & HF_INHIBIT_IRQ_MASK) ||
+        (env->vmx.proc & PROC_INTR_WINDOW)) {
+        return;
+    }
+    vec = env->vmx.rvi;
+    vapic_bit(env, 0x100, vec, true);
+    env->vmx.svi = vec;
+    vapic_wr(env, 0xa0, vec & 0xf0);
+    vapic_bit(env, 0x200, vec, false);
+    h = vapic_highest(env, 0x200);
+    env->vmx.rvi = h < 0 ? 0 : h;
+    env->vmx.vintr_pending = 0;
+    env->vmx.hlt_wake = 0;
+    x86_apic_deliver_event(env, vec);
+    cs->exception_index = -1;
+    cpu_loop_exit(cs);
+}
+
+/* the trap-like VM exits and the APIC-write emulation of the instruction just completed (32.4.3.2) */
+static void vmx_apic_traps(CPUX86State *env)
+{
+    X86VmxState *v = &env->vmx;
+    VmxExit e;
+
+    if (v->apic_va_valid) {
+        v->apic_va_valid = 0;
+        tlb_flush_page(env_cpu(env), v->apic_va);
+    }
+    if (v->apic_write_pending) {
+        uint32_t off = v->apic_write_off, icr;
+
+        v->apic_write_pending = 0;
+        if (off == 0x80) {
+            vapic_wr(env, 0x80, vapic_rd(env, 0x80) & 0xff);
+            vmx_tpr_virt(env);
+        } else if (off == 0xb0 && (v->proc2 & PROC2_VID)) {
+            vapic_wr(env, 0xb0, 0);
+            vmx_eoi_virt(env);
+        } else if (off == 0x300 && (v->proc2 & PROC2_VID) &&
+                   !((icr = vapic_rd(env, 0x300)) & 0xfff33000u) && ((icr >> 18) & 3) == 1 &&
+                   !(icr & (1u << 15)) && !((icr >> 8) & 7) && ((icr >> 4) & 0xf)) {
+            vmx_self_ipi_virt(env, icr & 0xff);
+        } else if (off >= 0x310 && off <= 0x313) {
+            vapic_wr(env, 0x310, vapic_rd(env, 0x310) & 0xff000000u);
+        } else {
+            vmx_trap_exit(env, EXIT_REASON_APIC_WRITE, off);
+        }
+    }
+    if (v->trap_pending) {
+        v->trap_pending = 0;
+        vmx_exit_init(&e, v->trap_reason, v->trap_qual);
+        vmx_vmexit(env, &e);
+    }
+}
+
+/* MOV from CR8 with "use TPR shadow": VTPR[7:4] (32.3); val unchanged otherwise */
+uint64_t x86_vmx_cr8_read(CPUX86State *env, uint64_t val)
+{
+    if (env->vmx.nonroot && (env->vmx.proc & PROC_TPR_SHADOW)) {
+        return (vapic_rd(env, 0x80) >> 4) & 0xf;
+    }
+    return val;
+}
+
+/* MOV to CR8 with "use TPR shadow": VTPR := source[3:0] << 4, TPR virtualization (32.3); true if done */
+bool x86_vmx_cr8_write(CPUX86State *env, uint64_t val)
+{
+    if (!env->vmx.nonroot || !(env->vmx.proc & PROC_TPR_SHADOW)) {
+        return false;
+    }
+    vapic_wr(env, 0x80, (uint32_t)(val & 0xf) << 4);
+    vmx_tpr_virt(env);
+    return true;
+}
+
+/* RDMSR 800H-8FFH with "virtualize x2APIC mode" (32.5); true with *val if virtualized */
+bool x86_vmx_x2apic_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *val)
+{
+    if (!env->vmx.nonroot || !(env->vmx.proc2 & PROC2_X2APIC) || msr < 0x800 || msr > 0x8ff) {
+        return false;
+    }
+    if (!(env->vmx.proc2 & PROC2_APIC_REG) && msr != 0x808) {
+        return false;
+    }
+    *val = vmx_ldq(env, env->vmx.vapic + ((msr & 0xff) << 4));
+    return true;
+}
+
+/*
+ * WRMSR 808H / 80BH / 83FH with "virtualize x2APIC mode" (32.5): the reserved-bit #GP, the 8-byte
+ * store at offset (ECX & FFH) << 4, then TPR / EOI / self-IPI virtualization (83FH with vector[7:4]
+ * = 0: APIC-write VM exit, qualification 3F0H). True if virtualized.
+ */
+bool x86_vmx_x2apic_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t ra)
+{
+    X86VmxState *v = &env->vmx;
+    bool vid = (v->proc2 & PROC2_VID) != 0;
+
+    if (!v->nonroot || !(v->proc2 & PROC2_X2APIC)) {
+        return false;
+    }
+    if (msr != 0x808 && !(vid && (msr == 0x80b || msr == 0x83f))) {
+        return false;
+    }
+    if ((msr == 0x80b && val) || (msr != 0x80b && (val >> 8))) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    vmx_stq(env, v->vapic + ((msr & 0xff) << 4), val);
+    if (msr == 0x808) {
+        vmx_tpr_virt(env);
+    } else if (msr == 0x80b) {
+        vmx_eoi_virt(env);
+    } else if (val & 0xf0) {
+        vmx_self_ipi_virt(env, val & 0xff);
+    } else {
+        vmx_trap_exit(env, EXIT_REASON_APIC_WRITE, 0x3f0);
+    }
+    return true;
+}
+
+/* the offsets of 32.4.2 (reads) / 32.4.3.1 (writes) virtualized with "APIC-register virtualization" */
+static bool vmx_apic_reg_ok(uint32_t off, bool write)
+{
+    uint32_t r = off & ~0xfu;
+
+    if ((off & 0xf) > 3) {
+        return false;
+    }
+    switch (r) {
+    case 0x20: case 0x80: case 0xb0: case 0xd0: case 0xe0: case 0xf0: case 0x280: case 0x300:
+    case 0x310: case 0x320: case 0x330: case 0x340: case 0x350: case 0x360: case 0x370: case 0x380:
+    case 0x3e0:
+        return true;
+    case 0x30:
+        return !write;
+    default:
+        return !write && r >= 0x100 && r <= 0x270;
+    }
+}
+
+/*
+ * A linear access to the APIC-access page with "virtualize APIC accesses" (32.4), from the page walk
+ * (after the paging and EPT checks, 32.4.1): an instruction fetch, or an access 32.4.2 / 32.4.3.1
+ * does not virtualize (also during event delivery: access type 3) is an APIC-access VM exit (44,
+ * Table 30-6); a
+ * virtualized access is redirected to the virtual-APIC page for this access only (the TLB entry is
+ * dropped at the next instruction boundary), a virtualized write is followed by APIC-write emulation.
+ * Returns the physical address to use.
+ */
+hwaddr x86_vmx_apic_access(CPUX86State *env, uint64_t la, hwaddr pa, int size, int access_type,
+                           int *prot)
+{
+    X86VmxState *v = &env->vmx;
+    uint32_t off = pa & 0xfff, type;
+    bool write = access_type == MMU_DATA_STORE, ok;
+    VmxExit e;
+
+    if (!v->nonroot || !(v->proc2 & PROC2_APIC_ACCESS) ||
+        (pa & ~0xfffull) != (v->apic_access & ~0xfffull)) {
+        return pa;
+    }
+    type = access_type == MMU_INST_FETCH ? 2 : v->delivering ? 3 : (write ? 1 : 0);
+    ok = type != 2 && (v->proc & PROC_TPR_SHADOW) && size <= 4 && (off & 0xf) + size <= 4;
+    if (ok && v->apic_write_pending && (!write || v->apic_write_off != off || v->apic_write_size != size)) {
+        ok = false;                     /* the operation already virtualized a write */
+    }
+    if (ok) {
+        ok = off == 0x80 || ((v->proc2 & PROC2_VID) && (off == 0xb0 || off == 0x300)) ||
+             ((v->proc2 & PROC2_APIC_REG) && vmx_apic_reg_ok(off, write) &&
+              vmx_apic_reg_ok(off + size - 1, write));
+    }
+    if (!ok) {
+        if (env->retaddr) {
+            cpu_restore_state(env_cpu(env), env->retaddr, true);
+        }
+        vmx_exit_init(&e, EXIT_REASON_APIC_ACCESS, off | (type << 12));
+        e.rf_one = !v->delivering;
+        vmx_vmexit(env, &e);
+    }
+    if (write) {
+        v->apic_write_pending = 1;
+        v->apic_write_off = off;
+        v->apic_write_size = size;
+        *prot = PAGE_WRITE;
+    } else {
+        *prot = PAGE_READ;
+    }
+    v->apic_va = la & TARGET_PAGE_MASK;
+    v->apic_va_valid = 1;
+    return (v->vapic & ~0xfffull) | off;
+}
+
+/*
+ * 32.7 SENDUIPI in VMX non-root operation with "use TPR shadow" (IPI virtualization is not offered):
+ * the notification IPI is written to VICR - xAPIC form (VICR_HI = NDST[15:8] << 24, VICR_LO = NV)
+ * with "virtualize APIC accesses", else the x2APIC form (8 bytes at 300H: NV, NDST << 32) - and an
+ * APIC-write VM exit (qualification 300H) follows the instruction. True if virtualized.
+ */
+bool x86_vmx_senduipi(CPUX86State *env, int nv, uint32_t ndst)
+{
+    if (!env->vmx.nonroot || !(env->vmx.proc & PROC_TPR_SHADOW)) {
+        return false;
+    }
+    if (env->vmx.proc2 & PROC2_APIC_ACCESS) {
+        vapic_wr(env, 0x310, (ndst & 0xff00u) << 16);
+        vapic_wr(env, 0x300, nv & 0xff);
+    } else {
+        vmx_stq(env, env->vmx.vapic + 0x300, (uint64_t)(nv & 0xff) | ((uint64_t)ndst << 32));
+    }
+    vmx_trap_exit(env, EXIT_REASON_APIC_WRITE, 0x300);
+    return true;
+}
+
+/*
+ * 32.6 posted-interrupt processing: an external interrupt with "external-interrupt exiting" and
+ * "process posted interrupts" (the local APIC was acknowledged: vec). Returns false if vec is not
+ * the notification vector (an ordinary VM exit follows).
+ */
+static bool vmx_posted_intr(CPUX86State *env, int vec)
+{
+    X86VmxState *v = &env->vmx;
+    uint64_t pir[4], on;
+    int i, h = -1, b;
+
+    if (vec != v->pi_nv) {
+        return false;
+    }
+    on = vmx_ldq(env, v->pi_desc + 32);
+    vmx_stq(env, v->pi_desc + 32, on & ~1ull);
+    x86_apic_eoi(env);
+    for (i = 0; i < 4; i++) {
+        pir[i] = vmx_ldq(env, v->pi_desc + 8 * i);
+        vmx_stq(env, v->pi_desc + 8 * i, 0);
+    }
+    for (i = 0; i < 4; i++) {
+        for (b = 0; b < 64; b++) {
+            if ((pir[i] >> b) & 1) {
+                vapic_bit(env, 0x200, i * 64 + b, true);
+                h = i * 64 + b;
+            }
+        }
+    }
+    if (h > v->rvi) {
+        v->rvi = h;
+    }
+    vmx_eval_vintr(env);
+    return true;
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

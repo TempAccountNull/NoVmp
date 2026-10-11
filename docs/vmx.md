@@ -120,12 +120,13 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 7 - APIC virtualization (local APIC model, `docs/apic.md`)
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| virtual-APIC page, TPR shadow / TPR threshold, CR8 virtualization | Vol3C 32.1.1-32.1.2 pp. 32-2; 32.3 p. 32-7 | `vmx_helper.c` vapic_* | planned |
-| PPR / EOI / self-IPI virtualization, evaluation and delivery of virtual interrupts, EOI-exit bitmap | Vol3C 32.1.3-32.1.5, 32.2 pp. 32-2 to 32-7 | vapic_* | planned |
-| virtualizing memory-mapped APIC accesses (APIC-access page, APIC-access exits 44, APIC-write exits 56) | Vol3C 32.4 pp. 32-8 to 32-15 | `excp_helper.c` translation of the APIC-access page | planned |
-| virtualizing MSR-based APIC accesses (x2APIC mode, APIC-register virtualization) | Vol3C 32.5 pp. 32-15 / 32-16 | `misc_helper.c` helper_rdmsr / helper_wrmsr | planned |
-| posted-interrupt processing | Vol3C 32.6 pp. 32-16 to 32-18 | `seg_helper.c` interrupt acknowledge | planned |
-| IPI virtualization, SENDUIPI virtualization, APIC-timer virtualization | Vol3C 32.1.6, 32.7; 28.5.10 | - | not offered |
+| virtual-APIC page, TPR shadow / TPR threshold, CR8 virtualization | Vol3C 32.1.1-32.1.2 pp. 32-2; 32.3 p. 32-7; 29.7.7 | `vmx_helper.c` x86_vmx_cr8_*, vmx_tpr_virt | done (U1307) |
+| PPR / EOI / self-IPI virtualization, evaluation and delivery of virtual interrupts, EOI-exit bitmap | Vol3C 32.1.3-32.1.5, 32.2 pp. 32-2 to 32-7; 29.3.2.5 | vmx_ppr_virt, vmx_eoi_virt, vmx_self_ipi_virt, vmx_eval_vintr, vmx_vintr_deliver | done (U1307) |
+| virtualizing memory-mapped APIC accesses (APIC-access page, APIC-access exits 44, APIC-write exits 56) | Vol3C 32.4 pp. 32-8 to 32-15 | `excp_helper.c` handle_mmu_fault -> x86_vmx_apic_access, vmx_apic_traps | done (U1307) for linear accesses; guest-physical / physical accesses: see the design notes |
+| virtualizing MSR-based APIC accesses (x2APIC mode, APIC-register virtualization) | Vol3C 32.5 pp. 32-15 / 32-16 | `misc_helper.c` helper_rdmsr / helper_wrmsr -> x86_vmx_x2apic_* | done (U1307) |
+| posted-interrupt processing | Vol3C 32.6 pp. 32-16 to 32-18 | x86_vmx_interrupt -> vmx_posted_intr | done (U1307) |
+| SENDUIPI virtualization | Vol3C 32.7 pp. 32-18 | `seg_helper.c` helper_senduipi -> x86_vmx_senduipi | done (U1307) |
+| IPI virtualization, APIC-timer virtualization | Vol3C 32.1.6; 28.5.10 | - | not offered (capability set) |
 
 ### Stage 8 - deferred items of other agents
 | requirement | SDM 092 | code | status |
@@ -300,3 +301,40 @@ translator and passed to the helpers.
   the EPT write permission (the walk checks each paging-structure access as a read, or as a write with
   EPT A/D flags); page-modification logging, sub-page write permissions, EPT-violation #VE, supervisor
   shadow-stack control, guest-paging verification are not offered by the capability set.
+
+### APIC virtualization (U1307)
+- The virtual-APIC page and the guest interrupt status (RVI / SVI, loaded by VM entry with
+  virtual-interrupt delivery and saved by VM exits) implement TPR, PPR, EOI and self-IPI virtualization,
+  the evaluation of pending virtual interrupts (VM entry, TPR / EOI / self-IPI virtualization, posted-
+  interrupt processing) and virtual-interrupt delivery at an instruction boundary (RFLAGS.IF = 1, no
+  STI / MOV-SS blocking, no interrupt-window exiting; after NMIs and the interrupt window, before external
+  interrupts; it also ends HLT). The virtual interrupt is delivered as the model delivers external
+  interrupts (guest IDT or UC_HOOK_INTR).
+- Trap-like VM exits (TPR below threshold 43, virtualized EOI 45, APIC write 56) and APIC-write emulation
+  are taken at the next instruction boundary before any other event; the instructions that cause them
+  end their translation block (MOV to CR8, WRMSR) or run one per block (APIC-access virtualization).
+  29.7.7: with TPR shadow, APIC-access virtualization and no virtual-interrupt delivery, VM entry makes a
+  TPR-below-threshold exit pending when the threshold exceeds VTPR[7:4].
+- CR8 with "use TPR shadow" (32.3); x2APIC-MSR virtualization (32.5): RDMSR 808H (and with APIC-register
+  virtualization every 800H-8FFH MSR) from the virtual-APIC page, WRMSR 808H / 80BH / 83FH with their
+  reserved-bit #GP, in any APIC mode, after the MSR-bitmap exit check and the UC_HOOK_INSN hooks.
+- The APIC-access page: a linear access whose final physical address is on the page is decided in the
+  page walk after the paging and EPT checks (32.4.1): an instruction fetch, an access larger than 4
+  bytes or not within the low 4 bytes of a 16-byte block, any access without "use TPR shadow", an access
+  after a virtualized write of the same instruction with another offset / size, or an offset 32.4.2 /
+  32.4.3.1 do not list is an APIC-access exit (44: offset, access type 0 read / 1 write / 2 fetch / 3
+  during event delivery; RFLAGS.RF saved as 1 outside event delivery). A virtualized access gets a TLB
+  entry to the virtual-APIC page that allows only its own access type and is dropped at the next
+  boundary. With "virtualize APIC accesses" every translation block holds one instruction, so APIC-write
+  emulation runs right after the instruction (a REP string instruction is one instruction here).
+  Guest-physical and physical accesses to the APIC-access page (32.4.6) are not treated specially (the
+  SDM allows either outcome for physical accesses; a guest paging structure on the APIC-access page
+  with EPT is not given the APIC-access exit of 32.4.6.1 - open gap, docs/quirks.md).
+- Posted interrupts (32.6): with "process posted interrupts" the acknowledged notification vector
+  clears ON, EOIs the local APIC, moves PIR into VIRR / RVI and evaluates pending virtual interrupts,
+  without a VM exit; any other vector exits as usual.
+- SENDUIPI (32.7) with "use TPR shadow": the notification is written to VICR (xAPIC form with "virtualize
+  APIC accesses", else the x2APIC form) and an APIC-write VM exit (300H) follows the instruction (IPI
+  virtualization is not offered, so case 4 of 32.7 applies).
+- Not offered (capability set): IPI virtualization, APIC-timer virtualization (tertiary controls),
+  "virtualize IA32_SPEC_CTRL".

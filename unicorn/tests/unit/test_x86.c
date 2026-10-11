@@ -33006,7 +33006,7 @@ static int vmx_enter(PcCtx *c, int launch, const char *g, size_t gl, uint64_t *f
     OK(uc_mem_write(c->uc, VMX_ENTRY_PC, launch ? "\x0f\x01\xc2" : "\x0f\x01\xc3", 3));
     c->cap.count = 0;
     pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
-    err = uc_emu_start(c->uc, VMX_ENTRY_PC, VMX_ENTRY_PC + 3, 0, 0);
+    err = uc_emu_start(c->uc, VMX_ENTRY_PC, VMX_ENTRY_PC + 3, 10000000, 0);    /* 10 s limit */
     TEST_CHECK(err == UC_ERR_OK);
     TEST_MSG("uc_emu_start: %s", uc_strerror(err));
     *fl = pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
@@ -33315,10 +33315,13 @@ static void vmx_exit_is(PcCtx *c, uint32_t reason, uint64_t qual, uint32_t len)
              (unsigned long long)q, (unsigned long long)l, reason, (unsigned long long)qual, len);
 }
 
-/* IDT event delivery with a guest GDT / IDT: #UD, #GP and #PF go to a CPUID at VMX_GUEST_PC + 100H */
+/*
+ * IDT event delivery (exceptions, software and external / virtual interrupts) with a guest GDT / IDT:
+ * #UD, #GP and #PF go to a CPUID at VMX_GUEST_PC + 100H
+ */
 static void vmx_guest_idt(PcCtx *c)
 {
-    OK(uc_ctl_set_x86_event_delivery(c->uc, UC_X86_DELIVER_EXC_IDT));
+    OK(uc_ctl_set_x86_event_delivery(c->uc, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT));
     vmx_wq(c, VMX_GDT + 8, 0x00af9b000000ffffull);
     vmx_wq(c, VMX_GDT + 16, 0x00cf93000000ffffull);
     vmx_w(c, 0x6816, VMX_GDT);
@@ -33831,6 +33834,170 @@ static void test_x86_vmx_ept(void)
     OK(uc_close(c.uc));
 }
 
+#define VMX_VAPIC    (VMX_DATA + 0x18000)  /* virtual-APIC page */
+#define VMX_APICACC  (VMX_DATA + 0x19000)  /* APIC-access page */
+#define VMX_PIDESC   (VMX_DATA + 0x1a000)  /* posted-interrupt descriptor */
+
+/*
+ * U1307: TPR shadow and x2APIC virtualization (SDM 092 Vol3C 32.1.2, 32.3, 32.5). "Use TPR shadow":
+ * MOV CR8, RAX (5) stores 50H in VTPR, MOV RBX, CR8 reads 5 back; with TPR threshold 4, MOV CR8 of 3
+ * exits trap-like (43, RIP after the MOV). "Virtualize x2APIC mode" (MSR bitmaps without exits):
+ * RDMSR 808H reads VTPR; WRMSR 808H of 20H virtualizes the TPR and exits (43) below the threshold.
+ * Virtual-interrupt delivery: a self IPI by WRMSR 83FH (vector 40H) is virtualized (VIRR, RVI) and the
+ * virtual interrupt is delivered through the guest IDT at the next boundary (RFLAGS.IF = 1): the
+ * handler runs, the guest interrupt status saved by the VM exit is SVI 40H / RVI 0, VISR has bit 40H;
+ * WRMSR 80BH (EOI) with the EOI-exit bitmap bit 40H: EOI virtualization exits (45, qualification 40H,
+ * trap-like) with VISR clear and SVI 0.
+ */
+static void test_x86_vmx_apicv_tpr_x2apic(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 0x40, VMX_GUEST_PC + 0x100);
+    vmx_w(&c, 0x2012, VMX_VAPIC);
+    vmx_w(&c, 0x401c, 0);
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 28));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    /* MOV CR8, RAX; MOV RBX, CR8; CPUID */
+    vmx_resume_regs(&c, "\x44\x0f\x22\xc0\x44\x0f\x20\xc3\x0f\xa2", 10, 5, 0, 0, 0);
+    v = pc_get(&c, UC_X86_REG_RBX);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && v == 5 && vmx_rq(&c, VMX_VAPIC + 0x80) == 0x50);
+    vmx_w(&c, 0x401c, 4);
+    vmx_resume_regs(&c, "\x44\x0f\x22\xc0\x0f\xa2", 6, 3, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 43 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 4);
+    TEST_CHECK(vmx_rq(&c, VMX_VAPIC + 0x80) == 0x30);
+    /* virtualize x2APIC mode */
+    vmx_wq(&c, VMX_VAPIC + 0x80, 0x70);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 28) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 4);
+    vmx_resume_regs(&c, "\x0f\x32\x0f\xa2", 4, 0, 0x808, 0, 0);
+    v = pc_get(&c, UC_X86_REG_RAX);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && (v & 0xffffffffull) == 0x70);
+    vmx_resume_regs(&c, "\x0f\x30\x0f\xa2", 4, 0x20, 0x808, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 43 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 2);
+    TEST_CHECK(vmx_rq(&c, VMX_VAPIC + 0x80) == 0x20);
+    /* virtual-interrupt delivery (needs external-interrupt exiting) */
+    vmx_wq(&c, VMX_VAPIC + 0x80, 0);
+    vmx_w(&c, 0x401c, 0);
+    vmx_w(&c, 0x4000, 0x16 | 1);
+    vmx_w(&c, 0x401e, (1u << 4) | (1u << 9));
+    vmx_w(&c, 0x0810, 0);
+    vmx_w(&c, 0x6820, 0x202);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\x0f\x30\x90\x90", 4, 0x40, 0x83f, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_r(&c, 0x0810) == 0x4000);
+    TEST_CHECK((vmx_rq(&c, VMX_VAPIC + 0x120) & 1) && vmx_rq(&c, VMX_VAPIC + 0xa0) == 0x40);
+    TEST_CHECK(vmx_rq(&c, VMX_VAPIC + 0x220) == 0);
+    /* EOI virtualization with the EOI-exit bitmap: exit 45, qualification 40H */
+    vmx_w(&c, 0x201e, 1);                       /* EOI-exit bitmap 1: vectors 40H-7FH, bit 0 */
+    vmx_w(&c, 0x6820, 2);
+    vmx_resume_regs(&c, "\x0f\x30\x0f\xa2", 4, 0, 0x80b, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 45 && vmx_r(&c, 0x6400) == 0x40);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 2 && vmx_r(&c, 0x0810) == 0);
+    TEST_CHECK((vmx_rq(&c, VMX_VAPIC + 0x120) & 1) == 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1307: the APIC-access page (32.4) with "use TPR shadow". A 4-byte read at offset 080H is
+ * virtualized (returns VTPR); a read at offset 020H without APIC-register virtualization is an
+ * APIC-access VM exit (44, qualification 020H: data read; RIP of the instruction); a 4-byte write at
+ * offset 080H is virtualized, APIC-write emulation clears VTPR bytes 3:1 and TPR virtualization exits
+ * below the threshold (43, trap-like); an instruction fetch from the page exits with access type 2.
+ * With APIC-register virtualization the read at 020H returns the virtual-APIC page.
+ */
+static void test_x86_vmx_apicv_access(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x2012, VMX_VAPIC);
+    vmx_w(&c, 0x2014, VMX_APICACC);
+    vmx_w(&c, 0x401c, 0);
+    vmx_wq(&c, VMX_VAPIC + 0x80, 0x30);
+    vmx_wq(&c, VMX_VAPIC + 0x20, 0x11223344);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_resume_regs(&c, "\x8b\x80\x80\x00\x00\x00\x0f\xa2", 8, VMX_APICACC, 0, 0, 0);
+    v = pc_get(&c, UC_X86_REG_RAX);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && v == 0x30);
+    TEST_MSG("read %llx", (unsigned long long)v);
+    vmx_resume_regs(&c, "\x8b\x40\x20", 3, VMX_APICACC, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 44 && vmx_r(&c, 0x6400) == 0x20 &&
+               vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    vmx_w(&c, 0x6820, 2);
+    vmx_w(&c, 0x401c, 2);
+    vmx_resume_regs(&c, "\x89\x98\x80\x00\x00\x00\x0f\xa2", 8, VMX_APICACC, 0, 0, 0x1ff10);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 43 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 6);
+    TEST_CHECK(vmx_rq(&c, VMX_VAPIC + 0x80) == 0x10);
+    TEST_MSG("exit %llu vtpr %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_rq(&c, VMX_VAPIC + 0x80));
+    vmx_w(&c, 0x401c, 0);
+    vmx_resume_regs(&c, "\xff\xe0", 2, VMX_APICACC + 0x10, 0, 0, 0);   /* JMP RAX */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 44 && vmx_r(&c, 0x6400) == (0x10 | (2u << 12)));
+    vmx_w(&c, 0x6820, 2);
+    /* APIC-register virtualization: the read at 020H is virtualized */
+    vmx_w(&c, 0x401e, 1u | (1u << 8));
+    vmx_resume_regs(&c, "\x8b\x40\x20\x0f\xa2", 5, VMX_APICACC, 0, 0, 0);
+    v = pc_get(&c, UC_X86_REG_RAX);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && (v & 0xffffffffull) == 0x11223344);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1307: posted-interrupt processing (32.6). External-interrupt exiting, acknowledge interrupt on exit,
+ * virtual-interrupt delivery and "process posted interrupts" with notification vector F2H; the
+ * posted-interrupt descriptor has PIR bit 55H and ON. A physical self IPI with vector F2H (the guest's
+ * WRMSR 83FH reaches the local APIC: no x2APIC virtualization) is processed without a VM exit: ON and
+ * PIR cleared, vector 55H moved to VIRR / RVI and delivered as a virtual interrupt through the guest
+ * IDT (the handler's CPUID exits; SVI = 55H). Another physical vector (61H) exits (1) as usual.
+ */
+static void test_x86_vmx_apicv_posted(void)
+{
+    PcCtx c;
+    uint64_t fl, base;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 0x55, VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1b, &base) == -1);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1b, (base & 0x100) | 0xfee00c00ull) == -1);
+    TEST_CHECK(vmx_wrmsr(&c, 0x80f, 0x1ff) == -1);
+    vmx_wq(&c, VMX_PIDESC + 8, 1ull << (0x55 - 64));
+    vmx_wq(&c, VMX_PIDESC + 32, 1);
+    vmx_w(&c, 0x2012, VMX_VAPIC);
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x2016, VMX_PIDESC);
+    vmx_w(&c, 0x0002, 0xf2);
+    vmx_w(&c, 0x401c, 0);
+    vmx_w(&c, 0x0810, 0);
+    vmx_w(&c, 0x4000, 0x16 | 1 | 0x80);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 15));
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 28) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 9);
+    vmx_w(&c, 0x6820, 0x202);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    /* WRMSR 83FH (SELF IPI) with the notification vector F2H */
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\x0f\x30\x90\x90", 4, 0xf2, 0x83f, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_rq(&c, VMX_PIDESC + 8) == 0 && (vmx_rq(&c, VMX_PIDESC + 32) & 1) == 0);
+    TEST_CHECK(vmx_r(&c, 0x0810) == 0x5500);
+    /* another vector: an ordinary VM exit (1) with the vector */
+    vmx_w(&c, 0x6820, 0x202);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\x0f\x30\x90\x90", 4, 0x61, 0x83f, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 1 && vmx_r(&c, 0x4404) == 0x80000061u);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34268,4 +34435,7 @@ TEST_LIST = {
     {"test_x86_vmx_exc_bitmap", test_x86_vmx_exc_bitmap},
     {"test_x86_vmx_intr_nmi", test_x86_vmx_intr_nmi},
     {"test_x86_vmx_ept", test_x86_vmx_ept},
+    {"test_x86_vmx_apicv_tpr_x2apic", test_x86_vmx_apicv_tpr_x2apic},
+    {"test_x86_vmx_apicv_access", test_x86_vmx_apicv_access},
+    {"test_x86_vmx_apicv_posted", test_x86_vmx_apicv_posted},
     {NULL, NULL}};

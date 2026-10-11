@@ -320,6 +320,12 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         if (t0 & ~(target_ulong)0xf) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+        /* VMX non-root operation with "use TPR shadow": VTPR and TPR virtualization (Vol3C 32.3) */
+        if (x86_vmx_cr8_write(env, t0)) {
+            break;
+        }
+#endif /* __Use_Original_Qemu (U1307) */
         if (env->hflags2 & HF2_VINTR_MASK) {
             env->v_tpr = t0 & 0x0f;
         } else {
@@ -1779,6 +1785,13 @@ void helper_wrmsr(CPUX86State *env)
     val = ((uint32_t)env->regs[R_EAX]) |
         ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
 
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+    /* VMX non-root operation: "virtualize x2APIC mode" (Vol3C 32.5), also without x2APIC mode */
+    if (env->msr_api == 0 &&
+        x86_vmx_x2apic_wrmsr(env, (uint32_t)env->regs[R_ECX], val, wrmsr_ra)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1307) */
 #if __Use_Original_Qemu != 1 /* ours (U960) */
     /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c). U1123: only
        when the MSR exists for the CPU as reported (msr_present: 1BH with CPUID.01H:EDX.APIC,
@@ -2428,6 +2441,14 @@ void helper_rdmsr(CPUX86State *env)
 
     if (skip_rdmsr)
         return;
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+    /* VMX non-root operation: "virtualize x2APIC mode" reads (Vol3C 32.5) */
+    if (env->msr_api == 0 && x86_vmx_x2apic_rdmsr(env, (uint32_t)env->regs[R_ECX], &val)) {
+        env->regs[R_EAX] = (uint32_t)(val);
+        env->regs[R_EDX] = (uint32_t)(val >> 32);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1307) */
 
 #if __Use_Original_Qemu != 1 /* ours (U960) */
     /* IA32_APIC_BASE and the x2APIC MSRs 800H-8FFH: the local APIC (apic_model.c); U1123: only

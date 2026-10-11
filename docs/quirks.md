@@ -362,6 +362,8 @@ VMX (U1300-U1399, `docs/vmx.md`) is implemented as described there. The followin
 | HLT in VMX non-root operation | Vol3C 28.2: the timer, NMI / interrupt windows, NMIs and interrupts wake the HLT state | events due at the HLT exit at once (activity state HLT); otherwise HLT ends the emulation run as outside VMX operation - Unicorn has no wake-up source for a halted vCPU (U1305) |
 | EPT write check of paging A / D updates | Vol3C 31.3.3.2, p. 31-14: writes to guest paging structures to set accessed / dirty flags are data writes for EPT | the model's page walk checks each guest paging-structure access as a read (as a write with EPT A/D flags enabled); its A / D stores are not checked against EPT write permission (U1306) |
 | MONITOR armed state | Vol3C 30.2.1, p. 30-6: the MWAIT exit qualification says whether address-range monitoring is armed | MONITOR arms, a completed MWAIT disarms; stores to the monitored range, UMONITOR and other disarming events are not tracked (U1304) |
+| APIC-access page: guest-physical accesses | Vol3C 32.4.6.1, p. 32-14: a guest-physical access (e.g. a guest paging-structure read through EPT) to the APIC-access page is always an APIC-access VM exit | only linear accesses are checked; a guest paging structure placed on the APIC-access page is read from memory (U1307) |
+| APIC-access page: REP string instructions | Vol3C 32.4.1, p. 32-9: an operation is one iteration of a REP string instruction; APIC-write emulation follows each operation | the whole REP instruction is one operation: APIC-write emulation runs after the instruction (U1307) |
 
 ## Intel SDE cross-check decisions (U1040 cross-check, user decisions 2026-10-10)
 

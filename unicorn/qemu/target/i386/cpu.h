@@ -512,6 +512,18 @@ typedef struct X86VmxState {
     uint8_t ept_lattr, pdpte_valid;
     uint64_t pdpte[4];
 #endif /* __Use_Original_Qemu (U1306) */
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+    /*
+     * U1307: APIC virtualization - the guest interrupt status (RVI, SVI), a recognized virtual
+     * interrupt, a pending trap-like VM exit (TPR below threshold, virtualized EOI, APIC write), a
+     * virtualized write to the APIC-access page awaiting APIC-write emulation, the linear page whose
+     * TLB entry was redirected to the virtual-APIC page
+     */
+    uint8_t rvi, svi, vintr_pending, trap_pending, apic_write_pending, apic_va_valid;
+    uint16_t apic_write_off, apic_write_size;
+    uint32_t trap_reason;
+    uint64_t trap_qual, apic_va;
+#endif /* __Use_Original_Qemu (U1307) */
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -3524,7 +3536,7 @@ void x86_vmx_exception(CPUX86State *env, int intno, int type, int error_code, in
 void x86_vmx_iret_start(CPUX86State *env);
 bool x86_vmx_iret_end(CPUX86State *env);
 void x86_vmx_task_switch(CPUX86State *env, int tss_selector, int source, uintptr_t ra);
-void x86_vmx_interrupt(CPUX86State *env, int req);
+bool x86_vmx_interrupt(CPUX86State *env, int req);
 bool x86_vmx_intr_unmasked(CPUX86State *env);
 void x86_vmx_hlt(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U1305) */
@@ -3534,6 +3546,16 @@ hwaddr x86_vmx_ept_translate(CPUX86State *env, uint64_t gpa, int access_type, in
 bool x86_vmx_pdpte(CPUX86State *env, int i, uint64_t *pdpte);
 void x86_vmx_pdpte_load(CPUX86State *env, int reg, uint64_t val, uintptr_t ra);
 #endif /* __Use_Original_Qemu (U1306) */
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+/* U1307: APIC virtualization */
+uint64_t x86_vmx_cr8_read(CPUX86State *env, uint64_t val);
+bool x86_vmx_cr8_write(CPUX86State *env, uint64_t val);
+bool x86_vmx_x2apic_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *val);
+bool x86_vmx_x2apic_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_t ra);
+hwaddr x86_vmx_apic_access(CPUX86State *env, uint64_t la, hwaddr pa, int size, int access_type,
+                           int *prot);
+bool x86_vmx_senduipi(CPUX86State *env, int nv, uint32_t ndst);
+#endif /* __Use_Original_Qemu (U1307) */
 #define VMX_EXIT_HLT     12
 #define VMX_EXIT_RDPMC   15
 #define VMX_EXIT_RDTSC   16

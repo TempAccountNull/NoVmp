@@ -2886,7 +2886,9 @@ bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     /* VMX non-root operation: MTF / timer / NMI window, NMI exiting, interrupt window, external-
        interrupt exiting in the priority of Vol3C 28.2 (vmx_helper.c) */
-    x86_vmx_interrupt(env, interrupt_request);
+    if (x86_vmx_interrupt(env, interrupt_request)) {
+        return true;                /* U1307: handled in VMX non-root operation (posted interrupts) */
+    }
 #endif /* __Use_Original_Qemu (U1305) */
 
     /* Don't process multiple interrupt requests in a single call.
@@ -5136,6 +5138,10 @@ void helper_senduipi(CPUX86State *env, target_ulong reg)
          * tempUPID.NDST" (x2APIC mode) / "to 8-bit physical APIC ID tempUPID.NDST[15:8]"
          * (xAPIC mode), through the local APIC (apic_model.c)
          */
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+        /* VMX non-root operation with "use TPR shadow": virtualized (Vol3C 32.7) */
+        if (!x86_vmx_senduipi(env, (int)((upid_lo >> 16) & 0xff), (uint32_t)(upid_lo >> 32)))
+#endif /* __Use_Original_Qemu (U1307) */
         x86_apic_send_notification(env, (int)((upid_lo >> 16) & 0xff), (uint32_t)(upid_lo >> 32));
     } else {
         cpu_stq_mmuidx_ra(env, upid, upid_lo, idx, ra);

@@ -11461,7 +11461,9 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
          * VM entry flushes the TBs when it sets the control (vmx_helper.c).
          */
         if (GUEST(dc) && dc->base.is_jmp == DISAS_NEXT &&
-            (((CPUX86State *)cpu->env_ptr)->vmx.proc & (1u << 27))) {
+            ((((CPUX86State *)cpu->env_ptr)->vmx.proc & (1u << 27)) ||
+             (((CPUX86State *)cpu->env_ptr)->vmx.proc2 & 1u))) {
+            /* U1307: also with "virtualize APIC accesses" (APIC-write emulation, Vol3C 32.4.3.2) */
             dc->base.is_jmp = DISAS_TOO_MANY;
         }
 #endif /* __Use_Original_Qemu (U1303) */

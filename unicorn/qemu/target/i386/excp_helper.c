@@ -940,6 +940,10 @@ do_check_protect_pse36:
     pte &= PG_ADDRESS_MASK & ~(page_size - 1);
     page_offset = addr & (page_size - 1);
     paddr = get_hphys(cs, pte + page_offset, is_write1, &prot);
+#if __Use_Original_Qemu != 1 /* ours (U1307) */
+    /* VMX "virtualize APIC accesses": the APIC-access page (vmx_helper.c, Vol3C 32.4) */
+    paddr = x86_vmx_apic_access(env, lam_va, paddr, size, is_write1, &prot);
+#endif /* __Use_Original_Qemu (U1307) */
 
     /* Even if 4MB pages, we map only one 4KB page in the cache to
        avoid filling it too fast */
