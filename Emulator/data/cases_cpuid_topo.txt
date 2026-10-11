@@ -1,0 +1,22 @@
+# U1204 (plan 1.J.34; sdeida report DX-5 / T-5): CPUID 0BH / 1FH with a sub-leaf the profile does not list, where Intel
+# SDE 10.13.1 returns 0. SDM 325462-092 Vol1 (093 identical) CPUID.0BH p. 21-39 / 21-40 and CPUID.1FH p. 21-71 / 21-72:
+# "If sub-leaf index "N" returns an invalid domain type in ECX[15:08] (00H), then all sub-leaves with an index greater
+# than "N" also return an invalid domain type. A sub-leaf returning an invalid domain always returns 0 in EAX and EBX.";
+# ECX[7:0] = "The input ECX sub-leaf index."; EDX = "The x2APIC ID of the current logical processor is always valid and
+# does not vary with the sub-leaf index in ECX." Expected-value cases with the gate profile (x2APIC ID: 0BH 5, 1FH 6,
+# the two leaves were captured on different vCPUs, see the profile's header):
+#   emu-alltest --cases Emulator\data\cases_cpuid_topo.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --expect-only
+cpuid | rax=0xB rcx=7 => rax=0 rbx=0 rcx=0x7 rdx=0x5
+cpuid | rax=0xB rcx=0xFF => rax=0 rbx=0 rcx=0xFF rdx=0x5
+cpuid | rax=0xB rcx=0x107 => rax=0 rbx=0 rcx=0x7 rdx=0x5
+cpuid | rax=0x1F rcx=4 => rax=0 rbx=0 rcx=0x4 rdx=0x6
+cpuid | rax=0x1F rcx=9 => rax=0 rbx=0 rcx=0x9 rdx=0x6
+# listed sub-leaves (the profile's rows): the first invalid one, and the valid SMT / core levels
+cpuid | rax=0xB rcx=2 => rax=0 rbx=0 rcx=0x2 rdx=0x5
+cpuid | rax=0x1F rcx=3 => rax=0 rbx=0 rcx=0x3 rdx=0x6
+cpuid | rax=0xB rcx=0 => rax=0 rbx=0x1 rcx=0x100 rdx=0x5
+cpuid | rax=0xB rcx=1 => rax=0x2 rbx=0x4 rcx=0x201 rdx=0x5
+# U1202: the profile path keeps U68: 40000000H is above the profile's highest basic leaf (20H) and returns leaf 20H
+# (all 0 in this VMware capture)
+cpuid | rax=0x40000000 rcx=0 => rax=0 rbx=0 rcx=0 rdx=0
+cpuid | rax=0x40000001 rcx=0 => rax=0 rbx=0 rcx=0 rdx=0

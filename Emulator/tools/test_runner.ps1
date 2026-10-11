@@ -416,6 +416,11 @@ Add-Exp 'cases_cpuid_hv_avx512' 'cases_cpuid_hv' 'xstate cpuid evex expect' @( '
 # (cpuid_xgetbv1_off.txt: the gate profile with CPUID.(0DH,1):EAX[2] = 0)
 Add-Exp 'cases_xcr' 'cases_xcr' 'xstate expect'
 Add-Exp 'cases_xcr_nox1' 'cases_xcr_nox1' 'xstate cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_xgetbv1_off.txt' ) )
+# U1204: the 15-byte instruction length limit, #GP(0) (T-3; the hardware lines are in the NON-gate file
+# cases_insn_len_hw.txt, checked by hand with --hw-repeat); CPUID 0BH / 1FH unlisted sub-leaves with the gate
+# profile (T-5)
+Add-Exp 'cases_insn_len' 'cases_insn_len' 'xstate evex expect' @( '--avx512' )
+Add-Exp 'cases_cpuid_topo' 'cases_cpuid_topo' 'xstate cpuid expect' @( '--cpuid', $Cpuid )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

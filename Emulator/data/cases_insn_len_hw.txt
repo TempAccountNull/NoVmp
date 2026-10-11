@@ -1,0 +1,17 @@
+# U1204 (plan 1.J.34; sdeida report DX-3 / T-3): the 15-byte instruction length limit. NOT a gate file (user decision
+# 2026-10-10): hardware lines, checked by hand with --hw-repeat (P-core / E-core attribution, AGENT_RULES):
+#   emu-alltest --cases Emulator\data\cases_insn_len_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --hw-repeat 20
+# SDM 325462-092 Vol2A 2.3.11 "The maximum length of an Intel 64 and IA-32 instruction remains 15 bytes." (p. 2-20) and Vol3A 7.15
+# "Interrupt 13-General Protection Exception (#GP)" p. 7-44: "Exceeding the instruction length limit of 15 bytes (this only can
+# occur when redundant prefixes are placed before an instruction)." Intel SDE 10.13.1 raises #UD instead (DX-3).
+# Measured 2026-10-10 (--hw-repeat 200 --hw-cpu all, VMware guest on the i5-13600K): every run of every line gave the
+# result Unicorn gives (#GP, Windows access violation at address -1, for the 16-byte lines; completion for the 15-byte
+# lines) on P-cores (159-188 runs per line) and E-cores (5-31 runs per line): hardware-validated, P- and E-core agree.
+# The expected-value form (with the #GP error code 0 and an EVEX instruction) is cases_insn_len.txt (gate).
+# 16 bytes (15 x 66H + NOP): #GP(0) (Windows: access violation at address -1)
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x90
+# 15 bytes (14 x 66H + NOP): executes
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x90
+# 16 bytes of a longer instruction (13 x 3EH + ADD EAX, 1 = 83 C0 01): #GP(0); 12 x 3EH (15 bytes): executes
+.byte 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x83, 0xc0, 0x01
+.byte 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x83, 0xc0, 0x01

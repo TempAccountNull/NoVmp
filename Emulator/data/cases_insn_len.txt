@@ -1,0 +1,14 @@
+# U1204 (plan 1.J.34; sdeida report DX-3 / T-3): the 15-byte instruction length limit, expected-value cases (EVEX with
+# --avx512; Intel SDE 10.13.1 raises #UD here). SDM 325462-092 Vol2A 2.3.11 "The maximum length of an Intel 64 and
+# IA-32 instruction remains 15 bytes." (p. 2-20); Vol3A 7.15 Interrupt 13 (#GP) p. 7-44: "Exceeding the instruction
+# length limit of 15 bytes (this only can occur when redundant prefixes are placed before an instruction)."; error
+# code p. 7-45: "If the fault condition was detected while loading a segment descriptor, ...; otherwise, the error
+# code is 0."
+#   emu-alltest --cases Emulator\data\cases_insn_len.txt --avx512 --expect-only
+# VADDPS zmm1, zmm2, [rsi+0] (EVEX 62 F1 6C 48 58 8E, disp32 0: 10 bytes) after six 3EH prefixes = 16 bytes: #GP(0)
+.byte 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x62, 0xf1, 0x6c, 0x48, 0x58, 0x8e, 0x00, 0x00, 0x00, 0x00 => #GP(0)
+# five 3EH = 15 bytes: executes (0 + 0 = 0, nothing changes)
+.byte 0x3e, 0x3e, 0x3e, 0x3e, 0x3e, 0x62, 0xf1, 0x6c, 0x48, 0x58, 0x8e, 0x00, 0x00, 0x00, 0x00 =>
+# legacy: 15 x 66H + NOP (16 bytes) #GP(0); 14 x 66H + NOP (15 bytes) executes
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x90 => #GP(0)
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x90 =>
