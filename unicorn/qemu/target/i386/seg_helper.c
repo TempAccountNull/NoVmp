@@ -2150,6 +2150,17 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     int has_error_code, new_stack;
     uint32_t e1, e2, e3, ss;
     target_ulong old_eip, esp, offset;
+#if __Use_Original_Qemu != 1 /* ours (U1401) */
+    /*
+     * NoVmp (ledger U1401): the EXT bit (bit 0) of the error codes this delivery raises. SDM
+     * 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation (p. 3-469): "if that event is a software
+     * interrupt (INT n, INT3, or INTO), EXT is 0; otherwise (including INT1), EXT is 1"; Vol3A
+     * 7.13 (p. 7-19): EXT "indicates that the exception occurred during delivery of an event
+     * external to the program". is_int is 1 exactly for INT n / INT3 / INTO (INT1 is raised as
+     * a #DB exception, helper_icebp). Stock QEMU never set it.
+     */
+    int ext = !is_int;
+#endif /* __Use_Original_Qemu (U1401) */
 
     has_error_code = 0;
     if (!is_int && !is_hw) {
@@ -2165,8 +2176,8 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     if (intno * 16 + 15 > dt->limit) {
 #if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0D_GPF, intno * 16 + 2);
-#else /* ours (U1400) */
-        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, 0));
+#else /* ours (U1400, EXT U1401) */
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, ext));
 #endif /* __Use_Original_Qemu (U1400) */
     }
     ptr = dt->base + intno * 16;
@@ -2182,8 +2193,8 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     default:
 #if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0D_GPF, intno * 16 + 2);
-#else /* ours (U1400) */
-        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, 0));
+#else /* ours (U1400, EXT U1401) */
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, ext));
 #endif /* __Use_Original_Qemu (U1400) */
         break;
     }
@@ -2202,8 +2213,8 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     if (!(e2 & DESC_P_MASK)) {
 #if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0B_NOSEG, intno * 16 + 2);
-#else /* ours (U1400) */
-        raise_exception_err(env, EXCP0B_NOSEG, idt_vector_error_code(intno, 0));
+#else /* ours (U1400, EXT U1401) */
+        raise_exception_err(env, EXCP0B_NOSEG, idt_vector_error_code(intno, ext));
 #endif /* __Use_Original_Qemu (U1400) */
     }
     selector = e1 >> 16;
