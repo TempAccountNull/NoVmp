@@ -2352,6 +2352,17 @@ typedef struct CPUX86State {
     uint8_t sgx_xlate;              /* x86_sgx_translate: a translation-only page walk */
     uint64_t sgx_xlate_pa;
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* NoVmp (ledger U1263): enclave entry / exit state (Vol3D Table 41-4, EENTER, AEX 40.4.1) */
+#define SGX_XSAVE_PAGES 8
+    uint64_t sgx_xsave_pa[SGX_XSAVE_PAGES]; /* CR_XSAVE_PAGE_n */
+    uint8_t sgx_xsave_n;            /* number of CR_XSAVE_PAGE_n */
+    uint64_t sgx_save_ucet;         /* CR_SAVE_IA32_U_CET */
+    uint64_t sgx_save_ssp;          /* CR_SAVE_SSP */
+    uint8_t sgx_enc_event;          /* FRED: the event being delivered is incident to enclave mode */
+    uint8_t sgx_int_fault;          /* the #BP / #DB being raised is INT3 / INT1 inside an enclave */
+    uint8_t sgx_implicit;           /* ERESUME's XRSTOR: TLB fills of CR_XSAVE_PAGE_n are implicit */
+#endif /* __Use_Original_Qemu (U1263) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -2770,6 +2781,23 @@ void x86_sgx_release(CPUX86State *env);
 void tlb_set_page_sgx_abort(CPUState *cpu, target_ulong vaddr, hwaddr paddr, MemTxAttrs attrs,
                             int prot, int mmu_idx, void *host, uint64_t ram);
 #endif /* __Use_Original_Qemu (U1262) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/* sgx_model.c: asynchronous enclave exit; cpu-exec.c / seg_helper.c / smm_helper.c call it */
+target_ulong x86_sgx_aex(CPUX86State *env, int vector, int is_int, int is_hw, int error_code,
+                         target_ulong next_eip);
+void x86_sgx_aex_exception(CPUX86State *env, int vector, bool ext, bool delivered);
+/* bpt_helper.c: the breakpoints suppressed inside an enclave (43.3.1) */
+void x86_sgx_bp_update(CPUX86State *env);
+/* fpu_helper.c: the SSA frame's XSAVE area and the synthetic extended state (40.3, 40.4) */
+void x86_sgx_xsave(CPUX86State *env, target_ulong ptr, uint64_t xfrm, bool m64);
+int x86_sgx_xrstor_fault(CPUX86State *env, uint64_t xfrm, uint64_t xstate_bv, uint64_t xcomp_bv,
+                         uint64_t reserve0, uint32_t mxcsr);
+void x86_sgx_xrstor(CPUX86State *env, target_ulong ptr, uint64_t xfrm, bool m64);
+void x86_sgx_xinit(CPUX86State *env, uint64_t xfrm, bool mf, bool xm, bool m64);
+/* cputlb.c: a TLB entry for an implicit access through a cached physical address */
+void tlb_set_page_sgx_implicit(CPUState *cpu, target_ulong vaddr, hwaddr paddr, MemTxAttrs attrs,
+                               int mmu_idx);
+#endif /* __Use_Original_Qemu (U1263) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
 /* apic_model.c: the APIC bus between engines (UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID) */
 int x86_apic_join(struct uc_struct *uc, struct uc_struct *peer);  /* a uc_err */

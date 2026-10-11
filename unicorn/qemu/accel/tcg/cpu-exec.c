@@ -337,6 +337,19 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
 
     // printf(">> exception index = %u\n", cpu->exception_index); qq
 
+#if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U1263) */
+    /*
+     * NoVmp (ledger U1263): an exception (or an external interrupt on its way to UC_HOOK_INTR) in
+     * Intel SGX enclave mode exits the enclave before it is delivered or reported (SDM 092 Vol3D
+     * 40.4: "These operations occur just before the normal interrupt or exception processing
+     * occurs"); the hooks and the API then see the synthetic state with RIP = AEP.
+     */
+    if (cpu->exception_index >= 0 && cpu->exception_index < EXCP_INTERRUPT) {
+        x86_sgx_aex_exception(cpu->env_ptr, cpu->exception_index, uc->x86_ext_hook,
+                              !uc->x86_ext_hook &&
+                              (uc->x86_event_delivery & UC_X86_DELIVER_EXC_IDT));
+    }
+#endif /* __Use_Original_Qemu (U1263) */
 #if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U963) */
     {
         /*

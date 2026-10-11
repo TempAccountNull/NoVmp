@@ -1366,7 +1366,9 @@ static void cet2_event(CPUX86State *env, bool inner, int cpl, int dpl, uint32_t 
  *    flat descriptors, DPL 0, CS.L = 1), GS.base <-> IA32_KERNEL_GS_BASE, IA32_PL3_SSP :=
  *    LA_adjust(SSP) with user shadow stacks; RFLAGS := 2; IA32_S_CET.TRACKER / SUPPRESS := 0 with
  *    supervisor IBT; the interrupt shadow ends.
- * Not modelled: the enclave bit (56, no SGX), NMI-source reporting, VMX (event injection, nested
+ * U1263: the enclave bit (56) with the SGX model (env->sgx_enc_event, set by the AEX of
+ * sgx_model.c and kept for exceptions during the delivery). Not modelled: NMI-source reporting,
+ * VMX (event injection, nested
  * exception support), LASS (not in the model), RF for traps after a partial REP iteration, pending
  * debug traps (none are kept). NMI blocking is set by the caller (x86_cpu_exec_interrupt).
  */
@@ -1467,6 +1469,11 @@ static void x86_fred_deliver(CPUX86State *env, int vector, int type, uint32_t er
     if (type == FRED_T_NMI) {
         ass |= 1ull << 18;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    if (env->sgx_enc_event) {
+        ass |= 1ull << 56;      /* "the event was incident to enclave execution" (U1263) */
+    }
+#endif /* __Use_Original_Qemu (U1263) */
     info = (vector & 0xff) | ((uint64_t)type << 16) |
            ((env->hflags & HF_CS64_MASK) ? 1ull << 25 : 0) | ((nested && !df) ? 1ull << 26 : 0) |
            (fred_soft_type(type) ? (uint64_t)(len & 0xf) << 28 : 0);
@@ -2637,6 +2644,12 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
     }
 #endif
 
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* an event in enclave mode exits the enclave first (SDM 092 Vol3D 40.4, sgx_model.c) */
+    if (env->sgx_enclave_mode) {
+        next_eip = x86_sgx_aex(env, intno, is_int, is_hw, error_code, next_eip);
+    }
+#endif /* __Use_Original_Qemu (U1263) */
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
     /* CR4.FRED = 1: FRED event delivery replaces IDT event delivery (SDM 092 Vol3A 8.3) */
     if (x86_fred_enabled(env)) {
@@ -2691,12 +2704,18 @@ void x86_cpu_do_interrupt(CPUState *cs)
                          env->exception_next_eip, 0);
         /* successfully delivered */
         env->old_exception = -1;
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        env->sgx_enc_event = 0;
+#endif /* __Use_Original_Qemu (U1263) */
     }
 }
 
 void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw)
 {
     do_interrupt_all(env_archcpu(env), intno, 0, 0, 0, is_hw);
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    env->sgx_enc_event = 0;
+#endif /* __Use_Original_Qemu (U1263) */
 }
 
 bool x86_cpu_exec_interrupt(CPUState *cs, int interrupt_request)

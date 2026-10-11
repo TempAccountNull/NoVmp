@@ -51,16 +51,16 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Structure | Source | Status |
 |---|---|---|
-| SECS (Table 38-2), ATTRIBUTES (Table 38-3), MISCSELECT (Table 38-4) | 3D 38.7 p.38-4..38-6 | plan |
-| TCS (Table 38-6), TCS.FLAGS (Table 38-7) | 3D 38.8 p.38-7 | plan |
-| SSA frame: XSAVE / pad / MISC / GPRSGX (Tables 38-8, 38-9), EXITINFO (Table 38-10), vectors (Table 38-11), MISC EXINFO (Tables 38-12, 38-13) | 3D 38.9 p.38-8..38-11 | plan |
-| PAGEINFO (Table 38-15), SECINFO (Tables 38-16..38-18) | 3D 38.11-38.12 p.38-12..38-13 | plan |
+| SECS (Table 38-2), ATTRIBUTES (Table 38-3), MISCSELECT (Table 38-4) | 3D 38.7 p.38-4..38-6 | impl (U1262) |
+| TCS (Table 38-6), TCS.FLAGS (Table 38-7) | 3D 38.8 p.38-7 | impl (U1262 / U1263) |
+| SSA frame: XSAVE / pad / MISC / GPRSGX (Tables 38-8, 38-9), EXITINFO (Table 38-10), vectors (Table 38-11), MISC EXINFO (Tables 38-12, 38-13) | 3D 38.9 p.38-8..38-11 | impl (U1263) |
+| PAGEINFO (Table 38-15), SECINFO (Tables 38-16..38-18) | 3D 38.11-38.12 p.38-12..38-13 | impl (U1262) |
 | PCMD (Table 38-19) | 3D 38.13 p.38-13 | plan |
-| SIGSTRUCT (Table 38-20), RSA-3072 e = 3, EMSA-PKCS1-v1.5 SHA-256, q1 / q2 | 3D 38.14 p.38-13..38-14 | plan |
-| EINITTOKEN (Table 38-21) | 3D 38.15 p.38-15 | plan |
+| SIGSTRUCT (Table 38-20), RSA-3072 e = 3, EMSA-PKCS1-v1.5 SHA-256, q1 / q2 | 3D 38.14 p.38-13..38-14 | impl (U1262) |
+| EINITTOKEN (Table 38-21) | 3D 38.15 p.38-15 | impl (U1262) |
 | REPORT (Table 38-22), REPORTDATA, TARGETINFO (Table 38-23) | 3D 38.16-38.17 p.38-15..38-16 | plan |
 | KEYREQUEST (Table 38-24), KEYNAME (Table 38-25), KEYPOLICY (Table 38-26) | 3D 38.18 p.38-17..38-18 | plan |
-| Version Array (Table 38-27) | 3D 38.19 p.38-18 | plan |
+| Version Array (Table 38-27) | 3D 38.19 p.38-18 | impl (U1262: EPA; slots with EWB / ELD) |
 | CET state save frame (Table 38-14), CET_ATTRIBUTES (Table 38-5), PT_SS_FIRST / PT_SS_REST | 3D 37.8 p.37-5..37-6, 38.10 p.38-11 | no: CPUID.12H.1:EAX[6] (ATTRIBUTES.CET) is not enumerated, so these fields are reserved |
 | KSS: ATTRIBUTES.KSS, CONFIGID / CONFIGSVN / ISVFAMILYID / ISVEXTPRODID, KEYPOLICY bits 5:2 | 3D 39.4.1.3 p.39-6, 38.18.2 | no: ATTRIBUTES.KSS[7] is not enumerated (the reserved-field checks of ECREATE / EINIT / EGETKEY apply) |
 | AEX-Notify: ATTRIBUTES.AEXNOTIFY[10], TCS.FLAGS.AEXNOTIFY, SSA.GPRSGX.AEXNOTIFY, EDECCSSA | 3D 39.2.3.2 p.39-5, EDECCSSA p.41-83 | no: not enumerated (12H.0:EAX[11] = 0, 12H.1 bit 10 = 0) |
@@ -69,16 +69,16 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Requirement | Source | Code | Status |
 |---|---|---|---|
-| Direct enclave access = enclave mode and linear address in ELRANGE: must map to an EPC page whose EPCM entry is valid, of the current enclave, at that linear address, PT_REG, not BLOCKED / PENDING / MODIFIED, R / W / X as EPCM allows; else #PF with PFEC.SGX[15] (P = 1, RSVD = PK = 0) | 3D 38.3 p.38-1..38-2, 38.5 p.38-2..38-3; 3A 5.7 Figure 5-12 p.5-37..5-38, 7.15 p.7-47..7-49 | `excp_helper.c` handle_mmu_fault -> `sgx_model.c` | plan |
-| Code fetch from enclave mode outside ELRANGE: #GP(0); a fetch split across ELRANGE: #GP | 3D 38.3 p.38-1, 38.5.2 p.38-2..38-3 | same | plan |
+| Direct enclave access = enclave mode and linear address in ELRANGE: must map to an EPC page whose EPCM entry is valid, of the current enclave, at that linear address, PT_REG, not BLOCKED / PENDING / MODIFIED, R / W / X as EPCM allows; else #PF with PFEC.SGX[15] (P = 1, RSVD = PK = 0) | 3D 38.3 p.38-1..38-2, 38.5 p.38-2..38-3; 3A 5.7 Figure 5-12 p.5-37..5-38, 7.15 p.7-47..7-49 | `excp_helper.c` handle_mmu_fault -> `sgx_model.c` | impl (U1263) |
+| Code fetch from enclave mode outside ELRANGE: #GP(0); a fetch split across ELRANGE: #GP | 3D 38.3 p.38-1, 38.5.2 p.38-2..38-3 | same | impl (U1263; a fetch split across ELRANGE faults on the page outside) |
 | Non-enclave access to EPC (outside enclave mode, or from enclave mode outside ELRANGE): "altered" - the SDM gives reads of all ones and dropped writes as an example ("abort page") | 3D 38.1 p.38-1, 38.3, 38.5.1 p.38-2 | `accel/tcg/cputlb.c` (abort-page TLB entry), `excp_helper.c` | impl (U1262: the abort page) |
-| CR2 / #PF event data bits 11:0 cleared for a #PF during enclave-mode execution | 3A 5.7 p.5-37, 7.15 p.7-49; 3D Table 40-1 p.40-3 | AEX | plan |
-| Enclave entry / exit flush linear-address translations | 3D 39.2.1 p.39-4, 42.12 p.42-11 | `sgx_model.c` (tlb_flush) | plan |
-| Instructions illegal inside an enclave (#UD): CPUID, GETSEC, RDPMC, SGDT, SIDT, SLDT, STR, VMCALL, VMFUNC, IN/INS/OUT/OUTS, far CALL/JMP/RET, INT n, INTO, IRET, LDS/LES/LFS/LGS/LSS, MOV to DS/ES/SS/FS/GS, POP DS/ES/SS/FS/GS, SYSCALL, SYSENTER, SMSW; EENTER / ERESUME #GP | 3D 39.6.1 Table 39-1 p.39-14; 42.3.4 p.42-2; 42.11.2 p.42-10 | `translate.c` (check emitted only when the model enumerates SGX) | plan |
+| CR2 / #PF event data bits 11:0 cleared for a #PF during enclave-mode execution | 3A 5.7 p.5-37, 7.15 p.7-49; 3D Table 40-1 p.40-3 | AEX | impl (U1263: AEX; FRED event data = CR2) |
+| Enclave entry / exit flush linear-address translations | 3D 39.2.1 p.39-4, 42.12 p.42-11 | `sgx_model.c` (tlb_flush) | impl (U1263) |
+| Instructions illegal inside an enclave (#UD): CPUID, GETSEC, RDPMC, SGDT, SIDT, SLDT, STR, VMCALL, VMFUNC, IN/INS/OUT/OUTS, far CALL/JMP/RET, INT n, INTO, IRET, LDS/LES/LFS/LGS/LSS, MOV to DS/ES/SS/FS/GS, POP DS/ES/SS/FS/GS, SYSCALL, SYSENTER, SMSW; EENTER / ERESUME #GP | 3D 39.6.1 Table 39-1 p.39-14; 42.3.4 p.42-2; 42.11.2 p.42-10 | `translate.c` (check emitted only when the model enumerates SGX) | impl (U1263) |
 | RDTSC / RDTSCP legal with SGX2 | 3D 39.6.1 p.39-15 | - | impl (nothing to do: SGX2 is enumerated) |
-| INT1 / INT3 inside an enclave: fault-class; opt-out #UD, opt-in #DB / #BP (no DPL check) | 3D 39.6.4 p.39-15, 43.4.1 p.43-4 | `translate.c`, `sgx_model.c` | plan |
-| POPF cannot set TF after an opt-out entry | 3D 43.2.5 p.43-3 | `translate.c` | plan |
-| Breakpoint suppression (opt-out: code breakpoints, data breakpoints in ELRANGE) | 3D 43.3 p.43-3..43-4 | `bpt_helper.c` | plan |
+| INT1 / INT3 inside an enclave: fault-class; opt-out #UD, opt-in #DB / #BP (no DPL check) | 3D 39.6.4 p.39-15, 43.4.1 p.43-4 | `translate.c`, `sgx_model.c` | impl (U1263) |
+| POPF cannot set TF after an opt-out entry | 3D 43.2.5 p.43-3 | `translate.c` | impl (U1263) |
+| Breakpoint suppression (opt-out: code breakpoints, data breakpoints in ELRANGE) | 3D 43.3 p.43-3..43-4 | `bpt_helper.c` | impl (U1263; details docs/quirks.md) |
 | Performance monitoring / LBR / PEBS / Intel PT suppression | 3D 43.5-43.6 p.43-5..43-9 | - | no: the model has no LBR / PEBS / PT and no performance counters that count |
 
 ### 1.4 ENCLS leaves (3D 41.3)
@@ -104,16 +104,16 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Leaf | Source | Status |
 |---|---|---|
-| ENCLU common checks (#UD as ENCLS but CPL < 3; #NM CR0.TS; #GP: FEATURE_CONTROL, invalid leaf, CR0.PG / CR0.NE = 0, 16-bit CS, EENTER/ERESUME inside / others outside an enclave) | ENCLU p.41-10..41-12 | plan |
+| ENCLU common checks (#UD as ENCLS but CPL < 3; #NM CR0.TS; #GP: FEATURE_CONTROL, invalid leaf, CR0.PG / CR0.NE = 0, 16-bit CS, EENTER/ERESUME inside / others outside an enclave) | ENCLU p.41-10..41-12 | impl (U1263) |
 | EREPORT (0): REPORT, report key derivation for TARGETINFO, CMAC over 384 bytes | p.41-112..41-116 | plan |
 | EGETKEY (1): KEYREQUEST checks, Table 41-62 dependencies, derivekey | p.41-99..41-108 | plan; derivekey and the root keys **ph** |
-| EENTER (2) | p.41-87..41-95 | plan |
-| ERESUME (3) | p.41-117..41-128 | plan |
-| EEXIT (4) | p.41-96..41-98 | plan |
+| EENTER (2) | p.41-87..41-95 | impl (U1263) |
+| ERESUME (3) | p.41-117..41-128 | impl (U1263; TMP_NOTIFY = 0) |
+| EEXIT (4) | p.41-96..41-98 | impl (U1263) |
 | EACCEPT (5), EMODPE (6), EACCEPTCOPY (7) (SGX2) | p.41-74..41-82, 41-109..41-111 | plan |
 | EVERIFYREPORT2 (8) | p.41-129..41-130 | no: 12H.0:EAX[7] not enumerated (needs TDX SEAMREPORT / CR_REPORT_MAC_KEY) |
 | EDECCSSA (9) | p.41-83..41-86 | no (AEX-Notify not enumerated) |
-| AEX: SSA save (GPRSGX, XSAVE with XFRM, EXITINFO, MISC.EXINFO), synthetic state (Table 40-1), FS/GS / XCR0 / TF restore, CSSA++, TCS inactive, flush | 3D 40.1-40.4 p.40-1..40-8; 42.6 p.42-4; 42.7.5 p.42-8 | plan |
+| AEX: SSA save (GPRSGX, XSAVE with XFRM, EXITINFO, MISC.EXINFO), synthetic state (Table 40-1), FS/GS / XCR0 / TF restore, CSSA++, TCS inactive, flush | 3D 40.1-40.4 p.40-1..40-8; 42.6 p.42-4; 42.7.5 p.42-8 | impl (U1263) |
 
 ### 1.6 Cryptography
 
@@ -210,7 +210,49 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
   MRSIGNER = IA32_SGXLEPUBKEYHASH; VALID = 1: DEBUG, reserved space, CPUSVN, the CMAC of bytes
   0-191 with the derived EINITTOKEN key, MRENCLAVE / MRSIGNER / ATTRIBUTES), commit.
 
-### 2.5 Validation (U1262)
+### 2.5 Enclave execution (U1263)
+- Decode: NP 0F 01 D7 routes to `helper_enclu` only when the model enumerates SGX; LOCK / 66 / F2 /
+  F3 #UD. The helper makes the Operation checks of p. 41-10/41-11 and sets RIP for every leaf; the
+  TB ends after it (no generic single-step / RF handling): RF is cleared except after ERESUME
+  (which loads it from the SSA), the interrupt shadow ends, a single-step #DB pended by an opt-in
+  EENTER or by EEXIT (TF = 1 after the exit) is raised by the helper (`helper_single_step`). The
+  CET rule of the Operation (ERESUME may run with the tracker in WAIT_FOR_ENDBRANCH) is the TB-start
+  IBT check with kind 4 (`translate.c` ibt_kind, `misc_helper.c` helper_ibt_check).
+- EENTER / ERESUME: the checks in the order of the Operation sections (`sgx_entry_checks`,
+  `sgx_ssa_checks`): page walks of the TCS (EENTER: read, ERESUME: read/write, per their Memory
+  Parameter tables), the SSA pages and the GPR area (write) with SGX-induced #PF for EPCM errors;
+  CR_XSAVE_PAGE_n / CR_GPR_PA are cached in the CPU state. Commit: enclave mode, CR_ACTIVE_SECS,
+  ELRANGE, CR_TCS_PA / LA, TCS.AEP, TCS busy, saved FS / GS, FS / GS from the TCS (selector 0BH,
+  descriptor bits from DS), XCR0 := XFRM with CR4.OSXSAVE, DBGOPTIN, TF save / clear and
+  breakpoint suppression for an opt-out entry, the CET save (CPUID.12H.1:EAX[6] = 0: the enclave
+  runs with IA32_U_CET = 0 and SSP = 0), Flush_linear_context (`tlb_flush`, which also clears the
+  TB jump cache). ERESUME first checks the XRSTOR fault conditions of the SSA header (#GP(0), or
+  the XFD #NM) and restores the XSAVE state (standard form, REX.W layout in 64-bit mode), then the
+  GPRs and RFLAGS of its Operation, and pops the SSA frame.
+- AEX (`x86_sgx_aex`): called before the delivery or report of every event in enclave mode -
+  exceptions in `cpu_handle_exception` (IDT / FRED delivery and the Unicorn hooks alike), hardware
+  interrupts / NMIs in `do_interrupt_all`, SMIs in `do_smm_enter` (SMRAM 7EE0H bit 1), INIT in
+  `do_cpu_init`. It saves GPRs / RFLAGS / RIP / FS / GS bases (4-byte fields outside 64-bit mode),
+  the XSAVE state of XFRM (through CR_XSAVE_PAGE_n), EXITINFO / EXINFO, loads the synthetic state
+  of Table 40-1 (x87 / SSE INIT with the table's FCW / FSW / MXCSR, the XFRM components 2-63 INIT
+  with CR4.OSXSAVE), increments CSSA, restores FS / GS, XCR0, TF (opt-out), CET, leaves enclave
+  mode, marks the TCS available and flushes; RIP := AEP. CR2 bits 11:0 are cleared for a #PF
+  (also in the UC_CTL_X86_EXCEPTION record). FRED event delivery sets bit 56 of the augmented SS
+  for the event and exceptions during its delivery.
+- Access control (`x86_sgx_access` from handle_mmu_fault after the paging checks): enclave mode and
+  ELRANGE -> the EPCM checks of 38.3 with the TLB entry's rights reduced to EPCM R / W / X; a fetch
+  outside ELRANGE #GP(0); other accesses to EPC pages the abort page.
+- Inside an enclave (`translate.c` sgx_enclave_kind, emitted at CPL 3 when SGX is enumerated, the
+  helper checks enclave mode): Table 39-1 instructions #UD; INT3 / INT1 fault-class (#UD opt-out,
+  #BP / #DB opt-in); POPF clears TF after an opt-out entry. Instruction breakpoints are not
+  inserted while suppressed (EENTER / ERESUME / EEXIT / AEX re-evaluate them); suppressed matches
+  set no DR6 bit (`bpt_helper.c`).
+- Tests (`test_x86_sgx_eenter_eexit`, `_aex_eresume`, `_enclave_access`, `_enclave_debug`): the
+  ref_sgx.py enclave (64-bit, XFRM 3, CR4.OSXSAVE = 0) entered at CPL 3. Not covered by unit tests:
+  32-bit enclaves, CR4.OSXSAVE = 1 with extended XFRM components, FRED delivery of an AEX event,
+  SMI / INIT in enclave mode, CET-enabled applications.
+
+### 2.6 Validation (U1262)
 - `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
   AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
   generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over
@@ -238,6 +280,12 @@ Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
 - SIGSTRUCT "Each of the 8 HASH dwords is stored in little-endian order": the model uses the FIPS
   180-4 digest byte string for MRENCLAVE / MRSIGNER / ENCLAVEHASH.
 - SGX_TCS_LIMIT of EDBGRD: the model uses 88.
+- ERESUME CR_SAVE_TF of an opt-out entry: the pseudocode clears TF before saving it; the model
+  saves the TF the application had (43.2.3 / 43.2.4).
+- AEX: the pseudocode writes EXINFO also without MISCSELECT[0]; the model writes it only with
+  MISCSELECT[0] = 1.
+- Which fault an enclave access gets when an ELRANGE address maps outside the EPC (38.1 "a fault
+  is generated"): the model raises the SGX-induced #PF.
 - The key derivation function and the platform keys (root key, CR_SEAL_FUSES, CR_SGXOWNEREPOCH,
   CR_CPUSVN, CR_REPORT_KEYID, CR_BASE_PK, Intel's LE signer hash): model placeholders - does the
   user have an Intel document that specifies any of them?

@@ -906,6 +906,12 @@ do_check_protect_pse36:
             return 0;
         case -1:
             return 1;
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        case 2:
+            /* an implicit access through CR_XSAVE_PAGE_n (sgx_model.c, U1263) */
+            tlb_set_page_sgx_implicit(cs, vaddr, paddr, cpu_get_mem_attrs(env), mmu_idx);
+            return 0;
+#endif /* __Use_Original_Qemu (U1263) */
         default:
             break;
         }

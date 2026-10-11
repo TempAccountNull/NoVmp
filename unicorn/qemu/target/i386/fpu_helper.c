@@ -6215,6 +6215,137 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
 #endif /* __Use_Original_Qemu (U612) */
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/*
+ * NoVmp (ledger U1263): the XSAVE area of an Intel SGX SSA frame (sgx_model.c; SDM 092 Vol3D 40.4
+ * p. 40-4: "The state of those extended features specified by SECS.ATTRIBUTES.XFRM are stored into
+ * the XSAVE area of the current SSA frame. The layout of the x87 and XMM portions ... the same
+ * format (32-bit) that XSAVE/FXSAVE uses ... the same format (64-bit) that XSAVE/FXSAVE uses with
+ * these values when REX.W = 1"; ERESUME p. 41-124 "XRSTOR(TMP_MODE64, SECS.ATTRIBUTES.XFRM,
+ * CR_XSAVE_PAGE_n)"). The standard form with RFBM = XFRM also when CR4.OSXSAVE = 0 (XFRM is 3
+ * then, EENTER / ERESUME check it); the caller maps the frame through tlb_set_page_sgx_implicit,
+ * so no access faults, and checked the XRSTOR fault conditions with x86_sgx_xrstor_fault.
+ */
+static void sgx_xstate_enter(CPUX86State *env, uint64_t xfrm, bool m64, uint64_t save[3])
+{
+    save[0] = env->xcr0;
+    save[1] = env->cr[4];
+    save[2] = env->x87_fx64;
+    env->xcr0 = xfrm;
+    env->cr[4] |= CR4_OSXSAVE_MASK;
+    env->x87_fx64 = m64;
+}
+
+static void sgx_xstate_leave(CPUX86State *env, const uint64_t save[3])
+{
+    env->xcr0 = save[0];
+    env->cr[4] = save[1];
+    env->x87_fx64 = (uint8_t)save[2];
+}
+
+/* AEX: "SSA.XSAVE.i := XSAVE_STATE_i" for each i of XFRM (XSTATE_BV from XINUSE as XSAVE) */
+void x86_sgx_xsave(CPUX86State *env, target_ulong ptr, uint64_t xfrm, bool m64)
+{
+    uint64_t save[3];
+
+    sgx_xstate_enter(env, xfrm, m64, save);
+    do_xsave(env, ptr, xfrm, get_xinuse(env), -1, 0);
+    sgx_xstate_leave(env, save);
+}
+
+/*
+ * The fault an XRSTOR of the SSA frame raises, from its header and MXCSR (do_xrstor's order with
+ * XCR0 = XFRM: XSTATE_BV within XFRM, bytes 23:8 of the header 0 - ERESUME: "Offsets 520-535 of
+ * the XSAVE area not 0", "The bit vector stored at offset 512 of the XSAVE area must be a subset
+ * of SECS.ATTRIBUTES.XFRM" - MXCSR reserved bits, extended feature disable #NM): an exception
+ * number (EXCP07_PREX with IA32_XFD_ERR loaded as XRSTOR does), or -1 for none.
+ */
+int x86_sgx_xrstor_fault(CPUX86State *env, uint64_t xfrm, uint64_t xstate_bv, uint64_t xcomp_bv,
+                         uint64_t reserve0, uint32_t mxcsr)
+{
+    uint64_t xfd;
+
+    if ((xstate_bv & ~xfrm) || xcomp_bv || reserve0) {
+        return EXCP0D_GPF;
+    }
+    if ((xfrm & (XSTATE_SSE_MASK | XSTATE_YMM_MASK)) && (mxcsr & ~MXCSR_MASK)) {
+        return EXCP0D_GPF;
+    }
+    xfd = xfrm & xstate_bv & x86_cpu_xfd_armed(env);
+    if (xfd) {
+        env->msr_xfd_err = xfd;
+        env->fred_evdata_next = xfd;
+        return EXCP07_PREX;
+    }
+    return -1;
+}
+
+void x86_sgx_xrstor(CPUX86State *env, target_ulong ptr, uint64_t xfrm, bool m64)
+{
+    uint64_t save[3];
+
+    sgx_xstate_enter(env, xfrm, m64, save);
+    do_xrstor(env, ptr, xfrm, 0);
+    sgx_xstate_leave(env, save);
+}
+
+/*
+ * The synthetic x87 / SSE / extended state of an AEX (Vol3D Table 40-1, 40.3.2): x87 and SSE as
+ * an XRSTOR with RFBM[1:0] = 11b and XSTATE_BV[1:0] = 00b loads them, then FCW 037EH / FSW 8081H on
+ * #MF (else 037FH / 0), MXCSR 1F01H on #XM (else 1FB0H); with CR4.OSXSAVE = 1 the components
+ * 2-63 of XFRM in their INIT state ("When the AEX occurs in 32-bit mode, those features that do not
+ * exist in 32-bit mode are unchanged": the clear helpers keep XMM8-15 / ZMM16-31 there, and the
+ * APX registers are kept).
+ */
+void x86_sgx_xinit(CPUX86State *env, uint64_t xfrm, bool mf, bool xm, bool m64)
+{
+    do_fninit(env);
+    memset(env->fpregs, 0, sizeof(env->fpregs));
+    do_clear_sse(env);
+    if (mf) {
+        cpu_set_fpuc(env, 0x37e);
+        env->fpus = 0x8081;
+    }
+    cpu_set_mxcsr(env, xm ? 0x1f01 : 0x1fb0);
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK)) {
+        return;
+    }
+    if (xfrm & XSTATE_YMM_MASK) {
+        do_clear_ymmh(env);
+    }
+    if (xfrm & XSTATE_BNDREGS_MASK) {
+        memset(env->bnd_regs, 0, sizeof(env->bnd_regs));
+        env->hflags &= ~HF_MPX_IU_MASK;
+    }
+    if (xfrm & XSTATE_BNDCSR_MASK) {
+        memset(&env->bndcs_regs, 0, sizeof(env->bndcs_regs));
+        cpu_sync_bndcs_hflags(env);
+    }
+    if (xfrm & XSTATE_OPMASK_MASK) {
+        do_clear_opmask(env);
+    }
+    if (xfrm & XSTATE_ZMM_Hi256_MASK) {
+        do_clear_zmm_hi256(env);
+    }
+    if (xfrm & XSTATE_Hi16_ZMM_MASK) {
+        do_clear_hi16_zmm(env);
+    }
+    if ((xfrm & XSTATE_PKRU_MASK) && env->pkru) {
+        env->pkru = 0;
+        tlb_flush(env_cpu(env));
+    }
+    if (xfrm & XSTATE_XTILE_CFG_MASK) {
+        do_clear_tilecfg(env);
+    }
+    if (xfrm & XSTATE_XTILE_DATA_MASK) {
+        do_clear_tiledata(env);
+    }
+    if ((xfrm & XSTATE_APX_MASK) && m64) {
+        do_clear_apx(env);
+    }
+}
+#endif /* __Use_Original_Qemu (U1263) */
+
 #undef XO
 
 void helper_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm)

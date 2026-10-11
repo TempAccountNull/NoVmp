@@ -3219,6 +3219,22 @@ void helper_ibt_check(CPUX86State *env, target_ulong la, uint32_t kind)
     if (!(*cet & CET_TRACKER) || kind == 2) {
         return;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /*
+     * NoVmp (ledger U1263): ENCLU (kind 4), SDM 092 Vol3D p. 41-10: "IF EndbranchEnabledAndNot-
+     * Suppressed(CPL) and TRACKER = WAIT_FOR_ENDBRANCH and (EAX != ERESUME or CR0.TS or (in SMM)
+     * or (CPUID.12H.00H:EAX.SGX1 = 0) or (CPL < 3)) THEN Handle CET State machine violation";
+     * ERESUME otherwise runs with the tracker still waiting (the state it saves for the exit).
+     */
+    if (kind == 4) {
+        if ((uint32_t)env->regs[R_EAX] == 3 && !(env->cr[0] & CR0_TS_MASK) &&
+            !(env->hflags & HF_SMM_MASK) && x86_sgx_enumerated(env) &&
+            (env->hflags & HF_CPL_MASK) == 3) {
+            return;
+        }
+        kind = 0;
+    }
+#endif /* __Use_Original_Qemu (U1263) */
 #if __Use_Original_Qemu != 1 /* ours (U758) */
     /* F3 REX2 1E FA (kind 3, U758): ENDBR64 when REX2 is usable (CR4.OSXSAVE, XCR0[APX_F]) */
     if (kind == 3) {

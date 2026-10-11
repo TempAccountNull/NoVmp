@@ -639,6 +639,8 @@ typedef struct SgxOp {
     uintptr_t ra;
     bool m64;                   /* IA32_EFER.LMA = 1 && CS.L = 1 */
     uint32_t flags;             /* the arithmetic flags the leaf ends with (CC_SRC) */
+    uint64_t next_eip;          /* ENCLU (U1263): the RIP of the next instruction */
+    bool single_step;           /* ENCLU (U1263): a single-step #DB is pending after the leaf */
 } SgxOp;
 
 static AddressSpace *sgx_as(CPUX86State *env)
@@ -1642,6 +1644,8 @@ void helper_encls(CPUX86State *env)
     o.ra = GETPC();
     o.m64 = (env->hflags & HF_CS64_MASK) != 0;      /* IA32_EFER.LMA = 1 && CS.L = 1 */
     o.flags = cpu_cc_compute_all(env, CC_OP) & (CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
+    o.next_eip = 0;
+    o.single_step = false;
     if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK) || (env->hflags & HF_SMM_MASK) ||
         !x86_sgx_enumerated(env) || (env->hflags & HF_CPL_MASK)) {
         raise_exception_ra(env, EXCP06_ILLOP, o.ra);
@@ -1697,6 +1701,740 @@ void helper_encls(CPUX86State *env)
 }
 
 /* ---------------------------------------------------------------------------------------------
+ * Enclave entry and exit (U1263): EENTER, ERESUME, EEXIT (Vol3D 41.4), AEX (40.3, 40.4)
+ * ------------------------------------------------------------------------------------------- */
+
+/* GPRSGX (Table 38-9) */
+#define GPR_RAX         0
+#define GPR_RFLAGS      128
+#define GPR_RIP         136
+#define GPR_URSP        144
+#define GPR_URBP        152
+#define GPR_EXITINFO    160
+#define GPR_FSBASE      168
+#define GPR_GSBASE      176
+
+/* TCS.STATE (Table 38-6): 0 = available, 1 = a logical processor executes in its context */
+#define TCS_ACTIVE      1
+
+static bool sgx_cet_enumerated(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT) ||
+           (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK);
+}
+
+/*
+ * The EPCM checks of an SSA frame page and of the GPR area (EENTER p. 41-90, ERESUME p. 41-120):
+ * "Check that DS:TMP_SSA_PAGE is read/write accessible" (a page walk for a write), it resolves to
+ * an EPC page that is VALID, not BLOCKED / PENDING / MODIFIED, at that ENCLAVEADDRESS, PT_REG, of
+ * the TCS's enclave, R = W = 1; else #PF. Returns the physical address of 'la'.
+ */
+static uint64_t sgx_ssa_page(SgxOp *o, uint64_t la, uint64_t secs)
+{
+    uint64_t pa;
+    X86SgxEpcm *m = sgx_epc_operand(o, la, true, &pa);
+
+    if (!m->valid || m->blocked || m->pending || m->modified ||
+        m->addr != (la & ~0xfffULL) || m->pt != SGX_PT_REG || m->secs != secs || !m->r || !m->w) {
+        sgx_pf(o, la, true);
+    }
+    return pa;
+}
+
+/* the FS / GS EENTER and ERESUME construct (p. 41-93 / 41-126) */
+static void sgx_load_fsgs(CPUX86State *env, int seg, uint64_t base, uint32_t limit)
+{
+    uint32_t ds = env->segs[R_DS].flags;
+    uint32_t flags = (1u << DESC_TYPE_SHIFT) |          /* type := 0001b */
+                     (ds & DESC_W_MASK) |               /* W := DS[bit 9] */
+                     DESC_S_MASK | (ds & DESC_DPL_MASK) | DESC_G_MASK | DESC_B_MASK |
+                     DESC_P_MASK | (ds & DESC_AVL_MASK) | (ds & DESC_L_MASK);
+
+    cpu_x86_load_seg_cache(env, seg, 0x0b, base, limit, flags);
+}
+
+static void sgx_restore_seg(CPUX86State *env, int seg, const SegmentCache *sc)
+{
+    cpu_x86_load_seg_cache(env, seg, sc->selector, sc->base, sc->limit, sc->flags);
+}
+
+static void sgx_set_xcr0(CPUX86State *env, uint64_t xcr0)
+{
+    env->xcr0 = xcr0;
+    cpu_sync_bndcs_hflags(env);
+    cpu_sync_avx_hflag(env);
+}
+
+/*
+ * The CET part of EENTER / ERESUME (p. 41-92, 41-94): CPUID.12H.01H:EAX[6] (CET attributes of an
+ * enclave) is 0 in the model, so TMP_IA32_U_CET = TMP_SSP = 0; with CET_IBT or CET_SS enumerated
+ * the application's IA32_U_CET (and SSP with CET_SS) are saved and the enclave's loaded.
+ */
+static void sgx_cet_enter(CPUX86State *env)
+{
+    if (!sgx_cet_enumerated(env)) {
+        return;
+    }
+    env->sgx_save_ucet = env->u_cet;
+    if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) {
+        env->sgx_save_ssp = env->ssp;
+        env->ssp = 0;
+    }
+    env->u_cet = 0;
+    cpu_sync_cet_hflags(env);
+}
+
+/* EEXIT p. 41-98 / AEX p. 40-7: the application's CET state; its tracker waits for ENDBRANCH */
+static void sgx_cet_exit(CPUX86State *env)
+{
+    if (!sgx_cet_enumerated(env)) {
+        return;
+    }
+    env->u_cet = env->sgx_save_ucet;
+    if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) {
+        env->ssp = env->sgx_save_ssp;
+    }
+    if ((env->cr[4] & CR4_CET_MASK) && (env->u_cet & CET_ENDBR_EN)) {
+        env->u_cet = (env->u_cet | CET_TRACKER) & ~CET_SUPPRESS;
+    }
+    cpu_sync_cet_hflags(env);
+}
+
+/*
+ * The checks EENTER and ERESUME share up to the CSSA check (p. 41-88..41-90, 41-118..41-120), in
+ * the order of their Operation sections. 'write': ERESUME's TCS is a "read/write access", EENTER's
+ * an "Enclave access" (their Memory Parameter Semantics tables). Returns the TCS physical address;
+ * *secs = its SECS.
+ */
+static uint64_t sgx_entry_checks(SgxOp *o, uint64_t tcs_la, bool write, uint64_t *secs)
+{
+    CPUX86State *env = o->env;
+    SegmentCache *sg = env->segs;
+    uint64_t pa, flags, xfrm, attr;
+    X86SgxEpcm *m;
+
+    if (!o->m64) {
+        /* DS usable and expand-up writable data (DS[11:9] = 001B); CS / DS / ES / SS bases 0 */
+        if (!(sg[R_DS].flags & DESC_P_MASK) || ((sg[R_DS].flags >> 9) & 7) != 1) {
+            sgx_gp(o);
+        }
+        if (sg[R_CS].base || sg[R_DS].base ||
+            ((sg[R_ES].flags & DESC_P_MASK) && sg[R_ES].base) ||
+            ((sg[R_SS].flags & DESC_P_MASK) && sg[R_SS].base) ||
+            ((sg[R_SS].flags & DESC_P_MASK) && !(sg[R_SS].flags & DESC_B_MASK))) {
+            sgx_gp(o);
+        }
+    }
+    if (tcs_la & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, tcs_la, write, &pa);
+    if (o->m64 && !x86_ip_is_canonical(env, env->regs[R_ECX])) {
+        sgx_gp(o);                                  /* the AEP */
+    }
+    if (!m->valid || m->blocked || m->addr != tcs_la || m->pt != SGX_PT_TCS || m->pending ||
+        m->modified) {
+        sgx_pf(o, tcs_la, write);
+    }
+    if ((sgx_pld64(env, pa + TCS_OSSA) & 0xfff) || (sgx_pld64(env, pa + TCS_OFSBASE) & 0xfff) ||
+        (sgx_pld64(env, pa + TCS_OGSBASE) & 0xfff)) {
+        sgx_gp(o);
+    }
+    *secs = m->secs;
+    flags = sgx_pld64(env, pa + TCS_FLAGS);
+    if (flags & ~3ULL) {
+        sgx_gp(o);
+    }
+    if (!sgx_secs_initialized(env, *secs)) {
+        sgx_gp(o);
+    }
+    attr = sgx_pld64(env, *secs + SECS_ATTRIBUTES);
+    if (o->m64 != ((attr & SGX_ATTR_MODE64BIT) != 0)) {
+        sgx_gp(o);
+    }
+    if (!(env->cr[4] & CR4_OSFXSR_MASK)) {
+        sgx_gp(o);
+    }
+    xfrm = sgx_pld64(env, *secs + SECS_XFRM);
+    if (!(env->cr[4] & CR4_OSXSAVE_MASK) ? xfrm != 3 : (xfrm & env->xcr0) != xfrm) {
+        sgx_gp(o);
+    }
+    /* "(DS:RBX).CSSA.FLAGS.DBGOPTIN = 0 and (DS:RBX).CSSA.FLAGS.AEXNOTIFY !=
+       TMP_SECS.ATTRIBUTES.AEXNOTIFY": TCS.FLAGS bits 0 / 1, ATTRIBUTES bit 10 (docs/quirks.md) */
+    if (!(flags & 1) && ((flags >> 1) & 1) != ((attr >> 10) & 1)) {
+        sgx_gp(o);
+    }
+    return pa;
+}
+
+/*
+ * The pages of the SSA frame at 'ssa' (the XSAVE area of XFRM, "FOR EACH TMP_SSA_PAGE = TMP_SSA to
+ * TMP_SSA + TMP_XSIZE" - the pages the area occupies, docs/quirks.md) and of its GPR area; outside
+ * 64-bit mode the GPR area must lie in the DS segment. Caches CR_XSAVE_PAGE_n and CR_GPR_PA.
+ */
+static void sgx_ssa_checks(SgxOp *o, uint64_t ssa, uint64_t secs)
+{
+    CPUX86State *env = o->env;
+    uint64_t xsize = sgx_xsave_size(env, sgx_pld64(env, secs + SECS_XFRM));
+    uint64_t gpr = ssa + 4096ULL * sgx_pld32(env, secs + SECS_SSAFRAMESIZE) - SGX_GPR_SIZE;
+    uint64_t p, gpa;
+    int n = 0;
+
+    if (!o->m64) {
+        gpr = (uint32_t)gpr;
+    }
+    for (p = 0; p < xsize; p += 4096) {
+        g_assert(n < SGX_XSAVE_PAGES);
+        env->sgx_xsave_pa[n++] = sgx_ssa_page(o, o->m64 ? ssa + p : (uint32_t)(ssa + p), secs);
+    }
+    gpa = sgx_ssa_page(o, gpr, secs);
+    if (!o->m64 && gpr + SGX_GPR_SIZE - 1 > env->segs[R_DS].limit) {
+        sgx_gp(o);
+    }
+    env->sgx_xsave_n = n;
+    env->sgx_gpr_pa = gpa;
+    env->sgx_ssa_la = ssa;
+}
+
+/* TMP_TARGET: canonical in 64-bit mode, else within the CS limit */
+static void sgx_target_check(SgxOp *o, uint64_t target)
+{
+    if (o->m64 ? !x86_ip_is_canonical(o->env, target) : target > o->env->segs[R_CS].limit) {
+        sgx_gp(o);
+    }
+}
+
+/* the proposed FS / GS (p. 41-91 / 41-122): canonical in 64-bit mode, else within DS */
+static void sgx_fsgs_check(SgxOp *o, uint64_t base, uint32_t limit)
+{
+    CPUX86State *env = o->env;
+    uint32_t b = (uint32_t)base, l = (uint32_t)(base + limit);
+
+    if (o->m64) {
+        if (!x86_ip_is_canonical(env, base)) {
+            sgx_gp(o);
+        }
+    } else if (l < b ? env->segs[R_DS].limit < 0xffffffffu : l > env->segs[R_DS].limit) {
+        sgx_gp(o);
+    }
+}
+
+/* map the SSA frame's XSAVE area through CR_XSAVE_PAGE_n for an implicit access */
+static void sgx_map_xsave(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+    int idx = cpu_mmu_index(env, false), i;
+
+    for (i = 0; i < env->sgx_xsave_n; i++) {
+        tlb_set_page_sgx_implicit(cs, env->sgx_ssa_la + 4096ULL * i, env->sgx_xsave_pa[i],
+                                  cpu_get_mem_attrs(env), idx);
+    }
+}
+
+/*
+ * The commit EENTER and ERESUME share (p. 41-93 / 41-125): enclave mode, the cached SECS / ELRANGE /
+ * TCS, the AEP, the saved FS / GS, the TCS busy (39.2.1 "Set the TCS as busy", Table 38-6 STATE =
+ * 1), the new FS / GS, DBGOPTIN, breakpoint and TF suppression, CET, Flush_linear_context.
+ */
+static void sgx_enter(SgxOp *o, uint64_t tcs_pa, uint64_t tcs_la, uint64_t secs, uint64_t aep,
+                      uint64_t fsbase, uint64_t gsbase)
+{
+    CPUX86State *env = o->env;
+
+    env->sgx_enclave_mode = 1;
+    env->sgx_secs = secs;
+    env->sgx_elbase = sgx_pld64(env, secs + SECS_BASEADDR);
+    env->sgx_elsize = sgx_pld64(env, secs + SECS_SIZE);
+    env->sgx_tcs_pa = tcs_pa;
+    env->sgx_tcs_la = tcs_la;
+    sgx_pst64(env, tcs_pa + TCS_AEP, aep);
+    sgx_pst64(env, tcs_pa + TCS_STATE, TCS_ACTIVE);
+    env->sgx_save_fs = env->segs[R_FS];
+    env->sgx_save_gs = env->segs[R_GS];
+    sgx_load_fsgs(env, R_FS, fsbase, sgx_pld32(env, tcs_pa + TCS_FSLIMIT));
+    sgx_load_fsgs(env, R_GS, gsbase, sgx_pld32(env, tcs_pa + TCS_GSLIMIT));
+    env->sgx_dbgoptin = sgx_pld64(env, tcs_pa + TCS_FLAGS) & 1;
+    if (!env->sgx_dbgoptin) {
+        env->sgx_save_tf = (env->eflags & TF_MASK) != 0;
+        env->eflags &= ~TF_MASK;
+    }
+    x86_sgx_bp_update(env);
+    sgx_cet_enter(env);
+    tlb_flush(env_cpu(env));
+}
+
+/* EENTER (ENCLU[2], p. 41-87..41-95) */
+static void sgx_eenter(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t tcs_la = sgx_la(o, sgx_reg(o, R_EBX), 4096, false);
+    uint64_t secs, tcs, base, ssa, target, fsbase, gsbase, xfrm, aep;
+    uint32_t cssa;
+
+    tcs = sgx_entry_checks(o, tcs_la, false, &secs);
+    cssa = sgx_pld32(env, tcs + TCS_CSSA);
+    if (cssa >= sgx_pld32(env, tcs + TCS_NSSA)) {
+        sgx_gp(o);
+    }
+    base = sgx_pld64(env, secs + SECS_BASEADDR);
+    ssa = sgx_pld64(env, tcs + TCS_OSSA) + base +
+          4096ULL * sgx_pld32(env, secs + SECS_SSAFRAMESIZE) * cssa;
+    target = sgx_pld64(env, tcs + TCS_OENTRY) + base;
+    fsbase = sgx_pld64(env, tcs + TCS_OFSBASE) + base;
+    gsbase = sgx_pld64(env, tcs + TCS_OGSBASE) + base;
+    if (!o->m64) {
+        ssa = (uint32_t)ssa;
+        target = (uint32_t)target;
+        fsbase = (uint32_t)fsbase;
+        gsbase = (uint32_t)gsbase;
+    }
+    sgx_ssa_checks(o, ssa, secs);
+    sgx_target_check(o, target);
+    sgx_fsgs_check(o, fsbase, sgx_pld32(env, tcs + TCS_FSLIMIT));
+    sgx_fsgs_check(o, gsbase, sgx_pld32(env, tcs + TCS_GSLIMIT));
+    if (sgx_pld64(env, tcs + TCS_STATE) == TCS_ACTIVE) {
+        sgx_gp(o);
+    }
+    /* commit: CR_TCS_LA.AEP := RCX precedes RCX := RIP */
+    aep = sgx_reg(o, R_ECX);
+    xfrm = sgx_pld64(env, secs + SECS_XFRM);
+    if (env->cr[4] & CR4_OSXSAVE_MASK) {
+        env->sgx_save_xcr0 = env->xcr0;
+        sgx_set_xcr0(env, xfrm);
+    }
+    env->regs[R_ECX] = o->next_eip;                 /* RCX := RIP (of the next instruction) */
+    env->eip = target;
+    env->regs[R_EAX] = cssa;
+    sgx_pst64(env, env->sgx_gpr_pa + GPR_URSP, sgx_reg(o, R_ESP));
+    sgx_pst64(env, env->sgx_gpr_pa + GPR_URBP, sgx_reg(o, R_EBP));
+    sgx_enter(o, tcs, tcs_la, secs, aep, fsbase, gsbase);
+    if (env->sgx_dbgoptin && (env->eflags & TF_MASK)) {
+        o->single_step = true;      /* "pend a single-step #DB at the end of EENTER" */
+    }
+}
+
+/*
+ * ERESUME (ENCLU[3], p. 41-117..41-128). AEX-Notify is not enumerated (CPUID.12H.01H:EAX[10] = 0):
+ * TMP_NOTIFY is taken as 0 (docs/sgx.md). The XRSTOR of the SSA frame precedes the commit; its #GP
+ * ends ERESUME with #GP(0) ("DS:RBX.STATE := INACTIVE" - the TCS is not busy yet in the model).
+ */
+static void sgx_eresume(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t tcs_la = sgx_la(o, sgx_reg(o, R_EBX), 4096, true);
+    uint64_t secs, tcs, base, ssa, target, fsbase, gsbase, xfrm, gpr, hdr[3], f, aep;
+    uint32_t cssa, ef, mask;
+    int i, fault;
+
+    tcs = sgx_entry_checks(o, tcs_la, true, &secs);
+    cssa = sgx_pld32(env, tcs + TCS_CSSA);
+    if (cssa == 0) {
+        sgx_gp(o);
+    }
+    base = sgx_pld64(env, secs + SECS_BASEADDR);
+    ssa = sgx_pld64(env, tcs + TCS_OSSA) + base +
+          4096ULL * sgx_pld32(env, secs + SECS_SSAFRAMESIZE) * (cssa - 1);
+    if (!o->m64) {
+        ssa = (uint32_t)ssa;
+    }
+    sgx_ssa_checks(o, ssa, secs);
+    gpr = env->sgx_gpr_pa;
+    target = o->m64 ? sgx_pld64(env, gpr + GPR_RIP) : sgx_pld32(env, gpr + GPR_RIP);
+    sgx_target_check(o, target);
+    if (o->m64) {
+        fsbase = sgx_pld64(env, gpr + GPR_FSBASE);
+        gsbase = sgx_pld64(env, gpr + GPR_GSBASE);
+    } else {
+        fsbase = (uint32_t)(sgx_pld64(env, tcs + TCS_OFSBASE) + base);
+        gsbase = (uint32_t)(sgx_pld64(env, tcs + TCS_OGSBASE) + base);
+    }
+    sgx_fsgs_check(o, fsbase, sgx_pld32(env, tcs + TCS_FSLIMIT));
+    sgx_fsgs_check(o, gsbase, sgx_pld32(env, tcs + TCS_GSLIMIT));
+    if (sgx_pld64(env, tcs + TCS_STATE) == TCS_ACTIVE) {
+        sgx_gp(o);
+    }
+    /* XRSTOR(TMP_MODE64, SECS.ATTRIBUTES.XFRM, CR_XSAVE_PAGE_n) */
+    xfrm = sgx_pld64(env, secs + SECS_XFRM);
+    sgx_pread(env, env->sgx_xsave_pa[0] + 512, hdr, sizeof(hdr));
+    fault = x86_sgx_xrstor_fault(env, xfrm, hdr[0], hdr[1], hdr[2],
+                                 sgx_pld32(env, env->sgx_xsave_pa[0] + 24));
+    if (fault == EXCP0D_GPF) {
+        sgx_gp(o);
+    } else if (fault >= 0) {
+        raise_exception_ra(env, fault, o->ra);
+    }
+    env->sgx_implicit = 1;
+    sgx_map_xsave(env);
+    x86_sgx_xrstor(env, env->sgx_ssa_la, xfrm, o->m64);
+    env->sgx_implicit = 0;
+    /* commit (the AEP from RCX before the GPRs are restored) */
+    aep = sgx_reg(o, R_ECX);
+    for (i = 0; i < (o->m64 ? 16 : 8); i++) {
+        env->regs[i] = o->m64 ? sgx_pld64(env, gpr + GPR_RAX + 8 * i)
+                              : sgx_pld32(env, gpr + GPR_RAX + 8 * i);
+    }
+    /* RFLAGS: CF PF AF ZF SF DF OF NT AC ID RF from the SSA, VM := 0, IF from the SSA if IOPL = 3,
+       TF := 0 for TCS.FLAGS.OPTIN (DBGOPTIN) = 0 */
+    f = sgx_pld64(env, gpr + GPR_RFLAGS);
+    mask = CC_C | CC_P | CC_A | CC_Z | CC_S | CC_O | DF_MASK | NT_MASK | AC_MASK | ID_MASK |
+           RF_MASK;
+    ef = ((uint32_t)env->eflags & ~(mask | VM_MASK)) | ((uint32_t)f & mask);
+    if (((env->eflags & IOPL_MASK) >> IOPL_SHIFT) == 3) {
+        ef = (ef & ~IF_MASK) | ((uint32_t)f & IF_MASK);
+    }
+    if (!(sgx_pld64(env, tcs + TCS_FLAGS) & 1)) {
+        ef &= ~TF_MASK;
+    }
+    o->flags = ef & (CC_C | CC_P | CC_A | CC_Z | CC_S | CC_O);
+    env->df = (ef & DF_MASK) ? -1 : 1;
+    env->eflags = ef & ~(CC_C | CC_P | CC_A | CC_Z | CC_S | CC_O | DF_MASK);
+    if (env->cr[4] & CR4_OSXSAVE_MASK) {
+        env->sgx_save_xcr0 = env->xcr0;
+        sgx_set_xcr0(env, xfrm);
+    }
+    sgx_pst32(env, tcs + TCS_CSSA, cssa - 1);
+    env->eip = target;
+    sgx_enter(o, tcs, tcs_la, secs, aep, fsbase, gsbase);
+}
+
+/*
+ * The exit EEXIT and AEX share: FS / GS, XCR0, breakpoints, TF of an opt-out entry, CET, enclave
+ * mode, the TCS not busy (EEXIT: "CR_TCS_PA.STATE := INACTIVE"; AEX: 39.2.1 "the TCS is considered
+ * busy until the logical processors exits the enclave"), Flush_linear_context.
+ */
+static void sgx_leave(CPUX86State *env)
+{
+    sgx_restore_seg(env, R_FS, &env->sgx_save_fs);
+    sgx_restore_seg(env, R_GS, &env->sgx_save_gs);
+    if (env->cr[4] & CR4_OSXSAVE_MASK) {
+        sgx_set_xcr0(env, env->sgx_save_xcr0);
+    }
+    if (!env->sgx_dbgoptin) {
+        env->eflags = (env->eflags & ~TF_MASK) | (env->sgx_save_tf ? TF_MASK : 0);
+    }
+    sgx_cet_exit(env);
+    env->sgx_enclave_mode = 0;
+    x86_sgx_bp_update(env);
+    sgx_pst64(env, env->sgx_tcs_pa + TCS_STATE, 0);
+    tlb_flush(env_cpu(env));
+}
+
+/* EEXIT (ENCLU[4], p. 41-96..41-98) */
+static void sgx_eexit(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t target = sgx_reg(o, R_EBX);
+    uint64_t aep = sgx_pld64(env, env->sgx_tcs_pa + TCS_AEP);
+
+    sgx_target_check(o, target);
+    env->eip = target;
+    env->regs[R_ECX] = o->m64 ? aep : (uint32_t)aep;
+    sgx_leave(env);
+    if (env->eflags & TF_MASK) {
+        o->single_step = true;                      /* "Pend Single-Step #DB at the end of EEXIT" */
+    }
+}
+
+/* the fault-class exception vectors (the RF the non-SGX delivery would save, 40.4 item 5) */
+static bool sgx_fault_vector(int v)
+{
+    switch (v) {
+    case 0: case 5: case 6: case 7: case 10: case 11: case 12: case 13: case 14: case 16:
+    case 17: case 19: case 20: case 21:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*
+ * NoVmp (ledger U1263): the asynchronous enclave exit (SDM 092 Vol3D 40.3, 40.4.1 p. 40-5..40-8),
+ * "just before the normal interrupt or exception processing" of an event in enclave mode: 'vector'
+ * (-1: an SMI), 'is_int' (INT n / INT3 / INTO: not possible inside an enclave, which makes those
+ * #UD or fault-class), 'is_hw' (an external interrupt / NMI / SMI), 'next_eip' (the RIP after a
+ * software interrupt). Saves the GPRs, RFLAGS (TF := 0, RF as the non-SGX delivery would push it:
+ * 1 for fault-class exceptions incl. INT3 / INT1 inside an enclave, else unchanged - the REP
+ * iteration RF of U482 is already in RFLAGS), RIP, FS / GS bases and the XSAVE state of XFRM into
+ * the current SSA frame, EXITINFO / EXINFO, loads the synthetic state (Table 40-1), increments
+ * CSSA and leaves the enclave; CR2 bits 11:0 are cleared for a #PF. Returns the RIP to deliver
+ * (the AEP).
+ */
+target_ulong x86_sgx_aex(CPUX86State *env, int vector, int is_int, int is_hw, int error_code,
+                         target_ulong next_eip)
+{
+    struct uc_x86_exception *rec = &env->uc->x86_exc;
+    bool m64 = (env->hflags & HF_CS64_MASK) != 0;
+    bool exc = !is_hw && !is_int && vector >= 0 && vector < 32;
+    uint64_t gpr = env->sgx_gpr_pa, secs = env->sgx_secs, tcs = env->sgx_tcs_pa;
+    uint64_t xfrm, aep, rip, f, bv;
+    uint32_t misc, info = 0;
+    int i;
+
+    if (!env->sgx_enclave_mode) {
+        return next_eip;
+    }
+    xfrm = sgx_pld64(env, secs + SECS_XFRM);
+    misc = sgx_pld32(env, secs + SECS_MISCSELECT);
+    aep = sgx_pld64(env, tcs + TCS_AEP);
+    rip = is_int ? next_eip : env->eip;             /* TMP_RIP: the resume RIP */
+    f = cpu_compute_eflags(env) & ~(uint64_t)TF_MASK;
+    if (exc && (sgx_fault_vector(vector) || vector == EXCP03_INT3 ||
+                (vector == EXCP01_DB && env->sgx_int_fault))) {
+        f |= RF_MASK;
+    }
+    if (m64) {
+        for (i = 0; i < 16; i++) {
+            sgx_pst64(env, gpr + GPR_RAX + 8 * i, env->regs[i]);
+        }
+        sgx_pst64(env, gpr + GPR_RFLAGS, f);
+        sgx_pst64(env, gpr + GPR_RIP, rip);
+    } else {
+        for (i = 0; i < 8; i++) {
+            sgx_pst32(env, gpr + GPR_RAX + 8 * i, (uint32_t)env->regs[i]);
+        }
+        sgx_pst32(env, gpr + GPR_RFLAGS, (uint32_t)f);
+        sgx_pst32(env, gpr + GPR_RIP, (uint32_t)rip);
+    }
+    sgx_pst64(env, gpr + GPR_FSBASE, env->segs[R_FS].base);
+    sgx_pst64(env, gpr + GPR_GSBASE, env->segs[R_GS].base);
+    /* SSA.XSAVE.i := XSAVE_STATE_i; XHEADER bytes 23:8 := 0; XHEADER_BV &= XFRM */
+    sgx_map_xsave(env);
+    x86_sgx_xsave(env, env->sgx_ssa_la, xfrm, m64);
+    bv = sgx_pld64(env, env->sgx_xsave_pa[0] + 512) & xfrm;
+    sgx_pst64(env, env->sgx_xsave_pa[0] + 512, bv);
+    sgx_pst64(env, env->sgx_xsave_pa[0] + 520, 0);
+    sgx_pst64(env, env->sgx_xsave_pa[0] + 528, 0);
+    /* EXITINFO (Table 38-10) and the EXINFO of MISCSELECT[0] (Table 38-13) */
+    if (exc && (vector == EXCP00_DIVZ || vector == EXCP01_DB || vector == EXCP03_INT3 ||
+                vector == EXCP05_BOUND || vector == EXCP06_ILLOP || vector == EXCP10_COPR ||
+                vector == EXCP11_ALGN || vector == EXCP13_XM)) {
+        info = (1u << 31) | ((vector == EXCP03_INT3 ? 6u : 3u) << 8) | (uint32_t)vector;
+    } else if (exc && (misc & 1) &&
+               (vector == EXCP0D_GPF ||
+                (vector == EXCP0E_PAGE && (error_code & PG_ERROR_U_MASK)))) {
+        info = (1u << 31) | (3u << 8) | (uint32_t)vector;
+        sgx_pst64(env, gpr - 16, vector == EXCP0E_PAGE ? env->cr[2] : 0);   /* MADDR */
+        sgx_pst32(env, gpr - 8, (uint32_t)error_code);                     /* ERRCD */
+        sgx_pst32(env, gpr - 4, 0);                                         /* RESERVED */
+    } else if (misc & 1) {
+        sgx_pst64(env, gpr - 16, 0);
+        sgx_pst64(env, gpr - 8, 0);
+    }
+    sgx_pst32(env, gpr + GPR_EXITINFO, info);
+    /* the synthetic state (Table 40-1, 40.3.2) */
+    x86_sgx_xinit(env, xfrm, exc && vector == EXCP10_COPR, exc && vector == EXCP13_XM,
+                  m64);
+    env->regs[R_ESP] = sgx_pld64(env, gpr + GPR_URSP);
+    env->regs[R_EBP] = sgx_pld64(env, gpr + GPR_URBP);
+    env->regs[R_EAX] = 3;                           /* ENCLU[3] is ERESUME */
+    env->regs[R_EBX] = env->sgx_tcs_la;
+    env->regs[R_ECX] = aep;
+    env->regs[R_EDX] = env->regs[R_ESI] = env->regs[R_EDI] = 0;
+    if (m64) {
+        for (i = 8; i < 16; i++) {
+            env->regs[i] = 0;
+        }
+    } else {
+        for (i = 0; i < 8; i++) {
+            env->regs[i] = (uint32_t)env->regs[i];
+        }
+        aep = (uint32_t)aep;
+    }
+    CC_SRC = 0;                                     /* CF PF AF ZF SF OF := 0 */
+    CC_OP = CC_OP_EFLAGS;
+    env->eflags &= ~RF_MASK;
+    env->eip = aep;
+    sgx_pst32(env, tcs + TCS_CSSA, sgx_pld32(env, tcs + TCS_CSSA) + 1);
+    sgx_leave(env);
+    if (exc && vector == EXCP0E_PAGE) {
+        env->cr[2] &= ~0xfffULL;
+        if (rec->vector == EXCP0E_PAGE && rec->has_address) {
+            rec->address = env->cr[2];
+        }
+    }
+    env->sgx_enc_event = 1;
+    env->sgx_int_fault = 0;
+    return is_int ? env->eip : next_eip;
+}
+
+/*
+ * NoVmp (ledger U1263): cpu-exec.c cpu_handle_exception, before an exception (or an external
+ * interrupt for UC_HOOK_INTR, 'ext') is delivered through the IDT / FRED ('delivered') or handed
+ * to the Unicorn hooks: the AEX in enclave mode; the FRED enclave bit is kept only for a delivery.
+ */
+void x86_sgx_aex_exception(CPUX86State *env, int vector, bool ext, bool delivered)
+{
+    if (env->sgx_enclave_mode) {
+        int is_int = ext ? 0 : env->exception_is_int;
+        target_ulong n = x86_sgx_aex(env, vector, is_int, ext, env->error_code,
+                                     env->exception_next_eip);
+
+        if (is_int) {
+            env->exception_next_eip = n;
+        }
+    }
+    if (!delivered) {
+        env->sgx_enc_event = 0;
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Instructions inside an enclave (U1263)
+ * ------------------------------------------------------------------------------------------- */
+
+/*
+ * NoVmp (ledger U1263): the translator calls this at CPL 3 with SGX enumerated before an
+ * instruction of Table 39-1 (kind 0: #UD inside an enclave, 39.6.1), INT3 (kind 1) and INT1 (kind
+ * 2). Inside an enclave INT1 / INT3 are fault-class (43.4.1): #UD after an opt-out entry, #DB / #BP
+ * after an opt-in entry, the IDT DPL check of INT3 not enforced, RIP at the instruction.
+ */
+void helper_sgx_enclave_check(CPUX86State *env, uint32_t kind)
+{
+    if (!env->sgx_enclave_mode) {
+        return;
+    }
+    if (kind == 0 || !env->sgx_dbgoptin) {
+        raise_exception_ra(env, EXCP06_ILLOP, GETPC());
+    }
+    env->sgx_int_fault = 1;
+    raise_exception_ra(env, kind == 1 ? EXCP03_INT3 : EXCP01_DB, GETPC());
+}
+
+/* NoVmp (ledger U1263): "The POPF instruction forces RFLAGS.TF to 0 if the enclave was entered
+   through opt-out entry" (43.2.5) */
+void helper_sgx_popf(CPUX86State *env)
+{
+    if (env->sgx_enclave_mode && !env->sgx_dbgoptin) {
+        env->eflags &= ~TF_MASK;
+    }
+}
+
+/* the ENCLU leaves the model enumerates: SGX1 (00H-04H), SGX2 (05H-07H); EVERIFYREPORT2 (08H) and
+   EDECCSSA (09H) are not */
+static bool sgx_enclu_leaf_valid(uint32_t leaf)
+{
+    return leaf <= 7;
+}
+
+/*
+ * NoVmp (ledger U1263): ENCLU (Vol3D p. 41-10..41-12). The translator raised #UD for LOCK / 66 / F2
+ * / F3 and routes here only with SGX enumerated; the CET tracker rule of the Operation is checked
+ * at the TB start (helper_ibt_check kind 4). Order: #UD for CR0.PE = 0, virtual-8086 mode, SMM,
+ * SGX1 = 0; #NM for CR0.TS = 1; #UD for CPL < 3; #GP(0) for IA32_FEATURE_CONTROL.LOCK /
+ * SGX_ENABLE = 0, an unsupported leaf, CR0.PG = 0 or CR0.NE = 0, CS.D = 0 outside 64-bit mode,
+ * EENTER / ERESUME inside or another leaf outside an enclave. 'len' = the instruction length. The
+ * helper sets RIP; RF is cleared (the instruction completes) except after ERESUME, which loads it
+ * from the SSA; a single-step #DB pended by EENTER (opt-in) or EEXIT is raised after the leaf.
+ */
+void helper_enclu(CPUX86State *env, uint32_t len)
+{
+    SgxOp o;
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    o.env = env;
+    o.ra = GETPC();
+    o.m64 = (env->hflags & HF_CS64_MASK) != 0;      /* IA32_EFER.LMA = 1 && CS.L = 1 */
+    o.flags = cpu_cc_compute_all(env, CC_OP) & (CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
+    o.next_eip = o.m64 ? env->eip + len : (uint32_t)(env->eip + len);
+    o.single_step = false;
+    if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK) || (env->hflags & HF_SMM_MASK) ||
+        !x86_sgx_enumerated(env)) {
+        raise_exception_ra(env, EXCP06_ILLOP, o.ra);
+    }
+    if (env->cr[0] & CR0_TS_MASK) {
+        raise_exception_ra(env, EXCP07_PREX, o.ra);
+    }
+    if ((env->hflags & HF_CPL_MASK) != 3) {
+        raise_exception_ra(env, EXCP06_ILLOP, o.ra);
+    }
+    if ((env->msr_ia32_feature_control & (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX)) !=
+            (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX) ||
+        !sgx_enclu_leaf_valid(leaf) || !(env->cr[0] & CR0_PG_MASK) ||
+        !(env->cr[0] & CR0_NE_MASK)) {
+        sgx_gp(&o);
+    }
+    if (!o.m64 && !(env->segs[R_CS].flags & DESC_B_MASK)) {
+        sgx_gp(&o);
+    }
+    if (env->sgx_enclave_mode ? (leaf == 2 || leaf == 3) : (leaf != 2 && leaf != 3)) {
+        sgx_gp(&o);
+    }
+    switch (leaf) {
+    case 2:
+        sgx_eenter(&o);
+        break;
+    case 3:
+        sgx_eresume(&o);
+        break;
+    case 4:
+        sgx_eexit(&o);
+        break;
+    default:
+        sgx_gp(&o);     /* EREPORT, EGETKEY: U1264; EACCEPT, EMODPE, EACCEPTCOPY: U1266 */
+        break;
+    }
+    if (leaf != 3) {
+        env->eflags &= ~RF_MASK;
+    }
+    env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    env->sgx_svn_lock = 1;
+    CC_SRC = o.flags;
+    CC_OP = CC_OP_EFLAGS;
+    if (o.single_step) {
+        helper_single_step(env);
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Enclave-mode memory access control (U1263)
+ * ------------------------------------------------------------------------------------------- */
+
+/*
+ * Accesses in enclave mode (Vol3D 38.3, 38.5.2): a linear address in ELRANGE must map to an EPC
+ * page whose EPCM entry is VALID, of the current enclave, at that ENCLAVEADDRESS, PT_REG, not
+ * BLOCKED / PENDING / MODIFIED, with R / W / X for the access; else a #PF with PFEC.SGX (P = 1,
+ * W/R, U/S = 1, I/D for a fetch as Vol3A 5.7 sets it). An address of ELRANGE that maps outside the
+ * EPC is that #PF too (38.1: "a fault is generated", docs/quirks.md). An instruction fetch outside
+ * ELRANGE is #GP(0); data accesses outside ELRANGE are non-enclave accesses (abort page for EPC).
+ */
+static int sgx_enclave_access(CPUX86State *env, uint64_t la, uint64_t pa, int access, int *prot)
+{
+    CPUState *cs = env_cpu(env);
+    X86SgxEpcm *m = sgx_epcm(env, pa);
+    int allowed;
+
+    if (la - env->sgx_elbase >= env->sgx_elsize) {
+        if (access == MMU_INST_FETCH) {
+            env->error_code = 0;
+            cs->exception_index = EXCP0D_GPF;
+            return -1;
+        }
+        return m ? 1 : 0;
+    }
+    allowed = m ? (m->r ? PAGE_READ : 0) | (m->w ? PAGE_WRITE : 0) | (m->x ? PAGE_EXEC : 0) : 0;
+    if (!m || !m->valid || m->secs != env->sgx_secs || m->addr != (la & ~0xfffULL) ||
+        m->pt != SGX_PT_REG || m->blocked || m->pending || m->modified ||
+        !(allowed & (1 << access))) {
+        uint32_t ec = PG_ERROR_P_MASK | PG_ERROR_U_MASK | SGX_PFEC_SGX;
+
+        if (access == MMU_DATA_STORE) {
+            ec |= PG_ERROR_W_MASK;
+        }
+        if (access == MMU_INST_FETCH &&
+            (((env->efer & MSR_EFER_NXE) && (env->cr[4] & CR4_PAE_MASK)) ||
+             (env->cr[4] & CR4_SMEP_MASK))) {
+            ec |= PG_ERROR_I_D_MASK;
+        }
+        env->cr[2] = la;
+        env->error_code = ec;
+        cs->exception_index = EXCP0E_PAGE;
+        return -1;
+    }
+    *prot &= allowed;
+    return 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
  * Memory access control (U1262: non-enclave accesses to the EPC)
  * ------------------------------------------------------------------------------------------- */
 
@@ -1728,19 +2466,29 @@ void *x86_sgx_abort_page(CPUX86State *env, uint64_t *ram)
 /*
  * NoVmp (ledger U1262): the SGX part of a TLB fill (excp_helper.c handle_mmu_fault, after the
  * paging checks): 0 = an ordinary mapping (*prot may be reduced), 1 = the abort page, -1 = a fault
- * set up in env (exception_index, error_code, CR2). An access that is not an enclave access
- * (38.2: outside enclave mode, or from enclave mode outside ELRANGE) to an EPC page gets the
- * abort page. Enclave accesses: U1263.
+ * set up in env (exception_index, error_code, CR2), 2 (U1263) = an implicit access to a cached
+ * CR_XSAVE_PAGE_n during ERESUME's XRSTOR. An access that is not an enclave access (38.2: outside
+ * enclave mode, or from enclave mode outside ELRANGE) to an EPC page gets the abort page; U1263:
+ * enclave accesses (sgx_enclave_access).
  */
 int x86_sgx_access(CPUX86State *env, uint64_t la, uint64_t pa, int access, int *prot)
 {
-    (void)la;
-    (void)access;
-    (void)prot;
-    if (!env->sgx || !sgx_epcm(env, pa)) {
+    int i;
+
+    if (!env->sgx) {
         return 0;
     }
-    return 1;
+    if (env->sgx_implicit) {
+        for (i = 0; i < env->sgx_xsave_n; i++) {
+            if ((pa & ~0xfffULL) == env->sgx_xsave_pa[i]) {
+                return 2;
+            }
+        }
+    }
+    if (env->sgx_enclave_mode) {
+        return sgx_enclave_access(env, la, pa, access, prot);
+    }
+    return sgx_epcm(env, pa) ? 1 : 0;
 }
 
 /* NoVmp (ledger U1262): free the package state (uc_close) */

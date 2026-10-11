@@ -50,6 +50,40 @@ static inline int hw_breakpoint_len(unsigned long dr7, int index)
     return (len == 2) ? 8 : len + 1;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/*
+ * NoVmp (ledger U1263): Intel SGX breakpoint suppression (SDM 092 Vol3D EENTER p. 41-94, ERESUME
+ * p. 41-126: "Suppress_all_code_breakpoints_that_are_outside_ELRANGE; IF (CR_DBGOPTIN = 0) THEN
+ * Suppress_all_code_breakpoints_that_overlap_with_ELRANGE"; 43.3.1: after an opt-out entry "Data
+ * breakpoints are not triggered on accesses to the address range defined by ELRANGE", they are on
+ * accesses outside it; "Following an opt-in entry instruction and data breakpoints are not
+ * suppressed"; "The processor does not report any matches on debug breakpoints that are suppressed
+ * on enclave entry"). EEXIT and AEX unsuppress them (x86_sgx_bp_update). A data breakpoint is
+ * suppressed when its range overlaps ELRANGE (the model does not split an access that straddles
+ * the ELRANGE boundary, 38.5.2). I/O breakpoints: IN / OUT are #UD inside an enclave.
+ */
+static bool hw_breakpoint_sgx_suppressed(CPUX86State *env, int index)
+{
+    target_ulong a = env->dr[index];
+    target_ulong len;
+
+    if (!env->sgx_enclave_mode) {
+        return false;
+    }
+    switch (hw_breakpoint_type(env->dr[7], index)) {
+    case DR7_TYPE_BP_INST:
+        return !env->sgx_dbgoptin || a - env->sgx_elbase >= env->sgx_elsize;
+    case DR7_TYPE_DATA_WR:
+    case DR7_TYPE_DATA_RW:
+        len = hw_breakpoint_len(env->dr[7], index);
+        return !env->sgx_dbgoptin && a < env->sgx_elbase + env->sgx_elsize &&
+               a + len > env->sgx_elbase;
+    default:
+        return false;
+    }
+}
+#endif /* __Use_Original_Qemu (U1263) */
+
 static int hw_breakpoint_insert(CPUX86State *env, int index)
 {
     CPUState *cs = env_cpu(env);
@@ -59,6 +93,11 @@ static int hw_breakpoint_insert(CPUX86State *env, int index)
 
     switch (hw_breakpoint_type(dr7, index)) {
     case DR7_TYPE_BP_INST:
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        if (hw_breakpoint_sgx_suppressed(env, index)) {
+            break;      /* not inserted while suppressed inside an enclave (U1263) */
+        }
+#endif /* __Use_Original_Qemu (U1263) */
         if (hw_breakpoint_enabled(dr7, index)) {
             err = cpu_breakpoint_insert(cs, drN, BP_CPU,
                                         &env->cpu_breakpoint[index]);
@@ -119,6 +158,25 @@ static void hw_breakpoint_remove(CPUX86State *env, int index)
         break;
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/*
+ * NoVmp (ledger U1263): re-evaluate the instruction breakpoints after an enclave entry or exit
+ * (suppressed ones are not inserted, so the translator does not stop on them; removing and
+ * inserting a breakpoint invalidates the translations of its address).
+ */
+void x86_sgx_bp_update(CPUX86State *env)
+{
+    int i;
+
+    for (i = 0; i < DR7_MAX_BP; i++) {
+        if (hw_breakpoint_type(env->dr[7], i) == DR7_TYPE_BP_INST) {
+            hw_breakpoint_remove(env, i);
+            hw_breakpoint_insert(env, i);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1263) */
 
 void cpu_x86_update_dr7(CPUX86State *env, uint32_t new_dr7)
 {
@@ -190,6 +248,11 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
         case DR7_TYPE_IO_RW:
             break;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        if (hw_breakpoint_sgx_suppressed(env, reg)) {
+            bp_match = wp_match = false;    /* no match is reported (Vol3D 43.3.1, U1263) */
+        }
+#endif /* __Use_Original_Qemu (U1263) */
         if (bp_match || wp_match) {
             dr6 |= 1ULL << reg;
             if (hw_breakpoint_enabled(env->dr[7], reg)) {

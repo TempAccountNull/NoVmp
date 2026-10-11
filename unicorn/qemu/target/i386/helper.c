@@ -533,6 +533,13 @@ void do_cpu_init(X86CPU *cpu)
     CPUX86State *save = g_new(CPUX86State, 1);
     int sipi = cs->interrupt_request & CPU_INTERRUPT_SIPI;
 
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* INIT inside an enclave: the AEX, then the INIT (SDM 092 Vol3D 42.9, sgx_model.c) */
+    if (env->sgx_enclave_mode) {
+        x86_sgx_aex(env, -1, 0, 1, 0, 0);
+        env->sgx_enc_event = 0;
+    }
+#endif /* __Use_Original_Qemu (U1263) */
     *save = *env;
 
     cpu_reset(cs);

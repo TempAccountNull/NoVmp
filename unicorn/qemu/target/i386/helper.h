@@ -112,6 +112,11 @@ DEF_HELPER_1(sgx_invd, void, env)
 #if __Use_Original_Qemu != 1 /* ours (U1262) */
 DEF_HELPER_1(encls, void, env)
 #endif /* __Use_Original_Qemu (U1262) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+DEF_HELPER_2(enclu, void, env, i32)
+DEF_HELPER_2(sgx_enclave_check, void, env, i32)
+DEF_HELPER_1(sgx_popf, void, env)
+#endif /* __Use_Original_Qemu (U1263) */
 #if __Use_Original_Qemu != 1 /* ours (U113) */
 DEF_HELPER_1(getsec, void, env)
 DEF_HELPER_1(pconfig, void, env)

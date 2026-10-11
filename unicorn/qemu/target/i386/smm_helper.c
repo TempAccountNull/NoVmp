@@ -40,6 +40,15 @@ void do_smm_enter(X86CPU *cpu)
     // qemu_log_mask(CPU_LOG_INT, "SMM: enter\n");
     // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
 
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* an SMI in enclave mode is an enclave-exiting event (SDM 092 Vol3D 40.4, 42.8.2, sgx_model.c) */
+    bool sgx_enc = env->sgx_enclave_mode != 0;
+
+    if (sgx_enc) {
+        x86_sgx_aex(env, -1, 0, 1, 0, 0);
+        env->sgx_enc_event = 0;
+    }
+#endif /* __Use_Original_Qemu (U1263) */
     env->msr_smi_count++;
     env->hflags |= HF_SMM_MASK;
     if (env->hflags2 & HF2_NMI_MASK) {
@@ -104,6 +113,14 @@ void do_smm_enter(X86CPU *cpu)
 
     x86_stl_phys(cs, sm_state + 0x7efc, SMM_REVISION_ID);
     x86_stl_phys(cs, sm_state + 0x7f00, env->smbase);
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    if (env->sgx) {
+        /* Vol3D Table 42-1: SMRAM 7EE0H bit 1 ENCLAVE_INTERRUPTION (U1263) */
+        uint32_t f = x86_ldl_phys(cs, sm_state + 0x7ee0);
+
+        x86_stl_phys(cs, sm_state + 0x7ee0, (f & ~2u) | (sgx_enc ? 2u : 0));
+    }
+#endif /* __Use_Original_Qemu (U1263) */
 #else
     x86_stl_phys(cs, sm_state + 0x7ffc, env->cr[0]);
     x86_stl_phys(cs, sm_state + 0x7ff8, env->cr[3]);

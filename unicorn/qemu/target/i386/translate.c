@@ -4326,6 +4326,13 @@ static int ibt_kind(CPUX86State *env, DisasContext *s)
         translator_ldub(tcg_ctx, env, pc + 1) == (CODE64(s) ? 0xfa : 0xfb)) {
         return 1;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* ENCLU (NP 0F 01 D7): kind 4, its Operation decides (helper_ibt_check, U1263) */
+    if (b == 0x0f && mand == 0 && (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX) &&
+        translator_ldub(tcg_ctx, env, pc) == 0x01 && translator_ldub(tcg_ctx, env, pc + 1) == 0xd7) {
+        return 4;
+    }
+#endif /* __Use_Original_Qemu (U1263) */
     return 0;
 }
 
@@ -4417,6 +4424,58 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
 }
 
 #endif /* __Use_Original_Qemu (U457) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/*
+ * NoVmp (ledger U1263): the instructions that behave differently inside an Intel SGX enclave, for
+ * opcode B (0F xx = 1xx) at CPL 3 with SGX enumerated (the helper checks enclave mode at run time):
+ * 0 = Table 39-1 (SDM 092 Vol3D 39.6.1, #UD inside an enclave): CPUID, GETSEC, RDPMC, SGDT, SIDT,
+ * SLDT, STR, VMCALL, VMFUNC; IN, INS, OUT, OUTS; far CALL / JMP / RET, INT n, INTO, IRET, LDS /
+ * LES / LFS / LGS / LSS, MOV to a segment register, POP DS / ES / SS / FS / GS, SYSCALL, SYSENTER;
+ * SMSW. 1 = INT3, 2 = INT1 (43.4.1). -1 = none. RDTSC / RDTSCP are legal (the model enumerates
+ * SGX2, 39.6.1). The ModRM byte is only peeked (s->pc is restored).
+ */
+static int sgx_enclave_kind(CPUX86State *env, DisasContext *s, int b)
+{
+    int modrm, mod, reg;
+
+    switch (b) {
+    case 0x1a2: case 0x137: case 0x133:                     /* CPUID GETSEC RDPMC */
+    case 0xe4: case 0xe5: case 0xe6: case 0xe7:             /* IN / OUT imm8 */
+    case 0xec: case 0xed: case 0xee: case 0xef:             /* IN / OUT DX */
+    case 0x6c: case 0x6d: case 0x6e: case 0x6f:             /* INS / OUTS */
+    case 0x9a: case 0xea: case 0xca: case 0xcb:             /* far CALL / JMP / RET */
+    case 0xcd: case 0xce: case 0xcf:                        /* INT n, INTO, IRET */
+    case 0xc4: case 0xc5: case 0x1b2: case 0x1b4: case 0x1b5:   /* LES LDS LSS LFS LGS */
+    case 0x8e:                                              /* MOV Sreg */
+    case 0x07: case 0x17: case 0x1f: case 0x1a1: case 0x1a9:    /* POP ES SS DS FS GS */
+    case 0x105: case 0x134:                                 /* SYSCALL SYSENTER */
+        return 0;
+    case 0xcc:
+        return 1;                                           /* INT3 */
+    case 0xf1:
+        return 2;                                           /* INT1 */
+    case 0x100: case 0x101: case 0xff:
+        break;
+    default:
+        return -1;
+    }
+    modrm = x86_ldub_code(env, s);
+    s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
+    mod = (modrm >> 6) & 3;
+    reg = (modrm >> 3) & 7;
+    switch (b) {
+    case 0x100:
+        return reg <= 1 ? 0 : -1;                           /* SLDT, STR */
+    case 0x101:
+        if ((mod != 3 && reg <= 1) || reg == 4) {
+            return 0;                                       /* SGDT, SIDT, SMSW */
+        }
+        return modrm == 0xc1 || modrm == 0xd4 ? 0 : -1;     /* VMCALL, VMFUNC */
+    default:
+        return reg == 3 || reg == 5 ? 0 : -1;               /* FF /3, FF /5: far CALL / JMP */
+    }
+}
+#endif /* __Use_Original_Qemu (U1263) */
 #if __Use_Original_Qemu != 1 /* ours (U614) */
 /*
  * NoVmp (ledger U614): the opcodes a REX2 prefix may not precede (APX spec 355828-009
@@ -5415,6 +5474,18 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         gen_apx_pre(s);     /* APX EVEX.NF = 1: keep the status flags (U640) */
     }
 #endif /* __Use_Original_Qemu (U640) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* instructions with another behaviour inside an SGX enclave (Table 39-1, 43.4.1) */
+    if ((s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX) && CPL(s) == 3) {
+        int kind = sgx_enclave_kind(env, s, b);
+
+        if (kind >= 0) {
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_sgx_enclave_check(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, kind));
+        }
+    }
+#endif /* __Use_Original_Qemu (U1263) */
     /* now check op code */
     switch (b) {
         /**************************/
@@ -8090,6 +8161,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     }
                 }
             }
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+            /* inside an enclave entered opt-out POPF clears TF (Vol3D 43.2.5, sgx_model.c) */
+            if ((s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX) && CPL(s) == 3) {
+                gen_helper_sgx_popf(tcg_ctx, cpu_env);
+            }
+#endif /* __Use_Original_Qemu (U1263) */
             gen_pop_update(s, ot);
             set_cc_op(s, CC_OP_EFLAGS);
             /* abort translation because TF/AC flag may change */
@@ -9301,6 +9378,27 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             set_cc_op(s, CC_OP_EFLAGS);
             break;
 #endif /* __Use_Original_Qemu (U1262) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        case 0xd7: /* enclu */
+            /*
+             * NoVmp (ledger U1263): ENCLU (NP 0F 01 D7, SDM 092 Vol3D p. 41-10). The helper
+             * (sgx_model.c) makes the CPL / mode checks, sets RIP for every leaf (EENTER, ERESUME
+             * and EEXIT transfer control) and raises a pending single-step #DB itself; the TB ends
+             * after it without the generic single-step / RF handling of gen_eob.
+             */
+            if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_enclu(tcg_ctx, cpu_env, cur_insn_len_i32(s));
+            set_cc_op(s, CC_OP_EFLAGS);
+            gen_update_cc_op(s);
+            tcg_gen_exit_tb(tcg_ctx, NULL, 0);
+            s->base.is_jmp = DISAS_NORETURN;
+            break;
+#endif /* __Use_Original_Qemu (U1263) */
         case 0xc5: /* pconfig */
             if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_PCONFIG)
                 || (s->prefix & (PREFIX_LOCK | PREFIX_DATA

@@ -1057,6 +1057,34 @@ void tlb_set_page_sgx_abort(CPUState *cpu, target_ulong vaddr, hwaddr paddr, Mem
 }
 
 #endif /* __Use_Original_Qemu (U1262) */
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+/*
+ * NoVmp (ledger U1263): an Intel SGX implicit access (target/i386/sgx_model.c: the XSAVE area of the
+ * current SSA frame that AEX writes and ERESUME reads through CR_XSAVE_PAGE_n, SDM 092 Vol3D
+ * 38.5.3.2, 40.4.1): 'vaddr' reads and writes 'paddr' (the physical address cached at enclave entry)
+ * without a page walk, without the SGX access control and without data breakpoints ("These
+ * accesses do not trigger any access-control faults/exits or data breakpoints"). The caller flushes
+ * the TLB afterwards.
+ */
+void tlb_set_page_sgx_implicit(CPUState *cpu, target_ulong vaddr, hwaddr paddr, MemTxAttrs attrs,
+                               int mmu_idx)
+{
+    CPUArchState *env = cpu->env_ptr;
+    target_ulong vaddr_page = vaddr & TARGET_PAGE_MASK;
+    CPUTLBEntry *te;
+
+    tlb_set_page_with_attrs(cpu, vaddr_page, paddr & TARGET_PAGE_MASK, attrs,
+                            PAGE_READ | PAGE_WRITE, mmu_idx, TARGET_PAGE_SIZE);
+    te = tlb_entry(env, mmu_idx, vaddr_page);
+    if (te->addr_read != (target_ulong)-1) {
+        te->addr_read &= ~(target_ulong)TLB_WATCHPOINT;
+    }
+    if (te->addr_write != (target_ulong)-1) {
+        te->addr_write &= ~(target_ulong)TLB_WATCHPOINT;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1263) */
 /* Add a new TLB entry, but without specifying the memory
  * transaction attributes to be used.
  */
