@@ -85,6 +85,7 @@ enum {
     VMXF_EXIT2,                 /* secondary VM-exit */
     VMXF_ENTRY,                 /* VM-entry */
     VMXF_VMFUNC,                /* VM-function controls */
+    VMXF_FRED,                  /* U1309: "exists only on processors that support FRED transitions" */
 };
 
 typedef struct VmxFieldDef {
@@ -144,11 +145,11 @@ static const VmxFieldDef vmx_fields[] = {
     FC(0x204a, VMXF_PROC3, 7),          /* IA32_SPEC_CTRL mask */
     FC(0x204c, VMXF_PROC3, 7),          /* IA32_SPEC_CTRL shadow */
     FC(0x204e, VMXF_PROC3, 8),          /* guest deadline shadow */
-    FC(0x2052, VMXF_NEVER, 0),          /* injected-event data (FRED) */
+    FC(0x2052, VMXF_FRED, 0),           /* injected-event data (FRED; U1309) */
     /* B.2.2 64-bit read-only data fields (Table B-5) */
     FC(0x2400, VMXF_PROC2, 1),          /* guest-physical address */
     FC(0x2402, VMXF_PROC3, 6),          /* MSR data */
-    FC(0x2404, VMXF_NEVER, 0),          /* original-event data (FRED) */
+    FC(0x2404, VMXF_FRED, 0),           /* original-event data (FRED; U1309) */
     /* B.2.3 64-bit guest-state fields (Table B-6) */
     F(0x2800),                          /* VMCS link pointer */
     F(0x2802),                          /* IA32_DEBUGCTL */
@@ -251,6 +252,27 @@ static uint64_t vmx_proc3_allowed1(CPUX86State *env)
 }
 
 /* the allowed 1-settings of a control register of the capability set */
+/*
+ * U1309: with FRED transitions (CPUID.(07H,1):EAX.FRED as reported) the capability set adds "load FRED"
+ * (VM-entry bit 23), "activate secondary controls" (VM-exit bit 31) with the secondary VM-exit controls
+ * "save FRED" (bit 0) and "load FRED" (bit 1), and VMX nested-exception support (IA32_VMX_BASIC[58]:
+ * "Any processor that supports FRED transitions will provide VMX nested-exception support", Vol3D A.1)
+ */
+static bool vmx_fred(CPUX86State *env)
+{
+    return x86_fred_cpuid(env);
+}
+
+static uint32_t vmx_exit_allowed1(CPUX86State *env)
+{
+    return VMX_EXIT_ALLOWED1 | (vmx_fred(env) ? 1u << 31 : 0);
+}
+
+static uint32_t vmx_entry_allowed1(CPUX86State *env)
+{
+    return VMX_ENTRY_ALLOWED1 | (vmx_fred(env) ? 1u << 23 : 0);
+}
+
 static uint64_t x86_vmx_allowed1(CPUX86State *env, int reg)
 {
     switch (reg) {
@@ -263,11 +285,11 @@ static uint64_t x86_vmx_allowed1(CPUX86State *env, int reg)
     case VMXF_PROC3:
         return vmx_proc3_allowed1(env);
     case VMXF_EXIT:
-        return VMX_EXIT_ALLOWED1;
+        return vmx_exit_allowed1(env);
     case VMXF_EXIT2:
-        return 0;                       /* EXIT_CTLS[63] = 0: no secondary VM-exit controls */
+        return vmx_fred(env) ? 3 : 0;   /* save FRED, load FRED (U1309); else no EXIT_CTLS2 */
     case VMXF_ENTRY:
-        return VMX_ENTRY_ALLOWED1;
+        return vmx_entry_allowed1(env);
     case VMXF_VMFUNC:
         return VMX_VMFUNC_ALLOWED1;
     default:
@@ -282,6 +304,9 @@ static bool vmx_cond(CPUX86State *env, int c, int b)
     }
     if (c == VMXF_NEVER) {
         return false;
+    }
+    if (c == VMXF_FRED) {
+        return vmx_fred(env);
     }
     return (x86_vmx_allowed1(env, c) >> b) & 1;
 }
@@ -378,7 +403,8 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
     case MSR_IA32_VMX_BASIC:
         /* A.1: revision, region size, WB (6), INS/OUTS information, TRUE_*, injection rule 56 */
         *val = VMX_REVISION_ID | ((uint64_t)VMX_REGION_SIZE << 32) | (6ull << 50) |
-               (1ull << 54) | (1ull << 55) | (1ull << 56);
+               (1ull << 54) | (1ull << 55) | (1ull << 56) |
+               (vmx_fred(env) ? 1ull << 58 : 0);           /* U1309: nested-exception support */
         break;
     case MSR_IA32_VMX_PINBASED_CTLS:
         *val = ((uint64_t)VMX_PIN_ALLOWED1 << 32) | VMX_PIN_DEFAULT1;
@@ -393,16 +419,19 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
         *val = ((uint64_t)VMX_PROC_ALLOWED1 << 32) | VMX_PROC_TRUE0;
         break;
     case MSR_IA32_VMX_EXIT_CTLS:
-        *val = ((uint64_t)VMX_EXIT_ALLOWED1 << 32) | VMX_EXIT_DEFAULT1;
+        *val = ((uint64_t)vmx_exit_allowed1(env) << 32) | VMX_EXIT_DEFAULT1;
         break;
     case MSR_IA32_VMX_TRUE_EXIT_CTLS:
-        *val = ((uint64_t)VMX_EXIT_ALLOWED1 << 32) | VMX_EXIT_TRUE0;
+        *val = ((uint64_t)vmx_exit_allowed1(env) << 32) | VMX_EXIT_TRUE0;
         break;
     case MSR_IA32_VMX_ENTRY_CTLS:
-        *val = ((uint64_t)VMX_ENTRY_ALLOWED1 << 32) | VMX_ENTRY_DEFAULT1;
+        *val = ((uint64_t)vmx_entry_allowed1(env) << 32) | VMX_ENTRY_DEFAULT1;
         break;
     case MSR_IA32_VMX_TRUE_ENTRY_CTLS:
-        *val = ((uint64_t)VMX_ENTRY_ALLOWED1 << 32) | VMX_ENTRY_TRUE0;
+        *val = ((uint64_t)vmx_entry_allowed1(env) << 32) | VMX_ENTRY_TRUE0;
+        break;
+    case MSR_IA32_VMX_EXIT_CTLS2_NV:
+        *val = x86_vmx_allowed1(env, VMXF_EXIT2);    /* A.4.2: the allowed 1-settings (U1309) */
         break;
     case MSR_IA32_VMX_MISC:
         *val = VMX_MISC_VALUE;
@@ -1314,6 +1343,7 @@ static void vmx_load_controls(CPUX86State *env)
     v->proc2 = (v->proc & PROC_SECONDARY) ? vmcs_get(env, VMCS_PROC2) : 0;
     v->proc3 = (v->proc & PROC_TERTIARY) ? vmcs_get(env, VMCS_PROC3) : 0;
     v->exit_ctls = vmcs_get(env, VMCS_EXIT_CTLS);
+    v->exit2_ctls = (v->exit_ctls & (1u << 31)) ? vmcs_get(env, 0x2044) : 0;     /* U1309 */
     v->entry_ctls = vmcs_get(env, VMCS_ENTRY_CTLS);
     v->exc_bitmap = vmcs_get(env, VMCS_EXC_BITMAP);
     v->pfec_mask = vmcs_get(env, VMCS_PFEC_MASK);
@@ -1471,8 +1501,11 @@ static bool vmx_check_controls(CPUX86State *env)
     if ((proc2 & PROC2_TSC_SCALING) && vmcs_get(env, VMCS_TSC_MULTIPLIER) == 0) {
         return false;
     }
-    /* 29.2.1.2 VM-exit control fields */
-    if (!vmx_ctl_ok(exit, VMX_EXIT_TRUE0, VMX_EXIT_ALLOWED1)) {
+    /* 29.2.1.2 VM-exit control fields (U1309: the secondary VM-exit controls, A.4.2) */
+    if (!vmx_ctl_ok(exit, VMX_EXIT_TRUE0, vmx_exit_allowed1(env))) {
+        return false;
+    }
+    if ((exit & (1u << 31)) && (vmcs_get(env, 0x2044) & ~x86_vmx_allowed1(env, VMXF_EXIT2))) {
         return false;
     }
     if (!(pin & PIN_PREEMPT_TIMER) && (exit & EXIT_SAVE_TIMER)) {
@@ -1485,7 +1518,7 @@ static bool vmx_check_controls(CPUX86State *env)
         return false;
     }
     /* 29.2.1.3 VM-entry control fields */
-    if (!vmx_ctl_ok(entry, VMX_ENTRY_TRUE0, VMX_ENTRY_ALLOWED1)) {
+    if (!vmx_ctl_ok(entry, VMX_ENTRY_TRUE0, vmx_entry_allowed1(env))) {
         return false;
     }
     info = vmcs_get(env, VMCS_ENTRY_INTR_INFO);
@@ -1495,8 +1528,12 @@ static bool vmx_check_controls(CPUX86State *env)
         if (type == 1) {
             return false;
         }
-        /* type 7: the 1-setting of "monitor trap flag" is supported; no FRED: vector 0 only */
-        if ((type == 2 && vec != 2) || (type == 3 && vec > 31) || (type == 7 && vec != 0)) {
+        /* type 7: vector 0 (pending MTF VM exit); U1309: 1 / 2 (SYSCALL / SYSENTER) when FRED
+           transitions would be enabled after VM entry (guest CR4.FRED) */
+        if ((type == 2 && vec != 2) || (type == 3 && vec > 31) ||
+            (type == 7 && vec != 0 &&
+             !((vec == 1 || vec == 2) && vmx_fred(env) &&
+               (vmcs_get(env, VMCS_GUEST_CR4) & CR4_FRED_MASK)))) {
             return false;
         }
         /* deliver-error-code bit: IA32_VMX_BASIC[56] = 1, so only the must-be-0 rules apply */
@@ -1512,8 +1549,10 @@ static bool vmx_check_controls(CPUX86State *env)
                 return false;
             }
         }
-        /* bit 13 (nested exception): IA32_VMX_BASIC[58] = 0; reserved 30:14 and 12 */
-        if (info & 0x7fffd000u) {
+        /* bit 13 (nested exception): only for hardware exceptions with IA32_VMX_BASIC[58] = 1
+           (FRED, U1309); reserved 30:14 and 12 */
+        if ((info & 0x7fffc000u) || (info & (1u << 12)) ||
+            ((info & (1u << 13)) && (type != 3 || !vmx_fred(env)))) {
             return false;
         }
         len = vmcs_get(env, VMCS_ENTRY_INSN_LEN);
@@ -1534,6 +1573,30 @@ static bool vmx_check_controls(CPUX86State *env)
 }
 
 /* ---- 29.2.2-29.2.4 checks on the host-state area: false = VMfailValid(8) ---- */
+/*
+ * U1309: the FRED MSR fields at 'base' (CONFIG, RSP1-3, STKLVLS, SSP1-3; 29.2.2 / 29.3.1.1):
+ * IA32_FRED_CONFIG bits 2, 5:4 and 11 zero and the value CPU canonical; RSP1-3 CPU canonical with bits
+ * 5:0 zero; SSP1-3 CPU canonical with bits 2:0 zero
+ */
+static bool vmx_fred_fields_ok(CPUX86State *env, uint32_t base)
+{
+    uint64_t cfg = vmcs_get(env, base);
+    int i;
+
+    if ((cfg & 0x834) || !x86_vmx_canonical(env, cfg)) {
+        return false;
+    }
+    for (i = 1; i <= 3; i++) {
+        uint64_t rsp = vmcs_get(env, base + 2 * i), ssp = vmcs_get(env, base + 8 + 2 * i);
+
+        if ((rsp & 0x3f) || !x86_vmx_canonical(env, rsp) || (ssp & 7) ||
+            !x86_vmx_canonical(env, ssp)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool vmx_check_host(CPUX86State *env)
 {
     uint32_t exit = vmcs_get(env, VMCS_EXIT_CTLS), entry = vmcs_get(env, VMCS_ENTRY_CTLS);
@@ -1584,6 +1647,10 @@ static bool vmx_check_host(CPUX86State *env)
         !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_GDTR_BASE)) ||
         !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_IDTR_BASE)) ||
         !x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_TR_BASE))) {
+        return false;
+    }
+    /* U1309: "load FRED" VM-exit control: the host FRED fields (29.2.2) */
+    if ((exit & (1u << 31)) && (vmcs_get(env, 0x2044) & 2) && !vmx_fred_fields_ok(env, 0x2c08)) {
         return false;
     }
     /* 29.2.4: address-space size */
@@ -1693,6 +1760,10 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
     if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_GUEST_CR3))) {
         return 0;
     }
+    /* U1309: "load FRED" VM-entry control: the guest FRED fields (29.3.1.1) */
+    if ((entry & (1u << 23)) && !vmx_fred_fields_ok(env, 0x281a)) {
+        return 0;
+    }
     /* SDM 093 29.3.1.1: the bits reserved in DR7 (the model's DR7: bits 63:32, no Intel PT) */
     if ((entry & ENTRY_LOAD_DEBUG) && (vmcs_get(env, VMCS_GUEST_DR7) >> 32)) {
         return 0;
@@ -1794,6 +1865,17 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
         }
         if ((AR_TYPE(ar[R_CS]) == 3 || !(cr0 & CR0_PE_MASK)) && AR_DPL(ar[R_SS]) != 0) {
             return 0;
+        }
+        /* U1309: a guest that will use FRED transitions (CR4.FRED): SS.DPL 0 (with CS.L = 1) or 3
+           (with RFLAGS.IOPL = 0 and no blocking by STI) (29.3.1.2) */
+        if (cr4 & CR4_FRED_MASK) {
+            int dpl = AR_DPL(ar[R_SS]);
+
+            if ((dpl != 0 && dpl != 3) || (dpl == 0 && !AR_L(ar[R_CS])) ||
+                (dpl == 3 && ((vmcs_get(env, VMCS_GUEST_RFLAGS) & IOPL_MASK) ||
+                              (vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) & 1)))) {
+                return 0;
+            }
         }
         for (i = 0; i < 6; i++) {
             if (i == R_CS || i == R_SS || ug || AR_UNUSABLE(ar[i])) {
@@ -2059,6 +2141,15 @@ static void vmx_load_guest(CPUX86State *env)
     } else {
         env->hflags2 &= ~HF2_NMI_MASK;
     }
+    /* U1309: "load FRED" VM-entry control (29.3.2.1) */
+    if (entry & (1u << 23)) {
+        env->fred_config = vmcs_get(env, 0x281a);
+        for (i = 1; i <= 3; i++) {
+            env->fred_rsp[i] = vmcs_get(env, 0x281a + 2 * i);
+            env->fred_ssp[i] = vmcs_get(env, 0x2822 + 2 * i);
+        }
+        env->fred_stklvls = vmcs_get(env, 0x2822);
+    }
     /* U1306: PAE paging with EPT: the PDPTE registers from the guest PDPTE fields (29.3.2.4) */
     env->vmx.pdpte_valid = 0;
     if ((env->vmx.proc2 & PROC2_EPT) && (env->cr[0] & CR0_PG_MASK) &&
@@ -2211,6 +2302,15 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.mtf_pending = 0;
     env->vmx.delivering = 0;
     env_cpu(env)->halted = 0;
+    /* U1309: "load FRED" VM-exit control (30.5.2) */
+    if (exit & (1u << 31) && (env->vmx.exit2_ctls & 2)) {
+        env->fred_config = vmcs_get(env, 0x2c08);
+        for (i = 1; i <= 3; i++) {
+            env->fred_rsp[i] = vmcs_get(env, 0x2c08 + 2 * i);
+            env->fred_ssp[i] = vmcs_get(env, 0x2c10 + 2 * i);
+        }
+        env->fred_stklvls = vmcs_get(env, 0x2c10);
+    }
     env->vmx.mwait_wait = 0;            /* U1304 */
     env->vmx.hlt_wake = 0;              /* U1305 */
     env->vmx.iret_nmi = 0;
@@ -2311,6 +2411,15 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     if (exit & EXIT_SAVE_TIMER) {
         vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
     }
+    /* U1309: "save FRED" VM-exit control (30.3.4 / 30.4) */
+    if (env->vmx.exit2_ctls & 1) {
+        vmcs_put(env, 0x281a, env->fred_config);
+        for (i = 1; i <= 3; i++) {
+            vmcs_put(env, 0x281a + 2 * i, env->fred_rsp[i]);
+            vmcs_put(env, 0x2822 + 2 * i, env->fred_ssp[i]);
+        }
+        vmcs_put(env, 0x2822, env->fred_stklvls);
+    }
     /* U1307: the guest interrupt status (30.3.4) */
     if (env->vmx.proc2 & PROC2_VID) {
         vmcs_put(env, VMCS_GUEST_INTR_STATUS, env->vmx.rvi | ((uint32_t)env->vmx.svi << 8));
@@ -2345,6 +2454,9 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
     vmcs_put(env, VMCS_EXIT_INTR_INFO, e->intr_info);
     if (e->intr_info & (1u << 11)) {
         vmcs_put(env, VMCS_EXIT_INTR_ERR, e->intr_err);
+    }
+    if (env->vmx.delivering && x86_fred_enabled(env)) {
+        vmcs_put(env, 0x2404, env->vmx.idtv_data);     /* U1309: original-event data (30.2.4) */
     }
     if (env->vmx.delivering) {
         vmcs_put(env, VMCS_IDTV_INFO, env->vmx.idtv_info);
@@ -2457,10 +2569,16 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
     uint32_t len = vmcs_get(env, VMCS_ENTRY_INSN_LEN);
     uint32_t ec = vmcs_get(env, VMCS_ENTRY_EXC_ERR);
 
-    if (type == 7) {
+    if (type == 7 && vec == 0) {
         env->vmx.mtf_pending = 1;       /* 29.6.2 */
         return;
     }
+    /* U1309: FRED event delivery of the injected event (29.6.1.1): its event data, STI blocking
+       from the guest interruptibility state, the nested-exception bit */
+    env->vmx.inj_data = vmx_fred(env) ? vmcs_get(env, 0x2052) : 0;
+    env->vmx.inj_sti = vmcs_get(env, VMCS_GUEST_INTERRUPTIBILITY) & 1;
+    env->fred_nested = type == 3 && ((info >> 13) & 1);
+    env->fred_kind = type == 6 ? 6 : 3;     /* INT3 / INTO: FRED software exception (type 6) */
     /* 29.7.1: no blocking by STI or MOV SS after an injecting VM entry; NMI blocking */
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
     if (type == 2) {
@@ -2482,6 +2600,20 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
     env->vmx.inj_ec = ec;
     env->vmx.inj_push_rip = env->eip + ((type == 4 || type == 5 || type == 6) ? len : 0);
     env->old_exception = -1;
+    if (type == 7) {
+        /* U1309: SYSCALL (1) / SYSENTER (2) with FRED event delivery: RIP + length pushed */
+        env->vmx.idtv_info = info & ~(1u << 12);
+        x86_fred_inject_other(env, vec, env->eip + len, (int)len);
+        env->vmx.delivering = 0;
+        env->vmx.inj_active = 0;
+        cs->exception_index = -1;
+        cpu_loop_exit(cs);
+    }
+    if (type == 5 && x86_fred_enabled(env)) {
+        env->fred_kind = 5;             /* U1309: FRED privileged software exception */
+        env->fred_insn_len = len;
+        env->eip += len;                /* x86_fred_event: the event "occurs" at RIP (RIP + len pushed) */
+    }
     if (type == 0 || type == 2) {
         /* an external interrupt / NMI: delivered as the local APIC delivers one (docs/apic.md) */
         x86_apic_deliver_event(env, vec);
@@ -3231,6 +3363,10 @@ void x86_vmx_delivery_start(CPUX86State *env, int intno, int is_int, int error_c
     }
     v->delivering = 1;
     v->idtv_info = vmx_event_info(env, intno, type);
+    /* U1309: an exception nested on FRED event delivery (Table 27-21 bit 13) */
+    if (type == 3 && intno != EXCP08_DBLE && env->fred_nested && x86_fred_enabled(env)) {
+        v->idtv_info |= 1u << 13;
+    }
     v->idtv_err = (uint32_t)error_code;
     v->idtv_len = len;
 }
@@ -3294,6 +3430,10 @@ void x86_vmx_exception(CPUX86State *env, int intno, int type, int error_code, in
     }
     if (v->iret_nmi && !v->delivering && intno != EXCP08_DBLE) {
         e.intr_info |= 1u << 12;
+    }
+    /* U1309: a hardware exception encountered during FRED event delivery (30.2.2 bit 13) */
+    if (type == 3 && intno != EXCP08_DBLE && env->fred_nested) {
+        e.intr_info |= 1u << 13;
     }
     v->iret_nmi = 0;
     vmx_vmexit(env, &e);
@@ -4047,6 +4187,23 @@ static bool vmx_posted_intr(CPUX86State *env, int vec)
     }
     vmx_eval_vintr(env);
     return true;
+}
+
+
+/*
+ * U1309: ERETS / ERETU in VMX non-root operation (28.3): with "NMI exiting" 1 they do not unblock NMIs;
+ * with virtual NMIs they unblock virtual NMIs instead (when augmented SS bit 18 is set). True if the
+ * caller unblocks NMIs as outside VMX non-root operation.
+ */
+bool x86_vmx_fred_eret_nmi(CPUX86State *env)
+{
+    if (!env->vmx.nonroot || !(env->vmx.pin & PIN_NMI_EXIT)) {
+        return true;
+    }
+    if (env->vmx.pin & PIN_VIRTUAL_NMI) {
+        env->vmx.vnmi_blocked = 0;
+    }
+    return false;
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

@@ -3500,14 +3500,8 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             } else if ((mask & UC_X86_FEATURE_VMX) && uc->x86_apx) {
                 /* U1302: VMX with APX: see UC_CTL_X86_APX (docs/vmx.md) */
                 err = UC_ERR_ARG;
-            } else if ((mask & UC_X86_FEATURE_VMX) && (mask & UC_X86_FEATURE_FRED)) {
-                /*
-                 * U1301: "Any processor that supports FRED transitions will provide VMX
-                 * nested-exception support" (SDM 092 Vol3D A.1 p. A-2) with the FRED VMCS fields;
-                 * the model's FRED-VMX interactions are not implemented yet (docs/vmx.md stage 8)
-                 */
-                err = UC_ERR_ARG;
             } else {
+                /* U1309: VMX together with FRED is allowed (the FRED-VMX interactions, docs/vmx.md) */
                 uc->x86_features = mask;
             }
         } else {

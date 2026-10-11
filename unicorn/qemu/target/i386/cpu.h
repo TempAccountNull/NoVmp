@@ -524,6 +524,15 @@ typedef struct X86VmxState {
     uint32_t trap_reason;
     uint64_t trap_qual, apic_va;
 #endif /* __Use_Original_Qemu (U1307) */
+#if __Use_Original_Qemu != 1 /* ours (U1309) */
+    /*
+     * U1309: FRED - the secondary VM-exit controls of the current VM entry; an event injected with
+     * FRED event delivery (its event data, blocking by STI from the guest interruptibility state);
+     * the event data of the event being delivered (original-event data, 30.2.4)
+     */
+    uint64_t exit2_ctls, inj_data, idtv_data;
+    uint8_t inj_sti;
+#endif /* __Use_Original_Qemu (U1309) */
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -3555,6 +3564,11 @@ bool x86_vmx_x2apic_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val, uintptr_
 hwaddr x86_vmx_apic_access(CPUX86State *env, uint64_t la, hwaddr pa, int size, int access_type,
                            int *prot);
 bool x86_vmx_senduipi(CPUX86State *env, int nv, uint32_t ndst);
+#if __Use_Original_Qemu != 1 /* ours (U1309) */
+/* U1309: FRED in VMX non-root operation */
+void x86_fred_inject_other(CPUX86State *env, int vector, uint64_t next_ip, int len);
+bool x86_vmx_fred_eret_nmi(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1309) */
 #endif /* __Use_Original_Qemu (U1307) */
 #define VMX_EXIT_HLT     12
 #define VMX_EXIT_RDPMC   15

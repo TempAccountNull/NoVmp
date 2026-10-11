@@ -32382,7 +32382,7 @@ static int vmx_mov_cr4(PcCtx *c, uint64_t v)
  * CPUID.01H:ECX[5] = 1"). With the opt-in: VMX[5] = 1, SVM (80000001H:ECX[2]) withdrawn, CR4.VMXE
  * settable, the capability MSRs read the values of docs/vmx.md (Appendix A) and are read-only
  * (#GP(0) on WRMSR, UC_ERR_EXCEPTION through the API); 493H does not exist (EXIT_CTLS[63] = 0);
- * IA32_FEATURE_CONTROL bits 0 and 2 writable until locked. VMX together with FRED: UC_ERR_ARG.
+ * IA32_FEATURE_CONTROL bits 0 and 2 writable until locked. VMX together with FRED: accepted (U1309).
  */
 static void test_x86_vmx_optin(void)
 {
@@ -32428,12 +32428,11 @@ static void test_x86_vmx_optin(void)
     TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == 13);           /* bit 2 needs CPUID.01H:ECX[5] */
     OK(uc_close(c.uc));
 
-    /* VMX together with FRED is refused until the FRED-VMX stage */
+    /* VMX together with FRED is accepted since U1309 (the FRED-VMX interactions) */
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
-    TEST_CHECK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED) == UC_ERR_ARG);
-    OK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_VMX));
+    OK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED));
     OK(uc_ctl_get_x86_features(uc, &mask));
-    TEST_CHECK(mask == UC_X86_FEATURE_VMX);
+    TEST_CHECK(mask == (UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED));
     OK(uc_close(uc));
 
     vmx_open(&c, UC_X86_FEATURE_VMX);
@@ -32498,11 +32497,11 @@ static uint64_t vmx_rq(PcCtx *c, uint64_t a)
  * NE, PG (IA32_VMX_CR0_FIXED0), CR4 with PAE and VMXE, IA32_FEATURE_CONTROL locked with bit 2,
  * revision identifier 1 in the VMXON region and in VMCS A and B
  */
-static void vmx_root_open(PcCtx *c)
+static void vmx_root_open_f(PcCtx *c, int feat)
 {
     uint32_t rev = 1;
 
-    vmx_open(c, UC_X86_FEATURE_VMX);
+    vmx_open(c, feat);
     vmx_wq(c, VMX_PT, (VMX_PT + 0x1000) | 3);
     vmx_wq(c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 3);
     vmx_wq(c, VMX_PT + 0x2000, 0x83);
@@ -32514,6 +32513,11 @@ static void vmx_root_open(PcCtx *c)
     OK(uc_mem_write(c->uc, VMX_VMXON, &rev, 4));
     OK(uc_mem_write(c->uc, VMX_VMCS_A, &rev, 4));
     OK(uc_mem_write(c->uc, VMX_VMCS_B, &rev, 4));
+}
+
+static void vmx_root_open(PcCtx *c)
+{
+    vmx_root_open_f(c, UC_X86_FEATURE_VMX);
 }
 
 /* a VMX instruction with the m64 operand [RAX] = ptr: the vector or -1; *fl = the result flags */
@@ -32913,12 +32917,12 @@ static uint64_t vmx_r(PcCtx *c, uint32_t enc)
  * flat segments, the host's CR0 / CR3 / CR4, IA-32e mode guest) with the TRUE_* default settings
  * of the controls; host: 64-bit, RIP = VMX_ENTRY_PC + 3 (after a 3-byte VMLAUNCH / VMRESUME)
  */
-static void vmx_setup(PcCtx *c)
+static void vmx_setup_f(PcCtx *c, int feat)
 {
     uint64_t fl;
     int i;
 
-    vmx_root_open(c);
+    vmx_root_open_f(c, feat);
     TEST_CHECK(vmx_vmxon(c, VMX_VMXON, &fl) == -1 && fl == 0);
     TEST_CHECK(vmx_vmclear(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
     TEST_CHECK(vmx_vmptrld(c, VMX_VMCS_A, &fl) == -1 && fl == 0);
@@ -32989,6 +32993,11 @@ static void vmx_setup(PcCtx *c)
     vmx_w(c, 0x6824, 0);
     vmx_w(c, 0x6826, 0);
     vmx_w(c, 0x2802, 0);                    /* guest IA32_DEBUGCTL */
+}
+
+static void vmx_setup(PcCtx *c)
+{
+    vmx_setup_f(c, UC_X86_FEATURE_VMX);
 }
 
 /*
@@ -33998,6 +34007,73 @@ static void test_x86_vmx_apicv_posted(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1309: FRED in VMX operation (SDM 092 Vol3C 27.8.3, 29.2.1.3, 29.3.1, 29.6.1.1, 30.2.2, 30.2.4,
+ * 30.3, 30.5; Vol3D A.1, A.4.2) with UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED. The capability set adds
+ * IA32_VMX_BASIC[58] (nested-exception support), "load FRED" (VM-entry bit 23), "activate secondary
+ * controls" (VM-exit bit 31) and IA32_VMX_EXIT_CTLS2 = 3 (save / load FRED). A guest with CR4.FRED and
+ * "load FRED" (IA32_FRED_CONFIG = the handler page): an injected #GP(55H) with injected-event data
+ * 1234H is delivered with FRED event delivery (handler at CONFIG + 100H; the frame holds the error code,
+ * the RIP and the event data 1234H). A #PF encountered during the FRED delivery of #UD (RSP not mapped)
+ * exits by the exception bitmap with the nested-exception bit (80002B0EH), the original event #UD
+ * (80000306H) and original-event data 0. "Save FRED" stores the FRED MSRs in the guest fields, "load
+ * FRED" (VM exit) loads IA32_FRED_CONFIG from the host field.
+ */
+static void test_x86_vmx_fred(void)
+{
+    PcCtx c;
+    uint64_t fl, v, sp;
+    int i;
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT));
+    TEST_CHECK(vmx_rdmsr(&c, 0x480, &v) == -1 && ((v >> 58) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x484, &v) == -1 && ((v >> 55) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x483, &v) == -1 && ((v >> 63) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x493, &v) == -1 && v == 3);
+    /* a FRED guest: CR4.FRED, "load FRED" with IA32_FRED_CONFIG = the handler page */
+    OK(uc_mem_write(c.uc, VMX_GUEST_PC + 0x1100, "\x0f\xa2", 2));
+    vmx_w(&c, 0x6804, pc_get(&c, UC_X86_REG_CR4) | (1ull << 32));
+    vmx_w(&c, 0x4012, 0x11fb | 0x200 | (1u << 23));
+    vmx_w(&c, 0x281a, VMX_GUEST_PC + 0x1000);
+    for (i = 0; i < 7; i++) {
+        vmx_w(&c, 0x281c + 2 * i, 0);       /* RSP1-3, STKLVLS, SSP1-3 */
+    }
+    /* inject #GP(55H) with injected-event data 1234H */
+    vmx_w(&c, 0x4016, 0x80000b0du);
+    vmx_w(&c, 0x4018, 0x55);
+    vmx_w(&c, 0x2052, 0x1234);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90", 1, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x1100);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(sp == (VMX_GUEST_RSP & ~0x3full) - 64);
+    TEST_CHECK(vmx_rq(&c, sp) == 0x55 && vmx_rq(&c, sp + 8) == VMX_GUEST_PC &&
+               vmx_rq(&c, sp + 48) == 0x1234);
+    /* a #PF during the FRED delivery of #UD: nested-exception bit, original event #UD */
+    vmx_w(&c, 0x4004, 1u << 14);
+    vmx_w(&c, 0x681c, 0x40000100);
+    vmx_resume_regs(&c, "\x0f\x0b", 2, 0, 0, 0, 0);
+    v = vmx_r(&c, 0x4404);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && v == 0x80002b0eu);
+    TEST_MSG("info %llx", (unsigned long long)v);
+    v = vmx_r(&c, 0x4408);
+    TEST_CHECK(v == 0x80000306u && vmx_r(&c, 0x2404) == 0);
+    TEST_MSG("original %llx", (unsigned long long)v);
+    /* "save FRED" / "load FRED" on VM exit */
+    vmx_w(&c, 0x4004, 0);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 31));
+    vmx_w(&c, 0x2044, 3);
+    vmx_w(&c, 0x281c, 0x7000);
+    vmx_w(&c, 0x2c08, 0x5000);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK(vmx_r(&c, 0x281a) == VMX_GUEST_PC + 0x1000 && vmx_r(&c, 0x281c) == 0x7000);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1d4, &v) == -1 && v == 0x5000);
+    TEST_MSG("IA32_FRED_CONFIG %llx", (unsigned long long)v);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34438,4 +34514,5 @@ TEST_LIST = {
     {"test_x86_vmx_apicv_tpr_x2apic", test_x86_vmx_apicv_tpr_x2apic},
     {"test_x86_vmx_apicv_access", test_x86_vmx_apicv_access},
     {"test_x86_vmx_apicv_posted", test_x86_vmx_apicv_posted},
+    {"test_x86_vmx_fred", test_x86_vmx_fred},
     {NULL, NULL}};

@@ -1462,11 +1462,37 @@ static void x86_fred_deliver(CPUX86State *env, int vector, int type, uint32_t er
         env->fred_ss16 = type == FRED_T_HWEXC && (env->hflags & HF_INHIBIT_IRQ_MASK) &&
                          env->fred_sti;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1309) */
+    /*
+     * VMX non-root operation (Vol3C 29.6.1.1): an event injected by VM entry saves the injected-event
+     * data and, as augmented SS bit 16, the guest's blocking by STI; the event data of the delivery is
+     * the original-event data of a VM exit during it (30.2.4); SYSCALL / SYSENTER are recorded as
+     * events of type 7 (30.2.4 note)
+     */
+    if (env->vmx.nonroot) {
+        if (env->vmx.inj_active) {
+            data = env->vmx.inj_data;
+            env->fred_ss16 = env->vmx.inj_sti;
+        }
+        if (type == FRED_T_OTHER && !env->vmx.inj_active) {
+            env->vmx.delivering = 1;
+            env->vmx.idtv_info = (vector & 0xff) | (7u << 8) | (1u << 31);
+            env->vmx.idtv_len = len;
+        }
+        env->vmx.idtv_data = data;
+    }
+#endif /* __Use_Original_Qemu (U1309) */
     acs = env->segs[R_CS].selector | ((uint64_t)old_csl << 16) | ((uint64_t)env->fred_cs18 << 18);
     ass = env->segs[R_SS].selector;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1309) */
     if (type == FRED_T_HWEXC && env->fred_ss16) {
         ass |= 1ull << 16;
     }
+#else /* ours (U1309) */
+    if ((type == FRED_T_HWEXC || (env->vmx.nonroot && env->vmx.inj_active)) && env->fred_ss16) {
+        ass |= 1ull << 16;
+    }
+#endif /* __Use_Original_Qemu (U1309) */
     if (type == FRED_T_SWINT || type == FRED_T_OTHER) {
         ass |= 1ull << 17;
     }
@@ -1579,8 +1605,20 @@ static void x86_fred_deliver(CPUX86State *env, int vector, int type, uint32_t er
     }
     cpu_sync_cet_hflags(env);
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U1309) */
+    env->vmx.delivering = 0;            /* the delivery completed (no VM exit during it) */
+    env->vmx.inj_active = 0;
+#endif /* __Use_Original_Qemu (U1309) */
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1309) */
+/* VMX: SYSCALL (1) / SYSENTER (2) injected by VM entry with FRED event delivery (Vol3C 29.6.1.1) */
+void x86_fred_inject_other(CPUX86State *env, int vector, uint64_t next_ip, int len)
+{
+    x86_fred_deliver(env, vector, FRED_T_OTHER, 0, next_ip, len, false, 0);
+}
+
+#endif /* __Use_Original_Qemu (U1309) */
 /* an exception / software interrupt / external interrupt or NMI on its way to FRED delivery */
 static void x86_fred_event(CPUX86State *env, int intno, int is_int, int error_code,
                            target_ulong next_eip, int is_hw)
@@ -1665,9 +1703,16 @@ static void fred_eret_pop(CPUX86State *env, uint64_t f[5], uintptr_t ra)
 /* the end of ERETS / ERETU: NMI unblocking and the single-step trap (old TF, or SS[17] and new TF) */
 static void fred_eret_end(CPUX86State *env, uint64_t tss, bool old_tf)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1309) */
     if (tss & (1ull << 18)) {
         env->hflags2 &= ~HF2_NMI_MASK;
     }
+#else /* ours (U1309) */
+    /* VMX non-root operation: NMI exiting / virtual NMIs change the unblocking (Vol3C 28.3) */
+    if ((tss & (1ull << 18)) && x86_vmx_fred_eret_nmi(env)) {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1309) */
     if (old_tf || ((tss & (1ull << 17)) && (env->eflags & TF_MASK))) {
         helper_single_step(env);
     }

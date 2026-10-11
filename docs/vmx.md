@@ -131,7 +131,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 8 - deferred items of other agents
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58] | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.6, 30.2.2, 30.2.4; Vol3D A.1 p. A-2 | - | planned (until then the opt-ins UC_X86_FEATURE_VMX and UC_X86_FEATURE_FRED are refused together, UC_ERR_ARG: a FRED processor must provide nested-exception support, Vol3D A.1 p. A-2) |
+| FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58], FRED event injection (event data, STI blocking, SYSCALL / SYSENTER as type 7), VM-entry checks of the FRED fields and of FRED guests, ERETS / ERETU with NMI exiting | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.2.1-29.3.2, 29.6.1.1, 30.2.2, 30.2.4, 30.3, 30.5, 28.3; Vol3D A.1 p. A-2, A.4.2 | `vmx_helper.c` vmx_fred*, `seg_helper.c` x86_fred_deliver / fred_eret_end | done (U1309); the opt-ins UC_X86_FEATURE_VMX and UC_X86_FEATURE_FRED may be combined |
 | ENCLV and SGX in VMX operation (ENCLS exiting, ENCLV exiting) | Vol3D 41 (ENCLV), Vol3C 28.1.3 (ENCLS) | - | pending: agent/sgx implements SGX; ENCLV is added only after SGX is merged |
 
 ### Stage 9 - tests
@@ -173,7 +173,7 @@ translator and passed to the helpers.
 - APX together with VMX: the VM-exit extended instruction-information field (2406H) and 5-bit register
   IDs (APX spec 355828-009 3.1.4.4.1), EVEX-promoted INVEPT / INVVPID: pending; the opt-ins APX
   (UC_CTL_X86_APX) and UC_X86_FEATURE_VMX are refused together (UC_ERR_ARG).
-- FRED together with VMX: stage 8; refused together (UC_ERR_ARG).
+- FRED together with VMX: done (U1309), see "FRED in VMX operation".
 - VMXOFF and active VMCSs: the VMCS data stay valid in memory (our choice; Vol3C 27.11.1 allows
   corruption), so VM-instruction error 6 never occurs.
 - SMX operation (GETSEC[SENTER]) does not exist in the model: VMXON is enabled by IA32_FEATURE_CONTROL
@@ -338,3 +338,25 @@ translator and passed to the helpers.
   virtualization is not offered, so case 4 of 32.7 applies).
 - Not offered (capability set): IPI virtualization, APIC-timer virtualization (tertiary controls),
   "virtualize IA32_SPEC_CTRL".
+
+### FRED in VMX operation (U1309)
+- With FRED transitions (CPUID.(07H,1):EAX.FRED as reported) the capability set adds IA32_VMX_BASIC[58],
+  "load FRED" (VM-entry control 23), "activate secondary controls" (VM-exit control 31) with
+  IA32_VMX_EXIT_CTLS2 = 3 ("save FRED", "load FRED"); the FRED VMCS fields, the injected-event data and
+  the original-event data exist then (Vol3D Appendix B footnotes).
+- VM entry: the secondary VM-exit controls against IA32_VMX_EXIT_CTLS2; injection type 7 with vector 1 /
+  2 when the guest CR4.FRED is 1; the nested-exception bit only for hardware exceptions; the FRED MSR
+  fields ("load FRED", host and guest: CONFIG bits 2, 5:4, 11 zero, RSP1-3 64-byte aligned, SSP1-3
+  8-byte aligned, all CPU canonical); a FRED guest's SS.DPL 0 (CS.L = 1) or 3 (IOPL 0, no STI blocking).
+  "load FRED" loads IA32_FRED_CONFIG / RSP1-3 / STKLVLS / SSP1-3; VM exits save them ("save FRED") and
+  load the host values ("load FRED").
+- Event injection into a FRED guest (29.6.1.1): FRED event delivery with the CPL of the loaded SS.DPL,
+  the injected-event data as event data, augmented SS bit 16 = the guest's blocking by STI, the
+  nested-exception bit for the stack level and the saved event information, SYSCALL / SYSENTER (type 7)
+  with RIP + the VM-entry instruction length.
+- VM exits: an exception encountered during FRED event delivery sets bit 13 of the exiting-event
+  information; the original-event information of an exception nested on FRED delivery has bit 13; the
+  original-event data field receives the event data of the delivery; SYSCALL / SYSENTER delivered with
+  FRED are original events of type 7.
+- ERETS / ERETU (28.3): with "NMI exiting" 1 they leave blocking by NMI alone; with virtual NMIs they
+  clear virtual-NMI blocking for augmented SS bit 18.
