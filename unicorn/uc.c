@@ -3617,6 +3617,13 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             uc->x86_cpuid_strict_set = on >= 0;
             uc->x86_cpuid_strict = on >= 0 ? on != 0 : uc->x86_cpuid_count != 0;
             if (uc->init_done) {
+#if __Use_Original_Qemu != 1 /* ours (U1225) */
+                /* NoVmp (ledger U1225): becoming strict narrows XCR0 to the profile's leaf 0DH
+                   (x86_cpu_xcr0_in_profile); becoming non-strict leaves the guest's XCR0 alone */
+                if (uc->x86_cpuid_changed) {
+                    uc->x86_cpuid_changed(uc);
+                }
+#endif /* __Use_Original_Qemu (U1225) */
                 uc->tb_flush(uc);
             }
         } else {

@@ -4438,6 +4438,21 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
     const uint64_t mpx = XSTATE_BNDREGS_MASK | XSTATE_BNDCSR_MASK;
     uint32_t eax, ebx, ecx, edx;
 
+#if __Use_Original_Qemu != 1 /* ours (U1225) */
+    /*
+     * NoVmp (ledger U1225, user decision 2026-10-11): only a strict UC_CTL_X86_CPUID profile
+     * narrows XCR0 to its leaf 0DH - the rule of XSETBV (U1220) and XGETBV ECX = 1 (U1203).
+     * Without a profile or with a non-strict one the model value stands (the components the model
+     * supports, x86_cpu_reset_hold); the pairing rules below then hold already. Architecturally
+     * "After reset, all bits (except bit 0) in XCR0 are cleared to zero; XCR0[0] is set to 1"
+     * (SDM 093 Vol3A 2.6 p. 2-23; Table 12-1 p. 12-3: XCR0 1H at power-up and RESET, unchanged by
+     * INIT); the emulator's reset XCR0 is the value an OS writes with XSETBV (Vol1 13.3 p. 13-5:
+     * XCR0[i] can be set "if and only if CPUID.0DH.00H:EAX[i] = 1"), as CR4.OSXSAVE is set (U67).
+     */
+    if (!env->uc || !env->uc->x86_cpuid_strict) {
+        return xcr0;
+    }
+#endif /* __Use_Original_Qemu (U1225) */
     if (!x86_cpuid_profile(env, 0xd, 0, &eax, &ebx, &ecx, &edx)) {
         return xcr0;
     }

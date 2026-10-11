@@ -5070,9 +5070,10 @@ static void test_x86_avx512_optin(void)
     TEST_CHECK(m0_xcr0(&m) == (xcr0 & 0x2e7));
     m0_close(&m);
 
-    /* a profile set before init: reset XCR0 within its leaf 0DH */
+    /* a profile set before init. U1225 (user decision 2026-10-11): m0_open makes it non-strict, so the
+       model's reset XCR0 stands; a strict one narrows it (test_x86_st_reset_xcr0_profile) */
     m0_open(&m, UC_MODE_64, 1, prof7, 2);
-    TEST_CHECK(m0_xcr0(&m) == 7);
+    TEST_CHECK(m0_xcr0(&m) == xcr0);
     m0_close(&m);
 
     /* without AVX-512 in the model, a profile listing 7:5 does not add them */
@@ -9919,12 +9920,14 @@ static void test_x86_amx_optin(void)
     TEST_CHECK(r[0] == 5);
     ax_close(&a);
 
-    /* the i5-13600K leaf 0DH has no AMX components: XCR0 without them, AMX unusable */
+    /* the i5-13600K leaf 0DH has no AMX components. U1225 (user decision 2026-10-11): this profile is
+       not strict (ax_open), so the reset XCR0 is the model's, AMX included, and TILERELEASE runs; a
+       strict profile narrows XCR0 (test_x86_st_reset_xcr0_profile) */
     ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, prof207, 2);
-    TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0);
+    TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0x60000);
     {
         static const uint8_t rel[] = {0xc4, 0xe2, 0x78, 0x49, 0xc0};
-        TEST_CHECK(ax_run(&a, rel, sizeof(rel)) == 6);       /* XCR0[18:17] != 11b */
+        TEST_CHECK(ax_run(&a, rel, sizeof(rel)) == -1);      /* XCR0[18:17] = 11b */
     }
     /* U1220 (user decision 2026-10-10): this profile is not strict (ax_open), so XSETBV follows the
        model, which has the AMX components - accepted (a strict profile restricts it) */
@@ -29675,6 +29678,108 @@ static void test_x86_st_unmap_paging(void)
     TEST_MSG("fetch after unmap: %u (%s), RAX %" PRIx64 " (expected %u)", err, uc_strerror(err), rax, e_fx);
     OK(uc_close(r.uc));
 }
+
+/*
+ * U1225 (user decision 2026-10-11): the reset XCR0 - and XCR0 when a profile is installed or strict mode is
+ * switched on later - is narrowed to the profile's CPUID.(0DH,0):EDX:EAX only while the profile is strict, the
+ * rule of XSETBV (U1220) and XGETBV ECX = 1 (U1203). Without a profile or with a non-strict profile the model
+ * value stands. Architectural reset: SDM 093 Vol3A 2.6 p. 2-23 "After reset, all bits (except bit 0) in XCR0
+ * are cleared to zero; XCR0[0] is set to 1." and Table 12-1 p. 12-3 (XCR0 1H, INIT unchanged); the emulator
+ * starts as an OS left it (XSETBV of every component CPUID enumerates, Vol1 13.3 p. 13-5), so the test
+ * compares with the model's own reset value. Before U1225 a non-strict profile narrowed it as well.
+ */
+static void st_open_prof(XsCtx *c, const uc_x86_cpuid *prof, size_t n, int strict)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (n) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, n));
+    }
+    if (strict >= 0) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, strict));
+    }
+    /* the engine starts here (first memory map): the reset XCR0 sees the settings above */
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, XS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static void test_x86_st_reset_xcr0_profile(void)
+{
+    static const uc_x86_cpuid no_pkru[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 7, 0x340, 0x340, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+    };
+    static const uc_x86_cpuid no_sse[] = {   /* AVX without SSE: the pairing rule drops AVX */
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 0x205, 0x340, 0xa88, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+    };
+    uint64_t model, x;
+    XsCtx c;
+
+    /* the model's reset value (no profile): x87, SSE, AVX and PKRU at least */
+    st_open_prof(&c, NULL, 0, -1);
+    model = st_xcr0(&c);
+    TEST_CHECK((model & 0x207) == 0x207);
+    TEST_MSG("model reset XCR0 %#" PRIx64, model);
+    OK(uc_close(c.uc));
+
+    /* profile before the engine starts: strict (the U435 default, and explicit) narrows to 7 */
+    st_open_prof(&c, no_pkru, 4, -1);
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 0x7);
+    TEST_MSG("default-strict profile: reset XCR0 %#" PRIx64 " (expected 7)", x);
+    OK(uc_close(c.uc));
+    st_open_prof(&c, no_pkru, 4, 1);
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 0x7);
+    TEST_MSG("strict profile: reset XCR0 %#" PRIx64 " (expected 7)", x);
+    OK(uc_close(c.uc));
+    /* ... non-strict: the model value stands (before U1225: 7) */
+    st_open_prof(&c, no_pkru, 4, 0);
+    x = st_xcr0(&c);
+    TEST_CHECK(x == model);
+    TEST_MSG("non-strict profile: reset XCR0 %#" PRIx64 " (expected the model's %#" PRIx64 ")", x, model);
+    OK(uc_close(c.uc));
+    /* strict with x87 | AVX | PKRU but no SSE: AVX dropped with SSE (Vol1 13.3: XCR0[2:1] = 10b is #GP) */
+    st_open_prof(&c, no_sse, 4, 1);
+    x = st_xcr0(&c);
+    TEST_CHECK(x == (model & 0x201));
+    TEST_MSG("strict profile without SSE: reset XCR0 %#" PRIx64 " (expected %#" PRIx64 ")", x, model & 0x201);
+    OK(uc_close(c.uc));
+
+    /* after the engine started: explicit non-strict, then a profile: XCR0 unchanged (before U1225: 7);
+       then strict on: narrowed to the profile (7) */
+    st_open_prof(&c, NULL, 0, 0);
+    OK(uc_ctl_set_x86_cpuid(c.uc, no_pkru, 4));
+    x = st_xcr0(&c);
+    TEST_CHECK(x == model);
+    TEST_MSG("non-strict profile set later: XCR0 %#" PRIx64 " (expected %#" PRIx64 ")", x, model);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 0x7);
+    TEST_MSG("strict switched on later: XCR0 %#" PRIx64 " (expected 7)", x);
+    /* switching strict off again does not widen the guest's XCR0 (only reset or XSETBV do) */
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 0x7);
+    TEST_CHECK(st_xsetbv(&c, model) == -1 && st_xcr0(&c) == model);
+    OK(uc_close(c.uc));
+
+    /* a default-strict profile set later narrows as before (U120) */
+    st_open_prof(&c, NULL, 0, -1);
+    OK(uc_ctl_set_x86_cpuid(c.uc, no_pkru, 4));
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 0x7);
+    TEST_MSG("default-strict profile set later: XCR0 %#" PRIx64 " (expected 7)", x);
+    OK(uc_close(c.uc));
+}
 /* ---- end U1220-U1239 (st_) ---- */
 
 TEST_LIST = {
@@ -30069,4 +30174,5 @@ TEST_LIST = {
     {"test_x86_st_nx_fetch", test_x86_st_nx_fetch},
     {"test_x86_st_smc_remap", test_x86_st_smc_remap},
     {"test_x86_st_unmap_paging", test_x86_st_unmap_paging},
+    {"test_x86_st_reset_xcr0_profile", test_x86_st_reset_xcr0_profile},
     {NULL, NULL}};
