@@ -34103,6 +34103,56 @@ static void test_x86_vmx_pending_dbg(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1311: CR3 across a VM exit with LAM (SDM 092 Vol3C 30.5.1 p. 30-30 against the host-CR3 check of
+ * 29.2.2 p. 29-7; docs/quirks.md "SDM self-conflicts", PROVISIONAL, user decision 2026-10-11). The
+ * VM exit takes CR3 bits MAXPHYADDR-1:0 from the host CR3 field and keeps bits 63:MAXPHYADDR of the
+ * CR3 in use at the VM exit - the LAM bits 62:61 the guest loaded by MOV to CR3 - for host LAM bits
+ * 00 against guest LAM bits 01, 10 and 11, and a host field with other base bits; the host's own LAM
+ * bits from before the VM entry are not restored. The VM-entry checks reject bits 63:MAXPHYADDR in
+ * the CR3 fields (LAM bits included): host field -> VMfailValid error 8, guest field (as saved by
+ * the VM exit) -> VM-entry failure, exit reason 33.
+ */
+#define VMX_PT_ALT (VMX_DATA + 0x1b000)    /* a second PML4 (same PDPT) */
+
+static void test_x86_vmx_lam_cr3(void)
+{
+    PcCtx c;
+    uint64_t fl, lam;
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_LAM);
+    vmx_wq(&c, VMX_PT_ALT, (VMX_PT + 0x1000) | 3);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK(vmx_r(&c, 0x6c02) == VMX_PT && pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    /* guest: MOV CR3, RAX (another PML4 with LAM bits); CPUID -> CR3 = host base | guest LAM bits */
+    for (lam = 1; lam <= 3; lam++) {
+        vmx_w(&c, 0x6802, VMX_PT);
+        vmx_resume_regs(&c, "\x0f\x22\xd8\x0f\xa2", 5, VMX_PT_ALT | (lam << 61), 0, 0, 0);
+        vmx_exit_is(&c, 10, 0, 2);
+        TEST_CHECK(vmx_r(&c, 0x6802) == (VMX_PT_ALT | (lam << 61)));
+        TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == (VMX_PT | (lam << 61)));
+        TEST_MSG("LAM %llu: CR3 %llx", (unsigned long long)lam,
+                 (unsigned long long)pc_get(&c, UC_X86_REG_CR3));
+    }
+    /* the guest CR3 field with LAM bit 61 (saved by the VM exit): VM-entry failure, reason 33 */
+    vmx_resume_regs(&c, NULL, 0, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == (VMX_PT | (3ull << 61)));
+    /* host LAM48 before the VM entry, a guest without LAM bits: CR3 = the host field */
+    vmx_w(&c, 0x6802, VMX_PT_ALT);
+    pc_set(&c, UC_X86_REG_CR3, VMX_PT | (1ull << 62));
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    /* the host CR3 field with LAM bit 62: VMfailValid, error 8 (invalid host state); CR3 unchanged */
+    vmx_w(&c, 0x6c02, VMX_PT | (1ull << 62));
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 8);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34545,4 +34595,5 @@ TEST_LIST = {
     {"test_x86_vmx_apicv_posted", test_x86_vmx_apicv_posted},
     {"test_x86_vmx_fred", test_x86_vmx_fred},
     {"test_x86_vmx_pending_dbg", test_x86_vmx_pending_dbg},
+    {"test_x86_vmx_lam_cr3", test_x86_vmx_lam_cr3},
     {NULL, NULL}};

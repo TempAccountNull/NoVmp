@@ -9285,7 +9285,8 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U1302) */
         /*
          * NoVmp (ledger U1302, docs/vmx.md): 0F 01 C1 VMCALL, C4 VMXOFF (SDM 092 Vol3C 33.3), decoded
-         * with CPUID.01H:ECX.VMX; 66 / F2 / F3 / LOCK #UD (the SDM is silent; XED: no_refining_prefix). Every
+         * with CPUID.01H:ECX.VMX; 66 / F2 / F3 / LOCK #UD (the SDM is silent; XED: no_refining_prefix;
+         * PROVISIONAL until the prefix audit reports, also for VMLAUNCH / VMRESUME). Every
          * other check is the helper's (VMX operation is runtime state).
          */
         case 0xc2: /* vmlaunch (U1303) */

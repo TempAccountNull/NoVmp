@@ -138,7 +138,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1310: 18 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1311: 19 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -161,7 +161,8 @@ choice). Software that writes a VMCS region with ordinary stores changes the fie
 
 ### Decoding (U1302)
 With CPUID.01H:ECX.VMX the translator decodes: 0F 01 C1 VMCALL and C4 VMXOFF (66 / F2 / F3 / LOCK #UD:
-the SDM gives no prefix rule, XED decodes them only without a refining prefix), F3 0F C7 /6 VMXON (66
+the SDM gives no prefix rule, XED decodes them only without a refining prefix; **PROVISIONAL** until
+the prefix audit reports, the same for 0F 01 C2 VMLAUNCH / C3 VMRESUME), F3 0F C7 /6 VMXON (66
 ignored, XED IGNORE66), 66 0F C7 /6 VMCLEAR, NP 0F C7 /6 VMPTRLD, NP 0F C7 /7 VMPTRST (memory forms;
 F2 / LOCK #UD), NP 0F 78 VMREAD, NP 0F 79 VMWRITE (LOCK #UD; the 66 / F2 forms keep their old decoding),
 66 0F 38 80 INVEPT and 81 INVVPID (memory only). VMLAUNCH, VMRESUME and VMFUNC follow in U1303. The
@@ -360,6 +361,15 @@ translator and passed to the helpers.
   FRED are original events of type 7.
 - ERETS / ERETU (28.3): with "NMI exiting" 1 they leave blocking by NMI alone; with virtual NMIs they
   clear virtual-NMI blocking for augmented SS bit 18.
+
+### CR3 and LAM across VM exits (U1311)
+- With UC_X86_FEATURE_VMX and UC_X86_FEATURE_LAM, a VM exit loads CR3 bits MAXPHYADDR-1:0 from the
+  host CR3 field and keeps bits 63:MAXPHYADDR - LAM_U57 (61) / LAM_U48 (62) included - of the CR3 in
+  use at the VM exit (30.5.1 p. 30-30). The VM-entry checks reject bits 63:MAXPHYADDR in the host and
+  guest CR3 fields (29.2.2 p. 29-7, 29.3.1.1 p. 29-9: "should not set"). The SDM conflicts with itself
+  here (29.2.2 also says only reserved CR3 bits are checked, and with LAM bits 62:61 are not reserved);
+  the reading is PROVISIONAL (user decision 2026-10-11, docs/quirks.md "SDM self-conflicts").
+  Regression test: test_x86_vmx_lam_cr3.
 
 ### Pending debug exceptions (U1310)
 - 29.7.3: a VM entry that injects nothing (or only a pending MTF VM exit), outside shutdown /
