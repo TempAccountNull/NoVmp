@@ -830,6 +830,10 @@ def sde_report(paths):
             s["hist"][key] = s["hist"].get(key, 0) + 1
             if d > s["maxulp"]:
                 s["maxulp"] = d
+            if d > 0 and kind(f, rs) in ("den", "norm") and kind(f, rm_) in ("den", "norm"):
+                rd = abs(float((val(f, rs) - val(f, rm_)) / val(f, rm_)))   # relative distance
+                if rd > s.get("maxrel", 0.0):
+                    s["maxrel"] = rd
             if e is not None and rule.startswith("|rel err|"):
                 ef = abs(float(e))
                 if s["worst_sde"] is None or ef > s["worst_sde"][0]:
@@ -860,7 +864,8 @@ def sde_report(paths):
               (s["same"], s["lanes"], s["special"], s["special_same"]))
         order = sorted(s["hist"].items(), key=lambda kv: (kv[0].startswith("differs"),
                                                           int(kv[0].split("-")[0]) if kv[0][0].isdigit() else 0))
-        print("  ulp distance SDE vs model: " + ", ".join("%s: %d" % kv for kv in order) + "; max %d" % s["maxulp"])
+        print("  ulp distance SDE vs model: " + ", ".join("%s: %d" % kv for kv in order) + "; max %d" % s["maxulp"] +
+              ("; max relative distance %s" % lg(s["maxrel"]) if s.get("maxrel") else ""))
         print("  SDE meets the documented requirements: %d of %d lanes%s" %
               (s["sde_ok"], s["lanes"], (" (bound unattainable lanes: %d)" % s["unattain"]) if s["unattain"] else ""))
         bad = [b for b in s["sde_bad"] if b]

@@ -3,7 +3,8 @@
 Scope: VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (AVX-512F / AVX10.1), VRCPPH/VRCPSH and
 VRSQRTPH/VRSQRTSH (AVX512-FP16 / AVX10.1), VRCPBF16 and VRSQRTBF16 (AVX10.2), and the legacy
 RCPPS/RCPSS/RSQRTPS/RSQRTSS (+ VEX.128/256) for reference. Ledger U81 (legacy), U236 (14-bit forms),
-U337 (FP16), U373 (BF16), U940-U959 (this review).
+U337 (FP16), U373 (BF16), U940-U959 (this review), U1240-U1243 (AMB-2: requirements checker, SDE labelled
+reference, verified_forms release; section 8).
 
 **Result in one line:** every form meets every documented architectural requirement; only the legacy
 forms are bit-exact to Intel hardware. The 14-bit, FP16 and BF16 forms return the correctly rounded
@@ -110,24 +111,23 @@ below); for FP64 RSQRT14 the float128 approximation decides correctly unless 1/s
 | Hardware cases `cases_rcp_hw.txt` vs the i5-13600K | legacy forms bit-exact incl. MXCSR independence (with U81's exhaustive 2^32 x 6 MXCSR comparison) | anything about AVX-512 forms (the host lacks AVX-512) |
 | Intel SDE 10.13.1 (`sde_rcp.py` + `sde_rcp_probe.c`), labelled "SDE-validated" | that Intel's own emulator meets the documented requirements, and how far the stand-in is from SDE's bits | silicon behaviour; SDE is a reference, never the definition |
 
-SDE status: **not run.** SDE's launcher starts pind.exe with CREATE_BREAKAWAY_FROM_JOB, which the
-agent shells' job object forbids ("Create pind process failed with code 5"; reproduced with a plain
-CreateProcess + CREATE_BREAKAWAY_FROM_JOB -> ERROR_ACCESS_DENIED). The probe was compiled and its
-gating checked natively (CPUID/XGETBV: XCR0 = 7, "refusing to execute"); the comparison pipeline was
-checked with synthetic data. Run from an ordinary user shell:
-`python Emulator\tools\isa\sde_rcp.py --probe <built sde_rcp_probe.exe> --out <dir>`.
+SDE status: **run** in U1240-U1243 (AMB-2, 2026-10-10) through the U1040 harness
+(`Emulator\tools\sde_crosscheck.ps1`, emu-alltest `--native-under-sde`), which does not need
+`sde_rcp.py` / `sde_rcp_probe.c` (U942, kept unchanged; their earlier "not run" was the agent sandbox's
+job object). Results: section 8.
 
 ## 5. Labels
 
 | Form | Label | Evidence |
 |---|---|---|
 | RCPPS, RCPSS, RSQRTPS, RSQRTSS, VRCPPS, VRCPSS, VRSQRTPS, VRSQRTSS | **bit-exact hardware compatibility** (i5-13600K) | U81: all 2^32 inputs x 6 MXCSR, 0 mismatches; `cases_rcp_hw.txt` 2740 cases / 0 differing; SDM bound proven analytically |
-| VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD | **documented architectural compliance**; bit-exact Intel compatibility **unverified** | sections 2-4 |
-| VRCPPH, VRCPSH, VRSQRTPH, VRSQRTSH | **documented architectural compliance** (normal results; subnormal VRCPPH results: best possible, see 3); bit-exact **unverified** | sections 2-4 |
-| VRCPBF16, VRSQRTBF16 | **documented architectural compliance**; bit-exact **unverified** | sections 2-4 |
+| VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD | **documented architectural compliance**; bit-exact Intel compatibility **unverified** | sections 2-4, 8 |
+| VRCPPH, VRCPSH, VRSQRTPH, VRSQRTSH | **documented architectural compliance** (normal results; subnormal VRCPPH results: best possible, see 3); bit-exact **unverified** | sections 2-4, 8 |
+| VRCPBF16, VRSQRTBF16 | **documented architectural compliance**; bit-exact **unverified** (VRCPBF16 is bit-identical to SDE on every encoding: a labelled reference, not authoritative) | sections 2-4, 8 |
 
-`Emulator/data/verified_forms.tsv` keeps these rows at `open` (⏳) with this label: the open item is
-Intel bit-compatibility, which needs Intel's reference code or an SDE / hardware reference.
+`Emulator/data/verified_forms.tsv`: since U1243 (AMB-2, user decision 2026-10-10) these 14 rows have the
+status `doc` (✅ "documented compliance" in gen_instruction_table.py; before: `open`, ⏳), never
+"bit-exact". Intel bit-compatibility stays unverified: it needs Intel's reference code or silicon.
 
 ## 6. Measured error (emulator, exhaustive where stated)
 
@@ -150,3 +150,60 @@ Intel bit-compatibility, which needs Intel's reference code or an SDE / hardware
   "Reference Implementations for IA Approximation Instructions: VRCP14, VRSQRT14, VRCP28, VRSQRT28,
   and VEXP2" (software.intel.com article with the reference C sources; no document number) - it defines
   the VRCP14/VRSQRT14 bits; nothing equivalent is known for VRCPPH/VRSQRTPH or VRCPBF16/VRSQRTBF16.
+
+## 8. AMB-2: requirements checker and the Intel SDE labelled reference (U1240-U1243)
+
+Plan 1.J.32, user decision AMB-2 (2026-10-10): analytic model per A9; Intel SDE results are only a
+**labelled reference**; the verified_forms rows are released as "documented compliance", never
+"bit-exact". The emulator code is unchanged: the stand-ins of section 3 already meet every documented
+requirement, so they are kept.
+
+**Independent requirements checker** `Emulator/tools/isa/ref_amb2.py` (U1240): `check()` decides for one
+element whether a result meets the documented requirements of its form (section 2): the strict bound
+with exact rationals (rcp: |r x - 1| < B; rsqrt: (1 - B)^2 < r^2 x < (1 + B)^2), every table row, DAZ /
+FTZ, the NaN rule (one-operand rule of Vol1 Table 4-8 where the page has no NaN row), and for VRCPPH
+with |X| > 2^14 (1/X an FP16 denormal; the bound is unattainable there) a non-zero FP16 neighbour of 1/X.
+It does not compare with any expected value. `model()` is a second, separately written analytic model
+(Fraction / isqrt, one RNE rounding); `--selftest` (in test.cmd) proves it against the checker (every
+FP16 / BF16 encoding, every FP32 / FP64 exponent; 410,272 element checks), shows the checker rejects
+wrong results (beyond the bound, sign, zero / INF, NaN handling, DAZ / FTZ, table rows, 12-bit
+accuracy), and finds ref_rcp.py bit-identical. `cases_amb2.txt` (5060 lines, `--avx10 2`): every
+form's table rows and threshold boundaries under 7 MXCSR settings, scalar merging, VL128/256 masks and
+the SDE distance sample (every FP32 / FP64 exponent x edge + LCG mantissas); 0 differing. Unit tests
+`test_x86_amb2_rows` / `_fp64_bound` / `_tiny` (U1241) check the table rows (457 runs), the FP64 bound
+and the FP16 / BF16 rows the bound cannot decide without any model.
+
+**SDE run** (Intel SDE 10.13.1, `sde_crosscheck.ps1 -Only cases_amb2` with `-dmr`, then
+`cases_rcp` `-spr`, `cases_rcp_f16_all` `-spr`, `cases_rcp_bf16` `-dmr`; every step under the build
+lock; `ref_amb2.py --sde-report <pass-2 log>`). Only register-form lanes are analysed (memory forms
+and masked-off lanes skipped); the 16 undefined-encoding lines (EVEX.vvvv != 1111b, MAP6 W1 forms) are
+#UD on SDE as in the emulator. SDE values are evidence about SDE; they are not copied anywhere.
+
+| Form | Bound | Lanes (file) | SDE == model | SDE vs model (ulps of the format) | max relative distance | SDE meets every documented requirement | SDE significant bits (normal results) |
+|---|---|---|---|---|---|---|---|
+| VRCP14PS | 2^-14 | 16,732 (amb2) + 1,914 (rcp) | 638 / 1,138 (all 607 / 1,101 table-row lanes) | 1 to 681, mostly 64-511 | 2^-14.22 | yes, all (worst 2^-14.22) | <= 17 |
+| VRCP14PD | 2^-14 | 8,535 + 1,803 | 2,331 / 1,130 (all table rows) | up to 2^38 (= ~2^-15 relative) | 2^-15.00 / 2^-14.29 | yes, all | <= 15 (amb2) / <= 17 (rcp) |
+| VRCP14SS / SD | 2^-14 | 126 + 584 each | 99 + 375 each (all table rows) | as PS / PD | 2^-14.83 / 2^-15.00 | yes, all | <= 17 |
+| VRSQRT14PS | 2^-14 | 16,732 + 1,912 | 2,622 / 1,047 (all table rows) | 1 to 909 | 2^-14.09 | yes, all (worst 2^-14.09) | <= 17 |
+| VRSQRT14PD | 2^-14 | 8,535 + 1,796 | 1,277 / 985 (all table rows) | up to 2^38.6 | 2^-14.21 | yes, all | <= 17 |
+| VRSQRT14SS / SD | 2^-14 | 126 + 584 each | 84 + 321 / 86 + 320 (all table rows) | as PS / PD | 2^-14.21 | yes, all | <= 17 |
+| VRCPPH | 2^-11 + 2^-14 | 65,536 (every encoding) + 472 + 1,286 | 64,282 of 65,536 | 0 or 1 (1,254 lanes) | 2^-10.00 (normal), 2^-8.03 (denormal results) | yes, all; 4,092 bound-unattainable lanes (|X| > 2^14): SDE is faithful too (picks the other neighbour in 30 of them) | 11 |
+| VRCPSH | as VRCPPH | 123 + 306 | 117 + 289 | 0 or 1 | 2^-10.00 | yes, all | 11 |
+| VRSQRTPH | 2^-11 + 2^-14 | 65,536 (every encoding) + 472 + 1,285 | 64,969 of 65,536 | 0 or 1 (567 lanes) | 2^-10.00 | yes, all | 11 |
+| VRSQRTSH | as VRSQRTPH | 123 + 306 | 120 + 290 | 0 or 1 | 2^-10.00 | yes, all | 11 |
+| VRCPBF16 | 2^-8 + 2^-14 | 66,836 (every encoding) + 472 | **all** | 0 | 0 | yes, all | 8 |
+| VRSQRTBF16 | 2^-8 + 2^-14 | 66,830 (every encoding) + 472 | 66,703 of 66,830 (all 472 amb2 lanes) | 0 or 1 (127 lanes) | 2^-7.40 | yes, all | 8 |
+
+What this shows: (1) SDE meets every documented requirement on every analysed lane, and every
+documented table-row lane is bit-identical to the model (the special cases are fully specified; only
+the bits inside the bound are open). (2) SDE's VRCP14 / VRSQRT14 values are short approximations (at
+most 15-17 significant bits, low significand bits zero), the model is correctly rounded (24 / 53 bits):
+both are inside 2^-14, at a relative distance of up to ~2^-14.1. (3) For FP16 and BF16 SDE is almost
+correctly rounded: VRCPBF16 is bit-identical on every encoding; VRCPPH / VRSQRTPH / VRSQRTBF16 differ by
+one ulp on 1.9 % / 0.9 % / 0.2 % of the encodings. None of this makes any form bit-exact: SDE is not
+silicon and not a specification (A9: bit-exactness only with authoritative evidence), so every form
+keeps the label **documented compliance**.
+
+Logs (agent scratch, cited by the AMB-2 report): `sde\cases_amb2.log`, `sde\cases_rcp.log`,
+`sde\cases_rcp_f16_all.log`, `sde\cases_rcp_bf16.log` and the `sde_report_*.txt` outputs of
+`ref_amb2.py --sde-report`.
