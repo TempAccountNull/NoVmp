@@ -5834,9 +5834,20 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
     int i;
 
-    if (!xrstors && !(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVEC)) {
+#if __Use_Original_Qemu != 1 /* ours (U1221) */
+    /*
+     * NoVmp (ledger U1221): SDM 093 Vol2D XRSTOR "Operation" p. 6-50 (IF CPUID.0DH.01H:EAX.XSAVEC[1]
+     * = 0 THEN #GP(0), the compacted form is not supported) and "64-Bit Mode Exceptions" p. 6-53.
+     * What CPUID reports decides: with a strict UC_CTL_X86_CPUID profile the profile's XSAVEC bit as
+     * well (x86_cpuid_profile_mask), as for XSAVEC itself in the translator (U68) and for XGETBV
+     * ECX = 1 (U1203). Before, only the model's bit was read, so XRSTOR ran the compacted form under
+     * a strict profile without XSAVEC (Emulator/data/cases_st_xrstor_noxsavec.txt).
+     */
+    if (!xrstors && !(env->features[FEAT_XSAVE] & x86_cpuid_profile_mask(env, 0xd, 1, 0) &
+                      CPUID_XSAVE_XSAVEC)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);        /* compacted form not supported */
     }
+#endif /* __Use_Original_Qemu (U1221) */
     /* SDM Vol1 13.8.2 / 13.12: XCOMP_BV[62:0] within XCR0 (| IA32_XSS), XSTATE_BV within
        XCOMP_BV[62:0], bytes 63:16 of the header zero; all checked before any state is loaded */
     if ((format & ~ena) || (xstate_bv & ~format)) {

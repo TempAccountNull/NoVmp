@@ -439,6 +439,8 @@ Add-Exp 'cases_st_movdir64b_only' 'cases_st_movdir64b_only' 'cpuid expect' @( '-
 Add-Exp 'cases_st_xsavec' 'cases_st_xsavec' 'xstate evex expect' @( '--avx512' )
 Add-Exp 'cases_st_xsavec_pad' 'cases_st_xsavec_pad' 'xstate apx amx expect' @( '--apx', '--amx' )
 Add-Hw 'cases_st_hw' 'hw xstate x87'
+# U1221: the compacted form of XRSTOR #GP(0) with a strict profile without CPUID.(0DH,1):EAX.XSAVEC (T-6)
+Add-Exp 'cases_st_xrstor_noxsavec' 'cases_st_xrstor_noxsavec' 'xstate cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_st_noxsavec.txt' ) )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

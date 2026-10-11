@@ -1,0 +1,21 @@
+# U1221 (plan 1.J.36, agent sdetests; T-6 with a CPUID profile): the compacted form of XRSTOR when the CPU does not
+# enumerate XSAVEC, and MPX header bits with a profile whose XCR0 cannot hold MPX.
+# SDM 093 Vol2D XRSTOR "64-Bit Mode Exceptions" p. 6-53: "#GP(0) ... If bit 63 of the XCOMP_BV field of the XSAVE
+# header is 1 and CPUID.0DH.01H:EAX.XSAVEC[1] = 0."; "Operation" p. 6-50: "IF CPUID.0DH.01H:EAX.XSAVEC[1] = 0 THEN
+# /* compacted form not supported */ #GP(0);"; Vol1 13.8 p. 13-20 footnote 2 ("A processor supports the compacted form
+# of XRSTOR only if it enumerates CPUID.0DH.01H:EAX[1] as 1"; without it the standard form may run at once - its
+# "bytes 23:8 of the XSAVE header are not all zero" check faults as well, XCOMP_BV being non-zero).
+# Expected-value cases with the profile cpuid_st_noxsavec.txt (the gate profile with CPUID.(0DH,1):EAX.XSAVEC[1] = 0;
+# strict, so the profile decides, as for XSAVEC itself and for XGETBV1 since U1203):
+#   emu-alltest --cases Emulator\data\cases_st_xrstor_noxsavec.txt --cpuid Emulator\data\cpuid_st_noxsavec.txt --expect-only
+# Before U1221 the compacted lines completed (the helper read the model's XSAVEC bit, not the profile's).
+# XSAVEC itself (0F C7 /4) is #UD under this profile
+.byte 0x0f, 0xc7, 0x26 | rax=0x7 rdx=0 => #UD
+# compacted form: #GP(0), nothing loaded
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x80A0=1112131415161718191A1B1C1D1E1F20 m+0x8200=0200000000000000 m+0x8208=0300000000000080 => #GP(0)
+xrstor [rsi] | rax=0 rdx=0 m+0x8208=0000000000000080 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0300000000000080 cpl=3 => #GP(0)
+# standard form (control): XMM0 loaded
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x80A0=1112131415161718191A1B1C1D1E1F20 m+0x8200=0200000000000000 => xmm0=1112131415161718191A1B1C1D1E1F20
+# MPX bits 4:3 in XSTATE_BV: the profile (0DH.0:EAX = 207H) has no MPX, so XCR0 (207H) cannot have them: #GP(0)
+xrstor [rsi] | rax=0x1f rdx=0 m+0x8018=801F0000 m+0x8200=1800000000000000 => #GP(0)
