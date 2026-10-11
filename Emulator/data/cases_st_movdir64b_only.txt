@@ -1,0 +1,15 @@
+# U1223 (plan 1.J.36, agent sdetests; T-13): the mirror of cases_st_movdiri_only.txt - profile cpuid_st_movdir64b_only.txt
+# (the gate profile with MOVDIRI[27] = 0, MOVDIR64B[28] = 1; strict). SDM 093 Vol1 Table 21-20 p. 21-28; Vol2B
+# MOVDIR64B p. 4-50 / 4-51 "#UD If CPUID.07H.00H:ECX.MOVDIR64B[28] = 0."; MOVDIRI p. 4-52 / 4-53 "#UD If
+# CPUID.07H.00H:ECX.MOVDIRI[27] = 0."
+#   emu-alltest --cases Emulator\data\cases_st_movdir64b_only.txt --cpuid Emulator\data\cpuid_st_movdir64b_only.txt --expect-only
+cpuid | rax=7 rcx=0 =>! rcx=0x9040078C
+# MOVDIRI: #UD although MOVDIR64B[28] = 1
+.byte 0x0f, 0x38, 0xf9, 0x06 | rax=0x1122334455667788 => #UD
+.byte 0x48, 0x0f, 0x38, 0xf9, 0x06 | rax=0x1122334455667788 => #UD
+.byte 0x48, 0x0f, 0x38, 0xf9, 0x06 | rax=0x1122334455667788 cpl=3 => #UD
+# MOVDIR64B rdi, m512: the 64 bytes at RSI are stored at ES:RDI (RDI = m+0x9000, 64-byte aligned)
+.byte 0x66, 0x0f, 0x38, 0xf8, 0x3e | m+0x8000=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F m+0x8040=FF => m+0x9000=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F
+# a destination that is not 64-byte aligned: #GP(0) (64-Bit Mode Exceptions: "If address in destination (register)
+# operand is not aligned to a 64-byte boundary.")
+.byte 0x66, 0x0f, 0x38, 0xf8, 0x3e | rdi=0x30029008 => #GP(0)

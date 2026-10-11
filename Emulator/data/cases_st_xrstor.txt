@@ -1,0 +1,64 @@
+# U1223 (plan 1.J.36, agent sdetests; sdeida report DX-19 / D-15a / T-6): XRSTOR header checks raise #GP(0).
+# Intel SDE 10.13.1 ends the process for every one of these conditions ("...: #GP" then exit(1)); NoVmp must deliver
+# the architectural #GP(0) instead. Specification: SDM 093 (325462-093 / 334569-093) Vol2D XRSTOR "64-Bit Mode
+# Exceptions" p. 6-53 (Protected Mode p. 6-52): "#GP(0) ... If bit 63 of the XCOMP_BV field of the XSAVE header is 1
+# and CPUID.0DH.01H:EAX.XSAVEC[1] = 0. If the standard form is executed and a bit in XCR0 is 0 and the corresponding
+# bit in the XSTATE_BV field of the XSAVE header is 1. If the standard form is executed and bytes 23:8 of the XSAVE
+# header are not all zero. If the compacted form is executed and a bit in XCR0 is 0 and the corresponding bit in the
+# XCOMP_BV field of the XSAVE header is 1. If the compacted form is executed and a bit in the XCOMP_BV field in the
+# XSAVE header is 0 and the corresponding bit in the XSTATE_BV field is 1. If the compacted form is executed and bytes
+# 63:16 of the XSAVE header are not all zero."; Vol1 13.8.1 / 13.8.2 p. 13-20 (the same rules; 13.8.2: "The XCOMP_BV
+# field of the XSAVE header sets a bit in the range 62:0 that is not set in XCR0", "The XSTATE_BV field ... sets a bit
+# (including bit 63) that is not set in XCOMP_BV"; footnote 3: bytes 63:24 are reserved but only bytes 23:8 are
+# checked by the standard form); "Operation" p. 6-50 / 6-51 (what is loaded or initialised).
+# Expected-value cases, Unicorn at CPL0 (and CPL3 where marked), XCR0 = 7 (x87 | SSE | AVX), no CPUID profile:
+#   emu-alltest --cases Emulator\data\cases_st_xrstor.txt --xcr0 0x7 --expect-only
+# Layout: the XSAVE area is at RSI (m+0x8000, 64-byte aligned): legacy region m+0x8000 (MXCSR m+0x8018, XMM0
+# m+0x80A0), header m+0x8200 (XSTATE_BV), m+0x8208 (XCOMP_BV), m+0x8210..m+0x823F (reserved); extended region from
+# m+0x8240 (standard: AVX state at offset 576 = CPUID.(0DH,2):EBX). A strict "=> #GP(0)" also checks that nothing
+# was loaded (XMM0 / MXCSR keep their input values). Every line passed before U1223 (the test pins the behaviour).
+#
+# --- (a) standard form, XSTATE_BV sets a bit that is not set in XCR0: bit 5, bit 63, MPX bits 4:3; with RFBM 7 and
+#     RFBM 1 (the check reads XSTATE_BV against XCR0, not against RFBM)
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x8200=2200000000000000 => #GP(0)
+xrstor [rsi] | rax=0x1 rdx=0 m+0x8200=2000000000000000 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0200000000000080 => #GP(0)
+xrstor [rsi] | rax=0x1f rdx=0 m+0x8018=801F0000 m+0x8200=1800000000000000 => #GP(0)
+xrstor64 [rsi] | rax=0x7 rdx=0 m+0x8200=2000000000000000 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8200=2000000000000000 cpl=3 => #GP(0)
+# --- (b) standard form, XCOMP_BV (header bytes 15:8) not zero with bit 63 clear
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0700000000000000 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8208=0000000000000040 => #GP(0)
+# --- (c) standard form, header bytes 23:16 not zero
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8210=01 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8217=80 => #GP(0)
+# --- (d) compacted form (XCOMP_BV[63] = 1): XCOMP_BV[5] set with XCR0[5] = 0; XSTATE_BV[2] set with XCOMP_BV[2] = 0;
+#     header bytes 63:16 not zero (byte 16, byte 24, byte 63)
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=2300000000000080 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0600000000000000 m+0x8208=0300000000000080 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0300000000000080 m+0x8210=01 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0300000000000080 m+0x8218=01 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0300000000000080 m+0x823F=01 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8200=0200000000000000 m+0x8208=0300000000000080 m+0x8210=01 cpl=3 => #GP(0)
+# --- the MXCSR check of both forms (reserved MXCSR bit 16 in the image)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0100 m+0x8200=0200000000000000 => #GP(0)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0100 m+0x8200=0200000000000000 m+0x8208=0300000000000080 => #GP(0)
+#
+# --- controls: valid headers complete (Operation p. 6-50 / 6-51)
+# standard form, XSTATE_BV = 2: XMM registers loaded (XMM0 from m+0x80A0), MXCSR loaded (RFBM[1] = 1), x87 (RFBM[0] = 1,
+# XSTATE_BV[0] = 0) and AVX (XSTATE_BV[2] = 0) initialised - already in their initial configuration here
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=C01F0000 m+0x80A0=0102030405060708090A0B0C0D0E0F10 m+0x8200=0200000000000000 => xmm0=0102030405060708090A0B0C0D0E0F10 mxcsr=0x1FC0
+# standard form: header bytes 63:24 are not checked (only bytes 23:8, Vol1 13.8.1 footnote 3)
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x80A0=0102030405060708090A0B0C0D0E0F10 m+0x8200=0200000000000000 m+0x8218=01 m+0x823F=FF => xmm0=0102030405060708090A0B0C0D0E0F10
+# standard form, XSTATE_BV[i] = 1 for a bit in XCR0 but outside RFBM (RFBM 1): no fault, the XMM registers keep their value
+xrstor [rsi] | rax=0x1 rdx=0 xmm0=AA m+0x8200=0600000000000000 =>
+# standard form, XSTATE_BV[1] = 0 with RFBM 7: XMM registers initialised to 0, MXCSR still loaded from memory
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 m+0x8018=C01F0000 => xmm0=00000000000000000000000000000000 mxcsr=0x1FC0
+# compacted form, XCOMP_BV = 8000000000000003H, XSTATE_BV = 2: XMM registers and MXCSR loaded
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=C01F0000 m+0x80A0=0102030405060708090A0B0C0D0E0F10 m+0x8200=0200000000000000 m+0x8208=0300000000000080 => xmm0=0102030405060708090A0B0C0D0E0F10 mxcsr=0x1FC0
+# compacted form, XSTATE_BV[1] = 0: XMM registers initialised and MXCSR := 1F80H (Vol1 13.8.2 p. 13-21)
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=0102030405060708090A0B0C0D0E0F10 mxcsr=0x1FC0 m+0x8018=C01F0000 m+0x8208=0300000000000080 => xmm0=00000000000000000000000000000000 mxcsr=0x1F80
+# compacted form, RFBM[2] = 1 with XCOMP_BV[2] = 0 (FORCE_INIT): AVX state initialised, no fault
+xrstor [rsi] | rax=0x7 rdx=0 ymmh0=0102030405060708090A0B0C0D0E0F10 m+0x8018=801F0000 m+0x8200=0200000000000000 m+0x8208=0300000000000080 => ymmh0=00000000000000000000000000000000
+# compacted form, AVX state at offset 576 (the first component of XCOMP_BV[62:2]): YMM0_H from m+0x8240
+xrstor [rsi] | rax=0x7 rdx=0 m+0x8018=801F0000 m+0x8200=0400000000000000 m+0x8208=0700000000000080 m+0x8240=1112131415161718191A1B1C1D1E1F20 => ymmh0=1112131415161718191A1B1C1D1E1F20

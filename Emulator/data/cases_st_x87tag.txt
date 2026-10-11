@@ -1,0 +1,45 @@
+# U1223 (plan 1.J.36, agent sdetests; sdeida report lead 4 / T-12): the x87 tag word - the full 16-bit tag word that
+# FNSTENV / FNSAVE store versus the abridged 8-bit tag that FXSAVE stores.
+# SDM 093 Vol1 8.1.7 "x87 FPU Tag Word" p. 8-8 / 8-9: "Each tag in the x87 FPU tag word corresponds to a physical
+# register (numbers 0 through 7)"; Figure 8-7: "00 - Valid, 01 - Zero, 10 - Special: invalid (NaN, unsupported),
+# infinity, or denormal, 11 - Empty"; FINIT/FNINIT sets it to FFFFH; "The FLDENV and FRSTOR instructions load an image
+# of the tag register into the x87 FPU; however, the x87 FPU uses those tag values only to determine if the data
+# registers are empty (11B) or non-empty (00B, 01B, or 10B). ... if the tag register image indicates that the data
+# register is non-empty, the x87 FPU reads the actual value in the data register and sets the tag for the register
+# accordingly." Vol1 8.1.2 (TOP; FLD decrements TOP before loading). Vol2A FSTENV/FNSTENV p. 3-390 (stores FCW, FSW,
+# FTW, FIP, FDP, FOP, "then masks all floating-point exceptions"; "The C0, C1, C2, and C3 are undefined" afterwards);
+# Vol1 Figure 8-9 (32-bit protected-mode environment: FCW at +0, FSW at +4, FTW at +8). Vol2A FXSAVE p. 3-414: "only a
+# single bit (1 for valid or 0 for empty) is saved for each tag", in physical register order.
+# Expected-value cases, Unicorn only, no options:
+#   emu-alltest --cases Emulator\data\cases_st_x87tag.txt --expect-only
+# Loose checks ("=>!"): the FNSTENV image also holds FIP / FDP / FOP (addresses of this run) and FSW C0-C3 are
+# undefined after FLDZ / FDIV, so only the tag word bytes (m+0x8008, low byte first) and the abridged tag are checked.
+# The input keys st0..st7 fill FXRSTOR slots in ST order with TOP = 0, i.e. physical registers R0..R7; FXRSTOR then
+# recomputes the full tags from the register contents. The same snippets run on the i5-13600K in cases_st_hw.txt.
+#
+# FINIT: all empty
+finit; fnstenv [rsi] =>! m+0x8008=FFFF
+# FLDZ after FINIT: TOP = 7, R7 = +0.0 -> tag(7) = 01b (bits 15:14), FTW = 7FFFH; abridged bit 7
+finit; fldz; fnstenv [rsi] =>! m+0x8008=FF7F
+finit; fldz =>! ftw=0x80
+# then FLD1 (R6 = 1.0, valid 00b) and FDIV ST(0), ST(1) (1/0 with #Z masked = +infinity, special 10b): FTW 6FFFH
+finit; fldz; fld1; fnstenv [rsi] =>! m+0x8008=FF4F
+finit; fldz; fld1; fdiv st(0), st(1); fnstenv [rsi] =>! m+0x8008=FF6F
+finit; fldz; fld1; fdiv st(0), st(1) =>! ftw=0xC0
+# FNSAVE stores the same tag word (then initialises the FPU)
+finit; fldz; fld1; fdiv st(0), st(1); fnsave [rsi] =>! m+0x8008=FF6F ftw=0x00
+# register contents loaded by FXRSTOR (TOP = 0): R0 +0.0 (01), R1 +inf (10), R2 1.0 (00), R3 denormal (10),
+# R4 unnormal = unsupported (10), R5-R7 empty (11): FTW = 11 11 11 10 10 00 10 01b = FE89H
+fnstenv [rsi] | st0=0000:0000000000000000 st1=7FFF:8000000000000000 st2=3FFF:8000000000000000 st3=0000:0000000000000001 st4=4000:4000000000000000 =>! m+0x8008=89FE
+# R0 -0.0 (01), R1 QNaN (10), R2 pseudo-denormal (exponent 0, J = 1: denormal, 10), R5 -SNaN (10): FTW = FBE9H
+fnstenv [rsi] | st0=8000:0000000000000000 st1=7FFF:C000000000000000 st2=0000:8000000000000000 st5=FFFF:8000000000000001 =>! m+0x8008=E9FB
+# the abridged tag of the same contents: bits 0, 1, 2, 5
+nop | st0=8000:0000000000000000 st1=7FFF:C000000000000000 st2=0000:8000000000000000 st5=FFFF:8000000000000001 =>! ftw=0x27
+# FLDENV: a non-empty tag in the image is recomputed from the register (R7 = +0.0 loaded with tag 00b -> 01b) ...
+finit; fldz; fnstenv [rsi]; mov word ptr [rsi+8], 0x3FFF; fldenv [rsi]; fnstenv [rdi] =>! m+0x9008=FF7F
+# ... an empty tag in the image empties the register (R7 tag 11b) ...
+finit; fldz; fnstenv [rsi]; mov word ptr [rsi+8], 0xFFFF; fldenv [rsi]; fnstenv [rdi] =>! m+0x9008=FFFF
+# ... and a register the image marks non-empty gets the tag of its contents (R7 still holds 1.0 after FSTP: 00b)
+finit; fld1; fstp st(0); fnstenv [rsi]; mov word ptr [rsi+8], 0x3FFF; fldenv [rsi]; fnstenv [rdi] =>! m+0x9008=FF3F
+# ... a "special" image tag (10b) for a valid register is recomputed as well (R7 = 1.0 -> 00b); FTW image 0BFFFH
+finit; fld1; fnstenv [rsi]; mov word ptr [rsi+8], 0xBFFF; fldenv [rsi]; fnstenv [rdi] =>! m+0x9008=FF3F

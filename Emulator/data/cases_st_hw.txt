@@ -1,0 +1,66 @@
+# U1223 (plan 1.J.36, agent sdetests): hardware cases (our own snippets only, CPL3 on the i5-13600K VMware guest vs
+# Unicorn with the gate CPUID profile) for T-6 (XRSTOR header #GP), T-14 (XSAVEC / XSAVE header and layout, XGETBV
+# ECX = 1), T-12 (full x87 tag word through FNSTENV / FLDENV; the image is cleared after its tag word is read into EAX,
+# because FIP / FDP differ between the two engines' code addresses) and T-7 / T-8 (group-11 and VEX map #UD).
+# The host's XCR0 is 7 (Windows in this guest: x87 | SSE | AVX), so XSAVEC / XRSTOR use RFBM AND 7.
+#   emu-alltest --cases Emulator\data\cases_st_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# P-core / E-core (U1050): --hw-repeat 500 --hw-load 8 --hw-cpu all, 2026-10-10: every one of the 48 cases had a single
+# outcome, seen on P-cores (362-418 runs per case) and on E-cores (74-116 runs per case) - hardware-validated.
+# SDM text for each group: cases_st_xrstor.txt (T-6), cases_st_xsavec.txt (T-14), cases_st_x87tag.txt (T-12),
+# cases_st_decode.txt (T-7 / T-8). Compacted XRSTOR with XSTATE_BV[63] = 1 (lines 1-2 and the last XRSTOR line):
+# Vol1 13.8.2 p. 13-20 reads "The XSTATE_BV field ... sets a bit (including bit 63) that is not set in XCOMP_BV",
+# while XCOMP_BV[63] = 1 in the compacted form - the i5-13600K raises #GP(0), as NoVmp (docs/quirks.md, "SDM
+# undefined, our choice").
+# --- T-6: XRSTOR header checks (compacted with XSTATE_BV[63] = 1; standard with bits outside XCR0, XCOMP_BV, bytes 23:16;
+#     standard with byte 24 set: no fault; compacted with XCOMP_BV outside XCR0, XSTATE_BV outside XCOMP_BV, bytes 63:16; MPX)
+xrstor [rsi] | rax=0 rdx=0 m+0x8200=0000000000000080 m+0x8208=0000000000000080
+xrstor [rsi] | rax=3 rdx=0 m+0x8018=801F0000 m+0x80A0=11223344556677881122334455667788 m+0x8200=0200000000000080 m+0x8208=0300000000000080
+xrstor [rsi] | rax=0 rdx=0 m+0x8200=0000000000000080
+xrstor [rsi] | rax=7 rdx=0 m+0x8200=2000000000000000
+xrstor [rsi] | rax=1 rdx=0 m+0x8200=2000000000000000
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=0700000000000000
+xrstor [rsi] | rax=7 rdx=0 m+0x8210=01
+xrstor [rsi] | rax=7 rdx=0 m+0x8218=01 m+0x8018=801F0000
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=2300000000000080 m+0x8200=0300000000000000 m+0x8018=801F0000
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=0300000000000080 m+0x8200=0700000000000000 m+0x8018=801F0000
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=0300000000000080 m+0x8200=0200000000000000 m+0x8018=801F0000 m+0x8238=01
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=0300000000000080 m+0x8200=0200000000000000 m+0x8018=801F0000 m+0x8218=01
+xrstor [rsi] | rax=0x1f rdx=0 m+0x8200=1800000000000000
+xrstor [rsi] | rax=7 rdx=0 m+0x8208=0300000000000080 m+0x8200=0200000000000080 m+0x8018=801F0000 m+0x80A0=11223344556677881122334455667788
+# --- T-14: XSAVEC (0F C7 /4) RFBM 204H / 6 / 2, XSAVE RFBM 6 / 2 (XCOMP_BV and reserved header bytes not written), XGETBV 1
+.byte 0x0f, 0xc7, 0x26 | rax=0x204 rdx=0 ymmh1=0102030405060708090A0B0C0D0E0F10 m+0x8350=AAAAAAAAAAAAAAAA m+0x8210=BBBBBBBBBBBBBBBB
+.byte 0x0f, 0xc7, 0x26 | rax=0x6 rdx=0 ymmh1=0102030405060708090A0B0C0D0E0F10 m+0x8210=BBBBBBBBBBBBBBBB
+.byte 0x0f, 0xc7, 0x26 | rax=0x6 rdx=0
+.byte 0x0f, 0xc7, 0x26 | rax=0x2 rdx=0 mxcsr=0x1FC0
+xsave [rsi] | rax=0x6 rdx=0
+xsave [rsi] | rax=0x6 rdx=0 m+0x8207=40 m+0x8208=CCCCCCCCCCCCCCCC m+0x8210=DD
+movd xmm3, eax; xsave [rsi] | rax=0x2 rdx=0
+.byte 0x0f, 0x01, 0xd0 | rcx=1
+movd xmm3, eax; .byte 0x0f, 0x01, 0xd0 | rax=5 rcx=1
+.byte 0x0f, 0xc7, 0x26 | rax=0x200 rdx=0
+# --- T-12: the full tag word read with FNSTENV (EAX), FLDENV recomputing non-empty tags
+finit; fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+finit; fldz; fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+finit; fldz; fld1; fdiv st(0), st(1); fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7 | st0=0000:0000000000000000 st1=7FFF:8000000000000000 st2=3FFF:8000000000000000 st3=0000:0000000000000001 st4=4000:4000000000000000
+fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7 | st0=8000:0000000000000000 st1=7FFF:C000000000000000 st2=0000:8000000000000000 st5=FFFF:8000000000000001
+finit; fld1; fstp st(0); fnstenv [rsi]; mov word ptr [rsi+8], 0x3FFF; fldenv [rsi]; fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+finit; fldz; fnstenv [rsi]; mov word ptr [rsi+8], 0x3FFF; fldenv [rsi]; fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+finit; fldz; fnstenv [rsi]; mov word ptr [rsi+8], 0xFFFF; fldenv [rsi]; fnstenv [rsi]; movzx eax, word ptr [rsi+8]; xorps xmm7, xmm7; movups [rsi], xmm7; movups [rsi+16], xmm7
+# --- T-7 / T-8: C7 / C6 group 11 other than /0 and F8, VEX maps 0, 4, 6, 31: #UD
+.byte 0xc7, 0x58, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x48, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x50, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x60, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x68, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x70, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0x78, 0x02, 0x00, 0x00, 0x00
+.byte 0xc7, 0xd8, 0x00, 0x00, 0x00, 0x00
+.byte 0xc7, 0xf9, 0x00, 0x00, 0x00, 0x00
+.byte 0xc6, 0x58, 0x02, 0x00
+.byte 0xc6, 0xd8, 0x00
+.byte 0xc4, 0xc4, 0x00, 0x00, 0x00
+.byte 0xc4, 0xc4, 0x78, 0x10, 0xc0
+.byte 0xc4, 0xc0, 0x78, 0x10, 0xc0
+.byte 0xc4, 0xe6, 0x78, 0x10, 0xc0
+.byte 0xc4, 0xff, 0x78, 0x10, 0xc0

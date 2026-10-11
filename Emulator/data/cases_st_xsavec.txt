@@ -1,0 +1,50 @@
+# U1223 (plan 1.J.36, agent sdetests; sdeida report leads 2/3 / T-14): XSAVEC compacted layout and size, XCOMP_BV,
+# XSTATE_BV for components that left their initial configuration; XSAVE's header writes.
+# SDM 093 Vol1 13.4.2 / 13.4.3 p. 13-9 (compacted format: the first component of XCOMP_BV[62:2] at offset 576, then
+# "If alignI = 0, locationI = locationJ + sizeJ ... If alignI = 1, locationI = ceiling(locationJ + sizeJ, 64)" with
+# sizeJ = CPUID.0DH.j:EAX and alignI = CPUID.0DH.i:ECX[1]); 13.6 p. 13-17 / 13-18 (XINUSE: "If XINUSE[i] = 0, state
+# component i is known to be in its initial configuration"; opmask init = k0-k7 zero, ZMM_Hi256 init = ZMM0_H-ZMM15_H
+# zero, Hi16_ZMM init = ZMM16-ZMM31 zero, AVX init = YMM0_H-YMM15_H zero, SSE init = XMM0-XMM15 zero); 13.7 p. 13-19
+# (XSAVE: "If RFBM[i] = 0, XSTATE_BV[i] is not changed", "If state component i is not in its initial configuration,
+# XINUSE[i] = 1 and XSTATE_BV[i] is written with 1", "The XSAVE instruction does not write any part of the XSAVE
+# header other than the XSTATE_BV field"); 13.10 p. 13-23 / 13-24 (XSAVEC: "If RFBM[i] = 0, XSTATE_BV[i] is written
+# as 0", a non-initial component is written with 1, "if RFBM[1] = 1 and MXCSR does not have the value 1F80H, XSAVEC
+# writes XSTATE_BV[1] as 1", "sets bit 63 of the XCOMP_BV field ... while writing RFBM[62:0] to XCOMP_BV[62:0]",
+# "does not write any part of the XSAVE header other than the XSTATE_BV and XCOMP_BV fields", "If XINUSE[i] = 0,
+# state component i is not saved"); Vol2D XSAVEC p. 6-61..6-63. Component sizes / offsets from the model's own CPUID
+# leaf 0DH (checked by the cpuid lines below, not taken from Pin's profile): AVX 256 @ 576, opmask 64 @ 1088,
+# ZMM_Hi256 512 @ 1152, Hi16_ZMM 1024 @ 1664, ECX[1] = 0 for all four.
+# Expected-value cases, Unicorn only, AVX-512 opt-in (reset XCR0 then has bits 7:5):
+#   emu-alltest --cases Emulator\data\cases_st_xsavec.txt --avx512 --expect-only
+# The area is at RSI = m+0x8000. Strict lines check the whole 64 KiB operand memory, so a write past the computed
+# end (sentinels AA.. at the first byte after it) or into the reserved header bytes (sentinels BB.. at m+0x8210) fails.
+#
+# --- the model's leaf 0DH sub-leaves 2, 5, 6, 7 (EAX size, EBX standard offset, ECX[1] alignment)
+cpuid | rax=0xd rcx=2 => rax=0x100 rbx=0x240 rcx=0 rdx=0
+cpuid | rax=0xd rcx=5 => rax=0x40 rbx=0x440 rcx=0 rdx=0
+cpuid | rax=0xd rcx=6 => rax=0x200 rbx=0x480 rcx=0 rdx=0
+cpuid | rax=0xd rcx=7 => rax=0x400 rbx=0x680 rcx=0 rdx=0
+#
+# --- XSAVEC (0F C7 /4) RFBM 20H: opmask at 576 (k1 at m+0x8248), size 576 + 64 = 280H; XCOMP_BV 8000000000000020H
+.byte 0x0f, 0xc7, 0x26 | rax=0x20 rdx=0 k1=0x1122334455667788 m+0x8210=BBBBBBBBBBBBBBBB m+0x8280=AAAAAAAAAAAAAAAA => m+0x8200=2000000000000000 m+0x8208=2000000000000080 m+0x8248=8877665544332211
+# RFBM E0H: opmask @ 240H, ZMM_Hi256 @ 280H (ZMMi[511:256] at 280H + 32 i), Hi16_ZMM @ 480H (ZMM16+i at 480H + 64 i),
+# size 880H
+.byte 0x0f, 0xc7, 0x26 | rax=0xe0 rdx=0 k7=0x0102030405060708 zmmh0=A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF zmmh15=C0C1C2C3C4C5C6C7C8C9CACBCCCDCECFD0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF zmm31=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F m+0x8210=BBBBBBBBBBBBBBBB m+0x8880=AAAAAAAAAAAAAAAA => m+0x8200=E000000000000000 m+0x8208=E000000000000080 m+0x8278=0807060504030201 m+0x8280=A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF m+0x8460=C0C1C2C3C4C5C6C7C8C9CACBCCCDCECFD0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF m+0x8840=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F
+# RFBM E7H with every component non-initial (ST0, XMM1, YMM1_H, K1, ZMM1_H, ZMM31): AVX @ 240H, opmask @ 340H,
+# ZMM_Hi256 @ 380H, Hi16_ZMM @ 580H, size 980H (= 576 + 256 + 64 + 512 + 1024); XSTATE_BV E7H
+.byte 0x0f, 0xc7, 0x26 | rax=0xe7 rdx=0 st0=3FFF:8000000000000000 xmm1=11 ymmh1=22 k1=0x33 zmmh1=44 zmm31=55 m+0x8210=BBBBBBBBBBBBBBBB m+0x8980=AAAAAAAAAAAAAAAA =>! m+0x8200=E700000000000000 m+0x8208=E700000000000080 m+0x8210=BBBBBBBBBBBBBBBB m+0x80B0=11 m+0x8250=22 m+0x8348=33 m+0x83A0=44 m+0x8940=55 m+0x8980=AAAAAAAAAAAAAAAA m+0x8020=0000000000000080FF3F
+# RFBM E0H with the opmask state initial (K0-K7 = 0) and XINUSE[5] = 0 allowed: only bits 7:6 must be 1 in XSTATE_BV, the
+# layout does not depend on XSTATE_BV (ZMM31 still at 840H)
+.byte 0x0f, 0xc7, 0x26 | rax=0xe0 rdx=0 zmmh0=01 zmm31=02 m+0x8880=AAAAAAAAAAAAAAAA =>! m+0x8208=E000000000000080 m+0x8280=01 m+0x8840=02 m+0x8880=AAAAAAAAAAAAAAAA
+# RFBM 2 with every XMM register 0 but MXCSR 1FC0H: XSTATE_BV[1] = 1 and the SSE state saved (MXCSR at +24)
+.byte 0x0f, 0xc7, 0x26 | rax=0x2 rdx=0 mxcsr=0x1FC0 =>! m+0x8200=0200000000000000 m+0x8208=0200000000000080 m+0x8018=C01F0000
+# RFBM 0: XSTATE_BV 0, XCOMP_BV 8000000000000000H, nothing else written
+.byte 0x0f, 0xc7, 0x26 | rax=0 rdx=0 m+0x8200=FFFFFFFFFFFFFFFF m+0x8210=BBBBBBBBBBBBBBBB m+0x8240=AAAAAAAAAAAAAAAA => m+0x8200=0000000000000000 m+0x8208=0000000000000080
+#
+# --- XSAVE (standard form): XMM3 and YMM3_H made non-initial -> XSTATE_BV[2:1] = 11b; XSTATE_BV bits outside RFBM
+#     (bit 62 here) kept; XCOMP_BV and the reserved header bytes not written; MXCSR / MXCSR_MASK saved for RFBM[1]
+movd xmm3, eax; xsave [rsi] | rax=0x6 rdx=0 ymmh3=0102 m+0x8207=40 m+0x8208=CCCCCCCCCCCCCCCC m+0x8210=DD => xmm3=06000000000000000000000000000000 m+0x8018=801F0000 m+0x801C=FFFF0000 m+0x80D0=06000000 m+0x8270=0102 m+0x8200=0600000000000040
+# XMM3 written from its initial value 0 by MOVD: XSTATE_BV[1] = 1 (RFBM 2)
+movd xmm3, eax; xsave [rsi] | rax=0x2 rdx=0 =>! m+0x8200=02 m+0x80D0=02000000
+# the opmask state made non-initial by an instruction (KMOVW k2, eax: K2 = 20H, at 440H + 16 in the standard format)
+kmovw k2, eax; xsave [rsi] | rax=0x20 rdx=0 =>! m+0x8200=20 m+0x8450=2000

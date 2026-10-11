@@ -1,0 +1,19 @@
+# U1223 (plan 1.J.36, agent sdetests; T-14): XSAVEC compacted offsets with a component whose size is not a multiple of
+# 64 (PKRU, 8 bytes): the next component follows it directly unless CPUID.(0DH,i):ECX[1] = 1, which moves it to the
+# next 64-byte boundary. SDM 093 Vol1 13.4.3 p. 13-9: "If alignI = 0, locationI = locationJ + sizeJ ... If
+# alignI = 1, locationI = ceiling(locationJ + sizeJ, 64)" (sizeJ = CPUID.0DH.j:EAX, alignI = CPUID.0DH.i:ECX[1]);
+# 13.6 p. 13-18 ("PKRU state is in its initial configuration if the value of the PKRU is 0", "AMX state ... if the
+# TILECFG register is zero and all tile data are zero"); 13.10 p. 13-23 / 13-24 (XSAVEC). APX state component 19:
+# APX spec 355828-009 3.1.4.3 / Table 3.9 (R16-R31, 8 bytes each, CPUID.(0DH,19): EAX 128, EBX 960, ECX 0).
+# Expected-value cases, Unicorn only (CPL0: CR4.PKE is set in the snippet so that WRPKRU can make PKRU non-initial):
+#   emu-alltest --cases Emulator\data\cases_st_xsavec_pad.txt --apx --amx --expect-only
+#
+# --- the model's sub-leaves 9 (PKRU), 17 (TILECFG), 19 (APX): size, standard offset, ECX (bit 1 = 64-byte alignment)
+cpuid | rax=0xd rcx=9 => rax=0x8 rbx=0xa80 rcx=0 rdx=0
+cpuid | rax=0xd rcx=0x11 => rax=0x40 rbx=0xac0 rcx=2 rdx=0
+cpuid | rax=0xd rcx=0x13 => rax=0x80 rbx=0x3c0 rcx=0 rdx=0
+#
+# --- RFBM 80200H (PKRU, APX): PKRU at 576 (240H), APX at 576 + 8 = 248H (ECX[1] = 0: no padding), R31 at 2C0H, size 2C8H
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xc; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x80200; .byte 0x0f, 0xc7, 0x26 | r16=0x1111111111111111 r31=0x2222222222222222 m+0x8210=BBBBBBBBBBBBBBBB m+0x82C8=AAAAAAAAAAAAAAAA =>! m+0x8200=0002080000000000 m+0x8208=0002080000000080 m+0x8210=BBBBBBBBBBBBBBBB m+0x8240=0C000000 m+0x8248=1111111111111111 m+0x82C0=2222222222222222 m+0x82C8=AAAAAAAAAAAAAAAA
+# --- RFBM 20200H (PKRU, TILECFG): PKRU at 240H, TILECFG (ECX[1] = 1) at ceiling(248H, 64) = 280H, size 2C0H
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xc; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; .byte 0xc4, 0xe2, 0x78, 0x49, 0x07; mov eax, 0x20200; .byte 0x0f, 0xc7, 0x26 | m+0x9000=01 m+0x9010=4000 m+0x9030=01 m+0x8210=BBBBBBBBBBBBBBBB m+0x82C0=AAAAAAAAAAAAAAAA =>! m+0x8200=0002020000000000 m+0x8208=0002020000000080 m+0x8210=BBBBBBBBBBBBBBBB m+0x8240=0C000000 m+0x8280=01000000000000000000000000000000 m+0x8290=4000 m+0x82B0=01 m+0x82C0=AAAAAAAAAAAAAAAA

@@ -424,6 +424,21 @@ Add-Exp 'cases_xcr_nox1' 'cases_xcr_nox1' 'xstate cpuid expect' @( '--cpuid', ( 
 # profile (T-5)
 Add-Exp 'cases_insn_len' 'cases_insn_len' 'xstate evex expect' @( '--avx512' )
 Add-Exp 'cases_cpuid_topo' 'cases_cpuid_topo' 'xstate cpuid expect' @( '--cpuid', $Cpuid )
+# U1220-U1239 (agent sdetests, plan 1.J.36): the SDE / Pin-kit test leads T-6..T-14 (sdeida report section 12, SDM 093):
+# T-6 XRSTOR header #GP(0) (XCR0 = 7); T-7 / T-8 group-11 and reserved VEX maps #UD, T-9 SYSCALL / SYSRET round trip
+# (also with the APX / AVX-512 / AMX opt-ins, which must not give these encodings a meaning); T-12 the x87 tag word;
+# T-13 MOVDIRI / MOVDIR64B each gated by its own CPUID bit (two profiles derived from the gate profile); T-14 XSAVEC
+# compacted layout / XSTATE_BV / header writes; cases_st_hw: the hardware side of T-6/T-7/T-8/T-12/T-14 (one outcome
+# on P- and E-cores, --hw-repeat)
+Add-Exp 'cases_st_xrstor' 'cases_st_xrstor' 'xstate expect' @( '--xcr0', '0x7' )
+Add-Exp 'cases_st_decode' 'cases_st_decode' 'expect'
+Add-Exp 'cases_st_decode_ext' 'cases_st_decode' 'apx evex amx expect' @( '--apx', '--avx512', '--amx' )
+Add-Exp 'cases_st_x87tag' 'cases_st_x87tag' 'x87 expect'
+Add-Exp 'cases_st_movdiri_only' 'cases_st_movdiri_only' 'cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_st_movdiri_only.txt' ) )
+Add-Exp 'cases_st_movdir64b_only' 'cases_st_movdir64b_only' 'cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_st_movdir64b_only.txt' ) )
+Add-Exp 'cases_st_xsavec' 'cases_st_xsavec' 'xstate evex expect' @( '--avx512' )
+Add-Exp 'cases_st_xsavec_pad' 'cases_st_xsavec_pad' 'xstate apx amx expect' @( '--apx', '--amx' )
+Add-Hw 'cases_st_hw' 'hw xstate x87'
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

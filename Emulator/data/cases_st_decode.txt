@@ -1,0 +1,62 @@
+# U1223 (plan 1.J.36, agent sdetests; sdeida report leads 5 / 7 / 8, T-7 / T-8 / T-9): group-11 opcode extensions that
+# are not XBEGIN, the 3-byte VEX prefix with a reserved map, and the SYSCALL / SYSRET register contract.
+# Expected-value cases, Unicorn only:
+#   emu-alltest --cases Emulator\data\cases_st_decode.txt --expect-only
+# (also run with --apx --avx512 --amx as suite cases_st_decode_ext: the opt-ins must not give these encodings a
+# meaning). The same #UD encodings run on the i5-13600K in cases_st_hw.txt.
+#
+# --- T-7: C6 / C7 group 11. SDM 093 Vol2D Table A-6 "Opcode Extensions for One- and Two-byte Opcodes by Group Number"
+# p. A-18: group 11, C7 mem: only reg 000 = "MOV Ev, Iz"; C7 11B: only "XBEGIN (000) Jz" in column 111 (ModRM F8);
+# C6 mem: "MOV Eb, Ib", C6 11B: "XABORT (000) Ib"; every other cell blank. Appendix A p. A-1 / A.1: "All blanks in
+# opcode maps are reserved and must not be used." / "Blank cells in the tables indicate opcodes that are reserved or
+# undefined."; Vol3A 7.15 "Event 6--Invalid Opcode Exception (#UD)" p. 7-32: "Attempted to execute an invalid or
+# reserved opcode." Pin's tsx_check_intel64.s probes XBEGIN with C7 58 02 00 00 00 (reg = 011b): #UD, not XBEGIN.
+.byte 0xc7, 0x58, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x48, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x50, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x60, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x68, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x70, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0x78, 0x02, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0xd8, 0x00, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0xf9, 0x00, 0x00, 0x00, 0x00 => #UD
+.byte 0xc7, 0xff, 0x00, 0x00, 0x00, 0x00 => #UD
+.byte 0x48, 0xc7, 0x58, 0x02, 0x00, 0x00, 0x00, 0x00 => #UD
+.byte 0xc6, 0x58, 0x02, 0x00 => #UD
+.byte 0xc6, 0xd8, 0x00 => #UD
+.byte 0xc6, 0xf9, 0x00 => #UD
+.byte 0xc7, 0x58, 0x02, 0x00, 0x00, 0x00 | cpl=3 => #UD
+# controls: reg 000 is MOV (C7 06 imm32: [rsi] := imm32; REX.W: sign-extended imm32), C7 F8 is XBEGIN (the model
+# reports RTM with RTM_ALWAYS_ABORT: EAX = 0, execution continues at the fallback = next instruction)
+.byte 0xc7, 0x06, 0x78, 0x56, 0x34, 0x12 => m+0x8000=78563412
+.byte 0x48, 0xc7, 0x06, 0x78, 0x56, 0x34, 0x92 => m+0x8000=78563492FFFFFFFF
+.byte 0xc6, 0x06, 0x5a => m+0x8000=5A
+.byte 0xc7, 0xf8, 0x00, 0x00, 0x00, 0x00 | rax=0x55 => rax=0
+#
+# --- T-8: C4 C4 in 64-bit mode is a 3-byte VEX prefix (LES is "Invalid" in 64-bit mode, Vol2A LES; Vol2A 2.3.5.2
+# p. 2-15: R = 0 makes C4 / C5 LES / LDS only "In protected and compatibility modes") whose byte 1 = C4H has
+# m-mmmm = 00100b: Vol2A Figure 2-9 p. 2-15 "00100-11111: Reserved for future use (will #UD)", 2.3.6.1 / Table 2-10
+# p. 2-18 ("Several bits are reserved for future use and will #UD unless 0"). Pin's raise_exception_app.cpp expects an
+# illegal instruction for the bytes C4 C4 at the start of a page. Map 00000b is reserved as well; maps 5 / 7 are
+# defined by the ISE (AMX-FP8, MSR immediates) and are not tested here.
+.byte 0xc4, 0xc4, 0x00, 0x00, 0x00 => #UD
+.byte 0xc4, 0xc4, 0x78, 0x10, 0xc0 => #UD
+.byte 0xc4, 0xc4, 0x00, 0x00, 0x00 | cpl=3 => #UD
+.byte 0xc4, 0xc0, 0x78, 0x10, 0xc0 => #UD
+.byte 0xc4, 0xe6, 0x78, 0x10, 0xc0 => #UD
+.byte 0xc4, 0xe8, 0x78, 0x10, 0xc0 => #UD
+.byte 0xc4, 0xff, 0x78, 0x10, 0xc0 => #UD
+# control: map 00001b (C4 E1 78 10 C0 = VMOVUPS xmm0, xmm0)
+.byte 0xc4, 0xe1, 0x78, 0x10, 0xc0 =>
+#
+# --- T-9: SYSCALL / SYSRET round trip CPL0 -> CPL3 -> CPL0 -> CPL3 -> CPL0. SDM 093 Vol2B SYSCALL p. 4-699 / 4-700
+# ("RCX := RIP; (* Will contain address of next instruction *) RIP := IA32_LSTAR; R11 := RFLAGS; RFLAGS := RFLAGS AND
+# NOT(IA32_FMASK); CS.Selector := IA32_STAR[47:32] AND FFFCH ... CPL := 0"); SYSRET p. 4-709 / 4-710 ("RIP := RCX;
+# RFLAGS := (R11 & 3C7FD7H) | 2; ... CS.Selector := IA32_STAR[63:48]+16 ... OR 3"). Pin's
+# check_rcx_r11_return_value.cpp: after the system call returns, RCX = the address after SYSCALL, R11 = RFLAGS.
+# Setup at CPL0: IA32_EFER.SCE = 1, IA32_STAR[63:32] = 0023_0010H, IA32_FMASK = 700H (TF, IF, DF), IA32_LSTAR = h.
+# SYSRETQ to u (CPL3, RFLAGS 202H); STD; STC; SYSCALL at CPL3 -> h (CPL0): R15 = RFLAGS in the handler (603H AND NOT
+# 700H = 3), R12 = RCX, R13 = R11; SYSRETQ back to v: RBP = RFLAGS there ((603H AND 3C7FD7H) OR 2 = 603H), RBX = CS
+# (23H + 16 OR 3 = 33H), R12 := R12 - v (0: RCX held the address after SYSCALL); CLD; SYSCALL again -> h: R14 = the
+# masked RFLAGS of the second entry (after SUB = 0: ZF, PF; 246H AND NOT 700H = 46H), end at CPL0.
+mov ecx, 0xC0000080; rdmsr; or eax, 1; wrmsr; mov ecx, 0xC0000081; xor eax, eax; mov edx, 0x00230010; wrmsr; mov ecx, 0xC0000084; mov eax, 0x700; xor edx, edx; wrmsr; mov ecx, 0xC0000082; lea rax, [rip + h]; mov rdx, rax; shr rdx, 32; wrmsr; xor r10d, r10d; lea rcx, [rip + u]; mov r11d, 0x202; .byte 0x48, 0x0f, 0x07; u: std; stc; syscall; v: pushfq; pop rbp; mov ebx, cs; lea r9, [rip + v]; sub r12, r9; cld; syscall; h: pushfq; test r10, r10; jnz f; pop r15; mov r12, rcx; mov r13, r11; inc r10; .byte 0x48, 0x0f, 0x07; f: pop r14 =>! r12=0 r13=0x603 r15=0x3 rbp=0x603 rbx=0x33 r14=0x46

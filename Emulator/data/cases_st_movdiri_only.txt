@@ -1,0 +1,18 @@
+# U1223 (plan 1.J.36, agent sdetests; sdeida report lead 12 / T-13): MOVDIRI and MOVDIR64B are gated by their own CPUID
+# bits. Pin's probe supports_movdir64b_intel64.asm tests bit 27 (MOVDIRI) for MOVDIR64B; NoVmp must not.
+# SDM 093 Vol1 Table 21-20 "Leaf 07H.00H Structured Extended Feature Flags Returned in ECX" p. 21-28: "ECX[27] MOVDIRI
+# If 1, supports the MOVDIRI instruction." / "ECX[28] MOVDIR64B If 1, supports the MOVDIR64B instruction."; Vol2B
+# MOVDIR64B p. 4-50 / 4-51 "64-Bit Mode Exceptions ... #UD If CPUID.07H.00H:ECX.MOVDIR64B[28] = 0."; MOVDIRI p. 4-52 /
+# 4-53 "#UD If CPUID.07H.00H:ECX.MOVDIRI[27] = 0."; operation DEST := SRC (MOVDIR64B: 64 bytes from the source memory
+# operand to ES:[register], destination 64-byte aligned; MOVDIRI: r32/r64 to m32/m64).
+# Expected-value cases with the profile cpuid_st_movdiri_only.txt (the gate profile with MOVDIR64B[28] = 0, MOVDIRI[27]
+# = 1; strict, so the profile decides):
+#   emu-alltest --cases Emulator\data\cases_st_movdiri_only.txt --cpuid Emulator\data\cpuid_st_movdiri_only.txt --expect-only
+# The mirror file cases_st_movdir64b_only.txt runs the same instructions with MOVDIRI[27] = 0, MOVDIR64B[28] = 1.
+cpuid | rax=7 rcx=0 =>! rcx=0x8840078C
+# MOVDIRI m32, r32 (NP 0F 38 F9 /r) and m64, r64 (REX.W): executes
+.byte 0x0f, 0x38, 0xf9, 0x06 | rax=0x1122334455667788 => m+0x8000=88776655
+.byte 0x48, 0x0f, 0x38, 0xf9, 0x06 | rax=0x1122334455667788 => m+0x8000=8877665544332211
+# MOVDIR64B rdi, m512 (66 0F 38 F8 /r): #UD although MOVDIRI[27] = 1
+.byte 0x66, 0x0f, 0x38, 0xf8, 0x3e | m+0x8000=0102030405060708 => #UD
+.byte 0x66, 0x0f, 0x38, 0xf8, 0x3e | m+0x8000=0102030405060708 cpl=3 => #UD
