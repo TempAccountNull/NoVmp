@@ -5146,9 +5146,11 @@ static void test_x86_avx512_xsetbv(void)
     TEST_CHECK(m0_xsetbv(&m, 0, 0x07) == -1);
     m0_close(&m);
 
-    /* model with AVX-512, profile without (i5-13600K leaf 0DH): #GP */
+    /* model with AVX-512, profile without (i5-13600K leaf 0DH). U1220 (user decision 2026-10-10):
+       this profile is not strict (m0_open), so XSETBV follows the model, which has 7:5 - accepted;
+       a strict profile restricts it (test_x86_st_xsetbv_profile) */
     m0_open(&m, UC_MODE_64, 1, prof207, 2);
-    TEST_CHECK(m0_xsetbv(&m, 0, 0xe7) == 13);
+    TEST_CHECK(m0_xsetbv(&m, 0, 0xe7) == -1);
     TEST_CHECK(m0_xsetbv(&m, 0, 0x207) == -1);
     m0_close(&m);
 
@@ -9920,11 +9922,13 @@ static void test_x86_amx_optin(void)
     /* the i5-13600K leaf 0DH has no AMX components: XCR0 without them, AMX unusable */
     ax_open(&a, UC_MODE_64, UC_X86_AMX_ALL, prof207, 2);
     TEST_CHECK((ax_xcr0(&a) & 0x60000) == 0);
-    TEST_CHECK(ax_xsetbv(&a, 0x60207) == 13);
     {
         static const uint8_t rel[] = {0xc4, 0xe2, 0x78, 0x49, 0xc0};
         TEST_CHECK(ax_run(&a, rel, sizeof(rel)) == 6);       /* XCR0[18:17] != 11b */
     }
+    /* U1220 (user decision 2026-10-10): this profile is not strict (ax_open), so XSETBV follows the
+       model, which has the AMX components - accepted (a strict profile restricts it) */
+    TEST_CHECK(ax_xsetbv(&a, 0x60207) == -1);
     ax_close(&a);
 }
 
@@ -29238,6 +29242,108 @@ static void test_x86_fl_eret_legacy(void)
 
 /* ---- end U1170-U1199 (fl_) ---- */
 
+/*
+ * ---- NoVmp U1220-U1239: SDE / Pin-kit test leads and the bugs they found (plan 1.J.36, st_) ----
+ * Expected values from the Intel SDM 093 (325462-093: Vol1 253665-093, Vol2D 334569-093, Vol3A
+ * 253668-093); the source of each value is given at each test. The expected-value side of the same
+ * leads is in Emulator\data\cases_st_*.txt.
+ */
+
+/* XSETBV ECX = 0 with EDX:EAX = mask at CPL0 (CR4.OSXSAVE = 1): the vector or -1 */
+static int st_xsetbv(XsCtx *c, uint64_t mask)
+{
+    xs_set(c, UC_X86_REG_RCX, 0);
+    xs_set(c, UC_X86_REG_RAX, mask & 0xffffffffu);
+    xs_set(c, UC_X86_REG_RDX, mask >> 32);
+    return xs_run(c, "\x0f\x01\xd1", 3, NULL);
+}
+
+static uint64_t st_xcr0(XsCtx *c)
+{
+    xs_set(c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(xs_run(c, "\x0f\x01\xd0", 3, NULL) == -1);
+    return (xs_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)xs_get(c, UC_X86_REG_RAX);
+}
+
+/*
+ * U1220 (user decision 2026-10-10): XSETBV accepts an XCR0 bit only for a state component the model
+ * supports (its own CPUID.(0DH,0):EDX:EAX) and, with a strict UC_CTL_X86_CPUID profile, that the
+ * profile reports as well - the rule of XGETBV ECX = 1 (U1203). A non-strict profile does not
+ * restrict XSETBV. SDM 093 Vol2D XSETBV p. 6-70 / 6-71 ("#GP(0) ... If the value in EDX:EAX sets bits
+ * that are reserved in the XCR specified by ECX"), Vol1 13.3 p. 13-5 / 13-6 (XCR0[i] can be set "if
+ * and only if CPUID.0DH.00H:EAX[i] = 1"). Before U1220 an installed profile decided alone, strict or
+ * not, and the model was not consulted.
+ */
+static void test_x86_st_xsetbv_profile(void)
+{
+    static const uc_x86_cpuid no_pkru[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 7, 0x340, 0x340, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+    };
+    static const uc_x86_cpuid avx512_xcr0[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x04000201, 0x078bfbff},
+        {0xd, 0, 0xe7, 0xa80, 0xa80, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+    };
+    uint32_t r[4];
+    uint64_t model;
+    int strict, v;
+    XsCtx c;
+
+    /* the model (no profile, no AVX-512 opt-in): its CPUID.(0DH,0):EAX has PKRU (9), not 7:5 */
+    xs_open(&c, 0);
+    xs_cpuid(&c, 0xd, 0, r);
+    model = ((uint64_t)r[3] << 32) | r[0];
+    TEST_CHECK((model & 0x2e7) == 0x207);
+    TEST_MSG("model CPUID.(0DH,0):EDX:EAX = %#" PRIx64, model);
+    TEST_CHECK(st_xsetbv(&c, 0x7) == -1 && st_xcr0(&c) == 0x7);
+    TEST_CHECK(st_xsetbv(&c, 0x207) == -1 && st_xcr0(&c) == 0x207);
+    TEST_CHECK(st_xsetbv(&c, 0xe7) == 13 && st_xcr0(&c) == 0x207);
+    OK(uc_close(c.uc));
+
+    for (strict = 1; strict >= 0; strict--) {
+        /* a profile without PKRU: strict -> the profile hides bit 9 (#GP(0)); not strict -> the
+           model's bit 9 is accepted (before U1220: #GP(0) in both) */
+        xs_open(&c, 0);
+        OK(uc_ctl_set_x86_cpuid(c.uc, no_pkru, 4));
+        OK(uc_ctl_set_x86_cpuid_strict(c.uc, strict));
+        TEST_CHECK(st_xsetbv(&c, 0x7) == -1 && st_xcr0(&c) == 0x7);
+        v = st_xsetbv(&c, 0x207);
+        TEST_CHECK(v == (strict ? 13 : -1));
+        TEST_MSG("strict %d: XSETBV 207H -> %d", strict, v);
+        TEST_CHECK(st_xcr0(&c) == (strict ? 0x7 : 0x207));
+        OK(uc_close(c.uc));
+
+        /* a profile reporting AVX-512 state the model does not have (no opt-in): #GP(0) either way
+           (before U1220: accepted, XCR0 = E7H without AVX-512 state in the CPU) */
+        xs_open(&c, 0);
+        OK(uc_ctl_set_x86_cpuid(c.uc, avx512_xcr0, 4));
+        OK(uc_ctl_set_x86_cpuid_strict(c.uc, strict));
+        v = st_xsetbv(&c, 0xe7);
+        TEST_CHECK(v == 13);
+        TEST_MSG("strict %d: XSETBV E7H without the AVX-512 opt-in -> %d", strict, v);
+        TEST_CHECK(st_xsetbv(&c, 0x7) == -1 && st_xcr0(&c) == 0x7);
+        OK(uc_close(c.uc));
+
+        /* with the AVX-512 opt-in the model has 7:5: accepted under both settings */
+        xs_open(&c, 1);
+        OK(uc_ctl_set_x86_cpuid(c.uc, avx512_xcr0, 4));
+        OK(uc_ctl_set_x86_cpuid_strict(c.uc, strict));
+        v = st_xsetbv(&c, 0xe7);
+        TEST_CHECK(v == -1 && st_xcr0(&c) == 0xe7);
+        TEST_MSG("strict %d: XSETBV E7H with the AVX-512 opt-in -> %d", strict, v);
+        /* PKRU: the model has it, this profile does not */
+        v = st_xsetbv(&c, 0x2e7);
+        TEST_CHECK(v == (strict ? 13 : -1));
+        TEST_MSG("strict %d: XSETBV 2E7H -> %d", strict, v);
+        OK(uc_close(c.uc));
+    }
+}
+/* ---- end U1220-U1239 (st_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -29626,4 +29732,5 @@ TEST_LIST = {
     {"test_x86_fl_lam", test_x86_fl_lam},
     {"test_x86_fl_lam_paging", test_x86_fl_lam_paging},
     {"test_x86_fl_eret_legacy", test_x86_fl_eret_legacy},
+    {"test_x86_st_xsetbv_profile", test_x86_st_xsetbv_profile},
     {NULL, NULL}};

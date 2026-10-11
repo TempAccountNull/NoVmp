@@ -6353,8 +6353,28 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
     }
 
     /* Disallow enabling unimplemented features.  */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1220) */
     cpu_x86_cpuid(env, 0x0d, 0, &ena_lo, &dummy, &dummy, &ena_hi);
     ena = ((uint64_t)ena_hi << 32) | ena_lo;
+#else /* ours (U1220) */
+    /*
+     * NoVmp (ledger U1220, user decision 2026-10-10): SDM 093 Vol2D XSETBV p. 6-70 / 6-71 "#GP(0)
+     * ... If the value in EDX:EAX sets bits that are reserved in the XCR specified by ECX"; Vol1
+     * 13.3 p. 13-5 / 13-6: XCR0[i] can be set "if and only if CPUID.0DH.00H:EAX[i] = 1". The
+     * supported components are the model's own (FEAT_XSAVE_XCR0_LO/HI, what CPUID.(0DH,0):EDX:EAX
+     * reports without a profile) AND, only with a strict UC_CTL_X86_CPUID profile, the ones that
+     * profile reports - the rule U1203 applies to XGETBV ECX = 1 (x86_cpuid_profile_mask). Before,
+     * cpu_x86_cpuid returned an installed profile's leaf 0DH whether strict or not, and the model
+     * was not consulted, so a profile could enable state the model does not implement.
+     */
+    (void)dummy;
+    (void)ena_lo;
+    (void)ena_hi;
+    ena = (((uint64_t)env->features[FEAT_XSAVE_XCR0_HI] << 32) |
+           env->features[FEAT_XSAVE_XCR0_LO]) &
+          (((uint64_t)x86_cpuid_profile_mask(env, 0xd, 0, 3) << 32) |
+           x86_cpuid_profile_mask(env, 0xd, 0, 0));
+#endif /* __Use_Original_Qemu (U1220) */
     if (mask & ~ena) {
         goto do_gpf;
     }
