@@ -1701,6 +1701,237 @@ void helper_encls(CPUX86State *env)
 }
 
 /* ---------------------------------------------------------------------------------------------
+ * EREPORT and EGETKEY (U1264, Vol3D p. 41-99..41-116)
+ * ------------------------------------------------------------------------------------------- */
+
+/*
+ * An EREPORT / EGETKEY operand (p. 41-101/41-102, 41-113/41-114): aligned to 'align' and within
+ * CR_ELRANGE (#GP(0)); it resolves within the EPC to a VALID page that is not BLOCKED (#PF); PT_REG
+ * of the current enclave, not PENDING / MODIFIED, at its ENCLAVEADDRESS, R = 1 (W = 1 for an
+ * output) (#PF). Returns the linear address; the data is then accessed through it (an enclave
+ * access, so data breakpoints apply as 43.3.4 says for these two leaves).
+ */
+static uint64_t sgx_enclave_operand(SgxOp *o, int reg, uint32_t align, uint32_t size, bool write)
+{
+    CPUX86State *env = o->env;
+    uint64_t la = sgx_la(o, sgx_reg(o, reg), size, write), pa;
+    X86SgxEpcm *m;
+
+    if ((la & (align - 1)) || la - env->sgx_elbase >= env->sgx_elsize) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, la, write, &pa);
+    if (!m->valid || m->blocked) {
+        sgx_pf(o, la, write);
+    }
+    if (m->pt != SGX_PT_REG || m->secs != env->sgx_secs || m->pending || m->modified ||
+        m->addr != (la & ~0xfffULL) || !(write ? m->w : m->r)) {
+        sgx_pf(o, la, write);
+    }
+    return la;
+}
+
+/* EREPORT (ENCLU[0], p. 41-112..41-116): REPORT (Table 38-22) MACed with the target's report key */
+static void sgx_ereport(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t secs = env->sgx_secs, ti, rd, out;
+    uint8_t t[512], rep[432], key[16];
+    SgxKeyDep k;
+
+    ti = sgx_enclave_operand(o, R_EBX, 512, 512, false);
+    sgx_ldbuf(o, ti, t, sizeof(t));
+    /* TARGETINFO reserved: 48 (CET_ATTRIBUTES, CET not enumerated), 49, 56-63, 128-511 */
+    if (t[48] || t[49] || !sgx_zero(t + 56, 8) || !sgx_zero(t + 128, 384)) {
+        sgx_gp(o);
+    }
+    rd = sgx_enclave_operand(o, R_ECX, 128, 64, false);
+    /* the OUTPUTDATA checks of p. 41-114 name EPCM(DS:RCX).PENDING / MODIFIED: those of RDX
+       (docs/quirks.md) */
+    out = sgx_enclave_operand(o, R_EDX, 512, sizeof(rep), true);
+    memset(rep, 0, sizeof(rep));
+    memcpy(rep + 0, env->sgx->cpusvn, 16);
+    stl_le_p(rep + 16, sgx_pld32(env, secs + SECS_MISCSELECT));
+    sgx_pread(env, secs + SECS_ISVEXTPRODID, rep + 32, 16);
+    sgx_pread(env, secs + SECS_ATTRIBUTES, rep + 48, 16);
+    sgx_pread(env, secs + SECS_MRENCLAVE, rep + 64, 32);
+    sgx_pread(env, secs + SECS_MRSIGNER, rep + 128, 32);
+    sgx_pread(env, secs + SECS_CONFIGID, rep + 192, 64);
+    sgx_pread(env, secs + SECS_ISVPRODID, rep + 256, 6);    /* ISVPRODID, ISVSVN, CONFIGSVN */
+    sgx_pread(env, secs + SECS_ISVFAMILYID, rep + 304, 16);
+    sgx_ldbuf(o, rd, rep + 320, 64);
+    memcpy(rep + 384, env->sgx->report_keyid, 32);
+    memset(&k, 0, sizeof(k));
+    k.keyname = KEYNAME_REPORT;
+    memcpy(k.ownerepoch, env->sgx->owner_epoch, 16);
+    memcpy(k.attributes, t + 32, 16);
+    memcpy(k.mrenclave, t + 0, 32);
+    memcpy(k.keyid, rep + 384, 32);
+    memcpy(k.seal_fuses, env->sgx->seal_fuses, 16);
+    memcpy(k.cpusvn, env->sgx->cpusvn, 16);
+    sgx_pread(env, secs + SECS_PADDING, k.padding, 352);
+    k.miscselect = ldl_le_p(t + 52);
+    memcpy(k.configid, t + 64, 64);
+    k.configsvn = lduw_le_p(t + 50);
+    sgx_derivekey(env, &k, key);
+    sgx_cmac(key, rep, 384, rep + 416);
+    sgx_stbuf(o, out, rep, sizeof(rep));
+}
+
+/* ATTRIBUTES.KSS (Table 38-3; not enumerated by the model) */
+#define SGX_ATTR_KSS    (1ULL << 7)
+
+/* KEYPOLICY (Table 38-26) */
+#define KP_MRENCLAVE    (1u << 0)
+#define KP_MRSIGNER     (1u << 1)
+#define KP_NOISVPRODID  (1u << 2)
+#define KP_CONFIGID     (1u << 3)
+#define KP_ISVFAMILYID  (1u << 4)
+#define KP_ISVEXTPRODID (1u << 5)
+
+/* the enclave-identity inputs SEAL_KEY and PROVISION_SEAL_KEY take by KEYPOLICY (p. 41-103) */
+static void sgx_key_policy(CPUX86State *env, uint64_t secs, const uint8_t *kr, SgxKeyDep *k,
+                           bool seal)
+{
+    uint16_t pol = lduw_le_p(kr + 2);
+
+    if (seal && (pol & KP_MRENCLAVE)) {
+        sgx_pread(env, secs + SECS_MRENCLAVE, k->mrenclave, 32);
+    }
+    if (seal && (pol & KP_MRSIGNER)) {
+        sgx_pread(env, secs + SECS_MRSIGNER, k->mrsigner, 32);
+    }
+    if (pol & KP_ISVFAMILYID) {
+        sgx_pread(env, secs + SECS_ISVFAMILYID, k->isvfamilyid, 16);
+    }
+    if (!(pol & KP_NOISVPRODID)) {
+        k->isvprodid = (uint16_t)sgx_pld32(env, secs + SECS_ISVPRODID);
+    }
+    if (pol & KP_CONFIGID) {
+        sgx_pread(env, secs + SECS_CONFIGID, k->configid, 64);
+        k->configsvn = lduw_le_p(kr + 76);
+    }
+    if (pol & KP_ISVEXTPRODID) {
+        sgx_pread(env, secs + SECS_ISVEXTPRODID, k->isvextprodid, 16);
+    }
+    k->keypolicy = pol;
+}
+
+/*
+ * EGETKEY (ENCLU[1], p. 41-99..41-108): KEYREQUEST (Table 38-24) checks, the dependencies of Table
+ * 41-62 per KEYNAME, derivekey (the model's placeholder, docs/sgx.md 3). An error leaves the output
+ * unmodified: RAX = the code, ZF = 1; success: RAX = 0, ZF = 0; CF PF AF OF SF := 0.
+ */
+static void sgx_egetkey(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t secs = env->sgx_secs, krla, out, attr[2], mask[2];
+    uint8_t kr[512], key[16];
+    uint16_t name, pol, isvsvn, configsvn;
+    uint32_t err = 0, misc;
+    SgxKeyDep k;
+    int i;
+
+    krla = sgx_enclave_operand(o, R_EBX, 512, 512, false);
+    out = sgx_enclave_operand(o, R_ECX, 16, 16, true);
+    sgx_ldbuf(o, krla, kr, sizeof(kr));
+    name = lduw_le_p(kr);
+    pol = lduw_le_p(kr + 2);
+    isvsvn = lduw_le_p(kr + 4);
+    configsvn = lduw_le_p(kr + 76);
+    /* RESERVED: 6 (CET_ATTRIBUTES_MASK, CET not enumerated), 7, 78-511; KEYPOLICY[15:6] */
+    if (kr[6] || kr[7] || !sgx_zero(kr + 78, 434) || (pol & 0xffc0)) {
+        sgx_gp(o);
+    }
+    attr[0] = sgx_pld64(env, secs + SECS_ATTRIBUTES);
+    attr[1] = sgx_pld64(env, secs + SECS_ATTRIBUTES + 8);
+    if (!(attr[0] & SGX_ATTR_KSS) && ((pol & 0x3c) || configsvn)) {
+        sgx_gp(o);
+    }
+    /* TMP_ATTRIBUTES := (ATTRIBUTEMASK | REQUIRED_SEALING_MASK (INIT, DEBUG)) & SECS.ATTRIBUTES */
+    mask[0] = ldq_le_p(kr + 24) | 3;
+    mask[1] = ldq_le_p(kr + 32);
+    misc = ldl_le_p(kr + 72) & sgx_pld32(env, secs + SECS_MISCSELECT);
+    memset(&k, 0, sizeof(k));
+    k.keyname = name;
+    switch (name) {
+    case KEYNAME_SEAL:
+    case KEYNAME_EINITTOKEN:
+    case KEYNAME_PROVISION:
+    case KEYNAME_PROVISION_SEAL:
+        if (name == KEYNAME_EINITTOKEN && !(attr[0] & SGX_ATTR_EINITTOKEN_KEY)) {
+            err = SGX_INVALID_ATTRIBUTE;
+        } else if ((name == KEYNAME_PROVISION || name == KEYNAME_PROVISION_SEAL) &&
+                   !(attr[0] & SGX_ATTR_PROVISIONKEY)) {
+            err = SGX_INVALID_ATTRIBUTE;
+        } else if (sgx_cpusvn_beyond(env, kr + 8)) {
+            err = SGX_INVALID_CPUSVN;
+        } else if (isvsvn > (uint16_t)sgx_pld32(env, secs + SECS_ISVSVN)) {
+            err = SGX_INVALID_ISVSVN;
+        } else if (name == KEYNAME_SEAL &&
+                   configsvn > (uint16_t)sgx_pld32(env, secs + SECS_CONFIGSVN)) {
+            err = SGX_INVALID_ISVSVN;
+        }
+        if (err) {
+            break;
+        }
+        k.isvsvn = isvsvn;
+        for (i = 0; i < 2; i++) {
+            stq_le_p(k.attributes + 8 * i, mask[i] & attr[i]);
+        }
+        memcpy(k.cpusvn, kr + 8, 16);
+        sgx_pread(env, secs + SECS_PADDING, k.padding, 352);
+        k.miscselect = misc;
+        if (name != KEYNAME_PROVISION && name != KEYNAME_PROVISION_SEAL) {
+            memcpy(k.ownerepoch, env->sgx->owner_epoch, 16);
+        }
+        if (name != KEYNAME_PROVISION) {
+            memcpy(k.seal_fuses, env->sgx->seal_fuses, 16);
+        }
+        if (name != KEYNAME_EINITTOKEN) {
+            memcpy(k.attributesmask, kr + 24, 16);
+            k.miscmask = ~ldl_le_p(kr + 72);
+        }
+        if (name == KEYNAME_SEAL || name == KEYNAME_EINITTOKEN) {
+            memcpy(k.keyid, kr + 40, 32);
+        }
+        if (name == KEYNAME_SEAL || name == KEYNAME_PROVISION_SEAL) {
+            sgx_key_policy(env, secs, kr, &k, name == KEYNAME_SEAL);
+        } else {
+            k.isvprodid = (uint16_t)sgx_pld32(env, secs + SECS_ISVPRODID);
+        }
+        if (name != KEYNAME_SEAL) {
+            sgx_pread(env, secs + SECS_MRSIGNER, k.mrsigner, 32);
+        }
+        break;
+    case KEYNAME_REPORT:
+        memcpy(k.ownerepoch, env->sgx->owner_epoch, 16);
+        sgx_pread(env, secs + SECS_ATTRIBUTES, k.attributes, 16);
+        sgx_pread(env, secs + SECS_MRENCLAVE, k.mrenclave, 32);
+        memcpy(k.keyid, kr + 40, 32);
+        memcpy(k.seal_fuses, env->sgx->seal_fuses, 16);
+        memcpy(k.cpusvn, env->sgx->cpusvn, 16);
+        sgx_pkcs_padding(k.padding);
+        k.miscselect = sgx_pld32(env, secs + SECS_MISCSELECT);
+        sgx_pread(env, secs + SECS_CONFIGID, k.configid, 64);
+        k.configsvn = (uint16_t)sgx_pld32(env, secs + SECS_CONFIGSVN);
+        break;
+    default:
+        err = SGX_INVALID_KEYNAME;
+        break;
+    }
+    if (err) {
+        env->regs[R_EAX] = err;
+        o->flags = CC_Z;
+        return;
+    }
+    sgx_derivekey(env, &k, key);
+    sgx_stbuf(o, out, key, 16);
+    env->regs[R_EAX] = 0;
+    o->flags = 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
  * Enclave entry and exit (U1263): EENTER, ERESUME, EEXIT (Vol3D 41.4), AEX (40.3, 40.4)
  * ------------------------------------------------------------------------------------------- */
 
@@ -2359,7 +2590,20 @@ void helper_enclu(CPUX86State *env, uint32_t len)
     if (env->sgx_enclave_mode ? (leaf == 2 || leaf == 3) : (leaf != 2 && leaf != 3)) {
         sgx_gp(&o);
     }
+    /* EREPORT / EGETKEY: TF at the start (inside an enclave only after an opt-in entry) pends a
+       single-step #DB after the leaf (43.2.2) */
+    if ((leaf == 0 || leaf == 1) && (env->eflags & TF_MASK)) {
+        o.single_step = true;
+    }
     switch (leaf) {
+    case 0:
+        sgx_ereport(&o);
+        env->eip = o.next_eip;
+        break;
+    case 1:
+        sgx_egetkey(&o);
+        env->eip = o.next_eip;
+        break;
     case 2:
         sgx_eenter(&o);
         break;
@@ -2370,14 +2614,16 @@ void helper_enclu(CPUX86State *env, uint32_t len)
         sgx_eexit(&o);
         break;
     default:
-        sgx_gp(&o);     /* EREPORT, EGETKEY: U1264; EACCEPT, EMODPE, EACCEPTCOPY: U1266 */
+        sgx_gp(&o);     /* EACCEPT, EMODPE, EACCEPTCOPY: U1266 */
         break;
     }
     if (leaf != 3) {
         env->eflags &= ~RF_MASK;
     }
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
-    env->sgx_svn_lock = 1;
+    if (leaf != 1 || !(o.flags & CC_Z)) {
+        env->sgx_svn_lock = 1;      /* not after an EGETKEY error code (42.11.3) */
+    }
     CC_SRC = o.flags;
     CC_OP = CC_OP_EFLAGS;
     if (o.single_step) {

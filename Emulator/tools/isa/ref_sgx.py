@@ -382,6 +382,97 @@ def einittoken(root, platform, le, mrenclave, mrsigner, attributes):
     return bytes(t), key
 
 
+# Table 41-3 error codes EGETKEY returns
+SGX_INVALID_ATTRIBUTE, SGX_INVALID_CPUSVN, SGX_INVALID_ISVSVN, SGX_INVALID_KEYNAME = 2, 32, 64, 256
+ATTR_PROVISIONKEY = 1 << 4
+
+
+def ereport(root, platform, secs, targetinfo, reportdata):
+    """EREPORT (Vol3D p. 41-112..41-116): REPORT (Table 38-22) and its MAC with the report key of
+    the TARGETINFO (Table 38-23) enclave. 'secs': the reporting enclave's SECS fields."""
+    r = bytearray(432)
+    r[0:16] = platform['cpusvn']
+    struct.pack_into('<I', r, 16, secs['miscselect'])
+    r[32:48] = secs.get('isvextprodid', bytes(16))
+    r[48:64] = secs['attributes']
+    r[64:96] = secs['mrenclave']
+    r[128:160] = secs['mrsigner']
+    r[192:256] = secs.get('configid', bytes(64))
+    struct.pack_into('<HHH', r, 256, secs['isvprodid'], secs['isvsvn'], secs.get('configsvn', 0))
+    r[304:320] = secs.get('isvfamilyid', bytes(16))
+    r[320:384] = reportdata
+    r[384:416] = platform['report_keyid']
+    key = derivekey(root, dict(keyname=KEYNAME_REPORT, ownerepoch=platform['ownerepoch'],
+                               attributes=targetinfo[32:48], mrenclave=targetinfo[0:32],
+                               keyid=platform['report_keyid'], seal_fuses=platform['seal_fuses'],
+                               cpusvn=platform['cpusvn'], padding=HARDCODED_PKCS1_5_PADDING,
+                               miscselect=struct.unpack_from('<I', targetinfo, 52)[0],
+                               configid=targetinfo[64:128],
+                               configsvn=struct.unpack_from('<H', targetinfo, 50)[0]))
+    r[416:432] = cmac(key, bytes(r[0:384]))
+    return bytes(r), key
+
+
+def egetkey(root, platform, secs, kr):
+    """EGETKEY (Vol3D p. 41-99..41-108, Table 41-62) for the KEYREQUEST bytes 'kr' (Table 38-24):
+    (0, key) or (error code, None). Reserved-field (#GP) checks are not modelled here."""
+    name, pol, isvsvn = struct.unpack_from('<HHH', kr, 0)
+    cpusvn, amask, keyid = kr[8:24], kr[24:40], kr[40:72]
+    miscmask, configsvn = struct.unpack_from('<IH', kr, 72)
+    attr = secs['attributes']
+    a0, a1 = struct.unpack('<QQ', attr)
+    m0, m1 = struct.unpack('<QQ', amask)
+    tmp_attr = struct.pack('<QQ', (m0 | 3) & a0, m1 & a1)
+    tmp_misc = miscmask & secs['miscselect']
+    beyond = any(cpusvn[i] > platform['cpusvn'][i] for i in range(16))
+    kd = dict(keyname=name)
+    if name == KEYNAME_REPORT:
+        kd.update(ownerepoch=platform['ownerepoch'], attributes=attr, mrenclave=secs['mrenclave'],
+                  keyid=keyid, seal_fuses=platform['seal_fuses'], cpusvn=platform['cpusvn'],
+                  padding=HARDCODED_PKCS1_5_PADDING, miscselect=secs['miscselect'],
+                  configid=secs.get('configid', bytes(64)), configsvn=secs.get('configsvn', 0))
+        return 0, derivekey(root, kd)
+    if name not in (KEYNAME_SEAL, KEYNAME_EINITTOKEN, KEYNAME_PROVISION, KEYNAME_PROVISION_SEAL):
+        return SGX_INVALID_KEYNAME, None
+    if name == KEYNAME_EINITTOKEN and not (a0 & ATTR_EINITTOKEN_KEY):
+        return SGX_INVALID_ATTRIBUTE, None
+    if name in (KEYNAME_PROVISION, KEYNAME_PROVISION_SEAL) and not (a0 & ATTR_PROVISIONKEY):
+        return SGX_INVALID_ATTRIBUTE, None
+    if beyond:
+        return SGX_INVALID_CPUSVN, None
+    if isvsvn > secs['isvsvn']:
+        return SGX_INVALID_ISVSVN, None
+    if name == KEYNAME_SEAL and configsvn > secs.get('configsvn', 0):
+        return SGX_INVALID_ISVSVN, None
+    kd.update(isvsvn=isvsvn, attributes=tmp_attr, cpusvn=cpusvn, padding=secs['padding'],
+              miscselect=tmp_misc)
+    if name in (KEYNAME_SEAL, KEYNAME_EINITTOKEN):
+        kd.update(ownerepoch=platform['ownerepoch'], keyid=keyid)
+    if name != KEYNAME_PROVISION:
+        kd.update(seal_fuses=platform['seal_fuses'])
+    if name != KEYNAME_EINITTOKEN:
+        kd.update(attributesmask=amask, miscmask=~miscmask & 0xffffffff)
+    if name in (KEYNAME_SEAL, KEYNAME_PROVISION_SEAL):
+        if name == KEYNAME_SEAL and pol & 1:
+            kd['mrenclave'] = secs['mrenclave']
+        if name == KEYNAME_SEAL and pol & 2:
+            kd['mrsigner'] = secs['mrsigner']
+        if pol & 0x10:
+            kd['isvfamilyid'] = secs.get('isvfamilyid', bytes(16))
+        if not pol & 4:
+            kd['isvprodid'] = secs['isvprodid']
+        if pol & 8:
+            kd.update(configid=secs.get('configid', bytes(64)), configsvn=configsvn)
+        if pol & 0x20:
+            kd['isvextprodid'] = secs.get('isvextprodid', bytes(16))
+        kd['keypolicy'] = pol
+    else:
+        kd['isvprodid'] = secs['isvprodid']
+    if name != KEYNAME_SEAL:
+        kd['mrsigner'] = secs['mrsigner']
+    return 0, derivekey(root, kd)
+
+
 # ---------------------------------------------------------------------------------------------
 # The test enclave of the unit tests (test_x86.c sgx_ block)
 # ---------------------------------------------------------------------------------------------
@@ -540,8 +631,28 @@ def test_vectors():
               keyid=bytes(range(0x40, 0x60)))
     tok, tokkey = einittoken(bytes(16), platform, le, mre, mrsigner,
                              struct.pack('<QQ', ATTR_MODE64 | ATTR_DEBUG, XFRM))
+    # EREPORT / EGETKEY of the initialised debug enclave (ATTRIBUTES = INIT | DEBUG | MODE64BIT,
+    # XFRM 3; ISVPRODID 1234H, ISVSVN 7) on the test platform (CR_REPORT_KEYID = 0, CR_CPUSVN = 0)
+    pf = dict(platform, cpusvn=bytes(16), report_keyid=bytes(32))
+    secs = dict(miscselect=MISCSELECT, attributes=struct.pack('<QQ', 7, XFRM), mrenclave=mre,
+                mrsigner=mrsigner, isvprodid=0x1234, isvsvn=7, padding=HARDCODED_PKCS1_5_PADDING)
+    ti = bytearray(512)
+    ti[0:32] = mre
+    ti[32:48] = secs['attributes']
+    struct.pack_into('<I', ti, 52, MISCSELECT)
+    report, _ = ereport(bytes(16), pf, secs, bytes(ti), bytes(range(64)))
+    kr_seal = bytearray(512)
+    struct.pack_into('<HHH', kr_seal, 0, KEYNAME_SEAL, 1, 7)      # KEYPOLICY.MRENCLAVE, ISVSVN 7
+    kr_seal[24:40] = struct.pack('<QQ', 0xff, 0)
+    kr_seal[40:72] = bytes(range(0xa0, 0xc0))
+    struct.pack_into('<I', kr_seal, 72, 1)
+    _, seal = egetkey(bytes(16), pf, secs, bytes(kr_seal))
+    kr_rep = bytearray(512)
+    struct.pack_into('<H', kr_rep, 0, KEYNAME_REPORT)
+    _, repkey = egetkey(bytes(16), pf, secs, bytes(kr_rep))
     return dict(n=n, d=d, mrenclave=mre, sigstruct=ss, mrsigner=mrsigner, token=tok,
-                tokkey=tokkey)
+                tokkey=tokkey, targetinfo=bytes(ti), report=report, kr_seal=bytes(kr_seal),
+                seal_key=seal, report_key=repkey)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -587,6 +698,23 @@ def selftest():
     check('a changed ENCLAVEHASH fails', not verify_sigstruct(bytes(bad)))
     m = Measure(1, 0x2000)
     check('ECREATE block is 64 bytes', len(m.stream) == 64)
+    check('the REPORT MAC verifies with the EGETKEY report key (KEYID = REPORT.KEYID)',
+          cmac(v['report_key'], v['report'][:384]) == v['report'][416:432])
+    pf = dict(ownerepoch=bytes(16), seal_fuses=bytes(16), cpusvn=bytes(16))
+    secs = dict(miscselect=1, attributes=struct.pack('<QQ', 7, 3), mrenclave=v['mrenclave'],
+                mrsigner=v['mrsigner'], isvprodid=0x1234, isvsvn=7,
+                padding=HARDCODED_PKCS1_5_PADDING)
+    kr = bytearray(v['kr_seal'])
+    struct.pack_into('<H', kr, 4, 8)
+    check('EGETKEY ISVSVN beyond the enclave: SGX_INVALID_ISVSVN',
+          egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_ISVSVN)
+    kr = bytearray(512)
+    struct.pack_into('<H', kr, 0, KEYNAME_PROVISION)
+    check('EGETKEY PROVISION_KEY without ATTRIBUTES.PROVISIONKEY: SGX_INVALID_ATTRIBUTE',
+          egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_ATTRIBUTE)
+    struct.pack_into('<H', kr, 0, 5)
+    check('EGETKEY KEYNAME 5: SGX_INVALID_KEYNAME',
+          egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_KEYNAME)
     try:
         inc = open(INC, newline='').read().replace('\r\n', '\n')
     except OSError:
@@ -613,6 +741,11 @@ def cinc_text():
     out.append(c_bytes('sgxv_mrsigner', v['mrsigner']))
     out.append(c_bytes('sgxv_sigstruct', v['sigstruct']))
     out.append(c_bytes('sgxv_token', v['token']))
+    out.append(c_bytes('sgxv_targetinfo', v['targetinfo']))
+    out.append(c_bytes('sgxv_report', v['report']))
+    out.append(c_bytes('sgxv_kr_seal', v['kr_seal']))
+    out.append(c_bytes('sgxv_seal_key', v['seal_key']))
+    out.append(c_bytes('sgxv_report_key', v['report_key']))
     for off, si, content, measured in enclave_pages():
         if any(content):
             out.append(c_bytes('sgxv_page_%04x' % off, content))

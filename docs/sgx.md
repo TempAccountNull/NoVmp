@@ -58,8 +58,8 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | PCMD (Table 38-19) | 3D 38.13 p.38-13 | plan |
 | SIGSTRUCT (Table 38-20), RSA-3072 e = 3, EMSA-PKCS1-v1.5 SHA-256, q1 / q2 | 3D 38.14 p.38-13..38-14 | impl (U1262) |
 | EINITTOKEN (Table 38-21) | 3D 38.15 p.38-15 | impl (U1262) |
-| REPORT (Table 38-22), REPORTDATA, TARGETINFO (Table 38-23) | 3D 38.16-38.17 p.38-15..38-16 | plan |
-| KEYREQUEST (Table 38-24), KEYNAME (Table 38-25), KEYPOLICY (Table 38-26) | 3D 38.18 p.38-17..38-18 | plan |
+| REPORT (Table 38-22), REPORTDATA, TARGETINFO (Table 38-23) | 3D 38.16-38.17 p.38-15..38-16 | impl (U1264) |
+| KEYREQUEST (Table 38-24), KEYNAME (Table 38-25), KEYPOLICY (Table 38-26) | 3D 38.18 p.38-17..38-18 | impl (U1264) |
 | Version Array (Table 38-27) | 3D 38.19 p.38-18 | impl (U1262: EPA; slots with EWB / ELD) |
 | CET state save frame (Table 38-14), CET_ATTRIBUTES (Table 38-5), PT_SS_FIRST / PT_SS_REST | 3D 37.8 p.37-5..37-6, 38.10 p.38-11 | no: CPUID.12H.1:EAX[6] (ATTRIBUTES.CET) is not enumerated, so these fields are reserved |
 | KSS: ATTRIBUTES.KSS, CONFIGID / CONFIGSVN / ISVFAMILYID / ISVEXTPRODID, KEYPOLICY bits 5:2 | 3D 39.4.1.3 p.39-6, 38.18.2 | no: ATTRIBUTES.KSS[7] is not enumerated (the reserved-field checks of ECREATE / EINIT / EGETKEY apply) |
@@ -105,8 +105,8 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | Leaf | Source | Status |
 |---|---|---|
 | ENCLU common checks (#UD as ENCLS but CPL < 3; #NM CR0.TS; #GP: FEATURE_CONTROL, invalid leaf, CR0.PG / CR0.NE = 0, 16-bit CS, EENTER/ERESUME inside / others outside an enclave) | ENCLU p.41-10..41-12 | impl (U1263) |
-| EREPORT (0): REPORT, report key derivation for TARGETINFO, CMAC over 384 bytes | p.41-112..41-116 | plan |
-| EGETKEY (1): KEYREQUEST checks, Table 41-62 dependencies, derivekey | p.41-99..41-108 | plan; derivekey and the root keys **ph** |
+| EREPORT (0): REPORT, report key derivation for TARGETINFO, CMAC over 384 bytes | p.41-112..41-116 | impl (U1264) |
+| EGETKEY (1): KEYREQUEST checks, Table 41-62 dependencies, derivekey | p.41-99..41-108 | impl (U1264); derivekey and the root keys **ph** |
 | EENTER (2) | p.41-87..41-95 | impl (U1263) |
 | ERESUME (3) | p.41-117..41-128 | impl (U1263; TMP_NOTIFY = 0) |
 | EEXIT (4) | p.41-96..41-98 | impl (U1263) |
@@ -122,7 +122,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | SHA-256 (FIPS 180-4) incremental: MRENCLAVE = SHA256INITIALIZE / SHA256UPDATE (64-byte blocks) / SHA256FINAL(count * 512) | ECREATE / EADD / EEXTEND / EINIT pseudocode; 39.4.1.1 p.39-6 | impl (U1262) |
 | MRSIGNER = SHA256(SIGSTRUCT.MODULUS) (384 bytes as stored) | EINIT p.41-45; 39.4.1.2 p.39-7 | impl (U1262) |
 | RSA-3072 signature check (e = 3, PKCS#1 v1.5 / RFC 3447 DigestInfo SHA-256) over SIGSTRUCT bytes 0-127 and 900-1027 ("Signed" column) using q1, q2 | 38.14 p.38-13..38-14; EINIT p.41-44 | impl (U1262; q1 / q2 use: our reading) |
-| AES-CMAC-128 (EINITTOKEN.MAC over bytes 0-191, REPORT.MAC over bytes 0-383) | EINIT p.41-46; EREPORT p.41-115 | impl (U1262: EINITTOKEN; REPORT U1264) |
+| AES-CMAC-128 (EINITTOKEN.MAC over bytes 0-191, REPORT.MAC over bytes 0-383) | EINIT p.41-46; EREPORT p.41-115 | impl (U1262: EINITTOKEN; U1264: REPORT) |
 | AES-GCM (EWB / ELDU): key CR_BASE_PK, counter "TMP_VER << 32", 128-byte MAC header (SECINFO, LINADDR, EID, ...), 4096-byte page | EWB p.41-72; ELDB p.41-51 | plan; the exact GCM IV formation and MAC-header byte layout are not fully specified -> our layout, documented (section 3) |
 | derivekey(KEYDEPENDENCIES): "derivation data and package specific value" | EGETKEY p.41-99, 41-104; EINIT p.41-46 | **ph** (U1262: AES-CMAC with the host root key over our 648-byte layout) |
 
@@ -252,7 +252,23 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
   32-bit enclaves, CR4.OSXSAVE = 1 with extended XFRM components, FRED delivery of an AEX event,
   SMI / INIT in enclave mode, CET-enabled applications.
 
-### 2.6 Validation (U1262)
+### 2.6 EREPORT and EGETKEY (U1264)
+- Operands: aligned (TARGETINFO / KEYREQUEST / OUTPUTDATA of EREPORT 512 bytes, REPORTDATA 128,
+  EGETKEY's output 16) and within ELRANGE (#GP(0)), a page walk and the EPCM checks of their
+  Operation sections (SGX #PF), then read / written through their linear addresses (enclave
+  accesses: data breakpoints apply as 43.3.4 says).
+- EREPORT builds the REPORT of Table 38-22 from the SECS and CR_CPUSVN / CR_REPORT_KEYID and MACs
+  bytes 0-383 with the report key of the TARGETINFO enclave; EGETKEY derives the five keys of
+  Table 41-62 (KEYPOLICY, ATTRIBUTEMASK | INIT | DEBUG, MISCMASK; the SVN / attribute / KEYNAME
+  error codes with ZF = 1 and the output unmodified). KSS and CET are not enumerated: KEYPOLICY bits
+  2-5 and a non-zero CONFIGSVN are #GP(0) (the Operation's KSS = 0 rule), the CET bytes are reserved.
+- A single-step #DB after EREPORT / EGETKEY when TF is 1 at their start (opt-in entries only);
+  IA32_SGX_SVN_STATUS.Lock is not set by an EGETKEY that returns an error code.
+- Validation: ref_sgx.py `ereport` / `egetkey` (written from the pseudocode) give the REPORT and the
+  SEAL / REPORT keys of the test enclave (`x86_sgx_vectors.inc`); its self test checks that the
+  REPORT MAC verifies with the EGETKEY report key and the error codes.
+
+### 2.7 Validation (U1262)
 - `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
   AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
   generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over
@@ -286,6 +302,8 @@ Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
   MISCSELECT[0] = 1.
 - Which fault an enclave access gets when an ELRANGE address maps outside the EPC (38.1 "a fault
   is generated"): the model raises the SGX-induced #PF.
+- EGETKEY EINITTOKEN_KEY: the description requires "SECS.MRSIGNER equal IA32_SGXLEPUBKEYHASH", the
+  Operation does not check it (the model follows the Operation).
 - The key derivation function and the platform keys (root key, CR_SEAL_FUSES, CR_SGXOWNEREPOCH,
   CR_CPUSVN, CR_REPORT_KEYID, CR_BASE_PK, Intel's LE signer hash): model placeholders - does the
   user have an Intel document that specifies any of them?
