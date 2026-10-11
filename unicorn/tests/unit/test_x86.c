@@ -30227,6 +30227,9 @@ static void sgx_platform(uc_x86_sgx_platform *p)
 }
 
 /* a 64-bit CPL0 engine (UC_CPU_X86_MAX), with UC_X86_FEATURE_SGX when 'feat' */
+/* U1271: further UC_CTL_X86_FEATURES bits for the next engine sgx_open_cfg opens (FRED) */
+static int sgx_extra_features;
+
 static void sgx_open_cfg(SgxCtx *c, int feat, const uc_x86_sgx_platform *p)
 {
     memset(c, 0, sizeof(*c));
@@ -30234,7 +30237,7 @@ static void sgx_open_cfg(SgxCtx *c, int feat, const uc_x86_sgx_platform *p)
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
     OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
     if (feat) {
-        OK(uc_ctl_set_x86_features(c->uc, UC_X86_FEATURE_SGX));
+        OK(uc_ctl_set_x86_features(c->uc, UC_X86_FEATURE_SGX | sgx_extra_features));
     }
     if (p) {
         OK(uc_ctl_set_x86_sgx_platform(c->uc, p));
@@ -30580,8 +30583,10 @@ static void sgx_map(SgxEnv *e, uint64_t la, uint64_t pa)
  */
 static void sgx_env_open(SgxEnv *e, const uc_x86_sgx_platform *p)
 {
-    uint64_t gdt[5] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
-                       0x00AFFA000000FFFFULL};
+    /* U1271: + 28h 32-bit code DPL3 (compatibility mode), 30h a 64-bit TSS at SGX_DATA + 7000H */
+    uint64_t gdt[8] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
+                       0x00AFFA000000FFFFULL, 0x00CFFA000000FFFFULL,
+                       0x67 | ((SGX_DATA + 0x7000) << 16) | (0x89ULL << 40), 0};
     uc_x86_mmr gdtr = {0, SGX_GDT, sizeof(gdt) - 1, 0};
     uc_x86_msr efer = {0xc0000080, 0};
     uint64_t a, v;
@@ -31887,6 +31892,108 @@ static void test_x86_sgx_cet_ibt(void)
 }
 
 
+/*
+ * U1271: the AEX before a guest delivery (UC_CTL_X86_EVENT_DELIVERY = UC_X86_DELIVER_EXC_IDT;
+ * Vol3D 40.1, 40.4; FRED spec 346446-009 / Vol3A 8.3.2.1 bit 56). A UD2 in the enclave: (a) IDT
+ * delivery through a 64-bit interrupt gate to CPL0 (RSP0 of the TSS): the frame holds RIP = AEP,
+ * CS 23H, the synthetic RFLAGS (CF..OF, RF, TF = 0), RSP = U_RSP, SS 1BH, after the AEX (CSSA = 1,
+ * EXITINFO); (b) FRED delivery from CPL3 (IA32_FRED_RSP0): RIP = AEP, CS, RSP, SS 1BH with event
+ * information vector 6 / type 3 and bit 56 ("incident to enclave execution") set; a later #UD at
+ * CPL0 outside the enclave has bit 56 clear.
+ */
+#define SGX_TSS (SGX_DATA + 0x7000)
+#define SGX_IDT (SGX_DATA + 0x7800)
+#define SGX_RSP0 (SGX_DATA + 0xE0000)
+#define SGX_KHANDLER (SGX_CODE + 0x600)
+#define SGX_FENTRY (SGX_CODE + 0x3000)
+
+/* ENCLU at SGX_ENCLU_AT running until 'until': the vector reported to the hooks or -1 */
+static int sgx_enclu_to(SgxEnv *e, uint64_t rax, uint64_t rdi, uint64_t until)
+{
+    uc_err err;
+
+    sgx_set(&e->c, UC_X86_REG_RAX, rax);
+    sgx_set(&e->c, UC_X86_REG_RBX, SGXV_BASE);
+    sgx_set(&e->c, UC_X86_REG_RCX, SGX_AEP);
+    sgx_set(&e->c, UC_X86_REG_RDI, rdi);
+    OK(uc_mem_write(e->c.uc, SGX_ENCLU_AT, "\x0f\x01\xd7", 3));
+    e->c.cap.count = 0;
+    err = uc_emu_start(e->c.uc, SGX_ENCLU_AT, until, 0, 100000);
+    TEST_CHECK_(err == UC_ERR_OK, "uc_emu_start: %s", uc_strerror(err));
+    return e->c.cap.count ? (int)e->c.cap.intno : -1;
+}
+
+static void test_x86_sgx_aex_delivery(void)
+{
+    uc_x86_mmr idtr = {0, SGX_IDT, 16 * 32 - 1, 0};
+    uint64_t h = SGX_KHANDLER, rsp, f[8], cr4;
+    SgxEnv e;
+    int i;
+
+    /* (a) IDT */
+    sgx_ready(&e, 0);
+    sgx_to_cpl0(&e);
+    sgx_wq(&e, SGX_TSS + 4, SGX_RSP0);                                  /* RSP0 */
+    sgx_wq(&e, SGX_IDT + 16 * 6, (h & 0xffff) | (0x08ULL << 16) | (0x8eULL << 40) |
+                                 (((h >> 16) & 0xffff) << 48));
+    sgx_wq(&e, SGX_IDT + 16 * 6 + 8, h >> 32);
+    OK(uc_reg_write(e.c.uc, UC_X86_REG_IDTR, &idtr));
+    TEST_CHECK(sgx_run(&e.c, "\x66\xb8\x30\x00\x0f\x00\xd8", 7) == -1);    /* LTR 30H */
+    OK(uc_mem_write(e.c.uc, SGX_KHANDLER, "\xf4", 1));
+    OK(uc_ctl_set_x86_event_delivery(e.c.uc, UC_X86_DELIVER_EXC_IDT));
+    sgx_to_cpl3(&e);
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    TEST_CHECK(sgx_enclu_to(&e, 2, 1, SGX_KHANDLER) == -1);              /* CMD_UD2 */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_KHANDLER &&
+               (sgx_get(&e.c, UC_X86_REG_CS) & 3) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_RSP) == SGX_RSP0 - 40);
+    for (i = 0; i < 5; i++) {
+        f[i] = sgx_rq(&e, SGX_RSP0 - 40 + 8 * i);
+    }
+    TEST_CHECK(f[0] == SGX_AEP && f[1] == 0x23 && !(f[2] & 0x108d5) && f[3] == rsp && f[4] == 0x1b);
+    TEST_MSG("frame %llx %llx %llx %llx %llx", (unsigned long long)f[0], (unsigned long long)f[1],
+             (unsigned long long)f[2], (unsigned long long)f[3], (unsigned long long)f[4]);
+    TEST_CHECK(sgx_cssa(&e) == 1 && sgx_get(&e.c, UC_X86_REG_RAX) == 3 &&
+               sgx_get(&e.c, UC_X86_REG_RBX) == SGXV_BASE &&
+               (uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u);
+    sgx_env_close(&e);
+
+    /* (b) FRED */
+    sgx_extra_features = UC_X86_FEATURE_FRED;
+    sgx_ready(&e, 0);
+    sgx_extra_features = 0;
+    OK(sgx_wrmsr_api(&e.c, 0xc0000081, 0x08ULL << 32));                 /* IA32_STAR CS 08H */
+    OK(sgx_wrmsr_api(&e.c, 0x1d4, SGX_FENTRY));                          /* IA32_FRED_CONFIG */
+    OK(sgx_wrmsr_api(&e.c, 0x1cc, SGX_RSP0));                            /* IA32_FRED_RSP0 */
+    OK(uc_mem_write(e.c.uc, SGX_FENTRY, "\xf4", 1));
+    OK(uc_mem_write(e.c.uc, SGX_FENTRY + 256, "\xf4", 1));
+    OK(uc_ctl_set_x86_event_delivery(e.c.uc, UC_X86_DELIVER_EXC_IDT));
+    cr4 = sgx_get(&e.c, UC_X86_REG_CR4);
+    sgx_set(&e.c, UC_X86_REG_CR4, cr4 | (1ULL << 32));                  /* CR4.FRED */
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    TEST_CHECK(sgx_enclu_to(&e, 2, 1, SGX_FENTRY) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_FENTRY && sgx_get(&e.c, UC_X86_REG_RSP) == SGX_RSP0 - 64);
+    for (i = 0; i < 8; i++) {
+        f[i] = sgx_rq(&e, SGX_RSP0 - 64 + 8 * i);
+    }
+    TEST_CHECK(f[1] == SGX_AEP && (f[2] & 0xffff) == 0x23 && f[4] == rsp &&
+               (f[5] & 0xffff) == 0x1b && ((f[5] >> 32) & 0xff) == 6 && ((f[5] >> 48) & 0xf) == 3 &&
+               ((f[5] >> 56) & 1) == 1);
+    TEST_MSG("FRED frame RIP %llx CS %llx RSP %llx SS %llx", (unsigned long long)f[1],
+             (unsigned long long)f[2], (unsigned long long)f[4], (unsigned long long)f[5]);
+    TEST_CHECK(sgx_cssa(&e) == 1);
+    /* a #UD at CPL0 outside the enclave: bit 56 clear */
+    OK(uc_mem_write(e.c.uc, SGX_CODE + 0x700, "\x0f\x0b", 2));
+    OK(uc_emu_start(e.c.uc, SGX_CODE + 0x700, SGX_FENTRY + 256, 0, 100));
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_FENTRY + 256);
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    f[5] = sgx_rq(&e, rsp + 40);
+    TEST_CHECK_(((f[5] >> 32) & 0xff) == 6 && ((f[5] >> 56) & 1) == 0, "SS word %llx",
+                (unsigned long long)f[5]);
+    sgx_env_close(&e);
+}
+
+
 /* ---- end U1260-U1299 (sgx_) ---- */
 
 TEST_LIST = {
@@ -32306,4 +32413,5 @@ TEST_LIST = {
     {"test_x86_gs_smx", test_x86_gs_smx},
     {"test_x86_sgx_xfrm_osxsave", test_x86_sgx_xfrm_osxsave},
     {"test_x86_sgx_cet_ibt", test_x86_sgx_cet_ibt},
+    {"test_x86_sgx_aex_delivery", test_x86_sgx_aex_delivery},
     {NULL, NULL}};
