@@ -101,10 +101,10 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 5 - exiting controls
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| priority of faults and VM exits | Vol3C 28.1.1 pp. 28-1 / 28-2 | every exit site | planned |
-| conditional instruction exits (CLTS, HLT, IN/OUT/INS/OUTS with I/O bitmaps, INVLPG, INVPCID, LGDT/LIDT/LLDT/LTR/SGDT/SIDT/SLDT/STR, LMSW, LOADIWKEY, MONITOR, MOV CR0/3/4/8, MOV DR, MWAIT, PAUSE, PCONFIG, RDMSR / WRMSR / WRMSRNS / RDMSRLIST / WRMSRLIST / URDMSR / UWRMSR with MSR bitmaps, RDPMC, RDRAND, RDSEED, RDTSC, RDTSCP, TPAUSE, UMWAIT, VMREAD, VMWRITE, WBINVD, WBNOINVD, XRSTORS, XSAVES) | Vol3C 28.1.3 pp. 28-2 to 28-6 | helpers of each instruction | planned |
-| exit qualifications and instruction information of these exits | Vol3C 30.2.1 Tables 30-1 to 30-7, 30.2.5 Tables 30-8 to 30-14 | vmx_vmexit callers | planned |
-| changed behaviour in non-root operation (CR0 / CR4 shadows, CR8 / TPR shadow, RDTSC / RDTSCP / RDMSR TSC offsetting and scaling, IRET and NMI blocking, enable-controls #UD for RDTSCP / INVPCID / XSAVES / UMWAIT / TPAUSE / UMONITOR / PCONFIG / RDMSRLIST / WRMSRLIST / PBNDKB, MOV to CR3 PDPTEs, ...) | Vol3C 28.3 pp. 28-8 to 28-15 | helpers of each instruction | planned |
+| priority of faults and VM exits | Vol3C 28.1.1 pp. 28-1 / 28-2 | every exit site | done (U1304) for the instruction exits |
+| conditional instruction exits (CLTS, HLT, IN/OUT/INS/OUTS with I/O bitmaps, INVLPG, INVPCID, LGDT/LIDT/LLDT/LTR/SGDT/SIDT/SLDT/STR, LMSW, LOADIWKEY, MONITOR, MOV CR0/3/4/8, MOV DR, MWAIT, PAUSE, PCONFIG, RDMSR / WRMSR / WRMSRNS / RDMSRLIST / WRMSRLIST / URDMSR / UWRMSR with MSR bitmaps, RDPMC, RDRAND, RDSEED, RDTSC, RDTSCP, TPAUSE, UMWAIT, VMREAD, VMWRITE, WBINVD, WBNOINVD, XRSTORS, XSAVES) | Vol3C 28.1.3 pp. 28-2 to 28-6 | helpers of each instruction; `translate.c` / `emit.c.inc` gen_vmx_insn -> helper_vmx_insn | done (U1304); ENCLS: pending (SGX); PAUSE-loop exiting: not offered |
+| exit qualifications and instruction information of these exits | Vol3C 30.2.1 Tables 30-1 to 30-7, 30.2.5 Tables 30-8 to 30-14 | vmx_vmexit callers | done (U1304) for the instruction exits (Tables 30-3 to 30-5, 30-8 to 30-16); debug / #PF / task switch / EPT: with their exits |
+| changed behaviour in non-root operation (CR0 / CR4 shadows, CR8 / TPR shadow, RDTSC / RDTSCP / RDMSR TSC offsetting and scaling, IRET and NMI blocking, enable-controls #UD for RDTSCP / INVPCID / XSAVES / UMWAIT / TPAUSE / UMONITOR / PCONFIG / RDMSRLIST / WRMSRLIST / PBNDKB, MOV to CR3 PDPTEs, ...) | Vol3C 28.3 pp. 28-8 to 28-15 | helpers of each instruction | done (U1304): CR0 / CR4 shadows and masks (MOV CR, CLTS, LMSW, SMSW), unrestricted-guest CR0 checks, TSC offsetting / scaling, WRMSR 79H, the enable-control #UDs; CR8 / TPR shadow: stage 7; IRET / NMI blocking: U1305; MOV to CR3 with EPT: stage 6 |
 | exception bitmap, #PF error-code mask / match, triple fault, external interrupts (acknowledge interrupt on exit), NMIs, interrupt window, NMI window, task switches | Vol3C 28.2 pp. 28-6 to 28-8; 28.4 pp. 28-15 / 28-16 | `excp_helper.c` raise path, `seg_helper.c` x86_cpu_exec_interrupt / switch_tss | planned |
 
 ### Stage 6 - EPT, VPID
@@ -175,8 +175,7 @@ translator and passed to the helpers.
 - VMXOFF and active VMCSs: the VMCS data stay valid in memory (our choice; Vol3C 27.11.1 allows
   corruption), so VM-instruction error 6 never occurs.
 - SMX operation (GETSEC[SENTER]) does not exist in the model: VMXON is enabled by IA32_FEATURE_CONTROL
-  bit 2 only. A20M and INIT are not modelled (nothing to block); MONITOR keeps no armed state (nothing
-  to clear).
+  bit 2 only. A20M and INIT are not modelled (nothing to block).
 
 ### VM entries and VM exits (U1303)
 - VM entry (helper_vmlaunch): the checks of 29.1 (in order), 29.2 (controls -> error 7, host state -> error
@@ -214,3 +213,33 @@ translator and passed to the helpers.
 - Unconditional exits (28.1.2): CPUID (before the UC_HOOK_INSN CPUID hooks), GETSEC (with CR4.SMXE = 1),
   INVD, XSETBV (after its #UD and CPL checks), the VMX instructions, VMCALL; triple fault (28.2).
 
+
+### Instruction exits and non-root behaviour (U1304)
+- Where the check sits: in the instruction's helper when it has one (HLT, RDPMC, RDTSC, RDTSCP, MONITOR,
+  MWAIT, PAUSE, RDMSR / WRMSR and their immediate, list and user forms, LOADIWKEY, PCONFIG); otherwise the
+  translator emits helper_vmx_insn (kind VMXI_*) with the instruction information and qualification parts
+  it knows: MOV CR / CLTS / LMSW, MOV DR, INVLPG, INVPCID, LGDT / LIDT / SGDT / SIDT, LLDT / LTR / SLDT /
+  STR, RDRAND, RDSEED, XSAVES, XRSTORS, WBINVD / WBNOINVD, RDPID, UMONITOR / UMWAIT / TPAUSE, RDMSRLIST /
+  WRMSRLIST (#UD), WRMSRNS, IN / OUT / INS / OUTS (from gen_check_io, after the IOPL / TSS check).
+- Priority (28.1.1): the checks come after the #UD and privilege #GP checks of the instruction and before
+  its other faults (MONITOR / MWAIT before the ECX #GP, MSRs before the #GP of an MSR the model lacks,
+  LOADIWKEY after its CPL #GP, UMWAIT / TPAUSE after the CR4.TSD #GP); MOV-DR exiting comes before the CPL
+  #GP and the CR4.DE #UD (DR8-DR15 stay #UD); the enable controls' #UD (RDTSCP, RDPID, INVPCID, XSAVES /
+  XRSTORS, UMONITOR / UMWAIT / TPAUSE, PCONFIG, PBNDKB, RDMSRLIST / WRMSRLIST) come first. The MSR-bitmap checks of
+  RDMSR / WRMSR run before the UC_HOOK_INSN hooks (as CPUID in U1303).
+- MSRs: the bitmaps of 27.6.9; RDMSR 10H and RDTSC / RDTSCP return the offset (and scaled) TSC; WRMSR 79H
+  does nothing; MSR-store / -load areas and uc_reg_* MSR accesses are not instructions (no exit, no
+  offset). WRMSRNS exits with qualification 1; RDMSR / WRMSRNS immediate forms use reasons 84 / 85 with
+  qualification 0 (SDM 092 defines no qualification or instruction information for them). RDMSRLIST /
+  WRMSRLIST: without MSR bitmaps the instruction exits before reading anything; with them, per entry
+  (qualification = the entry index, WRMSRLIST saves the data read into the MSR-data field).
+- I/O: the bitmaps of 27.6.4 (a wrap past FFFFH always exits); the REP bit of Table 30-5 is set whenever a
+  REP prefix is present; INS / OUTS store the instruction information (address size, segment: ES for INS)
+  and, if the segment is usable, the guest-linear address segment base + (E/R)SI / (E/R)DI at the
+  address size (our reading of "(E)DI" / "(E)SI").
+- MWAIT exit qualification: MONITOR arms the monitoring hardware, a completed MWAIT disarms it; stores to
+  the monitored range are not tracked and UMONITOR is not counted (the SDM does not say it arms the same
+  hardware). A logical processor waiting after MWAIT is saved with activity state active (30.1 footnote 3).
+- TSC scaling: ((TSC * multiplier) >> 48) + offset with a 128-bit product. UMWAIT / TPAUSE compare their
+  deadline with the guest TSC; their wait takes no time in the model, so the physical-delay conversion
+  of 28.3 has no visible effect.

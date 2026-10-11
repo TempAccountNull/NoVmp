@@ -1093,6 +1093,12 @@ static void gen_helper_out_func(TCGContext *tcg_ctx, MemOp ot, TCGv_i32 v,
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+/* VMX non-root operation (U1304, docs/vmx.md): HF_GUEST_MASK with CPUID.01H:ECX.VMX */
+#define VMX_GUEST(s)  (GUEST(s) && ((s)->cpuid_ext_features & CPUID_EXT_VMX))
+#define VMX_IOIO_IMM  (1u << 31)    /* gen_check_io: the port is an immediate operand */
+static void gen_vmx_insn(DisasContext *s, uint32_t kind, uint32_t info, target_ulong qual, TCGv val);
+#endif /* __Use_Original_Qemu (U1304) */
 /*
  * Validate that access to [port, port + 1<<ot) is allowed.
  * Raise #GP, or VMM exit if not.
@@ -1112,6 +1118,27 @@ static bool gen_check_io(DisasContext *s, MemOp ot, TCGv_i32 port,
     if (PE(s) && (CPL(s) > IOPL(s) || VM86(s))) {
         gen_helper_check_io(tcg_ctx, cpu_env, port, tcg_constant_i32(tcg_ctx, 1 << ot));
     }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /*
+     * VMX non-root operation: the I/O VM exits (SDM 092 Vol3C 28.1.3), after the IOPL / TSS
+     * I/O-permission #GP above and before the INS / OUTS segment, limit and #AC faults (28.1.1);
+     * exit qualification Table 30-5, INS / OUTS instruction information Table 30-8
+     */
+    if (VMX_GUEST(s)) {
+        bool in = (svm_flags & SVM_IOIO_TYPE_MASK) != 0, str = (svm_flags & SVM_IOIO_STR_MASK) != 0;
+        uint32_t q = ((1u << ot) - 1) | (in ? 8 : 0) | (str ? 0x10 : 0) |
+                     ((s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) ? 0x20 : 0) |
+                     ((svm_flags & VMX_IOIO_IMM) ? 0x40 : 0);
+        int seg = in ? R_ES : (s->override >= 0 ? s->override : R_DS);
+        TCGv p = tcg_temp_new(tcg_ctx);
+
+        tcg_gen_extu_i32_tl(tcg_ctx, p, port);
+        gen_vmx_insn(s, VMXI_IO, ((uint32_t)(s->aflag - MO_16) << 7) | ((uint32_t)seg << 15), q, p);
+        tcg_temp_free(tcg_ctx, p);
+        return true;
+    }
+    svm_flags &= ~VMX_IOIO_IMM;
+#endif /* __Use_Original_Qemu (U1304) */
     if (GUEST(s)) {
         gen_update_cc_op(s);
         gen_update_eip_cur(s);
@@ -3018,6 +3045,75 @@ static uint32_t gen_vmx_lea(CPUX86State *env, DisasContext *s, int modrm, target
 }
 
 #endif /* __Use_Original_Qemu (U1302) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+/*
+ * NoVmp (ledger U1304, docs/vmx.md): code that may run in VMX non-root operation (HF_GUEST_MASK
+ * with CPUID.01H:ECX.VMX; SVM is withdrawn then) checks the conditional VM exits of SDM 092 Vol3C
+ * 28.1.3 in helper_vmx_insn (kind VMXI_*, the instruction information / qualification parts the
+ * translator knows, val: a run-time operand). A VM exit restores the state from insn_start.
+ */
+static void gen_vmx_insn2(DisasContext *s, uint32_t kind, uint32_t info, TCGv qual, TCGv val)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    gen_update_cc_op(s);
+    gen_helper_vmx_insn(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, kind),
+                        tcg_constant_i32(tcg_ctx, info), qual,
+                        val ? val : tcg_constant_tl(tcg_ctx, 0));
+}
+
+static void gen_vmx_insn(DisasContext *s, uint32_t kind, uint32_t info, target_ulong qual, TCGv val)
+{
+    gen_vmx_insn2(s, kind, info, tcg_constant_tl(s->uc->tcg_ctx, qual), val);
+}
+
+/* LGDT / LIDT / SGDT / SIDT: the address into s->A0 and the VM exit check (Table 30-10) */
+static void gen_vmx_desc_lea(CPUX86State *env, DisasContext *s, int modrm, uint32_t ident)
+{
+    target_ulong qual;
+    uint32_t info;
+
+    if (!VMX_GUEST(s)) {
+        gen_lea_modrm(env, s, modrm);
+        return;
+    }
+    info = gen_vmx_lea(env, s, modrm, &qual) | (ident << 28) | (s->dflag != MO_16 ? 1u << 11 : 0);
+    gen_vmx_insn(s, VMXI_GDTR_IDTR, info, qual, NULL);
+}
+
+static void gen_ldst_modrm(CPUX86State *env, DisasContext *s, int modrm,
+                           MemOp ot, int reg, int is_store);
+
+/*
+ * gen_ldst_modrm (reg = OR_TMP0) for LLDT / LTR / SLDT / STR with the descriptor-table VM exit
+ * check (Table 30-11) between the address computation and the access
+ */
+static void gen_vmx_ldst_modrm(CPUX86State *env, DisasContext *s, int modrm, MemOp ot,
+                               int is_store, uint32_t ident)
+{
+    target_ulong qual;
+    uint32_t info;
+
+    if (!VMX_GUEST(s)) {
+        gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, is_store);
+        return;
+    }
+    if (((modrm >> 6) & 3) == 3) {
+        gen_vmx_insn(s, VMXI_LDTR_TR, (ident << 28) | (1u << 10) |
+                     ((uint32_t)((modrm & 7) | REX_B(s)) << 3), 0, NULL);
+        gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, is_store);
+        return;
+    }
+    info = gen_vmx_lea(env, s, modrm, &qual) | (ident << 28);
+    gen_vmx_insn(s, VMXI_LDTR_TR, info, qual, NULL);
+    if (is_store) {
+        gen_op_st_v(s, ot, s->T0, s->A0);
+    } else {
+        gen_op_ld_v(s, ot, s->T0, s->A0);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1304) */
 static void gen_nop_modrm(CPUX86State *env, DisasContext *s, int modrm)
 {
     (void)gen_lea_modrm_0(env, s, modrm, false);
@@ -6422,7 +6518,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_exception(s, EXCP07_PREX);
                 break;
             }
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_lea_modrm(env, s, modrm);
+#else /* ours (U1304) */
+            /* VMX non-root operation: "enable XSAVES/XRSTORS" #UD, the XSS-exiting bitmap (28.1.3,
+               28.3; Table 30-14) */
+            if (VMX_GUEST(s)) {
+                target_ulong qual;
+                uint32_t info = gen_vmx_lea(env, s, modrm, &qual);
+
+                gen_vmx_insn(s, ((modrm >> 3) & 7) == 5 ? VMXI_XSAVES : VMXI_XRSTORS, info, qual,
+                             NULL);
+            } else {
+                gen_lea_modrm(env, s, modrm);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
             gen_x87_fx64(s);
@@ -6444,6 +6554,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 if (!(s->cpuid_7_0_ecx_features & CPUID_7_0_ECX_RDPID)) {
                     goto illegal_op;
                 }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+                if (VMX_GUEST(s)) {     /* "enable RDTSCP" 0: RDPID #UD (Vol3C 28.3) */
+                    gen_vmx_insn(s, VMXI_RDPID, 0, 0, NULL);
+                }
+#endif /* __Use_Original_Qemu (U1304) */
                 gen_helper_rdpid(tcg_ctx, s->T0, cpu_env);
                 rm = (modrm & 7) | REX_B(s);
                 /*
@@ -6465,6 +6580,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_io_start(tcg_ctx);
                 s->base.is_jmp = DISAS_TOO_MANY;
             }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            if (VMX_GUEST(s)) {         /* "RDSEED exiting" (Vol3C 28.1.3, Table 30-12) */
+                gen_vmx_insn(s, VMXI_RDSEED, ((uint32_t)((modrm & 7) | REX_B(s)) << 3) |
+                             ((uint32_t)(dflag - MO_16) << 11), 0, NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_rdseed(tcg_ctx, s->T0, cpu_env);
             rm = (modrm & 7) | REX_B(s);
             gen_op_mov_reg_v(s, dflag, rm, s->T0);
@@ -6502,6 +6623,12 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_io_start(tcg_ctx);
                 s->base.is_jmp = DISAS_TOO_MANY;
             }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            if (VMX_GUEST(s)) {         /* "RDRAND exiting" (Vol3C 28.1.3, Table 30-12) */
+                gen_vmx_insn(s, VMXI_RDRAND, ((uint32_t)((modrm & 7) | REX_B(s)) << 3) |
+                             ((uint32_t)(dflag - MO_16) << 11), 0, NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_rdrand(tcg_ctx, s->T0, cpu_env);
             rm = (modrm & 7) | REX_B(s);
             gen_op_mov_reg_v(s, dflag, rm, s->T0);
@@ -7931,7 +8058,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         ot = mo_b_d32(b, dflag);
         val = x86_ldub_code(env, s);
         tcg_gen_movi_i32(tcg_ctx, s->tmp2_i32, val);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
         if (!gen_check_io(s, ot, s->tmp2_i32, SVM_IOIO_TYPE_MASK)) {
+#else /* ours (U1304) */
+        if (!gen_check_io(s, ot, s->tmp2_i32, SVM_IOIO_TYPE_MASK | VMX_IOIO_IMM)) {
+#endif /* __Use_Original_Qemu (U1304) */
             break;
         }
         if (tb_cflags(s->base.tb) & CF_USE_ICOUNT) {
@@ -7947,7 +8078,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         ot = mo_b_d32(b, dflag);
         val = x86_ldub_code(env, s);
         tcg_gen_movi_i32(tcg_ctx, s->tmp2_i32, val);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
         if (!gen_check_io(s, ot, s->tmp2_i32, 0)) {
+#else /* ours (U1304) */
+        if (!gen_check_io(s, ot, s->tmp2_i32, VMX_IOIO_IMM)) {
+#endif /* __Use_Original_Qemu (U1304) */
             break;
         }
         if (tb_cflags(s->base.tb) & CF_USE_ICOUNT) {
@@ -8935,14 +9070,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             s->ac_min = 3;  /* Table 7-7: LDTR / TR contents, 4-byte aligned (U834) */
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 1);
+#else /* ours (U1304) */
+            gen_vmx_ldst_modrm(env, s, modrm, ot, 1, 0);   /* SLDT: descriptor-table exiting */
+#endif /* __Use_Original_Qemu (U1304) */
             break;
         case 2: /* lldt */
             if (!PE(s) || VM86(s))
                 goto illegal_op;
             if (check_cpl0(s)) {
                 gen_svm_check_intercept(s, SVM_EXIT_LDTR_WRITE);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
                 gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
+#else /* ours (U1304) */
+                gen_vmx_ldst_modrm(env, s, modrm, MO_16, 0, 2);    /* LLDT */
+#endif /* __Use_Original_Qemu (U1304) */
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
                 gen_helper_lldt(tcg_ctx, cpu_env, s->tmp2_i32);
             }
@@ -8960,14 +9103,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             s->ac_min = 3;  /* Table 7-7: LDTR / TR contents, 4-byte aligned (U834) */
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_ldst_modrm(env, s, modrm, ot, OR_TMP0, 1);
+#else /* ours (U1304) */
+            gen_vmx_ldst_modrm(env, s, modrm, ot, 1, 1);   /* STR */
+#endif /* __Use_Original_Qemu (U1304) */
             break;
         case 3: /* ltr */
             if (!PE(s) || VM86(s))
                 goto illegal_op;
             if (check_cpl0(s)) {
                 gen_svm_check_intercept(s, SVM_EXIT_TR_WRITE);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
                 gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
+#else /* ours (U1304) */
+                gen_vmx_ldst_modrm(env, s, modrm, MO_16, 0, 3);    /* LTR */
+#endif /* __Use_Original_Qemu (U1304) */
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T0);
                 gen_helper_ltr(tcg_ctx, cpu_env, s->tmp2_i32);
             }
@@ -9084,7 +9235,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_GDTR_READ);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_lea_modrm(env, s, modrm);
+#else /* ours (U1304) */
+            gen_vmx_desc_lea(env, s, modrm, 0);    /* SGDT: descriptor-table exiting (U1304) */
+#endif /* __Use_Original_Qemu (U1304) */
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             /* Table 7-7: GDTR / IDTR contents need a 4-byte-aligned address; the limit and
                base stores below are not checked one by one (U834) */
@@ -9202,7 +9357,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_IDTR_READ);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_lea_modrm(env, s, modrm);
+#else /* ours (U1304) */
+            gen_vmx_desc_lea(env, s, modrm, 1);    /* SIDT (U1304) */
+#endif /* __Use_Original_Qemu (U1304) */
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             /* Table 7-7: GDTR / IDTR contents need a 4-byte-aligned address; the limit and
                base stores below are not checked one by one (U834) */
@@ -9359,7 +9518,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_GDTR_WRITE);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_lea_modrm(env, s, modrm);
+#else /* ours (U1304) */
+            gen_vmx_desc_lea(env, s, modrm, 2);    /* LGDT (U1304) */
+#endif /* __Use_Original_Qemu (U1304) */
             gen_op_ld_v(s, MO_16, s->T1, s->A0);
             gen_add_A0_im(s, 2);
             gen_op_ld_v(s, CODE64(s) + MO_32, s->T0, s->A0);
@@ -9375,7 +9538,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_IDTR_WRITE);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_lea_modrm(env, s, modrm);
+#else /* ours (U1304) */
+            gen_vmx_desc_lea(env, s, modrm, 3);    /* LIDT (U1304) */
+#endif /* __Use_Original_Qemu (U1304) */
             gen_op_ld_v(s, MO_16, s->T1, s->A0);
             gen_add_A0_im(s, 2);
             gen_op_ld_v(s, CODE64(s) + MO_32, s->T0, s->A0);
@@ -9391,7 +9558,16 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_READ_CR0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, cr[0]));
+#else /* ours (U1304) */
+            /* VMX non-root operation: SMSW reads the CR0 read shadow where the mask is set (28.3) */
+            if (VMX_GUEST(s)) {
+                gen_helper_read_crN(tcg_ctx, s->T0, cpu_env, tcg_constant_i32(tcg_ctx, 0));
+            } else {
+                tcg_gen_ld_tl(tcg_ctx, s->T0, cpu_env, offsetof(CPUX86State, cr[0]));
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             /*
              * In 32-bit mode, the higher 16 bits of the destination
              * register are undefined.  In practice CR0[31:0] is stored
@@ -9598,6 +9774,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     || (s->prefix & PREFIX_LOCK)) {
                     goto illegal_op;
                 }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+                if (VMX_GUEST(s)) {     /* "enable MSR-list instructions" 0: #UD first (28.3) */
+                    gen_vmx_insn(s, VMXI_MSRLIST_UD, 0, 0, NULL);
+                }
+#endif /* __Use_Original_Qemu (U1304) */
                 if (check_cpl0(s)) {
                     gen_update_cc_op(s);
                     gen_update_eip_cur(s);
@@ -9619,6 +9800,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             if (check_cpl0(s)) {
                 gen_update_cc_op(s);
                 gen_update_eip_cur(s);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+                if (VMX_GUEST(s)) {     /* WRMSRNS: MSR-bitmap VM exit, qualification 1 (30.2.1) */
+                    gen_vmx_insn(s, VMXI_WRMSRNS, 0, 0, NULL);
+                }
+#endif /* __Use_Original_Qemu (U1304) */
                 gen_helper_wrmsr(tcg_ctx, cpu_env);
                 s->base.is_jmp = DISAS_EOB_NEXT;
             }
@@ -9667,7 +9853,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 break;
             }
             gen_svm_check_intercept(s, SVM_EXIT_WRITE_CR0);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1304) */
             gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
+#else /* ours (U1304) */
+            /* VMX non-root operation: LMSW VM exit (Vol3C 28.1.3, Table 30-3 type 3) after the
+               operand fetch (28.1.1); a memory operand's linear address is saved */
+            if (VMX_GUEST(s) && ((modrm >> 6) & 3) != 3) {
+                gen_lea_modrm(env, s, modrm);
+                gen_op_ld_v(s, MO_16, s->T0, s->A0);
+                gen_vmx_insn2(s, VMXI_CR, (3u << 4) | (1u << 6), s->A0, s->T0);
+            } else {
+                gen_ldst_modrm(env, s, modrm, MO_16, OR_TMP0, 0);
+                if (VMX_GUEST(s)) {
+                    gen_vmx_insn(s, VMXI_CR, 3u << 4, 0, s->T0);
+                }
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             /*
              * Only the 4 lower bits of CR0 are modified.
              * PE cannot be set to zero if already set to one.
@@ -9686,6 +9887,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
             gen_svm_check_intercept(s, SVM_EXIT_INVLPG);
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            if (VMX_GUEST(s)) {         /* "INVLPG exiting" (Vol3C 28.1.3) */
+                gen_vmx_insn(s, VMXI_INVLPG, 0, 0, s->A0);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_flush_page(tcg_ctx, cpu_env, s->A0);
             s->base.is_jmp = DISAS_EOB_NEXT;
             break;
@@ -9743,6 +9949,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 gen_helper_vmx_uncond_exit(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, VMX_EXIT_INVD));
             }
 #endif /* __Use_Original_Qemu (U1303) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            /* "WBINVD exiting": WBINVD qualification 0, WBNOINVD (F3, CPUID.80000008H:EBX[9]) 1 */
+            if (b == 0x109 && VMX_GUEST(s)) {
+                gen_vmx_insn(s, VMXI_WBINVD, 0,
+                             ((prefixes & PREFIX_REPZ) &&
+                              (env->features[FEAT_8000_0008_EBX] & CPUID_8000_0008_EBX_WBNOINVD)) ? 1 : 0,
+                             NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             /* nothing to do */
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
             /* SGX: INVD #GP(0) once processor reserved memory protections are active (U1261) */
@@ -10235,10 +10450,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (b & 2) {
             gen_svm_check_intercept(s, SVM_EXIT_WRITE_CR0 + reg);
             gen_op_mov_v_reg(s, ot, s->T0, rm);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            /* VMX non-root operation: MOV to CR VM exits (Vol3C 28.1.3, Table 30-3) */
+            if (VMX_GUEST(s)) {
+                gen_vmx_insn(s, VMXI_CR, reg | ((uint32_t)rm << 8), 0, s->T0);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_write_crN(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, reg), s->T0);
             s->base.is_jmp = DISAS_EOB_NEXT;
         } else {
             gen_svm_check_intercept(s, SVM_EXIT_READ_CR0 + reg);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            if (VMX_GUEST(s)) {         /* MOV from CR3 / CR8 VM exits (Vol3C 28.1.3) */
+                gen_vmx_insn(s, VMXI_CR, reg | (1u << 4) | ((uint32_t)rm << 8), 0, NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_read_crN(tcg_ctx, s->T0, cpu_env, tcg_constant_i32(tcg_ctx, reg));
             gen_op_mov_reg_v(s, ot, rm, s->T0);
         }
@@ -10246,6 +10472,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 
     case 0x121: /* mov reg, drN */
     case 0x123: /* mov drN, reg */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        /*
+         * VMX non-root operation: "MOV-DR exiting" comes before the CPL #GP and the CR4.DE #UD of
+         * DR4 / DR5 (Vol3C 28.1.3); DR8-DR15 stay #UD (the ModRM byte is only peeked here)
+         */
+        if (VMX_GUEST(s)) {
+            int m = translator_ldub(tcg_ctx, env, s->pc);
+            int r = ((m >> 3) & 7) | REX_R(s);
+
+            if (r < 8) {
+                gen_vmx_insn(s, VMXI_DR, (uint32_t)r | ((b & 2) ? 0 : 0x10) |
+                             ((uint32_t)((m & 7) | REX_B(s)) << 8), 0, NULL);
+            }
+        }
+#endif /* __Use_Original_Qemu (U1304) */
         if (check_cpl0(s)) {
             modrm = x86_ldub_code(env, s);
             /* Ignore the mod bits (assume (modrm&0xc0)==0xc0).
@@ -10279,6 +10520,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0x106: /* clts */
         if (check_cpl0(s)) {
             gen_svm_check_intercept(s, SVM_EXIT_WRITE_CR0);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            if (VMX_GUEST(s)) {         /* CLTS VM exit (Vol3C 28.1.3, Table 30-3 type 2) */
+                gen_vmx_insn(s, VMXI_CR, 2u << 4, 0, NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             gen_helper_clts(tcg_ctx, cpu_env);
             /* abort block because static cpu state changed */
             s->base.is_jmp = DISAS_EOB_NEXT;
@@ -10356,6 +10602,15 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
             rm = (modrm & 7) | REX_B(s);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+            /* VMX non-root operation: "enable user wait and pause" #UD; UMWAIT / TPAUSE exit with
+               "RDTSC exiting" (Vol3C 28.1.3, 28.3; Table 30-13) */
+            if (VMX_GUEST(s)) {
+                gen_vmx_insn(s, (prefixes & PREFIX_REPZ) ? VMXI_UMONITOR :
+                             (prefixes & PREFIX_REPNZ) ? VMXI_UMWAIT : VMXI_TPAUSE,
+                             (uint32_t)rm << 3, 0, NULL);
+            }
+#endif /* __Use_Original_Qemu (U1304) */
             if (prefixes & PREFIX_REPZ) {
                 gen_lea_v_seg(s, s->aflag, cpu_regs[rm], R_DS, s->override);
                 gen_op_ld_v(s, MO_8, s->T0, s->A0);

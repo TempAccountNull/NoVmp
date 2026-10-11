@@ -5,8 +5,10 @@
  * B (VMCS field encodings) and C (basic exit reasons), compared with SDM 093 where change document
  * 252046-085 lists changes. Opt-in UC_X86_FEATURE_VMX (default off).
  *
-* U1303: VM entries and exits, VMLAUNCH / VMRESUME / VMFUNC, the VMX-preemption timer, unconditional
- * exits, the non-root paths of the VMX instructions.
+ * U1304: the conditional VM exits of instructions (28.1.3) and the changed instruction behaviour in
+ * VMX non-root operation (28.3): CR / DR accesses with guest/host masks and read shadows, I/O and
+ * MSR bitmaps, TSC offsetting and scaling, the enable controls (#UD) of RDTSCP / INVPCID / XSAVES /
+ * user wait / PCONFIG / MSR lists.
  * U1303: VM entries and exits (chapters 29, 30), VMLAUNCH / VMRESUME / VMFUNC, the VMX-preemption
  * timer, the unconditional VM exits (28.1.2) and the non-root paths of the VMX instructions.
  * U1302: VMX operation (VMXON / VMXOFF), the VMCS lifecycle (VMCLEAR / VMPTRLD / VMPTRST), VMREAD /
@@ -21,6 +23,7 @@
 #include "exec/helper-proto.h"
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
+#include "qemu/host-utils.h"
 #include "uc_priv.h"
 #include <unicorn/unicorn.h>
 
@@ -621,6 +624,18 @@ bool x86_vmx_cr_write_ok(CPUX86State *env, int reg, uint64_t v)
         return true;
     }
     if (reg == 0) {
+        /*
+         * U1304: "unrestricted guest" in VMX non-root operation: PE / PG are not checked against
+         * the fixed bits, but PE = 0 with PG = 1, or PG = 1 with CR4.PAE = 0 and IA32_EFER.LME = 1,
+         * is still #GP (28.3 MOV to CR0, pp. 28-9 / 28-10)
+         */
+        if (env->vmx.nonroot && (env->vmx.proc2 & (1u << 7) /* unrestricted guest */)) {
+            if ((v & CR0_PG_MASK) && (!(v & CR0_PE_MASK) ||
+                (!(env->cr[4] & CR4_PAE_MASK) && (env->efer & MSR_EFER_LME)))) {
+                return false;
+            }
+            return vmx_cr0_ok(env, v, true);
+        }
         return vmx_cr0_ok(env, v, false);
     }
     return vmx_cr4_ok(env, v);
@@ -2185,6 +2200,7 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.mtf_pending = 0;
     env->vmx.delivering = 0;
     env_cpu(env)->halted = 0;
+    env->vmx.mwait_wait = 0;            /* U1304 */
     tlb_flush(env_cpu(env));
 }
 
@@ -2257,8 +2273,8 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
     }
     vmcs_put(env, VMCS_GUEST_RFLAGS, rflags);
     /* 30.3.4 non-register state */
-    if (env_cpu(env)->halted) {
-        act = 1;
+    if (env_cpu(env)->halted && !env->vmx.mwait_wait) {
+        act = 1;            /* U1304: waiting after MWAIT is the active state (30.1 footnote 3) */
     }
     vmcs_put(env, VMCS_GUEST_ACTIVITY, act);
     if (env->hflags & HF_INHIBIT_IRQ_MASK) {
@@ -2342,21 +2358,26 @@ static G_NORETURN void vmx_vmexit(CPUX86State *env, VmxExit *e)
  * A fault-like VM exit for an instruction (28.1): the state is restored to the instruction's start
  * (its length from the translator, insn_start word 2), RFLAGS.RF saved as 0 (30.3.3)
  */
+static G_NORETURN void vmx_insn_exit_e(CPUX86State *env, VmxExit *e, uintptr_t ra)
+{
+    if (ra) {
+        cpu_restore_state(env_cpu(env), ra, true);
+    }
+    e->len_valid = true;
+    e->insn_len = env->vmx.insn_len;
+    e->rf_zero = true;
+    vmx_vmexit(env, e);
+}
+
 G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qual,
                                   uint32_t info, bool info_valid, uintptr_t ra)
 {
     VmxExit e;
 
-    if (ra) {
-        cpu_restore_state(env_cpu(env), ra, true);
-    }
     vmx_exit_init(&e, reason, qual);
-    e.len_valid = true;
-    e.insn_len = env->vmx.insn_len;
     e.info_valid = info_valid;
     e.insn_info = info;
-    e.rf_zero = true;
-    vmx_vmexit(env, &e);
+    vmx_insn_exit_e(env, &e, ra);
 }
 
 /* ---- 29.8 VM-entry failure after the guest-state checks ---- */
@@ -2507,6 +2528,7 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
     info = vmcs_get(env, VMCS_ENTRY_INTR_INFO);
     if (!(info >> 31) || ((info >> 8) & 7) == 7) {
         env_cpu(env)->halted = vmcs_get(env, VMCS_GUEST_ACTIVITY) == 1;
+        env->vmx.mwait_wait = 0;        /* U1304 */
     }
     /* 29.7.4 the VMX-preemption timer */
     if (env->vmx.pin & PIN_PREEMPT_TIMER) {
@@ -2644,6 +2666,451 @@ G_NORETURN void x86_vmx_triple_fault(CPUX86State *env)
     vmx_exit_init(&e, EXIT_REASON_TRIPLE_FAULT, 0);
     env->vmx.delivering = 0;
     vmx_vmexit(env, &e);
+}
+
+/*
+ * ---- U1304: conditional VM exits of instructions (Vol3C 28.1.3 pp. 28-2 to 28-6) and the changed
+ * behaviour of instructions in VMX non-root operation (28.3 pp. 28-8 to 28-15) ----
+ * Priority (28.1.1): #UD, faults based on privilege level and the TSS I/O-permission #GP come
+ * first (the translator / the instruction helper checks them before calling here); MOV DR exits
+ * come before those #GP / CR4.DE #UD faults; every other fault comes after the VM exit. The exit
+ * qualifications are Tables 30-3 to 30-5 (30.2.1), the instruction information Tables 30-8 to
+ * 30-16 (30.2.5).
+ */
+#define EXIT_REASON_INVLPG          14
+#define EXIT_REASON_CR_ACCESS       28
+#define EXIT_REASON_DR_ACCESS       29
+#define EXIT_REASON_IO              30
+#define EXIT_REASON_MWAIT           36
+#define EXIT_REASON_GDTR_IDTR       46
+#define EXIT_REASON_LDTR_TR         47
+#define EXIT_REASON_RDTSCP          51
+#define EXIT_REASON_WBINVD          54
+#define EXIT_REASON_RDRAND          57
+#define EXIT_REASON_INVPCID         58
+#define EXIT_REASON_RDSEED          61
+#define EXIT_REASON_XSAVES          63
+#define EXIT_REASON_XRSTORS         64
+#define EXIT_REASON_PCONFIG         65
+#define EXIT_REASON_UMWAIT          67
+#define EXIT_REASON_TPAUSE          68
+#define EXIT_REASON_LOADIWKEY       69
+#define EXIT_REASON_RDMSRLIST       78
+#define EXIT_REASON_WRMSRLIST       79
+#define EXIT_REASON_URDMSR          80
+#define EXIT_REASON_UWRMSR          81
+
+#define PROC3_LOADIWKEY             (1ull << 0)
+#define PROC3_MSRLIST               (1ull << 6)
+#define VMCS_MSR_DATA               0x2402
+
+static uint8_t vmx_ldub(CPUX86State *env, uint64_t pa)
+{
+    return x86_ldub_phys(env_cpu(env), pa);
+}
+
+/* bits 63:32 cleared outside 64-bit mode (linear addresses in exit qualifications, 30.2.1) */
+static uint64_t vmx_la_trunc(CPUX86State *env, uint64_t la)
+{
+    return (env->hflags & HF_CS64_MASK) ? la : (uint32_t)la;
+}
+
+static G_NORETURN void vmx_ud(CPUX86State *env, uintptr_t ra)
+{
+    raise_exception_ra(env, EXCP06_ILLOP, ra);
+}
+
+/*
+ * 28.3 RDTSC / RDTSCP / RDMSR 10H: with "use TSC offsetting" the TSC offset is added; with "use TSC
+ * scaling" too, the TSC is first multiplied by the TSC multiplier and shifted right 48 bits
+ */
+uint64_t x86_vmx_guest_tsc(CPUX86State *env, uint64_t tsc)
+{
+    uint64_t lo, hi;
+
+    if (!env->vmx.nonroot || !(env->vmx.proc & PROC_TSC_OFFSET)) {
+        return tsc;
+    }
+    if (env->vmx.proc2 & PROC2_TSC_SCALING) {
+        mulu64(&lo, &hi, tsc, env->vmx.tsc_mult);
+        tsc = (hi << 16) | (lo >> 48);
+    }
+    return tsc + env->vmx.tsc_offset;
+}
+
+/* HLT, RDPMC, RDTSC, RDTSCP, MONITOR, PAUSE: an exit by one primary control (28.1.3) */
+void x86_vmx_insn_check(CPUX86State *env, uint32_t reason, uintptr_t ra)
+{
+    uint32_t p = env->vmx.proc, bit;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    switch (reason) {
+    case EXIT_REASON_HLT:       bit = PROC_HLT; break;
+    case VMX_EXIT_RDPMC:        bit = PROC_RDPMC; break;
+    case VMX_EXIT_RDTSC:        bit = PROC_RDTSC; break;
+    case EXIT_REASON_RDTSCP:    bit = PROC_RDTSC; break;    /* "enable RDTSCP" checked before */
+    case VMX_EXIT_MONITOR:      bit = PROC_MONITOR; break;
+    case VMX_EXIT_PAUSE:        bit = PROC_PAUSE; break;    /* PAUSE-loop exiting: not allowed */
+    default:                    return;
+    }
+    if (p & bit) {
+        x86_vmx_insn_exit(env, reason, 0, 0, false, ra);
+    }
+}
+
+/* RDTSCP with "enable RDTSCP" 0: #UD, before any other exception (28.3) */
+void x86_vmx_rdtscp_check(CPUX86State *env, uintptr_t ra)
+{
+    if (env->vmx.nonroot && !(env->vmx.proc2 & PROC2_RDTSCP)) {
+        vmx_ud(env, ra);
+    }
+}
+
+/* MWAIT: the exit qualification says whether address-range monitoring is armed (30.2.1) */
+void x86_vmx_mwait_check(CPUX86State *env, uintptr_t ra)
+{
+    if (env->vmx.nonroot && (env->vmx.proc & PROC_MWAIT)) {
+        x86_vmx_insn_exit(env, EXIT_REASON_MWAIT, env->vmx.monitor_armed ? 1 : 0, 0, false, ra);
+    }
+}
+
+/* the MSR bitmaps (27.6.9): read low 000H, read high 400H, write low 800H, write high C00H */
+static bool vmx_msr_exits(CPUX86State *env, uint32_t msr, bool write)
+{
+    uint32_t off;
+
+    if (!(env->vmx.proc & PROC_MSR_BITMAPS)) {
+        return true;
+    }
+    if (msr <= 0x1fff) {
+        off = 0;
+    } else if (msr - 0xc0000000u <= 0x1fff) {
+        off = 0x400;
+    } else {
+        return true;
+    }
+    off += write ? 0x800 : 0;
+    return (vmx_ldub(env, env->vmx.msr_bitmap + off + (msr & 0x1fff) / 8) >> (msr & 7)) & 1;
+}
+
+/* RDMSR / WRMSR / WRMSRNS (31, 32: qualification 0 WRMSR, 1 WRMSRNS) and the immediate forms (84, 85) */
+void x86_vmx_msr_check(CPUX86State *env, uint32_t msr, bool write, uint32_t reason,
+                       uint64_t qual, uintptr_t ra)
+{
+    if (env->vmx.nonroot && vmx_msr_exits(env, msr, write)) {
+        x86_vmx_insn_exit(env, reason, qual, 0, false, ra);
+    }
+}
+
+/* URDMSR / UWRMSR (80, 81): after the user-MSR #GP checks (28.1.3) */
+void x86_vmx_user_msr_check(CPUX86State *env, uint32_t msr, bool write, uintptr_t ra)
+{
+    bool ex;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    if (!(env->vmx.proc & PROC_MSR_BITMAPS) || (msr >= 0x2000 && msr <= 0x3fff)) {
+        ex = true;
+    } else {
+        ex = msr <= 0x1fff && vmx_msr_exits(env, msr, write);
+    }
+    if (ex) {
+        x86_vmx_insn_exit(env, write ? EXIT_REASON_UWRMSR : EXIT_REASON_URDMSR, 0, 0, false, ra);
+    }
+}
+
+/*
+ * RDMSRLIST / WRMSRLIST (78, 79): n < 0 at the start (without MSR bitmaps the instruction exits with
+ * qualification 0, nothing read), else for table entry n (qualification n; WRMSRLIST saves the
+ * data it read into the MSR-data field; RCX[n] stays set)
+ */
+void x86_vmx_msrlist_entry(CPUX86State *env, uint32_t msr, int n, bool write, uint64_t data,
+                           uintptr_t ra)
+{
+    uint32_t reason = write ? EXIT_REASON_WRMSRLIST : EXIT_REASON_RDMSRLIST;
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    if (n < 0) {
+        if (!(env->vmx.proc & PROC_MSR_BITMAPS)) {
+            x86_vmx_insn_exit(env, reason, 0, 0, false, ra);
+        }
+        return;
+    }
+    if (vmx_msr_exits(env, msr, write)) {
+        if (write) {
+            vmcs_put(env, VMCS_MSR_DATA, data);
+        }
+        x86_vmx_insn_exit(env, reason, (uint64_t)n, 0, false, ra);
+    }
+}
+
+/* MOV from CR0 / CR4 (and SMSW): bits set in the guest/host mask come from the read shadow (28.3) */
+uint64_t x86_vmx_cr_read(CPUX86State *env, int reg, uint64_t val)
+{
+    if (!env->vmx.nonroot) {
+        return val;
+    }
+    if (reg == 0) {
+        return (val & ~env->vmx.cr0_mask) | (env->vmx.cr0_shadow & env->vmx.cr0_mask);
+    }
+    if (reg == 4) {
+        return (val & ~env->vmx.cr4_mask) | (env->vmx.cr4_shadow & env->vmx.cr4_mask);
+    }
+    return val;
+}
+
+/* MOV to CR0 / CR4, LMSW without a VM exit: bits set in the guest/host mask are not modified (28.3) */
+uint64_t x86_vmx_cr_write(CPUX86State *env, int reg, uint64_t val)
+{
+    if (!env->vmx.nonroot) {
+        return val;
+    }
+    if (reg == 0) {
+        return (val & ~env->vmx.cr0_mask) | (env->cr[0] & env->vmx.cr0_mask);
+    }
+    if (reg == 4) {
+        return (val & ~env->vmx.cr4_mask) | (env->cr[4] & env->vmx.cr4_mask);
+    }
+    return val;
+}
+
+/* LOADIWKEY (69): after the CR4.KL #UD and the CPL #GP; Table 30-16 (XMM register numbers) */
+void x86_vmx_loadiwkey_check(CPUX86State *env, uint32_t src1, uint32_t src2, uintptr_t ra)
+{
+    if (env->vmx.nonroot && (env->vmx.proc3 & PROC3_LOADIWKEY)) {
+        x86_vmx_insn_exit(env, EXIT_REASON_LOADIWKEY, 0, ((src1 & 15) << 3) | ((src2 & 15) << 28),
+                          true, ra);
+    }
+}
+
+/* PCONFIG: "enable PCONFIG" 0 is #UD before any other exception; the PCONFIG-exiting bitmap (65) */
+void x86_vmx_pconfig_check(CPUX86State *env, uintptr_t ra)
+{
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    if (!(env->vmx.proc2 & PROC2_PCONFIG)) {
+        vmx_ud(env, ra);
+    }
+    if ((env->vmx.pconfig_bmp >> (leaf < 63 ? leaf : 63)) & 1) {
+        x86_vmx_insn_exit(env, EXIT_REASON_PCONFIG, 0, 0, false, ra);
+    }
+}
+
+/* PBNDKB: "enable PBNDKB" (tertiary bit 9) 0 is #UD before any other exception (28.3) */
+void x86_vmx_pbndkb_check(CPUX86State *env, uintptr_t ra)
+{
+    if (env->vmx.nonroot && !(env->vmx.proc3 & (1ull << 9))) {
+        vmx_ud(env, ra);
+    }
+}
+
+/* the I/O bitmaps (27.6.4): A for ports 0000H-7FFFH, B for 8000H-FFFFH; a wrap-around always exits */
+static bool vmx_io_exits(CPUX86State *env, uint32_t port, uint32_t size)
+{
+    uint32_t i, p;
+    uint64_t bm;
+
+    if (!(env->vmx.proc & PROC_IO_BITMAPS)) {
+        return (env->vmx.proc & PROC_UNCOND_IO) != 0;
+    }
+    if (port + size - 1 > 0xffff) {
+        return true;
+    }
+    for (i = 0; i < size; i++) {
+        p = port + i;
+        bm = p < 0x8000 ? env->vmx.io_a : env->vmx.io_b;
+        if ((vmx_ldub(env, bm + (p & 0x7fff) / 8) >> (p & 7)) & 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The checks the translator emits for instructions without a helper of their own, or whose exit
+ * needs operand information only the translator has (kind: VMXI_*, cpu.h)
+ */
+void helper_vmx_insn(CPUX86State *env, uint32_t kind, uint32_t info, target_ulong qual,
+                     target_ulong val)
+{
+    uintptr_t ra = GETPC();
+    X86VmxState *v = &env->vmx;
+    VmxExit e;
+    uint32_t reason = 0;
+    uint64_t q = 0;
+    bool ex = false, inf = false;
+    int i;
+
+    if (!v->nonroot) {
+        return;
+    }
+    switch (kind) {
+    case VMXI_CR: {
+        int cr = info & 15;
+        uint64_t src;
+
+        q = info & 0xfff;
+        switch ((info >> 4) & 3) {
+        case 0:                                         /* MOV to CR */
+            if (!(env->hflags & HF_CS64_MASK)) {
+                val = (uint32_t)val;
+            }
+            if (cr == 0) {
+                ex = ((val ^ v->cr0_shadow) & v->cr0_mask) != 0;
+            } else if (cr == 4) {
+                ex = ((val ^ v->cr4_shadow) & v->cr4_mask) != 0;
+            } else if (cr == 3 && (v->proc & PROC_CR3_LOAD)) {
+                ex = true;
+                for (i = 0; i < (int)v->cr3_count && i < 4; i++) {
+                    if (val == v->cr3_target[i]) {
+                        ex = false;
+                    }
+                }
+            } else if (cr == 8) {
+                ex = (v->proc & PROC_CR8_LOAD) != 0;
+            }
+            break;
+        case 1:                                         /* MOV from CR */
+            ex = (cr == 3 && (v->proc & PROC_CR3_STORE)) || (cr == 8 && (v->proc & PROC_CR8_STORE));
+            break;
+        case 2:                                         /* CLTS */
+            ex = (v->cr0_mask & v->cr0_shadow & CR0_TS_MASK) != 0;
+            break;
+        default:                                        /* LMSW */
+            src = val & 0xffff;
+            ex = ((v->cr0_mask & 1) && (src & 1) && !(v->cr0_shadow & 1)) ||
+                 ((src ^ v->cr0_shadow) & v->cr0_mask & 0xe) != 0;
+            q |= src << 16;
+            break;
+        }
+        if (ex) {
+            vmx_exit_init(&e, EXIT_REASON_CR_ACCESS, q);
+            if (((info >> 4) & 3) == 3 && (info & 0x40)) {
+                e.gla_valid = true;                     /* LMSW with a memory operand */
+                e.gla = vmx_la_trunc(env, qual);
+            }
+            vmx_insn_exit_e(env, &e, ra);
+        }
+        return;
+    }
+    case VMXI_DR:
+        ex = (v->proc & PROC_MOV_DR) != 0;
+        reason = EXIT_REASON_DR_ACCESS;
+        q = info;
+        break;
+    case VMXI_INVLPG:
+        ex = (v->proc & PROC_INVLPG) != 0;
+        reason = EXIT_REASON_INVLPG;
+        q = vmx_la_trunc(env, val);
+        break;
+    case VMXI_INVPCID_UD:
+        if (!(v->proc2 & PROC2_INVPCID)) {
+            vmx_ud(env, ra);
+        }
+        return;
+    case VMXI_INVPCID:
+        ex = (v->proc & PROC_INVLPG) != 0;
+        reason = EXIT_REASON_INVPCID;
+        q = qual;
+        inf = true;
+        break;
+    case VMXI_GDTR_IDTR:
+    case VMXI_LDTR_TR:
+        ex = (v->proc2 & PROC2_DESC_TABLE) != 0;
+        reason = kind == VMXI_GDTR_IDTR ? EXIT_REASON_GDTR_IDTR : EXIT_REASON_LDTR_TR;
+        q = qual;
+        inf = true;
+        break;
+    case VMXI_RDRAND:
+    case VMXI_RDSEED:
+        ex = (v->proc2 & (kind == VMXI_RDRAND ? PROC2_RDRAND : PROC2_RDSEED)) != 0;
+        reason = kind == VMXI_RDRAND ? EXIT_REASON_RDRAND : EXIT_REASON_RDSEED;
+        inf = true;
+        break;
+    case VMXI_XSAVES:
+    case VMXI_XRSTORS: {
+        uint64_t rfbm = (uint32_t)env->regs[R_EAX] | ((uint64_t)(uint32_t)env->regs[R_EDX] << 32);
+
+        if (!(v->proc2 & PROC2_XSAVES)) {
+            vmx_ud(env, ra);
+        }
+        ex = (rfbm & env->xss & v->xss_bmp) != 0;
+        reason = kind == VMXI_XSAVES ? EXIT_REASON_XSAVES : EXIT_REASON_XRSTORS;
+        q = qual;
+        inf = true;
+        break;
+    }
+    case VMXI_WBINVD:
+        ex = (v->proc2 & PROC2_WBINVD) != 0;
+        reason = EXIT_REASON_WBINVD;
+        q = qual;
+        break;
+    case VMXI_RDPID:
+        if (!(v->proc2 & PROC2_RDTSCP)) {
+            vmx_ud(env, ra);
+        }
+        return;
+    case VMXI_UMONITOR:
+    case VMXI_UMWAIT:
+    case VMXI_TPAUSE:
+        if (!(v->proc2 & PROC2_USER_WAIT)) {
+            vmx_ud(env, ra);
+        }
+        if (kind == VMXI_UMONITOR) {
+            return;
+        }
+        /* CR4.TSD at CPL > 0 is a fault based on privilege level: before the VM exit */
+        if ((env->cr[4] & CR4_TSD_MASK) && (env->hflags & HF_CPL_MASK)) {
+            raise_exception_ra(env, EXCP0D_GPF, ra);
+        }
+        ex = (v->proc & PROC_RDTSC) != 0;
+        reason = kind == VMXI_UMWAIT ? EXIT_REASON_UMWAIT : EXIT_REASON_TPAUSE;
+        inf = true;
+        break;
+    case VMXI_MSRLIST_UD:
+        if (!(v->proc3 & PROC3_MSRLIST)) {
+            vmx_ud(env, ra);
+        }
+        return;
+    case VMXI_WRMSRNS:
+        x86_vmx_msr_check(env, (uint32_t)env->regs[R_ECX], true, VMX_EXIT_WRMSR, 1, ra);
+        return;
+    case VMXI_IO: {
+        uint32_t port = val & 0xffff;
+
+        if (!vmx_io_exits(env, port, (qual & 7) + 1)) {
+            return;
+        }
+        vmx_exit_init(&e, EXIT_REASON_IO, (qual & 0x7f) | ((uint64_t)port << 16));
+        if (qual & 0x10) {
+            /* INS / OUTS: Table 30-8; the guest-linear address if the segment is usable */
+            int seg = (info >> 15) & 7, aw = (info >> 7) & 7;
+            uint64_t off = env->regs[(qual & 8) ? R_EDI : R_ESI];
+
+            off = aw == 0 ? (uint16_t)off : aw == 1 ? (uint32_t)off : off;
+            if (seg < 6 && (env->segs[seg].flags & DESC_P_MASK)) {
+                e.gla_valid = true;
+                e.gla = vmx_la_trunc(env, env->segs[seg].base + off);
+            }
+            e.info_valid = true;
+            e.insn_info = info;
+        }
+        vmx_insn_exit_e(env, &e, ra);
+    }
+    default:
+        return;
+    }
+    if (ex) {
+        x86_vmx_insn_exit(env, reason, q, info, inf, ra);
+    }
 }
 
 #endif /* __Use_Original_Qemu (U1301) */

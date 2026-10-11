@@ -4542,6 +4542,12 @@ static void gen_INVPCID(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     TCGv hi = tcg_temp_new(tcg_ctx);
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: "enable INVPCID" 0 is #UD before anything (SDM 092 Vol3C 28.3) */
+    if (VMX_GUEST(s)) {
+        gen_vmx_insn(s, VMXI_INVPCID_UD, 0, 0, NULL);
+    }
+#endif /* __Use_Original_Qemu (U1304) */
     if (!check_cpl0(s)) {
         tcg_temp_free(tcg_ctx, hi);
         return;
@@ -4551,6 +4557,16 @@ static void gen_INVPCID(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     }
     gen_update_cc_op(s);
     gen_update_eip_cur(s);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* "INVLPG exiting": VM exit before the descriptor is read (28.1.1, 28.3; Table 30-9) */
+    if (VMX_GUEST(s)) {
+        target_ulong qual;
+        uint32_t info = vmx_mem_info(s, &decode->mem, &qual) |
+                        ((uint32_t)(decode->op[1].n & 15) << 28);
+
+        gen_vmx_insn(s, VMXI_INVPCID, info, qual, NULL);
+    }
+#endif /* __Use_Original_Qemu (U1304) */
     gen_op_ld_v(s, MO_64, s->T1, s->A0);
     tcg_gen_addi_tl(tcg_ctx, s->A0, s->A0, 8);
     gen_op_ld_v(s, MO_64, hi, s->A0);

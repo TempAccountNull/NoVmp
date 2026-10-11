@@ -475,6 +475,7 @@ DEF_HELPER_3(vmlaunch, void, env, i32, i32)                   /* U1303 */
 DEF_HELPER_1(vmfunc, void, env)
 DEF_HELPER_1(vmx_boundary, void, env)
 DEF_HELPER_2(vmx_uncond_exit, void, env, i32)
+DEF_HELPER_5(vmx_insn, void, env, i32, i32, tl, tl)            /* U1304 */
 #endif /* __Use_Original_Qemu (U1302) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user interrupts */

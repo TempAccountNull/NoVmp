@@ -33285,6 +33285,312 @@ static void test_x86_vmx_inject(void)
     OK(uc_close(c.uc));
 }
 
+#define VMX_IOBM_A  (VMX_DATA + 0x10000)
+#define VMX_IOBM_B  (VMX_DATA + 0x11000)
+#define VMX_MSRBM   (VMX_DATA + 0x12000)
+#define VMX_SCRATCH (VMX_DATA + 0x13000)
+#define VMX_PROC0   0x04006172u         /* the default1 primary controls (TRUE_PROCBASED_CTLS) */
+
+/* VMRESUME into the guest code g at VMX_GUEST_PC with RAX / RCX / RDX / RBX (VM entry keeps the GPRs) */
+static void vmx_resume_regs(PcCtx *c, const char *g, size_t gl, uint64_t rax, uint64_t rcx,
+                            uint64_t rdx, uint64_t rbx)
+{
+    uint64_t fl;
+
+    vmx_w(c, 0x681e, VMX_GUEST_PC);
+    pc_set(c, UC_X86_REG_RAX, rax);
+    pc_set(c, UC_X86_REG_RCX, rcx);
+    pc_set(c, UC_X86_REG_RDX, rdx);
+    pc_set(c, UC_X86_REG_RBX, rbx);
+    TEST_CHECK(vmx_enter(c, 0, g, gl, &fl) == -1);
+}
+
+/* the exit reason, the exit qualification and the VM-exit instruction length of the last VM exit */
+static void vmx_exit_is(PcCtx *c, uint32_t reason, uint64_t qual, uint32_t len)
+{
+    uint64_t r = vmx_r(c, 0x4402), q = vmx_r(c, 0x6400), l = vmx_r(c, 0x440c);
+
+    TEST_CHECK(r == reason && q == qual && l == len);
+    TEST_MSG("exit %llu qual %llx len %llu, expected %u %llx %u", (unsigned long long)r,
+             (unsigned long long)q, (unsigned long long)l, reason, (unsigned long long)qual, len);
+}
+
+/* IDT event delivery with a guest GDT / IDT: #UD, #GP and #PF go to a CPUID at VMX_GUEST_PC + 100H */
+static void vmx_guest_idt(PcCtx *c)
+{
+    OK(uc_ctl_set_x86_event_delivery(c->uc, UC_X86_DELIVER_EXC_IDT));
+    vmx_wq(c, VMX_GDT + 8, 0x00af9b000000ffffull);
+    vmx_wq(c, VMX_GDT + 16, 0x00cf93000000ffffull);
+    vmx_w(c, 0x6816, VMX_GDT);
+    vmx_w(c, 0x6818, VMX_IDT);
+    vmx_w(c, 0x4812, 0xfff);
+    OK(uc_mem_write(c->uc, VMX_GUEST_PC + 0x100, "\x0f\xa2", 2));
+    vmx_idt_gate(c, 6, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(c, 13, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(c, 14, VMX_GUEST_PC + 0x100);
+}
+
+/*
+ * U1304: control-register and debug-register accesses in VMX non-root operation (SDM 092 Vol3C
+ * 28.1.3, 28.3; exit qualification Table 30-3 / 30-4). CR0 guest/host mask TS with read shadow 0:
+ * MOV from CR0 reads TS = 0 although CR0.TS = 1; MOV to CR0 differing from the shadow in TS exits
+ * (28, qualification CR 0 / type 0 / RBX); matching the shadow it does not exit and leaves the
+ * masked TS unchanged; CLTS exits when the mask and the shadow have TS, else completes without
+ * clearing TS; LMSW exits when it would set PE against the shadow (register and memory forms: the
+ * source data in bits 31:16, the memory form with bit 6 and the guest-linear address); MOV from
+ * CR4 reads the CR4 shadow; CR3-load exiting with a CR3-target value (no exit for the target, exit
+ * otherwise), CR3-store, CR8-load / -store exiting; MOV-DR exiting (29) for MOV RAX, DR7 and MOV DR0,
+ * RCX - also at CPL 3 before the #GP (not tested: CPL 3 guest), instruction lengths.
+ */
+static void test_x86_vmx_cr_dr(void)
+{
+    PcCtx c;
+    uint64_t fl, cr0, cr3, cr4, v;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    cr0 = vmx_r(&c, 0x6800);
+    cr3 = vmx_r(&c, 0x6802);
+    cr4 = vmx_r(&c, 0x6804);
+    /* CR0 mask TS, shadow 0, CR0.TS = 1 */
+    vmx_w(&c, 0x6000, 8);
+    vmx_w(&c, 0x6004, 0);
+    vmx_w(&c, 0x6800, cr0 | 8);
+    vmx_resume_regs(&c, "\x0f\x20\xc0\x0f\xa2", 5, 0, 0, 0, 0);     /* MOV RAX, CR0; CPUID */
+    v = pc_get(&c, UC_X86_REG_RAX);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(v == (cr0 & ~8ull));
+    TEST_MSG("MOV from CR0 %llx", (unsigned long long)v);
+    vmx_resume_regs(&c, "\x0f\x22\xc3", 3, 0, 0, 0, cr0 | 8);       /* MOV CR0, RBX: TS != shadow */
+    vmx_exit_is(&c, 28, 0x300, 3);
+    vmx_resume_regs(&c, "\x0f\x22\xc3\x0f\xa2", 5, 0, 0, 0, cr0 & ~8ull);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 3 && (vmx_r(&c, 0x6800) & 8));
+    vmx_resume_regs(&c, "\x0f\x06\x0f\xa2", 4, 0, 0, 0, 0);         /* CLTS: shadow TS = 0 */
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(vmx_r(&c, 0x6800) & 8);
+    vmx_w(&c, 0x6004, 8);
+    vmx_resume_regs(&c, "\x0f\x06", 2, 0, 0, 0, 0);                 /* CLTS: mask and shadow TS */
+    vmx_exit_is(&c, 28, 0x20, 2);
+    /* LMSW: mask PE, shadow PE = 0 */
+    vmx_w(&c, 0x6000, 1);
+    vmx_w(&c, 0x6004, 0);
+    vmx_resume_regs(&c, "\x0f\x01\xf0", 3, 0x0001, 0, 0, 0);        /* LMSW AX, AX = 1 */
+    vmx_exit_is(&c, 28, 0x30 | (1ull << 16), 3);
+    vmx_resume_regs(&c, "\x0f\x01\xf0\x0f\xa2", 5, 0x0000, 0, 0, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    vmx_wq(&c, VMX_SCRATCH, 0x000b);
+    vmx_resume_regs(&c, "\x0f\x01\x30", 3, VMX_SCRATCH, 0, 0, 0);   /* LMSW [RAX] */
+    vmx_exit_is(&c, 28, 0x70 | (0xbull << 16), 3);
+    TEST_CHECK(vmx_r(&c, 0x640a) == VMX_SCRATCH);
+    vmx_w(&c, 0x6000, 0);
+    vmx_w(&c, 0x6800, cr0);
+    /* MOV from CR4 with the CR4 mask: bit 7 from the shadow */
+    vmx_w(&c, 0x6002, 0x80);
+    vmx_w(&c, 0x6006, (cr4 & 0x80) ^ 0x80);
+    vmx_resume_regs(&c, "\x0f\x20\xe0\x0f\xa2", 5, 0, 0, 0, 0);     /* MOV RAX, CR4 */
+    v = pc_get(&c, UC_X86_REG_RAX);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(v == (cr4 ^ 0x80));
+    vmx_resume_regs(&c, "\x0f\x22\xe0", 3, cr4, 0, 0, 0);           /* MOV CR4, RAX: bit 7 != shadow */
+    vmx_exit_is(&c, 28, 4, 3);
+    vmx_w(&c, 0x6002, 0);
+    /* CR3-load exiting with one CR3-target value */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 15));
+    vmx_w(&c, 0x400a, 1);
+    vmx_w(&c, 0x6008, cr3);
+    vmx_resume_regs(&c, "\x0f\x22\xd8\x0f\xa2", 5, cr3, 0, 0, 0);   /* MOV CR3, RAX = target 0 */
+    vmx_exit_is(&c, 10, 0, 2);
+    vmx_resume_regs(&c, "\x0f\x22\xd9", 3, 0, cr3 + 0x1000, 0, 0);  /* MOV CR3, RCX */
+    vmx_exit_is(&c, 28, 0x103, 3);
+    vmx_w(&c, 0x400a, 0);
+    /* CR3-store, CR8-load, CR8-store exiting */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 16));
+    vmx_resume_regs(&c, "\x0f\x20\xda", 3, 0, 0, 0, 0);             /* MOV RDX, CR3 */
+    vmx_exit_is(&c, 28, 0x213, 3);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 19));
+    vmx_resume_regs(&c, "\x44\x0f\x22\xc0", 4, 0, 0, 0, 0);         /* MOV CR8, RAX */
+    vmx_exit_is(&c, 28, 8, 4);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 20));
+    vmx_resume_regs(&c, "\x44\x0f\x20\xc3", 4, 0, 0, 0, 0);         /* MOV RBX, CR8 */
+    vmx_exit_is(&c, 28, 0x318, 4);
+    /* MOV-DR exiting */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 23));
+    vmx_resume_regs(&c, "\x0f\x21\xf8", 3, 0, 0, 0, 0);             /* MOV RAX, DR7 */
+    vmx_exit_is(&c, 29, 0x17, 3);
+    vmx_resume_regs(&c, "\x0f\x23\xc1", 3, 0, 0, 0, 0);             /* MOV DR0, RCX */
+    vmx_exit_is(&c, 29, 0x100, 3);
+    vmx_w(&c, 0x4002, VMX_PROC0);
+    vmx_resume_regs(&c, "\x0f\x21\xf8\x0f\xa2", 5, 0, 0, 0, 0);     /* no exit without the control */
+    vmx_exit_is(&c, 10, 0, 2);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1304: the instruction exits by primary / secondary controls (Vol3C 28.1.3, Appendix C): HLT (12),
+ * RDPMC (15), RDTSC (16), MONITOR (39, before the ECX #GP), MWAIT (36: qualification 0 unarmed, 1
+ * after MONITOR), PAUSE (40), INVLPG (14, the linear address), WBINVD (54), RDRAND (57, Table 30-12),
+ * SGDT (46, Table 30-10), SLDT / LTR (47, Table 30-11 register forms); TSC offsetting and scaling of
+ * RDTSC (28.3; multiplier 1: (TSC >> 48) + offset); "enable RDTSCP" 0: RDTSCP #UD (delivered through the
+ * guest IDT, the pushed RIP is the RDTSCP).
+ */
+static void test_x86_vmx_cond_exits(void)
+{
+    PcCtx c;
+    uint64_t fl, v, info;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 7));
+    vmx_resume_regs(&c, "\xf4", 1, 0, 0, 0, 0);
+    vmx_exit_is(&c, 12, 0, 1);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 11));
+    vmx_resume_regs(&c, "\x0f\x33", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 15, 0, 2);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 12));
+    vmx_resume_regs(&c, "\x0f\x31", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 16, 0, 2);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 29));
+    vmx_resume_regs(&c, "\x0f\x01\xc8", 3, VMX_SCRATCH, 5, 0, 0);   /* ECX = 5: the exit first */
+    vmx_exit_is(&c, 39, 0, 3);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 10));
+    vmx_resume_regs(&c, "\x0f\x01\xc9", 3, 0, 7, 0, 0);
+    vmx_exit_is(&c, 36, 0, 3);
+    vmx_resume_regs(&c, "\x0f\x01\xc8\x0f\x01\xc9", 6, VMX_SCRATCH, 0, 0, 0);
+    vmx_exit_is(&c, 36, 1, 3);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 3);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 30));
+    vmx_resume_regs(&c, "\xf3\x90", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 40, 0, 2);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 9));
+    vmx_resume_regs(&c, "\x0f\x01\x38", 3, 0x1234, 0, 0, 0);       /* INVLPG [RAX] */
+    vmx_exit_is(&c, 14, 0x1234, 3);
+    /* TSC offsetting: RDTSC returns at least the offset; scaling with multiplier 0: exactly it */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 3));
+    vmx_w(&c, 0x2010, 0x1000000000000000ull);
+    vmx_resume_regs(&c, "\x0f\x31\x0f\xa2", 4, 0, 0, 0, 0);
+    v = ((pc_get(&c, UC_X86_REG_RDX) & 0xffffffffull) << 32) | (pc_get(&c, UC_X86_REG_RAX) & 0xffffffffull);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK((v >> 60) == 1);
+    TEST_MSG("TSC %llx", (unsigned long long)v);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 3) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 25);
+    vmx_w(&c, 0x2032, 1);
+    vmx_resume_regs(&c, "\x0f\x31\x0f\xa2", 4, 0, 0, 0, 0);
+    v = ((pc_get(&c, UC_X86_REG_RDX) & 0xffffffffull) << 32) | (pc_get(&c, UC_X86_REG_RAX) & 0xffffffffull);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(v - 0x1000000000000000ull < 0x10000);
+    TEST_MSG("TSC %llx", (unsigned long long)v);
+    /* secondary controls: "enable RDTSCP" 0 -> #UD through the guest IDT */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(&c, 0x401e, 0);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\x0f\x01\xf9", 3, 0, 0, 0, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_rq(&c, vmx_r(&c, 0x681c)) == VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    /* WBINVD exiting, RDRAND exiting (RDRAND RAX: operand register 0, 64-bit) */
+    vmx_w(&c, 0x401e, (1u << 6) | (1u << 11) | (1u << 2));
+    vmx_resume_regs(&c, "\x0f\x09", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 54, 0, 2);
+    vmx_resume_regs(&c, "\x48\x0f\xc7\xf0", 4, 0, 0, 0, 0);
+    vmx_exit_is(&c, 57, 0, 4);
+    TEST_CHECK((vmx_r(&c, 0x440e) & ((0xfu << 3) | (3u << 11))) == (2u << 11));
+    /* descriptor-table exiting: SGDT [RAX+8] (46), SLDT AX / LTR CX (47) */
+    vmx_resume_regs(&c, "\x0f\x01\x40\x08", 4, VMX_SCRATCH, 0, 0, 0);
+    vmx_exit_is(&c, 46, 8, 4);
+    info = vmx_r(&c, 0x440e);
+    TEST_CHECK((info & ~(3u | (1u << 11))) == ((2u << 7) | (3u << 15) | (1u << 22) | (0u << 23) |
+                                              (0u << 28)));
+    TEST_MSG("info %llx", (unsigned long long)info);
+    vmx_resume_regs(&c, "\x0f\x00\xc0", 3, 0, 0, 0, 0);
+    vmx_exit_is(&c, 47, 0, 3);
+    TEST_CHECK((vmx_r(&c, 0x440e) & ((0xfu << 3) | (1u << 10) | (3u << 28))) == (1u << 10));
+    vmx_resume_regs(&c, "\x0f\x00\xd9", 3, 0, 0, 0, 0);
+    vmx_exit_is(&c, 47, 0, 3);
+    TEST_CHECK((vmx_r(&c, 0x440e) & ((0xfu << 3) | (1u << 10) | (3u << 28))) ==
+               ((1u << 3) | (1u << 10) | (3u << 28)));
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1304: I/O and MSR VM exits (Vol3C 28.1.3, Table 30-5 / 30-8, 27.6.4, 27.6.9). Unconditional I/O
+ * exiting: OUT DX, AL (port 80H, qualification size 0 / OUT / DX) and IN AL, 71H (immediate, IN);
+ * with I/O bitmaps (unconditional exiting then ignored): port 80H set exits, 81H clear does not, a
+ * 4-byte access at FFFEH wraps and exits; OUTSB / REP OUTSB with a usable DS: string / REP bits,
+ * the instruction information (64-bit address size, DS) and the guest-linear address DS.base + RSI.
+ * MSRs: without MSR bitmaps RDMSR (31) and WRMSR (32, qualification 0) exit; with the bitmaps an
+ * MSR whose bit is clear does not (RDMSR 10H returns the offset TSC: offsetting, multiplier 1), a
+ * set read bit for C0000080H and a set write bit for 1D9H exit, an MSR outside both ranges exits.
+ */
+static void test_x86_vmx_io_msr(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+    uint8_t one = 1, two = 2;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 24));
+    vmx_resume_regs(&c, "\xee", 1, 0, 0, 0x80, 0);
+    vmx_exit_is(&c, 30, 0x80ull << 16, 1);
+    vmx_resume_regs(&c, "\xe4\x71", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 30, (0x71ull << 16) | 0x48, 2);
+    /* the I/O bitmaps: port 80H */
+    OK(uc_mem_write(c.uc, VMX_IOBM_A + 0x10, &one, 1));
+    vmx_w(&c, 0x2000, VMX_IOBM_A);
+    vmx_w(&c, 0x2002, VMX_IOBM_B);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 24) | (1u << 25));
+    vmx_resume_regs(&c, "\xee\x0f\xa2", 3, 0, 0, 0x81, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    vmx_resume_regs(&c, "\xee", 1, 0, 0, 0x80, 0);
+    vmx_exit_is(&c, 30, 0x80ull << 16, 1);
+    vmx_resume_regs(&c, "\xef", 1, 0, 0, 0xfffe, 0);                /* OUT DX, EAX: wraps */
+    vmx_exit_is(&c, 30, (0xfffeull << 16) | 3, 1);
+    /* OUTSB with a usable DS */
+    vmx_w(&c, 0x0806, 0x10);
+    vmx_w(&c, 0x4806, 0xffffffff);
+    vmx_w(&c, 0x481a, 0xc093);
+    pc_set(&c, UC_X86_REG_RSI, 0x123);
+    vmx_resume_regs(&c, "\x6e", 1, 0, 0, 0x80, 0);
+    vmx_exit_is(&c, 30, (0x80ull << 16) | 0x10, 1);
+    TEST_CHECK((vmx_r(&c, 0x440e) & ((7u << 7) | (7u << 15))) == ((2u << 7) | (3u << 15)));
+    TEST_CHECK(vmx_r(&c, 0x640a) == 0x123);
+    pc_set(&c, UC_X86_REG_RSI, 0x123);
+    vmx_resume_regs(&c, "\xf3\x6e", 2, 0, 1, 0x80, 0);
+    vmx_exit_is(&c, 30, (0x80ull << 16) | 0x30, 2);
+    /* MSRs without MSR bitmaps */
+    vmx_w(&c, 0x4002, VMX_PROC0);
+    vmx_resume_regs(&c, "\x0f\x32", 2, 0, 0x10, 0, 0);
+    vmx_exit_is(&c, 31, 0, 2);
+    vmx_resume_regs(&c, "\x0f\x30", 2, 0, 0x10, 0, 0);
+    vmx_exit_is(&c, 32, 0, 2);
+    /* MSR bitmaps: read C0000080H, write 1D9H */
+    OK(uc_mem_write(c.uc, VMX_MSRBM + 0x410, &one, 1));
+    OK(uc_mem_write(c.uc, VMX_MSRBM + 0x800 + 0x3b, &two, 1));
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28) | (1u << 3) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 25);
+    vmx_w(&c, 0x2010, 0x2000000000000000ull);
+    vmx_w(&c, 0x2032, 1);
+    vmx_resume_regs(&c, "\x0f\x32\x0f\xa2", 4, 0, 0x10, 0, 0);      /* RDMSR 10H: no exit */
+    v = ((pc_get(&c, UC_X86_REG_RDX) & 0xffffffffull) << 32) | (pc_get(&c, UC_X86_REG_RAX) & 0xffffffffull);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(v - 0x2000000000000000ull < 0x10000);
+    TEST_MSG("RDMSR 10H %llx", (unsigned long long)v);
+    vmx_resume_regs(&c, "\x0f\x32", 2, 0, 0xc0000080u, 0, 0);
+    vmx_exit_is(&c, 31, 0, 2);
+    vmx_resume_regs(&c, "\x0f\x32", 2, 0, 0x40000000u, 0, 0);
+    vmx_exit_is(&c, 31, 0, 2);
+    vmx_resume_regs(&c, "\x0f\x30", 2, 0, 0x1d9, 0, 0);
+    vmx_exit_is(&c, 32, 0, 2);
+    vmx_resume_regs(&c, "\x0f\x32\x0f\xa2", 4, 0, 0x1d9, 0, 0);     /* the read bit is clear */
+    vmx_exit_is(&c, 10, 0, 2);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -33716,4 +34022,7 @@ TEST_LIST = {
     {"test_x86_vmx_entry_exit", test_x86_vmx_entry_exit},
     {"test_x86_vmx_nonroot_insn", test_x86_vmx_nonroot_insn},
     {"test_x86_vmx_inject", test_x86_vmx_inject},
+    {"test_x86_vmx_cr_dr", test_x86_vmx_cr_dr},
+    {"test_x86_vmx_cond_exits", test_x86_vmx_cond_exits},
+    {"test_x86_vmx_io_msr", test_x86_vmx_io_msr},
     {NULL, NULL}};

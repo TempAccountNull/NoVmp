@@ -187,6 +187,11 @@ target_ulong helper_read_crN(CPUX86State *env, int reg)
         }
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: CR0 / CR4 bits of the guest/host mask read from the read shadow
+       (SDM 092 Vol3C 28.3 MOV from CR0 / CR4) */
+    val = x86_vmx_cr_read(env, reg, val);
+#endif /* __Use_Original_Qemu (U1304) */
     return val;
 }
 
@@ -195,6 +200,10 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
     cpu_svm_check_intercept_param(env, SVM_EXIT_WRITE_CR0 + reg, 0, GETPC());
     switch (reg) {
     case 0:
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        /* VMX non-root operation: bits of the CR0 guest/host mask are not modified (Vol3C 28.3) */
+        t0 = x86_vmx_cr_write(env, 0, t0);
+#endif /* __Use_Original_Qemu (U1304) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
         /* CR0.WP cannot be cleared while CR4.CET = 1 (SDM Vol3 2.5, CR4.CET) */
         if (!(t0 & CR0_WP_MASK) && (env->cr[4] & CR4_CET_MASK)) {
@@ -254,6 +263,10 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
             t0 = (uint32_t)t0;
         }
 #endif /* __Use_Original_Qemu (U1170) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        /* VMX non-root operation: bits of the CR4 guest/host mask are not modified (Vol3C 28.3) */
+        t0 = x86_vmx_cr_write(env, 4, t0);
+#endif /* __Use_Original_Qemu (U1304) */
         if (t0 & cr4_reserved_bits(env)) {
             raise_exception_ra(env, EXCP0D_GPF, GETPC());
         }
@@ -369,6 +382,10 @@ void helper_rdtsc(CPUX86State *env)
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
     cpu_svm_check_intercept_param(env, SVM_EXIT_RDTSC, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: "RDTSC exiting" (Vol3C 28.1.3), after the CR4.TSD #GP */
+    x86_vmx_insn_check(env, VMX_EXIT_RDTSC, GETPC());
+#endif /* __Use_Original_Qemu (U1304) */
 
     // Unicorn: call registered RDTSC hooks
     HOOK_FOREACH_VAR_DECLARE;
@@ -400,6 +417,9 @@ void helper_rdtsc(CPUX86State *env)
 #else /* ours (U905) */
         val = msr_tsc_now(env);         /* IA32_TSC_ADJUST included (U905) */
 #endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        val = x86_vmx_guest_tsc(env, val);  /* TSC offsetting / scaling (Vol3C 28.3) */
+#endif /* __Use_Original_Qemu (U1304) */
         env->regs[R_EAX] = (uint32_t)(val);
         env->regs[R_EDX] = (uint32_t)(val >> 32);
     }
@@ -413,10 +433,17 @@ void helper_rdtscp(CPUX86State *env)
     int skip_rdtscp = 0;
     bool synced = false;
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: "enable RDTSCP" 0 is #UD before any other exception (Vol3C 28.3) */
+    x86_vmx_rdtscp_check(env, GETPC());
+#endif /* __Use_Original_Qemu (U1304) */
     if ((env->cr[4] & CR4_TSD_MASK) && ((env->hflags & HF_CPL_MASK) != 0)) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
     cpu_svm_check_intercept_param(env, SVM_EXIT_RDTSC, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_insn_check(env, 51, GETPC());      /* RDTSCP: "RDTSC exiting" (exit reason 51) */
+#endif /* __Use_Original_Qemu (U1304) */
 
     // Unicorn: call registered RDTSCP hooks
     HOOK_FOREACH_VAR_DECLARE;
@@ -448,6 +475,9 @@ void helper_rdtscp(CPUX86State *env)
 #else /* ours (U905) */
         val = msr_tsc_now(env);         /* IA32_TSC_ADJUST included (U905) */
 #endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        val = x86_vmx_guest_tsc(env, val);  /* TSC offsetting / scaling (Vol3C 28.3) */
+#endif /* __Use_Original_Qemu (U1304) */
         env->regs[R_EAX] = (uint32_t)(val);
         env->regs[R_EDX] = (uint32_t)(val >> 32);
 
@@ -695,6 +725,9 @@ void helper_rdpmc(CPUX86State *env)
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
     cpu_svm_check_intercept_param(env, SVM_EXIT_RDPMC, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_insn_check(env, VMX_EXIT_RDPMC, GETPC());     /* "RDPMC exiting" (Vol3C 28.1.3) */
+#endif /* __Use_Original_Qemu (U1304) */
 
 #if __Use_Original_Qemu == 1 /* original QEMU (U595) */
     /* currently unimplemented */
@@ -1693,6 +1726,12 @@ void helper_wrmsr(CPUX86State *env)
 #endif /* __Use_Original_Qemu (U905) */
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_MSR, 1, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: the MSR bitmaps (Vol3C 28.1.3); an instruction's own access only */
+    if (env->msr_api == 0 && !env->msr_swap) {
+        x86_vmx_msr_check(env, (uint32_t)env->regs[R_ECX], true, VMX_EXIT_WRMSR, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U1304) */
 
     HOOK_FOREACH_VAR_DECLARE;
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
@@ -1723,6 +1762,12 @@ void helper_wrmsr(CPUX86State *env)
 
     if (skip_wrmsr)
         return;
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: WRMSR 79H loads no microcode update; no fault (Vol3C 28.3) */
+    if (env->vmx.nonroot && env->msr_api == 0 && (uint32_t)env->regs[R_ECX] == 0x79) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1304) */
 
     val = ((uint32_t)env->regs[R_EAX]) |
         ((uint64_t)((uint32_t)env->regs[R_EDX]) << 32);
@@ -2340,6 +2385,12 @@ void helper_rdmsr(CPUX86State *env)
 #endif /* __Use_Original_Qemu (U905) */
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_MSR, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* VMX non-root operation: the MSR bitmaps (Vol3C 28.1.3); an instruction's own access only */
+    if (env->msr_api == 0 && !env->msr_swap) {
+        x86_vmx_msr_check(env, (uint32_t)env->regs[R_ECX], false, VMX_EXIT_RDMSR, 0, GETPC());
+    }
+#endif /* __Use_Original_Qemu (U1304) */
 
     HOOK_FOREACH_VAR_DECLARE;
     HOOK_FOREACH(env->uc, hook, UC_HOOK_INSN)
@@ -2399,6 +2450,11 @@ void helper_rdmsr(CPUX86State *env)
     /* NoVmp (ledger U905): MSRs of Table 2-2 the emulator did not model */
     case MSR_IA32_TSC:
         val = msr_tsc_now(env);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        if (env->msr_api == 0) {
+            val = x86_vmx_guest_tsc(env, val);  /* RDMSR 10H: TSC offsetting / scaling (28.3) */
+        }
+#endif /* __Use_Original_Qemu (U1304) */
         break;
     case MSR_TSC_ADJUST:
         val = env->tsc_adjust;
@@ -2804,6 +2860,10 @@ void helper_hlt(CPUX86State *env, int next_eip_addend)
     X86CPU *cpu = env_archcpu(env);
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_HLT, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_insn_check(env, VMX_EXIT_HLT, GETPC());       /* "HLT exiting" (Vol3C 28.1.3) */
+    env->vmx.mwait_wait = 0;
+#endif /* __Use_Original_Qemu (U1304) */
     env->eip += next_eip_addend;
 
     do_hlt(cpu);
@@ -2811,9 +2871,16 @@ void helper_hlt(CPUX86State *env, int next_eip_addend)
 
 void helper_monitor(CPUX86State *env, target_ulong ptr)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* "MONITOR exiting" (Vol3C 28.1.3): before the ECX #GP (28.1.1) */
+    x86_vmx_insn_check(env, VMX_EXIT_MONITOR, GETPC());
+#endif /* __Use_Original_Qemu (U1304) */
     if ((uint32_t)env->regs[R_ECX] != 0) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    env->vmx.monitor_armed = 1;     /* address-range monitoring armed (the MWAIT exit qualification) */
+#endif /* __Use_Original_Qemu (U1304) */
     /* XXX: store address? */
     cpu_svm_check_intercept_param(env, SVM_EXIT_MONITOR, 0, GETPC());
 }
@@ -2823,12 +2890,20 @@ void helper_mwait(CPUX86State *env, int next_eip_addend)
     CPUState *cs = env_cpu(env);
     X86CPU *cpu = env_archcpu(env);
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* "MWAIT exiting" (Vol3C 28.1.3): before the ECX #GP (28.1.1) */
+    x86_vmx_mwait_check(env, GETPC());
+#endif /* __Use_Original_Qemu (U1304) */
     if ((uint32_t)env->regs[R_ECX] != 0) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_MWAIT, 0, GETPC());
     env->eip += next_eip_addend;
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    env->vmx.monitor_armed = 0;
+    env->vmx.mwait_wait = 1;        /* the wait is not the HLT activity state (Vol3C 30.1) */
+#endif /* __Use_Original_Qemu (U1304) */
 
     /* XXX: not complete but not completely erroneous */
     // if (cs->cpu_index != 0 || CPU_NEXT(cs) != NULL) { // TODO
@@ -2844,6 +2919,9 @@ void helper_pause(CPUX86State *env, int next_eip_addend)
     X86CPU *cpu = env_archcpu(env);
 
     cpu_svm_check_intercept_param(env, SVM_EXIT_PAUSE, 0, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_insn_check(env, VMX_EXIT_PAUSE, GETPC());     /* "PAUSE exiting" (Vol3C 28.1.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     env->eip += next_eip_addend;
 
     do_pause(cpu);
@@ -2904,6 +2982,9 @@ void helper_waitpkg(CPUX86State *env, uint32_t src)
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
     tsc = cpu_get_tsc(env) + env->tsc_offset;
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    tsc = x86_vmx_guest_tsc(env, tsc);  /* the deadline is in guest TSC units (Vol3C 28.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     instr_deadline = ((uint64_t)(uint32_t)env->regs[R_EDX] << 32)
                      | (uint32_t)env->regs[R_EAX];
     deadline = instr_deadline;
@@ -3643,6 +3724,13 @@ void helper_loadiwkey(CPUX86State *env, uint32_t src1, uint32_t src2)
     uint32_t keysource = (eax >> 1) & 0xf;
 
     kl_check_cr4(env, ra);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /* "LOADIWKEY exiting" (Vol3C 28.1.3): after the CPL #GP, before the other #GP checks */
+    if ((env->hflags & HF_CPL_MASK) != 0) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+    x86_vmx_loadiwkey_check(env, src1, src2, ra);
+#endif /* __Use_Original_Qemu (U1304) */
     if ((env->hflags & HF_CPL_MASK) != 0 ||
         keysource > 1 ||
         (eax >> 5) != 0 ||
@@ -3790,6 +3878,9 @@ static void user_msr_check(CPUX86State *env, target_ulong msr, bool write, uintp
 target_ulong helper_urdmsr(CPUX86State *env, target_ulong msr)
 {
     user_msr_check(env, msr, false, GETPC());
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_user_msr_check(env, (uint32_t)msr, false, GETPC());     /* Vol3C 28.1.3 */
+#endif /* __Use_Original_Qemu (U1304) */
     return x86_msr_access(env, (uint32_t)msr, 0, false);
 }
 
@@ -3798,6 +3889,9 @@ void helper_uwrmsr(CPUX86State *env, target_ulong msr, target_ulong val)
     uintptr_t ra = GETPC();
 
     user_msr_check(env, msr, true, ra);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_user_msr_check(env, (uint32_t)msr, true, ra);          /* Vol3C 28.1.3 */
+#endif /* __Use_Original_Qemu (U1304) */
     if (msr != MSR_IA32_UARCH_MISC_CTL || (val & ~(target_ulong)1)) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }
@@ -3876,6 +3970,9 @@ void helper_rdmsrlist(CPUX86State *env)
 {
     uintptr_t ra = GETPC();
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_msrlist_entry(env, 0, -1, false, 0, ra);  /* no MSR bitmaps: VM exit (Vol3C 28.1.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     msrlist_entry_check(env, ra);
     while (env->regs[R_ECX]) {
         int n = ctz64(env->regs[R_ECX]);
@@ -3885,6 +3982,9 @@ void helper_rdmsrlist(CPUX86State *env)
         if (a >> 32) {
             raise_exception_ra(env, EXCP0D_GPF, ra);
         }
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        x86_vmx_msrlist_entry(env, (uint32_t)a, n, false, 0, ra);
+#endif /* __Use_Original_Qemu (U1304) */
         v = x86_msr_access(env, (uint32_t)a, 0, false);
         cpu_stq_data_ra(env, env->regs[R_EDI] + 8 * (target_ulong)n, v, ra);
         msrlist_unicorn_stop(env, ra);
@@ -3896,6 +3996,9 @@ void helper_wrmsrlist(CPUX86State *env)
 {
     uintptr_t ra = GETPC();
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_msrlist_entry(env, 0, -1, true, 0, ra);   /* no MSR bitmaps: VM exit (Vol3C 28.1.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     msrlist_entry_check(env, ra);
     while (env->regs[R_ECX]) {
         int n = ctz64(env->regs[R_ECX]);
@@ -3906,6 +4009,9 @@ void helper_wrmsrlist(CPUX86State *env)
             raise_exception_ra(env, EXCP0D_GPF, ra);
         }
         v = cpu_ldq_data_ra(env, env->regs[R_EDI] + 8 * (target_ulong)n, ra);
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+        x86_vmx_msrlist_entry(env, (uint32_t)a, n, true, v, ra);   /* after the data read */
+#endif /* __Use_Original_Qemu (U1304) */
         x86_msr_access(env, (uint32_t)a, v, true);
         env->regs[R_ECX] &= ~(1ULL << n);
     }
@@ -3915,11 +4021,17 @@ void helper_wrmsrlist(CPUX86State *env)
 /* NoVmp (ledger U803): RDMSR r64, imm32 / WRMSRNS imm32, r64 (CPL checked by the translator) */
 target_ulong helper_rdmsr_imm(CPUX86State *env, uint32_t msr)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_msr_check(env, msr, false, VMX_EXIT_RDMSR_IMM, 0, GETPC());     /* Vol3C 28.1.3 */
+#endif /* __Use_Original_Qemu (U1304) */
     return x86_msr_access(env, msr, 0, false);
 }
 
 void helper_wrmsr_imm(CPUX86State *env, uint32_t msr, target_ulong val)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_msr_check(env, msr, true, VMX_EXIT_WRMSRNS_IMM, 0, GETPC());    /* Vol3C 28.1.3 */
+#endif /* __Use_Original_Qemu (U1304) */
     x86_msr_access(env, msr, val, true);
 }
 #endif /* __Use_Original_Qemu (U803) */
@@ -4245,6 +4357,9 @@ void helper_pbndkb(CPUX86State *env)
     uint8_t s[256], o[256], rnd[64], iv[12], wkey[32], aad[176], tag[16];
     int i;
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_pbndkb_check(env, ra);  /* "enable PBNDKB" 0: #UD before any other exception (28.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     if (!pb_canonical(env, in) || !pb_canonical(env, out) || (in & 0xff) || (out & 0xff) ||
         in == out) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
@@ -4530,6 +4645,9 @@ void helper_pconfig(CPUX86State *env)
     uint32_t ctrl;
     X86MktmeKey *e;
 
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    x86_vmx_pconfig_check(env, ra);     /* "enable PCONFIG" #UD, PCONFIG-exiting bitmap (28.1.3, 28.3) */
+#endif /* __Use_Original_Qemu (U1304) */
     if (leaf > 2) {
         raise_exception_ra(env, EXCP0D_GPF, ra);
     }

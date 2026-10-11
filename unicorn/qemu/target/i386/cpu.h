@@ -486,6 +486,13 @@ typedef struct X86VmxState {
     uint32_t inj_ec;
     uint64_t inj_push_rip;
     uint32_t insn_len;
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /*
+     * U1304: address-range monitoring armed by MONITOR / UMONITOR (the MWAIT exit qualification,
+     * Vol3C 30.2.1); the logical processor waits after MWAIT (not the HLT activity state, 30.1)
+     */
+    uint8_t monitor_armed, mwait_wait;
+#endif /* __Use_Original_Qemu (U1304) */
 } X86VmxState;
 
 /* helper_vmx_op operations */
@@ -493,6 +500,33 @@ enum {
     VMX_OP_VMXON, VMX_OP_VMXOFF, VMX_OP_VMCLEAR, VMX_OP_VMPTRLD, VMX_OP_VMPTRST, VMX_OP_VMCALL,
 };
 #endif /* __Use_Original_Qemu (U1302) */
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+/*
+ * NoVmp (ledger U1304, docs/vmx.md): helper_vmx_insn kinds - instructions whose VM exit (Vol3C
+ * 28.1.3) or VMX non-root behaviour (28.3) the translator checks before the instruction acts
+ */
+enum {
+    VMXI_CR = 1,        /* MOV CR / CLTS / LMSW: info = Table 30-3 bits 11:0; val = source */
+    VMXI_DR,            /* MOV DR: info = Table 30-4 */
+    VMXI_INVLPG,        /* val = the linear address */
+    VMXI_INVPCID_UD,    /* "enable INVPCID" = 0: #UD before anything else */
+    VMXI_INVPCID,
+    VMXI_GDTR_IDTR,     /* LGDT / LIDT / SGDT / SIDT: info = Table 30-10 */
+    VMXI_LDTR_TR,       /* LLDT / LTR / SLDT / STR: info = Table 30-11 */
+    VMXI_RDRAND,        /* info = Table 30-12 */
+    VMXI_RDSEED,
+    VMXI_XSAVES,        /* info = Table 30-14 */
+    VMXI_XRSTORS,
+    VMXI_WBINVD,        /* qual = 0 WBINVD, 1 WBNOINVD */
+    VMXI_RDPID,
+    VMXI_UMONITOR,
+    VMXI_UMWAIT,        /* info = Table 30-13 */
+    VMXI_TPAUSE,
+    VMXI_MSRLIST_UD,    /* RDMSRLIST / WRMSRLIST: "enable MSR-list instructions" = 0: #UD */
+    VMXI_WRMSRNS,       /* WRMSRNS (implicit form): exit qualification 1 */
+    VMXI_IO,            /* info = Table 30-8; qual = Table 30-5 bits 6:0; val = the port */
+};
+#endif /* __Use_Original_Qemu (U1304) */
 #if __Use_Original_Qemu != 1 /* ours (U1120) */
 /*
  * NoVmp (ledger U1120, U1129, U1130): the model's IA32_TSE_CAPABILITY (9F1H), UC_X86_FEATURE_TSE.
@@ -3445,6 +3479,32 @@ void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_cod
 #define VMX_EXIT_GETSEC  11
 #define VMX_EXIT_INVD    13
 #define VMX_EXIT_XSETBV  55
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+/* U1304: conditional VM exits and VMX non-root behaviour inside the instruction helpers */
+void x86_vmx_insn_check(CPUX86State *env, uint32_t reason, uintptr_t ra);
+void x86_vmx_rdtscp_check(CPUX86State *env, uintptr_t ra);
+uint64_t x86_vmx_guest_tsc(CPUX86State *env, uint64_t tsc);
+void x86_vmx_msr_check(CPUX86State *env, uint32_t msr, bool write, uint32_t reason,
+                       uint64_t qual, uintptr_t ra);
+void x86_vmx_user_msr_check(CPUX86State *env, uint32_t msr, bool write, uintptr_t ra);
+void x86_vmx_msrlist_entry(CPUX86State *env, uint32_t msr, int n, bool write, uint64_t data,
+                           uintptr_t ra);
+uint64_t x86_vmx_cr_read(CPUX86State *env, int reg, uint64_t val);
+uint64_t x86_vmx_cr_write(CPUX86State *env, int reg, uint64_t val);
+void x86_vmx_mwait_check(CPUX86State *env, uintptr_t ra);
+void x86_vmx_loadiwkey_check(CPUX86State *env, uint32_t src1, uint32_t src2, uintptr_t ra);
+void x86_vmx_pconfig_check(CPUX86State *env, uintptr_t ra);
+void x86_vmx_pbndkb_check(CPUX86State *env, uintptr_t ra);
+#define VMX_EXIT_HLT     12
+#define VMX_EXIT_RDPMC   15
+#define VMX_EXIT_RDTSC   16
+#define VMX_EXIT_MONITOR 39
+#define VMX_EXIT_PAUSE   40
+#define VMX_EXIT_RDMSR   31
+#define VMX_EXIT_WRMSR   32
+#define VMX_EXIT_RDMSR_IMM   84
+#define VMX_EXIT_WRMSRNS_IMM 85
+#endif /* __Use_Original_Qemu (U1304) */
 #endif /* __Use_Original_Qemu (U1301) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {

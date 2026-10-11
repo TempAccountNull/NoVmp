@@ -355,6 +355,15 @@ target_ulong helper_read_eflags(CPUX86State *env)
 
 void helper_clts(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1304) */
+    /*
+     * VMX non-root operation (SDM 092 Vol3C 28.3 CLTS): with bit 3 set in the CR0 guest/host mask
+     * (and clear in the read shadow; set in both was a VM exit) CLTS completes without changing TS
+     */
+    if (env->vmx.nonroot && (env->vmx.cr0_mask & CR0_TS_MASK)) {
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1304) */
     env->cr[0] &= ~CR0_TS_MASK;
     env->hflags &= ~HF_TS_MASK;
 }
