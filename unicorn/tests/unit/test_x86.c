@@ -26242,6 +26242,369 @@ static void test_x86_rc_bounds(void)
 }
 /* ---- end U940-U959 (rc_) ---- */
 /*
+ * ---- NoVmp U1241 (amb2_): AMB-2 (plan 1.J.32, decision A9) - the documented requirements of the
+ * approximate reciprocal / reciprocal-square-root forms, checked without any model ----
+ * amb2_rows: every special-case table row (SDM 092 Vol2C Tables 5-24..5-26, 5-32..5-36; AVX10.2 spec
+ * 361050-007 Tables 7.2 / 7.3) for each of the 14 forms, with RC = RZ and every exception unmasked or
+ * every flag set (MXCSR unchanged, no #XM: "SIMD Floating-Point Exceptions: None"), DAZ / FTZ where the
+ * page names them, the lanes / bits the Operation sections keep or zero. amb2_fp64_bound: the 2^-14
+ * bound of VRCP14PD / VRSQRT14PD on every exponent (no other test covers FP64 model-free).
+ * amb2_tiny: the FP16 / BF16 rows the bound cannot decide (VRCPPH results below 2^-14 are FP16
+ * denormals: faithful and never flushed; BF16 DAZ / FTZ rows on every encoding they cover).
+ */
+typedef struct Amb2Ctx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+} Amb2Ctx;
+
+static void amb2_open(Amb2Ctx *c)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx10(c->uc, UC_X86_AVX10_2));      /* AVX512F, AVX512-FP16 and the BF16 forms */
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* zmm0 := insn(zmm2, zmm1): src = zmm1, s1 = zmm2 (scalar SRC1), zmm0 preset to EEh bytes; no
+   exception, MXCSR unchanged */
+static void amb2_run(Amb2Ctx *c, const uint8_t *insn, const uint8_t *src, const uint8_t *s1, uint32_t mxcsr,
+                     uint8_t *out)
+{
+    uint8_t d0[64];
+    uint32_t mx = mxcsr, mx2 = 0;
+    uc_err err;
+
+    memset(d0, 0xEE, sizeof(d0));
+    OK(uc_mem_write(c->uc, code_start, insn, 6));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM1, src));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM2, s1));
+    OK(uc_reg_write(c->uc, UC_X86_REG_ZMM0, d0));
+    OK(uc_reg_write(c->uc, UC_X86_REG_MXCSR, &mx));
+    c->cap.count = 0;
+    err = uc_emu_start(c->uc, code_start, code_start + 6, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    TEST_CHECK(c->cap.count == 0);
+    TEST_MSG("MXCSR %04X: an exception was raised", mxcsr);
+    OK(uc_reg_read(c->uc, UC_X86_REG_ZMM0, out));
+    OK(uc_reg_read(c->uc, UC_X86_REG_MXCSR, &mx2));
+    TEST_CHECK(mx2 == mxcsr);
+    TEST_MSG("MXCSR %04X -> %04X", mxcsr, mx2);
+}
+
+#define AMB2_ANY 0xFFFFFFFFu        /* the row holds for MXCSR 1F80, 6000 (RZ, unmasked) and 7FBF (flags) */
+
+typedef struct Amb2Row {
+    uint64_t x;
+    uint32_t mx;
+    uint64_t r;
+} Amb2Row;
+
+static const Amb2Row amb2_rcp14s[] = {   /* Table 5-25 and the VRCP14PS / SS description */
+    {0x00000000, AMB2_ANY, 0x7F800000}, {0x80000000, AMB2_ANY, 0xFF800000},     /* 0 -> INF, sign kept */
+    {0x00200000, AMB2_ANY, 0x7F800000}, {0x80200000, AMB2_ANY, 0xFF800000},     /* |X| <= 2^-128 -> INF */
+    {0x00000001, AMB2_ANY, 0x7F800000},
+    {0x7F800000, AMB2_ANY, 0x00000000}, {0xFF800000, AMB2_ANY, 0x80000000},     /* INF -> 0 */
+    {0x3E800000, AMB2_ANY, 0x40800000}, {0xC1000000, AMB2_ANY, 0xBE000000},     /* 2^-n -> 2^n */
+    {0x00400000, AMB2_ANY, 0x7F000000},                                         /* denormal 2^-127 -> 2^127 */
+    {0x00400000, 0x1FC0, 0x7F800000}, {0x80400000, 0x1FC0, 0xFF800000},         /* DAZ: zero -> INF */
+    {0x7F000000, AMB2_ANY, 0x00400000}, {0xFF000000, AMB2_ANY, 0x80400000},     /* 2^127 -> 2^-127 (underflow) */
+    {0x7F000000, 0x9F80, 0x00000000}, {0xFF000000, 0x9F80, 0x80000000},         /* FTZ: zero, operand's sign */
+    {0x7E800001, 0x9F80, 0x00000000}, {0xFE800001, 0x9FC0, 0x80000000},         /* |X| > 2^126 -> underflow */
+    {0x7E800000, 0x9F80, 0x00800000},                                           /* 2^126 -> 2^-126 (normal) */
+    {0x7F800001, AMB2_ANY, 0x7FC00001}, {0xFFC00005, AMB2_ANY, 0xFFC00005},     /* SNaN quieted, QNaN kept */
+};
+static const Amb2Row amb2_rcp14d[] = {   /* Table 5-24 */
+    {0x0000000000000000ULL, AMB2_ANY, 0x7FF0000000000000ULL}, {0x8000000000000000ULL, AMB2_ANY, 0xFFF0000000000000ULL},
+    {0x0004000000000000ULL, AMB2_ANY, 0x7FF0000000000000ULL}, {0x8004000000000000ULL, AMB2_ANY, 0xFFF0000000000000ULL},
+    {0x7FF0000000000000ULL, AMB2_ANY, 0x0000000000000000ULL}, {0xFFF0000000000000ULL, AMB2_ANY, 0x8000000000000000ULL},
+    {0x3FD0000000000000ULL, AMB2_ANY, 0x4010000000000000ULL}, {0xC020000000000000ULL, AMB2_ANY, 0xBFC0000000000000ULL},
+    {0x7FE0000000000000ULL, AMB2_ANY, 0x0008000000000000ULL}, {0x7FE0000000000000ULL, 0x9F80, 0x0000000000000000ULL},
+    {0xFFD0000000000001ULL, 0x8000, 0x8000000000000000ULL},
+    {0x0008000000000000ULL, AMB2_ANY, 0x7FE0000000000000ULL}, {0x0008000000000000ULL, 0x1FC0, 0x7FF0000000000000ULL},
+    {0x7FF0000000000001ULL, AMB2_ANY, 0x7FF8000000000001ULL}, {0xFFF8000000000007ULL, AMB2_ANY, 0xFFF8000000000007ULL},
+};
+static const Amb2Row amb2_rsqrt14s[] = { /* Tables 5-33 / 5-35 */
+    {0x00000000, AMB2_ANY, 0x7F800000}, {0x80000000, AMB2_ANY, 0xFF800000},     /* +0 -> +INF, -0 -> -INF */
+    {0x7F800000, AMB2_ANY, 0x00000000},                                         /* +INF -> +0 */
+    {0xFF800000, AMB2_ANY, 0xFFC00000}, {0xBF800000, AMB2_ANY, 0xFFC00000},     /* X < 0 incl. -INF -> indefinite */
+    {0x80000001, AMB2_ANY, 0xFFC00000}, {0x80000001, 0x1FC0, 0xFF800000},       /* -denormal; DAZ: -0 -> -INF */
+    {0x3E800000, AMB2_ANY, 0x40000000}, {0x4F800000, AMB2_ANY, 0x37800000},     /* 2^-2n -> 2^n */
+    {0x00000002, AMB2_ANY, 0x64800000}, {0x00000002, 0x1FC0, 0x7F800000},       /* denormal 2^-148 -> 2^74 normal */
+    {0x7FA00000, AMB2_ANY, 0x7FE00000}, {0xFFC12345, AMB2_ANY, 0xFFC12345},
+};
+static const Amb2Row amb2_rsqrt14d[] = { /* Tables 5-32 / 5-34 */
+    {0x0000000000000000ULL, AMB2_ANY, 0x7FF0000000000000ULL}, {0x8000000000000000ULL, AMB2_ANY, 0xFFF0000000000000ULL},
+    {0x7FF0000000000000ULL, AMB2_ANY, 0x0000000000000000ULL}, {0xFFF0000000000000ULL, AMB2_ANY, 0xFFF8000000000000ULL},
+    {0xBFF0000000000000ULL, AMB2_ANY, 0xFFF8000000000000ULL}, {0x8000000000000004ULL, 0x1FC0, 0xFFF0000000000000ULL},
+    {0x3FD0000000000000ULL, AMB2_ANY, 0x4000000000000000ULL}, {0x0000000000000004ULL, AMB2_ANY, 0x6170000000000000ULL},
+    {0x7FF0000000000002ULL, AMB2_ANY, 0x7FF8000000000002ULL},
+};
+static const Amb2Row amb2_rcpph[] = {    /* Table 5-26; FP16 denormals never DAZ'd, results never FTZ'd */
+    {0x0000, AMB2_ANY, 0x7C00}, {0x8000, AMB2_ANY, 0xFC00},
+    {0x0100, AMB2_ANY, 0x7C00}, {0x8100, 0x9FC0, 0xFC00},                         /* |X| <= 2^-16 -> INF */
+    {0x7C00, AMB2_ANY, 0x0000}, {0xFC00, AMB2_ANY, 0x8000},
+    {0x0200, 0x9FC0, 0x7800}, {0x7800, 0x9FC0, 0x0200},                           /* 2^-15 <-> 2^15 */
+    {0x3400, AMB2_ANY, 0x4400}, {0xC400, AMB2_ANY, 0xB400},
+    {0x7C01, AMB2_ANY, 0x7E01}, {0xFE11, AMB2_ANY, 0xFE11},
+};
+static const Amb2Row amb2_rsqrtph[] = {  /* Table 5-36 */
+    {0x0000, AMB2_ANY, 0x7C00}, {0x8000, AMB2_ANY, 0xFC00}, {0x7C00, AMB2_ANY, 0x0000},
+    {0xFC00, AMB2_ANY, 0xFE00}, {0xBC00, AMB2_ANY, 0xFE00}, {0x8001, 0x9FC0, 0xFE00},
+    {0x3400, AMB2_ANY, 0x4000}, {0x0001, 0x9FC0, 0x6C00},                         /* 2^-24 -> 2^12 (no DAZ) */
+    {0x7D00, AMB2_ANY, 0x7F00},
+};
+static const Amb2Row amb2_rcpbf[] = {    /* Table 7.2: DAZ, FTZ always */
+    {0x0000, AMB2_ANY, 0x7F80}, {0x8000, AMB2_ANY, 0xFF80}, {0x0001, 0x1F80, 0x7F80}, {0x807F, 0x1F80, 0xFF80},
+    {0x7F80, AMB2_ANY, 0x0000}, {0xFF80, AMB2_ANY, 0x8000},
+    {0x0080, AMB2_ANY, 0x7E80}, {0x7E80, AMB2_ANY, 0x0080},                       /* 2^-126 <-> 2^126 */
+    {0x7F00, 0x1F80, 0x0000}, {0xFF00, 0x1F80, 0x8000}, {0x7E81, 0x1F80, 0x0000},   /* |X| > 2^126: FTZ */
+    {0x3E80, AMB2_ANY, 0x4080}, {0x7F81, AMB2_ANY, 0x7FC1},
+};
+static const Amb2Row amb2_rsqrtbf[] = {  /* Table 7.3 */
+    {0x0000, AMB2_ANY, 0x7F80}, {0x8000, AMB2_ANY, 0xFF80}, {0x0001, 0x1F80, 0x7F80}, {0x8001, 0x1F80, 0xFF80},
+    {0xBF80, AMB2_ANY, 0xFFC0}, {0xFF80, AMB2_ANY, 0xFFC0}, {0x7F80, AMB2_ANY, 0x0000},
+    {0x3E80, AMB2_ANY, 0x4000}, {0x0080, AMB2_ANY, 0x5F00}, {0x7F81, AMB2_ANY, 0x7FC1},
+};
+
+typedef struct Amb2Form {
+    const char *name;
+    uint8_t insn[6];
+    int esz, scalar;
+    uint64_t one;
+    const Amb2Row *rows;
+    size_t n;
+} Amb2Form;
+
+#define AMB2_N(a) (sizeof(a) / sizeof((a)[0]))
+
+static void test_x86_amb2_rows(void)
+{
+    /* dst xmm0, src xmm1 (packed VL128), scalar: xmm0, xmm2, xmm1 */
+    static const Amb2Form f[] = {
+        {"VRCP14PS", {0x62, 0xF2, 0x7D, 0x08, 0x4C, 0xC1}, 4, 0, 0x3F800000, amb2_rcp14s, AMB2_N(amb2_rcp14s)},
+        {"VRCP14SS", {0x62, 0xF2, 0x6D, 0x08, 0x4D, 0xC1}, 4, 1, 0x3F800000, amb2_rcp14s, AMB2_N(amb2_rcp14s)},
+        {"VRCP14PD", {0x62, 0xF2, 0xFD, 0x08, 0x4C, 0xC1}, 8, 0, 0x3FF0000000000000ULL, amb2_rcp14d, AMB2_N(amb2_rcp14d)},
+        {"VRCP14SD", {0x62, 0xF2, 0xED, 0x08, 0x4D, 0xC1}, 8, 1, 0x3FF0000000000000ULL, amb2_rcp14d, AMB2_N(amb2_rcp14d)},
+        {"VRSQRT14PS", {0x62, 0xF2, 0x7D, 0x08, 0x4E, 0xC1}, 4, 0, 0x3F800000, amb2_rsqrt14s, AMB2_N(amb2_rsqrt14s)},
+        {"VRSQRT14SS", {0x62, 0xF2, 0x6D, 0x08, 0x4F, 0xC1}, 4, 1, 0x3F800000, amb2_rsqrt14s, AMB2_N(amb2_rsqrt14s)},
+        {"VRSQRT14PD", {0x62, 0xF2, 0xFD, 0x08, 0x4E, 0xC1}, 8, 0, 0x3FF0000000000000ULL, amb2_rsqrt14d, AMB2_N(amb2_rsqrt14d)},
+        {"VRSQRT14SD", {0x62, 0xF2, 0xED, 0x08, 0x4F, 0xC1}, 8, 1, 0x3FF0000000000000ULL, amb2_rsqrt14d, AMB2_N(amb2_rsqrt14d)},
+        {"VRCPPH", {0x62, 0xF6, 0x7D, 0x08, 0x4C, 0xC1}, 2, 0, 0x3C00, amb2_rcpph, AMB2_N(amb2_rcpph)},
+        {"VRCPSH", {0x62, 0xF6, 0x6D, 0x08, 0x4D, 0xC1}, 2, 1, 0x3C00, amb2_rcpph, AMB2_N(amb2_rcpph)},
+        {"VRSQRTPH", {0x62, 0xF6, 0x7D, 0x08, 0x4E, 0xC1}, 2, 0, 0x3C00, amb2_rsqrtph, AMB2_N(amb2_rsqrtph)},
+        {"VRSQRTSH", {0x62, 0xF6, 0x6D, 0x08, 0x4F, 0xC1}, 2, 1, 0x3C00, amb2_rsqrtph, AMB2_N(amb2_rsqrtph)},
+        {"VRCPBF16", {0x62, 0xF6, 0x7C, 0x08, 0x4C, 0xC1}, 2, 0, 0x3F80, amb2_rcpbf, AMB2_N(amb2_rcpbf)},
+        {"VRSQRTBF16", {0x62, 0xF6, 0x7C, 0x08, 0x4E, 0xC1}, 2, 0, 0x3F80, amb2_rsqrtbf, AMB2_N(amb2_rsqrtbf)},
+    };
+    static const uint32_t any[3] = {0x1F80, 0x6000, 0x7FBF};
+    uint8_t src[64], s1[64], exp[64], out[64];
+    size_t i, k, m, nm;
+    int b, rows = 0;
+    Amb2Ctx c;
+
+    amb2_open(&c);
+    for (i = 0; i < AMB2_N(f); i++) {
+        for (k = 0; k < f[i].n; k++) {
+            const Amb2Row *r = &f[i].rows[k];
+
+            nm = r->mx == AMB2_ANY ? 3 : 1;
+            for (m = 0; m < nm; m++) {
+                uint32_t mx = r->mx == AMB2_ANY ? any[m] : r->mx;
+
+                for (b = 0; b < 64; b++) {
+                    s1[b] = (uint8_t)(b * 7 + 3);
+                    src[b] = 0x5A;
+                }
+                for (b = 0; b < 16; b += f[i].esz) {
+                    memcpy(src + b, b ? &f[i].one : &r->x, f[i].esz);
+                }
+                amb2_run(&c, f[i].insn, src, s1, mx, out);
+                memset(exp, 0, sizeof(exp));                   /* DEST[MAXVL-1:128] := 0 */
+                if (f[i].scalar) {
+                    memcpy(exp, s1, 16);                       /* DEST[127:esz] := SRC1 */
+                } else {
+                    for (b = 0; b < 16; b += f[i].esz) {
+                        memcpy(exp + b, &f[i].one, f[i].esz);  /* the other lanes: 1/1 = 1 */
+                    }
+                }
+                memcpy(exp, &r->r, f[i].esz);
+                TEST_CHECK(memcmp(out, exp, 64) == 0);
+                TEST_MSG("%s row %u MXCSR %04X: X %llX expected %llX", f[i].name, (unsigned)k, mx,
+                         (unsigned long long)r->x, (unsigned long long)r->r);
+                rows++;
+            }
+        }
+    }
+    TEST_CHECK(rows > 300);
+    TEST_MSG("%d row runs", rows);
+    OK(uc_close(c.uc));
+}
+
+/* x = m * 2^e with m in [1, 2) (finite, non-zero; denormals normalised) */
+static double amb2_split(uint64_t x, int *e)
+{
+    uint64_t f = x & 0x000FFFFFFFFFFFFFULL, bits;
+    int ex = (int)((x >> 52) & 0x7FF);
+    double m;
+
+    if (ex == 0) {
+        ex = 1;
+        while (!(f & 0x0010000000000000ULL)) {
+            f <<= 1;
+            ex--;
+        }
+    } else {
+        f |= 0x0010000000000000ULL;
+    }
+    *e = ex - 1023;
+    bits = (f & 0x000FFFFFFFFFFFFFULL) | 0x3FF0000000000000ULL;
+    memcpy(&m, &bits, 8);
+    return m;
+}
+
+static double amb2_scale(double v, int e)
+{
+    for (; e > 0; e--) {
+        v *= 2.0;
+    }
+    for (; e < 0; e++) {
+        v *= 0.5;
+    }
+    return v;
+}
+
+/* VRCP14PD / VRSQRT14PD: |rel err| < 2^-14 on every exponent (positive X; 4 mantissas each, the
+   denormal exponent included); a VRCP14PD result for X > 2^1022 is a non-zero denormal (no FTZ),
+   every VRSQRT14PD result is normal ("Any denormal -> Normal") */
+static void test_x86_amb2_fp64_bound(void)
+{
+    static const uint8_t vrcp14pd[] = {0x62, 0xF2, 0xFD, 0x48, 0x4C, 0xC1};
+    static const uint8_t vrsqrt14pd[] = {0x62, 0xF2, 0xFD, 0x48, 0x4E, 0xC1};
+    const double b = 1.0 / 16384.0;
+    uint64_t in[8], res[8], s1[8] = {0}, lcg = 0xA3B2C1D0E5F60718ULL, bad = 0, n = 0, badn = 0;
+    int ex, op, i, er, ex2;
+    Amb2Ctx c;
+
+    amb2_open(&c);
+    for (op = 0; op < 2; op++) {
+        for (ex = 0; ex < 2047; ex += 2) {         /* 8 lanes: 2 exponents x 4 mantissas */
+            for (i = 0; i < 8; i++) {
+                lcg = lcg * 6364136223846793005ULL + 1442695040888963407ULL;
+                in[i] = ((uint64_t)((ex + (i >> 2)) > 2046 ? 2046 : ex + (i >> 2)) << 52) |
+                        ((i & 3) == 0 ? (ex ? 0 : 1) : (i & 3) == 1 ? 0x000FFFFFFFFFFFFFULL : (lcg >> 12));
+            }
+            amb2_run(&c, op ? vrsqrt14pd : vrcp14pd, (const uint8_t *)in, (const uint8_t *)s1, 0x1F80,
+                     (uint8_t *)res);
+            for (i = 0; i < 8; i++) {
+                double mx = amb2_split(in[i], &ex2), mr, q;
+                int rexp = (int)((res[i] >> 52) & 0x7FF);
+
+                if ((in[i] >> 52) == 0 && op == 0 && in[i] <= 0x0004000000000000ULL) {
+                    continue;                           /* |X| <= 2^-1024 -> INF (Table 5-24, amb2_rows) */
+                }
+                n++;
+                if ((res[i] >> 63) || rexp == 0x7FF || (res[i] << 1) == 0 || (op && rexp == 0)) {
+                    badn++;                             /* sign / INF / zero / a denormal rsqrt result */
+                    continue;
+                }
+                mr = amb2_split(res[i], &er);
+                q = op ? amb2_scale(mr * mr * mx, 2 * er + ex2) : amb2_scale(mr * mx, er + ex2);
+                if (op ? !(q > (1.0 - b) * (1.0 - b) && q < (1.0 + b) * (1.0 + b)) : !(q - 1.0 < b && 1.0 - q < b)) {
+                    bad++;
+                }
+            }
+        }
+    }
+    TEST_CHECK(bad == 0 && badn == 0 && n > 8000);
+    TEST_MSG("%llu of %llu results outside the bound, %llu of the wrong class", (unsigned long long)bad,
+             (unsigned long long)n, (unsigned long long)badn);
+    OK(uc_close(c.uc));
+}
+
+/* the rows the bound cannot decide, on every encoding they cover: VRCPPH |X| in (2^14, 65504] (1/X an
+   FP16 denormal, no FP16 value meets 2^-11 + 2^-14: a non-zero neighbour of 1/X of X's sign, never
+   flushed, the same with MXCSR.FTZ/DAZ), VRSQRTPH: every denormal -> a normal result, every
+   negative -> indefinite; VRCPBF16 |X| > 2^126 -> zero (FTZ), |X| < 2^-126 -> INF (DAZ);
+   VRSQRTBF16 -2^-126 < X <= 0 -> -INF, every other negative -> indefinite */
+static void test_x86_amb2_tiny(void)
+{
+    static const uint8_t vrcpph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4C, 0xC1}, vrsqrtph[] = {0x62, 0xF6, 0x7D, 0x48, 0x4E, 0xC1};
+    static const uint8_t vrcpbf[] = {0x62, 0xF6, 0x7C, 0x48, 0x4C, 0xC1}, vrsqrtbf[] = {0x62, 0xF6, 0x7C, 0x48, 0x4E, 0xC1};
+    uint16_t in[32], r0[32], r1[32], s1[32] = {0};
+    uint32_t x;
+    uint64_t bad[6] = {0}, cnt[6] = {0};
+    int i, t;
+    Amb2Ctx c;
+
+    amb2_open(&c);
+    for (x = 0; x < 0x10000; x += 32) {
+        for (i = 0; i < 32; i++) {
+            in[i] = (uint16_t)(x + i);
+        }
+        amb2_run(&c, vrcpph, (const uint8_t *)in, (const uint8_t *)s1, 0x1F80, (uint8_t *)r0);
+        amb2_run(&c, vrcpph, (const uint8_t *)in, (const uint8_t *)s1, 0x9FC0, (uint8_t *)r1);
+        for (i = 0; i < 32; i++) {
+            uint32_t a = in[i] & 0x7FFF, e = a >> 10, m, k, lo, hi;
+
+            if (a <= 0x7400 || e == 31) {
+                continue;                               /* |X| <= 2^14, INF, NaN */
+            }
+            m = (a & 0x3FF) | 0x400;                    /* X = m * 2^(e - 25), e - 25 >= 4 */
+            k = e - 25;
+            lo = (1u << (24 - k)) / m;
+            hi = lo + (((1u << (24 - k)) % m) != 0);
+            cnt[0]++;
+            if (r0[i] != r1[i] || (r0[i] & 0x8000) != (in[i] & 0x8000) ||
+                ((r0[i] & 0x7FFF) != lo && (r0[i] & 0x7FFF) != hi) || (r0[i] & 0x7FFF) == 0) {
+                bad[0]++;
+            }
+        }
+        amb2_run(&c, vrsqrtph, (const uint8_t *)in, (const uint8_t *)s1, 0x9FC0, (uint8_t *)r0);
+        for (i = 0; i < 32; i++) {
+            uint32_t e = (in[i] >> 10) & 31, re = (r0[i] >> 10) & 31;
+
+            if ((in[i] & 0x8000) && (in[i] & 0x7FFF) && !((in[i] & 0x7FFF) > 0x7C00)) {
+                cnt[1]++;
+                bad[1] += r0[i] != 0xFE00;              /* X < 0 including -INF, -denormal */
+            } else if (!(in[i] & 0x8000) && e == 0 && (in[i] & 0x3FF)) {
+                cnt[1]++;
+                bad[1] += !(re != 0 && re != 31 && !(r0[i] & 0x8000));     /* denormal -> normal */
+            }
+        }
+        amb2_run(&c, vrcpbf, (const uint8_t *)in, (const uint8_t *)s1, 0x1F80, (uint8_t *)r0);
+        amb2_run(&c, vrsqrtbf, (const uint8_t *)in, (const uint8_t *)s1, 0x1F80, (uint8_t *)r1);
+        for (i = 0; i < 32; i++) {
+            uint32_t a = in[i] & 0x7FFF, s = in[i] & 0x8000;
+
+            if (a > 0x7E80 && a < 0x7F80) {             /* 2^126 < |X| < INF */
+                cnt[2]++;
+                bad[2] += r0[i] != s;
+            }
+            if (a < 0x0080) {                           /* |X| < 2^-126, zeros included */
+                cnt[3]++;
+                bad[3] += r0[i] != (s | 0x7F80);
+                cnt[4]++;
+                bad[4] += r1[i] != (s | 0x7F80);
+            } else if (s && a <= 0x7F80) {              /* X <= -2^-126, -INF included */
+                cnt[5]++;
+                bad[5] += r1[i] != 0xFFC0;
+            }
+        }
+    }
+    for (t = 0; t < 6; t++) {
+        TEST_CHECK(bad[t] == 0 && cnt[t] > 0);
+        TEST_MSG("group %d: %llu of %llu wrong", t, (unsigned long long)bad[t], (unsigned long long)cnt[t]);
+    }
+    TEST_CHECK(cnt[0] == 4094 && cnt[2] == 2 * 255 && cnt[3] == 256);
+    TEST_MSG("counts %llu %llu %llu", (unsigned long long)cnt[0], (unsigned long long)cnt[2], (unsigned long long)cnt[3]);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1241 (amb2_) ---- */
+/*
  * ---- NoVmp U1060-U1069 (integ_): integration of fix5 / sysmsr / xeonphi / apic / rcp14 / pconfig ----
  */
 /* an engine with the MAX model in 64-bit mode */
@@ -30138,6 +30501,9 @@ TEST_LIST = {
     {"test_x86_rc_bf16", test_x86_rc_bf16},
     {"test_x86_rc_legacy", test_x86_rc_legacy},
     {"test_x86_rc_bounds", test_x86_rc_bounds},
+    {"test_x86_amb2_rows", test_x86_amb2_rows},
+    {"test_x86_amb2_fp64_bound", test_x86_amb2_fp64_bound},
+    {"test_x86_amb2_tiny", test_x86_amb2_tiny},
     {"test_x86_ig_tme_api", test_x86_ig_tme_api},
     {"test_x86_ig_apic_api", test_x86_ig_apic_api},
     {"test_x86_ig_context_msr", test_x86_ig_context_msr},
