@@ -34751,6 +34751,66 @@ static void test_x86_vmx_sgx_mtf(void)
     sgx_env_close(&e);
 }
 
+/*
+ * U1316: Intel SGX and APIC virtualization (SDM 092 Vol3D 42.5.3 p. 42-4). APIC-access page at
+ * SGX_DATA + 19000H (TPR shadow, virtual-APIC page SGX_DATA + 18000H). From inside the enclave, a
+ * read outside ELRANGE of the APIC-access page: APIC-access VM exit 44 | bit 27 after the AEX
+ * (qualification bits 11:0 cleared: 0, RIP = AEP). An ELRANGE page mapped to the APIC-access page
+ * (an explicit enclave access): #PF (exception bitmap: exit 0 | bit 27, qualification = the page
+ * address; CR2 unchanged), not an APIC-access VM exit. ENCLS EBLOCK (CPL-0 guest) with its EPC operand on the
+ * APIC-access page: #PF, not an APIC-access VM exit.
+ */
+static void vmx_sgx_apicacc(PcCtx *p)
+{
+    vmx_w(p, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 31));
+    vmx_w(p, 0x401e, 1u << 0);
+    vmx_w(p, 0x2012, SGX_DATA + 0x18000);
+    vmx_w(p, 0x2014, SGX_DATA + 0x19000);
+    vmx_w(p, 0x401c, 0);
+}
+
+static void test_x86_vmx_sgx_apic(void)
+{
+    SgxEnv e;
+    PcCtx p, c;
+    uint64_t fl, r, info, q;
+
+    vmx_sgx_open(&e, &p, 0);
+    vmx_sgx_apicacc(&p);
+    vmx_w(&p, 0x4004, 1u << 14);
+    vmx_sgx_eenter(&p, 1, 6, SGX_DATA + 0x19080);
+    TEST_CHECK(vmx_r(&p, 0x4402) == ((1u << 27) | 44) && vmx_r(&p, 0x6400) == 0 &&
+               vmx_r(&p, 0x681e) == SGX_AEP && sgx_cssa(&e) == 1);
+    TEST_MSG("exit %llx qual %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x6400));
+    sgx_set_cssa(&e, 0);
+    sgx_map(&e, SGXV_BASE + 0x6000, SGX_DATA + 0x19000);
+    pc_set(&p, UC_X86_REG_CR2, 0x1234);
+    vmx_sgx_eenter(&p, 0, 6, SGXV_BASE + 0x6080);
+    TEST_CHECK(pc_get(&p, UC_X86_REG_CR2) == 0x1234);              /* 30.1: CR2 unchanged */
+    TEST_CHECK(vmx_r(&p, 0x4402) == (1u << 27) && (vmx_r(&p, 0x4404) & 0x800007ffu) == 0x8000030eu &&
+               vmx_r(&p, 0x6400) == SGXV_BASE + 0x6000);
+    TEST_MSG("exit %llx info %llx qual %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x4404), (unsigned long long)vmx_r(&p, 0x6400));
+    sgx_env_close(&e);
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_SGX);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 0);
+    vmx_w(&c, 0x2012, VMX_VAPIC);
+    vmx_w(&c, 0x2014, VMX_APICACC);
+    vmx_w(&c, 0x4004, 1u << 14);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_resume_regs(&c, "\x0f\x01\xcf", 3, 9, VMX_APICACC, 0, 0);       /* EBLOCK [RCX] */
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    q = vmx_r(&c, 0x6400);
+    TEST_CHECK(r == 0 && (info & 0x800007ffu) == 0x8000030eu && q == VMX_APICACC);
+    TEST_MSG("exit %llx info %llx qual %llx", (unsigned long long)r, (unsigned long long)info,
+             (unsigned long long)q);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35201,4 +35261,5 @@ TEST_LIST = {
     {"test_x86_vmx_sgx_enc_events", test_x86_vmx_sgx_enc_events},
     {"test_x86_vmx_sgx_exit", test_x86_vmx_sgx_exit},
     {"test_x86_vmx_sgx_mtf", test_x86_vmx_sgx_mtf},
+    {"test_x86_vmx_sgx_apic", test_x86_vmx_sgx_apic},
     {NULL, NULL}};

@@ -4261,8 +4261,19 @@ hwaddr x86_vmx_apic_access(CPUX86State *env, uint64_t la, hwaddr pa, int size, i
         (pa & ~0xfffull) != (v->apic_access & ~0xfffull)) {
         return pa;
     }
+    /*
+     * U1316: Intel SGX (Vol3D 42.5.3 p. 42-4). In enclave mode an access into ELRANGE is an explicit
+     * enclave access (the SGX access control makes it a #PF: the APIC-access page is not EPC) and an
+     * instruction fetch outside ELRANGE is a #GP(0) - neither is checked here; any other access from
+     * inside an enclave that would be virtualized causes an APIC-access VM exit instead.
+     */
+    if (env->sgx_enclave_mode &&
+        (access_type == MMU_INST_FETCH || la - env->sgx_elbase < env->sgx_elsize)) {
+        return pa;
+    }
     type = access_type == MMU_INST_FETCH ? 2 : v->delivering ? 3 : (write ? 1 : 0);
-    ok = type != 2 && (v->proc & PROC_TPR_SHADOW) && size <= 4 && (off & 0xf) + size <= 4;
+    ok = type != 2 && (v->proc & PROC_TPR_SHADOW) && size <= 4 && (off & 0xf) + size <= 4 &&
+         !env->sgx_enclave_mode;
     if (ok && v->apic_write_pending && (!write || v->apic_write_off != off || v->apic_write_size != size)) {
         ok = false;                     /* the operation already virtualized a write */
     }

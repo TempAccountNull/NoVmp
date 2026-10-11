@@ -942,6 +942,13 @@ do_check_protect_pse36:
     paddr = get_hphys(cs, pte + page_offset, is_write1, &prot);
 #if __Use_Original_Qemu != 1 /* ours (U1307) */
     /* VMX "virtualize APIC accesses": the APIC-access page (vmx_helper.c, Vol3C 32.4) */
+#if __Use_Original_Qemu != 1 /* ours (U1316) */
+    /*
+     * U1316: not for the EPC operand of an SGX leaf (sgx_xlate) - an explicit enclave access that
+     * overlaps the APIC-access page is a #PF, which the leaf's EPC check raises (Vol3D 42.5.3)
+     */
+    if (!sgx_xlate)
+#endif /* __Use_Original_Qemu (U1316) */
     paddr = x86_vmx_apic_access(env, lam_va, paddr, size, is_write1, &prot);
 #endif /* __Use_Original_Qemu (U1307) */
 
