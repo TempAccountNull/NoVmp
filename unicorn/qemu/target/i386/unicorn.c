@@ -2716,6 +2716,32 @@ static uc_err x86_tse_key(struct uc_struct *uc, int keyid, struct uc_x86_mktme_k
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1120) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+/* NoVmp (ledger U1261): UC_CTL_X86_SGX_EPCM - the EPCM entry of the EPC page containing 'pa' */
+static uc_err x86_sgx_epcm(struct uc_struct *uc, uint64_t pa, struct uc_x86_sgx_epcm *e)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+    const X86SgxEpcm *m;
+
+    if (!env->sgx || pa < env->sgx->epc_base || pa - env->sgx->epc_base >= env->sgx->epc_size) {
+        return UC_ERR_ARG;
+    }
+    m = &env->sgx->epcm[(pa - env->sgx->epc_base) >> 12];
+    memset(e, 0, sizeof(*e));
+    e->valid = m->valid;
+    e->r = m->r;
+    e->w = m->w;
+    e->x = m->x;
+    e->pt = m->pt;
+    e->blocked = m->blocked;
+    e->pending = m->pending;
+    e->modified = m->modified;
+    e->pr = m->pr;
+    e->enclavesecs = m->secs;
+    e->enclaveaddress = m->addr;
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U1128) */
 /* NoVmp (ledger U1128): UC_CTL_X86_ITD_CLASS - the host-set Thread Director classification */
 static uc_err x86_itd_class(struct uc_struct *uc, int set, int *cls)
@@ -2773,6 +2799,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1128) */
     uc->x86_itd_class = x86_itd_class;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    uc->x86_sgx_epcm = x86_sgx_epcm;
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

@@ -101,6 +101,33 @@ typedef struct uc_x86_mktme_key {
     uint8_t tweak_key[32];  // mode KEY: the tweak key, same sizes
 } uc_x86_mktme_key;
 
+// The SGX platform configuration, UC_CTL_X86_SGX_PLATFORM (NoVmp ledger U1261, docs/sgx.md).
+// Every key / SVN field is a platform-specific value the SDM does not give (our placeholder).
+typedef struct uc_x86_sgx_platform {
+    uint64_t epc_base;          // EPC section base (physical, 4 KB aligned)
+    uint64_t epc_size;          // EPC section size in bytes (4 KB multiple), 0 = no EPC section
+    uint8_t root_key[16];       // the model's derivekey root key (AES-CMAC key, docs/sgx.md 3)
+    uint8_t cpusvn[16];         // CR_CPUSVN
+    uint8_t owner_epoch[16];    // CR_SGXOWNEREPOCH
+    uint8_t seal_fuses[16];     // CR_SEAL_FUSES
+    uint8_t base_pk[16];        // CR_BASE_PK (EWB / ELDB / ELDU paging key)
+    uint8_t report_keyid[32];   // CR_REPORT_KEYID
+    uint8_t le_pubkey_hash[32]; // reset value of IA32_SGXLEPUBKEYHASH0-3 (byte 0 = bits 7:0 of 8CH)
+    uint8_t svn_sinit;          // IA32_SGX_SVN_STATUS[23:16] (reported with SMX only)
+    uint8_t reserved[7];        // must be 0
+} uc_x86_sgx_platform;
+
+// One EPCM entry, UC_CTL_X86_SGX_EPCM (NoVmp ledger U1261; Vol3D Table 38-28). enclavesecs is
+// the model's SECS identifier: the physical address of the enclave's SECS page.
+typedef struct uc_x86_sgx_epcm {
+    uint8_t valid, r, w, x;
+    uint8_t pt;                 // PT_SECS 0, PT_TCS 1, PT_REG 2, PT_VA 3, PT_TRIM 4
+    uint8_t blocked, pending, modified, pr;
+    uint8_t reserved[7];
+    uint64_t enclavesecs;
+    uint64_t enclaveaddress;
+} uc_x86_sgx_epcm;
+
 typedef struct uc_x86_mmr {
     uint16_t selector; /* not used by GDTR and IDTR */
     uint64_t base;     /* handle 32 or 64 bit CPUs */

@@ -931,6 +931,21 @@ typedef enum uc_control_type {
     // IA32_HRESET_ENABLE[0]), clearing IA32_HW_FEEDBACK_THREAD_CONFIG[0] and a CPU reset clear
     // the history; a uc_context carries it. Write: @args = (int cls); Read: @args = (int *cls)
     UC_CTL_X86_ITD_CLASS,
+    // x86 only (NoVmp U1261, docs/sgx.md): the SGX platform of UC_X86_FEATURE_SGX - the EPC
+    // section (processor reserved memory: base and size, 4 KB aligned; size 0 = no EPC section,
+    // CPUID.12H.2 invalid) and the platform-specific values the SDM leaves to the platform:
+    // the model's key-derivation root key, CR_CPUSVN, CR_SGXOWNEREPOCH, CR_SEAL_FUSES, CR_BASE_PK,
+    // CR_REPORT_KEYID, the reset value of IA32_SGXLEPUBKEYHASH0-3 ("the digest of Intel's
+    // signing key" - not given by the SDM) and IA32_SGX_SVN_STATUS.SGX_SVN_SINIT. All default
+    // to 0; none is an Intel value. Write: before the engine is initialised (UC_ERR_ARG after,
+    // or with a misaligned EPC); the engine maps the EPC as RAM at init (the call that
+    // initialises the engine fails with UC_ERR_ARG when the range is above MAXPHYADDR). Read:
+    // any time. Write: @args = (const uc_x86_sgx_platform *); Read: @args = (uc_x86_sgx_platform *)
+    UC_CTL_X86_SGX_PLATFORM,
+    // x86 only (NoVmp U1261): the EPCM entry of the EPC page that contains physical address
+    // 'pa' (not software-visible on hardware; for tests and tools), with UC_X86_FEATURE_SGX and
+    // an EPC only (UC_ERR_ARG otherwise). Read: @args = (uint64_t pa, uc_x86_sgx_epcm *)
+    UC_CTL_X86_SGX_EPCM,
 } uc_control_type;
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)
@@ -938,6 +953,7 @@ typedef enum uc_control_type {
 #define UC_X86_FEATURE_ITD 2       // Intel Thread Director per-thread state and history (U1128)
 #define UC_X86_FEATURE_FRED 4      // FRED transitions, CR4.FRED, the FRED MSRs (U1170)
 #define UC_X86_FEATURE_LAM 8       // linear-address masking: CPUID LAM, CR3[62:61], CR4[28] (U1180)
+#define UC_X86_FEATURE_SGX 16      // Intel SGX: CPUID SGX/SGX_LC/12H, EPC, ENCLS, ENCLU (U1261)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)
@@ -1146,6 +1162,12 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_ITD_CLASS, 1), (int)(cls))
 #define uc_ctl_get_x86_itd_class(uc, cls)                                      \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_ITD_CLASS, 1), (int *)(cls))
+#define uc_ctl_set_x86_sgx_platform(uc, cfg)                                   \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SGX_PLATFORM, 1), (cfg))
+#define uc_ctl_get_x86_sgx_platform(uc, cfg)                                   \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SGX_PLATFORM, 1), (cfg))
+#define uc_ctl_get_x86_sgx_epcm(uc, pa, entry)                                 \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SGX_EPCM, 2), (uint64_t)(pa), (entry))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

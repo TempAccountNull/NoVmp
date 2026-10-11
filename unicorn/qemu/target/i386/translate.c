@@ -9494,6 +9494,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (check_cpl0(s)) {
             gen_svm_check_intercept(s, (b & 2) ? SVM_EXIT_INVD : SVM_EXIT_WBINVD);
             /* nothing to do */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+            /* SGX: INVD #GP(0) once processor reserved memory protections are active (U1261) */
+            if (b == 0x108 && (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX)) {
+                gen_update_cc_op(s);
+                gen_update_eip_cur(s);
+                gen_helper_sgx_invd(tcg_ctx, cpu_env);
+            }
+#endif /* __Use_Original_Qemu (U1261) */
         }
         break;
     case 0x63: /* arpl or movslS (x86_64) */

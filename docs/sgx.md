@@ -32,20 +32,20 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Requirement | Source | Code | Status |
 |---|---|---|---|
-| Opt-in: `UC_CTL_X86_FEATURES` bit `UC_X86_FEATURE_SGX` = 16 (default off; the existing models are unchanged) | our API (U1120 pattern) | `include/unicorn/unicorn.h`, `uc.c`, `qemu/target/i386/cpu.c` | plan |
-| CPUID.(07H,0):EBX.SGX[2], ECX.SGX_LC[30] | 1 Table 21-19 p.21-26, Table 21-20 p.21-28; 3D 37.7 p.37-4 | `cpu.c` (features after the TCG filter) | plan |
-| CPUID.12H valid with 07H.0:EBX.SGX and MAX_LEAF >= 12H; sub-leaf 0: SGX1[0], SGX2[1], EVERIFYREPORT2[7], EUPDATESVN[10], EDECCSSA[11], MISCSELECT (EBX), MAX_ENCLAVE_SIZE_NOT_64 / _64 (EDX) | 1 Table 21-47 p.21-52 | `cpu.c` leaf 12H | plan |
-| CPUID.12H.1: ECREATE-settable SECS.ATTRIBUTES[127:0] (EAX..EDX) | 1 Table 21-48 p.21-53; 3D 38.7.1 Table 38-3 p.38-5 | `cpu.c` | plan |
-| CPUID.12H.n>=2: EPC sections (type 1: base 51:12, size 51:12, property), type 0 = invalid (all zero) | 1 Table 21-49 p.21-53..21-54; 3D 37.7.2 p.37-5 | `cpu.c` | plan |
-| Leaf 12H content depends on enablement ("Valid*") | 3D Table 37-3 p.37-4..37-5 | `cpu.c` | plan |
+| Opt-in: `UC_CTL_X86_FEATURES` bit `UC_X86_FEATURE_SGX` = 16 (default off; the existing models are unchanged) | our API (U1120 pattern) | `include/unicorn/unicorn.h`, `uc.c`, `qemu/target/i386/cpu.c` | impl (U1261) |
+| CPUID.(07H,0):EBX.SGX[2], ECX.SGX_LC[30] | 1 Table 21-19 p.21-26, Table 21-20 p.21-28; 3D 37.7 p.37-4 | `cpu.c` (features after the TCG filter) | impl (U1261) |
+| CPUID.12H valid with 07H.0:EBX.SGX and MAX_LEAF >= 12H; sub-leaf 0: SGX1[0], SGX2[1], EVERIFYREPORT2[7], EUPDATESVN[10], EDECCSSA[11], MISCSELECT (EBX), MAX_ENCLAVE_SIZE_NOT_64 / _64 (EDX) | 1 Table 21-47 p.21-52 | `cpu.c` leaf 12H | impl (U1261) |
+| CPUID.12H.1: ECREATE-settable SECS.ATTRIBUTES[127:0] (EAX..EDX) | 1 Table 21-48 p.21-53; 3D 38.7.1 Table 38-3 p.38-5 | `cpu.c` | impl (U1261) |
+| CPUID.12H.n>=2: EPC sections (type 1: base 51:12, size 51:12, property), type 0 = invalid (all zero) | 1 Table 21-49 p.21-53..21-54; 3D 37.7.2 p.37-5 | `cpu.c` | impl (U1261) |
+| Leaf 12H content depends on enablement ("Valid*") | 3D Table 37-3 p.37-4..37-5 | `cpu.c` | impl (U1261): same values in every state (**question**) |
 | IA32_FEATURE_CONTROL (3AH): LOCK[0], LE_WR (SGX launch control enable)[17], SGX_ENABLE[18]; R/WL; exists if any enumeration condition holds | 4 Table 2-2 3AH p.2-5..2-6; 3D 37.7.1 p.37-4, 42.2 p.42-1; 2D Table 7-1 p.7-1..7-2 | `misc_helper.c` msr_present / msr_write_ok (U906, already conditional on the SGX bits) | impl (U906) |
 | ENCLS / ENCLU: #UD without SGX1, #GP(0) unless LOCK = SGX_ENABLE = 1 | 3D Table 37-3, ENCLS p.41-8..41-9, ENCLU p.41-10..41-12 | `sgx_model.c` | plan |
-| IA32_SGXLEPUBKEYHASH0-3 (8CH-8FH): read if SGX1 and SGX_LC; write if SGX1, FEATURE_CONTROL[17] = 1 and [0] = 1; reset value "the digest of Intel's signing key" | 4 Table 2-2 8CH-8FH p.2-11; 3D 39.1.4 p.39-3, 42.2.2 p.42-1 | `misc_helper.c`, `sgx_model.c` | plan; reset value **ph** (host-provided, default 0) |
+| IA32_SGXLEPUBKEYHASH0-3 (8CH-8FH): read if SGX1 and SGX_LC; write if SGX1, FEATURE_CONTROL[17] = 1 and [0] = 1; reset value "the digest of Intel's signing key" | 4 Table 2-2 8CH-8FH p.2-11; 3D 39.1.4 p.39-3, 42.2.2 p.42-1 | `misc_helper.c`, `sgx_model.c` | impl (U1261); reset value **ph** (host-provided, default 0) |
 | IA32_SGXLEPUBKEYHASH4/5 (90H/91H, "bits 383:256 of the SHA256 digest") | 4 Table 2-2 90H-91H p.2-11..2-12 (also 093) | - | **question** (a 256-bit digest has no bits 383:256; Vol3D uses a 256-bit hash). Not modelled: #GP(0) |
-| IA32_SGX_SVN_STATUS (500H, R/O): Lock[0] = a non-faulting SGX instruction was executed; SGX_SVN_SINIT 23:16 (only with SMX) | 4 Table 2-2 500H p.2-49; 3D 42.11.3 Table 42-2 p.42-11 | `misc_helper.c`, `sgx_model.c` | plan; SVN threshold **ph** (host-provided, default 0) |
-| INVD: #GP(0) once processor reserved memory protections are activated | 3D 39.6.5 p.39-15; 2A INVD (U1093 row in docs/quirks.md) | `misc_helper.c` helper_invd | plan |
-| EPC: processor reserved memory, base/size configured by the platform ("BIOS"); the host configures it (`UC_CTL_X86_SGX_PLATFORM`) and the model maps the RAM at engine init | 3D 37.5 p.37-2, 39.5 p.39-10 | `uc.c`, `sgx_model.c` | plan |
-| EPCM: one entry per EPC page (VALID, R, W, X, PT, ENCLAVESECS, ENCLAVEADDRESS, BLOCKED, PENDING, MODIFIED, PR) | 3D 37.5.1 p.37-3, 38.20 Table 38-28 p.38-18 | `sgx_model.c` (outside the reset area: survives CPU reset, 42.9 p.42-10) | plan |
+| IA32_SGX_SVN_STATUS (500H, R/O): Lock[0] = a non-faulting SGX instruction was executed; SGX_SVN_SINIT 23:16 (only with SMX) | 4 Table 2-2 500H p.2-49; 3D 42.11.3 Table 42-2 p.42-11 | `misc_helper.c`, `sgx_model.c` | impl (U1261, Lock set by the leaves later); SVN threshold **ph** (host-provided, default 0) |
+| INVD: #GP(0) once processor reserved memory protections are activated | 3D 39.6.5 p.39-15; 2A INVD (U1093 row in docs/quirks.md) | `misc_helper.c` helper_invd | impl (U1261, activation rule: our choice) |
+| EPC: processor reserved memory, base/size configured by the platform ("BIOS"); the host configures it (`UC_CTL_X86_SGX_PLATFORM`) and the model maps the RAM at engine init | 3D 37.5 p.37-2, 39.5 p.39-10 | `uc.c`, `sgx_model.c` | impl (U1261) |
+| EPCM: one entry per EPC page (VALID, R, W, X, PT, ENCLAVESECS, ENCLAVEADDRESS, BLOCKED, PENDING, MODIFIED, PR) | 3D 37.5.1 p.37-3, 38.20 Table 38-28 p.38-18 | `sgx_model.c` (outside the reset area: survives CPU reset, 42.9 p.42-10) | impl (U1261: state; access control later) |
 
 ### 1.2 Data structures
 
@@ -141,12 +141,52 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 ## 2. Design
 
-(Filled in by the implementation commits.)
+### 2.1 Opt-in and API (U1261)
+- `uc_ctl_set_x86_features(uc, UC_X86_FEATURE_SGX)` (bit value **16**, the lowest free bit after
+  TSE 1, ITD 2, FRED 4, LAM 8; coordinated with the VMX agent, which takes bits from the top of the
+  free range) before the engine is initialised. Default off: the CPU model, CPUID, the MSR list and
+  ENCLS / ENCLU (#UD) are unchanged.
+- `uc_ctl_set_x86_sgx_platform(uc, &cfg)` (`UC_CTL_X86_SGX_PLATFORM`, before init): the EPC section
+  (base, size; 4 KB aligned) and the platform-specific values the SDM does not give - the model's
+  key-derivation root key, CR_CPUSVN, CR_SGXOWNEREPOCH, CR_SEAL_FUSES, CR_BASE_PK, CR_REPORT_KEYID,
+  the IA32_SGXLEPUBKEYHASH reset value, IA32_SGX_SVN_STATUS.SGX_SVN_SINIT. All default to zero.
+  Reading returns the effective configuration (an EPC beyond MAXPHYADDR reads back with size 0).
+- `uc_ctl_get_x86_sgx_epcm(uc, pa, &e)` (`UC_CTL_X86_SGX_EPCM`): the EPCM entry of an EPC page (not
+  software-visible on hardware; for tests and tools).
+- The engine maps the EPC section as RAM at init (uc.c `x86_sgx_map_epc`). The host reads and
+  writes it in plaintext through `uc_mem_read` / `uc_mem_write` (the hardware view); guest software
+  is subject to the SGX access control.
+
+### 2.2 State (U1261)
+- Package (`X86SgxPkg`, `env->sgx`, after `end_reset_fields`: kept across CPU reset - 42.9: "EPC
+  Settings: Unchanged, EPCM: Unchanged" - and not part of a `uc_context`, like memory): the EPC
+  section, the EPCM array (one `X86SgxEpcm` per page: VALID, R, W, X, PT, BLOCKED, PENDING,
+  MODIFIED, PR, the SECS identifier = the physical address of the SECS page, ENCLAVEADDRESS, and
+  the tracking epochs), the platform CREGs (Table 41-4: CR_CPUSVN, CR_SGXOWNEREPOCH, CR_SEAL_FUSES,
+  CR_BASE_PK, CR_REPORT_KEYID, CR_NEXT_EID, CR_PAGING_VERSION) and the abort page.
+- Logical processor (reset area: cleared by reset, carried by a `uc_context`): CR_ENCLAVE_MODE,
+  CR_DBGOPTIN, CR_SAVE_TF, CR_TCS_LA / _PA, CR_ACTIVE_SECS, CR_ELRANGE, CR_GPR_PA, CR_SAVE_XCR0,
+  CR_SAVE_FS / _GS, IA32_SGXLEPUBKEYHASH0-3 and IA32_SGX_SVN_STATUS.Lock.
+
+### 2.3 Enumeration and MSRs (U1261)
+- CPUID.(07H,0):EBX.SGX[2], ECX.SGX_LC[30]; MAX_LEAF >= 12H; CPUID.12H as in docs/quirks.md
+  ("CPUID.12H.0 / 12H.1 / 12H.2 values"). A strict `UC_CTL_X86_CPUID` profile that hides SGX hides
+  the MSRs and (later stages) ENCLS / ENCLU, as the translator hides other instructions.
+- IA32_FEATURE_CONTROL bits 17 / 18 were already accepted with SGX_LC / SGX (U906).
+- IA32_SGXLEPUBKEYHASH0-3: present with SGX1 and SGX_LC; reset value from the platform; WRMSR only
+  with IA32_FEATURE_CONTROL.LOCK = LE_WR = 1, else #GP(0) (the host API gets UC_ERR_EXCEPTION).
+- IA32_SGX_SVN_STATUS (500H): present with SGX, read-only (WRMSR #GP(0)); Lock[0] = 0 until the
+  first non-faulting SGX instruction (set by the leaf functions, later stages); SGX_SVN_SINIT only
+  with CPUID.01H:ECX.SMX.
+- INVD: #GP(0) once processor reserved memory protections are active (our activation rule).
 
 ## 3. Our choices (platform-specific values, SDM gaps)
 
-(Filled in by the implementation commits; every entry is also a row of docs/quirks.md.)
+Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
 
 ## 4. Open questions for the user
 
-(Filled in by the implementation commits.)
+- CPUID.12H with IA32_FEATURE_CONTROL unlocked / SGX disabled: the SDM gives no values (the model
+  reports the same leaf in every state).
+- IA32_SGXLEPUBKEYHASH4 / 5 (90H / 91H) in SDM 092 / 093 Vol4 ("bits 383:256 of the SHA256
+  digest"): not modelled; which document defines them?

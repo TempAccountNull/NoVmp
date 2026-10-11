@@ -5007,6 +5007,12 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 #endif /* __Use_Original_Qemu (U170) */
         break;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    case 0x12:
+        /* NoVmp (ledger U1261): the SGX leaf (Vol1 Tables 21-47..21-49), sgx_model.c */
+        x86_sgx_cpuid(env, count, eax, ebx, ecx, edx);
+        break;
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     case 0x1B:
         /*
@@ -5480,6 +5486,9 @@ static void x86_cpu_reset(CPUState *dev)
     /* the local APIC after power-up / reset (SDM Vol3A 13.4.7.1, 13.12.5.1) */
     x86_apic_reset(env);
 #endif /* __Use_Original_Qemu (U960) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    x86_sgx_reset(env);  /* IA32_SGXLEPUBKEYHASH0-3 reset value (Vol4 8CH-8FH) */
+#endif /* __Use_Original_Qemu (U1261) */
 }
 
 static void mce_init(X86CPU *cpu)
@@ -6021,6 +6030,18 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 7);
     }
 #endif /* __Use_Original_Qemu (U1180) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /*
+     * NoVmp (ledger U1261): UC_X86_FEATURE_SGX opts in to Intel SGX (docs/sgx.md):
+     * CPUID.(07H,0):EBX.SGX[2] and ECX.SGX_LC[30] (Vol1 Tables 21-19 / 21-20) and leaf 12H (valid
+     * with MAX_LEAF >= 12H, Table 21-47). The package state is created by x86_sgx_init below.
+     */
+    if (uc->x86_features & UC_X86_FEATURE_SGX) {
+        env->features[FEAT_7_0_EBX] |= CPUID_7_0_EBX_SGX;
+        env->features[FEAT_7_0_ECX] |= CPUID_7_0_ECX_SGX_LC;
+        env->cpuid_level = MAX(env->cpuid_level, 0x12);
+    }
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.
@@ -6086,6 +6107,9 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
 #if __Use_Original_Qemu != 1 /* ours (U593) */
     x86_cpu_update_phys_bits(cpu);   /* a UC_CTL_X86_CPUID profile set before init */
 #endif /* __Use_Original_Qemu (U593) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    x86_sgx_init(env);   /* the SGX package (UC_X86_FEATURE_SGX; needs the final MAXPHYADDR) */
+#endif /* __Use_Original_Qemu (U1261) */
 
     /* Cache information initialization */
     if (!cpu->legacy_cache) {

@@ -1115,6 +1115,16 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return MF_1ECX(CPUID_EXT_X2APIC);
     }
 #endif /* __Use_Original_Qemu (U1123) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /* NoVmp (ledger U1261): IA32_SGXLEPUBKEYHASH0-3, IA32_SGX_SVN_STATUS (sgx_model.c) */
+    {
+        int sgx = x86_sgx_msr_present(env, msr);
+
+        if (sgx >= 0) {
+            return sgx != 0;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1261) */
     switch (msr) {
     case MSR_IA32_TSC:                      /* 05_01H; Vol3B 18.17: CPUID.01H:EDX.TSC */
         return MF_1EDX(CPUID_TSC);
@@ -1338,6 +1348,16 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
     uint64_t phys_mask = ~((1ULL << msr_cpu(env)->phys_bits) - 1);     /* U1063 */
     uint64_t valid;
 
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /* NoVmp (ledger U1261): the SGX MSRs' write permission (sgx_model.c, Vol4 8CH-8FH / 500H) */
+    {
+        int sgx = x86_sgx_msr_write_ok(env, msr, val);
+
+        if (sgx >= 0) {
+            return sgx != 0;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1261) */
     switch (msr) {
     case MSR_IA32_PLATFORM_ID_NV:
     case MSR_SMI_COUNT:
@@ -1975,6 +1995,15 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    case MSR_IA32_SGXLEPUBKEYHASH0:
+    case MSR_IA32_SGXLEPUBKEYHASH0 + 1:
+    case MSR_IA32_SGXLEPUBKEYHASH0 + 2:
+    case MSR_IA32_SGXLEPUBKEYHASH3:
+        /* NoVmp (ledger U1261): writable when msr_write_ok allowed it (FEATURE_CONTROL[17] + lock) */
+        x86_sgx_wrmsr(env, (uint32_t)env->regs[R_ECX], val);
+        break;
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
     case MSR_IA32_TSE_CAPABILITY:
         /* NoVmp (ledger U807): read-only with PBNDKB: WRMSR #GP(0) (an API write is dropped;
@@ -2550,6 +2579,18 @@ void helper_rdmsr(CPUX86State *env)
               ((1ULL << 63) | env->itd_class) : 0;
         break;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    case MSR_IA32_SGXLEPUBKEYHASH0:
+    case MSR_IA32_SGXLEPUBKEYHASH0 + 1:
+    case MSR_IA32_SGXLEPUBKEYHASH0 + 2:
+    case MSR_IA32_SGXLEPUBKEYHASH3:
+    case MSR_IA32_SGX_SVN_STATUS:
+        /* NoVmp (ledger U1261): sgx_model.c (present only with SGX, msr_present) */
+        if (!x86_sgx_rdmsr(env, (uint32_t)env->regs[R_ECX], &val)) {
+            val = 0;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U807) */
     case MSR_IA32_TSE_CAPABILITY:
         /*
@@ -2798,6 +2839,21 @@ void helper_waitpkg(CPUX86State *env, uint32_t src)
  * leaf is "not reported as supported by GETSEC[CAPABILITIES]": #UD, before any
  * CPL/mode #GP condition of that leaf.
  */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+/*
+ * NoVmp (ledger U1261): INVD with the SGX model - "Once processor reserved memory protections are
+ * activated (see Section 39.5), any execution of INVD will result in a #GP(0)" (SDM 092 Vol3D
+ * 39.6.5; Vol2A INVD). When they are activated is our choice (x86_sgx_prm_active, docs/sgx.md 3).
+ * The translator calls this only when the model enumerates SGX, after the CPL check.
+ */
+void helper_sgx_invd(CPUX86State *env)
+{
+    if (x86_sgx_prm_active(env)) {
+        raise_exception_ra(env, EXCP0D_GPF, GETPC());
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1261) */
 void helper_getsec(CPUX86State *env)
 {
     if (!(env->cr[4] & CR4_SMXE_MASK) || (uint32_t)env->regs[R_EAX] != 0) {

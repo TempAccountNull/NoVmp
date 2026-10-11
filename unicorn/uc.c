@@ -275,6 +275,9 @@ static gint uc_exits_cmp(gconstpointer a, gconstpointer b, gpointer user_data)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+static uc_err x86_sgx_map_epc(uc_engine *uc);
+#endif /* __Use_Original_Qemu (U1261) */
 static uc_err uc_init_engine(uc_engine *uc)
 {
     if (uc->init_done) {
@@ -309,6 +312,12 @@ static uc_err uc_init_engine(uc_engine *uc)
 
     uc->unmapped_regions = g_array_new(false, false, sizeof(MemoryRegion *));
 
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /* NoVmp (ledger U1261): the EPC section of UC_X86_FEATURE_SGX is RAM the platform provides */
+    if (x86_sgx_map_epc(uc) != UC_ERR_OK) {
+        return UC_ERR_NOMEM;
+    }
+#endif /* __Use_Original_Qemu (U1261) */
     uc->init_done = true;
 
     return UC_ERR_OK;
@@ -1392,6 +1401,24 @@ static uc_err mem_map(uc_engine *uc, MemoryRegion *block)
     return UC_ERR_OK;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+/*
+ * NoVmp (ledger U1261): map the EPC section (processor reserved memory, SDM 092 Vol3D 37.5) as RAM
+ * when the CPU accepted it (x86_sgx_init leaves epc_size 0 for a range beyond MAXPHYADDR). The
+ * host sees its plaintext through uc_mem_read (the hardware view); guest accesses go through the
+ * SGX access control (excp_helper.c, sgx_model.c).
+ */
+static uc_err x86_sgx_map_epc(uc_engine *uc)
+{
+    const uc_x86_sgx_platform *p = &uc->x86_sgx_platform;
+
+    if (uc->arch != UC_ARCH_X86 || !(uc->x86_features & UC_X86_FEATURE_SGX) || !p->epc_size) {
+        return UC_ERR_OK;
+    }
+    return mem_map(uc, uc->memory_map(uc, p->epc_base, p->epc_size, UC_PROT_ALL));
+}
+
+#endif /* __Use_Original_Qemu (U1261) */
 static uc_err mem_map_check(uc_engine *uc, uint64_t address, uint64_t size,
                             uint32_t perms)
 {
@@ -3459,9 +3486,10 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             *mask = uc->x86_features;
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
-            /* U1170: + UC_X86_FEATURE_FRED, U1180: + UC_X86_FEATURE_LAM */
+            /* U1170: + UC_X86_FEATURE_FRED, U1180: + UC_X86_FEATURE_LAM, U1261: + _SGX */
             if (uc->init_done || (mask & ~(UC_X86_FEATURE_TSE | UC_X86_FEATURE_ITD |
-                                           UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM))) {
+                                           UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM |
+                                           UC_X86_FEATURE_SGX))) {
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_features = mask;
@@ -3507,6 +3535,59 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             err = UC_ERR_ARG;
         }
         break;
+
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    case UC_CTL_X86_SGX_PLATFORM:
+        /* NoVmp U1261: the SGX platform (EPC, platform-specific values); written before init */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            uc_x86_sgx_platform *cfg = va_arg(args, uc_x86_sgx_platform *);
+
+            if (cfg) {
+                *cfg = uc->x86_sgx_platform;
+            } else {
+                err = UC_ERR_ARG;
+            }
+        } else if (rw == UC_CTL_IO_WRITE) {
+            const uc_x86_sgx_platform *cfg = va_arg(args, const uc_x86_sgx_platform *);
+            int i;
+
+            if (uc->init_done || !cfg || (cfg->epc_base & 0xfff) || (cfg->epc_size & 0xfff) ||
+                cfg->epc_base + cfg->epc_size < cfg->epc_base ||
+                (cfg->epc_size && cfg->epc_base + cfg->epc_size > (1ULL << 52))) {
+                err = UC_ERR_ARG;
+                break;
+            }
+            for (i = 0; i < (int)sizeof(cfg->reserved); i++) {
+                if (cfg->reserved[i]) {
+                    err = UC_ERR_ARG;
+                }
+            }
+            if (err == UC_ERR_OK) {
+                uc->x86_sgx_platform = *cfg;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+    case UC_CTL_X86_SGX_EPCM:
+        /* NoVmp U1261: one EPCM entry (tests / tools), UC_X86_FEATURE_SGX with an EPC only */
+        if (uc->arch != UC_ARCH_X86 || rw != UC_CTL_IO_READ || !uc->x86_sgx_epcm ||
+            !(uc->x86_features & UC_X86_FEATURE_SGX)) {
+            err = UC_ERR_ARG;
+        } else {
+            uint64_t pa = va_arg(args, uint64_t);
+            uc_x86_sgx_epcm *e = va_arg(args, uc_x86_sgx_epcm *);
+
+            UC_INIT(uc);
+            err = e ? uc->x86_sgx_epcm(uc, pa, e) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1261) */
 
 #endif /* __Use_Original_Qemu (U1120) */
 

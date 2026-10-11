@@ -469,6 +469,65 @@ typedef struct X86MktmeKey {
 #define NOVMP_TSE_KEY_BYTES             32      /* bit 0 = AES-XTS-256: 32-byte data / tweak keys */
 #define NOVMP_TSE_CAPABILITY            (1ULL | ((uint64_t)NOVMP_TSE_MAX_KEYS << 36))
 #endif /* __Use_Original_Qemu (U1120) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+/*
+ * NoVmp (ledger U1261, plan 1.J.11, docs/sgx.md): Intel SGX with UC_X86_FEATURE_SGX. Sources: SDM
+ * 092 Vol3D ch. 37-43, Vol1 Table 21-47..21-49 (CPUID.12H), Vol4 Table 2-2 (3AH, 8CH-8FH, 500H).
+ */
+#define CPUID_7_0_EBX_SGX               (1U << 2)
+#define CPUID_7_0_ECX_SGX_LC            (1U << 30)
+#define MSR_IA32_SGXLEPUBKEYHASH0       0x8c    /* .. 8FH: SHA-256 of the Launch Enclave signer */
+#define MSR_IA32_SGXLEPUBKEYHASH3       0x8f
+#define MSR_IA32_SGX_SVN_STATUS         0x500   /* R/O: Lock 0, SGX_SVN_SINIT 23:16 */
+#define FEATURE_CONTROL_SGX_LC          (1ULL << 17)    /* SGX launch control enable (LE_WR) */
+#define FEATURE_CONTROL_SGX             (1ULL << 18)    /* SGX global enable */
+/* CPUID.12H.0 (Vol1 Table 21-47): SGX1 [0], SGX2 [1]; MISCSELECT EXINFO [0]; the model's
+   MAX_ENCLAVE_SIZE_NOT_64 = 2^31, MAX_ENCLAVE_SIZE_64 = 2^36 (model values, docs/sgx.md 3) */
+#define NOVMP_SGX_12_0_EAX              3u
+#define NOVMP_SGX_12_0_EBX              1u
+#define NOVMP_SGX_12_0_EDX              ((36u << 8) | 31u)
+/* SECS.ATTRIBUTES[63:0] ECREATE may set (12H.1:EAX/EBX): DEBUG 1, MODE64BIT 2, PROVISIONKEY 4,
+   EINITTOKEN_KEY 5 (CET 6, KSS 7, AEXNOTIFY 10 are not enumerated); XFRM: 12H.1:ECX/EDX */
+#define NOVMP_SGX_ATTR_LOW              0x36ULL
+#define SGX_ATTR_INIT                   (1ULL << 0)
+#define SGX_ATTR_DEBUG                  (1ULL << 1)
+#define SGX_ATTR_MODE64BIT              (1ULL << 2)
+#define SGX_ATTR_PROVISIONKEY           (1ULL << 4)
+#define SGX_ATTR_EINITTOKEN_KEY         (1ULL << 5)
+/* EPCM page types (Vol3D Table 38-18) */
+#define SGX_PT_SECS                     0
+#define SGX_PT_TCS                      1
+#define SGX_PT_REG                      2
+#define SGX_PT_VA                       3
+#define SGX_PT_TRIM                     4
+/* one EPCM entry (Vol3D Table 38-28; the layout is micro-architectural: ours). secs = the SECS
+   identifier = the physical address of the enclave's SECS page (our choice); bepoch / mepoch: the
+   ETRACK epoch of the SECS when EBLOCK / EMODPR / EMODT ran (the tracking model, docs/sgx.md 3) */
+typedef struct X86SgxEpcm {
+    uint8_t valid, r, w, x, pt, blocked, pending, modified, pr;
+    uint64_t secs;
+    uint64_t addr;              /* ENCLAVEADDRESS */
+    uint64_t bepoch, mepoch;
+} X86SgxEpcm;
+/* the package state: EPC section, EPCM and the platform CREGs (Vol3D Table 41-4); allocated by
+   x86_sgx_init with UC_X86_FEATURE_SGX, kept across CPU reset (42.9) and not part of a uc_context */
+typedef struct X86SgxPkg {
+    uint64_t epc_base, epc_size, npages;
+    X86SgxEpcm *epcm;
+    uint8_t root_key[16];       /* the model's derivekey root (platform-specific, host-provided) */
+    uint8_t cpusvn[16];         /* CR_CPUSVN */
+    uint8_t owner_epoch[16];    /* CR_SGXOWNEREPOCH */
+    uint8_t seal_fuses[16];     /* CR_SEAL_FUSES */
+    uint8_t base_pk[16];        /* CR_BASE_PK */
+    uint8_t report_keyid[32];   /* CR_REPORT_KEYID */
+    uint8_t le_hash_reset[32];  /* reset value of IA32_SGXLEPUBKEYHASH0-3 */
+    uint8_t svn_sinit;          /* IA32_SGX_SVN_STATUS[23:16] (with SMX) */
+    uint64_t next_eid;          /* CR_NEXT_EID */
+    uint64_t paging_version;    /* CR_PAGING_VERSION */
+    void *abort_mr;             /* the abort page (MemoryRegion, reads all ones) */
+    void *abort_host;
+} X86SgxPkg;
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
 /* user-interrupt MSRs (SDM Vol3A 9.3.2) */
 #define MSR_IA32_UINTR_RR               0x985
@@ -2272,6 +2331,27 @@ typedef struct CPUX86State {
     uint32_t apic_tmr[8];
     uint32_t apic_irr[8];
 #endif /* __Use_Original_Qemu (U960) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /*
+     * NoVmp (ledger U1261): the per-logical-processor SGX state (Vol3D Table 41-4 "LP" CREGs; reset
+     * clears it: ENCLAVE_MODE 0 after INIT, 42.9), carried by a uc_context. IA32_SGXLEPUBKEYHASH0-3
+     * (reset value from the package, x86_sgx_reset) and IA32_SGX_SVN_STATUS.Lock live here too.
+     */
+    uint8_t sgx_enclave_mode;       /* CR_ENCLAVE_MODE */
+    uint8_t sgx_dbgoptin;           /* CR_DBGOPTIN */
+    uint8_t sgx_save_tf;            /* CR_SAVE_TF */
+    uint8_t sgx_svn_lock;           /* IA32_SGX_SVN_STATUS[0] */
+    uint64_t sgx_tcs_la, sgx_tcs_pa;    /* CR_TCS_LA, CR_TCS_PA */
+    uint64_t sgx_secs;              /* CR_ACTIVE_SECS (physical address) */
+    uint64_t sgx_elbase, sgx_elsize;    /* CR_ELRANGE */
+    uint64_t sgx_gpr_pa;            /* CR_GPR_PA */
+    uint64_t sgx_ssa_la;            /* linear address of the current SSA frame */
+    uint64_t sgx_save_xcr0;         /* CR_SAVE_XCR0 */
+    SegmentCache sgx_save_fs, sgx_save_gs;  /* CR_SAVE_FS, CR_SAVE_GS */
+    uint64_t sgx_lehash[4];         /* IA32_SGXLEPUBKEYHASH0-3 */
+    uint8_t sgx_xlate;              /* x86_sgx_translate: a translation-only page walk */
+    uint64_t sgx_xlate_pa;
+#endif /* __Use_Original_Qemu (U1261) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -2329,6 +2409,10 @@ typedef struct CPUX86State {
     uint64_t mcg_ext_ctl;
     uint64_t mce_banks[MCE_BANKS_DEF*4];
     uint64_t xstate_bv;
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+    /* NoVmp (ledger U1261): the SGX package state (UC_X86_FEATURE_SGX), NULL without it */
+    X86SgxPkg *sgx;
+#endif /* __Use_Original_Qemu (U1261) */
 
     /* vmstate */
     uint16_t fpus_vmstate;
@@ -2665,6 +2749,19 @@ int x86_apic_acknowledge(CPUX86State *env);
 void x86_apic_eoi(CPUX86State *env);
 void x86_apic_deliver_event(CPUX86State *env, int vector);
 #endif /* __Use_Original_Qemu (U960) */
+#if __Use_Original_Qemu != 1 /* ours (U1261) */
+/* sgx_model.c: Intel SGX (ledgers U1261-U1299, docs/sgx.md) */
+bool x86_sgx_enumerated(CPUX86State *env);
+void x86_sgx_init(CPUX86State *env);
+void x86_sgx_reset(CPUX86State *env);
+void x86_sgx_cpuid(CPUX86State *env, uint32_t count, uint32_t *eax, uint32_t *ebx,
+                   uint32_t *ecx, uint32_t *edx);
+int x86_sgx_msr_present(CPUX86State *env, uint32_t msr);   /* -1: not an SGX MSR */
+int x86_sgx_msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val);   /* -1: not SGX */
+bool x86_sgx_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *val);
+bool x86_sgx_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val);
+bool x86_sgx_prm_active(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1261) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
 /* apic_model.c: the APIC bus between engines (UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID) */
 int x86_apic_join(struct uc_struct *uc, struct uc_struct *peer);  /* a uc_err */

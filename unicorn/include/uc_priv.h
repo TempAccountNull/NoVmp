@@ -457,6 +457,10 @@ struct uc_struct {
     uc_err (*x86_tse_key)(struct uc_struct *uc, int keyid, struct uc_x86_mktme_key *key);
     // NoVmp U1128: UC_CTL_X86_ITD_CLASS (set = 1: write *cls; set = 0: read into *cls)
     uc_err (*x86_itd_class)(struct uc_struct *uc, int set, int *cls);
+    // NoVmp U1261: UC_CTL_X86_SGX_PLATFORM (copied into the CPU's SGX package at init),
+    // UC_CTL_X86_SGX_EPCM
+    struct uc_x86_sgx_platform x86_sgx_platform;
+    uc_err (*x86_sgx_epcm)(struct uc_struct *uc, uint64_t pa, struct uc_x86_sgx_epcm *e);
     // NoVmp U961: the local APIC bus shared with other engines (apic_model.c), NULL = alone;
     // UC_CTL_X86_APIC_ID (x86_apic_id_set = 1 once given); x86_apic_ap = 1: not the BSP
     void *x86_apic_bus;
