@@ -907,6 +907,14 @@ typedef enum uc_control_type {
     // addresses are masked before the canonicality check and paging (CR2 and the paging walk see the
     // masked address; instruction fetches, RIP loads, INVLPG / INVPCID operands are not masked).
     // Default off.
+    // NoVmp U1261: UC_X86_FEATURE_SGX: Intel SGX (SDM 092 Vol3D ch. 37-43, docs/sgx.md): CPUID SGX /
+    // SGX_LC / leaf 12H, the EPC of UC_CTL_X86_SGX_PLATFORM, ENCLS, ENCLU, enclave mode. Default off.
+    // NoVmp U1267: UC_X86_FEATURE_SMX: an SMX processor without an Intel TXT chipset (SDM 092
+    // Vol2D ch. 7): GETSEC[CAPABILITIES] reports the leaves 2-8 (chipset bit 0 = 0),
+    // GETSEC[PARAMETERS] the default parameters of Table 7-10 (model values), ENTERACCS / EXITAC /
+    // SENTER / SEXIT / SMCTRL / WAKEUP end in their #GP(0) (no chipset, not in authenticated-code
+    // mode, no measured environment). Default off: CAPABILITIES reports 0 and every other leaf is
+    // #UD (U113).
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
@@ -954,6 +962,7 @@ typedef enum uc_control_type {
 #define UC_X86_FEATURE_FRED 4      // FRED transitions, CR4.FRED, the FRED MSRs (U1170)
 #define UC_X86_FEATURE_LAM 8       // linear-address masking: CPUID LAM, CR3[62:61], CR4[28] (U1180)
 #define UC_X86_FEATURE_SGX 16      // Intel SGX: CPUID SGX/SGX_LC/12H, EPC, ENCLS, ENCLU (U1261)
+#define UC_X86_FEATURE_SMX 32      // SMX without a TXT chipset: GETSEC leaves 2-8 (U1267)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)

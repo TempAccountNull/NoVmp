@@ -2854,8 +2854,65 @@ void helper_sgx_invd(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1267) */
+/*
+ * NoVmp (ledger U1267): GETSEC with UC_X86_FEATURE_SMX - an SMX processor on a platform without an
+ * Intel TXT-capable chipset (SDM 092 Vol2D 7.2, 7.3, the leaf Operations p. 7-8..7-43; docs/sgx.md
+ * 1.7). Order of every Operation: #UD for CR4.SMXE = 0; (VMX non-root operation: VM exit - plan
+ * 1.J.12, pending); #UD for a leaf CAPABILITIES does not report (1, 9-FFFFFFFFH).
+ * CAPABILITIES (any CPL): EBX = 0 -> leaves ENTERACCS .. WAKEUP (bits 8:2) available, Chipset
+ * Present (bit 0) = 0, no extended leaves (bit 31); EBX != 0 -> 0. PARAMETERS (any CPL): the
+ * default values of Table 7-10 as the model's parameters - type 1 (AC module HeaderVersion 0.0
+ * only: EAX = 1, EBX = FFFFFFFFH, ECX = 0), type 2 (32 KB authenticated code area: 8002H), type 3
+ * (UC only: 103H), then NULL (EAX = 0, EBX / ECX unmodified). The other leaves end in their #GP(0)
+ * group, which always holds here: ENTERACCS / SENTER / SEXIT / WAKEUP "TXT chipset not present",
+ * EXITAC "ACMODEFLAG = 0", SMCTRL "SENTERFLAG = 0" (no measured environment can be launched
+ * without a chipset). The chipset, the AC module format, TPM and the measured environment need
+ * the Intel TXT MLE Developer's Guide / chipset documentation (docs/sgx.md 4).
+ */
+static void smx_getsec(CPUX86State *env, uintptr_t ra)
+{
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    if (!(env->cr[4] & CR4_SMXE_MASK) || leaf == 1 || leaf > 8) {
+        raise_exception_ra(env, EXCP06_ILLOP, ra);
+    }
+    switch (leaf) {
+    case 0:     /* CAPABILITIES */
+        env->regs[R_EAX] = (uint32_t)env->regs[R_EBX] == 0 ? 0x1fc : 0;
+        break;
+    case 6:     /* PARAMETERS */
+        switch ((uint32_t)env->regs[R_EBX]) {
+        case 0:
+            env->regs[R_EAX] = 1;
+            env->regs[R_EBX] = 0xffffffffu;
+            env->regs[R_ECX] = 0;
+            break;
+        case 1:
+            env->regs[R_EAX] = 0x8002;
+            break;
+        case 2:
+            env->regs[R_EAX] = 0x103;
+            break;
+        default:
+            env->regs[R_EAX] = 0;
+            break;
+        }
+        break;
+    default:    /* ENTERACCS, EXITAC, SENTER, SEXIT, SMCTRL, WAKEUP */
+        raise_exception_err_ra(env, EXCP0D_GPF, 0, ra);
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1267) */
 void helper_getsec(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1267) */
+    if (env->uc->x86_features & UC_X86_FEATURE_SMX) {
+        smx_getsec(env, GETPC());
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1267) */
     if (!(env->cr[4] & CR4_SMXE_MASK) || (uint32_t)env->regs[R_EAX] != 0) {
         raise_exception_ra(env, EXCP06_ILLOP, GETPC());
     }

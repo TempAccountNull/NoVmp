@@ -130,12 +130,12 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Requirement | Source | Status |
 |---|---|---|
-| Opt-in `UC_X86_FEATURE_SMX` = 32; CPUID.01H:ECX.SMX[6] (today always reported, U113), CR4.SMXE | 2D 7.2.1 p.7-1 | plan |
-| GETSEC[CAPABILITIES] (0) | p.7-7..7-9 | impl (U113: EAX = 0); plan: an SMX processor without a TXT chipset |
-| GETSEC[PARAMETERS] (6) | p.7-34..7-37 | plan (read in the GETSEC stage) |
-| GETSEC[SMCTRL] (7) | p.7-38..7-40 | plan |
-| GETSEC[ENTERACCS] (2) / [EXITAC] (3) | p.7-10..7-21 | **blk**: AC-module header format, chipset public-key hash (TXT.PUBLIC.KEY), signature algorithm - Intel TXT MLE Developer's Guide and the TXT chipset / SINIT ACM specifications are not local |
-| GETSEC[SENTER] (4) / [SEXIT] (5) / [WAKEUP] (8) | p.7-22..7-33, 7-41..7-43 | **blk** (same documents; TPM / chipset registers) |
+| Opt-in `UC_X86_FEATURE_SMX` = 32; CPUID.01H:ECX.SMX[6] (today always reported, U113), CR4.SMXE | 2D 7.2.1 p.7-1 | impl (U1267; bit value 32) |
+| GETSEC[CAPABILITIES] (0) | p.7-7..7-9 | impl (U113 without the opt-in: EAX = 0; U1267 with it: 1FCH - leaves 2-8, no chipset) |
+| GETSEC[PARAMETERS] (6) | p.7-34..7-37 | impl (U1267): Table 7-10 defaults as model values |
+| GETSEC[SMCTRL] (7) | p.7-38..7-40 | impl (U1267): always #GP(0) - SENTERFLAG = 0 (no measured environment without a chipset) |
+| GETSEC[ENTERACCS] (2) / [EXITAC] (3) | p.7-10..7-21 | impl up to the chipset (U1267: ENTERACCS #GP(0) "TXT chipset not present", EXITAC #GP(0) "ACMODEFLAG = 0"); the AC-module load / authentication **blk**: Intel TXT MLE Developer's Guide, TXT chipset and SINIT ACM specifications are not local |
+| GETSEC[SENTER] (4) / [SEXIT] (5) / [WAKEUP] (8) | p.7-22..7-33, 7-41..7-43 | impl up to the chipset (U1267: #GP(0) "TXT chipset not present" / "SENTERFLAG = 0"); the launch itself **blk** (same documents; TPM / chipset registers) |
 | FRED interactions (CR4.FRED save in Cr4High) | 3A 8.5.5 p.8-21..8-22 | **blk** with ENTERACCS / SENTER |
 | GETSEC in VMX non-root operation | 3C 27.1.2 | **def** (VMX) |
 
@@ -293,7 +293,20 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
   (SGX_EPC_PAGE_CONFLICT, "page in use", "locked") never occur with one logical processor.
 - The SDM typos read as noted in docs/quirks.md (U1266).
 
-### 2.9 Validation (U1262)
+### 2.9 GETSEC / SMX (U1267)
+- `uc_ctl_set_x86_features(uc, UC_X86_FEATURE_SMX)` (bit value **32**, the next free bit from the
+  bottom after SGX = 16): an SMX processor on a platform without an Intel TXT-capable chipset.
+  Without it GETSEC keeps U113 (CAPABILITIES = 0, every other leaf #UD).
+- `misc_helper.c` smx_getsec: #UD for CR4.SMXE = 0 and the leaves CAPABILITIES does not report;
+  CAPABILITIES (EBX = 0: 1FCH); PARAMETERS (types 1-3 with the Table 7-10 defaults, then NULL); the
+  other leaves raise the #GP(0) of their first condition group, which always holds without a
+  chipset. A TXT chipset model (TXT configuration space, TXT.PUBLIC.KEY, the AC-module header and
+  signature format, TPM localities, the MLE JOIN structure in chipset space) needs documents that
+  are not local (section 4); VMX non-root VM exits and "in VMX operation" are pending (plan
+  1.J.12).
+- Test `test_x86_gs_smx`.
+
+### 2.10 Validation (U1262)
 - `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
   AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
   generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over
@@ -330,6 +343,12 @@ Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
 - EGETKEY EINITTOKEN_KEY: the description requires "SECS.MRSIGNER equal IA32_SGXLEPUBKEYHASH", the
   Operation does not check it (the model follows the Operation).
 - EWB "IF (EBLOCK is not correct) THEN #GP(0)": the condition is not defined (the model has none).
+- GETSEC[WAKEUP] Operation (Vol2D p. 7-42): "(IN_SMM=0)" among the #GP(0) conditions, while 7.3 says
+  the leaves are not allowed in SMM - read as IN_SMM = 1 (no effect in the model: WAKEUP always
+  faults without a measured environment).
+- Missing documents for a TXT chipset model: Intel TXT Measured Launched Environment Developer's
+  Guide, the TXT chipset (TXT configuration space) and SINIT / BIOS ACM specifications, the TPM
+  interface of the chipset - can the user provide them?
 - The key derivation function and the platform keys (root key, CR_SEAL_FUSES, CR_SGXOWNEREPOCH,
   CR_CPUSVN, CR_REPORT_KEYID, CR_BASE_PK, Intel's LE signer hash): model placeholders - does the
   user have an Intel document that specifies any of them?
