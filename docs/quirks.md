@@ -381,6 +381,8 @@ Label: **SDE-resolved ambiguity**. Only where the SDM is genuinely ambiguous (tw
 
 Intel SGX (`UC_X86_FEATURE_SGX`, U1261-) is an opt-in the i5-13600K lacks; nothing here is hardware- or SDE-validated (Intel SDE cannot run CPL0 enclave management). Design and the requirement-to-code mapping: `docs/sgx.md`. Each row is either a **platform value** (the SDM leaves the value to the platform; the model uses a documented placeholder, never an invented Intel value), an **SDM gap** (no rule given; our choice) or an **SDM self-conflict** (our reading); rows marked **question** are open questions for the user.
 
+**User decision 2026-10-11:** every reading in this section, including the rows marked **question**, is accepted as documented ("SDM gap / self-conflict, our reading"); re-check against the next SDM revision. The GETSEC TXT leaves stay #GP(0) (blocked on documentation: the chipset side is only in Intel NDA documents; see `emulator\notes\txt_docs_inventory_2026-10-11.md`).
+
 | behaviour | SDM text | model | kind | ledger |
 |---|---|---|---|---|
 | CPUID.12H while IA32_FEATURE_CONTROL is unlocked or SGX_ENABLE = 0 | Vol3D Table 37-3, p. 37-4/37-5: CPUID.12H "Valid*", "* Leaf 12H enumeration results are dependent on enablement"; 37.7.2: "The number of available sub-leaves in leaf 12H depends on the Opt-in and system software configuration" - no values are given | the same values in every state | SDM gap, **question** | U1261 |
