@@ -29342,6 +29342,170 @@ static void test_x86_st_xsetbv_profile(void)
         OK(uc_close(c.uc));
     }
 }
+
+/*
+ * T-10 (U1222): execute-disable pages. nv_paging_ss's 4-level identity map plus 305000h (user,
+ * writable, executable) and 306000h (user, writable, XD = 1); IA32_EFER.NXE = 1. 'until' is past the
+ * last byte; the INTR hook stops at the #PF with RIP at the faulting instruction. SDM 093 Vol3A 5.6
+ * "Access Rights" p. 5-35 (with IA32_EFER.NXE = 1 "instructions may not be fetched from any
+ * supervisor-mode address with a translation for which the XD flag is 1", the same for user-mode
+ * addresses), Table 5-20 p. 5-31 (PTE bit 63: "If IA32_EFER.NXE = 1, execute-disable ...; otherwise,
+ * reserved (must be 0)"), 5.7 p. 5-37 / 5-38 (error code P, U/S, RSVD; I/D "is 1 if (1) the access
+ * causing the page-fault exception was an instruction fetch; and (2) either (a) CR4.SMEP = 1; or (b)
+ * both (i) CR4.PAE = 1 ... and (ii) IA32_EFER.NXE = 1"; "the processor loads the CR2 register with the
+ * linear address that generated the exception"), 6.13.4 p. 6-34 (an execute-disable page fault "can
+ * occur on any instruction fetch, including ... sequential instruction fetches"), 7.15 Event 14
+ * p. 7-47..7-49 ("The saved contents of CS and EIP registers generally point to the instruction that
+ * generated the exception"; "the instruction that causes the exception to be generated is not
+ * executed"). Which byte of a fetch with two bytes on the XD page goes to CR2 the SDM does not say
+ * (case (c) accepts either). Case (h) is the U1222 regression: Unicorn invalidated the translated code
+ * at a run's stop address with a faulting MMU lookup, which loaded CR2 and left a #PF pending, so a
+ * stop address on an XD or not-present page changed CR2 and turned the guest's next exception into #DF.
+ */
+#define ST_X 0x305000ULL
+#define ST_NX 0x306000ULL
+
+static void st_nx_open(NvRun *r, int nxe)
+{
+    uc_x86_msr efer = {0xc0000080, 0};
+
+    nv_open(r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(r);
+    OK(uc_mem_map(r->uc, ST_X, 0x2000, UC_PROT_ALL));
+    nv_st64(r, 0x404000 + ((ST_X - 0x200000) >> 12) * 8, ST_X | 7);
+    nv_st64(r, 0x404000 + ((ST_NX - 0x200000) >> 12) * 8, ST_NX | 7 | (1ULL << 63));
+    OK(uc_reg_read(r->uc, UC_X86_REG_MSR, &efer));
+    if (nxe) {
+        efer.value |= 1u << 11;
+    } else {
+        efer.value &= ~(1ull << 11);
+    }
+    OK(uc_reg_write(r->uc, UC_X86_REG_MSR, &efer));
+}
+
+/* CPL3 run of 'code' placed at 'ca' through nv_run3_n's IRETQ stub (fresh engine at CPL0) */
+static uc_err st_run3_at(NvRun *r, uint64_t ca, const char *code, size_t len, uint64_t until)
+{
+    char stub[] = "\x6a\x23\x68\x00\x1f\x20\x00\x9c\x6a\x2b\x68\x00\x00\x00\x00\x48\xcf";
+    uint64_t sa = r->next;
+    uint32_t ca32 = (uint32_t)ca;
+
+    TEST_CHECK(nv_cpl(r) == 0);
+    nv_gdt(r);
+    memcpy(stub + 11, &ca32, 4);
+    r->next += 0x40;
+    nv_set(r, UC_X86_REG_RSP, 0x201e00);
+    r->cap.count = 0;
+    r->cap.intno = 0;
+    r->last = ca;
+    OK(uc_mem_write(r->uc, sa, stub, sizeof(stub) - 1));
+    OK(uc_mem_write(r->uc, ca, code, len));
+    return uc_emu_start(r->uc, sa, until, 0, 0);
+}
+
+/* the #PF record: vector 14, error code, CR2 within [lo, hi] (the address the record reports too) */
+static void st_pf(NvRun *r, uint32_t ec, uint64_t lo, uint64_t hi, uint64_t rip, const char *what)
+{
+    uc_x86_exception e = fx4_exc(r->uc);
+    uint64_t cr2 = nv_get(r, UC_X86_REG_CR2), at = nv_get(r, UC_X86_REG_RIP);
+
+    TEST_CHECK(r->cap.count == 1 && r->cap.intno == 14);
+    TEST_MSG("%s: hook count %u, last vector %u", what, r->cap.count, r->cap.intno);
+    TEST_CHECK(e.vector == 14 && e.has_error_code && e.error_code == ec && e.has_address &&
+               e.address == cr2 && cr2 >= lo && cr2 <= hi && at == rip);
+    TEST_MSG("%s: count %u int %u, vector %d ec %#x (exp %#x), CR2 %" PRIx64 " (exp %" PRIx64
+             "..%" PRIx64 "), RIP %" PRIx64 " (exp %" PRIx64 ")",
+             what, r->cap.count, r->cap.intno, e.vector, e.error_code, ec, cr2, lo, hi, at, rip);
+}
+
+static void test_x86_st_nx_fetch(void)
+{
+    NvRun r;
+    uint64_t cr2;
+    int i;
+
+    /* (a) sequential fetch: INC RCX at 305FFDh executes, the next instruction starts on the XD page:
+       #PF(11h = P | I/D), CR2 = RIP = 306000h */
+    st_nx_open(&r, 1);
+    OK(uc_mem_write(r.uc, ST_NX - 3, "\x48\xff\xc1", 3));
+    OK(uc_mem_write(r.uc, ST_NX, "\x48\xff\xc1", 3));
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    r.cap.count = 0;
+    OK(uc_emu_start(r.uc, ST_NX - 3, ST_NX + 3, 0, 0));
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RCX) == 1);
+    st_pf(&r, 0x11, ST_NX, ST_NX, ST_NX, "sequential fetch into the XD page (CPL0)");
+    /* (b) an instruction whose last byte is the first byte of the XD page (MOV EAX, imm32 at
+       305FFCh): not executed, RIP = its first byte, CR2 = 306000h (its only byte there) */
+    nv_set(&r, UC_X86_REG_RAX, 0x55);
+    r.cap.count = 0;
+    OK(uc_mem_write(r.uc, ST_NX - 4, "\xb8\x11\x22\x33\x44", 5));
+    OK(uc_emu_start(r.uc, ST_NX - 4, ST_NX + 1, 0, 0));
+    st_pf(&r, 0x11, ST_NX, ST_NX, ST_NX - 4, "MOV EAX, imm32 straddling into the XD page (CPL0)");
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x55);
+    /* (c) the same with two bytes on the XD page: CR2 is one of them (the SDM names "the linear
+       address that generated the exception", not which byte; NoVmp: the first) */
+    r.cap.count = 0;
+    OK(uc_mem_write(r.uc, ST_NX - 8, "\x48\xb8\x01\x02\x03\x04\x05\x06\x07\x08", 10));
+    OK(uc_emu_start(r.uc, ST_NX - 8, ST_NX + 2, 0, 0));
+    st_pf(&r, 0x11, ST_NX, ST_NX + 1, ST_NX - 8, "MOV RAX, imm64 with 2 bytes on the XD page (CPL0)");
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x55);
+    /* (d) data reads from the XD page are allowed */
+    nv_st64(&r, ST_NX + 0x100, 0x1122334455667788ull);
+    nv_set(&r, UC_X86_REG_RDX, ST_NX + 0x100);
+    OK(nv_run(&r, "\x48\x8b\x02"));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_RAX) == 0x1122334455667788ull);
+    /* (e) a jump to the XD page: #PF(11h) at the target */
+    nv_set(&r, UC_X86_REG_RAX, ST_NX + 0x10);
+    OK(nv_run(&r, "\xff\xe0"));
+    st_pf(&r, 0x11, ST_NX + 0x10, ST_NX + 0x10, ST_NX + 0x10, "JMP RAX to the XD page (CPL0)");
+    OK(uc_close(r.uc));
+
+    /* (f) CPL3: U/S = 1 in the error code (15h); sequential and straddling */
+    st_nx_open(&r, 1);
+    OK(uc_mem_write(r.uc, ST_NX, "\x48\xff\xc1", 3));
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    OK(st_run3_at(&r, ST_NX - 3, "\x48\xff\xc1", 3, ST_NX + 3));
+    TEST_CHECK(nv_cpl(&r) == 3 && nv_get(&r, UC_X86_REG_RCX) == 1);
+    st_pf(&r, 0x15, ST_NX, ST_NX, ST_NX, "sequential fetch into the XD page (CPL3)");
+    OK(uc_close(r.uc));
+    st_nx_open(&r, 1);
+    nv_set(&r, UC_X86_REG_RAX, 0x55);
+    OK(st_run3_at(&r, ST_NX - 4, "\xb8\x11\x22\x33\x44", 5, ST_NX + 1));
+    TEST_CHECK(nv_cpl(&r) == 3 && nv_get(&r, UC_X86_REG_RAX) == 0x55);
+    st_pf(&r, 0x15, ST_NX, ST_NX, ST_NX - 4, "MOV EAX, imm32 straddling into the XD page (CPL3)");
+    OK(uc_close(r.uc));
+
+    /* (g) IA32_EFER.NXE = 0: bit 63 of the PTE is reserved -> #PF(9h = P | RSVD), I/D = 0 (5.7:
+       I/D needs NXE = 1 or SMEP), also for a data read */
+    st_nx_open(&r, 0);
+    nv_set(&r, UC_X86_REG_RAX, ST_NX + 0x10);
+    OK(nv_run(&r, "\xff\xe0"));
+    st_pf(&r, 0x9, ST_NX + 0x10, ST_NX + 0x10, ST_NX + 0x10, "fetch, NXE = 0 (reserved bit 63)");
+    nv_set(&r, UC_X86_REG_RDX, ST_NX + 0x100);
+    OK(nv_run(&r, "\x48\x8b\x02"));
+    st_pf(&r, 0x9, ST_NX + 0x100, ST_NX + 0x100, r.last, "read, NXE = 0 (reserved bit 63)");
+    OK(uc_close(r.uc));
+
+    /* (h) U1222: runs that stop (count = 1) with the stop address on the XD page and on a
+       not-present page: CR2 keeps its value and the next exception is the plain #GP(0) of a
+       non-canonical read (before U1222: CR2 = stop address - 1 or the stop address, then #DF) */
+    for (i = 0; i < 2; i++) {
+        uint64_t stop = i ? 0x380001 : ST_NX + 1;
+
+        st_nx_open(&r, 1);
+        nv_set(&r, UC_X86_REG_CR2, 0x1234);
+        OK(uc_mem_write(r.uc, code_start + 0x800, "\x90\x90", 2));
+        OK(uc_emu_start(r.uc, code_start + 0x800, stop, 0, 1));
+        cr2 = nv_get(&r, UC_X86_REG_CR2);
+        TEST_CHECK(cr2 == 0x1234);
+        TEST_MSG("stop at %" PRIx64 ": CR2 %" PRIx64, stop, cr2);
+        nv_set(&r, UC_X86_REG_RDX, 0x8000000000000000ull);
+        OK(nv_run(&r, "\x48\x8b\x02"));
+        TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+        TEST_MSG("stop at %" PRIx64 ": then hook count %u vector %u", stop, r.cap.count, r.cap.intno);
+        OK(uc_close(r.uc));
+    }
+}
 /* ---- end U1220-U1239 (st_) ---- */
 
 TEST_LIST = {
@@ -29733,4 +29897,5 @@ TEST_LIST = {
     {"test_x86_fl_lam_paging", test_x86_fl_lam_paging},
     {"test_x86_fl_eret_legacy", test_x86_fl_eret_legacy},
     {"test_x86_st_xsetbv_profile", test_x86_st_xsetbv_profile},
+    {"test_x86_st_nx_fetch", test_x86_st_nx_fetch},
     {NULL, NULL}};

@@ -983,7 +983,48 @@ static void uc_invalidate_tb(struct uc_struct *uc, uint64_t start_addr, size_t l
     // (GPA -> HVA via memory_region_get_ram_addr(mr) + GPA + block->host,
     // GVA -> GPA via tlb & softmmu
     // HVA -> HPA via host mmu)
+#if __Use_Original_Qemu == 1 /* original QEMU (U1222) */
     start = get_page_addr_code(uc->cpu->env_ptr, start_addr) & (target_ulong)(-1);
+#else /* ours (U1222) */
+    /*
+     * NoVmp (ledger U1222): look the address up without raising. get_page_addr_code fills the TLB
+     * through tlb_fill with probe = false, so an address whose translation faults (not present,
+     * execute-disable, reserved bit) raised a #PF here, outside any instruction: the x86 fault path
+     * loaded CR2 with the address, recorded the event (UC_CTL_X86_EXCEPTION), set the FRED
+     * bookkeeping and left the double-fault state of check_exception set, so the guest's next
+     * exception became #DF (SDM 093 Vol3A 7.15 Event 14 p. 7-49: CR2 holds the linear address of a
+     * page fault the processor detected; Table 7-5 contributory / page-fault pairs). This runs after
+     * every uc_emu_start for its stop address (softmmu/cpus.c, exit - 1, 2 bytes) and when a code
+     * hook is added. A non-faulting probe leaves the guest state alone (x86_cpu_tlb_fill restores
+     * CR2 for a probe, U771); a translation that does not exist has no translated code to drop.
+     */
+    {
+        CPUArchState *env = uc->cpu->env_ptr;
+        int saved_index = uc->cpu->exception_index;
+#if defined(TARGET_I386)
+        int saved_code = env->error_code;   /* a failed probe sets both (handle_mmu_fault) */
+#endif
+        void *host = NULL;
+        int flags = probe_access_flags(env, start_addr, MMU_INST_FETCH,
+                                       cpu_mmu_index(env, true), true, &host, 0);
+        ram_addr_t ra;
+
+        uc->cpu->exception_index = saved_index;
+#if defined(TARGET_I386)
+        env->error_code = saved_code;
+#endif
+        if ((flags & TLB_INVALID_MASK) || !host) {
+            uc->nested_level--;
+            return;
+        }
+        ra = qemu_ram_addr_from_host(uc, host);
+        if (ra == RAM_ADDR_INVALID) {
+            uc->nested_level--;
+            return;
+        }
+        start = ra & (target_ulong)(-1);
+    }
+#endif /* __Use_Original_Qemu (U1222) */
 
     uc->nested_level--;
 
