@@ -10,7 +10,7 @@
 # cases_st_decode.txt (T-7 / T-8). Compacted XRSTOR with XSTATE_BV[63] = 1 (lines 1-2 and the last XRSTOR line):
 # Vol1 13.8.2 p. 13-20 reads "The XSTATE_BV field ... sets a bit (including bit 63) that is not set in XCOMP_BV",
 # while XCOMP_BV[63] = 1 in the compacted form - the i5-13600K raises #GP(0), as NoVmp (docs/quirks.md, "SDM
-# undefined, our choice").
+# self-conflicts, our reading": #GP(0), user decision 2026-10-11, U1226).
 # --- T-6: XRSTOR header checks (compacted with XSTATE_BV[63] = 1; standard with bits outside XCR0, XCOMP_BV, bytes 23:16;
 #     standard with byte 24 set: no fault; compacted with XCOMP_BV outside XCR0, XSTATE_BV outside XCOMP_BV, bytes 63:16; MPX)
 xrstor [rsi] | rax=0 rdx=0 m+0x8200=0000000000000080 m+0x8208=0000000000000080
