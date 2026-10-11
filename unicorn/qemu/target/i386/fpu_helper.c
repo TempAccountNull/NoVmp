@@ -9580,113 +9580,61 @@ static uint64_t evf_from_int(const EvFmt *f, int64_t v)
     return s | ((uint64_t)(l + f->bias) << f->fbits) | (m & f->fmask);
 }
 
-/*
- * NoVmp (ledger U236): VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (SDM Vol2C). The SDM gives
- * the error bound (relative error < 2^-14), the special cases (Tables 5-24..5-27) and the
- * DAZ/FTZ rules, but not the exact approximation (Intel's reference RECIP14.c is not part of
- * the SDM and not available here). Implemented stand-in (well inside the bound; NOT
- * necessarily the silicon's bits): the exact 1/x (1/sqrt(x)) rounded to nearest even to the
- * destination precision with an unbounded exponent; overflow -> inf; a VRCP14 result that is
- * tiny after that rounding (SDM Vol1 4.9.1.5) is, with FTZ, a zero of the source's sign,
- * otherwise (U940, decision A9: the SDM's "correct underflow result is written") the exact 1/x
- * rounded to nearest even ONCE at the denormal quantum (the SDM's "mantissa shifted right by
- * one or two bits"; U236 rounded to p bits first and then again at the quantum, which differs
- * in 3144378 of the 16777215 FP32 underflow inputs). MXCSR.RC ignored, no MXCSR
- * flag, no #XM; DAZ: a denormal source is a zero of its sign; 0 -> inf (sign kept), inf -> 0
- * (sign kept), SNaN -> QNaN, QNaN -> itself; RSQRT14: -0 -> -inf, any other negative -> QNaN
- * indefinite. 1/x is formed in the next wider format (float64 / float128): the binary
- * expansion of 1/m (m < 2^p) has no run of p equal bits, so that rounding cannot meet a
- * midpoint at any quantum at or above 2^-(p+1) of the leading bit (p bits, or the 1-2 bits
- * shorter denormal) and the result is the correctly rounded one.
- */
+#endif /* __Use_Original_Qemu (U236) */
+#if __Use_Original_Qemu != 1 /* ours (U1245) */
 
 /*
- * round sig (normalised: bit 63 set; value = sig * 2^(e - 63), sticky = bits below) to the
- * format's precision (RNE, unbounded exponent), then overflow / FTZ / denormal (U940: one
- * rounding of sig at the denormal quantum)
+ * NoVmp (ledger U236, U1245): VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (SDM 092 Vol2C 5-674..5-681,
+ * 5-714..5-721). U1245 (user decision 2026-10-11): the results are those of Intel's reference
+ * implementation (article 671685, recip14.c; the SDM's "numerically exact implementation of VRCP14xx /
+ * VRSQRT14xx"), included below with Intel's BSD-3 notice, with one SDM-wins change (RCP14D of -2^1023
+ * with MXCSR.FTZ: -0, the operand's sign; docs/quirks.md). It replaces the correctly rounded stand-in of
+ * U236/U940 (decision A9). Validated bit for bit against Intel's original file (all 2^32 FP32 inputs and
+ * a stratified FP64 sample, MXCSR 1F80 / DAZ / FTZ / DAZ+FTZ) and against Intel SDE 10.13.1.
+ * The routines use host floating point: they run with the host MXCSR set to 1F80H (round to nearest,
+ * DAZ/FTZ off, exceptions masked), as the article requires, and the host MXCSR is restored afterwards, so
+ * neither the embedder's MXCSR nor host flags reach the result. The guest MXCSR is the routines' mxcsr
+ * argument (DAZ bit 6, FTZ bit 15); MXCSR.RC is ignored, no MXCSR flag is set, no #XM.
  */
-static uint64_t evf_round_rcp(const EvFmt *f, uint64_t sign, int e, uint64_t sig, bool sticky,
-                              bool ftz)
-{
-    int sh = 63 - f->fbits, e0 = e;
-    uint64_t r = sig >> sh, rem = sig & ((1ull << sh) - 1), half = 1ull << (sh - 1);
-
-    if (rem > half || (rem == half && (sticky || (r & 1)))) {
-        r++;
-        if (r >> (f->fbits + 1)) {
-            r >>= 1;
-            e++;
-        }
-    }
-    if (e > f->bias) {
-        return sign | f->emask;
-    }
-    if (e < 1 - f->bias) {
-        /* U940: the quantum 2^(1 - bias - fbits) is 2^s2 units of sig */
-        int s2 = (1 - f->bias - f->fbits) - (e0 - 63);
-        uint64_t r2, rem2, half2;
-
-        if (ftz || s2 > 63) {
-            return sign;                /* FTZ, or below half the smallest denormal */
-        }
-        r2 = sig >> s2;
-        rem2 = sig & ((1ull << s2) - 1);
-        half2 = 1ull << (s2 - 1);
-        if (rem2 > half2 || (rem2 == half2 && (sticky || (r2 & 1)))) {
-            r2++;                       /* 2^fbits: the smallest normal, same bits */
-        }
-        return sign | r2;
-    }
-    return sign | ((uint64_t)(e + f->bias) << f->fbits) | (r & f->fmask);
-}
+#if !defined(_M_X64) && !defined(__x86_64__)
+#error "intel_recip14.c.inc runs on the host FPU with MXCSR 1F80H: an x86-64 host is required"
+#endif
+#include <xmmintrin.h>
+#include "intel_recip14.c.inc"
 
 static uint64_t evex_rcp14(CPUX86State *env, const EvFmt *f, uint64_t x, bool rsqrt)
 {
-    float_status st = env->sse_status;
-    uint64_t s = x & f->sign;
+    unsigned int host = _mm_getcsr();
+    uint64_t r;
 
-    set_float_rounding_mode(float_round_nearest_even, &st);
-    set_float_exception_flags(0, &st);
-    /* U236 x U445: no MXCSR flag, so no unmasked-#U/#O rounding (FTZ applies as masked) */
-    st.unmasked_underflow = false;
-    st.unmasked_overflow = false;
-    if (evf_isnan(f, x)) {
-        return x | f->quiet;
-    }
-    if (evf_expzero(f, x) && (!(x & f->fmask) || (env->mxcsr & 0x40))) {
-        return s | f->emask;                                        /* +-0 -> +-inf */
-    }
-    if (evf_isinf(f, x)) {
-        return rsqrt && s ? f->indef : s;                           /* +-inf -> +-0 */
-    }
-    if (rsqrt) {
-        float128 q, one = int32_to_float128(1, &st);
-
-        if (s) {
-            return f->indef;
-        }
-        set_flush_inputs_to_zero(false, &st);
-        q = f->bits == 64 ? float64_to_float128(x, &st) : float32_to_float128(x, &st);
-        q = float128_div(one, float128_sqrt(q, &st), &st);
-        return f->bits == 64 ? float128_to_float64(q, &st) : float128_to_float32(q, &st);
-    }
-    set_flush_inputs_to_zero(false, &st);
-    set_flush_to_zero(false, &st);
+    _mm_setcsr(0x1f80);
     if (f->bits == 64) {
-        float128 q = float128_div(int32_to_float128(1, &st), float64_to_float128(x, &st), &st);
-        uint64_t sig = (1ull << 63) | ((q.high & 0xffffffffffffull) << 15) | (q.low >> 49);
+        type64 d, s;
 
-        return evf_round_rcp(f, s, (int)((q.high >> 48) & 0x7fff) - 16383, sig,
-                             (q.low & ((1ull << 49) - 1)) != 0, env->mxcsr & 0x8000);
+        s.u = x;
+        d.u = 0;
+        if (rsqrt) {
+            RSQRT14D(env->mxcsr, &d, s);
+        } else {
+            RCP14D(env->mxcsr, &d, s);
+        }
+        r = d.u;
     } else {
-        uint64_t q = float64_div(float64_one, float32_to_float64(x, &st), &st);
+        type32 d, s;
 
-        return evf_round_rcp(f, s, (int)((q >> 52) & 0x7ff) - 1023,
-                             ((q & 0xfffffffffffffull) | (1ull << 52)) << 11, false,
-                             env->mxcsr & 0x8000);
+        s.u = (unsigned int)x;
+        d.u = 0;
+        if (rsqrt) {
+            RSQRT14S(env->mxcsr, &d, s);
+        } else {
+            RCP14S(env->mxcsr, &d, s);
+        }
+        r = d.u;
     }
+    _mm_setcsr(host);
+    return r;
 }
-#endif /* __Use_Original_Qemu (U236) */
+#endif /* __Use_Original_Qemu (U1245) */
 #if __Use_Original_Qemu != 1 /* ours (U237) */
 
 /*

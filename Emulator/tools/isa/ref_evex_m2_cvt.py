@@ -16,7 +16,8 @@ Instructions
      VCVTQQ2PS VCVTUQQ2PS VCVTQQ2PD VCVTUQQ2PD VCVTPS2QQ VCVTPS2UQQ VCVTPD2QQ VCVTPD2UQQ
      VCVTTPS2QQ VCVTTPS2UQQ VCVTTPD2QQ VCVTTPD2UQQ, VCVTSI2SS/SD VCVTUSI2SS/SD
      VCVT[T]SS2SI/SD2SI VCVT[T]SS2USI/SD2USI VCVTSS2SD VCVTSD2SS
-  B  VRCP14PS/PD/SS/SD VRSQRT14PS/PD/SS/SD (documented stand-in, see rcp14 / rsqrt14)
+  B  VRCP14PS/PD/SS/SD VRSQRT14PS/PD/SS/SD (U1245: Intel's reference values, intel_ref14.py; rcp14 /
+     rsqrt14 remain the documented correctly rounded model of the selftest)
   C  VGETEXP VGETMANT VSCALEF VFIXUPIMM VRNDSCALE (PS/PD/SS/SD)
   D  VPSLLD/Q VPSRLD/Q VPSRAD/Q by xmm3/m128 (Mem128), VPROLVD/Q VPRORVD/Q
 
@@ -60,6 +61,8 @@ import json
 import random
 import re
 import sys
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))   # U1245: python -I
+import intel_ref14 as IREF14   # U1245
 from fractions import Fraction
 
 MEM_RSI = 0x8000
@@ -657,10 +660,10 @@ class Form:
                 return cvt_f2f(b, FMT[st], F16, ctx, rc=rc, ftz=False)
             return cvt_f2f(b, FMT[st], FMT[dt], ctx)
         f = FMT.get(st)
-        if op == "rcp14":
-            return rcp14(b, f, ctx)
+        if op == "rcp14":         # U1245: Intel's reference implementation (intel_ref14.py)
+            return IREF14.value("RCP14S" if f.bits == 32 else "RCP14D", b, ctx.mxcsr), 0
         if op == "rsqrt14":
-            return rsqrt14(b, f, ctx)
+            return IREF14.value("RSQRT14S" if f.bits == 32 else "RSQRT14D", b, ctx.mxcsr), 0
         if op == "getexp":
             return getexp(b, f, ctx)
         if op == "getmant":

@@ -45,10 +45,17 @@ every documented requirement; NOT claimed bit-exact to Intel silicon):
   every exponent for FP32 / FP64) and checks the independent U81 legacy model (RCPPS / RSQRTPS)
   against the SDM's 1.5 * 2^-12 bound and tiny-result guarantees.
 
+U1245: the case-file expectations of the VRCP14* / VRSQRT14* forms are Intel's reference values
+(intel_ref14.py, Emulator/data/intel_ref14_values.txt); rcp14() / rsqrt14() above stay the documented
+correctly rounded model the selftest checks against the documented requirements.
+
 usage: ref_rcp.py --selftest | --cases | --cases-f16-all | --cases-bf16 | --cases-hw
 """
 import random
 import sys
+
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))   # U1245: python -I
+import intel_ref14 as R14   # U1245
 from fractions import Fraction
 from math import isqrt
 
@@ -582,14 +589,14 @@ class Form:
 
 M2, M6 = 2, 6
 FORMS = [
-    Form("VRCP14PS", M2, 1, 0, 0x4C, F32, lambda x, m: rcp14(F32, x, m), False, True),
-    Form("VRCP14PD", M2, 1, 1, 0x4C, F64, lambda x, m: rcp14(F64, x, m), False, True),
-    Form("VRSQRT14PS", M2, 1, 0, 0x4E, F32, lambda x, m: rsqrt14(F32, x, m), False, True),
-    Form("VRSQRT14PD", M2, 1, 1, 0x4E, F64, lambda x, m: rsqrt14(F64, x, m), False, True),
-    Form("VRCP14SS", M2, 1, 0, 0x4D, F32, lambda x, m: rcp14(F32, x, m), True, True),
-    Form("VRCP14SD", M2, 1, 1, 0x4D, F64, lambda x, m: rcp14(F64, x, m), True, True),
-    Form("VRSQRT14SS", M2, 1, 0, 0x4F, F32, lambda x, m: rsqrt14(F32, x, m), True, True),
-    Form("VRSQRT14SD", M2, 1, 1, 0x4F, F64, lambda x, m: rsqrt14(F64, x, m), True, True),
+    Form("VRCP14PS", M2, 1, 0, 0x4C, F32, lambda x, m: R14.value("RCP14S", x, m), False, True),
+    Form("VRCP14PD", M2, 1, 1, 0x4C, F64, lambda x, m: R14.value("RCP14D", x, m), False, True),
+    Form("VRSQRT14PS", M2, 1, 0, 0x4E, F32, lambda x, m: R14.value("RSQRT14S", x, m), False, True),
+    Form("VRSQRT14PD", M2, 1, 1, 0x4E, F64, lambda x, m: R14.value("RSQRT14D", x, m), False, True),
+    Form("VRCP14SS", M2, 1, 0, 0x4D, F32, lambda x, m: R14.value("RCP14S", x, m), True, True),
+    Form("VRCP14SD", M2, 1, 1, 0x4D, F64, lambda x, m: R14.value("RCP14D", x, m), True, True),
+    Form("VRSQRT14SS", M2, 1, 0, 0x4F, F32, lambda x, m: R14.value("RSQRT14S", x, m), True, True),
+    Form("VRSQRT14SD", M2, 1, 1, 0x4F, F64, lambda x, m: R14.value("RSQRT14D", x, m), True, True),
     Form("VRCPPH", M6, 1, 0, 0x4C, F16, rcp_ph, False, False),
     Form("VRSQRTPH", M6, 1, 0, 0x4E, F16, rsqrt_ph, False, False),
     Form("VRCPSH", M6, 1, 0, 0x4D, F16, rcp_ph, True, False),
@@ -815,6 +822,10 @@ def header(out, files, opt):
     out.write("# spec 361050-007 (VRCPBF16/VRSQRTBF16 Tables 7.2/7.3). The documents give only an error bound; the\n")
     out.write("# expected values are the emulator's documented stand-in (correctly rounded, see docs%sreciprocal.md),\n" % BS)
     out.write("# NOT Intel silicon bits. The i5-13600K has no AVX-512: expected-value cases only:\n")
+    if files == "--cases":   # U1245
+        out.write("# U1245: the VRCP14*/VRSQRT14* expectations are Intel's reference implementation instead (values of\n")
+        out.write("# Intel's original recip14.c, Emulator%stools%sisa%sintel_ref14.py; documented compliance re-checked by\n" % (BS, BS, BS))
+        out.write("# ref_amb2.py --selftest).\n")
     out.write("#   %s\n" % opt)
     out.write("# RSI = MEM + 0x8000.\n")
 

@@ -25872,6 +25872,9 @@ static void test_x86_ap_idt_delivery(void)
  * (every FP16 / BF16 input, a stride sample of FP32), independent of any model.
  */
 #define RC_DATA 0x200000
+/* U1245: VRCP14* / VRSQRT14* are Intel's reference implementation; the approximation lanes below expect
+   Intel's reference values (generated macros), the special-case lanes the SDM tables */
+#include "x86_rcp14_ref.inc"
 
 typedef struct RcCtx {
     uc_engine *uc;
@@ -25922,7 +25925,8 @@ static void rc_run(RcCtx *c, const uint8_t *insn, size_t n, const void *src, con
     TEST_MSG("MXCSR %08X -> %08X", mxcsr, mx2);
 }
 
-/* the U236 stand-in vs the SDM tables (Table 5-25), DAZ / FTZ, RC and unmasked exceptions ignored */
+/* VRCP14PS (U1245: Intel's reference; approximation lanes RCREF_*) vs the SDM tables (Table 5-25), DAZ / FTZ,
+   RC and unmasked exceptions ignored */
 static void test_x86_rc_rcp14_tables(void)
 {
     static const uint8_t vrcp14ps[] = {0x62, 0xF2, 0x7D, 0x48, 0x4C, 0xC1};     /* vrcp14ps zmm0, zmm1 */
@@ -25937,19 +25941,19 @@ static void test_x86_rc_rcp14_tables(void)
            denormal -> finite, 2^127 -> 2^-127 (denormal), max -> underflow (shifted mantissa),
            2^126(1+2^-23) -> underflow, -max denormal -> finite, 1 -> 1, 3 -> 1/3, +-INF -> +-0,
            SNaN -> QNaN, QNaN -> itself, min denormal -> INF, 1.5 -> 2/3 */
-        {0x1F80, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
-                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        {0x1F80, {0x7F800000, 0xFF800000, 0x7F800000, RCREF_RCP14S_0000_00200001, 0x00400000, RCREF_RCP14S_0000_7F7FFFFF, RCREF_RCP14S_0000_7E800001, RCREF_RCP14S_0000_807FFFFF,
+                  0x3F800000, RCREF_RCP14S_0000_40400000, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, RCREF_RCP14S_0000_3FC00000}},
         /* DAZ: every denormal source is a signed zero */
-        {0x1FC0, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F800000, 0x00400000, 0x00200000, 0x007FFFFF, 0xFF800000,
-                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        {0x1FC0, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F800000, 0x00400000, RCREF_RCP14S_0040_7F7FFFFF, RCREF_RCP14S_0040_7E800001, 0xFF800000,
+                  0x3F800000, RCREF_RCP14S_0040_40400000, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, RCREF_RCP14S_0040_3FC00000}},
         /* FTZ: underflow results are zeros of the operand's sign */
-        {0x9F80, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00000000, 0x00000000, 0x00000000, 0xFE800001,
-                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        {0x9F80, {0x7F800000, 0xFF800000, 0x7F800000, RCREF_RCP14S_8000_00200001, 0x00000000, 0x00000000, 0x00000000, RCREF_RCP14S_8000_807FFFFF,
+                  0x3F800000, RCREF_RCP14S_8000_40400000, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, RCREF_RCP14S_8000_3FC00000}},
         /* RC = toward zero, every exception unmasked, every flag set: as the default */
-        {0x6000, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
-                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
-        {0x7FBF, {0x7F800000, 0xFF800000, 0x7F800000, 0x7F7FFFF8, 0x00400000, 0x00200000, 0x007FFFFF, 0xFE800001,
-                  0x3F800000, 0x3EAAAAAB, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, 0x3F2AAAAB}},
+        {0x6000, {0x7F800000, 0xFF800000, 0x7F800000, RCREF_RCP14S_0000_00200001, 0x00400000, RCREF_RCP14S_0000_7F7FFFFF, RCREF_RCP14S_0000_7E800001, RCREF_RCP14S_0000_807FFFFF,
+                  0x3F800000, RCREF_RCP14S_0000_40400000, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, RCREF_RCP14S_0000_3FC00000}},
+        {0x7FBF, {0x7F800000, 0xFF800000, 0x7F800000, RCREF_RCP14S_0000_00200001, 0x00400000, RCREF_RCP14S_0000_7F7FFFFF, RCREF_RCP14S_0000_7E800001, RCREF_RCP14S_0000_807FFFFF,
+                  0x3F800000, RCREF_RCP14S_0000_40400000, 0x00000000, 0x80000000, 0x7FC00001, 0xFFC00001, 0x7F800000, RCREF_RCP14S_0000_3FC00000}},
     };
     RcCtx c;
     uint32_t out[16];
@@ -25977,11 +25981,11 @@ static void test_x86_rc_rsqrt14_tables(void)
                                    0x7FF0000000000000ULL, 0x3FD0000000000000ULL, 0x0000000000000001ULL,
                                    0x4000000000000000ULL, 0x7FEFFFFFFFFFFFFFULL};
     static const uint64_t r0[8] = {0xFFF8000000000000ULL, 0xFFF8000000000000ULL, 0xFFF0000000000000ULL, 0,
-                                   0x4000000000000000ULL, 0x6180000000000000ULL, 0x3FE6A09E667F3BCDULL,
-                                   0x1FF0000000000000ULL};
+                                   0x4000000000000000ULL, 0x6180000000000000ULL, RCREF_RSQRT14D_0000_4000000000000000,
+                                   RCREF_RSQRT14D_0000_7FEFFFFFFFFFFFFF};
     static const uint64_t rdaz[8] = {0xFFF8000000000000ULL, 0xFFF0000000000000ULL, 0xFFF0000000000000ULL, 0,
-                                     0x4000000000000000ULL, 0x7FF0000000000000ULL, 0x3FE6A09E667F3BCDULL,
-                                     0x1FF0000000000000ULL};
+                                     0x4000000000000000ULL, 0x7FF0000000000000ULL, RCREF_RSQRT14D_0040_4000000000000000,
+                                     RCREF_RSQRT14D_0040_7FEFFFFFFFFFFFFF};
     RcCtx c;
     uint64_t out[8];
     int i;
@@ -26022,18 +26026,17 @@ static void test_x86_rc_scalar(void)
     rc_open(&c, UC_X86_AVX512_F | UC_X86_AVX512_BW | UC_X86_AVX512_VL | UC_X86_AVX512_FP16, 0);
     src[0] = 0x7E800001;                            /* 2^126 (1 + 2^-23): underflow */
     rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1F80, out);
-    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0x007FFFFF));
+    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | RCREF_RCP14S_0000_7E800001));
     TEST_CHECK(out[1] == s1[1] && out[2] == 0 && out[7] == 0);
     rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x9F80, out);   /* FTZ */
     TEST_CHECK(out[0] == (s1[0] & 0xFFFFFFFF00000000ULL));
-    /* U940: one rounding at the denormal quantum (U236's p-bit-then-shift gave 004D765A /
-       000A3991B2C34BA6) */
+    /* underflow results (U940 checked one rounding at the denormal quantum; since U1245 Intel's reference) */
     src[0] = 0x7ED38264;
     rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1F80, out);
-    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0x004D7659));
+    TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | RCREF_RCP14S_0000_7ED38264));
     src[0] = 0x7FD90976DE723B2FULL;
     rc_run(&c, vrcp14sd, sizeof(vrcp14sd), src, s1, d0, 0x1F80, out);
-    TEST_CHECK(out[0] == 0x000A3991B2C34BA7ULL && out[1] == s1[1]);
+    TEST_CHECK(out[0] == RCREF_RCP14D_0000_7FD90976DE723B2F && out[1] == s1[1]);
     src[0] = 0x807FFFFF;                            /* negative denormal: DAZ -> -INF */
     rc_run(&c, vrcp14ss, sizeof(vrcp14ss), src, s1, d0, 0x1FC0, out);
     TEST_CHECK(out[0] == ((s1[0] & 0xFFFFFFFF00000000ULL) | 0xFF800000));
