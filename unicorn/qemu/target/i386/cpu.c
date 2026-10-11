@@ -4562,7 +4562,23 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     } else if (index >= 0x80000000) {
         limit = env->cpuid_xlevel;
     } else if (index >= 0x40000000) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1202) */
         limit = 0x40000001;
+#else /* ours (U1202) */
+        /*
+         * NoVmp (ledger U1202): SDM 092 Vol1 21.1.3 (p. 21-2): "If a value entered for
+         * CPUID.EAX is higher than the maximum input value for basic or extended function for
+         * that processor then the data for the highest basic information leaf is returned."
+         * and "The range CPUID.40000000H to CPUID.4FFFFFFFH do not return feature information
+         * for the processor. These are allocated for emulation by software." QEMU's TCG
+         * hypervisor leaves 40000000H / 40000001H exist only with expose_tcg, which Unicorn
+         * never sets: without it the whole range is out of range, as on bare hardware (the
+         * i5-13600K without a hypervisor returns leaf 20H for 40000000H,
+         * emulator/notes/capture_host_vs_guest_2026-10-10.md). The profile path (U68)
+         * already does this.
+         */
+        limit = cpu->expose_tcg ? 0x40000001 : env->cpuid_level;
+#endif /* __Use_Original_Qemu (U1202) */
     } else {
         limit = env->cpuid_level;
     }

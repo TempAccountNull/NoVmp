@@ -408,6 +408,10 @@ Add-PySelftest 'ref_xeonphi_selftest' 'xeonphi tools' 'ref_xeonphi.py'
 # 6-52 / 6-59 / 6-65); CR0.TS is set for the snippet only (U1200). Control: the same snippets with TS = 0.
 Add-Exp 'cases_xstate_ts' 'cases_xstate_ts' 'xstate expect' @( '--cr0', '0x10019' )
 Add-Exp 'cases_xstate_ts_ctl' 'cases_xstate_ts_ctl' 'xstate expect' @( '--cr0', '0x10011' )
+# U1202: CPUID 40000000H-4FFFFFFFH on the model path = the highest basic leaf (SDM 092 Vol1 p. 21-2), with
+# and without the AVX-512 opt-in
+Add-Exp 'cases_cpuid_hv' 'cases_cpuid_hv' 'xstate cpuid expect'
+Add-Exp 'cases_cpuid_hv_avx512' 'cases_cpuid_hv' 'xstate cpuid evex expect' @( '--avx512' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

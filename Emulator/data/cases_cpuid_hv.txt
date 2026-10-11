@@ -1,0 +1,23 @@
+# U1202 (plan 1.J.34; sdeida report DX-2 / N-2 / T-2): CPUID 40000000H-4FFFFFFFH on the model path (no CPUID
+# profile) return the data of the highest basic leaf. SDM 325462-092 Vol1 21.1.3 p. 21-2 (093 identical):
+# "If a value entered for CPUID.EAX is higher than the maximum input value for basic or extended function for that
+# processor then the data for the highest basic information leaf is returned." and "The range CPUID.40000000H to
+# CPUID.4FFFFFFFH do not return feature information for the processor. These are allocated for emulation by
+# software." Hardware evidence: the bare i5-13600K (no hypervisor) returns leaf 20H's data for 40000000H
+# (EBX = 1; emulator\notes\capture_host_vs_guest_2026-10-10.md); a VMware guest returns the hypervisor's leaf, so
+# there is no hardware line. Before U1202 the model path returned 0 for 40000000H / 40000001H (QEMU's TCG
+# hypervisor window, cpu.c limit 40000001H, expose_tcg never set by Unicorn).
+# Expected-value cases, run twice: without an opt-in and with --avx512:
+#   emu-alltest --cases Emulator\data\cases_cpuid_hv.txt --expect-only
+#   emu-alltest --cases Emulator\data\cases_cpuid_hv.txt --avx512 --expect-only
+# Each line reads the highest basic leaf N = CPUID.00H:EAX (R12) and its sub-leaf 0 / 1, then the tested input with
+# the same ECX, and XORs the two results: R8-R11 = 0 means EAX, EBX, ECX, EDX are equal. R13 = OR of the highest
+# leaf's four registers (not 0: the comparison is not trivially 0 = 0). The MAX model's highest basic leaf is 20H
+# (EAX 0, EBX 1, ECX 0, EDX 0, also with --avx512). Before U1202 the 40000000H / 40000001H lines differed (R9 = 1).
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; xor ecx, ecx; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov r13d, eax; or r13d, ebx; or r13d, ecx; or r13d, edx; mov eax, 0x40000000; xor ecx, ecx; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0 r12=0x20 r13=0x1
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; xor ecx, ecx; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov eax, 0x40000001; xor ecx, ecx; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; xor ecx, ecx; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov eax, 0x40000010; xor ecx, ecx; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; xor ecx, ecx; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov eax, 0x4FFFFFFF; xor ecx, ecx; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; mov eax, r12d; mov ecx, 1; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov eax, 0x40000000; mov ecx, 1; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0
+# control: an input above the highest basic leaf below 40000000H (5FH) - unchanged by U1202
+xor eax, eax; xor ecx, ecx; cpuid; mov r12d, eax; xor ecx, ecx; cpuid; mov r8d, eax; mov r9d, ebx; mov r10d, ecx; mov r11d, edx; mov eax, 0x5F; xor ecx, ecx; cpuid; xor r8d, eax; xor r9d, ebx; xor r10d, ecx; xor r11d, edx =>! r8=0 r9=0 r10=0 r11=0
