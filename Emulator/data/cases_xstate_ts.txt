@@ -1,0 +1,40 @@
+# U1201 (plan 1.J.34; sdeida report DX-1 / N-1 / T-1): XSAVE, XRSTOR and XSAVEOPT with CR0.TS = 1 raise #NM.
+# SDM 325462-092 Vol2D (093 identical): XRSTOR p. 6-52 / 6-53, XSAVE p. 6-59 / 6-60, XSAVEOPT p. 6-65 / 6-66,
+# Protected Mode and 64-Bit Mode Exceptions: "#NM If CR0.TS[bit 3] = 1." and "#UD ... If the LOCK prefix is used."
+# Expected-value cases, Unicorn at CPL0, CR0.TS set for the snippet only (U1200):
+#   emu-alltest --cases Emulator\data\cases_xstate_ts.txt --cr0 0x10019 --expect-only
+# 0x10019 = PE|TS|ET|WP. The same snippets with CR0.TS = 0: cases_xstate_ts_ctl.txt (--cr0 0x10011).
+# A strict "=> #NM" means: fault at the instruction, nothing stored, no register changed (the state is saved at the
+# faulting instruction). Hardware: not testable (the host runs the snippets at CPL3; Windows owns CR0.TS):
+# specification-validated only.
+# the harness: CR0.TS is set at the snippet (MOV from CR0 at CPL0 reads it), the thunk is not affected
+mov rbx, cr0 => rbx=0x10019
+nop =>
+# x87 / SSE / AVX with TS = 1: #NM (Vol3A 2.5 p. 2-17; Vol2A FLD, MOVAPS; VEX class: "#NM If CR0.TS[bit 3]=1")
+fld1 => #NM
+movaps xmm0, xmm1 => #NM
+vaddps ymm0, ymm1, ymm2 => #NM
+# N-1: XSAVE / XRSTOR / XSAVEOPT (before U1201: completed, the image was written / loaded)
+xsave [rsi] | rax=0x7 rdx=0 => #NM
+xsave64 [rsi] | rax=0x7 rdx=0 => #NM
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => #NM
+xrstor64 [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => #NM
+xsaveopt [rsi] | rax=0x7 rdx=0 => #NM
+xsaveopt64 [rsi] | rax=0x7 rdx=0 => #NM
+# RFBM = 0 (EDX:EAX = 0) does not change it: #NM before any state is examined
+xsave [rsi] | rax=0 rdx=0 => #NM
+xrstor [rsi] | rax=0 rdx=0 => #NM
+# the forms that checked CR0.TS before U1201 (XSAVEC U66, XSAVES / XRSTORS U726, FXSAVE / FXRSTOR)
+.byte 0x0f, 0xc7, 0x26 | rax=0x7 rdx=0 => #NM
+.byte 0x0f, 0xc7, 0x2e | rax=0x7 rdx=0 => #NM
+.byte 0x0f, 0xc7, 0x1e | rax=0x7 rdx=0 => #NM
+fxsave [rsi] => #NM
+fxrstor [rsi] | m+0x8018=801F0000 => #NM
+# LOCK: #UD (decoded before #NM; the order within Vol3A Table 7-2 class 9 is implementation-dependent, p. 7-10)
+.byte 0xf0, 0x0f, 0xae, 0x26 | rax=0x7 rdx=0 => #UD
+.byte 0xf0, 0x0f, 0xae, 0x2e | rax=0x7 rdx=0 => #UD
+.byte 0xf0, 0x0f, 0xae, 0x36 | rax=0x7 rdx=0 => #UD
+# CLTS (CPL0) clears CR0.TS inside the snippet: XSAVE then completes (legacy region FCW 037FH, MXCSR 1F80H,
+# MXCSR_MASK FFFFH; XSTATE_BV = 07H for RFBM 7)
+clts; xsave [rsi] | rax=0x7 rdx=0 => m+0x8000=7F03 m+0x8018=801F m+0x801C=FFFF m+0x8200=07
+clts; xrstor [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => xmm0=00000000000000000000000000000000

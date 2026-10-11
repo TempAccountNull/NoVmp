@@ -404,6 +404,10 @@ Add-Exp 'cases_sysmsr_pmu' 'cases_sysmsr_pmu' 'sysmsr expect' @( '--cpuid', ( Jo
 Add-Exp 'cases_xeonphi' 'cases_xeonphi' 'evex xeonphi expect' @( '--xeonphi' )
 Add-Exp 'cases_xeonphi_off' 'cases_xeonphi_off' 'evex xeonphi expect' @( '--avx512' )
 Add-PySelftest 'ref_xeonphi_selftest' 'xeonphi tools' 'ref_xeonphi.py'
+# U1200-U1219 (agent xstatefix): XSAVE / XRSTOR / XSAVEOPT with CR0.TS = 1 raise #NM (U1201, SDM 092 Vol2D
+# 6-52 / 6-59 / 6-65); CR0.TS is set for the snippet only (U1200). Control: the same snippets with TS = 0.
+Add-Exp 'cases_xstate_ts' 'cases_xstate_ts' 'xstate expect' @( '--cr0', '0x10019' )
+Add-Exp 'cases_xstate_ts_ctl' 'cases_xstate_ts_ctl' 'xstate expect' @( '--cr0', '0x10011' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

@@ -1,0 +1,25 @@
+# U1201 control for cases_xstate_ts.txt: the same snippets with CR0.TS = 0, plus CR0.TS set by the snippet itself
+# (MOV CR0 at CPL0; the U1200 epilogue hook clears it again before the state save). Expected-value cases:
+#   emu-alltest --cases Emulator\data\cases_xstate_ts_ctl.txt --cr0 0x10011 --expect-only
+# 0x10011 = PE|ET|WP. SDM 325462-092 Vol2D XRSTOR p. 6-52 / 6-53, XSAVE p. 6-59 / 6-60, XSAVEOPT p. 6-65 / 6-66
+# ("#NM If CR0.TS[bit 3] = 1."); Vol1 13.7 / 13.8 (XSAVE / XRSTOR operation, standard form).
+mov rbx, cr0 => rbx=0x10011
+fld1 => st0=3FFF:8000000000000000 fsw=0x3800 ftw=0x80
+# XSAVE / XSAVEOPT with RFBM 7 (EDX:EAX): legacy region (FCW 037FH, MXCSR 1F80H, MXCSR_MASK FFFFH), XSTATE_BV 07H;
+# XMM / YMM_Hi128 and the x87 registers are 0 (the input state), like the bytes they overwrite
+xsave [rsi] | rax=0x7 rdx=0 => m+0x8000=7F03 m+0x8018=801F m+0x801C=FFFF m+0x8200=07
+xsave64 [rsi] | rax=0x7 rdx=0 => m+0x8000=7F03 m+0x8018=801F m+0x801C=FFFF m+0x8200=07
+xsaveopt [rsi] | rax=0x7 rdx=0 => m+0x8000=7F03 m+0x8018=801F m+0x801C=FFFF m+0x8200=07
+xsaveopt64 [rsi] | rax=0x7 rdx=0 => m+0x8000=7F03 m+0x8018=801F m+0x801C=FFFF m+0x8200=07
+# XRSTOR with XSTATE_BV = 0: x87 / SSE / AVX initialised (XMM0 = 0), MXCSR loaded from the image (1F80H)
+xrstor [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => xmm0=00000000000000000000000000000000
+xrstor64 [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => xmm0=00000000000000000000000000000000
+# CR0.TS set by the snippet (LEA keeps RFLAGS; TS was 0): #NM at the instruction (before U1201: XSAVE / XSAVEOPT
+# wrote the image, XRSTOR loaded it, and the line still reported #NM because the harness epilogue faulted)
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; xsave [rsi] | rax=0x7 rdx=0 => #NM rbx=0x10019
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; xrstor [rsi] | rax=0x7 rdx=0 xmm0=112233445566778899AABBCCDDEEFF01 m+0x8018=801F0000 => #NM rbx=0x10019
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; xsaveopt [rsi] | rax=0x7 rdx=0 => #NM rbx=0x10019
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; .byte 0x0f, 0xc7, 0x26 | rax=0x7 rdx=0 => #NM rbx=0x10019
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; fxsave [rsi] => #NM rbx=0x10019
+# the harness (U1200): a snippet that leaves CR0.TS = 1 completes; the epilogue clears it before the state save
+mov rbx, cr0; lea rbx, [rbx + 8]; mov cr0, rbx; nop => rbx=0x10019

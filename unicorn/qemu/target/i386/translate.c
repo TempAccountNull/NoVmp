@@ -10145,6 +10145,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;
             }
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U1201) */
+            /*
+             * NoVmp (ledger U1201): SDM 092 Vol2D XSAVE, Protected Mode / 64-Bit Mode
+             * Exceptions (p. 6-59 / 6-60): "#NM If CR0.TS[bit 3] = 1." (QEMU, upstream too, had
+             * no check: the state was saved). After the decode #UD conditions (CPUID
+             * .01H:ECX.XSAVE, LOCK, 66/F2/F3, REX2), before the CR4.OSXSAVE #UD of the helper:
+             * the order within Vol3A Table 7-2 class 9 is implementation-dependent
+             * (p. 7-10); the same as XSAVEC / XSAVES (U66 / U726), docs/quirks.md.
+             */
+            if (s->flags & HF_TS_MASK) {
+                gen_exception(s, EXCP07_PREX);
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1201) */
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
@@ -10165,6 +10179,20 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 goto illegal_op;    /* APX 3.1.2.1, see XSAVE */
             }
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U1201) */
+            /*
+             * NoVmp (ledger U1201): SDM 092 Vol2D XRSTOR, Protected Mode / 64-Bit Mode
+             * Exceptions (p. 6-52 / 6-53): "#NM If CR0.TS[bit 3] = 1." (QEMU, upstream too, had
+             * no check: the state was loaded). After the decode #UD conditions (CPUID
+             * .01H:ECX.XSAVE, LOCK, 66/F2/F3, REX2), before the CR4.OSXSAVE #UD of the helper:
+             * the order within Vol3A Table 7-2 class 9 is implementation-dependent
+             * (p. 7-10); the same as XSAVEC / XSAVES (U66 / U726), docs/quirks.md.
+             */
+            if (s->flags & HF_TS_MASK) {
+                gen_exception(s, EXCP07_PREX);
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1201) */
             gen_lea_modrm(env, s, modrm);
             tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                   cpu_regs[R_EDX]);
@@ -10199,6 +10227,21 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     goto illegal_op;    /* APX 3.1.2.1, see XSAVE */
                 }
 #endif /* __Use_Original_Qemu (U614) */
+#if __Use_Original_Qemu != 1 /* ours (U1201) */
+                /*
+                 * NoVmp (ledger U1201): SDM 092 Vol2D XSAVEOPT, Protected Mode / 64-Bit Mode
+                 * Exceptions (p. 6-65 / 6-66): "#NM If CR0.TS[bit 3] = 1." (QEMU, upstream too, had
+                 * no check: the state was saved). After the decode #UD conditions (CPUID
+                 * .01H:ECX.XSAVE / (0DH,1):EAX.XSAVEOPT, LOCK, F2/F3, REX2; 66 is CLWB),
+                 * before the CR4.OSXSAVE #UD of the helper:
+                 * the order within Vol3A Table 7-2 class 9 is implementation-dependent
+                 * (p. 7-10); the same as XSAVEC / XSAVES (U66 / U726), docs/quirks.md.
+                 */
+                if (s->flags & HF_TS_MASK) {
+                    gen_exception(s, EXCP07_PREX);
+                    break;
+                }
+#endif /* __Use_Original_Qemu (U1201) */
                 gen_lea_modrm(env, s, modrm);
                 tcg_gen_concat_tl_i64(tcg_ctx, s->tmp1_i64, cpu_regs[R_EAX],
                                       cpu_regs[R_EDX]);

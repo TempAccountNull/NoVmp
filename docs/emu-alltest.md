@@ -57,7 +57,7 @@ Without `--xcr0` / `--cr0`, emu-alltest derives the state per kind of case and p
 - a code hook at the epilogue's first instruction clears CR0.TS before the state save, whoever set it (the hook above, or the snippet with MOV CR0 at CPL0). Before U1200 the epilogue of a snippet that set TS raised #NM itself, so such a line reported #NM even when the snippet's own instruction completed (`notes\sdeida\probes\xsave_ts2.log`: a plain `nop` line ended in #NM), and the state was not saved;
 - each hook that changes CR0 also writes RIP = its own address: the translator reads CR0.TS when it translates a block (hflags HF_TS_MASK, part of the block key), so Unicorn leaves the current block and translates the next one with the new CR0.TS. The second visit of a hook finds nothing to change.
 
-The machine-state line prints the configured CR0 with "CR0.TS set for the snippet only (U1200)". The flag is set by the `--cases` runner only: the quick / `--full` sweep (CR0 11h) is unchanged.
+The machine-state line prints the configured CR0 with "CR0.TS set for the snippet only (U1200)". The flag is set by the `--cases` runner only: the quick / `--full` sweep (CR0 11h) is unchanged. Example (U1201): `Emulator\data\cases_xstate_ts.txt` (`--cr0 0x10019`: XSAVE / XRSTOR / XSAVEOPT #NM, x87 / SSE / AVX #NM, CLTS inside the snippet) and its control `cases_xstate_ts_ctl.txt` (`--cr0 0x10011`, with lines that set TS by MOV CR0).
 
 ## test.cmd: selective and parallel runs (U541–U543, plan 1.H.3)
 
