@@ -31841,6 +31841,52 @@ static void test_x86_sgx_xfrm_osxsave(void)
 }
 
 
+/*
+ * U1270: a CET indirect-branch-tracking application (CR4.CET, IA32_U_CET.ENDBR_EN) and enclaves
+ * (Vol3D EENTER p. 41-94, EEXIT p. 41-98, AEX p. 40-7, ENCLU Operation p. 41-10). EEXIT restores
+ * IA32_U_CET with the tracker in WAIT_FOR_ENDBRANCH: a plain instruction at the EEXIT target is
+ * #CP(ENDBRANCH), ENDBR64 clears the tracker. While the tracker waits, ENCLU[EENTER] is #CP and
+ * ENCLU[ERESUME] passes the CET check (here #GP(0): CSSA = 0). An AEX leaves the tracker waiting
+ * too; ERESUME at the AEP then runs (the UD2 faults again: #UD).
+ */
+static void test_x86_sgx_cet_ibt(void)
+{
+    uint64_t v;
+    SgxEnv e;
+
+    sgx_ready(&e, 0);
+    sgx_to_cpl0(&e);
+    sgx_set(&e.c, UC_X86_REG_CR0, sgx_get(&e.c, UC_X86_REG_CR0) | 0x10000);   /* WP */
+    TEST_CHECK(sgx_run(&e.c, "\x0f\x20\xe0\x48\x0f\xba\xe8\x17\x0f\x22\xe0", 11) == -1);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_CR4) & (1u << 23));
+    OK(sgx_wrmsr_api(&e.c, 0x6a0, 0x4));                                 /* ENDBR_EN */
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1);
+    OK(sgx_rdmsr_api(&e.c, 0x6a0, &v));
+    TEST_CHECK_(v == 0x804, "IA32_U_CET %llx after EEXIT", (unsigned long long)v);
+    OK(uc_mem_write(e.c.uc, SGX_ENCLU_AT + 3, "\x90", 1));
+    e.c.cap.count = 0;
+    OK(uc_emu_start(e.c.uc, SGX_ENCLU_AT + 3, SGX_ENCLU_AT + 4, 0, 0));
+    TEST_CHECK(e.c.cap.count == 1 && e.c.cap.intno == 21);
+    sgx_exc(&e, 21, 3, 0);
+    TEST_CHECK(sgx_enclu(&e, 2, SGXV_BASE, SGX_AEP, 0, 0, 0) == 21);    /* EENTER */
+    TEST_CHECK(sgx_enclu(&e, 3, SGXV_BASE, SGX_AEP, 0, 0, 0) == 13);    /* ERESUME, CSSA = 0 */
+    OK(sgx_rdmsr_api(&e.c, 0x6a0, &v));
+    TEST_CHECK(v == 0x804);
+    OK(uc_mem_write(e.c.uc, SGX_ENCLU_AT + 3, "\xf3\x0f\x1e\xfa", 4));  /* ENDBR64 */
+    e.c.cap.count = 0;
+    OK(uc_emu_start(e.c.uc, SGX_ENCLU_AT + 3, SGX_ENCLU_AT + 7, 0, 0));
+    TEST_CHECK(e.c.cap.count == 0);
+    OK(sgx_rdmsr_api(&e.c, 0x6a0, &v));
+    TEST_CHECK(v == 0x4);
+    TEST_CHECK(sgx_eenter(&e, 1, 0, 0) == 6);                           /* UD2: AEX */
+    OK(sgx_rdmsr_api(&e.c, 0x6a0, &v));
+    TEST_CHECK(v == 0x804 && sgx_cssa(&e) == 1);
+    TEST_CHECK(sgx_eresume(&e) == 6 && sgx_cssa(&e) == 1);              /* ERESUME ran, UD2 again */
+    sgx_env_close(&e);
+}
+
+
 /* ---- end U1260-U1299 (sgx_) ---- */
 
 TEST_LIST = {
@@ -32259,4 +32305,5 @@ TEST_LIST = {
     {"test_x86_sgx_sgx2", test_x86_sgx_sgx2},
     {"test_x86_gs_smx", test_x86_gs_smx},
     {"test_x86_sgx_xfrm_osxsave", test_x86_sgx_xfrm_osxsave},
+    {"test_x86_sgx_cet_ibt", test_x86_sgx_cet_ibt},
     {NULL, NULL}};
