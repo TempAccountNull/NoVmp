@@ -28087,6 +28087,1157 @@ static void test_x86_xs_xgetbv1_profile(void)
 }
 /* ---- end U1200-U1219 (xs_) ---- */
 
+/*
+ * ---- NoVmp U1170-U1199: FRED and LAM (plan 1.J.10, decision A11; fl_) ----
+ * Expected values from SDM 325462-092 Vol3A chapter 8 (FRED, pages 8-1..8-22), Vol2A ERETS / ERETU
+ * (3-298..3-304), Vol3A 4.4 (LAM) and the FRED spec 346446-009; the frame layout and the LAM
+ * masking are cross-checked by the independent model Emulator\tools\isa\ref_fred_lam.py.
+ */
+#define FL_DATA 0x200000
+
+/* a 64-bit CPL0 engine (pc_ helpers) with the UC_CTL_X86_FEATURES mask 'feat' */
+static void fl_open(PcCtx *c, int feat)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c->uc, feat));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, FL_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* RDMSR by the CPU: the vector or -1, the value in *v */
+static int fl_rdmsr(PcCtx *c, uint32_t msr, uint64_t *v)
+{
+    int r;
+
+    pc_set(c, UC_X86_REG_RCX, msr);
+    pc_set(c, UC_X86_REG_RAX, 0);
+    pc_set(c, UC_X86_REG_RDX, 0);
+    r = pc_run(c, "\x0f\x32", 2);
+    *v = (pc_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)pc_get(c, UC_X86_REG_RAX);
+    return r;
+}
+
+/* WRMSR by the CPU: the vector or -1 */
+static int fl_wrmsr(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RCX, msr);
+    pc_set(c, UC_X86_REG_RAX, (uint32_t)v);
+    pc_set(c, UC_X86_REG_RDX, v >> 32);
+    return pc_run(c, "\x0f\x30", 2);
+}
+
+/* CPUID.(leaf, sub) by the CPU into r[0..3] = EAX, EBX, ECX, EDX */
+static void fl_cpuid(PcCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    pc_set(c, UC_X86_REG_RAX, leaf);
+    pc_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(pc_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)pc_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)pc_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)pc_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)pc_get(c, UC_X86_REG_RDX);
+}
+
+/* MOV CR4, RAX by the CPU: the vector or -1 */
+static int fl_mov_cr4(PcCtx *c, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RAX, v);
+    return pc_run(c, "\x0f\x22\xe0", 3);
+}
+
+/* one MSR write that must succeed and read back, and one that must #GP(0) and leave it unchanged */
+static void fl_msr_ok(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    uint64_t r = 0;
+
+    TEST_CHECK(fl_wrmsr(c, msr, v) == -1);
+    TEST_CHECK(fl_rdmsr(c, msr, &r) == -1 && r == v);
+    TEST_MSG("MSR %x: wrote %llx read %llx", msr, (unsigned long long)v, (unsigned long long)r);
+}
+
+static void fl_msr_gp(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    uint64_t before = 0, after = 1;
+    uc_x86_msr m;
+
+    TEST_CHECK(fl_rdmsr(c, msr, &before) == -1);
+    TEST_CHECK(fl_wrmsr(c, msr, v) == 13);
+    TEST_MSG("MSR %x value %llx: expected #GP(0)", msr, (unsigned long long)v);
+    TEST_CHECK(fl_rdmsr(c, msr, &after) == -1 && after == before);
+    m.rid = msr;
+    m.value = v;
+    TEST_CHECK(uc_reg_write(c->uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+}
+
+/*
+ * U1170: UC_X86_FEATURE_FRED. Default off: CPUID.(07H,1):EAX[17] = 0, CR4[32] reserved (#GP(0)),
+ * the FRED MSRs #GP(0). With the opt-in: FRED[17] and LKGS[18] (Vol3A 8.2.1), CR4.FRED settable by
+ * MOV to CR4 in 64-bit mode (8.2.2), the MSRs (8.2.3): reset 0, IA32_FRED_CONFIG reserved bits 2,
+ * 5:4, 11, IA32_FRED_RSPi 64-byte aligned, IA32_FRED_SSPi (i = 1..3) bits 2:0 reserved, all CPU
+ * canonical (57-bit: the MAX model reports LA57), IA32_FRED_STKLVLS any value; a uc_context carries
+ * them.
+ */
+static void test_x86_fl_fred_enum(void)
+{
+    static const uint32_t msrs[] = {0x1cc, 0x1cd, 0x1ce, 0x1cf, 0x1d0, 0x1d1, 0x1d2, 0x1d3, 0x1d4};
+    const uint64_t k = 0xffff800000000000ull;
+    uint32_t r[4];
+    uint64_t v;
+    uc_context *ctx;
+    uc_x86_msr m;
+    PcCtx c;
+    int mask = -1;
+    size_t i;
+
+    /* default: no FRED */
+    fl_open(&c, 0);
+    fl_cpuid(&c, 7, 1, r);
+    TEST_CHECK((r[0] & (1u << 17)) == 0);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x20\xe0", 3) == -1);                  /* mov rax, cr4 */
+    v = pc_get(&c, UC_X86_REG_RAX);
+    TEST_CHECK(fl_mov_cr4(&c, v | (1ull << 32)) == 13);
+    for (i = 0; i < sizeof(msrs) / sizeof(msrs[0]); i++) {
+        TEST_CHECK(fl_rdmsr(&c, msrs[i], &v) == 13);
+        TEST_CHECK(fl_wrmsr(&c, msrs[i], 0) == 13);
+    }
+    OK(uc_ctl_get_x86_features(c.uc, &mask));
+    TEST_CHECK(mask == 0);
+    TEST_CHECK(uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_FRED) == UC_ERR_ARG);  /* initialised */
+    OK(uc_close(c.uc));
+
+    /* the opt-in */
+    fl_open(&c, UC_X86_FEATURE_FRED);
+    OK(uc_ctl_get_x86_features(c.uc, &mask));
+    TEST_CHECK(mask == UC_X86_FEATURE_FRED);
+    fl_cpuid(&c, 7, 1, r);
+    TEST_CHECK((r[0] & (1u << 17)) != 0 && (r[0] & (1u << 18)) != 0);
+    for (i = 0; i < sizeof(msrs) / sizeof(msrs[0]); i++) {
+        TEST_CHECK(fl_rdmsr(&c, msrs[i], &v) == -1 && v == 0);         /* RESET state 0 */
+    }
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x20\xe0", 3) == -1);
+    v = pc_get(&c, UC_X86_REG_RAX);
+    TEST_CHECK((v >> 32) == 0);
+    TEST_CHECK(fl_mov_cr4(&c, v | (1ull << 32)) == -1);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x20\xe0", 3) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RAX) == (v | (1ull << 32)));
+    TEST_CHECK(fl_mov_cr4(&c, v | (1ull << 33)) == 13);              /* bit 33 stays reserved */
+    TEST_CHECK(fl_mov_cr4(&c, v) == -1);
+    /* IA32_FRED_CONFIG */
+    fl_msr_ok(&c, 0x1d4, k | 0x17cb);           /* CSL 3, SSP dec 8, RSP dec 7 lines, IRQ SL 3 */
+    fl_msr_gp(&c, 0x1d4, k | 0x1000 | 0x4);
+    fl_msr_gp(&c, 0x1d4, k | 0x1000 | 0x10);
+    fl_msr_gp(&c, 0x1d4, k | 0x1000 | 0x20);
+    fl_msr_gp(&c, 0x1d4, k | 0x1000 | 0x800);
+    fl_msr_gp(&c, 0x1d4, 0x0100000000001000ull);                    /* not CPU canonical */
+    /* IA32_FRED_RSP0..3 */
+    for (i = 0; i < 4; i++) {
+        fl_msr_ok(&c, 0x1cc + (uint32_t)i, 0x00007fffffffffc0ull - 0x40 * i);
+        fl_msr_gp(&c, 0x1cc + (uint32_t)i, 0x1020);
+        fl_msr_gp(&c, 0x1cc + (uint32_t)i, 0x1001);
+        fl_msr_gp(&c, 0x1cc + (uint32_t)i, 0xfeffffffffffff40ull);
+    }
+    /* IA32_FRED_SSP1..3 */
+    for (i = 1; i < 4; i++) {
+        fl_msr_ok(&c, 0x1d0 + (uint32_t)i, k | (0x8008 * i));
+        fl_msr_gp(&c, 0x1d0 + (uint32_t)i, 0x2004);
+        fl_msr_gp(&c, 0x1d0 + (uint32_t)i, 0x2001);
+        fl_msr_gp(&c, 0x1d0 + (uint32_t)i, 0x0100000000000000ull);
+    }
+    /* IA32_FRED_STKLVLS: 32 2-bit fields, nothing reserved */
+    fl_msr_ok(&c, 0x1d0, 0xffffffffffffffffull);
+    fl_msr_ok(&c, 0x1d0, 0x0123456789abcdefull);
+    /* IA32_FRED_SSP0 = IA32_PL0_SSP: 4-byte aligned is allowed */
+    fl_msr_ok(&c, 0x6a4, k | 0x3004);
+    fl_msr_gp(&c, 0x6a4, k | 0x3002);
+    /* the host API reads the same values; a uc_context carries them */
+    m.rid = 0x1d4;
+    m.value = 0;
+    OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+    TEST_CHECK(m.value == (k | 0x17cb));
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    fl_msr_ok(&c, 0x1d4, 0);
+    fl_msr_ok(&c, 0x1cf, 0);
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(fl_rdmsr(&c, 0x1d4, &v) == -1 && v == (k | 0x17cb));
+    TEST_CHECK(fl_rdmsr(&c, 0x1cf, &v) == -1 && v == 0x00007fffffffff00ull);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+
+    /* a strict profile that hides FRED: CR4[32] reserved and the MSRs absent again */
+    {
+        static const uc_x86_cpuid prof[] = {
+            {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+            {1, 0, 0x000b0671, 0, 0, 1u << 5},
+            {7, 0, 1, 0, 0, 0},
+            {7, 1, 1u << 18, 0, 0, 0},
+        };
+
+        fl_open(&c, UC_X86_FEATURE_FRED);
+        OK(uc_ctl_set_x86_cpuid(c.uc, prof, sizeof(prof) / sizeof(prof[0])));
+        TEST_CHECK(fl_rdmsr(&c, 0x1d4, &v) == 13);
+        pc_set(&c, UC_X86_REG_RAX, 0);
+        TEST_CHECK(pc_run(&c, "\x0f\x20\xe0", 3) == -1);
+        v = pc_get(&c, UC_X86_REG_RAX);
+        TEST_CHECK(fl_mov_cr4(&c, v | (1ull << 32)) == 13);
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * FRED system state for the delivery tests (U1171): FRED MSRs, CR4.FRED, IA32_STAR = 0023_0008_0000_0000
+ * (kernel CS 08H / SS 10H; user 64-bit CS 33H / SS 2BH, compatibility CS 23H), entry page FL_ENTRY:
+ * the CPL3 entry copies the 64-byte frame to FL_MARK and stops at FL_STOP3, the CPL0 entry (+ 256) the
+ * same to FL_STOP0 (the emulation runs until there).
+ */
+#define FL_ENTRY (FL_DATA + 0x5000)
+#define FL_MARK (FL_DATA + 0x6000)
+#define FL_RSP0 (FL_DATA + 0xe000)
+#define FL_RSP1 (FL_DATA + 0xd000)
+#define FL_RSP2 (FL_DATA + 0xc000)
+#define FL_RSP3 (FL_DATA + 0xb000)
+#define FL_STACK (FL_DATA + 0xf000)
+#define FL_STAR 0x0023000800000000ull
+
+static void fl_wmsr(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    uc_x86_msr m;
+
+    m.rid = msr;
+    m.value = v;
+    OK(uc_reg_write(c->uc, UC_X86_REG_MSR, &m));
+}
+
+static uint64_t fl_msr(PcCtx *c, uint32_t msr)
+{
+    uc_x86_msr m;
+
+    m.rid = msr;
+    m.value = 0;
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static uint64_t fl_q(PcCtx *c, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(c->uc, a, &v, 8));
+    return v;
+}
+
+static void fl_wq(PcCtx *c, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(c->uc, a, &v, 8));
+}
+
+/* handler at h: mov rax, [rsp + 8 * i]; mov [FL_MARK + 8 * i], rax (i = 0..7); 'tail' bytes */
+static uint64_t fl_handler(PcCtx *c, uint64_t h, const char *tail, size_t tn)
+{
+    uint8_t b[160];
+    size_t n = 0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        uint32_t m = (uint32_t)(FL_MARK + 8 * i);
+
+        b[n++] = 0x48; b[n++] = 0x8b; b[n++] = 0x44; b[n++] = 0x24; b[n++] = (uint8_t)(8 * i);
+        b[n++] = 0x48; b[n++] = 0x89; b[n++] = 0x04; b[n++] = 0x25;
+        memcpy(b + n, &m, 4);
+        n += 4;
+    }
+    memcpy(b + n, tail, tn);
+    OK(uc_mem_write(c->uc, h, b, n + tn));
+    return h + n;          /* the address after the copy */
+}
+
+/* the FRED-enabled engine; deliver = UC_CTL_X86_EVENT_DELIVERY mask */
+static void fl_fred_open(PcCtx *c, int deliver, uint64_t config_low)
+{
+    uint64_t cr4;
+
+    fl_open(c, UC_X86_FEATURE_FRED);
+    OK(uc_ctl_set_x86_event_delivery(c->uc, deliver));
+    fl_wmsr(c, 0xc0000081, FL_STAR);
+    fl_wmsr(c, 0x1d4, FL_ENTRY | config_low);
+    fl_wmsr(c, 0x1cc, FL_RSP0);
+    fl_wmsr(c, 0x1cd, FL_RSP1);
+    fl_wmsr(c, 0x1ce, FL_RSP2);
+    fl_wmsr(c, 0x1cf, FL_RSP3);
+    cr4 = pc_get(c, UC_X86_REG_CR4);
+    pc_set(c, UC_X86_REG_CR4, cr4 | (1ull << 32));
+    pc_set(c, UC_X86_REG_RSP, FL_STACK);
+}
+
+/* run code until 'until': UC_ERR_* */
+static uc_err fl_go(PcCtx *c, const char *code, size_t len, uint64_t *at, uint64_t until)
+{
+    uint64_t pc = c->pc;
+
+    c->pc += 0x80;
+    if (c->pc + 0x80 > code_start + code_len) {
+        c->pc = code_start;
+    }
+    *at = pc;
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    return uc_emu_start(c->uc, pc, until, 0, 0);
+}
+
+/* the event information (bits 63:32 of the augmented SS, Vol3A 8.3.2.1) */
+static uint64_t fl_info(int vector, int type, int l64, int nested, int len)
+{
+    return ((uint64_t)(vector & 0xff) | ((uint64_t)type << 16) | ((uint64_t)l64 << 25) |
+            ((uint64_t)nested << 26) | ((uint64_t)(len & 15) << 28)) << 32;
+}
+
+/* the 8 frame words (error code first) against w[] */
+static void fl_frame(PcCtx *c, const uint64_t w[8])
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        uint64_t v = fl_q(c, FL_MARK + 8 * i);
+
+        TEST_CHECK(v == w[i]);
+        TEST_MSG("frame word %d (at RSP + %d): %016llx, expected %016llx", i, 8 * i,
+                 (unsigned long long)v, (unsigned long long)w[i]);
+    }
+}
+
+/*
+ * U1171: FRED event delivery at CPL0 (UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT), values from
+ * SDM 092 Vol3A 8.3 (frame layout Figure 8-1, 8.3.2.1; ref_fred_lam.py 'deliver'): RIP = the CPL0
+ * entry (IA32_FRED_CONFIG & ~FFFH) + 256, RFLAGS = 2, CSL / RSP per 8.3.1.2, and the frame: error
+ * code, RIP, CS (17:16 old CSL), RFLAGS (RF = 1 for faults), RSP, SS + event information (vector,
+ * type, 64-bit mode, length for INT n / INT1 / INT3), event data (#DB: BS), 0.
+ */
+static void test_x86_fl_fred_deliver_cpl0(void)
+{
+    static const char gp_ss[] = "\x66\xb8\x34\x12\x8e\xd0";      /* mov ax, 1234h; mov ss, ax */
+    uint64_t at, stop, cs, ss, w[8];
+    uc_x86_mmr gdtr = {0, FL_DATA + 0x7000, 0x17, 0};
+    uc_x86_exception e;
+    PcCtx c;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0x40);
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf4", 1);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+
+    /* INT3: type 6, vector 3, length 1; RSP - 1 cache line (IA32_FRED_CONFIG[8:6] = 1), aligned */
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, "\xcc", 1, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == stop);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_STACK - 0x40 - 64);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 2);
+    TEST_CHECK((fl_msr(&c, 0x1d4) & 3) == 0);
+    w[0] = 0; w[1] = at + 1; w[2] = cs; w[3] = 0x202; w[4] = FL_STACK;
+    w[5] = ss | fl_info(3, 6, 1, 0, 1); w[6] = 0; w[7] = 0;
+    fl_frame(&c, w);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 3 && e.software == 1);
+
+    /* INT 80H: type 4, length 2, SS bit 17 */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2c3);
+    OK(fl_go(&c, "\xcd\x80", 2, &at, stop));
+    w[1] = at + 2; w[3] = 0x2c3; w[5] = ss | (1ull << 17) | fl_info(0x80, 4, 1, 0, 2);
+    fl_frame(&c, w);
+
+    /* UD2: hardware exception (type 3), a fault: RF saved as 1, RIP of the instruction */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, "\x0f\x0b", 2, &at, stop));
+    w[1] = at; w[3] = 0x10202; w[5] = ss | fl_info(6, 3, 1, 0, 0);
+    fl_frame(&c, w);
+
+    /* #GP(selector) from MOV SS beyond the GDT limit: the error code in bits 15:0 */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, gp_ss, sizeof(gp_ss) - 1, &at, stop));
+    w[0] = 0x1234; w[1] = at + 4; w[5] = ss | fl_info(13, 3, 1, 0, 0);
+    fl_frame(&c, w);
+
+    /* single-step trap: #DB after the first NOP, event data BS (bit 14), RF not set (trap) */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x302);
+    OK(fl_go(&c, "\x90\x90", 2, &at, stop));
+    w[0] = 0; w[1] = at + 1; w[3] = 0x302; w[5] = ss | fl_info(1, 3, 1, 0, 0); w[6] = 0x4000;
+    fl_frame(&c, w);
+
+    /* INT1: privileged software exception (type 5), length 1, no event data (no DR6 bits) */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, "\xf1", 1, &at, stop));
+    w[1] = at + 1; w[3] = 0x202; w[5] = ss | fl_info(1, 5, 1, 0, 1); w[6] = 0;
+    fl_frame(&c, w);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1171: stack levels (SDM 092 Vol3A 8.3.1.2, Appendix B): an exception at CPL0 uses
+ * IA32_FRED_STKLVLS[2v+1:2v], INT n keeps the CSL (RSP decremented), an external interrupt
+ * IA32_FRED_CONFIG[10:9], an NMI IA32_FRED_STKLVLS[5:4] (SS bit 18); a higher level loads
+ * IA32_FRED_RSPi, the old CSL is saved in CS[17:16]; ERETS restores min(CSL, CS[17:16]).
+ */
+static void test_x86_fl_fred_stack_levels(void)
+{
+    uint64_t at, stop, cs, ss, w[8];
+    PcCtx c;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0x80 | (1 << 9) | 1);
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf4", 1);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    fl_wmsr(&c, 0x1d0, (2ull << 12) | (3ull << 6) | (1ull << 4));  /* #UD 2, #BP 3, NMI 1 */
+    /* #UD at CSL 1: level 2, RSP := IA32_FRED_RSP2 */
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2);
+    OK(fl_go(&c, "\x0f\x0b", 2, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP2 - 64 && (fl_msr(&c, 0x1d4) & 3) == 2);
+    w[0] = 0; w[1] = at; w[2] = cs | (1ull << 16); w[3] = 0x10002; w[4] = FL_STACK;
+    w[5] = ss | fl_info(6, 3, 1, 0, 0); w[6] = 0; w[7] = 0;
+    fl_frame(&c, w);
+    /* INT3 at CSL 2: level 3 */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 0x80 | (1 << 9) | 2);
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    OK(fl_go(&c, "\xcc", 1, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP3 - 64 && (fl_msr(&c, 0x1d4) & 3) == 3);
+    w[1] = at + 1; w[2] = cs | (2ull << 16); w[3] = 0x2; w[5] = ss | fl_info(3, 6, 1, 0, 1);
+    fl_frame(&c, w);
+    /* INT n at CSL 1: level 0, the CSL stays: RSP - 2 cache lines (CONFIG[8:6] = 2), aligned */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 0x80 | (1 << 9) | 1);
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK - 0x13);
+    OK(fl_go(&c, "\xcd\x21", 2, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == ((FL_STACK - 0x13 - 0x80) & ~0x3full) - 64);
+    TEST_CHECK((fl_msr(&c, 0x1d4) & 3) == 1);
+    w[1] = at + 2; w[2] = cs | (1ull << 16); w[4] = FL_STACK - 0x13;
+    w[5] = ss | (1ull << 17) | fl_info(0x21, 4, 1, 0, 2);
+    fl_frame(&c, w);
+    /* external interrupt 60H (x2APIC SELF IPI) at CSL 0: level CONFIG[10:9] = 1 */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 0x80 | (1 << 9));
+    fl_wmsr(&c, 0x1b, (fl_msr(&c, 0x1b) & 0x100) | 0xfee00c00ull);
+    fl_wmsr(&c, 0x80f, 0x1ff);
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    pc_set(&c, UC_X86_REG_RCX, 0x83f);
+    pc_set(&c, UC_X86_REG_RAX, 0x60);
+    pc_set(&c, UC_X86_REG_RDX, 0);
+    OK(fl_go(&c, "\x0f\x30\x90", 3, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP1 - 64 && (fl_msr(&c, 0x1d4) & 3) == 1);
+    w[1] = at + 2; w[2] = cs; w[3] = 0x202; w[4] = FL_STACK; w[5] = ss | fl_info(0x60, 0, 1, 0, 0);
+    fl_frame(&c, w);
+    fl_wmsr(&c, 0x80b, 0);                                           /* EOI */
+    /* NMI (ICR delivery mode NMI to itself): type 2, vector 2, SS bit 18, level STKLVLS[5:4] */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 0x80 | (1 << 9));
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    pc_set(&c, UC_X86_REG_RCX, 0x830);
+    pc_set(&c, UC_X86_REG_RAX, 0x400);
+    OK(fl_go(&c, "\x0f\x30\x90", 3, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP1 - 64);
+    w[1] = at + 2; w[5] = ss | (1ull << 18) | fl_info(2, 2, 1, 0, 0);
+    fl_frame(&c, w);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1171: faults during FRED delivery (SDM 092 Vol3A 8.3.4, 8.3.1.2): a regular-stack slot that is not
+ * paging canonical is #SS with error code 1 for a hardware exception (EXT); that #SS is "nested"
+ * (event information bit 58), its stack level comes from IA32_FRED_STKLVLS even from the same level,
+ * and its saved RIP is the instruction of the original event. A second failure converts to #DF
+ * (error code 0, bit 58 clear). Software interrupts give error code 0 (INT n).
+ */
+static void test_x86_fl_fred_nested(void)
+{
+    const uint64_t bad = 0x8000000000000000ull;
+    uint64_t at, stop, cs, ss, w[8];
+    uc_x86_exception e;
+    PcCtx c;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0);
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf4", 1);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    /* #UD on a non-canonical stack, #SS (vector 12) at level 1 */
+    fl_wmsr(&c, 0x1d0, 1ull << 24);
+    pc_set(&c, UC_X86_REG_RSP, bad);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2);
+    OK(fl_go(&c, "\x0f\x0b", 2, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP1 - 64 && (fl_msr(&c, 0x1d4) & 3) == 1);
+    w[0] = 1; w[1] = at; w[2] = cs; w[3] = 0x10002; w[4] = bad;
+    w[5] = ss | fl_info(12, 3, 1, 1, 0); w[6] = 0; w[7] = 0;
+    fl_frame(&c, w);
+    /* INT n: the nested #SS has error code 0, its RIP is the INT instruction */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY);
+    pc_set(&c, UC_X86_REG_RSP, bad);
+    OK(fl_go(&c, "\xcd\x40", 2, &at, stop));
+    w[0] = 0; w[1] = at; w[3] = 0x10002;
+    fl_frame(&c, w);
+    /* the #SS delivery fails too: #DF (level IA32_FRED_STKLVLS[17:16] = 2), error code 0, no bit 58 */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY);
+    fl_wmsr(&c, 0x1d0, 2ull << 16);
+    pc_set(&c, UC_X86_REG_RSP, bad);
+    OK(fl_go(&c, "\x0f\x0b", 2, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP2 - 64 && (fl_msr(&c, 0x1d4) & 3) == 2);
+    w[0] = 0; w[1] = at; w[3] = 0x2; w[5] = ss | fl_info(8, 3, 1, 0, 0);    /* abort: RF as is */
+    fl_frame(&c, w);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.vector == 8 && e.error_code == 0);
+    /* a non-canonical entry point (IA32_FRED_CONFIG cannot hold one: CPU canonical = paging
+       canonical here) is not reachable; a triple fault with no level for #DF ends the emulation */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY);
+    fl_wmsr(&c, 0x1d0, 0);
+    pc_set(&c, UC_X86_REG_RSP, bad);
+    TEST_CHECK(fl_go(&c, "\x0f\x0b", 2, &at, stop) == UC_ERR_EXCEPTION);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1171: with CR4.FRED = 1 SWAPGS, SYSRET, SYSEXIT, SETSSBSY and CLRSSBSY are #UD (SDM 092 Vol3A
+ * 8.5.1, Vol2B SWAPGS / SYSRET / SYSEXIT, Vol2B SETSSBSY / Vol2A CLRSSBSY); SWAPGS works again with
+ * CR4.FRED = 0.
+ */
+static void test_x86_fl_fred_disallowed(void)
+{
+    uint64_t cr4;
+    PcCtx c;
+
+    fl_fred_open(&c, 0, 0);
+    /* supervisor shadow stacks on (CR0.WP, CR4.CET, IA32_S_CET.SH_STK_EN): without FRED SETSSBSY
+       would reach its token check (#CP, the token at IA32_PL0_SSP is 0) */
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | 0x800000);
+    fl_wmsr(&c, 0x6a2, 1);
+    fl_wmsr(&c, 0x6a4, FL_DATA + 0x8000);
+    pc_set(&c, UC_X86_REG_RAX, FL_DATA + 0x8000);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xf8", 3) == 6);                 /* SWAPGS */
+    TEST_CHECK(pc_run(&c, "\x48\x0f\x07", 3) == 6);                 /* SYSRETQ */
+    TEST_CHECK(pc_run(&c, "\x48\x0f\x35", 3) == 6);                 /* SYSEXITQ */
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xe8", 4) == 6);             /* SETSSBSY */
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\xae\x30", 4) == 6);             /* CLRSSBSY [rax] */
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    pc_set(&c, UC_X86_REG_CR4, cr4 & ~(1ull << 32));
+    fl_wmsr(&c, 0xc0000102, 0x3333);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xf8", 3) == -1);                /* SWAPGS */
+    TEST_CHECK(fl_msr(&c, 0xc0000101) == 0x3333);
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xe8", 4) == 21);            /* SETSSBSY: #CP */
+    OK(uc_close(c.uc));
+}
+
+/* an ERETS / ERETU frame at RSP = FL_STACK - 0x100: error code, RIP, CS, RFLAGS, RSP, SS */
+#define FL_FRAME (FL_STACK - 0x100)
+
+static void fl_put_frame(PcCtx *c, uint64_t rip, uint64_t cs, uint64_t fl, uint64_t rsp, uint64_t ss)
+{
+    fl_wq(c, FL_FRAME, 0xeeee);
+    fl_wq(c, FL_FRAME + 8, rip);
+    fl_wq(c, FL_FRAME + 16, cs);
+    fl_wq(c, FL_FRAME + 24, fl);
+    fl_wq(c, FL_FRAME + 32, rsp);
+    fl_wq(c, FL_FRAME + 40, ss);
+    pc_set(c, UC_X86_REG_RSP, FL_FRAME);
+}
+
+/* ERETS (F2 0F 01 CA) from a fresh slot, run until 'until': the vector seen by UC_HOOK_INTR or -1 */
+static int fl_eret(PcCtx *c, bool u, uint64_t until)
+{
+    uint64_t at;
+    uc_err err = fl_go(c, u ? "\xf3\x0f\x01\xca" : "\xf2\x0f\x01\xca", 4, &at, until);
+
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+/*
+ * U1172: ERETS (SDM 092 Vol2A 3-298..3-300) with Unicorn-style exceptions (no event delivery, the
+ * state stays at the instruction on a fault): #UD with CR4.FRED = 0 or without FRED; #GP(0) for a
+ * non-canonical RIP, a CS image whose selector differs or that sets bits 63:19, an RFLAGS image
+ * without bit 1 or with bit 3 / 5 / 15 / 17 (VM) / 22+ set, an SS image whose selector differs or
+ * that sets bits 31:19 (63:32 are ignored); RSP unchanged then. A good frame loads RIP, RFLAGS (RF
+ * too), RSP and CSL := min(CSL, CS[17:16]); SS[17] with the new TF = 1 is a single-step trap at the
+ * new RIP, without SS[17] there is none; RFLAGS.TF = 1 before ERETS always traps.
+ */
+static void test_x86_fl_erets(void)
+{
+    const uint64_t tgt = code_start + 0x3f00;
+    uint64_t cs, ss, v;
+    uc_x86_exception e;
+    PcCtx c;
+
+    fl_fred_open(&c, 0, 0);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    /* good frame: RF loaded, CSL min(2, 1) */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 2);
+    fl_put_frame(&c, tgt, cs | (1ull << 16), 0x10a97, FL_STACK - 0x18, ss | 0xffffffff00000000ull);
+    TEST_CHECK(fl_eret(&c, false, tgt) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == tgt && pc_get(&c, UC_X86_REG_RSP) == FL_STACK - 0x18);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 0x10a97);
+    TEST_CHECK((fl_msr(&c, 0x1d4) & 3) == 1);
+    /* CS[17:16] above the CSL: the CSL does not increase */
+    fl_put_frame(&c, tgt, cs | (3ull << 16), 0x2, FL_STACK, ss);
+    TEST_CHECK(fl_eret(&c, false, tgt) == -1 && (fl_msr(&c, 0x1d4) & 3) == 1);
+    /* #GP(0) cases: nothing changes */
+    {
+        static const struct { uint64_t rip, csx, fl, ssx; } bad[] = {
+            {0x0000800000000000ull, 0, 2, 0},       /* RIP not paging canonical */
+            {0, 0x8, 2, 0},                         /* CS selector differs */
+            {0, 1ull << 19, 2, 0},                  /* CS bit 19 */
+            {0, 1ull << 63, 2, 0},                  /* CS bit 63 */
+            {0, 0, 0, 0},                           /* RFLAGS bit 1 clear */
+            {0, 0, 0xa, 0},                         /* RFLAGS bit 3 */
+            {0, 0, 0x22, 0},                        /* RFLAGS bit 5 */
+            {0, 0, 0x8002, 0},                      /* RFLAGS bit 15 */
+            {0, 0, 0x20002, 0},                     /* RFLAGS VM */
+            {0, 0, 0x400002, 0},                    /* RFLAGS bit 22 */
+            {0, 0, 1ull << 33 | 2, 0},              /* RFLAGS bit 33 */
+            {0, 0, 2, 0x10},                        /* SS selector differs */
+            {0, 0, 2, 1ull << 19},                  /* SS bit 19 */
+            {0, 0, 2, 1ull << 31},                  /* SS bit 31 */
+        };
+        size_t i;
+
+        for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            fl_put_frame(&c, bad[i].rip ? bad[i].rip : tgt, cs ^ bad[i].csx, bad[i].fl, FL_STACK,
+                         ss ^ bad[i].ssx);
+            TEST_CHECK(fl_eret(&c, false, tgt) == 13);
+            TEST_MSG("bad frame %d", (int)i);
+            TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_FRAME);
+            OK(uc_ctl_get_x86_exception(c.uc, &e));
+            TEST_CHECK(e.has_error_code && e.error_code == 0);
+        }
+    }
+    /* single-step: SS[17] and the new TF = 1: #DB at the new RIP; without SS[17] none */
+    fl_put_frame(&c, tgt, cs, 0x302, FL_STACK, ss | (1ull << 17));
+    TEST_CHECK(fl_eret(&c, false, tgt + 1) == 1 && pc_get(&c, UC_X86_REG_RIP) == tgt);
+    TEST_CHECK((pc_get(&c, UC_X86_REG_DR6) & 0x4000) != 0);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2);
+    fl_put_frame(&c, tgt, cs, 0x302, FL_STACK, ss);
+    TEST_CHECK(fl_eret(&c, false, tgt) == -1 && pc_get(&c, UC_X86_REG_RIP) == tgt);
+    /* TF = 1 before ERETS: always a single-step trap after it */
+    fl_put_frame(&c, tgt, cs, 0x202, FL_STACK, ss);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x102);
+    TEST_CHECK(fl_eret(&c, false, tgt + 1) == 1 && pc_get(&c, UC_X86_REG_RIP) == tgt);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 0x202);
+    /* CR4.FRED = 0: #UD */
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2);
+    v = pc_get(&c, UC_X86_REG_CR4);
+    pc_set(&c, UC_X86_REG_CR4, v & ~(1ull << 32));
+    fl_put_frame(&c, tgt, cs, 0x2, FL_STACK, ss);
+    TEST_CHECK(fl_eret(&c, false, tgt) == 6 && fl_eret(&c, true, tgt) == 6);
+    OK(uc_close(c.uc));
+    /* without FRED the prefixed encoding is not ERETS (CLAC at CPL0 as before) */
+    fl_open(&c, 0);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x40002);
+    TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xca", 4) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 0x2);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1172: ERETU (SDM 092 Vol2A 3-301..3-304): #GP(0) with CSL > 0, CS / SS images without RPL 3 or
+ * with undefined bits, RFLAGS with IOPL != 0; CS = IA32_STAR[63:48] + 16 / SS = + 8: 64-bit CPL3
+ * (CS 33H here), CS = IA32_STAR[63:48] / SS + 8: compatibility mode (CS 23H; RIP and RSP
+ * truncated to 32 bits); other selectors from the GDT (IRET's checks: DPL != 3 #GP(selector), SS
+ * not writable #GP(selector), null SS #GP(0)); GS.base swapped with IA32_KERNEL_GS_BASE. Then a
+ * CPL3 SYSCALL goes through FRED (type 7, vector 1, SS[17], length 2, IA32_EFER.SCE not needed) to
+ * the CPL3 entry with IA32_FRED_RSP0, CS 08H / SS 10H from IA32_STAR[47:32], GS swapped back, and
+ * the handler's ERETU returns after the SYSCALL; SYSENTER the same with vector 2.
+ */
+static void test_x86_fl_eretu_syscall(void)
+{
+    static const uint64_t gdt[] = {0, 0x00AF9A000000FFFFull, 0x00CF92000000FFFFull, 0, 0, 0, 0, 0,
+                                   0x00AFFA000000FFFFull,   /* 40H: 64-bit code, DPL3 */
+                                   0x00CFF2000000FFFFull,   /* 48H: data, DPL3 */
+                                   0x00AF9A000000FFFFull,   /* 50H: 64-bit code, DPL0 */
+                                   0x00CFF8000000FFFFull};  /* 58H: execute-only code, DPL3 */
+    uc_x86_mmr gdtr = {0, FL_DATA + 0x7000, sizeof(gdt) - 1, 0};
+    const uint64_t user = code_start + 0x3e00, urs = FL_DATA + 0xa000;
+    uint64_t at, stop, w[8];
+    PcCtx c;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0);
+    OK(uc_mem_write(c.uc, FL_DATA + 0x7000, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    fl_wmsr(&c, 0xc0000101, 0x1111);                     /* IA32_GS_BASE */
+    fl_wmsr(&c, 0xc0000102, 0x2222);                     /* IA32_KERNEL_GS_BASE */
+    /* the #GP(0) checks (Unicorn style: the exception goes to UC_HOOK_INTR) */
+    OK(uc_ctl_set_x86_event_delivery(c.uc, 0));
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 1);
+    fl_put_frame(&c, user, 0x33, 0x202, urs, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* CSL 1 */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY);
+    fl_put_frame(&c, user, 0x30, 0x202, urs, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* CS RPL 0 */
+    fl_put_frame(&c, user, 0x33 | (1ull << 16), 0x202, urs, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* CS bit 16 */
+    fl_put_frame(&c, user, 0x33, 0x1202, urs, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* IOPL 1 */
+    fl_put_frame(&c, user, 0x33, 0x202, urs, 0x28);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* SS RPL 0 */
+    fl_put_frame(&c, user, 0x33, 0x202, urs, 0x2b | (1ull << 20));
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* SS bit 20 */
+    fl_put_frame(&c, 0x0000800000000000ull, 0x33, 0x202, urs, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* RIP not canonical */
+    fl_put_frame(&c, user, 0x53, 0x202, urs, 0x4b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* GDT CS DPL 0 */
+    fl_put_frame(&c, user, 0x43, 0x202, urs, 0x5b);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* GDT SS not data */
+    fl_put_frame(&c, user, 0x43, 0x202, urs, 0x3);
+    TEST_CHECK(fl_eret(&c, true, user) == 13);                       /* null SS */
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_FRAME && pc_get(&c, UC_X86_REG_CS) != 0x43);
+    /* the GDT case: CS 43H / SS 4BH loaded as IRET would */
+    fl_put_frame(&c, user, 0x43, 0x246, urs, 0x4b);
+    TEST_CHECK(fl_eret(&c, true, user) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CS) == 0x43 && pc_get(&c, UC_X86_REG_SS) == 0x4b);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == user && pc_get(&c, UC_X86_REG_RSP) == urs);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RFLAGS) == 0x246);
+    TEST_CHECK(fl_msr(&c, 0xc0000101) == 0x2222 && fl_msr(&c, 0xc0000102) == 0x1111);
+    OK(uc_close(c.uc));
+
+    /* compatibility mode: CS 23H, RIP / RSP truncated */
+    fl_fred_open(&c, 0, 0);
+    fl_put_frame(&c, 0xdead000000001800ull, 0x23, 0x202, 0xbeef0000000a0000ull, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, code_start + 0x800) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CS) == 0x23 && pc_get(&c, UC_X86_REG_SS) == 0x2b);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == 0x1800 && pc_get(&c, UC_X86_REG_RSP) == 0xa0000);
+    OK(uc_close(c.uc));
+
+    /* 64-bit CPL3 (CS 33H) and a SYSCALL round trip through the CPL3 entry */
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0);
+    fl_wmsr(&c, 0xc0000101, 0x1111);
+    fl_wmsr(&c, 0xc0000102, 0x2222);
+    fl_wmsr(&c, 0xc0000080, fl_msr(&c, 0xc0000080) & ~1ull);         /* IA32_EFER.SCE = 0 */
+    stop = fl_handler(&c, FL_ENTRY, "\xf4", 1);
+    OK(uc_mem_write(c.uc, user, "\x0f\x05\x41\xbd\x05\x00\x00\x00", 8));
+    fl_put_frame(&c, user, 0x33, 0x283, urs, 0x2b);
+    OK(fl_go(&c, "\xf3\x0f\x01\xca", 4, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == stop);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CS) == 0x08 && pc_get(&c, UC_X86_REG_SS) == 0x10);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP0 - 64);
+    TEST_CHECK(fl_msr(&c, 0xc0000101) == 0x1111 && fl_msr(&c, 0xc0000102) == 0x2222);
+    w[0] = 0; w[1] = user + 2; w[2] = 0x33; w[3] = 0x283; w[4] = urs;
+    w[5] = 0x2b | (1ull << 17) | fl_info(1, 7, 1, 0, 2); w[6] = 0; w[7] = 0;
+    fl_frame(&c, w);
+    /* the handler returns with ERETU: back after the SYSCALL at CPL3 */
+    stop = fl_handler(&c, FL_ENTRY, "\xf3\x0f\x01\xca", 4);
+    fl_put_frame(&c, user, 0x33, 0x283, urs, 0x2b);
+    OK(fl_go(&c, "\xf3\x0f\x01\xca", 4, &at, user + 8));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_R13) == 5 && pc_get(&c, UC_X86_REG_CS) == 0x33);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == urs && pc_get(&c, UC_X86_REG_RFLAGS) == 0x283);
+    TEST_CHECK(fl_msr(&c, 0xc0000101) == 0x2222);
+    /* SYSENTER: vector 2 (a fresh CPL0 engine) */
+    OK(uc_close(c.uc));
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0);
+    stop = fl_handler(&c, FL_ENTRY, "\xf4", 1);
+    OK(uc_mem_write(c.uc, user, "\x0f\x34", 2));
+    fl_put_frame(&c, user, 0x33, 0x202, urs, 0x2b);
+    OK(fl_go(&c, "\xf3\x0f\x01\xca", 4, &at, stop));
+    w[1] = user + 2; w[3] = 0x202; w[5] = 0x2b | (1ull << 17) | fl_info(2, 7, 1, 0, 2);
+    fl_frame(&c, w);
+    /* INT3 at CPL3: the CPL3 entry, stack level 0 */
+    OK(uc_mem_write(c.uc, user, "\xcc", 1));
+    fl_put_frame(&c, user, 0x33, 0x202, urs, 0x2b);
+    OK(fl_go(&c, "\xf3\x0f\x01\xca", 4, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_RSP0 - 64 && (fl_msr(&c, 0x1d4) & 3) == 0);
+    w[1] = user + 1; w[5] = 0x2b | fl_info(3, 6, 1, 0, 1);
+    fl_frame(&c, w);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1172: delivery and ERETS round trips at CPL0 with supervisor shadow stacks (SDM 092 Vol3A
+ * 8.3.2.2, 8.4.1.2): INT3 with IA32_FRED_CONFIG[3] = 1 pushes 4 zero bytes at SSP - 8 - 4, then CS,
+ * LIP and the old SSP (SSP - 32 in all); the handler's ERETS pops and checks them and restores SSP
+ * and RSP. ERETS checks with a hand-made shadow stack: SSP not 8-byte aligned, LIP / CS differing,
+ * an SSP image with bit 0 / bit 1 set: #CP(2); an SSP image that is not CPU canonical: #GP(0); a
+ * stack-level decrease with SSP (after the pops) != IA32_FRED_SSP[CSL]: #CP(2).
+ */
+static void test_x86_fl_erets_shadow(void)
+{
+    const uint64_t ssp0 = FL_DATA + 0x9000, tgt = code_start + 0x3f00;
+    uint64_t at, stop, cs, ss, w[8], f;
+    PcCtx c;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0x48);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | 0x800000);
+    fl_wmsr(&c, 0x6a2, 1);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    /* delivery only: the shadow-stack frame */
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf4", 1);
+    pc_set(&c, UC_X86_REG_SSP, ssp0);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, "\xcc", 1, &at, stop));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_SSP) == ssp0 - 8 - 24);
+    TEST_CHECK(fl_q(&c, ssp0 - 16) == cs && fl_q(&c, ssp0 - 24) == at + 1);
+    TEST_CHECK(fl_q(&c, ssp0 - 32) == ssp0);
+    w[0] = 0; w[1] = at + 1; w[2] = cs; w[3] = 0x202; w[4] = FL_STACK;
+    w[5] = ss | fl_info(3, 6, 1, 0, 1); w[6] = 0; w[7] = 0;
+    fl_frame(&c, w);
+    /* the round trip: the handler returns with ERETS */
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf2\x0f\x01\xca", 4);
+    pc_set(&c, UC_X86_REG_SSP, ssp0);
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x2d7);
+    f = c.pc;
+    OK(fl_go(&c, "\xcc\x41\xbe\x07\x00\x00\x00", 7, &at, f + 7));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_R14) == 7 && pc_get(&c, UC_X86_REG_RSP) == FL_STACK);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_SSP) == ssp0 && pc_get(&c, UC_X86_REG_RFLAGS) == 0x2d7);
+    OK(uc_close(c.uc));
+
+    /* the shadow-stack checks of ERETS, Unicorn-style exceptions */
+    fl_fred_open(&c, 0, 0);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | 0x800000);
+    fl_wmsr(&c, 0x6a2, 1);
+    cs = pc_get(&c, UC_X86_REG_CS);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    {
+        static const struct { uint64_t ssp_off, img, lip_x, cs_x; int v; } t[] = {
+            {4, 0, 0, 0, 21},                       /* SSP not 8-byte aligned */
+            {0, 0, 1, 0, 21},                       /* LIP differs */
+            {0, 0, 0, 1ull << 16, 21},              /* CS image differs (bit 16) */
+            {0, 1, 0, 0, 21},                       /* SSP image bit 0 */
+            {0, 2, 0, 0, 21},                       /* SSP image bit 1 */
+            {0, 0x0100000000000000ull, 0, 0, 13},   /* SSP image not CPU canonical */
+            {0, 0, 0, 0, -1},
+        };
+        size_t i;
+
+        for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+            uint64_t s0 = ssp0 - 0x100 + t[i].ssp_off;
+
+            fl_wq(&c, s0, (ssp0 | t[i].img) ^ (t[i].img >> 56 ? ssp0 : 0));
+            fl_wq(&c, s0 + 8, tgt ^ t[i].lip_x);
+            fl_wq(&c, s0 + 16, cs ^ t[i].cs_x);
+            pc_set(&c, UC_X86_REG_SSP, s0);
+            fl_put_frame(&c, tgt, cs, 0x2, FL_STACK, ss);
+            TEST_CHECK(fl_eret(&c, false, tgt) == t[i].v);
+            TEST_MSG("shadow-stack case %d", (int)i);
+            if (t[i].v < 0) {
+                TEST_CHECK(pc_get(&c, UC_X86_REG_SSP) == ssp0);
+            } else {
+                TEST_CHECK(pc_get(&c, UC_X86_REG_SSP) == s0 && pc_get(&c, UC_X86_REG_RSP) == FL_FRAME);
+            }
+        }
+    }
+    /* CSL 2 -> 1: SSP after the pops must equal IA32_FRED_SSP2 */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY | 2);
+    fl_wmsr(&c, 0x1d2, ssp0 - 0x100 + 24 + 8);
+    fl_wq(&c, ssp0 - 0x100, ssp0);
+    fl_wq(&c, ssp0 - 0x100 + 8, tgt);
+    fl_wq(&c, ssp0 - 0x100 + 16, cs | (1ull << 16));
+    pc_set(&c, UC_X86_REG_SSP, ssp0 - 0x100);
+    fl_put_frame(&c, tgt, cs | (1ull << 16), 0x2, FL_STACK, ss);
+    TEST_CHECK(fl_eret(&c, false, tgt) == 21 && (fl_msr(&c, 0x1d4) & 3) == 2);
+    fl_wmsr(&c, 0x1d2, ssp0 - 0x100 + 24);
+    TEST_CHECK(fl_eret(&c, false, tgt) == -1 && (fl_msr(&c, 0x1d4) & 3) == 1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_SSP) == ssp0);
+    /* ERETU with supervisor shadow stacks: SSP must equal IA32_FRED_SSP0 (IA32_PL0_SSP) */
+    fl_wmsr(&c, 0x1d4, FL_ENTRY);
+    fl_wmsr(&c, 0x6a4, ssp0 + 8);
+    fl_put_frame(&c, tgt, 0x33, 0x202, FL_STACK, 0x2b);
+    TEST_CHECK(fl_eret(&c, true, tgt) == 21);
+    fl_wmsr(&c, 0x6a4, ssp0);
+    TEST_CHECK(fl_eret(&c, true, tgt) == -1 && pc_get(&c, UC_X86_REG_CS) == 0x33);
+    OK(uc_close(c.uc));
+}
+
+/* run code until 'until' (Unicorn-style exceptions): the vector or -1, the error code in *ec */
+static int fl_x(PcCtx *c, const char *code, size_t len, uint64_t until, uint32_t *ec)
+{
+    uc_x86_exception e;
+    uint64_t at;
+    uc_err err = fl_go(c, code, len, &at, until);
+
+    *ec = 0xffffffff;
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    if (!c->cap.count) {
+        return -1;
+    }
+    OK(uc_ctl_get_x86_exception(c->uc, &e));
+    if (e.has_error_code) {
+        *ec = e.error_code;
+    }
+    return (int)c->cap.intno;
+}
+
+/*
+ * U1173: far transfers with CR4.FRED = 1 (SDM 092 Vol3A 8.5.2; Vol2A JMP / CALL CALL-GATE and
+ * CONFORMING- / NONCONFORMING-CODE-SEGMENT, IRET; Vol2B RET): a call gate is #GP(gate selector) for
+ * far JMP and CALL; a code segment with L = 0 at CPL0 is #GP(selector); IRET / RET far to a selector
+ * with RPL > CPL is #GP(selector), to L = 0 at CPL0 too; IRETQ within CPL0 64-bit code works. With
+ * CR4.FRED = 0 the same transfers are made (gate to 08H, compatibility mode, CPL3).
+ */
+static void test_x86_fl_fred_far(void)
+{
+    const uint64_t tgt = code_start + 0x3d00;
+    /* 08H 64-bit code DPL0, 10H data DPL0, 18H 32-bit code DPL0 (L = 0), 20H 64-bit call gate
+       (DPL0, 16 bytes) to 08H:tgt, 30H 64-bit code DPL3, 38H data DPL3 */
+    uint64_t gdt[8] = {0, 0x00AF9A000000FFFFull, 0x00CF92000000FFFFull, 0x00CF9A000000FFFFull,
+                       0, 0, 0x00AFFA000000FFFFull, 0x00CFF2000000FFFFull};
+    uc_x86_mmr gdtr = {0, FL_DATA + 0x7000, sizeof(gdt) - 1, 0};
+    const uint64_t p = FL_DATA + 0x100;
+    uint32_t ec;
+    PcCtx c;
+    int fred;
+
+    gdt[4] = (tgt & 0xffff) | (0x08ull << 16) | (0x8cull << 40) | (((tgt >> 16) & 0xffff) << 48);
+    gdt[5] = tgt >> 32;
+    for (fred = 1; fred >= 0; fred--) {
+        static const struct { const char *code; size_t n; uint64_t off; uint16_t sel; } ft[] = {
+            {"\x48\xff\x28", 3, 0, 0x20},           /* jmp far [rax] (m16:64): call gate */
+            {"\x48\xff\x18", 3, 0, 0x20},           /* call far [rax]: call gate */
+            {"\x48\xff\x28", 3, 1, 0x18},           /* jmp far to 32-bit code at CPL0 */
+            {"\x48\xff\x18", 3, 1, 0x18},           /* call far to 32-bit code at CPL0 */
+        };
+        size_t i;
+
+        fl_fred_open(&c, 0, 0);
+        OK(uc_mem_write(c.uc, FL_DATA + 0x7000, gdt, sizeof(gdt)));
+        OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+        if (!fred) {
+            pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) & ~(1ull << 32));
+        }
+        for (i = 0; i < sizeof(ft) / sizeof(ft[0]); i++) {
+            uint64_t off = ft[i].off ? code_start + 0x3c00 : 0;
+
+            fl_wq(&c, p, off ? off : tgt);
+            OK(uc_mem_write(c.uc, p + 8, &ft[i].sel, 2));
+            pc_set(&c, UC_X86_REG_RAX, p);
+            pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+            if (fred) {
+                TEST_CHECK(fl_x(&c, ft[i].code, ft[i].n, off ? off : tgt, &ec) == 13 &&
+                           ec == ft[i].sel);
+            } else {
+                TEST_CHECK(fl_x(&c, ft[i].code, ft[i].n, off ? off : tgt, &ec) == -1 &&
+                           pc_get(&c, UC_X86_REG_CS) == (ft[i].sel == 0x20 ? 0x08 : ft[i].sel));
+                OK(uc_close(c.uc));
+                fl_fred_open(&c, 0, 0);
+                OK(uc_mem_write(c.uc, FL_DATA + 0x7000, gdt, sizeof(gdt)));
+                OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+                pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) & ~(1ull << 32));
+            }
+            TEST_MSG("FRED %d, far transfer %d: error code %x", fred, (int)i, ec);
+        }
+        /* IRETQ: CPL0 64-bit (works), CPL0 32-bit code, CPL3 */
+        fl_wq(&c, FL_FRAME, tgt);
+        fl_wq(&c, FL_FRAME + 8, 0x08);
+        fl_wq(&c, FL_FRAME + 16, 0x2);
+        fl_wq(&c, FL_FRAME + 24, FL_STACK);
+        fl_wq(&c, FL_FRAME + 32, 0x10);
+        pc_set(&c, UC_X86_REG_RSP, FL_FRAME);
+        TEST_CHECK(fl_x(&c, "\x48\xcf", 2, tgt, &ec) == -1 && pc_get(&c, UC_X86_REG_CS) == 0x08);
+        fl_wq(&c, FL_FRAME + 8, 0x18);
+        pc_set(&c, UC_X86_REG_RSP, FL_FRAME);
+        TEST_CHECK(fl_x(&c, "\x48\xcf", 2, tgt, &ec) == (fred ? 13 : -1));
+        TEST_CHECK(!fred || ec == 0x18);
+        if (fred) {
+            fl_wq(&c, FL_FRAME + 8, 0x33);
+            fl_wq(&c, FL_FRAME + 32, 0x3b);
+            pc_set(&c, UC_X86_REG_RSP, FL_FRAME);
+            TEST_CHECK(fl_x(&c, "\x48\xcf", 2, tgt, &ec) == 13 && ec == 0x30);
+            pc_set(&c, UC_X86_REG_RSP, FL_FRAME);
+            TEST_CHECK(fl_x(&c, "\x48\xcb", 2, tgt, &ec) == 13 && ec == 0x30);   /* RETFQ */
+            TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == FL_FRAME);
+        }
+        OK(uc_close(c.uc));
+    }
+    /* CR4.FRED = 0: IRETQ to CPL3 */
+    fl_fred_open(&c, 0, 0);
+    OK(uc_mem_write(c.uc, FL_DATA + 0x7000, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) & ~(1ull << 32));
+    fl_wq(&c, FL_FRAME, tgt);
+    fl_wq(&c, FL_FRAME + 8, 0x33);
+    fl_wq(&c, FL_FRAME + 16, 0x2);
+    fl_wq(&c, FL_FRAME + 24, FL_STACK);
+    fl_wq(&c, FL_FRAME + 32, 0x3b);
+    pc_set(&c, UC_X86_REG_RSP, FL_FRAME);
+    TEST_CHECK(fl_x(&c, "\x48\xcf", 2, tgt, &ec) == -1 && pc_get(&c, UC_X86_REG_CS) == 0x33);
+    OK(uc_close(c.uc));
+}
+
+/* MOV CR3, RAX / MOV CR4, RAX by the CPU: the vector or -1 */
+static int fl_mov_cr3(PcCtx *c, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RAX, v);
+    return pc_run(c, "\x0f\x22\xd8", 3);
+}
+
+/* mov rax, [rbx]: the vector or -1 */
+static int fl_load(PcCtx *c, uint64_t p)
+{
+    pc_set(c, UC_X86_REG_RBX, p);
+    pc_set(c, UC_X86_REG_RAX, 0);
+    return pc_run(c, "\x48\x8b\x03", 3);
+}
+
+/*
+ * U1180: UC_X86_FEATURE_LAM (SDM 092 Vol3A 4.4; values from ref_fred_lam.py 'lam_mask'). Default off:
+ * CPUID.(07H,1):EAX[26] = 0, CR3[62] / CR4[28] reserved (#GP(0)). With the opt-in (paging off, CPL0;
+ * the MAX model runs 4-level linear addresses): a user pointer with metadata in 62:48 is #GP(0)
+ * without LAM, LAM48 (CR3[62]) loads / stores / pushes through it (the masked address), bit 47 !=
+ * bit 63 stays #GP; LAM57 (CR3[61], over LAM48) masks 62:57 only (metadata in 56:48: #GP with 4-level
+ * paging); the instruction pointer is never masked (JMP to a metadata address: #GP); turning LAM off
+ * again faults the same pointer (no stale translation).
+ */
+static void test_x86_fl_lam(void)
+{
+    const uint64_t d = FL_DATA + 0x100;
+    uint64_t v = 0x1122334455667788ull, cr3, cr4, r;
+    uint32_t q[4];
+    uc_x86_exception e;
+    PcCtx c;
+
+    fl_open(&c, 0);
+    fl_cpuid(&c, 7, 1, q);
+    TEST_CHECK((q[0] & (1u << 26)) == 0);
+    cr3 = pc_get(&c, UC_X86_REG_CR3);
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    TEST_CHECK(fl_mov_cr3(&c, cr3 | (1ull << 62)) == 13);
+    TEST_CHECK(fl_mov_cr4(&c, cr4 | (1ull << 28)) == 13);
+    OK(uc_close(c.uc));
+
+    fl_open(&c, UC_X86_FEATURE_LAM);
+    fl_cpuid(&c, 7, 1, q);
+    TEST_CHECK((q[0] & (1u << 26)) != 0);
+    OK(uc_mem_write(c.uc, d, &v, 8));
+    cr3 = pc_get(&c, UC_X86_REG_CR3);
+    TEST_CHECK(fl_load(&c, d | 0x5a12000000000000ull) == 13);              /* no LAM */
+    /* LAM48 */
+    TEST_CHECK(fl_mov_cr3(&c, cr3 | (1ull << 62)) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == (cr3 | (1ull << 62)));
+    TEST_CHECK(fl_load(&c, d | 0x5a12000000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, d | 0x7fff000000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, d | 0x0000800000000000ull) == 13);              /* bit 47 != bit 63 */
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.has_error_code && e.error_code == 0);
+    pc_set(&c, UC_X86_REG_RBX, (d + 8) | 0x1234000000000000ull);
+    pc_set(&c, UC_X86_REG_RCX, 0xa5a5a5a5a5a5a5a5ull);
+    TEST_CHECK(pc_run(&c, "\x48\x89\x0b", 3) == -1);                       /* mov [rbx], rcx */
+    OK(uc_mem_read(c.uc, d + 8, &r, 8));
+    TEST_CHECK(r == 0xa5a5a5a5a5a5a5a5ull);
+    pc_set(&c, UC_X86_REG_RSP, (FL_DATA + 0x800) | 0x6600000000000000ull);
+    TEST_CHECK(pc_run(&c, "\x51", 1) == -1);                               /* push rcx */
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RSP) == ((FL_DATA + 0x7f8) | 0x6600000000000000ull));
+    OK(uc_mem_read(c.uc, FL_DATA + 0x7f8, &r, 8));
+    TEST_CHECK(r == 0xa5a5a5a5a5a5a5a5ull);
+    /* the instruction pointer is not masked: JMP RAX to a metadata address is #GP(0) */
+    pc_set(&c, UC_X86_REG_RAX, (code_start + 0x3f00) | 0x5a00000000000000ull);
+    TEST_CHECK(pc_run(&c, "\xff\xe0", 2) == 13);
+    /* LAM57: bits 62:57 only */
+    TEST_CHECK(fl_mov_cr3(&c, cr3 | (3ull << 61)) == -1);
+    TEST_CHECK(fl_load(&c, d | 0x7e00000000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, d | 0x5a12000000000000ull) == 13);
+    /* LAM off again: the metadata pointer faults (no stale TLB entry) */
+    TEST_CHECK(fl_mov_cr3(&c, cr3) == -1);
+    TEST_CHECK(fl_load(&c, d | 0x7e00000000000000ull) == 13);
+    /* the host API: CR3 with the LAM bits */
+    pc_set(&c, UC_X86_REG_CR3, cr3 | (1ull << 62));
+    TEST_CHECK(fl_load(&c, d | 0x7e00000000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    pc_set(&c, UC_X86_REG_CR3, cr3);
+    TEST_CHECK(fl_load(&c, d | 0x7e00000000000000ull) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1180: LAM with 4-level paging (SDM 092 Vol3A 4.4.1-4.4.3): CR4.LAM_SUP masks supervisor
+ * pointers (bit 63 = 1) with LAM48; CR3[62] does not disturb the page walk; a #PF through a
+ * masked pointer reports the masked linear address in CR2.
+ */
+static void test_x86_fl_lam_paging(void)
+{
+    const uint64_t pt = FL_DATA + 0xa000, d = FL_DATA + 0x100;
+    uint64_t v = 0x0102030405060708ull, cr3;
+    uc_x86_exception e;
+    PcCtx c;
+
+    fl_open(&c, UC_X86_FEATURE_LAM);
+    OK(uc_mem_write(c.uc, d, &v, 8));
+    /* PML4[0] = PML4[256] -> PDPT -> PD: 2 MB pages 0-4 MB, identity (U/S, R/W) */
+    fl_wq(&c, pt, (pt + 0x1000) | 7);
+    fl_wq(&c, pt + 256 * 8, (pt + 0x1000) | 7);
+    fl_wq(&c, pt + 0x1000, (pt + 0x2000) | 7);
+    fl_wq(&c, pt + 0x2000, 0x87);
+    fl_wq(&c, pt + 0x2008, 0x200000 | 0x87);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | 0x20);
+    pc_set(&c, UC_X86_REG_CR3, pt);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x80000000ull);
+    cr3 = pc_get(&c, UC_X86_REG_CR3);
+    TEST_CHECK(fl_load(&c, d) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, d | 0xffff800000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    /* a supervisor pointer with metadata: #GP(0) without LAM_SUP, the data with it */
+    TEST_CHECK(fl_load(&c, d | 0xd5a5800000000000ull) == 13);
+    TEST_CHECK(fl_mov_cr4(&c, pc_get(&c, UC_X86_REG_CR4) | (1ull << 28)) == -1);
+    TEST_CHECK(fl_load(&c, d | 0xd5a5800000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, d | 0x5a12000000000000ull) == 13);             /* user: no LAM_U48 */
+    /* LAM48 for user pointers with paging; #PF on a not-present page: CR2 = the masked address */
+    TEST_CHECK(fl_mov_cr3(&c, cr3 | (1ull << 62)) == -1);
+    TEST_CHECK(fl_load(&c, d | 0x5a12000000000000ull) == -1 && pc_get(&c, UC_X86_REG_RAX) == v);
+    TEST_CHECK(fl_load(&c, 0x5a5a000000600000ull) == 14);
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK(e.has_address && e.address == 0x600000);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR2) == 0x600000);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1182: ERETU / ERETS outside 64-bit mode (a 32-bit protected-mode CPL0 engine). The ERETU
+ * opcode table (SDM 325462-092 Vol2A p. 3-301) says "Valid" for compatibility / legacy mode; the
+ * Operation section (3-301: "IF CR4.FRED = 0 OR CS.L = 0 OR CPL > 0 THEN #UD") and the exception
+ * lists (3-303 / 3-304: "not recognized") say #UD - our reading (user decision 2026-10-10,
+ * docs/quirks.md "SDM self-conflicts, our reading"). With FRED enumerated both encodings are #UD;
+ * without it F3 0F 01 CA keeps its old meaning (CLAC at CPL0, RFLAGS.AC cleared).
+ */
+static void test_x86_fl_eret_legacy(void)
+{
+    PcCtx c;
+    int feat;
+
+    for (feat = 0; feat <= UC_X86_FEATURE_FRED; feat += UC_X86_FEATURE_FRED) {
+        memset(&c, 0, sizeof(c));
+        c.pc = code_start;
+        OK(uc_open(UC_ARCH_X86, UC_MODE_32, &c.uc));
+        OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+        OK(uc_ctl_set_x86_features(c.uc, feat));
+        OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+        OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+        pc_set(&c, UC_X86_REG_EFLAGS, 0x40002);
+        if (feat) {
+            TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xca", 4) == 6);     /* ERETU */
+            TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xca", 4) == 6);     /* ERETS */
+            TEST_CHECK(pc_get(&c, UC_X86_REG_EFLAGS) == 0x40002);
+        } else {
+            TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xca", 4) == -1);    /* CLAC */
+            TEST_CHECK(pc_get(&c, UC_X86_REG_EFLAGS) == 0x2);
+        }
+        OK(uc_close(c.uc));
+    }
+}
+
+/* ---- end U1170-U1199 (fl_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -28463,4 +29614,16 @@ TEST_LIST = {
     {"test_x86_xs_ts_order", test_x86_xs_ts_order},
     {"test_x86_xs_cpuid_hv_range", test_x86_xs_cpuid_hv_range},
     {"test_x86_xs_xgetbv1_profile", test_x86_xs_xgetbv1_profile},
+    {"test_x86_fl_fred_enum", test_x86_fl_fred_enum},
+    {"test_x86_fl_fred_deliver_cpl0", test_x86_fl_fred_deliver_cpl0},
+    {"test_x86_fl_fred_stack_levels", test_x86_fl_fred_stack_levels},
+    {"test_x86_fl_fred_nested", test_x86_fl_fred_nested},
+    {"test_x86_fl_fred_disallowed", test_x86_fl_fred_disallowed},
+    {"test_x86_fl_erets", test_x86_fl_erets},
+    {"test_x86_fl_eretu_syscall", test_x86_fl_eretu_syscall},
+    {"test_x86_fl_erets_shadow", test_x86_fl_erets_shadow},
+    {"test_x86_fl_fred_far", test_x86_fl_fred_far},
+    {"test_x86_fl_lam", test_x86_fl_lam},
+    {"test_x86_fl_lam_paging", test_x86_fl_lam_paging},
+    {"test_x86_fl_eret_legacy", test_x86_fl_eret_legacy},
     {NULL, NULL}};
