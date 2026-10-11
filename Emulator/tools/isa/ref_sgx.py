@@ -620,9 +620,30 @@ def enclave_pages():
     ]
 
 
-def enclave_mrenclave():
+def enclave32_code():
+    """
+    32-bit enclave code at OENTRY (BASE + 3000H) for the compatibility-mode unit test (U1272).
+    CSSA = 0: ESI := ECX (the return address), EDX := FS:[0] (the data page), UD2. CSSA != 0: the
+    handler adds 2 to SSA frame 0's RIP. Both end in EEXIT to ESI.
+    """
+    gpr_rip = ENC_BASE + OFF_SSA + 4096 * SSAFRAMESIZE - 184 + 136
+    c = bytes.fromhex('89ce' '85c0' '750c' '64a100000000' '89c2' '0f0b' 'eb07')
+    c += bytes.fromhex('8305') + struct.pack('<I', gpr_rip) + b'\x02'
+    c += bytes.fromhex('89f3' 'b804000000' '0f01d7')
+    return c
+
+
+def enclave32_pages():
+    """the 64-bit enclave's pages with the 32-bit code page"""
+    code = enclave32_code()
+    pages = enclave_pages()
+    return [(off, si, (code + b'\xcc' * (4096 - len(code))) if off == OFF_CODE else content, measured)
+            for off, si, content, measured in pages]
+
+
+def enclave_mrenclave(pages=None):
     m = Measure(SSAFRAMESIZE, ENC_SIZE)
-    for off, si, content, measured in enclave_pages():
+    for off, si, content, measured in (pages or enclave_pages()):
         # EADD records SECINFO with R/W/X forced to 0 for a TCS (p. 41-16)
         si_m = secinfo(0, PT_TCS) if si[1] == PT_TCS else si
         m.eadd(off, si_m)
@@ -670,9 +691,14 @@ def test_vectors():
     # EWB of the data page (offset 4000H, RW PT_REG) of a fresh test enclave: EID 1 (the first
     # ECREATE), TMP_VER 1 (the first EWB), CR_BASE_PK 0
     ct, pcmd = ewb(bytes(16), 1, bytes(range(256)) * 16, ENC_BASE + OFF_DATA, 1, bytes([3, 2]), 1)
+    # the 32-bit enclave (U1272): ATTRIBUTES.MODE64BIT = 0, the same key (MRSIGNER)
+    mre32 = enclave_mrenclave(enclave32_pages())
+    ss32 = make_sigstruct(n, d, mre32, struct.pack('<QQ', 0, 0), amask, MISCSELECT, 0xffffffff,
+                          0x1234, 7)
     return dict(n=n, d=d, mrenclave=mre, sigstruct=ss, mrsigner=mrsigner, token=tok,
                 tokkey=tokkey, targetinfo=bytes(ti), report=report, kr_seal=bytes(kr_seal),
-                seal_key=seal, report_key=repkey, ewb_data=ct, ewb_pcmd=pcmd)
+                seal_key=seal, report_key=repkey, ewb_data=ct, ewb_pcmd=pcmd, mrenclave32=mre32,
+                sigstruct32=ss32)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -739,6 +765,9 @@ def selftest():
                   v['ewb_data'], decrypt=True)
     check('EWB vector decrypts (ELDU) to the data page with the PCMD MAC',
           pt == bytes(range(256)) * 16 and tag == v['ewb_pcmd'][112:128])
+    check('32-bit enclave SIGSTRUCT verifies, its MRENCLAVE differs',
+          verify_sigstruct(v['sigstruct32']) and v['mrenclave32'] != v['mrenclave'] and
+          v['sigstruct32'][960:992] == v['mrenclave32'])
     check('EGETKEY KEYNAME 5: SGX_INVALID_KEYNAME',
           egetkey(bytes(16), pf, secs, bytes(kr))[0] == SGX_INVALID_KEYNAME)
     try:
@@ -774,6 +803,9 @@ def cinc_text():
     out.append(c_bytes('sgxv_report_key', v['report_key']))
     out.append(c_bytes('sgxv_ewb_data', v['ewb_data']))
     out.append(c_bytes('sgxv_ewb_pcmd', v['ewb_pcmd']))
+    out.append(c_bytes('sgxv32_mrenclave', v['mrenclave32']))
+    out.append(c_bytes('sgxv32_sigstruct', v['sigstruct32']))
+    out.append(c_bytes('sgxv32_page_3000', [c for o, si, c, m in enclave32_pages() if o == OFF_CODE][0]))
     for off, si, content, measured in enclave_pages():
         if any(content):
             out.append(c_bytes('sgxv_page_%04x' % off, content))

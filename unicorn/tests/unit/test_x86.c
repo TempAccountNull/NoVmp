@@ -31994,6 +31994,78 @@ static void test_x86_sgx_aex_delivery(void)
 }
 
 
+/*
+ * U1272: a 32-bit enclave (ATTRIBUTES.MODE64BIT = 0) run in compatibility mode at CPL3 (CS 2BH,
+ * DS / ES / SS 1BH): the ref_sgx.py enclave32_code page (MRENCLAVE and SIGSTRUCT from the model).
+ * EENTER from 64-bit mode is #GP(0) (mode mismatch, p. 41-89). In compatibility mode: EDX :=
+ * FS:[0] (FS from TCS.OFSBASE / FSLIMIT), UD2 -> AEX: the 32-bit SSA fields (Vol3D 40.4 item 1: 4
+ * bytes stored, the upper half of each 8-byte field unchanged), the synthetic state with R8
+ * unchanged (Table 40-1); the handler (CSSA = 1) adds 2 to SSA.RIP, ERESUME restores EDX and
+ * leaves through EEXIT to the first entry's ECX.
+ */
+static void sgx_to_compat3(SgxEnv *e)
+{
+    uint64_t frame[5] = {SGX_CODE + 0x40, 0x2b, 0x2, SGX_STACK - 0x800, 0x1b};
+    uint64_t rsp = SGX_STACK - 0x100;
+
+    OK(uc_mem_write(e->c.uc, rsp, frame, sizeof(frame)));
+    sgx_set(&e->c, UC_X86_REG_RSP, rsp);
+    /* mov eax, 1BH; mov ds, eax; mov es, eax; iretq */
+    OK(uc_mem_write(e->c.uc, SGX_CODE, "\xb8\x1b\x00\x00\x00\x8e\xd8\x8e\xc0\x48\xcf", 11));
+    OK(uc_emu_start(e->c.uc, SGX_CODE, SGX_CODE + 0x40, 0, 4));
+    TEST_CHECK(sgx_get(&e->c, UC_X86_REG_RIP) == SGX_CODE + 0x40 &&
+               sgx_get(&e->c, UC_X86_REG_CS) == 0x2b && sgx_get(&e->c, UC_X86_REG_DS) == 0x1b);
+    e->c.pc = SGX_CODE + 0x80;
+}
+
+static void test_x86_sgx_enclave32(void)
+{
+    uc_x86_sgx_platform p;
+    uint8_t b[32];
+    uint64_t rsp;
+    SgxEnv e;
+
+    sgx_platform(&p);
+    sgx_env_open(&e, &p);
+    sgx_secs_src(&e, 2);                                                /* DEBUG, MODE64BIT = 0 */
+    TEST_CHECK(sgx_ecreate(&e) == -1);
+    sgx_add_page(&e, 0x0000, sgxv_page_0000, 0x100, 1);
+    sgx_add_page(&e, 0x1000, NULL, 0x203, 0);
+    sgx_add_page(&e, 0x2000, NULL, 0x203, 0);
+    sgx_add_page(&e, 0x3000, sgxv32_page_3000, 0x205, 1);
+    sgx_add_page(&e, 0x4000, sgxv_page_4000, 0x203, 1);
+    sgx_add_page(&e, 0x5000, NULL, 0x203, 0);
+    sgx_set_lehash(&e, sgxv_mrsigner);
+    TEST_CHECK(sgx_einit(&e, sgxv32_sigstruct, NULL) == 0);
+    OK(uc_mem_read(e.c.uc, SGX_EPC_BASE + 64, b, 32));
+    TEST_CHECK(!memcmp(b, sgxv32_mrenclave, 32));
+    sgx_to_cpl3(&e);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 13);                          /* 64-bit mode */
+    sgx_to_cpl0(&e);
+    sgx_to_compat3(&e);
+    sgx_set(&e.c, UC_X86_REG_R8, 0x1234);
+    rsp = sgx_get(&e.c, UC_X86_REG_RSP);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == 6);                           /* UD2: AEX */
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_AEP && sgx_get(&e.c, UC_X86_REG_RAX) == 3 &&
+               sgx_get(&e.c, UC_X86_REG_RBX) == SGXV_BASE &&
+               sgx_get(&e.c, UC_X86_REG_RCX) == SGX_AEP && sgx_get(&e.c, UC_X86_REG_RDX) == 0 &&
+               sgx_get(&e.c, UC_X86_REG_RSI) == 0 && sgx_get(&e.c, UC_X86_REG_RSP) == rsp &&
+               sgx_get(&e.c, UC_X86_REG_R8) == 0x1234 && sgx_cssa(&e) == 1);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == SGXV_BASE + 0x300e);
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + 16) == 0x03020100 &&                 /* EDX */
+               sgx_rq(&e, SGX_GPR0_PA + 48) == SGX_ENCLU_AT + 3);           /* ESI */
+    TEST_CHECK((uint32_t)sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_EXITINFO) == 0x80000306u &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_FSBASE) == SGXV_BASE + 0x4000);
+    TEST_CHECK(sgx_eenter(&e, 0, 0, 0) == -1 && sgx_get(&e.c, UC_X86_REG_RAX) == 4);   /* handler */
+    TEST_CHECK(sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == SGXV_BASE + 0x3010);
+    TEST_CHECK(sgx_eresume(&e) == -1 && sgx_cssa(&e) == 0);
+    TEST_CHECK(sgx_get(&e.c, UC_X86_REG_RIP) == SGX_ENCLU_AT + 3 &&
+               sgx_get(&e.c, UC_X86_REG_RDX) == 0x03020100 &&
+               sgx_get(&e.c, UC_X86_REG_RCX) == SGX_AEP && sgx_get(&e.c, UC_X86_REG_CS) == 0x2b);
+    sgx_env_close(&e);
+}
+
+
 /* ---- end U1260-U1299 (sgx_) ---- */
 
 TEST_LIST = {
@@ -32414,4 +32486,5 @@ TEST_LIST = {
     {"test_x86_sgx_xfrm_osxsave", test_x86_sgx_xfrm_osxsave},
     {"test_x86_sgx_cet_ibt", test_x86_sgx_cet_ibt},
     {"test_x86_sgx_aex_delivery", test_x86_sgx_aex_delivery},
+    {"test_x86_sgx_enclave32", test_x86_sgx_enclave32},
     {NULL, NULL}};
