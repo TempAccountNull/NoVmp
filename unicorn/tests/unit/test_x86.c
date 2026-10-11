@@ -34716,6 +34716,41 @@ static void test_x86_vmx_sgx_exit(void)
     sgx_env_close(&e);
 }
 
+/*
+ * U1315: the monitor trap flag and enclaves (SDM 092 Vol3D 43.2.2 / 43.2.3, EENTER / EEXIT pseudocode).
+ * Opt-out entry: EENTER suppresses the MTF inside the enclave and the pending MTF VM exit of EENTER;
+ * EEXIT pends one - the first MTF VM exit (37) comes after EEXIT (guest RIP = SGX_ENCLU_AT + 3,
+ * CMD_INC done: R14 = the incremented data), outside enclave mode (no exit-reason bit 27). Opt-in
+ * entry (TCS.FLAGS.DBGOPTIN): EENTER pends an MTF VM exit at its end - it comes at the enclave's first
+ * instruction, in enclave mode: AEX, reason 37 | bit 27, RIP = AEP, SSA RIP = the entry point.
+ */
+static void test_x86_vmx_sgx_mtf(void)
+{
+    SgxEnv e;
+    PcCtx p;
+    uint64_t r14;
+
+    vmx_sgx_open(&e, &p, 0);
+    vmx_w(&p, 0x4002, VMX_PROC0 | (1u << 27));
+    vmx_sgx_eenter(&p, 1, 3, 0);
+    r14 = pc_get(&p, UC_X86_REG_R14);
+    TEST_CHECK(vmx_r(&p, 0x4402) == 37 && vmx_r(&p, 0x681e) == SGX_ENCLU_AT + 3);
+    TEST_MSG("exit %llx rip %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x681e));
+    TEST_CHECK(r14 == 0x0706050403020101ULL && !(vmx_r(&p, 0x4824) & 16) && sgx_cssa(&e) == 0);
+    sgx_env_close(&e);
+
+    vmx_sgx_open(&e, &p, 1);
+    vmx_w(&p, 0x4002, VMX_PROC0 | (1u << 27));
+    vmx_sgx_eenter(&p, 1, 3, 0);
+    TEST_CHECK(vmx_r(&p, 0x4402) == ((1u << 27) | 37) && vmx_r(&p, 0x681e) == SGX_AEP);
+    TEST_MSG("exit %llx rip %llx", (unsigned long long)vmx_r(&p, 0x4402),
+             (unsigned long long)vmx_r(&p, 0x681e));
+    TEST_CHECK(sgx_cssa(&e) == 1 && (vmx_r(&p, 0x4824) & 16) &&
+               sgx_rq(&e, SGX_GPR0_PA + SGX_GPR_RIP) == SGXV_BASE + sgx_rq(&e, SGX_TCS_PA + 32));
+    sgx_env_close(&e);
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35165,4 +35200,5 @@ TEST_LIST = {
     {"test_x86_vmx_encls", test_x86_vmx_encls},
     {"test_x86_vmx_sgx_enc_events", test_x86_vmx_sgx_enc_events},
     {"test_x86_vmx_sgx_exit", test_x86_vmx_sgx_exit},
+    {"test_x86_vmx_sgx_mtf", test_x86_vmx_sgx_mtf},
     {NULL, NULL}};

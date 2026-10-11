@@ -3545,6 +3545,7 @@ void x86_vmx_pconfig_check(CPUX86State *env, uintptr_t ra);
 void x86_vmx_pbndkb_check(CPUX86State *env, uintptr_t ra);
 #if __Use_Original_Qemu != 1 /* ours (U1313) */
 void x86_vmx_encls_check(CPUX86State *env, uintptr_t ra);     /* U1313: ENCLS exiting */
+void x86_vmx_sgx_mtf(CPUX86State *env, bool pend);              /* U1315: MTF and enclaves */
 #endif /* __Use_Original_Qemu (U1313) */
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
 /* U1305: events in VMX non-root operation */

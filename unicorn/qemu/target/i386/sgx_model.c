@@ -2848,6 +2848,9 @@ static void sgx_eenter(SgxOp *o)
     if (env->sgx_dbgoptin && (env->eflags & TF_MASK)) {
         o->single_step = true;      /* "pend a single-step #DB at the end of EENTER" */
     }
+#if __Use_Original_Qemu != 1 /* ours (U1315) */
+    x86_vmx_sgx_mtf(env, env->sgx_dbgoptin);   /* opt-in: pend an MTF VM exit; opt-out: suppress */
+#endif /* __Use_Original_Qemu (U1315) */
 }
 
 /*
@@ -2932,6 +2935,9 @@ static void sgx_eresume(SgxOp *o)
     sgx_pst32(env, tcs + TCS_CSSA, cssa - 1);
     env->eip = target;
     sgx_enter(o, tcs, tcs_la, secs, aep, fsbase, gsbase);
+#if __Use_Original_Qemu != 1 /* ours (U1315) */
+    x86_vmx_sgx_mtf(env, false);        /* TMP_NOTIFY = 0: "Clear pending MTF VM exits" */
+#endif /* __Use_Original_Qemu (U1315) */
 }
 
 /*
@@ -2970,6 +2976,9 @@ static void sgx_eexit(SgxOp *o)
     if (env->eflags & TF_MASK) {
         o->single_step = true;                      /* "Pend Single-Step #DB at the end of EEXIT" */
     }
+#if __Use_Original_Qemu != 1 /* ours (U1315) */
+    x86_vmx_sgx_mtf(env, true);         /* "pend a MTF VM exit at the end of EEXIT" */
+#endif /* __Use_Original_Qemu (U1315) */
 }
 
 /* the fault-class exception vectors (the RF the non-SGX delivery would save, 40.4 item 5) */
@@ -3083,6 +3092,9 @@ target_ulong x86_sgx_aex(CPUX86State *env, int vector, int is_int, int is_hw, in
     env->eip = aep;
     sgx_pst32(env, tcs + TCS_CSSA, sgx_pld32(env, tcs + TCS_CSSA) + 1);
     sgx_leave(env);
+#if __Use_Original_Qemu != 1 /* ours (U1315) */
+    x86_vmx_sgx_mtf(env, true);         /* "Pend MTF VM Exit at the end of exit" (40.4.1) */
+#endif /* __Use_Original_Qemu (U1315) */
     if (exc && vector == EXCP0E_PAGE) {
         env->cr[2] &= ~0xfffULL;
         if (rec->vector == EXCP0E_PAGE && rec->has_address) {

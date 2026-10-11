@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1314: 25 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1315: 26 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -410,3 +410,8 @@ translator and passed to the helpers.
   29.7.3) - the same flag the AEX sets (env->sgx_enc_event).
 - SGX-induced #PF (an EPC operand of a leaf, the enclave access control) remember CR2 for a #PF that
   exits by the exception bitmap (30.1), as the paging #PF does.
+- Monitor trap flag (U1315; Vol3D 43.2.2 / 43.2.3, EENTER / ERESUME / EEXIT pseudocode, AEX 40.4.1):
+  inside an enclave entered through an opt-out entry no MTF VM exit is pended; an opt-out EENTER /
+  ERESUME and an opt-in ERESUME (TMP_NOTIFY = 0: AEX-Notify is not enumerated) clear a pending one;
+  EEXIT, an AEX and an opt-in EENTER pend one at their end. ENCLS and EREPORT / EGETKEY follow the
+  ordinary per-instruction rule (43.2.1 / 43.2.2).

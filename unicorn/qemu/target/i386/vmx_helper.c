@@ -2881,8 +2881,12 @@ void helper_vmx_boundary(CPUX86State *env)
         vmx_vmexit(env, &e);
     }
     vmx_vintr_deliver(env);             /* U1307: a recognized virtual interrupt (32.2.2) */
-    /* the monitor trap flag: an MTF VM exit is pending after this instruction (28.5.2) */
-    if (env->vmx.proc & PROC_MTF) {
+    /*
+     * the monitor trap flag: an MTF VM exit is pending after this instruction (28.5.2); U1315: not
+     * inside an enclave entered through an opt-out entry (Vol3D EENTER p. 41-93 / ERESUME p. 41-126:
+     * "Suppress any MTF VM exits during execution of the enclave")
+     */
+    if ((env->vmx.proc & PROC_MTF) && !(env->sgx_enclave_mode && !env->sgx_dbgoptin)) {
         env->vmx.mtf_pending = 1;
     }
     env->vmx.hlt_wake = 0;
@@ -3182,6 +3186,25 @@ void x86_vmx_loadiwkey_check(CPUX86State *env, uint32_t src1, uint32_t src2, uin
     if (env->vmx.nonroot && (env->vmx.proc3 & PROC3_LOADIWKEY)) {
         x86_vmx_insn_exit(env, EXIT_REASON_LOADIWKEY, 0, ((src1 & 15) << 3) | ((src2 & 15) << 28),
                           true, ra);
+    }
+}
+
+/*
+ * U1315: the monitor trap flag at enclave entry and exit (SDM 092 Vol3D EENTER p. 41-93, ERESUME
+ * pp. 41-126 / 41-127, EEXIT p. 41-98, the AEX 40.4.1 p. 40-6, 43.2.2 / 43.2.3 pp. 43-1 to 43-3):
+ * 'pend' - EEXIT, an AEX and an opt-in EENTER pend an MTF VM exit at their end when the control is
+ * 1; otherwise (an opt-out EENTER / ERESUME, an opt-in ERESUME with TMP_NOTIFY = 0: AEX-Notify is
+ * not enumerated) a pending MTF VM exit is cleared.
+ */
+void x86_vmx_sgx_mtf(CPUX86State *env, bool pend)
+{
+    if (!env->vmx.nonroot) {
+        return;
+    }
+    if (!pend) {
+        env->vmx.mtf_pending = 0;
+    } else if (env->vmx.proc & PROC_MTF) {
+        env->vmx.mtf_pending = 1;
     }
 }
 
