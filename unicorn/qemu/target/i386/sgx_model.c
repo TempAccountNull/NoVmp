@@ -2017,7 +2017,7 @@ static bool sgx_encls_leaf_valid(uint32_t leaf)
  * NoVmp (ledger U1262): ENCLS. The translator raised #UD for LOCK / 66 / F2 / F3 / VEX (and routes
  * here only when the model enumerates SGX). Order of the Operation section: #UD for CR0.PE = 0,
  * virtual-8086 mode, SMM, CPUID.12H.0:EAX.SGX1 = 0 and CPL > 0; (VMX: "enable ENCLS exiting" -
- * pending, plan 1.J.12); #GP(0) for IA32_FEATURE_CONTROL.LOCK / SGX_ENABLE = 0, an unsupported
+ * U1313: x86_vmx_encls_check); #GP(0) for IA32_FEATURE_CONTROL.LOCK / SGX_ENABLE = 0, an unsupported
  * leaf, CR0.PG = 0, an expand-down DS outside 64-bit mode. A leaf that completes without a fault
  * sets IA32_SGX_SVN_STATUS.Lock (42.11.3: "the first successful execution of an Intel SGX
  * instruction that doesn't return an error code" - with RAX = 0 for the leaves that return one).
@@ -2037,6 +2037,9 @@ void helper_encls(CPUX86State *env)
         !x86_sgx_enumerated(env) || (env->hflags & HF_CPL_MASK)) {
         raise_exception_ra(env, EXCP06_ILLOP, o.ra);
     }
+#if __Use_Original_Qemu != 1 /* ours (U1313) */
+    x86_vmx_encls_check(env, o.ra);     /* VMX non-root: the ENCLS-exiting bitmap (reason 60) */
+#endif /* __Use_Original_Qemu (U1313) */
     if ((env->msr_ia32_feature_control & (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX)) !=
             (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX) ||
         !sgx_encls_leaf_valid(leaf) || !(env->cr[0] & CR0_PG_MASK)) {

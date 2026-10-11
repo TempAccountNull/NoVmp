@@ -132,13 +132,14 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
 | FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58], FRED event injection (event data, STI blocking, SYSCALL / SYSENTER as type 7), VM-entry checks of the FRED fields and of FRED guests, ERETS / ERETU with NMI exiting | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.2.1-29.3.2, 29.6.1.1, 30.2.2, 30.2.4, 30.3, 30.5, 28.3; Vol3D A.1 p. A-2, A.4.2 | `vmx_helper.c` vmx_fred*, `seg_helper.c` x86_fred_deliver / fred_eret_end | done (U1309); the opt-ins UC_X86_FEATURE_VMX and UC_X86_FEATURE_FRED may be combined |
-| ENCLV and SGX in VMX operation (ENCLS exiting, ENCLV exiting) | Vol3D 41 (ENCLV), Vol3C 28.1.3 (ENCLS) | - | pending: agent/sgx implements SGX; ENCLV is added only after SGX is merged |
+| ENCLS exiting: "enable ENCLS exiting" (secondary bit 15, allowed with SGX), the ENCLS-exiting bitmap (202EH), exit reason 60 after the #UD / CPL checks and before the #GP(0) checks | Vol3C 27.6.2, 27.6.16 p. 27-21, 28.1.3; Vol3D ENCLS p. 41-8, 42.5.1 p. 42-3 | `vmx_helper.c` x86_vmx_encls_check, `sgx_model.c` helper_encls | done (U1313) |
+| ENCLV, "enable ENCLV exiting", the ENCLV-exiting bitmap, SGX-conflict VM exits | not in SDM 092 / 093 (ISE 319433-062 change list: "Removed ENCLV from Section 14.1", "Removed SGX_CONFLICT VM Exit Qualification column") | - | not modelled: no specification (question to the user); ENCLV (NP 0F 01 C0) stays #UD, CPUID.12H.0:EAX[5] = 0, secondary bit 28 not allowed |
 
 ### Stage 9 - tests
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1312: 22 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1313: 23 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design

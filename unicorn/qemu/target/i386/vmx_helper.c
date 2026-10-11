@@ -263,6 +263,18 @@ static bool vmx_fred(CPUX86State *env)
     return x86_fred_cpuid(env);
 }
 
+/*
+ * U1313: "enable ENCLS exiting" (secondary bit 15, Vol3C 27.6.2 Table 27-7, 27.6.16) is supported when
+ * the CPU reports SGX (CPUID.07H.00H:EBX.SGX[2]); without it the ENCLS-exiting bitmap field does not
+ * exist (Vol3D Appendix B footnote 13)
+ */
+static bool x86_vmx_sgx(CPUX86State *env);
+
+static uint32_t vmx_proc2_allowed1(CPUX86State *env)
+{
+    return VMX_PROC2_ALLOWED1 | (x86_vmx_sgx(env) ? 1u << 15 : 0);
+}
+
 static uint32_t vmx_exit_allowed1(CPUX86State *env)
 {
     return VMX_EXIT_ALLOWED1 | (vmx_fred(env) ? 1u << 31 : 0);
@@ -281,7 +293,7 @@ static uint64_t x86_vmx_allowed1(CPUX86State *env, int reg)
     case VMXF_PROC:
         return VMX_PROC_ALLOWED1;
     case VMXF_PROC2:
-        return VMX_PROC2_ALLOWED1;
+        return vmx_proc2_allowed1(env);
     case VMXF_PROC3:
         return vmx_proc3_allowed1(env);
     case VMXF_EXIT:
@@ -452,7 +464,7 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
         *val = vmx_vmcs_enum(env);
         break;
     case MSR_IA32_VMX_PROCBASED_CTLS2:
-        *val = (uint64_t)VMX_PROC2_ALLOWED1 << 32;  /* A.3.3: allowed 0-settings always 0 */
+        *val = (uint64_t)vmx_proc2_allowed1(env) << 32;     /* A.3.3: allowed 0-settings 0 */
         break;
     case MSR_IA32_VMX_EPT_VPID_CAP:
         *val = VMX_EPT_VPID_CAP;
@@ -1166,6 +1178,7 @@ static bool x86_vmx_canonical(CPUX86State *env, uint64_t a)
 #define PROC2_INVPCID           (1u << 12)
 #define PROC2_VMFUNC            (1u << 13)
 #define PROC2_SHADOW_VMCS       (1u << 14)
+#define PROC2_ENCLS             (1u << 15)  /* U1313 */
 #define PROC2_RDSEED            (1u << 16)
 #define PROC2_XSAVES            (1u << 20)
 #define PROC2_MBEC              (1u << 22)
@@ -1372,6 +1385,7 @@ static void vmx_load_controls(CPUX86State *env)
     v->vmwrite_bmp = vmcs_get(env, VMCS_VMWRITE_BITMAP);
     v->xss_bmp = vmcs_get(env, VMCS_XSS_EXIT_BITMAP);
     v->pconfig_bmp = vmcs_get(env, VMCS_PCONFIG_BITMAP);
+    v->encls_bmp = (v->proc2 & PROC2_ENCLS) ? vmcs_get(env, 0x202e) : 0;   /* U1313 */
     v->link_ptr = vmcs_get(env, VMCS_LINK_PTR);
     v->pi_nv = vmcs_get(env, VMCS_PI_NV);
     v->pi_desc = vmcs_get(env, VMCS_PI_DESC);
@@ -1417,7 +1431,7 @@ static bool vmx_check_controls(CPUX86State *env)
     /* 29.2.1.1 VM-execution control fields (with the TRUE capability MSRs, A.3) */
     if (!vmx_ctl_ok(pin, VMX_PIN_TRUE0, VMX_PIN_ALLOWED1) ||
         !vmx_ctl_ok(proc, VMX_PROC_TRUE0, VMX_PROC_ALLOWED1) ||
-        !vmx_ctl_ok(proc2, 0, VMX_PROC2_ALLOWED1) ||
+        !vmx_ctl_ok(proc2, 0, vmx_proc2_allowed1(env)) ||
         !vmx_ctl_ok(proc3, 0, vmx_proc3_allowed1(env))) {
         return false;
     }
@@ -3095,6 +3109,22 @@ void x86_vmx_loadiwkey_check(CPUX86State *env, uint32_t src1, uint32_t src2, uin
     if (env->vmx.nonroot && (env->vmx.proc3 & PROC3_LOADIWKEY)) {
         x86_vmx_insn_exit(env, EXIT_REASON_LOADIWKEY, 0, ((src1 & 15) << 3) | ((src2 & 15) << 28),
                           true, ra);
+    }
+}
+
+/*
+ * U1313: ENCLS in VMX non-root operation (SDM 092 Vol3D ENCLS Operation p. 41-8, 42.5.1 p. 42-3;
+ * Vol3C 28.1.3, 27.6.16): with "enable ENCLS exiting" the ENCLS-exiting bitmap bit EAX (EAX < 63) or
+ * bit 63 (EAX >= 63) makes ENCLS exit (reason 60) - after the #UD and CPL checks, before the
+ * IA32_FEATURE_CONTROL, leaf and CR0.PG #GP(0). EAX: RAX[63:32] are ignored.
+ */
+void x86_vmx_encls_check(CPUX86State *env, uintptr_t ra)
+{
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    if (env->vmx.nonroot && (env->vmx.proc2 & PROC2_ENCLS) &&
+        ((env->vmx.encls_bmp >> (leaf < 63 ? leaf : 63)) & 1)) {
+        x86_vmx_insn_exit(env, 60, 0, 0, false, ra);
     }
 }
 

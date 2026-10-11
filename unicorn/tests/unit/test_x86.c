@@ -32342,6 +32342,12 @@ static void vmx_open(PcCtx *c, int feat)
     OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
     OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
     OK(uc_ctl_set_x86_features(c->uc, feat));
+    if (feat & UC_X86_FEATURE_SGX) {
+        uc_x86_sgx_platform p;              /* U1313: the platform of the sgx_ tests */
+
+        sgx_platform(&p);
+        OK(uc_ctl_set_x86_sgx_platform(c->uc, &p));
+    }
     OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
     OK(uc_mem_map(c->uc, VMX_DATA, 0x100000, UC_PROT_ALL));
     OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
@@ -32497,11 +32503,13 @@ static uint64_t vmx_rq(PcCtx *c, uint64_t a)
  * NE, PG (IA32_VMX_CR0_FIXED0), CR4 with PAE and VMXE, IA32_FEATURE_CONTROL locked with bit 2,
  * revision identifier 1 in the VMXON region and in VMCS A and B
  */
+#define VMX_FC_NO_SGX 0x20000000            /* test flag: IA32_FEATURE_CONTROL without SGX_ENABLE */
+
 static void vmx_root_open_f(PcCtx *c, int feat)
 {
     uint32_t rev = 1;
 
-    vmx_open(c, feat);
+    vmx_open(c, feat & ~VMX_FC_NO_SGX);
     vmx_wq(c, VMX_PT, (VMX_PT + 0x1000) | 3);
     vmx_wq(c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 3);
     vmx_wq(c, VMX_PT + 0x2000, 0x83);
@@ -32509,7 +32517,9 @@ static void vmx_root_open_f(PcCtx *c, int feat)
     pc_set(c, UC_X86_REG_CR4, pc_get(c, UC_X86_REG_CR4) | 0x2020);
     pc_set(c, UC_X86_REG_CR3, VMX_PT);
     pc_set(c, UC_X86_REG_CR0, pc_get(c, UC_X86_REG_CR0) | 0x80000020ull);
-    TEST_CHECK(vmx_wrmsr(c, 0x3a, 5) == -1);
+    /* U1313: + SGX_ENABLE (bit 18) with UC_X86_FEATURE_SGX unless VMX_FC_NO_SGX */
+    TEST_CHECK(vmx_wrmsr(c, 0x3a, 5 | ((feat & UC_X86_FEATURE_SGX) && !(feat & VMX_FC_NO_SGX) ?
+                                       1u << 18 : 0)) == -1);
     OK(uc_mem_write(c->uc, VMX_VMXON, &rev, 4));
     OK(uc_mem_write(c->uc, VMX_VMCS_A, &rev, 4));
     OK(uc_mem_write(c->uc, VMX_VMCS_B, &rev, 4));
@@ -34422,6 +34432,69 @@ static void test_x86_vmx_prefix_misc(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1313: ENCLS exiting (SDM 092 Vol3D ENCLS Operation p. 41-8, 42.5.1 p. 42-3; Vol3C 27.6.16, 28.1.3;
+ * exit reason 60). IA32_VMX_PROCBASED_CTLS2 allows bit 15 only with UC_X86_FEATURE_SGX (else VM entry
+ * with it fails, error 7). Guest at CPL 0, bitmap bits 1 and 63: ENCLS EAX = 1 exits (length 3, RIP
+ * at the ENCLS), also with RAX[63:32] set; EAX = 63 and 40H exit by bit 63; EAX = 10H (bit clear, an
+ * unsupported leaf) is #GP(0) (exception bitmap: exit 0); with the control 0 a bitmap of all ones is
+ * ignored (EAX = 10H: #GP(0)).
+ * The exit precedes the IA32_FEATURE_CONTROL #GP(0): SGX_ENABLE = 0, EAX = 1 exits, EAX = 2 is #GP(0).
+ */
+static void vmx_encls_guest(PcCtx *c, uint64_t rax, uint32_t reason)
+{
+    vmx_resume_regs(c, "\x0f\x01\xcf", 3, rax, 0, 0, 0);
+    if (reason) {
+        vmx_exit_is(c, reason, 0, 3);
+        TEST_CHECK(vmx_r(c, 0x681e) == VMX_GUEST_PC);
+    } else {
+        TEST_CHECK(vmx_r(c, 0x4402) == 0 && vmx_r(c, 0x4404) == 0x80000b0du);
+        TEST_MSG("RAX %llx: exit %llu info %llx", (unsigned long long)rax,
+                 (unsigned long long)vmx_r(c, 0x4402), (unsigned long long)vmx_r(c, 0x4404));
+    }
+}
+
+static void test_x86_vmx_encls(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x48b, &v) == -1 && !((v >> 47) & 1));
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 15);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    OK(uc_close(c.uc));
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_SGX);
+    TEST_CHECK(vmx_rdmsr(&c, 0x48b, &v) == -1 && ((v >> 47) & 1));
+    vmx_w(&c, 0x4004, 1u << 13);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 15);
+    vmx_w(&c, 0x202e, (1ull << 1) | (1ull << 63));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_encls_guest(&c, 1, 60);
+    vmx_encls_guest(&c, 0xffffffff00000001ull, 60);
+    vmx_encls_guest(&c, 63, 60);
+    vmx_encls_guest(&c, 0x40, 60);
+    vmx_encls_guest(&c, 0x10, 0);
+    vmx_w(&c, 0x401e, 0);
+    vmx_w(&c, 0x202e, ~0ull);
+    vmx_encls_guest(&c, 0x10, 0);
+    OK(uc_close(c.uc));
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_SGX | VMX_FC_NO_SGX);
+    vmx_w(&c, 0x4004, 1u << 13);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 31));
+    vmx_w(&c, 0x401e, 1u << 15);
+    vmx_w(&c, 0x202e, 1ull << 1);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_encls_guest(&c, 1, 60);
+    vmx_encls_guest(&c, 2, 0);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34868,4 +34941,5 @@ TEST_LIST = {
     {"test_x86_vmx_prefix_root", test_x86_vmx_prefix_root},
     {"test_x86_vmx_prefix_guest", test_x86_vmx_prefix_guest},
     {"test_x86_vmx_prefix_misc", test_x86_vmx_prefix_misc},
+    {"test_x86_vmx_encls", test_x86_vmx_encls},
     {NULL, NULL}};
