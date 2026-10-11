@@ -6282,7 +6282,19 @@ uint64_t helper_xgetbv(CPUX86State *env, uint32_t ecx)
     case 0:
         return env->xcr0;
     case 1:
+#if __Use_Original_Qemu == 1 /* original QEMU (U1203) */
         if (env->features[FEAT_XSAVE] & CPUID_XSAVE_XGETBV1) {
+#else /* ours (U1203) */
+        /*
+         * NoVmp (ledger U1203): SDM 092 Vol2D XGETBV p. 6-36 / 6-37: "#GP(0) If an invalid XCR
+         * is specified in ECX (includes ECX = 1 if CPUID.0DH.01H:EAX.XGETBV1[2] = 0)." A strict
+         * UC_CTL_X86_CPUID profile decides, as for the XSAVEOPT / XSAVEC / XSAVES bits of the
+         * same word in the translator (x86_cpuid_profile_mask, U68); before, only the model's
+         * feature word was read, so a profile without XGETBV1 still returned XINUSE.
+         */
+        if (env->features[FEAT_XSAVE] & x86_cpuid_profile_mask(env, 0xd, 1, 0) &
+            CPUID_XSAVE_XGETBV1) {
+#endif /* __Use_Original_Qemu (U1203) */
             return env->xcr0 & get_xinuse(env);
         }
         break;

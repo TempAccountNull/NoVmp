@@ -412,6 +412,10 @@ Add-Exp 'cases_xstate_ts_ctl' 'cases_xstate_ts_ctl' 'xstate expect' @( '--cr0', 
 # and without the AVX-512 opt-in
 Add-Exp 'cases_cpuid_hv' 'cases_cpuid_hv' 'xstate cpuid expect'
 Add-Exp 'cases_cpuid_hv_avx512' 'cases_cpuid_hv' 'xstate cpuid evex expect' @( '--avx512' )
+# U1203: XSETBV / XGETBV #GP(0) conditions (T-4); XGETBV ECX = 1 with a strict profile without XGETBV1
+# (cpuid_xgetbv1_off.txt: the gate profile with CPUID.(0DH,1):EAX[2] = 0)
+Add-Exp 'cases_xcr' 'cases_xcr' 'xstate expect'
+Add-Exp 'cases_xcr_nox1' 'cases_xcr_nox1' 'xstate cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_xgetbv1_off.txt' ) )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

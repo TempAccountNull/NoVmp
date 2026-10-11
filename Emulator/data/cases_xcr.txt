@@ -1,0 +1,23 @@
+# U1203 (plan 1.J.34; sdeida report DX-4 / T-4): XSETBV / XGETBV #GP(0) conditions, where Intel SDE 10.13.1 deviates
+# (SDE accepts XSETBV at CPL3 and ends the process for XGETBV ECX = 2); these lines pin the SDM behaviour.
+# SDM 325462-092 Vol2D (093 identical): XSETBV p. 6-70 / 6-71 "#GP(0) If the current privilege level is not 0. If an
+# invalid XCR is specified in ECX. If the value in EDX:EAX sets bits that are reserved in the XCR specified by ECX. If
+# an attempt is made to clear bit 0 of XCR0. If an attempt is made to set XCR0[2:1] to 10b."; XGETBV p. 6-36 / 6-37
+# "#GP(0) If an invalid XCR is specified in ECX (includes ECX = 1 if CPUID.0DH.01H:EAX.XGETBV1[2] = 0)."
+# Expected-value cases, the model path (no profile; XCR0 = Unicorn's reset value):
+#   emu-alltest --cases Emulator\data\cases_xcr.txt --expect-only
+# The XGETBV ECX = 1 #GP(0) line with CPUID.(0DH,1):EAX.XGETBV1 = 0 is in cases_xcr_nox1.txt (its own profile).
+# XSETBV (0F 01 D1) at CPL3: #GP(0)
+.byte 0x0f, 0x01, 0xd1 | rax=0x7 rcx=0 rdx=0 cpl=3 => #GP(0)
+# XSETBV at CPL0: an invalid XCR (1: XCR1 is not writable; 2), XCR0[0] = 0, XCR0[2:1] = 10b, a reserved bit
+.byte 0x0f, 0x01, 0xd1 | rax=0x7 rcx=1 rdx=0 => #GP(0)
+.byte 0x0f, 0x01, 0xd1 | rax=0x7 rcx=2 rdx=0 => #GP(0)
+.byte 0x0f, 0x01, 0xd1 | rax=0x6 rcx=0 rdx=0 => #GP(0)
+.byte 0x0f, 0x01, 0xd1 | rax=0x5 rcx=0 rdx=0 => #GP(0)
+.byte 0x0f, 0x01, 0xd1 | rax=0x7 rcx=0 rdx=0x80000000 => #GP(0)
+# XGETBV (0F 01 D0): ECX = 2 and ECX = 80000000H are invalid XCRs at every CPL
+.byte 0x0f, 0x01, 0xd0 | rcx=2 => #GP(0)
+.byte 0x0f, 0x01, 0xd0 | rcx=2 cpl=3 => #GP(0)
+.byte 0x0f, 0x01, 0xd0 | rcx=0x80000000 => #GP(0)
+# controls: a valid XSETBV (XCR0 = 7) read back with XGETBV ECX = 0 (XOR: ZF = PF = 1)
+.byte 0x0f, 0x01, 0xd1; xor eax, eax; .byte 0x0f, 0x01, 0xd0 | rax=0x7 rcx=0 rdx=0 => rflags=0x246
