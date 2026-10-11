@@ -2090,7 +2090,19 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
 #define PUSHQ(sp, val) PUSHQ_RA(sp, val, 0)
 #define POPQ(sp, val) POPQ_RA(sp, val, 0)
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1402) */
 static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
+#else /* ours (U1402) */
+/*
+ * NoVmp (ledger U1402): ext is the EXT bit of the #TS / #SS raised here (1 for IDT delivery of an
+ * event other than INT n / INT3 / INTO; 0 for the 64-bit call gate, get_rsp_from_tss). SDM
+ * 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation, IA-32e mode (p. 3-473): "IF
+ * (TSSstackAddress + 7) > current TSS limit THEN #TS(error_code(current TSS selector,0,EXT))";
+ * (p. 3-474): "IF StackAddress is non-canonical THEN #SS(EXT); FI; (* Error code contains NULL
+ * selector *)".
+ */
+static target_ulong get_rsp_from_tss_ext(CPUX86State *env, int level, int ext)
+#endif /* __Use_Original_Qemu (U1402) */
 {
     X86CPU *cpu = env_archcpu(env);
     int index;
@@ -2105,7 +2117,11 @@ static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
     }
     index = 8 * level + 4;
     if ((index + 7) > env->tr.limit) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1402) */
         raise_exception_err(env, EXCP0A_TSS, env->tr.selector & 0xfffc);
+#else /* ours (U1402) */
+        raise_exception_err(env, EXCP0A_TSS, (env->tr.selector & 0xfffc) | ext);
+#endif /* __Use_Original_Qemu (U1402) */
     }
     {
         /*
@@ -2118,11 +2134,23 @@ static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
         int64_t sext = (int64_t)rsp >> ((env->cr[4] & CR4_LA57_MASK) ? 56 : 47);
 
         if (sext != 0 && sext != -1) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1402) */
             raise_exception_err(env, EXCP0C_STACK, 0);
+#else /* ours (U1402) */
+            raise_exception_err(env, EXCP0C_STACK, ext);
+#endif /* __Use_Original_Qemu (U1402) */
         }
         return rsp;
     }
 }
+#if __Use_Original_Qemu != 1 /* ours (U1402) */
+
+/* the 64-bit call gate (helper_lcall_protected): not an event delivery, EXT = 0 */
+static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
+{
+    return get_rsp_from_tss_ext(env, level, 0);
+}
+#endif /* __Use_Original_Qemu (U1402) */
 
 #if __Use_Original_Qemu != 1 /* ours (U1400) */
 /*
@@ -2220,6 +2248,7 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     selector = e1 >> 16;
     offset = ((target_ulong)e3 << 32) | (e2 & 0xffff0000) | (e1 & 0x0000ffff);
     ist = e2 & 7;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1402) */
     if ((selector & 0xfffc) == 0) {
         raise_exception_err(env, EXCP0D_GPF, 0);
     }
@@ -2237,6 +2266,33 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     if (!(e2 & DESC_P_MASK)) {
         raise_exception_err(env, EXCP0B_NOSEG, selector & 0xfffc);
     }
+#else /* ours (U1402) */
+    /*
+     * NoVmp (ledger U1402): the code-segment checks carry EXT (U1401). SDM 325462-093 Vol2A
+     * INT n/INTO/INT3/INT1, Operation, TRAP-OR-INTERRUPT-GATE (p. 3-472): "IF new code-segment
+     * selector is NULL THEN #GP(EXT)"; beyond the descriptor table limits, not a code segment or
+     * DPL > CPL: "#GP(error_code(new code-segment selector,0,EXT))"; not present:
+     * "#NP(error_code(new code-segment selector,0,EXT))". error_code(num,0,ext) is the selector
+     * without its RPL plus EXT (p. 3-469; Vol3A 7.13 Figure 7-7: index bits 15:3, TI bit 2).
+     */
+    if ((selector & 0xfffc) == 0) {
+        raise_exception_err(env, EXCP0D_GPF, ext);
+    }
+
+    if (load_segment(env, &e1, &e2, selector) != 0) {
+        raise_exception_err(env, EXCP0D_GPF, (selector & 0xfffc) | ext);
+    }
+    if (!(e2 & DESC_S_MASK) || !(e2 & (DESC_CS_MASK))) {
+        raise_exception_err(env, EXCP0D_GPF, (selector & 0xfffc) | ext);
+    }
+    dpl = (e2 >> DESC_DPL_SHIFT) & 3;
+    if (dpl > cpl) {
+        raise_exception_err(env, EXCP0D_GPF, (selector & 0xfffc) | ext);
+    }
+    if (!(e2 & DESC_P_MASK)) {
+        raise_exception_err(env, EXCP0B_NOSEG, (selector & 0xfffc) | ext);
+    }
+#endif /* __Use_Original_Qemu (U1402) */
     if (!(e2 & DESC_L_MASK) || (e2 & DESC_B_MASK)) {
         raise_exception_err(env, EXCP0D_GPF, selector & 0xfffc);
     }
@@ -2246,7 +2302,11 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     if (dpl < cpl || ist != 0) {
         /* to inner privilege */
         new_stack = 1;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1402) */
         esp = get_rsp_from_tss(env, ist != 0 ? ist + 3 : dpl);
+#else /* ours (U1402) */
+        esp = get_rsp_from_tss_ext(env, ist != 0 ? ist + 3 : dpl, ext);
+#endif /* __Use_Original_Qemu (U1402) */
         ss = 0;
     } else {
         /* to same privilege */
