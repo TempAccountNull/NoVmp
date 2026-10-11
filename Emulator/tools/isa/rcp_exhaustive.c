@@ -15,6 +15,9 @@
  * Run: rcp_exhaustive.exe [fp32] [fp64 N] [f16] [bf16]      (no argument: everything, fp64 N = 2^24)
  *      rcp_exhaustive.exe fp32one KIND MXCSR                 (one FP32 sweep: KIND 0 RCP14, 1 RSQRT14)
  * Exit status 0 when every element matches the model and every documented requirement holds.
+ * U1246: since U1245 VRCP14* / VRSQRT14* are Intel's reference implementation, so the fp32 / fp64 sweeps of
+ * those forms report the reference's (expected) distance from this correctly rounded model; their bit-exact
+ * validation is the AMB-2 harness (docs/reciprocal.md section 9). The FP16 / BF16 sweeps are unaffected.
  */
 #include <stdint.h>
 #include <stdio.h>

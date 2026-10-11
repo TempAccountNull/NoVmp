@@ -4,12 +4,14 @@ Scope: VRCP14PS/PD/SS/SD and VRSQRT14PS/PD/SS/SD (AVX-512F / AVX10.1), VRCPPH/VR
 VRSQRTPH/VRSQRTSH (AVX512-FP16 / AVX10.1), VRCPBF16 and VRSQRTBF16 (AVX10.2), and the legacy
 RCPPS/RCPSS/RSQRTPS/RSQRTSS (+ VEX.128/256) for reference. Ledger U81 (legacy), U236 (14-bit forms),
 U337 (FP16), U373 (BF16), U940-U959 (this review), U1240-U1243 (AMB-2: requirements checker, SDE labelled
-reference, verified_forms release; section 8).
+reference, verified_forms release; section 8), U1244-U1246 (evidence labels; VRCP14 / VRSQRT14 adopt Intel's reference
+implementation; section 9).
 
-**Result in one line:** every form meets every documented architectural requirement; only the legacy
-forms are bit-exact to Intel hardware. The 14-bit, FP16 and BF16 forms return the correctly rounded
-value, which is inside Intel's documented bounds but is **not** claimed to be the bits an Intel CPU
-returns.
+**Result in one line:** every form meets every documented architectural requirement; the legacy forms
+are bit-exact to Intel hardware; since U1245 the 14-bit forms (VRCP14* / VRSQRT14*) return the bits of
+Intel's reference implementation (article 671685; bit-identical to it and to Intel SDE, section 9; not
+hardware-validated); the FP16 and BF16 forms return the correctly rounded value, which is inside Intel's
+documented bounds but is **not** claimed to be the bits an Intel CPU returns.
 
 ## 1. Which forms exist (checked per format, not assumed)
 
@@ -71,6 +73,10 @@ point (the error is monotone inside the interval), so the bound is checked analy
 (2 x 2^10) intervals: worst |rel err| RCP 2^-11.7016, RSQRT 2^-11.5820, both <= 1.5 * 2^-12 = 2^-11.415
 (`ref_rcp.py --selftest`); the SDM's tiny-result guarantees hold at their two boundary inputs.
 
+**VRCP14* / VRSQRT14* since U1245:** Intel's reference implementation (section 9). The description below
+(the 14-bit part) is the U236/U940 stand-in it replaced, kept as the documented-compliance model of
+ref_rcp.py / ref_amb2.py.
+
 **14-bit, FP16 and BF16 forms (stand-in):** the exact 1/x resp. 1/sqrt(x) rounded to nearest-even to the
 destination precision p (24, 53, 11, 8) with an unbounded exponent; overflow -> INF. Error bound: one
 rounding gives |rel err| <= 2^-p relative to the result's leading bit, i.e. 2^-24 / 2^-53 / 2^-11 / 2^-8 for
@@ -121,7 +127,7 @@ job object). Results: section 8.
 | Form | Label | Evidence |
 |---|---|---|
 | RCPPS, RCPSS, RSQRTPS, RSQRTSS, VRCPPS, VRCPSS, VRSQRTPS, VRSQRTSS | **bit-exact hardware compatibility** (i5-13600K) | U81: all 2^32 inputs x 6 MXCSR, 0 mismatches; `cases_rcp_hw.txt` 2740 cases / 0 differing; SDM bound proven analytically |
-| VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD | **documented architectural compliance**; bit-exact Intel compatibility **unverified** | sections 2-4, 8 |
+| VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD | **documented architectural compliance** (status); evidence label **reference-matched** (U1245/U1246): bit-identical to Intel's reference implementation and to Intel SDE; not hardware-validated | sections 2-4, 8, 9 |
 | VRCPPH, VRCPSH, VRSQRTPH, VRSQRTSH | **documented architectural compliance** (normal results; subnormal VRCPPH results: best possible, see 3); bit-exact **unverified** | sections 2-4, 8 |
 | VRCPBF16 | **documented architectural compliance** (status); evidence label **SDE-matched** (U1244): equal to Intel SDE on every BF16 encoding - a labelled reference, not authoritative, so not bit-exact and not hardware-validated | sections 2-4, 8 |
 | VRSQRTBF16 | **documented architectural compliance**; bit-exact **unverified** (127 of 66,830 SDE lanes 1 ulp apart) | sections 2-4, 8 |
@@ -213,3 +219,37 @@ keeps the label **documented compliance**.
 Logs (agent scratch, cited by the AMB-2 report): `sde\cases_amb2.log`, `sde\cases_rcp.log`,
 `sde\cases_rcp_f16_all.log`, `sde\cases_rcp_bf16.log` and the `sde_report_*.txt` outputs of
 `ref_amb2.py --sde-report`.
+
+## 9. VRCP14* / VRSQRT14*: Intel's reference implementation adopted (U1245, U1246)
+
+User decision 2026-10-11, after the AMB-2 comparison (agent harness outside the repository, Intel's files
+compiled by path: Intel SDE's VRCP14 / VRSQRT14 results equal Intel's reference implementation on all 60,789
+SDE lanes - the source of SDE's 15-17 significant bits).
+
+- Code: `unicorn/qemu/target/i386/intel_recip14.c.inc` = Intel's RCP14S, RCP14D, RSQRT14S, RSQRT14D and their
+  coefficient tables from recip14.c (article 671685, SHA-256 4cb551b4...b21e9), Intel's BSD-3 notice verbatim,
+  provenance block; changes: static, const tables, and the SDM-wins signed zero below. `evex_rcp14`
+  (fpu_helper.c, `ours (U1245)`) runs them with the host MXCSR at 1F80H (the article: round to nearest, DAZ /
+  FTZ off, exceptions masked) and restores it; the guest MXCSR is their mxcsr argument. Not built with
+  `__Use_Original_Qemu=1`.
+- SDM wins once: RCP14D of -2^1023 with MXCSR.FTZ. The reference masks the flushed result with the 32-bit
+  FP32_SIGN_BIT and returns +0; the SDM flushes underflow results "with the sign of the operand": -0
+  (docs/quirks.md).
+- Validation (harness amb2ref_new.exe, the U1245 emulator vs Intel's original file): VRCP14PS and VRSQRT14PS on
+  every one of the 2^32 FP32 inputs x MXCSR 1F80 / 1FC0 / 9F80 / 9FC0 - 0 differing, MXCSR unchanged in every
+  vector; VRCP14PD / VRSQRT14PD on 10,027,008 stratified FP64 inputs (every biased exponent x 2 signs x 2448
+  mantissas) x the same MXCSR - 0 differing except that one SDM-wins lane (9F80, 9FC0); Intel SDE 10.13.1 =
+  the reference on all 60,789 SDE lanes (U1242 logs); all 51,856 reference values the case files use meet
+  the documented bound and tables (ref_amb2.py --selftest); test.cmd (cases_rcp, cases_amb2,
+  cases_evex_m2_cvt, unit tests: scalar / vector, masking, DAZ / FTZ, high registers, memory, {1toN}).
+- Expected values: `Emulator/data/intel_ref14_values.txt` holds the OUTPUT of Intel's original recip14.c for
+  every input the case files use (data, not code), served by `Emulator/tools/isa/intel_ref14.py`; the unit
+  tests' approximation lanes use `x86_rcp14_ref.inc` (`intel_ref14.py --unit-inc`).
+- Labels: status **documented compliance** (unchanged), evidence label **reference-matched**
+  (verified_forms.tsv 5th column, U1244). Never hardware-validated: the i5-13600K has no AVX-512.
+- `Emulator/tools/isa/rcp_exhaustive.c` checks the correctly rounded stand-in: since U1245 its VRCP14 /
+  VRSQRT14 sweeps report the reference's (expected) differences; it remains valid for FP16 / BF16.
+- AVX512ER (VRCP28*, VRSQRT28*, VEXP2*, U994): not adopted yet; Intel's RECIP28EXP2.c returns +0 for VEXP2PD
+  inputs in [1024 - 2^-25, 1024) (0x408FFFFFFFFC0000 .. 0x408FFFFFFFFFFFFF, a signed overflow of its scale),
+  outside the documented 2^-23 bound; the architecturally required result there is an open question for
+  the user (AMB-2 report 2026-10-11).
