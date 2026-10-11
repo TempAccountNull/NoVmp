@@ -123,11 +123,17 @@ job object). Results: section 8.
 | RCPPS, RCPSS, RSQRTPS, RSQRTSS, VRCPPS, VRCPSS, VRSQRTPS, VRSQRTSS | **bit-exact hardware compatibility** (i5-13600K) | U81: all 2^32 inputs x 6 MXCSR, 0 mismatches; `cases_rcp_hw.txt` 2740 cases / 0 differing; SDM bound proven analytically |
 | VRCP14PS/PD/SS/SD, VRSQRT14PS/PD/SS/SD | **documented architectural compliance**; bit-exact Intel compatibility **unverified** | sections 2-4, 8 |
 | VRCPPH, VRCPSH, VRSQRTPH, VRSQRTSH | **documented architectural compliance** (normal results; subnormal VRCPPH results: best possible, see 3); bit-exact **unverified** | sections 2-4, 8 |
-| VRCPBF16, VRSQRTBF16 | **documented architectural compliance**; bit-exact **unverified** (VRCPBF16 is bit-identical to SDE on every encoding: a labelled reference, not authoritative) | sections 2-4, 8 |
+| VRCPBF16 | **documented architectural compliance** (status); evidence label **SDE-matched** (U1244): equal to Intel SDE on every BF16 encoding - a labelled reference, not authoritative, so not bit-exact and not hardware-validated | sections 2-4, 8 |
+| VRSQRTBF16 | **documented architectural compliance**; bit-exact **unverified** (127 of 66,830 SDE lanes 1 ulp apart) | sections 2-4, 8 |
 
 `Emulator/data/verified_forms.tsv`: since U1243 (AMB-2, user decision 2026-10-10) these 14 rows have the
 status `doc` (✅ "documented compliance" in gen_instruction_table.py; before: `open`, ⏳), never
 "bit-exact". Intel bit-compatibility stays unverified: it needs Intel's reference code or silicon.
+
+Evidence labels (U1244) are kept apart from the status: the status is the specification evidence
+("documented compliance"), an evidence label records an observed comparison - `sde-matched` (equal to Intel
+SDE on every tested input) or `reference-matched` (bit-identical to Intel's reference implementation and to
+SDE). They are the optional 5th column of verified_forms.tsv; neither ever implies hardware validation.
 
 ## 6. Measured error (emulator, exhaustive where stated)
 

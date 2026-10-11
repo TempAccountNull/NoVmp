@@ -154,6 +154,14 @@ UNSUP_IMPL = {
     'doc': 'implemented per the manual (documented compliance, not bit-exact)',   # U1243
 }
 ALWAYS_APPLY = {'spec', 'absent', 'absent_open'}
+# U1244: optional 5th verified_forms column, evidence labels kept SEPARATE from the status (the status stays
+# the architectural / specification evidence; an evidence label records an observed comparison only)
+EVIDENCE_LABELS = {
+    'sde-matched': 'SDE-matched (equal to Intel SDE, a labelled reference, on every tested input; not hardware, '
+                   'not bit-exact on SDE alone)',
+    'reference-matched': 'reference-matched (bit-identical to Intel\'s published reference implementation, article '
+                         '671685, on every tested input, and to Intel SDE; not hardware-validated)',
+}
 
 # U790: sweep/rule kinds whose ⏳ a verified_forms row may replace (the row proves that open item)
 TAKEOVER = {'priv', 'sdm_pending'}
@@ -171,9 +179,13 @@ def load_verified(path):
             line = line.rstrip('\r\n')
             if not line.strip() or line.startswith('#'):
                 continue
-            mn, enc, st, note = (line.split('\t') + ['', '', '', ''])[:4]
+            mn, enc, st, note, ev = (line.split('\t') + ['', '', '', '', ''])[:5]
             if st not in VERIFIED_STATUS:
                 raise SystemExit('verified_forms.tsv: unknown status %r for %s/%s' % (st, mn, enc))
+            for lab in [e.strip() for e in ev.split(',') if e.strip()]:   # U1244
+                if lab not in EVIDENCE_LABELS:
+                    raise SystemExit('verified_forms.tsv: unknown evidence label %r for %s/%s' % (lab, mn, enc))
+                note += ' — evidence label: ' + EVIDENCE_LABELS[lab]
             v[(mn.lower(), enc)] = (st, note)
     return v
 
