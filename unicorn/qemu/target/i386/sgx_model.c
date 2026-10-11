@@ -15,6 +15,10 @@
 #if __Use_Original_Qemu != 1 /* ours (U1261): whole file */
 #include "cpu.h"
 #include "exec/exec-all.h"
+#include "exec/cpu_ldst.h"
+#include "exec/helper-proto.h"
+#include "exec/memory.h"
+#include "crypto/aes.h"
 #include "uc_priv.h"
 #include <unicorn/unicorn.h>
 
@@ -216,6 +220,1546 @@ bool x86_sgx_prm_active(CPUX86State *env)
     return x86_sgx_enumerated(env) && env->sgx->epc_size &&
            (env->msr_ia32_feature_control & (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX)) ==
                (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX);
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Cryptography (U1262): SHA-256 (FIPS 180-4) with the SECS-resident running state that
+ * SHA256INITIALIZE / SHA256UPDATE / SHA256FINAL of the ECREATE / EADD / EEXTEND / EINIT pseudocode
+ * use; AES-CMAC-128 (SP 800-38B); AES-128-GCM (SP 800-38D, 96-bit IV, 128-bit tag); RSA-3072 with
+ * e = 3 checked through q1 / q2 (Vol3D 38.14). AES itself is QEMU's crypto/aes.c (as Key Locker).
+ * ------------------------------------------------------------------------------------------- */
+
+static const uint32_t sgx_sha_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+static const uint32_t sgx_sha_h0[8] = {
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+};
+
+static uint32_t sgx_ror(uint32_t x, int n)
+{
+    return (x >> n) | (x << (32 - n));
+}
+
+/* one SHA-256 compression of a 64-byte block (FIPS 180-4 6.2.2) */
+static void sgx_sha256_block(uint32_t h[8], const uint8_t *p)
+{
+    uint32_t w[64], a, b, c, d, e, f, g, k, t1, t2;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        w[i] = ldl_be_p(p + 4 * i);
+    }
+    for (i = 16; i < 64; i++) {
+        w[i] = w[i - 16] + (sgx_ror(w[i - 15], 7) ^ sgx_ror(w[i - 15], 18) ^ (w[i - 15] >> 3)) +
+               w[i - 7] + (sgx_ror(w[i - 2], 17) ^ sgx_ror(w[i - 2], 19) ^ (w[i - 2] >> 10));
+    }
+    a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; f = h[5]; g = h[6]; k = h[7];
+    for (i = 0; i < 64; i++) {
+        t1 = k + (sgx_ror(e, 6) ^ sgx_ror(e, 11) ^ sgx_ror(e, 25)) + ((e & f) ^ (~e & g)) +
+             sgx_sha_k[i] + w[i];
+        t2 = (sgx_ror(a, 2) ^ sgx_ror(a, 13) ^ sgx_ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        k = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += k;
+}
+
+/* SHA-256 of a byte string (the FIPS 180-4 digest byte string) */
+static void sgx_sha256(const uint8_t *p, size_t n, uint8_t out[32])
+{
+    uint32_t h[8];
+    uint8_t blk[64];
+    size_t i, r;
+
+    memcpy(h, sgx_sha_h0, sizeof(h));
+    for (i = 0; i + 64 <= n; i += 64) {
+        sgx_sha256_block(h, p + i);
+    }
+    r = n - i;
+    memset(blk, 0, 64);
+    memcpy(blk, p + i, r);
+    blk[r] = 0x80;
+    if (r >= 56) {
+        sgx_sha256_block(h, blk);
+        memset(blk, 0, 64);
+    }
+    stq_be_p(blk + 56, (uint64_t)n * 8);
+    sgx_sha256_block(h, blk);
+    for (i = 0; i < 8; i++) {
+        stl_be_p(out + 4 * i, h[i]);
+    }
+}
+
+/* AES-CMAC with a 128-bit key (NIST SP 800-38B; RFC 4493) */
+static void sgx_cmac(const uint8_t key[16], const uint8_t *msg, size_t n, uint8_t out[16])
+{
+    AES_KEY k;
+    uint8_t l[16] = {0}, k1[16], k2[16], x[16] = {0}, last[16];
+    size_t blocks = n ? (n + 15) / 16 : 1, i, j;
+    int carry;
+
+    AES_set_encrypt_key(key, 128, &k);
+    AES_encrypt(l, l, &k);
+    for (i = 0, carry = 0; i < 16; i++) {           /* K1 = dbl(L) */
+        k1[15 - i] = (uint8_t)((l[15 - i] << 1) | carry);
+        carry = l[15 - i] >> 7;
+    }
+    if (l[0] & 0x80) {
+        k1[15] ^= 0x87;
+    }
+    for (i = 0, carry = 0; i < 16; i++) {           /* K2 = dbl(K1) */
+        k2[15 - i] = (uint8_t)((k1[15 - i] << 1) | carry);
+        carry = k1[15 - i] >> 7;
+    }
+    if (k1[0] & 0x80) {
+        k2[15] ^= 0x87;
+    }
+    for (i = 0; i + 1 < blocks; i++) {
+        for (j = 0; j < 16; j++) {
+            x[j] ^= msg[16 * i + j];
+        }
+        AES_encrypt(x, x, &k);
+    }
+    if (n && n % 16 == 0) {
+        for (j = 0; j < 16; j++) {
+            last[j] = msg[16 * i + j] ^ k1[j];
+        }
+    } else {
+        size_t r = n - 16 * i;
+
+        memset(last, 0, 16);
+        memcpy(last, msg + 16 * i, r);
+        last[r] = 0x80;
+        for (j = 0; j < 16; j++) {
+            last[j] ^= k2[j];
+        }
+    }
+    for (j = 0; j < 16; j++) {
+        x[j] ^= last[j];
+    }
+    AES_encrypt(x, out, &k);
+}
+
+/* GF(2^128) multiplication (SP 800-38D 6.3), big-endian blocks */
+static void sgx_gf_mul(uint8_t x[16], const uint8_t y[16])
+{
+    uint64_t zh = 0, zl = 0, vh = ldq_be_p(y), vl = ldq_be_p(y + 8);
+    int i;
+
+    for (i = 0; i < 128; i++) {
+        if ((x[i >> 3] >> (7 - (i & 7))) & 1) {
+            zh ^= vh;
+            zl ^= vl;
+        }
+        if (vl & 1) {
+            vl = (vl >> 1) | (vh << 63);
+            vh = (vh >> 1) ^ 0xe100000000000000ULL;
+        } else {
+            vl = (vl >> 1) | (vh << 63);
+            vh >>= 1;
+        }
+    }
+    stq_be_p(x, zh);
+    stq_be_p(x + 8, zl);
+}
+
+static void sgx_ghash(uint8_t x[16], const uint8_t h[16], const uint8_t *p, size_t n)
+{
+    size_t i, j;
+
+    for (i = 0; i < n; i += 16) {
+        for (j = 0; j < 16 && i + j < n; j++) {
+            x[j] ^= p[i + j];
+        }
+        sgx_gf_mul(x, h);
+    }
+}
+
+/*
+ * AES-128-GCM (SP 800-38D 7.1 / 7.2), 96-bit IV: 'in' -> 'out' (encrypt, or decrypt with dec = 1);
+ * the tag is computed over 'aad' and the ciphertext
+ */
+static void sgx_gcm(const uint8_t key[16], const uint8_t iv[12], const uint8_t *aad, size_t na,
+                    const uint8_t *in, size_t n, uint8_t *out, uint8_t tag[16], bool dec)
+{
+    AES_KEY k;
+    uint8_t h[16] = {0}, j0[16], cb[16], ks[16], x[16] = {0}, lens[16];
+    size_t i, j;
+
+    AES_set_encrypt_key(key, 128, &k);
+    AES_encrypt(h, h, &k);
+    memcpy(j0, iv, 12);
+    stl_be_p(j0 + 12, 1);
+    sgx_ghash(x, h, aad, na);
+    if (dec) {
+        sgx_ghash(x, h, in, n);
+    }
+    memcpy(cb, j0, 16);
+    for (i = 0; i < n; i += 16) {
+        stl_be_p(cb + 12, ldl_be_p(cb + 12) + 1);
+        AES_encrypt(cb, ks, &k);
+        for (j = 0; j < 16 && i + j < n; j++) {
+            out[i + j] = in[i + j] ^ ks[j];
+        }
+    }
+    if (!dec) {
+        sgx_ghash(x, h, out, n);
+    }
+    stq_be_p(lens, (uint64_t)na * 8);
+    stq_be_p(lens + 8, (uint64_t)n * 8);
+    sgx_ghash(x, h, lens, 16);
+    AES_encrypt(j0, ks, &k);
+    for (i = 0; i < 16; i++) {
+        tag[i] = ks[i] ^ x[i];
+    }
+}
+
+/* little-endian 32-bit-limb integers for the RSA-3072 check: 96 limbs, products up to 192 */
+#define SGX_BN 96
+
+static void sgx_bn_load(uint32_t *a, const uint8_t *le384)
+{
+    int i;
+
+    for (i = 0; i < SGX_BN; i++) {
+        a[i] = ldl_le_p(le384 + 4 * i);
+    }
+}
+
+/* out[0 .. na+nb-1] = a * b */
+static void sgx_bn_mul(const uint32_t *a, int na, const uint32_t *b, int nb, uint32_t *out)
+{
+    int i, j;
+
+    memset(out, 0, sizeof(uint32_t) * (na + nb));
+    for (i = 0; i < na; i++) {
+        uint64_t c = 0;
+
+        for (j = 0; j < nb; j++) {
+            c += (uint64_t)a[i] * b[j] + out[i + j];
+            out[i + j] = (uint32_t)c;
+            c >>= 32;
+        }
+        out[i + nb] = (uint32_t)c;
+    }
+}
+
+/* compare n-limb numbers: -1, 0, 1 */
+static int sgx_bn_cmp(const uint32_t *a, const uint32_t *b, int n)
+{
+    int i;
+
+    for (i = n - 1; i >= 0; i--) {
+        if (a[i] != b[i]) {
+            return a[i] < b[i] ? -1 : 1;
+        }
+    }
+    return 0;
+}
+
+/* a -= b (n limbs, a >= b) */
+static void sgx_bn_sub(uint32_t *a, const uint32_t *b, int n)
+{
+    int64_t c = 0;
+    int i;
+
+    for (i = 0; i < n; i++) {
+        c += (int64_t)a[i] - b[i];
+        a[i] = (uint32_t)c;
+        c >>= 32;
+    }
+}
+
+/*
+ * r = s * x - q * n with 0 <= r < n required (x < n, all 96 limbs); false when the provided
+ * quotient q is not floor(s * x / n). Our reading of "Verify signature using embedded public key,
+ * q1, and q2" (EINIT p. 41-44, 38.14): r1 = S^2 - q1 * N and r2 = S * r1 - q2 * N are S^2 mod N
+ * and S^3 mod N exactly when q1, q2 are the quotients 38.14 defines.
+ */
+static bool sgx_bn_mulmod_q(const uint32_t *s, const uint32_t *x, const uint32_t *q,
+                            const uint32_t *n, uint32_t *r)
+{
+    uint32_t p1[2 * SGX_BN], p2[2 * SGX_BN];
+    int i;
+
+    sgx_bn_mul(s, SGX_BN, x, SGX_BN, p1);
+    sgx_bn_mul(q, SGX_BN, n, SGX_BN, p2);
+    if (sgx_bn_cmp(p1, p2, 2 * SGX_BN) < 0) {
+        return false;
+    }
+    sgx_bn_sub(p1, p2, 2 * SGX_BN);
+    for (i = SGX_BN; i < 2 * SGX_BN; i++) {
+        if (p1[i]) {
+            return false;
+        }
+    }
+    if (sgx_bn_cmp(p1, n, SGX_BN) >= 0) {
+        return false;
+    }
+    memcpy(r, p1, sizeof(uint32_t) * SGX_BN);
+    return true;
+}
+
+/* DER encoding of the SHA-256 DigestInfo (RFC 3447 9.2 note 1) */
+static const uint8_t sgx_der_sha256[19] = {
+    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
+    0x05, 0x00, 0x04, 0x20,
+};
+
+/*
+ * HARDCODED_PKCS1_5_PADDING (EGETKEY p. 41-100, EINIT p. 41-46): [15:0] = 0100H, [2655:16] = 330
+ * bytes of FFH, [2815:2656] = 2004000501020403650148866009060D30313000H - the first 352 bytes of
+ * the big-endian EMSA-PKCS1-v1_5 encoding of a SHA-256 digest: 00 01 FF..FF 00 || DER prefix
+ */
+static void sgx_pkcs_padding(uint8_t pad[352])
+{
+    pad[0] = 0x00;
+    pad[1] = 0x01;
+    memset(pad + 2, 0xff, 330);
+    pad[332] = 0x00;
+    memcpy(pad + 333, sgx_der_sha256, 19);
+}
+
+/*
+ * The SIGSTRUCT signature check of EINIT: SIGNATURE^3 mod MODULUS (via q1, q2) must be the
+ * EMSA-PKCS1-v1_5 encoding (RFC 3447 9.2, DER DigestInfo, SHA-256) of the signed fields - bytes
+ * 0-127 and 900-1027 of SIGSTRUCT (the "Y" rows of Table 38-20). Returns the 352-byte top of the
+ * encoded message (TMP_SIG_PADDING, big-endian byte order like HARDCODED_PKCS1_5_PADDING).
+ */
+static bool sgx_rsa_verify(const uint8_t *sig, uint8_t padding[352])
+{
+    uint32_t n[SGX_BN], s[SGX_BN], q1[SGX_BN], q2[SGX_BN], r1[SGX_BN], r2[SGX_BN];
+    uint8_t em[384], signed_part[256], digest[32], want[352];
+    int i;
+
+    sgx_bn_load(n, sig + 128);
+    sgx_bn_load(s, sig + 516);
+    sgx_bn_load(q1, sig + 1040);
+    sgx_bn_load(q2, sig + 1424);
+    if (sgx_bn_cmp(s, n, SGX_BN) >= 0 ||
+        !sgx_bn_mulmod_q(s, s, q1, n, r1) || !sgx_bn_mulmod_q(s, r1, q2, n, r2)) {
+        return false;
+    }
+    for (i = 0; i < SGX_BN; i++) {
+        stl_be_p(em + 384 - 4 * (i + 1), r2[i]);
+    }
+    memcpy(signed_part, sig, 128);
+    memcpy(signed_part + 128, sig + 900, 128);
+    sgx_sha256(signed_part, 256, digest);
+    sgx_pkcs_padding(want);
+    if (memcmp(em, want, 352) || memcmp(em + 352, digest, 32)) {
+        return false;
+    }
+    memcpy(padding, em, 352);
+    return true;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Common machinery of the leaf functions (U1262)
+ * ------------------------------------------------------------------------------------------- */
+
+/* SECS layout (Table 38-2) and the model's implementation-specific fields in its reserved area */
+#define SECS_SIZE           0
+#define SECS_BASEADDR       8
+#define SECS_SSAFRAMESIZE   16
+#define SECS_MISCSELECT     20
+#define SECS_CET_LEG        24
+#define SECS_CET_ATTR       32
+#define SECS_ATTRIBUTES     48
+#define SECS_XFRM           56
+#define SECS_MRENCLAVE      64
+#define SECS_MRSIGNER       128
+#define SECS_CONFIGID       192
+#define SECS_ISVPRODID      256
+#define SECS_ISVSVN         258
+#define SECS_CONFIGSVN      260
+/* ours (Table 38-2: "EID ... PAD ... location is implementation specific") */
+#define SECS_EID            0x200   /* 8 bytes */
+#define SECS_MR_COUNT       0x208   /* 8: the MRENCLAVE update counter (64-byte blocks) */
+#define SECS_ISVFAMILYID    0x210   /* 16 (KSS only: 0) */
+#define SECS_ISVEXTPRODID   0x220   /* 16 (KSS only: 0) */
+#define SECS_EPOCH          0x230   /* 8: the ETRACK epoch (the tracking model) */
+#define SECS_PADDING        0x260   /* 352: TMP_SIG_PADDING of EINIT */
+
+/* TCS layout (Table 38-6) */
+#define TCS_STATE           0
+#define TCS_FLAGS           8
+#define TCS_OSSA            16
+#define TCS_CSSA            24
+#define TCS_NSSA            28
+#define TCS_OENTRY          32
+#define TCS_AEP             40
+#define TCS_OFSBASE         48
+#define TCS_OGSBASE         56
+#define TCS_FSLIMIT         64
+#define TCS_GSLIMIT         68
+#define TCS_OCETSSA         72
+#define TCS_PREVSSP         80
+#define TCS_RESERVED        88
+
+/* error codes (Table 41-3) */
+#define SGX_INVALID_SIG_STRUCT      1
+#define SGX_INVALID_ATTRIBUTE       2
+#define SGX_BLKSTATE                3
+#define SGX_INVALID_MEASUREMENT     4
+#define SGX_NOTBLOCKABLE            5
+#define SGX_PG_INVLD                6
+#define SGX_EPC_PAGE_CONFLICT       7
+#define SGX_INVALID_SIGNATURE       8
+#define SGX_MAC_COMPARE_FAIL        9
+#define SGX_PAGE_NOT_BLOCKED        10
+#define SGX_NOT_TRACKED             11
+#define SGX_VA_SLOT_OCCUPIED        12
+#define SGX_CHILD_PRESENT           13
+#define SGX_ENCLAVE_ACT             14
+#define SGX_ENTRYEPOCH_LOCKED       15
+#define SGX_INVALID_EINITTOKEN      16
+#define SGX_PREV_TRK_INCMPL         17
+#define SGX_PG_IS_SECS              18
+#define SGX_PAGE_ATTRIBUTES_MISMATCH 19
+#define SGX_PAGE_NOT_MODIFIABLE     20
+#define SGX_PAGE_NOT_DEBUGGABLE     21
+#define SGX_INVALID_CPUSVN          32
+#define SGX_INVALID_ISVSVN          64
+#define SGX_UNMASKED_EVENT          128
+#define SGX_INVALID_KEYNAME         256
+
+#define SGX_PFEC_SGX        (1u << 15)
+
+typedef struct SgxOp {
+    CPUX86State *env;
+    uintptr_t ra;
+    bool m64;                   /* IA32_EFER.LMA = 1 && CS.L = 1 */
+    uint32_t flags;             /* the arithmetic flags the leaf ends with (CC_SRC) */
+} SgxOp;
+
+static AddressSpace *sgx_as(CPUX86State *env)
+{
+    return &env->uc->address_space_memory;
+}
+
+static void sgx_pread(CPUX86State *env, uint64_t pa, void *buf, size_t n)
+{
+    cpu_physical_memory_read(sgx_as(env), pa, buf, n);
+}
+
+static void sgx_pwrite(CPUX86State *env, uint64_t pa, const void *buf, size_t n)
+{
+    cpu_physical_memory_write(sgx_as(env), pa, buf, n);
+}
+
+static uint64_t sgx_pld64(CPUX86State *env, uint64_t pa)
+{
+    uint8_t b[8];
+
+    sgx_pread(env, pa, b, 8);
+    return ldq_le_p(b);
+}
+
+static uint32_t sgx_pld32(CPUX86State *env, uint64_t pa)
+{
+    uint8_t b[4];
+
+    sgx_pread(env, pa, b, 4);
+    return ldl_le_p(b);
+}
+
+static void sgx_pst64(CPUX86State *env, uint64_t pa, uint64_t v)
+{
+    uint8_t b[8];
+
+    stq_le_p(b, v);
+    sgx_pwrite(env, pa, b, 8);
+}
+
+static void sgx_pst32(CPUX86State *env, uint64_t pa, uint32_t v)
+{
+    uint8_t b[4];
+
+    stl_le_p(b, v);
+    sgx_pwrite(env, pa, b, 4);
+}
+
+/* the EPCM entry of the EPC page that contains 'pa', NULL outside the EPC */
+static X86SgxEpcm *sgx_epcm(CPUX86State *env, uint64_t pa)
+{
+    X86SgxPkg *p = env->sgx;
+
+    if (!p || pa < p->epc_base || pa - p->epc_base >= p->epc_size) {
+        return NULL;
+    }
+    return &p->epcm[(pa - p->epc_base) >> 12];
+}
+
+static uint64_t sgx_epcm_pa(CPUX86State *env, const X86SgxEpcm *m)
+{
+    return env->sgx->epc_base + ((uint64_t)(m - env->sgx->epcm) << 12);
+}
+
+/* an implicit register operand as an effective address: 64 bits in 64-bit mode, else 32 bits */
+static uint64_t sgx_reg(SgxOp *o, int reg)
+{
+    return o->m64 ? o->env->regs[reg] : (uint32_t)o->env->regs[reg];
+}
+
+static void QEMU_NORETURN sgx_gp(SgxOp *o)
+{
+    raise_exception_err_ra(o->env, EXCP0D_GPF, 0, o->ra);
+}
+
+/*
+ * DS:ea -> linear address (Vol3D 41.1, 42.3.2 / 42.3.3: DS only, segment overrides and the
+ * address-size prefix ignored). Outside 64-bit mode the DS limit and its write permission are
+ * checked (#GP(0)); ENCLS / ENCLU already made sure DS is usable and expand-up. In 64-bit mode the
+ * address is used as is; a non-canonical one faults in the page walk (#GP(0)).
+ */
+static uint64_t sgx_la(SgxOp *o, uint64_t ea, uint32_t size, bool write)
+{
+    SegmentCache *ds = &o->env->segs[R_DS];
+
+    if (o->m64) {
+        return ea;
+    }
+    if (ea + size - 1 > ds->limit || (write && !(ds->flags & DESC_W_MASK))) {
+        sgx_gp(o);
+    }
+    return (uint32_t)(ds->base + ea);
+}
+
+/*
+ * The physical address of a linear address through the current paging structures with the
+ * access rights of 'write' at the current CPL - the page walk of an explicit access (38.5.3.1):
+ * ordinary #PF / #GP faults are raised here; no TLB entry is made (excp_helper.c: env->sgx_xlate).
+ */
+static uint64_t sgx_xlate(SgxOp *o, uint64_t la, bool write)
+{
+    CPUX86State *env = o->env;
+
+    env->sgx_xlate = 1;
+    env->sgx_xlate_pa = 0;
+    x86_cpu_tlb_fill(env_cpu(env), la, 1, write ? MMU_DATA_STORE : MMU_DATA_LOAD,
+                     cpu_mmu_index(env, false), false, o->ra);
+    env->sgx_xlate = 0;
+    return env->sgx_xlate_pa;
+}
+
+/*
+ * An SGX-induced page fault (Vol3A 5.7 / 7.15): P = 1, W/R of the access, U/S = CPL 3, SGX[15].
+ * CR2 bits 11:0 are cleared for a #PF during enclave-mode execution (Vol3A 5.7 p. 5-37).
+ */
+static void QEMU_NORETURN sgx_pf(SgxOp *o, uint64_t la, bool write)
+{
+    CPUX86State *env = o->env;
+    uint32_t ec = PG_ERROR_P_MASK | SGX_PFEC_SGX | (write ? PG_ERROR_W_MASK : 0) |
+                  ((env->hflags & HF_CPL_MASK) == 3 ? PG_ERROR_U_MASK : 0);
+
+    env->cr[2] = env->sgx_enclave_mode ? la & ~0xfffULL : la;
+    raise_exception_err_ra(env, EXCP0E_PAGE, ec, o->ra);
+}
+
+/* "IF (DS:la does not resolve within an EPC) THEN #PF(DS:la)": the EPCM entry of DS:la */
+static X86SgxEpcm *sgx_epc_operand(SgxOp *o, uint64_t la, bool write, uint64_t *pa)
+{
+    uint64_t p = sgx_xlate(o, la, write);
+    X86SgxEpcm *m = sgx_epcm(o->env, p);
+
+    if (!m) {
+        sgx_pf(o, la, write);
+    }
+    *pa = p;
+    return m;
+}
+
+/* explicit accesses to non-EPC operands (linear addresses, ordinary access rights and faults) */
+static uint64_t sgx_ld64(SgxOp *o, uint64_t la)
+{
+    return cpu_ldq_data_ra(o->env, la, o->ra);
+}
+
+static void sgx_st64(SgxOp *o, uint64_t la, uint64_t v)
+{
+    cpu_stq_data_ra(o->env, la, v, o->ra);
+}
+
+static void sgx_ldbuf(SgxOp *o, uint64_t la, uint8_t *buf, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i += 8) {
+        stq_le_p(buf + i, cpu_ldq_data_ra(o->env, la + i, o->ra));
+    }
+}
+
+static void sgx_stbuf(SgxOp *o, uint64_t la, const uint8_t *buf, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i += 8) {
+        cpu_stq_data_ra(o->env, la + i, ldq_le_p(buf + i), o->ra);
+    }
+}
+
+static bool sgx_zero(const uint8_t *p, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (p[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* SECINFO (Table 38-16 / 38-17): reserved fields - FLAGS bits 7:6 and 63:16, bytes 8-63 */
+static bool sgx_secinfo_rsvd(const uint8_t si[64])
+{
+    return (ldq_le_p(si) & ~0xff3fULL) || !sgx_zero(si + 8, 56);
+}
+
+#define SI_R(si)        ((si)[0] & 1)
+#define SI_W(si)        (((si)[0] >> 1) & 1)
+#define SI_X(si)        (((si)[0] >> 2) & 1)
+#define SI_PENDING(si)  (((si)[0] >> 3) & 1)
+#define SI_MODIFIED(si) (((si)[0] >> 4) & 1)
+#define SI_PR(si)       (((si)[0] >> 5) & 1)
+#define SI_PT(si)       ((si)[1])
+
+/* the processor's canonical rule for SECS.BASEADDR (CPUID.80000008H:EAX[15:8]: 57 with LA57) */
+static bool sgx_canonical(CPUX86State *env, uint64_t a)
+{
+    int shift = (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_LA57) ? 64 - 57 : 64 - 48;
+
+    return (uint64_t)((int64_t)(a << shift) >> shift) == a;
+}
+
+/* the 64-bit ATTRIBUTES[127:64] = XFRM legality: what XSETBV would accept in XCR0 (42.7.3) */
+static bool sgx_xfrm_legal(CPUX86State *env, uint64_t xfrm)
+{
+    uint32_t lo, hi, d;
+    const uint64_t avx512 = XSTATE_OPMASK_MASK | XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK;
+
+    cpu_x86_cpuid(env, 0xd, 0, &lo, &d, &d, &hi);
+    if ((xfrm & 3) != 3 || (xfrm >> 63) || (xfrm & ~(((uint64_t)hi << 32) | lo))) {
+        return false;
+    }
+    if ((xfrm ^ (xfrm * (XSTATE_BNDCSR_MASK / XSTATE_BNDREGS_MASK))) & XSTATE_BNDCSR_MASK) {
+        return false;
+    }
+    if ((xfrm & avx512) &&
+        (xfrm & (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) !=
+            (avx512 | XSTATE_SSE_MASK | XSTATE_YMM_MASK)) {
+        return false;
+    }
+    if (((xfrm >> XSTATE_XTILE_CFG_BIT) ^ (xfrm >> XSTATE_XTILE_DATA_BIT)) & 1) {
+        return false;
+    }
+    return true;
+}
+
+/* compute_xsave_size(XFRM) of 42.7.2.2 (CPUID.0DH.x as the CPU reports it) */
+static uint64_t sgx_xsave_size(CPUX86State *env, uint64_t xfrm)
+{
+    uint64_t offset = 576, last = 0;
+    uint32_t a, b, c, d;
+    int x;
+
+    for (x = 2; x < 64; x++) {
+        if ((xfrm >> x) & 1) {
+            cpu_x86_cpuid(env, 0xd, x, &a, &b, &c, &d);
+            if (b >= offset + last) {
+                offset = b;
+                last = a;
+            }
+        }
+    }
+    return offset + last;
+}
+
+/* the MISC region size (38.9.2): from the highest MISCSELECT bit; EXINFO (bit 0) = 16 bytes */
+static uint64_t sgx_misc_size(uint32_t miscselect)
+{
+    return (miscselect & 1) ? 16 : 0;
+}
+
+#define SGX_GPR_SIZE 184
+
+/* ---- MRENCLAVE: the SHA-256 running state in the SECS (ECREATE / EADD / EEXTEND / EINIT) ---- */
+
+static void sgx_mr_update(CPUX86State *env, uint64_t secs, const uint8_t blk[64])
+{
+    uint32_t h[8];
+    uint8_t b[32];
+    int i;
+
+    sgx_pread(env, secs + SECS_MRENCLAVE, b, 32);
+    for (i = 0; i < 8; i++) {
+        h[i] = ldl_le_p(b + 4 * i);
+    }
+    sgx_sha256_block(h, blk);
+    for (i = 0; i < 8; i++) {
+        stl_le_p(b + 4 * i, h[i]);
+    }
+    sgx_pwrite(env, secs + SECS_MRENCLAVE, b, 32);
+    sgx_pst64(env, secs + SECS_MR_COUNT, sgx_pld64(env, secs + SECS_MR_COUNT) + 1);
+}
+
+/* SHA256FINAL(MRENCLAVE, update count * 512): the FIPS 180-4 digest byte string */
+static void sgx_mr_final(CPUX86State *env, uint64_t secs, uint8_t out[32])
+{
+    uint32_t h[8];
+    uint8_t b[32], pad[64] = {0x80};
+    int i;
+
+    sgx_pread(env, secs + SECS_MRENCLAVE, b, 32);
+    for (i = 0; i < 8; i++) {
+        h[i] = ldl_le_p(b + 4 * i);
+    }
+    stq_be_p(pad + 56, sgx_pld64(env, secs + SECS_MR_COUNT) * 512);
+    sgx_sha256_block(h, pad);
+    for (i = 0; i < 8; i++) {
+        stl_be_p(out + 4 * i, h[i]);
+    }
+}
+
+/* the SECS page an EPC page belongs to (its EPCM SECS identifier) */
+static uint64_t sgx_secs_of(const X86SgxEpcm *m)
+{
+    return m->secs;
+}
+
+static bool sgx_secs_initialized(CPUX86State *env, uint64_t secs)
+{
+    return sgx_pld64(env, secs + SECS_ATTRIBUTES) & SGX_ATTR_INIT;
+}
+
+/* "DS:RCX has an EPC page associated with it": any valid EPCM entry of that enclave but its SECS */
+static bool sgx_child_present(CPUX86State *env, uint64_t secs)
+{
+    X86SgxPkg *p = env->sgx;
+    uint64_t i;
+
+    for (i = 0; i < p->npages; i++) {
+        if (p->epcm[i].valid && p->epcm[i].pt != SGX_PT_SECS && p->epcm[i].secs == secs) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * ENCLS leaves (Vol3D 41.3)
+ * ------------------------------------------------------------------------------------------- */
+
+/* ECREATE (EAX = 0, p. 41-25..41-29) */
+static void sgx_ecreate(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t pi = sgx_la(o, sgx_reg(o, R_EBX), 32, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t srcpge, secinfo, pa, size, base, xfrm, attr, xsize;
+    uint32_t ssafs, misc, a, b, c, d;
+    uint8_t si[64], page[4096], blk[64];
+    X86SgxEpcm *m;
+
+    if (pi & 31) {
+        sgx_gp(o);
+    }
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    srcpge = sgx_ld64(o, pi + 8);
+    secinfo = sgx_ld64(o, pi + 16);
+    if (!o->m64) {
+        srcpge = (uint32_t)srcpge;
+        secinfo = (uint32_t)secinfo;
+    }
+    if ((srcpge & 0xfff) || (secinfo & 63)) {
+        sgx_gp(o);
+    }
+    if (sgx_ld64(o, pi) != 0 || sgx_ld64(o, pi + 24) != 0) {    /* LINADDR, SECS */
+        sgx_gp(o);
+    }
+    sgx_ldbuf(o, sgx_la(o, secinfo, 64, false), si, 64);
+    if (sgx_secinfo_rsvd(si) || SI_PT(si) != SGX_PT_SECS) {
+        sgx_gp(o);
+    }
+    if (m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    /* copy 4 KB from the source page into the EPC page; the checks look at the copy */
+    sgx_ldbuf(o, sgx_la(o, srcpge, 4096, false), page, 4096);
+    sgx_pwrite(env, pa, page, 4096);
+    size = ldq_le_p(page + SECS_SIZE);
+    base = ldq_le_p(page + SECS_BASEADDR);
+    ssafs = ldl_le_p(page + SECS_SSAFRAMESIZE);
+    misc = ldl_le_p(page + SECS_MISCSELECT);
+    attr = ldq_le_p(page + SECS_ATTRIBUTES);
+    xfrm = ldq_le_p(page + SECS_XFRM);
+    if ((xfrm & 3) != 3 || !sgx_xfrm_legal(env, xfrm)) {
+        sgx_gp(o);
+    }
+    /* CET: ATTRIBUTES.CET is not settable (12H.1:EAX[6] = 0): CET_ATTRIBUTES and the legacy
+       bitmap offset must be 0 (and are reserved fields then) */
+    if (ldq_le_p(page + SECS_CET_LEG) || page[SECS_CET_ATTR]) {
+        sgx_gp(o);
+    }
+    /* unsupported MISCSELECT bits (docs/sgx.md 4: the pseudocode's "!(EBX & MISCSELECT)") */
+    if (misc & ~NOVMP_SGX_12_0_EBX) {
+        sgx_gp(o);
+    }
+    xsize = sgx_xsave_size(env, xfrm) + SGX_GPR_SIZE + sgx_misc_size(misc);
+    if ((uint64_t)ssafs * 4096 < xsize) {
+        sgx_gp(o);
+    }
+    x86_sgx_cpuid(env, 0, &a, &b, &c, &d);
+    if (attr & SGX_ATTR_MODE64BIT) {
+        if (!sgx_canonical(env, base) || size >= (1ULL << ((d >> 8) & 0xff))) {
+            sgx_gp(o);
+        }
+    } else if ((base >> 32) || size >= (1ULL << (d & 0xff))) {
+        sgx_gp(o);
+    }
+    if (size < 8192 || (size & (size - 1))) {
+        sgx_gp(o);
+    }
+    if (base & (size - 1)) {
+        sgx_gp(o);
+    }
+    x86_sgx_cpuid(env, 1, &a, &b, &c, &d);
+    if ((attr & ~(((uint64_t)b << 32) | a)) || (xfrm & ~(((uint64_t)d << 32) | c))) {
+        sgx_gp(o);
+    }
+    /* reserved: 33-47 (CET_ATTRIBUTES is reserved without 12H.1:EAX[6]), 96-127, 160-191,
+       262-4095 ("must be cleared prior to executing ECREATE") */
+    if (!sgx_zero(page + 33, 15) || !sgx_zero(page + 96, 32) || !sgx_zero(page + 160, 32) ||
+        !sgx_zero(page + 262, 4096 - 262)) {
+        sgx_gp(o);
+    }
+    /* CONFIGID / CONFIGSVN need ATTRIBUTES.KSS, which is not settable */
+    if (!sgx_zero(page + SECS_CONFIGID, 64) || lduw_le_p(page + SECS_CONFIGSVN)) {
+        sgx_gp(o);
+    }
+    /* commit: the SECS, its MRENCLAVE log and the EPCM entry */
+    stw_le_p(page + SECS_ISVSVN, 0);
+    stw_le_p(page + SECS_ISVPRODID, 0);
+    for (a = 0; a < 8; a++) {
+        stl_le_p(page + SECS_MRENCLAVE + 4 * a, sgx_sha_h0[a]);
+    }
+    stq_le_p(page + SECS_MR_COUNT, 0);
+    stq_le_p(page + SECS_EID, env->sgx->next_eid++);
+    sgx_pwrite(env, pa, page, 4096);
+    memset(blk, 0, 64);
+    memcpy(blk, "ECREATE", 8);                  /* 0045544145524345H */
+    stl_le_p(blk + 8, ssafs);
+    stq_le_p(blk + 12, size);
+    /* TMPUPDATEFIELD[223:160] = CET_LEG_BITMAP_OFFSET with CET_IBT: 0 here (checked above) */
+    sgx_mr_update(env, pa, blk);
+    memset(m, 0, sizeof(*m));
+    m->pt = SGX_PT_SECS;
+    m->secs = pa;
+    m->valid = 1;
+}
+
+/* EADD (EAX = 1, p. 41-13..41-17) */
+static void sgx_eadd(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t pi = sgx_la(o, sgx_reg(o, R_EBX), 32, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t srcpge, secs_ea, secinfo, linaddr, pa, secs_la, secs, base, size;
+    uint8_t si[64], page[4096], blk[64];
+    X86SgxEpcm *m, *sm;
+    int pt;
+
+    if (pi & 31) {
+        sgx_gp(o);
+    }
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    srcpge = sgx_ld64(o, pi + 8);
+    secs_ea = sgx_ld64(o, pi + 24);
+    secinfo = sgx_ld64(o, pi + 16);
+    linaddr = sgx_ld64(o, pi);
+    if (!o->m64) {
+        srcpge = (uint32_t)srcpge;
+        secs_ea = (uint32_t)secs_ea;
+        secinfo = (uint32_t)secinfo;
+    }
+    if ((srcpge & 0xfff) || (secs_ea & 0xfff) || (secinfo & 63) || (linaddr & 0xfff)) {
+        sgx_gp(o);
+    }
+    secs_la = sgx_la(o, secs_ea, 4096, false);
+    sm = sgx_epc_operand(o, secs_la, false, &secs);
+    sgx_ldbuf(o, sgx_la(o, secinfo, 64, false), si, 64);
+    pt = SI_PT(si);
+    /* PT_SS_FIRST / PT_SS_REST need 12H.1:EAX[6] (CET), not enumerated */
+    if (sgx_secinfo_rsvd(si) || (pt != SGX_PT_REG && pt != SGX_PT_TCS)) {
+        sgx_gp(o);
+    }
+    if (m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    if (!sm->valid || sm->pt != SGX_PT_SECS) {
+        sgx_pf(o, secs_la, false);
+    }
+    /* copy 4 KB from the source page; the type-specific checks look at the copy */
+    sgx_ldbuf(o, sgx_la(o, srcpge, 4096, false), page, 4096);
+    sgx_pwrite(env, pa, page, 4096);
+    if (pt == SGX_PT_TCS) {
+        if (!sgx_zero(page + TCS_RESERVED, 4096 - TCS_RESERVED)) {
+            sgx_gp(o);
+        }
+        if (!(sgx_pld64(env, secs + SECS_ATTRIBUTES) & SGX_ATTR_MODE64BIT) &&
+            ((ldl_le_p(page + TCS_FSLIMIT) & 0xfff) != 0xfff ||
+             (ldl_le_p(page + TCS_GSLIMIT) & 0xfff) != 0xfff)) {
+            sgx_gp(o);
+        }
+        if ((env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) && ldq_le_p(page + TCS_PREVSSP)) {
+            sgx_gp(o);
+        }
+    } else if (SI_W(si) && !SI_R(si)) {
+        sgx_gp(o);
+    }
+    base = sgx_pld64(env, secs + SECS_BASEADDR);
+    size = sgx_pld64(env, secs + SECS_SIZE);
+    if (linaddr < base || linaddr >= base + size) {
+        sgx_gp(o);
+    }
+    if (sgx_secs_initialized(env, secs)) {
+        sgx_gp(o);
+    }
+    if (pt == SGX_PT_TCS) {
+        si[0] &= ~7;                                    /* EPCM.RWX := 0 for a TCS */
+        sgx_pst64(env, pa + TCS_FLAGS, ldq_le_p(page + TCS_FLAGS) & ~1ULL);   /* DBGOPTIN := 0 */
+        sgx_pst32(env, pa + TCS_CSSA, 0);
+        sgx_pst64(env, pa + TCS_AEP, 0);
+        sgx_pst64(env, pa + TCS_STATE, 0);
+    }
+    memset(blk, 0, 64);
+    memcpy(blk, "EADD", 4);                         /* 0000000044444145H */
+    stq_le_p(blk + 8, linaddr - base);
+    memcpy(blk + 16, si, 48);                       /* SCRATCH_SECINFO[375:0] */
+    sgx_mr_update(env, secs, blk);
+    memset(m, 0, sizeof(*m));
+    m->r = SI_R(si);
+    m->w = SI_W(si);
+    m->x = SI_X(si);
+    m->pt = pt;
+    m->addr = linaddr;
+    m->secs = secs;
+    m->valid = 1;
+}
+
+/* EEXTEND (EAX = 6, p. 41-38..41-40) */
+static void sgx_eextend(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 4096, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 256, false);
+    uint64_t secs_pa, pa, secs, off;
+    uint8_t blk[64], chunk[256];
+    X86SgxEpcm *m;
+    int i;
+
+    if (rbx & 0xfff) {
+        sgx_gp(o);
+    }
+    sgx_epc_operand(o, rbx, false, &secs_pa);
+    if (rcx & 0xff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, false, &pa);
+    if (!m->valid || (m->pt != SGX_PT_REG && m->pt != SGX_PT_TCS)) {
+        sgx_pf(o, rcx, false);
+    }
+    secs = sgx_secs_of(m);
+    if ((secs_pa & ~0xfffULL) != secs) {
+        sgx_gp(o);
+    }
+    /* "If the enclave is already initialized" (exception list; the pseudocode's "checking or
+       updating the initialized state" condition) */
+    if (sgx_secs_initialized(env, secs)) {
+        sgx_gp(o);
+    }
+    off = m->addr - sgx_pld64(env, secs + SECS_BASEADDR) + (pa & 0xfff);
+    memset(blk, 0, 64);
+    memcpy(blk, "EEXTEND", 8);                      /* 00444E4554584545H */
+    stq_le_p(blk + 8, off);
+    sgx_mr_update(env, secs, blk);
+    sgx_pread(env, pa, chunk, 256);
+    for (i = 0; i < 4; i++) {
+        sgx_mr_update(env, secs, chunk + 64 * i);
+    }
+}
+
+/* ---- key derivation (model placeholder, docs/sgx.md 3; ref_sgx.py keydep_bytes) ---- */
+
+#define KEYNAME_EINITTOKEN      0
+#define KEYNAME_PROVISION       1
+#define KEYNAME_PROVISION_SEAL  2
+#define KEYNAME_REPORT          3
+#define KEYNAME_SEAL            4
+
+typedef struct SgxKeyDep {
+    uint16_t keyname, isvprodid, isvsvn, configsvn, keypolicy;
+    uint8_t ownerepoch[16], attributes[16], attributesmask[16];
+    uint8_t mrenclave[32], mrsigner[32], keyid[32];
+    uint8_t seal_fuses[16], cpusvn[16];
+    uint32_t miscselect, miscmask;
+    uint8_t isvfamilyid[16], isvextprodid[16], configid[64];
+    uint8_t padding[352];
+} SgxKeyDep;
+
+/*
+ * derivekey(TMP_KEYDEPENDENCIES) (EINIT p. 41-46, EGETKEY p. 41-107, EREPORT p. 41-115): "the
+ * derivation data and package specific value" - neither the algorithm nor a byte layout is in the
+ * SDM. The model: AES-CMAC-128 keyed with the platform root key (UC_CTL_X86_SGX_PLATFORM) over this
+ * 648-byte little-endian serialization (our layout, docs/sgx.md 3; ref_sgx.py keydep_bytes).
+ */
+static void sgx_derivekey(CPUX86State *env, const SgxKeyDep *k, uint8_t out[16])
+{
+    uint8_t b[648];
+
+    memset(b, 0, sizeof(b));
+    stw_le_p(b + 0, k->keyname);
+    stw_le_p(b + 2, k->isvprodid);
+    stw_le_p(b + 4, k->isvsvn);
+    stw_le_p(b + 6, k->configsvn);
+    memcpy(b + 8, k->ownerepoch, 16);
+    memcpy(b + 24, k->attributes, 16);
+    memcpy(b + 40, k->attributesmask, 16);
+    memcpy(b + 56, k->mrenclave, 32);
+    memcpy(b + 88, k->mrsigner, 32);
+    memcpy(b + 120, k->keyid, 32);
+    memcpy(b + 152, k->seal_fuses, 16);
+    memcpy(b + 168, k->cpusvn, 16);
+    stl_le_p(b + 184, k->miscselect);
+    stl_le_p(b + 188, k->miscmask);
+    stw_le_p(b + 192, k->keypolicy);
+    memcpy(b + 196, k->isvfamilyid, 16);
+    memcpy(b + 212, k->isvextprodid, 16);
+    memcpy(b + 228, k->configid, 64);
+    memcpy(b + 292, k->padding, 352);
+    /* 644: CET_ATTRIBUTES, 645: CET_ATTRIBUTES_MASK (CET not enumerated: 0), 646-647: 0 */
+    sgx_cmac(env->sgx->root_key, b, sizeof(b), out);
+}
+
+/* IA32_SGXLEPUBKEYHASH as a 32-byte digest string (byte 0 = bits 7:0 of 8CH, our reading) */
+static void sgx_lehash(CPUX86State *env, uint8_t out[32])
+{
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        stq_le_p(out + 8 * i, env->sgx_lehash[i]);
+    }
+}
+
+/*
+ * "CPUSVN must not be a configuration beyond CR_CPUSVN" (EINIT p. 41-46, EGETKEY p. 41-102).
+ * CPUSVN "is not an integer and cannot be compared mathematically" (39.4.2.2); the elements it
+ * reflects are not specified. The model compares byte by byte (every byte <= CR_CPUSVN's) - our
+ * choice, docs/sgx.md 3 / 4.
+ */
+static bool sgx_cpusvn_beyond(CPUX86State *env, const uint8_t svn[16])
+{
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        if (svn[i] > env->sgx->cpusvn[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* an unmasked external event pending (INTR with RFLAGS.IF = 1 outside an interrupt shadow, or an
+   NMI while NMIs are not blocked): EINIT's "event window" (p. 41-42, 41-44) */
+static bool sgx_event_pending(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+
+    if ((cs->interrupt_request & CPU_INTERRUPT_NMI) && !(env->hflags2 & HF2_NMI_MASK)) {
+        return true;
+    }
+    return (cs->interrupt_request & CPU_INTERRUPT_HARD) && (env->eflags & IF_MASK) &&
+           !(env->hflags & HF_INHIBIT_IRQ_MASK);
+}
+
+/* EINIT (EAX = 2, p. 41-41..41-48) */
+static void sgx_einit(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rbx = sgx_la(o, sgx_reg(o, R_EBX), 1808, false);
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t rdx = sgx_la(o, sgx_reg(o, R_EDX), 304, false);
+    static const uint8_t hdr[16] = {0x06, 0, 0, 0, 0xe1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0};
+    static const uint8_t hdr2[16] = {1, 1, 0, 0, 0x60, 0, 0, 0, 0x60, 0, 0, 0, 1, 0, 0, 0};
+    uint8_t sig[1808], tok[304], pad[352], mre[32], mrs[32], lehash[32], secs_attr[16];
+    uint8_t key[16], mac[16];
+    uint64_t pa;
+    uint32_t vendor, misc;
+    X86SgxEpcm *m;
+    SgxKeyDep k;
+    int i;
+
+    if ((rbx & 0xfff) || (rcx & 0xfff)) {
+        sgx_gp(o);
+    }
+    if (rdx & 0x1ff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    sgx_ldbuf(o, rbx, sig, 1808);
+    sgx_ldbuf(o, rdx, tok, 304);
+    o->flags = 0;                                   /* CF, PF, AF, OF, SF := 0; ZF below */
+    vendor = ldl_le_p(sig + 16);
+    /* "Reserved space": 44-127, 908-911 (CET_ATTRIBUTES / _MASK are reserved without
+       12H.1:EAX[6]), 992-1007, 1028-1039 */
+    if (memcmp(sig, hdr, 16) || (vendor != 0 && vendor != 0x8086) || memcmp(sig + 24, hdr2, 16) ||
+        ldl_le_p(sig + 512) != 3 || !sgx_zero(sig + 44, 84) || !sgx_zero(sig + 908, 4) ||
+        !sgx_zero(sig + 992, 16) || !sgx_zero(sig + 1028, 12)) {
+        env->regs[R_EAX] = SGX_INVALID_SIG_STRUCT;
+        goto fail;
+    }
+    if (sgx_event_pending(env)) {
+        env->regs[R_EAX] = SGX_UNMASKED_EVENT;
+        goto fail;
+    }
+    if (!sgx_rsa_verify(sig, pad)) {
+        env->regs[R_EAX] = SGX_INVALID_SIGNATURE;
+        goto fail;
+    }
+    if (!m->valid || m->pt != SGX_PT_SECS) {
+        sgx_pf(o, rcx, true);
+    }
+    /* ISVFAMILYID needs ATTRIBUTES.KSS (not settable) */
+    if (!sgx_zero(sig + 912, 16)) {
+        env->regs[R_EAX] = SGX_INVALID_SIG_STRUCT;
+        goto fail;
+    }
+    if (sgx_secs_initialized(env, pa)) {
+        sgx_gp(o);                                  /* "If the enclave is already initialized" */
+    }
+    sgx_mr_final(env, pa, mre);
+    if (memcmp(sig + 960, mre, 32)) {
+        env->regs[R_EAX] = SGX_INVALID_MEASUREMENT;
+        goto fail;
+    }
+    sgx_sha256(sig + 128, 384, mrs);
+    sgx_lehash(env, lehash);
+    sgx_pread(env, pa + SECS_ATTRIBUTES, secs_attr, 16);
+    if ((secs_attr[0] & SGX_ATTR_EINITTOKEN_KEY) && memcmp(mrs, lehash, 32)) {
+        env->regs[R_EAX] = SGX_INVALID_ATTRIBUTE;   /* CONTROLLED_ATTRIBUTES = 20H */
+        goto fail;
+    }
+    for (i = 0; i < 16; i++) {
+        if ((secs_attr[i] & sig[944 + i]) != (sig[928 + i] & sig[944 + i])) {
+            env->regs[R_EAX] = SGX_INVALID_ATTRIBUTE;
+            goto fail;
+        }
+    }
+    misc = sgx_pld32(env, pa + SECS_MISCSELECT);
+    if ((misc & ldl_le_p(sig + 904)) != (ldl_le_p(sig + 900) & ldl_le_p(sig + 904))) {
+        env->regs[R_EAX] = SGX_INVALID_ATTRIBUTE;
+        goto fail;
+    }
+    if (!(tok[0] & 1)) {
+        if (memcmp(mrs, lehash, 32)) {
+            env->regs[R_EAX] = SGX_INVALID_EINITTOKEN;
+            goto fail;
+        }
+        goto commit;
+    }
+    if ((tok[240] & SGX_ATTR_DEBUG) && !(secs_attr[0] & SGX_ATTR_DEBUG)) {
+        env->regs[R_EAX] = SGX_INVALID_EINITTOKEN;
+        goto fail;
+    }
+    /* reserved: VALID[31:1], 4-47, 96-127, 160-191, 212-235 (212 = CET_MASKED_ATTRIBUTES_LE,
+       reserved without 12H.1:EAX[6]) */
+    if ((ldl_le_p(tok) & ~1u) || !sgx_zero(tok + 4, 44) || !sgx_zero(tok + 96, 32) ||
+        !sgx_zero(tok + 160, 32) || !sgx_zero(tok + 212, 24)) {
+        env->regs[R_EAX] = SGX_INVALID_EINITTOKEN;
+        goto fail;
+    }
+    if (sgx_cpusvn_beyond(env, tok + 192)) {
+        env->regs[R_EAX] = SGX_INVALID_CPUSVN;
+        goto fail;
+    }
+    memset(&k, 0, sizeof(k));
+    k.keyname = KEYNAME_EINITTOKEN;
+    k.isvprodid = lduw_le_p(tok + 208);
+    k.isvsvn = lduw_le_p(tok + 210);
+    memcpy(k.ownerepoch, env->sgx->owner_epoch, 16);
+    memcpy(k.attributes, tok + 240, 16);
+    memcpy(k.mrsigner, lehash, 32);
+    memcpy(k.keyid, tok + 256, 32);
+    memcpy(k.seal_fuses, env->sgx->seal_fuses, 16);
+    memcpy(k.cpusvn, tok + 192, 16);
+    k.miscselect = ldl_le_p(tok + 236);
+    sgx_pkcs_padding(k.padding);
+    sgx_derivekey(env, &k, key);
+    sgx_cmac(key, tok, 192, mac);
+    if (memcmp(mac, tok + 288, 16)) {
+        env->regs[R_EAX] = SGX_INVALID_EINITTOKEN;
+        goto fail;
+    }
+    if (memcmp(tok + 64, mre, 32) || memcmp(tok + 128, mrs, 32)) {
+        env->regs[R_EAX] = SGX_INVALID_MEASUREMENT;
+        goto fail;
+    }
+    /* "SGX_INVALID_EINIT_ATTRIBUTE" is not in Table 41-3: SGX_INVALID_ATTRIBUTE (docs/sgx.md 4) */
+    if (memcmp(tok + 48, secs_attr, 16)) {
+        env->regs[R_EAX] = SGX_INVALID_ATTRIBUTE;
+        goto fail;
+    }
+commit:
+    sgx_pwrite(env, pa + SECS_MRENCLAVE, mre, 32);
+    sgx_pwrite(env, pa + SECS_MRSIGNER, mrs, 32);
+    sgx_pwrite(env, pa + SECS_ISVEXTPRODID, sig + 1008, 16);
+    sgx_pwrite(env, pa + SECS_ISVPRODID, sig + 1024, 4);       /* ISVPRODID, ISVSVN */
+    sgx_pwrite(env, pa + SECS_ISVFAMILYID, sig + 912, 16);
+    sgx_pwrite(env, pa + SECS_PADDING, pad, 352);
+    secs_attr[0] |= SGX_ATTR_INIT;
+    sgx_pwrite(env, pa + SECS_ATTRIBUTES, secs_attr, 16);
+    env->regs[R_EAX] = 0;
+    return;
+fail:
+    o->flags = CC_Z;
+}
+
+/* EREMOVE (EAX = 3, p. 41-62..41-64) */
+static void sgx_eremove(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa;
+    X86SgxEpcm *m;
+
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    o->flags = 0;
+    env->regs[R_EAX] = 0;
+    /*
+     * "IF (VALID = 0) or (PT = PT_TRIM AND MODIFIED = 0) THEN GOTO DONE" comes before "IF (PT =
+     * PT_VA) OR (PT = PT_TRIM AND MODIFIED = 0) THEN VALID := 0": read literally the second rule
+     * never removes a trimmed page (the first one leaves it valid). 39.5.9 step 6 says the OS
+     * removes the trimmed page with EREMOVE - the model removes it (docs/sgx.md 4).
+     */
+    if (!m->valid) {
+        return;
+    }
+    if (m->pt == SGX_PT_VA || (m->pt == SGX_PT_TRIM && !m->modified)) {
+        m->valid = 0;
+        return;
+    }
+    if (m->pt == SGX_PT_SECS) {
+        if (sgx_child_present(env, pa)) {
+            o->flags = CC_Z;
+            env->regs[R_EAX] = SGX_CHILD_PRESENT;
+            return;
+        }
+        m->valid = 0;
+        return;
+    }
+    /* "Other threads active using SECS" (SGX_ENCLAVE_ACT): one logical processor, and EREMOVE
+       runs outside enclave mode - never in the model */
+    m->valid = 0;
+}
+
+/* EPA (EAX = 0AH, p. 41-60..41-61) */
+static void sgx_epa(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    static const uint8_t zero[4096];
+    uint64_t pa;
+    X86SgxEpcm *m;
+
+    if (sgx_reg(o, R_EBX) != SGX_PT_VA || (rcx & 0xfff)) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    if (m->valid) {
+        sgx_pf(o, rcx, true);
+    }
+    sgx_pwrite(env, pa, zero, 4096);
+    memset(m, 0, sizeof(*m));
+    m->pt = SGX_PT_VA;
+    m->valid = 1;
+}
+
+/* EBLOCK (EAX = 9, p. 41-22..41-24) */
+static void sgx_eblock(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa;
+    X86SgxEpcm *m;
+
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    o->flags = 0;
+    env->regs[R_EAX] = 0;
+    if (!m->valid) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_PG_INVLD;
+        return;
+    }
+    if (m->pt != SGX_PT_REG && m->pt != SGX_PT_TCS && m->pt != SGX_PT_TRIM) {
+        o->flags = CC_C;
+        env->regs[R_EAX] = m->pt == SGX_PT_SECS ? SGX_PG_IS_SECS : SGX_NOTBLOCKABLE;
+        return;
+    }
+    if (m->blocked) {
+        o->flags = CC_C;
+        env->regs[R_EAX] = SGX_BLKSTATE;
+        return;
+    }
+    m->blocked = 1;
+    m->bepoch = sgx_pld64(env, m->secs + SECS_EPOCH);   /* the tracking model */
+}
+
+/*
+ * ETRACK (EAX = 0CH, p. 41-65..41-66). The tracking model (docs/sgx.md 3): ETRACK starts a new
+ * epoch of the enclave, complete when every logical processor that was executing in the enclave
+ * has left it. The model has one logical processor and ETRACK runs outside enclave mode: the
+ * previous cycle is always complete (SGX_PREV_TRK_INCMPL never) and the new one completes at once;
+ * pages blocked (EBLOCK) or modified (EMODPR / EMODT) before it count as tracked.
+ */
+static void sgx_etrack(SgxOp *o)
+{
+    CPUX86State *env = o->env;
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), 4096, true);
+    uint64_t pa;
+    X86SgxEpcm *m;
+
+    if (rcx & 0xfff) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, true, &pa);
+    if (!m->valid || m->pt != SGX_PT_SECS) {
+        sgx_pf(o, rcx, true);
+    }
+    sgx_pst64(env, pa + SECS_EPOCH, sgx_pld64(env, pa + SECS_EPOCH) + 1);
+    o->flags = 0;
+    env->regs[R_EAX] = 0;
+}
+
+/*
+ * EDBGRD (EAX = 4, p. 41-30..41-33) / EDBGWR (EAX = 5, p. 41-34..41-37). SGX_TCS_LIMIT ("the
+ * architectural size of the TCS") is not given: the model uses 88 - the end of the TCS fields of
+ * Table 38-6 (docs/sgx.md 4).
+ */
+#define SGX_TCS_LIMIT 88
+
+static void sgx_edbg(SgxOp *o, bool wr)
+{
+    CPUX86State *env = o->env;
+    int n = o->m64 ? 8 : 4;
+    uint64_t rcx = sgx_la(o, sgx_reg(o, R_ECX), n, wr);
+    uint64_t pa, v;
+    X86SgxEpcm *m;
+
+    if (rcx & (n - 1)) {
+        sgx_gp(o);
+    }
+    m = sgx_epc_operand(o, rcx, wr, &pa);
+    if (!m->valid) {
+        sgx_pf(o, rcx, wr);
+    }
+    if (m->pt != SGX_PT_REG && m->pt != SGX_PT_TCS && (wr || m->pt != SGX_PT_VA)) {
+        sgx_pf(o, rcx, wr);
+    }
+    o->flags = 0;
+    if (m->pending || m->modified) {
+        o->flags = CC_Z;
+        env->regs[R_EAX] = SGX_PAGE_NOT_DEBUGGABLE;
+        return;
+    }
+    if (m->pt == SGX_PT_TCS &&
+        (wr ? (pa & 0xff8) != (TCS_FLAGS & 0xff8) : (pa & 0xfff) >= SGX_TCS_LIMIT)) {
+        sgx_gp(o);
+    }
+    if (m->pt != SGX_PT_VA && !(sgx_pld64(env, m->secs + SECS_ATTRIBUTES) & SGX_ATTR_DEBUG)) {
+        sgx_gp(o);
+    }
+    if (wr) {
+        if (n == 8) {
+            sgx_pst64(env, pa, env->regs[R_EBX]);
+        } else {
+            sgx_pst32(env, pa, (uint32_t)env->regs[R_EBX]);
+        }
+    } else if (m->pt == SGX_PT_VA) {
+        v = sgx_pld64(env, pa & ~7ULL) & ~7ULL;
+        env->regs[R_EBX] = v ? (n == 8 ? ~0ULL : 0xffffffffULL) : 0;
+    } else {
+        env->regs[R_EBX] = n == 8 ? sgx_pld64(env, pa) : sgx_pld32(env, pa);
+    }
+    env->regs[R_EAX] = 0;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * ENCLS (Vol3D p. 41-8..41-9)
+ * ------------------------------------------------------------------------------------------- */
+
+/* the leaves the model enumerates: SGX1 (00H-0CH), SGX2 (0DH-0FH); EUPDATESVN (18H) is not */
+static bool sgx_encls_leaf_valid(uint32_t leaf)
+{
+    return leaf <= 0x0c;
+}
+
+/*
+ * NoVmp (ledger U1262): ENCLS. The translator raised #UD for LOCK / 66 / F2 / F3 / VEX (and routes
+ * here only when the model enumerates SGX). Order of the Operation section: #UD for CR0.PE = 0,
+ * virtual-8086 mode, SMM, CPUID.12H.0:EAX.SGX1 = 0 and CPL > 0; (VMX: "enable ENCLS exiting" -
+ * pending, plan 1.J.12); #GP(0) for IA32_FEATURE_CONTROL.LOCK / SGX_ENABLE = 0, an unsupported
+ * leaf, CR0.PG = 0, an expand-down DS outside 64-bit mode. A leaf that completes without a fault
+ * sets IA32_SGX_SVN_STATUS.Lock (42.11.3: "the first successful execution of an Intel SGX
+ * instruction that doesn't return an error code" - with RAX = 0 for the leaves that return one).
+ */
+void helper_encls(CPUX86State *env)
+{
+    SgxOp o;
+    uint32_t leaf = (uint32_t)env->regs[R_EAX];
+
+    o.env = env;
+    o.ra = GETPC();
+    o.m64 = (env->hflags & HF_CS64_MASK) != 0;      /* IA32_EFER.LMA = 1 && CS.L = 1 */
+    o.flags = cpu_cc_compute_all(env, CC_OP) & (CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
+    if (!(env->cr[0] & CR0_PE_MASK) || (env->eflags & VM_MASK) || (env->hflags & HF_SMM_MASK) ||
+        !x86_sgx_enumerated(env) || (env->hflags & HF_CPL_MASK)) {
+        raise_exception_ra(env, EXCP06_ILLOP, o.ra);
+    }
+    if ((env->msr_ia32_feature_control & (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX)) !=
+            (FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX) ||
+        !sgx_encls_leaf_valid(leaf) || !(env->cr[0] & CR0_PG_MASK)) {
+        sgx_gp(&o);
+    }
+    if (!o.m64 && (env->segs[R_DS].flags & (DESC_S_MASK | DESC_CS_MASK | DESC_E_MASK)) ==
+                      (DESC_S_MASK | DESC_E_MASK)) {
+        sgx_gp(&o);                                 /* expand-down data segment */
+    }
+    switch (leaf) {
+    case 0x00:
+        sgx_ecreate(&o);
+        break;
+    case 0x01:
+        sgx_eadd(&o);
+        break;
+    case 0x02:
+        sgx_einit(&o);
+        break;
+    case 0x03:
+        sgx_eremove(&o);
+        break;
+    case 0x04:
+        sgx_edbg(&o, false);
+        break;
+    case 0x05:
+        sgx_edbg(&o, true);
+        break;
+    case 0x06:
+        sgx_eextend(&o);
+        break;
+    case 0x09:
+        sgx_eblock(&o);
+        break;
+    case 0x0a:
+        sgx_epa(&o);
+        break;
+    case 0x0c:
+        sgx_etrack(&o);
+        break;
+    default:
+        sgx_gp(&o);     /* 07H, 08H, 0BH (ELDB, ELDU, EWB) and SGX2: U1265 / U1266 */
+        break;
+    }
+    if (!(o.flags & CC_Z)) {
+        env->sgx_svn_lock = 1;
+    }
+    CC_SRC = o.flags;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Memory access control (U1262: non-enclave accesses to the EPC)
+ * ------------------------------------------------------------------------------------------- */
+
+/*
+ * The abort page: "Attempts to execute, read, or write to linear addresses mapped to EPC pages when
+ * not inside an enclave will result in the processor altering the access ... As an example a read
+ * of an enclave page may result in the return of all one's or return of cyphertext of the cache
+ * line. Writing to an enclave page may result in a dropped write" (Vol3D 38.1 p. 38-1, 38.5.1;
+ * EEXIT p. 41-96: a fetch "returns a fixed data pattern"). The model takes the first example: a RAM
+ * page of all ones that the TLB maps for reads and instruction fetches (writes are discarded,
+ * cputlb.c tlb_set_page_sgx_abort). Our choice among the SDM's examples (docs/sgx.md 3).
+ */
+void *x86_sgx_abort_page(CPUX86State *env, uint64_t *ram)
+{
+    X86SgxPkg *p = env->sgx;
+
+    if (!p->abort_mr) {
+        MemoryRegion *mr = g_new0(MemoryRegion, 1);
+
+        memory_region_init_ram(env->uc, mr, TARGET_PAGE_SIZE, UC_PROT_ALL);
+        p->abort_host = memory_region_get_ram_ptr(mr);
+        memset(p->abort_host, 0xff, TARGET_PAGE_SIZE);
+        p->abort_mr = mr;
+    }
+    *ram = memory_region_get_ram_addr((MemoryRegion *)p->abort_mr);
+    return p->abort_host;
+}
+
+/*
+ * NoVmp (ledger U1262): the SGX part of a TLB fill (excp_helper.c handle_mmu_fault, after the
+ * paging checks): 0 = an ordinary mapping (*prot may be reduced), 1 = the abort page, -1 = a fault
+ * set up in env (exception_index, error_code, CR2). An access that is not an enclave access
+ * (38.2: outside enclave mode, or from enclave mode outside ELRANGE) to an EPC page gets the
+ * abort page. Enclave accesses: U1263.
+ */
+int x86_sgx_access(CPUX86State *env, uint64_t la, uint64_t pa, int access, int *prot)
+{
+    (void)la;
+    (void)access;
+    (void)prot;
+    if (!env->sgx || !sgx_epcm(env, pa)) {
+        return 0;
+    }
+    return 1;
+}
+
+/* NoVmp (ledger U1262): free the package state (uc_close) */
+void x86_sgx_release(CPUX86State *env)
+{
+    X86SgxPkg *p = env->sgx;
+
+    if (!p) {
+        return;
+    }
+    if (p->abort_mr) {
+        MemoryRegion *mr = p->abort_mr;
+
+        mr->destructor(mr);
+        g_free(mr);
+    }
+    g_free(p->epcm);
+    g_free(p);
+    env->sgx = NULL;
 }
 
 #endif /* __Use_Original_Qemu (U1261) */

@@ -68,6 +68,9 @@ static void x86_release(void *ctx)
     CPUTLBDescFast *fast;
     X86CPUClass *xcc = X86_CPU_GET_CLASS(cpu);
 
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+    x86_sgx_release(&cpu->env);     /* the SGX package state and the abort page */
+#endif /* __Use_Original_Qemu (U1262) */
     release_common(ctx);
     for (i = 0; i < NB_MMU_MODES; i++) {
         desc = &(d[i]);

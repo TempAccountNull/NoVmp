@@ -39,7 +39,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | CPUID.12H.n>=2: EPC sections (type 1: base 51:12, size 51:12, property), type 0 = invalid (all zero) | 1 Table 21-49 p.21-53..21-54; 3D 37.7.2 p.37-5 | `cpu.c` | impl (U1261) |
 | Leaf 12H content depends on enablement ("Valid*") | 3D Table 37-3 p.37-4..37-5 | `cpu.c` | impl (U1261): same values in every state (**question**) |
 | IA32_FEATURE_CONTROL (3AH): LOCK[0], LE_WR (SGX launch control enable)[17], SGX_ENABLE[18]; R/WL; exists if any enumeration condition holds | 4 Table 2-2 3AH p.2-5..2-6; 3D 37.7.1 p.37-4, 42.2 p.42-1; 2D Table 7-1 p.7-1..7-2 | `misc_helper.c` msr_present / msr_write_ok (U906, already conditional on the SGX bits) | impl (U906) |
-| ENCLS / ENCLU: #UD without SGX1, #GP(0) unless LOCK = SGX_ENABLE = 1 | 3D Table 37-3, ENCLS p.41-8..41-9, ENCLU p.41-10..41-12 | `sgx_model.c` | plan |
+| ENCLS / ENCLU: #UD without SGX1, #GP(0) unless LOCK = SGX_ENABLE = 1 | 3D Table 37-3, ENCLS p.41-8..41-9, ENCLU p.41-10..41-12 | `sgx_model.c` | impl (U1262: ENCLS; ENCLU U1263) |
 | IA32_SGXLEPUBKEYHASH0-3 (8CH-8FH): read if SGX1 and SGX_LC; write if SGX1, FEATURE_CONTROL[17] = 1 and [0] = 1; reset value "the digest of Intel's signing key" | 4 Table 2-2 8CH-8FH p.2-11; 3D 39.1.4 p.39-3, 42.2.2 p.42-1 | `misc_helper.c`, `sgx_model.c` | impl (U1261); reset value **ph** (host-provided, default 0) |
 | IA32_SGXLEPUBKEYHASH4/5 (90H/91H, "bits 383:256 of the SHA256 digest") | 4 Table 2-2 90H-91H p.2-11..2-12 (also 093) | - | **question** (a 256-bit digest has no bits 383:256; Vol3D uses a 256-bit hash). Not modelled: #GP(0) |
 | IA32_SGX_SVN_STATUS (500H, R/O): Lock[0] = a non-faulting SGX instruction was executed; SGX_SVN_SINIT 23:16 (only with SMX) | 4 Table 2-2 500H p.2-49; 3D 42.11.3 Table 42-2 p.42-11 | `misc_helper.c`, `sgx_model.c` | impl (U1261, Lock set by the leaves later); SVN threshold **ph** (host-provided, default 0) |
@@ -71,7 +71,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 |---|---|---|---|
 | Direct enclave access = enclave mode and linear address in ELRANGE: must map to an EPC page whose EPCM entry is valid, of the current enclave, at that linear address, PT_REG, not BLOCKED / PENDING / MODIFIED, R / W / X as EPCM allows; else #PF with PFEC.SGX[15] (P = 1, RSVD = PK = 0) | 3D 38.3 p.38-1..38-2, 38.5 p.38-2..38-3; 3A 5.7 Figure 5-12 p.5-37..5-38, 7.15 p.7-47..7-49 | `excp_helper.c` handle_mmu_fault -> `sgx_model.c` | plan |
 | Code fetch from enclave mode outside ELRANGE: #GP(0); a fetch split across ELRANGE: #GP | 3D 38.3 p.38-1, 38.5.2 p.38-2..38-3 | same | plan |
-| Non-enclave access to EPC (outside enclave mode, or from enclave mode outside ELRANGE): "altered" - the SDM gives reads of all ones and dropped writes as an example ("abort page") | 3D 38.1 p.38-1, 38.3, 38.5.1 p.38-2 | `accel/tcg/cputlb.c` (abort-page TLB entry), `excp_helper.c` | plan (our choice of the SDM example) |
+| Non-enclave access to EPC (outside enclave mode, or from enclave mode outside ELRANGE): "altered" - the SDM gives reads of all ones and dropped writes as an example ("abort page") | 3D 38.1 p.38-1, 38.3, 38.5.1 p.38-2 | `accel/tcg/cputlb.c` (abort-page TLB entry), `excp_helper.c` | impl (U1262: the abort page) |
 | CR2 / #PF event data bits 11:0 cleared for a #PF during enclave-mode execution | 3A 5.7 p.5-37, 7.15 p.7-49; 3D Table 40-1 p.40-3 | AEX | plan |
 | Enclave entry / exit flush linear-address translations | 3D 39.2.1 p.39-4, 42.12 p.42-11 | `sgx_model.c` (tlb_flush) | plan |
 | Instructions illegal inside an enclave (#UD): CPUID, GETSEC, RDPMC, SGDT, SIDT, SLDT, STR, VMCALL, VMFUNC, IN/INS/OUT/OUTS, far CALL/JMP/RET, INT n, INTO, IRET, LDS/LES/LFS/LGS/LSS, MOV to DS/ES/SS/FS/GS, POP DS/ES/SS/FS/GS, SYSCALL, SYSENTER, SMSW; EENTER / ERESUME #GP | 3D 39.6.1 Table 39-1 p.39-14; 42.3.4 p.42-2; 42.11.2 p.42-10 | `translate.c` (check emitted only when the model enumerates SGX) | plan |
@@ -85,15 +85,15 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Leaf | Source | Status |
 |---|---|---|
-| ENCLS common checks (#UD: CR0.PE = 0, VM86, SMM, SGX1 = 0, CPL > 0, LOCK/66/F2/F3; #GP: FEATURE_CONTROL, invalid leaf, CR0.PG = 0, expand-down DS outside 64-bit mode) | ENCLS p.41-8..41-9; 42.3.2 p.42-2 | plan |
-| ECREATE (0) incl. MRENCLAVE init + "ECREATE" update, SSA size check (42.7.2.2) | p.41-25..41-29 | plan |
-| EADD (1) incl. "EADD" update | p.41-13..41-17 | plan |
-| EINIT (2): SIGSTRUCT header, RSA verify with q1/q2, MRENCLAVE final, MRSIGNER, controlled attributes, ATTRIBUTEMASK / MISCMASK, EINITTOKEN (CMAC with the derived launch key), COMMIT | p.41-41..41-48 | plan |
-| EREMOVE (3) | p.41-62..41-64 | plan |
-| EDBGRD (4) / EDBGWR (5) | p.41-30..41-37 | plan |
-| EEXTEND (6) | p.41-38..41-40 | plan |
+| ENCLS common checks (#UD: CR0.PE = 0, VM86, SMM, SGX1 = 0, CPL > 0, LOCK/66/F2/F3; #GP: FEATURE_CONTROL, invalid leaf, CR0.PG = 0, expand-down DS outside 64-bit mode) | ENCLS p.41-8..41-9; 42.3.2 p.42-2 | impl (U1262; VMX exiting **def**) |
+| ECREATE (0) incl. MRENCLAVE init + "ECREATE" update, SSA size check (42.7.2.2) | p.41-25..41-29 | impl (U1262) |
+| EADD (1) incl. "EADD" update | p.41-13..41-17 | impl (U1262) |
+| EINIT (2): SIGSTRUCT header, RSA verify with q1/q2, MRENCLAVE final, MRSIGNER, controlled attributes, ATTRIBUTEMASK / MISCMASK, EINITTOKEN (CMAC with the derived launch key), COMMIT | p.41-41..41-48 | impl (U1262) |
+| EREMOVE (3) | p.41-62..41-64 | impl (U1262) |
+| EDBGRD (4) / EDBGWR (5) | p.41-30..41-37 | impl (U1262) |
+| EEXTEND (6) | p.41-38..41-40 | impl (U1262) |
 | ELDB (7) / ELDU (8): AES-GCM decrypt with CR_BASE_PK, MAC compare | p.41-49..41-53 | plan; CR_BASE_PK **ph** |
-| EBLOCK (9), EPA (0AH), ETRACK (0CH) | p.41-22..41-24, 41-60..41-61, 41-65..41-66 | plan |
+| EBLOCK (9), EPA (0AH), ETRACK (0CH) | p.41-22..41-24, 41-60..41-61, 41-65..41-66 | impl (U1262; tracking model: our choice) |
 | EWB (0BH): AES-GCM encrypt, PCMD, VA slot | p.41-69..41-73 | plan |
 | EAUG (0DH), EMODPR (0EH), EMODT (0FH) (SGX2) | p.41-18..41-21, 41-54..41-59 | plan |
 | EUPDATESVN (18H) | p.41-67..41-68 | no: 12H.0:EAX[10] not enumerated (microcode SVN update has no meaning in the model) |
@@ -119,12 +119,12 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 
 | Item | Source | Status |
 |---|---|---|
-| SHA-256 (FIPS 180-4) incremental: MRENCLAVE = SHA256INITIALIZE / SHA256UPDATE (64-byte blocks) / SHA256FINAL(count * 512) | ECREATE / EADD / EEXTEND / EINIT pseudocode; 39.4.1.1 p.39-6 | plan |
-| MRSIGNER = SHA256(SIGSTRUCT.MODULUS) (384 bytes as stored) | EINIT p.41-45; 39.4.1.2 p.39-7 | plan |
-| RSA-3072 signature check (e = 3, PKCS#1 v1.5 / RFC 3447 DigestInfo SHA-256) over SIGSTRUCT bytes 0-127 and 900-1027 ("Signed" column) using q1, q2 | 38.14 p.38-13..38-14; EINIT p.41-44 | plan |
-| AES-CMAC-128 (EINITTOKEN.MAC over bytes 0-191, REPORT.MAC over bytes 0-383) | EINIT p.41-46; EREPORT p.41-115 | plan (the CMAC algorithm itself: NIST SP 800-38B / RFC 4493, our reading of "CMAC") |
+| SHA-256 (FIPS 180-4) incremental: MRENCLAVE = SHA256INITIALIZE / SHA256UPDATE (64-byte blocks) / SHA256FINAL(count * 512) | ECREATE / EADD / EEXTEND / EINIT pseudocode; 39.4.1.1 p.39-6 | impl (U1262) |
+| MRSIGNER = SHA256(SIGSTRUCT.MODULUS) (384 bytes as stored) | EINIT p.41-45; 39.4.1.2 p.39-7 | impl (U1262) |
+| RSA-3072 signature check (e = 3, PKCS#1 v1.5 / RFC 3447 DigestInfo SHA-256) over SIGSTRUCT bytes 0-127 and 900-1027 ("Signed" column) using q1, q2 | 38.14 p.38-13..38-14; EINIT p.41-44 | impl (U1262; q1 / q2 use: our reading) |
+| AES-CMAC-128 (EINITTOKEN.MAC over bytes 0-191, REPORT.MAC over bytes 0-383) | EINIT p.41-46; EREPORT p.41-115 | impl (U1262: EINITTOKEN; REPORT U1264) |
 | AES-GCM (EWB / ELDU): key CR_BASE_PK, counter "TMP_VER << 32", 128-byte MAC header (SECINFO, LINADDR, EID, ...), 4096-byte page | EWB p.41-72; ELDB p.41-51 | plan; the exact GCM IV formation and MAC-header byte layout are not fully specified -> our layout, documented (section 3) |
-| derivekey(KEYDEPENDENCIES): "derivation data and package specific value" | EGETKEY p.41-99, 41-104; EINIT p.41-46 | **ph**: the algorithm, the byte layout of KEYDEPENDENCIES and the root key are platform-specific (section 3) |
+| derivekey(KEYDEPENDENCIES): "derivation data and package specific value" | EGETKEY p.41-99, 41-104; EINIT p.41-46 | **ph** (U1262: AES-CMAC with the host root key over our 648-byte layout) |
 
 ### 1.7 GETSEC / SMX (2D chapter 7)
 
@@ -180,6 +180,46 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
   with CPUID.01H:ECX.SMX.
 - INVD: #GP(0) once processor reserved memory protections are active (our activation rule).
 
+### 2.4 ENCLS (U1262)
+- Decode: NP 0F 01 CF routes to `helper_encls` only when the model enumerates SGX (else #UD as
+  before); LOCK / 66 / F2 / F3 #UD (VEX cannot encode 0F 01); REX, segment and address-size
+  overrides ignored. The helper checks the Operation order of p. 41-8/41-9 (#UD, then #GP(0) for
+  IA32_FEATURE_CONTROL, an unsupported leaf - the model enumerates leaves 00H-0FH; 07H, 08H, 0BH
+  (ELDB, ELDU, EWB) and 0DH-0FH (SGX2) follow in later commits and are #GP(0) until then;
+  EUPDATESVN 18H is not enumerated - CR0.PG = 0, an expand-down DS outside 64-bit mode). 64-bit
+  mode = IA32_EFER.LMA = 1 and CS.L = 1 (the translator's CS64 flag).
+- Operands: DS-relative effective addresses (32-bit outside 64-bit mode, DS limit / write
+  checks); explicit non-EPC operands (PAGEINFO, SECINFO, source pages, SIGSTRUCT, EINITTOKEN) are
+  read through the TLB with ordinary faults; an EPC operand is translated by a translation-only
+  page walk (`env->sgx_xlate`, excp_helper.c: ordinary #PF / #GP, A/D bits set, no TLB entry) and
+  accessed physically. "Does not resolve within an EPC" and EPCM type / state errors are
+  SGX-induced #PF (P = 1, SGX[15] = 1, W/R of the access, U/S = CPL 3).
+- Flags: the helper ends with the arithmetic flags in CC_SRC (CC_OP_EFLAGS); leaves without an
+  error code keep the flags; error-code leaves set ZF / CF and clear the others as their pages say.
+- IA32_SGX_SVN_STATUS.Lock is set by the first leaf that completes without a fault and without an
+  error code (ZF = 0).
+- Non-enclave accesses to EPC pages map the abort page (all ones, writes dropped; cputlb.c
+  `tlb_set_page_sgx_abort`, a RAM block outside the address space so fetches have a RAM address).
+- Implemented leaves: ECREATE, EADD, EINIT, EREMOVE, EDBGRD, EDBGWR, EEXTEND, EBLOCK, EPA, ETRACK.
+- Measurement: the SECS keeps the SHA-256 state (MRENCLAVE field) and the update counter; ECREATE,
+  EADD and EEXTEND compress the 64-byte blocks of the pseudocode, EINIT finalises with the counter
+  (SHA256FINAL) - equal to SHA-256 over the concatenated blocks (ref_sgx.py computes it that way).
+- EINIT: SIGSTRUCT header / reserved checks, the event window (`SGX_UNMASKED_EVENT`), RSA-3072
+  with q1 / q2, the EPCM / initialized checks, MRENCLAVE, MRSIGNER = SHA-256(MODULUS),
+  CONTROLLED_ATTRIBUTES (EINITTOKEN_KEY), ATTRIBUTEMASK, MISCMASK, launch control (VALID = 0:
+  MRSIGNER = IA32_SGXLEPUBKEYHASH; VALID = 1: DEBUG, reserved space, CPUSVN, the CMAC of bytes
+  0-191 with the derived EINITTOKEN key, MRENCLAVE / MRSIGNER / ATTRIBUTES), commit.
+
+### 2.5 Validation (U1262)
+- `Emulator/tools/isa/ref_sgx.py` (stdlib Python, written from the SDM): AES-128 (FIPS 197),
+  AES-CMAC (RFC 4493 vectors), AES-GCM (GCM spec test case 2), SHA-256 (hashlib), RSA-3072 key
+  generation / signing with e = 3, the SIGSTRUCT / EINITTOKEN layouts, MRENCLAVE as SHA-256 over
+  the ECREATE / EADD / EEXTEND blocks, the model's key derivation. `--selftest` (suite
+  `ref_sgx_selftest`) also checks that `unicorn/tests/unit/x86_sgx_vectors.inc` equals `--cinc`.
+- Unit tests `test_x86_sgx_*` build that enclave with ENCLS and EINIT it with the Python
+  SIGSTRUCT / token: a successful EINIT and the SECS MRENCLAVE / MRSIGNER equal to the Python
+  values are an independent check of the measurement, the RSA check and the CMAC key derivation.
+
 ## 3. Our choices (platform-specific values, SDM gaps)
 
 Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
@@ -190,3 +230,14 @@ Every entry is a row of `docs/quirks.md`, section "SGX and SMX (plan 1.J.11)".
   reports the same leaf in every state).
 - IA32_SGXLEPUBKEYHASH4 / 5 (90H / 91H) in SDM 092 / 093 Vol4 ("bits 383:256 of the SHA256
   digest"): not modelled; which document defines them?
+- ECREATE MISCSELECT check (the pseudocode faults on MISCSELECT = 0; the model rejects unsupported
+  bits only).
+- ECREATE maximum size: SIZE >= 2^EDX[7:0] / 2^EDX[15:8] faults (pseudocode) although CPUID calls
+  2^EDX the maximum supported size (the model follows the pseudocode).
+- EINIT "SGX_INVALID_EINIT_ATTRIBUTE" (not in Table 41-3): the model returns SGX_INVALID_ATTRIBUTE.
+- SIGSTRUCT "Each of the 8 HASH dwords is stored in little-endian order": the model uses the FIPS
+  180-4 digest byte string for MRENCLAVE / MRSIGNER / ENCLAVEHASH.
+- SGX_TCS_LIMIT of EDBGRD: the model uses 88.
+- The key derivation function and the platform keys (root key, CR_SEAL_FUSES, CR_SGXOWNEREPOCH,
+  CR_CPUSVN, CR_REPORT_KEYID, CR_BASE_PK, Intel's LE signer hash): model placeholders - does the
+  user have an Intel document that specifies any of them?

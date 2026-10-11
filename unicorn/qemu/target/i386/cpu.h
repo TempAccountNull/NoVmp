@@ -2762,6 +2762,14 @@ bool x86_sgx_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *val);
 bool x86_sgx_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val);
 bool x86_sgx_prm_active(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+/* sgx_model.c: the access control of the TLB fill, the abort page; cputlb.c: its TLB entry */
+int x86_sgx_access(CPUX86State *env, uint64_t la, uint64_t pa, int access, int *prot);
+void *x86_sgx_abort_page(CPUX86State *env, uint64_t *ram);
+void x86_sgx_release(CPUX86State *env);
+void tlb_set_page_sgx_abort(CPUState *cpu, target_ulong vaddr, hwaddr paddr, MemTxAttrs attrs,
+                            int prot, int mmu_idx, void *host, uint64_t ram);
+#endif /* __Use_Original_Qemu (U1262) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
 /* apic_model.c: the APIC bus between engines (UC_CTL_X86_APIC_BUS / UC_CTL_X86_APIC_ID) */
 int x86_apic_join(struct uc_struct *uc, struct uc_struct *peer);  /* a uc_err */

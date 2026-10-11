@@ -109,6 +109,9 @@ DEF_HELPER_4(enqcmd, void, env, tl, tl, i32)
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
 DEF_HELPER_1(sgx_invd, void, env)
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+DEF_HELPER_1(encls, void, env)
+#endif /* __Use_Original_Qemu (U1262) */
 #if __Use_Original_Qemu != 1 /* ours (U113) */
 DEF_HELPER_1(getsec, void, env)
 DEF_HELPER_1(pconfig, void, env)

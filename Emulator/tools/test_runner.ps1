@@ -404,6 +404,9 @@ Add-PySelftest 'ref_sysmsr_selftest' 'sysmsr tools' 'ref_sysmsr.py'
 # U1170-U1199 (fredlam): FRED frame / ERETS / ERETU and LAM reference model (specification-validated)
 Add-PySelftest 'ref_fred_lam_selftest' 'fred lam tools' 'ref_fred_lam.py'
 Add-Exp 'cases_lam' 'cases_lam' 'lam expect' @( '--x86-features', '8' )
+# U1260-U1299 (agent sgx): the SGX reference model (MRENCLAVE, SIGSTRUCT RSA-3072, launch token, key
+# derivation placeholder; specification-validated) and the consistency of x86_sgx_vectors.inc
+Add-PySelftest 'ref_sgx_selftest' 'sgx tools' 'ref_sgx.py'
 # U907: the architectural PMU MSRs as storage, with a CPUID profile that enumerates a version-4 PMU
 # (cpuid_sysmsr_pmu.txt: the i5-13600K capture with leaf 0AH replaced), non-strict (MAX features)
 Add-Exp 'cases_sysmsr_pmu' 'cases_sysmsr_pmu' 'sysmsr expect' @( '--cpuid', ( Join-Path $D 'cpuid_sysmsr_pmu.txt' ), '--no-strict' )

@@ -508,6 +508,12 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
            addr, is_write1, is_user, env->eip);
 #endif
     is_write = is_write1 & 1;
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+    /* SGX (sgx_model.c sgx_xlate): a translation-only walk for an SGX leaf's explicit operand */
+    bool sgx_xlate = env->sgx_xlate;
+
+    env->sgx_xlate = 0;
+#endif /* __Use_Original_Qemu (U1262) */
 #if __Use_Original_Qemu != 1 /* ours (U1180) */
     /*
      * NoVmp (ledger U1180): LAM (SDM 092 Vol3A 4.4.2, 4.4.3, 4.5.1) - a data address is masked
@@ -877,6 +883,34 @@ do_check_protect_pse36:
     paddr &= TARGET_PAGE_MASK;
     assert(prot & (1 << is_write1));
 
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+    /*
+     * NoVmp (ledger U1262): Intel SGX (sgx_model.c). An SGX leaf's operand walk stops here with the
+     * physical address (no TLB entry). Otherwise the SGX access control applies after the paging
+     * checks (SDM 092 Vol3D 37.5, 38.3, 38.5): a non-enclave access to an EPC page gets the abort
+     * page; enclave accesses are checked against the EPCM (U1263).
+     */
+    if (sgx_xlate) {
+        env->sgx_xlate_pa = paddr | (addr & ~TARGET_PAGE_MASK);
+        return 0;
+    }
+    if (env->sgx) {
+        uint64_t sgx_ram;
+        void *sgx_host;
+
+        switch (x86_sgx_access(env, addr, paddr, is_write1, &prot)) {
+        case 1:
+            sgx_host = x86_sgx_abort_page(env, &sgx_ram);
+            tlb_set_page_sgx_abort(cs, vaddr, paddr, cpu_get_mem_attrs(env), prot, mmu_idx,
+                                   sgx_host, sgx_ram);
+            return 0;
+        case -1:
+            return 1;
+        default:
+            break;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1262) */
     tlb_set_page_with_attrs(cs, vaddr, paddr, cpu_get_mem_attrs(env),
                             prot, mmu_idx, page_size);
     return 0;

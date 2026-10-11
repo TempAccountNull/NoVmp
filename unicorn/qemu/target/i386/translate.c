@@ -9283,6 +9283,24 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
          * no model reports SGX (CPUID.7.0:EBX[2] / 12H.0:EAX.SGX1 = 0), the
          * first check of each, and ENCLV also needs VMX operation.
          */
+#if __Use_Original_Qemu != 1 /* ours (U1262) */
+        /*
+         * NoVmp (ledger U1262): ENCLS, NP 0F 01 CF (SDM 092 Vol3D p. 41-8): #UD without the SGX model
+         * (unchanged) and with LOCK / 66 / F2 / F3 (VEX cannot encode 0F 01); REX, segment and
+         * address-size overrides are ignored. Everything else is decided at run time by
+         * helper_encls (sgx_model.c), which ends with the arithmetic flags in CC_SRC.
+         */
+        case 0xcf: /* encls */
+            if (!(s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_SGX)
+                || (s->prefix & (PREFIX_LOCK | PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_encls(tcg_ctx, cpu_env);
+            set_cc_op(s, CC_OP_EFLAGS);
+            break;
+#endif /* __Use_Original_Qemu (U1262) */
         case 0xc5: /* pconfig */
             if (!(s->cpuid_7_0_edx_features & CPUID_7_0_EDX_PCONFIG)
                 || (s->prefix & (PREFIX_LOCK | PREFIX_DATA

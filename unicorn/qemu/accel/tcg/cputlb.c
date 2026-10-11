@@ -1030,6 +1030,33 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
     tlb_set_page_full(cpu, mmu_idx, vaddr, &full);
 }
 
+#if defined(TARGET_I386) && __Use_Original_Qemu != 1 /* ours (U1262) */
+/*
+ * NoVmp (ledger U1262): an Intel SGX abort-page entry (target/i386/sgx_model.c x86_sgx_abort_page):
+ * a non-enclave access to the EPC page at 'paddr' reads (and fetches) the all-ones page 'host'
+ * (RAM block 'ram') and its writes are dropped (TLB_DISCARD_WRITE). Unicorn's memory hooks and
+ * mapping checks still see 'paddr'. One 4 KB entry (the abort page is one page).
+ */
+void tlb_set_page_sgx_abort(CPUState *cpu, target_ulong vaddr, hwaddr paddr, MemTxAttrs attrs,
+                            int prot, int mmu_idx, void *host, uint64_t ram)
+{
+    CPUArchState *env = cpu->env_ptr;
+    target_ulong vaddr_page = vaddr & TARGET_PAGE_MASK;
+    uintptr_t index;
+    CPUTLBEntry *te;
+
+    tlb_set_page_with_attrs(cpu, vaddr_page, paddr & TARGET_PAGE_MASK, attrs, prot, mmu_idx,
+                            TARGET_PAGE_SIZE);
+    index = tlb_index(env, mmu_idx, vaddr_page);
+    te = tlb_entry(env, mmu_idx, vaddr_page);
+    te->addend = (uintptr_t)host - vaddr_page;
+    env_tlb(env)->d[mmu_idx].fulltlb[index].xlat_section = (hwaddr)ram - vaddr_page;
+    if (te->addr_write != (target_ulong)-1) {
+        te->addr_write = (te->addr_write & ~(target_ulong)TLB_NOTDIRTY) | TLB_DISCARD_WRITE;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1262) */
 /* Add a new TLB entry, but without specifying the memory
  * transaction attributes to be used.
  */
