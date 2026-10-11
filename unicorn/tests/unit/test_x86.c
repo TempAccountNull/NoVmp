@@ -32326,6 +32326,155 @@ static void test_x86_idterr_cs64(void)
 }
 /* ---- end U1400-U1409 (idterr_) ---- */
 
+/*
+ * ---- NoVmp U1300-U1399: VMX (vmx_) ----
+ * SDM 325462-092 Vol3C chapters 26-33, Vol3D Appendices A-C; design and capability set (our choice):
+ * docs/vmx.md. Expected values are specification-validated (independent SDM reading; the VMX
+ * instructions need CPL 0, which the i5-13600K test host cannot run from user mode).
+ */
+#define VMX_DATA 0x200000
+
+/* a 64-bit CPL0 engine (pc_ helpers) with the UC_CTL_X86_FEATURES mask 'feat' */
+static void vmx_open(PcCtx *c, int feat)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c->uc, feat));
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, VMX_DATA, 0x100000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+/* RDMSR by the CPU: the vector or -1, the value in *v */
+static int vmx_rdmsr(PcCtx *c, uint32_t msr, uint64_t *v)
+{
+    int r;
+
+    pc_set(c, UC_X86_REG_RCX, msr);
+    pc_set(c, UC_X86_REG_RAX, 0);
+    pc_set(c, UC_X86_REG_RDX, 0);
+    r = pc_run(c, "\x0f\x32", 2);
+    *v = (pc_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)pc_get(c, UC_X86_REG_RAX);
+    return r;
+}
+
+/* WRMSR by the CPU: the vector or -1 */
+static int vmx_wrmsr(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RCX, msr);
+    pc_set(c, UC_X86_REG_RAX, (uint32_t)v);
+    pc_set(c, UC_X86_REG_RDX, v >> 32);
+    return pc_run(c, "\x0f\x30", 2);
+}
+
+/* MOV CR4, RAX by the CPU: the vector or -1 */
+static int vmx_mov_cr4(PcCtx *c, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RAX, v);
+    return pc_run(c, "\x0f\x22\xe0", 3);
+}
+
+/*
+ * U1301: UC_X86_FEATURE_VMX. Default off: CPUID.01H:ECX.VMX[5] = 0, CR4.VMXE reserved (#GP(0)), the
+ * capability MSRs 480H-493H #GP(0), IA32_FEATURE_CONTROL bit 2 reserved (Vol4 3AH: "If
+ * CPUID.01H:ECX[5] = 1"). With the opt-in: VMX[5] = 1, SVM (80000001H:ECX[2]) withdrawn, CR4.VMXE
+ * settable, the capability MSRs read the values of docs/vmx.md (Appendix A) and are read-only
+ * (#GP(0) on WRMSR, UC_ERR_EXCEPTION through the API); 493H does not exist (EXIT_CTLS[63] = 0);
+ * IA32_FEATURE_CONTROL bits 0 and 2 writable until locked. VMX together with FRED: UC_ERR_ARG.
+ */
+static void test_x86_vmx_optin(void)
+{
+    static const struct {
+        uint32_t msr;
+        uint64_t val;
+    } caps[] = {
+        {0x480, 0x01d8100000000001ull},     /* BASIC */
+        {0x481, 0x000000ff00000016ull},     /* PINBASED */
+        {0x482, 0xfffbfffe0401e172ull},     /* PROCBASED */
+        {0x483, 0x007fffff00036dffull},     /* EXIT */
+        {0x484, 0x0000d3ff000011ffull},     /* ENTRY */
+        {0x485, 0x0000000060040065ull},     /* MISC */
+        {0x486, 0x0000000080000021ull},     /* CR0_FIXED0 */
+        {0x487, 0x00000000ffffffffull},     /* CR0_FIXED1 */
+        {0x488, 0x0000000000002000ull},     /* CR4_FIXED0 */
+        {0x48a, 0x000000000000003eull},     /* VMCS_ENUM: highest index 31 (203EH) */
+        {0x48b, 0x0e517bff00000000ull},     /* PROCBASED2 */
+        {0x48c, 0x00000f01067341c1ull},     /* EPT_VPID_CAP */
+        {0x48d, 0x000000ff00000016ull},     /* TRUE_PINBASED */
+        {0x48e, 0xfffbfffe04006172ull},     /* TRUE_PROCBASED */
+        {0x48f, 0x007fffff00036dfbull},     /* TRUE_EXIT */
+        {0x490, 0x0000d3ff000011fbull},     /* TRUE_ENTRY */
+        {0x491, 0x0000000000000001ull},     /* VMFUNC */
+        {0x492, 0x0000000000000241ull},     /* PROCBASED3: LOADIWKEY, MSR-list, PBNDKB (MAX model) */
+    };
+    PcCtx c;
+    uc_engine *uc;
+    uint32_t r[4];
+    uint64_t v, fixed1, cr4;
+    uc_x86_msr m;
+    int i, mask;
+
+    /* default off */
+    vmx_open(&c, 0);
+    pc_cpuid(&c, 1, 0, r);
+    TEST_CHECK(!(r[2] & (1u << 5)));
+    TEST_CHECK(vmx_mov_cr4(&c, pc_get(&c, UC_X86_REG_CR4) | 0x2000) == 13);
+    for (i = 0x480; i <= 0x493; i++) {
+        TEST_CHECK(vmx_rdmsr(&c, i, &v) == 13);
+        TEST_MSG("MSR %x readable without VMX", i);
+    }
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == 13);           /* bit 2 needs CPUID.01H:ECX[5] */
+    OK(uc_close(c.uc));
+
+    /* VMX together with FRED is refused until the FRED-VMX stage */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    TEST_CHECK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_VMX));
+    OK(uc_ctl_get_x86_features(uc, &mask));
+    TEST_CHECK(mask == UC_X86_FEATURE_VMX);
+    OK(uc_close(uc));
+
+    vmx_open(&c, UC_X86_FEATURE_VMX);
+    pc_cpuid(&c, 1, 0, r);
+    TEST_CHECK(r[2] & (1u << 5));
+    pc_cpuid(&c, 0x80000001, 0, r);
+    TEST_CHECK(!(r[2] & (1u << 2)));                    /* SVM withdrawn */
+    for (i = 0; i < (int)(sizeof(caps) / sizeof(caps[0])); i++) {
+        TEST_CHECK(vmx_rdmsr(&c, caps[i].msr, &v) == -1 && v == caps[i].val);
+        TEST_MSG("MSR %x = %llx, expected %llx", caps[i].msr, (unsigned long long)v,
+                 (unsigned long long)caps[i].val);
+        TEST_CHECK(vmx_wrmsr(&c, caps[i].msr, v) == 13);
+        m.rid = caps[i].msr;
+        m.value = v;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    }
+    TEST_CHECK(vmx_rdmsr(&c, 0x493, &v) == 13);         /* EXIT_CTLS2: EXIT_CTLS[63] = 0 */
+    /* CR4_FIXED1: VMXE among the bits; a bit outside it is reserved for MOV to CR4 */
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &fixed1) == -1 && (fixed1 & 0x2000));
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    TEST_CHECK((cr4 & ~fixed1) == 0);
+    for (i = 0; i < 64; i++) {
+        if (!((fixed1 >> i) & 1)) {
+            TEST_CHECK(vmx_mov_cr4(&c, cr4 | (1ull << i)) == 13);
+            TEST_MSG("CR4 bit %d outside CR4_FIXED1 accepted", i);
+        }
+    }
+    TEST_CHECK(vmx_mov_cr4(&c, cr4 | 0x2000) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == (cr4 | 0x2000));
+    TEST_CHECK(vmx_mov_cr4(&c, cr4) == -1);              /* outside VMX operation VMXE may be cleared */
+    /* IA32_FEATURE_CONTROL: reset 0; lock + VMX outside SMX; locked: #GP */
+    TEST_CHECK(vmx_rdmsr(&c, 0x3a, &v) == -1 && v == 0);
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 0x8) == 13);          /* bit 3 reserved */
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 0x5) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x3a, &v) == -1 && v == 5);
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 0x7) == 13);
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U1300-U1399 (vmx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -32748,4 +32897,5 @@ TEST_LIST = {
     {"test_x86_idterr_vector64", test_x86_idterr_vector64},
     {"test_x86_idterr_ext64", test_x86_idterr_ext64},
     {"test_x86_idterr_cs64", test_x86_idterr_cs64},
+    {"test_x86_vmx_optin", test_x86_vmx_optin},
     {NULL, NULL}};

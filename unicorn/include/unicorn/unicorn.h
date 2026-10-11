@@ -915,6 +915,11 @@ typedef enum uc_control_type {
     // SENTER / SEXIT / SMCTRL / WAKEUP end in their #GP(0) (no chipset, not in authenticated-code
     // mode, no measured environment). Default off: CAPABILITIES reports 0 and every other leaf is
     // #UD (U113).
+    // NoVmp U1301: UC_X86_FEATURE_VMX: Intel VMX (SDM 092 Vol3C chapters 26-33, Vol3D Appendices
+    // A-C; docs/vmx.md): CPUID.01H:ECX.VMX[5], CR4.VMXE, IA32_FEATURE_CONTROL bit 2, the VMX
+    // capability MSRs 480H-492H (the model's capability set, docs/vmx.md); CPUID.80000001H:ECX.SVM
+    // is withdrawn. Only on an Intel 64 CPU model (GenuineIntel with CPUID.80000001H:EDX.LM); not
+    // together with UC_X86_FEATURE_FRED yet (UC_ERR_ARG). Default off.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
@@ -963,6 +968,7 @@ typedef enum uc_control_type {
 #define UC_X86_FEATURE_LAM 8       // linear-address masking: CPUID LAM, CR3[62:61], CR4[28] (U1180)
 #define UC_X86_FEATURE_SGX 16      // Intel SGX: CPUID SGX/SGX_LC/12H, EPC, ENCLS, ENCLU (U1261)
 #define UC_X86_FEATURE_SMX 32      // SMX without a TXT chipset: GETSEC leaves 2-8 (U1267)
+#define UC_X86_FEATURE_VMX 0x40000000  // VMX (U1301; bit 30, the top of the free range)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)

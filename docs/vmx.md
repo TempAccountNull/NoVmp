@@ -59,10 +59,10 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 2 - opt-in and capability reporting
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| CPUID.01H:ECX.VMX[5] | Vol3C 26.6 p. 26-2; Vol2A CPUID Table 3-10 | `cpu.c` x86_cpu_realizefn (UC_X86_FEATURE_VMX) | planned |
-| CR4.VMXE (bit 13) settable only with VMX | Vol3A 2.5 p. 2-20; Vol3C 26.7 p. 26-3 | `cpu.h` cr4_reserved_bits | planned |
-| IA32_FEATURE_CONTROL lock / bit 1 (VMX in SMX) / bit 2 (VMX outside SMX), reset 0 | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `misc_helper.c` msr_present / msr_write_ok (existing U905 rules, enabled by CPUID.VMX) | planned |
-| capability MSRs 480H-492H: values above, R/O (#GP on WRMSR), absent without VMX (#GP on RDMSR), presence conditions of Table 2-2 | Vol3D Appendix A pp. A-1 to A-9; Vol4 Table 2-2 pp. 2-46 to 2-48 | `vmx_helper.c` x86_vmx_cap_msr; `misc_helper.c` msr_present / helper_rdmsr / msr_write_ok | planned |
+| CPUID.01H:ECX.VMX[5] | Vol3C 26.6 p. 26-2; Vol2A CPUID Table 3-10 | `cpu.c` x86_cpu_realizefn (UC_X86_FEATURE_VMX) | done (U1301) |
+| CR4.VMXE (bit 13) settable only with VMX | Vol3A 2.5 p. 2-20; Vol3C 26.7 p. 26-3 | `cpu.h` cr4_reserved_bits | done (U1301) |
+| IA32_FEATURE_CONTROL lock / bit 1 (VMX in SMX) / bit 2 (VMX outside SMX), reset 0 | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `misc_helper.c` msr_present / msr_write_ok (existing U905 rules, enabled by CPUID.VMX) | done (U1301) |
+| capability MSRs 480H-492H: values above, R/O (#GP on WRMSR), absent without VMX (#GP on RDMSR), presence conditions of Table 2-2 | Vol3D Appendix A pp. A-1 to A-9; Vol4 Table 2-2 pp. 2-46 to 2-48 | `vmx_helper.c` x86_vmx_msr_exists / x86_vmx_msr_read; `misc_helper.c` msr_present / helper_rdmsr / msr_write_ok | done (U1301) |
 
 ### Stage 3 - VMX operation, VMCS lifecycle and access
 | requirement | SDM 092 | code | status |
@@ -129,7 +129,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 ### Stage 8 - deferred items of other agents
 | requirement | SDM 092 | code | status |
 |---|---|---|---|
-| FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58] | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.6, 30.2.2, 30.2.4; Vol3D A.1 p. A-2 | - | planned (until then FRED and VMX are offered together without the FRED-VMX controls; see "Not modelled") |
+| FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58] | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.6, 30.2.2, 30.2.4; Vol3D A.1 p. A-2 | - | planned (until then the opt-ins UC_X86_FEATURE_VMX and UC_X86_FEATURE_FRED are refused together, UC_ERR_ARG: a FRED processor must provide nested-exception support, Vol3D A.1 p. A-2) |
 | ENCLV and SGX in VMX operation (ENCLS exiting, ENCLV exiting) | Vol3D 41 (ENCLV), Vol3C 28.1.3 (ENCLS) | - | pending: agent/sgx implements SGX; ENCLV is added only after SGX is merged |
 
 ### Stage 9 - tests

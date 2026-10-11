@@ -3487,10 +3487,18 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
             /* U1170: + UC_X86_FEATURE_FRED, U1180: + UC_X86_FEATURE_LAM, U1261: + _SGX,
-               U1267: + _SMX */
+               U1267: + _SMX, U1301: + VMX */
             if (uc->init_done || (mask & ~(UC_X86_FEATURE_TSE | UC_X86_FEATURE_ITD |
                                            UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM |
-                                           UC_X86_FEATURE_SGX | UC_X86_FEATURE_SMX))) {
+                                           UC_X86_FEATURE_SGX | UC_X86_FEATURE_SMX |
+                                           UC_X86_FEATURE_VMX))) {
+                err = UC_ERR_ARG;
+            } else if ((mask & UC_X86_FEATURE_VMX) && (mask & UC_X86_FEATURE_FRED)) {
+                /*
+                 * U1301: "Any processor that supports FRED transitions will provide VMX
+                 * nested-exception support" (SDM 092 Vol3D A.1 p. A-2) with the FRED VMCS fields;
+                 * the model's FRED-VMX interactions are not implemented yet (docs/vmx.md stage 8)
+                 */
                 err = UC_ERR_ARG;
             } else {
                 uc->x86_features = mask;

@@ -1125,6 +1125,12 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         }
     }
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+    /* NoVmp (ledger U1301): the VMX capability MSRs 480H-493H (Vol4 Table 2-2 pp. 2-46 to 2-48) */
+    if (msr >= MSR_IA32_VMX_BASIC && msr <= MSR_IA32_VMX_EXIT_CTLS2_NV) {
+        return x86_vmx_msr_exists(env, msr);
+    }
+#endif /* __Use_Original_Qemu (U1301) */
     switch (msr) {
     case MSR_IA32_TSC:                      /* 05_01H; Vol3B 18.17: CPUID.01H:EDX.TSC */
         return MF_1EDX(CPUID_TSC);
@@ -1358,6 +1364,12 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
         }
     }
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+    /* the VMX capability MSRs are read-only: WRMSR #GP(0) (Vol3D Appendix A p. A-1) */
+    if (msr >= MSR_IA32_VMX_BASIC && msr <= MSR_IA32_VMX_EXIT_CTLS2_NV) {
+        return false;
+    }
+#endif /* __Use_Original_Qemu (U1301) */
     switch (msr) {
     case MSR_IA32_PLATFORM_ID_NV:
     case MSR_SMI_COUNT:
@@ -2308,6 +2320,14 @@ void helper_rdmsr(CPUX86State *env)
         return;
     }
 #endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+    /* NoVmp (ledger U1301): the VMX capability MSRs (vmx_helper.c, Vol3D Appendix A) */
+    if (x86_vmx_msr_read(env, (uint32_t)env->regs[R_ECX], &val)) {
+        env->regs[R_EAX] = (uint32_t)(val);
+        env->regs[R_EDX] = (uint32_t)(val >> 32);
+        return;
+    }
+#endif /* __Use_Original_Qemu (U1301) */
     switch ((uint32_t)env->regs[R_ECX]) {
 #if __Use_Original_Qemu != 1 /* ours (U905) */
     /* NoVmp (ledger U905): MSRs of Table 2-2 the emulator did not model */

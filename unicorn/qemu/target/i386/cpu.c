@@ -6042,6 +6042,19 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->cpuid_level = MAX(env->cpuid_level, 0x12);
     }
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+    /*
+     * NoVmp (ledger U1301, docs/vmx.md): UC_X86_FEATURE_VMX opts in to VMX: CPUID.01H:ECX.VMX[5]
+     * (SDM 092 Vol3C 26.6 p. 26-2) on an Intel 64 model (GenuineIntel, CPUID.80000001H:EDX.LM; the
+     * model implements the Intel 64 VMX architecture only). An Intel processor does not report SVM
+     * (CPUID.80000001H:ECX[2], reserved on Intel): the model's SVM bit is withdrawn (our choice).
+     */
+    if ((uc->x86_features & UC_X86_FEATURE_VMX) && IS_INTEL_CPU(env) &&
+        (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM)) {
+        env->features[FEAT_1_ECX] |= CPUID_EXT_VMX;
+        env->features[FEAT_8000_0001_ECX] &= ~CPUID_EXT3_SVM;
+    }
+#endif /* __Use_Original_Qemu (U1301) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

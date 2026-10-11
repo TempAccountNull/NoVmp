@@ -3360,6 +3360,25 @@ static inline target_ulong x86_lam_mask(CPUX86State *env, target_ulong a)
 }
 
 #endif /* __Use_Original_Qemu (U1180) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+/*
+ * NoVmp (ledger U1301, docs/vmx.md): VMX as the CPU reports it - CPUID.01H:ECX.VMX[5] of the model
+ * (the UC_X86_FEATURE_VMX opt-in), hidden by a strict UC_CTL_X86_CPUID profile (SDM 092 Vol3C 26.6)
+ */
+#define MSR_IA32_VMX_PROCBASED_CTLS3_NV 0x00000492
+#define MSR_IA32_VMX_EXIT_CTLS2_NV      0x00000493
+
+static inline bool x86_vmx_cpuid(CPUX86State *env)
+{
+    return (env->features[FEAT_1_ECX] & CPUID_EXT_VMX) &&
+           (x86_cpuid_profile_mask(env, 1, 0, 2) & CPUID_EXT_VMX);
+}
+
+/* vmx_helper.c */
+bool x86_vmx_msr_exists(CPUX86State *env, uint32_t msr);
+bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val);
+int x86_vmx_field_slot(CPUX86State *env, uint64_t enc, int *high);
+#endif /* __Use_Original_Qemu (U1301) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;
@@ -3425,6 +3444,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
         reserved_bits &= ~(uint64_t)CR4_LAM_SUP_MASK;
     }
 #endif /* __Use_Original_Qemu (U1180) */
+#if __Use_Original_Qemu != 1 /* ours (U1301) */
+    /* CR4.VMXE (bit 13) with CPUID.01H:ECX.VMX (SDM 092 Vol3A 2.5 p. 2-20, Vol3C 26.7 p. 26-3) */
+    if (x86_vmx_cpuid(env)) {
+        reserved_bits &= ~(uint64_t)CR4_VMXE_MASK;
+    }
+#endif /* __Use_Original_Qemu (U1301) */
     return reserved_bits;
 }
 
