@@ -2124,6 +2124,22 @@ static inline target_ulong get_rsp_from_tss(CPUX86State *env, int level)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1400) */
+/*
+ * NoVmp (ledger U1400): the error code of the #GP / #NP that 64-bit IDT event delivery raises for
+ * the IDT entry itself (limit, gate type, DPL of a software interrupt, present). SDM 325462-093
+ * Vol2A INT n/INTO/INT3/INT1, Operation (p. 3-469): error_code(num,idt,ext) with idt = 1 "is
+ * (num « 3) | 2 | ext"; IA-32e-MODE (p. 3-471) passes vector_number; Vol3A 7.13 Figure 7-7
+ * (p. 7-20): the segment selector index is bits 15:3. Stock QEMU reported intno * 16 + 2, the
+ * byte offset of the 16-byte gate (Vol3A 7.14.1 p. 7-21 "the IDT index is formed by scaling the
+ * interrupt vector by 16" locates the entry; it does not define the error code).
+ */
+static inline int idt_vector_error_code(int intno, int ext)
+{
+    return (intno << 3) | 2 | ext;
+}
+
+#endif /* __Use_Original_Qemu (U1400) */
 /* 64 bit interrupt */
 static void do_interrupt64(CPUX86State *env, int intno, int is_int,
                            int error_code, target_ulong next_eip, int is_hw)
@@ -2147,7 +2163,11 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
 
     dt = &env->idt;
     if (intno * 16 + 15 > dt->limit) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0D_GPF, intno * 16 + 2);
+#else /* ours (U1400) */
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, 0));
+#endif /* __Use_Original_Qemu (U1400) */
     }
     ptr = dt->base + intno * 16;
     e1 = cpu_ldl_kernel(env, ptr);
@@ -2160,18 +2180,31 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     case 15: /* 386 trap gate */
         break;
     default:
+#if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0D_GPF, intno * 16 + 2);
+#else /* ours (U1400) */
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, 0));
+#endif /* __Use_Original_Qemu (U1400) */
         break;
     }
     dpl = (e2 >> DESC_DPL_SHIFT) & 3;
     cpl = env->hflags & HF_CPL_MASK;
     /* check privilege if software int */
     if (is_int && dpl < cpl) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0D_GPF, intno * 16 + 2);
+#else /* ours (U1400) */
+        /* error_code(vector_number,1,0): EXT is 0 for INT n / INT3 / INTO (p. 3-471) */
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, 0));
+#endif /* __Use_Original_Qemu (U1400) */
     }
     /* check valid bit */
     if (!(e2 & DESC_P_MASK)) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1400) */
         raise_exception_err(env, EXCP0B_NOSEG, intno * 16 + 2);
+#else /* ours (U1400) */
+        raise_exception_err(env, EXCP0B_NOSEG, idt_vector_error_code(intno, 0));
+#endif /* __Use_Original_Qemu (U1400) */
     }
     selector = e1 >> 16;
     offset = ((target_ulong)e3 << 32) | (e2 & 0xffff0000) | (e1 & 0x0000ffff);
