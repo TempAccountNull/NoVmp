@@ -34153,6 +34153,275 @@ static void test_x86_vmx_lam_cr3(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1312: prefixes on 0F 01 C1 VMCALL, C2 VMLAUNCH, C3 VMRESUME, C4 VMXOFF (PROVISIONAL until VMX
+ * hardware confirms it; notes\vmx_prefix_lam_audit_2026-10-11.md). LOCK: #UD (SDM 093 Vol2A LOCK
+ * p. 3-565); REX: ignored (Vol2A 2.2.1 p. 2-8); F2 / F3 / 66 / 67 / segment overrides: reserved
+ * (Vol2A 2.1.1 p. 2-2; Vol2D Table A-6 p. A-18, blank 66 / F2 / F3 cells), resolved by the Intel
+ * VT-x specification C97063-002 ch. 7 "Use of Prefixes" (pp. 7-4, 7-10, 7-24): LOCK / REP / 66 #UD,
+ * segment overrides / 67 / REX ignored. The prefix #UD is a decode fault (Vol3A Table 7-2) before the
+ * CPL #GP(0) and before the VM exit (Vol3C 28.1.1); the VM-exit instruction length counts the
+ * prefixes (30.2.5).
+ */
+static const struct {
+    char b;
+    int ud;
+} vmx_px[] = {
+    {'\xf0', 1}, {'\xf2', 1}, {'\xf3', 1}, {'\x66', 1}, {'\x2e', 0}, {'\x36', 0},
+    {'\x3e', 0}, {'\x26', 0}, {'\x64', 0}, {'\x65', 0}, {'\x67', 0}, {'\x40', 0},
+    {'\x41', 0}, {'\x44', 0}, {'\x47', 0}, {'\x48', 0}, {'\x4f', 0},
+};
+#define VMX_PX_N (sizeof(vmx_px) / sizeof(vmx_px[0]))
+
+/* 'pfx' (n bytes) + 0F 01 'op' into 'buf': the length */
+static size_t vmx_px_code(char *buf, const char *pfx, size_t n, char op)
+{
+    memcpy(buf, pfx, n);
+    buf[n] = '\x0f';
+    buf[n + 1] = '\x01';
+    buf[n + 2] = op;
+    return n + 3;
+}
+
+/* 'k' 2E prefixes + VMCALL */
+static size_t vmx_px_long(char *buf, size_t k)
+{
+    memset(buf, 0x2e, k);
+    buf[k] = '\x0f';
+    buf[k + 1] = '\x01';
+    buf[k + 2] = '\xc1';
+    return k + 3;
+}
+
+/* the flags of the last VMX instruction run by pc_run */
+static uint64_t vmx_px_fl(PcCtx *c)
+{
+    return pc_get(c, UC_X86_REG_RFLAGS) & VMX_FLAGS;
+}
+
+/*
+ * U1312: VMX root operation, CPL 0 (VMCS A launched, VMCS B clear): every prefix of the table on
+ * VMCALL (VMfailValid 1), VMLAUNCH of A (error 4), VMRESUME of B (error 5) and VMXOFF (VMsucceed,
+ * VMXON again) - #UD for LOCK / F2 / F3 / 66, the unprefixed outcome with RIP after the prefixed
+ * instruction otherwise; REX not directly before 0F (48 F3, F3 48) and 66 + REX.W (unresolved cell,
+ * provisional) #UD; 12 x 2E + VMCALL (15 bytes) executes, 13 x 2E (16 bytes) is #GP(0).
+ */
+static void test_x86_vmx_prefix_root(void)
+{
+    PcCtx c;
+    uint64_t fl;
+    char code[24];
+    size_t i, n;
+    int r;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    for (i = 0; i < VMX_PX_N; i++) {
+        TEST_CASE_("prefix %02x", (unsigned)(uint8_t)vmx_px[i].b);
+        TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+        n = vmx_px_code(code, &vmx_px[i].b, 1, '\xc1');
+        r = pc_run(&c, code, n);
+        if (vmx_px[i].ud) {
+            TEST_CHECK(r == 6);
+        } else {
+            TEST_CHECK(r == -1);
+            vmx_check_failvalid(&c, vmx_px_fl(&c), 1);
+        }
+        n = vmx_px_code(code, &vmx_px[i].b, 1, '\xc2');
+        r = pc_run(&c, code, n);
+        if (vmx_px[i].ud) {
+            TEST_CHECK(r == 6);
+        } else {
+            TEST_CHECK(r == -1);
+            vmx_check_failvalid(&c, vmx_px_fl(&c), 4);
+        }
+        TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+        n = vmx_px_code(code, &vmx_px[i].b, 1, '\xc3');
+        r = pc_run(&c, code, n);
+        if (vmx_px[i].ud) {
+            TEST_CHECK(r == 6);
+        } else {
+            TEST_CHECK(r == -1);
+            vmx_check_failvalid(&c, vmx_px_fl(&c), 5);
+        }
+        n = vmx_px_code(code, &vmx_px[i].b, 1, '\xc4');
+        r = pc_run(&c, code, n);
+        if (vmx_px[i].ud) {
+            TEST_CHECK(r == 6);
+        } else {
+            TEST_CHECK(r == -1 && vmx_px_fl(&c) == 0);
+            TEST_CHECK(pc_run(&c, "\x0f\x01\xc1", 3) == 6);     /* VMX operation left */
+            TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+        }
+    }
+    TEST_CASE_(NULL);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(pc_run(&c, "\x48\xf3\x0f\x01\xc1", 5) == 6);
+    TEST_CHECK(pc_run(&c, "\xf3\x48\x0f\x01\xc1", 5) == 6);
+    TEST_CHECK(pc_run(&c, "\x66\x48\x0f\x01\xc1", 5) == 6);     /* unresolved cell: PROVISIONAL */
+    n = vmx_px_long(code, 12);
+    TEST_CHECK(n == 15 && pc_run(&c, code, n) == -1);
+    vmx_check_failvalid(&c, vmx_px_fl(&c), 1);
+    n = vmx_px_long(code, 13);
+    TEST_CHECK(n == 16 && pc_run(&c, code, n) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1312: VMX non-root operation, exception bitmap #UD and #GP: every prefix of the table on the four
+ * instructions - #UD (VM exit 0, interruption information 80000306H) for LOCK / F2 / F3 / 66, else
+ * the unconditional VM exit (18 VMCALL, 20 VMLAUNCH, 24 VMRESUME, 26 VMXOFF) with the prefixed length;
+ * 48 F3 / F3 48 / 66 48 + VMCALL #UD; 15 bytes: exit 18, length 15; 16 bytes: #GP(0). Compatibility
+ * mode (guest CS.L = 0): 48 0F 01 C1 is DEC EAX + VMCALL (exit 18, length 3, RIP after the DEC);
+ * VMXOFF, VMLAUNCH, VMRESUME #UD there (Vol3C 33.3 pp. 33-15, 33-27).
+ */
+static void vmx_px_guest(PcCtx *c, const char *code, size_t n, uint32_t reason)
+{
+    vmx_resume_regs(c, code, n, 5, 0, 0, 0);
+    if (reason) {
+        vmx_exit_is(c, reason, 0, (uint32_t)n);
+    } else {
+        TEST_CHECK(vmx_r(c, 0x4402) == 0 && vmx_r(c, 0x4404) == 0x80000306u);
+        TEST_MSG("exit %llu info %llx", (unsigned long long)vmx_r(c, 0x4402),
+                 (unsigned long long)vmx_r(c, 0x4404));
+    }
+}
+
+static void test_x86_vmx_prefix_guest(void)
+{
+    static const char ops[4] = {'\xc1', '\xc2', '\xc3', '\xc4'};
+    static const uint32_t reason[4] = {18, 20, 24, 26};
+    PcCtx c;
+    uint64_t fl;
+    char code[24];
+    size_t i, j, n;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x4004, (1u << 6) | (1u << 13));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    for (j = 0; j < 4; j++) {
+        n = vmx_px_code(code, "", 0, ops[j]);
+        vmx_px_guest(&c, code, n, reason[j]);
+        for (i = 0; i < VMX_PX_N; i++) {
+            TEST_CASE_("op %02x prefix %02x", (unsigned)(uint8_t)ops[j], (unsigned)(uint8_t)vmx_px[i].b);
+            n = vmx_px_code(code, &vmx_px[i].b, 1, ops[j]);
+            vmx_px_guest(&c, code, n, vmx_px[i].ud ? 0 : reason[j]);
+        }
+        TEST_CASE_(NULL);
+    }
+    vmx_px_guest(&c, "\x48\xf3\x0f\x01\xc1", 5, 0);
+    vmx_px_guest(&c, "\xf3\x48\x0f\x01\xc1", 5, 0);
+    vmx_px_guest(&c, "\x66\x48\x0f\x01\xc1", 5, 0);              /* unresolved cell: PROVISIONAL */
+    n = vmx_px_long(code, 12);
+    vmx_px_guest(&c, code, n, 18);
+    n = vmx_px_long(code, 13);
+    vmx_resume_regs(&c, code, n, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000b0du && vmx_r(&c, 0x4406) == 0);
+    /* compatibility mode */
+    vmx_w(&c, 0x4816, 0xc09b);
+    vmx_resume_regs(&c, "\x48\x0f\x01\xc1", 4, 5, 0, 0, 0);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RAX) == 4);                /* before VMREAD changes RAX */
+    vmx_exit_is(&c, 18, 0, 3);
+    TEST_CHECK(vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    vmx_px_guest(&c, "\x0f\x01\xc1", 3, 18);
+    vmx_px_guest(&c, "\x0f\x01\xc2", 3, 0);
+    vmx_px_guest(&c, "\x0f\x01\xc3", 3, 0);
+    vmx_px_guest(&c, "\x0f\x01\xc4", 3, 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1312: outside VMX operation (CR4.VMXE = 1, no VMXON) every form is #UD; positive controls of
+ * the same opcode row with F2 / F3: RDMSRLIST / WRMSRLIST (F2 / F3 0F 01 C6, RCX = 0: complete) and,
+ * with CR4.FRED = 1, ERETS / ERETU (F2 / F3 0F 01 CA: a frame with RFLAGS bit 1 clear, #GP(0)) - the
+ * 66 row has no modelled neighbour (66 0F 01 CC TDCALL / CF SEAMCALL: TDX, plan 1.J.13). VMX root
+ * operation at CPL 3: #UD for LOCK / F2 / F3 / 66, else #GP(0). APX with VMX (REX2 + 0F 01 C1 is an
+ * unresolved cell): the two opt-ins are refused together; without VMX, D5 80 01 C1 is #UD.
+ */
+static void test_x86_vmx_prefix_misc(void)
+{
+    static const char ops[4] = {'\xc1', '\xc2', '\xc3', '\xc4'};
+    uint64_t gdt[5] = {0, 0x00af9b000000ffffull, 0x00cf93000000ffffull, 0x00cff3000000ffffull,
+                       0x00affb000000ffffull};
+    uint64_t frame[5], fl, at;
+    uc_x86_mmr gdtr = {0, VMX_GDT, sizeof(gdt) - 1, 0};
+    char code[24];
+    size_t i, j, n;
+    PcCtx c;
+
+    vmx_root_open_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED);
+    for (j = 0; j < 4; j++) {
+        n = vmx_px_code(code, "", 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);
+        for (i = 0; i < VMX_PX_N; i++) {
+            n = vmx_px_code(code, &vmx_px[i].b, 1, ops[j]);
+            TEST_CHECK(pc_run(&c, code, n) == 6);
+            TEST_MSG("outside VMX: op %02x prefix %02x", (unsigned)(uint8_t)ops[j],
+                     (unsigned)(uint8_t)vmx_px[i].b);
+        }
+    }
+    pc_set(&c, UC_X86_REG_RCX, 0);
+    pc_set(&c, UC_X86_REG_RSI, VMX_SCRATCH);
+    pc_set(&c, UC_X86_REG_RDI, VMX_SCRATCH + 0x100);
+    TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xc6", 4) == -1);        /* RDMSRLIST */
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xc6", 4) == -1);        /* WRMSRLIST */
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | (1ull << 32));
+    pc_set(&c, UC_X86_REG_RSP, VMX_SCRATCH + 0x200);
+    TEST_CHECK(pc_run(&c, "\xf2\x0f\x01\xca", 4) == 13);        /* ERETS */
+    TEST_CHECK(pc_run(&c, "\xf3\x0f\x01\xca", 4) == 13);        /* ERETU */
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) & ~(1ull << 32));
+    /* VMX root operation at CPL 3 (user pages, CPL3 code / stack descriptors, IRETQ) */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    vmx_wq(&c, VMX_PT, (VMX_PT + 0x1000) | 7);
+    vmx_wq(&c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 7);
+    vmx_wq(&c, VMX_PT + 0x2000, 0x87);
+    vmx_wq(&c, VMX_PT + 0x2008, 0x200000 | 0x87);
+    pc_set(&c, UC_X86_REG_CR3, VMX_PT);
+    OK(uc_mem_write(c.uc, VMX_GDT, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    at = c.pc;
+    frame[0] = at + 0x40;
+    frame[1] = 0x23;
+    frame[2] = 2;
+    frame[3] = VMX_SCRATCH + 0xf00;
+    frame[4] = 0x1b;
+    OK(uc_mem_write(c.uc, VMX_SCRATCH + 0x800, frame, sizeof(frame)));
+    pc_set(&c, UC_X86_REG_RSP, VMX_SCRATCH + 0x800);
+    OK(uc_mem_write(c.uc, at, "\x48\xcf", 2));
+    OK(uc_emu_start(c.uc, at, at + 0x40, 0, 2));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == at + 0x40 && (pc_get(&c, UC_X86_REG_CS) & 3) == 3);
+    c.pc = at + 0x80;
+    for (j = 0; j < 4; j++) {
+        n = vmx_px_code(code, "", 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 13);
+        for (i = 0; i < VMX_PX_N; i++) {
+            n = vmx_px_code(code, &vmx_px[i].b, 1, ops[j]);
+            TEST_CHECK(pc_run(&c, code, n) == (vmx_px[i].ud ? 6 : 13));
+            TEST_MSG("root CPL3: op %02x prefix %02x", (unsigned)(uint8_t)ops[j],
+                     (unsigned)(uint8_t)vmx_px[i].b);
+        }
+    }
+    OK(uc_close(c.uc));
+    /* APX and VMX: refused together (either order); REX2 VMCALL without VMX: #UD */
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_apx(c.uc, UC_X86_APX_F));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_VMX));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    TEST_CHECK(pc_run(&c, "\xd5\x80\x01\xc1", 4) == 6);
+    OK(uc_close(c.uc));
+    memset(&c, 0, sizeof(c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_VMX));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_apx(c.uc, UC_X86_APX_F));
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -34596,4 +34865,7 @@ TEST_LIST = {
     {"test_x86_vmx_fred", test_x86_vmx_fred},
     {"test_x86_vmx_pending_dbg", test_x86_vmx_pending_dbg},
     {"test_x86_vmx_lam_cr3", test_x86_vmx_lam_cr3},
+    {"test_x86_vmx_prefix_root", test_x86_vmx_prefix_root},
+    {"test_x86_vmx_prefix_guest", test_x86_vmx_prefix_guest},
+    {"test_x86_vmx_prefix_misc", test_x86_vmx_prefix_misc},
     {NULL, NULL}};

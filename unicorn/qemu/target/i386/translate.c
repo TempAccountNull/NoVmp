@@ -9285,8 +9285,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U1302) */
         /*
          * NoVmp (ledger U1302, docs/vmx.md): 0F 01 C1 VMCALL, C4 VMXOFF (SDM 092 Vol3C 33.3), decoded
-         * with CPUID.01H:ECX.VMX; 66 / F2 / F3 / LOCK #UD (the SDM is silent; XED: no_refining_prefix;
-         * PROVISIONAL until the prefix audit reports, also for VMLAUNCH / VMRESUME). Every
+         * with CPUID.01H:ECX.VMX; also VMLAUNCH / VMRESUME. LOCK #UD (SDM 093 Vol2A p. 3-565); REX
+         * ignored (Vol2A 2.2.1 p. 2-8); 66 / F2 / F3 / 67 / segment overrides reserved (Vol2A 2.1.1
+         * p. 2-2, Vol2D Table A-6 p. A-18), resolved by the Intel VT-x spec C97063-002 ch. 7 "Use of
+         * Prefixes" (pp. 7-4, 7-10, 7-24): 66 / F2 / F3 #UD, segment / 67 ignored (U1312;
+         * PROVISIONAL until VMX hardware confirms it, docs/vmx.md). Every
          * other check is the helper's (VMX operation is runtime state).
          */
         case 0xc2: /* vmlaunch (U1303) */

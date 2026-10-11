@@ -138,7 +138,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1311: 19 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1312: 22 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -160,15 +160,26 @@ corrupts nothing (Vol3C 27.11.1 allows corruption; VM-instruction error 6 is the
 choice). Software that writes a VMCS region with ordinary stores changes the fields (undefined by the SDM).
 
 ### Decoding (U1302)
-With CPUID.01H:ECX.VMX the translator decodes: 0F 01 C1 VMCALL and C4 VMXOFF (66 / F2 / F3 / LOCK #UD:
-the SDM gives no prefix rule, XED decodes them only without a refining prefix; **PROVISIONAL** until
-the prefix audit reports, the same for 0F 01 C2 VMLAUNCH / C3 VMRESUME), F3 0F C7 /6 VMXON (66
+With CPUID.01H:ECX.VMX the translator decodes: 0F 01 C1 VMCALL and C4 VMXOFF (prefixes as below),
+F3 0F C7 /6 VMXON (66
 ignored, XED IGNORE66), 66 0F C7 /6 VMCLEAR, NP 0F C7 /6 VMPTRLD, NP 0F C7 /7 VMPTRST (memory forms;
 F2 / LOCK #UD), NP 0F 78 VMREAD, NP 0F 79 VMWRITE (LOCK #UD; the 66 / F2 forms keep their old decoding),
 66 0F 38 80 INVEPT and 81 INVVPID (memory only). VMLAUNCH, VMRESUME and VMFUNC follow in U1303. The
 VM-exit instruction information (30.2.5 Tables 30-9, 30-14, 30-15) and exit qualification (30.2.1, the
 displacement; RIP-relative: displacement + next RIP) of these instructions are computed by the
 translator and passed to the helpers.
+- Prefixes on 0F 01 C1 VMCALL, C2 VMLAUNCH, C3 VMRESUME, C4 VMXOFF (U1302 / U1303, sources U1312;
+  audit `notes\vmx_prefix_lam_audit_2026-10-11.md`): LOCK #UD (SDM 093 Vol2A LOCK p. 3-565); REX
+  ignored (Vol2A 2.2.1 p. 2-8); F2 / F3 / 66 / 67 and segment overrides are reserved in the SDM
+  (Vol2A 2.1.1 p. 2-2; Vol2D Table A-6 p. A-18: the 66 / F2 / F3 cells of these opcodes are blank),
+  resolved by the Intel VT-x specification C97063-002 ch. 7 "Use of Prefixes" (VMCALL p. 7-4,
+  VMLAUNCH / VMRESUME p. 7-10, VMXOFF p. 7-24; C97063-001 ch. 4 the same): F2 / F3 / 66 #UD,
+  segment overrides and 67 ignored. The #UD is a decode fault (Vol3A Table 7-2): before the CPL
+  #GP(0) in VMX root operation and before the VM exit in VMX non-root operation (Vol3C 28.1.1).
+  The VM-exit instruction length counts the prefixes (30.2.5). XED (no_refining_prefix) agrees and
+  is a labelled reference only. Status: **PROVISIONAL** until VMX hardware confirms it. Unresolved
+  cells (provisional #UD, docs/quirks.md): 66 + REX.W, and REX2 (the APX and VMX opt-ins are refused
+  together). Tests: test_x86_vmx_prefix_root / _guest / _misc.
 
 ### Not modelled / pending
 - APX together with VMX: the VM-exit extended instruction-information field (2406H) and 5-bit register
