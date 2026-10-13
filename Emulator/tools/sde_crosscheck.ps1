@@ -10,8 +10,11 @@
 # tool only: never linked into or shipped with the emulator, and it only ever runs emu-alltest (our own
 # generated snippets).
 #
-#   powershell -File Emulator\tools\sde_crosscheck.ps1 -Sde <kit>\sde.exe [-Out DIR] [-Only id,id]
+#   powershell -File Emulator\tools\sde_crosscheck.ps1 [-Sde <kit>\sde.exe] [-Out DIR] [-Only id,id]
 #       [-Lock <emulator>\buildlock.ps1 [-LockName NAME]] [-Fresh]
+# Without -Sde the kit comes from the sources root (U1411, Emulator\tools\docroot.ps1):
+#   $env:NOVMP_SOURCES_ROOT (default E:\sources)\sde-external-10.13.1-2026-07-28-win\sde.exe
+# and the script stops with a clear message when it is missing.
 #
 # One step at a time (user request 2026-10-09, the VM is shared): each pass-1 shard and each pass-2 run
 # is a separate process, started only after the previous one ended; with -Lock every step runs through
@@ -19,9 +22,10 @@
 # an incomplete one resumes after its last finished line.
 #
 # Notes
-# - SDE 10.13.1's launcher builds the pind command line without quotes: a kit path with a space
-#   ("Intel docs") fails with "Create pind process failed with code 5". The script uses the 8.3 short
-#   path of sde.exe.
+# - SDE 10.13.1's launcher builds the pind command line without quotes: a kit path with a space fails
+#   with "Create pind process failed with code 5". The default E:\sources\... path has no space and is
+#   used as is; a path with a space (-Sde or NOVMP_SOURCES_ROOT) is replaced by its 8.3 short path, and
+#   the script stops with a clear message when the volume has no 8.3 name for it.
 # - SDE still ends the process on some conditions (e.g. an AMX #UD it reports as "AMX Exception"): the
 #   shard is rerun and emu-alltest resumes after that line (recorded as "SDE ended the process").
 # - SDE executes natively whatever the host (i5-13600K) supports (SSE/AVX2/x87/...); only the
@@ -36,7 +40,7 @@
 #   the application instead of ending the process; -fp16_fast 0: SDE's exact FP16 emulation (the fast
 #   one updates MXCSR less accurately).
 param(
-	[Parameter( Mandatory = $true )][string]$Sde,
+	[string]$Sde = '',
 	[string]$Out = '',
 	[string]$Config = 'Release',
 	[string[]]$Only = @(),
@@ -54,7 +58,11 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 if ( -not $Out ) { $Out = Join-Path $Root "build\x64\$Config\tests\sde" }
 New-Item -ItemType Directory -Force $Out | Out-Null
 if ( -not ( Test-Path $Exe ) ) { throw "emu-alltest not built: $Exe" }
-$SdeShort = ( New-Object -ComObject Scripting.FileSystemObject ).GetFile( ( Resolve-Path $Sde ).Path ).ShortPath
+. ( Join-Path $PSScriptRoot 'docroot.ps1' )
+if ( -not $Sde ) { $Sde = Get-NovmpSdeExe }
+elseif ( -not ( Test-Path -LiteralPath $Sde -PathType Leaf ) ) { throw "[sde] -Sde: no such file: $Sde" }
+$SdeShort = Get-NovmpSdeLaunchPath $Sde
+Write-Host "[sde] SDE: $Sde (launched as $SdeShort); sources root $( Get-NovmpSourcesRoot )"
 $Knobs = @( '-chip_check_die', '0', '-chip_check_emit_file', '1', '-emit_illegal_insts', '0', '-align_checker_action', 'warn', '-ptr_raise', '1', '-fp16_fast', '0' )
 
 # id, case file, Unicorn options (as in test_runner.ps1), SDE CPU (the newest one SDE 10.13.1 names

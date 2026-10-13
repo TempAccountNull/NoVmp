@@ -17,6 +17,9 @@ CREATE_BREAKAWAY_FROM_JOB and fails with "Create pind process failed with code 5
 agents' shells run in such a job; run this from an ordinary user shell).
 
 usage: python sde_rcp.py --probe sde_rcp_probe.exe --out DIR [--sde PATH\\sde.exe] [--quick]
+       (without --sde: <sources root>\\sde-external-10.13.1-2026-07-28-win\\sde.exe, Emulator\\tools\\docroot.py:
+       NOVMP_SOURCES_ROOT, default E:\\sources; stops with a clear message when it is missing. A path with a
+       space is run through its 8.3 short name: SDE's launcher starts pind.exe with an unquoted path)
        python sde_rcp.py --compare DIR          (re-analyse the dumps of an earlier run)
 Exit status 0 when every SDE result meets every documented requirement (the stand-in agreement is
 reported, not judged).
@@ -28,13 +31,13 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import docroot  # noqa: E402  (Emulator/tools/docroot.py: NOVMP_SOURCES_ROOT)
 from ref_rcp import (F16, BF16, F32, F64, rcp14, rsqrt14, rcp_ph, rsqrt_ph, rcp_bf16, rsqrt_bf16,  # noqa: E402
                      value, is_nan, is_inf, is_normal, specials)
 from fractions import Fraction  # noqa: E402
 
 BS = chr(92)
-SDE_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..",
-                           "Intel docs", "sde-external-10.13.1-2026-07-28-win", "sde.exe")
 
 # name, probe feature, SDE CPU, encoding (zmm0 <- zmm1), format, model(x, mxcsr), rsqrt?, bound, extra SDE knobs
 FORMS = [
@@ -176,7 +179,13 @@ def main():
     if "--probe" not in a or "--out" not in a:
         print(__doc__)
         sys.exit(2)
-    sde = a[a.index("--sde") + 1] if "--sde" in a else os.path.normpath(SDE_DEFAULT)
+    sde = a[a.index("--sde") + 1] if "--sde" in a else docroot.sde_exe()
+    if not os.path.isfile(sde):
+        sys.exit("[sde_rcp] --sde: no such file: %s" % sde)
+    launch = docroot.sde_launch_path(sde)
+    print("[sde_rcp] SDE: %s (launched as %s); sources root %s" % (sde, launch, docroot.sources_root()))
+    sys.stdout.flush()
+    sde = launch
     out = a[a.index("--out") + 1]
     run(sde, a[a.index("--probe") + 1], out, quick)
     sys.exit(0 if analyse(out, quick) else 1)
