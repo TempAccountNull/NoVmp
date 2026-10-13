@@ -8,7 +8,7 @@ Sources, in lookup order (the first one that has a value wins; every asmjit disa
      The -layout text sdm2.txt (pdftotext of the same 325383-092 PDF) is only used to cross-check that every EVEX
      opcode string of the SDM was seen (its table columns are interleaved and cannot give Op/En reliably).
   2. asmjit db\\isa_x86.json EVEX rows (tt, {k|z}, /bNN, {er}, {sae}, vl) - the primary *structured* source.
-  3. XED datafiles (Intel docs\\xed-main\\datafiles) - only to fill forms neither Intel text nor asmjit has, and as a
+  3. XED datafiles (<sources root>\\xed-main\\datafiles) - only to fill forms neither Intel text nor asmjit has, and as a
      third opinion printed next to each asmjit-vs-Intel conflict.
   (QEMU 11.1 has no EVEX decoder, so it contributes nothing here.)
 
@@ -18,6 +18,11 @@ Outputs (Emulator\\data):
   evex_forms_apx.txt        APX "EVEX-promoted legacy/VEX" forms, kept out of the AVX-512 table
   evex_tables_draft.inc     X86_EVEX_ENTRY(...) lines grouped by map/opcode/pp (draft, not compiled)
   evex_forms_summary.txt    counts per family / feature / tuple, conflicts, missing forms, decoder notes
+
+asmjit and XED come from the sources root (Emulator\\tools\\docroot.py: NOVMP_SOURCES_ROOT, default
+E:\\sources; the tool stops with a clear message when either is missing). The Intel text comes from
+<garbage>\\emulator\\intel_docs_text. sdm2.txt for --sdm-layout (summary "Layout cross-check" only):
+pdftotext -layout E:\\pdfs\\x86docs\\Intel\\SDMs\\325383-092.pdf sdm2.txt (pdftotext 4.00 of Git for Windows).
 
 usage: python gen_evex_tables.py [--garbage DIR] [--out DIR] [--sdm-layout sdm2.txt] [-q]
 """
@@ -31,6 +36,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERBOSE = True
+sys.path.insert(0, os.path.dirname(HERE))
+import docroot  # noqa: E402  (Emulator\tools\docroot.py: NOVMP_SOURCES_ROOT)
 
 
 try:
@@ -47,7 +54,7 @@ def log(*a):
 def find_garbage():
     d = HERE
     for _ in range(10):
-        if os.path.isfile(os.path.join(d, "asmjit", "db", "isa_x86.json")):
+        if os.path.isdir(os.path.join(d, "emulator", "intel_docs_text")):
             return d
         d = os.path.dirname(d)
     return None
@@ -1035,7 +1042,7 @@ def disp8_n(tup, vl, W, bcst, memsize, vsib=False):
 def main():
     global VERBOSE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--garbage", default=None, help="folder that holds asmjit\\ and emulator\\ (auto-detected)")
+    ap.add_argument("--garbage", default=None, help="folder that holds emulator\\intel_docs_text (auto-detected)")
     ap.add_argument("--out", default=os.path.normpath(os.path.join(HERE, "..", "..", "data")))
     ap.add_argument("--sdm-layout", default=None, help="pdftotext -layout text of 325383-092 (cross-check only)")
     ap.add_argument("-q", action="store_true")
@@ -1043,12 +1050,13 @@ def main():
     VERBOSE = not a.q
     g = a.garbage or find_garbage()
     if not g:
-        sys.exit("cannot find the garbage folder (asmjit\\db\\isa_x86.json); pass --garbage")
+        sys.exit("cannot find the garbage folder (emulator\\intel_docs_text); pass --garbage")
     docs_dir = os.path.join(g, "emulator", "intel_docs_text")
-    aj_path = os.path.join(g, "asmjit", "db", "isa_x86.json")
-    xed_dir = os.path.join(g, "emulator", "Intel docs", "xed-main", "datafiles")
+    aj_path = docroot.asmjit_db()
+    xed_dir = docroot.xed_datafiles()
     manual_path = os.path.join(a.out, "isa_manual_forms.tsv")
     log(f"[cfg] garbage={g}")
+    log(f"[cfg] sources root={docroot.sources_root()} ({docroot.ENV}, default {docroot.DEFAULT_ROOT})")
     log(f"[cfg] intel docs text={docs_dir}")
     log(f"[cfg] asmjit={aj_path}")
     log(f"[cfg] xed={xed_dir}")
@@ -1702,7 +1710,9 @@ def main():
     S.append("EVEX form table summary (gen_evex_tables.py)")
     S.append("=" * 72)
     S.append(f"Intel text: SDM 325383-092 Vol.2A-D, AVX10.2 spec 361050-007, ISE 319433-062 (PyMuPDF text)")
-    S.append(f"asmjit: {os.path.relpath(aj_path, g)}   XED: {os.path.relpath(xed_dir, g)}   (relative to the 'garbage' folder)")
+    S.append(f"asmjit: {os.path.relpath(aj_path, docroot.sources_root())}   "
+             f"XED: {os.path.relpath(xed_dir, docroot.sources_root())}   "
+             f"(relative to {docroot.ENV}, default {docroot.DEFAULT_ROOT})")
     S.append(r"Intel text: emulator\intel_docs_text\{sdm_vol2a..d_092, avx10_2_spec_361050_007, ise_319433_062}.md")
     S.append("")
     S.append(f"forms (TSV rows): {len(formlist)}   per-VL records: {len(allrecs)}")

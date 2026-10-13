@@ -1,7 +1,7 @@
 EVEX form table summary (gen_evex_tables.py)
 ========================================================================
 Intel text: SDM 325383-092 Vol.2A-D, AVX10.2 spec 361050-007, ISE 319433-062 (PyMuPDF text)
-asmjit: asmjit\db\isa_x86.json   XED: emulator\Intel docs\xed-main\datafiles   (relative to the 'garbage' folder)
+asmjit: asmjit\db\isa_x86.json   XED: xed-main\datafiles   (relative to NOVMP_SOURCES_ROOT, default E:\sources)
 Intel text: emulator\intel_docs_text\{sdm_vol2a..d_092, avx10_2_spec_361050_007, ise_319433_062}.md
 
 forms (TSV rows): 895   per-VL records: 2109

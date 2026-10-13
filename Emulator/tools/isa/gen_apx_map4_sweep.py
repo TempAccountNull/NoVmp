@@ -22,6 +22,8 @@ V (NDD / PUSH2 / POP2) is 0 (RAX) or 9 (R9). An opcode without any map 4 form ge
 combinations (each pp: W0 ND0 NF0 register and memory, W1 ND1 NF1 register).
 
 Usage: python gen_apx_map4_sweep.py [XED_APX_DIR] > Emulator/data/cases_apx_map4_sweep.txt
+XED_APX_DIR defaults to <sources root>/xed-main/datafiles/apx-f (Emulator/tools/docroot.py:
+NOVMP_SOURCES_ROOT, default E:/sources); the generator stops with a clear message when it is missing.
 """
 import glob
 import os
@@ -30,8 +32,8 @@ import sys
 
 MEM = 0x30020000
 MEM_PTR = MEM + 0x8000
-XED_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "..",
-                           "Intel docs", "xed-main", "datafiles", "apx-f")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import docroot  # noqa: E402  (Emulator/tools/docroot.py: NOVMP_SOURCES_ROOT)
 
 
 # --------------------------------------------------------------------------------------------
@@ -207,7 +209,8 @@ GROUPS = {0x80, 0x81, 0x83, 0xC0, 0xC1, 0xD0, 0xD1, 0xD2, 0xD3, 0xF6, 0xF7, 0xFE
 
 
 def main():
-    xdir = sys.argv[1] if len(sys.argv) > 1 else XED_DEFAULT
+    xdir = sys.argv[1] if len(sys.argv) > 1 else docroot.xed_datafiles("apx-f")
+    print("xed apx-f: %s" % xdir, file=sys.stderr)
     T = apx_spec_table()
     pats = xed_patterns(xdir)
     if not pats:
