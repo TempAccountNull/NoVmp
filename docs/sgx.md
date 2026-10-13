@@ -11,7 +11,7 @@ Validation label of everything in this document: **specification-validated** (in
 the SDM and an independent Python reference model). The i5-13600K has neither SGX nor SMX/TXT, and
 Intel SDE cannot run CPL0 enclave-management code, so nothing here is SDE- or hardware-validated.
 
-Sources (local copies, `emulator\Intel docs`, text in `emulator\intel_docs_text`):
+Sources (local copies, `E:\pdfs\x86docs\Intel\SDMs` (formerly `emulator\Intel docs`), text in `emulator\intel_docs_text`):
 - **3D** = SDM 092 Vol3D, 332831-092 (June 2026), chapters 37-43 (the plan's "34-41" is the numbering
   of older revisions). SDM 093 (332831-093, September 2026) was extracted with PyMuPDF and compared:
   chapters 37-43 are identical except Table 42-2 (IA32_SGX_SVN_STATUS gains SEAMLDR_SVN 63:56) and a

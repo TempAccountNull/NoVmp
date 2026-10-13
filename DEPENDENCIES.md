@@ -41,7 +41,12 @@ Not used by `NoVmp.sln` and left as upstream ships them: VTIL-Core's own `VTIL-*
 
 | Path | What | Commit | Used for |
 |---|---|---|---|
-| `garbage\emulator\Intel docs\`, `intel_docs_text\`, `intel_sdm_instructions.md` | Intel SDM, ISE, APX, AVX10, … | 092 / Dec-24 editions | **first** in the lookup order: the authority on semantics |
-| `garbage\qemu` | QEMU, https://gitlab.com/qemu-project/qemu.git `master` | `3377670ee9` (v11.1.0-2123, 2026-10-05) | second in the lookup order; source of the Phase 1.6 backports |
-| `garbage\asmjit` | asmjit, https://github.com/asmjit/asmjit `master` | `0d7f010` (2026-09-23), Zlib license | third in the lookup order: instruction database + encoder logic, rewritten in our own C++ with attribution |
-| `garbage\emulator\Intel docs\xed-main` | XED datafiles | — | fourth in the lookup order, final cross-check |
+| `E:\pdfs\x86docs\Intel\` (`SDMs\`, `ISAFuture\`, `APX\`, …), `garbage\emulator\intel_docs_text\`, `intel_sdm_instructions.md` | Intel SDM, ISE, APX, AVX10, … | 092 / Dec-24 editions | **first** in the lookup order: the authority on semantics |
+| `<sources>\qemu` | QEMU, https://gitlab.com/qemu-project/qemu.git `master` | `3377670ee9` (v11.1.0-2123, 2026-10-05) | second in the lookup order; source of the Phase 1.6 backports |
+| `<sources>\asmjit` | asmjit, https://github.com/asmjit/asmjit `master` | `0d7f010` (2026-09-23), Zlib license | third in the lookup order: instruction database + encoder logic, rewritten in our own C++ with attribution; `db\isa_x86.json` is read by `gen_evex_tables.py` |
+| `<sources>\xed-main` | XED datafiles | — | fourth in the lookup order, final cross-check; read by `gen_evex_tables.py`, `gen_apx_map4_sweep.py` |
+| `<sources>\sde-external-10.13.1-2026-07-28-win` | Intel SDE 10.13.1 | — | labelled reference only (`sde_crosscheck.ps1`, `sde_rcp.py`); never linked or shipped |
+| `<sources>\pin-sources` | Pin kits | — | reference only |
+| `E:\pdfs\x86docs\Third-Parties\ACE\ACE_v1_Specification_public_1_15.pdf` | AI Compute Extensions (ACE) Specification 1.15 | 05/15/2026 | AVX10_V2_AUX (`ref_ace_aux.py`) |
+
+`<sources>` is the sources root: the environment variable `NOVMP_SOURCES_ROOT`, default `E:\sources` (moved there from `garbage\emulator\Intel docs\` and `garbage\` on 2026-10-13). The tools resolve it through `Emulator\tools\docroot.py` / `docroot.ps1` and stop with a message naming the missing path and the variable when something is not there.

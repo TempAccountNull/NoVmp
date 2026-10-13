@@ -6,10 +6,10 @@ instructions (ledger U1095, plan 1.J.20) and generator of the expected-value cas
 Emulator/data/cases_avx10_v2aux.txt.
 
 Source: "AI Compute Extensions (ACE) Specification" 1.15 (x86 Ecosystem Advisory Group, 05/15/2026,
-emulator\\Intel docs\\ACE_v1_Specification_public_1_15.pdf): 3.1 CPUID (AVX10_V2_AUX =
+E:\\pdfs\\x86docs\\Third-Parties\\ACE\\ACE_v1_Specification_public_1_15.pdf): 3.1 CPUID (AVX10_V2_AUX =
 CPUID.(EAX=24H,ECX=1):ECX[3], "Requires AVX10"), 4.3, 5 (exception classes), 6.2 (encodings),
 9 (operations), 16.1/16.3/16.4 (helper pseudocode). Encodings cross-checked with XED
-(Intel docs\\xed-main\\datafiles\\avx10-2-aux, read only). Not written from any C implementation.
+(<NOVMP_SOURCES_ROOT, default E:\\sources>\\xed-main\\datafiles\\avx10-2-aux, read only). Not written from any C implementation.
 
 Each helper exists twice: lit_* is a literal transcription of the ACE 16.x pseudocode (bit
 operations, branch structure as printed); nat_* derives the same conversion from exact rationals

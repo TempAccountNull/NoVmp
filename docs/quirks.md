@@ -256,7 +256,7 @@ Kept as printed (the text is clear; SDE 10.13.1 differs, recorded as "SDE deviat
 
 ## AVX10_V2_AUX (ACE 1.15): gaps and resolutions
 
-The 21 AVX10_V2_AUX instructions (CPUID.(EAX=24H,ECX=1):ECX[3], "Requires AVX10") are defined only by the "AI Compute Extensions (ACE) Specification" 1.15 (x86 Ecosystem Advisory Group, 05/15/2026; `emulator\Intel docs\ACE_v1_Specification_public_1_15.pdf`): 3.1 CPUID, 4.3, 5 exception classes, 6.2 encodings, chapter 9 operations, 16.1 / 16.3 / 16.4 helper pseudocode. The emulator executes the helper pseudocode as printed (`avx10_helper.c`, U1095; independent model `Emulator/tools/isa/ref_ace_aux.py`, which also derives every conversion from exact rationals and the chapter-9 descriptions: RTNE, RTO, FP8 <-> FP32 / FP4 / FP6, VUNPACKB agree exhaustively or on a 40k-input FP32 sample). Encodings cross-checked with XED (`xed-main\datafiles\avx10-2-aux`). Behaviour checked with Intel SDE 10.13.1 `-future-ag` (AVX10.2 + AVX10_V1_AUX + AVX10_V2_AUX): SDE-validated, not hardware-validated. Opt-in: `UC_CTL_X86_AVX10` with `UC_X86_AVX10_V2_AUX` (0x200) and a version; `emu-alltest --avx10 0x202`. Cases: `cases_avx10_v2aux.txt`.
+The 21 AVX10_V2_AUX instructions (CPUID.(EAX=24H,ECX=1):ECX[3], "Requires AVX10") are defined only by the "AI Compute Extensions (ACE) Specification" 1.15 (x86 Ecosystem Advisory Group, 05/15/2026; `E:\pdfs\x86docs\Third-Parties\ACE\ACE_v1_Specification_public_1_15.pdf`): 3.1 CPUID, 4.3, 5 exception classes, 6.2 encodings, chapter 9 operations, 16.1 / 16.3 / 16.4 helper pseudocode. The emulator executes the helper pseudocode as printed (`avx10_helper.c`, U1095; independent model `Emulator/tools/isa/ref_ace_aux.py`, which also derives every conversion from exact rationals and the chapter-9 descriptions: RTNE, RTO, FP8 <-> FP32 / FP4 / FP6, VUNPACKB agree exhaustively or on a 40k-input FP32 sample). Encodings cross-checked with XED (`xed-main\datafiles\avx10-2-aux`). Behaviour checked with Intel SDE 10.13.1 `-future-ag` (AVX10.2 + AVX10_V1_AUX + AVX10_V2_AUX): SDE-validated, not hardware-validated. Opt-in: `UC_CTL_X86_AVX10` with `UC_X86_AVX10_V2_AUX` (0x200) and a version; `emu-alltest --avx10 0x202`. Cases: `cases_avx10_v2aux.txt`.
 
 Gaps of ACE 1.15 and how they are closed:
 
@@ -354,7 +354,7 @@ FRED (U1170-U1173) and LAM (U1180) are implemented as described in the ledger. T
 
 ## Intel SDE cross-check decisions (U1040 cross-check, user decisions 2026-10-10)
 
-The expected-value case files were run a second time under Intel SDE 10.13.1 (`emulator\Intel docs\sde-external-10.13.1-2026-07-28-win`, only `emu-alltest` with our own generated snippets; report `emulator\notes\sde_crosscheck_report_2026-10-10.md`). SDE results are **SDE-validated, never hardware-validated** (the i5-13600K lacks these instructions); the SDM wins any disagreement. These are not CPU deviations and carry no hardware-case tag.
+The expected-value case files were run a second time under Intel SDE 10.13.1 (`<NOVMP_SOURCES_ROOT, default E:\sources>\sde-external-10.13.1-2026-07-28-win`, formerly under `emulator\Intel docs`, only `emu-alltest` with our own generated snippets; report `emulator\notes\sde_crosscheck_report_2026-10-10.md`). SDE results are **SDE-validated, never hardware-validated** (the i5-13600K lacks these instructions); the SDM wins any disagreement. These are not CPU deviations and carry no hardware-case tag.
 
 ### Decided by the SDM (SDE only as supplementary confirmation)
 
