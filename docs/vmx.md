@@ -38,9 +38,9 @@ VM-instruction error 7) and their VMCS fields do not exist (VMREAD / VMWRITE: er
 | 481H / 48DH PINBASED / TRUE_PINBASED | 0000_00FF_0000_0016H | external-interrupt exiting, NMI exiting, virtual NMIs, VMX-preemption timer, process posted interrupts; default1 bits 1, 2, 4 stay 1 |
 | 482H PROCBASED | FFFB_FFFE_0401_E172H | every primary control except bits 0 and 18 (reserved); tertiary controls (17) |
 | 48EH TRUE_PROCBASED | FFFB_FFFE_0400_6172H | as 482H; CR3-load / CR3-store exiting (15, 16) may be 0 |
-| 48BH PROCBASED2 | 0E51_7BFF_0000_0000H | virtualize APIC accesses, EPT, descriptor-table exiting, RDTSCP, virtualize x2APIC mode, VPID, WBINVD exiting, unrestricted guest, APIC-register virtualization, virtual-interrupt delivery, RDRAND exiting, INVPCID, VM functions, VMCS shadowing, RDSEED exiting, XSAVES/XRSTORS, mode-based execute control for EPT, TSC scaling, user wait and pause, PCONFIG. Not offered: PAUSE-loop exiting, ENCLS exiting (until SGX is merged), PML, EPT-violation #VE, PT controls, PASID translation, sub-page write permissions, bus-lock detection, instruction timeout |
+| 48BH PROCBASED2 | 0E51_7BFF_0000_0000H; with SGX 0E51_FBFF_0000_0000H (U1313: + enable ENCLS exiting, bit 15) | virtualize APIC accesses, EPT, descriptor-table exiting, RDTSCP, virtualize x2APIC mode, VPID, WBINVD exiting, unrestricted guest, APIC-register virtualization, virtual-interrupt delivery, RDRAND exiting, INVPCID, VM functions, VMCS shadowing, RDSEED exiting, XSAVES/XRSTORS, mode-based execute control for EPT, TSC scaling, user wait and pause, PCONFIG. Not offered: PAUSE-loop exiting, PML, EPT-violation #VE, PT controls, PASID translation, sub-page write permissions, bus-lock detection, instruction timeout |
 | 492H PROCBASED3 | LOADIWKEY exiting (bit 0) with Key Locker, enable MSR-list instructions (bit 6) with MSRLIST, enable PBNDKB (bit 9) with PBNDKB, as the CPU model enumerates them | |
-| 483H / 48FH EXIT / TRUE_EXIT | 007F_EFFF_0003_6DFFH / 007F_EFFF_0003_6DFBH (U1317: bit 12 was wrongly offered by U1301-U1316) | save debug controls (may be 0 in TRUE), host address-space size, acknowledge interrupt on exit, save / load IA32_PAT, save / load IA32_EFER, save VMX-preemption timer value. Not offered (stage 8 or later): load IA32_PERF_GLOBAL_CTRL, clear IA32_BNDCFGS, PT, clear IA32_LBR_CTL, clear UINV, load CET state, load PKRS, secondary VM-exit controls (FRED) |
+| 483H / 48FH EXIT / TRUE_EXIT | 007F_EFFF_0003_6DFFH / 007F_EFFF_0003_6DFBH (U1317: bit 12 was wrongly offered by U1301-U1316) | save debug controls (may be 0 in TRUE), host address-space size, acknowledge interrupt on exit, save / load IA32_PAT, save / load IA32_EFER, save VMX-preemption timer value. Not offered (stage 8 or later): load IA32_PERF_GLOBAL_CTRL, clear IA32_BNDCFGS, PT, clear IA32_LBR_CTL, clear UINV, load CET state, load PKRS. U1309: with FRED, "activate secondary controls" (bit 31) and the secondary VM-exit controls save FRED / load FRED (493H = 3) |
 | 484H / 490H ENTRY / TRUE_ENTRY | 0000_D3FF_0000_11FFH / 0000_D3FF_0000_11FBH | load debug controls (may be 0 in TRUE), IA-32e mode guest, load IA32_PAT, load IA32_EFER. Not offered: entry to SMM / deactivate dual-monitor treatment (no dual-monitor treatment), PERF_GLOBAL_CTRL, BNDCFGS, PT, UINV, CET, LBR, PKRS, FRED, SPEC_CTRL |
 | 485H MISC | 0000_0000_6004_0065H | preemption timer = TSC >> 5; VM exits store IA32_EFER.LMA into "IA-32e mode guest" (5); activity state HLT (6); 4 CR3-target values; 512 MSRs per list; VMWRITE to any field (29); zero-length software-event injection (30); MSEG revision 0 |
 | 486H / 487H CR0_FIXED0 / FIXED1 | 8000_0021H / FFFF_FFFFH | PE, NE, PG fixed to 1 in VMX operation (unrestricted guests excepted, Vol3C 26.8) |
@@ -133,7 +133,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 |---|---|---|---|
 | FRED: guest / host FRED state, "load FRED" / "save FRED" controls, secondary VM-exit controls, injected-event data, original-event data, nested-exception bit, IA32_VMX_BASIC[58], FRED event injection (event data, STI blocking, SYSCALL / SYSENTER as type 7), VM-entry checks of the FRED fields and of FRED guests, ERETS / ERETU with NMI exiting | Vol3C 27.4.1 p. 27-6, 27.5 p. 27-9, 27.8.3 p. 27-26, 29.2.1-29.3.2, 29.6.1.1, 30.2.2, 30.2.4, 30.3, 30.5, 28.3; Vol3D A.1 p. A-2, A.4.2 | `vmx_helper.c` vmx_fred*, `seg_helper.c` x86_fred_deliver / fred_eret_end | done (U1309); the opt-ins UC_X86_FEATURE_VMX and UC_X86_FEATURE_FRED may be combined |
 | ENCLS exiting: "enable ENCLS exiting" (secondary bit 15, allowed with SGX), the ENCLS-exiting bitmap (202EH), exit reason 60 after the #UD / CPL checks and before the #GP(0) checks | Vol3C 27.6.2, 27.6.16 p. 27-21, 28.1.3; Vol3D ENCLS p. 41-8, 42.5.1 p. 42-3 | `vmx_helper.c` x86_vmx_encls_check, `sgx_model.c` helper_encls | done (U1313) |
-| ENCLV, "enable ENCLV exiting", the ENCLV-exiting bitmap, SGX-conflict VM exits | not in SDM 092 / 093 (ISE 319433-062 change list: "Removed ENCLV from Section 14.1", "Removed SGX_CONFLICT VM Exit Qualification column") | - | not modelled: no specification (question to the user); ENCLV (NP 0F 01 C0) stays #UD, CPUID.12H.0:EAX[5] = 0, secondary bit 28 not allowed |
+| ENCLV, "enable ENCLV exiting", the ENCLV-exiting bitmap, SGX-conflict VM exits | specified in SDM 325462-065 to -087 (ENCLV: opcode NP 0F 01 C0, exit reason 70, ENCLV-exiting bitmap 2036H, "enable ENCLV exiting"; SGX-conflict VM exits: 087 Table 40-1 "SGX Conflict Exit Qualification"), removed in -088 (checked in -064 / -065 / -087 / -088; ISE 319433-062 change list: "Removed ENCLV from Section 14.1", "Removed SGX_CONFLICT VM Exit Qualification column") | - | not modelled (the model follows SDM 092 / 093): ENCLV (NP 0F 01 C0) stays #UD, CPUID.12H.0:EAX[5] = 0, secondary bit 28 not allowed |
 
 ### Stage 9 - tests
 | requirement | where | status |
@@ -173,7 +173,8 @@ translator and passed to the helpers.
   audit `notes\vmx_prefix_lam_audit_2026-10-11.md`): LOCK #UD (SDM 093 Vol2A LOCK p. 3-565); REX
   ignored (Vol2A 2.2.1 p. 2-8); F2 / F3 / 66 / 67 and segment overrides are reserved in the SDM
   (Vol2A 2.1.1 p. 2-2; Vol2D Table A-6 p. A-18: the 66 / F2 / F3 cells of these opcodes are blank),
-  resolved by the Intel VT-x specification C97063-002 ch. 7 "Use of Prefixes" (VMCALL p. 7-4,
+  resolved by the Intel VT-x specification C97063-002 (public; local copies of -001 / -002 in
+  E:\pdfs\x86docs\Intel\VT-x\) ch. 7 "Use of Prefixes" (VMCALL p. 7-4,
   VMLAUNCH / VMRESUME p. 7-10, VMXOFF p. 7-24; C97063-001 ch. 4 the same): F2 / F3 / 66 #UD,
   segment overrides and 67 ignored. The #UD is a decode fault (Vol3A Table 7-2): before the CPL
   #GP(0) in VMX root operation and before the VM exit in VMX non-root operation (Vol3C 28.1.1).
@@ -384,7 +385,9 @@ translator and passed to the helpers.
   bits; host-field LAM bits are accepted and, per 30.5.1, not loaded by VM exits. The "should not set
   bits 63:MAXPHYADDR" sentences are guidance, not checks. The guest-CR3 MAXPHYADDR is reduced by
   IA32_TME_ACTIVATE[39:36] only with "enable EPT" 0 (29.3.1.1); the host-CR3 one always (29.2.2,
-  outside SEAM). Regression test: test_x86_vmx_lam_cr3.
+  outside SEAM). Note: 30.5.1 keeps CR3 bits 63:MAXPHYADDR with the TME-reduced MAXPHYADDR, so with
+  EPT a guest CR3 bit between the reduced and the full width (allowed by 29.3.1.1) reaches the host
+  CR3 at the VM exit - the SDM as written, modelled as such. Regression test: test_x86_vmx_lam_cr3.
 
 ### Pending debug exceptions (U1310)
 - 29.7.3: a VM entry that injects nothing (or only a pending MTF VM exit), outside shutdown /
@@ -400,7 +403,8 @@ translator and passed to the helpers.
 
 ### Intel SGX in VMX operation (U1313-U1316; the SGX model: docs/sgx.md)
 - ENCLS exiting (U1313): see Stage 8. ENCLV, its exiting control / bitmap and SGX-conflict VM exits
-  are not in SDM 092 / 093 (ISE 319433-062 removed them): not modelled, ENCLV stays #UD.
+  were specified in SDM 325462-065 to -087 (ENCLV NP 0F 01 C0, exit reason 70, bitmap 2036H) and
+  removed in -088: not modelled (the model follows 092 / 093), ENCLV stays #UD.
 - VM exits in enclave mode (U1314; Vol3C 30.1 p. 30-3, 30.2.1, 30.2.5, 30.3.3, 30.3.4; Vol3D 42.6):
   vmx_vmexit first runs the AEX (sgx_model.c x86_sgx_aex) - an exception VM exit hands the SSA its
   vector / error code (EXITINFO, MISCSELECT EXINFO with the #PF address; CR2 itself stays as 30.1

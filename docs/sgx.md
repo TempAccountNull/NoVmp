@@ -3,9 +3,9 @@
 User decision A10 (2026-10-09): implement SGX and GETSEC (TXT). Gate 1 follow-up: "SGX = full
 enclave model (EPC, ENCLS/ENCLU, measurement + key derivation; launch control / attestation keys
 documented as platform-specific)". Open note: "GETSEC leaves beyond CAPABILITIES need a TXT chipset
-model". Order: SGX first, then GETSEC/TXT. VMX (ENCLV, the ENCLS-exiting bitmap, SGX in VMX
-non-root operation, EPT interactions) belongs to plan 1.J.12 (the VMX agent) and is **pending**
-here.
+model". Order: SGX first, then GETSEC/TXT. VMX (the ENCLS-exiting bitmap, SGX in VMX
+non-root operation, EPT / APIC-virtualization interactions) belongs to plan 1.J.12 (the VMX agent):
+done in U1313-U1316 (docs/vmx.md); ENCLV is not modelled (removed from the SDM in 325462-088).
 
 Validation label of everything in this document: **specification-validated** (independent reading of
 the SDM and an independent Python reference model). The i5-13600K has neither SGX nor SMX/TXT, and
@@ -97,7 +97,7 @@ Status: **impl** = implemented in this branch, **plan** = planned (not yet imple
 | EWB (0BH): AES-GCM encrypt, PCMD, VA slot | p.41-69..41-73 | impl (U1265); TMP_VER = CR_PAGING_VERSION + 1 (our model) |
 | EAUG (0DH), EMODPR (0EH), EMODT (0FH) (SGX2) | p.41-18..41-21, 41-54..41-59 | impl (U1266) |
 | EUPDATESVN (18H) | p.41-67..41-68 | no: 12H.0:EAX[10] not enumerated (microcode SVN update has no meaning in the model) |
-| ENCLS leaves of SGX oversubscription (ERDINFO, ETRACKC, ELDBC/ELDUC, EINCVIRTCHILD, EDECVIRTCHILD) and ENCLV | not in SDM 092 Vol3D; ENCLV | **def** (VMX agent, plan 1.J.12) |
+| ENCLS leaves of SGX oversubscription (ERDINFO, ETRACKC, ELDBC/ELDUC, EINCVIRTCHILD, EDECVIRTCHILD) and ENCLV | not in SDM 092 Vol3D; ENCLV (NP 0F 01 C0, exit reason 70, ENCLV-exiting bitmap 2036H) was specified in SDM 325462-065 to -087 and removed in -088 | not modelled; ENCLV stays #UD (VMX agent, docs/vmx.md, U1313 / U1323) |
 | ENCLS-exiting bitmap / VM exits | ENCLS p.41-8; 42.5 p.42-3 | **def** (VMX) |
 
 ### 1.5 ENCLU leaves (3D 41.4)
