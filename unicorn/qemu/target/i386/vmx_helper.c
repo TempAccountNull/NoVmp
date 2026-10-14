@@ -48,7 +48,7 @@ void x86_store_dr(CPUX86State *env, int reg, target_ulong t0);    /* bpt_helper.
 #define VMX_PROC2_ALLOWED1      0x0e517bffu                 /* A.3.3, docs/vmx.md */
 
 #define VMX_EXIT_DEFAULT1       0x00036dffu                 /* A.4.1: 0-8, 10, 11, 13, 14, 16, 17 */
-#define VMX_EXIT_ALLOWED1       0x007fffffu                 /* + 9, 15, 18-22 */
+#define VMX_EXIT_ALLOWED1       0x007fefffu                 /* + 9, 15, 18-22 (U1317: not 12) */
 #define VMX_EXIT_TRUE0          0x00036dfbu                 /* save debug controls free */
 
 #define VMX_ENTRY_DEFAULT1      0x000011ffu                 /* A.5: 0-8, 12 */

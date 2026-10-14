@@ -40,7 +40,7 @@ VM-instruction error 7) and their VMCS fields do not exist (VMREAD / VMWRITE: er
 | 48EH TRUE_PROCBASED | FFFB_FFFE_0400_6172H | as 482H; CR3-load / CR3-store exiting (15, 16) may be 0 |
 | 48BH PROCBASED2 | 0E51_7BFF_0000_0000H | virtualize APIC accesses, EPT, descriptor-table exiting, RDTSCP, virtualize x2APIC mode, VPID, WBINVD exiting, unrestricted guest, APIC-register virtualization, virtual-interrupt delivery, RDRAND exiting, INVPCID, VM functions, VMCS shadowing, RDSEED exiting, XSAVES/XRSTORS, mode-based execute control for EPT, TSC scaling, user wait and pause, PCONFIG. Not offered: PAUSE-loop exiting, ENCLS exiting (until SGX is merged), PML, EPT-violation #VE, PT controls, PASID translation, sub-page write permissions, bus-lock detection, instruction timeout |
 | 492H PROCBASED3 | LOADIWKEY exiting (bit 0) with Key Locker, enable MSR-list instructions (bit 6) with MSRLIST, enable PBNDKB (bit 9) with PBNDKB, as the CPU model enumerates them | |
-| 483H / 48FH EXIT / TRUE_EXIT | 007F_FFFF_0003_6DFFH / 007F_FFFF_0003_6DFBH | save debug controls (may be 0 in TRUE), host address-space size, acknowledge interrupt on exit, save / load IA32_PAT, save / load IA32_EFER, save VMX-preemption timer value. Not offered (stage 8 or later): load IA32_PERF_GLOBAL_CTRL, clear IA32_BNDCFGS, PT, clear IA32_LBR_CTL, clear UINV, load CET state, load PKRS, secondary VM-exit controls (FRED) |
+| 483H / 48FH EXIT / TRUE_EXIT | 007F_EFFF_0003_6DFFH / 007F_EFFF_0003_6DFBH (U1317: bit 12 was wrongly offered by U1301-U1316) | save debug controls (may be 0 in TRUE), host address-space size, acknowledge interrupt on exit, save / load IA32_PAT, save / load IA32_EFER, save VMX-preemption timer value. Not offered (stage 8 or later): load IA32_PERF_GLOBAL_CTRL, clear IA32_BNDCFGS, PT, clear IA32_LBR_CTL, clear UINV, load CET state, load PKRS, secondary VM-exit controls (FRED) |
 | 484H / 490H ENTRY / TRUE_ENTRY | 0000_D3FF_0000_11FFH / 0000_D3FF_0000_11FBH | load debug controls (may be 0 in TRUE), IA-32e mode guest, load IA32_PAT, load IA32_EFER. Not offered: entry to SMM / deactivate dual-monitor treatment (no dual-monitor treatment), PERF_GLOBAL_CTRL, BNDCFGS, PT, UINV, CET, LBR, PKRS, FRED, SPEC_CTRL |
 | 485H MISC | 0000_0000_6004_0065H | preemption timer = TSC >> 5; VM exits store IA32_EFER.LMA into "IA-32e mode guest" (5); activity state HLT (6); 4 CR3-target values; 512 MSRs per list; VMWRITE to any field (29); zero-length software-event injection (30); MSEG revision 0 |
 | 486H / 487H CR0_FIXED0 / FIXED1 | 8000_0021H / FFFF_FFFFH | PE, NE, PG fixed to 1 in VMX operation (unrestricted guests excepted, Vol3C 26.8) |
@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1316: 27 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1317: 28 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design

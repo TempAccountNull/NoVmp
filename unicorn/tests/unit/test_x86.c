@@ -32399,7 +32399,7 @@ static void test_x86_vmx_optin(void)
         {0x480, 0x01d8100000000001ull},     /* BASIC */
         {0x481, 0x000000ff00000016ull},     /* PINBASED */
         {0x482, 0xfffbfffe0401e172ull},     /* PROCBASED */
-        {0x483, 0x007fffff00036dffull},     /* EXIT */
+        {0x483, 0x007fefff00036dffull},     /* EXIT (U1317: no bit 12) */
         {0x484, 0x0000d3ff000011ffull},     /* ENTRY */
         {0x485, 0x0000000060040065ull},     /* MISC */
         {0x486, 0x0000000080000021ull},     /* CR0_FIXED0 */
@@ -32410,7 +32410,7 @@ static void test_x86_vmx_optin(void)
         {0x48c, 0x00000f01067341c1ull},     /* EPT_VPID_CAP */
         {0x48d, 0x000000ff00000016ull},     /* TRUE_PINBASED */
         {0x48e, 0xfffbfffe04006172ull},     /* TRUE_PROCBASED */
-        {0x48f, 0x007fffff00036dfbull},     /* TRUE_EXIT */
+        {0x48f, 0x007fefff00036dfbull},     /* TRUE_EXIT (U1317: no bit 12) */
         {0x490, 0x0000d3ff000011fbull},     /* TRUE_ENTRY */
         {0x491, 0x0000000000000001ull},     /* VMFUNC */
         {0x492, 0x0000000000000241ull},     /* PROCBASED3: LOADIWKEY, MSR-list, PBNDKB (MAX model) */
@@ -34811,6 +34811,29 @@ static void test_x86_vmx_sgx_apic(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1317: the VM-exit controls do not offer "load IA32_PERF_GLOBAL_CTRL" (bit 12, Vol3C 27.7.1 Table
+ * 27-14; docs/vmx.md: not offered - no host-state check of 29.2.2 and no load of 30.5.1 behind it):
+ * IA32_VMX_EXIT_CTLS / IA32_VMX_TRUE_EXIT_CTLS bit 44 (allowed 1-setting of bit 12) is 0, a VM entry
+ * with the control set fails (VMfailValid 7), and the host IA32_PERF_GLOBAL_CTRL field (2C04H) does
+ * not exist (VMREAD: VMfailValid 12; A.9 / 27.11.2).
+ */
+static void test_x86_vmx_exit_caps(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x483, &v) == -1 && !((v >> 44) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x48f, &v) == -1 && !((v >> 44) & 1));
+    TEST_CHECK(vmx_vmread(&c, 0x2c04, &v, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 12);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 12));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35262,4 +35285,5 @@ TEST_LIST = {
     {"test_x86_vmx_sgx_exit", test_x86_vmx_sgx_exit},
     {"test_x86_vmx_sgx_mtf", test_x86_vmx_sgx_mtf},
     {"test_x86_vmx_sgx_apic", test_x86_vmx_sgx_apic},
+    {"test_x86_vmx_exit_caps", test_x86_vmx_exit_caps},
     {NULL, NULL}};
