@@ -34834,6 +34834,55 @@ static void test_x86_vmx_exit_caps(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1318: the tertiary enable controls in VMX non-root operation (Vol3C 27.6.2 Table 27-8, 28.3; A.3.4).
+ * IA32_VMX_PROCBASED_CTLS3 offers LOADIWKEY exiting (0), enable MSR-list instructions (6) and enable
+ * PBNDKB (9) of the MAX model (241H). With "activate tertiary controls": the controls 0 - RDMSRLIST,
+ * WRMSRLIST and PBNDKB are #UD (exception bitmap: exit 0, 80000306H); the controls 1 - RDMSRLIST /
+ * WRMSRLIST exit with reason 78 / 79 ("use MSR bitmaps" 0, 28.1.3) and PBNDKB is not #UD.
+ */
+static void vmx_px3_guest(PcCtx *c, const char *g, size_t n, int ud)
+{
+    uint32_t r, info;
+
+    vmx_resume_regs(c, g, n, 0, 0, 0, 0);
+    r = (uint32_t)vmx_r(c, 0x4402);
+    info = (uint32_t)vmx_r(c, 0x4404);
+    /*
+     * not #UD: without "use MSR bitmaps" RDMSRLIST / WRMSRLIST exit (78 / 79; Vol3C 28.1.3:
+     * "causes a VM exit if the enable MSR-list instructions control is 1 and the use MSR bitmaps
+     * control is 0"); PBNDKB does not #UD
+     */
+    TEST_CHECK(ud ? (r == 0 && info == 0x80000306u)
+                  : (g[0] == '\x0f' ? !(r == 0 && (info & 0xff) == 6)
+                                     : r == (g[0] == '\xf2' ? 78u : 79u)));
+    TEST_MSG("%02x %02x %02x %02x: exit %u info %x, expected %s", (uint8_t)g[0], (uint8_t)g[1],
+             (uint8_t)g[2], (uint8_t)g[3], r, info, ud ? "#UD" : "no #UD");
+}
+
+static void test_x86_vmx_proc3(void)
+{
+    PcCtx c;
+    uint64_t fl, v;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x492, &v) == -1 && v == 0x241);
+    vmx_w(&c, 0x4004, (1u << 6) | (1u << 13));
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 17));
+    vmx_w(&c, 0x2034, 0);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    pc_set(&c, UC_X86_REG_RSI, VMX_SCRATCH);                    /* MSR-list tables: 8-byte aligned */
+    pc_set(&c, UC_X86_REG_RDI, VMX_SCRATCH + 0x100);
+    vmx_px3_guest(&c, "\xf2\x0f\x01\xc6\x0f\xa2", 6, 1);       /* RDMSRLIST */
+    vmx_px3_guest(&c, "\xf3\x0f\x01\xc6\x0f\xa2", 6, 1);       /* WRMSRLIST */
+    vmx_px3_guest(&c, "\x0f\x01\xc7\x0f\xa2", 5, 1);           /* PBNDKB */
+    vmx_w(&c, 0x2034, (1ull << 6) | (1ull << 9));
+    vmx_px3_guest(&c, "\xf2\x0f\x01\xc6\x0f\xa2", 6, 0);
+    vmx_px3_guest(&c, "\xf3\x0f\x01\xc6\x0f\xa2", 6, 0);
+    vmx_px3_guest(&c, "\x0f\x01\xc7\x0f\xa2", 5, 0);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35286,4 +35335,5 @@ TEST_LIST = {
     {"test_x86_vmx_sgx_mtf", test_x86_vmx_sgx_mtf},
     {"test_x86_vmx_sgx_apic", test_x86_vmx_sgx_apic},
     {"test_x86_vmx_exit_caps", test_x86_vmx_exit_caps},
+    {"test_x86_vmx_proc3", test_x86_vmx_proc3},
     {NULL, NULL}};
