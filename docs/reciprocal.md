@@ -158,10 +158,11 @@ SDE). They are the optional 5th column of verified_forms.tsv; neither ever impli
   bit-for-bit with a real AVX-512 CPU (or uses the approximation error as a fingerprint) will see a
   difference; software that relies only on the documented bound will not.
 - FP64 VRSQRT14: correct rounding is proven only up to the float128 margin (section 3).
-- Documents that would settle bit-exactness (not available here, not searched online): Intel,
-  "Reference Implementations for IA Approximation Instructions: VRCP14, VRSQRT14, VRCP28, VRSQRT28,
-  and VEXP2" (software.intel.com article with the reference C sources; no document number) - it defines
-  the VRCP14/VRSQRT14 bits; nothing equivalent is known for VRCPPH/VRSQRTPH or VRCPBF16/VRSQRTBF16.
+- The document that settles bit-exactness is used since U1245 / U1247: Intel, "Reference Implementations
+  for IA Approximation Instructions: VRCP14, VRSQRT14, VRCP28, VRSQRT28, and VEXP2" (software.intel.com
+  article 671685 with the reference C sources; no document number). Its recip14.c (U1245, section 9) and
+  RECIP28EXP2.c (U1247, section 10) are taken from `E:\sources\Reference Implementations for IA Approximation
+  Instructions`. Nothing equivalent is known for VRCPPH/VRSQRTPH or VRCPBF16/VRSQRTBF16.
 
 ## 8. AMB-2: requirements checker and the Intel SDE labelled reference (U1240-U1243)
 
