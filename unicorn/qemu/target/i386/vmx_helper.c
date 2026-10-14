@@ -1340,10 +1340,20 @@ static bool vmx_pat_ok(uint64_t v)
     return true;
 }
 
-/* CR3 bits reserved for the Intel 64 architecture: 63:MAXPHYADDR (29.2.2, 29.3.1.1) */
-static bool vmx_cr3_ok(CPUX86State *env, uint64_t cr3)
+/*
+ * CR3 bits reserved for the Intel 64 architecture: 63:MAXPHYADDR (29.2.2 p. 29-7, 29.3.1.1 p. 29-9:
+ * "bits reserved in CR3 are 0"; 'mpa' = the MAXPHYADDR of the check). U1319: with LAM enumerated
+ * (CPUID.(07H,1):EAX.LAM[26]) bits 62:61 - LAM_U48 / LAM_U57 - are not reserved (Vol3A 2.5 Figure 2-7
+ * p. 2-15, Figure 5-11 note 2 p. 5-32)
+ */
+static bool vmx_cr3_ok(CPUX86State *env, uint64_t cr3, int mpa)
 {
-    return !(cr3 >> vmx_maxphyaddr(env));
+    uint64_t rsvd = ~0ull << mpa;
+
+    if (x86_lam_cpuid(env)) {
+        rsvd &= ~(CR3_LAM_U57_MASK | CR3_LAM_U48_MASK);
+    }
+    return !(cr3 & rsvd);
 }
 
 /* ---- cached controls ---- */
@@ -1626,7 +1636,7 @@ static bool vmx_check_host(CPUX86State *env)
     if ((cr4 & CR4_CET_MASK) && !(cr0 & CR0_WP_MASK)) {
         return false;
     }
-    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_HOST_CR3))) {
+    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_HOST_CR3), vmx_maxphyaddr(env))) {
         return false;
     }
     if (!x86_vmx_canonical(env, vmcs_get(env, VMCS_HOST_SYSENTER_ESP)) ||
@@ -1772,7 +1782,9 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
     if (!ia32e && ((cr4 & CR4_PCIDE_MASK) || (cr4 & CR4_FRED_MASK))) {
         return 0;
     }
-    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_GUEST_CR3))) {
+    /* U1319: the TME reduction of MAXPHYADDR applies to the guest CR3 only with "enable EPT" 0 */
+    if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_GUEST_CR3),
+                    (proc2 & PROC2_EPT) ? env_archcpu(env)->phys_bits : vmx_maxphyaddr(env))) {
         return 0;
     }
     /* U1309: "load FRED" VM-entry control: the guest FRED fields (29.3.1.1) */

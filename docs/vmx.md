@@ -377,11 +377,14 @@ translator and passed to the helpers.
 ### CR3 and LAM across VM exits (U1311)
 - With UC_X86_FEATURE_VMX and UC_X86_FEATURE_LAM, a VM exit loads CR3 bits MAXPHYADDR-1:0 from the
   host CR3 field and keeps bits 63:MAXPHYADDR - LAM_U57 (61) / LAM_U48 (62) included - of the CR3 in
-  use at the VM exit (30.5.1 p. 30-30). The VM-entry checks reject bits 63:MAXPHYADDR in the host and
-  guest CR3 fields (29.2.2 p. 29-7, 29.3.1.1 p. 29-9: "should not set"). The SDM conflicts with itself
-  here (29.2.2 also says only reserved CR3 bits are checked, and with LAM bits 62:61 are not reserved);
-  the reading is PROVISIONAL (user decision 2026-10-11, docs/quirks.md "SDM self-conflicts").
-  Regression test: test_x86_vmx_lam_cr3.
+  use at the VM exit (30.5.1 p. 30-30). U1319 (user decision 2026-10-14): the VM-entry checks reject
+  only the reserved CR3 bits of the host and guest CR3 fields (29.2.2 p. 29-7, 29.3.1.1 p. 29-9 in SDM
+  092 / 093); with LAM enumerated bits 62:61 are not reserved (Vol3A 2.5 Figure 2-7 p. 2-15, Figure
+  5-11 note 2 p. 5-32; ISE 319433-042 to -053 6.6.2 said so explicitly), so both fields may carry LAM
+  bits; host-field LAM bits are accepted and, per 30.5.1, not loaded by VM exits. The "should not set
+  bits 63:MAXPHYADDR" sentences are guidance, not checks. The guest-CR3 MAXPHYADDR is reduced by
+  IA32_TME_ACTIVATE[39:36] only with "enable EPT" 0 (29.3.1.1); the host-CR3 one always (29.2.2,
+  outside SEAM). Regression test: test_x86_vmx_lam_cr3.
 
 ### Pending debug exceptions (U1310)
 - 29.7.3: a VM entry that injects nothing (or only a pending MTF VM exit), outside shutdown /

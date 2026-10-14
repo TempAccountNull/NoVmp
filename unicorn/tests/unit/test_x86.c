@@ -34122,14 +34122,18 @@ static void test_x86_vmx_pending_dbg(void)
 }
 
 /*
- * U1311: CR3 across a VM exit with LAM (SDM 092 Vol3C 30.5.1 p. 30-30 against the host-CR3 check of
- * 29.2.2 p. 29-7; docs/quirks.md "SDM self-conflicts", PROVISIONAL, user decision 2026-10-11). The
- * VM exit takes CR3 bits MAXPHYADDR-1:0 from the host CR3 field and keeps bits 63:MAXPHYADDR of the
- * CR3 in use at the VM exit - the LAM bits 62:61 the guest loaded by MOV to CR3 - for host LAM bits
- * 00 against guest LAM bits 01, 10 and 11, and a host field with other base bits; the host's own LAM
- * bits from before the VM entry are not restored. The VM-entry checks reject bits 63:MAXPHYADDR in
- * the CR3 fields (LAM bits included): host field -> VMfailValid error 8, guest field (as saved by
- * the VM exit) -> VM-entry failure, exit reason 33.
+ * U1311 / U1319: CR3 and LAM in VMX operation. The VM exit takes CR3 bits MAXPHYADDR-1:0 from the host
+ * CR3 field and keeps bits 63:MAXPHYADDR of the CR3 in use at the VM exit (SDM 092 Vol3C 30.5.1 p.
+ * 30-30) - the LAM bits 62:61 the guest loaded by MOV to CR3 - for host LAM bits 00 against guest LAM
+ * bits 01, 10 and 11, and a host field with other base bits; the host's own LAM bits from before the
+ * VM entry are not restored. U1319: the VM-entry checks reject only reserved CR3 bits (29.2.2 p. 29-7,
+ * 29.3.1.1 p. 29-9); with LAM enumerated bits 62:61 are not reserved (Vol3A 2.5 Figure 2-7 p. 2-15,
+ * Figure 5-11 note 2 p. 5-32): a guest CR3 field with LAM bits (as the VM exit saved it) enters, a host
+ * CR3 field with LAM bit 62 enters (and the VM exit does not load it, 30.5.1); bit 63 and bit 60 stay
+ * reserved (VMfailValid 8). Without LAM: host field bit 62 -> VMfailValid 8, guest field bit 61 ->
+ * VM-entry failure 33. 29.3.1.1: the guest-CR3 MAXPHYADDR is reduced by IA32_TME_ACTIVATE[39:36] only
+ * with "enable EPT" 0 (TME active, 2 KeyID bits: guest CR3 bit 39 fails without EPT; with EPT it
+ * enters, EPT maps guest-physical 80_0000_0000H + x to x, and the guest runs).
  */
 #define VMX_PT_ALT (VMX_DATA + 0x1b000)    /* a second PML4 (same PDPT) */
 
@@ -34152,9 +34156,10 @@ static void test_x86_vmx_lam_cr3(void)
         TEST_MSG("LAM %llu: CR3 %llx", (unsigned long long)lam,
                  (unsigned long long)pc_get(&c, UC_X86_REG_CR3));
     }
-    /* the guest CR3 field with LAM bit 61 (saved by the VM exit): VM-entry failure, reason 33 */
-    vmx_resume_regs(&c, NULL, 0, 0, 0, 0, 0);
-    TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u);
+    /* U1319: the guest CR3 field with LAM bits 62:61 (saved by the VM exit) enters */
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(vmx_r(&c, 0x6802) == (VMX_PT_ALT | (3ull << 61)));
     TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == (VMX_PT | (3ull << 61)));
     /* host LAM48 before the VM entry, a guest without LAM bits: CR3 = the host field */
     vmx_w(&c, 0x6802, VMX_PT_ALT);
@@ -34162,12 +34167,54 @@ static void test_x86_vmx_lam_cr3(void)
     vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
     vmx_exit_is(&c, 10, 0, 2);
     TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
-    /* the host CR3 field with LAM bit 62: VMfailValid, error 8 (invalid host state); CR3 unchanged */
+    /* U1319: the host CR3 field with LAM bit 62 enters; the VM exit keeps the CPU's bits 63:MAXPHYADDR */
     vmx_w(&c, 0x6c02, VMX_PT | (1ull << 62));
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    /* bits 63 and 60 stay reserved: VMfailValid, error 8; CR3 unchanged */
+    vmx_w(&c, 0x6c02, VMX_PT | (1ull << 63));
     vmx_w(&c, 0x681e, VMX_GUEST_PC);
     TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
     vmx_check_failvalid(&c, fl, 8);
+    vmx_w(&c, 0x6c02, VMX_PT | (1ull << 60));
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 8);
     TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    OK(uc_close(c.uc));
+
+    /* without LAM: CR3 bits 62:61 are reserved */
+    vmx_setup(&c);
+    vmx_w(&c, 0x6c02, VMX_PT | (1ull << 62));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 8);
+    vmx_w(&c, 0x6c02, VMX_PT);
+    vmx_w(&c, 0x6802, VMX_PT | (1ull << 61));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 0x80000021u);
+    OK(uc_close(c.uc));
+
+    /* the guest-CR3 MAXPHYADDR with TME (29.3.1.1): reduced by KeyID bits only without EPT */
+    vmx_setup(&c);
+    TEST_CHECK(vmx_wrmsr(&c, 0x982, 2 | (2ull << 32) | (2ull << 36)) == -1);
+    vmx_w(&c, 0x6802, VMX_PT | (1ull << 39));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 0x80000021u);
+    /*
+     * with EPT: guest-physical 80_0000_0000H + x maps to x (EPT PML4[1] -> the PDPT of 0-4 MB); the
+     * guest loads CR3 without bit 39 before its CPUID exit - 30.5.1 keeps CR3 bits 63:MAXPHYADDR (the
+     * TME-reduced 38) of the CR3 in use at the VM exit, so a guest CR3 with bit 39 would reach the host
+     */
+    vmx_ept_setup(&c, 0);
+    vmx_wq(&c, VMX_EPT_PML4 + 8, VMX_EPT_PDPT | 7);
+    pc_set(&c, UC_X86_REG_RAX, VMX_PT);
+    {
+        int r = vmx_enter(&c, 1, "\x0f\x22\xd8\x0f\xa2", 5, &fl);      /* MOV CR3, RAX; CPUID */
+        uint64_t reason = r == -1 ? vmx_r(&c, 0x4402) : ~0ull;
+
+        TEST_CHECK(r == -1 && fl == 0 && reason == 10);
+        TEST_MSG("vmx_enter %d flags %llx exit %llx", r, (unsigned long long)fl,
+                 (unsigned long long)reason);
+        TEST_CHECK(vmx_r(&c, 0x6802) == VMX_PT && pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    }
     OK(uc_close(c.uc));
 }
 
