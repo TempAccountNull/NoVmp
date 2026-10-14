@@ -2438,7 +2438,19 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
         irs |= 8;
     }
     vmcs_put(env, VMCS_GUEST_INTERRUPTIBILITY, irs);
-    vmcs_put(env, VMCS_GUEST_PENDING_DBG, 0);
+    /*
+     * U1320: 30.3.4 (pp. 30-27 / 30-28) - the field is saved as 0 except for the VM exits that keep
+     * the debug exceptions pending at the exit; of those the model has basic reason "TPR below
+     * threshold" (43) and "monitor trap flag" (37), which save the bits of the debug exceptions still
+     * pending - those made pending by VM entry and not yet delivered (29.7.3: B3-B0, enabled
+     * breakpoint, BS, RTM)
+     */
+    {
+        uint32_t basic = e->reason & 0xffff;
+
+        vmcs_put(env, VMCS_GUEST_PENDING_DBG,
+                 (basic == 37 || basic == 43) ? (env->vmx.pdbg & 0x1500full) : 0);
+    }
     if (exit & EXIT_SAVE_TIMER) {
         vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
     }

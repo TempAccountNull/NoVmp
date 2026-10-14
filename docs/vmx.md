@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1318: 29 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1320: 30 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -393,7 +393,9 @@ translator and passed to the helpers.
   before the timer, NMIs, interrupts and the windows. DR6 gets B3-B0 / BS as the model's #DB raise sets
   them; the exception bitmap applies (qualification B3-B0 / BS). With blocking by MOV SS the model loses
   them ("held pending or lost as would normally be the case"); the MOV-SS cases of injected software
-  events are not modelled. VM exits save the pending-debug-exceptions field as 0 (docs/quirks.md).
+  events are not modelled. VM exits save the pending-debug-exceptions field as 0, except MTF and
+  TPR-below-threshold VM exits, which save the debug exceptions loaded by VM entry and still pending
+  (U1320, 30.3.4; docs/quirks.md).
 
 ### Intel SGX in VMX operation (U1313-U1316; the SGX model: docs/sgx.md)
 - ENCLS exiting (U1313): see Stage 8. ENCLV, its exiting control / bitmap and SGX-conflict VM exits

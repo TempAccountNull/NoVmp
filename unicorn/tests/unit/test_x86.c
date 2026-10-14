@@ -34930,6 +34930,34 @@ static void test_x86_vmx_proc3(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1320: the pending-debug-exceptions field saved by VM exits (SDM 092 Vol3C 30.3.4 pp. 30-27 / 30-28).
+ * A VM entry with pending debug exceptions (BS) and a pending MTF VM exit (injection type 7, vector
+ * 0): the MTF VM exit comes first (28.2 / 29.7.3) and saves the still pending BS (4000H); VMRESUME with
+ * that field delivers the #DB (exception bitmap: exit 0, 80000301H, qualification BS). Other VM exits
+ * save 0 (CPUID after VM entry with an empty field).
+ */
+static void test_x86_vmx_pdbg_save(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x4004, 1u << 1);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    TEST_CHECK(vmx_r(&c, 0x6822) == 0);
+    vmx_w(&c, 0x6822, 0x4000);
+    vmx_w(&c, 0x4016, 0x80000700u);                 /* pending MTF VM exit */
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 37 && vmx_r(&c, 0x6822) == 0x4000);
+    TEST_MSG("exit %llu pending dbg %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x6822));
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000301u &&
+               vmx_r(&c, 0x6400) == 0x4000 && vmx_r(&c, 0x6822) == 0);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35383,4 +35411,5 @@ TEST_LIST = {
     {"test_x86_vmx_sgx_apic", test_x86_vmx_sgx_apic},
     {"test_x86_vmx_exit_caps", test_x86_vmx_exit_caps},
     {"test_x86_vmx_proc3", test_x86_vmx_proc3},
+    {"test_x86_vmx_pdbg_save", test_x86_vmx_pdbg_save},
     {NULL, NULL}};
