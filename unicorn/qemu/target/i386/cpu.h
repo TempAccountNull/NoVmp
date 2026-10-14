@@ -545,6 +545,10 @@ typedef struct X86VmxState {
     /* U1321: a debug trap an MTF VM exit preempted (pending-debug-exceptions bits, 30.3.4) */
     uint64_t dbg_trap;
 #endif /* __Use_Original_Qemu (U1321) */
+#if __Use_Original_Qemu != 1 /* ours (U1324) */
+    /* U1324: the virtualization-exception information address of the current VM entry (27.6.19) */
+    uint64_t ve_info;
+#endif /* __Use_Original_Qemu (U1324) */
 } X86VmxState;
 
 /* helper_vmx_op operations */

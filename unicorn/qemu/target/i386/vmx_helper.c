@@ -45,7 +45,7 @@ void x86_store_dr(CPUX86State *env, int reg, target_ulong t0);    /* bpt_helper.
 #define VMX_PROC_ALLOWED1       0xfffbfffeu                 /* all but 0 and 18 */
 #define VMX_PROC_TRUE0          0x04006172u                 /* CR3-load / -store exiting free */
 
-#define VMX_PROC2_ALLOWED1      0x0e517bffu                 /* A.3.3, docs/vmx.md */
+#define VMX_PROC2_ALLOWED1      0x0e557bffu                 /* A.3.3, docs/vmx.md (U1324: + 18) */
 
 #define VMX_EXIT_DEFAULT1       0x00036dffu                 /* A.4.1: 0-8, 10, 11, 13, 14, 16, 17 */
 #define VMX_EXIT_ALLOWED1       0x007fefffu                 /* + 9, 15, 18-22 (U1317: not 12) */
@@ -1179,6 +1179,7 @@ static bool x86_vmx_canonical(CPUX86State *env, uint64_t a)
 #define PROC2_VMFUNC            (1u << 13)
 #define PROC2_SHADOW_VMCS       (1u << 14)
 #define PROC2_ENCLS             (1u << 15)  /* U1313 */
+#define PROC2_EPT_VE            (1u << 18)  /* U1324: EPT-violation #VE */
 #define PROC2_RDSEED            (1u << 16)
 #define PROC2_XSAVES            (1u << 20)
 #define PROC2_MBEC              (1u << 22)
@@ -1403,6 +1404,7 @@ static void vmx_load_controls(CPUX86State *env)
     for (i = 0; i < 4; i++) {
         v->eoi_exit[i] = vmcs_get(env, VMCS_EOI_EXIT0 + 2 * i);
     }
+    v->ve_info = (v->proc2 & PROC2_EPT_VE) ? vmcs_get(env, 0x202a) : 0;      /* U1324 */
 }
 
 /* ---- 29.2.1 checks on the VMX controls: false = VMfailValid(7) ---- */
@@ -1465,6 +1467,10 @@ static bool vmx_check_controls(CPUX86State *env)
     }
     if ((proc2 & PROC2_VMFUNC) && (vmcs_get(env, VMCS_VMFUNC_CTLS) & 1) &&
         !vmx_page_ok(env, vmcs_get(env, VMCS_EPTP_LIST))) {
+        return false;
+    }
+    /* U1324: 29.2.1.1 - the virtualization-exception information address (202AH) */
+    if ((proc2 & PROC2_EPT_VE) && !vmx_page_ok(env, vmcs_get(env, 0x202a))) {
         return false;
     }
     if ((proc2 & PROC2_SHADOW_VMCS) &&
@@ -2985,6 +2991,8 @@ void helper_vmfunc(CPUX86State *env)
     }
     env->vmx.eptp = eptp;
     vmcs_put(env, VMCS_EPTP, eptp);
+    /* U1324: the CPU supports "EPT-violation #VE": ECX[15:0] -> EPTP index (28.5.7.3) */
+    vmcs_put(env, 0x0004, ecx & 0xffff);
     tlb_flush(env_cpu(env));            /* new EPT paging structures; no flags modified */
 }
 
@@ -3864,6 +3872,7 @@ hwaddr x86_vmx_ept_translate(CPUX86State *env, uint64_t gpa, int access_type, in
     table = eptp & EPT_ADDR_MASK;
     if (levels == 4 && (gpa >> 48)) {
         present_all = false;
+        e = 1ull << 63;                 /* U1324: no EPT entry decides: not convertible */
         goto violation;
     }
     for (l = levels; l >= 1; l--) {
@@ -3959,9 +3968,26 @@ violation:
     if (v->iret_nmi && !v->delivering) {
         x.qual |= 1u << 12;
     }
-    v->iret_nmi = 0;
     x.gpa_valid = true;
     x.gpa = gpa;
+    /*
+     * U1324: EPT-violation #VE (Vol3C 28.5.8.1 p. 28-22 / 28-23): a convertible EPT violation - bit 63
+     * ("suppress #VE") clear in the not-present entry or the entry that maps the page ('e') - becomes a
+     * virtualization exception (vector 20, no error code) with CR0.PE = 1, outside event delivery and
+     * with the 32 bits at offset 4 of the information area 0; the area (Table 28-23) gets exit reason
+     * 48, FFFFFFFFH, the qualification, guest-linear and guest-physical address and the EPTP index.
+     */
+    if ((v->proc2 & PROC2_EPT_VE) && !(e >> 63) && (env->cr[0] & CR0_PE_MASK) && !v->delivering &&
+        vmx_ldl(env, v->ve_info + 4) == 0) {
+        vmx_stl(env, v->ve_info, EXIT_REASON_EPT_VIOLATION);
+        vmx_stl(env, v->ve_info + 4, 0xffffffffu);
+        vmx_stq(env, v->ve_info + 8, x.qual);
+        vmx_stq(env, v->ve_info + 16, x.gla_valid ? x.gla : 0);
+        vmx_stq(env, v->ve_info + 24, x.gpa);
+        x86_stw_phys(cs, v->ve_info + 32, (uint16_t)vmcs_get(env, 0x0004));
+        raise_exception(env, 20);
+    }
+    v->iret_nmi = 0;
     x.rf_one = !v->delivering;
     vmx_vmexit(env, &x);
 

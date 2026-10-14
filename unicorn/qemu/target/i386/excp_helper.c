@@ -90,6 +90,7 @@ static int check_exception(CPUX86State *env, int intno, int *error_code,
         return EXCP_HLT;
     }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1324) */
     if ((first_contributory && second_contributory)
         || (env->old_exception == EXCP0E_PAGE &&
             (second_contributory || (intno == EXCP0E_PAGE)))) {
@@ -101,6 +102,20 @@ static int check_exception(CPUX86State *env, int intno, int *error_code,
         (intno == EXCP08_DBLE)) {
         env->old_exception = intno;
     }
+#else /* ours (U1324) */
+    /* the page-fault class is #PF and #VE (20) (SDM 092 Vol3A Table 7-4 p. 7-36, Vol3C 28.5.8.3) */
+    if ((first_contributory && second_contributory)
+        || ((env->old_exception == EXCP0E_PAGE || env->old_exception == 20) &&
+            (second_contributory || intno == EXCP0E_PAGE || intno == 20))) {
+        intno = EXCP08_DBLE;
+        *error_code = 0;
+    }
+
+    if (second_contributory || (intno == EXCP0E_PAGE) || intno == 20 ||
+        (intno == EXCP08_DBLE)) {
+        env->old_exception = intno;
+    }
+#endif /* __Use_Original_Qemu (U1324) */
 
     return intno;
 }

@@ -38,7 +38,7 @@ VM-instruction error 7) and their VMCS fields do not exist (VMREAD / VMWRITE: er
 | 481H / 48DH PINBASED / TRUE_PINBASED | 0000_00FF_0000_0016H | external-interrupt exiting, NMI exiting, virtual NMIs, VMX-preemption timer, process posted interrupts; default1 bits 1, 2, 4 stay 1 |
 | 482H PROCBASED | FFFB_FFFE_0401_E172H | every primary control except bits 0 and 18 (reserved); tertiary controls (17) |
 | 48EH TRUE_PROCBASED | FFFB_FFFE_0400_6172H | as 482H; CR3-load / CR3-store exiting (15, 16) may be 0 |
-| 48BH PROCBASED2 | 0E51_7BFF_0000_0000H; with SGX 0E51_FBFF_0000_0000H (U1313: + enable ENCLS exiting, bit 15) | virtualize APIC accesses, EPT, descriptor-table exiting, RDTSCP, virtualize x2APIC mode, VPID, WBINVD exiting, unrestricted guest, APIC-register virtualization, virtual-interrupt delivery, RDRAND exiting, INVPCID, VM functions, VMCS shadowing, RDSEED exiting, XSAVES/XRSTORS, mode-based execute control for EPT, TSC scaling, user wait and pause, PCONFIG. Not offered: PAUSE-loop exiting, PML, EPT-violation #VE, PT controls, PASID translation, sub-page write permissions, bus-lock detection, instruction timeout |
+| 48BH PROCBASED2 | 0E55_7BFF_0000_0000H; with SGX 0E55_FBFF_0000_0000H (U1313: + enable ENCLS exiting, bit 15; U1324: + EPT-violation #VE, bit 18) | virtualize APIC accesses, EPT, descriptor-table exiting, RDTSCP, virtualize x2APIC mode, VPID, WBINVD exiting, unrestricted guest, APIC-register virtualization, virtual-interrupt delivery, RDRAND exiting, INVPCID, VM functions, VMCS shadowing, RDSEED exiting, XSAVES/XRSTORS, mode-based execute control for EPT, TSC scaling, user wait and pause, PCONFIG. Not offered: PAUSE-loop exiting, PML, PT controls, PASID translation, sub-page write permissions, bus-lock detection, instruction timeout |
 | 492H PROCBASED3 | LOADIWKEY exiting (bit 0) with Key Locker, enable MSR-list instructions (bit 6) with MSRLIST, enable PBNDKB (bit 9) with PBNDKB, as the CPU model enumerates them | |
 | 483H / 48FH EXIT / TRUE_EXIT | 007F_EFFF_0003_6DFFH / 007F_EFFF_0003_6DFBH (U1317: bit 12 was wrongly offered by U1301-U1316) | save debug controls (may be 0 in TRUE), host address-space size, acknowledge interrupt on exit, save / load IA32_PAT, save / load IA32_EFER, save VMX-preemption timer value. Not offered (stage 8 or later): load IA32_PERF_GLOBAL_CTRL, clear IA32_BNDCFGS, PT, clear IA32_LBR_CTL, clear UINV, load CET state, load PKRS. U1309: with FRED, "activate secondary controls" (bit 31) and the secondary VM-exit controls save FRED / load FRED (493H = 3) |
 | 484H / 490H ENTRY / TRUE_ENTRY | 0000_D3FF_0000_11FFH / 0000_D3FF_0000_11FBH | load debug controls (may be 0 in TRUE), IA-32e mode guest, load IA32_PAT, load IA32_EFER. Not offered: entry to SMM / deactivate dual-monitor treatment (no dual-monitor treatment), PERF_GLOBAL_CTRL, BNDCFGS, PT, UINV, CET, LBR, PKRS, FRED, SPEC_CTRL |
@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1322: 32 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1324: 33 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -313,8 +313,18 @@ translator and passed to the helpers.
   #GP(0) before the register changes), the PAE page walk uses them, VM exits save them.
 - Not modelled: the guest paging-structure A / D writes of the model's page walk are not checked against
   the EPT write permission (the walk checks each paging-structure access as a read, or as a write with
-  EPT A/D flags); page-modification logging, sub-page write permissions, EPT-violation #VE, supervisor
+  EPT A/D flags); page-modification logging, sub-page write permissions, supervisor
   shadow-stack control, guest-paging verification are not offered by the capability set.
+- EPT-violation #VE (U1324; 27.6.19, 28.5.8, 29.2.1.1): secondary bit 18, the virtualization-exception
+  information address (202AH, page-aligned within MAXPHYADDR at VM entry) and the EPTP index (0004H).
+  A convertible EPT violation (bit 63 clear in the not-present entry or in the entry that maps the
+  page) becomes a #VE (vector 20, no error code; page-fault class for #DF) with CR0.PE = 1, outside
+  event delivery and with offset 4 of the area 0; the area gets Table 28-23 (48, FFFFFFFFH,
+  qualification, guest-linear address - 0 when not valid -, guest-physical address, EPTP index).
+  An EPT violation for a guest-physical address beyond the 4-level walk (bits 63:48) has no entry
+  whose bit 63 could decide: not converted (our choice). The #VE goes through the exception bitmap
+  (bit 20) like any exception. VMFUNC EPTP switching writes ECX[15:0] to the EPTP index (28.5.7.3).
+  Not modelled: PT / PEBS / prematurely-busy-shadow-stack exclusions (those features are absent).
 
 ### APIC virtualization (U1307)
 - The virtual-APIC page and the guest interrupt status (RVI / SVI, loaded by VM entry with

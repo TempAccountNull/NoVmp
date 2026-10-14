@@ -32406,7 +32406,7 @@ static void test_x86_vmx_optin(void)
         {0x487, 0x00000000ffffffffull},     /* CR0_FIXED1 */
         {0x488, 0x0000000000002000ull},     /* CR4_FIXED0 */
         {0x48a, 0x000000000000003eull},     /* VMCS_ENUM: highest index 31 (203EH) */
-        {0x48b, 0x0e517bff00000000ull},     /* PROCBASED2 */
+        {0x48b, 0x0e557bff00000000ull},     /* PROCBASED2 (U1324: + EPT-violation #VE) */
         {0x48c, 0x00000f01067341c1ull},     /* EPT_VPID_CAP */
         {0x48d, 0x000000ff00000016ull},     /* TRUE_PINBASED */
         {0x48e, 0xfffbfffe04006172ull},     /* TRUE_PROCBASED */
@@ -35009,6 +35009,83 @@ static void test_x86_vmx_inj_len(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1324: EPT-violation #VE (SDM 092 Vol3C 27.6.19, 28.5.8, 29.2.1.1; EPT entry bit 63 "suppress #VE",
+ * 31.3.3.2). IA32_VMX_PROCBASED_CTLS2 offers bit 18; the information address must be page-aligned
+ * (else VMfailValid 7). With identity EPT, information area VMX_SCRATCH, EPTP index 5, #VE in the
+ * exception bitmap: a read of a page whose EPT PTE is not present (bit 63 = 0) is a #VE - exit 0,
+ * 80000314H (no error code), RIP of the read - and the area holds 48, FFFFFFFFH, the qualification
+ * (181H: read, linear address valid, translation), guest-linear and guest-physical address, EPTP
+ * index 5; the next read (offset 4 not 0) is an EPT violation (48); with offset 4 cleared and bit 63
+ * set in the not-present PTE: EPT violation; a write to a read-only PTE (bit 63 = 0): #VE (qualification
+ * bits 5:0 2AH: data write, readable, executable). Without
+ * #VE in the bitmap the #VE goes through the guest IDT (vector 20, no error code: 40 bytes pushed).
+ * VMFUNC EPTP switching writes ECX[15:0] to the EPTP index (28.5.7.3).
+ */
+static void test_x86_vmx_ept_ve(void)
+{
+    const uint64_t page = VMX_DATA + 0xf0000, ve = VMX_SCRATCH;
+    PcCtx c;
+    uint64_t fl, v, q, pte;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x48b, &v) == -1 && ((v >> 50) & 1));
+    vmx_ept_setup(&c, 0);
+    vmx_w(&c, 0x401e, (1u << 1) | (1u << 18));
+    vmx_w(&c, 0x202a, ve | 0x800);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x202a, ve);
+    vmx_w(&c, 0x0004, 5);
+    vmx_w(&c, 0x4004, 1u << 20);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    pte = vmx_rq(&c, VMX_EPT_PTE(page));
+    vmx_wq(&c, VMX_EPT_PTE(page), 0);
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);     /* MOV RAX, [RBX] */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000314u &&
+               vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    q = vmx_rq(&c, ve + 8);
+    TEST_CHECK((uint32_t)vmx_rq(&c, ve) == 48 && (vmx_rq(&c, ve) >> 32) == 0xffffffffu &&
+               (q & 0x1ff) == 0x181 && vmx_rq(&c, ve + 16) == page + 0x10 &&
+               vmx_rq(&c, ve + 24) == page + 0x10 && (uint16_t)vmx_rq(&c, ve + 32) == 5);
+    TEST_MSG("area %llx qual %llx gla %llx gpa %llx idx %llx", (unsigned long long)vmx_rq(&c, ve),
+             (unsigned long long)q, (unsigned long long)vmx_rq(&c, ve + 16),
+             (unsigned long long)vmx_rq(&c, ve + 24), (unsigned long long)vmx_rq(&c, ve + 32));
+    /* offset 4 not 0: an EPT violation */
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48);
+    /* offset 4 cleared, suppress #VE: an EPT violation */
+    vmx_wq(&c, ve, 0);
+    vmx_wq(&c, VMX_EPT_PTE(page), 1ull << 63);
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48);
+    /* a write to a read-only page: #VE */
+    vmx_wq(&c, VMX_EPT_PTE(page), (pte & ~2ull));
+    vmx_resume_regs(&c, "\x48\x89\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);     /* MOV [RBX], RAX */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000314u &&
+               (vmx_rq(&c, ve + 8) & 0x3f) == 0x2a);
+    /* through the guest IDT: vector 20, no error code */
+    vmx_wq(&c, ve, 0);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 20, VMX_GUEST_PC + 0x100);
+    vmx_w(&c, 0x4004, 0);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\x48\x89\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x100 &&
+               vmx_r(&c, 0x681c) == VMX_GUEST_RSP - 40 && vmx_rq(&c, VMX_GUEST_RSP - 40) == VMX_GUEST_PC);
+    TEST_MSG("exit %llu rip %llx rsp %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)vmx_r(&c, 0x681e), (unsigned long long)vmx_r(&c, 0x681c));
+    vmx_wq(&c, VMX_EPT_PTE(page), pte);
+    /* VMFUNC EPTP switching (EPTP list entry 1 = the current EPTP): EPTP index := 1 */
+    vmx_w(&c, 0x401e, (1u << 1) | (1u << 13) | (1u << 18));
+    vmx_w(&c, 0x2018, 1);
+    vmx_w(&c, 0x2024, VMX_DATA + 0x1d000);
+    vmx_wq(&c, VMX_DATA + 0x1d008, vmx_r(&c, 0x201a));
+    vmx_resume_regs(&c, "\x0f\x01\xd4\x0f\xa2", 5, 0, 1, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x0004) == 1);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35465,4 +35542,5 @@ TEST_LIST = {
     {"test_x86_vmx_pdbg_save", test_x86_vmx_pdbg_save},
     {"test_x86_vmx_mtf_tf", test_x86_vmx_mtf_tf},
     {"test_x86_vmx_inj_len", test_x86_vmx_inj_len},
+    {"test_x86_vmx_ept_ve", test_x86_vmx_ept_ve},
     {NULL, NULL}};
