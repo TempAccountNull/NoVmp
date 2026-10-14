@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-11 00:56 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `04fc318d docs/quirks.md: SGX / SMX readings accepted as documented (user decision 2026-10-11); GETSEC TXT leaves stay #GP(0), blocked on documentation`). Do not edit by hand._
+_Generated 2026-10-14 10:44 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `8703e3c5 Ledger: U1412 proof column records the coordinator verify_merge of the merged tree`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 

@@ -1,12 +1,12 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-11 00:56 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `04fc318d docs/quirks.md: SGX / SMX readings accepted as documented (user decision 2026-10-11); GETSEC TXT leaves stay #GP(0), blocked on documentation`). Do not edit by hand._
+_Generated 2026-10-14 10:44 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `8703e3c5 Ledger: U1412 proof column records the coordinator verify_merge of the merged tree`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1308, open item 45, not implemented yet 44) — 2699 forms
+**Totals (Intel families):** ✅ 1238 · ⏳ 64 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1310, open item 35, not implemented yet 52) — 2699 forms
 
 ## Currently being added
 
@@ -1961,7 +1961,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | PREFETCHWT1 | 1 | ❌ **cannot run** (CPUID.7H:ECX[0] = 0 on this CPU) | ✅ 1 |  |
 | RAO_INT | 4 | ❌ **cannot run** (CPUID.7H.1:EAX[3] = 0 on this CPU) | ✅ 4 |  |
 | RTM | 4 | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on this CPU) | ✅ 4 |  |
-| SGX | 2 | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) |  | ⬜ 2 queued |
+| SGX | 2 | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) | ✅ 2 |  |
 | SGX_ENCLV | 1 | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) |  | ⬜ 1 queued |
 | SHA512 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[0] = 0 on this CPU) | ✅ 3 |  |
 | SM3 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[1] = 0 on this CPU) | ✅ 3 |  |
@@ -2012,7 +2012,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | AVX512BW | 112 | ❌ **cannot run** (CPUID.7H:EBX[30] = 0 on this CPU) | ✅ 112 |  |
 | AVX512CD | 6 | ❌ **cannot run** (CPUID.7H:EBX[28] = 0 on this CPU) | ✅ 6 |  |
 | AVX512DQ | 69 | ❌ **cannot run** (CPUID.7H:EBX[17] = 0 on this CPU) | ✅ 69 |  |
-| AVX512ER | 10 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ 10 |
+| AVX512ER | 10 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ 10 queued |
 | AVX512F | 479 | ❌ **cannot run** (CPUID.7H:EBX[16] = 0 on this CPU; CPUID.7H.1:EDX[19] (AVX10) = 0 on this CPU; the instruction needs AVX10.2) | ✅ 469 | ⏳ 10 (M2 agents: wt/m2_engine, m2_perm, m2_cvt, m2_gather) |
 | AVX512PF | 16 | ❌ **cannot run** (CPUID.7H:EBX[26] = 0 on this CPU) | ✅ 16 |  |
 | AVX512_4FMAPS | 4 | ❌ **cannot run** (CPUID.7H:EDX[3] = 0 on this CPU) | ✅ 4 |  |
@@ -2362,8 +2362,8 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| ENCLS | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks SGX: #UD in both |
-| ENCLU | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) |  | ⬜ queued — not implemented (cases_reach): the i5-13600K lacks SGX: #UD in both |
+| ENCLS | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1261-U1266 Intel SGX ENCLS (NP… |  |
+| ENCLU | legacy | - | ❌ **cannot run** (CPUID.7H:EBX[2] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1263-U1266 Intel SGX ENCLU (NP… |  |
 
 </details>
 
@@ -3206,16 +3206,16 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VEXP2PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VEXP2PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRCP28PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRCP28PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRCP28SD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRCP28SS | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRSQRT28PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRSQRT28PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRSQRT28SD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
-| VRSQRT28SS | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⏳ open item — not bit-exact / decided open item: U994 AVX512ER (SDM 092 Vol2D 8-8..8-35): documented architectural compliance, NOT bi… |
+| VEXP2PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VEXP2PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRCP28PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRCP28PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRCP28SD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRCP28SS | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRSQRT28PD | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRSQRT28PS | evex | 512 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRSQRT28SD | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
+| VRSQRT28SS | evex | 128 | ❌ **cannot run** (CPUID.7H:EBX[27] = 0 on this CPU) |  | ⬜ queued — implemented; documented compliance (the documented error bound and special cases, independent model… |
 
 </details>
 
