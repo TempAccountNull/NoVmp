@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1321: 31 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1322: 32 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design

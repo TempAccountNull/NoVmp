@@ -34985,6 +34985,30 @@ static void test_x86_vmx_mtf_tf(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1322: the VM-entry instruction length of an injected "other event" (SDM 092 Vol3C 29.2.1.3): 0-15
+ * for vector 1 (SYSCALL) and 2 (SYSENTER) as for software events - length 16 fails (VMfailValid 7,
+ * FRED guest); vector 0 (pending MTF VM exit) has no length rule (length 16 enters: MTF VM exit 37).
+ */
+static void test_x86_vmx_inj_len(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED);
+    vmx_w(&c, 0x6804, pc_get(&c, UC_X86_REG_CR4) | (1ull << 32));
+    vmx_w(&c, 0x401a, 16);
+    vmx_w(&c, 0x4016, 0x80000701u);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x4016, 0x80000702u);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x4016, 0x80000700u);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && fl == 0 && vmx_r(&c, 0x4402) == 37);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35440,4 +35464,5 @@ TEST_LIST = {
     {"test_x86_vmx_proc3", test_x86_vmx_proc3},
     {"test_x86_vmx_pdbg_save", test_x86_vmx_pdbg_save},
     {"test_x86_vmx_mtf_tf", test_x86_vmx_mtf_tf},
+    {"test_x86_vmx_inj_len", test_x86_vmx_inj_len},
     {NULL, NULL}};

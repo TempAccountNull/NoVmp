@@ -1581,7 +1581,9 @@ static bool vmx_check_controls(CPUX86State *env)
             return false;
         }
         len = vmcs_get(env, VMCS_ENTRY_INSN_LEN);
-        if ((type == 4 || type == 5 || type == 6) && len > 15) {
+        /* U1322: also other event (7) with vector 1 (SYSCALL) / 2 (SYSENTER) (29.2.1.3 p. 29-6) */
+        if ((type == 4 || type == 5 || type == 6 || (type == 7 && (vec == 1 || vec == 2))) &&
+            len > 15) {
             return false;               /* 0 allowed: IA32_VMX_MISC[30] = 1 */
         }
     }
