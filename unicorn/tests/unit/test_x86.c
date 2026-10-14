@@ -34958,6 +34958,33 @@ static void test_x86_vmx_pdbg_save(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1321: the MTF VM exit before the single-step #DB trap (SDM 092 Vol3C 28.5.2 p. 28-18; 30.3.4). Guest
+ * RFLAGS.TF = 1, "monitor trap flag" 1, #DB in the exception bitmap: after a NOP the first VM exit is
+ * the MTF VM exit (37) with RIP after the NOP, RFLAGS.TF saved 1 and BS in the pending-debug-exceptions
+ * field - not the #DB; VMRESUME (MTF 0) with that field delivers the #DB first (exit 0, 80000301H,
+ * qualification BS, RIP after the NOP).
+ */
+static void test_x86_vmx_mtf_tf(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x4004, 1u << 1);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 27));
+    vmx_w(&c, 0x6820, 0x102);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90\x0f\xa2", 3, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 37 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    TEST_MSG("exit %llu", (unsigned long long)vmx_r(&c, 0x4402));
+    TEST_CHECK(vmx_r(&c, 0x6822) == 0x4000 && (vmx_r(&c, 0x6820) & 0x100));
+    vmx_w(&c, 0x4002, VMX_PROC0);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000301u &&
+               vmx_r(&c, 0x6400) == 0x4000 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35412,4 +35439,5 @@ TEST_LIST = {
     {"test_x86_vmx_exit_caps", test_x86_vmx_exit_caps},
     {"test_x86_vmx_proc3", test_x86_vmx_proc3},
     {"test_x86_vmx_pdbg_save", test_x86_vmx_pdbg_save},
+    {"test_x86_vmx_mtf_tf", test_x86_vmx_mtf_tf},
     {NULL, NULL}};

@@ -2342,6 +2342,7 @@ static void vmx_load_host(CPUX86State *env)
     env->vmx.hlt_wake = 0;              /* U1305 */
     env->vmx.iret_nmi = 0;
     env->vmx.pdbg = 0;                  /* U1310 */
+    env->vmx.dbg_trap = 0;              /* U1321 */
     env->vmx.trap_pending = 0;          /* U1307 */
     env->vmx.apic_write_pending = 0;
     env->vmx.apic_va_valid = 0;
@@ -2449,7 +2450,8 @@ static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
         uint32_t basic = e->reason & 0xffff;
 
         vmcs_put(env, VMCS_GUEST_PENDING_DBG,
-                 (basic == 37 || basic == 43) ? (env->vmx.pdbg & 0x1500full) : 0);
+                 (basic == 37 || basic == 43) ?
+                 ((env->vmx.pdbg & 0x1500full) | env->vmx.dbg_trap) : 0);   /* U1321: + trap */
     }
     if (exit & EXIT_SAVE_TIMER) {
         vmcs_put(env, VMCS_PREEMPT_TIMER, vmx_timer_value(env));
@@ -2891,6 +2893,26 @@ void helper_vmlaunch(CPUX86State *env, uint32_t launch, uint32_t next_len)
  */
 static void vmx_boundary_exits(CPUX86State *env);     /* U1305 */
 static bool vmx_intr_window(CPUX86State *env);
+
+/*
+ * U1321: a single-step #DB trap at the end of an instruction in VMX non-root operation (bpt_helper.c
+ * helper_single_step, before DR6 changes). A pending MTF VM exit has priority over debug traps (Vol3C
+ * 28.5.2 p. 28-18, 28.2): the MTF VM exit comes first, RIP after the instruction, and the
+ * pending-debug-exceptions field gets BS (30.3.4: RFLAGS.TF = 1 with IA32_DEBUGCTL.BTF = 0 - the model
+ * has no BTF); the #DB is not delivered (VM entry with that field delivers it, 29.7.3).
+ */
+void x86_vmx_single_step(CPUX86State *env)
+{
+    VmxExit e;
+
+    if (!env->vmx.nonroot || !env->vmx.mtf_pending) {
+        return;
+    }
+    env->vmx.mtf_pending = 0;
+    env->vmx.dbg_trap = 1ull << 14;
+    vmx_exit_init(&e, EXIT_REASON_MTF, 0);
+    vmx_vmexit(env, &e);
+}
 
 void helper_vmx_boundary(CPUX86State *env)
 {

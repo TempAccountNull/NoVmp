@@ -344,6 +344,9 @@ void breakpoint_handler(CPUState *cs)
 
 void helper_single_step(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1321) */
+    x86_vmx_single_step(env);       /* VMX: a pending MTF VM exit comes before this #DB (28.5.2) */
+#endif /* __Use_Original_Qemu (U1321) */
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     x86_vmx_db_snapshot(env);       /* VMX: DR6 / DR7 before this #DB (30.1) */
 #endif /* __Use_Original_Qemu (U1305) */
