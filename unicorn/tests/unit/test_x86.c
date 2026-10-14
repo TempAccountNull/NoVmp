@@ -32068,6 +32068,264 @@ static void test_x86_sgx_enclave32(void)
 
 /* ---- end U1260-U1299 (sgx_) ---- */
 
+/*
+ * ---- NoVmp U1400-U1409 tests (idterr_): error codes of IDT event delivery in IA-32e mode ----
+ * SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation (p. 3-469): "error_code(num,idt,ext) ...
+ * (1) if idt is 0, the error code is (num & FCH) | ext; (2) if idt is 1, the error code is
+ * (num << 3) | 2 | ext", and EXT is 0 for INT n / INT3 / INTO, "otherwise (including INT1), EXT
+ * is 1". IA-32e-MODE (p. 3-471): the IDT limit / gate type and not-present checks report
+ * error_code(vector_number,1,EXT), the DPL check of a software interrupt
+ * error_code(vector_number,1,0). Vol3A 7.13 Figure 7-7 (p. 7-20): the selector index is bits
+ * 15:3. Specification-validated (the i5-13600K's IDT cannot be changed from user mode).
+ * The U963 IDT delivery fixture (ap_sys) plus recording handlers for #TS #NP #SS #GP.
+ */
+#define IE_HND (AP_DATA + 0xa000)   /* the recording handlers, 40H bytes each */
+#define IE_TSS (AP_DATA + 0x9000)
+#define IE_M(v) (0x100 + 16 * (v))  /* AP_MARK offset: the pushed error code, then the RIP */
+
+/* handler for vector v (10-13): records error code and RIP, skips 2 bytes, IRETQ */
+static void ie_handler(ap_cpu *c, int v)
+{
+    ap_code k = {{0}, 0};
+    uint64_t h = IE_HND + 0x40 * (uint64_t)(v - 10);
+
+    ap_h_save(&k, 0, IE_M(v));
+    ap_h_save(&k, 8, IE_M(v) + 8);
+    ap_emit(&k, "\x58\x48\x83\x04\x24\x02\x48\xcf", 8);   /* pop rax; add [rsp], 2; iretq */
+    OK(uc_mem_write(c->uc, h, k.b, k.n));
+    ap_gate(c, v, h);
+}
+
+/* a raw 16-byte gate: offset, selector, IST, attribute byte (P DPL 0 type) */
+static void ie_gate(ap_cpu *c, int v, uint64_t off, uint16_t sel, int ist, uint8_t attr)
+{
+    uint64_t g[2];
+
+    g[0] = (off & 0xffff) | ((uint64_t)sel << 16) | ((uint64_t)(ist & 7) << 32) |
+           ((uint64_t)attr << 40) | (((off >> 16) & 0xffff) << 48);
+    g[1] = off >> 32;
+    OK(uc_mem_write(c->uc, AP_IDT + 16 * (uint64_t)v, g, sizeof(g)));
+}
+
+static void ie_idt_limit(ap_cpu *c, uint32_t limit)
+{
+    uc_x86_mmr idtr = {0, AP_IDT, limit, 0};
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_IDTR, &idtr));
+}
+
+/* CPL0 64-bit, IDT delivery 'mask', the ap_sys system state, handlers 10-13 */
+static void ie_open(ap_cpu *c, int mask, bool x2apic)
+{
+    int v;
+
+    ap_open_cpu(c, true);
+    OK(uc_ctl_set_x86_event_delivery(c->uc, mask));
+    if (x2apic) {
+        ap_x2apic(c, true);
+    }
+    ap_sys(c);
+    for (v = 10; v <= 13; v++) {
+        ie_handler(c, v);
+    }
+}
+
+/*
+ * runs k from a fresh slot; expects it to run to its end with exactly one delivery to the
+ * handler of vector hv: pushed and recorded error code ec, frame RIP = slot + rip_off (not
+ * checked when rip_off < 0)
+ */
+static void ie_run(ap_cpu *c, const ap_code *k, int hv, uint32_t ec, int rip_off, const char *what)
+{
+    uint64_t none[2] = {~0ULL, ~0ULL}, at = c->pc, got_ec, got_rip;
+    uc_x86_exception e;
+    int r;
+
+    OK(uc_mem_write(c->uc, AP_MARK + IE_M(hv), none, sizeof(none)));
+    r = ap_exec(c, k);
+    got_ec = ap_mark(c, IE_M(hv));
+    got_rip = ap_mark(c, IE_M(hv) + 8);
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c->uc, &e));
+    TEST_CHECK_(r == -1 && got_ec == ec && e.vector == hv && e.has_error_code == 1 &&
+                    e.error_code == ec && e.software == 0 &&
+                    (rip_off < 0 || got_rip == at + (uint64_t)rip_off),
+                "%s", what);
+    TEST_MSG("%s: run %d; handler %d: pushed error code %" PRIx64 " (expected %x), RIP %" PRIx64
+             " (expected %" PRIx64 "%s); recorded vector %d error code %x has_ec %d software %d",
+             what, r, hv, got_ec, ec, got_rip, at + (uint64_t)(rip_off < 0 ? 0 : rip_off),
+             rip_off < 0 ? ", not checked" : "", e.vector, e.error_code, e.has_error_code,
+             e.software);
+}
+
+static void ie_x(ap_cpu *c, const char *code, size_t n, int hv, uint32_t ec, int rip_off,
+                 const char *what)
+{
+    ap_code k = {{0}, 0};
+
+    ap_emit(&k, code, n);
+    ie_run(c, &k, hv, ec, rip_off, what);
+}
+
+/* U1400: the IDT checks of 64-bit delivery report error_code(vector,1,EXT): bits 15:3 = vector */
+static void test_x86_idterr_vector64(void)
+{
+    static const uint8_t vec[] = {0x01, 0x0e, 0x0f, 0x10, 0x20, 0x40, 0x7f, 0x81, 0xc3, 0xfe, 0xff};
+    uint64_t gdt[5] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL, 0x00CFF2000000FFFFULL,
+                       0x00AFFA000000FFFFULL};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    uc_x86_mmr tr = {0x28, IE_TSS, 0x67, 0x8b00};
+    uint8_t tss[0x68] = {0};
+    uint64_t rsp0 = AP_STACK - 0x1000, frame[5], at;
+    char code[2], what[96];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+    size_t i;
+
+    ie_open(&c, UC_X86_DELIVER_EXC_IDT, false);
+    /* INT n through an empty (all-zero) gate: not an interrupt or trap gate; EXT = 0 */
+    for (i = 0; i < sizeof(vec); i++) {
+        code[0] = '\xcd';
+        code[1] = (char)vec[i];
+        snprintf(what, sizeof(what), "INT %02Xh, empty gate", vec[i]);
+        ie_x(&c, code, 2, 13, (uint32_t)vec[i] * 8 + 2, 0, what);
+    }
+    /* INT3 (CCh) through an empty gate 3: 1AH */
+    ie_x(&c, "\xcc\x90", 2, 13, 0x1a, 0, "INT3, empty gate 3");
+    /* a present call gate (type CH) is not an interrupt or trap gate: 20AH */
+    ie_gate(&c, 0x41, AP_HND + 0x400, 0x08, 0, 0x8c);
+    ie_x(&c, "\xcd\x41", 2, 13, 0x20a, 0, "INT 41h, call gate");
+    /* an interrupt gate with P = 0: #NP(212H) */
+    ie_gate(&c, 0x42, AP_HND + 0x400, 0x08, 0, 0x0e);
+    ie_x(&c, "\xcd\x42", 2, 11, 0x212, 0, "INT 42h, gate not present");
+    /* IDT limit: gate 43H valid but its last byte beyond the limit (+15 > 43EH): #GP(21AH) */
+    ie_gate(&c, 0x43, AP_HND + 0x400, 0x08, 0, 0x8e);
+    ie_idt_limit(&c, 0x43 * 16 + 14);
+    ie_x(&c, "\xcd\x43", 2, 13, 0x21a, 0, "INT 43h, limit 43EH");
+    ie_idt_limit(&c, 0x40 * 16 - 1);
+    ie_x(&c, "\xcd\x80", 2, 13, 0x402, 0, "INT 80h, limit 3FFH");
+    ie_idt_limit(&c, 0xfff);
+    at = c.pc;
+    TEST_CHECK(ap_x(&c, "\xcd\x43", 2) == -1 && ap_mark(&c, 80) == at + 2);
+    TEST_MSG("INT 43h with the full limit: handler return RIP %" PRIx64 ", expected %" PRIx64,
+             ap_mark(&c, 80), at + 2);
+    /* CPL3: INT 60H / INT3 through DPL 0 gates: #GP(error_code(vector,1,0)) = 302H / 1AH */
+    memcpy(tss + 4, &rsp0, 8);
+    OK(uc_mem_write(c.uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_mem_write(c.uc, IE_TSS, tss, sizeof(tss)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    ie_gate(&c, 3, AP_HND + 0x400, 0x08, 0, 0x8e);
+    /* iretq to CPL3 (CS 23H, SS 1BH) at slot + 2; int 60h; int3; nop */
+    frame[0] = c.pc + 2;
+    frame[1] = 0x23;
+    frame[2] = 0x2;
+    frame[3] = AP_STACK - 0x2000;
+    frame[4] = 0x1b;
+    OK(uc_mem_write(c.uc, AP_STACK - 0x100, frame, sizeof(frame)));
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK - 0x100);
+    ap_emit(&k, "\x48\xcf\xcd\x60", 4);
+    ie_run(&c, &k, 13, 0x302, 2, "CPL3: INT 60h, gate DPL 0");
+    memset(&k, 0, sizeof(k));
+    ap_emit(&k, "\xcc\x90", 2);
+    ie_run(&c, &k, 13, 0x1a, 0, "CPL3: INT3, gate DPL 0");
+    TEST_CHECK((ap_get(&c, UC_X86_REG_CS) & 3) == 3);
+    OK(uc_close(c.uc));
+}
+
+/* U1401: EXT (bit 0) = 1 unless the event is INT n / INT3 / INTO (exceptions, INT1, interrupts) */
+static void test_x86_idterr_ext64(void)
+{
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+
+    ie_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, true);
+    /* #UD (UD2) through an empty gate 6: #GP(error_code(6,1,1)) = 33H, RIP of the UD2 */
+    ie_gate(&c, 6, 0, 0, 0, 0);
+    ie_x(&c, "\x0f\x0b", 2, 13, 0x33, 0, "#UD, empty gate 6");
+    /* INT1 (F1H) is EXT = 1: 0BH; INT 1 (CD 01) is EXT = 0: 0AH */
+    ie_x(&c, "\xf1\x66\x90", 3, 13, 0x0b, -1, "INT1, empty gate 1");
+    ie_x(&c, "\xcd\x01", 2, 13, 0x0a, 0, "INT 1, empty gate 1");
+    /* #UD through a not-present gate 6: #NP(33H) */
+    ie_gate(&c, 6, AP_HND + 0x400, 0x08, 0, 0x0e);
+    ie_x(&c, "\x0f\x0b", 2, 11, 0x33, 0, "#UD, gate 6 not present");
+    /* SELF IPI 61H (empty gate): #GP(30BH) at the instruction boundary after the WRMSR */
+    ap_wr(&k, 0x83f, 0x61);
+    ap_emit(&k, "\x66\x90", 2);
+    ie_run(&c, &k, 13, 0x30b, 17, "external interrupt 61h, empty gate");
+    ap_wmsr(&c, 0x80b, 0);                                         /* EOI: 61H left the ISR */
+    /* SELF IPI 61H with the IDT limit below it (60FH): #GP(30BH) */
+    ie_gate(&c, 0x61, AP_HND, 0x08, 0, 0x8e);
+    ie_idt_limit(&c, 0x60f);
+    ie_run(&c, &k, 13, 0x30b, 17, "external interrupt 61h, IDT limit 60FH");
+    ie_idt_limit(&c, 0xfff);
+    ap_wmsr(&c, 0x80b, 0);
+    /* NMI (ICR 400H, self) through an empty gate 2: #GP(13H) */
+    ie_gate(&c, 2, 0, 0, 0, 0);
+    memset(&k, 0, sizeof(k));
+    ap_wr(&k, 0x830, 0x400);
+    ap_emit(&k, "\x66\x90", 2);
+    ie_run(&c, &k, 13, 0x13, 17, "NMI, empty gate 2");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1402: the checks of the gate's code-segment selector, the TSS and the new RSP in 64-bit
+ * delivery carry EXT too (Vol2A p. 3-472: #GP(EXT) for a null selector, #GP / #NP
+ * (error_code(new code-segment selector,0,EXT)); p. 3-473 / 3-474: #TS(error_code(current TSS
+ * selector,0,EXT)), "IF StackAddress is non-canonical THEN #SS(EXT)"). Each case through gate 6
+ * (#UD, EXT = 1) and gate 50H (INT 50h, EXT = 0).
+ */
+static void test_x86_idterr_cs64(void)
+{
+    /* 18H: 64-bit code, P = 0; 20H: 64-bit code, DPL 3 */
+    static const uint64_t gdt[5] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL,
+                                    0x00AF1A000000FFFFULL, 0x00AFFA000000FFFFULL};
+    static const struct {
+        uint16_t sel;
+        int ist;
+        uint32_t tr_limit;
+        uint64_t ist1;
+        int hv;
+        uint32_t ec;    /* EXT = 0 */
+        const char *what;
+    } t[] = {
+        {0x00, 0, 0x67, 0, 13, 0x00, "null code-segment selector"},
+        {0x40, 0, 0x67, 0, 13, 0x40, "selector beyond the GDT limit"},
+        {0x10, 0, 0x67, 0, 13, 0x10, "data segment"},
+        {0x13, 0, 0x67, 0, 13, 0x10, "data segment, RPL 3"},
+        {0x20, 0, 0x67, 0, 13, 0x20, "code DPL 3 > CPL 0"},
+        {0x18, 0, 0x67, 0, 11, 0x18, "code segment not present"},
+        {0x08, 1, 0x2a, AP_STACK - 0x1000, 10, 0x28, "IST1 beyond the TSS limit 2AH"},
+        {0x08, 1, 0x67, 0x0000800000000000ULL, 12, 0x00, "IST1 non-canonical"},
+    };
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    uint8_t tss[0x68];
+    char what[96];
+    ap_cpu c;
+    size_t i;
+
+    ie_open(&c, UC_X86_DELIVER_EXC_IDT, false);
+    OK(uc_mem_write(c.uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc_x86_mmr tr = {0x28, IE_TSS, t[i].tr_limit, 0x8b00};
+
+        memset(tss, 0, sizeof(tss));
+        memcpy(tss + 36, &t[i].ist1, 8);
+        OK(uc_mem_write(c.uc, IE_TSS, tss, sizeof(tss)));
+        OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+        ie_gate(&c, 6, AP_HND + 0x400, t[i].sel, t[i].ist, 0x8e);
+        ie_gate(&c, 0x50, AP_HND + 0x400, t[i].sel, t[i].ist, 0x8e);
+        snprintf(what, sizeof(what), "#UD: %s", t[i].what);
+        ie_x(&c, "\x0f\x0b", 2, t[i].hv, t[i].ec | 1, 0, what);
+        snprintf(what, sizeof(what), "INT 50h: %s", t[i].what);
+        ie_x(&c, "\xcd\x50", 2, t[i].hv, t[i].ec, 0, what);
+    }
+    OK(uc_close(c.uc));
+}
+/* ---- end U1400-U1409 (idterr_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -32487,4 +32745,7 @@ TEST_LIST = {
     {"test_x86_sgx_cet_ibt", test_x86_sgx_cet_ibt},
     {"test_x86_sgx_aex_delivery", test_x86_sgx_aex_delivery},
     {"test_x86_sgx_enclave32", test_x86_sgx_enclave32},
+    {"test_x86_idterr_vector64", test_x86_idterr_vector64},
+    {"test_x86_idterr_ext64", test_x86_idterr_ext64},
+    {"test_x86_idterr_cs64", test_x86_idterr_cs64},
     {NULL, NULL}};
