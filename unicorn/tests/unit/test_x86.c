@@ -35245,6 +35245,51 @@ static void test_x86_vmx_inj_len15(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1328: the guest PDPTE check with the TME-reduced MAXPHYADDR (SDM 092 Vol3C 29.3.1.6 pp. 29-15 /
+ * 29-16; Vol3A 5.1.4 p. 5-6, Table 5-8 p. 5-15; notes\eread\T1_tmekeyid_review.md T14). MAXPHYADDR 40,
+ * IA32_TME_ACTIVATE locked with 2 KeyID bits (MAXPHYADDR 38 outside EPT). A PAE guest (32-bit code,
+ * CR0.PG, CR4.PAE, no IA-32e mode) whose PDPTE 1 is present: with "enable EPT" 0 the PDPTEs come from
+ * memory - bit 37 enters (CPUID exits), bit 38 is a VM-entry failure (33, qualification 2); with EPT
+ * the PDPTE fields are guest-physical (full width): bit 38 enters.
+ */
+static void test_x86_vmx_pdpte_tme(void)
+{
+    const uint64_t pdpt = VMX_DATA + 0x1c000, pd = VMX_DATA + 0x1f000;
+    PcCtx c;
+    uint64_t fl, r;
+    int i;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_wrmsr(&c, 0x982, 2 | (2ull << 32) | (2ull << 36)) == -1);
+    vmx_wq(&c, pd, 0x83);
+    vmx_wq(&c, pd + 8, 0x200000 | 0x83);
+    vmx_wq(&c, pdpt, pd | 1);
+    vmx_wq(&c, pdpt + 8, (1ull << 37) | 1);
+    vmx_w(&c, 0x4012, 0x11fb);                      /* no IA-32e mode guest */
+    vmx_w(&c, 0x6802, pdpt);
+    vmx_w(&c, 0x4816, 0xc09b);                      /* CS: 32-bit */
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(fl == 0 && r == 10);
+    TEST_MSG("bit 37, EPT 0: flags %llx exit %llx", (unsigned long long)fl, (unsigned long long)r);
+    vmx_wq(&c, pdpt + 8, (1ull << 38) | 1);
+    vmx_w(&c, 0x6802, pdpt);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(r == 0x80000021u && vmx_r(&c, 0x6400) == 2);
+    TEST_MSG("bit 38, EPT 0: exit %llx", (unsigned long long)r);
+    vmx_ept_setup(&c, 0);
+    for (i = 0; i < 4; i++) {
+        vmx_w(&c, 0x280a + 2 * i, vmx_rq(&c, pdpt + 8 * i));
+    }
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(r == 10);
+    TEST_MSG("bit 38, EPT 1: exit %llx", (unsigned long long)r);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35705,4 +35750,5 @@ TEST_LIST = {
     {"test_x86_vmx_mtf_tpr", test_x86_vmx_mtf_tpr},
     {"test_x86_vmx_ept_ve2", test_x86_vmx_ept_ve2},
     {"test_x86_vmx_inj_len15", test_x86_vmx_inj_len15},
+    {"test_x86_vmx_pdpte_tme", test_x86_vmx_pdpte_tme},
     {NULL, NULL}};

@@ -1728,9 +1728,15 @@ static bool vmx_seg_limit_g_ok(uint32_t limit, uint32_t ar)
 }
 
 /* PDPTE checks of MOV to CR3 with PAE paging (Vol3A 5.4.1): present entries, reserved bits */
-static bool vmx_pdpte_ok(CPUX86State *env, uint64_t e)
+/*
+ * A PDPTE as MOV to CR3 checks it (29.3.1.6 pp. 29-15 / 29-16, 30.5.4; Vol3A Table 5-8 p. 5-15): reserved
+ * bits 2:1, 8:5, 63:'mpa'. U1328: 'mpa' is the paging MAXPHYADDR - reduced by
+ * IA32_TME_ACTIVATE[39:36] (vmx_maxphyaddr) for a guest without EPT and for the host, the full width
+ * for guest-physical addresses under EPT (Vol3A 5.1.4 p. 5-6)
+ */
+static bool vmx_pdpte_ok(CPUX86State *env, uint64_t e, int mpa)
 {
-    uint64_t rsvd = 0x1e6ull | ~((1ull << env_archcpu(env)->phys_bits) - 1);
+    uint64_t rsvd = 0x1e6ull | ~((1ull << mpa) - 1);
 
     return !(e & 1) || !(e & rsvd);
 }
@@ -2053,7 +2059,8 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
                 ? vmcs_get(env, VMCS_GUEST_PDPTE0 + 2 * i)
                 : vmx_ldq(env, (vmcs_get(env, VMCS_GUEST_CR3) & ~0x1full) + 8 * i);
 
-            if (!vmx_pdpte_ok(env, e)) {
+            if (!vmx_pdpte_ok(env, e, (proc2 & PROC2_EPT) ? env_archcpu(env)->phys_bits
+                                                          : vmx_maxphyaddr(env))) {
                 return 2 + 1;
             }
         }
@@ -2328,7 +2335,7 @@ static void vmx_load_host(CPUX86State *env)
     /* 30.5.4 PDPTEs of a PAE-paging host: VMX abort 2 if MOV to CR3 would #GP */
     if ((cr4 & CR4_PAE_MASK) && !host64 && (cr0 & CR0_PG_MASK)) {
         for (i = 0; i < 4; i++) {
-            if (!vmx_pdpte_ok(env, vmx_ldq(env, (cr3 & ~0x1full) + 8 * i))) {
+            if (!vmx_pdpte_ok(env, vmx_ldq(env, (cr3 & ~0x1full) + 8 * i), mpa)) {   /* U1328 */
                 vmx_abort(env, 2);
             }
         }

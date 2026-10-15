@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1327: 36 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1328: 37 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -261,6 +261,10 @@ translator and passed to the helpers.
   of 28.3 has no visible effect.
 
 ### Events in VMX non-root operation (U1305)
+- U1328: the PDPTE checks use the paging MAXPHYADDR of 29.3.1.6 / 30.5.4 (Vol3A 5.1.4 p. 5-6): reduced
+  by IA32_TME_ACTIVATE[39:36] for the guest PDPTEs read from memory ("enable EPT" 0) and for the host
+  PDPTEs at VM exit (VMX abort 2); the full width for the guest PDPTE fields under EPT and for the
+  PDPTE loads of MOV to CR3 through EPT (x86_vmx_pdpte_load).
 - Exceptions: raise_interrupt2 consults the exception bitmap (#PF: reversed when PFEC & PFEC_MASK !=
   PFEC_MATCH) before the #DF escalation, so an exception met while delivering another event exits with
   the original event (30.2.4); a #DF produced by the escalation is checked again and exits without an
