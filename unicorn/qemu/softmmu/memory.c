@@ -270,9 +270,45 @@ static void memory_region_remove_mapped_block(struct uc_struct *uc, MemoryRegion
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1450) */
+/*
+ * NoVmp (ledger U1450, plan 1.J.38): drop the translated code of a region that leaves the guest-physical
+ * address space - memory_unmap (uc_mem_unmap; split_region / split_mmio_region for uc_mem_protect and
+ * partial unmaps go through uc_mem_unmap too; a snapshot restore) and memory_moveout (uc_mem_unmap with a
+ * snapshot active). Translated blocks are keyed by RAM address (tb->page_addr[] = the RAM block offset of
+ * the guest-physical page, get_page_addr_code; looked up by linear PC), so they are dropped by the RAM
+ * ranges of the region: its own RAM block and those of its subregions (the copy-on-write copies a
+ * snapshot puts in a container). MMIO has no RAM block and no cached code. The original handed mr->addr,
+ * a guest-physical address, to uc_invalidate_tb, which translates a LINEAR address through the MMU (right
+ * for its other callers: the run's stop address, code hooks, UC_CTL_TB_REMOVE_CACHE) and takes the first
+ * page's RAM address for the whole length: with paging on and linear != physical it dropped nothing of
+ * the region - or the code of the unrelated physical page that linear address named - and a block mapped
+ * again at the same address and size (same RAM offset once one was freed) ran the old instructions. The
+ * TLB (linear translations) and tb_jmp_cache (linear PC) are flushed whole by the commit of
+ * memory_region_del_subregion (tcg_commit -> tlb_flush), so the per-page tlb_flush_page loop, which took
+ * guest-physical addresses as linear ones, is not kept. Guest view: SDM 093 Vol3A 11.1.3 p. 11-5 / 14.6
+ * p. 14-18 (changed code runs as changed); the API's unmap / map is a change by another agent.
+ */
+static void memory_unmap_drop_tbs(struct uc_struct *uc, MemoryRegion *mr)
+{
+    MemoryRegion *sub;
+    ram_addr_t ra = memory_region_get_ram_addr(mr);
+    uint64_t size = int128_get64(mr->size);
+
+    if (ra != RAM_ADDR_INVALID && size != 0) {
+        tb_invalidate_phys_range(uc, ra, ra + size);
+    }
+    QTAILQ_FOREACH(sub, &mr->subregions, subregions_link) {
+        memory_unmap_drop_tbs(uc, sub);
+    }
+}
+#endif /* __Use_Original_Qemu (U1450) */
+
 void memory_moveout(struct uc_struct *uc, MemoryRegion *mr)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1450) */
     hwaddr addr;
+#endif /* __Use_Original_Qemu (U1450) */
     /* A bit dirty, but it works.
      * The first subregion will be the one with the smalest priority.
      * In case of CoW this will always be the region which is mapped initial and later be moved in the subregion of the container.
@@ -287,6 +323,7 @@ void memory_moveout(struct uc_struct *uc, MemoryRegion *mr)
     }
 
     if (uc->cpu) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1450) */
         // We also need to remove all tb cache
         uc->uc_invalidate_tb(uc, mr->addr, int128_get64(mr->size));
 
@@ -295,6 +332,10 @@ void memory_moveout(struct uc_struct *uc, MemoryRegion *mr)
         for (addr = mr->addr; (int64_t)(mr->end - addr) > 0; addr += uc->target_page_size) {
            tlb_flush_page(uc->cpu, addr);
         }
+#else /* ours (U1450) */
+        /* by RAM address; the TLB is flushed whole by the commit of the removal (U1450) */
+        memory_unmap_drop_tbs(uc, mr);
+#endif /* __Use_Original_Qemu (U1450) */
     }
 
     memory_region_del_subregion(uc->system_memory, mr);
@@ -316,9 +357,12 @@ void memory_movein(struct uc_struct *uc, MemoryRegion *mr)
 
 void memory_unmap(struct uc_struct *uc, MemoryRegion *mr)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1450) */
     hwaddr addr;
+#endif /* __Use_Original_Qemu (U1450) */
 
     if (uc->cpu) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1450) */
         // We also need to remove all tb cache
         uc->uc_invalidate_tb(uc, mr->addr, int128_get64(mr->size));
 
@@ -327,6 +371,10 @@ void memory_unmap(struct uc_struct *uc, MemoryRegion *mr)
         for (addr = mr->addr; (int64_t)(mr->end - addr) > 0; addr += uc->target_page_size) {
            tlb_flush_page(uc->cpu, addr);
         }
+#else /* ours (U1450) */
+        /* by RAM address; the TLB is flushed whole by the commit of the removal (U1450) */
+        memory_unmap_drop_tbs(uc, mr);
+#endif /* __Use_Original_Qemu (U1450) */
     }
     memory_region_del_subregion(uc->system_memory, mr);
     memory_region_remove_mapped_block(uc, mr, true);

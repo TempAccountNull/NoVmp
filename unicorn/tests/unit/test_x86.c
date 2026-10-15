@@ -37366,6 +37366,243 @@ static void test_x86_xc_strict_off_keeps_xcr0(void)
 }
 /* ---- end U1440-U1449 (xc_) ---- */
 
+/* ---- U1450-U1459 (um_): uc_mem_unmap drops the translated code of the unmapped memory (plan 1.J.38) ---- */
+/*
+ * U1450 (fix) / U1451 (tests). Translated blocks are keyed by RAM address (the RAM block offset of the
+ * guest-physical page, get_page_addr_code) and looked up by linear PC. memory_unmap and memory_moveout
+ * (softmmu/memory.c) handed the region's guest-physical address to uc_invalidate_tb, which translates a
+ * LINEAR address through the MMU (it serves the run's stop address, code hooks and UC_CTL_TB_REMOVE_CACHE).
+ * With paging on and linear != physical it dropped nothing of the unmapped memory - or the code of
+ * whatever physical page that linear address named. Once a RAM range has been freed, a block mapped again
+ * at the same address and size is placed at the same RAM offset (find_ram_offset's first gap; the first
+ * remap after the first free still lands elsewhere), so the old blocks matched again and the old
+ * instructions ran instead of the new ones whenever nothing else dropped them: uc_mem_map_ptr of a new
+ * host buffer (uc_mem_write drops what it overwrites, U94). SDM 093 Vol3A 11.1.3 p. 11-5 / 14.6 p. 14-18:
+ * after code is changed the next execution runs the new code; the API's unmap / map is such a change by
+ * another agent. The TLB holds linear translations; the memory commit of the unmap flushes it whole
+ * (tcg_commit), checked here with the control (a translation to a physical address never mapped).
+ * um_unrelated_kept writes a uc_mem_map_ptr host buffer behind the emulator's back as a PROBE of the
+ * translation cache, not as architectural behaviour: Unicorn is not told, so the old instruction keeps
+ * running exactly while its translated block stays cached (UC_CTL_TB_REMOVE_CACHE then drops it).
+ */
+#define UM_P 0x310000ULL /* physical: 2 code pages */
+#define UM_Q 0x318000ULL /* physical: an unrelated code page */
+#define UM_L 0x320000ULL /* linear -> UM_P (paging on, linear != physical) */
+#define UM_A 0x340000ULL /* linear alias -> UM_P (paging on) */
+#define UM_C 0x330000ULL /* linear -> 338000h, never mapped (the control) */
+#define UM_PTE(la) (0x404000 + (((la) - 0x200000) >> 12) * 8)
+
+static uint8_t um_host[3][0x2000];
+static const uint32_t um_off[3] = {0x100, 0x1100, 0xffe}; /* page 0, page 1, across the boundary */
+
+/* MOV EAX, v; RET at p */
+static void um_put(uint8_t *p, uint32_t v)
+{
+    p[0] = 0xb8;
+    memcpy(p + 1, &v, 4);
+    p[5] = 0xc3;
+}
+
+/* the three entry points return tag + 1, tag + 2, tag + 3; every other byte is INT3 */
+static void um_fill(uint8_t *b, uint32_t tag)
+{
+    int k;
+
+    memset(b, 0xcc, 0x2000);
+    for (k = 0; k < 3; k++) {
+        um_put(b + um_off[k], tag + k + 1);
+    }
+}
+
+/*
+ * mode 0: paging off; 1: paging on, UM_P identity-mapped; 2: paging on, UM_P only at UM_L (linear
+ * 310000h has no translation). Modes 1 / 2 also map UM_A -> UM_P and UM_C -> 338000h (never mapped).
+ * Returns the linear address of UM_P.
+ */
+static uint64_t um_open(NvRun *r, int mode)
+{
+    uint64_t lin = mode == 2 ? UM_L : UM_P;
+    int i;
+
+    nv_open(r, UC_MODE_64, UC_CPU_X86_MAX);
+    if (mode) {
+        nv_paging_ss(r);
+        for (i = 0; i < 2; i++) {
+            nv_st64(r, UM_PTE(lin + i * 0x1000), (UM_P + i * 0x1000) | 7);
+            nv_st64(r, UM_PTE(UM_A + i * 0x1000), (UM_P + i * 0x1000) | 7);
+        }
+        nv_st64(r, UM_PTE(UM_C), 0x338000 | 7);
+    }
+    return lin;
+}
+
+/* CALL RCX from a fresh snippet; RAX on return */
+static uint64_t um_call(NvRun *r, uint64_t target, uc_err *err)
+{
+    nv_set(r, UC_X86_REG_RAX, 0);
+    nv_set(r, UC_X86_REG_RCX, target);
+    nv_set(r, UC_X86_REG_RSP, 0x201800);
+    *err = nv_run(r, "\xff\xd1");
+    return nv_get(r, UC_X86_REG_RAX);
+}
+
+/* the three entry points through 'lin' return tag + k + 1 without a fault; stale translated code of the
+   previous contents would return old + k + 1 */
+static void um_check3(NvRun *r, uint64_t lin, uint32_t tag, uint32_t old, const char *what)
+{
+    uc_err err;
+    uint64_t rax;
+    int k;
+
+    for (k = 0; k < 3; k++) {
+        rax = um_call(r, lin + um_off[k], &err);
+        TEST_CHECK(err == UC_ERR_OK && r->cap.count == 0 && rax == tag + k + 1);
+        TEST_MSG("%s, entry %" PRIx64 ": err %u (%s), exceptions %u (last vector %u), RAX %" PRIx64
+                 " (expected %x): %s",
+                 what, lin + um_off[k], err, uc_strerror(err), r->cap.count, r->cap.intno, rax,
+                 tag + k + 1,
+                 rax == tag + k + 1 ? "new code"
+                 : (old && rax == old + k + 1) ? "STALE translated code of the unmapped memory"
+                                               : "neither the old nor the new code");
+    }
+}
+
+/*
+ * Regression (1.J.38): map 2 code pages at UM_P, run them (translated, then cached), unmap, map the same
+ * address and size again with new instructions, run: the new instructions run, without a fault, through
+ * every linear alias; between unmap and map a read and a fetch through the old translation find no
+ * memory, as the control does. Rounds 1, 2, 4: uc_mem_map_ptr of a new host buffer; round 3: uc_mem_map
+ * + uc_mem_write. Before U1450 mode 2 ran the old instructions in rounds 2 and 4 (RAM offset reused).
+ */
+static void test_x86_um_remap_stale_tb(void)
+{
+    static const char *const mname[3] = {"paging off", "paging on, identity",
+                                         "paging on, linear != physical"};
+    NvRun r;
+    uc_err e_fx, e_rd, err;
+    uint64_t lin, ctl, rax, rbx;
+    uint32_t tag, old;
+    char what[160];
+    int mode, round;
+
+    for (mode = 0; mode < 3; mode++) {
+        lin = um_open(&r, mode);
+        ctl = mode ? UM_C : 0x338000;
+        /* the control: no memory behind the address */
+        nv_set(&r, UC_X86_REG_RDX, ctl + 0x800);
+        e_rd = nv_run(&r, "\x48\x8b\x1a");
+        um_call(&r, ctl, &e_fx);
+        TEST_CHECK(e_rd != UC_ERR_OK && e_fx != UC_ERR_OK);
+        TEST_MSG("%s: control read %u (%s), fetch %u (%s)", mname[mode], e_rd, uc_strerror(e_rd),
+                 e_fx, uc_strerror(e_fx));
+        old = 0;
+        tag = 0x1000;
+        um_fill(um_host[0], tag);
+        OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[0]));
+        for (round = 0; round < 5; round++) {
+            if (round) {
+                old = tag;
+                tag += 0x1000;
+                OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+                /* the TLB: nothing reaches the released memory */
+                nv_set(&r, UC_X86_REG_RBX, 0);
+                nv_set(&r, UC_X86_REG_RDX, lin + 0x800);
+                err = nv_run(&r, "\x48\x8b\x1a");
+                rbx = nv_get(&r, UC_X86_REG_RBX);
+                TEST_CHECK(err == e_rd && rbx == 0);
+                TEST_MSG("%s, round %d: read after unmap %u (%s), RBX %" PRIx64 " (expected %u)",
+                         mname[mode], round, err, uc_strerror(err), rbx, e_rd);
+                rax = um_call(&r, lin + um_off[0], &err);
+                TEST_CHECK(err == e_fx && rax == 0 && r.cap.count == 0);
+                TEST_MSG("%s, round %d: fetch after unmap %u (%s), RAX %" PRIx64 " (expected %u)",
+                         mname[mode], round, err, uc_strerror(err), rax, e_fx);
+                /* the same address and size again, new instructions */
+                if (round == 3) {
+                    um_fill(um_host[2], tag);
+                    OK(uc_mem_map(r.uc, UM_P, 0x2000, UC_PROT_ALL));
+                    OK(uc_mem_write(r.uc, UM_P, um_host[2], 0x2000));
+                } else {
+                    um_fill(um_host[round & 1], tag);
+                    OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[round & 1]));
+                }
+            }
+            snprintf(what, sizeof(what), "%s, round %d (%s)", mname[mode], round,
+                     round == 0   ? "first map"
+                     : round == 3 ? "uc_mem_map + uc_mem_write"
+                                  : "uc_mem_map_ptr, new host buffer");
+            um_check3(&r, lin, tag, old, what); /* translated */
+            um_check3(&r, lin, tag, old, what); /* from the cache */
+            if (mode) {
+                snprintf(what, sizeof(what), "%s, round %d, alias 340000h", mname[mode], round);
+                um_check3(&r, UM_A, tag, old, what);
+            }
+        }
+        OK(uc_close(r.uc));
+    }
+}
+
+/*
+ * Unmapping one range leaves the translated code of other physical memory alone. Paging on, linear
+ * 310000h (the physical address of the unmapped range) -> UM_Q. The UM_Q block runs (cached); its host
+ * bytes are patched behind the emulator's back (the probe); uc_mem_unmap of UM_P must not drop it: the
+ * old instruction still runs (before U1450 the unmap invalidated linear 310000h, i.e. UM_Q's code, and
+ * the patched byte ran). UC_CTL_TB_REMOVE_CACHE (linear) then drops it and the patched byte runs.
+ * snap = 1: the same with a memory snapshot active (uc_mem_unmap -> memory_moveout); after the restore
+ * UM_P is back and runs its own code.
+ */
+static void test_x86_um_unrelated_kept(void)
+{
+    NvRun r;
+    uc_context *ctx = NULL;
+    uc_err err;
+    uint64_t rax;
+    int snap, i;
+
+    for (snap = 0; snap < 2; snap++) {
+        um_open(&r, 2);
+        nv_st64(&r, UM_PTE(UM_P), UM_Q | 7);
+        memset(um_host[2], 0xcc, 0x1000);
+        um_put(um_host[2] + 0x100, 0x5555);
+        OK(uc_mem_map_ptr(r.uc, UM_Q, 0x1000, UC_PROT_ALL, um_host[2]));
+        um_fill(um_host[0], 0x7000);
+        OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[0]));
+        for (i = 0; i < 2; i++) {
+            rax = um_call(&r, UM_P + 0x100, &err);
+            TEST_CHECK(err == UC_ERR_OK && r.cap.count == 0 && rax == 0x5555);
+            TEST_MSG("snap %d: linear 310100h -> 318100h: err %u, RAX %" PRIx64, snap, err, rax);
+        }
+        um_check3(&r, UM_L, 0x7000, 0, snap ? "UM_P before the unmap (snapshot)" : "UM_P before the unmap");
+        if (snap) {
+            OK(uc_ctl_context_mode(r.uc, UC_CTL_CONTEXT_MEMORY));
+            OK(uc_context_alloc(r.uc, &ctx));
+            OK(uc_context_save(r.uc, ctx));
+        }
+        um_put(um_host[2] + 0x100, 0x6666); /* the probe: not seen while the block is cached */
+        OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+        rax = um_call(&r, UM_P + 0x100, &err);
+        TEST_CHECK(err == UC_ERR_OK && r.cap.count == 0 && rax == 0x5555);
+        TEST_MSG("snap %d: unmap of 310000h-311FFFh, then linear 310100h (-> 318100h): err %u (%s), "
+                 "exceptions %u, RAX %" PRIx64 ": %s",
+                 snap, err, uc_strerror(err), r.cap.count, rax,
+                 rax == 0x6666 ? "the translated code of the unrelated page 318000h was dropped "
+                                 "(the unmap invalidated LINEAR 310000h)"
+                 : rax == 0x5555 ? "kept" : "other");
+        OK(uc_ctl_remove_cache(r.uc, UM_P + 0x100, UM_P + 0x106));
+        rax = um_call(&r, UM_P + 0x100, &err);
+        TEST_CHECK(err == UC_ERR_OK && r.cap.count == 0 && rax == 0x6666);
+        TEST_MSG("snap %d: after UC_CTL_TB_REMOVE_CACHE: err %u, RAX %" PRIx64 " (expected 6666h)",
+                 snap, err, rax);
+        if (snap) {
+            OK(uc_context_restore(r.uc, ctx)); /* UM_P back in */
+            um_check3(&r, UM_L, 0x7000, 0, "UM_P after the snapshot restore");
+            OK(uc_context_free(ctx));
+            ctx = NULL;
+        }
+        OK(uc_close(r.uc));
+    }
+}
+/* ---- end U1450-U1459 (um_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -37851,4 +38088,6 @@ TEST_LIST = {
     {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
     {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
+    {"test_x86_um_remap_stale_tb", test_x86_um_remap_stale_tb},
+    {"test_x86_um_unrelated_kept", test_x86_um_unrelated_kept},
     {NULL, NULL}};
