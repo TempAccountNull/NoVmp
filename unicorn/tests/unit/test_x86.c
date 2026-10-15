@@ -35290,6 +35290,40 @@ static void test_x86_vmx_pdpte_tme(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1329: a fault during the delivery of an injected hardware exception (SDM 092 Vol3C 29.6.1 p.
+ * 29-21 and footnote 1; Vol3A Table 7-5): IDT limit DFH (vectors 0-13), #DF in the exception bitmap.
+ * An injected #PF (vector 14, beyond the limit) meets #GP: page fault + contributory = #DF (exit 0,
+ * 80000B08H) - not the #GP the IDT would deliver (gate 13 -> CPUID); an injected #VE (vector 20, page-
+ * fault class because the CPU supports "EPT-violation #VE") likewise.
+ */
+static void test_x86_vmx_inj_df(void)
+{
+    PcCtx c;
+    uint64_t fl, r, info;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 8, VMX_GUEST_PC + 0x100);
+    vmx_w(&c, 0x4812, 14 * 16 - 1);
+    vmx_w(&c, 0x4004, 1u << 8);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x4016, 0x80000b0eu);
+    vmx_w(&c, 0x4018, 0);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000b08u);
+    TEST_MSG("#PF: exit %llu info %llx", (unsigned long long)r, (unsigned long long)info);
+    vmx_w(&c, 0x4016, 0x80000314u);
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000b08u);
+    TEST_MSG("#VE: exit %llu info %llx", (unsigned long long)r, (unsigned long long)info);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35751,4 +35785,5 @@ TEST_LIST = {
     {"test_x86_vmx_ept_ve2", test_x86_vmx_ept_ve2},
     {"test_x86_vmx_inj_len15", test_x86_vmx_inj_len15},
     {"test_x86_vmx_pdpte_tme", test_x86_vmx_pdpte_tme},
+    {"test_x86_vmx_inj_df", test_x86_vmx_inj_df},
     {NULL, NULL}};

@@ -2726,7 +2726,12 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
     env->vmx.inj_has_ec = (info >> 11) & 1;
     env->vmx.inj_ec = ec;
     env->vmx.inj_push_rip = env->eip + ((type == 4 || type == 5 || type == 6) ? len : 0);
-    env->old_exception = -1;
+    /*
+     * U1329: a fault during the delivery of an injected hardware exception is handled as if the
+     * exception had occurred normally (29.6.1 p. 29-21: a contributory or page-fault-class nested
+     * exception may become #DF; footnote 1: #VE is page-fault class); other event types are benign here
+     */
+    env->old_exception = type == 3 ? (int)vec : -1;
     if (type == 7) {
         /* U1309: SYSCALL (1) / SYSENTER (2) with FRED event delivery: RIP + length pushed */
         env->vmx.idtv_info = info & ~(1u << 12);
