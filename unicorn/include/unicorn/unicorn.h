@@ -680,6 +680,17 @@ typedef enum uc_control_type {
     // (installing, replacing or removing a profile no longer changes it). Writing a negative
     // value drops the explicit setting (back to the profile default). Reading returns the
     // effective value (0/1). Write: @args = (int); Read: @args = (int *)
+    // NoVmp U1441 (user decision A19, 2026-10-14): this control sets the CPUID reporting /
+    // enforcement policy; it never reinitialises guest-owned state. Written after init:
+    // - strict -> non-strict keeps XCR0 exactly. Components the model supports beyond the
+    //   profile become usable only after a valid XSETBV by the guest (or the host's
+    //   uc_reg_write(UC_X86_REG_XCR0)); XSETBV keeps its #GP(0) rules (reserved bit, x87 cleared,
+    //   AVX without SSE, AVX-512 not 000b/111b or without SSE+AVX, one MPX or AMX half) and the
+    //   AVX / AVX-512 / AMX instructions stay #UD until their XCR0 bits are set.
+    // - non-strict -> strict narrows XCR0 to the profile's CPUID.(EAX=0DH,ECX=0):EDX:EAX with
+    //   those pairing rules (U1225), as at reset.
+    // CPUID leaf 0DH reports the profile in both modes (EBX follows the current XCR0); the reset
+    // XCR0 itself is described in docs/quirks.md "Emulator environment choices" (U1440).
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists

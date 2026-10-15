@@ -37214,6 +37214,156 @@ static void test_x86_xc_arch_reset_vs_default(void)
     }
 }
 
+/*
+ * U1441 (user decision A19, 2026-10-14): UC_CTL_X86_CPUID_STRICT governs the CPUID reporting /
+ * enforcement policy, not guest-owned state. Switching it off after init keeps XCR0 exactly (only RESET
+ * and XSETBV change XCR0, SDM 093 Vol1 13.3 p. 13-5); the capabilities the model has beyond the profile
+ * become usable only after a valid XSETBV (Vol1 13.3 pp. 13-5 / 13-6: XSETBV #GP(0) for a reserved bit,
+ * x87 cleared, AVX without SSE, AVX-512 without AVX/SSE or not all of 7:5, one MPX half, one AMX half;
+ * Vol3A 2.6 p. 2-23 the same list; AVX / AVX-512 / AMX instructions #UD unless CR4.OSXSAVE = 1 and their
+ * XCR0 bits are set). Model: MAX + AVX512F + AMX-TILE (components 602FFH). Profile: leaf 0DH 7H, no leaf 7
+ * (AVX-512 and AMX hidden). The U1225 narrowing when strict is switched ON is kept.
+ */
+static void test_x86_xc_strict_off_keeps_xcr0(void)
+{
+    static const uc_x86_cpuid prof7[] = {
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x14000201, 0x078bfbff},
+        {0xd, 0, 7, 0x340, 0x340, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+        {0xd, 2, 0x100, 0x240, 0, 0},
+    };
+    static const struct {
+        uint64_t mask;
+        const char *why;
+    } bad[] = {
+        {0x6, "x87 cleared"},
+        {0x5, "AVX without SSE"},
+        {0x67, "opmask|ZMM_Hi256 without Hi16_ZMM"},
+        {0xc7, "ZMM_Hi256|Hi16_ZMM without opmask"},
+        {0xe3, "AVX-512 without AVX"},
+        {0xe5, "AVX-512 without SSE"},
+        {0xf, "BNDREGS without BNDCSR"},
+        {0x17, "BNDCSR without BNDREGS"},
+        {0x107, "bit 8 (reserved in XCR0)"},
+        {0x20007, "TILECFG without TILEDATA"},
+        {0x40007, "TILEDATA without TILECFG"},
+        {0x80007, "APX state: not in this model"},
+        {0x8000000000000007ULL, "bit 63"},
+    };
+    XcCfg k, m;
+    XsCtx c;
+    uint32_t r[4];
+    uint64_t x;
+    size_t i;
+    int on = -1, v;
+
+    memset(&k, 0, sizeof(k));
+    k.model = UC_CPU_X86_MAX;
+    k.avx512 = 1;
+    k.amx = UC_X86_AMX_TILE;
+    k.prof = prof7;
+    k.nprof = sizeof(prof7) / sizeof(prof7[0]);
+    k.strict = -1;
+
+    /* the model alone (no profile): its whole mask; strict has nothing to narrow to: on/off keep XCR0 */
+    m = k;
+    m.prof = NULL;
+    m.nprof = 0;
+    OK(xc_open(&c, &m));
+    x = xc_reg_xcr0(&c);
+    TEST_CHECK(x == 0x602ff);
+    TEST_MSG("MAX+AVX512F+AMX-TILE default XCR0 %#" PRIx64 " (expected 602FFH)", x);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(st_xcr0(&c) == 0x602ff);
+    xc_xsetbv_ok(&c, 3, "x87|SSE");
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(st_xcr0(&c) == 3);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(st_xcr0(&c) == 3);
+    OK(uc_close(c.uc));
+
+    /* strict (the profile default): the reset XCR0 is narrowed to the profile (U1225): 7 */
+    OK(xc_open(&c, &k));
+    OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+    TEST_CHECK(on == 1 && xc_reg_xcr0(&c) == 7 && st_xcr0(&c) == 7);
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == 6);           /* hidden by the profile */
+    TEST_CHECK(xc_exec(&c, XC_AMX) == 6);
+    xc_xsetbv_gp(&c, 0xe7, "strict: AVX-512 not in the profile");
+    xc_xsetbv_gp(&c, 0x60007, "strict: AMX not in the profile");
+    xc_xsetbv_gp(&c, 0x1f, "strict: MPX not in the profile");
+
+    /* (1) strict off: XCR0 is kept exactly (API and XGETBV) */
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+    x = xc_reg_xcr0(&c);
+    TEST_CHECK(on == 0 && x == 7 && st_xcr0(&c) == 7);
+    TEST_MSG("strict off: strict %d, XCR0 %#" PRIx64 " (expected 7, unchanged)", on, x);
+
+    /* (2) + (4) the newly exposed capabilities set no XCR0 bit: their instructions are still #UD
+       (now from XCR0, no longer from the profile); CPUID 0DH still reports the profile's leaf */
+    v = xc_exec(&c, XC_AVX512);
+    TEST_CHECK(v == 6);
+    TEST_MSG("strict off, XCR0 7: VPXORD zmm %d (expected #UD: XCR0[7:5] = 0)", v);
+    v = xc_exec(&c, XC_AMX);
+    TEST_CHECK(v == 6);
+    TEST_MSG("strict off, XCR0 7: TILERELEASE %d (expected #UD: XCR0[18:17] = 0)", v);
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+    TEST_CHECK(st_xcr0(&c) == 7);
+    xs_cpuid(&c, 1, 0, r);
+    TEST_CHECK((r[2] >> 27) & 1);
+    xs_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[0] == 7 && r[3] == 0 && r[1] == 0x340);
+    TEST_MSG("strict off: CPUID.(0DH,0) EAX %#x EBX %#x EDX %#x (expected 7, 340H, 0)", r[0], r[1], r[3]);
+
+    /* (3) invalid combinations still #GP(0), XCR0 unchanged */
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        xc_xsetbv_gp(&c, bad[i].mask, bad[i].why);
+    }
+    /* ... a valid XSETBV enables what the model supports and the dependency rules allow */
+    xc_xsetbv_ok(&c, 0x1f, "MPX, both halves");
+    xc_xsetbv_ok(&c, 0xe7, "AVX-512 with SSE and AVX");
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == -1);
+    TEST_CHECK(xc_exec(&c, XC_AMX) == 6);
+    xc_xsetbv_ok(&c, 0x60007, "AMX, both halves");
+    TEST_CHECK(xc_exec(&c, XC_AMX) == -1);
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == 6);
+    xc_xsetbv_ok(&c, 0x602ff, "every model component");
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == -1);
+    TEST_CHECK(xc_exec(&c, XC_AMX) == -1);
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+    xs_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[0] == 7);                              /* reporting stays the profile's */
+    /* (4) disabling again: the instructions #UD again */
+    xc_xsetbv_ok(&c, 7, "back to x87|SSE|AVX");
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == 6);
+    TEST_CHECK(xc_exec(&c, XC_AMX) == 6);
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+
+    /* strict on again narrows (U1225), a negative value (back to the profile default: strict) too;
+       strict off afterwards keeps the narrowed value */
+    xc_xsetbv_ok(&c, 0x602ff, "every model component");
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    x = st_xcr0(&c);
+    TEST_CHECK(x == 7);
+    TEST_MSG("strict on: XCR0 %#" PRIx64 " (expected 7, U1225)", x);
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == 6);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    xc_xsetbv_ok(&c, 0xe7, "AVX-512 with SSE and AVX");
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, -1));
+    OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+    TEST_CHECK(on == 1 && st_xcr0(&c) == 7);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(st_xcr0(&c) == 7);
+    /* a guest value below the profile survives both directions */
+    xc_xsetbv_ok(&c, 3, "x87|SSE");
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(st_xcr0(&c) == 3);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(st_xcr0(&c) == 3 && xc_reg_xcr0(&c) == 3);
+    OK(uc_close(c.uc));
+}
 /* ---- end U1440-U1449 (xc_) ---- */
 
 TEST_LIST = {
@@ -37700,4 +37850,5 @@ TEST_LIST = {
     {"test_x86_i6_cs_sel64", test_x86_i6_cs_sel64},
     {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
     {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
+    {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
     {NULL, NULL}};

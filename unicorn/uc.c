@@ -3716,7 +3716,10 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
             if (uc->init_done) {
 #if __Use_Original_Qemu != 1 /* ours (U1225) */
                 /* NoVmp (ledger U1225): becoming strict narrows XCR0 to the profile's leaf 0DH
-                   (x86_cpu_xcr0_in_profile); becoming non-strict leaves the guest's XCR0 alone */
+                   (x86_cpu_xcr0_in_profile); becoming non-strict leaves the guest's XCR0 alone.
+                   U1441 (user decision A19, 2026-10-14): the control is a CPUID reporting policy,
+                   not a reinitialisation of guest-owned state - never widen or rewrite XCR0 here;
+                   only RESET, XSETBV and uc_reg_write(UC_X86_REG_XCR0) do (test_x86_xc_strict_off_keeps_xcr0) */
                 if (uc->x86_cpuid_changed) {
                     uc->x86_cpuid_changed(uc);
                 }
