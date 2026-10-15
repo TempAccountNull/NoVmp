@@ -36896,8 +36896,8 @@ static void test_x86_i6_cs_sel64(void)
 /* ---- end U1420-U1429 (i6_) ---- */
 
 /*
- * ---- NoVmp U1421 tests (ig2_): 64-bit IDT event delivery - the canonical check of the
- * gate's target RIP (U1421) ----
+ * ---- NoVmp U1421 / U1423 tests (ig2_): 64-bit IDT event delivery - the canonical check of the
+ * gate's target RIP (U1421) and the 16-bit gate types 06H / 07H (U1423) ----
  * U1421: SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation, inter-privilege (p. 3-474) and
  * INTRA-PRIVILEGE-LEVEL-INTERRUPT (p. 3-478): "IF instruction pointer from IDT gate contains a
  * non-canonical address THEN #GP(EXT); FI; (* Error code contains NULL selector *)" - after the stack
@@ -36907,6 +36907,9 @@ static void test_x86_i6_cs_sel64(void)
  * 0 for INT n / INT3 / INTO, otherwise (including INT1) 1. Vol3A 7.14.1 (p. 7-21) and 4.5.2 (p. 4-5:
  * transfers through the IDT check "first whether the value to be loaded is paging canonical"; the
  * #GP "is delivered as a fault"): canonical as CR4.LA57 selects (48 / 57 bits).
+ * U1423 (provisional policy, docs/quirks.md "IA-32e IDT delivery: 16-bit interrupt / trap gates
+ * (06H / 07H)"): a 06H / 07H gate is "not an interrupt-, or trap-gate type" (Vol2A p. 3-471):
+ * #GP(error_code(vector,1,EXT)), not Vol3A 7.14.1's #GP(0) - ig2_gate16_ec holds the expectation.
  * Specification-validated (the i5-13600K's IDT cannot be changed from user mode). The recording
  * handlers of #DF #TS #NP #SS #GP run on IST1 (i6_open), so a stack the failed delivery must not
  * write can be checked.
@@ -36919,6 +36922,13 @@ static void test_x86_i6_cs_sel64(void)
 #define IG2_PT 0x72000000ULL        /* paging: tables IG2_PT..+7FFFH, the IG2_HI page at +10000H */
 #define IG2_HI 0xFFFF800000000000ULL /* the lowest canonical upper-half address (4-level paging) */
 #define IG2_LA57 0x0000800000000000ULL /* canonical with CR4.LA57 = 1: a handler is mapped there */
+
+/* U1423: the expected error code of an IDT gate of type 06H / 07H (the only place to change if the
+   provisional policy switches, e.g. to #GP(0 | EXT)) */
+static int64_t ig2_gate16_ec(int vector, int ext)
+{
+    return ((int64_t)vector << 3) | 2 | ext;
+}
 
 /* i6_exec with a time limit (a delivery loop without instructions ends: the build without U1421) */
 static int ig2_exec(ap_cpu *c, const ap_code *k)
@@ -37089,6 +37099,26 @@ static void ig2_code(ap_cpu *c, const char *code, size_t len, int v, uint64_t of
     ie_gate(c, v, off, 0x08, 0, attr);
     ap_emit(&k, code, len);
     ig2_run(c, &k, hv, ec, rip_off, what);
+}
+
+/* an event of kind through gate v (attribute byte; CS 08H, IST 0, offset I6_TGT): handler hv with
+   error code ec (#DE: #DF(0)) */
+static void ig2_ev(ap_cpu *c, int kind, int n, uint8_t attr, int hv, int64_t ec, const char *what)
+{
+    ap_code k = {{0}, 0};
+    int rip;
+
+    ie_gate(c, i6_vec(kind, n), I6_TGT, 0x08, 0, attr);
+    rip = i6_emit(&k, kind, n);
+    if (kind == I6_DE) {
+        hv = 8;
+        ec = 0;
+        rip = -1;
+    }
+    ig2_run(c, &k, hv, ec, rip, what);
+    if (kind == I6_EXTI) {
+        ap_wmsr(c, 0x80b, 0);
+    }
 }
 
 /* the 64-bit TSS of i6_tss with RSP0 given */
@@ -37617,7 +37647,135 @@ static void test_x86_ig2_gate_rip_tlbvirt64(void)
     OK(uc_close(c.uc));
 }
 
-/* ---- end U1421 (ig2_) ---- */
+/*
+ * U1423: IDT gates of type 06H / 07H (16-bit interrupt / trap gate) in IA-32e mode - provisional
+ * policy #GP(error_code(vector,1,EXT)) (ig2_gate16_ec): INT 44h / 45h through DPL 0 and DPL 3 gates
+ * at CPL0 and CPL3 (the type check precedes the DPL check), not-present 06H / 07H gates (#GP, not
+ * #NP: the type check precedes the present check), INT3, INT1 (EXT 1) and INT 01h (EXT 0), INTO (64-bit
+ * mode: #UD; compatibility mode with OF = 1: the gate), #UD, #DE (#DF(0)), a SELF IPI, an NMI, and a
+ * #UD whose #GP(33H) meets a 06H gate 13 (#DF(0)). Vol2A p. 3-471, Vol3A 7.14.1 (p. 7-21).
+ */
+static void test_x86_idterr_gate16_64(void)
+{
+    static const uint8_t attr[] = {0x86, 0x87, 0xe6, 0xe7};
+    char what[160];
+    ap_cpu c;
+    size_t a;
+
+    i6_open(&c);
+    for (a = 0; a < sizeof(attr); a++) {
+        int t = attr[a] & 0xf, dpl = attr[a] >> 5 & 3;
+
+        snprintf(what, sizeof(what), "INT 44h, type %02Xh gate, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INTN, 0x44, attr[a], 13, ig2_gate16_ec(0x44, 0), what);
+        snprintf(what, sizeof(what), "INT 45h, type %02Xh gate, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INTN, 0x45, attr[a], 13, ig2_gate16_ec(0x45, 0), what);
+        snprintf(what, sizeof(what), "INT3, gate 3 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INT3, 0, attr[a], 13, ig2_gate16_ec(3, 0), what);
+        snprintf(what, sizeof(what), "INT1, gate 1 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INT1, 0, attr[a], 13, ig2_gate16_ec(1, 1), what);
+        snprintf(what, sizeof(what), "INT 01h, gate 1 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INTN, 0x01, attr[a], 13, ig2_gate16_ec(1, 0), what);
+        snprintf(what, sizeof(what), "#UD, gate 6 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_UD, 0, attr[a], 13, ig2_gate16_ec(6, 1), what);
+        snprintf(what, sizeof(what), "#DE, gate 0 type %02Xh, DPL %d: #DF(0)", t, dpl);
+        ig2_ev(&c, I6_DE, 0, attr[a], 8, 0, what);
+        snprintf(what, sizeof(what), "SELF IPI 61h, type %02Xh gate, DPL %d", t, dpl);
+        ig2_ev(&c, I6_EXTI, 0x61, attr[a], 13, ig2_gate16_ec(0x61, 1), what);
+        snprintf(what, sizeof(what), "NMI, gate 2 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_NMI, 0, attr[a], 13, ig2_gate16_ec(2, 1), what);
+    }
+    /* not present: the type check comes first (#GP, not #NP) */
+    ig2_ev(&c, I6_INTN, 0x44, 0x06, 13, ig2_gate16_ec(0x44, 0), "INT 44h, type 06h gate, not present");
+    ig2_ev(&c, I6_INTN, 0x45, 0x07, 13, ig2_gate16_ec(0x45, 0), "INT 45h, type 07h gate, not present");
+    ig2_ev(&c, I6_UD, 0, 0x06, 13, ig2_gate16_ec(6, 1), "#UD, gate 6 type 06h, not present");
+    /* INTO in 64-bit mode: #UD whatever gate 4 is */
+    i6_handler(&c, 6, false, 2, 0);
+    ap_set(&c, UC_X86_REG_RFLAGS, 0xa02);   /* OF = 1 */
+    ig2_code(&c, "\xce\x90", 2, 4, I6_TGT, 0x86, 6, -1, 0, "64-bit mode: INTO (OF = 1), gate 4 type 06h: #UD");
+    /* compatibility mode: INTO (OF = 1) through gate 4 type 06h / 07h, INT 44h, #UD */
+    ig2_compat_in(&c);
+    ap_set(&c, UC_X86_REG_RFLAGS, 0xa02);
+    ig2_code(&c, "\xce\x90", 2, 4, I6_TGT, 0x86, 13, ig2_gate16_ec(4, 0), 0,
+             "compatibility mode: INTO (OF = 1), gate 4 type 06h");
+    ig2_code(&c, "\xce\x90", 2, 4, I6_TGT, 0xe7, 13, ig2_gate16_ec(4, 0), 0,
+             "compatibility mode: INTO (OF = 1), gate 4 type 07h DPL 3");
+    ap_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    ig2_ev(&c, I6_INTN, 0x44, 0x86, 13, ig2_gate16_ec(0x44, 0), "compatibility mode: INT 44h, type 06h gate");
+    ig2_ev(&c, I6_UD, 0, 0x87, 13, ig2_gate16_ec(6, 1), "compatibility mode: #UD, gate 6 type 07h");
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x38);
+    ig2_compat_out(&c);
+    /* #UD -> #GP(33H) through gate 0Dh type 06h -> #DF(0) */
+    ie_gate(&c, 13, I6_TGT, 0x08, 1, 0x86);
+    ig2_ev(&c, I6_UD, 0, 0x86, 8, 0, "#UD, gates 6 and 0Dh type 06h: #DF(0)");
+    i6_handler(&c, 13, true, 2, 1);
+    /* CPL3: the type check precedes the DPL check */
+    ig2_cpl3(&c);
+    for (a = 0; a < sizeof(attr); a++) {
+        int t = attr[a] & 0xf, dpl = attr[a] >> 5 & 3;
+
+        snprintf(what, sizeof(what), "CPL3: INT 44h, type %02Xh gate, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INTN, 0x44, attr[a], 13, ig2_gate16_ec(0x44, 0), what);
+        snprintf(what, sizeof(what), "CPL3: INT 45h, type %02Xh gate, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INTN, 0x45, attr[a], 13, ig2_gate16_ec(0x45, 0), what);
+        snprintf(what, sizeof(what), "CPL3: INT3, gate 3 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_INT3, 0, attr[a], 13, ig2_gate16_ec(3, 0), what);
+        snprintf(what, sizeof(what), "CPL3: #UD, gate 6 type %02Xh, DPL %d", t, dpl);
+        ig2_ev(&c, I6_UD, 0, attr[a], 13, ig2_gate16_ec(6, 1), what);
+    }
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x23);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1400 / U1423 separation: every other gate type that is not an interrupt or trap gate - system
+ * types 01H-05H, 08H-0DH and S = 1 descriptors (10H-1FH) - is #GP(error_code(vector,1,EXT)) as well
+ * (Vol2A p. 3-471, Table 3-2 p. 3-14); types 0EH / 0FH are delivered (controls). INT 62h (EXT 0),
+ * SELF IPI 62h and #UD (EXT 1).
+ */
+static void test_x86_idterr_gate_types64(void)
+{
+    static const uint8_t ty[] = {0x81, 0x82, 0x83, 0x84, 0x85, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d,
+                                 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a,
+                                 0x9b, 0x9c, 0x9d, 0x9e, 0x9f};
+    char what[160];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+    size_t i;
+    int g;
+
+    i6_open(&c);
+    for (i = 0; i < sizeof(ty); i++) {
+        int t = ty[i] & 0x1f;
+
+        snprintf(what, sizeof(what), "INT 62h, descriptor type %02Xh (S = %d)", t & 0xf, t >> 4);
+        ig2_ev(&c, I6_INTN, 0x62, ty[i], 13, (0x62 << 3) | 2, what);
+        snprintf(what, sizeof(what), "SELF IPI 62h, descriptor type %02Xh (S = %d)", t & 0xf, t >> 4);
+        ig2_ev(&c, I6_EXTI, 0x62, ty[i], 13, (0x62 << 3) | 3, what);
+        snprintf(what, sizeof(what), "#UD, gate 6 descriptor type %02Xh (S = %d)", t & 0xf, t >> 4);
+        ig2_ev(&c, I6_UD, 0, ty[i], 13, 0x33, what);
+    }
+    /* controls: 64-bit interrupt (0EH) and trap (0FH) gates are delivered */
+    i6_handler(&c, 0x62, false, 0, 0);
+    i6_handler(&c, 6, false, 2, 0);
+    for (g = 0; g < 2; g++) {
+        ie_gate(&c, 0x62, I6_HND + 0x80 * (uint64_t)i6_slot(0x62), 0x08, 0, (uint8_t)(0x8e + g));
+        ie_gate(&c, 6, I6_HND + 0x80 * (uint64_t)i6_slot(6), 0x08, 0, (uint8_t)(0x8e + g));
+        memset(&k, 0, sizeof(k));
+        ap_emit(&k, "\xcd\x62", 2);
+        ig2_run_sw(&c, &k, 0x62, -1, 2, 1, g ? "INT 62h, type 0Fh: delivered" : "INT 62h, type 0Eh: delivered");
+        memset(&k, 0, sizeof(k));
+        ap_wr(&k, 0x83f, 0x62);
+        ap_emit(&k, "\x66\x90", 2);
+        ig2_run(&c, &k, 0x62, -1, 17, g ? "SELF IPI 62h, type 0Fh: delivered" : "SELF IPI 62h, type 0Eh: delivered");
+        ap_wmsr(&c, 0x80b, 0);
+        memset(&k, 0, sizeof(k));
+        ap_emit(&k, "\x0f\x0b", 2);
+        ig2_run(&c, &k, 6, -1, 0, g ? "#UD, gate 6 type 0Fh: delivered" : "#UD, gate 6 type 0Eh: delivered");
+    }
+    OK(uc_close(c.uc));
+}
+/* ---- end U1421 / U1423 (ig2_) ---- */
 
 /* ---- begin U1440-U1449 (xc_) ---- */
 typedef struct XcCfg {
@@ -40697,6 +40855,8 @@ TEST_LIST = {
     {"test_x86_ig2_gate_rip_compat64", test_x86_ig2_gate_rip_compat64},
     {"test_x86_ig2_gate_rip_vmx64", test_x86_ig2_gate_rip_vmx64},
     {"test_x86_ig2_gate_rip_tlbvirt64", test_x86_ig2_gate_rip_tlbvirt64},
+    {"test_x86_idterr_gate16_64", test_x86_idterr_gate16_64},
+    {"test_x86_idterr_gate_types64", test_x86_idterr_gate_types64},
     {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
     {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
