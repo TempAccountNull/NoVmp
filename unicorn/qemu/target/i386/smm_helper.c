@@ -23,43 +23,21 @@
 
 /* SMM support */
 
-#ifdef TARGET_X86_64
-#define SMM_REVISION_ID 0x00020064
-#else
-#define SMM_REVISION_ID 0x00020000
-#endif
-
-void do_smm_enter(X86CPU *cpu)
+/*
+ * backport of upstream QEMU cdba90ac1b (DR6 / DR7 through helper_set_dr on SMM entry and
+ * RSM, so the debug-register breakpoints follow), 5d08f36983 (the 64-bit and 32-bit state-save
+ * code in separate functions) and e932132963 (the map chosen at run time from CPUID LM instead
+ * of TARGET_X86_64) - U1460
+ */
+static void sm_state_init_64(X86CPU *cpu)
 {
+#ifdef TARGET_X86_64
     CPUX86State *env = &cpu->env;
     CPUState *cs = CPU(cpu);
-    target_ulong sm_state;
     SegmentCache *dt;
     int i, offset;
+    target_ulong sm_state = env->smbase + 0x8000;
 
-    // qemu_log_mask(CPU_LOG_INT, "SMM: enter\n");
-    // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
-
-#if __Use_Original_Qemu != 1 /* ours (U1263) */
-    /* an SMI in enclave mode is an enclave-exiting event (SDM 092 Vol3D 40.4, 42.8.2, sgx_model.c) */
-    bool sgx_enc = env->sgx_enclave_mode != 0;
-
-    if (sgx_enc) {
-        x86_sgx_aex(env, -1, 0, 1, 0, 0);
-        env->sgx_enc_event = 0;
-    }
-#endif /* __Use_Original_Qemu (U1263) */
-    env->msr_smi_count++;
-    env->hflags |= HF_SMM_MASK;
-    if (env->hflags2 & HF2_NMI_MASK) {
-        env->hflags2 |= HF2_SMM_INSIDE_NMI_MASK;
-    } else {
-        env->hflags2 |= HF2_NMI_MASK;
-    }
-
-    sm_state = env->smbase + 0x8000;
-
-#ifdef TARGET_X86_64
     for (i = 0; i < 6; i++) {
         dt = &env->segs[i];
         offset = 0x7e00 + i * 16;
@@ -111,17 +89,21 @@ void do_smm_enter(X86CPU *cpu)
     x86_stq_phys(cs, sm_state + 0x7f50, env->cr[3]);
     x86_stl_phys(cs, sm_state + 0x7f58, env->cr[0]);
 
-    x86_stl_phys(cs, sm_state + 0x7efc, SMM_REVISION_ID);
+    x86_stl_phys(cs, sm_state + 0x7efc, 0x00020064);    /* SMM revision ID */
     x86_stl_phys(cs, sm_state + 0x7f00, env->smbase);
-#if __Use_Original_Qemu != 1 /* ours (U1263) */
-    if (env->sgx) {
-        /* Vol3D Table 42-1: SMRAM 7EE0H bit 1 ENCLAVE_INTERRUPTION (U1263) */
-        uint32_t f = x86_ldl_phys(cs, sm_state + 0x7ee0);
-
-        x86_stl_phys(cs, sm_state + 0x7ee0, (f & ~2u) | (sgx_enc ? 2u : 0));
-    }
-#endif /* __Use_Original_Qemu (U1263) */
 #else
+    g_assert_not_reached();
+#endif
+}
+
+static void sm_state_init_32(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+    CPUState *cs = CPU(cpu);
+    SegmentCache *dt;
+    int i, offset;
+    target_ulong sm_state = env->smbase + 0x8000;
+
     x86_stl_phys(cs, sm_state + 0x7ffc, env->cr[0]);
     x86_stl_phys(cs, sm_state + 0x7ff8, env->cr[3]);
     x86_stl_phys(cs, sm_state + 0x7ff4, cpu_compute_eflags(env));
@@ -167,14 +149,53 @@ void do_smm_enter(X86CPU *cpu)
     }
     x86_stl_phys(cs, sm_state + 0x7f14, env->cr[4]);
 
-    x86_stl_phys(cs, sm_state + 0x7efc, SMM_REVISION_ID);
+    x86_stl_phys(cs, sm_state + 0x7efc, 0x00020000);   /* SMM revision ID */
     x86_stl_phys(cs, sm_state + 0x7ef8, env->smbase);
-#endif
+}
+
+void do_smm_enter(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+
+    // qemu_log_mask(CPU_LOG_INT, "SMM: enter\n");
+    // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
+
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+    /* an SMI in enclave mode is an enclave-exiting event (SDM 092 Vol3D 40.4, 42.8.2, sgx_model.c) */
+    bool sgx_enc = env->sgx_enclave_mode != 0;
+
+    if (sgx_enc) {
+        x86_sgx_aex(env, -1, 0, 1, 0, 0);
+        env->sgx_enc_event = 0;
+    }
+#endif /* __Use_Original_Qemu (U1263) */
+    env->msr_smi_count++;
+    env->hflags |= HF_SMM_MASK;
+    if (env->hflags2 & HF2_NMI_MASK) {
+        env->hflags2 |= HF2_SMM_INSIDE_NMI_MASK;
+    } else {
+        env->hflags2 |= HF2_NMI_MASK;
+    }
+
+    if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+        sm_state_init_64(cpu);
+#if __Use_Original_Qemu != 1 /* ours (U1263) */
+        if (env->sgx) {
+            /* Vol3D Table 42-1: SMRAM 7EE0H bit 1 ENCLAVE_INTERRUPTION (U1263) */
+            CPUState *cs = CPU(cpu);
+            target_ulong sm_state = env->smbase + 0x8000;
+            uint32_t f = x86_ldl_phys(cs, sm_state + 0x7ee0);
+
+            x86_stl_phys(cs, sm_state + 0x7ee0, (f & ~2u) | (sgx_enc ? 2u : 0));
+        }
+#endif /* __Use_Original_Qemu (U1263) */
+        cpu_load_efer(env, 0);
+    } else {
+        sm_state_init_32(cpu);
+    }
+
     /* init SMM cpu state */
 
-#ifdef TARGET_X86_64
-    cpu_load_efer(env, 0);
-#endif
     cpu_load_eflags(env, 0, ~(CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C |
                               DF_MASK));
     env->eip = 0x00008000;
@@ -182,7 +203,7 @@ void do_smm_enter(X86CPU *cpu)
                        env->cr[0] & ~(CR0_PE_MASK | CR0_EM_MASK | CR0_TS_MASK |
                                       CR0_PG_MASK));
     cpu_x86_update_cr4(env, 0);
-    env->dr[7] = 0x00000400;
+    helper_set_dr(env, 7, 0x00000400);
 
     cpu_x86_load_seg_cache(env, R_CS, (env->smbase >> 4) & 0xffff, env->smbase,
                            0xffffffff,
@@ -205,15 +226,16 @@ void do_smm_enter(X86CPU *cpu)
                            DESC_G_MASK | DESC_A_MASK);
 }
 
-void helper_rsm(CPUX86State *env)
+static void rsm_load_regs_64(CPUX86State *env)
 {
+#ifdef TARGET_X86_64
     CPUState *cs = env_cpu(env);
     target_ulong sm_state;
     int i, offset;
     uint32_t val;
 
     sm_state = env->smbase + 0x8000;
-#ifdef TARGET_X86_64
+
     cpu_load_efer(env, x86_ldq_phys(cs, sm_state + 0x7ed0));
 
     env->gdt.base = x86_ldq_phys(cs, sm_state + 0x7e68);
@@ -246,8 +268,8 @@ void helper_rsm(CPUX86State *env)
     env->eip = x86_ldq_phys(cs, sm_state + 0x7f78);
     cpu_load_eflags(env, x86_ldl_phys(cs, sm_state + 0x7f70),
                     ~(CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C | DF_MASK));
-    env->dr[6] = x86_ldl_phys(cs, sm_state + 0x7f68);
-    env->dr[7] = x86_ldl_phys(cs, sm_state + 0x7f60);
+    helper_set_dr(env, 6, x86_ldl_phys(cs, sm_state + 0x7f68));
+    helper_set_dr(env, 7, x86_ldl_phys(cs, sm_state + 0x7f60));
 
     cpu_x86_update_cr4(env, x86_ldl_phys(cs, sm_state + 0x7f48));
     cpu_x86_update_cr3(env, x86_ldq_phys(cs, sm_state + 0x7f50));
@@ -268,6 +290,19 @@ void helper_rsm(CPUX86State *env)
         env->smbase = x86_ldl_phys(cs, sm_state + 0x7f00);
     }
 #else
+    g_assert_not_reached();
+#endif
+}
+
+static void rsm_load_regs_32(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+    target_ulong sm_state;
+    int i, offset;
+    uint32_t val;
+
+    sm_state = env->smbase + 0x8000;
+
     cpu_x86_update_cr0(env, x86_ldl_phys(cs, sm_state + 0x7ffc));
     cpu_x86_update_cr3(env, x86_ldl_phys(cs, sm_state + 0x7ff8));
     cpu_load_eflags(env, x86_ldl_phys(cs, sm_state + 0x7ff4),
@@ -281,8 +316,8 @@ void helper_rsm(CPUX86State *env)
     env->regs[R_EDX] = x86_ldl_phys(cs, sm_state + 0x7fd8);
     env->regs[R_ECX] = x86_ldl_phys(cs, sm_state + 0x7fd4);
     env->regs[R_EAX] = x86_ldl_phys(cs, sm_state + 0x7fd0);
-    env->dr[6] = x86_ldl_phys(cs, sm_state + 0x7fcc);
-    env->dr[7] = x86_ldl_phys(cs, sm_state + 0x7fc8);
+    helper_set_dr(env, 6, x86_ldl_phys(cs, sm_state + 0x7fcc));
+    helper_set_dr(env, 7, x86_ldl_phys(cs, sm_state + 0x7fc8));
 
     env->tr.selector = x86_ldl_phys(cs, sm_state + 0x7fc4) & 0xffff;
     env->tr.base = x86_ldl_phys(cs, sm_state + 0x7f64);
@@ -320,7 +355,16 @@ void helper_rsm(CPUX86State *env)
     if (val & 0x20000) {
         env->smbase = x86_ldl_phys(cs, sm_state + 0x7ef8);
     }
-#endif
+}
+
+void helper_rsm(CPUX86State *env)
+{
+    if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+        rsm_load_regs_64(env);
+    } else {
+        rsm_load_regs_32(env);
+    }
+
     if ((env->hflags2 & HF2_SMM_INSIDE_NMI_MASK) == 0) {
         env->hflags2 &= ~HF2_NMI_MASK;
     }
