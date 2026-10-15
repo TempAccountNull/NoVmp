@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1329: 38 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1330: 40 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -329,8 +329,9 @@ translator and passed to the helpers.
   page) becomes a #VE (vector 20, no error code; page-fault class for #DF) with CR0.PE = 1, outside
   event delivery and with offset 4 of the area 0; the area gets Table 28-23 (48, FFFFFFFFH,
   qualification, guest-linear address - 0 when not valid -, guest-physical address, EPTP index).
-  An EPT violation for a guest-physical address beyond the 4-level walk (bits 63:48) has no entry
-  whose bit 63 could decide: not converted (our choice). The #VE goes through the exception bitmap
+  An EPT violation for a guest-physical address beyond the 4-level walk (bits 51:48) has no entry
+  whose bit 63 could decide: not converted (documented interpretation, user decision 2026-10-14,
+  docs/quirks.md; test_x86_vmx_ve_gpa48). The #VE goes through the exception bitmap
   (bit 20) like any exception. VMFUNC EPTP switching writes ECX[15:0] to the EPTP index (28.5.7.3).
   Not modelled: the PT and PEBS exclusions (Intel PT and PEBS are absent from the model). The
   prematurely-busy-shadow-stack exclusion cannot arise: CET event delivery and far transfers plan and
@@ -408,7 +409,8 @@ translator and passed to the helpers.
   IA32_TME_ACTIVATE[39:36] only with "enable EPT" 0 (29.3.1.1); the host-CR3 one always (29.2.2,
   outside SEAM). Note: 30.5.1 keeps CR3 bits 63:MAXPHYADDR with the TME-reduced MAXPHYADDR, so with
   EPT a guest CR3 bit between the reduced and the full width (allowed by 29.3.1.1) reaches the host
-  CR3 at the VM exit - the SDM as written, modelled as such. Regression test: test_x86_vmx_lam_cr3.
+  CR3 at the VM exit - the SDM as written, modelled as such (user decision 2026-10-14, docs/quirks.md;
+  test_x86_vmx_host_cr3_tme). Regression test: test_x86_vmx_lam_cr3.
 
 ### Pending debug exceptions (U1310)
 - 29.7.3: a VM entry that injects nothing (or only a pending MTF VM exit), outside shutdown /

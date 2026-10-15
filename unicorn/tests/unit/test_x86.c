@@ -35324,6 +35324,94 @@ static void test_x86_vmx_inj_df(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1330: user decision 2026-10-14 (docs/quirks.md "our reading"): an EPT violation for a guest-physical
+ * address with bits 51:48 set under 4-level EPT is not converted to #VE (SDM 093 Vol3C 31.3.2 p. 31-4,
+ * 28.5.8.1 p. 28-23, Table 30-7 p. 30-12). A CPUID profile reports MAXPHYADDR 52 (strict off), so guest
+ * paging may map linear 400000H (2-MByte page) to guest-physical 1_0000_0000_0000H: "EPT-violation
+ * #VE" with the information area clear, #VE in the exception bitmap - MOV RAX, [400010H] is an
+ * ordinary VM exit 48 (qualification: data read, linear address valid, translation; bits 5:3 clear),
+ * guest-physical 1_0000_0000_0010H, guest-linear 400010H, RIP of the MOV, RBX unchanged, the area not
+ * written; a read of an ordinary EPT-not-present page is still a #VE.
+ */
+static void test_x86_vmx_ve_gpa48(void)
+{
+    const uint32_t lv[][2] = {{0, 0}, {1, 0}, {7, 0}, {7, 1}, {0xd, 0}, {0xd, 1},
+                              {0x80000000, 0}, {0x80000001, 0}, {0x80000008, 0}};
+    const uint64_t page = VMX_DATA + 0xf0000, ve = VMX_SCRATCH;
+    uc_x86_cpuid prof[9];
+    uint32_t r[4];
+    PcCtx c;
+    uint64_t fl, q, rbx;
+    int i;
+
+    vmx_setup(&c);
+    for (i = 0; i < 9; i++) {
+        pc_cpuid(&c, lv[i][0], lv[i][1], r);
+        prof[i].leaf = lv[i][0];
+        prof[i].subleaf = lv[i][1];
+        prof[i].eax = r[0];
+        prof[i].ebx = r[1];
+        prof[i].ecx = r[2];
+        prof[i].edx = r[3];
+    }
+    prof[6].eax = prof[6].eax < 0x80000008u ? 0x80000008u : prof[6].eax;
+    prof[8].eax = (prof[8].eax & ~0xffu) | 52;                   /* MAXPHYADDR 52 */
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof, 9));
+    pc_cpuid(&c, 0x80000008, 0, r);
+    TEST_CHECK((r[0] & 0xff) == 52);
+    vmx_wq(&c, VMX_PT + 0x2010, (1ull << 48) | 0x83);            /* PD[2]: 400000H -> 1_0000_0000_0000H */
+    vmx_ept_setup(&c, 0);
+    vmx_w(&c, 0x401e, (1u << 1) | (1u << 18));
+    vmx_w(&c, 0x202a, ve);
+    vmx_w(&c, 0x4004, 1u << 20);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, 0x400010);       /* MOV RAX, [RBX] */
+    rbx = pc_get(&c, UC_X86_REG_RBX);
+    q = vmx_r(&c, 0x6400);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48 && (q & 0x1bf) == 0x181 && vmx_r(&c, 0x2400) == (1ull << 48) + 0x10 &&
+               vmx_r(&c, 0x640a) == 0x400010 && vmx_r(&c, 0x681e) == VMX_GUEST_PC && rbx == 0x400010 &&
+               vmx_rq(&c, ve) == 0);
+    TEST_MSG("exit %llx qual %llx gpa %llx gla %llx", (unsigned long long)vmx_r(&c, 0x4402),
+             (unsigned long long)q, (unsigned long long)vmx_r(&c, 0x2400),
+             (unsigned long long)vmx_r(&c, 0x640a));
+    vmx_wq(&c, VMX_EPT_PTE(page), 0);
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000314u && (uint32_t)vmx_rq(&c, ve) == 48);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1330: user decision 2026-10-14 (docs/quirks.md "our reading"): the literal SDM 093 Vol3C 30.5.1 p.
+ * 30-30 rule for CR3 at VM exit with TME - CR3[M-1:0] from the host CR3 field, CR3[63:M] keep the
+ * pre-exit value. P = 40 (MAX model), K = 2 (IA32_TME_ACTIVATE locked), M = 38. An EPT guest whose CR3
+ * sets bits 38 and 37 (valid: 29.3.1.1 reduces only with EPT 0; EPT maps guest-physical 40_0000_0000H +
+ * x and 60_0000_0000H + x to x) exits by CPUID; the host CR3 field (VMX_PT | 18H) clears CR3[63:M].
+ * CR3 right after the host-state load (emulation stops at the host RIP): bit 38 (in CR3[P-1:M])
+ * survives, bit 37 (in CR3[M-1:12]) and bits 11:0 (PCD / PWT) come from the host field.
+ */
+static void test_x86_vmx_host_cr3_tme(void)
+{
+    PcCtx c;
+    uint64_t fl, cr3, rip;
+    int r;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_wrmsr(&c, 0x982, 2 | (2ull << 32) | (2ull << 36)) == -1);
+    vmx_ept_setup(&c, 0);
+    vmx_wq(&c, VMX_EPT_PDPT + 8 * 256, VMX_EPT_PD | 7);           /* guest-physical bit 38 */
+    vmx_wq(&c, VMX_EPT_PDPT + 8 * 384, VMX_EPT_PD | 7);           /* bits 38 and 37 */
+    vmx_w(&c, 0x6802, VMX_PT | (1ull << 38) | (1ull << 37));
+    vmx_w(&c, 0x6c02, VMX_PT | 0x18);
+    r = vmx_enter(&c, 1, "\x0f\xa2", 2, &fl);
+    cr3 = pc_get(&c, UC_X86_REG_CR3);
+    rip = pc_get(&c, UC_X86_REG_RIP);
+    TEST_CHECK(cr3 == (VMX_PT | 0x18 | (1ull << 38)) && rip == VMX_ENTRY_PC + 3);
+    TEST_MSG("vmx_enter %d CR3 %llx RIP %llx", r, (unsigned long long)cr3, (unsigned long long)rip);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35786,4 +35874,6 @@ TEST_LIST = {
     {"test_x86_vmx_inj_len15", test_x86_vmx_inj_len15},
     {"test_x86_vmx_pdpte_tme", test_x86_vmx_pdpte_tme},
     {"test_x86_vmx_inj_df", test_x86_vmx_inj_df},
+    {"test_x86_vmx_ve_gpa48", test_x86_vmx_ve_gpa48},
+    {"test_x86_vmx_host_cr3_tme", test_x86_vmx_host_cr3_tme},
     {NULL, NULL}};
