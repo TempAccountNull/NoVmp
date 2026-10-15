@@ -5467,7 +5467,12 @@ static void x86_cpu_reset(CPUState *dev)
     }
 
 #if __Use_Original_Qemu != 1 /* ours (U120) */
-    /* reset XCR0 within the CPUID profile's leaf 0DH (what XSETBV accepts) */
+    /* reset XCR0 within the CPUID profile's leaf 0DH (what XSETBV accepts).
+       U1440 (user decision A18, 2026-10-14): this XCR0 - every user component the model enumerates,
+       narrowed by a strict profile only (U1225) - is an emulator ENVIRONMENT choice (the state an OS
+       leaves after XSETBV, like CR4.OSXSAVE above), not the architectural RESET value: SDM 093 Vol3A
+       2.6 p. 2-23 / Table 12-1 p. 12-3 give XCR0 = 1H after power-up and RESET. Per-model table:
+       docs/quirks.md "Emulator environment choices"; test_x86_xc_default_xcr0_models */
     xcr0 = x86_cpu_xcr0_in_profile(env, xcr0);
 #endif /* __Use_Original_Qemu (U120) */
     env->xcr0 = xcr0;

@@ -178,6 +178,35 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 | (no tag: the harness handles it) | every hardware case that faults with RFLAGS.AC = 1 (`cases_ac_hw.txt`) | Windows clears RFLAGS.AC while it dispatches a user-mode exception (seen for #AC, #GP and #UD: the context the VEH resumes has AC = 0), so after a hardware fault the host's AC bit is the OS's; emu-alltest compares Unicorn's AC bit there (U834, `docs/emu-alltest.md`) |
 | `# host state: WRUSS under host CR4.CET = 1` | cases_reach lines 275–276, cases_tsx_cet lines 29–30 | Windows runs with CR4.CET = 1, so WRUSS at CPL3 is #GP(0); the emulator has CR4.CET = 0, where the SDM gives #UD ("#UD If CR4.CET = 0") |
 
+## Emulator environment choices (OS-preconfigured state, not architectural RESET)
+
+Unicorn starts a guest the way an operating system leaves a thread, not the way a processor leaves power-up or RESET. These are deliberate choices of the execution environment, not CPU-vs-SDM deviations and not "SDM undefined" choices; they carry no case tag.
+
+### XCR0 at engine start (U120 / U370 / U1225; documented U1440, user decision A18 2026-10-14)
+
+- **Architectural RESET.** SDM 093 Vol3A 2.6 p. 2-23: "After reset, all bits (except bit 0) in XCR0 are cleared to zero; XCR0[0] is set to 1." Table 12-1 (Contd.) p. 12-3: XCR0 = 1H at power-up and at RESET, unchanged by INIT. Vol1 13.3 pp. 13-5 / 13-6 gives the same per component ("XCR0[1] is 0 coming out of RESET", ... "XCR0[18:17] have value 00b coming out of RESET"). So after RESET XCR0 = **1H** (x87 only) and every other bit is 0; CR4 is 0 as well (Table 12-1), so XGETBV / XSETBV are #UD until system software sets CR4.OSXSAVE and then enables components with XSETBV.
+- **Emulator default (deliberate environment choice).** `x86_cpu_reset` (cpu.c, U120 / U370) and `reg_reset` (unicorn.c, U67) start with CR4.OSFXSR | OSXMMEXCPT | OSXSAVE set when CPUID.01H:ECX.XSAVE = 1 and with XCR0 = **every user state component the configured CPU model enumerates in CPUID.(EAX=0DH,ECX=0):EDX:EAX**, i.e. the state an OS leaves after XSETBV of everything the CPU offers. It is derived per model and per opt-in, not from "what every OS uses" (Windows on the i5-13600K runs with 7H although that CPU enumerates 207H, `docs/emu-alltest.md`): bit 0 always; bit 1 with CPUID.01H:EDX.SSE; bit 2 with CPUID.01H:ECX.AVX; bits 4:3 with CPUID.(7,0):EBX.MPX; bits 7:5 with AVX512F (`UC_CTL_X86_AVX512`, any non-zero mask) or AVX10 (`UC_CTL_X86_AVX10`); bit 9 with CPUID.(7,0):ECX.PKU; bits 18:17 with CPUID.(7,0):EDX.AMX_TILE (`UC_CTL_X86_AMX`); bit 19 with CPUID.(7,1):EDX.APX_F (`UC_CTL_X86_APX`, which withdraws MPX, U610) - `x86_ext_save_areas` / `x86_cpu_esa_supported`, limited to `CPUID_XSTATE_XCR0_MASK`. Supervisor components (CET 12:11 in IA32_XSS) are never in XCR0.
+- **Valid for the model by construction and by test.** One CPUID bit feeds each pair or group (MPX 4:3, AVX-512 7:5, AMX 18:17) and every AVX-capable model has SSE, so the default obeys every XSETBV rule of Vol1 13.3 / Vol3A 2.6 (bit 0 set; AVX only with SSE; MPX both or neither; AVX-512 all of 7:5 or none and only with 2:1; AMX both or neither; no reserved or supervisor bit) and equals CPUID.(0DH,0):EDX:EAX ("if and only if CPUID.0DH.00H:EAX[i] = 1"). `test_x86_xc_default_xcr0_models` checks every row below: the value, CR4.OSXSAVE = CPUID.01H:ECX.OSXSAVE = 1, XCR0 = CPUID.(0DH,0), the rules, XGETBV, XSETBV accepting both the default and the RESET value 1H, AVX running with the default and #UD with 1H.
+
+| model (`UC_CPU_X86_*`) / opt-in (64-bit mode) | default XCR0 | enabled state components |
+|---|---|---|
+| 486, PENTIUM, PENTIUM2 | 1H, see note | 0 x87 (no XSAVE, no SSE) |
+| QEMU64, PHENOM, CORE2DUO, KVM64, QEMU32, KVM32, COREDUO, PENTIUM3, ATHLON, N270, CONROE, PENRYN, NEHALEM, WESTMERE, OPTERON_G1, OPTERON_G2, OPTERON_G3 | 3H, see note | 0 x87, 1 SSE (no XSAVE) |
+| SANDYBRIDGE, IVYBRIDGE, HASWELL (the default model when none is set), BROADWELL, SKYLAKE_CLIENT, KNIGHTSMILL, OPTERON_G4, OPTERON_G5, EPYC, DHYANA, EPYC_ROME | 7H | 0 x87, 1 SSE, 2 AVX |
+| DENVERTON, SNOWRIDGE | 1BH | 0 x87, 1 SSE, 3 BNDREGS, 4 BNDCSR (MPX; no AVX) |
+| SKYLAKE_SERVER, CASCADELAKE_SERVER, COOPERLAKE, ICELAKE_CLIENT, ICELAKE_SERVER | 207H | 0 x87, 1 SSE, 2 AVX, 9 PKRU (their AVX-512 needs the opt-in, as KNIGHTSMILL's) |
+| MAX | 21FH | 0 x87, 1 SSE, 2 AVX, 3 BNDREGS, 4 BNDCSR, 9 PKRU |
+| MAX + `UC_CTL_X86_AVX512` (measured with 1 = AVX512F) | 2FFH | 0-4, 5 opmask, 6 ZMM_Hi256, 7 Hi16_ZMM, 9 |
+| MAX + `UC_CTL_X86_AVX10` (measured with `UC_X86_AVX10_1`) | 2FFH | as above |
+| MAX + `UC_CTL_X86_AMX` (`UC_X86_AMX_TILE`) | 6021FH | 0-4, 9, 17 TILECFG, 18 TILEDATA |
+| MAX + AVX512 + AMX | 602FFH | 0-7, 9, 17, 18 |
+| MAX + `UC_CTL_X86_APX` (`UC_X86_APX_F`) | 80207H | 0 x87, 1 SSE, 2 AVX, 9 PKRU, 19 APX (MPX withdrawn, U610) |
+
+  Note (no XSAVE): CR4.OSXSAVE = 0 and XGETBV / XSETBV are #UD, so XCR0 is not architecturally visible; the 1H / 3H that `uc_reg_read(UC_X86_REG_XCR0)` reports is the reset loop's x87 (+ SSE) and has no effect.
+- **With a CPUID profile.** No profile or a non-strict one: the model's value above. A strict profile (`UC_CTL_X86_CPUID_STRICT`, the U435 default while a profile is installed) narrows it to the profile's CPUID.(0DH,0):EDX:EAX with the pairing rules (U1225), e.g. MAX + the i5-13600K profile: 207H. This is still an OS-preconfigured value, **not** the RESET value 1H (see "Open" below).
+- **Reaching the architectural state.** A harness or loader writes `uc_reg_write(UC_X86_REG_XCR0, 1)` (a host override: not validated like XSETBV), or the guest executes XSETBV with EDX:EAX = 1 at CPL0. From there XCR0 behaves as the SDM says: AVX / AVX-512 / AMX #UD until XSETBV enables their components (SSE instructions still run, Vol1 13.3), XSETBV #GP(0) for invalid combinations or components outside CPUID.(0DH,0), CPUID.(0DH,0):EBX follows XCR0 (240H for 1H). Test: `test_x86_xc_arch_reset_vs_default`.
+- **Open (reported 2026-10-14, not changed).** Decision A18 expects "the strict architectural profile" to start with XCR0 = 1H and to need XSETBV before relying on more state. The emulator has no such profile: `UC_CTL_X86_CPUID_STRICT` only restricts CPUID-visible features, and a strict profile starts with the narrowed OS value (207H with the i5-13600K profile; `test_x86_xc_arch_reset_vs_default` locks this current behaviour). A change needs a decision first (the expected-value suites run with strict profiles take this reset value).
+
 ## SDM undefined, our choice
 
 Where the SDM leaves the result open the emulator copies the i5-13600K. These are not deviations and carry no tag.

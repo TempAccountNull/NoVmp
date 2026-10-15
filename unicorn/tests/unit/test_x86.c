@@ -36892,6 +36892,330 @@ static void test_x86_i6_cs_sel64(void)
 }
 /* ---- end U1420-U1429 (i6_) ---- */
 
+/* ---- begin U1440-U1449 (xc_) ---- */
+typedef struct XcCfg {
+    int model;                  /* UC_CPU_X86_*, -1 = not written (the default model) */
+    int avx512, amx, apx, avx10;    /* opt-in values written before init, 0 = not written */
+    const uc_x86_cpuid *prof;   /* UC_CTL_X86_CPUID profile, NULL = none */
+    size_t nprof;
+    int strict;                 /* UC_CTL_X86_CPUID_STRICT written before init, -1 = not written */
+} XcCfg;
+
+static uc_err xc_open(XsCtx *c, const XcCfg *k)
+{
+    uc_err err;
+
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    if (k->model >= 0) {
+        OK(uc_ctl_set_cpu_model(c->uc, k->model));
+    }
+    if (k->avx512) {
+        OK(uc_ctl_set_x86_avx512(c->uc, k->avx512));
+    }
+    if (k->amx) {
+        OK(uc_ctl_set_x86_amx(c->uc, k->amx));
+    }
+    if (k->apx) {
+        OK(uc_ctl_set_x86_apx(c->uc, k->apx));
+    }
+    if (k->avx10) {
+        OK(uc_ctl_set_x86_avx10(c->uc, k->avx10));
+    }
+    if (k->nprof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, k->prof, k->nprof));
+    }
+    if (k->strict >= 0) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, k->strict));
+    }
+    /* the engine starts here (first memory map): the reset state sees the settings above */
+    err = uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL);
+    if (err != UC_ERR_OK) {
+        uc_close(c->uc);
+        c->uc = NULL;
+        return err;
+    }
+    OK(uc_mem_map(c->uc, XS_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+    return UC_ERR_OK;
+}
+
+/* VEX.256 VXORPS ymm0 (AVX), EVEX.512 VPXORD zmm0 (AVX512F), PXOR xmm0 (SSE2), TILERELEASE (AMX-TILE) */
+#define XC_AVX "\xc5\xfc\x57\xc0"
+#define XC_AVX512 "\x62\xf1\x7d\x48\xef\xc0"
+#define XC_SSE "\x66\x0f\xef\xc0"
+#define XC_AMX "\xc4\xe2\x78\x49\xc0"
+
+static int xc_exec(XsCtx *c, const char *code)
+{
+    return xs_run(c, code, strlen(code), NULL);
+}
+
+static uint64_t xc_reg_xcr0(XsCtx *c)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_XCR0, &v));
+    return v;
+}
+
+/* XSETBV must fault (#GP(0)) and leave XCR0 as it was */
+static void xc_xsetbv_gp(XsCtx *c, uint64_t mask, const char *why)
+{
+    uint64_t before = st_xcr0(c), after;
+    int v = st_xsetbv(c, mask);
+
+    after = st_xcr0(c);
+    TEST_CHECK(v == 13 && after == before);
+    TEST_MSG("XSETBV %#" PRIx64 " (%s): vector %d (expected 13), XCR0 %#" PRIx64 " -> %#" PRIx64, mask, why,
+             v, before, after);
+}
+
+/* XSETBV must be accepted and XCR0 become mask (read back with XGETBV and through the API) */
+static void xc_xsetbv_ok(XsCtx *c, uint64_t mask, const char *why)
+{
+    int v = st_xsetbv(c, mask);
+    uint64_t x = st_xcr0(c);
+
+    TEST_CHECK(v == -1 && x == mask && xc_reg_xcr0(c) == mask);
+    TEST_MSG("XSETBV %#" PRIx64 " (%s): vector %d (expected none), XCR0 %#" PRIx64, mask, why, v, x);
+}
+
+/* the XCR0 rules of SDM 093 Vol1 13.3 pp. 13-5 / 13-6 and Vol3A 2.6 p. 2-23 (bit 19: APX spec 355828-009):
+   bit 0 set; AVX only with SSE; MPX both halves or none; AVX-512 all of 7:5 or none, and only with 2:1;
+   AMX both halves or none; bits 8 and 16:10 (supervisor components) and 63:20 never set */
+static int xc_xcr0_valid(uint64_t x)
+{
+    if (!(x & 1) || (x & 6) == 4) {
+        return 0;
+    }
+    if (((x >> 3) & 3) == 1 || ((x >> 3) & 3) == 2 || ((x >> 17) & 3) == 1 || ((x >> 17) & 3) == 2) {
+        return 0;
+    }
+    if ((x & 0xe0) && (x & 0xe6) != 0xe6) {
+        return 0;
+    }
+    return (x & (0x100 | 0xfc00 | 0x10000 | ~0xfffffULL)) == 0;
+}
+
+/*
+ * U1440 (user decision A18, 2026-10-14): the default (reset) XCR0 of every built-in model and of the MAX
+ * opt-ins - an emulator ENVIRONMENT choice (an OS has run XSETBV for every user component the model
+ * enumerates), documented per component in docs/quirks.md "Emulator environment choices". For a model
+ * with XSAVE (CPUID.01H:ECX[26]): CR4.OSXSAVE = CPUID.01H:ECX.OSXSAVE = 1; XCR0 = CPUID.(0DH,0):EDX:EAX
+ * (Vol1 13.3: bit i settable "if and only if CPUID.0DH.00H:EAX[i] = 1", so nothing more can be set);
+ * it obeys every XSETBV rule (xc_xcr0_valid) and XSETBV accepts it and the architectural RESET value 1H
+ * (Vol3A 2.6 p. 2-23, Table 12-1 p. 12-3); AVX executes with it and #UDs with 1H. Without XSAVE: CR4.OSXSAVE
+ * = 0, XGETBV / XSETBV #UD (Vol2D) and AVX #UD; the value uc_reg_read reports (x87, + SSE with
+ * CPUID.01H:EDX.SSE) is not architecturally visible there. The table locks the current values.
+ */
+static void test_x86_xc_default_xcr0_models(void)
+{
+    static const struct {
+        int model, avx512, amx, apx, avx10;
+        uint64_t xcr0;      /* expected default XCR0 (uc_reg_read) */
+        int xsave;          /* CPUID.01H:ECX.XSAVE */
+    } t[] = {
+        {-1, 0, 0, 0, 0, 0x7, 1},   /* the default model: UC_CPU_X86_HASWELL */
+        {UC_CPU_X86_QEMU64, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_PHENOM, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_CORE2DUO, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_KVM64, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_QEMU32, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_KVM32, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_COREDUO, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_486, 0, 0, 0, 0, 0x1, 0},
+        {UC_CPU_X86_PENTIUM, 0, 0, 0, 0, 0x1, 0},
+        {UC_CPU_X86_PENTIUM2, 0, 0, 0, 0, 0x1, 0},
+        {UC_CPU_X86_PENTIUM3, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_ATHLON, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_N270, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_CONROE, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_PENRYN, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_NEHALEM, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_WESTMERE, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_SANDYBRIDGE, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_IVYBRIDGE, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_HASWELL, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_BROADWELL, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_SKYLAKE_CLIENT, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_SKYLAKE_SERVER, 0, 0, 0, 0, 0x207, 1},
+        {UC_CPU_X86_CASCADELAKE_SERVER, 0, 0, 0, 0, 0x207, 1},
+        {UC_CPU_X86_COOPERLAKE, 0, 0, 0, 0, 0x207, 1},
+        {UC_CPU_X86_ICELAKE_CLIENT, 0, 0, 0, 0, 0x207, 1},
+        {UC_CPU_X86_ICELAKE_SERVER, 0, 0, 0, 0, 0x207, 1},
+        {UC_CPU_X86_DENVERTON, 0, 0, 0, 0, 0x1b, 1},
+        {UC_CPU_X86_SNOWRIDGE, 0, 0, 0, 0, 0x1b, 1},
+        {UC_CPU_X86_KNIGHTSMILL, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_OPTERON_G1, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_OPTERON_G2, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_OPTERON_G3, 0, 0, 0, 0, 0x3, 0},
+        {UC_CPU_X86_OPTERON_G4, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_OPTERON_G5, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_EPYC, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_DHYANA, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_EPYC_ROME, 0, 0, 0, 0, 0x7, 1},
+        {UC_CPU_X86_MAX, 0, 0, 0, 0, 0x21f, 1},
+        {UC_CPU_X86_MAX, 1, 0, 0, 0, 0x2ff, 1},                 /* UC_CTL_X86_AVX512 */
+        {UC_CPU_X86_MAX, 0, UC_X86_AMX_TILE, 0, 0, 0x6021f, 1}, /* UC_CTL_X86_AMX */
+        {UC_CPU_X86_MAX, 0, 0, UC_X86_APX_F, 0, 0x80207, 1},    /* UC_CTL_X86_APX: MPX withdrawn */
+        {UC_CPU_X86_MAX, 0, 0, 0, UC_X86_AVX10_1, 0x2ff, 1},    /* UC_CTL_X86_AVX10 */
+        {UC_CPU_X86_MAX, 1, UC_X86_AMX_TILE, 0, 0, 0x602ff, 1},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        XcCfg k;
+        XsCtx c;
+        uint32_t r1[4], rd[4];
+        uint64_t x, cr4 = 0, sup;
+        int v, avx;
+
+        memset(&k, 0, sizeof(k));
+        k.model = t[i].model;
+        k.avx512 = t[i].avx512;
+        k.amx = t[i].amx;
+        k.apx = t[i].apx;
+        k.avx10 = t[i].avx10;
+        k.strict = -1;
+        OK(xc_open(&c, &k));
+        x = xc_reg_xcr0(&c);
+        OK(uc_reg_read(c.uc, UC_X86_REG_CR4, &cr4));
+        xs_cpuid(&c, 1, 0, r1);
+        TEST_CHECK(x == t[i].xcr0 && (int)((r1[2] >> 26) & 1) == t[i].xsave);
+        TEST_MSG("row %u (model %d): XCR0 %#" PRIx64 " (expected %#" PRIx64 "), XSAVE %u (expected %d)",
+                 (unsigned)i, t[i].model, x, t[i].xcr0, (r1[2] >> 26) & 1, t[i].xsave);
+        avx = (r1[2] >> 28) & 1;
+        if (t[i].xsave) {
+            xs_cpuid(&c, 0xd, 0, rd);
+            sup = ((uint64_t)rd[3] << 32) | rd[0];
+            TEST_CHECK(((cr4 >> 18) & 1) && ((r1[2] >> 27) & 1));
+            TEST_CHECK(x == sup && x != 1 && xc_xcr0_valid(x));
+            TEST_MSG("row %u: XCR0 %#" PRIx64 ", CPUID.(0DH,0) %#" PRIx64 ", CR4 %#" PRIx64, (unsigned)i, x, sup,
+                     cr4);
+            TEST_CHECK(st_xcr0(&c) == x);
+            if (avx) {
+                TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+            }
+            xc_xsetbv_ok(&c, 1, "the RESET value");
+            if (avx) {
+                TEST_CHECK(xc_exec(&c, XC_AVX) == 6);
+            }
+            xc_xsetbv_ok(&c, x, "the default again");
+        } else {
+            TEST_CHECK(((cr4 >> 18) & 1) == 0 && ((r1[2] >> 27) & 1) == 0);
+            xs_set(&c, UC_X86_REG_RCX, 0);
+            v = xs_run(&c, "\x0f\x01\xd0", 3, NULL);
+            TEST_CHECK(v == 6);
+            TEST_MSG("row %u: XGETBV without XSAVE: %d (expected #UD)", (unsigned)i, v);
+            TEST_CHECK(st_xsetbv(&c, x) == 6);
+            TEST_CHECK(xc_exec(&c, XC_AVX) == 6);
+        }
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * U1440 (user decision A18, 2026-10-14): the architectural RESET value of XCR0 (1H) and the emulator's
+ * OS-preconfigured default. SDM 093 Vol3A 2.6 p. 2-23: "After reset, all bits (except bit 0) in XCR0 are
+ * cleared to zero; XCR0[0] is set to 1."; Table 12-1 (Contd.) p. 12-3: XCR0 1H at power-up and RESET,
+ * unchanged by INIT. Vol1 13.3 pp. 13-5 / 13-6: AVX needs CR4.OSXSAVE = XCR0[2] = 1 (else #UD), XCR0[1]
+ * "in no way determines whether software can execute SSE instructions", XCR0[i] can be set "if and only
+ * if CPUID.0DH.00H:EAX[i] = 1", XSETBV #GP(0) for EAX[0] = 0 and for EAX[2:1] = 10b. Vol2 CPUID 0DH.0:
+ * EBX = the XSAVE area size of the components enabled in XCR0 (240H for x87 alone, 340H with SSE+AVX).
+ * The default (no profile) is the model's whole CPUID.(0DH,0) mask - an environment choice (docs/quirks.md
+ * "Emulator environment choices"); a strict profile narrows it to the profile's leaf 0DH (U120/U1225),
+ * it does NOT start at 1H (reported against A18, not changed). The architectural state is reached by
+ * the harness (uc_reg_write XCR0 = 1) or by guest XSETBV, and from there behaves as the SDM says.
+ */
+static void test_x86_xc_arch_reset_vs_default(void)
+{
+    static const uc_x86_cpuid prof207[] = {   /* x87|SSE|AVX|PKRU, as the i5-13600K profile's leaf 0DH */
+        {0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x14000201, 0x078bfbff},
+        {0xd, 0, 0x207, 0x340, 0xa88, 0},
+        {0xd, 1, 0xf, 0, 0, 0},
+        {0xd, 2, 0x100, 0x240, 0, 0},
+        {0xd, 9, 8, 0xa80, 0, 0},
+    };
+    XcCfg k;
+    XsCtx c;
+    uint32_t r[4];
+    uint64_t x;
+    int v;
+
+    /* the default (MAX, no profile): every component of CPUID.(0DH,0), not the RESET value 1H */
+    memset(&k, 0, sizeof(k));
+    k.model = UC_CPU_X86_MAX;
+    k.strict = -1;
+    OK(xc_open(&c, &k));
+    x = xc_reg_xcr0(&c);
+    xs_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(x == 0x21f && x != 1 && x == (((uint64_t)r[3] << 32) | r[0]));
+    TEST_MSG("MAX default XCR0 %#" PRIx64 " (expected 21FH = CPUID.(0DH,0) %#x:%#x; RESET would be 1H)", x,
+             r[3], r[0]);
+    TEST_CHECK(r[1] == 0xa88);     /* EBX: x87..BNDCSR end at 440H, PKRU 8 bytes at A80H */
+    TEST_MSG("CPUID.(0DH,0):EBX %#x (expected A88H)", r[1]);
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+
+    /* the architectural RESET value, written by the harness: AVX #UD, SSE still executes */
+    xs_set(&c, UC_X86_REG_XCR0, 1);
+    TEST_CHECK(st_xcr0(&c) == 1);
+    xs_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[0] == 0x21f && r[1] == 0x240);  /* supported mask unchanged, size of x87 + header */
+    TEST_MSG("XCR0 1H: CPUID.(0DH,0) EAX %#x (expected 21FH) EBX %#x (expected 240H)", r[0], r[1]);
+    v = xc_exec(&c, XC_AVX);
+    TEST_CHECK(v == 6);
+    TEST_MSG("VXORPS ymm with XCR0 1H: %d (expected #UD)", v);
+    TEST_CHECK(xc_exec(&c, XC_SSE) == -1);
+    /* the guest enables state with XSETBV: x87|SSE is not enough for AVX, x87|SSE|AVX is */
+    xc_xsetbv_gp(&c, 0, "x87 cleared");
+    xc_xsetbv_gp(&c, 5, "AVX without SSE");
+    xc_xsetbv_ok(&c, 3, "x87|SSE");
+    TEST_CHECK(xc_exec(&c, XC_AVX) == 6);
+    xc_xsetbv_ok(&c, 7, "x87|SSE|AVX");
+    TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+    xs_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0x340);
+    /* the same RESET value through the guest's own XSETBV */
+    xc_xsetbv_ok(&c, 1, "the RESET value");
+    TEST_CHECK(xc_exec(&c, XC_AVX) == 6);
+    xc_xsetbv_ok(&c, 0x21f, "back to the default");
+    OK(uc_close(c.uc));
+
+    /* a strict profile (the U435 default with a profile, and explicit): the reset XCR0 is the
+       profile-narrowed OS value 207H, not 1H. CURRENT BEHAVIOUR (U120/U1225) - A18 asks for 1H in the
+       strict profile; reported as an inconsistency, not changed here */
+    k.prof = prof207;
+    k.nprof = sizeof(prof207) / sizeof(prof207[0]);
+    for (k.strict = -1; k.strict <= 1; k.strict += 2) {
+        int on = 0;
+
+        OK(xc_open(&c, &k));
+        OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+        x = xc_reg_xcr0(&c);
+        TEST_CHECK(on == 1 && x == 0x207);
+        TEST_MSG("strict (%d) profile: strict %d, reset XCR0 %#" PRIx64 " (current behaviour 207H; "
+                 "architectural RESET 1H)", k.strict, on, x);
+        xs_cpuid(&c, 1, 0, r);
+        TEST_CHECK((r[2] >> 27) & 1);                /* CPUID.1:ECX.OSXSAVE = CR4.OSXSAVE = 1 */
+        xs_cpuid(&c, 0xd, 0, r);
+        TEST_CHECK(r[0] == 0x207 && r[1] == 0xa88);
+        TEST_MSG("strict profile: CPUID.(0DH,0) EAX %#x EBX %#x (expected 207H, A88H)", r[0], r[1]);
+        TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+        /* from the RESET value the guest may enable only what both the model and the profile report */
+        xs_set(&c, UC_X86_REG_XCR0, 1);
+        TEST_CHECK(xc_exec(&c, XC_AVX) == 6);
+        xc_xsetbv_gp(&c, 0x21f, "MPX: in the model, not in the strict profile");
+        xc_xsetbv_ok(&c, 0x207, "the profile's components");
+        TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* ---- end U1440-U1449 (xc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -37374,4 +37698,6 @@ TEST_LIST = {
     {"test_x86_i6_dpl64", test_x86_i6_dpl64},
     {"test_x86_i6_cs_mode64", test_x86_i6_cs_mode64},
     {"test_x86_i6_cs_sel64", test_x86_i6_cs_sel64},
+    {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
+    {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
     {NULL, NULL}};
