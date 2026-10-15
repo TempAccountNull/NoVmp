@@ -2220,6 +2220,18 @@ typedef struct CPUX86State {
     /* NoVmp (U64): the current FXSAVE/FXRSTOR/XSAVE/XRSTOR has REX.W (64-bit FIP/FDP) */
     uint8_t x87_fx64;
 #endif /* __Use_Original_Qemu (U64) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /*
+     * NoVmp (ledger U1480, docs/xinuse.md): the tracked XINUSE bits of state components 0-2 (x87,
+     * SSE, AVX; XSTATE_FP/SSE/YMM_MASK) for the init optimization (SDM 092 Vol1 13.6). Set by the
+     * instructions that write the component (translate.c gen_xinuse_set, once per translation block),
+     * XRSTOR / XRSTORS / FXRSTOR; cleared by XRSTOR / XRSTORS initialising the component (Vol2D
+     * XRSTOR Operation "XINUSE[i] := 0"), VZEROUPPER (AVX), VZEROALL (SSE, AVX). Cleared by a CPU
+     * reset; kept by INIT like the state it describes (Vol3A Table 12-1: x87 / XMM / YMM_H unchanged).
+     * Reported through get_xinuse (fpu_helper.c) with the model of xinuse_model.
+     */
+    uint32_t xinuse_trk;
+#endif /* __Use_Original_Qemu (U1480) */
 
     float_status mmx_status; /* for 3DNow! float ops */
     float_status sse_status;
@@ -2660,6 +2672,13 @@ typedef struct CPUX86State {
      */
     uint32_t smm_revid;
 #endif /* __Use_Original_Qemu (U1465) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /*
+     * NoVmp (ledger U1480): UC_CTL_X86_XINUSE_MODEL (X86_XINUSE_*; 0 = the vendor's default).
+     * Configuration like the CPU model: kept across a CPU reset, not part of a uc_context.
+     */
+    uint8_t xinuse_model;
+#endif /* __Use_Original_Qemu (U1480) */
 #if __Use_Original_Qemu != 1 /* ours (U835) */
     /*
      * NoVmp (ledger U835): RDRAND/RDSEED source (UC_CTL_X86_RDRAND). Kept across a CPU reset
@@ -3484,6 +3503,14 @@ void x86_smm_signal(CPUX86State *env);  /* SMI# (UC_CTL_X86_SMI) */
 uint32_t x86_smm_revision(CPUX86State *env);    /* the identifier the next SMI writes */
 bool x86_smm_revision_valid(uint32_t rev);      /* a UC_CTL_X86_SMM_REVISION value */
 #endif /* __Use_Original_Qemu (U1465) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+/* XINUSE models (UC_CTL_X86_XINUSE_MODEL, UC_X86_XINUSE_*; docs/xinuse.md) */
+#define X86_XINUSE_DEFAULT 0
+#define X86_XINUSE_PCORE 1
+#define X86_XINUSE_ECORE 2
+#define X86_XINUSE_ALWAYS 3
+int x86_xinuse_model(CPUX86State *env);         /* the effective model (never DEFAULT) */
+#endif /* __Use_Original_Qemu (U1480) */
 
 /* Special values for X86CPUVersion: */
 

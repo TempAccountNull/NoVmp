@@ -465,6 +465,10 @@ struct uc_struct {
     uc_err (*x86_smi)(struct uc_struct *uc, int set, int *v);
     // NoVmp U1465: UC_CTL_X86_SMM_REVISION (set = 1: write *rev; set = 0: read into *rev)
     uc_err (*x86_smm_revision)(struct uc_struct *uc, int set, uint32_t *rev);
+    // NoVmp U1480: UC_CTL_X86_XINUSE_MODEL (set = 1: write *model; set = 0: read the effective one);
+    // x86_xinuse_model_cfg = the value written (before init: copied into the CPU when it is created)
+    uc_err (*x86_xinuse_model)(struct uc_struct *uc, int set, int *model);
+    int x86_xinuse_model_cfg;
     // NoVmp U961: the local APIC bus shared with other engines (apic_model.c), NULL = alone;
     // UC_CTL_X86_APIC_ID (x86_apic_id_set = 1 once given); x86_apic_ap = 1: not the BSP
     void *x86_apic_bus;

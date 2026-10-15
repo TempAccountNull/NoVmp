@@ -5284,6 +5284,86 @@ void helper_fxsave(CPUX86State *env, target_ulong ptr)
     do_fxsave(env, ptr, GETPC());
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+/*
+ * NoVmp (ledger U1480, docs/xinuse.md): XINUSE of state components 0-2 (x87, SSE, AVX).
+ * SDM 253665-092 Vol1 13.6 p. 13-17/13-18: "If XINUSE[i] = 0, state component i is known to be in its
+ * initial configuration; otherwise XINUSE[i] = 1. It is possible for XINUSE[i] to be 1 even when state
+ * component i is in its initial configuration. On a processor that does not support the init
+ * optimization, XINUSE[i] is always 1"; 13.8.3 p. 13-21 (XRSTOR with XSTATE_BV[i] = 0: "XINUSE[i] may
+ * be set to 0 or 1"). Models (UC_CTL_X86_XINUSE_MODEL), all permitted by that text and measured on the
+ * i5-13600K (emulator\capture\xinuse, notes\xinuse_host_vs_guest_2026-10-14.txt):
+ *   PCORE  the tracked bits (env->xinuse_trk): set by writes, cleared by XRSTOR(S) init / VZEROUPPER /
+ *          VZEROALL - the P-core result for all 55 measured cases (= the VMware guest majority);
+ *   ECORE  x87 and SSE always 1, AVX tracked - the E-core result (deterministic);
+ *   ALWAYS no init optimization for 0-2 (the behaviour before U1480; the AMD default: AMD APM is not
+ *          applied here, see docs/xinuse.md).
+ * Every model also reports a component that is not in its initial configuration by value, so the
+ * required direction ("not initial -> XINUSE[i] = 1") holds even for state written outside the
+ * tracked paths (uc_reg_write, helpers not marked): the initial configurations of 13.6 p. 13-18 -
+ * x87: FCW 037FH, FSW 0, FTW FFFFH (all empty), FCS / FDS 0, FIP / FDP 0, ST0-ST7 0 (FOP is not part
+ * of it); SSE: XMM0-15 (64-bit mode) or XMM0-7 0, MXCSR excluded ("XINUSE[1] pertains only to the
+ * state of the XMM registers and not to MXCSR"); AVX: YMM0_H-YMM15_H (64-bit mode) or YMM0_H-YMM7_H 0.
+ */
+int x86_xinuse_model(CPUX86State *env)
+{
+    uint32_t a, b, c, d;
+
+    if (env->xinuse_model != X86_XINUSE_DEFAULT) {
+        return env->xinuse_model;
+    }
+    /* the vendor CPUID reports (a profile included), as smm_helper.c smm_vendor_amd */
+    cpu_x86_cpuid(env, 0, 0, &a, &b, &c, &d);
+    if (b == CPUID_VENDOR_AMD_1 && d == CPUID_VENDOR_AMD_2 && c == CPUID_VENDOR_AMD_3) {
+        return X86_XINUSE_ALWAYS;
+    }
+    return X86_XINUSE_PCORE;
+}
+
+/* the components 0-2 that are not in their initial configuration (Vol1 13.6 p. 13-18) */
+static uint64_t xinuse_by_value(CPUX86State *env)
+{
+    uint64_t inuse = 0, acc = 0;
+    int i, n = xsave_nb_zmm_hi256(env);
+    uint16_t fsw = (env->fpus & ~0x3800) | (env->fpstt & 7) << 11;
+
+    for (i = 0; i < 8; i++) {
+        acc |= env->fpregs[i].d.low | env->fpregs[i].d.high | (env->fptags[i] ^ 1);
+    }
+    if (acc || env->fpuc != 0x37f || fsw || env->fpcs || env->fpds || env->fpip || env->fpdp) {
+        inuse |= XSTATE_FP_MASK;
+    }
+    for (acc = 0, i = 0; i < n; i++) {
+        acc |= env->xmm_regs[i].ZMM_Q(0) | env->xmm_regs[i].ZMM_Q(1);
+    }
+    if (acc) {
+        inuse |= XSTATE_SSE_MASK;
+    }
+    for (acc = 0, i = 0; i < n; i++) {
+        acc |= env->xmm_regs[i].ZMM_Q(2) | env->xmm_regs[i].ZMM_Q(3);
+    }
+    if (acc) {
+        inuse |= XSTATE_YMM_MASK;
+    }
+    return inuse;
+}
+
+/* XINUSE[2:0] under the effective model */
+static uint64_t get_xinuse_low(CPUX86State *env)
+{
+    const uint64_t low = XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_YMM_MASK;
+
+    switch (x86_xinuse_model(env)) {
+    case X86_XINUSE_ALWAYS:
+        return low;
+    case X86_XINUSE_ECORE:
+        return (XSTATE_FP_MASK | XSTATE_SSE_MASK | env->xinuse_trk | xinuse_by_value(env)) & low;
+    default:
+        return (env->xinuse_trk | xinuse_by_value(env)) & low;
+    }
+}
+#endif /* __Use_Original_Qemu (U1480) */
+
 static uint64_t get_xinuse(CPUX86State *env)
 {
     uint64_t inuse = -1;
@@ -5315,6 +5395,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     inuse &= ~(XSTATE_CET_U_MASK | XSTATE_CET_S_MASK);
     inuse |= get_xinuse_cet(env);
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* x87 / SSE / AVX: the XINUSE model (get_xinuse_low); PKRU (9) and the rest keep their rule */
+    inuse &= ~(XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_YMM_MASK);
+    inuse |= get_xinuse_low(env);
+#endif /* __Use_Original_Qemu (U1480) */
     return inuse;
 }
 
@@ -5791,6 +5876,14 @@ static void do_fxrstor(CPUX86State *env, target_ulong ptr, uintptr_t ra)
             do_xrstor_sse(env, ptr, ra);
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /*
+     * NoVmp (ledger U1480): FXRSTOR writes x87 state, and with CR4.OSFXSR = 1 MXCSR (and the XMM
+     * registers): x87 and SSE in use - i5-13600K P-cores R9b 0 -> 3 (also from the initial image,
+     * like LDMXCSR M10a); permitted by Vol1 13.6 (XINUSE[i] may be 1 in the initial configuration).
+     */
+    env->xinuse_trk |= XSTATE_FP_MASK | ((env->cr[4] & CR4_OSFXSR_MASK) ? XSTATE_SSE_MASK : 0);
+#endif /* __Use_Original_Qemu (U1480) */
 }
 
 void helper_fxrstor(CPUX86State *env, target_ulong ptr)
@@ -6029,6 +6122,16 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
             }
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* NoVmp (ledger U1480): Vol2D XRSTOR Operation p. 6-51 (compacted form, also XRSTORS):
+       TO_BE_RESTORED[i] -> XINUSE[i] := 1, TO_BE_INITIALIZED[i] -> XINUSE[i] := 0 */
+    {
+        const uint32_t low = XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_YMM_MASK;
+
+        env->xinuse_trk = (env->xinuse_trk & ~(uint32_t)((restore | init) & low)) |
+                          (uint32_t)(restore & low);
+    }
+#endif /* __Use_Original_Qemu (U1480) */
 }
 #endif /* __Use_Original_Qemu (U66) */
 
@@ -6213,6 +6316,18 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
         }
     }
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /*
+     * NoVmp (ledger U1480): SDM 334569-092 Vol2D XRSTOR Operation p. 6-50 (standard form): TO_BE_RESTORED[i]
+     * -> "XINUSE[i] := 1", TO_BE_INITIALIZED[i] -> "XINUSE[i] := 0"; RFBM[i] = 0 leaves XINUSE[i]
+     * (Vol1 13.8.3 p. 13-21). Loading MXCSR through RFBM[2] alone does not touch XINUSE[1].
+     */
+    {
+        const uint32_t low = XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_YMM_MASK;
+
+        env->xinuse_trk = (env->xinuse_trk & ~(rfbm & low)) | (uint32_t)(rfbm & xstate_bv & low);
+    }
+#endif /* __Use_Original_Qemu (U1480) */
 }
 
 #if __Use_Original_Qemu != 1 /* ours (U1263) */
@@ -6440,6 +6555,16 @@ uint64_t helper_xgetbv(CPUX86State *env, uint32_t ecx)
         if (env->features[FEAT_XSAVE] & x86_cpuid_profile_mask(env, 0xd, 1, 0) &
             CPUID_XSAVE_XGETBV1) {
 #endif /* __Use_Original_Qemu (U1203) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+            /*
+             * NoVmp (ledger U1480): SDM 092 Vol1 13.6 p. 13-18: "Such an execution of XGETBV always sets
+             * EAX[1] to 1 if XCR0[1] = 1 and MXCSR does not have its RESET value of 1F80H" - here only:
+             * XSAVE / XSAVEOPT write XINUSE[1] itself (13.7 p. 13-19, measured M10e / Z4c).
+             */
+            if (env->mxcsr != 0x1f80) {
+                return env->xcr0 & (get_xinuse(env) | XSTATE_SSE_MASK);
+            }
+#endif /* __Use_Original_Qemu (U1480) */
             return env->xcr0 & get_xinuse(env);
         }
         break;

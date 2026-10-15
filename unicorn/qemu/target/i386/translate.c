@@ -299,6 +299,10 @@ typedef struct DisasContext {
 #if __Use_Original_Qemu != 1 /* ours (U700) */
     TCGOp *insn_start_op;   /* this instruction's insn_start (its restore point, cc_op) */
 #endif /* __Use_Original_Qemu (U700) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* XINUSE bits (env->xinuse_trk) already set by code emitted earlier in this block (gen_xinuse_set) */
+    uint8_t xinuse_done;
+#endif /* __Use_Original_Qemu (U1480) */
 } DisasContext;
 
 #define DISAS_EOB_ONLY         DISAS_TARGET_0
@@ -1760,6 +1764,45 @@ static void gen_x87_fx64(DisasContext *s)
                     offsetof(CPUX86State, x87_fx64));
 }
 #endif /* __Use_Original_Qemu (U64) */
+
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+/*
+ * NoVmp (ledger U1480, docs/xinuse.md): an instruction that writes state component 0 / 1 / 2 marks it in
+ * use (env->xinuse_trk |= bits; XINUSE with the init optimization, SDM 092 Vol1 13.6). Emitted after
+ * the instruction's own code (a faulting instruction marks nothing) and once per translation block
+ * and component: s->xinuse_done holds the bits this block has set; an instruction that clears tracked
+ * bits (VZEROUPPER, VZEROALL, XRSTOR, XRSTORS) drops them from it, so a later write sets them again.
+ */
+static void gen_xinuse_set(DisasContext *s, uint32_t bits)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 t;
+
+    bits &= ~(uint32_t)s->xinuse_done;
+    if (!bits || s->base.is_jmp == DISAS_NORETURN) {
+        return;
+    }
+    t = tcg_temp_new_i32(tcg_ctx);
+    tcg_gen_ld_i32(tcg_ctx, t, cpu_env, offsetof(CPUX86State, xinuse_trk));
+    tcg_gen_ori_i32(tcg_ctx, t, t, bits);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, offsetof(CPUX86State, xinuse_trk));
+    tcg_temp_free_i32(tcg_ctx, t);
+    s->xinuse_done |= bits;
+}
+
+/* VZEROUPPER / VZEROALL: XINUSE[i] := 0 for the components they put in their initial configuration */
+static void gen_xinuse_clear(DisasContext *s, uint32_t bits)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+    TCGv_i32 t = tcg_temp_new_i32(tcg_ctx);
+
+    tcg_gen_ld_i32(tcg_ctx, t, cpu_env, offsetof(CPUX86State, xinuse_trk));
+    tcg_gen_andi_i32(tcg_ctx, t, t, ~bits);
+    tcg_gen_st_i32(tcg_ctx, t, cpu_env, offsetof(CPUX86State, xinuse_trk));
+    tcg_temp_free_i32(tcg_ctx, t);
+    s->xinuse_done &= ~bits;
+}
+#endif /* __Use_Original_Qemu (U1480) */
 
 #if __Use_Original_Qemu != 1 /* ours (U509) */
 /*
@@ -7956,6 +7999,17 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 }
 #endif /* __Use_Original_Qemu (U64) */
             }
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+            /*
+             * NoVmp (ledger U1480): every x87 instruction writes x87 state (FIP / FOP / FDP, or a
+             * control register: FNINIT, FLDCW, FNCLEX, FLDENV, FRSTOR, FNSAVE, FNSTENV masks the
+             * exceptions) except the stores of FCW / FSW: FNSTCW m (D9 /7), FNSTSW m (DD /7),
+             * FNSTSW AX (DF E0). i5-13600K P-cores: FNINIT F6a 0 -> 1, FLDCW L7a / L7b 0 -> 1.
+             */
+            if (!((mod != 3 && (op == 0x0f || op == 0x2f)) || (mod == 3 && op == 0x3c && rm == 0))) {
+                gen_xinuse_set(s, XSTATE_FP_MASK);
+            }
+#endif /* __Use_Original_Qemu (U1480) */
         }
         break;
         /************************/
@@ -10778,6 +10832,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U834) */
             tcg_gen_qemu_ld_i32(tcg_ctx, s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
             gen_helper_ldmxcsr(tcg_ctx, cpu_env, s->tmp2_i32);
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+            /* LDMXCSR marks SSE in use (i5-13600K P-cores M10a / M10b 0 -> 2, also with 1F80H) */
+            gen_xinuse_set(s, XSTATE_SSE_MASK);
+#endif /* __Use_Original_Qemu (U1480) */
             break;
 
         CASE_MODRM_MEM_OP(3): /* stmxcsr */
@@ -11324,6 +11382,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->ac = (flags & HF_AC_MASK) && cpl == 3;
     dc->ac_insn = dc->ac;
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    dc->xinuse_done = 0;
+#endif /* __Use_Original_Qemu (U1480) */
     dc->cpuid_features = env->features[FEAT_1_EDX];
     dc->cpuid_ext_features = env->features[FEAT_1_ECX];
     dc->cpuid_ext2_features = env->features[FEAT_8000_0001_EDX];

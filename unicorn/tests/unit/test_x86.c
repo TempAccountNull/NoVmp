@@ -38939,6 +38939,550 @@ static void test_x86_smr_revision_profiles(void)
 }
 /* ---- end U1461-U1465 (smr_) ---- */
 
+/*
+ * ---- NoVmp U1480-U1489: XINUSE models, UC_CTL_X86_XINUSE_MODEL (xu_) ----
+ * The measured matrix of emulator\capture\xinuse (xinuse_probe.c case table, xinuse_ops.asm) replayed
+ * on Unicorn: per case the setup XRSTOR64 of the constructed image (EDX:EAX = 7), XSAVE64 ("BV
+ * before"), XGETBV(1) ("before"), the measured instruction, XGETBV(1) ("after"), XSAVE64 ("BV
+ * after") - the probe's step order. Expected values = the per-case majority outcomes measured on the
+ * bare i5-13600K (notes\xinuse_host_vs_guest_2026-10-14.txt; run DESKTOP-JOB52RJ_20261014_223212):
+ * P-cores (12 LPs, = the VMware guest majority, 57/57) and E-cores (8 LPs, deterministic). K8a/K8b
+ * (WRPKRU) are not here: Skipped everywhere (OSPKE = 0), nothing was measured.
+ * SDM 253665-092 Vol1 13.6 p. 13-17/13-18 (XINUSE[i] may be 1 in the initial configuration; XGETBV(1)
+ * EAX[1] = 1 when MXCSR != 1F80H; initial configurations), 13.7 p. 13-19 (XSAVE writes XSTATE_BV[1]
+ * from XINUSE[1] only, "may be written with 0 even if MXCSR does not have its RESET value"), 13.8.3
+ * p. 13-21 (XRSTOR: RFBM[i] = 1, XSTATE_BV[i] = 0 -> XINUSE[i] 0 or 1; XSTATE_BV[i] = 1 -> 1);
+ * 334569-092 Vol2D XGETBV p. 6-36, XRSTOR Operation p. 6-50 ("XINUSE[i] := 0"). 093 identical.
+ */
+#define XU_DATA 0x300000
+#define XU_SETUP (XU_DATA + 0x0000)
+#define XU_OPIMG (XU_DATA + 0x1000)
+#define XU_BEFORE (XU_DATA + 0x2000)
+#define XU_AFTER (XU_DATA + 0x3000)
+#define XU_AREA 0x400
+
+enum { XU_X_I, XU_X_L, XU_X_N1, XU_X_N2, XU_X_N3 };   /* x87: init, loaded init values, fld1-like, FCW 027FH, FIP/FDP */
+enum { XU_S_I, XU_S_L, XU_S_NA, XU_S_N0 };            /* SSE: init, loaded zeros, XMM0-15 non-zero, XMM0 only */
+enum { XU_A_I, XU_A_L, XU_A_NA, XU_A_N0 };            /* AVX: init, loaded zeros, YMM0-15_H non-zero, YMM0_H only */
+enum { XU_M_R, XU_M_X };                              /* MXCSR 1F80H / 3F80H (non-RESET, RC = round down) */
+enum {
+    XU_OP_NONE, XU_OP_XRSTOR, XU_OP_FXRSTOR, XU_OP_PXOR, XU_OP_PCMPEQD, XU_OP_MOVAPS, XU_OP_VZEROUPPER,
+    XU_OP_VZEROALL, XU_OP_VPXOR, XU_OP_VMOVAPS, XU_OP_VPCMPEQD, XU_OP_FNINIT, XU_OP_FLDCW, XU_OP_LDMXCSR
+};
+
+typedef struct {
+    const char *id;
+    uint8_t x87, sse, avx, mx, op;
+    uint8_t op_rfbm, op_bv, ox87, osse, oavx, omx;   /* XRSTOR op image / FXRSTOR image */
+    uint16_t val;                                    /* FLDCW operand; LDMXCSR: 0 = 1F80H, 1 = 3F80H */
+    uint8_t p[4], e[4];   /* measured: XGETBV(1) before, after, XSTATE_BV before, after (P-core, E-core) */
+} XuCase;
+
+static const XuCase xu_cases[] = {
+    {"C00", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_NONE, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 0}, {3, 3, 3, 3}},
+    {"C01", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_NONE, 0, 0, 0, 0, 0, 0, 0, {7, 7, 7, 7}, {7, 7, 7, 7}},
+    {"C02", XU_X_L, XU_S_L, XU_A_L, XU_M_R, XU_OP_NONE, 0, 0, 0, 0, 0, 0, 0, {7, 7, 7, 7}, {7, 7, 7, 7}},
+    {"X1a", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 1, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {7, 6, 7, 6}, {7, 7, 7, 7}},
+    {"X1b", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 2, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {7, 5, 7, 5}, {7, 7, 7, 7}},
+    {"X1c", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 4, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {7, 3, 7, 3}, {7, 3, 7, 3}},
+    {"X1d", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 7, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {7, 0, 7, 0}, {7, 3, 7, 3}},
+    {"X1e", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_XRSTOR, 7, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {0, 0, 0, 0}, {3, 3, 3, 3}},
+    {"X1f", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 7, 7, XU_X_L, XU_S_L, XU_A_L, XU_M_R, 0, {7, 7, 7, 7}, {7, 7, 7, 7}},
+    {"X1g", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 2, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_X, 0, {7, 7, 7, 5}, {7, 7, 7, 7}},
+    {"X1h", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_XRSTOR, 4, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_X, 0, {7, 3, 7, 3}, {7, 3, 7, 3}},
+    {"P2a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"P2b", XU_X_I, XU_S_NA, XU_A_I, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"P2c", XU_X_I, XU_S_N0, XU_A_I, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"P2d", XU_X_I, XU_S_I, XU_A_NA, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {4, 6, 4, 6}, {7, 7, 7, 7}},
+    {"P2e", XU_X_I, XU_S_N0, XU_A_NA, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {6, 6, 6, 6}, {7, 7, 7, 7}},
+    {"P2f", XU_X_I, XU_S_L, XU_A_I, XU_M_R, XU_OP_PXOR, 0, 0, 0, 0, 0, 0, 0, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"P2g", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_PCMPEQD, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"P2h", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_MOVAPS, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"Z3a", XU_X_I, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_VZEROUPPER, 0, 0, 0, 0, 0, 0, 0, {6, 2, 6, 2}, {7, 3, 7, 3}},
+    {"Z3b", XU_X_I, XU_S_I, XU_A_NA, XU_M_R, XU_OP_VZEROUPPER, 0, 0, 0, 0, 0, 0, 0, {4, 0, 4, 0}, {7, 3, 7, 3}},
+    {"Z3c", XU_X_I, XU_S_NA, XU_A_I, XU_M_R, XU_OP_VZEROUPPER, 0, 0, 0, 0, 0, 0, 0, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"Z3d", XU_X_I, XU_S_I, XU_A_L, XU_M_R, XU_OP_VZEROUPPER, 0, 0, 0, 0, 0, 0, 0, {4, 0, 4, 0}, {7, 3, 7, 3}},
+    {"Z3e", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_VZEROUPPER, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 0}, {3, 3, 3, 3}},
+    {"Z4a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_VZEROALL, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 0}, {3, 3, 3, 3}},
+    {"Z4b", XU_X_I, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_VZEROALL, 0, 0, 0, 0, 0, 0, 0, {6, 0, 6, 0}, {7, 3, 7, 3}},
+    {"Z4c", XU_X_I, XU_S_NA, XU_A_NA, XU_M_X, XU_OP_VZEROALL, 0, 0, 0, 0, 0, 0, 0, {6, 2, 6, 0}, {7, 3, 7, 3}},
+    {"Z4d", XU_X_I, XU_S_L, XU_A_L, XU_M_R, XU_OP_VZEROALL, 0, 0, 0, 0, 0, 0, 0, {6, 0, 6, 0}, {7, 3, 7, 3}},
+    {"Z4e", XU_X_I, XU_S_N0, XU_A_I, XU_M_R, XU_OP_VZEROALL, 0, 0, 0, 0, 0, 0, 0, {2, 0, 2, 0}, {3, 3, 3, 3}},
+    {"V5a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_VPXOR, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"V5b", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_VMOVAPS, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"V5c", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_VPCMPEQD, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"V5d", XU_X_I, XU_S_N0, XU_A_I, XU_M_R, XU_OP_VPXOR, 0, 0, 0, 0, 0, 0, 0, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"V5e", XU_X_I, XU_S_I, XU_A_NA, XU_M_R, XU_OP_VPXOR, 0, 0, 0, 0, 0, 0, 0, {4, 6, 4, 6}, {7, 7, 7, 7}},
+    {"V5f", XU_X_I, XU_S_I, XU_A_N0, XU_M_R, XU_OP_VPXOR, 0, 0, 0, 0, 0, 0, 0, {4, 6, 4, 6}, {7, 7, 7, 7}},
+    {"F6a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_FNINIT, 0, 0, 0, 0, 0, 0, 0, {0, 1, 0, 1}, {3, 3, 3, 3}},
+    {"F6b", XU_X_N2, XU_S_I, XU_A_I, XU_M_R, XU_OP_FNINIT, 0, 0, 0, 0, 0, 0, 0, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"F6c", XU_X_N1, XU_S_I, XU_A_I, XU_M_R, XU_OP_FNINIT, 0, 0, 0, 0, 0, 0, 0, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"F6d", XU_X_L, XU_S_I, XU_A_I, XU_M_R, XU_OP_FNINIT, 0, 0, 0, 0, 0, 0, 0, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"F6e", XU_X_N3, XU_S_I, XU_A_I, XU_M_R, XU_OP_FNINIT, 0, 0, 0, 0, 0, 0, 0, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"L7a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_FLDCW, 0, 0, 0, 0, 0, 0, 0x037f, {0, 1, 0, 1}, {3, 3, 3, 3}},
+    {"L7b", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_FLDCW, 0, 0, 0, 0, 0, 0, 0x027f, {0, 1, 0, 1}, {3, 3, 3, 3}},
+    {"L7c", XU_X_N2, XU_S_I, XU_A_I, XU_M_R, XU_OP_FLDCW, 0, 0, 0, 0, 0, 0, 0x037f, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"L7d", XU_X_N1, XU_S_I, XU_A_I, XU_M_R, XU_OP_FLDCW, 0, 0, 0, 0, 0, 0, 0x027f, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"L7e", XU_X_L, XU_S_I, XU_A_I, XU_M_R, XU_OP_FLDCW, 0, 0, 0, 0, 0, 0, 0x037f, {1, 1, 1, 1}, {3, 3, 3, 3}},
+    {"R9a", XU_X_N1, XU_S_NA, XU_A_NA, XU_M_R, XU_OP_FXRSTOR, 0, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {7, 7, 7, 7}, {7, 7, 7, 7}},
+    {"R9b", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_FXRSTOR, 0, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {0, 3, 0, 3}, {3, 3, 3, 3}},
+    {"R9c", XU_X_N1, XU_S_NA, XU_A_I, XU_M_X, XU_OP_FXRSTOR, 0, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {3, 3, 3, 3}, {3, 3, 3, 3}},
+    {"R9d", XU_X_L, XU_S_L, XU_A_I, XU_M_R, XU_OP_FXRSTOR, 0, 0, XU_X_I, XU_S_I, XU_A_I, XU_M_R, 0, {3, 3, 3, 3}, {3, 3, 3, 3}},
+    {"M10a", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_LDMXCSR, 0, 0, 0, 0, 0, 0, 0, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"M10b", XU_X_I, XU_S_I, XU_A_I, XU_M_R, XU_OP_LDMXCSR, 0, 0, 0, 0, 0, 0, 1, {0, 2, 0, 2}, {3, 3, 3, 3}},
+    {"M10c", XU_X_I, XU_S_I, XU_A_I, XU_M_X, XU_OP_LDMXCSR, 0, 0, 0, 0, 0, 0, 0, {2, 2, 0, 2}, {3, 3, 3, 3}},
+    {"M10d", XU_X_I, XU_S_NA, XU_A_I, XU_M_R, XU_OP_LDMXCSR, 0, 0, 0, 0, 0, 0, 1, {2, 2, 2, 2}, {3, 3, 3, 3}},
+    {"M10e", XU_X_I, XU_S_I, XU_A_I, XU_M_X, XU_OP_NONE, 0, 0, 0, 0, 0, 0, 0, {2, 2, 0, 0}, {3, 3, 3, 3}},
+    {"M10f", XU_X_I, XU_S_L, XU_A_I, XU_M_R, XU_OP_LDMXCSR, 0, 0, 0, 0, 0, 0, 1, {2, 2, 2, 2}, {3, 3, 3, 3}},
+};
+
+typedef struct {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+} XuCtx;
+
+/* a 64-bit UC_CPU_X86_MAX (or cpu) engine; model < 0: UC_CTL_X86_XINUSE_MODEL not written */
+static void xu_open(XuCtx *c, int cpu, int model)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, cpu < 0 ? UC_CPU_X86_MAX : cpu));
+    if (model >= 0) {
+        OK(uc_ctl(c->uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), model));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, XU_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static uint64_t xu_get(XuCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void xu_set(XuCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* run code at code_start: -1 = no exception, else the vector */
+static int xu_run(XuCtx *c, const uint8_t *code, size_t len)
+{
+    uc_err err;
+
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, code_start, code, len));
+    err = uc_emu_start(c->uc, code_start, code_start + len, 0, 0);
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static uint8_t xu_pat(int r, int b, int salt)
+{
+    return (uint8_t)((((r << 4) ^ b ^ salt) & 0xff) | 1);
+}
+
+/* xinuse_probe.c make_state: a standard-form XSAVE image (XCOMP_BV 0) of (x87, sse, avx, mx) */
+static void xu_image(uint8_t *a, int x87, int sse, int avx, int mx)
+{
+    uint64_t bv = 0;
+    uint32_t m = mx == XU_M_X ? 0x3f80 : 0x1f80;
+    int r, b;
+
+    memset(a, 0, XU_AREA);
+    a[0] = 0x7f;                    /* FCW 037FH */
+    a[1] = 0x03;
+    a[28] = 0xff;                   /* MXCSR_MASK FFFFH (not read by XRSTOR) */
+    a[29] = 0xff;
+    switch (x87) {
+    case XU_X_L:
+        bv |= 1;
+        break;
+    case XU_X_N1:                   /* FSW TOP = 7, abridged FTW 80H, ST0 = 1.0 */
+        bv |= 1;
+        a[3] = 0x38;
+        a[4] = 0x80;
+        a[32 + 7] = 0x80;
+        a[32 + 8] = 0xff;
+        a[32 + 9] = 0x3f;
+        break;
+    case XU_X_N2:                   /* FCW 027FH */
+        bv |= 1;
+        a[1] = 0x02;
+        break;
+    case XU_X_N3:                   /* FIP 1111H, FDP 2222H */
+        bv |= 1;
+        a[8] = a[9] = 0x11;
+        a[16] = a[17] = 0x22;
+        break;
+    }
+    a[24] = (uint8_t)m;
+    a[25] = (uint8_t)(m >> 8);
+    if (sse != XU_S_I) {
+        bv |= 2;
+    }
+    for (r = 0; r < 16; r++) {
+        for (b = 0; b < 16; b++) {
+            if (sse == XU_S_NA || (sse == XU_S_N0 && r == 0)) {
+                a[160 + 16 * r + b] = xu_pat(r, b, 0x5a);
+            }
+            if (avx == XU_A_NA || (avx == XU_A_N0 && r == 0)) {
+                a[576 + 16 * r + b] = xu_pat(r, b, 0xa5);
+            }
+        }
+    }
+    if (avx != XU_A_I) {
+        bv |= 4;
+    }
+    a[512] = (uint8_t)bv;
+}
+
+static size_t xu_put(uint8_t *code, size_t n, const char *bytes, size_t len)
+{
+    memcpy(code + n, bytes, len);
+    return n + len;
+}
+
+/* the probe's window (xinuse_ops.asm steps 4-11): RBX = setup image, RDI / RBP = the before / after
+   areas, R8 = the op image or operand; XGETBV(1) before -> R12, after -> R13 */
+static size_t xu_snippet(const XuCase *k, uint8_t *code)
+{
+    static const char mask7[] = "\xb8\x07\x00\x00\x00\x31\xd2";   /* mov eax, 7; xor edx, edx */
+    static const char xg_r12[] = "\xb9\x01\x00\x00\x00\x0f\x01\xd0\x49\x89\xc4";
+    static const char xg_r13[] = "\xb9\x01\x00\x00\x00\x0f\x01\xd0\x49\x89\xc5";
+    size_t n = 0;
+
+    n = xu_put(code, n, mask7, 7);
+    n = xu_put(code, n, "\x48\x0f\xae\x2b", 4);           /* xrstor64 [rbx] */
+    n = xu_put(code, n, mask7, 7);
+    n = xu_put(code, n, "\x48\x0f\xae\x27", 4);           /* xsave64 [rdi] */
+    n = xu_put(code, n, xg_r12, 11);
+    switch (k->op) {
+    case XU_OP_XRSTOR:
+        code[n++] = 0xb8;                                 /* mov eax, op_rfbm */
+        code[n++] = k->op_rfbm;
+        code[n++] = 0;
+        code[n++] = 0;
+        code[n++] = 0;
+        n = xu_put(code, n, "\x31\xd2\x49\x0f\xae\x28", 6);   /* xor edx, edx; xrstor64 [r8] */
+        break;
+    case XU_OP_FXRSTOR:   n = xu_put(code, n, "\x49\x0f\xae\x08", 4); break;
+    case XU_OP_PXOR:      n = xu_put(code, n, "\x66\x0f\xef\xc0", 4); break;
+    case XU_OP_PCMPEQD:   n = xu_put(code, n, "\x66\x0f\x76\xc0", 4); break;
+    case XU_OP_MOVAPS:    n = xu_put(code, n, "\x0f\x28\xc1", 3); break;
+    case XU_OP_VZEROUPPER: n = xu_put(code, n, "\xc5\xf8\x77", 3); break;
+    case XU_OP_VZEROALL:  n = xu_put(code, n, "\xc5\xfc\x77", 3); break;
+    case XU_OP_VPXOR:     n = xu_put(code, n, "\xc5\xf9\xef\xc0", 4); break;
+    case XU_OP_VMOVAPS:   n = xu_put(code, n, "\xc5\xf8\x28\xc1", 4); break;
+    case XU_OP_VPCMPEQD:  n = xu_put(code, n, "\xc5\xf9\x76\xc0", 4); break;
+    case XU_OP_FNINIT:    n = xu_put(code, n, "\xdb\xe3", 2); break;
+    case XU_OP_FLDCW:     n = xu_put(code, n, "\x41\xd9\x28", 3); break;
+    case XU_OP_LDMXCSR:   n = xu_put(code, n, "\x41\x0f\xae\x10", 4); break;
+    default: break;
+    }
+    n = xu_put(code, n, xg_r13, 11);
+    n = xu_put(code, n, mask7, 7);
+    n = xu_put(code, n, "\x48\x0f\xae\x65\x00", 5);       /* xsave64 [rbp] */
+    return n;
+}
+
+/* run one case; r = XGETBV(1) before / after (bits 2:0), XSTATE_BV before / after (bits 2:0) */
+static void xu_case(XuCtx *c, const XuCase *k, uint8_t r[4])
+{
+    uint8_t img[XU_AREA], code[96];
+    uint64_t bv;
+    size_t n;
+
+    xu_image(img, k->x87, k->sse, k->avx, k->mx);
+    OK(uc_mem_write(c->uc, XU_SETUP, img, XU_AREA));
+    memset(img, 0, XU_AREA);
+    OK(uc_mem_write(c->uc, XU_BEFORE, img, XU_AREA));
+    OK(uc_mem_write(c->uc, XU_AFTER, img, XU_AREA));
+    if (k->op == XU_OP_XRSTOR || k->op == XU_OP_FXRSTOR) {
+        xu_image(img, k->ox87, k->osse, k->oavx, k->omx);
+        if (k->op == XU_OP_XRSTOR) {
+            img[512] = k->op_bv;
+        }
+    } else if (k->op == XU_OP_FLDCW) {
+        img[0] = (uint8_t)k->val;
+        img[1] = (uint8_t)(k->val >> 8);
+    } else if (k->op == XU_OP_LDMXCSR) {
+        img[0] = 0x80;
+        img[1] = k->val ? 0x3f : 0x1f;
+    }
+    OK(uc_mem_write(c->uc, XU_OPIMG, img, XU_AREA));
+    xu_set(c, UC_X86_REG_RBX, XU_SETUP);
+    xu_set(c, UC_X86_REG_RDI, XU_BEFORE);
+    xu_set(c, UC_X86_REG_RBP, XU_AFTER);
+    xu_set(c, UC_X86_REG_R8, XU_OPIMG);
+    n = xu_snippet(k, code);
+    TEST_CHECK(xu_run(c, code, n) == -1);
+    TEST_MSG("case %s faulted", k->id);
+    r[0] = (uint8_t)(xu_get(c, UC_X86_REG_R12) & 7);
+    r[1] = (uint8_t)(xu_get(c, UC_X86_REG_R13) & 7);
+    OK(uc_mem_read(c->uc, XU_BEFORE + 512, &bv, 8));
+    r[2] = (uint8_t)(bv & 7);
+    OK(uc_mem_read(c->uc, XU_AFTER + 512, &bv, 8));
+    r[3] = (uint8_t)(bv & 7);
+}
+
+/* the whole matrix with one engine; which: 0 = the P-core column, 1 = the E-core column, 2 = all 7 */
+static void xu_matrix(int cpu, int model, int which)
+{
+    XuCtx c;
+    size_t i;
+    int bad = 0;
+
+    xu_open(&c, cpu, model);
+    for (i = 0; i < sizeof(xu_cases) / sizeof(xu_cases[0]); i++) {
+        static const uint8_t all7[4] = {7, 7, 7, 7};
+        const XuCase *k = &xu_cases[i];
+        const uint8_t *exp = which == 0 ? k->p : which == 1 ? k->e : all7;
+        uint8_t r[4];
+
+        xu_case(&c, k, r);
+        if (!TEST_CHECK(memcmp(r, exp, 4) == 0)) {
+            bad++;
+        }
+        TEST_MSG("%s model %d: XGETBV1 %u->%u BV %u->%u, expected XGETBV1 %u->%u BV %u->%u", k->id, model,
+                 r[0], r[1], r[2], r[3], exp[0], exp[1], exp[2], exp[3]);
+    }
+    TEST_MSG("xu matrix model %d column %d: %d of %u cases differ", model, which, bad,
+             (unsigned)(sizeof(xu_cases) / sizeof(xu_cases[0])));
+    TEST_CHECK(bad == 0);
+    OK(uc_close(c.uc));
+}
+
+/* P-core model, the default on an Intel CPU model (UC_CTL_X86_XINUSE_MODEL not written) */
+static void test_x86_xu_pcore_default(void)
+{
+    xu_matrix(-1, -1, 0);
+}
+
+/* P-core model written explicitly (emu-alltest --guest / --vm / --xinuse-model p-core) */
+static void test_x86_xu_pcore(void)
+{
+    xu_matrix(-1, UC_X86_XINUSE_PCORE, 0);
+}
+
+/* E-core model (emu-alltest --xinuse-model e-core, or --host with an E-core profile) */
+static void test_x86_xu_ecore(void)
+{
+    xu_matrix(-1, UC_X86_XINUSE_ECORE, 1);
+}
+
+/* ALWAYS: components 0-2 always in use - the behaviour before U1480 (emu-alltest --AMD) */
+static void test_x86_xu_always(void)
+{
+    xu_matrix(-1, UC_X86_XINUSE_ALWAYS, 2);
+}
+
+/* AMD CPU model: the default stays ALWAYS (no Intel rule applied); an explicit model still acts */
+static void test_x86_xu_amd_unchanged(void)
+{
+    XuCtx c;
+    int m = -1;
+
+    xu_matrix(UC_CPU_X86_EPYC_ROME, -1, 2);
+    xu_open(&c, UC_CPU_X86_EPYC_ROME, -1);
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+    TEST_CHECK(m == UC_X86_XINUSE_ALWAYS);
+    TEST_MSG("AMD default model %d", m);
+    OK(uc_close(c.uc));
+    xu_matrix(UC_CPU_X86_EPYC_ROME, UC_X86_XINUSE_PCORE, 0);
+}
+
+/* UC_CTL_X86_XINUSE_MODEL: values, the effective default, refused values, before / after init */
+static void test_x86_xu_ctl(void)
+{
+    static const int bad[] = {-1, 4, 5, 0x100};
+    XuCtx c;
+    int m = -1;
+    size_t i;
+    uc_engine *uc;
+
+    /* before init: a write does not initialise the engine (a before-init-only control still works
+       after it), a read does */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), UC_X86_XINUSE_ECORE));
+    TEST_CHECK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), 4) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_microcode(uc, 0x129, 1));
+    OK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+    TEST_CHECK(m == UC_X86_XINUSE_ECORE);
+    OK(uc_close(uc));
+
+    xu_open(&c, -1, -1);
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+    TEST_CHECK(m == UC_X86_XINUSE_PCORE);   /* Intel default */
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        TEST_CHECK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), bad[i]) == UC_ERR_ARG);
+        TEST_MSG("value %d", bad[i]);
+    }
+    for (i = UC_X86_XINUSE_PCORE; i <= UC_X86_XINUSE_ALWAYS; i++) {
+        OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), (int)i));
+        OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+        TEST_CHECK(m == (int)i);
+    }
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), UC_X86_XINUSE_DEFAULT));
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+    TEST_CHECK(m == UC_X86_XINUSE_PCORE);
+    OK(uc_close(c.uc));
+}
+
+/* XGETBV(1) after code (64-bit, at code_start), bits 2:0 */
+static unsigned xu_after(XuCtx *c, const char *code, size_t len)
+{
+    uint8_t buf[128];
+
+    memcpy(buf, code, len);
+    memcpy(buf + len, "\xb9\x01\x00\x00\x00\x0f\x01\xd0", 8);   /* mov ecx, 1; xgetbv */
+    TEST_CHECK(xu_run(c, buf, len + 8) == -1);
+    return (unsigned)(xu_get(c, UC_X86_REG_RAX) & 7);
+}
+
+/* the init image (XSTATE_BV 0, MXCSR 1F80H) at XU_SETUP; code to XRSTOR it with RFBM 7 */
+#define XU_INIT "\xb8\x07\x00\x00\x00\x31\xd2\x48\x0f\xae\x2b"
+#define XU_INIT_LEN 11
+static void xu_init_image(XuCtx *c)
+{
+    uint8_t img[XU_AREA];
+
+    xu_image(img, XU_X_I, XU_S_I, XU_A_I, XU_M_R);
+    OK(uc_mem_write(c->uc, XU_SETUP, img, XU_AREA));
+    xu_set(c, UC_X86_REG_RBX, XU_SETUP);
+}
+
+/*
+ * The rules beyond the measured matrix (P-core model): one translation block clears and sets again
+ * (the per-block "already set" mark is dropped by VZEROALL / XRSTOR); VEX.256 writes set AVX and SSE;
+ * x87 reads (FNSTCW, FNSTSW) set nothing, other x87 instructions and EMMS set x87; a faulting
+ * instruction sets nothing; a non-initial value is always reported (SDM Vol1 13.6: "If XINUSE[i] = 0,
+ * state component i is known to be in its initial configuration") whatever the tracking says.
+ */
+static void test_x86_xu_rules(void)
+{
+    static const uint64_t one = 1;
+    XuCtx c;
+    uint8_t ymm[32];
+
+    xu_open(&c, -1, -1);
+    xu_init_image(&c);
+    /* one block: PXOR sets SSE, VZEROALL clears it, PXOR sets it again */
+    TEST_CHECK(xu_after(&c, XU_INIT "\x66\x0f\xef\xc0\xc5\xfc\x77", XU_INIT_LEN + 7) == 0);
+    TEST_CHECK(xu_after(&c, XU_INIT "\x66\x0f\xef\xc0\xc5\xfc\x77\x66\x0f\xef\xc9", XU_INIT_LEN + 11) == 2);
+    /* VEX.256 VPXOR ymm0 (zero result): AVX and SSE; VEX.128 VPXOR: SSE only (V5a) */
+    TEST_CHECK(xu_after(&c, XU_INIT "\xc5\xfd\xef\xc0", XU_INIT_LEN + 4) == 6);
+    TEST_CHECK(xu_after(&c, XU_INIT "\xc5\xf9\xef\xc0", XU_INIT_LEN + 4) == 2);
+    /* VEXTRACTF128 xmm1, ymm0, 1 (VEX.256, 128-bit destination): SSE only */
+    TEST_CHECK(xu_after(&c, XU_INIT "\xc4\xe3\x7d\x19\xc1\x01", XU_INIT_LEN + 6) == 2);
+    /* x87 reads: FNSTCW [rdi], FNSTSW AX, FNSTSW [rdi] leave x87 not in use; FLDZ; FSTP ST(0) sets it */
+    xu_set(&c, UC_X86_REG_RDI, XU_BEFORE);
+    TEST_CHECK(xu_after(&c, XU_INIT "\xd9\x3f\xdf\xe0\xdd\x3f", XU_INIT_LEN + 6) == 0);
+    TEST_CHECK(xu_after(&c, XU_INIT "\xd9\xee\xdd\xd8", XU_INIT_LEN + 4) == 1);
+    /* EMMS from the initial state (FTW stays empty): x87 written */
+    TEST_CHECK(xu_after(&c, XU_INIT "\x0f\x77", XU_INIT_LEN + 2) == 1);
+    /* MOVD xmm0, eax (EAX = 0): SSE */
+    TEST_CHECK(xu_after(&c, XU_INIT "\x31\xc0\x66\x0f\x6e\xc0", XU_INIT_LEN + 6) == 2);
+    /* MOVAPS [rdi], xmm0 (a store, reads XMM0): nothing */
+    TEST_CHECK(xu_after(&c, XU_INIT "\x0f\x29\x07", XU_INIT_LEN + 3) == 0);
+    /* a faulting MOVAPS xmm0, [unmapped] sets nothing */
+    {
+        uint8_t code[32];
+        uc_err err;
+
+        memcpy(code, XU_INIT "\x0f\x28\x06", XU_INIT_LEN + 3);   /* movaps xmm0, [rsi] */
+        xu_set(&c, UC_X86_REG_RSI, 0x7000000);
+        OK(uc_mem_write(c.uc, code_start, code, XU_INIT_LEN + 3));
+        err = uc_emu_start(c.uc, code_start, code_start + XU_INIT_LEN + 3, 0, 0);
+        TEST_CHECK(err == UC_ERR_READ_UNMAPPED);
+        TEST_CHECK(xu_after(&c, "\x90", 1) == 0);
+    }
+    /* a non-initial value through the API: XMM8 (64-bit mode: XMM0-15) / YMM9_H are reported */
+    TEST_CHECK(xu_after(&c, XU_INIT, XU_INIT_LEN) == 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_XMM8, (void *)&one));
+    TEST_CHECK(xu_after(&c, "\x90", 1) == 2);
+    TEST_CHECK(xu_after(&c, XU_INIT, XU_INIT_LEN) == 0);
+    memset(ymm, 0, sizeof(ymm));
+    ymm[31] = 0x80;
+    OK(uc_reg_write(c.uc, UC_X86_REG_YMM9, ymm));
+    TEST_CHECK(xu_after(&c, "\x90", 1) == 4);
+    /* FCW through the API (037FH is part of x87's initial configuration) */
+    TEST_CHECK(xu_after(&c, XU_INIT, XU_INIT_LEN) == 0);
+    xu_set(&c, UC_X86_REG_FPCW, 0x27f);
+    TEST_CHECK(xu_after(&c, "\x90", 1) == 1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * The MXCSR rule: XGETBV(1) EAX[1] = 1 when MXCSR != 1F80H (Vol1 13.6); XSAVE / XSAVEOPT write
+ * XSTATE_BV[1] = XINUSE[1] (13.7 / 13.9: "may be written with 0 even if MXCSR does not have its RESET
+ * value"); XSAVEC writes XSTATE_BV[1] = 1 and saves the SSE state when RFBM[1] = 1 and MXCSR != 1F80H
+ * (13.10 p. 13-23 / 13-24). XSAVEOPT skips a component with XINUSE[i] = 0 (13.9 init optimization).
+ */
+static void test_x86_xu_mxcsr_xsave(void)
+{
+    XuCtx c;
+    uint8_t area[XU_AREA], img[XU_AREA];
+    uint64_t bv;
+
+    xu_open(&c, -1, -1);
+    xu_image(img, XU_X_I, XU_S_I, XU_A_I, XU_M_X);           /* init image, MXCSR 3F80H */
+    OK(uc_mem_write(c.uc, XU_SETUP, img, XU_AREA));
+    xu_set(&c, UC_X86_REG_RBX, XU_SETUP);
+    xu_set(&c, UC_X86_REG_RDI, XU_BEFORE);
+    TEST_CHECK(xu_after(&c, XU_INIT, XU_INIT_LEN) == 2);      /* M10e */
+    /* XSAVEC RFBM 7: XSTATE_BV = 2, XMM area written (zeros), XCOMP_BV 8000000000000007H */
+    memset(area, 0xcc, sizeof(area));
+    OK(uc_mem_write(c.uc, XU_BEFORE, area, XU_AREA));
+    TEST_CHECK(xu_after(&c, XU_INIT "\xb8\x07\x00\x00\x00\x31\xd2\x48\x0f\xc7\x27", XU_INIT_LEN + 11) == 2);
+    OK(uc_mem_read(c.uc, XU_BEFORE, area, XU_AREA));
+    memcpy(&bv, area + 512, 8);
+    TEST_CHECK(bv == 2);
+    TEST_MSG("XSAVEC XSTATE_BV %llx", (unsigned long long)bv);
+    TEST_CHECK(area[160] == 0 && area[415] == 0 && area[24] == 0x80 && area[25] == 0x3f);
+    TEST_CHECK(area[0] == 0xcc);                               /* x87 not in use: not written */
+    /* XSAVEOPT RFBM 7: XSTATE_BV = 0, MXCSR written, XMM / x87 areas untouched */
+    memset(area, 0xcc, sizeof(area));
+    memset(area + 512, 0, 64);
+    OK(uc_mem_write(c.uc, XU_BEFORE, area, XU_AREA));
+    TEST_CHECK(xu_after(&c, XU_INIT "\xb8\x07\x00\x00\x00\x31\xd2\x48\x0f\xae\x37", XU_INIT_LEN + 11) == 2);
+    OK(uc_mem_read(c.uc, XU_BEFORE, area, XU_AREA));
+    memcpy(&bv, area + 512, 8);
+    TEST_CHECK(bv == 0);
+    TEST_CHECK(area[24] == 0x80 && area[25] == 0x3f && area[160] == 0xcc && area[0] == 0xcc);
+    OK(uc_close(c.uc));
+}
+
+/* the tracked bits are CPU state: a uc_context carries them; the model is configuration */
+static void test_x86_xu_context(void)
+{
+    XuCtx c;
+    uc_context *ctx;
+    int m = 0;
+
+    xu_open(&c, -1, UC_X86_XINUSE_PCORE);
+    xu_init_image(&c);
+    TEST_CHECK(xu_after(&c, XU_INIT, XU_INIT_LEN) == 0);
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    TEST_CHECK(xu_after(&c, "\x66\x0f\xef\xc0", 4) == 2);       /* PXOR */
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), UC_X86_XINUSE_ECORE));
+    OK(uc_context_restore(c.uc, ctx));
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_XINUSE_MODEL, 1), &m));
+    TEST_CHECK(m == UC_X86_XINUSE_ECORE);                       /* not part of the context */
+    TEST_CHECK(xu_after(&c, "\x90", 1) == 3);                   /* E-core: x87 / SSE forced */
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), UC_X86_XINUSE_PCORE));
+    TEST_CHECK(xu_after(&c, "\x90", 1) == 0);                   /* the restored tracking: none */
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+}
+/* ---- end U1480-U1489 (xu_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -39443,4 +39987,13 @@ TEST_LIST = {
     {"test_x86_smr_amd64_rsm", test_x86_smr_amd64_rsm},
     {"test_x86_smr_vendor", test_x86_smr_vendor},
     {"test_x86_smr_revision_profiles", test_x86_smr_revision_profiles},
+    {"test_x86_xu_pcore_default", test_x86_xu_pcore_default},
+    {"test_x86_xu_pcore", test_x86_xu_pcore},
+    {"test_x86_xu_ecore", test_x86_xu_ecore},
+    {"test_x86_xu_always", test_x86_xu_always},
+    {"test_x86_xu_amd_unchanged", test_x86_xu_amd_unchanged},
+    {"test_x86_xu_ctl", test_x86_xu_ctl},
+    {"test_x86_xu_rules", test_x86_xu_rules},
+    {"test_x86_xu_mxcsr_xsave", test_x86_xu_mxcsr_xsave},
+    {"test_x86_xu_context", test_x86_xu_context},
     {NULL, NULL}};

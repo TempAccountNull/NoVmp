@@ -2581,6 +2581,10 @@ static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
     cpu->env.rdrand_seed = uc->x86_rdrand_seed;
     cpu->env.rdrand_count = 0;
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* NoVmp (ledger U1480): UC_CTL_X86_XINUSE_MODEL written before init (default 0: the vendor's) */
+    cpu->env.xinuse_model = (uint8_t)uc->x86_xinuse_model_cfg;
+#endif /* __Use_Original_Qemu (U1480) */
 
     return 0;
 }
@@ -2815,6 +2819,23 @@ static uc_err x86_smm_revision_ctl(struct uc_struct *uc, int set, uint32_t *rev)
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1465) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+/* NoVmp (ledger U1480): UC_CTL_X86_XINUSE_MODEL - the XINUSE model of components 0-2 (fpu_helper.c) */
+static uc_err x86_xinuse_model_ctl(struct uc_struct *uc, int set, int *model)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    if (!set) {
+        *model = x86_xinuse_model(env);
+        return UC_ERR_OK;
+    }
+    if (*model < X86_XINUSE_DEFAULT || *model > X86_XINUSE_ALWAYS) {
+        return UC_ERR_ARG;
+    }
+    env->xinuse_model = (uint8_t)*model;
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1480) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2858,6 +2879,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1465) */
     uc->x86_smm_revision = x86_smm_revision_ctl;
 #endif /* __Use_Original_Qemu (U1465) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    uc->x86_xinuse_model = x86_xinuse_model_ctl;
+#endif /* __Use_Original_Qemu (U1480) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

@@ -6847,6 +6847,42 @@ static void decode_temps_free(TCGContext *tcg_ctx, X86DecodedInsn *decode)
  * Convert one instruction. s->base.is_jmp is set if the translation must
  * be stopped.
  */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+/*
+ * NoVmp (ledger U1480, docs/xinuse.md): the XINUSE bits an instruction of this decoder sets (after its
+ * code, gen_xinuse_set): a vector register destination XMM/YMM/ZMM0-15 writes SSE state (bits
+ * 127:0), one of 256 bits or more also AVX state (YMM_H) - a 128-bit VEX / EVEX destination leaves
+ * the AVX bit alone (i5-13600K P-cores V5e / V5f 4 -> 6: VEX.128 zeroes YMM0_H but AVX stays in
+ * use; V5a 0 -> 2); ZMM16-31 are Hi16_ZMM (value-based, get_xinuse_avx512). An MMX
+ * instruction (x87-to-MMX transition, MMX register operand) and EMMS write x87 state. Stores to
+ * memory and instructions without a vector destination (COMIS, PTEST, PEXTR to a GPR, ...) set nothing.
+ */
+static void gen_xinuse_insn(DisasContext *s, X86DecodedInsn *decode)
+{
+    X86DecodedOp *op = &decode->op[0];
+    uint32_t bits = 0;
+    int i;
+
+    if (op->unit == X86_OP_SSE && !op->has_ea && op->n < 16) {
+        bits |= XSTATE_SSE_MASK;
+        if (op->ot >= MO_256) {
+            bits |= XSTATE_YMM_MASK;
+        }
+    }
+    if (decode->e.gen == gen_EMMS ||
+        (decode->e.special == X86_SPECIAL_MMX &&
+         !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA)))) {
+        bits |= XSTATE_FP_MASK;
+    }
+    for (i = 0; i < 3; i++) {
+        if (decode->op[i].unit == X86_OP_MMX && !decode->op[i].has_ea) {
+            bits |= XSTATE_FP_MASK;
+        }
+    }
+    gen_xinuse_set(s, bits);
+}
+#endif /* __Use_Original_Qemu (U1480) */
+
 static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -7257,6 +7293,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
     if ((s->prefix & PREFIX_EVEX) && decode.e.vex_class == 23) {
         if (validate_amx_evex(s, &decode)) {
             decode.e.gen(s, env, &decode);
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+            gen_xinuse_insn(s, &decode);
+#endif /* __Use_Original_Qemu (U1480) */
         }
         decode_temps_free(tcg_ctx, &decode);
         return;
@@ -7268,6 +7307,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
 #if __Use_Original_Qemu != 1 /* ours (U146) */
             gen_evex_insn(s, env, &decode);
 #endif /* __Use_Original_Qemu (U146) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+            gen_xinuse_insn(s, &decode);
+#endif /* __Use_Original_Qemu (U1480) */
         }
         decode_temps_free(tcg_ctx, &decode);
         return;
@@ -7434,6 +7476,9 @@ static void disas_insn_new(DisasContext *s, CPUState *cpu, int b)
         gen_apx_post(s);            /* EVEX.NF = 1: the status flags restored (U646) */
     }
 #endif /* __Use_Original_Qemu (U646) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    gen_xinuse_insn(s, &decode);
+#endif /* __Use_Original_Qemu (U1480) */
     decode_temps_free(tcg_ctx, &decode);
     return;
  illegal_op:

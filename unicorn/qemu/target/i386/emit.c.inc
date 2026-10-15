@@ -4261,6 +4261,9 @@ static void gen_LDMXCSR(DisasContext *s, CPUX86State *env, X86DecodedInsn *decod
     /* VEX.L = 1: chk(VEX128) in the decoder (backport 183e6679e3, U486) */
     tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, s->T1);
     gen_helper_ldmxcsr(tcg_ctx, cpu_env, s->tmp2_i32);
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    gen_xinuse_set(s, XSTATE_SSE_MASK);     /* LDMXCSR / VLDMXCSR: SSE in use (M10a, M10b) */
+#endif /* __Use_Original_Qemu (U1480) */
 }
 
 static void gen_MASKMOV(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
@@ -5987,6 +5990,11 @@ static void gen_VZEROALL(DisasContext *s, CPUX86State *env, X86DecodedInsn *deco
                       tcg_constant_ptr(tcg_ctx, (CODE64(s) ? 16 : 8) * sizeof(ZMMReg)));
 #endif /* __Use_Original_Qemu (U126) */
     tcg_temp_free_ptr(tcg_ctx, ptr);
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* SSE and AVX are in their initial configuration (Vol1 13.6 p. 13-18: XMM0-15 / YMM0_H-YMM15_H in
+       64-bit mode, XMM0-7 / YMM0_H-YMM7_H outside it): XINUSE[2:1] := 0 (P-core Z4b 6 -> 0) */
+    gen_xinuse_clear(s, XSTATE_SSE_MASK | XSTATE_YMM_MASK);
+#endif /* __Use_Original_Qemu (U1480) */
 }
 
 static void gen_VZEROUPPER(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
@@ -6007,6 +6015,10 @@ static void gen_VZEROUPPER(DisasContext *s, CPUX86State *env, X86DecodedInsn *de
         tcg_gen_gvec_dup_imm(tcg_ctx, MO_64, offset, 48, 48, 0);
     }
 #endif /* __Use_Original_Qemu (U126) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    /* AVX is in its initial configuration: XINUSE[2] := 0 (P-core and E-core Z3a 6 -> 2 / 7 -> 3) */
+    gen_xinuse_clear(s, XSTATE_YMM_MASK);
+#endif /* __Use_Original_Qemu (U1480) */
 }
 
 #if __Use_Original_Qemu != 1 /* ours (U175) */

@@ -3689,6 +3689,37 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         break;
 
 #endif /* __Use_Original_Qemu (U1465) */
+#if __Use_Original_Qemu != 1 /* ours (U1480) */
+    case UC_CTL_X86_XINUSE_MODEL:
+        /* NoVmp U1480: the XINUSE model of state components 0-2 (fpu_helper.c, docs/xinuse.md). A
+           write does not initialise the engine (before init it is copied into the CPU at creation, as
+           UC_CTL_X86_RDRAND), so it may come before the controls accepted only before init; a read
+           initialises it (the effective model depends on the CPU's vendor) */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *model = va_arg(args, int *);
+
+            UC_INIT(uc);
+            err = model && uc->x86_xinuse_model ? uc->x86_xinuse_model(uc, 0, model) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int model = va_arg(args, int);
+
+            if (model < UC_X86_XINUSE_DEFAULT || model > UC_X86_XINUSE_ALWAYS) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_xinuse_model_cfg = model;
+                if (uc->init_done && uc->x86_xinuse_model) {
+                    err = uc->x86_xinuse_model(uc, 1, &model);
+                }
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1480) */
 #endif /* __Use_Original_Qemu (U1120) */
 
 #if __Use_Original_Qemu != 1 /* ours (U961) */

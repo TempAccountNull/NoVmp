@@ -1019,7 +1019,22 @@ typedef enum uc_control_type {
     // Read: the value the next SMI writes for the CPU's vendor and map. Any time; kept across a CPU
     // reset. Write: @args = (uint32_t rev); Read: @args = (uint32_t *rev)
     UC_CTL_X86_SMM_REVISION,
+    // x86 only (NoVmp U1480, docs/xinuse.md): the XINUSE model of state components 0-2 (x87, SSE,
+    // AVX) - what XGETBV with ECX = 1 and the XSTATE_BV written by XSAVE / XSAVEOPT / XSAVEC /
+    // XSAVES report (SDM 092 Vol1 13.6, 13.8.3; Vol2D XGETBV, XRSTOR). UC_X86_XINUSE_DEFAULT: the
+    // vendor's default (Intel: P-core model; AuthenticAMD: ALWAYS, the behaviour before U1480);
+    // PCORE: tracked with the init optimization (i5-13600K P-cores); ECORE: x87 and SSE always in
+    // use, AVX tracked (i5-13600K E-cores); ALWAYS: components 0-2 always in use. Other values ->
+    // UC_ERR_ARG. Read: the effective model (never DEFAULT). Any time; kept across a CPU reset, not
+    // part of a uc_context (the tracked bits are). Write: @args = (int model); Read: @args = (int *model)
+    UC_CTL_X86_XINUSE_MODEL,
 } uc_control_type;
+
+// UC_CTL_X86_XINUSE_MODEL values (NoVmp U1480)
+#define UC_X86_XINUSE_DEFAULT 0    // the vendor's default (Intel PCORE, AMD ALWAYS)
+#define UC_X86_XINUSE_PCORE 1      // init optimization for x87 / SSE / AVX (P-core)
+#define UC_X86_XINUSE_ECORE 2      // x87 / SSE always in use, AVX tracked (E-core)
+#define UC_X86_XINUSE_ALWAYS 3     // x87 / SSE / AVX always in use (no init optimization)
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)
 #define UC_X86_FEATURE_TSE 1       // TSE engine: IA32_TSE_CAPABILITY, PCONFIG leaves 1 and 2
