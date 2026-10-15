@@ -21,13 +21,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.normpath(os.path.join(HERE, "..", "data"))
 ECORE = os.path.join(DATA, "cpuid_xu_hybrid_ecore.txt")
 PCORE = os.path.join(DATA, "cpuid_xu_hybrid_pcore.txt")
+GUEST = os.path.join(DATA, "cpuid_i5-13600k.txt")        # U1482: the VMware-guest profile (07H.0:EDX[15] = 0)
 
 # (switches, model file that must pass, model name, source substring, evidence substring)
 COMBOS = [
     ([], "pcore", "engine default", "no platform switch: not written", "no CPUID profile"),
     (["--guest"], "pcore", "P-core", "--guest / --vm default: P-core model", "host CPUs not consulted"),
     (["--vm"], "pcore", "P-core", "--guest / --vm default: P-core model", "host CPUs not consulted"),
-    (["--host"], "pcore", "P-core", "--host: FALLBACK to the P-core model", "no native runs"),
+    # U1482: since U1491 --host loads the bare-host profile (P-core, cpuid_i5-13600k_bare_host.txt; E-core with
+    # --host-core E): the source is the profile's core type (choose_xinuse, at_cases.hpp)
+    (["--host"], "pcore", "P-core", "--host: the core type of the CPUID profile", "1AH:EAX[31:24] = 40H"),
+    (["--host", "--host-core", "E"], "ecore", "E-core", "--host: the core type of the CPUID profile", "1AH:EAX[31:24] = 20H"),
+    # U1482: a --cpuid override without hybrid enumeration (the VMware-guest profile): no profile core type and
+    # no native runs -> the logged P-core FALLBACK
+    (["--host", "--cpuid", GUEST], "pcore", "P-core", "--host: FALLBACK to the P-core model - no verified core-type identification",
+     "07H.0:EDX[15] hybrid = 0"),
     (["--host", "--cpuid", PCORE], "pcore", "P-core", "--host: the core type of the CPUID profile", "1AH:EAX[31:24] = 40H"),
     (["--host", "--cpuid", ECORE], "ecore", "E-core", "--host: the core type of the CPUID profile", "1AH:EAX[31:24] = 20H"),
     (["--guest", "--cpuid", ECORE], "pcore", "P-core", "--guest / --vm default", "1AH:EAX[31:24] = 20H"),
@@ -82,13 +90,15 @@ def main():
                       "%-60s %-6s differs as it must (differing %d of %d, errors %d)" % (" ".join(os.path.basename(a) for a in sw) or "(none)", f, diff, n, err))
 
     # --host with native runs allowed (no --expect-only): the host CPUs are consulted; in a VMware guest / on a
-    # machine without verified hybrid identification the model is the logged P-core fallback
+    # machine without verified hybrid identification the model is the logged P-core fallback - or, since U1491 loads
+    # the bare-host profile with --host, the profile's core type (U1482)
     code, out = run(exe, ["--cases", os.path.join(DATA, "cases_xu_pcore.txt"), "--xcr0", "0x7", "--host"])
     le = [l for l in out.splitlines() if l.startswith("xinuse evidence: ")]
     lm = [l for l in out.splitlines() if l.startswith("xinuse model: ")]
     check(len(le) == 1 and "host 07H.0:EDX[15] hybrid = " in le[0] and "EfficiencyClass" in le[0], "--host (native runs allowed): %s" % (le[0] if le else "(missing)"))
     verified = bool(le) and "(verified)" in le[0]
-    check(len(lm) == 1 and (verified or "FALLBACK" in lm[0]), "  %s" % (lm[0] if lm else "(missing)"))
+    check(len(lm) == 1 and (verified or "FALLBACK" in lm[0] or "--host: the core type of the CPUID profile" in lm[0]),
+          "  %s" % (lm[0] if lm else "(missing)"))
 
     # usage errors
     for args, msg in ((["--xinuse-model", "x"], "neither"), (["--xinuse-model", "P"], "neither"),
