@@ -37954,6 +37954,320 @@ static void test_x86_uc_mc_profiles(void)
 }
 /* ---- end U1470-U1479 (uc_mc_) ---- */
 
+/*
+ * ---- NoVmp U1461-U1464: SMI, the SMRAM state-save maps and RSM (smr_) ----
+ * Expected values: SDM 093 Vol3C ch. 34 (Tables 34-1, 34-3 to 34-8; 34.3.1, 34.5.3, 34.9-34.12)
+ * and AMD64 APM Vol2 24593 r3.45 ch. 10 (Table 10-1, Figures 10-3 / 10-6, 10.3.7, 10.3.8). The SMI
+ * comes from UC_CTL_X86_SMI (test-only hook, U1461). The SMI handler is a single RSM at
+ * SMBASE + 8000H; a UC_HOOK_CODE on it plays the handler: it captures the SMM entry state and the
+ * state-save area (SMBASE + FC00H..FFFFH) and writes the fields the handler changes before RSM.
+ * Every state-save area starts filled with A5h so reserved bytes show whether they were written.
+ */
+#define SMR_SMBASE 0x30000ULL
+#define SMR_SMBASE2 0x50000ULL
+#define SMR_CODE 0x1000ULL
+#define SMR_DATA 0x2000ULL
+#define SMR_FILL 0xa5
+#define SMR_HITS 3
+
+typedef struct SmrWrite {
+    uint32_t off;                       /* offset from SMBASE + 8000H (7C00H..7FFFH) */
+    int size;
+    uint64_t val;
+} SmrWrite;
+
+typedef struct SmrCtx {
+    uc_engine *uc;
+    uc_hook hk, hk_in, hk_out;
+    int hits;                           /* RSM hook calls (SMIs handled) */
+    uint64_t smbase[SMR_HITS];          /* SMBASE of each hit (handler address - 8000H) */
+    uint8_t ssa[SMR_HITS][0x400];       /* SMBASE + FC00H..FFFFH at each hit */
+    uint64_t rip[SMR_HITS], rflags[SMR_HITS], cr0[SMR_HITS], cr4[SMR_HITS], dr7[SMR_HITS];
+    uint64_t efer[SMR_HITS], rcx[SMR_HITS];
+    uint16_t cs[SMR_HITS];
+    int state[SMR_HITS];                /* UC_CTL_X86_SMI read in the handler */
+    SmrWrite wr[8];                     /* applied in the first handler run */
+    int nwr;
+    int smi_in_handler;                 /* signal one more SMI from the first handler run */
+    int io_calls, io_smi_at;            /* I/O hook calls; signal the SMI in this call (1-based) */
+    uint32_t in_value;
+    uint8_t out_data[16];
+} SmrCtx;
+
+static uint64_t smr_get(SmrCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void smr_set(SmrCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+static uint64_t smr_msr(uc_engine *uc, uint32_t id)
+{
+    uc_x86_msr m = {id, 0};
+
+    OK(uc_reg_read(uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static int smr_state(uc_engine *uc)
+{
+    int st = -1;
+
+    OK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SMI, 1), &st));
+    return st;
+}
+
+static void smr_signal(uc_engine *uc)
+{
+    OK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SMI, 1), 1));
+}
+
+static void smr_handler_cb(uc_engine *uc, uint64_t addr, uint32_t size, void *user)
+{
+    SmrCtx *c = (SmrCtx *)user;
+    int h = c->hits++, i;
+    uint64_t v;
+    uint16_t cs = 0;
+
+    (void)size;
+    if (h >= SMR_HITS) {
+        return;
+    }
+    c->smbase[h] = addr - 0x8000;
+    OK(uc_mem_read(uc, c->smbase[h] + 0xfc00, c->ssa[h], sizeof(c->ssa[h])));
+    OK(uc_reg_read(uc, UC_X86_REG_RIP, &c->rip[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &c->rflags[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_CR0, &c->cr0[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_CR4, &c->cr4[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_DR7, &c->dr7[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_RCX, &c->rcx[h]));
+    OK(uc_reg_read(uc, UC_X86_REG_CS, &cs));
+    c->cs[h] = cs;
+    {
+        uc_x86_msr m = {0xc0000080, 0};
+
+        c->efer[h] = uc_reg_read(uc, UC_X86_REG_MSR, &m) == UC_ERR_OK ? m.value : ~0ULL;
+    }
+    if (h == 0 && c->smi_in_handler) {
+        smr_signal(uc);                 /* latched in SMM (34.3.1) */
+    }
+    c->state[h] = smr_state(uc);
+    if (h == 0) {
+        for (i = 0; i < c->nwr; i++) {
+            v = c->wr[i].val;
+            OK(uc_mem_write(uc, c->smbase[h] + 0x8000 + c->wr[i].off, &v, c->wr[i].size));
+        }
+    }
+}
+
+static void smr_out_cb(uc_engine *uc, uint32_t port, int size, uint32_t value, void *user)
+{
+    SmrCtx *c = (SmrCtx *)user;
+
+    (void)port;
+    (void)size;
+    if (c->io_calls < (int)sizeof(c->out_data)) {
+        c->out_data[c->io_calls] = (uint8_t)value;
+    }
+    if (++c->io_calls == c->io_smi_at) {
+        smr_signal(uc);
+    }
+}
+
+static uint32_t smr_in_cb(uc_engine *uc, uint32_t port, int size, void *user)
+{
+    SmrCtx *c = (SmrCtx *)user;
+
+    (void)port;
+    (void)size;
+    if (++c->io_calls == c->io_smi_at) {
+        smr_signal(uc);
+    }
+    return c->in_value;
+}
+
+/* an engine with 1 MB of RAM, an RSM handler at both SMBASEs and A5h state-save areas */
+static void smr_open(SmrCtx *c, uc_mode mode, int model, const uc_x86_cpuid *prof, size_t nprof)
+{
+    uint8_t buf[0x400];
+    const uint64_t bases[2] = {SMR_SMBASE, SMR_SMBASE2};
+    int i;
+
+    memset(c, 0, sizeof(*c));
+    memset(buf, SMR_FILL, sizeof(buf));
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    if (model >= 0) {
+        OK(uc_ctl_set_cpu_model(c->uc, model));
+    }
+    if (prof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, 0));
+    }
+    OK(uc_mem_map(c->uc, 0, 0x100000, UC_PROT_ALL));
+    for (i = 0; i < 2; i++) {
+        OK(uc_mem_write(c->uc, bases[i] + 0x8000, "\x0f\xaa", 2));      /* RSM */
+        OK(uc_mem_write(c->uc, bases[i] + 0xfc00, buf, sizeof(buf)));
+    }
+    OK(uc_hook_add(c->uc, &c->hk, UC_HOOK_CODE, smr_handler_cb, c, SMR_SMBASE + 0x8000,
+                   SMR_SMBASE2 + 0x8000));
+    OK(uc_hook_add(c->uc, &c->hk_out, UC_HOOK_INSN, smr_out_cb, c, 1, 0, UC_X86_INS_OUT));
+    OK(uc_hook_add(c->uc, &c->hk_in, UC_HOOK_INSN, smr_in_cb, c, 1, 0, UC_X86_INS_IN));
+}
+
+static void smr_code(SmrCtx *c, const char *code, size_t len)
+{
+    OK(uc_mem_write(c->uc, SMR_CODE, code, len));
+}
+
+static void smr_wr(SmrCtx *c, uint32_t off, int size, uint64_t val)
+{
+    c->wr[c->nwr].off = off;
+    c->wr[c->nwr].size = size;
+    c->wr[c->nwr].val = val;
+    c->nwr++;
+}
+
+/* a state-save field of hit h, offset relative to SMBASE + 8000H */
+static uint64_t smr_f(SmrCtx *c, int h, uint32_t off, int size)
+{
+    uint64_t v = 0;
+
+    memcpy(&v, &c->ssa[h][off - 0x7c00], size);
+    return v;
+}
+
+/* bytes [lo, hi] of hit h are still A5h (not written) */
+static int smr_untouched(SmrCtx *c, int h, uint32_t lo, uint32_t hi)
+{
+    uint32_t o;
+
+    for (o = lo; o <= hi; o++) {
+        if (c->ssa[h][o - 0x7c00] != SMR_FILL) {
+            TEST_MSG("byte %04xh written (%02x)", o, c->ssa[h][o - 0x7c00]);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* distinct GPR values (smr_gpr_val), RSP 80000H */
+static void smr_set_gprs(SmrCtx *c)
+{
+    static const int r[] = {UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RBX,
+                            UC_X86_REG_RBP, UC_X86_REG_RSI, UC_X86_REG_RDI, UC_X86_REG_R8,
+                            UC_X86_REG_R9, UC_X86_REG_R10, UC_X86_REG_R11, UC_X86_REG_R12,
+                            UC_X86_REG_R13, UC_X86_REG_R14, UC_X86_REG_R15};
+    size_t i;
+
+    for (i = 0; i < sizeof(r) / sizeof(r[0]); i++) {
+        smr_set(c, r[i], 0x1111111111111111ULL * (i + 1) + 0x0102030405060700ULL);
+    }
+    smr_set(c, UC_X86_REG_RSP, 0x80000);
+}
+
+static uint64_t smr_gpr_val(int idx)
+{
+    return 0x1111111111111111ULL * (idx + 1) + 0x0102030405060700ULL;
+}
+
+/* U1461: SMI delivery and the SMM entry state (SDM Table 34-4, APM Table 10-3), RSM back */
+static void test_x86_smr_entry_state(void)
+{
+    SmrCtx c;
+    uint64_t rflags = 0x247;
+
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, "\x90\x90", 2);
+    smr_set_gprs(&c);
+    smr_set(&c, UC_X86_REG_RFLAGS, rflags);
+    TEST_CHECK(smr_state(c.uc) == 0);
+    smr_signal(c.uc);
+    TEST_CHECK(smr_state(c.uc) == 1);           /* latched, not in SMM */
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(c.smbase[0] == SMR_SMBASE);      /* reset SMBASE 30000H (34.4) */
+    TEST_CHECK(c.cs[0] == 0x3000);
+    TEST_CHECK(c.rip[0] == 0x8000);
+    TEST_CHECK(c.rflags[0] == 2);
+    TEST_CHECK((c.cr0[0] & 0x8000000dULL) == 0);    /* PE, EM, TS, PG cleared */
+    TEST_CHECK(c.cr4[0] == 0);
+    TEST_CHECK(c.dr7[0] == 0x400);
+    TEST_CHECK((c.efer[0] & 0x500) == 0);       /* LME / LMA 0 */
+    TEST_CHECK(c.state[0] == 2);                /* in SMM */
+    TEST_CHECK(c.rcx[0] == smr_gpr_val(1));     /* GPRs untouched on entry */
+    TEST_CHECK(smr_state(c.uc) == 0);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 2);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RAX) == smr_gpr_val(0));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_R15) == smr_gpr_val(14));
+    TEST_CHECK((smr_get(&c, UC_X86_REG_RFLAGS) & 0xfff) == rflags);
+    TEST_CHECK(smr_msr(c.uc, 0x34) == 1);      /* MSR_SMI_COUNT */
+    OK(uc_close(c.uc));
+}
+
+/* U1461: an SMI signalled in SMM is latched and taken right after RSM (34.3.1) */
+static void test_x86_smr_latched(void)
+{
+    SmrCtx c;
+
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, "\x90\x90", 2);
+    c.smi_in_handler = 1;
+    smr_signal(c.uc);
+    smr_signal(c.uc);                           /* one SMI is latched, not two */
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 2);
+    TEST_CHECK(c.state[0] == 3);                /* pending and in SMM */
+    TEST_CHECK(c.state[1] == 2);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 2);
+    TEST_CHECK(smr_msr(c.uc, 0x34) == 2);
+    TEST_CHECK(smr_state(c.uc) == 0);
+    /* argument checks */
+    TEST_CHECK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMI, 1), 0) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMI, 1), 2) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMI, 1), NULL) == UC_ERR_ARG);
+    OK(uc_close(c.uc));
+    /* before the engine is initialised (no mapping yet): the control initialises it */
+    {
+        uc_engine *uc;
+        int st = -1;
+
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        OK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SMI, 1), &st));
+        TEST_CHECK(st == 0);
+        OK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SMI, 1), 1));
+        OK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SMI, 1), &st));
+        TEST_CHECK(st == 1);
+        OK(uc_close(uc));
+    }
+}
+
+/* U1461: an SMI an OUT hook signals is taken right after that OUT (34.7: IO_SMI) */
+static void test_x86_smr_io_boundary(void)
+{
+    /* mov al, 5Ah; out B2h, al; inc ecx; inc ecx */
+    static const char code[] = "\xb0\x5a\xe6\xb2\xff\xc1\xff\xc1";
+    SmrCtx c;
+
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, code, sizeof(code) - 1);
+    smr_set(&c, UC_X86_REG_RCX, 0);
+    c.io_smi_at = 1;
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(c.rcx[0] == 0);                  /* before the INC ECX after the OUT */
+    TEST_CHECK(c.io_calls == 1 && c.out_data[0] == 0x5a);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 2);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + sizeof(code) - 1);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1461-U1464 (smr_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -38445,4 +38759,7 @@ TEST_LIST = {
     {"test_x86_uc_mc_privilege", test_x86_uc_mc_privilege},
     {"test_x86_uc_mc_sign_id", test_x86_uc_mc_sign_id},
     {"test_x86_uc_mc_profiles", test_x86_uc_mc_profiles},
+    {"test_x86_smr_entry_state", test_x86_smr_entry_state},
+    {"test_x86_smr_latched", test_x86_smr_latched},
+    {"test_x86_smr_io_boundary", test_x86_smr_io_boundary},
     {NULL, NULL}};

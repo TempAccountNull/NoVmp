@@ -1000,6 +1000,16 @@ typedef enum uc_control_type {
     // platform ID outside 0..7). Reading initialises the engine and returns the effective values.
     // Write: @args = (uint32_t rev, int platform_id); Read: @args = (uint32_t *rev, int *platform_id)
     UC_CTL_X86_MICROCODE,
+    // x86 only (NoVmp U1461, docs/smm.md): SMI# for tests and tools (not software-visible on
+    // hardware: the chipset or the local APIC signals it; Unicorn models neither). Write 1: latch
+    // one SMI (SDM 093 Vol3C 34.3.1). Signalled from the host it is taken before the first
+    // instruction of the next uc_emu_start; from an IN / OUT hook (UC_HOOK_INSN UC_X86_INS_IN /
+    // UC_X86_INS_OUT) right after that I/O instruction (one REP iteration), as an SMI synchronous
+    // to it (Intel IO_SMI / IO_MISC / IO_RIP, AMD I/O restart fields); in SMM it stays latched until
+    // RSM. Signalled while the CPU is in the HALT state (uc_emu_start returned after HLT) it records
+    // the auto HALT restart. Other values -> UC_ERR_ARG. Read: bit 0 = an SMI is latched, bit 1 = the
+    // CPU is in SMM. Write: @args = (int 1); Read: @args = (int *state)
+    UC_CTL_X86_SMI,
 } uc_control_type;
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)

@@ -2779,6 +2779,25 @@ static uc_err x86_itd_class(struct uc_struct *uc, int set, int *cls)
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+/* NoVmp (ledger U1461): UC_CTL_X86_SMI - signal SMI# (*v = 1) or read the SMI / SMM state */
+static uc_err x86_smi(struct uc_struct *uc, int set, int *v)
+{
+    CPUState *cs = uc->cpu;
+    CPUX86State *env = &X86_CPU(cs)->env;
+
+    if (!set) {
+        *v = ((cs->interrupt_request & CPU_INTERRUPT_SMI) ? 1 : 0) |
+             ((env->hflags & HF_SMM_MASK) ? 2 : 0);
+        return UC_ERR_OK;
+    }
+    if (*v != 1) {
+        return UC_ERR_ARG;
+    }
+    x86_smm_signal(env);
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1461) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2816,6 +2835,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
     uc->x86_sgx_epcm = x86_sgx_epcm;
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    uc->x86_smi = x86_smi;
+#endif /* __Use_Original_Qemu (U1461) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

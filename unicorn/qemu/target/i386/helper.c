@@ -568,6 +568,11 @@ void x86_cpu_exec_enter(CPUState *cs)
     env->df = 1 - (2 * ((env->eflags >> 10) & 1));
     CC_OP = CC_OP_EFLAGS;
     env->eflags &= ~(DF_MASK | CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    /* execution starts: the CPU leaves the HALT state; no I/O hook is running (smm_helper.c) */
+    env->smm_hlt = 0;
+    env->smm_io_size = 0;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 void x86_cpu_exec_exit(CPUState *cs)

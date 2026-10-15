@@ -8025,6 +8025,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         if (prefixes & (PREFIX_REPZ | PREFIX_REPNZ)) {
             gen_repz_ins(s, ot);
         } else {
@@ -8043,6 +8047,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         if (prefixes & (PREFIX_REPZ | PREFIX_REPNZ)) {
             gen_repz_outs(s, ot);
         } else {
@@ -8069,6 +8077,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         gen_helper_in_func(tcg_ctx, ot, s->T1, s->tmp2_i32);
         gen_op_mov_reg_v(s, ot, R_EAX, s->T1);
         gen_bpt_io(s, s->tmp2_i32, ot);
@@ -8089,6 +8101,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         gen_op_mov_v_reg(s, ot, s->T1, R_EAX);
         tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp3_i32, s->T1);
         gen_helper_out_func(tcg_ctx, ot, s->tmp2_i32, s->tmp3_i32);
@@ -8106,6 +8122,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         gen_helper_in_func(tcg_ctx, ot, s->T1, s->tmp2_i32);
         gen_op_mov_reg_v(s, ot, R_EAX, s->T1);
         gen_bpt_io(s, s->tmp2_i32, ot);
@@ -8122,6 +8142,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_io_start(tcg_ctx);
             s->base.is_jmp = DISAS_TOO_MANY;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+        /* the TB ends after the I/O instruction: an SMI its hook signals is taken right after it */
+        s->base.is_jmp = DISAS_TOO_MANY;
+#endif /* __Use_Original_Qemu (U1461) */
         gen_op_mov_v_reg(s, ot, s->T1, R_EAX);
         tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp3_i32, s->T1);
         gen_helper_out_func(tcg_ctx, ot, s->tmp2_i32, s->tmp3_i32);

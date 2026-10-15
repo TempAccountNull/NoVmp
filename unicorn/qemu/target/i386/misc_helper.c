@@ -27,6 +27,20 @@
 #include "uc_priv.h"
 #include "tcg/tcg-apple-jit.h"
 
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+/*
+ * NoVmp (ledger U1461): the I/O instruction the IN / OUT hooks run for, so an SMI they signal
+ * (UC_CTL_X86_SMI) is synchronous to it (smm_helper.c x86_smm_signal)
+ */
+static inline void smm_io_begin(CPUX86State *env, uint32_t port, int size, int in, uintptr_t ra)
+{
+    env->smm_io_port = (uint16_t)port;
+    env->smm_io_size = (uint8_t)size;
+    env->smm_io_in = (uint8_t)in;
+    env->smm_io_ra = ra;
+}
+
+#endif /* __Use_Original_Qemu (U1461) */
 void helper_outb(CPUX86State *env, uint32_t port, uint32_t data)
 {
 // #ifdef UNICORN_ARCH_POSTFIX
@@ -35,7 +49,13 @@ void helper_outb(CPUX86State *env, uint32_t port, uint32_t data)
 //     address_space_stb(env->uc, &env->uc->address_space_io, port, data & 0xff,
 // #endif
 //                       cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_outb(env->uc, port, data, GETPC());
+#else /* ours (U1461) */
+    smm_io_begin(env, port, 1, 0, GETPC());
+    cpu_outb(env->uc, port, data, GETPC());
+    env->smm_io_size = 0;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 target_ulong helper_inb(CPUX86State *env, uint32_t port)
@@ -46,7 +66,16 @@ target_ulong helper_inb(CPUX86State *env, uint32_t port)
 //     return address_space_ldub(env->uc, &env->uc->address_space_io, port,
 // #endif
 //                               cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_inb(env->uc, port, GETPC());
+#else /* ours (U1461) */
+    target_ulong v;
+
+    smm_io_begin(env, port, 1, 1, GETPC());
+    v = cpu_inb(env->uc, port, GETPC());
+    env->smm_io_size = 0;
+    return v;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 void helper_outw(CPUX86State *env, uint32_t port, uint32_t data)
@@ -57,7 +86,13 @@ void helper_outw(CPUX86State *env, uint32_t port, uint32_t data)
 //     address_space_stw(env->uc, &env->uc->address_space_io, port, data & 0xffff,
 // #endif
 //                       cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_outw(env->uc, port, data, GETPC());
+#else /* ours (U1461) */
+    smm_io_begin(env, port, 2, 0, GETPC());
+    cpu_outw(env->uc, port, data, GETPC());
+    env->smm_io_size = 0;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 target_ulong helper_inw(CPUX86State *env, uint32_t port)
@@ -68,7 +103,16 @@ target_ulong helper_inw(CPUX86State *env, uint32_t port)
 //     return address_space_lduw(env->uc, &env->uc->address_space_io, port,
 // #endif
 //                               cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_inw(env->uc, port, GETPC());
+#else /* ours (U1461) */
+    target_ulong v;
+
+    smm_io_begin(env, port, 2, 1, GETPC());
+    v = cpu_inw(env->uc, port, GETPC());
+    env->smm_io_size = 0;
+    return v;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 void helper_outl(CPUX86State *env, uint32_t port, uint32_t data)
@@ -79,7 +123,13 @@ void helper_outl(CPUX86State *env, uint32_t port, uint32_t data)
 //     address_space_stl(env->uc, &env->uc->address_space_io, port, data,
 // #endif
 //                       cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_outl(env->uc, port, data, GETPC());
+#else /* ours (U1461) */
+    smm_io_begin(env, port, 4, 0, GETPC());
+    cpu_outl(env->uc, port, data, GETPC());
+    env->smm_io_size = 0;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 target_ulong helper_inl(CPUX86State *env, uint32_t port)
@@ -90,7 +140,16 @@ target_ulong helper_inl(CPUX86State *env, uint32_t port)
 //     return address_space_ldl(env->uc, &env->uc->address_space_io, port,
 // #endif
 //                              cpu_get_mem_attrs(env), NULL);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return cpu_inl(env->uc, port, GETPC());
+#else /* ours (U1461) */
+    target_ulong v;
+
+    smm_io_begin(env, port, 4, 1, GETPC());
+    v = cpu_inl(env->uc, port, GETPC());
+    env->smm_io_size = 0;
+    return v;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 void helper_into(CPUX86State *env, int next_eip_addend)
@@ -3094,6 +3153,9 @@ void helper_hlt(CPUX86State *env, int next_eip_addend)
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     x86_vmx_hlt(env);   /* VMX events that end HLT at once: VM exit, activity state HLT */
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    env->smm_hlt = 1;   /* the HALT state an SMI records (auto HALT restart, smm_helper.c) */
+#endif /* __Use_Original_Qemu (U1461) */
 
     do_hlt(cpu);
 }

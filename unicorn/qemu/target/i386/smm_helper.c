@@ -20,6 +20,10 @@
 #include "qemu/osdep.h"
 #include "cpu.h"
 #include "exec/helper-proto.h"
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+#include "exec/exec-all.h"
+#include "uc_priv.h"
+#endif /* __Use_Original_Qemu (U1461) */
 
 /* SMM support */
 
@@ -374,3 +378,138 @@ void helper_rsm(CPUX86State *env)
     // qemu_log_mask(CPU_LOG_INT, "SMM: after RSM\n");
     // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+/*
+ * The I/O instruction an IN / OUT hook signalled the SMI in (helper_in* / helper_out* set
+ * env->smm_io_size / _in / _port / _ra around the hooks): EIP is put back to the instruction
+ * (cpu_restore_state, as the hooks do), its prefixes and opcode are read and the Intel I/O
+ * information (Tables 34-5 / 34-6) and the AMD I/O Instruction Restart Dword (Figure 10-6) are
+ * built from them. False if the bytes are not an I/O instruction of that size and direction.
+ * (U1461)
+ */
+static bool smm_io_decode(CPUX86State *env, X86SmmIo *io)
+{
+    CPUState *cs = env_cpu(env);
+    bool code64 = (env->hflags & HF_CS64_MASK) != 0;
+    int asize = code64 ? 64 : (env->hflags & HF_CS32_MASK) ? 32 : 16;
+    int size = env->smm_io_size, in = 0, str = 0, rep = 0, type = 0, seg = R_DS, i, op = -1;
+    bool aov = false;
+    uint8_t b;
+    target_ulong pc, base, addr;
+    uint64_t amask;
+
+    if (env->smm_io_ra) {
+        cpu_restore_state(cs, env->smm_io_ra, false);
+    }
+    pc = env->segs[R_CS].base + env->eip;
+    if (!code64) {
+        pc = (uint32_t)pc;
+    }
+    for (i = 0; i < 15 && op < 0; i++) {
+        if (cpu_memory_rw_debug(cs, code64 ? pc + i : (uint32_t)(pc + i), &b, 1, 0) < 0) {
+            return false;
+        }
+        switch (b) {
+        case 0x66: case 0xf0:
+            break;
+        case 0x67:
+            aov = true;
+            break;
+        case 0xf2: case 0xf3:
+            rep = 1;
+            break;
+        case 0x26: seg = R_ES; break;
+        case 0x2e: seg = R_CS; break;
+        case 0x36: seg = R_SS; break;
+        case 0x3e: seg = R_DS; break;
+        case 0x64: seg = R_FS; break;
+        case 0x65: seg = R_GS; break;
+        default:
+            if (!(code64 && (b & 0xf0) == 0x40)) {       /* REX */
+                op = b;
+            }
+            break;
+        }
+    }
+    if (aov) {
+        asize = code64 ? 32 : asize == 32 ? 16 : 32;
+    }
+    switch (op & 0xfe) {
+    case 0x6c: in = 1; str = 1; type = rep ? 7 : 3; break;      /* (REP) INS */
+    case 0x6e: in = 0; str = 1; type = rep ? 6 : 2; break;      /* (REP) OUTS */
+    case 0xe4: in = 1; type = 9; break;                         /* IN imm8 */
+    case 0xe6: in = 0; type = 8; break;                         /* OUT imm8 */
+    case 0xec: in = 1; type = 1; break;                         /* IN DX */
+    case 0xee: in = 0; type = 0; break;                         /* OUT DX */
+    default:
+        return false;
+    }
+    if (!str) {
+        rep = 0;
+    }
+    if (in != env->smm_io_in || (size != 1 && size != 2 && size != 4)) {
+        return false;
+    }
+    memset(io, 0, sizeof(*io));
+    io->rip = env->eip;
+    io->rcx = env->regs[R_ECX];
+    io->rsi = env->regs[R_ESI];
+    io->rdi = env->regs[R_EDI];
+    io->str = str;
+    if (str) {
+        amask = asize == 64 ? ~0ULL : asize == 32 ? 0xffffffffULL : 0xffffULL;
+        if (in) {
+            seg = R_ES;     /* INS: ES:(E/R)DI, no override */
+        }
+        base = (code64 && seg != R_FS && seg != R_GS) ? 0 : env->segs[seg].base;
+        addr = base + ((in ? env->regs[R_EDI] : env->regs[R_ESI]) & amask);
+        io->mem = code64 ? addr : (uint32_t)addr;
+    }
+    /* Table 34-5: 31:16 port, 7:4 type (Table 34-6), 3:1 length (001b/010b/100b), 0 IO_SMI */
+    io->intel_misc = ((uint32_t)env->smm_io_port << 16) | (type << 4) | (size << 1) | 1;
+    /*
+     * Figure 10-6: 31:16 PORT, 11 TF, 9 A64, 8 A32, 7 A16, 6 SZ32, 5 SZ16, 4 SZ8, 3 REP, 2 STR,
+     * 1 VAL, 0 TYPE (1 = IN). B3-B0 (15:12, the DR6 status) stay 0 (I/O breakpoints are not
+     * reported here); bit 10, also labelled PORT, has no definition in the text and stays 0.
+     */
+    io->amd_dword = ((uint32_t)env->smm_io_port << 16) |
+                    ((env->eflags & TF_MASK) ? 1u << 11 : 0) |
+                    (asize == 64 ? 1u << 9 : asize == 32 ? 1u << 8 : 1u << 7) |
+                    (size == 4 ? 1u << 6 : size == 2 ? 1u << 5 : 1u << 4) |
+                    (rep << 3) | (str << 2) | (1u << 1) | in;
+    return true;
+}
+
+/*
+ * SMI# (UC_CTL_X86_SMI): latch one SMI (34.3.1 / APM 10.3.3: one SMI is latched in SMM and
+ * serviced on RSM). Recorded with it: the HALT state (auto HALT restart, 34.10 / APM 10.3.7) and,
+ * from an IN / OUT hook outside SMM, the I/O instruction (34.7 IO_SMI: "taken immediately after a
+ * successful I/O instruction or ... after a successful iteration of a REP I/O instruction").
+ * The translator ends the TB after every I/O instruction, so the SMI is taken at the very next
+ * instruction boundary. (U1461)
+ */
+void x86_smm_signal(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+
+    if (cs->interrupt_request & CPU_INTERRUPT_SMI) {
+        return;
+    }
+    env->smm_pend_hlt = env->smm_hlt;
+    env->smm_pend_io = 0;
+    if (env->smm_io_size && !(env->hflags & HF_SMM_MASK) && env->uc->nested_level > 0 &&
+        smm_io_decode(env, &env->smm_io_pend)) {
+        env->smm_pend_io = 1;
+    }
+    cs->interrupt_request |= CPU_INTERRUPT_SMI;
+    if (!(env->hflags & HF_SMM_MASK)) {
+        /*
+         * leave the TB chain at the next TB start, as cpu_exit does; in SMM the SMI waits for RSM,
+         * whose end of block returns to the main loop (a kick there would only make a code hook
+         * run again for the instruction it was called for)
+         */
+        *(volatile int16_t *)&cs->icount_decr_ptr->u16.high = -1;
+    }
+}
+#endif /* __Use_Original_Qemu (U1461) */

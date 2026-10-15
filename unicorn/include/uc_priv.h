@@ -461,6 +461,8 @@ struct uc_struct {
     // UC_CTL_X86_SGX_EPCM
     struct uc_x86_sgx_platform x86_sgx_platform;
     uc_err (*x86_sgx_epcm)(struct uc_struct *uc, uint64_t pa, struct uc_x86_sgx_epcm *e);
+    // NoVmp U1461: UC_CTL_X86_SMI (set = 1: signal SMI# with *v = 1; set = 0: read into *v)
+    uc_err (*x86_smi)(struct uc_struct *uc, int set, int *v);
     // NoVmp U961: the local APIC bus shared with other engines (apic_model.c), NULL = alone;
     // UC_CTL_X86_APIC_ID (x86_apic_id_set = 1 once given); x86_apic_ap = 1: not the BSP
     void *x86_apic_bus;

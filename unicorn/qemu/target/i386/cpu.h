@@ -1777,6 +1777,18 @@ typedef struct SegmentCache {
     uint32_t flags;
 } SegmentCache;
 
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+/* NoVmp (ledger U1461): the I/O instruction an SMI is synchronous to (smm_helper.c, docs/smm.md) */
+typedef struct X86SmmIo {
+    uint64_t rip;               /* the I/O instruction (Intel IO_RIP, AMD I/O restart RIP) */
+    uint64_t rcx, rsi, rdi;     /* before the instruction (before this REP iteration) */
+    uint64_t mem;               /* Intel IO_MEM_ADDR: the INS / OUTS memory operand */
+    uint32_t intel_misc;        /* Intel IO_MISC (SDM Table 34-5) */
+    uint32_t amd_dword;         /* AMD I/O Instruction Restart Dword (APM Figure 10-6) */
+    uint8_t str;                /* INS / OUTS */
+} X86SmmIo;
+#endif /* __Use_Original_Qemu (U1461) */
+
 #define MMREG_UNION(n, bits)        \
     union n {                       \
         uint8_t  _b_##n[(bits)/8];  \
@@ -2525,6 +2537,15 @@ typedef struct CPUX86State {
 #if __Use_Original_Qemu != 1 /* ours (U1302) */
     X86VmxState vmx;                /* VMX operation (vmx_helper.c, docs/vmx.md) */
 #endif /* __Use_Original_Qemu (U1302) */
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    /*
+     * NoVmp (ledger U1461): SMI bookkeeping (smm_helper.c, UC_CTL_X86_SMI). smm_hlt: the HALT state
+     * (set by HLT and by an RSM back to it, cleared when execution starts); a latched SMI arrived in
+     * it (smm_pend_hlt) and / or is synchronous to the I/O instruction smm_io_pend (smm_pend_io).
+     */
+    uint8_t smm_hlt, smm_pend_hlt, smm_pend_io;
+    X86SmmIo smm_io_pend;
+#endif /* __Use_Original_Qemu (U1461) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;
@@ -2609,6 +2630,15 @@ typedef struct CPUX86State {
 #if __Use_Original_Qemu != 1 /* ours (U112) */
     uint64_t pasid;   /* IA32_PASID (D93H): 19:0 PASID, 31 valid */
 #endif /* __Use_Original_Qemu (U112) */
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    /*
+     * NoVmp (ledger U1461): the IN / OUT whose UC_HOOK_INSN hooks are running (helper_in* /
+     * helper_out*; size 0 = none): port, size, direction and the helper's return address
+     */
+    uint8_t smm_io_size, smm_io_in;
+    uint16_t smm_io_port;
+    uintptr_t smm_io_ra;
+#endif /* __Use_Original_Qemu (U1461) */
 #if __Use_Original_Qemu != 1 /* ours (U835) */
     /*
      * NoVmp (ledger U835): RDRAND/RDSEED source (UC_CTL_X86_RDRAND). Kept across a CPU reset
@@ -3071,7 +3101,17 @@ void x86_cpu_set_a20(X86CPU *cpu, int a20_state);
 
 static inline int x86_asidx_from_attrs(CPUState *cs, MemTxAttrs attrs)
 {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1461) */
     return !!attrs.secure;
+#else /* ours (U1461) */
+    /*
+     * NoVmp (ledger U1461): Unicorn creates one address space per CPU (exec.c cpu_exec_initfn,
+     * num_ases = 1) and SMRAM is ordinary RAM; QEMU's SMM index 1 made the TLB fill of the
+     * first SMM instruction fetch read cpu_ases[1] beyond the array (crash on every SMI)
+     */
+    (void)attrs;
+    return 0;
+#endif /* __Use_Original_Qemu (U1461) */
 }
 
 static inline AddressSpace *cpu_addressspace(CPUState *cs, MemTxAttrs attrs)
@@ -3416,6 +3456,9 @@ void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw);
 
 /* smm_helper.c */
 void do_smm_enter(X86CPU *cpu);
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+void x86_smm_signal(CPUX86State *env);  /* SMI# (UC_CTL_X86_SMI) */
+#endif /* __Use_Original_Qemu (U1461) */
 
 /* Special values for X86CPUVersion: */
 

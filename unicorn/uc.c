@@ -3639,6 +3639,31 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
 
 #endif /* __Use_Original_Qemu (U1261) */
 
+#if __Use_Original_Qemu != 1 /* ours (U1461) */
+    case UC_CTL_X86_SMI:
+        /* NoVmp U1461: SMI# for tests and tools (smm_helper.c x86_smm_signal) */
+        /* the arch hooks exist only once the engine is initialised (vl.c machine_initialize): check
+           after UC_INIT, so the control also works before the first mapping */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            int *st = va_arg(args, int *);
+
+            UC_INIT(uc);
+            err = st && uc->x86_smi ? uc->x86_smi(uc, 0, st) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            int v = va_arg(args, int);
+
+            UC_INIT(uc);
+            err = uc->x86_smi ? uc->x86_smi(uc, 1, &v) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1461) */
 #endif /* __Use_Original_Qemu (U1120) */
 
 #if __Use_Original_Qemu != 1 /* ours (U961) */
