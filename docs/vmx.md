@@ -269,6 +269,15 @@ translator and passed to the helpers.
   by IA32_TME_ACTIVATE[39:36] for the guest PDPTEs read from memory ("enable EPT" 0) and for the host
   PDPTEs at VM exit (VMX abort 2); the full width for the guest PDPTE fields under EPT and for the
   PDPTE loads of MOV to CR3 through EPT (x86_vmx_pdpte_load).
+- U1434 (TME-VMX integration): one MAXPHYADDR for VMX and TME-MK - vmx_maxphyaddr is the shared
+  x86_maxphyaddr (U1430: reduced by IA32_TME_ACTIVATE[39:36] after the lock, outside SEAM), and
+  x86_paging_maxphyaddr(env, ept) gives the width of CR3 / paging-structure addresses: the CPUID
+  width for guest-physical addresses under EPT (Vol3A 5.1.4 p. 5-6, Vol3C 31.3.1), else the reduced
+  one. Users: the guest-CR3 and guest-PDPTE VM-entry checks, x86_vmx_pdpte_load, MOV to CR3 in VMX
+  non-root operation with EPT ("the value M is not reduced outside SEAM", Vol3C 28.3 p. 28-10) and
+  the guest's IA-32 page walk under EPT (paging_maxphyaddr). Host-physical addresses (VMX pointers,
+  VMCS addresses, the EPTP, EPT entries, the host CR3 / PDPTEs) keep the reduced width. Tests:
+  test_x86_ti_vmx_ptr, _vmx_entry, _ept_entries, _ept_guest_width.
 - Exceptions: raise_interrupt2 consults the exception bitmap (#PF: reversed when PFEC & PFEC_MASK !=
   PFEC_MATCH) before the #DF escalation, so an exception met while delivering another event exits with
   the original event (30.2.4); a #DF produced by the escalation is checked again and exits without an

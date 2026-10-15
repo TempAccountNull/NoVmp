@@ -239,16 +239,16 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
          * uses for its reserved-bit checks.
          * U1430: MAXPHYADDR = x86_maxphyaddr - CPUID.80000008H:EAX[7:0] less
          * IA32_TME_ACTIVATE[39:36] once TME is locked outside SEAM (SDM 093 Vol3A 2.5
-         * footnote p. 2-13, Vol2B MOV CR p. 4-32). No VMX in this tree: a VMX merge
-         * keeps the CPUID width for MOV to CR3 in VMX non-root operation with EPT
-         * (Vol3C 28.3 p. 28-10: "unlike other cases" not reduced). Was: phys_bits.
+         * footnote p. 2-13, Vol2B MOV CR p. 4-32). Was: phys_bits.
+         * U1434: in VMX non-root operation with EPT the CPUID width (x86_paging_maxphyaddr;
+         * Vol3C 28.3 p. 28-10: "Unlike other cases, the value M is not reduced outside SEAM").
          */
         if (env->efer & MSR_EFER_LMA) {
             if (env->cr[4] & CR4_PCIDE_MASK) {
                 t0 &= ~(1ULL << 63);
             }
             /* U1180: with LAM, CR3[62:61] are LAM_U48 / LAM_U57, not reserved (Vol3A 4.4.1) */
-            if (t0 & ((~0ULL) << x86_maxphyaddr(env)) &
+            if (t0 & ((~0ULL) << x86_paging_maxphyaddr(env, x86_vmx_ept_active(env))) &
                 ~(x86_lam_cpuid(env) ? (CR3_LAM_U57_MASK | CR3_LAM_U48_MASK) : 0)) {
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
             }
@@ -849,9 +849,10 @@ static X86CPU *msr_cpu(CPUX86State *env)
  * address bits. The width is a function of the lock bit, not of the enable bit (bit 1). Used by MOV
  * to CR3 (U1430), the IA-32 page walk without EPT (excp_helper.c, U1430) and the MTRRs (U1431).
  * Kept at CPUID.80000008H:EAX[7:0] (cpu->phys_bits): CPUID itself (MKTME 336907-007 4.1.4),
- * guest-physical addresses under EPT (Vol3A 5.1.4 "without any regard to TME or SEAM"; no VMX in
- * this tree), IA32_RTIT_OUTPUT_BASE (Vol3C 35.4.2 / 36.2.8.7: checked against the CPUID width at
- * WRMSR; Intel PT is not modelled), IA32_TME_EXCLUDE_MASK / _BASE (writable only before the lock).
+ * guest-physical addresses under EPT (Vol3A 5.1.4 "without any regard to TME or SEAM";
+ * x86_paging_maxphyaddr, U1434), IA32_RTIT_OUTPUT_BASE (Vol3C 35.4.2 / 36.2.8.7: checked against
+ * the CPUID width at WRMSR; Intel PT is not modelled), IA32_TME_EXCLUDE_MASK / _BASE (writable only
+ * before the lock).
  * The model is always outside SEAM (x86_in_seam), so a lock with TDX_RESERVED_KEYID_BITS > 0 reduces
  * the width (emulator policy, docs/quirks.md). Review: emulator\notes\eread\T1_tmekeyid_review.md.
  */
@@ -866,6 +867,18 @@ int x86_maxphyaddr(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U1430) */
+#if __Use_Original_Qemu != 1 /* ours (U1434) */
+/*
+ * NoVmp (ledger U1434): MAXPHYADDR of CR3 / paging-structure addresses (cpu.h). Users: MOV to CR3
+ * and the IA-32 page walk (with x86_vmx_ept_active), the VM-entry checks of the guest CR3 field and
+ * the guest PDPTEs (ept = "enable EPT" of the VMCS) and the PDPTE loads through EPT (vmx_helper.c).
+ */
+int x86_paging_maxphyaddr(CPUX86State *env, bool ept)
+{
+    return ept ? (int)msr_cpu(env)->phys_bits : x86_maxphyaddr(env);
+}
+
+#endif /* __Use_Original_Qemu (U1434) */
 #if __Use_Original_Qemu != 1 /* ours (U1432) */
 /*
  * NoVmp (ledger U1432): MAXAPICADDR of IA32_APIC_BASE. SDM 093 Vol3A 13.4.4 footnote 1 (p. 13-8) and

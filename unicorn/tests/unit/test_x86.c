@@ -36234,6 +36234,179 @@ static void test_x86_tm_pconfig(void)
 }
 /* ---- end U1430-U1439 (tm_) ---- */
 
+/* ---- U1434 (ti_): TME-reduced MAXPHYADDR and VMX (notes\eread\T1_tmekeyid_review.md T11/12/15/16) ---- */
+
+/*
+ * U1434: the vmx_ engine (CPUID MAXPHYADDR 40) with IA32_TME_ACTIVATE locked, 2 KeyID bits, both
+ * TDX-reserved: MAXPHYADDR 38 outside SEAM (SDM 093 Vol3A 3.3.1 p. 3-6) for host-physical addresses;
+ * guest-physical addresses under EPT keep 40 (Vol3A 5.1.4 p. 5-6, Vol3C 28.3 p. 28-10)
+ */
+static void ti_setup(PcCtx *c)
+{
+    vmx_setup(c);
+    TEST_CHECK(vmx_wrmsr(c, 0x982, 2 | (2ull << 32) | (2ull << 36)) == -1);
+}
+
+/*
+ * U1434 (T11): VMX pointers use the reduced MAXPHYADDR (Vol3C 27.1 footnote 2 p. 27-1, 33.3 VMCLEAR /
+ * VMPTRLD / VMXON): VMCLEAR / VMPTRLD with bit 38 -> VMfailValid 2 / 9; VMXON with bit 38 ->
+ * VMfailInvalid; the same regions without the bit work.
+ */
+static void test_x86_ti_vmx_ptr(void)
+{
+    PcCtx c;
+    uint64_t fl;
+
+    ti_setup(&c);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B | (1ull << 38), &fl) == -1);
+    vmx_check_failvalid(&c, fl, 2);
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_B | (1ull << 38), &fl) == -1);
+    vmx_check_failvalid(&c, fl, 9);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_B, &fl) == -1 && fl == 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == -1);                /* VMXOFF */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON | (1ull << 38), &fl) == -1 && fl == 1);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1434 (T12): VM-entry checks of host-physical VMCS addresses with the reduced MAXPHYADDR (Vol3C
+ * 29.2.1.1, 29.2.2): an MSR-bitmap address with bit 38 and an EPTP with bit 38 -> VMfailValid 7, a
+ * host CR3 field with bit 38 -> VMfailValid 8; the MSR-bitmap address with bit 37 enters (CPUID exits).
+ */
+static void test_x86_ti_vmx_entry(void)
+{
+    PcCtx c;
+    uint64_t fl, r;
+
+    ti_setup(&c);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28));                     /* use MSR bitmaps */
+    vmx_w(&c, 0x2004, VMX_MSRBM | (1ull << 37));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(fl == 0 && r == 10);
+    TEST_MSG("MSR bitmap bit 37: flags %llx exit %llx", (unsigned long long)fl, (unsigned long long)r);
+    vmx_w(&c, 0x2004, VMX_MSRBM | (1ull << 38));
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x4002, VMX_PROC0);
+    vmx_ept_setup(&c, 0);
+    vmx_w(&c, 0x201a, VMX_EPT_PML4 | 0x1e | (1ull << 38));
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 7);
+    vmx_w(&c, 0x201a, VMX_EPT_PML4 | 0x1e);
+    vmx_w(&c, 0x6c02, VMX_PT | (1ull << 38));
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 8);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1434 (T15): EPT paging-structure entries hold host-physical addresses: bit 38 (beyond the reduced
+ * MAXPHYADDR) in the EPT PML4E, PDPTE, PDE or PTE is an EPT misconfiguration (exit 49, Vol3C 31.3.3.1);
+ * the restored entries translate again (CPUID exits).
+ */
+static void test_x86_ti_ept_entries(void)
+{
+    const uint64_t ent[4] = {VMX_EPT_PML4, VMX_EPT_PDPT, VMX_EPT_PD + 8, VMX_EPT_PTE(VMX_GUEST_PC)};
+    PcCtx c;
+    uint64_t fl, r, v;
+    int i;
+
+    ti_setup(&c);
+    vmx_ept_setup(&c, 0);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && fl == 0 && vmx_r(&c, 0x4402) == 10);
+    for (i = 0; i < 4; i++) {
+        v = vmx_rq(&c, ent[i]);
+        vmx_wq(&c, ent[i], v | (1ull << 38));
+        vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+        r = vmx_r(&c, 0x4402);
+        TEST_CHECK(r == 49);
+        TEST_MSG("level %d: exit %llu gpa %llx", i, (unsigned long long)r,
+                 (unsigned long long)vmx_r(&c, 0x2400));
+        vmx_w(&c, 0x6820, 2);
+        vmx_wq(&c, ent[i], v);
+    }
+    TEST_CHECK(vmx_r(&c, 0x2400) == VMX_GUEST_PC);              /* the PTE: the code fetch */
+    vmx_resume_regs(&c, "\x0f\xa2", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1434 (T16): VMX non-root operation with EPT - CR3 and the guest's paging-structure addresses are
+ * guest-physical, limited by CPUID.80000008H:EAX[7:0] "without any regard to TME or SEAM" (SDM 093
+ * Vol3A 5.1.4 p. 5-6); MOV to CR3 keeps the CPUID width (Vol3C 28.3 p. 28-10). Guest PML4[1] points to
+ * its PDPT at guest-physical bit 38; EPT PDPT[256] maps guest-physical 40_0000_0000H + x to x.
+ * Without EPT (reduced MAXPHYADDR 38): MOV CR3 with bit 38 -> #GP(0), the PML4E with bit 38 -> #PF
+ * (error code P | RSVD = 9). With EPT: the read through PML4[1] translates, MOV CR3 with bit 38 works
+ * (the walk of the next read goes through guest-physical bit 38), bit 40 -> #GP(0). The exception
+ * bitmap makes #GP / #PF VM exits.
+ */
+static void test_x86_ti_ept_guest_width(void)
+{
+    static const char g_cr3[] = "\x0f\x22\xd8\x0f\xa2";                 /* MOV CR3, RAX; CPUID */
+    static const char g_rd[] = "\x48\x8b\x0a\x0f\xa2";                  /* MOV RCX, [RDX]; CPUID */
+    /* MOV CR3, RAX; MOV RCX, [RDX]; MOV CR3, RBX; CPUID */
+    static const char g_sw[] = "\x0f\x22\xd8\x48\x8b\x0a\x0f\x22\xdb\x0f\xa2";
+    const uint64_t alias = 0x8000000000ull, magic = 0x1434143414341434ull;
+    PcCtx c;
+    uint64_t fl, r, info, err, rcx, gcr3;
+
+    ti_setup(&c);
+    vmx_w(&c, 0x4004, (1u << 13) | (1u << 14));
+    vmx_wq(&c, VMX_PT + 8, (VMX_PT + 0x1000) | (1ull << 38) | 3);
+    vmx_wq(&c, VMX_SCRATCH, magic);
+    /* EPT 0: MOV CR3 with bit 38 -> #GP(0) */
+    pc_set(&c, UC_X86_REG_RAX, VMX_PT | (1ull << 38));
+    TEST_CHECK(vmx_enter(&c, 1, g_cr3, 5, &fl) == -1 && fl == 0);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000b0du && vmx_r(&c, 0x4406) == 0);
+    TEST_MSG("EPT 0 MOV CR3 bit 38: exit %llu info %llx", (unsigned long long)r, (unsigned long long)info);
+    /* EPT 0: the PML4E with bit 38 -> #PF, RSVD */
+    vmx_resume_regs(&c, g_rd, 5, 0, 0, alias + VMX_SCRATCH, 0);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    err = vmx_r(&c, 0x4406);
+    TEST_CHECK(r == 0 && info == 0x80000b0eu && err == 9 && vmx_r(&c, 0x6400) == alias + VMX_SCRATCH);
+    TEST_MSG("EPT 0 PML4E bit 38: exit %llu info %llx err %llx", (unsigned long long)r,
+             (unsigned long long)info, (unsigned long long)err);
+    /* EPT 1 */
+    vmx_ept_setup(&c, 0);
+    vmx_wq(&c, VMX_EPT_PDPT + 8 * 256, VMX_EPT_PD | 7);               /* guest-physical bit 38 */
+    vmx_resume_regs(&c, g_rd, 5, 0, 0, alias + VMX_SCRATCH, 0);
+    rcx = pc_get(&c, UC_X86_REG_RCX);           /* before vmx_r: its VMREAD snippet uses RCX */
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    err = vmx_r(&c, 0x4406);
+    TEST_CHECK(r == 10 && rcx == magic);
+    TEST_MSG("EPT 1 PML4E bit 38: exit %llu info %llx err %llx RCX %llx", (unsigned long long)r,
+             (unsigned long long)info, (unsigned long long)err, (unsigned long long)rcx);
+    vmx_w(&c, 0x6820, 2);
+    vmx_resume_regs(&c, g_sw, 11, VMX_PT | (1ull << 38), 0, VMX_SCRATCH, VMX_PT);
+    rcx = pc_get(&c, UC_X86_REG_RCX);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    gcr3 = vmx_r(&c, 0x6802);
+    TEST_CHECK(r == 10 && rcx == magic && gcr3 == VMX_PT);
+    TEST_MSG("EPT 1 MOV CR3 bit 38: exit %llu info %llx RCX %llx guest CR3 %llx", (unsigned long long)r,
+             (unsigned long long)info, (unsigned long long)rcx, (unsigned long long)gcr3);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == VMX_PT);
+    vmx_w(&c, 0x6820, 2);
+    /* EPT 1: bit 40 is beyond the CPUID width -> #GP(0) */
+    vmx_resume_regs(&c, g_cr3, 5, VMX_PT | (1ull << 40), 0, 0, 0);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000b0du && vmx_r(&c, 0x681e) == VMX_GUEST_PC);
+    TEST_MSG("EPT 1 MOV CR3 bit 40: exit %llu info %llx", (unsigned long long)r, (unsigned long long)info);
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U1434 (ti_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -36708,4 +36881,8 @@ TEST_LIST = {
     {"test_x86_tm_apic_base", test_x86_tm_apic_base},
     {"test_x86_tm_mtrr", test_x86_tm_mtrr},
     {"test_x86_tm_pconfig", test_x86_tm_pconfig},
+    {"test_x86_ti_vmx_ptr", test_x86_ti_vmx_ptr},
+    {"test_x86_ti_vmx_entry", test_x86_ti_vmx_entry},
+    {"test_x86_ti_ept_entries", test_x86_ti_ept_entries},
+    {"test_x86_ti_ept_guest_width", test_x86_ti_ept_guest_width},
     {NULL, NULL}};

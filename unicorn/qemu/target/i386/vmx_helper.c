@@ -534,16 +534,13 @@ void x86_vmx_check_insn_exit(CPUX86State *env, uint32_t op, uint32_t info, uint6
 
 /*
  * MAXPHYADDR for VMX pointers: CPUID.80000008H:EAX[7:0], reduced by IA32_TME_ACTIVATE[39:36] when
- * IA32_TME_ACTIVATE[0] = 1 (Vol3C 27.1 footnote 2 p. 27-1; 33.3 VMCLEAR footnote 2 p. 33-11)
+ * IA32_TME_ACTIVATE[0] = 1 (Vol3C 27.1 footnote 2 p. 27-1; 33.3 VMCLEAR footnote 2 p. 33-11).
+ * U1434: the shared accessor x86_maxphyaddr (misc_helper.c, U1430): outside SEAM only, the engine's
+ * CPU for a uc_context image.
  */
 static int vmx_maxphyaddr(CPUX86State *env)
 {
-    int w = env_archcpu(env)->phys_bits;
-
-    if (env->tme_activate & 1) {
-        w -= (env->tme_activate >> 36) & 0xf;
-    }
-    return w;
+    return x86_maxphyaddr(env);
 }
 
 /* a physical address within MAXPHYADDR (bit 48 of IA32_VMX_BASIC is 0) */
@@ -1822,7 +1819,7 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
     }
     /* U1319: the TME reduction of MAXPHYADDR applies to the guest CR3 only with "enable EPT" 0 */
     if (!vmx_cr3_ok(env, vmcs_get(env, VMCS_GUEST_CR3),
-                    (proc2 & PROC2_EPT) ? env_archcpu(env)->phys_bits : vmx_maxphyaddr(env))) {
+                    x86_paging_maxphyaddr(env, (proc2 & PROC2_EPT) != 0))) {      /* U1434 */
         return 0;
     }
     /* U1309: "load FRED" VM-entry control: the guest FRED fields (29.3.1.1) */
@@ -2081,8 +2078,7 @@ static int vmx_check_guest(CPUX86State *env, uint32_t proc2)
                 ? vmcs_get(env, VMCS_GUEST_PDPTE0 + 2 * i)
                 : vmx_ldq(env, (vmcs_get(env, VMCS_GUEST_CR3) & ~0x1full) + 8 * i);
 
-            if (!vmx_pdpte_ok(env, e, (proc2 & PROC2_EPT) ? env_archcpu(env)->phys_bits
-                                                          : vmx_maxphyaddr(env))) {
+            if (!vmx_pdpte_ok(env, e, x86_paging_maxphyaddr(env, (proc2 & PROC2_EPT) != 0))) {
                 return 2 + 1;
             }
         }
@@ -4086,7 +4082,7 @@ void x86_vmx_pdpte_load(CPUX86State *env, int reg, uint64_t val, uintptr_t ra)
                       (CR4_PAE_MASK | CR4_PGE_MASK | CR4_PSE_MASK | CR4_SMEP_MASK))) {
         return;
     }
-    m = env_archcpu(env)->phys_bits;
+    m = x86_paging_maxphyaddr(env, true);   /* U1434: guest-physical PDPTEs (Vol3A 5.1.4) */
     rsvd = 0x1e6ull | (m < 64 ? ~0ull << m : 0);
     env->retaddr = ra;
     for (i = 0; i < 4; i++) {

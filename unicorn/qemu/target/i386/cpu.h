@@ -3658,6 +3658,22 @@ int x86_maxphyaddr(CPUX86State *env);
  */
 int x86_maxapicaddr(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U1432) */
+#if __Use_Original_Qemu != 1 /* ours (U1434) */
+/*
+ * NoVmp (ledger U1434, misc_helper.c): MAXPHYADDR of CR3 and of the paging-structure addresses.
+ * ept = VMX non-root operation with "enable EPT" (or a VM-entry check of such a guest): the
+ * addresses are guest-physical, "limited only by the value enumerated by CPUID.80000008H:EAX[7:0]
+ * without any regard to TME or SEAM" (SDM 092 Vol3A 5.1.4 p. 5-6, Vol3C 31.3.1); MOV to CR3: "the
+ * value M is not reduced outside SEAM" (Vol3C 28.3 p. 28-10). Otherwise x86_maxphyaddr.
+ */
+int x86_paging_maxphyaddr(CPUX86State *env, bool ept);
+
+/* VMX non-root operation with "enable EPT" (secondary VM-execution control bit 1, Vol3C 27.6.2) */
+static inline bool x86_vmx_ept_active(const CPUX86State *env)
+{
+    return env->vmx.nonroot && (env->vmx.proc2 & (1u << 1));
+}
+#endif /* __Use_Original_Qemu (U1434) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;

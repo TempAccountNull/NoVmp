@@ -541,13 +541,13 @@ static hwaddr get_hphys(CPUState *cs, hwaddr gphys, MMUAccessType access_type,
  * MAXPHYADDR (x86_maxphyaddr: CPUID width less IA32_TME_ACTIVATE[39:36] once TME is locked outside
  * SEAM) - "else the CPUID value": in VMX non-root operation with EPT the CR3 / paging-entry
  * addresses are guest-physical, "limited only by the value enumerated by CPUID.80000008H:EAX[7:0]
- * without any regard to TME or SEAM". This tree has no VMX, so EPT is never in use and the reduced
- * width always applies; a VMX merge returns phys_bits here for non-root operation with EPT. The
- * SVM nested-paging walk (get_hphys) keeps phys_bits (AMD; out of scope).
+ * without any regard to TME or SEAM". U1434: x86_paging_maxphyaddr - the CPUID width in VMX
+ * non-root operation with EPT (x86_vmx_ept_active), the reduced width otherwise. The SVM
+ * nested-paging walk (get_hphys) keeps phys_bits (AMD; out of scope).
  */
 static int paging_maxphyaddr(CPUX86State *env)
 {
-    return x86_maxphyaddr(env);
+    return x86_paging_maxphyaddr(env, x86_vmx_ept_active(env));     /* U1434 */
 }
 
 #endif /* __Use_Original_Qemu (U1430) */
