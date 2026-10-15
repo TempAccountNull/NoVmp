@@ -1061,6 +1061,8 @@ static bool x86_vmx_canonical(CPUX86State *env, uint64_t a)
 #define VMCS_EPTP               0x201a
 #define VMCS_EOI_EXIT0          0x201c
 #define VMCS_EPTP_LIST          0x2024
+#define VMCS_EPTP_INDEX         0x0004      /* U1324 */
+#define VMCS_VE_INFO            0x202a      /* U1324: virtualization-exception information address */
 #define VMCS_VMREAD_BITMAP      0x2026
 #define VMCS_VMWRITE_BITMAP     0x2028
 #define VMCS_XSS_EXIT_BITMAP    0x202c
@@ -1404,7 +1406,7 @@ static void vmx_load_controls(CPUX86State *env)
     for (i = 0; i < 4; i++) {
         v->eoi_exit[i] = vmcs_get(env, VMCS_EOI_EXIT0 + 2 * i);
     }
-    v->ve_info = (v->proc2 & PROC2_EPT_VE) ? vmcs_get(env, 0x202a) : 0;      /* U1324 */
+    v->ve_info = (v->proc2 & PROC2_EPT_VE) ? vmcs_get(env, VMCS_VE_INFO) : 0; /* U1324 */
 }
 
 /* ---- 29.2.1 checks on the VMX controls: false = VMfailValid(7) ---- */
@@ -1470,7 +1472,7 @@ static bool vmx_check_controls(CPUX86State *env)
         return false;
     }
     /* U1324: 29.2.1.1 - the virtualization-exception information address (202AH) */
-    if ((proc2 & PROC2_EPT_VE) && !vmx_page_ok(env, vmcs_get(env, 0x202a))) {
+    if ((proc2 & PROC2_EPT_VE) && !vmx_page_ok(env, vmcs_get(env, VMCS_VE_INFO))) {
         return false;
     }
     if ((proc2 & PROC2_SHADOW_VMCS) &&
@@ -3002,7 +3004,7 @@ void helper_vmfunc(CPUX86State *env)
     env->vmx.eptp = eptp;
     vmcs_put(env, VMCS_EPTP, eptp);
     /* U1324: the CPU supports "EPT-violation #VE": ECX[15:0] -> EPTP index (28.5.7.3) */
-    vmcs_put(env, 0x0004, ecx & 0xffff);
+    vmcs_put(env, VMCS_EPTP_INDEX, ecx & 0xffff);
     tlb_flush(env_cpu(env));            /* new EPT paging structures; no flags modified */
 }
 
@@ -3994,7 +3996,7 @@ violation:
         vmx_stq(env, v->ve_info + 8, x.qual);
         vmx_stq(env, v->ve_info + 16, x.gla_valid ? x.gla : 0);
         vmx_stq(env, v->ve_info + 24, x.gpa);
-        x86_stw_phys(cs, v->ve_info + 32, (uint16_t)vmcs_get(env, 0x0004));
+        x86_stw_phys(cs, v->ve_info + 32, (uint16_t)vmcs_get(env, VMCS_EPTP_INDEX));
         raise_exception(env, 20);
     }
     v->iret_nmi = 0;

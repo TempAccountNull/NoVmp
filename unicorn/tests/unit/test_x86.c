@@ -35215,6 +35215,36 @@ static void test_x86_vmx_ept_ve2(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1327: the positive control of U1322 - an injected SYSCALL (type 7, vector 1) with VM-entry
+ * instruction length 15 enters (FRED guest, "load FRED": the ring-0 entry CONFIG + 256 runs CPUID ->
+ * exit 10; the FRED frame holds RIP + 15).
+ */
+static void test_x86_vmx_inj_len15(void)
+{
+    PcCtx c;
+    uint64_t fl, sp;
+    int i;
+
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT));
+    OK(uc_mem_write(c.uc, VMX_GUEST_PC + 0x1100, "\x0f\xa2", 2));
+    vmx_w(&c, 0x6804, pc_get(&c, UC_X86_REG_CR4) | (1ull << 32));
+    vmx_w(&c, 0x4012, 0x11fb | 0x200 | (1u << 23));
+    vmx_w(&c, 0x281a, VMX_GUEST_PC + 0x1000);
+    for (i = 0; i < 7; i++) {
+        vmx_w(&c, 0x281c + 2 * i, 0);
+    }
+    vmx_w(&c, 0x401a, 15);
+    vmx_w(&c, 0x4016, 0x80000701u);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90", 1, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 10 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 0x1100);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK(vmx_rq(&c, sp + 8) == VMX_GUEST_PC + 15);
+    TEST_MSG("sp %llx rip pushed %llx", (unsigned long long)sp, (unsigned long long)vmx_rq(&c, sp + 8));
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35674,4 +35704,5 @@ TEST_LIST = {
     {"test_x86_vmx_ept_ve", test_x86_vmx_ept_ve},
     {"test_x86_vmx_mtf_tpr", test_x86_vmx_mtf_tpr},
     {"test_x86_vmx_ept_ve2", test_x86_vmx_ept_ve2},
+    {"test_x86_vmx_inj_len15", test_x86_vmx_inj_len15},
     {NULL, NULL}};
