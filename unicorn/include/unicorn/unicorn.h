@@ -987,6 +987,19 @@ typedef enum uc_control_type {
     // 'pa' (not software-visible on hardware; for tests and tools), with UC_X86_FEATURE_SGX and
     // an EPC only (UC_ERR_ARG otherwise). Read: @args = (uint64_t pa, uc_x86_sgx_epcm *)
     UC_CTL_X86_SGX_EPCM,
+    // x86 only (NoVmp U1470): the microcode identity of the CPU profile - the update revision
+    // the processor reports (Intel: IA32_BIOS_SIGN_ID[63:32] after the reporting sequence of SDM
+    // Vol3A Example 12-9: WRMSR 8BH := 0, CPUID, RDMSR 8BH; every executed CPUID deposits it,
+    // U1471; 0 = no update loaded: CPUID leaves the MSR unmodified) and the platform ID
+    // (IA32_PLATFORM_ID[52:50], 0..7; RDMSR 17H). AMD models: the revision is the patch level
+    // read from 8BH. Default (not written): QEMU's value for the model - revision 1, platform
+    // ID 0 for every built-in Intel model (synthetic models, no published update). A CPUID
+    // profile file gives its values with a "#@ microcode REV platform-id N" line (emu-alltest,
+    // U1473). WRMSR IA32_BIOS_UPDT_TRIG (79H) never changes them (U1472, docs/quirks.md).
+    // Only before the engine is initialised, like UC_CTL_CPU_MODEL (UC_ERR_ARG after, or for a
+    // platform ID outside 0..7). Reading initialises the engine and returns the effective values.
+    // Write: @args = (uint32_t rev, int platform_id); Read: @args = (uint32_t *rev, int *platform_id)
+    UC_CTL_X86_MICROCODE,
 } uc_control_type;
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)
@@ -1212,6 +1225,12 @@ See sample_ctl.c for a detailed example.
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SGX_PLATFORM, 1), (cfg))
 #define uc_ctl_get_x86_sgx_epcm(uc, pa, entry)                                 \
     uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SGX_EPCM, 2), (uint64_t)(pa), (entry))
+#define uc_ctl_set_x86_microcode(uc, rev, platform_id)                         \
+    uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_MICROCODE, 2), (uint32_t)(rev),         \
+           (int)(platform_id))
+#define uc_ctl_get_x86_microcode(uc, rev, platform_id)                         \
+    uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_MICROCODE, 2), (uint32_t *)(rev),        \
+           (int *)(platform_id))
 
 // Opaque storage for CPU context, used with uc_context_*()
 struct uc_context;

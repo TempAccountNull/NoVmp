@@ -561,6 +561,8 @@ namespace at
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
 			if ( strict >= 0 ) uc_ctl_set_x86_cpuid_strict( uc_, strict );
+			// U1473: the profile's microcode revision / platform ID (only before the engine is initialised)
+			if ( ucode_set && uc_ctl_set_x86_microcode( uc_, ucode_rev, ucode_pid ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_microcode failed"; return false; }
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
 			// U1200 (ts_hooks): the thunk's prologue (FXRSTOR64, VINSERTI128) and epilogue (FXSAVE64,
 			// FNSTENV, ...) would raise #NM with CR0.TS = 1 (SDM 092 Vol3A 2.5: TS = 1 makes x87 / SSE /
@@ -821,6 +823,9 @@ namespace at
 	public:
 		std::vector<uc_x86_cpuid> cpuid;
 		int strict = -1;         // UC_CTL_X86_CPUID_STRICT: -1 = not written (U435), 0 / 1 = explicit
+		bool ucode_set = false;  // U1473: UC_CTL_X86_MICROCODE from the profile's "#@ microcode" line
+		uint32_t ucode_rev = 0;
+		int ucode_pid = 0;
 		uint64_t xcr0 = 0;
 		uint64_t cr0 = 0;
 		int avx512 = 0;          // UC_CTL_X86_AVX512 mask (0 = off, the default)

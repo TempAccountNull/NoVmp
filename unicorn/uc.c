@@ -3448,6 +3448,40 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         }
         break;
 
+#if __Use_Original_Qemu != 1 /* ours (U1470) */
+    case UC_CTL_X86_MICROCODE:
+        /* NoVmp U1470: the CPU profile's microcode revision and platform ID; written before init */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            uint32_t *rev = va_arg(args, uint32_t *);
+            int *platform_id = va_arg(args, int *);
+
+            if (!rev || !platform_id || !uc->x86_ucode_get) {
+                err = UC_ERR_ARG;
+                break;
+            }
+            UC_INIT(uc);
+            uc->x86_ucode_get(uc, rev, platform_id);
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            uint32_t rev = va_arg(args, uint32_t);
+            int platform_id = va_arg(args, int);
+
+            if (uc->init_done || platform_id < 0 || platform_id > 7) {
+                err = UC_ERR_ARG;
+            } else {
+                uc->x86_ucode_rev = rev;
+                uc->x86_platform_id = platform_id;
+                uc->x86_ucode_set = 1;
+            }
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1470) */
+
 #if __Use_Original_Qemu != 1 /* ours (U770) */
     case UC_CTL_X86_EXCEPTION:
         /* NoVmp U770: the last exception / software interrupt (vector, error code, #PF address) */

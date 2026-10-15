@@ -1,0 +1,31 @@
+# U1470-U1474 (agent ucode): microcode identity of the gate CPUID profile and the microcode-update MSRs, expected
+# values from the profile's "#@ microcode 00000129 platform-id 1" line (the measured host revision, user decision 2026-10-14; not
+# the latest published revision, 137H - cpuid_i5-13600k.txt header: provenance of both) and
+# the SDM: Vol3A 12.11.7.1 Example 12-9 (WRMSR 8BH := 0, CPUID EAX = 1, RDMSR 8BH: EDX = the revision), Vol4 8BH
+# (31:0 reserved), Vol4 17H (platform ID in 52:50), Vol4 79H (W) and the emulator policy for 79H (docs/quirks.md
+# "Microcode update trigger": accepted at CPL0, no effect). Unicorn only, CPL0 unless cpl=3:
+#   emu-alltest --cases Emulator\data\cases_ucode.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --expect-only
+# --- the reporting sequence: revision 129H in EDX, EAX (bits 31:0, reserved) 0
+mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129
+# the CPUID signature of the profile (leaf 01H EAX) with that revision
+mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov r8d, eax; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129 r8=0xB0671
+# IA32_BIOS_SIGN_ID is R/W: a preloaded value stays until a CPUID deposits the signature (any leaf: Vol2A CPUID Operation)
+mov ecx, 0x8B; xor eax, eax; mov edx, 0x55; wrmsr; rdmsr =>! rax=0 rdx=0x55
+mov ecx, 0x8B; xor eax, eax; mov edx, 0x55; wrmsr; mov eax, 7; xor ecx, ecx; cpuid; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129
+# bits 31:0 reserved: #GP(0)
+wrmsr | rcx=0x8B rax=0x1 rdx=0x0 => #GP(0)
+# IA32_PLATFORM_ID: platform ID 1 (bits 52:50), all other bits 0
+rdmsr | rcx=0x17 =>! rax=0 rdx=0x40000
+# --- IA32_BIOS_UPDT_TRIG (79H): a privileged write is accepted (no #GP, no memory access: the address is not mapped),
+# the revision reported afterwards is unchanged
+mov ecx, 0x79; mov eax, 0x1000; mov edx, 0x7000; wrmsr; mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129
+mov ecx, 0x79; mov eax, 0x30; xor edx, edx; wrmsr; mov ecx, 0x17; rdmsr =>! rax=0 rdx=0x40000
+# a non-canonical or unaligned address: no #GP is defined for this MSR's value (Vol2D WRMSR, Vol4 79H)
+wrmsr | rcx=0x79 rax=0x0 rdx=0x80000000 =>! rcx=0x79
+wrmsr | rcx=0x79 rax=0x7 rdx=0x0 =>! rcx=0x79
+# write-only: RDMSR #GP(0) (our choice, as IA32_PRED_CMD / IA32_FLUSH_CMD)
+rdmsr | rcx=0x79 rax=0x1111 rdx=0x2222 => #GP(0)
+# CPL3: WRMSR / RDMSR #GP(0) (Vol2D WRMSR, Vol2B RDMSR)
+wrmsr | rcx=0x79 rax=0x1000 rdx=0x0 cpl=3 => #GP(0)
+rdmsr | rcx=0x8B cpl=3 => #GP(0)
+wrmsr | rcx=0x8B rax=0x0 rdx=0x0 cpl=3 => #GP(0)

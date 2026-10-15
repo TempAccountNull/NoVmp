@@ -37603,6 +37603,357 @@ static void test_x86_um_unrelated_kept(void)
 }
 /* ---- end U1450-U1459 (um_) ---- */
 
+/*
+ * ---- NoVmp U1470-U1479: microcode update trigger, IA32_BIOS_SIGN_ID, platform ID (uc_mc_) ----
+ * Expected values from the SDM: Vol4 Table 2-2 17H (platform ID 52:50), 79H IA32_BIOS_UPDT_TRIG (W),
+ * 8BH IA32_BIOS_SIGN_ID (R/W, 31:0 reserved); Vol3A 12.11.7 / Example 12-9 (the reporting sequence:
+ * WRMSR 8BH := 0, CPUID EAX = 1, RDMSR 8BH, EDX = the revision; "If no update is present in the
+ * processor, the value in the MSR remains unmodified"); Vol2A CPUID Operation (every CPUID deposits
+ * the revision); and the emulator policy for 79H (docs/quirks.md "Microcode update trigger": a
+ * privileged write is accepted and changes nothing). The revisions are configured values
+ * (UC_CTL_X86_MICROCODE), not measurements.
+ */
+typedef struct UcMcCtx {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+} UcMcCtx;
+
+/* reporting sequence (Vol3A Example 12-9): mov ecx,8Bh; xor eax,eax; xor edx,edx; wrmsr;
+   mov eax,1; cpuid; mov ecx,8Bh; rdmsr */
+#define UC_MC_REPORT "\xb9\x8b\x00\x00\x00\x31\xc0\x31\xd2\x0f\x30\xb8\x01\x00\x00\x00\x0f\xa2" \
+                     "\xb9\x8b\x00\x00\x00\x0f\x32"
+
+/* a 64-bit engine of 'model'; set = 1: UC_CTL_X86_MICROCODE (rev, pid) before init; prof: CPUID profile */
+static void uc_mc_open(UcMcCtx *c, int model, int set, uint32_t rev, int pid,
+                       const uc_x86_cpuid *prof, size_t nprof)
+{
+    memset(c, 0, sizeof(*c));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, model));
+    if (set) {
+        OK(uc_ctl_set_x86_microcode(c->uc, rev, pid));
+    }
+    if (prof) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, nprof));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, NK_DATA, NK_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static uint64_t uc_mc_get(UcMcCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void uc_mc_set(UcMcCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* run 'code' at code_start (CPL0 unless it starts with IRETQ after nk_setup_cpl3): vector or -1 */
+static int uc_mc_run(UcMcCtx *c, const char *code, size_t len)
+{
+    c->cap.count = 0;
+    OK(uc_mem_write(c->uc, code_start, code, len));
+    TEST_CHECK(uc_emu_start(c->uc, code_start, code_start + len, 0, 0) == UC_ERR_OK);
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+/* RDMSR (write = 0) / WRMSR (write = 1) of 'msr' at CPL0: vector or -1; *v in / out */
+static int uc_mc_msr(UcMcCtx *c, uint32_t msr, int write, uint64_t *v)
+{
+    int vec;
+
+    uc_mc_set(c, UC_X86_REG_RCX, msr);
+    uc_mc_set(c, UC_X86_REG_RAX, write ? (uint32_t)*v : 0x1111);
+    uc_mc_set(c, UC_X86_REG_RDX, write ? (uint32_t)(*v >> 32) : 0x2222);
+    vec = uc_mc_run(c, write ? "\x0f\x30" : "\x0f\x32", 2);
+    if (!write && vec < 0) {
+        *v = (uc_mc_get(c, UC_X86_REG_RAX) & 0xffffffffULL) | (uc_mc_get(c, UC_X86_REG_RDX) << 32);
+    }
+    return vec;
+}
+
+/* the reporting sequence: IA32_BIOS_SIGN_ID after WRMSR 0 / CPUID.01H (EDX:EAX) */
+static uint64_t uc_mc_report(UcMcCtx *c)
+{
+    TEST_CHECK(uc_mc_run(c, UC_MC_REPORT, sizeof(UC_MC_REPORT) - 1) == -1);
+    return (uc_mc_get(c, UC_X86_REG_RAX) & 0xffffffffULL) | (uc_mc_get(c, UC_X86_REG_RDX) << 32);
+}
+
+static uint64_t uc_mc_rd(UcMcCtx *c, uint32_t msr)
+{
+    uint64_t v = 0;
+
+    TEST_CHECK(uc_mc_msr(c, msr, 0, &v) == -1);
+    TEST_MSG("rdmsr %x faulted", msr);
+    return v;
+}
+
+static int uc_mc_cpuid_skip_cb(uc_engine *uc, void *user)
+{
+    (void)uc;
+    (*(int *)user)++;
+    return 1;           /* the hook handles CPUID: the instruction does not execute */
+}
+
+/*
+ * U1472: WRMSR IA32_BIOS_UPDT_TRIG at CPL0 is accepted (no #GP because loading is not modelled),
+ * whatever EDX:EAX holds (16-byte aligned / unaligned / unmapped / non-canonical address: the SDM
+ * defines no #GP for the value and the model reads no update data); the revision the reporting
+ * sequence returns and IA32_PLATFORM_ID do not change; RDMSR 79H is #GP(0) (write-only, our
+ * choice); the API write is accepted, the API read is UC_ERR_EXCEPTION. Two configurations: the
+ * default MAX model (QEMU's revision 1) and the gate profile's value (129H, the measured host
+ * revision, platform ID 1).
+ */
+static void test_x86_uc_mc_trigger(void)
+{
+    const uint64_t addr[] = {code_start + 0x1000, 0x00007000deadbee0ULL, 0x7,
+                                    0x8000000000000000ULL, 0};
+    static const struct {
+        int set;
+        uint32_t rev;
+        int pid;
+    } cfg[] = {{0, 0, 0}, {1, 0x129, 1}};
+    size_t i, k;
+
+    for (k = 0; k < sizeof(cfg) / sizeof(cfg[0]); k++) {
+        UcMcCtx c;
+        uint64_t r0, r1, p0, v;
+        uc_x86_msr m;
+
+        uc_mc_open(&c, UC_CPU_X86_MAX, cfg[k].set, cfg[k].rev, cfg[k].pid, NULL, 0);
+        r0 = uc_mc_report(&c);
+        p0 = uc_mc_rd(&c, 0x17);
+        TEST_CHECK(r0 == (cfg[k].set ? (uint64_t)cfg[k].rev << 32 : 0x100000000ULL));
+        TEST_MSG("config %d: reported %llx", (int)k, (unsigned long long)r0);
+        for (i = 0; i < sizeof(addr) / sizeof(addr[0]); i++) {
+            v = addr[i];
+            TEST_CHECK(uc_mc_msr(&c, 0x79, 1, &v) == -1);
+            TEST_CHECK(uc_mc_get(&c, UC_X86_REG_RIP) == code_start + 2);
+            TEST_CHECK(uc_mc_get(&c, UC_X86_REG_RAX) == (uint32_t)addr[i] &&
+                       uc_mc_get(&c, UC_X86_REG_RDX) == (uint32_t)(addr[i] >> 32));
+            TEST_MSG("config %d: wrmsr 79H, %llx", (int)k, (unsigned long long)addr[i]);
+            r1 = uc_mc_report(&c);
+            TEST_CHECK(r1 == r0);
+            TEST_CHECK(uc_mc_rd(&c, 0x17) == p0);
+            TEST_MSG("config %d: after wrmsr 79H %llx: reported %llx (was %llx)", (int)k,
+                     (unsigned long long)addr[i], (unsigned long long)r1, (unsigned long long)r0);
+        }
+        /* the effective microcode identity is unchanged too */
+        {
+            uint32_t rev = 0;
+            int pid = -1;
+
+            OK(uc_ctl_get_x86_microcode(c.uc, &rev, &pid));
+            TEST_CHECK(rev == (cfg[k].set ? cfg[k].rev : 1) && pid == cfg[k].pid);
+        }
+        /* RDMSR 79H: #GP(0), RAX / RDX unchanged */
+        v = 0;
+        TEST_CHECK(uc_mc_msr(&c, 0x79, 0, &v) == 13);
+        TEST_CHECK(uc_mc_get(&c, UC_X86_REG_RAX) == 0x1111 && uc_mc_get(&c, UC_X86_REG_RDX) == 0x2222);
+        /* the API: write accepted (no effect), read refused */
+        m.rid = 0x79;
+        m.value = code_start + 0x1000;
+        TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK);
+        TEST_CHECK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(uc_mc_report(&c) == r0);
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * U1472 / U1471: privilege and unsupported-MSR behaviour unchanged. CPL3: WRMSR 79H, RDMSR 8BH,
+ * WRMSR 8BH and RDMSR 17H are #GP(0) (Vol2B RDMSR / Vol2D WRMSR: CPL != 0) and change nothing.
+ * A model without 79H (AMD EPYC: Table 2-2 gives 79H for Intel 06_01H) keeps #GP(0) for it; there
+ * 8BH stays the AMD patch level (01000065H, QEMU's value) and CPUID deposits nothing.
+ */
+static void test_x86_uc_mc_privilege(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } t[] = {
+        {"\x48\xcf\xb9\x79\x00\x00\x00\xb8\x00\x10\x00\x00\x31\xd2\x0f\x30", 16, "wrmsr 79H"},
+        {"\x48\xcf\xb9\x8b\x00\x00\x00\x0f\x32", 9, "rdmsr 8BH"},
+        {"\x48\xcf\xb9\x8b\x00\x00\x00\x31\xc0\x31\xd2\x0f\x30", 13, "wrmsr 8BH"},
+        {"\x48\xcf\xb9\x17\x00\x00\x00\x0f\x32", 9, "rdmsr 17H"},
+    };
+    UcMcCtx c;
+    uc_x86_msr m;
+    uint64_t v;
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc_mc_open(&c, UC_CPU_X86_MAX, 1, 0x129, 1, NULL, 0);
+        nk_setup_cpl3(c.uc);
+        TEST_CHECK(uc_mc_run(&c, t[i].code, t[i].len) == 13);
+        TEST_CHECK((uc_mc_get(&c, UC_X86_REG_CS) & 3) == 3);
+        TEST_MSG("CPL3 %s: vector %u", t[i].what, c.cap.intno);
+        /* nothing changed (API read, no CPUID ran): IA32_BIOS_SIGN_ID keeps its reset value,
+           not the 0 the CPL3 WRMSR 8BH tried to write */
+        m.rid = 0x8b;
+        m.value = 0;
+        OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+        TEST_CHECK(m.value == 0x12900000000ULL);
+        OK(uc_close(c.uc));
+    }
+
+    /* AMD model: no 79H; 8BH = the patch level, CPUID deposits nothing */
+    uc_mc_open(&c, UC_CPU_X86_EPYC, 0, 0, 0, NULL, 0);
+    v = 0x1000;
+    TEST_CHECK(uc_mc_msr(&c, 0x79, 1, &v) == 13);
+    v = 0;
+    TEST_CHECK(uc_mc_msr(&c, 0x79, 0, &v) == 13);
+    TEST_CHECK(uc_mc_report(&c) == 0x01000065ULL);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1470 / U1471: IA32_BIOS_SIGN_ID reports the configured revision after the documented sequence,
+ * not a hard-coded 1 or 129H: the default MAX model (QEMU's 1, platform ID 0), 129H / 1 (the gate
+ * profile's value, measured on the host), 137H / 1 (the newer published revision), ABCD1234H / 7;
+ * revision 0 = no update: CPUID leaves the MSR as
+ * software preloaded it. The register is R/W: a written value reads back until a CPUID (any leaf)
+ * deposits the signature; a CPUID a hook skipped deposits nothing; bits 31:0 reserved (#GP(0),
+ * unchanged); the API read agrees; a uc_context carries the register. UC_CTL_X86_MICROCODE: read
+ * back, write after init / platform ID outside 0..7 = UC_ERR_ARG.
+ */
+static void test_x86_uc_mc_sign_id(void)
+{
+    static const struct {
+        int set;
+        uint32_t rev;
+        int pid;
+    } cfg[] = {{0, 1, 0}, {1, 0x129, 1}, {1, 0x137, 1}, {1, 0xabcd1234, 7}};
+    UcMcCtx c;
+    uc_context *ctx;
+    uc_hook hh;
+    uc_x86_msr m;
+    uint64_t v;
+    uint32_t rev;
+    int pid, hits = 0;
+    size_t k;
+
+    for (k = 0; k < sizeof(cfg) / sizeof(cfg[0]); k++) {
+        uint64_t sig = (uint64_t)cfg[k].rev << 32;
+
+        uc_mc_open(&c, UC_CPU_X86_MAX, cfg[k].set, cfg[k].rev, cfg[k].pid, NULL, 0);
+        OK(uc_ctl_get_x86_microcode(c.uc, &rev, &pid));
+        TEST_CHECK(rev == cfg[k].rev && pid == cfg[k].pid);
+        TEST_CHECK(uc_mc_rd(&c, 0x8b) == sig);                   /* reset: after firmware's sequence */
+        TEST_CHECK(uc_mc_report(&c) == sig);
+        TEST_CHECK(uc_mc_rd(&c, 0x17) == (uint64_t)cfg[k].pid << 50);
+        TEST_MSG("config %d: rev %x pid %d", (int)k, cfg[k].rev, cfg[k].pid);
+        if (cfg[k].set) {
+            TEST_CHECK(uc_mc_report(&c) != 0x100000000ULL);
+        }
+        if (cfg[k].rev != 0x129) {
+            TEST_CHECK(uc_mc_report(&c) != 0x12900000000ULL);
+        }
+        /* R/W: a preloaded value reads back; a CPUID of any leaf (7) deposits the signature */
+        v = 0x7700000000ULL;
+        TEST_CHECK(uc_mc_msr(&c, 0x8b, 1, &v) == -1);
+        TEST_CHECK(uc_mc_rd(&c, 0x8b) == 0x7700000000ULL);
+        uc_mc_set(&c, UC_X86_REG_RAX, 7);
+        uc_mc_set(&c, UC_X86_REG_RCX, 0);
+        TEST_CHECK(uc_mc_run(&c, "\x0f\xa2", 2) == -1);
+        TEST_CHECK(uc_mc_rd(&c, 0x8b) == sig);
+        /* bits 31:0 reserved: #GP(0), the register unchanged */
+        v = 0x7700000000ULL;
+        TEST_CHECK(uc_mc_msr(&c, 0x8b, 1, &v) == -1);
+        v = 1;
+        TEST_CHECK(uc_mc_msr(&c, 0x8b, 1, &v) == 13);
+        TEST_CHECK(uc_mc_rd(&c, 0x8b) == 0x7700000000ULL);
+        /* the API read agrees with RDMSR */
+        m.rid = 0x8b;
+        m.value = 0;
+        OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &m));
+        TEST_CHECK(m.value == 0x7700000000ULL);
+        /* a uc_context carries the register */
+        TEST_CHECK(uc_mc_report(&c) == sig);
+        OK(uc_context_alloc(c.uc, &ctx));
+        OK(uc_context_save(c.uc, ctx));
+        v = 0x5500000000ULL;
+        TEST_CHECK(uc_mc_msr(&c, 0x8b, 1, &v) == -1);
+        OK(uc_context_restore(c.uc, ctx));
+        TEST_CHECK(uc_mc_rd(&c, 0x8b) == sig);
+        OK(uc_context_free(ctx));
+        /* UC_CTL_X86_MICROCODE is fixed once the engine exists */
+        TEST_CHECK(uc_ctl_set_x86_microcode(c.uc, 0x200, 2) == UC_ERR_ARG);
+        OK(uc_ctl_get_x86_microcode(c.uc, &rev, &pid));
+        TEST_CHECK(rev == cfg[k].rev && pid == cfg[k].pid);
+        OK(uc_close(c.uc));
+    }
+
+    /* revision 0 = no update loaded: CPUID leaves the MSR unmodified (0 after the sequence) */
+    uc_mc_open(&c, UC_CPU_X86_MAX, 1, 0, 0, NULL, 0);
+    TEST_CHECK(uc_mc_report(&c) == 0);
+    v = 0x500000000ULL;
+    TEST_CHECK(uc_mc_msr(&c, 0x8b, 1, &v) == -1);
+    uc_mc_set(&c, UC_X86_REG_RAX, 1);
+    TEST_CHECK(uc_mc_run(&c, "\x0f\xa2", 2) == -1);
+    TEST_CHECK(uc_mc_rd(&c, 0x8b) == 0x500000000ULL);
+    OK(uc_close(c.uc));
+
+    /* a CPUID that a UC_X86_INS_CPUID hook skipped did not execute: no deposit */
+    uc_mc_open(&c, UC_CPU_X86_MAX, 1, 0x129, 1, NULL, 0);
+    OK(uc_hook_add(c.uc, &hh, UC_HOOK_INSN, uc_mc_cpuid_skip_cb, &hits, 1, 0, UC_X86_INS_CPUID));
+    TEST_CHECK(uc_mc_report(&c) == 0 && hits == 1);
+    OK(uc_hook_del(c.uc, hh));
+    TEST_CHECK(uc_mc_report(&c) == 0x12900000000ULL);
+    OK(uc_close(c.uc));
+
+    /* argument checks before init */
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    TEST_CHECK(uc_ctl_set_x86_microcode(c.uc, 0x137, 8) == UC_ERR_ARG);
+    TEST_CHECK(uc_ctl_set_x86_microcode(c.uc, 0x137, -1) == UC_ERR_ARG);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1470: two engines with different profiles report their own configured identity, also when the
+ * reporting sequence alternates between them and after WRMSR 79H in one of them: engine A has the
+ * gate profile's leaves 0 / 1 (signature 000B0671H, i5-13600K capture) and 129H / platform ID 1,
+ * engine B is the default MAX model (revision 1, platform ID 0, its own signature).
+ */
+static void test_x86_uc_mc_profiles(void)
+{
+    static const uc_x86_cpuid prof[] = {
+        {0, 0, 0x20, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {1, 0, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+    };
+    UcMcCtx a, b;
+    uint64_t v;
+    int i;
+
+    uc_mc_open(&a, UC_CPU_X86_MAX, 1, 0x129, 1, prof, 2);
+    uc_mc_open(&b, UC_CPU_X86_MAX, 0, 0, 0, NULL, 0);
+    for (i = 0; i < 3; i++) {
+        TEST_CHECK(uc_mc_report(&a) == 0x12900000000ULL);
+        TEST_CHECK(uc_mc_report(&b) == 0x100000000ULL);
+        TEST_CHECK(uc_mc_rd(&a, 0x17) == 1ULL << 50);
+        TEST_CHECK(uc_mc_rd(&b, 0x17) == 0);
+        v = code_start + 0x1000;
+        TEST_CHECK(uc_mc_msr(&a, 0x79, 1, &v) == -1);
+        TEST_MSG("round %d", i);
+    }
+    /* engine A's CPUID.01H:EAX is the profile's signature */
+    uc_mc_set(&a, UC_X86_REG_RAX, 1);
+    uc_mc_set(&a, UC_X86_REG_RCX, 0);
+    TEST_CHECK(uc_mc_run(&a, "\x0f\xa2", 2) == -1);
+    TEST_CHECK((uint32_t)uc_mc_get(&a, UC_X86_REG_RAX) == 0x000B0671);
+    OK(uc_close(a.uc));
+    OK(uc_close(b.uc));
+}
+/* ---- end U1470-U1479 (uc_mc_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -38090,4 +38441,8 @@ TEST_LIST = {
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
     {"test_x86_um_remap_stale_tb", test_x86_um_remap_stale_tb},
     {"test_x86_um_unrelated_kept", test_x86_um_unrelated_kept},
+    {"test_x86_uc_mc_trigger", test_x86_uc_mc_trigger},
+    {"test_x86_uc_mc_privilege", test_x86_uc_mc_privilege},
+    {"test_x86_uc_mc_sign_id", test_x86_uc_mc_sign_id},
+    {"test_x86_uc_mc_profiles", test_x86_uc_mc_profiles},
     {NULL, NULL}};

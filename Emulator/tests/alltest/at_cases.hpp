@@ -364,12 +364,39 @@ namespace at
 		return v;
 	}
 
+	// U1473: the profile's microcode identity, a comment line "#@ microcode REV platform-id N" (REV
+	// hex, N 0..7; other readers of the file skip it as a comment) -> UC_CTL_X86_MICROCODE. false =
+	// the file has no such line (the engine keeps the model default); a malformed line is an error.
+	static bool load_cpuid_microcode( const std::string& path, uint32_t& rev, int& platform_id, std::string& err )
+	{
+		std::ifstream f( path );
+		std::string line;
+		bool found = false;
+		while ( std::getline( f, line ) )
+		{
+			if ( line.rfind( "#@ microcode ", 0 ) != 0 ) continue;
+			std::istringstream is( line.substr( 13 ) );
+			std::string kw;
+			unsigned long r = 0;
+			int p = -1;
+			is >> std::hex >> r >> kw >> std::dec >> p;
+			if ( !is || kw != "platform-id" || p < 0 || p > 7 || r > 0xffffffffUL || found )
+			{
+				err = "bad or repeated \"#@ microcode REV platform-id N\" line: " + line;
+				return false;
+			}
+			rev = uint32_t( r ); platform_id = p; found = true;
+		}
+		return found;
+	}
+
 	// xcr0 / cr0: explicit overrides (--xcr0 V / --cr0 V) for both kinds of case; 0 = automatic
 	// (U540: hardware cases host XCR0 / WINDOWS_CR0, expected-value cases Unicorn's reset value).
 	// Never PG in cr0 (flat map).
 	// strict: -1 = not written (Unicorn's default: on while a profile is installed, U435),
 	// 0 = --no-strict, 1 = --strict
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
+					   bool ucode_set = false; uint32_t ucode_rev = 0; int ucode_pid = 0;   /* U1473: the profile's "#@ microcode" line */
 					   int x86_features = 0;   /* U1181: --x86-features N (UC_CTL_X86_FEATURES) */
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
@@ -723,6 +750,7 @@ namespace at
 			{
 				unicorn_engine pe( UC_CPU_X86_MAX );
 				pe.cpuid = opt.cpuid; pe.strict = opt.strict; pe.xcr0 = x; pe.cr0 = c;
+				pe.ucode_set = opt.ucode_set; pe.ucode_rev = opt.ucode_rev; pe.ucode_pid = opt.ucode_pid;   // U1473
 				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx; pe.x86_features = opt.x86_features;
 				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
 				uint64_t ex = 0, ec = 0;
@@ -1023,6 +1051,7 @@ namespace at
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX );
 			uc.cpuid = opt.cpuid; uc.strict = opt.strict;
+			uc.ucode_set = opt.ucode_set; uc.ucode_rev = opt.ucode_rev; uc.ucode_pid = opt.ucode_pid;   // U1473
 			uc.xcr0 = expect ? exp_xcr0 : hw_xcr0;   // U540
 			uc.cr0 = expect ? exp_cr0 : hw_cr0;
 			uc.avx512 = opt.avx512;
@@ -1198,6 +1227,9 @@ namespace at
 			std::printf( "cpuid: model (no profile), strict %s\n", opt.strict < 0 ? "off (default)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );
 		else
 			std::printf( "cpuid: profile (%zu entries), strict %s\n", opt.cpuid.size(), opt.strict < 0 ? "on (default with a profile)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );
+		// U1473: the microcode identity Unicorn used (UC_CTL_X86_MICROCODE)
+		if ( opt.ucode_set )
+			std::printf( "microcode: revision %Xh, platform ID %d (profile)\n", unsigned( opt.ucode_rev ), opt.ucode_pid );
 		if ( exp_n || exp_errors || skipped )
 			std::printf( "expected-value cases: %d, differing: %d, errors: %d, skipped (no \"=>\"): %d\n", exp_n, exp_differ, exp_errors, skipped );
 		// U1040: the SDE cross-check of the expected-value cases (does not change the exit status)

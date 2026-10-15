@@ -160,8 +160,20 @@ void helper_cpuid(CPUX86State *env)
         env->regs[R_EBX] = ebx;
         env->regs[R_ECX] = ecx;
         env->regs[R_EDX] = edx;
+#if __Use_Original_Qemu != 1 /* ours (U1471) */
+        /*
+         * NoVmp (ledger U1471): SDM Vol2A CPUID Operation "IA32_BIOS_SIGN_ID MSR := Update with
+         * installed microcode revision number" (every leaf); Vol3A 12.11.7 "If no update is
+         * present in the processor, the value in the MSR remains unmodified". The revision is
+         * the CPU profile's (UC_CTL_X86_MICROCODE); bits 31:0 (reserved) read 0. A CPUID that a
+         * UC_X86_INS_CPUID hook skipped did not execute and deposits nothing.
+         */
+        if (IS_INTEL_CPU(env) && (env_archcpu(env)->ucode_rev >> 32)) {
+            env->msr_bios_sign_id = env_archcpu(env)->ucode_rev & 0xffffffff00000000ULL;
+        }
+#endif /* __Use_Original_Qemu (U1471) */
     }
-    
+
 }
 
 target_ulong helper_read_crN(CPUX86State *env, int reg)
@@ -1189,6 +1201,9 @@ void x86_cet_msr_load(CPUX86State *env, uint32_t msr, uint64_t val)
  * the access is not made and the API returns UC_ERR_EXCEPTION (msr_api_err).
  */
 #define MSR_IA32_PLATFORM_ID_NV     0x17
+#if __Use_Original_Qemu != 1 /* ours (U1472) */
+#define MSR_IA32_BIOS_UPDT_TRIG_NV  0x79
+#endif /* __Use_Original_Qemu (U1472) */
 #define MSR_IA32_PERF_CTL_NV        0x199
 #define MSR_IA32_DEBUGCTL_NV        0x1d9
 #define MSR_IA32_FLUSH_CMD_NV       0x10b
@@ -1298,6 +1313,10 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return msr_intel_p6(env);
     case MSR_IA32_UCODE_REV:                /* IA32_BIOS_SIGN_ID, 06_01H (AMD: patch level) */
         return true;
+#if __Use_Original_Qemu != 1 /* ours (U1472) */
+    case MSR_IA32_BIOS_UPDT_TRIG_NV:        /* IA32_BIOS_UPDT_TRIG (W), 06_01H */
+        return msr_intel_p6(env);
+#endif /* __Use_Original_Qemu (U1472) */
     case MSR_IA32_APICBASE:                 /* 06_01H, with the local APIC */
         return MF_1EDX(CPUID_APIC);
     case MSR_SMI_COUNT:                     /* model-specific: Nehalem / Silvermont and later */
@@ -1736,10 +1755,15 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
 static bool msr_access_ok(CPUX86State *env, uint32_t msr, bool write, uint64_t val,
                           uintptr_t ra)
 {
-    /* U906: the value WRMSR refuses; RDMSR of a write-only MSR */
+    /* U906: the value WRMSR refuses; RDMSR of a write-only MSR (U1472: + IA32_BIOS_UPDT_TRIG,
+       Vol4 79H "(W)" - our choice, as for IA32_PRED_CMD / IA32_FLUSH_CMD) */
     if (msr_present(env, msr) &&
         (write ? msr_write_ok(env, msr, val)
-               : (msr != MSR_IA32_PRED_CMD && msr != MSR_IA32_FLUSH_CMD_NV))) {
+               : (msr != MSR_IA32_PRED_CMD && msr != MSR_IA32_FLUSH_CMD_NV
+#if __Use_Original_Qemu != 1 /* ours (U1472) */
+                  && msr != MSR_IA32_BIOS_UPDT_TRIG_NV
+#endif /* __Use_Original_Qemu (U1472) */
+                  ))) {
         return true;
     }
 #if __Use_Original_Qemu != 1 /* ours (U907) */
@@ -1948,8 +1972,38 @@ void helper_wrmsr(CPUX86State *env)
     case MSR_IA32_PRED_CMD:             /* IBPB: no prediction state is kept */
     case MSR_IA32_FLUSH_CMD_NV:         /* L1D_FLUSH: no cache is modelled */
     case MSR_IA32_TSCDEADLINE:          /* no local APIC: never in TSC-deadline mode */
-    case MSR_IA32_UCODE_REV:
         break;
+    case MSR_IA32_UCODE_REV:
+#if __Use_Original_Qemu != 1 /* ours (U1471) */
+        /*
+         * NoVmp (ledger U1471): IA32_BIOS_SIGN_ID is R/W (SDM Vol4 8BH); software preloads it
+         * (normally with 0) and CPUID deposits the update signature (Vol2A CPUID Operation,
+         * Vol3A 12.11.7). Bits 31:0 are reserved (a non-zero value is #GP, U906). AMD's 8BH
+         * (patch level) stays as before: the write has no effect.
+         */
+        if (IS_INTEL_CPU(env)) {
+            env->msr_bios_sign_id = val;
+        }
+#endif /* __Use_Original_Qemu (U1471) */
+        break;
+#if __Use_Original_Qemu != 1 /* ours (U1472) */
+    case MSR_IA32_BIOS_UPDT_TRIG_NV:
+        /*
+         * NoVmp (ledger U1472), emulator policy (docs/quirks.md "Microcode update trigger"):
+         * SDM Vol4 79H "Executing a WRMSR instruction to this MSR causes a microcode update to be
+         * loaded into the processor" (Vol3A 12.11.6). The emulator has no microcode and does not
+         * model update loading: a privileged WRMSR 79H is accepted and has no effect - no update
+         * data is read (no memory access, no #PF), nothing is authenticated or loaded, the active
+         * revision (IA32_BIOS_SIGN_ID reporting, UC_CTL_X86_MICROCODE) and the CPU profile do not
+         * change; to software this looks like an update the processor did not accept (Vol3A
+         * Example 12-10: the signature after the load is compared, a failed load is no fault).
+         * EDX:EAX is the update's linear address; the SDM defines no reserved bits and no #GP for
+         * this MSR's value (Vol2D WRMSR's canonical check names other MSRs). CPL > 0 stays #GP(0)
+         * (translator), CPUs that do not have 79H (not Intel family 6+) stay #GP(0) (msr_present),
+         * a UC_X86_INS_WRMSR hook that returns 1 still handles the write itself.
+         */
+        break;
+#endif /* __Use_Original_Qemu (U1472) */
 #endif /* __Use_Original_Qemu (U905) */
     case MSR_IA32_SYSENTER_CS:
 #if __Use_Original_Qemu == 1 /* original QEMU (U906) */
@@ -2627,7 +2681,11 @@ void helper_rdmsr(CPUX86State *env)
     case MSR_IA32_CORE_CAPABILITY:
         val = env->features[FEAT_CORE_CAPABILITY];
         break;
-    case MSR_IA32_PLATFORM_ID_NV:       /* platform ID 0 (52:50) */
+    case MSR_IA32_PLATFORM_ID_NV:
+        /* U1470: Platform ID (52:50) of the CPU profile (UC_CTL_X86_MICROCODE, default 0); the
+           other bits are reserved (SDM Vol4 17H) and read 0 */
+        val = (uint64_t)(x86_cpu->platform_id & 7) << 50;
+        break;
     case MSR_IA32_PRED_CMD:
     case MSR_IA32_FLUSH_CMD_NV:
     case MSR_IA32_TSCDEADLINE:          /* not in TSC-deadline mode: reads 0 (Vol3A 13.5.4.1) */
@@ -2840,7 +2898,12 @@ void helper_rdmsr(CPUX86State *env)
         val = env->msr_lbr_depth;
         break;
     case MSR_IA32_UCODE_REV:
+#if __Use_Original_Qemu == 1 /* original QEMU (U1471) */
         val = x86_cpu->ucode_rev;
+#else /* ours (U1471) */
+        /* Intel: the IA32_BIOS_SIGN_ID register (written value / CPUID deposit); AMD: the patch level */
+        val = IS_INTEL_CPU(env) ? env->msr_bios_sign_id : x86_cpu->ucode_rev;
+#endif /* __Use_Original_Qemu (U1471) */
         break;
 #if __Use_Original_Qemu != 1 /* ours (U103) */
     case MSR_IA32_USER_MSR_CTL:

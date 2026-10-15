@@ -2316,6 +2316,11 @@ typedef struct CPUX86State {
     uint64_t msr_perf_ctl;          /* IA32_PERF_CTL (199H): stored, no P-states */
     uint64_t msr_debugctl;          /* IA32_DEBUGCTL (1D9H): stored, no LBR/BTF/BTS */
 #endif /* __Use_Original_Qemu (U905) */
+#if __Use_Original_Qemu != 1 /* ours (U1471) */
+    /* IA32_BIOS_SIGN_ID (8BH, Intel): the written value or the signature CPUID deposited;
+       reset: the profile's signature (X86CPU.ucode_rev), as after the BIOS reporting sequence */
+    uint64_t msr_bios_sign_id;
+#endif /* __Use_Original_Qemu (U1471) */
 #if __Use_Original_Qemu != 1 /* ours (U104) */
     /* NoVmp (ledger U104): user-interrupt state (SDM Vol3A 9.3.1), cleared by reset */
     uint64_t uintr_rr;              /* UIRR */
@@ -2642,6 +2647,10 @@ struct X86CPU {
     CPUX86State env;
 
     uint64_t ucode_rev;
+#if __Use_Original_Qemu != 1 /* ours (U1470) */
+    /* IA32_PLATFORM_ID[52:50] of the CPU profile (UC_CTL_X86_MICROCODE; default 0) */
+    uint32_t platform_id;
+#endif /* __Use_Original_Qemu (U1470) */
 
     bool check_cpuid;
     bool enforce_cpuid;

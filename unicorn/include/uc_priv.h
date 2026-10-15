@@ -475,6 +475,13 @@ struct uc_struct {
     // travels from x86_apic_deliver_event to UC_HOOK_INTR (cpu_handle_exception)
     int x86_event_delivery;
     int x86_ext_hook;
+    // NoVmp U1470: UC_CTL_X86_MICROCODE written before init (x86_ucode_set = 1): the CPU
+    // profile's microcode update revision and IA32_PLATFORM_ID[52:50]; x86_ucode_get reads the
+    // CPU's effective values (the model default when not written)
+    uint32_t x86_ucode_rev;
+    int x86_platform_id;
+    int x86_ucode_set;
+    void (*x86_ucode_get)(struct uc_struct *uc, uint32_t *rev, int *platform_id);
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.

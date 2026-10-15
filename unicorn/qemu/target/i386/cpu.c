@@ -5362,6 +5362,15 @@ static void x86_cpu_reset(CPUState *dev)
     memset(env, 0, offsetof(CPUX86State, end_reset_fields));
 
     env->old_exception = -1;
+#if __Use_Original_Qemu != 1 /* ours (U1471) */
+    /*
+     * NoVmp (ledger U1471): IA32_BIOS_SIGN_ID "Default Value: XXXX XXXX XXXX XXXXh" (SDM Vol3A
+     * 12.11.7.1, undefined); our choice: the state after firmware ran the reporting sequence
+     * (Example 12-9), i.e. the profile's signature in 63:32 (as an RDMSR without a preceding
+     * CPUID sees it on a booted system). Also after INIT (do_cpu_init resets the CPU).
+     */
+    env->msr_bios_sign_id = cpu->ucode_rev;
+#endif /* __Use_Original_Qemu (U1471) */
 
     /* init to reset state */
 
@@ -5772,6 +5781,19 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
             cpu->ucode_rev = 0x100000000ULL;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1470) */
+    /*
+     * NoVmp (ledger U1470): the microcode identity of the CPU profile, UC_CTL_X86_MICROCODE
+     * (revision 0 = no update loaded is a valid value). Without it the built-in models keep
+     * QEMU's default above (revision 1, platform ID 0): they are synthetic models with no
+     * stepping or platform of their own and no published update.
+     */
+    if (uc->x86_ucode_set) {
+        cpu->ucode_rev = IS_AMD_CPU(env) ? (uint64_t)uc->x86_ucode_rev
+                                         : (uint64_t)uc->x86_ucode_rev << 32;
+        cpu->platform_id = (uint32_t)uc->x86_platform_id;
+    }
+#endif /* __Use_Original_Qemu (U1470) */
 
     /* mwait extended info: needed for Core compatibility */
     /* We always wake on interrupt even if host does not have the capability */

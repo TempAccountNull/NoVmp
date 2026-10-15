@@ -521,7 +521,15 @@ int main( int argc, char** argv )
 		else if ( a == "--filter" ) filter = val();
 		else if ( a == "--out" ) out_dir = val();
 		else if ( a == "--cases" ) cases = val();
-		else if ( a == "--cpuid" ) copt.cpuid = at::load_cpuid_profile( val() );
+		else if ( a == "--cpuid" )
+		{
+			const std::string path = val();
+			std::string uerr;
+			copt.cpuid = at::load_cpuid_profile( path );
+			// U1473: the profile's "#@ microcode REV platform-id N" line (UC_CTL_X86_MICROCODE)
+			copt.ucode_set = at::load_cpuid_microcode( path, copt.ucode_rev, copt.ucode_pid, uerr );
+			if ( !uerr.empty() ) { std::printf( "--cpuid %s: %s\n", path.c_str(), uerr.c_str() ); return 2; }
+		}
 		else if ( a == "--strict" ) copt.strict = 1;
 		else if ( a == "--no-strict" ) copt.strict = 0;   // U435: explicit UC_CTL_X86_CPUID_STRICT = 0
 		else if ( a == "--xcr0" ) copt.xcr0 = std::stoull( val(), nullptr, 0 );

@@ -455,6 +455,9 @@ Add-Exp 'cases_st_xsavec_pad' 'cases_st_xsavec_pad' 'xstate apx amx expect' @( '
 Add-Hw 'cases_st_hw' 'hw xstate x87'
 # U1221: the compacted form of XRSTOR #GP(0) with a strict profile without CPUID.(0DH,1):EAX.XSAVEC (T-6)
 Add-Exp 'cases_st_xrstor_noxsavec' 'cases_st_xrstor_noxsavec' 'xstate cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_st_noxsavec.txt' ) )
+# U1474 (agent ucode): the gate profile's microcode identity ("#@ microcode" line, UC_CTL_X86_MICROCODE): the
+# IA32_BIOS_SIGN_ID reporting sequence, IA32_PLATFORM_ID, IA32_BIOS_UPDT_TRIG accepted at CPL0 (docs/quirks.md)
+Add-Exp 'cases_ucode' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

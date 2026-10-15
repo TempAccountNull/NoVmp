@@ -2602,6 +2602,17 @@ static void x86_rdrand_sync(struct uc_struct *uc, int to_cpu)
 }
 #endif /* __Use_Original_Qemu (U835) */
 
+#if __Use_Original_Qemu != 1 /* ours (U1470) */
+/* NoVmp (ledger U1470): UC_CTL_X86_MICROCODE read (uc.c): the CPU's revision and platform ID */
+static void x86_ucode_get(struct uc_struct *uc, uint32_t *rev, int *platform_id)
+{
+    X86CPU *cpu = X86_CPU(uc->cpu);
+
+    *rev = IS_AMD_CPU(&cpu->env) ? (uint32_t)cpu->ucode_rev : (uint32_t)(cpu->ucode_rev >> 32);
+    *platform_id = (int)cpu->platform_id;
+}
+#endif /* __Use_Original_Qemu (U1470) */
+
 #if __Use_Original_Qemu != 1 /* ours (U832) */
 /*
  * NoVmp (ledger U832): an x86 uc_context holds the whole CPUX86State. Unicorn's default
@@ -2811,6 +2822,9 @@ void uc_init(struct uc_struct *uc)
     uc->x86_apic_get_id = x86_apic_get_id;
     uc->x86_apic_leave = x86_apic_leave;
 #endif /* __Use_Original_Qemu (U961) */
+#if __Use_Original_Qemu != 1 /* ours (U1470) */
+    uc->x86_ucode_get = x86_ucode_get;
+#endif /* __Use_Original_Qemu (U1470) */
     uc_common_init(uc);
 }
 
