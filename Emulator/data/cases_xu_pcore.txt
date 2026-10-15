@@ -1,0 +1,20 @@
+# U1481 (agent xinusemodel, docs/xinuse.md): the emu-alltest XINUSE model selection (UC_CTL_X86_XINUSE_MODEL), checked through
+# what the engine reports. Expected-value cases (Unicorn only), run with --xcr0 0x7 (x87 | SSE | AVX: the result is
+# XINUSE[2:0] alone, independent of the other components' rules).
+# Model of this file: P-core (x87 / SSE / AVX tracked with the init optimization). Expected values = the per-case outcomes measured on the bare i5-13600K
+# (emulator\capture\xinuse, notes\xinuse_host_vs_guest_2026-10-14.txt: P-cores = the VMware guest majority 57/57;
+# E-cores deterministic) for the capture case named on each line; "always" = the behaviour before U1480 (XINUSE[2:0]
+# always 1, kept for --AMD). SDM 253665-092 Vol1 13.6 p. 13-17/13-18, 13.7 p. 13-19, 13.8.3 p. 13-21; 334569-092 Vol2D
+# XGETBV p. 6-36, XRSTOR p. 6-50. The XSAVE area at RSI = MEM + 8000H: XSTATE_BV (m+0x8200) 0 = every component
+# initialised, MXCSR (m+0x8018) 1F80H or 3F80H; XRSTOR64 [rsi] = 48 0F AE 2E, XSAVE64 [rsi] = 48 0F AE 26, XGETBV = 0F 01 D0.
+# Run by test.cmd with: no switch (the engine default), --guest, --vm, --host (fallback without a hybrid profile), --host with the hybrid P-core test profile, --xinuse-model p-core
+# C00 / X1e: XRSTOR of the init image, then XGETBV(1)
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x0 rdx=0
+# Z3a-type: VZEROUPPER after the thunk's prologue (FXRSTOR64, VINSERTI128: all in use)
+.byte 0xc5, 0xf8, 0x77; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 =>! rax=0x3 rdx=0
+# P2a: PXOR xmm0, xmm0 from the initial state
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; pxor xmm0, xmm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x2 rdx=0
+# F6a: FNINIT from the initial state
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0
+# M10e: init image with MXCSR 3F80H: XGETBV(1) EAX[1] = 1 (MXCSR rule), XSAVE XSTATE_BV[1] = XINUSE[1]
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0; mov r8, rax; mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x26 | m+0x8018=803F0000 =>! r8=0x2 m+0x8200=00

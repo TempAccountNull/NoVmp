@@ -433,6 +433,15 @@ Add-Exp 'cases_cpuid_hv_avx512' 'cases_cpuid_hv' 'xstate cpuid evex expect' @( '
 # (cpuid_xgetbv1_off.txt: the gate profile with CPUID.(0DH,1):EAX[2] = 0)
 Add-Exp 'cases_xcr' 'cases_xcr' 'xstate expect'
 Add-Exp 'cases_xcr_nox1' 'cases_xcr_nox1' 'xstate cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_xgetbv1_off.txt' ) )
+# U1480-U1481 (agent xinusemodel, docs/xinuse.md): the XINUSE models (UC_CTL_X86_XINUSE_MODEL) as emu-alltest selects
+# them - --guest / --vm P-core, --host the verified / profile core type (else a logged P-core fallback), --AMD always in
+# use, --xinuse-model p-core|e-core overrides. One expected-value file per model (the measured i5-13600K P-core / E-core
+# outcomes); xu_cli runs every switch combination against all three files (the wrong ones must differ) and checks the
+# log lines and usage errors.
+Add-Exp 'xu_pcore_guest' 'cases_xu_pcore' 'xstate xinuse expect' @( '--guest', '--xcr0', '0x7' )
+Add-Exp 'xu_ecore_host' 'cases_xu_ecore' 'xstate xinuse cpuid expect' @( '--host', '--cpuid', ( Join-Path $D 'cpuid_xu_hybrid_ecore.txt' ), '--xcr0', '0x7' )
+Add-Exp 'xu_always_amd' 'cases_xu_always' 'xstate xinuse expect' @( '--AMD', '--xcr0', '0x7' )
+Add-Suite 'xu_cli' 'xstate xinuse tools' 'py' ( Join-Path $Root 'Emulator\tools\xinuse_cli_check.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
 # U1204: the 15-byte instruction length limit, #GP(0) (T-3; the hardware lines are in the NON-gate file
 # cases_insn_len_hw.txt, checked by hand with --hw-repeat); CPUID 0BH / 1FH unlisted sub-leaves with the gate
 # profile (T-5)

@@ -607,6 +607,9 @@ namespace at
 			// AVX instructions raise #NM), so the engine starts with TS clear and on_ts sets it for the
 			// snippet only
 			if ( cr0 ) { const uint64_t c0 = ts_hooks ? ( cr0 & ~CR0_TS ) : cr0; uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ); }
+			// U1481 (docs/xinuse.md): the XINUSE model chosen for the run (choose_xinuse; 0 = not written: the
+			// engine's default, P-core model for an Intel CPU model)
+			if ( xinuse_model ) { uc_err xe = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_XINUSE_MODEL, 1 ), xinuse_model ); if ( xe != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_XINUSE_MODEL: " ) + uc_strerror( xe ); return false; } }
 			return true;
 		}
 		// U540: the XCR0 / CR0 an engine with this configuration starts from (printed at the start
@@ -874,6 +877,7 @@ namespace at
 		int rdrand = UC_X86_RDRAND_SEEDED;   // UC_CTL_X86_RDRAND (U835): --seeded (default) / --HostSeed
 		uint64_t rdrand_seed = 0;            // the seeded model's seed (--rdrand-seed N)
 		uint32_t smm_revision = 0;           // U1465: UC_CTL_X86_SMM_REVISION (0 = not written; --host / --guest)
+		int xinuse_model = 0;                // U1481: UC_CTL_X86_XINUSE_MODEL (0 = not written; choose_xinuse)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full

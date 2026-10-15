@@ -449,6 +449,7 @@ namespace at
 	static uint64_t g_rdrand_seed = 0;
 	static int g_platform = PLATFORM_NONE;   // U1465: --host / --guest / --AMD
 	static const case_opts* g_copt = nullptr;   // U1491: CPUID profile (--host / --guest / --vm / --cpuid), strict, microcode
+	static xinuse_choice g_xinuse;           // U1481: the sweep's XINUSE model (choose_xinuse)
 
 	static std::string outcome_str( const result& r ) { return r.faulted ? "#" + std::to_string( r.vector ) : "ok"; }
 
@@ -460,6 +461,7 @@ namespace at
 		if ( p.code.empty() ) { fr.b = HARNESS_ERROR; fr.detail = "build: " + err; return fr; }
 		unicorn_engine uc( UC_CPU_X86_MAX );
 		uc.cpl3 = f.uc_cpl3;   // U850: control-transfer / stack / LSS forms: CPL3 with the Windows GDT, like the host
+		uc.xinuse_model = g_xinuse.model;   // U1481
 		uc.rdrand = g_rdrand;
 		uc.rdrand_seed = g_rdrand_seed;
 		uc.smm_revision = platform_smm_revision( g_platform );   // U1465
@@ -578,6 +580,14 @@ int main( int argc, char** argv )
 		else if ( a == "--avx10" ) copt.avx10 = std::stoi( val(), nullptr, 0 );
 		else if ( a == "--apx" ) copt.apx = UC_X86_APX_F;
 		else if ( a == "--x86-features" ) copt.x86_features = std::stoi( val(), nullptr, 0 );   // U1181
+		// U1481 (docs/xinuse.md): the XINUSE model, overriding the platform profile's choice
+		else if ( a == "--xinuse-model" )
+		{
+			const std::string v = val();
+			if ( v == "p-core" ) copt.xinuse_override = UC_X86_XINUSE_PCORE;
+			else if ( v == "e-core" ) copt.xinuse_override = UC_X86_XINUSE_ECORE;
+			else { std::printf( "--xinuse-model p-core|e-core: \"%s\" is neither\n", v.c_str() ); return 2; }
+		}
 		// U835 (decision D8): RDRAND/RDSEED source. --seeded = the deterministic model (default),
 		// --rdrand-seed N its seed (default 0), --HostSeed = the host CPU's hardware DRNG
 		else if ( a == "--seeded" ) copt.rdrand = UC_X86_RDRAND_SEEDED;
@@ -644,6 +654,7 @@ int main( int argc, char** argv )
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );
+	at::g_xinuse = at::choose_xinuse( copt.platform, copt.xinuse_override, copt.cpuid, true, {} );   // U1481: unpinned native runs
 	at::g_rdrand = copt.rdrand;
 	at::g_rdrand_seed = copt.rdrand_seed;
 	at::g_platform = copt.platform;   // U1465
@@ -698,6 +709,7 @@ int main( int argc, char** argv )
 	std::printf( "  universe: %zu forms (", uv.forms.size() );
 	for ( auto& [ k, v ] : per_cls ) std::printf( "%s %d ", k.c_str(), v );
 	std::printf( ") in %.1f s\n", sweep_s );
+	print_xinuse( g_xinuse, "  " );   // U1481
 
 	native_engine hw;
 	std::string err;

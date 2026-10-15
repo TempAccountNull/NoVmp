@@ -398,6 +398,7 @@ namespace at
 	struct case_opts { std::vector<uc_x86_cpuid> cpuid; int strict = -1; uint64_t xcr0 = 0; uint64_t cr0 = 0; bool expect_only = false; int avx512 = 0; int amx = 0; int avx10 = 0; int apx = 0;
 					   bool ucode_set = false; uint32_t ucode_rev = 0; int ucode_pid = 0;   /* U1473: the profile's "#@ microcode" line */
 					   int x86_features = 0;   /* U1181: --x86-features N (UC_CTL_X86_FEATURES) */
+					   int xinuse_override = 0;   /* U1481: --xinuse-model p-core|e-core (UC_X86_XINUSE_PCORE / ECORE) */
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
 					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
@@ -687,6 +688,146 @@ namespace at
 		return pin;
 	}
 
+	// U1481 (docs/xinuse.md): the XINUSE model of the run's Unicorn engines (UC_CTL_X86_XINUSE_MODEL). The
+	// i5-13600K's P-cores and E-cores report XINUSE differently (emulator\capture\xinuse; both permitted by SDM
+	// 092 Vol1 13.6 / 13.8.3): P-cores track x87 / SSE / AVX with the init optimization, E-cores keep x87 and
+	// SSE in use. --xinuse-model p-core|e-core overrides; else --guest / --vm: P-core (the guest majority, the
+	// guest's physical core is never assumed); --host: the verified core type of the CPUs the native runs use
+	// (CPUID.1AH and Windows' EfficiencyClass agree, as capture\xinuse\xinuse_probe), else the CPUID profile's
+	// (07H.0:EDX[15] hybrid = 1 and 1AH:EAX[31:24] 40H Core / 20H Atom), else P-core as a logged fallback;
+	// --AMD: always in use (the behaviour before U1480; no Intel rule applied); no switch: not written.
+	struct xinuse_choice { int model = 0; std::string source, evidence; };
+	static const char* xinuse_name( int m )
+	{
+		return m == UC_X86_XINUSE_PCORE ? "P-core" : m == UC_X86_XINUSE_ECORE ? "E-core" : m == UC_X86_XINUSE_ALWAYS ? "always in use" : "engine default";
+	}
+	// the core type a CPUID profile reports (0x40 / 0x20, 0 = none)
+	static int xinuse_profile_core( const std::vector<uc_x86_cpuid>& v, std::string& ev )
+	{
+		const uc_x86_cpuid* l7 = nullptr; const uc_x86_cpuid* l1a = nullptr;
+		for ( const auto& e : v )
+		{
+			if ( e.leaf == 7 && e.subleaf == 0 ) l7 = &e;
+			if ( e.leaf == 0x1A && e.subleaf == 0 ) l1a = &e;
+		}
+		char b[ 160 ];
+		if ( v.empty() ) { ev = "no CPUID profile"; return 0; }
+		const unsigned hy = l7 ? ( l7->edx >> 15 ) & 1 : 0, t = l1a ? l1a->eax >> 24 : 0;
+		std::snprintf( b, sizeof( b ), "CPUID profile 07H.0:EDX[15] hybrid = %u, 1AH:EAX[31:24] = %02XH", hy, t );
+		ev = b;
+		if ( !hy ) { ev += " (no core type)"; return 0; }
+		if ( t == 0x40 ) { ev += " (Core: P-core)"; return 0x40; }
+		if ( t == 0x20 ) { ev += " (Atom: E-core)"; return 0x20; }
+		ev += " (not Core / Atom)";
+		return 0;
+	}
+	// the verified core type of the logical CPUs the native runs use (pin: --hw-cpu list; empty = every CPU of
+	// the process): each one's CPUID.1AH core type must agree with Windows' EfficiencyClass (two classes, the
+	// higher = P), with CPUID.07H.0:EDX[15] = 1, and all must be of one type; 0 = not verified
+	static int xinuse_host_core( const std::vector<int>& pin, std::string& ev )
+	{
+		std::map<int, int> eff;
+		int cmin = 256, cmax = -1;
+		DWORD len = 0;
+		GetLogicalProcessorInformationEx( RelationProcessorCore, nullptr, &len );
+		std::vector<uint8_t> buf( len ? len : 1 );
+		if ( !len || !GetLogicalProcessorInformationEx( RelationProcessorCore, ( PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX ) buf.data(), &len ) )
+		{ ev = "GetLogicalProcessorInformationEx failed"; return 0; }
+		for ( DWORD o = 0; o < len; )
+		{
+			auto* e = ( PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX )( buf.data() + o );
+			if ( e->Relationship == RelationProcessorCore )
+			{
+				const int c = e->Processor.EfficiencyClass;
+				cmin = std::min<int>( cmin, c ); cmax = std::max<int>( cmax, c );
+				for ( WORD g = 0; g < e->Processor.GroupCount; ++g )
+					if ( e->Processor.GroupMask[ g ].Group == 0 )
+						for ( int k = 0; k < 64; ++k )
+							if ( e->Processor.GroupMask[ g ].Mask >> k & 1 ) eff[ k ] = c;
+			}
+			o += e->Size;
+		}
+		int r[ 4 ] = {};
+		__cpuidex( r, 0, 0 );
+		const int maxl = r[ 0 ];
+		__cpuidex( r, 7, 0 );
+		const unsigned hybrid = maxl >= 7 ? ( unsigned( r[ 3 ] ) >> 15 ) & 1 : 0;
+		const std::vector<host_cpu> cpus = host_cpus();
+		char b[ 200 ];
+		std::snprintf( b, sizeof( b ), "host 07H.0:EDX[15] hybrid = %u, EfficiencyClass %d..%d (%s)", hybrid, cmin, cmax, cmin == cmax ? "one class" : "two classes" );
+		ev = b;
+		int type = 0;
+		for ( const host_cpu& c : cpus )
+		{
+			if ( !pin.empty() && std::find( pin.begin(), pin.end(), c.cpu ) == pin.end() ) continue;
+			if ( c.cpu < 0 ) { ev += "; a CPU could not be pinned"; return 0; }
+			const int e = eff.count( c.cpu ) ? eff[ c.cpu ] : -1;
+			std::snprintf( b, sizeof( b ), "; CPU %d: 1AH core type %02XH, EfficiencyClass %d", c.cpu, unsigned( c.type ), e );
+			if ( !hybrid || cmin == cmax || ( c.type != 0x40 && c.type != 0x20 ) || ( c.type == 0x40 ) != ( e == cmax ) )
+			{ ev += b; ev += " - not verified"; return 0; }
+			if ( type && type != c.type ) { ev += "; the native runs' CPUs have both core types (--hw-cpu P or E pins one)"; return 0; }
+			type = c.type;
+		}
+		ev += type == 0x40 ? "; all P-cores (verified)" : type == 0x20 ? "; all E-cores (verified)" : "; no CPU";
+		return type;
+	}
+	// override: 0 = none, else UC_X86_XINUSE_PCORE / ECORE; hw: the run has native runs (hardware cases / the sweep)
+	static xinuse_choice choose_xinuse( int platform, int override_model, const std::vector<uc_x86_cpuid>& cpuid, bool hw, const std::vector<int>& pin )
+	{
+		xinuse_choice c;
+		std::string pev, hev = hw ? "" : "no native runs";
+		const int pt = xinuse_profile_core( cpuid, pev );
+		const int ht = platform == PLATFORM_HOST && hw ? xinuse_host_core( pin, hev ) : 0;
+		c.evidence = pev + "; " + ( platform == PLATFORM_HOST ? hev : "host CPUs not consulted (only --host uses them)" );
+		auto by_type = []( int t ) { return t == 0x20 ? UC_X86_XINUSE_ECORE : UC_X86_XINUSE_PCORE; };
+		if ( override_model )
+		{
+			c.model = override_model;
+			c.source = std::string( "override --xinuse-model " ) + ( override_model == UC_X86_XINUSE_ECORE ? "e-core" : "p-core" );
+			if ( platform == PLATFORM_AMD ) c.source += " (applied to --AMD on explicit request)";
+			return c;
+		}
+		switch ( platform )
+		{
+		case PLATFORM_AMD:
+			c.model = UC_X86_XINUSE_ALWAYS;
+			c.source = "--AMD default: AMD behaviour unchanged (x87 / SSE / AVX always in use; no Intel XINUSE rule applied)";
+			break;
+		case PLATFORM_GUEST:
+			c.model = UC_X86_XINUSE_PCORE;
+			c.source = "--guest / --vm default: P-core model (the VMware guest majority, 57/57 measured cases; the guest's physical core type is not assumed)";
+			break;
+		case PLATFORM_HOST:
+			if ( ht )
+			{
+				c.model = by_type( ht );
+				c.source = "--host: the core type of the native runs' CPUs (CPUID.1AH and EfficiencyClass agree)";
+				if ( pt && pt != ht ) c.source += "; the CPUID profile reports the other type - the native CPU decides";
+			}
+			else if ( pt )
+			{
+				c.model = by_type( pt );
+				c.source = "--host: the core type of the CPUID profile (07H.0:EDX[15] = 1, 1AH)";
+			}
+			else
+			{
+				c.model = UC_X86_XINUSE_PCORE;
+				c.source = "--host: FALLBACK to the P-core model - no verified core-type identification";
+			}
+			break;
+		default:
+			c.model = 0;
+			c.source = "no platform switch: not written (the engine default: P-core model for an Intel CPU, always in use for AuthenticAMD)";
+			break;
+		}
+		return c;
+	}
+	static void print_xinuse( const xinuse_choice& c, const char* ind = "" )
+	{
+		std::printf( "%sxinuse model: %s (UC_CTL_X86_XINUSE_MODEL %d) - %s\n", ind, xinuse_name( c.model ), c.model, c.source.c_str() );
+		std::printf( "%sxinuse evidence: %s\n", ind, c.evidence.c_str() );
+	}
+
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token. U772: an error code may follow
 	// in parentheses, "#GP(0)", "#SS(0)", "#PF(0x6)", "#13(0x30)", stored in *ec (else -1)
 	static int fault_vector( const std::string& t, int64_t* ec = nullptr )
@@ -777,6 +918,16 @@ namespace at
 		if ( opt.apx ) optin_x |= 0x80000ull;
 		const uint64_t hw_xcr0 = opt.xcr0 ? opt.xcr0 : ( host_x ? ( host_x | optin_x ) : 0 ), hw_cr0 = opt.cr0 ? opt.cr0 : WINDOWS_CR0;
 		const uint64_t exp_xcr0 = opt.xcr0, exp_cr0 = opt.cr0;
+		// U1481: the XINUSE model of every Unicorn engine of this run (--host consults the CPUs of the native runs)
+		std::vector<int> xinuse_pin;
+		if ( !opt.hw_cpu.empty() && !opt.expect_only )
+		{
+			std::string perr;
+			const std::vector<host_cpu> hc = host_cpus();
+			xinuse_pin = hw_pin_list( opt.hw_cpu, hc, perr );
+		}
+		const xinuse_choice xinuse = choose_xinuse( opt.platform, opt.xinuse_override, opt.cpuid, !opt.expect_only, xinuse_pin );
+		print_xinuse( xinuse );
 		{
 			// the effective values as an engine of this run starts with them (reset values included)
 			auto show = [ & ]( const char* kind, uint64_t x, uint64_t c, const char* xsrc, const char* csrc )
@@ -787,6 +938,7 @@ namespace at
 				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx; pe.x86_features = opt.x86_features;
 				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
 				pe.smm_revision = platform_smm_revision( opt.platform );   // U1465
+				pe.xinuse_model = xinuse.model;   // U1481
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
 				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }
@@ -1098,6 +1250,7 @@ namespace at
 			uc.rdrand = opt.rdrand;   // U835
 			uc.rdrand_seed = opt.rdrand_seed;
 			uc.smm_revision = platform_smm_revision( opt.platform );   // U1465
+			uc.xinuse_model = xinuse.model;   // U1481
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
