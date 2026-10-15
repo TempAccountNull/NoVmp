@@ -458,6 +458,11 @@ Add-Exp 'cases_st_xrstor_noxsavec' 'cases_st_xrstor_noxsavec' 'xstate cpuid expe
 # U1474 (agent ucode): the gate profile's microcode identity ("#@ microcode" line, UC_CTL_X86_MICROCODE): the
 # IA32_BIOS_SIGN_ID reporting sequence, IA32_PLATFORM_ID, IA32_BIOS_UPDT_TRIG accepted at CPL0 (docs/quirks.md)
 Add-Exp 'cases_ucode' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid )
+# U1490 (agent bareprofile): the same profile ("#@ microcode" line) with a platform switch. The SMM revision write
+# initialises the engine, so it must follow the pre-init controls; before U1490 every case of these runs failed with
+# "uc_ctl_set_x86_microcode failed"
+Add-Exp 'cases_ucode_host' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid, '--host' )
+Add-Exp 'cases_ucode_guest' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid, '--guest' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

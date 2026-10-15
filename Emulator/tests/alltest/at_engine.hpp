@@ -590,14 +590,17 @@ namespace at
 			if ( x86_features && uc_ctl_set_x86_features( uc_, x86_features ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_features failed"; return false; }
 			// U835 (D8): RDRAND/RDSEED source, --seeded (default, deterministic) or --HostSeed
 			if ( uc_ctl_set_x86_rdrand( uc_, rdrand, rdrand_seed ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_rdrand failed"; return false; }
-			// U1465: the platform profile's SMM revision identifier (--host / --guest; docs/smm.md)
-			if ( smm_revision ) { uc_err se = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_SMM_REVISION, 1 ), smm_revision ); if ( se != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_SMM_REVISION: " ) + uc_strerror( se ); return false; } }
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
 			if ( strict >= 0 ) uc_ctl_set_x86_cpuid_strict( uc_, strict );
 			// U1473: the profile's microcode revision / platform ID (only before the engine is initialised)
 			if ( ucode_set && uc_ctl_set_x86_microcode( uc_, ucode_rev, ucode_pid ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_microcode failed"; return false; }
+			// U1465: the platform profile's SMM revision identifier (--host / --guest; docs/smm.md). U1490: written
+			// after the controls that are accepted only before the engine is initialised (UC_CTL_X86_SMM_REVISION
+			// initialises it, UC_INIT): before, --host / --guest with a profile's "#@ microcode" line failed every case
+			// ("uc_ctl_set_x86_microcode failed")
+			if ( smm_revision ) { uc_err se = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_SMM_REVISION, 1 ), smm_revision ); if ( se != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_SMM_REVISION: " ) + uc_strerror( se ); return false; } }
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
 			// U1200 (ts_hooks): the thunk's prologue (FXRSTOR64, VINSERTI128) and epilogue (FXSAVE64,
 			// FNSTENV, ...) would raise #NM with CR0.TS = 1 (SDM 092 Vol3A 2.5: TS = 1 makes x87 / SSE /
