@@ -8,7 +8,13 @@ non-root operation, EPT / APIC-virtualization interactions) belongs to plan 1.J.
 done in U1313-U1316 (docs/vmx.md); ENCLV is not modelled (removed from the SDM in 325462-088).
 
 Validation label of everything in this document: **specification-validated** (independent reading of
-the SDM and an independent Python reference model). The i5-13600K has neither SGX nor SMX/TXT, and
+the SDM and an independent Python reference model). The i5-13600K has no SGX (CPUID.(07H,0):EBX[2] = 0
+on the bare host, EBX = 239C27EBH, and in the VMware guest, EBX = 219C27EBH). SMX is hidden in the
+VMware guest that runs the hardware tests (CPUID.01H:ECX = 7FFA3223H, bit 6 = 0); the bare host
+enumerates SMX (CPUID.01H:ECX[6] = 1, ECX = 7FFAFBFFH on all 20 logical processors, bare-host capture
+2026-10-10 `emulator\capture\host\output\DESKTOP-JOB52RJ_20261010_133354`; again 2026-10-15
+`emulator\capture\smmid\output\DESKTOP-JOB52RJ_20261015_002318_native-host`). GETSEC was not run on
+the bare host, and the TXT chipset side stays blocked on Intel's documents either way (plan 1.J.11.b).
 Intel SDE cannot run CPL0 enclave-management code, so nothing here is SDE- or hardware-validated.
 
 Sources (local copies, `E:\pdfs\x86docs\Intel\SDMs` (formerly `emulator\Intel docs`), text in `emulator\intel_docs_text`):

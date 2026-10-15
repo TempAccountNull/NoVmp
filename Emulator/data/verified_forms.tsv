@@ -198,7 +198,7 @@ vsm3msg2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_s
 vsm3rnds2	vex	sdm	U83: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
 vsm4key4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
 vsm4rnds4	vex	sdm	U84: SDM-pseudocode reference (standard test vectors) + cases_sha_sm.txt "=>" + unit tests; strict i5-13600K profile #UD == CPU
-getsec	legacy	sdm	U113 GETSEC/PCONFIG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU; U1267 opt-in UC_X86_FEATURE_SMX (an SMX processor without a TXT chipset): CAPABILITIES 1FCH, PARAMETERS (Table 7-10 defaults), the #GP(0) of ENTERACCS / EXITAC / SENTER / SEXIT / SMCTRL / WAKEUP - unit test test_x86_gs_smx + cases_sgx.txt (U1268); the TXT chipset launch path stays #GP(0) (its documents are Intel NDA material, user decision 2026-10-11)
+getsec	legacy	sdm	U113 GETSEC/PCONFIG: SDM-pseudocode expectations + unit tests + cases_tsx_cet(_max).txt; strict i5-13600K profile == CPU (the VMware guest, which hides SMX: GETSEC #UD on both; the bare host enumerates SMX, GETSEC not run there); U1267 opt-in UC_X86_FEATURE_SMX (an SMX processor without a TXT chipset): CAPABILITIES 1FCH, PARAMETERS (Table 7-10 defaults), the #GP(0) of ENTERACCS / EXITAC / SENTER / SEXIT / SMCTRL / WAKEUP - unit test test_x86_gs_smx + cases_sgx.txt (U1268); the TXT chipset launch path stays #GP(0) (its documents are Intel NDA material, user decision 2026-10-11)
 blcfill	xop	oos	AMD TBM
 blci	xop	oos	AMD TBM
 blcic	xop	oos	AMD TBM

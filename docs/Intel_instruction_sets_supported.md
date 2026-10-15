@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-14 23:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `dd741e35 Ledger: U1460-U1465 (agent/smram), merged and verified`). Do not edit by hand._
+_Generated 2026-10-15 00:16 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `9b6b50f7 Docs refresh after the local merges of agent/vmx, agent/tdx, agent/tme (+ U1434), agent/idt64, agent/xcr0, agent/unmap, agent/ucode, agent/smram`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
@@ -1966,7 +1966,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | SHA512 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[0] = 0 on this CPU) | ✅ 3 |  |
 | SM3 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[1] = 0 on this CPU) | ✅ 3 |  |
 | SM4 | 4 | ❌ **cannot run** (CPUID.7H.1:EAX[2] = 0 on this CPU) | ✅ 4 |  |
-| SMX | 1 | ❌ **cannot run** (CPUID.1H:ECX[6] = 0 on this CPU) | ✅ 1 |  |
+| SMX | 1 | ❌ **cannot run** (CPUID.01H:ECX[6] = 0: SMX hidden in the VMware guest; the bare host enumerates SMX (CPUID.01H:ECX[6] = 1, bare-host capture 2026-10-10 emulator\capture\host\output\DESKTOP-JOB52RJ_20261010_133354, again 2026-10-15 emulator\capture\smmid\output\DESKTOP-JOB52RJ_20261015_002318_native-host); GETSEC was not run on the bare host) | ✅ 1 |  |
 | TDX | 4 | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); SEAMCALL: VMX root operation, 64-bit mode (VMX non-root: VM exit 76); SEAMOPS: SEAM root operation only …) |  | ⬜ 4 queued |
 | TSX_LDTRK | 2 | ❌ **cannot run** (CPUID.7H:EDX[16] = 0 on this CPU) | ✅ 2 |  |
 | UINTR | 5 | ❌ **cannot run** (CPUID.7H:EDX[5] = 0 on this CPU) | ✅ 5 |  |
@@ -2410,7 +2410,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| GETSEC | legacy | - | ❌ **cannot run** (CPUID.1H:ECX[6] = 0 on this CPU) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U113 GETSEC/PCONFIG: SDM-pseudo… |  |
+| GETSEC | legacy | - | ❌ **cannot run** (CPUID.01H:ECX[6] = 0: SMX hidden in the VMware guest; the bare host enumerates SMX (CPUID.01H:ECX[6] = 1, bare-host capture 2026-10-10 emulator\capture\host\output\DESKTOP-JOB52RJ_20261010_133354, again 2026-10-15 emulator\capture\smmid\output\DESKTOP-JOB52RJ_20261015_002318_native-host); GETSEC was not run on the bare host) | ✅ per manual (SDM vectors) — implemented; the VMware guest hides it (the bare i5-13600K host enumerates it): verified against SDM-pseudoco… |  |
 
 </details>
 

@@ -393,6 +393,19 @@ def avx10_on_cpu(fam, cpuid):
 OS_OFF = {
     'PKU': 'the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode',
 }
+# U1500 (plan 1.J.51): families the VMware guest hides from the gate-test profile (cpuid_i5-13600k.txt, a
+# guest capture) while the bare i5-13600K host enumerates them. The row stays ❌ (the hardware cases run in
+# the guest, so the instruction cannot be compared with the CPU there), but the reason names the guest, not
+# the processor. Bare-host captures are evidence only; nothing here was executed on the bare host.
+GUEST_HIDDEN = {
+    'SMX': ('CPUID.01H:ECX[6] = 0: SMX hidden in the VMware guest; the bare host enumerates SMX '
+            '(CPUID.01H:ECX[6] = 1, bare-host capture 2026-10-10 '
+            'emulator\\capture\\host\\output\\DESKTOP-JOB52RJ_20261010_133354, again 2026-10-15 '
+            'emulator\\capture\\smmid\\output\\DESKTOP-JOB52RJ_20261015_002318_native-host); '
+            'GETSEC was not run on the bare host'),
+}
+# U1500: the verified_forms 'sdm' prefix of such a row names the guest instead of the processor
+GUEST_HIDDEN_NOTE = ('the i5-13600K lacks it', 'the VMware guest hides it (the bare i5-13600K host enumerates it)')
 CET_USER_OK = {'endbr32', 'endbr64', 'rdsspd', 'rdsspq'}
 
 
@@ -436,6 +449,8 @@ def family_on_cpu(fam, cpuid):
     v = cpuid.get((leaf, sub))
     if v and (v[reg] >> b) & 1:
         return True, ''
+    if fam in GUEST_HIDDEN:                                 # U1500
+        return False, GUEST_HIDDEN[fam]
     return False, 'CPUID.%XH%s:%s[%d] = 0 on this CPU' % (leaf, ('.%d' % sub) if sub else '',
                                                            ['EAX', 'EBX', 'ECX', 'EDX'][reg], b)
 
@@ -547,6 +562,8 @@ def main():
                     '⬜': 'not implemented yet'}[st]
             if st == '✅' and vst in UNSUP_IMPL:            # U1094
                 impl = UNSUP_IMPL[vst]
+            if any(family(f) in GUEST_HIDDEN for isa in r['isa'] for f in isa.split('+')):   # U1500
+                note = note.replace(*GUEST_HIDDEN_NOTE)
             impl_unsup[st] += 1
             note = '**NOT SUPPORTED on our i5-13600K** (%s) — %s: %s' % (why or 'not reported by this CPU', impl, note)
             st = '❌'

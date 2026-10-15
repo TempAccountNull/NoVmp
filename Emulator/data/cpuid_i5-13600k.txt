@@ -2,7 +2,8 @@
 # NOT a bare-host capture. Relabelled 2026-10-10 after the hybrid CPUID diagnostic
 # (emulator\notes\hybrid_cpuid_2026-10-10.md): the values match the VMware guest (8 vCPUs as 2 sockets x 4
 # cores), not the physical host (6 P-cores + 8 E-cores). VMware masks or modifies CPUID: it hides the hybrid bit
-# (07H:EDX[15]), leaf 1AH core types, Thread Director (06H), PCONFIG and TME, reports P-core cache sizes on every
+# (07H:EDX[15]), leaf 1AH core types, Thread Director (06H), PCONFIG and TME, SMX (01H:ECX[6] = 0 here; the bare
+# host enumerates SMX, CPUID.01H:ECX[6] = 1, bare-host capture 2026-10-10, U1500), reports P-core cache sizes on every
 # vCPU and invents the topology (0BH/1FH). A feature absent here is NOT proof that the physical processor lacks it;
 # never use this file to infer the bare host or the emulated model.
 # Role: gate-test profile for hardware cases run inside this VMware guest (file name kept for test_runner.ps1).

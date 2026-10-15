@@ -1,7 +1,9 @@
 # Intel SGX / SMX opt-in gates (ledgers U1261-U1267, U1268): expected values written from SDM 092
 # (Vol1 Table 21-47..21-49 CPUID.12H, Vol3D ENCLS p. 41-8 / ENCLU p. 41-10 Operation order, 39.6.5
 # INVD, Vol2D 7.3 GETSEC and the leaf Operations) and the model's documented platform values
-# (docs/sgx.md, docs/quirks.md SGX rows). Unicorn only (the i5-13600K has neither SGX nor SMX), MAX
+# (docs/sgx.md, docs/quirks.md SGX rows). Unicorn only (the i5-13600K has no SGX; SMX is hidden in
+# the VMware guest that runs the hardware tests, the bare host enumerates SMX: CPUID.01H:ECX[6] = 1,
+# bare-host capture 2026-10-10, docs/sgx.md; GETSEC was not run on the bare host), MAX
 # model, CPL0 unless cpl=3, paging off, no EPC section, IA32_FEATURE_CONTROL unlocked:
 #   emu-alltest --cases Emulator\data\cases_sgx.txt --x86-features 48 --expect-only
 # (48 = UC_X86_FEATURE_SGX | UC_X86_FEATURE_SMX). Enclave behaviour needs CPL0 set-up with paging and
