@@ -3640,6 +3640,16 @@ bool x86_vmx_fred_eret_nmi(CPUX86State *env);
 #define VMX_EXIT_WRMSRNS_IMM 85
 #endif /* __Use_Original_Qemu (U1304) */
 #endif /* __Use_Original_Qemu (U1301) */
+#if __Use_Original_Qemu != 1 /* ours (U1430) */
+/*
+ * NoVmp (ledger U1430, misc_helper.c): MAXPHYADDR of the host-physical address checks -
+ * CPUID.80000008H:EAX[7:0] reduced by IA32_TME_ACTIVATE[39:36] (TDX_RESERVED_KEYID_BITS) while
+ * IA32_TME_ACTIVATE[0] (lock) = 1 and the processor is outside SEAM (SDM 093 Vol3A 3.3.1 p. 3-6).
+ * Not for CPUID.80000008H, guest-physical addresses under EPT, IA32_RTIT_OUTPUT_BASE or the TME
+ * exclusion MSRs (full width).
+ */
+int x86_maxphyaddr(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1430) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;

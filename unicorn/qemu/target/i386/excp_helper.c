@@ -534,6 +534,23 @@ static hwaddr get_hphys(CPUState *cs, hwaddr gphys, MMUAccessType access_type,
     cpu_vmexit(env, SVM_EXIT_NPF, exit_info_1, env->retaddr);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1430) */
+/*
+ * NoVmp (ledger U1430): M of the paging-structure reserved bits 51:M (SDM 093 Vol3A 5.1.4 p. 5-6,
+ * 5.5 tables, 6.13 Tables 6-8 / 6-9 p. 6-33): "M = MAXPHYADDR if EPT is not enabled" - the reduced
+ * MAXPHYADDR (x86_maxphyaddr: CPUID width less IA32_TME_ACTIVATE[39:36] once TME is locked outside
+ * SEAM) - "else the CPUID value": in VMX non-root operation with EPT the CR3 / paging-entry
+ * addresses are guest-physical, "limited only by the value enumerated by CPUID.80000008H:EAX[7:0]
+ * without any regard to TME or SEAM". This tree has no VMX, so EPT is never in use and the reduced
+ * width always applies; a VMX merge returns phys_bits here for non-root operation with EPT. The
+ * SVM nested-paging walk (get_hphys) keeps phys_bits (AMD; out of scope).
+ */
+static int paging_maxphyaddr(CPUX86State *env)
+{
+    return x86_maxphyaddr(env);
+}
+
+#endif /* __Use_Original_Qemu (U1430) */
 /* return value:
  * -1 = cannot handle fault
  * 0  = nothing more to do
@@ -555,7 +572,12 @@ static int handle_mmu_fault(CPUState *cs, vaddr addr, int size,
      * structure address are reserved (SDM Vol3A 5.5), MAXPHYADDR = cpu->phys_bits, not
      * the fixed TCG_PHYS_ADDR_BITS
      */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1430) */
     uint64_t rsvd_mask = PG_ADDRESS_MASK & ~MAKE_64BIT_MASK(0, env_archcpu(env)->phys_bits);
+#else /* ours (U1430) */
+    /* U1430: M = the effective MAXPHYADDR (paging_maxphyaddr: reduced after the TME lock) */
+    uint64_t rsvd_mask = PG_ADDRESS_MASK & ~MAKE_64BIT_MASK(0, paging_maxphyaddr(env));
+#endif /* __Use_Original_Qemu (U1430) */
     uint32_t page_offset;
     target_ulong vaddr;
     uint32_t pkr;   /* backport e7e7bdabab (U479) */

@@ -235,15 +235,20 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
          * attempt is made to write a 1 to any reserved bit in CR3[63:MAXPHYADDR]"
          * - a #GP, not an SVM exit (we are not an SVM guest). With CR4.PCIDE = 1
          * bit 63 is the no-invalidate flag and is not written ("The instruction
-         * does not modify bit 63 of CR3"). MAXPHYADDR = phys_bits, the width the
-         * page walk uses for its reserved-bit checks.
+         * does not modify bit 63 of CR3"). MAXPHYADDR = the width the page walk
+         * uses for its reserved-bit checks.
+         * U1430: MAXPHYADDR = x86_maxphyaddr - CPUID.80000008H:EAX[7:0] less
+         * IA32_TME_ACTIVATE[39:36] once TME is locked outside SEAM (SDM 093 Vol3A 2.5
+         * footnote p. 2-13, Vol2B MOV CR p. 4-32). No VMX in this tree: a VMX merge
+         * keeps the CPUID width for MOV to CR3 in VMX non-root operation with EPT
+         * (Vol3C 28.3 p. 28-10: "unlike other cases" not reduced). Was: phys_bits.
          */
         if (env->efer & MSR_EFER_LMA) {
             if (env->cr[4] & CR4_PCIDE_MASK) {
                 t0 &= ~(1ULL << 63);
             }
             /* U1180: with LAM, CR3[62:61] are LAM_U48 / LAM_U57, not reserved (Vol3A 4.4.1) */
-            if (t0 & ((~0ULL) << env_archcpu(env)->phys_bits) &
+            if (t0 & ((~0ULL) << x86_maxphyaddr(env)) &
                 ~(x86_lam_cpuid(env) ? (CR3_LAM_U57_MASK | CR3_LAM_U48_MASK) : 0)) {
                 raise_exception_ra(env, EXCP0D_GPF, GETPC());
             }
@@ -833,6 +838,34 @@ static X86CPU *msr_cpu(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U1063) */
+#if __Use_Original_Qemu != 1 /* ours (U1430) */
+/*
+ * NoVmp (ledger U1430): the effective MAXPHYADDR. SDM 093 Vol3A 3.3.1 (p. 3-6): "If
+ * IA32_TME_ACTIVATE[0] = 1 (indicating that TME has been configured), MAXPHYADDR is reduced by the
+ * value of IA32_TME_ACTIVATE[39:36] when a logical processor is outside secure arbitration mode
+ * (SEAM ...); the value is not reduced in SEAM"; the same footnote at every use of MAXPHYADDR (2.5
+ * p. 2-13 CR3, 5.1.4 p. 5-6 and 6.13 p. 6-33 paging entries, 14.11.2.3 p. 14-24 MTRRs, Vol4 2.1). Only
+ * the TDX-reserved KeyID bits (39:36) are subtracted, the shared KeyID bits (35:32 - 39:36) stay
+ * address bits. The width is a function of the lock bit, not of the enable bit (bit 1). Used by MOV
+ * to CR3 (U1430) and the IA-32 page walk without EPT (excp_helper.c, U1430).
+ * Kept at CPUID.80000008H:EAX[7:0] (cpu->phys_bits): CPUID itself (MKTME 336907-007 4.1.4),
+ * guest-physical addresses under EPT (Vol3A 5.1.4 "without any regard to TME or SEAM"; no VMX in
+ * this tree), IA32_RTIT_OUTPUT_BASE (Vol3C 35.4.2 / 36.2.8.7: checked against the CPUID width at
+ * WRMSR; Intel PT is not modelled), IA32_TME_EXCLUDE_MASK / _BASE (writable only before the lock).
+ * The model is always outside SEAM (x86_in_seam), so a lock with TDX_RESERVED_KEYID_BITS > 0 reduces
+ * the width (emulator policy, docs/quirks.md). Review: emulator\notes\eread\T1_tmekeyid_review.md.
+ */
+int x86_maxphyaddr(CPUX86State *env)
+{
+    int m = (int)msr_cpu(env)->phys_bits;      /* a uc_context image: the engine's CPU (U1063) */
+
+    if ((env->tme_activate & 1) && !x86_in_seam(env)) {
+        m -= (int)((env->tme_activate >> 36) & 0xf);
+    }
+    return m;
+}
+
+#endif /* __Use_Original_Qemu (U1430) */
 #if __Use_Original_Qemu != 1 /* ours (U1020) */
 /*
  * NoVmp (ledger U1020): the TME / TME-MK MSRs, present with CPUID.(07H,0):ECX.TME_EN[13] (SDM
@@ -871,8 +904,7 @@ static X86CPU *msr_cpu(CPUX86State *env)
  *     "supported on all parts that enumerate support for SEAM mode" (SDM Vol4) and the model has
  *     no SEAM. U1333: with UC_X86_FEATURE_SEAM it is 2^k - 2^(k-p) (x86_seam_tdx_priv_keyids).
  * Not modelled: memory encryption itself (KeyID bits of physical addresses select nothing; every
- * KeyID reads and writes the same plain-text memory), the MAXPHYADDR reduction by
- * TDX_RESERVED_KEYID_BITS outside SEAM (SDM Vol4 2.1), the exclusion range's effect,
+ * KeyID reads and writes the same plain-text memory), the exclusion range's effect,
  * MK_TME_CORE_ACTIVATE (9FFH, model-specific "BIOS only" MSR) and IA32_TME_CLEAR_SAVED_KEY
  * (9FBH: capability bit 30 = 0).
  */

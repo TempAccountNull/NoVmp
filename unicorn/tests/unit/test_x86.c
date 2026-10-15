@@ -35689,6 +35689,481 @@ static void test_x86_tx_insn(void)
 }
 /* ---- end U1331-U1349 (tx_) ---- */
 
+/*
+ * ---- NoVmp U1430-U1439: MAXPHYADDR reduced by TDX_RESERVED_KEYID_BITS outside SEAM (tm_) ----
+ * SDM 093 Vol3A 3.3.1 (p. 3-6) and the footnotes of 2.5 (p. 2-13), 5.1.4 (p. 5-6) and 14.11.2.3
+ * (p. 14-24): with IA32_TME_ACTIVATE[0] (lock) = 1 a logical processor outside SEAM has MAXPHYADDR =
+ * CPUID.80000008H:EAX[7:0] - IA32_TME_ACTIVATE[39:36] (the model is never in SEAM). Vol3A 13.4.4
+ * footnote 1 (p. 13-8) / Vol4 Table 2-2 1BH (p. 2-5): with IA32_TME_ACTIVATE[39:36] > 0, MAXAPICADDR =
+ * CPUID width - IA32_TME_ACTIVATE[35:32] (every KeyID bit of the APIC base must be 0). Unchanged:
+ * CPUID.80000008H (MKTME 336907-007 4.1.4), PCONFIG's KeyID check, IA32_RTIT_OUTPUT_BASE (not
+ * modelled: #GP). Setup of the review (notes\eread\T1_tmekeyid_review.md section 6, T1-T10): MAX
+ * model, m = 40, k = 6, WRMSR 982H = 2 | 6 << 32 | p << 36 (locks: RDMSR returns the value | 3).
+ * The KeyID bits are not removed from a physical address (docs/quirks.md): an address that keeps a
+ * shared-KeyID bit reaches the host mapping at that address (TM_M1 below).
+ */
+#define TM_R 0x40000000ULL              /* the walked hierarchy and its data page (physical) */
+#define TM_M0 0x1111222233334444ULL     /* data at TM_R */
+#define TM_M1 0x5555666677778888ULL     /* data at TM_R + 2^bit (the address with the bit set) */
+
+static uint8_t tm_img[0x10000];
+
+static uint64_t tm_act(unsigned p)
+{
+    return 2 | (6ull << 32) | ((uint64_t)p << 36);
+}
+
+/* a CPL0 engine on the MAX model for the pc_ helpers; UC_MODE_32 uses the 32-bit register names */
+static void tm_open(PcCtx *c, uc_mode mode, int feat)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    c->real = mode == UC_MODE_32;   /* pc_reg: RAX..RDX -> EAX..EDX (no #GP error-code check) */
+    OK(uc_open(UC_ARCH_X86, mode, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (feat) {
+        OK(uc_ctl_set_x86_features(c->uc, feat));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, PC_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+}
+
+static void tm_lock(PcCtx *c, unsigned p)
+{
+    TEST_CHECK(pc_wrmsr(c, 0x982, tm_act(p)) == -1);
+    TEST_CHECK(pc_rdmsr(c, 0x982) == (tm_act(p) | 3));
+    TEST_MSG("lock with p = %u", p);
+}
+
+static void tm_st64(PcCtx *c, uint64_t a, uint64_t v)
+{
+    OK(uc_mem_write(c->uc, a, &v, 8));
+}
+
+static uint64_t tm_ld64(PcCtx *c, uint64_t a)
+{
+    uint64_t v = 0;
+
+    OK(uc_mem_read(c->uc, a, &v, 8));
+    return v;
+}
+
+/* MOV CR3, RAX: the vector or -1 */
+static int tm_cr3(PcCtx *c, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RAX, v);
+    return pc_run(c, "\x0f\x22\xd8", 3);
+}
+
+/* copies TM_R .. +FFFFh to TM_R + 2^bit (TM_M1 at its data page), then sets the bit in the entry at 'at' */
+static void tm_inject(PcCtx *c, uint64_t at, int bit)
+{
+    uint64_t alias = TM_R + (1ULL << bit);
+
+    OK(uc_mem_read(c->uc, TM_R, tm_img, sizeof(tm_img)));
+    OK(uc_mem_map(c->uc, alias, sizeof(tm_img), UC_PROT_ALL));
+    OK(uc_mem_write(c->uc, alias, tm_img, sizeof(tm_img)));
+    tm_st64(c, alias, TM_M1);
+    tm_st64(c, at, tm_ld64(c, at) | (1ULL << bit));
+}
+
+/* result of one walk: the vector, RAX / EAX, the #PF error code and address */
+typedef struct {
+    int vec;
+    uint64_t rax;
+    uint32_t ec;
+    uint64_t cr2;
+} TmRes;
+
+static void tm_result(PcCtx *c, int vec, TmRes *res)
+{
+    uc_x86_exception e;
+
+    res->vec = vec;
+    res->rax = pc_get(c, UC_X86_REG_RAX);
+    res->ec = 0;
+    res->cr2 = 0;
+    if (vec == 14) {
+        OK(uc_ctl_get_x86_exception(c->uc, &e));
+        res->ec = e.has_error_code ? e.error_code : 0xffffffffu;
+        res->cr2 = e.has_address ? e.address : ~0ULL;
+    }
+}
+
+/* levels of the walked entry */
+enum { TM_PML5E, TM_PML4E, TM_PDPTE, TM_PDE, TM_PTE, TM_PDPTE_1G, TM_PDE_2M };
+static const char *const tm_lvl[] = {"PML5E", "PML4E", "PDPTE", "PDE", "PTE", "PDPTE 1 GB page",
+                                     "PDE 2 MB page"};
+
+/*
+ * 4-level (la57 = 0) or 5-level paging (la57 = 1), 64-bit mode. The code runs through a 2 MB page at
+ * 0 (tables at PC_DATA); 'mov rax, [la]' with la = 2^39 (PML4 slot 1) or 2^48 (PML5 slot 1) walks
+ * its own hierarchy in TM_R: [PML4' +1000h,] PDPT' +2000h, PD' +3000h, PT' +4000h, data page TM_R.
+ * 'bit' >= 0 is set in the address field of entry 'level' (tm_inject); p < 0: TME not locked.
+ */
+static void tm_walk64(int la57, int level, int bit, int p, TmRes *res)
+{
+    const uint64_t pml5 = PC_DATA, pml4 = PC_DATA + 0x1000, pdpt = PC_DATA + 0x2000;
+    const uint64_t pd = PC_DATA + 0x3000, la = la57 ? 1ULL << 48 : 1ULL << 39;
+    uc_x86_msr efer = {0xc0000080, 0};
+    char code[10] = "\x48\xa1";     /* mov rax, [moffs64] */
+    uint64_t at;
+    PcCtx c;
+
+    tm_open(&c, UC_MODE_64, 0);
+    if (p >= 0) {
+        tm_lock(&c, (unsigned)p);
+    }
+    tm_st64(&c, pd, 0x87);                              /* 0-2 MB: P, R/W, U/S, PS */
+    tm_st64(&c, pdpt, pd | 7);
+    tm_st64(&c, pml4, pdpt | 7);
+    tm_st64(&c, pml5, pml4 | 7);
+    OK(uc_mem_map(c.uc, TM_R, 0x10000, UC_PROT_ALL));
+    tm_st64(&c, TM_R, TM_M0);
+    if (la57) {
+        tm_st64(&c, pml5 + 8, (TM_R + 0x1000) | 7);
+        tm_st64(&c, TM_R + 0x1000, (TM_R + 0x2000) | 7);
+    } else {
+        tm_st64(&c, pml4 + 8, (TM_R + 0x2000) | 7);
+    }
+    tm_st64(&c, TM_R + 0x2000, level == TM_PDPTE_1G ? TM_R | 0x87 : (TM_R + 0x3000) | 7);
+    tm_st64(&c, TM_R + 0x3000, level == TM_PDE_2M ? TM_R | 0x87 : (TM_R + 0x4000) | 7);
+    tm_st64(&c, TM_R + 0x4000, TM_R | 7);
+    if (bit >= 0) {
+        switch (level) {
+        case TM_PML5E:
+            at = pml5 + 8;
+            break;
+        case TM_PML4E:
+            at = la57 ? TM_R + 0x1000 : pml4 + 8;
+            break;
+        case TM_PDPTE:
+        case TM_PDPTE_1G:
+            at = TM_R + 0x2000;
+            break;
+        case TM_PDE:
+        case TM_PDE_2M:
+            at = TM_R + 0x3000;
+            break;
+        default:
+            at = TM_R + 0x4000;
+            break;
+        }
+        tm_inject(&c, at, bit);
+    }
+    pc_set(&c, UC_X86_REG_CR3, la57 ? pml5 : pml4);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | (1u << 5) | (la57 ? 1u << 12 : 0));
+    OK(uc_reg_read(c.uc, UC_X86_REG_MSR, &efer));
+    efer.value |= 1u << 8;                              /* LME */
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &efer));
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x80000001ULL);
+    memcpy(code + 2, &la, 8);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    tm_result(&c, pc_run(&c, code, 10), res);
+    OK(uc_close(c.uc));
+}
+
+/* fault: #PF with error code RSVD | P (supervisor read), CR2 = the address; else the data */
+static void tm_expect64(int la57, int level, int bit, int p, int fault)
+{
+    const uint64_t la = la57 ? 1ULL << 48 : 1ULL << 39;
+    int leaf = level == TM_PTE || level == TM_PDPTE_1G || level == TM_PDE_2M;
+    TmRes r;
+
+    tm_walk64(la57, level, bit, p, &r);
+    if (fault) {
+        TEST_CHECK(r.vec == 14 && r.ec == 9 && r.cr2 == la);
+    } else {
+        TEST_CHECK(r.vec == -1 && r.rax == (bit >= 0 && leaf ? TM_M1 : TM_M0));
+    }
+    TEST_MSG("%d-level %s, address bit %d, p %d: expected %s; vector %d error code %x CR2 %" PRIx64
+             " RAX %" PRIx64, la57 ? 5 : 4, tm_lvl[level], bit, p, fault ? "#PF(RSVD)" : "data",
+             r.vec, r.ec, r.cr2, r.rax);
+}
+
+/*
+ * PAE paging (32-bit protected mode, CPL0): PDPT at PC_DATA + 1000h (CR3), PDPTE 0 -> PD with a
+ * 2 MB code page; 'mov eax, [40000000h]' walks PDPTE 1 -> PD' TM_R + 3000h -> PT' + 4000h -> TM_R.
+ * The main tree loads the PDPTEs at the walk (excp_helper.c), so a reserved PDPTE bit is #PF(RSVD)
+ * there (SDM 093 Vol3A 5.4.1 p. 5-14: #GP at MOV to CR3 / CR0 / CR4; existing deviation, review E8).
+ */
+static void tm_walk_pae(int level, int bit, int p, TmRes *res)
+{
+    const uint64_t pdpt = PC_DATA + 0x1000, pd = PC_DATA + 0x2000;
+    static const char code[] = "\xa1\x00\x00\x00\x40";    /* mov eax, [40000000h] */
+    PcCtx c;
+
+    tm_open(&c, UC_MODE_32, 0);
+    if (p >= 0) {
+        tm_lock(&c, (unsigned)p);
+    }
+    tm_st64(&c, pd, 0x87);
+    tm_st64(&c, pdpt, pd | 1);
+    OK(uc_mem_map(c.uc, TM_R, 0x10000, UC_PROT_ALL));
+    tm_st64(&c, TM_R, TM_M0);
+    tm_st64(&c, pdpt + 8, (TM_R + 0x3000) | 1);
+    tm_st64(&c, TM_R + 0x3000, (TM_R + 0x4000) | 7);
+    tm_st64(&c, TM_R + 0x4000, TM_R | 7);
+    if (bit >= 0) {
+        tm_inject(&c, level == TM_PDPTE ? pdpt + 8 : level == TM_PDE ? TM_R + 0x3000 : TM_R + 0x4000,
+                  bit);
+    }
+    pc_set(&c, UC_X86_REG_CR3, pdpt);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | (1u << 5));
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x80000001ULL);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    tm_result(&c, pc_run(&c, code, 5), res);
+    OK(uc_close(c.uc));
+}
+
+static void tm_expect_pae(int level, int bit, int p, int fault)
+{
+    TmRes r;
+
+    tm_walk_pae(level, bit, p, &r);
+    if (fault) {
+        TEST_CHECK(r.vec == 14 && r.ec == 9 && r.cr2 == 0x40000000);
+    } else {
+        TEST_CHECK(r.vec == -1 &&
+                   (uint32_t)r.rax == (uint32_t)(bit >= 0 && level == TM_PTE ? TM_M1 : TM_M0));
+    }
+    TEST_MSG("PAE %s, address bit %d, p %d: expected %s; vector %d error code %x CR2 %" PRIx64
+             " EAX %" PRIx64, tm_lvl[level], bit, p, fault ? "#PF(RSVD)" : "data", r.vec, r.ec, r.cr2,
+             r.rax);
+}
+
+/*
+ * T1/T2: WRMSR 982H with k = 6 and p in {0, 1, 2, 6} is accepted and locks (no SEAM condition in SDM
+ * 093 Vol4 982H p. 2-66 / MKTME Table 4-3: emulator policy, docs/quirks.md); p > k #GP(0) and nothing
+ * changes; IA32_MKTME_KEYID_PARTITIONING (87H) = 2^(k-p) - 1, NUM_TDX_PRIV_KEYIDS (63:32) = 0.
+ */
+static void test_x86_tm_activate(void)
+{
+    static const unsigned ps[] = {0, 1, 2, 6};
+    PcCtx c;
+    size_t i;
+
+    for (i = 0; i < sizeof(ps) / sizeof(ps[0]); i++) {
+        tm_open(&c, UC_MODE_64, 0);
+        tm_lock(&c, ps[i]);
+        TEST_CHECK(pc_rdmsr(&c, 0x87) == (1ULL << (6 - ps[i])) - 1);
+        TEST_MSG("p %u: 87H %" PRIx64, ps[i], pc_rdmsr(&c, 0x87));
+        OK(uc_close(c.uc));
+    }
+    tm_open(&c, UC_MODE_64, 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, tm_act(7)) == 13);                  /* p > k = 6 */
+    TEST_CHECK(pc_wrmsr(&c, 0x982, 2 | (1ull << 32) | (2ull << 36)) == 13);    /* p 2 > k 1 */
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0 && pc_rdmsr(&c, 0x87) == 0);
+    /* nothing locked: MOV CR3 with bit 39 (MAXPHYADDR 40) */
+    TEST_CHECK(tm_cr3(&c, 1ULL << 39) == -1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * T3 and the paths that keep the full width: CPUID.80000008H:EAX before and after the lock (40,
+ * MKTME 336907-007 4.1.4 "MAX_PA ... unaffected"); IA32_RTIT_OUTPUT_BASE (560H; SDM 093 Vol3C
+ * 36.2.8.7 p. 36-23: WRMSR checks 63:CPUID width only) - Intel PT is not modelled, so the MSR is
+ * #GP(0) before and after the lock; the i5-13600K CPUID profile (no TME_EN): CPUID gives 45,
+ * WRMSR / RDMSR 982H #GP(0), MOV CR3 bit 44 accepted and bit 45 #GP(0) (MAXPHYADDR 45, no reduction).
+ */
+static void test_x86_tm_unchanged(void)
+{
+    static const uc_x86_cpuid prof[] = {
+        {0, 0, 0x20, 0x756E6547, 0x6C65746E, 0x49656E69},
+        {1, 0, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+        {7, 0, 0x2, 0x219C27EB, 0x9840078C, 0xBC004410},
+        {7, 1, 0x810, 0, 0, 0},
+        {0x80000000, 0, 0x80000008, 0, 0, 0},
+        {0x80000001, 0, 0, 0, 0x121, 0x2C100800},
+        {0x80000008, 0, 0x302D, 0, 0, 0},
+    };
+    uint32_t r0[4], r1[4];
+    PcCtx c;
+
+    tm_open(&c, UC_MODE_64, 0);
+    pc_cpuid(&c, 0x80000008, 0, r0);
+    TEST_CHECK((r0[0] & 0xff) == 40);
+    TEST_CHECK(pc_wrmsr(&c, 0x560, 1ULL << 38) == 13);
+    tm_lock(&c, 2);
+    pc_cpuid(&c, 0x80000008, 0, r1);
+    TEST_CHECK(memcmp(r0, r1, sizeof(r0)) == 0);
+    TEST_MSG("CPUID.80000008H EAX %08x -> %08x", r0[0], r1[0]);
+    TEST_CHECK(pc_wrmsr(&c, 0x560, 1ULL << 38) == 13);
+    OK(uc_close(c.uc));
+
+    memset(&c, 0, sizeof(c));
+    c.pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_cpu_model(c.uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof, sizeof(prof) / sizeof(prof[0])));
+    OK(uc_mem_map(c.uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_hook_add(c.uc, &c.hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c.cap, 1, 0));
+    pc_cpuid(&c, 0x80000008, 0, r0);
+    TEST_CHECK(r0[0] == 0x302D);
+    pc_cpuid(&c, 7, 0, r0);
+    TEST_CHECK(!(r0[2] & (1u << 13)));
+    TEST_CHECK(pc_wrmsr(&c, 0x982, tm_act(2)) == 13);
+    pc_set(&c, UC_X86_REG_RCX, 0x982);
+    TEST_CHECK(pc_run(&c, "\x0f\x32", 2) == 13);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 44) == -1);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 45) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * T4: MOV to CR3 (64-bit mode; SDM 093 Vol3A 2.5 footnote p. 2-13, Vol2B MOV CR: #GP(0) for a 1 in
+ * CR3[63:MAXPHYADDR]): p = 2 -> bit 38 #GP(0) and CR3 unchanged, bit 37 accepted; before the lock bit
+ * 38 is accepted; p = 0 -> bit 39 accepted, bit 40 #GP(0); p = 6 -> bit 34 #GP(0), bit 33 accepted;
+ * the CR4.PCIDE no-invalidate bit 63 and the LAM bits 62:61 stay outside the check; a uc_context
+ * saved before the lock restores the full width (T18).
+ */
+static void test_x86_tm_mov_cr3(void)
+{
+    uc_context *ctx;
+    PcCtx c;
+
+    tm_open(&c, UC_MODE_64, 0);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 38) == -1 && pc_get(&c, UC_X86_REG_CR3) == 1ULL << 38);
+    TEST_CHECK(tm_cr3(&c, 0x1000) == -1);
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    tm_lock(&c, 2);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 38) == 13 && pc_get(&c, UC_X86_REG_CR3) == 0x1000);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 39) == 13 && pc_get(&c, UC_X86_REG_CR3) == 0x1000);
+    TEST_CHECK(tm_cr3(&c, (1ULL << 37) | 0x2000) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == ((1ULL << 37) | 0x2000));
+    OK(uc_context_restore(c.uc, ctx));
+    OK(uc_context_free(ctx));
+    TEST_CHECK(pc_rdmsr(&c, 0x982) == 0);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 38) == -1 && pc_get(&c, UC_X86_REG_CR3) == 1ULL << 38);
+    OK(uc_close(c.uc));
+
+    tm_open(&c, UC_MODE_64, 0);
+    tm_lock(&c, 0);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 39) == -1);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 40) == 13);
+    OK(uc_close(c.uc));
+
+    tm_open(&c, UC_MODE_64, 0);
+    tm_lock(&c, 6);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 34) == 13);
+    TEST_CHECK(tm_cr3(&c, 1ULL << 33) == -1);
+    OK(uc_close(c.uc));
+
+    /* CR4.PCIDE: bit 63 is not written and not checked */
+    tm_open(&c, UC_MODE_64, 0);
+    tm_lock(&c, 2);
+    pc_set(&c, UC_X86_REG_CR4, pc_get(&c, UC_X86_REG_CR4) | (1u << 17));
+    TEST_CHECK(tm_cr3(&c, (1ULL << 63) | (1ULL << 37)) == -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR3) == 1ULL << 37);
+    TEST_CHECK(tm_cr3(&c, (1ULL << 63) | (1ULL << 38)) == 13);
+    OK(uc_close(c.uc));
+
+    /* LAM (UC_X86_FEATURE_LAM): CR3[62:61] are controls, not address bits */
+    tm_open(&c, UC_MODE_64, UC_X86_FEATURE_LAM);
+    tm_lock(&c, 2);
+    TEST_CHECK(tm_cr3(&c, (1ULL << 62) | (1ULL << 37)) == -1);
+    TEST_CHECK(tm_cr3(&c, (1ULL << 61) | (1ULL << 37)) == -1);
+    TEST_CHECK(tm_cr3(&c, (1ULL << 61) | (1ULL << 38)) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * T5: the paging-structure entries of 4-level and 5-level paging (no EPT in the main tree; SDM 093
+ * Vol3A 5.1.4 p. 5-6, 5.5 tables, 6.13 Tables 6-8 / 6-9): every level (PML5E .. PTE, 1 GB and 2 MB
+ * pages), p = 2 (MAXPHYADDR 38): address bit 38 -> #PF with RSVD | P; bit 37 (a shared-KeyID bit)
+ * translates; before the lock bit 38 translates; bit 40 (MAXPHYADDR 40) is reserved without TME.
+ */
+static void test_x86_tm_paging_width(void)
+{
+    int la57, level;
+
+    for (la57 = 0; la57 < 2; la57++) {
+        for (level = la57 ? TM_PML5E : TM_PML4E; level <= TM_PDE_2M; level++) {
+            tm_expect64(la57, level, 38, 2, 1);
+            tm_expect64(la57, level, 37, 2, 0);
+            tm_expect64(la57, level, 38, -1, 0);
+        }
+    }
+    tm_expect64(0, TM_PTE, -1, 2, 0);
+    tm_expect64(0, TM_PTE, 40, -1, 1);
+}
+
+/*
+ * T6: the width boundary MAXPHYADDR = 40 - p (bit 40 - p reserved, bit 39 - p an address bit) for
+ * p = 6, 1, 0 on a PTE and a PML4E; p = 2 with the lowest KeyID bit (34) set.
+ */
+static void test_x86_tm_width_bounds(void)
+{
+    static const struct {
+        int p, bit, fault;
+    } t[] = {
+        {6, 34, 1}, {6, 33, 0}, {6, 39, 1}, {1, 39, 1}, {1, 38, 0}, {0, 39, 0}, {0, 40, 1},
+        {2, 34, 0},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        tm_expect64(0, TM_PTE, t[i].bit, t[i].p, t[i].fault);
+        tm_expect64(0, TM_PML4E, t[i].bit, t[i].p, t[i].fault);
+    }
+}
+
+/*
+ * T7: PAE paging (SDM 093 Vol3A 5.4.1 p. 5-14, Tables 5-8 .. 5-11): PDPTE, PDE and PTE with
+ * address bit 38 and p = 2 -> #PF(RSVD) at the walk; bit 37 translates; bit 38 before the lock
+ * translates.
+ */
+static void test_x86_tm_pae_pdpte(void)
+{
+    static const int lv[] = {TM_PDPTE, TM_PDE, TM_PTE};
+    size_t i;
+
+    for (i = 0; i < sizeof(lv) / sizeof(lv[0]); i++) {
+        tm_expect_pae(lv[i], 38, 2, 1);
+        tm_expect_pae(lv[i], 37, 2, 0);
+        tm_expect_pae(lv[i], 38, -1, 0);
+    }
+    tm_expect_pae(TM_PTE, -1, 2, 0);
+}
+
+/*
+ * T10: PCONFIG MKTME_KEY_PROGRAM outside SEAM (SDM 093 Vol2B PCONFIG p. 4-272): with k = 6, p = 2 a
+ * KeyID with any of bits 5:4 set (SEAM-private) is #GP(0); 1 .. 15 are programmable; p = 0: 63 is
+ * programmable. AES-XTS-128 (IA32_TME_ACTIVATE bit 48) is enabled so the KeyID check decides.
+ */
+static void test_x86_tm_pconfig(void)
+{
+    static const unsigned bad[] = {16, 32, 48, 63};
+    const uint64_t a = PC_DATA + 0x1000;
+    uint8_t k1[64], k2[64];
+    PcCtx c;
+    size_t i;
+
+    memset(k1, 0x11, sizeof(k1));
+    memset(k2, 0x22, sizeof(k2));
+    tm_open(&c, UC_MODE_64, 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, tm_act(2) | (1ULL << 48)) == -1);
+    pc_kps(&c, a, 15, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, a) == -1);
+    pc_kps(&c, a, 1, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, a) == -1);
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        pc_kps(&c, a, bad[i], 0, 1, k1, k2, 0);
+        TEST_CHECK(pc_pconfig(&c, 0, a) == 13);
+        TEST_MSG("KeyID %u", bad[i]);
+    }
+    OK(uc_close(c.uc));
+
+    tm_open(&c, UC_MODE_64, 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x982, tm_act(0) | (1ULL << 48)) == -1);
+    pc_kps(&c, a, 63, 0, 1, k1, k2, 0);
+    TEST_CHECK(pc_pconfig(&c, 0, a) == -1);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1430-U1439 (tm_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -36154,4 +36629,11 @@ TEST_LIST = {
     {"test_x86_tx_optin", test_x86_tx_optin},
     {"test_x86_tx_seamrr", test_x86_tx_seamrr},
     {"test_x86_tx_insn", test_x86_tx_insn},
+    {"test_x86_tm_activate", test_x86_tm_activate},
+    {"test_x86_tm_unchanged", test_x86_tm_unchanged},
+    {"test_x86_tm_mov_cr3", test_x86_tm_mov_cr3},
+    {"test_x86_tm_paging_width", test_x86_tm_paging_width},
+    {"test_x86_tm_width_bounds", test_x86_tm_width_bounds},
+    {"test_x86_tm_pae_pdpte", test_x86_tm_pae_pdpte},
+    {"test_x86_tm_pconfig", test_x86_tm_pconfig},
     {NULL, NULL}};
