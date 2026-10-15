@@ -402,7 +402,39 @@ namespace at
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
 					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
 					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */
-					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */ };
+					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */
+					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */ };
+
+	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
+	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
+	// (SDM 092 Vol2A CPUID): 40H Core (P-core), 20H Atom (E-core)
+	static std::string cpuid_profile_core_type( const std::vector<uc_x86_cpuid>& v )
+	{
+		const uc_x86_cpuid* l7 = nullptr; const uc_x86_cpuid* l1a = nullptr;
+		for ( const auto& e : v )
+		{
+			if ( e.leaf == 7 && e.subleaf == 0 ) l7 = &e;
+			if ( e.leaf == 0x1A && e.subleaf == 0 ) l1a = &e;
+		}
+		if ( !l7 || !( ( l7->edx >> 15 ) & 1 ) ) return "none (07H.0:EDX[15] hybrid = 0: no core type reported)";
+		const unsigned t = l1a ? l1a->eax >> 24 : 0;
+		char b[ 96 ];
+		if ( t == 0x40 ) return "P (CPUID.1AH:EAX[31:24] = 40H Core)";
+		if ( t == 0x20 ) return "E (CPUID.1AH:EAX[31:24] = 20H Atom)";
+		std::snprintf( b, sizeof( b ), "unknown (CPUID.1AH:EAX[31:24] = %02XH)", t );
+		return b;
+	}
+	static void print_cpuid_profile( const case_opts& o, const char* ind = "" )
+	{
+		if ( o.cpuid.empty() )
+		{
+			if ( o.cpuid_path.empty() ) std::printf( "%scpuid profile: none (no --host/--guest/--vm/--cpuid: Unicorn's CPU model)\n", ind );
+			else std::printf( "%scpuid profile: none (%s %s: no rows read; Unicorn's CPU model)\n", ind, o.cpuid_src.c_str(), o.cpuid_path.c_str() );
+			return;
+		}
+		std::printf( "%scpuid profile: %s (%s), %zu rows\n", ind, o.cpuid_path.c_str(), o.cpuid_src.c_str(), o.cpuid.size() );
+		std::printf( "%scpuid core type: %s\n", ind, cpuid_profile_core_type( o.cpuid ).c_str() );
+	}
 
 	// U1040: one --native-under-sde result per expected-value line: "L <line> <hash> run <faulted> <vector>
 	// [OFF:HEX ...]" (the bytes of 'state' that differ from the input state), "L <line> <hash> skip
@@ -769,6 +801,7 @@ namespace at
 			if ( opt.rdrand == UC_X86_RDRAND_HOST ) std::printf( "rdrand: host DRNG (--HostSeed)\n" );
 			else std::printf( "rdrand: seeded, seed 0x%llX (--seeded, the default)\n", ( unsigned long long ) opt.rdrand_seed );
 			print_platform( opt.platform );   // U1465
+			print_cpuid_profile( opt );       // U1491
 		}
 		native_engine hw;
 		bool hw_open = false;

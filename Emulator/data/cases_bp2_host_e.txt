@@ -1,0 +1,43 @@
+# U1493 (agent bareprofile, plan 1.J.52): emu-alltest --host --host-core E selects the BARE-HOST CPUID profile, E-core
+# (Emulator\data\cpuid_i5-13600k_bare_host_ecore.txt, derived from the bare-host captures by Emulator\tools\bare_host_cpuid.py;
+# representative logical processor 12, x2APIC ID 30H). Expected values = that file's rows (the capture), read through the
+# emulator's profile rules (U68). No --cpuid: the file comes from --host --host-core E alone.
+#   emu-alltest --cases Emulator\data\cases_bp2_host_e.txt --host --host-core E --expect-only     (suite bp2_host_e)
+# The same lines fail with --host alone (the P-core profile) and with --guest (negative controls in bare_host_cpuid.py --cli).
+# --- 01H: initial APIC ID 30H (LP 12), the rest as on the P-core: SMX [6] = 1
+cpuid | rax=1 rcx=0 => rax=0xB0671 rbx=0x30800800 rcx=0x7FFAFBFF rdx=0xBFEBFBFF
+mov eax, 1; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 6; and r8d, 1 =>! r8=1
+# --- 07H.0 as on the P-core: Hybrid [15] = 1, CET_IBT [20] = 1
+cpuid | rax=7 rcx=0 => rax=0x2 rbx=0x239C27EB rcx=0x98C027AC rdx=0xFC1CC410
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 15; and r8d, 1 =>! r8=1
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 20; and r8d, 1 =>! r8=1
+# --- 04H: E-core L1D 8 ways (EBX), L1I 128 sets, L2 4096 sets (ECX)
+cpuid | rax=4 rcx=0 => rax=0xFC004121 rbx=0x01C0003F rcx=0x3F rdx=0
+cpuid | rax=4 rcx=1 => rax=0xFC004122 rbx=0x01C0003F rcx=0x7F rdx=0
+cpuid | rax=4 rcx=2 => rax=0xFC01C143 rbx=0x03C0003F rcx=0xFFF rdx=0
+# --- 06H: EDX[31:16] = HFI row 6 (LP 12)
+cpuid | rax=6 rcx=0 => rax=0x00DF8FF7 rbx=0x2 rcx=0x401 rdx=0x00060003
+# --- 0BH / 1FH: one LP at the SMT level, x2APIC ID 30H (also in an unlisted sub-leaf)
+cpuid | rax=0xB rcx=0 => rax=0x1 rbx=0x1 rcx=0x100 rdx=0x30
+cpuid | rax=0x1F rcx=0 => rax=0x1 rbx=0x1 rcx=0x100 rdx=0x30
+cpuid | rax=0x1F rcx=1 => rax=0x7 rbx=0x14 rcx=0x201 rdx=0x30
+cpuid | rax=0x1F rcx=4 => rax=0 rbx=0 rcx=0x4 rdx=0x30
+# --- 14H Intel Processor Trace: sub-leaf 0 ECX[31] LIP = 1 on the E-core
+cpuid | rax=0x14 rcx=0 => rax=0x1 rbx=0x5F rcx=0x80000007 rdx=0
+cpuid | rax=0x14 rcx=1 => rax=0x02490002 rbx=0x003F003F rcx=0 rdx=0
+# --- 16H: max F3Ch = 3900 MHz on the E-core
+cpuid | rax=0x16 rcx=0 => rax=0xDAC rbx=0xF3C rcx=0x64 rdx=0
+# --- 18H: 4 sub-leaves on the E-core; sub-leaf 5 (listed on the P-core) is unlisted here and reads 0
+cpuid | rax=0x18 rcx=0 => rax=0x4 rbx=0 rcx=0 rdx=0
+cpuid | rax=0x18 rcx=1 => rax=0 rbx=0x00300001 rcx=0x1 rdx=0x121
+cpuid | rax=0x18 rcx=5 => rax=0 rbx=0 rcx=0 rdx=0
+# --- 1AH hybrid core type 20H Atom (E-core), native model ID 1
+cpuid | rax=0x1A rcx=0 => rax=0x20000001 rbx=0 rcx=0 rdx=0
+# --- 1CH architectural LBR: EAX[31] = 1 on the E-core
+cpuid | rax=0x1C rcx=0 => rax=0xC000000B rbx=0x7 rcx=0x7 rdx=0
+# --- 80000006H L2 4 MB (the E-core module's); 80000008H 46 physical address bits
+cpuid | rax=0x80000006 rcx=0 => rax=0 rbx=0 rcx=0x10008040 rdx=0
+cpuid | rax=0x80000008 rcx=0 => rax=0x302E rbx=0 rcx=0 rdx=0
+# --- the profile's "#@ microcode 00000129 platform-id 1" line (U1473)
+mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov r8d, eax; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129 r8=0xB0671
+rdmsr | rcx=0x17 =>! rax=0 rdx=0x40000

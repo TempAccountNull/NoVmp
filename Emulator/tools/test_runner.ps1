@@ -463,6 +463,18 @@ Add-Exp 'cases_ucode' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid )
 # "uc_ctl_set_x86_microcode failed"
 Add-Exp 'cases_ucode_host' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid, '--host' )
 Add-Exp 'cases_ucode_guest' 'cases_ucode' 'sysmsr cpuid expect' @( '--cpuid', $Cpuid, '--guest' )
+# U1491-U1493 (agent bareprofile, plan 1.J.52): the platform switch selects the CPUID profile - --host the bare host
+# (cpuid_i5-13600k_bare_host.txt, P-core; --host-core E: _bare_host_ecore.txt), --guest / --vm the VMware guest (the gate
+# profile); --cpuid FILE overrides. Expected values from the profile rows (the captures); bp2_profile_check re-derives both
+# bare-host files from the captures (Emulator\tools\bare_host_cpuid.py --check, byte for byte); bp2_cli checks the switch
+# exclusions, the log lines and the negative controls (the wrong environment's expectations fail).
+Add-Exp 'bp2_host_p' 'cases_bp2_host_p' 'cpuid expect bp2' @( '--host' )
+Add-Exp 'bp2_host_e' 'cases_bp2_host_e' 'cpuid expect bp2' @( '--host', '--host-core', 'E' )
+Add-Exp 'bp2_guest' 'cases_bp2_guest' 'cpuid expect bp2' @( '--guest' )
+Add-Exp 'bp2_vm' 'cases_bp2_guest' 'cpuid expect bp2' @( '--vm' )
+Add-Exp 'bp2_cpuid_override' 'cases_bp2_guest' 'cpuid expect bp2' @( '--host', '--cpuid', $Cpuid )
+Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
+Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

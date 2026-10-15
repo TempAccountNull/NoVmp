@@ -1,0 +1,50 @@
+# U1493 (agent bareprofile, plan 1.J.52): emu-alltest --host selects the BARE-HOST CPUID profile, P-core
+# (Emulator\data\cpuid_i5-13600k_bare_host.txt, derived from the bare-host captures by Emulator\tools\bare_host_cpuid.py;
+# representative logical processor 0, x2APIC ID 0). Expected values = that file's rows (the capture), read through the
+# emulator's profile rules (U68: an unlisted sub-leaf reads 0, 0BH / 1FH echo ECX[7:0] with the x2APIC ID, a leaf above
+# the maximum returns the highest basic leaf 20H). No --cpuid: the file comes from --host alone.
+#   emu-alltest --cases Emulator\data\cases_bp2_host_p.txt --host --expect-only            (suite bp2_host_p)
+#   emu-alltest --cases Emulator\data\cases_bp2_host_p.txt --host --host-core P --expect-only
+# The same lines fail with --guest and with --host --host-core E (negative controls in bare_host_cpuid.py --cli).
+# --- vendor / maximum leaf (same in every profile of this processor)
+cpuid | rax=0 rcx=0 => rax=0x20 rbx=0x756E6547 rcx=0x6C65746E rdx=0x49656E69
+# --- 01H: signature 000B0671, initial APIC ID 0, ECX 7FFAFBFF (SMX, VMX, ...; OSXSAVE[27] follows CR4 = 1), EDX BFEBFBFF
+cpuid | rax=1 rcx=0 => rax=0xB0671 rbx=0x00800800 rcx=0x7FFAFBFF rdx=0xBFEBFBFF
+# 01H:ECX[6] SMX = 1 (the VMware guest hides it: 0)
+mov eax, 1; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 6; and r8d, 1 =>! r8=1
+# --- 07H.0: EDX FC1CC410 - Hybrid [15] = 1, PCONFIG [18], CET_IBT [20] = 1 (guest: BC004410, all 0); ECX[4] OSPKE follows CR4 (0)
+cpuid | rax=7 rcx=0 => rax=0x2 rbx=0x239C27EB rcx=0x98C027AC rdx=0xFC1CC410
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 15; and r8d, 1 =>! r8=1
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 20; and r8d, 1 =>! r8=1
+cpuid | rax=7 rcx=1 => rax=0x00400810 rbx=0 rcx=0 rdx=0x00040000
+# --- 04H deterministic cache parameters: P-core L1D 12 ways (EBX), L1I / L2 sets (ECX); E-core values differ
+cpuid | rax=4 rcx=0 => rax=0xFC004121 rbx=0x02C0003F rcx=0x3F rdx=0
+cpuid | rax=4 rcx=1 => rax=0xFC004122 rbx=0x01C0003F rcx=0x3F rdx=0
+cpuid | rax=4 rcx=2 => rax=0xFC01C143 rbx=0x03C0003F rcx=0x7FF rdx=0
+# --- 06H thermal / power: EDX[31:16] = HFI row 0 (LP 0)
+cpuid | rax=6 rcx=0 => rax=0x00DF8FF7 rbx=0x2 rcx=0x401 rdx=0x3
+# --- 0BH / 1FH topology: SMT level (2 LPs), core level, x2APIC ID 0; an unlisted 1FH sub-leaf echoes ECX
+cpuid | rax=0xB rcx=0 => rax=0x1 rbx=0x2 rcx=0x100 rdx=0
+cpuid | rax=0x1F rcx=1 => rax=0x7 rbx=0x14 rcx=0x201 rdx=0
+cpuid | rax=0x1F rcx=5 => rax=0 rbx=0 rcx=0x5 rdx=0
+# --- 14H Intel Processor Trace (the guest reports 0): sub-leaf 0 ECX[31] LIP = 0 on the P-core, sub-leaf 1
+cpuid | rax=0x14 rcx=0 => rax=0x1 rbx=0x5F rcx=0x7 rdx=0
+cpuid | rax=0x14 rcx=1 => rax=0x02490002 rbx=0x003F003F rcx=0 rdx=0
+# --- 16H frequencies: max 13ECh = 5100 MHz on the P-core
+cpuid | rax=0x16 rcx=0 => rax=0xDAC rbx=0x13EC rcx=0x64 rdx=0
+# --- 18H address translation: 8 sub-leaves on the P-core (E-core: 4); sub-leaf 8 listed
+cpuid | rax=0x18 rcx=0 => rax=0x8 rbx=0 rcx=0 rdx=0
+cpuid | rax=0x18 rcx=8 => rax=0 rbx=0x00080009 rcx=0x80 rdx=0x4043
+# --- 1AH hybrid core type 40H Core (P-core), native model ID 1
+cpuid | rax=0x1A rcx=0 => rax=0x40000001 rbx=0 rcx=0 rdx=0
+# --- 1CH architectural LBR: EAX[31] = 0 on the P-core
+cpuid | rax=0x1C rcx=0 => rax=0x4000000B rbx=0x7 rcx=0x7 rdx=0
+# --- 40000000H: no hypervisor range, the highest basic leaf 20H (sub-leaf 0: 0 1 0 0) - the guest returns 0 0 0 0
+cpuid | rax=0x40000000 rcx=0 => rax=0 rbx=0x1 rcx=0 rdx=0
+# --- 80000006H L2 2 MB on the P-core; 80000008H 46 physical address bits (the guest: 45)
+cpuid | rax=0x80000006 rcx=0 => rax=0 rbx=0 rcx=0x08007040 rdx=0
+cpuid | rax=0x80000008 rcx=0 => rax=0x302E rbx=0 rcx=0 rdx=0
+# --- the profile's "#@ microcode 00000129 platform-id 1" line (UC_CTL_X86_MICROCODE, U1473): IA32_BIOS_SIGN_ID after
+# CPUID (SDM Vol3A 12.11.7.1 Example 12-9) and IA32_PLATFORM_ID bits 52:50 = 1
+mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov r8d, eax; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129 r8=0xB0671
+rdmsr | rcx=0x17 =>! rax=0 rdx=0x40000

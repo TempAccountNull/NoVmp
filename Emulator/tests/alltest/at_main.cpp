@@ -47,6 +47,13 @@
 //   --hw-cpu SPEC    with --cases: pin the native runs to a logical CPU / a comma list / "all" /
 //                    "P" / "E" (rotating; U1050); without it they are not pinned
 //   --hw-load N      with --hw-repeat: N busy threads beside the native runs (U1050)
+//   --host [--host-core P|E] | --guest | --vm | --AMD   the platform profile (U1465 SMM revision; U1491 CPUID):
+//                    --host = the bare host, CPUID profile Emulator\data\cpuid_i5-13600k_bare_host.txt (P-core,
+//                    default) or _bare_host_ecore.txt (--host-core E); --guest / --vm = the VMware guest,
+//                    cpuid_i5-13600k.txt; --AMD and none: no profile. Mutually exclusive; --host-core only with
+//                    --host; an explicit --cpuid FILE overrides the default (logged). The effective profile
+//                    (--cpuid or the default, with its "#@ microcode" line and --strict / --no-strict) goes to
+//                    the case engines and, since U1491, also to the quick / --full sweep's Unicorn engines.
 //
 // Each form runs with identical randomized state on the host CPU (self-generated snippets only,
 // native-safe forms) and on Unicorn UC_CPU_X86_MAX; the full architectural result is compared.
@@ -62,6 +69,7 @@
 #include "at_bench.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <chrono>
 #include <cmath>
@@ -440,6 +448,7 @@ namespace at
 	static int g_rdrand = UC_X86_RDRAND_SEEDED;
 	static uint64_t g_rdrand_seed = 0;
 	static int g_platform = PLATFORM_NONE;   // U1465: --host / --guest / --AMD
+	static const case_opts* g_copt = nullptr;   // U1491: CPUID profile (--host / --guest / --vm / --cpuid), strict, microcode
 
 	static std::string outcome_str( const result& r ) { return r.faulted ? "#" + std::to_string( r.vector ) : "ok"; }
 
@@ -454,6 +463,11 @@ namespace at
 		uc.rdrand = g_rdrand;
 		uc.rdrand_seed = g_rdrand_seed;
 		uc.smm_revision = platform_smm_revision( g_platform );   // U1465
+		if ( g_copt )   // U1491: the run's CPUID profile (none without --host/--guest/--vm/--cpuid: unchanged)
+		{
+			uc.cpuid = g_copt->cpuid; uc.strict = g_copt->strict;
+			uc.ucode_set = g_copt->ucode_set; uc.ucode_rev = g_copt->ucode_rev; uc.ucode_pid = g_copt->ucode_pid;
+		}
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		// U1124: every iteration starts from the state after load (was: iteration n + 1 started
 		// from where iteration n left the CPU - a privileged form that changed CPL / CS ran its
@@ -512,6 +526,8 @@ int main( int argc, char** argv )
 	double bench_scale = 1.0;
 	std::string bench_csv;
 	int bench_profile = 0;
+	std::string platform_flag;   // U1491: the platform switch as given (--host / --guest / --vm / --AMD)
+	char host_core = 0;          // U1491: --host-core P|E (0 = not given: P)
 	for ( int i = 1; i < argc; ++i )
 	{
 		std::string a = argv[ i ];
@@ -531,6 +547,8 @@ int main( int argc, char** argv )
 			// U1473: the profile's "#@ microcode REV platform-id N" line (UC_CTL_X86_MICROCODE)
 			copt.ucode_set = at::load_cpuid_microcode( path, copt.ucode_rev, copt.ucode_pid, uerr );
 			if ( !uerr.empty() ) { std::printf( "--cpuid %s: %s\n", path.c_str(), uerr.c_str() ); return 2; }
+			copt.cpuid_path = path;   // U1491: an explicit profile overrides the --host / --guest / --vm default
+			copt.cpuid_src = "--cpuid";
 		}
 		else if ( a == "--strict" ) copt.strict = 1;
 		else if ( a == "--no-strict" ) copt.strict = 0;   // U435: explicit UC_CTL_X86_CPUID_STRICT = 0
@@ -566,11 +584,21 @@ int main( int argc, char** argv )
 		else if ( a == "--rdrand-seed" ) { copt.rdrand = UC_X86_RDRAND_SEEDED; copt.rdrand_seed = std::stoull( val(), nullptr, 0 ); }
 		else if ( a == "--HostSeed" ) copt.rdrand = UC_X86_RDRAND_HOST;
 		// U1465: the platform profile (docs/smm.md), mutually exclusive; selects the SMM revision identifier
-		else if ( a == "--host" || a == "--guest" || a == "--AMD" )
+		// U1491: --vm = --guest (the VMware guest); a different switch of the four is an error
+		else if ( a == "--host" || a == "--guest" || a == "--vm" || a == "--AMD" )
 		{
-			const int p = a == "--host" ? PLATFORM_HOST : a == "--guest" ? PLATFORM_GUEST : PLATFORM_AMD;
-			if ( copt.platform != PLATFORM_NONE && copt.platform != p ) { std::printf( "--host, --guest and --AMD exclude each other\n" ); return 2; }
+			const int p = a == "--host" ? PLATFORM_HOST : ( a == "--guest" || a == "--vm" ) ? PLATFORM_GUEST : PLATFORM_AMD;
+			if ( copt.platform != PLATFORM_NONE && copt.platform != p ) { std::printf( "--host, --guest, --vm and --AMD exclude each other\n" ); return 2; }
 			copt.platform = p;
+			if ( platform_flag.empty() ) platform_flag = a;
+		}
+		// U1491: the core type of the bare-host CPUID profile (with --host only): P (default) or E
+		else if ( a == "--host-core" )
+		{
+			const std::string v = val();
+			if ( host_core ) { std::printf( "--host-core given twice\n" ); return 2; }
+			if ( v != "P" && v != "p" && v != "E" && v != "e" ) { std::printf( "--host-core P|E: \"%s\" is neither P (P-core) nor E (E-core)\n", v.c_str() ); return 2; }
+			host_core = char( std::toupper( (unsigned char)v[ 0 ] ) );
 		}
 		// U1040: SDE cross-check (at_cases.hpp): pass 1 under Intel SDE (sde.exe -<cpu> -- emu-alltest ...) writes the
 		// native results of the expected-value lines, pass 2 (a normal run) compares Unicorn with them
@@ -585,13 +613,41 @@ int main( int argc, char** argv )
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host|--guest|--AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+	}
+	// U1491 (user requirement 2026-10-15: emulate the VMware guest OR the bare host, each from its own
+	// captures): the platform switch also selects the CPUID profile (with its "#@ microcode" line) - --host the
+	// bare-host profile of the core type --host-core P|E (default P), --guest / --vm the VMware-guest profile;
+	// an explicit --cpuid FILE wins (logged). --AMD and no switch: no profile, as before.
+	if ( host_core && copt.platform != PLATFORM_HOST ) { std::printf( "--host-core needs --host (the bare-host profile)\n" ); return 2; }
+	if ( copt.platform == PLATFORM_HOST || copt.platform == PLATFORM_GUEST )
+	{
+		char exe_path[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe_path, MAX_PATH );
+		// build\x64\Release\tests -> the repository root -> Emulator\data
+		const std::filesystem::path data = ( std::filesystem::path( exe_path ).parent_path() / ".." / ".." / ".." / ".." / "Emulator" / "data" ).lexically_normal();
+		const bool ecore = host_core == 'E';
+		const char* file = copt.platform == PLATFORM_GUEST ? "cpuid_i5-13600k.txt" : ecore ? "cpuid_i5-13600k_bare_host_ecore.txt" : "cpuid_i5-13600k_bare_host.txt";
+		const std::string def = ( data / file ).string();
+		const std::string flags = platform_flag + ( ecore ? " --host-core E" : "" );
+		if ( !copt.cpuid_path.empty() )
+			copt.cpuid_src = "--cpuid, overrides the " + flags + " default " + def;
+		else
+		{
+			std::string uerr;
+			copt.cpuid = at::load_cpuid_profile( def );
+			if ( copt.cpuid.empty() ) { std::printf( "%s: cannot read the CPUID profile %s\n", flags.c_str(), def.c_str() ); return 2; }
+			copt.ucode_set = at::load_cpuid_microcode( def, copt.ucode_rev, copt.ucode_pid, uerr );
+			if ( !uerr.empty() ) { std::printf( "%s: %s: %s\n", flags.c_str(), def.c_str(), uerr.c_str() ); return 2; }
+			copt.cpuid_path = def;
+			copt.cpuid_src = flags + " default: " + ( copt.platform == PLATFORM_GUEST ? "VMware guest" : ecore ? "bare host, E-core" : "bare host, P-core" );
+		}
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );
 	at::g_rdrand = copt.rdrand;
 	at::g_rdrand_seed = copt.rdrand_seed;
 	at::g_platform = copt.platform;   // U1465
+	at::g_copt = &copt;               // U1491: the CPUID profile / strict / microcode of the sweep's Unicorn engines
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );
@@ -608,9 +664,12 @@ int main( int argc, char** argv )
 				 maj, min, full ? "full" : "quick", iters, sample );
 	std::printf( "  output: %s\n", out_dir.c_str() );
 	{
-		// U540: the sweep runs Unicorn in its reset state (UC_CPU_X86_MAX, no profile, no opt-in);
-		// printed with the host's XCR0 for comparison
+		// U540: the sweep runs Unicorn in its reset state (UC_CPU_X86_MAX, no opt-in; U1491: the CPUID
+		// profile of --host / --guest / --vm / --cpuid, none without them); printed with the host's XCR0
 		unicorn_engine pe( UC_CPU_X86_MAX );
+		// U1491: with the run's CPUID profile (as run_form installs it), so XCR0 is the profile's reset value
+		pe.cpuid = copt.cpuid; pe.strict = copt.strict;
+		pe.ucode_set = copt.ucode_set; pe.ucode_rev = copt.ucode_rev; pe.ucode_pid = copt.ucode_pid;
 		uint64_t ex = 0, ec = 0;
 		std::string perr;
 		if ( pe.probe( ex, ec, perr ) )
@@ -621,6 +680,7 @@ int main( int argc, char** argv )
 	}
 	std::printf( "  " );
 	print_platform( copt.platform );   // U1465
+	print_cpuid_profile( copt, "  " );   // U1491
 
 	// universe
 	auto t0 = std::chrono::steady_clock::now();

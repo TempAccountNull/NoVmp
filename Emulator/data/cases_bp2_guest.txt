@@ -1,0 +1,25 @@
+# U1493 (agent bareprofile, plan 1.J.52): emu-alltest --guest / --vm keep the VMware-GUEST CPUID profile
+# (Emulator\data\cpuid_i5-13600k.txt, the gate profile; captured inside the guest, vCPU 5 / 6). Expected values = that file's
+# rows. Also the --cpuid override check: --host --cpuid cpuid_i5-13600k.txt must give these guest values, not the bare host's.
+#   emu-alltest --cases Emulator\data\cases_bp2_guest.txt --guest --expect-only                     (suite bp2_guest)
+#   emu-alltest --cases Emulator\data\cases_bp2_guest.txt --vm --expect-only                        (suite bp2_vm)
+#   emu-alltest --cases Emulator\data\cases_bp2_guest.txt --host --cpuid Emulator\data\cpuid_i5-13600k.txt --expect-only
+#                                                                                                    (suite bp2_cpuid_override)
+# The same lines fail with --host (negative control in bare_host_cpuid.py --cli).
+# --- 01H: initial APIC ID 05H (vCPU 5), ECX 7FFA3223: SMX [6] = 0 (hidden by VMware)
+cpuid | rax=1 rcx=0 => rax=0xB0671 rbx=0x05040800 rcx=0x7FFA3223 rdx=0x1F8BFBFF
+mov eax, 1; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 6; and r8d, 1 =>! r8=0
+# --- 07H.0: EDX BC004410: Hybrid [15] = 0, CET_IBT [20] = 0
+cpuid | rax=7 rcx=0 => rax=0x2 rbx=0x219C27EB rcx=0x9840078C rdx=0xBC004410
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 15; and r8d, 1 =>! r8=0
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, edx; shr r8d, 20; and r8d, 1 =>! r8=0
+# --- 14H Intel Processor Trace and 1AH core type: 0 in the guest
+cpuid | rax=0x14 rcx=0 => rax=0 rbx=0 rcx=0 rdx=0
+cpuid | rax=0x1A rcx=0 => rax=0 rbx=0 rcx=0 rdx=0
+# --- 0BH: VMware's topology, x2APIC ID 5
+cpuid | rax=0xB rcx=1 => rax=0x2 rbx=0x4 rcx=0x201 rdx=0x5
+# --- 40000000H: the highest basic leaf 20H, all 0 in this capture; 80000008H 45 physical address bits
+cpuid | rax=0x40000000 rcx=0 => rax=0 rbx=0 rcx=0 rdx=0
+cpuid | rax=0x80000008 rcx=0 => rax=0x302D rbx=0 rcx=0 rdx=0
+# --- the profile's "#@ microcode 00000129 platform-id 1" line (U1473)
+mov ecx, 0x8B; xor eax, eax; xor edx, edx; wrmsr; mov eax, 1; cpuid; mov r8d, eax; mov ecx, 0x8B; rdmsr =>! rax=0 rdx=0x129 r8=0xB0671
