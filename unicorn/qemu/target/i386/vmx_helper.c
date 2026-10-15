@@ -2913,13 +2913,23 @@ void x86_vmx_single_step(CPUX86State *env)
 {
     VmxExit e;
 
-    if (!env->vmx.nonroot || !env->vmx.mtf_pending) {
+    if (!env->vmx.nonroot) {
         return;
     }
-    env->vmx.mtf_pending = 0;
+    /*
+     * U1325: the APIC-write emulation and the trap-like VM exits of the instruction (TPR below
+     * threshold, virtualized EOI, APIC write; 32.1.2 p. 32-2, 32.4.3.2 p. 32-11) belong to the
+     * instruction and come before the boundary events - a TPR-below-threshold VM exit saves BS too
+     * (30.3.4); then the MTF VM exit (28.5.2)
+     */
     env->vmx.dbg_trap = 1ull << 14;
-    vmx_exit_init(&e, EXIT_REASON_MTF, 0);
-    vmx_vmexit(env, &e);
+    vmx_apic_traps(env);
+    if (env->vmx.mtf_pending) {
+        env->vmx.mtf_pending = 0;
+        vmx_exit_init(&e, EXIT_REASON_MTF, 0);
+        vmx_vmexit(env, &e);
+    }
+    env->vmx.dbg_trap = 0;
 }
 
 void helper_vmx_boundary(CPUX86State *env)

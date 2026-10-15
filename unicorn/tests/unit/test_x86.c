@@ -35086,6 +35086,33 @@ static void test_x86_vmx_ept_ve(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1325: the trap-like VM exit of an instruction before its MTF VM exit (SDM 092 Vol3C 32.1.2 p. 32-2,
+ * 28.5.2 p. 28-18, 30.3.4). Guest RFLAGS.TF = 1, "monitor trap flag" and "use TPR shadow" 1, TPR
+ * threshold 4, VTPR 50H: MOV CR8, RAX (3) is a TPR-below-threshold VM exit (43) after the instruction
+ * - not an MTF VM exit - with RIP after the MOV, VTPR 30H and BS (4000H) in the pending-debug-
+ * exceptions field.
+ */
+static void test_x86_vmx_mtf_tpr(void)
+{
+    PcCtx c;
+    uint64_t fl, r;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x2012, VMX_VAPIC);
+    vmx_wq(&c, VMX_VAPIC + 0x80, 0x50);
+    vmx_w(&c, 0x401c, 4);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 21) | (1u << 27));
+    vmx_w(&c, 0x6820, 0x102);
+    pc_set(&c, UC_X86_REG_RAX, 3);
+    TEST_CHECK(vmx_enter(&c, 1, "\x44\x0f\x22\xc0\x0f\xa2", 6, &fl) == -1);
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(r == 43 && vmx_r(&c, 0x681e) == VMX_GUEST_PC + 4 && vmx_r(&c, 0x6822) == 0x4000 &&
+               vmx_rq(&c, VMX_VAPIC + 0x80) == 0x30);
+    TEST_MSG("exit %llu", (unsigned long long)r);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35543,4 +35570,5 @@ TEST_LIST = {
     {"test_x86_vmx_mtf_tf", test_x86_vmx_mtf_tf},
     {"test_x86_vmx_inj_len", test_x86_vmx_inj_len},
     {"test_x86_vmx_ept_ve", test_x86_vmx_ept_ve},
+    {"test_x86_vmx_mtf_tpr", test_x86_vmx_mtf_tpr},
     {NULL, NULL}};

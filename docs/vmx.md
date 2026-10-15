@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1324: 33 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1325: 34 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -410,6 +410,9 @@ translator and passed to the helpers.
   TPR-below-threshold VM exits, which save the debug exceptions loaded by VM entry and still pending
   (U1320, 30.3.4; docs/quirks.md). U1321: a pending MTF VM exit comes before the single-step #DB trap
   of the instruction (28.5.2) and saves BS in the field; the #DB follows the next VM entry (29.7.3).
+  U1325: before that, the APIC-write emulation and the trap-like VM exits of the instruction (TPR below
+  threshold, virtualized EOI, APIC write; 32.1.2, 32.4.3.2) - a TPR-below-threshold VM exit saves BS
+  as well (30.3.4); APIC-write / virtualized-EOI exits save 0.
 
 ### Intel SGX in VMX operation (U1313-U1316; the SGX model: docs/sgx.md)
 - ENCLS exiting (U1313): see Stage 8. ENCLV, its exiting control / bitmap and SGX-conflict VM exits
