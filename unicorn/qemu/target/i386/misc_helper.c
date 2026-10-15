@@ -923,10 +923,24 @@ int x86_maxapicaddr(CPUX86State *env)
  *     KeyID bit downward), at most MK_TME_MAX_KEYS; NUM_TDX_PRIV_KEYIDS = 0 - the field is
  *     "supported on all parts that enumerate support for SEAM mode" (SDM Vol4) and the model has
  *     no SEAM. U1333: with UC_X86_FEATURE_SEAM it is 2^k - 2^(k-p) (x86_seam_tdx_priv_keyids).
- * Not modelled: memory encryption itself (KeyID bits of physical addresses select nothing; every
- * KeyID reads and writes the same plain-text memory), the exclusion range's effect,
- * MK_TME_CORE_ACTIVATE (9FFH, model-specific "BIOS only" MSR) and IA32_TME_CLEAR_SAVED_KEY
- * (9FBH: capability bit 30 = 0).
+ * U1433: TDX_RESERVED_KEYID_BITS (39:36) without SEAM - EMULATOR POLICY, not a normative rule:
+ *   SDM 093 Vol4 Table 2-2 982H (p. 2-66) and MKTME 336907-007 Tables 4-2 / 4-3 (pp. 15-16) give
+ *   only "> MK_TME_KEYID_BITS -> #GP(0)" (and "= 35:32 if IA32_TME_CAPABILITY[28] = 1", 0 here); no
+ *   row ties 39:36 to SEAM enumeration, while 35:32 is "Reserved if TME-MK is not enumerated". The
+ *   architecture leaves p > 0 on a processor without SEAM unspecified; tme_activate_write accepts it
+ *   exactly as the documented error rows (docs/quirks.md).
+ * U1430-U1432: the consequences the SDM defines for a lock with p > 0 apply, the model being always
+ *   outside SEAM (x86_in_seam, cpu.h): MAXPHYADDR = CPUID width - p for MOV to CR3, the IA-32 page
+ *   walk and the MTRRs (x86_maxphyaddr); MAXAPICADDR = CPUID width - k for IA32_APIC_BASE
+ *   (x86_maxapicaddr); PCONFIG rejects SEAM-private KeyIDs (helper_pconfig, U1021). CPUID.80000008H,
+ *   IA32_TME_EXCLUDE_MASK / _BASE and the SVM nested-paging walk keep the full width. WRMSR 982H
+ *   flushes no TLB entry (the SDM is silent; translations cached before the lock stay until
+ *   software invalidates them).
+ * Not modelled: memory encryption itself (a KeyID selects no key; data is plain text) and the
+ * removal of the KeyID bits from a physical address - an address that keeps a KeyID bit reaches
+ * the host mapping at that full address, so KeyIDs alias the same memory only where the host maps
+ * the aliases (docs/quirks.md); the exclusion range's effect; MK_TME_CORE_ACTIVATE (9FFH,
+ * model-specific "BIOS only" MSR) and IA32_TME_CLEAR_SAVED_KEY (9FBH: capability bit 30 = 0).
  */
 static bool tme_enumerated(CPUX86State *env)
 {
