@@ -36129,6 +36129,31 @@ static void test_x86_tm_pae_pdpte(void)
 }
 
 /*
+ * T9: IA32_MTRR_PHYSBASE0 / PHYSMASK0 (200H / 201H; SDM 093 Vol3A 14.11.2.3 p. 14-24, fields
+ * MAXPHYADDR-1:12 with the reduction footnote): p = 2 -> bit 38 #GP(0), bit 37 accepted; before the
+ * lock bit 39 accepted, bit 40 #GP(0).
+ */
+static void test_x86_tm_mtrr(void)
+{
+    const uint64_t mask37 = 0x3ffffff000ULL | 0x800;   /* PhysMask 37:12, valid */
+    PcCtx c;
+
+    tm_open(&c, UC_MODE_64, 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x200, (1ULL << 39) | 6) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x200, (1ULL << 40) | 6) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x201, mask37 | (1ULL << 39) | (1ULL << 38)) == -1);
+    tm_lock(&c, 2);
+    TEST_CHECK(pc_wrmsr(&c, 0x200, (1ULL << 38) | 6) == 13);
+    TEST_CHECK(pc_rdmsr(&c, 0x200) == ((1ULL << 39) | 6));
+    TEST_CHECK(pc_wrmsr(&c, 0x200, (1ULL << 37) | 6) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x200) == ((1ULL << 37) | 6));
+    TEST_CHECK(pc_wrmsr(&c, 0x201, mask37 | (1ULL << 38)) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x201, mask37) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x201) == mask37);
+    OK(uc_close(c.uc));
+}
+
+/*
  * T10: PCONFIG MKTME_KEY_PROGRAM outside SEAM (SDM 093 Vol2B PCONFIG p. 4-272): with k = 6, p = 2 a
  * KeyID with any of bits 5:4 set (SEAM-private) is #GP(0); 1 .. 15 are programmable; p = 0: 63 is
  * programmable. AES-XTS-128 (IA32_TME_ACTIVATE bit 48) is enabled so the KeyID check decides.
@@ -36635,5 +36660,6 @@ TEST_LIST = {
     {"test_x86_tm_paging_width", test_x86_tm_paging_width},
     {"test_x86_tm_width_bounds", test_x86_tm_width_bounds},
     {"test_x86_tm_pae_pdpte", test_x86_tm_pae_pdpte},
+    {"test_x86_tm_mtrr", test_x86_tm_mtrr},
     {"test_x86_tm_pconfig", test_x86_tm_pconfig},
     {NULL, NULL}};

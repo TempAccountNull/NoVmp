@@ -847,7 +847,7 @@ static X86CPU *msr_cpu(CPUX86State *env)
  * p. 2-13 CR3, 5.1.4 p. 5-6 and 6.13 p. 6-33 paging entries, 14.11.2.3 p. 14-24 MTRRs, Vol4 2.1). Only
  * the TDX-reserved KeyID bits (39:36) are subtracted, the shared KeyID bits (35:32 - 39:36) stay
  * address bits. The width is a function of the lock bit, not of the enable bit (bit 1). Used by MOV
- * to CR3 (U1430) and the IA-32 page walk without EPT (excp_helper.c, U1430).
+ * to CR3 (U1430), the IA-32 page walk without EPT (excp_helper.c, U1430) and the MTRRs (U1431).
  * Kept at CPUID.80000008H:EAX[7:0] (cpu->phys_bits): CPUID itself (MKTME 336907-007 4.1.4),
  * guest-physical addresses under EPT (Vol3A 5.1.4 "without any regard to TME or SEAM"; no VMX in
  * this tree), IA32_RTIT_OUTPUT_BASE (Vol3C 35.4.2 / 36.2.8.7: checked against the CPUID width at
@@ -1460,7 +1460,14 @@ static bool msr_memtype_ok(uint64_t v, bool pat)
 
 static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
 {
-    uint64_t phys_mask = ~((1ULL << msr_cpu(env)->phys_bits) - 1);     /* U1063 */
+    /*
+     * U1431: bits 63:MAXPHYADDR of the MTRR PhysBase / PhysMask fields with the effective
+     * MAXPHYADDR (x86_maxphyaddr: reduced by IA32_TME_ACTIVATE[39:36] once TME is locked outside
+     * SEAM; SDM 093 Vol3A 14.11.2.3 p. 14-24, fields MAXPHYADDR-1:12 and footnote 1). Was:
+     * phys_bits (U1063), which IA32_APIC_BASE keeps (apic_mask).
+     */
+    uint64_t phys_mask = ~((1ULL << x86_maxphyaddr(env)) - 1);
+    uint64_t apic_mask = ~((1ULL << msr_cpu(env)->phys_bits) - 1);     /* U1063 */
     uint64_t valid;
 
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
@@ -1503,7 +1510,7 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
     case MSR_IA32_APICBASE:
         valid = MSR_IA32_APICBASE_BSP | MSR_IA32_APICBASE_ENABLE |
                 (MF_1ECX(CPUID_EXT_X2APIC) ? MSR_IA32_APICBASE_EXTD : 0) |
-                (~phys_mask & ~0xfffULL);
+                (~apic_mask & ~0xfffULL);
         return !(val & ~valid);
     case MSR_IA32_FEATURE_CONTROL:
         valid = FEATURE_CONTROL_LOCKED |
