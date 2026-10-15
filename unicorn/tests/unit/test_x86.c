@@ -35113,6 +35113,108 @@ static void test_x86_vmx_mtf_tpr(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1326: EPT-violation #VE, more cases (SDM 092 Vol3C 28.5.8.1 pp. 28-22 / 28-23, 28.5.8.3 p. 28-24,
+ * 30.2.2; Vol3A Table 7-4 p. 7-36). Identity EPT, information area VMX_SCRATCH, a page whose EPT PTE
+ * is not present (bit 63 = 0):
+ * - NOP; MOV RAX, [page]: the #VE exit reports the RIP of the MOV (not of the block start);
+ * - IRET with blocking by NMI whose stack is on that page: #VE with bit 12 (NMI unblocking due to
+ *   IRET) in the exit interruption information and in the qualification of the area;
+ * - the guest IDT on such a page (EPT PTE not present): UD2 - the EPT violation during the delivery of
+ *   #UD is not convertible: exit 48 with IDT-vectoring information 80000306H, the area untouched;
+ * - #VE delivered through the IDT on a stack that guest paging does not map: the #PF of the delivery
+ *   becomes #DF (#VE is page-fault class; exception bitmap #DF: exit 0, 80000B08H) - not the #PF that
+ *   the IDT would deliver on its IST stack;
+ * - a real-mode guest (CR0.PE = 0, unrestricted guest): the EPT violation is not convertible (exit 48).
+ */
+static void vmx_ve_setup(PcCtx *c, uint64_t page)
+{
+    uint64_t fl;
+
+    vmx_setup(c);
+    vmx_ept_setup(c, 0);
+    vmx_w(c, 0x401e, (1u << 1) | (1u << 18));
+    vmx_w(c, 0x202a, VMX_SCRATCH);
+    TEST_CHECK(vmx_enter(c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(c, 0x4402) == 10);
+    vmx_wq(c, VMX_EPT_PTE(page), 0);
+}
+
+static void test_x86_vmx_ept_ve2(void)
+{
+    const uint64_t page = VMX_DATA + 0xf0000, ve = VMX_SCRATCH, tss = VMX_DATA + 0x1e000;
+    PcCtx c;
+    uint64_t fl, r, info;
+
+    vmx_ve_setup(&c, page);
+    vmx_w(&c, 0x4004, 1u << 20);
+    vmx_resume_regs(&c, "\x90\x48\x8b\x03\x0f\xa2", 6, 0, 0, 0, page + 0x10);   /* NOP; MOV RAX, [RBX] */
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000314u &&
+               vmx_r(&c, 0x681e) == VMX_GUEST_PC + 1);
+    /* IRETQ with blocking by NMI, its stack on the page */
+    vmx_wq(&c, ve, 0);
+    vmx_w(&c, 0x4824, 8);
+    vmx_w(&c, 0x681c, page + 0x100);
+    vmx_resume_regs(&c, "\x48\xcf", 2, 0, 0, 0, 0);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 0 && info == 0x80001314u && ((vmx_rq(&c, ve + 8) >> 12) & 1));
+    TEST_MSG("info %llx area qualification %llx", (unsigned long long)info,
+             (unsigned long long)vmx_rq(&c, ve + 8));
+    vmx_w(&c, 0x4824, 0);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    /* an EPT violation during event delivery: the guest IDT page not present in EPT */
+    vmx_wq(&c, ve, 0);
+    vmx_w(&c, 0x4004, 0);
+    vmx_guest_idt(&c);
+    vmx_wq(&c, VMX_EPT_PTE(VMX_IDT), 0);
+    vmx_resume_regs(&c, "\x0f\x0b", 2, 0, 0, 0, 0);
+    TEST_CHECK(vmx_r(&c, 0x4402) == 48 && vmx_r(&c, 0x4408) == 0x80000306u &&
+               (vmx_r(&c, 0x2400) & ~0xfffull) == VMX_IDT && vmx_rq(&c, ve) == 0);
+    vmx_wq(&c, VMX_EPT_PTE(VMX_IDT), VMX_IDT | 0x37);
+    /* #VE through the IDT on an unmapped stack: #DF; #PF would use IST1 */
+    vmx_idt_gate(&c, 20, VMX_GUEST_PC + 0x100);
+    vmx_idt_gate(&c, 8, VMX_GUEST_PC + 0x100);
+    vmx_wq(&c, VMX_IDT + 16 * 14, vmx_rq(&c, VMX_IDT + 16 * 14) | (1ull << 32));    /* IST1 */
+    vmx_wq(&c, tss + 0x24, VMX_GUEST_RSP);
+    vmx_w(&c, 0x6814, tss);
+    vmx_w(&c, 0x4004, 1u << 8);
+    vmx_w(&c, 0x681c, 0x500000);
+    vmx_resume_regs(&c, "\x48\x8b\x03\x0f\xa2", 5, 0, 0, 0, page + 0x10);
+    r = vmx_r(&c, 0x4402);
+    info = vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000b08u);
+    TEST_MSG("exit %llu info %llx", (unsigned long long)r, (unsigned long long)info);
+    OK(uc_close(c.uc));
+
+    /* CR0.PE = 0 (unrestricted guest): not convertible */
+    vmx_setup(&c);
+    vmx_ept_setup(&c, 0);
+    vmx_wq(&c, VMX_EPT_PTE(page), 0);
+    vmx_w(&c, 0x401e, (1u << 1) | (1u << 7) | (1u << 18));
+    vmx_w(&c, 0x202a, ve);
+    vmx_w(&c, 0x4012, 0x11fb);                      /* no IA-32e mode guest */
+    vmx_w(&c, 0x6800, pc_get(&c, UC_X86_REG_CR0) & ~0x80000001ull);
+    vmx_w(&c, 0x0802, 0);                           /* CS: base = the code, 16-bit */
+    vmx_w(&c, 0x6808, VMX_GUEST_PC);
+    vmx_w(&c, 0x4802, 0xffff);
+    vmx_w(&c, 0x4816, 0x9b);
+    vmx_w(&c, 0x0804, 0);                           /* SS */
+    vmx_w(&c, 0x680a, 0);
+    vmx_w(&c, 0x4804, 0xffff);
+    vmx_w(&c, 0x4818, 0x93);
+    vmx_w(&c, 0x0806, 0);                           /* DS: base = the page */
+    vmx_w(&c, 0x680c, page);
+    vmx_w(&c, 0x4806, 0xffff);
+    vmx_w(&c, 0x481a, 0x93);
+    vmx_w(&c, 0x681e, 0);
+    vmx_w(&c, 0x681c, 0x100);
+    pc_set(&c, UC_X86_REG_RBX, 0x10);
+    TEST_CHECK(vmx_enter(&c, 1, "\x8b\x07\x0f\xa2", 4, &fl) == -1);   /* MOV AX, [BX]; CPUID */
+    r = vmx_r(&c, 0x4402);
+    TEST_CHECK(fl == 0 && r == 48 && vmx_r(&c, 0x2400) == page + 0x10 && vmx_rq(&c, ve) == 0);
+    TEST_MSG("flags %llx exit %llx", (unsigned long long)fl, (unsigned long long)r);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1300-U1399 (vmx_) ---- */
 
 TEST_LIST = {
@@ -35571,4 +35673,5 @@ TEST_LIST = {
     {"test_x86_vmx_inj_len", test_x86_vmx_inj_len},
     {"test_x86_vmx_ept_ve", test_x86_vmx_ept_ve},
     {"test_x86_vmx_mtf_tpr", test_x86_vmx_mtf_tpr},
+    {"test_x86_vmx_ept_ve2", test_x86_vmx_ept_ve2},
     {NULL, NULL}};

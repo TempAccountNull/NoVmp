@@ -139,7 +139,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | requirement | where | status |
 |---|---|---|
 | independent Python reference: field encodings, capability classes, exit qualifications / instruction information, I/O / MSR bitmaps, exception bitmap, TSC scaling, EPT walk, virtual APIC; `--selftest` checks the unit-test values | `Emulator\tools\isa\ref_vmx.py` | done (U1308) |
-| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1325: 34 tests) |
+| unit tests (prefix `vmx_`) | `unicorn\tests\unit\test_x86.c` (one block) | done (U1301-U1326: 35 tests) |
 | registration | `Emulator\tools\test_runner.ps1` (`ref_vmx_selftest`, groups vmx / tools; the unit tests run in `unicorn-test_x86`) | done (U1308) |
 
 ## Design
@@ -324,7 +324,10 @@ translator and passed to the helpers.
   An EPT violation for a guest-physical address beyond the 4-level walk (bits 63:48) has no entry
   whose bit 63 could decide: not converted (our choice). The #VE goes through the exception bitmap
   (bit 20) like any exception. VMFUNC EPTP switching writes ECX[15:0] to the EPTP index (28.5.7.3).
-  Not modelled: PT / PEBS / prematurely-busy-shadow-stack exclusions (those features are absent).
+  Not modelled: the PT and PEBS exclusions (Intel PT and PEBS are absent from the model). The
+  prematurely-busy-shadow-stack exclusion cannot arise: CET event delivery and far transfers plan and
+  probe every shadow-stack access before the token's busy bit is set (seg_helper.c cet2_plan_* /
+  cet2_commit), so an EPT violation never follows a busy-bit store (U1326).
 
 ### APIC virtualization (U1307)
 - The virtual-APIC page and the guest interrupt status (RVI / SVI, loaded by VM entry with
