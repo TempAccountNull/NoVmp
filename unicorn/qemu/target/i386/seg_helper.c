@@ -2382,6 +2382,20 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
         }
         new_stack = 0;
         esp = env->regs[R_ESP];
+#if __Use_Original_Qemu != 1 /* ours (U1420) */
+        /*
+         * NoVmp (ledger U1420): SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation,
+         * INTRA-PRIVILEGE-LEVEL-INTERRUPT (p. 3-478): IST = 0 "ELSE NewRSP := RSP;" ... "ELSE
+         * (* IA32_EFER.LMA = 1, 64-bit gate*) IF NewRSP contains a non-canonical address THEN
+         * #SS(EXT); (* Error code contains NULL selector *)", before anything is pushed; EXT as
+         * U1401. Stock QEMU pushed the frame and the store's MMU fault raised #GP(0). A non-zero
+         * IST and the inter-privilege stack are checked in get_rsp_from_tss_ext (U496, U1402).
+         * Canonical as x86_ip_is_canonical (CR4.LA57; no canonical rule under UC_TLB_VIRTUAL, U42).
+         */
+        if (!x86_ip_is_canonical(env, esp)) {
+            raise_exception_err(env, EXCP0C_STACK, ext);
+        }
+#endif /* __Use_Original_Qemu (U1420) */
     }
     esp &= ~0xfLL; /* align stack */
 

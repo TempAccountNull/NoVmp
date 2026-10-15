@@ -36407,6 +36407,397 @@ static void test_x86_ti_ept_guest_width(void)
 
 /* ---- end U1434 (ti_) ---- */
 
+/*
+ * ---- NoVmp U1420-U1429 tests (i6_): EXT and the delivery checks of 64-bit IDT event delivery ----
+ * SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation (p. 3-469): error_code(num,idt,ext) is
+ * (num & FCH) | ext for idt = 0 and (num << 3) | 2 | ext for idt = 1; EXT "depends on the nature
+ * of the event whose delivery encountered a nested exception: if that event is a software
+ * interrupt (INT n, INT3, or INTO), EXT is 0; otherwise (including INT1), EXT is 1". Vol3A 7.13
+ * (p. 7-19): EXT bit 0, IDT bit 1; footnote 1 "The bit is also set if the exception occurred
+ * during delivery of INT1." Event sources: INT n, INT3 (EXT = 0), INT1, #UD, #DE (exceptions), a
+ * SELF IPI (x2APIC, external interrupt) and a self NMI (ICR delivery mode NMI) - the injection
+ * paths of the U963 fixture (there is no INTR-pin / ExtINT injection). A contributory fault
+ * during the delivery of #DE is a double fault (Vol3A Event 8, Table 7-5): #DF, error code 0.
+ * Specification-validated (the i5-13600K's IDT cannot be changed from user mode). The recording
+ * handlers of #DF #TS #NP #SS #GP run on IST1.
+ */
+#define I6_HND (AP_DATA + 0xb000)   /* recording handlers, 80H bytes per slot */
+#define I6_IST1 (AP_DATA + 0xe000)  /* IST1: the recording handlers' stack */
+#define I6_IST2 (AP_DATA + 0xf000)  /* IST2: a valid stack for a gate under test */
+#define I6_RSP0 (AP_STACK - 0x1000)
+#define I6_USTK (AP_STACK - 0x2000)
+#define I6_M(s) (0x400 + 0x40 * (s)) /* AP_MARK offset of slot s: frame qwords 0-5, count at +48 */
+#define I6_NC 0x0000800000000000ULL /* the lowest non-canonical address (4-level paging) */
+#define I6_TGT (AP_HND + 0x400)     /* a gate target that the failing deliveries never reach */
+
+enum { I6_INTN, I6_INT3, I6_INT1, I6_UD, I6_DE, I6_EXTI, I6_NMI };
+
+static const uint64_t i6_gdt[11] = {
+    0,
+    0x00AF9A000000FFFFULL, /* 08H 64-bit code, DPL 0 */
+    0x00CF92000000FFFFULL, /* 10H data, DPL 0 */
+    0x00CFF2000000FFFFULL, /* 18H data, DPL 3 */
+    0x00AFFA000000FFFFULL, /* 20H 64-bit code, DPL 3 */
+    0, 0,                  /* 28H (TR is loaded directly) */
+    0x00CF9A000000FFFFULL, /* 38H code, L = 0, D = 1 (32-bit) */
+    0x00EF9A000000FFFFULL, /* 40H code, L = 1, D = 1 */
+    0x008F9A000000FFFFULL, /* 48H code, L = 0, D = 0 (16-bit) */
+    0x00AF1A000000FFFFULL, /* 50H 64-bit code, not present */
+};
+
+static int i6_slot(int v)
+{
+    switch (v) {
+    case 1: return 0;
+    case 6: return 1;
+    case 8: return 2;
+    case 10: return 3;
+    case 11: return 4;
+    case 12: return 5;
+    case 13: return 6;
+    default: return 7;  /* 62H */
+    }
+}
+
+/* handler for vector v: copies 6 frame qwords to its slot and counts; pops the error code (ec),
+   adds 'skip' to the frame RIP; IRETQ. Its gate: 64-bit interrupt gate, CS 08H, IST 'ist'. */
+static void i6_handler(ap_cpu *c, int v, bool ec, int skip, int ist)
+{
+    ap_code k = {{0}, 0};
+    int s = i6_slot(v), i;
+    uint8_t add[5] = {0x48, 0x83, 0x04, 0x24, (uint8_t)skip};   /* add qword [rsp], skip */
+
+    for (i = 0; i < 6; i++) {
+        ap_h_save(&k, 8 * i, I6_M(s) + 8 * i);
+    }
+    ap_h_inc(&k, I6_M(s) + 48);
+    if (ec) {
+        ap_emit(&k, "\x58", 1);
+    }
+    if (skip) {
+        ap_emit(&k, add, 5);
+    }
+    ap_emit(&k, "\x48\xcf", 2);
+    OK(uc_mem_write(c->uc, I6_HND + 0x80 * (uint64_t)s, k.b, k.n));
+    ie_gate(c, v, I6_HND + 0x80 * (uint64_t)s, 0x08, ist, 0x8e);
+}
+
+static void i6_frame(ap_cpu *c, int v, uint64_t f[6])
+{
+    OK(uc_mem_read(c->uc, AP_MARK + I6_M(i6_slot(v)), f, 6 * sizeof(uint64_t)));
+}
+
+/* 64-bit TSS: RSP0, IST1 (handlers), IST2; TR 28H with the given limit */
+static void i6_tss(ap_cpu *c, uint32_t limit, uint64_t ist2)
+{
+    uint8_t tss[0x68] = {0};
+    uint64_t rsp0 = I6_RSP0, ist1 = I6_IST1;
+    uc_x86_mmr tr = {0x28, IE_TSS, limit, 0x8b00};
+
+    memcpy(tss + 4, &rsp0, 8);
+    memcpy(tss + 36, &ist1, 8);
+    memcpy(tss + 44, &ist2, 8);
+    OK(uc_mem_write(c->uc, IE_TSS, tss, sizeof(tss)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_TR, &tr));
+}
+
+/* CPL0 64-bit, exceptions and interrupts through the IDT, x2APIC, i6_gdt, TSS, handlers on IST1 */
+static void i6_open(ap_cpu *c)
+{
+    static const int hv[] = {8, 10, 11, 12, 13};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(i6_gdt) - 1, 0};
+    size_t i;
+
+    ie_open(c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, true);
+    OK(uc_mem_write(c->uc, AP_DATA, i6_gdt, sizeof(i6_gdt)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_GDTR, &gdtr));
+    i6_tss(c, 0x67, I6_IST2);
+    for (i = 0; i < sizeof(hv) / sizeof(hv[0]); i++) {
+        i6_handler(c, hv[i], true, 2, 1);
+    }
+}
+
+/* as ap_exec, bounded (4000 instructions) and below AP_HND: -3 = stopped before the slot's end */
+static int i6_exec(ap_cpu *c, const ap_code *k)
+{
+    uint64_t at = c->pc, rip = 0;
+    uc_err e;
+
+    c->pc += (k->n + 0x3f) & ~(uint64_t)0x3f;
+    TEST_CHECK(c->pc <= AP_HND);
+    memset(&c->intr, 0, sizeof(c->intr));
+    OK(uc_mem_write(c->uc, at, k->b, k->n));
+    e = uc_emu_start(c->uc, at, at + k->n, 0, 4000);
+    if (e == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (e == UC_ERR_EXCEPTION) {
+        return -2;
+    }
+    if (e != UC_ERR_OK) {
+        return -4;
+    }
+    OK(uc_reg_read(c->uc, UC_X86_REG_RIP, &rip));
+    if (rip != at + k->n) {
+        return -3;
+    }
+    return c->intr.count ? (int)c->intr.intno[0] : -1;
+}
+
+/* the vector an event source delivers, and its EXT */
+static int i6_vec(int kind, int n)
+{
+    static const int fixed[] = {0, 3, 1, 6, 0, 0, 2};
+
+    return kind == I6_INTN || kind == I6_EXTI ? n : fixed[kind];
+}
+
+static int i6_ext(int kind)
+{
+    return kind != I6_INTN && kind != I6_INT3;
+}
+
+static const char *i6_name(int kind)
+{
+    static const char *const nm[] = {"INT n", "INT3", "INT1", "#UD", "#DE", "SELF IPI", "NMI"};
+
+    return nm[kind];
+}
+
+/* appends the event's code; returns the slot offset of the frame RIP of a fault raised while the
+   event is delivered (-1: not checked, INT1) */
+static int i6_emit(ap_code *k, int kind, int n)
+{
+    int at = (int)k->n;
+    uint8_t b[2] = {0xcd, (uint8_t)n};
+
+    switch (kind) {
+    case I6_INTN:
+        ap_emit(k, b, 2);
+        return at;
+    case I6_INT3:
+        ap_emit(k, "\xcc\x90", 2);
+        return at;
+    case I6_INT1:
+        ap_emit(k, "\xf1\x66\x90", 3);
+        return -1;
+    case I6_UD:
+        ap_emit(k, "\x0f\x0b", 2);
+        return at;
+    case I6_DE:
+        ap_emit(k, "\x31\xc9\xf7\xf1", 4);     /* xor ecx, ecx; div ecx */
+        return at + 2;
+    case I6_EXTI:
+        ap_wr(k, 0x83f, (uint64_t)n);           /* x2APIC SELF IPI */
+        break;
+    default:
+        ap_wr(k, 0x830, 0x400);                 /* ICR: NMI to itself */
+        break;
+    }
+    ap_emit(k, "\x66\x90", 2);
+    return at + 17;
+}
+
+/*
+ * runs k from a fresh slot; expects it to reach its end after exactly one entry to the handler of
+ * vector hv: error code ec (pushed and recorded; -1 = none), frame RIP = slot + rip_off (not
+ * checked when rip_off < 0)
+ */
+static bool i6_run(ap_cpu *c, const ap_code *k, int hv, int64_t ec, int rip_off, const char *what)
+{
+    uint64_t at = c->pc, f[7], rip;
+    uc_x86_exception e;
+    int s = i6_slot(hv), r;
+    bool ok;
+
+    memset(f, 0xff, sizeof(f));
+    f[6] = 0;
+    OK(uc_mem_write(c->uc, AP_MARK + I6_M(s), f, sizeof(f)));
+    r = i6_exec(c, k);
+    OK(uc_mem_read(c->uc, AP_MARK + I6_M(s), f, sizeof(f)));
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c->uc, &e));
+    rip = ec >= 0 ? f[1] : f[0];
+    ok = r == -1 && f[6] == 1 && e.vector == hv && e.software == 0 &&
+         (ec >= 0 ? f[0] == (uint64_t)ec && e.has_error_code == 1 && e.error_code == (uint32_t)ec
+                  : e.has_error_code == 0) &&
+         (rip_off < 0 || rip == at + (uint64_t)rip_off);
+    TEST_CHECK_(ok, "%s", what);
+    TEST_MSG("%s: run %d; handler %d entered %" PRIu64 " time(s): error code %" PRIx64
+             " (expected %" PRIx64 "), RIP %" PRIx64 " (expected %" PRIx64 "%s); recorded vector %d"
+             " error code %x has_ec %d software %d",
+             what, r, hv, f[6], ec >= 0 ? f[0] : 0, (uint64_t)(ec >= 0 ? ec : 0), rip,
+             at + (uint64_t)(rip_off < 0 ? 0 : rip_off), rip_off < 0 ? ", not checked" : "",
+             e.vector, e.error_code, e.has_error_code, e.software);
+    return ok;
+}
+
+static bool i6_x(ap_cpu *c, const char *code, size_t n, int hv, int64_t ec, int rip_off,
+                 const char *what)
+{
+    ap_code k = {{0}, 0};
+
+    ap_emit(&k, code, n);
+    return i6_run(c, &k, hv, ec, rip_off, what);
+}
+
+/*
+ * U1420: each check of 64-bit delivery (Vol2A p. 3-471 IA-32e-MODE, p. 3-472 TRAP-OR-INTERRUPT-GATE,
+ * p. 3-473 / 3-474 inter-privilege stack, p. 3-478 intra-privilege stack) for each event source:
+ * the full error code (index, IDT bit 1, EXT bit 0). A fault in the delivery of #DE: #DF(0).
+ */
+static void test_x86_i6_ext_matrix64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x50}, {I6_INT3, 0}, {I6_INT1, 0}, {I6_UD, 0},
+               {I6_DE, 0},      {I6_EXTI, 0x61}, {I6_NMI, 0}};
+    enum { LIMIT, EMPTY, NOTP, CSNULL, CSLIM, CSDATA, CSDPL, CSNP, TSSLIM, ISTNC, RSPNC, NCASES };
+    static const char *const cname[NCASES] = {
+        "IDT limit (+15 rule)", "empty gate", "gate not present", "null CS selector",
+        "CS beyond the GDT limit", "CS is a data segment", "CS DPL 3 > CPL 0",
+        "CS not present", "IST2 beyond the TSS limit 32H", "IST2 non-canonical",
+        "RSP non-canonical (IST 0, same privilege)"};
+    char what[160];
+    ap_cpu c;
+    size_t i;
+    int j;
+
+    i6_open(&c);
+    for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+        for (j = 0; j < NCASES; j++) {
+            int kind = src[i].kind, v = i6_vec(kind, src[i].n), ext = i6_ext(kind);
+            int hv = 13, ist = 0, rip;
+            int64_t ec = (v << 3) | 2 | ext;
+            uint64_t off = I6_TGT;
+            uint16_t sel = 0x08;
+            uint8_t attr = 0x8e;
+            ap_code k = {{0}, 0};
+
+            if (j == LIMIT && v < 0x14) {
+                continue;   /* the recording handlers' gates would be beyond the limit too */
+            }
+            switch (j) {
+            case LIMIT:
+                ie_idt_limit(&c, (uint32_t)v * 16 + 14);
+                break;
+            case EMPTY:
+                off = 0;
+                sel = 0;
+                attr = 0;
+                break;
+            case NOTP:
+                attr = 0x0e;
+                hv = 11;
+                break;
+            case CSNULL:
+                sel = 0;
+                ec = ext;
+                break;
+            case CSLIM:
+                sel = 0x80;
+                ec = 0x80 | ext;
+                break;
+            case CSDATA:
+                sel = 0x10;
+                ec = 0x10 | ext;
+                break;
+            case CSDPL:
+                sel = 0x20;
+                ec = 0x20 | ext;
+                break;
+            case CSNP:
+                sel = 0x50;
+                hv = 11;
+                ec = 0x50 | ext;
+                break;
+            case TSSLIM:
+                ist = 2;
+                i6_tss(&c, 0x32, I6_IST2);
+                hv = 10;
+                ec = 0x28 | ext;
+                break;
+            case ISTNC:
+                ist = 2;
+                i6_tss(&c, 0x67, I6_NC);
+                hv = 12;
+                ec = ext;
+                break;
+            default:    /* RSPNC: Vol2A p. 3-478 "IF NewRSP contains a non-canonical address THEN #SS(EXT)" */
+                ap_set(&c, UC_X86_REG_RSP, I6_NC + 0x100);
+                hv = 12;
+                ec = ext;
+                break;
+            }
+            ie_gate(&c, v, off, sel, ist, attr);
+            rip = i6_emit(&k, kind, src[i].n);
+            if (kind == I6_DE) {
+                hv = 8;     /* contributory fault in the delivery of a contributory exception */
+                ec = 0;
+                rip = -1;
+            }
+            snprintf(what, sizeof(what), "%s (vector %02Xh, EXT %d): %s", i6_name(kind), v, ext,
+                     cname[j]);
+            i6_run(&c, &k, hv, ec, rip, what);
+            if (kind == I6_EXTI) {
+                ap_wmsr(&c, 0x80b, 0);  /* EOI */
+            }
+            ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+            ie_idt_limit(&c, 0xfff);
+            i6_tss(&c, 0x67, I6_IST2);
+        }
+    }
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1420: CPL3. The gate DPL check is made for INT n / INT3 only (Vol2A p. 3-471 "IF software
+ * interrupt (* Generated by INT n, INT3, or INTO; does not apply to INT1 *)", error_code(vector,1,0));
+ * INT1, exceptions and external interrupts are delivered through DPL 0 gates.
+ */
+static void test_x86_i6_dpl64(void)
+{
+    ap_code k = {{0}, 0};
+    uint64_t frame[5], f[6];
+    ap_cpu c;
+
+    i6_open(&c);
+    i6_handler(&c, 1, false, 0, 0);
+    i6_handler(&c, 6, false, 2, 0);
+    i6_handler(&c, 0x62, false, 0, 0);
+    ie_gate(&c, 0x50, I6_TGT, 0x08, 0, 0x8e);
+    ie_gate(&c, 3, I6_TGT, 0x08, 0, 0x8e);
+    /* CPL0: CLI; SELF IPI 62H (pending, IF = 0); IRETQ to CPL3 with IF = 1; 66 90 */
+    ap_emit(&k, "\xfa", 1);
+    ap_wr(&k, 0x83f, 0x62);
+    ap_emit(&k, "\x48\xcf\x66\x90", 4);
+    frame[0] = c.pc + 20;
+    frame[1] = 0x23;
+    frame[2] = 0x202;
+    frame[3] = I6_USTK;
+    frame[4] = 0x1b;
+    OK(uc_mem_write(c.uc, AP_STACK - 0x100, frame, sizeof(frame)));
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK - 0x100);
+    i6_run(&c, &k, 0x62, -1, 20, "CPL3: external interrupt 62h, gate DPL 0");
+    i6_frame(&c, 0x62, f);
+    TEST_CHECK(f[1] == 0x23 && f[3] == I6_USTK && f[4] == 0x1b);
+    TEST_MSG("frame CS %" PRIx64 " RSP %" PRIx64 " SS %" PRIx64, f[1], f[3], f[4]);
+    ap_wmsr(&c, 0x80b, 0);
+    TEST_CHECK((ap_get(&c, UC_X86_REG_CS) & 3) == 3);
+    i6_x(&c, "\xcd\x50", 2, 13, 0x282, 0, "CPL3: INT 50h, gate DPL 0");
+    i6_x(&c, "\xcc\x90", 2, 13, 0x1a, 0, "CPL3: INT3, gate DPL 0");
+    i6_x(&c, "\xcd\x01", 2, 13, 0x0a, 0, "CPL3: INT 01h, gate DPL 0");
+    i6_x(&c, "\xf1\x90", 2, 1, -1, 1, "CPL3: INT1, gate DPL 0 (no DPL check)");
+    i6_frame(&c, 1, f);
+    TEST_CHECK(f[1] == 0x23);
+    i6_x(&c, "\x0f\x0b", 2, 6, -1, 0, "CPL3: #UD, gate DPL 0");
+    i6_frame(&c, 6, f);
+    TEST_CHECK(f[1] == 0x23);
+    TEST_CHECK((ap_get(&c, UC_X86_REG_CS) & 3) == 3);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1420-U1429 (i6_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -36885,4 +37276,6 @@ TEST_LIST = {
     {"test_x86_ti_vmx_entry", test_x86_ti_vmx_entry},
     {"test_x86_ti_ept_entries", test_x86_ti_ept_entries},
     {"test_x86_ti_ept_guest_width", test_x86_ti_ept_guest_width},
+    {"test_x86_i6_ext_matrix64", test_x86_i6_ext_matrix64},
+    {"test_x86_i6_dpl64", test_x86_i6_dpl64},
     {NULL, NULL}};
