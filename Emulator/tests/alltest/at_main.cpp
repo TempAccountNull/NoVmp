@@ -439,6 +439,7 @@ namespace at
 	// U835: the sweep's RDRAND/RDSEED source (--seeded / --rdrand-seed N / --HostSeed)
 	static int g_rdrand = UC_X86_RDRAND_SEEDED;
 	static uint64_t g_rdrand_seed = 0;
+	static int g_platform = PLATFORM_NONE;   // U1465: --host / --guest / --AMD
 
 	static std::string outcome_str( const result& r ) { return r.faulted ? "#" + std::to_string( r.vector ) : "ok"; }
 
@@ -452,6 +453,7 @@ namespace at
 		uc.cpl3 = f.uc_cpl3;   // U850: control-transfer / stack / LSS forms: CPL3 with the Windows GDT, like the host
 		uc.rdrand = g_rdrand;
 		uc.rdrand_seed = g_rdrand_seed;
+		uc.smm_revision = platform_smm_revision( g_platform );   // U1465
 		if ( !uc.load( p, err ) ) { fr.b = HARNESS_ERROR; fr.detail = err; return fr; }
 		// U1124: every iteration starts from the state after load (was: iteration n + 1 started
 		// from where iteration n left the CPU - a privileged form that changed CPL / CS ran its
@@ -563,6 +565,13 @@ int main( int argc, char** argv )
 		else if ( a == "--seeded" ) copt.rdrand = UC_X86_RDRAND_SEEDED;
 		else if ( a == "--rdrand-seed" ) { copt.rdrand = UC_X86_RDRAND_SEEDED; copt.rdrand_seed = std::stoull( val(), nullptr, 0 ); }
 		else if ( a == "--HostSeed" ) copt.rdrand = UC_X86_RDRAND_HOST;
+		// U1465: the platform profile (docs/smm.md), mutually exclusive; selects the SMM revision identifier
+		else if ( a == "--host" || a == "--guest" || a == "--AMD" )
+		{
+			const int p = a == "--host" ? PLATFORM_HOST : a == "--guest" ? PLATFORM_GUEST : PLATFORM_AMD;
+			if ( copt.platform != PLATFORM_NONE && copt.platform != p ) { std::printf( "--host, --guest and --AMD exclude each other\n" ); return 2; }
+			copt.platform = p;
+		}
 		// U1040: SDE cross-check (at_cases.hpp): pass 1 under Intel SDE (sde.exe -<cpu> -- emu-alltest ...) writes the
 		// native results of the expected-value lines, pass 2 (a normal run) compares Unicorn with them
 		else if ( a == "--native-under-sde" ) copt.sde_out = val();
@@ -576,12 +585,13 @@ int main( int argc, char** argv )
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host|--guest|--AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	if ( bench ) return at::bench::run( bench_reps, filter, bench_scale, bench_cpu, bench_csv, bench_profile );
 	if ( !cases.empty() ) return at::run_cases( cases, copt );
 	at::g_rdrand = copt.rdrand;
 	at::g_rdrand_seed = copt.rdrand_seed;
+	at::g_platform = copt.platform;   // U1465
 	if ( iters < 0 ) iters = full ? 6 : 2;
 	if ( sample < 0 ) sample = full ? 1 : 7;
 	char exe[ MAX_PATH ]; GetModuleFileNameA( nullptr, exe, MAX_PATH );
@@ -609,6 +619,8 @@ int main( int argc, char** argv )
 		else
 			std::printf( "  machine state: %s\n", perr.c_str() );
 	}
+	std::printf( "  " );
+	print_platform( copt.platform );   // U1465
 
 	// universe
 	auto t0 = std::chrono::steady_clock::now();

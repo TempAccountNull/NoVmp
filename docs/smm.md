@@ -1,4 +1,4 @@
-# System-management mode: SMI, SMRAM state-save maps, RSM (ledgers U1460-U1464)
+# System-management mode: SMI, SMRAM state-save maps, RSM (ledgers U1460-U1465)
 
 User decision 2026-10-14 (finding S3 / F1 of `emulator/notes/eread/S3_firmware.md`): QEMU wrote its
 AMD64-style map (revision 00020064H) for every CPU, a known emulator fingerprint. Source:
@@ -27,14 +27,80 @@ model's), never the build or the host:
 | vendor | condition | map | SMM revision identifier |
 |---|---|---|---|
 | AuthenticAMD | always (APM 10.2.3: AMD64 implementations do not use the legacy Table 10-2) | APM Table 10-1 | 0003_0064h: level 0_xx64h with xx = 00, bits 16 / 17 "always set" (Figure 10-3) |
-| any other (GenuineIntel) | CPUID.80000001H:EDX[29] (IA-32e mode) or a Table 34-2 signature (06_17H, 06_0FH, 06_1CH) | SDM Table 34-3 | 0003_0004h |
-| any other | otherwise (RSM Operation: "Non-32-Bit-Mode SMM STATE MAP") | SDM Table 34-1 | 0003_0004h |
+| any other (GenuineIntel) | CPUID.80000001H:EDX[29] (IA-32e mode) or a Table 34-2 signature (06_17H, 06_0FH, 06_1CH) | SDM Table 34-3 | the platform profile's (default 0003_0101h, U1465) |
+| any other | otherwise (RSM Operation: "Non-32-Bit-Mode SMM STATE MAP") | SDM Table 34-1 | 0003_0004h (not a profile datum, U1465) |
 
-Intel revision identifier: 34.9 defines bit 16 (I/O instruction restart) and bit 17 (SMBASE
-relocation) - both supported - and 34.7 gives the I/O state information to "revision ID of 30004H or
-higher"; the SDM gives no lower-word value of its own, so 0003_0004h is the smallest value that
-states everything the model does. Real processors report model-specific values (open-source
-firmware headers use 30100H / 30101H for the Intel 64 map - evidence class C, not used).
+Intel revision identifier: a datum of the platform profile (U1465, user decision 2026-10-14), see
+"Revision identifier: evidence and profiles" below. Whatever the profile sets must agree with the
+layout: bit 16 (I/O instruction restart) and bit 17 (SMBASE relocation, 34.9) set - both implemented
+- and a revision with the I/O state information (34.7: "revision ID of 30004H or higher").
+
+## Revision identifier: evidence and profiles (U1465)
+
+User decisions 2026-10-14: the identifier must fit the platform profile the user selects explicitly
+(`--host` / `--guest` / `--AMD`); a value is never derived from the environment and never proof.
+Local sources only (no downloads).
+
+Evidence found (class C = open-source firmware, never architectural):
+- coreboot 26.06, Raptor Lake-S is built by the Alder Lake SoC code (`src/soc/intel/alderlake/Kconfig:122`
+  `SOC_INTEL_RAPTORLAKE`; a Raptor Lake-S desktop board: `src/mainboard/msi/ms7e06/Kconfig:3-12`, MSI
+  PRO Z790-P, `SOC_INTEL_RAPTORLAKE_PCH_S`). That SoC selects `SOC_INTEL_COMMON_BLOCK_CPU_SMMRELOCATE`
+  and `SOC_INTEL_COMMON_BLOCK_SMM` (`Kconfig:64`, `:81`).
+- `src/soc/intel/common/block/cpu/smmrelocate.c:5, 65-71, 227` relocates SMBASE through the
+  `em64t101_smm_state_save_area_t` layout and sizes the save state with it;
+  `src/soc/intel/common/block/smm/smihandler.c:41-44` uses `em64t101_smm_ops` for every SoC without
+  an override (Alder / Raptor Lake have none), and `:763-771` / `src/cpu/x86/smm/save_state.c:20-46`
+  pair that layout with revision 0x30101 (0x30100 = the em64t100 Atom layout).
+- `src/include/cpu/intel/em64t101_save_state.h:9-14` ("Intel Revision 30101 SMM State-Save Area")
+  names only Westmere ... Haswell; its architectural fields sit at exactly the Table 34-3 offsets
+  (checked field by field: 7DD0H-7DD8H, 7DE8H IO_RIP, 7E40H, 7E8CH-7E9CH, 7ED8H, 7EE0H, 7EF8H-7F02H,
+  the GPRs, 7F9CH, 7FA4H, the selectors, DR7 / DR6, RIP, EFER, RFLAGS, CR3, CR0). Its extra
+  model-specific words in SDM-reserved bytes (IO_CF8 7DDCH, I/O RDI / RCX / RSI 7DE0H / 7DF0H /
+  7DF8H, shutdown auto-restart 7E34H, CS base 7EE4H, IEDBASE 7EECH) are not written by the model.
+  It has no SSP field (pre-CET processors); Table 34-3 of SDM 093 puts SSP at 7EC8H, which the model
+  writes on CET processors.
+- Intel-authored edk2-derived code shipped with coreboot (`3rdparty/stm/Bios/StmCpuPkg/Include/
+  Register/SmramSaveStateMap.h:153`, `PiSmmCpuDxeSmm/SmramSaveState.c:372`) only tests "30004H or
+  higher" before reading IO_MISC.
+- Hypervisor values, for contrast: Linux KVM `arch/x86/kvm/smm.c:221` 00020000h, `:248` 00020064h;
+  coreboot `src/mainboard/emulation/qemu-q35/smihandler.c:13-33` documents QEMU's 00020064h and its
+  missing I/O-restart data as recognisable; `efi_dxe_emulator` carries QEMU's smm_helper.c (00020064h).
+- Not found: no revision in the FSP headers (`E:\sources\FSP`), chipsec, UEFITool, the 12th / 13th
+  generation datasheets and specification update, the RPL-S EDS XML; no VMware document or capture
+  (SMRAM cannot be read from a guest OS, and the project has no bare-host SMM capture).
+
+Chosen values (user decision 2026-10-14, second revision):
+
+| switch (emu-alltest) | profile | Intel 64 map revision | classification |
+|---|---|---|---|
+| `--host` | physical i5-13600K (Raptor Lake-S) | 0003_0101h | **inferred** from indirect evidence (coreboot's Alder / Raptor Lake save-state code above, class C); never read from the processor |
+| `--guest` | VMware guest (440BX virtual platform) | 0003_0004h | **documented minimum** (SDM 093 34.7), the **default approximation**: no VMware-specific source exists locally |
+| `--AMD` | AMD | 0003_0064h (AMD map) | **documented** (APM Vol2 r3.45 Figure 10-3); unchanged, nothing written |
+| none | - | 0003_0101h (the `--host` value) | as `--host`; Table 34-1 and AMD unchanged |
+
+Table 34-1 CPUs (Intel without IA-32e mode) report 0003_0004h under every profile (documented minimum,
+compatibility approximation; not a profile datum).
+
+Profile selection: emu-alltest (`Emulator/tests/alltest/at_main.cpp`) is the program that chooses the
+emulated CPU's identity (`--cpuid FILE`, the opt-ins), so the switches live there. `--host`, `--guest`
+and `--AMD` exclude each other (two different ones end the run with exit code 2); the same switch
+twice is accepted. The switch is never changed by what the run observes (no environment detection).
+The run prints `platform profile: ...` with the profile, the revision and its classification (sweep
+header and `--cases` header). `--host` / `--guest` write the revision into every Unicorn engine of the
+run with `UC_CTL_X86_SMM_REVISION`; `--AMD` and no switch write nothing (the engines keep their CPU
+model and CPUID vendor; AMD CPUs report the APM value). Library users call the control directly.
+
+`UC_CTL_X86_SMM_REVISION`: write the Intel 64 map's value (0 = the default 0003_0101h); read returns
+what the next SMI writes for the CPU's vendor and map (Table 34-1: 0003_0004h, AMD: 0003_0064h). Values
+without bits 16 / 17, with any of bits 31:18 or below 30004H are refused (they would disagree with the
+implemented layout: I/O restart, SMBASE relocation and the I/O state fields are always implemented).
+
+Limitations: no user-mode source exposes the SMM revision identifier, so neither profile's value has
+been read from hardware; the evidence-collection utility `emulator/capture/smmid` (outside the repo)
+records the platform identity the user runs it on next to the profile's configured value, for review -
+it cannot read the revision either. A CPUID profile-file line (`#@ smm-revision ...`, like U1473's
+`#@ microcode`) is not added: the switches select the profile.
+Test: `test_x86_smr_revision_profiles`.
 
 ## Intel 64: SDM 093 Table 34-3 (offsets from SMBASE + 8000H)
 
@@ -56,7 +122,7 @@ firmware headers use 30100H / 30101H for the Intel 64 map - evidence class C, no
 | 7F1BH-7F04H | | reserved | | not written |
 | 7F02H | 2 | auto HALT restart | Yes | bit 0 = SMI in the HALT state; RSM: bit 0 = 1 returns to the HALT state |
 | 7F00H | 2 | I/O instruction restart | Yes | 0 on entry; RSM: 00FFH re-executes the I/O instruction |
-| 7EFCH | 4 | SMM revision identifier | No | 0003_0004h |
+| 7EFCH | 4 | SMM revision identifier | No | the platform profile's (`--host` / default 0003_0101h, `--guest` 0003_0004h) |
 | 7EF8H | 4 | SMBASE | Yes | saved; RSM loads SMBASE from it (34.11) |
 | 7EF7H-7EE4H | | reserved | | not written |
 | 7EE0H | 4 | bit 0 EPT in VMX non-root, bit 1 incident to enclave mode | No | 0 / bit 1 = SGX enclave mode at the SMI (U1263); RSM does not read it |

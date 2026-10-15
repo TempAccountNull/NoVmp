@@ -2652,6 +2652,14 @@ typedef struct CPUX86State {
     uint16_t smm_io_port;
     uintptr_t smm_io_ra;
 #endif /* __Use_Original_Qemu (U1461) */
+#if __Use_Original_Qemu != 1 /* ours (U1465) */
+    /*
+     * NoVmp (ledger U1465): the SMM revision identifier of the platform profile for the Intel 64
+     * map, SDM Table 34-3 (UC_CTL_X86_SMM_REVISION; 0 = the default, docs/smm.md). Configuration like the CPU model:
+     * kept across a CPU reset, not part of a uc_context.
+     */
+    uint32_t smm_revid;
+#endif /* __Use_Original_Qemu (U1465) */
 #if __Use_Original_Qemu != 1 /* ours (U835) */
     /*
      * NoVmp (ledger U835): RDRAND/RDSEED source (UC_CTL_X86_RDRAND). Kept across a CPU reset
@@ -3472,6 +3480,10 @@ void do_smm_enter(X86CPU *cpu);
 #if __Use_Original_Qemu != 1 /* ours (U1461) */
 void x86_smm_signal(CPUX86State *env);  /* SMI# (UC_CTL_X86_SMI) */
 #endif /* __Use_Original_Qemu (U1461) */
+#if __Use_Original_Qemu != 1 /* ours (U1465) */
+uint32_t x86_smm_revision(CPUX86State *env);    /* the identifier the next SMI writes */
+bool x86_smm_revision_valid(uint32_t rev);      /* a UC_CTL_X86_SMM_REVISION value */
+#endif /* __Use_Original_Qemu (U1465) */
 
 /* Special values for X86CPUVersion: */
 

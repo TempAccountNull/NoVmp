@@ -1010,6 +1010,15 @@ typedef enum uc_control_type {
     // the auto HALT restart. Other values -> UC_ERR_ARG. Read: bit 0 = an SMI is latched, bit 1 = the
     // CPU is in SMM. Write: @args = (int 1); Read: @args = (int *state)
     UC_CTL_X86_SMI,
+    // x86 only (NoVmp U1465, docs/smm.md): the SMM revision identifier (SMRAM offset 7EFCH) the
+    // Intel 64 state-save map (SDM Table 34-3) reports - a datum of the platform profile (emu-alltest
+    // --host 00030101h, --guest 00030004h). Write 0 for the default (00030101h) or a value with bits
+    // 16 and 17 set, bits 31:18 clear and at least 00030004h (the model always implements I/O
+    // restart, SMBASE relocation and the I/O state fields); anything else -> UC_ERR_ARG. Table 34-1
+    // CPUs (no IA-32e mode) always report 00030004h, AMD CPUs 00030064h (APM Vol2 Figure 10-3).
+    // Read: the value the next SMI writes for the CPU's vendor and map. Any time; kept across a CPU
+    // reset. Write: @args = (uint32_t rev); Read: @args = (uint32_t *rev)
+    UC_CTL_X86_SMM_REVISION,
 } uc_control_type;
 
 // UC_CTL_X86_FEATURES bits (NoVmp U1120)

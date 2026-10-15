@@ -370,8 +370,9 @@ void helper_rsm(CPUX86State *env)
  *  - every other vendor (GenuineIntel): SDM 093 Vol3C Table 34-3 when IA-32e mode is supported
  *    (CPUID.80000001H:EDX[29], 34.4.1.1) or the signature is one of Table 34-2, else Table 34-1
  *    (Vol2B RSM Operation: "IF (IA-32e mode supported) ... IA-32e SMM STATE MAP"). The SMM
- *    revision identifier is 0003_0004h: I/O instruction restart (bit 16) and SMBASE relocation
- *    (bit 17, 34.9) and the I/O state information of 34.7 ("revision ID of 30004H or higher").
+ *    revision identifier is the platform profile's (U1465, below): I/O instruction restart (bit
+ *    16), SMBASE relocation (bit 17, 34.9) and the I/O state information of 34.7 ("revision ID of
+ *    30004H or higher") always hold.
  * The vendor is the one CPUID leaf 0 returns (a UC_CTL_X86_CPUID profile's, else the CPU
  * model's), never the build. What a map has no field for (Intel: the hidden part of the segment
  * registers, 34.4.1 "saved (but not readable) and restored"; the GDTR / IDTR limits; in Table
@@ -382,7 +383,21 @@ void helper_rsm(CPUX86State *env)
 #define SMM_MAP_INTEL32 2
 #define SMM_MAP_AMD64 3
 
-#define SMM_REVID_INTEL 0x00030004u
+/*
+ * SMM revision identifiers (U1465, docs/smm.md "Revision identifier: evidence"):
+ *  - Intel 64 map default 0003_0101h (platform profile raptor_lake_s, the default; also used for
+ *    the --host profile): inferred from indirect evidence - the value coreboot 26.06 pairs with the
+ *    Table 34-3 layout it uses on Alder Lake / Raptor Lake (soc/intel/common/block/smm/smihandler.c
+ *    em64t101 ops, cpu/smmrelocate.c); never read from the i5-13600K;
+ *  - the --guest profile (VMware guest) writes 0003_0004h through UC_CTL_X86_SMM_REVISION: the
+ *    documented minimum (34.7), the default approximation (no VMware-specific source);
+ *  - Intel Table 34-1 map 0003_0004h: the smallest value with the I/O state fields (34.7), a
+ *    compatibility approximation (no processor-specific source); not a profile datum;
+ *  - UC_CTL_X86_SMM_REVISION replaces the Table 34-3 value only (a platform profile's datum);
+ *  - AMD 0003_0064h (APM Figure 10-3: 0_xx64h, xx = 00), not configurable.
+ */
+#define SMM_REVID_INTEL64 0x00030101u
+#define SMM_REVID_INTEL32 0x00030004u
 #define SMM_REVID_AMD 0x00030064u
 
 /* hflags that belong to the hidden CS / SS state (the Unicorn API sets CS64 without CS.L) */
@@ -591,7 +606,7 @@ static void smm_save_intel64(CPUX86State *env, target_ulong sm, bool halted, boo
     }
     x86_stw_phys(cs, sm + 0x7f02, halted ? 1 : 0);                  /* auto HALT restart */
     x86_stw_phys(cs, sm + 0x7f00, 0);                               /* I/O instruction restart */
-    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_INTEL);
+    x86_stl_phys(cs, sm + 0x7efc, env->smm_revid ? env->smm_revid : SMM_REVID_INTEL64);
     x86_stl_phys(cs, sm + 0x7ef8, env->smbase);
     /*
      * 7EE0H: bit 0 EPT (not in VMX non-root operation: 0, so 7ED8H EPTP is not saved, 34.14.1),
@@ -640,7 +655,7 @@ static void smm_save_intel32(CPUX86State *env, target_ulong sm, bool halted)
     x86_stl_phys(cs, sm + 0x7fa0, io ? (uint32_t)io->mem : 0);      /* I/O memory address */
     x86_stw_phys(cs, sm + 0x7f02, halted ? 1 : 0);
     x86_stw_phys(cs, sm + 0x7f00, 0);
-    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_INTEL);
+    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_INTEL32);              /* not a profile datum */
     x86_stl_phys(cs, sm + 0x7ef8, env->smbase);
 }
 
@@ -709,6 +724,30 @@ static void smm_save_amd64(CPUX86State *env, target_ulong sm, bool halted)
     x86_stq_phys(cs, sm + 0x7fe8, env->regs[R_EDX]);
     x86_stq_phys(cs, sm + 0x7ff0, env->regs[R_ECX]);
     x86_stq_phys(cs, sm + 0x7ff8, env->regs[R_EAX]);
+}
+
+/*
+ * UC_CTL_X86_SMM_REVISION (U1465): a value must state what the model implements - bit 16 (I/O
+ * instruction restart) and bit 17 (SMBASE relocation) set, the reserved bits 31:18 clear (Figure
+ * 34-2) and a revision with the I/O state information (34.7: 30004H or higher). 0 = the default.
+ */
+bool x86_smm_revision_valid(uint32_t rev)
+{
+    return rev == 0 || ((rev & 0xfffc0000u) == 0 && (rev & 0x00030000u) == 0x00030000u &&
+                        rev >= 0x00030004u);
+}
+
+/* the SMM revision identifier the next SMI writes (U1465) */
+uint32_t x86_smm_revision(CPUX86State *env)
+{
+    switch (smm_map_of(env)) {
+    case SMM_MAP_AMD64:
+        return SMM_REVID_AMD;
+    case SMM_MAP_INTEL64:
+        return env->smm_revid ? env->smm_revid : SMM_REVID_INTEL64;
+    default:
+        return SMM_REVID_INTEL32;
+    }
 }
 
 void do_smm_enter(X86CPU *cpu)

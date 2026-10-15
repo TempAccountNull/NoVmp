@@ -37958,7 +37958,7 @@ static void test_x86_uc_mc_profiles(void)
 /* ---- end U1470-U1479 (uc_mc_) ---- */
 
 /*
- * ---- NoVmp U1461-U1464: SMI, the SMRAM state-save maps and RSM (smr_) ----
+ * ---- NoVmp U1461-U1465: SMI, the SMRAM state-save maps and RSM (smr_) ----
  * Expected values: SDM 093 Vol3C ch. 34 (Tables 34-1, 34-3 to 34-8; 34.3.1, 34.5.3, 34.9-34.12)
  * and AMD64 APM Vol2 24593 r3.45 ch. 10 (Table 10-1, Figures 10-3 / 10-6, 10.3.7, 10.3.8). The SMI
  * comes from UC_CTL_X86_SMI (test-only hook, U1461). The SMI handler is a single RSM at
@@ -38341,7 +38341,7 @@ static void test_x86_smr_intel64_map(void)
     }
     TEST_CHECK(smr_f(&c, 0, 0x7f02, 2) == 0);                       /* auto HALT restart */
     TEST_CHECK(smr_f(&c, 0, 0x7f00, 2) == 0);                       /* I/O instruction restart */
-    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030004);              /* SMM revision identifier */
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030101);              /* SMM revision identifier */
     TEST_CHECK(smr_f(&c, 0, 0x7ef8, 4) == SMR_SMBASE);
     TEST_CHECK(smr_f(&c, 0, 0x7ee0, 4) == 0);                       /* not VMX non-root / enclave */
     TEST_CHECK(smr_f(&c, 0, 0x7e9c, 4) == 0x00002000);              /* LDT base 31:0 */
@@ -38818,7 +38818,7 @@ static void test_x86_smr_vendor(void)
     smr_signal(c.uc);
     OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
     TEST_CHECK(c.hits == 1);
-    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030004);
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030101);
     TEST_CHECK(smr_f(&c, 0, 0x7ff8, 8) == cr0);                     /* CR0 at 7FF8H */
     TEST_CHECK(smr_f(&c, 0, 0x7f5c, 8) == smr_gpr_val(0));          /* RAX at 7F5CH */
     TEST_CHECK(smr_untouched(&c, 0, 0x7e00, 0x7e3f));               /* no AMD segment fields */
@@ -38851,7 +38851,93 @@ static void test_x86_smr_vendor(void)
     TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f1b));
     OK(uc_close(c.uc));
 }
-/* ---- end U1461-U1464 (smr_) ---- */
+/*
+ * U1465: the Intel 64 map's SMM revision identifier is a datum of the platform profile
+ * (UC_CTL_X86_SMM_REVISION, written by emu-alltest --host / --guest). Values and evidence: docs/smm.md.
+ */
+static void test_x86_smr_revision_profiles(void)
+{
+    static const struct {
+        const char *profile;
+        uint32_t rev;
+    } prof[] = {
+        {"--host", 0x00030101},     /* inferred: coreboot 26.06 em64t101 (Alder / Raptor Lake) */
+        {"--guest", 0x00030004},    /* SDM 34.7 documented minimum, the default approximation */
+    };
+    static const uc_x86_cpuid amd0[] = {{0, 0, 0xd, 0x68747541, 0x444d4163, 0x69746e65}};
+    static const uint32_t bad[] = {0x00010101, 0x00020101, 0x00070101, 0x80030101, 0x00030003,
+                                   0x00000101};
+    SmrCtx c;
+    uint32_t rev;
+    size_t i;
+
+    for (i = 0; i < sizeof(prof) / sizeof(prof[0]); i++) {
+        smr_open(&c, UC_MODE_64, -1, NULL, 0);
+        smr_code(&c, "\x90\x90", 2);
+        OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), prof[i].rev));
+        rev = 0;
+        OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+        TEST_CHECK(rev == prof[i].rev);
+        smr_signal(c.uc);
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == prof[i].rev);
+        /* the advertised extensions are implemented: SMBASE relocation (bit 17) */
+        TEST_CHECK((smr_f(&c, 0, 0x7efc, 4) & 0x30000) == 0x30000);
+        TEST_MSG("profile %s", prof[i].profile);
+        OK(uc_close(c.uc));
+    }
+
+    /* written before the engine is initialised (as emu-alltest does) */
+    {
+        uc_engine *uc;
+
+        OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+        OK(uc_ctl(uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), 0x00030004));
+        OK(uc_ctl(uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+        TEST_CHECK(rev == 0x00030004);
+        OK(uc_close(uc));
+    }
+
+    /* defaults: Intel 64 map 00030101h, Table 34-1 map 00030004h, AMD 00030064h */
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+    TEST_CHECK(rev == 0x00030101);
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {     /* layout disagreements refused */
+        TEST_CHECK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), bad[i]) == UC_ERR_ARG);
+        TEST_MSG("value %08x", bad[i]);
+    }
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), 0x00030004));
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), 0));      /* back to the default */
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+    TEST_CHECK(rev == 0x00030101);
+    OK(uc_close(c.uc));
+
+    /* Table 34-1 CPUs keep 00030004h: the profile datum is for the Intel 64 map only */
+    smr_open(&c, UC_MODE_32, UC_CPU_X86_PENTIUM3, NULL, 0);
+    smr_code(&c, "\x40", 1);   /* inc eax */
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+    TEST_CHECK(rev == 0x00030004);
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), 0x00030101));
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+    TEST_CHECK(rev == 0x00030004);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 1, 0, 0));
+    TEST_CHECK(c.hits == 1 && smr_f(&c, 0, 0x7efc, 4) == 0x00030004);
+    OK(uc_close(c.uc));
+
+    /* an AMD profile keeps the APM value whatever the Intel datum says */
+    smr_open(&c, UC_MODE_64, -1, amd0, 1);
+    smr_code(&c, "\x90\x90", 2);
+    OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_SMM_REVISION, 1), 0x00030101));
+    OK(uc_ctl(c.uc, UC_CTL_READ(UC_CTL_X86_SMM_REVISION, 1), &rev));
+    TEST_CHECK(rev == 0x00030064);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1 && smr_f(&c, 0, 0x7efc, 4) == 0x00030064);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1461-U1465 (smr_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -39356,4 +39442,5 @@ TEST_LIST = {
     {"test_x86_smr_amd64_map", test_x86_smr_amd64_map},
     {"test_x86_smr_amd64_rsm", test_x86_smr_amd64_rsm},
     {"test_x86_smr_vendor", test_x86_smr_vendor},
+    {"test_x86_smr_revision_profiles", test_x86_smr_revision_profiles},
     {NULL, NULL}};

@@ -2798,6 +2798,23 @@ static uc_err x86_smi(struct uc_struct *uc, int set, int *v)
     return UC_ERR_OK;
 }
 #endif /* __Use_Original_Qemu (U1461) */
+#if __Use_Original_Qemu != 1 /* ours (U1465) */
+/* NoVmp (ledger U1465): UC_CTL_X86_SMM_REVISION - the platform profile's SMM revision identifier */
+static uc_err x86_smm_revision_ctl(struct uc_struct *uc, int set, uint32_t *rev)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    if (!set) {
+        *rev = x86_smm_revision(env);
+        return UC_ERR_OK;
+    }
+    if (!x86_smm_revision_valid(*rev)) {
+        return UC_ERR_ARG;
+    }
+    env->smm_revid = *rev;
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1465) */
 
 DEFAULT_VISIBILITY
 void uc_init(struct uc_struct *uc)
@@ -2838,6 +2855,9 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U1461) */
     uc->x86_smi = x86_smi;
 #endif /* __Use_Original_Qemu (U1461) */
+#if __Use_Original_Qemu != 1 /* ours (U1465) */
+    uc->x86_smm_revision = x86_smm_revision_ctl;
+#endif /* __Use_Original_Qemu (U1465) */
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     uc->x86_apic_join = x86_apic_join;
     uc->x86_apic_set_id = x86_apic_set_id;

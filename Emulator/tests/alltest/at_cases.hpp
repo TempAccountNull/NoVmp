@@ -401,7 +401,8 @@ namespace at
 					   int shard_k = 0, shard_n = 0;   /* U543: --shard K/N (0 = the whole file) */
 					   int rdrand = UC_X86_RDRAND_SEEDED; uint64_t rdrand_seed = 0;   /* U835: --seeded [--rdrand-seed N] / --HostSeed */
 					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
-					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */ };
+					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */
+					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */ };
 
 	// U1040: one --native-under-sde result per expected-value line: "L <line> <hash> run <faulted> <vector>
 	// [OFF:HEX ...]" (the bytes of 'state' that differ from the input state), "L <line> <hash> skip
@@ -753,6 +754,7 @@ namespace at
 				pe.ucode_set = opt.ucode_set; pe.ucode_rev = opt.ucode_rev; pe.ucode_pid = opt.ucode_pid;   // U1473
 				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx; pe.x86_features = opt.x86_features;
 				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
+				pe.smm_revision = platform_smm_revision( opt.platform );   // U1465
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
 				if ( !pe.probe( ex, ec, perr ) ) { std::printf( "machine state: %s cases: %s\n", kind, perr.c_str() ); return; }
@@ -766,6 +768,7 @@ namespace at
 			// U835 (D8): the RDRAND/RDSEED source of every Unicorn engine of this run
 			if ( opt.rdrand == UC_X86_RDRAND_HOST ) std::printf( "rdrand: host DRNG (--HostSeed)\n" );
 			else std::printf( "rdrand: seeded, seed 0x%llX (--seeded, the default)\n", ( unsigned long long ) opt.rdrand_seed );
+			print_platform( opt.platform );   // U1465
 		}
 		native_engine hw;
 		bool hw_open = false;
@@ -1061,6 +1064,7 @@ namespace at
 			uc.x86_features = opt.x86_features;   // U1181
 			uc.rdrand = opt.rdrand;   // U835
 			uc.rdrand_seed = opt.rdrand_seed;
+			uc.smm_revision = platform_smm_revision( opt.platform );   // U1465
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk

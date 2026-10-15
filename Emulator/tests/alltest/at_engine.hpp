@@ -533,6 +533,39 @@ namespace at
 	// U539: Unicorn implements the Intel SDM only (no UC_CTL_X86_HW_QUIRKS, no --quirks). Where
 	// the host i5-13600K deviates, the hardware cases are tagged (docs\quirks.md, at_cases.hpp).
 
+	// U1465 (docs/smm.md): the platform profile chosen on the command line (--host / --guest / --AMD,
+	// mutually exclusive, never derived from the environment). It selects the SMM revision identifier
+	// the engines' Intel 64 map reports (UC_CTL_X86_SMM_REVISION); --AMD and no switch write nothing
+	// (AMD CPUs report the APM value, the Intel 64 map its default, Table 34-1 CPUs 00030004h).
+	enum { PLATFORM_NONE = 0, PLATFORM_HOST, PLATFORM_GUEST, PLATFORM_AMD };
+	static uint32_t platform_smm_revision( int p )
+	{
+		return p == PLATFORM_HOST ? 0x00030101u : p == PLATFORM_GUEST ? 0x00030004u : 0u;
+	}
+	static void print_platform( int p )
+	{
+		switch ( p )
+		{
+		case PLATFORM_HOST:
+			std::printf( "platform profile: --host (physical i5-13600K, Raptor Lake-S); SMM revision 00030101h (Intel 64 map) - "
+						 "inferred from indirect evidence (coreboot 26.06 Alder/Raptor Lake em64t101 save-state code, class C), "
+						 "never read from the processor; Table 34-1 CPUs 00030004h, AMD 00030064h\n" );
+			break;
+		case PLATFORM_GUEST:
+			std::printf( "platform profile: --guest (VMware guest); SMM revision 00030004h (Intel 64 map) - documented minimum "
+						 "(SDM 093 34.7), the default approximation: no VMware-specific source; Table 34-1 CPUs 00030004h, AMD 00030064h\n" );
+			break;
+		case PLATFORM_AMD:
+			std::printf( "platform profile: --AMD; SMM revision 00030064h - documented (AMD APM Vol2 r3.45 Figure 10-3) for "
+						 "AuthenticAMD CPUs; nothing written: the engines keep their CPU model and CPUID vendor\n" );
+			break;
+		default:
+			std::printf( "platform profile: none (no --host/--guest/--AMD); SMM revision defaults: Intel 64 map 00030101h "
+						 "(inferred, coreboot class C), Table 34-1 00030004h (documented minimum), AMD 00030064h (documented)\n" );
+			break;
+		}
+	}
+
 	class unicorn_engine
 	{
 	public:
@@ -557,6 +590,8 @@ namespace at
 			if ( x86_features && uc_ctl_set_x86_features( uc_, x86_features ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_features failed"; return false; }
 			// U835 (D8): RDRAND/RDSEED source, --seeded (default, deterministic) or --HostSeed
 			if ( uc_ctl_set_x86_rdrand( uc_, rdrand, rdrand_seed ) != UC_ERR_OK ) { err = "uc_ctl_set_x86_rdrand failed"; return false; }
+			// U1465: the platform profile's SMM revision identifier (--host / --guest; docs/smm.md)
+			if ( smm_revision ) { uc_err se = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_SMM_REVISION, 1 ), smm_revision ); if ( se != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_SMM_REVISION: " ) + uc_strerror( se ); return false; } }
 			// optional CPUID profile / strict-#UD / XCR0 (emu-alltest --cpuid/--strict/--xcr0)
 			if ( !cpuid.empty() ) uc_ctl_set_x86_cpuid( uc_, cpuid.data(), cpuid.size() );
 			// U435: -1 leaves Unicorn's default (strict while a profile is installed)
@@ -835,6 +870,7 @@ namespace at
 		int x86_features = 0;    // UC_CTL_X86_FEATURES mask (0 = none, the default; --x86-features N, U1181)
 		int rdrand = UC_X86_RDRAND_SEEDED;   // UC_CTL_X86_RDRAND (U835): --seeded (default) / --HostSeed
 		uint64_t rdrand_seed = 0;            // the seeded model's seed (--rdrand-seed N)
+		uint32_t smm_revision = 0;           // U1465: UC_CTL_X86_SMM_REVISION (0 = not written; --host / --guest)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
