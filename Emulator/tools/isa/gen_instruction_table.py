@@ -353,7 +353,16 @@ CPU_NOT = {
     'MCOMMIT': 'AMD MCOMMIT', 'AMD': 'AMD-only', 'AMD_INVLPGB': 'AMD INVLPGB', 'SVM': 'AMD SVM',
     'SNP': 'AMD SEV-SNP', 'VIA_PADLOCK_AES': 'VIA PadLock', 'VIA_PADLOCK_SHA': 'VIA PadLock',
     'VIA_PADLOCK_RNG': 'VIA PadLock', 'VIA_PADLOCK_MONTMUL': 'VIA PadLock',
-    'TDX': 'Intel TDX (server, VMX root only)', 'IBHF': 'not reported by this CPU',
+    'TDX': 'Intel TDX / SEAM (server CPUs)', 'IBHF': 'not reported by this CPU',
+}
+# U1335: where each SEAM instruction can execute (SDM 093 Vol3C 35.5 pp. 35-6 to 35-9; Intel Trust Domain
+# CPU Architectural Extensions 343754-003 ch. 5 pp. 5-2 to 5-7). The family label alone said "VMX root
+# only" for all four; TDCALL is VMX / SEAM non-root only, SEAMRET / SEAMOPS are SEAM root only.
+TDX_WHERE = {
+    'seamcall': 'SEAMCALL: VMX root operation, 64-bit mode (VMX non-root: VM exit 76)',
+    'tdcall': 'TDCALL: VMX non-root / SEAM non-root operation only (VM exit 77)',
+    'seamret': 'SEAMRET: SEAM root operation only',
+    'seamops': 'SEAMOPS: SEAM root operation only',
 }
 # U1094: XED ISA sets of the AVX10.2 / ACE instructions and their enumeration (AVX10.2 spec 361050-007
 # ch.2, ACE 1.15 3.1). The prefix match on CPUID_BIT gave AVX512_VNNI_INT8/INT16 and AVX512_VNNI_FP16 the
@@ -439,6 +448,8 @@ def row_on_cpu(mn, isas, cpuid):
     reasons = []
     for f in sorted(fams):
         ok, why = family_on_cpu(f, cpuid)
+        if f == 'TDX' and mn.lower() in TDX_WHERE:          # U1335
+            why = '%s; %s' % (why, TDX_WHERE[mn.lower()])
         if ok:
             if f == 'CET' and mn not in CET_USER_OK:
                 return False, 'the CPU has CET but Windows does not enable shadow stacks for our process: #UD/#GP in user mode'

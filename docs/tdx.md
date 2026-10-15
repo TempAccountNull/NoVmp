@@ -125,6 +125,14 @@ table, 87H, the MSR list are unchanged), and `emu-alltest --full` is byte-identi
 | G6 | 4.2 TDCAE / 35.4.2 3C: outside SEAM, loading CRs / MSRs with a SEAM-private KeyID physical address #GP(0), paging-structure entries with one #PF, EPT entries EPT misconfiguration, VM entry failure, IA32_APIC_BASE with any non-zero KeyID #GP(0), VMX instruction operands "as if a reserved bit were set" | not modelled: it is the MAXPHYADDR reduction by TDX_RESERVED_KEYID_BITS outside SEAM, pending the user decision on the `x86_maxphyaddr(env)` / `x86_in_seam(env)` accessor (notes\eread\T1_tmekeyid_review.md, agent/tme). Stage A does not change any MAXPHYADDR / TME width logic. |
 | G7 | INVD #GP when the SEAM range is valid and protected (TDCAE 4.2 p. 4-2) | never valid in Stage A: no change |
 
+## 3. Instruction-table label
+
+`Emulator\tools\isa\gen_instruction_table.py` labelled the whole TDX family "Intel TDX (server, VMX
+root only)". U1335: the family label is "Intel TDX / SEAM (server CPUs)" and each mnemonic gets where
+it can execute: SEAMCALL VMX root (non-root: VM exit 76), TDCALL VMX / SEAM non-root only (VM exit 77),
+SEAMRET / SEAMOPS SEAM root only. `docs/Intel_instruction_sets_supported.md` is generated from it at
+the next docs refresh.
+
 ## 4. Stage B - full SEAM root / non-root support: NOT IMPLEMENTED - design only
 
 Goal: a logical processor that can enter and run in SEAM root operation (loader and module mode) and
