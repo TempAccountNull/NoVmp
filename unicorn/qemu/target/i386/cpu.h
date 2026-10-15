@@ -440,6 +440,12 @@ typedef enum X86Seg {
                                          ((uint64_t)NOVMP_TME_MAX_KEYID_BITS << 32) | \
                                          ((uint64_t)NOVMP_MKTME_MAX_KEYS << 36))
 #endif /* __Use_Original_Qemu (U1020) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+/* SEAM range registers (SDM 093 Vol4 Table 2-2 1400H / 1401H; 343754-003 ch. 8), with IA32_MTRRCAP[15] */
+#define MSR_IA32_SEAMRR_BASE            0x1400  /* CONFIGURED 3, BASE M-1:25 */
+#define MSR_IA32_SEAMRR_MASK            0x1401  /* LOCK 10, VALID 11 (R/O), MASK M-1:25 */
+#define MSR_MTRRcap_SEAMRR              (1 << 15)
+#endif /* __Use_Original_Qemu (U1332) */
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
 /* one TME-MK key table entry (PCONFIG MKTME_KEY_PROGRAM); same meaning as uc_x86_mktme_key */
 typedef struct X86MktmeKey {
@@ -2431,6 +2437,15 @@ typedef struct CPUX86State {
     uint64_t tme_exclude_mask;      /* IA32_TME_EXCLUDE_MASK (983H) */
     uint64_t tme_exclude_base;      /* IA32_TME_EXCLUDE_BASE (984H) */
 #endif /* __Use_Original_Qemu (U1020) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+    /*
+     * NoVmp (ledger U1332, docs/tdx.md): IA32_SEAMRR_BASE / IA32_SEAMRR_MASK with UC_X86_FEATURE_SEAM
+     * (core scope, 343754-003 ch. 8); reset 0 (our choice: the SDM gives no reset value); a uc_context
+     * carries them (reset area). MASK bit 11 (VALID) is never stored: it always reads 0 (Stage A).
+     */
+    uint64_t seamrr_base;           /* IA32_SEAMRR_BASE (1400H) */
+    uint64_t seamrr_mask;           /* IA32_SEAMRR_MASK (1401H) */
+#endif /* __Use_Original_Qemu (U1332) */
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     /*
      * NoVmp (ledger U1021): the TME-MK key table PCONFIG programs (SDM Vol2B PCONFIG: "discarded
@@ -3528,6 +3543,27 @@ G_NORETURN void x86_vmx_insn_exit(CPUX86State *env, uint32_t reason, uint64_t qu
 void x86_vmx_uncond_exit(CPUX86State *env, uint32_t reason, uintptr_t ra);
 G_NORETURN void x86_vmx_triple_fault(CPUX86State *env);
 bool x86_msr_vmx_access(CPUX86State *env, uint32_t msr, uint64_t *val, bool write);
+#if __Use_Original_Qemu != 1 /* ours (U1331) */
+/*
+ * NoVmp (ledger U1331, plan 1.J.13 Stage A, docs/tdx.md): SEAM (SDM 093 Vol3C ch. 35, 343754-003).
+ * x86_in_seam: STAGE A STUB - the logical processor is in SEAM (SEAM root or SEAM non-root operation).
+ * Always false: Stage A never enters SEAM (no SEAM range, no SEAM module); the name and signature are
+ * shared with the TME-MK MAXPHYADDR accessor work (agent/tme) so both merge as one definition.
+ */
+static inline bool x86_in_seam(const CPUX86State *env)
+{
+    (void)env;
+    return false;
+}
+
+/* seam_model.c */
+bool x86_seam_enumerated(CPUX86State *env);                       /* IA32_VMX_PROCBASED_CTLS3[5] */
+int x86_seam_msr_present(CPUX86State *env, uint32_t msr);         /* -1: not a SEAM MSR */
+int x86_seam_msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val);  /* -1: not SEAM */
+bool x86_seam_rdmsr(CPUX86State *env, uint32_t msr, uint64_t *val);
+bool x86_seam_wrmsr(CPUX86State *env, uint32_t msr, uint64_t val);
+uint64_t x86_seam_tdx_priv_keyids(CPUX86State *env);             /* 87H bits 63:32 */
+#endif /* __Use_Original_Qemu (U1331) */
 bool x86_msr_value_ok(CPUX86State *env, uint32_t msr, uint64_t val);
 bool x86_efer_value_ok(CPUX86State *env, uint64_t efer);
 void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_code);

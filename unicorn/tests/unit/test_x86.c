@@ -35414,6 +35414,281 @@ static void test_x86_vmx_host_cr3_tme(void)
 
 /* ---- end U1300-U1399 (vmx_) ---- */
 
+/*
+ * ---- NoVmp U1331-U1349: SEAM Stage A (tx_) ----
+ * plan 1.J.13 Stage A, docs/tdx.md. Expected values from SDM 325462-093 Vol3C ch. 35 (SEAMCALL
+ * pp. 35-7 / 35-8, TDCALL p. 35-9, 35.5 p. 35-6), Vol3D Table C-1 p. C-4 (exit reasons 76 / 77),
+ * Vol4 Table 2-2 (FEH, 87H, 1400H, 1401H) and Intel Trust Domain CPU Architectural Extensions
+ * 343754-003 ch. 5, 8, 9. Specification-validated only (the i5-13600K has no SEAM).
+ */
+#define TX_SEAM (UC_X86_FEATURE_VMX | UC_X86_FEATURE_SEAM)
+
+/* 66 0F 01 'op' with an optional leading prefix byte (0: none): the length */
+static size_t tx_code(char *buf, char pfx, char op)
+{
+    size_t n = 0;
+
+    if (pfx) {
+        buf[n++] = pfx;
+    }
+    buf[n++] = '\x66';
+    buf[n++] = '\x0f';
+    buf[n++] = '\x01';
+    buf[n++] = op;
+    return n;
+}
+
+/* CPUID.80000008H:EAX[7:0] (MAXPHYADDR as enumerated) */
+static int tx_maxphyaddr(PcCtx *c)
+{
+    pc_set(c, UC_X86_REG_RAX, 0x80000008);
+    pc_set(c, UC_X86_REG_RCX, 0);
+    TEST_CHECK(pc_run(c, "\x0f\xa2", 2) == -1);
+    return (int)(pc_get(c, UC_X86_REG_RAX) & 0xff);
+}
+
+/* VMX root operation (VMXON, VMCS A current) with exception bitmap #UD / #GP for the guests */
+static void tx_setup(PcCtx *c, int feat)
+{
+    uint64_t fl;
+
+    vmx_setup_f(c, feat);
+    vmx_w(c, 0x4004, (1u << 6) | (1u << 13));
+    TEST_CHECK(vmx_enter(c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(c, 0x4402) == 10);
+}
+
+/* the guest code at VMX_GUEST_PC: VM exit 'reason' (qualification 0, length n), or the exception */
+static void tx_guest(PcCtx *c, const char *code, size_t n, uint32_t reason, uint32_t vec)
+{
+    vmx_resume_regs(c, code, n, 0, 0, 0, 0);
+    if (reason) {
+        vmx_exit_is(c, reason, 0, (uint32_t)n);
+        TEST_CHECK(vmx_r(c, 0x681e) == VMX_GUEST_PC);
+    } else {
+        TEST_CHECK(vmx_r(c, 0x4402) == 0 && vmx_r(c, 0x4404) == (0x80000300u | vec |
+                                                                 (vec == 13 ? 0x800u : 0)));
+        TEST_MSG("exit %llu info %llx, expected vector %u", (unsigned long long)vmx_r(c, 0x4402),
+                 (unsigned long long)vmx_r(c, 0x4404), vec);
+        if (vec == 13) {
+            TEST_CHECK(vmx_r(c, 0x4406) == 0);
+        }
+    }
+}
+
+/*
+ * U1331: the opt-in. UC_X86_FEATURE_SEAM needs UC_X86_FEATURE_VMX (UC_ERR_ARG alone). Default (VMX
+ * only, or nothing): IA32_MTRRCAP[15] = 0, 1400H / 1401H #GP(0), IA32_VMX_PROCBASED_CTLS3[5] = 0,
+ * IA32_VMX_ENTRY_CTLS / TRUE_ENTRY_CTLS bit 57 = 0, the fields 4026H / 203CH do not exist (VMfailValid
+ * 12), 87H[63:32] = 0 with TME-MK active, and 66 0F 01 CC-CF #UD outside VMX operation, in VMX root
+ * operation and in VMX non-root operation (no VM exit). With the opt-in: MTRRCAP and the capability
+ * MSRs differ from the default exactly in bits 15 / 5 / 57; the two SEAM fields exist.
+ */
+static void test_x86_tx_optin(void)
+{
+    static const char ops[4] = {'\xcc', '\xcd', '\xce', '\xcf'};
+    uint64_t v0[4], v1[4], v, fl;
+    uc_engine *uc;
+    char code[8];
+    size_t n;
+    int j;
+    PcCtx c;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    TEST_CHECK(uc_ctl_set_x86_features(uc, UC_X86_FEATURE_SEAM) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_features(uc, TX_SEAM));
+    OK(uc_close(uc));
+
+    /* no VMX at all: the encodings are #UD as before */
+    pc_open(&c);
+    for (j = 0; j < 4; j++) {
+        n = tx_code(code, 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);
+    }
+    OK(uc_close(c.uc));
+
+    /* default: VMX without SEAM */
+    vmx_root_open_f(&c, UC_X86_FEATURE_VMX);
+    TEST_CHECK(vmx_rdmsr(&c, 0xfe, &v0[0]) == -1 && !((v0[0] >> 15) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x492, &v0[1]) == -1 && !((v0[1] >> 5) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x484, &v0[2]) == -1 && !((v0[2] >> 57) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x490, &v0[3]) == -1 && !((v0[3] >> 57) & 1));
+    TEST_CHECK(vmx_rdmsr(&c, 0x1400, &v) == 13 && vmx_rdmsr(&c, 0x1401, &v) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 0) == 13 && vmx_wrmsr(&c, 0x1401, 0) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x982, 2 | 0x20 | (6ull << 32) | (2ull << 36) | (5ull << 48)) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x87, &v) == -1 && v == 15);          /* NUM_TDX_PRIV_KEYIDS 0 */
+    for (j = 0; j < 4; j++) {
+        n = tx_code(code, 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);                       /* outside VMX operation */
+    }
+    OK(uc_close(c.uc));
+    tx_setup(&c, UC_X86_FEATURE_VMX);
+    TEST_CHECK(vmx_vmwrite(&c, 0x4026, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 12);
+    TEST_CHECK(vmx_vmwrite(&c, 0x203c, 0, &fl) == -1);
+    vmx_check_failvalid(&c, fl, 12);
+    for (j = 0; j < 4; j++) {
+        TEST_CASE_("default op %02x", (unsigned)(uint8_t)ops[j]);
+        n = tx_code(code, 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);                       /* VMX root, CPL 0 */
+        tx_guest(&c, code, n, 0, 6);                                /* VMX non-root */
+    }
+    TEST_CASE_(NULL);
+    OK(uc_close(c.uc));
+
+    /* the opt-in: exactly the SEAM bits more */
+    vmx_root_open_f(&c, TX_SEAM);
+    TEST_CHECK(vmx_rdmsr(&c, 0xfe, &v1[0]) == -1 && (v1[0] ^ v0[0]) == (1ull << 15));
+    TEST_CHECK(vmx_rdmsr(&c, 0x492, &v1[1]) == -1 && (v1[1] ^ v0[1]) == (1ull << 5));
+    TEST_CHECK(vmx_rdmsr(&c, 0x484, &v1[2]) == -1 && (v1[2] ^ v0[2]) == (1ull << 57));
+    TEST_CHECK(vmx_rdmsr(&c, 0x490, &v1[3]) == -1 && (v1[3] ^ v0[3]) == (1ull << 57));
+    TEST_CHECK(vmx_wrmsr(&c, 0xfe, v1[0]) == 13);                   /* MTRRCAP stays R/O */
+    OK(uc_close(c.uc));
+    tx_setup(&c, TX_SEAM);
+    vmx_w(&c, 0x4026, 0x12345678);                                  /* SEAM-guest KeyID, 32 bits */
+    TEST_CHECK(vmx_r(&c, 0x4026) == 0x12345678);
+    vmx_w(&c, 0x203c, 0xabcdef000ull);                              /* SEAM shared EPT pointer */
+    TEST_CHECK(vmx_r(&c, 0x203c) == 0xabcdef000ull && vmx_r(&c, 0x203d) == 0xa);
+    /* the controls may be 1 outside SEAM, where they are ignored (Vol3C 27.6.26) */
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 17));
+    vmx_w(&c, 0x2034, 1ull << 5);
+    vmx_w(&c, 0x4012, 0x11fb | 0x200 | (1u << 25));
+    tx_guest(&c, "\x0f\xa2", 2, 10, 0);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1332 / U1333: IA32_SEAMRR_BASE / IA32_SEAMRR_MASK (Vol4 Table 2-2 093 pp. 2-78 / 2-79): reset 0;
+ * BASE reserved 2:0, 24:4, 63:M; CONFIGURED (3) and BASE M-1:25 writable; MASK reserved 9:0, 24:12,
+ * 63:M, VALID (11) "Must be written with 0" and reads 0 (never activated); with TME-MK active (k = 6,
+ * p = 2) BASE bits M-1:M-6 (KeyID) #GP(0), bit M-7 is an address bit; IA32_MKTME_KEYID_PARTITIONING =
+ * 15 shared + 48 SEAM-private KeyIDs (2^6 - 2^4); LOCK (10): both registers no longer writable
+ * (#GP(0), docs/tdx.md G3), still readable; a uc_context carries them; a CPU reset clears them.
+ */
+static void test_x86_tx_seamrr(void)
+{
+    const uint64_t act = 2 | 0x20 | (6ull << 32) | (2ull << 36) | (5ull << 48);
+    uc_context *ctx;
+    uint64_t v, base, mask;
+    int m;
+    PcCtx c;
+
+    vmx_root_open_f(&c, TX_SEAM);
+    m = tx_maxphyaddr(&c);
+    TEST_CHECK(m > 32 && m <= 52);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1400, &v) == -1 && v == 0);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1401, &v) == -1 && v == 0);
+    base = (1ull << (m - 1)) | (1ull << 25) | 8;
+    mask = ((1ull << m) - 1) & ~((1ull << 25) - 1);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1) == 13);                     /* 2:0 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1ull << 4) == 13);             /* 24:4 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1ull << 24) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1ull << m) == 13);             /* 63:M */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1ull << 63) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, base) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1400, &v) == -1 && v == base);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, 1) == 13);                     /* 9:0 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, 1ull << 11) == 13);            /* VALID: written with 0 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, 1ull << 12) == 13);            /* 24:12 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, 1ull << m) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, mask) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1401, &v) == -1 && v == mask);
+    /* TME-MK with 6 KeyID bits, 2 of them SEAM-private */
+    TEST_CHECK(vmx_wrmsr(&c, 0x982, act) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x87, &v) == -1 && v == (15 | (48ull << 32)));
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, base) == 13);                  /* bit M-1: a KeyID bit */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 1ull << (m - 6)) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, (1ull << (m - 7)) | 8) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1400, &v) == -1 && v == ((1ull << (m - 7)) | 8));
+    /* LOCK */
+    OK(uc_context_alloc(c.uc, &ctx));
+    OK(uc_context_save(c.uc, ctx));
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, mask | (1ull << 10)) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1401, &v) == -1 && v == (mask | (1ull << 10)));  /* VALID 0 */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, mask) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, 8) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x1400, &v) == -1 && v == ((1ull << (m - 7)) | 8));
+    OK(uc_context_restore(c.uc, ctx));
+    TEST_CHECK(vmx_rdmsr(&c, 0x1401, &v) == -1 && v == mask);
+    OK(uc_context_free(ctx));
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1334: the instructions with the opt-in (SEAM enumerated, SEAM range not valid, never in SEAM).
+ * Outside VMX operation: all four #UD (LOCK too). VMX root operation, CPL 0, 64-bit: TDCALL, SEAMRET,
+ * SEAMOPS #UD; SEAMCALL #GP(0) (IA32_SEAMRR_MASK.VALID = 0), also with a configured, locked range and
+ * with RAX[63] = 1; LOCK #UD; F2 / F3 with 66 not SEAM (#UD). VMX non-root operation (64-bit CPL 0
+ * guest, exception bitmap #UD / #GP): TDCALL VM exit 77 and SEAMCALL VM exit 76, qualification 0,
+ * length with the prefixes (2E, REX 48 between 66 and 0F), guest RIP unchanged; SEAMRET / SEAMOPS #UD;
+ * LOCK #UD. Compatibility-mode guest: TDCALL exit 77 (SDM: Compat/Leg Mode "Valid", docs/tdx.md C1),
+ * SEAMCALL #UD (IA32_EFER.LMA = 1, CS.L = 0). CPL 3 guest: TDCALL and SEAMCALL #GP(0) (CPL before the
+ * VM exit), SEAMRET #UD.
+ */
+static void test_x86_tx_insn(void)
+{
+    static const char ops[4] = {'\xcc', '\xcd', '\xce', '\xcf'};
+    char code[8];
+    size_t n;
+    int j;
+    PcCtx c;
+
+    vmx_root_open_f(&c, TX_SEAM);
+    for (j = 0; j < 4; j++) {
+        n = tx_code(code, 0, ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);
+        n = tx_code(code, '\xf0', ops[j]);
+        TEST_CHECK(pc_run(&c, code, n) == 6);
+    }
+    OK(uc_close(c.uc));
+
+    tx_setup(&c, TX_SEAM);
+    /* VMX root operation */
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xcc", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xcd", 4) == 6);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xce", 4) == 6);
+    pc_set(&c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xcf", 4) == 13);
+    pc_set(&c, UC_X86_REG_RAX, 1ull << 63);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xcf", 4) == 13);
+    TEST_CHECK(pc_run(&c, "\xf0\x66\x0f\x01\xcf", 5) == 6);
+    TEST_CHECK(pc_run(&c, "\x66\xf3\x0f\x01\xcf", 5) == 6);
+    TEST_CHECK(pc_run(&c, "\xf2\x66\x0f\x01\xcc", 5) == 6);
+    TEST_CHECK(pc_run(&c, "\x2e\x66\x48\x0f\x01\xcf", 6) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x1400, (1ull << 30) | 8) == -1);      /* configured, locked */
+    TEST_CHECK(vmx_wrmsr(&c, 0x1401, ((~0ull << 30) & ((1ull << tx_maxphyaddr(&c)) - 1)) |
+                                         (1ull << 10)) == -1);
+    TEST_CHECK(pc_run(&c, "\x66\x0f\x01\xcf", 4) == 13);
+    /* VMX non-root operation, 64-bit CPL 0 guest */
+    tx_guest(&c, "\x66\x0f\x01\xcc", 4, 77, 0);
+    tx_guest(&c, "\x66\x0f\x01\xcf", 4, 76, 0);
+    tx_guest(&c, "\x66\x0f\x01\xcd", 4, 0, 6);
+    tx_guest(&c, "\x66\x0f\x01\xce", 4, 0, 6);
+    tx_guest(&c, "\x2e\x66\x0f\x01\xcc", 5, 77, 0);
+    tx_guest(&c, "\x66\x48\x0f\x01\xcf", 5, 76, 0);
+    tx_guest(&c, "\xf0\x66\x0f\x01\xcc", 5, 0, 6);
+    tx_guest(&c, "\xf0\x66\x0f\x01\xcf", 5, 0, 6);
+    tx_guest(&c, "\x66\xf3\x0f\x01\xcc", 5, 0, 6);
+    /* compatibility mode (guest CS.L = 0, D = 1) */
+    vmx_w(&c, 0x4816, 0xc09b);
+    tx_guest(&c, "\x66\x0f\x01\xcc", 4, 77, 0);
+    tx_guest(&c, "\x66\x0f\x01\xcf", 4, 0, 6);
+    vmx_w(&c, 0x4816, 0xa09b);
+    /* CPL 3 guest: user pages, CS 1BH / SS 23H with DPL 3 */
+    vmx_wq(&c, VMX_PT, (VMX_PT + 0x1000) | 7);
+    vmx_wq(&c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 7);
+    vmx_wq(&c, VMX_PT + 0x2000, 0x87);
+    vmx_wq(&c, VMX_PT + 0x2008, 0x200000 | 0x87);
+    vmx_w(&c, 0x0802, 0x1b);
+    vmx_w(&c, 0x4816, 0xa0fb);
+    vmx_w(&c, 0x0804, 0x23);
+    vmx_w(&c, 0x4818, 0xc0f3);
+    tx_guest(&c, "\x66\x0f\x01\xcc", 4, 0, 13);
+    tx_guest(&c, "\x66\x0f\x01\xcf", 4, 0, 13);
+    tx_guest(&c, "\x66\x0f\x01\xcd", 4, 0, 6);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1331-U1349 (tx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -35876,4 +36151,7 @@ TEST_LIST = {
     {"test_x86_vmx_inj_df", test_x86_vmx_inj_df},
     {"test_x86_vmx_ve_gpa48", test_x86_vmx_ve_gpa48},
     {"test_x86_vmx_host_cr3_tme", test_x86_vmx_host_cr3_tme},
+    {"test_x86_tx_optin", test_x86_tx_optin},
+    {"test_x86_tx_seamrr", test_x86_tx_seamrr},
+    {"test_x86_tx_insn", test_x86_tx_insn},
     {NULL, NULL}};

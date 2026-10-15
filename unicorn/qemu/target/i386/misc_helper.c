@@ -869,7 +869,7 @@ static X86CPU *msr_cpu(CPUX86State *env)
  *     KEYIDS = 2^(k-p) - 1 (KeyIDs 1 .. 2^(k-p)-1: the TDX bits are taken from the most significant
  *     KeyID bit downward), at most MK_TME_MAX_KEYS; NUM_TDX_PRIV_KEYIDS = 0 - the field is
  *     "supported on all parts that enumerate support for SEAM mode" (SDM Vol4) and the model has
- *     no SEAM.
+ *     no SEAM. U1333: with UC_X86_FEATURE_SEAM it is 2^k - 2^(k-p) (x86_seam_tdx_priv_keyids).
  * Not modelled: memory encryption itself (KeyID bits of physical addresses select nothing; every
  * KeyID reads and writes the same plain-text memory), the MAXPHYADDR reduction by
  * TDX_RESERVED_KEYID_BITS outside SEAM (SDM Vol4 2.1), the exclusion range's effect,
@@ -978,7 +978,12 @@ static uint64_t tme_rdmsr(CPUX86State *env, uint32_t msr)
             return 0;
         }
         n = (1ULL << (k - p)) - 1;
-        return MIN(n, (uint64_t)NOVMP_MKTME_MAX_KEYS);
+        n = MIN(n, (uint64_t)NOVMP_MKTME_MAX_KEYS);
+#if __Use_Original_Qemu != 1 /* ours (U1333) */
+        /* U1333: NUM_TDX_PRIV_KEYIDS (63:32) when the CPU enumerates SEAM (seam_model.c) */
+        n |= x86_seam_tdx_priv_keyids(env) << 32;
+#endif /* __Use_Original_Qemu (U1333) */
+        return n;
     }
 }
 
@@ -1193,6 +1198,16 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return x86_vmx_msr_exists(env, msr);
     }
 #endif /* __Use_Original_Qemu (U1301) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+    /* NoVmp (ledger U1332): IA32_SEAMRR_BASE / IA32_SEAMRR_MASK with IA32_MTRRCAP[15] (seam_model.c) */
+    {
+        int seam = x86_seam_msr_present(env, msr);
+
+        if (seam >= 0) {
+            return seam != 0;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1332) */
     switch (msr) {
     case MSR_IA32_TSC:                      /* 05_01H; Vol3B 18.17: CPUID.01H:EDX.TSC */
         return MF_1EDX(CPUID_TSC);
@@ -1426,6 +1441,16 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
         }
     }
 #endif /* __Use_Original_Qemu (U1261) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+    /* NoVmp (ledger U1332): reserved bits, KeyID bits, VALID, LOCK of the SEAM range registers */
+    {
+        int seam = x86_seam_msr_write_ok(env, msr, val);
+
+        if (seam >= 0) {
+            return seam != 0;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1332) */
 #if __Use_Original_Qemu != 1 /* ours (U1301) */
     /* the VMX capability MSRs are read-only: WRMSR #GP(0) (Vol3D Appendix A p. A-1) */
     if (msr >= MSR_IA32_VMX_BASIC && msr <= MSR_IA32_VMX_EXIT_CTLS2_NV) {
@@ -2137,6 +2162,13 @@ void helper_wrmsr(CPUX86State *env)
         }
         break;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+    case MSR_IA32_SEAMRR_BASE:
+    case MSR_IA32_SEAMRR_MASK:
+        /* NoVmp (ledger U1332): present and writable as msr_present / msr_write_ok allowed it */
+        x86_seam_wrmsr(env, (uint32_t)env->regs[R_ECX], val);
+        break;
+#endif /* __Use_Original_Qemu (U1332) */
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
     case MSR_IA32_SGXLEPUBKEYHASH0:
     case MSR_IA32_SGXLEPUBKEYHASH0 + 1:
@@ -2619,6 +2651,13 @@ void helper_rdmsr(CPUX86State *env)
         if (env->features[FEAT_1_EDX] & CPUID_MTRR) {
             val = MSR_MTRRcap_VCNT | MSR_MTRRcap_FIXRANGE_SUPPORT |
                 MSR_MTRRcap_WC_SUPPORTED;
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+            /* "Processors that support SEAM architecture return IA32_MTRRCAP bit 15 as 1" (Vol3C
+               35.4.1 p. 35-5; 343754 4.1 p. 4-1): SEAMRR supported (Vol4 FEH) */
+            if (x86_seam_enumerated(env)) {
+                val |= MSR_MTRRcap_SEAMRR;
+            }
+#endif /* __Use_Original_Qemu (U1332) */
         } else {
             /* XXX: exception? */
             val = 0;
@@ -2749,6 +2788,15 @@ void helper_rdmsr(CPUX86State *env)
               ((1ULL << 63) | env->itd_class) : 0;
         break;
 #endif /* __Use_Original_Qemu (U1128) */
+#if __Use_Original_Qemu != 1 /* ours (U1332) */
+    case MSR_IA32_SEAMRR_BASE:
+    case MSR_IA32_SEAMRR_MASK:
+        /* NoVmp (ledger U1332): seam_model.c (present only with SEAM, msr_present) */
+        if (!x86_seam_rdmsr(env, (uint32_t)env->regs[R_ECX], &val)) {
+            val = 0;
+        }
+        break;
+#endif /* __Use_Original_Qemu (U1332) */
 #if __Use_Original_Qemu != 1 /* ours (U1261) */
     case MSR_IA32_SGXLEPUBKEYHASH0:
     case MSR_IA32_SGXLEPUBKEYHASH0 + 1:

@@ -9213,6 +9213,31 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             break;
         }
 #endif /* __Use_Original_Qemu (U104) */
+#if __Use_Original_Qemu != 1 /* ours (U1334) */
+        /*
+         * NoVmp (ledger U1334, docs/tdx.md): 66 0F 01 CC TDCALL, CD SEAMRET, CE SEAMOPS, CF SEAMCALL
+         * (SDM 093 Vol2D Table A-6 p. A-19, 0F 01 /1 66 row; Vol3C 35.5; 343754-003 ch. 5), decoded only with
+         * UC_X86_FEATURE_SEAM and CPUID.01H:ECX.VMX in the model - otherwise the encodings stay #UD
+         * (the default, as on the i5-13600K). 66 without F2 / F3 (a different mandatory prefix is not
+         * a SEAM encoding); LOCK #UD (343754 ch. 5 exception lists); REX, segment and address-size
+         * prefixes ignored. Enumeration, mode, CPL and the VMX / SEAM state are checked at run time
+         * by helper_seam_insn (seam_model.c), which ends with CC_SRC set when it returns.
+         */
+        if (modrm >= 0xcc && modrm <= 0xcf && (s->prefix & PREFIX_DATA) &&
+            !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ)) &&
+            (s->uc->x86_features & UC_X86_FEATURE_SEAM) &&
+            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+            if (s->prefix & PREFIX_LOCK) {
+                goto illegal_op;
+            }
+            gen_update_cc_op(s);
+            gen_update_eip_cur(s);
+            gen_helper_seam_insn(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, modrm - 0xcc));
+            set_cc_op(s, CC_OP_EFLAGS);
+            s->base.is_jmp = DISAS_EOB_NEXT;
+            break;
+        }
+#endif /* __Use_Original_Qemu (U1334) */
 #if __Use_Original_Qemu != 1 /* ours (U1172) */
         /*
          * NoVmp (ledger U1172): F2 0F 01 CA ERETS, F3 0F 01 CA ERETU (SDM 092 Vol2A 3-298 / 3-301;

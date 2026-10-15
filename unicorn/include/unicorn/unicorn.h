@@ -926,6 +926,17 @@ typedef enum uc_control_type {
     // (VM entries, VM exits, VMX non-root operation), VMFUNC; events injected by VM entry are
     // delivered as UC_CTL_X86_EVENT_DELIVERY delivers events; a VMX abort stops the emulation with
     // UC_ERR_EXCEPTION. Default off.
+    // NoVmp U1331 (plan 1.J.13 Stage A, docs/tdx.md): UC_X86_FEATURE_SEAM: a processor that enumerates
+    // SEAM (SDM 093 Vol3C ch. 35; Intel Trust Domain CPU Architectural Extensions 343754-003) on a
+    // platform where SEAM is not ready: IA32_VMX_PROCBASED_CTLS3[5] ("SEAM guest-physical address
+    // width", which also enumerates SEAMCALL / SEAMRET / SEAMOPS / TDCALL, 343754 ch. 9) and
+    // IA32_VMX_ENTRY_CTLS[57] ("allow SEAM-guest telemetry"), IA32_MTRRCAP[15] with IA32_SEAMRR_BASE /
+    // IA32_SEAMRR_MASK (1400H / 1401H; VALID always reads 0: no SEAM range is ever activated),
+    // IA32_MKTME_KEYID_PARTITIONING[63:32]. SEAMCALL in VMX root operation is #GP(0) (SEAM range not
+    // valid), in VMX non-root operation a VM exit (76); TDCALL in VMX non-root operation a VM exit
+    // (77); SEAMRET / SEAMOPS #UD (never in SEAM). Nothing ever enters SEAM (no SEAM module). Only
+    // together with UC_X86_FEATURE_VMX (UC_ERR_ARG otherwise). Default off: all four instructions
+    // #UD, MTRRCAP[15] = 0, 1400H / 1401H #GP(0), as before.
     // Only before the engine is initialised, like UC_CTL_CPU_MODEL; other bits -> UC_ERR_ARG.
     // Write: @args = (int mask); Read: @args = (int *mask)
     UC_CTL_X86_FEATURES,
@@ -975,6 +986,7 @@ typedef enum uc_control_type {
 #define UC_X86_FEATURE_SGX 16      // Intel SGX: CPUID SGX/SGX_LC/12H, EPC, ENCLS, ENCLU (U1261)
 #define UC_X86_FEATURE_SMX 32      // SMX without a TXT chipset: GETSEC leaves 2-8 (U1267)
 #define UC_X86_FEATURE_VMX 0x40000000  // VMX (U1301; bit 30, the top of the free range)
+#define UC_X86_FEATURE_SEAM 0x10000000 // SEAM enumerated, not ready, with VMX (U1331; bit 28)
 
 // UC_CTL_X86_SYSCALL_MODE values (NoVmp U901)
 #define UC_X86_SYSCALL_SDM 0       // the SDM transition; hooks see the new state (default)

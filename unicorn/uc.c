@@ -3491,15 +3491,21 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         } else if (rw == UC_CTL_IO_WRITE) {
             int mask = va_arg(args, int);
             /* U1170: + UC_X86_FEATURE_FRED, U1180: + UC_X86_FEATURE_LAM, U1261: + _SGX,
-               U1267: + _SMX, U1301: + VMX */
+               U1267: + _SMX, U1301: + VMX, U1331: + SEAM */
             if (uc->init_done || (mask & ~(UC_X86_FEATURE_TSE | UC_X86_FEATURE_ITD |
                                            UC_X86_FEATURE_FRED | UC_X86_FEATURE_LAM |
                                            UC_X86_FEATURE_SGX | UC_X86_FEATURE_SMX |
-                                           UC_X86_FEATURE_VMX))) {
+                                           UC_X86_FEATURE_VMX | UC_X86_FEATURE_SEAM))) {
                 err = UC_ERR_ARG;
             } else if ((mask & UC_X86_FEATURE_VMX) && uc->x86_apx) {
                 /* U1302: VMX with APX: see UC_CTL_X86_APX (docs/vmx.md) */
                 err = UC_ERR_ARG;
+#if __Use_Original_Qemu != 1 /* ours (U1331) */
+            } else if ((mask & UC_X86_FEATURE_SEAM) && !(mask & UC_X86_FEATURE_VMX)) {
+                /* U1331: SEAM is an extension of VMX operation (Vol3C 35.1); enumerated by a VMX
+                   capability MSR (343754 ch. 9): only together with VMX (docs/tdx.md) */
+                err = UC_ERR_ARG;
+#endif /* __Use_Original_Qemu (U1331) */
             } else {
                 /* U1309: VMX together with FRED is allowed (the FRED-VMX interactions, docs/vmx.md) */
                 uc->x86_features = mask;

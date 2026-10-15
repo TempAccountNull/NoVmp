@@ -248,6 +248,18 @@ static uint64_t vmx_proc3_allowed1(CPUX86State *env)
     if (vmx_feat(env, FEAT_7_1_EBX, CPUID_7_1_EBX_PBNDKB, 7, 1, 1)) {
         v |= 1ull << 9;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1331) */
+    /*
+     * U1331: "SEAM guest-physical address width" (5) with UC_X86_FEATURE_SEAM: the bit enumerates
+     * SEAM and its instructions (343754-003 ch. 9 p. 9-1; Vol3C 35.1.3 p. 35-2, Table 27-8 p. 27-14).
+     * The fields SEAM-guest KeyID (4026H) and SEAM shared EPT pointer (203CH) exist with it (Vol3D
+     * Appendix B footnotes); the control and the fields are ignored outside SEAM (Vol3C 27.6.26
+     * p. 27-22) - Stage A never enters SEAM (docs/tdx.md).
+     */
+    if (x86_seam_enumerated(env)) {
+        v |= 1ull << 5;
+    }
+#endif /* __Use_Original_Qemu (U1331) */
     return v;
 }
 
@@ -282,6 +294,16 @@ static uint32_t vmx_exit_allowed1(CPUX86State *env)
 
 static uint32_t vmx_entry_allowed1(CPUX86State *env)
 {
+#if __Use_Original_Qemu != 1 /* ours (U1331) */
+    /*
+     * U1331: "allow SEAM-guest telemetry" (VM-entry bit 25, Vol3C Table 27-15 p. 27-25): "Any processor
+     * that supports SEAM also supports the SEAM-specific VMCS fields and controls" (Vol3C 35.1.3
+     * p. 35-2; 343754-003 1.1.3 p. 1-3); it acts only on VM entry to SEAM non-root operation
+     */
+    if (x86_seam_enumerated(env)) {
+        return VMX_ENTRY_ALLOWED1 | (vmx_fred(env) ? 1u << 23 : 0) | (1u << 25);
+    }
+#endif /* __Use_Original_Qemu (U1331) */
     return VMX_ENTRY_ALLOWED1 | (vmx_fred(env) ? 1u << 23 : 0);
 }
 
