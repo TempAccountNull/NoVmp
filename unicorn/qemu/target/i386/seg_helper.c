@@ -2414,6 +2414,28 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
         }
 #endif /* __Use_Original_Qemu (U1420) */
     }
+#if __Use_Original_Qemu != 1 /* ours (U1421) */
+    /*
+     * NoVmp (ledger U1421, user decision 2026-10-15): the gate's target RIP must be canonical. SDM
+     * 325462-093 Vol2A INT n/INTO/INT3/INT1, Operation, inter-privilege (p. 3-474) and
+     * INTRA-PRIVILEGE-LEVEL-INTERRUPT (p. 3-478): "IF instruction pointer from IDT gate contains a
+     * non-canonical address THEN #GP(EXT); FI; (* Error code contains NULL selector *)" - after the
+     * TSS / IST load (#TS(EXT), U1402) and the new-RSP check (#SS(EXT), U1420), before RSP is
+     * aligned, the frame is pushed, the shadow-stack steps run (U755), the flags change and SS:RSP /
+     * CS:RIP are loaded; Compatibility Mode Exceptions (p. 3-481; 64-bit mode refers to it):
+     * "#GP(error_code) If the instruction pointer in the 64-bit interrupt gate or trap gate is
+     * non-canonical". Vol3A 7.14.1 (p. 7-21) and 4.5.2 (p. 4-5: transfers through the IDT "check
+     * first whether the value to be loaded is paging canonical"; the #GP "is delivered as a fault").
+     * EXT as U1401 (0 for INT n / INT3 / INTO and VM-entry-injected types 4 / 6, else 1). Canonical
+     * as x86_ip_is_canonical: CR4.LA57 selects 48 / 57 bits, no LAM masking (4.5.1, p. 4-5: LAM
+     * applies only to data accesses); under UC_TLB_VIRTUAL it returns true - no check (U42). Stock
+     * QEMU loaded the offset and faulted on the handler fetch: #GP(0) in the new context, after the
+     * frame was written.
+     */
+    if (!x86_ip_is_canonical(env, offset)) {
+        raise_exception_err(env, EXCP0D_GPF, ext);
+    }
+#endif /* __Use_Original_Qemu (U1421) */
     esp &= ~0xfLL; /* align stack */
 
     PUSHQ(esp, env->segs[R_SS].selector);
