@@ -866,6 +866,26 @@ int x86_maxphyaddr(CPUX86State *env)
 }
 
 #endif /* __Use_Original_Qemu (U1430) */
+#if __Use_Original_Qemu != 1 /* ours (U1432) */
+/*
+ * NoVmp (ledger U1432): MAXAPICADDR of IA32_APIC_BASE. SDM 093 Vol3A 13.4.4 footnote 1 (p. 13-8) and
+ * Vol4 Table 2-2 1BH (p. 2-5): normally CPUID.80000008H:EAX[7:0]; "If IA32_TME_ACTIVATE[39:36] > 0
+ * ..., MAXAPICADDR is reduced by the value of IA32_TME_ACTIVATE[35:32] (the KeyID bits in the address
+ * must be 0)" - every KeyID bit, not only the TDX-reserved ones, and no lock / SEAM condition in the
+ * text (39:36 is non-zero only after a locking write in this model). Vol3C 35.4.2 (p. 35-5): "a
+ * non-zero KeyID results in #GP(0)".
+ */
+int x86_maxapicaddr(CPUX86State *env)
+{
+    int m = (int)msr_cpu(env)->phys_bits;
+
+    if ((env->tme_activate >> 36) & 0xf) {
+        m -= (int)((env->tme_activate >> 32) & 0xf);
+    }
+    return m;
+}
+
+#endif /* __Use_Original_Qemu (U1432) */
 #if __Use_Original_Qemu != 1 /* ours (U1020) */
 /*
  * NoVmp (ledger U1020): the TME / TME-MK MSRs, present with CPUID.(07H,0):ECX.TME_EN[13] (SDM
@@ -1463,11 +1483,12 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
     /*
      * U1431: bits 63:MAXPHYADDR of the MTRR PhysBase / PhysMask fields with the effective
      * MAXPHYADDR (x86_maxphyaddr: reduced by IA32_TME_ACTIVATE[39:36] once TME is locked outside
-     * SEAM; SDM 093 Vol3A 14.11.2.3 p. 14-24, fields MAXPHYADDR-1:12 and footnote 1). Was:
-     * phys_bits (U1063), which IA32_APIC_BASE keeps (apic_mask).
+     * SEAM; SDM 093 Vol3A 14.11.2.3 p. 14-24, fields MAXPHYADDR-1:12 and footnote 1). U1432:
+     * IA32_APIC_BASE 63:MAXAPICADDR (x86_maxapicaddr; WRMSR reaches apic_write_base first, this is
+     * the same rule for the paths that do not). Was: phys_bits for both (U1063).
      */
     uint64_t phys_mask = ~((1ULL << x86_maxphyaddr(env)) - 1);
-    uint64_t apic_mask = ~((1ULL << msr_cpu(env)->phys_bits) - 1);     /* U1063 */
+    uint64_t apic_mask = ~((1ULL << x86_maxapicaddr(env)) - 1);
     uint64_t valid;
 
 #if __Use_Original_Qemu != 1 /* ours (U1261) */

@@ -3650,6 +3650,14 @@ bool x86_vmx_fred_eret_nmi(CPUX86State *env);
  */
 int x86_maxphyaddr(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U1430) */
+#if __Use_Original_Qemu != 1 /* ours (U1432) */
+/*
+ * NoVmp (ledger U1432, misc_helper.c): MAXAPICADDR of IA32_APIC_BASE - CPUID.80000008H:EAX[7:0]
+ * reduced by IA32_TME_ACTIVATE[35:32] (all KeyID bits) while IA32_TME_ACTIVATE[39:36] > 0 (SDM 093
+ * Vol3A 13.4.4 footnote 1 p. 13-8, Vol4 Table 2-2 1BH p. 2-5).
+ */
+int x86_maxapicaddr(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1432) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;

@@ -59,8 +59,12 @@ LVT entries 00010000H (masked), DFR FFFFFFFFH, ESR 0.
 - Exists with CPUID.01H:EDX.APIC, and 800H-8FFH with CPUID.01H:ECX.x2APIC, as the CPU reports them (a
   strict UC_CTL_X86_CPUID profile that hides a bit removes the MSRs: #GP(0), UC_ERR_EXCEPTION for the
   host API; U1123).
-- Reserved bits (#GP(0)): 7:0, 9, 63:MAXPHYADDR (MAXPHYADDR = the CPU's physical-address width,
-  CPUID 80000008H), and 10 (EXTD) when CPUID.01H:ECX.x2APIC = 0.
+- Reserved bits (#GP(0)): 7:0, 9, 63:MAXAPICADDR, and 10 (EXTD) when CPUID.01H:ECX.x2APIC = 0.
+  MAXAPICADDR = the CPU's physical-address width (CPUID 80000008H), reduced by
+  IA32_TME_ACTIVATE[35:32] (the KeyID bits) while IA32_TME_ACTIVATE[39:36] > 0 (U1432; SDM 093 Vol3A
+  13.4.4 footnote 1, p. 13-8, and Vol4 Table 2-2 1BH, p. 2-5: "the KeyID bits in the address must
+  be 0"). This is not the reduced MAXPHYADDR of the page walk (which subtracts only
+  IA32_TME_ACTIVATE[39:36]); `x86_maxapicaddr` in misc_helper.c.
 - Invalid transitions (#GP(0)): to EN = 0 / EXTD = 1; x2APIC -> xAPIC; disabled -> x2APIC.
 - EN 1 -> 0: the APIC registers return to their power-up values (the ID is kept); CPUID.01H:EDX.APIC
   reads 0 while EN = 0 (13.4.3).

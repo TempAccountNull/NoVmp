@@ -692,8 +692,15 @@ static void apic_gp(CPUX86State *env, uintptr_t ra)
 static void apic_write_base(CPUX86State *env, uint64_t val, uintptr_t ra)
 {
     uint64_t old = env->apic_base;
+    /*
+     * U1432: bits 63:MAXAPICADDR - MAXAPICADDR = CPUID.80000008H:EAX[7:0], reduced by
+     * IA32_TME_ACTIVATE[35:32] while IA32_TME_ACTIVATE[39:36] > 0: "the KeyID bits in the address
+     * must be 0" (SDM 093 Vol3A 13.4.4 footnote 1 p. 13-8, Vol4 Table 2-2 1BH p. 2-5; Vol3C 35.4.2
+     * p. 35-5: #GP(0)). x86_maxapicaddr (misc_helper.c) takes the engine's CPU for a uc_context
+     * image as apic_cpu does (U1063). Was: apic_cpu(env)->phys_bits.
+     */
     uint64_t rsvd = 0x2ffULL | (apic_has_x2apic(env) ? 0 : APIC_BASE_EXTD) |
-                    (~0ULL << apic_cpu(env)->phys_bits);      /* U1063 */
+                    (~0ULL << x86_maxapicaddr(env));
     bool en = (val & APIC_BASE_EN) != 0, extd = (val & APIC_BASE_EXTD) != 0;
     bool oen = (old & APIC_BASE_EN) != 0, oextd = (old & APIC_BASE_EXTD) != 0;
 

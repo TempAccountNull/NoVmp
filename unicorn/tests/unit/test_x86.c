@@ -36129,6 +36129,51 @@ static void test_x86_tm_pae_pdpte(void)
 }
 
 /*
+ * T8: IA32_APIC_BASE (SDM 093 Vol3A 13.4.4 footnote 1 p. 13-8, Vol4 Table 2-2 1BH p. 2-5): with
+ * IA32_TME_ACTIVATE[39:36] > 0 MAXAPICADDR = 40 - IA32_TME_ACTIVATE[35:32] = 34: every KeyID bit
+ * (39:34) #GP(0) (WRMSR; the host API UC_ERR_EXCEPTION), bit 33 accepted; p = 0 (k = 6): 40, bit 39
+ * accepted; before the lock: bit 39 accepted.
+ */
+static void test_x86_tm_apic_base(void)
+{
+    uc_x86_msr m = {0x1b, 0};
+    uint64_t base;
+    PcCtx c;
+    int b;
+
+    tm_open(&c, UC_MODE_64, 0);
+    base = pc_rdmsr(&c, 0x1b);
+    TEST_CHECK(base == 0xfee00900ULL);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, base | (1ULL << 39)) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x1b) == (base | (1ULL << 39)));
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, base) == -1);
+    tm_lock(&c, 2);
+    for (b = 34; b <= 39; b++) {
+        TEST_CHECK(pc_wrmsr(&c, 0x1b, base | (1ULL << b)) == 13);
+        TEST_MSG("APIC base bit %d", b);
+    }
+    TEST_CHECK(pc_rdmsr(&c, 0x1b) == base);
+    m.value = base | (1ULL << 34);
+    TEST_CHECK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+    TEST_CHECK(pc_rdmsr(&c, 0x1b) == base);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, base | (1ULL << 33)) == -1);
+    TEST_CHECK(pc_rdmsr(&c, 0x1b) == (base | (1ULL << 33)));
+    OK(uc_close(c.uc));
+
+    tm_open(&c, UC_MODE_64, 0);
+    tm_lock(&c, 1);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00900ULL | (1ULL << 34)) == 13);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00900ULL | (1ULL << 33)) == -1);
+    OK(uc_close(c.uc));
+
+    tm_open(&c, UC_MODE_64, 0);
+    tm_lock(&c, 0);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00900ULL | (1ULL << 39)) == -1);
+    TEST_CHECK(pc_wrmsr(&c, 0x1b, 0xfee00900ULL | (1ULL << 40)) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
  * T9: IA32_MTRR_PHYSBASE0 / PHYSMASK0 (200H / 201H; SDM 093 Vol3A 14.11.2.3 p. 14-24, fields
  * MAXPHYADDR-1:12 with the reduction footnote): p = 2 -> bit 38 #GP(0), bit 37 accepted; before the
  * lock bit 39 accepted, bit 40 #GP(0).
@@ -36660,6 +36705,7 @@ TEST_LIST = {
     {"test_x86_tm_paging_width", test_x86_tm_paging_width},
     {"test_x86_tm_width_bounds", test_x86_tm_width_bounds},
     {"test_x86_tm_pae_pdpte", test_x86_tm_pae_pdpte},
+    {"test_x86_tm_apic_base", test_x86_tm_apic_base},
     {"test_x86_tm_mtrr", test_x86_tm_mtrr},
     {"test_x86_tm_pconfig", test_x86_tm_pconfig},
     {NULL, NULL}};
