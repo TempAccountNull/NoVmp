@@ -2360,9 +2360,26 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
         raise_exception_err(env, EXCP0B_NOSEG, (selector & 0xfffc) | ext);
     }
 #endif /* __Use_Original_Qemu (U1402) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1422) */
     if (!(e2 & DESC_L_MASK) || (e2 & DESC_B_MASK)) {
         raise_exception_err(env, EXCP0D_GPF, selector & 0xfffc);
     }
+#else /* ours (U1422) */
+    /*
+     * NoVmp (ledger U1422, user decision 2026-10-14): the gate's code segment must be a 64-bit
+     * code segment. SDM 325462-093 Vol3A 7.14.1 (p. 7-21): "The target code segment referenced by
+     * the interrupt gate must be a 64-bit code segment (CS.L = 1, CS.D = 0). If the target is not
+     * a 64-bit code segment, a general-protection exception (#GP) is generated with the IDT vector
+     * number reported as the error code." The vector is encoded in the error-code format of Vol3A
+     * 7.13 (p. 7-19: index bits 15:3, IDT bit 1, EXT bit 0), as error_code(vector_number,1,EXT) of
+     * Vol2A INT n Operation (p. 3-469); EXT as U1401. The other code-segment checks above keep
+     * the selector (Vol2A p. 3-472, U1402). Upstream QEMU and Bochs report the selector here
+     * (docs/quirks.md, "IA-32e IDT delivery: error code of the 64-bit code-segment check").
+     */
+    if (!(e2 & DESC_L_MASK) || (e2 & DESC_B_MASK)) {
+        raise_exception_err(env, EXCP0D_GPF, idt_vector_error_code(intno, ext));
+    }
+#endif /* __Use_Original_Qemu (U1422) */
     if (e2 & DESC_C_MASK) {
         dpl = cpl;
     }

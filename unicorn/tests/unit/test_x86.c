@@ -36796,6 +36796,100 @@ static void test_x86_i6_dpl64(void)
     TEST_CHECK((ap_get(&c, UC_X86_REG_CS) & 3) == 3);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1422 (user decision 2026-10-14): delivery through an interrupt or trap gate whose code segment is
+ * not a 64-bit code segment (L = 0, or L = 1 with D = 1): #GP((vector << 3) | 2 | EXT). Vol3A
+ * 7.14.1 (p. 7-21) requires the IDT vector number as the error code; its encoding follows the
+ * error-code format of 7.13 (index = vector, IDT bit 1, EXT bit 0; Vol2A p. 3-469 error_code(num,1,ext)).
+ */
+static void test_x86_i6_cs_mode64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x40}, {I6_INTN, 0xff}, {I6_INTN, 0x06}, {I6_INTN, 0x01}, {I6_INT3, 0},
+               {I6_EXTI, 0x40}, {I6_EXTI, 0xff}, {I6_UD, 0},      {I6_INT1, 0},    {I6_NMI, 0},
+               {I6_DE, 0}};
+    static const uint16_t sel[] = {0x38, 0x40, 0x48};
+    static const char *const sname[] = {"L = 0, D = 1", "L = 1, D = 1", "L = 0, D = 0"};
+    static const uint8_t attr[] = {0x8e, 0x8f};
+    char what[160];
+    ap_cpu c;
+    size_t a, s, i;
+
+    i6_open(&c);
+    for (a = 0; a < 2; a++) {
+        for (s = 0; s < 3; s++) {
+            for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+                int kind = src[i].kind, v = i6_vec(kind, src[i].n), ext = i6_ext(kind), hv = 13, rip;
+                int64_t ec = (v << 3) | 2 | ext;
+                ap_code k = {{0}, 0};
+
+                ie_gate(&c, v, I6_TGT, sel[s], 0, attr[a]);
+                rip = i6_emit(&k, kind, src[i].n);
+                if (kind == I6_DE) {
+                    hv = 8;     /* #GP in the delivery of #DE: #DF(0) */
+                    ec = 0;
+                    rip = -1;
+                }
+                snprintf(what, sizeof(what), "%s gate, CS %02Xh (%s): %s (vector %02Xh, EXT %d)",
+                         a ? "trap" : "interrupt", sel[s], sname[s], i6_name(kind), v, ext);
+                i6_run(&c, &k, hv, ec, rip, what);
+                if (kind == I6_EXTI) {
+                    ap_wmsr(&c, 0x80b, 0);
+                }
+            }
+        }
+    }
+    /* INT 0Dh through a gate with a 32-bit CS: #GP(6AH), whose delivery uses that same gate: #DF(0) */
+    ie_gate(&c, 13, I6_TGT, 0x38, 1, 0x8e);
+    i6_x(&c, "\xcd\x0d", 2, 8, 0, -1, "INT 0Dh, gate 0Dh CS 38H (L = 0): #GP(6AH) then #DF");
+    i6_handler(&c, 13, true, 2, 1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1422: the other code-segment checks keep error_code(new code-segment selector,0,EXT) / #GP(EXT)
+ * (Vol2A p. 3-472), through interrupt and trap gates, the vectors of test_x86_i6_cs_mode64.
+ */
+static void test_x86_i6_cs_sel64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x40}, {I6_INTN, 0xff}, {I6_INTN, 0x06}, {I6_EXTI, 0xff}, {I6_UD, 0}};
+    static const struct {
+        uint16_t sel;
+        int hv;
+        const char *what;
+    } t[] = {{0x00, 13, "null selector"}, {0x80, 13, "beyond the GDT limit"},
+             {0x10, 13, "data segment"},  {0x20, 13, "DPL 3 > CPL 0"},
+             {0x50, 11, "not present"}};
+    static const uint8_t attr[] = {0x8e, 0x8f};
+    char what[160];
+    ap_cpu c;
+    size_t a, j, i;
+
+    i6_open(&c);
+    for (a = 0; a < 2; a++) {
+        for (j = 0; j < sizeof(t) / sizeof(t[0]); j++) {
+            for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+                int kind = src[i].kind, v = i6_vec(kind, src[i].n), ext = i6_ext(kind);
+                ap_code k = {{0}, 0};
+                int rip;
+
+                ie_gate(&c, v, I6_TGT, t[j].sel, 0, attr[a]);
+                rip = i6_emit(&k, kind, src[i].n);
+                snprintf(what, sizeof(what), "%s gate, CS %02Xh (%s): %s (vector %02Xh, EXT %d)",
+                         a ? "trap" : "interrupt", t[j].sel, t[j].what, i6_name(kind), v, ext);
+                i6_run(&c, &k, t[j].hv, (t[j].sel & 0xfffc) | ext, rip, what);
+                if (kind == I6_EXTI) {
+                    ap_wmsr(&c, 0x80b, 0);
+                }
+            }
+        }
+    }
+    OK(uc_close(c.uc));
+}
 /* ---- end U1420-U1429 (i6_) ---- */
 
 TEST_LIST = {
@@ -37278,4 +37372,6 @@ TEST_LIST = {
     {"test_x86_ti_ept_guest_width", test_x86_ti_ept_guest_width},
     {"test_x86_i6_ext_matrix64", test_x86_i6_ext_matrix64},
     {"test_x86_i6_dpl64", test_x86_i6_dpl64},
+    {"test_x86_i6_cs_mode64", test_x86_i6_cs_mode64},
+    {"test_x86_i6_cs_sel64", test_x86_i6_cs_sel64},
     {NULL, NULL}};
