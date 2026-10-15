@@ -2546,6 +2546,19 @@ typedef struct CPUX86State {
     uint8_t smm_hlt, smm_pend_hlt, smm_pend_io;
     X86SmmIo smm_io_pend;
 #endif /* __Use_Original_Qemu (U1461) */
+#if __Use_Original_Qemu != 1 /* ours (U1462) */
+    /*
+     * NoVmp (ledger U1462): SMM (smm_helper.c, docs/smm.md). What the SMRAM map of the current SMI
+     * has no field for (SDM 093 Vol3C 34.4.1: "saved (but not readable) and restored"): the segment
+     * registers, LDTR, TR, GDTR, IDTR, CR4 and the CS / SS hflags; smm_map = the map of that SMI (0
+     * outside SMM); smm_io / smm_io_valid = the I/O instruction it is synchronous to.
+     */
+    SegmentCache smm_seg[6], smm_ldt, smm_tr, smm_gdt, smm_idt;
+    uint64_t smm_cr4;
+    uint32_t smm_hflags;
+    uint8_t smm_map, smm_io_valid;
+    X86SmmIo smm_io;
+#endif /* __Use_Original_Qemu (U1462) */
 
     /* Fields up to this point are cleared by a CPU reset */
     int end_reset_fields;

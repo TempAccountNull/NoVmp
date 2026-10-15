@@ -32326,6 +32326,9 @@ static void test_x86_idterr_cs64(void)
 }
 /* ---- end U1400-U1409 (idterr_) ---- */
 
+
+
+
 /*
  * ---- NoVmp U1300-U1399: VMX (vmx_) ----
  * SDM 325462-092 Vol3C chapters 26-33, Vol3D Appendices A-C; design and capability set (our choice):
@@ -37978,6 +37981,7 @@ typedef struct SmrWrite {
 
 typedef struct SmrCtx {
     uc_engine *uc;
+    uc_mode mode;
     uc_hook hk, hk_in, hk_out;
     int hits;                           /* RSM hook calls (SMIs handled) */
     uint64_t smbase[SMR_HITS];          /* SMBASE of each hit (handler address - 8000H) */
@@ -37986,7 +37990,7 @@ typedef struct SmrCtx {
     uint64_t efer[SMR_HITS], rcx[SMR_HITS];
     uint16_t cs[SMR_HITS];
     int state[SMR_HITS];                /* UC_CTL_X86_SMI read in the handler */
-    SmrWrite wr[8];                     /* applied in the first handler run */
+    SmrWrite wr[12];                    /* applied in the first handler run */
     int nwr;
     int smi_in_handler;                 /* signal one more SMI from the first handler run */
     int io_calls, io_smi_at;            /* I/O hook calls; signal the SMI in this call (1-based) */
@@ -38041,12 +38045,13 @@ static void smr_handler_cb(uc_engine *uc, uint64_t addr, uint32_t size, void *us
     }
     c->smbase[h] = addr - 0x8000;
     OK(uc_mem_read(uc, c->smbase[h] + 0xfc00, c->ssa[h], sizeof(c->ssa[h])));
-    OK(uc_reg_read(uc, UC_X86_REG_RIP, &c->rip[h]));
-    OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &c->rflags[h]));
+    /* 32-bit engines: the 32-bit register names (Unicorn warns about the 64-bit ones) */
+    OK(uc_reg_read(uc, c->mode == UC_MODE_64 ? UC_X86_REG_RIP : UC_X86_REG_EIP, &c->rip[h]));
+    OK(uc_reg_read(uc, c->mode == UC_MODE_64 ? UC_X86_REG_RFLAGS : UC_X86_REG_EFLAGS, &c->rflags[h]));
     OK(uc_reg_read(uc, UC_X86_REG_CR0, &c->cr0[h]));
     OK(uc_reg_read(uc, UC_X86_REG_CR4, &c->cr4[h]));
     OK(uc_reg_read(uc, UC_X86_REG_DR7, &c->dr7[h]));
-    OK(uc_reg_read(uc, UC_X86_REG_RCX, &c->rcx[h]));
+    OK(uc_reg_read(uc, c->mode == UC_MODE_64 ? UC_X86_REG_RCX : UC_X86_REG_ECX, &c->rcx[h]));
     OK(uc_reg_read(uc, UC_X86_REG_CS, &cs));
     c->cs[h] = cs;
     {
@@ -38100,6 +38105,7 @@ static void smr_open(SmrCtx *c, uc_mode mode, int model, const uc_x86_cpuid *pro
     int i;
 
     memset(c, 0, sizeof(*c));
+    c->mode = mode;
     memset(buf, SMR_FILL, sizeof(buf));
     OK(uc_open(UC_ARCH_X86, mode, &c->uc));
     if (model >= 0) {
@@ -38264,6 +38270,585 @@ static void test_x86_smr_io_boundary(void)
     TEST_CHECK(c.io_calls == 1 && c.out_data[0] == 0x5a);
     TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 2);
     TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + sizeof(code) - 1);
+    OK(uc_close(c.uc));
+}
+
+/* ---- Intel (U1462): SDM 093 Vol3C Table 34-3 ---- */
+
+/* the Intel 64 map: every field at its Table 34-3 offset, reserved bytes not written */
+static void test_x86_smr_intel64_map(void)
+{
+    /* mov rax, 0123456789ABCDEFh: decodes so only in 64-bit mode */
+    static const char code[] = "\x48\xb8\xef\xcd\xab\x89\x67\x45\x23\x01";
+    uc_x86_mmr gdtr = {0, 0x0000123456789000ULL, 0x7f, 0};
+    uc_x86_mmr idtr = {0, 0x0000abcd00001000ULL, 0xfff, 0};
+    uc_x86_mmr ldtr = {0x28, 0x0000000100002000ULL, 0x67, 0x8200};
+    uc_x86_mmr tr = {0x30, 0x0000000200003000ULL, 0x67, 0x8b00};
+    uint64_t cr0, cr3 = 0x7000, cr4, efer, rflags = 0x247, dr6;
+    static const int sel_reg[] = {UC_X86_REG_ES, UC_X86_REG_CS, UC_X86_REG_SS, UC_X86_REG_DS};
+    uint16_t sel;
+    SmrCtx c;
+    int i;
+
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, code, sizeof(code) - 1);
+    smr_set_gprs(&c);
+    smr_set(&c, UC_X86_REG_RFLAGS, rflags);
+    smr_set(&c, UC_X86_REG_CR3, cr3);
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_LDTR, &ldtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    for (i = 0; i < 4; i++) {
+        sel = (uint16_t)(0x10 + 8 * i);
+        if (sel_reg[i] != UC_X86_REG_CS) {
+            OK(uc_reg_write(c.uc, sel_reg[i], &sel));
+        }
+    }
+    cr0 = smr_get(&c, UC_X86_REG_CR0);
+    cr4 = smr_get(&c, UC_X86_REG_CR4);
+    dr6 = smr_get(&c, UC_X86_REG_DR6);
+    efer = smr_msr(c.uc, 0xc0000080);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7ff8, 8) == cr0);
+    TEST_CHECK(smr_f(&c, 0, 0x7ff0, 8) == cr3);
+    TEST_CHECK(smr_f(&c, 0, 0x7fe8, 8) == rflags);
+    TEST_CHECK(smr_f(&c, 0, 0x7fe0, 8) == efer);
+    TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == SMR_CODE);                /* RIP */
+    TEST_CHECK(smr_f(&c, 0, 0x7fd0, 8) == dr6);
+    TEST_CHECK(smr_f(&c, 0, 0x7fc8, 8) == 0x400);                   /* DR7 */
+    TEST_CHECK(smr_f(&c, 0, 0x7fc4, 4) == 0x30);                    /* TR SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fc0, 4) == 0x28);                    /* LDTR SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fb4, 4) == 0x28);                    /* DS SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fb0, 4) == 0x20);                    /* SS SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fac, 4) == 0);                       /* CS SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fa8, 4) == 0x10);                    /* ES SEL */
+    TEST_CHECK(smr_f(&c, 0, 0x7fa4, 4) == 0);                       /* IO_MISC: no IO_SMI */
+    TEST_CHECK(smr_f(&c, 0, 0x7f9c, 8) == 0);                       /* IO_MEM_ADDR */
+    TEST_CHECK(smr_f(&c, 0, 0x7f94, 8) == smr_gpr_val(6));          /* RDI */
+    TEST_CHECK(smr_f(&c, 0, 0x7f8c, 8) == smr_gpr_val(5));          /* RSI */
+    TEST_CHECK(smr_f(&c, 0, 0x7f84, 8) == smr_gpr_val(4));          /* RBP */
+    TEST_CHECK(smr_f(&c, 0, 0x7f7c, 8) == 0x80000);                 /* RSP */
+    TEST_CHECK(smr_f(&c, 0, 0x7f74, 8) == smr_gpr_val(3));          /* RBX */
+    TEST_CHECK(smr_f(&c, 0, 0x7f6c, 8) == smr_gpr_val(2));          /* RDX */
+    TEST_CHECK(smr_f(&c, 0, 0x7f64, 8) == smr_gpr_val(1));          /* RCX */
+    TEST_CHECK(smr_f(&c, 0, 0x7f5c, 8) == smr_gpr_val(0));          /* RAX */
+    for (i = 0; i < 8; i++) {                                       /* R8 7F54H .. R15 7F1CH */
+        TEST_CHECK(smr_f(&c, 0, 0x7f54 - 8 * i, 8) == smr_gpr_val(7 + i));
+        TEST_MSG("R%d", 8 + i);
+    }
+    TEST_CHECK(smr_f(&c, 0, 0x7f02, 2) == 0);                       /* auto HALT restart */
+    TEST_CHECK(smr_f(&c, 0, 0x7f00, 2) == 0);                       /* I/O instruction restart */
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030004);              /* SMM revision identifier */
+    TEST_CHECK(smr_f(&c, 0, 0x7ef8, 4) == SMR_SMBASE);
+    TEST_CHECK(smr_f(&c, 0, 0x7ee0, 4) == 0);                       /* not VMX non-root / enclave */
+    TEST_CHECK(smr_f(&c, 0, 0x7e9c, 4) == 0x00002000);              /* LDT base 31:0 */
+    TEST_CHECK(smr_f(&c, 0, 0x7e94, 4) == 0x00001000);              /* IDT base 31:0 */
+    TEST_CHECK(smr_f(&c, 0, 0x7e8c, 4) == 0x56789000);              /* GDT base 31:0 */
+    TEST_CHECK(smr_f(&c, 0, 0x7e40, 8) == cr4);                     /* CR4, 64 bits */
+    TEST_CHECK(smr_f(&c, 0, 0x7de8, 8) == 0);                       /* IO_RIP */
+    TEST_CHECK(smr_f(&c, 0, 0x7dd8, 4) == 0x0000abcd);              /* IDT base 63:32 */
+    TEST_CHECK(smr_f(&c, 0, 0x7dd4, 4) == 0x00000001);              /* LDT base 63:32 */
+    TEST_CHECK(smr_f(&c, 0, 0x7dd0, 4) == 0x00001234);              /* GDT base 63:32 */
+    /* reserved (Haswell: no CET shadow stacks, so 7EC8H SSP is not written; no EPTP) */
+    TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f1b));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ee4, 0x7ef7));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ea0, 0x7edf));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e98, 0x7e9b));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e90, 0x7e93));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e48, 0x7e8b));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7df0, 0x7e3f));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ddc, 0x7de7));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7c00, 0x7dcf));
+    /* RSM: back in 64-bit mode, everything restored */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + sizeof(code) - 1);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RAX) == 0x0123456789abcdefULL);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_R15) == smr_gpr_val(14));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_CR3) == cr3);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_CR4) == cr4);
+    TEST_CHECK(smr_msr(c.uc, 0xc0000080) == efer);
+    OK(uc_reg_read(c.uc, UC_X86_REG_GDTR, &gdtr));
+    TEST_CHECK(gdtr.base == 0x0000123456789000ULL && gdtr.limit == 0x7f);
+    OK(uc_reg_read(c.uc, UC_X86_REG_LDTR, &ldtr));
+    TEST_CHECK(ldtr.base == 0x0000000100002000ULL && ldtr.limit == 0x67 && ldtr.selector == 0x28 &&
+               ldtr.flags == 0x8200);
+    OK(uc_reg_read(c.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.base == 0x0000000200003000ULL && tr.selector == 0x30 && tr.flags == 0x8b00);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * writable fields (Table 34-3 "Yes"), SMBASE relocation (34.11); bytes Intel reserves (where the AMD
+ * map keeps TR base and LDTR attributes) do not reach the hidden state
+ */
+static void test_x86_smr_intel64_rsm(void)
+{
+    /* +0: inc rbx; nops; +20h: inc rcx; +23h: nop */
+    char code[0x24];
+    uc_x86_mmr ldtr = {0x28, 0x0000000100002000ULL, 0x67, 0x8200};
+    uc_x86_mmr tr = {0x30, 0x0000000200003000ULL, 0x67, 0x8b00};
+    SmrCtx c;
+    uint64_t efer;
+
+    memset(code, 0x90, sizeof(code));
+    memcpy(code, "\x48\xff\xc3", 3);
+    memcpy(code + 0x20, "\x48\xff\xc1", 3);
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, code, sizeof(code));
+    smr_set_gprs(&c);
+    OK(uc_reg_write(c.uc, UC_X86_REG_LDTR, &ldtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    efer = smr_msr(c.uc, 0xc0000080);
+    smr_wr(&c, 0x7e98, 4, 0xdeadb000ULL);                           /* reserved (AMD: TR base 31:0) */
+    smr_wr(&c, 0x7e72, 2, 0xffff);                                  /* reserved (AMD: LDTR attr) */
+    smr_wr(&c, 0x7f5c, 8, 0xfeedULL);                               /* RAX */
+    smr_wr(&c, 0x7f1c, 8, 0xbeefULL);                               /* R15 */
+    smr_wr(&c, 0x7fd8, 8, SMR_CODE + 0x20);                         /* RIP */
+    smr_wr(&c, 0x7fe8, 8, 0x203);                                   /* RFLAGS: CF */
+    smr_wr(&c, 0x7fe0, 8, efer | 0x800);                            /* IA32_EFER: NXE */
+    smr_wr(&c, 0x7ef8, 4, SMR_SMBASE2);                             /* SMBASE */
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 0x23, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RAX) == 0xfeed);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_R15) == 0xbeef);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RBX) == smr_gpr_val(3));      /* INC RBX skipped */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == smr_gpr_val(1) + 1);
+    TEST_CHECK((smr_get(&c, UC_X86_REG_RFLAGS) & 1) == 1);          /* CF from 7FE8H (INC keeps CF) */
+    TEST_CHECK(smr_msr(c.uc, 0xc0000080) == (efer | 0x800));
+    OK(uc_reg_read(c.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.base == 0x0000000200003000ULL && tr.flags == 0x8b00 && tr.limit == 0x67);
+    OK(uc_reg_read(c.uc, UC_X86_REG_LDTR, &ldtr));
+    TEST_CHECK(ldtr.flags == 0x8200 && ldtr.base == 0x0000000100002000ULL);
+    /* the next SMI uses SMBASE 50000H */
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE + 0x23, SMR_CODE + 0x24, 0, 0));
+    TEST_CHECK(c.hits == 2);
+    TEST_CHECK(c.smbase[1] == SMR_SMBASE2 && c.cs[1] == 0x5000);
+    TEST_CHECK(smr_f(&c, 1, 0x7ef8, 4) == SMR_SMBASE2);
+    TEST_CHECK(smr_f(&c, 1, 0x7fd8, 8) == SMR_CODE + 0x23);
+    OK(uc_close(c.uc));
+}
+
+/* CET (34.5.3, 34.3.2): SSP saved at 7EC8H, CR4.CET cleared, RSM sign-extends SSP */
+static void test_x86_smr_intel64_cet(void)
+{
+    SmrCtx c;
+    uint64_t cr0, cr4;
+
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_MAX, NULL, 0);
+    smr_code(&c, "\x90\x90", 2);
+    cr0 = smr_get(&c, UC_X86_REG_CR0) | 0x10000;                    /* WP */
+    smr_set(&c, UC_X86_REG_CR0, cr0);
+    cr4 = smr_get(&c, UC_X86_REG_CR4) | (1ULL << 23);               /* CET */
+    smr_set(&c, UC_X86_REG_CR4, cr4);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_CR4) == cr4);
+    smr_set(&c, UC_X86_REG_SSP, 0x00007ffffffff000ULL);
+    smr_wr(&c, 0x7ec8, 8, 0x0000800000001000ULL);                   /* not canonical */
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(c.cr4[0] == 0);
+    TEST_CHECK(smr_f(&c, 0, 0x7ec8, 8) == 0x00007ffffffff000ULL);
+    TEST_CHECK(smr_f(&c, 0, 0x7e40, 8) == cr4);
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ed0, 0x7edf));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ea0, 0x7ec7));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_SSP) == 0xffff800000001000ULL);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_CR4) == cr4);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 2);
+    OK(uc_close(c.uc));
+}
+
+/* I/O SMIs: IO_MISC / IO_MEM_ADDR / IO_RIP (Tables 34-5, 34-6) and I/O instruction restart (34.12) */
+static void test_x86_smr_intel64_io(void)
+{
+    /* mov al, 5Ah; out B2h, al; inc ecx; inc ecx */
+    static const char out_imm[] = "\xb0\x5a\xe6\xb2\xff\xc1\xff\xc1";
+    /* mov dx, 1234h; in ax, dx; nop */
+    static const char in_dx[] = "\x66\xba\x34\x12\x66\xed\x90";
+    /* rep outsb; nop */
+    static const char rep_outs[] = "\xf3\x6e\x90";
+    SmrCtx c;
+    int restart;
+
+    for (restart = 0; restart < 2; restart++) {
+        smr_open(&c, UC_MODE_64, -1, NULL, 0);
+        smr_code(&c, out_imm, sizeof(out_imm) - 1);
+        smr_set(&c, UC_X86_REG_RCX, 0);
+        c.io_smi_at = 1;
+        if (restart) {
+            smr_wr(&c, 0x7f00, 2, 0xff);
+        }
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(out_imm) - 1, 0, 0));
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == SMR_CODE + 4);        /* RIP: after the OUT */
+        TEST_CHECK(smr_f(&c, 0, 0x7fa4, 4) == 0x00b20083);          /* port B2h, OUT imm, byte */
+        TEST_CHECK(smr_f(&c, 0, 0x7de8, 8) == SMR_CODE + 2);        /* IO_RIP */
+        TEST_CHECK(smr_f(&c, 0, 0x7f9c, 8) == 0);
+        TEST_CHECK(c.io_calls == 1 + restart);                      /* FFH: the OUT again */
+        TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 2);
+        TEST_MSG("restart %d", restart);
+        OK(uc_close(c.uc));
+    }
+
+    smr_open(&c, UC_MODE_64, -1, NULL, 0);
+    smr_code(&c, in_dx, sizeof(in_dx) - 1);
+    c.io_smi_at = 1;
+    c.in_value = 0xbeef;
+    smr_set(&c, UC_X86_REG_RAX, 0);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(in_dx) - 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7fa4, 4) == 0x12340015);              /* port 1234h, IN DX, word */
+    TEST_CHECK(smr_f(&c, 0, 0x7de8, 8) == SMR_CODE + 4);
+    TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == SMR_CODE + 6);
+    TEST_CHECK(smr_f(&c, 0, 0x7f5c, 8) == 0xbeef);                  /* the IN completed */
+    OK(uc_close(c.uc));
+
+    for (restart = 0; restart < 2; restart++) {
+        smr_open(&c, UC_MODE_64, -1, NULL, 0);
+        smr_code(&c, rep_outs, sizeof(rep_outs) - 1);
+        OK(uc_mem_write(c.uc, SMR_DATA, "ABC", 3));
+        smr_set(&c, UC_X86_REG_RSI, SMR_DATA);
+        smr_set(&c, UC_X86_REG_RCX, 3);
+        smr_set(&c, UC_X86_REG_RDX, 0x80);
+        c.io_smi_at = 2;
+        if (restart) {
+            smr_wr(&c, 0x7f00, 2, 0xff);
+        }
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(rep_outs) - 1, 0, 0));
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == SMR_CODE);            /* RIP: the REP OUTS */
+        TEST_CHECK(smr_f(&c, 0, 0x7f64, 8) == 1);                   /* RCX after 2 iterations */
+        TEST_CHECK(smr_f(&c, 0, 0x7f8c, 8) == SMR_DATA + 2);        /* RSI */
+        TEST_CHECK(smr_f(&c, 0, 0x7fa4, 4) == 0x00800063);          /* port 80h, REP OUTS, byte */
+        TEST_CHECK(smr_f(&c, 0, 0x7f9c, 8) == SMR_DATA + 1);        /* IO_MEM_ADDR */
+        TEST_CHECK(smr_f(&c, 0, 0x7de8, 8) == SMR_CODE);            /* IO_RIP */
+        TEST_CHECK(c.io_calls == 3 + restart);
+        TEST_CHECK(memcmp(c.out_data, restart ? "ABBC" : "ABC", 3 + restart) == 0);
+        TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 0);
+        TEST_CHECK(smr_get(&c, UC_X86_REG_RSI) == SMR_DATA + 3);
+        TEST_MSG("restart %d", restart);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* auto HALT restart (34.10, Table 34-7) */
+static void test_x86_smr_intel64_halt(void)
+{
+    /* hlt; inc ecx */
+    static const char code[] = "\xf4\xff\xc1";
+    SmrCtx c;
+    int clear;
+
+    for (clear = 0; clear < 2; clear++) {
+        smr_open(&c, UC_MODE_64, -1, NULL, 0);
+        smr_code(&c, code, sizeof(code) - 1);
+        smr_set(&c, UC_X86_REG_RCX, 0);
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 3, 0, 0));      /* stops in the HALT state */
+        TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 1);
+        if (clear) {
+            smr_wr(&c, 0x7f02, 2, 0);
+        }
+        smr_signal(c.uc);
+        OK(uc_emu_start(c.uc, SMR_CODE + 1, SMR_CODE + 3, 0, 0));
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(smr_f(&c, 0, 0x7f02, 2) == 1);                   /* entered from HALT */
+        TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == SMR_CODE + 1);
+        if (clear) {                                                /* the instruction after HLT */
+            TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 1);
+            TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 3);
+        } else {                                                    /* back to the HALT state */
+            TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 0);
+            TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 1);
+            OK(uc_emu_start(c.uc, SMR_CODE + 1, SMR_CODE + 3, 0, 0));
+            TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 1);
+        }
+        TEST_MSG("flag cleared %d", clear);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* Table 34-1: an Intel processor without IA-32e mode (Pentium III) */
+static void test_x86_smr_intel32_map(void)
+{
+    /* inc eax */
+    static const char code[] = "\x40";
+    SmrCtx c;
+    uint32_t eax = 0x11111111, ecx = 0x22222222, edi = 0x77777777, cr0;
+
+    smr_open(&c, UC_MODE_32, UC_CPU_X86_PENTIUM3, NULL, 0);
+    smr_code(&c, code, 1);
+    OK(uc_reg_write(c.uc, UC_X86_REG_EAX, &eax));
+    OK(uc_reg_write(c.uc, UC_X86_REG_ECX, &ecx));
+    OK(uc_reg_write(c.uc, UC_X86_REG_EDI, &edi));
+    cr0 = (uint32_t)smr_get(&c, UC_X86_REG_CR0);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7ffc, 4) == cr0);
+    TEST_CHECK(smr_f(&c, 0, 0x7ff0, 4) == SMR_CODE);                /* EIP */
+    TEST_CHECK(smr_f(&c, 0, 0x7fec, 4) == edi);
+    TEST_CHECK(smr_f(&c, 0, 0x7fd4, 4) == ecx);
+    TEST_CHECK(smr_f(&c, 0, 0x7fd0, 4) == eax);
+    TEST_CHECK(smr_f(&c, 0, 0x7fc8, 4) == 0x400);                   /* DR7 */
+    TEST_CHECK(smr_f(&c, 0, 0x7fa4, 4) == 0);                       /* I/O state field */
+    TEST_CHECK(smr_f(&c, 0, 0x7fa0, 4) == 0);
+    TEST_CHECK(smr_f(&c, 0, 0x7f02, 2) == 0);
+    TEST_CHECK(smr_f(&c, 0, 0x7f00, 2) == 0);
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030004);
+    TEST_CHECK(smr_f(&c, 0, 0x7ef8, 4) == SMR_SMBASE);
+    TEST_CHECK(smr_untouched(&c, 0, 0x7fc0, 0x7fc3));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f9f));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7c00, 0x7ef7));
+    TEST_CHECK((uint32_t)smr_get(&c, UC_X86_REG_EAX) == eax + 1);
+    TEST_CHECK((uint32_t)smr_get(&c, UC_X86_REG_EIP) == SMR_CODE + 1);
+    OK(uc_close(c.uc));
+}
+
+/* ---- AMD (U1463): AMD64 APM Vol2 r3.45 Table 10-1 ---- */
+
+static void test_x86_smr_amd64_map(void)
+{
+    static const char code[] = "\x48\xb8\xef\xcd\xab\x89\x67\x45\x23\x01";
+    uc_x86_mmr gdtr = {0, 0x0000123456789000ULL, 0x7f, 0};
+    uc_x86_mmr idtr = {0, 0x0000abcd00001000ULL, 0xfff, 0};
+    uc_x86_mmr ldtr = {0x28, 0x0000000100002000ULL, 0x67, 0x8200};
+    uc_x86_mmr tr = {0x30, 0x0000000200003000ULL, 0x67, 0x8b00};
+    uint64_t cr0, cr3 = 0x7000, cr4, efer, rflags = 0x247, dr6;
+    SmrCtx c;
+    int i;
+
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, NULL, 0);
+    smr_code(&c, code, sizeof(code) - 1);
+    smr_set_gprs(&c);
+    smr_set(&c, UC_X86_REG_RFLAGS, rflags);
+    smr_set(&c, UC_X86_REG_CR3, cr3);
+    OK(uc_reg_write(c.uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_LDTR, &ldtr));
+    OK(uc_reg_write(c.uc, UC_X86_REG_TR, &tr));
+    cr0 = smr_get(&c, UC_X86_REG_CR0);
+    cr4 = smr_get(&c, UC_X86_REG_CR4);
+    dr6 = smr_get(&c, UC_X86_REG_DR6);
+    efer = smr_msr(c.uc, 0xc0000080);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(code) - 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7e10, 2) == 0);                       /* CS selector */
+    TEST_CHECK(smr_f(&c, 0, 0x7e64, 2) == 0x7f);                    /* GDTR limit (word) */
+    TEST_CHECK(smr_f(&c, 0, 0x7e68, 8) == 0x0000123456789000ULL);
+    TEST_CHECK(smr_f(&c, 0, 0x7e70, 2) == 0x28);                    /* LDTR */
+    TEST_CHECK(smr_f(&c, 0, 0x7e72, 2) == 0x82);
+    TEST_CHECK(smr_f(&c, 0, 0x7e74, 4) == 0x67);
+    TEST_CHECK(smr_f(&c, 0, 0x7e78, 8) == 0x0000000100002000ULL);
+    TEST_CHECK(smr_f(&c, 0, 0x7e84, 2) == 0xfff);                   /* IDTR limit (word) */
+    TEST_CHECK(smr_f(&c, 0, 0x7e88, 8) == 0x0000abcd00001000ULL);
+    TEST_CHECK(smr_f(&c, 0, 0x7e90, 2) == 0x30);                    /* TR */
+    TEST_CHECK(smr_f(&c, 0, 0x7e92, 2) == 0x8b);
+    TEST_CHECK(smr_f(&c, 0, 0x7e98, 8) == 0x0000000200003000ULL);
+    for (i = 0; i < 4; i++) {                                       /* I/O restart RIP..RDI */
+        TEST_CHECK(smr_f(&c, 0, 0x7ea0 + 8 * i, 8) == 0);
+    }
+    TEST_CHECK(smr_f(&c, 0, 0x7ec0, 4) == 0);                       /* I/O restart dword: VAL 0 */
+    TEST_CHECK(smr_f(&c, 0, 0x7ec8, 1) == 0);                       /* I/O instruction restart */
+    TEST_CHECK(smr_f(&c, 0, 0x7ec9, 1) == 0);                       /* auto-halt restart */
+    TEST_CHECK(smr_f(&c, 0, 0x7ed0, 8) == efer);
+    TEST_CHECK(smr_f(&c, 0, 0x7ed8, 8) == 0 && smr_f(&c, 0, 0x7ee0, 8) == 0 &&
+               smr_f(&c, 0, 0x7ee8, 8) == 0);                       /* not an SVM guest */
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030064);              /* SMM-revision identifier */
+    TEST_CHECK(smr_f(&c, 0, 0x7f00, 4) == SMR_SMBASE);
+    TEST_CHECK(smr_f(&c, 0, 0x7f48, 8) == cr4);
+    TEST_CHECK(smr_f(&c, 0, 0x7f50, 8) == cr3);
+    TEST_CHECK(smr_f(&c, 0, 0x7f58, 8) == cr0);
+    TEST_CHECK(smr_f(&c, 0, 0x7f60, 8) == 0x400);                   /* DR7, quadword */
+    TEST_CHECK(smr_f(&c, 0, 0x7f68, 8) == dr6);                     /* DR6, quadword */
+    TEST_CHECK(smr_f(&c, 0, 0x7f70, 8) == rflags);                  /* RFLAGS, quadword */
+    TEST_CHECK(smr_f(&c, 0, 0x7f78, 8) == SMR_CODE);                /* RIP */
+    for (i = 0; i < 8; i++) {                                       /* R15 FF80H .. R8 FFB8H */
+        TEST_CHECK(smr_f(&c, 0, 0x7f80 + 8 * i, 8) == smr_gpr_val(14 - i));
+        TEST_MSG("R%d", 15 - i);
+    }
+    TEST_CHECK(smr_f(&c, 0, 0x7fc0, 8) == smr_gpr_val(6));          /* RDI */
+    TEST_CHECK(smr_f(&c, 0, 0x7fc8, 8) == smr_gpr_val(5));          /* RSI */
+    TEST_CHECK(smr_f(&c, 0, 0x7fd0, 8) == smr_gpr_val(4));          /* RBP */
+    TEST_CHECK(smr_f(&c, 0, 0x7fd8, 8) == 0x80000);                 /* RSP */
+    TEST_CHECK(smr_f(&c, 0, 0x7fe0, 8) == smr_gpr_val(3));          /* RBX */
+    TEST_CHECK(smr_f(&c, 0, 0x7fe8, 8) == smr_gpr_val(2));          /* RDX */
+    TEST_CHECK(smr_f(&c, 0, 0x7ff0, 8) == smr_gpr_val(1));          /* RCX */
+    TEST_CHECK(smr_f(&c, 0, 0x7ff8, 8) == smr_gpr_val(0));          /* RAX */
+    /* reserved; SSP (no shadow stacks on EPYC) and the SVM host fields are not written */
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e60, 0x7e63));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e66, 0x7e67));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e80, 0x7e83));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e86, 0x7e87));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ec4, 0x7ec7));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7eca, 0x7ecf));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7ef0, 0x7efb));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f47));
+    TEST_CHECK(smr_untouched(&c, 0, 0x7c00, 0x7dff));
+    /* RSM: back in 64-bit mode */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + sizeof(code) - 1);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RAX) == 0x0123456789abcdefULL);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == smr_gpr_val(1));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_CR4) == cr4);
+    OK(uc_reg_read(c.uc, UC_X86_REG_GDTR, &gdtr));
+    TEST_CHECK(gdtr.base == 0x0000123456789000ULL && gdtr.limit == 0x7f);
+    OK(uc_reg_read(c.uc, UC_X86_REG_TR, &tr));
+    TEST_CHECK(tr.base == 0x0000000200003000ULL && tr.selector == 0x30 && tr.flags == 0x8b00);
+    OK(uc_close(c.uc));
+}
+
+/* writable fields, SMBASE relocation, I/O instruction restart (10.3.8), auto-halt (10.3.7) */
+static void test_x86_smr_amd64_rsm(void)
+{
+    char code[0x24];
+    /* mov dx, 80h; out dx, al; inc ecx; inc ecx */
+    static const char out_dx[] = "\x66\xba\x80\x00\xee\xff\xc1\xff\xc1";
+    static const char rep_outs[] = "\xf3\x6e\x90";
+    static const char hlt[] = "\xf4\xff\xc1";
+    SmrCtx c;
+    int restart;
+
+    memset(code, 0x90, sizeof(code));
+    memcpy(code, "\x48\xff\xc3", 3);
+    memcpy(code + 0x20, "\x48\xff\xc1", 3);
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, NULL, 0);
+    smr_code(&c, code, sizeof(code));
+    smr_set_gprs(&c);
+    smr_wr(&c, 0x7ff8, 8, 0xfeedULL);                               /* RAX */
+    smr_wr(&c, 0x7f78, 8, SMR_CODE + 0x20);                         /* RIP */
+    smr_wr(&c, 0x7f00, 4, SMR_SMBASE2);                             /* SMBASE */
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 0x23, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RAX) == 0xfeed);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RBX) == smr_gpr_val(3));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == smr_gpr_val(1) + 1);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE + 0x23, SMR_CODE + 0x24, 0, 0));
+    TEST_CHECK(c.hits == 2 && c.smbase[1] == SMR_SMBASE2);
+    TEST_CHECK(smr_f(&c, 1, 0x7f00, 4) == SMR_SMBASE2);
+    TEST_CHECK(smr_f(&c, 1, 0x7efc, 4) == 0x00030064);
+    OK(uc_close(c.uc));
+
+    for (restart = 0; restart < 2; restart++) {
+        smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, NULL, 0);
+        smr_code(&c, out_dx, sizeof(out_dx) - 1);
+        smr_set(&c, UC_X86_REG_RCX, 0);
+        smr_set(&c, UC_X86_REG_RSI, 0x1234);
+        smr_set(&c, UC_X86_REG_RDI, 0x5678);
+        c.io_smi_at = 1;
+        if (restart) {
+            smr_wr(&c, 0x7ec8, 1, 1);                               /* any non-zero value */
+        }
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(out_dx) - 1, 0, 0));
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(smr_f(&c, 0, 0x7f78, 8) == SMR_CODE + 5);        /* RIP after the OUT */
+        TEST_CHECK(smr_f(&c, 0, 0x7ea0, 8) == SMR_CODE + 4);        /* I/O restart RIP */
+        TEST_CHECK(smr_f(&c, 0, 0x7ea8, 8) == 0);                   /* RCX */
+        TEST_CHECK(smr_f(&c, 0, 0x7eb0, 8) == 0x1234);              /* RSI */
+        TEST_CHECK(smr_f(&c, 0, 0x7eb8, 8) == 0x5678);              /* RDI */
+        /* port 80h, A64, SZ8, VAL, TYPE 0 (OUT) */
+        TEST_CHECK(smr_f(&c, 0, 0x7ec0, 4) == 0x00800212);
+        TEST_CHECK(c.io_calls == 1 + restart);
+        TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 2);
+        TEST_MSG("restart %d", restart);
+        OK(uc_close(c.uc));
+    }
+
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, NULL, 0);
+    smr_code(&c, rep_outs, sizeof(rep_outs) - 1);
+    OK(uc_mem_write(c.uc, SMR_DATA, "ABC", 3));
+    smr_set(&c, UC_X86_REG_RSI, SMR_DATA);
+    smr_set(&c, UC_X86_REG_RCX, 3);
+    smr_set(&c, UC_X86_REG_RDX, 0x80);
+    c.io_smi_at = 2;
+    smr_wr(&c, 0x7ec8, 1, 0xff);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(rep_outs) - 1, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    /* port 80h, A64, SZ8, REP, STR, VAL, OUT */
+    TEST_CHECK(smr_f(&c, 0, 0x7ec0, 4) == 0x0080021e);
+    TEST_CHECK(smr_f(&c, 0, 0x7ea8, 8) == 2 && smr_f(&c, 0, 0x7eb0, 8) == SMR_DATA + 1);
+    TEST_CHECK(c.io_calls == 4 && memcmp(c.out_data, "ABBC", 4) == 0);
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 0 && smr_get(&c, UC_X86_REG_RSI) == SMR_DATA + 3);
+    OK(uc_close(c.uc));
+
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, NULL, 0);
+    smr_code(&c, hlt, sizeof(hlt) - 1);
+    smr_set(&c, UC_X86_REG_RCX, 0);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 3, 0, 0));
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE + 1, SMR_CODE + 3, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7ec9, 1) == 1);                       /* entered from the halt state */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RCX) == 0);                   /* returned to it */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 1);
+    OK(uc_close(c.uc));
+}
+
+/* ---- the vendor decides the map, not the build or the CPU model's defaults (U1463) ---- */
+static void test_x86_smr_vendor(void)
+{
+    static const uc_x86_cpuid amd0[] = {{0, 0, 0xd, 0x68747541, 0x444d4163, 0x69746e65}};
+    static const uc_x86_cpuid intel0[] = {{0, 0, 0xd, 0x756e6547, 0x6c65746e, 0x49656e69}};
+    SmrCtx c;
+    uint64_t cr0;
+
+    /* Intel model, AMD profile: Table 10-1 */
+    smr_open(&c, UC_MODE_64, -1, amd0, 1);
+    smr_code(&c, "\x90\x90", 2);
+    smr_set_gprs(&c);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030064);
+    TEST_CHECK(smr_f(&c, 0, 0x7ff8, 8) == smr_gpr_val(0));          /* RAX at FFF8H */
+    TEST_CHECK(smr_f(&c, 0, 0x7f78, 8) == SMR_CODE);                /* RIP at FF78H */
+    TEST_CHECK(smr_untouched(&c, 0, 0x7dd0, 0x7dff));               /* no Intel fields */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 2);
+    OK(uc_close(c.uc));
+
+    /* AMD model, Intel profile: Table 34-3 */
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_EPYC, intel0, 1);
+    smr_code(&c, "\x90\x90", 2);
+    smr_set_gprs(&c);
+    cr0 = smr_get(&c, UC_X86_REG_CR0);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7efc, 4) == 0x00030004);
+    TEST_CHECK(smr_f(&c, 0, 0x7ff8, 8) == cr0);                     /* CR0 at 7FF8H */
+    TEST_CHECK(smr_f(&c, 0, 0x7f5c, 8) == smr_gpr_val(0));          /* RAX at 7F5CH */
+    TEST_CHECK(smr_untouched(&c, 0, 0x7e00, 0x7e3f));               /* no AMD segment fields */
+    TEST_CHECK(smr_get(&c, UC_X86_REG_RIP) == SMR_CODE + 2);
+    OK(uc_close(c.uc));
+
+    /* shadow stacks with an AMD profile: SSP at FF18H, never at Intel's 7EC8H */
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_MAX, amd0, 1);
+    smr_code(&c, "\x90\x90", 2);
+    smr_set(&c, UC_X86_REG_SSP, 0x00007ffffffff000ULL);
+    smr_wr(&c, 0x7f18, 8, 0x0000800000001000ULL);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7f18, 8) == 0x00007ffffffff000ULL);
+    TEST_CHECK(smr_f(&c, 0, 0x7ec0, 4) == 0);                       /* AMD I/O restart dword */
+    TEST_CHECK(smr_f(&c, 0, 0x7ec8, 1) == 0 && smr_f(&c, 0, 0x7ec9, 1) == 0);
+    TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f17));
+    TEST_CHECK(smr_get(&c, UC_X86_REG_SSP) == 0x0000800000001000ULL);   /* loaded as written */
+    OK(uc_close(c.uc));
+
+    /* Intel with shadow stacks: SSP at 7EC8H, FF18H (7F18H) is Intel's reserved range */
+    smr_open(&c, UC_MODE_64, UC_CPU_X86_MAX, NULL, 0);
+    smr_code(&c, "\x90\x90", 2);
+    smr_set(&c, UC_X86_REG_SSP, 0x00007ffffffff000ULL);
+    smr_signal(c.uc);
+    OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+    TEST_CHECK(c.hits == 1);
+    TEST_CHECK(smr_f(&c, 0, 0x7ec8, 8) == 0x00007ffffffff000ULL);
+    TEST_CHECK(smr_untouched(&c, 0, 0x7f04, 0x7f1b));
     OK(uc_close(c.uc));
 }
 /* ---- end U1461-U1464 (smr_) ---- */
@@ -38762,4 +39347,13 @@ TEST_LIST = {
     {"test_x86_smr_entry_state", test_x86_smr_entry_state},
     {"test_x86_smr_latched", test_x86_smr_latched},
     {"test_x86_smr_io_boundary", test_x86_smr_io_boundary},
+    {"test_x86_smr_intel64_map", test_x86_smr_intel64_map},
+    {"test_x86_smr_intel64_rsm", test_x86_smr_intel64_rsm},
+    {"test_x86_smr_intel64_cet", test_x86_smr_intel64_cet},
+    {"test_x86_smr_intel64_io", test_x86_smr_intel64_io},
+    {"test_x86_smr_intel64_halt", test_x86_smr_intel64_halt},
+    {"test_x86_smr_intel32_map", test_x86_smr_intel32_map},
+    {"test_x86_smr_amd64_map", test_x86_smr_amd64_map},
+    {"test_x86_smr_amd64_rsm", test_x86_smr_amd64_rsm},
+    {"test_x86_smr_vendor", test_x86_smr_vendor},
     {NULL, NULL}};

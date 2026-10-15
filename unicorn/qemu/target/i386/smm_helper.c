@@ -27,6 +27,7 @@
 
 /* SMM support */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1462) */
 /*
  * backport of upstream QEMU cdba90ac1b (DR6 / DR7 through helper_set_dr on SMM entry and
  * RSM, so the debug-register breakpoints follow), 5d08f36983 (the 64-bit and 32-bit state-save
@@ -164,15 +165,6 @@ void do_smm_enter(X86CPU *cpu)
     // qemu_log_mask(CPU_LOG_INT, "SMM: enter\n");
     // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
 
-#if __Use_Original_Qemu != 1 /* ours (U1263) */
-    /* an SMI in enclave mode is an enclave-exiting event (SDM 092 Vol3D 40.4, 42.8.2, sgx_model.c) */
-    bool sgx_enc = env->sgx_enclave_mode != 0;
-
-    if (sgx_enc) {
-        x86_sgx_aex(env, -1, 0, 1, 0, 0);
-        env->sgx_enc_event = 0;
-    }
-#endif /* __Use_Original_Qemu (U1263) */
     env->msr_smi_count++;
     env->hflags |= HF_SMM_MASK;
     if (env->hflags2 & HF2_NMI_MASK) {
@@ -183,16 +175,6 @@ void do_smm_enter(X86CPU *cpu)
 
     if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
         sm_state_init_64(cpu);
-#if __Use_Original_Qemu != 1 /* ours (U1263) */
-        if (env->sgx) {
-            /* Vol3D Table 42-1: SMRAM 7EE0H bit 1 ENCLAVE_INTERRUPTION (U1263) */
-            CPUState *cs = CPU(cpu);
-            target_ulong sm_state = env->smbase + 0x8000;
-            uint32_t f = x86_ldl_phys(cs, sm_state + 0x7ee0);
-
-            x86_stl_phys(cs, sm_state + 0x7ee0, (f & ~2u) | (sgx_enc ? 2u : 0));
-        }
-#endif /* __Use_Original_Qemu (U1263) */
         cpu_load_efer(env, 0);
     } else {
         sm_state_init_32(cpu);
@@ -378,8 +360,69 @@ void helper_rsm(CPUX86State *env)
     // qemu_log_mask(CPU_LOG_INT, "SMM: after RSM\n");
     // log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);
 }
+#else /* ours (U1462) */
+/*
+ * NoVmp (ledger U1462 Intel maps, U1463 AMD map; the SMI signal U1461): SMI delivery and RSM with
+ * the state-save map of the CPU's vendor (docs/smm.md).
+ *  - AuthenticAMD: AMD64 APM Vol2 24593 r3.45 10.2.3 Table 10-1 ("Implementations of the AMD64
+ *    architecture do not use" the legacy format of Table 10-2), SMM-revision identifier
+ *    0003_0064h (10.2.4: 0_xx64h with xx = 00, bits 16 and 17 "always set to 1").
+ *  - every other vendor (GenuineIntel): SDM 093 Vol3C Table 34-3 when IA-32e mode is supported
+ *    (CPUID.80000001H:EDX[29], 34.4.1.1) or the signature is one of Table 34-2, else Table 34-1
+ *    (Vol2B RSM Operation: "IF (IA-32e mode supported) ... IA-32e SMM STATE MAP"). The SMM
+ *    revision identifier is 0003_0004h: I/O instruction restart (bit 16) and SMBASE relocation
+ *    (bit 17, 34.9) and the I/O state information of 34.7 ("revision ID of 30004H or higher").
+ * The vendor is the one CPUID leaf 0 returns (a UC_CTL_X86_CPUID profile's, else the CPU
+ * model's), never the build. What a map has no field for (Intel: the hidden part of the segment
+ * registers, 34.4.1 "saved (but not readable) and restored"; the GDTR / IDTR limits; in Table
+ * 34-1 also CR4, LDTR, GDTR and IDTR) is kept in the CPU (env->smm_*). Reserved bytes of a map
+ * are never written.
+ */
+#define SMM_MAP_INTEL64 1
+#define SMM_MAP_INTEL32 2
+#define SMM_MAP_AMD64 3
 
-#if __Use_Original_Qemu != 1 /* ours (U1461) */
+#define SMM_REVID_INTEL 0x00030004u
+#define SMM_REVID_AMD 0x00030064u
+
+/* hflags that belong to the hidden CS / SS state (the Unicorn API sets CS64 without CS.L) */
+#define SMM_HFLAGS_SEG (HF_CPL_MASK | HF_CS32_MASK | HF_SS32_MASK | HF_CS64_MASK | HF_ADDSEG_MASK)
+
+extern void x86_store_dr(CPUX86State *env, int reg, target_ulong t0);
+
+static bool smm_vendor_amd(CPUX86State *env)
+{
+    uint32_t a, b, c, d;
+
+    cpu_x86_cpuid(env, 0, 0, &a, &b, &c, &d);
+    return b == CPUID_VENDOR_AMD_1 && d == CPUID_VENDOR_AMD_2 && c == CPUID_VENDOR_AMD_3;
+}
+
+static int smm_map_of(CPUX86State *env)
+{
+    uint32_t v = env->cpuid_version;
+    uint32_t fam = (v >> 8) & 0xf, model = (v >> 4) & 0xf;
+
+    if (smm_vendor_amd(env)) {
+        return SMM_MAP_AMD64;
+    }
+    if (fam == 6 || fam == 0xf) {
+        model |= (v >> 12) & 0xf0;
+    }
+    if ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) ||
+        (fam == 6 && (model == 0x17 || model == 0x0f || model == 0x1c))) {
+        return SMM_MAP_INTEL64;
+    }
+    return SMM_MAP_INTEL32;
+}
+
+/* CET shadow stacks supported (SDM 34.5.3 "On processors that support CET shadow stacks") */
+static bool smm_cet_ss(CPUX86State *env)
+{
+    return (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) &&
+           (x86_cpuid_profile_mask(env, 7, 0, 2) & CPUID_7_0_ECX_CET_SHSTK);
+}
+
 /*
  * The I/O instruction an IN / OUT hook signalled the SMI in (helper_in* / helper_out* set
  * env->smm_io_size / _in / _port / _ra around the hooks): EIP is put back to the instruction
@@ -512,4 +555,479 @@ void x86_smm_signal(CPUX86State *env)
         *(volatile int16_t *)&cs->icount_decr_ptr->u16.high = -1;
     }
 }
-#endif /* __Use_Original_Qemu (U1461) */
+
+/* SDM 093 Vol3C Table 34-3 (Intel 64): offsets relative to SMBASE + 8000H */
+static void smm_save_intel64(CPUX86State *env, target_ulong sm, bool halted, bool sgx_enc)
+{
+    CPUState *cs = env_cpu(env);
+    const X86SmmIo *io = env->smm_io_valid ? &env->smm_io : NULL;
+    int i;
+
+    x86_stq_phys(cs, sm + 0x7ff8, env->cr[0]);
+    x86_stq_phys(cs, sm + 0x7ff0, env->cr[3]);
+    x86_stq_phys(cs, sm + 0x7fe8, cpu_compute_eflags(env));
+    x86_stq_phys(cs, sm + 0x7fe0, env->efer);
+    x86_stq_phys(cs, sm + 0x7fd8, env->eip);
+    x86_stq_phys(cs, sm + 0x7fd0, env->dr[6]);
+    x86_stq_phys(cs, sm + 0x7fc8, env->dr[7]);
+    /* selectors, dwords (note 1: the two most significant bytes are reserved) */
+    x86_stl_phys(cs, sm + 0x7fc4, env->tr.selector & 0xffff);
+    x86_stl_phys(cs, sm + 0x7fc0, env->ldt.selector & 0xffff);
+    for (i = 0; i < 6; i++) {               /* ES 7FA8H, CS, SS, DS, FS, GS 7FBCH */
+        x86_stl_phys(cs, sm + 0x7fa8 + i * 4, env->segs[i].selector & 0xffff);
+    }
+    x86_stl_phys(cs, sm + 0x7fa4, io ? io->intel_misc : 0);         /* IO_MISC */
+    x86_stq_phys(cs, sm + 0x7f9c, io ? io->mem : 0);                /* IO_MEM_ADDR */
+    x86_stq_phys(cs, sm + 0x7f94, env->regs[R_EDI]);
+    x86_stq_phys(cs, sm + 0x7f8c, env->regs[R_ESI]);
+    x86_stq_phys(cs, sm + 0x7f84, env->regs[R_EBP]);
+    x86_stq_phys(cs, sm + 0x7f7c, env->regs[R_ESP]);
+    x86_stq_phys(cs, sm + 0x7f74, env->regs[R_EBX]);
+    x86_stq_phys(cs, sm + 0x7f6c, env->regs[R_EDX]);
+    x86_stq_phys(cs, sm + 0x7f64, env->regs[R_ECX]);
+    x86_stq_phys(cs, sm + 0x7f5c, env->regs[R_EAX]);
+    for (i = 8; i < 16; i++) {              /* R8 7F54H ... R15 7F1CH */
+        x86_stq_phys(cs, sm + 0x7f54 - (i - 8) * 8, env->regs[i]);
+    }
+    x86_stw_phys(cs, sm + 0x7f02, halted ? 1 : 0);                  /* auto HALT restart */
+    x86_stw_phys(cs, sm + 0x7f00, 0);                               /* I/O instruction restart */
+    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_INTEL);
+    x86_stl_phys(cs, sm + 0x7ef8, env->smbase);
+    /*
+     * 7EE0H: bit 0 EPT (not in VMX non-root operation: 0, so 7ED8H EPTP is not saved, 34.14.1),
+     * bit 1 incident to enclave mode (Vol3D Table 42-1, U1263)
+     */
+    x86_stl_phys(cs, sm + 0x7ee0, sgx_enc ? 2 : 0);
+    if (smm_cet_ss(env)) {
+        x86_stq_phys(cs, sm + 0x7ec8, env->ssp);                    /* 34.5.3 */
+    }
+    x86_stl_phys(cs, sm + 0x7e9c, (uint32_t)env->ldt.base);
+    x86_stl_phys(cs, sm + 0x7e94, (uint32_t)env->idt.base);
+    x86_stl_phys(cs, sm + 0x7e8c, (uint32_t)env->gdt.base);
+    x86_stq_phys(cs, sm + 0x7e40, env->cr[4]);                      /* all 64 bits (FRED 12) */
+    x86_stq_phys(cs, sm + 0x7de8, io ? io->rip : 0);                /* IO_RIP */
+    x86_stl_phys(cs, sm + 0x7dd8, (uint32_t)((uint64_t)env->idt.base >> 32));
+    x86_stl_phys(cs, sm + 0x7dd4, (uint32_t)((uint64_t)env->ldt.base >> 32));
+    x86_stl_phys(cs, sm + 0x7dd0, (uint32_t)((uint64_t)env->gdt.base >> 32));
+}
+
+/* SDM 093 Vol3C Table 34-1 (no IA-32e mode): offsets relative to SMBASE + 8000H */
+static void smm_save_intel32(CPUX86State *env, target_ulong sm, bool halted)
+{
+    CPUState *cs = env_cpu(env);
+    const X86SmmIo *io = env->smm_io_valid ? &env->smm_io : NULL;
+    int i;
+
+    x86_stl_phys(cs, sm + 0x7ffc, env->cr[0]);
+    x86_stl_phys(cs, sm + 0x7ff8, env->cr[3]);
+    x86_stl_phys(cs, sm + 0x7ff4, cpu_compute_eflags(env));
+    x86_stl_phys(cs, sm + 0x7ff0, env->eip);
+    x86_stl_phys(cs, sm + 0x7fec, env->regs[R_EDI]);
+    x86_stl_phys(cs, sm + 0x7fe8, env->regs[R_ESI]);
+    x86_stl_phys(cs, sm + 0x7fe4, env->regs[R_EBP]);
+    x86_stl_phys(cs, sm + 0x7fe0, env->regs[R_ESP]);
+    x86_stl_phys(cs, sm + 0x7fdc, env->regs[R_EBX]);
+    x86_stl_phys(cs, sm + 0x7fd8, env->regs[R_EDX]);
+    x86_stl_phys(cs, sm + 0x7fd4, env->regs[R_ECX]);
+    x86_stl_phys(cs, sm + 0x7fd0, env->regs[R_EAX]);
+    x86_stl_phys(cs, sm + 0x7fcc, env->dr[6]);
+    x86_stl_phys(cs, sm + 0x7fc8, env->dr[7]);
+    x86_stl_phys(cs, sm + 0x7fc4, env->tr.selector & 0xffff);      /* 7FC0H is reserved */
+    for (i = 0; i < 6; i++) {               /* ES 7FA8H ... GS 7FBCH */
+        x86_stl_phys(cs, sm + 0x7fa8 + i * 4, env->segs[i].selector & 0xffff);
+    }
+    x86_stl_phys(cs, sm + 0x7fa4, io ? io->intel_misc : 0);         /* I/O state field */
+    x86_stl_phys(cs, sm + 0x7fa0, io ? (uint32_t)io->mem : 0);      /* I/O memory address */
+    x86_stw_phys(cs, sm + 0x7f02, halted ? 1 : 0);
+    x86_stw_phys(cs, sm + 0x7f00, 0);
+    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_INTEL);
+    x86_stl_phys(cs, sm + 0x7ef8, env->smbase);
+}
+
+/* AMD64 APM Vol2 r3.45 Table 10-1: offsets relative to SMBASE + 8000H (FE00H = 7E00H) (U1463) */
+static void smm_save_amd64(CPUX86State *env, target_ulong sm, bool halted)
+{
+    CPUState *cs = env_cpu(env);
+    const X86SmmIo *io = env->smm_io_valid ? &env->smm_io : NULL;
+    SegmentCache *dt;
+    int i;
+
+    for (i = 0; i < 6; i++) {               /* ES FE00H, CS, SS, DS, FS, GS FE50H */
+        dt = &env->segs[i];
+        x86_stw_phys(cs, sm + 0x7e00 + i * 16, dt->selector);
+        x86_stw_phys(cs, sm + 0x7e02 + i * 16, (dt->flags >> 8) & 0xf0ff);
+        x86_stl_phys(cs, sm + 0x7e04 + i * 16, dt->limit);
+        x86_stq_phys(cs, sm + 0x7e08 + i * 16, dt->base);
+    }
+    x86_stw_phys(cs, sm + 0x7e64, env->gdt.limit);                  /* GDTR limit: a word */
+    x86_stq_phys(cs, sm + 0x7e68, env->gdt.base);
+    x86_stw_phys(cs, sm + 0x7e70, env->ldt.selector);
+    x86_stw_phys(cs, sm + 0x7e72, (env->ldt.flags >> 8) & 0xf0ff);
+    x86_stl_phys(cs, sm + 0x7e74, env->ldt.limit);
+    x86_stq_phys(cs, sm + 0x7e78, env->ldt.base);
+    x86_stw_phys(cs, sm + 0x7e84, env->idt.limit);                  /* IDTR limit: a word */
+    x86_stq_phys(cs, sm + 0x7e88, env->idt.base);
+    x86_stw_phys(cs, sm + 0x7e90, env->tr.selector);
+    x86_stw_phys(cs, sm + 0x7e92, (env->tr.flags >> 8) & 0xf0ff);
+    x86_stl_phys(cs, sm + 0x7e94, env->tr.limit);
+    x86_stq_phys(cs, sm + 0x7e98, env->tr.base);
+    /* 10.3.8: I/O Instruction Restart RIP / RCX / RSI / RDI / Dword (VAL = 0: no I/O SMI) */
+    x86_stq_phys(cs, sm + 0x7ea0, io ? io->rip : 0);
+    x86_stq_phys(cs, sm + 0x7ea8, io ? io->rcx : 0);
+    x86_stq_phys(cs, sm + 0x7eb0, io ? io->rsi : 0);
+    x86_stq_phys(cs, sm + 0x7eb8, io ? io->rdi : 0);
+    x86_stl_phys(cs, sm + 0x7ec0, io ? io->amd_dword : 0);
+    x86_stb_phys(cs, sm + 0x7ec8, 0);                               /* I/O instruction restart */
+    x86_stb_phys(cs, sm + 0x7ec9, halted ? 1 : 0);                  /* auto-halt restart */
+    x86_stq_phys(cs, sm + 0x7ed0, env->efer);
+    if (!(env->hflags & HF_GUEST_MASK)) {
+        /* SVM Guest, Guest VMCB Physical Address, Guest Virtual Interrupt: not in a guest */
+        x86_stq_phys(cs, sm + 0x7ed8, 0);
+        x86_stq_phys(cs, sm + 0x7ee0, 0);
+        x86_stq_phys(cs, sm + 0x7ee8, 0);
+    }
+    x86_stl_phys(cs, sm + 0x7efc, SMM_REVID_AMD);
+    x86_stl_phys(cs, sm + 0x7f00, env->smbase);
+    if (smm_cet_ss(env)) {
+        x86_stq_phys(cs, sm + 0x7f18, env->ssp);
+    }
+    x86_stq_phys(cs, sm + 0x7f48, env->cr[4]);
+    x86_stq_phys(cs, sm + 0x7f50, env->cr[3]);
+    x86_stq_phys(cs, sm + 0x7f58, env->cr[0]);
+    x86_stq_phys(cs, sm + 0x7f60, env->dr[7]);
+    x86_stq_phys(cs, sm + 0x7f68, env->dr[6]);
+    x86_stq_phys(cs, sm + 0x7f70, cpu_compute_eflags(env));
+    x86_stq_phys(cs, sm + 0x7f78, env->eip);
+    for (i = 8; i < 16; i++) {              /* R15 FF80H ... R8 FFB8H */
+        x86_stq_phys(cs, sm + 0x7ff8 - i * 8, env->regs[i]);
+    }
+    x86_stq_phys(cs, sm + 0x7fc0, env->regs[R_EDI]);
+    x86_stq_phys(cs, sm + 0x7fc8, env->regs[R_ESI]);
+    x86_stq_phys(cs, sm + 0x7fd0, env->regs[R_EBP]);
+    x86_stq_phys(cs, sm + 0x7fd8, env->regs[R_ESP]);
+    x86_stq_phys(cs, sm + 0x7fe0, env->regs[R_EBX]);
+    x86_stq_phys(cs, sm + 0x7fe8, env->regs[R_EDX]);
+    x86_stq_phys(cs, sm + 0x7ff0, env->regs[R_ECX]);
+    x86_stq_phys(cs, sm + 0x7ff8, env->regs[R_EAX]);
+}
+
+void do_smm_enter(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+    target_ulong sm;
+    bool halted = env->smm_pend_hlt != 0;
+    /* an SMI in enclave mode is an enclave-exiting event (SDM 092 Vol3D 40.4, 42.8.2, sgx_model.c) */
+    bool sgx_enc = env->sgx_enclave_mode != 0;
+    int i, map;
+
+    if (sgx_enc) {
+        x86_sgx_aex(env, -1, 0, 1, 0, 0);
+        env->sgx_enc_event = 0;
+    }
+    env->msr_smi_count++;
+    env->hflags |= HF_SMM_MASK;
+    if (env->hflags2 & HF2_NMI_MASK) {
+        env->hflags2 |= HF2_SMM_INSIDE_NMI_MASK;
+    } else {
+        env->hflags2 |= HF2_NMI_MASK;
+    }
+
+    map = smm_map_of(env);
+    env->smm_map = map;
+    env->smm_io_valid = env->smm_pend_io;
+    if (env->smm_io_valid) {
+        env->smm_io = env->smm_io_pend;
+    } else {
+        memset(&env->smm_io, 0, sizeof(env->smm_io));
+    }
+    env->smm_pend_hlt = 0;
+    env->smm_pend_io = 0;
+    env->smm_hlt = 0;
+    /* the state no field of the map holds (34.4.1: saved, not readable, restored by RSM) */
+    for (i = 0; i < 6; i++) {
+        env->smm_seg[i] = env->segs[i];
+    }
+    env->smm_ldt = env->ldt;
+    env->smm_tr = env->tr;
+    env->smm_gdt = env->gdt;
+    env->smm_idt = env->idt;
+    env->smm_cr4 = env->cr[4];
+    env->smm_hflags = env->hflags & SMM_HFLAGS_SEG;
+
+    sm = env->smbase + 0x8000;
+    switch (map) {
+    case SMM_MAP_AMD64:
+        smm_save_amd64(env, sm, halted);
+        break;
+    case SMM_MAP_INTEL64:
+        smm_save_intel64(env, sm, halted, sgx_enc);
+        break;
+    default:
+        smm_save_intel32(env, sm, halted);
+        break;
+    }
+
+    /* SDM Table 34-4 / APM Table 10-3 */
+    if (map != SMM_MAP_INTEL32) {
+        cpu_load_efer(env, 0);
+    }
+    cpu_load_eflags(env, 0, ~(CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C |
+                              DF_MASK));
+    env->eip = 0x00008000;
+    cpu_x86_update_cr0(env,
+                       env->cr[0] & ~(CR0_PE_MASK | CR0_EM_MASK | CR0_TS_MASK |
+                                      CR0_PG_MASK));
+    cpu_x86_update_cr4(env, 0);             /* CR4.CET = 0 (34.5.3) */
+    x86_store_dr(env, 7, 0x00000400);       /* removes the breakpoints too (upstream cdba90ac1b) */
+
+    cpu_x86_load_seg_cache(env, R_CS, (env->smbase >> 4) & 0xffff, env->smbase,
+                           0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+    cpu_x86_load_seg_cache(env, R_DS, 0, 0, 0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+    cpu_x86_load_seg_cache(env, R_ES, 0, 0, 0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+    cpu_x86_load_seg_cache(env, R_SS, 0, 0, 0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+    cpu_x86_load_seg_cache(env, R_FS, 0, 0, 0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+    cpu_x86_load_seg_cache(env, R_GS, 0, 0, 0xffffffff,
+                           DESC_P_MASK | DESC_S_MASK | DESC_W_MASK |
+                           DESC_G_MASK | DESC_A_MASK);
+}
+
+/*
+ * The hidden CS / SS state of the SMI comes back with the segments; Unicorn's API sets the
+ * IA-32e mode bits (HF_CS64 etc.) without a CS.L descriptor bit, so the hflags of that state
+ * are restored too while CS and SS carry the attributes they had at the SMI.
+ */
+static void smm_restore_seg_hflags(CPUX86State *env)
+{
+    if (env->segs[R_CS].flags == env->smm_seg[R_CS].flags &&
+        env->segs[R_SS].flags == env->smm_seg[R_SS].flags &&
+        ((env->hflags ^ env->smm_hflags) & SMM_HFLAGS_SEG)) {
+        env->hflags = (env->hflags & ~SMM_HFLAGS_SEG) | env->smm_hflags;
+        cpu_sync_cet_hflags(env);
+    }
+}
+
+static void smm_load_regs(CPUX86State *env, uint64_t rflags, uint64_t rip, uint64_t dr6,
+                          uint64_t dr7)
+{
+    env->eip = rip;
+    cpu_load_eflags(env, (uint32_t)rflags,
+                    ~(CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C | DF_MASK));
+    x86_store_dr(env, 6, (uint32_t)dr6);
+    x86_store_dr(env, 7, (uint32_t)dr7);
+}
+
+static void smm_load_intel64(CPUX86State *env, target_ulong sm, bool *halt)
+{
+    CPUState *cs = env_cpu(env);
+    uint64_t v;
+    int i;
+
+    cpu_load_efer(env, x86_ldq_phys(cs, sm + 0x7fe0));
+    env->gdt = env->smm_gdt;
+    env->gdt.base = x86_ldl_phys(cs, sm + 0x7e8c) | ((uint64_t)x86_ldl_phys(cs, sm + 0x7dd0) << 32);
+    env->idt = env->smm_idt;
+    env->idt.base = x86_ldl_phys(cs, sm + 0x7e94) | ((uint64_t)x86_ldl_phys(cs, sm + 0x7dd8) << 32);
+    env->ldt = env->smm_ldt;
+    env->ldt.selector = x86_lduw_phys(cs, sm + 0x7fc0);
+    env->ldt.base = x86_ldl_phys(cs, sm + 0x7e9c) | ((uint64_t)x86_ldl_phys(cs, sm + 0x7dd4) << 32);
+    env->tr = env->smm_tr;
+    env->tr.selector = x86_lduw_phys(cs, sm + 0x7fc4);
+
+    env->regs[R_EDI] = x86_ldq_phys(cs, sm + 0x7f94);
+    env->regs[R_ESI] = x86_ldq_phys(cs, sm + 0x7f8c);
+    env->regs[R_EBP] = x86_ldq_phys(cs, sm + 0x7f84);
+    env->regs[R_ESP] = x86_ldq_phys(cs, sm + 0x7f7c);
+    env->regs[R_EBX] = x86_ldq_phys(cs, sm + 0x7f74);
+    env->regs[R_EDX] = x86_ldq_phys(cs, sm + 0x7f6c);
+    env->regs[R_ECX] = x86_ldq_phys(cs, sm + 0x7f64);
+    env->regs[R_EAX] = x86_ldq_phys(cs, sm + 0x7f5c);
+    for (i = 8; i < 16; i++) {
+        env->regs[i] = x86_ldq_phys(cs, sm + 0x7f54 - (i - 8) * 8);
+    }
+    smm_load_regs(env, x86_ldq_phys(cs, sm + 0x7fe8), x86_ldq_phys(cs, sm + 0x7fd8),
+                  x86_ldq_phys(cs, sm + 0x7fd0), x86_ldq_phys(cs, sm + 0x7fc8));
+
+    cpu_x86_update_cr4(env, x86_ldq_phys(cs, sm + 0x7e40));
+    cpu_x86_update_cr3(env, x86_ldq_phys(cs, sm + 0x7ff0));
+    cpu_x86_update_cr0(env, x86_ldq_phys(cs, sm + 0x7ff8));
+
+    for (i = 0; i < 6; i++) {
+        cpu_x86_load_seg_cache(env, i, x86_lduw_phys(cs, sm + 0x7fa8 + i * 4),
+                               env->smm_seg[i].base, env->smm_seg[i].limit,
+                               env->smm_seg[i].flags);
+    }
+    smm_restore_seg_hflags(env);
+    if (smm_cet_ss(env)) {
+        /* 34.3.2: "made canonical by sign-extension before loading it into SSP" */
+        int top = (env->cr[4] & CR4_LA57_MASK) ? 56 : 47;
+
+        v = x86_ldq_phys(cs, sm + 0x7ec8);
+        env->ssp = (uint64_t)((int64_t)(v << (63 - top)) >> (63 - top));
+    }
+    *halt = (x86_lduw_phys(cs, sm + 0x7f02) & 1) != 0;
+    if (x86_lduw_phys(cs, sm + 0x7f00) == 0xff) {
+        /* 34.12: EIP to the I/O instruction (IO_RIP, writable), a string one re-executes its iteration */
+        env->eip = x86_ldq_phys(cs, sm + 0x7de8);
+        if (env->smm_io_valid && env->smm_io.str) {
+            env->regs[R_ECX] = env->smm_io.rcx;
+            env->regs[R_ESI] = env->smm_io.rsi;
+            env->regs[R_EDI] = env->smm_io.rdi;
+        }
+    }
+    env->smbase = x86_ldl_phys(cs, sm + 0x7ef8);    /* 34.11 */
+}
+
+static void smm_load_intel32(CPUX86State *env, target_ulong sm, bool *halt)
+{
+    CPUState *cs = env_cpu(env);
+    int i;
+
+    env->gdt = env->smm_gdt;
+    env->idt = env->smm_idt;
+    env->ldt = env->smm_ldt;
+    env->tr = env->smm_tr;
+    env->tr.selector = x86_lduw_phys(cs, sm + 0x7fc4);
+
+    env->regs[R_EDI] = x86_ldl_phys(cs, sm + 0x7fec);
+    env->regs[R_ESI] = x86_ldl_phys(cs, sm + 0x7fe8);
+    env->regs[R_EBP] = x86_ldl_phys(cs, sm + 0x7fe4);
+    env->regs[R_ESP] = x86_ldl_phys(cs, sm + 0x7fe0);
+    env->regs[R_EBX] = x86_ldl_phys(cs, sm + 0x7fdc);
+    env->regs[R_EDX] = x86_ldl_phys(cs, sm + 0x7fd8);
+    env->regs[R_ECX] = x86_ldl_phys(cs, sm + 0x7fd4);
+    env->regs[R_EAX] = x86_ldl_phys(cs, sm + 0x7fd0);
+    smm_load_regs(env, x86_ldl_phys(cs, sm + 0x7ff4), x86_ldl_phys(cs, sm + 0x7ff0),
+                  x86_ldl_phys(cs, sm + 0x7fcc), x86_ldl_phys(cs, sm + 0x7fc8));
+
+    cpu_x86_update_cr4(env, env->smm_cr4);
+    cpu_x86_update_cr3(env, x86_ldl_phys(cs, sm + 0x7ff8));
+    cpu_x86_update_cr0(env, x86_ldl_phys(cs, sm + 0x7ffc));
+
+    for (i = 0; i < 6; i++) {
+        cpu_x86_load_seg_cache(env, i, x86_lduw_phys(cs, sm + 0x7fa8 + i * 4),
+                               env->smm_seg[i].base, env->smm_seg[i].limit,
+                               env->smm_seg[i].flags);
+    }
+    smm_restore_seg_hflags(env);
+    *halt = (x86_lduw_phys(cs, sm + 0x7f02) & 1) != 0;
+    if (x86_lduw_phys(cs, sm + 0x7f00) == 0xff) {
+        /* Table 34-1 has no IO_RIP: the I/O instruction recorded at the SMI */
+        env->eip = env->smm_io.rip;
+        if (env->smm_io_valid && env->smm_io.str) {
+            env->regs[R_ECX] = (uint32_t)env->smm_io.rcx;
+            env->regs[R_ESI] = (uint32_t)env->smm_io.rsi;
+            env->regs[R_EDI] = (uint32_t)env->smm_io.rdi;
+        }
+    }
+    env->smbase = x86_ldl_phys(cs, sm + 0x7ef8);
+}
+
+/* RSM with Table 10-1 (APM 10.4) (U1463) */
+static void smm_load_amd64(CPUX86State *env, target_ulong sm, bool *halt)
+{
+    CPUState *cs = env_cpu(env);
+    int i;
+
+    cpu_load_efer(env, x86_ldq_phys(cs, sm + 0x7ed0));
+    env->gdt.limit = x86_lduw_phys(cs, sm + 0x7e64);
+    env->gdt.base = x86_ldq_phys(cs, sm + 0x7e68);
+    env->ldt.selector = x86_lduw_phys(cs, sm + 0x7e70);
+    env->ldt.flags = (x86_lduw_phys(cs, sm + 0x7e72) & 0xf0ff) << 8;
+    env->ldt.limit = x86_ldl_phys(cs, sm + 0x7e74);
+    env->ldt.base = x86_ldq_phys(cs, sm + 0x7e78);
+    env->idt.limit = x86_lduw_phys(cs, sm + 0x7e84);
+    env->idt.base = x86_ldq_phys(cs, sm + 0x7e88);
+    env->tr.selector = x86_lduw_phys(cs, sm + 0x7e90);
+    env->tr.flags = (x86_lduw_phys(cs, sm + 0x7e92) & 0xf0ff) << 8;
+    env->tr.limit = x86_ldl_phys(cs, sm + 0x7e94);
+    env->tr.base = x86_ldq_phys(cs, sm + 0x7e98);
+
+    for (i = 8; i < 16; i++) {
+        env->regs[i] = x86_ldq_phys(cs, sm + 0x7ff8 - i * 8);
+    }
+    env->regs[R_EDI] = x86_ldq_phys(cs, sm + 0x7fc0);
+    env->regs[R_ESI] = x86_ldq_phys(cs, sm + 0x7fc8);
+    env->regs[R_EBP] = x86_ldq_phys(cs, sm + 0x7fd0);
+    env->regs[R_ESP] = x86_ldq_phys(cs, sm + 0x7fd8);
+    env->regs[R_EBX] = x86_ldq_phys(cs, sm + 0x7fe0);
+    env->regs[R_EDX] = x86_ldq_phys(cs, sm + 0x7fe8);
+    env->regs[R_ECX] = x86_ldq_phys(cs, sm + 0x7ff0);
+    env->regs[R_EAX] = x86_ldq_phys(cs, sm + 0x7ff8);
+    smm_load_regs(env, x86_ldq_phys(cs, sm + 0x7f70), x86_ldq_phys(cs, sm + 0x7f78),
+                  x86_ldq_phys(cs, sm + 0x7f68), x86_ldq_phys(cs, sm + 0x7f60));
+
+    cpu_x86_update_cr4(env, x86_ldq_phys(cs, sm + 0x7f48));
+    cpu_x86_update_cr3(env, x86_ldq_phys(cs, sm + 0x7f50));
+    cpu_x86_update_cr0(env, x86_ldq_phys(cs, sm + 0x7f58));
+
+    for (i = 0; i < 6; i++) {
+        cpu_x86_load_seg_cache(env, i, x86_lduw_phys(cs, sm + 0x7e00 + i * 16),
+                               x86_ldq_phys(cs, sm + 0x7e08 + i * 16),
+                               x86_ldl_phys(cs, sm + 0x7e04 + i * 16),
+                               (x86_lduw_phys(cs, sm + 0x7e02 + i * 16) & 0xf0ff) << 8);
+    }
+    smm_restore_seg_hflags(env);
+    if (smm_cet_ss(env)) {
+        env->ssp = x86_ldq_phys(cs, sm + 0x7f18);
+    }
+    *halt = x86_ldub_phys(cs, sm + 0x7ec9) != 0;
+    if (x86_ldub_phys(cs, sm + 0x7ec8) != 0) {
+        /* 10.3.8: "Set to any non-zero value - The I/O instruction is restarted" */
+        env->eip = x86_ldq_phys(cs, sm + 0x7ea0);
+        env->regs[R_ECX] = x86_ldq_phys(cs, sm + 0x7ea8);
+        env->regs[R_ESI] = x86_ldq_phys(cs, sm + 0x7eb0);
+        env->regs[R_EDI] = x86_ldq_phys(cs, sm + 0x7eb8);
+    }
+    env->smbase = x86_ldl_phys(cs, sm + 0x7f00);    /* 10.2.2 */
+}
+
+void helper_rsm(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+    target_ulong sm = env->smbase + 0x8000;
+    int map = env->smm_map ? env->smm_map : smm_map_of(env);
+    bool halt = false;
+
+    switch (map) {
+    case SMM_MAP_AMD64:
+        smm_load_amd64(env, sm, &halt);
+        break;
+    case SMM_MAP_INTEL64:
+        smm_load_intel64(env, sm, &halt);
+        break;
+    default:
+        smm_load_intel32(env, sm, &halt);
+        break;
+    }
+    env->smm_map = 0;
+    env->smm_io_valid = 0;
+
+    if ((env->hflags2 & HF2_SMM_INSIDE_NMI_MASK) == 0) {
+        env->hflags2 &= ~HF2_NMI_MASK;
+    }
+    env->hflags2 &= ~HF2_SMM_INSIDE_NMI_MASK;
+    env->hflags &= ~HF_SMM_MASK;
+
+    if (halt) {
+        /* back to the HALT state (34.10, APM 10.3.7); an SMI latched in SMM is taken in it */
+        if (cs->interrupt_request & CPU_INTERRUPT_SMI) {
+            env->smm_pend_hlt = 1;
+        } else {
+            env->smm_hlt = 1;
+            cs->halted = 1;
+            cs->exception_index = EXCP_HLT;
+            cpu_loop_exit(cs);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1462) */
