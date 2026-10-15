@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-14 10:44 (HEAD `8703e3c5 Ledger: U1412 proof column records the coordinator verify_merge of the merged tree`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-14 23:45 (HEAD `dd741e35 Ledger: U1460-U1465 (agent/smram), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -30,7 +30,7 @@ _Generated 2026-10-14 10:44 (HEAD `8703e3c5 Ledger: U1412 proof column records t
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
       - ⬜ SGX "present but disabled" model and GETSEC TXT leaves (decision, new); PCONFIG leaf 1BH (A4) [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 563 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 622 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

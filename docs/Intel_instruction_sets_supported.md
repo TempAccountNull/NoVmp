@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-14 10:44 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `8703e3c5 Ledger: U1412 proof column records the coordinator verify_merge of the merged tree`). Do not edit by hand._
+_Generated 2026-10-14 23:45 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `dd741e35 Ledger: U1460-U1465 (agent/smram), merged and verified`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
 
@@ -1967,7 +1967,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | SM3 | 3 | ❌ **cannot run** (CPUID.7H.1:EAX[1] = 0 on this CPU) | ✅ 3 |  |
 | SM4 | 4 | ❌ **cannot run** (CPUID.7H.1:EAX[2] = 0 on this CPU) | ✅ 4 |  |
 | SMX | 1 | ❌ **cannot run** (CPUID.1H:ECX[6] = 0 on this CPU) | ✅ 1 |  |
-| TDX | 4 | ❌ **cannot run** (Intel TDX (server, VMX root only)) |  | ⬜ 4 queued |
+| TDX | 4 | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); SEAMCALL: VMX root operation, 64-bit mode (VMX non-root: VM exit 76); SEAMOPS: SEAM root operation only …) |  | ⬜ 4 queued |
 | TSX_LDTRK | 2 | ❌ **cannot run** (CPUID.7H:EDX[16] = 0 on this CPU) | ✅ 2 |  |
 | UINTR | 5 | ❌ **cannot run** (CPUID.7H:EDX[5] = 0 on this CPU) | ✅ 5 |  |
 | USER_MSR | 4 | ❌ **cannot run** (CPUID.7H.1:EDX[15] = 0 on this CPU) | ✅ 4 |  |
@@ -2418,10 +2418,10 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| SEAMCALL | legacy | - | ❌ **cannot run** (Intel TDX (server, VMX root only)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| SEAMOPS | legacy | - | ❌ **cannot run** (Intel TDX (server, VMX root only)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| SEAMRET | legacy | - | ❌ **cannot run** (Intel TDX (server, VMX root only)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| TDCALL | legacy | - | ❌ **cannot run** (Intel TDX (server, VMX root only)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| SEAMCALL | legacy | - | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); SEAMCALL: VMX root operation, 64-bit mode (VMX non-root: VM exit 76)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| SEAMOPS | legacy | - | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); SEAMOPS: SEAM root operation only) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| SEAMRET | legacy | - | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); SEAMRET: SEAM root operation only) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| TDCALL | legacy | - | ❌ **cannot run** (Intel TDX / SEAM (server CPUs); TDCALL: VMX non-root / SEAM non-root operation only (VM exit 77)) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
 
 </details>
 
