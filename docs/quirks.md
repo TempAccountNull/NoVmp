@@ -1,6 +1,6 @@
 # i5-13600K deviations from the Intel SDM
 
-**The emulator implements only the Intel SDM.** There is no switch that selects hardware behaviour (user decision 2026-10-08: "IF we do not need the Quirks for now please remove them"). The quirk mechanism (`UC_CTL_X86_HW_QUIRKS`, `UC_X86_QUIRK_*`, `emu-alltest --quirks`) was removed in ledger U531–U539; this file only documents where the host CPU (Intel Core i5-13600K, Raptor Lake, microcode 0x129) does something the SDM does not allow, so that hardware comparisons can tell a documented deviation from a bug.
+**The emulator implements only the Intel SDM.** There is no switch that selects hardware behaviour (user decision 2026-10-08: "IF we do not need the Quirks for now please remove them"). The quirk mechanism (`UC_CTL_X86_HW_QUIRKS`, `UC_X86_QUIRK_*`, `emu-alltest --quirks`) was removed in ledger U531–U539; this file only documents where the host CPU (Intel Core i5-13600K, Raptor Lake, microcode 0x129) does something the SDM does not allow, so that hardware comparisons can tell a documented deviation from a bug. The hardware comparisons run in a VMware guest on that CPU; where the guest's virtualized CPUID, not the processor, explains a result, the entry is listed under "VMware-guest artifacts (not CPU deviations)" (U1476: PTWRITE without PT, HRESET without CPUID).
 
 Where the SDM is silent or says "undefined", "reserved" or "implementation specific", following the hardware is not a deviation: those behaviours are listed at the end ("SDM undefined, our choice").
 
@@ -40,24 +40,6 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - i5-13600K: x is an ordinary operand: no #IA; result x itself with PE, ±0 / ±∞ (sign of x XOR y) for y = ±0 / ±∞, and a denormal y raises #D first (unmasked: nothing stored).
 - Hardware cases: `cases_quirks.txt` lines 15–19; emu-uc72-risk R17 (special operands: 2376 of 29400 FYL2XP1 cases) and R18 (360 cases); `alltest_known_deviations.tsv` `fyl2xp1` (U931: the --full inputs since U931 reach x < −1 with ST(1) valid in 3 of 6 iterations; the earlier inputs never did).
 - Ledger: U53/U432 (quirk bit 2), removed in U533.
-
-### PTWRITE without PT
-
-- Behaviour: PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4) on a CPU whose CPUID.(EAX=14H,ECX=0):EBX[4] = 0.
-- SDM: Vol2B PTWRITE, Protected Mode Exceptions: "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0."
-- Emulator: #UD (the fork has no Intel PT; leaf 14H is 0 on every model and on the i5-13600K profile). The #UD comes before the memory operand is accessed.
-- i5-13600K (leaf 14H all zero): executes it: the operand is read (#PF/#GP as usual), nothing else happens; LOCK and 66H are #UD.
-- Hardware cases: `cases_quirks.txt` lines 21–22; `alltest_known_deviations.tsv` `ptwrite eax`, `ptwrite dword ptr [rsi]`, `ptwrite rax`, `ptwrite qword ptr [rsi]` (--full: hardware runs, emulator #UD).
-- Ledger: U80 (quirk bit 3), removed in U534.
-
-### HRESET without CPUID
-
-- Behaviour: HRESET imm8 (F3 0F 3A F0 C0 ib) on a CPU whose CPUID.(EAX=07H,ECX=1):EAX[22] (HRESET) = 0.
-- SDM: Vol2A HRESET, Protected Mode Exceptions: "#UD If CPUID.07H.01H:EAX.HRESET[22] = 0."
-- Emulator: the MAX model reports HRESET (U804) and executes it; with the i5-13600K CPUID profile (strict, bit 22 = 0) it is #UD.
-- i5-13600K (bit 22 = 0 as Windows reports it): decodes it; at CPL3 #GP(0) (the CPL check of an implemented HRESET). Other ModRM bytes than C0 are #UD on both.
-- Hardware cases: `cases_sysins_hw.txt` (the two HRESET lines with ModRM C0, CPL3).
-- Ledger: U804 (no quirk bit; tag only).
 
 ### DPPD two NaN products
 
@@ -167,6 +149,42 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 - i5-13600K: ZF, CF, OF, SF and AF as the SDM, whatever the input flags; PF = the parity of the low byte of the result, the bit index (for example `bsf ax, cx` with CX = 8000h: index 15, PF = 1, where the SDM's count of 1 gives PF = 0). P-cores and E-cores agree: `emu-alltest --hw-repeat 400` (U1050), idle and with `--hw-load 7`, 94 cases, 75200 runs, one outcome per case; 66 of the cases ran on both core classes. For a zero source both rules give PF = 1 (`cases_bsf_zero_hw.txt`).
 - Hardware cases: `Emulator/data/cases_bsf_flags_hw.txt` (the 66 cases with P- and E-core runs; 41 tagged `# known deviation: BSF/BSR PF`, the 25 where both rules give the same PF untagged). The `--full` sweep does not see it: Capstone still marks the BSF/BSR flags but ZF undefined (the pre-092 text), so the sweep compares only ZF.
 - Ledger: U1121.
+
+## VMware-guest artifacts (not CPU deviations)
+
+**User decision 2026-10-14 (ledger U1476, documentation only):** the two entries below were recorded as i5-13600K deviations from the SDM. They are reclassified as VMware-guest artifacts. The "hardware" side of the harness runs in a VMware guest on the i5-13600K (8 vCPUs; `emulator\AGENT_RULES.md` "Host and spec decisions"), and the guest's CPUID does not enumerate Intel PT, PTWRITE or HRESET, while the bare-host CPUID capture of the physical processor enumerates all three:
+
+| CPUID bit | physical i5-13600K (bare host) | VMware guest |
+|---|---|---|
+| CPUID.(07H,0):EBX[25] Intel PT | 1 (EBX = 239C27EBH) | 0 (EBX = 219C27EBH) |
+| CPUID.(14H,0):EBX[4] PTWRITE | 1 (EBX = 0000005FH) | 0 (leaf 14H all zero) |
+| CPUID.(07H,1):EAX[22] HRESET | 1 (EAX = 00400810H) | 0 (EAX = 00000810H) |
+
+- Bare host: `emulator\capture\host\output\DESKTOP-JOB52RJ_20261010_133354\cpuid_GenuineIntel_06-B7-1_bare_host.txt` (profile rows, logical processor 0) and `cpuid_GenuineIntel_06-B7-1_bare_host_raw.tsv` in the same folder (all 20 logical processors report the same three values: the 12 P-core threads, CPUID.1AH core type 40H, and the 8 E-cores, core type 20H). Capture metadata as recorded in the files: tool `cpuid_capture 1.6 (standalone, 2026-10-10)`, captured 2026-10-10T18:33:54Z, environment declared by the user `bare_host`, label "Bare-metal i5-13600K host", hypervisor-present bit CPUID.1:ECX[31] = 0, VM heuristic "none found - this is NOT proof of bare metal", every CPUID pinned to its logical processor (0 off-processor samples); machine DESKTOP-JOB52RJ (`..._bare_host_system.txt`: MSI MAG Z790 TOMAHAWK WIFI (MS-7D91), BIOS H.D0 08/12/2024, Windows 10 Pro 22H2 build 19045, Update Revision 0x129 on all 20 processors).
+- VMware guest: the gate profile `Emulator/data/cpuid_i5-13600k.txt` (captured inside the guest, ledger U68) and `emulator\capture\host\output\DESKTOP-20UC5U0_20261010_112028\cpuid_GenuineIntel_06-B7-1_vmware_guest.txt` / `_raw.tsv` (cpuid_capture 1.6, captured 2026-10-10T18:20:28Z, environment `vmware_guest`, VM evidence: BIOSVendor "VMware, Inc.", BaseBoardProduct "440BX Desktop Reference Platform"); all 8 vCPUs report the three bits as 0.
+- Reading: in both entries the guest executes or recognises an instruction that the guest's CPUID reports absent, on a physical processor whose own CPUID reports it present. Measured against the physical processor's enumeration that is not a deviation from the SDM; it is a property of the virtualized CPUID (consistent with VMware masking the CPUID bits while the processor still implements the instructions - an inference from the two captures; VMware's configuration was not examined). The physical CPU does not lack these features.
+- Not measured: the hardware cases below ran only in the VMware guest; their outcome on the bare host was not captured. The observations stay recorded as guest-specific results.
+- Unchanged by this reclassification: the emulator (SDM behaviour for the CPUID it reports: #UD with the gate profile, whose bits are the guest's), CPUID emulation and feature exposure, the profiles, the instructions, and the harness tags (`# known deviation: PTWRITE without PT`, `# known deviation: HRESET without CPUID`, `alltest_known_deviations.tsv`): the tag names stay as they are, and for these two names "known deviation" means "documented VMware-guest artifact".
+
+### PTWRITE without PT
+
+- Classification: VMware-guest artifact (2026-10-14), formerly listed as a deviation.
+- Behaviour: PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4) on a CPU whose CPUID.(EAX=14H,ECX=0):EBX[4] = 0.
+- SDM: Vol2B PTWRITE, Protected Mode Exceptions: "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0."
+- Emulator: #UD (the fork has no Intel PT; leaf 14H is 0 on every model and on the i5-13600K profile). The #UD comes before the memory operand is accessed.
+- VMware guest on the i5-13600K (guest leaf 14H all zero; the physical CPU reports CPUID.(14H,0):EBX[4] = 1, table above): executes it: the operand is read (#PF/#GP as usual), nothing else happens; LOCK and 66H are #UD.
+- Hardware cases (run in the guest): `cases_quirks.txt` lines 21–22; `alltest_known_deviations.tsv` `ptwrite eax`, `ptwrite dword ptr [rsi]`, `ptwrite rax`, `ptwrite qword ptr [rsi]` (--full: hardware runs, emulator #UD).
+- Ledger: U80 (quirk bit 3), removed in U534; reclassified U1476.
+
+### HRESET without CPUID
+
+- Classification: VMware-guest artifact (2026-10-14), formerly listed as a deviation.
+- Behaviour: HRESET imm8 (F3 0F 3A F0 C0 ib) on a CPU whose CPUID.(EAX=07H,ECX=1):EAX[22] (HRESET) = 0.
+- SDM: Vol2A HRESET, Protected Mode Exceptions: "#UD If CPUID.07H.01H:EAX.HRESET[22] = 0."
+- Emulator: the MAX model reports HRESET (U804) and executes it; with the i5-13600K CPUID profile (strict, bit 22 = 0) it is #UD.
+- VMware guest on the i5-13600K (bit 22 = 0 as Windows in the guest reports it; the physical CPU reports CPUID.(07H,1):EAX[22] = 1, table above): decodes it; at CPL3 #GP(0) (the CPL check of an implemented HRESET). Other ModRM bytes than C0 are #UD on both.
+- Hardware cases (run in the guest): `cases_sysins_hw.txt` (the two HRESET lines with ModRM C0, CPL3).
+- Ledger: U804 (no quirk bit; tag only); reclassified U1476.
 
 ## Host state (not SDM deviations)
 
