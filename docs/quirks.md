@@ -426,6 +426,17 @@ IA-32e-mode IDT event delivery whose new RSP is canonical but whose 40- or 48-by
 - Code / tests: `seg_helper.c` idt64_pushq / do_interrupt64; unit tests `test_x86_ig3_frame_cross64`, `_paging64`, `_df64`, `_order64`, `_la57_64`, `_vmx64`, `_tlbvirt64`.
 - Ledger: U1424.
 
+## IA-32e IDT delivery: RIP saved by a fault during INT1 delivery (user decision 2026-10-15)
+
+A fault raised while the #DB of INT1 (ICEBP, F1H) is being delivered (#GP / #NP / #TS / #SS / #PF from the IDT entry, the code segment, the TSS / IST, the new RSP, the gate offset or a stack push) saves the **address of the INT1 instruction** (its first byte, prefixes included); only INT1's own #DB frame saves the next instruction (a trap, Vol3A Event 1 Table 7-3). Class 1 (audit `emulator\notes\eread\C3_int1rip_audit.md`): stated for FRED (Vol3A 8.3.2.1 p. 8-10) and VM-entry injection of a privileged software exception (Vol3C 29.6.1.1 p. 29-21); for IDT delivery it follows from the fault saved-RIP rules (Vol3A 7.5 p. 7-5, Event 11 p. 7-41, Event 13 p. 7-45) and Vol3A 7.9 p. 7-10 (INT1's event is "integral to the execution" of the instruction). A specification reading, not a CPU deviation (no hardware or SDE result).
+
+- Emulator (IA-32e IDT delivery, FRED, VMX): RIP stays at the INT1 while its #DB is delivered; RIP + length is pushed only in the #DB frame (FRED: also the event information length). A VM exit for a fault during the delivery saves the INT1 address with the INT1 length (Vol3C 30.2.5); re-injecting type 5 with that length pushes INT1 + length.
+- Unicorn hook mode (no IDT delivery): `UC_HOOK_INTR` still sees RIP after the INT1 (unchanged API).
+- Not changed (plan 1.I, 32-bit deferred): legacy protected-mode and real-address-mode delivery (`do_interrupt_protected` / `do_interrupt_real`) keep saving the next instruction for a nested fault as well.
+- Discrepancy (recorded): upstream QEMU since 73fb7b3c49 (2024) delivers INT1 with RIP after the instruction, so its nested faults save the next instruction; the original-QEMU build (`__Use_Original_Qemu=1`) keeps that.
+- Code / tests: `translate.c` (F1H), `excp_helper.c` helper_icebp, `seg_helper.c` do_interrupt_all / do_interrupt64 / x86_fred_event, `vmx_helper.c` vmx_inject, `accel\tcg\cpu-exec.c`; unit tests `test_x86_ig3_int1_rip64`, `_int1_unchanged64`, `_int1_fred64`, `_int1_vmx64`, `_int1_legacy32`.
+- Ledger: U1425.
+
 ## FRED and LAM: not modelled (open gaps)
 
 FRED (U1170-U1173) and LAM (U1180) are implemented as described in the ledger. The following parts of SDM 325462-092 / FRED spec 346446-009 are **not** modelled; the emulator behaves as stated here. These are emulator gaps, not CPU deviations and not readings of the SDM.

@@ -276,8 +276,9 @@ G_NORETURN void helper_icebp(CPUX86State *env)
 
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     /* VMX non-root operation: INT1 is a privileged software exception (type 5) for the exception
-       bitmap; a VM exit saves the RIP of the INT1 and its length (30.2.5, 30.3.3) */
-    x86_vmx_exception(env, EXCP01_DB, 5, 0, env->fred_insn_len, env->fred_insn_len, 0);
+       bitmap; a VM exit saves the RIP of the INT1 and its length (30.2.5, 30.3.3) - U1425: RIP is
+       already at the INT1 (translator), so no step back (back = 0, was the length) */
+    x86_vmx_exception(env, EXCP01_DB, 5, 0, env->fred_insn_len, 0, 0);
 #endif /* __Use_Original_Qemu (U1305) */
 
     /* end the instruction as gen_eob() would: no IRQ shadow, RF cleared */
@@ -303,7 +304,14 @@ G_NORETURN void helper_icebp(CPUX86State *env)
     cs->exception_index = EXCP01_DB;
     env->error_code = 0;
     env->exception_is_int = 0;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1425) */
     env->exception_next_eip = env->eip;
+#else /* ours (U1425) */
+    /* RIP is at the INT1 (translator, U1425): the #DB frame saves the next instruction, a fault
+       during the delivery the INT1 (do_interrupt_all / do_interrupt64; FRED x86_fred_event) */
+    env->exception_next_eip = env->eip + env->fred_insn_len;
+    env->int1_deliver = 1;
+#endif /* __Use_Original_Qemu (U1425) */
     cpu_loop_exit(cs);
 }
 

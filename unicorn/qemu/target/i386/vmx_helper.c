@@ -2763,7 +2763,7 @@ static void vmx_inject(CPUX86State *env, uint32_t info)
     if (type == 5 && x86_fred_enabled(env)) {
         env->fred_kind = 5;             /* U1309: FRED privileged software exception */
         env->fred_insn_len = len;
-        env->eip += len;                /* x86_fred_event: the event "occurs" at RIP (RIP + len pushed) */
+        /* U1425: RIP stays at the guest RIP; x86_fred_event pushes exception_next_eip (RIP + len) */
     }
     if (type == 0 || type == 2) {
         /* an external interrupt / NMI: delivered as the local APIC delivers one (docs/apic.md) */

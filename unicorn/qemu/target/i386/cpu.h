@@ -2449,6 +2449,15 @@ typedef struct CPUX86State {
     uint8_t fred_insn_len, fred_cs18, fred_ss16, fred_sti;
     uint64_t fred_evdata_next, fred_evdata;
 #endif /* __Use_Original_Qemu (U1171) */
+#if __Use_Original_Qemu != 1 /* ours (U1425) */
+    /*
+     * NoVmp (ledger U1425): the #DB being raised comes from INT1 (F1H, helper_icebp): RIP is at the
+     * INT1 instruction and exception_next_eip after it (fred_insn_len holds its length). Set by
+     * helper_icebp, consumed by do_interrupt_all (seg_helper.c) or by the UC_HOOK_INTR path
+     * (cpu-exec.c cpu_handle_exception); not architectural state.
+     */
+    uint8_t int1_deliver;
+#endif /* __Use_Original_Qemu (U1425) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;

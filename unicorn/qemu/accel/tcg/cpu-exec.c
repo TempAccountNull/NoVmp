@@ -415,6 +415,16 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
             // point EIP to the next instruction after INT
             env->eip = env->exception_next_eip;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1425) */
+        /*
+         * NoVmp (ledger U1425): INT1 (helper_icebp) now leaves RIP at the instruction for the IDT
+         * delivery; UC_HOOK_INTR keeps seeing the next instruction, as since the 73fb7b3c49 backport
+         */
+        else if (env->int1_deliver) {
+            env->eip = env->exception_next_eip;
+        }
+        env->int1_deliver = 0;
+#endif /* __Use_Original_Qemu (U1425) */
 #endif
 #if defined(TARGET_MIPS) || defined(TARGET_MIPS64)
         // Unicorn: Imported from https://github.com/unicorn-engine/unicorn/pull/1098

@@ -8864,22 +8864,22 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
     case 0xf1: /* icebp / int1: trap-like #DB (backport of QEMU 73fb7b3c49) */
         gen_svm_check_intercept(s, SVM_EXIT_ICEBP);
         gen_update_cc_op(s);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1425) */
         gen_update_eip_next(s);
-#if __Use_Original_Qemu != 1 /* ours (U1171) */
-        /* FRED saves the length of INT1 (SDM 092 Vol3A 8.3.2.1) */
-        if (s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) {
-            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, cur_insn_len(s)), cpu_env,
-                            offsetof(CPUX86State, fred_insn_len));
-        }
-#endif /* __Use_Original_Qemu (U1171) */
-#if __Use_Original_Qemu != 1 /* ours (U1305) */
-        /* VMX: the length of INT1 (VM-exit instruction length, Vol3C 30.2.5) */
-        if (!(s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) &&
-            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
-            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, cur_insn_len(s)), cpu_env,
-                            offsetof(CPUX86State, fred_insn_len));
-        }
-#endif /* __Use_Original_Qemu (U1305) */
+#else /* ours (U1425) */
+        /*
+         * NoVmp (ledger U1425): RIP stays at INT1 (its first byte, prefixes included) while the
+         * #DB is delivered, so a fault during the delivery saves the INT1 address (SDM 325462-093
+         * Vol3A 8.3.2.1 p. 8-10, Vol3C 29.6.1.1 p. 29-21, Vol3A 7.9 p. 7-10, Event 11 p. 7-41;
+         * notes\eread\C3_int1rip_audit.md); helper_icebp pushes RIP + length only in the #DB's own
+         * frame (a trap, Vol3A Table 7-3). The length is stored for every CPU model (it was stored
+         * only with FRED (U1171) or VMX (U1305), which use it too: event information, VM-exit
+         * instruction length).
+         */
+        gen_update_eip_cur(s);
+        tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, cur_insn_len(s)), cpu_env,
+                        offsetof(CPUX86State, fred_insn_len));
+#endif /* __Use_Original_Qemu (U1425) */
         gen_helper_icebp(tcg_ctx, cpu_env);
         s->base.is_jmp = DISAS_NORETURN;
         break;

@@ -1635,11 +1635,11 @@ static void x86_fred_event(CPUX86State *env, int intno, int is_int, int error_co
         next_ip = next_eip;
         len = (int)(next_eip - env->eip);
     } else if (env->fred_kind == FRED_T_PRIVSW && intno == EXCP01_DB) {
-        /* INT1: helper_icebp left RIP after the instruction; the event "occurs" at INT1 */
+        /* INT1: RIP is at the INT1 and next_eip after it (U1425: helper_icebp / VM-entry injection
+           of type 5; the former step back "env->eip -= len" is gone with them) */
         type = FRED_T_PRIVSW;
         len = env->fred_insn_len;
-        next_ip = env->eip;
-        env->eip -= len;
+        next_ip = next_eip;
     } else {
         type = FRED_T_HWEXC;
         nested = env->fred_nested;
@@ -2289,6 +2289,21 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     } else {
         old_eip = env->eip;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1425) */
+    /*
+     * NoVmp (ledger U1425): INT1 (do_interrupt_all): its #DB frame saves the next instruction (a
+     * trap, Vol3A Event 1 Table 7-3 p. 7-26 "Execution of INT1"), while RIP stays at the INT1, so
+     * every fault raised below (#GP / #NP / #TS / #SS / #PF) saves the INT1 address - fault-class
+     * (Vol3A 7.5 p. 7-5, Event 11 p. 7-41 "the instruction that invoked the access", Event 13
+     * p. 7-45) for an event "integral to the execution" of INT1 (Vol3A 7.9 p. 7-10); stated for
+     * FRED (8.3.2.1 p. 8-10) and VM-entry injection (Vol3C 29.6.1.1 p. 29-21). EXT stays 1 and no
+     * DPL check (is_int = 0). Stock QEMU (73fb7b3c49) delivered with RIP after the INT1.
+     */
+    if (env->int1_deliver) {
+        env->int1_deliver = 0;
+        old_eip = next_eip;
+    }
+#endif /* __Use_Original_Qemu (U1425) */
 #if __Use_Original_Qemu != 1 /* ours (U1303) */
     /* an event injected by VM entry: its error code and pushed RIP (SDM 092 Vol3C 29.6.1.1) */
     if (env->vmx.inj_active) {
@@ -2883,6 +2898,23 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
                              int error_code, target_ulong next_eip, int is_hw)
 {
     CPUX86State *env = &cpu->env;
+#if __Use_Original_Qemu != 1 /* ours (U1425) */
+    /*
+     * NoVmp (ledger U1425): INT1's #DB (helper_icebp) arrives with RIP at the INT1 and next_eip
+     * after it. IA-32e IDT delivery (do_interrupt64) pushes next_eip in the #DB frame and leaves RIP
+     * at the INT1 for a fault during the delivery; FRED (x86_fred_event) has its own type-5 rule.
+     * The legacy paths (do_interrupt_protected / do_interrupt_real, plan 1.I: 32-bit deferred) keep
+     * their previous behaviour - RIP after the INT1 for the #DB frame and for a nested fault - until
+     * they are reviewed.
+     */
+    bool int1 = env->int1_deliver && !is_int && !is_hw && intno == EXCP01_DB;
+
+    env->int1_deliver = 0;
+    if (int1 && (!(env->hflags & HF_LMA_MASK) || !(env->cr[0] & CR0_PE_MASK))) {
+        env->eip = next_eip;    /* legacy delivery: as before U1425 (plan 1.I) */
+        int1 = false;
+    }
+#endif /* __Use_Original_Qemu (U1425) */
 
 #if 0
     if (qemu_loglevel_mask(CPU_LOG_INT)) {
@@ -2949,6 +2981,9 @@ static void do_interrupt_all(X86CPU *cpu, int intno, int is_int,
         }
 #ifdef TARGET_X86_64
         if (env->hflags & HF_LMA_MASK) {
+#if __Use_Original_Qemu != 1 /* ours (U1425) */
+            env->int1_deliver = int1;   /* do_interrupt64 consumes it */
+#endif /* __Use_Original_Qemu (U1425) */
             do_interrupt64(env, intno, is_int, error_code, next_eip, is_hw);
         } else
 #endif

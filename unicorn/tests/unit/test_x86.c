@@ -38275,6 +38275,394 @@ static void test_x86_ig3_frame_cross_tlbvirt64(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * -- ig3_ U1425 (user decision 2026-10-15 "All 64-bit paths together"): the RIP saved by a fault
+ * during INT1 delivery --
+ * A fault during the delivery of INT1's #DB saves the INT1 address (Vol3A 8.3.2.1 p. 8-10 for FRED,
+ * Vol3C 29.6.1.1 p. 29-21 for VM-entry injection, Vol3A 7.5 / 7.9 / Event 11 / Event 13 for IDT
+ * delivery; notes\eread\C3_int1rip_audit.md); the #DB frame itself saves the next instruction (a trap,
+ * Vol3A Table 7-3). Unicorn hook mode and the legacy 32-bit delivery keep the next instruction. No
+ * test here crosses into non-canonical space (U1424).
+ */
+
+/*
+ * U1425: INT1 (pfx: no prefix or one prefix byte; then F1H and 66 90 / 90, so that a recording
+ * handler's 2-byte skip from the INT1 address lands on an instruction boundary) through gate 1
+ * (offset, selector, IST, attribute byte): one entry to hv with error code ec and frame RIP = the
+ * INT1 address (its first prefix byte; rip false: not checked, #DF); nothing pushed below top; the
+ * fault's frame holds the interrupted CS / RFLAGS / RSP / SS.
+ */
+static void ig3_int1(ap_cpu *c, const char *pfx, size_t pn, uint64_t off, uint16_t sel, int ist, uint8_t attr,
+                     uint64_t top, int hv, int64_t ec, bool rip, const char *what)
+{
+    uint64_t rsp = ap_get(c, UC_X86_REG_RSP), cs = ap_get(c, UC_X86_REG_CS);
+    uint64_t ss = ap_get(c, UC_X86_REG_SS), fl = ap_get(c, UC_X86_REG_RFLAGS), f[6];
+    ap_code k = {{0}, 0};
+
+    TEST_CHECK(pn <= 1);
+    ie_gate(c, 1, off, sel, ist, attr);
+    ig2_fill(c, top, false, what);
+    ap_emit(&k, pfx, pn);
+    if (pn) {
+        ap_emit(&k, "\xf1\x90", 2);
+    } else {
+        ap_emit(&k, "\xf1\x66\x90", 3);
+    }
+    ig2_run(c, &k, hv, ec, rip ? 0 : -1, what);
+    ig2_fill(c, top, true, what);
+    i6_frame(c, hv, f);
+    if (hv != 8) {
+        TEST_CHECK_(f[2] == cs && (f[3] & ~0x10000ULL) == (fl & ~0x10000ULL) && f[4] == rsp && f[5] == ss,
+                    "%s: frame CS %" PRIx64 " RFLAGS %" PRIx64 " RSP %" PRIx64 " SS %" PRIx64
+                    " (expected %" PRIx64 " %" PRIx64 " %" PRIx64 " %" PRIx64 ")",
+                    what, f[2], f[3], f[4], f[5], cs, fl, rsp, ss);
+    }
+}
+
+/*
+ * U1425, IA-32e IDT delivery: every fault raised while INT1's #DB is delivered saves the INT1
+ * address - the IDT entry (empty gate #GP(0BH), not present #NP(0BH)), the gate offset (#GP(1),
+ * U1421), the code segment (null #GP(1), beyond the GDT limit #GP(81H), data #GP(11H), not present
+ * #NP(51H), L = 0 #GP(0BH) U1422), the TSS / IST (beyond the limit #TS(29H), non-canonical #SS(1)),
+ * the new RSP (#SS(1), U1420) and a stack page not present (#PF(2), CR2) - with a prefix byte (3E F1,
+ * 66 F1) the prefix; at CPL0, from CPL3 (RSP0) and in compatibility mode. Gates 1 and 0Bh not
+ * present: #NP, #NP -> #DF(0) (its saved RIP is not checked: Vol3A Event 8). Stock QEMU: INT1 + 1.
+ */
+static void test_x86_ig3_int1_rip64(void)
+{
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+
+    i6_open(&c);
+    ig3_int1(&c, "", 0, 0, 0, 0, 0, AP_STACK, 13, 0x0b, true, "INT1, empty gate 1: #GP(0BH), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x0e, AP_STACK, 11, 0x0b, true, "INT1, gate 1 not present: #NP(0BH), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_NC, 0x08, 0, 0x8e, AP_STACK, 13, 1, true, "INT1, non-canonical gate offset: #GP(1), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_NC, 0x08, 0, 0x8f, AP_STACK, 13, 1, true, "INT1, trap gate, non-canonical offset: #GP(1), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x00, 0, 0x8e, AP_STACK, 13, 1, true, "INT1, null CS: #GP(1), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x80, 0, 0x8e, AP_STACK, 13, 0x81, true, "INT1, CS beyond the GDT limit: #GP(81H), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x10, 0, 0x8e, AP_STACK, 13, 0x11, true, "INT1, CS a data segment: #GP(11H), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x50, 0, 0x8e, AP_STACK, 11, 0x51, true, "INT1, CS not present: #NP(51H), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x38, 0, 0x8e, AP_STACK, 13, 0x0b, true, "INT1, CS L = 0: #GP(0BH), RIP = INT1");
+    i6_tss(&c, 0x32, I6_IST2);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 10, 0x29, true, "INT1, IST2 beyond the TSS limit: #TS(29H), RIP = INT1");
+    i6_tss(&c, 0x67, I6_NC);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 1, true, "INT1, IST2 non-canonical: #SS(1), RIP = INT1");
+    i6_tss(&c, 0x67, I6_IST2);
+    ap_set(&c, UC_X86_REG_RSP, I6_NC + 0x100);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x8e, AP_STACK, 12, 1, true, "INT1, RSP non-canonical: #SS(1), RIP = INT1");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    ig3_int1(&c, "\x3e", 1, I6_TGT, 0x08, 0, 0x0e, AP_STACK, 11, 0x0b, true, "3E F1, gate 1 not present: #NP(0BH), RIP = the prefix");
+    ig3_int1(&c, "\x66", 1, I6_NC, 0x08, 0, 0x8e, AP_STACK, 13, 1, true, "66 F1, non-canonical offset: #GP(1), RIP = the prefix");
+    /* gates 1 and 0Bh not present: #NP, #NP: #DF(0) */
+    ie_gate(&c, 11, I6_TGT, 0x08, 1, 0x0e);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x0e, AP_STACK, 8, 0, false, "INT1, gates 1 and 0Bh not present: #DF(0)");
+    i6_handler(&c, 11, true, 2, 1);
+    /* CPL3 -> CPL0 */
+    ig2_cpl3(&c);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x0e, I6_RSP0, 11, 0x0b, true, "CPL3: INT1, gate 1 not present: #NP(0BH), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_NC, 0x08, 0, 0x8e, I6_RSP0, 13, 1, true, "CPL3: INT1, non-canonical offset: #GP(1), RIP = INT1");
+    ig2_tss(&c, 0x67, I6_NC, I6_IST2);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x8e, I6_RSP0, 12, 1, true, "CPL3: INT1, RSP0 non-canonical: #SS(1), RIP = INT1");
+    ig2_tss(&c, 0x67, I6_RSP0, I6_IST2);
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x23);
+    ig2_cpl0(&c);
+    /* compatibility mode */
+    ig2_compat_in(&c);
+    ig3_int1(&c, "", 0, I6_TGT, 0x08, 0, 0x0e, AP_STACK, 11, 0x0b, true, "compatibility mode: INT1, gate 1 not present: #NP(0BH), RIP = INT1");
+    ig3_int1(&c, "", 0, I6_TGT, 0x38, 0, 0x8e, AP_STACK, 13, 0x0b, true, "compatibility mode: INT1, CS L = 0: #GP(0BH), RIP = INT1");
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x38);
+    ig2_compat_out(&c);
+    /* paging: the stack page (PTE 7) not present: #PF(2) on the first push, RIP = INT1 */
+    ig2_paging(&c);
+    i6_handler(&c, 14, true, 2, 1);
+    ig2_pte(&c, 7, 0);
+    ie_gate(&c, 1, I6_TGT, 0x08, 0, 0x8e);
+    ap_emit(&k, "\xf1\x66\x90", 3);
+    ig2_run(&c, &k, 14, 2, 0, "paging, INT1, stack page not present: #PF(2), RIP = INT1");
+    TEST_CHECK_(ap_get(&c, UC_X86_REG_CR2) == AP_STACK - 8, "CR2 %" PRIx64, ap_get(&c, UC_X86_REG_CR2));
+    ig2_pte(&c, 7, 3);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1425, unchanged behaviour (the same before and after): INT1's own #DB frame saves the next
+ * instruction (F1, 3E F1, 66 F1; CPL0 and CPL3 through a DPL 0 gate); a single-step trap (#DB from
+ * TF, trap class) whose gate 1 is not present saves the next instruction; INT 01h, INT3, INT 50h, #UD
+ * and compatibility-mode INTO with their gates not present save the instruction; INT 01h from CPL3
+ * through the DPL 0 gate is #GP(0AH). Unicorn hook mode (no IDT delivery): UC_HOOK_INTR sees RIP after
+ * INT1 / 3E F1 / INT3 / INT 50h.
+ */
+static void test_x86_ig3_int1_unchanged64(void)
+{
+    static const struct {
+        const char *code;
+        size_t n;
+        int vec, len, sw;
+        const char *what;
+    } h[] = {{"\xf1\x90", 2, 1, 1, 0, "INT1"},       {"\x3e\xf1\x90", 3, 1, 2, 0, "3E F1"},
+             {"\xcc\x90", 2, 3, 1, 1, "INT3"},       {"\xcd\x50", 2, 0x50, 2, 1, "INT 50h"}};
+    uint64_t at, f[6];
+    ap_cpu c;
+    size_t i;
+    int r;
+
+    i6_open(&c);
+    i6_handler(&c, 1, false, 0, 0);
+    i6_x(&c, "\xf1\x90", 2, 1, -1, 1, "INT1 delivered: #DB frame RIP = the next instruction");
+    i6_x(&c, "\x3e\xf1\x90", 3, 1, -1, 2, "3E F1 delivered: #DB frame RIP = the next instruction");
+    i6_x(&c, "\x66\xf1\x90", 3, 1, -1, 2, "66 F1 delivered: #DB frame RIP = the next instruction");
+    i6_frame(&c, 1, f);
+    TEST_CHECK_(f[1] == 0x08, "INT1 #DB frame CS %" PRIx64, f[1]);
+    /* TF single-step trap after a NOP, gate 1 not present: #NP(0BH), RIP = the next instruction */
+    ie_gate(&c, 1, I6_TGT, 0x08, 0, 0x0e);
+    ap_set(&c, UC_X86_REG_RFLAGS, 0x302);
+    i6_x(&c, "\x90\x66\x90", 3, 11, 0x0b, 1, "single-step trap, gate 1 not present: #NP(0BH), RIP = the next instruction");
+    ap_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    i6_x(&c, "\xcd\x01", 2, 11, 0x0a, 0, "INT 01h, gate 1 not present: #NP(0AH), RIP = the instruction");
+    ie_gate(&c, 3, I6_TGT, 0x08, 0, 0x0e);
+    i6_x(&c, "\xcc\x90", 2, 11, 0x1a, 0, "INT3, gate 3 not present: #NP(1AH), RIP = the instruction");
+    ie_gate(&c, 0x50, I6_TGT, 0x08, 0, 0x0e);
+    i6_x(&c, "\xcd\x50", 2, 11, 0x282, 0, "INT 50h, gate not present: #NP(282H), RIP = the instruction");
+    ie_gate(&c, 6, I6_TGT, 0x08, 0, 0x0e);
+    i6_x(&c, "\x0f\x0b", 2, 11, 0x33, 0, "#UD, gate 6 not present: #NP(33H), RIP = the instruction");
+    ig2_compat_in(&c);
+    ap_set(&c, UC_X86_REG_RFLAGS, 0xa02);   /* OF = 1 */
+    ig2_code(&c, "\xce\x90", 2, 4, I6_TGT, 0x0e, 11, 0x22, 0, "compatibility mode: INTO (OF = 1), gate 4 not present: #NP(22H), RIP = INTO");
+    ap_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    ig2_compat_out(&c);
+    i6_handler(&c, 1, false, 0, 0);
+    ig2_cpl3(&c);
+    i6_x(&c, "\xf1\x90", 2, 1, -1, 1, "CPL3: INT1 through a DPL 0 gate delivered: RIP = the next instruction");
+    i6_frame(&c, 1, f);
+    TEST_CHECK_(f[1] == 0x23, "CPL3: INT1 #DB frame CS %" PRIx64, f[1]);
+    i6_x(&c, "\xcd\x01", 2, 13, 0x0a, 0, "CPL3: INT 01h, gate DPL 0: #GP(0AH), RIP = the instruction");
+    OK(uc_close(c.uc));
+    /* Unicorn hook mode */
+    ap_open_cpu(&c, true);
+    for (i = 0; i < sizeof(h) / sizeof(h[0]); i++) {
+        at = c.pc;
+        r = ap_x(&c, h[i].code, h[i].n);
+        TEST_CHECK_(r == h[i].vec && c.intr.count == 1 && c.intr.rip[0] == at + (uint64_t)h[i].len &&
+                        c.intr.exc[0].vector == h[i].vec && c.intr.exc[0].software == h[i].sw,
+                    "hook mode: %s: vector %d, RIP in the hook %" PRIx64 " (expected %" PRIx64 "), recorded %d software %d",
+                    h[i].what, r, c.intr.rip[0], at + (uint64_t)h[i].len, c.intr.exc[0].vector,
+                    c.intr.exc[0].software);
+    }
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1425 with FRED (the FRED path already saved the INT1 address; its step back moved into the common
+ * rule - same results): 3E F1 delivered with RIP after it and event length 2; INT1 / 66 F1 on a
+ * non-canonical stack (RSP 00008000_00000100H): the nested #SS(1) - on stack level 1
+ * (IA32_FRED_STKLVLS[25:24]) - saves the INT1 address, event information vector 12, type 3, nested.
+ */
+static void test_x86_ig3_int1_fred64(void)
+{
+    static const struct {
+        const char *code;
+        size_t n;
+    } t[] = {{"\xf1", 1}, {"\x66\xf1", 2}};
+    uint64_t at, stop, ss, v;
+    PcCtx c;
+    size_t i;
+
+    fl_fred_open(&c, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT, 0x40);
+    stop = fl_handler(&c, FL_ENTRY + 0x100, "\xf4", 1);
+    ss = pc_get(&c, UC_X86_REG_SS);
+    pc_set(&c, UC_X86_REG_RSP, FL_STACK);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+    OK(fl_go(&c, "\x3e\xf1", 2, &at, stop));
+    v = fl_q(&c, FL_MARK + 40);
+    TEST_CHECK_(pc_get(&c, UC_X86_REG_RIP) == stop && fl_q(&c, FL_MARK + 8) == at + 2 &&
+                    v == (ss | fl_info(1, 5, 1, 0, 2)),
+                "FRED: 3E F1 delivered: frame RIP %" PRIx64 " (expected %" PRIx64 "), SS + information %" PRIx64,
+                fl_q(&c, FL_MARK + 8), at + 2, v);
+    fl_wmsr(&c, 0x1d0, 1ULL << 24);         /* IA32_FRED_STKLVLS: #SS on stack level 1 */
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        fl_wmsr(&c, 0x1d4, FL_ENTRY | 0x40);    /* CSL 0 again (the handler stops without ERETS) */
+        pc_set(&c, UC_X86_REG_RSP, 0x0000800000000100ULL);
+        pc_set(&c, UC_X86_REG_RFLAGS, 0x202);
+        OK(fl_go(&c, t[i].code, t[i].n, &at, stop));
+        v = fl_q(&c, FL_MARK + 40);
+        TEST_CHECK_(pc_get(&c, UC_X86_REG_RIP) == stop && fl_q(&c, FL_MARK) == 1 && fl_q(&c, FL_MARK + 8) == at &&
+                        (v >> 32) == (fl_info(12, 3, 1, 1, 0) >> 32) &&
+                        fl_q(&c, FL_MARK + 32) == 0x0000800000000100ULL,
+                    "FRED: INT1 (%zu bytes), RSP non-canonical: nested #SS error code %" PRIx64 ", RIP %" PRIx64
+                    " (expected %" PRIx64 "), information %" PRIx64 ", RSP %" PRIx64,
+                    t[i].n, fl_q(&c, FL_MARK), fl_q(&c, FL_MARK + 8), at, v, fl_q(&c, FL_MARK + 32));
+    }
+    OK(uc_close(c.uc));
+}
+
+/* a guest IDT gate for vector v that is not present (vmx_idt_gate with P = 0) */
+static void ig3_vmx_gate_np(PcCtx *c, int v)
+{
+    uint64_t h = VMX_GUEST_PC + 0x100;
+
+    vmx_wq(c, VMX_IDT + 16 * v, (h & 0xffff) | (0x08ull << 16) | (0x0e00ull << 32) | ((h >> 16 & 0xffff) << 48));
+    vmx_wq(c, VMX_IDT + 16 * v + 8, h >> 32);
+}
+
+/*
+ * U1425 in VMX non-root operation (Vol3C 30.2.4, 30.2.5, 30.3.3, 29.6.1.1): guest INT1 with gate 1 not
+ * present and exception bitmap bit 11: VM exit with #NP(0BH) (80000B0BH), IDT-vectoring information
+ * type 5 vector 1 (80000501H), VM-exit instruction length 1 and guest RIP = the INT1 (stock: INT1 + 1);
+ * re-injecting that event with that length through a present gate pushes INT1 + 1. Unchanged: bit 1 -
+ * the INT1 exit saves the INT1 address; VM-entry injection of type 5 with gate 1 not present - the #NP
+ * frame holds the guest RIP. FRED guest: an injected INT1 pushes RIP + 1 (event type 5, length 1); on a
+ * non-canonical stack the nested #SS(1) exits by bit 12 (80002B0CH) with guest RIP = the INT1.
+ */
+static void test_x86_ig3_int1_vmx64(void)
+{
+    uint64_t fl, sp, rip, len, v;
+    PcCtx c;
+    int i;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    vmx_idt_gate(&c, 11, VMX_GUEST_PC + 0x100);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    ig3_vmx_gate_np(&c, 1);
+    vmx_w(&c, 0x4004, 1u << 11);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\xf1\x90", 2, 0, 0, 0, 0);
+    rip = vmx_r(&c, 0x681e);
+    len = vmx_r(&c, 0x440c);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000b0bu && vmx_r(&c, 0x4406) == 0x0b &&
+                    vmx_r(&c, 0x4408) == 0x80000501u && len == 1 && rip == VMX_GUEST_PC,
+                "VMX: INT1, gate 1 not present, bitmap bit 11: exit %" PRIu64 " info %" PRIx64 " error %" PRIx64
+                " IDT-vectoring %" PRIx64 " length %" PRIu64 " guest RIP %" PRIx64 " (expected %" PRIx64 ")",
+                vmx_r(&c, 0x4402), vmx_r(&c, 0x4404), vmx_r(&c, 0x4406), vmx_r(&c, 0x4408), len, rip,
+                (uint64_t)VMX_GUEST_PC);
+    /* re-inject the recorded event (type 5, the recorded length) at the saved RIP, gate 1 present */
+    vmx_idt_gate(&c, 1, VMX_GUEST_PC + 0x100);
+    vmx_w(&c, 0x4004, 0);
+    vmx_w(&c, 0x681e, rip);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x80000501u);
+    vmx_w(&c, 0x401a, len);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 10 && vmx_rq(&c, sp) == VMX_GUEST_PC + 1,
+                "VMX: re-injected INT1: exit %" PRIu64 ", frame RIP %" PRIx64 " (expected %" PRIx64 ")",
+                vmx_r(&c, 0x4402), vmx_rq(&c, sp), (uint64_t)VMX_GUEST_PC + 1);
+    /* unchanged: bitmap bit 1 - the INT1 exit itself */
+    vmx_w(&c, 0x4004, 1u << 1);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_resume_regs(&c, "\xf1\x90", 2, 0, 0, 0, 0);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000501u && vmx_r(&c, 0x440c) == 1 &&
+                    vmx_r(&c, 0x681e) == VMX_GUEST_PC,
+                "VMX: INT1 exit (bitmap bit 1): exit %" PRIu64 " info %" PRIx64 " length %" PRIu64 " RIP %" PRIx64,
+                vmx_r(&c, 0x4402), vmx_r(&c, 0x4404), vmx_r(&c, 0x440c), vmx_r(&c, 0x681e));
+    /* unchanged: injected type 5 with gate 1 not present: #NP(0BH) frame RIP = the guest RIP */
+    ig3_vmx_gate_np(&c, 1);
+    vmx_w(&c, 0x4004, 0);
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, VMX_GUEST_RSP);
+    vmx_w(&c, 0x4016, 0x80000501u);
+    vmx_w(&c, 0x401a, 1);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 10 && vmx_rq(&c, sp) == 0x0b && vmx_rq(&c, sp + 8) == VMX_GUEST_PC,
+                "VMX: injected INT1, gate 1 not present: exit %" PRIu64 ", #NP frame %" PRIx64 " %" PRIx64,
+                vmx_r(&c, 0x4402), vmx_rq(&c, sp), vmx_rq(&c, sp + 8));
+    OK(uc_close(c.uc));
+    /* FRED guest (as test_x86_vmx_fred): IA32_FRED_CONFIG = VMX_GUEST_PC + 1000H, CPL0 entry CPUID */
+    vmx_setup_f(&c, UC_X86_FEATURE_VMX | UC_X86_FEATURE_FRED);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT | UC_X86_DELIVER_INTR_IDT));
+    OK(uc_mem_write(c.uc, VMX_GUEST_PC + 0x1100, "\x0f\xa2", 2));
+    vmx_w(&c, 0x6804, pc_get(&c, UC_X86_REG_CR4) | (1ull << 32));
+    vmx_w(&c, 0x4012, 0x11fb | 0x200 | (1u << 23));
+    vmx_w(&c, 0x281a, VMX_GUEST_PC + 0x1000);
+    for (i = 0; i < 7; i++) {
+        vmx_w(&c, 0x281c + 2 * i, 0);
+    }
+    vmx_w(&c, 0x4016, 0x80000501u);
+    vmx_w(&c, 0x401a, 1);
+    TEST_CHECK(vmx_enter(&c, 1, "\x90", 1, &fl) == -1);
+    sp = vmx_r(&c, 0x681c);
+    v = vmx_rq(&c, sp + 40);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 10 && vmx_rq(&c, sp + 8) == VMX_GUEST_PC + 1 &&
+                    (v >> 32) == (fl_info(1, 5, 1, 0, 1) >> 32),
+                "VMX FRED: injected INT1: exit %" PRIu64 ", frame RIP %" PRIx64 " (expected %" PRIx64 "), SS + information %" PRIx64,
+                vmx_r(&c, 0x4402), vmx_rq(&c, sp + 8), (uint64_t)VMX_GUEST_PC + 1, v);
+    vmx_w(&c, 0x4004, 1u << 12);
+    vmx_w(&c, 0x681e, VMX_GUEST_PC);
+    vmx_w(&c, 0x681c, 0x0000800000000100ULL);
+    vmx_w(&c, 0x4016, 0x80000501u);
+    vmx_w(&c, 0x401a, 1);
+    TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+    TEST_CHECK_(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80002b0cu && vmx_r(&c, 0x4406) == 1 &&
+                    vmx_r(&c, 0x4408) == 0x80000501u && vmx_r(&c, 0x681e) == VMX_GUEST_PC,
+                "VMX FRED: injected INT1, RSP non-canonical: exit %" PRIu64 " info %" PRIx64 " error %" PRIx64
+                " IDT-vectoring %" PRIx64 " RIP %" PRIx64,
+                vmx_r(&c, 0x4402), vmx_r(&c, 0x4404), vmx_r(&c, 0x4406), vmx_r(&c, 0x4408), vmx_r(&c, 0x681e));
+    OK(uc_close(c.uc));
+}
+
+/* a 32-bit interrupt gate (8 bytes, CS 08H) for vector v at AP_IDT */
+static void ig3_gate32(uc_engine *uc, int v, uint32_t off, uint8_t attr)
+{
+    uint64_t g = (off & 0xffff) | (0x08ULL << 16) | ((uint64_t)attr << 40) | ((uint64_t)(off >> 16) << 48);
+
+    OK(uc_mem_write(uc, AP_IDT + 8 * (uint64_t)v, &g, 8));
+}
+
+/*
+ * U1425 scope: legacy protected-mode delivery is NOT changed (plan 1.I, 32-bit deferred) - a 32-bit
+ * protected-mode engine (CS 08H, SS 10H flat) with IDT delivery: INT1 through a present gate pushes
+ * EIP + 1; with gate 1 not present the #NP (gate 0Bh) frame still holds EIP + 1 (the SDM's INT1
+ * address is left to 1.I). The gates end the run (uc_emu_start 'until').
+ */
+static void test_x86_ig3_int1_legacy32(void)
+{
+    static const uint64_t gdt[3] = {0, 0x00CF9A000000FFFFULL, 0x00CF92000000FFFFULL};
+    uc_x86_mmr gdtr = {0, AP_DATA, sizeof(gdt) - 1, 0};
+    uc_x86_mmr idtr = {0, AP_IDT, 0x7ff, 0};
+    uint32_t h1 = (uint32_t)AP_HND + 0x100, h2 = (uint32_t)AP_HND + 0x200, at, esp, eip, fr[2];
+    uc_engine *uc;
+    uc_err e;
+    int pass;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_32, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, AP_DATA, AP_DATA_SIZE, UC_PROT_ALL));
+    OK(uc_ctl_set_x86_event_delivery(uc, UC_X86_DELIVER_EXC_IDT));
+    OK(uc_mem_write(uc, AP_DATA, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(uc, UC_X86_REG_IDTR, &idtr));
+    OK(uc_mem_write(uc, h1, "\xf4", 1));
+    OK(uc_mem_write(uc, h2, "\xf4", 1));
+    /* SS := 10H (a 32-bit stack) */
+    OK(uc_mem_write(uc, code_start, "\x66\xb8\x10\x00\x8e\xd0", 6));
+    OK(uc_emu_start(uc, code_start, code_start + 6, 0, 0));
+    for (pass = 0; pass < 2; pass++) {
+        at = (uint32_t)code_start + 0x40 + 0x40 * (uint32_t)pass;
+        esp = (uint32_t)AP_STACK;
+        OK(uc_reg_write(uc, UC_X86_REG_ESP, &esp));
+        ig3_gate32(uc, 1, h1, pass ? 0x0e : 0x8e);
+        ig3_gate32(uc, 11, h2, 0x8e);
+        OK(uc_mem_write(uc, at, "\xf1\x90", 2));
+        e = uc_emu_start(uc, at, pass ? h2 : h1, 0, 100);
+        OK(uc_reg_read(uc, UC_X86_REG_EIP, &eip));
+        OK(uc_reg_read(uc, UC_X86_REG_ESP, &esp));
+        memset(fr, 0, sizeof(fr));
+        OK(uc_mem_read(uc, esp, fr, sizeof(fr)));
+        if (pass == 0) {
+            TEST_CHECK_(e == UC_ERR_OK && eip == h1 && esp == (uint32_t)AP_STACK - 12 && fr[0] == at + 1,
+                        "32-bit protected mode: INT1 delivered: %s, EIP %x, ESP %x, frame EIP %x (expected %x)",
+                        uc_strerror(e), eip, esp, fr[0], at + 1);
+        } else {
+            TEST_CHECK_(e == UC_ERR_OK && eip == h2 && esp == (uint32_t)AP_STACK - 16 && fr[1] == at + 1,
+                        "32-bit protected mode: INT1, gate 1 not present: #NP frame EIP %x (expected %x, unchanged "
+                        "until plan 1.I), %s, EIP %x, ESP %x, error code %x",
+                        fr[1], at + 1, uc_strerror(e), eip, esp, fr[0]);
+        }
+    }
+    OK(uc_close(uc));
+}
 /* ---- end ig3_ (U1424 / U1425) ---- */
 
 /* ---- begin U1440-U1449 (xc_) ---- */
@@ -41364,6 +41752,11 @@ TEST_LIST = {
     {"test_x86_ig3_frame_cross_la57_64", test_x86_ig3_frame_cross_la57_64},
     {"test_x86_ig3_frame_cross_vmx64", test_x86_ig3_frame_cross_vmx64},
     {"test_x86_ig3_frame_cross_tlbvirt64", test_x86_ig3_frame_cross_tlbvirt64},
+    {"test_x86_ig3_int1_rip64", test_x86_ig3_int1_rip64},
+    {"test_x86_ig3_int1_unchanged64", test_x86_ig3_int1_unchanged64},
+    {"test_x86_ig3_int1_fred64", test_x86_ig3_int1_fred64},
+    {"test_x86_ig3_int1_vmx64", test_x86_ig3_int1_vmx64},
+    {"test_x86_ig3_int1_legacy32", test_x86_ig3_int1_legacy32},
     {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
     {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
