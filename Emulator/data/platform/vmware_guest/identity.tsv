@@ -1,0 +1,71 @@
+# emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512) - identity of the fwid text outputs - vmware_guest - SYNTHETIC: every replaced value is synthetic, not host data
+# Rules (README.md / profile_generator.hpp): 3 MAC, 4a computer name, 4c GUID, 4d USB / HID serial (4b: PnP hashes exact),
+# 6 EDID serial, 7a ProductId, 7b install instant, 7c user name, 7d SID, 7e volume serial, 8a-8e fwid 1.4 identifiers.
+# columns: id, kind, rule, first anchor in the capture (file:line), occurrences in the capture's text files (fieldmap.tsv), value
+# fwid writes '\' inside quoted strings as \x5C; values and paths here use plain characters. GUIDs in {UPPER} form unless
+# the identifier keeps its own style (MachineGuid & co.). install_date = unix seconds, install_time = FILETIME (decimal).
+N01	computer_name	4a	capture_info.txt:19	37	DESKTOP-RTVRRXN
+G01	interface_guid	4c	network_adapters.txt:8	1	{E51EF898-3685-4E26-B67B-C24BF742428A}
+M01	mac	3	network_adapters.txt:11	4	00:04:0F:92:9D:B9
+G02	interface_guid	4c	network_adapters.txt:14	1	{A6886899-33ED-17EA-9CA2-806E6F6E6963}
+G03	interface_guid	4c	network_adapters.txt:20	1	{3264009F-22B0-1749-AA6A-806E6F6E6963}
+G04	interface_guid	4c	network_adapters.txt:26	1	{2CC71BEA-E4D1-13EB-B9A8-806E6F6E6963}
+G05	interface_guid	4c	network_adapters.txt:32	1	{34E2F470-85AA-15DA-B95E-806E6F6E6963}
+G06	interface_guid	4c	network_adapters.txt:38	1	{4F805D75-AC9A-403E-B8BF-E229180AEEFE}
+G07	interface_guid	4c	network_adapters.txt:44	1	{EB8B1840-5E32-4FBA-952D-785662651799}
+G08	interface_guid	4c	network_adapters.txt:50	1	{252CDA86-2FE3-4D13-B950-F372A0ACEB44}
+G09	interface_guid	4c	network_adapters.txt:56	1	{5F6DDE25-FABB-45B5-A0F4-36791E66A019}
+G10	container_id	4c	enum_registry.txt:41	5	{C27884EE-BAAA-1A85-81DE-806E6F6E6963}
+G11	container_id	4c	enum_registry.txt:220	7	{4CDCB623-600A-138C-86EA-806E6F6E6963}
+G12	container_id	4c	enum_registry.txt:1460	5	{D8E777CC-173C-1B84-B6F3-806E6F6E6963}
+U01	usb_serial	4d	enum_registry.txt:1745	22	6822314de1478a3310ffd6006d877a039ada68e08cf98dc8ec8fc2d7ab3d0257e6795326668035790174028911e342fcce6cc477121289161312bc6d
+G13	container_id	4c	enum_registry.txt:1751	3	{304F88D9-D787-58FE-96F1-94FDFA9253E1}
+G14	container_id	4c	enum_registry.txt:1778	2	{89CE9FF6-6792-1233-A695-00040F929DB9}
+G15	container_id	4c	enum_registry.txt:1798	2	{ECF76257-2200-1D30-A5A8-00040F929DB9}
+G16	container_id	4c	enum_registry.txt:1822	10	{B2045CDB-8185-1026-B796-806E6F6E6963}
+G17	container_id	4c	enum_registry.txt:1904	6	{43A30122-AC13-1BF9-BA9B-00040F929DB9}
+U02	usb_serial	4d	enum_registry.txt:2009	22	464334304B31303034524542
+G18	container_id	4c	enum_registry.txt:2015	3	{5DF45CC0-8ABB-59E7-A046-741F16C35881}
+G19	container_id	4c	enum_registry.txt:4346	10	{72AF8281-EF95-1D9D-BC20-806E6F6E6963}
+G20	container_id	4c	enum_registry.txt:4377	5	{3B5CB443-44F1-1AEA-ACBD-806E6F6E6963}
+G21	container_id	4c	enum_registry.txt:4409	5	{FBF33DB3-4ABC-1B46-89A2-806E6F6E6963}
+G22	container_id	4c	enum_registry.txt:4436	8	{185A7235-4D8E-1BED-A348-00040F929DB9}
+G23	container_id	4c	enum_registry.txt:4472	1	{50BDE48A-E11C-4FE5-8B2B-ADF555EDB85E}
+G24	container_id	4c	enum_registry.txt:4490	2	{8F177540-AF72-549C-87C5-B99FF5A4C225}
+G25	volume_guid	4c	enum_registry.txt:4651	34	{3F884FB7-C51D-1992-83F5-00040F929DB9}
+G26	volume_guid	4c	enum_registry.txt:4667	68	{5B20EDA8-0469-1786-B11A-806E6F6E6963}
+G27	volume_guid	4c	enum_registry.txt:4731	68	{861C12D2-3951-18AB-973B-806E6F6E6963}
+G28	volume_guid	4c	enum_registry.txt:4795	54	{383CF690-ECF4-1D00-AA1A-00040F929DB9}
+G29	volume_guid	4c	enum_registry.txt:4827	34	{F3C38A78-E0C9-1CAD-B6F7-00040F929DB9}
+G30	volume_guid	4c	enum_registry.txt:4843	72	{BF5F9122-C565-1BBE-8C78-806E6F6E6963}
+G31	swd_guid	4c	enum_registry.txt:4940	17	{56EEF3D3-F908-486B-98B2-DB26A602F994}
+G32	container_id	4c	enum_registry.txt:4945	2	{D40C98C7-B234-55FE-A925-13E362CB53DA}
+G33	swd_guid	4c	enum_registry.txt:4958	17	{27B1F367-4A2E-46A6-9604-54D6BD69226C}
+G34	container_id	4c	enum_registry.txt:4963	2	{25712EAB-7416-5AA7-82E7-9573800C7A32}
+G35	swd_guid	4c	enum_registry.txt:4980	15	{D8A0A8B4-AEB8-4054-BFAD-D51AD16DC141}
+G36	swd_guid	4c	enum_registry.txt:5020	17	{E2DBBBCF-3D16-4D62-A7D7-8132D36F8878}
+G37	container_id	4c	enum_registry.txt:5024	2	{F26E9302-7111-BDA2-D809-5E3EC9FBE08E}
+G38	swd_guid	4c	enum_registry.txt:5040	17	{8BCD2B73-E51B-4310-ADF2-BBCC19A2DFF1}
+G39	container_id	4c	enum_registry.txt:5044	2	{818BDA27-FC5B-F4FD-5E57-6AAD42C056AE}
+G40	swd_guid	4c	enum_registry.txt:5060	17	{309D3443-8181-4503-A6BE-CCE344527023}
+G41	container_id	4c	enum_registry.txt:5064	2	{A8ECF9B3-48D2-FDFD-B57D-4FDA2DB0EE5D}
+G42	swd_guid	4c	enum_registry.txt:5080	17	{02057D4D-698F-4ADE-9AA8-AFA75D4D4D5C}
+G43	container_id	4c	enum_registry.txt:5084	2	{F5ED59FF-4756-97D1-7B6D-E18E11091450}
+G44	swd_guid	4c	enum_registry.txt:5104	16	{0D561F55-FD36-4D4C-AA5B-A5FFC8E97CCE}
+# Enum\STORAGE\Volume instance paths (the volume GUID per rule 4c, the partition offset exact)
+P01	storage_path	4c	-	-	STORAGE\Volume\{3f884fb7-c51d-1992-83f5-00040f929db9}#0000000000100000
+P02	storage_path	4c	-	-	STORAGE\Volume\{5b20eda8-0469-1786-b11a-806e6f6e6963}#0000000000100000
+P03	storage_path	4c	-	-	STORAGE\Volume\{5b20eda8-0469-1786-b11a-806e6f6e6963}#0000000006500000
+P04	storage_path	4c	-	-	STORAGE\Volume\{5b20eda8-0469-1786-b11a-806e6f6e6963}#0000000007500000
+P05	storage_path	4c	-	-	STORAGE\Volume\{5b20eda8-0469-1786-b11a-806e6f6e6963}#0000001DE0100000
+P06	storage_path	4c	-	-	STORAGE\Volume\{861c12d2-3951-18ab-973b-806e6f6e6963}#0000000000100000
+P07	storage_path	4c	-	-	STORAGE\Volume\{861c12d2-3951-18ab-973b-806e6f6e6963}#0000000006500000
+P08	storage_path	4c	-	-	STORAGE\Volume\{861c12d2-3951-18ab-973b-806e6f6e6963}#0000000007500000
+P09	storage_path	4c	-	-	STORAGE\Volume\{861c12d2-3951-18ab-973b-806e6f6e6963}#0000001DE0100000
+P10	storage_path	4c	-	-	STORAGE\Volume\{383cf690-ecf4-1d00-aa1a-00040f929db9}#0000000000004400
+P11	storage_path	4c	-	-	STORAGE\Volume\{383cf690-ecf4-1d00-aa1a-00040f929db9}#0000000001000000
+P12	storage_path	4c	-	-	STORAGE\Volume\{f3c38a78-e0c9-1cad-b6f7-00040f929db9}#0000000000100000
+P13	storage_path	4c	-	-	STORAGE\Volume\{bf5f9122-c565-1bbe-8c78-806e6f6e6963}#0000000000100000
+P14	storage_path	4c	-	-	STORAGE\Volume\{bf5f9122-c565-1bbe-8c78-806e6f6e6963}#0000000006500000
+P15	storage_path	4c	-	-	STORAGE\Volume\{bf5f9122-c565-1bbe-8c78-806e6f6e6963}#0000000007500000
+P16	storage_path	4c	-	-	STORAGE\Volume\{bf5f9122-c565-1bbe-8c78-806e6f6e6963}#0000003FE02FC000

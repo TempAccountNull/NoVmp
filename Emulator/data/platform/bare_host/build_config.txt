@@ -1,0 +1,26 @@
+# emu-profilegen BuildConfig (format 1): every input of one platform-profile build. Rebuild with
+#   emu-profilegen --config build_config.txt [--check]
+# Paths: out / seed_file relative to repo_root; original_out, capture_parent and companion relative to capture_root;
+# "auto" = NOVMP_CAPTURE_ROOT, else the first ancestor folder "capture" (capture_root) / the folder holding NoVmp.sln (repo_root).
+# No identifier values: the capture folder is a name pattern plus its pinned manifest SHA-256. peer_capture_*: the other
+# environment's clean capture, read only for the USB serial table both profiles share (rule 4d). seed: random (not host
+# data); the same seed gives the same identity.
+format                       = 1
+tool                         = emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512)
+environment                  = bare_host
+capture_root                 = auto
+capture_parent               = baseline\Host_clean_20261016_fwid13
+capture_folder               = *
+capture_manifest_sha256      = C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89
+companion                    = baseline\Host_clean_20261016_fwid13.sha256 C2BD8A2B0AADA8A679D066AEA07126CFFA5B6B237512D2698761E6D7B964550A
+companion                    = baseline\Host_clean_20261016.sha256 1C8C498DB6CD26A57F8673375BF563868F12D3AEB79901363DF2EEEE8A8EF78C
+companion                    = baseline\Host_clean_20261016_xinuse_all_lps.sha256 CA726BF73851C9251D9DF30737B4CE171053B4814610798DA6551ECC03348F5C
+peer_capture_parent          = fwid\baseline
+peer_capture_folder          = Run3_clean_guest_*
+peer_capture_manifest_sha256 = 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C
+repo_root                    = auto
+out                          = Emulator\data\platform\bare_host
+original_out                 = profiles_original\bare_host
+seed_file                    = Emulator\data\platform\profilegen_seed.txt
+seed                         = DF5A5F597AD3A42FF268DFD4E112DBB73C2546B88B65DDFAB5B066B35AA0059E
+rules                        = 1 2 2h 2o 3 4a 4b 4c 4d 6 7 8

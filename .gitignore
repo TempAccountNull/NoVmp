@@ -376,3 +376,7 @@ FodyWeavers.xsd
 build/
 Capstone/
 Keystone/
+
+## Platform profiles (plan 1.J.49, U1512): the ORIGINAL profiles hold real identifiers and stay local, outside the repository
+## (emu-profilegen refuses to write them inside a git work tree); ignore any accidental copy
+profiles_original/

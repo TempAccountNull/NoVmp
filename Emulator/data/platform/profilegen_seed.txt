@@ -1,0 +1,5 @@
+# emu-profilegen seed (ledger U1510): 32 bytes from BCryptGenRandom (BCRYPT_USE_SYSTEM_PREFERRED_RNG), created on the first run.
+# Every synthetic identifier value of Emulator\data\platform\<env>\ is an HMAC-SHA256 stream keyed with this seed; the
+# stream labels name a field location (environment + field id), never a value. Not derived from host data; keep it
+# unchanged so the synthetic profiles stay reproducible (a new seed = new synthetic values).
+seed = DF5A5F597AD3A42FF268DFD4E112DBB73C2546B88B65DDFAB5B066B35AA0059E
