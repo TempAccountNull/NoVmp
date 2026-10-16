@@ -2226,6 +2226,38 @@ static inline int idt_vector_error_code(int intno, int ext)
 }
 
 #endif /* __Use_Original_Qemu (U1400) */
+#if __Use_Original_Qemu != 1 /* ours (U1424) */
+/*
+ * NoVmp (ledger U1424, user decision 2026-10-15 "Per-push check"): one 8-byte push of the 64-bit
+ * IDT-delivery frame. SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Compatibility Mode Exceptions
+ * (p. 3-482; 64-Bit Mode Exceptions: "Same exceptions as in compatibility mode"): "#SS(error_code)
+ * If an ordinary stack access would use an address that is not canonical relative to the current
+ * paging mode or cause a LASS violation." (090-093; 015-089 listed each push: "If a push of the
+ * old SS selector, ESP, EFLAGS, CS selector, EIP, or error code is in non-canonical space on a
+ * stack switch (either CPL change or no-CPL with IST)" and, without a stack switch, "If a push of
+ * the old EFLAGS, CS selector, EIP, or error code is in non-canonical space"). Vol3A 4.5.1 (p. 4-5):
+ * stack accesses get #SS with "a null error code"; EXT as U1401 (error_code / EXT, Vol3A 7.13
+ * p. 7-20 "all bits are clear except possibly EXT"; audit notes\eread\C2_framecross_audit.md).
+ * Each push is checked just before its store, in push order: the pushes made before the failing
+ * one stay written and a #PF on a canonical slot comes first (docs/quirks.md "IA-32e IDT delivery:
+ * frame pushes into non-canonical space"). Canonical as the MMU's data path: after LAM masking
+ * (Vol3A 4.4 / 4.5.1: LAM applies to data accesses and precedes the canonicality check; with a
+ * canonical new RSP the masking cannot change the result here, bit 63 and bit 47 / 56 differ at
+ * the boundary), CR4.LA57 selects 48 / 57 bits, and no rule under UC_TLB_VIRTUAL (U42, as
+ * x86_ip_is_canonical for U1420 / U1421). Stock QEMU stored the push and the MMU raised #GP(0).
+ */
+static void idt64_pushq(CPUX86State *env, target_ulong *sp, uint64_t val, int ext)
+{
+    target_ulong a = *sp - 8;
+
+    if (!x86_ip_is_canonical(env, x86_lam_mask(env, a))) {
+        raise_exception_err(env, EXCP0C_STACK, ext);
+    }
+    cpu_stq_kernel_ra(env, a, val, 0);
+    *sp = a;
+}
+
+#endif /* __Use_Original_Qemu (U1424) */
 /* 64 bit interrupt */
 static void do_interrupt64(CPUX86State *env, int intno, int is_int,
                            int error_code, target_ulong next_eip, int is_hw)
@@ -2438,6 +2470,7 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
 #endif /* __Use_Original_Qemu (U1421) */
     esp &= ~0xfLL; /* align stack */
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1424) */
     PUSHQ(esp, env->segs[R_SS].selector);
     PUSHQ(esp, env->regs[R_ESP]);
     PUSHQ(esp, cpu_compute_eflags(env));
@@ -2446,6 +2479,19 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     if (has_error_code) {
         PUSHQ(esp, error_code);
     }
+#else /* ours (U1424) */
+    /* each push checked before its store: #SS(EXT) at the first non-canonical slot (idt64_pushq);
+       after the TSS / IST #TS(EXT) and #SS(EXT) (U1402, U1420) and the gate-offset #GP(EXT)
+       (U1421), before the shadow-stack steps (U755) and before any register is loaded */
+    idt64_pushq(env, &esp, env->segs[R_SS].selector, ext);
+    idt64_pushq(env, &esp, env->regs[R_ESP], ext);
+    idt64_pushq(env, &esp, cpu_compute_eflags(env), ext);
+    idt64_pushq(env, &esp, env->segs[R_CS].selector, ext);
+    idt64_pushq(env, &esp, old_eip, ext);
+    if (has_error_code) {
+        idt64_pushq(env, &esp, error_code, ext);
+    }
+#endif /* __Use_Original_Qemu (U1424) */
 
 #if __Use_Original_Qemu != 1 /* ours (U755) */
     cet2_event(env, dpl < cpl, cpl, dpl, e2, ist, old_eip);   /* CET (U755) */

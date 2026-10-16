@@ -37777,6 +37777,506 @@ static void test_x86_idterr_gate_types64(void)
 }
 /* ---- end U1421 / U1423 (ig2_) ---- */
 
+/*
+ * ---- NoVmp ig3_ tests: 64-bit IDT event delivery (U1424 frame pushes, U1425 INT1 RIP) ----
+ * Specification-validated (the i5-13600K's IDT cannot be changed from user mode). The recording
+ * handlers of #DF #TS #NP #SS #GP run on IST1 (i6_open). The U1424 part and the U1425 part do not
+ * depend on each other (each passes with or without the other change).
+ */
+
+/*
+ * -- ig3_ U1424 (user decision 2026-10-15 "Per-push check"): frame pushes into non-canonical space --
+ * SDM 325462-093 Vol2A INT n/INTO/INT3/INT1, Compatibility Mode Exceptions (p. 3-482; 64-bit mode
+ * refers to it): "#SS(error_code) If an ordinary stack access would use an address that is not
+ * canonical relative to the current paging mode or cause a LASS violation" (015-089: each push named);
+ * Vol3A 4.5.1 (p. 4-5): #SS with a null error code, plus EXT (Vol3A 7.13; 0 for INT n / INT3 / INTO,
+ * else 1). Policy for what the SDM leaves open (docs/quirks.md "IA-32e IDT delivery: frame pushes into
+ * non-canonical space"): each push is checked before its store, in push order - the earlier pushes
+ * stay written, a #PF on a canonical slot comes first. The INT1 rows do not check the saved RIP (U1425).
+ */
+#define IG3_PG (IG2_PT + 0x10000)           /* the physical page of IG2_HI (ig2_paging) */
+#define IG3_PML5 (IG2_PT + 0x8000)          /* LA57: the PML5 table */
+#define IG3_PML4B (IG2_PT + 0x9000)         /* LA57: the PML4 table of IG3_LA57HI */
+#define IG3_LA57HI 0xFF00000000000000ULL    /* the lowest canonical upper-half address (5-level) */
+#define IG3_GP_SS "\x66\xb8\x34\x12\x8e\xd0"  /* mov ax, 1234h; mov ss, ax: #GP(1234H) at +4 */
+
+/* fills the IG2_HI page (IG3_PG) with 5AH */
+static void ig3_pg_fill(ap_cpu *c)
+{
+    uint8_t p[0x1000];
+
+    memset(p, 0x5a, sizeof(p));
+    OK(uc_mem_write(c->uc, IG3_PG, p, sizeof(p)));
+}
+
+/* the IG3_PG page: qwords 0..n-1 hold w[] (qword rf: RFLAGS, RF not compared), the rest is 5AH */
+static void ig3_pg_check(ap_cpu *c, const uint64_t *w, int n, int rf, const char *what)
+{
+    uint8_t b[0x1000], p[0x1000];
+    uint64_t v;
+    int i;
+
+    memset(p, 0x5a, sizeof(p));
+    OK(uc_mem_read(c->uc, IG3_PG, b, sizeof(b)));
+    for (i = 0; i < n; i++) {
+        uint64_t m = i == rf ? ~0x10000ULL : ~0ULL;
+
+        memcpy(&v, b + 8 * i, 8);
+        TEST_CHECK_((v & m) == (w[i] & m), "%s: frame slot at +%02XH: %016" PRIx64 " (expected %016" PRIx64 ")",
+                    what, 8 * i, v, w[i]);
+        memcpy(b + 8 * i, p, 8);
+    }
+    TEST_CHECK_(memcmp(b, p, sizeof(b)) == 0, "%s: nothing else written in the page", what);
+}
+
+/*
+ * paging: the event (kind, n) through its gate (I6_TGT, CS 08H, IST ist: ISTn = stk, else RSP = stk)
+ * whose frame starts in the page mapped at 'base' (IG3_PG) and crosses below it: #SS(EXT) on IST1
+ * (ig2_nc) after the pushes that fit - SS, RSP, RFLAGS, CS from (stk & ~FH) - 8 down - which stay
+ * written; nothing else in the page changes. Restores RSP / IST2.
+ */
+static void ig3_partial(ap_cpu *c, int kind, int n, uint64_t base, uint64_t stk, int ist,
+                        const char *what)
+{
+    uint64_t rsp = ap_get(c, UC_X86_REG_RSP), w[4] = {0, 0, 0, 0}, vals[4];
+    int top = (int)(((stk & ~0xfULL) - base) / 8), j;
+
+    TEST_CHECK(top >= 0 && top <= 4);
+    vals[0] = ap_get(c, UC_X86_REG_SS);
+    vals[1] = ist ? rsp : stk;
+    vals[2] = ap_get(c, UC_X86_REG_RFLAGS);
+    vals[3] = ap_get(c, UC_X86_REG_CS);
+    for (j = 0; j < top; j++) {
+        w[top - 1 - j] = vals[j];
+    }
+    ig3_pg_fill(c);
+    if (ist) {
+        i6_tss(c, 0x67, stk);
+    } else {
+        ap_set(c, UC_X86_REG_RSP, stk);
+    }
+    ig2_nc(c, kind, n, I6_TGT, 0x08, ist, 0x8e, AP_STACK, 12, 0, what);
+    ig3_pg_check(c, w, top, top - 3, what);
+    ap_set(c, UC_X86_REG_RSP, rsp);
+    i6_tss(c, 0x67, I6_IST2);
+}
+
+/* the event's gate (I6_TGT, CS 08H, IST 0), RSP = stk, the event's code: one entry to hv with error
+   code ec (as given: no EXT added - #DF(0), #PF), frame RIP of i6_emit (rip false: not checked) */
+static void ig3_ev_at(ap_cpu *c, int kind, int n, uint64_t stk, int hv, int64_t ec, bool rip,
+                      const char *what)
+{
+    uint64_t rsp = ap_get(c, UC_X86_REG_RSP);
+    ap_code k = {{0}, 0};
+    int r;
+
+    ie_gate(c, i6_vec(kind, n), I6_TGT, 0x08, 0, 0x8e);
+    ap_set(c, UC_X86_REG_RSP, stk);
+    r = i6_emit(&k, kind, n);
+    ig2_run(c, &k, hv, ec, rip ? r : -1, what);
+    ap_set(c, UC_X86_REG_RSP, rsp);
+    if (kind == I6_EXTI) {
+        ap_wmsr(c, 0x80b, 0);
+    }
+}
+
+/*
+ * U1424, no paging: the first push (SS, at FFFF7FFF_FFFFFFF8H) of a frame below a canonical RSP
+ * FFFF8000_00000000H (or ...0FH, aligned to it) is #SS(EXT) - INT n / INT3 0, INT1 / #UD / SELF IPI
+ * / NMI 1, #DE escalates to #DF(0) - at CPL0 (IST 0 and IST2), from CPL3 (RSP0, IST2; an external
+ * interrupt pending when IRETQ enters CPL3) and in compatibility mode (IST2). Nothing is loaded: the
+ * #SS frame holds the interrupted CS / RFLAGS / RSP / SS. Stock QEMU: #GP(0) from the MMU.
+ */
+static void test_x86_ig3_frame_cross64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x50}, {I6_INT3, 0}, {I6_INT1, 0}, {I6_UD, 0},
+               {I6_DE, 0},      {I6_EXTI, 0x61}, {I6_NMI, 0}};
+    static const uint64_t stk[] = {IG2_HI, IG2_HI + 0xf};
+    char what[160];
+    uint64_t frame[5], f[6];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+    size_t i, j;
+
+    i6_open(&c);
+    for (j = 0; j < 2; j++) {
+        for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+            ap_set(&c, UC_X86_REG_RSP, stk[j]);
+            snprintf(what, sizeof(what), "%s, RSP %016" PRIX64 "H: #SS(EXT) at the first push",
+                     i6_name(src[i].kind), stk[j]);
+            ig2_nc(&c, src[i].kind, src[i].n, I6_TGT, 0x08, 0, 0x8e, AP_STACK, 12, 0, what);
+            ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+        }
+    }
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 0, 0x8f, AP_STACK, 12, 0, "#UD, trap gate, RSP FFFF800000000000H: #SS(1)");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    /* CPL0, IST2 = FFFF8000_00000000H */
+    i6_tss(&c, 0x67, IG2_HI);
+    ig2_nc(&c, I6_INTN, 0x50, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "INT 50h, IST2 FFFF800000000000H: #SS(0)");
+    ig2_nc(&c, I6_INT1, 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "INT1, IST2 FFFF800000000000H: #SS(1)");
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "#UD, IST2 FFFF800000000000H: #SS(1)");
+    ig2_nc(&c, I6_EXTI, 0x61, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "SELF IPI 61h, IST2 FFFF800000000000H: #SS(1)");
+    ig2_nc(&c, I6_NMI, 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "NMI, IST2 FFFF800000000000H: #SS(1)");
+    i6_tss(&c, 0x67, I6_IST2);
+    /* CPL3 -> CPL0: RSP0 = FFFF8000_00000000H, then IST2 = FFFF8000_0000000FH */
+    ig2_tss(&c, 0x67, IG2_HI, I6_IST2);
+    ig2_cpl3(&c);
+    ig2_nc(&c, I6_INTN, 0x50, I6_TGT, 0x08, 0, 0xee, I6_RSP0, 12, 0, "CPL3: INT 50h (gate DPL 3), RSP0 FFFF800000000000H: #SS(0)");
+    ig2_nc(&c, I6_INT3, 0, I6_TGT, 0x08, 0, 0xee, I6_RSP0, 12, 0, "CPL3: INT3 (gate DPL 3), RSP0 FFFF800000000000H: #SS(0)");
+    ig2_nc(&c, I6_INT1, 0, I6_TGT, 0x08, 0, 0x8e, I6_RSP0, 12, 0, "CPL3: INT1, RSP0 FFFF800000000000H: #SS(1)");
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 0, 0x8e, I6_RSP0, 12, 0, "CPL3: #UD, RSP0 FFFF800000000000H: #SS(1)");
+    ig2_tss(&c, 0x67, I6_RSP0, IG2_HI + 0xf);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 2, 0x8e, I6_IST2, 12, 0, "CPL3: #UD, IST2 FFFF80000000000FH: #SS(1)");
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x23);
+    /* an external interrupt pending when IRETQ enters CPL3 (CLI; SELF IPI 62h; IRETQ, IF = 1; 66 90) */
+    ig2_tss(&c, 0x67, I6_RSP0, I6_IST2);
+    ig2_cpl0(&c);
+    ig2_tss(&c, 0x67, IG2_HI, I6_IST2);
+    ie_gate(&c, 0x62, I6_TGT, 0x08, 0, 0x8e);
+    ap_emit(&k, "\xfa", 1);
+    ap_wr(&k, 0x83f, 0x62);
+    ap_emit(&k, "\x48\xcf\x66\x90", 4);
+    frame[0] = c.pc + 20;
+    frame[1] = 0x23;
+    frame[2] = 0x202;
+    frame[3] = I6_USTK;
+    frame[4] = 0x1b;
+    OK(uc_mem_write(c.uc, AP_STACK - 0x100, frame, sizeof(frame)));
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK - 0x100);
+    ig2_run(&c, &k, 12, 1, 20, "CPL3: external interrupt 62h, RSP0 FFFF800000000000H: #SS(1)");
+    i6_frame(&c, 12, f);
+    TEST_CHECK_(f[2] == 0x23 && f[4] == I6_USTK && f[5] == 0x1b && (f[3] & 0x200),
+                "external interrupt 62h at CPL3: #SS frame CS %" PRIx64 " RFLAGS %" PRIx64 " RSP %" PRIx64
+                " SS %" PRIx64, f[2], f[3], f[4], f[5]);
+    ap_wmsr(&c, 0x80b, 0);
+    ig2_tss(&c, 0x67, I6_RSP0, I6_IST2);
+    ig2_cpl0(&c);
+    /* compatibility mode (CS 38H), IST2 = FFFF8000_00000000H */
+    ig2_compat_in(&c);
+    i6_tss(&c, 0x67, IG2_HI);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "compatibility mode: #UD, IST2 FFFF800000000000H: #SS(1)");
+    ig2_nc(&c, I6_INTN, 0x50, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 12, 0, "compatibility mode: INT 50h, IST2 FFFF800000000000H: #SS(0)");
+    i6_tss(&c, 0x67, I6_IST2);
+    TEST_CHECK(ap_get(&c, UC_X86_REG_CS) == 0x38);
+    ig2_compat_out(&c);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 with 4-level paging (the IG2_HI page mapped): RSP FFFF8000_000000xxH - 00H nothing written,
+ * 10H SS / RSP written, 20H and 2FH (aligned to 20H) SS / RSP / RFLAGS / CS written, then #SS(EXT)
+ * (policy: earlier pushes stay written); IST2 the same. RSP ...30H: the 40-byte frame of INT 50h and
+ * the 48-byte frame of #GP(1234H) fit and are delivered. A crossing frame during the delivery of #GP
+ * or #PF (contributory / page fault): #DF(0). Policy (SDM unspecified): the IG2_HI page not present -
+ * #PF (CR2 FFFF8000_00000008H) on the canonical slot before the #SS. Negative controls (canonical, no
+ * #SS): RSP 00007FFF_FFFFFFF0H (#PF, CR2 00007FFF_FFFFFFE8H: not mapped) and RSP 10H (wraps to
+ * FFFFFFFF_FFFFFFF8H: #PF there after two pushes at 8H / 0H).
+ */
+static void test_x86_ig3_frame_cross_paging64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x50}, {I6_INT1, 0}, {I6_UD, 0}, {I6_EXTI, 0x61}};
+    static const uint64_t off[] = {0x00, 0x10, 0x20, 0x2f};
+    char what[160];
+    uint64_t f[6], w[4], lo[2];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+    size_t i, j;
+
+    i6_open(&c);
+    ig2_paging(&c);
+    for (j = 0; j < sizeof(off) / sizeof(off[0]); j++) {
+        for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+            snprintf(what, sizeof(what), "paging, RSP %016" PRIX64 "H: %s: #SS(EXT) after the pushes that fit",
+                     IG2_HI + off[j], i6_name(src[i].kind));
+            ig3_partial(&c, src[i].kind, src[i].n, IG2_HI, IG2_HI + off[j], 0, what);
+        }
+    }
+    ig3_partial(&c, I6_UD, 0, IG2_HI, IG2_HI + 0x20, 2, "paging, #UD, IST2 FFFF800000000020H: #SS(1) after 4 pushes");
+    ig3_partial(&c, I6_INTN, 0x50, IG2_HI, IG2_HI + 0x10, 2, "paging, INT 50h, IST2 FFFF800000000010H: #SS(0) after 2 pushes");
+    /* RSP FFFF8000_00000030H: the 40-byte frame (INT 50h) and the 48-byte frame (#GP) fit */
+    i6_handler(&c, 0x50, false, 0, 0);
+    ig3_pg_fill(&c);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI + 0x30);
+    ap_emit(&k, "\xcd\x50", 2);
+    ig2_run_sw(&c, &k, 0x50, -1, 2, 1, "paging, RSP FFFF800000000030H: INT 50h delivered (40-byte frame)");
+    i6_frame(&c, 0x50, f);
+    TEST_CHECK_(f[1] == 0x08 && f[3] == IG2_HI + 0x30 && ap_get(&c, UC_X86_REG_RSP) == IG2_HI + 0x30,
+                "INT 50h frame CS %" PRIx64 " RSP %" PRIx64 ", RSP after IRETQ %" PRIx64, f[1], f[3],
+                ap_get(&c, UC_X86_REG_RSP));
+    i6_handler(&c, 13, true, 2, 0);
+    memset(&k, 0, sizeof(k));
+    ap_emit(&k, IG3_GP_SS, 6);
+    ig2_run(&c, &k, 13, 0x1234, 4, "paging, RSP FFFF800000000030H, gate 0Dh IST 0: #GP(1234H) delivered (48-byte frame)");
+    i6_frame(&c, 13, f);
+    TEST_CHECK_(f[4] == IG2_HI + 0x30, "#GP frame RSP %" PRIx64, f[4]);
+    /* RSP ...20H, gate 0Dh on IST 0: the #GP frame crosses after 4 pushes -> #SS in a contributory
+       exception's delivery: #DF(0) */
+    ig3_pg_fill(&c);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI + 0x20);
+    w[0] = 0x08;
+    w[1] = ap_get(&c, UC_X86_REG_RFLAGS);
+    w[2] = IG2_HI + 0x20;
+    w[3] = ap_get(&c, UC_X86_REG_SS);
+    memset(&k, 0, sizeof(k));
+    ap_emit(&k, IG3_GP_SS, 6);
+    ig2_run(&c, &k, 8, 0, -1, "paging, RSP FFFF800000000020H: #GP(1234H) on a crossing stack: #DF(0)");
+    ig3_pg_check(&c, w, 4, 1, "paging, #GP(1234H) on a crossing stack");
+    i6_handler(&c, 13, true, 2, 1);
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    /* #PF (mov eax, [rcx] to a page not present) whose gate 14 (IST 0) frame crosses: #DF(0) */
+    ig2_pte(&c, 15, 0);
+    ap_set(&c, UC_X86_REG_RCX, AP_DATA + 0xf000);
+    ie_gate(&c, 14, I6_TGT, 0x08, 0, 0x8e);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    memset(&k, 0, sizeof(k));
+    ap_emit(&k, "\x8b\x01", 2);
+    ig2_run(&c, &k, 8, 0, -1, "paging, RSP FFFF800000000000H: #PF on a crossing stack: #DF(0)");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    ig2_pte(&c, 15, 3);
+    /* policy (SDM unspecified): the canonical slot's #PF before the #SS (the IG2_HI page not present) */
+    i6_handler(&c, 14, true, 2, 1);
+    ig2_pt_w(&c, IG2_PT + 0x7000, 0);
+    ap_set(&c, UC_X86_REG_CR3, IG2_PT);
+    ap_set(&c, UC_X86_REG_CR2, 0);
+    ig3_ev_at(&c, I6_UD, 0, IG2_HI + 0x10, 14, 2, true,
+              "policy (SDM unspecified): #UD, RSP FFFF800000000010H, page FFFF800000000000H not present: #PF first");
+    TEST_CHECK_(ap_get(&c, UC_X86_REG_CR2) == IG2_HI + 8, "CR2 %" PRIx64, ap_get(&c, UC_X86_REG_CR2));
+    ig3_ev_at(&c, I6_INTN, 0x50, IG2_HI + 0x10, 14, 2, true,
+              "policy (SDM unspecified): INT 50h, RSP FFFF800000000010H, page not present: #PF first");
+    ig2_pt_w(&c, IG2_PT + 0x7000, (IG2_PT + 0x10000) | 3);
+    ap_set(&c, UC_X86_REG_CR3, IG2_PT);
+    /* negative controls: canonical stacks are not #SS */
+    ig3_ev_at(&c, I6_UD, 0, 0x00007FFFFFFFFFF0ULL, 14, 2, true,
+              "control: #UD, RSP 00007FFFFFFFFFF0H (canonical, not mapped): #PF, not #SS");
+    TEST_CHECK_(ap_get(&c, UC_X86_REG_CR2) == 0x00007FFFFFFFFFE8ULL, "CR2 %" PRIx64, ap_get(&c, UC_X86_REG_CR2));
+    OK(uc_mem_map(c.uc, 0, 0x1000, UC_PROT_ALL));
+    ig3_ev_at(&c, I6_UD, 0, 0x10, 14, 2, true,
+              "control: #UD, RSP 10H (wraps to FFFFFFFFFFFFFFF8H, canonical): #PF, not #SS");
+    TEST_CHECK_(ap_get(&c, UC_X86_REG_CR2) == 0xFFFFFFFFFFFFFFF8ULL, "CR2 %" PRIx64, ap_get(&c, UC_X86_REG_CR2));
+    OK(uc_mem_read(c.uc, 0, lo, sizeof(lo)));
+    TEST_CHECK_(lo[0] == 0x10 && lo[1] == ap_get(&c, UC_X86_REG_SS),
+                "RSP 10H: the pushes at 0H / 8H: %" PRIx64 " %" PRIx64, lo[0], lo[1]);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 escalation (no paging, RSP FFFF8000_00000000H): #SS and #GP are both contributory, so the
+ * double-fault rules are those of stock QEMU's #GP(0) (Vol3A Event 8, Table 7-5): #DE and #GP(1234H)
+ * (gate 0Dh on IST 0) -> #DF(0); gate 0Dh on IST 0 but gate 0Ch on IST1: #UD -> #SS(1) delivered on
+ * IST1 (stock QEMU: #GP(0) through gate 0Dh, then #DF); gates 0Ch and 0Dh on IST 0: #UD, INT 50h, a SELF
+ * IPI -> #SS -> #SS on the same stack -> #DF(0) on IST1; no IST anywhere: shutdown (UC_ERR_EXCEPTION).
+ */
+static void test_x86_ig3_frame_cross_df64(void)
+{
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+    int r;
+
+    i6_open(&c);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    ig2_nc(&c, I6_DE, 0, I6_TGT, 0x08, 0, 0x8e, AP_STACK, 8, 0, "#DE, RSP FFFF800000000000H: #SS in its delivery: #DF(0)");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    ie_gate(&c, 13, I6_TGT, 0x08, 0, 0x8e);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    ap_emit(&k, IG3_GP_SS, 6);
+    ig2_run(&c, &k, 8, 0, -1, "#GP(1234H), gate 0Dh IST 0, RSP FFFF800000000000H: #DF(0)");
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 0, 0x8e, AP_STACK, 12, 0,
+           "#UD, RSP FFFF800000000000H, gate 0Dh IST 0, gate 0Ch IST1: #SS(1) delivered");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    ie_gate(&c, 12, I6_TGT, 0x08, 0, 0x8e);
+    ig3_ev_at(&c, I6_UD, 0, IG2_HI, 8, 0, false, "#UD, gates 0Ch / 0Dh IST 0, RSP FFFF800000000000H: #SS, #SS: #DF(0)");
+    ig3_ev_at(&c, I6_INTN, 0x50, IG2_HI, 8, 0, false, "INT 50h, gates 0Ch / 0Dh IST 0, RSP FFFF800000000000H: #DF(0)");
+    ig3_ev_at(&c, I6_EXTI, 0x61, IG2_HI, 8, 0, false, "SELF IPI 61h, gates 0Ch / 0Dh IST 0, RSP FFFF800000000000H: #DF(0)");
+    /* no IST anywhere: the #DF frame crosses too - shutdown */
+    ie_gate(&c, 8, I6_TGT, 0x08, 0, 0x8e);
+    ie_gate(&c, 6, I6_TGT, 0x08, 0, 0x8e);
+    memset(&k, 0, sizeof(k));
+    ap_emit(&k, "\x0f\x0b", 2);
+    ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+    r = ig2_exec(&c, &k);
+    TEST_CHECK_(r == -2, "#UD, gates 8 / 0Ch / 0Dh IST 0, RSP FFFF800000000000H: shutdown (run %d, -2 = UC_ERR_EXCEPTION)", r);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 ordering (Vol2A pp. 3-474 / 3-478: the stack and offset checks precede the pushes): a crossing
+ * RSP with a non-canonical gate offset is #GP(EXT) (U1421); IST2 crossing and beyond the TSS limit
+ * #TS(EXT) (U1402); a non-canonical RSP #SS(EXT) before any push (U1420). With supervisor shadow
+ * stacks the push-time #SS(EXT) comes before the shadow-stack steps (U755): the misaligned IST2 entry
+ * of the interrupt SSP table, which gives #GP(0) when the delivery reaches it (control), is not read.
+ */
+static void test_x86_ig3_frame_cross_order64(void)
+{
+    static const struct {
+        int kind, n;
+    } src[] = {{I6_INTN, 0x50}, {I6_INT1, 0}, {I6_UD, 0}, {I6_EXTI, 0x61}};
+    uint64_t v = IG2_SSP + 0x804;   /* the IST2 entry of the interrupt SSP table: not 8-byte aligned */
+    char what[160];
+    uc_x86_exception e;
+    ap_cpu c;
+    size_t i;
+
+    i6_open(&c);
+    for (i = 0; i < sizeof(src) / sizeof(src[0]); i++) {
+        ap_set(&c, UC_X86_REG_RSP, IG2_HI);
+        snprintf(what, sizeof(what), "%s, RSP FFFF800000000000H and a non-canonical offset: #GP(EXT) (U1421 first)",
+                 i6_name(src[i].kind));
+        ig2_nc(&c, src[i].kind, src[i].n, I6_NC, 0x08, 0, 0x8e, AP_STACK, 13, 0, what);
+        ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    }
+    i6_tss(&c, 0x32, IG2_HI);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 10, 0x28, "#UD, IST2 crossing and beyond the TSS limit: #TS(29H)");
+    ig2_nc(&c, I6_INTN, 0x50, I6_TGT, 0x08, 2, 0x8e, AP_STACK, 10, 0x28, "INT 50h, IST2 crossing and beyond the TSS limit: #TS(28H)");
+    i6_tss(&c, 0x67, I6_IST2);
+    ap_set(&c, UC_X86_REG_RSP, I6_NC + 0x100);
+    ig2_nc(&c, I6_UD, 0, I6_TGT, 0x08, 0, 0x8e, AP_STACK, 12, 0, "#UD, RSP non-canonical: #SS(1) before any push (U1420)");
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    /* CET: supervisor shadow stacks, gates 0Ch / 0Dh (IST 0) end the run at IG2_STOP */
+    ap_set(&c, UC_X86_REG_CR0, ap_get(&c, UC_X86_REG_CR0) | 0x10000);         /* WP */
+    ap_set(&c, UC_X86_REG_CR4, ap_get(&c, UC_X86_REG_CR4) | (1ULL << 23));    /* CET */
+    ap_wmsr(&c, 0x6a2, 1);                  /* IA32_S_CET.SH_STK_EN */
+    ap_wmsr(&c, 0x6a8, IG2_TBL);            /* IA32_INTERRUPT_SSP_TABLE_ADDR */
+    OK(uc_mem_write(c.uc, IG2_TBL + 16, &v, 8));
+    ie_gate(&c, 12, IG2_STOP, 0x08, 0, 0x8e);
+    ie_gate(&c, 13, IG2_STOP, 0x08, 0, 0x8e);
+    ig2_cet_run(&c, I6_UD, 0, I6_TGT, 0, false, "CET control: #UD, IST2 canonical: #GP(0) (IST2 SSP not aligned)");
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK_(e.vector == 13, "CET control: recorded vector %d", e.vector);
+    i6_tss(&c, 0x67, IG2_HI);
+    ig2_cet_run(&c, I6_UD, 0, I6_TGT, 1, true, "CET: #UD, IST2 FFFF800000000000H: #SS(1) before the shadow-stack steps");
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK_(e.vector == 12 && e.error_code == 1, "CET: #UD: recorded vector %d error code %x", e.vector, e.error_code);
+    ig2_cet_run(&c, I6_INTN, 0x50, I6_TGT, 0, true, "CET: INT 50h, IST2 FFFF800000000000H: #SS(0)");
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK_(e.vector == 12 && e.error_code == 0, "CET: INT 50h: recorded vector %d error code %x", e.vector, e.error_code);
+    ig2_cet_run(&c, I6_EXTI, 0x61, I6_TGT, 1, true, "CET: SELF IPI 61h, IST2 FFFF800000000000H: #SS(1)");
+    memset(&e, 0, sizeof(e));
+    OK(uc_ctl_get_x86_exception(c.uc, &e));
+    TEST_CHECK_(e.vector == 12 && e.error_code == 1, "CET: SELF IPI: recorded vector %d error code %x", e.vector, e.error_code);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 with CR4.LA57 = 1 (5-level paging; PML5[0] and PML5[511] -> the 4-level tables, PML5[256] ->
+ * FF00_0000_0000_0000H on the IG2_HI page): RSP FF00_0000_0000_00xxH crosses into non-canonical
+ * space (57 bits: FEFF_FFFF_FFFF_FFF8H) - #SS(EXT) after the pushes that fit; RSP FFFF8000_00000010H
+ * does not (FFFF7FFF_FFFFFFF8H is canonical: #PF there, not mapped); RSP 00008000_00000040H is
+ * canonical and mapped (INT 50h delivered). CR4.LA57 = 0 again: FFFF8000_00000010H crosses.
+ */
+static void test_x86_ig3_frame_cross_la57_64(void)
+{
+    uint64_t cr4, f[6];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+
+    i6_open(&c);
+    ig2_paging(&c);
+    ig2_pt_w(&c, IG3_PML5 + 0, IG2_PT | 3);
+    ig2_pt_w(&c, IG3_PML5 + 8 * 256, IG3_PML4B | 3);
+    ig2_pt_w(&c, IG3_PML5 + 8 * 511, IG2_PT | 3);
+    ig2_pt_w(&c, IG3_PML4B + 0, (IG2_PT + 0x4000) | 3);
+    cr4 = ap_get(&c, UC_X86_REG_CR4);
+    ap_set(&c, UC_X86_REG_CR3, IG3_PML5);
+    ap_set(&c, UC_X86_REG_CR4, cr4 | (1ULL << 12));
+    ig3_partial(&c, I6_UD, 0, IG3_LA57HI, IG3_LA57HI + 0x10, 0, "LA57: #UD, RSP FF00000000000010H: #SS(1) after 2 pushes");
+    ig3_partial(&c, I6_INTN, 0x50, IG3_LA57HI, IG3_LA57HI + 0x20, 0, "LA57: INT 50h, RSP FF00000000000020H: #SS(0) after 4 pushes");
+    ig3_partial(&c, I6_EXTI, 0x61, IG3_LA57HI, IG3_LA57HI, 0, "LA57: SELF IPI 61h, RSP FF00000000000000H: #SS(1), nothing written");
+    ig3_partial(&c, I6_INT1, 0, IG3_LA57HI, IG3_LA57HI + 0x10, 2, "LA57: INT1, IST2 FF00000000000010H: #SS(1) after 2 pushes");
+    i6_handler(&c, 14, true, 2, 1);
+    ap_set(&c, UC_X86_REG_CR2, 0);
+    ig3_ev_at(&c, I6_UD, 0, IG2_HI + 0x10, 14, 2, true,
+              "LA57: #UD, RSP FFFF800000000010H (canonical with 57 bits): #PF at FFFF7FFFFFFFFFF8H, not #SS");
+    TEST_CHECK_(ap_get(&c, UC_X86_REG_CR2) == 0xFFFF7FFFFFFFFFF8ULL, "CR2 %" PRIx64, ap_get(&c, UC_X86_REG_CR2));
+    i6_handler(&c, 0x50, false, 0, 0);
+    ap_set(&c, UC_X86_REG_RSP, 0x0000800000000040ULL);
+    ap_emit(&k, "\xcd\x50", 2);
+    ig2_run_sw(&c, &k, 0x50, -1, 2, 1, "LA57: INT 50h, RSP 0000800000000040H: delivered");
+    i6_frame(&c, 0x50, f);
+    TEST_CHECK_(f[3] == 0x0000800000000040ULL, "LA57: INT 50h frame RSP %" PRIx64, f[3]);
+    ap_set(&c, UC_X86_REG_RSP, AP_STACK);
+    ap_set(&c, UC_X86_REG_CR4, cr4);
+    ap_set(&c, UC_X86_REG_CR3, IG2_PT);
+    ig3_partial(&c, I6_UD, 0, IG2_HI, IG2_HI + 0x10, 0, "CR4.LA57 = 0 again: #UD, RSP FFFF800000000010H: #SS(1)");
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 in VMX non-root operation (Vol3C 28.2, 30.2.2, 30.2.4): a guest #UD whose frame starts at
+ * FFFF8000_00000000H raises #SS(1); exception bitmap bit 12 makes it a VM exit - exit-interruption
+ * information 80000B0CH, error code 1, IDT-vectoring information 80000306H (the #UD), guest RIP / RSP
+ * unchanged. With bits 12 and 13 the #SS exits (stock QEMU: the #GP(0), bit 13).
+ */
+static void test_x86_ig3_frame_cross_vmx64(void)
+{
+    static const uint32_t bm[] = {1u << 12, (1u << 12) | (1u << 13)};
+    uint64_t fl, r, info, err, idtv, rip, rsp;
+    PcCtx c;
+    size_t i;
+
+    vmx_setup(&c);
+    vmx_guest_idt(&c);
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    for (i = 0; i < 2; i++) {
+        vmx_w(&c, 0x4004, bm[i]);
+        vmx_w(&c, 0x681c, IG2_HI);
+        vmx_resume_regs(&c, "\x0f\x0b", 2, 0, 0, 0, 0);
+        r = vmx_r(&c, 0x4402);
+        info = vmx_r(&c, 0x4404);
+        err = vmx_r(&c, 0x4406);
+        idtv = vmx_r(&c, 0x4408);
+        rip = vmx_r(&c, 0x681e);
+        rsp = vmx_r(&c, 0x681c);
+        TEST_CHECK_(r == 0 && info == 0x80000b0cu && err == 1 && idtv == 0x80000306u && rip == VMX_GUEST_PC &&
+                        rsp == IG2_HI,
+                    "VMX, exception bitmap %x: guest #UD, RSP FFFF800000000000H: exit %" PRIu64 " info %" PRIx64
+                    " error %" PRIx64 " IDT-vectoring %" PRIx64 " RIP %" PRIx64 " RSP %" PRIx64,
+                    bm[i], r, info, err, idtv, rip, rsp);
+    }
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1424 under UC_TLB_VIRTUAL: no canonical rule (x86_ip_is_canonical, U42; Unicorn's virtual TLB has
+ * none), so the pushes are not checked (a mode of the Unicorn API, not of the SDM): with RSP
+ * 00008000_00000040H (non-canonical; the Unicorn page at 00008000_00000000H mapped) the #UD frame is
+ * pushed at 00008000_00000038H..18H and delivered to the recording handler on that stack, no #SS /
+ * #GP. (A crossing frame below FFFF8000_00000000H is not used: there Unicorn's memory is unmapped and
+ * the failing kernel store inside the delivery does not return to the run loop.)
+ */
+static void test_x86_ig3_frame_cross_tlbvirt64(void)
+{
+    uint64_t zero = 0, f[6];
+    ap_code k = {{0}, 0};
+    ap_cpu c;
+
+    i6_open(&c);
+    OK(uc_ctl_tlb_mode(c.uc, UC_TLB_VIRTUAL));
+    OK(uc_mem_map(c.uc, IG2_LA57, 0x1000, UC_PROT_ALL));
+    OK(uc_mem_write(c.uc, AP_MARK + I6_M(i6_slot(12)) + 48, &zero, 8));
+    OK(uc_mem_write(c.uc, AP_MARK + I6_M(i6_slot(13)) + 48, &zero, 8));
+    i6_handler(&c, 6, false, 2, 0);
+    ap_set(&c, UC_X86_REG_RSP, IG2_LA57 + 0x40);
+    ap_emit(&k, "\x0f\x0b", 2);
+    ig2_run(&c, &k, 6, -1, 0, "UC_TLB_VIRTUAL: #UD, RSP 0000800000000040H: delivered (no canonical check)");
+    i6_frame(&c, 6, f);
+    TEST_CHECK_(f[3] == IG2_LA57 + 0x40 && ap_mark(&c, I6_M(i6_slot(12)) + 48) == 0 &&
+                    ap_mark(&c, I6_M(i6_slot(13)) + 48) == 0,
+                "UC_TLB_VIRTUAL: #UD frame RSP %" PRIx64 ", #SS entries %" PRIu64 ", #GP entries %" PRIu64, f[3],
+                ap_mark(&c, I6_M(i6_slot(12)) + 48), ap_mark(&c, I6_M(i6_slot(13)) + 48));
+    OK(uc_close(c.uc));
+}
+
+/* ---- end ig3_ (U1424 / U1425) ---- */
+
 /* ---- begin U1440-U1449 (xc_) ---- */
 typedef struct XcCfg {
     int model;                  /* UC_CPU_X86_*, -1 = not written (the default model) */
@@ -40857,6 +41357,13 @@ TEST_LIST = {
     {"test_x86_ig2_gate_rip_tlbvirt64", test_x86_ig2_gate_rip_tlbvirt64},
     {"test_x86_idterr_gate16_64", test_x86_idterr_gate16_64},
     {"test_x86_idterr_gate_types64", test_x86_idterr_gate_types64},
+    {"test_x86_ig3_frame_cross64", test_x86_ig3_frame_cross64},
+    {"test_x86_ig3_frame_cross_paging64", test_x86_ig3_frame_cross_paging64},
+    {"test_x86_ig3_frame_cross_df64", test_x86_ig3_frame_cross_df64},
+    {"test_x86_ig3_frame_cross_order64", test_x86_ig3_frame_cross_order64},
+    {"test_x86_ig3_frame_cross_la57_64", test_x86_ig3_frame_cross_la57_64},
+    {"test_x86_ig3_frame_cross_vmx64", test_x86_ig3_frame_cross_vmx64},
+    {"test_x86_ig3_frame_cross_tlbvirt64", test_x86_ig3_frame_cross_tlbvirt64},
     {"test_x86_xc_default_xcr0_models", test_x86_xc_default_xcr0_models},
     {"test_x86_xc_arch_reset_vs_default", test_x86_xc_arch_reset_vs_default},
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
