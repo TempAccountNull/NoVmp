@@ -484,6 +484,9 @@ Add-Exp 'bp2_vm' 'cases_bp2_guest' 'cpuid expect bp2' @( '--vm' )
 Add-Exp 'bp2_cpuid_override' 'cases_bp2_guest' 'cpuid expect bp2' @( '--host', '--cpuid', $Cpuid )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
+# U1511 (agent platform, plan 1.J.49): pg_unit - the pg_ unit tests of ProfileGenerator on synthetic fixtures
+# (emu-profilegen-tests; never a real capture)
+Add-Suite 'pg_unit' 'unit tools platform' 'exit' 'emu-profilegen-tests' @()
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}

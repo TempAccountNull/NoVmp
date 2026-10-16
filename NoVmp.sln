@@ -37,6 +37,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-alltest", "Emulator\tes
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-profilegen", "Emulator\tools\profilegen\emu-profilegen.vcxproj", "{7B3E5D21-6A4C-4F8E-9D1B-2C5A8E0F4B61}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "emu-profilegen-tests", "Emulator\tests\profilegen\emu-profilegen-tests.vcxproj", "{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -99,6 +101,10 @@ Global
 		{7B3E5D21-6A4C-4F8E-9D1B-2C5A8E0F4B61}.Debug|x64.Build.0 = Debug|x64
 		{7B3E5D21-6A4C-4F8E-9D1B-2C5A8E0F4B61}.Release|x64.ActiveCfg = Release|x64
 		{7B3E5D21-6A4C-4F8E-9D1B-2C5A8E0F4B61}.Release|x64.Build.0 = Release|x64
+		{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3}.Debug|x64.ActiveCfg = Debug|x64
+		{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3}.Debug|x64.Build.0 = Debug|x64
+		{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3}.Release|x64.ActiveCfg = Release|x64
+		{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -116,6 +122,7 @@ Global
 		{C4D57C0D-0E94-4E38-BCDE-8D132109F629} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{A507753A-1304-4182-81FF-8B5424BD7838} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 		{2F4C3A16-D42F-43B3-B7F5-70B4490F5AE4} = {6D6705D5-B7A9-4922-A499-776CB8835031}
+		{C2D8A6F4-3E91-4B7A-8F05-61D4B9E2A7C3} = {6D6705D5-B7A9-4922-A499-776CB8835031}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {43AEF470-2FF3-5242-923F-C62C32A8EAE1}
