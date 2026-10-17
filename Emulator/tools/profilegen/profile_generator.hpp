@@ -93,7 +93,14 @@
 //            variant bits kept, the rest synthetic; a version-1 node = the adapter's synthetic MAC, Windows' no-NIC node
 //            806E6F6E6963 exact; MBR-style volume GUIDs {SSSSSSSS-0000-0000-0000-OOOOOOOOOOOO}: only the disk signature
 //            synthetic. One real GUID = one synthetic GUID everywhere. The "no container" ID {00000000-0000-0000-FFFF-
-//            FFFFFFFFFFFF} stays.
+//            FFFFFFFFFFFF} stays. RFC 4122 version-1 GUIDs (U1516, decision E "valid v1" + rule 7b): the 60-bit timestamp =
+//            the real one + the install-history offset of rule 7b (map key "identity/install"; derived, never drawn), so
+//            HwProfileGuid, the v1 container / interface / volume / WPD GUIDs keep their real ordering and spacing to the
+//            install; the clock sequence synthetic (variant bits kept, Randomize->gen_clock_seq_like); the node as above
+//            (adapter MAC -> its synthetic MAC, 806E6F6E6963 exact, any other node synthetic). A capture without an install
+//            history cannot build a version-1 GUID (the run stops). Application re-checks every saved v1 value against the
+//            rule; BuildContext::upgrade_v1_time re-derives the timestamp of a map written before U1516 (clock sequence and
+//            node of the saved value kept; emu-profilegen --upgrade-v1-time).
 //   Rule 4d  USB device serials (Enum\USB instance IDs without '&', incl. the host's VMware USB arbitration mirror and the
 //            guest's passthrough entries) and HID serial strings (hid.txt): same length + classes, hex-encoded ASCII stays
 //            hex-encoded ASCII, other hex stays hex (gen_usb_serial). ONE mapping per physical device for BOTH profiles: a
@@ -327,6 +334,15 @@ namespace emu::platform
 	struct Eui64Id { const char* text = nullptr; bool ffff = true; };
 	// rule 4c: a GUID text (with or without braces) and the identity-map key of its identity
 	struct GuidValue { const char* text = nullptr; std::string label; };
+	// rule 4c (U1516): the fields of an RFC 4122 version-1 (time-based) GUID text; ok = false for any other GUID (another
+	// version, another variant, the MBR form {SSSSSSSS-0000-0000-0000-OOOOOOOOOOOO})
+	struct GuidV1
+	{
+		bool ok = false;
+		uint64_t timestamp = 0;				// 60 bits: 100-ns intervals since 1582-10-15 00:00 UTC (time_hi & 0x0FFF, time_mid, time_low)
+		std::string clock_seq;				// group 4: 4 hex digits (variant bits + 14-bit clock sequence), as written
+		std::string node;					// group 5: 12 hex digits, as written
+	};
 	struct NodeMap { std::map<std::string, std::string> real_to_synthetic; };	// lower-case 12-hex MAC nodes
 	// rule 4d: a USB / HID device serial; table_index >= 0: its index in the shared table (key "shared/usb/<index>": the
 	// same value in both profiles)
@@ -379,6 +395,13 @@ namespace emu::platform
 		std::map<std::string, size_t> per_kind;
 	};
 	struct InstallWindow { int64_t lo = 0, hi = 0; };	// unix seconds, exclusive bounds
+	// the self-check of the version-1 GUID timestamps (U1516; counts only)
+	struct V1GuidCheck
+	{
+		size_t guids = 0, exact = 0;		// RFC 4122 version-1 GUID identities / those whose synthetic timestamp = real + the offset
+		size_t before_install = 0;			// real timestamps earlier than the OS install (they stay earlier by the same spacing)
+		size_t after_capture = 0;			// real timestamps later than the capture (none expected)
+	};
 	struct SidParts { const char* prefix = nullptr; std::string label; };	// rule 7d: "S-1-5-21-a-b-c" (the RID is not part of it)
 	struct VolumeId { const char* serial = nullptr; std::string label; };	// rule 7e: "XXXX-XXXX"
 
@@ -582,6 +605,7 @@ namespace emu::platform
 		size_t excluded_anchors = 0, excluded_rows = 0;	// identifier anchors / occurrence rows inside excluded ranges (dropped)
 		size_t filler_serials = 0;					// disk / HID / USB serials kept as placeholders (one repeated character, ...)
 		TimeShiftCheck time_shift;					// rule 7b install-history shift
+		V1GuidCheck v1_guids;						// rule 4c version-1 GUID timestamps (U1516)
 	};
 	struct DiskInput { std::vector<DiskDescriptor> descriptors; std::vector<IdentityEntry> identity; };
 	struct DiskGen
@@ -618,6 +642,7 @@ namespace emu::platform
 		size_t excluded_anchors = 0, excluded_rows = 0, filler_serials = 0;
 		std::vector<VolatileItem> volatiles;
 		TimeShiftCheck time_shift;
+		V1GuidCheck v1_guids;
 		std::vector<std::string> needles;	// leak guard
 		std::vector<Bytes> binary_needles;
 		std::vector<MacPair> macs;
@@ -649,6 +674,11 @@ namespace emu::platform
 		bool applying = false;				// identity_map was loaded non-empty: a missing key stops the build, nothing is drawn
 		bool fresh = false;					// gen_new_identity(): run_build generates instead of applying the saved map
 		std::set<std::string> used_keys;	// the keys this build asked for (application: every map key must be one of them)
+		// U1516: application of a map written before the version-1 GUID timestamp rule - a saved v1 value whose timestamp is not
+		// real + the install-history offset gets that timestamp (its clock sequence and node kept) instead of stopping the
+		// build; every such key is listed in upgraded_keys (emu-profilegen --upgrade-v1-time; never in check mode)
+		bool upgrade_v1_time = false;
+		std::vector<std::string> upgraded_keys;
 	};
 
 	// the builder of both profiles: a singleton like the demo's Randomizer - ProfileGen->new_context( cfg ), then
@@ -744,6 +774,8 @@ namespace emu::platform
 		static ChidCheck check_chid_fields( const Bytes& original, const Bytes& synthetic );
 		// every one of the 9 groups of 7 digits ends with its check digit (d0 + 2 d1 + d2 + 2 d3 + d4 + 2 d5) mod 7
 		static bool check_installation_id( const char* text );
+		// the fields of an RFC 4122 version-1 GUID text (with or without braces); ok = false for any other GUID (U1516)
+		static GuidV1 parse_guid_v1( const char* text );
 
 	private:
 		ProfileGenerator();

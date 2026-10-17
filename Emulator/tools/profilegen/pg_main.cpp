@@ -19,6 +19,9 @@
 //                      serials both profiles share still come from the other environment's map
 //   --check            apply the saved identity map in memory and compare with the SYNTHETIC output folder byte for byte;
 //                      writes nothing
+//   --upgrade-v1-time  (U1516) apply a map written before the version-1 GUID timestamp rule: every saved version-1 GUID gets
+//                      the timestamp real + the install-history offset (its saved clock sequence and node kept), every
+//                      other value is applied unchanged; the keys that changed are logged; writes both profiles
 //   --save-config FILE write the effective BuildConfig to FILE and stop (no build)
 #include "profile_generator.hpp"
 
@@ -30,14 +33,14 @@ int main( int argc, char** argv )
 	using namespace emu::platform;
 	auto usage = []() {
 		std::cout << "usage: emu-profilegen --guest | --vm | --host | --config FILE [--capture-root DIR] [--out DIR] [--original-out DIR | --no-original]\n"
-					 "                      [--repo-root DIR] [--rules LIST] [--new-identity] [--check] [--save-config FILE]\n";
+					 "                      [--repo-root DIR] [--rules LIST] [--new-identity] [--check] [--upgrade-v1-time] [--save-config FILE]\n";
 		return 2;
 	};
 	int envs = 0;
 	Environment env = Environment::vmware_guest;
 	const char* config_file = nullptr;
 	const char* save_file = nullptr;
-	bool check = false, no_original = false, new_identity = false;
+	bool check = false, no_original = false, new_identity = false, upgrade_v1 = false;
 	std::vector<std::pair<std::string, std::string>> over;
 	for ( int i = 1; i < argc; i++ )
 	{
@@ -48,6 +51,7 @@ int main( int argc, char** argv )
 		else if ( !strcmp( a, "--no-original" ) ) no_original = true;
 		else if ( !strcmp( a, "--check" ) ) check = true;
 		else if ( !strcmp( a, "--new-identity" ) ) new_identity = true;
+		else if ( !strcmp( a, "--upgrade-v1-time" ) ) upgrade_v1 = true;
 		else if ( !strcmp( a, "--help" ) || !strcmp( a, "-h" ) ) { usage(); return 0; }
 		else if ( !strcmp( a, "--config" ) || !strcmp( a, "--save-config" ) || !strcmp( a, "--capture-root" ) || !strcmp( a, "--out" ) || !strcmp( a, "--original-out" )
 				  || !strcmp( a, "--repo-root" ) || !strcmp( a, "--rules" ) )
@@ -62,6 +66,7 @@ int main( int argc, char** argv )
 	}
 	if ( envs + ( config_file ? 1 : 0 ) != 1 ) { std::cout << "[profilegen] give exactly one of --guest / --vm / --host / --config FILE\n"; return usage(); }
 	if ( check && new_identity ) { std::cout << "[profilegen] --check applies the saved identity: not with --new-identity\n"; return usage(); }
+	if ( upgrade_v1 && ( check || new_identity ) ) { std::cout << "[profilegen] --upgrade-v1-time upgrades and writes the saved identity: not with --check / --new-identity\n"; return usage(); }
 
 	BuildContext ctx;	// this invocation's build: its configuration, identity maps and used keys
 	try
@@ -85,6 +90,7 @@ int main( int argc, char** argv )
 		return 2;
 	}
 	if ( new_identity ) ProfileGen->gen_new_identity( ctx );
+	ctx.upgrade_v1_time = upgrade_v1;
 	if ( save_file )
 	{
 		try { ctx.config.save_file( save_file ); }

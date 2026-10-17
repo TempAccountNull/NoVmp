@@ -661,6 +661,28 @@ namespace emu::platform
 	// synthetic (Randomize->gen_guid_like). Version-1 (time-based) GUIDs: when the node (last 12 hex digits) is an adapter
 	// MAC, the node becomes that adapter's synthetic MAC; Windows' no-NIC node 806E6F6E6963 stays exact. MBR-style volume
 	// GUIDs {SSSSSSSS-0000-0000-0000-OFFSET}: only the disk signature (the first 8 digits) is synthetic.
+	GuidV1 ProfileGenerator::parse_guid_v1( const char* text )
+	{
+		GuidV1 v;
+		static const std::regex k_guid( R"(\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?)" );
+		const std::string g = text ? text : "";
+		if ( !std::regex_match( g, k_guid ) ) return v;
+		std::string h;
+		for ( char c : g ) if ( is_hex( c ) ) h += c;
+		const unsigned variant = unsigned( std::stoul( h.substr( 16, 1 ), nullptr, 16 ) );
+		const bool mbr = h.substr( 8, 12 ).find_first_not_of( '0' ) == std::string::npos;
+		if ( mbr || h[ 12 ] != '1' || variant < 8 || variant >= 12 ) return v;	// version 1 and the RFC 4122 variant (10xx) only
+		v.timestamp = ( std::stoull( h.substr( 13, 3 ), nullptr, 16 ) << 48 ) | ( std::stoull( h.substr( 8, 4 ), nullptr, 16 ) << 32 ) | std::stoull( h.substr( 0, 8 ), nullptr, 16 );
+		v.clock_seq = h.substr( 16, 4 );
+		v.node = h.substr( 20, 12 );
+		v.ok = true;
+		return v;
+	}
+
+	// rule 4c (see above); RFC 4122 version-1 GUIDs (U1516): the 60-bit timestamp = the real one + the install-history offset
+	// (rule 7b, in 100-ns units; ctx's identity map holds the offset once gen_install_time ran), the clock sequence synthetic
+	// (Randomize->gen_clock_seq_like, variant bits kept), the node = the adapter's synthetic MAC / Windows' no-NIC node kept /
+	// any other node synthetic. Generation composes that value; application checks the saved one against the same rule
 	GuidValue ProfileGenerator::gen_guid( BuildContext& ctx, const GuidValue& real, const NodeMap& nodes )
 	{
 		const std::string g = real.text ? real.text : "";
@@ -670,7 +692,47 @@ namespace emu::platform
 		std::string sn;
 		if ( node.size() == 32 )
 			if ( auto it = nodes.real_to_synthetic.find( node.substr( 20 ) ); it != nodes.real_to_synthetic.end() ) { sn = it->second; syn_node = sn.c_str(); }
-		return { draw( ctx, real.label, "guid", g, true, [ & ] { return Randomize->gen_guid_like( g.c_str(), syn_node ); } ), real.label };
+		const GuidV1 rv = parse_guid_v1( g.c_str() );
+		if ( !rv.ok ) return { draw( ctx, real.label, "guid", g, true, [ & ] { return Randomize->gen_guid_like( g.c_str(), syn_node ); } ), real.label };
+
+		// version 1: the timestamp is derived (never drawn)
+		if ( !ctx.identity_map.has_install_shift )
+			fail( "rule 4c: the version-1 GUID " + real.label + " needs the install-history offset (rule 7b: os_ids.txt InstallDate) - this capture has none" );
+		const int64_t ts = int64_t( rv.timestamp ) + ctx.identity_map.install_shift * 10000000LL;
+		if ( ts < 0 || ts >= int64_t( 1 ) << 60 ) fail( "rule 4c: the shifted timestamp of the version-1 GUID " + real.label + " leaves the 60-bit range" );
+		const std::string want_node = syn_node ? lower( sn ) : lower( rv.node ) == "806e6f6e6963" ? std::string( "806e6f6e6963" ) : std::string();	// empty: any synthetic node
+		const bool up = !has_lower_hex( g );
+		// the GUID text in the real one's style (braces, hyphens, case) from its three parts
+		auto compose = [ & ]( uint64_t t, const std::string& clock, const std::string& nd ) {
+			std::string hex = fmt( "%08llx%04llx%04llx", (unsigned long long)( t & 0xFFFFFFFFull ), (unsigned long long)( t >> 32 & 0xFFFF ), (unsigned long long)( 0x1000 | ( t >> 48 & 0x0FFF ) ) ) + lower( clock ) + lower( nd );
+			if ( up ) hex = upper( hex );
+			std::string o = g;
+			size_t k = 0;
+			for ( char& c : o ) if ( is_hex( c ) ) c = hex[ k++ ];
+			return o;
+		};
+		const char* v = draw( ctx, real.label, "guid", g, true, [ & ] {
+			const std::string clock = Randomize->gen_clock_seq_like( rv.clock_seq.c_str() );
+			const std::string nd = want_node.empty() ? std::string( Randomize->gen_hex_like( rv.node.c_str(), false ) ) : want_node;
+			return keep( compose( uint64_t( ts ), clock, nd ) );
+		} );
+		// the value (drawn now or saved) must follow the rule: version 1, the real variant class, the derived timestamp, the
+		// derived node, the real one's style
+		const GuidV1 sv = parse_guid_v1( v );
+		auto variant_class = []( const std::string& c ) { const unsigned x = unsigned( std::stoul( c.substr( 0, 1 ), nullptr, 16 ) ); return x < 8 ? 0u : x < 12 ? 1u : x < 14 ? 2u : 3u; };
+		const bool style = std::string( v ).size() == g.size() && compose( sv.ok ? sv.timestamp : 0, sv.ok ? sv.clock_seq : "0000", sv.ok ? sv.node : "000000000000" ) == v;
+		const bool node_ok = sv.ok && ( want_node.empty() || lower( sv.node ) == want_node );
+		const bool shape_ok = sv.ok && style && node_ok && variant_class( sv.clock_seq ) == variant_class( rv.clock_seq );
+		if ( shape_ok && sv.timestamp == uint64_t( ts ) ) return { v, real.label };
+		if ( !shape_ok || !ctx.applying || !ctx.upgrade_v1_time )
+			fail( "the identity map's version-1 GUID for " + real.label + " does not fit the rule (version 1, variant, node, timestamp = real + the install-history offset)" +
+				( shape_ok ? " - a map written before U1516: apply it once with --upgrade-v1-time, or generate a new identity (--new-identity)" : " - generate a new identity (--new-identity)" ) );
+		// the upgrade of a pre-U1516 map: the derived timestamp, the saved clock sequence and node
+		const std::string up_v = compose( uint64_t( ts ), sv.clock_seq, sv.node );
+		if ( ieq( up_v, g ) ) fail( "rule 4c: the upgraded version-1 GUID " + real.label + " equals the captured value" );
+		ctx.identity_map.entries[ real.label ].value = up_v;
+		ctx.upgraded_keys.push_back( real.label );
+		return { keep( up_v ), real.label };
 	}
 
 	// rule 4d: a USB / HID device serial (Randomize->gen_usb_serial_like: hex-encoded ASCII stays hex-encoded ASCII, other hex
@@ -1811,7 +1873,50 @@ namespace emu::platform
 		}
 		NodeMap nodes;
 		for ( size_t i : mac_ids ) nodes.real_to_synthetic[ mac_plain( ids[ i ].original ) ] = mac_plain( ids[ i ].synthetic );
-		// 2. everything else (dependent kinds - SIDs, NameSamCompatible, the install instant - in the pass after it)
+		// 1b. the install instant (rule 7b) BEFORE the GUIDs: an RFC 4122 version-1 GUID's timestamp moves by the same
+		// install-history offset (rule 4c, U1516). ONE instant for InstallDate and InstallTime (gen_install_time records the
+		// offset in ctx's identity map; this capture's offset only - a value of an earlier build of ctx is dropped first)
+		ctx.identity_map.has_install_shift = false;
+		ctx.identity_map.install_shift = 0;
+		bool have_instant = false;
+		InstallTime inst, inst_real;
+		// an install-history value as unix seconds (FILETIMEs floored to the second)
+		auto history_unix = [ & ]( const Ident& x, int64_t& t ) {
+			if ( !k_history.count( x.kind ) || x.preset ) return false;
+			if ( x.kind == "install_date" ) { t = std::stoll( x.original ); return true; }
+			if ( x.kind == "event_iso" ) return unix_of_iso( x.original, t );
+			t = int64_t( std::stoull( x.original ) / 10000000ull ) - 11644473600LL;
+			return true;
+		};
+		if ( std::any_of( ids.begin(), ids.end(), [ & ]( const Ident& x ) { int64_t t = 0; return history_unix( x, t ); } ) )
+		{
+			for ( const std::string& l : split_lines( f_info->data ) )
+			{
+				std::smatch m;
+				static const std::regex r_build( R"(CurrentBuild ([0-9]+))" ), r_utc( R"(^run\.start_utc\s*=\s*(\S+))" );
+				if ( l.rfind( "os.registry", 0 ) == 0 && std::regex_search( l, m, r_build ) ) inst_real.os_build = unsigned( std::stoul( m[ 1 ].str() ) );
+				if ( std::regex_search( l, m, r_utc ) ) inst_real.capture_utc = m[ 1 ].str();
+			}
+			bool have_install = false;
+			for ( const Ident& x : ids )
+			{
+				if ( x.kind == "install_date" ) { inst_real.unix_seconds = std::stoll( x.original ); have_install = true; }
+				if ( x.kind == "install_time" ) inst_real.filetime = std::stoull( x.original );
+			}
+			if ( !have_install ) fail( "rule 7b: install-history timestamps without the OS InstallDate (os_ids.txt) - nothing to shift them with" );
+			if ( !inst_real.filetime ) inst_real.filetime = ( uint64_t( inst_real.unix_seconds ) + 11644473600ull ) * 10000000ull;
+			int64_t lo = INT64_MAX, hi = INT64_MIN;
+			for ( const Ident& x : ids )
+			{
+				int64_t t = 0;
+				if ( history_unix( x, t ) ) { lo = std::min( lo, t ); hi = std::max( hi, t ); }
+			}
+			inst_real.earliest_event = lo;
+			inst_real.latest_event = hi;
+			inst = gen_install_time( ctx, inst_real );
+			have_instant = true;
+		}
+		// 2. everything else (dependent kinds - SIDs, NameSamCompatible, the install-history values - in the pass after it)
 		const std::vector<std::string> usb_table = in.usb_table.empty() ? parse_usb_serial_table( { f_enum->data } ) : in.usb_table;
 		static const std::set<std::string> k_post = { "machine_sid", "user_sid", "name_sam_compatible", "install_date", "install_time", "device_install_time",
 			"device_arrival_time", "sqm_first_session", "diagtrack_time", "bt_event_time", "event_iso" };	// = the SIDs, NameSamCompatible and k_history
@@ -1903,16 +2008,6 @@ namespace emu::platform
 				for ( const Ident& x : ids ) if ( x.kind == kind && ieq( x.original, v ) ) return x.synthetic;
 				return {};
 			};
-			bool have_instant = false;
-			InstallTime inst, inst_real;
-			// an install-history value as unix seconds (FILETIMEs floored to the second)
-			auto history_unix = [ & ]( const Ident& x, int64_t& t ) {
-				if ( !k_history.count( x.kind ) || x.preset ) return false;
-				if ( x.kind == "install_date" ) { t = std::stoll( x.original ); return true; }
-				if ( x.kind == "event_iso" ) return unix_of_iso( x.original, t );
-				t = int64_t( std::stoull( x.original ) / 10000000ull ) - 11644473600LL;
-				return true;
-			};
 			for ( Ident& d : ids )
 			{
 				if ( !k_post.count( d.kind ) ) continue;
@@ -1928,36 +2023,9 @@ namespace emu::platform
 					if ( suser.empty() ) suser = gen_class_string( ctx, { user.c_str(), "identity/" + d.id + "/user" } ).text;
 					d.synthetic = sdom + "\\" + suser;
 				}
-				else	// rule 7b: the install history, shifted together by ONE offset (gen_install_time)
+				else	// rule 7b: the install history, shifted together by ONE offset (gen_install_time, step 1b)
 				{
-					if ( !have_instant )
-					{
-						for ( const std::string& l : split_lines( f_info->data ) )
-						{
-							std::smatch m;
-							static const std::regex r_build( R"(CurrentBuild ([0-9]+))" ), r_utc( R"(^run\.start_utc\s*=\s*(\S+))" );
-							if ( l.rfind( "os.registry", 0 ) == 0 && std::regex_search( l, m, r_build ) ) inst_real.os_build = unsigned( std::stoul( m[ 1 ].str() ) );
-							if ( std::regex_search( l, m, r_utc ) ) inst_real.capture_utc = m[ 1 ].str();
-						}
-						bool have_install = false;
-						for ( const Ident& x : ids )
-						{
-							if ( x.kind == "install_date" ) { inst_real.unix_seconds = std::stoll( x.original ); have_install = true; }
-							if ( x.kind == "install_time" ) inst_real.filetime = std::stoull( x.original );
-						}
-						if ( !have_install ) fail( "rule 7b: install-history timestamps without the OS InstallDate (os_ids.txt) - nothing to shift them with" );
-						if ( !inst_real.filetime ) inst_real.filetime = ( uint64_t( inst_real.unix_seconds ) + 11644473600ull ) * 10000000ull;
-						int64_t lo = INT64_MAX, hi = INT64_MIN;
-						for ( const Ident& x : ids )
-						{
-							int64_t t = 0;
-							if ( history_unix( x, t ) ) { lo = std::min( lo, t ); hi = std::max( hi, t ); }
-						}
-						inst_real.earliest_event = lo;
-						inst_real.latest_event = hi;
-						inst = gen_install_time( ctx, inst_real );
-						have_instant = true;
-					}
+					if ( !have_instant ) fail( "rule 7b: an install-history value without the install instant (step 1b)" );
 					if ( d.kind == "install_date" ) d.synthetic = std::to_string( inst.unix_seconds );
 					else if ( d.kind == "event_iso" )
 					{
@@ -1996,6 +2064,25 @@ namespace emu::platform
 				if ( c.exact != c.shifted || c.outside_window || c.before_install_real != c.before_install_synthetic )
 					fail( fmt( "self-check rule 7b: %zu of %zu install-history values shifted by the one offset, %zu outside the window, %zu / %zu before the install", c.exact, c.shifted,
 						c.outside_window, c.before_install_real, c.before_install_synthetic ) );
+			}
+			// the self-check of the version-1 GUID timestamps (rule 4c, U1516): synthetic = real + the one offset (100-ns units) for
+			// every RFC 4122 version-1 GUID identity; counted (no value): real timestamps before the OS install / after the capture
+			if ( rules.r4c )
+			{
+				V1GuidCheck& c = out.v1_guids;
+				const int64_t capture_unix = have_instant ? parse_install_window( inst_real.os_build, inst_real.capture_utc ).hi : 0;
+				for ( const Ident& x : ids )
+				{
+					if ( x.rule != "4c" ) continue;
+					const GuidV1 a = parse_guid_v1( x.original.c_str() ), b = parse_guid_v1( x.synthetic.c_str() );
+					if ( !a.ok ) continue;
+					c.guids++;
+					c.exact += have_instant && b.ok && int64_t( b.timestamp ) - int64_t( a.timestamp ) == inst.shift_seconds * 10000000LL;
+					const int64_t unix_real = int64_t( a.timestamp / 10000000ull ) - 12219292800LL;	// 1582-10-15 -> 1970-01-01: 141427 days
+					c.before_install += have_instant && unix_real < inst_real.unix_seconds;
+					c.after_capture += have_instant && unix_real > capture_unix;
+				}
+				if ( c.exact != c.guids ) fail( fmt( "self-check rule 4c: %zu of %zu version-1 GUID timestamps = real + the install-history offset", c.exact, c.guids ) );
 			}
 		}
 		// 3a. disk serials (8d): the start of a USB serial of the capture (a USB flash drive reports the start of its USB serial) =
@@ -2935,6 +3022,7 @@ namespace emu::platform
 		p.filler_serials = tg.filler_serials;
 		p.volatiles = tg.volatiles;
 		p.time_shift = tg.time_shift;
+		p.v1_guids = tg.v1_guids;
 		p.needles = sg.needles;
 		p.needles.insert( p.needles.end(), eg.needles.begin(), eg.needles.end() );
 		p.needles.insert( p.needles.end(), dg.needles.begin(), dg.needles.end() );
@@ -3002,6 +3090,7 @@ namespace emu::platform
 			const Environment env = ctx.config.env;
 			Identity& p = res.identity;
 			ctx.used_keys.clear();
+			ctx.upgraded_keys.clear();
 			const size_t loaded = ctx.identity_map.entries.size();
 			p = gen_identity( ctx, in );
 			// the identity map: application uses every saved value (one left over means the map does not fit this capture)
@@ -3057,6 +3146,19 @@ namespace emu::platform
 					p.time_shift.shifted, shift_kinds.c_str(), p.time_shift.exact, p.time_shift.shifted, p.time_shift.outside_window, p.time_shift.before_install_real, p.time_shift.before_install_synthetic )
 				: std::string( "no install history in this capture" );
 			log.info( "install shift", shift_text );
+			const V1GuidCheck& vc = p.v1_guids;
+			const std::string v1_text = vc.guids
+				? fmt( "%zu RFC 4122 version-1 GUIDs (rule 4c, U1516): timestamp = real + the install-history offset for %zu of %zu (100-ns units, derived - never drawn); clock sequence synthetic, variant bits and the node rule kept; %zu real timestamps precede the OS install (they stay earlier by the same spacing), %zu follow the capture",
+					vc.guids, vc.exact, vc.guids, vc.before_install, vc.after_capture )
+				: std::string( "no RFC 4122 version-1 GUID in this capture" );
+			log.info( "version-1 guids", v1_text );
+			if ( !ctx.upgraded_keys.empty() )
+			{
+				std::string keys;
+				for ( const std::string& k : ctx.upgraded_keys ) keys += ( keys.empty() ? "" : ", " ) + k;
+				log.info( "identity map", fmt( "UPGRADE (--upgrade-v1-time, U1516): %zu version-1 GUID value(s) of the saved map re-derived - timestamp = real + the install-history offset, the saved clock sequence and node kept; every other value applied unchanged: %s",
+					ctx.upgraded_keys.size(), keys.c_str() ) );
+			}
 			std::map<std::string, size_t> per_kind;
 			for ( const IdentityEntry& r : p.identity ) per_kind[ r.kind ]++;
 			std::string kinds;
@@ -3144,6 +3246,7 @@ namespace emu::platform
 				p.exclusions.ranges.size(), excl_summary.empty() ? "-" : excl_summary.c_str(), p.excluded_anchors, p.excluded_rows ) );
 			prov.emplace_back( "volatile", fmt( "%zu values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps", p.volatiles.size() ) );
 			prov.emplace_back( "install_shift", shift_text );
+			prov.emplace_back( "v1_guids", v1_text );
 
 			// the BuildConfig copies: synthetic = the configuration as used (portable); original adds the resolved
 			// capture root and folder name (local only)
@@ -3280,6 +3383,7 @@ namespace emu::platform
 			else if ( check ) fail( "check: no identity map " + show( own_map_file ) + " to apply" );
 			load_identity_maps( ctx, own, peer_map );
 			ctx.fresh = false;
+			if ( ctx.upgrade_v1_time && ( check || !ctx.applying ) ) fail( "--upgrade-v1-time upgrades a saved identity map while writing the profile: not in check mode, not without a saved map" );
 			pre.info( "identity", own.entries.empty() ? std::string( "GENERATION: a new identity, every value from RDRAND (the shared USB serials from the peer map when it has them)" )
 				: fmt( "APPLICATION of the saved identity map (%zu values)", own.entries.size() ) );
 

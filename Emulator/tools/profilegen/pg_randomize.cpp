@@ -234,6 +234,22 @@ namespace emu::platform
 			if ( !ieq( o, g ) ) return result( buf, o );
 		}
 	}
+	const char* Randomizer::gen_clock_seq_like( const char* real )
+	{
+		thread_local std::string buf;
+		const std::string r = real ? real : "";
+		if ( r.size() != 4 || !std::all_of( r.begin(), r.end(), is_hex ) ) fail( "rule 4c: a version-1 clock sequence of 4 hex digits expected" );
+		const bool lower_case = std::any_of( r.begin(), r.end(), []( char c ) { return c >= 'a' && c <= 'f'; } );
+		const unsigned v = unsigned( std::stoul( r.substr( 0, 1 ), nullptr, 16 ) );
+		const unsigned keep = ( v < 8 ? 0x8u : v < 12 ? 0xCu : 0xEu ) << 12;	// the variant bits (bits 15:12 of the group)
+		for ( ;; )
+		{
+			const unsigned x = ( unsigned( gen_below( 0x10000 ) ) & ~keep ) | ( ( v << 12 ) & keep );
+			char o[ 5 ];
+			snprintf( o, sizeof o, lower_case ? "%04x" : "%04X", x );
+			if ( !ieq( o, r ) ) return result( buf, o );
+		}
+	}
 	const char* Randomizer::gen_system_uuid_like( const char* real_hex, bool vmware )
 	{
 		thread_local std::string buf;

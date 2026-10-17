@@ -58,8 +58,15 @@ namespace emu::platform
 		const char* gen_mac_like( const char* real, unsigned max_delta );
 		// a GUID text (braces, hyphens, case kept): the version digit and the variant bits kept; an MBR-style volume GUID
 		// {SSSSSSSS-0000-0000-0000-OOOOOOOOOOOO}: only the disk signature; a version-1 GUID: node = node (12 hex digits),
-		// or Windows' no-NIC node 806E6F6E6963 kept when node is null; any other GUID: every remaining digit random
+		// or Windows' no-NIC node 806E6F6E6963 kept when node is null; any other GUID: every remaining digit random.
+		// (Since U1516 ProfileGenerator::gen_guid no longer takes RFC 4122 version-1 GUIDs from here: their timestamp is the
+		// real one + the install-history offset, only the clock sequence comes from gen_clock_seq_like.)
 		const char* gen_guid_like( const char* real, const char* node );
+		// the clock sequence of a version-1 GUID (its 4th group: 4 hex digits, the real one's case - upper case when it has no
+		// letter; ProfileGenerator writes it in the GUID's case anyway): the variant bits of the
+		// first digit kept (0xxx / 10xx / 110x / 111x), every other bit random, differs from real (U1516: the 60-bit
+		// timestamp of a version-1 GUID is no random value - ProfileGenerator derives it from the install-history offset)
+		const char* gen_clock_seq_like( const char* real );
 		// SMBIOS type 1 UUID as 32 hex digits (raw SMBIOS byte order): vmware = bytes 0-1 kept (VMware's 56 4D), else the
 		// RFC 4122 version nibbles (bytes 6, 7) and the variant bits (byte 8) kept
 		const char* gen_system_uuid_like( const char* real_hex, bool vmware );

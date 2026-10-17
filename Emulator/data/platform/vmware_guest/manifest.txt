@@ -23,6 +23,7 @@ identity                            = 117 identifiers, 1911 occurrence + relatio
 exclusions                          = 32 range(s) of tool artifacts not part of the profile (exclusions.tsv): RustDesk Printer: 28 range(s), 93 line(s); RustDesk: 1 range(s), 1 line(s); System Informer: 3 range(s), 3 line(s); DebugView: nothing found; VmLoader: nothing found; 3 identifier anchor(s), 0 occurrence row(s) inside them dropped
 volatile                            = 19 values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps
 install_shift                       = 56 install-history values (device_arrival_time 13, device_install_time 24, diagtrack_time 3, event_iso 13, install_date 1, install_time 1, sqm_first_session 1) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): 56 of 56 exact, so every pairwise difference is the original one; 0 outside the build release .. capture window; 0 precede the OS install in the capture and 0 in the profile (Windows setup)
+v1_guids                            = 22 RFC 4122 version-1 GUIDs (rule 4c, U1516): timestamp = real + the install-history offset for 22 of 22 (100-ns units, derived - never drawn); clock sequence synthetic, variant bits and the node rule kept; 0 real timestamps precede the OS install (they stay earlier by the same spacing), 0 follow the capture
 # size_bytes  sha256  file
        178  24990A4B6BA764BA0B2D4EF03E480973589061841320A4F22556E275E7A0351C  acpi\acpi_APIC.bin
         80  7A2F0AF9B3A6FE103CDDBD63DA8A9246DFF4B632FF624EB4D1B1E00803C43B02  acpi\acpi_DMAR.bin
@@ -43,8 +44,8 @@ install_shift                       = 56 install-history values (device_arrival_
        396  C9039CD3996833898AA92391E1430479F27F318CF6752C52E4FBD798B9B50F41  disk\disk_1_descriptor.bin
       2364  92B1E10AD6D027317A83E966BFBF8A941E33F64BDBB2112B52463020E3153B35  exclusions.tsv
      94669  B0EFF5C21C97397AD879C7915187023C87634A685863A7074C71485293D9F7DE  fieldmap.tsv
-     11195  C1431CD115DE5C021CFCEA96A37F4E526C9615960CCC24F09DABF056CDA09B97  identity.tsv
-      4027  EA9C4B21EEB49728513D4BAB9FA9C8866480AD85B853B2989B242C479A3134D1  identity_map.tsv
+     11195  5D75184407440951CCB1A988171705371F1B0BFC9C697BC00B04D432FEAC44CD  identity.tsv
+      4027  FEAE6D69D61028A7FF4D75084598023099FDC34B6E841E7371D9E7C09F37F249  identity_map.tsv
      14082  43D427054C54D5EBBFBE89053A8299527ECB0F8A8588C08FB283F8C7C8E5DB63  smbios.bin
       2627  A8DC8D421B5C74698766358066A015E9F6238432A6DB758A169C4AC2E166738F  volatile.tsv
 # 23 file(s)

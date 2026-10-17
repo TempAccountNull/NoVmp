@@ -301,6 +301,20 @@ static void pg_guard_undecided( void )
 	TEST_CHECK( threw );
 }
 
+// the install history every text fixture carries (U1516: an RFC 4122 version-1 GUID's timestamp moves by the rule 7b
+// install-history offset, so a capture with a version-1 GUID needs one): os_ids.txt with InstallDate / InstallTime only
+// (made-up values, the same as pg_os_ids); the capture_info.txt lines give the build release .. capture window
+static const char* const k_pg_install_os_ids =
+	"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallDate\" REG_DWORD, 4 bytes [machine-specific]: 0x64A0B1C2 (1688252866)\n"
+	"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallTime\" REG_QWORD, 8 bytes [machine-specific]: 0x01D9AC70D901E387 (133327264661234567)\n";
+// replaces the text file name of files (or adds it)
+static void pg_put( std::vector<TextFile>& files, const char* name, const std::string& body )
+{
+	for ( TextFile& f : files )
+		if ( f.name == name ) { f.data = Bytes( body.begin(), body.end() ); return; }
+	files.push_back( { name, Bytes( body.begin(), body.end() ) } );
+}
+
 static void pg_text_fixture( std::vector<TextFile>& files )
 {
 	auto tf = []( const char* name, const std::string& s ) { return TextFile { name, Bytes( s.begin(), s.end() ) }; };
@@ -308,7 +322,9 @@ static void pg_text_fixture( std::vector<TextFile>& files )
 		tf( "capture_info.txt", "tool.version            = fixture\n"
 								"os.computer_name        = NetBIOS \"DESKTOP-FIXTURE\", DNS host \"DESKTOP-FIXTURE\", DNS domain \"\"\n"
 								"run.output_folder       = X:\\out\\DESKTOP-FIXTURE_20260101_000000\n"
-								"not.a.match             = DESKTOP-FIXTUREX\n" ),
+								"not.a.match             = DESKTOP-FIXTUREX\n"
+								"run.start_utc           = 2026-01-01T00:00:00.000Z\n"
+								"os.registry             = ProductName \"Windows 10 Pro\", EditionID \"Professional\", DisplayVersion \"22H2\", CurrentBuild 19045, UBR 1\n" ),
 		tf( "network_adapters.txt", "=== adapter 0\nAdapterName: \"{11111111-2222-4333-8444-555555555555}\"\nDescription: \"Fixture Virtual Ethernet Adapter\"\n"
 									"MAC (6 bytes): 00:50:56:3F:1D:42  [VMware OUI]\n"
 									"=== adapter 1\nAdapterName: \"{AAAAAAAA-BBBB-1CCC-9DDD-EEEEEEEEEEEE}\"\nDescription: \"Fixture Wired Ethernet\"\nMAC (6 bytes): 00:11:22:33:44:55\n"
@@ -324,7 +340,8 @@ static void pg_text_fixture( std::vector<TextFile>& files )
 							   "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\STORAGE\\VolumeSnapshot\\HarddiskVolumeSnapshot1\n" ),
 		tf( "pci_devices.txt", "  SPDRP_BASE_CONTAINERID             REG_SZ \"{deadbeef-0000-11f0-a000-806e6f6e6963}\"\n"
 							 "    {8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C} pid 2 DEVPKEY_Device_ContainerId [IDENTIFIER - keep local] type 0xD: {DEADBEEF-0000-11F0-A000-806E6F6E6963}\n"
-							 "  instance SCSI\\DISK&VEN_FIXTURE&PROD_DISK_1\\5&1A2B3C4D&0&000000\n" ) };
+							 "  instance SCSI\\DISK&VEN_FIXTURE&PROD_DISK_1\\5&1A2B3C4D&0&000000\n" ),
+		tf( "os_ids.txt", k_pg_install_os_ids ) };
 }
 
 static const IdentityEntry* pg_find( const std::vector<IdentityEntry>& v, const std::string& kind, const std::string& original )
@@ -404,7 +421,8 @@ static void pg_identity_rules( void )
 		TEST_ASSERT( r != nullptr );
 		std::string want = r->original;
 		if ( r->rule == "4c" && want.front() == '{' ) want = want.substr( 1, 36 );
-		TEST_CHECK_( _stricmp( got.c_str(), want.c_str() ) == 0 || ( r->rule == "3" && got.size() == 17 ), "occurrence of %s at %s %llu:%llu", f.id.c_str(), f.area.c_str(),
+		// a MAC occurs in its hyphen / colon forms, an install-history value also as its 0x hex form
+		TEST_CHECK_( _stricmp( got.c_str(), want.c_str() ) == 0 || ( r->rule == "3" && got.size() == 17 ) || ( r->rule == "7b" && got.rfind( "0x", 0 ) == 0 ), "occurrence of %s at %s %llu:%llu", f.id.c_str(), f.area.c_str(),
 			(unsigned long long)f.line, (unsigned long long)f.offset );
 	}
 }
@@ -647,7 +665,8 @@ static std::vector<TextFile> pg_text_fixture2( const std::string& usb_lines )
 							   "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\STORAGE\\Volume\\{87654321-0000-11f0-a000-806e6f6e6963}#0000000000200000\n" + usb_lines ),
 		tf( "pci_devices.txt", "  instance PCI\\VEN_8086&DEV_1234&SUBSYS_00000000&REV_04\\A0B1C2FFFF01020300\n"
 							 "  SPDRP_BASE_CONTAINERID             REG_SZ \"{12345678-9abc-11f0-8123-3ca9f4102030}\"\n" ),
-		tf( "certificates.txt", "subject: \"CN=Fixture Test Certificate\"\nnode 3CA9F4102030 here is not searched\n" ) };
+		tf( "certificates.txt", "subject: \"CN=Fixture Test Certificate\"\nnode 3CA9F4102030 here is not searched\n" ),
+		tf( "os_ids.txt", k_pg_install_os_ids ) };	// index 5: the install history (fixture 3 replaces it by the full os_ids.txt)
 }
 static std::string pg_usb( const char* dev, const char* serial ) { return std::string( "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB\\" ) + dev + "\\" + serial + "\n"; }
 
@@ -1036,7 +1055,7 @@ static std::vector<TextFile> pg_text_fixture3( bool sus_dump = false )
 							"    {83DA6326-97A6-4088-9453-A1923F573B29} pid 102 DEVPKEY_Device_LastArrivalDate [machine-specific] type 0x10: 2025-12-31T23:50:00Z (0x01DC7AB02D45FDAA)\n"
 							"    {A8B865DD-2E3D-4094-AD97-E593A70C75D6} pid 2 DEVPKEY_Device_DriverDate [machine-specific] type 0x10: 2006-06-21T00:00:00Z (0x01C694C5A38C8000)\n";
 	files[ 3 ].data.insert( files[ 3 ].data.end(), dev.begin(), dev.end() );
-	files.push_back( tf( "os_ids.txt", pg_os_ids() ) );
+	pg_put( files, "os_ids.txt", pg_os_ids() );
 	files.push_back( tf( "license.txt", std::string( "# fwid license capture - fixture\n# OfflineInstallationId = the Windows installation ID [IDENTIFIER - keep local].\n\n"
 		"=== SoftwareLicensingProduct row 0\n"
 		"ID                     \"f0f0f0f0-aaaa-4bbb-8ccc-dddddddddddd\"  [SKU ID]\n"
@@ -1158,7 +1177,7 @@ static void pg_os_ids_guard( void )
 	BuildContext ctx;
 	auto run = [ & ]( const char* name, const std::string& body ) {
 		auto files = pg_text_fixture2( "" );
-		files.push_back( { name, Bytes( body.begin(), body.end() ) } );
+		pg_put( files, name, body );
 		ctx = pg_fresh( Environment::bare_host );
 		try { ProfileGen->gen_text_identity( ctx, { files } ); }
 		catch ( const std::exception& e ) { return std::string( e.what() ).find( "needs a field decision" ) != std::string::npos; }
@@ -1380,7 +1399,7 @@ static std::vector<TextFile> pg_tool_fixture( bool leak_outside )
 	files.push_back( tf( "services_vm.txt", "# the services matching vmloader, ...\n## all service key names (3)\n  \"Beep\"\n  \"KFixDbg\"\n  \"Tcpip\"\n" ) );
 	files.push_back( tf( "loaded_drivers.txt", "3 module(s)\n   0  0000000000000000  base \"ntoskrnl.exe\"\n   1  0000000000000000  base \"FixDbg.sys\" (len 10)\n" ) );
 	files.push_back( tf( "driver_files.txt", "## \"C:\\x5Cvmloader.sys\"  (old install location)\nexists: no (GetLastError 2 = not present)\n" ) );
-	if ( leak_outside ) files.push_back( tf( "os_ids.txt", "## note\nprinter instance {d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\n" ) );
+	if ( leak_outside ) pg_put( files, "os_ids.txt", std::string( k_pg_install_os_ids ) + "## note\nprinter instance {d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\n" );
 	return files;
 }
 static void pg_tool_exclusions( void )
@@ -1625,7 +1644,7 @@ static void pg_install_shift( void )
 static void pg_randomizer_threads( void )
 {
 	TEST_ASSERT_( Randomize->cpu_supports_rand, "RDRAND (CPUID.1:ECX[30]) on the test machine" );
-	constexpr int k_threads = 8, k_rounds = 1500, k_checks = 23;	// k_checks: the results validated per round
+	constexpr int k_threads = 8, k_rounds = 1500, k_checks = 24;	// k_checks: the results validated per round
 	std::string iid_real;	// 63 digits: 9 groups of 7 (the pattern; its own check digits do not matter)
 	for ( int g = 0; g < 9; g++ ) iid_real += "1234560";
 	struct ThreadResult
@@ -1642,7 +1661,8 @@ static void pg_randomizer_threads( void )
 			r_guid4( R"(\{[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}\})" ),
 			r_guid1( R"([0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[89ab][0-9a-f]{3}-a0b1c2010203)" ),
 			r_mbr( R"(\{[0-9a-f]{8}-0000-0000-0000-100000000000\})" ), r_uuid( "[0-9a-f]{32}" ), r_dec6( "[1-9][0-9]{5}" ),
-			r_sid( "S-1-5-21-[1-9][0-9]{9}-[1-9][0-9]{8}-[1-9][0-9]{9}" ), r_usbhex( "[0-9a-f]{20}" ), r_dec( "[0-9]{1,10}" ), r_usbtxt( "[A-Z]{3}[0-9]{5}" );
+			r_sid( "S-1-5-21-[1-9][0-9]{9}-[1-9][0-9]{8}-[1-9][0-9]{9}" ), r_usbhex( "[0-9a-f]{20}" ), r_dec( "[0-9]{1,10}" ), r_usbtxt( "[A-Z]{3}[0-9]{5}" ),
+			r_clock( "[89ab][0-9a-f]{3}" );
 		auto ok = [ & ]( bool good, const char* what ) {
 			r.calls++;
 			if ( !good && !r.bad++ ) r.first_bad = what;
@@ -1676,6 +1696,8 @@ static void pg_randomizer_threads( void )
 				ok( std::regex_match( Randomize->gen_guid_like( "{0F0F0F0F-1111-4222-8333-444455556666}", nullptr ), r_guid4 ), "gen_guid_like v4" );
 				ok( std::regex_match( Randomize->gen_guid_like( "12345678-9abc-11f0-8123-3ca9f4102030", "a0b1c2010203" ), r_guid1 ), "gen_guid_like v1 node" );
 				ok( std::regex_match( Randomize->gen_guid_like( "{3fa81c55-0000-0000-0000-100000000000}", nullptr ), r_mbr ), "gen_guid_like mbr" );
+				const std::string cs = Randomize->gen_clock_seq_like( "a3f1" );
+				ok( std::regex_match( cs, r_clock ) && cs != "a3f1", "gen_clock_seq_like" );
 				const std::string uv = Randomize->gen_system_uuid_like( "564d0123456789abcdef1032547698ba", true );
 				ok( std::regex_match( uv, r_uuid ) && uv.substr( 0, 4 ) == "564d", "gen_system_uuid_like vmware" );
 				const std::string ur = Randomize->gen_system_uuid_like( "1032547698ba1c4e8f00112233445566", false );
@@ -1853,6 +1875,126 @@ static void pg_concurrent_fresh_shared( void )
 	size_t valid = 0;
 	for ( const HeldValue& h : held ) valid += h.text && h.copy == h.text;
 	TEST_CHECK_( valid == held.size() && held.size() == size_t( k_rounds ) * 2 * 4, "%zu of %zu const char* results still valid after their contexts were destroyed", valid, held.size() );
+}
+
+// ── version-1 GUID timestamps (gap P1 #1, U1516) ──────────────────────────────────────────────────────────────────────
+// the GUID text with its first 8 hex digits (time_low) replaced by x (case of the text kept): another timestamp, the same
+// clock sequence and node
+static std::string pg_v1_retime( const std::string& g, uint32_t x )
+{
+	const bool up = std::none_of( g.begin(), g.end(), []( char c ) { return c >= 'a' && c <= 'f'; } );
+	char h[ 9 ];
+	snprintf( h, sizeof h, up ? "%08X" : "%08x", x );
+	std::string o = g;
+	size_t k = 0;
+	for ( char& c : o )
+		if ( isxdigit( uint8_t( c ) ) && k < 8 ) c = h[ k++ ];
+	return o;
+}
+// rule 4c version-1 GUIDs (decision E "valid v1" + rule 7b): every RFC 4122 version-1 GUID's 60-bit timestamp = real + the
+// install-history offset (the offset of InstallDate, 100-ns units), the clock sequence synthetic with its variant bits, the
+// node rule kept (adapter MAC -> synthetic MAC, the no-NIC node exact); application re-checks every saved value; a map
+// written before the rule stops the build unless upgrade_v1_time re-derives exactly those timestamps (clock + node kept);
+// without an install history a version-1 GUID stops the build; parse_guid_v1 / Randomize->gen_clock_seq_like on their own
+static void pg_v1_guid_time( void )
+{
+	auto files = pg_text_fixture3();
+	BuildContext ctx = pg_fresh( Environment::bare_host );
+	const TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	const IdentityMap gen_map = ctx.identity_map;
+	const IdentityEntry* d = pg_find( t.identity, "install_date", "1688252866" );
+	const IdentityEntry* wifi = pg_find( t.identity, "mac", "3C:A9:F4:10:20:30" );
+	TEST_ASSERT( d != nullptr && wifi != nullptr );
+	const long long shift = std::stoll( d->synthetic ) - 1688252866LL;
+	std::string wifi_node;
+	for ( char ch : wifi->synthetic ) if ( ch != ':' ) wifi_node += char( tolower( uint8_t( ch ) ) );
+	size_t v1 = 0, mac_nodes = 0, nonic = 0;
+	for ( const IdentityEntry& r : t.identity )
+	{
+		const GuidV1 a = ProfileGenerator::parse_guid_v1( r.original.c_str() ), b = ProfileGenerator::parse_guid_v1( r.synthetic.c_str() );
+		if ( !a.ok ) continue;
+		v1++;
+		TEST_CHECK_( b.ok && (long long)( b.timestamp - a.timestamp ) == shift * 10000000LL, "%s (%s): timestamp = real + the install-history offset", r.id.c_str(), r.kind.c_str() );
+		TEST_CHECK_( b.clock_seq.size() == 4 && ( std::stoul( b.clock_seq.substr( 0, 1 ), nullptr, 16 ) & 0xC ) == 0x8, "%s: the RFC 4122 variant kept", r.id.c_str() );
+		std::string an = a.node, bn = b.node;
+		for ( char& ch : an ) ch = char( tolower( uint8_t( ch ) ) );
+		for ( char& ch : bn ) ch = char( tolower( uint8_t( ch ) ) );
+		if ( an == "806e6f6e6963" ) { nonic++; TEST_CHECK( bn == an ); }
+		if ( an == "3ca9f4102030" ) { mac_nodes++; TEST_CHECK_( bn == wifi_node, "%s: node = the synthetic Wi-Fi MAC", r.id.c_str() ); }
+	}
+	TEST_CHECK_( v1 == 4 && mac_nodes == 2 && nonic == 2, "4 version-1 GUIDs (container, WPD, volume, HwProfileGuid): got %zu (%zu MAC nodes, %zu no-NIC nodes)", v1, mac_nodes, nonic );
+	TEST_CHECK( t.v1_guids.guids == v1 && t.v1_guids.exact == v1 && t.v1_guids.after_capture == 0 );
+	const IdentityEntry* hp = pg_find( t.identity, "hw_profile_guid", "{0a1b2c3d-1111-11ef-8222-806e6f6e6963}" );
+	TEST_ASSERT( hp != nullptr );
+	TEST_CHECK( std::regex_match( hp->synthetic, std::regex( R"(\{[0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[89ab][0-9a-f]{3}-806e6f6e6963\})" ) ) );	// its own style
+	// application of the saved map: the same values, nothing drawn
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, gen_map, {} );
+	const TextIdentityGen t2 = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	bool same = t2.identity.size() == t.identity.size();
+	for ( size_t i = 0; same && i < t.identity.size(); i++ ) same = t2.identity[ i ].synthetic == t.identity[ i ].synthetic;
+	TEST_CHECK( same && ctx.upgraded_keys.empty() );
+	// a map written before the rule: every version-1 value with another timestamp (clock sequence + node kept)
+	IdentityMap old_map = gen_map;
+	std::vector<std::string> retimed;
+	for ( auto& [ k, e ] : old_map.entries )
+		if ( e.kind == "guid" && ProfileGenerator::parse_guid_v1( e.value.c_str() ).ok )
+		{
+			e.value = pg_v1_retime( e.value, uint32_t( 0x13572468u + retimed.size() ) );
+			retimed.push_back( k );
+		}
+	TEST_ASSERT( retimed.size() == v1 );
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, old_map, {} );
+	bool threw = false;
+	try { ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "--upgrade-v1-time" ) != std::string::npos; }
+	TEST_CHECK_( threw, "a pre-U1516 version-1 timestamp stops the application" );
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, old_map, {} );
+	ctx.upgrade_v1_time = true;
+	const TextIdentityGen t3 = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	std::vector<std::string> up = ctx.upgraded_keys;
+	std::sort( up.begin(), up.end() );
+	TEST_CHECK_( up == retimed && ctx.identity_map.entries == gen_map.entries, "the upgrade re-derives exactly the %zu version-1 values (%zu upgraded), every other value unchanged", retimed.size(), up.size() );
+	// another node is no timestamp upgrade: it stops the build even with upgrade_v1_time
+	IdentityMap bad_node = gen_map;
+	for ( auto& [ k, e ] : bad_node.entries )
+		if ( const GuidV1 g = ProfileGenerator::parse_guid_v1( e.value.c_str() ); e.kind == "guid" && g.ok && _stricmp( g.node.c_str(), "806e6f6e6963" ) != 0 )	// a MAC node
+		{
+			std::string& v = e.value;
+			const size_t last = v.find_last_of( "0123456789abcdefABCDEF" );
+			v[ last ] = v[ last ] == '0' ? '1' : '0';
+			break;
+		}
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, bad_node, {} );
+	ctx.upgrade_v1_time = true;
+	threw = false;
+	try { ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "version-1 GUID" ) != std::string::npos; }
+	TEST_CHECK_( threw, "a version-1 value with another node stops the build (not upgradeable)" );
+	// no install history: a version-1 GUID cannot be built
+	auto no_history = pg_text_fixture2( "" );
+	pg_put( no_history, "os_ids.txt", "## no install values\n" );
+	ctx = pg_fresh( Environment::bare_host );
+	threw = false;
+	try { ProfileGen->gen_text_identity( ctx, { no_history } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "needs the install-history offset" ) != std::string::npos; }
+	TEST_CHECK( threw );
+	// parse_guid_v1: the fields of a version-1 GUID; nothing for version 4, the MBR form, another variant
+	const GuidV1 p = ProfileGenerator::parse_guid_v1( "{12345678-9abc-11f0-8123-3ca9f4102030}" );
+	TEST_CHECK( p.ok && p.timestamp == 0x1F09ABC12345678ull && p.clock_seq == "8123" && p.node == "3ca9f4102030" );
+	for ( const char* g : { "{0F0F0F0F-1111-4222-8333-444455556666}", "{3fa81c55-0000-0000-0000-100000000000}", "12345678-9abc-11f0-c123-3ca9f4102030", "not a guid" } )
+		TEST_CHECK_( !ProfileGenerator::parse_guid_v1( g ).ok, "%s is no RFC 4122 version-1 GUID", g );
+	// the Randomizer's clock sequence: variant bits kept per class, case kept, never the real one
+	for ( int i = 0; i < 200; i++ )
+	{
+		const std::string a = Randomize->gen_clock_seq_like( "8123" ), b = Randomize->gen_clock_seq_like( "C0DE" ), c = Randomize->gen_clock_seq_like( "7fff" );
+		TEST_CHECK( std::regex_match( a, std::regex( "[89AB][0-9A-F]{3}" ) ) && a != "8123" );	// no letter in the real one: upper case
+		TEST_CHECK( std::regex_match( b, std::regex( "[CD][0-9A-F]{3}" ) ) && b != "C0DE" );
+		TEST_CHECK( std::regex_match( c, std::regex( "[0-7][0-9a-f]{3}" ) ) && c != "7fff" );
+	}
 }
 
 // ── atomic profile writes (user decision 2026-10-17 "Atomic writes", U1515) ─────────────────────────────────────────────
@@ -2068,5 +2210,6 @@ TEST_LIST = {
 	{ "pg_parallel_builds", pg_parallel_builds },
 	{ "pg_concurrent_fresh_shared", pg_concurrent_fresh_shared },
 	{ "pg_atomic_writes", pg_atomic_writes },
+	{ "pg_v1_guid_time", pg_v1_guid_time },
 	{ NULL, NULL } };
 // ── end of the pg_ block (U1511) ─────────────────────────────────────────────────────────────────────────────────────────
