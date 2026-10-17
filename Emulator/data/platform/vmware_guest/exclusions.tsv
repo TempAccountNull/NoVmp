@@ -1,0 +1,36 @@
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - excluded tool artifacts - vmware_guest - capture ranges that are NOT part of the presented machine (BuildConfig
+# "exclude", user decision J 2026-10-16); identical in the synthetic and the original profile. A presenter omits these lines
+# (and adjusts the counts of the enclosing lists).
+# columns: item, capture text file, first line, last line (1-based, inclusive), unit
+RustDesk Printer	enum_registry.txt	5080	5098	registry key
+RustDesk Printer	enum_registry.txt	5001	5001	parent subkey line
+System Informer	loaded_drivers.txt	189	189	line
+System Informer	loaded_drivers.txt	190	190	line
+RustDesk Printer	pci_devices.txt	22131	22170	block
+RustDesk Printer	printers.txt	8	16	block
+System Informer	services_vm.txt	283	283	line
+RustDesk	services_vm.txt	472	472	line
+RustDesk Printer	capture_info.txt	23123	23123	run-metadata line
+RustDesk Printer	capture_info.txt	23124	23124	run-metadata line
+RustDesk Printer	capture_info.txt	23125	23125	run-metadata line
+RustDesk Printer	capture_info.txt	23126	23126	run-metadata line
+RustDesk Printer	capture_info.txt	23127	23127	run-metadata line
+RustDesk Printer	capture_info.txt	23128	23128	run-metadata line
+RustDesk Printer	capture_info.txt	23129	23129	run-metadata line
+RustDesk Printer	capture_info.txt	23130	23130	run-metadata line
+RustDesk Printer	capture_info.txt	23131	23131	run-metadata line
+RustDesk Printer	capture_info.txt	23132	23132	run-metadata line
+RustDesk Printer	capture_info.txt	23133	23133	run-metadata line
+RustDesk Printer	capture_info.txt	23134	23134	run-metadata line
+RustDesk Printer	capture_info.txt	23135	23135	run-metadata line
+RustDesk Printer	capture_info.txt	23136	23136	run-metadata line
+RustDesk Printer	capture_info.txt	23137	23137	run-metadata line
+RustDesk Printer	capture_info.txt	23138	23138	run-metadata line
+RustDesk Printer	capture_info.txt	23139	23139	run-metadata line
+RustDesk Printer	capture_info.txt	23140	23140	run-metadata line
+RustDesk Printer	capture_info.txt	23141	23141	run-metadata line
+RustDesk Printer	capture_info.txt	23142	23142	run-metadata line
+RustDesk Printer	capture_info.txt	23143	23143	run-metadata line
+RustDesk Printer	capture_info.txt	23144	23144	run-metadata line
+RustDesk Printer	capture_info.txt	23145	23145	run-metadata line
+RustDesk Printer	capture_info.txt	23146	23146	run-metadata line

@@ -484,9 +484,9 @@ Add-Exp 'bp2_vm' 'cases_bp2_guest' 'cpuid expect bp2' @( '--vm' )
 Add-Exp 'bp2_cpuid_override' 'cases_bp2_guest' 'cpuid expect bp2' @( '--host', '--cpuid', $Cpuid )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
-# U1510-U1512 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).
+# U1510-U1514 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).
 # pg_unit: the pg_ unit tests on synthetic fixtures (emu-profilegen-tests; never a real capture). pg_profile_check_*: each
-# synthetic profile is rebuilt from its saved BuildConfig + seed and compared byte for byte (emu-profilegen --config ... --check;
+# synthetic profile is rebuilt from its saved BuildConfig + identity map (applied, no randomness) and compared byte for byte (emu-profilegen --config ... --check;
 # needs the pinned clean captures under the capture root, as bp2_profile_check; writes nothing)
 Add-Suite 'pg_unit' 'unit tools platform' 'exit' 'emu-profilegen-tests' @()
 Add-Suite 'pg_profile_check_guest' 'tools platform' 'exit' 'emu-profilegen' @( '--config', ( Join-Path $D 'platform\vmware_guest\build_config.txt' ), '--check' )

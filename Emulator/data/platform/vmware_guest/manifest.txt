@@ -1,21 +1,28 @@
-# emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512) - platform profile manifest - vmware_guest (--guest) - SYNTHETIC: every replaced value is synthetic, not host data
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - platform profile manifest - vmware_guest (--guest) - SYNTHETIC: every replaced value is synthetic, not host data
 # Everything not listed in fieldmap.tsv is byte-exact from the capture. SHA-256 = uppercase hex (Get-FileHash).
-tool                                = emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512)
+tool                                = emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514)
 profile.kind                        = synthetic (replaced fields: synthetic, not host data)
 environment                         = vmware_guest
-provenance.capture                  = fwid\baseline\Run3_clean_guest_<computer-name>_20261015_225503 (relative to the capture root; the computer-name part of the folder name is withheld)
-provenance.capture_tool             = fwid_probe 1.2 (2026-10-15) (capture manifest header)
-provenance.capture_manifest_sha256  = 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C
-provenance.capture_check            = 33 of 33 manifest entries match (size + SHA-256); manifest SHA-256 = the pinned clean capture
-provenance.companion_1              = baseline\Run3_clean_guest_probes_20261015.sha256 sha256 748A3515D7FC401B14C97E650996D15426E891C477B5CF75F28C6EAF59F89E8D (frozen hash list of the same state; not consumed)
-provenance.peer_capture             = baseline\Host_clean_20261016_fwid13\* manifest C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89 (enum_registry.txt only: the shared USB serial table)
-build_config                        = build_config.txt (this folder, seed included; rebuild: emu-profilegen --config build_config.txt)
+provenance.capture                  = baseline\Run3b_clean_guest_fwid14_20261016\<computer-name>_20261016_171556_vmware-guest (relative to the capture root; the computer-name part of the folder name is withheld)
+provenance.capture_tool             = fwid_probe 1.4 (2026-10-16) (capture manifest header)
+provenance.capture_manifest_sha256  = 2828D5201670AFFF41FAD5027E90C113A310AE2F8CAA11F59282FA7FB79F526D
+provenance.capture_check            = 49 of 49 manifest entries match (size + SHA-256); manifest SHA-256 = the pinned clean capture
+provenance.companion_1              = baseline\Run3b_clean_guest_fwid14_20261016.sha256 sha256 82C116C913650B687FA789AD52AAEDD3D724A1EA7C9B71344402095A2AB8EA6A (frozen hash list of the same state; not consumed)
+provenance.companion_2              = baseline\Run3_clean_guest_probes_20261015.sha256 sha256 748A3515D7FC401B14C97E650996D15426E891C477B5CF75F28C6EAF59F89E8D (frozen hash list of the same state; not consumed)
+provenance.peer_capture             = baseline\Host_clean_20261016_fwid14\* manifest FF2062E2E72AB2138CF4BD08942028E0E8D43E5F0FACBC105DB449E92CEC1C64 (enum_registry.txt only: the shared USB serial table)
+provenance.firmware_reference       = fwid\baseline\Run3_clean_guest_* manifest 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C: 15 of 15 firmware entries (rsmb / acpi / hwacpi / edid) byte-identical (SHA-256)
+build_config                        = build_config.txt (this folder; rebuild: emu-profilegen --config build_config.txt - applies identity_map.tsv)
+identity_map                        = identity_map.tsv (this folder): 61 synthetic values, drawn once from RDRAND at generation; every build applies them
 rules                               = 1 2 2o 3 4a 4b 4c 4d 6 7 8
-optional_inputs                     = os_ids.txt no, edid.txt no, license.txt no, update_ids.txt no, disks.txt no, hid.txt no, gpu.txt no, bluetooth.txt no, audio.txt no, chid.txt no, platform_security.txt no, environment.txt no, wifi.txt no, printers.txt no
-smbios                              = version 2.7, 189 structures, table 14074 bytes; 2 fields replaced (fieldmap.tsv F rows), 20 bytes differ from the capture; CHID-relevant fields 11, changed 0
+optional_inputs                     = os_ids.txt yes, edid.txt yes, license.txt yes, update_ids.txt yes, disks.txt yes, hid.txt yes, gpu.txt yes, bluetooth.txt yes, audio.txt yes, chid.txt yes, platform_security.txt yes, environment.txt yes, wifi.txt yes, printers.txt yes
+smbios                              = version 2.7, 189 structures, table 14074 bytes; 2 fields replaced (fieldmap.tsv F rows), 21 bytes differ from the capture; CHID-relevant fields 11, changed 0
 edid                                = not in this capture
 acpi                                = 14 table files byte-exact (acpi\); checksum valid 13, not applicable (FACS) 1, not valid 0; identifier search: 0 hit(s)
-identity                            = 48 identifiers, 650 occurrence + relation rows (identity.tsv, fieldmap.tsv)
+disk                                = 2 STORAGE_DEVICE_DESCRIPTORs (disk\): 0 serials replaced (fieldmap.tsv R rows), 0 placeholder serials exact, 2 without a serial
+identity                            = 117 identifiers, 1911 occurrence + relation rows (identity.tsv, fieldmap.tsv)
+exclusions                          = 32 range(s) of tool artifacts not part of the profile (exclusions.tsv): RustDesk Printer: 28 range(s), 93 line(s); RustDesk: 1 range(s), 1 line(s); System Informer: 3 range(s), 3 line(s); DebugView: nothing found; VmLoader: nothing found; 3 identifier anchor(s), 0 occurrence row(s) inside them dropped
+volatile                            = 19 values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps
+install_shift                       = 56 install-history values (device_arrival_time 13, device_install_time 24, diagtrack_time 3, event_iso 13, install_date 1, install_time 1, sqm_first_session 1) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): 56 of 56 exact, so every pairwise difference is the original one; 0 outside the build release .. capture window; 0 precede the OS install in the capture and 0 in the profile (Windows setup)
 # size_bytes  sha256  file
        178  24990A4B6BA764BA0B2D4EF03E480973589061841320A4F22556E275E7A0351C  acpi\acpi_APIC.bin
         80  7A2F0AF9B3A6FE103CDDBD63DA8A9246DFF4B632FF624EB4D1B1E00803C43B02  acpi\acpi_DMAR.bin
@@ -31,8 +38,13 @@ identity                            = 48 identifiers, 650 occurrence + relation 
         64  3FB3115E2C3C626603DBB20AB49825295D952F171ED7901A7F464CEAD2F40800  acpi\hwacpi_001_FACS_00000000.bin
        244  4701E1E44E2C8055BA05FB1953942AE061B350E8C51E4B338041DA52CFBE90AC  acpi\hwacpi_002_FADT_INTEL__440BX____06040000_00000000.bin
        100  47A6A5E5026B13BBA5E7D2AC260EC6A92022CB6740CD9336D33149CFC1181627  acpi\hwacpi_003_RSDT_INTEL__440BX____06040000_00000000.bin
-      1816  0888ECBFF9EBB768F8F5D8492A7B9C67EC9950F7F276610AC2E70E9DEEA39958  build_config.txt
-     32320  70393EEC917F0463A372A89E5157F5983FA5EB8E2CC7FA9B01342E65295F3F17  fieldmap.tsv
-      6449  11D9B22C9F5CF826EF4A2C1EB9A0D3D0BC11A42E3289E1AE7AE1888B45425DDE  identity.tsv
-     14082  1235F8E1C2E019F169C930F4C4BA020BC60C9F9B621B1651DF1317C443A263EC  smbios.bin
-# 18 file(s)
+      3251  CEF5A5DC97798EE99BAABBDA347735605BC01134C7DD507258EE9A2F1E5C9C1D  build_config.txt
+       396  7B9ED9F23D7DC2CF1C1BB9D3F35131CC3CB19FF89E109D3D265CA60190BA2F9F  disk\disk_0_descriptor.bin
+       396  C9039CD3996833898AA92391E1430479F27F318CF6752C52E4FBD798B9B50F41  disk\disk_1_descriptor.bin
+      2364  92B1E10AD6D027317A83E966BFBF8A941E33F64BDBB2112B52463020E3153B35  exclusions.tsv
+     94669  B0EFF5C21C97397AD879C7915187023C87634A685863A7074C71485293D9F7DE  fieldmap.tsv
+     11195  C1431CD115DE5C021CFCEA96A37F4E526C9615960CCC24F09DABF056CDA09B97  identity.tsv
+      4027  EA9C4B21EEB49728513D4BAB9FA9C8866480AD85B853B2989B242C479A3134D1  identity_map.tsv
+     14082  43D427054C54D5EBBFBE89053A8299527ECB0F8A8588C08FB283F8C7C8E5DB63  smbios.bin
+      2627  A8DC8D421B5C74698766358066A015E9F6238432A6DB758A169C4AC2E166738F  volatile.tsv
+# 23 file(s)

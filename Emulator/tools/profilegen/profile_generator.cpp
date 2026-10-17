@@ -1,8 +1,11 @@
-// profile_generator.cpp - ProfileGenerator (plan 1.J.49, ledger U1510-U1512). The field rules and the exact locations
+// profile_generator.cpp - ProfileGenerator (plan 1.J.49, ledger U1510-U1512, U1513-U1514). The field rules and the exact locations
 // they touch in the clean captures are documented in profile_generator.hpp; each gen_ below repeats the locations it
 // changes. Nothing here ever prints or writes a real identifier value outside the ORIGINAL profile: log lines, errors, the
 // field map and the manifests carry locations, lengths and counts only.
+// Per-build context (plan 1.J.49.a): every gen_ step takes the build's BuildContext (config, identity maps, used keys); the
+// singleton's own state (default config, value pool, shared/ registry) is guarded by leaf locks - see profile_generator.hpp.
 #include "profile_generator.hpp"
+#include "pg_randomize.hpp"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -25,7 +28,7 @@ namespace fs = std::filesystem;
 
 namespace emu::platform
 {
-	static const char* const k_tool = "emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512)";
+	static const char* const k_tool = "emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514)";
 
 	const char* env_dir_name( Environment e ) { return e == Environment::vmware_guest ? "vmware_guest" : "bare_host"; }
 	const char* env_switch( Environment e ) { return e == Environment::vmware_guest ? "--guest" : "--host"; }
@@ -101,12 +104,24 @@ namespace emu::platform
 	}
 
 	// ── CNG ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+	// the SHA-256 algorithm providers, opened once (magic statics: thread-safe initialization; a CNG algorithm handle may be
+	// shared by threads - each hash object below is local to its call)
+	static BCRYPT_ALG_HANDLE open_alg( bool hmac )
+	{
+		BCRYPT_ALG_HANDLE h = nullptr;
+		if ( !BCRYPT_SUCCESS( BCryptOpenAlgorithmProvider( &h, BCRYPT_SHA256_ALGORITHM, nullptr, hmac ? BCRYPT_ALG_HANDLE_HMAC_FLAG : 0 ) ) )
+			fail( "BCryptOpenAlgorithmProvider(SHA256) failed" );
+		return h;
+	}
 	static BCRYPT_ALG_HANDLE alg( bool hmac )
 	{
-		static BCRYPT_ALG_HANDLE h[ 2 ] = {};
-		if ( !h[ hmac ] && !BCRYPT_SUCCESS( BCryptOpenAlgorithmProvider( &h[ hmac ], BCRYPT_SHA256_ALGORITHM, nullptr, hmac ? BCRYPT_ALG_HANDLE_HMAC_FLAG : 0 ) ) )
-			fail( "BCryptOpenAlgorithmProvider(SHA256) failed" );
-		return h[ hmac ];
+		if ( hmac )
+		{
+			static const BCRYPT_ALG_HANDLE h_hmac = open_alg( true );
+			return h_hmac;
+		}
+		static const BCRYPT_ALG_HANDLE h_plain = open_alg( false );
+		return h_plain;
 	}
 	static std::array<uint8_t, 32> cng_hash( bool hmac, const uint8_t* key, size_t key_len, const void* data, size_t size )
 	{
@@ -132,91 +147,30 @@ namespace emu::platform
 		auto h = sha256( b.data(), b.size() );
 		return hex_of( h.data(), h.size(), true );
 	}
-	std::array<uint8_t, 32> hmac_sha256( const Bytes& key, const std::string& message ) { return cng_hash( true, key.data(), key.size(), message.data(), message.size() ); }
-	Bytes random_bytes( size_t n )
+	// ── the single write-point conversions (text value -> blob bytes) ──────────────────────────────────────────────────────
+	Bytes bytes_of_hex( const char* hex )
 	{
-		Bytes b( n );
-		if ( !BCRYPT_SUCCESS( BCryptGenRandom( nullptr, b.data(), ULONG( n ), BCRYPT_USE_SYSTEM_PREFERRED_RNG ) ) ) fail( "BCryptGenRandom failed" );
+		const std::string h = hex ? hex : "";
+		if ( h.size() % 2 || !std::all_of( h.begin(), h.end(), is_hex ) ) fail( "bytes_of_hex: an even number of hex digits expected" );
+		Bytes b;
+		for ( size_t i = 0; i < h.size(); i += 2 ) b.push_back( uint8_t( std::stoul( h.substr( i, 2 ), nullptr, 16 ) ) );
 		return b;
 	}
-
-	// ── SyntheticStream ───────────────────────────────────────────────────────────────────────────────────────────────────
-	// block k = HMAC-SHA256( seed, "emu-profilegen/1|<env>|<label>|<k as 8 hex digits>" ). The label names a field location
-	// (environment + field id), never a value, so no synthetic byte depends on a real value.
-	SyntheticStream::SyntheticStream( const Bytes& seed, Environment env, const std::string& label )
-		: key_( seed ), prefix_( std::string( "emu-profilegen/1|" ) + env_dir_name( env ) + "|" + label + "|" )
+	uint32_t le32_of_decimal( const char* dec )
 	{
-		if ( seed.size() != 32 ) fail( "seed must be 32 bytes" );
+		const std::string d = dec ? dec : "";
+		if ( d.empty() || !std::all_of( d.begin(), d.end(), []( char c ) { return c >= '0' && c <= '9'; } ) || std::stoull( d ) > 0xFFFFFFFFull ) fail( "le32_of_decimal: a 32-bit decimal expected" );
+		return uint32_t( std::stoull( d ) );
 	}
-	SyntheticStream SyntheticStream::shared( const Bytes& seed, const std::string& label )
+	// a synthetic text in the letter case of the real one, position by position (the character classes already agree)
+	static std::string follow_case( std::string s, const std::string& real )
 	{
-		SyntheticStream s( seed, Environment::vmware_guest, label );
-		s.prefix_ = "emu-profilegen/1|shared|" + label + "|";	// the same stream for both environments
+		for ( size_t i = 0; i < s.size() && i < real.size(); i++ )
+		{
+			if ( std::isupper( uint8_t( real[ i ] ) ) ) s[ i ] = char( std::toupper( uint8_t( s[ i ] ) ) );
+			else if ( std::islower( uint8_t( real[ i ] ) ) ) s[ i ] = char( std::tolower( uint8_t( s[ i ] ) ) );
+		}
 		return s;
-	}
-	uint8_t SyntheticStream::next_byte()
-	{
-		if ( pos_ == block_.size() )
-		{
-			block_ = hmac_sha256( key_, prefix_ + fmt( "%08X", counter_++ ) );
-			pos_ = 0;
-		}
-		return block_[ pos_++ ];
-	}
-	char SyntheticStream::digit() { for ( ;; ) { uint8_t b = next_byte(); if ( b < 250 ) return char( '0' + b % 10 ); } }
-	char SyntheticStream::upper() { for ( ;; ) { uint8_t b = next_byte(); if ( b < 234 ) return char( 'A' + b % 26 ); } }
-	char SyntheticStream::lower() { for ( ;; ) { uint8_t b = next_byte(); if ( b < 234 ) return char( 'a' + b % 26 ); } }
-	char SyntheticStream::hex( bool upper_case ) { return ( upper_case ? "0123456789ABCDEF" : "0123456789abcdef" )[ next_byte() & 15 ]; }
-	char SyntheticStream::alnum_upper()
-	{
-		for ( ;; )
-		{
-			uint8_t b = next_byte();
-			if ( b < 252 ) return "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[ b % 36 ];
-		}
-	}
-	uint64_t SyntheticStream::next_u64()
-	{
-		uint64_t r = 0;
-		for ( int i = 0; i < 8; i++ ) r = r << 8 | next_byte();
-		return r;
-	}
-
-	// ── draw primitives (internal; every gen_ below uses them on its own stream) ────────────────────────────────────────────
-	// rule-2 classes: same length, same character class per position (digit / A-Z / a-z), every other character kept
-	static std::string draw_classes( const std::string& real, SyntheticStream& s )
-	{
-		if ( std::none_of( real.begin(), real.end(), is_alnum ) ) fail( "rule 2: a value without letters or digits cannot be replaced" );
-		for ( ;; )
-		{
-			std::string out = real;
-			for ( char& c : out )
-			{
-				if ( c >= '0' && c <= '9' ) c = s.digit();
-				else if ( c >= 'A' && c <= 'Z' ) c = s.upper();
-				else if ( c >= 'a' && c <= 'z' ) c = s.lower();
-			}
-			if ( out != real ) return out;	// equal to the real value: draw again from the same stream
-		}
-	}
-	// hex digits in the value's case (lower when it has no a-f letters... unless all upper), other characters kept
-	static std::string draw_hex( const std::string& real, SyntheticStream& s, bool keep_digit_class )
-	{
-		if ( std::none_of( real.begin(), real.end(), is_hex ) ) fail( "a value without hex digits cannot be replaced" );
-		bool up = std::any_of( real.begin(), real.end(), []( char c ) { return c >= 'A' && c <= 'F'; } ) || !has_lower_hex( real );
-		if ( has_lower_hex( real ) ) up = false;
-		for ( ;; )
-		{
-			std::string o = real;
-			for ( char& c : o )
-			{
-				if ( !is_hex( c ) ) continue;
-				if ( keep_digit_class && c >= '0' && c <= '9' ) c = s.digit();
-				else if ( keep_digit_class ) for ( ;; ) { uint8_t b = s.next_byte(); if ( b < 252 ) { c = char( ( c >= 'a' ? 'a' : 'A' ) + b % 6 ); break; } }
-				else c = s.hex( up );
-			}
-			if ( !ieq( o, real ) ) return o;
-		}
 	}
 	static bool parse_mac_text( const std::string& t, uint8_t m[ 6 ] )
 	{
@@ -314,73 +268,147 @@ namespace emu::platform
 		if ( s.empty() ) return true;
 		for ( const char* f : k )
 			if ( ieq( s, f ) ) return true;
-		return false;
+		// one repeated character (length >= 2): a placeholder, not an identifier (user decision J 2026-10-16: the Sabrent
+		// bridge's repeated-digit disk serial, generalized)
+		return s.size() >= 2 && std::all_of( s.begin(), s.end(), [ & ]( char c ) { return std::tolower( uint8_t( c ) ) == std::tolower( uint8_t( s[ 0 ] ) ); } );
 	}
 	bool ProfileGenerator::check_usb_placeholder( const std::string& s )
 	{
-		if ( !s.empty() && std::all_of( s.begin(), s.end(), []( char c ) { return c == '0'; } ) ) return true;	// all '0'
+		// all '0', or one repeated character (length >= 2) - the rule-2 filler generalization of decision J
+		if ( !s.empty() && std::all_of( s.begin(), s.end(), []( char c ) { return c == '0'; } ) ) return true;
+		if ( s.size() >= 2 && std::all_of( s.begin(), s.end(), [ & ]( char c ) { return std::tolower( uint8_t( c ) ) == std::tolower( uint8_t( s[ 0 ] ) ); } ) ) return true;
 		return s.size() > 6 && ieq( s.substr( 0, 6 ), "MSFT30" ) && std::all_of( s.begin() + 6, s.end(), []( char c ) { return c == '0'; } );
 	}
 
-	// ── ProfileGenerator ──────────────────────────────────────────────────────────────────────────────────────────────────
-	ProfileGenerator::ProfileGenerator( BuildConfig c ) : c_( std::move( c ) ) {}
-
-	Bytes ProfileGenerator::seed_bytes() const
+	// ── ProfileGenerator: the singleton (design: the user's rid demo - private constructor, get_instance, the -> handle) ──
+	// It holds only the state shared by every build (plan 1.J.49.a): the default BuildConfig (config_mutex_), the interned
+	// value pool (pool_mutex_) and the shared/ registry (shared_mutex_). The three locks are leaves: no function below holds
+	// two of them at once, none is held across Randomize-> or file I/O. Everything else of a build is in its BuildContext.
+	ProfileGenerator& ProfileGenerator::get_instance()
 	{
-		if ( c_.seed.size() != 64 || !std::all_of( c_.seed.begin(), c_.seed.end(), is_hex ) ) fail( "the build config has no seed (64 hex digits)" );
-		Bytes s;
-		for ( size_t i = 0; i < 64; i += 2 ) s.push_back( uint8_t( std::stoul( c_.seed.substr( i, 2 ), nullptr, 16 ) ) );
-		return s;
+		static ProfileGenerator instance;	// magic static: thread-safe one-time construction (C++11)
+		return instance;
 	}
-	SyntheticStream ProfileGenerator::stream( const std::string& label ) const { return SyntheticStream( seed_bytes(), c_.env, label ); }
-
-	Seed ProfileGenerator::gen_new_seed()
+	ProfileGenerator::ProfileGenerator() : default_config_( BuildConfig::defaults( Environment::vmware_guest ) ) {}
+	void ProfileGenerator::reset()
 	{
-		Seed s;
-		Bytes b = random_bytes( 32 );
-		std::copy( b.begin(), b.end(), s.bytes.begin() );
-		s.hex = hex_of( b.data(), b.size(), true );
-		c_.seed = s.hex;	// a fresh identity: every synthetic value of this generator changes
-		return s;
-	}
-
-	// rule 1 (see the header for the exact byte ranges in both captures)
-	SmbiosUuid ProfileGenerator::gen_system_uuid( const SmbiosUuid& real )
-	{
-		SyntheticStream s = stream( fmt( "smbios/t1/h%04X/uuid", real.handle ) );
-		SmbiosUuid out = real;
-		const uint8_t* r = real.bytes.data();
-		uint8_t* o = out.bytes.data();
-		for ( ;; )
 		{
-			for ( int i = 0; i < 16; i++ ) o[ i ] = s.next_byte();
-			if ( c_.env == Environment::vmware_guest )
-			{
-				// VMware layout: VMware's fixed prefix 56h 4Dh ("VM") in bytes 0-1, the rest synthetic. Run 3 guest: type 1
-				// handle 0x0001 UUID at smbios.bin 0x0066..0x0075, prefix bytes 0x0066..0x0067 kept.
-				if ( r[ 0 ] != 0x56 || r[ 1 ] != 0x4D ) fail( "rule 1: the guest UUID does not have VMware's 56 4D layout" );
-				o[ 0 ] = 0x56;
-				o[ 1 ] = 0x4D;
-			}
-			else
-			{
-				// RFC 4122 layout: version nibble under both byte orders (byte 6 bits 7:4, byte 7 bits 7:4) and the variant bits
-				// of byte 8 kept exactly as in the real UUID. Bare host: type 1 handle 0x0001 UUID at smbios.bin 0x0063..0x0072.
-				o[ 6 ] = uint8_t( ( r[ 6 ] & 0xF0 ) | ( o[ 6 ] & 0x0F ) );
-				o[ 7 ] = uint8_t( ( r[ 7 ] & 0xF0 ) | ( o[ 7 ] & 0x0F ) );
-				uint8_t keep = r[ 8 ] < 0x80 ? 0x80 : r[ 8 ] < 0xC0 ? 0xC0 : 0xE0;
-				o[ 8 ] = uint8_t( ( r[ 8 ] & keep ) | ( o[ 8 ] & ~keep ) );
-			}
-			if ( memcmp( o, r, 16 ) != 0 ) return out;
+			std::unique_lock lock( config_mutex_ );
+			default_config_ = BuildConfig::defaults( Environment::vmware_guest );
 		}
+		reset_shared_values();	// the value pool is kept: every const char* handed out stays valid for the process lifetime
+	}
+	void ProfileGenerator::reset_shared_values()
+	{
+		std::lock_guard lock( shared_mutex_ );
+		shared_.clear();
+	}
+	size_t ProfileGenerator::check_shared_values() const
+	{
+		std::lock_guard lock( shared_mutex_ );
+		return shared_.size();
+	}
+	void ProfileGenerator::load_config( const BuildConfig& c )
+	{
+		std::unique_lock lock( config_mutex_ );
+		default_config_ = c;
+	}
+	BuildConfig ProfileGenerator::config() const
+	{
+		std::shared_lock lock( config_mutex_ );
+		return default_config_;
+	}
+	BuildContext ProfileGenerator::new_context() const { return new_context( config() ); }
+	BuildContext ProfileGenerator::new_context( const BuildConfig& c ) const
+	{
+		BuildContext ctx;
+		ctx.config = c;
+		return ctx;
+	}
+	void ProfileGenerator::load_identity_maps( BuildContext& ctx, const IdentityMap& own, const IdentityMap& peer )
+	{
+		ctx.identity_map = own;
+		ctx.peer_map = peer;
+		ctx.applying = !own.entries.empty();
+		ctx.used_keys.clear();
+	}
+	IdentityMap ProfileGenerator::gen_new_identity( BuildContext& ctx )
+	{
+		ctx.identity_map = IdentityMap();	// the next build draws every value fresh from RDRAND (Randomize->gen_...)
+		ctx.applying = false;
+		ctx.fresh = true;
+		ctx.used_keys.clear();
+		return ctx.identity_map;
+	}
+	const char* ProfileGenerator::keep( const std::string& value )
+	{
+		std::lock_guard lock( pool_mutex_ );
+		return pool_.insert( value ).first->c_str();	// std::set nodes never move: the pointer stays valid
 	}
 
-	// rules 2 / 2h: rule-2 classes on one SMBIOS string, stream "smbios/t<type>/h<handle>/o<offset>"
-	SmbiosStringField ProfileGenerator::gen_smbios_string( const SmbiosStringField& real )
+	// the identity map: key -> the synthetic value. Generation records the Randomizer's value, application returns the saved
+	// one; a "shared/" key may come from the other environment's map, else (generation) from the shared/ registry of this
+	// process (one USB serial per physical device in both profiles, also when both generate concurrently). Every result is
+	// interned: it stays valid when ctx is destroyed or its map is replaced (load_identity_maps / gen_new_identity)
+	const char* ProfileGenerator::draw( BuildContext& ctx, const std::string& key, const char* kind, const std::string& real, bool same_length, const std::function<const char*()>& fn )
 	{
-		SyntheticStream s = stream( fmt( "smbios/t%u/h%04X/o%02X", real.type, real.handle, real.offset ) );
+		ctx.used_keys.insert( key );
+		auto fits = [ & ]( const std::string& e_kind, const std::string& e_value ) {
+			if ( e_kind != kind || ( same_length && e_value.size() != real.size() ) )
+				fail( "the identity map's value for " + key + " does not fit the capture (kind / length) - generate a new identity (--new-identity)" );
+			if ( ieq( e_value, real ) ) fail( "the identity map's value for " + key + " equals the captured value" );
+		};
+		IdentityMap& own = ctx.identity_map;
+		if ( auto it = own.entries.find( key ); it != own.entries.end() ) { fits( it->second.kind, it->second.value ); return keep( it->second.value ); }
+		const bool shared = key.rfind( "shared/", 0 ) == 0;
+		if ( shared )
+			if ( auto p = ctx.peer_map.entries.find( key ); p != ctx.peer_map.entries.end() )
+			{
+				fits( p->second.kind, p->second.value );
+				own.entries[ key ] = p->second;
+				return keep( p->second.value );
+			}
+		if ( ctx.applying ) fail( "the identity map has no value for " + key + ": it does not fit this capture - generate a new identity (--new-identity)" );
+		if ( !shared )
+		{
+			const std::string v = fn();	// a finished value of the Randomizer (no lock held)
+			own.entries[ key ] = IdentityMapEntry { kind, v };
+			return keep( v );
+		}
+		// a shared/ key while generating: the registry's value when another build of this process recorded one, else this
+		// build's draw (drawn and interned without a lock, then registered insert-if-absent: the first writer wins)
+		SharedValue sv;
+		bool found = false;
+		{
+			std::lock_guard lock( shared_mutex_ );
+			if ( auto r = shared_.find( key ); r != shared_.end() ) { sv = r->second; found = true; }
+		}
+		if ( !found )
+		{
+			const char* drawn = keep( fn() );
+			std::lock_guard lock( shared_mutex_ );
+			sv = shared_.try_emplace( key, SharedValue { kind, drawn } ).first->second;
+		}
+		fits( sv.kind, sv.value );
+		own.entries[ key ] = IdentityMapEntry { sv.kind, sv.value };
+		return sv.value;
+	}
+
+	// rule 1 (see the header for the exact byte ranges in both captures): the Randomizer's 32 hex digits with VMware's layout
+	// (guest: bytes 0-1 = 56h 4Dh kept) or the RFC 4122 version / variant bits of the real UUID (bare host)
+	SmbiosUuid ProfileGenerator::gen_system_uuid( BuildContext& ctx, const SmbiosUuid& real )
+	{
+		SmbiosUuid out = real;
+		const bool vmware = ctx.config.env == Environment::vmware_guest;
+		out.hex = draw( ctx, fmt( "smbios/t1/h%04X/uuid", real.handle ), "uuid", real.hex, true, [ & ] { return Randomize->gen_system_uuid_like( real.hex, vmware ); } );
+		return out;
+	}
+
+	// rules 2 / 2h: rule-2 classes on one SMBIOS string, key "smbios/t<type>/h<handle>/o<offset>"
+	SmbiosStringField ProfileGenerator::gen_smbios_string( BuildContext& ctx, const SmbiosStringField& real )
+	{
 		SmbiosStringField out = real;
-		out.value = draw_classes( real.value, s );
+		out.value = draw( ctx, fmt( "smbios/t%u/h%04X/o%02X", real.type, real.handle, real.offset ), "smbios_string", real.value, true, [ & ] { return Randomize->gen_like( real.value ); } );
 		return out;
 	}
 
@@ -399,14 +427,14 @@ namespace emu::platform
 	}
 
 	// ── gen_smbios: rules 1, 2, 2h, 2o + guard on the RawSMBIOSData blob ──────────────────────────────────────────────────
-	SmbiosGen ProfileGenerator::gen_smbios( const SmbiosInput& in )
+	SmbiosGen ProfileGenerator::gen_smbios( BuildContext& ctx, const SmbiosInput& in )
 	{
 		const Bytes& raw = in.raw;
 		const SmbiosTable t = parse_smbios( raw );
 		SmbiosGen g;
 		g.synthetic = raw;
 		Bytes& out = g.synthetic;
-		const RuleSet& rules = c_.rules;
+		const RuleSet& rules = ctx.config.rules;
 		std::map<std::string, std::string> mapped;	// real value -> synthetic value, rules 2 / 2h (equal real values, equal synthetic values)
 		int fid = 0;
 		auto next_id = [ & ]() { return fmt( "F%02d", ++fid ); };
@@ -445,10 +473,12 @@ namespace emu::platform
 				}
 				if ( !unset && rules.r1 )
 				{
+					const std::string real_hex = hex_of( real, 16, false );
 					SmbiosUuid ru;
 					ru.handle = s.handle;
-					std::copy( real, real + 16, ru.bytes.begin() );
-					SmbiosUuid su = gen_system_uuid( ru );
+					ru.hex = real_hex.c_str();
+					SmbiosUuid su = gen_system_uuid( ctx, ru );
+					Bytes ub = bytes_of_hex( su.hex );	// the single write point: text -> the 16 raw bytes
 					// UUID-MAC relation: the real UUID's last 6 bytes = an adapter MAC of the capture -> the synthetic UUID's last 6
 					// bytes = that adapter's synthetic MAC. Bare host: bytes 10-15 (smbios.bin 0x006D..0x0072) = the onboard wired
 					// NIC's MAC. Run 3 guest: no relation.
@@ -457,16 +487,16 @@ namespace emu::platform
 					{
 						uint8_t rm[ 6 ], sm[ 6 ];
 						if ( !parse_mac_text( m.real.text, rm ) || !parse_mac_text( m.synthetic.text, sm ) || memcmp( real + 10, rm, 6 ) != 0 ) continue;
-						memcpy( su.bytes.data() + 10, sm, 6 );
+						memcpy( ub.data() + 10, sm, 6 );
 						su.tail_is_mac = true;
 						su.tail_adapter = m.real.adapter;
 						tied = "; bytes 10-15 = the synthetic MAC of identity " + m.real.id + " (adapter \"" + m.real.adapter + "\"), the UUID-MAC relation of the capture kept";
 						break;
 					}
-					std::copy( su.bytes.begin(), su.bytes.end(), out.begin() + s.offset + 8 );
-					g.fields.push_back( { "smbios.bin", next_id(), c_.env == Environment::vmware_guest ? "1-vmware" : "1-rfc4122",
+					std::copy( ub.begin(), ub.end(), out.begin() + s.offset + 8 );
+					g.fields.push_back( { "smbios.bin", next_id(), ctx.config.env == Environment::vmware_guest ? "1-vmware" : "1-rfc4122",
 						fmt( "type 1 handle 0x%04X formatted offset 0x08: system UUID (%s%s)", s.handle,
-							c_.env == Environment::vmware_guest ? "bytes 0-1 VMware prefix kept" : "version nibbles of bytes 6/7 and the variant bits of byte 8 kept", tied.c_str() ),
+							ctx.config.env == Environment::vmware_guest ? "bytes 0-1 VMware prefix kept" : "version nibbles of bytes 6/7 and the variant bits of byte 8 kept", tied.c_str() ),
 						s.offset + 8, 0, 16 } );
 				}
 			}
@@ -480,7 +510,7 @@ namespace emu::platform
 			}
 			std::vector<std::pair<field, const char*>> decided;
 			for ( const field& f : k_rule2 ) decided.emplace_back( f, "2" );
-			if ( c_.env == Environment::bare_host )
+			if ( ctx.config.env == Environment::bare_host )
 				for ( const field& f : k_rule2h ) decided.emplace_back( f, "2h" );
 			for ( auto& [ f, rule ] : decided )
 			{
@@ -497,7 +527,11 @@ namespace emu::platform
 						fail( fmt( "SMBIOS type %u handle 0x%04X: the %s string is shared with formatted offset 0x%02X - replacing it would change another field",
 							s.type, s.handle, f.name, o ) );
 				auto it = mapped.find( v );
-				if ( it == mapped.end() ) it = mapped.emplace( v, gen_smbios_string( { s.type, f.off, s.handle, v } ).value ).first;
+				if ( it == mapped.end() )
+				{
+					it = mapped.emplace( v, gen_smbios_string( ctx, { s.type, f.off, s.handle, v.c_str() } ).value ).first;
+					g.strings.emplace_back( v, it->second );
+				}
 				memcpy( &out[ p->offset ], it->second.data(), p->length );
 				g.fields.push_back( { "smbios.bin", next_id(), rule, fmt( "type %u handle 0x%04X formatted offset 0x%02X -> string %u: %s", s.type, s.handle, f.off, idx, f.name ),
 					p->offset, 0, uint32_t( p->length ) } );
@@ -550,28 +584,24 @@ namespace emu::platform
 		return r;
 	}
 
-	// ── single-value generators ──────────────────────────────────────────────────────────────────────────────────────────
-	// rule 3: one base MAC - OUI (bytes 0-2) exact, bytes 3-5 synthetic; stream "identity/<id>"
-	MacAddress ProfileGenerator::gen_mac( const MacAddress& real )
+	// ── single-value generators: each asks the Randomizer (Randomize->gen_...) for a finished value through draw() - the
+	//    identity map records it (generation) or returns the saved one (application); none draws randomness itself ────────
+	// rule 3: one base MAC - OUI (bytes 0-2) exact, bytes 3-5 synthetic with room for max_delta; key "identity/<id>"
+	MacAddress ProfileGenerator::gen_mac( BuildContext& ctx, const MacAddress& real ) { return gen_mac_with_room( ctx, real, 0 ); }
+	MacAddress ProfileGenerator::gen_mac_with_room( BuildContext& ctx, const MacAddress& real, unsigned max_delta )
 	{
 		uint8_t m[ 6 ];
-		if ( !parse_mac_text( real.text, m ) ) fail( "rule 3: not a MAC in XX:XX:XX:XX:XX:XX form" );
-		SyntheticStream s = stream( "identity/" + real.id );
-		for ( ;; )
-		{
-			uint8_t o[ 6 ] = { m[ 0 ], m[ 1 ], m[ 2 ], s.next_byte(), s.next_byte(), s.next_byte() };
-			if ( memcmp( o, m, 6 ) == 0 ) continue;
-			MacAddress out = real;
-			out.text.clear();
-			for ( int i = 0; i < 6; i++ ) out.text += ( i ? ":" : "" ) + hex_of( &o[ i ], 1, true );
-			return out;
-		}
+		if ( !real.text || !parse_mac_text( real.text, m ) ) fail( "rule 3: not a MAC in XX:XX:XX:XX:XX:XX form" );
+		MacAddress out = real;
+		out.text = draw( ctx, "identity/" + real.id, "mac", real.text, true, [ & ] { return Randomize->gen_mac_like( real.text, max_delta ); } );
+		if ( ( mac_value( out.text ) & 0xFFFFFF ) + max_delta > 0xFFFFFF ) fail( "rule 3: the identity map's MAC of " + real.id + " leaves no room for its family" );
+		return out;
 	}
 
 	// rule 3: the MAC family of one capture. Detects the relations generically - the locally administered variant (byte 0 bit
-	// 1 toggled) of another MAC, or + delta (<= 16) within the same OUI from the lowest MAC (the base) - draws one synthetic
+	// 1 toggled) of another MAC, or + delta (<= 16) within the same OUI from the lowest MAC (the base) - takes one synthetic
 	// MAC per base (its tail leaves room for the largest delta) and re-derives every dependent with the same relation
-	MacFamily ProfileGenerator::gen_mac_family( const MacFamily& real )
+	MacFamily ProfileGenerator::gen_mac_family( BuildContext& ctx, const MacFamily& real )
 	{
 		MacFamily f = real;
 		std::vector<MacMember>& m = f.members;
@@ -603,158 +633,104 @@ namespace emu::platform
 			if ( m[ i ].parent >= 0 ) continue;
 			long long maxd = 0;
 			for ( size_t j : universal ) if ( m[ j ].parent == int( i ) ) maxd = std::max( maxd, m[ j ].delta );
-			MacAddress probe = m[ i ].mac;
-			for ( int attempt = 0;; attempt++ )
-			{
-				if ( attempt ) probe.id = m[ i ].mac.id + fmt( "/retry%d", attempt );
-				uint64_t v = mac_value( gen_mac( probe ).text );
-				if ( ( v & 0xFFFFFF ) + uint64_t( maxd ) <= 0xFFFFFF ) { syn[ i ] = v; break; }
-			}
+			syn[ i ] = mac_value( gen_mac_with_room( ctx, m[ i ].mac, unsigned( maxd ) ).text );
 		}
 		for ( size_t i : universal ) if ( m[ i ].parent >= 0 ) syn[ i ] = syn[ m[ i ].parent ] + uint64_t( m[ i ].delta );
 		for ( size_t i = 0; i < m.size(); i++ ) if ( m[ i ].locally_administered ) syn[ i ] = syn[ m[ i ].parent ] ^ ( uint64_t( 2 ) << 40 );
 		for ( size_t i = 0; i < m.size(); i++ )
 		{
 			if ( ieq( mac_text( syn[ i ] ), real.members[ i ].mac.text ) ) fail( "rule 3: a derived MAC equals its real value" );
-			m[ i ].mac.text = mac_text( syn[ i ] );
+			m[ i ].mac.text = keep( mac_text( syn[ i ] ) );	// derived (a base value or a relation of one): no randomness here
 		}
 		return f;
 	}
 
 	// rule 3: the EUI-64 form of a NIC's MAC in an instance ID, re-derived from the NIC's synthetic MAC (the I226-V's PCI
 	// instance ID on the bare host: OUI + FFFF + NIC part + 00)
-	Eui64Id ProfileGenerator::gen_eui64_instance_id( const Eui64Id& real, const MacAddress& nic )
+	Eui64Id ProfileGenerator::gen_eui64_instance_id( BuildContext& ctx, const Eui64Id& real, const MacAddress& nic )
 	{
 		std::string sp = fmt( "%012llX", (unsigned long long)mac_value( nic.text ) );
+		std::string t = sp.substr( 0, 6 ) + ( real.ffff ? "FFFF" : "FFFE" ) + sp.substr( 6 ) + ( real.ffff ? "00" : "" );
+		if ( has_lower_hex( real.text ) ) t = lower( t );
 		Eui64Id out = real;
-		out.text = sp.substr( 0, 6 ) + ( real.ffff ? "FFFF" : "FFFE" ) + sp.substr( 6 ) + ( real.ffff ? "00" : "" );
-		if ( has_lower_hex( real.text ) ) out.text = lower( out.text );
+		out.text = keep( t );
 		return out;
 	}
 
-	// rule 4c: GUID text, braces / hyphens / case kept; hex digit 12 (the version) kept; digit 16 keeps its variant bits
-	// (0xxx NCS: bit 3; 10xx RFC 4122: bits 3:2; 110x / 111x Microsoft / reserved: bits 3:1); all other digits synthetic.
-	// Version-1 (time-based) GUIDs: when the node (last 12 hex digits) is an adapter MAC, the node becomes that adapter's
-	// synthetic MAC; Windows' no-NIC node 806E6F6E6963 stays exact. MBR-style volume GUIDs {SSSSSSSS-0000-0000-0000-OFFSET}:
-	// only the disk signature (the first 8 digits) is synthetic.
-	GuidValue ProfileGenerator::gen_guid( const GuidValue& real, const NodeMap& nodes )
+	// rule 4c: GUID text, braces / hyphens / case kept; the version digit and the variant bits kept; all other digits
+	// synthetic (Randomize->gen_guid_like). Version-1 (time-based) GUIDs: when the node (last 12 hex digits) is an adapter
+	// MAC, the node becomes that adapter's synthetic MAC; Windows' no-NIC node 806E6F6E6963 stays exact. MBR-style volume
+	// GUIDs {SSSSSSSS-0000-0000-0000-OFFSET}: only the disk signature (the first 8 digits) is synthetic.
+	GuidValue ProfileGenerator::gen_guid( BuildContext& ctx, const GuidValue& real, const NodeMap& nodes )
 	{
-		static const std::regex k_guid( R"(\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?)" );
-		const std::string& g = real.text;
-		if ( !std::regex_match( g, k_guid ) ) fail( "rule 4c: not a GUID" );
-		SyntheticStream s = stream( real.label );
-		bool up = !has_lower_hex( g );
-		std::vector<size_t> hp;
-		for ( size_t i = 0; i < g.size(); i++ ) if ( is_hex( g[ i ] ) ) hp.push_back( i );
-		bool mbr = true;
-		for ( size_t k = 8; k < 20; k++ ) mbr &= g[ hp[ k ] ] == '0';
+		const std::string g = real.text ? real.text : "";
 		std::string node;
-		for ( size_t k = 20; k < 32; k++ ) node += char( std::tolower( uint8_t( g[ hp[ k ] ] ) ) );
-		for ( ;; )
-		{
-			std::string out = g;
-			for ( size_t k = 0; k < 32; k++ )
-			{
-				char& c = out[ hp[ k ] ];
-				if ( k == 12 || ( mbr && k >= 8 ) ) continue;
-				char r = s.hex( up );
-				if ( k == 16 )
-				{
-					unsigned v = unsigned( std::stoul( std::string( 1, g[ hp[ k ] ] ), nullptr, 16 ) ), x = unsigned( std::stoul( std::string( 1, r ), nullptr, 16 ) );
-					unsigned keep = v < 8 ? 0x8 : v < 12 ? 0xC : 0xE;
-					r = ( up ? "0123456789ABCDEF" : "0123456789abcdef" )[ ( v & keep ) | ( x & ~keep & 15 ) ];
-				}
-				c = r;
-			}
-			if ( !mbr && g[ hp[ 12 ] ] == '1' )
-			{
-				auto it = nodes.real_to_synthetic.find( node );
-				if ( it != nodes.real_to_synthetic.end() )
-					for ( size_t k = 20; k < 32; k++ ) out[ hp[ k ] ] = up ? char( std::toupper( uint8_t( it->second[ k - 20 ] ) ) ) : it->second[ k - 20 ];
-				else if ( node == "806e6f6e6963" )
-					for ( size_t k = 20; k < 32; k++ ) out[ hp[ k ] ] = g[ hp[ k ] ];
-			}
-			if ( !ieq( out, g ) ) return { out, real.label };
-		}
+		for ( char c : g ) if ( is_hex( c ) ) node += char( std::tolower( uint8_t( c ) ) );
+		const char* syn_node = nullptr;
+		std::string sn;
+		if ( node.size() == 32 )
+			if ( auto it = nodes.real_to_synthetic.find( node.substr( 20 ) ); it != nodes.real_to_synthetic.end() ) { sn = it->second; syn_node = sn.c_str(); }
+		return { draw( ctx, real.label, "guid", g, true, [ & ] { return Randomize->gen_guid_like( g.c_str(), syn_node ); } ), real.label };
 	}
 
-	// rule 4d: a USB / HID device serial. Hex-encoded ASCII (even length >= 8, every byte printable) stays hex-encoded ASCII of
-	// the same shape (the decoded text gets the rule-2 classes, re-encoded in the original's hex case); any other all-hex
-	// serial stays hex (digit -> digit, A-F -> A-F, a-f -> a-f); other serials get the rule-2 classes. table_index >= 0: the
-	// stream shared by both profiles ("shared|usb/<index>"), else this environment's stream
-	UsbSerial ProfileGenerator::gen_usb_serial( const UsbSerial& real )
+	// rule 4d: a USB / HID device serial (Randomize->gen_usb_serial_like: hex-encoded ASCII stays hex-encoded ASCII, other hex
+	// stays hex with its digit classes, anything else rule-2 classes). table_index >= 0: key "shared/usb/<index>" - the
+	// same value in both profiles; else this environment's key
+	UsbSerial ProfileGenerator::gen_usb_serial( BuildContext& ctx, const UsbSerial& real )
 	{
-		SyntheticStream s = real.table_index >= 0 ? SyntheticStream::shared( seed_bytes(), fmt( "usb/%ld", real.table_index ) ) : stream( real.label );
-		const std::string& r = real.text;
 		UsbSerial out = real;
-		bool hex = r.size() >= 2 && std::all_of( r.begin(), r.end(), is_hex );
-		bool up = !has_lower_hex( r );
-		if ( hex && r.size() % 2 == 0 && r.size() >= 8 )
-		{
-			std::string txt;
-			for ( size_t i = 0; i < r.size(); i += 2 ) txt += char( std::stoul( r.substr( i, 2 ), nullptr, 16 ) );
-			if ( std::all_of( txt.begin(), txt.end(), []( char c ) { return c >= 0x20 && c <= 0x7E; } ) && std::any_of( txt.begin(), txt.end(), is_alnum ) )
-			{
-				std::string t = draw_classes( txt, s );
-				out.text.clear();
-				for ( char c : t ) out.text += hex_of( reinterpret_cast<const uint8_t*>( &c ), 1, up );
-				return out;
-			}
-		}
-		out.text = hex ? draw_hex( r, s, true ) : draw_classes( r, s );
+		const std::string key = real.table_index >= 0 ? fmt( "shared/usb/%ld", real.table_index ) : real.label;
+		out.text = draw( ctx, key, "usb_serial", real.text, true, [ & ] { return Randomize->gen_usb_serial_like( real.text ); } );
 		return out;
 	}
 
 	// rule 4a: "DESKTOP-" + 7 synthetic characters [A-Z0-9]
-	ComputerName ProfileGenerator::gen_computer_name( const ComputerName& real )
+	ComputerName ProfileGenerator::gen_computer_name( BuildContext& ctx, const ComputerName& real )
 	{
-		SyntheticStream s = stream( real.label );
-		for ( ;; )
-		{
-			std::string n = "DESKTOP-";
-			for ( int i = 0; i < 7; i++ ) n += s.alnum_upper();
-			if ( !ieq( n, real.text ) ) return { n, real.label };
-		}
+		return { draw( ctx, real.label, "computer_name", real.text, false, [ & ] { return Randomize->gen_computer_name( real.text ); } ), real.label };
 	}
 
-	TextValue ProfileGenerator::gen_class_string( const TextValue& real )
+	TextValue ProfileGenerator::gen_class_string( BuildContext& ctx, const TextValue& real )
 	{
-		SyntheticStream s = stream( real.label );
-		return { draw_classes( real.text, s ), real.label };
+		return { draw( ctx, real.label, "classes", real.text, true, [ & ] { return Randomize->gen_like( real.text ); } ), real.label };
 	}
-	TextValue ProfileGenerator::gen_hex_token( const TextValue& real )
+	TextValue ProfileGenerator::gen_hex_token( BuildContext& ctx, const TextValue& real )
 	{
-		SyntheticStream s = stream( real.label );
-		return { draw_hex( real.text, s, false ), real.label };
+		return { draw( ctx, real.label, "hex", real.text, true, [ & ] { return Randomize->gen_hex_like( real.text, false ); } ), real.label };
 	}
 
-	// rule 8a: the installation ID - same length, digits stay digits, the group layout (separators) kept; the internal check
-	// digits are NOT modelled (no local, citable description of the scheme)
-	WinInstallationId ProfileGenerator::gen_win_installation_id( const WinInstallationId& real )
+	// rule 8a: the installation ID - 63 digits = 9 groups of six random digits + their check digit (d0 + 2 d1 + d2 + 2 d3 +
+	// d4 + 2 d5) mod 7 (user decision 2026-10-17, the demo's rule; checked on all 7 real IDs of the clean captures), the
+	// real one's separators (none in fwid 1.4) kept
+	WinInstallationId ProfileGenerator::gen_win_installation_id( BuildContext& ctx, const WinInstallationId& real )
 	{
-		if ( std::none_of( real.text.begin(), real.text.end(), []( char c ) { return c >= '0' && c <= '9'; } ) ) fail( "rule 8a: an installation ID without digits" );
 		WinInstallationId out = real;
-		SyntheticStream s = stream( real.label );
-		out.text = draw_classes( real.text, s );
-		out.group_lengths.clear();
-		size_t run = 0;
-		for ( char c : real.text + " " )
-		{
-			if ( c >= '0' && c <= '9' ) run++;
-			else if ( run ) { out.group_lengths.push_back( run ); run = 0; }
-		}
-		out.check_digits_modelled = false;
+		out.text = draw( ctx, real.label, "installation_id", real.text, true, [ & ] { return Randomize->gen_installation_id_like( real.text ); } );
+		if ( !check_installation_id( out.text ) ) fail( "rule 8a: the identity map's installation ID of " + real.label + " fails its check digits" );
+		out.group_lengths = std::vector<size_t>( 9, 7 );
+		out.check_digits_modelled = true;
 		return out;
+	}
+	bool ProfileGenerator::check_installation_id( const char* text )
+	{
+		std::string d;
+		for ( const char* p = text; p && *p; p++ ) if ( *p >= '0' && *p <= '9' ) d += *p;
+		if ( d.size() != 63 ) return false;
+		for ( size_t g = 0; g < 63; g += 7 )
+			if ( Randomizer::check_digit( d.substr( g, 6 ).c_str() ) != d[ g + 6 ] ) return false;
+		return true;
 	}
 
 	// rule 7a: ProductId "ddddd-ddddd-ddddd-AAddd": the first group (product / edition) and the last group (channel) exact,
 	// the middle groups rule-2 classes
-	ProductId ProfileGenerator::gen_product_id( const ProductId& real )
+	ProductId ProfileGenerator::gen_product_id( BuildContext& ctx, const ProductId& real )
 	{
-		size_t a = real.text.find( '-' ), b = real.text.rfind( '-' );
+		const std::string t = real.text;
+		const size_t a = t.find( '-' ), b = t.rfind( '-' );
 		if ( a == std::string::npos || a == b ) fail( "rule 7a: a ProductId without middle groups" );
-		SyntheticStream s = stream( real.label );
-		return { real.text.substr( 0, a + 1 ) + draw_classes( real.text.substr( a + 1, b - a - 1 ), s ) + real.text.substr( b ), real.label };
+		const std::string mid = t.substr( a + 1, b - a - 1 );
+		const char* m = draw( ctx, real.label, "product_id_middle", mid, true, [ & ] { return Randomize->gen_like( mid.c_str() ); } );
+		return { keep( t.substr( 0, a + 1 ) + m + t.substr( b ) ), real.label };
 	}
 
 	// rule 7b: the window for a synthetic install instant, strictly between the release of the OS build and the capture
@@ -782,77 +758,86 @@ namespace emu::platform
 		if ( w.hi - w.lo < 3 ) fail( "rule 7b: the capture is not after the OS build release" );
 		return w;
 	}
-	// rule 7b: ONE synthetic instant strictly inside the window; InstallDate (unix seconds) and InstallTime (FILETIME) agree
-	InstallTime ProfileGenerator::gen_install_time( const InstallTime& real )
+	// rule 7b: ONE offset for the whole install history (user decision 2026-10-16: shift all together), whole seconds.
+	// Generation: Randomize->gen_decimal_in_range over the window; the map key "identity/install" records the synthetic InstallDate
+	// (the repository copy: no offset), the original copy also the offset. Application: offset = the saved synthetic
+	// InstallDate - the real one. Every shifted event stays strictly after the build release and strictly before the capture;
+	// the latest event (a device's last arrival, minutes before the capture) leaves no room forward, so the offset is at least
+	// one day earlier. InstallDate and InstallTime move by the same offset (their real sub-second relation kept).
+	InstallTime ProfileGenerator::gen_install_time( BuildContext& ctx, const InstallTime& real )
 	{
 		const InstallWindow w = parse_install_window( real.os_build, real.capture_utc );
-		SyntheticStream s = stream( "identity/install" );
-		for ( ;; )
-		{
-			uint64_t r = s.next_u64(), q = s.next_u64();
-			InstallTime out = real;
-			out.unix_seconds = w.lo + 1 + int64_t( r % uint64_t( w.hi - w.lo - 1 ) );
-			out.filetime = ( uint64_t( out.unix_seconds ) + 11644473600ull ) * 10000000ull + q % 10000000ull;
-			if ( out.unix_seconds != real.unix_seconds ) return out;
-		}
+		const int64_t first = real.earliest_event ? std::min( real.unix_seconds, real.earliest_event ) : real.unix_seconds;
+		const int64_t last = std::max( real.unix_seconds, real.latest_event );
+		const int64_t lo = w.lo - first + 1, hi = std::min<int64_t>( -86400, w.hi - last - 1 );
+		if ( first <= w.lo || last >= w.hi ) fail( "rule 7b: an install-history event of the capture lies outside the build release .. capture window" );
+		if ( hi < lo ) fail( "rule 7b: no room to shift the install history by at least one day inside the build release .. capture window" );
+		const std::string real_text = std::to_string( real.unix_seconds );
+		const char* s = draw( ctx, "identity/install", "install", real_text, false, [ & ] {
+			return keep( std::to_string( real.unix_seconds + std::stoll( Randomize->gen_decimal_in_range( lo, hi ) ) ) );
+		} );
+		InstallTime out = real;
+		out.shift_seconds = std::stoll( s ) - real.unix_seconds;
+		if ( out.shift_seconds < lo || out.shift_seconds > hi ) fail( "rule 7b: the identity map's install instant does not fit this capture's window" );
+		out.unix_seconds = real.unix_seconds + out.shift_seconds;
+		out.filetime = uint64_t( int64_t( real.filetime ) + out.shift_seconds * 10000000LL );
+		ctx.identity_map.has_install_shift = true;	// written only into the ORIGINAL (local) copy of the map
+		ctx.identity_map.install_shift = out.shift_seconds;
+		return out;
+	}
+
+	// ISO 8601 "YYYY-MM-DDTHH:MM:SSZ" <-> unix seconds (proleptic Gregorian, UTC)
+	static int64_t days_from_civil( int y, unsigned m, unsigned d )
+	{
+		y -= m <= 2;
+		const int era = ( y >= 0 ? y : y - 399 ) / 400;
+		const unsigned yoe = unsigned( y - era * 400 );
+		const unsigned doy = ( 153 * ( m > 2 ? m - 3 : m + 9 ) + 2 ) / 5 + d - 1;
+		const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+		return int64_t( era ) * 146097 + int64_t( doe ) - 719468;
+	}
+	static bool unix_of_iso( const std::string& iso, int64_t& out )
+	{
+		int y = 0;
+		unsigned mo = 0, d = 0, hh = 0, mi = 0, ss = 0;
+		if ( iso.size() != 20 || sscanf( iso.c_str(), "%d-%u-%uT%u:%u:%uZ", &y, &mo, &d, &hh, &mi, &ss ) != 6 ) return false;
+		out = days_from_civil( y, mo, d ) * 86400 + hh * 3600 + mi * 60 + ss;
+		return true;
+	}
+	static std::string iso_of_unix( int64_t t )
+	{
+		int64_t z = ( t >= 0 ? t : t - 86399 ) / 86400, sec = t - z * 86400;
+		z += 719468;
+		const int64_t era = ( z >= 0 ? z : z - 146096 ) / 146097;
+		const unsigned doe = unsigned( z - era * 146097 );
+		const unsigned yoe = ( doe - doe / 1460 + doe / 36524 - doe / 146096 ) / 365;
+		const unsigned doy = doe - ( 365 * yoe + yoe / 4 - yoe / 100 ), mp = ( 5 * doy + 2 ) / 153;
+		const unsigned d = doy - ( 153 * mp + 2 ) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+		const int64_t y = int64_t( yoe ) + era * 400 + ( m <= 2 );
+		return fmt( "%04lld-%02u-%02uT%02lld:%02lld:%02lldZ", (long long)y, m, d, (long long)( sec / 3600 ), (long long)( sec / 60 % 60 ), (long long)( sec % 60 ) );
 	}
 
 	// rule 7d: the machine / account-domain SID prefix "S-1-5-21-a-b-c": structure kept; the three sub-authorities synthetic,
 	// each a decimal of the same digit count (no leading zero, at most 4294967295)
-	SidParts ProfileGenerator::gen_sid( const SidParts& real )
+	SidParts ProfileGenerator::gen_sid( BuildContext& ctx, const SidParts& real )
 	{
-		static const std::regex r( R"(^S-1-5-21-([0-9]+)-([0-9]+)-([0-9]+)$)", std::regex::icase );
-		std::smatch m;
-		if ( !std::regex_match( real.prefix, m, r ) ) fail( "rule 7d: not an S-1-5-21-a-b-c SID prefix" );
-		SyntheticStream s = stream( real.label );
-		for ( ;; )
-		{
-			std::string o = real.prefix.substr( 0, 9 );
-			for ( int k = 1; k <= 3; k++ )
-			{
-				size_t n = size_t( m[ k ].length() );
-				for ( ;; )
-				{
-					std::string d;
-					while ( d.size() < n ) { char c = s.digit(); if ( d.empty() && n > 1 && c == '0' ) continue; d += c; }
-					if ( std::stoull( d ) <= 0xFFFFFFFFull ) { o += d + ( k < 3 ? "-" : "" ); break; }
-				}
-			}
-			if ( !ieq( o, real.prefix ) ) return { o, real.label };
-		}
+		return { draw( ctx, real.label, "sid", real.prefix, true, [ & ] { return Randomize->gen_sid_like( real.prefix ); } ), real.label };
 	}
 
 	// rule 7e: a volume serial "XXXX-XXXX": 8 synthetic hex digits in the original's case, the form kept
-	VolumeId ProfileGenerator::gen_volume_serial( const VolumeId& real )
+	VolumeId ProfileGenerator::gen_volume_serial( BuildContext& ctx, const VolumeId& real )
 	{
-		SyntheticStream s = stream( real.label );
-		return { draw_hex( real.serial, s, false ), real.label };
+		return { draw( ctx, real.label, "volume_serial", real.serial, true, [ & ] { return Randomize->gen_hex_like( real.serial, false ); } ), real.label };
 	}
 
-	// rule 6: the EDID numeric serial (bytes 12-15, little-endian). Four printable letters / digits (some vendors store text
-	// there) get the rule-2 classes; any other value a synthetic number of the same decimal digit count
-	EdidSerial ProfileGenerator::gen_edid_serial( const EdidSerial& real )
+	// rule 6: the EDID numeric serial (bytes 12-15, little-endian) as its decimal value. Four printable letters / digits (some
+	// vendors store text there) get the rule-2 classes; any other value a synthetic number of the same decimal digit count
+	EdidSerial ProfileGenerator::gen_edid_serial( BuildContext& ctx, const EdidSerial& real )
 	{
-		SyntheticStream s = stream( real.label );
-		const uint32_t v = real.value;
-		char c[ 4 ] = { char( v & 0xFF ), char( v >> 8 & 0xFF ), char( v >> 16 & 0xFF ), char( v >> 24 & 0xFF ) };
-		if ( std::all_of( c, c + 4, is_alnum ) )
-		{
-			std::string t = draw_classes( std::string( c, 4 ), s );
-			return { uint32_t( uint8_t( t[ 0 ] ) ) | uint32_t( uint8_t( t[ 1 ] ) ) << 8 | uint32_t( uint8_t( t[ 2 ] ) ) << 16 | uint32_t( uint8_t( t[ 3 ] ) ) << 24, real.label };
-		}
-		size_t dc = std::to_string( v ).size();
-		uint64_t lo = 1;
-		for ( size_t i = 1; i < dc; i++ ) lo *= 10;
-		uint64_t hi = std::min<uint64_t>( lo * 10 - 1, 0xFFFFFFFFull );
-		for ( ;; )
-		{
-			uint32_t r = uint32_t( lo + s.next_u64() % ( hi - lo + 1 ) );
-			if ( r != v ) return { r, real.label };
-		}
+		return { draw( ctx, real.label, "edid_serial", real.text, false, [ & ] { return Randomize->gen_edid_serial_like( real.text ); } ), real.label };
 	}
 	// rule 6: byte 127 = the value that makes the 128-byte base block sum to 0 (mod 256)
-	EdidBlock ProfileGenerator::gen_edid_checksum( const EdidBlock& block )
+	EdidBlock ProfileGenerator::gen_edid_checksum( BuildContext& ctx, const EdidBlock& block )
 	{
 		if ( block.bytes.size() < 128 ) fail( "EDID base block shorter than 128 bytes" );
 		EdidBlock out = block;
@@ -864,7 +849,7 @@ namespace emu::platform
 	// rule 6 on the EDID values (edid_<n>.bin): serial field + FFh serial string synthetic, ONE mapping per physical monitor
 	// (key: manufacturer + product code + the real serial: the same monitor on several ports / instances gets one synthetic
 	// serial), base-block checksum recomputed, extension blocks untouched (scanned for the real serials)
-	EdidGen ProfileGenerator::gen_edid( const EdidInput& in )
+	EdidGen ProfileGenerator::gen_edid( BuildContext& ctx, const EdidInput& in )
 	{
 		static const uint8_t k_hdr[ 8 ] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
 		EdidGen g;
@@ -884,11 +869,13 @@ namespace emu::platform
 				auto it = num.find( model + fmt( "%08X", serial ) );
 				if ( it == num.end() )
 				{
-					it = num.emplace( model + fmt( "%08X", serial ), gen_edid_serial( { serial, fmt( "edid/n%02d", ++nnum ) } ).value ).first;
+					const std::string dec = std::to_string( serial );
+					const uint32_t syn = le32_of_decimal( gen_edid_serial( ctx, { dec.c_str(), fmt( "edid/n%02d", ++nnum ) } ).text );	// the single write point
+					it = num.emplace( model + fmt( "%08X", serial ), syn ).first;
 					g.presets.push_back( { "edid_serial", "6", fmt( "0x%08X", serial ), fmt( "0x%08X", it->second ), { lower( fmt( "0x%08X", serial ) ), std::to_string( serial ) }, "edid.txt" } );
 				}
 				real_forms.push_back( Bytes( raw.begin() + 12, raw.begin() + 16 ) );
-				if ( c_.rules.r6 )
+				if ( ctx.config.rules.r6 )
 				{
 					for ( int i = 0; i < 4; i++ ) b.bytes[ 12 + i ] = uint8_t( it->second >> ( 8 * i ) );
 					g.fields.push_back( { area, fmt( "D%02d", ++row ), "6", "EDID serial number field (bytes 12-15, little-endian)", 12, 0, 4 } );
@@ -904,18 +891,18 @@ namespace emu::platform
 				auto it = str.find( model + s );
 				if ( it == str.end() )
 				{
-					it = str.emplace( model + s, gen_class_string( { s, fmt( "edid/s%02d", ++nstr ) } ).text ).first;
+					it = str.emplace( model + s, gen_class_string( ctx, { s.c_str(), fmt( "edid/s%02d", ++nstr ) } ).text ).first;
 					g.presets.push_back( { "edid_serial_string", "6", s, it->second, { lower( s ) }, "edid.txt" } );
 				}
 				real_forms.push_back( to_bytes( s ) );
 				g.needles.push_back( s );
-				if ( c_.rules.r6 )
+				if ( ctx.config.rules.r6 )
 				{
 					memcpy( &b.bytes[ d + 5 ], it->second.data(), len );
 					g.fields.push_back( { area, fmt( "D%02d", ++row ), "6", fmt( "EDID descriptor at offset %zu, tag FFh: monitor serial string", d ), d + 5, 0, uint32_t( len ) } );
 				}
 			}
-			b = gen_edid_checksum( b );
+			b = gen_edid_checksum( ctx, b );
 			g.fields.push_back( { area, fmt( "D%02d", ++row ), "6c", "EDID base-block checksum (byte 127), recomputed", 127, 0, 1 } );
 			for ( size_t e = 128; e + 128 <= raw.size(); e += 128 )	// extension blocks: never changed, scanned for the real serials
 			{
@@ -926,6 +913,246 @@ namespace emu::platform
 			g.synthetic.push_back( b );
 		}
 		return g;
+	}
+
+	// ── rule 8d: the raw STORAGE_DEVICE_DESCRIPTORs (disk_<n>_descriptor.bin, fwid >= 1.4) ───────────────────────────────
+	// The serial string at SerialNumberOffset (offset 24; NUL-terminated ASCII), without its blank padding, becomes its disk-
+	// serial identity (disks.txt, or the USB serial it equals); a placeholder (one repeated character) and a descriptor without
+	// a serial (offset 0: the VMware guest's virtual disks) stay exact, like vendor / product / revision and every other byte.
+	// The real serial anywhere else in the descriptor (raw properties) stops the run.
+	DiskGen ProfileGenerator::gen_disk_descriptors( BuildContext& ctx, const DiskInput& in )
+	{
+		DiskGen g;
+		int row = 0;
+		auto dword = []( const Bytes& b, size_t o ) { return uint32_t( b[ o ] ) | uint32_t( b[ o + 1 ] ) << 8 | uint32_t( b[ o + 2 ] ) << 16 | uint32_t( b[ o + 3 ] ) << 24; };
+		for ( const DiskDescriptor& d : in.descriptors )
+		{
+			DiskDescriptor s = d;
+			const Bytes& b = d.bytes;
+			if ( b.size() < 36 ) fail( d.name + ": shorter than a STORAGE_DEVICE_DESCRIPTOR" );
+			const size_t size = std::min<size_t>( dword( b, 4 ), b.size() ), so = dword( b, 24 );
+			if ( !so ) { g.none++; g.synthetic.push_back( s ); continue; }
+			if ( so < 36 || so >= size ) fail( fmt( "%s: SerialNumberOffset %zu outside the descriptor", d.name.c_str(), so ) );
+			size_t e = so;
+			while ( e < size && b[ e ] ) e++;
+			size_t a = so, z = e;
+			while ( a < z && b[ a ] == ' ' ) a++;
+			while ( z > a && b[ z - 1 ] == ' ' ) z--;
+			const std::string core( b.begin() + a, b.begin() + z );
+			if ( check_filler( core ) ) { g.filler++; g.synthetic.push_back( s ); continue; }
+			const IdentityEntry* id = nullptr;
+			for ( const IdentityEntry& r : in.identity )
+				if ( ( r.kind == "disk_serial" || r.kind == "usb_serial" ) && ieq( r.original, core ) ) { id = &r; break; }
+			if ( !id ) fail( d.name + ": its serial has no disk-serial identity (disks.txt) - it needs a field decision" );
+			g.needles.push_back( core );
+			const Bytes cb( core.begin(), core.end() );
+			for ( auto it = std::search( b.begin(), b.end(), cb.begin(), cb.end() ); it != b.end(); it = std::search( it + 1, b.end(), cb.begin(), cb.end() ) )
+				if ( size_t( it - b.begin() ) != a ) fail( d.name + ": the disk serial also occurs outside the serial string - it needs a field decision" );
+			if ( ctx.config.rules.r8 )
+			{
+				const std::string syn = follow_case( id->synthetic, core );
+				memcpy( &s.bytes[ a ], syn.data(), core.size() );
+				g.fields.push_back( { "disk\\" + d.name, fmt( "R%02d", ++row ), "8d", fmt( "STORAGE_DEVICE_DESCRIPTOR serial number string (SerialNumberOffset %zu%s): identity %s", so,
+					a != so || z != e ? ", blank padding kept" : "", id->id.c_str() ), a, 0, uint32_t( core.size() ) } );
+			}
+			g.serials++;
+			g.synthetic.push_back( s );
+		}
+		return g;
+	}
+
+	// ── rule 8c: SusClientIdValidation ─────────────────────────────────────────────────────────────────────────────────────
+	// The layout of both clean fwid 1.4 captures (Run3b guest: 29 bytes; bare host: 117 bytes): 06h 02h len1 01h len2 len3,
+	// string 1 (UTF-16LE, len1 bytes), 06h + 6 MAC bytes, string 2 (len2), string 3 (len3); the lengths add up to the blob.
+	// The meaning of the components comes from the captures (string 1 = the system disk's serial of disks.txt, the MAC = an
+	// adapter MAC, string 2 = the SMBIOS baseboard serial, string 3 = SMBIOS filler); no local document describes the value.
+	SusValidationLayout ProfileGenerator::parse_sus_client_id_validation( const Bytes& b )
+	{
+		SusValidationLayout l;
+		if ( b.size() < 13 || b[ 0 ] != 0x06 || b[ 1 ] != 0x02 || b[ 3 ] != 0x01 ) return l;
+		const size_t n1 = b[ 2 ], n2 = b[ 4 ], n3 = b[ 5 ];
+		if ( n1 % 2 || n2 % 2 || n3 % 2 || 6 + n1 + 7 + n2 + n3 != b.size() || b[ 6 + n1 ] != 6 ) return l;
+		auto u16 = [ & ]( size_t o, size_t n, std::string& out ) {
+			for ( size_t i = 0; i < n; i += 2 )
+			{
+				if ( b[ o + i + 1 ] || b[ o + i ] < 0x20 || b[ o + i ] > 0x7E ) return false;
+				out += char( b[ o + i ] );
+			}
+			return true;
+		};
+		if ( !u16( 6, n1, l.disk_serial ) ) return l;
+		l.mac_offset = 6 + n1 + 1;
+		std::copy( b.begin() + l.mac_offset, b.begin() + l.mac_offset + 6, l.mac.begin() );
+		if ( !u16( l.mac_offset + 6, n2, l.board_serial ) || !u16( l.mac_offset + 6 + n2, n3, l.other_serial ) ) return l;
+		l.ok = true;
+		return l;
+	}
+	SusValidation ProfileGenerator::gen_sus_client_id_validation( BuildContext& ctx, const SusValidationInput& in )
+	{
+		SusValidation out;
+		out.layout = parse_sus_client_id_validation( in.real );
+		if ( !out.layout.ok ) fail( "rule 8c: SusClientIdValidation has another layout than the clean captures - it needs a field decision" );
+		Bytes bytes = in.real;	// assembled from the components' synthetic texts (no randomness of its own)
+		auto put = [ & ]( size_t off, const std::string& real, const char* what ) {
+			if ( real.empty() || check_filler( real ) ) { out.components.push_back( std::string( what ) + ": empty / filler, exact" ); return; }
+			const std::string* syn = nullptr;
+			for ( auto& [ r, s ] : in.strings ) if ( ieq( r, real ) ) { syn = &s; break; }
+			if ( !syn ) fail( std::string( "rule 8c: SusClientIdValidation " ) + what + " is no identifier of the capture - it needs a field decision" );
+			const std::string s2 = follow_case( *syn, real );
+			for ( size_t i = 0; i < s2.size(); i++ ) bytes[ off + 2 * i ] = uint8_t( s2[ i ] );
+			out.components.push_back( std::string( what ) + ": its synthetic identifier" );
+		};
+		const SusValidationLayout& l = out.layout;
+		put( 6, l.disk_serial, "string 1 (the system disk serial)" );
+		std::string mt;
+		for ( int i = 0; i < 6; i++ ) mt += ( i ? ":" : "" ) + hex_of( &l.mac[ i ], 1, true );
+		bool mac = false;
+		for ( const MacPair& m : in.macs )
+		{
+			uint8_t sm[ 6 ];
+			if ( !ieq( m.real.text, mt ) || !parse_mac_text( m.synthetic.text, sm ) ) continue;
+			memcpy( &bytes[ l.mac_offset ], sm, 6 );
+			out.components.push_back( "MAC: the synthetic MAC of identity " + m.real.id + " (adapter \"" + m.real.adapter + "\")" );
+			mac = true;
+			break;
+		}
+		if ( !mac ) fail( "rule 8c: the MAC inside SusClientIdValidation is no adapter MAC of the capture - it needs a field decision" );
+		put( l.mac_offset + 6, l.board_serial, "string 2 (the SMBIOS baseboard serial)" );
+		put( l.mac_offset + 6 + 2 * l.board_serial.size(), l.other_serial, "string 3" );
+		if ( bytes == in.real ) out.components.push_back( "no component is an identifier: exact" );
+		out.hex = keep( hex_of( bytes.data(), bytes.size(), true ) );
+		return out;
+	}
+
+	// ── rule 8a: license.txt rows (fwid 1.4: "=== SoftwareLicensingProduct row N", then "Key  value" lines) ──────────────
+	std::vector<WinInstallationId> ProfileGenerator::parse_license_rows( const TextFile& f )
+	{
+		std::vector<WinInstallationId> rows;
+		WinLicenseInfo lic;
+		static const std::regex r_kv( R"re(^([A-Za-z]+)\s+(.*)$)re" );
+		const auto lines = split_lines( f.data );
+		for ( size_t i = 0; i < lines.size(); i++ )
+		{
+			const std::string& l = lines[ i ];
+			if ( l.empty() || l[ 0 ] == '#' ) continue;
+			if ( l.rfind( "=== ", 0 ) == 0 ) { lic = WinLicenseInfo(); continue; }
+			std::smatch m;
+			if ( !std::regex_match( l, m, r_kv ) ) continue;
+			const std::string key = m[ 1 ].str(), rest = m[ 2 ].str();
+			std::string v;
+			if ( !rest.empty() && rest[ 0 ] == '"' )
+			{
+				const size_t q = rest.find( '"', 1 );
+				v = rest.substr( 1, q == std::string::npos ? std::string::npos : q - 1 );
+			}
+			else v = rest.substr( 0, rest.find( ' ' ) );
+			if ( key == "ID" ) lic.sku_id = v;
+			else if ( key == "Name" ) lic.name = v;
+			else if ( key == "Description" ) lic.description = v;
+			else if ( key == "LicenseStatus" ) lic.license_status = v;
+			else if ( key == "ProductKeyChannel" ) lic.product_key_channel = v;
+			else if ( key == "OfflineInstallationId" )
+			{
+				WinInstallationId w;
+				w.text = keep( v );
+				w.source = fmt( "license.txt:%zu", i + 1 );
+				w.license = lic;
+				rows.push_back( w );
+			}
+		}
+		return rows;
+	}
+
+	// ── tool artifacts (BuildConfig "exclude"; user decision J 2026-10-16) ───────────────────────────────────────────────
+	const ExclusionRange* ExclusionScan::range_of( const std::string& file, size_t line ) const
+	{
+		for ( const ExclusionRange& r : ranges )
+			if ( r.file == file && line >= r.first_line && line <= r.last_line ) return &r;
+		return nullptr;
+	}
+	bool ExclusionScan::excluded( const std::string& file, size_t line ) const { return range_of( file, line ) != nullptr; }
+
+	// the unit of a pattern hit: a quoted list item / numbered list line alone; else its "## " / "=== " block (a registry key
+	// block with all its subkey blocks and the parent block's subkey line); a block recording the item's absence is skipped
+	ExclusionScan ProfileGenerator::parse_tool_exclusions( const std::vector<TextFile>& files, const std::vector<ToolExclusion>& items )
+	{
+		ExclusionScan s;
+		static const std::regex r_list( R"re(^\s*"[^"]*"\s*$)re" ), r_numbered( R"(^\s*[0-9]+\s{2,}\S.*$)" ), r_key( R"(^## (HK[A-Z_]+\\.+)$)" );
+		for ( const TextFile& f : files )
+		{
+			if ( f.name == "capture_info.txt" || f.name == "certificates.txt" ) continue;	// run metadata / not part of the profile
+			s.scanned_files++;
+			const auto lines = split_lines( f.data );
+			std::vector<std::string> lc;
+			for ( const std::string& l : lines ) lc.push_back( lower( l ) );
+			auto header = [ & ]( size_t i ) { const std::string& l = lines[ i ]; return l.rfind( "## ", 0 ) == 0 || l.rfind( "=== ", 0 ) == 0 || l.rfind( "##########", 0 ) == 0; };
+			auto comment = [ & ]( size_t i ) { return !lines[ i ].empty() && lines[ i ][ 0 ] == '#' && !header( i ); };
+			auto block_of = [ & ]( size_t i, size_t& a, size_t& z ) {
+				size_t k = i + 1;
+				while ( k-- > 0 ) if ( header( k ) ) break;
+				if ( k == size_t( -1 ) ) return false;
+				a = k;
+				z = k;
+				while ( z + 1 < lines.size() && !header( z + 1 ) ) z++;
+				while ( z > a && lines[ z ].empty() ) z--;
+				return true;
+			};
+			auto add = [ & ]( const ToolExclusion& it, const char* unit, size_t a, size_t z ) {
+				for ( const ExclusionRange& r : s.ranges )
+					if ( r.file == f.name && r.first_line <= a + 1 && r.last_line >= z + 1 ) return;	// already inside an excluded range
+				if ( z - a > 2000 ) fail( fmt( "exclusion \"%s\": the unit %s:%zu-%zu is larger than 2000 lines - review the patterns", it.name.c_str(), f.name.c_str(), a + 1, z + 1 ) );
+				s.ranges.push_back( { it.name, f.name, unit, a + 1, z + 1 } );
+			};
+			for ( size_t i = 0; i < lines.size(); i++ )
+			{
+				if ( lines[ i ].empty() || comment( i ) ) continue;
+				auto hits = [ & ]( const ToolExclusion& x, size_t k ) {
+					for ( const std::string& p : x.patterns ) if ( !p.empty() && lc[ k ].find( lower( p ) ) != std::string::npos ) return true;
+					return false;
+				};
+				for ( size_t ii = 0; ii < items.size(); ii++ )
+				{
+					if ( !hits( items[ ii ], i ) ) continue;
+					size_t a = 0, z = 0;
+					if ( std::regex_match( lines[ i ], r_list ) || std::regex_match( lines[ i ], r_numbered ) || !block_of( i, a, z ) ) { add( items[ ii ], "line", i, i ); continue; }
+					// a unit is named after the first list item any of its lines matches (the printer's key holds "RustDesk" as Mfg
+					// before "RustDesk Printer": it stays the printer's)
+					size_t owner = ii;
+					for ( size_t jj = 0; jj < ii; jj++ )
+						for ( size_t k = a; k <= z && owner == ii; k++ )
+							if ( hits( items[ jj ], k ) ) owner = jj;
+					const ToolExclusion& it = items[ owner ];
+					bool absent = false;
+					for ( size_t k = a; k <= z; k++ )
+						absent |= lc[ k ].find( "exists: no" ) != std::string::npos || lc[ k ].find( "not present" ) != std::string::npos || lc[ k ].find( "(not found)" ) != std::string::npos;
+					if ( absent ) { s.absence_records++; continue; }
+					std::smatch m;
+					if ( !std::regex_match( lines[ a ], m, r_key ) ) { add( it, "block", a, z ); continue; }
+					const std::string key = m[ 1 ].str(), klc = lower( key ) + "\\";
+					add( it, "registry key", a, z );
+					for ( size_t k = z + 1; k < lines.size(); k++ )	// its subkey blocks
+					{
+						std::smatch m2;
+						size_t a2 = 0, z2 = 0;
+						if ( std::regex_match( lines[ k ], m2, r_key ) && lower( m2[ 1 ].str() ).rfind( klc, 0 ) == 0 && block_of( k, a2, z2 ) ) add( it, "registry subkey", a2, z2 );
+					}
+					const size_t bs = key.rfind( '\\' );
+					const std::string parent = lower( key.substr( 0, bs ) ), sub = "subkey \"" + lower( key.substr( bs + 1 ) ) + "\"";
+					for ( size_t k = 0; k < lines.size(); k++ )	// the parent block's subkey line
+					{
+						std::smatch m2;
+						size_t a2 = 0, z2 = 0;
+						if ( !std::regex_match( lines[ k ], m2, r_key ) || lower( m2[ 1 ].str() ) != parent || !block_of( k, a2, z2 ) ) continue;
+						for ( size_t q = a2 + 1; q <= z2; q++ )
+						{
+							const size_t first = lc[ q ].find_first_not_of( " \t" );
+							if ( first != std::string::npos && lc[ q ].compare( first, sub.size(), sub ) == 0 ) add( it, "parent subkey line", q, q );
+						}
+					}
+				}
+			}
+		}
+		return s;
 	}
 
 	// ── gen_text_identity: rules 3, 4a-4d, 7, 8 on the fwid text outputs ─────────────────────────────────────────────────
@@ -942,7 +1169,16 @@ namespace emu::platform
 			std::string only_file;				// presets: search only this file
 			bool preset = false;
 			size_t family = size_t( -1 );		// MAC: index in the MacFamily
+			std::vector<FieldMapEntry> manual;	// occurrences no needle finds (the SusClientIdValidation hex dump), id set later
+			Bytes blob;							// rule 8c: the real SusClientIdValidation bytes
+			std::vector<std::string> line_markers;	// non-empty: an occurrence counts only on a line holding one of them (rule 7b ISO forms)
 		};
+		// rule 7b: the lines on which an ISO form of an install-history event is that event (not a registry last-write time)
+		const std::vector<std::string> k_event_iso_markers = { "devpkey_device_firstinstalldate", "devpkey_device_installdate", "devpkey_device_lastarrivaldate",
+			"(filetime)", "(seconds since" };
+		// rule 7b: the install-history kinds (FILETIME decimal values unless noted)
+		const std::set<std::string> k_history = { "install_date", "install_time", "device_install_time", "device_arrival_time", "sqm_first_session", "diagtrack_time",
+			"bt_event_time", "event_iso" };
 		bool rule_on( const RuleSet& r, const std::string& rule )
 		{
 			if ( rule == "3" ) return r.r3;
@@ -971,10 +1207,10 @@ namespace emu::platform
 		return t;
 	}
 
-	TextIdentityGen ProfileGenerator::gen_text_identity( const TextIdentityInput& in )
+	TextIdentityGen ProfileGenerator::gen_text_identity( BuildContext& ctx, const TextIdentityInput& in )
 	{
 		const std::vector<TextFile>& files = in.files;
-		const RuleSet& rules = c_.rules;
+		const RuleSet& rules = ctx.config.rules;
 		TextIdentityGen out;
 		std::vector<Ident> ids;
 		std::map<std::string, size_t> by_key;	// lower-case value (GUIDs without braces) -> index
@@ -982,7 +1218,18 @@ namespace emu::platform
 		std::map<std::string, int> counters;
 		std::set<std::string> keep_style;		// GUID keys whose own style (braces / case) identity.tsv keeps
 		auto key_of = []( const std::string& v ) { std::string k = lower( v ); if ( !k.empty() && k.front() == '{' && k.size() == 38 ) k = k.substr( 1, 36 ); return k; };
+		// identifier anchors inside the ranges of an excluded tool artifact (parse_tool_exclusions) create no identity; their
+		// values are checked below never to occur outside the excluded ranges, and stay in the leak guard
+		struct ExcludedAnchor { std::string kind, value, file; size_t line; std::vector<std::string> markers; };
+		std::vector<ExcludedAnchor> excluded_anchors;
+		Ident scratch;
 		auto add = [ & ]( const std::string& kind, const std::string& rule, const std::string& value, const std::string& file, size_t line ) -> Ident& {
+			if ( line && in.exclusions.excluded( file, line ) )
+			{
+				excluded_anchors.push_back( { kind, value, file, line } );
+				scratch = Ident();
+				return scratch;
+			}
 			std::string key = key_of( value );
 			auto it = by_key.find( key );
 			if ( it != by_key.end() ) return ids[ it->second ];
@@ -1107,9 +1354,18 @@ namespace emu::platform
 			for ( size_t i = 0; i < lines.size(); i++ )
 			{
 				std::smatch m;
-				if ( lines[ i ].find( "CONTAINERID" ) == std::string::npos && lines[ i ].find( "ContainerId" ) == std::string::npos ) continue;
-				if ( std::regex_search( lines[ i ], m, r_container_pci ) && key_of( m[ 1 ].str() ) != k_null_container )
-					add( "container_id", "4c", m[ 1 ].str(), f_pci->name, i + 1 );
+				const bool marked = lines[ i ].find( "[IDENTIFIER" ) != std::string::npos && lines[ i ][ 0 ] != '#';
+				if ( lines[ i ].find( "CONTAINERID" ) == std::string::npos && lines[ i ].find( "ContainerId" ) == std::string::npos )
+				{
+					// fwid marks only the container-ID properties in pci_devices.txt; any other marked line needs a decision
+					if ( marked ) fail( fmt( "pci_devices.txt:%zu: an identifier line no rule covers - it needs a field decision", i + 1 ) );
+					continue;
+				}
+				if ( std::regex_search( lines[ i ], m, r_container_pci ) )
+				{
+					if ( key_of( m[ 1 ].str() ) != k_null_container ) add( "container_id", "4c", m[ 1 ].str(), f_pci->name, i + 1 );
+				}
+				else if ( marked ) fail( fmt( "pci_devices.txt:%zu: an identifier line no rule covers - it needs a field decision", i + 1 ) );
 			}
 		}
 
@@ -1155,6 +1411,7 @@ namespace emu::platform
 			for ( size_t i = 0; i < lines.size(); i++ )
 			{
 				const std::string& l = lines[ i ];
+				if ( !l.empty() && l[ 0 ] == '#' ) continue;	// fwid's file comments describe the marks, they hold no value
 				bool marked = l.find( "[IDENTIFIER" ) != std::string::npos, used = false;
 				std::smatch m;
 				if ( std::regex_match( l, m, r_reg ) )
@@ -1172,7 +1429,12 @@ namespace emu::platform
 						Ident& d = add( name == "InstallDate" ? "install_date" : "install_time", "7b", h[ 2 ].str(), f->name, i + 1 );
 						d.needles = { lower( "0x" + h[ 1 ].str() ), h[ 2 ].str() };
 						std::smatch iso;
-						if ( name == "InstallDate" && i + 1 < lines.size() && std::regex_search( lines[ i + 1 ], iso, r_iso ) ) d.needles.push_back( lower( iso[ 1 ].str() ) );
+						if ( i + 1 < lines.size() && std::regex_search( lines[ i + 1 ], iso, r_iso ) )	// "    = <ISO> (seconds since ...)" / "(FILETIME)"
+						{
+							Ident& e = add( "event_iso", "7b", iso[ 1 ].str(), f->name, i + 2 );
+							e.line_markers = k_event_iso_markers;
+							if ( &e == &scratch ) excluded_anchors.back().markers = k_event_iso_markers;
+						}
 					}
 					else if ( name == "RegisteredOwner" ) { if ( !v.empty() ) add( "user_name", "7c", v, f->name, i + 1 ); }
 					else if ( name == "RegisteredOrganization" ) { if ( !v.empty() ) undecided( f->name, i + 1 ); }	// no decision yet
@@ -1203,52 +1465,89 @@ namespace emu::platform
 				if ( marked && !used ) undecided( f->name, i + 1 );
 			}
 		}
+		// rule 8a: one installation ID per SoftwareLicensingProduct row of license.txt, with that row's exact license data
+		if ( const TextFile* f = find_file( "license.txt" ) ) win_ids = parse_license_rows( *f );
+		static const std::regex r_inline_hex( R"(\]: ([0-9A-Fa-f]+) \([0-9]+ bytes hex\))" );
+		static const std::regex r_dump( R"(^(\s+[0-9A-Fa-f]{4}: )((?:[0-9A-Fa-f]{2} )+)\s*\|(.*)\|$)" );
 		for ( const char* fn : { "license.txt", "update_ids.txt", "disks.txt", "hid.txt", "gpu.txt", "bluetooth.txt", "audio.txt", "chid.txt", "platform_security.txt",
-				  "environment.txt", "wifi.txt", "printers.txt" } )
+				  "environment.txt", "wifi.txt", "printers.txt", "edid.txt" } )
 		{
 			const TextFile* f = find_file( fn );
 			if ( !f ) continue;
 			const std::string file = fn;
 			auto lines = split_lines( f->data );
-			WinLicenseInfo lic;	// license.txt: exact license data, carried with the installation ID
 			for ( size_t i = 0; i < lines.size(); i++ )
 			{
 				const std::string& l = lines[ i ];
-				const std::string k = lower( l );
-				if ( file == "license.txt" && l.find( "[IDENTIFIER" ) == std::string::npos )
-				{
-					if ( k.find( "licensestatus" ) != std::string::npos ) lic.license_status = field_value( l );
-					else if ( k.find( "productkeychannel" ) != std::string::npos ) lic.product_key_channel = field_value( l );
-					else if ( k.find( "description" ) != std::string::npos ) lic.description = field_value( l );
-					else if ( k.find( "name" ) != std::string::npos ) lic.name = field_value( l );
-				}
-				if ( l.find( "[IDENTIFIER" ) == std::string::npos ) continue;
-				const std::string v = field_value( l );
+				if ( l.find( "[IDENTIFIER" ) == std::string::npos || l[ 0 ] == '#' ) continue;	// '#': fwid's file comments describe the marks
+				// "[IDENTIFIER?] review: ..." on a line of its own marks the value line above it (gpu.txt)
+				const bool review = i > 0 && l.find_first_not_of( " \t" ) == l.find( "[IDENTIFIER?]" );
+				const std::string& subject = review ? lines[ i - 1 ] : l;
+				const size_t sline = review ? i : i + 1;	// 1-based line of the marked value
+				const std::string k = lower( subject );
+				const std::string v = field_value( subject );
 				std::smatch m;
-				const bool guid = std::regex_search( v, m, r_any_guid );
+				const bool guid = std::regex_search( subject, m, r_any_guid );
 				auto has = [ & ]( std::initializer_list<const char*> w ) { for ( const char* x : w ) if ( k.find( x ) != std::string::npos ) return true; return false; };
-				if ( file == "chid.txt" ) continue;	// CHIDs are derived from SMBIOS fields that stay exact (check_chid_fields)
+				if ( file == "chid.txt" || file == "platform_security.txt" ) continue;	// CHIDs: from SMBIOS fields that stay exact (check_chid_fields); Secure Boot / TPM exact
 				else if ( file == "license.txt" && has( { "installationid" } ) )
 				{
+					bool row = false;
+					for ( const WinInstallationId& w : win_ids ) row |= w.text == v && w.source == fmt( "license.txt:%zu", i + 1 );
+					if ( !row ) undecided( file, i + 1 );	// a marked installation ID outside a SoftwareLicensingProduct row
 					add( "win_installation_id", "8a", v, file, i + 1 );
-					WinInstallationId w;
-					w.text = v;
-					w.source = fmt( "license.txt:%zu", i + 1 );
-					w.license = lic;
-					win_ids.push_back( w );
 				}
-				else if ( file == "update_ids.txt" && has( { "susclientidvalidation" } ) ) add( "sus_client_id_validation", "8c", v, file, i + 1 );
-				else if ( file == "update_ids.txt" && has( { "susclientid" } ) && guid ) add_guid( "sus_client_id", m[ 0 ].str(), file, i + 1, true );
+				else if ( file == "update_ids.txt" && has( { "\"susclientidvalidation\"" } ) )
+				{
+					// rule 8c: the blob inline ("...]: <hex> (N bytes hex)") or as a hex dump on the lines below (bytes + ASCII column)
+					Bytes blob;
+					std::vector<FieldMapEntry> rows;
+					std::smatch hm;
+					if ( std::regex_search( l, hm, r_inline_hex ) && hm[ 1 ].length() % 2 == 0 )
+						for ( size_t q = 0; q < size_t( hm[ 1 ].length() ); q += 2 ) blob.push_back( uint8_t( std::stoul( hm[ 1 ].str().substr( q, 2 ), nullptr, 16 ) ) );
+					else
+						for ( size_t q = i + 1; q < lines.size(); q++ )
+						{
+							std::smatch dm;
+							if ( !std::regex_match( lines[ q ], dm, r_dump ) ) break;
+							std::istringstream hs( dm[ 2 ].str() );
+							for ( std::string h; hs >> h; ) blob.push_back( uint8_t( std::stoul( h, nullptr, 16 ) ) );
+							rows.push_back( { file, "", "8c", "sus_client_id_validation (hex dump: bytes)", uint64_t( dm.position( 2 ) + 1 ), q + 1, uint32_t( dm[ 2 ].length() - 1 ) } );
+							rows.push_back( { file, "", "8c", "sus_client_id_validation (hex dump: ASCII column)", uint64_t( dm.position( 3 ) + 1 ), q + 1, uint32_t( dm[ 3 ].length() ) } );
+						}
+					if ( blob.empty() ) fail( fmt( "update_ids.txt:%zu: SusClientIdValidation in an unknown form - it needs a field decision", i + 1 ) );
+					Ident& d = add( "sus_client_id_validation", "8c", hex_of( blob.data(), blob.size(), true ), file, i + 1 );
+					d.manual = rows;
+					d.blob = blob;
+				}
+				else if ( file == "update_ids.txt" && has( { "\"susclientid\"", "susclientid " } ) && guid ) add_guid( "sus_client_id", m[ 0 ].str(), file, i + 1, true );
 				else if ( file == "update_ids.txt" && has( { "diagtrack", "telemetry", "deviceid", "machineid", "sqm" } ) )
 				{
 					if ( guid ) add_guid( "telemetry_id", m[ 0 ].str(), file, i + 1, true );
 					else add( "telemetry_id", "8b", v, file, i + 1 );
 				}
-				else if ( file == "disks.txt" && has( { "serial" } ) ) add( "disk_serial", "8d", v, file, i + 1 );
-				else if ( file == "hid.txt" && has( { "serial" } ) ) add( "hid_serial", "4d", v, file, i + 1 );	// = a USB serial: the same identity
+				else if ( file == "disks.txt" && has( { "serial" } ) )
+				{
+					// rule 8d: the serial without its blank padding; a placeholder (one repeated character: the Sabrent bridge) is exact
+					std::string core = v;
+					while ( !core.empty() && core.back() == ' ' ) core.pop_back();
+					core.erase( 0, std::min( core.size(), core.find_first_not_of( ' ' ) ) );
+					if ( check_filler( core ) ) { out.filler_serials++; continue; }
+					add( "disk_serial", "8d", core, file, i + 1 );
+				}
+				else if ( file == "hid.txt" && has( { "serial" } ) )
+				{
+					// rule 4d: = a USB serial -> that identity; a placeholder or no serial -> exact (decision J: a real HID serial of a
+					// device whose USB instance serial is a placeholder is synthetic, the placeholder stays)
+					if ( v.empty() ) continue;
+					if ( check_usb_placeholder( v ) ) { out.filler_serials++; continue; }
+					add( "hid_serial", "4d", v, file, i + 1 );
+				}
+				else if ( file == "hid.txt" && has( { "path:" } ) ) {}	// a HID device path: PnP instance IDs (hashes exact, rule 4b) + the HID class GUID; identifiers inside it match their own identities
 				else if ( ( file == "hid.txt" || file == "bluetooth.txt" || file == "audio.txt" ) && has( { "manufacturer", "product", "name" } ) && !guid ) {}	// names exact
+				else if ( file == "gpu.txt" && has( { "\"usermodedriverguid\"", "driverstore" } ) ) {}	// driver-package constants: exact (user decision J)
 				else if ( file == "gpu.txt" && has( { "model", "driver", "bios", "memory", "chiptype", "dactype", "adapterstring" } ) && !guid ) {}	// exact
-				else if ( file == "gpu.txt" ) { if ( guid ) add_guid( "gpu_guid", m[ 0 ].str(), file, i + 1, true ); else add( "gpu_unique", "8e", v, file, i + 1 ); }
+				else if ( file == "gpu.txt" ) { if ( guid ) add_guid( "gpu_guid", m[ 0 ].str(), file, sline, true ); else add( "gpu_unique", "8e", v, file, sline ); }
 				else if ( file == "bluetooth.txt" && std::regex_match( v, m, r_macish ) )
 				{
 					std::string mac = upper( m[ 1 ].str() + ":" + m[ 2 ].str() + ":" + m[ 3 ].str() + ":" + m[ 4 ].str() + ":" + m[ 5 ].str() + ":" + m[ 6 ].str() );
@@ -1258,7 +1557,120 @@ namespace emu::platform
 				{
 					for ( auto it = std::sregex_iterator( l.begin(), l.end(), r_any_guid ); it != std::sregex_iterator(); ++it ) add_guid( "audio_endpoint", ( *it )[ 0 ].str(), file, i + 1, false );
 				}
-				else undecided( file, i + 1 );
+				else if ( file == "wifi.txt" && guid ) add_guid( "wlan_interface_guid", m[ 0 ].str(), file, i + 1, false );	// = the network interface GUID
+				else if ( file == "environment.txt" && has( { "workgroup", "domain" } ) ) {}	// the workgroup / domain name: exact
+				else if ( file == "edid.txt" && ( has( { "serial" } ) || ( i > 0 && lower( lines[ i - 1 ] ).find( "tag 0xff" ) != std::string::npos ) ) ) {}	// the EDID serials (the
+					// serial field, the FFh descriptor and its string): identities from gen_edid (presets)
+				else undecided( file, sline );
+			}
+		}
+		// rule 3: Bluetooth addresses (bluetooth.txt): the paired-device subkey names of BTHPORT\Parameters\Devices and the
+		// "ServicesFor<address>" subkey names (the local radio), 12 hex digits each - fwid marks them in its file comment
+		if ( const TextFile* f = find_file( "bluetooth.txt" ) )
+		{
+			static const std::regex r_dev_key( R"(^## HKLM\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\(?:Devices|LocalInfo)\\([0-9A-Fa-f]{12})$)" );
+			static const std::regex r_dev_sub( R"re(^\s+subkey "([0-9A-Fa-f]{12})")re" ), r_svc( R"(ServicesFor([0-9A-Fa-f]{12})(?![0-9A-Za-z]))" );
+			auto lines = split_lines( f->data );
+			for ( size_t i = 0; i < lines.size(); i++ )
+			{
+				std::smatch m;
+				const std::string& l = lines[ i ];
+				if ( l.empty() || ( l[ 0 ] == '#' ) ) continue;
+				if ( !std::regex_match( l, m, r_dev_key ) && !std::regex_search( l, m, r_dev_sub ) && !std::regex_search( l, m, r_svc ) ) continue;
+				const std::string a = upper( m[ 1 ].str() );
+				std::string mac;
+				for ( size_t q = 0; q < 12; q += 2 ) mac += ( q ? ":" : "" ) + a.substr( q, 2 );
+				if ( !by_key.count( key_of( mac ) ) ) add( "bt_device", "3", mac, f->name, i + 1 );	// an adapter MAC (the local radio) is that identity
+			}
+		}
+		// rule 4c: a WSD printer port "WSD-<GUID>" (printers.txt; printer / driver names exact)
+		if ( const TextFile* f = find_file( "printers.txt" ) )
+		{
+			static const std::regex r_wsd( R"re(^port "WSD-(\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?)")re" );
+			auto lines = split_lines( f->data );
+			for ( size_t i = 0; i < lines.size(); i++ )
+			{
+				std::smatch m;
+				if ( std::regex_search( lines[ i ], m, r_wsd ) ) add_guid( "printer_wsd_port", m[ 1 ].str(), f->name, i + 1, false );
+			}
+		}
+		// rule 7b: the install-history timestamps shifted with the OS install (user decision 2026-10-16): the per-device
+		// install / first-install / last-arrival dates (pci_devices.txt, "[machine-specific]", FILETIME + ISO), the SQM first
+		// session, the DiagTrack FILETIME timestamps, the Bluetooth device events (REG_QWORD FILETIMEs, hex + decimal)
+		{
+			static const std::regex r_dev( R"(DEVPKEY_Device_(FirstInstallDate|InstallDate|LastArrivalDate) \[machine-specific\] type 0x10: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) \(0x([0-9A-Fa-f]{16})\))" );
+			static const std::regex r_qword( R"re(value "(WinSqmFirstSessionStartTime|LastFreeNetworkLossTime|LastConnectivityHeartBeatTime|LastPersistedEventTime|LastSeen|LastConnected|FingerprintTimestamp)"\s+REG_QWORD \(11\)\s+8 bytes: 0x([0-9A-Fa-f]{16}) \(([0-9]+)\))re" );
+			auto add_ft = [ & ]( const char* kind, uint64_t v, const std::string& file, size_t line ) {
+				if ( !v ) return;	// not set
+				Ident& d = add( kind, "7b", std::to_string( v ), file, line );
+				d.needles = { fmt( "0x%016llx", (unsigned long long)v ), std::to_string( v ) };
+			};
+			for ( const TextFile& f : files )
+			{
+				if ( f.name != "pci_devices.txt" && f.name != "update_ids.txt" && f.name != "bluetooth.txt" ) continue;
+				const auto lines = split_lines( f.data );
+				for ( size_t i = 0; i < lines.size(); i++ )
+				{
+					std::smatch m;
+					if ( f.name == "pci_devices.txt" && std::regex_search( lines[ i ], m, r_dev ) )
+					{
+						add_ft( m[ 1 ].str() == "LastArrivalDate" ? "device_arrival_time" : "device_install_time", std::stoull( m[ 3 ].str(), nullptr, 16 ), f.name, i + 1 );
+						Ident& e = add( "event_iso", "7b", m[ 2 ].str(), f.name, i + 1 );
+						e.line_markers = k_event_iso_markers;
+						if ( &e == &scratch ) excluded_anchors.back().markers = k_event_iso_markers;
+					}
+					else if ( f.name != "pci_devices.txt" && std::regex_search( lines[ i ], m, r_qword ) )
+					{
+						const std::string n = m[ 1 ].str();
+						if ( std::stoull( m[ 2 ].str(), nullptr, 16 ) != std::stoull( m[ 3 ].str() ) ) fail( fmt( "%s:%zu: a FILETIME whose hex and decimal forms differ", f.name.c_str(), i + 1 ) );
+						add_ft( n == "WinSqmFirstSessionStartTime" ? "sqm_first_session" : f.name == "bluetooth.txt" ? "bt_event_time" : "diagtrack_time", std::stoull( m[ 3 ].str() ), f.name, i + 1 );
+					}
+				}
+			}
+		}
+		// volatile.tsv: every line fwid marks "[volatile" and the DiagTrack counters / timestamps (update_ids.txt; user decision
+		// J: captured values kept as a plausible snapshot the emulator may advance) - names and locations, never values
+		for ( const TextFile& f : files )
+		{
+			if ( !searched( f ) || f.name == "capture_info.txt" ) continue;
+			auto lines = split_lines( f.data );
+			bool diag = false;
+			static const std::regex r_val( R"re(^\s+value "([^"]+)")re" );
+			for ( size_t i = 0; i < lines.size(); i++ )
+			{
+				const std::string& l = lines[ i ];
+				if ( l.empty() || ( l[ 0 ] == '#' && l.rfind( "## ", 0 ) != 0 ) ) continue;
+				if ( l.rfind( "## ", 0 ) == 0 ) diag = f.name == "update_ids.txt" && lower( l ).find( "\\diagnostics\\diagtrack" ) != std::string::npos;
+				std::smatch m;
+				if ( diag && std::regex_search( l, m, r_val ) )
+				{
+					const std::string n = m[ 1 ].str(), nl = lower( n );
+					const bool timestamp = nl.size() > 4 && nl.compare( nl.size() - 4, 4, "time" ) == 0;	// not TimeStampInterval (a setting)
+					if ( timestamp || nl.find( "count" ) != std::string::npos || nl.find( "latency" ) != std::string::npos )
+						out.volatiles.push_back( { f.name, i + 1, n, timestamp && l.find( "0x01" ) != std::string::npos
+							? "DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)"
+							: "DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)" } );
+					continue;
+				}
+				const size_t vp = lower( l ).find( "[volatile" );
+				if ( vp == std::string::npos ) continue;
+				std::string head = l.substr( 0, vp ), name;
+				if ( head.rfind( "## ", 0 ) == 0 ) name = head.substr( 3, head.find( " (" ) == std::string::npos ? std::string::npos : head.find( " (" ) - 3 );
+				else if ( size_t c = head.find( ": " ); c != std::string::npos ) name = head.substr( 0, c );
+				else
+				{
+					std::istringstream parts( head );
+					for ( std::string part; std::getline( parts, part, ',' ); )
+					{
+						std::istringstream w( part );
+						std::string first;
+						w >> first;
+						if ( !first.empty() && std::isalpha( uint8_t( first[ 0 ] ) ) ) name += ( name.empty() ? "" : ", " ) + first;
+					}
+				}
+				while ( !name.empty() && name.back() == ' ' ) name.pop_back();
+				const size_t ve = l.find( ']', vp );
+				out.volatiles.push_back( { f.name, i + 1, name, l.substr( vp + 1, ve == std::string::npos ? std::string::npos : ve - vp - 1 ) } );
 			}
 		}
 		// fixed synthetic values from another gen_ (rule 6: the EDID serials of gen_edid)
@@ -1322,6 +1734,51 @@ namespace emu::platform
 				add( "mac_node_guid", "4c", "{" + std::string( t.f->data.begin() + i, t.f->data.begin() + i + 36 ) + "}", t.f->name, line_of( t, i ) );
 			}
 		}
+		// an occurrence is a token: not part of a longer letter / digit run (other needles than names and GUIDs: not inside a
+		// hyphenated token either, e.g. a MAC as a version-1 GUID node); fwid writes '\' as \x5C (a boundary); in bluetooth.txt
+		// "ServicesFor<address>" names a subkey after the local radio address (a boundary before the 12 hex digits)
+		auto is_token = []( const std::string& lc, size_t pos, size_t len, bool name_rule ) {
+			const bool esc = pos >= 4 && lc.compare( pos - 4, 4, "\\x5c" ) == 0;
+			const bool svc = len == 12 && pos >= 11 && lc.compare( pos - 11, 11, "servicesfor" ) == 0;
+			const char b = pos && !esc && !svc ? lc[ pos - 1 ] : ' ', a = pos + len < lc.size() ? lc[ pos + len ] : ' ';
+			const bool guid_shaped = len == 36 && lc[ pos + 8 ] == '-' && lc[ pos + 13 ] == '-' && lc[ pos + 18 ] == '-' && lc[ pos + 23 ] == '-';
+			const bool word = name_rule || guid_shaped ? ( is_alnum( b ) || is_alnum( a ) ) : ( is_alnum( b ) || is_alnum( a ) || b == '-' || a == '-' );
+			return !word;
+		};
+		auto short_number = []( const std::string& n ) { return n.size() < 6 && std::all_of( n.begin(), n.end(), []( char c ) { return c >= '0' && c <= '9'; } ); };
+		// excluded tool artifacts: a value anchored only inside excluded ranges must not occur outside them (a capture_info.txt
+		// line - run metadata - is excluded with it); otherwise it would need its own decision
+		ExclusionScan excl = in.exclusions;
+		for ( const ExcludedAnchor& x : excluded_anchors )
+		{
+			const std::string n = key_of( x.value );
+			if ( by_key.count( n ) ) continue;	// also anchored outside the ranges: a kept identity, its rule applies
+			if ( !short_number( n ) ) out.needles.push_back( n );	// leak guard
+			const ExclusionRange* src = in.exclusions.range_of( x.file, x.line );
+			const std::string item = src ? src->item : "?";
+			for ( const TextLc& t : texts )
+				for ( size_t p = t.lc.find( n ); p != std::string::npos; p = t.lc.find( n, p + 1 ) )
+				{
+					if ( !is_token( t.lc, p, n.size(), false ) ) continue;
+					const size_t li = line_of( t, p );
+					if ( excl.excluded( t.f->name, li ) ) continue;
+					if ( !x.markers.empty() )	// an ISO event form: only on the event lines (not a registry last-write time)
+					{
+						const size_t ls = t.starts[ li - 1 ], le = li < t.starts.size() ? t.starts[ li ] : t.lc.size();
+						const std::string line = t.lc.substr( ls, le - ls );
+						if ( std::none_of( x.markers.begin(), x.markers.end(), [ & ]( const std::string& mk ) { return line.find( mk ) != std::string::npos; } ) ) continue;
+					}
+					if ( t.f->name == "capture_info.txt" )
+					{
+						excl.ranges.push_back( { item, t.f->name, "run-metadata line", li, li } );
+						out.extra_exclusions.push_back( excl.ranges.back() );
+						continue;
+					}
+					fail( fmt( "%s:%zu: a value of the excluded tool artifact \"%s\" (%s, anchored at %s:%zu) also occurs outside its excluded ranges - it needs a decision",
+						t.f->name.c_str(), li, item.c_str(), x.kind.c_str(), x.file.c_str(), x.line ) );
+				}
+		}
+		out.excluded_anchors = excluded_anchors.size();
 
 		// ── synthetic values ──────────────────────────────────────────────────────────────────────────────────────────
 		// 1. the adapter MACs: gen_mac_family (one synthetic MAC per physical NIC / radio, dependents re-derived)
@@ -1329,9 +1786,9 @@ namespace emu::platform
 		for ( size_t i : mac_ids )
 		{
 			ids[ i ].family = fam.members.size();
-			fam.members.push_back( { { ids[ i ].original, ids[ i ].desc, ids[ i ].id } } );
+			fam.members.push_back( { { keep( ids[ i ].original ), ids[ i ].desc, ids[ i ].id } } );
 		}
-		const MacFamily sfam = gen_mac_family( fam );
+		const MacFamily sfam = gen_mac_family( ctx, fam );
 		for ( size_t i : mac_ids )
 		{
 			Ident& d = ids[ i ];
@@ -1343,7 +1800,7 @@ namespace emu::platform
 			uint8_t m[ 6 ];
 			parse_mac_text( d.original, m );
 			out.binary_needles.push_back( Bytes( m, m + 6 ) );
-			out.macs.push_back( { { d.original, d.desc, d.id }, { d.synthetic, d.desc, d.id } } );
+			out.macs.push_back( { { keep( d.original ), d.desc, d.id }, { keep( d.synthetic ), d.desc, d.id } } );
 			if ( sm.parent >= 0 )
 			{
 				const Ident& pd = ids[ mac_ids[ size_t( sm.parent ) ] ];
@@ -1356,22 +1813,24 @@ namespace emu::platform
 		for ( size_t i : mac_ids ) nodes.real_to_synthetic[ mac_plain( ids[ i ].original ) ] = mac_plain( ids[ i ].synthetic );
 		// 2. everything else (dependent kinds - SIDs, NameSamCompatible, the install instant - in the pass after it)
 		const std::vector<std::string> usb_table = in.usb_table.empty() ? parse_usb_serial_table( { f_enum->data } ) : in.usb_table;
-		static const std::set<std::string> k_post = { "machine_sid", "user_sid", "name_sam_compatible", "install_date", "install_time" };
+		static const std::set<std::string> k_post = { "machine_sid", "user_sid", "name_sam_compatible", "install_date", "install_time", "device_install_time",
+			"device_arrival_time", "sqm_first_session", "diagtrack_time", "bt_event_time", "event_iso" };	// = the SIDs, NameSamCompatible and k_history
+		static const std::set<std::string> k_late = { "disk_serial", "sus_client_id_validation" };	// after the USB serials (step 3a / 3b)
 		for ( Ident& d : ids )
 		{
-			if ( d.kind == "mac" || d.preset || k_post.count( d.kind ) ) continue;
+			if ( d.kind == "mac" || d.preset || k_post.count( d.kind ) || k_late.count( d.kind ) ) continue;
 			const std::string label = "identity/" + d.id;
-			if ( d.rule == "4a" ) d.synthetic = gen_computer_name( { d.original, label } ).text;
+			if ( d.rule == "4a" ) d.synthetic = gen_computer_name( ctx, { d.original.c_str(), label } ).text;
 			else if ( d.kind == "mac_eui64" )
 			{
 				const Ident& nic = ids[ size_t( d.parent ) ];
-				d.synthetic = gen_eui64_instance_id( { d.original, d.eui_ffff }, { nic.synthetic, nic.desc, nic.id } ).text;
+				d.synthetic = gen_eui64_instance_id( ctx, { d.original.c_str(), d.eui_ffff }, { nic.synthetic.c_str(), nic.desc, nic.id } ).text;
 				out.fields.push_back( { "network_adapters.txt", d.id, "3r", fmt( "relation: the EUI-64 form (OUI + %s + NIC part%s) of the MAC of adapter \"%s\" in instance IDs",
 					d.eui_ffff ? "FFFF" : "FFFE", d.eui_ffff ? " + 00" : "", nic.desc.c_str() ), 0, 0, uint32_t( d.original.size() ) } );
 			}
 			else if ( d.rule == "3" )	// another device's MAC (a paired Bluetooth device): OUI kept
 			{
-				d.synthetic = gen_mac( { d.original, "", d.id } ).text;
+				d.synthetic = gen_mac( ctx, { d.original.c_str(), "", d.id } ).text;
 				std::string l = lower( d.original ), h = l;
 				std::replace( h.begin(), h.end(), ':', '-' );
 				d.needles = { l, h, mac_plain( d.original ) };
@@ -1379,7 +1838,7 @@ namespace emu::platform
 			else if ( d.rule == "4b" )
 			{
 				if ( !std::all_of( d.original.begin(), d.original.end(), is_hex ) ) fail( "rule 4b: the serial part is not a hex token" );
-				d.synthetic = gen_hex_token( { d.original, label } ).text;
+				d.synthetic = gen_hex_token( ctx, { d.original.c_str(), label } ).text;
 			}
 			else if ( d.rule == "4d" )
 			{
@@ -1387,25 +1846,24 @@ namespace emu::platform
 				// HID serial equal to a USB serial is that identity already; one outside the table gets a stream of this environment
 				auto it = std::find( usb_table.begin(), usb_table.end(), lower( d.original ) );
 				if ( it == usb_table.end() && d.kind == "usb_serial" ) fail( "rule 4d: a USB serial of the capture is missing from the shared serial table" );
-				d.synthetic = gen_usb_serial( { d.original, it == usb_table.end() ? -1 : long( it - usb_table.begin() ), label } ).text;
+				d.synthetic = gen_usb_serial( ctx, { d.original.c_str(), it == usb_table.end() ? -1 : long( it - usb_table.begin() ), label } ).text;
 			}
-			else if ( d.rule == "7a" ) d.synthetic = gen_product_id( { d.original, label } ).text;
-			else if ( d.rule == "7c" || d.rule == "8b" || d.rule == "8d" || d.rule == "8e" ) d.synthetic = gen_class_string( { d.original, label } ).text;
-			else if ( d.rule == "7e" ) d.synthetic = gen_volume_serial( { d.original, label } ).serial;
+			else if ( d.rule == "7a" ) d.synthetic = gen_product_id( ctx, { d.original.c_str(), label } ).text;
+			else if ( d.rule == "7c" || d.rule == "8b" || d.rule == "8e" ) d.synthetic = gen_class_string( ctx, { d.original.c_str(), label } ).text;
+			else if ( d.rule == "7e" ) d.synthetic = gen_volume_serial( ctx, { d.original.c_str(), label } ).serial;
 			else if ( d.rule == "8a" )
 			{
 				for ( WinInstallationId& w : win_ids )
 					if ( w.text == d.original )
 					{
 						w.label = label;
-						WinInstallationId s = gen_win_installation_id( w );
+						WinInstallationId s = gen_win_installation_id( ctx, w );
 						d.synthetic = s.text;
 						out.installation_ids.push_back( w );
 						out.installation_ids.push_back( s );
 						break;
 					}
 			}
-			else if ( d.rule == "8c" ) d.synthetic = gen_hex_token( { d.original, label } ).text;	// the identifier hash inside it is not modelled
 			else
 			{
 				// GUIDs: canonical {UPPER} form in identity.tsv, or the original's own style (MachineGuid & co.); occurrences are
@@ -1417,7 +1875,7 @@ namespace emu::platform
 					g = upper( g );
 				}
 				d.original = g;
-				d.synthetic = gen_guid( { g, label }, nodes ).text;
+				d.synthetic = gen_guid( ctx, { g.c_str(), label }, nodes ).text;
 				const std::string bare = g.front() == '{' ? g.substr( 1, 36 ) : g;
 				d.needles = { lower( bare ) };
 				std::string node = lower( bare.substr( 24, 12 ) );
@@ -1438,7 +1896,7 @@ namespace emu::platform
 			int nsid = 0;
 			auto sid_of = [ & ]( const std::string& prefix ) -> std::string {
 				std::string key = lower( prefix );
-				if ( !sids.count( key ) ) sids[ key ] = gen_sid( { prefix, fmt( "identity/sid%02d", ++nsid ) } ).prefix;
+				if ( !sids.count( key ) ) sids[ key ] = gen_sid( ctx, { prefix.c_str(), fmt( "identity/sid%02d", ++nsid ) } ).prefix;
 				return sids[ key ];
 			};
 			auto syn_value = [ & ]( const std::string& v, const char* kind ) -> std::string {
@@ -1446,7 +1904,15 @@ namespace emu::platform
 				return {};
 			};
 			bool have_instant = false;
-			InstallTime inst;
+			InstallTime inst, inst_real;
+			// an install-history value as unix seconds (FILETIMEs floored to the second)
+			auto history_unix = [ & ]( const Ident& x, int64_t& t ) {
+				if ( !k_history.count( x.kind ) || x.preset ) return false;
+				if ( x.kind == "install_date" ) { t = std::stoll( x.original ); return true; }
+				if ( x.kind == "event_iso" ) return unix_of_iso( x.original, t );
+				t = int64_t( std::stoull( x.original ) / 10000000ull ) - 11644473600LL;
+				return true;
+			};
 			for ( Ident& d : ids )
 			{
 				if ( !k_post.count( d.kind ) ) continue;
@@ -1458,42 +1924,116 @@ namespace emu::platform
 					if ( bs == std::string::npos ) fail( "rule 7c: NameSamCompatible without DOMAIN\\user" );
 					std::string dom = d.original.substr( 0, bs ), user = d.original.substr( bs + 1 );
 					std::string sdom = syn_value( dom, "computer_name" ), suser = syn_value( user, "user_name" );
-					if ( sdom.empty() ) sdom = gen_class_string( { dom, "identity/" + d.id + "/domain" } ).text;	// a domain account
-					if ( suser.empty() ) suser = gen_class_string( { user, "identity/" + d.id + "/user" } ).text;
+					if ( sdom.empty() ) sdom = gen_class_string( ctx, { dom.c_str(), "identity/" + d.id + "/domain" } ).text;	// a domain account
+					if ( suser.empty() ) suser = gen_class_string( ctx, { user.c_str(), "identity/" + d.id + "/user" } ).text;
 					d.synthetic = sdom + "\\" + suser;
 				}
-				else	// install_date / install_time
+				else	// rule 7b: the install history, shifted together by ONE offset (gen_install_time)
 				{
 					if ( !have_instant )
 					{
-						InstallTime real;
 						for ( const std::string& l : split_lines( f_info->data ) )
 						{
 							std::smatch m;
 							static const std::regex r_build( R"(CurrentBuild ([0-9]+))" ), r_utc( R"(^run\.start_utc\s*=\s*(\S+))" );
-							if ( l.rfind( "os.registry", 0 ) == 0 && std::regex_search( l, m, r_build ) ) real.os_build = unsigned( std::stoul( m[ 1 ].str() ) );
-							if ( std::regex_search( l, m, r_utc ) ) real.capture_utc = m[ 1 ].str();
+							if ( l.rfind( "os.registry", 0 ) == 0 && std::regex_search( l, m, r_build ) ) inst_real.os_build = unsigned( std::stoul( m[ 1 ].str() ) );
+							if ( std::regex_search( l, m, r_utc ) ) inst_real.capture_utc = m[ 1 ].str();
 						}
+						bool have_install = false;
 						for ( const Ident& x : ids )
 						{
-							if ( x.kind == "install_date" ) real.unix_seconds = std::stoll( x.original );
-							if ( x.kind == "install_time" ) real.filetime = std::stoull( x.original );
+							if ( x.kind == "install_date" ) { inst_real.unix_seconds = std::stoll( x.original ); have_install = true; }
+							if ( x.kind == "install_time" ) inst_real.filetime = std::stoull( x.original );
 						}
-						inst = gen_install_time( real );
+						if ( !have_install ) fail( "rule 7b: install-history timestamps without the OS InstallDate (os_ids.txt) - nothing to shift them with" );
+						if ( !inst_real.filetime ) inst_real.filetime = ( uint64_t( inst_real.unix_seconds ) + 11644473600ull ) * 10000000ull;
+						int64_t lo = INT64_MAX, hi = INT64_MIN;
+						for ( const Ident& x : ids )
+						{
+							int64_t t = 0;
+							if ( history_unix( x, t ) ) { lo = std::min( lo, t ); hi = std::max( hi, t ); }
+						}
+						inst_real.earliest_event = lo;
+						inst_real.latest_event = hi;
+						inst = gen_install_time( ctx, inst_real );
 						have_instant = true;
 					}
-					d.synthetic = d.kind == "install_date" ? std::to_string( inst.unix_seconds ) : std::to_string( inst.filetime );
+					if ( d.kind == "install_date" ) d.synthetic = std::to_string( inst.unix_seconds );
+					else if ( d.kind == "event_iso" )
+					{
+						int64_t t = 0;
+						if ( !unix_of_iso( d.original, t ) ) fail( "rule 7b: an unreadable ISO timestamp" );
+						d.synthetic = iso_of_unix( t + inst.shift_seconds );
+					}
+					else d.synthetic = std::to_string( uint64_t( int64_t( std::stoull( d.original ) ) + inst.shift_seconds * 10000000LL ) );
 				}
 				if ( d.needles.empty() ) d.needles = { lower( d.original ) };
 			}
+			// the self-check of the shift: synthetic - real = the one offset for every install-history value (so every pairwise
+			// difference is the original one), every event strictly between the build release and the capture, and the same
+			// events precede the OS install as in the capture (Windows setup installs devices before OOBE writes InstallDate)
+			if ( have_instant && rules.r7 )
+			{
+				TimeShiftCheck& c = out.time_shift;
+				const InstallWindow w = parse_install_window( inst_real.os_build, inst_real.capture_utc );
+				for ( const Ident& x : ids )
+				{
+					int64_t tr = 0;
+					if ( !history_unix( x, tr ) ) continue;
+					Ident y = x;
+					y.original = x.synthetic;
+					int64_t ts = 0;
+					history_unix( y, ts );
+					c.shifted++;
+					c.per_kind[ x.kind ]++;
+					const bool exact = x.kind == "install_date" || x.kind == "event_iso" ? ts - tr == inst.shift_seconds
+						: int64_t( std::stoull( x.synthetic ) ) - int64_t( std::stoull( x.original ) ) == inst.shift_seconds * 10000000LL;
+					c.exact += exact;
+					c.outside_window += !( ts > w.lo && ts < w.hi );
+					c.before_install_real += tr < inst_real.unix_seconds;
+					c.before_install_synthetic += ts < inst.unix_seconds;
+				}
+				if ( c.exact != c.shifted || c.outside_window || c.before_install_real != c.before_install_synthetic )
+					fail( fmt( "self-check rule 7b: %zu of %zu install-history values shifted by the one offset, %zu outside the window, %zu / %zu before the install", c.exact, c.shifted,
+						c.outside_window, c.before_install_real, c.before_install_synthetic ) );
+			}
+		}
+		// 3a. disk serials (8d): the start of a USB serial of the capture (a USB flash drive reports the start of its USB serial) =
+		// the start of that serial's synthetic value; any other disk serial rule-2 classes
+		for ( Ident& d : ids )
+		{
+			if ( d.kind != "disk_serial" ) continue;
+			const Ident* usb = nullptr;
+			for ( const Ident& x : ids )
+				if ( x.kind == "usb_serial" && x.original.size() > d.original.size() && ieq( x.original.substr( 0, d.original.size() ), d.original ) ) { usb = &x; break; }
+			if ( usb )
+			{
+				d.synthetic = follow_case( usb->synthetic.substr( 0, d.original.size() ), d.original );
+				out.fields.push_back( { "disks.txt", d.id, "8dr", fmt( "relation: the disk serial = the first %zu characters of USB serial %s (the same device)", d.original.size(), usb->id.c_str() ),
+					0, 0, uint32_t( d.original.size() ) } );
+			}
+			else d.synthetic = gen_class_string( ctx, { d.original.c_str(), "identity/" + d.id } ).text;
+			d.needles = { lower( d.original ) };
+		}
+		// 3b. SusClientIdValidation (8c): the layout kept, every component its synthetic identity (gen_sus_client_id_validation)
+		for ( Ident& d : ids )
+		{
+			if ( d.kind != "sus_client_id_validation" ) continue;
+			SusValidationInput si { d.blob, {}, out.macs };
+			for ( const Ident& x : ids ) if ( x.kind == "disk_serial" || x.kind == "usb_serial" ) si.strings.emplace_back( x.original, x.synthetic );
+			si.strings.insert( si.strings.end(), in.smbios_strings.begin(), in.smbios_strings.end() );
+			const SusValidation sv = gen_sus_client_id_validation( ctx, si );
+			d.synthetic = sv.hex;
+			for ( const std::string& c : sv.components ) out.fields.push_back( { "update_ids.txt", d.id, "8cr", "relation: SusClientIdValidation " + c, 0, 0, 0 } );
+			d.needles = { lower( d.original ) };
 		}
 		for ( Ident& d : ids )
 			for ( const std::string& n : d.needles )
-				if ( !( n.size() < 6 && std::all_of( n.begin(), n.end(), []( char c ) { return c >= '0' && c <= '9'; } ) ) )	// short pure numbers: too generic for the leak guard
-					out.needles.push_back( n );
+				if ( !short_number( n ) ) out.needles.push_back( n );	// short pure numbers: too generic for the leak guard
 
-		// occurrences in every searched text file of the capture (fieldmap rows; 1-based line and byte column)
-		std::map<std::string, size_t> occ;
+		// occurrences in every searched text file of the capture (fieldmap rows; 1-based line and byte column); rows inside the
+		// ranges of an excluded tool artifact are dropped
+		std::map<std::string, size_t> occ, occ_excluded;
 		std::map<std::string, std::string> first_at;
 		for ( const TextLc& t : texts )
 		{
@@ -1509,17 +2049,15 @@ namespace emu::platform
 					{
 						size_t pos = size_t( it - lc.begin() ), len = n.size();
 						if ( d.token ) { pos++; len -= 2; }
-						else
-						{
-							bool esc = pos >= 4 && lc.compare( pos - 4, 4, "\\x5c" ) == 0;	// fwid writes '\' as \x5C: a boundary
-							char b = pos && !esc ? lc[ pos - 1 ] : ' ', a = pos + len < lc.size() ? lc[ pos + len ] : ' ';
-							// a GUID-shaped needle (8-4-4-4-12) only needs letter / digit boundaries (it may follow a hyphenated prefix); other
-							// needles (MACs, serials) must not sit inside a hyphenated token either (e.g. a MAC as a version-1 GUID node)
-							const bool guid_shaped = n.size() == 36 && n[ 8 ] == '-' && n[ 13 ] == '-' && n[ 18 ] == '-' && n[ 23 ] == '-';
-							bool word = d.rule == "4a" || guid_shaped ? ( is_alnum( b ) || is_alnum( a ) ) : ( is_alnum( b ) || is_alnum( a ) || b == '-' || a == '-' );
-							if ( word ) continue;	// part of a longer token
-						}
+						else if ( !is_token( lc, pos, len, d.rule == "4a" ) ) continue;	// part of a longer token
 						size_t li = line_of( t, pos ) - 1;
+						if ( !d.line_markers.empty() )	// rule 7b ISO forms: only on the event lines (not a registry last-write time)
+						{
+							const size_t le = li + 1 < t.starts.size() ? t.starts[ li + 1 ] : lc.size();
+							const std::string line = lc.substr( t.starts[ li ], le - t.starts[ li ] );
+							if ( std::none_of( d.line_markers.begin(), d.line_markers.end(), [ & ]( const std::string& mk ) { return line.find( mk ) != std::string::npos; } ) ) continue;
+						}
+						if ( excl.excluded( t.f->name, li + 1 ) ) { occ_excluded[ d.id ]++; out.excluded_rows++; continue; }
 						out.fields.push_back( { t.f->name, d.id, d.rule, d.kind, pos - t.starts[ li ] + 1, li + 1, uint32_t( len ) } );
 						if ( !occ[ d.id ]++ ) first_at[ d.id ] = fmt( "%s:%zu", t.f->name.c_str(), li + 1 );
 					}
@@ -1527,8 +2065,17 @@ namespace emu::platform
 			}
 		}
 		for ( Ident& d : ids )
+			for ( FieldMapEntry f : d.manual )
+			{
+				if ( excl.excluded( f.area, size_t( f.line ) ) ) { occ_excluded[ d.id ]++; out.excluded_rows++; continue; }
+				f.id = d.id;
+				out.fields.push_back( f );
+				occ[ d.id ]++;
+			}
+		for ( Ident& d : ids )
 		{
 			if ( !rule_on( rules, d.rule ) ) d.synthetic = d.original;	// rule disabled: the real value stays (the leak guard refuses a synthetic profile)
+			if ( !occ[ d.id ] && occ_excluded[ d.id ] ) { out.excluded_anchors++; continue; }	// only inside excluded ranges: not part of the profile
 			if ( !occ[ d.id ] && !d.preset ) fail( "identity " + d.id + ": its anchor was not found again by the occurrence search" );
 			if ( d.preset ) d.source = first_at.count( d.id ) ? first_at[ d.id ] : "-";
 			out.identity.push_back( { d.id, d.kind, d.rule, d.source, occ[ d.id ], d.original, d.synthetic } );
@@ -1603,7 +2150,8 @@ namespace emu::platform
 	}
 
 	// the files of one profile: smbios.bin, acpi\*, edid\*, identity.tsv, fieldmap.tsv, build_config.txt, manifest.txt
-	static std::map<std::string, Bytes> make_files( const Identity& p, bool original, const std::vector<std::pair<std::string, std::string>>& prov, const std::string& config_text )
+	static std::map<std::string, Bytes> make_files( const Identity& p, bool original, const std::vector<std::pair<std::string, std::string>>& prov, const std::string& config_text,
+		const std::string& identity_map_text )
 	{
 		std::map<std::string, Bytes> files;
 		const char* env = env_dir_name( p.env );
@@ -1611,11 +2159,28 @@ namespace emu::platform
 		files[ "smbios.bin" ] = original ? p.smbios_original : p.smbios_synthetic;
 		for ( auto& [ name, data ] : p.acpi ) files[ "acpi\\" + name ] = data;
 		for ( const EdidBlock& e : original ? p.edid_original : p.edid_synthetic ) files[ "edid\\" + e.name ] = e.bytes;
+		for ( const DiskDescriptor& d : original ? p.disk_original : p.disk_synthetic ) files[ "disk\\" + d.name ] = d.bytes;
+
+		// the tool artifacts that are not part of the presented machine, and the volatile values (both: locations only)
+		std::ostringstream ex;
+		ex << "# " << k_tool << " - excluded tool artifacts - " << env << " - capture ranges that are NOT part of the presented machine (BuildConfig\n"
+		   << "# \"exclude\", user decision J 2026-10-16); identical in the synthetic and the original profile. A presenter omits these lines\n"
+		   << "# (and adjusts the counts of the enclosing lists).\n"
+		   << "# columns: item, capture text file, first line, last line (1-based, inclusive), unit\n";
+		for ( const ExclusionRange& r : p.exclusions.ranges ) ex << r.item << '\t' << r.file << '\t' << r.first_line << '\t' << r.last_line << '\t' << r.unit << "\n";
+		files[ "exclusions.tsv" ] = to_bytes( ex.str() );
+		std::ostringstream vo;
+		vo << "# " << k_tool << " - volatile values - " << env << " - captured values the emulator may advance (the captured value is a plausible\n"
+		   << "# snapshot; user decision J 2026-10-16); identical in the synthetic and the original profile; names, never values.\n"
+		   << "# columns: capture text file, line, name, mark\n";
+		for ( const VolatileItem& v : p.volatiles ) vo << v.file << '\t' << v.line << '\t' << v.name << '\t' << v.mark << "\n";
+		files[ "volatile.tsv" ] = to_bytes( vo.str() );
 
 		std::ostringstream id;
 		id << "# " << k_tool << " - identity of the fwid text outputs - " << env << " - " << kind << "\n"
 		   << "# Rules (README.md / profile_generator.hpp): 3 MAC, 4a computer name, 4c GUID, 4d USB / HID serial (4b: PnP hashes exact),\n"
-		   << "# 6 EDID serial, 7a ProductId, 7b install instant, 7c user name, 7d SID, 7e volume serial, 8a-8e fwid 1.4 identifiers.\n"
+		   << "# 6 EDID serial, 7a ProductId, 7b install instant, 7c user name, 7d SID, 7e volume serial, 8a installation ID, 8c\n"
+		   << "# SusClientIdValidation (hex, layout kept), 8d disk serial; identifiers only inside excluded tool artifacts are not listed.\n"
 		   << "# columns: id, kind, rule, first anchor in the capture (file:line), occurrences in the capture's text files (fieldmap.tsv), value\n"
 		   << "# fwid writes '\\' inside quoted strings as \\x5C; values and paths here use plain characters. GUIDs in {UPPER} form unless\n"
 		   << "# the identifier keeps its own style (MachineGuid & co.). install_date = unix seconds, install_time = FILETIME (decimal).\n";
@@ -1629,13 +2194,14 @@ namespace emu::platform
 
 		std::ostringstream fm;
 		fm << "# " << k_tool << " - field map - " << env << " - every replaced field as LOCATION + LENGTH + RULE, never a value; identical in the synthetic and the original profile\n"
-		   << "# columns: id, rule, file (smbios.bin / edid\\edid_<n>.bin of this profile, or the capture's fwid text file), offset (blobs: absolute byte offset, smbios.bin incl. the 8-byte RawSMBIOSData header) or line:column (text) or - (relation rows), length in bytes, location\n";
+		   << "# columns: id, rule, file (smbios.bin / edid\\edid_<n>.bin / disk\\disk_<n>_descriptor.bin of this profile, or the capture's fwid text file), offset (blobs: absolute byte offset, smbios.bin incl. the 8-byte RawSMBIOSData header) or line:column (text) or - (relation rows), length in bytes, location\n";
 		for ( const FieldMapEntry& f : p.fields )
 			fm << f.id << '\t' << f.rule << '\t' << f.area << '\t'
 			   << ( f.rule.back() == 'r' ? std::string( "-" ) : f.line ? fmt( "%llu:%llu", (unsigned long long)f.line, (unsigned long long)f.offset ) : fmt( "0x%04llX", (unsigned long long)f.offset ) )
 			   << '\t' << f.length << '\t' << f.location << "\n";
 		files[ "fieldmap.tsv" ] = to_bytes( fm.str() );
 		files[ BuildConfig::k_file ] = to_bytes( config_text );
+		files[ "identity_map.tsv" ] = to_bytes( identity_map_text );	// the original copy alone carries the install-history offset
 
 		std::ostringstream mf;
 		mf << "# " << k_tool << " - platform profile manifest - " << env << " (" << env_switch( p.env ) << ") - " << kind << "\n"
@@ -1652,41 +2218,44 @@ namespace emu::platform
 		return files;
 	}
 
-	Seed ProfileGenerator::load_seed( const fs::path& file, bool allow_create, BuildLog& log )
+	// ── identity_map.tsv ───────────────────────────────────────────────────────────────────────────────────────────────────
+	// "key<TAB>kind<TAB>value" rows sorted by key; '#' comments. The ORIGINAL (local-only) copy adds one line
+	// "install_shift<TAB>seconds" (rule 7b); a repository copy holding it is refused by every check
+	IdentityMap ProfileGenerator::parse_identity_map( const std::string& text )
 	{
-		std::error_code ec;
-		Seed s;
-		if ( fs::exists( file, ec ) )
+		IdentityMap m;
+		std::istringstream is( text );
+		size_t n = 0;
+		for ( std::string l; std::getline( is, l ); )
 		{
-			Bytes raw = read_file( file );
-			std::string t( raw.begin(), raw.end() );
-			std::smatch m;
-			static const std::regex r( R"((?:^|\n)seed\s*=\s*([0-9A-Fa-f]{64})\s*(?:\r?\n|$))" );
-			if ( !std::regex_search( t, m, r ) ) fail( "seed file " + show( file ) + " has no \"seed = <64 hex digits>\" line" );
-			s.hex = upper( m[ 1 ].str() );
-			for ( size_t i = 0; i < 32; i++ ) s.bytes[ i ] = uint8_t( std::stoul( s.hex.substr( i * 2, 2 ), nullptr, 16 ) );
-			log.info( "seed", show( file ) + " (existing, sha256 " + sha256_hex( raw ) + ")" );
-			return s;
+			n++;
+			if ( !l.empty() && l.back() == '\r' ) l.pop_back();
+			if ( l.empty() || l[ 0 ] == '#' ) continue;
+			const size_t t1 = l.find( '\t' ), t2 = t1 == std::string::npos ? t1 : l.find( '\t', t1 + 1 );
+			if ( l.rfind( "install_shift\t", 0 ) == 0 )
+			{
+				m.has_install_shift = true;
+				m.install_shift = std::stoll( l.substr( 14 ) );
+				continue;
+			}
+			if ( t2 == std::string::npos ) fail( fmt( "identity map line %zu: key<TAB>kind<TAB>value expected", n ) );
+			const std::string key = l.substr( 0, t1 );
+			if ( !m.entries.emplace( key, IdentityMapEntry { l.substr( t1 + 1, t2 - t1 - 1 ), l.substr( t2 + 1 ) } ).second ) fail( fmt( "identity map line %zu: key given twice", n ) );
 		}
-		if ( !allow_create ) fail( "seed file " + show( file ) + " missing (a check never creates it)" );
-		Bytes b = random_bytes( 32 );
-		std::copy( b.begin(), b.end(), s.bytes.begin() );
-		s.hex = hex_of( b.data(), b.size(), true );
-		save_seed( file, s );
-		log.info( "seed", show( file ) + " CREATED (BCryptGenRandom, 32 bytes)" );
-		return s;
+		return m;
 	}
-	void ProfileGenerator::save_seed( const fs::path& file, const Seed& s )
+	std::string ProfileGenerator::save_identity_map( const IdentityMap& m, Environment e, bool original )
 	{
-		std::string t = "# emu-profilegen seed (ledger U1510): 32 bytes from BCryptGenRandom (BCRYPT_USE_SYSTEM_PREFERRED_RNG).\n"
-						"# Every synthetic identifier value of Emulator\\data\\platform\\<env>\\ is an HMAC-SHA256 stream keyed with this seed; the\n"
-						"# stream labels name a field location (environment + field id), never a value. Not derived from host data. The same\n"
-						"# seed gives the same identity; emu-profilegen --new-identity writes a fresh one (a different, equally consistent identity).\n"
-						"seed = " + s.hex + "\n";
-		fs::create_directories( file.parent_path() );
-		std::ofstream o( file, std::ios::binary | std::ios::trunc );
-		o << t;
-		if ( !o ) fail( "cannot write the seed file " + show( file ) );
+		std::ostringstream o;
+		o << "# " << k_tool << " - identity map - " << env_dir_name( e ) << " - "
+		  << ( original ? "ORIGINAL copy: LOCAL ONLY, never commit (it holds the install-history offset)" : "every value synthetic (RDRAND), no real value, no install-history offset" ) << "\n"
+		  << "# The identity this profile presents: GENERATION (the first build, or --new-identity) drew every value from RDRAND\n"
+		  << "# (Randomize->gen_...); every later build APPLIES this map to the clean capture, byte for byte. Keys name a field location\n"
+		  << "# (environment + field id), never a value; \"shared/\" keys are the same in both profiles (one USB serial per physical device).\n"
+		  << "# columns: key, kind, synthetic value (final text form)\n";
+		for ( auto& [ k, v ] : m.entries ) o << k << '\t' << v.kind << '\t' << v.value << "\n";
+		if ( original && m.has_install_shift ) o << "install_shift\t" << m.install_shift << "\n";
+		return o.str();
 	}
 
 	// ── RuleSet / BuildConfig / BuildLog ──────────────────────────────────────────────────────────────────────────────
@@ -1723,28 +2292,47 @@ namespace emu::platform
 
 	const BuildConfig& BuildConfig::pinned( Environment e )
 	{
-		// the pinned clean captures: --guest is built ONLY from Run 3 (no VmLoader), --host ONLY from the clean host run
+		// the pinned clean captures: --guest is built ONLY from the clean VMware guest without VmLoader (fwid 1.4 Run3b, its
+		// firmware checked against Run 3), --host ONLY from the clean host run (fwid 1.4, its firmware checked against fwid 1.3)
 		static const BuildConfig guest = [] {
 			BuildConfig c;
 			c.env = Environment::vmware_guest;
-			c.capture_parent = "fwid\\baseline";
-			c.capture_folder = "Run3_clean_guest_*";
-			c.capture_manifest_sha256 = "57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C";
-			c.companions = { { "baseline\\Run3_clean_guest_probes_20261015.sha256", "748A3515D7FC401B14C97E650996D15426E891C477B5CF75F28C6EAF59F89E8D" } };
+			c.capture_parent = "baseline\\Run3b_clean_guest_fwid14_20261016";
+			c.capture_folder = "*";
+			c.capture_manifest_sha256 = "2828D5201670AFFF41FAD5027E90C113A310AE2F8CAA11F59282FA7FB79F526D";
+			c.companions = { { "baseline\\Run3b_clean_guest_fwid14_20261016.sha256", "82C116C913650B687FA789AD52AAEDD3D724A1EA7C9B71344402095A2AB8EA6A" },
+				{ "baseline\\Run3_clean_guest_probes_20261015.sha256", "748A3515D7FC401B14C97E650996D15426E891C477B5CF75F28C6EAF59F89E8D" } };
+			c.firmware_ref_parent = "fwid\\baseline";	// Run 3 (fwid 1.2): the same clean VM state
+			c.firmware_ref_folder = "Run3_clean_guest_*";
+			c.firmware_ref_manifest_sha256 = "57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C";
 			return c;
 		}();
 		static const BuildConfig host = [] {
 			BuildConfig c;
 			c.env = Environment::bare_host;
-			c.capture_parent = "baseline\\Host_clean_20261016_fwid13";	// fwid 1.3 (firmware byte-identical to the fwid 1.2 capture)
+			c.capture_parent = "baseline\\Host_clean_20261016_fwid14";
 			c.capture_folder = "*";
-			c.capture_manifest_sha256 = "C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89";
-			c.companions = { { "baseline\\Host_clean_20261016_fwid13.sha256", "C2BD8A2B0AADA8A679D066AEA07126CFFA5B6B237512D2698761E6D7B964550A" },
+			c.capture_manifest_sha256 = "FF2062E2E72AB2138CF4BD08942028E0E8D43E5F0FACBC105DB449E92CEC1C64";
+			c.companions = { { "baseline\\Host_clean_20261016_fwid14.sha256", "74B0BBFFC670B4ED53C873872DF8970CEB4B634CB75D328C012CA8EAA3421FEE" },
 				{ "baseline\\Host_clean_20261016.sha256", "1C8C498DB6CD26A57F8673375BF563868F12D3AEB79901363DF2EEEE8A8EF78C" },
 				{ "baseline\\Host_clean_20261016_xinuse_all_lps.sha256", "CA726BF73851C9251D9DF30737B4CE171053B4814610798DA6551ECC03348F5C" } };
+			c.firmware_ref_parent = "baseline\\Host_clean_20261016_fwid13";	// fwid 1.3 (itself byte-identical to the fwid 1.2 firmware)
+			c.firmware_ref_folder = "*";
+			c.firmware_ref_manifest_sha256 = "C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89";
 			return c;
 		}();
 		return e == Environment::vmware_guest ? guest : host;
+	}
+	// tool artifacts of the capture setup, excluded from both profiles (user decision J 2026-10-16); VMware Workstation's
+	// host-side services and VMnet adapters are real host state and stay in --host. Patterns match case-insensitively.
+	std::vector<ToolExclusion> BuildConfig::default_exclusions()
+	{
+		return {
+			{ "RustDesk Printer", { "RustDesk Printer", "RustDesk v4 Printer Driver" }, "the remote-desktop tool's virtual printer (its queue, port, driver and PRINTENUM device)" },
+			{ "RustDesk", { "RustDesk" }, "the remote-desktop tool itself: its service and any driver / registry / device trace (user decision 2026-10-16)" },
+			{ "System Informer", { "SystemInformer" }, "the analysis tool's kernel driver and service (KSystemInformer, SystemInformer.sys, ksi.dll)" },
+			{ "DebugView", { "Dbgv" }, "Sysinternals DebugView's kernel driver (Dbgv.sys)" },
+			{ "VmLoader", { "vmloader" }, "any VmLoader service / driver / file trace" } };
 	}
 	BuildConfig BuildConfig::defaults( Environment e )
 	{
@@ -1752,24 +2340,29 @@ namespace emu::platform
 		c.tool = k_tool;
 		c.out = std::string( "Emulator\\data\\platform\\" ) + env_dir_name( e );
 		c.original_out = std::string( "profiles_original\\" ) + env_dir_name( e );
-		c.seed_file = "Emulator\\data\\platform\\profilegen_seed.txt";
+		c.identity_map = "identity_map.tsv";
+		c.peer_identity_map = std::string( "Emulator\\data\\platform\\" ) + env_dir_name( e == Environment::vmware_guest ? Environment::bare_host : Environment::vmware_guest ) + "\\identity_map.tsv";
 		c.rules.r2h = e == Environment::bare_host;	// rule 2h is a bare-host rule; the guest keeps every type 17 string
 		const BuildConfig& peer = pinned( e == Environment::vmware_guest ? Environment::bare_host : Environment::vmware_guest );
 		c.peer_capture_parent = peer.capture_parent;
 		c.peer_capture_folder = peer.capture_folder;
 		c.peer_capture_manifest_sha256 = peer.capture_manifest_sha256;
+		c.exclusions = default_exclusions();
 		return c;
 	}
 	std::string BuildConfig::save() const
 	{
 		std::ostringstream o;
-		o << "# emu-profilegen BuildConfig (format 1): every input of one platform-profile build. Rebuild with\n"
+		o << "# emu-profilegen BuildConfig (format 3): every input of one platform-profile build. Rebuild with\n"
 			 "#   emu-profilegen --config build_config.txt [--check]\n"
-			 "# Paths: out / seed_file relative to repo_root; original_out, capture_parent and companion relative to capture_root;\n"
+			 "# Paths: out / peer_identity_map relative to repo_root; identity_map relative to out; original_out, capture_parent and companion relative to capture_root;\n"
 			 "# \"auto\" = NOVMP_CAPTURE_ROOT, else the first ancestor folder \"capture\" (capture_root) / the folder holding NoVmp.sln (repo_root).\n"
 			 "# No identifier values: the capture folder is a name pattern plus its pinned manifest SHA-256. peer_capture_*: the other\n"
-			 "# environment's clean capture, read only for the USB serial table both profiles share (rule 4d). seed: random (not host\n"
-			 "# data); the same seed gives the same identity.\n";
+			 "# environment's clean capture, read only for the USB serial table both profiles share (rule 4d). firmware_ref_*: an older\n"
+			 "# capture of the same machine; every firmware entry (rsmb / acpi / hwacpi / edid) must have the same SHA-256. exclude =\n"
+			 "# name | pattern; pattern | reason: a tool artifact excluded from the profile (exclusions.tsv). identity_map: the identity\n"
+			 "# this profile presents (every value drawn from RDRAND once, then applied by every build); peer_identity_map: the other\n"
+			 "# environment's map (the shared USB serials). No seed (format 3).\n";
 		auto kv = [ & ]( const char* k, const std::string& v ) { o << k << std::string( strlen( k ) < 29 ? 29 - strlen( k ) : 1, ' ' ) << "= " << v << "\n"; };
 		kv( "format", std::to_string( format ) );
 		kv( "tool", tool );
@@ -1782,11 +2375,23 @@ namespace emu::platform
 		kv( "peer_capture_parent", peer_capture_parent );
 		kv( "peer_capture_folder", peer_capture_folder );
 		kv( "peer_capture_manifest_sha256", peer_capture_manifest_sha256 );
+		if ( !firmware_ref_parent.empty() )
+		{
+			kv( "firmware_ref_parent", firmware_ref_parent );
+			kv( "firmware_ref_folder", firmware_ref_folder );
+			kv( "firmware_ref_manifest_sha256", firmware_ref_manifest_sha256 );
+		}
+		for ( const ToolExclusion& x : exclusions )
+		{
+			std::string pats;
+			for ( const std::string& p : x.patterns ) pats += ( pats.empty() ? "" : "; " ) + p;
+			kv( "exclude", x.name + " | " + pats + " | " + x.reason );
+		}
 		kv( "repo_root", repo_root );
 		kv( "out", out );
 		kv( "original_out", original_out );
-		kv( "seed_file", seed_file );
-		if ( !seed.empty() ) kv( "seed", seed );
+		kv( "identity_map", identity_map );
+		kv( "peer_identity_map", peer_identity_map );
 		kv( "rules", rules.to_string() );
 		return o.str();
 	}
@@ -1809,8 +2414,8 @@ namespace emu::platform
 			while ( !k.empty() && ( k.back() == ' ' || k.back() == '\t' ) ) k.pop_back();
 			v.erase( 0, std::min( v.size(), v.find_first_not_of( " \t" ) ) );
 			while ( !v.empty() && ( v.back() == ' ' || v.back() == '\t' ) ) v.pop_back();
-			if ( k != "companion" && !seen.insert( k ).second ) fail( fmt( "build config line %zu: key \"%s\" given twice", n, k.c_str() ) );
-			if ( k == "format" ) { if ( v != "1" ) fail( fmt( "build config line %zu: format %s not supported (1)", n, v.c_str() ) ); }
+			if ( k != "companion" && k != "exclude" && !seen.insert( k ).second ) fail( fmt( "build config line %zu: key \"%s\" given twice", n, k.c_str() ) );
+			if ( k == "format" ) { if ( v != "3" ) fail( fmt( "build config line %zu: format %s not supported (3; the seed formats 1 / 2 were replaced by the identity map)", n, v.c_str() ) ); }
 			else if ( k == "tool" ) c.tool = v;
 			else if ( k == "environment" )
 			{
@@ -1833,20 +2438,38 @@ namespace emu::platform
 			else if ( k == "peer_capture_parent" ) c.peer_capture_parent = v;
 			else if ( k == "peer_capture_folder" ) c.peer_capture_folder = v;
 			else if ( k == "peer_capture_manifest_sha256" ) c.peer_capture_manifest_sha256 = v;
+			else if ( k == "firmware_ref_parent" ) c.firmware_ref_parent = v;
+			else if ( k == "firmware_ref_folder" ) c.firmware_ref_folder = v;
+			else if ( k == "firmware_ref_manifest_sha256" ) c.firmware_ref_manifest_sha256 = v;
+			else if ( k == "exclude" )
+			{
+				const size_t p1 = v.find( '|' ), p2 = p1 == std::string::npos ? std::string::npos : v.find( '|', p1 + 1 );
+				if ( p2 == std::string::npos ) fail( fmt( "build config line %zu: exclude = <name> | <pattern>; <pattern> | <reason>", n ) );
+				auto trim = []( std::string s ) {
+					s.erase( 0, std::min( s.size(), s.find_first_not_of( " \t" ) ) );
+					while ( !s.empty() && ( s.back() == ' ' || s.back() == '\t' ) ) s.pop_back();
+					return s;
+				};
+				ToolExclusion x;
+				x.name = trim( v.substr( 0, p1 ) );
+				x.reason = trim( v.substr( p2 + 1 ) );
+				std::istringstream ps( v.substr( p1 + 1, p2 - p1 - 1 ) );
+				for ( std::string p; std::getline( ps, p, ';' ); )
+					if ( !trim( p ).empty() ) x.patterns.push_back( trim( p ) );
+				if ( x.name.empty() || x.patterns.empty() ) fail( fmt( "build config line %zu: an exclusion needs a name and at least one pattern", n ) );
+				c.exclusions.push_back( x );
+			}
 			else if ( k == "repo_root" ) c.repo_root = v;
 			else if ( k == "out" ) c.out = v;
 			else if ( k == "original_out" ) c.original_out = v;
-			else if ( k == "seed_file" ) c.seed_file = v;
-			else if ( k == "seed" )
-			{
-				if ( v.size() != 64 || !std::all_of( v.begin(), v.end(), is_hex ) ) fail( fmt( "build config line %zu: seed must be 64 hex digits", n ) );
-				c.seed = upper( v );
-			}
+			else if ( k == "identity_map" ) { if ( v != "identity_map.tsv" ) fail( fmt( "build config line %zu: identity_map is the profile file identity_map.tsv", n ) ); c.identity_map = v; }
+			else if ( k == "peer_identity_map" ) c.peer_identity_map = v;
+			else if ( k == "seed" || k == "seed_file" ) fail( fmt( "build config line %zu: \"%s\" - the seed was replaced by the identity map (format 3)", n, k.c_str() ) );
 			else if ( k == "rules" ) c.rules = RuleSet::parse( v );
 			else if ( k.rfind( "resolved.", 0 ) == 0 ) {}	// the local original copy's record of the resolved paths
 			else fail( fmt( "build config line %zu: unknown key \"%s\"", n, k.c_str() ) );
 		}
-		for ( const char* k : { "environment", "capture_parent", "capture_folder", "capture_manifest_sha256", "out", "seed_file", "rules" } )
+		for ( const char* k : { "format", "environment", "capture_parent", "capture_folder", "capture_manifest_sha256", "out", "identity_map", "rules" } )
 			if ( !seen.count( k ) ) fail( std::string( "build config: missing key \"" ) + k + "\"" );
 		if ( c.env == Environment::vmware_guest && c.rules.r2h ) fail( "build config: rule 2h is a bare_host rule (the guest keeps every type 17 string)" );
 		return c;
@@ -1989,10 +2612,49 @@ namespace emu::platform
 			bool bin = n.size() > 4 && n.substr( n.size() - 4 ) == ".bin", txt = n.size() > 4 && n.substr( n.size() - 4 ) == ".txt";
 			if ( bin && ( n.rfind( "acpi_", 0 ) == 0 || n.rfind( "hwacpi_", 0 ) == 0 ) ) in.acpi.emplace_back( n, read_file( cap / n ) );
 			else if ( bin && n.rfind( "edid_", 0 ) == 0 ) in.edid.push_back( { n, read_file( cap / n ) } );
+			else if ( bin && n.rfind( "disk_", 0 ) == 0 && n.find( "_descriptor" ) != std::string::npos ) in.disks.push_back( { n, read_file( cap / n ) } );
 			else if ( txt ) in.texts.push_back( { n, read_file( cap / n ) } );
 		}
-		log.info( "capture", fmt( "inputs: rsmb.bin %zu bytes, %zu ACPI table files, %zu EDID values, %zu text files (manifest entries)", in.rsmb.size(), in.acpi.size(),
-			in.edid.size(), in.texts.size() ) );
+		log.info( "capture", fmt( "inputs: rsmb.bin %zu bytes, %zu ACPI table files, %zu EDID values, %zu disk descriptors, %zu text files (manifest entries)", in.rsmb.size(),
+			in.acpi.size(), in.edid.size(), in.disks.size(), in.texts.size() ) );
+
+		// the firmware of this capture = the firmware of the reference capture of the same machine (manifest SHA-256 per entry;
+		// the reference manifest itself is pinned): rsmb.bin, acpi_*.bin, hwacpi_*.bin, edid_*.bin
+		if ( !c.firmware_ref_parent.empty() )
+		{
+			const fs::path ref = find_one( root / c.firmware_ref_parent, c.firmware_ref_folder, "firmware reference capture" );
+			const Bytes rm = read_file( ref / "manifest.txt" );
+			if ( sha256_hex( rm ) != c.firmware_ref_manifest_sha256 ) fail( "the firmware reference capture's manifest.txt is not the pinned one" );
+			auto entries = []( const Bytes& m ) {
+				std::map<std::string, std::string> e;
+				for ( const std::string& l : split_lines( m ) )
+				{
+					std::istringstream is( l );
+					unsigned long long size = 0;
+					std::string sha, name;
+					if ( !l.empty() && l[ 0 ] != '#' && ( is >> size >> sha >> name ) ) e[ name ] = sha;
+				}
+				return e;
+			};
+			auto firmware = []( const std::string& n ) {
+				const bool bin = n.size() > 4 && n.substr( n.size() - 4 ) == ".bin";
+				return n == "rsmb.bin" || ( bin && ( n.rfind( "acpi_", 0 ) == 0 || n.rfind( "hwacpi_", 0 ) == 0 || n.rfind( "edid_", 0 ) == 0 ) );
+			};
+			const auto a = entries( manifest ), b = entries( rm );
+			for ( auto& [ n, sha ] : a )
+			{
+				if ( !firmware( n ) ) continue;
+				in.firmware_ref.compared++;
+				auto it = b.find( n );
+				if ( it == b.end() || it->second != sha ) fail( "firmware entry " + n + " differs from the firmware reference capture (" + c.firmware_ref_parent + ")" );
+				in.firmware_ref.identical++;
+			}
+			for ( auto& [ n, sha ] : b )
+				if ( firmware( n ) && !a.count( n ) ) fail( "the firmware reference capture has the firmware entry " + n + ", this capture lacks it" );
+			in.firmware_ref.manifest_sha256 = c.firmware_ref_manifest_sha256;
+			log.info( "capture", fmt( "firmware = the reference capture %s\\%s (pinned manifest %s): %zu of %zu firmware entries identical (SHA-256)", c.firmware_ref_parent.c_str(),
+				c.firmware_ref_folder.c_str(), c.firmware_ref_manifest_sha256.c_str(), in.firmware_ref.identical, in.firmware_ref.compared ) );
+		}
 
 		// the shared USB serial table (rule 4d): the bare-host capture's enum_registry.txt, then the guest's; the peer capture is
 		// verified the same way (pinned manifest SHA-256, the entry's size + SHA-256)
@@ -2017,33 +2679,53 @@ namespace emu::platform
 		return in;
 	}
 
-	Identity ProfileGenerator::gen_identity( const CaptureInputs& in )
+	Identity ProfileGenerator::gen_identity( BuildContext& ctx, const CaptureInputs& in )
 	{
 		Identity p;
-		p.env = c_.env;
+		p.env = ctx.config.env;
 		p.smbios_original = in.rsmb;
 		p.acpi = in.acpi;
 		p.edid_original = in.edid;
 		// rule 6 first (its serials are presets for the edid.txt occurrences), then the text identity (the synthetic MACs are
 		// needed for the UUID-MAC relation), then SMBIOS
-		const EdidGen eg = gen_edid( { in.edid } );
+		const EdidGen eg = gen_edid( ctx, { in.edid } );
 		p.edid_synthetic = eg.synthetic;
 		p.edid_ext_blocks = eg.ext_blocks;
 		p.edid_ext_hits = eg.ext_hits;
 		const std::vector<std::string> usb_table = in.usb_sources.empty() ? std::vector<std::string> {} : parse_usb_serial_table( in.usb_sources );
-		TextIdentityGen tg = gen_text_identity( { in.texts, usb_table, eg.presets } );
-		SmbiosGen sg = gen_smbios( { in.rsmb, c_.rules.r1 && c_.rules.r3 ? tg.macs : std::vector<MacPair> {} } );
+		// the tool artifacts of the capture setup (BuildConfig "exclude"), then the text identity with the SMBIOS rule-2 value
+		// mapping (rule 8c needs the synthetic baseboard serial; the UUID-MAC tail needs the synthetic MACs: SMBIOS again below)
+		const ExclusionScan ex = parse_tool_exclusions( in.texts, ctx.config.exclusions );
+		const SmbiosGen sg0 = gen_smbios( ctx, { in.rsmb } );
+		TextIdentityGen tg = gen_text_identity( ctx, { in.texts, usb_table, eg.presets, ex, sg0.strings } );
+		SmbiosGen sg = gen_smbios( ctx, { in.rsmb, ctx.config.rules.r1 && ctx.config.rules.r3 ? tg.macs : std::vector<MacPair> {} } );
+		const DiskGen dg = gen_disk_descriptors( ctx, { in.disks, tg.identity } );
 		p.smbios_synthetic = sg.synthetic;
+		p.disk_original = in.disks;
+		p.disk_synthetic = dg.synthetic;
+		p.disk_serials = dg.serials;
+		p.disk_filler = dg.filler;
+		p.disk_none = dg.none;
 		p.fields = sg.fields;
 		p.smbios_fields = sg.fields.size();
 		p.fields.insert( p.fields.end(), eg.fields.begin(), eg.fields.end() );
 		p.edid_fields = eg.fields.size();
+		p.fields.insert( p.fields.end(), dg.fields.begin(), dg.fields.end() );
+		p.disk_fields = dg.fields.size();
 		p.fields.insert( p.fields.end(), tg.fields.begin(), tg.fields.end() );
 		p.identity = tg.identity;
 		p.storage_paths = tg.storage_paths;
 		p.macs = tg.macs;
+		p.exclusions = ex;
+		p.exclusions.ranges.insert( p.exclusions.ranges.end(), tg.extra_exclusions.begin(), tg.extra_exclusions.end() );
+		p.excluded_anchors = tg.excluded_anchors;
+		p.excluded_rows = tg.excluded_rows;
+		p.filler_serials = tg.filler_serials;
+		p.volatiles = tg.volatiles;
+		p.time_shift = tg.time_shift;
 		p.needles = sg.needles;
 		p.needles.insert( p.needles.end(), eg.needles.begin(), eg.needles.end() );
+		p.needles.insert( p.needles.end(), dg.needles.begin(), dg.needles.end() );
 		p.needles.insert( p.needles.end(), tg.needles.begin(), tg.needles.end() );
 		p.binary_needles = sg.binary_needles;
 		p.binary_needles.insert( p.binary_needles.end(), tg.binary_needles.begin(), tg.binary_needles.end() );
@@ -2086,9 +2768,10 @@ namespace emu::platform
 			for ( size_t k = 0; k < 128; k++ ) sum = uint8_t( sum + p.edid_synthetic[ i ].bytes[ k ] );
 			if ( sum ) fail( "self-check: a synthetic EDID base block has an invalid checksum" );
 		}
+		for ( size_t i = 0; i < p.disk_original.size(); i++ ) check_blob( "disk\\" + p.disk_original[ i ].name, p.disk_original[ i ].bytes, p.disk_synthetic[ i ].bytes );
 		// (c) every identity value of an enabled rule changed and kept its length
 		for ( const IdentityEntry& r : p.identity )
-			if ( r.synthetic.size() != r.original.size() || ( rule_on( c_.rules, r.rule ) && ieq( r.synthetic, r.original ) ) ) fail( "self-check: identity " + r.id + " not replaced at the same length" );
+			if ( r.synthetic.size() != r.original.size() || ( rule_on( ctx.config.rules, r.rule ) && ieq( r.synthetic, r.original ) ) ) fail( "self-check: identity " + r.id + " not replaced at the same length" );
 		for ( const StoragePath& sp : p.storage_paths )
 			if ( sp.original.size() != sp.synthetic.size() ) fail( "self-check: a storage path changed its length" );
 		// (d) the CHID-relevant SMBIOS fields are unchanged
@@ -2097,16 +2780,30 @@ namespace emu::platform
 		return p;
 	}
 
-	GenResult ProfileGenerator::gen_build( const CaptureInputs& in, const std::string& resolved_root )
+	GenResult ProfileGenerator::gen_build( BuildContext& ctx, const CaptureInputs& in, const std::string& resolved_root )
 	{
 		GenResult res;
-		res.config = c_;
+		res.config = ctx.config;
 		BuildLog& log = res.log;
 		try
 		{
-			const Environment env = c_.env;
+			const Environment env = ctx.config.env;
 			Identity& p = res.identity;
-			p = gen_identity( in );
+			ctx.used_keys.clear();
+			const size_t loaded = ctx.identity_map.entries.size();
+			p = gen_identity( ctx, in );
+			// the identity map: application uses every saved value (one left over means the map does not fit this capture)
+			if ( ctx.applying )
+				for ( auto& [ k, v ] : ctx.identity_map.entries )
+					if ( !ctx.used_keys.count( k ) ) fail( "the identity map has a value (" + k + ") this capture does not use - it does not fit; generate a new identity (--new-identity)" );
+			res.generated = !ctx.applying;
+			res.identity_map = ctx.identity_map;
+			const IdentityMap& map = ctx.identity_map;
+			const size_t shared_total = size_t( std::count_if( map.entries.begin(), map.entries.end(), [ & ]( auto& e ) { return e.first.rfind( "shared/", 0 ) == 0; } ) );
+			const size_t shared_peer = size_t( std::count_if( map.entries.begin(), map.entries.end(), [ & ]( auto& e ) { return e.first.rfind( "shared/", 0 ) == 0 && ctx.peer_map.entries.count( e.first ); } ) );
+			log.info( "identity map", ctx.applying ? fmt( "APPLIED: %zu saved values (identity_map.tsv), no randomness drawn", loaded )
+				: fmt( "GENERATED: %zu values drawn from RDRAND (Randomize->gen_...; %s), %zu shared value(s) taken from the other environment's map, %zu shared value(s) taken from / recorded in this process's shared/ registry (%zu registered)",
+					map.entries.size(), Randomize->cpu_supports_rand ? "CPUID.1:ECX[30] = 1" : "no RDRAND", shared_peer, shared_total - shared_peer, check_shared_values() ) );
 			const SmbiosTable t0 = parse_smbios( p.smbios_original );
 			log.info( "smbios", fmt( "version %u.%u, table %u bytes, %zu structures", t0.major, t0.minor, t0.length, t0.structures.size() ) );
 			for ( size_t i = 0; i < p.smbios_fields; i++ )
@@ -2124,12 +2821,43 @@ namespace emu::platform
 			else
 				log.info( "edid", fmt( "%zu EDID values: %zu fields replaced (serial field / FFh string), checksums recomputed and valid; extension blocks %zu, with a real serial %zu",
 					p.edid_original.size(), p.edid_fields - p.edid_original.size(), p.edid_ext_blocks, p.edid_ext_hits ) );
+			if ( in.disks.empty() ) log.info( "disk", "no disk descriptors in this capture (fwid < 1.4): section omitted" );
+			else
+				log.info( "disk", fmt( "%zu STORAGE_DEVICE_DESCRIPTORs: %zu serials replaced (fieldmap.tsv R rows), %zu placeholder serials exact, %zu without a serial",
+					p.disk_original.size(), p.disk_serials, p.disk_filler, p.disk_none ) );
+			std::map<std::string, std::pair<size_t, size_t>> per_item;	// ranges, lines
+			for ( const ExclusionRange& r : p.exclusions.ranges ) { per_item[ r.item ].first++; per_item[ r.item ].second += r.last_line - r.first_line + 1; }
+			std::string excl_summary;
+			for ( const ToolExclusion& x : ctx.config.exclusions )
+			{
+				auto it = per_item.find( x.name );
+				excl_summary += ( excl_summary.empty() ? "" : "; " ) + x.name + ": " + ( it == per_item.end() ? std::string( "nothing found" ) : fmt( "%zu range(s), %zu line(s)", it->second.first, it->second.second ) );
+			}
+			log.info( "exclude", fmt( "%zu tool artifact item(s), %zu text files scanned: %s; %zu pattern hit(s) in absence records (not excluded); %zu identifier anchor(s) and %zu occurrence row(s) inside the excluded ranges dropped",
+				ctx.config.exclusions.size(), p.exclusions.scanned_files, excl_summary.empty() ? "-" : excl_summary.c_str(), p.exclusions.absence_records, p.excluded_anchors, p.excluded_rows ) );
+			for ( const ExclusionRange& r : p.exclusions.ranges )
+				log.info( "exclude", fmt( "%s: %s lines %zu-%zu (%s)", r.item.c_str(), r.file.c_str(), r.first_line, r.last_line, r.unit.c_str() ) );
+			log.info( "volatile", fmt( "%zu volatile values (volatile.tsv); %zu disk / HID / USB placeholder serials kept exact", p.volatiles.size(), p.filler_serials ) );
+			std::string shift_kinds;
+			for ( auto& [ k, n ] : p.time_shift.per_kind ) shift_kinds += ( shift_kinds.empty() ? "" : ", " ) + k + " " + std::to_string( n );
+			const std::string shift_text = p.time_shift.shifted
+				? fmt( "%zu install-history values (%s) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): %zu of %zu exact, so every pairwise difference is the original one; %zu outside the build release .. capture window; %zu precede the OS install in the capture and %zu in the profile (Windows setup)",
+					p.time_shift.shifted, shift_kinds.c_str(), p.time_shift.exact, p.time_shift.shifted, p.time_shift.outside_window, p.time_shift.before_install_real, p.time_shift.before_install_synthetic )
+				: std::string( "no install history in this capture" );
+			log.info( "install shift", shift_text );
 			std::map<std::string, size_t> per_kind;
 			for ( const IdentityEntry& r : p.identity ) per_kind[ r.kind ]++;
 			std::string kinds;
 			for ( auto& [ k, n ] : per_kind ) kinds += ( kinds.empty() ? "" : ", " ) + k + " " + std::to_string( n );
 			log.info( "identity", fmt( "%zu identifiers (%s), %zu occurrence + relation rows, %zu storage instance paths", p.identity.size(), kinds.c_str(),
-				p.fields.size() - p.smbios_fields - p.edid_fields, p.storage_paths.size() ) );
+				p.fields.size() - p.smbios_fields - p.edid_fields - p.disk_fields, p.storage_paths.size() ) );
+			{
+				size_t iid = 0, real_ok = 0, syn_ok = 0;
+				for ( const IdentityEntry& r : p.identity )
+					if ( r.kind == "win_installation_id" ) { iid++; real_ok += check_installation_id( r.original.c_str() ); syn_ok += check_installation_id( r.synthetic.c_str() ); }
+				if ( iid ) log.info( "installation id", fmt( "%zu installation ID(s): check digits valid in %zu real and %zu synthetic (9 groups of 6 digits + (d0 + 2 d1 + d2 + 2 d3 + d4 + 2 d5) mod 7)", iid, real_ok, syn_ok ) );
+				if ( syn_ok != iid ) fail( "self-check rule 8a: a synthetic installation ID fails its check digits" );
+			}
 			for ( const IdentityEntry& r : p.identity )
 				log.info( "identity", fmt( "%s %s rule %s first at %s, %zu occurrence(s), length %zu", r.id.c_str(), r.kind.c_str(), r.rule.c_str(), r.source.c_str(), r.occurrences, r.original.size() ) );
 			std::string optional;
@@ -2141,7 +2869,7 @@ namespace emu::platform
 				if ( !have ) log.info( "optional", std::string( fn ) + ": not in this capture, section omitted" );
 			}
 			const std::string cap_name = redact( in.folder_name, p.identity );
-			log.info( "capture", "folder <capture root>\\" + c_.capture_parent + "\\" + cap_name );
+			log.info( "capture", "folder <capture root>\\" + ctx.config.capture_parent + "\\" + cap_name );
 
 			// ACPI: byte-exact; checksums; identifier search (report only, never change)
 			size_t acpi_valid = 0, acpi_na = 0, acpi_bad = 0, acpi_hits = 0;
@@ -2167,15 +2895,19 @@ namespace emu::platform
 			// provenance (no absolute paths; the computer name withheld from folder names)
 			std::vector<std::pair<std::string, std::string>> prov;
 			std::string tool = in.tool_line.find( "fwid_probe" ) != std::string::npos ? in.tool_line.substr( in.tool_line.find( "fwid_probe" ) ) : "unknown";
-			prov.emplace_back( "provenance.capture", c_.capture_parent + "\\" + cap_name + " (relative to the capture root; the computer-name part of the folder name is withheld)" );
+			prov.emplace_back( "provenance.capture", ctx.config.capture_parent + "\\" + cap_name + " (relative to the capture root; the computer-name part of the folder name is withheld)" );
 			prov.emplace_back( "provenance.capture_tool", tool + " (capture manifest header)" );
 			prov.emplace_back( "provenance.capture_manifest_sha256", in.manifest_sha256 );
 			prov.emplace_back( "provenance.capture_check", fmt( "%zu of %zu manifest entries match (size + SHA-256); manifest SHA-256 = the pinned clean capture", in.manifest_entries, in.manifest_entries ) );
 			int ci = 0;
 			for ( auto& [ rel, sha ] : in.companions ) prov.emplace_back( fmt( "provenance.companion_%d", ++ci ), rel + " sha256 " + sha + " (frozen hash list of the same state; not consumed)" );
-			prov.emplace_back( "provenance.peer_capture", c_.peer_capture_parent + "\\" + c_.peer_capture_folder + " manifest " + c_.peer_capture_manifest_sha256 + " (enum_registry.txt only: the shared USB serial table)" );
-			prov.emplace_back( "build_config", std::string( BuildConfig::k_file ) + " (this folder, seed included; rebuild: emu-profilegen --config " + BuildConfig::k_file + ")" );
-			prov.emplace_back( "rules", c_.rules.to_string() );
+			prov.emplace_back( "provenance.peer_capture", ctx.config.peer_capture_parent + "\\" + ctx.config.peer_capture_folder + " manifest " + ctx.config.peer_capture_manifest_sha256 + " (enum_registry.txt only: the shared USB serial table)" );
+			if ( !ctx.config.firmware_ref_parent.empty() )
+				prov.emplace_back( "provenance.firmware_reference", ctx.config.firmware_ref_parent + "\\" + ctx.config.firmware_ref_folder + " manifest " + ctx.config.firmware_ref_manifest_sha256 +
+					fmt( ": %zu of %zu firmware entries (rsmb / acpi / hwacpi / edid) byte-identical (SHA-256)", in.firmware_ref.identical, in.firmware_ref.compared ) );
+			prov.emplace_back( "build_config", std::string( BuildConfig::k_file ) + " (this folder; rebuild: emu-profilegen --config " + BuildConfig::k_file + " - applies identity_map.tsv)" );
+			prov.emplace_back( "identity_map", fmt( "identity_map.tsv (this folder): %zu synthetic values, drawn once from RDRAND at generation; every build applies them", ctx.identity_map.entries.size() ) );
+			prov.emplace_back( "rules", ctx.config.rules.to_string() );
 			prov.emplace_back( "optional_inputs", optional );
 			if ( env == Environment::bare_host )
 			{
@@ -2193,15 +2925,21 @@ namespace emu::platform
 				p.edid_original.size(), p.edid_fields - p.edid_original.size(), p.edid_original.size(), p.edid_ext_blocks, p.edid_ext_hits ) );
 			prov.emplace_back( "acpi", fmt( "%zu table files byte-exact (acpi\\); checksum valid %zu, not applicable (FACS) %zu, not valid %zu; identifier search: %zu hit(s)",
 				p.acpi.size(), acpi_valid, acpi_na, acpi_bad, acpi_hits ) );
-			prov.emplace_back( "identity", fmt( "%zu identifiers, %zu occurrence + relation rows (identity.tsv, fieldmap.tsv)", p.identity.size(), p.fields.size() - p.smbios_fields - p.edid_fields ) );
+			prov.emplace_back( "disk", in.disks.empty() ? std::string( "not in this capture" ) : fmt( "%zu STORAGE_DEVICE_DESCRIPTORs (disk\\): %zu serials replaced (fieldmap.tsv R rows), %zu placeholder serials exact, %zu without a serial",
+				p.disk_original.size(), p.disk_serials, p.disk_filler, p.disk_none ) );
+			prov.emplace_back( "identity", fmt( "%zu identifiers, %zu occurrence + relation rows (identity.tsv, fieldmap.tsv)", p.identity.size(), p.fields.size() - p.smbios_fields - p.edid_fields - p.disk_fields ) );
+			prov.emplace_back( "exclusions", fmt( "%zu range(s) of tool artifacts not part of the profile (exclusions.tsv): %s; %zu identifier anchor(s), %zu occurrence row(s) inside them dropped",
+				p.exclusions.ranges.size(), excl_summary.empty() ? "-" : excl_summary.c_str(), p.excluded_anchors, p.excluded_rows ) );
+			prov.emplace_back( "volatile", fmt( "%zu values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps", p.volatiles.size() ) );
+			prov.emplace_back( "install_shift", shift_text );
 
-			// the BuildConfig copies: synthetic = the configuration as used (portable, seed included); original adds the resolved
+			// the BuildConfig copies: synthetic = the configuration as used (portable); original adds the resolved
 			// capture root and folder name (local only)
-			std::string cfg_syn = c_.save();
+			std::string cfg_syn = ctx.config.save();
 			std::string cfg_org = cfg_syn + "# resolved (LOCAL ONLY copy, ignored by load):\nresolved.capture_root   = " + ( resolved_root.empty() ? "-" : resolved_root ) +
 								  "\nresolved.capture_folder = " + in.folder_name + "\n";
-			res.synthetic = make_files( p, false, prov, cfg_syn );
-			res.original = make_files( p, true, prov, cfg_org );
+			res.synthetic = make_files( p, false, prov, cfg_syn, save_identity_map( ctx.identity_map, env, false ) );
+			res.original = make_files( p, true, prov, cfg_org, save_identity_map( ctx.identity_map, env, true ) );
 
 			// (e) leak guard: no real value in any synthetic file except the byte-exact ACPI copies (reported above)
 			size_t embedded = 0;
@@ -2217,7 +2955,7 @@ namespace emu::platform
 					embedded += count_raw( lc, nl ) - tok;
 					if ( tok )
 						fail( "leak guard: a real identifier value (length " + std::to_string( n.size() ) + ") is in the synthetic " + name +
-							( c_.rules == BuildConfig::defaults( c_.env ).rules ? "" : " (a field rule is disabled)" ) );
+							( ctx.config.rules == BuildConfig::defaults( ctx.config.env ).rules ? "" : " (a field rule is disabled)" ) );
 				}
 				for ( const Bytes& n : p.binary_needles )
 					if ( count_bin( data, n ) ) fail( "leak guard: a real binary identifier is in the synthetic " + name );
@@ -2237,19 +2975,26 @@ namespace emu::platform
 		return res;
 	}
 
+	// the convenience form: one new context of the default configuration per call (pg_main uses its own context)
 	GenResult ProfileGenerator::run_build( bool check )
+	{
+		BuildContext ctx = new_context();
+		return run_build( ctx, check );
+	}
+	GenResult ProfileGenerator::run_build( BuildContext& ctx, bool check )
 	{
 		GenResult res;
 		BuildLog pre;
 		try
 		{
-			BuildConfig c = c_;
+			BuildConfig c = ctx.config;
 			const char* envn = env_dir_name( c.env );
 			pre.info( "start", std::string( k_tool ) + "; environment " + envn + " (" + env_switch( c.env ) + ")" + ( check ? "; check mode (nothing is written)" : "" ) );
 			const BuildConfig& pin = BuildConfig::pinned( c.env );
 			const BuildConfig& peer = BuildConfig::pinned( c.env == Environment::vmware_guest ? Environment::bare_host : Environment::vmware_guest );
-			if ( c.capture_manifest_sha256 != pin.capture_manifest_sha256 || c.companions != pin.companions || c.capture_parent != pin.capture_parent )
-				fail( std::string( "the build config does not name the pinned clean capture of " ) + envn + " (--guest is built only from Run 3 without VmLoader, --host only from the clean host run)" );
+			if ( c.capture_manifest_sha256 != pin.capture_manifest_sha256 || c.companions != pin.companions || c.capture_parent != pin.capture_parent ||
+				 c.firmware_ref_parent != pin.firmware_ref_parent || c.firmware_ref_folder != pin.firmware_ref_folder || c.firmware_ref_manifest_sha256 != pin.firmware_ref_manifest_sha256 )
+				fail( std::string( "the build config does not name the pinned clean capture of " ) + envn + " (--guest is built only from the clean guest without VmLoader, --host only from the clean host run)" );
 			if ( c.peer_capture_parent != peer.capture_parent || c.peer_capture_folder != peer.capture_folder || c.peer_capture_manifest_sha256 != peer.capture_manifest_sha256 )
 				fail( "the build config's peer capture is not the pinned clean capture of the other environment" );
 
@@ -2268,7 +3013,8 @@ namespace emu::platform
 				if ( repo.empty() ) fail( "no repository found above the exe: give repo_root (--repo-root)" );
 				return repo / x;
 			};
-			const fs::path out = in_repo( c.out ), seed_file = in_repo( c.seed_file );
+			const fs::path out = in_repo( c.out ), own_map_file = out / c.identity_map;
+			const fs::path peer_map_file = c.peer_identity_map.empty() ? fs::path() : in_repo( c.peer_identity_map );
 
 			// capture root
 			fs::path root;
@@ -2286,7 +3032,7 @@ namespace emu::platform
 					}
 				if ( root.empty() ) fail( "no capture root: set capture_root (--capture-root) or NOVMP_CAPTURE_ROOT to the folder that holds " + c.capture_parent );
 			}
-			pre.info( "paths", "capture root " + show( root ) + " (" + root_from + "); synthetic out " + show( out ) + "; seed store " + show( seed_file ) );
+			pre.info( "paths", "capture root " + show( root ) + " (" + root_from + "); synthetic out " + show( out ) + "; identity map " + show( own_map_file ) + "; peer identity map " + ( peer_map_file.empty() ? std::string( "-" ) : show( peer_map_file ) ) );
 			fs::path orig;
 			if ( c.original_out != "none" && !c.original_out.empty() )
 			{
@@ -2295,22 +3041,38 @@ namespace emu::platform
 			}
 			const fs::path cap = find_one( root / c.capture_parent, c.capture_folder, "capture" );
 			CaptureInputs in = load_capture( cap, root, c, pre );
-			if ( c.seed.empty() ) c.seed = load_seed( seed_file, !check, pre ).hex;
-			else pre.info( "seed", "from the build config" );
+			// the identity: APPLY the saved map (identity_map.tsv of the profile) unless a new identity was asked for or none exists
+			// yet (then GENERATE every value from RDRAND); the other environment's map provides the shared USB serials
+			auto read_map = [ & ]( const fs::path& f, const char* what ) {
+				const Bytes mb = read_file( f );
+				IdentityMap m = parse_identity_map( std::string( mb.begin(), mb.end() ) );
+				if ( m.has_install_shift ) fail( std::string( what ) + " identity map holds the install-history offset: an ORIGINAL copy must never be in the repository" );
+				return m;
+			};
+			std::error_code mec;
+			IdentityMap own, peer_map;
+			if ( !peer_map_file.empty() && fs::exists( peer_map_file, mec ) ) peer_map = read_map( peer_map_file, "the peer" );
+			if ( !ctx.fresh && fs::exists( own_map_file, mec ) ) own = read_map( own_map_file, "this profile's" );
+			else if ( check ) fail( "check: no identity map " + show( own_map_file ) + " to apply" );
+			if ( own.entries.empty() && !ctx.fresh && fs::exists( own_map_file, mec ) ) fail( "the identity map " + show( own_map_file ) + " is empty" );
+			load_identity_maps( ctx, own, peer_map );
+			ctx.fresh = false;
+			pre.info( "identity", own.entries.empty() ? std::string( "GENERATION: a new identity, every value from RDRAND (the shared USB serials from the peer map when it has them)" )
+				: fmt( "APPLICATION of the saved identity map (%zu values)", own.entries.size() ) );
 
 			// the configuration as saved next to the outputs: portable (roots "auto", paths relative to the repository / capture
-			// root), so the synthetic copy holds no user-specific absolute path; the seed travels with it
+			// root), so the synthetic copy holds no user-specific absolute path
 			BuildConfig cp = c;
 			cp.tool = k_tool;
 			cp.capture_root = "auto";
 			cp.repo_root = "auto";
 			cp.out = repo.empty() ? show( out ) : portable( out, repo );
-			cp.seed_file = repo.empty() ? show( seed_file ) : portable( seed_file, repo );
+			if ( !peer_map_file.empty() ) cp.peer_identity_map = repo.empty() ? show( peer_map_file ) : portable( peer_map_file, repo );
 			cp.original_out = orig.empty() ? "none" : portable( orig, root );
 			if ( c.capture_root != "auto" ) pre.info( "paths", "the saved build config records capture_root = auto (the root given here is a local path)" );
-			c_ = cp;
+			ctx.config = cp;
 
-			res = gen_build( in, root.string() );
+			res = gen_build( ctx, in, root.string() );
 			res.log.entries.insert( res.log.entries.begin(), pre.entries.begin(), pre.entries.end() );
 			pre.entries.clear();
 			if ( !res.ok ) return res;
@@ -2341,7 +3103,7 @@ namespace emu::platform
 						if ( e.is_regular_file() && !res.synthetic.count( fs::relative( e.path(), out ).string() ) ) { log.error( "check", "extra file " + fs::relative( e.path(), out ).string() ); bad++; }
 				if ( bad ) fail( fmt( "check: %zu file(s) of %s differ from the regeneration", bad, show( out ).c_str() ) );
 				res.checked = true;
-				log.info( "check", fmt( "%zu files of %s are byte-identical to the regeneration (same build config incl. seed, same capture)", res.synthetic.size(), show( out ).c_str() ) );
+				log.info( "check", fmt( "%zu files of %s are byte-identical to the regeneration (the same build config and identity map applied to the same capture)", res.synthetic.size(), show( out ).c_str() ) );
 				return res;
 			}
 			if ( !orig.empty() )
@@ -2359,17 +3121,6 @@ namespace emu::platform
 				log.info( "write", fmt( "ORIGINAL profile (LOCAL ONLY, real values) %s (%zu files)", show( orig ).c_str(), res.original.size() ) );
 			}
 			else log.info( "write", "original profile: not written (original_out = none)" );
-			// the seed store follows the seed of the last build (a new identity is kept for the next default build)
-			BuildLog sl;
-			std::string stored;
-			try { stored = fs::exists( seed_file, ec ) ? load_seed( seed_file, false, sl ).hex : ""; } catch ( const std::exception& ) {}
-			if ( !ieq( stored, c_.seed ) )
-			{
-				Seed s;
-				s.hex = c_.seed;
-				save_seed( seed_file, s );
-				log.info( "seed", "seed store " + show( seed_file ) + " updated to this build's seed (rebuild the other environment with it to keep the shared USB mapping)" );
-			}
 			return res;
 		}
 		catch ( const std::exception& e )

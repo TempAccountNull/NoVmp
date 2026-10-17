@@ -1,24 +1,30 @@
-# emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512) - platform profile manifest - bare_host (--host) - SYNTHETIC: every replaced value is synthetic, not host data
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - platform profile manifest - bare_host (--host) - SYNTHETIC: every replaced value is synthetic, not host data
 # Everything not listed in fieldmap.tsv is byte-exact from the capture. SHA-256 = uppercase hex (Get-FileHash).
-tool                                = emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512)
+tool                                = emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514)
 profile.kind                        = synthetic (replaced fields: synthetic, not host data)
 environment                         = bare_host
-provenance.capture                  = baseline\Host_clean_20261016_fwid13\<computer-name>_20261016_115901_native-host (relative to the capture root; the computer-name part of the folder name is withheld)
-provenance.capture_tool             = fwid_probe 1.3 (2026-10-16) (capture manifest header)
-provenance.capture_manifest_sha256  = C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89
-provenance.capture_check            = 73 of 73 manifest entries match (size + SHA-256); manifest SHA-256 = the pinned clean capture
-provenance.companion_1              = baseline\Host_clean_20261016_fwid13.sha256 sha256 C2BD8A2B0AADA8A679D066AEA07126CFFA5B6B237512D2698761E6D7B964550A (frozen hash list of the same state; not consumed)
+provenance.capture                  = baseline\Host_clean_20261016_fwid14\<computer-name>_20261016_181322_native-host (relative to the capture root; the computer-name part of the folder name is withheld)
+provenance.capture_tool             = fwid_probe 1.4 (2026-10-16) (capture manifest header)
+provenance.capture_manifest_sha256  = FF2062E2E72AB2138CF4BD08942028E0E8D43E5F0FACBC105DB449E92CEC1C64
+provenance.capture_check            = 93 of 93 manifest entries match (size + SHA-256); manifest SHA-256 = the pinned clean capture
+provenance.companion_1              = baseline\Host_clean_20261016_fwid14.sha256 sha256 74B0BBFFC670B4ED53C873872DF8970CEB4B634CB75D328C012CA8EAA3421FEE (frozen hash list of the same state; not consumed)
 provenance.companion_2              = baseline\Host_clean_20261016.sha256 sha256 1C8C498DB6CD26A57F8673375BF563868F12D3AEB79901363DF2EEEE8A8EF78C (frozen hash list of the same state; not consumed)
 provenance.companion_3              = baseline\Host_clean_20261016_xinuse_all_lps.sha256 sha256 CA726BF73851C9251D9DF30737B4CE171053B4814610798DA6551ECC03348F5C (frozen hash list of the same state; not consumed)
-provenance.peer_capture             = fwid\baseline\Run3_clean_guest_* manifest 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C (enum_registry.txt only: the shared USB serial table)
-build_config                        = build_config.txt (this folder, seed included; rebuild: emu-profilegen --config build_config.txt)
+provenance.peer_capture             = baseline\Run3b_clean_guest_fwid14_20261016\* manifest 2828D5201670AFFF41FAD5027E90C113A310AE2F8CAA11F59282FA7FB79F526D (enum_registry.txt only: the shared USB serial table)
+provenance.firmware_reference       = baseline\Host_clean_20261016_fwid13\* manifest C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89: 53 of 53 firmware entries (rsmb / acpi / hwacpi / edid) byte-identical (SHA-256)
+build_config                        = build_config.txt (this folder; rebuild: emu-profilegen --config build_config.txt - applies identity_map.tsv)
+identity_map                        = identity_map.tsv (this folder): 257 synthetic values, drawn once from RDRAND at generation; every build applies them
 rules                               = 1 2 2h 2o 3 4a 4b 4c 4d 6 7 8
-optional_inputs                     = os_ids.txt yes, edid.txt yes, license.txt no, update_ids.txt no, disks.txt no, hid.txt no, gpu.txt no, bluetooth.txt no, audio.txt no, chid.txt no, platform_security.txt no, environment.txt no, wifi.txt no, printers.txt no
+optional_inputs                     = os_ids.txt yes, edid.txt yes, license.txt yes, update_ids.txt yes, disks.txt yes, hid.txt yes, gpu.txt yes, bluetooth.txt yes, audio.txt yes, chid.txt yes, platform_security.txt yes, environment.txt yes, wifi.txt yes, printers.txt yes
 test_signing_certificate_present    = yes
-smbios                              = version 3.6, 105 structures, table 5203 bytes; 14 fields replaced (fieldmap.tsv F rows), 159 bytes differ from the capture; CHID-relevant fields 11, changed 0
+smbios                              = version 3.6, 105 structures, table 5203 bytes; 14 fields replaced (fieldmap.tsv F rows), 161 bytes differ from the capture; CHID-relevant fields 11, changed 0
 edid                                = 7 values (edid\), 9 fields + 7 checksums (fieldmap.tsv D rows); extension blocks 0, with a real serial 0
 acpi                                = 45 table files byte-exact (acpi\); checksum valid 44, not applicable (FACS) 1, not valid 0; identifier search: 0 hit(s)
-identity                            = 203 identifiers, 2343 occurrence + relation rows (identity.tsv, fieldmap.tsv)
+disk                                = 8 STORAGE_DEVICE_DESCRIPTORs (disk\): 6 serials replaced (fieldmap.tsv R rows), 2 placeholder serials exact, 0 without a serial
+identity                            = 344 identifiers, 4623 occurrence + relation rows (identity.tsv, fieldmap.tsv)
+exclusions                          = 1 range(s) of tool artifacts not part of the profile (exclusions.tsv): RustDesk Printer: nothing found; RustDesk: 1 range(s), 1 line(s); System Informer: nothing found; DebugView: nothing found; VmLoader: nothing found; 0 identifier anchor(s), 0 occurrence row(s) inside them dropped
+volatile                            = 20 values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps
+install_shift                       = 89 install-history values (bt_event_time 6, device_arrival_time 13, device_install_time 42, diagtrack_time 3, event_iso 22, install_date 1, install_time 1, sqm_first_session 1) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): 89 of 89 exact, so every pairwise difference is the original one; 0 outside the build release .. capture window; 34 precede the OS install in the capture and 34 in the profile (Windows setup)
 # size_bytes  sha256  file
        476  9938CE7F69CB016D6AFE3B916BEFFA916215D8DEAEF59C5C42805F1256673309  acpi\acpi_APIC.bin
         56  0661FEB4EEC8887AB24FAABE7943B3C25DD0C1F8A1D5698A4981A1AB66CF7AF8  acpi\acpi_BGRT.bin
@@ -65,15 +71,26 @@ identity                            = 203 identifiers, 2343 occurrence + relatio
      14810  B92E63EF381E84FD2AEA59316C495695CD4521D2434EC0D21EF34EA6F7C558FC  acpi\hwacpi_012_SSD9_SocGpe_SocGpe__00003000_00000000.bin
      14810  F2028CE43DC53C1F1944A5F4650C58EA9AC50D1919299A09FDC8214ED88B5C22  acpi\hwacpi_013_SSDA_SocCmn_SocCmn__00003000_00000000.bin
        908  7D9BF2ACF8E4B1BDCC6C1654EDC3E77A5EC9E6A08F50795431C8797E0C054C23  acpi\hwacpi_014_SSDT_PmaxDv_Pmax_Dev_00000001_00000000.bin
-      2083  394EF14F76C519D9B11ECBD4B83866068693462DB4A4C782B05ADD62F7ADF0F7  build_config.txt
-       128  D9B90B3C4F17826C5B64FBD56D618B5FB470F1722EBD6122F5AFC28B2CDC1922  edid\edid_0.bin
-       128  9CA0EE54C6B55A0AD036BBFFD7A67D315A22A388C2C0504F97DB25E8DA75243E  edid\edid_1.bin
-       128  5263761F5A7A3BE0DB846BC1FFAEEDA9E3F7F601C364FFF8EA5FD999ED76E17C  edid\edid_2.bin
-       128  5263761F5A7A3BE0DB846BC1FFAEEDA9E3F7F601C364FFF8EA5FD999ED76E17C  edid\edid_3.bin
-       128  5263761F5A7A3BE0DB846BC1FFAEEDA9E3F7F601C364FFF8EA5FD999ED76E17C  edid\edid_4.bin
+      3380  8DDAECC614C9A6F01FE789BB15298CC87E552C22E4EA98C9003B77A4BC1EFE73  build_config.txt
+       396  EF8BE575180006CD53C663E649E0803EE92499C9EBCF0BC62530101BA6E27A72  disk\disk_0_descriptor.bin
+       396  E9D337EC1D1D3DF437C5F91A7C04E51B08C07AA3DEBDB1E3F4A2C063374EA1FA  disk\disk_1_descriptor.bin
+       396  55A04D2432ECD02F89C3E0756DBD0B7E5A2E39D043EBBF49F9255C27993800CC  disk\disk_2_descriptor.bin
+       124  61F1D7BBACDFA43BF9455171291A5DF3F9480DECA3829A677319AC8C593863CF  disk\disk_3_descriptor.bin
+       120  271DEBC7DFAEF2017837EC8CFB328B30126ACF9C28F50A1E4D60AC59CED8164A  disk\disk_4_descriptor.bin
+       396  3C45A41D7AD8F4C91A814C2E84C74569D86DFD808297315A41156D26BAD8788A  disk\disk_5_descriptor.bin
+       396  3C45A41D7AD8F4C91A814C2E84C74569D86DFD808297315A41156D26BAD8788A  disk\disk_6_descriptor.bin
+       120  0B1ACA22E9725E8F925CF3577B2EC79F4775C8791057366339193A1D16EFDDAE  disk\disk_7_descriptor.bin
+       128  A551A7AF171265AEA5DE5FE9CA7C7D4F8EDC750E1FEC523D4902CECF32989708  edid\edid_0.bin
+       128  30A2EB3F37DA4E45E106296F5CD1B7C30CA38B1A3F5A707EEC53FCB38A061D15  edid\edid_1.bin
+       128  BCBE336B7410E6BD921A19DB6C57BFF8EF15BB8957A8E33FDB5CB76F433344D0  edid\edid_2.bin
+       128  BCBE336B7410E6BD921A19DB6C57BFF8EF15BB8957A8E33FDB5CB76F433344D0  edid\edid_3.bin
+       128  BCBE336B7410E6BD921A19DB6C57BFF8EF15BB8957A8E33FDB5CB76F433344D0  edid\edid_4.bin
        128  636BC17912343A06CBE73E03CD39B612663E3FAC3954A66FD80CC90005AC7962  edid\edid_5.bin
-       128  D458EC920BE3AEC5A847C417A39588A6255116EFF5739312B37994F7085C1C39  edid\edid_6.bin
-    117823  12B6285DA7FC685C50026EDD862D8A1BCD0DA93927B268A978D707C017515C38  fieldmap.tsv
-     18778  B647EFCA65D7C648E38B30D6F8EB2EA84F823EFAC4986CC9CC5F0D3CA57EB1D1  identity.tsv
-      5211  7C3D078F40B7B7C4687D577E989D3CB59C2972897AEF54C7FED309D97A5E8909  smbios.bin
-# 56 file(s)
+       128  26B89AF8368B36A058DEF4B388117D351D3E1BDCB24AD91A3FA909C67FD42CE1  edid\edid_6.bin
+       470  84F74498EBF8466FAA285D6991AF1C3F3FC92456F959E3E4CB8838F5E1419D0D  exclusions.tsv
+    226797  35F1D48FADC32099626404FE58CD802D953FEA66D272669C360C21097BBECB6C  fieldmap.tsv
+     28956  A830D8C64CAC216AD8B359C27FD9197419B83EEE68056841D00021495B8FFD1E  identity.tsv
+     14837  AD8CF7B72EBA49DAEE6AEC7117BD4E54C5DF1063CFE4E6519CA4123FA3A2662E  identity_map.tsv
+      5211  1A2574D8907C883ED0EB8DC7DD4E2AEA64AE7581B32A32B9131639E0CD814C42  smbios.bin
+      2773  DD2056E073275B608B2B8AF556E704AB5B027F74F474F8660A44BA073F474A57  volatile.tsv
+# 67 file(s)

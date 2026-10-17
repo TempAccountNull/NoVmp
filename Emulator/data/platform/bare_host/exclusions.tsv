@@ -1,0 +1,5 @@
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - excluded tool artifacts - bare_host - capture ranges that are NOT part of the presented machine (BuildConfig
+# "exclude", user decision J 2026-10-16); identical in the synthetic and the original profile. A presenter omits these lines
+# (and adjusts the counts of the enclosing lists).
+# columns: item, capture text file, first line, last line (1-based, inclusive), unit
+RustDesk	services_vm.txt	556	556	line

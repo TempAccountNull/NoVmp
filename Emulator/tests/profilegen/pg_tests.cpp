@@ -1,26 +1,40 @@
-// pg_tests.cpp - unit tests of ProfileGenerator (plan 1.J.49, ledger U1511), suite "pg_unit" in test.cmd.
+// pg_tests.cpp - unit tests of ProfileGenerator (plan 1.J.49, ledger U1511; fwid 1.4 formats, disk descriptors, tool
+// exclusions, install-history shift, RDRAND Randomizer, identity map, singleton, per-build context + threading (plan
+// 1.J.49.a): U1513-U1514), suite "pg_unit" in test.cmd.
 // Every input is a SMALL SYNTHETIC FIXTURE built here (made-up vendor strings, serials, MACs, GUIDs, SIDs, EDIDs); no real
-// capture is read. Call sites follow the user's style rule: auto ProfileGen = std::make_unique<ProfileGenerator>( cfg );
-// ProfileGen->gen_<what>( struct ) -> struct.
-// (a) only the decided SMBIOS bytes change, (b) lengths / structure layout preserved, (c) same seed -> identical output,
+// capture is read. Call sites follow the user's style rule (design: the user's rid demo): the singleton is reached as
+// ProfileGen->gen_<what>( ctx, struct ) -> struct with the build's BuildContext; each case starts from ProfileGen->reset() +
+// ProfileGen->load_config( cfg ) and a new context (ctx = pg_fresh( env )); every random value comes from Randomize-> (RDRAND).
+// (a) only the decided SMBIOS bytes change, (b) lengths / structure layout preserved, (c) a saved identity map applied again
+// -> identical output, a new identity -> other values,
 // (d) filler fields untouched, (e) MAC OUI preserved, (f) the original profile is refused inside a git work tree; plus the
 // guard for undecided fields, the identity rules 4a-4d, rule 2h (host only), the BuildConfig round trip (save -> load ->
 // rebuild = byte-identical), the UUID-MAC relation, the shared USB table, the MAC relations (EUI-64), version-1 GUID nodes,
 // EDID (checksum, one serial per monitor), ProductId groups, SID / NameSamCompatible / install-instant consistency, volume
-// GUID consistency, the fwid 1.4 rules (installation ID, update IDs, disk / HID / GPU / Bluetooth / audio), the CHID check,
-// a new identity (another seed: every mapped field differs, every relation still holds) and the software-device GUIDs.
+// GUID consistency, the fwid 1.4 rules in fwid_probe 1.4's formats (installation IDs per license row, SusClientId and the
+// layout-kept SusClientIdValidation, disk serials incl. the USB-prefix relation, HID / GPU / Bluetooth / audio / Wi-Fi / WSD
+// port, volatile values), the CHID check, a new identity (fresh RDRAND values: every mapped field differs, every relation still
+// holds), the software-device GUIDs, the disk descriptors (rule 8d) and the tool exclusions (BuildConfig "exclude"); threading:
+// the Randomizer from 8 threads (formats, check digits, thread-local result buffers), guest + host built in parallel threads
+// from saved maps (byte-identical to serial builds), and both generated concurrently (one value per shared/ key, every
+// returned const char* still valid after its context is gone).
 #include "profile_generator.hpp"
+#include "pg_randomize.hpp"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <array>
+#include <barrier>
 #include <cctype>
+#include <ctime>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "acutest.h"
 
@@ -83,20 +97,20 @@ static Bytes pg_fixture( bool vmware, const char* chassis_serial = "None" )
 		{ 127, 0xFEFF, {}, {} } } );
 }
 
-static std::string pg_seed_hex( uint8_t fill )
-{
-	std::string s;
-	for ( int i = 0; i < 32; i++ ) { char b[ 3 ]; snprintf( b, sizeof b, "%02X", unsigned( uint8_t( fill + i * 7 ) ) ); s += b; }
-	return s;
-}
-static BuildConfig pg_cfg( Environment e, uint8_t seed )
+static BuildConfig pg_cfg( Environment e )
 {
 	BuildConfig c = BuildConfig::defaults( e );
-	c.seed = pg_seed_hex( seed );
 	c.original_out = "none";
 	return c;
 }
-static std::unique_ptr<ProfileGenerator> pg_gen( Environment e, uint8_t seed ) { return std::make_unique<ProfileGenerator>( pg_cfg( e, seed ) ); }
+// a test case starts from the initial state: a new context of e's configuration, no identity loaded (generation: every
+// value fresh from RDRAND), the shared/ registry of the process emptied (a new identity session)
+static BuildContext pg_fresh( Environment e )
+{
+	ProfileGen->reset();
+	ProfileGen->load_config( pg_cfg( e ) );
+	return ProfileGen->new_context();
+}
 
 static std::string pg_str( const Bytes& b, const SmbiosString& s ) { return std::string( b.begin() + s.offset, b.begin() + s.offset + s.length ); }
 
@@ -104,11 +118,12 @@ static std::string pg_str( const Bytes& b, const SmbiosString& s ) { return std:
 // ranges are exactly the decided locations of the fixture (host: also the rule-2h type 17 name strings)
 static void pg_smbios_decided_bytes_only( void )
 {
+	BuildContext ctx;
 	for ( bool vm : { true, false } )
 	{
-		auto ProfileGen = pg_gen( vm ? Environment::vmware_guest : Environment::bare_host, 0x11 );
+		ctx = pg_fresh( vm ? Environment::vmware_guest : Environment::bare_host );
 		Bytes raw = pg_fixture( vm );
-		SmbiosGen g = ProfileGen->gen_smbios( { raw } );
+		SmbiosGen g = ProfileGen->gen_smbios( ctx, { raw } );
 		const Bytes& out = g.synthetic;
 		TEST_ASSERT( out.size() == raw.size() );
 		TEST_CHECK_( g.fields.size() == ( vm ? 5u : 13u ), "replaced fields: %zu", g.fields.size() );
@@ -141,11 +156,12 @@ static void pg_smbios_decided_bytes_only( void )
 // (b) lengths and structure layout preserved; character classes per position; UUID layout bits kept
 static void pg_smbios_layout_preserved( void )
 {
+	BuildContext ctx;
 	for ( bool vm : { true, false } )
 	{
-		auto ProfileGen = pg_gen( vm ? Environment::vmware_guest : Environment::bare_host, 0x22 );
+		ctx = pg_fresh( vm ? Environment::vmware_guest : Environment::bare_host );
 		Bytes raw = pg_fixture( vm );
-		SmbiosGen g = ProfileGen->gen_smbios( { raw } );
+		SmbiosGen g = ProfileGen->gen_smbios( ctx, { raw } );
 		const Bytes& out = g.synthetic;
 		SmbiosTable a = parse_smbios( raw ), b = parse_smbios( out );
 		TEST_ASSERT( a.structures.size() == b.structures.size() );
@@ -179,57 +195,89 @@ static void pg_smbios_layout_preserved( void )
 			TEST_CHECK_( std::find( g.needles.begin(), g.needles.end(), std::string( real ) ) != g.needles.end(), "%s collected", real );
 			TEST_CHECK_( os.find( real ) == std::string::npos, "%s no longer in the output", real );
 		}
+		std::string uh;
+		for ( int i = 0; i < 16; i++ ) { char h[ 3 ]; snprintf( h, sizeof h, "%02x", u0[ i ] ); uh += h; }
 		SmbiosUuid ru;
 		ru.handle = 1;
-		std::copy( u0, u0 + 16, ru.bytes.begin() );
-		SmbiosUuid su = ProfileGen->gen_system_uuid( ru );
-		TEST_CHECK( su.bytes != ru.bytes && ( !vm || ( su.bytes[ 0 ] == 0x56 && su.bytes[ 1 ] == 0x4D ) ) );
+		ru.hex = uh.c_str();
+		SmbiosUuid su = ProfileGen->gen_system_uuid( ctx, ru );	// cached: the value gen_smbios already took for handle 1
+		const Bytes sb = bytes_of_hex( su.hex );
+		TEST_CHECK( std::equal( sb.begin(), sb.end(), u1 ) && sb != Bytes( u0, u0 + 16 ) && ( !vm || ( sb[ 0 ] == 0x56 && sb[ 1 ] == 0x4D ) ) );
 	}
 }
 
 static void pg_text_fixture( std::vector<TextFile>& files );
 static std::vector<TextFile> pg_text_fixture2( const std::string& usb_lines );
 
-// (c) the same seed gives identical output; another seed gives other values (SMBIOS and identity)
-static void pg_same_seed_identical( void )
+// (c) generation vs application: a saved identity map applied again gives identical output (SMBIOS and identity) without
+// drawing anything; a new identity (fresh RDRAND values) gives other values; a map that does not fit stops the build
+static void pg_identity_map_replay( void )
 {
-	auto run = []( uint8_t seed ) { return pg_gen( Environment::bare_host, seed )->gen_smbios( { pg_fixture( false ) } ).synthetic; };
-	TEST_CHECK( run( 0x33 ) == run( 0x33 ) );
-	TEST_CHECK( run( 0x33 ) != run( 0x34 ) );
+	BuildContext ctx;
+	TEST_CHECK_( Randomize->cpu_supports_rand, "RDRAND (CPUID.1:ECX[30]) on the test machine" );
+	const uint64_t r1 = Randomize->gen_u64(), r2 = Randomize->gen_u64();
+	TEST_CHECK( r1 != 0 && r1 != ~0ull && r2 != 0 && r2 != ~0ull && r1 != r2 );
 	std::vector<TextFile> files;
 	pg_text_fixture( files );
-	auto ident = [ & ]( uint8_t seed ) {
-		TextIdentityGen t = pg_gen( Environment::vmware_guest, seed )->gen_text_identity( { files } );
-		std::string s;
-		for ( auto& r : t.identity ) s += r.synthetic + "|";
-		for ( auto& p : t.storage_paths ) s += p.synthetic + "|";
-		return s;
+	auto ident = [ & ]() {
+		Bytes s = ProfileGen->gen_smbios( ctx, { pg_fixture( false ) } ).synthetic;
+		TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
+		std::string o( s.begin(), s.end() );
+		for ( auto& r : t.identity ) o += r.synthetic + "|";
+		for ( auto& p : t.storage_paths ) o += p.synthetic + "|";
+		return o;
 	};
-	TEST_CHECK( ident( 0x33 ) == ident( 0x33 ) );
-	TEST_CHECK( ident( 0x33 ) != ident( 0x34 ) );
-	Bytes seed( 32, 0x33 );
-	SyntheticStream g( seed, Environment::vmware_guest, "x" ), h( seed, Environment::bare_host, "x" );
-	std::string a, b;
-	for ( int i = 0; i < 16; i++ ) { a += char( g.next_byte() ); b += char( h.next_byte() ); }
-	TEST_CHECK( a != b );
+	ctx = pg_fresh( Environment::bare_host );
+	const std::string first = ident();
+	const IdentityMap saved = ctx.identity_map;
+	TEST_CHECK( !saved.entries.empty() && !ctx.applying );
+	const IdentityMap parsed = ProfileGenerator::parse_identity_map( ProfileGenerator::save_identity_map( saved, Environment::bare_host, false ) );
+	TEST_CHECK( parsed.entries == saved.entries && !parsed.has_install_shift );	// identity_map.tsv round trip
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, parsed, {} );
+	TEST_CHECK( ctx.applying );
+	TEST_CHECK_( ident() == first, "the applied map reproduces every value" );
+	TEST_CHECK( ctx.identity_map.entries == saved.entries );
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->gen_new_identity( ctx );
+	TEST_CHECK_( ident() != first, "a new identity: other values" );
+	// a map that does not fit (a missing key) stops the build: application never draws randomness
+	IdentityMap partial = saved;
+	partial.entries.erase( partial.entries.begin() );
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, partial, {} );
+	bool threw = false;
+	try { ident(); } catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "identity map has no value" ) != std::string::npos; }
+	TEST_CHECK( threw );
+	// the repository copy never carries the install-history offset; the original copy does
+	IdentityMap withshift = saved;
+	withshift.has_install_shift = true;
+	withshift.install_shift = -123456;
+	TEST_CHECK( ProfileGenerator::save_identity_map( withshift, Environment::bare_host, false ).find( "install_shift" ) == std::string::npos );
+	const IdentityMap orig = ProfileGenerator::parse_identity_map( ProfileGenerator::save_identity_map( withshift, Environment::bare_host, true ) );
+	TEST_CHECK( orig.has_install_shift && orig.install_shift == -123456 );
 }
 
 // (d) filler fields untouched
 static void pg_filler_untouched( void )
 {
+	BuildContext ctx;
+	// one repeated character (length >= 2) is filler too (user decision J 2026-10-16: the repeated-digit bridge disk serial)
 	for ( const char* f : { "Default string", "To Be Filled By O.E.M.", "None", "No Asset Tag", "N/A", "Not Specified", "", "to be filled by o.e.m.", "None  ",
-			  "Unknown", "NO DIMM", "00000000", "9876543210", "9876543210  " } )
+			  "Unknown", "NO DIMM", "00000000", "9876543210", "9876543210  ", "000000000", "22222222222222222222", "FFFF", "aA" } )
 		TEST_CHECK_( ProfileGenerator::check_filler( f ), "\"%s\" is filler", f );
-	for ( const char* f : { "AT-0042", "0", "Default", "N/A1", "00000017", "000000000", "98765432100" } ) TEST_CHECK_( !ProfileGenerator::check_filler( f ), "\"%s\" is not filler", f );
+	for ( const char* f : { "AT-0042", "0", "7", "Default", "N/A1", "00000017", "13572468", "98765432100", "AAAB" } ) TEST_CHECK_( !ProfileGenerator::check_filler( f ), "\"%s\" is not filler", f );
+	TEST_CHECK( ProfileGenerator::check_usb_placeholder( "0" ) && ProfileGenerator::check_usb_placeholder( "1111" ) && !ProfileGenerator::check_usb_placeholder( "1" ) &&
+				!ProfileGenerator::check_usb_placeholder( "1112" ) );
 	std::vector<uint8_t> t17 = pg_tail( 0x28, { { 0x10, 1 }, { 0x11, 2 }, { 0x17, 3 }, { 0x18, 4 }, { 0x19, 5 }, { 0x1A, 3 } } );
 	Bytes raw = pg_build( { { 2, 0x0002, pg_tail( 0x0F, { { 0x04, 1 }, { 0x07, 2 }, { 0x08, 3 } } ), { "Fixture Maker Inc.", "Default string", "To Be Filled By O.E.M." } },
 		{ 17, 0x0011, t17, { "DIMM 0", "BANK 5", "Not Specified", "None", "No Asset Tag" } }, { 127, 0xFEFF, {}, {} } } );
-	auto ProfileGen = pg_gen( Environment::vmware_guest, 0x44 );
-	SmbiosGen g = ProfileGen->gen_smbios( { raw } );
+	ctx = pg_fresh( Environment::vmware_guest );
+	SmbiosGen g = ProfileGen->gen_smbios( ctx, { raw } );
 	TEST_CHECK( g.synthetic == raw );
 	TEST_CHECK( g.fields.empty() && g.needles.empty() && g.binary_needles.empty() );
 	Bytes fx = pg_fixture( true );
-	Bytes o2 = ProfileGen->gen_smbios( { fx } ).synthetic;
+	Bytes o2 = ProfileGen->gen_smbios( ctx, { fx } ).synthetic;
 	SmbiosTable t = parse_smbios( fx );
 	for ( const SmbiosStructure& s : t.structures )
 		for ( const SmbiosString& x : s.strings )
@@ -239,9 +287,10 @@ static void pg_filler_untouched( void )
 // the guard: a real value in an undecided identifier field (here the chassis serial) stops the run
 static void pg_guard_undecided( void )
 {
-	auto ProfileGen = pg_gen( Environment::vmware_guest, 0x55 );
+	BuildContext ctx;
+	ctx = pg_fresh( Environment::vmware_guest );
 	bool threw = false;
-	try { ProfileGen->gen_smbios( { pg_fixture( true, "CH-998877" ) } ); }
+	try { ProfileGen->gen_smbios( ctx, { pg_fixture( true, "CH-998877" ) } ); }
 	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "undecided identifier field" ) != std::string::npos; }
 	TEST_CHECK( threw );
 	Bytes bad = pg_fixture( true );
@@ -287,17 +336,19 @@ static const IdentityEntry* pg_find( const std::vector<IdentityEntry>& v, const 
 // (e) MAC OUI preserved (also the VMware OUI 00:50:56); one identity per distinct MAC, every occurrence mapped
 static void pg_mac_oui( void )
 {
-	auto ProfileGen = pg_gen( Environment::bare_host, 0x66 );
+	BuildContext ctx;
+	ctx = pg_fresh( Environment::bare_host );
 	for ( const char* mac : { "00:50:56:2E:9B:17", "00:04:0F:12:34:56", "FC:34:97:AB:CD:EF", "00:0C:29:00:00:00" } )
 	{
-		MacAddress o = ProfileGen->gen_mac( { mac, "Fixture", std::string( "T" ) + mac } );
-		TEST_CHECK_( o.text.size() == 17 && o.text.substr( 0, 9 ) == std::string( mac ).substr( 0, 9 ), "OUI of %s kept", mac );
-		TEST_CHECK_( o.text.substr( 9 ) != std::string( mac ).substr( 9 ), "last 3 bytes of %s synthetic", mac );
-		TEST_CHECK( std::regex_match( o.text, std::regex( "([0-9A-F]{2}:){5}[0-9A-F]{2}" ) ) );
+		const std::string o = ProfileGen->gen_mac( ctx, { mac, "Fixture", std::string( "T" ) + mac } ).text;
+		TEST_CHECK_( o.size() == 17 && o.substr( 0, 9 ) == std::string( mac ).substr( 0, 9 ), "OUI of %s kept", mac );
+		TEST_CHECK_( o.substr( 9 ) != std::string( mac ).substr( 9 ), "last 3 bytes of %s synthetic", mac );
+		TEST_CHECK( std::regex_match( o, std::regex( "([0-9A-F]{2}:){5}[0-9A-F]{2}" ) ) );
 	}
 	std::vector<TextFile> files;
 	pg_text_fixture( files );
-	TextIdentityGen t = pg_gen( Environment::vmware_guest, 0x66 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::vmware_guest );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
 	const IdentityEntry* m1 = pg_find( t.identity, "mac", "00:50:56:3F:1D:42" );
 	const IdentityEntry* m2 = pg_find( t.identity, "mac", "00:11:22:33:44:55" );
 	TEST_ASSERT( m1 != nullptr && m2 != nullptr );
@@ -309,9 +360,11 @@ static void pg_mac_oui( void )
 // rules 4a / 4b / 4c on the text fixture (4b: the SCSI PnP parent-prefix hash stays exact)
 static void pg_identity_rules( void )
 {
+	BuildContext ctx;
 	std::vector<TextFile> files;
 	pg_text_fixture( files );
-	TextIdentityGen t = pg_gen( Environment::bare_host, 0x77 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
 	const IdentityEntry* n = pg_find( t.identity, "computer_name", "DESKTOP-FIXTURE" );
 	TEST_ASSERT( n != nullptr );
 	TEST_CHECK( std::regex_match( n->synthetic, std::regex( "DESKTOP-[A-Z0-9]{7}" ) ) );
@@ -394,36 +447,44 @@ static void pg_git_refusal( void )
 // check_diff_ranges and the single-value generators on their own
 static void pg_helpers( void )
 {
+	BuildContext ctx;
 	Bytes a = { 1, 2, 3, 4, 5, 6 }, b = { 1, 9, 9, 4, 5, 0 };
 	auto r = ProfileGenerator::check_diff_ranges( a, b );
 	TEST_CHECK( r.size() == 2 && r[ 0 ].first == 1 && r[ 0 ].last == 3 && r[ 1 ].first == 5 && r[ 1 ].last == 6 );
-	auto ProfileGen = pg_gen( Environment::bare_host, 0x88 );
-	TextValue o = ProfileGen->gen_class_string( { "07X1234_A99b-z", "classes" } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextValue o = ProfileGen->gen_class_string( ctx, { "07X1234_A99b-z", "classes" } );
 	TEST_CHECK( std::regex_match( o.text, std::regex( "[0-9]{2}[A-Z][0-9]{4}_[A-Z][0-9]{2}[a-z]-[a-z]" ) ) );
 	bool threw = false;
-	try { ProfileGen->gen_class_string( { "--__", "x" } ); } catch ( const std::exception& ) { threw = true; }
+	try { ProfileGen->gen_class_string( ctx, { "--__", "x" } ); } catch ( const std::exception& ) { threw = true; }
 	TEST_CHECK( threw );
-	for ( int i = 0; i < 50; i++ ) TEST_CHECK( ProfileGen->gen_class_string( { "7", "one/" + std::to_string( i ) } ).text != "7" );
-	TEST_CHECK( std::regex_match( ProfileGen->gen_hex_token( { "1a2b3c4d", "hex" } ).text, std::regex( "[0-9a-f]{8}" ) ) );
-	ComputerName cn = ProfileGen->gen_computer_name( { "DESKTOP-ABCDEFG", "cn" } );
-	TEST_CHECK( std::regex_match( cn.text, std::regex( "DESKTOP-[A-Z0-9]{7}" ) ) && cn.text != "DESKTOP-ABCDEFG" );
-	VolumeId vs = ProfileGen->gen_volume_serial( { "1A2B-3C4D", "vs" } );
-	TEST_CHECK( std::regex_match( vs.serial, std::regex( "[0-9A-F]{4}-[0-9A-F]{4}" ) ) && vs.serial != "1A2B-3C4D" );
-	BuildConfig c = BuildConfig::defaults( Environment::bare_host );	// a seedless generator refuses to generate
-	auto Seedless = std::make_unique<ProfileGenerator>( c );
-	threw = false;
-	try { Seedless->gen_class_string( { "AB12", "x" } ); } catch ( const std::exception& ) { threw = true; }
-	TEST_CHECK( threw );
+	for ( int i = 0; i < 50; i++ ) TEST_CHECK( std::string( ProfileGen->gen_class_string( ctx, { "7", "one/" + std::to_string( i ) } ).text ) != "7" );
+	TEST_CHECK( std::regex_match( ProfileGen->gen_hex_token( ctx, { "1a2b3c4d", "hex" } ).text, std::regex( "[0-9a-f]{8}" ) ) );
+	ComputerName cn = ProfileGen->gen_computer_name( ctx, { "DESKTOP-ABCDEFG", "cn" } );
+	TEST_CHECK( std::regex_match( cn.text, std::regex( "DESKTOP-[A-Z0-9]{7}" ) ) && std::string( cn.text ) != "DESKTOP-ABCDEFG" );
+	VolumeId vs = ProfileGen->gen_volume_serial( ctx, { "1A2B-3C4D", "vs" } );
+	TEST_CHECK( std::regex_match( vs.serial, std::regex( "[0-9A-F]{4}-[0-9A-F]{4}" ) ) && std::string( vs.serial ) != "1A2B-3C4D" );
+	// the same key asks the identity map: the value already taken, not a new draw
+	TEST_CHECK( std::string( ProfileGen->gen_class_string( ctx, { "07X1234_A99b-z", "classes" } ).text ) == o.text );
+	// the Randomizer's formats on their own (Randomize->gen_...): the captured value is the pattern, the result differs
+	TEST_CHECK( std::regex_match( Randomize->gen_like( "AB12cd-345_Z" ), std::regex( "[A-Z]{2}[0-9]{2}[a-z]{2}-[0-9]{3}_[A-Z]" ) ) );
+	TEST_CHECK( std::regex_match( Randomize->gen_fill( "X-??", "01" ), std::regex( "X-[01]{2}" ) ) );
+	TEST_CHECK( std::regex_match( Randomize->gen_sid_like( "S-1-5-21-1111111111-222222222-3333333333" ), std::regex( "S-1-5-21-[1-9][0-9]{9}-[1-9][0-9]{8}-[1-9][0-9]{9}" ) ) );
+	TEST_CHECK( std::regex_match( Randomize->gen_mac_like( "00:11:22:33:44:55", 16 ), std::regex( "00:11:22:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}" ) ) );
+	const int64_t v = Randomize->gen_in_range( -5, 5 );
+	TEST_CHECK( v >= -5 && v <= 5 && Randomize->gen_below( 1 ) == 0 );
 }
 
 // rule 2h: host only; the guest keeps every type 17 string byte-identical
 static void pg_type17_names_host_only( void )
 {
+	BuildContext ctx;
 	Bytes raw = pg_fixture( false );
 	SmbiosTable t = parse_smbios( raw );
-	Bytes host = pg_gen( Environment::bare_host, 0x99 )->gen_smbios( { raw } ).synthetic;
+	ctx = pg_fresh( Environment::bare_host );
+	Bytes host = ProfileGen->gen_smbios( ctx, { raw } ).synthetic;
 	const Bytes graw = pg_fixture( true );
-	Bytes guest = pg_gen( Environment::vmware_guest, 0x99 )->gen_smbios( { graw } ).synthetic;
+	ctx = pg_fresh( Environment::vmware_guest );
+	Bytes guest = ProfileGen->gen_smbios( ctx, { graw } ).synthetic;
 	SmbiosTable tg = parse_smbios( graw );
 	auto cls = []( const std::string& a, const std::string& b ) {
 		if ( a.size() != b.size() || a == b ) return false;
@@ -475,31 +536,43 @@ static CaptureInputs pg_capture( bool vm, std::vector<TextFile> texts = {} )
 	return in;
 }
 
-// BuildConfig: save -> load gives the same configuration (seed included), and a rebuild from the loaded (and from the
-// saved-next-to-the-output) configuration gives byte-identical synthetic files; the saved copy holds no fixture identifier
+// BuildConfig: save -> load gives the same configuration, and a rebuild from the loaded (and from the saved-next-to-the-
+// output) configuration with the build's identity map gives byte-identical synthetic files; the saved copy holds no
+// fixture identifier; the identity map is a profile file (the original copy alone with the install-history offset)
 static void pg_build_config_roundtrip( void )
 {
+	BuildContext ctx;
 	for ( bool vm : { true, false } )
 	{
 		Environment e = vm ? Environment::vmware_guest : Environment::bare_host;
-		BuildConfig c1 = pg_cfg( e, 0xA1 );
+		BuildConfig c1 = pg_cfg( e );
 		BuildConfig c2 = BuildConfig::load( c1.save() );
 		TEST_CHECK( c2 == c1 );
 		TEST_CHECK( c2.save() == c1.save() );
 		CaptureInputs in = pg_capture( vm );
-		auto ProfileGen = std::make_unique<ProfileGenerator>( c1 );
-		GenResult r1 = ProfileGen->gen_build( in );
+		ctx = pg_fresh( e );
+		ctx = ProfileGen->new_context( c1 );
+		GenResult r1 = ProfileGen->gen_build( ctx, in );
 		TEST_ASSERT_( r1.ok, "build: %s", r1.error.c_str() );
-		GenResult r2 = std::make_unique<ProfileGenerator>( c2 )->gen_build( in );
+		TEST_CHECK( r1.generated );
+		const Bytes& mf = r1.synthetic.at( "identity_map.tsv" );
+		const IdentityMap applied = ProfileGenerator::parse_identity_map( std::string( mf.begin(), mf.end() ) );
+		ctx = pg_fresh( e );
+		ctx = ProfileGen->new_context( c2 );
+		ProfileGen->load_identity_maps( ctx, applied, {} );
+		GenResult r2 = ProfileGen->gen_build( ctx, in );
 		TEST_ASSERT( r2.ok );
-		TEST_CHECK( r1.synthetic == r2.synthetic );
+		TEST_CHECK( !r2.generated && r1.synthetic == r2.synthetic );
 		const Bytes& saved = r1.synthetic.at( BuildConfig::k_file );
 		BuildConfig c3 = BuildConfig::load( std::string( saved.begin(), saved.end() ) );
-		TEST_CHECK( c3 == c1 && c3.seed == c1.seed );
-		GenResult r3 = std::make_unique<ProfileGenerator>( c3 )->gen_build( in );
+		TEST_CHECK( c3 == c1 );
+		ctx = pg_fresh( e );
+		ctx = ProfileGen->new_context( c3 );
+		ProfileGen->load_identity_maps( ctx, applied, {} );
+		GenResult r3 = ProfileGen->gen_build( ctx, in );
 		TEST_ASSERT( r3.ok );
 		TEST_CHECK( r3.synthetic == r1.synthetic );
-		for ( const char* f : { "smbios.bin", "acpi\\acpi_TEST.bin", "identity.tsv", "fieldmap.tsv", "build_config.txt", "manifest.txt" } )
+		for ( const char* f : { "smbios.bin", "acpi\\acpi_TEST.bin", "identity.tsv", "fieldmap.tsv", "identity_map.tsv", "build_config.txt", "manifest.txt" } )
 			TEST_CHECK_( r1.synthetic.count( f ) && r1.original.count( f ), "%s in both profiles", f );
 		TEST_CHECK( r1.synthetic.at( "acpi\\acpi_TEST.bin" ) == in.acpi[ 0 ].second && r1.original.at( "smbios.bin" ) == in.rsmb );
 		TEST_CHECK( r1.synthetic.at( "fieldmap.tsv" ) == r1.original.at( "fieldmap.tsv" ) );
@@ -520,7 +593,7 @@ static void pg_build_config_roundtrip( void )
 		TEST_CHECK( so.find( "resolved." ) == std::string::npos );
 		TEST_CHECK( !r1.log.entries.empty() && r1.log.text().find( "[profilegen] leak guard: " ) != std::string::npos );
 	}
-	for ( const char* bad : { "format = 2\n", "environment = mars\n", "bogus = 1\n", "out = a\nout = b\n", "seed = 12\n" } )
+	for ( const char* bad : { "format = 2\n", "environment = mars\n", "bogus = 1\n", "out = a\nout = b\n", "seed = 12\n", "identity_map = other.tsv\n" } )
 	{
 		bool threw = false;
 		try { BuildConfig::load( bad ); } catch ( const std::exception& ) { threw = true; }
@@ -563,6 +636,7 @@ static std::string pg_usb( const char* dev, const char* serial ) { return std::s
 // adapter's synthetic MAC (OUI kept), the field map names the adapter; without a relation the UUID is independent
 static void pg_uuid_mac_relation( void )
 {
+	BuildContext ctx;
 	auto mac_of = []( const std::string& t ) {
 		std::array<uint8_t, 6> m {};
 		for ( int i = 0; i < 6; i++ ) m[ i ] = uint8_t( std::stoul( t.substr( i * 3, 2 ), nullptr, 16 ) );
@@ -577,7 +651,8 @@ static void pg_uuid_mac_relation( void )
 			const uint8_t mac[ 6 ] = { 0xA0, 0xB1, 0xC2, 0x01, 0x02, 0x03 };
 			if ( related ) memcpy( &in.rsmb[ uo + 10 ], mac, 6 );
 			Bytes real( in.rsmb.begin() + uo, in.rsmb.begin() + uo + 16 );
-			GenResult r = pg_gen( vm ? Environment::vmware_guest : Environment::bare_host, 0xB1 )->gen_build( in );
+			ctx = pg_fresh( vm ? Environment::vmware_guest : Environment::bare_host );
+			GenResult r = ProfileGen->gen_build( ctx, in );
 			TEST_ASSERT_( r.ok, "build: %s", r.error.c_str() );
 			const uint8_t* u = &r.synthetic.at( "smbios.bin" )[ uo ];
 			const IdentityEntry* m = pg_find( r.identity.identity, "mac", "A0:B1:C2:01:02:03" );
@@ -605,14 +680,20 @@ static void pg_uuid_mac_relation( void )
 // hex-encoded ASCII stays hex-encoded ASCII of the same shape; placeholders stay
 static void pg_usb_shared_table( void )
 {
+	BuildContext ctx;
 	std::string host = pg_usb( "VID_1111&PID_2222", "4142433132333435" ) + pg_usb( "Vid_0E0F&Pid_0001", "4142433132333435" ) + pg_usb( "VID_3333&PID_4444", "Q9ZK21x" ) +
 					   pg_usb( "VID_5555&PID_6666", "000000000000" ) + pg_usb( "VID_7777&PID_8888", "MSFT3000000000" ) + pg_usb( "VID_9999&PID_AAAA", "0a1b2c3d4e5f60718293" );
 	std::string guest = pg_usb( "VID_BBBB&PID_CCCC", "7Y7Y" ) + pg_usb( "VID_1111&PID_2222", "4142433132333435" );
 	auto fh = pg_text_fixture2( host ), fg = pg_text_fixture2( guest );
 	std::vector<std::string> table = ProfileGenerator::parse_usb_serial_table( { fh[ 2 ].data, fg[ 2 ].data } );
 	TEST_CHECK_( table.size() == 4, "table: 3 host serials + 1 guest-only serial (placeholders excluded), got %zu", table.size() );
-	TextIdentityGen th = pg_gen( Environment::bare_host, 0xC1 )->gen_text_identity( { fh, table } );
-	TextIdentityGen tg = pg_gen( Environment::vmware_guest, 0xC1 )->gen_text_identity( { fg, table } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen th = ProfileGen->gen_text_identity( ctx, { fh, table } );
+	const IdentityMap hmap = ctx.identity_map;	// the host's map: its "shared/usb/<index>" values
+	ctx = pg_fresh( Environment::vmware_guest );
+	ProfileGen->load_identity_maps( ctx, {}, hmap );				// a new guest identity, the shared serials from the peer map
+	TextIdentityGen tg = ProfileGen->gen_text_identity( ctx, { fg, table } );
+	TEST_CHECK( hmap.entries.count( "shared/usb/0" ) && ctx.identity_map.entries.at( "shared/usb/0" ) == hmap.entries.at( "shared/usb/0" ) );
 	const IdentityEntry* a = pg_find( th.identity, "usb_serial", "4142433132333435" );
 	const IdentityEntry* b = pg_find( tg.identity, "usb_serial", "4142433132333435" );
 	TEST_ASSERT( a != nullptr && b != nullptr );
@@ -631,20 +712,25 @@ static void pg_usb_shared_table( void )
 	TEST_CHECK( std::regex_match( q->synthetic, std::regex( "[A-Z][0-9][A-Z]{2}[0-9]{2}[a-z]" ) ) && q->synthetic != q->original );
 	TEST_CHECK( !pg_find( th.identity, "usb_serial", "000000000000" ) && !pg_find( th.identity, "usb_serial", "MSFT3000000000" ) );
 	TEST_CHECK( ProfileGenerator::check_usb_placeholder( "00000000" ) && ProfileGenerator::check_usb_placeholder( "MSFT3000000000000000000000" ) && !ProfileGenerator::check_usb_placeholder( "MSFT3100000000" ) );
-	TextIdentityGen solo = pg_gen( Environment::vmware_guest, 0xC1 )->gen_text_identity( { fg } );	// own table only: another index
+	ctx = pg_fresh( Environment::vmware_guest );
+	TextIdentityGen solo = ProfileGen->gen_text_identity( ctx, { fg } );	// own table only, no peer map: another (new) value
 	const IdentityEntry* c = pg_find( solo.identity, "usb_serial", "4142433132333435" );
 	TEST_ASSERT( c != nullptr );
 	TEST_CHECK( c->synthetic != b->synthetic );
-	UsbSerial us = pg_gen( Environment::bare_host, 0xC1 )->gen_usb_serial( { "4142433132333435", 0, "x" } );
-	TEST_CHECK( us.text == a->synthetic );	// gen_usb_serial with the shared index = the identity's value
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, hmap, {} );
+	UsbSerial us = ProfileGen->gen_usb_serial( ctx, { "4142433132333435", 0, "x" } );
+	TEST_CHECK( us.text == a->synthetic );	// gen_usb_serial with the shared index = the identity's value (applied map)
 }
 
 // rule 3 relations: one synthetic MAC per radio / NIC, dependents re-derived (+1, locally administered variant, +4), the
 // EUI-64 instance ID re-derived, VMnet exact, Hyper-V OUI kept; relations recorded by adapter description
 static void pg_mac_relations( void )
 {
+	BuildContext ctx;
 	auto files = pg_text_fixture2( "" );
-	TextIdentityGen t = pg_gen( Environment::bare_host, 0xC2 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
 	auto val = [ & ]( const char* real ) -> unsigned long long {
 		const IdentityEntry* r = pg_find( t.identity, "mac", real );
 		if ( !r ) return ~0ull;
@@ -677,18 +763,22 @@ static void pg_mac_relations( void )
 	TEST_CHECK_( rel == 4 && named, "3 MAC relations + 1 EUI-64 relation recorded by description, got %zu", rel );
 	MacFamily fam;
 	fam.members = { { { "3C:A9:F4:10:20:30", "radio", "R1" } }, { { "3C:A9:F4:10:20:31", "direct", "R2" } }, { { "3E:A9:F4:10:20:30", "direct2", "R3" } } };
-	MacFamily sf = pg_gen( Environment::bare_host, 0xC2 )->gen_mac_family( fam );
+	ctx = pg_fresh( Environment::bare_host );
+	MacFamily sf = ProfileGen->gen_mac_family( ctx, fam );
 	TEST_CHECK( sf.members[ 1 ].parent == 0 && sf.members[ 1 ].delta == 1 && sf.members[ 2 ].parent == 0 && sf.members[ 2 ].locally_administered );
-	Eui64Id ei = pg_gen( Environment::bare_host, 0xC2 )->gen_eui64_instance_id( { "a0b1c2ffff01020300", true }, { "A0:B1:C2:0A:0B:0C", "", "x" } );
-	TEST_CHECK( ei.text == "a0b1c2ffff0a0b0c00" );
+	ctx = pg_fresh( Environment::bare_host );
+	Eui64Id ei = ProfileGen->gen_eui64_instance_id( ctx, { "a0b1c2ffff01020300", true }, { "A0:B1:C2:0A:0B:0C", "", "x" } );
+	TEST_CHECK( std::string( ei.text ) == "a0b1c2ffff0a0b0c00" );
 }
 
 // rule 4c version-1 GUIDs: node = the synthetic MAC of its adapter (also when the GUID only occurs elsewhere, e.g. a WPD
 // instance), Windows' no-NIC node kept, timestamp / clock synthetic, version 1 and variant kept, one GUID = one value
 static void pg_v1_guid_node( void )
 {
+	BuildContext ctx;
 	auto files = pg_text_fixture2( "" );
-	TextIdentityGen t = pg_gen( Environment::bare_host, 0xC3 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
 	const IdentityEntry* wifi = pg_find( t.identity, "mac", "3C:A9:F4:10:20:30" );
 	TEST_ASSERT( wifi != nullptr );
 	std::string node;
@@ -709,8 +799,10 @@ static void pg_v1_guid_node( void )
 	const IdentityEntry* g = pg_find( t.identity, "interface_guid", "{0F0F0F0F-1111-4222-8333-444455556666}" );
 	TEST_ASSERT( g != nullptr );
 	TEST_CHECK( g->synthetic[ 15 ] == '4' && g->synthetic.substr( 25, 12 ) != "444455556666" );
-	GuidValue mbr = pg_gen( Environment::bare_host, 0xC3 )->gen_guid( { "{3fa81c55-0000-0000-0000-100000000000}", "mbr" } );
-	TEST_CHECK( mbr.text.substr( 9 ) == "-0000-0000-0000-100000000000}" && mbr.text.substr( 1, 8 ) != "3fa81c55" );
+	ctx = pg_fresh( Environment::bare_host );
+	GuidValue mbr = ProfileGen->gen_guid( ctx, { "{3fa81c55-0000-0000-0000-100000000000}", "mbr" } );
+	const std::string mt = mbr.text;
+	TEST_CHECK( mt.substr( 9 ) == "-0000-0000-0000-100000000000}" && mt.substr( 1, 8 ) != "3fa81c55" );
 }
 
 // an EDID base block (made-up manufacturer "FIX"): product, serial field, week / year, version, descriptors (detailed
@@ -758,10 +850,11 @@ static Bytes pg_edid( uint16_t product, uint32_t serial, const char* serial_stri
 // untouched, extension blocks untouched and scanned
 static void pg_edid_rules( void )
 {
+	BuildContext ctx;
 	EdidInput in { { { "edid_0.bin", pg_edid( 0x2701, 0x12345678, "FIXSER12345", true ) }, { "edid_1.bin", pg_edid( 0x2701, 0x12345678, "FIXSER12345", false ) },
 		{ "edid_2.bin", pg_edid( 0x4012, 0x32314241, nullptr, false ) } } };
-	auto ProfileGen = pg_gen( Environment::bare_host, 0xD1 );
-	EdidGen g = ProfileGen->gen_edid( in );
+	ctx = pg_fresh( Environment::bare_host );
+	EdidGen g = ProfileGen->gen_edid( ctx, in );
 	TEST_ASSERT( g.synthetic.size() == 3 );
 	for ( const EdidBlock& b : g.synthetic )
 	{
@@ -782,23 +875,26 @@ static void pg_edid_rules( void )
 	size_t rows6 = 0, rows6c = 0;
 	for ( const FieldMapEntry& f : g.fields ) { rows6 += f.rule == "6"; rows6c += f.rule == "6c"; }
 	TEST_CHECK_( rows6 == 5 && rows6c == 3 && g.presets.size() == 3, "rows6 %zu rows6c %zu presets %zu", rows6, rows6c, g.presets.size() );
-	EdidSerial es = ProfileGen->gen_edid_serial( { 1804, "n" } );
-	TEST_CHECK( es.value >= 1000 && es.value <= 9999 && es.value != 1804 );
+	EdidSerial es = ProfileGen->gen_edid_serial( ctx, { "1804", "n" } );
+	const uint32_t ev = le32_of_decimal( es.text );
+	TEST_CHECK( ev >= 1000 && ev <= 9999 && ev != 1804 );
 	EdidBlock bad = in.blocks[ 1 ];
 	bad.bytes[ 127 ] ^= 0x55;
-	EdidBlock fixed = ProfileGen->gen_edid_checksum( bad );
+	EdidBlock fixed = ProfileGen->gen_edid_checksum( ctx, bad );
 	TEST_CHECK( fixed.bytes == in.blocks[ 1 ].bytes );
 }
 
 // rule 7a: ProductId groups
 static void pg_product_id_groups( void )
 {
-	auto ProfileGen = pg_gen( Environment::bare_host, 0xD2 );
-	ProductId p = ProfileGen->gen_product_id( { "00330-12345-67890-AA123", "pid" } );
-	TEST_CHECK( p.text.size() == 23 && p.text.substr( 0, 6 ) == "00330-" && p.text.substr( 17 ) == "-AA123" && p.text != "00330-12345-67890-AA123" );
+	BuildContext ctx;
+	ctx = pg_fresh( Environment::bare_host );
+	ProductId p = ProfileGen->gen_product_id( ctx, { "00330-12345-67890-AA123", "pid" } );
+	const std::string pt = p.text;
+	TEST_CHECK( pt.size() == 23 && pt.substr( 0, 6 ) == "00330-" && pt.substr( 17 ) == "-AA123" && pt != "00330-12345-67890-AA123" );
 	TEST_CHECK( std::regex_match( p.text, std::regex( "00330-[0-9]{5}-[0-9]{5}-AA123" ) ) );
 	bool threw = false;
-	try { ProfileGen->gen_product_id( { "12345", "x" } ); } catch ( const std::exception& ) { threw = true; }
+	try { ProfileGen->gen_product_id( ctx, { "12345", "x" } ); } catch ( const std::exception& ) { threw = true; }
 	TEST_CHECK( threw );
 }
 
@@ -808,10 +904,10 @@ static std::string pg_os_ids( const std::string& extra = "" )
 	return "## registry identifiers\n"
 		   "HKLM\\SOFTWARE\\Microsoft\\Cryptography \"MachineGuid\" REG_SZ, 74 bytes [IDENTIFIER - keep local]: \"1b2c3d4e-5f60-4718-9a0b-c1d2e3f4a5b6\"\n"
 		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"ProductId\" REG_SZ, 48 bytes [IDENTIFIER - keep local]: \"00330-12345-67890-AA123\"\n"
-		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallDate\" REG_DWORD, 4 bytes [machine-specific]: 0x62A0B1C2 (1654698434)\n"
-		   "    = 2022-06-08T14:27:14Z (seconds since 1970-01-01 UTC)\n"
-		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallTime\" REG_QWORD, 8 bytes [machine-specific]: 0x01D87B43D901E387 (132991720341234567)\n"
-		   "    = 2022-06-08T14:27:14Z (FILETIME)\n"
+		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallDate\" REG_DWORD, 4 bytes [machine-specific]: 0x64A0B1C2 (1688252866)\n"
+		   "    = 2023-07-01T23:07:46Z (seconds since 1970-01-01 UTC)\n"
+		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"InstallTime\" REG_QWORD, 8 bytes [machine-specific]: 0x01D9AC70D901E387 (133327264661234567)\n"
+		   "    = 2023-07-01T23:07:46Z (FILETIME)\n"
 		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"RegisteredOwner\" REG_SZ, 12 bytes [IDENTIFIER - keep local]: \"Fixer\"\n"
 		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"RegisteredOrganization\" REG_SZ, 2 bytes [IDENTIFIER - keep local]: \"\"\n"
 		   "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion \"BuildGUID\" REG_SZ, 74 bytes [build identifier]: \"ffffffff-ffff-ffff-ffff-ffffffffffff\"\n"
@@ -831,33 +927,149 @@ static std::string pg_os_ids( const std::string& extra = "" )
 		   "  volume serial number: 5E6F-7A8B (0x5E6F7A8B) [IDENTIFIER - keep local]\n"
 		   "  volume GUID path: \\\\?\\Volume{3fa81c55-0000-0000-0000-100000000000}\\ [IDENTIFIER - keep local]\n" + extra;
 }
-static std::vector<TextFile> pg_text_fixture3()
+// the fwid 1.4 files in fwid_probe 1.4's formats (made-up values): two license rows, the SusClientIdValidation blob (inline
+// hex, or the hex-dump form), DiagTrack values, three disks (a padded serial, a repeated-digit placeholder, a USB flash
+// drive reporting the start of its USB serial), HID devices (= a USB serial, a placeholder, a real serial whose USB serial is
+// a placeholder, none), the GPU review marks, Bluetooth device / radio subkeys, an audio endpoint, the Wi-Fi interface,
+// the workgroup, a WSD printer port
+static const char* const k_pg_iid0 = "123456712345671234567123456712345671234567123456712345671234567";
+static const char* const k_pg_iid1 = "765432176543217654321765432176543217654321765432176543217654321";
+static const char* const k_pg_flash_usb = "0401a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6";	// a USB flash drive's (made-up) USB serial
+static Bytes pg_sus_blob()
+{
+	// 06 02 len1 01 len2 len3 | UTF-16LE disk serial | 06 + the wired fixture NIC's MAC | UTF-16LE board serial (the SMBIOS
+	// fixture's type 2 serial) | UTF-16LE "Default string"
+	auto u16 = []( const std::string& s ) { Bytes b; for ( char c : s ) { b.push_back( uint8_t( c ) ); b.push_back( 0 ); } return b; };
+	Bytes s1 = u16( "S5GXNF0R123456K" ), s2 = u16( "AB12cd-345_Z" ), s3 = u16( "Default string" );
+	Bytes b = { 0x06, 0x02, uint8_t( s1.size() ), 0x01, uint8_t( s2.size() ), uint8_t( s3.size() ) };
+	b.insert( b.end(), s1.begin(), s1.end() );
+	for ( uint8_t x : { 0x06, 0xA0, 0xB1, 0xC2, 0x01, 0x02, 0x03 } ) b.push_back( x );
+	b.insert( b.end(), s2.begin(), s2.end() );
+	b.insert( b.end(), s3.begin(), s3.end() );
+	return b;
+}
+static std::string pg_update_ids( bool dump )
+{
+	const Bytes b = pg_sus_blob();
+	std::string head = "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate \"SusClientIdValidation\" REG_BINARY, " + std::to_string( b.size() ) + " bytes [IDENTIFIER - keep local]: ";
+	if ( !dump )
+	{
+		for ( uint8_t x : b ) { char h[ 3 ]; snprintf( h, sizeof h, "%02X", x ); head += h; }
+		head += " (" + std::to_string( b.size() ) + " bytes hex)\n";
+	}
+	else
+	{
+		head += "(" + std::to_string( b.size() ) + " bytes)\n";
+		for ( size_t o = 0; o < b.size(); o += 16 )
+		{
+			char h[ 16 ];
+			snprintf( h, sizeof h, "    %04zX: ", o );
+			std::string hex = h, asc;
+			for ( size_t k = o; k < o + 16; k++ )
+			{
+				if ( k < b.size() ) { snprintf( h, sizeof h, "%02X ", b[ k ] ); hex += h; asc += b[ k ] >= 0x20 && b[ k ] < 0x7F ? char( b[ k ] ) : '.'; }
+				else hex += "   ";
+			}
+			head += hex + " |" + asc + "|\n";
+		}
+	}
+	return "# fwid update / telemetry identifier capture - fixture\n"
+		   "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate \"SusClientId\" REG_SZ, 74 bytes [IDENTIFIER - keep local]: \"1234abcd-5678-4ef0-9abc-def012345678\"\n" +
+		   head +
+		   "\n## HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Diagnostics\\DiagTrack\n"
+		   "  value \"TimeStampInterval\"  REG_DWORD (4)  4 bytes: 0x00000001 (1)\n"
+		   "  value \"LaunchCount\"  REG_QWORD (11)  8 bytes: 0x0000000000000021 (33)\n"
+		   "  value \"LastPersistedEventTime\"  REG_QWORD (11)  8 bytes: 0x01DC7AB0DFD64AB8 (134116989002468024)\n"
+		   "\n## HKLM\\SOFTWARE\\Microsoft\\SQMClient\n"
+		   "  value \"WinSqmFirstSessionStartTime\"  REG_QWORD (11)  8 bytes: 0x01D9AC793AC82D59 (133327300661357913)\n"
+		   "  value \"MachineId\"  REG_SZ (1)  78 bytes: \"{ABCDEF01-2345-4678-9ABC-DEF012345678}\"\n";
+}
+static std::string pg_disks()
+{
+	return "# fwid physical disk capture - fixture. IDENTIFIERS: the serial number is marked; keep local.\n\n"
+		   "=== PhysicalDrive0\n  vendor ID:        \"FIXDISK\" (offset 40, 7 bytes)\n"
+		   "  serial number:    \"S5GXNF0R123456K    \" (offset 103, 19 bytes)  [IDENTIFIER - keep local]\n\n"
+		   "=== PhysicalDrive1\n  serial number:    \"00000000000000000000\" (offset 71, 20 bytes)  [IDENTIFIER - keep local]\n\n"
+		   "=== PhysicalDrive2\n  serial number:    \"0401A1B2C3D4E5F60718\" (offset 103, 20 bytes)  [IDENTIFIER - keep local]\n\n"
+		   "=== PhysicalDrive3\n  serial number:    (offset 0: not reported)\n";
+}
+static std::string pg_hid()
+{
+	return "# fwid HID capture - fixture\n"
+		   "=== HID device 0\npath: \"\\\\?\\hid#vid_1111&pid_2222&mi_00#8&1a2b3c4d&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\" [IDENTIFIER - keep local]\n"
+		   "manufacturer: \"Fixture Corp\"\nproduct: \"Fixture Mouse\"\nserial:       \"4142433132333435\"  [IDENTIFIER - keep local]\n"
+		   "=== HID device 1\npath: \"\\\\?\\hid#vid_3333&pid_4444#8&2b3c4d5e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\" [IDENTIFIER - keep local]\n"
+		   "serial:       \"000000000000\"  [IDENTIFIER - keep local]\n"
+		   "=== HID device 2\npath: \"\\\\?\\hid#vid_5555&pid_6666#8&3c4d5e6f&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\" [IDENTIFIER - keep local]\n"
+		   "serial:       \"987654321098\"  [IDENTIFIER - keep local]\n"
+		   "=== HID device 3\nserial:       \"\"  [IDENTIFIER - keep local]\n";
+}
+static std::vector<TextFile> pg_text_fixture3( bool sus_dump = false )
 {
 	auto tf = []( const char* name, const std::string& s ) { return TextFile { name, Bytes( s.begin(), s.end() ) }; };
-	auto files = pg_text_fixture2( pg_usb( "VID_1111&PID_2222", "4142433132333435" ) );
+	// a registry last-write time in the same second as a device's first install: not an install event, never shifted
+	auto files = pg_text_fixture2( pg_usb( "VID_1111&PID_2222", "4142433132333435" ) + "  depth 2; last write 2023-07-01T23:06:46Z; 0 value(s), 0 subkey(s)\n" +
+								   pg_usb( "VID_5555&PID_6666", "000000000000" ) + pg_usb( "VID_0781&PID_5581", k_pg_flash_usb ) );
+	// the install history of a device (first install 60 s before InstallDate - Windows setup -, install 30 s after, last
+	// arrival 10 min before the capture) and its driver date (not shifted)
+	const std::string dev = "    {83DA6326-97A6-4088-9453-A1923F573B29} pid 100 DEVPKEY_Device_InstallDate [machine-specific] type 0x10: 2023-07-01T23:08:16Z (0x01D9AC70EB257563)\n"
+							"    {83DA6326-97A6-4088-9453-A1923F573B29} pid 101 DEVPKEY_Device_FirstInstallDate [machine-specific] type 0x10: 2023-07-01T23:06:46Z (0x01D9AC70B56F981C)\n"
+							"    {83DA6326-97A6-4088-9453-A1923F573B29} pid 102 DEVPKEY_Device_LastArrivalDate [machine-specific] type 0x10: 2025-12-31T23:50:00Z (0x01DC7AB02D45FDAA)\n"
+							"    {A8B865DD-2E3D-4094-AD97-E593A70C75D6} pid 2 DEVPKEY_Device_DriverDate [machine-specific] type 0x10: 2006-06-21T00:00:00Z (0x01C694C5A38C8000)\n";
+	files[ 3 ].data.insert( files[ 3 ].data.end(), dev.begin(), dev.end() );
 	files.push_back( tf( "os_ids.txt", pg_os_ids() ) );
-	files.push_back( tf( "license.txt", "Name: \"Windows(R), Professional edition\"\nDescription: \"Windows(R) Operating System, RETAIL channel\"\nLicenseStatus: 1 (licensed)\n"
-										"ProductKeyChannel: \"Retail\"\nOfflineInstallationId [IDENTIFIER - keep local]: \"123456-234567-345678-456789-567890-678901-789012-890123-901234\"\n" ) );
-	files.push_back( tf( "update_ids.txt", "SusClientId [IDENTIFIER - keep local]: \"{1234abcd-5678-4ef0-9abc-def012345678}\"\n"
-										   "SusClientIdValidation [IDENTIFIER - keep local]: 06 02 00 00 1A 2B 3C 4D\n"
-										   "DiagTrack DeviceId [IDENTIFIER - keep local]: \"f0e1d2c3-b4a5-4968-8776-655443322110\"\n" ) );
-	files.push_back( tf( "disks.txt", "PhysicalDrive0 vendor \"FIXDISK\" product \"FX SSD 1TB\"\nPhysicalDrive0 serial [IDENTIFIER - keep local]: \"S5GXNF0R123456K\"\n" ) );
-	files.push_back( tf( "hid.txt", "HID\\VID_1111&PID_2222 SerialNumber [IDENTIFIER - keep local]: \"4142433132333435\"\nHID\\VID_1111&PID_2222 Manufacturer [IDENTIFIER - keep local]: \"Fixture Corp\"\n" ) );
-	files.push_back( tf( "gpu.txt", "AdapterString [IDENTIFIER - keep local]: \"Fixture GPU\"\nDeviceUUID [IDENTIFIER - keep local]: \"{a1a2a3a4-b4a5-4968-8776-655443322110}\"\n"
-									"BoardSerial [IDENTIFIER - keep local]: \"GPU12345XY\"\n" ) );
-	files.push_back( tf( "bluetooth.txt", "paired device address [IDENTIFIER - keep local]: 70:1A:B8:11:22:33\npaired device name [IDENTIFIER - keep local]: \"Fixture Headset\"\n"
-										  "local radio address [IDENTIFIER - keep local]: 3C:A9:F4:10:20:34\n" ) );
-	files.push_back( tf( "audio.txt", "endpoint [IDENTIFIER - keep local]: \"{0.0.0.00000000}.{a1b2c3d4-e5f6-4789-8abc-def012345678}\"\nendpoint name: \"Fixture Speakers\"\n" ) );
-	files.push_back( tf( "wifi.txt", "profiles: 3\n" ) );
+	files.push_back( tf( "license.txt", std::string( "# fwid license capture - fixture\n# OfflineInstallationId = the Windows installation ID [IDENTIFIER - keep local].\n\n"
+		"=== SoftwareLicensingProduct row 0\n"
+		"ID                     \"f0f0f0f0-aaaa-4bbb-8ccc-dddddddddddd\"  [SKU ID]\n"
+		"Name                   \"Windows(R), Professional edition\"\n"
+		"Description            \"Windows(R) Operating System, RETAIL channel\"\n"
+		"LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)\n"
+		"ProductKeyChannel      \"Retail\"\n"
+		"OfflineInstallationId  \"" ) + k_pg_iid0 + "\"  [IDENTIFIER - installation ID, keep local]\n\n"
+		"=== SoftwareLicensingProduct row 1\n"
+		"ID                     \"e1e1e1e1-bbbb-4ccc-8ddd-eeeeeeeeeeee\"  [SKU ID]\n"
+		"Name                   \"Windows(R), Client-ESU-Year1 add-on for Fixture\"\n"
+		"Description            \"Windows(R) Operating System, VOLUME_MAK channel\"\n"
+		"LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)\n"
+		"ProductKeyChannel      \"Volume:MAK\"\n"
+		"OfflineInstallationId  \"" + k_pg_iid1 + "\"  [IDENTIFIER - installation ID, keep local]\n\n2 row(s); query time 1 ms\n" ) );
+	files.push_back( tf( "update_ids.txt", pg_update_ids( sus_dump ) ) );
+	files.push_back( tf( "disks.txt", pg_disks() ) );
+	files.push_back( tf( "hid.txt", pg_hid() ) );
+	files.push_back( tf( "gpu.txt", "# [IDENTIFIER?] marks values that look per-device unique (for review).\n"
+									"## HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000\n"
+									"  value \"HardwareInformation.AdapterString\"  REG_SZ (1)  24 bytes: \"Fixture GPU\"\n"
+									"  value \"UserModeDriverGUID\"  REG_SZ (1)  78 bytes: \"{a1a2a3a4-b4a5-4968-8776-655443322110}\"\n"
+									"      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)\n"
+									"  value \"KmFileIoBaseFilePath\"  REG_SZ (1)  166 bytes: \"C:\\x5CWindows\\x5CSystem32\\x5CDriverState\\x5CDevices\\x5C{b1b2b3b4-c4c5-4d6e-8f70-123456789abc}\\x5CData\"\n"
+									"      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)\n"
+									"  value \"BoardSerial\"  REG_SZ (1)  22 bytes: \"GPU12345XY\"\n"
+									"      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)\n" ) );
+	files.push_back( tf( "bluetooth.txt", "# fwid Bluetooth capture - fixture: each subkey name = a paired device address [IDENTIFIER]\n\n"
+										  "## HKLM\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Devices\n  depth 0; 0 value(s), 1 subkey(s)\n  subkey \"701ab8112233\"\n\n"
+										  "## HKLM\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\Devices\\701ab8112233\n"
+										  "  value \"Name\"  REG_BINARY (3)  15 bytes: 46697874757265204865616473657400 (15 bytes hex)\n      Name as UTF-8: \"Fixture Headset\"\n"
+										  "  value \"LastSeen\"  REG_QWORD (11)  8 bytes: 0x01D9C403D164AD1E (133353184661122334)\n"
+										  "  subkey \"ServicesFor3ca9f4102034\" (not descended: depth limit)\n\n"
+										  "## HKLM\\SYSTEM\\CurrentControlSet\\Services\\BTHPORT\\Parameters\\LocalInfo\n" ) );
+	files.push_back( tf( "audio.txt", "=== endpoint {a1b2c3d4-e5f6-4789-8abc-def012345678} [IDENTIFIER]\n  name: \"Fixture Speakers\"\n" ) );
+	files.push_back( tf( "wifi.txt", "=== interface 0: GUID {1E1E1E1E-1111-4222-8333-444455556666} [IDENTIFIER], profiles 3\n" ) );
+	files.push_back( tf( "environment.txt", "## join state (NetGetJoinInformation, local)\nresult 0; status 2 (NetSetupWorkgroupName); name \"FIXGROUP\" [IDENTIFIER: workgroup / domain name]\n"
+											"## uptime\nGetTickCount64: 1234 ms (0.00 h) [volatile]\n" ) );
+	files.push_back( tf( "printers.txt", "=== printer 0\nname \"Fixture Printer\"\nport \"WSD-c1c2c3c4-d4d5-4e6f-8a7b-0123456789ab\"\ndriver \"Microsoft IPP Class Driver\"\n" ) );
 	files.push_back( tf( "chid.txt", "HardwareID-0 [IDENTIFIER]: {01234567-89ab-cdef-0123-456789abcdef}\n" ) );
 	return files;
 }
+// the SMBIOS rule-2 mapping gen_text_identity needs for rule 8c (the fixture's type 2 serial)
+static std::vector<std::pair<std::string, std::string>> pg_smbios_strings() { return { { "AB12cd-345_Z", "XY34ab-567_Q" } }; }
 
 // rule 7: SID consistency, NameSamCompatible, one user name everywhere, the install instant; volume GUID consistency
 static void pg_os_ids_rules( void )
 {
+	BuildContext ctx;
 	auto files = pg_text_fixture3();
-	TextIdentityGen t = pg_gen( Environment::bare_host, 0xD3 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
 	const IdentityEntry* ms = pg_find( t.identity, "machine_sid", "S-1-5-21-1111111111-222222222-3333333333" );
 	const IdentityEntry* us = pg_find( t.identity, "user_sid", "S-1-5-21-1111111111-222222222-3333333333-1001" );
 	TEST_ASSERT( ms != nullptr && us != nullptr );
@@ -871,15 +1083,18 @@ static void pg_os_ids_rules( void )
 	TEST_CHECK_( ns->synthetic == cn->synthetic + "\\" + un->synthetic, "NameSamCompatible = synthetic computer name \\ synthetic user" );
 	TEST_CHECK_( un->occurrences >= 4, "user name: RegisteredOwner, GetUserNameW, NameSamCompatible (after \\x5C), the profile path; got %zu", un->occurrences );
 	TEST_CHECK( std::count_if( t.identity.begin(), t.identity.end(), []( const IdentityEntry& r ) { return r.kind == "user_name"; } ) == 1 );
-	const IdentityEntry* d = pg_find( t.identity, "install_date", "1654698434" );
-	const IdentityEntry* it = pg_find( t.identity, "install_time", "132991720341234567" );
+	const IdentityEntry* d = pg_find( t.identity, "install_date", "1688252866" );
+	const IdentityEntry* it = pg_find( t.identity, "install_time", "133327264661234567" );
 	TEST_ASSERT( d != nullptr && it != nullptr );
 	long long sd = std::stoll( d->synthetic );
 	unsigned long long st = std::stoull( it->synthetic );
 	InstallWindow w = ProfileGenerator::parse_install_window( 19045, "2026-01-01T00:00:00.000Z" );
 	TEST_CHECK_( sd > w.lo && sd < w.hi, "the install instant lies strictly between the build release and the capture" );
 	TEST_CHECK_( ( st / 10000000ull ) - 11644473600ull == (unsigned long long)sd, "InstallTime = the same instant as InstallDate" );
-	TEST_CHECK( d->occurrences >= 3 );	// hex, decimal, ISO
+	TEST_CHECK( d->occurrences == 2 );	// hex, decimal; the ISO form is its own install-history identity
+	const IdentityEntry* iso = pg_find( t.identity, "event_iso", "2023-07-01T23:07:46Z" );
+	TEST_ASSERT( iso != nullptr );
+	TEST_CHECK( iso->occurrences == 2 && iso->synthetic.size() == 20 && iso->synthetic != iso->original );	// the InstallDate and InstallTime lines (same second)
 	const IdentityEntry* v = pg_find( t.identity, "volume_guid", "{87654321-0000-11F0-A000-806E6F6E6963}" );
 	TEST_ASSERT( v != nullptr );
 	bool in_enum = false, in_os = false;
@@ -903,23 +1118,30 @@ static void pg_os_ids_rules( void )
 	TEST_ASSERT( hp != nullptr );
 	TEST_CHECK( hp->synthetic.substr( 25 ) == "806e6f6e6963}" && hp->synthetic.front() == '{' );
 	TEST_CHECK( pg_find( t.identity, "product_id", "00330-12345-67890-AA123" ) != nullptr );
-	SidParts sp = pg_gen( Environment::bare_host, 0xD3 )->gen_sid( { "S-1-5-21-1111111111-222222222-3333333333", "sid" } );
-	TEST_CHECK( sp.prefix.rfind( "S-1-5-21-", 0 ) == 0 && sp.prefix.size() == 40 );
+	ctx = pg_fresh( Environment::bare_host );
+	SidParts sp = ProfileGen->gen_sid( ctx, { "S-1-5-21-1111111111-222222222-3333333333", "sid" } );
+	TEST_CHECK( std::string( sp.prefix ).rfind( "S-1-5-21-", 0 ) == 0 && std::string( sp.prefix ).size() == 40 );
 	InstallTime itr;
 	itr.os_build = 19045;
 	itr.capture_utc = "2026-01-01T00:00:00Z";
-	InstallTime its = pg_gen( Environment::bare_host, 0xD3 )->gen_install_time( itr );
+	itr.unix_seconds = 1688252866;
+	itr.filetime = 133327264661234567ull;
+	ctx = pg_fresh( Environment::bare_host );
+	InstallTime its = ProfileGen->gen_install_time( ctx, itr );
 	TEST_CHECK( its.unix_seconds > w.lo && its.unix_seconds < w.hi && its.filetime / 10000000ull - 11644473600ull == uint64_t( its.unix_seconds ) );
+	TEST_CHECK( its.shift_seconds <= -86400 && its.unix_seconds == itr.unix_seconds + its.shift_seconds && its.filetime % 10000000ull == itr.filetime % 10000000ull );
 }
 
 // a marked identifier line no rule consumes stops the run; so does a non-empty RegisteredOrganization or a marked line in
 // a file whose content is exact (wifi.txt)
 static void pg_os_ids_guard( void )
 {
+	BuildContext ctx;
 	auto run = [ & ]( const char* name, const std::string& body ) {
 		auto files = pg_text_fixture2( "" );
 		files.push_back( { name, Bytes( body.begin(), body.end() ) } );
-		try { pg_gen( Environment::bare_host, 0xD4 )->gen_text_identity( { files } ); }
+		ctx = pg_fresh( Environment::bare_host );
+		try { ProfileGen->gen_text_identity( ctx, { files } ); }
 		catch ( const std::exception& e ) { return std::string( e.what() ).find( "needs a field decision" ) != std::string::npos; }
 		return false;
 	};
@@ -932,58 +1154,273 @@ static void pg_os_ids_guard( void )
 // rule 8: the Windows installation ID (its own gen_, license data exact), update IDs, disk / HID / GPU / Bluetooth / audio
 static void pg_fwid14_rules( void )
 {
-	auto ProfileGen = pg_gen( Environment::bare_host, 0xD5 );
+	BuildContext ctx;
+	ctx = pg_fresh( Environment::bare_host );
 	WinInstallationId wi;
-	wi.text = "123456-234567-345678-456789-567890-678901-789012-890123-901234";
+	wi.text = "1234567-2345678-3456789-4567890-5678901-6789012-7890123-8901234-9012345";	// with separators: kept
 	wi.label = "iid";
 	wi.license.license_status = "1";
 	wi.license.product_key_channel = "Retail";
-	WinInstallationId so = ProfileGen->gen_win_installation_id( wi );
-	TEST_CHECK( so.text.size() == wi.text.size() && so.text != wi.text && !so.check_digits_modelled && so.rule == "8a" );
-	TEST_CHECK( std::regex_match( so.text, std::regex( "([0-9]{6}-){8}[0-9]{6}" ) ) && so.group_lengths == std::vector<size_t>( 9, 6 ) );
+	WinInstallationId so = ProfileGen->gen_win_installation_id( ctx, wi );
+	TEST_CHECK( strlen( so.text ) == strlen( wi.text ) && std::string( so.text ) != wi.text && so.check_digits_modelled && so.rule == "8a" );
+	TEST_CHECK( std::regex_match( so.text, std::regex( "([0-9]{7}-){8}[0-9]{7}" ) ) && so.group_lengths == std::vector<size_t>( 9, 7 ) );
 	TEST_CHECK( so.license.product_key_channel == "Retail" && so.license.license_status == "1" );
-	auto files = pg_text_fixture3();
-	TextIdentityGen t = ProfileGen->gen_text_identity( { files, ProfileGenerator::parse_usb_serial_table( { files[ 2 ].data } ) } );
-	const IdentityEntry* ii = pg_find( t.identity, "win_installation_id", wi.text );
-	TEST_ASSERT( ii != nullptr );
-	TEST_CHECK( ii->rule == "8a" && std::regex_match( ii->synthetic, std::regex( "([0-9]{6}-){8}[0-9]{6}" ) ) );
-	TEST_ASSERT( t.installation_ids.size() == 2 );
-	TEST_CHECK( t.installation_ids[ 0 ].license.product_key_channel == "Retail" && t.installation_ids[ 0 ].license.name == "Windows(R), Professional edition" );
-	const IdentityEntry* sus = pg_find( t.identity, "sus_client_id", "{1234abcd-5678-4ef0-9abc-def012345678}" );
-	TEST_ASSERT( sus != nullptr );
-	TEST_CHECK( sus->synthetic.front() == '{' && sus->synthetic[ 15 ] == '4' && sus->synthetic != sus->original && std::none_of( sus->synthetic.begin(), sus->synthetic.end(), []( char c ) { return c >= 'A' && c <= 'F'; } ) );
-	const IdentityEntry* val = pg_find( t.identity, "sus_client_id_validation", "06 02 00 00 1A 2B 3C 4D" );
-	TEST_ASSERT( val != nullptr );
-	TEST_CHECK( std::regex_match( val->synthetic, std::regex( "([0-9A-F]{2} ){7}[0-9A-F]{2}" ) ) && val->synthetic != val->original );
-	TEST_CHECK( pg_find( t.identity, "telemetry_id", "f0e1d2c3-b4a5-4968-8776-655443322110" ) != nullptr );
-	const IdentityEntry* ds = pg_find( t.identity, "disk_serial", "S5GXNF0R123456K" );
-	TEST_ASSERT( ds != nullptr );
-	TEST_CHECK( std::regex_match( ds->synthetic, std::regex( "[A-Z][0-9][A-Z]{4}[0-9][A-Z][0-9]{6}[A-Z]" ) ) );
-	const IdentityEntry* usb = pg_find( t.identity, "usb_serial", "4142433132333435" );
-	TEST_ASSERT( usb != nullptr );
-	TEST_CHECK( !pg_find( t.identity, "hid_serial", "4142433132333435" ) );
-	bool in_hid = false;
-	for ( const FieldMapEntry& f : t.fields ) in_hid |= f.id == usb->id && f.area == "hid.txt";
-	TEST_CHECK_( in_hid, "the HID serial = the USB serial: one identity, occurrences in hid.txt too" );
-	TEST_CHECK( pg_find( t.identity, "gpu_guid", "{a1a2a3a4-b4a5-4968-8776-655443322110}" ) != nullptr && pg_find( t.identity, "gpu_unique", "GPU12345XY" ) != nullptr );
-	const IdentityEntry* bt = pg_find( t.identity, "bt_device", "70:1A:B8:11:22:33" );
-	TEST_ASSERT( bt != nullptr );
-	TEST_CHECK( bt->synthetic.substr( 0, 9 ) == "70:1A:B8:" && bt->synthetic != bt->original );
-	TEST_CHECK_( !pg_find( t.identity, "bt_device", "3C:A9:F4:10:20:34" ), "the local radio address is its adapter MAC identity (Bluetooth PAN = Wi-Fi + 4)" );
-	const IdentityEntry* pan = pg_find( t.identity, "mac", "3C:A9:F4:10:20:34" );
-	TEST_ASSERT( pan != nullptr );
-	bool in_bt = false;
-	for ( const FieldMapEntry& f : t.fields ) in_bt |= f.id == pan->id && f.area == "bluetooth.txt";
-	TEST_CHECK( in_bt );
-	TEST_CHECK( pg_find( t.identity, "audio_endpoint", "{A1B2C3D4-E5F6-4789-8ABC-DEF012345678}" ) != nullptr );
-	TEST_CHECK( !pg_find( t.identity, "gpu_unique", "Fixture GPU" ) && !pg_find( t.identity, "bt_device", "Fixture Headset" ) );	// names exact
+	WinInstallationId w63;	// fwid 1.4 prints the 63 digits without separators: 9 groups of 7
+	w63.text = k_pg_iid0;
+	w63.label = "iid63";
+	WinInstallationId s63 = ProfileGen->gen_win_installation_id( ctx, w63 );
+	TEST_CHECK( std::regex_match( s63.text, std::regex( "[0-9]{63}" ) ) && std::string( s63.text ) != w63.text && s63.group_lengths == std::vector<size_t>( 9, 7 ) );
+	// every group of every synthetic installation ID passes its check digit (d0 + 2 d1 + d2 + 2 d3 + d4 + 2 d5) mod 7 (user decision
+	// 2026-10-17); 200 fresh ones from the Randomizer, group by group
+	for ( int n = 0; n < 200; n++ )
+	{
+		const std::string iid = Randomize->gen_installation_id_like( k_pg_iid1 );
+		TEST_ASSERT( iid.size() == 63 );
+		for ( size_t g = 0; g < 63; g += 7 )
+		{
+			unsigned sum = 0;
+			for ( size_t i = 0; i < 6; i++ ) sum += unsigned( iid[ g + i ] - '0' ) * ( i & 1 ? 2 : 1 );
+			TEST_CHECK_( iid[ g + 6 ] == char( '0' + sum % 7 ), "IID %d group %zu: check digit", n, g / 7 );
+		}
+		TEST_CHECK( ProfileGenerator::check_installation_id( iid.c_str() ) );
+	}
+	TEST_CHECK( ProfileGenerator::check_installation_id( so.text ) && ProfileGenerator::check_installation_id( s63.text ) );
+	TEST_CHECK( !ProfileGenerator::check_installation_id( k_pg_iid0 ) && !ProfileGenerator::check_installation_id( "12345" ) );	// the fixture's made-up ID fails
+	TEST_CHECK( ProfileGen->gen_win_installation_id( ctx, w63 ).text == s63.text );	// the same key: the value already taken (the identity map)
+	for ( bool dump : { false, true } )
+	{
+		auto files = pg_text_fixture3( dump );
+		TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files, ProfileGenerator::parse_usb_serial_table( { files[ 2 ].data } ), {}, {}, pg_smbios_strings() } );
+		// 8a: one installation ID per SoftwareLicensingProduct row, with that row's exact license data
+		TEST_ASSERT( t.installation_ids.size() == 4 );
+		TEST_CHECK( t.installation_ids[ 0 ].license.product_key_channel == "Retail" && t.installation_ids[ 0 ].license.name == "Windows(R), Professional edition" &&
+					t.installation_ids[ 0 ].license.license_status == "1" && t.installation_ids[ 0 ].license.sku_id == "f0f0f0f0-aaaa-4bbb-8ccc-dddddddddddd" );
+		TEST_CHECK( t.installation_ids[ 2 ].license.product_key_channel == "Volume:MAK" && t.installation_ids[ 2 ].license.description == "Windows(R) Operating System, VOLUME_MAK channel" );
+		TEST_CHECK( t.installation_ids[ 1 ].group_lengths == std::vector<size_t>( 9, 7 ) && t.installation_ids[ 1 ].check_digits_modelled && ProfileGenerator::check_installation_id( t.installation_ids[ 1 ].text ) );
+		for ( const char* iid : { k_pg_iid0, k_pg_iid1 } )
+		{
+			const IdentityEntry* ii = pg_find( t.identity, "win_installation_id", iid );
+			TEST_ASSERT( ii != nullptr );
+			TEST_CHECK( ii->rule == "8a" && std::regex_match( ii->synthetic, std::regex( "[0-9]{63}" ) ) && ii->synthetic != ii->original && ii->occurrences == 1 );
+		}
+		for ( const TextFile& f : files )
+			if ( f.name == "license.txt" ) TEST_CHECK( ProfileGen->parse_license_rows( f ).size() == 2 );
+		// 4c: SusClientId (own style), the SQM MachineId (one identity with os_ids.txt)
+		const IdentityEntry* sus = pg_find( t.identity, "sus_client_id", "1234abcd-5678-4ef0-9abc-def012345678" );
+		TEST_ASSERT( sus != nullptr );
+		TEST_CHECK( sus->synthetic.size() == 36 && sus->synthetic[ 14 ] == '4' && sus->synthetic != sus->original && std::none_of( sus->synthetic.begin(), sus->synthetic.end(), []( char c ) { return c >= 'A' && c <= 'F'; } ) );
+		const IdentityEntry* sqm = pg_find( t.identity, "sqm_machine_id", "{ABCDEF01-2345-4678-9ABC-DEF012345678}" );
+		TEST_ASSERT( sqm != nullptr );
+		TEST_CHECK( sqm->occurrences == 2 );
+		// 8c: the layout kept, every component its synthetic identity; the dump form gives bytes + ASCII rows per dump line
+		const Bytes real = pg_sus_blob();
+		const IdentityEntry* val = nullptr;
+		for ( const IdentityEntry& r : t.identity ) if ( r.kind == "sus_client_id_validation" ) val = &r;
+		TEST_ASSERT( val != nullptr );
+		TEST_ASSERT( val->synthetic.size() == real.size() * 2 );
+		Bytes sb;
+		for ( size_t i = 0; i < val->synthetic.size(); i += 2 ) sb.push_back( uint8_t( std::stoul( val->synthetic.substr( i, 2 ), nullptr, 16 ) ) );
+		SusValidationLayout ls = ProfileGenerator::parse_sus_client_id_validation( sb ), lr = ProfileGenerator::parse_sus_client_id_validation( real );
+		TEST_ASSERT( ls.ok && lr.ok );
+		const IdentityEntry* ds = pg_find( t.identity, "disk_serial", "S5GXNF0R123456K" );
+		const IdentityEntry* wired = pg_find( t.identity, "mac", "A0:B1:C2:01:02:03" );
+		TEST_ASSERT( ds != nullptr && wired != nullptr );
+		std::string wm;
+		for ( int i = 0; i < 6; i++ ) { char h[ 4 ]; snprintf( h, sizeof h, i ? ":%02X" : "%02X", ls.mac[ i ] ); wm += h; }
+		TEST_CHECK_( ls.disk_serial == ds->synthetic && wm == wired->synthetic && ls.board_serial == "XY34ab-567_Q" && ls.other_serial == "Default string",
+			"SusClientIdValidation: string 1 = the synthetic disk serial, MAC = the synthetic NIC MAC, string 2 = the synthetic board serial, string 3 filler" );
+		TEST_CHECK( std::equal( sb.begin(), sb.begin() + 6, real.begin() ) );
+		TEST_CHECK( val->occurrences == ( dump ? 2 * ( ( real.size() + 15 ) / 16 ) : 1u ) );
+		// 8d: disk serials without padding; the placeholder exact; the USB flash drive = the start of its USB serial's synthetic value
+		TEST_CHECK( std::regex_match( ds->synthetic, std::regex( "[A-Z][0-9][A-Z]{4}[0-9][A-Z][0-9]{6}[A-Z]" ) ) );
+		TEST_CHECK( !pg_find( t.identity, "disk_serial", "00000000000000000000" ) && t.filler_serials >= 2 );
+		const IdentityEntry* flash = pg_find( t.identity, "disk_serial", "0401A1B2C3D4E5F60718" );
+		const IdentityEntry* fusb = pg_find( t.identity, "usb_serial", k_pg_flash_usb );
+		TEST_ASSERT( flash != nullptr && fusb != nullptr );
+		std::string want = fusb->synthetic.substr( 0, 20 );
+		for ( char& c : want ) c = char( toupper( uint8_t( c ) ) );
+		TEST_CHECK_( flash->synthetic == want, "the flash drive's disk serial = the start of its USB serial's synthetic value (case of the disk serial)" );
+		bool rel = false;
+		for ( const FieldMapEntry& f : t.fields ) rel |= f.rule == "8dr" && f.id == flash->id;
+		TEST_CHECK( rel );
+		// 4d: the HID serial = the USB serial (one identity); a placeholder exact; a real HID serial whose USB serial is a
+		// placeholder: synthetic; no serial: nothing
+		const IdentityEntry* usb = pg_find( t.identity, "usb_serial", "4142433132333435" );
+		TEST_ASSERT( usb != nullptr );
+		TEST_CHECK( !pg_find( t.identity, "hid_serial", "4142433132333435" ) && !pg_find( t.identity, "hid_serial", "000000000000" ) && !pg_find( t.identity, "usb_serial", "000000000000" ) );
+		bool in_hid = false;
+		for ( const FieldMapEntry& f : t.fields ) in_hid |= f.id == usb->id && f.area == "hid.txt";
+		TEST_CHECK_( in_hid, "the HID serial = the USB serial: one identity, occurrences in hid.txt too" );
+		const IdentityEntry* hs = pg_find( t.identity, "hid_serial", "987654321098" );
+		TEST_ASSERT( hs != nullptr );
+		TEST_CHECK( std::regex_match( hs->synthetic, std::regex( "[0-9]{12}" ) ) && hs->synthetic != hs->original );
+		// 8e: UserModeDriverGUID exact (a driver-package constant), the DriverState GUID rule 4c, another value rule-2 classes
+		TEST_CHECK( !pg_find( t.identity, "gpu_guid", "{a1a2a3a4-b4a5-4968-8776-655443322110}" ) );
+		TEST_CHECK( pg_find( t.identity, "gpu_guid", "{b1b2b3b4-c4c5-4d6e-8f70-123456789abc}" ) != nullptr && pg_find( t.identity, "gpu_unique", "GPU12345XY" ) != nullptr );
+		// 3: the paired device (subkey names) OUI kept; the local radio ("ServicesFor<address>") = its adapter MAC identity
+		const IdentityEntry* bt = pg_find( t.identity, "bt_device", "70:1A:B8:11:22:33" );
+		TEST_ASSERT( bt != nullptr );
+		TEST_CHECK( bt->synthetic.substr( 0, 9 ) == "70:1A:B8:" && bt->synthetic != bt->original && bt->occurrences == 2 );
+		TEST_CHECK_( !pg_find( t.identity, "bt_device", "3C:A9:F4:10:20:34" ), "the local radio address is its adapter MAC identity (Bluetooth PAN = Wi-Fi + 4)" );
+		const IdentityEntry* pan = pg_find( t.identity, "mac", "3C:A9:F4:10:20:34" );
+		TEST_ASSERT( pan != nullptr );
+		bool in_bt = false;
+		for ( const FieldMapEntry& f : t.fields ) in_bt |= f.id == pan->id && f.area == "bluetooth.txt" && f.length == 12;
+		TEST_CHECK_( in_bt, "\"ServicesFor<address>\": the radio address after the prefix is an occurrence" );
+		// 4c: the audio endpoint, the Wi-Fi interface (= the network interface GUID), the WSD port; the workgroup exact
+		TEST_CHECK( pg_find( t.identity, "audio_endpoint", "{A1B2C3D4-E5F6-4789-8ABC-DEF012345678}" ) != nullptr );
+		TEST_CHECK( !pg_find( t.identity, "wlan_interface_guid", "{1E1E1E1E-1111-4222-8333-444455556666}" ) );
+		const IdentityEntry* wifi = pg_find( t.identity, "interface_guid", "{1E1E1E1E-1111-4222-8333-444455556666}" );
+		TEST_ASSERT( wifi != nullptr );
+		bool in_wifi = false;
+		for ( const FieldMapEntry& f : t.fields ) in_wifi |= f.id == wifi->id && f.area == "wifi.txt";
+		TEST_CHECK( in_wifi );
+		const IdentityEntry* wsd = pg_find( t.identity, "printer_wsd_port", "{C1C2C3C4-D4D5-4E6F-8A7B-0123456789AB}" );
+		TEST_ASSERT( wsd != nullptr );
+		TEST_CHECK( wsd->occurrences == 1 && wsd->synthetic != wsd->original );
+		for ( const IdentityEntry& r : t.identity ) TEST_CHECK( r.original != "FIXGROUP" && r.original != "Fixture GPU" && r.original != "Fixture Headset" );	// exact
+		// volatile.tsv: fwid's [volatile] mark + the DiagTrack counters / timestamps, not the TimeStampInterval setting
+		std::set<std::string> vn;
+		for ( const VolatileItem& v : t.volatiles ) vn.insert( v.name );
+		TEST_CHECK_( vn == std::set<std::string>( { "GetTickCount64", "LaunchCount", "LastPersistedEventTime" } ), "volatile: %zu items", vn.size() );
+	}
+	// another SusClientIdValidation layout stops the run
+	SusValidationInput bad { { 0x06, 0x01, 0x00, 0x01, 0x00, 0x00, 0x06, 1, 2, 3, 4, 5, 6 } };
+	bool threw = false;
+	try { ProfileGen->gen_sus_client_id_validation( ctx, bad ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "needs a field decision" ) != std::string::npos; }
+	TEST_CHECK( threw );
+	TEST_CHECK( ProfileGenerator::parse_sus_client_id_validation( pg_sus_blob() ).disk_serial == "S5GXNF0R123456K" );
+}
+
+// rule 8d on the raw STORAGE_DEVICE_DESCRIPTORs: the serial string (without padding) = its identity, every other byte exact;
+// a placeholder and a missing serial stay; the serial elsewhere in the descriptor stops the run
+static Bytes pg_descriptor( const char* serial, bool serial_twice = false )
+{
+	Bytes b( 160, 0 );
+	auto put32 = [ & ]( size_t o, uint32_t v ) { for ( int i = 0; i < 4; i++ ) b[ o + i ] = uint8_t( v >> ( 8 * i ) ); };
+	put32( 0, 40 );
+	put32( 4, 160 );
+	put32( 12, 40 );	// vendor
+	memcpy( &b[ 40 ], "FIXDISK", 7 );
+	put32( 16, 49 );	// product
+	memcpy( &b[ 49 ], "FX SSD 1TB", 10 );
+	if ( serial )
+	{
+		put32( 24, 103 );
+		memcpy( &b[ 103 ], serial, strlen( serial ) );
+	}
+	put32( 28, 17 );	// BusTypeNvme
+	if ( serial_twice ) memcpy( &b[ 140 ], "S5GXNF0R123456K", 15 );
+	return b;
+}
+static void pg_disk_descriptors( void )
+{
+	BuildContext ctx;
+	ctx = pg_fresh( Environment::bare_host );
+	std::vector<IdentityEntry> ids = { { "K01", "disk_serial", "8d", "disks.txt:4", 1, "S5GXNF0R123456K", "Q7HZRA3T987654M" } };
+	DiskInput in { { { "disk_0_descriptor.bin", pg_descriptor( "  S5GXNF0R123456K    " ) }, { "disk_1_descriptor.bin", pg_descriptor( "00000000000000000000" ) },
+		{ "disk_2_descriptor.bin", pg_descriptor( nullptr ) } }, ids };
+	DiskGen g = ProfileGen->gen_disk_descriptors( ctx, in );
+	TEST_ASSERT( g.synthetic.size() == 3 && g.fields.size() == 1 );
+	TEST_CHECK( g.serials == 1 && g.filler == 1 && g.none == 1 );
+	const Bytes &a = in.descriptors[ 0 ].bytes, &s = g.synthetic[ 0 ].bytes;
+	TEST_CHECK( g.fields[ 0 ].area == "disk\\disk_0_descriptor.bin" && g.fields[ 0 ].offset == 105 && g.fields[ 0 ].length == 15 && g.fields[ 0 ].rule == "8d" );
+	TEST_CHECK( std::string( s.begin() + 105, s.begin() + 120 ) == "Q7HZRA3T987654M" );
+	auto diffs = ProfileGenerator::check_diff_ranges( a, s );
+	TEST_CHECK( diffs.size() >= 1 && diffs.front().first >= 105 && diffs.back().last <= 120 );
+	TEST_CHECK( g.synthetic[ 1 ].bytes == in.descriptors[ 1 ].bytes && g.synthetic[ 2 ].bytes == in.descriptors[ 2 ].bytes );
+	bool threw = false;
+	try { ProfileGen->gen_disk_descriptors( ctx, { { { "disk_3_descriptor.bin", pg_descriptor( "S5GXNF0R123456K", true ) } }, ids } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "needs a field decision" ) != std::string::npos; }
+	TEST_CHECK( threw );
+	threw = false;
+	try { ProfileGen->gen_disk_descriptors( ctx, { { { "disk_4_descriptor.bin", pg_descriptor( "UNKNOWN99" ) } }, ids } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "needs a field decision" ) != std::string::npos; }
+	TEST_CHECK( threw );
+}
+
+// tool artifacts (BuildConfig "exclude"): the excluded units (a registry key + its subkeys + the parent's subkey line, a
+// device block, a printer block, a list item, a numbered list line), an absence record not excluded, the anchors inside
+// dropped, the run-metadata lines excluded with them, a value outside stopping the run; the BuildConfig round trip
+static std::vector<TextFile> pg_tool_fixture( bool leak_outside )
+{
+	auto tf = []( const char* name, const std::string& s ) { return TextFile { name, Bytes( s.begin(), s.end() ) }; };
+	const std::string swd = "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\PRINTENUM\n  depth 1; 0 value(s), 1 subkey(s)\n  subkey \"{d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\"\n\n"
+							"## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\PRINTENUM\\{d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\n"
+							"  value \"ContainerID\"  REG_SZ (1)  78 bytes: \"{e1e2e3e4-f5f6-4a7b-8c9d-0e1f2a3b4c5d}\"\n"
+							"  value \"FriendlyName\"  REG_SZ (1)  34 bytes: \"FixTool Printer\"\n\n"
+							"## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\PRINTENUM\\{d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\\Properties\n  depth 3; 1 value(s)\n\n";
+	auto files = pg_text_fixture2( swd );
+	std::string ci = "[api] SetupDiGetDeviceInstanceIdW -> \"SWD\\PRINTENUM\\{D1D2D3D4-E5E6-4F7A-8B9C-0D1E2F3A4B5C}\"\n";
+	files[ 0 ].data.insert( files[ 0 ].data.end(), ci.begin(), ci.end() );
+	std::string pci = "=== device 7\n  instance ID: \"SWD\\x5CPRINTENUM\\x5C{D1D2D3D4-E5E6-4F7A-8B9C-0D1E2F3A4B5C}\"\n  SPDRP_BASE_CONTAINERID             REG_SZ \"{E1E2E3E4-F5F6-4A7B-8C9D-0E1F2A3B4C5D}\"\n"
+					  "  SPDRP_FRIENDLYNAME                 REG_SZ \"FixTool Printer\"\n\n=== device 8\n  instance ID: \"PCI\\x5CVEN_1234\"\n";
+	files[ 3 ].data.insert( files[ 3 ].data.end(), pci.begin(), pci.end() );
+	files.push_back( tf( "printers.txt", "=== printer 0\nname \"FixTool Printer\"\nport \"FixTool Printer\"\ndriver \"FixTool v4 Printer Driver\"\n\n=== printer 1\nname \"Fax\"\n" ) );
+	files.push_back( tf( "services_vm.txt", "# the services matching vmloader, ...\n## all service key names (3)\n  \"Beep\"\n  \"KFixDbg\"\n  \"Tcpip\"\n" ) );
+	files.push_back( tf( "loaded_drivers.txt", "3 module(s)\n   0  0000000000000000  base \"ntoskrnl.exe\"\n   1  0000000000000000  base \"FixDbg.sys\" (len 10)\n" ) );
+	files.push_back( tf( "driver_files.txt", "## \"C:\\x5Cvmloader.sys\"  (old install location)\nexists: no (GetLastError 2 = not present)\n" ) );
+	if ( leak_outside ) files.push_back( tf( "os_ids.txt", "## note\nprinter instance {d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c}\n" ) );
+	return files;
+}
+static void pg_tool_exclusions( void )
+{
+	BuildContext ctx;
+	const std::vector<ToolExclusion> items = { { "FixTool Printer", { "FixTool Printer", "FixTool v4 Printer Driver" }, "fixture printer" }, { "FixDbg", { "FixDbg" }, "fixture driver" },
+		{ "VmLoader", { "vmloader" }, "fixture absence" } };
+	auto files = pg_tool_fixture( false );
+	ExclusionScan ex = ProfileGenerator::parse_tool_exclusions( files, items );
+	std::set<std::string> got;
+	for ( const ExclusionRange& r : ex.ranges ) got.insert( r.item + "|" + r.file + "|" + r.unit + "|" + std::to_string( r.first_line ) + "-" + std::to_string( r.last_line ) );
+	const std::set<std::string> want = { "FixTool Printer|enum_registry.txt|registry key|8-10", "FixTool Printer|enum_registry.txt|registry subkey|12-13",
+		"FixTool Printer|enum_registry.txt|parent subkey line|6-6", "FixTool Printer|pci_devices.txt|block|3-6", "FixTool Printer|printers.txt|block|1-4",
+		"FixDbg|services_vm.txt|line|4-4", "FixDbg|loaded_drivers.txt|line|3-3" };
+	TEST_CHECK_( got == want, "%zu excluded ranges", got.size() );
+	for ( const std::string& g : got ) TEST_MSG( "range %s", g.c_str() );
+	TEST_CHECK( ex.absence_records == 1 && ex.excluded( "printers.txt", 3 ) && !ex.excluded( "printers.txt", 6 ) );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files, {}, {}, ex } );
+	TEST_CHECK( !pg_find( t.identity, "swd_guid", "{D1D2D3D4-E5E6-4F7A-8B9C-0D1E2F3A4B5C}" ) && !pg_find( t.identity, "container_id", "{E1E2E3E4-F5F6-4A7B-8C9D-0E1F2A3B4C5D}" ) );
+	TEST_CHECK( t.excluded_anchors >= 2 && t.extra_exclusions.size() == 1 && t.extra_exclusions[ 0 ].file == "capture_info.txt" );
+	TEST_CHECK( std::find( t.needles.begin(), t.needles.end(), std::string( "d1d2d3d4-e5e6-4f7a-8b9c-0d1e2f3a4b5c" ) ) != t.needles.end() );	// leak guard keeps it
+	for ( const FieldMapEntry& f : t.fields ) TEST_CHECK( !( f.area == "pci_devices.txt" && f.line >= 3 && f.line <= 6 ) );
+	bool threw = false;
+	auto leaky = pg_tool_fixture( true );
+	ctx = pg_fresh( Environment::bare_host );
+	try { ProfileGen->gen_text_identity( ctx, { leaky, {}, {}, ProfileGenerator::parse_tool_exclusions( leaky, items ) } ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "also occurs outside its excluded ranges" ) != std::string::npos; }
+	TEST_CHECK( threw );
+	// the BuildConfig carries the list (reviewable, reproducible); the defaults name the four decided items
+	BuildConfig c = pg_cfg( Environment::vmware_guest );
+	TEST_CHECK( c.exclusions.size() == 5 && c.exclusions[ 0 ].name == "RustDesk Printer" && c.exclusions[ 1 ].name == "RustDesk" && c.exclusions[ 4 ].patterns == std::vector<std::string>( { "vmloader" } ) );
+	c.exclusions.push_back( items[ 0 ] );
+	BuildConfig c2 = BuildConfig::load( c.save() );
+	TEST_CHECK( c2 == c && c2.exclusions.size() == 6 && c2.exclusions[ 5 ].patterns.size() == 2 );
+	TEST_CHECK( !c.firmware_ref_parent.empty() && c2.firmware_ref_manifest_sha256 == c.firmware_ref_manifest_sha256 );
+	threw = false;
+	try { BuildConfig::load( c.save() + "exclude = no pattern list\n" ); } catch ( const std::exception& ) { threw = true; }
+	TEST_CHECK( threw );
+	// gen_build: exclusions.tsv / volatile.tsv in both profiles, identical
+	BuildConfig cb = pg_cfg( Environment::bare_host );
+	cb.exclusions = items;
+	CaptureInputs cap = pg_capture( false, files );
+	ctx = pg_fresh( Environment::bare_host );
+	ctx = ProfileGen->new_context( cb );
+	GenResult r = ProfileGen->gen_build( ctx, cap );
+	TEST_ASSERT_( r.ok, "build: %s", r.error.c_str() );
+	TEST_CHECK( r.synthetic.at( "exclusions.tsv" ) == r.original.at( "exclusions.tsv" ) && r.synthetic.at( "volatile.tsv" ) == r.original.at( "volatile.tsv" ) );
+	const Bytes& et = r.synthetic.at( "exclusions.tsv" );
+	TEST_CHECK( std::string( et.begin(), et.end() ).find( "FixTool Printer\tprinters.txt\t1\t4\tblock" ) != std::string::npos );
 }
 
 // the CHID check: unchanged fields pass; a changed CHID input (type 1 manufacturer) is counted
 static void pg_chid_check( void )
 {
+	BuildContext ctx;
 	Bytes raw = pg_fixture( false );
-	Bytes syn = pg_gen( Environment::bare_host, 0xD6 )->gen_smbios( { raw } ).synthetic;
+	ctx = pg_fresh( Environment::bare_host );
+	Bytes syn = ProfileGen->gen_smbios( ctx, { raw } ).synthetic;
 	ProfileGenerator::ChidCheck c = ProfileGenerator::check_chid_fields( raw, syn );
 	TEST_CHECK( c.checked >= 6 && c.changed == 0 );
 	Bytes bad = syn;
@@ -992,19 +1429,22 @@ static void pg_chid_check( void )
 	TEST_CHECK( ProfileGenerator::check_chid_fields( raw, bad ).changed == 1 );
 }
 
-// a new identity: another seed gives a different value for EVERY mapped field, while every consistency relation holds
+// a new identity: fresh RDRAND values give a different value for EVERY mapped field, while every consistency relation holds;
+// the repository identity map (no install-history offset) applied again reproduces the identity byte for byte
 static void pg_new_identity( void )
 {
+	BuildContext ctx;
 	CaptureInputs in = pg_capture( false, pg_text_fixture3() );
 	SmbiosTable t = parse_smbios( in.rsmb );
 	const uint8_t wired[ 6 ] = { 0xA0, 0xB1, 0xC2, 0x01, 0x02, 0x03 };
 	memcpy( &in.rsmb[ t.structures[ 0 ].offset + 8 + 10 ], wired, 6 );
 	in.edid = { { "edid_0.bin", pg_edid( 0x2701, 0x12345678, "FIXSER12345", false ) }, { "edid_1.bin", pg_edid( 0x2701, 0x12345678, "FIXSER12345", false ) } };
-	auto A = std::make_unique<ProfileGenerator>( pg_cfg( Environment::bare_host, 0xE1 ) );
-	auto ProfileGen = std::make_unique<ProfileGenerator>( pg_cfg( Environment::bare_host, 0xE1 ) );
-	Seed s = ProfileGen->gen_new_seed();
-	TEST_CHECK( s.hex.size() == 64 && ProfileGen->config().seed == s.hex && s.hex != A->config().seed );
-	GenResult ra = A->gen_build( in ), rb = ProfileGen->gen_build( in );
+	ctx = pg_fresh( Environment::bare_host );
+	GenResult ra = ProfileGen->gen_build( ctx, in );	// generation: identity A
+	ctx = pg_fresh( Environment::bare_host );
+	TEST_CHECK( ProfileGen->gen_new_identity( ctx ).entries.empty() && !ctx.applying );
+	GenResult rb = ProfileGen->gen_build( ctx, in );	// a new identity: B
+	TEST_CHECK( ra.generated && rb.generated && ra.identity_map.has_install_shift && rb.identity_map.has_install_shift );
 	TEST_ASSERT_( ra.ok && rb.ok, "builds: %s / %s", ra.error.c_str(), rb.error.c_str() );
 	TEST_ASSERT( ra.identity.identity.size() == rb.identity.identity.size() );
 	for ( size_t i = 0; i < ra.identity.identity.size(); i++ )
@@ -1039,19 +1479,28 @@ static void pg_new_identity( void )
 		const IdentityEntry* ms = pg_find( r->identity.identity, "machine_sid", "S-1-5-21-1111111111-222222222-3333333333" );
 		const IdentityEntry* us = pg_find( r->identity.identity, "user_sid", "S-1-5-21-1111111111-222222222-3333333333-1001" );
 		TEST_CHECK( us->synthetic == ms->synthetic + "-1001" );
-		const IdentityEntry* d = pg_find( r->identity.identity, "install_date", "1654698434" );
-		const IdentityEntry* it = pg_find( r->identity.identity, "install_time", "132991720341234567" );
+		const IdentityEntry* d = pg_find( r->identity.identity, "install_date", "1688252866" );
+		const IdentityEntry* it = pg_find( r->identity.identity, "install_time", "133327264661234567" );
 		TEST_CHECK( std::stoull( it->synthetic ) / 10000000ull - 11644473600ull == std::stoull( d->synthetic ) );
 		TEST_CHECK( r->synthetic.at( "edid\\edid_0.bin" ) == r->synthetic.at( "edid\\edid_1.bin" ) );	// the same monitor on two ports
 	}
-	GenResult ra2 = std::make_unique<ProfileGenerator>( pg_cfg( Environment::bare_host, 0xE1 ) )->gen_build( in );
-	TEST_CHECK( ra2.ok && ra2.synthetic == ra.synthetic );	// the same seed again: byte-identical
+	// identity A again from its repository map (no offset inside): byte-identical, nothing drawn
+	const Bytes& am = ra.synthetic.at( "identity_map.tsv" );
+	const IdentityMap amap = ProfileGenerator::parse_identity_map( std::string( am.begin(), am.end() ) );
+	TEST_CHECK( !amap.has_install_shift && std::string( am.begin(), am.end() ).find( "install_shift" ) == std::string::npos );
+	const Bytes& om = ra.original.at( "identity_map.tsv" );
+	TEST_CHECK( ProfileGenerator::parse_identity_map( std::string( om.begin(), om.end() ) ).install_shift == ra.identity_map.install_shift );
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, amap, {} );
+	GenResult ra2 = ProfileGen->gen_build( ctx, in );
+	TEST_CHECK( ra2.ok && !ra2.generated && ra2.synthetic == ra.synthetic && ra2.original == ra.original );
 }
 
 // rule 4c on software-device instance IDs: every GUID inside an Enum\SWD instance (braced or not) is synthetic, one mapping
 // everywhere (the MMDEVAPI endpoint GUID = the audio.txt endpoint); the all-zero GUID and the PnP hashes stay exact
 static void pg_swd_guids( void )
 {
+	BuildContext ctx;
 	std::string swd = "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\MMDEVAPI\\{0.0.0.00000000}.{a1b2c3d4-e5f6-4789-8abc-def012345678}\n"
 					  "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\DRIVERENUM\\{12ab34cd-56ef-4a1b-9c2d-3e4f5a6b7c8d}#Fixture_component_123&1&2c3d4e5f&0\n"
 					  "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\PRINTENUM\\{ABCDEF12-3456-4789-ABCD-EF0123456789}\n"
@@ -1059,7 +1508,8 @@ static void pg_swd_guids( void )
 					  "## HKLM\\SYSTEM\\CurrentControlSet\\Enum\\SWD\\NULLENUM\\{00000000-0000-0000-0000-000000000000}\n";
 	auto files = pg_text_fixture2( swd );
 	files.push_back( { "audio.txt", [] { std::string a = "endpoint [IDENTIFIER - keep local]: \"{0.0.0.00000000}.{a1b2c3d4-e5f6-4789-8abc-def012345678}\"\n"; return Bytes( a.begin(), a.end() ); }() } );
-	TextIdentityGen t = pg_gen( Environment::bare_host, 0xD7 )->gen_text_identity( { files } );
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files } );
 	size_t swd_n = std::count_if( t.identity.begin(), t.identity.end(), []( const IdentityEntry& r ) { return r.kind == "swd_guid"; } );
 	TEST_CHECK_( swd_n == 4, "4 SWD GUIDs (the all-zero one excluded), got %zu", swd_n );
 	const IdentityEntry* ep = pg_find( t.identity, "swd_guid", "{A1B2C3D4-E5F6-4789-8ABC-DEF012345678}" );
@@ -1078,10 +1528,318 @@ static void pg_swd_guids( void )
 	for ( const IdentityEntry& r : t.identity ) TEST_CHECK( _stricmp( r.original.c_str(), "2c3d4e5f" ) != 0 && _stricmp( r.original.c_str(), "3e2f1a0b" ) != 0 );	// PnP hashes exact
 }
 
+// rule 7b (user decision 2026-10-16: shift all together): ONE offset for InstallDate / InstallTime and every install-history
+// timestamp (device first install / install / last arrival with their ISO forms, SQM first session, DiagTrack, Bluetooth);
+// spacing and ordering exactly kept (the device installed 60 s before InstallDate still is), every event inside the build
+// release .. capture window, the offset at least one day earlier; driver dates and registry last-write times untouched
+static void pg_install_shift( void )
+{
+	BuildContext ctx;
+	auto files = pg_text_fixture3();
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	const IdentityMap first_map = ctx.identity_map;
+	TEST_CHECK( first_map.has_install_shift && first_map.entries.count( "identity/install" ) );
+	struct ev { const char* kind; const char* real; bool iso; };
+	const ev evs[] = { { "install_time", "133327264661234567", false }, { "device_install_time", "133327264064444444", false }, { "device_install_time", "133327264965555555", false },
+		{ "device_arrival_time", "134116986006666666", false }, { "sqm_first_session", "133327300661357913", false }, { "diagtrack_time", "134116989002468024", false },
+		{ "bt_event_time", "133353184661122334", false }, { "event_iso", "2023-07-01T23:07:46Z", true }, { "event_iso", "2023-07-01T23:06:46Z", true },
+		{ "event_iso", "2023-07-01T23:08:16Z", true }, { "event_iso", "2025-12-31T23:50:00Z", true } };
+	const IdentityEntry* id = pg_find( t.identity, "install_date", "1688252866" );
+	TEST_ASSERT( id != nullptr );
+	const long long shift = std::stoll( id->synthetic ) - 1688252866LL;
+	TEST_CHECK_( shift <= -86400, "the offset is at least one day earlier" );
+	auto iso_unix = []( const std::string& s ) {
+		std::tm tm {};
+		sscanf( s.c_str(), "%d-%d-%dT%d:%d:%dZ", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min, &tm.tm_sec );
+		tm.tm_year -= 1900;
+		tm.tm_mon -= 1;
+		return (long long)_mkgmtime( &tm );
+	};
+	for ( const ev& e : evs )
+	{
+		const IdentityEntry* r = pg_find( t.identity, e.kind, e.real );
+		TEST_ASSERT_( r != nullptr, "%s %s", e.kind, e.real );
+		const long long d = e.iso ? iso_unix( r->synthetic ) - iso_unix( r->original ) : ( std::stoll( r->synthetic ) - std::stoll( r->original ) ) / 10000000LL;
+		TEST_CHECK_( d == shift && ( e.iso || ( std::stoll( r->synthetic ) - std::stoll( r->original ) ) % 10000000LL == 0 ), "%s shifted by the one offset", e.kind );
+	}
+	// every pairwise difference is the original one (the constant offset), the setup-phase order kept
+	const IdentityEntry* first = pg_find( t.identity, "device_install_time", "133327264064444444" );
+	const IdentityEntry* it = pg_find( t.identity, "install_time", "133327264661234567" );
+	TEST_CHECK( std::stoll( it->synthetic ) - std::stoll( first->synthetic ) == 133327264661234567LL - 133327264064444444LL );
+	TEST_CHECK( t.time_shift.shifted == 12 && t.time_shift.exact == 12 && t.time_shift.outside_window == 0 );
+	TEST_CHECK( t.time_shift.before_install_real == 2 && t.time_shift.before_install_synthetic == 2 );	// the device first install (FILETIME + ISO)
+	// not shifted: the driver date, the registry last-write time in the same second as the device's first install
+	TEST_CHECK( !pg_find( t.identity, "device_install_time", "126064512000000000" ) );
+	for ( const FieldMapEntry& f : t.fields )
+		if ( f.area == "enum_registry.txt" ) TEST_CHECK_( f.rule != "7b", "a registry last-write time is no install event (%s %llu)", f.id.c_str(), (unsigned long long)f.line );
+	// the offset: drawn from RDRAND at generation (a new identity, another offset); the same identity map applied again,
+	// the same offset - derived from the map's synthetic InstallDate, the repository copy holds no offset
+	ctx = pg_fresh( Environment::bare_host );
+	TextIdentityGen t2 = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	IdentityMap repo_copy = first_map;
+	repo_copy.has_install_shift = false;
+	repo_copy.install_shift = 0;
+	ctx = pg_fresh( Environment::bare_host );
+	ProfileGen->load_identity_maps( ctx, repo_copy, {} );
+	TextIdentityGen t3 = ProfileGen->gen_text_identity( ctx, { files, {}, {}, {}, pg_smbios_strings() } );
+	TEST_CHECK( ctx.identity_map.install_shift == first_map.install_shift );
+	TEST_CHECK( pg_find( t2.identity, "install_date", "1688252866" )->synthetic != id->synthetic && pg_find( t3.identity, "install_date", "1688252866" )->synthetic == id->synthetic );
+	// gen_install_time on its own: no room (the history spans the whole window) stops the run
+	InstallTime tight;
+	tight.os_build = 19045;
+	tight.capture_utc = "2022-10-25T00:00:00Z";
+	tight.unix_seconds = 1666137600;	// 2022-10-19
+	tight.filetime = ( 1666137600ull + 11644473600ull ) * 10000000ull;
+	tight.latest_event = 1666569600;	// 2022-10-24
+	bool threw = false;
+	try { ProfileGen->gen_install_time( ctx, tight ); } catch ( const std::exception& ) { threw = true; }
+	TEST_CHECK( threw );
+}
+
+// ── threading (plan 1.J.49.a, user decision 2026-10-17 "Per-build context") ──────────────────────────────────────────────
+// acutest's checks are not thread-safe: the worker threads only count / record, the checks run on the main thread.
+
+// the Randomizer under load: 8 threads x k_pg_rounds rounds of EVERY Randomize->gen_ (formats validated, installation-ID
+// check digits valid, no exception), and the thread-local result buffers: a value one thread holds is never overwritten by
+// the other threads drawing the same gen_ meanwhile (a barrier makes all threads draw while every thread holds its value)
+static void pg_randomizer_threads( void )
+{
+	TEST_ASSERT_( Randomize->cpu_supports_rand, "RDRAND (CPUID.1:ECX[30]) on the test machine" );
+	constexpr int k_threads = 8, k_rounds = 1500, k_checks = 23;	// k_checks: the results validated per round
+	std::string iid_real;	// 63 digits: 9 groups of 7 (the pattern; its own check digits do not matter)
+	for ( int g = 0; g < 9; g++ ) iid_real += "1234560";
+	struct ThreadResult
+	{
+		size_t calls = 0, bad = 0, exceptions = 0, overwritten = 0;
+		std::string first_bad;		// which gen_ failed first (no value)
+	};
+	std::vector<ThreadResult> res( k_threads );
+	std::barrier sync( k_threads );
+	auto worker = [ & ]( int t ) {
+		ThreadResult& r = res[ t ];
+		const std::regex r_like( "[A-Z]{2}[0-9]{2}[a-z]{2}-[0-9]{3}_[A-Z]" ), r_fill( "X-[01]{2}" ), r_hex8( "[0-9a-f]{8}" ), r_hexcls( "[0-9][A-F][0-9][A-F]" ),
+			r_cn( "DESKTOP-[A-Z0-9]{7}" ), r_mac( "00:11:22:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}" ),
+			r_guid4( R"(\{[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}\})" ),
+			r_guid1( R"([0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[89ab][0-9a-f]{3}-a0b1c2010203)" ),
+			r_mbr( R"(\{[0-9a-f]{8}-0000-0000-0000-100000000000\})" ), r_uuid( "[0-9a-f]{32}" ), r_dec6( "[1-9][0-9]{5}" ),
+			r_sid( "S-1-5-21-[1-9][0-9]{9}-[1-9][0-9]{8}-[1-9][0-9]{9}" ), r_usbhex( "[0-9a-f]{20}" ), r_dec( "[0-9]{1,10}" ), r_usbtxt( "[A-Z]{3}[0-9]{5}" );
+		auto ok = [ & ]( bool good, const char* what ) {
+			r.calls++;
+			if ( !good && !r.bad++ ) r.first_bad = what;
+		};
+		try
+		{
+			for ( int i = 0; i < k_rounds; i++ )
+			{
+				const uint64_t u = Randomize->gen_u64();
+				ok( u != 0 && u != ~0ull, "gen_u64" );
+				ok( Randomize->gen_below( 7 ) < 7 && Randomize->gen_below( 1 ) == 0, "gen_below" );
+				const int64_t v = Randomize->gen_in_range( -5, 5 );
+				ok( v >= -5 && v <= 5, "gen_in_range" );
+				ok( strchr( "xyz", Randomize->gen_char( "xyz" ) ) != nullptr, "gen_char" );
+				ok( std::regex_match( Randomize->gen_fill( "X-??", "01" ), r_fill ), "gen_fill" );
+				const int64_t d = std::stoll( Randomize->gen_decimal_in_range( -1000, 1000 ) );
+				ok( d >= -1000 && d <= 1000, "gen_decimal_in_range" );
+				ok( std::regex_match( Randomize->gen_like( "AB12cd-345_Z" ), r_like ), "gen_like" );
+				const std::string h8 = Randomize->gen_hex_like( "1a2b3c4d", false );
+				ok( std::regex_match( h8, r_hex8 ) && h8 != "1a2b3c4d", "gen_hex_like" );
+				ok( std::regex_match( Randomize->gen_hex_like( "1A2B", true ), r_hexcls ), "gen_hex_like classes" );
+				const std::string us = Randomize->gen_usb_serial_like( "4142433132333435" );
+				std::string txt;
+				for ( size_t k = 0; k + 1 < us.size(); k += 2 ) txt += char( std::stoul( us.substr( k, 2 ), nullptr, 16 ) );
+				ok( us.size() == 16 && std::regex_match( txt, r_usbtxt ) && txt != "ABC12345", "gen_usb_serial_like ascii" );
+				ok( std::regex_match( Randomize->gen_usb_serial_like( "0a1b2c3d4e5f60718293" ), r_usbhex ), "gen_usb_serial_like hex" );
+				const std::string cn = Randomize->gen_computer_name( "DESKTOP-ABCDEFG" );
+				ok( std::regex_match( cn, r_cn ) && cn != "DESKTOP-ABCDEFG", "gen_computer_name" );
+				const std::string mac = Randomize->gen_mac_like( "00:11:22:33:44:55", 16 );
+				ok( std::regex_match( mac, r_mac ) && std::stoul( mac.substr( 9, 2 ) + mac.substr( 12, 2 ) + mac.substr( 15, 2 ), nullptr, 16 ) <= 0xFFFFFFul - 16, "gen_mac_like" );
+				ok( std::regex_match( Randomize->gen_guid_like( "{0F0F0F0F-1111-4222-8333-444455556666}", nullptr ), r_guid4 ), "gen_guid_like v4" );
+				ok( std::regex_match( Randomize->gen_guid_like( "12345678-9abc-11f0-8123-3ca9f4102030", "a0b1c2010203" ), r_guid1 ), "gen_guid_like v1 node" );
+				ok( std::regex_match( Randomize->gen_guid_like( "{3fa81c55-0000-0000-0000-100000000000}", nullptr ), r_mbr ), "gen_guid_like mbr" );
+				const std::string uv = Randomize->gen_system_uuid_like( "564d0123456789abcdef1032547698ba", true );
+				ok( std::regex_match( uv, r_uuid ) && uv.substr( 0, 4 ) == "564d", "gen_system_uuid_like vmware" );
+				const std::string ur = Randomize->gen_system_uuid_like( "1032547698ba1c4e8f00112233445566", false );
+				ok( std::regex_match( ur, r_uuid ) && ur[ 12 ] == '1' && ur[ 14 ] == '4' && ( ur[ 16 ] >= '8' && ur[ 16 ] <= 'b' ), "gen_system_uuid_like rfc4122" );
+				const std::string d6 = Randomize->gen_decimal_like( "123456", 999999 );
+				ok( std::regex_match( d6, r_dec6 ) && d6 != "123456", "gen_decimal_like" );
+				const std::string es = Randomize->gen_edid_serial_like( "305419896" );
+				ok( std::regex_match( es, r_dec ) && std::stoull( es ) <= 0xFFFFFFFFull && es != "305419896", "gen_edid_serial_like" );
+				ok( std::regex_match( Randomize->gen_sid_like( "S-1-5-21-1111111111-222222222-3333333333" ), r_sid ), "gen_sid_like" );
+				const std::string iid = Randomize->gen_installation_id_like( iid_real.c_str() );
+				ok( iid.size() == 63 && ProfileGenerator::check_installation_id( iid.c_str() ), "gen_installation_id_like" );
+				ok( Randomizer::check_digit( "123456" ) == char( '0' + ( 1 + 4 + 3 + 8 + 5 + 12 ) % 7 ), "check_digit" );
+			}
+			// the thread-local buffers: hold one result of each of three gen_, let every thread draw the same gen_ many times,
+			// then compare the held pointers with their copies
+			const char* held_like = Randomize->gen_like( "AB12cd-345_Z" );
+			const char* held_guid = Randomize->gen_guid_like( "{0F0F0F0F-1111-4222-8333-444455556666}", nullptr );
+			const char* held_iid = Randomize->gen_installation_id_like( iid_real.c_str() );
+			const std::string copy_like = held_like, copy_guid = held_guid, copy_iid = held_iid;
+			sync.arrive_and_wait();	// every thread holds its values
+			for ( int i = 0; i < 200; i++ )	// the OTHER threads draw the same gen_ now; this thread draws other gen_ only
+			{
+				( void )Randomize->gen_hex_like( "1a2b3c4d", false );
+				( void )Randomize->gen_mac_like( "00:11:22:33:44:55", 0 );
+			}
+			sync.arrive_and_wait();	// every thread has drawn
+			r.overwritten += copy_like != held_like;
+			r.overwritten += copy_guid != held_guid;
+			r.overwritten += copy_iid != held_iid;
+		}
+		catch ( const std::exception& )
+		{
+			r.exceptions++;
+			sync.arrive_and_drop();	// the other threads must not wait for this one at the barriers still ahead
+		}
+	};
+	std::vector<std::thread> threads;
+	for ( int t = 0; t < k_threads; t++ ) threads.emplace_back( worker, t );
+	for ( std::thread& th : threads ) th.join();
+	size_t calls = 0;
+	for ( int t = 0; t < k_threads; t++ )
+	{
+		calls += res[ t ].calls;
+		TEST_CHECK_( res[ t ].bad == 0, "thread %d: %zu of %zu results with a wrong format (first: %s)", t, res[ t ].bad, res[ t ].calls, res[ t ].first_bad.c_str() );
+		TEST_CHECK_( res[ t ].exceptions == 0, "thread %d: %zu exception(s)", t, res[ t ].exceptions );
+		TEST_CHECK_( res[ t ].overwritten == 0, "thread %d: %zu held result(s) overwritten by another thread", t, res[ t ].overwritten );
+	}
+	TEST_MSG( "%d threads, %zu checked results", k_threads, calls );
+	TEST_CHECK( calls == size_t( k_threads ) * size_t( k_rounds ) * k_checks );
+}
+
+// the two fixture environments of the parallel builds: the host with the rich fwid 1.4 fixture, the guest with fixture 2;
+// both share one USB device (the shared table of both enum_registry.txt, host first - as load_capture builds it)
+struct PgEnvPair
+{
+	CaptureInputs guest, host;
+};
+static PgEnvPair pg_env_pair()
+{
+	PgEnvPair p;
+	p.host = pg_capture( false, pg_text_fixture3() );
+	p.guest = pg_capture( true, pg_text_fixture2( pg_usb( "VID_BBBB&PID_CCCC", "7Y7Y" ) + pg_usb( "VID_1111&PID_2222", "4142433132333435" ) ) );
+	const std::vector<Bytes> usb = { p.host.texts[ 2 ].data, p.guest.texts[ 2 ].data };	// enum_registry.txt of the host, then of the guest
+	p.host.usb_sources = usb;
+	p.guest.usb_sources = usb;
+	return p;
+}
+// one application build from saved maps in its own context (callable from any thread)
+static GenResult pg_apply( Environment e, const CaptureInputs& in, const IdentityMap& own, const IdentityMap& peer )
+{
+	BuildContext ctx = ProfileGen->new_context( pg_cfg( e ) );
+	ProfileGen->load_identity_maps( ctx, own, peer );
+	return ProfileGen->gen_build( ctx, in );
+}
+
+// guest and host contexts built in parallel threads from the saved maps: every file of both profiles byte-identical to the
+// serial builds (several rounds), nothing drawn
+static void pg_parallel_builds( void )
+{
+	const PgEnvPair env = pg_env_pair();
+	BuildContext ctx = pg_fresh( Environment::bare_host );
+	GenResult gh = ProfileGen->gen_build( ctx, env.host );	// generation: the host first, then the guest with the host as peer
+	TEST_ASSERT_( gh.ok, "host generation: %s", gh.error.c_str() );
+	BuildContext gctx = ProfileGen->new_context( pg_cfg( Environment::vmware_guest ) );
+	ProfileGen->load_identity_maps( gctx, {}, gh.identity_map );
+	GenResult gg = ProfileGen->gen_build( gctx, env.guest );
+	TEST_ASSERT_( gg.ok, "guest generation: %s", gg.error.c_str() );
+	auto repo_map = []( const GenResult& r ) { const Bytes& b = r.synthetic.at( "identity_map.tsv" ); return ProfileGenerator::parse_identity_map( std::string( b.begin(), b.end() ) ); };
+	const IdentityMap mh = repo_map( gh ), mg = repo_map( gg );
+	const GenResult sh = pg_apply( Environment::bare_host, env.host, mh, mg ), sg = pg_apply( Environment::vmware_guest, env.guest, mg, mh );	// serial
+	TEST_ASSERT_( sh.ok && sg.ok, "serial application: %s / %s", sh.error.c_str(), sg.error.c_str() );
+	TEST_CHECK( !sh.generated && !sg.generated && sh.synthetic == gh.synthetic && sg.synthetic == gg.synthetic );
+	constexpr int k_rounds = 16;
+	for ( int round = 0; round < k_rounds; round++ )
+	{
+		GenResult ph, pg;
+		std::thread th( [ & ] { ph = pg_apply( Environment::bare_host, env.host, mh, mg ); } );
+		std::thread tg( [ & ] { pg = pg_apply( Environment::vmware_guest, env.guest, mg, mh ); } );
+		th.join();
+		tg.join();
+		TEST_CHECK_( ph.ok && pg.ok, "round %d: parallel application ok (%s / %s)", round, ph.error.c_str(), pg.error.c_str() );
+		TEST_CHECK_( !ph.generated && !pg.generated, "round %d: nothing drawn", round );
+		TEST_CHECK_( ph.synthetic == sh.synthetic && ph.original == sh.original, "round %d: host profile (%zu files) byte-identical to the serial build", round, sh.synthetic.size() );
+		TEST_CHECK_( pg.synthetic == sg.synthetic && pg.original == sg.original, "round %d: guest profile (%zu files) byte-identical to the serial build", round, sg.synthetic.size() );
+		TEST_CHECK( ph.identity_map == sh.identity_map && pg.identity_map == sg.identity_map );
+	}
+}
+
+// both environments generated CONCURRENTLY into memory (no peer map, no file written): every shared/ key has the same value in
+// both maps (the shared/ registry: the first build that needs a key records it, the other takes it); each map applied again
+// reproduces its profile; every const char* a gen_ step returned stays valid after its context is destroyed (copies compared)
+static void pg_concurrent_fresh_shared( void )
+{
+	const PgEnvPair env = pg_env_pair();
+	constexpr int k_rounds = 16;
+	struct HeldValue
+	{
+		const char* text = nullptr;	// as returned by the gen_ step (the interned pool)
+		std::string copy;			// taken while the context existed
+	};
+	std::vector<HeldValue> held;
+	std::mutex held_mutex;
+	std::set<std::string> first_round_values;
+	for ( int round = 0; round < k_rounds; round++ )
+	{
+		ProfileGen->reset();	// a new identity session: the shared/ registry empty
+		GenResult rh, rg;
+		auto run = [ & ]( Environment e, const CaptureInputs& in, GenResult& out ) {
+			std::vector<HeldValue> mine;
+			{
+				BuildContext ctx = ProfileGen->new_context( pg_cfg( e ) );
+				ProfileGen->gen_new_identity( ctx );
+				out = ProfileGen->gen_build( ctx, in );
+				// values straight from gen_ steps of this context (identity map hits and fresh draws)
+				const char* usb = ProfileGen->gen_usb_serial( ctx, { "4142433132333435", 0, "x" } ).text;
+				const char* mac = ProfileGen->gen_mac( ctx, { "00:04:0F:12:34:56", "Fixture", "Mheld" } ).text;
+				const char* guid = ProfileGen->gen_guid( ctx, { "{0F0F0F0F-1111-4222-8333-444455556666}", "identity/Gheld" } ).text;
+				const char* cls = ProfileGen->gen_class_string( ctx, { "AB12cd-345_Z", "identity/Cheld" } ).text;
+				for ( const char* v : { usb, mac, guid, cls } ) mine.push_back( { v, v } );
+				ProfileGen->load_identity_maps( ctx, {}, {} );	// the context's map replaced ...
+			}	// ... and the context destroyed
+			std::lock_guard lock( held_mutex );
+			held.insert( held.end(), mine.begin(), mine.end() );
+		};
+		std::thread th( run, Environment::bare_host, std::cref( env.host ), std::ref( rh ) );
+		std::thread tg( run, Environment::vmware_guest, std::cref( env.guest ), std::ref( rg ) );
+		th.join();
+		tg.join();
+		TEST_ASSERT_( rh.ok && rg.ok, "round %d: concurrent generation: %s / %s", round, rh.error.c_str(), rg.error.c_str() );
+		TEST_CHECK( rh.generated && rg.generated );
+		size_t common = 0, same = 0;
+		for ( auto& [ k, v ] : rh.identity_map.entries )
+		{
+			if ( k.rfind( "shared/", 0 ) != 0 ) continue;
+			auto it = rg.identity_map.entries.find( k );
+			if ( it == rg.identity_map.entries.end() ) continue;
+			common++;
+			same += it->second == v;
+		}
+		TEST_CHECK_( common >= 1 && same == common, "round %d: %zu shared/ key(s) in both maps, %zu with the same value", round, common, same );
+		TEST_CHECK_( ProfileGen->check_shared_values() >= 3, "round %d: %zu value(s) in the shared/ registry", round, ProfileGen->check_shared_values() );
+		const IdentityEntry* a = pg_find( rh.identity.identity, "usb_serial", "4142433132333435" );
+		const IdentityEntry* b = pg_find( rg.identity.identity, "usb_serial", "4142433132333435" );
+		TEST_ASSERT( a != nullptr && b != nullptr );
+		TEST_CHECK_( a->synthetic == b->synthetic, "round %d: the shared USB device has one synthetic serial in both profiles", round );
+		if ( round == 0 ) first_round_values.insert( a->synthetic );
+		else TEST_CHECK_( !first_round_values.count( a->synthetic ), "round %d: a new identity session draws a new shared serial", round );
+		// each concurrently generated map applied again (serially, the other map as peer) reproduces its profile byte for byte
+		auto repo_map = []( const GenResult& r ) { const Bytes& m = r.synthetic.at( "identity_map.tsv" ); return ProfileGenerator::parse_identity_map( std::string( m.begin(), m.end() ) ); };
+		const IdentityMap mh = repo_map( rh ), mg = repo_map( rg );
+		const GenResult ah = pg_apply( Environment::bare_host, env.host, mh, mg ), ag = pg_apply( Environment::vmware_guest, env.guest, mg, mh );
+		TEST_CHECK_( ah.ok && ag.ok && ah.synthetic == rh.synthetic && ag.synthetic == rg.synthetic, "round %d: the generated maps reproduce both profiles", round );
+	}
+	ProfileGen->reset();
+	size_t valid = 0;
+	for ( const HeldValue& h : held ) valid += h.text && h.copy == h.text;
+	TEST_CHECK_( valid == held.size() && held.size() == size_t( k_rounds ) * 2 * 4, "%zu of %zu const char* results still valid after their contexts were destroyed", valid, held.size() );
+}
+
 TEST_LIST = {
 	{ "pg_smbios_decided_bytes_only", pg_smbios_decided_bytes_only },
 	{ "pg_smbios_layout_preserved", pg_smbios_layout_preserved },
-	{ "pg_same_seed_identical", pg_same_seed_identical },
+	{ "pg_identity_map_replay", pg_identity_map_replay },
 	{ "pg_filler_untouched", pg_filler_untouched },
 	{ "pg_guard_undecided", pg_guard_undecided },
 	{ "pg_mac_oui", pg_mac_oui },
@@ -1102,5 +1860,11 @@ TEST_LIST = {
 	{ "pg_chid_check", pg_chid_check },
 	{ "pg_new_identity", pg_new_identity },
 	{ "pg_swd_guids", pg_swd_guids },
+	{ "pg_disk_descriptors", pg_disk_descriptors },
+	{ "pg_tool_exclusions", pg_tool_exclusions },
+	{ "pg_install_shift", pg_install_shift },
+	{ "pg_randomizer_threads", pg_randomizer_threads },
+	{ "pg_parallel_builds", pg_parallel_builds },
+	{ "pg_concurrent_fresh_shared", pg_concurrent_fresh_shared },
 	{ NULL, NULL } };
 // ── end of the pg_ block (U1511) ─────────────────────────────────────────────────────────────────────────────────────────

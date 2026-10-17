@@ -1,24 +1,36 @@
-# emu-profilegen BuildConfig (format 1): every input of one platform-profile build. Rebuild with
+# emu-profilegen BuildConfig (format 3): every input of one platform-profile build. Rebuild with
 #   emu-profilegen --config build_config.txt [--check]
-# Paths: out / seed_file relative to repo_root; original_out, capture_parent and companion relative to capture_root;
+# Paths: out / peer_identity_map relative to repo_root; identity_map relative to out; original_out, capture_parent and companion relative to capture_root;
 # "auto" = NOVMP_CAPTURE_ROOT, else the first ancestor folder "capture" (capture_root) / the folder holding NoVmp.sln (repo_root).
 # No identifier values: the capture folder is a name pattern plus its pinned manifest SHA-256. peer_capture_*: the other
-# environment's clean capture, read only for the USB serial table both profiles share (rule 4d). seed: random (not host
-# data); the same seed gives the same identity.
-format                       = 1
-tool                         = emu-profilegen 1.0 (ProfileGenerator, ledger U1510-U1512)
+# environment's clean capture, read only for the USB serial table both profiles share (rule 4d). firmware_ref_*: an older
+# capture of the same machine; every firmware entry (rsmb / acpi / hwacpi / edid) must have the same SHA-256. exclude =
+# name | pattern; pattern | reason: a tool artifact excluded from the profile (exclusions.tsv). identity_map: the identity
+# this profile presents (every value drawn from RDRAND once, then applied by every build); peer_identity_map: the other
+# environment's map (the shared USB serials). No seed (format 3).
+format                       = 3
+tool                         = emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514)
 environment                  = vmware_guest
 capture_root                 = auto
-capture_parent               = fwid\baseline
-capture_folder               = Run3_clean_guest_*
-capture_manifest_sha256      = 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C
+capture_parent               = baseline\Run3b_clean_guest_fwid14_20261016
+capture_folder               = *
+capture_manifest_sha256      = 2828D5201670AFFF41FAD5027E90C113A310AE2F8CAA11F59282FA7FB79F526D
+companion                    = baseline\Run3b_clean_guest_fwid14_20261016.sha256 82C116C913650B687FA789AD52AAEDD3D724A1EA7C9B71344402095A2AB8EA6A
 companion                    = baseline\Run3_clean_guest_probes_20261015.sha256 748A3515D7FC401B14C97E650996D15426E891C477B5CF75F28C6EAF59F89E8D
-peer_capture_parent          = baseline\Host_clean_20261016_fwid13
+peer_capture_parent          = baseline\Host_clean_20261016_fwid14
 peer_capture_folder          = *
-peer_capture_manifest_sha256 = C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89
+peer_capture_manifest_sha256 = FF2062E2E72AB2138CF4BD08942028E0E8D43E5F0FACBC105DB449E92CEC1C64
+firmware_ref_parent          = fwid\baseline
+firmware_ref_folder          = Run3_clean_guest_*
+firmware_ref_manifest_sha256 = 57268E68D23B488C74AC0ABA57EDD275DCEC9680153367A8C4A8786A30AE8E1C
+exclude                      = RustDesk Printer | RustDesk Printer; RustDesk v4 Printer Driver | the remote-desktop tool's virtual printer (its queue, port, driver and PRINTENUM device)
+exclude                      = RustDesk | RustDesk | the remote-desktop tool itself: its service and any driver / registry / device trace (user decision 2026-10-16)
+exclude                      = System Informer | SystemInformer | the analysis tool's kernel driver and service (KSystemInformer, SystemInformer.sys, ksi.dll)
+exclude                      = DebugView | Dbgv | Sysinternals DebugView's kernel driver (Dbgv.sys)
+exclude                      = VmLoader | vmloader | any VmLoader service / driver / file trace
 repo_root                    = auto
 out                          = Emulator\data\platform\vmware_guest
 original_out                 = profiles_original\vmware_guest
-seed_file                    = Emulator\data\platform\profilegen_seed.txt
-seed                         = DF5A5F597AD3A42FF268DFD4E112DBB73C2546B88B65DDFAB5B066B35AA0059E
+identity_map                 = identity_map.tsv
+peer_identity_map            = Emulator\data\platform\bare_host\identity_map.tsv
 rules                        = 1 2 2o 3 4a 4b 4c 4d 6 7 8

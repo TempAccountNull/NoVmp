@@ -1,0 +1,66 @@
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - identity map - vmware_guest - every value synthetic (RDRAND), no real value, no install-history offset
+# The identity this profile presents: GENERATION (the first build, or --new-identity) drew every value from RDRAND
+# (Randomize->gen_...); every later build APPLIES this map to the clean capture, byte for byte. Keys name a field location
+# (environment + field id), never a value; "shared/" keys are the same in both profiles (one USB serial per physical device).
+# columns: key, kind, synthetic value (final text form)
+identity/G01	guid	{F7B5EB80-903A-46A5-84AC-1FFE28179367}
+identity/G02	guid	{05E8B3D1-B9D8-1BC1-9D75-806E6F6E6963}
+identity/G03	guid	{D9DB40A1-D108-1FE6-A669-806E6F6E6963}
+identity/G04	guid	{34E7E4DC-5701-1D2C-AF55-806E6F6E6963}
+identity/G05	guid	{EF576E11-144A-10E0-B461-806E6F6E6963}
+identity/G06	guid	{9C61554B-4312-4B2F-BD72-EB93FDC156B4}
+identity/G07	guid	{2F05DB1C-5F8B-47E2-96CE-81441E095D02}
+identity/G08	guid	{22CEEB34-C57E-4FF2-95B0-B5B5AB188F44}
+identity/G09	guid	{B3231345-5B80-4CDE-B1BB-118BF0B31092}
+identity/G10	guid	{06B8FB74-37DF-1961-855A-806E6F6E6963}
+identity/G11	guid	{D34F59AC-9F8B-1784-86A5-806E6F6E6963}
+identity/G12	guid	{0F8C1862-6092-1FC7-AF30-806E6F6E6963}
+identity/G13	guid	{8F53EA72-BB5A-5903-ABB1-01CC901EEB1A}
+identity/G14	guid	{5B737E55-1065-15A3-8E24-00040FA1CA5B}
+identity/G15	guid	{4D175FC6-AF44-1E5E-A218-00040FA1CA5B}
+identity/G16	guid	{51C195A6-72B1-1FA5-ABD0-806E6F6E6963}
+identity/G17	guid	{F5566B0C-A341-1E8F-A787-00040FA1CA5B}
+identity/G18	guid	{1B0013D1-CCD5-5D33-B6D7-9141418AC79C}
+identity/G19	guid	{6C4F0ADA-95E2-1553-8AFE-806E6F6E6963}
+identity/G20	guid	{111324E7-47B9-12F3-B9C5-806E6F6E6963}
+identity/G21	guid	{580670C5-28BA-19A3-AF07-806E6F6E6963}
+identity/G22	guid	{40D44C6F-4388-1DED-AB7C-00040FA1CA5B}
+identity/G23	guid	{ACFDB8A0-A548-42D5-B78E-0316425394B3}
+identity/G24	guid	{5FF69908-427C-5063-89B1-F31E8FE81510}
+identity/G25	guid	{64C6B694-D98A-161A-9C02-00040FA1CA5B}
+identity/G26	guid	{B50EFC27-8AEC-19C5-84B7-806E6F6E6963}
+identity/G27	guid	{639BE891-D3F0-11D2-A862-806E6F6E6963}
+identity/G28	guid	{72AF6411-CDBF-19B6-99F4-00040FA1CA5B}
+identity/G29	guid	{D6AF0AE6-9247-1F9D-804F-00040FA1CA5B}
+identity/G30	guid	{A46B6BCF-98C4-1A6C-BF41-806E6F6E6963}
+identity/G31	guid	{D6BE3FCB-D782-49FC-94FC-3310F5D15634}
+identity/G32	guid	{8D198F93-4C51-5DDA-AC4B-214EDB58E519}
+identity/G33	guid	{2A7D4061-9824-4432-82BD-226B96F4CC51}
+identity/G34	guid	{3F4582ED-E613-5BEE-B236-70DC5E5B645A}
+identity/G35	guid	{2C904107-3671-4BD0-8F33-C192681EABF7}
+identity/G36	guid	{6FAD4EA2-E286-4CF7-9E8B-AEEA2AB8D035}
+identity/G37	guid	{075C28EA-5788-B51D-C1AA-C623FDA1645B}
+identity/G38	guid	{F1AF64D2-7BA3-4449-9FB9-9B65C4B647E1}
+identity/G39	guid	{764A903A-DD93-F7A1-2539-7C8E2FC49101}
+identity/G40	guid	{D7B381D4-E4B4-476E-838D-B1FEED2D8F3D}
+identity/G41	guid	{F0AFF474-AC3E-FA2F-B80F-58A79A109426}
+identity/G42	guid	{0E63211F-E94B-428F-B224-28DCB73AAD54}
+identity/G43	guid	76bf47e9-fe9d-43f3-b799-885ea11b57cc
+identity/G44	guid	{4aac601e-37b7-1f03-be3c-806e6f6e6963}
+identity/G45	guid	{5F9891AA-4098-45F1-9F99-28902F03BFE7}
+identity/G46	guid	{CE9C46D6-D2AE-495A-9CCA-EDAB1141F525}
+identity/G47	guid	{88287E9B-C4E5-4B0C-A9DE-A56F802A2CA1}
+identity/G48	guid	26578090-5853-400a-a190-a9f40c5eaaf7
+identity/K01	installation_id	993933116912347141350792146318049405924443071222408729546005524
+identity/M01	mac	00:04:0F:A1:CA:5B
+identity/N01	computer_name	DESKTOP-8EEBSN8
+identity/O01	product_id_middle	80836-73051
+identity/O05	classes	AilzO9Z
+identity/O09	volume_serial	15FC-4A77
+identity/O10	volume_serial	1499-9DEE
+identity/install	install	1673357326
+identity/sid01	sid	S-1-5-21-192489524-1873546556-3665591170
+shared/usb/0	usb_serial	7095315ff0208b6073ebf3368b448b710daf29d30fd12cc4ba8ab1e3ed8d9564e6796176049972667698266562c312adad3ab581280417559829ec2d
+shared/usb/1	usb_serial	525430384F30393238424C57
+smbios/t1/h0001/uuid	uuid	564dd08494ba128228f004a4ad906c09
+smbios/t17/h0031/o18	smbios_string	82314066

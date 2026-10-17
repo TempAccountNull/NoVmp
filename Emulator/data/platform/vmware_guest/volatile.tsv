@@ -1,0 +1,22 @@
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - volatile values - vmware_guest - captured values the emulator may advance (the captured value is a plausible
+# snapshot; user decision J 2026-10-16); identical in the synthetic and the original profile; names, never values.
+# columns: capture text file, line, name, mark
+environment.txt	5	time zone	volatile: standard / daylight state
+environment.txt	22	GetKeyboardLayoutNameW	volatile
+environment.txt	28	GetTickCount64	volatile
+environment.txt	32	AvailPhys, AvailPageFile, AvailVirtual, MemoryLoad	volatile
+environment.txt	42	screen	volatile
+update_ids.txt	16	LaunchCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	18	LastFreeNetworkLossTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	19	LastConnectivityHeartBeatTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	21	ConnectivityNoNetworkTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	22	ConnectivityRestrictedNetworkTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	23	LastPersistedEventTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	24	LatencyDataLastUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	25	TriggerCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	26	HttpRequestCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	27	TriggerLatency	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	28	HttpRequestLatency	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	29	LastSuccessfulUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	30	LastSuccessfulRealtimeUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	31	LastSuccessfulNormalUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)

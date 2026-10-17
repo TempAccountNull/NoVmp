@@ -1,0 +1,23 @@
+# emu-profilegen 1.2 (ProfileGenerator, ledger U1510-U1514) - volatile values - bare_host - captured values the emulator may advance (the captured value is a plausible
+# snapshot; user decision J 2026-10-16); identical in the synthetic and the original profile; names, never values.
+# columns: capture text file, line, name, mark
+environment.txt	5	time zone	volatile: standard / daylight state
+environment.txt	22	GetKeyboardLayoutNameW	volatile
+environment.txt	28	GetTickCount64	volatile
+environment.txt	32	AvailPhys, AvailPageFile, AvailVirtual, MemoryLoad	volatile
+environment.txt	42	screen	volatile
+update_ids.txt	25	LaunchCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	27	LastFreeNetworkLossTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	28	LastConnectivityHeartBeatTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	30	ConnectivityNoNetworkTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	31	ConnectivityRestrictedNetworkTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	32	LastSuccessfulUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	33	LastSuccessfulRealtimeUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	34	LastSuccessfulNormalUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	35	LastSuccessfulCostDeferredUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	36	LastPersistedEventTime	DiagTrack timestamp (user decision J: a captured snapshot the emulator may advance; FILETIME shifted with the install history, rule 7b)
+update_ids.txt	37	LatencyDataLastUploadTime	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	38	TriggerCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	39	HttpRequestCount	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	40	TriggerLatency	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
+update_ids.txt	41	HttpRequestLatency	DiagTrack counter / timestamp (user decision J: a captured snapshot the emulator may advance)
