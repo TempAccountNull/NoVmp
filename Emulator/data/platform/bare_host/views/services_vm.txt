@@ -1,0 +1,2228 @@
+# fwid services capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Services: every subkey name; for every name containing (case-insensitive) vm, vmware,
+# vmloader, vmci, vmhgfs, vmmouse, vm3d, vmx or vsock: all values and all subkeys (Parameters, Enum, ...) up to depth 3.
+# KEY_READ only. NOTE: names are not evidence of a guest - the physical host with VMware Workstation has vm* services too.
+
+## all service key names (869)
+  ".NET CLR Data"
+  ".NET CLR Networking"
+  ".NET CLR Networking 4.0.0.0"
+  ".NET Data Provider for Oracle"
+  ".NET Data Provider for SqlServer"
+  ".NET Memory Cache 4.0"
+  ".NETFramework"
+  "1394ohci"
+  "3ware"
+  "AarSvc"
+  "AarSvc_12d1c7"
+  "ACE-BASE"
+  "ACE-SSC-DRV64"
+  "ACPI"
+  "AcpiDev"
+  "acpiex"
+  "acpipagr"
+  "AcpiPmi"
+  "acpitime"
+  "Acx01000"
+  "ADOVMPPackage"  [matches: vm]
+  "ADP80XX"
+  "adsi"
+  "aehd"
+  "AFD"
+  "afunix"
+  "ahcache"
+  "AJRouter"
+  "ALG"
+  "AMD Crash Defender Service"
+  "AMD External Events Utility"
+  "amdfendr"
+  "amdfendrmgr"
+  "amdgpio2"
+  "amdi2c"
+  "AmdK8"
+  "amdkmdap"
+  "amdkmpfd"
+  "AmdPPM"
+  "AMDSAFD"
+  "amdsata"
+  "amdsbs"
+  "amduw23g-201588-df09ebb6"
+  "amdxata"
+  "AMDXE"
+  "AntiCheatExpert Protection"
+  "AntiCheatExpert Service"
+  "AppID"
+  "AppIDSvc"
+  "Appinfo"
+  "Apple Mobile Device Service"
+  "AppleKmdfFilter"
+  "AppleLowerFilter"
+  "applockerfltr"
+  "AppMgmt"
+  "AppReadiness"
+  "AppVClient"
+  "AppvStrm"
+  "AppvVemgr"
+  "AppvVfs"
+  "AppXSvc"
+  "arcsas"
+  "AROCMON24"
+  "ASP.NET"
+  "ASP.NET_2.0.50727"
+  "ASP.NET_4.0.30319"
+  "ASP.NET_64_2.0.50727"
+  "aspnet_state"
+  "AssignedAccessManagerSvc"
+  "AsyncMac"
+  "atapi"
+  "AtiHDAudioService"
+  "AudioEndpointBuilder"
+  "Audiosrv"
+  "autotimesvc"
+  "AxInstSV"
+  "b06bdrv"
+  "bam"
+  "BasicDisplay"
+  "BasicRender"
+  "BattC"
+  "BcastDVRUserService"
+  "BcastDVRUserService_12d1c7"
+  "bcmfn2"
+  "BDESVC"
+  "Beep"
+  "BEService"
+  "BFE"
+  "bindflt"
+  "BITS"
+  "BlueStacksDrv_nxt"
+  "BluetoothUserService"
+  "BluetoothUserService_12d1c7"
+  "Bonjour Service"
+  "bowser"
+  "BrokerInfrastructure"
+  "BTAGService"
+  "BthA2dp"
+  "BthAvctpSvc"
+  "BthEnum"
+  "BthHFAud"
+  "BthHFEnum"
+  "BthLEEnum"
+  "BthMini"
+  "BTHMODEM"
+  "BthPan"
+  "BTHPORT"
+  "bthserv"
+  "BTHUSB"
+  "bttflt"
+  "buttonconverter"
+  "CAD"
+  "camsvc"
+  "CaptureService"
+  "CaptureService_12d1c7"
+  "cbdhsvc"
+  "cbdhsvc_12d1c7"
+  "cdfs"
+  "CDPSvc"
+  "CDPUserSvc"
+  "CDPUserSvc_12d1c7"
+  "cdrom"
+  "CertPropSvc"
+  "cht4iscsi"
+  "cht4vbd"
+  "CimFS"
+  "circlass"
+  "CldFlt"
+  "CLFS"
+  "ClipSVC"
+  "cloudidsvc"
+  "clr_optimization_v2.0.50727_32"
+  "clr_optimization_v2.0.50727_64"
+  "clr_optimization_v4.0.30319_32"
+  "clr_optimization_v4.0.30319_64"
+  "CmBatt"
+  "CNG"
+  "cnghwassist"
+  "CodexSandboxService.OpenAI.Codex"
+  "CompositeBus"
+  "COMSysApp"
+  "condrv"
+  "ConsentUxUserSvc"
+  "ConsentUxUserSvc_12d1c7"
+  "CoreMessagingRegistrar"
+  "CoreUI"
+  "CorsairCpuIdService"
+  "CorsairDeviceControlService"
+  "CorsairDeviceListerService"
+  "CorsairLLAccess8F050F5E415C1A5882EB9FF7CE2BC59B7BE3A953"
+  "CorsairLLAccessE5624B0A345A7E17A08498BFEDC2D42A7CBA71C2"
+  "CorsairService"
+  "CoworkVMService"  [matches: vm]
+  "cplspcon"
+  "cpuz159"
+  "CredentialEnrollmentManagerUserSvc"
+  "CredentialEnrollmentManagerUserSvc_12d1c7"
+  "crypt32"
+  "CryptSvc"
+  "CSC"
+  "CscService"
+  "CY3014.X64"
+  "dam"
+  "dc1-controller"
+  "DCLocator"
+  "DcomLaunch"
+  "dcsvc"
+  "defragsvc"
+  "DeviceAssociationBrokerSvc"
+  "DeviceAssociationBrokerSvc_12d1c7"
+  "DeviceAssociationService"
+  "DeviceInstall"
+  "DevicePickerUserSvc"
+  "DevicePickerUserSvc_12d1c7"
+  "DevicesFlowUserSvc"
+  "DevicesFlowUserSvc_12d1c7"
+  "DevQueryBroker"
+  "Dfsc"
+  "Dhcp"
+  "diagnosticshub.standardcollector.service"
+  "diagsvc"
+  "DiagTrack"
+  "DialogBlockingService"
+  "disk"
+  "DispBrokerDesktopSvc"
+  "DisplayEnhancementService"
+  "DmEnrollmentSvc"
+  "dmvsc"
+  "dmwappushservice"
+  "Dnscache"
+  "DoSvc"
+  "dot3svc"
+  "DPS"
+  "drmkaud"
+  "DsmSvc"
+  "DsSvc"
+  "DusmSvc"
+  "DXGKrnl"
+  "e2fexpress"
+  "EAAntiCheat"
+  "EAAntiCheatService"
+  "EABackgroundService"
+  "Eaphost"
+  "EasyAntiCheat_EOS"
+  "ebdrv"
+  "edgeupdate"
+  "edgeupdatem"
+  "EFS"
+  "EhStorClass"
+  "EhStorTcgDrv"
+  "Elytra.Service"
+  "embeddedmode"
+  "EntAppSvc"
+  "EpicOnlineServices"
+  "ErrDev"
+  "ESENT"
+  "EventLog"
+  "EventSystem"
+  "Everything (1.5a)"
+  "exfat"
+  "fastfat"
+  "Fax"
+  "fdc"
+  "fdPHost"
+  "FDResPub"
+  "fhsvc"
+  "FileCrypt"
+  "FileInfo"
+  "Filetrace"
+  "flpydisk"
+  "FltMgr"
+  "Focusrite Control Server"
+  "FocusritePCIeSwRoot"
+  "FocusriteUsb"
+  "FocusriteUsbAudio"
+  "FocusriteUsbSwRoot"
+  "FontCache"
+  "FontCache3.0.0.0"
+  "FrameServer"
+  "FsDepends"
+  "Fs_Rec"
+  "fvevol"
+  "GalaxyClientService"
+  "GalaxyCommunication"
+  "gameflt"
+  "GameInputRedistService"
+  "GameInputSvc"
+  "GamingServices"
+  "GamingServicesNet"
+  "gencounter"
+  "genericusbfn"
+  "GoogleChromeElevationService"
+  "GoogleUpdaterInternalService157.0.8089.0"
+  "GoogleUpdaterService157.0.8089.0"
+  "GPIOClx0101"
+  "gpsvc"
+  "GpuEnergyDrv"
+  "GraphicsPerfSvc"
+  "hcmon"
+  "HdAudAddService"
+  "HDAudBus"
+  "HgClientService"
+  "HidBatt"
+  "HidBth"
+  "hidi2c"
+  "hidinterrupt"
+  "HidIr"
+  "hidserv"
+  "hidspi"
+  "HidSpiCx"
+  "HidUsb"
+  "hns"
+  "hnswfpdriver"
+  "HomeGroupListener"
+  "HomeGroupProvider"
+  "HpSAMD"
+  "HTTP"
+  "hvcrash"
+  "HvHost"
+  "hvservice"
+  "hvsocketcontrol"  [matches: vsock]
+  "HWiNFO_206"
+  "HwNClx0101"
+  "hwpolicy"
+  "hyperkbd"
+  "HyperVideo"
+  "i8042prt"
+  "iagpio"
+  "iai2c"
+  "iaLPSS2i_GPIO2"
+  "iaLPSS2i_GPIO2_BXT_P"
+  "iaLPSS2i_GPIO2_CNL"
+  "iaLPSS2i_GPIO2_GLK"
+  "iaLPSS2i_I2C"
+  "iaLPSS2i_I2C_BXT_P"
+  "iaLPSS2i_I2C_CNL"
+  "iaLPSS2i_I2C_GLK"
+  "iaLPSSi_GPIO"
+  "iaLPSSi_I2C"
+  "iaStorAV"
+  "iaStorAVC"
+  "iaStorV"
+  "ibbus"
+  "ibtusb"
+  "icssvc"
+  "iCUEUpdateService"
+  "igfxn"
+  "IKEEXT"
+  "IndirectKmd"
+  "inetaccs"
+  "InstallService"
+  "Intel(R) Platform License Manager Service"
+  "IntelGraphicsSoftwareService"
+  "intelide"
+  "intelpep"
+  "intelpmax"
+  "intelppm"
+  "iorate"
+  "IpFilterDriver"
+  "iphlpsvc"
+  "IPMIDRV"
+  "IPNAT"
+  "IpOverUsbSvc"
+  "IPT"
+  "IpxlatCfgSvc"
+  "isapnp"
+  "iScsiPrt"
+  "ItSas35i"
+  "jhi_service"
+  "kbdclass"
+  "kbdhid"
+  "kbldfltr"
+  "kdnic"
+  "KeyIso"
+  "KSecDD"
+  "KSecPkg"
+  "KslD"
+  "ksthunk"
+  "KtmRm"
+  "l2bridge"
+  "LanmanServer"
+  "LanmanWorkstation"
+  "ldap"
+  "lfsvc"
+  "LicenseManager"
+  "lltdio"
+  "lltdsvc"
+  "lmhosts"
+  "Lsa"
+  "LSI_SAS"
+  "LSI_SAS2i"
+  "LSI_SAS3i"
+  "LSI_SSS"
+  "LSM"
+  "luafv"
+  "lunparser"
+  "LxpSvc"
+  "MapsBroker"
+  "mausbhost"
+  "mausbip"
+  "MaximaBackgroundService"
+  "MbbCx"
+  "McpManagementService"
+  "MDCoreSvc"
+  "megasas"
+  "megasas2i"
+  "megasas35i"
+  "megasr"
+  "MEIx64"
+  "MessagingService"
+  "MessagingService_12d1c7"
+  "Microsoft_Bluetooth_AvrcpTransport"
+  "MixedRealityOpenXRSvc"
+  "mlx4_bus"
+  "MMCSS"
+  "Modem"
+  "monitor"
+  "mouclass"
+  "mouhid"
+  "mountmgr"
+  "mpsdrv"
+  "mpssvc"
+  "MRxDAV"
+  "mrxsmb"
+  "mrxsmb20"
+  "MsBridge"
+  "MSDTC"
+  "MSDTC Bridge 3.0.0.0"
+  "MSDTC Bridge 4.0.0.0"
+  "Msfs"
+  "msgpiowin32"
+  "mshidkmdf"
+  "mshidumdf"
+  "msisadrv"
+  "MSiSCSI"
+  "msiserver"
+  "MsKeyboardFilter"
+  "MSKSSRV"
+  "MsLldp"
+  "MSPCLOCK"
+  "MSPQM"
+  "MsQuic"
+  "MsRPC"
+  "MSSCNTRS"
+  "MsSecCore"
+  "MsSecFlt"
+  "MsSecWfp"
+  "mssmbios"
+  "MSTEE"
+  "MTConfig"
+  "Mup"
+  "mvumis"
+  "napagent"
+  "NativeWifiP"
+  "NaturalAuthentication"
+  "NcaSvc"
+  "NcbService"
+  "NcdAutoSetup"
+  "ndfltr"
+  "NDIS"
+  "NdisCap"
+  "NdisImPlatform"
+  "NdisTapi"
+  "Ndisuio"
+  "NdisVirtualBus"
+  "NdisWan"
+  "ndiswanlegacy"
+  "NDKPing"
+  "ndproxy"
+  "Ndu"
+  "Netaapl"
+  "NetAdapterCx"
+  "NetBIOS"
+  "NetbiosSmb"
+  "NetBT"
+  "Netlogon"
+  "Netman"
+  "netprofm"
+  "NetSetupSvc"
+  "NetTcpPortSharing"
+  "netvsc"
+  "netvscvfpp"
+  "Netwtw14"
+  "NgcCtnrSvc"
+  "NgcSvc"
+  "NlaSvc"
+  "NPF"
+  "Npfs"
+  "npsvctrig"
+  "nsi"
+  "nsiproxy"
+  "NTDS"
+  "Ntfs"
+  "Null"
+  "nvagent"
+  "nvdimm"
+  "nvraid"
+  "nvstor"
+  "OneSyncSvc"
+  "OneSyncSvc_12d1c7"
+  "p2pimsvc"
+  "p2psvc"
+  "PaceLicenseDServices"
+  "Parport"
+  "partmgr"
+  "passthruparser"
+  "PcaSvc"
+  "pci"
+  "pciide"
+  "pcip"
+  "pcmcia"
+  "pcw"
+  "pdc"
+  "PEAUTH"
+  "PeerDistSvc"
+  "perceptionsimulation"
+  "percsas2i"
+  "percsas3i"
+  "PerfDisk"
+  "PerfHost"
+  "PerfNet"
+  "PerfOS"
+  "PerfProc"
+  "PhoneSvc"
+  "PimIndexMaintenanceSvc"
+  "PimIndexMaintenanceSvc_12d1c7"
+  "PktMon"
+  "pla"
+  "PlugPlay"
+  "pmem"
+  "PnkBstrA"
+  "PNPMEM"
+  "PNRPAutoReg"
+  "PNRPsvc"
+  "PolicyAgent"
+  "portcfg"
+  "PortProxy"
+  "Power"
+  "PptpMiniport"
+  "PrintNotify"
+  "PrintWorkflowUserSvc"
+  "PrintWorkflowUserSvc_12d1c7"
+  "PrjFlt"
+  "Processor"
+  "PROCMON24"
+  "ProfSvc"
+  "Psched"
+  "PSEXESVC"
+  "PushToInstall"
+  "pvhdparser"
+  "QWAVE"
+  "QWAVEdrv"
+  "Ramdisk"
+  "ramparser"
+  "RasAcd"
+  "RasAgileVpn"
+  "RasAuto"
+  "Rasl2tp"
+  "RasMan"
+  "RasPppoe"
+  "RasSstp"
+  "Razer Elevation Service"
+  "Razer Game Manager Service 3"
+  "rdbss"
+  "RDMANDK"
+  "rdpbus"
+  "RDPDR"
+  "RDPNP"
+  "RDPUDD"
+  "RdpVideoMiniport"
+  "rdyboost"
+  "Realtek"
+  "ReFS"
+  "ReFSv1"
+  "RemoteAccess"
+  "RemoteRegistry"
+  "RetailDemo"
+  "RFCOMM"
+  "rhproxy"
+  "RmSvc"
+  "Rockstar Service"
+  "rpcapd"
+  "RpcEptMapper"
+  "RpcLocator"
+  "RpcSs"
+  "rspndr"
+  "RTCore64"
+  "RtkAudioUniversalService"
+  "RtkUsbAD_2379"
+# [excluded tool artifact]
+  "RzCommon"
+  "RzDev_00a4"
+  "RzDev_00aa"
+  "RzDev_00ac"
+  "RzDev_0203"
+  "RzDev_0C00"
+  "s3cap"
+  "SamSs"
+  "sbp2port"
+  "SCardSvr"
+  "ScDeviceEnum"
+  "scfilter"
+  "Schedule"
+  "scmbus"
+  "SCPolicySvc"
+  "sdbus"
+  "SDFRd"
+  "SDRSVC"
+  "sdstor"
+  "seclogon"
+  "SecurityHealthService"
+  "SEMgrSvc"
+  "SENS"
+  "Sense"
+  "SensorDataService"
+  "SensorService"
+  "SensorsSimulatorDriver"
+  "SensrSvc"
+  "SerCx"
+  "SerCx2"
+  "Serenum"
+  "Serial"
+  "sermouse"
+  "ServiceModelEndpoint 3.0.0.0"
+  "ServiceModelOperation 3.0.0.0"
+  "ServiceModelService 3.0.0.0"
+  "SessionEnv"
+  "sfloppy"
+  "SharedAccess"
+  "SharedRealitySvc"
+  "ShellHWDetection"
+  "shpamsvc"
+  "SiSRaid2"
+  "SiSRaid4"
+  "SIUSBXP"
+  "SmartSAMD"
+  "smbdirect"
+  "smphost"
+  "SmsRouter"
+  "SMSvcHost 3.0.0.0"
+  "SMSvcHost 4.0.0.0"
+  "SNMPTRAP"
+  "spaceparser"
+  "spaceport"
+  "SpatialGraphFilter"
+  "SpbCx"
+  "spectrum"
+  "Spooler"
+  "sppsvc"
+  "SQLWriter"
+  "srv2"
+  "srvnet"
+  "SSDPSRV"
+  "ssh-agent"
+  "SstpSvc"
+  "StateRepository"
+  "Steam Client Service"
+  "SteamStreamingMicrophone"
+  "SteamStreamingSpeakers"
+  "stexstor"
+  "stisvc"
+  "storahci"
+  "storflt"
+  "stornvme"  [matches: vm]
+  "storqosflt"
+  "StorSvc"
+  "storufs"
+  "storvsc"
+  "storvsp"
+  "svsvc"
+  "swenum"
+  "swprv"
+  "Synth3dVsc"
+  "Synth3dVsp"
+  "SysMain"
+  "SystemEventsBroker"
+  "TabletInputService"
+  "TapiSrv"
+  "Tcpip"
+  "Tcpip6"
+  "TCPIP6TUNNEL"
+  "tcpipreg"
+  "TCPIPTUNNEL"
+  "tdevmonc"  [matches: vm]
+  "tdevmonp"  [matches: vm]
+  "tdx"
+  "Telemetry"
+  "terminpt"
+  "TermService"
+  "Themes"
+  "TieringEngineService"
+  "TimeBrokerSvc"
+  "TokenBroker"
+  "TPM"
+  "TrkWks"
+  "TroubleshootingSvc"
+  "TrustedInstaller"
+  "TSDDD"
+  "TsUsbFlt"
+  "TsUsbGD"
+  "tsusbhub"
+  "tunnel"
+  "tzautoupdate"
+  "UASPStor"
+  "ucldr_battlegrounds_gl"
+  "UcmCx0101"
+  "UcmTcpciCx0101"
+  "UcmUcsiAcpiClient"
+  "UcmUcsiCx0101"
+  "UCPD"
+  "Ucx01000"
+  "UdeCx"
+  "udfs"
+  "UdkUserSvc"
+  "UdkUserSvc_12d1c7"
+  "UEFI"
+  "UevAgentDriver"
+  "UevAgentService"
+  "Ufx01000"
+  "UfxChipidea"
+  "ufxsynopsys"
+  "UGatherer"
+  "UGTHRSVC"
+  "uhssvc"
+  "umbus"
+  "UmPass"
+  "UmRdpService"
+  "UnistoreSvc"
+  "UnistoreSvc_12d1c7"
+  "UpcElevationService"
+  "upnphost"
+  "UrsChipidea"
+  "UrsCx01000"
+  "UrsSynopsys"
+  "usbaudio"
+  "usbaudio2"
+  "usbccgp"
+  "usbcir"
+  "usbehci"
+  "usbhub"
+  "USBHUB3"
+  "usbohci"
+  "usbprint"
+  "usbser"
+  "USBSTOR"
+  "usbuhci"
+  "usbvideo"
+  "USBXHCI"
+  "UserDataSvc"
+  "UserDataSvc_12d1c7"
+  "UserManager"
+  "UsoSvc"
+  "VacSvc"
+  "VaultSvc"
+  "vdrvroot"
+  "vds"
+  "VerifierExt"
+  "VfpExt"
+  "vhdmp"
+  "vhdparser"
+  "vhf"
+  "Vid"
+  "VirtualRender"
+  "VMAuthdService"  [matches: vm]
+  "vmbus"  [matches: vm]
+  "VMBusHID"  [matches: vm]
+  "vmbusr"  [matches: vm]
+  "vmci"  [matches: vm,vmci]
+  "vmcompute"  [matches: vm]
+  "vmgid"  [matches: vm]
+  "vmicguestinterface"  [matches: vm]
+  "vmicheartbeat"  [matches: vm]
+  "vmickvpexchange"  [matches: vm]
+  "vmicrdv"  [matches: vm]
+  "vmicshutdown"  [matches: vm]
+  "vmictimesync"  [matches: vm]
+  "vmicvmsession"  [matches: vm]
+  "vmicvss"  [matches: vm]
+  "vmms"  [matches: vm]
+  "VMnetAdapter"  [matches: vm]
+  "VMnetBridge"  [matches: vm]
+  "VMnetDHCP"  [matches: vm]
+  "VMnetuserif"  [matches: vm]
+  "vmsmp"  [matches: vm]
+  "VMSNPXY"  [matches: vm]
+  "VMSNPXYMP"  [matches: vm]
+  "VMSP"  [matches: vm]
+  "VmsProxy"  [matches: vm]
+  "VMSVSF"  [matches: vm]
+  "VMSVSP"  [matches: vm]
+  "vmusb"  [matches: vm]
+  "VMUSBArbService"  [matches: vm]
+  "VMware"  [matches: vm,vmware]
+  "VMware NAT Service"  [matches: vm,vmware]
+  "VmwareAutostartService"  [matches: vm,vmware]
+  "vmx86"  [matches: vm,vmx]
+  "volmgr"
+  "volmgrx"
+  "volsnap"
+  "volume"
+  "vpci"
+  "vpcivsp"
+  "VSInstallerElevationService"
+  "vsmraid"
+  "vsock"  [matches: vsock]
+  "VSS"
+  "VSSrv"
+  "VSStandardCollectorService140"
+  "VSStandardCollectorService150"
+  "VSTXRAID"
+  "vwifibus"
+  "vwififlt"
+  "vwifimp"
+  "W32Time"
+  "WaaSMedicSvc"
+  "WacomPen"
+  "WalletService"
+  "wanarp"
+  "wanarpv6"
+  "WarpJITSvc"
+  "wbengine"
+  "WbioSrvc"
+  "wcifs"
+  "Wcmsvc"
+  "wcncsvc"
+  "wcnfs"
+  "WdAiNisDrv"
+  "WdBoot"
+  "WDC_SAM"
+  "Wdf01000"
+  "WdFilter"
+  "WdiServiceHost"
+  "WdiSystemHost"
+  "wdiwifi"
+  "WdmCompanionFilter"
+  "WdNisDrv"
+  "WdNisSvc"
+  "WebClient"
+  "Wecsvc"
+  "WEPHOSTSVC"
+  "wercplsupport"
+  "WerSvc"
+  "WFDSConMgrSvc"
+  "WFPLWFS"
+  "WiaRpc"
+  "WIMMount"
+  "WinDefend"
+  "Windows Workflow Foundation 3.0.0.0"
+  "Windows Workflow Foundation 4.0.0.0"
+  "WindowsTrustedRT"
+  "WindowsTrustedRTProxy"
+  "WinHttpAutoProxySvc"
+  "WinMad"
+  "Winmgmt"
+  "WinNat"
+  "WinRM"
+  "Winsock"
+  "WinSock2"
+  "WINUSB"
+  "WinVerbs"
+  "wisvc"
+  "WlanSvc"
+  "wlidsvc"
+  "wlpasvc"
+  "WManSvc"
+  "WmiAcpi"
+  "WmiApRpl"
+  "wmiApSrv"
+  "WMIRegistrationService"
+  "WMPNetworkSvc"
+  "Wof"
+  "workerdd"
+  "workfolderssvc"
+  "WpcMonSvc"
+  "WPDBusEnum"
+  "WpdUpFltr"
+  "WpnService"
+  "WpnUserService"
+  "WpnUserService_12d1c7"
+  "ws2ifsl"
+  "wscsvc"
+  "WSearch"
+  "WSearchIdxPi"
+  "wuauserv"
+  "WudfPf"
+  "WUDFRd"
+  "WUDFWpdFs"
+  "WUDFWpdMtp"
+  "WwanSvc"
+  "XblAuthManager"
+  "XblGameSave"
+  "xboxgip"
+  "XboxGipSvc"
+  "XboxNetApiSvc"
+  "xhunter1"
+  "xinputhid"
+  "xmlprov"
+  "Xvdd"
+  "zksvc"
+  "{139348A2-F2AD-46A4-B369-F021DBBC3502}"
+  "{4DC84F63-FCCA-4151-B79D-EFB8116314F9}"
+  "{6A1EB38F-5FBC-42D7-89E0-9CD04198DE7F}"
+  "{3CE809E1-4A2F-4874-9FC5-FD31CAD0E89B}"
+  "{A2793689-B07E-4065-8A71-F6026B4D5BEF}"
+  "{A023F64B-6460-4E2A-B2E7-8E7564C87829}"
+  "{0399EF6C-3E3B-447B-A0C4-73575A36B79F}"
+  "{7D7584F7-D227-4CC4-BDF1-7A64E1ED7F6E}"
+  "{C56B036D-759E-4BE4-AE25-16216475D7C4}"
+  "Enum"
+
+869 service(s), 40 matching
+
+########## service "ADOVMPPackage" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\ADOVMPPackage
+  depth 0; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "Final"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\ADOVMPPackage\Final
+open FAILED: 5 (access denied)
+
+########## service "CoworkVMService" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\CoworkVMService
+  depth 0; last write 2025-08-20T08:41:46Z; 12 value(s), 2 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000210 (528)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ImagePath"  REG_EXPAND_SZ (2)  192 bytes: "C:\x5CProgram Files\x5CWindowsApps\x5CClaude_2.42304.0.0_x64__pzs8sxrjxfjjc\x5Capp\x5Cresources\x5Ccowork-svc.exe"
+  value "DisplayName"  REG_SZ (1)  14 bytes: "Claude"
+  value "DependOnService"  REG_MULTI_SZ (7)  34 bytes: (list)
+        [0] "staterepository"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "PackageFullName"  REG_SZ (1)  76 bytes: "Claude_2.42304.0.0_x64__pzs8sxrjxfjjc"
+  value "AppUserModelId"  REG_SZ (1)  56 bytes: "Claude_pzs8sxrjxfjjc!Claude"
+  value "PackageOrigin"  REG_DWORD (4)  4 bytes: 0x00000005 (5)
+  value "Description"  REG_SZ (1)  68 bytes: "Desktop application for Claude.ai"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "Security"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\CoworkVMService\Security
+open FAILED: 5 (access denied)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\CoworkVMService\TriggerInfo
+  depth 1; last write 2025-08-20T08:41:46Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\CoworkVMService\TriggerInfo\0
+  depth 2; last write 2025-08-20T08:41:46Z; 5 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000014 (20)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Guid"  REG_BINARY (3)  16 bytes: 31D1811F603E764C986037334E4FFCE3 (16 bytes hex)
+  value "Data0"  REG_BINARY (3)  50 bytes: (50 bytes)
+      0000: 5C 00 70 00 69 00 70 00 65 00 5C 00 63 00 6F 00  |\.p.i.p.e.\.c.o.|
+      0010: 77 00 6F 00 72 00 6B 00 2D 00 76 00 6D 00 2D 00  |w.o.r.k.-.v.m.-.|
+      0020: 73 00 65 00 72 00 76 00 69 00 63 00 65 00 00 00  |s.e.r.v.i.c.e...|
+      0030: 00 00                                            |..|
+  value "DataType0"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+########## service "hvsocketcontrol" (matches: vsock)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\hvsocketcontrol
+  depth 0; last write 2025-04-17T22:01:04Z; 4 value(s), 0 subkey(s)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  98 bytes: "\x5CSystemRoot\x5Csystem32\x5Cdrivers\x5Chvsocketcontrol.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "stornvme" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\stornvme
+  depth 0; last write 2025-08-08T00:10:42Z; 8 value(s), 2 subkey(s)
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "System32\x5Cdrivers\x5Cstornvme.sys"
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Group"  REG_SZ (1)  28 bytes: "SCSI Miniport"
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  value "DisplayName"  REG_SZ (1)  150 bytes: "@stornvme.inf,%StorNVMe_ServiceDesc%;Microsoft Standard NVM Express Driver"
+  value "Owners"  REG_MULTI_SZ (7)  28 bytes: (list)
+        [0] "stornvme.inf"
+  subkey "Parameters"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 2 subkey(s)
+  value "BusType"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "IoTimeoutValue"  REG_DWORD (4)  4 bytes: 0x0000000A (10)
+  value "DmaRemappingCompatible"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  subkey "Device"
+  subkey "PnpInterface"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\Device
+  depth 2; last write 2024-02-12T07:58:29Z; 1 value(s), 0 subkey(s)
+  value "IoStripeAlignment"  REG_MULTI_SZ (7)  292 bytes: (list)
+        [0] "VEN_8086&DEV_0953&REV_?? 128"
+        [1] "VEN_8086&DEV_0984&REV_?? 128"
+        [2] "VEN_8086&DEV_0A53&REV_?? 128"
+        [3] "VEN_8086&DEV_0A54&REV_?? 128"
+        [4] "VEN_8086&DEV_0A55&REV_?? 128"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\PnpInterface
+  depth 2; last write 2024-02-12T07:58:29Z; 1 value(s), 0 subkey(s)
+  value "5"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\stornvme\Enum
+  depth 1; last write 2025-08-08T00:10:42Z; 5 value(s), 0 subkey(s)
+  value "0"  REG_SZ (1)  126 bytes: "PCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&31b1139f&0&0030"
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "1"  REG_SZ (1)  126 bytes: "PCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&3b1ae242&0&00D0"
+  value "2"  REG_SZ (1)  126 bytes: "PCI\x5CVEN_144D&DEV_A808&SUBSYS_A801144D&REV_00\x5C4&1842fd38&0&00DC"
+
+########## service "tdevmonc" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\tdevmonc
+  depth 0; last write 2025-01-14T00:58:06Z; 6 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  84 bytes: "\x5CSystemRoot\x5CSystem32\x5CDrivers\x5Ctdevmonc.sys"
+  value "DisplayName"  REG_SZ (1)  92 bytes: "Tibbo Device Monitor kernel-mode core service"
+  value "Description"  REG_SZ (1)  114 bytes: "Provides core monitoring capabilities for Tibbo IO Ninja"
+
+########## service "tdevmonp" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\tdevmonp
+  depth 0; last write 2025-01-14T00:58:06Z; 6 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  84 bytes: "\x5CSystemRoot\x5CSystem32\x5CDrivers\x5Ctdevmonp.sys"
+  value "DisplayName"  REG_SZ (1)  104 bytes: "Tibbo Device Monitor kernel-mode PNP filter service"
+  value "Description"  REG_SZ (1)  114 bytes: "Provides core monitoring capabilities for Tibbo IO Ninja"
+
+########## service "VMAuthdService" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMAuthdService
+  depth 0; last write 2025-06-12T22:16:53Z; 8 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  136 bytes: "\x22C:\x5CProgram Files (x86)\x5CVMware\x5CVMware Workstation\x5Cvmware-authd.exe\x22"
+  value "DisplayName"  REG_SZ (1)  58 bytes: "VMware Authorization Service"
+  value "DependOnService"  REG_MULTI_SZ (7)  30 bytes: (list)
+        [0] "vmx86"
+        [1] "winmgmt"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "Description"  REG_SZ (1)  172 bytes: "Authorization and authentication service for starting and accessing virtual machines."
+
+########## service "vmbus" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus
+  depth 0; last write 2024-05-18T05:33:33Z; 8 value(s), 2 subkey(s)
+  value "ImagePath"  REG_EXPAND_SZ (2)  54 bytes: "System32\x5Cdrivers\x5Cvmbus.sys"
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  40 bytes: "System Bus Extender"
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x0000000B (11)
+  value "DisplayName"  REG_SZ (1)  96 bytes: "@wvmbus.inf,%vmbus.SVCDESC%;Virtual Machine Bus"
+  value "Owners"  REG_MULTI_SZ (7)  24 bytes: (list)
+        [0] "wvmbus.inf"
+  subkey "Parameters"
+  subkey "StartOverride"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 2 subkey(s)
+  subkey "Wdf"
+  subkey "Winsock"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus\Parameters\Wdf
+  depth 2; last write 2024-02-12T07:58:29Z; 2 value(s), 0 subkey(s)
+  value "WdfMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "WdfMinorVersion"  REG_DWORD (4)  4 bytes: 0x0000000F (15)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus\Parameters\Winsock
+  depth 2; last write 2024-02-12T07:58:29Z; 6 value(s), 1 subkey(s)
+  value "MaxSockAddrLength"  REG_DWORD (4)  4 bytes: 0x00000024 (36)
+  value "MinSockAddrLength"  REG_DWORD (4)  4 bytes: 0x00000024 (36)
+  value "HelperDllName"  REG_EXPAND_SZ (2)  72 bytes: "%SystemRoot%\x5Csystem32\x5Cwshhyperv.dll"
+  value "ProviderGUID"  REG_BINARY (3)  16 bytes: 1B193412F74BA74C86E0DFD7C32B5445 (16 bytes hex)
+  value "OfflineCapable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Mapping"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 03 00 00 00 03 00 00 00 22 00 00 00 01 00 00 00  |........".......|
+      0010: 01 00 00 00 22 00 00 00 01 00 00 00 00 00 00 00  |...."...........|
+      0020: 22 00 00 00 00 00 00 00 01 00 00 00              |"...........|
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus\Parameters\Winsock\0
+  depth 3; last write 2024-02-12T07:58:29Z; 12 value(s), 0 subkey(s)
+  value "Version"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "AddressFamily"  REG_DWORD (4)  4 bytes: 0x00000022 (34)
+  value "MaxSockAddrLength"  REG_DWORD (4)  4 bytes: 0x00000024 (36)
+  value "MinSockAddrLength"  REG_DWORD (4)  4 bytes: 0x00000024 (36)
+  value "SocketType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Protocol"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ProtocolMaxOffset"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ByteOrder"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "MessageSize"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "szProtocol"  REG_EXPAND_SZ (2)  22 bytes: "Hyper-V RAW"
+  value "ProviderFlags"  REG_DWORD (4)  4 bytes: 0x00000008 (8)
+  value "ServiceFlags"  REG_DWORD (4)  4 bytes: 0x00020026 (131110)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbus\StartOverride
+  depth 1; last write 2024-05-18T05:33:33Z; 1 value(s), 0 subkey(s)
+  value "0"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+
+########## service "VMBusHID" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMBusHID
+  depth 0; last write 2024-02-12T07:58:29Z; 7 value(s), 0 subkey(s)
+  value "ImagePath"  REG_EXPAND_SZ (2)  84 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5CVMBusHID.sys"
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Group"  REG_SZ (1)  28 bytes: "Extended Base"
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x0000002C (44)
+  value "Owners"  REG_MULTI_SZ (7)  30 bytes: (list)
+        [0] "wvmbushid.inf"
+
+########## service "vmbusr" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbusr
+  depth 0; last write 2025-08-08T00:10:42Z; 8 value(s), 2 subkey(s)
+  value "ImagePath"  REG_EXPAND_SZ (2)  80 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5Cvmbusr.sys"
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  28 bytes: "Extended Base"
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x0000000E (14)
+  value "DisplayName"  REG_SZ (1)  96 bytes: "@%SystemRoot%\x5Csystem32\x5Cdrivers\x5Cvmbusr.sys,-1001"
+  value "Owners"  REG_MULTI_SZ (7)  26 bytes: (list)
+        [0] "wvmbusr.inf"
+  subkey "Parameters"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbusr\Parameters
+  depth 1; last write 2025-04-17T22:01:59Z; 0 value(s), 1 subkey(s)
+  subkey "Wdf"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbusr\Parameters\Wdf
+  depth 2; last write 2025-04-17T22:01:59Z; 2 value(s), 0 subkey(s)
+  value "WdfMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "WdfMinorVersion"  REG_DWORD (4)  4 bytes: 0x0000000F (15)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmbusr\Enum
+  depth 1; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "0"  REG_SZ (1)  32 bytes: "ROOT\x5CVMBus\x5C0000"
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmci" (matches: vm,vmci)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmci
+  depth 0; last write 2025-08-08T00:10:42Z; 9 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "ImagePath"  REG_EXPAND_SZ (2)  52 bytes: "System32\x5Cdrivers\x5Cvmci.sys"
+  value "DisplayName"  REG_SZ (1)  126 bytes: "@oem54.inf,%loc.vmciServiceDisplayName%;VMware VMCI Bus Driver"
+  value "Group"  REG_SZ (1)  40 bytes: "System Bus Extender"
+  value "Owners"  REG_MULTI_SZ (7)  22 bytes: (list)
+        [0] "oem54.inf"
+  value "vwdk.installers"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "MSI"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmci\Enum
+  depth 1; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "0"  REG_SZ (1)  50 bytes: "ROOT\x5CVMWVMCIHOSTDEV\x5C0000"
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmcompute" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmcompute
+  depth 0; last write 2025-04-17T22:01:04Z; 9 value(s), 2 subkey(s)
+  value "DependOnService"  REG_MULTI_SZ (7)  72 bytes: (list)
+        [0] "rpcss"
+        [1] "wcifs"
+        [2] "hvsocketcontrol"
+        [3] "condrv"
+  value "Description"  REG_SZ (1)  84 bytes: "@%systemroot%\x5Csystem32\x5Cvmcompute.exe,-101"
+  value "DisplayName"  REG_SZ (1)  84 bytes: "@%systemroot%\x5Csystem32\x5Cvmcompute.exe,-100"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  72 bytes: "%systemroot%\x5Csystem32\x5Cvmcompute.exe"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  subkey "Security"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmcompute\Security
+  depth 1; last write 2025-04-17T22:01:04Z; 1 value(s), 0 subkey(s)
+  value "Security"  REG_BINARY (3)  144 bytes: (144 bytes)
+      0000: 01 00 14 80 78 00 00 00 84 00 00 00 14 00 00 00  |....x...........|
+      0010: 30 00 00 00 02 00 1C 00 01 00 00 00 02 80 14 00  |0...............|
+      0020: FF 01 0F 00 01 01 00 00 00 00 00 01 00 00 00 00  |................|
+      0030: 02 00 48 00 03 00 00 00 00 00 14 00 FD 01 02 00  |..H.............|
+      0040: 01 01 00 00 00 00 00 05 12 00 00 00 00 00 18 00  |................|
+      0050: FF 01 0F 00 01 02 00 00 00 00 00 05 20 00 00 00  |............ ...|
+      0060: 20 02 00 00 00 00 14 00 8D 00 02 00 01 01 00 00  | ...............|
+      0070: 00 00 00 05 0B 00 00 00 01 01 00 00 00 00 00 05  |................|
+      0080: 12 00 00 00 01 01 00 00 00 00 00 05 12 00 00 00  |................|
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmcompute\TriggerInfo
+  depth 1; last write 2025-04-17T22:01:04Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmcompute\TriggerInfo\0
+  depth 2; last write 2025-04-17T22:01:04Z; 5 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Data0"  REG_BINARY (3)  74 bytes: (74 bytes)
+      0000: 45 00 37 00 41 00 32 00 31 00 36 00 41 00 46 00  |E.7.A.2.1.6.A.F.|
+      0010: 2D 00 31 00 45 00 43 00 31 00 2D 00 34 00 34 00  |-.1.E.C.1.-.4.4.|
+      0020: 37 00 46 00 2D 00 38 00 44 00 33 00 46 00 2D 00  |7.F.-.8.D.3.F.-.|
+      0030: 41 00 38 00 37 00 32 00 37 00 38 00 44 00 42 00  |A.8.7.2.7.8.D.B.|
+      0040: 35 00 36 00 34 00 44 00 00 00                    |5.6.4.D...|
+  value "DataType0"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "GUID"  REG_BINARY (3)  16 bytes: 67D190BC70943941A9BABE0BBBF5B74D (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+
+########## service "vmgid" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmgid
+  depth 0; last write 2024-02-12T07:58:29Z; 6 value(s), 0 subkey(s)
+  value "ImagePath"  REG_EXPAND_SZ (2)  78 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5Cvmgid.sys"
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisplayName"  REG_SZ (1)  148 bytes: "@wvmgid.inf,%VmGid.SVCDESC%;Microsoft Hyper-V Guest Infrastructure Driver"
+  value "Owners"  REG_MULTI_SZ (7)  24 bytes: (list)
+        [0] "wvmgid.inf"
+
+########## service "vmicguestinterface" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicguestinterface
+  depth 0; last write 2024-02-12T07:58:29Z; 9 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-802"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-801"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  138 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalSystemNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  50 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicguestinterface\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  52 bytes: "GuestInterfaceServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicguestinterface\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicguestinterface\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: E34BD134E4DEC8419AE76B174977C192 (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmicheartbeat" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicheartbeat
+  depth 0; last write 2024-02-12T07:58:29Z; 10 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-102"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-101"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 10 0E 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |................|
+      0010: 14 00 00 00 01 00 00 00 60 EA 00 00 01 00 00 00  |........`.......|
+      0020: C0 D4 01 00 00 00 00 00 00 00 00 00              |............|
+  value "ImagePath"  REG_EXPAND_SZ (2)  100 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k ICService -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  50 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicheartbeat\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  42 bytes: "HeartbeatServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicheartbeat\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicheartbeat\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: 394F16571591784EAB55382F3BD5422D (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmickvpexchange" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmickvpexchange
+  depth 0; last write 2024-02-12T07:58:29Z; 10 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-202"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-201"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 40 38 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |@8..............|
+      0010: 14 00 00 00 01 00 00 00 60 EA 00 00 01 00 00 00  |........`.......|
+      0020: C0 D4 01 00 00 00 00 00 00 00 00 00              |............|
+  value "ImagePath"  REG_EXPAND_SZ (2)  138 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalSystemNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  50 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmickvpexchange\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  46 bytes: "KvpexchangeServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmickvpexchange\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmickvpexchange\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: E7F4A0A9455A964DB8278A841E8C03E6 (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmicrdv" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicrdv
+  depth 0; last write 2024-02-12T07:58:29Z; 9 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  82 bytes: "@%systemroot%\x5Csystem32\x5Cicsvcext.dll,-602"
+  value "DisplayName"  REG_SZ (1)  82 bytes: "@%systemroot%\x5Csystem32\x5Cicsvcext.dll,-601"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  100 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k ICService -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  322 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeBackupPrivilege"
+        [2] "SeRestorePrivilege"
+        [3] "SeTakeOwnershipPrivilege"
+        [4] "SeManageVolumePrivilege"
+        [5] "SeCreateSymbolicLinkPrivilege"
+        [6] "SeShutdownPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicrdv\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  70 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvcext.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  30 bytes: "RdvServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicrdv\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicrdv\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: F4AC6A2715AC6C4298DD7521AD3F01FE (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmicshutdown" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicshutdown
+  depth 0; last write 2024-02-12T07:58:29Z; 10 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-302"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-301"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 10 0E 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |................|
+      0010: 14 00 00 00 01 00 00 00 60 EA 00 00 01 00 00 00  |........`.......|
+      0020: C0 D4 01 00 00 00 00 00 00 00 00 00              |............|
+  value "ImagePath"  REG_EXPAND_SZ (2)  138 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalSystemNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  166 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeShutdownPrivilege"
+        [2] "SeTcbPrivilege"
+        [3] "SeImpersonatePrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicshutdown\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  40 bytes: "ShutdownServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicshutdown\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicshutdown\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: 31600B0E13523449818B38D90CED39DB (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmictimesync" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmictimesync
+  depth 0; last write 2024-02-12T07:58:29Z; 11 value(s), 2 subkey(s)
+  value "DependOnService"  REG_MULTI_SZ (7)  14 bytes: (list)
+        [0] "VmGid"
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-402"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-401"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 40 38 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |@8..............|
+      0010: 14 00 00 00 01 00 00 00 60 EA 00 00 01 00 00 00  |........`.......|
+      0020: C0 D4 01 00 00 00 00 00 00 00 00 00              |............|
+  value "ImagePath"  REG_EXPAND_SZ (2)  140 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalServiceNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  52 bytes: "NT AUTHORITY\x5CLocalService"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  142 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeSystemtimePrivilege"
+        [2] "SeCreateGlobalPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmictimesync\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  40 bytes: "TimesyncServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmictimesync\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmictimesync\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: 30E62795AED07B49ADCEE80AB0175CAF (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmicvmsession" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvmsession
+  depth 0; last write 2024-02-12T07:58:29Z; 9 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-902"
+  value "DisplayName"  REG_SZ (1)  76 bytes: "@%systemroot%\x5Csystem32\x5Cicsvc.dll,-901"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  138 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalSystemNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  344 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeBackupPrivilege"
+        [2] "SeRestorePrivilege"
+        [3] "SeDebugPrivilege"
+        [4] "SeImpersonatePrivilege"
+        [5] "SeTcbPrivilege"
+        [6] "SeIncreaseQuotaPrivilege"
+        [7] "SeAssignPrimaryTokenPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvmsession\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  64 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvc.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  42 bytes: "VMSessionServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvmsession\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvmsession\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: D4539E995C3D3E4C8779BED06EC056E1 (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmicvss" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvss
+  depth 0; last write 2024-02-12T07:58:29Z; 9 value(s), 2 subkey(s)
+  value "Description"  REG_SZ (1)  82 bytes: "@%systemroot%\x5Csystem32\x5Cicsvcext.dll,-502"
+  value "DisplayName"  REG_SZ (1)  82 bytes: "@%systemroot%\x5Csystem32\x5Cicsvcext.dll,-501"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  138 bytes: "%systemroot%\x5Csystem32\x5Csvchost.exe -k LocalSystemNetworkRestricted -p"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  86 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeBackupPrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  subkey "Parameters"
+  subkey "TriggerInfo"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvss\Parameters
+  depth 1; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "ServiceDll"  REG_EXPAND_SZ (2)  70 bytes: "%SystemRoot%\x5CSystem32\x5Cicsvcext.dll"
+  value "ServiceDllUnloadOnStop"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ServiceMain"  REG_SZ (1)  30 bytes: "VssServiceMain"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvss\TriggerInfo
+  depth 1; last write 2024-02-12T07:58:29Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmicvss\TriggerInfo\0
+  depth 2; last write 2024-02-12T07:58:29Z; 3 value(s), 0 subkey(s)
+  value "Action"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GUID"  REG_BINARY (3)  16 bytes: 292EFA3523EA364296AE3A6EBACBA440 (16 bytes hex)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "vmms" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmms
+  depth 0; last write 2025-08-01T17:15:40Z; 13 value(s), 1 subkey(s)
+  value "DependOnService"  REG_MULTI_SZ (7)  30 bytes: (list)
+        [0] "RPCSS"
+        [1] "WINMGMT"
+  value "Description"  REG_SZ (1)  72 bytes: "@%systemroot%\x5Csystem32\x5Cvmms.exe,-11"
+  value "DisplayName"  REG_SZ (1)  72 bytes: "@%systemroot%\x5Csystem32\x5Cvmms.exe,-10"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 84 03 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |................|
+      0010: 14 00 00 00 01 00 00 00 C0 D4 01 00 01 00 00 00  |................|
+      0020: 80 A9 03 00 00 00 00 00 00 00 00 00              |............|
+  value "Group"  REG_SZ (1)  10 bytes: "Base"
+  value "ImagePath"  REG_EXPAND_SZ (2)  62 bytes: "%systemroot%\x5Csystem32\x5Cvmms.exe"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "RequiredPrivileges"  REG_MULTI_SZ (7)  512 bytes: (list)
+        [0] "SeChangeNotifyPrivilege"
+        [1] "SeAssignPrimaryTokenPrivilege"
+        [2] "SeIncreaseQuotaPrivilege"
+        [3] "SeTcbPrivilege"
+        [4] "SeTakeOwnershipPrivilege"
+        [5] "SeManageVolumePrivilege"
+        [6] "SeImpersonatePrivilege"
+        [7] "SeCreateSymbolicLinkPrivilege"
+        [8] "SeLoadDriverPrivilege"
+        [9] "SeBackupPrivilege"
+        [10] "SeRestorePrivilege"
+  value "ServiceSidType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "PreshutdownTimeout"  REG_DWORD (4)  4 bytes: 0x002CDC60 (2940000)
+  subkey "Security"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmms\Security
+  depth 1; last write 2025-08-01T17:14:34Z; 1 value(s), 0 subkey(s)
+  value "Security"  REG_BINARY (3)  188 bytes: (188 bytes)
+      0000: 01 00 14 80 A4 00 00 00 B0 00 00 00 14 00 00 00  |................|
+      0010: 30 00 00 00 02 00 1C 00 01 00 00 00 02 80 14 00  |0...............|
+      0020: FF 01 0F 00 01 01 00 00 00 00 00 01 00 00 00 00  |................|
+      0030: 02 00 74 00 05 00 00 00 00 00 14 00 FD 01 02 00  |..t.............|
+      0040: 01 01 00 00 00 00 00 05 12 00 00 00 00 00 18 00  |................|
+      0050: FF 01 0F 00 01 02 00 00 00 00 00 05 20 00 00 00  |............ ...|
+      0060: 20 02 00 00 00 00 14 00 8D 01 02 00 01 01 00 00  | ...............|
+      0070: 00 00 00 05 04 00 00 00 00 00 14 00 8D 01 02 00  |................|
+      0080: 01 01 00 00 00 00 00 05 06 00 00 00 00 00 18 00  |................|
+      0090: FD 01 02 00 01 02 00 00 00 00 00 05 20 00 00 00  |............ ...|
+      00A0: 42 02 00 00 01 01 00 00 00 00 00 05 12 00 00 00  |B...............|
+      00B0: 01 01 00 00 00 00 00 05 12 00 00 00              |............|
+
+########## service "VMnetAdapter" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetAdapter
+  depth 0; last write 2025-08-08T00:10:42Z; 13 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000016 (22)
+  value "ImagePath"  REG_EXPAND_SZ (2)  92 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5Cvmnetadapter.sys"
+  value "DisplayName"  REG_SZ (1)  164 bytes: "@oem53.inf,%VMnetAdapter.Service.DispName%;VMware Virtual Ethernet Adapter Driver"
+  value "Group"  REG_SZ (1)  10 bytes: "NDIS"
+  value "Description"  REG_SZ (1)  184 bytes: "@oem53.inf,%VMnetAdapter.Service.Desc%;Driver for VMware's Virtual Ethernet Adapters Ver. 2"
+  value "Owners"  REG_MULTI_SZ (7)  22 bytes: (list)
+        [0] "oem53.inf"
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000014 (20)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000014 (20)
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetAdapter\Enum
+  depth 1; last write 2025-08-08T00:10:42Z; 4 value(s), 0 subkey(s)
+  value "0"  REG_SZ (1)  34 bytes: "ROOT\x5CVMWARE\x5C0000"
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "1"  REG_SZ (1)  34 bytes: "ROOT\x5CVMWARE\x5C0001"
+
+########## service "VMnetBridge" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetBridge
+  depth 0; last write 2025-06-12T22:16:55Z; 13 value(s), 2 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x0000000A (10)
+  value "ImagePath"  REG_EXPAND_SZ (2)  90 bytes: "\x5CSystemRoot\x5Csystem32\x5CDRIVERS\x5Cvmnetbridge.sys"
+  value "DisplayName"  REG_SZ (1)  96 bytes: "@oem37.inf,%VMware_Desc%;VMware Bridge Protocol"
+  value "Group"  REG_SZ (1)  16 bytes: "PNP_TDI"
+  value "Description"  REG_SZ (1)  96 bytes: "@oem37.inf,%VMware_Desc%;VMware Bridge Protocol"
+  value "TextModeFlags"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "Linkage"
+  subkey "Parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetBridge\Linkage
+  depth 1; last write 2025-08-08T00:11:23Z; 3 value(s), 0 subkey(s)
+  value "Export"  REG_MULTI_SZ (7)  828 bytes: (list)
+        [0] "\x5CDevice\x5CVMnetBridge_{7D7584F7-D227-4CC4-BDF1-7A64E1ED7F6E}"
+        [1] "\x5CDevice\x5CVMnetBridge_{C56B036D-759E-4BE4-AE25-16216475D7C4}"
+        [2] "\x5CDevice\x5CVMnetBridge_{6A1EB38F-5FBC-42D7-89E0-9CD04198DE7F}"
+        [3] "\x5CDevice\x5CVMnetBridge_{4DC84F63-FCCA-4151-B79D-EFB8116314F9}"
+        [4] "\x5CDevice\x5CVMnetBridge_{0399EF6C-3E3B-447B-A0C4-73575A36B79F}"
+        [5] "\x5CDevice\x5CVMnetBridge_{A2793689-B07E-4065-8A71-F6026B4D5BEF}"
+        [6] "\x5CDevice\x5CVMnetBridge_{F24C9576-5BDC-40DF-BE54-7A9139F23206}"
+  value "Bind"  REG_MULTI_SZ (7)  660 bytes: (list)
+        [0] "\x5CDevice\x5C{7D7584F7-D227-4CC4-BDF1-7A64E1ED7F6E}"
+        [1] "\x5CDevice\x5C{C56B036D-759E-4BE4-AE25-16216475D7C4}"
+        [2] "\x5CDevice\x5C{6A1EB38F-5FBC-42D7-89E0-9CD04198DE7F}"
+        [3] "\x5CDevice\x5C{4DC84F63-FCCA-4151-B79D-EFB8116314F9}"
+        [4] "\x5CDevice\x5C{0399EF6C-3E3B-447B-A0C4-73575A36B79F}"
+        [5] "\x5CDevice\x5C{A2793689-B07E-4065-8A71-F6026B4D5BEF}"
+        [6] "\x5CDevice\x5C{F24C9576-5BDC-40DF-BE54-7A9139F23206}"
+  value "Route"  REG_MULTI_SZ (7)  576 bytes: (list)
+        [0] "\x22{7D7584F7-D227-4CC4-BDF1-7A64E1ED7F6E}\x22"
+        [1] "\x22{C56B036D-759E-4BE4-AE25-16216475D7C4}\x22"
+        [2] "\x22{6A1EB38F-5FBC-42D7-89E0-9CD04198DE7F}\x22"
+        [3] "\x22{4DC84F63-FCCA-4151-B79D-EFB8116314F9}\x22"
+        [4] "\x22{0399EF6C-3E3B-447B-A0C4-73575A36B79F}\x22"
+        [5] "\x22{A2793689-B07E-4065-8A71-F6026B4D5BEF}\x22"
+        [6] "\x22{F24C9576-5BDC-40DF-BE54-7A9139F23206}\x22"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetBridge\Parameters
+  depth 1; last write 2025-06-12T22:16:55Z; 0 value(s), 1 subkey(s)
+  subkey "Adapters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetBridge\Parameters\Adapters
+  depth 2; last write 2025-06-12T22:16:55Z; 1 value(s), 0 subkey(s)
+  value "Test"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+
+########## service "VMnetDHCP" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetDHCP
+  depth 0; last write 2025-06-12T22:16:55Z; 8 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  68 bytes: "C:\x5CWindows\x5Csystem32\x5Cvmnetdhcp.exe"
+  value "DisplayName"  REG_SZ (1)  40 bytes: "VMware DHCP Service"
+  value "DependOnService"  REG_MULTI_SZ (7)  26 bytes: (list)
+        [0] "VMnetuserif"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "Description"  REG_SZ (1)  74 bytes: "DHCP service for virtual networks.\x0D\x0A"
+  subkey "Parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetDHCP\Parameters
+  depth 1; last write 2025-06-12T22:16:55Z; 2 value(s), 1 subkey(s)
+  value "ConfFile"  REG_EXPAND_SZ (2)  74 bytes: "C:\x5CProgramData\x5CVMware\x5Cvmnetdhcp.conf"
+  value "LeaseFile"  REG_EXPAND_SZ (2)  78 bytes: "C:\x5CProgramData\x5CVMware\x5Cvmnetdhcp.leases"
+  subkey "VirtualEthernetSegments"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetDHCP\Parameters\VirtualEthernetSegments
+  depth 2; last write 2025-06-12T22:16:55Z; 0 value(s), 2 subkey(s)
+  subkey "1"
+  subkey "8"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetDHCP\Parameters\VirtualEthernetSegments\1
+  depth 3; last write 2025-06-12T22:16:55Z; 2 value(s), 0 subkey(s)
+  value "HostIpAddress"  REG_DWORD (4)  4 bytes: 0x0188A8C0 (25733312)
+  value "ListenTo"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetDHCP\Parameters\VirtualEthernetSegments\8
+  depth 3; last write 2025-06-12T22:16:55Z; 2 value(s), 0 subkey(s)
+  value "HostIpAddress"  REG_DWORD (4)  4 bytes: 0x0134A8C0 (20228288)
+  value "ListenTo"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+########## service "VMnetuserif" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMnetuserif
+  depth 0; last write 2025-06-12T22:16:55Z; 9 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000015 (21)
+  value "ImagePath"  REG_EXPAND_SZ (2)  90 bytes: "\x5CSystemRoot\x5Csystem32\x5CDRIVERS\x5Cvmnetuserif.sys"
+  value "DisplayName"  REG_SZ (1)  82 bytes: "VMware Virtual Ethernet Userif for VMnet"
+  value "Group"  REG_SZ (1)  10 bytes: "NDIS"
+  value "Description"  REG_SZ (1)  82 bytes: "VMware Virtual Ethernet Userif for VMnet"
+  value "vwdk.installers"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "MSI"
+
+########## service "vmsmp" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp
+  depth 0; last write 2025-08-08T00:10:43Z; 11 value(s), 2 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  84 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5Cvmswitch.sys"
+  value "DependOnService"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "VMSP"
+  value "ObjectName"  REG_SZ (1)  26 bytes: "\x5CDriver\x5CVMSP"
+  value "Owners"  REG_MULTI_SZ (7)  42 bytes: (list)
+        [0] "wvms_mp_windows.inf"
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x0000003C (60)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "parameters"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\parameters
+  depth 1; last write 2025-08-01T17:15:43Z; 2 value(s), 2 subkey(s)
+  value "WppRecorder_PerBufferMaxBytes"  REG_DWORD (4)  4 bytes: 0x00010000 (65536)
+  value "WppRecorder_TraceGuid"  REG_SZ (1)  78 bytes: "{1f387cbc-6818-4530-9db6-5f1058cd7e86}"
+  subkey "NicList"
+  subkey "SwitchList"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\parameters\NicList
+  depth 2; last write 2025-08-08T00:11:23Z; 0 value(s), 1 subkey(s)
+  subkey "E1ABAA80-2321-455D-B8E5-CAEA763CFE53"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\parameters\NicList\E1ABAA80-2321-455D-B8E5-CAEA763CFE53
+  depth 3; last write 2025-08-08T00:11:23Z; 9 value(s), 0 subkey(s)
+  value "SwitchName"  REG_SZ (1)  72 bytes: "C08CB7B8-9B3C-408E-8E30-5E16A3AEB444"
+  value "PortName"  REG_SZ (1)  72 bytes: "2C2869B7-2220-43EF-A214-03BFE3B017EE"
+  value "NicType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OriginalName"  REG_SZ (1)  72 bytes: "E1ABAA80-2321-455D-B8E5-CAEA763CFE53"
+  value "FriendlyName"  REG_SZ (1)  28 bytes: "Default Switch"
+  value "DeviceGuid"  REG_SZ (1)  92 bytes: "\x5CDevice\x5C{F24C9576-5BDC-40DF-BE54-7A9139F23206}"
+  value "CurrentMacAddress"  REG_BINARY (3)  6 bytes: 00155DE8F6D3 (6 bytes hex)
+  value "PermanentMacAddress"  REG_BINARY (3)  6 bytes: 00155DE8F6D3 (6 bytes hex)
+  value "IsLightWeightNic"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\parameters\SwitchList
+  depth 2; last write 2025-08-08T00:11:23Z; 0 value(s), 1 subkey(s)
+  subkey "C08CB7B8-9B3C-408E-8E30-5E16A3AEB444"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\parameters\SwitchList\C08CB7B8-9B3C-408E-8E30-5E16A3AEB444
+  depth 3; last write 2025-08-08T00:11:23Z; 2 value(s), 1 subkey(s)
+  value "FriendlyName"  REG_SZ (1)  28 bytes: "Default Switch"
+  value "{3b04a490-0745-420a-8830-b7d2e5130c0f}"  REG_BINARY (3)  3256 bytes: (3256 bytes)
+      0000: B8 0C 00 00 A8 0C 00 00 00 04 00 01 00 01 01 00  |................|
+      0010: 48 00 43 00 30 00 38 00 43 00 42 00 37 00 42 00  |H.C.0.8.C.B.7.B.|
+      0020: 38 00 2D 00 39 00 42 00 33 00 43 00 2D 00 34 00  |8.-.9.B.3.C.-.4.|
+      0030: 30 00 38 00 45 00 2D 00 38 00 45 00 33 00 30 00  |0.8.E.-.8.E.3.0.|
+      0040: 2D 00 35 00 45 00 31 00 36 00 41 00 33 00 41 00  |-.5.E.1.6.A.3.A.|
+      0050: 45 00 42 00 34 00 34 00 34 00 00 00 00 00 00 00  |E.B.4.4.4.......|
+      0060: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0070: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0090: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0100: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0110: 00 00 00 00 00 04 00 00 F4 01 00 00 00 00 00 00  |................|
+      0120: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0130: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0140: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0150: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0160: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0170: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0180: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0190: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0210: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0220: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0230: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0240: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0250: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0260: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0270: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0290: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0300: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0310: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0320: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0330: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0340: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0350: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0360: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0370: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0380: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0390: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0400: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0410: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0420: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0430: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0440: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0450: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0460: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0470: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0480: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0490: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0500: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0510: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0520: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0530: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0540: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0550: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0560: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0570: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0580: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0590: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0600: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0610: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0620: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0630: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0640: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0650: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0660: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0670: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0680: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0690: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0700: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0710: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0720: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0730: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0740: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0750: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0760: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0770: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0780: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0790: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      07F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0800: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0810: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0820: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0830: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0840: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0850: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0860: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0870: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0880: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0890: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0900: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0910: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0920: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0930: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0940: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0950: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0960: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0970: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0980: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0990: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      09F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A20: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A90: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AA0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AB0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AC0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AD0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AE0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AF0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B20: 00 00 4C 00 7B 00 45 00 34 00 37 00 38 00 34 00  |..L.{.E.4.7.8.4.|
+      0B30: 45 00 35 00 30 00 2D 00 39 00 41 00 38 00 35 00  |E.5.0.-.9.A.8.5.|
+      0B40: 2D 00 34 00 31 00 41 00 45 00 2D 00 42 00 31 00  |-.4.1.A.E.-.B.1.|
+      0B50: 30 00 39 00 2D 00 43 00 33 00 32 00 32 00 43 00  |0.9.-.C.3.2.2.C.|
+      0B60: 45 00 39 00 39 00 31 00 46 00 42 00 45 00 7D 00  |E.9.9.1.F.B.E.}.|
+      0B70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B90: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BA0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BB0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BC0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BD0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BE0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0BF0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C20: 00 00 00 00 00 00 00 00 02 00 00 00 40 00 00 00  |............@...|
+      0C30: 01 01 00 00 10 00 00 00 01 00 00 00 02 00 00 00  |................|
+      0C40: 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0C90: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0CA0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0CB0: 00 00 00 00 01 00 00 00                          |........|
+  subkey "2C2869B7-2220-43EF-A214-03BFE3B017EE" (not descended: depth limit)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmsmp\Enum
+  depth 1; last write 2025-08-08T00:11:23Z; 3 value(s), 0 subkey(s)
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "0"  REG_SZ (1)  38 bytes: "ROOT\x5CVMS_VSMP\x5C0000"
+
+########## service "VMSNPXY" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSNPXY
+  depth 0; last write 2025-08-08T00:10:43Z; 10 value(s), 1 subkey(s)
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000051 (81)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisplayName"  REG_SZ (1)  52 bytes: "VmSwitch NIC Proxy Driver"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  28 bytes: "Extended Base"
+  value "ImagePath"  REG_EXPAND_SZ (2)  68 bytes: "system32\x5Cdrivers\x5CVmsProxyHNic.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSNPXY\parameters
+  depth 1; last write 2025-04-17T22:01:04Z; 2 value(s), 0 subkey(s)
+  value "WppRecorder_TraceGuid"  REG_SZ (1)  78 bytes: "{c0ddafb5-16eb-470b-bf17-24ed39a9e8ba}"
+  value "WppRecorder_PerBufferMaxBytes"  REG_DWORD (4)  4 bytes: 0x00010000 (65536)
+
+########## service "VMSNPXYMP" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSNPXYMP
+  depth 0; last write 2025-08-08T00:10:42Z; 7 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  92 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5CVmsProxyHNic.sys"
+  value "DependOnService"  REG_MULTI_SZ (7)  18 bytes: (list)
+        [0] "VMSNPXY"
+  value "ObjectName"  REG_SZ (1)  32 bytes: "\x5CDriver\x5CVMSNPXY"
+  value "Owners"  REG_MULTI_SZ (7)  42 bytes: (list)
+        [0] "wvms_mp_windows.inf"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSNPXYMP\Enum
+  depth 1; last write 2025-08-08T00:11:23Z; 3 value(s), 0 subkey(s)
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "0"  REG_SZ (1)  34 bytes: "ROOT\x5CVMS_MP\x5C0000"
+
+########## service "VMSP" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSP
+  depth 0; last write 2025-08-08T00:10:43Z; 11 value(s), 1 subkey(s)
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000054 (84)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DependOnService"  REG_MULTI_SZ (7)  18 bytes: (list)
+        [0] "VMSNPXY"
+  value "DisplayName"  REG_SZ (1)  50 bytes: "VmSwitch Protocol Driver"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  10 bytes: "NDIS"
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "System32\x5Cdrivers\x5Cvmswitch.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "Linkage"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSP\Linkage
+  depth 1; last write 2025-08-08T00:11:23Z; 3 value(s), 0 subkey(s)
+  value "Export"  REG_MULTI_SZ (7)  28 bytes: (list)
+        [0] "\x5CDevice\x5CVMSP"
+  value "Bind"  REG_MULTI_SZ (7)  2 bytes: (list)
+        (empty list)
+  value "Route"  REG_MULTI_SZ (7)  2 bytes: (list)
+        (empty list)
+
+########## service "VmsProxy" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VmsProxy
+  depth 0; last write 2025-04-17T22:01:04Z; 7 value(s), 1 subkey(s)
+  value "DisplayName"  REG_SZ (1)  44 bytes: "VmSwitch Proxy Driver"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  28 bytes: "Extended Base"
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "system32\x5Cdrivers\x5CVmsProxy.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x0000000C (12)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VmsProxy\parameters
+  depth 1; last write 2025-04-17T22:01:04Z; 2 value(s), 0 subkey(s)
+  value "WppRecorder_TraceGuid"  REG_SZ (1)  78 bytes: "{3b7922bb-c097-495d-bf47-d7003fd40a1a}"
+  value "WppRecorder_PerBufferMaxBytes"  REG_DWORD (4)  4 bytes: 0x00010000 (65536)
+
+########## service "VMSVSF" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF
+  depth 0; last write 2025-04-17T22:01:04Z; 11 value(s), 1 subkey(s)
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x0000003C (60)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DependOnService"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "ndis"
+  value "DisplayName"  REG_SZ (1)  60 bytes: "VmSwitch Extensibility Filter"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  10 bytes: "NDIS"
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "System32\x5Cdrivers\x5Cvmswitch.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "Parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF\Parameters
+  depth 1; last write 2025-02-03T18:29:24Z; 1 value(s), 1 subkey(s)
+  value "DefaultFilterSettings"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "NdisAdapters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF\Parameters\NdisAdapters
+  depth 2; last write 2025-08-08T00:11:23Z; 0 value(s), 3 subkey(s)
+  subkey "{B6077276-E227-4E14-99C0-DB540D3D283F}"
+  subkey "{C22C8754-CCEF-4B74-9144-6FC8347B3512}"
+  subkey "{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF\Parameters\NdisAdapters\{B6077276-E227-4E14-99C0-DB540D3D283F}
+  depth 3; last write 2025-02-03T18:29:24Z; 1 value(s), 0 subkey(s)
+  value "InterfaceGuid"  REG_BINARY (3)  16 bytes: 2B6DFF0D5CE2EF11973710F60A6FCD2E (16 bytes hex)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF\Parameters\NdisAdapters\{C22C8754-CCEF-4B74-9144-6FC8347B3512}
+  depth 3; last write 2025-08-01T17:15:43Z; 1 value(s), 0 subkey(s)
+  value "InterfaceGuid"  REG_BINARY (3)  16 bytes: 5B28D618FB6EF0118FDF10F60A6FCD31 (16 bytes hex)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSF\Parameters\NdisAdapters\{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}
+  depth 3; last write 2025-08-08T00:11:23Z; 1 value(s), 0 subkey(s)
+  value "InterfaceGuid"  REG_BINARY (3)  16 bytes: 3BBF361FEC73F0118FDB10F60A6FCD2E (16 bytes hex)
+
+########## service "VMSVSP" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSP
+  depth 0; last write 2025-04-17T22:01:04Z; 10 value(s), 1 subkey(s)
+  value "NdisMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000006 (6)
+  value "NdisMinorVersion"  REG_DWORD (4)  4 bytes: 0x0000003C (60)
+  value "DriverMajorVersion"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "DriverMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DisplayName"  REG_SZ (1)  64 bytes: "VmSwitch Extensibility Protocol"
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Group"  REG_SZ (1)  10 bytes: "NDIS"
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "System32\x5Cdrivers\x5Cvmswitch.sys"
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  subkey "Linkage"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMSVSP\Linkage
+  depth 1; last write 2025-08-08T00:11:23Z; 3 value(s), 0 subkey(s)
+  value "Export"  REG_MULTI_SZ (7)  110 bytes: (list)
+        [0] "\x5CDevice\x5CVMSVSP_{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}"
+  value "Bind"  REG_MULTI_SZ (7)  96 bytes: (list)
+        [0] "\x5CDevice\x5C{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}"
+  value "Route"  REG_MULTI_SZ (7)  84 bytes: (list)
+        [0] "\x22{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}\x22"
+
+########## service "vmusb" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmusb
+  depth 0; last write 2025-08-08T00:17:57Z; 6 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  78 bytes: "\x5CSystemRoot\x5CSystem32\x5Cdrivers\x5Cvmusb.sys"
+  value "DisplayName"  REG_SZ (1)  118 bytes: "@oem36.inf,%S_ServiceDisplayName%;VMware USB Client Driver"
+  value "Owners"  REG_MULTI_SZ (7)  22 bytes: (list)
+        [0] "oem36.inf"
+  subkey "Enum"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmusb\Enum
+  depth 1; last write 2025-08-19T21:42:43Z; 2 value(s), 0 subkey(s)
+  value "Count"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "NextInstance"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+
+########## service "VMUSBArbService" (matches: vm)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMUSBArbService
+  depth 0; last write 2025-06-12T22:16:53Z; 9 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  152 bytes: "\x22C:\x5CProgram Files (x86)\x5CCommon Files\x5CVMware\x5CUSB\x5Cvmware-usbarbitrator64.exe\x22"
+  value "DisplayName"  REG_SZ (1)  62 bytes: "VMware USB Arbitration Service"
+  value "DependOnService"  REG_MULTI_SZ (7)  18 bytes: (list)
+        [0] "winmgmt"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "Description"  REG_SZ (1)  128 bytes: "Arbitration and enumeration of USB devices for virtual machines"
+  value "FailureActions"  REG_BINARY (3)  36 bytes: (36 bytes)
+      0000: 08 07 00 00 00 00 00 00 00 00 00 00 02 00 00 00  |................|
+      0010: 14 00 00 00 01 00 00 00 10 27 00 00 01 00 00 00  |.........'......|
+      0020: 10 27 00 00                                      |.'..|
+
+########## service "VMware" (matches: vm,vmware)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMware
+  depth 0; last write 2025-06-12T22:16:53Z; 0 value(s), 1 subkey(s)
+  subkey "Performance"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMware\Performance
+  depth 1; last write 2025-06-12T22:16:53Z; 10 value(s), 0 subkey(s)
+  value "" (default)  REG_SZ (1)  2 bytes: ""
+  value "Open"  REG_SZ (1)  24 bytes: "PerfmonOpen"
+  value "Close"  REG_SZ (1)  26 bytes: "PerfmonClose"
+  value "Collect"  REG_SZ (1)  30 bytes: "PerfmonCollect"
+  value "Library"  REG_SZ (1)  126 bytes: "C:\x5CProgram Files (x86)\x5CVMware\x5CVMware Workstation\x5CvmPerfmon.dll"
+  value "PerfIniFile"  REG_SZ (1)  124 bytes: "vmPerfmon.ini"
+  value "Last Counter"  REG_DWORD (4)  4 bytes: 0x00003602 (13826)
+  value "Last Help"  REG_DWORD (4)  4 bytes: 0x00003603 (13827)
+  value "First Counter"  REG_DWORD (4)  4 bytes: 0x000035DE (13790)
+  value "First Help"  REG_DWORD (4)  4 bytes: 0x000035DF (13791)
+
+########## service "VMware NAT Service" (matches: vm,vmware)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMware NAT Service
+  depth 0; last write 2025-06-12T22:16:55Z; 9 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  60 bytes: "C:\x5CWindows\x5Csystem32\x5Cvmnat.exe"
+  value "DisplayName"  REG_SZ (1)  38 bytes: "VMware NAT Service"
+  value "DependOnService"  REG_MULTI_SZ (7)  26 bytes: (list)
+        [0] "VMnetuserif"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "Description"  REG_SZ (1)  104 bytes: "Network address translation for virtual networks.\x0D\x0A"
+  value "FailureActions"  REG_BINARY (3)  44 bytes: (44 bytes)
+      0000: 58 02 00 00 00 00 00 00 00 00 00 00 03 00 00 00  |X...............|
+      0010: 14 00 00 00 01 00 00 00 E8 03 00 00 01 00 00 00  |................|
+      0020: E8 03 00 00 00 00 00 00 1D 00 00 00              |............|
+  subkey "Parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VMware NAT Service\Parameters
+  depth 1; last write 2025-06-12T22:16:55Z; 1 value(s), 0 subkey(s)
+  value "ConfigPath"  REG_EXPAND_SZ (2)  46 bytes: "C:\x5CProgramData\x5CVMware\x5C"
+
+########## service "VmwareAutostartService" (matches: vm,vmware)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\VmwareAutostartService
+  depth 0; last write 2025-06-12T22:16:53Z; 7 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ImagePath"  REG_EXPAND_SZ (2)  144 bytes: "\x22C:\x5CProgram Files (x86)\x5CVMware\x5CVMware Workstation\x5Cvmware-autostart.exe\x22"
+  value "DisplayName"  REG_SZ (1)  50 bytes: "VMware Autostart Service"
+  value "ObjectName"  REG_SZ (1)  24 bytes: "LocalSystem"
+  value "Description"  REG_SZ (1)  224 bytes: "The service for automatically powering on the VMs specified in the configuration file when the service starts. "
+
+########## service "vmx86" (matches: vm,vmx)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmx86
+  depth 0; last write 2025-06-12T22:16:59Z; 9 value(s), 1 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000034 (52)
+  value "ImagePath"  REG_EXPAND_SZ (2)  78 bytes: "\x5CSystemRoot\x5Csystem32\x5CDRIVERS\x5Cvmx86.sys"
+  value "DisplayName"  REG_SZ (1)  26 bytes: "VMware vmx86"
+  value "Group"  REG_SZ (1)  28 bytes: "Extended Base"
+  value "Description"  REG_SZ (1)  40 bytes: "VMware vmx86 driver"
+  value "vwdk.installers"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "MSI"
+  subkey "Parameters"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vmx86\Parameters
+  depth 1; last write 2025-06-12T22:16:59Z; 0 value(s), 0 subkey(s)
+
+########## service "vsock" (matches: vsock)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\vsock
+  depth 0; last write 2025-06-12T22:17:00Z; 9 value(s), 0 subkey(s)
+  value "Type"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Start"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ErrorControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Tag"  REG_DWORD (4)  4 bytes: 0x00000013 (19)
+  value "ImagePath"  REG_EXPAND_SZ (2)  54 bytes: "system32\x5CDRIVERS\x5Cvsock.sys"
+  value "DisplayName"  REG_SZ (1)  128 bytes: "vSockets Virtual Machine Communication Interface Sockets driver"
+  value "Group"  REG_SZ (1)  40 bytes: "System Bus Extender"
+  value "Description"  REG_SZ (1)  32 bytes: "vSockets Driver"
+  value "vwdk.installers"  REG_MULTI_SZ (7)  12 bytes: (list)
+        [0] "MSI"

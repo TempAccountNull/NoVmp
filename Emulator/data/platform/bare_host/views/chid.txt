@@ -1,0 +1,26 @@
+# fwid computer hardware ID capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Control\SystemInformation: all values raw (ComputerHardwareId, ComputerHardwareIds,
+# SystemManufacturer, SystemProductName, BIOSVersion, BIOSReleaseDate, ...); KEY_READ; product-key value-name guard active.
+# IDENTIFIERS: the hardware IDs are derived from the platform identity - every value here is treated as identifying.
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SystemInformation
+  depth 0; last write 2025-08-08T00:10:44Z; 7 value(s), 0 subkey(s)
+  value "BIOSVersion"  REG_SZ (1)  10 bytes: "H.D0"
+  value "BIOSReleaseDate"  REG_SZ (1)  22 bytes: "08/12/2024"
+  value "SystemManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "SystemProductName"  REG_SZ (1)  16 bytes: "MS-7D91"
+  value "InformationSource"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ComputerHardwareIds"  REG_MULTI_SZ (7)  782 bytes: (list)
+        [0] "{35af319b-f28c-5199-89da-518ad57137db}"
+        [1] "{f3961042-0cd4-57e4-912b-77f9df621456}"
+        [2] "{bdc8b1f1-04fc-58f7-a86b-6f8710cfd747}"
+        [3] "{a166a528-3ea1-5881-995d-e8b3da7834b3}"
+        [4] "{17bb5663-b088-542b-a474-e7097bc12604}"
+        [5] "{66c645b3-d83a-5e21-ae4e-5da4ae825486}"
+        [6] "{209c2706-3f11-5d62-80bf-b9a287efe62f}"
+        [7] "{66c645b3-d83a-5e21-ae4e-5da4ae825486}"
+        [8] "{bdd76d3e-147f-58a9-a0b2-42136454ed07}"
+        [9] "{50af5797-a2f2-58b1-9a1a-453bcbb2e025}"
+  value "ComputerHardwareId"  REG_SZ (1)  78 bytes: "{ab00bf9a-1025-5406-b9f6-7d52a55d48e3}"
+
+1 key(s), 7 value(s), 0 failure(s)

@@ -1,0 +1,13 @@
+# fwid Bluetooth capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices (each subkey name = a paired device
+# address [IDENTIFIER]; values Name (binary UTF-8, also shown decoded), COD, LMPVersion, ...; deeper subkeys by name
+# only) and ...\Parameters\LocalInfo (local radio, if present) [IDENTIFIER]. KEY_READ only. Parameters\Keys (pairing
+# link keys) is NEVER opened.
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices
+  depth 0; last write 2024-06-21T01:16:53Z; 0 value(s), 0 subkey(s)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\LocalInfo
+open FAILED: 2 (not found)
+
+Devices: 0 paired device key(s), 0 value(s), 0 failure(s); LocalInfo: 0 key(s), 0 value(s)

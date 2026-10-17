@@ -17,7 +17,10 @@
 // holds), the software-device GUIDs, the disk descriptors (rule 8d) and the tool exclusions (BuildConfig "exclude"); threading:
 // the Randomizer from 8 threads (formats, check digits, thread-local result buffers), guest + host built in parallel threads
 // from saved maps (byte-identical to serial builds), and both generated concurrently (one value per shared/ key, every
-// returned const char* still valid after its context is gone).
+// returned const char* still valid after its context is gone). P4: atomic profile writes in parallel (pg_atomic_writes,
+// U1515), version-1 GUID timestamps (pg_v1_guid_time, U1516), the synthetic-only field view and single-value edits
+// (pg_field_view, U1517), the synthetic text views (pg_views, U1518). Every text fixture carries an install history
+// (k_pg_install_os_ids): a version-1 GUID needs the rule 7b offset.
 #include "profile_generator.hpp"
 #include "pg_randomize.hpp"
 
@@ -2161,6 +2164,298 @@ static void pg_field_view( void )
 	TEST_CHECK( r3.ok && !r3.generated && r3.synthetic == r2.synthetic );
 }
 
+// ── the synthetic text views (gap P1 #7, user decision 2026-10-17 "Export synthetic views", U1518) ───────────────────────
+static std::vector<std::string> pg_lines( const Bytes& b )
+{
+	std::vector<std::string> v;
+	std::string cur;
+	for ( uint8_t c : b )
+	{
+		if ( c == '\n' ) { v.push_back( cur ); cur.clear(); }
+		else if ( c != '\r' ) cur += char( c );
+	}
+	if ( !cur.empty() ) v.push_back( cur );
+	return v;
+}
+// views\<file> in both profiles: every presentable text file (not capture_info.txt / certificates.txt), the same line count
+// as the capture; at every field-map text row the view holds the identity's synthetic value in that occurrence's form and
+// case (MAC colon / plain, GUID without braces, 0x hex + decimal FILETIME, the hex dump of rule 8c, ...); no real value in a
+// synthetic view; the original views are the capture text; excluded tool-artifact lines are marker lines in both; the
+// manifest lists the views; application reproduces them byte for byte. Fixture 3 holds a registry last-write time in the
+// same second as a device's first install (exact by decision K in the blobs): in the view it moves by the install-history
+// offset like the event itself (user decision 2026-10-17 "Shift by the offset"), so neither the real time nor the offset
+// can be read off the view
+static void pg_views( void )
+{
+	for ( bool dump : { false, true } )
+	{
+		CaptureInputs in = pg_capture( false, pg_text_fixture3( dump ) );
+		BuildContext ctx = pg_fresh( Environment::bare_host );
+		TEST_CHECK( ctx.config.views );	// the default BuildConfig writes the views
+		const GenResult r = ProfileGen->gen_build( ctx, in );
+		TEST_ASSERT_( r.ok, "build: %s", r.error.c_str() );
+		size_t views = 0, rows = 0, rows_ok = 0, hits = 0;
+		std::string bad_row;	// the first row not replaced in its form (location only)
+		for ( const TextFile& f : in.texts )
+		{
+			const std::string key = "views\\" + f.name;
+			const bool want = f.name != "capture_info.txt" && f.name != "certificates.txt";
+			TEST_CHECK_( r.synthetic.count( key ) == ( want ? 1u : 0u ) && r.original.count( key ) == ( want ? 1u : 0u ), "%s: %s", f.name.c_str(), want ? "a view" : "no view" );
+			if ( !want ) continue;
+			views++;
+			const Bytes& sv = r.synthetic.at( key );
+			TEST_CHECK_( r.original.at( key ) == f.data, "%s: the original view is the capture text", f.name.c_str() );
+			const std::vector<std::string> cl = pg_lines( f.data ), vl = pg_lines( sv );
+			TEST_CHECK_( cl.size() == vl.size(), "%s: %zu lines (capture %zu)", f.name.c_str(), vl.size(), cl.size() );
+			for ( const FieldMapEntry& fm : r.identity.fields )
+			{
+				if ( fm.area != f.name || fm.rule.back() == 'r' || !fm.line || fm.line > vl.size() || fm.location.find( "hex dump" ) != std::string::npos ) continue;	// the dump rows: checked as one blob below
+				const IdentityEntry* id = nullptr;
+				for ( const IdentityEntry& e : r.identity.identity ) if ( e.id == fm.id ) id = &e;
+				if ( !id ) continue;
+				rows++;
+				const std::string got = vl[ fm.line - 1 ].substr( size_t( fm.offset ) - 1, fm.length ), was = cl[ fm.line - 1 ].substr( size_t( fm.offset ) - 1, fm.length );
+				bool ok = _stricmp( got.c_str(), was.c_str() ) != 0 && got.size() == was.size();
+				for ( size_t c = 0; ok && c < got.size(); c++ )	// the form kept: separators at the same places, letters in the same case class
+					ok = ( isalnum( uint8_t( was[ c ] ) ) != 0 ) == ( isalnum( uint8_t( got[ c ] ) ) != 0 ) && ( isalnum( uint8_t( was[ c ] ) ) || was[ c ] == got[ c ] ) &&
+						 !( islower( uint8_t( was[ c ] ) ) && isupper( uint8_t( got[ c ] ) ) ) && !( isupper( uint8_t( was[ c ] ) ) && islower( uint8_t( got[ c ] ) ) );
+				rows_ok += ok;
+				if ( !ok && bad_row.empty() ) bad_row = f.name + ":" + std::to_string( fm.line ) + ":" + std::to_string( fm.offset ) + " " + id->id + " " + id->kind + " (" + fm.location + ")";
+			}
+			std::string low( sv.begin(), sv.end() );
+			for ( char& c : low ) c = char( tolower( uint8_t( c ) ) );
+			for ( const IdentityEntry& e : r.identity.identity )
+			{
+				std::string x = e.original;
+				if ( x.size() == 38 && x.front() == '{' ) x = x.substr( 1, 36 );
+				for ( char& c : x ) c = char( tolower( uint8_t( c ) ) );
+				if ( x.size() < 6 || low.find( x ) == std::string::npos ) continue;
+				hits++;
+				TEST_MSG( "%s: the real value of %s (%s) in the synthetic view", f.name.c_str(), e.id.c_str(), e.kind.c_str() );
+			}
+		}
+		TEST_CHECK_( views >= 15 && rows > 50 && rows_ok == rows && hits == 0, "dump %d: %zu views, %zu field-map rows replaced in form %zu, real values found %zu; first row not in form: %s", dump, views, rows, rows_ok, hits, bad_row.c_str() );
+		// the FILETIME forms agree in the view (hex = decimal), the hex dump is the synthetic blob
+		const std::vector<std::string> os = pg_lines( r.synthetic.at( "views\\os_ids.txt" ) );
+		size_t ft = 0;
+		for ( const std::string& l : os )
+		{
+			std::smatch m;
+			if ( !std::regex_search( l, m, std::regex( R"(\"InstallTime\".*: 0x([0-9A-F]{16}) \(([0-9]+)\))" ) ) ) continue;
+			ft++;
+			TEST_CHECK( std::stoull( m[ 1 ].str(), nullptr, 16 ) == std::stoull( m[ 2 ].str() ) && m[ 2 ].str() != "133327264661234567" );
+		}
+		TEST_CHECK( ft == 1 );
+		// every last-write time of the view = the capture's + the install-history offset; the original view exact
+		const IdentityEntry* idate = pg_find( r.identity.identity, "install_date", "1688252866" );
+		TEST_ASSERT( idate != nullptr );
+		const long long shift = std::stoll( idate->synthetic ) - 1688252866LL;
+		auto lw = []( const Bytes& b ) {
+			std::vector<long long> v;
+			const std::string t( b.begin(), b.end() );
+			static const std::regex r_lw( R"(last write ([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z)" );
+			for ( std::sregex_iterator it( t.begin(), t.end(), r_lw ), e; it != e; ++it )
+			{
+				std::tm tm {};
+				tm.tm_year = std::stoi( ( *it )[ 1 ].str() ) - 1900;
+				tm.tm_mon = std::stoi( ( *it )[ 2 ].str() ) - 1;
+				tm.tm_mday = std::stoi( ( *it )[ 3 ].str() );
+				tm.tm_hour = std::stoi( ( *it )[ 4 ].str() );
+				tm.tm_min = std::stoi( ( *it )[ 5 ].str() );
+				tm.tm_sec = std::stoi( ( *it )[ 6 ].str() );
+				v.push_back( (long long)_mkgmtime( &tm ) );
+			}
+			return v;
+		};
+		const Bytes& ev = r.synthetic.at( "views\\enum_registry.txt" );
+		const std::vector<long long> lc = lw( in.texts[ 2 ].data ), lv = lw( ev ), lo = lw( r.original.at( "views\\enum_registry.txt" ) );
+		bool shifted = !lc.empty() && lc.size() == lv.size() && lo == lc;
+		for ( size_t i = 0; shifted && i < lc.size(); i++ ) shifted = lv[ i ] - lc[ i ] == shift;
+		TEST_CHECK_( shifted, "%zu last-write time(s): view = capture + the install-history offset, the original view exact", lc.size() );
+		TEST_CHECK( std::string( ev.begin(), ev.end() ).find( "2023-07-01T23:06:46Z" ) == std::string::npos );	// the real install-event second nowhere in the view
+		const IdentityEntry* sus = nullptr;
+		for ( const IdentityEntry& e : r.identity.identity ) if ( e.kind == "sus_client_id_validation" ) sus = &e;
+		TEST_ASSERT( sus != nullptr );
+		const std::string ut( r.synthetic.at( "views\\update_ids.txt" ).begin(), r.synthetic.at( "views\\update_ids.txt" ).end() );
+		std::string hex;
+		if ( !dump ) TEST_CHECK( ut.find( sus->synthetic ) != std::string::npos );
+		else
+		{
+			for ( const std::string& l : pg_lines( r.synthetic.at( "views\\update_ids.txt" ) ) )
+			{
+				std::smatch m;
+				if ( std::regex_match( l, m, std::regex( R"(^\s+[0-9A-Fa-f]{4}: ((?:[0-9A-Fa-f]{2} )+)\s*\|.*\|$)" ) ) )
+					for ( char c : m[ 1 ].str() ) if ( c != ' ' ) hex += c;
+			}
+			TEST_CHECK_( hex == sus->synthetic, "the hex dump of SusClientIdValidation is the synthetic blob" );
+		}
+		TEST_CHECK( std::string( r.synthetic.at( "manifest.txt" ).begin(), r.synthetic.at( "manifest.txt" ).end() ).find( "views\\enum_registry.txt" ) != std::string::npos );
+		// application of the saved map: the views byte-identical
+		const Bytes& mb = r.synthetic.at( "identity_map.tsv" );
+		BuildConfig cv = pg_cfg( Environment::bare_host );
+		cv.views = true;
+		BuildContext ctx2 = ProfileGen->new_context( cv );
+		ProfileGen->load_identity_maps( ctx2, ProfileGenerator::parse_identity_map( std::string( mb.begin(), mb.end() ) ), {} );
+		const GenResult r2 = ProfileGen->gen_build( ctx2, in );
+		TEST_CHECK( r2.ok && r2.synthetic == r.synthetic && r2.original == r.original );
+		// views off (a BuildConfig written before U1518): no views\ file, the config text without the key; "views = yes" round trips
+		BuildConfig off = pg_cfg( Environment::bare_host );
+		off.views = false;
+		BuildContext ctx3 = ProfileGen->new_context( off );
+		ProfileGen->load_identity_maps( ctx3, ProfileGenerator::parse_identity_map( std::string( mb.begin(), mb.end() ) ), {} );
+		const GenResult r3 = ProfileGen->gen_build( ctx3, in );
+		TEST_CHECK( r3.ok && std::none_of( r3.synthetic.begin(), r3.synthetic.end(), []( const auto& kv ) { return kv.first.rfind( "views\\", 0 ) == 0; } ) );
+		TEST_CHECK( off.save().find( "views" ) == std::string::npos && !BuildConfig::load( off.save() ).views && BuildConfig::load( cv.save() ).views && BuildConfig::load( cv.save() ) == cv );
+	}
+	// the other install-history timestamps a view shows: "key last write time: <ISO>" (registry_bios.txt) and the code-integrity
+	// aggregation FILETIMEs (REG_QWORD hex + decimal, code_integrity.txt) move by the offset; a QWORD that is no time stays
+	{
+		std::vector<TextFile> f = pg_text_fixture3();
+		const std::string bios = "## HKLM\\HARDWARE\\DESCRIPTION\\System\\BIOS\n  key last write time: 2023-07-01T23:06:46Z; 3 value(s), 0 subkey(s)\n";
+		const std::string ci = "## HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Aggregation\n  depth 1; last write 2024-01-02T03:04:05Z; 2 value(s), 0 subkey(s)\n"
+							   "  value \"0123456789abcdef\"  REG_QWORD (11)  8 bytes: 0x01D9AC70B56F981C (133327264064444444)\n"
+							   "  value \"Counter\"  REG_QWORD (11)  8 bytes: 0x0000000000000021 (33)\n";
+		f.push_back( { "registry_bios.txt", Bytes( bios.begin(), bios.end() ) } );
+		f.push_back( { "code_integrity.txt", Bytes( ci.begin(), ci.end() ) } );
+		CaptureInputs in = pg_capture( false, f );
+		BuildContext c = pg_fresh( Environment::bare_host );
+		const GenResult rt = ProfileGen->gen_build( c, in );
+		TEST_ASSERT_( rt.ok, "build: %s", rt.error.c_str() );
+		const IdentityEntry* idate = pg_find( rt.identity.identity, "install_date", "1688252866" );
+		TEST_ASSERT( idate != nullptr );
+		const long long shift = std::stoll( idate->synthetic ) - 1688252866LL;
+		const std::string vb( rt.synthetic.at( "views\\registry_bios.txt" ).begin(), rt.synthetic.at( "views\\registry_bios.txt" ).end() );
+		const std::string vc( rt.synthetic.at( "views\\code_integrity.txt" ).begin(), rt.synthetic.at( "views\\code_integrity.txt" ).end() );
+		std::smatch m;
+		TEST_CHECK( vb.find( "2023-07-01T23:06:46Z" ) == std::string::npos && std::regex_search( vb, m, std::regex( "key last write time: ([0-9T:Z-]{20});" ) ) );
+		std::tm tm {};
+		sscanf( m[ 1 ].str().c_str(), "%d-%d-%dT%d:%d:%dZ", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min, &tm.tm_sec );
+		tm.tm_year -= 1900;
+		tm.tm_mon -= 1;
+		TEST_CHECK_( (long long)_mkgmtime( &tm ) - 1688252806LL == shift, "the key last-write time moved by the offset" );
+		TEST_CHECK( std::regex_search( vc, m, std::regex( R"(8 bytes: 0x([0-9A-F]{16}) \(([0-9]+)\))" ) ) );
+		const unsigned long long h = std::stoull( m[ 1 ].str(), nullptr, 16 ), d = std::stoull( m[ 2 ].str() );
+		TEST_CHECK_( h == d && (long long)( d - 133327264064444444ull ) == shift * 10000000LL, "the CI FILETIME moved by the offset in both forms" );
+		TEST_CHECK( vc.find( "0x0000000000000021 (33)" ) != std::string::npos && vc.find( "2024-01-02T03:04:05Z" ) == std::string::npos );
+	}
+	// a USB serial truncated in a SetupAPI instance ID (the first 30 of the flash drive's 48 characters): the same prefix of
+	// its synthetic serial, one "4dr" relation row; the truncated real form nowhere in a synthetic file
+	{
+		std::vector<TextFile> f = pg_text_fixture3();
+		const std::string flash = k_pg_flash_usb, cut = flash.substr( 0, 30 );
+		const std::string add = "=== device 9\n  instance ID: \"USBSTOR\\x5CDISK&VEN_FIX&PROD_FLASH&REV_1.00\\x5C" + cut + "\"\n";
+		f[ 3 ].data.insert( f[ 3 ].data.end(), add.begin(), add.end() );
+		CaptureInputs in = pg_capture( false, f );
+		BuildContext c = pg_fresh( Environment::bare_host );
+		const GenResult rp = ProfileGen->gen_build( c, in );
+		TEST_ASSERT_( rp.ok, "build: %s", rp.error.c_str() );
+		const IdentityEntry* pre = pg_find( rp.identity.identity, "usb_serial_prefix", cut );
+		const IdentityEntry* usb = pg_find( rp.identity.identity, "usb_serial", flash );
+		TEST_ASSERT( pre != nullptr && usb != nullptr );
+		TEST_CHECK_( pre->rule == "4d" && pre->synthetic == usb->synthetic.substr( 0, 30 ) && pre->occurrences == 1, "the truncated serial = the synthetic serial's first 30 characters" );
+		size_t rel = 0;
+		for ( const FieldMapEntry& fm : rp.identity.fields ) rel += fm.rule == "4dr" && fm.id == pre->id;
+		TEST_CHECK( rel == 1 );
+		const std::string pv( rp.synthetic.at( "views\\pci_devices.txt" ).begin(), rp.synthetic.at( "views\\pci_devices.txt" ).end() );
+		TEST_CHECK( pv.find( cut ) == std::string::npos && pv.find( "REV_1.00\\x5C" + usb->synthetic.substr( 0, 30 ) + "\"" ) != std::string::npos );
+	}
+	// rule 4c on the 16-byte REG_BINARY form (Windows byte order): the container GUID {12345678-9ABC-11F0-8123-3CA9F4102030} in
+	// binary form follows its synthetic value; a version-1 GUID with the Wi-Fi MAC as node that occurs only in binary form is a
+	// new mac_node_guid identity (timestamp + the offset, node = the synthetic Wi-Fi MAC); a saved map without it applies only
+	// with add_new_keys (exactly that key drawn); the real binary forms nowhere in a synthetic file
+	{
+		auto bin = []( const std::string& g ) {	// the Windows byte order of a GUID text, upper-case hex
+			std::string h;
+			for ( char c : g ) if ( isxdigit( uint8_t( c ) ) ) h += char( toupper( uint8_t( c ) ) );
+			return h.substr( 6, 2 ) + h.substr( 4, 2 ) + h.substr( 2, 2 ) + h.substr( 0, 2 ) + h.substr( 10, 2 ) + h.substr( 8, 2 ) + h.substr( 14, 2 ) + h.substr( 12, 2 ) + h.substr( 16 );
+		};
+		const std::string known = bin( "12345678-9abc-11f0-8123-3ca9f4102030" ), only_bin = bin( "a1b2c3d4-0001-11f0-9abc-3ca9f4102030" );
+		const std::string svc = "## HKLM\\SYSTEM\\CurrentControlSet\\Services\\FIXSF\\Parameters\\NdisAdapters\\0\n"
+								"  value \"InterfaceGuid\"  REG_BINARY (3)  16 bytes: " + known + "\n"
+								"## HKLM\\SYSTEM\\CurrentControlSet\\Services\\FIXSF\\Parameters\\NdisAdapters\\1\n"
+								"  value \"InterfaceGuid\"  REG_BINARY (3)  16 bytes: " + only_bin + "\n";
+		std::vector<TextFile> f = pg_text_fixture3();
+		const CaptureInputs plain = pg_capture( false, f );
+		f.push_back( { "services_vm.txt", Bytes( svc.begin(), svc.end() ) } );
+		const CaptureInputs in = pg_capture( false, f );
+		BuildContext c = pg_fresh( Environment::bare_host );
+		const GenResult rg = ProfileGen->gen_build( c, in );
+		TEST_ASSERT_( rg.ok, "build: %s", rg.error.c_str() );
+		const IdentityEntry* cont = pg_find( rg.identity.identity, "container_id", "{12345678-9ABC-11F0-8123-3CA9F4102030}" );
+		const IdentityEntry* nb = pg_find( rg.identity.identity, "mac_node_guid", "{A1B2C3D4-0001-11F0-9ABC-3CA9F4102030}" );
+		const IdentityEntry* wifi = pg_find( rg.identity.identity, "mac", "3C:A9:F4:10:20:30" );
+		const IdentityEntry* idate = pg_find( rg.identity.identity, "install_date", "1688252866" );
+		TEST_ASSERT( cont && nb && wifi && idate );
+		std::string wn;
+		for ( char ch : wifi->synthetic ) if ( ch != ':' ) wn += ch;
+		const GuidV1 ra = ProfileGenerator::parse_guid_v1( nb->original.c_str() ), sa = ProfileGenerator::parse_guid_v1( nb->synthetic.c_str() );
+		TEST_CHECK_( ra.ok && sa.ok && _stricmp( sa.node.c_str(), wn.c_str() ) == 0 && (long long)( sa.timestamp - ra.timestamp ) == ( std::stoll( idate->synthetic ) - 1688252866LL ) * 10000000LL,
+			"the binary-only version-1 GUID: node = the synthetic Wi-Fi MAC, timestamp = real + the offset" );
+		const std::string sv( rg.synthetic.at( "views\\services_vm.txt" ).begin(), rg.synthetic.at( "views\\services_vm.txt" ).end() );
+		TEST_CHECK( sv.find( known ) == std::string::npos && sv.find( only_bin ) == std::string::npos && sv.find( bin( cont->synthetic ) ) != std::string::npos && sv.find( bin( nb->synthetic ) ) != std::string::npos );
+		// a map saved before the binary rule (the capture without the file) applies to the capture with it only with add_new_keys
+		BuildContext c0 = pg_fresh( Environment::bare_host );
+		const GenResult r0 = ProfileGen->gen_build( c0, plain );
+		TEST_ASSERT( r0.ok );
+		const Bytes& mb = r0.synthetic.at( "identity_map.tsv" );
+		const IdentityMap saved = ProfileGenerator::parse_identity_map( std::string( mb.begin(), mb.end() ) );
+		BuildContext c1 = ProfileGen->new_context( pg_cfg( Environment::bare_host ) );
+		ProfileGen->load_identity_maps( c1, saved, {} );
+		const GenResult r1 = ProfileGen->gen_build( c1, in );
+		TEST_CHECK_( !r1.ok && r1.error.find( "has no value for" ) != std::string::npos, "without add_new_keys: %s", r1.error.c_str() );
+		BuildContext c2 = ProfileGen->new_context( pg_cfg( Environment::bare_host ) );
+		ProfileGen->load_identity_maps( c2, saved, {} );
+		c2.add_new_keys = true;
+		const GenResult r2 = ProfileGen->gen_build( c2, in );
+		TEST_ASSERT_( r2.ok, "with add_new_keys: %s", r2.error.c_str() );
+		size_t same = 0;
+		for ( auto& [ k, e ] : saved.entries ) same += r2.identity_map.entries.count( k ) && r2.identity_map.entries.at( k ) == e;
+		TEST_CHECK_( c2.added_keys.size() == 1 && r2.identity_map.entries.size() == saved.entries.size() + 1 && same == saved.entries.size(), "exactly one key added (%zu), every saved value kept (%zu of %zu)",
+			c2.added_keys.size(), same, saved.entries.size() );
+	}
+	// a brand name: the host's rule-2h memory Manufacturer ("FixtureRAM" in the SMBIOS fixture) as a HID device's manufacturer /
+	// product name (exact by decision H) passes on those name lines of views\hid.txt; on any other line it is refused
+	for ( bool elsewhere : { false, true } )
+	{
+		std::vector<TextFile> f = pg_text_fixture3();
+		for ( TextFile& t : f )
+			if ( t.name == "hid.txt" )
+			{
+				const std::string add = "=== HID device 4\nmanufacturer: \"FixtureRAM\"\nproduct: \"FixtureRAM Keyboard\"\n";
+				t.data.insert( t.data.end(), add.begin(), add.end() );
+			}
+			else if ( elsewhere && t.name == "disks.txt" )
+			{
+				const std::string add = "  note: FixtureRAM\n";
+				t.data.insert( t.data.end(), add.begin(), add.end() );
+			}
+		CaptureInputs in = pg_capture( false, f );
+		BuildContext c = pg_fresh( Environment::bare_host );
+		const GenResult rb = ProfileGen->gen_build( c, in );
+		if ( !elsewhere ) TEST_CHECK_( rb.ok && rb.log.text().find( "2 device name(s) in views equal to a rule-2h memory Manufacturer brand" ) != std::string::npos, "brand on name lines: %s", rb.error.c_str() );
+		else TEST_CHECK_( !rb.ok && rb.error.find( "views\\disks.txt" ) != std::string::npos, "the brand on another line is refused: %s", rb.error.c_str() );
+	}
+	// excluded tool artifacts: marker lines in both profiles' views, the line count kept
+	const std::vector<ToolExclusion> items = { { "FixTool Printer", { "FixTool Printer", "FixTool v4 Printer Driver" }, "fixture printer" }, { "FixDbg", { "FixDbg" }, "fixture driver" } };
+	BuildConfig cb = pg_cfg( Environment::bare_host );
+	cb.exclusions = items;
+	cb.views = true;
+	const std::vector<TextFile> files = pg_tool_fixture( false );
+	CaptureInputs cap = pg_capture( false, files );
+	BuildContext ctx = pg_fresh( Environment::bare_host );
+	ctx = ProfileGen->new_context( cb );
+	const GenResult r = ProfileGen->gen_build( ctx, cap );
+	TEST_ASSERT_( r.ok, "build: %s", r.error.c_str() );
+	const std::vector<std::string> pv = pg_lines( r.synthetic.at( "views\\printers.txt" ) ), po = pg_lines( r.original.at( "views\\printers.txt" ) );
+	TEST_CHECK( pv.size() == pg_lines( files[ 6 ].data ).size() && pv[ 0 ] == "# [excluded tool artifact]" && pv[ 3 ] == pv[ 0 ] && po[ 0 ] == pv[ 0 ] && pv[ 5 ] == "=== printer 1" );
+	for ( const auto& [ name, data ] : r.synthetic )
+		if ( name.rfind( "views\\", 0 ) == 0 )
+		{
+			const std::string t( data.begin(), data.end() );
+			TEST_CHECK_( t.find( "FixTool" ) == std::string::npos && t.find( "FixDbg" ) == std::string::npos, "%s: no tool artifact text", name.c_str() );
+		}
+}
+
 // ── atomic profile writes (user decision 2026-10-17 "Atomic writes", U1515) ─────────────────────────────────────────────
 // the test's own cleanup: exactly the files it wrote (relative paths of files), then the folders they emptied and dir -
 // single non-recursive removes, never a recursive delete
@@ -2376,5 +2671,6 @@ TEST_LIST = {
 	{ "pg_atomic_writes", pg_atomic_writes },
 	{ "pg_v1_guid_time", pg_v1_guid_time },
 	{ "pg_field_view", pg_field_view },
+	{ "pg_views", pg_views },
 	{ NULL, NULL } };
 // ── end of the pg_ block (U1511) ─────────────────────────────────────────────────────────────────────────────────────────

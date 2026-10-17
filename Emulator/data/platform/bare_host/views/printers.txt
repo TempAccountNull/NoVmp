@@ -1,0 +1,51 @@
+# fwid printer capture - fwid_probe 1.4 (2026-10-16)
+# EnumPrintersW(PRINTER_ENUM_LOCAL, level 2): name, server, share, port, driver, comment, location, attributes,
+# status; EnumPrintersW(PRINTER_ENUM_CONNECTIONS, level 4): name, server, attributes (level 4 needs no network).
+# Read only: no OpenPrinter / SetPrinter / AddPrinter / DeletePrinter.
+
+########## PRINTER_ENUM_LOCAL (level 2)
+
+=== printer 0
+name "Microsoft XPS Document Writer"
+server (null)
+share ""
+port "PORTPROMPT:"
+driver "Microsoft XPS Document Writer v4"
+comment ""
+location ""
+attributes 0x00000240, status 0x00000000, priority 1
+
+=== printer 1
+name "Microsoft Print to PDF"
+server (null)
+share ""
+port "PORTPROMPT:"
+driver "Microsoft Print To PDF"
+comment ""
+location ""
+attributes 0x00000240, status 0x00000000, priority 1
+
+=== printer 2
+name "Fax"
+server (null)
+share ""
+port "SHRFAX:"
+driver "Microsoft Shared Fax Driver"
+comment ""
+location ""
+attributes 0x00004040, status 0x00000000, priority 1
+
+=== printer 3
+name "EPSON WF-4830 Series"
+server (null)
+share ""
+port "WSD-eeb83018-0c8b-45c8-b192-41856da7d2a1"
+driver "Microsoft IPP Class Driver"
+comment "EPSON WF-4830 Series"
+location ""
+attributes 0x00000240, status 0x00000000, priority 1
+
+########## PRINTER_ENUM_CONNECTIONS (level 4)
+none
+
+4 printer(s)

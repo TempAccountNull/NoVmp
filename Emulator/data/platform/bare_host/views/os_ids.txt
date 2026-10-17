@@ -1,0 +1,85 @@
+# fwid OS identifier capture - fwid_probe 1.4 (2026-10-16)
+# Read-only. PRODUCT KEYS ARE NEVER READ: DigitalProductId, DigitalProductId4, BackupProductKeyDefault and any other
+# product-key value are not queried (named values only, no value enumeration of these keys). Every identifier is marked.
+
+## registry identifiers
+HKLM\SOFTWARE\Microsoft\Cryptography "MachineGuid" REG_SZ, 74 bytes [IDENTIFIER - keep local]: "a2c49613-9895-43fa-8573-74d193f4e644"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "ProductId" REG_SZ, 48 bytes [IDENTIFIER - keep local]: "00330-52576-51922-AA106"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "InstallDate" REG_DWORD, 4 bytes [machine-specific]: 0x640CBCDF (1678556383)
+    = 2023-03-11T17:39:43Z (seconds since 1970-01-01 UTC)
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "InstallTime" REG_QWORD, 8 bytes [machine-specific]: 0x01D954407714415B (133230299836596571)
+    = 2023-03-11T17:39:43Z (FILETIME)
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "RegisteredOwner" REG_SZ, 12 bytes [IDENTIFIER - keep local]: "Zupyu"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "RegisteredOrganization" REG_SZ, 2 bytes [IDENTIFIER - keep local]: ""
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "BuildGUID" REG_SZ, 74 bytes [build identifier]: "ffffffff-ffff-ffff-ffff-ffffffffffff"
+HKLM\SYSTEM\CurrentControlSet\Control\IDConfigDB\Hardware Profiles\0001 "HwProfileGuid" REG_SZ, 78 bytes [IDENTIFIER - keep local]: "{e200ea3d-c03b-11ed-8a33-806e6f6e6963}"
+HKLM\SOFTWARE\Microsoft\SQMClient "MachineId" REG_SZ, 78 bytes [IDENTIFIER - keep local]: "{72912EBC-03BA-4F14-B19A-843BF2EA9A07}"
+
+## current user
+GetUserNameW: "Zupyu" [IDENTIFIER - keep local]
+GetUserNameExW(NameSamCompatible): "DESKTOP-HCJxiOU\x5CZupyu" [IDENTIFIER - keep local] (only this format is queried: the others can contact a domain controller)
+user SID: S-1-5-21-1287148136-3796910626-1877471298-1001 [IDENTIFIER - keep local]
+account domain prefix: S-1-5-21-1287148136-3796910626-1877471298 [IDENTIFIER - keep local]
+  account domain from NameSamCompatible: "DESKTOP-HCJXIOU"; computer name: "DESKTOP-HCJXIOU"
+  equal -> LOCAL account: the prefix above is the MACHINE SID (derived from the user SID)
+Microsoft-account indicator: no authority-11 group SID in the token (not a Microsoft-account logon, as far as the token shows)
+
+## volumes (GetLogicalDriveStringsW + GetDriveTypeW; GetVolumeInformationW only for fixed / removable)
+
+C:\  type 3 (DRIVE_FIXED)
+  volume serial number: 19E0-D943 (0x19E0D943) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: ""
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{5edd0b73-6c1f-4362-ba7d-2def4510568a}\ [IDENTIFIER - keep local]
+
+D:\  type 3 (DRIVE_FIXED)
+  volume serial number: 5B3F-2876 (0x5B3F2876) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "NewDriver2TB#1"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{218125dc-df9a-472e-93f8-fbeef6a45f37}\ [IDENTIFIER - keep local]
+
+E:\  type 3 (DRIVE_FIXED)
+  volume serial number: 366A-EDFD (0x366AEDFD) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "NewDriver2TB#2"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{b2f589a9-d817-44ed-988a-64463c764bbd}\ [IDENTIFIER - keep local]
+
+F:\  type 3 (DRIVE_FIXED)
+  volume serial number: AD5F-2487 (0xAD5F2487) [IDENTIFIER - keep local]
+  file system: "FAT32"
+  label: "XBOXEXTDR"
+  flags 0x00020206, max component length 255
+  volume GUID path: \\?\Volume{772EFE30-0000-0000-0000-000000000000}\ [IDENTIFIER - keep local]
+
+G:\  type 3 (DRIVE_FIXED)
+  volume serial number: 5AC5-AF54 (0x5AC5AF54) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "Steam Games"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{bd97298e-be67-4da1-945b-892d8c5bb90c}\ [IDENTIFIER - keep local]
+
+H:\  type 3 (DRIVE_FIXED)
+  volume serial number: 8272-ACAE (0x8272ACAE) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "Music ExtDrive"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{699c6513-0000-0000-0000-100000000000}\ [IDENTIFIER - keep local]
+
+I:\  type 3 (DRIVE_FIXED)
+  volume serial number: 6192-72F2 (0x619272F2) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "SSD Games"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{2e0c9e9f-ee44-4789-9cdc-2ed87603c0c0}\ [IDENTIFIER - keep local]
+
+J:\  type 2 (DRIVE_REMOVABLE)
+  volume serial number: 0CB9-23E6 (0x0CB923E6) [IDENTIFIER - keep local]
+  file system: "FAT32"
+  label: "DBVMDISK"
+  flags 0x00020206, max component length 255
+  volume GUID path: \\?\Volume{aeba5ef6-c033-11ed-8d76-54ac52d2638a}\ [IDENTIFIER - keep local]
+
+9 registry identifier value(s) read; 8 fixed / removable volume(s) queried

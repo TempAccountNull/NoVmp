@@ -1,0 +1,91 @@
+# fwid Bluetooth capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices (each subkey name = a paired device
+# address [IDENTIFIER]; values Name (binary UTF-8, also shown decoded), COD, LMPVersion, ...; deeper subkeys by name
+# only) and ...\Parameters\LocalInfo (local radio, if present) [IDENTIFIER]. KEY_READ only. Parameters\Keys (pairing
+# link keys) is NEVER opened.
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices
+  depth 0; last write 2025-05-04T03:56:34Z; 0 value(s), 3 subkey(s)
+  subkey "0c35264d472c"
+  subkey "e7c942dc9d4a"
+  subkey "f44efdc0cd60"
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices\0c35264d472c
+  depth 1; last write 2025-05-04T03:56:34Z; 19 value(s), 1 subkey(s)
+  value "DibServiceVersion"  REG_DWORD (4)  4 bytes: 0x00020000 (131072)
+  value "Name"  REG_BINARY (3)  25 bytes: 58626F7820576972656C65737320436F6E74726F6C6C657200 (25 bytes hex)
+      Name as UTF-8: "Xbox Wireless Controller"
+  value "ManufacturerId"  REG_DWORD (4)  4 bytes: 0x00000046 (70)
+  value "LmpVersion"  REG_DWORD (4)  4 bytes: 0x00000008 (8)
+  value "LmpSubversion"  REG_DWORD (4)  4 bytes: 0x00001304 (4868)
+  value "LastSeen"  REG_QWORD (11)  8 bytes: 0x01DB68F360A4C258 (133816008445313624)
+  value "LastConnected"  REG_QWORD (11)  8 bytes: 0x01DB68F360A4C258 (133816008445313624)
+  value "FriendlyName"  REG_BINARY (3)  1 bytes: 00 (1 bytes hex)
+  value "LocalEvaldIoCapLE"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "LEName"  REG_BINARY (3)  25 bytes: 58626F7820576972656C65737320436F6E74726F6C6C657200 (25 bytes hex)
+  value "LEAppearance"  REG_DWORD (4)  4 bytes: 0x000003C4 (964)
+  value "LEAddressType"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "FingerprintTimestamp"  REG_QWORD (11)  8 bytes: 0x01DB6A1CBEBC94A0 (133817285629220000)
+  value "FingerprintVersion"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "FingerprintString"  REG_SZ (1)  298 bytes: "Fingerprint:08;0046;1304;0000000000000000;000000;BD23A9B85D8F896F;0000000000000000;045E;0B13;0509;04;0006;03C4;00;00000000000000E1;FF084737D59D71F7;"
+  value "VID"  REG_DWORD (4)  4 bytes: 0x0000045E (1118)
+  value "PID"  REG_DWORD (4)  4 bytes: 0x00000B13 (2835)
+  value "VIDType"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Version"  REG_DWORD (4)  4 bytes: 0x00000509 (1289)
+  subkey "ServicesFor10f60a6fcd31" (not descended: depth limit)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices\e7c942dc9d4a
+  depth 1; last write 2025-05-04T03:56:34Z; 20 value(s), 1 subkey(s)
+  value "DibServiceVersion"  REG_DWORD (4)  4 bytes: 0x00020000 (131072)
+  value "ManufacturerId"  REG_DWORD (4)  4 bytes: 0x00000059 (89)
+  value "LmpVersion"  REG_DWORD (4)  4 bytes: 0x0000000A (10)
+  value "LmpSubversion"  REG_DWORD (4)  4 bytes: 0x000000CA (202)
+  value "LastSeen"  REG_QWORD (11)  8 bytes: 0x01DB8D69441FE262 (133856097191584354)
+  value "LastConnected"  REG_QWORD (11)  8 bytes: 0x01DB8D69441FE262 (133856097191584354)
+  value "FriendlyName"  REG_BINARY (3)  1 bytes: 00 (1 bytes hex)
+  value "LocalEvaldIoCapLE"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "LEName"  REG_BINARY (3)  11 bytes: 42534B2056332050524F00 (11 bytes hex)
+  value "LEAppearance"  REG_DWORD (4)  4 bytes: 0x000003C2 (962)
+  value "LEAddressType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Name"  REG_BINARY (3)  11 bytes: 42534B2056332050524F00 (11 bytes hex)
+      Name as UTF-8: "BSK V3 PRO"
+  value "VID"  REG_DWORD (4)  4 bytes: 0x0000068E (1678)
+  value "PID"  REG_DWORD (4)  4 bytes: 0x000000AC (172)
+  value "VIDType"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Version"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FingerprintTimestamp"  REG_QWORD (11)  8 bytes: 0x01DB8D932F197CB0 (133856277227470000)
+  value "FingerprintVersion"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "FingerprintString"  REG_SZ (1)  298 bytes: "Fingerprint:0A;0059;00CA;0000000000000000;000000;14C1D90E0DBB74C1;0000000000000000;068E;00AC;0001;00;FFFF;03C2;00;0000000000004925;FF084737D59D71F7;"
+  value "COD"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "ServicesFor10f60a6fcd31" (not descended: depth limit)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices\f44efdc0cd60
+  depth 1; last write 2025-08-15T16:37:13Z; 19 value(s), 3 subkey(s)
+  value "DibServiceVersion"  REG_DWORD (4)  4 bytes: 0x00020000 (131072)
+  value "COD"  REG_DWORD (4)  4 bytes: 0x00240404 (2360324)
+  value "Name"  REG_BINARY (3)  22 bytes: 6F6E6E2E2052756767656420537065616B6572204D00 (22 bytes hex)
+      Name as UTF-8: "onn. Rugged Speaker M"
+  value "HostSupportedFeaturesMap"  REG_QWORD (11)  8 bytes: 0x0000000000000001 (1)
+  value "LMPFeatures"  REG_QWORD (11)  8 bytes: 0x877BBDDBFA8DFEBF (9762605369754779327)
+  value "ManufacturerId"  REG_DWORD (4)  4 bytes: 0x000003E0 (992)
+  value "LmpVersion"  REG_DWORD (4)  4 bytes: 0x0000000C (12)
+  value "LmpSubversion"  REG_DWORD (4)  4 bytes: 0x00001450 (5200)
+  value "LastSeen"  REG_QWORD (11)  8 bytes: 0x01DC0A9DCC445003 (133993761767444483)
+  value "LastConnected"  REG_QWORD (11)  8 bytes: 0x01DC0A9DCC445003 (133993761767444483)
+  value "FriendlyName"  REG_BINARY (3)  1 bytes: 00 (1 bytes hex)
+  value "LocalEvaldIoCap"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "VID"  REG_DWORD (4)  4 bytes: 0x0000574D (22349)
+  value "PID"  REG_DWORD (4)  4 bytes: 0x00006595 (26005)
+  value "VIDType"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Version"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "FingerprintTimestamp"  REG_QWORD (11)  8 bytes: 0x01DC0E02DADA3810 (133997494338730000)
+  value "FingerprintVersion"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "FingerprintString"  REG_SZ (1)  298 bytes: "Fingerprint:0C;03E0;1450;877BBDDBFA8DFEBF;240404;88A90E21C229DB87;973514BD9CE18024;574D;6595;0000;00;0000;0000;00;0000000000000000;FF084737D59D71F7;"
+  subkey "CachedServices" (not descended: depth limit)
+  subkey "DynamicCachedServices" (not descended: depth limit)
+  subkey "ServicesFor10f60a6fcd31" (not descended: depth limit)
+
+## HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\LocalInfo
+open FAILED: 2 (not found)
+
+Devices: 3 paired device key(s), 58 value(s), 0 failure(s); LocalInfo: 0 key(s), 0 value(s)

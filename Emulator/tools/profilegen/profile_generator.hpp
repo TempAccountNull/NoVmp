@@ -1,5 +1,7 @@
 // profile_generator.hpp - the platform identity profiles of the emulator (plan 1.J.49, ledger U1510-U1512; fwid 1.4 inputs,
-// tool exclusions, disk descriptors, SusClientIdValidation layout, per-build context / thread safety (plan 1.J.49.a): U1513-U1514).
+// tool exclusions, disk descriptors, SusClientIdValidation layout, per-build context / thread safety (plan 1.J.49.a): U1513-U1514;
+// atomic profile writes U1515, version-1 GUID timestamps U1516, synthetic-only field view + single-value edits U1517,
+// synthetic text views U1518).
 //
 // ProfileGenerator BUILDS both platform profiles the emulator presents to a sample (--guest / --vm and --host), comparable
 // to per-CPU definition files: packer HWID hashes and anti-VM checks must see ONE consistent real-looking machine, so the
@@ -24,7 +26,10 @@
 // exclusions.tsv (the capture ranges of tool artifacts that are NOT part of the presented machine, BuildConfig "exclude"),
 // volatile.tsv (the captured values the emulator may advance: uptime, free memory, DiagTrack counters / timestamps, ...),
 // identity_map.tsv (every synthetic value of the identity by field-location key: generation records it, every later build
-// applies it; the original copy alone adds the install-history offset), build_config.txt (the BuildConfig: with the
+// applies it; the original copy alone adds the install-history offset), views\<fwid file> (U1518, BuildConfig "views =
+// yes": the synthetic text views - every recorded occurrence replaced in its own form, the install-history timestamps a view
+// shows (registry last-write times, code-integrity times) moved by the rule 7b offset, see gen_text_identity),
+// build_config.txt (the BuildConfig: with the
 // identity map a build is reproducible from it; a later ImGui front end loads / saves
 // the same file), manifest.txt (SHA-256 of every file, provenance, tool version).
 // Code style (user rule 2026-10-16): every generation step is a member gen_<what> taking and returning named structs, used
@@ -100,14 +105,18 @@
 //            (adapter MAC -> its synthetic MAC, 806E6F6E6963 exact, any other node synthetic). A capture without an install
 //            history cannot build a version-1 GUID (the run stops). Application re-checks every saved v1 value against the
 //            rule; BuildContext::upgrade_v1_time re-derives the timestamp of a map written before U1516 (clock sequence and
-//            node of the saved value kept; emu-profilegen --upgrade-v1-time).
+//            node of the saved value kept; emu-profilegen --upgrade-v1-time). U1518: also the 16-byte REG_BINARY form of a
+//            GUID (Windows byte order): a known GUID's binary form = its synthetic binary form; a version-1 GUID with an
+//            adapter-MAC node found only in binary form is a mac_node_guid identity of its own (MBR-style GUIDs: no binary form).
 //   Rule 4d  USB device serials (Enum\USB instance IDs without '&', incl. the host's VMware USB arbitration mirror and the
 //            guest's passthrough entries) and HID serial strings (hid.txt): same length + classes, hex-encoded ASCII stays
 //            hex-encoded ASCII, other hex stays hex (gen_usb_serial). ONE mapping per physical device for BOTH profiles: a
 //            shared table (bare-host capture, then guest capture) - the index of first appearance keys a stream shared by both
 //            environments, never a hash of the value. A HID serial equal to a USB serial is that identity (fwid 1.4 bare host:
 //            all 3 real HID serials); a real HID serial whose device's USB instance serial is a placeholder (user decision J)
-//            is synthetic with a stream of this environment, the USB placeholder stays (in the fwid 1.4 host capture the
+//            is synthetic with a stream of this environment, the USB placeholder stays (U1518: a USB serial TRUNCATED in a
+//            text output - a proper prefix of >= 16 characters as a token, the host's SetupAPI instance ID of the flash drive -
+//            = the same prefix of that device's synthetic serial, relation row "4dr"; in the fwid 1.4 host capture the
 //            Basilisk's 7 HID serial lines hold the all-zero placeholder too). Placeholders (one repeated character, e.g. all
 //            '0'; "MSFT30" + zeros) and empty HID serials exact.
 //   Rule 6   EDID (edid_<n>.bin, fwid >= 1.3; gen_edid): the numeric serial (bytes 12-15) and the FFh serial-string descriptor
@@ -270,7 +279,7 @@ namespace emu::platform
 		std::string area;		// "smbios.bin", "edid\edid_<n>.bin", "disk\disk_<n>_descriptor.bin", or the fwid text file of an occurrence / relation
 		std::string id;			// "F01" SMBIOS, "D01" EDID, "R01" disk descriptor, "M01" MAC, "E01" EUI-64, "N01" computer name, "G01" GUID, "S01"
 								// (unused since rule 4b keeps the PnP hashes exact), "U01" USB / HID serial, "X01" EDID serial (edid.txt), "O01" OS identifier, "K01" fwid 1.4 identifier
-		std::string rule;		// "1-vmware" "1-rfc4122" "2" "2h" "2o" "3" "3r" "4a" "4b" "4c" "4cr" "4d" "6" "6c" "7a".."7e" "8a".."8e" "8cr" "8dr"
+		std::string rule;		// "1-vmware" "1-rfc4122" "2" "2h" "2o" "3" "3r" "4a" "4b" "4c" "4cr" "4d" "4dr" "6" "6c" "7a".."7e" "8a".."8e" "8cr" "8dr"
 		std::string location;	// human-readable: structure / handle / offset, the identity kind, or the relation (adapter descriptions)
 		uint64_t offset = 0;	// blobs: absolute byte offset; text: 1-based byte column; relation rows ("..r"): none
 		uint64_t line = 0;		// text: 1-based line; blobs: 0
@@ -534,6 +543,10 @@ namespace emu::platform
 		std::string identity_map = "identity_map.tsv";	// this environment's identity map, relative to out (a profile file)
 		std::string peer_identity_map;			// the other environment's identity map, relative to repo_root (the shared USB serials)
 		RuleSet rules;
+		// U1518: write the synthetic text views (views\<fwid file>) into both profiles (user decision 2026-10-17 "Export
+		// synthetic views"; registry last-write times shifted, "Shift by the offset"). BuildConfig::defaults turns it on;
+		// in the file "views = yes" (absent = no: a config written before U1518 keeps its meaning and its bytes)
+		bool views = false;
 
 		static BuildConfig defaults( Environment e );		// the pinned clean capture of e and the documented default paths
 		static const BuildConfig& pinned( Environment e );	// the built-in pin (capture_parent / folder / manifest / companions / firmware ref)
@@ -582,6 +595,7 @@ namespace emu::platform
 		std::vector<std::string> needles;			// real values (leak guard), never written
 		std::vector<Bytes> binary_needles;
 		std::vector<std::pair<std::string, std::string>> strings;	// rule 2 / 2h values, real -> synthetic (rule 8c)
+		std::vector<std::string> vendor_needles;	// U1518: the rule-2h memory Manufacturer values (a brand name, also among the needles)
 	};
 	struct TextIdentityInput
 	{
@@ -606,6 +620,13 @@ namespace emu::platform
 		size_t filler_serials = 0;					// disk / HID / USB serials kept as placeholders (one repeated character, ...)
 		TimeShiftCheck time_shift;					// rule 7b install-history shift
 		V1GuidCheck v1_guids;						// rule 4c version-1 GUID timestamps (U1516)
+		// U1518: the synthetic text views (views\<file> of the profile): each presentable text file with every recorded
+		// occurrence replaced, excluded tool-artifact lines as a marker line; the original profile's copy without replacement
+		std::vector<TextFile> views, views_original;
+		size_t view_replacements = 0, view_excluded_lines = 0;
+		size_t view_nested = 0;						// occurrences inside another replaced one (checked to agree with it)
+		size_t view_shifted_times = 0;				// registry last-write times moved by the install-history offset (views only)
+		std::vector<std::string> view_skipped;		// the text files that are no view (run metadata, decoded firmware copies, ...)
 	};
 	struct DiskInput { std::vector<DiskDescriptor> descriptors; std::vector<IdentityEntry> identity; };
 	struct DiskGen
@@ -643,8 +664,12 @@ namespace emu::platform
 		std::vector<VolatileItem> volatiles;
 		TimeShiftCheck time_shift;
 		V1GuidCheck v1_guids;
+		std::vector<TextFile> views, views_original;	// U1518: views\<file> of the synthetic / original profile
+		size_t view_replacements = 0, view_excluded_lines = 0, view_nested = 0, view_shifted_times = 0;
+		std::vector<std::string> view_skipped;
 		std::vector<std::string> needles;	// leak guard
 		std::vector<Bytes> binary_needles;
+		std::vector<std::string> vendor_needles;	// U1518: rule-2h memory Manufacturer values (brand names, see the leak guard)
 		std::vector<MacPair> macs;
 	};
 	struct GenResult
@@ -717,6 +742,11 @@ namespace emu::platform
 		// build; every such key is listed in upgraded_keys (emu-profilegen --upgrade-v1-time; never in check mode)
 		bool upgrade_v1_time = false;
 		std::vector<std::string> upgraded_keys;
+		// U1518: application of a map that lacks the keys of identities a newer rule finds (the binary-form version-1 GUIDs):
+		// exactly those keys are drawn (generation), every saved value applied; listed in added_keys (emu-profilegen
+		// --add-new-keys; never in check mode)
+		bool add_new_keys = false;
+		std::vector<std::string> added_keys;
 		// U1517: the synthetic-only field metadata of the last gen_build (list_fields) and the real-value guards draw() records
 		// per key (hashes, never values): the context holds no real value
 		std::vector<FieldInfo> view_fields;

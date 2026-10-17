@@ -22,7 +22,7 @@ G08	interface_guid	4c	network_adapters.txt:50	1	{E200EA58-C03B-11ED-92C8-806E6F6
 G09	interface_guid	4c	network_adapters.txt:56	5	{F24C9576-5BDC-40DF-BE54-7A9139F23206}
 M06	mac	3	network_adapters.txt:59	6	00:15:5D:E8:F6:D3
 G10	interface_guid	4c	network_adapters.txt:62	1	{1F36BEB7-73EC-11F0-B65A-10F60A6FCD2E}
-G11	interface_guid	4c	network_adapters.txt:68	1	{1F36BF3B-73EC-11F0-8FDB-10F60A6FCD2E}
+G11	interface_guid	4c	network_adapters.txt:68	2	{1F36BF3B-73EC-11F0-8FDB-10F60A6FCD2E}
 G12	interface_guid	4c	network_adapters.txt:74	1	{1F36BF3D-73EC-11F0-B582-10F60A6FCD2E}
 G13	interface_guid	4c	network_adapters.txt:80	1	{1F36BF3E-73EC-11F0-84EC-10F60A6FCD2E}
 G14	interface_guid	4c	network_adapters.txt:86	1	{1F36BDB9-73EC-11F0-86D2-806E6F6E6963}
@@ -349,6 +349,9 @@ X05	edid_serial	6	edid.txt:49	6	0x0000122E
 X06	edid_serial	6	edid.txt:113	2	0x33323733
 X07	edid_serial_string	6	edid.txt:121	1	FLGJ410959
 E01	mac_eui64	3	capture_info.txt:17767	47	047C16FFFF56B63600
+G207	mac_node_guid	4c	services_vm.txt:2071	1	{0DFF6D2B-E25C-11EF-9737-10F60A6FCD2E}
+G208	mac_node_guid	4c	services_vm.txt:2075	1	{18D6285B-6EFB-11F0-8FDF-10F60A6FCD31}
+U07	usb_serial_prefix	4d	pci_devices.txt:20198	1	7095315FF0208B6073EBF3368B448B710DAF29D30FD12CC4BA8AB1E3ED8D956
 # Enum\STORAGE\Volume instance paths (the volume GUID per rule 4c, the partition offset exact)
 P01	storage_path	4c	-	-	STORAGE\Volume\{512e93fd-bfa9-11ee-8b28-806e6f6e6963}#0000000000004400
 P02	storage_path	4c	-	-	STORAGE\Volume\{512e93fd-bfa9-11ee-8b28-806e6f6e6963}#0000000001000000

@@ -1,0 +1,7 @@
+# fwid Wi-Fi capture - fwid_probe 1.4 (2026-10-16)
+# per WLAN interface: GUID, description, state, and the NUMBER of saved profiles (with each profile's dwFlags).
+# SSIDs, profile names and keys are NEVER recorded; WlanGetProfile is never called (authentication / cipher type would
+# need its XML, so it is not recorded).
+WlanOpenHandle returned 1062 (WLAN AutoConfig service not running) - no Wi-Fi data
+
+0 WLAN interface(s)

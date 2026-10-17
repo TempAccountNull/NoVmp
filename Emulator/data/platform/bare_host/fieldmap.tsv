@@ -76,7 +76,10 @@ G127	4cr	network_adapters.txt	-	36	relation: version-1 GUID (container_id), node
 G154	4cr	network_adapters.txt	-	36	relation: version-1 GUID (container_id), node = the synthetic MAC of adapter "Bluetooth Device (Personal Area Network)"
 G168	4cr	network_adapters.txt	-	36	relation: version-1 GUID (gpu_guid), node = the synthetic MAC of adapter "Intel(R) Ethernet Controller I226-V"
 E01	3r	network_adapters.txt	-	18	relation: the EUI-64 form (OUI + FFFF + NIC part + 00) of the MAC of adapter "Intel(R) Ethernet Controller I226-V" in instance IDs
+G207	4cr	network_adapters.txt	-	36	relation: version-1 GUID (mac_node_guid), node = the synthetic MAC of adapter "Microsoft Wi-Fi Direct Virtual Adapter"
+G208	4cr	network_adapters.txt	-	36	relation: version-1 GUID (mac_node_guid), node = the synthetic MAC of adapter "Bluetooth Device (Personal Area Network)"
 K10	8dr	disks.txt	-	20	relation: the disk serial = the first 20 characters of USB serial U01 (the same device)
+U07	4dr	pci_devices.txt	-	63	relation: the first 63 characters of USB serial U01 (a truncated instance ID of the same device)
 K06	8cr	update_ids.txt	-	0	relation: SusClientIdValidation string 1 (the system disk serial): its synthetic identifier
 K06	8cr	update_ids.txt	-	0	relation: SusClientIdValidation MAC: the synthetic MAC of identity M01 (adapter "Intel(R) Ethernet Controller I226-V")
 K06	8cr	update_ids.txt	-	0	relation: SusClientIdValidation string 2 (the SMBIOS baseboard serial): its synthetic identifier
@@ -4596,6 +4599,7 @@ E01	3	pci_devices.txt	1049:65	18	mac_eui64
 E01	3	pci_devices.txt	3783:68	18	mac_eui64
 E01	3	pci_devices.txt	3876:141	18	mac_eui64
 E01	3	pci_devices.txt	20856:68	18	mac_eui64
+U07	4d	pci_devices.txt	20198:68	63	usb_serial_prefix
 G144	4c	printers.txt	42:11	36	swd_guid
 G01	4c	services_vm.txt	870:5	36	interface_guid
 G01	4c	services_vm.txt	1612:41	36	interface_guid
@@ -4623,6 +4627,7 @@ G09	4c	services_vm.txt	1629:19	36	interface_guid
 G09	4c	services_vm.txt	1728:61	36	interface_guid
 M06	3	services_vm.txt	1729:55	12	mac
 M06	3	services_vm.txt	1730:57	12	mac
+G11	4c	services_vm.txt	2079:52	32	interface_guid
 G23	4c	services_vm.txt	874:5	36	interface_guid
 G23	4c	services_vm.txt	1608:41	36	interface_guid
 G23	4c	services_vm.txt	1616:29	36	interface_guid
@@ -4632,6 +4637,8 @@ G27	4c	services_vm.txt	2077:75	36	interface_guid
 G27	4c	services_vm.txt	2100:36	36	interface_guid
 G27	4c	services_vm.txt	2102:29	36	interface_guid
 G27	4c	services_vm.txt	2104:19	36	interface_guid
+G207	4c	services_vm.txt	2071:52	32	mac_node_guid
+G208	4c	services_vm.txt	2075:52	32	mac_node_guid
 G158	4c	update_ids.txt	69:46	36	sqm_machine_id
 G167	4c	update_ids.txt	5:121	36	sus_client_id
 O99	7b	update_ids.txt	27:61	18	diagtrack_time

@@ -1,0 +1,66 @@
+# fwid update / telemetry identifier capture - fwid_probe 1.4 (2026-10-16)
+# named values (RegGetValueW) and the values (no subkeys) of DiagTrack and SQMClient; KEY_READ only; the product-key
+# value-name guard is active for every read. IDENTIFIERS: every value in these keys is treated as identifying.
+
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate "SusClientId" REG_SZ, 74 bytes [IDENTIFIER - keep local]: "26578090-5853-400a-a190-a9f40c5eaaf7"
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate "SusClientIdValidation" REG_BINARY, 29 bytes [IDENTIFIER - keep local]: 0602000108080600040FA1CA5B4E006F006E0065004E006F006E006500 (29 bytes hex)
+
+## DiagTrack (values only)
+
+## HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Diagnostics\DiagTrack
+  depth 0; last write 2024-06-22T13:26:56Z; 22 value(s), 20 subkey(s)
+  value "TimeStampInterval"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Capabilities"  REG_BINARY (3)  8 bytes: C6F6431500000000 (8 bytes hex)
+  value "mspflags"  REG_QWORD (11)  8 bytes: 0x0000000000000000 (0)
+  value "DiagTrackAuthorization"  REG_DWORD (4)  4 bytes: 0x00001101 (4353)
+  value "LaunchCount"  REG_QWORD (11)  8 bytes: 0x0000000000000021 (33)
+  value "DiagTrackStatus"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "LastFreeNetworkLossTime"  REG_QWORD (11)  8 bytes: 0x01DAC1E301C81A24 (133632319692479012)
+  value "LastConnectivityHeartBeatTime"  REG_QWORD (11)  8 bytes: 0x01D9250A33F5F621 (133178389735798305)
+  value "LastConnectivityState"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "ConnectivityNoNetworkTime"  REG_DWORD (4)  4 bytes: 0x000000A0 (160)
+  value "ConnectivityRestrictedNetworkTime"  REG_DWORD (4)  4 bytes: 0x0000000D (13)
+  value "LastPersistedEventTime"  REG_QWORD (11)  8 bytes: 0x01DAC42635EC8B30 (133634807353346864)
+  value "LatencyDataLastUploadTime"  REG_QWORD (11)  8 bytes: 0x0000000000000000 (0)
+  value "TriggerCount"  REG_QWORD (11)  8 bytes: 0x0000000000000022 (34)
+  value "HttpRequestCount"  REG_QWORD (11)  8 bytes: 0x0000000000000011 (17)
+  value "TriggerLatency"  REG_SZ (1)  18 bytes: "0.030182"
+  value "HttpRequestLatency"  REG_SZ (1)  18 bytes: "0.193217"
+  value "LastSuccessfulUploadTime"  REG_QWORD (11)  8 bytes: 0x000000000006927E (430718)
+  value "LastSuccessfulRealtimeUploadTime"  REG_QWORD (11)  8 bytes: 0x0000000000011EDD (73437)
+  value "LastSuccessfulNormalUploadTime"  REG_QWORD (11)  8 bytes: 0x000000000006927E (430718)
+  value "LastKnownProcessorModeStateIsController"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "UtcDataHandlingPolicies"  REG_QWORD (11)  8 bytes: 0x0000000000000000 (0)
+  subkey "Aggregation" (not descended: depth limit)
+  subkey "AsimovUploader" (not descended: depth limit)
+  subkey "DeviceDeleteRequest" (not descended: depth limit)
+  subkey "ETWEncryptionKey" (not descended: depth limit)
+  subkey "EventMonitors" (not descended: depth limit)
+  subkey "EventTranscriptKey" (not descended: depth limit)
+  subkey "FailFastCounters" (not descended: depth limit)
+  subkey "Features" (not descended: depth limit)
+  subkey "HeartBeats" (not descended: depth limit)
+  subkey "LocalSettings" (not descended: depth limit)
+  subkey "ProviderControl" (not descended: depth limit)
+  subkey "RegionalSettings" (not descended: depth limit)
+  subkey "Scenarios" (not descended: depth limit)
+  subkey "SettingsRequests" (not descended: depth limit)
+  subkey "SevilleEventlogManager" (not descended: depth limit)
+  subkey "TelemetryNamespaces" (not descended: depth limit)
+  subkey "Tenants" (not descended: depth limit)
+  subkey "TestHooks" (not descended: depth limit)
+  subkey "TraceManager" (not descended: depth limit)
+  subkey "TriggerListener" (not descended: depth limit)
+
+## SQMClient (values only)
+
+## HKLM\SOFTWARE\Microsoft\SQMClient
+  depth 0; last write 2023-01-10T15:28:05Z; 3 value(s), 3 subkey(s)
+  value "CabSessionAfterSize"  REG_DWORD (4)  4 bytes: 0x00005000 (20480)
+  value "WinSqmFirstSessionStartTime"  REG_QWORD (11)  8 bytes: 0x01D9250822B1EC87 (133178380856192135)
+  value "MachineId"  REG_SZ (1)  78 bytes: "{5F9891AA-4098-45F1-9F99-28902F03BFE7}"
+  subkey "CommonUploader" (not descended: depth limit)
+  subkey "IE" (not descended: depth limit)
+  subkey "Windows" (not descended: depth limit)
+
+DiagTrack: 22 value(s), 0 failure(s); SQMClient: 3 value(s), 0 failure(s)

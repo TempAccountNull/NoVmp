@@ -1,0 +1,14 @@
+# fwid Wi-Fi capture - fwid_probe 1.4 (2026-10-16)
+# per WLAN interface: GUID, description, state, and the NUMBER of saved profiles (with each profile's dwFlags).
+# SSIDs, profile names and keys are NEVER recorded; WlanGetProfile is never called (authentication / cipher type would
+# need its XML, so it is not recorded).
+
+=== interface 0: GUID {4DC84F63-FCCA-4151-B79D-EFB8116314F9} [IDENTIFIER], state 1
+description "Intel(R) Wi-Fi 6E AX211 160MHz"
+saved profiles: 4 (names NOT recorded)
+  profile 0: dwFlags 0x00000000
+  profile 1: dwFlags 0x00000000
+  profile 2: dwFlags 0x00000000
+  profile 3: dwFlags 0x00000000
+
+1 WLAN interface(s)

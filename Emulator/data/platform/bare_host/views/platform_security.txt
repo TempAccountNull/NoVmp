@@ -1,0 +1,70 @@
+# fwid platform security capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot (and State: UEFISecureBootEnabled, ...) values, KEY_READ;
+# Tbsi_GetDeviceInfo (tbs.dll): TPM version / interface type / implementation revision - no TPM command, no endorsement key.
+# Constants: SDK 10.0.26100.0 shared\tbs.h lines 194-212.
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot
+  depth 0; last write 2025-08-08T00:10:41Z; 1 value(s), 3 subkey(s)
+  value "AvailableUpdates"  REG_DWORD (4)  4 bytes: 0x00004000 (16384)
+  subkey "SBAT"
+  subkey "Servicing"
+  subkey "State"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\SBAT
+  depth 1; last write 2025-05-04T03:57:55Z; 2 value(s), 0 subkey(s)
+  value "UpdateStatus"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "SbatLevel"  REG_BINARY (3)  65 bytes: (65 bytes)
+      0000: 73 62 61 74 2C 31 2C 32 30 32 34 30 31 30 39 30  |sbat,1,202401090|
+      0010: 30 0A 73 68 69 6D 2C 34 0A 67 72 75 62 2C 33 0A  |0.shim,4.grub,3.|
+      0020: 67 72 75 62 2E 64 65 62 69 61 6E 2C 34 00 20 20  |grub.debian,4.  |
+      0030: 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |
+      0040: 00                                               |.|
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
+  depth 1; last write 2025-08-08T00:16:08Z; 7 value(s), 2 subkey(s)
+  value "WindowsUEFICA2023Capable"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "UEFICA2023Status"  REG_SZ (1)  16 bytes: "Updated"
+  value "BucketHash"  REG_SZ (1)  130 bytes: "b1d9e3e704880c0d83aa8b7cd57e0c4615830db8ee63190213cbe9bc6027bef1"
+  value "ConfidenceLevel"  REG_SZ (1)  32 bytes: "High Confidence"
+  value "LastParsedBucketDataVersion"  REG_DWORD (4)  4 bytes: 0x00000011 (17)
+  value "ConfidenceUpdateType"  REG_DWORD (4)  4 bytes: 0x00005944 (22852)
+  value "LastTelemetrySendTime"  REG_BINARY (3)  8 bytes: 9D95177FEA52DD01 (8 bytes hex)
+  subkey "DeviceAttributes"
+  subkey "UploadedForCurrentBootCycle"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\DeviceAttributes
+  depth 2; last write 2025-05-04T16:04:07Z; 18 value(s), 0 subkey(s)
+  value "CanAttemptUpdateAfter"  REG_BINARY (3)  8 bytes: B07916C8D0E8DC01 (8 bytes hex)
+  value "OEMManufacturerName"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "FirmwareManufacturer"  REG_SZ (1)  80 bytes: "American Megatrends International, LLC."
+  value "OEMModelBaseBoard"  REG_SZ (1)  66 bytes: "MAG Z790 TOMAHAWK WIFI (MS-7D91)"
+  value "FirmwareVersion"  REG_SZ (1)  10 bytes: "H.D0"
+  value "OEMModelNumber"  REG_SZ (1)  16 bytes: "MS-7D91"
+  value "OEMName"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "OSArchitecture"  REG_SZ (1)  12 bytes: "AMD64"
+  value "OEMModelSKU"  REG_SZ (1)  30 bytes: "Default string"
+  value "StateAttributes"  REG_SZ (1)  308 bytes: "05EBB51E620D007D007DFFFFFFE0000000000000-1-0-1-0-ER--BR--OR---RBR--0-922F07D6DDC2D0F8680E05F62D778802F4FB7120-0--7B3C212EEDCE4551978786D4996769347A5ADAA2"
+  value "OEMModelSystemVersion"  REG_SZ (1)  8 bytes: "4.0"
+  value "BaseBoardManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "OEMModelSystemFamily"  REG_SZ (1)  30 bytes: "Default string"
+  value "FirmwareReleaseDate"  REG_SZ (1)  22 bytes: "08/12/2024"
+  value "OEMModelBaseBoardVersion"  REG_SZ (1)  8 bytes: "4.0"
+  value "OSVersionFull"  REG_SZ (1)  96 bytes: "10.0.19045.7184.amd64fre.vb_release.191206-1406"
+  value "FlightRing"  REG_SZ (1)  14 bytes: "Retail"
+  value "DeviceFamily"  REG_SZ (1)  32 bytes: "Windows.Desktop"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\UploadedForCurrentBootCycle
+  depth 2; last write 2025-08-08T00:16:08Z; 0 value(s), 0 subkey(s)
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State
+  depth 1; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "UEFISecureBootEnabled"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PolicyPublisher"  REG_SZ (1)  78 bytes: "{77fa9abd-0359-4d32-bd60-28f4e78f784b}"
+  value "PolicyVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+
+## TPM (Tbsi_GetDeviceInfo)
+TBS_RESULT 0x00000000 (TBS_SUCCESS)
+structVersion 1
+tpmVersion 2 (TPM_VERSION_20)
+tpmInterfaceType 3 (TPM_IFTYPE_HW)
+tpmImpRevision 0 (0x00000000)

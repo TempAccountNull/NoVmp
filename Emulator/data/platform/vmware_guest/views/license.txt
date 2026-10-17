@@ -1,0 +1,16 @@
+# fwid license capture - fwid_probe 1.4 (2026-10-16)
+# USER-AUTHORIZED EXCEPTION (2026-10-16), exact scope: local WMI root\cimv2, one ExecQuery, Get of the six
+# properties ID, Name, Description, LicenseStatus, ProductKeyChannel, OfflineInstallationId. Product keys and
+# PartialProductKey / ProductKeyID / ProductKeyID2 are NEVER requested; no WMI method is ever called; no SL* function.
+# Query: SELECT ID, Name, Description, LicenseStatus, ProductKeyChannel, OfflineInstallationId FROM SoftwareLicensingProduct WHERE ApplicationID = '55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL
+# OfflineInstallationId = the Windows installation ID [IDENTIFIER - keep local]. The query can take seconds.
+
+=== SoftwareLicensingProduct row 0
+ID                     "ed655016-a9e8-4434-95d9-4345352c2552"  [SKU ID]
+Name                   "Windows(R), IoTEnterpriseS edition"
+Description            "Windows(R) Operating System, OEM_COA_NSLP channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "OEM:NONSLP"
+OfflineInstallationId  "993933116912347141350792146318049405924443071222408729546005524"  [IDENTIFIER - installation ID, keep local]
+
+1 row(s); query time 391 ms

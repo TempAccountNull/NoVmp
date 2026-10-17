@@ -1,0 +1,856 @@
+# fwid HKLM\HARDWARE\DESCRIPTION\System capture (recursive: BIOS, CentralProcessor, FloatingPointProcessor,
+# MultifunctionAdapter, ...) - fwid_probe 1.4 (2026-10-16)
+# every key with all values (binary in full hex); KEY_READ only.
+
+## HKLM\HARDWARE\DESCRIPTION\System
+  depth 0; last write 2025-08-08T00:11:04Z; 7 value(s), 5 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000000000000000000 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  34 bytes: "AT/AT COMPATIBLE"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  176 bytes: (176 bytes)
+      0000: FF FF FF FF FF FF FF FF 00 00 00 00 02 00 00 00  |................|
+      0010: 05 00 00 00 78 00 00 00 00 00 00 00 00 00 00 00  |....x...........|
+      0020: 00 00 00 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+      0030: 00 00 FF FF FF FF 00 00 FF FF 0A 00 00 00 FF FF  |................|
+      0040: FF FF 00 00 FF FF 0A 00 00 00 FF FF FF FF 00 00  |................|
+      0050: FF FF 0A 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+      0060: 00 00 FF FF FF FF 00 00 FF FF 0A 00 00 00 FF FF  |................|
+      0070: FF FF 00 00 FF FF 0A 00 00 00 FF FF FF FF 00 00  |................|
+      0080: FF FF 0A 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+      0090: 00 00 FF FF FF FF 00 00 FF FF 0A 00 05 00 00 00  |................|
+      00A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+  value "SystemBiosVersion"  REG_MULTI_SZ (7)  102 bytes: (list)
+        [0] "ALASKA - 1072009"
+        [1] "H.D0"
+        [2] "American Megatrends - 5001B"
+  value "BootArchitecture"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "PreferredProfile"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Capabilities"  REG_DWORD (4)  4 bytes: 0x0003C6E5 (247525)
+  subkey "CentralProcessor"
+  subkey "FloatingPointProcessor"
+  subkey "MultifunctionAdapter"
+  subkey "BIOS"
+  subkey "VideoAdapterBusses"
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor
+  depth 1; last write 2025-08-08T00:10:41Z; 0 value(s), 20 subkey(s)
+  subkey "0"
+  subkey "1"
+  subkey "10"
+  subkey "11"
+  subkey "12"
+  subkey "13"
+  subkey "14"
+  subkey "15"
+  subkey "16"
+  subkey "17"
+  subkey "18"
+  subkey "19"
+  subkey "2"
+  subkey "3"
+  subkey "4"
+  subkey "5"
+  subkey "6"
+  subkey "7"
+  subkey "8"
+  subkey "9"
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000000000000000000 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\1
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000100000000000100 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\10
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000A00000000000A00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\11
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000B00000000000B00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\12
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000C00000000000C00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\13
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000D00000000000D00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\14
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000E00000000000E00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\15
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000F00000000000F00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\16
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001000000000001000 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\17
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001100000000001100 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\18
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001200000000001200 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\19
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001300000000001300 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\2
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000200000000000200 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\3
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000300000000000300 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\4
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000400000000000400 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\5
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000500000000000500 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\6
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000600000000000600 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\7
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000700000000000700 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\8
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000800000000000800 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\9
+  depth 2; last write 2025-08-08T00:10:41Z; 11 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000900000000000900 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+  value "ProcessorNameString"  REG_SZ (1)  74 bytes: "13th Gen Intel(R) Core(TM) i5-13600K"
+  value "VendorIdentifier"  REG_SZ (1)  26 bytes: "GenuineIntel"
+  value "FeatureSet"  REG_DWORD (4)  4 bytes: 0x3D1B3FFF (1025196031)
+  value "~MHz"  REG_DWORD (4)  4 bytes: 0x00000DA6 (3494)
+  value "Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Update Status"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "Previous Update Revision"  REG_BINARY (3)  8 bytes: 0000000029010000 (8 bytes hex)
+  value "Platform Specific Field 1"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor
+  depth 1; last write 2025-08-08T00:10:41Z; 0 value(s), 20 subkey(s)
+  subkey "0"
+  subkey "1"
+  subkey "10"
+  subkey "11"
+  subkey "12"
+  subkey "13"
+  subkey "14"
+  subkey "15"
+  subkey "16"
+  subkey "17"
+  subkey "18"
+  subkey "19"
+  subkey "2"
+  subkey "3"
+  subkey "4"
+  subkey "5"
+  subkey "6"
+  subkey "7"
+  subkey "8"
+  subkey "9"
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\0
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000000000000000000 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\1
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000100000000000100 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\10
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000A00000000000A00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\11
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000B00000000000B00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\12
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000C00000000000C00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\13
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000D00000000000D00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\14
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000E00000000000E00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\15
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000F00000000000F00 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\16
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001000000000001000 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\17
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001100000000001100 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\18
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001200000000001200 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\19
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000001300000000001300 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\2
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000200000000000200 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\3
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000300000000000300 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\4
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000400000000000400 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\5
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000500000000000500 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\6
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000600000000000600 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\7
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000700000000000700 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\8
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000800000000000800 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\FloatingPointProcessor\9
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000900000000000900 (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  76 bytes: "Intel64 Family 6 Model 183 Stepping 1"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: FFFFFFFFFFFFFFFF0000000000000000 (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter
+  depth 1; last write 2025-08-08T00:10:42Z; 0 value(s), 12 subkey(s)
+  subkey "0"
+  subkey "1"
+  subkey "10"
+  subkey "11"
+  subkey "2"
+  subkey "3"
+  subkey "4"
+  subkey "5"
+  subkey "6"
+  subkey "7"
+  subkey "8"
+  subkey "9"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 2 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  8 bytes: "ISA"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 01000000000000000000000000000000 (16 bytes hex)
+  subkey "DiskController"
+  subkey "KeyboardController"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController
+  depth 3; last write 2025-08-08T00:10:41Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0
+  depth 4; last write 2025-08-08T00:10:41Z; 2 value(s), 1 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 01000000000000000000000000000000 (16 bytes hex)
+  subkey "DiskPeripheral"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral
+  depth 5; last write 2025-08-08T00:10:41Z; 0 value(s), 8 subkey(s)
+  subkey "0"
+  subkey "1"
+  subkey "2"
+  subkey "3"
+  subkey "4"
+  subkey "5"
+  subkey "6"
+  subkey "7"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\0
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "4ec91f5b-07f2dfe5-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\1
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000001000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "a1a0d2e1-2ed90d27-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\2
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000002000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "56bb6440-00000000-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\3
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000003000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "7f923cd4-73696d20-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\4
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000004000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "9db67f10-00000000-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\5
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000007000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "9db6fed0-00000000-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\6
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000008000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "9db6fed0-00000000-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DiskController\0\DiskPeripheral\7
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 600000000000000009000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  40 bytes: "56bbff40-00000000-A"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  52 bytes: (52 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00                                      |....|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\KeyboardController
+  depth 3; last write 2025-08-08T00:10:41Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\KeyboardController\0
+  depth 4; last write 2025-08-08T00:10:41Z; 2 value(s), 1 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 280000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 01000000000000000000000000000000 (16 bytes hex)
+  subkey "KeyboardPeripheral"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\KeyboardController\0\KeyboardPeripheral
+  depth 5; last write 2025-08-08T00:10:41Z; 0 value(s), 1 subkey(s)
+  subkey "0"
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\KeyboardController\0\KeyboardPeripheral\0
+  depth 6; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 280000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  34 bytes: "UNKNOWN_KEYBOARD"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  44 bytes: (44 bytes)
+      0000: 01 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 08 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 00 00 00 FF FF 00 00              |............|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\1
+  depth 2; last write 2025-08-08T00:10:41Z; 3 value(s), 0 subkey(s)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+  value "Identifier"  REG_SZ (1)  20 bytes: "ACPI BIOS"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  2092 bytes: (2092 bytes)
+      0000: 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  |................|
+      0010: 05 00 00 00 08 08 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 28 67 82 74 00 00 00 00 55 00 00 00  |....(g.t....U...|
+      0030: 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00  |................|
+      0040: 00 00 00 00 01 00 00 00 00 00 00 00 00 10 00 00  |................|
+      0050: 00 00 00 00 00 10 00 00 00 00 00 00 01 00 00 00  |................|
+      0060: 02 F8 FF FF 00 20 00 00 00 00 00 00 00 C0 09 00  |..... ..........|
+      0070: 00 00 00 00 01 00 00 00 00 00 00 00 00 E0 09 00  |................|
+      0080: 00 00 00 00 00 10 00 00 00 00 00 00 02 00 00 00  |................|
+      0090: 02 F8 FF FF 00 F0 09 00 00 00 00 00 00 10 00 00  |................|
+      00A0: 00 00 00 00 01 00 00 00 00 00 00 00 00 00 10 00  |................|
+      00B0: 00 00 00 00 00 20 00 00 00 00 00 00 01 00 00 00  |..... ..........|
+      00C0: 02 F8 FF FF 00 20 10 00 00 00 00 00 00 10 00 00  |..... ..........|
+      00D0: 00 00 00 00 01 00 00 00 00 00 00 00 00 30 10 00  |.............0..|
+      00E0: 00 00 00 00 00 30 17 00 00 00 00 00 01 00 00 00  |.....0..........|
+      00F0: 02 F8 FF FF 00 60 27 00 00 00 00 00 00 50 01 00  |.....`'......P..|
+      0100: 00 00 00 00 01 00 00 00 00 00 00 00 00 B0 28 00  |..............(.|
+      0110: 00 00 00 00 00 70 00 00 00 00 00 00 01 00 00 00  |.....p..........|
+      0120: 00 00 00 00 00 20 29 00 00 00 00 00 00 20 00 00  |..... )...... ..|
+      0130: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 40 29 00  |.............@).|
+      0140: 00 00 00 00 00 E0 00 00 00 00 00 00 01 00 00 00  |................|
+      0150: 00 00 00 00 00 20 2A 00 00 00 00 00 00 B0 00 00  |..... *.........|
+      0160: 00 00 00 00 01 00 00 00 00 00 00 00 00 D0 2A 00  |..............*.|
+      0170: 00 00 00 00 00 A0 14 00 00 00 00 00 01 00 00 00  |................|
+      0180: 00 00 00 00 00 70 3F 00 00 00 00 00 00 30 40 00  |.....p?......0@.|
+      0190: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 A0 7F 00  |................|
+      01A0: 00 00 00 00 00 F0 21 00 00 00 00 00 01 00 00 00  |......!.........|
+      01B0: 00 00 00 00 00 90 A1 00 00 00 00 00 00 70 1E 00  |.............p..|
+      01C0: 00 00 00 00 01 00 00 00 00 00 00 00 00 00 C0 00  |................|
+      01D0: 00 00 00 00 00 00 AC 01 00 00 00 00 01 00 00 00  |................|
+      01E0: 00 00 00 00 00 00 6C 02 00 00 00 00 00 00 94 0D  |......l.........|
+      01F0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 00 00 10  |................|
+      0200: 00 00 00 00 00 B0 00 00 00 00 00 00 01 00 00 00  |................|
+      0210: 00 00 00 00 00 B0 00 10 00 00 00 00 00 40 26 55  |.............@&U|
+      0220: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 F0 26 65  |..............&e|
+      0230: 00 00 00 00 00 00 08 00 00 00 00 00 01 00 00 00  |................|
+      0240: 00 00 00 00 00 F0 2E 65 00 00 00 00 00 A0 C1 03  |.......e........|
+      0250: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 90 F0 68  |...............h|
+      0260: 00 00 00 00 00 20 33 00 00 00 00 00 01 00 00 00  |..... 3.........|
+      0270: 02 F8 FF FF 00 B0 23 69 00 00 00 00 00 A0 2E 00  |......#i........|
+      0280: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 50 52 69  |.............PRi|
+      0290: 00 00 00 00 00 80 11 00 00 00 00 00 01 00 00 00  |................|
+      02A0: 00 00 00 00 00 D0 63 69 00 00 00 00 00 60 00 00  |......ci.....`..|
+      02B0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 30 64 69  |.............0di|
+      02C0: 00 00 00 00 00 60 01 00 00 00 00 00 01 00 00 00  |.....`..........|
+      02D0: 00 00 00 00 00 90 65 69 00 00 00 00 00 A0 00 00  |......ei........|
+      02E0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 30 66 69  |.............0fi|
+      02F0: 00 00 00 00 00 20 00 00 00 00 00 00 01 00 00 00  |..... ..........|
+      0300: 00 00 00 00 00 50 66 69 00 00 00 00 00 10 13 00  |.....Pfi........|
+      0310: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 60 79 69  |.............`yi|
+      0320: 00 00 00 00 00 50 00 00 00 00 00 00 01 00 00 00  |.....P..........|
+      0330: 00 00 00 00 00 B0 79 69 00 00 00 00 00 50 00 00  |......yi.....P..|
+      0340: 00 00 00 00 01 00 00 00 00 00 00 00 00 00 7A 69  |..............zi|
+      0350: 00 00 00 00 00 10 00 00 00 00 00 00 01 00 00 00  |................|
+      0360: 02 F8 FF FF 00 10 7A 69 00 00 00 00 00 10 9F 02  |......zi........|
+      0370: 00 00 00 00 01 00 00 00 00 00 00 00 00 20 19 6C  |............. .l|
+      0380: 00 00 00 00 00 C0 01 00 00 00 00 00 01 00 00 00  |................|
+      0390: 02 F8 FF FF 00 E0 1A 6C 00 00 00 00 00 C0 02 00  |.......l........|
+      03A0: 00 00 00 00 01 00 00 00 00 00 00 00 00 A0 1D 6C  |...............l|
+      03B0: 00 00 00 00 00 B0 00 00 00 00 00 00 01 00 00 00  |................|
+      03C0: 02 F8 FF FF 00 50 1E 6C 00 00 00 00 00 50 00 00  |.....P.l.....P..|
+      03D0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 A0 1E 6C  |...............l|
+      03E0: 00 00 00 00 00 20 00 00 00 00 00 00 01 00 00 00  |..... ..........|
+      03F0: 00 00 00 00 00 C0 1E 6C 00 00 00 00 00 50 00 00  |.......l.....P..|
+      0400: 00 00 00 00 01 00 00 00 00 00 00 00 00 10 1F 6C  |...............l|
+      0410: 00 00 00 00 00 40 00 00 00 00 00 00 01 00 00 00  |.....@..........|
+      0420: 02 F8 FF FF 00 50 1F 6C 00 00 00 00 00 80 00 00  |.....P.l........|
+      0430: 00 00 00 00 01 00 00 00 00 00 00 00 00 D0 1F 6C  |...............l|
+      0440: 00 00 00 00 00 20 00 00 00 00 00 00 01 00 00 00  |..... ..........|
+      0450: 02 F8 FF FF 00 F0 1F 6C 00 00 00 00 00 60 00 00  |.......l.....`..|
+      0460: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 50 20 6C  |.............P l|
+      0470: 00 00 00 00 00 10 00 00 00 00 00 00 01 00 00 00  |................|
+      0480: 00 00 00 00 00 60 20 6C 00 00 00 00 00 F0 01 00  |.....` l........|
+      0490: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 50 22 6C  |.............P"l|
+      04A0: 00 00 00 00 00 40 00 00 00 00 00 00 01 00 00 00  |.....@..........|
+      04B0: 02 F8 FF FF 00 90 22 6C 00 00 00 00 00 80 00 00  |......"l........|
+      04C0: 00 00 00 00 01 00 00 00 00 00 00 00 00 10 23 6C  |..............#l|
+      04D0: 00 00 00 00 00 E0 04 00 00 00 00 00 01 00 00 00  |................|
+      04E0: 00 00 00 00 00 F0 27 6C 00 00 00 00 00 50 10 00  |......'l.....P..|
+      04F0: 00 00 00 00 01 00 00 00 00 00 00 00 00 40 38 6C  |.............@8l|
+      0500: 00 00 00 00 00 70 00 00 00 00 00 00 01 00 00 00  |.....p..........|
+      0510: 00 00 00 00 00 B0 38 6C 00 00 00 00 00 B0 00 00  |......8l........|
+      0520: 00 00 00 00 01 00 00 00 00 00 00 00 00 60 39 6C  |.............`9l|
+      0530: 00 00 00 00 00 50 00 00 00 00 00 00 01 00 00 00  |.....P..........|
+      0540: 00 00 00 00 00 B0 39 6C 00 00 00 00 00 90 00 00  |......9l........|
+      0550: 00 00 00 00 01 00 00 00 00 00 00 00 00 40 3A 6C  |.............@:l|
+      0560: 00 00 00 00 00 40 04 00 00 00 00 00 01 00 00 00  |.....@..........|
+      0570: 00 00 00 00 00 80 3E 6C 00 00 00 00 00 20 25 01  |......>l..... %.|
+      0580: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 A0 63 6D  |..............cm|
+      0590: 00 00 00 00 00 50 01 00 00 00 00 00 01 00 00 00  |.....P..........|
+      05A0: 00 00 00 00 00 F0 64 6D 00 00 00 00 00 40 00 00  |......dm.....@..|
+      05B0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 30 65 6D  |.............0em|
+      05C0: 00 00 00 00 00 50 00 00 00 00 00 00 01 00 00 00  |.....P..........|
+      05D0: 00 00 00 00 00 80 65 6D 00 00 00 00 00 F0 73 00  |......em......s.|
+      05E0: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 70 D9 6D  |.............p.m|
+      05F0: 00 00 00 00 00 80 4C 00 00 00 00 00 01 00 00 00  |......L.........|
+      0600: 00 00 00 00 00 F0 25 6E 00 00 00 00 00 F0 A0 02  |......%n........|
+      0610: 00 00 00 00 01 00 00 00 02 F8 FF FF 00 E0 C6 70  |...............p|
+      0620: 00 00 00 00 00 20 45 00 00 00 00 00 01 00 00 00  |..... E.........|
+      0630: 00 00 00 00 00 00 0C 71 00 00 00 00 00 00 14 01  |.......q........|
+      0640: 00 00 00 00 01 00 00 00 00 00 00 00 00 00 20 72  |.............. r|
+      0650: 00 00 00 00 00 D0 3A 02 00 00 00 00 02 00 00 00  |......:.........|
+      0660: 00 00 00 00 00 D0 5A 74 00 00 00 00 00 E0 11 00  |......Zt........|
+      0670: 00 00 00 00 03 00 00 00 00 00 00 00 00 B0 6C 74  |..............lt|
+      0680: 00 00 00 00 00 00 20 00 00 00 00 00 04 00 00 00  |...... .........|
+      0690: 00 00 00 00 00 B0 8C 74 00 00 00 00 00 B0 26 01  |.......t......&.|
+      06A0: 00 00 00 00 02 00 00 00 00 00 00 00 00 60 B3 75  |.............`.u|
+      06B0: 00 00 00 00 00 90 0C 00 00 00 00 00 02 00 00 00  |................|
+      06C0: 00 00 00 00 00 F0 BF 75 00 00 00 00 00 10 00 00  |.......u........|
+      06D0: 00 00 00 00 01 00 00 00 00 00 00 00 00 00 C0 75  |...............u|
+      06E0: 00 00 00 00 00 00 40 00 00 00 00 00 02 00 00 00  |......@.........|
+      06F0: 00 00 00 00 00 00 00 00 01 00 00 00 00 00 80 7F  |................|
+      0700: 07 00 00 00 01 00 00 00 00 00 00 00 00 00 0A 00  |................|
+      0710: 00 00 00 00 00 00 06 00 00 00 00 00 02 00 00 00  |................|
+      0720: 02 F8 FF FF 00 00 00 76 00 00 00 00 00 00 00 04  |.......v........|
+      0730: 00 00 00 00 02 00 00 00 00 00 00 00 00 00 40 7A  |..............@z|
+      0740: 00 00 00 00 00 00 40 00 00 00 00 00 02 00 00 00  |......@.........|
+      0750: 02 F8 FF FF 00 00 00 7B 00 00 00 00 00 00 00 01  |.......{........|
+      0760: 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 7C  |...............||
+      0770: 00 00 00 00 00 00 80 04 00 00 00 00 02 00 00 00  |................|
+      0780: 00 00 00 00 00 00 00 C0 00 00 00 00 00 00 00 10  |................|
+      0790: 00 00 00 00 02 00 00 00 02 F8 FF FF 00 00 00 FE  |................|
+      07A0: 00 00 00 00 00 10 01 00 00 00 00 00 02 00 00 00  |................|
+      07B0: 00 00 00 00 00 00 C0 FE 00 00 00 00 00 10 00 00  |................|
+      07C0: 00 00 00 00 02 00 00 00 00 00 00 00 00 00 D0 FE  |................|
+      07D0: 00 00 00 00 00 10 00 00 00 00 00 00 02 00 00 00  |................|
+      07E0: 00 00 00 00 00 00 D2 FE 00 00 00 00 00 00 06 00  |................|
+      07F0: 00 00 00 00 02 00 00 00 02 F8 FF FF 00 00 E0 FE  |................|
+      0800: 00 00 00 00 00 10 00 00 00 00 00 00 02 00 00 00  |................|
+      0810: 00 00 00 00 00 00 00 FF 00 00 00 00 00 00 00 01  |................|
+      0820: 00 00 00 00 02 00 00 00 00 00 00 00              |............|
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\10
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000080000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\11
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000090000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\2
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000000000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\3
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000010000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\4
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000020000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\5
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000030000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\6
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000040000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\7
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000050000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\8
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000060000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\MultifunctionAdapter\9
+  depth 2; last write 2025-08-08T00:10:42Z; 3 value(s), 0 subkey(s)
+  value "Identifier"  REG_SZ (1)  8 bytes: "PCI"
+  value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  16 bytes: 05000000070000000000000000000000 (16 bytes hex)
+  value "Component Information"  REG_BINARY (3)  16 bytes: 000000000000000000000000FFFFFFFF (16 bytes hex)
+
+## HKLM\HARDWARE\DESCRIPTION\System\BIOS
+  depth 1; last write 2025-08-08T00:11:04Z; 15 value(s), 0 subkey(s)
+  value "BiosMajorRelease"  REG_DWORD (4)  4 bytes: 0x00000005 (5)
+  value "BiosMinorRelease"  REG_DWORD (4)  4 bytes: 0x0000001B (27)
+  value "ECFirmwareMajorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+  value "ECFirmwareMinorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+  value "BaseBoardManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "BaseBoardProduct"  REG_SZ (1)  66 bytes: "MAG Z790 TOMAHAWK WIFI (MS-7D91)"
+  value "BaseBoardVersion"  REG_SZ (1)  8 bytes: "4.0"
+  value "BIOSReleaseDate"  REG_SZ (1)  22 bytes: "08/12/2024"
+  value "BIOSVendor"  REG_SZ (1)  80 bytes: "American Megatrends International, LLC."
+  value "BIOSVersion"  REG_SZ (1)  10 bytes: "H.D0"
+  value "SystemFamily"  REG_SZ (1)  30 bytes: "Default string"
+  value "SystemManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "SystemProductName"  REG_SZ (1)  16 bytes: "MS-7D91"
+  value "SystemSKU"  REG_SZ (1)  30 bytes: "Default string"
+  value "SystemVersion"  REG_SZ (1)  8 bytes: "4.0"
+
+## HKLM\HARDWARE\DESCRIPTION\System\VideoAdapterBusses
+  depth 1; last write 2025-08-08T00:10:42Z; 0 value(s), 1 subkey(s)
+  subkey "PCIBus"
+
+## HKLM\HARDWARE\DESCRIPTION\System\VideoAdapterBusses\PCIBus
+  depth 2; last write 2025-08-08T00:10:42Z; 1 value(s), 1 subkey(s)
+  value "" (default)  REG_DWORD (4)  4 bytes: 0x00000005 (5)
+  subkey "0003"
+
+## HKLM\HARDWARE\DESCRIPTION\System\VideoAdapterBusses\PCIBus\0003
+  depth 3; last write 2025-08-08T00:10:42Z; 1 value(s), 0 subkey(s)
+  value "" (default)  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+
+## summary
+keys 75, values 371, failures 0

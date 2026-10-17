@@ -195,6 +195,16 @@ namespace emu::platform
 		return t;
 	}
 	static std::string mac_plain( const std::string& t ) { std::string p; for ( char c : lower( t ) ) if ( c != ':' ) p += c; return p; }
+	// a GUID text's 16 bytes in Windows byte order (Data1-3 little-endian, Data4 as is) as 32 lower-case hex digits: the
+	// REG_BINARY form fwid prints (U1518); empty for a text that is no GUID
+	static std::string guid_binary_hex( const std::string& g )
+	{
+		std::string h;
+		for ( char c : lower( g ) ) if ( is_hex( c ) ) h += c;
+		if ( h.size() != 32 ) return {};
+		if ( h.substr( 8, 12 ).find_first_not_of( '0' ) == std::string::npos ) return {};	// an MBR-style volume GUID (signature + offset): never stored binary
+		return h.substr( 6, 2 ) + h.substr( 4, 2 ) + h.substr( 2, 2 ) + h.substr( 0, 2 ) + h.substr( 10, 2 ) + h.substr( 8, 2 ) + h.substr( 14, 2 ) + h.substr( 12, 2 ) + h.substr( 16 );
+	}
 	// VMware Workstation's host-only / NAT adapters: the fixed pattern 00:50:56:C0:00:<VMnet number> (kept exact)
 	static bool is_vmnet_mac( const std::string& t ) { return lower( t ).rfind( "00:50:56:c0:00:", 0 ) == 0; }
 
@@ -381,7 +391,8 @@ namespace emu::platform
 				own.entries[ key ] = p->second;
 				return keep( p->second.value );
 			}
-		if ( ctx.applying ) fail( "the identity map has no value for " + key + ": it does not fit this capture - generate a new identity (--new-identity)" );
+		if ( ctx.applying && !ctx.add_new_keys ) fail( "the identity map has no value for " + key + ": it does not fit this capture - generate a new identity (--new-identity)" );
+		if ( ctx.applying ) ctx.added_keys.push_back( key );	// U1518 --add-new-keys: only this key is drawn, every saved value applied
 		if ( !shared )
 		{
 			const std::string v = fn();	// a finished value of the Randomizer (no lock held)
@@ -533,6 +544,7 @@ namespace emu::platform
 				std::string v = to_string( raw, p->offset, p->length );
 				if ( check_filler( v ) ) continue;	// firmware filler: unchanged
 				g.needles.push_back( v );	// leak guard, also when the rule is disabled
+				if ( rule == std::string( "2h" ) && f.off == 0x17 ) g.vendor_needles.push_back( v );	// a brand name (U1518 leak guard)
 				if ( rule == std::string( "2" ) ? !rules.r2 : !rules.r2h ) continue;
 				uint8_t idx = raw[ s.offset + f.off ];
 				for ( uint8_t o : string_fields( s.type ) )
@@ -1810,6 +1822,25 @@ namespace emu::platform
 				add( "mac_node_guid", "4c", "{" + std::string( t.f->data.begin() + i, t.f->data.begin() + i + 36 ) + "}", t.f->name, line_of( t, i ) );
 			}
 		}
+		// rule 4c (U1518, decision E "one mapping per real GUID everywhere"): a version-1 GUID with an adapter-MAC node stored as
+		// a 16-byte REG_BINARY value (Windows byte order; bare host: VMSVSF NdisAdapters InterfaceGuid) is that GUID - after the
+		// text pass, so the identity ids of the text GUIDs stay as they were
+		for ( const TextLc& t : texts )
+		{
+			static const std::string k_bin = "reg_binary (3)";
+			for ( size_t q = t.lc.find( k_bin ); q != std::string::npos; q = t.lc.find( k_bin, q + 1 ) )
+			{
+				const size_t le = t.lc.find( '\n', q ), b = t.lc.find( "16 bytes: ", q );
+				if ( b == std::string::npos || ( le != std::string::npos && b > le ) || b + 10 + 32 > t.lc.size() ) continue;
+				const std::string h = t.lc.substr( b + 10, 32 );
+				if ( !std::all_of( h.begin(), h.end(), is_hex ) || ( b + 42 < t.lc.size() && is_alnum( t.lc[ b + 42 ] ) ) ) continue;
+				const std::string g = h.substr( 6, 2 ) + h.substr( 4, 2 ) + h.substr( 2, 2 ) + h.substr( 0, 2 ) + "-" + h.substr( 10, 2 ) + h.substr( 8, 2 ) + "-" + h.substr( 14, 2 ) +
+									  h.substr( 12, 2 ) + "-" + h.substr( 16, 4 ) + "-" + h.substr( 20 );
+				const unsigned variant = unsigned( std::stoul( g.substr( 19, 1 ), nullptr, 16 ) );
+				if ( g[ 14 ] != '1' || variant < 8 || variant >= 12 || !mac_by_plain.count( g.substr( 24 ) ) ) continue;
+				add( "mac_node_guid", "4c", "{" + upper( g ) + "}", t.f->name, line_of( t, b + 10 ) );
+			}
+		}
 		// an occurrence is a token: not part of a longer letter / digit run (other needles than names and GUIDs: not inside a
 		// hyphenated token either, e.g. a MAC as a version-1 GUID node); fwid writes '\' as \x5C (a boundary); in bluetooth.txt
 		// "ServicesFor<address>" names a subkey after the local radio address (a boundary before the 12 hex digits)
@@ -1997,6 +2028,7 @@ namespace emu::platform
 				d.synthetic = gen_guid( ctx, { g.c_str(), label }, nodes ).text;
 				const std::string bare = g.front() == '{' ? g.substr( 1, 36 ) : g;
 				d.needles = { lower( bare ) };
+				if ( const std::string bin = guid_binary_hex( bare ); !bin.empty() ) d.needles.push_back( bin );	// U1518: also the 16-byte REG_BINARY form
 				std::string node = lower( bare.substr( 24, 12 ) );
 				if ( bare[ 14 ] == '1' && nodes.real_to_synthetic.count( node ) )
 				{
@@ -2116,6 +2148,35 @@ namespace emu::platform
 			else d.synthetic = gen_class_string( ctx, { d.original.c_str(), "identity/" + d.id } ).text;
 			d.needles = { lower( d.original ) };
 		}
+		// 3a'. a USB serial TRUNCATED in a text output (U1518 review: the bare host's SetupAPI instance ID of a USB flash drive
+		// "USBSTOR-style DISK&VEN_..&PROD_..&REV_..\<the first 63 characters of the USB serial>"): rule 4d - one serial per
+		// physical device - with the prefix relation of rule 8d (decision K): a token that is a proper prefix of at least 16
+		// characters of a real USB serial = the same prefix of that serial's synthetic value; a relation row "4dr" names it
+		for ( size_t ui = 0, n0 = ids.size(); ui < n0; ui++ )
+		{
+			if ( ids[ ui ].kind != "usb_serial" || ids[ ui ].original.size() <= 16 ) continue;
+			const std::string us = lower( ids[ ui ].original ), head = us.substr( 0, 16 );
+			for ( const TextLc& t : texts )
+				for ( size_t q = t.lc.find( head ); q != std::string::npos; q = t.lc.find( head, q + 1 ) )
+				{
+					const bool esc = q >= 4 && t.lc.compare( q - 4, 4, "\\x5c" ) == 0;
+					if ( q && !esc && is_alnum( t.lc[ q - 1 ] ) ) continue;	// inside a longer token
+					size_t z = q;
+					while ( z < t.lc.size() && is_alnum( t.lc[ z ] ) ) z++;
+					const std::string tok = t.lc.substr( q, z - q );
+					if ( tok.size() >= us.size() || us.compare( 0, tok.size(), tok ) != 0 ) continue;	// the whole serial / another value
+					if ( by_key.count( key_of( tok ) ) ) continue;	// already an identity (the flash drive's disk serial, rule 8d)
+					const size_t ui_id = ui;
+					const std::string tok_text( t.f->data.begin() + q, t.f->data.begin() + z );
+					Ident& d = add( "usb_serial_prefix", "4d", tok_text, t.f->name, line_of( t, q ) );
+					if ( &d == &scratch ) continue;	// inside an excluded tool artifact
+					const Ident& usb = ids[ ui_id ];
+					d.synthetic = follow_case( usb.synthetic.substr( 0, tok.size() ), tok_text );
+					d.needles = { tok };
+					out.fields.push_back( { t.f->name, d.id, "4dr", fmt( "relation: the first %zu characters of USB serial %s (a truncated instance ID of the same device)", tok.size(), usb.id.c_str() ),
+						0, 0, uint32_t( tok.size() ) } );
+				}
+		}
 		// 3b. SusClientIdValidation (8c): the layout kept, every component its synthetic identity (gen_sus_client_id_validation)
 		for ( Ident& d : ids )
 		{
@@ -2136,14 +2197,21 @@ namespace emu::platform
 		// ranges of an excluded tool artifact are dropped
 		std::map<std::string, size_t> occ, occ_excluded;
 		std::map<std::string, std::string> first_at;
+		// (U1518) every recorded occurrence, for the synthetic text views: the text, the byte position and length, the identity
+		// and which of its needle forms matched (a hex-dump row of rule 8c: its chunk of 16 bytes and column)
+		// time: a view-only timestamp shift (1 = ISO "YYYY-MM-DDTHH:MM:SSZ", 2 = FILETIME 16 hex digits, 3 = FILETIME decimal)
+		struct Occurrence { size_t text = 0, pos = 0, len = 0, ident = 0, form = 0; int chunk = -1; bool ascii = false; int time = 0; };
+		std::vector<Occurrence> found;
 		for ( const TextLc& t : texts )
 		{
 			const std::string& lc = t.lc;
-			for ( const Ident& d : ids )
+			for ( size_t di = 0; di < ids.size(); di++ )
 			{
+				const Ident& d = ids[ di ];
 				if ( !d.only_file.empty() && d.only_file != t.f->name ) continue;
-				for ( const std::string& n0 : d.needles )
+				for ( size_t ni = 0; ni < d.needles.size(); ni++ )
 				{
+					const std::string& n0 = d.needles[ ni ];
 					std::string n = d.token ? "&" + n0 + "&" : n0;
 					std::boyer_moore_horspool_searcher srch( n.begin(), n.end() );
 					for ( auto it = std::search( lc.begin(), lc.end(), srch ); it != lc.end(); it = std::search( it + 1, lc.end(), srch ) )
@@ -2161,18 +2229,26 @@ namespace emu::platform
 						if ( excl.excluded( t.f->name, li + 1 ) ) { occ_excluded[ d.id ]++; out.excluded_rows++; continue; }
 						out.fields.push_back( { t.f->name, d.id, d.rule, d.kind, pos - t.starts[ li ] + 1, li + 1, uint32_t( len ) } );
 						if ( !occ[ d.id ]++ ) first_at[ d.id ] = fmt( "%s:%zu", t.f->name.c_str(), li + 1 );
+						found.push_back( { size_t( &t - texts.data() ), pos, len, di, ni } );
 					}
 				}
 			}
 		}
-		for ( Ident& d : ids )
-			for ( FieldMapEntry f : d.manual )
+		for ( size_t di = 0; di < ids.size(); di++ )
+		{
+			Ident& d = ids[ di ];
+			for ( size_t mi = 0; mi < d.manual.size(); mi++ )
 			{
+				FieldMapEntry f = d.manual[ mi ];
 				if ( excl.excluded( f.area, size_t( f.line ) ) ) { occ_excluded[ d.id ]++; out.excluded_rows++; continue; }
 				f.id = d.id;
 				out.fields.push_back( f );
 				occ[ d.id ]++;
+				for ( size_t ti = 0; ti < texts.size(); ti++ )	// rule 8c hex dump: rows in pairs per dump line (bytes, ASCII column)
+					if ( texts[ ti ].f->name == f.area && f.line >= 1 && f.line <= texts[ ti ].starts.size() )
+						found.push_back( { ti, texts[ ti ].starts[ f.line - 1 ] + size_t( f.offset ) - 1, f.length, di, 0, int( mi / 2 ), mi % 2 == 1 } );
 			}
+		}
 		for ( Ident& d : ids )
 		{
 			if ( !rule_on( rules, d.rule ) ) d.synthetic = d.original;	// rule disabled: the real value stays (the leak guard refuses a synthetic profile)
@@ -2193,6 +2269,212 @@ namespace emu::platform
 			std::string g = mv[ 1 ].str(), sg = syn_of( g ).synthetic;	// in the case of this occurrence
 			if ( has_lower_hex( g ) ) sg = lower( sg );
 			out.storage_paths.push_back( { o, "STORAGE\\" + dev + "\\" + sg + mv[ 2 ].str() } );
+		}
+
+		// ── (U1518, user decision 2026-10-17 "Export synthetic views") the synthetic text views: every presentable fwid
+		// text output with each recorded occurrence replaced by its identity's synthetic value in the occurrence's own form
+		// (the needle form that matched: colon / hyphen / plain MAC, a GUID without braces, 0x hex or decimal FILETIME, ...)
+		// and letter case; every line inside an excluded range of a tool artifact becomes the marker "# [excluded tool
+		// artifact]" (which one: exclusions.tsv), so line numbers stay those of the capture (fieldmap.tsv text rows point into the view;
+		// columns shift only after a replacement of another length on the same line - an EDID decimal serial). Volatile
+		// values stay the captured snapshot (volatile.tsv). The original profile gets the same files without replacement
+		auto forms_of = [ & ]( const Ident& d, const std::string& v ) -> std::vector<std::string> {	// the needle forms of value v
+			static const std::set<std::string> k_ft = { "device_install_time", "device_arrival_time", "sqm_first_session", "diagtrack_time", "bt_event_time" };
+			if ( d.preset && d.kind == "edid_serial" ) return { lower( v ), std::to_string( std::stoull( v.substr( 2 ), nullptr, 16 ) ) };
+			if ( d.preset ) return { lower( v ) };
+			if ( d.kind == "mac" || d.kind == "bt_device" )
+			{
+				std::string l = lower( v ), h = l;
+				std::replace( h.begin(), h.end(), ':', '-' );
+				return { l, h, mac_plain( v ) };
+			}
+			if ( d.kind == "install_date" || d.kind == "install_time" )
+				return { lower( fmt( "0x%0*llX", int( d.needles.empty() ? 0 : d.needles[ 0 ].size() - 2 ), (unsigned long long)std::stoull( v ) ) ), v };
+			if ( k_ft.count( d.kind ) ) return { fmt( "0x%016llx", (unsigned long long)std::stoull( v ) ), v };
+			if ( d.kind == "volume_serial" )
+			{
+				std::string plain = v;
+				plain.erase( std::remove( plain.begin(), plain.end(), '-' ), plain.end() );
+				return { lower( v ), lower( "0x" + plain ) };
+			}
+			if ( d.kind == "name_sam_compatible" )
+			{
+				const size_t bs = v.find( '\\' );
+				if ( bs == std::string::npos ) return { lower( v ) };
+				return { lower( v ), lower( v.substr( 0, bs ) + "\\x5c" + v.substr( bs + 1 ) ) };
+			}
+			if ( d.rule == "4c" )
+			{
+				const std::string bare = lower( v.size() == 38 && v.front() == '{' ? v.substr( 1, 36 ) : v ), bin = guid_binary_hex( bare );
+				if ( bin.empty() ) return { bare };
+				return { bare, bin };
+			}
+			return { lower( v ) };
+		};
+		// the synthetic form in the letter case of the occurrence: all-lower / all-upper letters -> that case, mixed -> position
+		// by position, no letter -> the case of the identity's synthetic value; a "0x" prefix keeps its own case
+		auto cased = [ & ]( std::string s, const std::string& occ_text, const std::string& canonical ) {
+			std::string prefix;
+			if ( s.size() > 2 && occ_text.size() > 2 && ieq( s.substr( 0, 2 ), "0x" ) && ieq( occ_text.substr( 0, 2 ), "0x" ) ) { prefix = occ_text.substr( 0, 2 ); s = s.substr( 2 ); }
+			const std::string o = prefix.empty() ? occ_text : occ_text.substr( 2 );
+			const bool lo = std::any_of( o.begin(), o.end(), []( char c ) { return std::islower( uint8_t( c ) ) != 0; } ), up = std::any_of( o.begin(), o.end(), []( char c ) { return std::isupper( uint8_t( c ) ) != 0; } );
+			const bool clo = std::any_of( canonical.begin(), canonical.end(), []( char c ) { return std::islower( uint8_t( c ) ) != 0; } ), cup = std::any_of( canonical.begin(), canonical.end(), []( char c ) { return std::isupper( uint8_t( c ) ) != 0; } );
+			if ( lo && !up ) s = lower( s );
+			else if ( up && !lo ) s = upper( s );
+			else if ( lo && up ) s = follow_case( s, o );
+			else if ( cup && !clo ) s = upper( s );
+			else if ( clo && !cup ) s = lower( s );
+			return prefix + s;
+		};
+		if ( !ctx.config.views ) return out;	// BuildConfig "views" off: no view is built
+		std::vector<std::vector<std::string>> syn_forms( ids.size() );
+		std::set<size_t> used_idents;
+		for ( const Occurrence& o : found ) used_idents.insert( o.ident );
+		for ( size_t di : used_idents )
+		{
+			const Ident& d = ids[ di ];
+			if ( forms_of( d, d.original ) != d.needles )	// the forms are re-derived exactly as the needles were (self-check)
+				fail( "views: the occurrence forms of identity " + d.id + " (" + d.kind + ") cannot be re-derived - it needs a view rule" );
+			syn_forms[ di ] = forms_of( d, d.synthetic );
+		}
+		static const std::set<std::string> k_no_view = { "capture_info.txt", "certificates.txt", "smbios_decoded.txt", "acpi_decoded.txt", "hwacpi_registry.txt", "cpuid_dump.txt" };
+		for ( size_t ti = 0; ti < texts.size(); ti++ )
+		{
+			const TextLc& t = texts[ ti ];
+			const std::string& name = t.f->name;
+			if ( k_no_view.count( name ) || name.rfind( "VERDICT", 0 ) == 0 || name == "log.txt" || name == "manifest.txt" ) { out.view_skipped.push_back( name ); continue; }
+			const Bytes& raw = t.f->data;
+			std::vector<const Occurrence*> mine;
+			for ( const Occurrence& o : found ) if ( o.text == ti ) mine.push_back( &o );
+			// (user decision 2026-10-17 "Shift by the offset") the install-history timestamps a view shows besides the rule 7b
+			// identities move by the same install-history offset in the view (exact in the blobs / the original view) - an
+			// exact one would stand next to shifted copies of the same instants (the offset, then every real time, derivable):
+			//   * every registry key last-write time, "last write <ISO>" and "key last write time: <ISO>" (all text files)
+			//   * the code-integrity aggregation times: REG_QWORD FILETIMEs (hex = decimal, a date since 1990 and before the
+			//     capture) in code_integrity.txt (HKLM\SYSTEM\CurrentControlSet\Control\CI) - both forms
+			std::vector<Occurrence> times;
+			const int64_t capture_unix = have_instant ? parse_install_window( inst_real.os_build, inst_real.capture_utc ).hi : 0;
+			for ( size_t li = 0; li < t.starts.size(); li++ )
+			{
+				const size_t ls = t.starts[ li ], le = li + 1 < t.starts.size() ? t.starts[ li + 1 ] : raw.size();
+				if ( ls >= le || excl.excluded( name, li + 1 ) ) continue;	// an excluded line becomes the marker
+				auto add_time = [ & ]( size_t pos, size_t len, int kind ) {
+					for ( const Occurrence* r : mine )	// already a rule 7b identity occurrence (replaced by real + the same offset)
+						if ( r->pos < pos + len && pos < r->pos + r->len ) return;
+					if ( !have_instant ) fail( "views: " + name + fmt( ":%zu: a timestamp of the install history needs the install-history offset (rule 7b) - this capture has none", li + 1 ) );
+					Occurrence o;
+					o.text = ti;
+					o.pos = pos;
+					o.len = len;
+					o.time = kind;
+					times.push_back( o );
+				};
+				for ( const std::string k_lw : { std::string( "last write time: " ), std::string( "last write " ) } )
+					for ( size_t q = t.lc.find( k_lw, ls ); q != std::string::npos && q < le; q = t.lc.find( k_lw, q + 1 ) )
+					{
+						const size_t a = q + k_lw.size();
+						int64_t tt = 0;
+						if ( a + 20 <= le && unix_of_iso( std::string( raw.begin() + a, raw.begin() + a + 20 ), tt ) ) add_time( a, 20, 1 );
+					}
+				if ( name == "code_integrity.txt" && t.lc.find( "reg_qword (11)", ls ) < le )
+				{
+					static const std::regex r_q( R"(REG_QWORD \(11\)\s+8 bytes: 0x([0-9A-Fa-f]{16}) \(([0-9]+)\))" );
+					const std::string line( raw.begin() + ls, raw.begin() + le );
+					std::smatch m;
+					if ( std::regex_search( line, m, r_q ) && m[ 2 ].length() <= 20 )
+					{
+						const uint64_t h = std::stoull( m[ 1 ].str(), nullptr, 16 ), d = std::stoull( m[ 2 ].str() );
+						const int64_t u = int64_t( h / 10000000ull ) - 11644473600LL;
+						if ( h == d && u >= 631152000 && u <= capture_unix )
+						{
+							add_time( ls + size_t( m.position( 1 ) ), 16, 2 );
+							add_time( ls + size_t( m.position( 2 ) ), size_t( m[ 2 ].length() ), 3 );
+						}
+					}
+				}
+			}
+			for ( const Occurrence& o : times ) mine.push_back( &o );
+			// by position, the longer first: an occurrence inside another one (the computer name / user name inside
+			// NameSamCompatible) is covered by the outer replacement - checked to agree with it, then skipped
+			std::sort( mine.begin(), mine.end(), []( const Occurrence* a, const Occurrence* b ) { return a->pos != b->pos ? a->pos < b->pos : a->len > b->len; } );
+			Bytes syn, org;
+			size_t next = 0, k = 0;	// next byte of raw to copy; next occurrence
+			size_t outer_pos = 0, outer_end = 0;	// the last replaced occurrence
+			std::string outer_rep;
+			for ( size_t li = 0; li < t.starts.size(); li++ )
+			{
+				const size_t ls = t.starts[ li ], le_all = li + 1 < t.starts.size() ? t.starts[ li + 1 ] : raw.size();
+				if ( ls >= raw.size() && li + 1 == t.starts.size() ) break;	// the empty remainder after a final newline
+				size_t le = le_all;	// the line's end without its line break
+				while ( le > ls && ( raw[ le - 1 ] == '\n' || raw[ le - 1 ] == '\r' ) ) le--;
+				if ( const ExclusionRange* xr = excl.range_of( name, li + 1 ) )
+				{
+					const std::string marker = "# [excluded tool artifact]";	// the item: exclusions.tsv (no tool name in a view)
+					(void)xr;
+					for ( Bytes* b : { &syn, &org } )
+					{
+						b->insert( b->end(), marker.begin(), marker.end() );
+						b->insert( b->end(), raw.begin() + le, raw.begin() + le_all );
+					}
+					out.view_excluded_lines++;
+					while ( k < mine.size() && mine[ k ]->pos < le_all ) k++;	// none: occurrences inside excluded ranges are not recorded
+					next = le_all;
+					continue;
+				}
+				org.insert( org.end(), raw.begin() + ls, raw.begin() + le_all );
+				next = ls;
+				for ( ; k < mine.size() && mine[ k ]->pos < le_all; k++ )
+				{
+					const Occurrence& o = *mine[ k ];
+					if ( o.pos + o.len > le ) fail( fmt( "views: %s:%zu: a replacement crosses the line end", name.c_str(), li + 1 ) );
+					const Ident& d = ids[ o.ident ];
+					const std::string occ_text( raw.begin() + o.pos, raw.begin() + o.pos + o.len );
+					if ( o.pos < next )	// inside the previous replacement: it must agree with the outer synthetic text
+					{
+						const bool inside = o.pos >= outer_pos && o.pos + o.len <= outer_end && outer_rep.size() == outer_end - outer_pos;
+						if ( !inside || o.chunk >= 0 || !ieq( outer_rep.substr( o.pos - outer_pos, o.len ), cased( syn_forms[ o.ident ].at( o.form ), occ_text, d.synthetic ) ) )
+							fail( fmt( "views: %s:%zu: overlapping replacements that do not agree (identity %s)", name.c_str(), li + 1, d.id.c_str() ) );
+						out.view_nested++;
+						continue;
+					}
+					syn.insert( syn.end(), raw.begin() + next, raw.begin() + o.pos );
+					std::string rep;
+					if ( o.time == 1 )	// an ISO time: + the install-history offset (whole seconds, ISO form kept)
+					{
+						int64_t tt = 0;
+						unix_of_iso( occ_text, tt );
+						rep = iso_of_unix( tt + inst.shift_seconds );
+						out.view_shifted_times++;
+					}
+					else if ( o.time == 2 || o.time == 3 )	// a FILETIME: + the offset in 100-ns units (hex: 16 digits in its case)
+					{
+						const uint64_t v = o.time == 2 ? std::stoull( occ_text, nullptr, 16 ) : std::stoull( occ_text );
+						const uint64_t sv = uint64_t( int64_t( v ) + inst.shift_seconds * 10000000LL );
+						rep = o.time == 2 ? cased( fmt( "%016llX", (unsigned long long)sv ), occ_text, "A" ) : std::to_string( sv );
+						out.view_shifted_times += o.time == 2;	// one value, two forms
+					}
+					else if ( o.chunk >= 0 )	// rule 8c hex dump: the synthetic blob's 16 bytes of this row, as hex bytes or ASCII column
+					{
+						const Bytes blob = bytes_of_hex( d.synthetic.c_str() );
+						for ( size_t b = size_t( o.chunk ) * 16; b < std::min( blob.size(), size_t( o.chunk ) * 16 + 16 ); b++ )
+							rep += o.ascii ? std::string( 1, blob[ b ] >= 0x20 && blob[ b ] < 0x7F ? char( blob[ b ] ) : '.' ) : ( rep.empty() ? "" : " " ) + fmt( "%02X", blob[ b ] );
+						if ( !o.ascii ) rep = cased( rep, occ_text, d.synthetic );
+					}
+					else rep = cased( syn_forms[ o.ident ].at( o.form ), occ_text, d.synthetic );
+					if ( o.chunk >= 0 && rep.size() != o.len ) fail( fmt( "views: %s:%zu: the hex-dump row does not keep its length", name.c_str(), li + 1 ) );
+					syn.insert( syn.end(), rep.begin(), rep.end() );
+					next = o.pos + o.len;
+					outer_pos = o.pos;
+					outer_end = next;
+					outer_rep = rep;
+					out.view_replacements++;
+				}
+				syn.insert( syn.end(), raw.begin() + next, raw.begin() + le_all );
+				next = le_all;
+			}
+			if ( k != mine.size() ) fail( "views: " + name + ": an occurrence outside every line" );
+			out.views.push_back( { name, syn } );
+			out.views_original.push_back( { name, org } );
 		}
 		return out;
 	}
@@ -2464,7 +2746,7 @@ namespace emu::platform
 
 	// the files of one profile: smbios.bin, acpi\*, edid\*, identity.tsv, fieldmap.tsv, build_config.txt, manifest.txt
 	static std::map<std::string, Bytes> make_files( const Identity& p, bool original, const std::vector<std::pair<std::string, std::string>>& prov, const std::string& config_text,
-		const std::string& identity_map_text )
+		const std::string& identity_map_text, bool with_views )
 	{
 		std::map<std::string, Bytes> files;
 		const char* env = env_dir_name( p.env );
@@ -2473,6 +2755,8 @@ namespace emu::platform
 		for ( auto& [ name, data ] : p.acpi ) files[ "acpi\\" + name ] = data;
 		for ( const EdidBlock& e : original ? p.edid_original : p.edid_synthetic ) files[ "edid\\" + e.name ] = e.bytes;
 		for ( const DiskDescriptor& d : original ? p.disk_original : p.disk_synthetic ) files[ "disk\\" + d.name ] = d.bytes;
+		if ( with_views )	// U1518 (BuildConfig views)
+			for ( const TextFile& v : original ? p.views_original : p.views ) files[ "views\\" + v.name ] = v.data;
 
 		// the tool artifacts that are not part of the presented machine, and the volatile values (both: locations only)
 		std::ostringstream ex;
@@ -2661,6 +2945,7 @@ namespace emu::platform
 		c.peer_capture_folder = peer.capture_folder;
 		c.peer_capture_manifest_sha256 = peer.capture_manifest_sha256;
 		c.exclusions = default_exclusions();
+		c.views = true;	// U1518: the synthetic text views are part of every new profile
 		return c;
 	}
 	std::string BuildConfig::save() const
@@ -2706,6 +2991,7 @@ namespace emu::platform
 		kv( "identity_map", identity_map );
 		kv( "peer_identity_map", peer_identity_map );
 		kv( "rules", rules.to_string() );
+		if ( views ) kv( "views", "yes" );	// U1518 (absent = no: configs written before stay byte-identical)
 		return o.str();
 	}
 	BuildConfig BuildConfig::load( const std::string& text )
@@ -2779,6 +3065,11 @@ namespace emu::platform
 			else if ( k == "peer_identity_map" ) c.peer_identity_map = v;
 			else if ( k == "seed" || k == "seed_file" ) fail( fmt( "build config line %zu: \"%s\" - the seed was replaced by the identity map (format 3)", n, k.c_str() ) );
 			else if ( k == "rules" ) c.rules = RuleSet::parse( v );
+			else if ( k == "views" )
+			{
+				if ( v != "yes" && v != "no" ) fail( fmt( "build config line %zu: views = yes | no", n ) );
+				c.views = v == "yes";
+			}
 			else if ( k.rfind( "resolved.", 0 ) == 0 ) {}	// the local original copy's record of the resolved paths
 			else fail( fmt( "build config line %zu: unknown key \"%s\"", n, k.c_str() ) );
 		}
@@ -3037,7 +3328,15 @@ namespace emu::platform
 		p.volatiles = tg.volatiles;
 		p.time_shift = tg.time_shift;
 		p.v1_guids = tg.v1_guids;
+		p.views = tg.views;
+		p.views_original = tg.views_original;
+		p.view_replacements = tg.view_replacements;
+		p.view_excluded_lines = tg.view_excluded_lines;
+		p.view_nested = tg.view_nested;
+		p.view_shifted_times = tg.view_shifted_times;
+		p.view_skipped = tg.view_skipped;
 		p.needles = sg.needles;
+		p.vendor_needles = sg.vendor_needles;
 		p.needles.insert( p.needles.end(), eg.needles.begin(), eg.needles.end() );
 		p.needles.insert( p.needles.end(), dg.needles.begin(), dg.needles.end() );
 		p.needles.insert( p.needles.end(), tg.needles.begin(), tg.needles.end() );
@@ -3105,6 +3404,7 @@ namespace emu::platform
 			Identity& p = res.identity;
 			ctx.used_keys.clear();
 			ctx.upgraded_keys.clear();
+			ctx.added_keys.clear();
 			const size_t loaded = ctx.identity_map.entries.size();
 			p = gen_identity( ctx, in );
 			// the identity map: application uses every saved value (one left over means the map does not fit this capture)
@@ -3166,6 +3466,18 @@ namespace emu::platform
 					vc.guids, vc.exact, vc.guids, vc.before_install, vc.after_capture )
 				: std::string( "no RFC 4122 version-1 GUID in this capture" );
 			log.info( "version-1 guids", v1_text );
+			std::string skipped;
+			for ( const std::string& n : p.view_skipped ) skipped += ( skipped.empty() ? "" : ", " ) + n;
+			const std::string views_text = fmt( "%zu synthetic text views (views\\<fwid file>, U1518): %zu recorded occurrences replaced in their own form and letter case (%zu more inside another replaced one, agreeing with it), %zu registry last-write times moved by the install-history offset (rule 7b, user decision 2026-10-17), %zu line(s) of excluded tool artifacts as marker lines (line numbers = the capture's); not exported (run metadata / not part of the profile / decoded copies of the blobs / the CPUID profile): %s",
+				p.views.size(), p.view_replacements - p.view_shifted_times, p.view_nested, p.view_shifted_times, p.view_excluded_lines, skipped.empty() ? "-" : skipped.c_str() );
+			log.info( "views", views_text );
+			if ( !ctx.added_keys.empty() )
+			{
+				std::string keys;
+				for ( const std::string& k : ctx.added_keys ) keys += ( keys.empty() ? "" : ", " ) + k;
+				log.info( "identity map", fmt( "ADD (--add-new-keys, U1518): %zu new key(s) drawn from RDRAND (identities this build finds and the saved map does not hold yet); every saved value applied unchanged: %s",
+					ctx.added_keys.size(), keys.c_str() ) );
+			}
 			if ( !ctx.upgraded_keys.empty() )
 			{
 				std::string keys;
@@ -3261,27 +3573,55 @@ namespace emu::platform
 			prov.emplace_back( "volatile", fmt( "%zu values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps", p.volatiles.size() ) );
 			prov.emplace_back( "install_shift", shift_text );
 			prov.emplace_back( "v1_guids", v1_text );
+			if ( ctx.config.views ) prov.emplace_back( "views", views_text );	// written only with the views (else the manifest stays as before)
 
 			// the BuildConfig copies: synthetic = the configuration as used (portable); original adds the resolved
 			// capture root and folder name (local only)
 			std::string cfg_syn = ctx.config.save();
 			std::string cfg_org = cfg_syn + "# resolved (LOCAL ONLY copy, ignored by load):\nresolved.capture_root   = " + ( resolved_root.empty() ? "-" : resolved_root ) +
 								  "\nresolved.capture_folder = " + in.folder_name + "\n";
-			res.synthetic = make_files( p, false, prov, cfg_syn, save_identity_map( ctx.identity_map, env, false ) );
-			res.original = make_files( p, true, prov, cfg_org, save_identity_map( ctx.identity_map, env, true ) );
+			res.synthetic = make_files( p, false, prov, cfg_syn, save_identity_map( ctx.identity_map, env, false ), ctx.config.views );
+			res.original = make_files( p, true, prov, cfg_org, save_identity_map( ctx.identity_map, env, true ), ctx.config.views );
 
-			// (e) leak guard: no real value in any synthetic file except the byte-exact ACPI copies (reported above)
-			size_t embedded = 0;
+			// (e) leak guard: no real value in any synthetic file except the byte-exact ACPI copies (reported above). One scoped
+			// exception (U1518): a rule-2h memory Manufacturer value is a brand name; the same brand as a HID / Bluetooth / audio
+			// device's manufacturer or product name (exact by decision H) on a name line of views\hid.txt / bluetooth.txt /
+			// audio.txt is that device's name, not the memory identity - counted, not refused; anywhere else it is refused
+			size_t embedded = 0, vendor_names = 0;
+			const std::set<std::string> vendors = [ & ] { std::set<std::string> v; for ( const std::string& x : p.vendor_needles ) v.insert( lower( x ) ); return v; }();
 			for ( auto& [ name, data ] : res.synthetic )
 			{
 				if ( name.rfind( "acpi\\", 0 ) == 0 ) continue;
 				std::string lc( data.begin(), data.end() );
 				for ( char& x : lc ) x = char( std::tolower( uint8_t( x ) ) );
+				const bool name_view = name == "views\\hid.txt" || name == "views\\bluetooth.txt" || name == "views\\audio.txt";
+				const bool view = name.rfind( "views\\", 0 ) == 0;
 				for ( const std::string& n : p.needles )
 				{
 					const std::string nl = lower( n );
 					size_t tok = count_ci( lc, nl );
 					embedded += count_raw( lc, nl ) - tok;
+					// (U1518) in a view a real MAC (12 hex digits), GUID (36) or binary GUID (32 hex digits) is refused also inside a
+					// longer token (a REG_BINARY GUID whose node is a MAC, a serial with a MAC tail, ...)
+					const bool hexy = std::all_of( nl.begin(), nl.end(), []( char c ) { return is_hex( c ) || c == '-'; } );
+					if ( view && hexy && ( nl.size() == 12 || nl.size() == 32 || nl.size() == 36 ) && count_raw( lc, nl ) )
+						fail( "leak guard: a real identifier value (length " + std::to_string( n.size() ) + ") is inside a token of the synthetic " + name );
+					if ( tok && name_view && vendors.count( nl ) )
+					{
+						size_t on_names = 0;
+						for ( size_t ls = 0; ls < lc.size(); )
+						{
+							size_t le = lc.find( '\n', ls );
+							if ( le == std::string::npos ) le = lc.size();
+							const std::string line = lc.substr( ls, le - ls );
+							const size_t a = line.find_first_not_of( " \t" );
+							const bool name_line = a != std::string::npos && ( line.compare( a, 13, "manufacturer:" ) == 0 || line.compare( a, 8, "product:" ) == 0 || line.compare( a, 5, "name:" ) == 0 );
+							if ( name_line ) on_names += count_ci( line, nl );
+							ls = le + 1;
+						}
+						vendor_names += on_names;
+						tok -= std::min( tok, on_names );
+					}
 					if ( tok )
 						fail( "leak guard: a real identifier value (length " + std::to_string( n.size() ) + ") is in the synthetic " + name +
 							( ctx.config.rules == BuildConfig::defaults( ctx.config.env ).rules ? "" : " (a field rule is disabled)" ) );
@@ -3289,8 +3629,8 @@ namespace emu::platform
 				for ( const Bytes& n : p.binary_needles )
 					if ( count_bin( data, n ) ) fail( "leak guard: a real binary identifier is in the synthetic " + name );
 			}
-			log.info( "leak guard", fmt( "%zu real values (text forms + raw UUID / MAC bytes) x %zu synthetic files: 0 hits (%zu substring match(es) only inside a longer alphanumeric token - not the value)",
-				p.needles.size() + p.binary_needles.size(), res.synthetic.size() - p.acpi.size(), embedded ) );
+			log.info( "leak guard", fmt( "%zu real values (text forms + raw UUID / MAC bytes) x %zu synthetic files: 0 hits (%zu substring match(es) only inside a longer alphanumeric token - not the value; %zu device name(s) in views equal to a rule-2h memory Manufacturer brand, decision H)",
+				p.needles.size() + p.binary_needles.size(), res.synthetic.size() - p.acpi.size(), embedded, vendor_names ) );
 			// (U1517) the synthetic-only field view of this build for the profile builder / MCP pipe, checked like the files
 			save_field_view( ctx, p );
 			const ProfileView view = list_fields( ctx );
@@ -3712,6 +4052,7 @@ namespace emu::platform
 			else if ( check ) fail( "check: no identity map " + show( own_map_file ) + " to apply" );
 			load_identity_maps( ctx, own, peer_map );
 			ctx.fresh = false;
+			if ( ctx.add_new_keys && ( check || !ctx.applying ) ) fail( "--add-new-keys completes a saved identity map while writing the profile: not in check mode, not without a saved map" );
 			if ( ctx.upgrade_v1_time && ( check || !ctx.applying ) ) fail( "--upgrade-v1-time upgrades a saved identity map while writing the profile: not in check mode, not without a saved map" );
 			pre.info( "identity", own.entries.empty() ? std::string( "GENERATION: a new identity, every value from RDRAND (the shared USB serials from the peer map when it has them)" )
 				: fmt( "APPLICATION of the saved identity map (%zu values)", own.entries.size() ) );

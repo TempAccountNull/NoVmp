@@ -1,0 +1,364 @@
+# fwid HID capture - fwid_probe 1.4 (2026-10-16)
+# USER-AUTHORIZED EXCEPTION (narrow): per HID interface: path, VID / PID / version (HidD_GetAttributes),
+# manufacturer / product / serial strings (HidD_Get*String) and the parent device chain (CM_Get_Parent). Handles are
+# opened with access 0; nothing is read from or written to a device. IDENTIFIERS: serial strings and instance IDs.
+HID interface class GUID {4D1E55B2-F16F-11CF-88CB-001111000030}
+
+=== interface 0
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0568&mi_04&col01#7&ce255d1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0568&MI_04&COL01\x5C7&CE255D1&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0568&MI_04\x5C6&2112AC4B&0&0004"
+  grandparent:  "USB\x5CVID_1532&PID_0568\x5C5&3B72E4CF&0&8"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x0568 version 0x0101
+  manufacturer: "Razer Kraken V4 Pro - Chat"
+  product:      "Razer Kraken V4 Pro - Game"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 1
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_01&col02#8&577b7a2&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_01&COL02\x5C8&577B7A2&0&0001"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 2
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0568&mi_04&col02#7&ce255d1&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0568&MI_04&COL02\x5C7&CE255D1&0&0001"
+  parent:       "USB\x5CVID_1532&PID_0568&MI_04\x5C6&2112AC4B&0&0004"
+  grandparent:  "USB\x5CVID_1532&PID_0568\x5C5&3B72E4CF&0&8"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x0568 version 0x0101
+  manufacturer: "Razer Kraken V4 Pro - Chat"
+  product:      "Razer Kraken V4 Pro - Game"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 3
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_00#8&1d3b43e7&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_00\x5C8&1D3B43E7&0&0000"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_00\x5C7&1DE262EF&0&0000"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 4
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_01&col03#8&577b7a2&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_01&COL03\x5C8&577B7A2&0&0002"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 5
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_01&col02#8&19a8c430&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_01&COL02\x5C8&19A8C430&0&0001"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 6
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0568&mi_03#7&30b99393&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0568&MI_03\x5C7&30B99393&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0568&MI_03\x5C6&2112AC4B&0&0003"
+  grandparent:  "USB\x5CVID_1532&PID_0568\x5C5&3B72E4CF&0&8"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x0568 version 0x0101
+  manufacturer: "Razer Kraken V4 Pro - Chat"
+  product:      "Razer Kraken V4 Pro"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 7
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_01&col03#8&19a8c430&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_01&COL03\x5C8&19A8C430&0&0002"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 8
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_00#8&126e0e1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_00\x5C8&126E0E1&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_00\x5C7&2189581C&0&0000"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 9
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0568&mi_04&col03#7&ce255d1&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0568&MI_04&COL03\x5C7&CE255D1&0&0002"
+  parent:       "USB\x5CVID_1532&PID_0568&MI_04\x5C6&2112AC4B&0&0004"
+  grandparent:  "USB\x5CVID_1532&PID_0568\x5C5&3B72E4CF&0&8"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  open (access 0) FAILED 32 - attributes / strings not queried
+
+=== interface 10
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_01&col04#8&19a8c430&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_01&COL04\x5C8&19A8C430&0&0003"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 11
+  path: "\x5C\x5C?\x5Chid#vid_1b1c&pid_0c32&mi_01#8&d46c18&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1B1C&PID_0C32&MI_01\x5C8&D46C18&0&0000"
+  parent:       "USB\x5CVID_1B1C&PID_0C32&MI_01\x5C7&33E0279F&0&0001"
+  grandparent:  "USB\x5CVID_1B1C&PID_0C32\x5C808988F55437"
+  level 3:      "USB\x5CVID_05E3&PID_0608\x5C5&3B72E4CF&0&10"
+  attributes:   VID 0x1B1C PID 0x0C32 version 0x0100
+  manufacturer: "Corsair"
+  product:      "CORSAIR iCUE COMMANDER Core"
+  serial:       "808988F55437"  [IDENTIFIER - keep local]
+
+=== interface 12
+  path: "\x5C\x5C?\x5Chid#vid_1050&pid_0407&mi_00#9&2f09edd5&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1050&PID_0407&MI_00\x5C9&2F09EDD5&0&0000"
+  parent:       "USB\x5CVID_1050&PID_0407&MI_00\x5C8&2DA1C140&0&0000"
+  grandparent:  "USB\x5CVID_1050&PID_0407\x5C7&154295CD&0&4"
+  level 3:      "USB\x5CVID_045B&PID_0209\x5C6&1EE3A122&0&1"
+  attributes:   VID 0x1050 PID 0x0407 version 0x0543
+  manufacturer: "Yubico"
+  product:      "YubiKey OTP+FIDO+CCID"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 13
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_01&col05#8&19a8c430&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_01&COL05\x5C8&19A8C430&0&0004"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 14
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_01&col04#8&577b7a2&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_01&COL04\x5C8&577B7A2&0&0003"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 15
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_01&col01#8&577b7a2&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_01&COL01\x5C8&577B7A2&0&0000"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 16
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_00&col03&col01#8&4f07994&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_00&COL03&COL01\x5C8&4F07994&0&0000"
+  parent:       "RZVIRTUAL\x5CVID_1532&PID_00AA&MI_00&COL03\x5C8&577B7A2&0&01"
+  grandparent:  "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  level 3:      "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0101
+  manufacturer: ""
+  product:      ""
+  serial:       ""  [IDENTIFIER - keep local]
+
+=== interface 17
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_02#8&30adf96b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_02\x5C8&30ADF96B&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_02\x5C7&2189581C&0&0002"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 18
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_01&col02#8&18ea6d26&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_01&COL02\x5C8&18EA6D26&0&0001"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 19
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_01&col03#8&18ea6d26&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_01&COL03\x5C8&18EA6D26&0&0002"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 20
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_01&col04#8&18ea6d26&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_01&COL04\x5C8&18EA6D26&0&0003"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 21
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_01&col05#8&577b7a2&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_01&COL05\x5C8&577B7A2&0&0004"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+=== interface 22
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_01&col01#8&19a8c430&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_01&COL01\x5C8&19A8C430&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 23
+  path: "\x5C\x5C?\x5Chid#vid_1050&pid_0407&mi_01#9&35e9405b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1050&PID_0407&MI_01\x5C9&35E9405B&0&0000"
+  parent:       "USB\x5CVID_1050&PID_0407&MI_01\x5C8&2DA1C140&0&0001"
+  grandparent:  "USB\x5CVID_1050&PID_0407\x5C7&154295CD&0&4"
+  level 3:      "USB\x5CVID_045B&PID_0209\x5C6&1EE3A122&0&1"
+  open (access 0) FAILED 5 - attributes / strings not queried
+
+=== interface 24
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_01&col05#8&18ea6d26&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_01&COL05\x5C8&18EA6D26&0&0004"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 25
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_00&col03&col02#8&4f07994&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_00&COL03&COL02\x5C8&4F07994&0&0001"
+  parent:       "RZVIRTUAL\x5CVID_1532&PID_00AA&MI_00&COL03\x5C8&577B7A2&0&01"
+  grandparent:  "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001"
+  level 3:      "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0101
+  manufacturer: ""
+  product:      ""
+  serial:       ""  [IDENTIFIER - keep local]
+
+=== interface 26
+  path: "\x5C\x5C?\x5Chid#vid_0db0&pid_a74b&mi_07#7&43a6e77&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_0DB0&PID_A74B&MI_07\x5C7&43A6E77&0&0000"
+  parent:       "USB\x5CVID_0DB0&PID_A74B&MI_07\x5C6&106104F&0&0007"
+  grandparent:  "USB\x5CVID_0DB0&PID_A74B\x5C5&3B72E4CF&0&11"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x0DB0 PID 0xA74B version 0x0002
+  manufacturer: "Generic"
+  product:      "USB Audio"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 27
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_00#8&1e537eb&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_00\x5C8&1E537EB&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_00\x5C7&23D72DCC&0&0000"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 28
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0c00&mi_01&col01#8&18ea6d26&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0C00&MI_01&COL01\x5C8&18EA6D26&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001"
+  grandparent:  "USB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0C00 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer Firefly"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 29
+  path: "\x5C\x5C?\x5Chid#vid_1462&pid_7d91#6&2ded8ff9&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1462&PID_7D91\x5C6&2DED8FF9&0&0000"
+  parent:       "USB\x5CVID_1462&PID_7D91\x5C8F6473158124"
+  grandparent:  "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  level 3:      "PCI\x5CVEN_8086&DEV_7A60&SUBSYS_7D911462&REV_11\x5C3&11583659&0&A0"
+  attributes:   VID 0x1462 PID 0x7D91 version 0x0001
+  manufacturer: "MSI"
+  product:      "MYSTIC LIGHT "
+  serial:       "8F6473158124"  [IDENTIFIER - keep local]
+
+=== interface 30
+  path: "\x5C\x5C?\x5Chid#vid_1b1c&pid_0c32&mi_00#8&1897f85d&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1B1C&PID_0C32&MI_00\x5C8&1897F85D&0&0000"
+  parent:       "USB\x5CVID_1B1C&PID_0C32&MI_00\x5C7&33E0279F&0&0000"
+  grandparent:  "USB\x5CVID_1B1C&PID_0C32\x5C808988F55437"
+  level 3:      "USB\x5CVID_05E3&PID_0608\x5C5&3B72E4CF&0&10"
+  attributes:   VID 0x1B1C PID 0x0C32 version 0x0100
+  manufacturer: "Corsair"
+  product:      "CORSAIR iCUE COMMANDER Core"
+  serial:       "808988F55437"  [IDENTIFIER - keep local]
+
+=== interface 31
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_0203&mi_02#8&a2e7992&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_0203&MI_02\x5C8&A2E7992&0&0000"
+  parent:       "USB\x5CVID_1532&PID_0203&MI_02\x5C7&23D72DCC&0&0002"
+  grandparent:  "USB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1"
+  level 3:      "USB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9"
+  attributes:   VID 0x1532 PID 0x0203 version 0x0200
+  manufacturer: "Razer"
+  product:      "Razer BlackWidow Chroma"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 32
+  path: "\x5C\x5C?\x5Chid#vid_1532&pid_00aa&mi_02#8&23e0ac87&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\x5Ckbd" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_1532&PID_00AA&MI_02\x5C8&23E0AC87&0&0000"
+  parent:       "USB\x5CVID_1532&PID_00AA&MI_02\x5C7&1DE262EF&0&0002"
+  grandparent:  "USB\x5CVID_1532&PID_00AA\x5C000000000000"
+  level 3:      "USB\x5CROOT_HUB30\x5C4&1DE9F484&0&0"
+  attributes:   VID 0x1532 PID 0x00AA version 0x0100
+  manufacturer: (not returned, GetLastError 87)
+  product:      "Razer Basilisk V3 Pro"
+  serial:       "000000000000"  [IDENTIFIER - keep local]
+
+33 interface(s), 31 opened with access 0

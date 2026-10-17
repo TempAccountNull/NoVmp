@@ -1,0 +1,56 @@
+# fwid platform security capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot (and State: UEFISecureBootEnabled, ...) values, KEY_READ;
+# Tbsi_GetDeviceInfo (tbs.dll): TPM version / interface type / implementation revision - no TPM command, no endorsement key.
+# Constants: SDK 10.0.26100.0 shared\tbs.h lines 194-212.
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot
+  depth 0; last write 2024-06-22T13:19:46Z; 1 value(s), 2 subkey(s)
+  value "AvailableUpdates"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "Servicing"
+  subkey "State"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
+  depth 1; last write 2024-06-22T13:24:55Z; 10 value(s), 2 subkey(s)
+  value "WindowsUEFICA2023Capable"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "UEFICA2023Status"  REG_SZ (1)  22 bytes: "NotStarted"
+  value "LastParsedBucketDataVersion"  REG_DWORD (4)  4 bytes: 0x00000019 (25)
+  value "BucketHash"  REG_SZ (1)  130 bytes: "c9ba1aea039eb567ee71566944eb3cd5f1b83d12243667c19871f6db69de3598"
+  value "ConfidenceLevel"  REG_SZ (1)  32 bytes: "High Confidence"
+  value "ConfidenceUpdateType"  REG_DWORD (4)  4 bytes: 0x00005944 (22852)
+  value "LastTelemetrySendTime"  REG_BINARY (3)  8 bytes: C619B587CB5DDD01 (8 bytes hex)
+  value "SecureBootTelemetryState"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "TaskState"  REG_DWORD (4)  4 bytes: 0x0000000D (13)
+  value "LastFirmwareFreezeStateAtTaskStart"  REG_DWORD (4)  4 bytes: 0x0000000D (13)
+  subkey "DeviceAttributes"
+  subkey "UploadedForCurrentBootCycle"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\DeviceAttributes
+  depth 2; last write 2024-06-21T21:42:15Z; 18 value(s), 0 subkey(s)
+  value "CanAttemptUpdateAfter"  REG_BINARY (3)  8 bytes: 00F274E09F57DD01 (8 bytes hex)
+  value "OSVersionFull"  REG_SZ (1)  96 bytes: "10.0.19044.6575.amd64fre.vb_release.191206-1406"
+  value "FlightRing"  REG_SZ (1)  14 bytes: "Retail"
+  value "DeviceFamily"  REG_SZ (1)  32 bytes: "Windows.Desktop"
+  value "StateAttributes"  REG_SZ (1)  496 bytes: "053D8660C00C003D0005FFFFFFE00000001FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE00000000000000000000000000000000000000000000000000-1-0-0-0-ER--BR--OR---RBR--0-4C53672414B01E10FF90D0A967C7C1446CAFF832-0--2596C6B38D1E0A5C758060CF9A2C0C369A1D5F41"
+  value "OEMManufacturerName"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "OEMModelSystemVersion"  REG_SZ (1)  10 bytes: "None"
+  value "BaseBoardManufacturer"  REG_SZ (1)  36 bytes: "Intel Corporation"
+  value "FirmwareManufacturer"  REG_SZ (1)  26 bytes: "VMware, Inc."
+  value "OEMModelBaseBoard"  REG_SZ (1)  66 bytes: "440BX Desktop Reference Platform"
+  value "FirmwareVersion"  REG_SZ (1)  70 bytes: "VMW201.00V.25275966.B64.2603102050"
+  value "OEMModelNumber"  REG_SZ (1)  16 bytes: "MS-7D91"
+  value "OEMModelSystemFamily"  REG_SZ (1)  2 bytes: ""
+  value "OEMName"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+  value "OSArchitecture"  REG_SZ (1)  12 bytes: "AMD64"
+  value "OEMModelSKU"  REG_SZ (1)  2 bytes: ""
+  value "FirmwareReleaseDate"  REG_SZ (1)  22 bytes: "03/10/2026"
+  value "OEMModelBaseBoardVersion"  REG_SZ (1)  10 bytes: "None"
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\UploadedForCurrentBootCycle
+  depth 2; last write 2024-06-22T13:24:55Z; 0 value(s), 0 subkey(s)
+
+## HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State
+  depth 1; last write 2024-06-22T13:19:46Z; 1 value(s), 0 subkey(s)
+  value "UEFISecureBootEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+
+## TPM (Tbsi_GetDeviceInfo)
+TBS_RESULT 0x8028400F (no TPM information: see the code; e.g. TBS_E_TPM_NOT_FOUND = 0x8028400F)

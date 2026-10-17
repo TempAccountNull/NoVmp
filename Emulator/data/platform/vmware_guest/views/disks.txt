@@ -1,0 +1,35 @@
+# fwid physical disk capture - fwid_probe 1.4 (2026-10-16)
+# \\.\PhysicalDrive0..31: CreateFileW(dwDesiredAccess = 0, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING) and
+# DeviceIoControl(IOCTL_STORAGE_QUERY_PROPERTY, StorageDeviceProperty, PropertyStandardQuery) ONLY (user-authorized
+# exception 2026-10-16). Stops after 4 consecutive ERROR_FILE_NOT_FOUND. The raw STORAGE_DEVICE_DESCRIPTOR is written
+# unaltered to disk_<n>_descriptor.bin. IDENTIFIERS: the serial number is marked; keep local.
+
+=== PhysicalDrive0
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_0_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 10 (BusTypeSas)
+  vendor ID:        "Tencent " (offset 40, 8 bytes)
+  product ID:       "Tencents 256gb  " (offset 49, 16 bytes)
+  product revision: "1.0 " (offset 66, 4 bytes)
+  serial number:    (offset 0: not reported)
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive1
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_1_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 10 (BusTypeSas)
+  vendor ID:        "VMware, " (offset 40, 8 bytes)
+  product ID:       "VMware Virtual S" (offset 49, 16 bytes)
+  product revision: "1.0 " (offset 66, 4 bytes)
+  serial number:    (offset 0: not reported)
+  RawPropertiesLength 0 (bytes in the .bin)
+
+PhysicalDrive2: open FAILED 2 (not present)
+
+PhysicalDrive3: open FAILED 2 (not present)
+
+PhysicalDrive4: open FAILED 2 (not present)
+
+PhysicalDrive5: open FAILED 2 (not present)
+
+2 disk(s) opened, 2 descriptor(s) read

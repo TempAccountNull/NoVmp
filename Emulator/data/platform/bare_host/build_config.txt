@@ -35,3 +35,4 @@ original_out                 = profiles_original\bare_host
 identity_map                 = identity_map.tsv
 peer_identity_map            = Emulator\data\platform\vmware_guest\identity_map.tsv
 rules                        = 1 2 2h 2o 3 4a 4b 4c 4d 6 7 8
+views                        = yes

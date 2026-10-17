@@ -17,6 +17,10 @@
 //   (default)          APPLY the profile's identity_map.tsv when it exists (deterministic); else GENERATE a new identity
 //   --new-identity     ProfileGen->gen_new_identity( ctx ): GENERATE every value fresh from RDRAND (Randomize->gen_...); the USB
 //                      serials both profiles share still come from the other environment's map
+//   --add-new-keys     (U1518) apply the saved identity map and draw ONLY the keys it lacks (identities a newer rule finds);
+//                      the added keys are logged; writes both profiles
+//   --views            (U1518) write the synthetic text views views\<fwid file> into both profiles (BuildConfig
+//                      "views = yes" - the default of --guest / --host; needed only for a --config written before U1518)
 //   --check            apply the saved identity map in memory and compare with the SYNTHETIC output folder byte for byte;
 //                      writes nothing
 //   --upgrade-v1-time  (U1516) apply a map written before the version-1 GUID timestamp rule: every saved version-1 GUID gets
@@ -33,14 +37,14 @@ int main( int argc, char** argv )
 	using namespace emu::platform;
 	auto usage = []() {
 		std::cout << "usage: emu-profilegen --guest | --vm | --host | --config FILE [--capture-root DIR] [--out DIR] [--original-out DIR | --no-original]\n"
-					 "                      [--repo-root DIR] [--rules LIST] [--new-identity] [--check] [--upgrade-v1-time] [--save-config FILE]\n";
+					 "                      [--repo-root DIR] [--rules LIST] [--new-identity] [--check] [--upgrade-v1-time] [--add-new-keys] [--views] [--save-config FILE]\n";
 		return 2;
 	};
 	int envs = 0;
 	Environment env = Environment::vmware_guest;
 	const char* config_file = nullptr;
 	const char* save_file = nullptr;
-	bool check = false, no_original = false, new_identity = false, upgrade_v1 = false;
+	bool check = false, no_original = false, new_identity = false, upgrade_v1 = false, views = false, add_keys = false;
 	std::vector<std::pair<std::string, std::string>> over;
 	for ( int i = 1; i < argc; i++ )
 	{
@@ -52,6 +56,8 @@ int main( int argc, char** argv )
 		else if ( !strcmp( a, "--check" ) ) check = true;
 		else if ( !strcmp( a, "--new-identity" ) ) new_identity = true;
 		else if ( !strcmp( a, "--upgrade-v1-time" ) ) upgrade_v1 = true;
+		else if ( !strcmp( a, "--views" ) ) views = true;
+		else if ( !strcmp( a, "--add-new-keys" ) ) add_keys = true;
 		else if ( !strcmp( a, "--help" ) || !strcmp( a, "-h" ) ) { usage(); return 0; }
 		else if ( !strcmp( a, "--config" ) || !strcmp( a, "--save-config" ) || !strcmp( a, "--capture-root" ) || !strcmp( a, "--out" ) || !strcmp( a, "--original-out" )
 				  || !strcmp( a, "--repo-root" ) || !strcmp( a, "--rules" ) )
@@ -81,6 +87,7 @@ int main( int argc, char** argv )
 			else if ( k == "--rules" ) c.rules = RuleSet::parse( v );
 		}
 		if ( no_original ) c.original_out = "none";
+		if ( views ) c.views = true;
 		ProfileGen->load_config( c );	// the default configuration (shared state), and this build's own copy of it
 		ctx = ProfileGen->new_context( c );
 	}
@@ -91,6 +98,7 @@ int main( int argc, char** argv )
 	}
 	if ( new_identity ) ProfileGen->gen_new_identity( ctx );
 	ctx.upgrade_v1_time = upgrade_v1;
+	ctx.add_new_keys = add_keys;
 	if ( save_file )
 	{
 		try { ctx.config.save_file( save_file ); }

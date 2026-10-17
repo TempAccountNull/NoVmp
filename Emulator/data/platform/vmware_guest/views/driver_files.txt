@@ -1,0 +1,12 @@
+# fwid driver files - fwid_probe 1.4 (2026-10-16)
+# C:\vmloader.sys (old installer), %SystemRoot%\System32\drivers\VmLoader.sys (new installer) and the ImagePath of
+# the service vmloader if present: existence, size, attributes, timestamps, SHA-256. Opened GENERIC_READ only; never loaded
+# or executed.
+
+## "C:\x5Cvmloader.sys"  (old VmLoader install location)
+exists: no (GetFileAttributesExW GetLastError 2 = not present)
+
+## "C:\x5CWindows\x5CSystem32\x5Cdrivers\x5CVmLoader.sys"  (new VmLoader install location)
+exists: no (GetFileAttributesExW GetLastError 2 = not present)
+
+## service vmloader ImagePath: not present (RegGetValueW 2 (not found))

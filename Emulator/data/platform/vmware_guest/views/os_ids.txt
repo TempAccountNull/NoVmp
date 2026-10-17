@@ -1,0 +1,46 @@
+# fwid OS identifier capture - fwid_probe 1.4 (2026-10-16)
+# Read-only. PRODUCT KEYS ARE NEVER READ: DigitalProductId, DigitalProductId4, BackupProductKeyDefault and any other
+# product-key value are not queried (named values only, no value enumeration of these keys). Every identifier is marked.
+
+## registry identifiers
+HKLM\SOFTWARE\Microsoft\Cryptography "MachineGuid" REG_SZ, 74 bytes [IDENTIFIER - keep local]: "76bf47e9-fe9d-43f3-b799-885ea11b57cc"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "ProductId" REG_SZ, 48 bytes [IDENTIFIER - keep local]: "00436-80836-73051-AAOEM"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "InstallDate" REG_DWORD, 4 bytes [machine-specific]: 0x63BD680E (1673357326)
+    = 2023-01-10T13:28:46Z (seconds since 1970-01-01 UTC)
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "InstallTime" REG_QWORD, 8 bytes [machine-specific]: 0x01D924F777B00BF2 (133178309267688434)
+    = 2023-01-10T13:28:46Z (FILETIME)
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "RegisteredOwner" REG_SZ, 16 bytes [IDENTIFIER - keep local]: "AilzO9Z"
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "RegisteredOrganization" REG_SZ, 2 bytes [IDENTIFIER - keep local]: ""
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion "BuildGUID" REG_SZ, 74 bytes [build identifier]: "ffffffff-ffff-ffff-ffff-ffffffffffff"
+HKLM\SYSTEM\CurrentControlSet\Control\IDConfigDB\Hardware Profiles\0001 "HwProfileGuid" REG_SZ, 78 bytes [IDENTIFIER - keep local]: "{bb80fbce-9103-11ed-be3c-806e6f6e6963}"
+HKLM\SOFTWARE\Microsoft\SQMClient "MachineId" REG_SZ, 78 bytes [IDENTIFIER - keep local]: "{5F9891AA-4098-45F1-9F99-28902F03BFE7}"
+
+## current user
+GetUserNameW: "AilzO9Z" [IDENTIFIER - keep local]
+GetUserNameExW(NameSamCompatible): "DESKTOP-8eEBsN8\x5CAilzO9Z" [IDENTIFIER - keep local] (only this format is queried: the others can contact a domain controller)
+user SID: S-1-5-21-192489524-1873546556-3665591170-1001 [IDENTIFIER - keep local]
+account domain prefix: S-1-5-21-192489524-1873546556-3665591170 [IDENTIFIER - keep local]
+  account domain from NameSamCompatible: "DESKTOP-8EEBSN8"; computer name: "DESKTOP-8EEBSN8"
+  equal -> LOCAL account: the prefix above is the MACHINE SID (derived from the user SID)
+Microsoft-account indicator: no authority-11 group SID in the token (not a Microsoft-account logon, as far as the token shows)
+
+## volumes (GetLogicalDriveStringsW + GetDriveTypeW; GetVolumeInformationW only for fixed / removable)
+
+C:\  type 3 (DRIVE_FIXED)
+  volume serial number: 15FC-4A77 (0x15FC4A77) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: ""
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{ce9c46d6-d2ae-495a-9cca-edab1141f525}\ [IDENTIFIER - keep local]
+
+D:\  type 5 (DRIVE_CDROM)
+  not queried (only fixed / removable volumes; remote drives would need the network)
+
+E:\  type 3 (DRIVE_FIXED)
+  volume serial number: 1499-9DEE (0x14999DEE) [IDENTIFIER - keep local]
+  file system: "NTFS"
+  label: "docs"
+  flags 0x03E706FF, max component length 255
+  volume GUID path: \\?\Volume{88287e9b-c4e5-4b0c-a9de-a56f802a2ca1}\ [IDENTIFIER - keep local]
+
+9 registry identifier value(s) read; 2 fixed / removable volume(s) queried

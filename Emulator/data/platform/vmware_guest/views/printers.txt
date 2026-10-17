@@ -1,0 +1,51 @@
+# fwid printer capture - fwid_probe 1.4 (2026-10-16)
+# EnumPrintersW(PRINTER_ENUM_LOCAL, level 2): name, server, share, port, driver, comment, location, attributes,
+# status; EnumPrintersW(PRINTER_ENUM_CONNECTIONS, level 4): name, server, attributes (level 4 needs no network).
+# Read only: no OpenPrinter / SetPrinter / AddPrinter / DeletePrinter.
+
+########## PRINTER_ENUM_LOCAL (level 2)
+
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+# [excluded tool artifact]
+
+=== printer 1
+name "Microsoft XPS Document Writer"
+server (null)
+share ""
+port "PORTPROMPT:"
+driver "Microsoft XPS Document Writer v4"
+comment ""
+location ""
+attributes 0x00000240, status 0x00000000, priority 1
+
+=== printer 2
+name "Microsoft Print to PDF"
+server (null)
+share ""
+port "PORTPROMPT:"
+driver "Microsoft Print To PDF"
+comment ""
+location ""
+attributes 0x00000240, status 0x00000000, priority 1
+
+=== printer 3
+name "Fax"
+server (null)
+share ""
+port "SHRFAX:"
+driver "Microsoft Shared Fax Driver"
+comment ""
+location ""
+attributes 0x00004040, status 0x00000000, priority 1
+
+########## PRINTER_ENUM_CONNECTIONS (level 4)
+none
+
+4 printer(s)

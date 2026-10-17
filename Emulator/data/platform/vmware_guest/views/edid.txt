@@ -1,0 +1,15 @@
+# fwid EDID capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<model>\<instance>\Device Parameters value "EDID": every value written
+# UNALTERED to edid_<n>.bin and decoded. No VESA E-EDID document is on disk; the base-block layout used is the one in the
+# local Linux sources include\drm\drm_edid.h / drivers\gpu\drm\drm_edid.c (licensed open source, reference tier):
+# 8-byte header, manufacturer ID, product code, serial number field (bytes 12-15), week / year, version, the four
+# 18-byte descriptors with their type tags (FFH serial string, FEH string, FCH name, ...), extension count and checksums.
+# IDENTIFIERS: the serial number field and the FFH serial string are marked; keep the files local.
+
+=== HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CDISPLAY\x5CDefault_Monitor\x5C1&28a6823a&0&UID256\x5CDevice Parameters
+  value "EDID": not present (2 (not found))
+
+=== HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CDISPLAY\x5CDefault_Monitor\x5C4&427137e&0&UID0\x5CDevice Parameters
+  value "EDID": not present (2 (not found))
+
+0 EDID value(s) captured, 0 failure(s)

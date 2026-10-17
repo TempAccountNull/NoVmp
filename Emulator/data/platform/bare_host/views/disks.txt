@@ -1,0 +1,95 @@
+# fwid physical disk capture - fwid_probe 1.4 (2026-10-16)
+# \\.\PhysicalDrive0..31: CreateFileW(dwDesiredAccess = 0, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING) and
+# DeviceIoControl(IOCTL_STORAGE_QUERY_PROPERTY, StorageDeviceProperty, PropertyStandardQuery) ONLY (user-authorized
+# exception 2026-10-16). Stops after 4 consecutive ERROR_FILE_NOT_FOUND. The raw STORAGE_DEVICE_DESCRIPTOR is written
+# unaltered to disk_<n>_descriptor.bin. IDENTIFIERS: the serial number is marked; keep local.
+
+=== PhysicalDrive0
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_0_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 17 (BusTypeNvme)
+  vendor ID:        (offset 0: not reported)
+  product ID:       "Samsung SSD 990 PRO 2TB" (offset 57, 23 bytes)
+  product revision: "4B2QJXD7" (offset 122, 8 bytes)
+  serial number:    "7360_765L_35Q0_34ML." (offset 139, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive1
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_1_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 17 (BusTypeNvme)
+  vendor ID:        (offset 0: not reported)
+  product ID:       "Samsung SSD 990 PRO 2TB" (offset 57, 23 bytes)
+  product revision: "5B2QJXD7" (offset 122, 8 bytes)
+  serial number:    "8424_1564_6904_6WXW." (offset 139, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive2
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_2_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 17 (BusTypeNvme)
+  vendor ID:        (offset 0: not reported)
+  product ID:       "Samsung SSD 970 EVO Plus 2TB" (offset 57, 28 bytes)
+  product revision: "4B2QEXM7" (offset 122, 8 bytes)
+  serial number:    "7965_1423_5269_9183." (offset 139, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive3
+  descriptor: Version 40, Size 124, 124 bytes returned -> disk_3_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 1, CommandQueueing 0
+  BusType 7 (BusTypeUsb)
+  vendor ID:        "SanDisk" (offset 72, 7 bytes)
+  product ID:       "Ultra" (offset 81, 5 bytes)
+  product revision: "1.00" (offset 98, 4 bytes)
+  serial number:    "7095315ff0208b6073eb" (offset 103, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 36 (bytes in the .bin)
+
+=== PhysicalDrive4
+  descriptor: Version 40, Size 120, 120 bytes returned -> disk_4_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 0
+  BusType 7 (BusTypeUsb)
+  vendor ID:        "WD      " (offset 72, 8 bytes)
+  product ID:       "My Passport 0810" (offset 81, 16 bytes)
+  product revision: "1049" (offset 98, 4 bytes)
+  serial number:    "OOU4M11NLB15    " (offset 103, 16 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 36 (bytes in the .bin)
+
+=== PhysicalDrive5
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_5_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 7 (BusTypeUsb)
+  vendor ID:        "Sabrent " (offset 40, 8 bytes)
+  product ID:       "Dual SATA Bridge" (offset 49, 16 bytes)
+  product revision: "0   " (offset 66, 4 bytes)
+  serial number:    "00000000000000000000" (offset 71, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive6
+  descriptor: Version 40, Size 396, 396 bytes returned -> disk_6_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 1
+  BusType 7 (BusTypeUsb)
+  vendor ID:        "Sabrent " (offset 40, 8 bytes)
+  product ID:       "Dual SATA Bridge" (offset 49, 16 bytes)
+  product revision: "0   " (offset 66, 4 bytes)
+  serial number:    "00000000000000000000" (offset 71, 20 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 0 (bytes in the .bin)
+
+=== PhysicalDrive7
+  descriptor: Version 40, Size 120, 120 bytes returned -> disk_7_descriptor.bin
+  DeviceType 0x00, DeviceTypeModifier 0x00, RemovableMedia 0, CommandQueueing 0
+  BusType 7 (BusTypeUsb)
+  vendor ID:        "WD      " (offset 72, 8 bytes)
+  product ID:       "My Passport 0827" (offset 81, 16 bytes)
+  product revision: "1012" (offset 98, 4 bytes)
+  serial number:    "HC06W0218LHW    " (offset 103, 16 bytes)  [IDENTIFIER - keep local]
+  RawPropertiesLength 36 (bytes in the .bin)
+
+PhysicalDrive8: open FAILED 2 (not present)
+
+PhysicalDrive9: open FAILED 2 (not present)
+
+PhysicalDrive10: open FAILED 2 (not present)
+
+PhysicalDrive11: open FAILED 2 (not present)
+
+8 disk(s) opened, 8 descriptor(s) read

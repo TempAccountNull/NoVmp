@@ -1,0 +1,48 @@
+# fwid license capture - fwid_probe 1.4 (2026-10-16)
+# USER-AUTHORIZED EXCEPTION (2026-10-16), exact scope: local WMI root\cimv2, one ExecQuery, Get of the six
+# properties ID, Name, Description, LicenseStatus, ProductKeyChannel, OfflineInstallationId. Product keys and
+# PartialProductKey / ProductKeyID / ProductKeyID2 are NEVER requested; no WMI method is ever called; no SL* function.
+# Query: SELECT ID, Name, Description, LicenseStatus, ProductKeyChannel, OfflineInstallationId FROM SoftwareLicensingProduct WHERE ApplicationID = '55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL
+# OfflineInstallationId = the Windows installation ID [IDENTIFIER - keep local]. The query can take seconds.
+
+=== SoftwareLicensingProduct row 0
+ID                     "0b533b5e-08b6-44f9-b885-c2de291ba456"  [SKU ID]
+Name                   "Windows(R), Client-ESU-Year6 add-on for Education,EducationN,Enterprise,EnterpriseN,Professional,ProfessionalEducation,ProfessionalEducationN,ProfessionalN,ProfessionalWorkstation,ProfessionalWorkstationN,ServerRdsh,Core,CoreN,CoreCountrySpecific,CoreSingleLanguage,IoTEnterprise,PPIPro"
+Description            "Windows(R) Operating System, VOLUME_MAK channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "Volume:MAK"
+OfflineInstallationId  "537357128359460457586741382619697544717354408521506622857079045"  [IDENTIFIER - installation ID, keep local]
+
+=== SoftwareLicensingProduct row 1
+ID                     "1043add5-23b1-4afb-9a0f-64343c8f3f8d"  [SKU ID]
+Name                   "Windows(R), Client-ESU-Year2 add-on for Education,EducationN,Enterprise,EnterpriseN,Professional,ProfessionalEducation,ProfessionalEducationN,ProfessionalN,ProfessionalWorkstation,ProfessionalWorkstationN,ServerRdsh,Core,CoreN,CoreCountrySpecific,CoreSingleLanguage,IoTEnterprise,PPIPro"
+Description            "Windows(R) Operating System, VOLUME_MAK channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "Volume:MAK"
+OfflineInstallationId  "333060400297239522685779083285261638509682091203179999109380132"  [IDENTIFIER - installation ID, keep local]
+
+=== SoftwareLicensingProduct row 2
+ID                     "4de7cb65-cdf1-4de9-8ae8-e3cce27b9f2c"  [SKU ID]
+Name                   "Windows(R), Professional edition"
+Description            "Windows(R) Operating System, RETAIL channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "Retail"
+OfflineInstallationId  "694020291360755685931085360524614138006254797724085340831513293"  [IDENTIFIER - installation ID, keep local]
+
+=== SoftwareLicensingProduct row 3
+ID                     "83d49986-add3-41d7-ba33-87c7bfb5c0fb"  [SKU ID]
+Name                   "Windows(R), Client-ESU-Year3 add-on for Education,EducationN,Enterprise,EnterpriseN,Professional,ProfessionalEducation,ProfessionalEducationN,ProfessionalN,ProfessionalWorkstation,ProfessionalWorkstationN,ServerRdsh,Core,CoreN,CoreCountrySpecific,CoreSingleLanguage,IoTEnterprise,PPIPro"
+Description            "Windows(R) Operating System, VOLUME_MAK channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "Volume:MAK"
+OfflineInstallationId  "311903213995047371333172139516528720518403500688670027044269620"  [IDENTIFIER - installation ID, keep local]
+
+=== SoftwareLicensingProduct row 4
+ID                     "f520e45e-7413-4a34-a497-d2765967d094"  [SKU ID]
+Name                   "Windows(R), Client-ESU-Year1 add-on for Education,EducationN,Enterprise,EnterpriseN,Professional,ProfessionalEducation,ProfessionalEducationN,ProfessionalN,ProfessionalWorkstation,ProfessionalWorkstationN,ServerRdsh,Core,CoreN,CoreCountrySpecific,CoreSingleLanguage,IoTEnterprise,PPIPro"
+Description            "Windows(R) Operating System, VOLUME_MAK channel"
+LicenseStatus          1 = Licensed (decode: public knowledge, unverified locally)
+ProductKeyChannel      "Volume:MAK"
+OfflineInstallationId  "564071252954914434084690611446992739521380012051407772319082770"  [IDENTIFIER - installation ID, keep local]
+
+5 row(s); query time 703 ms

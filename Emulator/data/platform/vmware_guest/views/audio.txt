@@ -1,0 +1,22 @@
+# fwid audio endpoint capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{Render,Capture}\<endpoint GUID>: DeviceState and the
+# Properties values of the friendly-name / device-description / interface-name keys (KEY_READ; access denied is recorded).
+# Endpoint GUIDs are per-installation [IDENTIFIER].
+
+########## Render
+
+=== endpoint {d6be3fcb-d782-49fc-94fc-3310f5d15634} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d6be3fcb-d782-49fc-94fc-3310f5d15634}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d6be3fcb-d782-49fc-94fc-3310f5d15634}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d6be3fcb-d782-49fc-94fc-3310f5d15634}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+########## Capture
+
+=== endpoint {2a7d4061-9824-4432-82bd-226b96f4cc51} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2a7d4061-9824-4432-82bd-226b96f4cc51}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2a7d4061-9824-4432-82bd-226b96f4cc51}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2a7d4061-9824-4432-82bd-226b96f4cc51}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+2 endpoint(s)

@@ -1,4 +1,4 @@
-# Platform identity profiles (plan 1.J.49, ledger U1510-U1512; fwid 1.4 rebuild U1513-U1514; per-build context + threading 1.J.49.a)
+# Platform identity profiles (plan 1.J.49, ledger U1510-U1512; fwid 1.4 rebuild U1513-U1514; per-build context + threading 1.J.49.a; U1515-U1518)
 
 The firmware and device identity the emulator presents for `--guest` / `--vm` (the VMware guest) and `--host` (the bare
 i5-13600K host): packer HWID hashes and anti-VM checks must see ONE consistent, real-looking machine, so the internal
@@ -131,6 +131,39 @@ dependents, EUI-64 form, NameSamCompatible, SusClientIdValidation, a flash drive
   every editable key, the edited map applied (Wi-Fi Direct = the new Wi-Fi MAC + 1, NameSamCompatible follows the new
   computer name, the version-1 node follows the new MAC) and reproduced from its saved `identity_map.tsv`.
 
+## Synthetic text views (U1518, user decisions 2026-10-17 "Export synthetic views" and "Shift by the offset")
+
+Every profile holds `views\<fwid file>` (BuildConfig `views = yes`: the default of `--guest` / `--host`, written into both
+`build_config.txt`; a config without the key builds no views): every presentable fwid text output with each recorded
+occurrence replaced by its identity's synthetic value in that occurrence's own form and letter case (colon / hyphen / plain
+MAC, GUID without braces, `0x` hex and decimal FILETIME, the SusClientIdValidation hex dump, ...), occurrences nested in
+another replaced one checked to agree, every excluded tool-artifact line replaced by the marker `# [excluded tool artifact]`
+(which one: `exclusions.tsv`), so line numbers stay those of the capture and `fieldmap.tsv` text rows point into the view.
+**Timestamps of the install history** move by the same install-history offset as rule 7b in every view (derived from
+`identity/install`, never random), so neither a real install time nor the offset can be read off a view: the rule 7b
+identities, every registry key last-write time (`last write <ISO>`, `key last write time: <ISO>`) and the code-integrity
+aggregation FILETIMEs (REG_QWORD under `Control\CI`, hex and decimal). Exact in the blobs and the original profile; driver
+dates (DEVPKEY_Device_DriverDate, package build dates) stay exact. Not exported: `capture_info.txt` (run metadata),
+`certificates.txt` (not part of the profile), `VERDICT*.txt`, `smbios_decoded.txt` / `acpi_decoded.txt` /
+`hwacpi_registry.txt` (decoded copies of the blobs), `cpuid_dump.txt` (the CPUID profiles, 1.J.53). The manifest lists the
+views with SHA-256; the leak guard and `--check` (pg_profile_check_*) cover them like every file; in a view the leak guard
+also refuses a real MAC, GUID or binary GUID inside a longer token. Three rules came with the views (the review of the real
+views found what only a full text view shows):
+- rule 4d prefix relation: a USB serial truncated in a text output (the host's SetupAPI instance ID of the USB flash drive
+  holds its first 63 characters) = the same prefix of the device's synthetic serial (identity `usb_serial_prefix`, relation
+  row `4dr`), as rule 8d does for the flash drive's disk serial;
+- rule 4c on the 16-byte REG_BINARY form of GUIDs (Windows byte order; decision E "one mapping per real GUID everywhere"):
+  a known GUID's binary form becomes its synthetic binary form; a version-1 GUID with an adapter-MAC node that occurs only in
+  binary form is a new `mac_node_guid` identity (bare host: 2 VMSVSF `NdisAdapters` InterfaceGuid values, G207 / G208; ids
+  after every existing one). MBR-style volume GUIDs have no binary form (signature + offset);
+- the leak guard counts, instead of refusing, a rule-2h memory Manufacturer value on a manufacturer / product / name line
+  of `views\hid.txt` / `bluetooth.txt` / `audio.txt`: the same brand as a device name (exact by decision H) is that
+  device's name, not the memory identity (bare host: 8 such lines); anywhere else it is refused.
+Counts: guest 25 views, 1108 occurrences, 488 last-write / CI times moved, 73 excluded lines; host 25 views, 1892
+occurrences, 1082 times moved, 1 excluded line. Independent check (P4 report): no exact timestamp equals a real
+install-history value, no exact timestamp + the offset equals a moved one, no real value as a token beyond the explained
+coincidences.
+
 ## Field rules and the replaced locations
 
 User decisions 2026-10-16 (Identifier_fields.md sections C-J); everything not listed is byte-exact from the capture. Full
@@ -205,6 +238,9 @@ emu-profilegen --guest | --vm | --host [--capture-root DIR] [--out DIR] [--origi
 emu-profilegen --config Emulator\data\platform\<env>\build_config.txt [--check]
 emu-profilegen --guest --new-identity          (GENERATE: every value fresh from RDRAND; a different, equally consistent identity)
 emu-profilegen --host --save-config FILE       (write the effective BuildConfig and stop)
+emu-profilegen --config ...\build_config.txt --add-new-keys    (U1518, one-time: apply the saved map, draw ONLY the keys of
+                                               identities a newer rule finds - done for bare_host: identity/G207, identity/G208)
+emu-profilegen --config ...\build_config.txt --views           (U1518: a config written before U1518 builds no views without it)
 emu-profilegen --config ...\build_config.txt --upgrade-v1-time   (U1516, one-time: apply a pre-U1516 map, re-deriving only its
                                                version-1 GUID timestamps - clock sequence and node kept; done 2026-10-17 for both profiles)
 ```

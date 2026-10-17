@@ -1,0 +1,43 @@
+# fwid environment capture - fwid_probe 1.4 (2026-10-16)
+# [volatile] = changes while the machine runs (uptime, free memory, screen setup, active layout); the rest is
+# configuration. NetGetJoinInformation is called with lpServer = NULL (local machine only).
+
+## time zone (GetDynamicTimeZoneInformation -> 2 = TIME_ZONE_ID_DAYLIGHT [volatile: standard / daylight state])
+TimeZoneKeyName "Pacific Standard Time"
+Bias 480 min, StandardBias 0, DaylightBias -60, DynamicDaylightTimeDisabled 0
+StandardName "Pacific Standard Time"
+DaylightName "Pacific Daylight Time"
+StandardDate 0000-11-01 02:00:00 (wDayOfWeek 0)
+DaylightDate 0000-03-02 02:00:00 (wDayOfWeek 0)
+
+## locale / language
+GetUserDefaultLocaleName: "en-US"
+GetSystemDefaultLocaleName: "en-US"
+GetUserDefaultUILanguage: 0x0409
+GetSystemDefaultUILanguage: 0x0409
+
+## keyboard
+GetKeyboardLayoutList: 1 layout(s)
+  HKL 0000000004090409
+GetKeyboardLayoutNameW (this thread's active layout) [volatile]: "00000409"
+
+## join state (NetGetJoinInformation, local)
+result 0; status 2 (NetSetupWorkgroupName); name "WORKGROUP" [IDENTIFIER: workgroup / domain name]
+
+## uptime
+GetTickCount64: 804718 ms (0.22 h) [volatile]
+
+## memory (GlobalMemoryStatusEx -> 1)
+TotalPhys 17178873856, TotalPageFile 29526904832, TotalVirtual 140737488224256
+AvailPhys 11421736960, AvailPageFile 23505113088, AvailVirtual 140733069635584, MemoryLoad 33% [volatile]
+
+## GetSystemInfo
+wProcessorArchitecture 9, dwNumberOfProcessors 8, dwActiveProcessorMask 0xFF, dwPageSize 4096, dwAllocationGranularity 65536
+wProcessorLevel 6, wProcessorRevision 0xB701, lpMinimumApplicationAddress 0000000000010000, lpMaximumApplicationAddress 00007FFFFFFEFFFF
+
+## GetNativeSystemInfo
+wProcessorArchitecture 9, dwNumberOfProcessors 8, dwActiveProcessorMask 0xFF, dwPageSize 4096, dwAllocationGranularity 65536
+wProcessorLevel 6, wProcessorRevision 0xB701, lpMinimumApplicationAddress 0000000000010000, lpMaximumApplicationAddress 00007FFFFFFEFFFF
+
+## screen (GetSystemMetrics) [volatile]
+SM_CXSCREEN 1920, SM_CYSCREEN 1080, SM_CMONITORS 1

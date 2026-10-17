@@ -1,0 +1,388 @@
+# fwid audio endpoint capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{Render,Capture}\<endpoint GUID>: DeviceState and the
+# Properties values of the friendly-name / device-description / interface-name keys (KEY_READ; access denied is recorded).
+# Endpoint GUIDs are per-installation [IDENTIFIER].
+
+########## Render
+
+=== endpoint {132697ed-aeaf-46de-a4af-cb53ef9e72ae} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{132697ed-aeaf-46de-a4af-cb53ef9e72ae}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{132697ed-aeaf-46de-a4af-cb53ef9e72ae}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{132697ed-aeaf-46de-a4af-cb53ef9e72ae}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {57dab98b-be46-4e3b-9057-c46cb4584abe} [IDENTIFIER]
+DeviceState 0x20000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{57dab98b-be46-4e3b-9057-c46cb4584abe}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{57dab98b-be46-4e3b-9057-c46cb4584abe}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{57dab98b-be46-4e3b-9057-c46cb4584abe}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {efa8d20b-f957-4a96-b5aa-0b8353a93d04} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{efa8d20b-f957-4a96-b5aa-0b8353a93d04}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{efa8d20b-f957-4a96-b5aa-0b8353a93d04}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{efa8d20b-f957-4a96-b5aa-0b8353a93d04}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {4eb13ec6-2c0a-4e99-a007-482154aebb20} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4eb13ec6-2c0a-4e99-a007-482154aebb20}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4eb13ec6-2c0a-4e99-a007-482154aebb20}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 46 bytes: "Realtek Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4eb13ec6-2c0a-4e99-a007-482154aebb20}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6b0a9526-5e5b-43e6-995f-d0488e8908e3} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6b0a9526-5e5b-43e6-995f-d0488e8908e3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6b0a9526-5e5b-43e6-995f-d0488e8908e3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6b0a9526-5e5b-43e6-995f-d0488e8908e3}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6045e70f-9542-4411-9f9f-0193460bbf4a} [IDENTIFIER]
+DeviceState 0x20000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6045e70f-9542-4411-9f9f-0193460bbf4a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6045e70f-9542-4411-9f9f-0193460bbf4a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6045e70f-9542-4411-9f9f-0193460bbf4a}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {4a4b56c4-b12f-474b-9734-bc7c038f6206} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4a4b56c4-b12f-474b-9734-bc7c038f6206}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4a4b56c4-b12f-474b-9734-bc7c038f6206}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4a4b56c4-b12f-474b-9734-bc7c038f6206}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {573df87c-f5a4-4df4-9fe9-66b3b15a5d2f} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{573df87c-f5a4-4df4-9fe9-66b3b15a5d2f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{573df87c-f5a4-4df4-9fe9-66b3b15a5d2f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{573df87c-f5a4-4df4-9fe9-66b3b15a5d2f}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {650fd96f-6be9-428d-b39f-2f2a5a2e902e} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{650fd96f-6be9-428d-b39f-2f2a5a2e902e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{650fd96f-6be9-428d-b39f-2f2a5a2e902e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{650fd96f-6be9-428d-b39f-2f2a5a2e902e}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {30400549-c57b-482d-87a1-5dd42b968b7f} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{30400549-c57b-482d-87a1-5dd42b968b7f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{30400549-c57b-482d-87a1-5dd42b968b7f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{30400549-c57b-482d-87a1-5dd42b968b7f}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {8d504c74-12d7-4ecb-a4b6-d83454c87b3c} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{8d504c74-12d7-4ecb-a4b6-d83454c87b3c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{8d504c74-12d7-4ecb-a4b6-d83454c87b3c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 28 bytes: "1 - EK220Q E3"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{8d504c74-12d7-4ecb-a4b6-d83454c87b3c}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {7303a389-5808-44a0-b8d2-838bd79c4641} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7303a389-5808-44a0-b8d2-838bd79c4641}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7303a389-5808-44a0-b8d2-838bd79c4641}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Headphones"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7303a389-5808-44a0-b8d2-838bd79c4641}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {4fc26a4f-0a32-4273-a84a-4c3281311860} [IDENTIFIER]
+DeviceState 0x20000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4fc26a4f-0a32-4273-a84a-4c3281311860}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4fc26a4f-0a32-4273-a84a-4c3281311860}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 28 bytes: "1 - 100012584"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4fc26a4f-0a32-4273-a84a-4c3281311860}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {0538f0ea-a0b7-40ee-b233-3790d53e896b} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{0538f0ea-a0b7-40ee-b233-3790d53e896b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{0538f0ea-a0b7-40ee-b233-3790d53e896b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{0538f0ea-a0b7-40ee-b233-3790d53e896b}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {7bdf47f6-6bce-4452-a81a-f57652a858fa} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7bdf47f6-6bce-4452-a81a-f57652a858fa}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7bdf47f6-6bce-4452-a81a-f57652a858fa}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 38 bytes: "Speakers (Headset)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{7bdf47f6-6bce-4452-a81a-f57652a858fa}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6eef6ee9-3153-476c-9fa6-1bdaca8eafc3} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6eef6ee9-3153-476c-9fa6-1bdaca8eafc3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6eef6ee9-3153-476c-9fa6-1bdaca8eafc3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6eef6ee9-3153-476c-9fa6-1bdaca8eafc3}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {f1c2c32a-6ef2-4fae-8852-8edafdd5118e} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f1c2c32a-6ef2-4fae-8852-8edafdd5118e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f1c2c32a-6ef2-4fae-8852-8edafdd5118e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f1c2c32a-6ef2-4fae-8852-8edafdd5118e}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {4adbad0d-8e66-4e33-b22e-399f9a32c4b1} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4adbad0d-8e66-4e33-b22e-399f9a32c4b1}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4adbad0d-8e66-4e33-b22e-399f9a32c4b1}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 32 bytes: "Speakers (Main)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{4adbad0d-8e66-4e33-b22e-399f9a32c4b1}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {3442cd53-199e-46c2-9c62-686d1376f4f8} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{3442cd53-199e-46c2-9c62-686d1376f4f8}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{3442cd53-199e-46c2-9c62-686d1376f4f8}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{3442cd53-199e-46c2-9c62-686d1376f4f8}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {bd95b776-a27f-47b9-9e2c-3d3f5c993f9c} [IDENTIFIER]
+DeviceState 0x20000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd95b776-a27f-47b9-9e2c-3d3f5c993f9c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd95b776-a27f-47b9-9e2c-3d3f5c993f9c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd95b776-a27f-47b9-9e2c-3d3f5c993f9c}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {e8e31e36-85eb-45e2-9d7e-7516bf9a801e} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{e8e31e36-85eb-45e2-9d7e-7516bf9a801e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{e8e31e36-85eb-45e2-9d7e-7516bf9a801e}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{e8e31e36-85eb-45e2-9d7e-7516bf9a801e}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6f8a07b8-c94b-4c67-86fb-962f657e8613} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6f8a07b8-c94b-4c67-86fb-962f657e8613}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6f8a07b8-c94b-4c67-86fb-962f657e8613}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6f8a07b8-c94b-4c67-86fb-962f657e8613}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {bd9da58d-91b9-497d-b231-f680229ea9f3} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd9da58d-91b9-497d-b231-f680229ea9f3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd9da58d-91b9-497d-b231-f680229ea9f3}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 20 bytes: "4 - G27QC"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd9da58d-91b9-497d-b231-f680229ea9f3}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {f8a7d224-4236-46c3-a3d3-65578e82950b} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f8a7d224-4236-46c3-a3d3-65578e82950b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f8a7d224-4236-46c3-a3d3-65578e82950b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 42 bytes: "Digital Audio (HDMI)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{f8a7d224-4236-46c3-a3d3-65578e82950b}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {980b2523-4c12-48c5-ada5-9f4ed8c3a0a6} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{980b2523-4c12-48c5-ada5-9f4ed8c3a0a6}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{980b2523-4c12-48c5-ada5-9f4ed8c3a0a6}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{980b2523-4c12-48c5-ada5-9f4ed8c3a0a6}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {9b8d0b59-c885-4c8e-9e67-df68f143d884} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{9b8d0b59-c885-4c8e-9e67-df68f143d884}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{9b8d0b59-c885-4c8e-9e67-df68f143d884}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{9b8d0b59-c885-4c8e-9e67-df68f143d884}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {a43a9d80-c6bf-4fd6-88d6-2f1d42cefb4a} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{a43a9d80-c6bf-4fd6-88d6-2f1d42cefb4a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{a43a9d80-c6bf-4fd6-88d6-2f1d42cefb4a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{a43a9d80-c6bf-4fd6-88d6-2f1d42cefb4a}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {d4eeb13e-27fc-42d9-b245-b6af12055f68} [IDENTIFIER]
+DeviceState 0x20000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d4eeb13e-27fc-42d9-b245-b6af12055f68}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d4eeb13e-27fc-42d9-b245-b6af12055f68}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 24 bytes: "1 - C24F390"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{d4eeb13e-27fc-42d9-b245-b6af12055f68}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {59c71cca-3409-4c3d-8372-4d231d2d433f} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{59c71cca-3409-4c3d-8372-4d231d2d433f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{59c71cca-3409-4c3d-8372-4d231d2d433f}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 32 bytes: "SPDIF Interface"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{59c71cca-3409-4c3d-8372-4d231d2d433f}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ab6fca12-f5b5-4eea-bf23-521e560934c4} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ab6fca12-f5b5-4eea-bf23-521e560934c4}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ab6fca12-f5b5-4eea-bf23-521e560934c4}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 48 bytes: "Headphones (Front Port)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ab6fca12-f5b5-4eea-bf23-521e560934c4}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {007f0a92-e795-44a1-92c5-759af53ef34c} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{007f0a92-e795-44a1-92c5-759af53ef34c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{007f0a92-e795-44a1-92c5-759af53ef34c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{007f0a92-e795-44a1-92c5-759af53ef34c}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6c77e44f-9488-4804-9f90-884d5cdce302} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6c77e44f-9488-4804-9f90-884d5cdce302}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6c77e44f-9488-4804-9f90-884d5cdce302}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{6c77e44f-9488-4804-9f90-884d5cdce302}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ac74b3e2-a63e-4ab0-b0fb-a2013e556d97} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ac74b3e2-a63e-4ab0-b0fb-a2013e556d97}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ac74b3e2-a63e-4ab0-b0fb-a2013e556d97}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{ac74b3e2-a63e-4ab0-b0fb-a2013e556d97}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {dca88c79-9985-4b4a-a6a9-782239f1d075} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{dca88c79-9985-4b4a-a6a9-782239f1d075}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{dca88c79-9985-4b4a-a6a9-782239f1d075}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 44 bytes: "G27QC (Monitor Audio)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{dca88c79-9985-4b4a-a6a9-782239f1d075}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {b4ce0ee7-b3b1-4fd1-9521-c4837ef8faf0} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{b4ce0ee7-b3b1-4fd1-9521-c4837ef8faf0}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{b4ce0ee7-b3b1-4fd1-9521-c4837ef8faf0}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Speakers"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{b4ce0ee7-b3b1-4fd1-9521-c4837ef8faf0}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {112b4196-e641-4198-a01a-48f3bfe49346} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{112b4196-e641-4198-a01a-48f3bfe49346}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{112b4196-e641-4198-a01a-48f3bfe49346}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Headphones"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{112b4196-e641-4198-a01a-48f3bfe49346}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {bd31361a-d6a4-4e4c-b280-be24ae39ec93} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd31361a-d6a4-4e4c-b280-be24ae39ec93}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd31361a-d6a4-4e4c-b280-be24ae39ec93}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 50 bytes: "Focusrite (Monitor Jack)"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{bd31361a-d6a4-4e4c-b280-be24ae39ec93}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {07eb867b-76bc-44ee-8f04-21219a57fc4c} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{07eb867b-76bc-44ee-8f04-21219a57fc4c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{07eb867b-76bc-44ee-8f04-21219a57fc4c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Digital Output"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{07eb867b-76bc-44ee-8f04-21219a57fc4c}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+########## Capture
+
+=== endpoint {07cd43a5-1d47-4872-9559-b86e2df93b97} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{07cd43a5-1d47-4872-9559-b86e2df93b97}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{07cd43a5-1d47-4872-9559-b86e2df93b97}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{07cd43a5-1d47-4872-9559-b86e2df93b97}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {0813196f-478f-48df-a8e9-c5fc3ff66170} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0813196f-478f-48df-a8e9-c5fc3ff66170}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0813196f-478f-48df-a8e9-c5fc3ff66170}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0813196f-478f-48df-a8e9-c5fc3ff66170}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {8b4b071b-998e-406e-856c-bbf2584213b1} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{8b4b071b-998e-406e-856c-bbf2584213b1}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{8b4b071b-998e-406e-856c-bbf2584213b1}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{8b4b071b-998e-406e-856c-bbf2584213b1}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {dcbe6cad-ae3c-4d50-a83a-9722ea8a876b} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{dcbe6cad-ae3c-4d50-a83a-9722ea8a876b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{dcbe6cad-ae3c-4d50-a83a-9722ea8a876b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{dcbe6cad-ae3c-4d50-a83a-9722ea8a876b}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {6d7f44d6-2b5c-4ba0-9e84-bd30729fd826} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{6d7f44d6-2b5c-4ba0-9e84-bd30729fd826}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{6d7f44d6-2b5c-4ba0-9e84-bd30729fd826}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{6d7f44d6-2b5c-4ba0-9e84-bd30729fd826}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {f460304b-8893-408e-b20b-2a0fec9a02ee} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f460304b-8893-408e-b20b-2a0fec9a02ee}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f460304b-8893-408e-b20b-2a0fec9a02ee}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f460304b-8893-408e-b20b-2a0fec9a02ee}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {daef38f0-ebde-4d22-a712-daeac62d5e84} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{daef38f0-ebde-4d22-a712-daeac62d5e84}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{daef38f0-ebde-4d22-a712-daeac62d5e84}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{daef38f0-ebde-4d22-a712-daeac62d5e84}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {c969b522-905a-4abf-8027-01467077226b} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{c969b522-905a-4abf-8027-01467077226b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{c969b522-905a-4abf-8027-01467077226b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{c969b522-905a-4abf-8027-01467077226b}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ba60fc90-e119-499c-ae1b-782e0fdc35a2} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ba60fc90-e119-499c-ae1b-782e0fdc35a2}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ba60fc90-e119-499c-ae1b-782e0fdc35a2}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 34 bytes: "Analog Connector"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ba60fc90-e119-499c-ae1b-782e0fdc35a2}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {2c930018-b94d-48ec-807e-49064cbc08fc} [IDENTIFIER]
+DeviceState 0x10000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2c930018-b94d-48ec-807e-49064cbc08fc}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2c930018-b94d-48ec-807e-49064cbc08fc}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{2c930018-b94d-48ec-807e-49064cbc08fc}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {f52e9381-81b3-4d8f-9a50-48939892afee} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f52e9381-81b3-4d8f-9a50-48939892afee}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f52e9381-81b3-4d8f-9a50-48939892afee}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{f52e9381-81b3-4d8f-9a50-48939892afee}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {aa99b519-574d-43dc-9671-fce781399541} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{aa99b519-574d-43dc-9671-fce781399541}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{aa99b519-574d-43dc-9671-fce781399541}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{aa99b519-574d-43dc-9671-fce781399541}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {14399211-054c-453e-9fb2-c6d3e060a22a} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{14399211-054c-453e-9fb2-c6d3e060a22a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{14399211-054c-453e-9fb2-c6d3e060a22a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 18 bytes: "Sidetone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{14399211-054c-453e-9fb2-c6d3e060a22a}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {d45d7748-72a6-4b50-be21-7c03ce237783} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{d45d7748-72a6-4b50-be21-7c03ce237783}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{d45d7748-72a6-4b50-be21-7c03ce237783}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{d45d7748-72a6-4b50-be21-7c03ce237783}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {0839199d-6d9c-49fc-8c3f-4cecbcf8188b} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0839199d-6d9c-49fc-8c3f-4cecbcf8188b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0839199d-6d9c-49fc-8c3f-4cecbcf8188b}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{0839199d-6d9c-49fc-8c3f-4cecbcf8188b}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {20e829ee-293e-412e-aed5-bdc8a4da36d0} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{20e829ee-293e-412e-aed5-bdc8a4da36d0}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{20e829ee-293e-412e-aed5-bdc8a4da36d0}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Analogue 1 + 2"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{20e829ee-293e-412e-aed5-bdc8a4da36d0}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {b8484dbc-38f5-478c-a611-a481f709f990} [IDENTIFIER]
+DeviceState 0x00000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{b8484dbc-38f5-478c-a611-a481f709f990}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{b8484dbc-38f5-478c-a611-a481f709f990}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{b8484dbc-38f5-478c-a611-a481f709f990}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {01e57f23-6e2d-41f4-a9c3-bb80f257b7de} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{01e57f23-6e2d-41f4-a9c3-bb80f257b7de}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{01e57f23-6e2d-41f4-a9c3-bb80f257b7de}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 10 bytes: "Line"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{01e57f23-6e2d-41f4-a9c3-bb80f257b7de}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {e602ca34-5d3d-45e4-8e9d-623411e71d9a} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{e602ca34-5d3d-45e4-8e9d-623411e71d9a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{e602ca34-5d3d-45e4-8e9d-623411e71d9a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{e602ca34-5d3d-45e4-8e9d-623411e71d9a}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ee91c7d5-4f35-470b-bb0d-8a0bb7fc1241} [IDENTIFIER]
+DeviceState 0x10000001: ACTIVE
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ee91c7d5-4f35-470b-bb0d-8a0bb7fc1241}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ee91c7d5-4f35-470b-bb0d-8a0bb7fc1241}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Stereo Mix"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ee91c7d5-4f35-470b-bb0d-8a0bb7fc1241}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ea9ec939-8be6-4681-9a16-c09404e6e785} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ea9ec939-8be6-4681-9a16-c09404e6e785}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ea9ec939-8be6-4681-9a16-c09404e6e785}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ea9ec939-8be6-4681-9a16-c09404e6e785}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {4457984e-ec86-4350-b0b6-76a48b47829d} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{4457984e-ec86-4350-b0b6-76a48b47829d}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{4457984e-ec86-4350-b0b6-76a48b47829d}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 30 bytes: "Analogue 1 + 2"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{4457984e-ec86-4350-b0b6-76a48b47829d}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {ef40675f-bd4f-460f-9aba-2f582bf5525a} [IDENTIFIER]
+DeviceState 0x00000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ef40675f-bd4f-460f-9aba-2f582bf5525a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ef40675f-bd4f-460f-9aba-2f582bf5525a}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 22 bytes: "Microphone"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{ef40675f-bd4f-460f-9aba-2f582bf5525a}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {a86bbaa7-f427-436f-9269-69d9d5febd4c} [IDENTIFIER]
+DeviceState 0x10000004: NOTPRESENT
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{a86bbaa7-f427-436f-9269-69d9d5febd4c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{a86bbaa7-f427-436f-9269-69d9d5febd4c}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 36 bytes: "Internal AUX Jack"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{a86bbaa7-f427-436f-9269-69d9d5febd4c}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+=== endpoint {362bb67c-b5cc-416c-9eef-cc8de9a879a2} [IDENTIFIER]
+DeviceState 0x00000008: UNPLUGGED
+DEVPKEY_Device_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{362bb67c-b5cc-416c-9eef-cc8de9a879a2}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},14": not present / not readable (2 (not found))
+DEVPKEY_Device_DeviceDesc: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{362bb67c-b5cc-416c-9eef-cc8de9a879a2}\Properties "{a45c254e-df1c-4efd-8020-67d146a850e0},2" REG_SZ, 16 bytes: "Line In"
+DEVPKEY_DeviceInterface_FriendlyName: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{362bb67c-b5cc-416c-9eef-cc8de9a879a2}\Properties "{026e516e-b814-414b-83cd-856d6fef4822},2": not present / not readable (2 (not found))
+
+63 endpoint(s)

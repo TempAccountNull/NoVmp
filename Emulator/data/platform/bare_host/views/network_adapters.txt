@@ -1,0 +1,295 @@
+# fwid network adapter capture - fwid_probe 1.4 (2026-10-16)
+# GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_INTERFACES | SKIP_UNICAST/ANYCAST/MULTICAST/DNS_SERVER): adapter
+# name, friendly name, description, MAC (RAW, unredacted - keep local), interface type, status. IP addresses are not recorded.
+# MACs whose OUI is 00:05:69 / 00:0C:29 / 00:1C:14 / 00:50:56 are flagged [VMware OUI per the coordinator's list]; this is
+# NOT used as guest evidence (the physical host's VMware Workstation adapters VMnet1/8 carry 00:50:56 too).
+
+=== adapter 0: IfIndex 7, IfType 6, OperStatus 2, Mtu 1500, Flags 0x000001C5, Luid 0x0006008004000000
+AdapterName: "{A2793689-B07E-4065-8A71-F6026B4D5BEF}"
+FriendlyName: "Ethernet"
+Description: "Intel(R) Ethernet Controller I226-V"
+MAC (6 bytes): 04:7C:16:56:B6:36
+
+=== adapter 1: IfIndex 19, IfType 71, OperStatus 2, Mtu 1500, Flags 0x000001C5, Luid 0x0047008001000000
+AdapterName: "{7D7584F7-D227-4CC4-BDF1-7A64E1ED7F6E}"
+FriendlyName: "Local Area Connection* 9"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter"
+MAC (6 bytes): 10:F6:0A:6F:CD:2E
+
+=== adapter 2: IfIndex 16, IfType 71, OperStatus 2, Mtu 1500, Flags 0x000001C1, Luid 0x0047008002000000
+AdapterName: "{0399EF6C-3E3B-447B-A0C4-73575A36B79F}"
+FriendlyName: "Local Area Connection* 10"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter #2"
+MAC (6 bytes): 12:F6:0A:6F:CD:2D
+
+=== adapter 3: IfIndex 14, IfType 6, OperStatus 1, Mtu 1500, Flags 0x000001C1, Luid 0x0006008006000000
+AdapterName: "{F8F81B32-DE52-4E8C-B3C0-876336483450}"
+FriendlyName: "VMware Network Adapter VMnet1"
+Description: "VMware Virtual Ethernet Adapter for VMnet1"
+MAC (6 bytes): 00:50:56:C0:00:01  [VMware OUI]
+
+=== adapter 4: IfIndex 15, IfType 6, OperStatus 1, Mtu 1500, Flags 0x000001C1, Luid 0x0006008007000000
+AdapterName: "{2FA8B63A-7B74-41CF-BB37-9E9847353EC5}"
+FriendlyName: "VMware Network Adapter VMnet8"
+Description: "VMware Virtual Ethernet Adapter for VMnet8"
+MAC (6 bytes): 00:50:56:C0:00:08  [VMware OUI]
+
+=== adapter 5: IfIndex 3, IfType 71, OperStatus 1, Mtu 1500, Flags 0x000003E5, Luid 0x0047008000000000
+AdapterName: "{4DC84F63-FCCA-4151-B79D-EFB8116314F9}"
+FriendlyName: "Wi-Fi"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 6: IfIndex 4, IfType 6, OperStatus 2, Mtu 1500, Flags 0x000001C5, Luid 0x0006008005000000
+AdapterName: "{6A1EB38F-5FBC-42D7-89E0-9CD04198DE7F}"
+FriendlyName: "Bluetooth Network Connection"
+Description: "Bluetooth Device (Personal Area Network)"
+MAC (6 bytes): 10:F6:0A:6F:CD:31
+
+=== adapter 7: IfIndex 1, IfType 24, OperStatus 1, Mtu 4294967295, Flags 0x00000181, Luid 0x0018000000000000
+AdapterName: "{E200EA58-C03B-11ED-92C8-806E6F6E6963}"
+FriendlyName: "Loopback Pseudo-Interface 1"
+Description: "Software Loopback Interface 1"
+MAC (0 bytes): 
+
+=== adapter 8: IfIndex 24, IfType 6, OperStatus 1, Mtu 1500, Flags 0x000001C0, Luid 0x0006008009000000
+AdapterName: "{F24C9576-5BDC-40DF-BE54-7A9139F23206}"
+FriendlyName: "vEthernet (Default Switch)"
+Description: "Hyper-V Virtual Ethernet Adapter"
+MAC (6 bytes): 00:15:5D:E8:F6:D3
+
+=== adapter 9: IfIndex 38, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000000000000
+AdapterName: "{1F36BEB7-73EC-11F0-B65A-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 6-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "WAN Miniport (IP)-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (0 bytes): 
+
+=== adapter 10: IfIndex 17, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000001000000
+AdapterName: "{1F36BF3B-73EC-11F0-8FDB-10F60A6FCD2E}"
+FriendlyName: "vSwitch (Default Switch)-Hyper-V Virtual Switch Extension Filter-0000"
+Description: "Hyper-V Virtual Switch Extension Adapter-Hyper-V Virtual Switch Extension Filter-0000"
+MAC (0 bytes): 
+
+=== adapter 11: IfIndex 25, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000002000000
+AdapterName: "{1F36BF3D-73EC-11F0-B582-10F60A6FCD2E}"
+FriendlyName: "vEthernet (Default Switch)-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Hyper-V Virtual Ethernet Adapter-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 00:15:5D:E8:F6:D3
+
+=== adapter 12: IfIndex 26, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000003000000
+AdapterName: "{1F36BF3E-73EC-11F0-84EC-10F60A6FCD2E}"
+FriendlyName: "vEthernet (Default Switch)-QoS Packet Scheduler-0000"
+Description: "Hyper-V Virtual Ethernet Adapter-QoS Packet Scheduler-0000"
+MAC (6 bytes): 00:15:5D:E8:F6:D3
+
+=== adapter 13: IfIndex 27, IfType 6, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0006000004000000
+AdapterName: "{1F36BDB9-73EC-11F0-86D2-806E6F6E6963}"
+FriendlyName: "Ethernet-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) Ethernet Controller I226-V-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 04:7C:16:56:B6:36
+
+=== adapter 14: IfIndex 28, IfType 6, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0006000005000000
+AdapterName: "{1F36BDBA-73EC-11F0-A11E-806E6F6E6963}"
+FriendlyName: "Ethernet-QoS Packet Scheduler-0000"
+Description: "Intel(R) Ethernet Controller I226-V-QoS Packet Scheduler-0000"
+MAC (6 bytes): 04:7C:16:56:B6:36
+
+=== adapter 15: IfIndex 29, IfType 6, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0006000006000000
+AdapterName: "{1F36BDBB-73EC-11F0-8BFF-806E6F6E6963}"
+FriendlyName: "Ethernet-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) Ethernet Controller I226-V-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 04:7C:16:56:B6:36
+
+=== adapter 16: IfIndex 39, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000007000000
+AdapterName: "{1F36BEB8-73EC-11F0-B952-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 6-QoS Packet Scheduler-0000"
+Description: "WAN Miniport (IP)-QoS Packet Scheduler-0000"
+MAC (0 bytes): 
+
+=== adapter 17: IfIndex 40, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000008000000
+AdapterName: "{1F36BEB9-73EC-11F0-81B0-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 7-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "WAN Miniport (IPv6)-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (0 bytes): 
+
+=== adapter 18: IfIndex 41, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000009000000
+AdapterName: "{1F36BEBA-73EC-11F0-88D8-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 7-QoS Packet Scheduler-0000"
+Description: "WAN Miniport (IPv6)-QoS Packet Scheduler-0000"
+MAC (0 bytes): 
+
+=== adapter 19: IfIndex 42, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x000600000A000000
+AdapterName: "{1F36BEBB-73EC-11F0-A1C8-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 8-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "WAN Miniport (Network Monitor)-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (0 bytes): 
+
+=== adapter 20: IfIndex 43, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x000600000B000000
+AdapterName: "{1F36BEBC-73EC-11F0-B4DF-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 8-QoS Packet Scheduler-0000"
+Description: "WAN Miniport (Network Monitor)-QoS Packet Scheduler-0000"
+MAC (0 bytes): 
+
+=== adapter 21: IfIndex 44, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x000600000C000000
+AdapterName: "{1F36BF3F-73EC-11F0-A913-10F60A6FCD2E}"
+FriendlyName: "vEthernet (Default Switch)-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Hyper-V Virtual Ethernet Adapter-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 00:15:5D:E8:F6:D3
+
+=== adapter 22: IfIndex 20, IfType 6, OperStatus 6, Mtu 0, Flags 0x00000004, Luid 0x0006008000000000
+AdapterName: "{C56B036D-759E-4BE4-AE25-16216475D7C4}"
+FriendlyName: "Ethernet (Kernel Debugger)"
+Description: "Microsoft Kernel Debug Network Adapter"
+MAC (0 bytes): 
+
+=== adapter 23: IfIndex 22, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006008001000000
+AdapterName: "{1096B88F-06F6-4F01-993C-B6DA0F9BE3D8}"
+FriendlyName: "Local Area Connection* 6"
+Description: "WAN Miniport (IP)"
+MAC (0 bytes): 
+
+=== adapter 24: IfIndex 6, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006008002000000
+AdapterName: "{C4CAA1F3-E187-4F5A-A8CD-1D1B9648862D}"
+FriendlyName: "Local Area Connection* 7"
+Description: "WAN Miniport (IPv6)"
+MAC (0 bytes): 
+
+=== adapter 25: IfIndex 13, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006008003000000
+AdapterName: "{60DC4738-20D4-4F3C-87AE-3A5E653DCE75}"
+FriendlyName: "Local Area Connection* 8"
+Description: "WAN Miniport (Network Monitor)"
+MAC (0 bytes): 
+
+=== adapter 26: IfIndex 9, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006008008000000
+AdapterName: "{D147F4A2-3C2A-4D8A-87D4-B2AB79F3EB89}"
+FriendlyName: "vSwitch (Default Switch)"
+Description: "Hyper-V Virtual Switch Extension Adapter"
+MAC (0 bytes): 
+
+=== adapter 27: IfIndex 18, IfType 23, OperStatus 2, Mtu 1494, Flags 0x00000000, Luid 0x0017008000000000
+AdapterName: "{2B9B295A-30F0-426C-99EC-AB5770B784EA}"
+FriendlyName: "Local Area Connection* 5"
+Description: "WAN Miniport (PPPOE)"
+MAC (0 bytes): 
+
+=== adapter 28: IfIndex 30, IfType 71, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0047000000000000
+AdapterName: "{1F36BE3E-73EC-11F0-B865-10F60A6FCD31}"
+FriendlyName: "Wi-Fi-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 29: IfIndex 31, IfType 71, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0047000001000000
+AdapterName: "{AEBA602B-C033-11ED-8230-047C1656B636}"
+FriendlyName: "Wi-Fi-Virtual WiFi Filter Driver-0000"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz-Virtual WiFi Filter Driver-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 30: IfIndex 32, IfType 71, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0047000002000000
+AdapterName: "{AEBA602C-C033-11ED-80C1-047C1656B636}"
+FriendlyName: "Wi-Fi-Native WiFi Filter Driver-0000"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz-Native WiFi Filter Driver-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 31: IfIndex 33, IfType 71, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0047000003000000
+AdapterName: "{1F36BE3F-73EC-11F0-83CD-10F60A6FCD31}"
+FriendlyName: "Wi-Fi-QoS Packet Scheduler-0000"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz-QoS Packet Scheduler-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 32: IfIndex 34, IfType 71, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0047000004000000
+AdapterName: "{1F36BE40-73EC-11F0-98BC-10F60A6FCD31}"
+FriendlyName: "Wi-Fi-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) Wi-Fi 6E AX211 160MHz-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2D
+
+=== adapter 33: IfIndex 23, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0047000005000000
+AdapterName: "{1F36BEAF-73EC-11F0-B3DF-10F60A6FCD31}"
+FriendlyName: "Local Area Connection* 9-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2E
+
+=== adapter 34: IfIndex 35, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0047000006000000
+AdapterName: "{AEBA6036-C033-11ED-A547-047C1656B636}"
+FriendlyName: "Local Area Connection* 9-Native WiFi Filter Driver-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter-Native WiFi Filter Driver-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2E
+
+=== adapter 35: IfIndex 36, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0047000007000000
+AdapterName: "{1F36BEB5-73EC-11F0-BBD5-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 9-QoS Packet Scheduler-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter-QoS Packet Scheduler-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2E
+
+=== adapter 36: IfIndex 37, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0047000008000000
+AdapterName: "{1F36BEB6-73EC-11F0-AA62-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 9-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 10:F6:0A:6F:CD:2E
+
+=== adapter 37: IfIndex 45, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x0047000009000000
+AdapterName: "{1F36BFD7-73EC-11F0-9132-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 10-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter #2-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 12:F6:0A:6F:CD:2D
+
+=== adapter 38: IfIndex 46, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x004700000A000000
+AdapterName: "{AEBA60D4-C033-11ED-98C4-047C1656B636}"
+FriendlyName: "Local Area Connection* 10-Native WiFi Filter Driver-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter #2-Native WiFi Filter Driver-0000"
+MAC (6 bytes): 12:F6:0A:6F:CD:2D
+
+=== adapter 39: IfIndex 47, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x004700000B000000
+AdapterName: "{1F36BFD8-73EC-11F0-88CA-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 10-QoS Packet Scheduler-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter #2-QoS Packet Scheduler-0000"
+MAC (6 bytes): 12:F6:0A:6F:CD:2D
+
+=== adapter 40: IfIndex 48, IfType 71, OperStatus 2, Mtu 1500, Flags 0x00000000, Luid 0x004700000C000000
+AdapterName: "{1F36BFD9-73EC-11F0-8377-10F60A6FCD2E}"
+FriendlyName: "Local Area Connection* 10-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Microsoft Wi-Fi Direct Virtual Adapter #2-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 12:F6:0A:6F:CD:2D
+
+=== adapter 41: IfIndex 11, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F00000000
+AdapterName: "{09A204F5-5358-46FD-81B4-F24FAA4DC80E}"
+FriendlyName: "Teredo Tunneling Pseudo-Interface"
+Description: "Microsoft Teredo Tunneling Adapter"
+MAC (0 bytes): 
+
+=== adapter 42: IfIndex 5, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F01000000
+AdapterName: "{81C6F255-9381-4D0B-BC66-9FC030F75B3A}"
+FriendlyName: "Microsoft IP-HTTPS Platform Interface"
+Description: "Microsoft IP-HTTPS Platform Adapter"
+MAC (0 bytes): 
+
+=== adapter 43: IfIndex 2, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F02000000
+AdapterName: "{8F9C8E6E-04C7-458C-AB0D-1A32A8CCABA1}"
+FriendlyName: "6to4 Adapter"
+Description: "Microsoft 6to4 Adapter"
+MAC (0 bytes): 
+
+=== adapter 44: IfIndex 12, IfType 131, OperStatus 2, Mtu 4091, Flags 0x00000000, Luid 0x0083008000000000
+AdapterName: "{F3590C96-6907-407D-89AC-A8DAF7678613}"
+FriendlyName: "Local Area Connection* 1"
+Description: "WAN Miniport (SSTP)"
+MAC (0 bytes): 
+
+=== adapter 45: IfIndex 10, IfType 131, OperStatus 2, Mtu 1480, Flags 0x00000000, Luid 0x0083008001000000
+AdapterName: "{61AB6AEA-587B-439A-9AA8-4D71DE9ED934}"
+FriendlyName: "Local Area Connection* 2"
+Description: "WAN Miniport (IKEv2)"
+MAC (0 bytes): 
+
+=== adapter 46: IfIndex 21, IfType 131, OperStatus 2, Mtu 1460, Flags 0x00000000, Luid 0x0083008002000000
+AdapterName: "{F625EE3E-3096-4B9C-8C3B-BBD1462438BD}"
+FriendlyName: "Local Area Connection* 3"
+Description: "WAN Miniport (L2TP)"
+MAC (0 bytes): 
+
+=== adapter 47: IfIndex 8, IfType 131, OperStatus 2, Mtu 1464, Flags 0x00000000, Luid 0x0083008003000000
+AdapterName: "{BBD743ED-6789-404E-A3F1-97D664E082DC}"
+FriendlyName: "Local Area Connection* 4"
+Description: "WAN Miniport (PPTP)"
+MAC (0 bytes): 
+
+48 adapter(s), 2 with a VMware OUI

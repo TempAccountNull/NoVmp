@@ -1,0 +1,415 @@
+# fwid Enum open probe - fwid_probe 1.4 (2026-10-16)
+# For every present device that SetupAPI reported (pci_devices.txt section B) under PCI / USB / HDAUDIO:
+# RegOpenKeyExW(KEY_READ) directly on its device-ID key and on its instance key, independently of RegEnumKeyExW, and whether
+# the key was listed by the RegEnumKeyExW walk in enum_registry.txt. Then the same for every ID that
+# CM_Get_Device_ID_ListW(<root>, CM_GETIDLIST_FILTER_ENUMERATOR) returns (present and non-present devices).
+# This exposes "hidden from enumeration but openable / not openable".
+
+## A. device-ID keys of SetupAPI-reported devices (68)
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0827
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_174C&PID_55AA
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1462&PID_7D91
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A50&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_02
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0608
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A77D&SUBSYS_00000000&REV_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_AB28&SUBSYS_AB281002&REV_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A44&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A780&SUBSYS_7D911462&REV_04
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A38&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CROOT_HUB30
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_03
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0810
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1B21&DEV_0612&SUBSYS_10601B21&REV_02
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A40&SUBSYS_00000000&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A24&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1479&SUBSYS_14791002&REV_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A808&SUBSYS_A801144D&REV_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A48&SUBSYS_001A0100&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A60&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74F&SUBSYS_7D911462&REV_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A704&SUBSYS_7D911462&REV_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A68&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_04
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A04&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A70D&SUBSYS_7D911462&REV_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A3B&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_02
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CHDAUDIO\x5CFUNC_01&VEN_1002&DEV_AA01&SUBSYS_00AA0100&REV_1008
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_07
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_125C&SUBSYS_7D911462&REV_04
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_02
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A23&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_05
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_8087&PID_0033
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A62&SUBSYS_7D911462&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_73DF&SUBSYS_661A1EAE&REV_DF
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0781&PID_5581
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_02
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1478&SUBSYS_00000000&REV_DF
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A70&SUBSYS_00948086&REV_11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74D&SUBSYS_00000000&REV_01
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A27&SUBSYS_00000000&REV_11
+
+## B. instance keys of SetupAPI-reported devices (73)
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0827\x5C525430384F30393238424C57
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_174C&PID_55AA\x5CMSFT3000000000000000000000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1462&PID_7D91\x5C8F6473158124
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C6&320E2471&0&1
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A50&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FB
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_02\x5C8&2DA1C140&0&0002
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0608\x5C5&3B72E4CF&0&10
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&2
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610\x5C5&3B72E4CF&0&9
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_00\x5C7&33E0279F&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A77D&SUBSYS_00000000&REV_01\x5C3&11583659&0&50
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_AB28&SUBSYS_AB281002&REV_00\x5C6&21465CF7&0&01000008
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A44&SUBSYS_7D911462&REV_11\x5C3&11583659&0&DC
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A780&SUBSYS_7D911462&REV_04\x5C3&11583659&0&10
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_00\x5C7&2189581C&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B\x5C5&3B72E4CF&0&11
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C5&3B72E4CF&0&18
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A38&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CROOT_HUB30\x5C4&1DE9F484&0&0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_00\x5C7&1DE262EF&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_01\x5C7&33E0279F&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_03\x5C6&2112AC4B&0&0003
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0810\x5C47564E3746353844554B3733
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1B21&DEV_0612&SUBSYS_10601B21&REV_02\x5C4&2BF43E13&0&00E3
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A40&SUBSYS_00000000&REV_11\x5C3&11583659&0&D8
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407\x5C7&154295CD&0&4
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A24&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FD
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1479&SUBSYS_14791002&REV_00\x5C5&E5AFE58&0&000008
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A808&SUBSYS_A801144D&REV_00\x5C4&1842FD38&0&00DC
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581C&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A48&SUBSYS_001A0100&REV_11\x5C3&11583659&0&D0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_00\x5C7&23D72DCC&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00\x5C6&1868863B&0&3
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A60&SUBSYS_7D911462&REV_11\x5C3&11583659&0&A0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74F&SUBSYS_7D911462&REV_01\x5C3&11583659&0&40
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203\x5C6&1868863B&0&1
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A704&SUBSYS_7D911462&REV_01\x5C3&11583659&0&00
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_01\x5C7&1DE262EF&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568\x5C5&3B72E4CF&0&8
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A68&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_04\x5C6&2112AC4B&0&0004
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A04&SUBSYS_7D911462&REV_11\x5C3&11583659&0&F8
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&31B1139F&0&0030
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620\x5C5&3B72E4CF&0&22
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620\x5C5&3B72E4CF&0&24
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C5&3B72E4CF&0&3
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A70D&SUBSYS_7D911462&REV_01\x5C3&11583659&0&08
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A3B&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E3
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_02\x5C7&2189581C&0&0002
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CHDAUDIO\x5CFUNC_01&VEN_1002&DEV_AA01&SUBSYS_00AA0100&REV_1008\x5C7&A7FABDA&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_01\x5C7&23D72DCC&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_07\x5C6&106104F&0&0007
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_00\x5C8&2DA1C140&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_125C&SUBSYS_7D911462&REV_04\x5C047C16FFFF56B63600
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_02\x5C7&1DE262EF&0&0002
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_00\x5C6&2112AC4B&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A23&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FC
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_05\x5C6&2112AC4B&0&0005
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_8087&PID_0033\x5C5&3B72E4CF&0&14
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A62&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B8
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_73DF&SUBSYS_661A1EAE&REV_DF\x5C6&21465CF7&0&00000008
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0781&PID_5581\x5C7095315FF0208B6073EBF3368B448B710DAF29D30FD12CC4BA8AB1E3ED8D9564E6796176049972667698266562C312ADAD3AB581280417559829EC2D
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C6&1EE3A122&0&1
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_00\x5C6&106104F&0&0000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&3B1AE242&0&00D0
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA\x5C000000000000
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_02\x5C7&23D72DCC&0&0002
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_01\x5C8&2DA1C140&0&0001
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1478&SUBSYS_00000000&REV_DF\x5C4&375498B8&0&0008
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A70&SUBSYS_00948086&REV_11\x5C3&11583659&0&A3
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74D&SUBSYS_00000000&REV_01\x5C3&11583659&0&30
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32\x5C808988F55437
+  open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A27&SUBSYS_00000000&REV_11\x5C3&11583659&0&A2
+
+## C. CM_Get_Device_ID_ListW per root (configuration manager view)
+
+### PCI: CM_Get_Device_ID_List_SizeW -> CONFIGRET 0x00000000, 1798 chars
+  CM ID "PCI\x5CVEN_8086&DEV_7A50&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FB"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A50&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FB
+  CM ID "PCI\x5CVEN_8086&DEV_A77D&SUBSYS_00000000&REV_01\x5C3&11583659&0&50"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A77D&SUBSYS_00000000&REV_01\x5C3&11583659&0&50
+  CM ID "PCI\x5CVEN_1002&DEV_AB28&SUBSYS_AB281002&REV_00\x5C6&21465cf7&0&01000008"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_AB28&SUBSYS_AB281002&REV_00\x5C6&21465cf7&0&01000008
+  CM ID "PCI\x5CVEN_8086&DEV_7A44&SUBSYS_7D911462&REV_11\x5C3&11583659&0&DC"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A44&SUBSYS_7D911462&REV_11\x5C3&11583659&0&DC
+  CM ID "PCI\x5CVEN_8086&DEV_A780&SUBSYS_7D911462&REV_04\x5C3&11583659&0&10"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A780&SUBSYS_7D911462&REV_04\x5C3&11583659&0&10
+  CM ID "PCI\x5CVEN_8086&DEV_7A38&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A38&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E0
+  CM ID "PCI\x5CVEN_1B21&DEV_0612&SUBSYS_10601B21&REV_02\x5C4&2bf43e13&0&00E3"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1B21&DEV_0612&SUBSYS_10601B21&REV_02\x5C4&2bf43e13&0&00E3
+  CM ID "PCI\x5CVEN_8086&DEV_7A40&SUBSYS_00000000&REV_11\x5C3&11583659&0&D8"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A40&SUBSYS_00000000&REV_11\x5C3&11583659&0&D8
+  CM ID "PCI\x5CVEN_8086&DEV_7A24&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FD"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A24&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FD
+  CM ID "PCI\x5CVEN_1002&DEV_1479&SUBSYS_14791002&REV_00\x5C5&e5afe58&0&000008"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1479&SUBSYS_14791002&REV_00\x5C5&e5afe58&0&000008
+  CM ID "PCI\x5CVEN_144D&DEV_A808&SUBSYS_A801144D&REV_00\x5C4&1842fd38&0&00DC"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A808&SUBSYS_A801144D&REV_00\x5C4&1842fd38&0&00DC
+  CM ID "PCI\x5CVEN_8086&DEV_7A48&SUBSYS_001A0100&REV_11\x5C3&11583659&0&D0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A48&SUBSYS_001A0100&REV_11\x5C3&11583659&0&D0
+  CM ID "PCI\x5CVEN_8086&DEV_7A60&SUBSYS_7D911462&REV_11\x5C3&11583659&0&A0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A60&SUBSYS_7D911462&REV_11\x5C3&11583659&0&A0
+  CM ID "PCI\x5CVEN_8086&DEV_A74F&SUBSYS_7D911462&REV_01\x5C3&11583659&0&40"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74F&SUBSYS_7D911462&REV_01\x5C3&11583659&0&40
+  CM ID "PCI\x5CVEN_8086&DEV_A704&SUBSYS_7D911462&REV_01\x5C3&11583659&0&00"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A704&SUBSYS_7D911462&REV_01\x5C3&11583659&0&00
+  CM ID "PCI\x5CVEN_8086&DEV_7A68&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A68&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B0
+  CM ID "PCI\x5CVEN_8086&DEV_7A04&SUBSYS_7D911462&REV_11\x5C3&11583659&0&F8"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A04&SUBSYS_7D911462&REV_11\x5C3&11583659&0&F8
+  CM ID "PCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&31b1139f&0&0030"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&31b1139f&0&0030
+  CM ID "PCI\x5CVEN_8086&DEV_A70D&SUBSYS_7D911462&REV_01\x5C3&11583659&0&08"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A70D&SUBSYS_7D911462&REV_01\x5C3&11583659&0&08
+  CM ID "PCI\x5CVEN_8086&DEV_7A3B&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E3"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A3B&SUBSYS_7D911462&REV_11\x5C3&11583659&0&E3
+  CM ID "PCI\x5CVEN_8086&DEV_125C&SUBSYS_7D911462&REV_04\x5C047C16FFFF56B63600"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_125C&SUBSYS_7D911462&REV_04\x5C047C16FFFF56B63600
+  CM ID "PCI\x5CVEN_8086&DEV_7A23&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FC"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A23&SUBSYS_7D911462&REV_11\x5C3&11583659&0&FC
+  CM ID "PCI\x5CVEN_8086&DEV_7A62&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B8"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A62&SUBSYS_7D911462&REV_11\x5C3&11583659&0&B8
+  CM ID "PCI\x5CVEN_1002&DEV_73DF&SUBSYS_661A1EAE&REV_DF\x5C6&21465cf7&0&00000008"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_73DF&SUBSYS_661A1EAE&REV_DF\x5C6&21465cf7&0&00000008
+  CM ID "PCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&3b1ae242&0&00D0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_144D&DEV_A80C&SUBSYS_A801144D&REV_00\x5C4&3b1ae242&0&00D0
+  CM ID "PCI\x5CVEN_1002&DEV_1478&SUBSYS_00000000&REV_DF\x5C4&375498b8&0&0008"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_1002&DEV_1478&SUBSYS_00000000&REV_DF\x5C4&375498b8&0&0008
+  CM ID "PCI\x5CVEN_8086&DEV_7A70&SUBSYS_00948086&REV_11\x5C3&11583659&0&A3"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A70&SUBSYS_00948086&REV_11\x5C3&11583659&0&A3
+  CM ID "PCI\x5CVEN_8086&DEV_A74D&SUBSYS_00000000&REV_01\x5C3&11583659&0&30"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_A74D&SUBSYS_00000000&REV_01\x5C3&11583659&0&30
+  CM ID "PCI\x5CVEN_8086&DEV_7A27&SUBSYS_00000000&REV_11\x5C3&11583659&0&A2"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CPCI\x5CVEN_8086&DEV_7A27&SUBSYS_00000000&REV_11\x5C3&11583659&0&A2
+### PCI: 29 CM ID(s), 29 instance key(s) openable
+
+### USB: CM_Get_Device_ID_List_SizeW -> CONFIGRET 0x00000000, 4196 chars
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_00\x5C6&9754fec&3&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_00\x5C6&9754fec&3&0000
+  CM ID "USB\x5CVID_1058&PID_0827\x5C525430384F30393238424C57"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0827\x5C525430384F30393238424C57
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&344308c1&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_01\x5C7&344308c1&0&0001
+  CM ID "USB\x5CVID_174C&PID_55AA\x5CMSFT3000000000000000000000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_174C&PID_55AA\x5CMSFT3000000000000000000000
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5C7&154295cd&0&4"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5C7&154295cd&0&4
+  CM ID "USB\x5CVID_1462&PID_7D91\x5C8F6473158124"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1462&PID_7D91\x5C8F6473158124
+  CM ID "USB\x5CVID_045B&PID_0210\x5C6&320e2471&0&1"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C6&320e2471&0&1
+  CM ID "USB\x5CVID_1235&PID_8211\x5CA2LTAX86CAD2GU"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1235&PID_8211\x5CA2LTAX86CAD2GU
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5CMSFT3000000000000000000000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5CMSFT3000000000000000000000
+  CM ID "USB\x5CVID_1532&PID_0203&MI_00\x5C7&111d7d27&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_00\x5C7&111d7d27&0&0000
+  CM ID "USB\x5CVID_1050&PID_0407&MI_02\x5C8&2da1c140&0&0002"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_02\x5C8&2da1c140&0&0002
+  CM ID "USB\x5CVID_05E3&PID_0608\x5C5&3b72e4cf&0&10"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0608\x5C5&3b72e4cf&0&10
+  CM ID "USB\x5CVID_05E3&PID_0610\x5C5&3b72e4cf&0&2"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610\x5C5&3b72e4cf&0&2
+  CM ID "USB\x5CVID_05E3&PID_0610\x5C5&3b72e4cf&0&9"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610\x5C5&3b72e4cf&0&9
+  CM ID "USB\x5CVID_1B1C&PID_0C32&MI_00\x5C7&33e0279f&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_00\x5C7&33e0279f&0&0000
+  CM ID "USB\x5CVID_0000&PID_0002\x5C6&c8f3955&0&2"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0000&PID_0002\x5C6&c8f3955&0&2
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_02\x5C7&344308c1&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_02\x5C7&344308c1&0&0002
+  CM ID "USB\x5CVID_0E8D&PID_0003\x5C5&3b72e4cf&0&4"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0E8D&PID_0003\x5C5&3b72e4cf&0&4
+  CM ID "USB\x5CVID_1532&PID_0567\x5C0000000000000000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0567\x5C0000000000000000
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_00\x5C7&2189581c&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_00\x5C7&2189581c&0&0000
+  CM ID "USB\x5CVID_045B&PID_0209\x5C6&3220810&0&1"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C6&3220810&0&1
+  CM ID "USB\x5CVID_1532&PID_0527&MI_00\x5C7&28170fe0&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0527&MI_00\x5C7&28170fe0&0&0000
+  CM ID "USB\x5CVID_0DB0&PID_A74B\x5C5&3b72e4cf&0&11"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B\x5C5&3b72e4cf&0&11
+  CM ID "USB\x5CVID_045B&PID_0210\x5C5&3b72e4cf&0&18"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C5&3b72e4cf&0&18
+  CM ID "USB\x5CVID_045B&PID_0210\x5C5&3b72e4cf&0&23"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C5&3b72e4cf&0&23
+  CM ID "USB\x5CVID_1532&PID_0203&MI_01\x5C7&111d7d27&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_01\x5C7&111d7d27&0&0001
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5C7095315ff0208b6073ebf3368b448b710daf29d30fd12cc4ba8ab1e3ed8d9564e6796176049972667698266562c312adad3ab581280417559829ec2d"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5C7095315ff0208b6073ebf3368b448b710daf29d30fd12cc4ba8ab1e3ed8d9564e6796176049972667698266562c312adad3ab581280417559829ec2d
+  CM ID "USB\x5CROOT_HUB30\x5C4&1de9f484&0&0"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CROOT_HUB30\x5C4&1de9f484&0&0
+  CM ID "USB\x5CVID_1532&PID_0567&MI_00\x5C6&2cd9d105&3&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0567&MI_00\x5C6&2cd9d105&3&0000
+  CM ID "USB\x5CVID_1532&PID_00AA&MI_00\x5C7&1de262ef&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_00\x5C7&1de262ef&0&0000
+  CM ID "USB\x5CVID_1532&PID_0567&MI_05\x5C6&2cd9d105&3&0005"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0567&MI_05\x5C6&2cd9d105&3&0005
+  CM ID "USB\x5CVID_1B1C&PID_0C32&MI_01\x5C7&33e0279f&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32&MI_01\x5C7&33e0279f&0&0001
+  CM ID "USB\x5CVID_1532&PID_0568&MI_03\x5C6&2112ac4b&0&0003"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_03\x5C6&2112ac4b&0&0003
+  CM ID "USB\x5CVID_1058&PID_0810\x5C47564E3746353844554B3733"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1058&PID_0810\x5C47564E3746353844554B3733
+  CM ID "USB\x5CVID_1532&PID_00A4\x5C6&1868863b&0&1"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4\x5C6&1868863b&0&1
+  CM ID "USB\x5CVID_1050&PID_0407\x5C7&154295cd&0&4"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407\x5C7&154295cd&0&4
+  CM ID "USB\x5CVID_045B&PID_0210\x5C6&1672d9d8&0&1"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0210\x5C6&1672d9d8&0&1
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_00\x5C7&1829cf0f&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_00\x5C7&1829cf0f&0&0000
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_00\x5C7&34c53c68&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_00\x5C7&34c53c68&0&0000
+  CM ID "USB\x5CVID_045E&PID_02FF&IG_00\x5C00&00&000043D72889ED7E"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045E&PID_02FF&IG_00\x5C00&00&000043D72889ED7E
+  CM ID "USB\x5CVID_1050&PID_0407\x5C7&36541f62&0&4"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407\x5C7&36541f62&0&4
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581c&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_01\x5C7&2189581c&0&0001
+  CM ID "USB\x5CVID_1532&PID_0203&MI_00\x5C7&39fe9689&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_00\x5C7&39fe9689&0&0000
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5C47564E3746353844554B3733"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5C47564E3746353844554B3733
+  CM ID "USB\x5CVID_1532&PID_0203&MI_00\x5C7&23d72dcc&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_00\x5C7&23d72dcc&0&0000
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5C525430384F30393238424C57"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5C525430384F30393238424C57
+  CM ID "USB\x5CVID_1532&PID_0C00\x5C6&1868863b&0&2"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00\x5C6&1868863b&0&2
+  CM ID "USB\x5CVID_1532&PID_0C00\x5C6&1868863b&0&3"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00\x5C6&1868863b&0&3
+  CM ID "USB\x5CVID_1532&PID_0527\x5C00000000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0527\x5C00000000
+  CM ID "USB\x5CVID_1532&PID_0203&MI_02\x5C7&111d7d27&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_02\x5C7&111d7d27&0&0002
+  CM ID "USB\x5CVID_1532&PID_0203\x5C6&1868863b&0&1"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203\x5C6&1868863b&0&1
+  CM ID "USB\x5CVID_1532&PID_0203\x5C6&1868863b&0&2"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203\x5C6&1868863b&0&2
+  CM ID "USB\x5CVID_1532&PID_0203\x5C6&1868863b&0&3"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203\x5C6&1868863b&0&3
+  CM ID "USB\x5CVID_1532&PID_00AA&MI_01\x5C7&1de262ef&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_01\x5C7&1de262ef&0&0001
+  CM ID "USB\x5CVID_1532&PID_0568\x5C5&3b72e4cf&0&8"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568\x5C5&3b72e4cf&0&8
+  CM ID "USB\x5CVID_1532&PID_0568&MI_04\x5C6&2112ac4b&0&0004"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_04\x5C6&2112ac4b&0&0004
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_01\x5C7&1829cf0f&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_01\x5C7&1829cf0f&0&0001
+  CM ID "USB\x5CVID_05E3&PID_0620\x5C5&3b72e4cf&0&22"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620\x5C5&3b72e4cf&0&22
+  CM ID "USB\x5CVID_05E3&PID_0620\x5C5&3b72e4cf&0&24"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620\x5C5&3b72e4cf&0&24
+  CM ID "USB\x5CVID_045B&PID_0209\x5C5&3b72e4cf&0&3"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C5&3b72e4cf&0&3
+  CM ID "USB\x5CVID_045B&PID_0209\x5C5&3b72e4cf&0&8"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C5&3b72e4cf&0&8
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_01\x5C7&34c53c68&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_01\x5C7&34c53c68&0&0001
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_02\x5C7&2189581c&0&0002"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_02\x5C7&2189581c&0&0002
+  CM ID "USB\x5CVID_1532&PID_0203&MI_01\x5C7&39fe9689&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_01\x5C7&39fe9689&0&0001
+  CM ID "USB\x5CVID_1532&PID_0203&MI_01\x5C7&23d72dcc&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_01\x5C7&23d72dcc&0&0001
+  CM ID "USB\x5CVID_0DB0&PID_A74B&MI_07\x5C6&106104f&0&0007"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_07\x5C6&106104f&0&0007
+  CM ID "USB\x5CVID_1050&PID_0407&MI_00\x5C8&2da1c140&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_00\x5C8&2da1c140&0&0000
+  CM ID "USB\x5CVID_1532&PID_0C00\x5C6&3220810&0&3"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00\x5C6&3220810&0&3
+  CM ID "USB\x5CVID_1532&PID_00AA&MI_02\x5C7&1de262ef&0&0002"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA&MI_02\x5C7&1de262ef&0&0002
+  CM ID "USB\x5CVID_1050&PID_0407&MI_02\x5C8&921ac78&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_02\x5C8&921ac78&0&0002
+  CM ID "USB\x5CVID_1532&PID_0568&MI_00\x5C6&2112ac4b&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_00\x5C6&2112ac4b&0&0000
+  CM ID "USB\x5CVID_1532&PID_0568&MI_05\x5C6&2112ac4b&0&0005"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0568&MI_05\x5C6&2112ac4b&0&0005
+  CM ID "USB\x5CVID_8087&PID_0033\x5C5&3b72e4cf&0&14"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_8087&PID_0033\x5C5&3b72e4cf&0&14
+  CM ID "USB\x5CVID_1050&PID_0407&MI_01\x5C8&921ac78&0&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_01\x5C8&921ac78&0&0001
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_00\x5C7&344308c1&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_00\x5C7&344308c1&0&0000
+  CM ID "USB\x5CVID_1050&PID_0407&MI_00\x5C8&921ac78&0&0000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_00\x5C8&921ac78&0&0000
+  CM ID "USB\x5CVID_0781&PID_5581\x5C7095315ff0208b6073ebf3368b448b710daf29d30fd12cc4ba8ab1e3ed8d9564e6796176049972667698266562c312adad3ab581280417559829ec2d"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0781&PID_5581\x5C7095315ff0208b6073ebf3368b448b710daf29d30fd12cc4ba8ab1e3ed8d9564e6796176049972667698266562c312adad3ab581280417559829ec2d
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_02\x5C7&1829cf0f&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_02\x5C7&1829cf0f&0&0002
+  CM ID "USB\x5CVID_05E3&PID_0610\x5C6&3220810&0&2"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0610\x5C6&3220810&0&2
+  CM ID "USB\x5CVID_045B&PID_0209\x5C6&1ee3a122&0&1"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_045B&PID_0209\x5C6&1ee3a122&0&1
+  CM ID "USB\x5CVID_1532&PID_00A4\x5C5&3b72e4cf&0&4"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4\x5C5&3b72e4cf&0&4
+  CM ID "USB\x5CVID_1532&PID_0C00&MI_02\x5C7&34c53c68&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0C00&MI_02\x5C7&34c53c68&0&0002
+  CM ID "USB\x5CVID_0DB0&PID_A74B&MI_00\x5C6&106104f&0&0000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0DB0&PID_A74B&MI_00\x5C6&106104f&0&0000
+  CM ID "USB\x5CVID_0000&PID_0005\x5C5&3b72e4cf&0&4"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_0000&PID_0005\x5C5&3b72e4cf&0&4
+  CM ID "USB\x5CVid_0E0F&Pid_0001\x5C000000000000"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVid_0E0F&Pid_0001\x5C000000000000
+  CM ID "USB\x5CVID_1532&PID_0203&MI_02\x5C7&39fe9689&0&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_02\x5C7&39fe9689&0&0002
+  CM ID "USB\x5CVID_1532&PID_0527&MI_03\x5C7&28170fe0&0&0003"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0527&MI_03\x5C7&28170fe0&0&0003
+  CM ID "USB\x5CVID_05E3&PID_0620\x5C6&1672d9d8&0&2"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_05E3&PID_0620\x5C6&1672d9d8&0&2
+  CM ID "USB\x5CVID_1532&PID_00AA\x5C000000000000"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00AA\x5C000000000000
+  CM ID "USB\x5CVID_1532&PID_0203&MI_02\x5C7&23d72dcc&0&0002"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0203&MI_02\x5C7&23d72dcc&0&0002
+  CM ID "USB\x5CVID_1050&PID_0407&MI_01\x5C8&2da1c140&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1050&PID_0407&MI_01\x5C8&2da1c140&0&0001
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_02\x5C6&9754fec&3&0002"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_02\x5C6&9754fec&3&0002
+  CM ID "USB\x5CVID_1532&PID_0567&MI_03\x5C6&2cd9d105&3&0003"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_0567&MI_03\x5C6&2cd9d105&3&0003
+  CM ID "USB\x5CVID_1532&PID_00A4&MI_01\x5C6&9754fec&3&0001"  SetupAPI (present): no
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1532&PID_00A4&MI_01\x5C6&9754fec&3&0001
+  CM ID "USB\x5CVID_1B1C&PID_0C32\x5C808988F55437"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CUSB\x5CVID_1B1C&PID_0C32\x5C808988F55437
+### USB: 95 CM ID(s), 95 instance key(s) openable
+
+### HDAUDIO: CM_Get_Device_ID_List_SizeW -> CONFIGRET 0x00000000, 77 chars
+  CM ID "HDAUDIO\x5CFUNC_01&VEN_1002&DEV_AA01&SUBSYS_00AA0100&REV_1008\x5C7&a7fabda&0&0001"  SetupAPI (present): yes
+    open -> 0  [listed by RegEnumKeyExW, openable]  HKLM\SYSTEM\x5CCurrentControlSet\x5CEnum\x5CHDAUDIO\x5CFUNC_01&VEN_1002&DEV_AA01&SUBSYS_00AA0100&REV_1008\x5C7&a7fabda&0&0001
+### HDAUDIO: 1 CM ID(s), 1 instance key(s) openable
+
+## summary
+device-ID keys probed 68, openable 68; instance keys probed 73, openable 73; CM IDs 125

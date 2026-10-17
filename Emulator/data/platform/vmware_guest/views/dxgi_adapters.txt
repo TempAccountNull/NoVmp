@@ -1,0 +1,24 @@
+# fwid DXGI capture - fwid_probe 1.4 (2026-10-16)
+# CreateDXGIFactory1, IDXGIFactory1::EnumAdapters1, IDXGIAdapter1::GetDesc1, IDXGIAdapter::EnumOutputs + GetDesc.
+# Query only (no device is created). Failures are recorded, not counted as internal errors.
+
+=== adapter 0 (GetDesc1 HRESULT 0x00000000)
+Description: "Microsoft Basic Render Driver"
+VendorId 0x1414  DeviceId 0x008C  SubSysId 0x00000000  Revision 0x00
+DedicatedVideoMemory 0  DedicatedSystemMemory 0  SharedSystemMemory 8589436928
+AdapterLuid 00000000:0000B6AC  Flags 0x00000000
+  output 0: DeviceName "\x5C\x5C.\x5CDISPLAY1" desktop (0,0)-(1920,1080) attached 1 rotation 1
+
+=== adapter 1 (GetDesc1 HRESULT 0x00000000)
+Description: "Microsoft Basic Render Driver"
+VendorId 0x1414  DeviceId 0x008C  SubSysId 0x00000000  Revision 0x00
+DedicatedVideoMemory 0  DedicatedSystemMemory 0  SharedSystemMemory 8589436928
+AdapterLuid 00000000:0000B76B  Flags 0x00000002 SOFTWARE
+
+=== adapter 2 (GetDesc1 HRESULT 0x00000000)
+Description: "Microsoft Basic Render Driver"
+VendorId 0x1414  DeviceId 0x008C  SubSysId 0x00000000  Revision 0x00
+DedicatedVideoMemory 0  DedicatedSystemMemory 0  SharedSystemMemory 8589436928
+AdapterLuid 00000000:00012AFF  Flags 0x00000000
+
+3 adapter(s)

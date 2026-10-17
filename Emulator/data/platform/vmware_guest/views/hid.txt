@@ -1,0 +1,29 @@
+# fwid HID capture - fwid_probe 1.4 (2026-10-16)
+# USER-AUTHORIZED EXCEPTION (narrow): per HID interface: path, VID / PID / version (HidD_GetAttributes),
+# manufacturer / product / serial strings (HidD_Get*String) and the parent device chain (CM_Get_Parent). Handles are
+# opened with access 0; nothing is read from or written to a device. IDENTIFIERS: serial strings and instance IDs.
+HID interface class GUID {4D1E55B2-F16F-11CF-88CB-001111000030}
+
+=== interface 0
+  path: "\x5C\x5C?\x5Chid#vid_0e0f&pid_0003&mi_01#8&2641b88&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_0E0F&PID_0003&MI_01\x5C8&2641B88&0&0000"
+  parent:       "USB\x5CVID_0E0F&PID_0003&MI_01\x5C7&220035BB&0&0001"
+  grandparent:  "USB\x5CVID_0E0F&PID_0003\x5C6&1E7C416C&0&5"
+  level 3:      "USB\x5CROOT_HUB30\x5C5&315918C4&0&0"
+  attributes:   VID 0x0E0F PID 0x0003 version 0x0102
+  manufacturer: "VMware"
+  product:      "VMware"
+  serial:       (not returned, GetLastError 87)
+
+=== interface 1
+  path: "\x5C\x5C?\x5Chid#vid_0e0f&pid_0003&mi_00#8&26f448a1&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}" [IDENTIFIER - keep local]
+  device:       "HID\x5CVID_0E0F&PID_0003&MI_00\x5C8&26F448A1&0&0000"
+  parent:       "USB\x5CVID_0E0F&PID_0003&MI_00\x5C7&220035BB&0&0000"
+  grandparent:  "USB\x5CVID_0E0F&PID_0003\x5C6&1E7C416C&0&5"
+  level 3:      "USB\x5CROOT_HUB30\x5C5&315918C4&0&0"
+  attributes:   VID 0x0E0F PID 0x0003 version 0x0102
+  manufacturer: "VMware"
+  product:      "VMware"
+  serial:       (not returned, GetLastError 87)
+
+2 interface(s), 2 opened with access 0

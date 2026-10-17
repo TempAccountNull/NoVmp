@@ -1,0 +1,44 @@
+# fwid registry capture - fwid_probe 1.4 (2026-10-16)
+# values (all of them, every type, binary in full hex) of two keys; subkey names listed, not descended.
+# Opened with KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS only; nothing is written.
+
+## HKLM\HARDWARE\DESCRIPTION\System\BIOS
+key last write time: 2024-06-22T13:19:51Z; 15 value(s), 0 subkey(s)
+value "BiosMajorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "BiosMinorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "ECFirmwareMajorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "ECFirmwareMinorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "BaseBoardManufacturer"  REG_SZ (1)  36 bytes: "Intel Corporation"
+value "BaseBoardProduct"  REG_SZ (1)  66 bytes: "440BX Desktop Reference Platform"
+value "BaseBoardVersion"  REG_SZ (1)  10 bytes: "None"
+value "BIOSReleaseDate"  REG_SZ (1)  22 bytes: "03/10/2026"
+value "BIOSVendor"  REG_SZ (1)  26 bytes: "VMware, Inc."
+value "BIOSVersion"  REG_SZ (1)  70 bytes: "VMW201.00V.25275966.B64.2603102050"
+value "SystemFamily"  REG_SZ (1)  2 bytes: ""
+value "SystemManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+value "SystemProductName"  REG_SZ (1)  16 bytes: "MS-7D91"
+value "SystemSKU"  REG_SZ (1)  2 bytes: ""
+value "SystemVersion"  REG_SZ (1)  10 bytes: "None"
+
+## HKLM\HARDWARE\DESCRIPTION\System
+key last write time: 2024-06-22T13:19:51Z; 7 value(s), 5 subkey(s)
+value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000000000000000000 (16 bytes hex)
+value "Identifier"  REG_SZ (1)  34 bytes: "AT/AT COMPATIBLE"
+value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  68 bytes: (68 bytes)
+    0000: FF FF FF FF FF FF FF FF 00 00 00 00 02 00 00 00  |................|
+    0010: 05 00 00 00 0C 00 00 00 00 00 00 00 00 00 00 00  |................|
+    0020: 00 00 00 00 00 00 FF FF FF FF 00 00 FF FF 01 00  |................|
+    0030: 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+    0040: 00 00 00 00                                      |....|
+value "SystemBiosVersion"  REG_MULTI_SZ (7)  148 bytes: (list)
+      [0] "INTEL  - 6040000"
+      [1] "VMW201.00V.25275966.B64.2603102050"
+      [2] "VMware, Inc. - 10000"
+value "BootArchitecture"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+value "PreferredProfile"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+value "Capabilities"  REG_DWORD (4)  4 bytes: 0x00004421 (17441)
+subkey "CentralProcessor" (name only; its values are not read)
+subkey "FloatingPointProcessor" (name only; its values are not read)
+subkey "MultifunctionAdapter" (name only; its values are not read)
+subkey "BIOS" (name only; its values are not read)
+subkey "VideoAdapterBusses" (name only; its values are not read)

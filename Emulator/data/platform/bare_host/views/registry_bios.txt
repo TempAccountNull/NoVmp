@@ -1,0 +1,50 @@
+# fwid registry capture - fwid_probe 1.4 (2026-10-16)
+# values (all of them, every type, binary in full hex) of two keys; subkey names listed, not descended.
+# Opened with KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS only; nothing is written.
+
+## HKLM\HARDWARE\DESCRIPTION\System\BIOS
+key last write time: 2025-08-08T00:11:04Z; 15 value(s), 0 subkey(s)
+value "BiosMajorRelease"  REG_DWORD (4)  4 bytes: 0x00000005 (5)
+value "BiosMinorRelease"  REG_DWORD (4)  4 bytes: 0x0000001B (27)
+value "ECFirmwareMajorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "ECFirmwareMinorRelease"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+value "BaseBoardManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+value "BaseBoardProduct"  REG_SZ (1)  66 bytes: "MAG Z790 TOMAHAWK WIFI (MS-7D91)"
+value "BaseBoardVersion"  REG_SZ (1)  8 bytes: "4.0"
+value "BIOSReleaseDate"  REG_SZ (1)  22 bytes: "08/12/2024"
+value "BIOSVendor"  REG_SZ (1)  80 bytes: "American Megatrends International, LLC."
+value "BIOSVersion"  REG_SZ (1)  10 bytes: "H.D0"
+value "SystemFamily"  REG_SZ (1)  30 bytes: "Default string"
+value "SystemManufacturer"  REG_SZ (1)  70 bytes: "Micro-Star International Co., Ltd."
+value "SystemProductName"  REG_SZ (1)  16 bytes: "MS-7D91"
+value "SystemSKU"  REG_SZ (1)  30 bytes: "Default string"
+value "SystemVersion"  REG_SZ (1)  8 bytes: "4.0"
+
+## HKLM\HARDWARE\DESCRIPTION\System
+key last write time: 2025-08-08T00:11:04Z; 7 value(s), 5 subkey(s)
+value "Component Information"  REG_BINARY (3)  16 bytes: 00000000000000000000000000000000 (16 bytes hex)
+value "Identifier"  REG_SZ (1)  34 bytes: "AT/AT COMPATIBLE"
+value "Configuration Data"  REG_FULL_RESOURCE_DESCRIPTOR (9)  176 bytes: (176 bytes)
+    0000: FF FF FF FF FF FF FF FF 00 00 00 00 02 00 00 00  |................|
+    0010: 05 00 00 00 78 00 00 00 00 00 00 00 00 00 00 00  |....x...........|
+    0020: 00 00 00 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+    0030: 00 00 FF FF FF FF 00 00 FF FF 0A 00 00 00 FF FF  |................|
+    0040: FF FF 00 00 FF FF 0A 00 00 00 FF FF FF FF 00 00  |................|
+    0050: FF FF 0A 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+    0060: 00 00 FF FF FF FF 00 00 FF FF 0A 00 00 00 FF FF  |................|
+    0070: FF FF 00 00 FF FF 0A 00 00 00 FF FF FF FF 00 00  |................|
+    0080: FF FF 0A 00 00 00 FF FF FF FF 00 00 FF FF 0A 00  |................|
+    0090: 00 00 FF FF FF FF 00 00 FF FF 0A 00 05 00 00 00  |................|
+    00A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+value "SystemBiosVersion"  REG_MULTI_SZ (7)  102 bytes: (list)
+      [0] "ALASKA - 1072009"
+      [1] "H.D0"
+      [2] "American Megatrends - 5001B"
+value "BootArchitecture"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+value "PreferredProfile"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+value "Capabilities"  REG_DWORD (4)  4 bytes: 0x0003C6E5 (247525)
+subkey "CentralProcessor" (name only; its values are not read)
+subkey "FloatingPointProcessor" (name only; its values are not read)
+subkey "MultifunctionAdapter" (name only; its values are not read)
+subkey "BIOS" (name only; its values are not read)
+subkey "VideoAdapterBusses" (name only; its values are not read)

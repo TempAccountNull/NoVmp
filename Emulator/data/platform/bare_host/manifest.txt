@@ -13,7 +13,7 @@ provenance.companion_3              = baseline\Host_clean_20261016_xinuse_all_lp
 provenance.peer_capture             = baseline\Run3b_clean_guest_fwid14_20261016\* manifest 2828D5201670AFFF41FAD5027E90C113A310AE2F8CAA11F59282FA7FB79F526D (enum_registry.txt only: the shared USB serial table)
 provenance.firmware_reference       = baseline\Host_clean_20261016_fwid13\* manifest C9B008D860BEB95F3E7BFD5724FE6670A01EC4024E9C5471D7EF34851D706B89: 53 of 53 firmware entries (rsmb / acpi / hwacpi / edid) byte-identical (SHA-256)
 build_config                        = build_config.txt (this folder; rebuild: emu-profilegen --config build_config.txt - applies identity_map.tsv)
-identity_map                        = identity_map.tsv (this folder): 257 synthetic values, drawn once from RDRAND at generation; every build applies them
+identity_map                        = identity_map.tsv (this folder): 259 synthetic values, drawn once from RDRAND at generation; every build applies them
 rules                               = 1 2 2h 2o 3 4a 4b 4c 4d 6 7 8
 optional_inputs                     = os_ids.txt yes, edid.txt yes, license.txt yes, update_ids.txt yes, disks.txt yes, hid.txt yes, gpu.txt yes, bluetooth.txt yes, audio.txt yes, chid.txt yes, platform_security.txt yes, environment.txt yes, wifi.txt yes, printers.txt yes
 test_signing_certificate_present    = yes
@@ -21,11 +21,12 @@ smbios                              = version 3.6, 105 structures, table 5203 by
 edid                                = 7 values (edid\), 9 fields + 7 checksums (fieldmap.tsv D rows); extension blocks 0, with a real serial 0
 acpi                                = 45 table files byte-exact (acpi\); checksum valid 44, not applicable (FACS) 1, not valid 0; identifier search: 0 hit(s)
 disk                                = 8 STORAGE_DEVICE_DESCRIPTORs (disk\): 6 serials replaced (fieldmap.tsv R rows), 2 placeholder serials exact, 0 without a serial
-identity                            = 344 identifiers, 4623 occurrence + relation rows (identity.tsv, fieldmap.tsv)
+identity                            = 347 identifiers, 4630 occurrence + relation rows (identity.tsv, fieldmap.tsv)
 exclusions                          = 1 range(s) of tool artifacts not part of the profile (exclusions.tsv): RustDesk Printer: nothing found; RustDesk: 1 range(s), 1 line(s); System Informer: nothing found; DebugView: nothing found; VmLoader: nothing found; 0 identifier anchor(s), 0 occurrence row(s) inside them dropped
 volatile                            = 20 values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps
 install_shift                       = 89 install-history values (bt_event_time 6, device_arrival_time 13, device_install_time 42, diagtrack_time 3, event_iso 22, install_date 1, install_time 1, sqm_first_session 1) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): 89 of 89 exact, so every pairwise difference is the original one; 0 outside the build release .. capture window; 34 precede the OS install in the capture and 34 in the profile (Windows setup)
-v1_guids                            = 65 RFC 4122 version-1 GUIDs (rule 4c, U1516): timestamp = real + the install-history offset for 65 of 65 (100-ns units, derived - never drawn); clock sequence synthetic, variant bits and the node rule kept; 7 real timestamps precede the OS install (they stay earlier by the same spacing), 0 follow the capture
+v1_guids                            = 67 RFC 4122 version-1 GUIDs (rule 4c, U1516): timestamp = real + the install-history offset for 67 of 67 (100-ns units, derived - never drawn); clock sequence synthetic, variant bits and the node rule kept; 7 real timestamps precede the OS install (they stay earlier by the same spacing), 0 follow the capture
+views                               = 25 synthetic text views (views\<fwid file>, U1518): 1892 recorded occurrences replaced in their own form and letter case (2 more inside another replaced one, agreeing with it), 1082 registry last-write times moved by the install-history offset (rule 7b, user decision 2026-10-17), 1 line(s) of excluded tool artifacts as marker lines (line numbers = the capture's); not exported (run metadata / not part of the profile / decoded copies of the blobs / the CPUID profile): VERDICT_CONSISTENT.txt, acpi_decoded.txt, capture_info.txt, cpuid_dump.txt, hwacpi_registry.txt, smbios_decoded.txt
 # size_bytes  sha256  file
        476  9938CE7F69CB016D6AFE3B916BEFFA916215D8DEAEF59C5C42805F1256673309  acpi\acpi_APIC.bin
         56  0661FEB4EEC8887AB24FAABE7943B3C25DD0C1F8A1D5698A4981A1AB66CF7AF8  acpi\acpi_BGRT.bin
@@ -72,7 +73,7 @@ v1_guids                            = 65 RFC 4122 version-1 GUIDs (rule 4c, U151
      14810  B92E63EF381E84FD2AEA59316C495695CD4521D2434EC0D21EF34EA6F7C558FC  acpi\hwacpi_012_SSD9_SocGpe_SocGpe__00003000_00000000.bin
      14810  F2028CE43DC53C1F1944A5F4650C58EA9AC50D1919299A09FDC8214ED88B5C22  acpi\hwacpi_013_SSDA_SocCmn_SocCmn__00003000_00000000.bin
        908  7D9BF2ACF8E4B1BDCC6C1654EDC3E77A5EC9E6A08F50795431C8797E0C054C23  acpi\hwacpi_014_SSDT_PmaxDv_Pmax_Dev_00000001_00000000.bin
-      3380  8DDAECC614C9A6F01FE789BB15298CC87E552C22E4EA98C9003B77A4BC1EFE73  build_config.txt
+      3415  5B93709EF50DAD6E763F8005DDD0CE34191A66B6E677B09015952799078998BE  build_config.txt
        396  EF8BE575180006CD53C663E649E0803EE92499C9EBCF0BC62530101BA6E27A72  disk\disk_0_descriptor.bin
        396  E9D337EC1D1D3DF437C5F91A7C04E51B08C07AA3DEBDB1E3F4A2C063374EA1FA  disk\disk_1_descriptor.bin
        396  55A04D2432ECD02F89C3E0756DBD0B7E5A2E39D043EBBF49F9255C27993800CC  disk\disk_2_descriptor.bin
@@ -89,9 +90,34 @@ v1_guids                            = 65 RFC 4122 version-1 GUIDs (rule 4c, U151
        128  636BC17912343A06CBE73E03CD39B612663E3FAC3954A66FD80CC90005AC7962  edid\edid_5.bin
        128  26B89AF8368B36A058DEF4B388117D351D3E1BDCB24AD91A3FA909C67FD42CE1  edid\edid_6.bin
        470  84F74498EBF8466FAA285D6991AF1C3F3FC92456F959E3E4CB8838F5E1419D0D  exclusions.tsv
-    226797  35F1D48FADC32099626404FE58CD802D953FEA66D272669C360C21097BBECB6C  fieldmap.tsv
-     28956  A5E57238FC468273FC86C29C300DFD4558CA8E7928123BC623161167BAD3F2DD  identity.tsv
-     14837  0B0073400E967E43F65FF97097B4A234C06588AEF13BDC5393875C385E1F19AD  identity_map.tsv
+    227433  B0D426EFE1B83FAD464F6FB3908DA837CDA8A830FE40E688A1245A37ADE78105  fieldmap.tsv
+     29237  611F75ED411701DDA7267737D6174E9523855F3ECC12C41E0758D2D6919F43A3  identity.tsv
+     14953  85170C1DE8829E33AA1244AC5265F9B280B7CBAEF4DEA253097CEF67D18B7867  identity_map.tsv
       5211  1A2574D8907C883ED0EB8DC7DD4E2AEA64AE7581B32A32B9131639E0CD814C42  smbios.bin
+     51334  C112B90708C7ECDC1956477AF9A6F6E799664B5868E2907EB71A5F3A9E5E7C17  views\audio.txt
+      6273  BCF7F88765837B6BDF7C9322DD87E8F2C731088EE82F0A9F13A64EDC5A34AE21  views\bluetooth.txt
+      1609  34F2AA374B2A71E643EE65EB0524DD16BD699D9D1C084415D3F09A992C17D00C  views\chid.txt
+     46165  5263BF9B1E7C59CF602ACEF5B7E4A7B52449964CD77BC00D295FD9C29F8840E8  views\code_integrity.txt
+      4753  08C47EC87DC5983DE7B6BDC5EC8F6CFEC878AF510E2224548862DFD7DB21E670  views\disks.txt
+       653  508FE9F847CB312F508DA84996262711027ECAE8B03810B8F0510E8924E2F2FA  views\driver_files.txt
+      1335  1EB46CE03D77EBFF58F0936428DC3492D49848A3CF27522801E016C4F289C290  views\dxgi_adapters.txt
+      9332  522E1D7E1A629CB207B4B41E94F2FC53E2AC2621D0926700B25B511D573AD7F2  views\edid.txt
+     51135  7B7E6F330DFAD51AD3428736AD0696B86A0A8823F53F1434B52B5DFDC3B758ED  views\enum_open_probe.txt
+    622289  E2F49BBBEE3D914C6175C559146A97D40AB023A9A0304731F47910F7C61B9C4A  views\enum_registry.txt
+      2043  52C3ADD4A6E823F56480EFE684AC26570CD1D9477E51AE9BAC114059D5A44077  views\environment.txt
+     69847  7593AF39694A8133E87E8ECA14BA408F55DB4C0A4D729DE8AB4F2035168C280F  views\gpu.txt
+     19829  855A12DFC3CE978977744342093F8F4B1F7A3C55A71E87D22BF49759B9A2755F  views\hid.txt
+      4210  A10F2BFBB74B3DC2D6BE45FDED21299F04D505ECE1A6B775E038DEA8FBAFEA28  views\license.txt
+     40754  8231CDC663E97CC43AD4D515B3F6AEF93C34E1367C07202595B34EB4C70D11F1  views\loaded_drivers.txt
+     15485  BC75E84C3510E9CB5AD203B1DB50AC96151EC64114C44684B1A83FAD38766F4F  views\network_adapters.txt
+      4813  2F245D2D78371526742636D2DD928386A32612AF139D3014A343B2555EE030EB  views\os_ids.txt
+   1872727  2F1D7898366934BB18CC7446FA3B95ACD4BDCBFB497F63D1F2D79B16FB684553  views\pci_devices.txt
+      4268  112FA73F56F23DF43E757FF398AE8A1349E6E960984BAE38975CB633237C82B6  views\platform_security.txt
+      1286  D2EB45DCFC96CBF12B9419A179EA92CA1A71B0276F928FF78A7D8E76524B1F6F  views\printers.txt
+      3235  212772E611DF7AABED3D2AB06019860C71C1B9520A4C7F54DE7C83CE98DAA2BB  views\registry_bios.txt
+     57869  11BC39E11F3B58D9DDF2B886F9175E2E50F8A5D9280271E1A6D6BDE93F35D330  views\registry_hardware_description.txt
+     92909  17309CA766140C28887D0651168E6FE4D44943A74E4CC57FE3B027BB2D1EF1D2  views\services_vm.txt
+      4944  68FD1F1A9D65A1400950BA18C60CFCF0E8BC6A0E39D40B6C1EDE912B2C3FC89C  views\update_ids.txt
+       639  139B0F54451C0D05E1FA3E5FBB81E04BD6974BED1E579D106706CAB5A6832527  views\wifi.txt
       2773  DD2056E073275B608B2B8AF556E704AB5B027F74F474F8660A44BA073F474A57  volatile.tsv
-# 67 file(s)
+# 92 file(s)

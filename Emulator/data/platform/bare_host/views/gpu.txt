@@ -1,0 +1,908 @@
+# fwid GPU class-key capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\NNNN: every numeric subkey, values only (KEY_READ; binary in full hex incl.
+# HardwareInformation.*), matched to the present display-class device whose SPDRP_DRIVER is <class>\NNNN, with its SUBSYS.
+# [IDENTIFIER?] marks values that look per-device unique (for review).
+non-numeric subkey "Configuration" (not read)
+non-numeric subkey "Properties" (not read)
+
+########## class subkey 0000
+present device: "PCI\x5CVEN_1002&DEV_73DF&SUBSYS_661A1EAE&REV_DF\x5C6&21465CF7&0&00000008"  SUBSYS_661A1EAE
+
+## HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000
+  depth 0; last write 2025-08-08T00:11:06Z; 322 value(s), 11 subkey(s)
+  value "DriverDesc"  REG_SZ (1)  38 bytes: "AMD Radeon RX 6700"
+  value "ProviderName"  REG_SZ (1)  58 bytes: "Advanced Micro Devices, Inc."
+  value "DriverDateData"  REG_BINARY (3)  8 bytes: 00C050927EFFDC01 (8 bytes hex)
+  value "DriverDate"  REG_SZ (1)  20 bytes: "6-19-2026"
+  value "DriverVersion"  REG_SZ (1)  34 bytes: "32.0.21043.19003"
+  value "InfPath"  REG_SZ (1)  20 bytes: "oem24.inf"
+  value "InfSection"  REG_SZ (1)  32 bytes: "ati2mtag_Navi22"
+  value "MatchingDeviceId"  REG_SZ (1)  58 bytes: "PCI\x5CVEN_1002&DEV_73DF&REV_DF"
+  value "FeatureScore"  REG_DWORD (4)  4 bytes: 0x000000CF (207)
+  value "HardwareInformation.ChipType"  REG_BINARY (3)  78 bytes: (78 bytes)
+      0000: 41 00 4D 00 44 00 20 00 52 00 61 00 64 00 65 00  |A.M.D. .R.a.d.e.|
+      0010: 6F 00 6E 00 20 00 47 00 72 00 61 00 70 00 68 00  |o.n. .G.r.a.p.h.|
+      0020: 69 00 63 00 73 00 20 00 50 00 72 00 6F 00 63 00  |i.c.s. .P.r.o.c.|
+      0030: 65 00 73 00 73 00 6F 00 72 00 20 00 28 00 30 00  |e.s.s.o.r. .(.0.|
+      0040: 78 00 37 00 33 00 44 00 46 00 29 00 00 00        |x.7.3.D.F.)...|
+  value "HardwareInformation.DacType"  REG_BINARY (3)  42 bytes: (42 bytes)
+      0000: 49 00 6E 00 74 00 65 00 72 00 6E 00 61 00 6C 00  |I.n.t.e.r.n.a.l.|
+      0010: 20 00 44 00 41 00 43 00 28 00 34 00 30 00 30 00  | .D.A.C.(.4.0.0.|
+      0020: 4D 00 48 00 7A 00 29 00 00 00                    |M.H.z.)...|
+  value "HardwareInformation.AdapterString"  REG_BINARY (3)  38 bytes: (38 bytes)
+      0000: 41 00 4D 00 44 00 20 00 52 00 61 00 64 00 65 00  |A.M.D. .R.a.d.e.|
+      0010: 6F 00 6E 00 20 00 52 00 58 00 20 00 36 00 37 00  |o.n. .R.X. .6.7.|
+      0020: 30 00 30 00 00 00                                |0.0...|
+  value "HardwareInformation.BiosString"  REG_BINARY (3)  36 bytes: (36 bytes)
+      0000: 31 00 31 00 33 00 2D 00 36 00 37 00 4C 00 39 00  |1.1.3.-.6.7.L.9.|
+      0010: 36 00 53 00 4D 00 44 00 31 00 2D 00 44 00 30 00  |6.S.M.D.1.-.D.0.|
+      0020: 31 00 00 00                                      |1...|
+  value "HardwareInformation.MemorySize"  REG_DWORD (4)  4 bytes: 0xFFF00000 (4293918720)
+  value "DDC2Disabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "MultiFunctionSupported"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "TimingSelection"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "VgaCompatible"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Adaptive De-interlacing"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "VPE Adaptive De-interlacing"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "GCOOPTION_DisableGPIOPowerSaveMode"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ReleaseVersion"  REG_SZ (1)  118 bytes: "25.10.43.19-260616a-201588C-AMD-Software-Adrenalin-Edition"
+  value "BuildNumber"  REG_SZ (1)  12 bytes: "09700"
+  value "UserModeDriverGUID"  REG_SZ (1)  78 bytes: "{F3A42474-0891-4151-B44A-ED04B657432B}"
+      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)
+  value "DALGameGammaScale"  REG_DWORD (4)  4 bytes: 0x00646464 (6579300)
+  value "DXVA_WMV_NA"  REG_SZ (1)  4 bytes: "1"
+  value "DI_METHOD_NA"  REG_SZ (1)  4 bytes: "0"
+  value "Force_CV_Detection_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "LDA_ChainDescriptor"  REG_SZ (1)  2 bytes: ""
+  value "KMD_UVDVideoStopDelay"  REG_DWORD (4)  4 bytes: 0x000007D0 (2000)
+  value "color_mapping_runtime_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "powermanagement_delag_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "chill_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "SMOOTHVISION_NAME"  REG_SZ (1)  2 bytes: ""
+  value "VIDEO_NAME_SUFFIX"  REG_SZ (1)  20 bytes: "Avivo(TM)"
+  value "SameOnAllUsingStandardInVideoTheaterCloneMode"  REG_SZ (1)  4 bytes: "1"
+  value "3to2Pulldown_NA"  REG_SZ (1)  4 bytes: "0"
+  value "GI_NA"  REG_SZ (1)  4 bytes: "1"
+  value "AreaAniso_NA"  REG_SZ (1)  4 bytes: "1"
+  value "AAF_NA"  REG_SZ (1)  4 bytes: "0"
+  value "TemporalAAMultiplier_NA"  REG_SZ (1)  4 bytes: "1"
+  value "CN_Hide_All_Notification"  REG_SZ (1)  12 bytes: "false"
+  value "USR_DelayInDays"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "USR_RepeatAfterDays"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "news_feed_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "6CD6F123-9AE3-4A7D-A182-D90051B6B327"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PowerSaverAutoEnable_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Chill40_NA"  REG_SZ (1)  12 bytes: "False"
+  value "cpumetrics_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "ADL_CDVL"  REG_SZ (1)  12 bytes: "23.19"
+  value "HideAMDLinkForWindows"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "dvr_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "prefmonitor_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "gpu_od_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "smarttools_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "RSXBrowserUnavailable"  REG_SZ (1)  10 bytes: "true"
+  value "notifications_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "BugReportTool_Hide"  REG_SZ (1)  12 bytes: "false"
+  value "displays_list_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "customresolution_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "customresolution_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "displaycolor_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "displayprops_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "displayspec_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "hdcp_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "tenbit_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "color_enhancement_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "freesync_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "video_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "camera_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "wirelessvr_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "hotkeys_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "profileusertype_runtime_na"  REG_SZ (1)  12 bytes: "false"
+  value "imagesharpening_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "framerate_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "enhancedsync_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "crossfire_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "framepacing_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "tessellation_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "ogltriplebuffering_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "gpuworkload_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "virtualmemory_runtime_na"  REG_SZ (1)  12 bytes: "false"
+  value "misctools_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "ecc_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "quadbuffer_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "wattman_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "ProblemReportUrl"  REG_SZ (1)  10 bytes: "show"
+  value "HelpUrl"  REG_SZ (1)  10 bytes: "show"
+  value "EnableCoolerMasterRGB"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "AdvancedMetrics_NA"  REG_SZ (1)  12 bytes: "false"
+  value "EnableTempIntake"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "IsAutoDefault"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "CN_Hide_Toast_Notification"  REG_SZ (1)  12 bytes: "false"
+  value "edid_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "dgma_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "glpbmode_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "audio_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "ReportAnalytics"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DvrToastNotification_250_Hide"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ClaimData_NA"  REG_SZ (1)  10 bytes: "true"
+  value "IntelligenceFeature_NA"  REG_SZ (1)  12 bytes: "false"
+  value "smartfeatures_ui_component_NA"  REG_SZ (1)  12 bytes: "false"
+  value "CN_Hide_Tutorials"  REG_SZ (1)  12 bytes: "false"
+  value "CN_Hide_FeatureData"  REG_SZ (1)  12 bytes: "false"
+  value "videoupscale_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "DriverBuildNumber"  REG_SZ (1)  140 bytes: "2606191403-25.10.43.19-260616a-201588C-AMD-Software-Adrenalin-Edition"
+  value "CommitHash"  REG_SZ (1)  82 bytes: "df09ebb6d248fa8727c2234bf459d614ee269049"
+  value "EnableSmartBlurInstall"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "radeon_superresolution_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "frame_gen_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "glpbmode_runtime_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "enhanced_sync_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "DXCoreAttributes"  REG_MULTI_SZ (7)  470 bytes: (list)
+        [0] "{B69EB219-3DED-4464-979F-A00BD4687006}"
+        [1] "{8c47866b-7583-450d-f0f0-6bada895af4b}"
+        [2] "{0c9ece4d-2f6e-4f01-8c96-e89e331b47b1}"
+        [3] "{248e2800-a793-4724-abaa-23a6de1be090}"
+        [4] "{b71b0d41-1088-422f-a27c-0250b7d3a988}"
+        [5] "{8eb2c848-82f6-4b49-aa87-aecfcf0174c6}"
+  value "VulkanDriverNameNexus"  REG_SZ (1)  216 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdvlk_nexus.cab"
+  value "SafeModeUpdate_Enable"  REG_SZ (1)  10 bytes: "true"
+  value "SSEco1_5_NA"  REG_SZ (1)  12 bytes: "false"
+  value "KMD_BackingStoreMgrEnabled"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "b006b667-ca3d-411c-b5f3-9ee727a32ae8"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Notify_DriverUpdate_hide"  REG_SZ (1)  12 bytes: "false"
+  value "PreloadDelay"  REG_DWORD (4)  4 bytes: 0x0000012C (300)
+  value "575236dd-2453-4518-87eb-7052389c57e1"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DVRTrackingEnabledBuild"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "NotifySubscription"  REG_BINARY (3)  2 bytes: 3000 (2 bytes hex)
+  value "AllowSubscription"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "10BitPixelFormat_NA"  REG_SZ (1)  4 bytes: "0"
+  value "ShowReleaseNotes"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "AllowSkins"  REG_SZ (1)  10 bytes: "true"
+  value "DVRInstallEligible"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "blockchainsupport"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "mobile_runtime_component_NA"  REG_SZ (1)  10 bytes: "true"
+  value "Distribution"  REG_SZ (1)  16 bytes: "Crimson"
+  value "DalDCELogFilePath"  REG_SZ (1)  216 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catikmdag_dce.log"
+  value "UA_Enabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DalAllowAutoVSROnEmbeddedDisplay"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "driverupdate_ui_component_na"  REG_SZ (1)  12 bytes: "false"
+  value "MiscControl"  REG_DWORD (4)  4 bytes: 0x01FDD7B8 (33413048)
+  value "BigSoftwareMajorVersion"  REG_DWORD (4)  4 bytes: 0x000007E7 (2023)
+  value "BigSoftwareMinorVersion"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_BACODelayIntervalInMilliSeconds"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "AMDKMPFD"  REG_EXPAND_SZ (2)  88 bytes: "%SystemDrive%\x5CWindows\x5CSystem32\x5CAMD\x5CAMDKMPFD"
+  value "DalWFDEnable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DalEnableRemoteDisplayPath"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DalAsicFIDOSForcedModeSupport"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "PXSplashScreen"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "OpenGLDriverName"  REG_MULTI_SZ (7)  210 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catig6pxx.dll"
+  value "OpenGLFlags"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "OpenGLVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OpenGLFlagsWow"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "OpenGLVersionWow"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OpenGLDriverNameWow"  REG_MULTI_SZ (7)  210 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catiglpxx.dll"
+  value "AutoColorDepthReduction_NA"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PP_ULPSDelayIntervalInMilliSeconds"  REG_DWORD (4)  4 bytes: 0x00007530 (30000)
+  value "TVEnableOverscan"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "TVForceDetection"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "AllowSnapshot"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "AllowRSOverlay"  REG_SZ (1)  10 bytes: "true"
+  value "PowerXpressLoad"  REG_DWORD (4)  4 bytes: 0xFFFFFFFF (4294967295)
+  value "KMD_CVMLCameraSupport"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "BuildConfigType"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "RadeonSoftwareEdition"  REG_SZ (1)  64 bytes: "AMD Software: Adrenalin Edition"
+  value "RadeonSoftwareVersion"  REG_SZ (1)  14 bytes: "26.6.2"
+  value "IntegerScalingPerAppSupport"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "MobileLinkOverCloudAuth_NA"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ECCMode"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ContentProtectionDriverName"  REG_SZ (1)  32 bytes: "amdmiracast.dll"
+  value "KMD_EnableOPM2Interface"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "KMD_EnableContextBasedPowerManagement"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "WmAgpMaxIdleClk"  REG_DWORD (4)  4 bytes: 0x00000020 (32)
+  value "MemInitLatencyTimer"  REG_DWORD (4)  4 bytes: 0x775771BF (2002219455)
+  value "Denoise_NA"  REG_SZ (1)  4 bytes: "0"
+  value "Detail_NA"  REG_SZ (1)  4 bytes: "0"
+  value "DynamicContrast_NA"  REG_SZ (1)  4 bytes: "0"
+  value "ASTT_NA"  REG_SZ (1)  4 bytes: "1"
+  value "DemoMode_NA"  REG_SZ (1)  4 bytes: "0"
+  value "SplitScreen_NA"  REG_SZ (1)  4 bytes: "0"
+  value "TheaterMode_NA"  REG_SZ (1)  4 bytes: "1"
+  value "DemoMode_DEF"  REG_SZ (1)  4 bytes: "0"
+  value "StaticGamma_NA"  REG_SZ (1)  4 bytes: "0"
+  value "Gamma_NA"  REG_SZ (1)  4 bytes: "1"
+  value "EQAA_NA"  REG_SZ (1)  4 bytes: "0"
+  value "MLF_NA"  REG_SZ (1)  4 bytes: "0"
+  value "EnableUlps_NA"  REG_SZ (1)  4 bytes: "1"
+  value "SurfaceFormatReplacements_NA"  REG_SZ (1)  4 bytes: "0"
+  value "TFQ_NA"  REG_SZ (1)  4 bytes: "0"
+  value "AntiAlias_NA"  REG_SZ (1)  4 bytes: "0"
+  value "TextureLod_NA"  REG_SZ (1)  4 bytes: "1"
+  value "TestOnceRequest_NA"  REG_SZ (1)  4 bytes: "1"
+  value "AutoTuneRequest_NA"  REG_SZ (1)  4 bytes: "1"
+  value "CameraShakeMotionDetect_NA"  REG_SZ (1)  4 bytes: "1"
+  value "UseExecuteIndirectPacket"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "MGPUSupported"  REG_SZ (1)  4 bytes: "1"
+  value "PP_SclkDeepSleepDisable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PP_DisableVoltageIsland"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DalAllowDPrefSwitchingForGLSync"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DalReportSingleSelectedTiming"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisableSAMUPowerGating"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "EnableAspmL1"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "EnableAspmL0s"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "KMD_EnableDesktopTexture"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisableVCEPowerGating"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "EnableUvdClockGating"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "EnableVceSwClockGating"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisableUVDPowerGatingDynamic"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "StutterMode"  REG_DWORD (4)  4 bytes: 0x0000200A (8202)
+  value "MosquitoNoiseRemoval_NA"  REG_SZ (1)  4 bytes: "0"
+  value "Deblocking_NA"  REG_SZ (1)  4 bytes: "0"
+  value "EnableUlps"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "EnableCrossFireAutoLink"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ExtEvent_BIOSEventByInterrupt"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "TVM6Flag"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "TVDisableModes"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ShowNewVFCurve"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ColourDesktopGamma_DEF"  REG_SZ (1)  24 bytes: "1.0 1.0 1.0"
+  value "ColourDesktopBrightness_DEF"  REG_SZ (1)  12 bytes: "0 0 0"
+  value "ColourDesktopContrast_DEF"  REG_SZ (1)  24 bytes: "1.0 1.0 1.0"
+  value "ColourFullscreenGamma_DEF"  REG_SZ (1)  24 bytes: "1.0 1.0 1.0"
+  value "ColourFullscreenBrightness_DEF"  REG_SZ (1)  12 bytes: "0 0 0"
+  value "ColourFullscreenContrast_DEF"  REG_SZ (1)  24 bytes: "1.0 1.0 1.0"
+  value "3D_Refresh_Rate_Override_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Display_Detection_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Panning_Mode_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Force_TV_Detection_DEF"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "BD1B9A8C20E25DEFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BD1BBA8C20E25DEFFD20"  REG_BINARY (3)  4 bytes: 48C00601 (4 bytes hex)
+  value "BD1BBA8C20E25DEFFD3A"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BD1BBA8C20E25DEFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BD5FF98C208C88EFFD3D"  REG_BINARY (3)  4 bytes: 64050720 (4 bytes hex)
+  value "BD5FFF8C208C88EFFD3D"  REG_BINARY (3)  4 bytes: 82B40812 (4 bytes hex)
+  value "BD76D58C20EFC3EFFD3A"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BD98A58C20E101EFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDADCC8C20E7B6EFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDADCD8C20E7B6EFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDADDD8C20E7B6EFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDADEF8C20E7B6EFFD3A"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDADF68C20E7B6EFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDADF98C20E7B6EFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDB9A18C20E25DEFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDC4DE8C20E855EFFD30"  REG_BINARY (3)  4 bytes: 4F44064E (4 bytes hex)
+  value "BDC4DE8C20E855EFFD3D"  REG_BINARY (3)  4 bytes: 64050720 (4 bytes hex)
+  value "BDC67B8C20EFD7EFFD3A"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDC67D8C20EB9DEFFD3A"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDC67E8C20EB9DEFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDC67F8C20EB9DEFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDDE348C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDDE348C20EFBCEFFD3D"  REG_BINARY (3)  4 bytes: 6CE50774 (4 bytes hex)
+  value "BDE0138C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDE0238C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDE2138C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDE2338C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDE93D8C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDECC38C20EFBCEFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDECE98C20EB9DEFFD30"  REG_BINARY (3)  4 bytes: 4F44064E (4 bytes hex)
+  value "BDF1C98C20EFFDEFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDF4A28C20EFD7EFFD30"  REG_BINARY (3)  4 bytes: 4F44064E (4 bytes hex)
+  value "BDF4A28C20EFD7EFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "BDF4A28C20EFD7EFFD3D"  REG_BINARY (3)  4 bytes: 82B40812 (4 bytes hex)
+  value "BDFA188C20EFBCEFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDFA1A8C20EFBCEFFD3F"  REG_BINARY (3)  4 bytes: 5C8A06D2 (4 bytes hex)
+  value "BDFA368C20EFBCEFFD3E"  REG_BINARY (3)  4 bytes: 5C5D06CD (4 bytes hex)
+  value "BDFFFB8C20E305EFFD3C"  REG_BINARY (3)  4 bytes: 4F4C064F (4 bytes hex)
+  value "KMD_EnableBrightnessInterface2"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PP_GPUPowerDownEnabled"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "UserModeDriverName"  REG_MULTI_SZ (7)  840 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catidx9loader64.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx64.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx64.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxc64.dll"
+  value "UserModeDriverNameWow"  REG_MULTI_SZ (7)  840 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catidx9loader32.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx32.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx32.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxc32.dll"
+  value "ProxyLDA_Support"  REG_DWORD (4)  4 bytes: 0x00000002 (2)
+  value "OpenGLDynamicPX"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "UserModeDListDriverName"  REG_SZ (1)  208 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdhdl64.dll"
+  value "UserModeDListDriverNameWow"  REG_SZ (1)  208 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdhdl32.dll"
+  value "VulkanDriverName"  REG_SZ (1)  218 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camd-vulkan64.json"
+  value "VulkanImplicitLayers"  REG_SZ (1)  218 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camd-vulkan64.json"
+  value "VulkanDriverNameWow"  REG_SZ (1)  218 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camd-vulkan32.json"
+  value "VulkanImplicitLayersWow"  REG_SZ (1)  218 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camd-vulkan32.json"
+  value "OpenGLVendorName"  REG_MULTI_SZ (7)  418 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catio6axx.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catio6axx.dll"
+  value "OpenGLVendorNameWoW"  REG_MULTI_SZ (7)  418 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catioglxx.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Catioglxx.dll"
+  value "UserModeDriverNameWsl"  REG_MULTI_SZ (7)  206 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxc64.so"
+  value "D3DVendorName"  REG_MULTI_SZ (7)  826 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxn64.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxn64.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx64.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx64.dll"
+  value "D3DVendorNameWoW"  REG_MULTI_SZ (7)  826 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxn32.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxn32.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx32.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Cu0201588.inf_amd64_18d847f3215007c5\x5CB026184\x5Camdxx32.dll"
+  value "InstalledDisplayDrivers"  REG_MULTI_SZ (7)  134 bytes: (list)
+        [0] "amdxc64"
+        [1] "amdxc32"
+        [2] "amdxn64"
+        [3] "amdxx64"
+        [4] "amdxn32"
+        [5] "amdxx32"
+        [6] "atiumdva"
+        [7] "atiumd6a"
+  value "KMD_EnableAmdFendrOptions"  REG_DWORD (4)  4 bytes: 0x00000010 (16)
+  value "KMD_Oca_ErrorInjection"  REG_BINARY (3)  40 bytes: (40 bytes)
+      0000: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0020: 00 00 00 00 00 00 00 00                          |........|
+  value "KMD_RebarControlMode"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "BGM_GDDR6MTData"  REG_BINARY (3)  4132 bytes: (4132 bytes)
+      0000: 42 49 53 54 00 00 00 00 50 0B 00 00 7A BB AA 9F  |BIST....P...z...|
+      0010: 01 FD FF FF FD FE FD FF FE FC FE FE FE FE FE 01  |................|
+      0020: FE FD FD 01 FE FC FD FF FE FD FE FC FF FF FE FE  |................|
+      0030: FE FF FE FE FD FE FD 00 FD 00 FF 00 FE FE FF 00  |................|
+      0040: FF 02 FE 00 FF FE FF FD 00 00 FE 00 01 FF 01 FE  |................|
+      0050: 01 01 02 FF FF FF FF FE FE FE 00 FF 00 00 02 FF  |................|
+      0060: 42 42 4A 4A 00 00 47 42 42 42 45 47 45 44 45 44  |BBJJ..GBBBEGEDED|
+      0070: 45 43 4A 4A 43 45 44 45 44 45 46 44 48 47 4A 4A  |ECJJCEDEDEFDHGJJ|
+      0080: 42 47 45 48 46 43 41 43 42 47 4A 4A 46 46 47 47  |BGEHFCACBGJJFFGG|
+      0090: 48 45 46 45 47 47 4A 4A 00 2C 2A 2A 08 2B 14 2D  |HEFEGGJJ.,**.+.-|
+      00A0: 00 00 1C 2E 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      00E0: 00 00 00 00 00 00 00 00 08 08 00 00 00 00 0A 0A  |................|
+      00F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0100: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0110: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0120: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0130: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0140: 16 13 00 00 00 00 00 03 00 01 01 40 00 00 00 00  |...........@....|
+      0150: 17 05 00 41 00 00 01 11 00 00 0F 00 00 00 00 00  |...A............|
+      0160: 00 02 00 05 01 00 00 00 10 FE 00 FF 00 FF 18 FF  |................|
+      0170: 09 70 00 00 26 24 23 21 08 05 04 04 00 00 00 00  |.p..&$#!........|
+      0180: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0190: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      01F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0210: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0220: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0230: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0240: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0250: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0260: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0270: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0290: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      02F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0300: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0310: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0320: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0330: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0340: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0350: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0360: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0370: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0380: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0390: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      03D0: FE FE FE FF FE FF FE FF 00 FD FD 01 FE 00 FF 00  |................|
+      03E0: FD 00 FE FF FE FE FE FF FD 00 FF 00 00 FE 00 FF  |................|
+      03F0: FE FD FF FF FF FF FD FE 00 02 FF 00 FE FE 00 FE  |................|
+      0400: FE 00 FF FF FF FF FE FD 00 00 00 00 FF 00 FE FD  |................|
+      0410: FE FE FF 00 00 00 01 FD 00 FF FF 00 00 00 00 00  |................|
+      0420: 47 44 4A 4A 00 00 48 44 44 44 45 46 48 46 44 47  |GDJJ..HDDDEFHFDG|
+      0430: 46 47 4A 4A 45 45 45 45 45 46 45 45 47 47 4A 4A  |FGJJEEEEEFEEGGJJ|
+      0440: 47 48 48 48 46 43 46 48 47 45 4A 4A 46 47 48 47  |GHHHFCFHGEJJFGHG|
+      0450: 47 46 43 45 46 45 4A 4A 00 2D 2A 2A 08 2E 14 30  |GFCEFEJJ.-**...0|
+      0460: 00 00 1C 2E 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0470: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0480: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0490: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04A0: 00 00 00 00 00 00 00 00 08 08 00 00 00 00 0A 0A  |................|
+      04B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04E0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      04F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0500: 16 13 00 00 00 00 00 03 00 01 01 40 00 00 00 00  |...........@....|
+      0510: 17 05 00 41 00 00 01 11 00 00 0F 00 00 00 00 00  |...A............|
+      0520: 00 02 00 05 01 00 00 00 10 FF 00 FE 00 FF 18 00  |................|
+      0530: 09 70 00 00 26 25 23 21 08 05 04 04 00 00 00 00  |.p..&%#!........|
+      0540: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0550: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0560: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0570: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0580: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0590: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      05B0: FE FD 00 FF FF FF FD FD FF FB FF 00 FE FF FE FF  |................|
+      05C0: FE FF FF 00 FF FD FF FF FE FD FD FD FF FF FF FE  |................|
+      05D0: FD FF FE FF FE 01 FF FE FF FF FE FF 00 FF FF 01  |................|
+      05E0: 00 01 00 00 FE FC FF 01 00 00 00 FF FE 00 FE FE  |................|
+      05F0: 01 00 01 FF FF FE FE 00 00 00 00 01 00 00 01 01  |................|
+      0600: 48 47 4A 4A 00 00 49 44 47 44 46 47 46 48 47 46  |HGJJ..IDGDFGFHGF|
+      0610: 49 47 4A 4A 45 45 48 48 46 48 44 47 49 49 4A 4A  |IGJJEEHHFHDGIIJJ|
+      0620: 48 49 4A 4A 47 47 47 48 48 46 4A 4A 47 47 49 4A  |HIJJGGGHHFJJGGIJ|
+      0630: 48 48 48 47 49 45 4A 4A 00 2B 2A 2A 08 2D 14 2E  |HHHGIEJJ.+**.-..|
+      0640: 00 00 1C 2E 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0650: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0660: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0670: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0680: 00 00 00 00 00 00 00 00 08 08 00 00 00 00 0A 0A  |................|
+      0690: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06C0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06D0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      06E0: 16 13 00 00 00 00 00 03 00 01 01 40 00 00 00 00  |...........@....|
+      06F0: 17 05 00 41 00 00 01 11 00 00 0F 00 00 00 00 00  |...A............|
+      0700: 00 02 00 05 01 00 00 00 10 FD 00 FE 00 FF 18 FF  |................|
+      0710: 09 70 00 00 26 23 23 21 08 04 04 04 00 00 00 00  |.p..&##!........|
+      0720: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0730: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0740: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0750: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0760: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0770: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0780: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0790: 00 FC FE FE FD FF FE 00 FD FD FF FF FD FF FE 00  |................|
+      07A0: FF FD FF FD FF FC FD FE FE FE FC FD FD FD FD FF  |................|
+      07B0: FE FD FF FD FD FE FF FE FF 02 00 00 01 FE FF 00  |................|
+      07C0: 00 02 00 00 00 FF FE FE 00 00 02 01 FF 00 00 FF  |................|
+      07D0: 00 00 01 00 FF 00 01 00 00 00 00 02 00 00 01 02  |................|
+      07E0: 45 47 4A 4A 00 00 47 45 47 45 45 47 45 47 46 47  |EGJJ..GEGEEGEGFG|
+      07F0: 45 48 4A 4A 45 45 47 46 46 46 45 48 47 45 4A 4A  |EHJJEEGFFFEHGEJJ|
+      0800: 45 47 46 47 47 46 46 44 46 48 4A 4A 47 49 48 46  |EGFGGFFDFHJJGIHF|
+      0810: 48 45 47 44 45 48 4A 4A 00 2B 2A 2A 08 2C 14 2D  |HEGDEHJJ.+**.,.-|
+      0820: 00 00 1C 2E 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0830: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0840: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0850: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0860: 00 00 00 00 00 00 00 00 08 08 00 00 00 00 0A 0A  |................|
+      0870: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0880: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0890: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08A0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08B0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      08C0: 16 13 00 00 00 00 00 03 00 01 01 40 00 00 00 00  |...........@....|
+      08D0: 17 05 00 41 00 00 01 11 00 00 0F 00 00 00 00 00  |...A............|
+      08E0: 00 02 00 05 01 00 00 00 10 FE 00 FE 00 00 18 00  |................|
+      08F0: 09 70 00 00 25 24 22 21 07 04 04 04 00 00 00 00  |.p..%$"!........|
+      0900: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0910: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0920: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0930: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0940: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0950: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0960: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0970: 01 FC 01 00 FE FF FC FE FD FD FD FF 00 FF FE FF  |................|
+      0980: FE FF 00 FD 00 FF FF FF 00 00 FF FF FE 00 FF FF  |................|
+      0990: FF FE FF 00 00 00 FE FF FF 02 FE FE FF FD 01 00  |................|
+      09A0: 05 04 02 02 FF FD FD FE 00 00 00 01 00 01 FF FE  |................|
+      09B0: 00 00 01 00 00 FE FF FE 01 00 FF FF 00 00 01 01  |................|
+      09C0: 45 43 4A 4A 00 00 48 42 43 42 47 49 43 44 44 45  |ECJJ..HBCBGICDDE|
+      09D0: 47 47 4A 4A 45 43 45 45 45 42 45 43 47 48 4A 4A  |GGJJECEEEBECGHJJ|
+      09E0: 45 48 45 47 45 46 46 45 47 45 4A 4A 47 46 45 46  |EHEGEFFEGEJJGFEF|
+      09F0: 47 43 47 46 45 47 4A 4A 00 2B 2A 2A 08 2C 14 2D  |GCGFEGJJ.+**.,.-|
+      0A00: 00 00 1C 2D 00 00 00 00 00 00 00 00 00 00 00 00  |...-............|
+      0A10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A20: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A40: 00 00 00 00 00 00 00 00 08 08 00 00 00 00 0A 0A  |................|
+      0A50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0A90: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AA0: 16 13 00 00 00 00 00 03 00 01 01 40 00 00 00 00  |...........@....|
+      0AB0: 17 05 00 41 00 00 01 11 00 00 0F 00 00 00 00 00  |...A............|
+      0AC0: 00 02 00 05 01 00 00 00 10 FE 00 FF 00 01 18 FF  |................|
+      0AD0: 09 70 00 00 26 24 23 21 08 05 04 04 00 00 00 00  |.p..&$#!........|
+      0AE0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0AF0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B10: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B20: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0B50: 99 99 99 99 99 99 99 99 99 99 99 99 99 99 99 99  |................|
+      0B60: 99 99 99 99 99 99 99 99 99 99 99 99 99 98 B9 99  |................|
+      0B70: 99 99 99 99 99 99 99 99 99 9D 99 98 99 99 98 98  |................|
+      0B80: 99 99 99 99 99 B9 99 99 99 99 99 99 99 99 98 99  |................|
+      0B90: 99 99 99 98 99 99 99 99 99 99 99 99 9D 98 18 99  |................|
+      0BA0: 99 B9 99 99 99 B9 B9 99 99 99 99 98 99 98 99 B9  |................|
+      0BB0: 99 99 99 99 99 99 99 9C 99 99 99 99 99 99 99 99  |................|
+      0BC0: 99 99 99 99 99 99 99 99 99 99 99 98 99 99 99 99  |................|
+      0BD0: 99 99 99 99 99 9D 99 99 99 9C 99 99 99 99 99 99  |................|
+      0BE0: 99 91 99 99 19 98 99 99 99 99 99 99 99 99 99 99  |................|
+      0BF0: 99 B9 99 B9 99 99 99 9D 99 99 9D 99 99 98 99 B9  |................|
+      0C00: 99 99 98 19 99 99 98 99 99 19 99 B9 19 19 98 B9  |................|
+      0C10: 99 19 9D 99 99 99 9D 9D 9D B9 9D 99 1D 99 99 19  |................|
+      0C20: 99 99 99 99 9D 99 99 99 99 19 99 99 99 99 19 99  |................|
+      0C30: 99 99 18 99 99 99 99 91 99 39 99 99 9D 99 99 19  |.........9......|
+      0C40: 99 99 99 99 99 99 99 99 99 99 99 99 99 99 99 99  |................|
+      0C50: 99 99 D9 19 99 99 B9 99 99 19 B9 99 99 99 99 19  |................|
+      0C60: 99 99 99 19 99 99 99 99 9D 99 19 99 99 99 99 99  |................|
+      0C70: 99 99 9D 99 99 99 9C 99 99 99 99 99 B9 98 B8 99  |................|
+      0C80: 99 B8 99 B9 99 99 99 99 99 99 99 99 99 B9 99 B9  |................|
+      0C90: 19 99 99 99 9D 99 98 99 99 98 99 99 98 99 99 B9  |................|
+      0CA0: 99 99 99 99 99 99 99 99 9D 99 99 99 99 99 98 B9  |................|
+      0CB0: 9D 19 99 99 99 99 99 99 99 99 99 B9 99 99 99 39  |...............9|
+      0CC0: 99 99 99 19 99 99 99 19 99 99 9C 99 99 19 99 39  |...............9|
+      0CD0: 99 99 99 99 B9 99 99 39 99 99 99 99 98 B8 98 99  |.......9........|
+      0CE0: 99 99 99 99 9D 99 99 99 99 19 99 98 99 99 99 99  |................|
+      0CF0: 99 99 99 99 98 99 99 B9 98 99 99 99 BD 99 99 99  |................|
+      0D00: 99 99 99 99 9D 99 98 B9 99 99 19 99 99 99 99 99  |................|
+      0D10: 99 19 99 99 99 19 9C 99 99 B9 99 99 B9 99 99 9D  |................|
+      0D20: 99 99 9D 99 99 98 99 98 98 99 99 99 99 B9 99 99  |................|
+      0D30: 99 99 99 99 9E 99 99 99 99 99 99 99 9D 99 99 99  |................|
+      0D40: 99 99 99 99 99 99 99 99 99 99 99 99 9D BB 98 99  |................|
+      0D50: 99 B9 99 99 BD 99 99 99 98 99 99 99 9D 99 99 99  |................|
+      0D60: 99 99 99 99 99 99 9D 99 99 99 99 19 99 19 99 99  |................|
+      0D70: 98 99 99 99 98 19 99 99 9C 99 99 99 99 99 B9 99  |................|
+      0D80: 9D 99 99 99 98 99 99 99 99 99 99 99 99 99 99 99  |................|
+      0D90: 99 99 99 99 B9 B9 99 99 99 99 99 99 99 99 99 99  |................|
+      0DA0: 99 99 99 19 9D 9B 99 99 99 99 99 1D 99 99 99 99  |................|
+      0DB0: 99 99 99 19 98 99 9D 19 19 99 99 98 99 99 19 99  |................|
+      0DC0: 99 99 99 99 99 99 99 9D 99 99 99 19 99 99 99 9D  |................|
+      0DD0: 99 99 99 B9 99 B9 98 99 99 99 99 99 99 99 98 99  |................|
+      0DE0: 99 99 99 99 99 B9 19 99 99 B9 99 99 99 99 98 98  |................|
+      0DF0: 99 99 99 99 99 99 98 99 98 99 99 99 99 B9 98 99  |................|
+      0E00: 26 66 6E 76 64 66 64 66 66 66 64 66 64 66 66 66  |&fnvdfdfffdfdfff|
+      0E10: 66 64 26 66 64 6E 6E 26 66 6E 66 66 66 66 6E 6E  |fd&fdnn&fnffffnn|
+      0E20: 66 66 66 66 66 66 66 66 66 66 6E 66 66 66 66 66  |ffffffffffnfffff|
+      0E30: 66 66 66 66 66 66 66 66 66 66 66 66 6E 66 24 66  |ffffffffffffnf$f|
+      0E40: 66 66 66 66 66 66 66 66 66 66 66 66 66 66 6C 66  |fffffffffffffflf|
+      0E50: 66 66 66 66 66 66 66 66 66 66 6E 66 66 76 6E 66  |ffffffffffnffvnf|
+      0E60: 76 66 6E 66 66 66 66 66 66 66 66 66 6C 66 66 66  |vfnffffffffflfff|
+      0E70: 66 66 66 66 66 66 74 66 66 66 66 66 66 76 66 66  |fffffftffffffvff|
+      0E80: 64 66 66 66 66 64 66 66 66 66 66 64 6E 66 66 6E  |dffffdfffffdnffn|
+      0E90: 66 66 6E 66 76 66 66 66 66 66 64 66 66 66 66 66  |ffnfvfffffdfffff|
+      0EA0: 66 66 64 66 66 64 64 66 2E 66 66 66 64 62 66 66  |ffdffddf.fffdbff|
+      0EB0: E4 66 66 26 66 66 66 66 66 66 66 66 66 26 6E 64  |.ff&fffffffff&nd|
+      0EC0: 66 66 66 6E 66 64 66 64 66 66 66 76 6C 66 64 66  |fffnfdfdfffvlfdf|
+      0ED0: 66 66 66 66 66 66 66 66 6E 2E 66 66 66 76 66 66  |ffffffffn.fffvff|
+      0EE0: 66 66 66 66 66 66 66 66 66 66 64 66 2E 66 6E 66  |ffffffffffdf.fnf|
+      0EF0: 66 66 66 66 66 66 66 64 66 66 66 26 66 66 64 66  |fffffffdfff&ffdf|
+      0F00: 66 66 66 66 66 64 66 66 7E 76 66 66 66 66 66 64  |fffffdff~vfffffd|
+      0F10: 66 6E 6E 64 66 64 26 6E 66 66 66 66 66 66 66 66  |fnndfd&nffffffff|
+      0F20: 66 66 66 64 66 66 66 64 66 66 66 66 66 26 66 64  |fffdfffdfffff&fd|
+      0F30: 6E 66 66 6E 66 66 66 66 66 66 6E 66 66 66 66 26  |nffnffffffnffff&|
+      0F40: 66 66 66 66 26 6E 66 66 66 66 66 66 76 66 66 66  |ffff&nffffffvfff|
+      0F50: 64 66 66 66 6E 6E 66 26 66 64 6E 66 66 66 66 66  |dfffnnf&fdnfffff|
+      0F60: 66 66 66 6C 66 66 66 76 66 66 66 6E 26 26 76 66  |ffflfffvfffn&&vf|
+      0F70: 66 6E 66 6E 36 66 66 66 66 66 64 66 66 6E 66 64  |fnfn6fffffdffnfd|
+      0F80: 66 66 76 66 6E 66 66 66 66 66 6E 64 66 66 66 66  |ffvfnfffffndffff|
+      0F90: 66 6E 66 66 66 64 76 66 66 66 66 64 26 7E 66 66  |fnfffdvffffd&~ff|
+      0FA0: 66 64 66 66 64 66 26 6C 66 66 66 66 66 66 66 24  |fdffdf&lfffffff$|
+      0FB0: 66 66 66 66 26 6E 26 64 66 76 76 66 66 66 66 64  |ffff&n&dfvvffffd|
+      0FC0: 66 66 66 66 66 66 66 6C 66 66 76 64 66 6C 66 66  |ffffffflffvdflff|
+      0FD0: 66 64 64 66 66 6E 66 E6 6E 66 66 66 66 66 66 E6  |fddffnf.nffffff.|
+      0FE0: 66 6E 66 66 66 66 6E 66 66 66 66 64 66 26 66 66  |fnffffnffffdf&ff|
+      0FF0: 66 66 66 66 64 64 26 66 66 66 66 64 66 66 64 6C  |ffffdd&ffffdffdl|
+      1000: 6D BE 1E CA E9 52 DD 01 33 AA 26 0B 32 30 32 31  |m....R..3.&.2021|
+      1010: 2F 31 31 2F 30 38 20 32 31 3A 32 38 00 00 00 00  |/11/08 21:28....|
+      1020: 00 00 00 00                                      |....|
+  value "KMD_FRTEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_MaxFrameRateRequested"  REG_DWORD (4)  4 bytes: 0x0000003C (60)
+  value "KMD_FRTCInitialStatus"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PP_BACOCounter"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DalLogMask_Display Connectivity"  REG_BINARY (3)  4 bytes: 01000000 (4 bytes hex)
+  value "OpenCLDriverName"  REG_SZ (1)  188 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Camdocl.inf_amd64_04d38d306eb8907b\x5Camdocl64.dll"
+  value "OpenCLDriverNameWow"  REG_SZ (1)  188 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Camdocl.inf_amd64_04d38d306eb8907b\x5Camdocl32.dll"
+  value "KMD_EnableVpeRTPM"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_EnableVcnRTPM"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_ApplyResetIfPreemptFail"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "BDValue"  REG_BINARY (3)  101 bytes: (101 bytes)
+      0000: 00 00 00 00 00 00 00 00 00 FF 48 C0 06 01 48 C0  |..........H...H.|
+      0010: 06 01 2F 0C 0D 88 00 00 00 00 00 00 00 00 00 00  |../.............|
+      0020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0030: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0050: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  |................|
+      0060: 00 00 00 00 00                                   |.....|
+  value "HardwareInformation.qwMemorySize"  REG_QWORD (11)  8 bytes: 0x000000027F000000 (10720641024)
+  value "PruningMode"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ACE"  REG_BINARY (3)  2 bytes: 3000 (2 bytes hex)
+  value "KMD_USUEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_RadeonBoostEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_DeLagEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_ChillEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "IsAdvancedControl"  REG_BINARY (3)  4 bytes: 02000000 (4 bytes hex)
+  value "GPUScaling04"  REG_BINARY (3)  4 bytes: 01000000 (4 bytes hex)
+  value "EscapeInputState"  REG_BINARY (3)  1 bytes: 00 (1 bytes hex)
+  value "OD8Settings"  REG_BINARY (3)  4 bytes: 00100000 (4 bytes hex)
+  value "Point2Freq"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "Point3Freq"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "IsComponentControl"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "PP_AutoCurveOptimizerVoltageOffset1"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoCurveOptimizerVoltageOffset2"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoCurveOptimizerVoltageOffset3"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoCurveOptimizerVoltageOffset4"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoCurveOptimizerVoltageOffset5"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoCurveOptimizerVoltageOffset6"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "InitDelay"  REG_DWORD (4)  4 bytes: 0x00000014 (20)
+  value "EnableChipsetInstall"  REG_SZ (1)  10 bytes: "true"
+  value "BDDFEC8C20E5A7EFFD30"  REG_BINARY (3)  4 bytes: 3F670664 (4 bytes hex)
+  value "KMD_BoostAdaptiveVrsEnabled"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "EnableCloudProfile"  REG_SZ (1)  10 bytes: "true"
+  value "PP_AutoODActive"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KMD_SlsConfigCount"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "KD_TilingMode"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PP_AutoOCEngineClock"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "ACR" (not descended: depth limit)
+  subkey "Classes" (not descended: depth limit)
+  subkey "CopyToVmOverwrite" (not descended: depth limit)
+  subkey "CopyToVmOverwriteWow64" (not descended: depth limit)
+  subkey "DAL2_DATA__2_0" (not descended: depth limit)
+  subkey "DAL3_DATA" (not descended: depth limit)
+  subkey "DRV_SDWM" (not descended: depth limit)
+  subkey "MediaFoundation" (not descended: depth limit)
+  subkey "Microsoft" (not descended: depth limit)
+  subkey "UMD" (not descended: depth limit)
+  subkey "VolatileSettings" (not descended: depth limit)
+
+########## class subkey 0001
+present device: "PCI\x5CVEN_8086&DEV_A780&SUBSYS_7D911462&REV_04\x5C3&11583659&0&10"  SUBSYS_7D911462
+
+## HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0001
+  depth 0; last write 2025-08-08T00:11:06Z; 172 value(s), 14 subkey(s)
+  value "DriverDesc"  REG_SZ (1)  52 bytes: "Intel(R) UHD Graphics 770"
+  value "ProviderName"  REG_SZ (1)  36 bytes: "Intel Corporation"
+  value "DriverDateData"  REG_BINARY (3)  8 bytes: 00C0B26F5562DC01 (8 bytes hex)
+  value "DriverDate"  REG_SZ (1)  20 bytes: "12-1-2025"
+  value "DriverVersion"  REG_SZ (1)  28 bytes: "32.0.101.7082"
+  value "InfPath"  REG_SZ (1)  22 bytes: "oem130.inf"
+  value "InfSection"  REG_SZ (1)  28 bytes: "iRPLSD_w10_DS"
+  value "IncludedInfs"  REG_MULTI_SZ (7)  18 bytes: (list)
+        [0] "pci.inf"
+  value "MatchingDeviceId"  REG_SZ (1)  44 bytes: "PCI\x5CVEN_8086&DEV_A780"
+  value "InstalledDisplayDrivers"  REG_MULTI_SZ (7)  186 bytes: (list)
+        [0] "igdumdim64"
+        [1] "igd10iumd64"
+        [2] "igd10iumd64"
+        [3] "igd12umd64"
+        [4] "igdumdim32"
+        [5] "igd10iumd32"
+        [6] "igd10iumd32"
+        [7] "igd12umd32"
+  value "UserModeDriverName"  REG_MULTI_SZ (7)  790 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigdumdim64.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd10iumd64.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd10iumd64.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd12umd64.dll"
+  value "UserModeDriverNameWow"  REG_MULTI_SZ (7)  790 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigdumdim32.dll"
+        [1] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd10iumd32.dll"
+        [2] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd10iumd32.dll"
+        [3] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigd12umd32.dll"
+  value "UserModeDriverNameWsl"  REG_MULTI_SZ (7)  202 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Clibigd12umd64.so"
+  value "InstallDrvType"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DriverStorePathForVPL"  REG_SZ (1)  166 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4"
+  value "EnableWDDM21"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DriverStorePathForMDF"  REG_SZ (1)  166 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4"
+  value "DriverStorePathForComputeRuntime"  REG_SZ (1)  166 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4"
+  value "UserModeDriverGUID"  REG_SZ (1)  78 bytes: "{6C4BE3D5-831A-42ED-AA62-2AEB34C8CBA4}"
+      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)
+  value "MultifunctionSupported"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "VgaCompatible"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PC_Release_Major"  REG_DWORD (4)  4 bytes: 0x0000000F (15)
+  value "PC_Release_Minor"  REG_DWORD (4)  4 bytes: 0x00000031 (49)
+  value "Disable_OverlayDSQualityEnhancement"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DXCoreAttributes"  REG_MULTI_SZ (7)  470 bytes: (list)
+        [0] "{B69EB219-3DED-4464-979F-A00BD4687006}"
+        [1] "{248E2800-A793-4724-ABAA-23A6DE1BE090}"
+        [2] "{8C47866B-7583-450D-F0F0-6BADA895AF4B}"
+        [3] "{0C9ECE4D-2F6E-4F01-8C96-E89E331B47B1}"
+        [4] "{B71B0D41-1088-422F-A27C-0250B7D3A988}"
+        [5] "{8EB2C848-82F6-4B49-AA87-AECFCF0174C6}"
+  value "VulkanDriverName"  REG_SZ (1)  190 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigvk64.json"
+  value "VulkanDriverNameWow"  REG_SZ (1)  190 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigvk32.json"
+  value "OpenGLDriverName"  REG_MULTI_SZ (7)  200 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigxelpicd64.dll"
+  value "OpenGLVersion"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OpenGLFlags"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "OpenGLDriverNameWow"  REG_MULTI_SZ (7)  200 bytes: (list)
+        [0] "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigxelpicd32.dll"
+  value "OpenGLVersionWow"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OpenGLFlagsWow"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "OpenGLInstalled"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OpenCLDriverName"  REG_SZ (1)  192 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigdrcl64.dll"
+  value "OpenCLDriverNameWow"  REG_SZ (1)  192 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigdrcl32.dll"
+  value "LevelZeroDriverPath"  REG_SZ (1)  204 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cze_intel_gpu64.dll"
+  value "ControlApiPath"  REG_SZ (1)  206 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5CIntelControlLib.dll"
+  value "ControlApiPath32"  REG_SZ (1)  210 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5CIntelControlLib32.dll"
+  value "TotalStaticModes"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "SPDIFVendorName"  REG_SZ (1)  12 bytes: "Intel"
+  value "SPDIFVendorDesc"  REG_SZ (1)  6 bytes: "PC"
+  value "SPDIFVendorSDI"  REG_DWORD (4)  4 bytes: 0x00000009 (9)
+  value "DTD_1"  REG_BINARY (3)  20 bytes: 011D8018711C1620582C1A000000000000863701 (20 bytes hex)
+  value "DTD_2"  REG_BINARY (3)  20 bytes: 011D80D0721C1620102C1A800000000000863701 (20 bytes hex)
+  value "DTD_3"  REG_BINARY (3)  20 bytes: 011D00BC52D01E20B82825400000000000043701 (20 bytes hex)
+  value "DTD_4"  REG_BINARY (3)  20 bytes: 011D007251D01E206E2825000000000000063701 (20 bytes hex)
+  value "DTD_5"  REG_BINARY (3)  20 bytes: 0000000000000000000000000000000000000000 (20 bytes hex)
+  value "TotalDTDCount"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Display1_EnableCRTHotPlugDefaultVrefVoltage"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "Display1_DisableAsyncFlips"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "SlaveAddressForDID2"  REG_DWORD (4)  4 bytes: 0x000000A0 (160)
+  value "DelayedDetectionForDP"  REG_DWORD (4)  4 bytes: 0x000001F4 (500)
+  value "ResendACTSignal"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DelayedDetectionForHDMI"  REG_DWORD (4)  4 bytes: 0x000003E8 (1000)
+  value "EnumerateWigigEncoder"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "QuickCaptureEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "WigigLogQCData"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "IncreaseFixedSegment"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DP12WorkAroundFlags"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "SideMsgPollingTimeOut100msecUnit"  REG_DWORD (4)  4 bytes: 0x00000019 (25)
+  value "WideGamutFeatureEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "NarrowGamutSplitGammaEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "MediaRefreshRateSupport"  REG_DWORD (4)  4 bytes: 0x0000803F (32831)
+  value "DFT_Control"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DFT_HASConfig"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "AdaptiveVsyncEnable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "LinkRateSupport"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "PdTogglingTimerValue"  REG_DWORD (4)  4 bytes: 0x000000BF (191)
+  value "NoFastLinkTrainingForeDP"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ForceEnableHDMIAudio"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "AudioSurpriseRemovalWAEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "TotalOUICount"  REG_DWORD (4)  4 bytes: 0x0000000A (10)
+  value "OUI_1"  REG_DWORD (4)  4 bytes: 0x00001CF8 (7416)
+  value "OUI_2"  REG_DWORD (4)  4 bytes: 0x000012FB (4859)
+  value "OUI_3"  REG_DWORD (4)  4 bytes: 0x0034F62D (3470893)
+  value "OUI_4"  REG_DWORD (4)  4 bytes: 0x0038EC11 (3730449)
+  value "OUI_5"  REG_DWORD (4)  4 bytes: 0x00940BD5 (9702357)
+  value "OUI_6"  REG_DWORD (4)  4 bytes: 0x00000613 (1555)
+  value "OUI_7"  REG_DWORD (4)  4 bytes: 0x000022B9 (8889)
+  value "OUI_8"  REG_DWORD (4)  4 bytes: 0x001889DF (1608159)
+  value "OUI_9"  REG_DWORD (4)  4 bytes: 0x000060AD (24749)
+  value "OUI_10"  REG_DWORD (4)  4 bytes: 0x00536957 (5466455)
+  value "CUINotRequired"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "MAXViews"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "MAXDevicesInView"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "MAXIntelDevicesActive"  REG_DWORD (4)  4 bytes: 0x00000004 (4)
+  value "MAXOtherDevicesActive"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "NumGammaBits"  REG_DWORD (4)  4 bytes: 0x00000008 (8)
+  value "LFPGammaEncodeXBit"  REG_BINARY (3)  1 bytes: 00 (1 bytes hex)
+  value "EnableUnderRunInterrupt"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisplayOSFtrCtrl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "ForceDefaultHDRMetadataEdp"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FakeEDID_14_0_af0d_1723"  REG_BINARY (3)  128 bytes: (128 bytes)
+      0000: 00 FF FF FF FF FF FF 00 0D AF 23 17 00 00 00 00  |..........#.....|
+      0010: 02 15 01 04 95 26 15 78 02 D1 F5 93 5D 59 90 26  |.....&.x....]Y.&|
+      0020: 1D 50 54 00 00 00 01 01 01 01 01 01 01 01 01 01  |.PT.............|
+      0030: 01 01 01 01 01 01 1D 36 80 A0 70 38 1E 40 2E 1E  |.......6..p8.@..|
+      0040: 24 00 7E D7 10 00 00 18 00 00 00 05 00 74 8B 80  |$.~..........t..|
+      0050: 50 70 38 97 41 08 40 06 00 00 00 00 00 FE 00 43  |Pp8.A.@........C|
+      0060: 4D 49 0A 20 20 20 20 20 20 20 20 20 00 00 00 FE  |MI.         ....|
+      0070: 00 4E 31 37 33 48 48 46 2D 45 32 31 20 20 00 39  |.N173HHF-E21  .9|
+  value "ReadEDIDFromRegistry"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "FeatureTestControl"  REG_DWORD (4)  4 bytes: 0x00001200 (4608)
+  value "PSR2Disable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "Psr2DrrsEnable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisplayPcFeatureControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "YCBCRFeatureEnable"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "DisableFlipImmediateOnHSync"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DisableOSHDR"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "DisplayFeatureControl"  REG_DWORD (4)  4 bytes: 0x000003E7 (999)
+  value "IGCLGamingDisableControl"  REG_DWORD (4)  4 bytes: 0x00014004 (81924)
+  value "DisplaySoftwareWaControl"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "EdpHDRTotalOUICount"  REG_DWORD (4)  4 bytes: 0x0000000C (12)
+  value "OUI_EDP_HDR_1"  REG_DWORD (4)  4 bytes: 0x000022B9 (8889)
+  value "OUI_EDP_HDR_2"  REG_DWORD (4)  4 bytes: 0x000060AD (24749)
+  value "OUI_EDP_HDR_3"  REG_DWORD (4)  4 bytes: 0x0038EC11 (3730449)
+  value "OUI_EDP_HDR_4"  REG_DWORD (4)  4 bytes: 0x00BA4159 (12206425)
+  value "OUI_EDP_HDR_5"  REG_DWORD (4)  4 bytes: 0x00000CE7 (3303)
+  value "OUI_EDP_HDR_6"  REG_DWORD (4)  4 bytes: 0x00001CF8 (7416)
+  value "OUI_EDP_HDR_7"  REG_DWORD (4)  4 bytes: 0x00000CE7 (3303)
+  value "OUI_EDP_HDR_8"  REG_DWORD (4)  4 bytes: 0x00536957 (5466455)
+  value "OUI_EDP_HDR_9"  REG_DWORD (4)  4 bytes: 0x001889DF (1608159)
+  value "OUI_EDP_HDR_10"  REG_DWORD (4)  4 bytes: 0x0030D941 (3201345)
+  value "ParadeMuxEdpLinkRateDataReloadTrigger"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ContentProtectionDriverName"  REG_SZ (1)  190 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cigdde64.dll"
+  value "ForceDitheringEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "PipeGangedModeSupport"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "KmFtrControl"  REG_DWORD (4)  4 bytes: 0x00000003 (3)
+  value "FeatureScore"  REG_DWORD (4)  4 bytes: 0x000000CF (207)
+  value "z AssertEnableMask"  REG_DWORD (4)  4 bytes: 0x00001FF7 (8183)
+  value "z DebugEnableMask"  REG_DWORD (4)  4 bytes: 0x00001FFF (8191)
+  value "z ReportAssertEnable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "z AssertBreakDisable"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "z KMD_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z MINIPORT_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z GMM_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z D3D_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z OGL_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z KCH_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z RESOURCEMANAGER_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z SOFTBIOS_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z AIM_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z GHAL3D_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z PWRCONS_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z KmdCp_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z PWRCONS_GT_Debug_Lvl"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "z RingBufDbgMask"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "UnderRunCountPipeA"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "UnderRunCountPipeB"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "UnderRunCountPipeC"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "UnderRunCountPipeD"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "DISPCDCPowerPolicyData"  REG_BINARY (3)  4 bytes: 02210000 (4 bytes hex)
+  value "DISPCDCUserPreferencePolicy"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "DISPPCACPowerPolicyData"  REG_BINARY (3)  4 bytes: 02220000 (4 bytes hex)
+  value "DISPCACUserPreferencePolicy"  REG_BINARY (3)  4 bytes: 00000000 (4 bytes hex)
+  value "DISPCPowerAcPolicy"  REG_BINARY (3)  4 bytes: 02410001 (4 bytes hex)
+  value "HardwareInformation.ChipType"  REG_BINARY (3)  58 bytes: (58 bytes)
+      0000: 49 00 6E 00 74 00 65 00 6C 00 28 00 52 00 29 00  |I.n.t.e.l.(.R.).|
+      0010: 20 00 55 00 48 00 44 00 20 00 47 00 72 00 61 00  | .U.H.D. .G.r.a.|
+      0020: 70 00 68 00 69 00 63 00 73 00 20 00 46 00 61 00  |p.h.i.c.s. .F.a.|
+      0030: 6D 00 69 00 6C 00 79 00 00 00                    |m.i.l.y...|
+  value "HardwareInformation.AdapterString"  REG_BINARY (3)  52 bytes: (52 bytes)
+      0000: 49 00 6E 00 74 00 65 00 6C 00 28 00 52 00 29 00  |I.n.t.e.l.(.R.).|
+      0010: 20 00 55 00 48 00 44 00 20 00 47 00 72 00 61 00  | .U.H.D. .G.r.a.|
+      0020: 70 00 68 00 69 00 63 00 73 00 20 00 37 00 37 00  |p.h.i.c.s. .7.7.|
+      0030: 30 00 00 00                                      |0...|
+  value "HardwareInformation.DacType"  REG_BINARY (3)  18 bytes: 49006E007400650072006E0061006C000000 (18 bytes hex)
+  value "HardwareInformation.BiosString"  REG_BINARY (3)  34 bytes: (34 bytes)
+      0000: 49 00 6E 00 74 00 65 00 6C 00 20 00 56 00 69 00  |I.n.t.e.l. .V.i.|
+      0010: 64 00 65 00 6F 00 20 00 42 00 49 00 4F 00 53 00  |d.e.o. .B.I.O.S.|
+      0020: 00 00                                            |..|
+  value "KmFileIoBaseFilePath"  REG_SZ (1)  166 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverState\x5CDevices\x5C{aeba615a-c033-11ed-aba7-047c1656b636}\x5CData"
+      [IDENTIFIER?] review: per-device-unique-looking value (GUID other than the class GUID, or a serial / unique-ID name)
+  value "DCPowerPolicyVersion"  REG_DWORD (4)  4 bytes: 0x00002102 (8450)
+  value "DCUserPreferencePolicy"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "ACPowerPolicyVersion"  REG_DWORD (4)  4 bytes: 0x00004202 (16898)
+  value "ACUserPreferencePolicy"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "GsvRP0SliceFreqs"  REG_BINARY (3)  1 bytes: 1F (1 bytes hex)
+  value "TurboAcPolicy"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "TurboDcPolicy"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "PowerDcPolicy"  REG_DWORD (4)  4 bytes: 0xC0A0C0A0 (3231760544)
+  value "PowerAcPolicy"  REG_DWORD (4)  4 bytes: 0xC0A0C0A0 (3231760544)
+  value "ConnectedStandbyPlatform"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "HardwareInformation.MemorySize"  REG_BINARY (3)  4 bytes: 00F0FF7F (4 bytes hex)
+  value "AdaptiveVsyncEnableUserSetting"  REG_BINARY (3)  4 bytes: 07000000 (4 bytes hex)
+  value "UserModeDriverDxgCabinet"  REG_SZ (1)  204 bytes: "C:\x5CWindows\x5CSystem32\x5CDriverStore\x5CFileRepository\x5Ciigd_dch.inf_amd64_68fe65fbc646d3a4\x5Cdxg_on_android.cab"
+  value "IntelDotCom"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  value "128b132bDisableHBlankReductionSupport"  REG_DWORD (4)  4 bytes: 0x00000001 (1)
+  value "OUI_EDP_HDR_11"  REG_DWORD (4)  4 bytes: 0x00940BD5 (9702357)
+  value "DriverTargetSegment"  REG_MULTI_SZ (7)  54 bytes: (list)
+        [0] "Intel(R) Arc(TM) Graphics"
+  value "OUI_EDP_HDR_12"  REG_DWORD (4)  4 bytes: 0x000012FB (4859)
+  subkey "Classes" (not descended: depth limit)
+  subkey "CopyToVMOverwrite" (not descended: depth limit)
+  subkey "CopyToVMOverwriteWow64" (not descended: depth limit)
+  subkey "CopyToVMWhenNewer" (not descended: depth limit)
+  subkey "CopyToVMWhenNewerWow64" (not descended: depth limit)
+  subkey "DisplayVal" (not descended: depth limit)
+  subkey "DPP" (not descended: depth limit)
+  subkey "DXVA" (not descended: depth limit)
+  subkey "FwBootStatus" (not descended: depth limit)
+  subkey "KMD" (not descended: depth limit)
+  subkey "MediaFoundation" (not descended: depth limit)
+  subkey "MediaKeys" (not descended: depth limit)
+  subkey "WOW6432Node" (not descended: depth limit)
+  subkey "VolatileSettings" (not descended: depth limit)
+
+2 numeric class subkey(s); 2 present display device(s)

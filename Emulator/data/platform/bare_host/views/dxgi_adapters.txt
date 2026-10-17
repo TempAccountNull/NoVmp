@@ -1,0 +1,25 @@
+# fwid DXGI capture - fwid_probe 1.4 (2026-10-16)
+# CreateDXGIFactory1, IDXGIFactory1::EnumAdapters1, IDXGIAdapter1::GetDesc1, IDXGIAdapter::EnumOutputs + GetDesc.
+# Query only (no device is created). Failures are recorded, not counted as internal errors.
+
+=== adapter 0 (GetDesc1 HRESULT 0x00000000)
+Description: "AMD Radeon RX 6700"
+VendorId 0x1002  DeviceId 0x73DF  SubSysId 0x661A1EAE  Revision 0xDF
+DedicatedVideoMemory 10689413120  DedicatedSystemMemory 0  SharedSystemMemory 17059084288
+AdapterLuid 00000000:00013E45  Flags 0x00000000
+  output 0: DeviceName "\x5C\x5C.\x5CDISPLAY1" desktop (0,0)-(2560,1440) attached 1 rotation 1
+  output 1: DeviceName "\x5C\x5C.\x5CDISPLAY2" desktop (-1920,69)-(0,1149) attached 1 rotation 1
+
+=== adapter 1 (GetDesc1 HRESULT 0x00000000)
+Description: "Intel(R) UHD Graphics 770"
+VendorId 0x8086  DeviceId 0xA780  SubSysId 0x7D911462  Revision 0x04
+DedicatedVideoMemory 134217728  DedicatedSystemMemory 0  SharedSystemMemory 17059084288
+AdapterLuid 00000000:00016A87  Flags 0x00000000
+
+=== adapter 2 (GetDesc1 HRESULT 0x00000000)
+Description: "Microsoft Basic Render Driver"
+VendorId 0x1414  DeviceId 0x008C  SubSysId 0x00000000  Revision 0x00
+DedicatedVideoMemory 0  DedicatedSystemMemory 0  SharedSystemMemory 17059084288
+AdapterLuid 00000000:00016A36  Flags 0x00000002 SOFTWARE
+
+3 adapter(s)

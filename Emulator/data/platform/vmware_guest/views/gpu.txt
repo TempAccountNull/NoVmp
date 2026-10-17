@@ -1,0 +1,47 @@
+# fwid GPU class-key capture - fwid_probe 1.4 (2026-10-16)
+# HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\NNNN: every numeric subkey, values only (KEY_READ; binary in full hex incl.
+# HardwareInformation.*), matched to the present display-class device whose SPDRP_DRIVER is <class>\NNNN, with its SUBSYS.
+# [IDENTIFIER?] marks values that look per-device unique (for review).
+non-numeric subkey "Configuration" (not read)
+non-numeric subkey "Properties" (not read)
+
+########## class subkey 0000
+present device: "PCI\x5CVEN_15AD&DEV_0405&SUBSYS_040515AD&REV_00\x5C3&61AAA01&0&78"  SUBSYS_040515AD
+
+## HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000
+  depth 0; last write 2024-06-22T13:19:52Z; 15 value(s), 1 subkey(s)
+  value "DriverDesc"  REG_SZ (1)  64 bytes: "Microsoft Basic Display Adapter"
+  value "ProviderName"  REG_SZ (1)  20 bytes: "Microsoft"
+  value "DriverDateData"  REG_BINARY (3)  8 bytes: 00808CA3C594C601 (8 bytes hex)
+  value "DriverDate"  REG_SZ (1)  20 bytes: "6-21-2006"
+  value "DriverVersion"  REG_SZ (1)  32 bytes: "10.0.19041.3636"
+  value "InfPath"  REG_SZ (1)  24 bytes: "display.inf"
+  value "InfSection"  REG_SZ (1)  12 bytes: "MSBDA"
+  value "IncludedInfs"  REG_MULTI_SZ (7)  36 bytes: (list)
+        [0] "basicdisplay.inf"
+  value "MatchingDeviceId"  REG_SZ (1)  24 bytes: "PCI\x5CCC_0300"
+  value "FeatureScore"  REG_DWORD (4)  4 bytes: 0x000000FB (251)
+  value "HardwareInformation.ChipType"  REG_SZ (1)  14 bytes: "VMware"
+  value "HardwareInformation.DacType"  REG_SZ (1)  14 bytes: "VMware"
+  value "HardwareInformation.AdapterString"  REG_SZ (1)  64 bytes: "Microsoft Basic Display Adapter"
+  value "HardwareInformation.BiosString"  REG_SZ (1)  28 bytes: "EFI VESA SVGA"
+  value "HardwareInformation.MemorySize"  REG_DWORD (4)  4 bytes: 0x00000000 (0)
+  subkey "VolatileSettings" (not descended: depth limit)
+
+########## class subkey 0001
+present device: "ROOT\x5CDISPLAY\x5C0000"  SUBSYS_-
+
+## HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0001
+  depth 0; last write 2024-06-22T13:19:53Z; 9 value(s), 1 subkey(s)
+  value "DriverDesc"  REG_SZ (1)  70 bytes: "USB Mobile Monitor Virtual Display"
+  value "ProviderName"  REG_SZ (1)  14 bytes: "Amyuni"
+  value "DriverDateData"  REG_BINARY (3)  8 bytes: 00002D24FB9DD701 (8 bytes hex)
+  value "DriverDate"  REG_SZ (1)  20 bytes: "8-31-2021"
+  value "DriverVersion"  REG_SZ (1)  16 bytes: "2.0.0.1"
+  value "InfPath"  REG_SZ (1)  18 bytes: "oem4.inf"
+  value "InfSection"  REG_SZ (1)  40 bytes: "MyDevice_Install.NT"
+  value "MatchingDeviceId"  REG_SZ (1)  18 bytes: "usbmmidd"
+  value "FeatureScore"  REG_DWORD (4)  4 bytes: 0x000000FF (255)
+  subkey "VolatileSettings" (not descended: depth limit)
+
+2 numeric class subkey(s); 2 present display device(s)

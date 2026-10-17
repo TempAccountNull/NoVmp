@@ -487,7 +487,8 @@ Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bar
 # U1510-U1514 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).
 # pg_unit: the pg_ unit tests on synthetic fixtures (emu-profilegen-tests; never a real capture). pg_profile_check_*: each
 # synthetic profile is rebuilt from its saved BuildConfig + identity map (applied, no randomness) and compared byte for byte (emu-profilegen --config ... --check;
-# needs the pinned clean captures under the capture root, as bp2_profile_check; writes nothing)
+# needs the pinned clean captures under the capture root, as bp2_profile_check; writes nothing). Every file of the profile
+# is compared, so the synthetic text views views\<fwid file> (U1518) are covered as well, and an extra or missing file fails.
 Add-Suite 'pg_unit' 'unit tools platform' 'exit' 'emu-profilegen-tests' @()
 Add-Suite 'pg_profile_check_guest' 'tools platform' 'exit' 'emu-profilegen' @( '--config', ( Join-Path $D 'platform\vmware_guest\build_config.txt' ), '--check' )
 Add-Suite 'pg_profile_check_host' 'tools platform' 'exit' 'emu-profilegen' @( '--config', ( Join-Path $D 'platform\bare_host\build_config.txt' ), '--check' )

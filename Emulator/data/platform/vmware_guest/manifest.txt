@@ -24,6 +24,7 @@ exclusions                          = 32 range(s) of tool artifacts not part of 
 volatile                            = 19 values (volatile.tsv): fwid's [volatile] marks and the DiagTrack counters / timestamps
 install_shift                       = 56 install-history values (device_arrival_time 13, device_install_time 24, diagtrack_time 3, event_iso 13, install_date 1, install_time 1, sqm_first_session 1) shifted by ONE offset (RDRAND at generation, whole seconds, at least one day earlier; value withheld, only in the original identity map): 56 of 56 exact, so every pairwise difference is the original one; 0 outside the build release .. capture window; 0 precede the OS install in the capture and 0 in the profile (Windows setup)
 v1_guids                            = 22 RFC 4122 version-1 GUIDs (rule 4c, U1516): timestamp = real + the install-history offset for 22 of 22 (100-ns units, derived - never drawn); clock sequence synthetic, variant bits and the node rule kept; 0 real timestamps precede the OS install (they stay earlier by the same spacing), 0 follow the capture
+views                               = 25 synthetic text views (views\<fwid file>, U1518): 1108 recorded occurrences replaced in their own form and letter case (2 more inside another replaced one, agreeing with it), 488 registry last-write times moved by the install-history offset (rule 7b, user decision 2026-10-17), 73 line(s) of excluded tool artifacts as marker lines (line numbers = the capture's); not exported (run metadata / not part of the profile / decoded copies of the blobs / the CPUID profile): VERDICT_CONSISTENT.txt, acpi_decoded.txt, capture_info.txt, cpuid_dump.txt, hwacpi_registry.txt, smbios_decoded.txt
 # size_bytes  sha256  file
        178  24990A4B6BA764BA0B2D4EF03E480973589061841320A4F22556E275E7A0351C  acpi\acpi_APIC.bin
         80  7A2F0AF9B3A6FE103CDDBD63DA8A9246DFF4B632FF624EB4D1B1E00803C43B02  acpi\acpi_DMAR.bin
@@ -39,7 +40,7 @@ v1_guids                            = 22 RFC 4122 version-1 GUIDs (rule 4c, U151
         64  3FB3115E2C3C626603DBB20AB49825295D952F171ED7901A7F464CEAD2F40800  acpi\hwacpi_001_FACS_00000000.bin
        244  4701E1E44E2C8055BA05FB1953942AE061B350E8C51E4B338041DA52CFBE90AC  acpi\hwacpi_002_FADT_INTEL__440BX____06040000_00000000.bin
        100  47A6A5E5026B13BBA5E7D2AC260EC6A92022CB6740CD9336D33149CFC1181627  acpi\hwacpi_003_RSDT_INTEL__440BX____06040000_00000000.bin
-      3251  CEF5A5DC97798EE99BAABBDA347735605BC01134C7DD507258EE9A2F1E5C9C1D  build_config.txt
+      3286  1FDEA43703F3BB2389C9A3932B74B5BE398DD944946229BB4E216A93EABAADDE  build_config.txt
        396  7B9ED9F23D7DC2CF1C1BB9D3F35131CC3CB19FF89E109D3D265CA60190BA2F9F  disk\disk_0_descriptor.bin
        396  C9039CD3996833898AA92391E1430479F27F318CF6752C52E4FBD798B9B50F41  disk\disk_1_descriptor.bin
       2364  92B1E10AD6D027317A83E966BFBF8A941E33F64BDBB2112B52463020E3153B35  exclusions.tsv
@@ -47,5 +48,30 @@ v1_guids                            = 22 RFC 4122 version-1 GUIDs (rule 4c, U151
      11195  5D75184407440951CCB1A988171705371F1B0BFC9C697BC00B04D432FEAC44CD  identity.tsv
       4027  FEAE6D69D61028A7FF4D75084598023099FDC34B6E841E7371D9E7C09F37F249  identity_map.tsv
      14082  43D427054C54D5EBBFBE89053A8299527ECB0F8A8588C08FB283F8C7C8E5DB63  smbios.bin
+      2009  ED4C91F2B988119DE408C9C4DF6B664743EBE6ED8266E1793E91181CBB9D3C02  views\audio.txt
+       752  8B5F9769846F61C1F09114112B21AE28009A523CA57F25BB194EBDABA43789D9  views\bluetooth.txt
+      1427  3EFA514B24B6C9767251F7CF59F1D5F89A741D50EE7097F03C7373A83CD46BDE  views\chid.txt
+     12034  CA564D3A190E10B202BF8F2116BB1D7166CAD1E137F32D612F2B8C86D4EAC533  views\code_integrity.txt
+      1633  17A4662279AF6E71EFD84D977C3DCE1EE2A5C5C3CC7A1F4E9E7E8074E9B3DA02  views\disks.txt
+       653  508FE9F847CB312F508DA84996262711027ECAE8B03810B8F0510E8924E2F2FA  views\driver_files.txt
+      1232  DC7F0BE79FB5A3DC938627FA6152593809B7585D582440AD14B79EC77C66D501  views\dxgi_adapters.txt
+      1102  A7EEB97A41F980EBDAF590D31EF32B82FDD8E5F1B0B072FF4CDAB7C47DA0DB77  views\edid.txt
+     28949  0A9A1C627E5053A0930A54192B6817A569A2B94ADD56A460D3EC33DF59618C00  views\enum_open_probe.txt
+    304005  0B22D49F1CF73EBDDAC52D137D69C6095DB099FC01BC1B4E871F9339EB2E07F3  views\enum_registry.txt
+      2051  8715D156FF50317AA822EDAF8EA8184E53D9DE89D65BB277E143C28699602EDB  views\environment.txt
+      2853  8E52E5D01F093AB1E56584BDCEA412F3E510996050C9CE5C7F0A236274D54F21  views\gpu.txt
+      1602  21DFA7E51EB4F8D91F55DDB4A9750E18D3F399E40D7C67B31F9D5EC57166A075  views\hid.txt
+      1242  85C7800CE57B8A2D02A7D4736270911EDCE3E60738FB76055CD9CF214DE52218  views\license.txt
+     28563  106B5486B4C2126E4FAAA3FDD9517F0B6F0E7BD68B1ABBA0D0AA400FA5B1570F  views\loaded_drivers.txt
+      3224  03591D68F2A391C2130087011FB9E1C5F292D23720C4DD5318FECBCC2FC917D2  views\network_adapters.txt
+      3198  15425F4B81DEFACA4560D78B008B0D4ECD3AACEC66EB2A1225CAADEE46CCDCBA  views\os_ids.txt
+   2024380  AE54AA2552563689CEE2FCDB9F2B4F98A89BED7C987D192EA625772957786B2E  views\pci_devices.txt
+      3691  FFDA8F5DBD69098AB22517D2F23E4DCCC3668F6B4DEE6B69A136310635A5CB96  views\platform_security.txt
+      1284  18101FA54F547070F8947B56BC3E67309A74538E78C8BADA287794BAD65C6EF2  views\printers.txt
+      2737  67CEA05E66642E718FAD3D18BECD7E4E3FDAC3B7056F73AC8D3AE96CBC55FCFD  views\registry_bios.txt
+     40011  FF2F245787012E2AEF900CF43A236F66D06D56833141CAAD13D5A02AD2C94514  views\registry_hardware_description.txt
+     37461  58ECCC52B25F769A34CD3753801CC7553397137C84D0A48DDD091E94B5A1DE92  views\services_vm.txt
+      4335  3C5AD768143B1CF62223DAA47958F559A1044C25DF114FA298363FE05C278D25  views\update_ids.txt
+       426  4F183421DA23C4795E71D27A679BF77D5451BAC1E2E3BC260D266F0917FE125A  views\wifi.txt
       2627  A8DC8D421B5C74698766358066A015E9F6238432A6DB758A169C4AC2E166738F  volatile.tsv
-# 23 file(s)
+# 48 file(s)

@@ -1,0 +1,61 @@
+# fwid network adapter capture - fwid_probe 1.4 (2026-10-16)
+# GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_INTERFACES | SKIP_UNICAST/ANYCAST/MULTICAST/DNS_SERVER): adapter
+# name, friendly name, description, MAC (RAW, unredacted - keep local), interface type, status. IP addresses are not recorded.
+# MACs whose OUI is 00:05:69 / 00:0C:29 / 00:1C:14 / 00:50:56 are flagged [VMware OUI per the coordinator's list]; this is
+# NOT used as guest evidence (the physical host's VMware Workstation adapters VMnet1/8 carry 00:50:56 too).
+
+=== adapter 0: IfIndex 4, IfType 6, OperStatus 1, Mtu 1500, Flags 0x000000C5, Luid 0x0006008001000000
+AdapterName: "{F7B5EB80-903A-46A5-84AC-1FFE28179367}"
+FriendlyName: "Ethernet0"
+Description: "Intel(R) 82574L Gigabit Network Connection"
+MAC (6 bytes): 00:04:0F:A1:CA:5B
+
+=== adapter 1: IfIndex 1, IfType 24, OperStatus 1, Mtu 4294967295, Flags 0x00000181, Luid 0x0018000000000000
+AdapterName: "{BB80FBEB-9103-11ED-9D75-806E6F6E6963}"
+FriendlyName: "Loopback Pseudo-Interface 1"
+Description: "Software Loopback Interface 1"
+MAC (0 bytes): 
+
+=== adapter 2: IfIndex 7, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000000000000
+AdapterName: "{19FEEABE-309A-11EF-A669-806E6F6E6963}"
+FriendlyName: "Ethernet0-WFP Native MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) 82574L Gigabit Network Connection-WFP Native MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 00:04:0F:A1:CA:5B
+
+=== adapter 3: IfIndex 8, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000001000000
+AdapterName: "{19FEEABF-309A-11EF-AF55-806E6F6E6963}"
+FriendlyName: "Ethernet0-QoS Packet Scheduler-0000"
+Description: "Intel(R) 82574L Gigabit Network Connection-QoS Packet Scheduler-0000"
+MAC (6 bytes): 00:04:0F:A1:CA:5B
+
+=== adapter 4: IfIndex 9, IfType 6, OperStatus 1, Mtu 1500, Flags 0x00000000, Luid 0x0006000002000000
+AdapterName: "{19FEEAC0-309A-11EF-B461-806E6F6E6963}"
+FriendlyName: "Ethernet0-WFP 802.3 MAC Layer LightWeight Filter-0000"
+Description: "Intel(R) 82574L Gigabit Network Connection-WFP 802.3 MAC Layer LightWeight Filter-0000"
+MAC (6 bytes): 00:04:0F:A1:CA:5B
+
+=== adapter 5: IfIndex 6, IfType 6, OperStatus 6, Mtu 0, Flags 0x00000004, Luid 0x0006008000000000
+AdapterName: "{9C61554B-4312-4B2F-BD72-EB93FDC156B4}"
+FriendlyName: "Ethernet (Kernel Debugger)"
+Description: "Microsoft Kernel Debug Network Adapter"
+MAC (0 bytes): 
+
+=== adapter 6: IfIndex 5, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F00000000
+AdapterName: "{2F05DB1C-5F8B-47E2-96CE-81441E095D02}"
+FriendlyName: "Teredo Tunneling Pseudo-Interface"
+Description: "Microsoft Teredo Tunneling Adapter"
+MAC (0 bytes): 
+
+=== adapter 7: IfIndex 3, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F01000000
+AdapterName: "{22CEEB34-C57E-4FF2-95B0-B5B5AB188F44}"
+FriendlyName: "Microsoft IP-HTTPS Platform Interface"
+Description: "Microsoft IP-HTTPS Platform Adapter"
+MAC (0 bytes): 
+
+=== adapter 8: IfIndex 2, IfType 131, OperStatus 6, Mtu 0, Flags 0x00000000, Luid 0x0083007F02000000
+AdapterName: "{B3231345-5B80-4CDE-B1BB-118BF0B31092}"
+FriendlyName: "6to4 Adapter"
+Description: "Microsoft 6to4 Adapter"
+MAC (0 bytes): 
+
+9 adapter(s), 0 with a VMware OUI
