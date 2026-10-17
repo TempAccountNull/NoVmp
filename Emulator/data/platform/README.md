@@ -45,7 +45,8 @@ other environment's map. There is no seed.
 `gen_guid` (incl. the version-1 node and MBR form) / `gen_usb_serial` / `gen_computer_name` / `gen_class_string` /
 `gen_hex_token` / `gen_win_installation_id` (with `WinLicenseInfo`) / `gen_product_id` / `gen_install_time` / `gen_sid` /
 `gen_volume_serial` / `gen_edid` / `gen_edid_serial` / `gen_edid_checksum` / `gen_disk_descriptors` (`DiskInput` ->
-`DiskGen`) / `gen_sus_client_id_validation` (`SusValidationInput` -> `SusValidation`) / `gen_new_identity( ctx )` (a new identity).
+`DiskGen`) / `gen_sus_client_id_validation` (`SusValidationInput` -> `SusValidation`) / `gen_new_identity( ctx )` (a new identity) /
+`gen_value( ctx, key )` (ONE value fresh, U1517).
 Each draw goes through the identity map: generation asks `Randomize->gen_<what>()` (`gen_like`, `gen_hex_like`,
 `gen_usb_serial_like`, `gen_computer_name`, `gen_mac_like`, `gen_guid_like`, `gen_clock_seq_like` (U1516: the clock
 sequence of a version-1 GUID - its timestamp is derived from the install-history offset in ProfileGenerator, never drawn),
@@ -57,7 +58,8 @@ Non-generators: `run_build( ctx, check )` (and `run_build( check )` with a new c
 `save_identity_map`, `load_identity_map` (one map file, safe against a concurrent folder switch), `load_capture`,
 `load_config`, `load_identity_maps`, `save_profile` (atomic, returns a `ProfileSaveResult`), `check_profile_dir`,
 `check_filler`, `check_usb_placeholder`, `check_git_work_tree`, `check_diff_ranges`, `check_chid_fields`, `check_installation_id`,
-`parse_guid_v1` (the timestamp / clock sequence / node of an RFC 4122 version-1 GUID, U1516).
+`parse_guid_v1` (the timestamp / clock sequence / node of an RFC 4122 version-1 GUID, U1516), `list_fields` (the
+synthetic-only view, U1517), `set_value` (ONE value, checked), `check_view` (the leak guard over a view).
 
 ## Threading and the per-build context (plan 1.J.49.a, user decision 2026-10-17 "Per-build context")
 
@@ -99,6 +101,35 @@ previous map (`<dir>.old`) or the complete new one, never a half-written file, s
 written in parallel (unit test `pg_atomic_writes`: both profiles written by two threads, 6 re-runs that read their maps
 from disk while the other side switches, byte-identical; a reader polling a map during 25 switches always got the
 complete map). The ORIGINAL profile is written the same way and is still refused inside a git work tree.
+
+## The synthetic-only view and single-value edits (U1517; for the ImGui `emu_profile_builder` and the MCP pipe)
+
+`GenResult::identity` and `GenResult::original` hold real values and must never cross the shared-memory pipe or reach a
+model. What a front end may show and edit is the **field view** of a context: `ProfileView v = ProfileGen->list_fields( ctx )`
+(a listing, hence `list_` and not `gen_`). `gen_build` fills it into the `BuildContext` from synthetic data and metadata
+only - the identity map (key, kind, synthetic value), the identity rows without their original column (id, kind, rule,
+first anchor, occurrence count, synthetic value) and the field map's location texts and relation rows - and checks every
+text of the view with the leak guard (log line `field view`: guest 63 fields = 61 map keys + 2 derived, host 264 = 257 +
+7; 0 hits). One `FieldInfo` per identity-map key (`key` = the field location, `kind`, `rule`, `location` = first anchor or
+blob field, `occurrences`, `length`, `identities`, `relations` - what it follows and what follows it, `editable` /
+`not_editable`, `value` as `const char*`) plus one `derived/<id>` entry per value derived at build time (MAC family
+dependents, EUI-64 form, NameSamCompatible, SusClientIdValidation, a flash drive's disk serial; not editable).
+
+- `ProfileGen->set_value( ctx, key, text )` sets ONE value: an editable key; the kind / length / format rules of its
+  current value (MAC: upper-case form, OUI kept, room for the family's largest delta, not the VMnet pattern; GUID: form,
+  case, version digit and variant bits, MBR form = signature only, version-1 = only the clock sequence; UUID: VMware prefix /
+  RFC 4122 nibbles; serials and names: rule-2 classes or hex layout per position; installation ID: valid check digits; SID:
+  digit counts; ...); never the captured value - the context keeps per key only a guard (SHA-256 of a domain tag + the
+  lower-case real text, `RealValueGuard`), no real value; unique among the keys of its kind. A base MAC's version-1 GUID
+  nodes in the map follow it; everything derived at build time is re-derived by the next `gen_build( ctx, capture )`,
+  which applies the edited map (nothing drawn). `identity/install` is not editable (its window depends on the real install
+  history: a new instant comes with `--new-identity`); a `shared/` value is changed in this profile's map only.
+- `ProfileGen->gen_value( ctx, key )` regenerates ONE value fresh from RDRAND (`Randomize->gen_<what>` with the current
+  synthetic value as the pattern), then the same checks.
+- Unit test `pg_field_view`: none of the 173 real values of the fixture build in any of the view's texts; every map key
+  listed; refusals (format, OUI, room, the real value, another key's value, not editable, unknown key); set + regenerate of
+  every editable key, the edited map applied (Wi-Fi Direct = the new Wi-Fi MAC + 1, NameSamCompatible follows the new
+  computer name, the version-1 node follows the new MAC) and reproduced from its saved `identity_map.tsv`.
 
 ## Field rules and the replaced locations
 

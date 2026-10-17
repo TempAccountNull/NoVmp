@@ -661,6 +661,44 @@ namespace emu::platform
 		bool checked = false;					// run_build( true ): the output folder matched the regeneration
 	};
 
+	// ── the synthetic-only view of a profile (gap P1 #8 / #9, U1517): what the ImGui profile builder (emu_profile_builder)
+	//    and the MCP shared-memory pipe may see and edit. Built by gen_build into the BuildContext from synthetic values and
+	//    metadata ONLY - the identity map's values, the identity rows' id / kind / rule / anchor / count / synthetic value,
+	//    the field map's locations and relation rows - never IdentityEntry::original, Identity or GenResult::original (they
+	//    hold real values and must never reach the pipe); gen_build re-checks every text of the view against the leak guard ──
+	struct FieldInfo
+	{
+		std::string key;					// the identity-map key (a field location: "identity/M01", "smbios/t1/h0001/uuid", "shared/usb/0",
+											// "edid/n01", ...), or "derived/<identity id>" for a value derived at build time (no map entry)
+		std::string kind;					// the identity-map kind ("mac", "guid", "uuid", ...) or, derived, the identity kind
+		std::string rule;					// the field rule ("1-rfc4122", "2", "3", "4c", "4d", "6", "7b", "8a", ...)
+		std::string location;				// the first anchor "<capture file>:<line>", or the blob field ("smbios.bin 0x0063 len 16: ...")
+		size_t occurrences = 0;				// occurrence rows of its identities (fieldmap.tsv); blob fields: the field rows
+		size_t length = 0;					// characters of the value
+		std::vector<std::string> identities;	// the identity.tsv ids the value belongs to
+		std::vector<std::string> relations;	// what it follows / what follows it (field-map relation rows, map dependents), no values
+		bool editable = false;				// set_value / gen_value accept the key
+		std::string not_editable;			// why not (a derived value, the install window, ...)
+		const char* value = nullptr;		// the synthetic value, final text form (interned: valid for the process lifetime)
+	};
+	struct ProfileView
+	{
+		Environment env = Environment::vmware_guest;
+		std::string profile;				// "vmware_guest" | "bare_host"
+		bool built = false;					// false: no gen_build on this context yet (no fields)
+		std::vector<FieldInfo> fields;		// the identity-map keys (sorted), then the derived identities (identity.tsv order)
+	};
+	// the guard of one identity-map key's real value (U1517): enough to refuse the real value in set_value, never the value -
+	// the SHA-256 of a domain tag + the lower-case real text; with the kind / length rules of draw()
+	struct RealValueGuard
+	{
+		std::string kind;
+		size_t length = 0;
+		bool same_length = true;
+		std::array<uint8_t, 32> digest {};
+		unsigned mac_room = 0;				// rule 3 base MACs: the largest family delta the tail must leave room for
+	};
+
 	// ── the per-build state (user decision 2026-10-17 "Per-build context", plan 1.J.49.a): everything one build reads or
 	//    changes besides the shared state of the singleton. One context per build, used by one thread at a time; two builds
 	//    with different contexts may run in parallel. Created by ProfileGen->new_context( cfg ) ──────────────────────────
@@ -679,6 +717,10 @@ namespace emu::platform
 		// build; every such key is listed in upgraded_keys (emu-profilegen --upgrade-v1-time; never in check mode)
 		bool upgrade_v1_time = false;
 		std::vector<std::string> upgraded_keys;
+		// U1517: the synthetic-only field metadata of the last gen_build (list_fields) and the real-value guards draw() records
+		// per key (hashes, never values): the context holds no real value
+		std::vector<FieldInfo> view_fields;
+		std::map<std::string, RealValueGuard> guards;
 	};
 
 	// the builder of both profiles: a singleton like the demo's Randomizer - ProfileGen->new_context( cfg ), then
@@ -742,6 +784,21 @@ namespace emu::platform
 		DiskGen gen_disk_descriptors( BuildContext& ctx, const DiskInput& in );				// rule 8d on disk_<n>_descriptor.bin
 		SusValidation gen_sus_client_id_validation( BuildContext& ctx, const SusValidationInput& in );	// rule 8c, layout kept (no randomness of its own)
 
+		// ── the synthetic-only view and single-value edits (U1517; the listing is list_, not a generator) ─────────────────
+		// the fields of ctx's last gen_build, every value from ctx's identity map; empty (built = false) before a build
+		ProfileView list_fields( const BuildContext& ctx );
+		// ONE value fresh from RDRAND: Randomize->gen_<what> with the current synthetic value as the pattern (same format,
+		// OUI, version / variant, digit layout; a version-1 GUID: a new clock sequence - its timestamp and node are derived),
+		// then the checks of set_value; returns the field with its new value. The next gen_build( ctx, ... ) applies it
+		FieldInfo gen_value( BuildContext& ctx, const std::string& key );
+		// set ONE value (final text form): an editable key of the view, the kind / length / format rules of its current value,
+		// never the captured value (its guard), unique among the keys of its kind. Map dependents follow (a base MAC's
+		// version-1 GUID nodes); build-time dependents (MAC family, UUID tail, EUI-64 form, SusClientIdValidation, SIDs,
+		// NameSamCompatible) are re-derived by the next gen_build. Throws naming the key and the rule, never a value
+		FieldInfo set_value( BuildContext& ctx, const std::string& key, const char* value );
+		// how many texts of the view contain one of needles as a token (the leak guard's matching); 0 = clean
+		static size_t check_view( const ProfileView& view, const std::vector<std::string>& needles );
+
 		// ── parsers, loaders, savers, validators (no per-build state) ──────────────────────────────────────────────────
 		static std::vector<std::string> parse_usb_serial_table( const std::vector<Bytes>& enum_registry_texts );
 		static InstallWindow parse_install_window( unsigned os_build, const std::string& capture_utc );
@@ -786,6 +843,10 @@ namespace emu::platform
 		// are checked either way. The result is interned (keep): valid for the process lifetime
 		const char* draw( BuildContext& ctx, const std::string& key, const char* kind, const std::string& real, bool same_length, const std::function<const char*()>& fn );
 		const char* keep( const std::string& value );	// intern value in the pool (pool_mutex_), stable for the process lifetime
+		// U1517: the synthetic-only view of ctx's last build (gen_build), from ctx's identity map and the synthetic side of p
+		void save_field_view( BuildContext& ctx, const Identity& p );
+		// U1517: why value cannot be key's value (kind / length / format / the real value / not unique), empty = acceptable
+		std::string check_value( const BuildContext& ctx, const std::string& key, const std::string& value ) const;
 		// one value of the shared/ registry
 		struct SharedValue
 		{

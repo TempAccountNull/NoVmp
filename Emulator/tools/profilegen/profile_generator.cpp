@@ -350,9 +350,22 @@ namespace emu::platform
 	// one; a "shared/" key may come from the other environment's map, else (generation) from the shared/ registry of this
 	// process (one USB serial per physical device in both profiles, also when both generate concurrently). Every result is
 	// interned: it stays valid when ctx is destroyed or its map is replaced (load_identity_maps / gen_new_identity)
+	// the guard digest of a real value (U1517): SHA-256 of a domain tag + its lower-case text (the value itself is not kept)
+	static std::array<uint8_t, 32> real_digest( const std::string& v )
+	{
+		const std::string t = "emu-profilegen real-value guard\x1f" + lower( v );
+		return sha256( t.data(), t.size() );
+	}
 	const char* ProfileGenerator::draw( BuildContext& ctx, const std::string& key, const char* kind, const std::string& real, bool same_length, const std::function<const char*()>& fn )
 	{
 		ctx.used_keys.insert( key );
+		{
+			RealValueGuard& g = ctx.guards[ key ];	// for set_value / gen_value (U1517): hashes and rules only
+			g.kind = kind;
+			g.length = real.size();
+			g.same_length = same_length;
+			g.digest = real_digest( real );
+		}
 		auto fits = [ & ]( const std::string& e_kind, const std::string& e_value ) {
 			if ( e_kind != kind || ( same_length && e_value.size() != real.size() ) )
 				fail( "the identity map's value for " + key + " does not fit the capture (kind / length) - generate a new identity (--new-identity)" );
@@ -594,6 +607,7 @@ namespace emu::platform
 		if ( !real.text || !parse_mac_text( real.text, m ) ) fail( "rule 3: not a MAC in XX:XX:XX:XX:XX:XX form" );
 		MacAddress out = real;
 		out.text = draw( ctx, "identity/" + real.id, "mac", real.text, true, [ & ] { return Randomize->gen_mac_like( real.text, max_delta ); } );
+		ctx.guards[ "identity/" + real.id ].mac_room = max_delta;
 		if ( ( mac_value( out.text ) & 0xFFFFFF ) + max_delta > 0xFFFFFF ) fail( "rule 3: the identity map's MAC of " + real.id + " leaves no room for its family" );
 		return out;
 	}
@@ -3277,6 +3291,14 @@ namespace emu::platform
 			}
 			log.info( "leak guard", fmt( "%zu real values (text forms + raw UUID / MAC bytes) x %zu synthetic files: 0 hits (%zu substring match(es) only inside a longer alphanumeric token - not the value)",
 				p.needles.size() + p.binary_needles.size(), res.synthetic.size() - p.acpi.size(), embedded ) );
+			// (U1517) the synthetic-only field view of this build for the profile builder / MCP pipe, checked like the files
+			save_field_view( ctx, p );
+			const ProfileView view = list_fields( ctx );
+			if ( const size_t hits = check_view( view, p.needles ) ) fail( fmt( "view leak guard: %zu text(s) of the field view hold a real identifier value", hits ) );
+			const size_t derived = size_t( std::count_if( view.fields.begin(), view.fields.end(), []( const FieldInfo& f ) { return f.key.rfind( "derived/", 0 ) == 0; } ) );
+			const size_t editable = size_t( std::count_if( view.fields.begin(), view.fields.end(), []( const FieldInfo& f ) { return f.editable; } ) );
+			log.info( "field view", fmt( "%zu fields (%zu identity-map keys, %zu editable; %zu derived at build time) - synthetic values and metadata only; leak guard over every text of the view: 0 hits",
+				view.fields.size(), view.fields.size() - derived, editable, derived ) );
 			// (f) the original profile's blobs are the capture's bytes
 			if ( res.original.at( "smbios.bin" ) != in.rsmb ) fail( "self-check: the original smbios.bin differs from rsmb.bin" );
 			res.ok = true;
@@ -3288,6 +3310,313 @@ namespace emu::platform
 			log.error( "build", e.what() );
 		}
 		return res;
+	}
+
+	// ── the synthetic-only view and single-value edits (gap P1 #8 / #9, U1517) ───────────────────────────────────────────
+	// The view is built from synthetic data ONLY: ctx's identity map (key, kind, synthetic value), the identity rows WITHOUT
+	// their original column (id, kind, rule, first anchor, occurrence count, synthetic value) and the field map's location
+	// texts / relation rows. Nothing below reads IdentityEntry::original, the original profile files or a capture
+	void ProfileGenerator::save_field_view( BuildContext& ctx, const Identity& p )
+	{
+		struct Row { std::string id, kind, rule, source, synthetic; size_t occurrences = 0; };	// an identity row without its original value
+		std::vector<Row> rows;
+		for ( const IdentityEntry& r : p.identity ) rows.push_back( { r.id, r.kind, r.rule, r.source, r.synthetic, r.occurrences } );
+		std::map<std::string, std::vector<std::string>> rel;	// identity id -> its relation rows ("3r" / "4cr" / "8cr" / "8dr" location texts)
+		for ( const FieldMapEntry& f : p.fields )
+			if ( !f.rule.empty() && f.rule.back() == 'r' && !f.id.empty() ) rel[ f.id ].push_back( "rule " + f.rule + ": " + f.location );
+		std::set<std::string> covered;
+		auto add_row = [ & ]( FieldInfo& f, const Row& r ) {
+			f.identities.push_back( r.id );
+			f.occurrences += r.occurrences;
+			if ( f.rule.empty() ) f.rule = r.rule;
+			if ( f.location.empty() ) f.location = r.source;
+			for ( const std::string& x : rel[ r.id ] ) f.relations.push_back( x );
+			covered.insert( r.id );
+		};
+		std::vector<FieldInfo> out;
+		for ( auto& [ key, e ] : ctx.identity_map.entries )
+		{
+			FieldInfo f;
+			f.key = key;
+			f.kind = e.kind;
+			f.value = keep( e.value );
+			f.length = e.value.size();
+			f.editable = true;
+			if ( key == "identity/install" )
+			{
+				for ( const Row& r : rows ) if ( r.kind == "install_date" ) add_row( f, r );
+				for ( const Row& r : rows ) if ( r.rule == "7b" && r.kind != "install_date" ) add_row( f, r );
+				f.rule = "7b";
+				f.editable = false;
+				f.not_editable = "the install instant: the window it may move in depends on the real install history - a new instant comes with a new identity (--new-identity)";
+				f.relations.push_back( fmt( "moves %zu install-history value(s) and every version-1 GUID timestamp by the same offset (rules 7b, 4c)", f.identities.size() ) );
+			}
+			else if ( key.rfind( "identity/sid", 0 ) == 0 )
+			{
+				for ( const Row& r : rows ) if ( ( r.kind == "machine_sid" || r.kind == "user_sid" ) && r.synthetic.rfind( e.value, 0 ) == 0 ) add_row( f, r );
+				f.relations.push_back( "the machine / account-domain SID prefix: every user SID = this prefix + its exact RID (rule 7d)" );
+			}
+			else if ( key.rfind( "identity/", 0 ) == 0 )
+			{
+				std::string id = key.substr( 9 ), part;
+				if ( const size_t slash = id.find( '/' ); slash != std::string::npos ) { part = id.substr( slash + 1 ); id = id.substr( 0, slash ); }
+				for ( const Row& r : rows ) if ( r.id == id ) add_row( f, r );
+				if ( !part.empty() ) f.relations.push_back( "the " + part + " part of NameSamCompatible " + id + " (rule 7c)" );
+				if ( e.kind == "mac" )
+					for ( auto& [ k2, e2 ] : ctx.identity_map.entries )
+						if ( const GuidV1 g = parse_guid_v1( e2.value.c_str() ); g.ok && lower( g.node ) == mac_plain( e.value ) )
+							f.relations.push_back( "its MAC is the node of version-1 GUID " + k2 + " (an edit carries over)" );
+			}
+			else if ( key.rfind( "shared/usb/", 0 ) == 0 )
+			{
+				for ( const Row& r : rows ) if ( ( r.kind == "usb_serial" || r.kind == "hid_serial" ) && ieq( r.synthetic, e.value ) ) add_row( f, r );
+				f.relations.push_back( "shared with the other environment's profile (one serial per physical device, rule 4d): an edit changes this map only - give the other profile's map the same value" );
+			}
+			else if ( key.rfind( "smbios/", 0 ) == 0 )
+			{
+				unsigned type = 0, handle = 0, off = 0;
+				const bool uuid = key.size() > 5 && key.compare( key.size() - 5, 5, "/uuid" ) == 0 && sscanf( key.c_str(), "smbios/t%u/h%x/uuid", &type, &handle ) == 2;
+				if ( !uuid && sscanf( key.c_str(), "smbios/t%u/h%x/o%x", &type, &handle, &off ) != 3 ) type = 0;
+				const std::string prefix = uuid ? fmt( "type 1 handle 0x%04X formatted offset 0x08", handle ) : fmt( "type %u handle 0x%04X formatted offset 0x%02X", type, handle, off );
+				for ( const FieldMapEntry& fm : p.fields )
+					if ( fm.area == "smbios.bin" && fm.location.rfind( prefix, 0 ) == 0 )
+					{
+						f.occurrences++;
+						if ( f.rule.empty() ) f.rule = fm.rule;
+						if ( f.location.empty() ) f.location = fmt( "smbios.bin 0x%04llX len %u: ", (unsigned long long)fm.offset, fm.length ) + fm.location;
+					}
+				if ( uuid && f.location.find( "UUID-MAC relation" ) != std::string::npos ) f.relations.push_back( "bytes 10-15 = the synthetic MAC of the onboard NIC (re-derived by every build)" );
+				if ( !uuid ) f.relations.push_back( "a copy in an unreferenced string of the same structure follows it (rule 2o); SusClientIdValidation holds the board serial (rule 8c, re-derived by every build)" );
+			}
+			else if ( key.rfind( "edid/n", 0 ) == 0 || key.rfind( "edid/s", 0 ) == 0 )
+			{
+				const bool num = key[ 5 ] == 'n';
+				const std::string want = num ? fmt( "0x%08llX", std::stoull( e.value ) ) : e.value;	// the identity row of a numeric serial: its 0x form
+				for ( const Row& r : rows ) if ( r.kind == ( num ? "edid_serial" : "edid_serial_string" ) && ieq( r.synthetic, want ) ) add_row( f, r );
+				f.rule = "6";
+				f.relations.push_back( "one synthetic serial per physical monitor; the base-block checksum is recomputed by every build" );
+			}
+			out.push_back( f );
+		}
+		// identities without a map key of their own: derived at build time from other fields
+		for ( const Row& r : rows )
+		{
+			if ( covered.count( r.id ) ) continue;
+			FieldInfo f;
+			f.key = "derived/" + r.id;
+			f.kind = r.kind;
+			f.rule = r.rule;
+			f.location = r.source;
+			f.occurrences = r.occurrences;
+			f.length = r.synthetic.size();
+			f.identities = { r.id };
+			f.relations = rel[ r.id ];
+			f.value = keep( r.synthetic );
+			f.not_editable = r.rule == "7b" ? "an install-history value: real + the install-history offset (identity/install)"
+				: r.kind == "user_sid" || r.kind == "machine_sid" ? "a SID: the synthetic prefix (identity/sid..) + the exact RID"
+				: r.kind == "name_sam_compatible" ? "NameSamCompatible: the synthetic computer name \\ the synthetic user name"
+				: "derived at build time from the fields its relations name";
+			out.push_back( f );
+		}
+		ctx.view_fields = out;
+	}
+	ProfileView ProfileGenerator::list_fields( const BuildContext& ctx )
+	{
+		ProfileView v;
+		v.env = ctx.config.env;
+		v.profile = env_dir_name( ctx.config.env );
+		v.built = !ctx.view_fields.empty();
+		v.fields = ctx.view_fields;
+		for ( FieldInfo& f : v.fields )	// a map edited since (set_value / gen_value keep the view in step; anything else: the map wins)
+			if ( auto it = ctx.identity_map.entries.find( f.key ); it != ctx.identity_map.entries.end() && ( !f.value || it->second.value != f.value ) )
+			{
+				f.value = keep( it->second.value );
+				f.length = it->second.value.size();
+			}
+		return v;
+	}
+	size_t ProfileGenerator::check_view( const ProfileView& view, const std::vector<std::string>& needles )
+	{
+		std::vector<std::string> nl;
+		for ( const std::string& n : needles ) if ( !n.empty() ) nl.push_back( lower( n ) );
+		size_t hits = 0;
+		auto scan = [ & ]( const std::string& s ) {
+			const std::string l = lower( s );
+			for ( const std::string& n : nl )
+				if ( count_ci( l, n ) ) { hits++; return; }
+		};
+		for ( const FieldInfo& f : view.fields )
+		{
+			for ( const std::string* s : { &f.key, &f.kind, &f.rule, &f.location, &f.not_editable } ) scan( *s );
+			for ( const std::string& s : f.identities ) scan( s );
+			for ( const std::string& s : f.relations ) scan( s );
+			if ( f.value ) scan( f.value );
+		}
+		return hits;
+	}
+	namespace
+	{
+		// rule-2 classes per position: digit <-> digit, A-Z <-> A-Z, a-z <-> a-z, every other character identical
+		bool same_classes( const std::string& a, const std::string& b )
+		{
+			if ( a.size() != b.size() ) return false;
+			for ( size_t i = 0; i < a.size(); i++ )
+			{
+				const uint8_t x = uint8_t( a[ i ] ), y = uint8_t( b[ i ] );
+				const bool ok = ( std::isdigit( x ) && std::isdigit( y ) ) || ( std::isupper( x ) && std::isupper( y ) ) || ( std::islower( x ) && std::islower( y ) ) || ( !std::isalnum( x ) && x == y );
+				if ( !ok ) return false;
+			}
+			return true;
+		}
+		// hex text of the same layout: a hex digit where a has one, every other character identical, the letter case of a
+		bool same_hex_layout( const std::string& a, const std::string& b )
+		{
+			if ( a.size() != b.size() ) return false;
+			const bool a_lower = has_lower_hex( a ), a_upper = std::any_of( a.begin(), a.end(), []( char c ) { return c >= 'A' && c <= 'F'; } );
+			for ( size_t i = 0; i < a.size(); i++ )
+			{
+				if ( is_hex( a[ i ] ) != is_hex( b[ i ] ) || ( !is_hex( a[ i ] ) && a[ i ] != b[ i ] ) ) return false;
+				if ( ( a_lower && b[ i ] >= 'A' && b[ i ] <= 'F' ) || ( a_upper && b[ i ] >= 'a' && b[ i ] <= 'f' ) ) return false;
+			}
+			return true;
+		}
+		unsigned variant_class( char c )
+		{
+			const unsigned x = unsigned( std::stoul( std::string( 1, c ), nullptr, 16 ) );
+			return x < 8 ? 0u : x < 12 ? 1u : x < 14 ? 2u : 3u;
+		}
+		std::string hex_digits( const std::string& s ) { std::string h; for ( char c : s ) if ( is_hex( c ) ) h += c; return h; }
+	}
+	std::string ProfileGenerator::check_value( const BuildContext& ctx, const std::string& key, const std::string& v ) const
+	{
+		auto fi = std::find_if( ctx.view_fields.begin(), ctx.view_fields.end(), [ & ]( const FieldInfo& f ) { return f.key == key; } );
+		if ( fi == ctx.view_fields.end() ) return "not a field of the view (build the profile first)";
+		if ( !fi->editable ) return "not editable: " + fi->not_editable;
+		auto me = ctx.identity_map.entries.find( key );
+		auto gd = ctx.guards.find( key );
+		if ( me == ctx.identity_map.entries.end() || gd == ctx.guards.end() ) return "no identity-map value / guard for it (build the profile first)";
+		const std::string& cur = me->second.value;
+		const std::string& kind = me->second.kind;
+		const RealValueGuard& g = gd->second;
+		if ( g.same_length && v.size() != g.length ) return fmt( "length %zu - the field keeps the captured length %zu", v.size(), g.length );
+		if ( real_digest( v ) == g.digest ) return "this is the captured (real) value";
+		std::string bad;
+		static const std::regex r_guid( R"(\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?)" ), r_cn( "DESKTOP-[A-Z0-9]{7}" ),
+			r_sid( R"(S-1-5-21-([0-9]+)-([0-9]+)-([0-9]+))" ), r_dec( "[0-9]{1,10}" ), r_vol( "[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}" );
+		if ( kind == "mac" )
+		{
+			uint8_t m[ 6 ];
+			if ( !parse_mac_text( v, m ) || v != upper( v ) ) bad = "not an upper-case XX:XX:XX:XX:XX:XX MAC";
+			else if ( !ieq( v.substr( 0, 9 ), cur.substr( 0, 9 ) ) ) bad = "the OUI (bytes 0-2) must stay (rule 3)";
+			else if ( ( mac_value( v ) & 0xFFFFFF ) + g.mac_room > 0xFFFFFF ) bad = fmt( "the tail leaves no room for the family's largest delta %u", g.mac_room );
+			else if ( is_vmnet_mac( v ) ) bad = "VMware's VMnet pattern 00:50:56:C0:00:xx is reserved";
+		}
+		else if ( kind == "guid" )
+		{
+			const std::string hc = hex_digits( cur ), hv = hex_digits( v );
+			const GuidV1 a = parse_guid_v1( cur.c_str() ), b = parse_guid_v1( v.c_str() );
+			if ( !std::regex_match( v, r_guid ) || !same_hex_layout( cur, v ) ) bad = "not a GUID in the field's form (braces, hyphens, letter case)";
+			else if ( hv[ 12 ] != hc[ 12 ] || variant_class( hv[ 16 ] ) != variant_class( hc[ 16 ] ) ) bad = "the version digit and the variant bits must stay (rule 4c)";
+			else if ( hc.substr( 8, 12 ).find_first_not_of( '0' ) == std::string::npos && !ieq( hv.substr( 8 ), hc.substr( 8 ) ) ) bad = "an MBR-style volume GUID: only the disk signature (digits 1-8) may change";
+			else if ( a.ok && ( !b.ok || b.timestamp != a.timestamp || !ieq( b.node, a.node ) ) ) bad = "a version-1 GUID: the timestamp (real + the install-history offset) and the node are derived - only the clock sequence may change";
+		}
+		else if ( kind == "uuid" )
+		{
+			if ( v.size() != 32 || !std::all_of( v.begin(), v.end(), is_hex ) || !same_hex_layout( cur, v ) ) bad = "not 32 hex digits in the field's case";
+			else if ( ctx.config.env == Environment::vmware_guest ? !ieq( v.substr( 0, 4 ), cur.substr( 0, 4 ) ) : ( v[ 12 ] != cur[ 12 ] || v[ 14 ] != cur[ 14 ] || variant_class( v[ 16 ] ) != variant_class( cur[ 16 ] ) ) )
+				bad = ctx.config.env == Environment::vmware_guest ? "VMware's 56 4D prefix must stay (rule 1)" : "the RFC 4122 version nibbles and variant bits must stay (rule 1)";
+		}
+		else if ( kind == "usb_serial" ) { if ( std::all_of( cur.begin(), cur.end(), is_hex ) ? !same_hex_layout( cur, v ) : !same_classes( cur, v ) ) bad = "not the field's form (hex digits / rule-2 classes per position, rule 4d)"; }
+		else if ( kind == "classes" || kind == "smbios_string" || kind == "product_id_middle" ) { if ( !same_classes( cur, v ) ) bad = "the rule-2 character classes per position must stay"; }
+		else if ( kind == "computer_name" ) { if ( !std::regex_match( v, r_cn ) ) bad = "not DESKTOP- + 7 of [A-Z0-9] (rule 4a)"; }
+		else if ( kind == "hex" ) { if ( !same_hex_layout( cur, v ) ) bad = "not hex digits of the field's length and case"; }
+		else if ( kind == "volume_serial" ) { if ( !std::regex_match( v, r_vol ) || !same_hex_layout( cur, v ) ) bad = "not XXXX-XXXX hex in the field's case (rule 7e)"; }
+		else if ( kind == "installation_id" ) { if ( !same_classes( cur, v ) || !check_installation_id( v.c_str() ) ) bad = "not 63 digits in the field's layout with valid check digits (rule 8a)"; }
+		else if ( kind == "sid" )
+		{
+			std::smatch a, b;
+			const bool ok = std::regex_match( v, b, r_sid ) && std::regex_match( cur, a, r_sid );
+			for ( int k = 1; ok && k <= 3 && bad.empty(); k++ )
+				if ( b[ k ].length() != a[ k ].length() || b[ k ].str()[ 0 ] == '0' || std::stoull( b[ k ].str() ) > 0xFFFFFFFFull ) bad = "each sub-authority keeps its digit count, no leading zero, at most 4294967295 (rule 7d)";
+			if ( !ok ) bad = "not S-1-5-21-a-b-c (rule 7d)";
+		}
+		else if ( kind == "edid_serial" ) { if ( !std::regex_match( v, r_dec ) || v[ 0 ] == '0' || std::stoull( v ) > 0xFFFFFFFFull ) bad = "not a decimal 1 .. 4294967295 (rule 6)"; }
+		else bad = "no edit rule for the kind " + kind;
+		if ( !bad.empty() ) return bad;
+		for ( auto& [ k2, e2 ] : ctx.identity_map.entries )
+			if ( k2 != key && e2.kind == kind && ieq( e2.value, v ) ) return "already the value of " + k2 + " (one synthetic value per identity)";
+		return {};
+	}
+	FieldInfo ProfileGenerator::set_value( BuildContext& ctx, const std::string& key, const char* value )
+	{
+		const std::string v = value ? value : "";
+		if ( const std::string why = check_value( ctx, key, v ); !why.empty() ) fail( "set_value " + key + ": " + why );
+		IdentityMapEntry& e = ctx.identity_map.entries.at( key );
+		const std::string old = e.value;
+		e.value = v;
+		std::vector<std::string> changed = { key };
+		if ( e.kind == "mac" )	// map dependents: the version-1 GUIDs whose node is this MAC
+		{
+			const std::string on = mac_plain( old ), nn = mac_plain( v );
+			for ( auto& [ k2, e2 ] : ctx.identity_map.entries )
+			{
+				const GuidV1 g = parse_guid_v1( e2.value.c_str() );
+				if ( !g.ok || lower( g.node ) != on ) continue;
+				const std::string node = has_lower_hex( e2.value ) || !std::any_of( e2.value.begin(), e2.value.end(), []( char c ) { return c >= 'A' && c <= 'F'; } ) ? nn : upper( nn );
+				size_t k = 0, seen = 0;
+				for ( char& c : e2.value )
+					if ( is_hex( c ) && seen++ >= 20 ) c = node[ k++ ];
+				changed.push_back( k2 );
+			}
+		}
+		ctx.applying = true;	// the map is complete: the next gen_build applies it, nothing is drawn
+		FieldInfo result;
+		for ( FieldInfo& f : ctx.view_fields )
+		{
+			for ( const std::string& k : changed )
+				if ( f.key == k ) { f.value = keep( ctx.identity_map.entries.at( k ).value ); f.length = ctx.identity_map.entries.at( k ).value.size(); }
+			if ( f.key == key ) result = f;
+		}
+		return result;
+	}
+	FieldInfo ProfileGenerator::gen_value( BuildContext& ctx, const std::string& key )
+	{
+		auto me = ctx.identity_map.entries.find( key );
+		if ( me == ctx.identity_map.entries.end() ) fail( "gen_value " + key + ": no identity-map value (build the profile first)" );
+		const std::string cur = me->second.value, kind = me->second.kind;
+		if ( const std::string why = check_value( ctx, key, cur ); !why.empty() ) fail( "gen_value " + key + ": " + why );
+		const unsigned room = ctx.guards.at( key ).mac_room;
+		for ( int attempt = 0; attempt < 64; attempt++ )
+		{
+			std::string v;	// a finished value of the Randomizer, the current synthetic value as its pattern
+			if ( kind == "mac" ) v = Randomize->gen_mac_like( cur.c_str(), room );
+			else if ( kind == "guid" )
+			{
+				const GuidV1 g = parse_guid_v1( cur.c_str() );
+				if ( !g.ok ) v = Randomize->gen_guid_like( cur.c_str(), nullptr );
+				else
+				{
+					// version 1: only the clock sequence (hex digits 17-20) - timestamp and node are derived
+					const std::string clock = Randomize->gen_clock_seq_like( g.clock_seq.c_str() );
+					const bool up = !has_lower_hex( cur );
+					v = cur;
+					size_t k = 0, seen = 0;
+					for ( char& c : v )
+						if ( is_hex( c ) && seen++ >= 16 && k < 4 ) c = up ? char( std::toupper( uint8_t( clock[ k++ ] ) ) ) : char( std::tolower( uint8_t( clock[ k++ ] ) ) );
+				}
+			}
+			else if ( kind == "uuid" ) v = Randomize->gen_system_uuid_like( cur.c_str(), ctx.config.env == Environment::vmware_guest );
+			else if ( kind == "usb_serial" ) v = Randomize->gen_usb_serial_like( cur.c_str() );
+			else if ( kind == "classes" || kind == "smbios_string" || kind == "product_id_middle" ) v = Randomize->gen_like( cur.c_str() );
+			else if ( kind == "computer_name" ) v = Randomize->gen_computer_name( cur.c_str() );
+			else if ( kind == "hex" || kind == "volume_serial" ) v = Randomize->gen_hex_like( cur.c_str(), false );
+			else if ( kind == "installation_id" ) v = Randomize->gen_installation_id_like( cur.c_str() );
+			else if ( kind == "sid" ) v = Randomize->gen_sid_like( cur.c_str() );
+			else if ( kind == "edid_serial" ) v = Randomize->gen_edid_serial_like( cur.c_str() );
+			else fail( "gen_value " + key + ": no generator for the kind " + kind );
+			if ( !ieq( v, cur ) && check_value( ctx, key, v ).empty() ) return set_value( ctx, key, v.c_str() );
+		}
+		fail( "gen_value " + key + ": no acceptable value in 64 draws" );
 	}
 
 	// the convenience form: one new context of the default configuration per call (pg_main uses its own context)

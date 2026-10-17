@@ -1997,6 +1997,170 @@ static void pg_v1_guid_time( void )
 	}
 }
 
+// ── the synthetic-only view and single-value edits (gap P1 #8 / #9, U1517) ──────────────────────────────────────────────
+// every text of a view (key, kind, rule, location, identities, relations, reason, value)
+static std::vector<std::string> pg_view_texts( const ProfileView& v )
+{
+	std::vector<std::string> t;
+	for ( const FieldInfo& f : v.fields )
+	{
+		for ( const std::string* s : { &f.key, &f.kind, &f.rule, &f.location, &f.not_editable } ) t.push_back( *s );
+		t.insert( t.end(), f.identities.begin(), f.identities.end() );
+		t.insert( t.end(), f.relations.begin(), f.relations.end() );
+		if ( f.value ) t.push_back( f.value );
+	}
+	return t;
+}
+static const FieldInfo* pg_field( const ProfileView& v, const std::string& key )
+{
+	for ( const FieldInfo& f : v.fields ) if ( f.key == key ) return &f;
+	return nullptr;
+}
+// the view of a build holds none of the captured values: every real value the in-memory build knows (each identity's
+// original, the SMBIOS / EDID / disk real values of the leak guard) and the fixture's raw values are absent from every text
+// of the view (case-insensitive substring); the view lists every map key plus the derived identities with metadata; then
+// edits round trip: gen_value (fresh RDRAND, the same format) and set_value (format / real value / uniqueness checked),
+// dependents follow (a base MAC's version-1 GUID nodes in the map; the MAC family, NameSamCompatible at the next build),
+// the edited map applied by gen_build gives the edited profile, and the saved map reproduces it in a new context
+static void pg_field_view( void )
+{
+	CaptureInputs in = pg_capture( false, pg_text_fixture3() );
+	SmbiosTable t = parse_smbios( in.rsmb );
+	const uint8_t wired[ 6 ] = { 0xA0, 0xB1, 0xC2, 0x01, 0x02, 0x03 };
+	memcpy( &in.rsmb[ t.structures[ 0 ].offset + 8 + 10 ], wired, 6 );
+	in.edid = { { "edid_0.bin", pg_edid( 0x2701, 0x12345678, "FIXSER12345", false ) } };
+	BuildContext ctx = pg_fresh( Environment::bare_host );
+	TEST_CHECK( !ProfileGen->list_fields( ctx ).built );
+	const GenResult r = ProfileGen->gen_build( ctx, in );
+	TEST_ASSERT_( r.ok, "build: %s", r.error.c_str() );
+	const ProfileView v = ProfileGen->list_fields( ctx );
+	TEST_CHECK( v.built && v.profile == "bare_host" && v.env == Environment::bare_host );
+	// no real value anywhere in the view (and the leak guard of gen_build agrees)
+	std::vector<std::string> real;
+	for ( const IdentityEntry& e : r.identity.identity ) real.push_back( e.original );
+	real.insert( real.end(), r.identity.needles.begin(), r.identity.needles.end() );
+	for ( const char* x : { "DESKTOP-FIXTUR2", "Fixer", "AB12cd-345_Z", "1234ABCD", "AT-0042", "S5GXNF0R123456K", "FIXSER12345", "4142433132333435", "987654321098", "GPU12345XY",
+			  "a0b1c2010203", "3ca9f4102030", "1688252866", "1111111111-222222222-3333333333", k_pg_iid0, k_pg_iid1, k_pg_flash_usb } )
+		real.push_back( x );
+	size_t checked = 0, hits = 0;
+	const std::vector<std::string> texts = pg_view_texts( v );
+	for ( const std::string& x0 : real )
+	{
+		if ( x0.size() < 4 ) continue;
+		std::string x = x0;
+		for ( char& c : x ) c = char( tolower( uint8_t( c ) ) );
+		if ( x.front() == '{' && x.back() == '}' ) x = x.substr( 1, x.size() - 2 );
+		checked++;
+		for ( const std::string& s0 : texts )
+		{
+			std::string s = s0;
+			for ( char& c : s ) c = char( tolower( uint8_t( c ) ) );
+			if ( s.find( x ) != std::string::npos ) { hits++; TEST_MSG( "a real value of length %zu in a view text", x.size() ); }
+		}
+	}
+	TEST_CHECK_( checked > 100 && hits == 0, "%zu real values x %zu view texts: %zu hits", checked, texts.size(), hits );
+	TEST_CHECK( ProfileGenerator::check_view( v, r.identity.needles ) == 0 && ProfileGenerator::check_view( v, { "1688252866" } ) == 0 );
+	ProfileView poisoned = v;	// the check itself finds a real value
+	poisoned.fields[ 0 ].relations.push_back( "x DESKTOP-FIXTUR2 y" );
+	TEST_CHECK( ProfileGenerator::check_view( poisoned, { "desktop-fixtur2" } ) == 1 );
+	// the fields: every map key once, the derived identities with their reason, metadata filled
+	size_t keys = 0, derived = 0;
+	for ( const FieldInfo& f : v.fields )
+	{
+		if ( f.key.rfind( "derived/", 0 ) == 0 ) { derived++; TEST_CHECK( !f.editable && !f.not_editable.empty() && f.identities.size() == 1 ); }
+		else { keys++; TEST_CHECK_( ctx.identity_map.entries.count( f.key ) && f.value && ctx.identity_map.entries.at( f.key ).value == f.value, "%s: the map's value", f.key.c_str() ); }
+		TEST_CHECK_( !f.rule.empty() && f.value && f.length == strlen( f.value ), "%s: rule and value", f.key.c_str() );
+	}
+	// derived: the MAC family dependents (Wi-Fi Direct, Wi-Fi Direct #2, Bluetooth PAN), the EUI-64 form, NameSamCompatible,
+	// SusClientIdValidation, the flash drive's disk serial (the install history belongs to identity/install, SIDs to the prefix)
+	TEST_CHECK_( keys == ctx.identity_map.entries.size() && derived >= 7, "%zu map keys of %zu, %zu derived", keys, ctx.identity_map.entries.size(), derived );
+	const IdentityEntry* wifi = pg_find( r.identity.identity, "mac", "3C:A9:F4:10:20:30" );
+	const IdentityEntry* direct = pg_find( r.identity.identity, "mac", "3C:A9:F4:10:20:31" );
+	const IdentityEntry* cn = pg_find( r.identity.identity, "computer_name", "DESKTOP-FIXTUR2" );
+	const IdentityEntry* cont = pg_find( r.identity.identity, "container_id", "{12345678-9ABC-11F0-8123-3CA9F4102030}" );
+	TEST_ASSERT( wifi && direct && cn && cont );
+	const FieldInfo* fw = pg_field( v, "identity/" + wifi->id );
+	const FieldInfo* fd = pg_field( v, "derived/" + direct->id );
+	const FieldInfo* fi = pg_field( v, "identity/install" );
+	const FieldInfo* fu = pg_field( v, "smbios/t1/h0001/uuid" );
+	TEST_ASSERT( fw && fd && fi && fu );
+	TEST_CHECK( fw->editable && fw->rule == "3" && fw->location.rfind( "network_adapters.txt:", 0 ) == 0 && fw->occurrences >= 1 );
+	TEST_CHECK_( std::count_if( fw->relations.begin(), fw->relations.end(), []( const std::string& s ) { return s.find( "node of version-1 GUID" ) != std::string::npos; } ) == 2, "the Wi-Fi MAC is the node of 2 version-1 GUIDs" );
+	TEST_CHECK( !fd->relations.empty() && fd->relations[ 0 ].find( "+ 1" ) != std::string::npos );
+	TEST_CHECK( !fi->editable && fi->identities.size() >= 12 && fu->rule == "1-rfc4122" && fu->location.rfind( "smbios.bin 0x", 0 ) == 0 && !fu->relations.empty() );
+	// set_value: refused for a wrong format, the real value, a value another key holds, a non-editable / unknown key
+	auto refused = [ & ]( const std::string& key, const char* value, const char* why ) {
+		try { ProfileGen->set_value( ctx, key, value ); }
+		catch ( const std::exception& e ) { return std::string( e.what() ).find( why ) != std::string::npos; }
+		return false;
+	};
+	const std::string kw = "identity/" + wifi->id, kc = "identity/" + cn->id;
+	TEST_CHECK( refused( kw, "3C:A9:F4:10:20:30", "captured (real) value" ) );
+	TEST_CHECK( refused( kw, "3E:A9:F4:10:20:30", "OUI" ) && refused( kw, "3c:a9:f4:aa:bb:cc", "upper-case" ) && refused( kw, "3C:A9:F4:FF:FF:FE", "room" ) );
+	TEST_CHECK( refused( kc, "DESKTOP-FIXTUR2", "captured (real) value" ) && refused( kc, "LAPTOP-1234567", "DESKTOP-" ) );
+	TEST_CHECK( refused( "identity/install", "1700000000", "not editable" ) && refused( "nothing/here", "x", "not a field" ) );
+	const IdentityEntry* wired_mac = pg_find( r.identity.identity, "mac", "A0:B1:C2:01:02:03" );
+	TEST_ASSERT( wired_mac != nullptr );
+	TEST_CHECK( refused( "identity/" + wired_mac->id, ctx.identity_map.entries.at( "identity/" + wired_mac->id ).value.c_str(), "" ) == false );	// its own value: accepted (no change)
+	const std::string cont_key = "identity/" + cont->id;
+	const std::string cont_v = ctx.identity_map.entries.at( cont_key ).value;
+	std::string other_guid = cont_v;
+	other_guid[ 3 ] = other_guid[ 3 ] == 'A' ? 'B' : 'A';	// another timestamp
+	TEST_CHECK( refused( cont_key, other_guid.c_str(), "only the clock sequence" ) );
+	// set_value: the computer name; gen_value: the Wi-Fi base MAC (its v1 GUID nodes follow in the map)
+	const FieldInfo sc = ProfileGen->set_value( ctx, kc, "DESKTOP-ABCDEF1" );
+	TEST_CHECK( std::string( sc.value ) == "DESKTOP-ABCDEF1" && ctx.identity_map.entries.at( kc ).value == "DESKTOP-ABCDEF1" && ctx.applying );
+	TEST_CHECK( refused( "identity/" + wired_mac->id, ctx.identity_map.entries.at( kw ).value.c_str(), "OUI" ) );	// another key's value (another OUI here)
+	const std::string old_wifi = ctx.identity_map.entries.at( kw ).value;
+	const FieldInfo gw = ProfileGen->gen_value( ctx, kw );
+	const std::string new_wifi = gw.value;
+	TEST_CHECK( new_wifi != old_wifi && new_wifi.substr( 0, 9 ) == "3C:A9:F4:" && ctx.identity_map.entries.at( kw ).value == new_wifi );
+	std::string new_node;
+	for ( char ch : new_wifi ) if ( ch != ':' ) new_node += char( tolower( uint8_t( ch ) ) );
+	const GuidV1 cg = ProfileGenerator::parse_guid_v1( ctx.identity_map.entries.at( cont_key ).value.c_str() );
+	TEST_CHECK_( cg.ok && _stricmp( cg.node.c_str(), new_node.c_str() ) == 0 && cg.timestamp == ProfileGenerator::parse_guid_v1( cont_v.c_str() ).timestamp, "the container's version-1 node followed the new MAC in the map" );
+	{
+		const ProfileView after = ProfileGen->list_fields( ctx );
+		const FieldInfo* fa = pg_field( after, kw );
+		TEST_CHECK( fa && std::string( fa->value ) == new_wifi );
+	}
+	// uniqueness: one interface GUID cannot take another one's value
+	const IdentityEntry* if0 = pg_find( r.identity.identity, "interface_guid", "{0F0F0F0F-1111-4222-8333-444455556666}" );
+	const IdentityEntry* if1 = pg_find( r.identity.identity, "interface_guid", "{2D2D2D2D-1111-4222-8333-444455556666}" );
+	TEST_ASSERT( if0 && if1 );
+	TEST_CHECK( refused( "identity/" + if0->id, ctx.identity_map.entries.at( "identity/" + if1->id ).value.c_str(), "already the value of" ) );
+	// a fresh value for EVERY other editable key: each differs, keeps its format (the checks), the build applies all
+	std::map<std::string, std::string> before;
+	for ( auto& [ k, e ] : ctx.identity_map.entries ) before[ k ] = e.value;
+	size_t regenerated = 0;
+	for ( const FieldInfo& f : ProfileGen->list_fields( ctx ).fields )
+	{
+		if ( !f.editable || f.key == kw || f.key == kc ) continue;
+		const FieldInfo g = ProfileGen->gen_value( ctx, f.key );
+		TEST_CHECK_( g.value && before[ f.key ] != g.value, "%s (%s): a new value", f.key.c_str(), f.kind.c_str() );
+		regenerated++;
+	}
+	TEST_CHECK( regenerated + 3 >= keys );
+	const GenResult r2 = ProfileGen->gen_build( ctx, in );	// application of the edited map (nothing drawn)
+	TEST_ASSERT_( r2.ok, "the edited map applied: %s", r2.error.c_str() );
+	TEST_CHECK( !r2.generated );
+	const IdentityEntry* cn2 = pg_find( r2.identity.identity, "computer_name", "DESKTOP-FIXTUR2" );
+	const IdentityEntry* w2 = pg_find( r2.identity.identity, "mac", "3C:A9:F4:10:20:30" );
+	const IdentityEntry* d2 = pg_find( r2.identity.identity, "mac", "3C:A9:F4:10:20:31" );
+	const IdentityEntry* ns2 = pg_find( r2.identity.identity, "name_sam_compatible", "DESKTOP-FIXTUR2\\Fixer" );
+	TEST_ASSERT( cn2 && w2 && d2 && ns2 );
+	TEST_CHECK( cn2->synthetic == "DESKTOP-ABCDEF1" && w2->synthetic == new_wifi && ns2->synthetic.rfind( "DESKTOP-ABCDEF1\\", 0 ) == 0 );
+	TEST_CHECK_( std::stoull( d2->synthetic.substr( 9, 2 ) + d2->synthetic.substr( 12, 2 ) + d2->synthetic.substr( 15, 2 ), nullptr, 16 ) == std::stoull( new_wifi.substr( 9, 2 ) + new_wifi.substr( 12, 2 ) + new_wifi.substr( 15, 2 ), nullptr, 16 ) + 1,
+		"Wi-Fi Direct = the edited Wi-Fi MAC + 1 (re-derived by the build)" );
+	TEST_CHECK( r2.synthetic.at( "identity.tsv" ) != r.synthetic.at( "identity.tsv" ) && ProfileGenerator::check_view( ProfileGen->list_fields( ctx ), r2.identity.needles ) == 0 );
+	// the saved edited map reproduces the edited profile in a new context
+	const Bytes& mb = r2.synthetic.at( "identity_map.tsv" );
+	BuildContext ctx2 = ProfileGen->new_context( pg_cfg( Environment::bare_host ) );
+	ProfileGen->load_identity_maps( ctx2, ProfileGenerator::parse_identity_map( std::string( mb.begin(), mb.end() ) ), {} );
+	const GenResult r3 = ProfileGen->gen_build( ctx2, in );
+	TEST_CHECK( r3.ok && !r3.generated && r3.synthetic == r2.synthetic );
+}
+
 // ── atomic profile writes (user decision 2026-10-17 "Atomic writes", U1515) ─────────────────────────────────────────────
 // the test's own cleanup: exactly the files it wrote (relative paths of files), then the folders they emptied and dir -
 // single non-recursive removes, never a recursive delete
@@ -2211,5 +2375,6 @@ TEST_LIST = {
 	{ "pg_concurrent_fresh_shared", pg_concurrent_fresh_shared },
 	{ "pg_atomic_writes", pg_atomic_writes },
 	{ "pg_v1_guid_time", pg_v1_guid_time },
+	{ "pg_field_view", pg_field_view },
 	{ NULL, NULL } };
 // ── end of the pg_ block (U1511) ─────────────────────────────────────────────────────────────────────────────────────────
