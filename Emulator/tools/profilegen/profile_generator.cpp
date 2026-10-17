@@ -2111,29 +2111,241 @@ namespace emu::platform
 		}
 	}
 
-	void ProfileGenerator::save_profile( const fs::path& dir, const std::map<std::string, Bytes>& files, bool original )
+	// ── atomic profile writes (user decision 2026-10-17 "Atomic writes", U1515) ─────────────────────────────────────────
+	namespace
 	{
+		// the sibling "<dir><suffix>" of a profile folder: "<dir>.partial" (the new profile while it is written) and
+		// "<dir>.old" (the previous profile while the new one is switched in)
+		fs::path sibling( const fs::path& dir, const wchar_t* suffix ) { return dir.parent_path() / ( dir.filename().native() + suffix ); }
+		// a NEW file (CREATE_NEW: an existing file is never overwritten), written completely and flushed to disk
+		void write_new_file( const fs::path& f, const Bytes& data )
+		{
+			HANDLE h = CreateFileW( f.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr );
+			if ( h == INVALID_HANDLE_VALUE ) fail( fmt( "cannot create %s (Win32 error %lu)", show( f ).c_str(), GetLastError() ) );
+			size_t done = 0;
+			bool ok = true;
+			while ( ok && done < data.size() )
+			{
+				const DWORD part = DWORD( std::min<size_t>( data.size() - done, size_t( 1 ) << 30 ) );
+				DWORD wrote = 0;
+				ok = WriteFile( h, data.data() + done, part, &wrote, nullptr ) && wrote == part;
+				done += wrote;
+			}
+			ok = ok && FlushFileBuffers( h );
+			const DWORD err = ok ? 0 : GetLastError();
+			CloseHandle( h );
+			if ( !ok ) fail( fmt( "cannot write %s (Win32 error %lu)", show( f ).c_str(), err ) );
+		}
+		// a folder rename on the same volume (MoveFileExW without MOVEFILE_REPLACE_EXISTING: an existing target fails), tried
+		// again while another process briefly holds a handle inside the folder (a reader, the search indexer, a virus
+		// scanner): up to 150 attempts 20 ms apart. Returns 0 or the last Win32 error
+		DWORD move_folder( const fs::path& from, const fs::path& to )
+		{
+			DWORD err = 0;
+			for ( int i = 0; i < 150; i++ )
+			{
+				if ( MoveFileExW( from.c_str(), to.c_str(), 0 ) ) return 0;
+				err = GetLastError();
+				if ( err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION && err != ERROR_LOCK_VIOLATION ) break;
+				Sleep( 20 );
+			}
+			return err;
+		}
+		// removes EXACTLY the listed files (relative paths) of a folder this tool created or validated, then the sub-folders
+		// they emptied (deepest first) and the folder itself - each a single non-recursive remove; anything not listed stays
+		// and keeps its folders. Never a recursive delete of a path
+		struct KnownRemoval { size_t files = 0; bool folder_removed = false; size_t left = 0; };
+		KnownRemoval remove_known( const fs::path& dir, const std::vector<std::string>& rel_files )
+		{
+			KnownRemoval r;
+			std::error_code ec;
+			std::set<fs::path> subdirs;
+			for ( const std::string& rel : rel_files )
+			{
+				const fs::path f = ( dir / rel ).lexically_normal();
+				if ( f.native().rfind( dir.native(), 0 ) != 0 || f == dir ) continue;	// never outside dir
+				for ( int i = 0; i < 25 && fs::is_regular_file( f, ec ); i++ )
+				{
+					if ( fs::remove( f, ec ) ) { r.files++; break; }
+					Sleep( 20 );	// a handle held briefly by another process
+				}
+				for ( fs::path p = f.parent_path(); p != dir && p.native().size() > dir.native().size(); p = p.parent_path() ) subdirs.insert( p );
+			}
+			std::vector<fs::path> order( subdirs.begin(), subdirs.end() );
+			std::sort( order.begin(), order.end(), []( const fs::path& a, const fs::path& b ) { return a.native().size() > b.native().size(); } );
+			for ( const fs::path& p : order ) fs::remove( p, ec );	// non-recursive: fails (and stays) when not empty
+			r.folder_removed = fs::remove( dir, ec );
+			if ( !r.folder_removed && fs::exists( dir, ec ) )
+				for ( auto it = fs::recursive_directory_iterator( dir, ec ); !ec && it != fs::recursive_directory_iterator(); it.increment( ec ) ) r.left++;
+			return r;
+		}
+		// the manifest.txt this tool writes into a profile folder of environment env (first line)
+		bool has_profile_manifest( const fs::path& dir, const std::string& env )
+		{
+			std::ifstream f( dir / "manifest.txt", std::ios::binary );
+			std::string first;
+			if ( !f || !std::getline( f, first ) ) return false;
+			return first.rfind( "# emu-profilegen ", 0 ) == 0 && first.find( " - platform profile manifest - " + env + " (" ) != std::string::npos;
+		}
+		// one file read with full sharing (a concurrent rename of its folder is not blocked); missing = it does not exist
+		struct SharedRead { bool ok = false, missing = false; Bytes data; };
+		SharedRead read_shared( const fs::path& p )
+		{
+			SharedRead r;
+			HANDLE h = CreateFileW( p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
+			if ( h == INVALID_HANDLE_VALUE )
+			{
+				const DWORD e = GetLastError();
+				r.missing = e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND;
+				return r;
+			}
+			LARGE_INTEGER size {};
+			bool ok = GetFileSizeEx( h, &size ) && size.QuadPart < ( int64_t( 1 ) << 31 );
+			if ( ok ) r.data.resize( size_t( size.QuadPart ) );
+			DWORD got = 0;
+			ok = ok && ( r.data.empty() || ( ReadFile( h, r.data.data(), DWORD( r.data.size() ), &got, nullptr ) && got == r.data.size() ) );
+			CloseHandle( h );
+			r.ok = ok;
+			return r;
+		}
+	}
+
+	ProfileDirCheck ProfileGenerator::check_profile_dir( const fs::path& dir0 )
+	{
+		ProfileDirCheck c;
+		std::error_code ec;
+		fs::path dir = fs::absolute( dir0, ec ).lexically_normal();
+		if ( dir.filename().empty() ) dir = dir.parent_path();	// a trailing separator
+		const std::string env = lower( dir.filename().string() );
+		if ( env != "vmware_guest" && env != "bare_host" ) { c.reason = "the folder name is not a profile environment (vmware_guest / bare_host)"; return c; }
+		const fs::path p1 = dir.parent_path(), p2 = p1.parent_path(), p3 = p2.parent_path();
+		const bool repo_profile = ieq( p1.filename().string(), "platform" ) && ieq( p2.filename().string(), "data" ) && ieq( p3.filename().string(), "Emulator" );
+		const bool original_profile = ieq( p1.filename().string(), "profiles_original" );
+		if ( !repo_profile && !original_profile ) { c.reason = "the folder is neither <...>\\Emulator\\data\\platform\\<env> nor <...>\\profiles_original\\<env>"; return c; }
+		if ( fs::exists( dir, ec ) && !has_profile_manifest( dir, env ) ) { c.reason = "the folder holds no manifest.txt of an emu-profilegen " + env + " profile"; return c; }
+		c.ok = true;
+		return c;
+	}
+
+	IdentityMapFile ProfileGenerator::load_identity_map( const fs::path& file )
+	{
+		// the folder states a concurrent save_profile goes through: [dir] -> [dir, dir.partial] -> [dir.old, dir.partial] ->
+		// [dir.old, dir] -> [dir]. A reader looks at dir, then dir.old, then dir again; when none of them holds the map while
+		// a "<dir>.partial" or "<dir>.old" exists (a switch - or several quick ones - in progress, or a first write not yet
+		// switched in), it tries again. No map = three attempts in a row (4 ms apart) found neither the map, nor a previous
+		// copy, nor a write in progress: a reader preempted across switches cannot see that, since between two switches the
+		// map is always in place
+		IdentityMapFile r;
+		const fs::path dir = file.parent_path(), old_dir = sibling( dir, L".old" ), old = old_dir / file.filename(), partial = sibling( dir, L".partial" );
+		std::error_code ec;
+		int quiet = 0;	// attempts in a row without a map and without a write in progress
+		for ( size_t attempt = 1; attempt <= 2500; attempt++ )
+		{
+			r.attempts = attempt;
+			bool busy = false;
+			for ( int pass = 0; pass < 3; pass++ )
+			{
+				const fs::path& p = pass == 1 ? old : file;
+				SharedRead s = read_shared( p );
+				if ( s.ok )
+				{
+					r.found = true;
+					r.source = pass == 1 ? "previous profile (a replacement was switching it)" : "profile";
+					r.map = parse_identity_map( std::string( s.data.begin(), s.data.end() ) );
+					return r;
+				}
+				busy |= !s.missing;	// present but not readable right now (a sharing conflict): try again
+			}
+			busy |= fs::exists( partial, ec ) || fs::exists( old_dir, ec );
+			quiet = busy ? 0 : quiet + 1;
+			if ( quiet == 3 ) return r;	// no map and no write in progress, three times in a row
+			Sleep( 4 );
+		}
+		fail( "the identity map " + show( file ) + " could not be read for 10 s: a sharing conflict, or a profile write in progress that does not finish (an interrupted run's " +
+			partial.filename().string() + " / " + old_dir.filename().string() + " folder?)" );
+	}
+
+	ProfileSaveResult ProfileGenerator::save_profile( const fs::path& dir0, const std::map<std::string, Bytes>& files, bool original )
+	{
+		ProfileSaveResult res;
+		std::error_code ec;
+		fs::path dir = fs::absolute( dir0, ec ).lexically_normal();
+		if ( dir.filename().empty() ) dir = dir.parent_path();	// a trailing separator
+		res.dir = dir;
 		if ( original )
 		{
 			fs::path wt = check_git_work_tree( dir );
 			if ( !wt.empty() ) fail( "refusing to write the ORIGINAL profile (real identifiers) inside a git work tree: " + show( dir ) + " is under " + show( wt ) );
 		}
-		std::error_code ec;
-		if ( fs::exists( dir, ec ) )
+		if ( dir.filename().empty() || dir == dir.root_path() || dir.parent_path().empty() ) fail( "save_profile: not a profile folder path: " + show( dir ) );
+		const fs::path partial = sibling( dir, L".partial" ), old = sibling( dir, L".old" );
+		for ( const fs::path& s : { partial, old } )
+			if ( fs::exists( s, ec ) )
+				fail( "a folder of an interrupted profile write exists: " + show( s ) + " - this build did not create it and leaves it untouched; inspect it, then remove it by hand" );
+		res.replaced = fs::exists( dir, ec );
+		std::vector<std::string> names;	// the profile's files (relative paths)
+		for ( auto& [ rel, data ] : files ) names.push_back( rel );
+		if ( res.replaced )
 		{
+			if ( !fs::is_directory( dir, ec ) ) fail( show( dir ) + " exists and is not a folder" );
+			const ProfileDirCheck pc = check_profile_dir( dir );
+			if ( !pc.ok ) fail( "refusing to replace " + show( dir ) + ": " + pc.reason );
 			std::vector<std::string> stale;
 			for ( auto& e : fs::recursive_directory_iterator( dir ) )
 				if ( e.is_regular_file() && !files.count( fs::relative( e.path(), dir ).string() ) ) stale.push_back( fs::relative( e.path(), dir ).string() );
 			if ( !stale.empty() ) fail( "the output folder " + show( dir ) + " holds " + std::to_string( stale.size() ) + " file(s) that are not part of the profile (first: " + stale[ 0 ] + "); remove them first" );
 		}
-		for ( auto& [ rel, data ] : files )
+		fs::create_directories( dir.parent_path(), ec );
+		// CREATE_NEW semantics for the folder: CreateDirectoryW fails when it exists (a concurrent writer of the same profile)
+		if ( !CreateDirectoryW( partial.c_str(), nullptr ) ) fail( fmt( "cannot create %s (Win32 error %lu)", show( partial ).c_str(), GetLastError() ) );
+		std::vector<std::string> written;
+		try
 		{
-			fs::path f = dir / rel;
-			fs::create_directories( f.parent_path() );
-			std::ofstream o( f, std::ios::binary | std::ios::trunc );
-			o.write( reinterpret_cast<const char*>( data.data() ), std::streamsize( data.size() ) );
-			if ( !o ) fail( "cannot write " + show( f ) );
+			for ( auto& [ rel, data ] : files )
+			{
+				const fs::path f = partial / rel;
+				fs::create_directories( f.parent_path() );
+				write_new_file( f, data );
+				written.push_back( rel );
+			}
 		}
+		catch ( const std::exception& )
+		{
+			remove_known( partial, written );	// the folder this call created, exactly the files it wrote
+			throw;
+		}
+		if ( res.replaced )
+			if ( const DWORD e = move_folder( dir, old ) )
+			{
+				remove_known( partial, written );
+				fail( fmt( "cannot move the previous profile %s aside to %s (Win32 error %lu); nothing changed", show( dir ).c_str(), show( old ).c_str(), e ) );
+			}
+		if ( const DWORD e = move_folder( partial, dir ) )
+		{
+			std::string back = "no previous profile";
+			if ( res.replaced ) back = move_folder( old, dir ) ? "the previous profile could NOT be moved back - it is " + show( old ) : "the previous profile was moved back";
+			remove_known( partial, written );
+			fail( fmt( "cannot switch %s into place as %s (Win32 error %lu); %s", show( partial ).c_str(), show( dir ).c_str(), e, back.c_str() ) );
+		}
+		res.files = written.size();
+		if ( res.replaced )
+		{
+			// validated before anything is removed: the literal sibling this call created by renaming the validated profile
+			// folder, still a profile folder of the same environment holding only files of this profile's list
+			bool foreign = !has_profile_manifest( old, lower( dir.filename().string() ) );
+			for ( auto it = fs::recursive_directory_iterator( old, ec ); !foreign && !ec && it != fs::recursive_directory_iterator(); it.increment( ec ) )
+				if ( it->is_regular_file() && !files.count( fs::relative( it->path(), old ).string() ) ) foreign = true;
+			if ( foreign || ec )
+				res.note = "the previous profile " + show( old ) + " was kept: it no longer looks like this profile (a file outside the profile appeared) - inspect it, then remove it by hand";
+			else
+			{
+				const KnownRemoval kr = remove_known( old, names );
+				res.old_removed = kr.folder_removed;
+				res.old_files_removed = kr.files;
+				if ( !kr.folder_removed ) res.note = fmt( "the previous profile %s could not be removed completely (%zu entr%s left) - remove it by hand", show( old ).c_str(), kr.left, kr.left == 1 ? "y" : "ies" );
+			}
+		}
+		return res;
 	}
 
 	std::vector<ByteRange> ProfileGenerator::check_diff_ranges( const Bytes& a, const Bytes& b )
@@ -3043,18 +3255,29 @@ namespace emu::platform
 			CaptureInputs in = load_capture( cap, root, c, pre );
 			// the identity: APPLY the saved map (identity_map.tsv of the profile) unless a new identity was asked for or none exists
 			// yet (then GENERATE every value from RDRAND); the other environment's map provides the shared USB serials
+			// both maps are read ONCE here (U1515): the context holds the snapshot, nothing reads the files again; a peer profile
+			// that another build is switching right now yields its complete previous or new map (load_identity_map)
 			auto read_map = [ & ]( const fs::path& f, const char* what ) {
-				const Bytes mb = read_file( f );
-				IdentityMap m = parse_identity_map( std::string( mb.begin(), mb.end() ) );
-				if ( m.has_install_shift ) fail( std::string( what ) + " identity map holds the install-history offset: an ORIGINAL copy must never be in the repository" );
+				IdentityMapFile m = load_identity_map( f );
+				if ( m.found && m.map.has_install_shift ) fail( std::string( what ) + " identity map holds the install-history offset: an ORIGINAL copy must never be in the repository" );
 				return m;
 			};
-			std::error_code mec;
 			IdentityMap own, peer_map;
-			if ( !peer_map_file.empty() && fs::exists( peer_map_file, mec ) ) peer_map = read_map( peer_map_file, "the peer" );
-			if ( !ctx.fresh && fs::exists( own_map_file, mec ) ) own = read_map( own_map_file, "this profile's" );
+			if ( !peer_map_file.empty() )
+			{
+				const IdentityMapFile pm = read_map( peer_map_file, "the peer" );
+				peer_map = pm.map;
+				pre.info( "identity", pm.found ? fmt( "peer identity map read once at the start (a snapshot of %zu values; %s, %zu read attempt(s))", pm.map.entries.size(), pm.source.c_str(), pm.attempts )
+											   : std::string( "no peer identity map (the other environment has no profile yet)" ) );
+			}
+			if ( !ctx.fresh )
+			{
+				const IdentityMapFile om = read_map( own_map_file, "this profile's" );
+				if ( om.found && om.map.entries.empty() ) fail( "the identity map " + show( own_map_file ) + " is empty" );
+				if ( !om.found && check ) fail( "check: no identity map " + show( own_map_file ) + " to apply" );
+				own = om.map;
+			}
 			else if ( check ) fail( "check: no identity map " + show( own_map_file ) + " to apply" );
-			if ( own.entries.empty() && !ctx.fresh && fs::exists( own_map_file, mec ) ) fail( "the identity map " + show( own_map_file ) + " is empty" );
 			load_identity_maps( ctx, own, peer_map );
 			ctx.fresh = false;
 			pre.info( "identity", own.entries.empty() ? std::string( "GENERATION: a new identity, every value from RDRAND (the shared USB serials from the peer map when it has them)" )
@@ -3112,13 +3335,16 @@ namespace emu::platform
 				fs::path wt = check_git_work_tree( orig );
 				if ( !wt.empty() ) fail( "refusing to write the ORIGINAL profile (real identifiers) inside a git work tree: " + show( orig ) + " is under " + show( wt ) );
 			}
-			save_profile( out, res.synthetic, false );
-			log.info( "write", fmt( "SYNTHETIC profile %s (%zu files)", show( out ).c_str(), res.synthetic.size() ) );
+			auto saved = [ & ]( const char* what, const ProfileSaveResult& s ) {
+				log.info( "write", fmt( "%s %s (%zu files): written into %s.partial, switched into place by rename%s", what, show( s.dir ).c_str(), s.files, s.dir.filename().string().c_str(),
+					!s.replaced ? " (new folder)" : s.old_removed ? fmt( "; the previous profile kept as .old until the switch, then its %zu listed files removed", s.old_files_removed ).c_str() : "" ) );
+				if ( !s.note.empty() ) log.warning( "write", s.note );
+			};
+			saved( "SYNTHETIC profile", save_profile( out, res.synthetic, false ) );
 			if ( !orig.empty() )
 			{
-				save_profile( orig, res.original, true );
+				saved( "ORIGINAL profile (LOCAL ONLY, real values)", save_profile( orig, res.original, true ) );
 				res.original_out = orig;
-				log.info( "write", fmt( "ORIGINAL profile (LOCAL ONLY, real values) %s (%zu files)", show( orig ).c_str(), res.original.size() ) );
 			}
 			else log.info( "write", "original profile: not written (original_out = none)" );
 			return res;

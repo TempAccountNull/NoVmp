@@ -52,8 +52,9 @@ Each draw goes through the identity map: generation asks `Randomize->gen_<what>(
 Non-generators: `run_build( ctx, check )` (and `run_build( check )` with a new context of the default configuration), `new_context`, `config`, `reset`,
 `reset_shared_values`, `check_shared_values`, `parse_smbios`, `parse_usb_serial_table`, `parse_install_window`, `parse_tool_exclusions`
 (`ToolExclusion` list -> `ExclusionScan`), `parse_sus_client_id_validation`, `parse_license_rows`, `parse_identity_map`,
-`save_identity_map`, `load_capture`, `load_config`, `load_identity_maps`, `save_profile`, `check_filler`,
-`check_usb_placeholder`, `check_git_work_tree`, `check_diff_ranges`, `check_chid_fields`, `check_installation_id`.
+`save_identity_map`, `load_identity_map` (one map file, safe against a concurrent folder switch), `load_capture`,
+`load_config`, `load_identity_maps`, `save_profile` (atomic, returns a `ProfileSaveResult`), `check_profile_dir`,
+`check_filler`, `check_usb_placeholder`, `check_git_work_tree`, `check_diff_ranges`, `check_chid_fields`, `check_installation_id`.
 
 ## Threading and the per-build context (plan 1.J.49.a, user decision 2026-10-17 "Per-build context")
 
@@ -78,10 +79,23 @@ both profiles (the peer map on disk still has precedence; application never cons
 are leaves - no code path holds two at once, none is held while calling `Randomize->` (a value is drawn, interned, then
 registered insert-if-absent; a concurrent first writer wins) or during file I/O. The Randomizer is thread-safe and
 lock-free: RDRAND is per-thread safe, the byte pool and every result buffer are `thread_local` (a result is valid until the
-same `gen_` runs again on the same thread). Files: two `run_build` calls that write both profiles at the same time read
-each other's `identity_map.tsv` (peer map) at their start while the other may write it at its end - run parallel builds
-with `--check`, or generate both into memory (`gen_build`) and write afterwards. Unit tests: `pg_randomizer_threads`,
-`pg_parallel_builds`, `pg_concurrent_fresh_shared`.
+same `gen_` runs again on the same thread). Unit tests: `pg_randomizer_threads`, `pg_parallel_builds`,
+`pg_concurrent_fresh_shared`, `pg_atomic_writes`.
+
+**Atomic profile writes** (user decision 2026-10-17 "Atomic writes", U1515). A build reads its own and the peer
+`identity_map.tsv` ONCE at its start (`load_identity_map`; the snapshot lives in the `BuildContext`, nothing reads the
+files again). `save_profile` writes each profile folder atomically: every file into the new sibling `<dir>.partial`
+(the folder created with CREATE_NEW semantics, each file CREATE_NEW and flushed), then the switch by rename - the
+previous folder is renamed to `<dir>.old`, the new one to `<dir>`, and only then exactly the previous folder's listed
+profile files and its emptied sub-folders are removed (single non-recursive removes; never a recursive delete). An
+existing folder is replaced only when it is a validated profile folder (`check_profile_dir`: `<...>\Emulator\data\platform\<env>`
+or `<...>\profiles_original\<env>`, `<env>` = `vmware_guest` / `bare_host`, holding this tool's `manifest.txt` of that
+environment) without files outside the profile. A `<dir>.partial` / `<dir>.old` left by an interrupted run stops the
+write and is reported - it is never deleted by the tool. A reader of a peer map that meets the switch gets the complete
+previous map (`<dir>.old`) or the complete new one, never a half-written file, so `--guest` and `--host` may be built and
+written in parallel (unit test `pg_atomic_writes`: both profiles written by two threads, 6 re-runs that read their maps
+from disk while the other side switches, byte-identical; a reader polling a map during 25 switches always got the
+complete map). The ORIGINAL profile is written the same way and is still refused inside a git work tree.
 
 ## Field rules and the replaced locations
 

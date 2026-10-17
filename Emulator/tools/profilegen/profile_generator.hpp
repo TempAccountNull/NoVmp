@@ -200,9 +200,15 @@
 // Lock order: the three locks are leaves - no code path holds two of them at once, and none is held while calling
 // Randomize-> (a value is drawn first, then interned, then registered insert-if-absent: a concurrent first writer wins and
 // the later draw is discarded) or while doing file I/O. reset() / reset_shared_values() must not run while a build runs.
-// The Randomizer is thread-safe and lock-free on its own (pg_randomize.hpp). Files: two run_build calls that WRITE
-// profiles in parallel read each other's identity_map.tsv as peer map at their start while the other may be writing it at
-// its end - run parallel builds in check mode, or generate both into memory (gen_build) and write afterwards.
+// The Randomizer is thread-safe and lock-free on its own (pg_randomize.hpp). Files (user decision 2026-10-17 "Atomic
+// writes", U1515): a build reads its own and the peer identity_map.tsv ONCE at its start (load_identity_map: a snapshot in
+// the BuildContext; nothing reads them again) and writes each profile folder atomically (save_profile): every file goes
+// into the new sibling folder "<dir>.partial" (created with CREATE_NEW semantics, each file CREATE_NEW + flushed), then
+// the folder is switched into place by rename - the previous folder is renamed to "<dir>.old" first and, once the new one
+// is in place, exactly its listed profile files and emptied sub-folders are removed (never a recursive delete; the folder
+// must be a validated profile folder, check_profile_dir). A ".partial" / ".old" sibling left by an interrupted run stops
+// the write and is reported, never deleted. A reader of a peer map that meets the switch takes the complete previous map
+// from "<dir>.old" or the complete new one, never a half-written file - so two builds may write both profiles in parallel.
 #pragma once
 #include <array>
 #include <cstdint>
@@ -390,6 +396,33 @@ namespace emu::platform
 		bool has_install_shift = false;		// the ORIGINAL (local-only) copy: the rule 7b offset in seconds
 		int64_t install_shift = 0;
 		bool operator==( const IdentityMap& ) const = default;
+	};
+	// one identity_map.tsv read at the start of a build (load_identity_map, U1515): found = false when the profile folder
+	// has no map (and no replacement of it is in progress)
+	struct IdentityMapFile
+	{
+		bool found = false;
+		IdentityMap map;
+		std::string source;					// "profile" or "previous profile (a replacement was switching it)": the folder read
+		size_t attempts = 0;				// reads tried (a reader that meets a folder switch tries again)
+	};
+	// check_profile_dir (U1515): may save_profile replace this existing folder? ok = the folder is a profile folder of the
+	// expected layout: "<...>\Emulator\data\platform\<env>" or "<...>\profiles_original\<env>" with <env> = vmware_guest |
+	// bare_host, and (when it exists) holds the manifest.txt this tool writes for <env>
+	struct ProfileDirCheck
+	{
+		bool ok = false;
+		std::string reason;					// why not (locations only)
+	};
+	// what save_profile did (U1515): the folder written atomically ("<dir>.partial" -> "<dir>"), the previous one replaced
+	struct ProfileSaveResult
+	{
+		std::filesystem::path dir;			// the profile folder (absolute)
+		size_t files = 0;					// files written
+		bool replaced = false;				// a previous profile folder existed and was switched out
+		bool old_removed = false;			// "<dir>.old" (the previous folder) removed after the switch
+		size_t old_files_removed = 0;		// its listed profile files removed
+		std::string note;					// set when "<dir>.old" had to stay (what is left), else empty
 	};
 
 	// rule 8d: one raw STORAGE_DEVICE_DESCRIPTOR (disk_<n>_descriptor.bin, fwid >= 1.4; layout: Windows SDK winioctl.h -
@@ -691,9 +724,16 @@ namespace emu::platform
 		// identity_map.tsv: "key<TAB>kind<TAB>value" rows; the original copy adds the "install_shift" line (never the repository copy)
 		static IdentityMap parse_identity_map( const std::string& text );	// throws naming the line
 		static std::string save_identity_map( const IdentityMap& map, Environment env, bool original );
-		// writes the files (relative path -> bytes); an ORIGINAL profile inside a git work tree is refused (throws) before
-		// anything is created; a file in dir that is not part of the profile is an error (stale output)
-		static void save_profile( const std::filesystem::path& dir, const std::map<std::string, Bytes>& files, bool original );
+		// one identity_map.tsv of a profile folder, read with full sharing; while that folder is being switched by save_profile
+		// the complete previous map ("<dir>.old") or the complete new one is returned (U1515). Throws on a malformed map
+		static IdentityMapFile load_identity_map( const std::filesystem::path& file );
+		// writes the files (relative path -> bytes) atomically (U1515, see the header): "<dir>.partial" (CREATE_NEW), then the
+		// switch by rename, the previous folder kept as "<dir>.old" until the switch succeeded, then exactly its listed files
+		// removed. Refused (throws) before anything is created: an ORIGINAL profile inside a git work tree; an existing dir
+		// that is no validated profile folder (check_profile_dir) or that holds a file which is not part of the profile (stale
+		// output); an existing "<dir>.partial" / "<dir>.old" (an interrupted run: reported, never deleted)
+		static ProfileSaveResult save_profile( const std::filesystem::path& dir, const std::map<std::string, Bytes>& files, bool original );
+		static ProfileDirCheck check_profile_dir( const std::filesystem::path& dir );
 		static bool check_filler( const std::string& s );
 		static bool check_usb_placeholder( const std::string& s );			// one repeated character (all '0', ...), or "MSFT30" + zeros
 		// the folder holding a ".git" entry (directory or worktree file) at p or above it; empty = not in a git work tree

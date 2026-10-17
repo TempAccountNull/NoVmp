@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <barrier>
 #include <cctype>
 #include <ctime>
@@ -410,11 +411,27 @@ static void pg_identity_rules( void )
 
 // (f) the original profile is refused inside a git work tree (".git" directory or worktree file in an ancestor); nothing
 // is created there. A synthetic profile may go anywhere; stale files in an output folder are refused.
+// Cleanup (P4, user decision 2026-10-17): no recursive delete - exactly the files and folders this test creates, as literal
+// paths relative to its own temp root (validated: the root is temp\pg_unit_<pid>, every path lexically inside it), each
+// removed with a single non-recursive remove, deepest first
+static void pg_remove_listed( const fs::path& root, std::initializer_list<const char*> files, std::initializer_list<const char*> folders )
+{
+	fs::path tmp = fs::temp_directory_path().lexically_normal();
+	if ( tmp.filename().empty() ) tmp = tmp.parent_path();	// temp_directory_path ends with a separator
+	const bool root_ok = root.lexically_normal().parent_path() == tmp;
+	const bool name_ok = root.filename().string() == "pg_unit_" + std::to_string( GetCurrentProcessId() );
+	TEST_ASSERT_( root_ok && name_ok, "the cleanup root is the test's own temp folder" );
+	std::error_code ec;
+	auto inside = [ & ]( const fs::path& p ) { const fs::path n = p.lexically_normal(); return n.native().rfind( root.lexically_normal().native() + L"\\", 0 ) == 0; };
+	for ( const char* f : files ) { const fs::path p = root / f; if ( inside( p ) && fs::is_regular_file( p, ec ) ) fs::remove( p, ec ); }
+	for ( const char* d : folders ) { const fs::path p = root / d; if ( inside( p ) ) fs::remove( p, ec ); }	// non-recursive: fails when not empty
+	fs::remove( root, ec );
+}
 static void pg_git_refusal( void )
 {
 	fs::path base = fs::temp_directory_path() / ( "pg_unit_" + std::to_string( GetCurrentProcessId() ) );
 	std::error_code ec;
-	fs::remove_all( base, ec );
+	TEST_ASSERT_( !fs::exists( base, ec ), "the test's temp folder does not exist yet (nothing to clean blindly)" );
 	fs::create_directories( base / "repo" / ".git" );
 	fs::create_directories( base / "wt" );
 	std::ofstream( base / "wt" / ".git" ) << "gitdir: elsewhere\n";
@@ -441,7 +458,9 @@ static void pg_git_refusal( void )
 		catch ( const std::exception& ) { threw = true; }
 		TEST_CHECK( threw );
 	}
-	fs::remove_all( base, ec );
+	pg_remove_listed( base, { "wt/.git", "repo/syn/smbios.bin", "repo/syn/acpi/acpi_TEST.bin", "plain/orig/smbios.bin", "plain/orig/acpi/acpi_TEST.bin", "plain/orig/old.bin" },
+		{ "repo/syn/acpi", "repo/syn", "repo/.git", "repo", "wt", "plain/orig/acpi", "plain/orig", "plain" } );
+	TEST_CHECK_( !fs::exists( base, ec ), "everything the test created is removed" );
 }
 
 // check_diff_ranges and the single-value generators on their own
@@ -1836,6 +1855,188 @@ static void pg_concurrent_fresh_shared( void )
 	TEST_CHECK_( valid == held.size() && held.size() == size_t( k_rounds ) * 2 * 4, "%zu of %zu const char* results still valid after their contexts were destroyed", valid, held.size() );
 }
 
+// ── atomic profile writes (user decision 2026-10-17 "Atomic writes", U1515) ─────────────────────────────────────────────
+// the test's own cleanup: exactly the files it wrote (relative paths of files), then the folders they emptied and dir -
+// single non-recursive removes, never a recursive delete
+static void pg_remove_written( const fs::path& dir, const std::map<std::string, Bytes>& files )
+{
+	std::error_code ec;
+	std::set<fs::path> sub;
+	for ( auto& [ rel, data ] : files )
+	{
+		fs::remove( dir / rel, ec );
+		for ( fs::path p = ( dir / rel ).parent_path(); p != dir && p.native().size() > dir.native().size(); p = p.parent_path() ) sub.insert( p );
+	}
+	std::vector<fs::path> order( sub.begin(), sub.end() );
+	std::sort( order.begin(), order.end(), []( const fs::path& a, const fs::path& b ) { return a.native().size() > b.native().size(); } );
+	for ( const fs::path& p : order ) fs::remove( p, ec );
+	fs::remove( dir, ec );
+}
+// every regular file below dir (relative path -> bytes), the layout save_profile writes
+static std::map<std::string, Bytes> pg_read_folder( const fs::path& dir )
+{
+	std::map<std::string, Bytes> m;
+	std::error_code ec;
+	for ( auto it = fs::recursive_directory_iterator( dir, ec ); !ec && it != fs::recursive_directory_iterator(); it.increment( ec ) )
+		if ( it->is_regular_file() )
+		{
+			std::ifstream f( it->path(), std::ios::binary );
+			m[ fs::relative( it->path(), dir ).string() ] = Bytes( std::istreambuf_iterator<char>( f ), std::istreambuf_iterator<char>() );
+		}
+	return m;
+}
+// guest + host written in PARALLEL threads into temp folders outside any git work tree (synthetic + original profile each):
+// both complete (every file, nothing else, no ".partial" / ".old" left), shared/ keys equal in both maps on disk; re-runs
+// that read their maps from disk while the other side switches its folder give byte-identical files; a reader polling a
+// map during 25 switches always gets the complete map; an interrupted run's ".partial" / ".old" stops the write and stays
+// untouched; a folder that is no validated profile folder is never replaced
+static void pg_atomic_writes( void )
+{
+	const fs::path base = fs::temp_directory_path() / ( "pg_atomic_" + std::to_string( GetCurrentProcessId() ) );
+	TEST_ASSERT_( ProfileGenerator::check_git_work_tree( base ).empty(), "the temp folder is outside any git work tree" );
+	const PgEnvPair env = pg_env_pair();
+	BuildContext ctx = pg_fresh( Environment::bare_host );
+	const GenResult gh = ProfileGen->gen_build( ctx, env.host );
+	TEST_ASSERT_( gh.ok, "host generation: %s", gh.error.c_str() );
+	BuildContext gctx = ProfileGen->new_context( pg_cfg( Environment::vmware_guest ) );
+	ProfileGen->load_identity_maps( gctx, {}, gh.identity_map );
+	const GenResult gg = ProfileGen->gen_build( gctx, env.guest );
+	TEST_ASSERT_( gg.ok, "guest generation: %s", gg.error.c_str() );
+	struct Side
+	{
+		Environment e;
+		const CaptureInputs* in;
+		const GenResult* gen;
+		fs::path syn, org;
+		std::string error;	// a worker's exception (checked on the main thread)
+	};
+	Side sides[ 2 ] = { { Environment::vmware_guest, &env.guest, &gg }, { Environment::bare_host, &env.host, &gh } };
+	for ( Side& s : sides )
+	{
+		s.syn = base / "Emulator" / "data" / "platform" / env_dir_name( s.e );
+		s.org = base / "capture" / "profiles_original" / env_dir_name( s.e );
+		TEST_CHECK_( ProfileGenerator::check_profile_dir( s.syn ).ok && ProfileGenerator::check_profile_dir( s.org ).ok, "%s: both folders are valid profile locations", env_dir_name( s.e ) );
+	}
+	TEST_CHECK( !ProfileGenerator::check_profile_dir( base / "plain" / "vmware_guest" ).ok && !ProfileGenerator::check_profile_dir( base / "Emulator" / "data" / "platform" / "other" ).ok );
+	auto siblings_gone = [ & ]( const fs::path& d ) {
+		std::error_code ec;
+		return !fs::exists( d.parent_path() / ( d.filename().native() + L".partial" ), ec ) && !fs::exists( d.parent_path() / ( d.filename().native() + L".old" ), ec );
+	};
+	// round 0: the first write of both environments in parallel
+	auto first = [ & ]( Side& s ) {
+		try
+		{
+			const ProfileSaveResult a = ProfileGenerator::save_profile( s.syn, s.gen->synthetic, false );
+			const ProfileSaveResult b = ProfileGenerator::save_profile( s.org, s.gen->original, true );
+			if ( a.replaced || b.replaced || a.files != s.gen->synthetic.size() || b.files != s.gen->original.size() ) s.error = "unexpected first-write result";
+		}
+		catch ( const std::exception& e ) { s.error = e.what(); }
+	};
+	{
+		std::thread t0( first, std::ref( sides[ 0 ] ) ), t1( first, std::ref( sides[ 1 ] ) );
+		t0.join();
+		t1.join();
+	}
+	for ( Side& s : sides )
+	{
+		TEST_CHECK_( s.error.empty(), "%s first write: %s", env_dir_name( s.e ), s.error.c_str() );
+		TEST_CHECK_( pg_read_folder( s.syn ) == s.gen->synthetic && pg_read_folder( s.org ) == s.gen->original, "%s: both profiles complete on disk (%zu / %zu files)", env_dir_name( s.e ),
+			s.gen->synthetic.size(), s.gen->original.size() );
+		TEST_CHECK( siblings_gone( s.syn ) && siblings_gone( s.org ) );
+	}
+	const IdentityMapFile mg = ProfileGenerator::load_identity_map( sides[ 0 ].syn / "identity_map.tsv" ), mh = ProfileGenerator::load_identity_map( sides[ 1 ].syn / "identity_map.tsv" );
+	TEST_ASSERT( mg.found && mh.found && mg.source == "profile" && !mg.map.has_install_shift && !mh.map.has_install_shift );
+	size_t common = 0, same = 0;
+	for ( auto& [ k, v ] : mh.map.entries )
+		if ( k.rfind( "shared/", 0 ) == 0 && mg.map.entries.count( k ) ) { common++; same += mg.map.entries.at( k ) == v; }
+	TEST_CHECK_( common >= 1 && same == common, "%zu shared/ key(s) in both maps on disk, %zu equal", common, same );
+	TEST_CHECK( !ProfileGenerator::load_identity_map( base / "Emulator" / "data" / "platform" / "nothing" / "identity_map.tsv" ).found );
+	// rounds 1..6: each side reads its own and the peer map from disk (once, at its start - while the other side may be
+	// switching its folder), applies them and writes both profiles again: byte-identical every time
+	auto rerun = [ & ]( Side& s, const Side& peer ) {
+		try
+		{
+			const IdentityMapFile own = ProfileGenerator::load_identity_map( s.syn / "identity_map.tsv" ), other = ProfileGenerator::load_identity_map( peer.syn / "identity_map.tsv" );
+			if ( !own.found || !other.found ) { s.error = "a map was not found"; return; }
+			const GenResult r = pg_apply( s.e, *s.in, own.map, other.map );
+			if ( !r.ok ) { s.error = r.error; return; }
+			const ProfileSaveResult a = ProfileGenerator::save_profile( s.syn, r.synthetic, false );
+			const ProfileSaveResult b = ProfileGenerator::save_profile( s.org, r.original, true );
+			if ( !a.replaced || !a.old_removed || !b.replaced || !b.old_removed || !a.note.empty() || !b.note.empty() ) s.error = "the previous folder was not replaced and removed";
+		}
+		catch ( const std::exception& e ) { s.error = e.what(); }
+	};
+	for ( int round = 1; round <= 6; round++ )
+	{
+		std::thread t0( rerun, std::ref( sides[ 0 ] ), std::cref( sides[ 1 ] ) ), t1( rerun, std::ref( sides[ 1 ] ), std::cref( sides[ 0 ] ) );
+		t0.join();
+		t1.join();
+		for ( Side& s : sides )
+		{
+			TEST_CHECK_( s.error.empty(), "round %d %s: %s", round, env_dir_name( s.e ), s.error.c_str() );
+			TEST_CHECK_( pg_read_folder( s.syn ) == s.gen->synthetic && pg_read_folder( s.org ) == s.gen->original && siblings_gone( s.syn ) && siblings_gone( s.org ),
+				"round %d %s: both profiles byte-identical to the first write, no sibling left", round, env_dir_name( s.e ) );
+		}
+	}
+	// a reader polling the guest map while its folder is switched 25 times: always the complete map (old or new copy)
+	{
+		std::atomic<bool> done { false };
+		size_t reads = 0, missing = 0, wrong = 0, from_old = 0;
+		std::string werr;
+		std::thread writer( [ & ] {
+			try { for ( int i = 0; i < 25; i++ ) ProfileGenerator::save_profile( sides[ 0 ].syn, gg.synthetic, false ); }
+			catch ( const std::exception& e ) { werr = e.what(); }
+			done = true;
+		} );
+		while ( !done || reads < 25 )
+		{
+			const IdentityMapFile m = ProfileGenerator::load_identity_map( sides[ 0 ].syn / "identity_map.tsv" );
+			reads++;
+			missing += !m.found;
+			wrong += m.found && !( m.map.entries == mg.map.entries );
+			from_old += m.source != "profile";
+			if ( done && reads >= 25 ) break;
+		}
+		writer.join();
+		TEST_CHECK_( werr.empty(), "25 switches: %s", werr.c_str() );
+		TEST_CHECK_( missing == 0 && wrong == 0, "%zu reads during 25 folder switches: %zu without a map, %zu incomplete / other (%zu from the previous copy)", reads, missing, wrong, from_old );
+		TEST_MSG( "%zu reads, %zu from the previous copy", reads, from_old );
+	}
+	// an interrupted run's sibling stops the write and stays untouched (the test's own sibling, removed by the test afterwards)
+	for ( const wchar_t* suffix : { L".partial", L".old" } )
+	{
+		const fs::path sib = sides[ 1 ].syn.parent_path() / ( sides[ 1 ].syn.filename().native() + suffix );
+		fs::create_directories( sib );
+		std::ofstream( sib / "left_over.bin", std::ios::binary ) << "x";
+		bool threw = false;
+		try { ProfileGenerator::save_profile( sides[ 1 ].syn, gh.synthetic, false ); }
+		catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "interrupted profile write" ) != std::string::npos; }
+		TEST_CHECK_( threw && fs::exists( sib / "left_over.bin" ), "an existing %ls sibling: write refused, the sibling untouched", suffix );
+		TEST_CHECK( pg_read_folder( sides[ 1 ].syn ) == gh.synthetic );
+		pg_remove_written( sib, { { "left_over.bin", {} } } );
+		TEST_CHECK( !fs::exists( sib ) );
+	}
+	// a folder that is no validated profile folder: written when new, never replaced
+	const fs::path plain = base / "plain" / "profile_copy";
+	const std::map<std::string, Bytes> small = { { "smbios.bin", { 1, 2, 3 } }, { "acpi\\acpi_TEST.bin", { 4 } } };
+	ProfileGenerator::save_profile( plain, small, false );
+	bool threw = false;
+	try { ProfileGenerator::save_profile( plain, small, false ); }
+	catch ( const std::exception& e ) { threw = std::string( e.what() ).find( "refusing to replace" ) != std::string::npos; }
+	TEST_CHECK_( threw && pg_read_folder( plain ) == small, "an unvalidated folder is never replaced" );
+	// cleanup: exactly what the test wrote, then the emptied folders (non-recursive)
+	pg_remove_written( plain, small );
+	for ( Side& s : sides )
+	{
+		pg_remove_written( s.syn, s.gen->synthetic );
+		pg_remove_written( s.org, s.gen->original );
+	}
+	std::error_code ec;
+	for ( const fs::path& p : { base / "plain", base / "Emulator" / "data" / "platform", base / "Emulator" / "data", base / "Emulator", base / "capture" / "profiles_original", base / "capture", base } )
+		fs::remove( p, ec );
+	TEST_CHECK_( !fs::exists( base ), "the temp folder removed completely" );
+}
+
 TEST_LIST = {
 	{ "pg_smbios_decided_bytes_only", pg_smbios_decided_bytes_only },
 	{ "pg_smbios_layout_preserved", pg_smbios_layout_preserved },
@@ -1866,5 +2067,6 @@ TEST_LIST = {
 	{ "pg_randomizer_threads", pg_randomizer_threads },
 	{ "pg_parallel_builds", pg_parallel_builds },
 	{ "pg_concurrent_fresh_shared", pg_concurrent_fresh_shared },
+	{ "pg_atomic_writes", pg_atomic_writes },
 	{ NULL, NULL } };
 // ── end of the pg_ block (U1511) ─────────────────────────────────────────────────────────────────────────────────────────
