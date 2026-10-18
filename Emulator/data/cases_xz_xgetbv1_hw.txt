@@ -1,0 +1,43 @@
+# U1534 (agent xcr0fix, G9 item 8 / notes\eread\X10_xcr0_ospke_fix.md): XGETBV(1) = XCR0 AND XINUSE (SDM 093 Vol2D XGETBV)
+# after controlled instruction sequences, as HARDWARE cases (no "=>": the host CPU and Unicorn both run them; self-written
+# snippets only). Not a gate file: XINUSE[1:0] is core-type dependent on the hybrid i5-13600K (P-cores track x87 / SSE, E-cores
+# report them always in use; docs/xinuse.md), so a vCPU of the VMware guest can give either.
+# Guest (this VMware guest, the --guest profile; XCR0 7H = the host's XGETBV(0)):
+#   emu-alltest --cases Emulator\data\cases_xz_xgetbv1_hw.txt --guest --hw-repeat 50 --hw-cpu all
+# Bare host (the user runs it; P-cores and E-cores separately; results not assumed):
+#   emu-alltest --cases Emulator\data\cases_xz_xgetbv1_hw.txt --host --hw-cpu P --hw-repeat 50
+#   emu-alltest --cases Emulator\data\cases_xz_xgetbv1_hw.txt --host --host-core E --hw-cpu E --hw-repeat 50
+# Expected by the model (XCR0 7H): line - P-core / E-core
+#   S0 thunk prologue state (FXRSTOR64 + VINSERTI128)                       7 / 7
+#   S1 XRSTOR64 init image (RFBM 7, XSTATE_BV 0, MXCSR 1F80H)              0 / 3
+#   S2 init + FNINIT                                                       1 / 3
+#   S3 init + PXOR xmm0, xmm0                                              2 / 3
+#   S4 init + VXORPS ymm0, ymm0, ymm0                                      6 / 7
+#   S5 init + FNINIT + PXOR + VXORPS ymm0                                  7 / 7
+#   S6 S5 + VZEROUPPER                                                     3 / 3
+#   S7 S5 + VZEROALL                                                       1 / 3
+#   S8 init + LDMXCSR 1F80H                                                2 / 3
+#   S9 init image with MXCSR 3F80H (XGETBV(1) MXCSR rule, Vol1 13.6)        2 / 3
+#   S10 init + VZEROALL alone                                              0 / 3
+# S0
+mov ecx, 1; .byte 0x0f, 0x01, 0xd0
+# S1
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S2
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S3
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; pxor xmm0, xmm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S4
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S5
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S6
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S7
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S8
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; ldmxcsr [rsi+0x18]; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000
+# S9
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=803F0000
+# S10
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000

@@ -482,6 +482,13 @@ Add-Exp 'bp2_host_e' 'cases_bp2_host_e' 'cpuid expect bp2' @( '--host', '--host-
 Add-Exp 'bp2_guest' 'cases_bp2_guest' 'cpuid expect bp2' @( '--guest' )
 Add-Exp 'bp2_vm' 'cases_bp2_guest' 'cpuid expect bp2' @( '--vm' )
 Add-Exp 'bp2_cpuid_override' 'cases_bp2_guest' 'cpuid expect bp2' @( '--host', '--cpuid', $Cpuid )
+# U1533 (agent xcr0fix, notes\eread\X10_xcr0_ospke_fix.md): the XSTATE configuration at ENGINE RESET per platform switch
+# (no --xcr0: XGETBV(0) 7H, CPUID 01H / 07H.0 / 0DH.0 / 0DH.1, CR4.PKE / OSPKE 0, IA32_XSS, RDPKRU / WRPKRU #UD, XGETBV(1)
+# sequences per XINUSE model); expected values = the clean captures (--host 2026-10-16, --guest 2026-10-15)
+Add-Exp 'xz_host_p' 'cases_xz_host_p' 'xstate cpuid expect xz' @( '--host' )
+Add-Exp 'xz_host_e' 'cases_xz_host_e' 'xstate cpuid expect xz' @( '--host', '--host-core', 'E' )
+Add-Exp 'xz_guest' 'cases_xz_guest' 'xstate cpuid expect xz' @( '--guest' )
+Add-Exp 'xz_vm' 'cases_xz_guest' 'xstate cpuid expect xz' @( '--vm' )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
 # U1510-U1514 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).

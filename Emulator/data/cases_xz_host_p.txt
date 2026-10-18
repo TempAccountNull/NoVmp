@@ -1,0 +1,40 @@
+# U1533 (agent xcr0fix, G9 / notes\eread\X10_xcr0_ospke_fix.md): the XSTATE configuration at ENGINE RESET with --host (the
+# bare-host P-core profile Emulator\data\cpuid_i5-13600k_bare_host.txt, LP 0). No --xcr0 / --cr0: the engine's own reset state.
+#   emu-alltest --cases Emulator\data\cases_xz_host_p.txt --host --expect-only        (suite xz_host_p)
+# Expected values = the clean bare-host capture 2026-10-16 (capture\baseline\Host_clean_20261016, cpuid_capture 1.6, 20/20
+# logical processors): XGETBV(0) = 7H; CPUID 01H ECX 7FFAFBFFH (SMX [6] = 1, VMX [5] = 1: not VMware's 7FFA3223H),
+# 07H.0 ECX 98C027ACH (PKU [3] = 1, OSPKE [4] = 0), 0DH.0 207H / 340H / A88H / 0, 0DH.1 0FH / 3D0H / 19900H / 0.
+# IA32_XSS 900H (PT | CET_U) is DERIVED, not measured: the only subset of 0DH.1 ECX 19900H (8 PT 80H, 11 CET_U 10H,
+# 12 CET_S 18H, 15 LBR 328H, 16 HWP 8H; none 64-byte aligned) with 240H + 100H (AVX) + size = 3D0H (CPL > 0 cannot read
+# IA32_XSS, SDM 093 Vol1 13.3 p. 13-7). The emulator does not implement the PT state component in XSAVES / XRSTORS (docs/quirks.md).
+# The per-LP APIC IDs (01H EBX, 0BH / 1FH EDX) stay as the profile has them (cases_bp2_host_p).
+# --- XGETBV(0) = XCR0: 7H (before U1530: 207H)
+.byte 0x0f, 0x01, 0xd0 | rcx=0 =>! rax=0x7 rdx=0
+# --- CPUID 01H
+.byte 0x0f, 0xa2 | rax=1 rcx=0 =>! rax=0xB0671 rcx=0x7FFAFBFF rdx=0xBFEBFBFF
+# --- CPUID 07H.0: PKU [3] = 1, OSPKE [4] = 0
+.byte 0x0f, 0xa2 | rax=7 rcx=0 =>! rax=0x2 rbx=0x239C27EB rcx=0x98C027AC rdx=0xFC1CC410
+# --- CPUID 0DH.0: EBX 340H for XCR0 7H (before U1530: A88H)
+.byte 0x0f, 0xa2 | rax=0xd rcx=0 =>! rax=0x207 rbx=0x340 rcx=0xA88 rdx=0
+# --- CPUID 0DH.1: EBX 3D0H = XSAVES size of XCR0 7H | IA32_XSS 900H, ECX 19900H
+.byte 0x0f, 0xa2 | rax=0xd rcx=1 =>! rax=0xF rbx=0x3D0 rcx=0x19900 rdx=0
+# --- CR4: OSXSAVE [18] = 1, PKE [22] = 0
+mov rax, cr4; shr rax, 18; and eax, 0x11 =>! rax=0x1
+# --- IA32_XSS (RDMSR DA0H at CPL0): 900H
+mov ecx, 0xda0; rdmsr =>! rax=0x900 rdx=0
+# --- RDPKRU / WRPKRU: #UD (CR4.PKE = 0)
+.byte 0x0f, 0x01, 0xee | rcx=0 => #UD
+.byte 0x0f, 0x01, 0xef | rax=0 rcx=0 rdx=0 => #UD
+# --- XSETBV 207H accepted, RDPKRU still #UD; 0DH.0 EBX A88H, 0DH.1 EBX 3D8H (PKRU 8 bytes before PT)
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0xd; xor ecx, ecx; cpuid; mov r8, rbx =>! r8=0xA88
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0xd; mov ecx, 1; cpuid; mov r8, rbx =>! r8=0x3D8
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; xor ecx, ecx; .byte 0x0f, 0x01, 0xee =>! #UD
+# --- XGETBV(1), P-core XINUSE model (the profile's core type, 1AH = 40H). Prologue state 7H; from the init image:
+mov ecx, 1; .byte 0x0f, 0x01, 0xd0 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x0 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; pxor xmm0, xmm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x2 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x6 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0

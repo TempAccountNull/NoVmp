@@ -1,0 +1,40 @@
+# U1533 (agent xcr0fix, G9 / notes\eread\X10_xcr0_ospke_fix.md): the XSTATE configuration at ENGINE RESET with --guest (the
+# VMware guest profile Emulator\data\cpuid_i5-13600k.txt). No --xcr0 / --cr0: every value below is the engine's own reset
+# state, never the host's XGETBV (hardware cases load that, U540, so they cannot show the reset value).
+#   emu-alltest --cases Emulator\data\cases_xz_guest.txt --guest --expect-only        (suite xz_guest; also --vm: xz_vm)
+# Expected values = the clean VMware guest capture 2026-10-15 (capture\baseline\Run3_clean_guest_probes_20261015,
+# cpuid_capture 1.6, 8/8 logical processors): XGETBV(0) = 7H; CPUID 01H ECX 7FFA3223H, 07H.0 ECX 9840078CH (PKU [3] = 1,
+# OSPKE [4] = 0), 0DH.0 207H / 340H / A88H / 0, 0DH.1 0FH / 350H / 1800H / 0. IA32_XSS 800H (CET_U) is DERIVED, not measured:
+# the only subset of 0DH.1 ECX (bits 11 CET_U 10H, 12 CET_S 18H) with 240H + 100H (AVX) + size = 350H; "There is no mechanism
+# by which software operating with CPL > 0 can discover the value of the IA32_XSS MSR" (SDM 093 Vol1 13.3 p. 13-7).
+# Unicorn runs these at CPL0 (no cpl=3), so CR4 and RDMSR are readable.
+# --- XGETBV(0) = XCR0: 7H (x87 | SSE | AVX), as Windows in the guest (before U1530: 207H)
+.byte 0x0f, 0x01, 0xd0 | rcx=0 =>! rax=0x7 rdx=0
+# --- CPUID 01H: XSAVE [26], OSXSAVE [27], AVX [28] = 1 (EBX holds the vCPU's APIC ID: not checked here, cases_bp2_guest)
+.byte 0x0f, 0xa2 | rax=1 rcx=0 =>! rax=0xB0671 rcx=0x7FFA3223 rdx=0x1F8BFBFF
+# --- CPUID 07H.0: PKU [3] = 1, OSPKE [4] = 0 (CR4.PKE = 0)
+.byte 0x0f, 0xa2 | rax=7 rcx=0 =>! rax=0x2 rbx=0x219C27EB rcx=0x9840078C rdx=0xBC004410
+# --- CPUID 0DH.0: EDX:EAX 207H supported, EBX 340H = the size for XCR0 7H (before U1530: A88H), ECX A88H the maximum
+.byte 0x0f, 0xa2 | rax=0xd rcx=0 =>! rax=0x207 rbx=0x340 rcx=0xA88 rdx=0
+# --- CPUID 0DH.1: EAX 0FH, EBX 350H = XSAVES size of XCR0 7H | IA32_XSS 800H, ECX 1800H (CET_U | CET_S supported), EDX 0
+.byte 0x0f, 0xa2 | rax=0xd rcx=1 =>! rax=0xF rbx=0x350 rcx=0x1800 rdx=0
+# --- CR4: OSXSAVE [18] = 1, PKE [22] = 0 (bit 0 / bit 4 of CR4 >> 18)
+mov rax, cr4; shr rax, 18; and eax, 0x11 =>! rax=0x1
+# --- IA32_XSS (RDMSR DA0H at CPL0): 800H
+mov ecx, 0xda0; rdmsr =>! rax=0x800 rdx=0
+# --- RDPKRU / WRPKRU: #UD If CR4.PKE = 0 (SDM Vol2B)
+.byte 0x0f, 0x01, 0xee | rcx=0 => #UD
+.byte 0x0f, 0x01, 0xef | rax=0 rcx=0 rdx=0 => #UD
+# --- XSETBV 207H is accepted (PKRU supported), RDPKRU stays #UD (CR4.PKE = 0); 0DH.0 EBX follows (A88H)
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0xd; xor ecx, ecx; cpuid; mov r8, rbx =>! r8=0xA88
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; xor ecx, ecx; .byte 0x0f, 0x01, 0xee =>! #UD
+# --- XGETBV(1) = XCR0 AND XINUSE, P-core XINUSE model (--guest default). The thunk's prologue (FXRSTOR64, VINSERTI128) leaves
+# x87 / SSE / AVX in use: 7H (what the G9 case run showed). From the init image (XRSTOR64 [rsi], RFBM 7, XSTATE_BV 0):
+mov ecx, 1; .byte 0x0f, 0x01, 0xd0 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x0 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; pxor xmm0, xmm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x2 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x6 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0

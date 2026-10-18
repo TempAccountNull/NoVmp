@@ -1,0 +1,29 @@
+# U1533 (agent xcr0fix, G9 / notes\eread\X10_xcr0_ospke_fix.md): the XSTATE configuration at ENGINE RESET with
+# --host --host-core E (the bare-host E-core profile Emulator\data\cpuid_i5-13600k_bare_host_ecore.txt, LP 12). No --xcr0 / --cr0.
+#   emu-alltest --cases Emulator\data\cases_xz_host_e.txt --host --host-core E --expect-only        (suite xz_host_e)
+# Expected values = the clean bare-host capture 2026-10-16 (E-core LPs 12-19 agree with LP 12 in these leaves): as
+# cases_xz_host_p.txt (XCR0 7H, 0DH.1 3D0H / 19900H, IA32_XSS 900H derived); XGETBV(1) follows the E-core XINUSE model
+# (x87 and SSE always in use; AVX tracked; docs/xinuse.md, measured on the bare host's E-cores).
+# --- XGETBV(0) = XCR0: 7H
+.byte 0x0f, 0x01, 0xd0 | rcx=0 =>! rax=0x7 rdx=0
+# --- CPUID 01H (EBX initial APIC ID 30H of LP 12: cases_bp2_host_e)
+.byte 0x0f, 0xa2 | rax=1 rcx=0 =>! rax=0xB0671 rcx=0x7FFAFBFF rdx=0xBFEBFBFF
+# --- CPUID 07H.0: PKU [3] = 1, OSPKE [4] = 0
+.byte 0x0f, 0xa2 | rax=7 rcx=0 =>! rax=0x2 rbx=0x239C27EB rcx=0x98C027AC rdx=0xFC1CC410
+# --- CPUID 0DH.0 / 0DH.1
+.byte 0x0f, 0xa2 | rax=0xd rcx=0 =>! rax=0x207 rbx=0x340 rcx=0xA88 rdx=0
+.byte 0x0f, 0xa2 | rax=0xd rcx=1 =>! rax=0xF rbx=0x3D0 rcx=0x19900 rdx=0
+# --- CR4: OSXSAVE [18] = 1, PKE [22] = 0; IA32_XSS 900H
+mov rax, cr4; shr rax, 18; and eax, 0x11 =>! rax=0x1
+mov ecx, 0xda0; rdmsr =>! rax=0x900 rdx=0
+# --- RDPKRU / WRPKRU: #UD (CR4.PKE = 0)
+.byte 0x0f, 0x01, 0xee | rcx=0 => #UD
+.byte 0x0f, 0x01, 0xef | rax=0 rcx=0 rdx=0 => #UD
+# --- XGETBV(1), E-core XINUSE model (the profile's core type, 1AH = 20H): x87 / SSE always 1
+mov ecx, 1; .byte 0x0f, 0x01, 0xd0 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; pxor xmm0, xmm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x7 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
+mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
