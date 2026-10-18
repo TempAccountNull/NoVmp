@@ -1714,8 +1714,8 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
      * UC_ERR_EXCEPTION and never reaches a guest #GP raised outside translated code
      */
     case MSR_IA32_XSS:
-        return !(val & ~(((uint64_t)env->features[FEAT_XSAVE_XSS_HI] << 32) |
-                         env->features[FEAT_XSAVE_XSS_LO]));
+        /* U1581: the model's bits, or a strict profile's CPUID.(0DH,1):EDX:ECX of the engine's components (cpu.c) */
+        return !(val & ~x86_cpu_xss_valid(env));
     case MSR_IA32_XFD:
     case MSR_IA32_XFD_ERR:
         return !(val & ~x86_cpu_xfd_supported(env));
@@ -2209,7 +2209,11 @@ void helper_wrmsr(CPUX86State *env)
          * corresponding bit is set in" CPUID.(0DH,1):EDX:ECX - WRMSR with any other bit #GP(0)
          * (was: silently dropped). An API write (UC_X86_REG_MSR) is dropped instead, as U173.
          * U1122: and returns UC_ERR_EXCEPTION (msr_api_err), the U905 contract (was: UC_ERR_OK).
+         * U1581 (plan 1.J.56): "that bitmap" is what CPUID reports - with a strict UC_CTL_X86_CPUID profile its
+         * 0DH.1 EDX:ECX (i5-13600K --host 19900H incl. PT / LBR / HWP, U1582; --guest 1800H), else the model's
+         * (x86_cpu_xss_valid); before, the model's CET_U | CET_S only, so --host WRMSR of PT / LBR / HWP was #GP(0).
          */
+        valid = x86_cpu_xss_valid(env);
         if (!(env->features[FEAT_XSAVE] & CPUID_XSAVE_XSAVES) || (val & ~valid)) {
             if (env->msr_api) {
                 env->msr_api_err = 1;   /* U1122 */

@@ -42336,6 +42336,131 @@ static const uc_x86_cpuid xq_guest[] = {
     {0x1C, 0x00, 0, 0, 0, 0},
 };
 
+static int xq_wrmsr(XzCtx *c, uint32_t msr, uint64_t v)
+{
+    xz_set(c, UC_X86_REG_RCX, msr);
+    xz_set(c, UC_X86_REG_RAX, v & 0xffffffffu);
+    xz_set(c, UC_X86_REG_RDX, v >> 32);
+    return xz_run(c, "\x0f\x30", 2);
+}
+
+/* XRSTORS64 [rsi] / XSAVES64 [rdi] with EDX:EAX = rfbm: -1 = no exception, else the vector */
+static int xq_xrstors(XzCtx *c, uint64_t at, uint64_t rfbm)
+{
+    xz_set(c, UC_X86_REG_RSI, at);
+    xz_set(c, UC_X86_REG_RAX, rfbm & 0xffffffffu);
+    xz_set(c, UC_X86_REG_RDX, rfbm >> 32);
+    return xz_run(c, "\x48\x0f\xc7\x1e", 4);
+}
+
+static int xq_xsaves(XzCtx *c, uint64_t at, uint64_t rfbm)
+{
+    xz_set(c, UC_X86_REG_RDI, at);
+    xz_set(c, UC_X86_REG_RAX, rfbm & 0xffffffffu);
+    xz_set(c, UC_X86_REG_RDX, rfbm >> 32);
+    return xz_run(c, "\x48\x0f\xc7\x2f", 4);
+}
+
+/* the compacted layout of 'mask' from the profile's own 0DH sub-leaves (Vol1 13.4.3: legacy area + header 240H, then each
+   component i >= 2 in index order, on the next 64-byte boundary when 0DH.i ECX[1] = 1), computed here independently of the
+   engine; returns the end (= the size CPUID.(0DH,1):EBX must report) */
+static uint32_t xq_layout(const uc_x86_cpuid *p, size_t n, uint64_t mask, uint32_t off[64], uint32_t size[64])
+{
+    uint32_t at = 0x240;
+    size_t k;
+    int i;
+
+    for (i = 0; i < 64; i++) {
+        off[i] = size[i] = 0;
+    }
+    for (i = 2; i < 63; i++) {
+        if (!((mask >> i) & 1)) {
+            continue;
+        }
+        for (k = 0; k < n; k++) {
+            if (p[k].leaf == 0xd && p[k].subleaf == (uint32_t)i) {
+                break;
+            }
+        }
+        TEST_CHECK(k < n);
+        if (k == n) {
+            continue;
+        }
+        if (p[k].ecx & 2) {
+            at = (at + 63) & ~63u;
+        }
+        off[i] = at;
+        size[i] = p[k].eax;
+        at += p[k].eax;
+    }
+    return at;
+}
+
+static void xq_st64(uint8_t *a, uint32_t at, uint64_t v)
+{
+    memcpy(a + at, &v, 8);
+}
+
+static uint64_t xq_ld64(const uint8_t *a, uint32_t at)
+{
+    uint64_t v;
+
+    memcpy(&v, a + at, 8);
+    return v;
+}
+
+/* an XRSTORS image: x87 / SSE in their initial values (FCW 37FH, MXCSR 1F80H), every component of 'rfbm' marked in use with
+   bytes that are never CCH, and the values each supervisor component needs to be accepted (CET: canonical 8-byte aligned
+   SSPs, U_CET 0; PT: TraceEn 0, bytes 72 and up 0; LBR: IA32_LBR_CTL without reserved bits, DEPTH 32 = the reset depth;
+   HWP: bits 63:43 0) */
+static void xq_image(uint8_t *a, size_t len, uint64_t rfbm, const uint32_t off[64], const uint32_t size[64])
+{
+    uint32_t i, k;
+
+    memset(a, 0, len);
+    a[0] = 0x7f;
+    a[1] = 0x03;
+    xq_st64(a, 24, 0x1f80);
+    xq_st64(a, 512, rfbm);
+    xq_st64(a, 520, rfbm | (1ULL << 63));
+    for (i = 2; i < 63; i++) {
+        if (!((rfbm >> i) & 1)) {
+            continue;
+        }
+        for (k = 0; k < size[i]; k++) {
+            uint8_t b = (uint8_t)(0x11 * ((i % 13) + 1) + 3 * k + 1);
+            a[off[i] + k] = b == 0xcc ? 0x5a : b;
+        }
+        switch (i) {
+        case 8:     /* PT: IA32_RTIT_CTL.TraceEn = 0, reserved bytes 72..size-1 zero */
+            a[off[i]] &= ~1;
+            memset(a + off[i] + 72, 0, size[i] - 72);
+            break;
+        case 9:     /* PKRU: 32 bits */
+            memset(a + off[i] + 4, 0, 4);
+            break;
+        case 11:
+            xq_st64(a, off[i], 0);
+            xq_st64(a, off[i] + 8, 0x00007fff12345000ULL);
+            break;
+        case 12:
+            xq_st64(a, off[i], 0x00007fff00001000ULL);
+            xq_st64(a, off[i] + 8, 0xffff800000002000ULL);
+            xq_st64(a, off[i] + 16, 0x00007fff00003000ULL);
+            break;
+        case 15:
+            xq_st64(a, off[i], 0x0041000eULL);
+            xq_st64(a, off[i] + 8, 32);
+            break;
+        case 16:
+            xq_st64(a, off[i], 0x000003ff80ff2a05ULL);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 /* U1580: a profile installed (or strict switched on) after guest code ran is refused */
 static void test_x86_xq_profile_after_run(void)
 {
@@ -42416,6 +42541,313 @@ static void test_x86_xq_profile_order(void)
     OK(uc_close(c.uc));
 }
 
+/* U1581: WRMSR IA32_XSS accepts exactly the bits the active strict profile advertises (and the engine holds); the model's
+   mask without a profile or with a non-strict one is unchanged */
+static void test_x86_xq_xss_wrmsr(void)
+{
+    static const struct {
+        const char *name;
+        const uc_x86_cpuid *p;
+        size_t n;
+        int strict;
+        uint64_t ok;
+    } m[] = {
+        {"--host", xq_host, XQ_N(xq_host), -1, 0x19900},
+        {"--guest", xq_guest, XQ_N(xq_guest), -1, 0x1800},
+        {"no profile (model)", NULL, 0, -1, 0x1800},
+        {"--host non-strict (model)", xq_host, XQ_N(xq_host), 0, 0x1800},
+    };
+    size_t j;
+    int b, vec;
+    uint64_t s;
+    XzCtx c;
+
+    for (j = 0; j < XQ_N(m); j++) {
+        xz_open(&c, m[j].p, m[j].n, m[j].strict, -1, 0);
+        for (b = 0; b < 64; b++) {
+            const uint64_t v = 1ULL << b;
+            const int want = ((m[j].ok >> b) & 1) ? -1 : 13;
+
+            vec = xq_wrmsr(&c, 0xda0, v);
+            TEST_CHECK(vec == want);
+            TEST_MSG("%s: WRMSR IA32_XSS %#" PRIx64 ": vector %d (expected %d)", m[j].name, v, vec, want);
+            if (want == -1) {
+                s = xz_xss(&c);
+                TEST_CHECK(s == v);
+                TEST_MSG("%s: RDMSR IA32_XSS %#" PRIx64 " (expected %#" PRIx64 ")", m[j].name, s, v);
+            }
+        }
+        TEST_CHECK(xq_wrmsr(&c, 0xda0, m[j].ok) == -1);
+        TEST_CHECK(xq_wrmsr(&c, 0xda0, m[j].ok | 0x200) == 13);
+        s = xz_xss(&c);
+        TEST_CHECK(s == m[j].ok);
+        TEST_MSG("%s: IA32_XSS %#" PRIx64 " (expected %#" PRIx64 ")", m[j].name, s, m[j].ok);
+        OK(uc_close(c.uc));
+    }
+}
+
+/* U1582: XSAVES / XRSTORS round trip and layout for every XCR0 | IA32_XSS combination of each profile: the area ends at
+   CPUID.(0DH,1):EBX, each component sits where the profile's sub-leaves put it, nothing is written beyond EBX, XCOMP_BV =
+   8000000000000000H | RFBM, XSTATE_BV[i] = 1 for the loaded components; after XRSTORS of the init image the supervisor
+   components are in their initial configuration (XSTATE_BV[i] = 0, not written) */
+static void test_x86_xq_xsaves_roundtrip(void)
+{
+    static const uint64_t xcr0s[] = {0x3, 0x7, 0x207};
+    static const struct {
+        const char *name;
+        const uc_x86_cpuid *p;
+        size_t n;
+        uint64_t sup;
+    } m[] = {
+        {"--host", xq_host, XQ_N(xq_host), 0x19900},
+        {"--guest", xq_guest, XQ_N(xq_guest), 0x1800},
+    };
+    static uint8_t a[0x1000], bimg[0x1000];
+    uint32_t off[64], size[64], end, r[4];
+    uint64_t bits[8], xss, rfbm, v;
+    size_t j, x;
+    int nb, i, k, combos = 0, bad = 0;
+    XzCtx c;
+
+    for (j = 0; j < XQ_N(m); j++) {
+        for (nb = 0, i = 0; i < 64; i++) {
+            if ((m[j].sup >> i) & 1) {
+                bits[nb++] = 1ULL << i;
+            }
+        }
+        for (x = 0; x < XQ_N(xcr0s); x++) {
+            for (k = 0; k < (1 << nb); k++) {
+                for (xss = 0, i = 0; i < nb; i++) {
+                    if ((k >> i) & 1) {
+                        xss |= bits[i];
+                    }
+                }
+                rfbm = xcr0s[x] | xss;
+                combos++;
+                xz_open(&c, m[j].p, m[j].n, -1, -1, 0);
+                TEST_CHECK(xz_xsetbv(&c, xcr0s[x]) == -1);
+                if (xq_wrmsr(&c, 0xda0, xss) != -1) {
+                    TEST_CHECK(0);
+                    TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": WRMSR faulted", m[j].name, xcr0s[x], xss);
+                    bad++;
+                    OK(uc_close(c.uc));
+                    continue;
+                }
+                end = xq_layout(m[j].p, m[j].n, rfbm, off, size);
+                xz_cpuid(&c, 0xd, 1, r);
+                TEST_CHECK(r[1] == end);
+                TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": 0DH.1 EBX %X (profile layout %X)", m[j].name,
+                         xcr0s[x], xss, r[1], end);
+                xq_image(a, sizeof(a), rfbm, off, size);
+                OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+                TEST_CHECK(xq_xrstors(&c, XQ_A, ~0ULL) == -1);
+                TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": XRSTORS faulted", m[j].name, xcr0s[x], xss);
+                memset(bimg, 0xcc, sizeof(bimg));
+                OK(uc_mem_write(c.uc, XQ_B, bimg, sizeof(bimg)));
+                TEST_CHECK(xq_xsaves(&c, XQ_B, ~0ULL) == -1);
+                OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+                v = xq_ld64(bimg, 520);
+                TEST_CHECK(v == (rfbm | (1ULL << 63)));
+                TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": XCOMP_BV %#" PRIx64, m[j].name, xcr0s[x], xss, v);
+                v = xq_ld64(bimg, 512);
+                TEST_CHECK((v & ~3ULL) == (rfbm & ~3ULL));
+                TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": XSTATE_BV %#" PRIx64, m[j].name, xcr0s[x], xss, v);
+                for (i = 2; i < 63; i++) {
+                    if ((rfbm >> i) & 1) {
+                        int same = !memcmp(a + off[i], bimg + off[i], size[i]);
+
+                        TEST_CHECK(same);
+                        TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": component %d at %X (%X bytes) differs",
+                                 m[j].name, xcr0s[x], xss, i, off[i], size[i]);
+                        bad += !same;
+                    }
+                }
+                for (i = 0; i < 64; i++) {
+                    if (bimg[end + i] != 0xcc) {
+                        TEST_CHECK(0);
+                        TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": byte %X beyond EBX written", m[j].name,
+                                 xcr0s[x], xss, end + i);
+                        bad++;
+                        break;
+                    }
+                }
+                /* the init image (XSTATE_BV = 0): supervisor components to their initial configuration */
+                memset(a, 0, sizeof(a));
+                xq_st64(a, 24, 0x1f80);
+                xq_st64(a, 520, rfbm | (1ULL << 63));
+                OK(uc_mem_write(c.uc, XQ_I, a, 0x800));
+                TEST_CHECK(xq_xrstors(&c, XQ_I, ~0ULL) == -1);
+                memset(bimg, 0xcc, sizeof(bimg));
+                OK(uc_mem_write(c.uc, XQ_B, bimg, sizeof(bimg)));
+                TEST_CHECK(xq_xsaves(&c, XQ_B, ~0ULL) == -1);
+                OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+                v = xq_ld64(bimg, 512);
+                TEST_CHECK((v & xss) == 0);
+                TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": XSTATE_BV after init %#" PRIx64, m[j].name,
+                         xcr0s[x], xss, v);
+                for (i = 2; i < 63; i++) {
+                    if ((xss >> i) & 1) {
+                        uint32_t t;
+
+                        for (t = 0; t < size[i]; t++) {
+                            if (bimg[off[i] + t] != 0xcc) {
+                                break;
+                            }
+                        }
+                        TEST_CHECK(t == size[i]);
+                        TEST_MSG("%s IA32_XSS %#" PRIx64 ": component %d in its initial configuration was written",
+                                 m[j].name, xss, i);
+                    }
+                }
+                OK(uc_close(c.uc));
+            }
+        }
+    }
+    TEST_CHECK(combos == 3 * 32 + 3 * 4);
+    TEST_MSG("combinations %d, failing components %d", combos, bad);
+}
+
+/* U1582: the component-specific rules of 13.5.6 / 13.5.12 / 13.5.13 / 13.6 / 13.12, and --guest rejecting the components it
+   does not advertise */
+static void test_x86_xq_component_rules(void)
+{
+    static uint8_t a[0x1000], bimg[0x1000];
+    const uint64_t xss = 0x19900, rfbm = 0x7 | 0x19900;
+    uint32_t off[64], size[64];
+    uint64_t v;
+    XzCtx c;
+
+    xz_open(&c, xq_host, XQ_N(xq_host), -1, -1, 0);
+    TEST_CHECK(xq_wrmsr(&c, 0xda0, xss) == -1);
+    xq_layout(xq_host, XQ_N(xq_host), rfbm, off, size);
+    TEST_CHECK(off[8] == 0x340 && off[11] == 0x3c0 && off[12] == 0x3d0 && off[15] == 0x3e8 && off[16] == 0x710);
+
+    /* HWP: at RESET in its initial configuration (8000FF01H): XSAVES writes XSTATE_BV[16] = 0 */
+    memset(bimg, 0xcc, sizeof(bimg));
+    OK(uc_mem_write(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK(xq_xsaves(&c, XQ_B, XQ_HWP | XQ_PT | XQ_LBR) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    v = xq_ld64(bimg, 512);
+    TEST_CHECK(v == 0);
+    TEST_MSG("reset: XSTATE_BV %#" PRIx64 " (expected 0: PT 0, LBR 0, HWP 8000FF01H)", v);
+    TEST_CHECK(xq_ld64(bimg, 520) == (0x8000000000000000ULL | XQ_HWP | XQ_PT | XQ_LBR));
+
+    /* HWP: restoring 8000FF01H is the initial configuration again; another value is saved; bits 63:43 reserved -> #GP */
+    xq_image(a, sizeof(a), XQ_HWP, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | rfbm);
+    xq_st64(a, off[16], 0x8000ff01ULL);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_HWP) == -1);
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK((xq_ld64(bimg, 512) & XQ_HWP) == 0);
+    xq_st64(a, off[16], 0x000003ff80ff2a05ULL);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_HWP) == -1);
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK((xq_ld64(bimg, 512) & XQ_HWP) && xq_ld64(bimg, off[16]) == 0x000003ff80ff2a05ULL);
+    xq_st64(a, off[16], 0x0000080000000000ULL);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_HWP) == 13);
+    TEST_MSG("HWP: IA32_HWP_REQUEST bit 43 (reserved) must be #GP");
+
+    /* PT: TraceEn restored as 1 is saved as 1 and cleared by that XSAVES; XRSTORS restoring or initialising PT state with
+       TraceEn = 1 is #GP (nothing changes), XRSTORS of other components is not; reserved bytes 72.. set -> #GP */
+    xq_image(a, sizeof(a), XQ_PT, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | rfbm);
+    xq_st64(a, off[8], 0x2001);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_PT) == -1);
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_PT) == 13);
+    TEST_MSG("PT: XRSTORS with IA32_RTIT_CTL.TraceEn = 1 must be #GP");
+    xq_st64(a, 512, 0);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_PT) == 13);
+    TEST_MSG("PT: XRSTORS initialising PT state with TraceEn = 1 must be #GP");
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_HWP) == -1);
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    v = xq_ld64(bimg, off[8]);
+    TEST_CHECK(v == 0x2001);
+    TEST_MSG("PT: first XSAVES saved IA32_RTIT_CTL %#" PRIx64 " (expected 2001)", v);
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    v = xq_ld64(bimg, off[8]);
+    TEST_CHECK(v == 0x2000);
+    TEST_MSG("PT: second XSAVES saved IA32_RTIT_CTL %#" PRIx64 " (expected 2000: TraceEn cleared)", v);
+    xq_image(a, sizeof(a), XQ_PT, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | rfbm);
+    a[off[8] + 72] = 1;
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_PT) == 13);
+    TEST_MSG("PT: a set reserved byte (offset 72) must be #GP");
+
+    /* LBR: DEPTH in the area != the current DEPTH (32): CTL and LER restored, the 32 triples zero; DEPTH bit 7 or an
+       IA32_LBR_CTL reserved bit -> #GP; initialising: XSTATE_BV[15] = 0 and the component is not written */
+    xq_image(a, sizeof(a), XQ_LBR, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | rfbm);
+    xq_st64(a, off[15] + 8, 16);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_LBR) == -1);
+    memset(bimg, 0xcc, sizeof(bimg));
+    OK(uc_mem_write(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK((xq_ld64(bimg, 512) & XQ_LBR) == XQ_LBR);
+    TEST_CHECK(!memcmp(bimg + off[15], a + off[15], 8) && xq_ld64(bimg, off[15] + 8) == 32 &&
+               !memcmp(bimg + off[15] + 16, a + off[15] + 16, 24));
+    TEST_MSG("LBR: CTL %#" PRIx64 " DEPTH %" PRIu64 " (expected CTL as loaded, DEPTH 32)", xq_ld64(bimg, off[15]),
+             xq_ld64(bimg, off[15] + 8));
+    {
+        int z = 1, t;
+
+        for (t = 40; t < 808; t++) {
+            z &= bimg[off[15] + t] == 0;
+        }
+        TEST_CHECK(z);
+        TEST_MSG("LBR: with another DEPTH the 32 triples must be zero");
+    }
+    xq_image(a, sizeof(a), XQ_LBR, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | rfbm);
+    xq_st64(a, off[15] + 8, 32 | 0x80);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_LBR) == 13);
+    TEST_MSG("LBR: DEPTH field with bit 7 (reserved) must be #GP");
+    xq_st64(a, off[15] + 8, 32);
+    xq_st64(a, off[15], 0x0041000eULL | 0x10);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_LBR) == 13);
+    TEST_MSG("LBR: IA32_LBR_CTL bit 4 (reserved) must be #GP");
+    xq_st64(a, off[15], 0x0041000eULL | (1ULL << 23));
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_LBR) == 13);
+    TEST_MSG("LBR: IA32_LBR_CTL bit 23 (reserved) must be #GP");
+    xq_st64(a, 512, 0);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, XQ_LBR) == -1);
+    memset(bimg, 0xcc, sizeof(bimg));
+    OK(uc_mem_write(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK(xq_xsaves(&c, XQ_B, rfbm) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK((xq_ld64(bimg, 512) & XQ_LBR) == 0 && bimg[off[15]] == 0xcc);
+    TEST_MSG("LBR: after the init the component must be in its initial configuration and not written");
+    OK(uc_close(c.uc));
+
+    /* --guest: PT / LBR / HWP are not in XCR0 | IA32_XSS - XRSTORS with them in XCOMP_BV is #GP, XSAVES never writes them */
+    xz_open(&c, xq_guest, XQ_N(xq_guest), -1, -1, 0);
+    TEST_CHECK(xq_wrmsr(&c, 0xda0, 0x1800) == -1);
+    xq_layout(xq_host, XQ_N(xq_host), rfbm, off, size);
+    xq_image(a, sizeof(a), XQ_PT, off, size);
+    xq_st64(a, 520, 0x8000000000000000ULL | 0x7 | XQ_PT);
+    OK(uc_mem_write(c.uc, XQ_A, a, sizeof(a)));
+    TEST_CHECK(xq_xrstors(&c, XQ_A, ~0ULL) == 13);
+    TEST_MSG("--guest: XCOMP_BV with PT (not in XCR0 | IA32_XSS) must be #GP");
+    TEST_CHECK(xq_xsaves(&c, XQ_B, ~0ULL) == -1);
+    OK(uc_mem_read(c.uc, XQ_B, bimg, sizeof(bimg)));
+    TEST_CHECK(xq_ld64(bimg, 520) == (0x8000000000000000ULL | 0x7 | 0x1800));
+    OK(uc_close(c.uc));
+}
 /* ---- end U1580-U1589 (xq_) ---- */
 
 TEST_LIST = {
@@ -42963,4 +43395,7 @@ TEST_LIST = {
     {"test_x86_xz_derive_rules", test_x86_xz_derive_rules},
     {"test_x86_xq_profile_after_run", test_x86_xq_profile_after_run},
     {"test_x86_xq_profile_order", test_x86_xq_profile_order},
+    {"test_x86_xq_xss_wrmsr", test_x86_xq_xss_wrmsr},
+    {"test_x86_xq_xsaves_roundtrip", test_x86_xq_xsaves_roundtrip},
+    {"test_x86_xq_component_rules", test_x86_xq_component_rules},
     {NULL, NULL}};

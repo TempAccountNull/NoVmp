@@ -6,7 +6,7 @@
 # 07H.0 ECX 98C027ACH (PKU [3] = 1, OSPKE [4] = 0), 0DH.0 207H / 340H / A88H / 0, 0DH.1 0FH / 3D0H / 19900H / 0.
 # IA32_XSS 900H (PT | CET_U) is DERIVED, not measured: the only subset of 0DH.1 ECX 19900H (8 PT 80H, 11 CET_U 10H,
 # 12 CET_S 18H, 15 LBR 328H, 16 HWP 8H; none 64-byte aligned) with 240H + 100H (AVX) + size = 3D0H (CPL > 0 cannot read
-# IA32_XSS, SDM 093 Vol1 13.3 p. 13-7). The emulator does not implement the PT state component in XSAVES / XRSTORS (docs/quirks.md).
+# IA32_XSS, SDM 093 Vol1 13.3 p. 13-7). PT / LBR / HWP are XSAVE state storage since U1582 (before: no PT layout, docs/quirks.md).
 # The per-LP APIC IDs (01H EBX, 0BH / 1FH EDX) stay as the profile has them (cases_bp2_host_p).
 # --- XGETBV(0) = XCR0: 7H (before U1530: 207H)
 .byte 0x0f, 0x01, 0xd0 | rcx=0 =>! rax=0x7 rdx=0
@@ -38,3 +38,15 @@ mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0;
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x7 rdx=0
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0
+# --- U1581 / U1582 (agent xstate2, plan 1.J.56): WRMSR IA32_XSS at CPL0 accepts every bit of 0DH.1 ECX 19900H (8 PT, 11 CET_U,
+# 12 CET_S, 15 LBR, 16 HWP; PT / LBR / HWP are XSAVE state storage only, SDM 093 Vol1 13.5.6 / 13.5.12 / 13.5.13); bit 9 (not
+# enumerated) is #GP(0); 0DH.1 EBX follows: 240H + 100H (AVX) + 80H + 10H + 18H + 328H + 8H = 718H; XSAVES64 [rsi] with
+# EDX:EAX = -1 writes XCOMP_BV = 8000000000000000H | XCR0 7H | IA32_XSS (before U1581: WRMSR with bit 8, 15 or 16 #GP(0))
+mov ecx, 0xda0; mov eax, 0x19900; xor edx, edx; wrmsr; rdmsr =>! rax=0x19900 rdx=0
+mov ecx, 0xda0; mov eax, 0x100; xor edx, edx; wrmsr; rdmsr =>! rax=0x100 rdx=0
+mov ecx, 0xda0; mov eax, 0x8000; xor edx, edx; wrmsr; rdmsr =>! rax=0x8000 rdx=0
+mov ecx, 0xda0; mov eax, 0x10000; xor edx, edx; wrmsr; rdmsr =>! rax=0x10000 rdx=0
+mov ecx, 0xda0; mov eax, 0x200; xor edx, edx; wrmsr =>! #GP
+mov ecx, 0xda0; mov eax, 0x19900; xor edx, edx; wrmsr; mov eax, 0xd; mov ecx, 1; cpuid; mov r8, rbx =>! r8=0x718
+mov ecx, 0xda0; mov eax, 0x19900; xor edx, edx; wrmsr; mov eax, -1; mov edx, -1; .byte 0x48, 0x0f, 0xc7, 0x2e; mov r8, [rsi+0x208] =>! r8=0x8000000000019907
+mov eax, -1; mov edx, -1; .byte 0x48, 0x0f, 0xc7, 0x2e; mov r8, [rsi+0x208] =>! r8=0x8000000000000907

@@ -38,3 +38,12 @@ mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; vxorps ymm0, ymm0, ymm0;
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x7 rdx=0
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroupper; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x3 rdx=0
 mov eax, 7; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; fninit; pxor xmm0, xmm0; vxorps ymm0, ymm0, ymm0; vzeroall; mov ecx, 1; .byte 0x0f, 0x01, 0xd0 | m+0x8018=801F0000 =>! rax=0x1 rdx=0
+# --- U1581 (agent xstate2, plan 1.J.56): WRMSR IA32_XSS at CPL0 accepts exactly 0DH.1 ECX 1800H (CET_U, CET_S); PT (8), LBR
+# (15) and HWP (16) are not enumerated by VMware and stay #GP(0); XSAVES64 [rsi] with EDX:EAX = -1 at reset: XCOMP_BV =
+# 8000000000000000H | XCR0 7H | IA32_XSS 800H
+mov ecx, 0xda0; mov eax, 0x1800; xor edx, edx; wrmsr; rdmsr =>! rax=0x1800 rdx=0
+mov ecx, 0xda0; mov eax, 0x100; xor edx, edx; wrmsr =>! #GP
+mov ecx, 0xda0; mov eax, 0x8000; xor edx, edx; wrmsr =>! #GP
+mov ecx, 0xda0; mov eax, 0x10000; xor edx, edx; wrmsr =>! #GP
+mov ecx, 0xda0; mov eax, 0x1800; xor edx, edx; wrmsr; mov eax, 0xd; mov ecx, 1; cpuid; mov r8, rbx =>! r8=0x368
+mov eax, -1; mov edx, -1; .byte 0x48, 0x0f, 0xc7, 0x2e; mov r8, [rsi+0x208] =>! r8=0x8000000000000807

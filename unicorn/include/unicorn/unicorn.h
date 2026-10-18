@@ -705,6 +705,10 @@ typedef enum uc_control_type {
     // before the first instruction - only narrows XCR0 (U120 / U1225).
     // NoVmp U1580: after guest code ran, switching strict on (1, or -1 with a profile installed) returns
     // UC_ERR_ARG and changes nothing; writes that keep the effective value or turn strict off are accepted.
+    // NoVmp U1581 / U1582 (plan 1.J.56): with a strict profile WRMSR IA32_XSS accepts exactly what the
+    // profile's CPUID.(0DH,1):EDX:ECX advertises of the components the engine holds (CET_U / CET_S and,
+    // as XSAVE state storage only, PT / LBR / HWP; i5-13600K --host 19900H, --guest 1800H), and XSAVES /
+    // XRSTORS save / restore those components in the compacted layout CPUID.(0DH,1):EBX describes.
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists

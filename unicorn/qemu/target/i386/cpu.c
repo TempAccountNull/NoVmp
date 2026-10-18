@@ -1446,6 +1446,23 @@ ExtSaveArea x86_ext_save_areas[XSAVE_STATE_AREA_COUNT] = {
         .offset = 0,
         .size = sizeof(XSavesArchLBR),
     },
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    /*
+     * NoVmp (ledger U1582): PT (8) and HWP (16) supervisor components as XSAVE state storage (SDM 093 Vol1 13.5.6 / 13.5.13):
+     * sizes = CPUID.(0DH,8 / 10H):EAX of the bare-host capture (80H, 8H), ECX[0] = 1, not 64-byte aligned. Outside
+     * CPUID_XSTATE_XSS_MASK (the models never enumerate them): only a strict profile makes them IA32_XSS bits (U1581).
+     */
+    [XSTATE_PT_BIT] = {
+        .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_INTEL_PT,
+        .offset = 0,
+        .size = XSAVES_PT_SIZE,
+    },
+    [XSTATE_HWP_BIT] = {
+        .feature = FEAT_6_EAX, .bits = CPUID_6_EAX_HWP,
+        .offset = 0,
+        .size = XSAVES_HWP_SIZE,
+    },
+#endif /* __Use_Original_Qemu (U1582) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U170) */
     [XSTATE_XTILE_CFG_BIT] = {
         .feature = FEAT_7_0_EDX, .bits = CPUID_7_0_EDX_AMX_TILE,
@@ -4522,6 +4539,47 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
     return xcr0;
 }
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U1581) */
+/*
+ * NoVmp (ledger U1581, plan 1.J.56, user decision 2026-10-17, notes\eread\X11_xstate2.md): the IA32_XSS bits WRMSR accepts.
+ * SDM 093 Vol1 13.2 p. 13-4: CPUID.(0DH,1):EDX:ECX "is a bitmap of all the supervisor state components that can be managed
+ * by XSAVES and XRSTORS. A bit can be set in the IA32_XSS MSR if and only if the corresponding bit is set in this bitmap".
+ * Without a profile or with a non-strict one: the model's supervisor components (FEAT_XSAVE_XSS: CET_U / CET_S / ARCH_LBR,
+ * U727 / U756), unchanged. With a strict profile: what the profile's CPUID.(0DH,1):EDX:ECX advertises, out of the
+ * components the engine holds - the model's plus PT / LBR / HWP as XSAVE state storage (U1582) - and only where the
+ * profile's sub-leaf 0DH.i gives the component the size the engine stores (EAX) as a supervisor component (ECX[0] = 1); the
+ * 64-byte alignment of the compacted format follows the profile's ECX[1] (fpu_helper.c xsave_comp_align, U1582), so XSAVES /
+ * XRSTORS and CPUID.(0DH,1):EBX (U1531, from the profile's sizes and alignment) agree on every offset. i5-13600K: --host
+ * 19900H (PT, CET_U, CET_S, LBR, HWP), --guest 1800H (CET_U, CET_S).
+ */
+uint64_t x86_cpu_xss_valid(CPUX86State *env)
+{
+    uint64_t v = ((uint64_t)env->features[FEAT_XSAVE_XSS_HI] << 32) | env->features[FEAT_XSAVE_XSS_LO];
+    struct uc_struct *uc = env->uc;
+    uint64_t adv;
+    int i;
+
+    if (!uc || !uc->x86_cpuid_strict || !uc->x86_cpuid_count) {
+        return v;
+    }
+    adv = ((uint64_t)x86_cpuid_profile_mask(env, 0xd, 1, 3) << 32) | x86_cpuid_profile_mask(env, 0xd, 1, 2);
+    v = (v | XSTATE_XSS_STORAGE_MASK) & adv;
+    for (i = 0; i < 64; i++) {
+        const struct uc_x86_cpuid *s = NULL;
+
+        if (!((v >> i) & 1)) {
+            continue;
+        }
+        if (i >= 2 && i < XSAVE_STATE_AREA_COUNT) {
+            s = x86_cpuid_find(uc, 0xd, i, false);
+        }
+        if (!s || s->eax != x86_ext_save_areas[i].size || !(s->ecx & 1)) {
+            v &= ~(1ULL << i);
+        }
+    }
+    return v;
+}
+#endif /* __Use_Original_Qemu (U1581) */
 #if __Use_Original_Qemu != 1 /* ours (U1530) */
 /*
  * NoVmp (ledger U1530, G9 2026-10-17, notes\eread\X10_xcr0_ospke_fix.md): the XCR0 of the OS environment at engine RESET
@@ -4574,7 +4632,9 @@ static uint64_t x86_cpu_xcr0_os_env(CPUX86State *env, uint64_t m)
  * 21-35). The value used is the UNIQUE set of supervisor components (0DH.1 EDX:ECX, sub-leaf ECX[0] = 1, a known size) whose
  * compacted size together with 'xcr0' equals that EBX; none or several: 0. i5-13600K: bare host EBX 3D0H, ECX 19900H ->
  * 900H (PT 80H + CET_U 10H; the other 31 subsets give other sizes); VMware guest EBX 350H, ECX 1800H -> 800H (CET_U). A
- * derived value, documented in docs/quirks.md; the model does not implement every such component (PT: no XSAVES layout).
+ * derived value, documented in docs/quirks.md. U1581: only components WRMSR would accept (x86_cpu_xss_valid: advertised and
+ * held by the engine, PT / LBR / HWP as state storage since U1582) take part, so the reset value is always a writable one
+ * with the layout CPUID.(0DH,1):EBX describes (both i5-13600K profiles: all their components, results unchanged).
  */
 static uint64_t x86_cpu_xss_os_env(CPUX86State *env, uint64_t xcr0)
 {
@@ -4590,6 +4650,9 @@ static uint64_t x86_cpu_xss_os_env(CPUX86State *env, uint64_t xcr0)
         return 0;
     }
     sup = ((uint64_t)e1->edx << 32) | e1->ecx;
+#if __Use_Original_Qemu != 1 /* ours (U1581) */
+    sup &= x86_cpu_xss_valid(env);      /* U1581: only components WRMSR IA32_XSS accepts */
+#endif /* __Use_Original_Qemu (U1581) */
     for (i = 2; i < 63; i++) {
         if (!((sup >> i) & 1)) {
             continue;
@@ -5637,6 +5700,27 @@ static void x86_cpu_reset(CPUState *dev)
         env->xss = x86_cpu_xss_os_env(env, xcr0);
     }
 #endif /* __Use_Original_Qemu (U1531) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    /*
+     * NoVmp (ledger U1582): the PT / LBR / HWP state storage after RESET (the memset above cleared it, as it clears the LBR
+     * records): IA32_HWP_REQUEST in HWP state's initial configuration 8000FF01H (SDM 093 Vol1 13.6; Vol4 774H gives no
+     * reset value - our choice); IA32_LBR_DEPTH "The reset value will match the maximum supported by the CPU" (Vol4 14CFH):
+     * the largest depth CPUID.1CH:EAX[7:0] enumerates (bit n: depth 8(n+1)), only when CPUID reports leaf 1CH and Arch LBR
+     * (07H.0:EDX[19]); otherwise 0 as before (the CPU models: no Arch LBR). The i5-13600K bare-host profile: 0BH -> 32.
+     */
+    env->hwp_request = X86_HWP_REQUEST_INIT;
+    {
+        uint32_t a, b, c, d, max;
+
+        cpu_x86_cpuid(env, 0, 0, &max, &b, &c, &d);
+        cpu_x86_cpuid(env, 7, 0, &a, &b, &c, &d);
+        a = 0;
+        if (max >= 0x1c && (d & CPUID_7_0_EDX_ARCH_LBR)) {
+            cpu_x86_cpuid(env, 0x1c, 0, &a, &b, &c, &d);
+        }
+        env->msr_lbr_depth = (a & 0xff) ? 8 * (32 - clz32(a & 0xff)) : 0;
+    }
+#endif /* __Use_Original_Qemu (U1582) */
     cpu_x86_update_cr4(env, cr4);
 
     /*

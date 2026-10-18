@@ -5245,6 +5245,181 @@ static void do_clear_cet_s(CPUX86State *env)
     env->pl_ssp[0] = env->pl_ssp[1] = env->pl_ssp[2] = 0;
 }
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+/*
+ * NoVmp (ledger U1582, plan 1.J.56, user decision 2026-10-17, notes\eread\X11_xstate2.md): PT (8), LBR (15) and HWP (16)
+ * supervisor state components as XSAVE STATE STORAGE ONLY - the bytes XSAVES / XRSTORS move (SDM 093 Vol1 13.5.6, 13.5.12,
+ * 13.5.13), kept in env->pt_state, env->msr_lbr_ctl / msr_lbr_depth / lbr_ler / lbr_records and env->hwp_request. Nothing
+ * traces, records branches or changes P-states, and the PT / LER / HWP MSRs are not RDMSR / WRMSR accessible. Before, PT and
+ * HWP had no layout at all and LBR was laid out but never written or loaded (XSTATE_BV[15] = 1 over stale bytes).
+ *   PT  (80H): IA32_RTIT_CTL, _OUTPUT_BASE, _OUTPUT_MASK_PTRS, _STATUS, _CR3_MATCH, _ADDR0_A, _ADDR0_B, _ADDR1_A, _ADDR1_B,
+ *       8 bytes each from offset 0; "Any locations in the state component at or beyond byte offset 72 are reserved". XSAVES
+ *       "saves zeroes in the reserved portions" and "clears IA32_RTIT_CTL.TraceEn (bit 0) after saving the value of the
+ *       IA32_RTIT_CTL MSR" (the area is probed first, so no fault can follow); XRSTORS that "would restore (or initialize) PT
+ *       state and IA32_RTIT_CTL.TraceEn = 1" is #GP before modifying anything (13.5.6 p. 13-13).
+ *   LBR (328H): IA32_LBR_CTL, IA32_LBR_DEPTH, IA32_LER_FROM_IP, _TO_IP, _INFO, then the triples FROM_IP / TO_IP / INFO of
+ *       entries 0-31 (13.5.12 p. 13-16). XSAVES saves CTL, DEPTH, the LERs and the triples i < DEPTH; XRSTORS initialising:
+ *       "IA32_LBR_DEPTH is not modified and zero is written to the other MSRs"; restoring with the area's DEPTH equal to
+ *       IA32_LBR_DEPTH: CTL, LERs and the triples i < DEPTH; with another DEPTH: CTL and LERs, all 32 triples zero; #GP if
+ *       "the IA32_LBR_DEPTH field in the XSAVE area sets any reserved bits" (bits 63:7: "N:0 DEPTH" of Vol4 14CFH leaves N
+ *       open; CPUID.1CH:EAX[7:0] enumerates at most depth 64, 7 bits - our reading) or IA32_LBR_CTL sets a reserved bit
+ *       (15:4, 63:23, Vol4 14CEH; 13.12 p. 13-26 "#GP ... if it would load any element of that component with an
+ *       unsupported value (e.g., by setting a reserved bit in an MSR)").
+ *   HWP (8H): IA32_HWP_REQUEST (13.5.13); #GP for bits 63:43 (reserved, Vol4 774H).
+ * Initial configurations (13.6 pp. 13-18 / 13-19): PT "each of the 9 MSRs is 0"; LBR every MSR 0 except IA32_LBR_DEPTH
+ * ("XINUSE[15] does not pertain to IA32_LBR_DEPTH"); HWP "IA32_HWP_REQUEST MSR is 8000FF01H". XINUSE value-based, as CET
+ * (U756). Values are otherwise not checked (no Intel PT capability model behind CPUID.14H; LBR IPs are stored as given).
+ */
+#define X86_LBR_CTL_RSVD        0xffffffffff80fff0ULL
+#define X86_LBR_DEPTH_RSVD      0xffffffffffffff80ULL
+#define X86_HWP_REQUEST_RSVD    0xfffff80000000000ULL
+
+static uint64_t get_xinuse_sstore(CPUX86State *env)
+{
+    uint64_t r = 0, acc = 0;
+    int i;
+
+    for (i = 0; i < 9; i++) {
+        acc |= env->pt_state[i];
+    }
+    if (acc) {
+        r |= XSTATE_PT_MASK;
+    }
+    acc = env->msr_lbr_ctl | env->lbr_ler[0] | env->lbr_ler[1] | env->lbr_ler[2];
+    for (i = 0; i < ARCH_LBR_NR_ENTRIES; i++) {
+        acc |= env->lbr_records[i].from | env->lbr_records[i].to | env->lbr_records[i].info;
+    }
+    if (acc) {
+        r |= XSTATE_ARCH_LBR_MASK;
+    }
+    if (env->hwp_request != X86_HWP_REQUEST_INIT) {
+        r |= XSTATE_HWP_MASK;
+    }
+    return r;
+}
+
+/* the LBR triples XSAVES / XRSTORS move: entries 0 .. IA32_LBR_DEPTH - 1 (at most the 32 the state component holds) */
+static int lbr_triples(CPUX86State *env)
+{
+    return env->msr_lbr_depth < ARCH_LBR_NR_ENTRIES ? (int)env->msr_lbr_depth : ARCH_LBR_NR_ENTRIES;
+}
+
+static void do_xsave_pt(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 9; i++) {
+        cpu_stq_data_ra(env, ptr + 8 * i, env->pt_state[i], ra);
+    }
+    for (i = 72; i < XSAVES_PT_SIZE; i += 8) {
+        cpu_stq_data_ra(env, ptr + i, 0, ra);
+    }
+    env->pt_state[0] &= ~1ULL;                  /* IA32_RTIT_CTL.TraceEn, after it was saved */
+}
+
+static void do_xsave_lbr(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i, n = lbr_triples(env);
+
+    cpu_stq_data_ra(env, ptr, env->msr_lbr_ctl, ra);
+    cpu_stq_data_ra(env, ptr + 8, env->msr_lbr_depth, ra);
+    for (i = 0; i < 3; i++) {
+        cpu_stq_data_ra(env, ptr + 16 + 8 * i, env->lbr_ler[i], ra);
+    }
+    for (i = 0; i < n; i++) {
+        target_ulong at = ptr + 40 + 24 * i;
+
+        cpu_stq_data_ra(env, at, env->lbr_records[i].from, ra);
+        cpu_stq_data_ra(env, at + 8, env->lbr_records[i].to, ra);
+        cpu_stq_data_ra(env, at + 16, env->lbr_records[i].info, ra);
+    }
+}
+
+static void do_xsave_hwp(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    cpu_stq_data_ra(env, ptr, env->hwp_request, ra);
+}
+
+/* XRSTORS: every #GP(0) of these components before anything is loaded (as cet_xrstor_check) */
+static void sstore_xrstor_check(CPUX86State *env, uint64_t restore, uint64_t init, target_ulong at_pt,
+                                target_ulong at_lbr, target_ulong at_hwp, uintptr_t ra)
+{
+    bool ok = true;
+    int i;
+
+    if (((restore | init) & XSTATE_PT_MASK) && (env->pt_state[0] & 1)) {
+        ok = false;                             /* TraceEn = 1 */
+    }
+    if (restore & XSTATE_PT_MASK) {
+        for (i = 72; i < XSAVES_PT_SIZE; i += 8) {
+            ok &= !cpu_ldq_data_ra(env, at_pt + i, ra);
+        }
+    }
+    if (restore & XSTATE_ARCH_LBR_MASK) {
+        ok &= !(cpu_ldq_data_ra(env, at_lbr, ra) & X86_LBR_CTL_RSVD);
+        ok &= !(cpu_ldq_data_ra(env, at_lbr + 8, ra) & X86_LBR_DEPTH_RSVD);
+    }
+    if (restore & XSTATE_HWP_MASK) {
+        ok &= !(cpu_ldq_data_ra(env, at_hwp, ra) & X86_HWP_REQUEST_RSVD);
+    }
+    if (!ok) {
+        raise_exception_ra(env, EXCP0D_GPF, ra);
+    }
+}
+
+static void do_xrstor_pt(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    int i;
+
+    for (i = 0; i < 9; i++) {
+        env->pt_state[i] = cpu_ldq_data_ra(env, ptr + 8 * i, ra);
+    }
+}
+
+static void do_xrstor_lbr(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    uint64_t depth = cpu_ldq_data_ra(env, ptr + 8, ra);
+    int i, n = lbr_triples(env);
+
+    env->msr_lbr_ctl = cpu_ldq_data_ra(env, ptr, ra);
+    for (i = 0; i < 3; i++) {
+        env->lbr_ler[i] = cpu_ldq_data_ra(env, ptr + 16 + 8 * i, ra);
+    }
+    if (depth != env->msr_lbr_depth) {
+        memset(env->lbr_records, 0, sizeof(env->lbr_records));
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        target_ulong at = ptr + 40 + 24 * i;
+
+        env->lbr_records[i].from = cpu_ldq_data_ra(env, at, ra);
+        env->lbr_records[i].to = cpu_ldq_data_ra(env, at + 8, ra);
+        env->lbr_records[i].info = cpu_ldq_data_ra(env, at + 16, ra);
+    }
+}
+
+static void do_xrstor_hwp(CPUX86State *env, target_ulong ptr, uintptr_t ra)
+{
+    env->hwp_request = cpu_ldq_data_ra(env, ptr, ra);
+}
+
+static void do_clear_pt(CPUX86State *env)
+{
+    memset(env->pt_state, 0, sizeof(env->pt_state));
+}
+
+static void do_clear_lbr(CPUX86State *env)
+{
+    env->msr_lbr_ctl = 0;                       /* IA32_LBR_DEPTH is not modified */
+    memset(env->lbr_ler, 0, sizeof(env->lbr_ler));
+    memset(env->lbr_records, 0, sizeof(env->lbr_records));
+}
+
+static void do_clear_hwp(CPUX86State *env)
+{
+    env->hwp_request = X86_HWP_REQUEST_INIT;
+}
+#endif /* __Use_Original_Qemu (U1582) */
 
 static void do_fxsave(CPUX86State *env, target_ulong ptr, uintptr_t ra)
 {
@@ -5395,6 +5570,11 @@ static uint64_t get_xinuse(CPUX86State *env)
     inuse &= ~(XSTATE_CET_U_MASK | XSTATE_CET_S_MASK);
     inuse |= get_xinuse_cet(env);
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    /* PT / LBR / HWP state storage: value-based (see get_xinuse_sstore) */
+    inuse &= ~XSTATE_XSS_STORAGE_MASK;
+    inuse |= get_xinuse_sstore(env);
+#endif /* __Use_Original_Qemu (U1582) */
 #if __Use_Original_Qemu != 1 /* ours (U1480) */
     /* x87 / SSE / AVX: the XINUSE model (get_xinuse_low); PKRU (9) and the rest keep their rule */
     inuse &= ~(XSTATE_FP_MASK | XSTATE_SSE_MASK | XSTATE_YMM_MASK);
@@ -5580,6 +5760,11 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
     case XSTATE_CET_U_BIT:      do_xsave_cet_u(env, at, ra); break;
     case XSTATE_CET_S_BIT:      do_xsave_cet_s(env, at, ra); break;
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    case XSTATE_PT_BIT:         do_xsave_pt(env, at, ra); break;
+    case XSTATE_ARCH_LBR_BIT:   do_xsave_lbr(env, at, ra); break;
+    case XSTATE_HWP_BIT:        do_xsave_hwp(env, at, ra); break;
+#endif /* __Use_Original_Qemu (U1582) */
     default:                 break;
     }
 }
@@ -5589,10 +5774,19 @@ static void do_xsave_comp(CPUX86State *env, int i, target_ulong at, uintptr_t ra
  * Compacted format (SDM Vol1 13.4.3): a component with CPUID.(EAX=0DH,ECX=i):ECX[1] = 1
  * starts on the next 64-byte boundary after the preceding one (the AMX components, U170).
  */
-static target_ulong xsave_comp_align(int i, target_ulong next)
+static target_ulong xsave_comp_align(CPUX86State *env, int i, target_ulong next)
 {
-    if (i < XSAVE_STATE_AREA_COUNT &&
-        (x86_ext_save_areas[i].ecx & ESA_FEATURE_ALIGN64_MASK)) {
+    bool a = i < XSAVE_STATE_AREA_COUNT && (x86_ext_save_areas[i].ecx & ESA_FEATURE_ALIGN64_MASK);
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    /* NoVmp (ledger U1582): with a strict CPUID profile the alignment CPUID reports - the profile's CPUID.(0DH,i):ECX[1],
+       as CPUID.(0DH,1):EBX counts it (U1531); the i5-13600K profiles align none of their components */
+    uint32_t ecx = x86_cpuid_profile_mask(env, 0xd, i, 2);
+
+    if (ecx != ~0u) {
+        a = (ecx & 2) != 0;
+    }
+#endif /* __Use_Original_Qemu (U1582) */
+    if (a) {
         next = QEMU_ALIGN_UP(next, 64);
     }
     return next;
@@ -5631,7 +5825,7 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 
         for (i = 2; i < 63; i++) {
             if (rfbm & (1ULL << i)) {
-                at = xsave_comp_align(i, at);
+                at = xsave_comp_align(env, i, at);
                 if (save & (1ULL << i)) {
                     end = at + xsave_comp_size(i);
                 }
@@ -5651,7 +5845,7 @@ static void do_xsavec(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     for (i = 2; i < 63; i++) {
         if (rfbm & (1ULL << i)) {
 #if __Use_Original_Qemu != 1 /* ours (U172) */
-            next = xsave_comp_align(i, next);
+            next = xsave_comp_align(env, i, next);
 #endif /* __Use_Original_Qemu (U172) */
             if (save & (1ULL << i)) {
                 do_xsave_comp(env, i, ptr + next, ra);
@@ -5963,12 +6157,15 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 #if __Use_Original_Qemu != 1 /* ours (U756) */
         target_ulong at_cet_u = 0, at_cet_s = 0;   /* CET_U / CET_S offsets (U756) */
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+        target_ulong at_pt = 0, at_lbr = 0, at_hwp = 0;   /* PT / LBR / HWP offsets (U1582) */
+#endif /* __Use_Original_Qemu (U1582) */
         /* U480: nothing is loaded when any byte up to the last restored component faults */
         target_ulong at = next, end = next;
 
         for (i = 2; i < 63; i++) {
             if (format & (1ULL << i)) {
-                at = xsave_comp_align(i, at);
+                at = xsave_comp_align(env, i, at);
                 if (restore & (1ULL << i)) {
                     end = at + xsave_comp_size(i);
                 }
@@ -5979,6 +6176,15 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     at_cet_s = ptr + at;
                 }
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+                if (i == XSTATE_PT_BIT) {
+                    at_pt = ptr + at;
+                } else if (i == XSTATE_ARCH_LBR_BIT) {
+                    at_lbr = ptr + at;
+                } else if (i == XSTATE_HWP_BIT) {
+                    at_hwp = ptr + at;
+                }
+#endif /* __Use_Original_Qemu (U1582) */
                 at += xsave_comp_size(i);
             }
         }
@@ -5986,6 +6192,9 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 #if __Use_Original_Qemu != 1 /* ours (U756) */
         cet_xrstor_check(env, restore, at_cet_u, at_cet_s, ra);
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+        sstore_xrstor_check(env, restore, init, at_pt, at_lbr, at_hwp, ra);
+#endif /* __Use_Original_Qemu (U1582) */
     }
 
     if (restore & XSTATE_FP_MASK) {
@@ -6005,7 +6214,7 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
         uint64_t bit = 1ULL << i;
         if (format & bit) {
 #if __Use_Original_Qemu != 1 /* ours (U172) */
-            next = xsave_comp_align(i, next);
+            next = xsave_comp_align(env, i, next);
 #endif /* __Use_Original_Qemu (U172) */
             if (restore & bit) {
                 switch (i) {
@@ -6060,6 +6269,17 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     do_xrstor_cet_s(env, ptr + next, ra);
                     break;
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+                case XSTATE_PT_BIT:
+                    do_xrstor_pt(env, ptr + next, ra);
+                    break;
+                case XSTATE_ARCH_LBR_BIT:
+                    do_xrstor_lbr(env, ptr + next, ra);
+                    break;
+                case XSTATE_HWP_BIT:
+                    do_xrstor_hwp(env, ptr + next, ra);
+                    break;
+#endif /* __Use_Original_Qemu (U1582) */
                 default:
                     break;
                 }
@@ -6089,6 +6309,17 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                 do_clear_cet_s(env);
                 break;
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+            case XSTATE_PT_BIT:
+                do_clear_pt(env);
+                break;
+            case XSTATE_ARCH_LBR_BIT:
+                do_clear_lbr(env);
+                break;
+            case XSTATE_HWP_BIT:
+                do_clear_hwp(env);
+                break;
+#endif /* __Use_Original_Qemu (U1582) */
             case XSTATE_YMM_BIT:
                 do_clear_ymmh(env);
                 break;

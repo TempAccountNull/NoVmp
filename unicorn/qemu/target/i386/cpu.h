@@ -886,6 +886,24 @@ typedef struct X86SgxPkg {
 #define XSTATE_CET_U_MASK               (1ULL << XSTATE_CET_U_BIT)
 #define XSTATE_CET_S_MASK               (1ULL << XSTATE_CET_S_BIT)
 #endif /* __Use_Original_Qemu (U756) */
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+/*
+ * NoVmp (ledger U1582, plan 1.J.56): supervisor state components 8 (PT state) and 16 (HWP state), SDM 093 Vol1 13.1 /
+ * 13.5.6 / 13.5.13; with 15 (LBR state) the components held as XSAVE STATE STORAGE ONLY (fpu_helper.c): XSAVES / XRSTORS
+ * move their bytes, nothing traces, records branches or changes P-states. Sizes = CPUID.(0DH,8 / 10H):EAX of the bare-host
+ * i5-13600K capture (80H, 8H; LBR 328H = sizeof(XSavesArchLBR)). Not in CPUID_XSTATE_XSS_MASK: no CPU model enumerates
+ * them; a strict CPUID profile that does makes them valid IA32_XSS bits (x86_cpu_xss_valid, U1581).
+ */
+#define XSTATE_PT_BIT                   8
+#define XSTATE_HWP_BIT                  16
+#define XSTATE_PT_MASK                  (1ULL << XSTATE_PT_BIT)
+#define XSTATE_HWP_MASK                 (1ULL << XSTATE_HWP_BIT)
+#define XSTATE_XSS_STORAGE_MASK         (XSTATE_PT_MASK | XSTATE_ARCH_LBR_MASK | XSTATE_HWP_MASK)
+#define XSAVES_PT_SIZE                  0x80
+#define XSAVES_HWP_SIZE                 8
+#define X86_HWP_REQUEST_INIT            0x8000ff01ULL   /* HWP state's initial configuration (Vol1 13.6) */
+#define CPUID_6_EAX_HWP                 (1U << 7)       /* CPUID.06H:EAX[7] HWP base registers (Vol4 774H) */
+#endif /* __Use_Original_Qemu (U1582) */
 
 #define XSTATE_DYNAMIC_MASK             (XSTATE_XTILE_DATA_MASK)
 
@@ -2384,6 +2402,13 @@ typedef struct CPUX86State {
     uint64_t msr_lbr_ctl;
     uint64_t msr_lbr_depth;
     LBREntry lbr_records[ARCH_LBR_NR_ENTRIES];
+#if __Use_Original_Qemu != 1 /* ours (U1582) */
+    /* XSAVE state storage only (U1582, SDM 093 Vol1 13.5.6 / 13.5.12 / 13.5.13); no RDMSR / WRMSR of these MSRs */
+    uint64_t lbr_ler[3];    /* LBR state: IA32_LER_FROM_IP, IA32_LER_TO_IP, IA32_LER_INFO */
+    uint64_t pt_state[9];   /* PT state: IA32_RTIT_CTL, _OUTPUT_BASE, _OUTPUT_MASK_PTRS, _STATUS, _CR3_MATCH, _ADDR0_A,
+                               _ADDR0_B, _ADDR1_A, _ADDR1_B */
+    uint64_t hwp_request;   /* HWP state: IA32_HWP_REQUEST */
+#endif /* __Use_Original_Qemu (U1582) */
 
     /* exception/interrupt handling */
     int error_code;
@@ -3098,6 +3123,11 @@ void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra);
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U1581) */
+/* cpu.c: the IA32_XSS bits WRMSR accepts - the model's, or with a strict CPUID profile what its CPUID.(0DH,1):EDX:ECX
+   advertises of the components the engine holds */
+uint64_t x86_cpu_xss_valid(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1581) */
 #if __Use_Original_Qemu != 1 /* ours (U172) */
 /* fpu_helper.c: LDTILECFG's consistency checks on a 64-byte TILECFG image */
 bool x86_amx_tilecfg_ok(const uint8_t *buf, uint64_t xcr0);
