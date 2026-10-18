@@ -1,0 +1,38 @@
+# WAITPKG (UMONITOR / UMWAIT / TPAUSE) under the VMWARE-GUEST profile: expected-value cases (plan 1.J.55, ledger U1601,
+# agent waitpkg, 2026-10-17). The guest does not enumerate WAITPKG (CPUID.07H.0:ECX[5] = 0, capture
+# Run3_clean_guest_probes_20261015, ECX 9840078CH): "#UD If CPUID.07H.00H:ECX.WAITPKG[5] = 0" (SDM 093 Vol2B TPAUSE
+# p. 4-730, UMONITOR p. 4-741, UMWAIT p. 4-743), decided at decode, so it comes before every #GP / #SS / #PF of the
+# instruction; IA32_UMWAIT_CONTROL (E1H) does not exist there (Vol4 Table 2-2 lists it with WAITPKG): RDMSR / WRMSR #GP(0).
+#   emu-alltest --cases Emulator\data\cases_waitpkg_guest.txt --guest --expect-only   (suites waitpkg_guest, waitpkg_vm)
+# The same instructions execute under --host (cases_waitpkg_host.txt). Raw Unicorn runs at CPL0, "cpl=3" lines at CPL3.
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 5; and r8d, 1 =>! r8=0
+# --- every form #UD, nothing changes
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => #UD
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0xffffffff rax=0xffffffff => #UD
+.byte 0x66, 0x41, 0x0f, 0xae, 0xf1 | r9=1 rdx=0 rax=0 => #UD
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => #UD
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0xffffffff rax=0xffffffff => #UD
+.byte 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7 => #UD
+.byte 0x67, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000030028000 => #UD
+# #UD before the #GP(0) of src[31:1] and before the #GP(0) / #PF of the UMONITOR address
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=2 rdx=0 rax=0 => #UD
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0x80000000 => #UD
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000000000000 => #UD
+.byte 0x36, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000000000000 => #UD
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x10 => #UD
+# mandatory-prefix combinations (U75) and LOCK
+.byte 0x66, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 => #UD
+.byte 0xf3, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 => #UD
+.byte 0xf2, 0xf3, 0x0f, 0xae, 0xf6 => #UD
+.byte 0x66, 0xf3, 0x0f, 0xae, 0xf6 => #UD
+.byte 0xf0, 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 => #UD
+# CPL3 (Windows user mode)
+.byte 0x66, 0x0f, 0xae, 0xf1 | cpl=3 rcx=0 rdx=0 rax=0 rflags=0xad7 => #UD
+.byte 0xf2, 0x0f, 0xae, 0xf1 | cpl=3 rcx=0 rdx=0 rax=0 => #UD
+.byte 0xf3, 0x0f, 0xae, 0xf6 | cpl=3 => #UD
+# --- IA32_UMWAIT_CONTROL is not enumerated: #GP(0), nothing changes
+rdmsr | rcx=0xe1 => #GP(0)
+wrmsr | rcx=0xe1 rax=0 rdx=0 => #GP(0)
+wrmsr | rcx=0xe1 rax=0x401 rdx=0 => #GP(0)

@@ -1,0 +1,96 @@
+# WAITPKG (UMONITOR / UMWAIT / TPAUSE) under the BARE-HOST profile: expected-value cases (plan 1.J.55, ledger U1601,
+# agent waitpkg, 2026-10-17). The bare host enumerates WAITPKG (CPUID.07H.0:ECX[5] = 1, capture Host_clean_20261016,
+# ECX 98C027ACH), so the instructions execute. Values from SDM 093 Vol2B TPAUSE (pp. 4-729 / 4-730), UMONITOR
+# (pp. 4-740 / 4-741), UMWAIT (pp. 4-742 / 4-743) and Vol4 Table 2-2 E1H (IA32_UMWAIT_CONTROL).
+#   emu-alltest --cases Emulator\data\cases_waitpkg_host.txt --host --expect-only                (suite waitpkg_host_p)
+#   emu-alltest --cases Emulator\data\cases_waitpkg_host.txt --host --host-core E --expect-only  (suite waitpkg_host_e)
+# The same instructions are #UD under --guest (cases_waitpkg_guest.txt). Raw Unicorn runs at CPL0 (privileged setup
+# inline), "cpl=3" lines at CPL3. Layout: RSI = 30028000h (MEM + 8000h), 0x10 is never mapped.
+# Wait model (docs/quirks.md "WAITPKG wait duration"): the implementation-dependent optimized state is left at once, no
+# TSC time passes, and the Operation is evaluated with one TSC sample (the value RDTSC returns, IA32_TSC_ADJUST
+# included): CF = 0 unless os_deadline wraps past 2^64; AF/PF/SF/ZF/OF = 0; every other flag unchanged.
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 5; and r8d, 1 =>! r8=1
+# --- IA32_UMWAIT_CONTROL at engine start: 0 (no OS maximum time, C0.2 allowed; environment choice, docs/quirks.md)
+rdmsr | rcx=0xe1 => rax=0 rdx=0
+#
+# --- TPAUSE r32 (66 0F AE /6, mod = 11b): C0.2 (src[0] = 0) and C0.1 (src[0] = 1); EDX:EAX = 0 is a past deadline
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+# a deadline far in the future without an OS limit: zero-length wait, not an OS time-limit wake -> CF = 0
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0xffffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0x7fffffff rax=0 rflags=0x2 => rflags=0x2
+# only CF, AF, PF, SF, ZF, OF are written (DF stays)
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xed7 => rflags=0x602
+# r32 source: bits 63:32 of the register are not used (also with REX.W); EDX:EAX = the low halves of RDX / RAX
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0xffffffff00000001 rdx=0xffffffff00000000 rax=0xffffffff00000000 rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x48, 0x0f, 0xae, 0xf1 | rcx=0xfffffffe00000000 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x41, 0x0f, 0xae, 0xf1 | r9=1 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0x66, 0x0f, 0xae, 0xf0 | rax=1 rdx=0 rflags=0xad7 => rflags=0x202
+# #GP(0) if src[31:1] != 0: nothing changes
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=2 rdx=0 rax=0 rflags=0xad7 => #GP(0)
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0x80000000 => #GP(0)
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0xfffffffe => #GP(0)
+.byte 0x66, 0x48, 0x0f, 0xae, 0xf1 | rcx=0x0000000100000002 => #GP(0)
+# LOCK: #UD
+.byte 0xf0, 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 => #UD
+#
+# --- UMWAIT r32 (F2 0F AE /6, mod = 11b): same deadline rule; whether UMONITOR armed a range does not change it
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0xffffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0xffffffff00000000 rdx=0 rax=0 rflags=0xed7 => rflags=0x602
+.byte 0xf2, 0x41, 0x0f, 0xae, 0xf7 | r15=1 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=2 rdx=0 rax=0 rflags=0xad7 => #GP(0)
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0x80000000 => #GP(0)
+.byte 0xf0, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 => #UD
+# UMONITOR then UMWAIT (the armed form)
+.byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0xffffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
+#
+# --- UMONITOR r64 (F3 0F AE /6, mod = 11b): DS:reg, checked as a byte load; no register, flag or memory change
+.byte 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7 =>
+.byte 0xf3, 0x41, 0x0f, 0xae, 0xf0 | r8=0x30028fff rflags=0xad7 =>
+# 67h: the source register is r32 (EAX), bits 63:32 not used; without 67h the same RAX is non-canonical
+.byte 0x67, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000030028000 =>
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000030028000 => #GP(0)
+# 64-bit mode: non-canonical -> #GP(0) ("If the specified segment is not SS"); a CS/DS/ES/SS override is ignored in
+# 64-bit mode, so 36h does not make it a stack reference (U51: ss:[rcx] #GP on the i5-13600K) -> #GP(0) too
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x0000800000000000 => #GP(0)
+.byte 0xf3, 0x0f, 0xae, 0xf4 | rflags=0xad7 =>
+.byte 0x36, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000000000000 => #GP(0)
+.byte 0x3e, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7 =>
+# not-present page: #PF (as a byte load)
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x10 => #PF
+.byte 0xf0, 0xf3, 0x0f, 0xae, 0xf6 => #UD
+#
+# --- mandatory prefix (U75): the last F2 / F3 decides, a 66 beside it is ignored
+.byte 0x66, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf3, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7 =>
+.byte 0x66, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7 =>
+.byte 0xf3, 0x66, 0x0f, 0xae, 0xf6 | rflags=0xad7 =>
+#
+# --- CPL3 (Windows user mode): all three execute (CR4.TSD = 0); IA32_UMWAIT_CONTROL is CPL0 only
+.byte 0x66, 0x0f, 0xae, 0xf1 | cpl=3 rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
+.byte 0xf2, 0x0f, 0xae, 0xf1 | cpl=3 rcx=1 rdx=0xffffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
+.byte 0xf3, 0x0f, 0xae, 0xf6 | cpl=3 rflags=0xad7 =>
+.byte 0x66, 0x0f, 0xae, 0xf1 | cpl=3 rcx=2 rdx=0 rax=0 => #GP(0)
+rdmsr | cpl=3 rcx=0xe1 => #GP(0)
+#
+# --- IA32_UMWAIT_CONTROL: bit 0 C0.2 disable, bit 1 and 63:32 reserved (#GP(0)), 31:2 maximum time in TSC quanta
+mov ecx, 0xe1; mov eax, 0xfffffffd; xor edx, edx; wrmsr; xor eax, eax; rdmsr =>! rax=0xfffffffd rdx=0
+wrmsr | rcx=0xe1 rax=2 rdx=0 => #GP(0)
+wrmsr | rcx=0xe1 rax=0 rdx=1 => #GP(0)
+# an OS limit (400h quanta, C0.2 not allowed) below the far deadline: using_os_deadline = 1, but no time passes -> CF = 0
+mov ecx, 0xe1; mov eax, 0x401; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+mov ecx, 0xe1; mov eax, 0x4; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0xf2, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+# os_deadline past 2^64 (TSC := FFFFFFFF_80000000h by WRMSR 10H, which moves IA32_TSC_ADJUST; limit FFFFFFFCh): the
+# 64-bit sum is below EDX:EAX = ~0, so deadline = os_deadline and TSC >= deadline at once -> CF = 1 (U1600)
+mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; mov eax, 0xfffffffc; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x203
+mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; mov eax, 0xfffffffc; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0xf2, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x203
+# the same TSC with limit 0 ("A zero value indicates no maximum time"): CF = 0
+mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; xor eax, eax; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+# the same TSC and limit with a past deadline (EDX:EAX = 0): os_deadline is not below it, using_os_deadline = 0 -> CF = 0
+mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; mov eax, 0xfffffffc; xor edx, edx; wrmsr; xor ecx, ecx; xor eax, eax; xor edx, edx; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202

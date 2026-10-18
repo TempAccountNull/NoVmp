@@ -6990,6 +6990,130 @@ static void test_x86_waitpkg(void)
     OK(uc_close(r.uc));
 }
 
+/* ---- NoVmp U1600-U1601 (agent waitpkg, plan 1.J.55): helper prefix wp_ ---- */
+/*
+ * The "TSC" of the UMWAIT / TPAUSE Operation is the time-stamp counter RDTSC reads, IA32_TSC_ADJUST
+ * included (SDM 093 Vol3B 20.17.3: a WRMSR to IA32_TIME_STAMP_COUNTER moves IA32_TSC_ADJUST by the
+ * same amount; U905). With the zero-length wait (docs/quirks.md "WAITPKG wait duration") the TSC shows
+ * in CF only where os_deadline = TSC + (IA32_UMWAIT_CONTROL[31:2] << 2) passes 2^64 (64-bit sum):
+ * TSC = FFFFFFFF_80000000h + e and limit FFFFFFFCh give os_deadline = 7FFFFFFCh + e < instr_deadline
+ * = ~0, so deadline = os_deadline, using_os_deadline = 1 and TSC >= deadline at once: CF = 1. Before
+ * U1600 the helper read the counter without IA32_TSC_ADJUST (no wrap, CF = 0).
+ */
+static uint64_t wp_wait(NvRun *r, const char *insn, uint64_t deadline)
+{
+    char code[4];
+
+    memcpy(code, insn, 4);
+    nv_set(r, UC_X86_REG_RCX, 0);
+    nv_set(r, UC_X86_REG_RDX, deadline >> 32);
+    nv_set(r, UC_X86_REG_RAX, (uint32_t)deadline);
+    nv_set(r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(nv_run_n(r, code, 4));
+    TEST_CHECK(r->cap.count == 0);
+    return nv_get(r, UC_X86_REG_RFLAGS) & 0xfff;
+}
+
+/* WRMSR as an instruction at CPL0 (MSR 10H then moves IA32_TSC_ADJUST, U905) */
+static void wp_wrmsr(NvRun *r, uint32_t msr, uint64_t value)
+{
+    nv_set(r, UC_X86_REG_RCX, msr);
+    nv_set(r, UC_X86_REG_RAX, (uint32_t)value);
+    nv_set(r, UC_X86_REG_RDX, value >> 32);
+    OK(nv_run(r, "\x0f\x30"));
+    TEST_CHECK(r->cap.count == 0);
+}
+
+static void test_x86_wp_tsc_adjust(void)
+{
+    static const char tpause[] = "\x66\x0f\xae\xf1", umwait[] = "\xf2\x0f\xae\xf1";
+    NvRun r;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    wp_wrmsr(&r, 0x10, 0xffffffff80000000ull);
+    OK(nv_run(&r, "\x0f\x31"));                          /* RDTSC sees the written TSC */
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RDX) == 0xffffffff);
+
+    wp_wrmsr(&r, 0xe1, 0xfffffffc);
+    TEST_CHECK(wp_wait(&r, tpause, ~0ull) == 0x003);     /* os_deadline wrapped: CF = 1 */
+    TEST_CHECK(wp_wait(&r, umwait, ~0ull) == 0x003);
+    TEST_CHECK(wp_wait(&r, tpause, 0) == 0x002);         /* past deadline: using_os_deadline = 0 */
+
+    wp_wrmsr(&r, 0xe1, 0);                               /* "no maximum time": CF = 0 */
+    TEST_CHECK(wp_wait(&r, tpause, ~0ull) == 0x002);
+    TEST_CHECK(wp_wait(&r, umwait, ~0ull) == 0x002);
+
+    wp_wrmsr(&r, 0x10, 0x1000);                          /* no wrap: the wait takes no time, CF = 0 */
+    wp_wrmsr(&r, 0xe1, 0xfffffffc);
+    TEST_CHECK(wp_wait(&r, tpause, ~0ull) == 0x002);
+    wp_wrmsr(&r, 0xe1, 4);
+    TEST_CHECK(wp_wait(&r, umwait, ~0ull) == 0x002);
+    OK(uc_close(r.uc));
+}
+
+/*
+ * U1601: the two i5-13600K environments. CPUID.07H.0:ECX of the clean captures: bare host 98C027ACH
+ * (WAITPKG[5] = 1), VMware guest 9840078CH (0). Under the strict profile the bare host runs all three
+ * instructions and IA32_UMWAIT_CONTROL exists (0 at engine start); the guest #UDs them (decode, before
+ * any #GP / #PF) and RDMSR / WRMSR E1H are #GP(0).
+ */
+static void wp_profile(NvRun *r, uint32_t ecx7)
+{
+    uc_x86_cpuid p[3] = {
+        {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0xb0671, 0x00800800, 0x7ffafbff, 0xbfebfbff},
+        {7, 0, 2, 0, 0, 0},
+    };
+
+    p[2].ecx = ecx7;
+    OK(uc_ctl_set_x86_cpuid(r->uc, p, 3));
+    OK(uc_ctl_set_x86_cpuid_strict(r->uc, 1));
+}
+
+static void test_x86_wp_profiles(void)
+{
+    NvRun r;
+
+    /* bare host */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    wp_profile(&r, 0x98c027ac);
+    TEST_CHECK(nv_rdmsr(&r, 0xe1) == 0);
+    TEST_CHECK(wp_wait(&r, "\x66\x0f\xae\xf1", 0) == 0x002);
+    TEST_CHECK(wp_wait(&r, "\xf2\x0f\xae\xf1", ~0ull) == 0x002);
+    nv_set(&r, UC_X86_REG_RDX, 0x200100);
+    OK(nv_run(&r, "\xf3\x0f\xae\xf2"));
+    TEST_CHECK(r.cap.count == 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x8000000000000000ull); /* non-canonical: #GP(0) */
+    OK(nv_run(&r, "\xf3\x0f\xae\xf2"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    OK(nv_run(&r, "\x36\xf3\x0f\xae\xf2"));             /* SS override ignored (U51) */
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RDX, 0x8000000000200100ull); /* 67h: EDX */
+    OK(nv_run(&r, "\x67\xf3\x0f\xae\xf2"));
+    TEST_CHECK(r.cap.count == 0);
+    OK(nv_run3(&r, "\x66\x0f\xae\xf1"));                /* CPL3 runs it */
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    OK(uc_close(r.uc));
+
+    /* VMware guest */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    wp_profile(&r, 0x9840078c);
+    nv_set(&r, UC_X86_REG_RCX, 2);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\xae\xf1"));
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\xae\xf1"));
+    nv_set(&r, UC_X86_REG_RDX, 0x8000000000000000ull);
+    uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\xae\xf2"));
+    nv_set(&r, UC_X86_REG_RCX, 0xe1);
+    OK(nv_run(&r, "\x0f\x32"));                          /* RDMSR E1H: #GP(0) */
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    nv_set(&r, UC_X86_REG_RAX, 0);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x30"));                          /* WRMSR E1H: #GP(0) */
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
+    OK(uc_close(r.uc));
+}
+/* ---- end of the wp_ block (U1600-U1601) ---- */
+
 /*
  * NoVmp U112: ENQCMD / ENQCMDS (SDM Vol2). No enqueue register exists, so a
  * well-formed command returns the retry status ZF = 1 (other flags 0) and the
@@ -42988,6 +43112,8 @@ TEST_LIST = {
     {"test_x86_uintr_senduipi", test_x86_uintr_senduipi},
     {"test_x86_uintr_delivery", test_x86_uintr_delivery},
     {"test_x86_waitpkg", test_x86_waitpkg},
+    {"test_x86_wp_tsc_adjust", test_x86_wp_tsc_adjust},
+    {"test_x86_wp_profiles", test_x86_wp_profiles},
     {"test_x86_enqcmd", test_x86_enqcmd},
     {"test_x86_smx_pconfig_sgx", test_x86_smx_pconfig_sgx},
     {"test_x86_cet_shadow_stack", test_x86_cet_shadow_stack},

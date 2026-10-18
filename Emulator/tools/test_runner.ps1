@@ -284,6 +284,13 @@ Add-Hw 'cases_tsx_cet' 'hw'
 # U879: the TSX / WAITPKG / ENQCMD / CET / SMX / PCONFIG expected values of U110-U116 on UC_CPU_X86_MAX (no
 # CPUID profile: the i5-13600K's hides these features; cases_tsx_cet.txt above is the hardware side).
 Add-Exp 'cases_tsx_cet_max' 'cases_tsx_cet_max' 'expect'
+# U1601-U1602 (agent waitpkg, plan 1.J.55): WAITPKG per platform switch - --host (bare host, CPUID.07H.0:ECX[5] = 1)
+# executes UMONITOR / UMWAIT / TPAUSE and has IA32_UMWAIT_CONTROL, --guest / --vm (VMware guest, 0) #UD / #GP(0);
+# cases_waitpkg_hw.txt is the hardware side (#UD on both in the VMware guest; bare-host steps in its header).
+Add-Exp 'waitpkg_host_p' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host' )
+Add-Exp 'waitpkg_host_e' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'waitpkg_guest' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--guest' )
+Add-Exp 'waitpkg_vm' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--vm' )
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'

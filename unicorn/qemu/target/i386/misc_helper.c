@@ -3261,10 +3261,11 @@ void helper_xbegin_check(CPUX86State *env, target_ulong fallback_eip)
  * as the SDM allows ("Other implementation-dependent events may cause the
  * processor to exit the implementation-dependent optimized state"), so no TSC
  * time passes inside the instruction. The pseudocode is evaluated with the TSC
- * sampled once (the RDTSC value without hooks): os_deadline = TSC +
+ * sampled once (the RDTSC value without hooks, IA32_TSC_ADJUST included since U1600): os_deadline = TSC +
  * IA32_UMWAIT_CONTROL[31:2] quanta (0 = no maximum time, per the MSR
  * description); CF = using_os_deadline AND TSC >= deadline, which therefore
- * stays 0 (the OS limit is never reached); AF/PF/SF/ZF/OF = 0. UMONITOR state
+ * stays 0 (the OS limit is never reached) unless TSC + limit wraps past 2^64
+ * (U1600); AF/PF/SF/ZF/OF = 0. UMONITOR state
  * does not change the result: an unarmed monitor only means no wait at all.
  */
 void helper_waitpkg(CPUX86State *env, uint32_t src)
@@ -3276,7 +3277,15 @@ void helper_waitpkg(CPUX86State *env, uint32_t src)
                         && (env->hflags & HF_CPL_MASK) != 0)) {
         raise_exception_ra(env, EXCP0D_GPF, GETPC());
     }
-    tsc = cpu_get_tsc(env) + env->tsc_offset;
+#if __Use_Original_Qemu != 1 /* ours (U1600) */
+    /*
+     * NoVmp (ledger U1600, plan 1.J.55): the Operation's "TSC" is the counter RDTSC reads, IA32_TSC_ADJUST included
+     * (SDM 093 Vol3B 20.17.3 p. 20-44: a WRMSR to IA32_TIME_STAMP_COUNTER moves IA32_TSC_ADJUST by the same amount;
+     * U905); before, the sample left IA32_TSC_ADJUST out. 64-bit arithmetic: an os_deadline past 2^64 wraps below
+     * the instruction deadline, and the single sample is then already past it (CF = 1, docs/quirks.md).
+     */
+    tsc = msr_tsc_now(env);
+#endif /* __Use_Original_Qemu (U1600) */
 #if __Use_Original_Qemu != 1 /* ours (U1304) */
     tsc = x86_vmx_guest_tsc(env, tsc);  /* the deadline is in guest TSC units (Vol3C 28.3) */
 #endif /* __Use_Original_Qemu (U1304) */
