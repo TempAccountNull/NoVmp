@@ -146,11 +146,22 @@ MemoryRegion *memory_cow(struct uc_struct *uc, MemoryRegion *current, hwaddr beg
                              current_offset, size);
     memory_region_add_subregion_overlap(current->container, offset, ram, uc->snapshot_level);
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1595) */
     if (uc->cpu) {
         for (addr = ram->addr; (int64_t)(ram->end - addr) > 0; addr += uc->target_page_size) {
            tlb_flush_page(uc->cpu, addr);
         }
     }
+#else /* ours (U1595) */
+    /*
+     * NoVmp (ledger U1595, plan 1.J.54): no per-page tlb_flush_page. ram->addr / ram->end are offsets in
+     * the container (memory_region_add_subregion_common), not linear addresses, so the loop flushed the
+     * TLB entries of unrelated linear pages 0 .. size; the TLB is already flushed whole by the commit of
+     * the add above (memory_region_update_container_subregions -> memory_region_transaction_commit ->
+     * tcg_commit -> tlb_flush), as for memory_unmap / memory_moveout (U1450).
+     */
+    (void)addr;
+#endif /* __Use_Original_Qemu (U1595) */
 
     return ram;
 }

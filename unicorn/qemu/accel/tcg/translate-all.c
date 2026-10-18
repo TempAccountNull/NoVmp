@@ -965,7 +965,11 @@ static void uc_tb_flush(struct uc_struct *uc) {
     tb_exec_lock(uc);
 }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1594) */
 static void uc_invalidate_tb(struct uc_struct *uc, uint64_t start_addr, size_t len) 
+#else /* ours (U1594): one linear page per call, see uc_invalidate_tb below */
+static void uc_invalidate_tb_page(struct uc_struct *uc, uint64_t start_addr, size_t len)
+#endif /* __Use_Original_Qemu (U1594) */
 {
     tb_page_addr_t start, end;
 
@@ -1038,6 +1042,46 @@ static void uc_invalidate_tb(struct uc_struct *uc, uint64_t start_addr, size_t l
 
     tb_invalidate_phys_range(uc, start, end);
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U1594) */
+/*
+ * NoVmp (ledger U1594, plan 1.J.54): uc_invalidate_tb gets a LINEAR range (UC_CTL_TB_REMOVE_CACHE, code /
+ * block hook ranges, the run's stop address: exit - 1, 2 bytes, which can straddle a page). The
+ * original translated only the first page and dropped [ram(first page), + len): a later linear page that
+ * maps to another physical page - another RAM block, or with paging any frame - kept its translated
+ * code, and nothing was dropped when the first page had no translation. Look every linear page up on
+ * its own (uc_invalidate_tb_page = the original body, probe without raising, U1222). A range of more
+ * than UC_INVALIDATE_TB_MAX_PAGES pages (e.g. a code hook over most of the address space) flushes the
+ * whole cache instead, as uc_hook_add already does for begin > end.
+ */
+#define UC_INVALIDATE_TB_MAX_PAGES 65536 /* 256 MiB of 4 KiB pages */
+
+static void uc_invalidate_tb(struct uc_struct *uc, uint64_t start_addr, size_t len)
+{
+    uint64_t align = uc->target_page_align;
+    uint64_t last, page, a, e;
+
+    if (len == 0) {
+        return;
+    }
+    last = start_addr + (len - 1);
+    if (last < start_addr) {
+        last = UINT64_MAX; /* the original also gave up on a wrap; keep to the top */
+    }
+    if (((last & ~align) - (start_addr & ~align)) / uc->target_page_size >= UC_INVALIDATE_TB_MAX_PAGES) {
+        uc->tb_flush(uc);
+        return;
+    }
+    for (page = start_addr & ~align;; page += uc->target_page_size) {
+        a = page < start_addr ? start_addr : page;
+        e = (page | align) < last ? (page | align) : last;
+        uc_invalidate_tb_page(uc, a, (size_t)(e - a + 1));
+        if ((page | align) >= last) {
+            break;
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1594) */
 
 static uc_err uc_gen_tb(struct uc_struct *uc, uint64_t addr, uc_tb *out_tb) 
 {
