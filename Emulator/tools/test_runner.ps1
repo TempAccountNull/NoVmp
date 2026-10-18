@@ -291,6 +291,7 @@ Add-Exp 'waitpkg_host_p' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host'
 Add-Exp 'waitpkg_host_e' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host', '--host-core', 'E' )
 Add-Exp 'waitpkg_guest' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--guest' )
 Add-Exp 'waitpkg_vm' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--vm' )
+Add-Hw 'cases_waitpkg_hw' 'hw waitpkg'
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'

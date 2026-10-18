@@ -1,0 +1,22 @@
+# WAITPKG timing probe for the BARE HOST (plan 1.J.55, ledger U1602, agent waitpkg, 2026-10-17). Not a gate file: it
+# measures what the emulator deliberately does not model (docs/quirks.md "WAITPKG wait duration") - how long a TPAUSE /
+# UMWAIT with a far deadline really waits under Windows, and whether it ends by the OS time limit (CF = 1,
+# IA32_UMWAIT_CONTROL[31:2] != 0) or by another wake event such as the clock interrupt (CF = 0). That tells whether
+# Windows programs IA32_UMWAIT_CONTROL (a CPL0 MSR that user mode cannot read), the --host environment value
+# (docs/quirks.md "IA32_UMWAIT_CONTROL at engine start").
+# Each line: t0 = RDTSC; deadline = t0 + 2^40 (minutes away); TPAUSE / UMWAIT; R10 = CF; R11 = bit index of the highest
+# set bit of the elapsed TSC ticks (BSR: 16 = 65536..131071 ticks); every other changed register is zeroed. The
+# emulator's result is R10 = 0, R11 = its own JIT time, so each line carries "# host state" and never counts as differing.
+# Run on the bare host only (on the VMware guest every line is #UD):
+#   emu-alltest --cases Emulator\data\cases_waitpkg_probe_hw.txt --host --strict --xcr0 7 --hw-cpu P --hw-repeat 50
+#   emu-alltest --cases Emulator\data\cases_waitpkg_probe_hw.txt --host --host-core E --strict --xcr0 7 --hw-cpu E --hw-repeat 50
+# Report the "host outcomes" lists (R10 / R11 per outcome, with counts). Expected: if Windows sets a limit L, CF = 1 and
+# R11 = BSR(L) in most runs; if it sets none, CF = 0 and R11 = the clock-interrupt period (about 2^24..2^26 ticks).
+#
+# TPAUSE C0.2 / C0.1
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator's wait takes no time)
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; mov ecx, 1; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator's wait takes no time)
+# UMONITOR [RSI] + UMWAIT C0.2 (armed; nothing else stores to MEM)
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator's wait takes no time)
+# UMWAIT without a fresh UMONITOR (SDM: no wait when no range is armed)
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator's wait takes no time)

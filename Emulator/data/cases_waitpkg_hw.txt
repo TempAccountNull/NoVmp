@@ -1,0 +1,67 @@
+# WAITPKG (UMONITOR / UMWAIT / TPAUSE) hardware cases (plan 1.J.55, ledger U1602, agent waitpkg, 2026-10-17).
+# Own snippets only. Every line is deterministic on a CPU that has WAITPKG, whatever IA32_UMWAIT_CONTROL Windows
+# programmed: EDX:EAX is a past deadline (0 or 1), so by the Operation (SDM 093 Vol2B TPAUSE p. 4-730, UMWAIT
+# p. 4-743) os_deadline >= instr_deadline, deadline = instr_deadline, using_os_deadline = 0, the wait loop does not run,
+# CF = 0 and AF/PF/SF/ZF/OF = 0. UMONITOR addresses are inside MEM (RSI = 30028000h) or deliberately faulting. Input
+# flags carry IF (ADxh): Windows runs user code with IF = 1, so the native side always has it.
+#
+# 1. VMware guest (this machine; CPUID.07H.0:ECX[5] = 0, WAITPKG hidden): every line is #UD natively and in the emulator
+#    (the guest profile, strict):
+#      emu-alltest --cases Emulator\data\cases_waitpkg_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict --xcr0 7
+#    (suite cases_waitpkg_hw; the same with --guest instead of --cpuid ...)
+# 2. Bare host (CPUID.07H.0:ECX[5] = 1): the lines execute natively and in the emulator under the bare-host profile:
+#      emu-alltest --cases Emulator\data\cases_waitpkg_hw.txt --host --strict --xcr0 7 --hw-cpu P
+#      emu-alltest --cases Emulator\data\cases_waitpkg_hw.txt --host --host-core E --strict --xcr0 7 --hw-cpu E
+#    Expected there: 0 differing. Open SDM reading checked by one line (marked below): UMONITOR's 64-bit exception list
+#    says "#SS(0) If the specified segment is SS and the source register is in non-canonical form"; the emulator follows
+#    U51 (a CS/DS/ES/SS override is ignored in 64-bit mode, ss:[rcx] is #GP on the i5-13600K), i.e. #GP(0).
+#
+# --- TPAUSE r32 (66 0F AE /6, mod = 11b)
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0 rax=0 rflags=0xad7
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=1 rflags=0xed7
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0xffffffff00000001 rdx=0xffffffff00000000 rax=0xffffffff00000000 rflags=0xad7
+.byte 0x66, 0x48, 0x0f, 0xae, 0xf1 | rcx=0xfffffffe00000000 rdx=0 rax=0 rflags=0xad7
+.byte 0x66, 0x41, 0x0f, 0xae, 0xf1 | r9=1 rdx=0 rax=0 rflags=0xad7
+.byte 0x66, 0x0f, 0xae, 0xf0 | rax=1 rdx=0 rflags=0xad7
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=2 rdx=0 rax=0 rflags=0xad7
+.byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0x80000000 rdx=0 rax=0
+.byte 0x66, 0x48, 0x0f, 0xae, 0xf1 | rcx=0x0000000100000002 rdx=0 rax=0
+.byte 0xf0, 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0
+# --- UMWAIT r32 (F2 0F AE /6, mod = 11b)
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0xffffffff00000000 rdx=0 rax=0 rflags=0xed7
+.byte 0xf2, 0x41, 0x0f, 0xae, 0xf7 | r15=1 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=2 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0x0f, 0xae, 0xf1 | rcx=0x80000000 rdx=0 rax=0
+.byte 0xf0, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0
+# UMONITOR [RSI] then UMWAIT with a past deadline
+.byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+# --- UMONITOR r64 (F3 0F AE /6, mod = 11b)
+.byte 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7
+.byte 0xf3, 0x0f, 0xae, 0xf7 | rflags=0xad7
+.byte 0xf3, 0x41, 0x0f, 0xae, 0xf0 | r8=0x30028fff rflags=0xad7
+.byte 0x67, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000030028000 rflags=0xad7
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000030028000
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x0000800000000000
+.byte 0xf3, 0x0f, 0xae, 0xf4 | rflags=0xad7
+# the open #SS-vs-#GP reading (see the header): SS override, non-canonical source
+.byte 0x36, 0xf3, 0x0f, 0xae, 0xf0 | rax=0x8000000000000000
+.byte 0x3e, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7
+.byte 0x26, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7
+.byte 0xf3, 0x0f, 0xae, 0xf0 | rax=0x10
+.byte 0xf0, 0xf3, 0x0f, 0xae, 0xf6
+# --- mandatory prefix (U75): the last F2 / F3 decides, a 66 beside it is ignored
+.byte 0x66, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0xf3, 0xf2, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0xf2, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7
+.byte 0x66, 0xf3, 0x0f, 0xae, 0xf6 | rflags=0xad7
+.byte 0xf3, 0x66, 0x0f, 0xae, 0xf6 | rflags=0xad7
+# --- CPL3 in Unicorn too (cpl=3, U452); IA32_UMWAIT_CONTROL from CPL3: #GP(0) on both machines (RDMSR is CPL0; on the
+# guest the MSR also does not exist)
+.byte 0x66, 0x0f, 0xae, 0xf1 | cpl=3 rcx=0 rdx=0 rax=0 rflags=0xad7
+.byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1 | cpl=3 rcx=1 rdx=0 rax=0 rflags=0xad7
+.byte 0xf3, 0x0f, 0xae, 0xf0 | cpl=3 rax=0x10
+rdmsr | cpl=3 rcx=0xe1
