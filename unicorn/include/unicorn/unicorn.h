@@ -691,6 +691,11 @@ typedef enum uc_control_type {
     //   those pairing rules (U1225), as at reset.
     // CPUID leaf 0DH reports the profile in both modes (EBX follows the current XCR0); the reset
     // XCR0 itself is described in docs/quirks.md "Emulator environment choices" (U1440).
+    // NoVmp U1530 / U1531 (G9, 2026-10-17): with a strict profile installed BEFORE the engine starts, the
+    // reset XCR0 is the capture's XCR0 read from the profile's CPUID.(0DH,0):EBX (7H for the i5-13600K
+    // bare-host and VMware-guest profiles, as Windows), and the reset IA32_XSS the unique supervisor set
+    // matching its CPUID.(0DH,1):EBX (bare host 900H, guest 800H); CPUID.(0DH,1):EBX then follows
+    // XCR0 | IA32_XSS. Installing a profile or switching strict on later only narrows XCR0 (U120 / U1225).
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists

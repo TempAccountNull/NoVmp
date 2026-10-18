@@ -5650,8 +5650,15 @@ static void test_x86_avx512_cpuid(void)
         TEST_CHECK(r[0] == 0x207 && r[1] == ebx[i] && r[2] == 0xa88 && r[3] == 0);
         TEST_MSG("xcr0 %llx: ebx %x", (unsigned long long)x, r[1]);
     }
+    /* U1531: 0DH.1 EBX follows XCR0 | IA32_XSS (was the captured 350H whatever the state); XCR0 is 3 here and
+       IA32_XSS 0 (this profile lists no supervisor sub-leaves, so no reset IA32_XSS can be derived): 240H */
     m0_cpuid(&m, 0xd, 1, r);
-    TEST_CHECK(r[1] == 0x350);                     /* profile value (IA32_XSS unknown) */
+    TEST_CHECK(r[1] == 0x240);
+    TEST_MSG("0DH.1 EBX %x (expected 240H)", r[1]);
+    x = 7;
+    OK(uc_reg_write(m.uc, UC_X86_REG_XCR0, &x));
+    m0_cpuid(&m, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x340);
     m0_close(&m);
 
     /* AVX-512 profile + model */
@@ -38958,8 +38965,9 @@ static void test_x86_xc_arch_reset_vs_default(void)
     OK(uc_close(c.uc));
 
     /* a strict profile (the U435 default with a profile, and explicit): the reset XCR0 is the
-       profile-narrowed OS value 207H, not 1H. CURRENT BEHAVIOUR (U120/U1225) - A18 asks for 1H in the
-       strict profile; reported as an inconsistency, not changed here */
+       capture's XCR0 that the profile records in CPUID.(0DH,0):EBX (340H -> 7H, U1530, user decision G9
+       2026-10-17: the Windows value of both i5-13600K captures), not 1H (the architectural RESET value,
+       reached below by the harness or by XSETBV) and no longer the narrowed mask 207H (U120/U1225) */
     k.prof = prof207;
     k.nprof = sizeof(prof207) / sizeof(prof207[0]);
     for (k.strict = -1; k.strict <= 1; k.strict += 2) {
@@ -38968,14 +38976,14 @@ static void test_x86_xc_arch_reset_vs_default(void)
         OK(xc_open(&c, &k));
         OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
         x = xc_reg_xcr0(&c);
-        TEST_CHECK(on == 1 && x == 0x207);
-        TEST_MSG("strict (%d) profile: strict %d, reset XCR0 %#" PRIx64 " (current behaviour 207H; "
+        TEST_CHECK(on == 1 && x == 0x7);
+        TEST_MSG("strict (%d) profile: strict %d, reset XCR0 %#" PRIx64 " (expected 7H, U1530; "
                  "architectural RESET 1H)", k.strict, on, x);
         xs_cpuid(&c, 1, 0, r);
         TEST_CHECK((r[2] >> 27) & 1);                /* CPUID.1:ECX.OSXSAVE = CR4.OSXSAVE = 1 */
         xs_cpuid(&c, 0xd, 0, r);
-        TEST_CHECK(r[0] == 0x207 && r[1] == 0xa88);
-        TEST_MSG("strict profile: CPUID.(0DH,0) EAX %#x EBX %#x (expected 207H, A88H)", r[0], r[1]);
+        TEST_CHECK(r[0] == 0x207 && r[1] == 0x340);
+        TEST_MSG("strict profile: CPUID.(0DH,0) EAX %#x EBX %#x (expected 207H, 340H)", r[0], r[1]);
         TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
         /* from the RESET value the guest may enable only what both the model and the profile report */
         xs_set(&c, UC_X86_REG_XCR0, 1);
@@ -41253,6 +41261,487 @@ static void test_x86_xu_context(void)
 }
 /* ---- end U1480-U1489 (xu_) ---- */
 
+/*
+ * ---- NoVmp U1530-U1539: XCR0 / IA32_XSS of the OS environment at engine reset, per CPUID profile (xz_) ----
+ * G9 (notes\eread\G9_xcr0_verification.md, notes\eread\X10_xcr0_ospke_fix.md): Windows runs with XCR0 = 7H on the bare
+ * i5-13600K (20/20 LPs) and in the VMware guest (8/8 LPs) - capture\baseline\Host_clean_20261016 and
+ * Run3_clean_guest_probes_20261015, *_xstate.txt - although both enumerate CPUID.(0DH,0):EAX = 207H (PKRU supported, not
+ * enabled; CR4.PKE = 0, CPUID.(7,0):ECX.OSPKE = 0). The strict profile's reset XCR0 was 207H. Architectural RESET is 1H (SDM
+ * 093 Vol3A 2.6 p. 2-23, Table 12-1 p. 12-3); IA32_XSS is 0 coming out of RESET and "There is no mechanism by which
+ * software operating with CPL > 0 can discover the value of the IA32_XSS MSR" (Vol1 13.3 p. 13-7).
+ * U1530: with a strict profile the reset XCR0 is the capture machine's XCR0 as the profile records it in
+ * CPUID.(0DH,0):EBX (the XSAVE size of the components enabled in XCR0, Vol1 Table 21-34): the largest valid XCR0 within the
+ * narrowed mask whose standard-format size equals that EBX; else the narrowed mask (U120 / U1225, unchanged).
+ * U1531: CPUID.(0DH,1):EBX of a profile follows XCR0 | IA32_XSS (Vol1 Table 21-35 p. 21-43) computed with the profile's own
+ * sub-leaf sizes / alignment (compacted format, Vol1 13.4.3); the reset IA32_XSS with a strict profile is the unique set of
+ * supervisor components (0DH.1 EDX:ECX) whose compacted size together with the reset XCR0 equals the profile's captured
+ * 0DH.1 EBX (else 0). Rows below are verbatim from Emulator\data\cpuid_i5-13600k.txt (--guest),
+ * cpuid_i5-13600k_bare_host.txt (--host, P-core LP 0) and cpuid_i5-13600k_bare_host_ecore.txt (--host --host-core E, LP 12).
+ */
+#define XZ_DATA 0x200000
+
+static const uc_x86_cpuid xz_guest[] = {
+    {0x00, 0x00, 0x00000020, 0x756E6547, 0x6C65746E, 0x49656E69},
+    {0x01, 0x00, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+    {0x07, 0x00, 0x00000002, 0x219C27EB, 0x9840078C, 0xBC004410},
+    {0x07, 0x01, 0x00000810, 0x00000000, 0x00000000, 0x00000000},
+    {0x07, 0x02, 0x00000000, 0x00000000, 0x00000000, 0x0000001F},
+    {0x0D, 0x00, 0x00000207, 0x00000340, 0x00000A88, 0x00000000},
+    {0x0D, 0x01, 0x0000000F, 0x00000350, 0x00001800, 0x00000000},
+    {0x0D, 0x02, 0x00000100, 0x00000240, 0x00000000, 0x00000000},
+    {0x0D, 0x03, 0, 0, 0, 0}, {0x0D, 0x04, 0, 0, 0, 0}, {0x0D, 0x05, 0, 0, 0, 0}, {0x0D, 0x06, 0, 0, 0, 0},
+    {0x0D, 0x07, 0, 0, 0, 0}, {0x0D, 0x08, 0, 0, 0, 0},
+    {0x0D, 0x09, 0x00000008, 0x00000A80, 0x00000000, 0x00000000},
+    {0x0D, 0x0A, 0, 0, 0, 0},
+    {0x0D, 0x0B, 0x00000010, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0C, 0x00000018, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0D, 0, 0, 0, 0}, {0x0D, 0x0E, 0, 0, 0, 0}, {0x0D, 0x0F, 0, 0, 0, 0}, {0x0D, 0x10, 0, 0, 0, 0},
+    {0x0D, 0x11, 0, 0, 0, 0}, {0x0D, 0x12, 0, 0, 0, 0}, {0x0D, 0x13, 0, 0, 0, 0},
+};
+
+/* P-core rows; the E-core file differs in these leaves only in 01H:EBX (30800800H, LP 12) */
+static const uc_x86_cpuid xz_host[] = {
+    {0x00, 0x00, 0x00000020, 0x756E6547, 0x6C65746E, 0x49656E69},
+    {0x01, 0x00, 0x000B0671, 0x00800800, 0x7FFAFBFF, 0xBFEBFBFF},
+    {0x07, 0x00, 0x00000002, 0x239C27EB, 0x98C027AC, 0xFC1CC410},
+    {0x07, 0x01, 0x00400810, 0x00000000, 0x00000000, 0x00040000},
+    {0x07, 0x02, 0x00000000, 0x00000000, 0x00000000, 0x0000001F},
+    {0x0D, 0x00, 0x00000207, 0x00000340, 0x00000A88, 0x00000000},
+    {0x0D, 0x01, 0x0000000F, 0x000003D0, 0x00019900, 0x00000000},
+    {0x0D, 0x02, 0x00000100, 0x00000240, 0x00000000, 0x00000000},
+    {0x0D, 0x08, 0x00000080, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x09, 0x00000008, 0x00000A80, 0x00000000, 0x00000000},
+    {0x0D, 0x0B, 0x00000010, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0C, 0x00000018, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0F, 0x00000328, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x10, 0x00000008, 0x00000000, 0x00000001, 0x00000000},
+};
+
+typedef struct {
+    uc_engine *uc;
+    X86IntrCapture cap;
+    uc_hook hook;
+    uint64_t pc;
+} XzCtx;
+
+/* MAX + profile (n = 0: none) + strict (-1 = not written, U435 default) + XINUSE model (-1 = not written); the profile is
+   installed before the engine starts unless 'late' (then after the first memory map, i.e. after RESET) */
+static void xz_open(XzCtx *c, const uc_x86_cpuid *prof, size_t n, int strict, int xinuse, int late)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, UC_CPU_X86_MAX));
+    if (xinuse >= 0) {
+        OK(uc_ctl(c->uc, UC_CTL_WRITE(UC_CTL_X86_XINUSE_MODEL, 1), xinuse));
+    }
+    if (n && !late) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, n));
+    }
+    if (strict >= 0) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, strict));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));   /* the engine starts (RESET) here */
+    OK(uc_mem_map(c->uc, XZ_DATA, 0x10000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+    if (n && late) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, prof, n));
+    }
+}
+
+static uint64_t xz_get(XzCtx *c, int reg)
+{
+    uint64_t v = 0;
+
+    OK(uc_reg_read(c->uc, reg, &v));
+    return v;
+}
+
+static void xz_set(XzCtx *c, int reg, uint64_t v)
+{
+    OK(uc_reg_write(c->uc, reg, &v));
+}
+
+/* a snippet at a fresh address (one translation per run): -1 = no exception, else the vector (6 = #UD) */
+static int xz_run(XzCtx *c, const char *code, size_t len)
+{
+    uint64_t pc = c->pc;
+    uc_err err;
+
+    c->pc += 0x80;
+    if (c->pc + 0x80 > code_start + code_len) {
+        c->pc = code_start;
+    }
+    TEST_CHECK(len <= 0x80);
+    c->cap.count = 0;
+    c->cap.intno = 0;
+    OK(uc_mem_write(c->uc, pc, code, len));
+    err = uc_emu_start(c->uc, pc, pc + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    TEST_CHECK(err == UC_ERR_OK);
+    TEST_MSG("uc_emu_start: %s", uc_strerror(err));
+    return c->cap.count ? (int)c->cap.intno : -1;
+}
+
+static void xz_cpuid(XzCtx *c, uint32_t leaf, uint32_t sub, uint32_t r[4])
+{
+    xz_set(c, UC_X86_REG_RAX, leaf);
+    xz_set(c, UC_X86_REG_RCX, sub);
+    TEST_CHECK(xz_run(c, "\x0f\xa2", 2) == -1);
+    r[0] = (uint32_t)xz_get(c, UC_X86_REG_RAX);
+    r[1] = (uint32_t)xz_get(c, UC_X86_REG_RBX);
+    r[2] = (uint32_t)xz_get(c, UC_X86_REG_RCX);
+    r[3] = (uint32_t)xz_get(c, UC_X86_REG_RDX);
+}
+
+/* XGETBV with ECX = idx (EDX:EAX), the guest's view */
+static uint64_t xz_xgetbv(XzCtx *c, uint32_t idx)
+{
+    xz_set(c, UC_X86_REG_RCX, idx);
+    TEST_CHECK(xz_run(c, "\x0f\x01\xd0", 3) == -1);
+    return (xz_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)xz_get(c, UC_X86_REG_RAX);
+}
+
+static int xz_xsetbv(XzCtx *c, uint64_t v)
+{
+    xz_set(c, UC_X86_REG_RCX, 0);
+    xz_set(c, UC_X86_REG_RAX, v & 0xffffffffu);
+    xz_set(c, UC_X86_REG_RDX, v >> 32);
+    return xz_run(c, "\x0f\x01\xd1", 3);
+}
+
+/* IA32_XSS through RDMSR at CPL0 (the engine's own state; Unicorn runs at CPL0 here) */
+static uint64_t xz_xss(XzCtx *c)
+{
+    xz_set(c, UC_X86_REG_RCX, 0xda0);
+    TEST_CHECK(xz_run(c, "\x0f\x32", 2) == -1);
+    return (xz_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)xz_get(c, UC_X86_REG_RAX);
+}
+
+/* the XSAVE area at XZ_DATA with every component initialised (XSTATE_BV = 0), then XRSTOR64 [rsi] with RFBM = 7 */
+static void xz_init_image(XzCtx *c)
+{
+    uint8_t m[0x1000];
+
+    memset(m, 0, sizeof(m));
+    m[0] = 0x7f;   /* FCW 037FH */
+    m[1] = 0x03;
+    m[0x18] = 0x80;   /* MXCSR 1F80H */
+    m[0x19] = 0x1f;
+    OK(uc_mem_write(c->uc, XZ_DATA, m, sizeof(m)));
+    xz_set(c, UC_X86_REG_RSI, XZ_DATA);
+    xz_set(c, UC_X86_REG_RAX, 7);
+    xz_set(c, UC_X86_REG_RDX, 0);
+    TEST_CHECK(xz_run(c, "\x48\x0f\xae\x2e", 4) == -1);
+}
+
+/* the XSTATE values every profile test checks at engine reset, against the capture (expected values in the arguments) */
+static void xz_check_reset(XzCtx *c, const char *mode, uint32_t c1_ecx, uint32_t c7_ecx, uint32_t d1_ebx, uint32_t d1_ecx,
+                           uint64_t xss)
+{
+    uint32_t r[4];
+    uint64_t v;
+
+    v = xz_get(c, UC_X86_REG_XCR0);
+    TEST_CHECK(v == 0x7);
+    TEST_MSG("%s: uc_reg_read XCR0 = %#" PRIx64 " (expected 7H, the Windows runtime value of the capture)", mode, v);
+    v = xz_xgetbv(c, 0);
+    TEST_CHECK(v == 0x7);
+    TEST_MSG("%s: XGETBV(0) = %#" PRIx64 " (expected 7H)", mode, v);
+    xz_cpuid(c, 1, 0, r);
+    TEST_CHECK(r[0] == 0x000B0671 && r[2] == c1_ecx);
+    TEST_MSG("%s: CPUID.01H EAX %08X ECX %08X (expected 000B0671 / %08X: XSAVE, OSXSAVE, AVX = 1)", mode, r[0], r[2], c1_ecx);
+    xz_cpuid(c, 7, 0, r);
+    TEST_CHECK(r[2] == c7_ecx && (r[2] & 8) && !(r[2] & 0x10));
+    TEST_MSG("%s: CPUID.(07H,0):ECX %08X (expected %08X: PKU[3] = 1, OSPKE[4] = 0)", mode, r[2], c7_ecx);
+    xz_cpuid(c, 0xd, 0, r);
+    TEST_CHECK(r[0] == 0x207 && r[1] == 0x340 && r[2] == 0xa88 && r[3] == 0);
+    TEST_MSG("%s: CPUID.(0DH,0) %08X %08X %08X %08X (expected 00000207 00000340 00000A88 00000000)", mode, r[0], r[1], r[2],
+             r[3]);
+    xz_cpuid(c, 0xd, 1, r);
+    TEST_CHECK(r[0] == 0xf && r[1] == d1_ebx && r[2] == d1_ecx && r[3] == 0);
+    TEST_MSG("%s: CPUID.(0DH,1) %08X %08X %08X %08X (expected 0000000F %08X %08X 00000000)", mode, r[0], r[1], r[2], r[3],
+             d1_ebx, d1_ecx);
+    v = xz_xss(c);
+    TEST_CHECK(v == xss);
+    TEST_MSG("%s: IA32_XSS = %#" PRIx64 " (expected %#" PRIx64 ", derived from the captured 0DH.1 EBX)", mode, v, xss);
+    v = xz_get(c, UC_X86_REG_CR4);
+    TEST_CHECK(!(v & (1ull << 22)) && (v & (1ull << 18)));
+    TEST_MSG("%s: CR4 %#" PRIx64 " (expected PKE[22] = 0, OSXSAVE[18] = 1)", mode, v);
+    /* RDPKRU / WRPKRU: "#UD If CR4.PKE = 0" (Vol2B RDPKRU / WRPKRU); ECX = EDX = 0 */
+    xz_set(c, UC_X86_REG_RCX, 0);
+    xz_set(c, UC_X86_REG_RDX, 0);
+    xz_set(c, UC_X86_REG_RAX, 0);
+    TEST_CHECK(xz_run(c, "\x0f\x01\xee", 3) == 6);
+    TEST_MSG("%s: RDPKRU must be #UD", mode);
+    TEST_CHECK(xz_run(c, "\x0f\x01\xef", 3) == 6);
+    TEST_MSG("%s: WRPKRU must be #UD", mode);
+}
+
+/* XGETBV(1) at reset and after controlled sequences from the init image (XRSTOR, XSTATE_BV = 0): the XINUSE model's value */
+static void xz_check_xgetbv1(XzCtx *c, const char *mode, int ecore)
+{
+    static const struct {
+        const char *name;
+        const char *code;
+        size_t len;
+        uint64_t pcore, ecore_v;
+    } seq[] = {
+        {"init image", "\x90", 1, 0, 3},
+        {"FNINIT", "\xdb\xe3", 2, 1, 3},
+        {"PXOR xmm0", "\x66\x0f\xef\xc0", 4, 2, 3},
+        {"VXORPS ymm0", "\xc5\xfc\x57\xc0", 4, 6, 7},
+        {"FNINIT; PXOR; VXORPS ymm0", "\xdb\xe3\x66\x0f\xef\xc0\xc5\xfc\x57\xc0", 10, 7, 7},
+        {"... VZEROUPPER", "\xdb\xe3\x66\x0f\xef\xc0\xc5\xfc\x57\xc0\xc5\xf8\x77", 13, 3, 3},
+        {"... VZEROALL", "\xdb\xe3\x66\x0f\xef\xc0\xc5\xfc\x57\xc0\xc5\xfc\x77", 13, 1, 3},
+    };
+    uint64_t fcw = 0, fsw = 0, ftw = 0, mx = 0, v, exp;
+    size_t i;
+
+    /* fresh engine state: the tracked bits are 0 after RESET (Vol3A Table 12-1); reported = tracked OR "not initial"
+       (Vol1 13.6: x87 initial = FCW 037FH, FSW 0, FTW FFFFH, ...; Unicorn's reg_reset loads FCW 0040H, FTW 0 (U48)) */
+    OK(uc_reg_read(c->uc, UC_X86_REG_FPCW, &fcw));
+    OK(uc_reg_read(c->uc, UC_X86_REG_FPSW, &fsw));
+    OK(uc_reg_read(c->uc, UC_X86_REG_FPTAG, &ftw));
+    OK(uc_reg_read(c->uc, UC_X86_REG_MXCSR, &mx));
+    exp = ecore ? 3 : ((fcw & 0xffff) != 0x37f || (fsw & 0xffff) != 0 || (ftw & 0xffff) != 0xffff ? 1 : 0) |
+                      ((mx & 0xffffffff) != 0x1f80 ? 2 : 0);
+    v = xz_xgetbv(c, 1);
+    TEST_CHECK(v == exp);
+    TEST_MSG("%s: XGETBV(1) at engine reset = %#" PRIx64 " (expected %#" PRIx64 "; FCW %04X FSW %04X FTW %04X MXCSR %08X)", mode,
+             v, exp, (unsigned)(fcw & 0xffff), (unsigned)(fsw & 0xffff), (unsigned)(ftw & 0xffff), (unsigned)(mx & 0xffffffff));
+    for (i = 0; i < sizeof(seq) / sizeof(seq[0]); i++) {
+        xz_init_image(c);
+        TEST_CHECK(xz_run(c, seq[i].code, seq[i].len) == -1);
+        exp = ecore ? seq[i].ecore_v : seq[i].pcore;
+        v = xz_xgetbv(c, 1);
+        TEST_CHECK(v == exp);
+        TEST_MSG("%s: XGETBV(1) after %s = %#" PRIx64 " (expected %#" PRIx64 ", %s model)", mode, seq[i].name, v, exp,
+                 ecore ? "E-core" : "P-core");
+    }
+}
+
+/* --guest: the VMware guest profile (Run 3 capture: XCR0 7H, 0DH.1 EBX 350H / ECX 1800H) */
+static void test_x86_xz_reset_guest(void)
+{
+    XzCtx c;
+
+    xz_open(&c, xz_guest, sizeof(xz_guest) / sizeof(xz_guest[0]), -1, UC_X86_XINUSE_PCORE, 0);
+    xz_check_reset(&c, "--guest", 0x7FFA3223, 0x9840078C, 0x350, 0x1800, 0x800);
+    xz_check_xgetbv1(&c, "--guest", 0);
+    OK(uc_close(c.uc));
+}
+
+/* --host: the bare-host profiles, P-core (LP 0) with the P-core XINUSE model and E-core (LP 12) with the E-core model
+   (capture 2026-10-16: XCR0 7H on all 20 LPs, 0DH.1 EBX 3D0H / ECX 19900H) */
+static void test_x86_xz_reset_host(void)
+{
+    uc_x86_cpuid ecore[sizeof(xz_host) / sizeof(xz_host[0])];
+    XzCtx c;
+
+    xz_open(&c, xz_host, sizeof(xz_host) / sizeof(xz_host[0]), -1, UC_X86_XINUSE_PCORE, 0);
+    xz_check_reset(&c, "--host P", 0x7FFAFBFF, 0x98C027AC, 0x3d0, 0x19900, 0x900);
+    xz_check_xgetbv1(&c, "--host P", 0);
+    OK(uc_close(c.uc));
+    memcpy(ecore, xz_host, sizeof(ecore));
+    ecore[1].ebx = 0x30800800;
+    xz_open(&c, ecore, sizeof(ecore) / sizeof(ecore[0]), 1, UC_X86_XINUSE_ECORE, 0);
+    xz_check_reset(&c, "--host E", 0x7FFAFBFF, 0x98C027AC, 0x3d0, 0x19900, 0x900);
+    xz_check_xgetbv1(&c, "--host E", 1);
+    OK(uc_close(c.uc));
+}
+
+/* CPUID 0DH EBX follow XCR0 | IA32_XSS after XSETBV / WRMSR (SDM: sizes of the components currently enabled); XSETBV 207H
+   enables PKRU state, but RDPKRU / WRPKRU stay #UD while CR4.PKE = 0 */
+static void test_x86_xz_sizes_follow(void)
+{
+    static const struct {
+        int host, write;
+        uint64_t xcr0, xss;
+        uint32_t d0_ebx, d1_ebx;
+    } rows[] = {
+        /* compacted (index order): 240H legacy + header, AVX 100H, PKRU 8, PT 80H, CET_U 10H, CET_S 18H */
+        {0, 0, 0x7, 0x800, 0x340, 0x350},   {0, 0, 0x3, 0x800, 0x240, 0x250}, {0, 0, 0x1, 0x800, 0x240, 0x250},
+        {0, 0, 0x207, 0x800, 0xa88, 0x358}, {0, 1, 0x7, 0x0, 0x340, 0x340},   {0, 1, 0x7, 0x1800, 0x340, 0x368},
+        {1, 0, 0x7, 0x900, 0x340, 0x3d0},   {1, 0, 0x207, 0x900, 0xa88, 0x3d8}, {1, 0, 0x3, 0x900, 0x240, 0x2d0},
+        {1, 1, 0x7, 0x0, 0x340, 0x340},     {1, 1, 0x7, 0x800, 0x340, 0x350},
+    };
+    uint32_t r[4];
+    uint64_t s;
+    size_t i;
+    XzCtx c;
+
+    for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        if (rows[i].host) {
+            xz_open(&c, xz_host, sizeof(xz_host) / sizeof(xz_host[0]), -1, -1, 0);
+        } else {
+            xz_open(&c, xz_guest, sizeof(xz_guest) / sizeof(xz_guest[0]), -1, -1, 0);
+        }
+        TEST_CHECK(xz_xsetbv(&c, rows[i].xcr0) == -1);
+        if (rows[i].write) {
+            /* WRMSR at CPL0 (the model's IA32_XSS bits: CET_U / CET_S, U727) */
+            xz_set(&c, UC_X86_REG_RCX, 0xda0);
+            xz_set(&c, UC_X86_REG_RAX, rows[i].xss & 0xffffffffu);
+            xz_set(&c, UC_X86_REG_RDX, rows[i].xss >> 32);
+            TEST_CHECK(xz_run(&c, "\x0f\x30", 2) == -1);
+        }
+        s = xz_xss(&c);
+        TEST_CHECK(s == rows[i].xss);
+        TEST_MSG("row %u: IA32_XSS %#" PRIx64 " (expected %#" PRIx64 ")", (unsigned)i, s, rows[i].xss);
+        xz_cpuid(&c, 0xd, 0, r);
+        TEST_CHECK(r[1] == rows[i].d0_ebx);
+        TEST_MSG("%s XCR0 %#" PRIx64 ": 0DH.0 EBX %X (expected %X)", rows[i].host ? "host" : "guest", rows[i].xcr0, r[1],
+                 rows[i].d0_ebx);
+        xz_cpuid(&c, 0xd, 1, r);
+        TEST_CHECK(r[1] == rows[i].d1_ebx);
+        TEST_MSG("%s XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 ": 0DH.1 EBX %X (expected %X)", rows[i].host ? "host" : "guest",
+                 rows[i].xcr0, rows[i].xss, r[1], rows[i].d1_ebx);
+        if (rows[i].xcr0 & 0x200) {
+            xz_set(&c, UC_X86_REG_RCX, 0);
+            xz_set(&c, UC_X86_REG_RDX, 0);
+            TEST_CHECK(xz_run(&c, "\x0f\x01\xee", 3) == 6);
+            TEST_MSG("RDPKRU with XCR0[9] = 1 and CR4.PKE = 0 must be #UD");
+        }
+        OK(uc_close(c.uc));
+    }
+}
+
+/* the derivation's limits: captured sizes that fit no / several values, a non-strict or later profile, XSAVEC-only rows */
+static void test_x86_xz_derive_rules(void)
+{
+    static const uc_x86_cpuid base[] = {
+        {0x00, 0x00, 0x0000000d, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {0x01, 0x00, 0x000b0671, 0, 0x1c000201, 0x078bfbff},
+        {0x07, 0x00, 0, 0, 0x00000008, 0},
+        {0x0d, 0x00, 0x207, 0x340, 0xa88, 0},
+        {0x0d, 0x01, 0xf, 0x350, 0x1800, 0},
+        {0x0d, 0x02, 0x100, 0x240, 0, 0},
+        {0x0d, 0x08, 0, 0, 0, 0},
+        {0x0d, 0x09, 8, 0xa80, 0, 0},
+        {0x0d, 0x0b, 0x10, 0, 1, 0},
+        {0x0d, 0x0c, 0x18, 0, 1, 0},
+        {0x0d, 0x10, 0, 0, 0, 0},
+    };
+    uc_x86_cpuid p[sizeof(base) / sizeof(base[0])];
+    const size_t n = sizeof(base) / sizeof(base[0]);
+    uint64_t model, x, s;
+    uint32_t r[4];
+    XzCtx c;
+
+    /* the model's own reset value (no profile): unchanged by U1530 (docs/quirks.md per-model table) */
+    xz_open(&c, NULL, 0, -1, -1, 0);
+    model = xz_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK((model & 0x207) == 0x207);
+    OK(uc_close(c.uc));
+
+    /* base: 0DH.0 EBX 340H -> 7H; 0DH.1 EBX 350H -> IA32_XSS 800H (CET_U alone: 340H + 10H) */
+    xz_open(&c, base, n, -1, -1, 0);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == 0x7 && s == 0x800);
+    TEST_MSG("base: XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 " (expected 7, 800)", x, s);
+    OK(uc_close(c.uc));
+
+    /* a capture with XCR0 = 207H (0DH.0 EBX A88H, 0DH.1 EBX 348H): 207H, IA32_XSS 0 - the value before U1530 */
+    memcpy(p, base, sizeof(p));
+    p[3].ebx = 0xa88;
+    p[4].ebx = 0x348;
+    xz_open(&c, p, n, -1, -1, 0);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == 0x207 && s == 0);
+    TEST_MSG("EBX A88H: XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 " (expected 207, 0)", x, s);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x348);
+    OK(uc_close(c.uc));
+
+    /* 0DH.0 EBX that no valid XCR0 has (300H): the narrowed mask stands (207H, U120 / U1225); 0DH.1 EBX 350H then fits no
+       IA32_XSS (207H alone is 348H) -> 0 */
+    memcpy(p, base, sizeof(p));
+    p[3].ebx = 0x300;
+    xz_open(&c, p, n, -1, -1, 0);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == 0x207 && s == 0);
+    TEST_MSG("EBX 300H: XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 " (expected 207, 0)", x, s);
+    xz_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0xa88);
+    OK(uc_close(c.uc));
+
+    /* two supervisor components of the same size (bits 8 and 16, 10H each) and EBX 350H: ambiguous -> IA32_XSS 0 */
+    memcpy(p, base, sizeof(p));
+    p[4].ecx = 0x10100;
+    p[6].eax = 0x10;
+    p[6].ecx = 1;
+    p[10].eax = 0x10;
+    p[10].ecx = 1;
+    xz_open(&c, p, n, -1, -1, 0);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == 0x7 && s == 0);
+    TEST_MSG("ambiguous: XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 " (expected 7, 0)", x, s);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x340);
+    TEST_MSG("ambiguous: 0DH.1 EBX %X (expected 340H, XCR0 7H | IA32_XSS 0)", r[1]);
+    OK(uc_close(c.uc));
+
+    /* an aligned component (ECX[1]): CET_S marked 64-byte aligned, 0DH.1 EBX 398H = ALIGN64(340H + 10H) + 18H, only
+       CET_U | CET_S gives it (unaligned that pair would be 368H; {} 340H, {CET_U} 350H, {CET_S} 358H) */
+    memcpy(p, base, sizeof(p));
+    p[9].ecx = 3;
+    p[4].ebx = 0x398;
+    xz_open(&c, p, n, -1, -1, 0);
+    s = xz_xss(&c);
+    TEST_CHECK(s == 0x1800);
+    TEST_MSG("aligned CET_S: IA32_XSS %#" PRIx64 " (expected 1800)", s);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x398);
+    OK(uc_close(c.uc));
+
+    /* non-strict: the model's XCR0 and IA32_XSS 0 (U1225); 0DH EBX follow them */
+    xz_open(&c, base, n, 0, -1, 0);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == model && s == 0);
+    TEST_MSG("non-strict: XCR0 %#" PRIx64 " (expected the model's %#" PRIx64 ") IA32_XSS %#" PRIx64, x, model, s);
+    OK(uc_close(c.uc));
+
+    /* a profile installed after RESET: only the U120 narrowing (207H), IA32_XSS unchanged (0); the OS-environment values are
+       RESET values, not rewritten by a later control write (U1441 principle) */
+    xz_open(&c, base, n, -1, -1, 1);
+    x = xz_get(&c, UC_X86_REG_XCR0);
+    s = xz_xss(&c);
+    TEST_CHECK(x == 0x207 && s == 0);
+    TEST_MSG("late profile: XCR0 %#" PRIx64 " IA32_XSS %#" PRIx64 " (expected 207, 0)", x, s);
+    xz_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0xa88);
+    OK(uc_close(c.uc));
+
+    /* XSAVEC without XSAVES (0DH.1 EAX 3): EBX = the XSAVEC size of XCR0 (follows XSETBV); neither: EBX 0 (U833) */
+    memcpy(p, base, sizeof(p));
+    p[4].eax = 0x3;
+    p[4].ebx = 0x340;
+    p[4].ecx = 0;
+    xz_open(&c, p, n, -1, -1, 0);
+    TEST_CHECK(xz_get(&c, UC_X86_REG_XCR0) == 0x7);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x340);
+    TEST_CHECK(xz_xsetbv(&c, 0x207) == -1);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x348);
+    TEST_MSG("XSAVEC only, XCR0 207H: 0DH.1 EBX %X (expected 348H)", r[1]);
+    OK(uc_close(c.uc));
+    p[4].eax = 0x1;
+    xz_open(&c, p, n, -1, -1, 0);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0);
+    TEST_MSG("no XSAVEC / XSAVES: 0DH.1 EBX %X (expected 0)", r[1]);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1530-U1539 (xz_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -41788,4 +42277,8 @@ TEST_LIST = {
     {"test_x86_xu_rules", test_x86_xu_rules},
     {"test_x86_xu_mxcsr_xsave", test_x86_xu_mxcsr_xsave},
     {"test_x86_xu_context", test_x86_xu_context},
+    {"test_x86_xz_reset_guest", test_x86_xz_reset_guest},
+    {"test_x86_xz_reset_host", test_x86_xz_reset_host},
+    {"test_x86_xz_sizes_follow", test_x86_xz_sizes_follow},
+    {"test_x86_xz_derive_rules", test_x86_xz_derive_rules},
     {NULL, NULL}};

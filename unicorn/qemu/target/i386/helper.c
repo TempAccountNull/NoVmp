@@ -547,6 +547,11 @@ void do_cpu_init(X86CPU *cpu)
     memcpy(&env->start_init_save, &save->start_init_save,
            offsetof(CPUX86State, end_init_save) -
            offsetof(CPUX86State, start_init_save));
+#if __Use_Original_Qemu != 1 /* ours (U1531) */
+    /* NoVmp (ledger U1531): INIT does not reload IA32_XSS - x86_cpu_reset's profile value is a RESET value only (before
+       U1531 reset left env->xss alone, so INIT kept it) */
+    env->xss = save->xss;
+#endif /* __Use_Original_Qemu (U1531) */
     g_free(save);
 
     // apic_init_reset(cpu->apic_state);

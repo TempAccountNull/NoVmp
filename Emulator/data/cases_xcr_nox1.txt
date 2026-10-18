@@ -6,5 +6,6 @@
 # Before U1203 both lines differed: the helper read the model's XGETBV1 bit and returned XINUSE (RAX = 207H).
 .byte 0x0f, 0x01, 0xd0 | rcx=1 => #GP(0)
 .byte 0x0f, 0x01, 0xd0 | rcx=1 cpl=3 => #GP(0)
-# control: ECX = 0 reads XCR0 (the profile's reset value 207H: x87, SSE, AVX, PKRU)
-.byte 0x0f, 0x01, 0xd0 | rcx=0 => rax=0x207
+# control: ECX = 0 reads XCR0 (the profile's reset value: 207H x87, SSE, AVX, PKRU before U1530; since U1530 7H, the
+# capture's XCR0 recorded in the profile's CPUID.(0DH,0):EBX 340H)
+.byte 0x0f, 0x01, 0xd0 | rcx=0 => rax=0x7

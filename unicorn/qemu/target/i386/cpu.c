@@ -4317,6 +4317,37 @@ static uint32_t x86_cpuid_profile_xsave_size(struct uc_struct *uc, uint64_t xcr0
 }
 
 #endif /* __Use_Original_Qemu (U125) */
+#if __Use_Original_Qemu != 1 /* ours (U1531) */
+/*
+ * NoVmp (ledger U1531): the compacted-format size of the XSAVE area for the components of 'mask' (SDM 093 Vol1 13.4.3
+ * pp. 13-9 / 13-10: the 576-byte legacy area and header, then each component i >= 2 in index order directly after the
+ * previous one, on the next 64-byte boundary when CPUID.(0DH,i):ECX[1] = 1), with the CPUID profile's own sub-leaf sizes
+ * (0DH.i EAX). CPUID.(0DH,1):EBX is this size for XCR0 | IA32_XSS (Vol1 Table 21-35 p. 21-43); a component the profile
+ * gives no size for adds nothing.
+ */
+static uint32_t x86_cpuid_profile_xsaves_size(struct uc_struct *uc, uint64_t mask)
+{
+    uint32_t size = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
+    int i;
+
+    for (i = 2; i < 63; i++) {
+        const struct uc_x86_cpuid *s;
+        if (!((mask >> i) & 1)) {
+            continue;
+        }
+        s = x86_cpuid_find(uc, 0xd, i, false);
+        if (!s || !s->eax) {
+            continue;
+        }
+        if (s->ecx & 2) {
+            size = QEMU_ALIGN_UP(size, 64);
+        }
+        size += s->eax;
+    }
+    return size;
+}
+
+#endif /* __Use_Original_Qemu (U1531) */
 static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
                               uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx)
 {
@@ -4358,6 +4389,20 @@ static bool x86_cpuid_profile(CPUX86State *env, uint32_t index, uint32_t count,
         *ebx = x86_cpuid_profile_xsave_size(uc, env->xcr0);
     }
 #endif /* __Use_Original_Qemu (U125) */
+#if __Use_Original_Qemu != 1 /* ours (U1531) */
+    /*
+     * NoVmp (ledger U1531): CPUID.(0DH,1):EBX "The size in bytes of the XSAVE area containing all states enabled by
+     * XCR0 | IA32_XSS"; with EAX[3] = 0 and EAX[1] = 1 the size for XCR0 alone; EBX 0 when both are 0 (SDM 093 Vol1
+     * Table 21-35 p. 21-43; the model's rule, U125 / U833). Was the profile's captured EBX, i.e. the capture machine's
+     * XCR0 | IA32_XSS whatever the emulated state: now computed from this CPU's XCR0 and IA32_XSS with the profile's
+     * sub-leaf sizes (at reset the two equal the capture: U1530 / below).
+     */
+    else if (index == 0xd && count == 1 && e) {
+        uint64_t m = env->xcr0 | ((*eax & CPUID_XSAVE_XSAVES) ? env->xss : 0);
+
+        *ebx = (*eax & (CPUID_XSAVE_XSAVEC | CPUID_XSAVE_XSAVES)) ? x86_cpuid_profile_xsaves_size(uc, m) : 0;
+    }
+#endif /* __Use_Original_Qemu (U1531) */
 #if __Use_Original_Qemu != 1 /* ours (U960) */
     x86_apic_cpuid_fixup(env, index, eax, ebx, ecx, edx);   /* local APIC state (U960) */
 #endif /* __Use_Original_Qemu (U960) */
@@ -4477,6 +4522,102 @@ uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0)
     return xcr0;
 }
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U1530) */
+/*
+ * NoVmp (ledger U1530, G9 2026-10-17, notes\eread\X10_xcr0_ospke_fix.md): the XCR0 of the OS environment at engine RESET
+ * with a strict CPUID profile. A profile is a capture of a running OS, and its CPUID.(0DH,0):EBX is the "Maximum size ...
+ * required by enabled features in XCR0" (SDM 093 Vol1 Table 21-34 p. 21-42) - the capture machine's XCR0 recorded as a size.
+ * From the narrowed mask m (x86_cpu_xcr0_in_profile: the profile's EDX:EAX with the XSETBV pairing rules) take every
+ * component whose standard-format area (0DH.i: offset EBX + size EAX) ends at or below that EBX, apply the pairing rules
+ * again, and use the result if its size is exactly that EBX (the largest XCR0 consistent with the capture); otherwise m
+ * (U120 / U1225 unchanged). The i5-13600K profiles (bare host, VMware guest): EBX 340H -> 7H = what Windows enabled on both
+ * machines (XGETBV(0) of the clean captures, 20/20 and 8/8 LPs), not 207H (PKRU is supported but Windows leaves it and
+ * CR4.PKE off). Still an OS-preconfigured value, not the architectural RESET value 1H (Vol3A 2.6 p. 2-23). Only at RESET:
+ * a profile installed or strict switched on later only narrows (U120 / U1225 / U1441).
+ */
+static uint64_t x86_cpu_xcr0_os_env(CPUX86State *env, uint64_t m)
+{
+    struct uc_struct *uc = env->uc;
+    const struct uc_x86_cpuid *e0, *s;
+    uint64_t c;
+    int i;
+
+    if (!uc || !uc->x86_cpuid_strict || !uc->x86_cpuid_count) {
+        return m;
+    }
+    e0 = x86_cpuid_find(uc, 0xd, 0, false);
+    if (!e0) {
+        return m;
+    }
+    c = m & (XSTATE_FP_MASK | XSTATE_SSE_MASK);   /* the legacy area: always within any size */
+    for (i = 2; i < 63; i++) {
+        if (!((m >> i) & 1)) {
+            continue;
+        }
+        s = x86_cpuid_find(uc, 0xd, i, false);
+        if (s && s->eax && (uint64_t)s->ebx + s->eax <= e0->ebx) {
+            c |= 1ULL << i;
+        }
+    }
+    c = x86_cpu_xcr0_in_profile(env, c);
+    if ((c & ~m) || x86_cpuid_profile_xsave_size(uc, c) != e0->ebx) {
+        return m;
+    }
+    return c;
+}
+
+/*
+ * NoVmp (ledger U1531): IA32_XSS of the OS environment at engine RESET with a strict CPUID profile whose 0DH.1 enumerates
+ * XSAVES. Architecturally IA32_XSS is 0 coming out of RESET and "There is no mechanism by which software operating with
+ * CPL > 0 can discover the value of the IA32_XSS MSR" (SDM 093 Vol1 13.3 pp. 13-6 / 13-7), so a user-mode capture never
+ * measures it; the profile's captured CPUID.(0DH,1):EBX is the XSAVES size for the capture machine's XCR0 | IA32_XSS (Table
+ * 21-35). The value used is the UNIQUE set of supervisor components (0DH.1 EDX:ECX, sub-leaf ECX[0] = 1, a known size) whose
+ * compacted size together with 'xcr0' equals that EBX; none or several: 0. i5-13600K: bare host EBX 3D0H, ECX 19900H ->
+ * 900H (PT 80H + CET_U 10H; the other 31 subsets give other sizes); VMware guest EBX 350H, ECX 1800H -> 800H (CET_U). A
+ * derived value, documented in docs/quirks.md; the model does not implement every such component (PT: no XSAVES layout).
+ */
+static uint64_t x86_cpu_xss_os_env(CPUX86State *env, uint64_t xcr0)
+{
+    struct uc_struct *uc = env->uc;
+    const struct uc_x86_cpuid *e1, *s;
+    uint64_t sup, sub, found = 0;
+    int bits[16];
+    int n = 0, i, hits = 0;
+    uint32_t k;
+
+    e1 = x86_cpuid_find(uc, 0xd, 1, false);
+    if (!e1 || !(e1->eax & CPUID_XSAVE_XSAVES)) {
+        return 0;
+    }
+    sup = ((uint64_t)e1->edx << 32) | e1->ecx;
+    for (i = 2; i < 63; i++) {
+        if (!((sup >> i) & 1)) {
+            continue;
+        }
+        s = x86_cpuid_find(uc, 0xd, i, false);
+        if (!s || !s->eax || !(s->ecx & 1)) {
+            continue;
+        }
+        if (n == (int)ARRAY_SIZE(bits)) {
+            return 0;
+        }
+        bits[n++] = i;
+    }
+    for (k = 0; k < (1u << n); k++) {
+        sub = 0;
+        for (i = 0; i < n; i++) {
+            if ((k >> i) & 1) {
+                sub |= 1ULL << bits[i];
+            }
+        }
+        if (x86_cpuid_profile_xsaves_size(uc, xcr0 | sub) == e1->ebx) {
+            found = sub;
+            hits++;
+        }
+    }
+    return hits == 1 ? found : 0;
+}
+#endif /* __Use_Original_Qemu (U1530) */
 #if __Use_Original_Qemu != 1 /* ours (U173) */
 /*
  * NoVmp (ledger U173): the state components whose IA32_XFD / IA32_XFD_ERR bit can be set
@@ -5484,7 +5625,18 @@ static void x86_cpu_reset(CPUState *dev)
        docs/quirks.md "Emulator environment choices"; test_x86_xc_default_xcr0_models */
     xcr0 = x86_cpu_xcr0_in_profile(env, xcr0);
 #endif /* __Use_Original_Qemu (U120) */
+#if __Use_Original_Qemu != 1 /* ours (U1530) */
+    /* the capture's XCR0 with a strict profile (7H for the i5-13600K bare-host and VMware-guest profiles) */
+    xcr0 = x86_cpu_xcr0_os_env(env, xcr0);
+#endif /* __Use_Original_Qemu (U1530) */
     env->xcr0 = xcr0;
+#if __Use_Original_Qemu != 1 /* ours (U1531) */
+    /* and the IA32_XSS consistent with the capture's CPUID.(0DH,1):EBX; without a strict profile IA32_XSS is left as it
+       was (0 from the engine's creation; it lies after end_reset_fields) */
+    if (env->uc && env->uc->x86_cpuid_strict && env->uc->x86_cpuid_count) {
+        env->xss = x86_cpu_xss_os_env(env, xcr0);
+    }
+#endif /* __Use_Original_Qemu (U1531) */
     cpu_x86_update_cr4(env, cr4);
 
     /*
