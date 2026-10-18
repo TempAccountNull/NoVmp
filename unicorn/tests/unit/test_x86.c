@@ -40715,6 +40715,114 @@ static void test_x86_smr_revision_profiles(void)
     TEST_CHECK(c.hits == 1 && smr_f(&c, 0, 0x7efc, 4) == 0x00030064);
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1460 (upstream QEMU cdba90ac1b): the DR7 the SMI entry loads (00000400H, SDM 093 Vol3C
+ * Table 34-4) and the DR6 / DR7 RSM loads from the state-save map (34.3.2, 34.5.2) take
+ * effect on the hardware breakpoints, like a MOV DR (was: env->dr[] assigned, the breakpoints
+ * of the interrupted program stayed armed in SMM and the ones RSM restores were not armed).
+ * DR0 = an instruction of the SMI handler, DR1 = an instruction of the interrupted program,
+ * DR7 = L0 | L1. The handler (JMP FAR 0000:9000h at SMBASE + 8000H, so CS base 0 and the
+ * linear address = EIP; NOP; NOP <- DR0; RSM) runs without a #DB ("breakpoint traps ... are
+ * inhibited when the processor enters SMM", 34.5.1); after RSM the program's NOP at DR1 is a
+ * fault-class #DB with DR6.B1 (Vol3B 20.2.3, 20.3.1.1). Run on all three state-save maps
+ * (Intel Table 34-3, Intel Table 34-1 without IA-32e mode, AMD APM Table 10-1). Ledger U1570.
+ */
+#define SMR_DRH_CODE 0x9000ULL
+
+typedef struct SmrDrHit {
+    uint32_t count, intno;
+    int state;                          /* UC_CTL_X86_SMI at the #DB (2 = in SMM) */
+    uint64_t rip, dr6, dr7;
+    uc_mode mode;
+} SmrDrHit;
+
+static void smr_dr_intr_cb(uc_engine *uc, uint32_t intno, void *user)
+{
+    SmrDrHit *d = (SmrDrHit *)user;
+
+    if (d->count++ == 0) {
+        d->intno = intno;
+        if (d->mode == UC_MODE_64) {
+            OK(uc_reg_read(uc, UC_X86_REG_RIP, &d->rip));
+        } else {
+            uint32_t eip = 0;
+
+            OK(uc_reg_read(uc, UC_X86_REG_EIP, &eip));
+            d->rip = eip;
+        }
+        OK(uc_reg_read(uc, UC_X86_REG_DR6, &d->dr6));
+        OK(uc_reg_read(uc, UC_X86_REG_DR7, &d->dr7));
+        d->state = smr_state(uc);
+    }
+    uc_emu_stop(uc);
+}
+
+static void test_x86_smr_dr_breakpoints(void)
+{
+    static const struct {
+        uc_mode mode;
+        int model;
+        uint32_t dr7_off;               /* the DR7 field of the map */
+        int dr7_size;
+        const char *name;
+    } cfg[] = {
+        {UC_MODE_64, -1, 0x7fc8, 8, "Intel Table 34-3"},
+        {UC_MODE_32, UC_CPU_X86_PENTIUM3, 0x7fc8, 4, "Intel Table 34-1 (Pentium III)"},
+        {UC_MODE_64, UC_CPU_X86_EPYC, 0x7f60, 8, "AMD Table 10-1 (EPYC)"},
+    };
+    /* jmp far 0000:9000h (16-bit SMM code) */
+    static const char smi_entry[] = "\xea\x00\x90\x00\x00";
+    /* nop; nop (DR0); rsm */
+    static const char smi_body[] = "\x90\x90\x0f\xaa";
+    /* nop; nop (DR1); nop */
+    static const char code[] = "\x90\x90\x90";
+    const uint64_t dr0 = SMR_DRH_CODE + 1, dr1 = SMR_CODE + 1, dr7 = 0x405;
+    size_t k;
+
+    for (k = 0; k < sizeof(cfg) / sizeof(cfg[0]); k++) {
+        SmrCtx c;
+        SmrDrHit d;
+        uc_hook hk;
+        uint64_t v;
+
+        memset(&d, 0, sizeof(d));
+        smr_open(&c, cfg[k].mode, cfg[k].model, NULL, 0);
+        d.mode = cfg[k].mode;
+        OK(uc_mem_write(c.uc, SMR_SMBASE + 0x8000, smi_entry, sizeof(smi_entry) - 1));
+        OK(uc_mem_write(c.uc, SMR_DRH_CODE, smi_body, sizeof(smi_body) - 1));
+        smr_code(&c, code, sizeof(code) - 1);
+        OK(uc_hook_add(c.uc, &hk, UC_HOOK_INTR, smr_dr_intr_cb, &d, 1, 0));
+        OK(uc_reg_write(c.uc, UC_X86_REG_DR0, &dr0));
+        OK(uc_reg_write(c.uc, UC_X86_REG_DR1, &dr1));
+        OK(uc_reg_write(c.uc, UC_X86_REG_DR7, &dr7));
+        smr_signal(c.uc);
+        OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + sizeof(code) - 1, 0, 0));
+
+        /* SMM entry: DR7 = 400H, the pre-SMI DR7 in the map */
+        TEST_CHECK(c.hits == 1);
+        TEST_CHECK(c.dr7[0] == 0x400);
+        TEST_CHECK(smr_f(&c, 0, cfg[k].dr7_off, cfg[k].dr7_size) == dr7);
+        /* exactly one #DB: at DR1 after RSM, none at DR0 in SMM */
+        TEST_CHECK(d.count == 1);
+        TEST_CHECK(d.intno == 1);
+        TEST_CHECK(d.state == 0);
+        TEST_CHECK(d.rip == dr1);
+        TEST_CHECK((d.dr6 & 0xf) == 2);
+        TEST_CHECK(d.dr7 == dr7);
+        TEST_MSG("%s: hits %d entry DR7 %llx map DR7 %llx; #DB count %u intno %u state %d "
+                 "rip %llx DR6 %llx DR7 %llx",
+                 cfg[k].name, c.hits, (unsigned long long)c.dr7[0],
+                 (unsigned long long)smr_f(&c, 0, cfg[k].dr7_off, cfg[k].dr7_size), d.count,
+                 d.intno, d.state, (unsigned long long)d.rip, (unsigned long long)d.dr6,
+                 (unsigned long long)d.dr7);
+        v = 0;
+        OK(uc_reg_read(c.uc, UC_X86_REG_DR7, &v));
+        TEST_CHECK(v == dr7);
+        TEST_CHECK(smr_state(c.uc) == 0);
+        OK(uc_close(c.uc));
+    }
+}
 /* ---- end U1461-U1465 (smr_) ---- */
 
 /*
@@ -42268,6 +42376,7 @@ TEST_LIST = {
     {"test_x86_smr_amd64_rsm", test_x86_smr_amd64_rsm},
     {"test_x86_smr_vendor", test_x86_smr_vendor},
     {"test_x86_smr_revision_profiles", test_x86_smr_revision_profiles},
+    {"test_x86_smr_dr_breakpoints", test_x86_smr_dr_breakpoints},
     {"test_x86_xu_pcore_default", test_x86_xu_pcore_default},
     {"test_x86_xu_pcore", test_x86_xu_pcore},
     {"test_x86_xu_ecore", test_x86_xu_ecore},
