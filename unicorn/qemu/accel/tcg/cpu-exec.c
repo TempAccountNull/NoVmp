@@ -673,6 +673,11 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
             if (unlikely(cpu->exit_request)) {
                 continue;
             }
+#if __Use_Original_Qemu != 1 /* ours (U1580) */
+            /* NoVmp (ledger U1580): guest code executes from here on - UC_CTL_X86_CPUID / UC_CTL_X86_CPUID_STRICT can no
+               longer make a CPUID profile strict (uc.c) */
+            uc->x86_ran = true;
+#endif /* __Use_Original_Qemu (U1580) */
             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
             /* Try to align the host and virtual clocks
                if the guest is in advance */

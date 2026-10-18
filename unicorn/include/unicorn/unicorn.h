@@ -669,6 +669,12 @@ typedef enum uc_control_type {
     // Read: @args = (size_t *count)
     // NoVmp U435: an installed profile also turns UC_CTL_X86_CPUID_STRICT on unless that
     // was written explicitly (see below): features the profile hides are #UD by default.
+    // NoVmp U1580 (plan 1.J.47.a, user decision "Enforce it" 2026-10-17): install a strict profile
+    // right after uc_open, before the first memory map / register access, so the engine starts with
+    // its OS-environment values (U1530 / U1531 below). Once guest code ran (uc_emu_start executed a
+    // translation block), a write that would leave a strict profile installed returns UC_ERR_ARG and
+    // changes nothing; count 0 (removing the profile) and a profile under an explicit
+    // UC_CTL_X86_CPUID_STRICT = 0 (reporting only) are still accepted.
     UC_CTL_X86_CPUID,
     // x86 only (NoVmp U68): 1 = instructions of features the CPUID profile hides raise
     // #UD (QEMU style, as the SDM requires for a CPU without the feature); 0 = they still
@@ -695,7 +701,10 @@ typedef enum uc_control_type {
     // reset XCR0 is the capture's XCR0 read from the profile's CPUID.(0DH,0):EBX (7H for the i5-13600K
     // bare-host and VMware-guest profiles, as Windows), and the reset IA32_XSS the unique supervisor set
     // matching its CPUID.(0DH,1):EBX (bare host 900H, guest 800H); CPUID.(0DH,1):EBX then follows
-    // XCR0 | IA32_XSS. Installing a profile or switching strict on later only narrows XCR0 (U120 / U1225).
+    // XCR0 | IA32_XSS. Installing a profile or switching strict on later - after the engine started but
+    // before the first instruction - only narrows XCR0 (U120 / U1225).
+    // NoVmp U1580: after guest code ran, switching strict on (1, or -1 with a profile installed) returns
+    // UC_ERR_ARG and changes nothing; writes that keep the effective value or turn strict off are accepted.
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists

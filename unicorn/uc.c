@@ -3279,6 +3279,20 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
         } else if (rw == UC_CTL_IO_WRITE) {
             const struct uc_x86_cpuid *entries = va_arg(args, const struct uc_x86_cpuid *);
             size_t count = va_arg(args, size_t);
+#if __Use_Original_Qemu != 1 /* ours (U1580) */
+            /*
+             * NoVmp (ledger U1580, plan 1.J.47.a, user decision "Enforce it" 2026-10-17): a strict profile is part of the
+             * machine the guest starts on - its reset XCR0 / IA32_XSS (U1530 / U1531) exist only when it is installed
+             * before the engine starts. Once guest code ran (cpu_exec entered a TB), a write that would leave a strict
+             * profile installed (a profile while strict is on or defaults to on, U435) is refused with UC_ERR_ARG and
+             * changes nothing; removing the profile (count 0) or installing one under an explicit non-strict setting
+             * (CPUID reporting only) is still accepted.
+             */
+            if (uc->x86_ran && count && (uc->x86_cpuid_strict_set ? uc->x86_cpuid_strict : 1)) {
+                err = UC_ERR_ARG;
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1580) */
             g_free(uc->x86_cpuid);
             uc->x86_cpuid = NULL;
             uc->x86_cpuid_count = 0;
@@ -3826,6 +3840,15 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
                default in either order; a negative value returns to the default (on while a
                profile is installed) */
             int on = va_arg(args, int);
+#if __Use_Original_Qemu != 1 /* ours (U1580) */
+            /* NoVmp (ledger U1580): after guest code ran, switching strict on while a profile is installed is refused
+               (UC_ERR_ARG, nothing changes); a write that leaves the effective value as it is, or turns strict off, is not */
+            if (uc->x86_ran && uc->x86_cpuid_count && !uc->x86_cpuid_strict &&
+                (on >= 0 ? on != 0 : 1)) {
+                err = UC_ERR_ARG;
+                break;
+            }
+#endif /* __Use_Original_Qemu (U1580) */
             uc->x86_cpuid_strict_set = on >= 0;
             uc->x86_cpuid_strict = on >= 0 ? on != 0 : uc->x86_cpuid_count != 0;
             if (uc->init_done) {

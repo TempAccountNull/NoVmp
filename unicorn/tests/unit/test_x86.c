@@ -5059,7 +5059,13 @@ static void test_x86_avx512_optin(void)
     xcr0 = m0_xcr0(&m);
     TEST_CHECK((xcr0 & 0xe7) == 0xe7);
     TEST_MSG("xcr0=%llx", (unsigned long long)xcr0);
-    /* a profile set later narrows XCR0 to its leaf 0DH ... */
+    /* U1580: once code ran, a (strict by default) profile is refused and XCR0 stays */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid(m.uc, prof7, 2));
+    TEST_CHECK(m0_xcr0(&m) == xcr0);
+    m0_close(&m);
+
+    /* a profile set later - after the engine started, before any instruction - narrows XCR0 to its leaf 0DH ... */
+    m0_open(&m, UC_MODE_64, 1, NULL, 0);
     OK(uc_ctl_set_x86_cpuid(m.uc, prof7, 2));
     TEST_CHECK(m0_xcr0(&m) == 7);
     m0_close(&m);
@@ -6777,7 +6783,10 @@ static void test_x86_tsx_rtm_always_abort(void)
     OK(uc_mem_read(r.uc, 0x200004, &m1, 4));
     TEST_CHECK(m0 == 6 && m1 == 5);
 
-    /* strict profile with HLE only: XTEST runs, XBEGIN/XABORT/XEND/XSUSLDTRK #UD */
+    /* strict profile with HLE only: XTEST runs, XBEGIN/XABORT/XEND/XSUSLDTRK #UD (U1580: a strict profile only on an
+       engine that has not run code yet - a fresh one per profile) */
+    OK(uc_close(r.uc));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
     nv_profile7(&r, 1u << 4, 0, 0);
     OK(nv_run(&r, "\x0f\x01\xd6"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xc7\xf8\x00\x00\x00\x00"));
@@ -6785,6 +6794,8 @@ static void test_x86_tsx_rtm_always_abort(void)
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xd5"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x01\xe8"));
     /* i5-13600K-like profile (no HLE/RTM/TSXLDTRK): XTEST #UD */
+    OK(uc_close(r.uc));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
     nv_profile7(&r, 0, 0, 0);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x01\xd6"));
     OK(uc_close(r.uc));
@@ -6969,7 +6980,9 @@ static void test_x86_waitpkg(void)
     TEST_CHECK(r.cap.count == 1 && r.cap.intno == 13);
     TEST_CHECK(nv_get(&r, UC_X86_REG_RIP) == r.last + 4);
 
-    /* strict profile without WAITPKG: #UD */
+    /* strict profile without WAITPKG: #UD (U1580: on a fresh engine, before any instruction) */
+    OK(uc_close(r.uc));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
     nv_profile7(&r, 0, 0, 0);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x66\x0f\xae\xf1"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\xae\xf1"));
@@ -7071,6 +7084,8 @@ static void test_x86_enqcmd(void)
     /* register form, LOCK: #UD; strict profile without ENQCMD: #UD */
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x38\xf8\xc6"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf0\xf2\x0f\x38\xf8\x06"));
+    OK(uc_close(r.uc));                     /* U1580: the strict profile on a fresh engine */
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
     nv_profile7(&r, 0, 0, 0);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf2\x0f\x38\xf8\x06"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\xf3\x0f\x38\xf8\x06"));
@@ -7135,8 +7150,16 @@ static void test_x86_smx_pconfig_sgx(void)
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xd7"));
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run3(&r, "\x0f\x01\xc0"));
 
-    /* strict profile hiding SMX (leaf 1 not listed): GETSEC #UD although CR4.SMXE = 1 */
+    /* strict profile hiding SMX (leaf 1 not listed): GETSEC #UD although CR4.SMXE = 1 (U1580: a fresh engine, CR4.SMXE
+       written through the API before the profile, no instruction run before it) */
+    OK(uc_close(r.uc));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 0x4000;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
     nv_profile7(&r, 0, 0, 0);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    TEST_CHECK(cr4 & 0x4000);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
     OK(uc_close(r.uc));
 
@@ -7177,6 +7200,21 @@ static void nv_cet_on(NvRun *r)
     /* mov rax, cr4; bts rax, 23; mov cr4, rax */
     OK(nv_run(r, "\x0f\x20\xe0\x48\x0f\xba\xe8\x17\x0f\x22\xe0"));
     TEST_CHECK(r->cap.count == 0);
+}
+
+/* the same without running code (U1580: a strict profile can only follow state written through the API) */
+static void nv_cet_on_api(NvRun *r)
+{
+    uint64_t cr0, cr4;
+
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR0, &cr0));
+    cr0 |= 0x10000;
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR0, &cr0));
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR4, &cr4));
+    cr4 |= 1ull << 23;
+    OK(uc_reg_write(r->uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_read(r->uc, UC_X86_REG_CR4, &cr4));
+    TEST_CHECK(cr4 & (1ull << 23));
 }
 
 /*
@@ -7409,9 +7447,10 @@ static void test_x86_cet_shadow_stack(void)
     TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1111);
     OK(uc_close(r.uc));
 
-    /* strict profile without CET_SS: every form #UD (RDSSP stays a NOP) although enabled */
+    /* strict profile without CET_SS: every form #UD (RDSSP stays a NOP) although enabled (U1580: enabled through the API,
+       no instruction before the profile) */
     nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
-    nv_cet_on(&r);
+    nv_cet_on_api(&r);
     nv_wrmsr(&r, 0x6a2, 3);
     nv_profile7(&r, 0, 0, 0);
     nv_set(&r, UC_X86_REG_RAX, 0x1111);
@@ -7749,9 +7788,9 @@ static void test_x86_cet_ibt(void)
     TEST_CHECK(nv_rdmsr(&r, 0x6a2) == 0x4);
     OK(uc_close(r.uc));
 
-    /* strict profile without CET_IBT: no tracking, ENDBR64 a NOP */
+    /* strict profile without CET_IBT: no tracking, ENDBR64 a NOP (U1580: CET on through the API before the profile) */
     nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
-    nv_cet_on(&r);
+    nv_cet_on_api(&r);
     nv_wrmsr(&r, 0x6a2, 0x4);
     nv_profile7(&r, 0, 1u << 7, 0);
     t_plain = nv_ibt_target(&r, 1, "\x48\xff\xc3", 3);
@@ -10986,7 +11025,15 @@ static void test_x86_evex_state(void)
     TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == 6);
     OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
     TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == -1);
+    /* U1580: switching strict on again after code ran is refused (UC_ERR_ARG); the explicit strict case on a fresh engine */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == -1);
+    OK(uc_close(c.uc));
+    ev_open(&c, UC_MODE_64, EV_ALL);
+    OK(uc_ctl_set_x86_cpuid(c.uc, prof_noavx512, 4));
     OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    v = 0xe7;
+    OK(uc_reg_write(c.uc, UC_X86_REG_XCR0, &v));
     TEST_CHECK(ev_run(&c, EV_VPADDD_ZMM1_2_3, 6) == 6);
     OK(uc_close(c.uc));
 }
@@ -14022,30 +14069,49 @@ static void test_x86_cpuid_strict_default(void)
         OK(uc_close(c.uc));
     }
 
-    /* not written: removing the profile turns strict off, installing it again on */
+    /* not written: removing the profile turns strict off; U1580: once code ran, installing it again (strict by default)
+       is refused with UC_ERR_ARG and nothing changes */
     sd_open(&c);
     sd_profile(&c, 1);
     sd_check(&c, "profile installed", 1, 1);
     sd_profile(&c, 0);
     sd_check(&c, "profile removed", 0, 0);
-    sd_profile(&c, 1);
-    sd_check(&c, "profile installed again", 1, 1);
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid(c.uc, sd_prof, sizeof(sd_prof) / sizeof(sd_prof[0])));
+    sd_check(&c, "profile refused after a run", 0, 0);
     /* after init: an explicit 0 takes effect at once (translation cache flushed) ... */
     sd_strict(&c, 0);
     sd_check(&c, "explicit 0 after a run", 0, 0);
-    /* ... and survives replacing / removing / reinstalling the profile */
+    /* ... and survives installing / removing / reinstalling the profile (a non-strict profile stays allowed) */
+    sd_profile(&c, 1);
+    sd_check(&c, "explicit 0, profile installed", 0, 0);
     sd_profile(&c, 0);
     sd_check(&c, "explicit 0, profile removed", 0, 0);
     sd_profile(&c, 1);
     sd_check(&c, "explicit 0, profile reinstalled", 0, 0);
-    sd_strict(&c, 1);
-    sd_check(&c, "explicit 1 after a run", 1, 1);
+    /* U1580: strict on (1, or -1 = the default with a profile) after a run is refused */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, -1));
+    sd_check(&c, "strict refused after a run", 0, 0);
+    /* without a profile the setting may change (nothing to enforce) */
     sd_profile(&c, 0);
-    sd_check(&c, "explicit 1, profile removed", 1, 0);
+    sd_strict(&c, 1);
+    sd_check(&c, "explicit 1, no profile", 1, 0);
     sd_strict(&c, -1);
     sd_check(&c, "-1, no profile", 0, 0);
+    OK(uc_close(c.uc));
+
+    /* the same writes before any instruction ran: accepted (explicit 1 after 0, -1 back to the default) */
+    sd_open(&c);
+    sd_strict(&c, 0);
     sd_profile(&c, 1);
-    sd_check(&c, "-1, profile installed", 1, 1);
+    sd_strict(&c, 1);
+    sd_check(&c, "explicit 1 before a run", 1, 1);
+    OK(uc_close(c.uc));
+    sd_open(&c);
+    sd_strict(&c, 0);
+    sd_profile(&c, 1);
+    sd_strict(&c, -1);
+    sd_check(&c, "-1 before a run, profile installed", 1, 1);
     OK(uc_close(c.uc));
 }
 
@@ -16886,8 +16952,9 @@ static void f2_set_maxphy(uc_engine *uc, uint32_t bits)
         {0x80000008, 0, 0x3000 | bits, 0, 0, 0},
     };
 
-    OK(uc_ctl_set_x86_cpuid(uc, prof, 3));
+    /* non-strict before the profile: U1580 refuses a strict profile once code ran (this one may follow a run) */
     OK(uc_ctl_set_x86_cpuid_strict(uc, 0));
+    OK(uc_ctl_set_x86_cpuid(uc, prof, 3));
 }
 
 static void test_x86_f2_maxphyaddr(void)
@@ -30174,10 +30241,11 @@ static void test_x86_st_reset_xcr0_profile(void)
     OK(uc_close(c.uc));
 
     /* after the engine started: explicit non-strict, then a profile: XCR0 unchanged (before U1225: 7);
-       then strict on: narrowed to the profile (7) */
+       then strict on: narrowed to the profile (7). U1580: strict may be switched on only before the first instruction,
+       so XCR0 is read through the API until then */
     st_open_prof(&c, NULL, 0, 0);
     OK(uc_ctl_set_x86_cpuid(c.uc, no_pkru, 4));
-    x = st_xcr0(&c);
+    x = xs_get(&c, UC_X86_REG_XCR0);
     TEST_CHECK(x == model);
     TEST_MSG("non-strict profile set later: XCR0 %#" PRIx64 " (expected %#" PRIx64 ")", x, model);
     OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
@@ -30189,6 +30257,9 @@ static void test_x86_st_reset_xcr0_profile(void)
     x = st_xcr0(&c);
     TEST_CHECK(x == 0x7);
     TEST_CHECK(st_xsetbv(&c, model) == -1 && st_xcr0(&c) == model);
+    /* ... and once code ran, strict cannot come back (U1580): UC_ERR_ARG, XCR0 kept */
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(st_xcr0(&c) == model);
     OK(uc_close(c.uc));
 
     /* a default-strict profile set later narrows as before (U120) */
@@ -39003,7 +39074,8 @@ static void test_x86_xc_arch_reset_vs_default(void)
  * x87 cleared, AVX without SSE, AVX-512 without AVX/SSE or not all of 7:5, one MPX half, one AMX half;
  * Vol3A 2.6 p. 2-23 the same list; AVX / AVX-512 / AMX instructions #UD unless CR4.OSXSAVE = 1 and their
  * XCR0 bits are set). Model: MAX + AVX512F + AMX-TILE (components 602FFH). Profile: leaf 0DH 7H, no leaf 7
- * (AVX-512 and AMX hidden). The U1225 narrowing when strict is switched ON is kept.
+ * (AVX-512 and AMX hidden). The U1225 narrowing when strict is switched ON is kept - before the first instruction;
+ * afterwards U1580 refuses the switch (UC_ERR_ARG).
  */
 static void test_x86_xc_strict_off_keeps_xcr0(void)
 {
@@ -39122,27 +39194,20 @@ static void test_x86_xc_strict_off_keeps_xcr0(void)
     TEST_CHECK(xc_exec(&c, XC_AMX) == 6);
     TEST_CHECK(xc_exec(&c, XC_AVX) == -1);
 
-    /* strict on again narrows (U1225), a negative value (back to the profile default: strict) too;
-       strict off afterwards keeps the narrowed value */
+    /* U1580 (plan 1.J.47.a): once code ran, strict cannot be switched on again - neither by 1 nor by a negative value
+       (back to the profile default: strict); UC_ERR_ARG, the setting and the guest's XCR0 stay. The U1225 narrowing on
+       strict-on is reached only before the first instruction (test_x86_st_reset_xcr0_profile) */
     xc_xsetbv_ok(&c, 0x602ff, "every model component");
-    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
-    x = st_xcr0(&c);
-    TEST_CHECK(x == 7);
-    TEST_MSG("strict on: XCR0 %#" PRIx64 " (expected 7, U1225)", x);
-    TEST_CHECK(xc_exec(&c, XC_AVX512) == 6);
-    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
-    xc_xsetbv_ok(&c, 0xe7, "AVX-512 with SSE and AVX");
-    OK(uc_ctl_set_x86_cpuid_strict(c.uc, -1));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_cpuid_strict(c.uc, -1));
     OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
-    TEST_CHECK(on == 1 && st_xcr0(&c) == 7);
+    x = st_xcr0(&c);
+    TEST_CHECK(on == 0 && x == 0x602ff);
+    TEST_MSG("strict on refused: strict %d, XCR0 %#" PRIx64 " (expected 0, 602FFH)", on, x);
+    TEST_CHECK(xc_exec(&c, XC_AVX512) == -1);
+    /* strict off again is accepted and keeps XCR0 */
     OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
-    TEST_CHECK(st_xcr0(&c) == 7);
-    /* a guest value below the profile survives both directions */
-    xc_xsetbv_ok(&c, 3, "x87|SSE");
-    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
-    TEST_CHECK(st_xcr0(&c) == 3);
-    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
-    TEST_CHECK(st_xcr0(&c) == 3 && xc_reg_xcr0(&c) == 3);
+    TEST_CHECK(st_xcr0(&c) == 0x602ff && xc_reg_xcr0(&c) == 0x602ff);
     OK(uc_close(c.uc));
 }
 /* ---- end U1440-U1449 (xc_) ---- */
@@ -42202,6 +42267,157 @@ static void test_x86_xz_derive_rules(void)
 }
 /* ---- end U1530-U1539 (xz_) ---- */
 
+/*
+ * ---- NoVmp U1580-U1589 (xq_): a strict CPUID profile only before the first instruction (plan 1.J.47.a, user decision
+ * "Enforce it" 2026-10-17) and the PT / LBR / HWP supervisor state components as XSAVE state storage (plan 1.J.56, user
+ * decision 2026-10-17) ----
+ * U1580: the OS-environment reset values of U1530 / U1531 (XCR0 7H, IA32_XSS 900H / 800H) exist only when the strict profile
+ * is installed before the engine starts; once guest code ran, UC_CTL_X86_CPUID / UC_CTL_X86_CPUID_STRICT writes that would
+ * leave a strict profile active (a new profile, or strict switched on) return UC_ERR_ARG and change nothing. Removing the
+ * profile, going non-strict and writes that leave the strict state as it is stay allowed.
+ * U1581 / U1582: SDM 093 Vol1 13.3 p. 13-7 ("IA32_XSS[8] is associated with PT state", [15] LBR, [16] HWP; "a bit can be set
+ * in the IA32_XSS MSR if and only if the corresponding bit is set in" CPUID.(0DH,1):EDX:ECX); 13.5.6 PT state (9 MSRs, 8 bytes
+ * each, bytes 72 and up reserved; XSAVES saves zeroes there and clears IA32_RTIT_CTL.TraceEn after saving it; XRSTORS #GP if
+ * TraceEn = 1 and it would restore or initialise PT state), 13.5.12 LBR state (CTL, DEPTH, LER x3, 32 triples; restore with
+ * another DEPTH zeroes the triples), 13.5.13 HWP state (IA32_HWP_REQUEST); 13.6 initial configurations (PT all 0, LBR all 0
+ * except DEPTH, HWP 8000FF01H); 13.11 / 13.12 XSAVES / XRSTORS (compacted format, XCOMP_BV, init optimization, #GP for reserved
+ * bits). Rows below are verbatim from Emulator\data\cpuid_i5-13600k_bare_host.txt (--host, P-core LP 0) and
+ * cpuid_i5-13600k.txt (--guest), with leaves 06H, 14H and 1CH added to the xz_ rows.
+ */
+#define XQ_A (XZ_DATA + 0x1000)
+#define XQ_B (XZ_DATA + 0x3000)
+#define XQ_I (XZ_DATA + 0x5000)
+#define XQ_N(p) (sizeof(p) / sizeof((p)[0]))
+#define XQ_PT (1ULL << 8)
+#define XQ_LBR (1ULL << 15)
+#define XQ_HWP (1ULL << 16)
+
+static const uc_x86_cpuid xq_host[] = {
+    {0x00, 0x00, 0x00000020, 0x756E6547, 0x6C65746E, 0x49656E69},
+    {0x01, 0x00, 0x000B0671, 0x00800800, 0x7FFAFBFF, 0xBFEBFBFF},
+    {0x06, 0x00, 0x00DF8FF7, 0x00000002, 0x00000401, 0x00000003},
+    {0x07, 0x00, 0x00000002, 0x239C27EB, 0x98C027AC, 0xFC1CC410},
+    {0x07, 0x01, 0x00400810, 0x00000000, 0x00000000, 0x00040000},
+    {0x07, 0x02, 0x00000000, 0x00000000, 0x00000000, 0x0000001F},
+    {0x0D, 0x00, 0x00000207, 0x00000340, 0x00000A88, 0x00000000},
+    {0x0D, 0x01, 0x0000000F, 0x000003D0, 0x00019900, 0x00000000},
+    {0x0D, 0x02, 0x00000100, 0x00000240, 0x00000000, 0x00000000},
+    {0x0D, 0x08, 0x00000080, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x09, 0x00000008, 0x00000A80, 0x00000000, 0x00000000},
+    {0x0D, 0x0B, 0x00000010, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0C, 0x00000018, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0F, 0x00000328, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x10, 0x00000008, 0x00000000, 0x00000001, 0x00000000},
+    {0x14, 0x00, 0x00000001, 0x0000005F, 0x00000007, 0x00000000},
+    {0x14, 0x01, 0x02490002, 0x003F003F, 0x00000000, 0x00000000},
+    {0x1C, 0x00, 0x4000000B, 0x00000007, 0x00000007, 0x00000000},
+};
+
+static const uc_x86_cpuid xq_guest[] = {
+    {0x00, 0x00, 0x00000020, 0x756E6547, 0x6C65746E, 0x49656E69},
+    {0x01, 0x00, 0x000B0671, 0x05040800, 0x7FFA3223, 0x1F8BFBFF},
+    {0x06, 0x00, 0x00000004, 0x00000000, 0x00000000, 0x00000000},
+    {0x07, 0x00, 0x00000002, 0x219C27EB, 0x9840078C, 0xBC004410},
+    {0x07, 0x01, 0x00000810, 0x00000000, 0x00000000, 0x00000000},
+    {0x07, 0x02, 0x00000000, 0x00000000, 0x00000000, 0x0000001F},
+    {0x0D, 0x00, 0x00000207, 0x00000340, 0x00000A88, 0x00000000},
+    {0x0D, 0x01, 0x0000000F, 0x00000350, 0x00001800, 0x00000000},
+    {0x0D, 0x02, 0x00000100, 0x00000240, 0x00000000, 0x00000000},
+    {0x0D, 0x03, 0, 0, 0, 0}, {0x0D, 0x04, 0, 0, 0, 0}, {0x0D, 0x05, 0, 0, 0, 0}, {0x0D, 0x06, 0, 0, 0, 0},
+    {0x0D, 0x07, 0, 0, 0, 0}, {0x0D, 0x08, 0, 0, 0, 0},
+    {0x0D, 0x09, 0x00000008, 0x00000A80, 0x00000000, 0x00000000},
+    {0x0D, 0x0A, 0, 0, 0, 0},
+    {0x0D, 0x0B, 0x00000010, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0C, 0x00000018, 0x00000000, 0x00000001, 0x00000000},
+    {0x0D, 0x0D, 0, 0, 0, 0}, {0x0D, 0x0E, 0, 0, 0, 0}, {0x0D, 0x0F, 0, 0, 0, 0}, {0x0D, 0x10, 0, 0, 0, 0},
+    {0x0D, 0x11, 0, 0, 0, 0}, {0x0D, 0x12, 0, 0, 0, 0}, {0x0D, 0x13, 0, 0, 0, 0},
+    {0x14, 0x00, 0, 0, 0, 0},
+    {0x14, 0x01, 0, 0, 0, 0},
+    {0x1C, 0x00, 0, 0, 0, 0},
+};
+
+/* U1580: a profile installed (or strict switched on) after guest code ran is refused */
+static void test_x86_xq_profile_after_run(void)
+{
+    uint64_t x0;
+    uint32_t r[4];
+    size_t cnt;
+    int on;
+    XzCtx c;
+
+    /* no profile; one instruction executed: installing a profile (strict by default, U435) is refused, nothing changes */
+    xz_open(&c, NULL, 0, -1, -1, 0);
+    x0 = xz_get(&c, UC_X86_REG_XCR0);
+    TEST_CHECK(xz_run(&c, "\x90", 1) == -1);
+    TEST_CHECK(uc_ctl_set_x86_cpuid(c.uc, xq_host, XQ_N(xq_host)) == UC_ERR_ARG);
+    TEST_MSG("UC_CTL_X86_CPUID (strict by default) after the first instruction must be UC_ERR_ARG");
+    OK(uc_ctl_get_x86_cpuid_count(c.uc, &cnt));
+    TEST_CHECK(cnt == 0);
+    OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+    TEST_CHECK(on == 0);
+    TEST_CHECK(xz_get(&c, UC_X86_REG_XCR0) == x0);
+    /* a non-strict profile (CPUID reporting only) stays allowed; switching it to strict is refused */
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    OK(uc_ctl_set_x86_cpuid(c.uc, xq_host, XQ_N(xq_host)));
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[2] == 0x19900);
+    TEST_CHECK(uc_ctl_set_x86_cpuid_strict(c.uc, 1) == UC_ERR_ARG);
+    TEST_MSG("UC_CTL_X86_CPUID_STRICT = 1 with a profile after the first instruction must be UC_ERR_ARG");
+    TEST_CHECK(uc_ctl_set_x86_cpuid_strict(c.uc, -1) == UC_ERR_ARG);
+    TEST_MSG("UC_CTL_X86_CPUID_STRICT = -1 (default: strict with a profile) after the first instruction must be UC_ERR_ARG");
+    OK(uc_ctl_get_x86_cpuid_strict(c.uc, &on));
+    TEST_CHECK(on == 0);
+    TEST_CHECK(xz_get(&c, UC_X86_REG_XCR0) == x0);
+    TEST_MSG("XCR0 %#" PRIx64 " (expected unchanged %#" PRIx64 ")", xz_get(&c, UC_X86_REG_XCR0), x0);
+    OK(uc_close(c.uc));
+
+    /* strict profile from uc_open: after a run, replacing it is refused; a write that leaves strict on as it is, going
+       non-strict and removing the profile are accepted; strict without a profile enforces nothing and is accepted */
+    xz_open(&c, xq_host, XQ_N(xq_host), -1, -1, 0);
+    TEST_CHECK(xz_run(&c, "\x90", 1) == -1);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(uc_ctl_set_x86_cpuid(c.uc, xq_guest, XQ_N(xq_guest)) == UC_ERR_ARG);
+    TEST_MSG("replacing a strict profile after the first instruction must be UC_ERR_ARG");
+    OK(uc_ctl_get_x86_cpuid_count(c.uc, &cnt));
+    TEST_CHECK(cnt == XQ_N(xq_host));
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[2] == 0x19900);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(uc_ctl_set_x86_cpuid_strict(c.uc, 1) == UC_ERR_ARG);
+    OK(uc_ctl_set_x86_cpuid(c.uc, NULL, 0));
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(uc_ctl_set_x86_cpuid(c.uc, xq_host, XQ_N(xq_host)) == UC_ERR_ARG);
+    OK(uc_ctl_get_x86_cpuid_count(c.uc, &cnt));
+    TEST_CHECK(cnt == 0);
+    OK(uc_close(c.uc));
+}
+
+/* U1580: the order emu-alltest uses and NoVmp / emu-oep must use - the profile right after uc_open - gives the OS-environment
+   reset state; installing after the engine started (first map) but before any instruction is still accepted (U1441 narrowing) */
+static void test_x86_xq_profile_order(void)
+{
+    uint32_t r[4];
+    XzCtx c;
+
+    xz_open(&c, xq_host, XQ_N(xq_host), -1, -1, 0);
+    TEST_CHECK(xz_get(&c, UC_X86_REG_XCR0) == 0x7);
+    TEST_CHECK(xz_xss(&c) == 0x900);
+    xz_cpuid(&c, 0xd, 0, r);
+    TEST_CHECK(r[1] == 0x340);
+    xz_cpuid(&c, 0xd, 1, r);
+    TEST_CHECK(r[1] == 0x3d0 && r[2] == 0x19900);
+    TEST_MSG("profile at uc_open: 0DH.1 EBX %X ECX %X (expected 3D0, 19900)", r[1], r[2]);
+    OK(uc_close(c.uc));
+
+    xz_open(&c, xq_host, XQ_N(xq_host), -1, -1, 1);
+    TEST_CHECK(xz_get(&c, UC_X86_REG_XCR0) == 0x207);
+    TEST_MSG("profile after the first map, before any instruction: XCR0 %#" PRIx64 " (expected 207H, U120 narrowing)",
+             xz_get(&c, UC_X86_REG_XCR0));
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U1580-U1589 (xq_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -42745,4 +42961,6 @@ TEST_LIST = {
     {"test_x86_xz_reset_host", test_x86_xz_reset_host},
     {"test_x86_xz_sizes_follow", test_x86_xz_sizes_follow},
     {"test_x86_xz_derive_rules", test_x86_xz_derive_rules},
+    {"test_x86_xq_profile_after_run", test_x86_xq_profile_after_run},
+    {"test_x86_xq_profile_order", test_x86_xq_profile_order},
     {NULL, NULL}};
