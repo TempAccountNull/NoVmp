@@ -39384,6 +39384,358 @@ static void test_x86_um_unrelated_kept(void)
 }
 /* ---- end U1450-U1459 (um_) ---- */
 
+/* ---- U1590-U1599 (sr_): snapshot restore and translated code / mapped blocks (plan 1.J.54) ---- */
+/*
+ * U1590-U1592, U1594-U1597 (fixes) / U1593 (tests). A memory snapshot (uc_ctl_context_mode UC_CTL_CONTEXT_MEMORY +
+ * uc_context_save) makes the first write to a page after the save - a guest store (store_helper) or
+ * uc_mem_write - copy the page into a new RAM block (memory_cow); code in that page then runs from the
+ * copy and its translated blocks are keyed by the copy's RAM address. uc_context_restore discards the
+ * copies (memory_region_filter_subregions) and resets ram_list.freed / last_block, so the next RAM block
+ * (the next copy, or a uc_mem_map_ptr) gets the same RAM offset. Before U1590 the copies' translated
+ * blocks were not dropped: after the restore the next copy of the page matched them again and the
+ * DISCARDED code ran (the instruction the guest or the API had written before the restore) instead of
+ * the page's restored bytes. SDM 093 Vol3A 11.1.3 p. 11-5 / 14.6 p. 14-18: after code is changed the next
+ * execution runs the new code; a restore is such a change by another agent (the debugger).
+ * U1591: a restore that finds a moved-out container (uc_mem_unmap with a snapshot active) emptied by the
+ * filter (its region was mapped after the restored snapshot) called memory_unmap(uc, subregion) with the
+ * finished loop's iterator (NULL) and then mem_map'ped the region the filter had just freed.
+ * U1592: the region the API mapped is the container's LOWEST-priority subregion (QTAILQ_LAST; the list is
+ * sorted by descending priority, the copies are above it), not QTAILQ_FIRST; and a region freed by the
+ * filter must leave uc->mapped_blocks. Before, an unmap after a write under a snapshot left the region
+ * in mapped_blocks (the restore then failed with UC_ERR_MAP), and a restore that dropped a region mapped
+ * after the snapshot left a dangling mapped_blocks entry (uc_mem_regions listed freed memory, a new map
+ * at the address failed).
+ * U1596: a moved-out region older than the restored snapshot kept its saved level (it was cleared first).
+ * U1597: the restore filters every discarded copy before any memory commit (a commit regenerated the
+ * flatview while copies were still in the tree; freed right after, they stayed referenced).
+ * U1594 (uc_invalidate_tb per linear page): test_x86_sr_remove_cache_pages.
+ */
+#define SR_IMM 0x101  /* the imm32 of MOV EAX, imm32 at entry 0 (um_off[0] = 100h) */
+#define SR_DATA 0x800 /* a data byte of the code page, outside every entry */
+
+static const char *sr_mname(int mode)
+{
+    return mode == 0 ? "paging off" : mode == 1 ? "paging on, identity" : "paging on, linear != physical";
+}
+
+/* guest: [pre] (a store through RDX = rdx), then CALL RCX = entry; RAX on return */
+static uint64_t sr_call(NvRun *r, uint64_t entry, const uint8_t *pre, size_t n, uint64_t rdx,
+                        uc_err *err)
+{
+    uint8_t code[16];
+
+    memcpy(code, pre, n);
+    code[n] = 0xff; /* CALL RCX */
+    code[n + 1] = 0xd1;
+    nv_set(r, UC_X86_REG_RAX, 0);
+    nv_set(r, UC_X86_REG_RCX, entry);
+    nv_set(r, UC_X86_REG_RDX, rdx);
+    nv_set(r, UC_X86_REG_RSP, 0x201800);
+    *err = nv_run_n(r, (const char *)code, n + 2);
+    return nv_get(r, UC_X86_REG_RAX);
+}
+
+static void sr_expect(NvRun *r, uint64_t entry, const uint8_t *pre, size_t n, uint64_t rdx,
+                      uint32_t expect, uint32_t stale, const char *what)
+{
+    uc_err err;
+    uint64_t rax = sr_call(r, entry, pre, n, rdx, &err);
+
+    TEST_CHECK(err == UC_ERR_OK && r->cap.count == 0 && rax == expect);
+    TEST_MSG("%s: entry %" PRIx64 ", err %u (%s), exceptions %u (last vector %u), RAX %" PRIx64
+             " (expected %x): %s",
+             what, entry, err, uc_strerror(err), r->cap.count, r->cap.intno, rax, expect,
+             rax == expect ? "the expected code"
+             : (stale && rax == stale) ? "STALE translated code (the old / discarded instruction)"
+                                       : "neither the expected nor the discarded code");
+}
+
+/* MOV DWORD [RDX], imm32 */
+static size_t sr_pre_patch(uint8_t *b, uint32_t v)
+{
+    b[0] = 0xc7;
+    b[1] = 0x02;
+    memcpy(b + 2, &v, 4);
+    return 6;
+}
+
+/* MOV BYTE [RDX], imm8 */
+static size_t sr_pre_data(uint8_t *b, uint8_t v)
+{
+    b[0] = 0xc6;
+    b[1] = 0x02;
+    b[2] = v;
+    return 3;
+}
+
+/*
+ * Regression (1.J.54). One memory snapshot of 2 code pages at UM_P (entry 0 returns A001h), restored
+ * again and again (the debugger pattern). Per cycle k:
+ *   a) the guest rewrites entry 0's immediate (copy of the page), runs it -> tag; restore -> A001h; restore;
+ *   b) the guest stores a data byte in the page (a new copy, same RAM offset), runs entry 0 -> A001h;
+ *   c) uc_mem_write rewrites the immediate, entry 0 -> tag2; restore -> A001h; restore;
+ *   d) uc_mem_write of a data byte (a new copy, same RAM offset), entry 0 -> A001h.
+ * Every restore resets the RAM allocator, so a step that repeats the previous step's order of first
+ * writes (snippet page, code page, stack page) puts the code page's copy at the same RAM offset - the
+ * debugger pattern "restore, do it again".
+ * Then e) uc_mem_write patch, run, restore, uc_mem_unmap (moved out), uc_mem_map_ptr of new code at the
+ * same address (same RAM offset as the discarded copy) -> D001h (the U1 report's reproducer).
+ * Before U1590 b), d) and e) ran the discarded code.
+ */
+static void test_x86_sr_restore_stale_tb(void)
+{
+    static const int modes[2] = {0, 2};
+    NvRun r;
+    uc_context *ctx = NULL;
+    uint8_t pre[8], byte = 0x5a;
+    uint32_t tag, tag2;
+    uint64_t lin;
+    size_t n;
+    char what[192];
+    int mi, mode, k;
+
+    for (mi = 0; mi < 2; mi++) {
+        mode = modes[mi];
+        lin = um_open(&r, mode);
+        OK(uc_mem_map(r.uc, UM_P, 0x2000, UC_PROT_ALL));
+        um_fill(um_host[0], 0xA000);
+        OK(uc_mem_write(r.uc, UM_P, um_host[0], 0x2000));
+        snprintf(what, sizeof(what), "%s: before the snapshot", sr_mname(mode));
+        sr_expect(&r, lin + um_off[0], pre, 0, 0, 0xA001, 0, what);
+        OK(uc_ctl_context_mode(r.uc, UC_CTL_CONTEXT_MEMORY));
+        OK(uc_context_alloc(r.uc, &ctx));
+        OK(uc_context_save(r.uc, ctx));
+        for (k = 1; k <= 3; k++) {
+            tag = 0xB001 + k * 0x100;
+            tag2 = 0xC001 + k * 0x100;
+            /* a) guest patch */
+            n = sr_pre_patch(pre, tag);
+            snprintf(what, sizeof(what), "%s, cycle %d a: the guest rewrote entry 0 (copy)", sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, n, lin + SR_IMM, tag, 0, what);
+            OK(uc_context_restore(r.uc, ctx));
+            snprintf(what, sizeof(what), "%s, cycle %d a: after the restore", sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, 0, 0, 0xA001, tag, what);
+            OK(uc_context_restore(r.uc, ctx)); /* b) repeats a)'s allocation order */
+            /* b) guest data store into the page: a new copy at the reused RAM offset */
+            n = sr_pre_data(pre, byte);
+            snprintf(what, sizeof(what), "%s, cycle %d b: the guest stored a data byte at +800h (new copy)",
+                     sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, n, lin + SR_DATA, 0xA001, tag, what);
+            OK(uc_context_restore(r.uc, ctx));
+            /* c) API patch */
+            OK(uc_mem_write(r.uc, UM_P + SR_IMM, &tag2, 4));
+            snprintf(what, sizeof(what), "%s, cycle %d c: uc_mem_write rewrote entry 0 (copy)", sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, 0, 0, tag2, 0, what);
+            OK(uc_context_restore(r.uc, ctx));
+            snprintf(what, sizeof(what), "%s, cycle %d c: after the restore", sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, 0, 0, 0xA001, tag2, what);
+            OK(uc_context_restore(r.uc, ctx)); /* d) repeats c)'s allocation order */
+            /* d) API data write: a new copy at the reused RAM offset */
+            OK(uc_mem_write(r.uc, UM_P + 0x900, &byte, 1));
+            snprintf(what, sizeof(what), "%s, cycle %d d: uc_mem_write of a data byte at +900h (new copy)",
+                     sr_mname(mode), k);
+            sr_expect(&r, lin + um_off[0], pre, 0, 0, 0xA001, tag2, what);
+            OK(uc_context_restore(r.uc, ctx));
+        }
+        /* e) the U1 reproducer: patch, run, restore, unmap, uc_mem_map_ptr new code */
+        tag2 = 0xE001;
+        OK(uc_mem_write(r.uc, UM_P + SR_IMM, &tag2, 4));
+        snprintf(what, sizeof(what), "%s, e: uc_mem_write rewrote entry 0 (copy)", sr_mname(mode));
+        sr_expect(&r, lin + um_off[0], pre, 0, 0, tag2, 0, what);
+        OK(uc_context_restore(r.uc, ctx));
+        OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+        um_fill(um_host[1], 0xD000);
+        OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[1]));
+        snprintf(what, sizeof(what), "%s, e: restore, unmap, uc_mem_map_ptr of new code", sr_mname(mode));
+        sr_expect(&r, lin + um_off[0], pre, 0, 0, 0xD001, tag2, what);
+        OK(uc_context_free(ctx));
+        ctx = NULL;
+        OK(uc_close(r.uc));
+    }
+}
+
+/* the number of mapped blocks and whether one starts at 'addr' */
+static uint32_t sr_regions(uc_engine *uc, uint64_t addr, int *found)
+{
+    uc_mem_region *rg = NULL;
+    uint32_t count = 0, i;
+
+    OK(uc_mem_regions(uc, &rg, &count));
+    *found = 0;
+    for (i = 0; i < count; i++) {
+        if (rg[i].begin == addr) {
+            *found = 1;
+        }
+    }
+    uc_free(rg);
+    return count;
+}
+
+/*
+ * The restore paths that drop or bring back a region the API mapped (U1591 / U1592). Snapshot A, then:
+ * case 0: UM_P mapped before A; written after A (copy); unmapped (moved out); restore A -> UM_P back
+ *         with its own code (before U1592: UC_ERR_MAP, the region was left in mapped_blocks).
+ * case 1: UM_P mapped after A; snapshot B; written (copy); restore B; restore A -> UM_P gone (before
+ *         U1592: mapped_blocks kept the freed region: uc_mem_regions still listed it).
+ * case 2: as case 1, but unmapped (moved out) between restore B and restore A -> UM_P gone (before
+ *         U1591: memory_unmap(NULL) - an access violation).
+ * case 3: UM_P mapped before A; unmapped (moved out at level 1); snapshot B; restore B; restore A -> UM_P
+ *         back (before U1596: restore B cleared the moved-out region's saved level before finding it
+ *         was older than B, so restore A never brought it back).
+ * After cases 1 / 2 UM_P is mapped again with new code, which runs (no stale code of the dropped one).
+ */
+static void test_x86_sr_restore_unmapped(void)
+{
+    static const char *const cname[4] = {"mapped before A, written, unmapped, restore A",
+                                         "mapped after A, B, written, restore B, restore A",
+                                         "mapped after A, B, written, restore B, unmapped, restore A",
+                                         "mapped before A, unmapped, B, restore B, restore A"};
+    NvRun r;
+    uc_context *a = NULL, *b = NULL;
+    uint8_t pre[1], byte = 0x5a, rd;
+    uint32_t n0, n1;
+    uc_err err;
+    char what[192];
+    int c, found;
+
+    for (c = 0; c < 4; c++) {
+        TEST_CASE(cname[c]);
+        nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+        OK(uc_ctl_context_mode(r.uc, UC_CTL_CONTEXT_MEMORY));
+        OK(uc_context_alloc(r.uc, &a));
+        OK(uc_context_alloc(r.uc, &b));
+        n0 = sr_regions(r.uc, UM_P, &found);
+        um_fill(um_host[0], 0xA000);
+        if (c == 0 || c == 3) {
+            OK(uc_mem_map(r.uc, UM_P, 0x2000, UC_PROT_ALL));
+            OK(uc_mem_write(r.uc, UM_P, um_host[0], 0x2000));
+            n0++;
+            snprintf(what, sizeof(what), "case %d (%s): before", c, cname[c]);
+            sr_expect(&r, UM_P + um_off[0], pre, 0, 0, 0xA001, 0, what);
+        }
+        OK(uc_context_save(r.uc, a));
+        if (c == 0) {
+            OK(uc_mem_write(r.uc, UM_P + 0x900, &byte, 1)); /* copy */
+            OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+        } else if (c == 3) {
+            OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+            OK(uc_context_save(r.uc, b));
+            err = uc_context_restore(r.uc, b);
+            TEST_CHECK(err == UC_ERR_OK);
+            TEST_MSG("case %d (%s): restore B: err %u (%s)", c, cname[c], err, uc_strerror(err));
+            err = uc_mem_read(r.uc, UM_P + 0x100, &rd, 1);
+            TEST_CHECK(err == UC_ERR_READ_UNMAPPED);
+            TEST_MSG("case %d (%s): after restore B 310000h is still unmapped: err %u (%s)", c, cname[c],
+                     err, uc_strerror(err));
+        } else {
+            OK(uc_mem_map(r.uc, UM_P, 0x2000, UC_PROT_ALL));
+            OK(uc_mem_write(r.uc, UM_P, um_host[0], 0x2000));
+            OK(uc_context_save(r.uc, b));
+            OK(uc_mem_write(r.uc, UM_P + 0x900, &byte, 1)); /* copy */
+            snprintf(what, sizeof(what), "case %d (%s): after the write", c, cname[c]);
+            sr_expect(&r, UM_P + um_off[0], pre, 0, 0, 0xA001, 0, what);
+            OK(uc_context_restore(r.uc, b));
+            if (c == 2) {
+                OK(uc_mem_unmap(r.uc, UM_P, 0x2000));
+            }
+        }
+        err = uc_context_restore(r.uc, a);
+        TEST_CHECK(err == UC_ERR_OK);
+        TEST_MSG("case %d (%s): restore A: err %u (%s)", c, cname[c], err, uc_strerror(err));
+        n1 = sr_regions(r.uc, UM_P, &found);
+        /* only the count: a region inside a snapshot container keeps its container-relative addr in
+           mapped_blocks (make_contained), so uc_mem_regions shows it at 0 (pre-existing; U3 report) */
+        TEST_CHECK(n1 == n0);
+        TEST_MSG("case %d (%s): after restore A: %u mapped blocks (expected %u; a begin of 310000h %s)",
+                 c, cname[c], n1, n0, found ? "listed" : "not listed");
+        if (c == 0 || c == 3) {
+            snprintf(what, sizeof(what), "case %d (%s): after restore A", c, cname[c]);
+            sr_expect(&r, UM_P + um_off[0], pre, 0, 0, 0xA001, 0, what);
+            OK(uc_context_free(a));
+            OK(uc_context_free(b));
+            OK(uc_close(r.uc));
+            continue;
+        }
+        err = uc_mem_read(r.uc, UM_P + 0x100, &rd, 1);
+        TEST_CHECK(err == UC_ERR_READ_UNMAPPED);
+        TEST_MSG("case %d (%s): uc_mem_read of 310100h after restore A: err %u (%s) (expected "
+                 "UC_ERR_READ_UNMAPPED)", c, cname[c], err, uc_strerror(err));
+        err = uc_mem_map(r.uc, UM_P, 0x2000, UC_PROT_ALL);
+        TEST_CHECK(err == UC_ERR_OK);
+        TEST_MSG("case %d (%s): uc_mem_map of 310000h again: err %u (%s)", c, cname[c], err, uc_strerror(err));
+        if (err == UC_ERR_OK) {
+            um_fill(um_host[1], 0xF000);
+            OK(uc_mem_write(r.uc, UM_P, um_host[1], 0x2000));
+            snprintf(what, sizeof(what), "case %d (%s): mapped again with new code", c, cname[c]);
+            sr_expect(&r, UM_P + um_off[0], pre, 0, 0, 0xF001, 0xA001, what);
+        }
+        OK(uc_context_free(a));
+        OK(uc_context_free(b));
+        OK(uc_close(r.uc));
+    }
+}
+
+/*
+ * UC_CTL_TB_REMOVE_CACHE over 2 linear pages whose RAM is not contiguous (U1594): the translated code of
+ * BOTH pages is dropped. The pages are uc_mem_map_ptr host buffers patched behind the emulator's back as
+ * a PROBE of the translation cache (um_unrelated_kept): the old instruction keeps running exactly while its
+ * block stays cached. mode 0: paging off, UM_P + 1000h mapped first (lower RAM offset) then UM_P;
+ * mode 2: paging on, UM_L -> UM_P, UM_L + 1000h -> UM_Q (mapped first); mode 3: as 2 with UM_L not present (only
+ * the second page has a translation). Before U1594 uc_invalidate_tb took the first page's RAM address
+ * for the whole length (and returned when the first page had no translation).
+ */
+static void test_x86_sr_remove_cache_pages(void)
+{
+    static const int modes[3] = {0, 2, 3};
+    static uint8_t h0[0x1000], h1[0x1000];
+    NvRun r;
+    uint8_t pre[1];
+    uint64_t lin;
+    char what[192];
+    int mi, mode, i;
+
+    for (mi = 0; mi < 3; mi++) {
+        mode = modes[mi];
+        lin = um_open(&r, mode == 0 ? 0 : 2);
+        memset(h0, 0xcc, sizeof(h0));
+        memset(h1, 0xcc, sizeof(h1));
+        um_put(h0 + 0x100, 0x1111);
+        um_put(h1 + 0x100, 0x2222);
+        if (mode == 0) {
+            OK(uc_mem_map_ptr(r.uc, UM_P + 0x1000, 0x1000, UC_PROT_ALL, h1));
+            OK(uc_mem_map_ptr(r.uc, UM_P, 0x1000, UC_PROT_ALL, h0));
+        } else { /* UM_Q first: its RAM offset is below UM_P's */
+            OK(uc_mem_map_ptr(r.uc, UM_Q, 0x1000, UC_PROT_ALL, h1));
+            OK(uc_mem_map_ptr(r.uc, UM_P, 0x1000, UC_PROT_ALL, h0));
+            nv_st64(&r, UM_PTE(lin + 0x1000), UM_Q | 7);
+            if (mode == 3) {
+                nv_st64(&r, UM_PTE(lin), 0);
+            }
+        }
+        for (i = 0; i < 2; i++) { /* translated, then cached */
+            if (mode != 3) {
+                snprintf(what, sizeof(what), "mode %d: page 0 before", mode);
+                sr_expect(&r, lin + 0x100, pre, 0, 0, 0x1111, 0, what);
+            }
+            snprintf(what, sizeof(what), "mode %d: page 1 before", mode);
+            sr_expect(&r, lin + 0x1100, pre, 0, 0, 0x2222, 0, what);
+        }
+        um_put(h0 + 0x100, 0x3333); /* the probe */
+        um_put(h1 + 0x100, 0x4444);
+        snprintf(what, sizeof(what), "mode %d: page 1 patched behind the back (still cached)", mode);
+        sr_expect(&r, lin + 0x1100, pre, 0, 0, 0x2222, 0, what);
+        OK(uc_ctl_remove_cache(r.uc, lin, lin + 0x2000));
+        if (mode != 3) {
+            snprintf(what, sizeof(what), "mode %d: page 0 after UC_CTL_TB_REMOVE_CACHE of 2 pages", mode);
+            sr_expect(&r, lin + 0x100, pre, 0, 0, 0x3333, 0x1111, what);
+        }
+        snprintf(what, sizeof(what), "mode %d: page 1 after UC_CTL_TB_REMOVE_CACHE of 2 pages", mode);
+        sr_expect(&r, lin + 0x1100, pre, 0, 0, 0x4444, 0x2222, what);
+        OK(uc_close(r.uc));
+    }
+}
+/* ---- end U1590-U1599 (sr_) ---- */
+
 /*
  * ---- NoVmp U1470-U1479: microcode update trigger, IA32_BIOS_SIGN_ID, platform ID (uc_mc_) ----
  * Expected values from the SDM: Vol4 Table 2-2 17H (platform ID 52:50), 79H IA32_BIOS_UPDT_TRIG (W),
@@ -42359,6 +42711,9 @@ TEST_LIST = {
     {"test_x86_xc_strict_off_keeps_xcr0", test_x86_xc_strict_off_keeps_xcr0},
     {"test_x86_um_remap_stale_tb", test_x86_um_remap_stale_tb},
     {"test_x86_um_unrelated_kept", test_x86_um_unrelated_kept},
+    {"test_x86_sr_restore_stale_tb", test_x86_sr_restore_stale_tb},
+    {"test_x86_sr_restore_unmapped", test_x86_sr_restore_unmapped},
+    {"test_x86_sr_remove_cache_pages", test_x86_sr_remove_cache_pages},
     {"test_x86_uc_mc_trigger", test_x86_uc_mc_trigger},
     {"test_x86_uc_mc_privilege", test_x86_uc_mc_privilege},
     {"test_x86_uc_mc_sign_id", test_x86_uc_mc_sign_id},
