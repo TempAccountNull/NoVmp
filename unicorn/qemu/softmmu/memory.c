@@ -232,6 +232,10 @@ static void memory_region_remove_subregion(MemoryRegion *mr,
     QTAILQ_REMOVE(&mr->subregions, subregion, subregions_link);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1590) */
+static void memory_unmap_drop_tbs(struct uc_struct *uc, MemoryRegion *mr);
+#endif /* __Use_Original_Qemu (U1590) */
+
 void memory_region_filter_subregions(MemoryRegion *mr, int32_t level)
 {
     MemoryRegion *subregion, *subregion_next;
@@ -246,6 +250,24 @@ void memory_region_filter_subregions(MemoryRegion *mr, int32_t level)
      */
     QTAILQ_FOREACH_SAFE(subregion, &mr->subregions, subregions_link, subregion_next) {
         if (subregion->priority >= level) {
+#if __Use_Original_Qemu != 1 /* ours (U1590) */
+            /*
+             * NoVmp (ledger U1590, plan 1.J.54): a snapshot restore (uc_restore_latest_snapshot; level =
+             * the restored snapshot level, >= 1) discards here the copy-on-write copies made after the
+             * snapshot (memory_cow) and the regions mapped after it. Their translated blocks are keyed by
+             * the copies' RAM addresses and were left cached; the restore also resets ram_list.freed /
+             * last_block (uc_context_restore), so the next RAM block - the next copy of the same page, or
+             * a uc_mem_map_ptr - gets the same RAM offset, the old blocks matched again and the DISCARDED
+             * instructions ran instead of the restored bytes. Drop them by RAM address, as memory_unmap
+             * does (U1450). level 0 is the destructor path (memory_region_destructor_ram / _container):
+             * from memory_unmap, which has dropped the region's code already, and from uc_close /
+             * memory_free, which run after the TCG context is gone - nothing to drop there.
+             * Guest view: SDM 093 Vol3A 11.1.3 p. 11-5 / 14.6 p. 14-18 (changed code runs as changed).
+             */
+            if (level > 0 && mr->uc->cpu) {
+                memory_unmap_drop_tbs(mr->uc, subregion);
+            }
+#endif /* __Use_Original_Qemu (U1590) */
             memory_region_remove_subregion(mr, subregion);
             subregion->destructor(subregion);
             g_free(subregion);
@@ -316,7 +338,19 @@ void memory_moveout(struct uc_struct *uc, MemoryRegion *mr)
      * Because CoW is done after the snapshot level is increased there is only on subregion with 
      */
     memory_region_transaction_begin();
+#if __Use_Original_Qemu == 1 /* original QEMU (U1592) */
     MemoryRegion *mr_block = QTAILQ_FIRST(&mr->subregions);
+#else /* ours (U1592) */
+    /*
+     * NoVmp (ledger U1592, plan 1.J.54): the subregions are sorted by DESCENDING priority
+     * (memory_region_update_container_subregions inserts before the first lower-or-equal one), so the
+     * region the API mapped - lowest priority, the copies are added at the snapshot level above it - is
+     * the LAST one. QTAILQ_FIRST is the newest copy once a page was written under the snapshot: it is
+     * not in mapped_blocks, so the unmapped region stayed there and the restore failed (UC_ERR_MAP) or
+     * mem_map'ped a copy the restore had just freed.
+     */
+    MemoryRegion *mr_block = (MemoryRegion *)QTAILQ_LAST(&mr->subregions);
+#endif /* __Use_Original_Qemu (U1592) */
 
     if (!mr_block) {
         mr_block = mr;

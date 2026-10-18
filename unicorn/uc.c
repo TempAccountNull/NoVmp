@@ -3896,11 +3896,40 @@ static uc_err uc_snapshot(struct uc_struct *uc)
     return UC_ERR_OK;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1592) */
+/*
+ * NoVmp (ledger U1592, plan 1.J.54): uc->mapped_blocks holds the regions the API mapped (mem_map). In a
+ * snapshot container (make_contained) that region is a subregion; when the restore's filter frees it
+ * (it was mapped after the restored snapshot: priority >= level) its mapped_blocks entry has to go too,
+ * or uc_mem_regions / memory_overlap read freed memory (the count stayed one too high).
+ */
+static void snapshot_forget_filtered(struct uc_struct *uc, MemoryRegion *container, int32_t level)
+{
+    MemoryRegion *sub;
+    uint32_t i;
+
+    QTAILQ_FOREACH(sub, &container->subregions, subregions_link) {
+        if (sub->priority < level) {
+            continue;
+        }
+        for (i = 0; i < uc->mapped_block_count; i++) {
+            if (uc->mapped_blocks[i] == sub) {
+                uc->mapped_block_count--;
+                memmove(&uc->mapped_blocks[i], &uc->mapped_blocks[i + 1],
+                        sizeof(MemoryRegion *) * (uc->mapped_block_count - i));
+                break;
+            }
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1592) */
+
 static uc_err uc_restore_latest_snapshot(struct uc_struct *uc)
 {
     MemoryRegion *subregion, *subregion_next, *mr, *initial_mr;
     int level;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1592, U1597) */
     QTAILQ_FOREACH_SAFE(subregion, &uc->system_memory->subregions,
                         subregions_link, subregion_next)
     {
@@ -3910,17 +3939,53 @@ static uc_err uc_restore_latest_snapshot(struct uc_struct *uc)
             uc->memory_unmap(uc, subregion);
         }
     }
+#else /* ours (U1592, U1597) */
+    /*
+     * NoVmp (ledger U1597, plan 1.J.54): first filter every container (no memory commit: the current
+     * flatview is the one restored from the context, which knows none of the discarded copies), THEN
+     * unmap. The original filtered and unmapped child by child: the commit of an unmap (and of the
+     * movein below) regenerates the flatview from the region tree while later containers still held
+     * their discarded copies, which the filter then freed - the flatview kept pointers to freed regions
+     * (a use-after-free: seen as UC_ERR_WRITE_UNMAPPED / an access violation on the next access).
+     */
+    QTAILQ_FOREACH(subregion, &uc->system_memory->subregions, subregions_link) {
+        snapshot_forget_filtered(uc, subregion, uc->snapshot_level); /* U1592 */
+        uc->memory_filter_subregions(subregion, uc->snapshot_level);
+    }
+    QTAILQ_FOREACH_SAFE(subregion, &uc->system_memory->subregions,
+                        subregions_link, subregion_next)
+    {
+        bool emptied = subregion->priority < uc->snapshot_level && !subregion->terminates &&
+                       QTAILQ_EMPTY(&subregion->subregions);
+
+        if (subregion->priority >= uc->snapshot_level || emptied) {
+            uc->memory_unmap(uc, subregion);
+        }
+        if (emptied) {
+            /* U1592: a container (priority 0) is never in mapped_blocks: memory_unmap did not free it */
+            subregion->destructor(subregion);
+            g_free(subregion);
+        }
+    }
+#endif /* __Use_Original_Qemu (U1592, U1597) */
 
     for (size_t i = uc->unmapped_regions->len; i-- > 0;) {
         mr = g_array_index(uc->unmapped_regions, MemoryRegion *, i);
         // same dirty hack as in memory_moveout see qemu/softmmu/memory.c
+#if __Use_Original_Qemu == 1 /* original QEMU (U1592) */
         initial_mr = QTAILQ_FIRST(&mr->subregions);
+#else /* ours (U1592) */
+        /* the region the API mapped: the lowest priority = the LAST subregion (see memory_moveout) */
+        initial_mr = (MemoryRegion *)QTAILQ_LAST(&mr->subregions);
+#endif /* __Use_Original_Qemu (U1592) */
         if (!initial_mr) {
             initial_mr = mr;
         }
         /* same dirty hack as in memory_moveout see qemu/softmmu/memory.c */
         level = (intptr_t)mr->container;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1596) */
         mr->container = NULL;
+#endif /* __Use_Original_Qemu (U1596) */
 
         if (level < uc->snapshot_level) {
             break;
@@ -3928,12 +3993,43 @@ static uc_err uc_restore_latest_snapshot(struct uc_struct *uc)
         if (memory_overlap(uc, mr->addr, int128_get64(mr->size))) {
             return UC_ERR_MAP;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1596) */
+        /*
+         * NoVmp (ledger U1596, plan 1.J.54): clear the saved level (memory_moveout keeps it in
+         * mr->container) only for the region that is moved back in now. The original cleared it before
+         * the check, so the region that stopped the loop - moved out under an OLDER snapshot than the
+         * one restored - read as level 0 at the next restore and was never brought back (unmap after
+         * snapshot A, save B, restore B, restore A: the region stayed unmapped).
+         */
+        mr->container = NULL;
+#endif /* __Use_Original_Qemu (U1596) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1591, U1597) */
         uc->memory_movein(uc, mr);
         uc->memory_filter_subregions(mr, uc->snapshot_level);
         if (initial_mr != mr && QTAILQ_EMPTY(&mr->subregions)) {
             uc->memory_unmap(uc, subregion);
         }
         mem_map(uc, initial_mr);
+#else /* ours (U1591, U1597) */
+        /*
+         * NoVmp (ledger U1591, plan 1.J.54): a moved-out container whose region was mapped after the
+         * restored snapshot is emptied by the filter (the region's priority >= level). The original
+         * then called memory_unmap(uc, subregion) with the first loop's finished iterator - NULL after
+         * QTAILQ_FOREACH_SAFE - and mem_map'ped initial_mr, which the filter had just freed. The region
+         * did not exist at the restored snapshot: free the container (it is not in mapped_blocks) and
+         * map nothing. U1597: filter BEFORE memory_movein, whose commit regenerates the flatview -
+         * after it the freed copies were still referenced by the flatview.
+         */
+        snapshot_forget_filtered(uc, mr, uc->snapshot_level);
+        uc->memory_filter_subregions(mr, uc->snapshot_level);
+        if (initial_mr != mr && QTAILQ_EMPTY(&mr->subregions)) {
+            mr->destructor(mr);
+            g_free(mr);
+        } else {
+            uc->memory_movein(uc, mr);
+            mem_map(uc, initial_mr);
+        }
+#endif /* __Use_Original_Qemu (U1591, U1597) */
         g_array_remove_range(uc->unmapped_regions, i, 1);
     }
     uc->snapshot_level--;
