@@ -238,6 +238,11 @@ typedef struct DisasContext {
     CCOp cc_op;  /* current CC operation */
     int mem_index; /* select memory access functions */
     uint32_t flags; /* all execution flags */
+#if __Use_Original_Qemu != 1 /* ours (U1752) */
+    /* the MOV / POP SS of this TB runs in an interrupt shadow with TF = 1: the end of the block
+       decides the single-step trap at run time (gen_movl_seg_T0, do_gen_eob_worker) */
+    bool ss_tf_chain;
+#endif /* __Use_Original_Qemu (U1752) */
 #if __Use_Original_Qemu != 1 /* ours (U834) */
     bool ac;       /* the TB checks alignment: HF_AC_MASK (EFLAGS.AC AND CR0.AM) at CPL3 */
     bool ac_insn;  /* the current instruction is subject to it (U834 exceptions below) */
@@ -3395,11 +3400,30 @@ static void gen_movl_seg_T0(DisasContext *s, X86Seg seg_reg, bool inhibit_irq)
      * might have been set above.
      */
     if (inhibit_irq) {
+#if __Use_Original_Qemu != 1 /* ours (U1752) */
+        /*
+         * NoVmp (ledger U1752, Gate 1 D3): a MOV / POP SS that itself runs in the shadow of a
+         * MOV / POP SS does not suppress the single-step trap again - with TF = 1 the #DB follows
+         * it, as the i5-13600K does (MOV SS; MOV SS: trap after the second, VMware guest, P- and
+         * E-core runs; POP SS; POP SS and MOV SS; POP SS in compatibility mode alike;
+         * cases_probefix_hw.txt). SDM 093 Vol3A 7.8.3 p. 7-9: "If a sequence of consecutive
+         * instructions each loads the SS register (using MOV or POP), only the first is
+         * guaranteed to inhibit or suppress events in this way." A shadow at the start of this
+         * TB (TBs in a shadow hold one instruction) can also come from STI (or a VM entry /
+         * ERETS with blocking by STI), which does not hold the trap: then this MOV / POP SS
+         * suppresses it as usual. env->fred_sti tells the two apart at run time
+         * (do_gen_eob_worker); its shadow is not renewed either (QEMU's "only the first").
+         */
+        if ((s->flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) == (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) {
+            s->ss_tf_chain = true;
+        }
+#endif /* __Use_Original_Qemu (U1752) */
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
         /* FRED: this shadow is blocking by MOV / POP SS, not by STI; U1303: VMX too (the
-           interruptibility state, SDM 092 Vol3C Table 27-3) */
-        if ((s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) ||
-            (s->cpuid_ext_features & CPUID_EXT_VMX)) {
+           interruptibility state, SDM 092 Vol3C Table 27-3); U1752: on every model (the cause
+           decides the trap of a chained MOV / POP SS), not inside a shadow (the shadow ends
+           with this instruction, and the cause of the old one is read at its end) */
+        if (!(s->flags & HF_INHIBIT_IRQ_MASK)) {
             tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 0), cpu_env,
                             offsetof(CPUX86State, fred_sti));
         }
@@ -3864,6 +3888,20 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr)
     if (recheck_tf) {
         gen_helper_rechecking_single_step(tcg_ctx, cpu_env);
         tcg_gen_exit_tb(tcg_ctx, NULL, 0);
+#if __Use_Original_Qemu != 1 /* ours (U1752) */
+    } else if (s->ss_tf_chain) {
+        /* a MOV / POP SS in a shadow with TF = 1 (gen_movl_seg_T0): the trap follows it unless
+           the shadow came from STI (env->fred_sti = 1), whose MOV / POP SS still suppresses it */
+        TCGLabel *no_trap = gen_new_label(tcg_ctx);
+        TCGv_i32 sti = tcg_temp_new_i32(tcg_ctx);
+
+        tcg_gen_ld8u_i32(tcg_ctx, sti, cpu_env, offsetof(CPUX86State, fred_sti));
+        tcg_gen_brcondi_i32(tcg_ctx, TCG_COND_NE, sti, 0, no_trap);
+        tcg_temp_free_i32(tcg_ctx, sti);
+        gen_helper_single_step(tcg_ctx, cpu_env);
+        gen_set_label(tcg_ctx, no_trap);
+        tcg_gen_exit_tb(tcg_ctx, NULL, 0);
+#endif /* __Use_Original_Qemu (U1752) */
     } else if (s->flags & HF_TF_MASK) {
         /* QEMU 1e94ddc685: STI does not block the single-step trap */
         gen_helper_single_step(tcg_ctx, cpu_env);
@@ -8913,12 +8951,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_set_eflags(s, IF_MASK);
 #if __Use_Original_Qemu != 1 /* ours (U1171) */
             /* FRED: the interrupt shadow is blocking by STI (augmented SS bit 16, 8.3.2.1); U1303:
-               VMX too (interruptibility state) */
-            if ((s->cpuid_7_1_eax_features & CPUID_7_1_EAX_FRED) ||
-                (s->cpuid_ext_features & CPUID_EXT_VMX)) {
-                tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
-                                offsetof(CPUX86State, fred_sti));
-            }
+               VMX too (interruptibility state); U1752: on every model (a MOV / POP SS in this
+               shadow still suppresses the single-step trap, gen_movl_seg_T0) */
+            tcg_gen_st8_i32(tcg_ctx, tcg_constant_i32(tcg_ctx, 1), cpu_env,
+                            offsetof(CPUX86State, fred_sti));
 #endif /* __Use_Original_Qemu (U1171) */
             /* interruptions are enabled only the first insn after sti */
             gen_update_eip_next(s);
@@ -11388,6 +11424,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cs_base = dc->base.tb->cs_base;
     dc->pc_save = dc->base.pc_next;
     dc->flags = flags;
+#if __Use_Original_Qemu != 1 /* ours (U1752) */
+    dc->ss_tf_chain = false;
+#endif /* __Use_Original_Qemu (U1752) */
 #ifndef CONFIG_USER_ONLY
     dc->cpl = cpl;
     dc->iopl = iopl;

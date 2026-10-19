@@ -45592,6 +45592,77 @@ static void test_x86_pf_lar_limit_bits(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1752 (D3): a MOV SS / POP SS that itself runs in the shadow of a MOV SS / POP SS does not
+ * suppress the single-step trap again: with TF = 1, MOV SS; MOV SS traps after the second MOV SS,
+ * as the i5-13600K does (guest P- and E-core runs: r8 = 0). SDM 093 Vol3A 7.8.3 p. 7-9: "If a
+ * sequence of consecutive instructions each loads the SS register (using MOV or POP), only the
+ * first is guaranteed to inhibit or suppress events in this way." One MOV SS still holds the trap
+ * over the next instruction (test_x86_bp_ss_sti_tf). TF is set by POPFQ / POPFD, so it applies
+ * from the instruction after the one that follows POPF.
+ */
+static void test_x86_pf_ss_chain_tf(void)
+{
+    /* pushfq; or qword [rsp], 100h; and qword [rsp], ~200h; popfq (18 bytes) */
+#define PF_TF_ON "\x9c\x48\x81\x0c\x24\x00\x01\x00\x00\x48\x81\x24\x24\xff\xfd\xff\xff\x9d"
+    static const char movss2[] = PF_TF_ON "\x8e\xd1\x8e\xd1\xff\xc0\xff\xc0";  /* mov ss, ecx x2; inc x2 */
+    static const char movss3[] = PF_TF_ON "\x8e\xd1\x8e\xd1\x8e\xd1\xff\xc0";  /* mov ss, ecx x3; inc */
+#undef PF_TF_ON
+    /* push ss; push ss; pushfd; or dword [esp], 100h; popfd; pop ss; pop ss; inc eax; inc eax */
+    static const char popss2[] = "\x16\x16\x9c\x81\x0c\x24\x00\x01\x00\x00\x9d\x17\x17\x40\x40";
+    /* push ss; pushfd; or dword [esp], 100h; popfd; mov ss, ecx; pop ss; inc eax; inc eax */
+    static const char mixed[] = "\x16\x9c\x81\x0c\x24\x00\x01\x00\x00\x9d\x8e\xd1\x17\x40\x40";
+    BpCpu c;
+    uint64_t base;
+
+    /* 64-bit mode, CPL0, SS = null (RCX = 0) */
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    base = c.next;
+    OK(bp_run(&c, movss2, sizeof(movss2) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 22 && bp_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_MSG("mov ss; mov ss: intno %u rip %llx (expected %llx) rax %llx (expected 0)", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 22),
+             (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+
+    /* three in a row: the second traps (it does not suppress), the third never runs */
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    base = c.next;
+    OK(bp_run(&c, movss3, sizeof(movss3) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 22 && bp_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_MSG("mov ss x3: intno %u rip %llx (expected %llx)", c.intno, (unsigned long long)c.rip,
+             (unsigned long long)(base + 22));
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode, CPL0, SS = 10h: POP SS; POP SS and MOV SS; POP SS */
+    bp_open(&c, UC_MODE_32, -1);
+    bp_set(&c, UC_X86_REG_ESP, BP_STACK);
+    bp_set(&c, UC_X86_REG_EAX, 0);
+    base = c.next;
+    OK(bp_run(&c, popss2, sizeof(popss2) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 13 && bp_get(&c, UC_X86_REG_EAX) == 0);
+    TEST_MSG("pop ss; pop ss: intno %u eip %llx (expected %llx) eax %llx (expected 0)", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 13),
+             (unsigned long long)bp_get(&c, UC_X86_REG_EAX));
+    bp_set(&c, UC_X86_REG_EFLAGS, 2);                   /* the stop at the #DB left TF = 1 */
+    bp_set(&c, UC_X86_REG_ESP, BP_STACK);
+    bp_set(&c, UC_X86_REG_EAX, 0);
+    bp_set(&c, UC_X86_REG_ECX, 0x10);
+    base = c.next;
+    OK(bp_run(&c, mixed, sizeof(mixed) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 13 && bp_get(&c, UC_X86_REG_EAX) == 0);
+    TEST_MSG("mov ss; pop ss: intno %u eip %llx (expected %llx) eax %llx (expected 0)", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 13),
+             (unsigned long long)bp_get(&c, UC_X86_REG_EAX));
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1750-U1759 (pf_) ---- */
 
 TEST_LIST = {
@@ -46180,4 +46251,5 @@ TEST_LIST = {
     {"test_x86_pf_lock_mov_dr", test_x86_pf_lock_mov_dr},
     {"test_x86_pf_lock_mov_dr_vmx", test_x86_pf_lock_mov_dr_vmx},
     {"test_x86_pf_lar_limit_bits", test_x86_pf_lar_limit_bits},
+    {"test_x86_pf_ss_chain_tf", test_x86_pf_ss_chain_tf},
     {NULL, NULL}};
