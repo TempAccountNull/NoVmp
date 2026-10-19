@@ -2674,6 +2674,33 @@ typedef struct CPUX86State {
 
     uint64_t xss;
     uint32_t umwait;
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+    /*
+     * NoVmp (ledger U1620): the TSC ticks TPAUSE / UMWAIT waited, part of the counter RDTSC reads
+     * (msr_tsc_now, vmx_tsc). After end_reset_fields on purpose: uc_context_restore never takes the
+     * counter back (the TSC is monotonic), RESET does not clear it (the host-time base is not reset
+     * either).
+     */
+    uint64_t tsc_wait;
+#endif /* __Use_Original_Qemu (U1620) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    /*
+     * NoVmp (ledger U1621): the armed UMONITOR line - a write watch of this CPU (BP_MONITOR; NULL = not
+     * armed, BP_MONITOR_HIT = triggered) and the line's physical address (-1: none) for uc_mem_write.
+     * Live CPU objects, so after end_reset_fields: never taken from a uc_context image.
+     */
+    struct CPUWatchpoint *umon_wp;
+    uint64_t umon_pa;
+#endif /* __Use_Original_Qemu (U1621) */
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+    /*
+     * NoVmp (ledger U1622): UC_CTL_X86_WAIT_WAKE - the period W (TSC ticks) of the environment's wake
+     * event (the OS timer interrupt) that ends a TPAUSE / UMWAIT wait at the next multiple of W of the
+     * TSC, CF = 0; 0 = none (the default: the wait runs to the deadline). An environment setting: kept
+     * across RESET and uc_context_restore.
+     */
+    uint64_t wait_wake;
+#endif /* __Use_Original_Qemu (U1622) */
 #if __Use_Original_Qemu != 1 /* ours (U111) */
     /*
      * NoVmp (ledger U111): set while uc_reg_read/uc_reg_write (UC_X86_REG_MSR)
@@ -3714,6 +3741,15 @@ void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_cod
 #define VMX_EXIT_GETSEC  11
 #define VMX_EXIT_INVD    13
 #define VMX_EXIT_XSETBV  55
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+/* U1620: the physical delay of a TPAUSE / UMWAIT virtual delay (Vol3C 28.3; outside VMX: the delay) */
+uint64_t x86_vmx_wait_delay(CPUX86State *env, uint64_t vdelay);
+#endif /* __Use_Original_Qemu (U1620) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+/* U1621: the UMONITOR monitor (misc_helper.c): disarm, and a uc_mem_write of physical [pa, pa + len) */
+void x86_umonitor_disarm(CPUX86State *env);
+void x86_umonitor_store(CPUX86State *env, uint64_t pa, uint64_t len);
+#endif /* __Use_Original_Qemu (U1621) */
 #if __Use_Original_Qemu != 1 /* ours (U1304) */
 /* U1304: conditional VM exits and VMX non-root behaviour inside the instruction helpers */
 void x86_vmx_insn_check(CPUX86State *env, uint32_t reason, uintptr_t ra);

@@ -6898,9 +6898,9 @@ static void nv_wrmsr(NvRun *r, uint32_t msr, uint64_t value)
 }
 
 /*
- * NoVmp U111: WAITPKG (SDM Vol2 UMONITOR/UMWAIT/TPAUSE). Timing model: the
- * optimized state is left at once, so CF = 0 (the OS time limit never expires)
- * and AF/PF/SF/ZF/OF = 0; #GP(0) for src[31:1] != 0 or CR4.TSD at CPL > 0.
+ * NoVmp U111: WAITPKG (SDM Vol2 UMONITOR/UMWAIT/TPAUSE). AF/PF/SF/ZF/OF = 0;
+ * #GP(0) for src[31:1] != 0 or CR4.TSD at CPL > 0. Timing (since U1620): the
+ * wait advances the TSC to the deadline or the OS limit (the tw_ tests below).
  */
 static void test_x86_waitpkg(void)
 {
@@ -6929,12 +6929,13 @@ static void test_x86_waitpkg(void)
     TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
     TEST_CHECK(r.cap.count == 0);
 
-    /* OS time limit set (IA32_UMWAIT_CONTROL = 400h quanta, C0.2 disabled): still CF = 0 */
+    /* OS time limit set (IA32_UMWAIT_CONTROL = 400h quanta, C0.2 disabled): below the far deadline and
+       the 2^21-tick wake event, it ends the wait: CF = 1 (U1620 / U1622; tw_ tests) */
     nv_wrmsr(&r, 0xe1, 0x401);
     TEST_CHECK(nv_rdmsr(&r, 0xe1) == 0x401);
     nv_set(&r, UC_X86_REG_RFLAGS, 0x8d7);
     OK(nv_run(&r, "\x66\x0f\xae\xf1"));
-    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x002);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0x003);
     /* reserved MSR bits: WRMSR #GP(0); through the API the write is dropped */
     nv_set(&r, UC_X86_REG_RCX, 0xe1);
     nv_set(&r, UC_X86_REG_RAX, 2);
@@ -6994,8 +6995,8 @@ static void test_x86_waitpkg(void)
 /*
  * The "TSC" of the UMWAIT / TPAUSE Operation is the time-stamp counter RDTSC reads, IA32_TSC_ADJUST
  * included (SDM 093 Vol3B 20.17.3: a WRMSR to IA32_TIME_STAMP_COUNTER moves IA32_TSC_ADJUST by the
- * same amount; U905). With the zero-length wait (docs/quirks.md "WAITPKG wait duration") the TSC shows
- * in CF only where os_deadline = TSC + (IA32_UMWAIT_CONTROL[31:2] << 2) passes 2^64 (64-bit sum):
+ * same amount; U905). The wrap case (written for the U1600 zero-length wait; since U1620 the wait advances
+ * the TSC, docs/quirks.md "WAITPKG wait duration"): os_deadline = TSC + (IA32_UMWAIT_CONTROL[31:2] << 2) passes 2^64 (64-bit sum):
  * TSC = FFFFFFFF_80000000h + e and limit FFFFFFFCh give os_deadline = 7FFFFFFCh + e < instr_deadline
  * = ~0, so deadline = os_deadline, using_os_deadline = 1 and TSC >= deadline at once: CF = 1. Before
  * U1600 the helper read the counter without IA32_TSC_ADJUST (no wrap, CF = 0).
@@ -7043,10 +7044,10 @@ static void test_x86_wp_tsc_adjust(void)
     TEST_CHECK(wp_wait(&r, tpause, ~0ull) == 0x002);
     TEST_CHECK(wp_wait(&r, umwait, ~0ull) == 0x002);
 
-    wp_wrmsr(&r, 0x10, 0x1000);                          /* no wrap: the wait takes no time, CF = 0 */
-    wp_wrmsr(&r, 0xe1, 0xfffffffc);
+    wp_wrmsr(&r, 0x10, 0x1000);                          /* no wrap: the wake event (2^21 ticks, U1622) comes */
+    wp_wrmsr(&r, 0xe1, 0xfffffffc);                      /* before the OS limit FFFFFFFCH: CF = 0 */
     TEST_CHECK(wp_wait(&r, tpause, ~0ull) == 0x002);
-    wp_wrmsr(&r, 0xe1, 4);
+    wp_wrmsr(&r, 0xe1, 4);                               /* no UMONITOR on this engine: no wait, CF = 0 */
     TEST_CHECK(wp_wait(&r, umwait, ~0ull) == 0x002);
     OK(uc_close(r.uc));
 }
@@ -7113,6 +7114,337 @@ static void test_x86_wp_profiles(void)
     OK(uc_close(r.uc));
 }
 /* ---- end of the wp_ block (U1600-U1601) ---- */
+
+/* ---- NoVmp U1620-U1623 (agent tpause, plan 1.J.55.a): helper prefix tw_ ---- */
+/*
+ * U1620: TPAUSE / UMWAIT advance the emulated TSC to the end of the wait instead of returning at once (user
+ * decision 2026-10-18; SDM 093 Vol2B TPAUSE p. 4-730 and UMWAIT p. 4-743 Operation): deadline = min(EDX:EAX,
+ * TSC + (IA32_UMWAIT_CONTROL[31:2] << 2)) (0 = no maximum time); while TSC < deadline the counter RDTSC reads
+ * jumps to the deadline (no real sleep); CF = using_os_deadline AND TSC >= deadline. U1621: UMWAIT waits only
+ * while a UMONITOR range is armed - a store to the line (CPUID.05H:EBX bytes), a uc_mem_write to it, MONITOR,
+ * IRET, SYSRET, SYSEXIT, ERETU, a far RET to another CPL and a uc_context_restore disarm it. U1622: by default
+ * the wait also ends 2^21 ticks after its start (the environment wake event, test_x86_tw_wake); the other tw_
+ * tests switch that off (tw_wake 0) to test the deadline rule alone. The counter keeps running on host time, so
+ * every TSC check is a window: tw_near(t, b) = t in [b, b + 2^32).
+ */
+#define TW_T0 0x100000000000ull
+static const char tw_tpause[] = "\x66\x0f\xae\xf1", tw_umwait[] = "\xf2\x0f\xae\xf1";
+
+/* the bare-host rows the model reads (Emulator/data/cpuid_i5-13600k_bare_host.txt, capture Host_clean_20261016) */
+static void tw_open(NvRun *r)
+{
+    uc_x86_cpuid p[4] = {
+        {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0xb0671, 0x00800800, 0x7ffafbff, 0xbfebfbff},   /* ECX[3] MONITOR */
+        {5, 0, 0x40, 0x40, 3, 0x10102020},                      /* monitor line 40H bytes */
+        {7, 0, 2, 0x239c27eb, 0x98c027ac, 0xfc1cc410},          /* EBX[1] TSC_ADJUST, ECX[5] WAITPKG */
+    };
+
+    nv_open(r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_ctl_set_x86_cpuid(r->uc, p, 4));
+    OK(uc_ctl_set_x86_cpuid_strict(r->uc, 1));
+}
+
+/* U1622: the environment wake period W (UC_CTL_X86_WAIT_WAKE); 0 = no wake event, the wait runs to the deadline */
+static void tw_wake(NvRun *r, uint64_t w)
+{
+    OK(uc_ctl(r->uc, UC_CTL_WRITE(UC_CTL_X86_WAIT_WAKE, 1), w));
+}
+
+static uint64_t tw_rdtsc(NvRun *r)
+{
+    OK(nv_run(r, "\x0f\x31"));
+    TEST_CHECK(r->cap.count == 0);
+    return (nv_get(r, UC_X86_REG_RDX) << 32) | (uint32_t)nv_get(r, UC_X86_REG_RAX);
+}
+
+static int tw_near(uint64_t t, uint64_t base)
+{
+    return t - base < (1ull << 32);
+}
+
+/* code ending in TPAUSE / UMWAIT ECX with ECX = src, EDX:EAX = deadline (at CPL3: nv_run3); RFLAGS[11:0] after */
+static uint64_t tw_wait_n(NvRun *r, const char *code, size_t len, uint32_t src, uint64_t deadline, int cpl3)
+{
+    nv_set(r, UC_X86_REG_RCX, src);
+    nv_set(r, UC_X86_REG_RDX, deadline >> 32);
+    nv_set(r, UC_X86_REG_RAX, (uint32_t)deadline);
+    nv_set(r, UC_X86_REG_RFLAGS, 0x8d7);
+    OK(cpl3 ? nv_run3_n(r, code, len) : nv_run_n(r, code, len));
+    TEST_CHECK(r->cap.count == 0);
+    return nv_get(r, UC_X86_REG_RFLAGS) & 0xfff;
+}
+
+#define tw_wait(r, code, src, deadline) tw_wait_n((r), (code), sizeof(code) - 1, (src), (deadline), 0)
+
+static void test_x86_tw_deadline(void)
+{
+    NvRun r;
+    uint64_t t, d;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone (U1620) */
+    wp_wrmsr(&r, 0x10, TW_T0);
+    /* no OS limit (IA32_UMWAIT_CONTROL = 0 at engine start): the TSC goes to EDX:EAX, CF = 0 */
+    d = TW_T0 + 0x10000000;
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);          /* C0.2 */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    d += 0x10000000;
+    TEST_CHECK(tw_wait(&r, tw_tpause, 1, d) == 0x002);          /* C0.1: the same wait */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    wp_wrmsr(&r, 0xe1, 1);                                       /* C0.2 not allowed, no limit: the same */
+    d += 0x10000000;
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    /* a deadline in the past (0, an earlier TSC value): no wait, the TSC is not advanced, CF = 0 */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, 0) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    TEST_CHECK(tw_wait(&r, tw_tpause, 1, t) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_tw_os_limit(void)
+{
+    NvRun r;
+    uint64_t t;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone (U1620) */
+    wp_wrmsr(&r, 0x10, TW_T0);
+    wp_wrmsr(&r, 0xe1, 0x01000000);                              /* maximum time 1000000H TSC quanta */
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, TW_T0 + (1ull << 40)) == 0x003);   /* the OS limit ends it: CF = 1 */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0 + 0x01000000));
+    /* bits 1:0 are not part of the time (bit 0: C0.2 not allowed) */
+    wp_wrmsr(&r, 0xe1, 0x01000001);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 1, t + (1ull << 40)) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x01000000));
+    /* the deadline comes first: the deadline ends the wait, CF = 0 */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x100000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
+    /* the largest limit, FFFFFFFCH */
+    wp_wrmsr(&r, 0xe1, 0xfffffffc);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0xfffffffcull));
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_tw_wrap(void)
+{
+    NvRun r;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone (U1620) */
+    wp_wrmsr(&r, 0x10, 0xffffffff80000000ull);
+    wp_wrmsr(&r, 0xe1, 0xfffffffc);
+    /* TSC + FFFFFFFCH wraps past 2^64 below EDX:EAX = ~0: deadline = os_deadline < TSC, no wait, CF = 1 */
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, ~0ull) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), 0xffffffff80000000ull));
+    /* no OS limit, EDX:EAX = ~0: the TSC goes to 2^64 - 1 and counts on from there (wraps, as after WRMSR 10H) */
+    wp_wrmsr(&r, 0xe1, 0);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, ~0ull) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), ~0ull));
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_tw_monitor(void)
+{
+    /* umonitor rbx (F3 0F AE F3); [a store]; umwait ecx */
+    static const char armed[] = "\xf3\x0f\xae\xf3\xf2\x0f\xae\xf1";
+    static const char st_in[] = "\xf3\x0f\xae\xf3\x88\x43\x3f\xf2\x0f\xae\xf1";        /* mov [rbx+3Fh], al */
+    static const char st_cross[] = "\xf3\x0f\xae\xf3\x66\x89\x43\xff\xf2\x0f\xae\xf1"; /* mov [rbx-1], ax */
+    static const char st_next[] = "\xf3\x0f\xae\xf3\x88\x43\x40\xf2\x0f\xae\xf1";      /* mov [rbx+40h], al */
+    static const char st_prev[] = "\xf3\x0f\xae\xf3\x88\x43\xff\xf2\x0f\xae\xf1";      /* mov [rbx-1], al */
+    NvRun r;
+    uint64_t t;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone (U1620) */
+    wp_wrmsr(&r, 0x10, TW_T0);
+    nv_set(&r, UC_X86_REG_RBX, 0x200100);
+    /* no UMONITOR yet: no range armed, no wait - also with an OS limit (CF = 0) */
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, TW_T0 + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
+    wp_wrmsr(&r, 0xe1, 0x01000000);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, TW_T0 + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
+    /* armed, OS limit: CF = 1 at TSC + limit */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 1, t + (1ull << 40)) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x01000000));
+    wp_wrmsr(&r, 0xe1, 0);
+    /* armed, no limit: to the deadline, CF = 0 */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    /* nothing but the listed events disarms it: after a wait that reached the deadline UMWAIT alone waits again */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    /* a store into the line 200100H-20013FH (CPUID.05H:EBX = 40H) triggers the monitor: no wait */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, st_in, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);    /* and it stays triggered */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, st_cross, 0, t + 0x10000000) == 0x002);     /* 2 bytes, 2000FFH-200100H */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    /* stores outside the line do not */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, st_next, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, st_prev, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    /* a uc_mem_write into the line (a store by a non-processor agent) triggers it; one outside does not */
+    OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
+    OK(uc_mem_write(r.uc, 0x200120, "\x00", 1));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
+    OK(uc_mem_write(r.uc, 0x200140, "\x00", 1));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    /* MONITOR after UMONITOR: UMWAIT does not wait (it does not interoperate with MONITOR) */
+    OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
+    nv_set(&r, UC_X86_REG_RAX, 0x200200);
+    nv_set(&r, UC_X86_REG_RCX, 0);
+    nv_set(&r, UC_X86_REG_RDX, 0);
+    OK(nv_run(&r, "\x0f\x01\xc8"));
+    TEST_CHECK(r.cap.count == 0);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    /* IRETQ (the nv_run3 stub, CPL0 -> 3) after UMONITOR: no wait */
+    OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait_n(&r, tw_umwait, 4, 0, t + 0x10000000, 1) == 0x002);
+    TEST_CHECK(nv_cpl(&r) == 3);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    /* at CPL3 (Windows user mode), UMONITOR then UMWAIT with no IRET between: waits; also across two runs */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait_n(&r, armed, 8, 0, t + 0x10000000, 1) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    OK(nv_run3(&r, "\xf3\x0f\xae\xf3"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait_n(&r, tw_umwait, 4, 0, t + 0x10000000, 1) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_tw_tsc_adjust(void)
+{
+    NvRun r;
+    uc_context *ctx;
+    uint64_t t, d;
+
+    /*
+     * UC_CPU_X86_MAX has no IA32_TSC_ADJUST MSR (RDMSR / WRMSR 3BH #GP(0), U905: the model's CPUID.07H.0:EBX[1]
+     * is 0 under every profile), so the interplay shows through IA32_TIME_STAMP_COUNTER: WRMSR 10H moves
+     * IA32_TSC_ADJUST by the value written minus the counter (U905 / U1600, SDM 093 Vol3B 20.17.3) - the
+     * counter with the wait in it, so RDTSC reads the value written, not that value plus the wait.
+     */
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone (U1620) */
+    wp_wrmsr(&r, 0x10, TW_T0);
+    d = TW_T0 + (1ull << 36);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    wp_wrmsr(&r, 0x10, 0x500000000000ull);                       /* forward */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), 0x500000000000ull));
+    d = 0x500000000000ull + (1ull << 36);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    wp_wrmsr(&r, 0x10, 0x1000);                                  /* back (software may move it back) */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), 0x1000));
+    /* uc_context_restore does not take the counter back: the TSC is monotonic */
+    OK(uc_context_alloc(r.uc, &ctx));
+    OK(uc_context_save(r.uc, ctx));
+    d = tw_rdtsc(&r) + (1ull << 36);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
+    OK(uc_context_restore(r.uc, ctx));
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    /* ... and disarms UMONITOR (a thread switch returns to user mode through IRET / SYSRET) */
+    nv_set(&r, UC_X86_REG_RBX, 0x200100);
+    OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
+    OK(uc_context_save(r.uc, ctx));
+    OK(uc_context_restore(r.uc, ctx));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    OK(uc_context_free(ctx));
+    OK(uc_close(r.uc));
+}
+
+/*
+ * U1622 (user decision 2026-10-18 "Wake after ~1 ms"): by default a wait also ends TSC + W after its start, W =
+ * 2^21 ticks, the environment's wake event (Windows on the bare host: the timer interrupt; capture
+ * 20261018_232017_native-host, cases_waitpkg_probe_hw.txt: CF = 0 after BSR(elapsed) = 14H..15H on P and E cores
+ * for a deadline 2^40 ticks away). CF = 0 for that wake, CF = 1 only when the OS limit ends the wait first.
+ */
+static void test_x86_tw_wake(void)
+{
+    static const char armed[] = "\xf3\x0f\xae\xf3\xf2\x0f\xae\xf1";
+    NvRun r;
+    uc_context *ctx;
+    uint64_t t, w = 0;
+
+    tw_open(&r);
+    OK(uc_ctl(r.uc, UC_CTL_READ(UC_CTL_X86_WAIT_WAKE, 1), &w));
+    TEST_CHECK(w == UC_X86_WAIT_WAKE_DEFAULT && w == 0x200000);
+    wp_wrmsr(&r, 0x10, TW_T0);
+    /* a far deadline, no OS limit: the wake event ends it at TSC + 2^21, CF = 0 */
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, TW_T0 + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0 + 0x200000));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 1, ~0ull) == 0x002);           /* C0.1, EDX:EAX = ~0: the same */
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
+    /* the deadline before the wake: the deadline, CF = 0 */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x1000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x1000));
+    /* an OS limit below W: the limit, CF = 1; above W: the wake, CF = 0 */
+    wp_wrmsr(&r, 0xe1, 0x100000);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
+    wp_wrmsr(&r, 0xe1, 0x01000000);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
+    wp_wrmsr(&r, 0xe1, 0);
+    /* UMWAIT on an armed range: the same wake; without UMONITOR: no wait */
+    nv_set(&r, UC_X86_REG_RBX, 0x200100);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
+    /* the period is an environment setting: kept across uc_context_restore; another W, and 0 = none */
+    OK(uc_context_alloc(r.uc, &ctx));
+    OK(uc_context_save(r.uc, ctx));
+    OK(uc_context_restore(r.uc, ctx));
+    OK(uc_context_free(ctx));
+    w = 0;
+    OK(uc_ctl(r.uc, UC_CTL_READ(UC_CTL_X86_WAIT_WAKE, 1), &w));
+    TEST_CHECK(w == 0x200000);
+    tw_wake(&r, 0x10000);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000));
+    tw_wake(&r, 0);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    OK(uc_close(r.uc));
+}
+/* ---- end of the tw_ block (U1620-U1623) ---- */
 
 /*
  * NoVmp U112: ENQCMD / ENQCMDS (SDM Vol2). No enqueue register exists, so a
@@ -43615,6 +43947,12 @@ TEST_LIST = {
     {"test_x86_waitpkg", test_x86_waitpkg},
     {"test_x86_wp_tsc_adjust", test_x86_wp_tsc_adjust},
     {"test_x86_wp_profiles", test_x86_wp_profiles},
+    {"test_x86_tw_deadline", test_x86_tw_deadline},
+    {"test_x86_tw_os_limit", test_x86_tw_os_limit},
+    {"test_x86_tw_wrap", test_x86_tw_wrap},
+    {"test_x86_tw_monitor", test_x86_tw_monitor},
+    {"test_x86_tw_tsc_adjust", test_x86_tw_tsc_adjust},
+    {"test_x86_tw_wake", test_x86_tw_wake},
     {"test_x86_enqcmd", test_x86_enqcmd},
     {"test_x86_smx_pconfig_sgx", test_x86_smx_pconfig_sgx},
     {"test_x86_cet_shadow_stack", test_x86_cet_shadow_stack},

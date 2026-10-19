@@ -36,3 +36,8 @@ mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 5; and r8d, 1 =>! r8=0
 rdmsr | rcx=0xe1 => #GP(0)
 wrmsr | rcx=0xe1 rax=0 rdx=0 => #GP(0)
 wrmsr | rcx=0xe1 rax=0x401 rdx=0 => #GP(0)
+# --- the TSC-advancing waits of cases_waitpkg_host.txt (U1620-U1621): the WRMSR 10H before them runs, the WAITPKG
+# instruction is #UD (nothing waits, the TSC is not advanced)
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; mov eax, 0x10000000; mov edx, 0x1000; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b =>! #UD
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; mov eax, 0x10000000; mov edx, 0x1000; .byte 0xf3, 0x0f, 0xae, 0xf6; .byte 0xf2, 0x0f, 0xae, 0xf1 =>! #UD
+.byte 0xf3, 0x0f, 0xae, 0xf6; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; lea rax, [r8 + 0x10000000]; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1 | cpl=3 =>! #UD

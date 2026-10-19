@@ -10737,10 +10737,14 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             if (prefixes & PREFIX_REPZ) {
                 gen_lea_v_seg(s, s->aflag, cpu_regs[rm], R_DS, s->override);
                 gen_op_ld_v(s, MO_8, s->T0, s->A0);
+                /* U1621: arm the monitor on the line of the linear address (helper_umonitor) */
+                gen_helper_umonitor(tcg_ctx, cpu_env, s->A0);
             } else {
                 gen_update_cc_op(s);
                 tcg_gen_trunc_tl_i32(tcg_ctx, s->tmp2_i32, cpu_regs[rm]);
-                gen_helper_waitpkg(tcg_ctx, cpu_env, s->tmp2_i32);
+                /* U1620: UMWAIT (F2) waits only on an armed monitor, TPAUSE (66) always */
+                gen_helper_waitpkg(tcg_ctx, cpu_env, s->tmp2_i32,
+                                   tcg_const_i32(tcg_ctx, (prefixes & PREFIX_REPNZ) ? 1 : 0));
                 set_cc_op(s, CC_OP_EFLAGS);
             }
             break;

@@ -101,8 +101,11 @@ DEF_HELPER_FLAGS_4(rao, TCG_CALL_NO_WG, void, env, tl, tl, i32)
 DEF_HELPER_2(xbegin_check, void, env, tl)
 #endif /* __Use_Original_Qemu (U110) */
 #if __Use_Original_Qemu != 1 /* ours (U111) */
-DEF_HELPER_2(waitpkg, void, env, i32)
+DEF_HELPER_3(waitpkg, void, env, i32, i32)    /* U1620: + umwait */
 #endif /* __Use_Original_Qemu (U111) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+DEF_HELPER_2(umonitor, void, env, tl)
+#endif /* __Use_Original_Qemu (U1621) */
 #if __Use_Original_Qemu != 1 /* ours (U112) */
 DEF_HELPER_4(enqcmd, void, env, tl, tl, i32)
 #endif /* __Use_Original_Qemu (U112) */

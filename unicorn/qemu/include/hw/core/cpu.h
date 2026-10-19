@@ -594,6 +594,15 @@ void qemu_init_vcpu(CPUState *cpu);
 #define BP_WATCHPOINT_HIT_READ 0x40
 #define BP_WATCHPOINT_HIT_WRITE 0x80
 #define BP_WATCHPOINT_HIT (BP_WATCHPOINT_HIT_READ | BP_WATCHPOINT_HIT_WRITE)
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+/*
+ * NoVmp (ledger U1621): a monitor watch (x86 UMONITOR line): a matching store only sets
+ * BP_MONITOR_HIT, which stays set until the watch is removed; it never stops the CPU or
+ * raises a debug exception (cpu_check_watchpoint)
+ */
+#define BP_MONITOR            0x100
+#define BP_MONITOR_HIT        0x200
+#endif /* __Use_Original_Qemu (U1621) */
 
 int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
                           CPUBreakpoint **breakpoint);

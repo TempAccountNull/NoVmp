@@ -71,6 +71,9 @@ static void x86_release(void *ctx)
 #if __Use_Original_Qemu != 1 /* ours (U1262) */
     x86_sgx_release(&cpu->env);     /* the SGX package state and the abort page */
 #endif /* __Use_Original_Qemu (U1262) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(&cpu->env); /* the UMONITOR watch (not a BP_CPU watchpoint) */
+#endif /* __Use_Original_Qemu (U1621) */
     release_common(ctx);
     for (i = 0; i < NB_MMU_MODES; i++) {
         desc = &(d[i]);
@@ -2585,6 +2588,10 @@ static int x86_cpus_init(struct uc_struct *uc, const char *cpu_model)
     /* NoVmp (ledger U1480): UC_CTL_X86_XINUSE_MODEL written before init (default 0: the vendor's) */
     cpu->env.xinuse_model = (uint8_t)uc->x86_xinuse_model_cfg;
 #endif /* __Use_Original_Qemu (U1480) */
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+    /* NoVmp (ledger U1622): the environment wake period of TPAUSE / UMWAIT (UC_CTL_X86_WAIT_WAKE) */
+    cpu->env.wait_wake = UC_X86_WAIT_WAKE_DEFAULT;
+#endif /* __Use_Original_Qemu (U1622) */
 
     return 0;
 }
@@ -2605,6 +2612,31 @@ static void x86_rdrand_sync(struct uc_struct *uc, int to_cpu)
     }
 }
 #endif /* __Use_Original_Qemu (U835) */
+
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+/* NoVmp (ledger U1621): uc_mem_write (uc.c) of physical [addr, addr + len): an armed UMONITOR line triggers */
+static void x86_mem_write_notify(struct uc_struct *uc, uint64_t addr, uint64_t len)
+{
+    if (uc->cpu) {
+        x86_umonitor_store(&X86_CPU(uc->cpu)->env, addr, len);
+    }
+}
+#endif /* __Use_Original_Qemu (U1621) */
+
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+/* NoVmp (ledger U1622): UC_CTL_X86_WAIT_WAKE (uc.c) - the TPAUSE / UMWAIT environment wake period */
+static uc_err x86_wait_wake(struct uc_struct *uc, int set, uint64_t *w)
+{
+    CPUX86State *env = &X86_CPU(uc->cpu)->env;
+
+    if (set) {
+        env->wait_wake = *w;
+    } else {
+        *w = env->wait_wake;
+    }
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1622) */
 
 #if __Use_Original_Qemu != 1 /* ours (U1470) */
 /* NoVmp (ledger U1470): UC_CTL_X86_MICROCODE read (uc.c): the CPU's revision and platform ID */
@@ -2692,6 +2724,13 @@ static uc_err x86_context_restore(struct uc_struct *uc, uc_context *context)
 #if __Use_Original_Qemu != 1 /* ours (U878) */
     x86_uintr_update_request(env);  /* the restored UIRR (U878; an image write does not) */
 #endif /* __Use_Original_Qemu (U878) */
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+    /*
+     * NoVmp (ledger U1620-U1621): env->tsc_wait is not restored - the TSC never goes back - and an armed
+     * UMONITOR range ends (a thread switch returns to user mode through IRET / SYSRET, which disarm it)
+     */
+    x86_umonitor_disarm(env);
+#endif /* __Use_Original_Qemu (U1620) */
     return UC_ERR_OK;
 }
 #undef X86_CTX_COPY
@@ -2861,6 +2900,12 @@ void uc_init(struct uc_struct *uc)
 #if __Use_Original_Qemu != 1 /* ours (U835) */
     uc->x86_rdrand_sync = x86_rdrand_sync;
 #endif /* __Use_Original_Qemu (U835) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    uc->mem_write_notify = x86_mem_write_notify;
+#endif /* __Use_Original_Qemu (U1621) */
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+    uc->x86_wait_wake = x86_wait_wake;
+#endif /* __Use_Original_Qemu (U1622) */
 #if __Use_Original_Qemu != 1 /* ours (U1021) */
     uc->x86_mktme_key = x86_mktme_key;
 #endif /* __Use_Original_Qemu (U1021) */

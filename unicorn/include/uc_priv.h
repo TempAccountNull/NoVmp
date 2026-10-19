@@ -491,6 +491,11 @@ struct uc_struct {
     int x86_platform_id;
     int x86_ucode_set;
     void (*x86_ucode_get)(struct uc_struct *uc, uint32_t *rev, int *platform_id);
+    // NoVmp U1621: uc_mem_write wrote physical [addr, addr + len) - a store by a non-processor
+    // agent, which triggers an armed x86 UMONITOR line (NULL on other architectures)
+    void (*mem_write_notify)(struct uc_struct *uc, uint64_t addr, uint64_t len);
+    // NoVmp U1622: UC_CTL_X86_WAIT_WAKE (set = 1: write *w; set = 0: read into *w)
+    uc_err (*x86_wait_wake)(struct uc_struct *uc, int set, uint64_t *w);
 #if defined(WIN32) && defined(WIN32_ENABLE_VEH)
     bool prealloc; // Commit the whole code gen buffer upfront instead of
                    // relying on lazy commit via the vectored exception handler.

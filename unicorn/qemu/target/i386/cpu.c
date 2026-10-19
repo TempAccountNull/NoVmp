@@ -5644,6 +5644,9 @@ static void x86_cpu_reset(CPUState *dev)
     env->dr[7] = DR7_FIXED_1;
     cpu_breakpoint_remove_all(s, BP_CPU);
     cpu_watchpoint_remove_all(s, BP_CPU);
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* RESET / INIT: no UMONITOR range armed */
+#endif /* __Use_Original_Qemu (U1621) */
 
     cr4 = 0;
     xcr0 = XSTATE_FP_MASK;

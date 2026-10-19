@@ -6,9 +6,13 @@
 #   emu-alltest --cases Emulator\data\cases_waitpkg_host.txt --host --host-core E --expect-only  (suite waitpkg_host_e)
 # The same instructions are #UD under --guest (cases_waitpkg_guest.txt). Raw Unicorn runs at CPL0 (privileged setup
 # inline), "cpl=3" lines at CPL3. Layout: RSI = 30028000h (MEM + 8000h), 0x10 is never mapped.
-# Wait model (docs/quirks.md "WAITPKG wait duration"): the implementation-dependent optimized state is left at once, no
-# TSC time passes, and the Operation is evaluated with one TSC sample (the value RDTSC returns, IA32_TSC_ADJUST
-# included): CF = 0 unless os_deadline wraps past 2^64; AF/PF/SF/ZF/OF = 0; every other flag unchanged.
+# Wait model (docs/quirks.md "WAITPKG wait duration", U1620, user decision 2026-10-18): the Operation is evaluated
+# with the TSC RDTSC returns (IA32_TSC_ADJUST included); while TSC < deadline = min(EDX:EAX, TSC +
+# (IA32_UMWAIT_CONTROL[31:2] << 2), 0 = no maximum) the TSC jumps to the end of the wait (no real sleep): the deadline
+# or, earlier, TSC + W, the environment wake period (U1622, user decision 2026-10-18 "Wake after ~1 ms": W = 2^21
+# ticks, CF = 0); UMWAIT only while a UMONITOR range is armed (U1621); CF = 1 only when the OS limit ends the wait;
+# AF/PF/SF/ZF/OF = 0; every other flag unchanged. The TSC keeps counting on host time, so the TSC lines check a
+# window: R11 = (RDTSC - expected) >> 32 = 0.
 #
 # --- enumeration
 mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 5; and r8d, 1 =>! r8=1
@@ -18,7 +22,7 @@ rdmsr | rcx=0xe1 => rax=0 rdx=0
 # --- TPAUSE r32 (66 0F AE /6, mod = 11b): C0.2 (src[0] = 0) and C0.1 (src[0] = 1); EDX:EAX = 0 is a past deadline
 .byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
 .byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0 rax=0 rflags=0xad7 => rflags=0x202
-# a deadline far in the future without an OS limit: zero-length wait, not an OS time-limit wake -> CF = 0
+# a deadline far in the future without an OS limit: the wake event ends it (TSC + 2^21), not an OS time-limit wake -> CF = 0
 .byte 0x66, 0x0f, 0xae, 0xf1 | rcx=0 rdx=0xffffffff rax=0xffffffff rflags=0xad7 => rflags=0x202
 .byte 0x66, 0x0f, 0xae, 0xf1 | rcx=1 rdx=0x7fffffff rax=0 rflags=0x2 => rflags=0x2
 # only CF, AF, PF, SF, ZF, OF are written (DF stays)
@@ -83,9 +87,11 @@ rdmsr | cpl=3 rcx=0xe1 => #GP(0)
 mov ecx, 0xe1; mov eax, 0xfffffffd; xor edx, edx; wrmsr; xor eax, eax; rdmsr =>! rax=0xfffffffd rdx=0
 wrmsr | rcx=0xe1 rax=2 rdx=0 => #GP(0)
 wrmsr | rcx=0xe1 rax=0 rdx=1 => #GP(0)
-# an OS limit (400h quanta, C0.2 not allowed) below the far deadline: using_os_deadline = 1, but no time passes -> CF = 0
-mov ecx, 0xe1; mov eax, 0x401; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+# an OS limit (400h quanta, C0.2 not allowed) below the far deadline and below W: using_os_deadline = 1, the wait ends
+# at the limit -> CF = 1 (U1620); UMWAIT without a UMONITOR before it (no range armed): no wait -> CF = 0
+mov ecx, 0xe1; mov eax, 0x401; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x203
 mov ecx, 0xe1; mov eax, 0x4; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0xf2, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+mov ecx, 0xe1; mov eax, 0x4; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x203
 # os_deadline past 2^64 (TSC := FFFFFFFF_80000000h by WRMSR 10H, which moves IA32_TSC_ADJUST; limit FFFFFFFCh): the
 # 64-bit sum is below EDX:EAX = ~0, so deadline = os_deadline and TSC >= deadline at once -> CF = 1 (U1600)
 mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; mov eax, 0xfffffffc; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x203
@@ -94,3 +100,36 @@ mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; m
 mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; xor eax, eax; xor edx, edx; wrmsr; xor ecx, ecx; mov eax, 0xffffffff; mov edx, eax; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
 # the same TSC and limit with a past deadline (EDX:EAX = 0): os_deadline is not below it, using_os_deadline = 0 -> CF = 0
 mov ecx, 0x10; mov eax, 0x80000000; mov edx, 0xffffffff; wrmsr; mov ecx, 0xe1; mov eax, 0xfffffffc; xor edx, edx; wrmsr; xor ecx, ecx; xor eax, eax; xor edx, edx; .byte 0x66, 0x0f, 0xae, 0xf1 | rflags=0xad7 =>! rflags=0x202
+#
+# --- the wait advances the TSC (U1620-U1622, plan 1.J.55.a): T0 = 1000_0000_0000h by WRMSR 10H, then the wait; R10 = CF,
+# R11 = (RDTSC after - the expected TSC) >> 28 (0: within 2^28 ticks, about 77 ms, above it - host time keeps the counter running).
+# The wait ends at the earliest of EDX:EAX, TSC + the OS limit (CF = 1) and TSC + W, the environment wake period
+# (U1622, default W = 2^21 = 200000H ticks, the bare-host timer-interrupt wake, CF = 0).
+# no OS limit, deadline T0 + 100000H (before the wake): TPAUSE C0.2 / C0.1 and the armed UMWAIT end at EDX:EAX, CF = 0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; mov eax, 0x00100000; mov edx, 0x1000; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; mov ecx, 1; mov eax, 0x00100000; mov edx, 0x1000; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; mov eax, 0x00100000; mov edx, 0x1000; .byte 0xf3, 0x0f, 0xae, 0xf6; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# deadline T0 + 2^40 (after the wake): the wake event ends it at T0 + 200000H, CF = 0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; mov ecx, 1; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0xf3, 0x0f, 0xae, 0xf6; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# UMWAIT without UMONITOR (no range armed): no wait -> TSC = T0, CF = 0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; mov eax, 0x10000000; mov edx, 0x1000; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# OS limit 100000H quanta (below W; bits 1:0 not part of it, bit 0 = C0.2 not allowed), deadline T0 + 2^40: the limit
+# ends the wait -> TSC = T0 + 100000H, CF = 1; unarmed UMWAIT: no wait, CF = 0; a past deadline (0): no wait, CF = 0
+mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=1 r11=0
+mov ecx, 0xe1; mov eax, 0x00100001; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; mov ecx, 1; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=1 r11=0
+mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0xf3, 0x0f, 0xae, 0xf6; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=1 r11=0
+mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; xor edx, edx; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# OS limit 1000000H (above W): the wake event comes first -> TSC = T0 + 200000H, CF = 0
+mov ecx, 0xe1; mov eax, 0x01000000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# a store to the monitored line (RSI = 30028000h, CPUID.05H:EBX = 40H bytes: 30028000h-3002803Fh) triggers the monitor:
+# no wait (TSC = T0); a store to the next line does not (TSC = T0 + 100000H); MONITOR after UMONITOR: no wait
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; .byte 0xf3, 0x0f, 0xae, 0xf6; mov byte ptr [rsi + 0x3f], 0; mov eax, 0x00100000; mov edx, 0x1000; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; .byte 0xf3, 0x0f, 0xae, 0xf6; mov byte ptr [rsi + 0x40], 0; mov eax, 0x00100000; mov edx, 0x1000; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000100000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; .byte 0xf3, 0x0f, 0xae, 0xf6; mov rax, rsi; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xc8; mov eax, 0x00100000; mov edx, 0x1000; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# CPL3 (Windows user mode, no WRMSR): R8 = RDTSC, deadline R8 + 2^40. UMONITOR + UMWAIT: the wake ends it (R11 from
+# R8 + 200000H); an IRETQ (same CPL) between them disarms the range: no wait (R11 from R8)
+.byte 0xf3, 0x0f, 0xae, 0xf6; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov rax, 0x10000000000; add rax, r8; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0x200000; sub rax, r9; shr rax, 28; mov r11, rax | cpl=3 =>! r10=0 r11=0
+.byte 0xf3, 0x0f, 0xae, 0xf6; mov rcx, rsp; lea rax, [rip + 9]; push 0x2b; push rcx; pushfq; push 0x33; push rax; iretq; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov rax, 0x10000000000; add rax, r8; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; shr rax, 28; mov r11, rax | cpl=3 =>! r10=0 r11=0

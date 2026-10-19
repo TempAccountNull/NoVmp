@@ -287,6 +287,7 @@ Add-Exp 'cases_tsx_cet_max' 'cases_tsx_cet_max' 'expect'
 # U1601-U1602 (agent waitpkg, plan 1.J.55): WAITPKG per platform switch - --host (bare host, CPUID.07H.0:ECX[5] = 1)
 # executes UMONITOR / UMWAIT / TPAUSE and has IA32_UMWAIT_CONTROL, --guest / --vm (VMware guest, 0) #UD / #GP(0);
 # cases_waitpkg_hw.txt is the hardware side (#UD on both in the VMware guest; bare-host steps in its header).
+# U1620-U1621 (agent tpause, plan 1.J.55.a): the host file also checks the TSC advance of the wait (TSC windows).
 Add-Exp 'waitpkg_host_p' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host' )
 Add-Exp 'waitpkg_host_e' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host', '--host-core', 'E' )
 Add-Exp 'waitpkg_guest' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--guest' )

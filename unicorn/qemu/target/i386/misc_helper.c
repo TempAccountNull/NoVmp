@@ -455,7 +455,13 @@ void helper_flush_page(CPUX86State *env, target_ulong addr)
  */
 static uint64_t msr_tsc_now(CPUX86State *env)
 {
-    return cpu_get_tsc(env) + env->tsc_offset + env->tsc_adjust;
+    uint64_t tsc = cpu_get_tsc(env) + env->tsc_offset + env->tsc_adjust;
+
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+    /* NoVmp (ledger U1620): plus the ticks TPAUSE / UMWAIT waited (helper_waitpkg) */
+    tsc += env->tsc_wait;
+#endif /* __Use_Original_Qemu (U1620) */
+    return tsc;
 }
 
 #endif /* __Use_Original_Qemu (U905) */
@@ -3176,6 +3182,10 @@ void helper_monitor(CPUX86State *env, target_ulong ptr)
 #if __Use_Original_Qemu != 1 /* ours (U1304) */
     env->vmx.monitor_armed = 1;     /* address-range monitoring armed (the MWAIT exit qualification) */
 #endif /* __Use_Original_Qemu (U1304) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    /* MONITOR after UMONITOR: UMWAIT will not wait (SDM 093 Vol2B UMWAIT p. 4-743) */
+    x86_umonitor_disarm(env);
+#endif /* __Use_Original_Qemu (U1621) */
     /* XXX: store address? */
     cpu_svm_check_intercept_param(env, SVM_EXIT_MONITOR, 0, GETPC());
 }
@@ -3256,19 +3266,101 @@ void helper_xbegin_check(CPUX86State *env, target_ulong fallback_eip)
 #if __Use_Original_Qemu != 1 /* ours (U111) */
 /*
  * NoVmp (ledger U111): UMWAIT r32 / TPAUSE r32 (SDM Vol2 UMWAIT, TPAUSE).
- * #GP(0) if src[31:1] != 0 or CR4.TSD = 1 at CPL > 0. Timing model (fully
- * deterministic): the implementation-dependent optimized state is left at once,
- * as the SDM allows ("Other implementation-dependent events may cause the
- * processor to exit the implementation-dependent optimized state"), so no TSC
- * time passes inside the instruction. The pseudocode is evaluated with the TSC
- * sampled once (the RDTSC value without hooks, IA32_TSC_ADJUST included since U1600): os_deadline = TSC +
- * IA32_UMWAIT_CONTROL[31:2] quanta (0 = no maximum time, per the MSR
- * description); CF = using_os_deadline AND TSC >= deadline, which therefore
- * stays 0 (the OS limit is never reached) unless TSC + limit wraps past 2^64
- * (U1600); AF/PF/SF/ZF/OF = 0. UMONITOR state
- * does not change the result: an unarmed monitor only means no wait at all.
+ * #GP(0) if src[31:1] != 0 or CR4.TSD = 1 at CPL > 0. The pseudocode is
+ * evaluated with the TSC RDTSC would return (without hooks, IA32_TSC_ADJUST
+ * included since U1600): os_deadline = TSC + IA32_UMWAIT_CONTROL[31:2] quanta
+ * (0 = no maximum time, per the MSR description); AF/PF/SF/ZF/OF = 0.
+ * Timing (U1620, below): the wait advances the emulated TSC, no real sleep.
  */
-void helper_waitpkg(CPUX86State *env, uint32_t src)
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+/*
+ * NoVmp (ledger U1621, plan 1.J.55.a): the UMONITOR address-range monitor (SDM 093 Vol2B UMONITOR pp. 4-740 /
+ * 4-741, UMWAIT pp. 4-742 / 4-743). UMONITOR arms the line of the linear address, CPUID.05H:EBX[15:0] bytes
+ * ("the address range that the monitoring hardware checks for store operations can be determined by using the
+ * CPUID.05H"; 64 when that field is not a power of two of at least 16), as a write watch of the CPU
+ * (BP_MONITOR, exec.c): "A store to an address within the specified address range triggers the monitoring
+ * hardware" - every store of the CPU that overlaps the line (cpu_check_watchpoint) and every uc_mem_write
+ * overlapping its physical line (a store by a non-processor agent, x86_umonitor_store) set BP_MONITOR_HIT.
+ * UMWAIT waits only while the range is armed and not triggered ("WHILE monitor hardware armed AND TSC <
+ * deadline"). The arm ends with a new UMONITOR, MONITOR, IRET, SYSRET, SYSEXIT, ERETU (Vol3A 8.4.2.4), a far
+ * RET that changes CPL, a uc_context_restore (a thread switch returns to user mode through IRET / SYSRET), the
+ * reset and uc_close. Nothing else ends it: a UMWAIT that reached its deadline leaves it armed (the SDM lists
+ * no such event; our reading).
+ */
+static uint32_t umon_line_size(CPUX86State *env)
+{
+    uint32_t eax, ebx, ecx, edx, size;
+
+    cpu_x86_cpuid(env, 5, 0, &eax, &ebx, &ecx, &edx);
+    size = ebx & 0xffff;    /* "Largest monitor-line size in bytes" */
+    if (size < 16 || (size & (size - 1))) {
+        size = 64;
+    }
+    return size;
+}
+
+void x86_umonitor_disarm(CPUX86State *env)
+{
+    if (env->umon_wp) {
+        cpu_watchpoint_remove_by_ref(env_cpu(env), env->umon_wp);
+        env->umon_wp = NULL;
+    }
+}
+
+void helper_umonitor(CPUX86State *env, target_ulong addr)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t size = umon_line_size(env);
+    target_ulong line = addr & ~(target_ulong)(size - 1);
+    MemTxAttrs attrs;
+    hwaddr pa;
+
+    x86_umonitor_disarm(env);
+    if (cpu_watchpoint_insert(cs, line, size, BP_MEM_WRITE | BP_MONITOR, &env->umon_wp) != 0) {
+        env->umon_wp = NULL;
+        return;
+    }
+    pa = cpu_get_phys_page_attrs_debug(cs, line & TARGET_PAGE_MASK, &attrs);
+    env->umon_pa = (pa == (hwaddr)-1) ? (uint64_t)-1 : (uint64_t)pa + (line & ~TARGET_PAGE_MASK);
+}
+
+/* a uc_mem_write of [pa, pa + len) (unicorn.c): a store by a non-processor agent triggers an armed line */
+void x86_umonitor_store(CPUX86State *env, uint64_t pa, uint64_t len)
+{
+    uint64_t size;
+
+    if (!env->umon_wp || env->umon_pa == (uint64_t)-1 || len == 0) {
+        return;
+    }
+    size = env->umon_wp->len;
+    if (pa <= env->umon_pa + size - 1 && env->umon_pa <= pa + len - 1) {
+        env->umon_wp->flags |= BP_MONITOR_HIT;
+    }
+}
+
+static bool umon_armed(CPUX86State *env)
+{
+    return env->umon_wp != NULL && !(env->umon_wp->flags & BP_MONITOR_HIT);
+}
+
+#endif /* __Use_Original_Qemu (U1621) */
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+/*
+ * NoVmp (ledger U1620, plan 1.J.55.a, user decision 2026-10-18 "Advance TSC to deadline"): the wait advances
+ * the emulated TSC. "The instruction execution wakes up when the time-stamp counter reaches or exceeds the
+ * implicit EDX:EAX 64-bit input value" / the OS limit ends it with CF = 1 (SDM 093 Vol2B TPAUSE pp. 4-729 /
+ * 4-730, UMWAIT pp. 4-742 / 4-743): with deadline = min(EDX:EAX, TSC + (IA32_UMWAIT_CONTROL[31:2] << 2)) and
+ * TSC < deadline (UMWAIT: only while the UMONITOR range is armed, U1621) the counter RDTSC reads jumps to the
+ * deadline - env->tsc_wait grows by the delay (in VMX non-root operation the physical delay of Vol3C 28.3,
+ * x86_vmx_wait_delay). No real sleep, no host-time dependence of the result. CF = using_os_deadline AND TSC >=
+ * deadline, so CF = 1 exactly when the OS limit ended the wait (also when os_deadline wrapped below the TSC).
+ * src[0] (C0.1 / C0.2) and IA32_UMWAIT_CONTROL[0] choose a power state only: the same wait. One wake event is
+ * modelled (U1622): the environment's timer interrupt, W ticks after the start (CF = 0). Other wake events
+ * (NMI, SMI, debug exceptions, stores by other agents during the wait) are not: nothing else runs while the
+ * instruction waits. umwait = 1: UMWAIT, 0: TPAUSE.
+ */
+#endif /* __Use_Original_Qemu (U1620) */
+void helper_waitpkg(CPUX86State *env, uint32_t src, uint32_t umwait)
 {
     uint64_t tsc, instr_deadline, deadline, limit;
     bool using_os_deadline = false;
@@ -3297,6 +3389,26 @@ void helper_waitpkg(CPUX86State *env, uint32_t src)
         deadline = tsc + limit;
         using_os_deadline = true;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1620) */
+    if (tsc < deadline && (!umwait || umon_armed(env))) {
+        uint64_t end = deadline;
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+        /*
+         * NoVmp (ledger U1622, user decision 2026-10-18 "Wake after ~1 ms"): the environment's wake event
+         * (Windows on the bare host: the timer interrupt; measured 2026-10-18, docs/quirks.md) ends the
+         * wait at TSC + W when that comes before the deadline: "an external interrupt causes the processor
+         * to exit the implementation-dependent optimized state regardless of whether maskable-interrupts are
+         * inhibited" (SDM 093 Vol2B TPAUSE p. 4-730). Not the OS time limit, so CF = 0 (TSC < deadline
+         * below). W = UC_CTL_X86_WAIT_WAKE (default 2^21 ticks; 0 = none, the wait runs to the deadline).
+         */
+        if (env->wait_wake != 0 && end - tsc > env->wait_wake) {
+            end = tsc + env->wait_wake;
+        }
+#endif /* __Use_Original_Qemu (U1622) */
+        env->tsc_wait += x86_vmx_wait_delay(env, end - tsc);
+        tsc = end;          /* the wait ended at the deadline (or the wake event) */
+    }
+#endif /* __Use_Original_Qemu (U1620) */
     CC_SRC = (using_os_deadline && tsc >= deadline) ? CC_C : 0;
 }
 

@@ -1001,6 +1001,9 @@ uc_err uc_mem_write(uc_engine *uc, uint64_t address, const void *_bytes,
 {
     uint64_t count = 0, len;
     const uint8_t *bytes = _bytes;
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    const uint64_t start = address;
+#endif /* __Use_Original_Qemu (U1621) */
 
     UC_INIT(uc);
 
@@ -1055,6 +1058,12 @@ uc_err uc_mem_write(uc_engine *uc, uint64_t address, const void *_bytes,
         }
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    /* NoVmp (ledger U1621): the bytes written are a store by a non-processor agent (x86: UMONITOR) */
+    if (count != 0 && uc->mem_write_notify) {
+        uc->mem_write_notify(uc, start, count);
+    }
+#endif /* __Use_Original_Qemu (U1621) */
     if (count == size) {
         restore_jit_state(uc);
         return UC_ERR_OK;
@@ -3816,6 +3825,30 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
 
 #endif /* __Use_Original_Qemu (U1480) */
 #endif /* __Use_Original_Qemu (U1120) */
+
+#if __Use_Original_Qemu != 1 /* ours (U1622) */
+    case UC_CTL_X86_WAIT_WAKE:
+        /* NoVmp U1622: the TPAUSE / UMWAIT environment wake period (misc_helper.c helper_waitpkg) */
+        if (uc->arch != UC_ARCH_X86) {
+            err = UC_ERR_ARG;
+        } else if (rw == UC_CTL_IO_READ) {
+            uint64_t *w = va_arg(args, uint64_t *);
+
+            UC_INIT(uc);
+            err = w && uc->x86_wait_wake ? uc->x86_wait_wake(uc, 0, w) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else if (rw == UC_CTL_IO_WRITE) {
+            uint64_t w = va_arg(args, uint64_t);
+
+            UC_INIT(uc);
+            err = uc->x86_wait_wake ? uc->x86_wait_wake(uc, 1, &w) : UC_ERR_ARG;
+            restore_jit_state(uc);
+        } else {
+            err = UC_ERR_ARG;
+        }
+        break;
+
+#endif /* __Use_Original_Qemu (U1622) */
 
 #if __Use_Original_Qemu != 1 /* ours (U961) */
     case UC_CTL_X86_APIC_BUS:

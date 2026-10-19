@@ -2390,7 +2390,8 @@ static void vmx_load_host(CPUX86State *env)
 
 static uint64_t vmx_tsc(CPUX86State *env)
 {
-    return cpu_get_tsc(env) + env->tsc_adjust;
+    /* U1620: + the TSC ticks of TPAUSE / UMWAIT waits (they pass for the timer too) */
+    return cpu_get_tsc(env) + env->tsc_adjust + env->tsc_wait;
 }
 
 static uint32_t vmx_timer_value(CPUX86State *env)
@@ -3132,6 +3133,29 @@ uint64_t x86_vmx_guest_tsc(CPUX86State *env, uint64_t tsc)
         tsc = (hi << 16) | (lo >> 48);
     }
     return tsc + env->vmx.tsc_offset;
+}
+
+/*
+ * U1620: TPAUSE / UMWAIT in VMX non-root operation with "RDTSC exiting" = 0 (SDM 093 Vol3C 28.3 pp. 28-12 /
+ * 28-13): "If either control is 0, the physical delay is the virtual delay"; with "use TSC offsetting" and
+ * "use TSC scaling" both 1 "the virtual delay is multiplied by 2^48 (using a shift) to produce a 128-bit
+ * integer. That product is then divided by the TSC multiplier to produce a 64-bit integer". The physical
+ * delay is what the host counter advances (a quotient above 64 bits, or multiplier 0: all ones).
+ */
+uint64_t x86_vmx_wait_delay(CPUX86State *env, uint64_t vdelay)
+{
+    uint64_t lo, hi;
+
+    if (!env->vmx.nonroot || !(env->vmx.proc & PROC_TSC_OFFSET) || !(env->vmx.proc2 & PROC2_TSC_SCALING)) {
+        return vdelay;
+    }
+    if (env->vmx.tsc_mult == 0) {
+        return UINT64_MAX;
+    }
+    lo = vdelay << 48;
+    hi = vdelay >> 16;
+    divu128(&lo, &hi, env->vmx.tsc_mult);
+    return hi ? UINT64_MAX : lo;
 }
 
 /* HLT, RDPMC, RDTSC, RDTSCP, MONITOR, PAUSE: an exit by one primary control (28.1.3) */

@@ -1895,6 +1895,9 @@ void helper_eretu(CPUX86State *env)
     }
     cpu_sync_cet_hflags(env);
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* ERETU after UMONITOR: UMWAIT does not wait (SDM 093 Vol3A 8.4.2.4) */
+#endif /* __Use_Original_Qemu (U1621) */
     fred_eret_end(env, tss, old_tf);
 }
 
@@ -2812,6 +2815,9 @@ void helper_sysret(CPUX86State *env, int dflag)
                                DESC_S_MASK | (3 << DESC_DPL_SHIFT) |
                                DESC_W_MASK | DESC_A_MASK);
     }
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* SYSRET after UMONITOR: UMWAIT does not wait (SDM 093 Vol2B UMWAIT) */
+#endif /* __Use_Original_Qemu (U1621) */
 }
 #endif
 
@@ -4287,6 +4293,9 @@ void helper_iret_real(CPUX86State *env, int shift)
         env->hflags2 &= ~HF2_NMI_MASK;
     }
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* IRET after UMONITOR: UMWAIT does not wait (SDM 093 Vol2B UMWAIT) */
+#endif /* __Use_Original_Qemu (U1621) */
 }
 
 static inline void validate_seg(CPUX86State *env, int seg_reg, int cpl)
@@ -4587,6 +4596,9 @@ static inline void helper_ret_protected(CPUX86State *env, int shift,
         validate_seg(env, R_GS, rpl);
 
         sp += addend;
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+        x86_umonitor_disarm(env);   /* far RET / IRET changing CPL after UMONITOR: UMWAIT does not wait */
+#endif /* __Use_Original_Qemu (U1621) */
     }
     SET_ESP(sp, sp_mask);
     env->eip = new_eip;
@@ -4687,6 +4699,9 @@ void helper_iret_protected(CPUX86State *env, int shift, int next_eip)
         env->hflags2 &= ~HF2_NMI_MASK;
     }
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* IRET after UMONITOR: UMWAIT does not wait (SDM 093 Vol2B UMWAIT) */
+#endif /* __Use_Original_Qemu (U1621) */
 }
 
 void helper_lret_protected(CPUX86State *env, int shift, int addend)
@@ -4898,6 +4913,9 @@ void helper_sysexit(CPUX86State *env, int dflag)
         env->ssp = env->pl_ssp[3];
     }
 #endif /* __Use_Original_Qemu (U753) */
+#if __Use_Original_Qemu != 1 /* ours (U1621) */
+    x86_umonitor_disarm(env);   /* SYSEXIT after UMONITOR: UMWAIT does not wait (SDM 093 Vol2B UMWAIT) */
+#endif /* __Use_Original_Qemu (U1621) */
 }
 
 target_ulong helper_lsl(CPUX86State *env, target_ulong selector1)

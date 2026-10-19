@@ -1046,7 +1046,18 @@ typedef enum uc_control_type {
     // UC_ERR_ARG. Read: the effective model (never DEFAULT). Any time; kept across a CPU reset, not
     // part of a uc_context (the tracked bits are). Write: @args = (int model); Read: @args = (int *model)
     UC_CTL_X86_XINUSE_MODEL,
+    // x86 only (NoVmp U1622, docs/quirks.md "WAITPKG wait duration"): the environment wake period W
+    // in TSC ticks. A TPAUSE / UMWAIT wait (which advances the emulated TSC instead of sleeping, U1620)
+    // ends at the earliest of EDX:EAX, TSC + the IA32_UMWAIT_CONTROL limit (CF = 1) and TSC + W (a wake
+    // event such as the OS timer interrupt, CF = 0). Default UC_X86_WAIT_WAKE_DEFAULT (2^21, from the
+    // i5-13600K bare-host measurement under Windows); 0 = no wake event (the wait runs to the deadline).
+    // Any time; kept across a CPU reset and uc_context_restore. Write: @args = (uint64_t w);
+    // Read: @args = (uint64_t *w)
+    UC_CTL_X86_WAIT_WAKE,
 } uc_control_type;
+
+// UC_CTL_X86_WAIT_WAKE default (NoVmp U1622): 2^21 TSC ticks (about 0.6 ms at 3494.4 MHz)
+#define UC_X86_WAIT_WAKE_DEFAULT 0x200000ull
 
 // UC_CTL_X86_XINUSE_MODEL values (NoVmp U1480)
 #define UC_X86_XINUSE_DEFAULT 0    // the vendor's default (Intel PCORE, AMD ALWAYS)
