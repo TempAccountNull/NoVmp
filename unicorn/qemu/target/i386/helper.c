@@ -644,6 +644,43 @@ uint64_t x86_ldq_phys(CPUState *cs, hwaddr addr)
 #endif
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+/*
+ * NoVmp (ledger U1645, plan 1.J.58.c): the CPU model's own physical stores - the page walk's accessed / dirty bits
+ * (x86_stl_phys_notdirty, SDM 093 Vol3A 5.8), and the stores of SMM state save, VMX / SVM structures and EPT A / D
+ * bits through x86_st[bwlq]_phys - write the flatview directly and skipped the snapshot copy-on-write that guest
+ * stores (store_helper) and uc_mem_write make: they landed in the saved page itself, and a restore kept the bits
+ * the discarded future had set. Copy the page first, as store_helper does (RAM only, a region mapped below the
+ * current level, one page per touched page); the store then goes through the new flatview to the copy. The memory
+ * commit of the copy flushes the TLB (tcg_commit); the walk installs its translation after the stores. No snapshot:
+ * nothing changes.
+ */
+static void x86_phys_store_cow(CPUState *cs, hwaddr addr, unsigned size)
+{
+    struct uc_struct *uc = cs->uc;
+    hwaddr page, last;
+    MemoryRegion *mr;
+
+    if (!uc->snapshot_level) {
+        return;
+    }
+    last = (addr + size - 1) & TARGET_PAGE_MASK;
+    for (page = addr & TARGET_PAGE_MASK;; page += TARGET_PAGE_SIZE) {
+        mr = uc->memory_mapping(uc, page);
+        if (mr && mr->ram && mr->priority < uc->snapshot_level &&
+            !uc->memory_cow(uc, mr, page, TARGET_PAGE_SIZE)) {
+            /* out of memory: as store_helper, end the run with UC_ERR_NOMEM (the store goes to the saved page) */
+            uc->invalid_addr = addr;
+            uc->invalid_error = UC_ERR_NOMEM;
+            cpu_exit(cs);
+        }
+        if (page == last) {
+            break;
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1645) */
+
 void x86_stb_phys(CPUState *cs, hwaddr addr, uint8_t val)
 {
     X86CPU *cpu = X86_CPU(cs);
@@ -651,6 +688,9 @@ void x86_stb_phys(CPUState *cs, hwaddr addr, uint8_t val)
     MemTxAttrs attrs = cpu_get_mem_attrs(env);
     AddressSpace *as = cpu_addressspace(cs, attrs);
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+    x86_phys_store_cow(cs, addr, 1);
+#endif /* __Use_Original_Qemu (U1645) */
 #ifdef UNICORN_ARCH_POSTFIX
     glue(address_space_stb, UNICORN_ARCH_POSTFIX)(as->uc, as, addr, val, attrs, NULL);
 #else
@@ -665,6 +705,9 @@ void x86_stl_phys_notdirty(CPUState *cs, hwaddr addr, uint32_t val)
     MemTxAttrs attrs = cpu_get_mem_attrs(env);
     AddressSpace *as = cpu_addressspace(cs, attrs);
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+    x86_phys_store_cow(cs, addr, 4);
+#endif /* __Use_Original_Qemu (U1645) */
 #ifdef UNICORN_ARCH_POSTFIX
     glue(address_space_stl_notdirty, UNICORN_ARCH_POSTFIX)(as->uc, as, addr, val, attrs, NULL);
 #else
@@ -679,6 +722,9 @@ void x86_stw_phys(CPUState *cs, hwaddr addr, uint32_t val)
     MemTxAttrs attrs = cpu_get_mem_attrs(env);
     AddressSpace *as = cpu_addressspace(cs, attrs);
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+    x86_phys_store_cow(cs, addr, 2);
+#endif /* __Use_Original_Qemu (U1645) */
 #ifdef UNICORN_ARCH_POSTFIX
     glue(address_space_stw,UNICORN_ARCH_POSTFIX)(as->uc, as, addr, val, attrs, NULL);
 #else
@@ -693,6 +739,9 @@ void x86_stl_phys(CPUState *cs, hwaddr addr, uint32_t val)
     MemTxAttrs attrs = cpu_get_mem_attrs(env);
     AddressSpace *as = cpu_addressspace(cs, attrs);
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+    x86_phys_store_cow(cs, addr, 4);
+#endif /* __Use_Original_Qemu (U1645) */
 #ifdef UNICORN_ARCH_POSTFIX
     glue(address_space_stl, UNICORN_ARCH_POSTFIX)(as->uc, as, addr, val, attrs, NULL);
 #else
@@ -707,6 +756,9 @@ void x86_stq_phys(CPUState *cs, hwaddr addr, uint64_t val)
     MemTxAttrs attrs = cpu_get_mem_attrs(env);
     AddressSpace *as = cpu_addressspace(cs, attrs);
 
+#if __Use_Original_Qemu != 1 /* ours (U1645) */
+    x86_phys_store_cow(cs, addr, 8);
+#endif /* __Use_Original_Qemu (U1645) */
 #ifdef UNICORN_ARCH_POSTFIX
     glue(address_space_stq, UNICORN_ARCH_POSTFIX)(as->uc, as, addr, val, attrs, NULL);
 #else
