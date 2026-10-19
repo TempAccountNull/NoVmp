@@ -226,6 +226,9 @@ translator and passed to the helpers.
   instruction (VM entry flushes the TB cache when it sets the control).
 - The VMX-preemption timer counts the model's TSC (host time) >> 5; it is evaluated at TB boundaries, so
   expiry is time-based, not instruction-exact (a value of 0 exits before the first guest instruction).
+  U1671 (plan 1.J.60): a WRMSR to IA32_TIME_STAMP_COUNTER (10H) or IA32_TSC_ADJUST (3BH) moves the TSC but is
+  no "TSC increment" (Vol3C 28.5.1 p. 28-17, SDM 093): the running timer keeps its value and counts on from the moved
+  TSC (x86_vmx_tsc_moved); a TPAUSE / UMWAIT wait (U1620) is time passing and counts.
 - Unconditional exits (28.1.2): CPUID (before the UC_HOOK_INSN CPUID hooks), GETSEC (with CR4.SMXE = 1),
   INVD, XSETBV (after its #UD and CPL checks), the VMX instructions, VMCALL; triple fault (28.2).
 
@@ -243,7 +246,9 @@ translator and passed to the helpers.
   #GP and the CR4.DE #UD (DR8-DR15 stay #UD); the enable controls' #UD (RDTSCP, RDPID, INVPCID, XSAVES /
   XRSTORS, UMONITOR / UMWAIT / TPAUSE, PCONFIG, PBNDKB, RDMSRLIST / WRMSRLIST) come first. The MSR-bitmap checks of
   RDMSR / WRMSR run before the UC_HOOK_INSN hooks (as CPUID in U1303).
-- MSRs: the bitmaps of 27.6.9; RDMSR 10H and RDTSC / RDTSCP return the offset (and scaled) TSC; WRMSR 79H
+- MSRs: the bitmaps of 27.6.9; RDMSR 10H and RDTSC / RDTSCP return the offset (and scaled) TSC (RDMSR 3BH,
+  IA32_TSC_ADJUST, is not offset; WRMSR 10H / 3BH load the TSC / IA32_TSC_ADJUST themselves, Vol3C 28.3 p. 28-13,
+  U1671); WRMSR 79H
   does nothing; MSR-store / -load areas and uc_reg_* MSR accesses are not instructions (no exit, no
   offset). WRMSRNS exits with qualification 1; RDMSR / WRMSRNS immediate forms use reasons 84 / 85 with
   qualification 0 (SDM 092 defines no qualification or instruction information for them). RDMSRLIST /
