@@ -1,0 +1,35 @@
+# PTWRITE (F3 [REX.W] 0F AE /4) where CPUID does not enumerate it: expected-value cases (Gate 1 item P18, ledger U1712,
+# agent ptwrite, 2026-10-19). The VMware-guest profile hides Intel PT (CPUID.(07H,0):EBX.INTEL_PT[25] = 0, EBX 219C27EBH;
+# leaf 14H all zero) and the models do not enumerate it (no Intel PT): "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM
+# 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501), decided at decode, so it comes before every #GP / #SS / #PF / #AC of the
+# operand and nothing changes.
+#   emu-alltest --cases Emulator\data\cases_ptwrite_guest.txt --guest --cr0 0x40033 --expect-only   (suites ptwrite_guest, ptwrite_vm)
+#   emu-alltest --cases Emulator\data\cases_ptwrite_guest.txt --cr0 0x40033 --expect-only           (suite ptwrite_max: no profile)
+# The same instructions execute under --host (cases_ptwrite_host.txt). The VMware guest CPU itself executes PTWRITE
+# although its CPUID hides it (hardware cases_quirks.txt, docs/quirks.md). Raw Unicorn runs at CPL0, "cpl=3" lines at CPL3.
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 25; and r8d, 1 =>! r8=0
+mov eax, 0x14; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 4; and r8d, 1 =>! r8=0
+#
+# --- every form #UD, nothing changes
+.byte 0xf3, 0x0f, 0xae, 0xe0 | rax=0x1234 rflags=0xad7 => #UD
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x123456789abcdef0 => #UD
+.byte 0xf3, 0x41, 0x0f, 0xae, 0xe1 | r9=0xffffffffffffffff => #UD
+.byte 0xf3, 0x0f, 0xae, 0x26 | m+0x8000=0102030405060708 => #UD
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x26 => #UD
+.byte 0xf3, 0x0f, 0xae, 0x26; inc rbx => #UD
+.byte 0xf2, 0xf3, 0x0f, 0xae, 0xe0 => #UD
+# #UD before the operand faults (#GP(0), #SS(0), #PF)
+.byte 0xf3, 0x0f, 0xae, 0x20 | rax=0x8000000000000000 => #UD
+.byte 0xf3, 0x0f, 0xae, 0x65, 0x00 | rbp=0x8000000000000000 => #UD
+.byte 0xf3, 0x0f, 0xae, 0x20 | rax=0x10 => #UD
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x20 | rax=0x10 => #UD
+# LOCK and 66H: #UD as well
+.byte 0xf0, 0xf3, 0x0f, 0xae, 0x26 => #UD
+.byte 0x66, 0xf3, 0x0f, 0xae, 0xe0 => #UD
+# --- CPL3 (Windows user mode), also before #AC(0) (CR0.AM = 1, RFLAGS.AC = 1)
+.byte 0xf3, 0x0f, 0xae, 0x26 | cpl=3 => #UD
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | cpl=3 rax=0x1234 => #UD
+.byte 0xf3, 0x0f, 0xae, 0x66, 0x02 | cpl=3 rflags=0x40202 => #UD
+.byte 0xf3, 0x0f, 0xae, 0x20 | cpl=3 rax=0x10 => #UD

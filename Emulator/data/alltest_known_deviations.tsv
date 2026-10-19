@@ -3,11 +3,12 @@
 # are reported in the bucket "known deviation (docs/quirks.md)" instead of "differs" / "unicorn-#UD",
 # and in "known deviation not observed (matches)" when the run did not show the deviation.
 # One form per line: <form text exactly as in alltest.csv><TAB><docs/quirks.md entry name>
-# Exception (U1700): "PTWRITE not modelled" is an emulator gap, not a CPU deviation (the bare host
-# enumerates PTWRITE and executes it; the emulator #UDs on every profile): docs/quirks.md.
+# Exception (U1476, U1700, U1710): "PTWRITE hidden by the guest CPUID" is a VMware-guest artifact, not a CPU deviation (the bare host
+# enumerates PTWRITE and executes it, as the emulator does with --host since U1710; --full runs without a profile,
+# where the emulator #UDs as the SDM requires for that CPUID): docs/quirks.md.
 cvtpi2ps xmm0, qword ptr [rsi]	CVTPI2PS m64 x87 transition
-ptwrite eax	PTWRITE not modelled
-ptwrite dword ptr [rsi]	PTWRITE not modelled
-ptwrite rax	PTWRITE not modelled
-ptwrite qword ptr [rsi]	PTWRITE not modelled
+ptwrite eax	PTWRITE hidden by the guest CPUID
+ptwrite dword ptr [rsi]	PTWRITE hidden by the guest CPUID
+ptwrite rax	PTWRITE hidden by the guest CPUID
+ptwrite qword ptr [rsi]	PTWRITE hidden by the guest CPUID
 fyl2xp1	FYL2XP1 below -1

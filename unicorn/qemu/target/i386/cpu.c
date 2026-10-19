@@ -4441,6 +4441,37 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
     return r[reg];
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
+/*
+ * NoVmp (ledger U1710, Gate 1 item P18): whether PTWRITE executes - "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM
+ * 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501; Vol3C Table 36-11 p. 36-28 "PTWRITE Supported": "0: ... PTWRITE will #UD
+ * fault"), read as CPUID reports it. Leaf 14H exists only with CPUID.(07H,0):EBX.INTEL_PT[25] = 1 and a maximum basic leaf
+ * of at least 14H. A strict UC_CTL_X86_CPUID profile decides with its own rows (--host, P and E: 07H.0 EBX 239C27EBH, 14H.0
+ * EBX 5FH -> executes; --guest / --vm: 219C27EBH, leaf 14H zero -> #UD). Otherwise the model decides: its leaf 14H is QEMU's
+ * minimal Intel PT leaf (INTEL_PT_MINIMAL_EBX, EBX[4] = 0) and only with INTEL_PT, which no TCG model reports - so PTWRITE
+ * is #UD without a profile and with a non-strict one (reporting only, U435: the translator keeps the model's features).
+ * Intel PT tracing itself is not modelled (docs/quirks.md): an enumerated PTWRITE reads its operand and does nothing else.
+ */
+bool x86_cpuid_ptwrite(CPUX86State *env)
+{
+    uint32_t r[4];
+
+    if (!env->uc || !env->uc->x86_cpuid_strict || !env->uc->x86_cpuid_count) {
+        return (env->features[FEAT_7_0_EBX] & CPUID_7_0_EBX_INTEL_PT) &&
+               (INTEL_PT_MINIMAL_EBX & CPUID_14_0_EBX_PTWRITE);
+    }
+    if (!x86_cpuid_profile(env, 0, 0, &r[0], &r[1], &r[2], &r[3]) || r[0] < 0x14) {
+        return false;
+    }
+    x86_cpuid_profile(env, 7, 0, &r[0], &r[1], &r[2], &r[3]);
+    if (!(r[1] & CPUID_7_0_EBX_INTEL_PT)) {
+        return false;
+    }
+    x86_cpuid_profile(env, 0x14, 0, &r[0], &r[1], &r[2], &r[3]);
+    return (r[1] & CPUID_14_0_EBX_PTWRITE) != 0;
+}
+
+#endif /* __Use_Original_Qemu (U1710) */
 #if __Use_Original_Qemu != 1 /* ours (U1660) */
 /*
  * NoVmp (ledger U1660, plan 1.J.59, user decision "Profiles enable VMX" 2026-10-19; docs/vmx.md "Opt-in"): a strict

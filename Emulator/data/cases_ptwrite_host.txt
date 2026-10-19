@@ -1,0 +1,71 @@
+# PTWRITE (F3 [REX.W] 0F AE /4) under the BARE-HOST profile: expected-value cases (Gate 1 item P18, ledger U1712, agent
+# ptwrite, 2026-10-19). The bare host enumerates Intel PT and PTWRITE (CPUID.(07H,0):EBX.INTEL_PT[25] = 1, EBX 239C27EBH;
+# CPUID.(14H,0):EBX.PTWRITE[4] = 1, EBX 0000005FH, P- and E-core files), so the instruction executes. SDM 325383-093 Vol2B
+# PTWRITE pp. 4-500 / 4-501: it "reads data in the source operand" (64 bits with REX.W in 64-bit mode, otherwise 32) and
+# makes a PTW packet only "if TriggerEn, ContextEn, FilterEn, and PTWEn are all set to 1"; flags affected: none. Intel PT
+# tracing is not modelled (IA32_RTIT_CTL.TraceEn = 0, docs/quirks.md "Intel PT tracing not modelled"), so apart from its
+# faults PTWRITE changes nothing. 64-Bit Mode Exceptions: #GP(0) non-canonical, #SS(0) non-canonical SS reference, #PF,
+# #AC(0) "If alignment checking is enabled and an unaligned memory reference is made while the current privilege level is
+# 3", #UD "If CPUID.14H.00H:EBX.PTWRITE[4] = 0. If LOCK prefix is used. If 66H prefix is used."
+#   emu-alltest --cases Emulator\data\cases_ptwrite_host.txt --host --cr0 0x40033 --expect-only                (suite ptwrite_host_p)
+#   emu-alltest --cases Emulator\data\cases_ptwrite_host.txt --host --host-core E --cr0 0x40033 --expect-only  (suite ptwrite_host_e)
+# CR0 40033H (the Windows CR0 of the hardware cases, AM = 1) for the #AC lines. The same instructions are #UD under --guest /
+# --vm and without a profile (cases_ptwrite_guest.txt). Raw Unicorn runs at CPL0, "cpl=3" lines at CPL3. Layout: RSI =
+# 30028000h (MEM + 8000h), 0x10 is never mapped.
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 25; and r8d, 1 =>! r8=1
+mov eax, 0x14; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 4; and r8d, 1 =>! r8=1
+#
+# --- register operands: nothing changes (no register, no flag)
+.byte 0xf3, 0x0f, 0xae, 0xe0 | rax=0x1234 rflags=0xad7 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x123456789abcdef0 rflags=0xad7 =>
+.byte 0xf3, 0x41, 0x0f, 0xae, 0xe1 | r9=0xffffffffffffffff =>
+.byte 0xf3, 0x49, 0x0f, 0xae, 0xe7 | r15=1 rflags=0x202 =>
+# the register form reads no memory: a register holding a non-canonical value does not fault
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x8000000000000000 =>
+# --- memory operands: read, nothing written
+.byte 0xf3, 0x0f, 0xae, 0x26 | m+0x8000=0102030405060708 rflags=0xad7 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x26 | m+0x8000=0102030405060708 =>
+.byte 0xf3, 0x0f, 0xae, 0x66, 0x04 | rflags=0x8d7 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x24, 0x0e | rcx=0x10 =>
+# the next instruction runs
+.byte 0xf3, 0x0f, 0xae, 0x26; inc rbx => rbx=1 rflags=0x202
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0; inc rbx => rbx=1 rflags=0x202
+#
+# --- mandatory prefix: the last F2 / F3 counts (U75): F2 F3 is PTWRITE, F3 F2 is #UD
+.byte 0xf2, 0xf3, 0x0f, 0xae, 0xe0 | rax=0x1234 =>
+.byte 0xf3, 0xf2, 0x0f, 0xae, 0xe0 | rax=0x1234 => #UD
+# --- #UD: LOCK, 66H (before or after F3, with REX.W); decided before the operand is read
+.byte 0xf0, 0xf3, 0x0f, 0xae, 0x26 => #UD
+.byte 0xf3, 0xf0, 0x0f, 0xae, 0x26 => #UD
+.byte 0x66, 0xf3, 0x0f, 0xae, 0xe0 | rax=0x1234 => #UD
+.byte 0xf3, 0x66, 0x0f, 0xae, 0xe0 | rax=0x1234 => #UD
+.byte 0x66, 0xf3, 0x48, 0x0f, 0xae, 0x26 => #UD
+.byte 0x66, 0xf3, 0x0f, 0xae, 0x20 | rax=0x10 => #UD
+.byte 0xf0, 0xf3, 0x0f, 0xae, 0x20 | rax=0x8000000000000000 => #UD
+#
+# --- memory faults: non-canonical #GP(0) (DS) / #SS(0) (SS: RBP or RSP base); not present #PF; nothing changes
+.byte 0xf3, 0x0f, 0xae, 0x20 | rax=0x8000000000000000 => #GP(0)
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x20 | rax=0x0000800000000000 => #GP(0)
+.byte 0xf3, 0x0f, 0xae, 0x65, 0x00 | rbp=0x8000000000000000 => #SS(0)
+.byte 0xf3, 0x0f, 0xae, 0x24, 0x0c | rcx=0x8000000000000000 => #SS(0)
+.byte 0xf3, 0x0f, 0xae, 0x20 | rax=0x10 => #PF
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x20 | rax=0x10 => #PF
+.byte 0xf3, 0x0f, 0xae, 0x20; inc rbx | rax=0x10 => #PF
+#
+# --- CPL3 (Windows user mode): allowed
+.byte 0xf3, 0x0f, 0xae, 0x26 | cpl=3 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | cpl=3 rax=0x1234 =>
+.byte 0xf3, 0x0f, 0xae, 0x20 | cpl=3 rax=0x10 => #PF
+.byte 0xf3, 0x0f, 0xae, 0x20 | cpl=3 rax=0x8000000000000000 => #GP(0)
+.byte 0x66, 0xf3, 0x0f, 0xae, 0x26 | cpl=3 => #UD
+# --- #AC(0): CR0.AM = 1 (--cr0 0x40033), RFLAGS.AC = 1, CPL3; dword: 4-byte, qword: 8-byte alignment
+.byte 0xf3, 0x0f, 0xae, 0x66, 0x02 | cpl=3 rflags=0x40202 => #AC(0)
+.byte 0xf3, 0x0f, 0xae, 0x66, 0x04 | cpl=3 rflags=0x40202 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x66, 0x04 | cpl=3 rflags=0x40202 => #AC(0)
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x66, 0x08 | cpl=3 rflags=0x40202 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | cpl=3 rflags=0x40202 =>
+# no check with AC = 0 or at CPL0
+.byte 0xf3, 0x0f, 0xae, 0x66, 0x02 | cpl=3 rflags=0x202 =>
+.byte 0xf3, 0x48, 0x0f, 0xae, 0x66, 0x04 | rflags=0x40202 =>

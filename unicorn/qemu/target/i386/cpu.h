@@ -1172,6 +1172,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_7_0_EBX_CLWB              (1U << 24)
 /* Intel Processor Trace */
 #define CPUID_7_0_EBX_INTEL_PT          (1U << 25)
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
+/* CPUID.(14H,0):EBX[4] "PTWRITE Supported" (SDM 093 Vol3C Table 36-11 p. 36-28; leaf 14H needs CPUID.(07H,0):EBX[25]) */
+#define CPUID_14_0_EBX_PTWRITE          (1U << 4)
+#endif /* __Use_Original_Qemu (U1710) */
 /* AVX-512 Prefetch */
 #define CPUID_7_0_EBX_AVX512PF          (1U << 26)
 /* AVX-512 Exponential and Reciprocal */
@@ -3055,6 +3059,10 @@ bool x86_uintr_deliverable(CPUX86State *env);
 void x86_uintr_deliver(CPUX86State *env);
 #endif /* __Use_Original_Qemu (U104) */
 #endif /* __Use_Original_Qemu (U68) */
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
+/* cpu.c: PTWRITE as CPUID reports it (CPUID.(14H,0):EBX.PTWRITE[4]; translator, U1710) */
+bool x86_cpuid_ptwrite(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1710) */
 #if __Use_Original_Qemu != 1 /* ours (U960) */
 /* apic_model.c: the local APIC (ledger U960, docs/apic.md) */
 void x86_apic_reset(CPUX86State *env);

@@ -2884,10 +2884,11 @@ static void test_x86_sse_aligned_access(void)
 
 /*
  * NoVmp U80/U534: PTWRITE is #UD (SDM Vol2 PTWRITE: "#UD If CPUID.14H.00H:EBX.PTWRITE[4]
- * = 0"; the fork has no Intel PT). The #UD comes before the memory operand is touched,
- * so an unmapped operand is #UD too, and nothing after it runs. (The i5-13600K, which
- * enumerates PTWRITE on the bare host, executes it: emulator gap "PTWRITE not modelled",
- * docs/quirks.md, U1700.)
+ * = 0"; no model enumerates Intel PT - this engine has no CPUID profile; U1710: a strict
+ * profile that enumerates it executes it, test_x86_pw_*). The #UD comes before the memory
+ * operand is touched, so an unmapped operand is #UD too, and nothing after it runs. (The
+ * i5-13600K enumerates PTWRITE on the bare host and executes it; the VMware guest CPUID hides
+ * it: "PTWRITE hidden by the guest CPUID", docs/quirks.md, U1700 / U1710.)
  */
 static void test_x86_ptwrite_ud(void)
 {
@@ -13455,9 +13456,9 @@ static void test_x86_sdm_documented_deviations(void)
        with y = +0 (U432); the i5-13600K gives ST0 = x with PE / -0 (docs/quirks.md) */
     qk_fyl2xp1(0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
     qk_fyl2xp1(1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    /* PTWRITE not modelled (U534, quirk removed; U1700): #UD, the SDM result for
-       CPUID.14H.0:EBX[4] = 0 (the i5-13600K reads the operand and goes on,
-       docs/quirks.md "PTWRITE not modelled") */
+    /* PTWRITE hidden by the guest CPUID (U534, quirk removed; U1700, U1710): SDM #UD for the
+       model's CPUID (no Intel PT; CPUID.14H.0:EBX[4] = 0); executed where a strict profile
+       enumerates it (test_x86_pw_*); the i5-13600K reads the operand and goes on (docs/quirks.md) */
     qk_ptwrite(UC_ERR_INSN_INVALID);
     /* DPPD two NaN products (U535, quirk removed): SDM p0 + p1 in both elements (the
        i5-13600K gives p1 + p0 in element 1, docs/quirks.md) */
@@ -45135,6 +45136,298 @@ static void test_x86_cr4p_off(void)
 }
 /* ---- end U1680-U1689 (cr4p_) ---- */
 
+/* ---- NoVmp U1710-U1712 (agent ptwrite, Gate 1 item P18): helper prefix pw_ ---- */
+/*
+ * PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4), SDM 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501: "reads data in the source
+ * operand and sends it to the Intel Processor Trace hardware to be encoded in a PTW packet if TriggerEn, ContextEn,
+ * FilterEn, and PTWEn are all set to 1"; 64 bits "if using REX.W in 64-bit mode, otherwise 32-bits"; flags affected: none.
+ * #UD "If CPUID.14H.00H:EBX.PTWRITE[4] = 0", "If LOCK prefix is used", "If 66H prefix is used"; the operand read has the
+ * faults of a data read (64-bit mode: #GP(0) non-canonical, #SS(0) for an SS reference, #PF, #AC(0) at CPL3). Intel PT
+ * tracing is not modelled (IA32_RTIT_CTL.TraceEn = 0, docs/quirks.md): PTWRITE is a no-op apart from its faults.
+ * Enumeration (Vol3C Table 36-11 p. 36-28, EBX[4] "PTWRITE Supported": "0: ... PTWRITE will #UD fault"): leaf 14H is valid with
+ * CPUID.(07H,0):EBX.INTEL_PT[25] = 1; the models do not enumerate PTWRITE, a strict CPUID profile decides with its rows.
+ * Rows: bare host (cpuid_i5-13600k_bare_host.txt, P and E) 07H.0 EBX 239C27EBH, 14H.0 = 1 / 5FH / 7 (E: 80000007H) / 0;
+ * VMware guest (cpuid_i5-13600k.txt) 219C27EBH, leaf 14H all zero.
+ */
+enum { PW_NONE, PW_HOST, PW_HOST_NOSTRICT, PW_GUEST, PW_NOPT, PW_NOBIT4, PW_LOWMAX };
+
+/* MAX model; cfg != PW_NONE: a profile with leaves 0, 1, 07H.0, 14H.0, 14H.1 (installed before the first instruction) */
+static void pw_open(NvRun *r, uc_mode mode, int cfg)
+{
+    uc_x86_cpuid p[5] = {
+        {0, 0, 0x20, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0xb0671, 0x00800800, 0x7ffafbdf, 0xbfebfbff},    /* ECX.VMX[5] = 0: no VMX model (U1660) */
+        {7, 0, 2, 0x239c27eb, 0x98c027ac, 0xfc1cc410},
+        {0x14, 0, 1, 0x5f, 7, 0},
+        {0x14, 1, 0x02490002, 0x003f003f, 0, 0},
+    };
+
+    nv_open(r, mode, UC_CPU_X86_MAX);
+    if (cfg == PW_NONE) {
+        return;
+    }
+    if (cfg == PW_GUEST) {                       /* the guest: no INTEL_PT, leaf 14H all zero */
+        p[2].ebx = 0x219c27eb;
+        p[2].ecx = 0x9840078c;
+        p[2].edx = 0xbc004410;
+        memset(&p[3].eax, 0, 4 * sizeof(uint32_t));
+        memset(&p[4].eax, 0, 4 * sizeof(uint32_t));
+    } else if (cfg == PW_NOPT) {                 /* 14H.0:EBX[4] = 1 but INTEL_PT = 0: leaf 14H is not valid */
+        p[2].ebx = 0x219c27eb;
+    } else if (cfg == PW_NOBIT4) {               /* Intel PT without PTWRITE */
+        p[3].ebx = 0x4f;
+    } else if (cfg == PW_LOWMAX) {               /* maximum basic leaf 13H: CPUID 14H returns leaf 13H (absent: 0) */
+        p[0].eax = 0x13;
+    }
+    OK(uc_ctl_set_x86_cpuid(r->uc, p, 5));
+    OK(uc_ctl_set_x86_cpuid_strict(r->uc, cfg != PW_HOST_NOSTRICT));
+}
+
+/*
+ * run code (CPL0, or CPL3 through nv_run3) and, with tail, "inc ebx" after it (FF C3: inc ebx / inc bx in every mode, RBX
+ * preset 0, so it shows that the next instruction ran): -1 = no fault, 6 = #UD, a vector from the interrupt hook, or
+ * 1000 + the uc_err of uc_emu_start (e.g. UC_ERR_READ_UNMAPPED)
+ */
+static int pw_run(NvRun *r, const char *code, size_t len, int cpl3, int tail)
+{
+    char buf[48];
+    uc_err err;
+
+    TEST_CHECK(len + 2 <= sizeof(buf));
+    memcpy(buf, code, len);
+    if (tail) {
+        memcpy(buf + len, "\xff\xc3", 2);
+        len += 2;
+        nv_set(r, UC_X86_REG_EBX, 0);              /* EBX: a register of every mode (RBX only in 64-bit mode) */
+    }
+    err = cpl3 ? nv_run3_n(r, buf, len) : nv_run_n(r, buf, len);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    if (err != UC_ERR_OK) {
+        return 1000 + (int)err;
+    }
+    if (r->cap.count) {
+        return (int)r->cap.intno;
+    }
+    if (tail) {
+        TEST_CHECK((nv_get(r, UC_X86_REG_EBX) & 0xffff) == 1);
+        TEST_MSG("the instruction after PTWRITE did not run (EBX %llx)", (unsigned long long)nv_get(r, UC_X86_REG_EBX));
+    }
+    return -1;
+}
+
+#define pw_x(r, code) pw_run((r), (code), sizeof(code) - 1, 0, 1)
+#define pw_x3(r, code) pw_run((r), (code), sizeof(code) - 1, 1, 1)
+
+/* CPUID (leaf, 0) as an instruction: EBX */
+static uint32_t pw_cpuid_ebx(NvRun *r, uint32_t leaf)
+{
+    char code[] = "\xb8\x00\x00\x00\x00\x31\xc9\x0f\xa2";      /* mov eax, leaf; xor ecx, ecx; cpuid */
+
+    memcpy(code + 1, &leaf, 4);
+    OK(nv_run(r, code));
+    return (uint32_t)nv_get(r, UC_X86_REG_RBX);
+}
+
+/* one configuration: what CPUID reports (07H.0:EBX[25], 14H.0:EBX[4]) and whether PTWRITE executes (else #UD) */
+static void pw_enum_one(int cfg, int bit25, int bit4, int exec, const char *name)
+{
+    NvRun r;
+    uint32_t ebx7, ebx14;
+    int v;
+
+    pw_open(&r, UC_MODE_64, cfg);
+    ebx7 = pw_cpuid_ebx(&r, 7);
+    ebx14 = pw_cpuid_ebx(&r, 0x14);
+    TEST_CHECK((int)((ebx7 >> 25) & 1) == bit25 && (int)((ebx14 >> 4) & 1) == bit4);
+    TEST_MSG("%s: CPUID.(07H,0):EBX %08x (INTEL_PT want %d), CPUID.(14H,0):EBX %08x (PTWRITE want %d)", name, ebx7, bit25,
+             ebx14, bit4);
+    nv_set(&r, UC_X86_REG_RAX, 0x200000);
+    v = pw_x(&r, "\xf3\x0f\xae\xe0");                         /* ptwrite eax */
+    TEST_CHECK(v == (exec ? -1 : 6));
+    TEST_MSG("%s: ptwrite eax -> %d, want %d", name, v, exec ? -1 : 6);
+    v = pw_x(&r, "\xf3\x48\x0f\xae\x20");                     /* ptwrite qword [rax] */
+    TEST_CHECK(v == (exec ? -1 : 6));
+    TEST_MSG("%s: ptwrite qword [rax] -> %d, want %d", name, v, exec ? -1 : 6);
+    if (!exec) {                                              /* #UD before the operand is touched */
+        nv_set(&r, UC_X86_REG_RAX, 0x300000);
+        v = pw_x(&r, "\xf3\x0f\xae\x20");
+        TEST_CHECK(v == 6);
+        TEST_MSG("%s: ptwrite dword [unmapped] -> %d, want #UD", name, v);
+        nv_set(&r, UC_X86_REG_RAX, 0x8000000000000000ULL);
+        v = pw_x(&r, "\xf3\x0f\xae\x20");
+        TEST_CHECK(v == 6);
+        TEST_MSG("%s: ptwrite dword [non-canonical] -> %d, want #UD", name, v);
+    }
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_pw_enum(void)
+{
+    pw_enum_one(PW_NONE, 0, 0, 0, "no profile (MAX model: no Intel PT)");
+    pw_enum_one(PW_HOST, 1, 1, 1, "--host (bare-host rows, strict)");
+    pw_enum_one(PW_GUEST, 0, 0, 0, "--guest / --vm (guest rows, strict)");
+    /* not strict = reporting only (U435): the translator keeps the model's features, and the model has no PTWRITE */
+    pw_enum_one(PW_HOST_NOSTRICT, 1, 1, 0, "bare-host rows, not strict");
+    pw_enum_one(PW_NOPT, 0, 1, 0, "14H.0:EBX[4] = 1 without INTEL_PT");
+    pw_enum_one(PW_NOBIT4, 1, 0, 0, "INTEL_PT, 14H.0:EBX[4] = 0");
+    pw_enum_one(PW_LOWMAX, 1, 0, 0, "maximum basic leaf 13H");
+}
+
+/* ptwrite and the MOV load of the same size and address give the same outcome (the operand read is a data read) */
+static void pw_same_as_load(NvRun *r, const char *pw, size_t pwlen, const char *ld, size_t ldlen, int cpl3,
+                            const char *what)
+{
+    int a = pw_run(r, pw, pwlen, cpl3, 1), b = pw_run(r, ld, ldlen, cpl3, 0);
+
+    TEST_CHECK(a == b && a != -1);
+    TEST_MSG("%s: ptwrite %d, load %d (want the same fault)", what, a, b);
+}
+
+/* 64-bit mode, --host: every form executes as a no-op; LOCK / 66H #UD; the operand read and its faults */
+static void test_x86_pw_exec(void)
+{
+    static const uint8_t pat[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    uint8_t mem[16];
+    NvRun r;
+    int v;
+
+    pw_open(&r, UC_MODE_64, PW_HOST);
+    nv_set(&r, UC_X86_REG_RAX, 0x200100);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\xe0") == -1);               /* ptwrite eax */
+    TEST_CHECK(pw_x(&r, "\xf3\x48\x0f\xae\xe0") == -1);           /* ptwrite rax */
+    nv_set(&r, UC_X86_REG_R9, 0xffffffffffffffffULL);
+    TEST_CHECK(pw_x(&r, "\xf3\x41\x0f\xae\xe1") == -1);           /* ptwrite r9d */
+    TEST_CHECK(pw_x(&r, "\xf3\x49\x0f\xae\xe7") == -1);           /* ptwrite r15 */
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x20") == -1);               /* ptwrite dword [rax] */
+    TEST_CHECK(pw_x(&r, "\xf3\x48\x0f\xae\x20") == -1);           /* ptwrite qword [rax] */
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x25\x00\x01\x00\x00") == -1); /* ptwrite dword [rip + 100h] */
+    /* last F2/F3 is the mandatory prefix (U75): F2 F3 = PTWRITE, F3 F2 = #UD */
+    TEST_CHECK(pw_x(&r, "\xf2\xf3\x0f\xae\xe0") == -1);
+    TEST_CHECK(pw_x(&r, "\xf3\xf2\x0f\xae\xe0") == 6);
+
+    /* nothing changes: registers, RFLAGS, the operand */
+    OK(uc_mem_write(r.uc, 0x200100, pat, sizeof(pat)));
+    nv_set(&r, UC_X86_REG_RCX, 0x5555);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0xad7);
+    TEST_CHECK(pw_run(&r, "\xf3\x48\x0f\xae\x20\xf3\x0f\xae\x20\xf3\x48\x0f\xae\xe0\xf3\x0f\xae\xe1", 18, 0, 0) == -1);
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x200100 && nv_get(&r, UC_X86_REG_RCX) == 0x5555);
+    TEST_CHECK((nv_get(&r, UC_X86_REG_RFLAGS) & 0xfff) == 0xad7);
+    TEST_MSG("RFLAGS %llx after PTWRITE, want ad7", (unsigned long long)nv_get(&r, UC_X86_REG_RFLAGS));
+    OK(uc_mem_read(r.uc, 0x200100, mem, sizeof(mem)));
+    TEST_CHECK(memcmp(mem, pat, sizeof(mem)) == 0);
+
+    /* #UD: LOCK and 66H (before or after F3, with REX.W), decided before the operand is read */
+    TEST_CHECK(pw_x(&r, "\xf0\xf3\x0f\xae\x20") == 6);
+    TEST_CHECK(pw_x(&r, "\xf3\xf0\x0f\xae\x20") == 6);
+    TEST_CHECK(pw_x(&r, "\x66\xf3\x0f\xae\xe0") == 6);
+    TEST_CHECK(pw_x(&r, "\xf3\x66\x0f\xae\xe0") == 6);
+    TEST_CHECK(pw_x(&r, "\x66\xf3\x48\x0f\xae\x20") == 6);
+    nv_set(&r, UC_X86_REG_RAX, 0x300000);
+    TEST_CHECK(pw_x(&r, "\x66\xf3\x0f\xae\x20") == 6);
+    TEST_CHECK(pw_x(&r, "\xf0\xf3\x0f\xae\x20") == 6);
+
+    /* the operand is read: an unmapped one faults like a load, and the next instruction does not run */
+    v = pw_x(&r, "\xf3\x0f\xae\x20");
+    TEST_CHECK(v == 1000 + UC_ERR_READ_UNMAPPED && nv_get(&r, UC_X86_REG_RBX) == 0);
+    TEST_MSG("ptwrite dword [unmapped] -> %d", v);
+    pw_same_as_load(&r, "\xf3\x48\x0f\xae\x20", 5, "\x48\x8b\x08", 3, 0, "qword [unmapped]");
+    /* the operand size: a dword at 201FFCH ends at the mapped end, a qword there does not */
+    nv_set(&r, UC_X86_REG_RAX, 0x201ffc);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x20") == -1);
+    pw_same_as_load(&r, "\xf3\x48\x0f\xae\x20", 5, "\x48\x8b\x08", 3, 0, "qword [201FFCH]");
+    nv_set(&r, UC_X86_REG_RAX, 0x201ff8);
+    TEST_CHECK(pw_x(&r, "\xf3\x48\x0f\xae\x20") == -1);
+    /* non-canonical: as a load (DS: #GP(0); SS through RBP: #SS(0)) */
+    nv_set(&r, UC_X86_REG_RAX, 0x8000000000000000ULL);
+    pw_same_as_load(&r, "\xf3\x0f\xae\x20", 4, "\x8b\x08", 2, 0, "dword [non-canonical]");
+    nv_set(&r, UC_X86_REG_RBP, 0x8000000000000000ULL);
+    pw_same_as_load(&r, "\xf3\x0f\xae\x65\x00", 5, "\x8b\x4d\x00", 3, 0, "dword [rbp non-canonical]");
+    /* the register form reads no memory */
+    TEST_CHECK(pw_x(&r, "\xf3\x48\x0f\xae\xe0") == -1);
+    OK(uc_close(r.uc));
+}
+
+/* CPL3 (allowed) and the alignment check: dword 4-byte, qword 8-byte (CR0.AM = 1, RFLAGS.AC = 1, CPL3: #AC(0)) */
+static void test_x86_pw_cpl3(void)
+{
+    NvRun r;
+
+    pw_open(&r, UC_MODE_64, PW_HOST);
+    nv_set(&r, UC_X86_REG_CR0, nv_get(&r, UC_X86_REG_CR0) | (1ULL << 18));
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x202);
+    nv_set(&r, UC_X86_REG_RAX, 0x200102);
+    TEST_CHECK(pw_x3(&r, "\xf3\x0f\xae\x20") == -1 && nv_cpl(&r) == 3); /* AC = 0: no check */
+    TEST_CHECK(pw_x3(&r, "\xf3\x48\x0f\xae\xe0") == -1);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    TEST_CHECK(pw_x3(&r, "\xf3\x0f\xae\x20") == 17);                    /* dword at 2 mod 4 */
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RBX) == 0 && nv_get(&r, UC_X86_REG_RIP) == r.last);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    TEST_CHECK(pw_x3(&r, "\xf3\x0f\xae\xe0") == -1);                    /* register form */
+    nv_set(&r, UC_X86_REG_RAX, 0x200104);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    TEST_CHECK(pw_x3(&r, "\xf3\x0f\xae\x20") == -1);                    /* dword at 4 */
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    TEST_CHECK(pw_x3(&r, "\xf3\x48\x0f\xae\x20") == 17);                /* qword at 4 mod 8 */
+    nv_set(&r, UC_X86_REG_RAX, 0x200108);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    TEST_CHECK(pw_x3(&r, "\xf3\x48\x0f\xae\x20") == -1);                /* qword at 8 */
+    nv_set(&r, UC_X86_REG_RAX, 0x300000);
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x202);
+    pw_same_as_load(&r, "\xf3\x0f\xae\x20", 4, "\x8b\x08", 2, 1, "CPL3 dword [unmapped]");
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x202);
+    TEST_CHECK(pw_x3(&r, "\x66\xf3\x0f\xae\xe0") == 6);
+    OK(uc_close(r.uc));
+
+    /* CPL0 with CR0.AM = 1 and RFLAGS.AC = 1: no check */
+    pw_open(&r, UC_MODE_64, PW_HOST);
+    nv_set(&r, UC_X86_REG_CR0, nv_get(&r, UC_X86_REG_CR0) | (1ULL << 18));
+    nv_set(&r, UC_X86_REG_RFLAGS, 0x40202);
+    nv_set(&r, UC_X86_REG_RAX, 0x200102);
+    TEST_CHECK(pw_x(&r, "\xf3\x48\x0f\xae\x20") == -1);
+    /* --guest at CPL3: #UD */
+    OK(uc_close(r.uc));
+    pw_open(&r, UC_MODE_64, PW_GUEST);
+    nv_set(&r, UC_X86_REG_RAX, 0x200100);
+    TEST_CHECK(pw_x3(&r, "\xf3\x0f\xae\x20") == 6);
+    OK(uc_close(r.uc));
+}
+
+/* protected mode (32-bit) and real-address mode: r/m32 only (REX.W "N.E."), 32 bits read whatever the operand size */
+static void test_x86_pw_legacy_modes(void)
+{
+    NvRun r;
+
+    pw_open(&r, UC_MODE_32, PW_HOST);
+    nv_set(&r, UC_X86_REG_EAX, 0x201ffc);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x20") == -1);                     /* ptwrite dword [eax] */
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\xe0") == -1);                     /* ptwrite eax */
+    TEST_CHECK(pw_x(&r, "\x66\xf3\x0f\xae\x20") == 6);
+    TEST_CHECK(pw_x(&r, "\xf0\xf3\x0f\xae\x20") == 6);
+    nv_set(&r, UC_X86_REG_EAX, 0x300000);
+    pw_same_as_load(&r, "\xf3\x0f\xae\x20", 4, "\x8b\x08", 2, 0, "32-bit dword [unmapped]");
+    OK(uc_close(r.uc));
+
+    pw_open(&r, UC_MODE_32, PW_GUEST);
+    nv_set(&r, UC_X86_REG_EAX, 0x200000);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x20") == 6);
+    OK(uc_close(r.uc));
+
+    /* real-address mode: ptwrite [si] (16-bit addressing, ModRM 24H) reads a dword; 66H #UD */
+    pw_open(&r, UC_MODE_16, PW_HOST);
+    nv_set(&r, UC_X86_REG_ESI, 0x3000);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x24") == -1);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\xe0") == -1);
+    TEST_CHECK(pw_x(&r, "\x66\xf3\x0f\xae\x24") == 6);
+    OK(uc_close(r.uc));
+    pw_open(&r, UC_MODE_16, PW_NONE);
+    nv_set(&r, UC_X86_REG_ESI, 0x3000);
+    TEST_CHECK(pw_x(&r, "\xf3\x0f\xae\x24") == 6);
+    OK(uc_close(r.uc));
+}
+/* ---- end U1710-U1712 (pw_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -45714,4 +46007,8 @@ TEST_LIST = {
     {"test_x86_cr4p_profiles", test_x86_cr4p_profiles},
     {"test_x86_cr4p_each_bit", test_x86_cr4p_each_bit},
     {"test_x86_cr4p_off", test_x86_cr4p_off},
+    {"test_x86_pw_enum", test_x86_pw_enum},
+    {"test_x86_pw_exec", test_x86_pw_exec},
+    {"test_x86_pw_cpl3", test_x86_pw_cpl3},
+    {"test_x86_pw_legacy_modes", test_x86_pw_legacy_modes},
     {NULL, NULL}};

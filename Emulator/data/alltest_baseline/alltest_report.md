@@ -75,10 +75,10 @@ Known deviations: 6 forms listed in `Emulator\data\alltest_known_deviations.tsv`
 
 - `fyl2xp1` (fpu, known deviation (docs/quirks.md), 3/6): known deviation: FYL2XP1 below -1; iter 0: x87 fcw/fsw/ftw hw=037F/0820/FF03 uc=037F/0801/FF0B (fsw mask BAFF); st(0) differs; 
 - `cvtpi2ps xmm0, qword ptr [rsi]` (sse1, known deviation (docs/quirks.md), 5/6): known deviation: CVTPI2PS m64 x87 transition; iter 0: x87 fcw/fsw/ftw hw=037F/0000/FF00 uc=037F/0000/0000 (fsw mask FFFF); 
-- `ptwrite eax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE not modelled; iter 0: outcome hw=ok uc=vector 6
-- `ptwrite dword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE not modelled; iter 0: outcome hw=ok uc=vector 6
-- `ptwrite rax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE not modelled; iter 0: outcome hw=ok uc=vector 6
-- `ptwrite qword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE not modelled; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite eax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE hidden by the guest CPUID; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite dword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE hidden by the guest CPUID; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite rax` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE hidden by the guest CPUID; iter 0: outcome hw=ok uc=vector 6
+- `ptwrite qword ptr [rsi]` (base, known deviation (docs/quirks.md), 6/6): known deviation: PTWRITE hidden by the guest CPUID; iter 0: outcome hw=ok uc=vector 6
 
 ## Manual forms not reachable by the sweep yet
 

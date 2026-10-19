@@ -17,9 +17,9 @@ fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000 # known deviation:
 fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000 # known deviation: FYL2XP1 below -1
 fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000 # known deviation: FYL2XP1 below -1
 fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000 # known deviation: FYL2XP1 below -1
-# PTWRITE not modelled (U534, U1700; an emulator gap, not a CPU deviation): the emulator #UDs on every profile, the CPU (guest and bare host P/E) reads the operand and goes on
-.byte 0xf3, 0x0f, 0xae, 0x26 # known deviation: PTWRITE not modelled
-.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234 # known deviation: PTWRITE not modelled
+# PTWRITE hidden by the guest CPUID (U534, U1700, U1710; a VMware-guest artifact, not a CPU deviation): the emulator #UDs where CPUID hides PTWRITE (gate / --guest profile) and executes it with --host; the CPU (guest and bare host P/E) reads the operand and goes on
+.byte 0xf3, 0x0f, 0xae, 0x26 # known deviation: PTWRITE hidden by the guest CPUID
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234 # known deviation: PTWRITE hidden by the guest CPUID
 # DPPD two NaN products (U535): SDM p0 in both elements, hardware p1 in element 1
 dppd xmm0, xmm1, 0x33 | xmm0=010A00000000F87F020A00000000F87F xmm1=000000000000F03F000000000000F03F # known deviation: DPPD two NaN products
 vdppd xmm2, xmm0, xmm1, 0x32 | xmm0=000000000000F03F030A00000000F07F xmm1=040B00000000F8FF000000000000F03F # known deviation: DPPD two NaN products

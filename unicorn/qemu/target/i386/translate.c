@@ -255,6 +255,9 @@ typedef struct DisasContext {
 #if __Use_Original_Qemu != 1 /* ours (U100) */
     int cpuid_19_ebx_features; /* Key Locker AESKLE / AES_WIDE (CR4.KL checked at run time) */
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
+    bool ptwrite;              /* CPUID.(14H,0):EBX.PTWRITE[4] as reported (x86_cpuid_ptwrite) */
+#endif /* __Use_Original_Qemu (U1710) */
     int cpuid_7_1_eax_features;
 #if __Use_Original_Qemu != 1 /* ours (U85) */
     int cpuid_7_1_edx_features;
@@ -10778,18 +10781,29 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             }
         }
 #endif /* __Use_Original_Qemu (U75) */
-#if __Use_Original_Qemu != 1 /* ours (U80) */
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
         /*
-         * NoVmp (ledger U80, U534): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4)
-         * is #UD on every profile: the fork has no Intel PT. The SDM #UD ("If
-         * CPUID.14H.00H:EBX.PTWRITE[4] = 0", Vol2 PTWRITE) covers --guest only;
-         * --host enumerates PTWRITE and the i5-13600K executes it (bare host
-         * 2026-10-18): emulator gap "PTWRITE not modelled", docs/quirks.md (U1700).
+         * NoVmp (ledger U80, U534, U1710): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4; SDM 325383-093 Vol2B PTWRITE
+         * pp. 4-500 / 4-501). #UD "If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (as CPUID reports it, s->ptwrite: a strict
+         * profile's rows - --host executes, --guest / --vm and every model without a profile #UD), "If LOCK prefix is
+         * used", "If 66H prefix is used" (also beside the mandatory F3, unlike the other F3 0F AE forms of U75 above);
+         * all decided before the operand is read. Otherwise the operand is read - 64 bits with REX.W in 64-bit mode,
+         * else 32 bits (no 16-bit form) - with the faults of a data read (#GP / #SS / #PF, #AC(0) at CPL3); CPL3 is
+         * allowed; no VM exit (Vol3C 28.1.2 / 28.1.3 do not list it). Intel PT tracing is not modelled (docs/quirks.md
+         * "Intel PT tracing: not modelled"): TriggerEn & ContextEn & FilterEn & PTWEn is 0, so the Operation inserts no
+         * PTW / FUP packet and PTWRITE changes nothing else (flags affected: none). Until U1710: #UD on every profile.
          */
         if ((prefixes & PREFIX_REPZ) && ((modrm >> 3) & 7) == 4) {
-            goto illegal_op;
+            if (!s->ptwrite || (prefixes & (PREFIX_LOCK | PREFIX_DATA))) {
+                goto illegal_op;
+            }
+            if ((modrm >> 6) != 3) {
+                gen_lea_modrm(env, s, modrm);
+                gen_op_ld_v(s, REX_W(s) ? MO_64 : MO_32, s->T0, s->A0);   /* #AC check included (U834) */
+            }
+            break;
         }
-#endif /* __Use_Original_Qemu (U80) */
+#endif /* __Use_Original_Qemu (U1710) */
         switch (modrm) {
         CASE_MODRM_MEM_OP(0): /* fxsave */
             if (!(s->cpuid_features & CPUID_FXSR)
@@ -11433,6 +11447,9 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U100) */
     dc->cpuid_19_ebx_features &= x86_cpuid_profile_mask(env, 0x19, 0, 1);
 #endif /* __Use_Original_Qemu (U100) */
+#if __Use_Original_Qemu != 1 /* ours (U1710) */
+    dc->ptwrite = x86_cpuid_ptwrite(env);   /* a strict profile's 07H.0 / 14H.0 rows, else the model (none) */
+#endif /* __Use_Original_Qemu (U1710) */
     dc->cpuid_xsave_features &= x86_cpuid_profile_mask(env, 0xd, 1, 0);
 #endif /* __Use_Original_Qemu (U68) */
 #if __Use_Original_Qemu != 1 /* ours (U793) */

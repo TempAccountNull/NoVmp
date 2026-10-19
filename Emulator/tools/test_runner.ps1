@@ -316,6 +316,14 @@ Add-Exp 'msr35_host_e' 'cases_msr35' 'pkru msr cpuid expect' @( '--host', '--hos
 Add-Exp 'msr35_guest' 'cases_msr35' 'pkru msr cpuid expect' @( '--guest' )
 Add-Exp 'msr35_vm' 'cases_msr35' 'pkru msr cpuid expect' @( '--vm' )
 Add-Exp 'msr35_max' 'cases_msr35' 'pkru msr expect'
+# U1712 (agent ptwrite, Gate 1 item P18): PTWRITE per platform switch - --host P / E (CPUID.(14H,0):EBX[4] = 1) executes it
+# (operand read and its #GP / #SS / #PF / #AC, LOCK / 66H #UD, Intel PT tracing not modelled = no-op), --guest / --vm and no
+# profile (not enumerated) #UD; CR0 40033H (AM = 1) for the #AC lines. The hardware side is cases_quirks.txt.
+Add-Exp 'ptwrite_host_p' 'cases_ptwrite_host' 'ptwrite cpuid expect' @( '--host', '--cr0', '0x40033' )
+Add-Exp 'ptwrite_host_e' 'cases_ptwrite_host' 'ptwrite cpuid expect' @( '--host', '--host-core', 'E', '--cr0', '0x40033' )
+Add-Exp 'ptwrite_guest' 'cases_ptwrite_guest' 'ptwrite cpuid expect' @( '--guest', '--cr0', '0x40033' )
+Add-Exp 'ptwrite_vm' 'cases_ptwrite_guest' 'ptwrite cpuid expect' @( '--vm', '--cr0', '0x40033' )
+Add-Exp 'ptwrite_max' 'cases_ptwrite_guest' 'ptwrite expect' @( '--cr0', '0x40033' )
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'
