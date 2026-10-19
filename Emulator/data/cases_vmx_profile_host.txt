@@ -1,0 +1,72 @@
+# VMX under the platform profiles: expected-value cases (plan 1.J.59, ledger U1660-U1662, agent vmxprof, 2026-10-19;
+# user decision "Profiles enable VMX"). A strict CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 turns the
+# VMX model on (U1660); the platform switch also sets IA32_FEATURE_CONTROL as the firmware left it (U1661).
+# Sources: SDM 093 Vol3C 26.6 p. 26-2, 26.7 p. 26-3, 26.8 pp. 26-3 / 26-4, VMXON pp. 33-28 / 33-29, VMXOFF / VMPTRLD /
+# VMPTRST / VMCLEAR (33.3), 33.2 (VMsucceed / VMfailInvalid); Vol3D A.1 p. A-1, A.7 / A.8 p. A-7; Vol4 Table 2-2 3AH
+# p. 2-5. Specification-validated only (CPL0 VMX cannot run from the user-mode test host); capability values are
+# the model's (docs/vmx.md), NOT measured.
+# Raw Unicorn runs these at CPL0; the VMXON lines build an identity map of the 2-MByte page 30000000h (CODE, DATA,
+# MEM) in MEM (RSI - 8000h): PML4 +0, PDPT +1000h, PD +2000h, VMXON region +4000h, VMCS +5000h, m64 operands
+# +6000h / +6008h / +6010h, then CR4 |= PAE | VMXE, CR3, CR0 |= NE | PG.
+# Profile: --host: bare-host capture Host_clean_20261016 01H ECX 7FFAFBFFH (VMX = 1, SMX = 1), 07H ECX 98C027ACH (Key Locker = 1: IA32_VMX_PROCBASED_CTLS3[0] LOADIWKEY exiting).
+#   emu-alltest --cases Emulator\data\cases_vmx_profile_host.txt --host --expect-only                (suite vmx_prof_host_p)
+#   emu-alltest --cases Emulator\data\cases_vmx_profile_host.txt --host --host-core E --expect-only  (suite vmx_prof_host_e)
+# IA32_FEATURE_CONTROL = 5 (lock, VMX outside SMX) at engine start: the platform's firmware value (U1661; CPU-Z
+# MSR 3AH on every logical processor of both machines, E:\CPU Info; no CPL0 project capture yet).
+#
+# --- IA32_FEATURE_CONTROL: 5 (locked by the platform firmware); WRMSR to the locked MSR: #GP(0) (Vol4 3AH)
+rdmsr | rcx=0x3A =>! rax=0x5 rdx=0x0
+wrmsr | rcx=0x3A rax=0x5 rdx=0x0 => #GP(0)
+# --- CPUID.01H:ECX.VMX[5] = 1 (the profile) and CPUID.80000001H:ECX.SVM[2] = 0
+mov eax, 0x1; xor ecx, ecx; cpuid; mov r8, rcx; shr r8, 5; and r8, 1 =>! r8=1
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rcx; shr r8, 2; and r8, 1 =>! r8=0
+# --- IA32_EFER.SVME (bit 12) is reserved on an Intel processor (the model withdraws SVM with VMX, U1301): #GP(0)
+mov ecx, 0xC0000080; rdmsr; bts eax, 12; wrmsr =>! #GP(0)
+# --- MOV CR4 with VMXE = 1 (Vol3C 26.7 p. 26-3; reserved without VMX): accepted
+mov rax, cr4; bts rax, 13; mov cr4, rax; mov r8, cr4; shr r8, 13; and r8, 1 =>! r8=1
+# --- VMXON with CR4.VMXE = 0: #UD (VMXON p. 33-28); VMXOFF / VMPTRST outside VMX operation: #UD
+vmxon qword ptr [rsi] => #UD
+vmxoff => #UD
+vmptrst qword ptr [rsi] => #UD
+# --- VMX capability MSRs 480H-492H: the model's capability set (docs/vmx.md; not measured - the i5-13600K values are not captured), read-only
+rdmsr | rcx=0x480 =>! rax=0x1 rdx=0x1D81000
+rdmsr | rcx=0x481 =>! rax=0x16 rdx=0xFF
+rdmsr | rcx=0x482 =>! rax=0x401E172 rdx=0xFFFBFFFE
+rdmsr | rcx=0x483 =>! rax=0x36DFF rdx=0x7FEFFF
+rdmsr | rcx=0x484 =>! rax=0x11FF rdx=0xD3FF
+rdmsr | rcx=0x485 =>! rax=0x60040065 rdx=0x0
+rdmsr | rcx=0x486 =>! rax=0x80000021 rdx=0x0
+rdmsr | rcx=0x487 =>! rax=0xFFFFFFFF rdx=0x0
+rdmsr | rcx=0x488 =>! rax=0x2000 rdx=0x0
+rdmsr | rcx=0x489 =>! rax=0x3FF7FFF rdx=0x0
+rdmsr | rcx=0x48A =>! rax=0x3E rdx=0x0
+rdmsr | rcx=0x48B =>! rax=0x0 rdx=0xE557BFF
+rdmsr | rcx=0x48C =>! rax=0x67341C1 rdx=0xF01
+rdmsr | rcx=0x48D =>! rax=0x16 rdx=0xFF
+rdmsr | rcx=0x48E =>! rax=0x4006172 rdx=0xFFFBFFFE
+rdmsr | rcx=0x48F =>! rax=0x36DFB rdx=0x7FEFFF
+rdmsr | rcx=0x490 =>! rax=0x11FB rdx=0xD3FF
+rdmsr | rcx=0x491 =>! rax=0x1 rdx=0x0
+rdmsr | rcx=0x492 =>! rax=0x1 rdx=0x0
+# --- 493H (IA32_VMX_EXIT_CTLS2) does not exist (IA32_VMX_EXIT_CTLS[63] = 0): #GP(0); WRMSR 480H: #GP(0)
+rdmsr | rcx=0x493 => #GP(0)
+wrmsr | rcx=0x480 rax=0x1 rdx=0x01D81000 => #GP(0)
+# --- CPL0: paging (PAE, PG), CR4.VMXE, CR0.NE, VMXON with a valid region (revision 1) -> VMsucceed (CF = PF = AF = ZF = SF = OF = 0), VMXOFF -> VMsucceed
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8; vmxoff; pushfq; pop r9 =>! r8=0x202 r9=0x202
+# --- VMXON -> VMPTRLD (revision 1) -> VMPTRST stores the current-VMCS pointer -> VMCLEAR (current pointer invalid: VMPTRST stores FFFFFFFF_FFFFFFFFH) -> VMXOFF
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; mov dword ptr [rbx+0x5000], 1; lea rax, [rbx+0x5000]; mov [rbx+0x6008], rax; vmxon qword ptr [rbx+0x6000]; vmptrld qword ptr [rbx+0x6008]; pushfq; pop r8; vmptrst qword ptr [rbx+0x6010]; mov r10, [rbx+0x6010]; vmclear qword ptr [rbx+0x6008]; pushfq; pop r9; vmptrst qword ptr [rbx+0x6010]; mov r11, [rbx+0x6010]; vmxoff; pushfq; pop r12 =>! r8=0x202 r9=0x202 r10=0x30025000 r11=0xFFFFFFFFFFFFFFFF r12=0x202
+# --- VMfailInvalid (CF = 1, the other five flags 0; VMXON p. 33-28): wrong revision identifier
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 2; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8 =>! r8=0x203
+# --- VMfailInvalid: revision bit 31 = 1
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 0x80000001; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8 =>! r8=0x203
+# --- VMfailInvalid: VMXON pointer not 4-KByte aligned
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4008]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8 =>! r8=0x203
+# --- VMfailInvalid: VMXON pointer bit 52 set (beyond MAXPHYADDR: 46 bare host, 45 VMware guest)
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; mov rax, 1; shl rax, 52; lea rcx, [rbx+0x4000]; or rax, rcx; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8 =>! r8=0x203
+# --- #GP(0) at VMXON (R15 = 5AH: the fault is the VMXON, not an earlier MOV CR): CR0.NE = 0 (IA32_VMX_CR0_FIXED0 bit 5; Vol3C 26.8 p. 26-3)
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000000; or rax, rcx; mov cr0, rax; mov r15, 0x5A; vmxon qword ptr [rbx+0x6000] =>! #GP(0) r15=0x5A
+# --- VMXON in VMX root operation without a current VMCS: VMfailInvalid
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8 =>! r8=0x203
+# --- in VMX operation CR4.VMXE and CR0.NE are fixed to 1 (Vol3C 26.8): MOV CR4 / MOV CR0 clearing them #GP(0)
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; mov r15, 0x5A; mov rax, cr4; btr rax, 13; mov cr4, rax =>! #GP(0) r15=0x5A
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; mov r15, 0x5A; mov rax, cr0; btr rax, 5; mov cr0, rax =>! #GP(0) r15=0x5A

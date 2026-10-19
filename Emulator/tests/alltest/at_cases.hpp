@@ -938,6 +938,7 @@ namespace at
 				pe.avx512 = opt.avx512; pe.amx = opt.amx; pe.avx10 = opt.avx10; pe.apx = opt.apx; pe.x86_features = opt.x86_features;
 				pe.rdrand = opt.rdrand; pe.rdrand_seed = opt.rdrand_seed;
 				pe.smm_revision = platform_smm_revision( opt.platform );   // U1465
+				pe.feature_control = platform_feature_control( opt.platform );   // U1661
 				pe.xinuse_model = xinuse.model;   // U1481
 				uint64_t ex = 0, ec = 0;
 				std::string perr;
@@ -1250,6 +1251,7 @@ namespace at
 			uc.rdrand = opt.rdrand;   // U835
 			uc.rdrand_seed = opt.rdrand_seed;
 			uc.smm_revision = platform_smm_revision( opt.platform );   // U1465
+			uc.feature_control = platform_feature_control( opt.platform );   // U1661
 			uc.xinuse_model = xinuse.model;   // U1481
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;

@@ -1,0 +1,14 @@
+# VMX stays off without a strict CPUID profile (plan 1.J.59, ledger U1660 / U1662, agent vmxprof, 2026-10-19): the
+# default of UC_X86_FEATURE_VMX (docs/vmx.md) - CR4.VMXE reserved (#GP(0), Vol3A 2.5), the capability MSRs absent
+# (#GP(0), Vol3D Appendix A p. A-1), IA32_FEATURE_CONTROL bit 2 reserved (Vol4 Table 2-2 3AH p. 2-5: "If
+# CPUID.01H:ECX[5] = 1"), VMXON #UD (not decoded / CR4.VMXE = 0, VMXON p. 33-28).
+#   emu-alltest --cases Emulator\data\cases_vmx_noprofile.txt --expect-only                                                    (vmx_prof_off)
+#   emu-alltest --cases Emulator\data\cases_vmx_noprofile.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --no-strict --expect-only (vmx_prof_nonstrict)
+# (with --no-strict the profile reports VMX = 1 but only reports CPUID, U68: the engine keeps the model's features)
+#
+mov rax, cr4; bts rax, 13; mov cr4, rax =>! #GP(0)
+rdmsr | rcx=0x480 => #GP(0)
+rdmsr | rcx=0x489 => #GP(0)
+wrmsr | rcx=0x3A rax=0x5 rdx=0x0 => #GP(0)
+vmxon qword ptr [rsi] => #UD
+vmxoff => #UD

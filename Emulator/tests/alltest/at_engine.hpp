@@ -542,6 +542,17 @@ namespace at
 	{
 		return p == PLATFORM_HOST ? 0x00030101u : p == PLATFORM_GUEST ? 0x00030004u : 0u;
 	}
+	// U1661 (plan 1.J.59, docs/vmx.md "Platform profiles"): IA32_FEATURE_CONTROL (MSR 3AH) as the platform's firmware
+	// left it - "cleared to zero when a logical processor is reset", "to enable VMX support in a platform, BIOS must
+	// set bit 1, bit 2, or both ... as well as the lock bit" (SDM 093 Vol3C 26.7 p. 26-3). Both machines read 5 (lock +
+	// VMX outside SMX; VMX in SMX and the SENTER enables 15:8 clear) on every logical processor (CPU-Z MSR dumps,
+	// E:\CPU Info\cpuz-host and cpuz-vmguest: evidence, no CPL0 project capture yet); --AMD and no switch: 0 = not
+	// written (the engine's reset value 0). Written only where the engine models VMX for the profile (U1660: strict
+	// profile, no --apx), else bit 2 is reserved.
+	static uint64_t platform_feature_control( int p )
+	{
+		return p == PLATFORM_HOST || p == PLATFORM_GUEST ? 0x5u : 0u;
+	}
 	static void print_platform( int p )
 	{
 		switch ( p )
@@ -550,10 +561,12 @@ namespace at
 			std::printf( "platform profile: --host (physical i5-13600K, Raptor Lake-S); SMM revision 00030101h (Intel 64 map) - "
 						 "inferred from indirect evidence (coreboot 26.06 Alder/Raptor Lake em64t101 save-state code, class C), "
 						 "never read from the processor; Table 34-1 CPUs 00030004h, AMD 00030064h\n" );
+			std::printf( "platform firmware: IA32_FEATURE_CONTROL = 5 (lock, VMX outside SMX; CPU-Z MSR 3AH on every LP, evidence) at engine start where the engine models VMX (U1661)\n" );
 			break;
 		case PLATFORM_GUEST:
 			std::printf( "platform profile: --guest (VMware guest); SMM revision 00030004h (Intel 64 map) - documented minimum "
 						 "(SDM 093 34.7), the default approximation: no VMware-specific source; Table 34-1 CPUs 00030004h, AMD 00030064h\n" );
+			std::printf( "platform firmware: IA32_FEATURE_CONTROL = 5 (lock, VMX outside SMX; CPU-Z MSR 3AH on every LP, evidence) at engine start where the engine models VMX (U1661)\n" );
 			break;
 		case PLATFORM_AMD:
 			std::printf( "platform profile: --AMD; SMM revision 00030064h - documented (AMD APM Vol2 r3.45 Figure 10-3) for "
@@ -601,6 +614,14 @@ namespace at
 			// initialises it, UC_INIT): before, --host / --guest with a profile's "#@ microcode" line failed every case
 			// ("uc_ctl_set_x86_microcode failed")
 			if ( smm_revision ) { uc_err se = uc_ctl( uc_, UC_CTL_WRITE( UC_CTL_X86_SMM_REVISION, 1 ), smm_revision ); if ( se != UC_ERR_OK ) { err = std::string( "UC_CTL_X86_SMM_REVISION: " ) + uc_strerror( se ); return false; } }
+			// U1661: the platform's firmware IA32_FEATURE_CONTROL (platform_feature_control), before the first instruction;
+			// only where U1660 turned VMX on (a strict profile that reports VMX, no APX: VMX + APX is not modelled)
+			if ( feature_control && !cpuid.empty() && strict != 0 && !apx )
+			{
+				uc_x86_msr m{ 0x3a, feature_control };
+				uc_err fe = uc_reg_write( uc_, UC_X86_REG_MSR, &m );
+				if ( fe != UC_ERR_OK ) { err = std::string( "uc_reg_write IA32_FEATURE_CONTROL: " ) + uc_strerror( fe ); return false; }
+			}
 			if ( xcr0 ) uc_reg_write( uc_, UC_X86_REG_XCR0, &xcr0 );
 			// U1200 (ts_hooks): the thunk's prologue (FXRSTOR64, VINSERTI128) and epilogue (FXSAVE64,
 			// FNSTENV, ...) would raise #NM with CR0.TS = 1 (SDM 092 Vol3A 2.5: TS = 1 makes x87 / SSE /
@@ -877,6 +898,7 @@ namespace at
 		int rdrand = UC_X86_RDRAND_SEEDED;   // UC_CTL_X86_RDRAND (U835): --seeded (default) / --HostSeed
 		uint64_t rdrand_seed = 0;            // the seeded model's seed (--rdrand-seed N)
 		uint32_t smm_revision = 0;           // U1465: UC_CTL_X86_SMM_REVISION (0 = not written; --host / --guest)
+		uint64_t feature_control = 0;        // U1661: IA32_FEATURE_CONTROL at engine start (0 = not written; --host / --guest / --vm: 5)
 		int xinuse_model = 0;                // U1481: UC_CTL_X86_XINUSE_MODEL (0 = not written; choose_xinuse)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)

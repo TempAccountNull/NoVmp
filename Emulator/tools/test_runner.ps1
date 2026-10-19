@@ -528,6 +528,20 @@ Add-Exp 'gating_cet_host_e' 'cases_gating_host' 'gating cet cpuid expect' @( '--
 Add-Exp 'gating_cet_guest' 'cases_gating_guest' 'gating cet cpuid expect' @( '--guest' )
 Add-Exp 'gating_cet_vm' 'cases_gating_guest' 'gating cet cpuid expect' @( '--vm' )
 Add-Hw 'cases_gating_hw' 'hw gating'
+# U1660-U1662 (agent vmxprof, plan 1.J.59, your decision "Profiles enable VMX" 2026-10-19; notes\eread\V5_vmx_profiles.md):
+# a strict CPUID profile that reports VMX turns the VMX model on (U1660) and --host / --guest / --vm start with the platform's
+# IA32_FEATURE_CONTROL = 5 (U1661): CPL0 MOV CR4.VMXE -> VMXON -> VMPTRLD / VMPTRST / VMCLEAR -> VMXOFF, the #GP / #UD /
+# VMfailInvalid paths and the capability MSRs per platform switch; the same profiles through --cpuid (API path, FEATURE_CONTROL
+# reset 0: the lock / bit-2 rules); VMX stays off without a profile and with a non-strict one.
+Add-Exp 'vmx_prof_host_p' 'cases_vmx_profile_host' 'vmx cpuid expect' @( '--host' )
+Add-Exp 'vmx_prof_host_e' 'cases_vmx_profile_host' 'vmx cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'vmx_prof_guest' 'cases_vmx_profile_guest' 'vmx cpuid expect' @( '--guest' )
+Add-Exp 'vmx_prof_vm' 'cases_vmx_profile_guest' 'vmx cpuid expect' @( '--vm' )
+Add-Exp 'vmx_prof_api_host_p' 'cases_vmx_profile_api' 'vmx cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_i5-13600k_bare_host.txt' ) )
+Add-Exp 'vmx_prof_api_host_e' 'cases_vmx_profile_api' 'vmx cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_i5-13600k_bare_host_ecore.txt' ) )
+Add-Exp 'vmx_prof_api_guest' 'cases_vmx_profile_api' 'vmx cpuid expect' @( '--cpuid', $Cpuid )
+Add-Exp 'vmx_prof_off' 'cases_vmx_noprofile' 'vmx expect'
+Add-Exp 'vmx_prof_nonstrict' 'cases_vmx_noprofile' 'vmx cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
 Add-Suite 'gating_cases_check' 'gating tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\gen_gating_cases.py' ) @( '--check' )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )

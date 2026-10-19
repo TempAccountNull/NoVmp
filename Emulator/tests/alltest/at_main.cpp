@@ -465,6 +465,7 @@ namespace at
 		uc.rdrand = g_rdrand;
 		uc.rdrand_seed = g_rdrand_seed;
 		uc.smm_revision = platform_smm_revision( g_platform );   // U1465
+		uc.feature_control = platform_feature_control( g_platform );   // U1661
 		if ( g_copt )   // U1491: the run's CPUID profile (none without --host/--guest/--vm/--cpuid: unchanged)
 		{
 			uc.cpuid = g_copt->cpuid; uc.strict = g_copt->strict;

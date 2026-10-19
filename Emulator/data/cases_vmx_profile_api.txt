@@ -1,0 +1,39 @@
+# VMX under the platform profiles: expected-value cases (plan 1.J.59, ledger U1660-U1662, agent vmxprof, 2026-10-19;
+# user decision "Profiles enable VMX"). A strict CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 turns the
+# VMX model on (U1660); the platform switch also sets IA32_FEATURE_CONTROL as the firmware left it (U1661).
+# Sources: SDM 093 Vol3C 26.6 p. 26-2, 26.7 p. 26-3, 26.8 pp. 26-3 / 26-4, VMXON pp. 33-28 / 33-29, VMXOFF / VMPTRLD /
+# VMPTRST / VMCLEAR (33.3), 33.2 (VMsucceed / VMfailInvalid); Vol3D A.1 p. A-1, A.7 / A.8 p. A-7; Vol4 Table 2-2 3AH
+# p. 2-5. Specification-validated only (CPL0 VMX cannot run from the user-mode test host); capability values are
+# the model's (docs/vmx.md), NOT measured.
+# Raw Unicorn runs these at CPL0; the VMXON lines build an identity map of the 2-MByte page 30000000h (CODE, DATA,
+# MEM) in MEM (RSI - 8000h): PML4 +0, PDPT +1000h, PD +2000h, VMXON region +4000h, VMCS +5000h, m64 operands
+# +6000h / +6008h / +6010h, then CR4 |= PAE | VMXE, CR3, CR0 |= NE | PG.
+# API path (UC_CTL_X86_CPUID, strict by default; no platform switch, so IA32_FEATURE_CONTROL keeps its reset value 0,
+# Vol3C 26.7 p. 26-3 "cleared to zero when a logical processor is reset"):
+#   emu-alltest --cases Emulator\data\cases_vmx_profile_api.txt --cpuid Emulator\data\cpuid_i5-13600k_bare_host.txt --expect-only        (vmx_prof_api_host_p)
+#   emu-alltest --cases Emulator\data\cases_vmx_profile_api.txt --cpuid Emulator\data\cpuid_i5-13600k_bare_host_ecore.txt --expect-only  (vmx_prof_api_host_e)
+#   emu-alltest --cases Emulator\data\cases_vmx_profile_api.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --expect-only                  (vmx_prof_api_guest)
+#
+# --- CPUID.01H:ECX.VMX[5] = 1 (the profile) and CPUID.80000001H:ECX.SVM[2] = 0
+mov eax, 0x1; xor ecx, ecx; cpuid; mov r8, rcx; shr r8, 5; and r8, 1 =>! r8=1
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rcx; shr r8, 2; and r8, 1 =>! r8=0
+# --- IA32_EFER.SVME (bit 12) is reserved on an Intel processor (the model withdraws SVM with VMX, U1301): #GP(0)
+mov ecx, 0xC0000080; rdmsr; bts eax, 12; wrmsr =>! #GP(0)
+# --- MOV CR4 with VMXE = 1 (Vol3C 26.7 p. 26-3; reserved without VMX): accepted
+mov rax, cr4; bts rax, 13; mov cr4, rax; mov r8, cr4; shr r8, 13; and r8, 1 =>! r8=1
+# --- VMXON with CR4.VMXE = 0: #UD (VMXON p. 33-28); VMXOFF / VMPTRST outside VMX operation: #UD
+vmxon qword ptr [rsi] => #UD
+vmxoff => #UD
+vmptrst qword ptr [rsi] => #UD
+# --- IA32_FEATURE_CONTROL reset value 0; VMXON with the lock bit clear: #GP(0)
+rdmsr | rcx=0x3A =>! rax=0x0 rdx=0x0
+lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; mov r15, 0x5A; vmxon qword ptr [rbx+0x6000] =>! #GP(0) r15=0x5A
+# --- lock = 1, bit 2 (VMXON outside SMX) = 0: #GP(0)
+mov ecx, 0x3a; mov eax, 1; xor edx, edx; wrmsr; lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; mov r15, 0x5A; vmxon qword ptr [rbx+0x6000] =>! #GP(0) r15=0x5A
+# --- bit 2 = 1, lock = 0: #GP(0)
+mov ecx, 0x3a; mov eax, 4; xor edx, edx; wrmsr; lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; mov r15, 0x5A; vmxon qword ptr [rbx+0x6000] =>! #GP(0) r15=0x5A
+# --- lock = 1, bit 2 = 1 (what BIOS writes, Vol3C 26.7): VMXON / VMXOFF VMsucceed; afterwards WRMSR 3AH #GP(0)
+mov ecx, 0x3a; mov eax, 5; xor edx, edx; wrmsr; lea rbx, [rsi-0x8000]; lea rax, [rbx+0x1003]; mov [rbx], rax; lea rax, [rbx+0x2003]; mov [rbx+0x1000], rax; mov qword ptr [rbx+0x2c00], 0x30000083; mov dword ptr [rbx+0x4000], 1; lea rax, [rbx+0x4000]; mov [rbx+0x6000], rax; mov rax, cr4; or rax, 0x2020; mov cr4, rax; mov cr3, rbx; mov rax, cr0; mov ecx, 0x80000020; or rax, rcx; mov cr0, rax; vmxon qword ptr [rbx+0x6000]; pushfq; pop r8; vmxoff; pushfq; pop r9 =>! r8=0x202 r9=0x202
+mov ecx, 0x3a; mov eax, 5; xor edx, edx; wrmsr; rdmsr; mov r8, rax; wrmsr =>! #GP(0) r8=0x5
+# --- bits other than 0 / 2 (bit 1 needs SMX in the engine, UC_X86_FEATURE_SMX; bit 3 reserved): #GP(0)
+wrmsr | rcx=0x3A rax=0x8 rdx=0x0 => #GP(0)
