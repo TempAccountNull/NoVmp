@@ -35,6 +35,9 @@
 #   1FH.0 EDX P 00000000 E 00000030; 1FH.1 EDX P 00000000 E 00000030; 1FH.2 EDX P 00000000 E 00000030
 #   80000006H.0 ECX P 08007040 E 10008040
 # Recomputed by the emulator whatever the file says: 01H ECX[27] OSXSAVE and 07H.0 ECX[4] OSPKE (CR4), 0DH.0 EBX (XCR0, U125).
+# Erratum RPL016 (Intel spec update 740518 rev 031, No Fix): CPUID leaf 18H sub-leaf 4 EBX[31:16] reports 4 ways
+#   instead of 6 for the load DTLB. The 18H 04 row keeps the captured hardware value (EBX 00040001, 4 ways): a profile
+#   describes the processor as it reports itself (docs/quirks.md "Intel-documented errata").
 # Microcode identity ("#@ microcode REV platform-id N" -> UC_CTL_X86_MICROCODE in emu-alltest, U1473; other readers skip it):
 #   revision 129H = the capture's cpuid_GenuineIntel_06-B7-1_bare_host_system.txt "Update Revision ... (Intel bytes 7:4: 0x129)" on all 20
 #   processors (BIOS H.D0) and smmid microcode.revision 00000129 (registry); CPU-Z 3.01 host report E:\CPU Info\cpuz-host\CPU-info.txt

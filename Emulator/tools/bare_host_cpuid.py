@@ -379,6 +379,12 @@ def render(ev, key, prof, smm_n, diffs):
     for i in range(0, len(diffs), 3):
         a("#   " + "; ".join(diffs[i:i + 3]))
     a("# Recomputed by the emulator whatever the file says: 01H ECX[27] OSXSAVE and 07H.0 ECX[4] OSPKE (CR4), 0DH.0 EBX (XCR0, U125).")
+    dtlb = prof.get((0x18, 4))
+    if key == "P" and dtlb is not None and (dtlb[1] >> 16) == 4 and (dtlb[3] & 0x1F) == 4:
+        # U1731 (comment only, no data change): Intel erratum RPL016 explains this captured value
+        a("# Erratum RPL016 (Intel spec update 740518 rev 031, No Fix): CPUID leaf 18H sub-leaf 4 EBX[31:16] reports 4 ways")
+        a("#   instead of 6 for the load DTLB. The 18H 04 row keeps the captured hardware value (EBX %s, 4 ways): a profile" % h(dtlb[1]))
+        a("#   describes the processor as it reports itself (docs/quirks.md \"Intel-documented errata\").")
     a("# Microcode identity (\"#@ microcode REV platform-id N\" -> UC_CTL_X86_MICROCODE in emu-alltest, U1473; other readers skip it):")
     a("#   revision 129H = the capture's %s_system.txt \"Update Revision ... (Intel bytes 7:4: 0x129)\" on all 20" % HOST_STEM)
     a("#   processors (BIOS H.D0) and smmid microcode.revision 00000129 (registry); CPU-Z 3.01 host report E:\\CPU Info\\cpuz-host\\CPU-info.txt")

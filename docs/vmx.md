@@ -36,7 +36,7 @@ VM-instruction error 7) and their VMCS fields do not exist (VMREAD / VMWRITE: er
 
 | MSR | value | meaning (Appendix A) |
 |---|---|---|
-| 480H IA32_VMX_BASIC | 01D8_1000_0000_0001H | revision identifier 1 (our choice); VMCS / VMXON region 4096 bytes; bit 48 = 0 (full MAXPHYADDR); no dual-monitor treatment (49 = 0); memory type WB (53:50 = 6); INS/OUTS instruction information (54); TRUE_* MSRs (55); any hardware exception may be injected with or without an error code (56); nested-exception support (58) = 0 until the FRED-VMX stage |
+| 480H IA32_VMX_BASIC | 01D8_1000_0000_0001H | revision identifier 1 (our choice); VMCS / VMXON region 4096 bytes; bit 48 = 0 (full MAXPHYADDR); no dual-monitor treatment (49 = 0); memory type WB (53:50 = 6); INS/OUTS instruction information (54); TRUE_* MSRs (55); any hardware exception may be injected with or without an error code (56); nested-exception support (58) = 1 only with FRED (U1309, value 05D8_1000_0000_0001H; without FRED 0 - the value shown; U1733: this row said "0 until the FRED-VMX stage") |
 | 481H / 48DH PINBASED / TRUE_PINBASED | 0000_00FF_0000_0016H | external-interrupt exiting, NMI exiting, virtual NMIs, VMX-preemption timer, process posted interrupts; default1 bits 1, 2, 4 stay 1 |
 | 482H PROCBASED | FFFB_FFFE_0401_E172H | every primary control except bits 0 and 18 (reserved); tertiary controls (17) |
 | 48EH TRUE_PROCBASED | FFFB_FFFE_0400_6172H | as 482H; CR3-load / CR3-store exiting (15, 16) may be 0 |
@@ -50,7 +50,7 @@ VM-instruction error 7) and their VMCS fields do not exist (VMREAD / VMWRITE: er
 | 48AH VMCS_ENUM | 2 x the highest field index of the supported fields | Appendix A.9 |
 | 48CH EPT_VPID_CAP | 0000_0F01_0673_41C1H | execute-only, page-walk length 4 and 5, UC and WB paging-structure memory types, 2-MByte and 1-GByte pages, INVEPT (single-context, all-context), EPT A/D flags, advanced VM-exit information for EPT violations, INVVPID (all four types). Not offered: supervisor shadow-stack control (23), HLAT |
 | 491H VMFUNC | 1 | EPTP switching |
-| 493H EXIT_CTLS2 | does not exist (EXIT_CTLS[63] = 0) | |
+| 493H EXIT_CTLS2 | without FRED: does not exist (EXIT_CTLS[63] = 0); with FRED (U1309): EXIT_CTLS allowed-1 bit 31 (activate secondary controls) is set and 493H reads 3 (U1733: this row said "does not exist" unconditionally) | the allowed 1-settings of the secondary VM-exit controls: save FRED (0), load FRED (1) |
 
 ## Requirement-to-code mapping
 
@@ -64,7 +64,7 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | CPUID.01H:ECX.VMX[5] | Vol3C 26.6 p. 26-2; Vol2A CPUID Table 3-10 | `cpu.c` x86_cpu_realizefn (UC_X86_FEATURE_VMX) | done (U1301) |
 | CR4.VMXE (bit 13) settable only with VMX | Vol3A 2.5 p. 2-20; Vol3C 26.7 p. 26-3 | `cpu.h` cr4_reserved_bits | done (U1301) |
 | IA32_FEATURE_CONTROL lock / bit 1 (VMX in SMX) / bit 2 (VMX outside SMX), reset 0 | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `misc_helper.c` msr_present / msr_write_ok (existing U905 rules, enabled by CPUID.VMX) | done (U1301) |
-| capability MSRs 480H-492H: values above, R/O (#GP on WRMSR), absent without VMX (#GP on RDMSR), presence conditions of Table 2-2 | Vol3D Appendix A pp. A-1 to A-9; Vol4 Table 2-2 pp. 2-46 to 2-48 | `vmx_helper.c` x86_vmx_msr_exists / x86_vmx_msr_read; `misc_helper.c` msr_present / helper_rdmsr / msr_write_ok | done (U1301) |
+| capability MSRs 480H-492H (493H with FRED, U1309): values above, R/O (#GP on WRMSR), absent without VMX (#GP on RDMSR), presence conditions of Table 2-2 | Vol3D Appendix A pp. A-1 to A-9; Vol4 Table 2-2 pp. 2-46 to 2-48 | `vmx_helper.c` x86_vmx_msr_exists / x86_vmx_msr_read; `misc_helper.c` msr_present / helper_rdmsr / msr_write_ok | done (U1301) |
 | a strict CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 turns the model on (Intel 64 model, no APX; until the first instruction, then fixed) | SDM 093 Vol3C 26.6 p. 26-2 | `cpu.c` x86_cpu_vmx_profile_sync (from x86_cpu_realizefn and `unicorn.c` x86_cpuid_changed) | done (U1660) |
 | emu-alltest `--host` / `--guest` / `--vm`: IA32_FEATURE_CONTROL = 5 at engine start (platform firmware) | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `Emulator\tests\alltest\at_engine.hpp` platform_feature_control / open_configured | done (U1661) |
 
