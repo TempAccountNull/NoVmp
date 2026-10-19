@@ -4481,6 +4481,138 @@ void x86_cpu_vmx_profile_sync(X86CPU *cpu)
 }
 
 #endif /* __Use_Original_Qemu (U1660) */
+#if __Use_Original_Qemu != 1 /* ours (U1680) */
+/*
+ * NoVmp (ledger U1680, plan 1.J.61): which CR4 bits exist follows CPUID - "Not all flags in control register CR4 are
+ * implemented on all processors. With the exception of the PCE flag, they can be qualified with the CPUID
+ * instruction" (SDM 093 Vol3A 2.5.1 p. 2-21); MOV to CR4 "If an attempt is made to write a 1 to any reserved bit in
+ * CR4": #GP(0) (Vol2B MOV CR pp. 4-33 / 4-34); IA32_VMX_CR4_FIXED1 reports the bits allowed to be 1 (Vol3D A.8
+ * p. A-7). Before, only VMXE / FRED / LAM_SUP followed a strict UC_CTL_X86_CPUID profile and every other bit the CPU
+ * model: under --guest MOV CR4 accepted SMXE / KL / UINTR although the profile hides SMX, Key Locker and user
+ * interrupts, and CR4_FIXED1 reported them. Now with profile = true each CPUID-qualified bit also needs the profile's
+ * CPUID bit (x86_cpuid_profile_mask: ~0 without a strict profile, so nothing changes there):
+ *   01H EDX (ISE 319433-062 Table 1-6): VME -> VME, PVI; DE; PSE; TSC -> TSD; PAE; MCE; PGE; FXSR -> OSFXSR;
+ *     SSE -> OSXMMEXCPT (Vol3A 12.6 p. 12-8);
+ *   01H ECX (Table 1-5): PCID -> PCIDE; XSAVE -> OSXSAVE; SMX -> SMXE (U113); VMX -> VMXE (U1301 / U1660);
+ *   07H.0 EBX: FSGSBASE, SMEP, SMAP; ECX: UMIP, PKU -> PKE, LA57, KL (U100), PKS, CET_SS; EDX: UINTR (U104),
+ *     CET_IBT (CET with either, U114); 07H.1 EAX: FRED (U1170), LAM -> LAM_SUP (U1180).
+ * The bits the original mask leaves to every processor (VME..PGE, OSFXSR, OSXMMEXCPT, PCIDE) keep that model rule
+ * (profile = false: unchanged); PCE has no CPUID bit. profile = false gives the model alone, before any profile.
+ */
+uint64_t x86_cr4_reserved(CPUX86State *env, bool profile)
+{
+    /* the profile's feature words; ~0 = no restriction (no strict profile, or the model alone) */
+    uint32_t p1c = ~0u, p1d = ~0u, p7b = ~0u, p7c = ~0u, p7d = ~0u;
+    uint64_t r = CR4_RESERVED_MASK;
+    bool fred, lam, vmx;
+
+    if (profile && env->uc && env->uc->x86_cpuid_strict && env->uc->x86_cpuid_count) {
+        p1c = x86_cpuid_profile_mask(env, 1, 0, 2);
+        p1d = x86_cpuid_profile_mask(env, 1, 0, 3);
+        p7b = x86_cpuid_profile_mask(env, 7, 0, 1);
+        p7c = x86_cpuid_profile_mask(env, 7, 0, 2);
+        p7d = x86_cpuid_profile_mask(env, 7, 0, 3);
+    }
+    /* the bits CR4_RESERVED_MASK allows on every model: reserved when the profile does not enumerate them */
+    if (!(p1d & CPUID_VME)) {
+        r |= CR4_VME_MASK | CR4_PVI_MASK;
+    }
+    if (!(p1d & CPUID_DE)) {
+        r |= CR4_DE_MASK;
+    }
+    if (!(p1d & CPUID_PSE)) {
+        r |= CR4_PSE_MASK;
+    }
+    if (!(p1d & CPUID_TSC)) {
+        r |= CR4_TSD_MASK;
+    }
+    if (!(p1d & CPUID_PAE)) {
+        r |= CR4_PAE_MASK;
+    }
+    if (!(p1d & CPUID_MCE)) {
+        r |= CR4_MCE_MASK;
+    }
+    if (!(p1d & CPUID_PGE)) {
+        r |= CR4_PGE_MASK;
+    }
+    if (!(p1d & CPUID_FXSR)) {
+        r |= CR4_OSFXSR_MASK;
+    }
+    if (!(p1d & CPUID_SSE)) {
+        r |= CR4_OSXMMEXCPT_MASK;
+    }
+    if (!(p1c & CPUID_EXT_PCID)) {
+        r |= CR4_PCIDE_MASK;
+    }
+    /* the model's conditions (QEMU: OSXSAVE with any XSAVE feature word bit, as before), each also on the profile */
+    if (!env->features[FEAT_XSAVE] || !(p1c & CPUID_EXT_XSAVE)) {
+        r |= CR4_OSXSAVE_MASK;
+    }
+    if (!(env->features[FEAT_7_0_EBX] & p7b & CPUID_7_0_EBX_SMEP)) {
+        r |= CR4_SMEP_MASK;
+    }
+    if (!(env->features[FEAT_7_0_EBX] & p7b & CPUID_7_0_EBX_SMAP)) {
+        r |= CR4_SMAP_MASK;
+    }
+    if (!(env->features[FEAT_7_0_EBX] & p7b & CPUID_7_0_EBX_FSGSBASE)) {
+        r |= CR4_FSGSBASE_MASK;
+    }
+    if (!(env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_PKU)) {
+        r |= CR4_PKE_MASK;
+    }
+    if (!(env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_LA57)) {
+        r |= CR4_LA57_MASK;
+    }
+    if (!(env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_UMIP)) {
+        r |= CR4_UMIP_MASK;
+    }
+    if (!(env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_PKS)) {
+        r |= CR4_PKS_MASK;
+    }
+    /* the bits CR4_RESERVED_MASK reserves, allowed with their CPUID bit (U100 / U104 / U114 / U113) */
+    if (env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_KeyLocker) {
+        r &= ~(uint64_t)CR4_KL_MASK;
+    }
+    if (env->features[FEAT_7_0_EDX] & p7d & CPUID_7_0_EDX_UINTR) {
+        r &= ~(uint64_t)CR4_UINTR_MASK;
+    }
+    if ((env->features[FEAT_7_0_ECX] & p7c & CPUID_7_0_ECX_CET_SHSTK) ||
+        (env->features[FEAT_7_0_EDX] & p7d & CPUID_7_0_EDX_CET_IBT)) {
+        r &= ~(uint64_t)CR4_CET_MASK;
+    }
+    if (env->features[FEAT_1_ECX] & p1c & CPUID_EXT_SMX) {
+        r &= ~(uint64_t)CR4_SMXE_MASK;
+    }
+    /* U1170 / U1180 / U1301: their predicates already apply the profile; the model alone without it */
+    fred = profile ? x86_fred_cpuid(env) : (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_FRED) != 0;
+    lam = profile ? x86_lam_cpuid(env) : (env->features[FEAT_7_1_EAX] & CPUID_7_1_EAX_LAM) != 0;
+    vmx = profile ? x86_vmx_cpuid(env) : (env->features[FEAT_1_ECX] & CPUID_EXT_VMX) != 0;
+    if (fred) {
+        r &= ~CR4_FRED_MASK;
+    }
+    if (lam) {
+        r &= ~(uint64_t)CR4_LAM_SUP_MASK;
+    }
+    if (vmx) {
+        r &= ~(uint64_t)CR4_VMXE_MASK;
+    }
+    return r;
+}
+
+/*
+ * The CR4 bits the model supports and the strict profile hides. cpu_x86_update_cr4 drops them as it drops the bits
+ * the model lacks (helper.c), so the reset CR4 (the OS-environment value of U67 / U100 / U104, unicorn.c reg_reset and
+ * x86_cpu_reset_hold) and a profile installed after the engine started (unicorn.c x86_cpuid_changed) leave them clear.
+ */
+uint64_t x86_cr4_profile_hidden(CPUX86State *env)
+{
+    if (!env->uc || !env->uc->x86_cpuid_strict || !env->uc->x86_cpuid_count) {
+        return 0;
+    }
+    return x86_cr4_reserved(env, true) & ~x86_cr4_reserved(env, false);
+}
+
+#endif /* __Use_Original_Qemu (U1680) */
 #if __Use_Original_Qemu != 1 /* ours (U860) */
 /*
  * NoVmp (ledger U860): SDM Vol1 8.1.8 ties the x87 data pointer and the FCS/FDS selectors to

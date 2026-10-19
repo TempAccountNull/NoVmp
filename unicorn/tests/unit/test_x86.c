@@ -7616,6 +7616,12 @@ static void test_x86_smx_pconfig_sgx(void)
     OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
     nv_profile7(&r, 0, 0, 0);
     OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
+    /* U1681: the strict profile hides SMX, so CR4.SMXE is reserved and installing the profile clears it (U1680);
+       written through the API again (a raw register write keeps it), GETSEC is still #UD */
+    TEST_CHECK(!(cr4 & 0x4000));
+    cr4 |= 0x4000;
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR4, &cr4));
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR4, &cr4));
     TEST_CHECK(cr4 & 0x4000);
     uc_assert_err(UC_ERR_INSN_INVALID, nv_run(&r, "\x0f\x37"));
     OK(uc_close(r.uc));
@@ -44317,23 +44323,23 @@ static void vpf_profile_checks(const uc_x86_cpuid *p, uint64_t fixed1, int late)
     OK(uc_close(c.uc));
 }
 
-/* IA32_VMX_CR4_FIXED1 expected (A.8: every CR4 bit the CPU model supports) */
-static uint64_t vpf_fixed1_expected(void)
+/* IA32_VMX_CR4_FIXED1 expected (A.8: every CR4 bit the CPU supports) */
+static uint64_t vpf_fixed1_expected(const uc_x86_cpuid *p)
 {
     /*
-     * cr4_reserved_bits takes the CR4 bits from the MAX model's features (VMXE, FRED and LAM_SUP from the
-     * profile-aware predicates): VME..PCE (8:0), OSFXSR, OSXMMEXCPT, UMIP, LA57, VMXE, SMXE (the MAX model reports
-     * SMX, U113), FSGSBASE, PCIDE, OSXSAVE, KL, SMEP, SMAP, PKE, CET, PKS, UINTR; no FRED (32) / LAM_SUP (28)
-     * without their opt-ins. The same on both profiles (V5 note: the profile does not narrow these bits).
+     * The MAX model's CR4 bits VME..PCE (8:0), OSFXSR, OSXMMEXCPT, UMIP, LA57, VMXE, SMXE (the MAX model reports
+     * SMX, U113), FSGSBASE, PCIDE, OSXSAVE, KL, SMEP, SMAP, PKE, CET, PKS, UINTR = 03FF7FFFH (no FRED (32) / LAM_SUP
+     * (28) without their opt-ins), U1681 (plan 1.J.61): restricted to the bits the strict profile enumerates (U1680,
+     * cr4p_ tests) - --guest less LA57, SMXE, KL, UINTR; --host less LA57, UINTR. Was 03FF7FFFH on both (U1662).
      */
-    return 0x03ff7fffull;
+    return p == vpf_host ? 0x01ff6fffull : 0x01f72fffull;
 }
 
 /* U1660: VMX from the --guest / --host rows, profile installed before the engine started */
 static void test_x86_vpf_profiles(void)
 {
-    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(), 0);
-    vpf_profile_checks(vpf_host, vpf_fixed1_expected(), 0);
+    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(vpf_guest), 0);
+    vpf_profile_checks(vpf_host, vpf_fixed1_expected(vpf_host), 0);
 }
 
 /*
@@ -44346,7 +44352,7 @@ static void test_x86_vpf_profile_timing(void)
     PcCtx c;
     uint32_t r[4];
 
-    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(), 1);
+    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(vpf_guest), 1);
 
     /* installed, then removed before the first instruction: the model without VMX, SVM back */
     vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 1, -1, 0, 0);
@@ -44885,6 +44891,249 @@ static void test_x86_pk_msr35(void)
     }
 }
 /* ---- end U1690-U1692 (pk_) ---- */
+
+/*
+ * ---- NoVmp U1680-U1689 (agent cr4prof, plan 1.J.61): helper prefix cr4p_ ----
+ * U1680: the CR4 bits a strict UC_CTL_X86_CPUID profile does not enumerate are reserved, as on a processor that
+ * reports that CPUID: "Not all flags in control register CR4 are implemented on all processors. With the
+ * exception of the PCE flag, they can be qualified with the CPUID instruction" (SDM 093 Vol3A 2.5.1 p. 2-21);
+ * MOV to CR4 "If an attempt is made to write a 1 to any reserved bit in CR4": #GP(0) (Vol2B MOV CR pp. 4-33 /
+ * 4-34); IA32_VMX_CR4_FIXED1 reports such a bit 0 ("fixed to 0 in VMX operation", Vol3D A.8 p. A-7) and VMXON
+ * refuses a CR4 that holds one (Vol3C 26.8 p. 26-3); the engine's reset CR4 (the OS-environment value, U67 /
+ * U100 / U104) does not set it. The CPUID bit of each CR4 bit: ISE 319433-062 Tables 1-5 / 1-6 (01H: VME -> VME,
+ * PVI; DE; PSE; TSC -> TSD; PAE; MCE; PGE; FXSR -> OSFXSR; PCID -> PCIDE; XSAVE -> OSXSAVE), Vol3A 12.6 p. 12-8
+ * (SSE -> OSXMMEXCPT), SMX -> SMXE (U113), KL (U100), UINTR (U104), CET_SS / CET_IBT -> CET (U114), 07H.0 EBX /
+ * ECX (FSGSBASE, SMEP, SMAP, UMIP, PKU -> PKE, LA57, PKS). Without a profile and with a non-strict one: the CPU
+ * model as before. Rows: vpf_guest / vpf_host (verbatim from the profile files, U1662).
+ */
+
+/* the expected values per profile: reset CR4 and IA32_VMX_CR4_FIXED1 (MAX model 03FF7FFFH less the hidden bits) */
+#define CR4P_RESET_MODEL   0x020d0600ull   /* OSFXSR OSXMMEXCPT FSGSBASE OSXSAVE KL UINTR (the MAX model) */
+#define CR4P_RESET_GUEST   0x00050600ull   /* no KL (07H.0:ECX[23] = 0), no UINTR (07H.0:EDX[5] = 0) */
+#define CR4P_RESET_HOST    0x000d0600ull   /* KL (ECX[23] = 1), no UINTR */
+#define CR4P_FIXED1_MODEL  0x03ff7fffull
+#define CR4P_FIXED1_GUEST  0x01f72fffull   /* less LA57 (12), SMXE (14), KL (19), UINTR (25) */
+#define CR4P_FIXED1_HOST   0x01ff6fffull   /* less LA57 (12), UINTR (25) */
+
+/* a 64-bit CPL0 engine of the MAX model with the profile p (n rows, strict by default) before / after init */
+static void cr4p_open(PcCtx *c, const uc_x86_cpuid *p, size_t n, int late, int strict)
+{
+    vpf_open(c, UC_CPU_X86_MAX, p, n, late, strict, 0, 0);
+}
+
+/* MOV CR4 setting bit(s) b by the CPU after clearing them (both must be accepted): -1, else the vector */
+static int cr4p_set(PcCtx *c, uint64_t b)
+{
+    uint64_t cr4 = pc_get(c, UC_X86_REG_CR4);
+    int r = vmx_mov_cr4(c, cr4 & ~b);
+
+    if (r != -1) {
+        return r;
+    }
+    r = vmx_mov_cr4(c, cr4 | b);
+    if (r == -1) {
+        TEST_CHECK((pc_get(c, UC_X86_REG_CR4) & b) == b);
+    }
+    return r;
+}
+
+/* one profile: reset CR4, every CR4 bit accepted or #GP(0) as the expected FIXED1 says, FIXED1 itself, VMXON */
+static void cr4p_profile(const uc_x86_cpuid *p, int late, uint64_t reset, uint64_t fixed1)
+{
+    PcCtx c;
+    uint64_t v, fl, cr4;
+    int b, r;
+
+    cr4p_open(&c, p, VPF_N, late, -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == reset);
+    TEST_MSG("reset CR4 %llx, expected %llx (late %d)", (unsigned long long)pc_get(&c, UC_X86_REG_CR4),
+             (unsigned long long)reset, late);
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && v == fixed1);
+    TEST_MSG("IA32_VMX_CR4_FIXED1 %llx, expected %llx (late %d)", (unsigned long long)v,
+             (unsigned long long)fixed1, late);
+    OK(uc_close(c.uc));
+
+    /* each CR4 bit 0-31 on its own engine: settable exactly when FIXED1 has it (LA57 and CET aside, below) */
+    for (b = 0; b < 32; b++) {
+        if (b == 12 || b == 23) {
+            continue;   /* LA57: not modifiable in IA-32e mode (#GP either way); CET: needs CR0.WP, below */
+        }
+        cr4p_open(&c, p, VPF_N, late, -1);
+        r = cr4p_set(&c, 1ull << b);
+        TEST_CHECK(r == (((fixed1 >> b) & 1) ? -1 : 13));
+        TEST_MSG("CR4 bit %d: %d, expected %d", b, r, ((fixed1 >> b) & 1) ? -1 : 13);
+        OK(uc_close(c.uc));
+    }
+    cr4p_open(&c, p, VPF_N, late, -1);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);   /* CR0.WP for CR4.CET */
+    TEST_CHECK(cr4p_set(&c, 1ull << 23) == (((fixed1 >> 23) & 1) ? -1 : 13));
+    OK(uc_close(c.uc));
+    cr4p_open(&c, p, VPF_N, late, -1);              /* CR4.FRED (32): not enumerated by either profile */
+    TEST_CHECK(cr4p_set(&c, 1ull << 32) == 13);
+    OK(uc_close(c.uc));
+
+    /* VMXON checks CR4 against FIXED1: a CR4 holding a bit FIXED1 lacks (written through the API) is #GP(0) */
+    cr4p_open(&c, p, VPF_N, late, -1);
+    vpf_root(&c, 5);
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    pc_set(&c, UC_X86_REG_CR4, cr4 | (1ull << 25));    /* UINTR: hidden by both profiles */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
+    pc_set(&c, UC_X86_REG_CR4, cr4);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);
+    OK(uc_close(c.uc));
+}
+
+/* U1680: --guest and --host rows, the profile installed before the engine started and after (before any instruction) */
+static void test_x86_cr4p_profiles(void)
+{
+    cr4p_profile(vpf_guest, 0, CR4P_RESET_GUEST, CR4P_FIXED1_GUEST);
+    cr4p_profile(vpf_guest, 1, CR4P_RESET_GUEST, CR4P_FIXED1_GUEST);
+    cr4p_profile(vpf_host, 0, CR4P_RESET_HOST, CR4P_FIXED1_HOST);
+    cr4p_profile(vpf_host, 1, CR4P_RESET_HOST, CR4P_FIXED1_HOST);
+}
+
+/* a CPUID bit of a profile row and the CR4 bit(s) it enumerates */
+typedef struct Cr4pFeat {
+    int row;            /* index into vpf_host: 1 = leaf 01H, 2 = leaf (07H,0) */
+    int reg;            /* 0 EAX, 1 EBX, 2 ECX, 3 EDX */
+    uint32_t bit;
+    uint64_t cr4;
+    const char *name;
+} Cr4pFeat;
+
+static const Cr4pFeat cr4p_feats[] = {
+    {1, 3, 1u << 1, 0x3, "VME: CR4.VME, CR4.PVI"},
+    {1, 3, 1u << 2, 1u << 3, "DE"},
+    {1, 3, 1u << 3, 1u << 4, "PSE"},
+    {1, 3, 1u << 4, 1u << 2, "TSC: CR4.TSD"},
+    {1, 3, 1u << 6, 1u << 5, "PAE"},
+    {1, 3, 1u << 7, 1u << 6, "MCE"},
+    {1, 3, 1u << 13, 1u << 7, "PGE"},
+    {1, 3, 1u << 24, 1u << 9, "FXSR: CR4.OSFXSR"},
+    {1, 3, 1u << 25, 1u << 10, "SSE: CR4.OSXMMEXCPT"},
+    {1, 2, 1u << 6, 1u << 14, "SMX: CR4.SMXE"},
+    {1, 2, 1u << 17, 1u << 17, "PCID: CR4.PCIDE"},
+    {1, 2, 1u << 26, 1u << 18, "XSAVE: CR4.OSXSAVE"},
+    {2, 1, 1u << 0, 1u << 16, "FSGSBASE"},
+    {2, 1, 1u << 7, 1u << 20, "SMEP"},
+    {2, 1, 1u << 20, 1u << 21, "SMAP"},
+    {2, 2, 1u << 2, 1u << 11, "UMIP"},
+    {2, 2, 1u << 3, 1u << 22, "PKU: CR4.PKE"},
+    {2, 2, 1u << 23, 1u << 19, "KL"},
+    {2, 2, 1u << 31, 1u << 24, "PKS"},
+};
+
+/*
+ * U1680: every CPUID-enumerated CR4 bit on its own: the --host rows with that one feature bit cleared make the
+ * CR4 bit(s) reserved (MOV CR4 #GP(0), absent from FIXED1 and from the reset CR4); with the rows as captured the
+ * bit is settable. CET needs both CET_SS and CET_IBT hidden; UINTR and LA57, which the --host rows hide, come
+ * back when the rows enumerate them (the MAX model has both).
+ */
+static void test_x86_cr4p_each_bit(void)
+{
+    uc_x86_cpuid rows[VPF_N];
+    PcCtx c;
+    uint64_t v, b;
+    size_t i;
+
+    for (i = 0; i < sizeof(cr4p_feats) / sizeof(cr4p_feats[0]); i++) {
+        const Cr4pFeat *f = &cr4p_feats[i];
+        uint32_t *w;
+
+        memcpy(rows, vpf_host, sizeof(rows));
+        w = f->reg == 0 ? &rows[f->row].eax : f->reg == 1 ? &rows[f->row].ebx :
+            f->reg == 2 ? &rows[f->row].ecx : &rows[f->row].edx;
+        *w &= ~f->bit;
+        cr4p_open(&c, rows, VPF_N, 0, -1);
+        TEST_CHECK(!(pc_get(&c, UC_X86_REG_CR4) & f->cr4));
+        TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && !(v & f->cr4));
+        TEST_MSG("%s hidden: CR4 %llx, FIXED1 %llx", f->name, (unsigned long long)pc_get(&c, UC_X86_REG_CR4),
+                 (unsigned long long)v);
+        OK(uc_close(c.uc));
+        for (b = 1; b; b <<= 1) {
+            if (!(f->cr4 & b)) {
+                continue;
+            }
+            cr4p_open(&c, rows, VPF_N, 0, -1);
+            TEST_CHECK(vmx_mov_cr4(&c, pc_get(&c, UC_X86_REG_CR4) | b) == 13);
+            TEST_MSG("%s hidden: MOV CR4 bit %llx", f->name, (unsigned long long)b);
+            OK(uc_close(c.uc));
+            cr4p_open(&c, vpf_host, VPF_N, 0, -1);
+            TEST_CHECK(cr4p_set(&c, b) == -1);
+            TEST_MSG("%s enumerated: MOV CR4 bit %llx", f->name, (unsigned long long)b);
+            OK(uc_close(c.uc));
+        }
+    }
+
+    /* CET: reserved only with CET_SS (07H.0:ECX[7]) and CET_IBT (07H.0:EDX[20]) both hidden */
+    memcpy(rows, vpf_host, sizeof(rows));
+    rows[2].ecx &= ~(1u << 7);
+    cr4p_open(&c, rows, VPF_N, 0, -1);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);
+    TEST_CHECK(cr4p_set(&c, 1ull << 23) == -1);                 /* CET_IBT alone */
+    OK(uc_close(c.uc));
+    rows[2].edx &= ~(1u << 20);
+    cr4p_open(&c, rows, VPF_N, 0, -1);
+    pc_set(&c, UC_X86_REG_CR0, pc_get(&c, UC_X86_REG_CR0) | 0x10000);
+    TEST_CHECK(vmx_mov_cr4(&c, pc_get(&c, UC_X86_REG_CR4) | (1ull << 23)) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && !(v & (1ull << 23)));
+    OK(uc_close(c.uc));
+
+    /* UINTR (07H.0:EDX[5]) and LA57 (07H.0:ECX[16]) enumerated: back in FIXED1, UINTR in the reset CR4 and settable */
+    memcpy(rows, vpf_host, sizeof(rows));
+    rows[2].edx |= 1u << 5;
+    rows[2].ecx |= 1u << 16;
+    cr4p_open(&c, rows, VPF_N, 0, -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == (CR4P_RESET_HOST | (1ull << 25)));
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && v == (CR4P_FIXED1_HOST | (1ull << 25) | (1ull << 12)));
+    TEST_MSG("FIXED1 %llx", (unsigned long long)v);
+    TEST_CHECK(cr4p_set(&c, 1ull << 25) == -1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1680 regression guard: without a profile and with a non-strict one the CPU model decides as before (reset CR4
+ * 020D0600H, SMXE / KL / UINTR settable; FIXED1 03FF7FFFH with the UC_X86_FEATURE_VMX opt-in); removing the profile
+ * or switching strict off keeps the guest's CR4 (never widened), switching strict on again before the first
+ * instruction narrows it
+ */
+static void test_x86_cr4p_off(void)
+{
+    PcCtx c;
+    uint64_t v;
+
+    cr4p_open(&c, NULL, 0, 0, -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_MODEL);
+    TEST_CHECK(cr4p_set(&c, (1ull << 14) | (1ull << 19) | (1ull << 25)) == -1);
+    OK(uc_close(c.uc));
+
+    cr4p_open(&c, vpf_guest, VPF_N, 0, 0);                     /* non-strict: CPUID reporting only */
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_MODEL);
+    TEST_CHECK(cr4p_set(&c, (1ull << 14) | (1ull << 19) | (1ull << 25)) == -1);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, UC_X86_FEATURE_VMX, 0);
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && v == CR4P_FIXED1_MODEL);
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, 0, UC_X86_FEATURE_VMX, 0);   /* non-strict + opt-in */
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && v == CR4P_FIXED1_MODEL);
+    OK(uc_close(c.uc));
+
+    /* strict profile installed, then strict off before the first instruction: CR4 stays narrowed, bits settable */
+    cr4p_open(&c, vpf_guest, VPF_N, 1, -1);
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_GUEST);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_GUEST);
+    TEST_CHECK(cr4p_set(&c, 1ull << 25) == -1);
+    OK(uc_close(c.uc));
+    cr4p_open(&c, vpf_guest, VPF_N, 0, 0);                     /* non-strict, then strict: narrowed */
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_MODEL);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    TEST_CHECK(pc_get(&c, UC_X86_REG_CR4) == CR4P_RESET_GUEST);
+    TEST_CHECK(vmx_mov_cr4(&c, pc_get(&c, UC_X86_REG_CR4) | (1ull << 25)) == 13);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1680-U1689 (cr4p_) ---- */
 
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
@@ -45462,4 +45711,7 @@ TEST_LIST = {
     {"test_x86_pk_xrstor_rights", test_x86_pk_xrstor_rights},
     {"test_x86_pk_modes", test_x86_pk_modes},
     {"test_x86_pk_msr35", test_x86_pk_msr35},
+    {"test_x86_cr4p_profiles", test_x86_cr4p_profiles},
+    {"test_x86_cr4p_each_bit", test_x86_cr4p_each_bit},
+    {"test_x86_cr4p_off", test_x86_cr4p_off},
     {NULL, NULL}};

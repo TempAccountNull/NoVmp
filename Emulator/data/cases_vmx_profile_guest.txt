@@ -38,7 +38,8 @@ rdmsr | rcx=0x485 =>! rax=0x60040065 rdx=0x0
 rdmsr | rcx=0x486 =>! rax=0x80000021 rdx=0x0
 rdmsr | rcx=0x487 =>! rax=0xFFFFFFFF rdx=0x0
 rdmsr | rcx=0x488 =>! rax=0x2000 rdx=0x0
-rdmsr | rcx=0x489 =>! rax=0x3FF7FFF rdx=0x0
+# 489H IA32_VMX_CR4_FIXED1: the CR4 bits the profile enumerates (U1680 / U1681, plan 1.J.61): the model's 03FF7FFFH less LA57, SMXE, KL, UINTR
+rdmsr | rcx=0x489 =>! rax=0x1F72FFF rdx=0x0
 rdmsr | rcx=0x48A =>! rax=0x3E rdx=0x0
 rdmsr | rcx=0x48B =>! rax=0x0 rdx=0xE557BFF
 rdmsr | rcx=0x48C =>! rax=0x67341C1 rdx=0xF01

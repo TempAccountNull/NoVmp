@@ -2570,6 +2570,16 @@ static void x86_cpuid_changed(struct uc_struct *uc)
     /* NoVmp (ledger U1660): VMX follows a strict profile that reports it, until the first instruction */
     x86_cpu_vmx_profile_sync(X86_CPU(uc->cpu));
 #endif /* __Use_Original_Qemu (U1660) */
+#if __Use_Original_Qemu != 1 /* ours (U1680) */
+    /*
+     * NoVmp (ledger U1680, plan 1.J.61): the CR4 bits a new strict profile hides become reserved; CR4 drops them as at
+     * reset (cpu_x86_update_cr4). Like XCR0 above it is only narrowed, never widened: removing the profile or turning
+     * strict off leaves CR4 as it is (U1441). After the first instruction a strict profile cannot be installed (U1580).
+     */
+    if (env->cr[4] & x86_cr4_profile_hidden(env)) {
+        cpu_x86_update_cr4(env, env->cr[4]);
+    }
+#endif /* __Use_Original_Qemu (U1680) */
 }
 
 #endif /* __Use_Original_Qemu (U120) */

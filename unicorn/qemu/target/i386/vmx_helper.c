@@ -480,7 +480,7 @@ bool x86_vmx_msr_read(CPUX86State *env, uint32_t msr, uint64_t *val)
         *val = VMX_CR4_FIXED0;
         break;
     case MSR_IA32_VMX_CR4_FIXED1:
-        *val = ~cr4_reserved_bits(env);       /* every CR4 bit the CPU model supports (A.8) */
+        *val = ~cr4_reserved_bits(env);       /* every CR4 bit the CPU supports (A.8): the model as a strict profile reports it (U1680) */
         break;
     case MSR_IA32_VMX_VMCS_ENUM:
         *val = vmx_vmcs_enum(env);

@@ -280,6 +280,15 @@ void cpu_x86_update_cr4(CPUX86State *env, uint64_t new_cr4)
 #if defined(DEBUG_MMU)
     printf("CR4 update: %08x -> %08x\n", (uint32_t)env->cr[4], new_cr4);
 #endif
+#if __Use_Original_Qemu != 1 /* ours (U1680) */
+    /*
+     * NoVmp (ledger U1680, plan 1.J.61; cpu.c x86_cr4_reserved): a CR4 bit a strict CPUID profile hides is reserved
+     * like one the model lacks, and is dropped here as the model-specific bits below are - the reset CR4 (the
+     * OS-environment value, U67 / U100 / U104), RSM and a profile installed later keep it clear. MOV to CR4 has raised
+     * #GP(0) for it before (misc_helper.c). Without a strict profile x86_cr4_profile_hidden is 0: unchanged.
+     */
+    new_cr4 &= ~x86_cr4_profile_hidden(env);
+#endif /* __Use_Original_Qemu (U1680) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U878) */
     if ((new_cr4 ^ env->cr[4]) &
         (CR4_PGE_MASK | CR4_PAE_MASK | CR4_PSE_MASK |

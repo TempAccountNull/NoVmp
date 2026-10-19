@@ -3874,6 +3874,7 @@ static inline bool x86_vmx_ept_active(const CPUX86State *env)
     return env->vmx.nonroot && (env->vmx.proc2 & (1u << 1));
 }
 #endif /* __Use_Original_Qemu (U1434) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1680) */
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {
     uint64_t reserved_bits = CR4_RESERVED_MASK;
@@ -3902,51 +3903,23 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
     if (!(env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_PKS)) {
         reserved_bits |= CR4_PKS_MASK;
     }
-#if __Use_Original_Qemu != 1 /* ours (U100) */
-    /* CR4.KL exists if CPUID.(07H,0):ECX.KL = 1 (Key Locker spec 1.3) */
-    if (env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_KeyLocker) {
-        reserved_bits &= ~(uint64_t)CR4_KL_MASK;
-    }
-#endif /* __Use_Original_Qemu (U100) */
-#if __Use_Original_Qemu != 1 /* ours (U104) */
-    /* CR4.UINTR exists if CPUID.(07H,0):EDX.UINTR = 1 (SDM Vol3A 9.2) */
-    if (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_UINTR) {
-        reserved_bits &= ~(uint64_t)CR4_UINTR_MASK;
-    }
-#endif /* __Use_Original_Qemu (U104) */
-#if __Use_Original_Qemu != 1 /* ours (U114) */
-    /* CR4.CET (bit 23) can be set with CET_SS or CET_IBT (SDM Vol3 5.1.4) */
-    if ((env->features[FEAT_7_0_ECX] & CPUID_7_0_ECX_CET_SHSTK) ||
-        (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_CET_IBT)) {
-        reserved_bits &= ~(uint64_t)CR4_CET_MASK;
-    }
-#endif /* __Use_Original_Qemu (U114) */
-#if __Use_Original_Qemu != 1 /* ours (U113) */
-    /* CR4.SMXE (bit 14) can be set only with CPUID.1:ECX.SMX (SDM Vol2 7.2.1) */
-    if (env->features[FEAT_1_ECX] & CPUID_EXT_SMX) {
-        reserved_bits &= ~(uint64_t)CR4_SMXE_MASK;
-    }
-#endif /* __Use_Original_Qemu (U113) */
-#if __Use_Original_Qemu != 1 /* ours (U1170) */
-    /* CR4.FRED (bit 32) exists with CPUID.(07H,1):EAX.FRED (SDM 092 Vol3A 8.2.2) */
-    if (x86_fred_cpuid(env)) {
-        reserved_bits &= ~CR4_FRED_MASK;
-    }
-#endif /* __Use_Original_Qemu (U1170) */
-#if __Use_Original_Qemu != 1 /* ours (U1180) */
-    /* CR4.LAM_SUP (bit 28) with CPUID.(07H,1):EAX.LAM (SDM 092 Vol3A 4.4.1) */
-    if (x86_lam_cpuid(env)) {
-        reserved_bits &= ~(uint64_t)CR4_LAM_SUP_MASK;
-    }
-#endif /* __Use_Original_Qemu (U1180) */
-#if __Use_Original_Qemu != 1 /* ours (U1301) */
-    /* CR4.VMXE (bit 13) with CPUID.01H:ECX.VMX (SDM 092 Vol3A 2.5 p. 2-20, Vol3C 26.7 p. 26-3) */
-    if (x86_vmx_cpuid(env)) {
-        reserved_bits &= ~(uint64_t)CR4_VMXE_MASK;
-    }
-#endif /* __Use_Original_Qemu (U1301) */
     return reserved_bits;
 }
+#else /* ours (U1680) */
+/*
+ * NoVmp (ledger U1680, plan 1.J.61; cpu.c): the reserved CR4 bits of the CPU model as a strict UC_CTL_X86_CPUID
+ * profile reports it (profile = false: the model alone - the conditions of QEMU and of U100 / U104 / U113 / U114 /
+ * U1170 / U1180 / U1301). Used by MOV to CR4 (#GP(0)), the VMX CR4 checks and IA32_VMX_CR4_FIXED1 (vmx_helper.c).
+ */
+uint64_t x86_cr4_reserved(CPUX86State *env, bool profile);
+/* the CR4 bits the model supports and a strict profile hides: cpu_x86_update_cr4 drops them (reset CR4, RSM) */
+uint64_t x86_cr4_profile_hidden(CPUX86State *env);
+
+static inline uint64_t cr4_reserved_bits(CPUX86State *env)
+{
+    return x86_cr4_reserved(env, true);
+}
+#endif /* __Use_Original_Qemu (U1680) */
 
 #if __Use_Original_Qemu != 1 /* ours (U211) */
 /*
