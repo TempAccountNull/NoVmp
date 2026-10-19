@@ -31,6 +31,18 @@
 //                          A snippet may far-transfer to CS = 23h and back to 33h (heaven's gate);
 //                          a fault taken in compatibility mode resumes at the 64-bit epilogue in
 //                          both engines. Without it Unicorn runs at CPL0 (no GDT).
+//   dr0..dr3=V dr6=V dr7=V (inputs; U1740) the debug registers for the snippet, both engines. V: a C literal,
+//                          s+OFF (the snippet's first byte + OFF) or m+OFF (MEM + OFF; [rsi] = m+0x8000). Native:
+//                          the thunk runs on a fresh thread of our own whose DR0-DR3 / DR6 / DR7 are set with
+//                          SetThreadContext (CONTEXT_DEBUG_REGISTERS) while it is suspended (Windows keeps only
+//                          what user mode may set: the "dbg:" line prints GetThreadContext's read-back); DR6
+//                          after a #DB is CONTEXT.Dr6 of the exception. Unicorn: uc_reg_write DRn before the
+//                          prologue, DR6 at the #DB hook and after the run. Hardware cases: every enabled
+//                          breakpoint must lie on the snippet's bytes or in MEM (else "not run"), I/O breakpoints
+//                          are not run natively; a #DB at the first epilogue byte is the snippet's last
+//                          instruction's trap. The verdict adds the #DB RIP and DR6 (when Windows hands it over).
+//                          Expected-value cases: "dr6=V" after "=>" checks Unicorn's DR6 after the run.
+//                          Snippets ending in compatibility mode must leave it (or fault) themselves.
 // MXCSR is also settable from the snippet itself ("ldmxcsr [rsi] | m+0x8000=801F0000").
 // Default input state: GPRs 0 except RSP/RSI/RDI/R14, RFLAGS 0x202, FCW 037F, MXCSR 1F80, all else 0.
 //
@@ -404,7 +416,8 @@ namespace at
 					   int hw_repeat = 1; std::string hw_cpu; int hw_load = 0;   /* U1050: --hw-repeat N / --hw-cpu SPEC / --hw-load N */
 					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */
 					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */
-					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */ };
+					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */
+					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */ };
 
 	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
 	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
@@ -882,6 +895,114 @@ namespace at
 		return s + " ";
 	}
 
+	// U1740: debug-register tokens of a case, "dr0=V" .. "dr3=V", "dr6=V", "dr7=V" (inputs; "dr6=V" is also an
+	// expectation of an expected-value case: Unicorn's DR6 after the run). V is a C literal, "s+OFF" (the
+	// snippet's first byte + OFF; the snippet's address depends on its length) or "m+OFF" (MEM + OFF, the operand
+	// memory: [rsi] = m+0x8000). Index 0-3, 6, 7; -1 = not a debug-register key.
+	struct dbg_spec { bool any = false; bool set[ 8 ] = {}; int base[ 8 ] = {}; /* 0 absolute, 1 snippet, 2 MEM */ uint64_t v[ 8 ] = {}; };
+	static int dbg_key( const std::string& kv )
+	{
+		const std::string k = kv.substr( 0, kv.find( '=' ) );
+		if ( k.size() != 3 || k[ 0 ] != 'd' || k[ 1 ] != 'r' ) return -1;
+		const int i = k[ 2 ] - '0';
+		return ( i >= 0 && i <= 3 ) || i == 6 || i == 7 ? i : -1;
+	}
+	static bool dbg_parse( dbg_spec& d, const std::string& kv, std::string& err )
+	{
+		const int i = dbg_key( kv );
+		const size_t eq = kv.find( '=' );
+		if ( i < 0 || eq == std::string::npos ) { err = "bad debug-register token " + kv; return false; }
+		std::string v = kv.substr( eq + 1 );
+		int base = 0;
+		if ( v.rfind( "s+", 0 ) == 0 ) { base = 1; v.erase( 0, 2 ); }
+		else if ( v.rfind( "m+", 0 ) == 0 ) { base = 2; v.erase( 0, 2 ); }
+		char* end = nullptr;
+		const unsigned long long x = std::strtoull( v.c_str(), &end, 0 );
+		if ( v.empty() || !end || *end || ( base == 2 && x >= MEM_SIZE ) || ( base && i >= 6 ) )
+		{
+			err = "bad value in " + kv + " (a C literal, s+OFF or m+OFF below 0x10000; s+ / m+ only for dr0..dr3)";
+			return false;
+		}
+		d.any = true; d.set[ i ] = true; d.base[ i ] = base; d.v[ i ] = x;
+		return true;
+	}
+	static dbg_regs dbg_resolve( const dbg_spec& d, const program& p )
+	{
+		dbg_regs r;
+		r.any = d.any;
+		for ( int i = 0; i < 8; ++i )
+		{
+			r.set[ i ] = d.set[ i ];
+			r.v[ i ] = d.base[ i ] == 1 ? p.snippet_begin + d.v[ i ] : d.base[ i ] == 2 ? MEM + d.v[ i ] : d.v[ i ];
+		}
+		return r;
+	}
+	// U1740: may these debug registers be set on the native thread? Every ENABLED breakpoint (DR7 Ln / Gn) must
+	// cover only the snippet's bytes or the operand memory MEM, which the thunk's prologue and epilogue never touch; I/O breakpoints (R/W =
+	// 10b) are not run natively. "" = may run.
+	static std::string dbg_native_unsafe( const dbg_regs& d, const program& p )
+	{
+		const uint64_t dr7 = d.v[ 7 ];
+		for ( int i = 0; i < 4; ++i )
+		{
+			if ( !( ( dr7 >> ( 2 * i ) ) & 3 ) ) continue;
+			const int rw = int( ( dr7 >> ( 16 + 4 * i ) ) & 3 ), ln = int( ( dr7 >> ( 18 + 4 * i ) ) & 3 );
+			const uint64_t len = rw == 0 ? 1 : ln == 2 ? 8 : uint64_t( ln ) + 1, a = d.v[ i ] & ~( len - 1 );
+			char b[ 200 ];
+			if ( rw == 2 ) { std::snprintf( b, sizeof( b ), "DR%d: I/O breakpoint (R/W = 10b) is not run natively", i ); return b; }
+			const bool in_snip = a >= p.snippet_begin && a + len <= p.snippet_end;
+			const bool in_mem = a >= MEM && a + len <= MEM + MEM_SIZE;
+			if ( !in_snip && !in_mem )
+			{
+				std::snprintf( b, sizeof( b ), "DR%d = 0x%llX (%llu bytes) is enabled outside the snippet and MEM: it could hit the thunk", i,
+							   ( unsigned long long ) d.v[ i ], ( unsigned long long ) len );
+				return b;
+			}
+		}
+		return "";
+	}
+	static std::string dr6_text( uint64_t d )
+	{
+		std::string s;
+		static const struct { int bit; const char* name; } on[] = { { 0, "B0" }, { 1, "B1" }, { 2, "B2" }, { 3, "B3" }, { 13, "BD" }, { 14, "BS" }, { 15, "BT" } };
+		for ( auto& b : on ) if ( ( d >> b.bit ) & 1 ) s += std::string( s.empty() ? "" : " " ) + b.name;
+		if ( !( ( d >> 11 ) & 1 ) ) s += std::string( s.empty() ? "" : " " ) + "BLD(bit 11 = 0)";
+		if ( !( ( d >> 16 ) & 1 ) ) s += std::string( s.empty() ? "" : " " ) + "RTM(bit 16 = 0)";
+		return s.empty() ? "none" : s;
+	}
+	static std::string rip_text( uint64_t rip, uint64_t snip )
+	{
+		char b[ 64 ];
+		if ( rip + 0x1000 >= snip && rip < snip + 0x1000 )
+			std::snprintf( b, sizeof( b ), "s%c0x%llX (0x%llX)", rip >= snip ? '+' : '-', ( unsigned long long ) ( rip >= snip ? rip - snip : snip - rip ),
+						   ( unsigned long long ) rip );
+		else std::snprintf( b, sizeof( b ), "0x%llX", ( unsigned long long ) rip );
+		return b;
+	}
+	// U1740 / U1741: the first event of a run as an engine reports it: vector, RIP (s+OFF = from the snippet's
+	// first byte), the EFLAGS image (native: CONTEXT.EFlags of the exception, the image the CPU pushed as Windows
+	// hands it over; Unicorn: RFLAGS when the hook ran, no frame is pushed), DR6 for a #DB, the #PF access type
+	static std::string event_text( const result& r, bool native, uint64_t snip )
+	{
+		if ( !r.faulted ) return "no event";
+		std::ostringstream os;
+		os << "#" << r.vector << " at " << rip_text( r.fault_rip, snip );
+		if ( !r.ev.valid ) return os.str() + " (no event record)";
+		const uint64_t f = r.ev.rflags;
+		os << " rflags=" << hx( f ) << " (RF " << ( ( f >> 16 ) & 1 ) << ", TF " << ( ( f >> 8 ) & 1 ) << ( native ? "; CONTEXT.EFlags of the exception)" : "; at the hook, no frame pushed)" );
+		if ( r.ev.dr6_valid ) os << " dr6=" << hx( r.ev.dr6 ) << " (" << dr6_text( r.ev.dr6 ) << ")";
+		else if ( r.vector == 1 && native ) os << " dr6: not reported (not the debug-register thread, Windows keeps no enabled breakpoint, or no CONTEXT_DEBUG_REGISTERS; ContextFlags " << hx( r.ev.ctx_flags ) << ")";
+		if ( r.ev.access >= 0 )
+		{
+			os << " access " << r.ev.access << ( r.ev.access == 1 ? " write (W = 1)" : r.ev.access == 8 ? " execute (I/D = 1)" : r.ev.access == 0 ? " read (W = 0)" : "" );
+			os << " address " << hx( r.ev.address );
+			if ( !native && r.ev.uc_mem_type >= 0 )
+				os << " (" << ( r.ev.uc_mem_type == UC_MEM_WRITE_UNMAPPED ? "UC_MEM_WRITE_UNMAPPED" : r.ev.uc_mem_type == UC_MEM_FETCH_UNMAPPED ? "UC_MEM_FETCH_UNMAPPED" :
+							   r.ev.uc_mem_type == UC_MEM_READ_UNMAPPED ? "UC_MEM_READ_UNMAPPED" : "uc_mem_type " + std::to_string( r.ev.uc_mem_type ) ) << ")";
+		}
+		return os.str();
+	}
+
 	// U530: trailing tag of a hardware case, "# known deviation: NAME" (a CPU-vs-SDM deviation
 	// documented in docs\quirks.md; the emulator implements the SDM) or "# host state: REASON"
 	// (the host's state differs from the emulator's, e.g. RDRAND values, the APIC ID, CET shadow
@@ -1066,6 +1187,7 @@ namespace at
 		std::map<std::string, int> known, host;
 		std::vector<std::string> not_observed;
 		int known_n = 0, host_n = 0;
+		int dbg_n = 0, dbg_notrun = 0, dbg_no_dr6 = 0, dbg_harness = 0;   // U1740
 		// U543: --shard K/N runs the K-th of N contiguous blocks of the file's case lines (non-empty,
 		// not '#'); the N blocks together are exactly the file, in order (test.cmd runs them side by side)
 		size_t shard_lo = 0, shard_hi = SIZE_MAX, case_line = 0;
@@ -1131,10 +1253,16 @@ namespace at
 			std::string kv;
 			bool ok = true, ext = false, cpl3 = false;
 			int need = 0;   // U1040: Unicorn-only state the case uses (ext_need)
+			dbg_spec dspec;   // U1740: dr0..dr3 / dr6 / dr7
 			while ( as >> kv )
 			{
 				if ( kv == "cpl=3" ) { cpl3 = true; continue; }
 				if ( kv == "cpl=0" ) { cpl3 = false; continue; }
+				if ( dbg_key( kv ) >= 0 )
+				{
+					if ( !dbg_parse( dspec, kv, err ) ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
+					continue;
+				}
 				need |= ext_need( kv );
 				bool good = false;
 				try { good = case_assign( *st_in, kv, err, nullptr, &ext ); }
@@ -1153,12 +1281,22 @@ namespace at
 			bool exp_fault = false;
 			int exp_vector = -1;
 			int64_t exp_ec = -1;     // U772: "#GP(0)": the error code must match too
+			bool exp_dr6_set = false;   // U1740: "dr6=V": Unicorn's DR6 after the run
+			uint64_t exp_dr6 = 0;
 			if ( expect )
 			{
 				std::istringstream es( rhs );
 				std::string tok;
 				while ( ok && es >> tok )
 				{
+					if ( tok.rfind( "dr6=", 0 ) == 0 )
+					{
+						char* end = nullptr;
+						exp_dr6 = std::strtoull( tok.c_str() + 4, &end, 0 );
+						if ( tok.size() == 4 || !end || *end ) { err = "bad value in " + tok; ok = false; }
+						exp_dr6_set = true;
+						continue;
+					}
 					if ( tok[ 0 ] == '#' )
 					{
 						int64_t ec = -1;
@@ -1183,7 +1321,8 @@ namespace at
 			{
 				if ( sde_done.count( line_no ) ) { ++n; continue; }   // resume: already in FILE
 				std::string why;
-				if ( ( need & 1 ) && !hw.ext_zmm ) why = "ZMM/K state: the SDE CPU has no AVX-512/AVX10 state";
+				if ( dspec.any ) why = "debug-register tokens (U1740: not run under SDE)";
+				else if ( ( need & 1 ) && !hw.ext_zmm ) why = "ZMM/K state: the SDE CPU has no AVX-512/AVX10 state";
 				else if ( ( need & 2 ) && !hw.ext_apx ) why = "R16-R31: the SDE CPU has no APX state";
 				else if ( st_in->mxcsr() & ~0xFFFFu ) why = "MXCSR reserved bits (FXRSTOR64 #GP in the native prologue)";
 				// U1041: SDE 10.13.1 ends the process (an unhandled X87_INVALID_OPERATION inside its own
@@ -1256,6 +1395,14 @@ namespace at
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
+			const dbg_regs dbg_uc = dbg_resolve( dspec, p_uc ), dbg_hw = dbg_resolve( dspec, p );   // U1740
+			uc.dbg = dbg_uc;
+			// U1740: a hardware case's enabled breakpoints must stay on the snippet's bytes / MEM (dbg_native_unsafe)
+			if ( !expect && dspec.any )
+			{
+				const std::string why = dbg_native_unsafe( dbg_hw, p );
+				if ( !why.empty() ) { std::printf( "[%d] %s\n    not run: %s\n", n, line.c_str(), why.c_str() ); ++dbg_notrun; continue; }
+			}
 			if ( !uc.load( p_uc, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
 			uc.run( *st_in, u );
 			if ( expect )
@@ -1271,6 +1418,13 @@ namespace at
 				for ( size_t b = 0; b < care.size(); ++b ) if ( care[ b ] ) ms[ b ] = us[ b ];
 				bool same_fault = exp_fault == u.faulted && exp_vector == u.vector && ( exp_ec < 0 || exp_ec == u.error_code );
 				std::string ed = case_fields( *st_in, *st_exp ), ud = case_fields( *st_in, *u.s ), x = case_fields( *st_exp, *masked );
+				// U1740: "dr6=V" (Unicorn's DR6 after the run; the debug registers need a dr token in the inputs)
+				if ( exp_dr6_set )
+				{
+					ed += " dr6=" + hx( exp_dr6 );
+					if ( u.dr6_end_valid ) ud += " dr6=" + hx( u.dr6_end );
+					if ( !u.dr6_end_valid || u.dr6_end != exp_dr6 ) x += " dr6=" + ( u.dr6_end_valid ? hx( u.dr6_end ) : std::string( "(not read: no dr token in the inputs)" ) );
+				}
 				bool same = same_fault && x.empty() && u.err.empty();
 				differ += !same;
 				exp_differ += !same;
@@ -1280,6 +1434,7 @@ namespace at
 				std::printf( "    uc: %s%s\n", fault_text( u.faulted, u.vector, exp_ec >= 0 ? u.error_code : -1 ).c_str(), ud.c_str() );
 				if ( !u.err.empty() ) std::printf( "    uc error: %s\n", u.err.c_str() );
 				if ( !same ) std::printf( "    uc vs exp:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
+				if ( dspec.any || opt.events ) std::printf( "    uc event: %s\n", event_text( u, false, p_uc.snippet_begin ).c_str() );   // U1740 / U1741
 				// U1040: pass 2 (--sde-results FILE): the same snippet and input state as run on Intel SDE's CPU
 				// (pass 1), compared with Unicorn on the bytes this expectation checks (strict: every checked field;
 				// loose: the listed ones) and the fault vector. A second, labelled reference; the "=>" verdict above
@@ -1336,6 +1491,7 @@ namespace at
 				hw_open = true;
 			}
 			std::string hw_report;   // U1050
+			hw.dbg = dspec.any ? &dbg_hw : nullptr;   // U1740: the snippet thread's debug registers
 			if ( !hw_measure ) hw.run( p, *st_in, h );
 			else
 			{
@@ -1363,7 +1519,10 @@ namespace at
 						key += "fault #" + std::to_string( rr.vector );
 						if ( rr.vector == 14 || rr.vector == 13 || rr.vector == 12 ) key += " (av " + hx( rr.fault_info0 ) + " " + hx( rr.fault_info1 ) + ")";
 						key += " rip+" + hx( rr.fault_rip - CODE ) + " ";
+						// U1740: a debug-register case's run also differs by DR6 and the EFLAGS image of the #DB
+						if ( dspec.any && rr.ev.valid ) key += "dr6=" + ( rr.ev.dr6_valid ? hx( rr.ev.dr6 ) : std::string( "?" ) ) + " eflags=" + hx( rr.ev.rflags ) + " ";
 					}
+					if ( !rr.err.empty() || !rr.dbg_note.empty() ) key += "[" + rr.err + ( rr.err.empty() || rr.dbg_note.empty() ? "" : "; " ) + rr.dbg_note + "] ";
 					key += case_fields( *st_in, *rr.s );
 					tally& t = outcomes[ key ];
 					++t.count;
@@ -1384,9 +1543,23 @@ namespace at
 			// U834: Windows clears RFLAGS.AC while it dispatches a user-mode exception (observed for
 			// #AC, #GP, #UD, ...: the context the VEH resumes has AC = 0), so after a hardware fault
 			// the host's AC bit is the OS's, not the CPU's: the fault state compares Unicorn's AC
+			hw.dbg = nullptr;
 			if ( h.faulted && u.faulted ) h.s->rflags = ( h.s->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
 			bool same_fault = h.faulted == u.faulted && h.vector == u.vector;
 			std::string hd = case_fields( *st_in, *h.s ), ud = case_fields( *st_in, *u.s ), x = case_fields( *h.s, *u.s );
+			// U1740: a debug-register case also compares where the #DB was taken and DR6 (when Windows hands
+			// DR6 over in the exception context); a harness problem on either side makes it differ
+			if ( dspec.any )
+			{
+				++dbg_n;
+				if ( h.faulted && u.faulted && h.vector == 1 && u.vector == 1 )
+				{
+					if ( h.fault_rip != u.fault_rip ) x += " #DB rip (hw " + rip_text( h.fault_rip, p.snippet_begin ) + ", uc " + rip_text( u.fault_rip, p_uc.snippet_begin ) + ")";
+					if ( h.ev.dr6_valid && u.ev.dr6_valid && h.ev.dr6 != u.ev.dr6 ) x += " dr6 (hw " + hx( h.ev.dr6 ) + ", uc " + hx( u.ev.dr6 ) + ")";
+					if ( !h.ev.dr6_valid ) ++dbg_no_dr6;
+				}
+				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; }
+			}
 			bool same = same_fault && x.empty();
 			// U530: a tagged case that differs is counted under its tag, not as differing; a tagged
 			// case that matches is listed (the deviation was not observed: stale tag or a CPU that
@@ -1404,6 +1577,31 @@ namespace at
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
+			// U1740 / U1741: the debug registers as set and as Windows keeps them, and both engines' event lines
+			if ( dspec.any )
+			{
+				std::string sb;
+				char b[ 8 ];
+				for ( uint64_t a = p.snippet_begin; a < p.snippet_end; ++a ) { std::snprintf( b, sizeof( b ), "%02X", p.code[ size_t( a - CODE ) ] ); sb += b; }
+				std::printf( "    dbg: snippet s = 0x%llX, %llu bytes %s\n", ( unsigned long long ) p.snippet_begin, ( unsigned long long ) ( p.snippet_end - p.snippet_begin ), sb.c_str() );
+				std::string set, eff;
+				for ( int i : { 0, 1, 2, 3, 6, 7 } )
+				{
+					if ( dbg_hw.set[ i ] || i == 7 ) set += " dr" + std::to_string( i ) + "=" + hx( dbg_hw.v[ i ] );
+					if ( h.dbg_eff_valid ) eff += " dr" + std::to_string( i ) + "=" + hx( h.dbg_eff[ i ] );
+				}
+				std::printf( "    dbg: set (both engines):%s\n", set.c_str() );
+				std::printf( "    dbg: hw thread after SetThreadContext (GetThreadContext):%s\n", h.dbg_eff_valid ? eff.c_str() : " (not read)" );
+				if ( !h.err.empty() ) std::printf( "    dbg: hw error: %s\n", h.err.c_str() );
+				if ( !h.dbg_note.empty() ) std::printf( "    dbg: hw note: %s\n", h.dbg_note.c_str() );
+				if ( !u.err.empty() ) std::printf( "    dbg: uc error: %s\n", u.err.c_str() );
+				if ( u.dr6_end_valid ) std::printf( "    dbg: uc dr6 after the run = %s (%s)\n", hx( u.dr6_end ).c_str(), dr6_text( u.dr6_end ).c_str() );
+			}
+			if ( dspec.any || opt.events )
+			{
+				std::printf( "    hw event: %s\n", event_text( h, true, p.snippet_begin ).c_str() );
+				std::printf( "    uc event: %s\n", event_text( u, false, p_uc.snippet_begin ).c_str() );
+			}
 			if ( !hw_report.empty() ) std::printf( "%s", hw_report.c_str() );
 			++n;
 		}
@@ -1414,6 +1612,10 @@ namespace at
 		for ( auto& [ k, v ] : host ) std::printf( "host state: %s: %d\n", k.c_str(), v );
 		std::printf( "tagged but not observed (matched the hardware): %zu\n", not_observed.size() );
 		for ( auto& s : not_observed ) std::printf( "  not observed %s\n", s.c_str() );
+		// U1740: only when the file has debug-register hardware cases
+		if ( dbg_n || dbg_notrun )
+			std::printf( "debug-register cases: %d (not run natively: %d, #DB without a hardware DR6 from Windows: %d, harness errors / notes: %d)\n", dbg_n, dbg_notrun,
+						 dbg_no_dr6, dbg_harness );
 		// U435: the CPUID profile and the strict setting Unicorn used
 		if ( opt.cpuid.empty() )
 			std::printf( "cpuid: model (no profile), strict %s\n", opt.strict < 0 ? "off (default)" : opt.strict ? "on (--strict)" : "off (--no-strict)" );

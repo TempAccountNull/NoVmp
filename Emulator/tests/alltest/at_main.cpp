@@ -47,6 +47,10 @@
 //   --hw-cpu SPEC    with --cases: pin the native runs to a logical CPU / a comma list / "all" /
 //                    "P" / "E" (rotating; U1050); without it they are not pinned
 //   --hw-load N      with --hw-repeat: N busy threads beside the native runs (U1050)
+//   --events         with --cases: print both engines' event lines for every case (U1741): vector, RIP,
+//                    the EFLAGS image (native CONTEXT.EFlags of the exception: RF / TF), DR6, the #PF
+//                    access type (native ExceptionInformation[0], Unicorn the unmapped hook's uc_mem_type);
+//                    a case with dr0..dr7 tokens (U1740) always prints them
 //   --host [--host-core P|E] | --guest | --vm | --AMD   the platform profile (U1465 SMM revision; U1491 CPUID):
 //                    --host = the bare host, CPUID profile Emulator\data\cpuid_i5-13600k_bare_host.txt (P-core,
 //                    default) or _bare_host_ecore.txt (--host-core E); --guest / --vm = the VMware guest,
@@ -618,13 +622,14 @@ int main( int argc, char** argv )
 		else if ( a == "--hw-repeat" ) { copt.hw_repeat = std::stoi( val() ); if ( copt.hw_repeat < 1 ) { std::printf( "--hw-repeat N: N >= 1\n" ); return 2; } }   // U1050
 		else if ( a == "--hw-cpu" ) copt.hw_cpu = val();   // U1050
 		else if ( a == "--hw-load" ) copt.hw_load = std::stoi( val() );   // U1050
+		else if ( a == "--events" ) copt.events = true;   // U1741: both engines' event lines for every case
 		else if ( a == "--bench" ) bench = true;
 		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
 		else if ( a == "--scale" ) bench_scale = std::stod( val() );
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--events] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	// U1491 (user requirement 2026-10-15: emulate the VMware guest OR the bare host, each from its own
 	// captures): the platform switch also selects the CPUID profile (with its "#@ microcode" line) - --host the

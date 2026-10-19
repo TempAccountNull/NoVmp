@@ -91,6 +91,29 @@ namespace at
 		const uint8_t* xmm( int i ) const { return fx + 160 + i * 16; }
 	};
 
+	// U1740: the debug registers of a --cases case (tokens dr0..dr3, dr6, dr7; index 0-3, 6, 7), resolved to
+	// absolute values. Native: written to the thread that runs the thunk with SetThreadContext
+	// (CONTEXT_DEBUG_REGISTERS) while it is still suspended, before its first instruction; Unicorn: written with
+	// uc_reg_write before uc_emu_start. Both: before the prologue, so a breakpoint must not hit the thunk itself
+	// (the --cases runner allows enabled breakpoints only on the snippet's bytes or the operand memory MEM).
+	struct dbg_regs { bool any = false; bool set[ 8 ] = {}; uint64_t v[ 8 ] = {}; };
+
+	// U1740 / U1741: what the engines report about the first event of a run (both: recorded for every run)
+	struct event_info
+	{
+		bool valid = false;          // an exception / #DB was recorded
+		uint64_t rflags = 0;         // native: CONTEXT.EFlags of the exception record (the image the CPU pushed, as
+									 // Windows hands it to the VEH); Unicorn: RFLAGS when UC_HOOK_INTR / the unmapped
+									 // hook ran (Unicorn style delivery pushes no frame)
+		bool dr6_valid = false;      // native: the exception CONTEXT has CONTEXT_DEBUG_REGISTERS; Unicorn: a #DB
+		uint64_t dr6 = 0;
+		uint32_t ctx_flags = 0;      // native: CONTEXT.ContextFlags of the exception record
+		int access = -1;             // #PF access: native ExceptionInformation[0] (0 read, 1 write, 8 execute);
+									 // Unicorn: the same encoding from the unmapped hook's uc_mem_type (U1741)
+		int uc_mem_type = -1;        // Unicorn: UC_MEM_READ_UNMAPPED / WRITE_UNMAPPED / FETCH_UNMAPPED
+		uint64_t address = 0;        // #PF address (native ExceptionInformation[1], Unicorn the hook's address)
+	};
+
 	struct result
 	{
 		std::unique_ptr<state> s = std::make_unique<state>();
@@ -100,6 +123,14 @@ namespace at
 		int64_t error_code = -1;    // U772: Unicorn's error code (UC_CTL_X86_EXCEPTION), -1 = none / native
 		uint64_t fault_rip = 0;
 		uint64_t fault_info0 = 0, fault_info1 = 0;   // U1050: native only, the Windows access-violation access type / address
+		event_info ev;              // U1740 / U1741
+		// U1740: native - the debug registers Windows keeps for the thread (GetThreadContext right after
+		// SetThreadContext, before it runs: Windows sanitizes DR7 / the addresses); Unicorn - DR6 after the run
+		bool dbg_eff_valid = false;
+		uint64_t dbg_eff[ 8 ] = {};
+		bool dr6_end_valid = false;
+		uint64_t dr6_end = 0;
+		std::string dbg_note;       // U1740: a stray #DB outside the snippet (native), SetThreadContext failure, ...
 		std::string err;
 	};
 
@@ -322,6 +353,8 @@ namespace at
 		// U1040 (--native-under-sde): the native CPU (Intel SDE's emulated CPU) has ZMM0-31 / K0-7
 		// (ext_zmm) or APX R16-R31 (ext_apx) state; the thunk then moves it like Unicorn's code hooks
 		bool ext_zmm = false, ext_apx = false;
+		// U1740: the case's debug registers (nullptr / !any: the thunk runs on the calling thread as before)
+		const dbg_regs* dbg = nullptr;
 		void run( const program& p, const state& in, result& r )
 		{
 			std::memset( code_, p.fill, CODE_SIZE );
@@ -333,12 +366,26 @@ namespace at
 			if ( ext_zmm || ext_apx ) write_ext( in );
 			g().lo = p.snippet_begin; g().hi = p.snippet_end; g().resume = p.epilogue_at;
 			g().faulted = false; g().code = 0; g().rip = 0;
+			g().ev = event_info{}; g().stray = 0; g().stray_rip = 0;   // U1740 / U1741
 			// U850: a branch-layout snippet may fault outside its own bytes (at its target: the HLT
 			// fill, or an unmapped address below 64 KiB); only this thread, only while it runs
 			g().prog = &p; g().tid = GetCurrentThreadId(); g().active = true;
-			( ( void( * )() ) code_ )();
+			if ( dbg && dbg->any ) run_dbg_thread( r );   // U1740: debug registers: a fresh thread of our own
+			else ( ( void( * )() ) code_ )();
 			g().active = false; g().prog = nullptr;
-			r.ran = true;
+			r.ev = g().ev;
+			// U1740: Windows loads a thread's debug registers only while it keeps an enabled breakpoint (L0-L3) for
+			// it (measured: with DR7 = 400h the read-back is all 0 and the #DB context has Dr6 = 0), so DR6 is a
+			// hardware value only then
+			if ( dbg && dbg->any && r.ev.dr6_valid && r.dbg_eff_valid && !( r.dbg_eff[ 7 ] & 0xFF ) ) r.ev.dr6_valid = false;
+			if ( g().stray )
+			{
+				char b[ 160 ];
+				std::snprintf( b, sizeof( b ), "%d #DB outside the snippet (first at RIP 0x%llX): resumed with RF = 1 and DR7 = 0 - the breakpoint hit the thunk",
+							   g().stray, ( unsigned long long ) g().stray_rip );
+				r.dbg_note += ( r.dbg_note.empty() ? "" : "; " ) + std::string( b );
+			}
+			r.ran = r.err.empty();
 			r.faulted = g().faulted;
 			r.vector = g().faulted ? vector_of( g().code, g().info0, g().info1 ) : -1;
 			// Windows reports #MF and #XM with the same STATUS_FLOAT_* codes: an x87 opcode
@@ -475,24 +522,99 @@ namespace at
 			put_jmp( code_ + so, CODE + so, EXT_SAVE_STUB );
 			return true;
 		}
-		struct globals { uint64_t lo, hi, resume, rip, info0, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active; };
+		// U1740: the thunk on a thread of our own whose debug registers are set before it starts. The thread is
+		// created suspended, gets DR0-DR3 / DR6 / DR7 with SetThreadContext (CONTEXT_DEBUG_REGISTERS; documented
+		// for a suspended thread, and nothing else of the process sees the values: they die with the thread),
+		// runs on the calling thread's logical CPUs (--hw-cpu pins the caller) and is waited for. The VEH below
+		// handles its exceptions as for the calling thread; it also takes a single-step / breakpoint #DB at the
+		// first epilogue byte (a trap after the snippet's last instruction) and resumes a #DB outside the snippet
+		// (the thunk itself hit a breakpoint) with RF = 1 and DR7 = 0, recorded as stray (dbg_note).
+		static DWORD WINAPI dbg_thread( void* code ) { ( ( void( * )() ) code )(); return 0; }
+		void run_dbg_thread( result& r )
+		{
+			DWORD tid = 0;
+			HANDLE t = CreateThread( nullptr, 0x100000, dbg_thread, code_, CREATE_SUSPENDED, &tid );
+			if ( !t ) { r.err = "CreateThread (debug-register thread) failed, error " + std::to_string( GetLastError() ); return; }
+			DWORD_PTR pm = 0, sm = 0;
+			GetProcessAffinityMask( GetCurrentProcess(), &pm, &sm );
+			const DWORD_PTR mine = SetThreadAffinityMask( GetCurrentThread(), pm );   // returns the caller's mask
+			if ( mine ) { SetThreadAffinityMask( GetCurrentThread(), mine ); SetThreadAffinityMask( t, mine ); }
+			CONTEXT c{};
+			c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+			c.Dr0 = dbg->v[ 0 ]; c.Dr1 = dbg->v[ 1 ]; c.Dr2 = dbg->v[ 2 ]; c.Dr3 = dbg->v[ 3 ];
+			c.Dr6 = dbg->v[ 6 ]; c.Dr7 = dbg->v[ 7 ];
+			if ( !SetThreadContext( t, &c ) )
+				r.dbg_note = "SetThreadContext failed, error " + std::to_string( GetLastError() ) + ": the thunk ran without debug registers";
+			CONTEXT b{};
+			b.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+			if ( GetThreadContext( t, &b ) )
+			{
+				r.dbg_eff_valid = true;
+				r.dbg_eff[ 0 ] = b.Dr0; r.dbg_eff[ 1 ] = b.Dr1; r.dbg_eff[ 2 ] = b.Dr2; r.dbg_eff[ 3 ] = b.Dr3;
+				r.dbg_eff[ 6 ] = b.Dr6; r.dbg_eff[ 7 ] = b.Dr7;
+			}
+			g().dbg_tid = tid;
+			ResumeThread( t );
+			if ( WaitForSingleObject( t, 30000 ) != WAIT_OBJECT_0 )
+			{
+				// our own snippet thread did not end (a loop in the snippet): it must not run on while CODE is reused
+				TerminateThread( t, 1 );
+				WaitForSingleObject( t, INFINITE );
+				r.err = "debug-register thread did not end within 30 s (terminated)";
+			}
+			g().dbg_tid = 0;
+			CloseHandle( t );
+		}
+		struct globals { uint64_t lo, hi, resume, rip, info0, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active;
+						 DWORD dbg_tid; event_info ev; int stray; uint64_t stray_rip; };   // U1740 / U1741: dbg_tid .. stray_rip
 		static globals& g() { static globals x{}; return x; }
+		static bool is_db( DWORD code ) { return code == STATUS_SINGLE_STEP || code == 0x4000001E; }   // + STATUS_WX86_SINGLE_STEP
 		static LONG CALLBACK veh( EXCEPTION_POINTERS* ep )
 		{
 			uint64_t rip = ep->ContextRecord->Rip;
+			const DWORD code = ep->ExceptionRecord->ExceptionCode;
+			// U1740: the debug-register thread: a #DB at the first epilogue byte is the snippet's last
+			// instruction's trap; a #DB anywhere else outside the snippet is the thunk hitting a breakpoint
+			const bool dbg_thread_here = g().dbg_tid && GetCurrentThreadId() == g().dbg_tid;
+			if ( dbg_thread_here && is_db( code ) && !( g().prog && g().prog->ctl ? g().prog->in_trap_range( rip ) : ( rip >= g().lo && rip <= g().hi ) ) )
+			{
+				if ( !g().stray++ ) g().stray_rip = rip;
+				ep->ContextRecord->EFlags |= 0x10000u;   // RF: an instruction breakpoint does not fire again
+				ep->ContextRecord->EFlags &= ~0x100u;
+				if ( ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS ) ep->ContextRecord->Dr7 = 0;
+				return EXCEPTION_CONTINUE_EXECUTION;
+			}
 			if ( g().active && g().prog && g().prog->ctl )
 			{
 				// U850: branch layout - everything but the prologue / epilogue, on the running thread
-				if ( GetCurrentThreadId() != g().tid || !g().prog->in_trap_range( rip ) ) return EXCEPTION_CONTINUE_SEARCH;
+				// (U1740: or the debug-register thread)
+				if ( ( GetCurrentThreadId() != g().tid && !dbg_thread_here ) || !g().prog->in_trap_range( rip ) ) return EXCEPTION_CONTINUE_SEARCH;
 			}
-			else if ( rip < g().lo || rip >= g().hi ) return EXCEPTION_CONTINUE_SEARCH;
+			else if ( rip < g().lo || ( rip >= g().hi && !( dbg_thread_here && rip == g().hi && is_db( code ) ) ) ) return EXCEPTION_CONTINUE_SEARCH;
 			g().faulted = true;
-			g().code = ep->ExceptionRecord->ExceptionCode;
+			g().code = code;
 			g().info0 = ep->ExceptionRecord->NumberParameters >= 1 ? ep->ExceptionRecord->ExceptionInformation[ 0 ] : 0;
 			g().info1 = ep->ExceptionRecord->NumberParameters >= 2 ? ep->ExceptionRecord->ExceptionInformation[ 1 ] : 0;
 			g().rip = rip;
+			// U1740 / U1741: the exception's EFLAGS image (RF, TF) and, when Windows supplies the debug
+			// registers in the exception context, DR6
+			g().ev.valid = true;
+			g().ev.rflags = ep->ContextRecord->EFlags;
+			g().ev.ctx_flags = ep->ContextRecord->ContextFlags;
+			// DR6 only on the debug-register thread: elsewhere (and there when Windows keeps no enabled breakpoint,
+			// see run_dbg_thread) Windows does not load the debug registers and CONTEXT.Dr6 reads 0
+			g().ev.dr6_valid = dbg_thread_here && ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS;
+			g().ev.dr6 = g().ev.dr6_valid ? ep->ContextRecord->Dr6 : 0;
+			if ( code == STATUS_ACCESS_VIOLATION ) { g().ev.access = int( g().info0 ); g().ev.address = g().info1; }
 			// a trap (single step) leaves TF set in the context: clear it before resuming
 			ep->ContextRecord->EFlags &= ~0x100u;
+			// U1740: on the debug-register thread also RF = 1, so an instruction breakpoint never fires at the resume RIP
+			// and DR7 = 0: the resume path never meets a breakpoint (as Unicorn's, resume_if_in_snippet)
+			if ( dbg_thread_here )
+			{
+				ep->ContextRecord->EFlags |= 0x10000u;
+				if ( ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS ) ep->ContextRecord->Dr7 = 0;
+			}
 			ep->ContextRecord->Rip = g().resume;
 			// a snippet that switched to compatibility mode (far transfer to CS = 23h) faulted
 			// there: the epilogue is 64-bit code, so resume with the 64-bit user CS (33h)
@@ -725,6 +847,15 @@ namespace at
 			uc_mem_write( uc_, MEM, mem.data(), mem.size() );
 			uint64_t rsp = HOST + 0x800;
 			uc_reg_write( uc_, UC_X86_REG_RSP, &rsp );
+			// U1740: the case's debug registers (DR0-DR3 and DR6 first, DR7 last: U878 inserts the breakpoints of
+			// the new DR7 into the live engine), before the prologue as natively
+			if ( dbg.any )
+				for ( int i : { 0, 1, 2, 3, 6, 7 } )
+					if ( dbg.set[ i ] || i == 7 )
+					{
+						uint64_t v = dbg.v[ i ];
+						if ( uc_reg_write( uc_, UC_X86_REG_DR0 + i, &v ) != UC_ERR_OK ) { r.err = "uc_reg_write DR" + std::to_string( i ) + " failed"; return; }
+					}
 			cur_ = &r;
 			in_ = &in;
 			ext_in_done_ = ext_out_done_ = false;
@@ -736,9 +867,12 @@ namespace at
 				// an unmapped access inside the snippet stopped the run (#PF): save the state at
 				// the faulting instruction by running the epilogue, as the native VEH path does
 				uint64_t fl = 0; uc_reg_read( uc_, UC_X86_REG_RFLAGS, &fl ); fl &= ~0x100ull; uc_reg_write( uc_, UC_X86_REG_RFLAGS, &fl );
+				disarm_dbg();
 				e = uc_emu_start( uc_, resume_target(), prog_->ret_at, 0, 0 );
 			}
 			if ( e ) r.err = std::string( "uc_emu_start: " ) + uc_strerror( e );
+			// U1740: DR6 after the run (a debug-register case's expectation "dr6=V")
+			if ( dbg.any ) r.dr6_end_valid = uc_reg_read( uc_, UC_X86_REG_DR6, &r.dr6_end ) == UC_ERR_OK;
 			uc_mem_read( uc_, DATA, data.data(), data.size() );
 			uc_mem_read( uc_, MEM, mem.data(), mem.size() );
 			read_blocks( data.data(), mem.data(), *r.s );
@@ -771,6 +905,14 @@ namespace at
 			}
 			return prog_->epilogue_at;
 		}
+		// U1740: after an event of a debug-register case DR7 = 0, so the resume path (the compatibility-mode gate
+		// pushes onto the snippet's stack) never hits a breakpoint; DR6 was read at the event
+		void disarm_dbg()
+		{
+			if ( !dbg.any ) return;
+			uint64_t z = 0;
+			uc_reg_write( uc_, UC_X86_REG_DR7, &z );
+		}
 		bool resume_if_in_snippet( uint64_t rip )
 		{
 			if ( !prog_->in_trap_range( rip ) ) return false;   // U850: the branch layout's wider range
@@ -778,6 +920,7 @@ namespace at
 			uc_reg_write( uc_, UC_X86_REG_RIP, &to );
 			// clear TF so a single-step trap does not repeat inside the epilogue
 			uint64_t fl = 0; uc_reg_read( uc_, UC_X86_REG_RFLAGS, &fl ); fl &= ~0x100ull; uc_reg_write( uc_, UC_X86_REG_RFLAGS, &fl );
+			disarm_dbg();
 			return true;
 		}
 		static void on_intr( uc_engine* uc, uint32_t intno, void* user )
@@ -788,6 +931,14 @@ namespace at
 			uc_x86_exception e{};
 			int64_t ec = -1;
 			if ( uc_ctl_get_x86_exception( uc, &e ) == UC_ERR_OK && e.vector == int( intno ) && e.has_error_code ) ec = e.error_code;
+			// U1740 / U1741: RFLAGS when the hook runs (no frame is pushed) and, for a #DB, DR6
+			if ( self->cur_ && !self->cur_->faulted )
+			{
+				event_info& ev = self->cur_->ev;
+				ev.valid = true;
+				uc_reg_read( uc, UC_X86_REG_RFLAGS, &ev.rflags );
+				if ( intno == 1 ) ev.dr6_valid = uc_reg_read( uc, UC_X86_REG_DR6, &ev.dr6 ) == UC_ERR_OK;
+			}
 			self->fault( rip, int( intno ), ec );
 			if ( !self->resume_if_in_snippet( rip ) ) uc_emu_stop( uc );
 		}
@@ -795,14 +946,26 @@ namespace at
 		{
 			auto* self = ( unicorn_engine* ) user;
 			uint64_t rip = 0; uc_reg_read( uc, UC_X86_REG_RIP, &rip );
+			if ( self->cur_ && !self->cur_->faulted ) { self->cur_->ev.valid = true; uc_reg_read( uc, UC_X86_REG_RFLAGS, &self->cur_->ev.rflags ); }   // U1741
 			self->fault( rip, 6 );
 			return self->resume_if_in_snippet( rip );
 		}
-		static bool on_unmapped( uc_engine* uc, uc_mem_type, uint64_t, int, int64_t, void* user )
+		static bool on_unmapped( uc_engine* uc, uc_mem_type type, uint64_t address, int, int64_t, void* user )
 		{
 			// an access outside our regions: the host sees an access violation (#PF) there too
 			auto* self = ( unicorn_engine* ) user;
 			uint64_t rip = 0; uc_reg_read( uc, UC_X86_REG_RIP, &rip );
+			// U1741: the access type as the native side reports it (Windows ExceptionInformation[0]: 0 read,
+			// 1 write = #PF error code W, 8 execute = I/D), the address and RFLAGS
+			if ( self->cur_ && !self->cur_->faulted )
+			{
+				event_info& ev = self->cur_->ev;
+				ev.valid = true;
+				uc_reg_read( uc, UC_X86_REG_RFLAGS, &ev.rflags );
+				ev.uc_mem_type = int( type );
+				ev.access = type == UC_MEM_WRITE_UNMAPPED ? 1 : type == UC_MEM_FETCH_UNMAPPED ? 8 : 0;
+				ev.address = address;
+			}
 			self->fault( rip, 14 );
 			if ( self->prog_->in_trap_range( rip ) ) self->pending_epilogue_ = true;   // U850: branch layout too
 			return false;
@@ -902,6 +1065,7 @@ namespace at
 		int xinuse_model = 0;                // U1481: UC_CTL_X86_XINUSE_MODEL (0 = not written; choose_xinuse)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
+		dbg_regs dbg;            // U1740: the case's debug registers (written by run(); !any = none written)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
 		// sweep (CR0 11h, never TS) is untouched
 		bool ts_hooks = false;
