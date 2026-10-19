@@ -292,7 +292,12 @@
 .byte 0x0f, 0x01, 0xcf | rax=0
 .byte 0x0f, 0x01, 0xc0 | rax=0
 .byte 0x0f, 0x37 | rax=0
-.byte 0x0f, 0x01, 0xc5 | rax=0
+# PCONFIG (0F 01 C5) runs with cpl=3 (U1650): the host runs it at CPL3, and a bare host that
+# enumerates PCONFIG (CPUID.(07H,0):EDX[18] = 1) raises #UD there for CPL > 0, while Unicorn at
+# CPL0 reached the leaf check (#GP(0), EAX = 0 without TME activated). The row stays reached
+# (decoded, #UD) under every profile: the VMware guest profile hides PCONFIG (#UD before the CPL
+# check), the bare host reports it (#UD by CPL). The CPL0 paths are cases_pconfig.txt ("=>").
+.byte 0x0f, 0x01, 0xc5 | rax=0 cpl=3
 # ------------------------------------------- AVX-512 opmask instructions (VEX, no AVX-512: #UD)
 .byte 0xc5, 0xf8, 0x90, 0xc1
 .byte 0xc4, 0xe1, 0xf8, 0x90, 0xc1

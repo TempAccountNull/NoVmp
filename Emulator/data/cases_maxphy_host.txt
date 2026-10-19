@@ -1,0 +1,22 @@
+# MAXPHYADDR boundary of MOV CR3 under the BARE-HOST profile: expected-value cases (ledger U1652, agent hostfix,
+# 2026-10-18). Moved out of cases_fixes2.txt (U593), which runs under both platform profiles. The bare-host profiles
+# (cpuid_i5-13600k_bare_host.txt / _bare_host_ecore.txt, from the clean bare-host capture) report
+# CPUID.80000008H:EAX = 302EH on P- and E-cores: MAXPHYADDR 46, so CR3 bits 45:12 are address bits and bits 63:46
+# reserved. SDM Vol2B MOV CR: "#GP(0) If an attempt is made to write a 1 to any reserved bit in CR3[63:MAXPHYADDR]";
+# Vol3A 5.5 (4-level paging, CR3 format). Gate 1 on the bare host (2026-10-18, H2) showed bit 45 without a fault
+# under --host, the cause of this split. CPL0, Unicorn only:
+#   emu-alltest --cases Emulator\data\cases_maxphy_host.txt --host --expect-only     (and --host --host-core E)
+# The VMware-guest counterpart (MAXPHYADDR 45) is cases_maxphy_guest.txt.
+# --- the profile row the boundary comes from: EAX = 302EH (linear 48, physical 46), EBX = ECX = EDX = 0
+mov eax, 0x80000008; cpuid => rax=0x302E rbx=0 rcx=0 rdx=0
+# --- bits 45:12 (and a bit-40 address): no fault, CR3 written; bit 45 is an address bit here (#GP in the guest)
+mov rax, 0x100000000000; mov cr3, rax => rax=0x100000000000
+mov rax, 0x10000000000; mov cr3, rax => rax=0x10000000000
+mov rax, 0x1FFFFFFFF000; mov cr3, rax => rax=0x1FFFFFFFF000
+mov rax, 0x200000000000; mov cr3, rax => rax=0x200000000000
+mov rax, 0x3FFFFFFFF000; mov cr3, rax => rax=0x3FFFFFFFF000
+# --- bit 46 = MAXPHYADDR: the first reserved bit, #GP(0)
+mov rax, 0x400000000000; mov cr3, rax => #GP(0) rax=0x400000000000
+mov rax, 0x7FFFFFFFF000; mov cr3, rax => #GP(0) rax=0x7FFFFFFFF000
+# --- bit 51: reserved
+mov rax, 0x8000000000000; mov cr3, rax => #GP(0) rax=0x8000000000000

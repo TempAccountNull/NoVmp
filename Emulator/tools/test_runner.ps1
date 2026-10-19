@@ -319,6 +319,13 @@ Add-HwCmp 'ref_evex_m4a_hwcmp' 'hw evex' 'ref_evex_m4a.py' 'cases_evex_m4a_hw'
 # U590-U609 (plan 1.F.7): LSS/LFS/LGS m16:64, 64-bit stack width of IRET/RETF/far CALL, page-crossing
 # stores, MAXPHYADDR, SYSCALL and EFER.SCE, RDPMC; hardware lines at CPL3 + SDM expected values.
 Add-Hw 'cases_fixes2' 'hw'
+# U1652 (agent hostfix): the MAXPHYADDR boundary of MOV CR3 per platform switch - --guest / --vm (VMware guest,
+# 80000008H EAX 302DH: bit 45 #GP(0)), --host / --host --host-core E (bare host, 302EH: bit 45 an address bit,
+# bit 46 #GP(0)); cases_fixes2.txt keeps only the lines that hold under both (it also runs in the bare-host package).
+Add-Exp 'maxphy_guest' 'cases_maxphy_guest' 'cpuid expect' @( '--guest' )
+Add-Exp 'maxphy_vm' 'cases_maxphy_guest' 'cpuid expect' @( '--vm' )
+Add-Exp 'maxphy_host_p' 'cases_maxphy_host' 'cpuid expect' @( '--host' )
+Add-Exp 'maxphy_host_e' 'cases_maxphy_host' 'cpuid expect' @( '--host', '--host-core', 'E' )
 # U700-U719: the state at a fault (flags, destinations, partial stores) vs the i5-13600K, plus
 # expected values against the SDM where the host cannot show it.
 Add-Hw 'cases_fix3' 'hw'

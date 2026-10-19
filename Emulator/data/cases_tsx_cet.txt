@@ -62,7 +62,10 @@
 .byte 0xf2, 0x0f, 0x38, 0xf8, 0x3e
 .byte 0xf3, 0x0f, 0x38, 0xf8, 0x3e
 # --- PCONFIG (not reported), SGX ENCLS/ENCLU (not reported), ENCLV (no VMX operation): #UD
-.byte 0x0f, 0x01, 0xc5
+# PCONFIG with cpl=3 (U1650): #UD at CPL3 whether or not the profile reports PCONFIG (the bare
+# host does, CPUID.(07H,0):EDX[18] = 1: without cpl=3 Unicorn ran it at CPL0 and gave #GP(0) from
+# the leaf check, the host #UD); the CPL0 paths are cases_pconfig.txt ("=>").
+.byte 0x0f, 0x01, 0xc5 | cpl=3
 .byte 0x0f, 0x01, 0xcf
 .byte 0x0f, 0x01, 0xd7
 .byte 0x0f, 0x01, 0xc0
