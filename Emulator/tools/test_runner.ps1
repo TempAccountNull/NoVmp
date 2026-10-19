@@ -369,6 +369,9 @@ Add-Hw 'cases_bsf_zero_hw' 'hw'
 # U1121: BSF/BSR flags with a non-zero source (SDM 092: PF from the source's bit count, CF/OF/SF/AF
 # cleared) vs the i5-13600K (P- and E-core runs agree; PF from the result: known deviation).
 Add-Hw 'cases_bsf_flags_hw' 'hw'
+# U1750-U1754 (Gate 1 "Fix D1-D4", notes\eread\P11_probe_fixes.md): LOCK MOV DR at CPL3 #GP, LAR bits 19:16,
+# MOV SS / POP SS chain with TF, PCMPESTRx REX.W / VEX.W1 64-bit lengths vs the i5-13600K (cases_probefix_hw.txt).
+Add-Hw 'cases_probefix_hw' 'hw'
 # U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
 # (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
 Add-Hw 'cases_fix5' 'hw'

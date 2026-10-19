@@ -1,0 +1,22 @@
+# U1750-U1754 (Gate 1, user decision 2026-10-19 "Fix D1-D4 now"): the emulator differences D1-D4 that the
+# G15 probe files found (notes\eread\P9_probe_snippets.md; cases_probe_p1_hw.txt / _p2_ / _p10_ are measurement
+# files, not gates). This file is the GATE for the fixes: hardware lines (no "=>") run natively on the
+# i5-13600K (CPL3, Windows x64, VMware guest) and in Unicorn (cpl=3: Windows-like GDT, 23h code32, 2Bh data,
+# 33h code64, all DPL3); expected-value lines ("=>") run in Unicorn only, against the SDM. SDM reading, red /
+# green and logs: notes\eread\P11_probe_fixes.md.
+#   emu-alltest --cases Emulator\data\cases_probefix_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME (0 differing). Only our own snippets run natively; every fault / trap is caught by
+# the harness (VEH); trap snippets end with spare instructions so the trap RIP stays inside the snippet.
+#
+# --- U1750 (D1): MOV DR with LOCK at CPL3: #GP(0) (the CPL check first), as without LOCK. SDM 093 Vol2B MOV DR
+# p. 4-36 lists "#GP(0) If the current privilege level is not 0." and "#UD ... If the LOCK prefix is used."
+# without an order (Vol3A 7.9: Table 7-2 does not order the faults of an executing instruction).
+.byte 0xf0, 0x0f, 0x21, 0xc0 | cpl=3
+.byte 0xf0, 0x0f, 0x21, 0xf8 | cpl=3
+.byte 0xf0, 0x0f, 0x23, 0xf8 | cpl=3
+.byte 0xf0, 0x0f, 0x21, 0xe0 | cpl=3
+.byte 0xf0, 0x44, 0x0f, 0x21, 0xc0 | cpl=3
+.byte 0xf0, 0x0f, 0x21, 0x00 | cpl=3
+# at CPL0 (Unicorn only) LOCK stays #UD
+.byte 0xf0, 0x0f, 0x21, 0xc0 => #UD
+.byte 0xf0, 0x0f, 0x23, 0xf8 => #UD

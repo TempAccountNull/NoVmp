@@ -4563,6 +4563,23 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
 {
     int modrm, mod, reg;
 
+#if __Use_Original_Qemu != 1 /* ours (U1750) */
+    /*
+     * NoVmp (ledger U1750, Gate 1 D1): MOV DR (0F 21 / 0F 23) with LOCK at CPL > 0 (also
+     * virtual-8086 mode) raises the CPL #GP(0) of check_cpl0 in the opcode switch, not this #UD:
+     * the i5-13600K raises #GP for F0 0F 21 C0 / F0 0F 23 F8 / F0 44 0F 21 C0 at CPL3 (VMware
+     * guest, P- and E-core runs; cases_probefix_hw.txt), as for the forms without LOCK. SDM 093
+     * Vol2B MOV DR p. 4-36 lists "#GP(0) If the current privilege level is not 0." and "#UD ...
+     * If the LOCK prefix is used." without an order; Vol3A 7.9 p. 7-10: Table 7-2 "does not
+     * specify the prioritization of faults that arise during instruction execution". In VMX
+     * non-root operation LOCK stays #UD first: Vol3C 28.1.1 p. 28-1 gives invalid-opcode
+     * exceptions priority over VM exits, and 28.1.3 p. 28-3 lets the MOV-DR exiting VM exit pass
+     * only the CPL #GP and the CR4.DE #UD of DR4 / DR5. CPL0 and real-address mode: #UD.
+     */
+    if ((b == 0x121 || b == 0x123) && CPL(s) != 0 && !VMX_GUEST(s)) {
+        return true;
+    }
+#endif /* __Use_Original_Qemu (U1750) */
     if ((b >= 0x10e && b <= 0x117) || (b >= 0x128 && b <= 0x12f) ||
         (b >= 0x138 && b <= 0x13a) || (b >= 0x150 && b <= 0x179) ||
         (b >= 0x17c && b <= 0x17f) || b == 0x1c2 || (b >= 0x1c4 && b <= 0x1c6) ||

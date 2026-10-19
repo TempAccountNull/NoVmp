@@ -45428,6 +45428,120 @@ static void test_x86_pw_legacy_modes(void)
 }
 /* ---- end U1710-U1712 (pw_) ---- */
 
+/*
+ * ---- U1750-U1759 (pf_): the probe differences D1-D4 of notes\eread\P9_probe_snippets.md (Gate 1,
+ * user decision 2026-10-19) - the i5-13600K (VMware guest, P- and E-core runs alike) against the
+ * emulator, with the SDM reading in notes\eread\P11_probe_fixes.md ----
+ */
+
+/*
+ * run 'code' at CPL3 (bp_run64_cpl3) and return the vector of the first event (0: none); Unicorn
+ * reports #UD as UC_ERR_INSN_INVALID (no interrupt hook call): 6, c->rip = the RIP at the stop
+ */
+static uint32_t pf_cpl3_vector(BpCpu *c, const char *code, size_t len)
+{
+    uc_err e = bp_run64_cpl3(c, code, len);
+
+    if (e == UC_ERR_INSN_INVALID && c->count == 0) {
+        OK(uc_reg_read(c->uc, UC_X86_REG_RIP, &c->rip));
+        return 6;
+    }
+    OK(e);
+    return c->count ? c->intno : 0;
+}
+
+/*
+ * U1750 (D1): MOV DR with LOCK at CPL > 0 raises #GP(0), the CPL check first, as the i5-13600K does
+ * (F0 0F 21 C0 at CPL3: #GP, also the forms without LOCK incl. DR4 / DR5 / REX.R). SDM 093 Vol2B
+ * MOV DR p. 4-36 lists "#GP(0) If the current privilege level is not 0." and "#UD ... If the LOCK
+ * prefix is used." without an order; Vol3A 7.9 p. 7-10: Table 7-2 "does not specify the
+ * prioritization of faults that arise during instruction execution". At CPL0 LOCK stays #UD.
+ */
+static void test_x86_pf_lock_mov_dr(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint32_t vec;
+        const char *what;
+    } t3[] = {
+        {"\xf0\x0f\x21\xc0", 4, 13, "lock mov rax, dr0"},
+        {"\xf0\x0f\x21\xf8", 4, 13, "lock mov rax, dr7"},
+        {"\xf0\x0f\x23\xc0", 4, 13, "lock mov dr0, rax"},
+        {"\xf0\x0f\x23\xf8", 4, 13, "lock mov dr7, rax"},
+        {"\xf0\x0f\x21\xe0", 4, 13, "lock mov rax, dr4"},
+        {"\xf0\x44\x0f\x21\xc0", 5, 13, "lock mov rax, dr8 (REX.R)"},
+        {"\xf0\x66\x0f\x21\xc0", 5, 13, "lock 66 mov rax, dr0"},
+        {"\x0f\x21\xc0", 3, 13, "mov rax, dr0 (control)"},
+        {"\x44\x0f\x21\xc0", 4, 13, "mov rax, dr8 (control)"},
+        {"\xf0\x0f\x20\xc0", 4, 6, "lock mov rax, cr0 (unchanged: no CR8LEGACY on Intel)"},
+    };
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } t0[] = {
+        {"\xf0\x0f\x21\xc0", 4, "cpl0 lock mov rax, dr0"},
+        {"\xf0\x0f\x23\xf8", 4, "cpl0 lock mov dr7, rax"},
+        {"\xf0\x0f\x21\xe8", 4, "cpl0 lock mov rax, dr5"},
+    };
+    BpCpu c;
+    size_t i;
+
+    bp_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(t3) / sizeof(t3[0]); i++) {
+        uint32_t v;
+
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        v = pf_cpl3_vector(&c, t3[i].code, t3[i].len);
+        TEST_CHECK(v == t3[i].vec && c.rip == BP_CODE + 0x100);
+        TEST_MSG("%s at CPL3: vector %u rip %llx, expected %u at %llx", t3[i].what, v,
+                 (unsigned long long)c.rip, t3[i].vec, (unsigned long long)(BP_CODE + 0x100));
+    }
+    OK(uc_close(c.uc));
+
+    bp_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(t0) / sizeof(t0[0]); i++) {
+        uc_err e;
+
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        e = bp_run(&c, t0[i].code, t0[i].len);
+        TEST_CHECK(e == UC_ERR_INSN_INVALID && c.count == 0);
+        TEST_MSG("%s: uc_emu_start %d events %u (vector %u), expected #UD (UC_ERR_INSN_INVALID = %d)",
+                 t0[i].what, (int)e, c.count, c.intno, (int)UC_ERR_INSN_INVALID);
+    }
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1750 (D1), VMX non-root operation: LOCK MOV DR keeps the #UD before the "MOV-DR exiting" VM exit
+ * (SDM 093 Vol3C 28.1.1: "Certain exceptions have priority over VM exits. These include
+ * invalid-opcode exceptions"; 28.1.3 makes the MOV DR exit outrank only the CPL #GP and the
+ * CR4.DE #UD of DR4 / DR5). CPL0 guest, exception bitmap #UD: exit 0, interruption info 80000306H.
+ */
+static void test_x86_pf_lock_mov_dr_vmx(void)
+{
+    PcCtx c;
+    uint64_t fl;
+    uint32_t r, info;
+
+    vmx_setup(&c);
+    vmx_w(&c, 0x4004, 1u << 6);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 23));
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_resume_regs(&c, "\xf0\x0f\x21\xf8", 4, 0, 0, 0, 0);       /* LOCK MOV RAX, DR7 */
+    r = (uint32_t)vmx_r(&c, 0x4402);
+    info = (uint32_t)vmx_r(&c, 0x4404);
+    TEST_CHECK(r == 0 && info == 0x80000306u);
+    TEST_MSG("lock mov rax, dr7 with MOV-DR exiting: exit %u info %x, expected 0 / 80000306", r, info);
+    vmx_resume_regs(&c, "\x0f\x21\xf8", 3, 0, 0, 0, 0);           /* without LOCK: the exit */
+    vmx_exit_is(&c, 29, 0x17, 3);
+    OK(uc_close(c.uc));
+}
+
+/* ---- end U1750-U1759 (pf_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -46011,4 +46125,6 @@ TEST_LIST = {
     {"test_x86_pw_exec", test_x86_pw_exec},
     {"test_x86_pw_cpl3", test_x86_pw_cpl3},
     {"test_x86_pw_legacy_modes", test_x86_pw_legacy_modes},
+    {"test_x86_pf_lock_mov_dr", test_x86_pf_lock_mov_dr},
+    {"test_x86_pf_lock_mov_dr_vmx", test_x86_pf_lock_mov_dr_vmx},
     {NULL, NULL}};
