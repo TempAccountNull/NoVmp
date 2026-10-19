@@ -193,6 +193,7 @@ was #GP(0): a hypervisor driver saw VMX advertised and then failed. SDM 093 Vol3
 | RDMSR 480H-492H before / after | #GP(0) / the values below | #GP(0) / the values below | #GP(0) / the values below | #GP(0) |
 | WRMSR IA32_EFER.SVME before / after | accepted / #GP(0) | accepted / #GP(0) | accepted / #GP(0) | accepted |
 | VMXON / VMXOFF after (CPL0, valid region) | VMsucceed | VMsucceed | #GP(0) until software writes 3AH = 5 | #UD |
+| RDMSR 489H CR4_FIXED1 before / after U1680 | 03FF7FFFH / 01FF6FFFH | 03FF7FFFH / 01F72FFFH | as the platform switch | #GP(0) (no VMX) |
 
 Capability MSR values per profile: **model defaults only** (the capability set above; the i5-13600K's own values are not
 captured, so nothing is taken from hardware). Identical on all four profiles: 480H 01D81000_00000001H (revision identifier
@@ -200,15 +201,21 @@ captured, so nothing is taken from hardware). Identical on all four profiles: 48
 FFFBFFFE_04006172H, 483H 007FEFFF_00036DFFH, 48FH 007FEFFF_00036DFBH, 484H 0000D3FF_000011FFH, 490H 0000D3FF_000011FBH, 485H
 00000000_60040065H, 486H 80000021H, 487H FFFFFFFFH, 488H 2000H, 48AH 3EH, 48BH 0E557BFF_00000000H (no SGX), 48CH
 00000F01_067341C1H, 491H 1; 493H absent. Profile-dependent through the profile mask (vmx_feat): 492H PROCBASED_CTLS3 = 1
-on `--host` (Key Locker enumerated: LOADIWKEY exiting), 0 on `--guest` / `--vm`. 489H CR4_FIXED1 = 03FF7FFFH on all of them:
-`~cr4_reserved_bits`, which takes the CR4 bits from the MAX model's features (only VMXE, FRED and LAM_SUP follow the
-profile) - it therefore includes SMXE (14), KL (19) and UINTR (25) also where the profile hides SMX / Key Locker / UINTR,
-and MOV CR4 accepts those bits there (a pre-existing CR4-vs-profile gap, not VMX-specific; V5 note, left to implement).
+on `--host` (Key Locker enumerated: LOADIWKEY exiting), 0 on `--guest` / `--vm`. 489H CR4_FIXED1 = `~cr4_reserved_bits`:
+U1680 (plan 1.J.61) - every CR4 bit the CPU supports, i.e. the MAX model's bits (03FF7FFFH) restricted to the ones the
+strict profile enumerates (cpu.c `x86_cr4_reserved`): **`--host` P / E 01FF6FFFH** (less LA57 12, UINTR 25), **`--guest` /
+`--vm` 01F72FFFH** (less LA57 12, SMXE 14, KL 19, UINTR 25). Before U1680 it was 03FF7FFFH on all of them (only VMXE, FRED
+and LAM_SUP followed the profile), and MOV CR4 accepted SMXE / KL / UINTR under `--guest` (UINTR also under `--host`)
+although the profile hides them. The same mask decides MOV to CR4 (#GP(0)) and the CR4 checks of VMXON and VM entry
+(Vol3C 26.8 p. 26-3, Vol3D A.8 p. A-7); without a profile or with `--no-strict` the model's 03FF7FFFH stands.
+Details, the reset CR4 per profile and the CPUID bit of each CR4 bit: `docs/quirks.md` "CR4 at engine start".
 
 Tests: `test_x86_vpf_profiles`, `_profile_timing`, `_profile_off` (unit); expected-value files
 `Emulator\data\cases_vmx_profile_host.txt` (`--host`, `--host --host-core E`), `cases_vmx_profile_guest.txt` (`--guest`,
 `--vm`), `cases_vmx_profile_api.txt` (`--cpuid` of the three profile files: the lock / bit-2 #GP rules),
-`cases_vmx_noprofile.txt` (no profile, `--no-strict`); suites `vmx_prof_*`. Specification-validated only (CPL0).
+`cases_vmx_noprofile.txt` (no profile, `--no-strict`); suites `vmx_prof_*`. Specification-validated only (CPL0). U1680 / U1681:
+`test_x86_cr4p_profiles`, `_each_bit`, `_off` (unit), `cases_cr4_profile_host.txt` / `_guest.txt` / `cases_cr4_noprofile.txt`
+(suites `cr4_prof_*`).
 
 ### VMCS storage (implementation-specific, Vol3C 27.2 p. 27-3)
 The model keeps no VMCS data on the processor: every field lives in the VMCS region in guest memory. Bytes 0-3:
