@@ -297,6 +297,14 @@ A documented model of real **timing** (no real sleeping); the SDM-defined result
 - **Hardware cases** (`cases_waitpkg_hw.txt`) use past deadlines only, so the hardware result does not depend on timing; no `# known deviation` tag is needed. The VMware guest #UDs all three instructions.
 - Tests: `test_x86_waitpkg`, `test_x86_wp_tsc_adjust`, `test_x86_wp_profiles`, `test_x86_tw_deadline`, `_os_limit`, `_wrap`, `_monitor`, `_tsc_adjust` (the deadline rule with W = 0), `test_x86_tw_wake` (the default W) - TSC windows: the counter is host time, so a check is "within 2^32 ticks above the expected value"; `cases_waitpkg_host.txt` (suites waitpkg_host_p / waitpkg_host_e; the U1620-U1622 lines with R10 = CF and R11 = the window check), `cases_waitpkg_guest.txt` (waitpkg_guest / waitpkg_vm: #UD, nothing waits), `cases_tsx_cet_max.txt`, `cases_waitpkg_hw.txt` (cases_waitpkg_hw).
 
+## Model-specific MSRs the SDM does not list for the i5-13600K (absent: #GP(0))
+
+The emulator gives a model-specific MSR only where SDM Vol4 lists it for the model's DisplayFamily_DisplayModel (U905). An address the SDM does not list for 06_B7H is "a reserved or unimplemented MSR address": RDMSR / WRMSR raise #GP(0) (SDM 093 Vol2B RDMSR, Vol2D WRMSR), on every platform switch and on the built-in models. Whether the part itself answers such an address is not known: RDMSR is CPL0 only, so it would take a kernel-mode read on the bare host (and in the guest) - not done, nothing is inferred from it.
+
+| MSR | SDM 093 Vol4 | emulator | tests | ledger |
+|---|---|---|---|---|
+| 35H MSR_CORE_THREAD_COUNT ([15:0] THREAD_COUNT, [31:16] Core_COUNT, R/O, Package) | listed only in Table 2-32 p. 2-305 (Intel Xeon E5 v3 family, 06_3FH: "Configured State of Enabled Processor Core Count and Logical Processor Count"). The i5-13600K is 06_B7H (Table 2-1, 13th generation, Raptor Lake); its tables are 2-20, 2-21, 2-25, 2-29, 2-35 and 2-39 (section 2.17 p. 2-360) plus 2-44 - 2-48 (section 2.17.5 p. 2-400), and none of them has 35H (the whole of Vol4 093 has "Register Address: 35H" once, in Table 2-32) | absent: RDMSR / WRMSR 35H #GP(0) at any CPL, under `--host` (P / E), `--guest` / `--vm` and without a profile; `uc_reg_read` / `uc_reg_write` of it return UC_ERR_EXCEPTION. Not modelled for 06_3FH either (no such profile exists here). If it were listed, its value would come from the profile's topology (CPUID 0BH / 1FH: bare host 20 threads / 14 cores) | `cases_msr35.txt` (suites msr35_*), `test_x86_pk_msr35` | U1692 / U1693 |
+
 ## SDM undefined, our choice
 
 Where the SDM leaves the result open the emulator copies the i5-13600K. These are not deviations and carry no tag.
