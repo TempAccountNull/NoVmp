@@ -1,15 +1,15 @@
 # Instruction support — index
 
-_Generated 2026-10-19 01:08 (HEAD `60d1eba0 Ledger: U1640-U1647 (agent/snapgaps), merged and verified`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-19 01:22 (HEAD `b9e1acf5 Ledger: U1630-U1632 (agent/gating), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
 
-**How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started).
+**How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started). **Per profile** (U1632, plan 1.J.57): the split follows the VMware guest (`--guest` / `--vm`, where the hardware cases run); every **CPU cannot support** reason says whether it also holds on the bare host (`--host`) - the forms the bare host enumerates are labelled "--host: enumerated". **Gating only** (your decision 2026-10-17, G10) = not enumerated on either profile, CPUID + #UD verified on both (`Emulator/data/cases_gating*.txt`).
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1607 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1239 · ⏳ 66 · ⬜ 0 · ❌ 1607 (implemented per the manual 1335, open item 48, not implemented yet 224)
+**All forms:** ✅ 1252 · ⏳ 53 · ⬜ 0 · ❌ 1607 (implemented per the manual 1342, open item 48, not implemented yet 217)
 
 ## Currently being added
 
@@ -25,7 +25,7 @@ _Generated 2026-10-19 01:08 (HEAD `60d1eba0 Ledger: U1640-U1647 (agent/snapgaps)
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
       - ⬜ [SGX part GATING ONLY (CPUID.07H:EBX[2] SGX = 0 on both profiles), your decision 2026-10-17 (G10): closes as "CPUID + #UD verified" once a test shows CPUID absent + #UD on --host and --guest (ENCLS/ENCLU; model done U1260-U1273); GETSEC TXT leaves out of scope (1.J.11.b); PCONFIG leaf 1BH done (U1020-U1023), host-only -> Phase 3 3.E.6.c] SGX "present but disabled" model and GETSEC TXT leaves (decision, new); PCONFIG leaf 1BH (A4) [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 677 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 680 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

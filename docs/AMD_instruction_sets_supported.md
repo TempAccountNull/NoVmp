@@ -1,6 +1,6 @@
 # AMD (and VIA) instruction sets
 
-_Generated 2026-10-14 10:44 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `8703e3c5 Ledger: U1412 proof column records the coordinator verify_merge of the merged tree`). Do not edit by hand._
+_Generated 2026-10-19 01:22 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `b9e1acf5 Ledger: U1630-U1632 (agent/gating), merged and verified`). Do not edit by hand._
 
 These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13600K) **cannot run them**, so almost every row is ❌ NOT SUPPORTED on our CPU (listed under "Instructions that can't be supported for now:"). The few AMD-originated instructions Intel also implements (LZCNT, SYSCALL/SYSRET in 64-bit mode) run on the i5-13600K and are listed first.
 
@@ -38,27 +38,29 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 **210 forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against SDM-pseudocode vectors.
 
+Per profile (U1632): 0 of them are **enumerated by the bare host** (`--host`) and hidden only by the VMware guest (`--guest` / `--vm`); the reasons of all others hold on both.
+
 #### By family
 
 | family | forms | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|
-| 3DNOW | 25 | ❌ **cannot run** (AMD 3DNow!) |  | ⏳ 1 · ⬜ 24 queued |
-| AMD_INVLPGB | 2 | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ 2 queued |
-| CLZERO | 1 | ❌ **cannot run** (AMD CLZERO) |  | ⬜ 1 queued |
-| FMA4 | 20 | ❌ **cannot run** (AMD FMA4) |  | ⬜ 20 queued |
-| LWP | 4 | ❌ **cannot run** (AMD LWP) |  | ⬜ 4 queued |
-| MCOMMIT | 1 | ❌ **cannot run** (AMD MCOMMIT) |  | ⬜ 1 queued |
-| MONITORX | 2 | ❌ **cannot run** (AMD MONITORX) |  | ⬜ 2 queued |
-| RDPRU | 1 | ❌ **cannot run** (AMD RDPRU) |  | ⬜ 1 queued |
-| SNP | 4 | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ 4 queued |
-| SSE4a | 4 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ 4 |
-| SVM | 8 | ❌ **cannot run** (AMD SVM) |  | ⏳ 8 |
-| TBM | 10 | ❌ **cannot run** (AMD TBM) | ✅ 1 | ⬜ 9 queued |
-| VIA_PADLOCK_AES | 5 | ❌ **cannot run** (VIA PadLock) |  | ⬜ 5 queued |
-| VIA_PADLOCK_MONTMUL | 1 | ❌ **cannot run** (VIA PadLock) |  | ⬜ 1 queued |
-| VIA_PADLOCK_RNG | 1 | ❌ **cannot run** (VIA PadLock) |  | ⬜ 1 queued |
-| VIA_PADLOCK_SHA | 2 | ❌ **cannot run** (VIA PadLock) |  | ⬜ 2 queued |
-| XOP | 119 | ❌ **cannot run** (AMD XOP) |  | ⬜ 119 queued |
+| 3DNOW | 25 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⏳ 1 · ⬜ 24 queued |
+| AMD_INVLPGB | 2 | ❌ **cannot run** (AMD INVLPGB, on --host and --guest) |  | ⬜ 2 queued |
+| CLZERO | 1 | ❌ **cannot run** (AMD CLZERO, on --host and --guest) |  | ⬜ 1 queued |
+| FMA4 | 20 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ 20 queued |
+| LWP | 4 | ❌ **cannot run** (AMD LWP, on --host and --guest) |  | ⬜ 4 queued |
+| MCOMMIT | 1 | ❌ **cannot run** (AMD MCOMMIT, on --host and --guest) |  | ⬜ 1 queued |
+| MONITORX | 2 | ❌ **cannot run** (AMD MONITORX, on --host and --guest) |  | ⬜ 2 queued |
+| RDPRU | 1 | ❌ **cannot run** (AMD RDPRU, on --host and --guest) |  | ⬜ 1 queued |
+| SNP | 4 | ❌ **cannot run** (AMD SEV-SNP, on --host and --guest) |  | ⬜ 4 queued |
+| SSE4a | 4 | ❌ **cannot run** (AMD SSE4a, on --host and --guest) |  | ⏳ 4 |
+| SVM | 8 | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ 8 |
+| TBM | 10 | ❌ **cannot run** (AMD TBM, on --host and --guest) | ✅ 1 | ⬜ 9 queued |
+| VIA_PADLOCK_AES | 5 | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ 5 queued |
+| VIA_PADLOCK_MONTMUL | 1 | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ 1 queued |
+| VIA_PADLOCK_RNG | 1 | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ 1 queued |
+| VIA_PADLOCK_SHA | 2 | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ 2 queued |
+| XOP | 119 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ 119 queued |
 
 #### Per instruction
 
@@ -66,31 +68,31 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| FEMMS | legacy | - | ❌ **cannot run** (AMD 3DNow!) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| PAVGUSB | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PF2ID | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PF2IW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFADD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFCMPEQ | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFCMPGE | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFCMPGT | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFMAX | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFMIN | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFMUL | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFNACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFPNACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFRCP | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFRCPIT1 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFRCPIT2 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFRSQIT1 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFRSQRT | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFSUB | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PFSUBR | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PI2FD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PI2FW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PMULHRW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
-| PSWAPD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| FEMMS | legacy | - | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| PAVGUSB | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PF2ID | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PF2IW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFADD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFCMPEQ | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFCMPGE | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFCMPGT | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFMAX | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFMIN | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFMUL | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFNACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFPNACC | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFRCP | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFRCPIT1 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFRCPIT2 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFRSQIT1 | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFRSQRT | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFSUB | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PFSUBR | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PI2FD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PI2FW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PMULHRW | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
+| PSWAPD | legacy | 64 | ❌ **cannot run** (AMD 3DNow!, on --host and --guest) |  | ⬜ queued — out of scope: AMD 3DNow! |
 
 </details>
 
@@ -98,8 +100,8 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| INVLPGB | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| TLBSYNC | legacy | - | ❌ **cannot run** (AMD INVLPGB) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| INVLPGB | legacy | - | ❌ **cannot run** (AMD INVLPGB, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| TLBSYNC | legacy | - | ❌ **cannot run** (AMD INVLPGB, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
 
 </details>
 
@@ -107,7 +109,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| CLZERO | legacy | - | ❌ **cannot run** (AMD CLZERO) |  | ⬜ queued — out of scope: AMD CLZERO |
+| CLZERO | legacy | - | ❌ **cannot run** (AMD CLZERO, on --host and --guest) |  | ⬜ queued — out of scope: AMD CLZERO |
 
 </details>
 
@@ -115,26 +117,26 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VFMADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMADDSD | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMADDSS | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMADDSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMADDSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBSD | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFMSUBSS | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMADDSD | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMADDSS | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMSUBSD | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
-| VFNMSUBSS | vex | 128 | ❌ **cannot run** (AMD FMA4) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDSD | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDSS | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMADDSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBSD | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFMSUBSS | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMADDPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMADDPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMADDSD | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMADDSS | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMSUBPD | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMSUBPS | vex | 128/256 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMSUBSD | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
+| VFNMSUBSS | vex | 128 | ❌ **cannot run** (AMD FMA4, on --host and --guest) |  | ⬜ queued — out of scope: AMD FMA4 |
 
 </details>
 
@@ -142,10 +144,10 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| LLWPCB | xop | - | ❌ **cannot run** (AMD LWP) |  | ⬜ queued — out of scope: AMD LWP |
-| LWPINS | xop | - | ❌ **cannot run** (AMD LWP) |  | ⬜ queued — out of scope: AMD LWP |
-| LWPVAL | xop | - | ❌ **cannot run** (AMD LWP) |  | ⬜ queued — out of scope: AMD LWP |
-| SLWPCB | xop | - | ❌ **cannot run** (AMD LWP) |  | ⬜ queued — out of scope: AMD LWP |
+| LLWPCB | xop | - | ❌ **cannot run** (AMD LWP, on --host and --guest) |  | ⬜ queued — out of scope: AMD LWP |
+| LWPINS | xop | - | ❌ **cannot run** (AMD LWP, on --host and --guest) |  | ⬜ queued — out of scope: AMD LWP |
+| LWPVAL | xop | - | ❌ **cannot run** (AMD LWP, on --host and --guest) |  | ⬜ queued — out of scope: AMD LWP |
+| SLWPCB | xop | - | ❌ **cannot run** (AMD LWP, on --host and --guest) |  | ⬜ queued — out of scope: AMD LWP |
 
 </details>
 
@@ -153,7 +155,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MCOMMIT | legacy | - | ❌ **cannot run** (AMD MCOMMIT) |  | ⬜ queued — out of scope: AMD MCOMMIT |
+| MCOMMIT | legacy | - | ❌ **cannot run** (AMD MCOMMIT, on --host and --guest) |  | ⬜ queued — out of scope: AMD MCOMMIT |
 
 </details>
 
@@ -161,8 +163,8 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MONITORX | legacy | - | ❌ **cannot run** (AMD MONITORX) |  | ⬜ queued — out of scope: AMD MONITORX |
-| MWAITX | legacy | - | ❌ **cannot run** (AMD MONITORX) |  | ⬜ queued — out of scope: AMD MONITORX |
+| MONITORX | legacy | - | ❌ **cannot run** (AMD MONITORX, on --host and --guest) |  | ⬜ queued — out of scope: AMD MONITORX |
+| MWAITX | legacy | - | ❌ **cannot run** (AMD MONITORX, on --host and --guest) |  | ⬜ queued — out of scope: AMD MONITORX |
 
 </details>
 
@@ -170,7 +172,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| RDPRU | legacy | - | ❌ **cannot run** (AMD RDPRU) |  | ⬜ queued — out of scope: AMD RDPRU |
+| RDPRU | legacy | - | ❌ **cannot run** (AMD RDPRU, on --host and --guest) |  | ⬜ queued — out of scope: AMD RDPRU |
 
 </details>
 
@@ -178,10 +180,10 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| PSMASH | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| PVALIDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| RMPADJUST | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
-| RMPUPDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| PSMASH | legacy | - | ❌ **cannot run** (AMD SEV-SNP, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| PVALIDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| RMPADJUST | legacy | - | ❌ **cannot run** (AMD SEV-SNP, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
+| RMPUPDATE | legacy | - | ❌ **cannot run** (AMD SEV-SNP, on --host and --guest) |  | ⬜ queued — CPL0 instruction, not reachable by the sweep and no verified_forms.tsv row: not implemented / not v… |
 
 </details>
 
@@ -189,10 +191,10 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| EXTRQ | legacy | 128 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| INSERTQ | legacy | 128 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| MOVNTSD | legacy | 128 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
-| MOVNTSS | legacy | 128 | ❌ **cannot run** (AMD SSE4a) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| EXTRQ | legacy | 128 | ❌ **cannot run** (AMD SSE4a, on --host and --guest) |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| INSERTQ | legacy | 128 | ❌ **cannot run** (AMD SSE4a, on --host and --guest) |  | ⏳ open item — implemented; 2 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| MOVNTSD | legacy | 128 | ❌ **cannot run** (AMD SSE4a, on --host and --guest) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| MOVNTSS | legacy | 128 | ❌ **cannot run** (AMD SSE4a, on --host and --guest) |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
 
 </details>
 
@@ -200,14 +202,14 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| CLGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| INVLPGA | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| SKINIT | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| STGI | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| VMLOAD | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| VMMCALL | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| VMRUN | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
-| VMSAVE | legacy | - | ❌ **cannot run** (AMD SVM) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| CLGI | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| INVLPGA | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| SKINIT | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| STGI | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMLOAD | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMMCALL | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMRUN | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
+| VMSAVE | legacy | - | ❌ **cannot run** (AMD SVM, on --host and --guest) |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 
 </details>
 
@@ -215,16 +217,16 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| BEXTR | xop | - | ❌ **cannot run** (AMD TBM) | ✅ per manual (SDM vectors) — identical to the i5-13600K (4 forms) |  |
-| BLCFILL | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLCI | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLCIC | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLCMSK | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLCS | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLSFILL | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| BLSIC | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| T1MSKC | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
-| TZMSK | xop | - | ❌ **cannot run** (AMD TBM) |  | ⬜ queued — out of scope: AMD TBM |
+| BEXTR | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) | ✅ per manual (SDM vectors) — identical to the i5-13600K (4 forms) |  |
+| BLCFILL | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLCI | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLCIC | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLCMSK | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLCS | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLSFILL | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| BLSIC | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| T1MSKC | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
+| TZMSK | xop | - | ❌ **cannot run** (AMD TBM, on --host and --guest) |  | ⬜ queued — out of scope: AMD TBM |
 
 </details>
 
@@ -232,11 +234,11 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| XCRYPTCBC | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
-| XCRYPTCFB | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
-| XCRYPTCTR | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
-| XCRYPTECB | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
-| XCRYPTOFB | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
+| XCRYPTCBC | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
+| XCRYPTCFB | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
+| XCRYPTCTR | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
+| XCRYPTECB | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
+| XCRYPTOFB | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
 
 </details>
 
@@ -244,7 +246,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| MONTMUL | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
+| MONTMUL | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
 
 </details>
 
@@ -252,7 +254,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| XSTORE | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
+| XSTORE | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
 
 </details>
 
@@ -260,8 +262,8 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| XSHA1 | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
-| XSHA256 | legacy | - | ❌ **cannot run** (VIA PadLock) |  | ⬜ queued — out of scope: VIA PadLock |
+| XSHA1 | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
+| XSHA256 | legacy | - | ❌ **cannot run** (VIA PadLock, on --host and --guest) |  | ⬜ queued — out of scope: VIA PadLock |
 
 </details>
 
@@ -269,125 +271,125 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| VFRCZPD | xop | 128/256 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VFRCZPS | xop | 128/256 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VFRCZSD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VFRCZSS | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCMOV | xop | 128/256 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMEQW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSED | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMFALSEW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGED | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGEW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMGTW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLED | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLEW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMLTW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMNEQW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUED | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMTRUEW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMUB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMUD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMUQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMUW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPCOMW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPERMIL2PD | vex | 128/256 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPERMIL2PS | vex | 128/256 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDBD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDBQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDBW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDDQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUBD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUBQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUBW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUDQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDUWQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHADDWQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHSUBBW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHSUBDQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPHSUBWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSDD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSDQH | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSDQL | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSSDD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSSDQH | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSSDQL | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSSWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSSWW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMACSWW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMADCSSWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPMADCSWD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPPERM | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPROTB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPROTD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPROTQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPROTW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHAB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHAD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHAQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHAW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHLB | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHLD | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHLQ | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
-| VPSHLW | xop | 128 | ❌ **cannot run** (AMD XOP) |  | ⬜ queued — out of scope: AMD XOP |
+| VFRCZPD | xop | 128/256 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VFRCZPS | xop | 128/256 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VFRCZSD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VFRCZSS | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCMOV | xop | 128/256 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMEQW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSED | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMFALSEW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGED | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGEW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMGTW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLED | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLEW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMLTW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMNEQW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUED | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMTRUEW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMUB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMUD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMUQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMUW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPCOMW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPERMIL2PD | vex | 128/256 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPERMIL2PS | vex | 128/256 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDBD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDBQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDBW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDDQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUBD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUBQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUBW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUDQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDUWQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHADDWQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHSUBBW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHSUBDQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPHSUBWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSDD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSDQH | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSDQL | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSSDD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSSDQH | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSSDQL | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSSWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSSWW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMACSWW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMADCSSWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPMADCSWD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPPERM | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPROTB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPROTD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPROTQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPROTW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHAB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHAD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHAQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHAW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHLB | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHLD | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHLQ | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
+| VPSHLW | xop | 128 | ❌ **cannot run** (AMD XOP, on --host and --guest) |  | ⬜ queued — out of scope: AMD XOP |
 
 </details>
 
