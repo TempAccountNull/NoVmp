@@ -45663,6 +45663,82 @@ static void test_x86_pf_ss_chain_tf(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1753 (D4): PCMPESTRI / PCMPESTRM with REX.W and VPCMPESTRI / VPCMPESTRM with VEX.W1 take the
+ * lengths from RAX / RDX in 64-bit mode (SDM 093 Vol2B PCMPESTRI p. 4-254 / PCMPESTRM p. 4-257,
+ * "Effective Operand Size": "64 bit + REX.W ... RAX RDX"; Vol2A 2.3.5.x: "VEX.W field provides the
+ * same functionality as REX.W"), as the i5-13600K does (ECX = 16 for RAX = 100000002H, RDX =
+ * 100000003H). W0 and every form outside 64-bit mode: EAX / EDX. Equal-each, unsigned bytes,
+ * negative polarity (imm8 18H) on two equal strings: IntRes2 = 0 within both lengths.
+ */
+static void test_x86_pf_pcmpestr_w(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint64_t rax, rdx, rcx, fl;     /* fl: OF SF ZF AF PF CF of the result */
+        int mask;                       /* PCMPESTRM: the expected XMM0 byte 0 (-1: PCMPESTRI) */
+        const char *what;
+    } t[] = {
+        {"\x66\x48\x0f\x3a\x61\xc1\x18", 7, 0x100000002ull, 0x100000003ull, 16, 0, -1, "pcmpestri rex.w"},
+        {"\xc4\xe3\xf9\x61\xc1\x18", 6, 0x100000002ull, 0x100000003ull, 16, 0, -1, "vpcmpestri vex.w1"},
+        {"\x66\x48\x0f\x3a\x61\xc1\x18", 7, 0xffffffff00000002ull, 0x100000003ull, 16, 0, -1,
+         "pcmpestri rex.w, rax negative"},
+        {"\x66\x48\x0f\x3a\x61\xc1\x18", 7, 2, 3, 2, 0xc1, -1, "pcmpestri rex.w, small lengths"},
+        {"\x66\x0f\x3a\x61\xc1\x18", 6, 0x100000002ull, 0x100000003ull, 2, 0xc1, -1, "pcmpestri w0"},
+        {"\xc4\xe3\x79\x61\xc1\x18", 6, 0x100000002ull, 0x100000003ull, 2, 0xc1, -1, "vpcmpestri vex.w0"},
+        {"\x66\x48\x0f\x3a\x60\xc1\x18", 7, 0x100000002ull, 0x100000003ull, ~0ull, 0, 0x00,
+         "pcmpestrm rex.w"},
+        {"\xc4\xe3\xf9\x60\xc1\x18", 6, 0x100000002ull, 0x100000003ull, ~0ull, 0, 0x00, "vpcmpestrm vex.w1"},
+        {"\x66\x0f\x3a\x60\xc1\x18", 6, 0x100000002ull, 0x100000003ull, ~0ull, 0xc1, 0x04, "pcmpestrm w0"},
+    };
+    static const uint8_t a16[16] = {0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+                                    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41};
+    uint8_t x0[16];
+    BpCpu c;
+    size_t i;
+    uint64_t rcx, fl;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_HASWELL);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, a16));
+        OK(uc_reg_write(c.uc, UC_X86_REG_XMM1, a16));
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RAX, t[i].rax);
+        bp_set(&c, UC_X86_REG_RDX, t[i].rdx);
+        bp_set(&c, UC_X86_REG_RCX, ~0ull);
+        bp_set(&c, UC_X86_REG_RFLAGS, 0x202);
+        OK(bp_run(&c, t[i].code, t[i].len));
+        rcx = bp_get(&c, UC_X86_REG_RCX);
+        fl = bp_get(&c, UC_X86_REG_RFLAGS) & 0x8d5;
+        OK(uc_reg_read(c.uc, UC_X86_REG_XMM0, x0));
+        TEST_CHECK(c.count == 0 && rcx == t[i].rcx && fl == t[i].fl &&
+                   (t[i].mask < 0 || x0[0] == (uint8_t)t[i].mask));
+        TEST_MSG("%s: rcx %llx flags %llx xmm0[0] %02x events %u, expected rcx %llx flags %llx mask %d",
+                 t[i].what, (unsigned long long)rcx, (unsigned long long)fl, x0[0], c.count,
+                 (unsigned long long)t[i].rcx, (unsigned long long)t[i].fl, t[i].mask);
+    }
+    OK(uc_close(c.uc));
+
+    /* 32-bit mode: VEX.W1 / legacy forms use EAX / EDX (EAX = FFFFFFFEH: length 2, not 16) */
+    bp_open(&c, UC_MODE_32, UC_CPU_X86_HASWELL);
+    for (i = 0; i < 2; i++) {
+        static const char *code32[2] = {"\xc4\xe3\xf9\x61\xc1\x18", "\x66\x0f\x3a\x61\xc1\x18"};
+
+        OK(uc_reg_write(c.uc, UC_X86_REG_XMM0, a16));
+        OK(uc_reg_write(c.uc, UC_X86_REG_XMM1, a16));
+        bp_set(&c, UC_X86_REG_ESP, BP_STACK);
+        bp_set(&c, UC_X86_REG_EAX, 0xfffffffeu);
+        bp_set(&c, UC_X86_REG_EDX, 3);
+        bp_set(&c, UC_X86_REG_ECX, 0);
+        OK(bp_run(&c, code32[i], 6));
+        rcx = bp_get(&c, UC_X86_REG_ECX);
+        TEST_CHECK(c.count == 0 && rcx == 2);
+        TEST_MSG("32-bit %s: ecx %llx events %u, expected 2", i ? "pcmpestri" : "vpcmpestri vex.w1",
+                 (unsigned long long)rcx, c.count);
+    }
+    OK(uc_close(c.uc));
+}
 /* ---- end U1750-U1759 (pf_) ---- */
 
 TEST_LIST = {
@@ -46252,4 +46328,5 @@ TEST_LIST = {
     {"test_x86_pf_lock_mov_dr_vmx", test_x86_pf_lock_mov_dr_vmx},
     {"test_x86_pf_lar_limit_bits", test_x86_pf_lar_limit_bits},
     {"test_x86_pf_ss_chain_tf", test_x86_pf_ss_chain_tf},
+    {"test_x86_pf_pcmpestr_w", test_x86_pf_pcmpestr_w},
     {NULL, NULL}};

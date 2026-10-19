@@ -4834,10 +4834,33 @@ static void gen_PANDN(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
                       decode->op[1].offset, vec_len, vec_len);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1753) */
+/*
+ * NoVmp (ledger U1753, Gate 1 D4): the PCMPESTRI / PCMPESTRM control word with bit 8 = 64-bit
+ * lengths, which pcmp_elen (ops_sse.h) reads ("Presence of REX.W is indicated by a bit higher than
+ * 7 set"); the converted decoder passes only imm8 (the old SSE decoder set "val |= 1 << 8" for
+ * dflag == MO_64; lost with upstream QEMU 653fad2497, still so in QEMU 11.1), so REX.W / VEX.W1
+ * used EAX / EDX. SDM 093 Vol2B PCMPESTRI p. 4-254 / PCMPESTRM p. 4-257 "Effective
+ * Operand Size": "64 bit + REX.W ... RAX RDX"; Vol2A 2.3.5 p. 2-14: "VEX.W field provides the
+ * same functionality as REX.W"; XED: PCMPESTRI64 / VPCMPESTRI64 = mode64 with REX.W / VEX.W1. The
+ * i5-13600K: ECX = 16 for RAX = 100000002H, RDX = 100000003H (cases_probefix_hw.txt). W is
+ * ignored outside 64-bit mode.
+ */
+static TCGv_i32 gen_pcmpestr_ctrl(DisasContext *s, X86DecodedInsn *decode)
+{
+    return tcg_constant_i32(s->uc->tcg_ctx, (uint8_t)decode->immediate |
+                            ((CODE64(s) && REX_W(s)) ? 0x100 : 0));
+}
+
+#endif /* __Use_Original_Qemu (U1753) */
 static void gen_PCMPESTRI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1753) */
     TCGv_i32 imm = tcg_constant8u_i32(tcg_ctx, decode->immediate);
+#else /* ours (U1753) */
+    TCGv_i32 imm = gen_pcmpestr_ctrl(s, decode);
+#endif /* __Use_Original_Qemu (U1753) */
     gen_helper_pcmpestri_xmm(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, imm);
     set_cc_op(s, CC_OP_EFLAGS);
 }
@@ -4845,7 +4868,11 @@ static void gen_PCMPESTRI(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
 static void gen_PCMPESTRM(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1753) */
     TCGv_i32 imm = tcg_constant8u_i32(tcg_ctx, decode->immediate);
+#else /* ours (U1753) */
+    TCGv_i32 imm = gen_pcmpestr_ctrl(s, decode);
+#endif /* __Use_Original_Qemu (U1753) */
     gen_helper_pcmpestrm_xmm(tcg_ctx, cpu_env, OP_PTR1, OP_PTR2, imm);
     set_cc_op(s, CC_OP_EFLAGS);
     if ((s->prefix & PREFIX_VEX) && !s->vex_l) {
