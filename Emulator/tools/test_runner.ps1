@@ -556,6 +556,15 @@ Add-Exp 'vmx_prof_api_host_e' 'cases_vmx_profile_api' 'vmx cpuid expect' @( '--c
 Add-Exp 'vmx_prof_api_guest' 'cases_vmx_profile_api' 'vmx cpuid expect' @( '--cpuid', $Cpuid )
 Add-Exp 'vmx_prof_off' 'cases_vmx_noprofile' 'vmx expect'
 Add-Exp 'vmx_prof_nonstrict' 'cases_vmx_noprofile' 'vmx cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
+# U1680-U1682 (agent cr4prof, plan 1.J.61; notes\eread\V6_cr4_profile.md): the CR4 bits a strict CPUID profile hides are
+# reserved (MOV CR4 #GP(0), absent from IA32_VMX_CR4_FIXED1 and from the reset CR4) per platform switch; without a profile and
+# with a non-strict one the CPU model decides as before.
+Add-Exp 'cr4_prof_host_p' 'cases_cr4_profile_host' 'cr4 vmx cpuid expect' @( '--host' )
+Add-Exp 'cr4_prof_host_e' 'cases_cr4_profile_host' 'cr4 vmx cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'cr4_prof_guest' 'cases_cr4_profile_guest' 'cr4 vmx cpuid expect' @( '--guest' )
+Add-Exp 'cr4_prof_vm' 'cases_cr4_profile_guest' 'cr4 vmx cpuid expect' @( '--vm' )
+Add-Exp 'cr4_prof_off' 'cases_cr4_noprofile' 'cr4 expect'
+Add-Exp 'cr4_prof_nonstrict' 'cases_cr4_noprofile' 'cr4 cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
 Add-Suite 'gating_cases_check' 'gating tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\gen_gating_cases.py' ) @( '--check' )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )

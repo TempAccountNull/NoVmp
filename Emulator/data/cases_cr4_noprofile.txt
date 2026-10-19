@@ -1,0 +1,18 @@
+# CR4 without a strict CPUID profile (plan 1.J.61, ledger U1680-U1682, agent cr4prof, 2026-10-19): the CPU model
+# decides as before U1680 (regression guard). MAX model: reset CR4 020D0600H (OSFXSR, OSXMMEXCPT, FSGSBASE, OSXSAVE,
+# KL, UINTR - the OS-environment value, U67 / U100 / U104); SMXE (U113), KL, UINTR settable; VMXE reserved (no VMX).
+#   emu-alltest --cases Emulator\data\cases_cr4_noprofile.txt --expect-only                                                    (cr4_prof_off)
+#   emu-alltest --cases Emulator\data\cases_cr4_noprofile.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --no-strict --expect-only (cr4_prof_nonstrict)
+# (with --no-strict the profile only reports CPUID, U68: the engine keeps the model's CR4 bits)
+#
+mov r8, cr4 =>! r8=0x20D0600
+# CR4.SMXE (the MAX model reports SMX): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 14; mov cr4, rax; bts rax, 14; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 14; and r8, 1 =>! r8=1
+# CR4.KL (the MAX model reports Key Locker): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 19; mov cr4, rax; bts rax, 19; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 19; and r8, 1 =>! r8=1
+# CR4.UINTR (the MAX model reports UINTR): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 25; mov cr4, rax; bts rax, 25; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 25; and r8, 1 =>! r8=1
+# CR4.VMXE (no VMX: reserved): #GP(0)
+mov rax, cr4; bts rax, 13; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# CR4 bit 15 (reserved): #GP(0)
+mov rax, cr4; bts rax, 15; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A

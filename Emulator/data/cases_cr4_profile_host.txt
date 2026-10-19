@@ -1,0 +1,90 @@
+# CR4 under the platform profiles: expected-value cases (plan 1.J.61, ledger U1680-U1682, agent cr4prof, 2026-10-19).
+# A strict CPUID profile decides which CR4 bits exist (U1680): "Not all flags in control register CR4 are implemented
+# on all processors. With the exception of the PCE flag, they can be qualified with the CPUID instruction" (SDM 093
+# Vol3A 2.5.1 p. 2-21); MOV to CR4 with a 1 in a reserved bit: #GP(0) (Vol2B MOV CR pp. 4-33 / 4-34);
+# IA32_VMX_CR4_FIXED1 = the CR4 bits allowed to be 1 in VMX operation (Vol3D A.8 p. A-7). The reset CR4 is the
+# emulator's OS-environment value (U67 / U100 / U104), restricted to the bits the profile enumerates.
+# Specification-validated only (CPL0 MOV CR4 / RDMSR 489H cannot run from the user-mode test host); NOT measured.
+# Raw Unicorn runs these at CPL0 without paging; a line that sets a bit restores CR4 before it ends (R8 = the bit
+# read back). R15 = 5AH just before a faulting MOV CR4 proves the #GP comes from that instruction.
+# Profile: --host (P- and E-core rows): bare-host capture (Emulator\data\cpuid_i5-13600k_bare_host*.txt) 01H ECX 7FFAFBFFH
+# (SMX = 1), 07H.0 ECX 98C027ACH (KL = 1, LA57 = 0), EDX FC1CC410H (UINTR = 0): CR4.UINTR / LA57 reserved.
+#   emu-alltest --cases Emulator\data\cases_cr4_profile_host.txt --host --expect-only                (suite cr4_prof_host_p)
+#   emu-alltest --cases Emulator\data\cases_cr4_profile_host.txt --host --host-core E --expect-only  (suite cr4_prof_host_e)
+# Before U1680 (the CPU model decided): reset CR4 020D0600H, UINTR settable, FIXED1 03FF7FFFH.
+#
+# --- the profile: 01H:ECX.SMX[6] = 1
+mov eax, 0x1; mov ecx, 0x0; cpuid; mov r8, rcx; shr r8, 6; and r8, 1 =>! r8=1
+# 07H.0:ECX.KL[23] = 1
+mov eax, 0x7; mov ecx, 0x0; cpuid; mov r8, rcx; shr r8, 23; and r8, 1 =>! r8=1
+# 07H.0:EDX.UINTR[5] = 0
+mov eax, 0x7; mov ecx, 0x0; cpuid; mov r8, rdx; shr r8, 5; and r8, 1 =>! r8=0
+# 07H.0:ECX.LA57[16] = 0
+mov eax, 0x7; mov ecx, 0x0; cpuid; mov r8, rcx; shr r8, 16; and r8, 1 =>! r8=0
+# --- reset CR4: OSFXSR, OSXMMEXCPT, FSGSBASE, OSXSAVE, KL (no UINTR: hidden)
+mov r8, cr4 =>! r8=0xD0600
+# --- hidden by the profile
+# CR4.UINTR (07H.0:EDX.UINTR[5] = 0): #GP(0)
+mov rax, cr4; bts rax, 25; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# --- reserved everywhere
+# CR4 bit 15 (reserved on every processor): #GP(0)
+mov rax, cr4; bts rax, 15; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# CR4 bit 26 (reserved): #GP(0)
+mov rax, cr4; bts rax, 26; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# CR4.LASS (not modelled): #GP(0)
+mov rax, cr4; bts rax, 27; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# CR4.LAM_SUP (07H.1:EAX.LAM[26] = 0): #GP(0)
+mov rax, cr4; bts rax, 28; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# CR4 bit 29 (reserved): #GP(0)
+mov rax, cr4; bts rax, 29; mov r15, 0x5A; mov cr4, rax =>! #GP(0) r15=0x5A
+# --- enumerated by the profile
+# CR4.SMXE (01H:ECX.SMX[6] = 1): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 14; mov cr4, rax; bts rax, 14; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 14; and r8, 1 =>! r8=1
+# CR4.KL (07H.0:ECX.KL[23] = 1): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 19; mov cr4, rax; bts rax, 19; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 19; and r8, 1 =>! r8=1
+# CR4.VME (01H:EDX.VME[1]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 0; mov cr4, rax; bts rax, 0; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 0; and r8, 1 =>! r8=1
+# CR4.PVI (01H:EDX.VME[1]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 1; mov cr4, rax; bts rax, 1; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 1; and r8, 1 =>! r8=1
+# CR4.TSD (01H:EDX.TSC[4]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 2; mov cr4, rax; bts rax, 2; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 2; and r8, 1 =>! r8=1
+# CR4.DE (01H:EDX.DE[2]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 3; mov cr4, rax; bts rax, 3; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 3; and r8, 1 =>! r8=1
+# CR4.PSE (01H:EDX.PSE[3]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 4; mov cr4, rax; bts rax, 4; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 4; and r8, 1 =>! r8=1
+# CR4.PAE (01H:EDX.PAE[6]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 5; mov cr4, rax; bts rax, 5; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 5; and r8, 1 =>! r8=1
+# CR4.MCE (01H:EDX.MCE[7]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 6; mov cr4, rax; bts rax, 6; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 6; and r8, 1 =>! r8=1
+# CR4.PGE (01H:EDX.PGE[13]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 7; mov cr4, rax; bts rax, 7; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 7; and r8, 1 =>! r8=1
+# CR4.PCE (no CPUID bit, 2.5.1): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 8; mov cr4, rax; bts rax, 8; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 8; and r8, 1 =>! r8=1
+# CR4.OSFXSR (01H:EDX.FXSR[24]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 9; mov cr4, rax; bts rax, 9; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 9; and r8, 1 =>! r8=1
+# CR4.OSXMMEXCPT (01H:EDX.SSE[25]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 10; mov cr4, rax; bts rax, 10; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 10; and r8, 1 =>! r8=1
+# CR4.UMIP (07H.0:ECX.UMIP[2]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 11; mov cr4, rax; bts rax, 11; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 11; and r8, 1 =>! r8=1
+# CR4.VMXE (01H:ECX.VMX[5], U1660): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 13; mov cr4, rax; bts rax, 13; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 13; and r8, 1 =>! r8=1
+# CR4.FSGSBASE (07H.0:EBX[0]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 16; mov cr4, rax; bts rax, 16; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 16; and r8, 1 =>! r8=1
+# CR4.PCIDE (01H:ECX.PCID[17]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 17; mov cr4, rax; bts rax, 17; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 17; and r8, 1 =>! r8=1
+# CR4.OSXSAVE (01H:ECX.XSAVE[26]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 18; mov cr4, rax; bts rax, 18; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 18; and r8, 1 =>! r8=1
+# CR4.SMEP (07H.0:EBX[7]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 20; mov cr4, rax; bts rax, 20; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 20; and r8, 1 =>! r8=1
+# CR4.SMAP (07H.0:EBX[20]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 21; mov cr4, rax; bts rax, 21; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 21; and r8, 1 =>! r8=1
+# CR4.PKE (07H.0:ECX.PKU[3]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 22; mov cr4, rax; bts rax, 22; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 22; and r8, 1 =>! r8=1
+# CR4.PKS (07H.0:ECX.PKS[31]): accepted
+mov rbx, cr4; mov rax, rbx; btr rax, 24; mov cr4, rax; bts rax, 24; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 24; and r8, 1 =>! r8=1
+# CR4.CET (07H.0:ECX.CET_SS[7]; CR0.WP = 1 first, Vol3A 2.5): accepted
+mov rax, cr0; bts rax, 16; mov cr0, rax; mov rbx, cr4; mov rax, rbx; btr rax, 23; mov cr4, rax; bts rax, 23; mov cr4, rax; mov r8, cr4; mov cr4, rbx; shr r8, 23; and r8, 1 =>! r8=1
+# --- IA32_VMX_CR4_FIXED1 (VMX on, U1660): 03FF7FFFH of the model less LA57 (12), UINTR (25)
+rdmsr | rcx=0x489 =>! rax=0x1FF6FFF rdx=0x0
+# --- IA32_VMX_CR4_FIXED0: VMXE (A.8) - unchanged
+rdmsr | rcx=0x488 =>! rax=0x2000 rdx=0x0
