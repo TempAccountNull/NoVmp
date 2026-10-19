@@ -2678,6 +2678,15 @@ typedef struct CPUX86State {
 
     uint64_t xss;
     uint32_t umwait;
+#if __Use_Original_Qemu != 1 /* ours (U1660) */
+    /*
+     * NoVmp (ledger U1660): the VMX model was turned on by a strict CPUID profile that reports VMX
+     * (x86_cpu_vmx_profile_sync), and the model's CPUID.80000001H:ECX.SVM bit it withdrew. Part of the
+     * machine, not of a uc_context image: after end_reset_fields.
+     */
+    bool vmx_from_profile;
+    uint32_t vmx_profile_svm;
+#endif /* __Use_Original_Qemu (U1660) */
 #if __Use_Original_Qemu != 1 /* ours (U1620) */
     /*
      * NoVmp (ledger U1620): the TSC ticks TPAUSE / UMWAIT waited, part of the counter RDTSC reads
@@ -3704,6 +3713,10 @@ static inline bool x86_vmx_cpuid(CPUX86State *env)
     return (env->features[FEAT_1_ECX] & CPUID_EXT_VMX) &&
            (x86_cpuid_profile_mask(env, 1, 0, 2) & CPUID_EXT_VMX);
 }
+#if __Use_Original_Qemu != 1 /* ours (U1660) */
+/* NoVmp (ledger U1660, cpu.c): a strict CPUID profile that reports VMX turns the VMX model on until the first instruction */
+void x86_cpu_vmx_profile_sync(X86CPU *cpu);
+#endif /* __Use_Original_Qemu (U1660) */
 
 /* vmx_helper.c */
 bool x86_vmx_msr_exists(CPUX86State *env, uint32_t msr);

@@ -709,6 +709,10 @@ typedef enum uc_control_type {
     // profile's CPUID.(0DH,1):EDX:ECX advertises of the components the engine holds (CET_U / CET_S and,
     // as XSAVE state storage only, PT / LBR / HWP; i5-13600K --host 19900H, --guest 1800H), and XSAVES /
     // XRSTORS save / restore those components in the compacted layout CPUID.(0DH,1):EBX describes.
+    // NoVmp U1660 (plan 1.J.59, user decision "Profiles enable VMX" 2026-10-19): a strict profile whose
+    // CPUID.01H:ECX.VMX[5] = 1 turns the VMX model of UC_X86_FEATURE_VMX on (see UC_CTL_X86_FEATURES), on an
+    // Intel 64 CPU model and without UC_CTL_X86_APX; switching strict off or removing the profile before the
+    // first instruction turns it off again; after the first instruction it stays as the engine started.
     UC_CTL_X86_CPUID_STRICT,
     // x86 only (NoVmp U120): 1 = the CPU model also implements AVX512F state: XCR0 may
     // enable state components 5-7 (opmask, ZMM_Hi256, Hi16_ZMM), CPUID.(EAX=0DH) lists
@@ -955,6 +959,13 @@ typedef enum uc_control_type {
     // (VM entries, VM exits, VMX non-root operation), VMFUNC; events injected by VM entry are
     // delivered as UC_CTL_X86_EVENT_DELIVERY delivers events; a VMX abort stops the emulation with
     // UC_ERR_EXCEPTION. Default off.
+    // NoVmp U1660 (plan 1.J.59): a strict UC_CTL_X86_CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 (e.g.
+    // the i5-13600K bare-host and VMware-guest profiles of emu-alltest --host / --guest / --vm) turns the same
+    // VMX model on without this bit (same CPU-model and APX conditions; decided when the CPU is created and on
+    // every profile / strict change until the first instruction, then fixed). Reading UC_CTL_X86_FEATURES
+    // returns the mask that was written; UC_X86_FEATURE_SEAM still needs UC_X86_FEATURE_VMX here.
+    // IA32_FEATURE_CONTROL resets to 0 either way (SDM 093 Vol3C 26.7: firmware sets the lock bit and bit 2;
+    // a host that models a platform's firmware writes it before the first instruction, as emu-alltest does).
     // NoVmp U1331 (plan 1.J.13 Stage A, docs/tdx.md): UC_X86_FEATURE_SEAM: a processor that enumerates
     // SEAM (SDM 093 Vol3C ch. 35; Intel Trust Domain CPU Architectural Extensions 343754-003) on a
     // platform where SEAM is not ready: IA32_VMX_PROCBASED_CTLS3[5] ("SEAM guest-physical address

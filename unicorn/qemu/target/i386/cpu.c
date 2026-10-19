@@ -4441,6 +4441,46 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
     return r[reg];
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1660) */
+/*
+ * NoVmp (ledger U1660, plan 1.J.59, user decision "Profiles enable VMX" 2026-10-19; docs/vmx.md "Opt-in"): a strict
+ * UC_CTL_X86_CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 describes a processor that supports VMX operation
+ * (SDM 093 Vol3C 26.6 p. 26-2), so it turns the VMX model on exactly as the UC_X86_FEATURE_VMX opt-in does in
+ * x86_cpu_realizefn (U1301: Intel 64 CPU models only - GenuineIntel with CPUID.80000001H:EDX.LM -, SVM withdrawn).
+ * Called when the CPU is created and after every UC_CTL_X86_CPUID / UC_CTL_X86_CPUID_STRICT write until the first
+ * instruction ran: installing, replacing or removing the profile or switching strict off before that follows the
+ * profile (the SVM bit of the model comes back when the profile's VMX goes away). Once guest code ran the setting is
+ * frozen, like the strict profile itself (U1580: part of the machine the guest starts on). Not with UC_CTL_X86_APX
+ * (VMX together with APX is not modelled, U1302): there the profile still reports VMX and CR4.VMXE stays reserved,
+ * as before U1660. A non-strict profile only reports CPUID (U68): no change. UC_CTL_X86_FEATURES reads back the mask
+ * that was written; IA32_FEATURE_CONTROL keeps its reset value 0 (Vol3C 26.7 p. 26-3: firmware sets and locks it).
+ */
+void x86_cpu_vmx_profile_sync(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+    struct uc_struct *uc = env->uc;
+    uint32_t eax, ebx, ecx = 0, edx;
+    bool want;
+
+    if (!uc || uc->x86_ran) {
+        return;
+    }
+    want = !(uc->x86_features & UC_X86_FEATURE_VMX) && !uc->x86_apx && uc->x86_cpuid_strict &&
+           x86_cpuid_profile(env, 1, 0, &eax, &ebx, &ecx, &edx) && (ecx & CPUID_EXT_VMX) &&
+           IS_INTEL_CPU(env) && (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM);
+    if (want && !env->vmx_from_profile) {
+        env->vmx_profile_svm = env->features[FEAT_8000_0001_ECX] & CPUID_EXT3_SVM;
+        env->features[FEAT_1_ECX] |= CPUID_EXT_VMX;
+        env->features[FEAT_8000_0001_ECX] &= ~CPUID_EXT3_SVM;
+        env->vmx_from_profile = true;
+    } else if (!want && env->vmx_from_profile) {
+        env->features[FEAT_1_ECX] &= ~CPUID_EXT_VMX;
+        env->features[FEAT_8000_0001_ECX] |= env->vmx_profile_svm;
+        env->vmx_from_profile = false;
+    }
+}
+
+#endif /* __Use_Original_Qemu (U1660) */
 #if __Use_Original_Qemu != 1 /* ours (U860) */
 /*
  * NoVmp (ledger U860): SDM Vol1 8.1.8 ties the x87 data pointer and the FCS/FDS selectors to
@@ -6324,6 +6364,10 @@ static void x86_cpu_realizefn(struct uc_struct *uc, CPUState *dev)
         env->features[FEAT_8000_0001_ECX] &= ~CPUID_EXT3_SVM;
     }
 #endif /* __Use_Original_Qemu (U1301) */
+#if __Use_Original_Qemu != 1 /* ours (U1660) */
+    /* NoVmp (ledger U1660): a strict CPUID profile installed before the engine started that reports VMX */
+    x86_cpu_vmx_profile_sync(cpu);
+#endif /* __Use_Original_Qemu (U1660) */
 #if __Use_Original_Qemu != 1 /* ours (U37) */
     /*
      * Unicorn: recompute the XSAVE component masks from the *filtered* features.

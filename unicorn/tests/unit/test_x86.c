@@ -44115,6 +44115,333 @@ static void test_x86_ta_vmx(void)
 }
 /* ---- end U1670-U1672 (ta_) ---- */
 
+/*
+ * ---- NoVmp U1660-U1669 (agent vmxprof, plan 1.J.59): helper prefix vpf_ ----
+ * U1660 (user decision "Profiles enable VMX" 2026-10-19): a strict UC_CTL_X86_CPUID profile that reports
+ * CPUID.01H:ECX.VMX[5] = 1 turns the VMX model on as UC_X86_FEATURE_VMX does (SDM 093 Vol3C 26.6 p. 26-2;
+ * 26.7 p. 26-3; 26.8 pp. 26-3 / 26-4; VMXON pp. 33-28 / 33-29; Vol3D A.1 p. A-1, A.7 / A.8 p. A-7; Vol4
+ * Table 2-2 3AH p. 2-5), until the first instruction ran; then it is frozen. Not with a non-strict profile, a
+ * profile without VMX, an AMD CPU model or UC_CTL_X86_APX. IA32_FEATURE_CONTROL resets to 0 ("cleared to zero
+ * when a logical processor is reset", Vol3C 26.7): the lock / bit 2 rules of VMXON apply as written.
+ * Rows verbatim from Emulator/data/cpuid_i5-13600k.txt (--guest) and cpuid_i5-13600k_bare_host.txt (--host,
+ * P-core LP 0); leaf 0 EAX = 7, the highest leaf of this subset (as wp_profile).
+ */
+static const uc_x86_cpuid vpf_guest[] = {
+    {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+    {1, 0, 0x000b0671, 0x05040800, 0x7ffa3223, 0x1f8bfbff},
+    {7, 0, 2, 0x219c27eb, 0x9840078c, 0xbc004410},
+    {0x80000000, 0, 0x80000008, 0, 0, 0},
+    {0x80000001, 0, 0, 0, 0x00000121, 0x2c100800},
+    {0x80000008, 0, 0x0000302d, 0, 0, 0},
+};
+static const uc_x86_cpuid vpf_host[] = {
+    {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+    {1, 0, 0x000b0671, 0x00800800, 0x7ffafbff, 0xbfebfbff},
+    {7, 0, 2, 0x239c27eb, 0x98c027ac, 0xfc1cc410},
+    {0x80000000, 0, 0x80000008, 0, 0, 0},
+    {0x80000001, 0, 0, 0, 0x00000121, 0x2c100800},
+    {0x80000008, 0, 0x0000302e, 0, 0, 0},
+};
+#define VPF_N 6
+
+/*
+ * a 64-bit CPL0 engine (pc_ helpers) of CPU model 'model' with the UC_CTL_X86_FEATURES mask 'feat', APX when
+ * 'apx', UC_CTL_X86_CPUID_STRICT = 'strict' (-1: not written) and the profile p (n rows; 0 = none) installed
+ * before the engine is initialised (late = 0) or after it (late = 1: after uc_mem_map, before any instruction)
+ */
+static void vpf_open(PcCtx *c, int model, const uc_x86_cpuid *p, size_t n, int late, int strict, int feat,
+                     int apx)
+{
+    memset(c, 0, sizeof(*c));
+    c->pc = code_start;
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c->uc));
+    OK(uc_ctl_set_cpu_model(c->uc, model));
+    if (feat) {
+        OK(uc_ctl_set_x86_features(c->uc, feat));
+    }
+    if (apx) {
+        OK(uc_ctl_set_x86_apx(c->uc, UC_X86_APX_F));
+    }
+    if (strict >= 0) {
+        OK(uc_ctl_set_x86_cpuid_strict(c->uc, strict));
+    }
+    if (n && !late) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, p, n));
+    }
+    OK(uc_mem_map(c->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(c->uc, VMX_DATA, 0x100000, UC_PROT_ALL));
+    OK(uc_hook_add(c->uc, &c->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &c->cap, 1, 0));
+    if (n && late) {
+        OK(uc_ctl_set_x86_cpuid(c->uc, p, n));
+    }
+}
+
+/* CPUID.01H:ECX as the guest reads it */
+static uint32_t vpf_ecx1(PcCtx *c)
+{
+    uint32_t r[4];
+
+    pc_cpuid(c, 1, 0, r);
+    return r[2];
+}
+
+/* MOV CR4 with VMXE = 1 by the CPU: -1 = accepted (then cleared again by MOV CR4), else the vector */
+static int vpf_vmxe(PcCtx *c)
+{
+    uint64_t cr4 = pc_get(c, UC_X86_REG_CR4);
+    int r = vmx_mov_cr4(c, cr4 | 0x2000);
+
+    if (r == -1) {
+        TEST_CHECK(vmx_mov_cr4(c, cr4) == -1);
+    }
+    return r;
+}
+
+/* WRMSR IA32_EFER with SVME (bit 12) by the CPU: -1 = accepted (then restored), else the vector */
+static int vpf_svme(PcCtx *c)
+{
+    uint64_t efer = 0;
+    int r;
+
+    TEST_CHECK(vmx_rdmsr(c, 0xc0000080, &efer) == -1);
+    r = vmx_wrmsr(c, 0xc0000080, efer | (1ull << 12));
+    if (r == -1) {
+        TEST_CHECK(vmx_wrmsr(c, 0xc0000080, efer) == -1);
+    }
+    return r;
+}
+
+/* MOV CR0, RAX by the CPU: the vector or -1 */
+static int vpf_mov_cr0(PcCtx *c, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_RAX, v);
+    return pc_run(c, "\x0f\x22\xc0", 3);
+}
+
+/*
+ * ready for VMXON (as vmx_root_open_f, but CR4.VMXE set by the CPU): identity paging of 0-4 MB, CR0 with PE, NE,
+ * PG, CR4.PAE, then MOV CR4 with VMXE; IA32_FEATURE_CONTROL = fc by WRMSR (fc < 0: not written); revision
+ * identifier 1 in the VMXON region and in VMCS A
+ */
+static void vpf_root(PcCtx *c, int64_t fc)
+{
+    uint32_t rev = 1;
+
+    vmx_wq(c, VMX_PT, (VMX_PT + 0x1000) | 3);
+    vmx_wq(c, VMX_PT + 0x1000, (VMX_PT + 0x2000) | 3);
+    vmx_wq(c, VMX_PT + 0x2000, 0x83);
+    vmx_wq(c, VMX_PT + 0x2008, 0x200000 | 0x83);
+    pc_set(c, UC_X86_REG_CR4, pc_get(c, UC_X86_REG_CR4) | 0x20);
+    pc_set(c, UC_X86_REG_CR3, VMX_PT);
+    pc_set(c, UC_X86_REG_CR0, pc_get(c, UC_X86_REG_CR0) | 0x80000020ull);
+    TEST_CHECK(vmx_mov_cr4(c, pc_get(c, UC_X86_REG_CR4) | 0x2000) == -1);
+    if (fc >= 0) {
+        TEST_CHECK(vmx_wrmsr(c, 0x3a, (uint64_t)fc) == -1);
+    }
+    OK(uc_mem_write(c->uc, VMX_VMXON, &rev, 4));
+    OK(uc_mem_write(c->uc, VMX_VMCS_A, &rev, 4));
+}
+
+/*
+ * one profile: CPUID.01H:ECX[5] = 1, SVM withdrawn (80000001H:ECX[2] = 0, IA32_EFER.SVME reserved), the
+ * capability MSRs of docs/vmx.md (480H, 486H-488H; 489H = fixed1; 493H absent; read-only), IA32_FEATURE_CONTROL
+ * reset 0 and its VMXON rules, the VMfailInvalid cases, the CR0 / CR4 fixed bits, then VMXON -> VMPTRLD ->
+ * VMPTRST -> VMCLEAR -> VMXOFF succeed
+ */
+static void vpf_profile_checks(const uc_x86_cpuid *p, uint64_t fixed1, int late)
+{
+    PcCtx c;
+    uint32_t r[4], rev;
+    uint64_t v, fl, cr0, cr4;
+
+    vpf_open(&c, UC_CPU_X86_MAX, p, VPF_N, late, -1, 0, 0);
+    TEST_CHECK(vpf_ecx1(&c) & (1u << 5));
+    pc_cpuid(&c, 0x80000001, 0, r);
+    TEST_CHECK(!(r[2] & (1u << 2)));
+    TEST_CHECK(vpf_svme(&c) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x3a, &v) == -1 && v == 0);
+    TEST_CHECK(vmx_rdmsr(&c, 0x480, &v) == -1 && v == 0x01d8100000000001ull);
+    TEST_MSG("IA32_VMX_BASIC %llx", (unsigned long long)v);
+    TEST_CHECK(vmx_rdmsr(&c, 0x486, &v) == -1 && v == 0x80000021ull);
+    TEST_CHECK(vmx_rdmsr(&c, 0x487, &v) == -1 && v == 0xffffffffull);
+    TEST_CHECK(vmx_rdmsr(&c, 0x488, &v) == -1 && v == 0x2000);
+    TEST_CHECK(vmx_rdmsr(&c, 0x489, &v) == -1 && v == fixed1);
+    TEST_MSG("IA32_VMX_CR4_FIXED1 %llx, expected %llx", (unsigned long long)v, (unsigned long long)fixed1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x493, &v) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x480, 0x01d8100000000001ull) == 13);
+    vpf_root(&c, -1);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);           /* lock bit clear */
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 4) == -1);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);           /* bit 2 set, lock clear */
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == -1);
+    TEST_CHECK(vmx_rdmsr(&c, 0x3a, &v) == -1 && v == 5);
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == 13);                  /* locked */
+    rev = 2;                                                   /* wrong revision identifier */
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    rev = 0x80000001;                                          /* rev[31] = 1 */
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);
+    rev = 1;
+    OK(uc_mem_write(c.uc, VMX_VMXON, &rev, 4));
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON + 8, &fl) == -1 && fl == 1);            /* not 4-KByte aligned */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON | (1ull << 52), &fl) == -1 && fl == 1);  /* beyond MAXPHYADDR */
+    cr0 = pc_get(&c, UC_X86_REG_CR0);
+    pc_set(&c, UC_X86_REG_CR0, cr0 & ~0x20ull);                /* CR0.NE = 0: IA32_VMX_CR0_FIXED0 */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
+    pc_set(&c, UC_X86_REG_CR0, cr0);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 0);   /* VMsucceed */
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == -1 && fl == 1);   /* in VMX root operation, no current VMCS */
+    cr4 = pc_get(&c, UC_X86_REG_CR4);
+    TEST_CHECK(vmx_mov_cr4(&c, cr4 & ~0x2000ull) == 13);       /* VMXE fixed to 1 in VMX operation */
+    TEST_CHECK(vpf_mov_cr0(&c, cr0 & ~0x20ull) == 13);         /* NE fixed to 1 */
+    TEST_CHECK(vpf_mov_cr0(&c, cr0 & ~0x80000000ull) == 13);   /* PG fixed to 1 */
+    TEST_CHECK(vmx_vmptrld(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrst(&c) == VMX_VMCS_A);
+    TEST_CHECK(vmx_vmclear(&c, VMX_VMCS_A, &fl) == -1 && fl == 0);
+    TEST_CHECK(vmx_vmptrst(&c) == ~0ull);
+    pc_set(&c, UC_X86_REG_RFLAGS, 0x8d7);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == -1);           /* VMXOFF */
+    TEST_CHECK((pc_get(&c, UC_X86_REG_RFLAGS) & VMX_FLAGS) == 0);
+    TEST_CHECK(pc_run(&c, "\x0f\x01\xc4", 3) == 6);            /* outside VMX operation: #UD */
+    TEST_CHECK(vmx_mov_cr4(&c, cr4 & ~0x2000ull) == -1);       /* VMXE may be cleared again */
+    OK(uc_close(c.uc));
+
+    /* lock bit set, bit 2 (VMX outside SMX) clear: VMXON #GP(0) */
+    vpf_open(&c, UC_CPU_X86_MAX, p, VPF_N, late, -1, 0, 0);
+    vpf_root(&c, 1);
+    TEST_CHECK(vmx_vmxon(&c, VMX_VMXON, &fl) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == 13);
+    OK(uc_close(c.uc));
+}
+
+/* IA32_VMX_CR4_FIXED1 expected (A.8: every CR4 bit the CPU model supports) */
+static uint64_t vpf_fixed1_expected(void)
+{
+    /*
+     * cr4_reserved_bits takes the CR4 bits from the MAX model's features (VMXE, FRED and LAM_SUP from the
+     * profile-aware predicates): VME..PCE (8:0), OSFXSR, OSXMMEXCPT, UMIP, LA57, VMXE, SMXE (the MAX model reports
+     * SMX, U113), FSGSBASE, PCIDE, OSXSAVE, KL, SMEP, SMAP, PKE, CET, PKS, UINTR; no FRED (32) / LAM_SUP (28)
+     * without their opt-ins. The same on both profiles (V5 note: the profile does not narrow these bits).
+     */
+    return 0x03ff7fffull;
+}
+
+/* U1660: VMX from the --guest / --host rows, profile installed before the engine started */
+static void test_x86_vpf_profiles(void)
+{
+    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(), 0);
+    vpf_profile_checks(vpf_host, vpf_fixed1_expected(), 0);
+}
+
+/*
+ * U1660: the profile follows until the first instruction: installed after uc_mem_map (engine initialised) it
+ * turns VMX on; removed or made non-strict before the first instruction it turns VMX off again (SVM back); once
+ * an instruction ran the setting is frozen (removing the profile keeps VMX, U1580)
+ */
+static void test_x86_vpf_profile_timing(void)
+{
+    PcCtx c;
+    uint32_t r[4];
+
+    vpf_profile_checks(vpf_guest, vpf_fixed1_expected(), 1);
+
+    /* installed, then removed before the first instruction: the model without VMX, SVM back */
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 1, -1, 0, 0);
+    OK(uc_ctl_set_x86_cpuid(c.uc, NULL, 0));
+    TEST_CHECK(!(vpf_ecx1(&c) & (1u << 5)));
+    pc_cpuid(&c, 0x80000001, 0, r);
+    TEST_CHECK(r[2] & (1u << 2));
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    TEST_CHECK(vpf_svme(&c) == -1);
+    OK(uc_close(c.uc));
+
+    /* strict switched off before the first instruction (profile = reporting only): off; strict on again: on */
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, 1, -1, 0, 0);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));
+    TEST_CHECK(vpf_ecx1(&c) & (1u << 5));                      /* the profile reports VMX */
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, 1, 0, 0, 0);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, -1));                 /* back to the default: strict with a profile */
+    TEST_CHECK(vpf_vmxe(&c) == -1);
+    TEST_CHECK(vpf_svme(&c) == 13);
+    OK(uc_close(c.uc));
+
+    /* frozen once an instruction ran: removing the profile keeps VMX (the model now reports it) */
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, 0, 0);
+    TEST_CHECK(vpf_vmxe(&c) == -1);
+    OK(uc_ctl_set_x86_cpuid(c.uc, NULL, 0));
+    TEST_CHECK(vpf_vmxe(&c) == -1);
+    TEST_CHECK(vpf_ecx1(&c) & (1u << 5));
+    TEST_CHECK(vpf_svme(&c) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1660: VMX stays off without a profile, with a non-strict profile, with a strict profile that hides VMX, on an
+ * AMD CPU model and with UC_CTL_X86_APX (VMX + APX not modelled, U1302); UC_CTL_X86_FEATURES reads back what was
+ * written; the explicit opt-in is unchanged; SEAM still needs the explicit VMX bit
+ */
+static void test_x86_vpf_profile_off(void)
+{
+    PcCtx c;
+    uc_x86_cpuid novmx[VPF_N];
+    uint64_t v;
+    int mask = -1;
+
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);       /* no profile: the default stays off */
+    TEST_CHECK(!(vpf_ecx1(&c) & (1u << 5)));
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x480, &v) == 13);
+    TEST_CHECK(vmx_wrmsr(&c, 0x3a, 5) == 13);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, 0, 0, 0); /* non-strict: CPUID reporting only */
+    TEST_CHECK(vpf_ecx1(&c) & (1u << 5));
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x480, &v) == 13);
+    OK(uc_close(c.uc));
+
+    memcpy(novmx, vpf_guest, sizeof(novmx));
+    novmx[1].ecx &= ~(1u << 5);
+    vpf_open(&c, UC_CPU_X86_MAX, novmx, VPF_N, 0, -1, 0, 0);  /* the profile hides VMX */
+    TEST_CHECK(!(vpf_ecx1(&c) & (1u << 5)));
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_EPYC, vpf_guest, VPF_N, 0, -1, 0, 0); /* AMD CPU model (U1301: Intel 64 only) */
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    TEST_CHECK(vmx_rdmsr(&c, 0x480, &v) == 13);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, 0, -1, 0, 1); /* APX: VMX not modelled with it */
+    TEST_CHECK(vpf_ecx1(&c) & (1u << 5));
+    TEST_CHECK(vpf_vmxe(&c) == 13);
+    OK(uc_ctl_get_x86_features(c.uc, &mask));
+    TEST_CHECK(mask == 0);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, 0, 0);
+    OK(uc_ctl_get_x86_features(c.uc, &mask));
+    TEST_CHECK(mask == 0);                                     /* the written mask, not the profile's VMX */
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, UC_X86_FEATURE_VMX, 0); /* explicit + profile */
+    TEST_CHECK(vpf_vmxe(&c) == -1);
+    OK(uc_ctl_set_x86_cpuid(c.uc, NULL, 0));
+    TEST_CHECK(vpf_vmxe(&c) == -1);
+    OK(uc_close(c.uc));
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &c.uc));
+    OK(uc_ctl_set_x86_cpuid(c.uc, vpf_guest, VPF_N));
+    uc_assert_err(UC_ERR_ARG, uc_ctl_set_x86_features(c.uc, UC_X86_FEATURE_SEAM));
+    OK(uc_close(c.uc));
+}
+/* ---- end U1660-U1669 (vpf_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -44682,4 +45009,7 @@ TEST_LIST = {
     {"test_x86_xq_xss_wrmsr", test_x86_xq_xss_wrmsr},
     {"test_x86_xq_xsaves_roundtrip", test_x86_xq_xsaves_roundtrip},
     {"test_x86_xq_component_rules", test_x86_xq_component_rules},
+    {"test_x86_vpf_profiles", test_x86_vpf_profiles},
+    {"test_x86_vpf_profile_timing", test_x86_vpf_profile_timing},
+    {"test_x86_vpf_profile_off", test_x86_vpf_profile_off},
     {NULL, NULL}};

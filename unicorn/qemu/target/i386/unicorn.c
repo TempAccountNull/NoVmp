@@ -2566,6 +2566,10 @@ static void x86_cpuid_changed(struct uc_struct *uc)
     x86_cpu_update_phys_bits(X86_CPU(uc->cpu));
     tlb_flush(uc->cpu);
 #endif /* __Use_Original_Qemu (U593) */
+#if __Use_Original_Qemu != 1 /* ours (U1660) */
+    /* NoVmp (ledger U1660): VMX follows a strict profile that reports it, until the first instruction */
+    x86_cpu_vmx_profile_sync(X86_CPU(uc->cpu));
+#endif /* __Use_Original_Qemu (U1660) */
 }
 
 #endif /* __Use_Original_Qemu (U120) */
