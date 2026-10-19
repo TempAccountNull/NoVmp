@@ -45540,6 +45540,58 @@ static void test_x86_pf_lock_mov_dr_vmx(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1751 (D2): LAR bits 19:16 = bits 19:16 of the descriptor's second doubleword (segment limit
+ * 19:16), as the i5-13600K returns them (selector 2Bh: CFF300H); SDM 093 Vol2A LAR p. 3-533:
+ * "Bits 19:16 are undefined." The rest is unchanged: 7:0 and 31:24 zero, a 16-bit destination
+ * keeps its upper bits, 32 / 64 bits zero-extend, LSL unchanged. bp_open's GDT: 10h data
+ * (93H, limit FFFFFH, G = 1, B = 1), 28h 64-bit code (9BH, L = 1); 38h: data, limit 5ABCDH, AVL.
+ */
+static void test_x86_pf_lar_limit_bits(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        uint64_t sel, rax_in, rax_out;
+        const char *what;
+    } t[] = {
+        {"\x0f\x02\xc1", 3, 0x10, ~0ull, 0x00cf9300ull, "lar eax, 10h"},
+        {"\x48\x0f\x02\xc1", 4, 0x10, ~0ull, 0x00cf9300ull, "lar rax, 10h"},
+        {"\x0f\x02\xc1", 3, 0x28, ~0ull, 0x00af9b00ull, "lar eax, 28h (64-bit code)"},
+        {"\x0f\x02\xc1", 3, 0x38, ~0ull, 0x00159300ull, "lar eax, 38h (limit 19:16 = 5, AVL)"},
+        {"\x66\x0f\x02\xc1", 4, 0x38, ~0ull, 0xffffffffffff9300ull, "lar ax, 38h (upper bits kept)"},
+        {"\x0f\x03\xc1", 3, 0x38, ~0ull, 0x0005abcdull, "lsl eax, 38h (unchanged)"},
+    };
+    BpCpu c;
+    size_t i;
+    uint64_t v, fl;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set_gdt_entry(&c, 7, bp_desc(0, 0x5abcd, 0x93, 0x1));
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RAX, t[i].rax_in);
+        bp_set(&c, UC_X86_REG_RCX, t[i].sel);
+        OK(bp_run(&c, t[i].code, t[i].len));
+        v = bp_get(&c, UC_X86_REG_RAX);
+        fl = bp_get(&c, UC_X86_REG_RFLAGS);
+        TEST_CHECK(c.count == 0 && v == t[i].rax_out && (fl & 0x40));
+        TEST_MSG("%s: rax %llx zf %d events %u, expected %llx zf 1", t[i].what, (unsigned long long)v,
+                 (int)((fl >> 6) & 1), c.count, (unsigned long long)t[i].rax_out);
+    }
+    OK(uc_close(c.uc));
+
+    /* CPL3: LAR ecx, 23h (the DPL3 data segment, limit FFFFFH): 00CFF300H as the hardware's 2Bh */
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RAX, 0x23);
+    bp_set(&c, UC_X86_REG_RCX, ~0ull);
+    TEST_CHECK(pf_cpl3_vector(&c, "\x0f\x02\xc8", 3) == 0);
+    v = bp_get(&c, UC_X86_REG_RCX);
+    TEST_CHECK(v == 0x00cff300ull);
+    TEST_MSG("CPL3 lar ecx, 23h: rcx %llx, expected cff300", (unsigned long long)v);
+    OK(uc_close(c.uc));
+}
+
 /* ---- end U1750-U1759 (pf_) ---- */
 
 TEST_LIST = {
@@ -46127,4 +46179,5 @@ TEST_LIST = {
     {"test_x86_pw_legacy_modes", test_x86_pw_legacy_modes},
     {"test_x86_pf_lock_mov_dr", test_x86_pf_lock_mov_dr},
     {"test_x86_pf_lock_mov_dr_vmx", test_x86_pf_lock_mov_dr_vmx},
+    {"test_x86_pf_lar_limit_bits", test_x86_pf_lar_limit_bits},
     {NULL, NULL}};

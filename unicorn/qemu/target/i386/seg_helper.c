@@ -5012,7 +5012,19 @@ target_ulong helper_lar(CPUX86State *env, target_ulong selector1)
         }
     }
     CC_SRC = eflags | CC_Z;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1751) */
     return e2 & 0x00f0ff00;
+#else /* ours (U1751) */
+    /*
+     * NoVmp (ledger U1751, Gate 1 D2): bits 19:16 = bits 19:16 of the descriptor's second
+     * doubleword (segment limit 19:16), as the i5-13600K returns them (VMware guest, P- and E-core
+     * runs: selector 2Bh CFF300H, 23h CFFB00H; cases_probefix_hw.txt). SDM 093 Vol2A LAR p. 3-533:
+     * "Bits 19:16 are undefined." (SDM 013 - 041: "The doubleword is masked by 00FXFF00H"); QEMU
+     * returned 0 there. Bits 7:0 and 31:24 stay 0; translate.c writes bits 15:0 only for a
+     * 16-bit destination.
+     */
+    return e2 & 0x00ffff00;
+#endif /* __Use_Original_Qemu (U1751) */
 }
 
 void helper_verr(CPUX86State *env, target_ulong selector1)

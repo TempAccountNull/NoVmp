@@ -20,3 +20,14 @@
 # at CPL0 (Unicorn only) LOCK stays #UD
 .byte 0xf0, 0x0f, 0x21, 0xc0 => #UD
 .byte 0xf0, 0x0f, 0x23, 0xf8 => #UD
+#
+# --- U1751 (D2): LAR bits 19:16 = bits 19:16 of the descriptor's second doubleword (limit 19:16). SDM 093 Vol2A
+# LAR p. 3-533: "Bits 19:16 are undefined." (older revisions: "masked by 00FxFF00H"). 2Bh / 23h: limit FFFFFH
+# (CFF300H / CFFB00H), 33h: limit 19:16 = 0 (20FB00H); r16 keeps the upper bits; LSL unchanged.
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF
+.byte 0x48, 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF
+.byte 0x66, 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF
+.byte 0x0f, 0x02, 0x0e | cpl=3 rcx=0xFFFFFFFFFFFFFFFF m+0x8000=2B00
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF
