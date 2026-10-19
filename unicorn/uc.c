@@ -34,6 +34,10 @@
 static void clear_deleted_hooks(uc_engine *uc);
 static uc_err uc_snapshot(uc_engine *uc);
 static uc_err uc_restore_latest_snapshot(uc_engine *uc);
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+static uc_err snap_host_save(struct uc_struct *uc, uc_context *context);
+static uc_err snap_host_check(struct uc_struct *uc, const uc_context *context);
+#endif /* __Use_Original_Qemu (U1644) */
 
 #define UC_MTE_TAG_STORAGE_GRANULE 32
 
@@ -1018,7 +1022,15 @@ uc_err uc_mem_write(uc_engine *uc, uint64_t address, const void *_bytes,
             }
 
             len = memory_region_len(uc, mr, address, size - count);
+#if __Use_Original_Qemu == 1 /* original QEMU (U1643) */
             if (uc->snapshot_level && uc->snapshot_level > mr->priority) {
+#else /* ours (U1643) */
+            /*
+             * NoVmp (ledger U1643, plan 1.J.58.b): only RAM is copied (as store_helper checks mr->ram). MMIO has no
+             * RAM block: memory_cow copied from a NULL block (an access violation); the write goes to the callback.
+             */
+            if (uc->snapshot_level && mr->ram && uc->snapshot_level > mr->priority) {
+#endif /* __Use_Original_Qemu (U1643) */
                 mr = uc->memory_cow(uc, mr, address & ~align,
                                     (len + (address & align) + align) & ~align);
                 if (!mr) {
@@ -1314,6 +1326,35 @@ uc_err uc_emu_stop(uc_engine *uc)
     return err;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1640) */
+/*
+ * NoVmp (ledger U1640, plan 1.J.58.a): uc->mapped_blocks holds the regions the API mapped. The first write to a
+ * region under a memory snapshot moves it into a container (memory_cow -> make_contained: the region is re-added
+ * at offset 0 of a new container placed at its address), so its own addr / end are container-relative from then
+ * on. The guest-physical range is the region's offset plus the offsets of its containers up to system_memory
+ * (as memory_region_len walks it). The original read mr->addr / mr->end: uc_mem_regions listed a contained region
+ * at 0, and the sorted search (bsearch_mapped_blocks) behind memory_overlap and mem_map used that range - a map
+ * over the region was accepted and a new region was inserted out of order. The array stays sorted by these
+ * absolute ranges: make_contained does not move a region in the guest-physical space.
+ */
+static uint64_t mapped_block_begin(const uc_engine *uc, const MemoryRegion *mr)
+{
+    uint64_t begin = mr->addr;
+
+    while (mr->container && mr->container != uc->system_memory) {
+        mr = mr->container;
+        begin += mr->addr;
+    }
+    return begin;
+}
+
+/* the last guest-physical byte of a mapped_blocks entry */
+static uint64_t mapped_block_last(const uc_engine *uc, const MemoryRegion *mr)
+{
+    return mapped_block_begin(uc, mr) + int128_get64(mr->size) - 1;
+}
+#endif /* __Use_Original_Qemu (U1640) */
+
 // return target index where a memory region at the address exists, or could be
 // inserted
 //
@@ -1335,9 +1376,15 @@ static int bsearch_mapped_blocks(const uc_engine *uc, uint64_t address)
 
         mapping = uc->mapped_blocks[mid];
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1640) */
         if (mapping->end - 1 < address) {
             left = mid + 1;
         } else if (mapping->addr > address) {
+#else /* ours (U1640) */
+        if (mapped_block_last(uc, mapping) < address) {
+            left = mid + 1;
+        } else if (mapped_block_begin(uc, mapping) > address) {
+#endif /* __Use_Original_Qemu (U1640) */
             right = mid;
         } else {
             return mid;
@@ -1360,7 +1407,11 @@ static bool memory_overlap(struct uc_struct *uc, uint64_t begin, size_t size)
         return false;
 
     // end address overlaps this region?
+#if __Use_Original_Qemu == 1 /* original QEMU (U1640) */
     if (end >= uc->mapped_blocks[i]->addr)
+#else /* ours (U1640) */
+    if (end >= mapped_block_begin(uc, uc->mapped_blocks[i]))
+#endif /* __Use_Original_Qemu (U1640) */
         return true;
 
     // not found
@@ -1389,7 +1440,12 @@ static uc_err mem_map(uc_engine *uc, MemoryRegion *block)
         uc->mapped_blocks = regions;
     }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1640) */
     pos = bsearch_mapped_blocks(uc, block->addr);
+#else /* ours (U1640) */
+    /* the restore maps back a region inside its container (uc_restore_latest_snapshot) */
+    pos = bsearch_mapped_blocks(uc, mapped_block_begin(uc, block));
+#endif /* __Use_Original_Qemu (U1640) */
 
     // shift the array right to give space for the new pointer
     memmove(&uc->mapped_blocks[pos + 1], &uc->mapped_blocks[pos],
@@ -2393,8 +2449,14 @@ uc_err uc_mem_regions(uc_engine *uc, uc_mem_region **regions, uint32_t *count)
     }
 
     for (i = 0; i < *count; i++) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1640) */
         r[i].begin = uc->mapped_blocks[i]->addr;
         r[i].end = uc->mapped_blocks[i]->end - 1;
+#else /* ours (U1640) */
+        /* guest-physical, also for a region inside a snapshot container */
+        r[i].begin = mapped_block_begin(uc, uc->mapped_blocks[i]);
+        r[i].end = mapped_block_last(uc, uc->mapped_blocks[i]);
+#endif /* __Use_Original_Qemu (U1640) */
         r[i].perms = uc->mapped_blocks[i]->perms;
     }
 
@@ -2495,6 +2557,14 @@ uc_err uc_context_save(uc_engine *uc, uc_context *context)
     uc_err ret = UC_ERR_OK;
 
     if (uc->context_content & UC_CTL_CONTEXT_MEMORY) {
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+        /* first, so a failure changes nothing: the map_ptr host buffers of the saved state */
+        ret = snap_host_save(uc, context);
+        if (ret != UC_ERR_OK) {
+            restore_jit_state(uc);
+            return ret;
+        }
+#endif /* __Use_Original_Qemu (U1644) */
         if (!context->fv) {
             context->fv = g_malloc0(sizeof(*context->fv));
         }
@@ -2779,6 +2849,14 @@ uc_err uc_context_restore(uc_engine *uc, uc_context *context)
     uc_err ret;
 
     if (uc->context_content & UC_CTL_CONTEXT_MEMORY) {
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+        /* before anything changes: refuse when the host changed a map_ptr buffer of the saved state */
+        ret = snap_host_check(uc, context);
+        if (ret != UC_ERR_OK) {
+            restore_jit_state(uc);
+            return ret;
+        }
+#endif /* __Use_Original_Qemu (U1644) */
         uc->snapshot_level = context->snapshot_level;
         if (!uc->flatview_copy(uc, uc->address_space_memory.current_map,
                                context->fv, true)) {
@@ -2816,6 +2894,9 @@ uc_err uc_context_free(uc_context *context)
         free(context->fv->ranges);
         g_free(context->fv);
     }
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+    g_free(context->host_recs);
+#endif /* __Use_Original_Qemu (U1644) */
     return uc_free(context);
 }
 
@@ -3910,6 +3991,148 @@ uc_err uc_ctl(uc_engine *uc, uc_control_type control, ...)
     return err;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+/*
+ * NoVmp (ledger U1644, plan 1.J.58.b): the bytes of a uc_mem_map_ptr host buffer belong to the caller. Under a
+ * snapshot, guest stores and uc_mem_write into a region mapped before the save go to emulator-owned copies
+ * (memory_cow) and the buffer keeps the saved bytes; the restore discards the copies. A change the HOST makes to the
+ * buffer after the save is invisible to the emulator and cannot be undone, so the restore would return a state
+ * that differs from the saved one without saying so. The save records each map_ptr region of the memory map (also
+ * inside a snapshot container) with a hash of its buffer; the restore first re-hashes the recorded regions that are
+ * still mapped or moved out (uc_mem_unmap under a snapshot keeps the region, the restore maps it back) and refuses
+ * with UC_ERR_MAP, changing nothing, when one differs. A region no longer present (the context is newer than a
+ * snapshot restored since) is not read. The hash is a bijection per 8-byte step, so one changed word is always
+ * detected; several changes collide with a probability of about 2^-64. The buffer must stay valid as long as a
+ * context saved while it was mapped can be restored.
+ */
+struct uc_snap_host_rec {
+    MemoryRegion *mr;   /* the uc_mem_map_ptr region (RAM block allocated with RAM_PREALLOC) */
+    const uint8_t *host;
+    uint64_t size;
+    uint64_t hash;
+};
+
+static bool snap_host_region(const MemoryRegion *mr)
+{
+    /* RAM_PREALLOC (exec.c) = 1, as split_region tests it */
+    return mr->ram && mr->ram_block && (mr->ram_block->flags & 1);
+}
+
+static uint64_t snap_host_hash(const uint8_t *p, uint64_t n)
+{
+    uint64_t h = 0xcbf29ce484222325ULL, w, i = 0;
+
+    for (; i + 8 <= n; i += 8) {
+        memcpy(&w, p + i, 8);
+        h = (h ^ w) * 0x100000001b3ULL;
+        h ^= h >> 29;
+    }
+    for (; i < n; i++) {
+        h = (h ^ p[i]) * 0x100000001b3ULL;
+    }
+    return h;
+}
+
+static bool snap_host_add(struct uc_snap_host_rec **recs, uint32_t *n, uint32_t *cap, MemoryRegion *mr)
+{
+    struct uc_snap_host_rec *r;
+
+    if (*n == *cap) {
+        uint32_t c = *cap ? *cap * 2 : 8;
+        r = g_realloc(*recs, c * sizeof(**recs));
+        if (r == NULL) {
+            return false;
+        }
+        *recs = r;
+        *cap = c;
+    }
+    r = &(*recs)[(*n)++];
+    r->mr = mr;
+    r->host = (const uint8_t *)mr->ram_block->host;
+    r->size = int128_get64(mr->size);
+    r->hash = snap_host_hash(r->host, r->size);
+    return true;
+}
+
+/* uc_context_save: record the map_ptr regions mapped now (top level and inside snapshot containers) */
+static uc_err snap_host_save(struct uc_struct *uc, uc_context *context)
+{
+    struct uc_snap_host_rec *recs = NULL;
+    uint32_t n = 0, cap = 0;
+    MemoryRegion *sub, *s2;
+
+    QTAILQ_FOREACH(sub, &uc->system_memory->subregions, subregions_link) {
+        if (snap_host_region(sub)) {
+            if (!snap_host_add(&recs, &n, &cap, sub)) {
+                g_free(recs);
+                return UC_ERR_NOMEM;
+            }
+        } else if (!sub->terminates) {
+            QTAILQ_FOREACH(s2, &sub->subregions, subregions_link) {
+                if (snap_host_region(s2) && !snap_host_add(&recs, &n, &cap, s2)) {
+                    g_free(recs);
+                    return UC_ERR_NOMEM;
+                }
+            }
+        }
+    }
+    g_free(context->host_recs);
+    context->host_recs = recs;
+    context->host_rec_count = n;
+    return UC_ERR_OK;
+}
+
+static bool snap_host_in(MemoryRegion *top, const MemoryRegion *mr)
+{
+    MemoryRegion *s2;
+
+    if (top == mr) {
+        return true;
+    }
+    QTAILQ_FOREACH(s2, &top->subregions, subregions_link) {
+        if (s2 == mr) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* the recorded region is still mapped or moved out, with the same buffer */
+static bool snap_host_present(struct uc_struct *uc, const struct uc_snap_host_rec *r)
+{
+    MemoryRegion *sub;
+    size_t i;
+    bool found = false;
+
+    QTAILQ_FOREACH(sub, &uc->system_memory->subregions, subregions_link) {
+        if (snap_host_in(sub, r->mr)) {
+            found = true;
+            break;
+        }
+    }
+    for (i = 0; !found && i < uc->unmapped_regions->len; i++) {
+        found = snap_host_in(g_array_index(uc->unmapped_regions, MemoryRegion *, i), r->mr);
+    }
+    return found && snap_host_region(r->mr) && (const uint8_t *)r->mr->ram_block->host == r->host &&
+           int128_get64(r->mr->size) == r->size;
+}
+
+/* uc_context_restore, before anything changes: UC_ERR_MAP when the host changed a recorded buffer */
+static uc_err snap_host_check(struct uc_struct *uc, const uc_context *context)
+{
+    uint32_t i;
+
+    for (i = 0; i < context->host_rec_count; i++) {
+        const struct uc_snap_host_rec *r = &context->host_recs[i];
+
+        if (snap_host_present(uc, r) && snap_host_hash(r->host, r->size) != r->hash) {
+            return UC_ERR_MAP;
+        }
+    }
+    return UC_ERR_OK;
+}
+#endif /* __Use_Original_Qemu (U1644) */
+
 static uc_err uc_snapshot(struct uc_struct *uc)
 {
     if (uc->snapshot_level == INT32_MAX) {
@@ -4013,6 +4236,23 @@ static uc_err uc_restore_latest_snapshot(struct uc_struct *uc)
         if (level < uc->snapshot_level) {
             break;
         }
+#if __Use_Original_Qemu != 1 /* ours (U1642) */
+        /*
+         * NoVmp (ledger U1642, plan 1.J.58.b): a region (not a container) mapped after the restored snapshot -
+         * its priority is the level it was mapped at, >= the restored level - and unmapped since did not exist at
+         * the snapshot: free it, do not map it back. The original moved it in again. Its translated code was
+         * dropped by memory_moveout; it is not in mapped_blocks. For uc_mmio_map the destructor frees the
+         * callbacks; for uc_mem_map_ptr the host buffer stays the caller's. A container in this case is emptied by
+         * the filter below and freed (U1591).
+         */
+        if (initial_mr == mr && mr->priority >= uc->snapshot_level) {
+            mr->container = NULL;
+            mr->destructor(mr);
+            g_free(mr);
+            g_array_remove_range(uc->unmapped_regions, i, 1);
+            continue;
+        }
+#endif /* __Use_Original_Qemu (U1642) */
         if (memory_overlap(uc, mr->addr, int128_get64(mr->size))) {
             return UC_ERR_MAP;
         }

@@ -39563,6 +39563,13 @@ static void test_x86_um_unrelated_kept(void)
         TEST_MSG("snap %d: after UC_CTL_TB_REMOVE_CACHE: err %u, RAX %" PRIx64 " (expected 6666h)",
                  snap, err, rax);
         if (snap) {
+            /* U1646: the probe changed the map_ptr buffer of UM_Q (mapped at the save) behind the emulator's back;
+               the restore refuses that (U1644, UC_ERR_MAP), so the host puts its bytes back first */
+            err = uc_context_restore(r.uc, ctx);
+            TEST_CHECK(err == UC_ERR_MAP);
+            TEST_MSG("snap 1: restore with the probe still in UM_Q's host buffer: err %u (%s), expected UC_ERR_MAP",
+                     err, uc_strerror(err));
+            um_put(um_host[2] + 0x100, 0x5555);
             OK(uc_context_restore(r.uc, ctx)); /* UM_P back in */
             um_check3(&r, UM_L, 0x7000, 0, "UM_P after the snapshot restore");
             OK(uc_context_free(ctx));

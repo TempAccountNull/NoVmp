@@ -2032,6 +2032,16 @@ uc_err uc_context_reg_read_batch2(uc_context *ctx, int const *regs,
  @context: handle returned by uc_context_alloc that has been used with
  uc_context_save
 
+ NoVmp (U1640-U1645, plan 1.J.58), with UC_CTL_CONTEXT_MEMORY: restoring a snapshot brings back the memory map
+ and the bytes of the save. Every mapping made after the save (uc_mem_map, uc_mem_map_ptr, uc_mmio_map) is removed,
+ also when it was unmapped in the meantime; a removed MMIO region's callbacks are not called again. A region
+ unmapped after the save is mapped back. Guest stores, uc_mem_write and the page walk's accessed / dirty bits
+ under the snapshot go to copies that the restore discards. The bytes of a uc_mem_map_ptr host buffer belong to
+ the caller: writes under a snapshot into a region mapped before the save go to a copy (the buffer keeps the
+ saved bytes until the restore), and if the host itself changed the buffer after the save the restore returns
+ UC_ERR_MAP and changes nothing (put the bytes back, then restore). The buffer must stay valid while a context
+ saved when it was mapped can be restored. MMIO device state is the caller's and is not restored.
+
  @return UC_ERR_OK on success, or other value on failure (refer to uc_err enum
    for detailed error).
 */

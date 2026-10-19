@@ -76,7 +76,19 @@ MemoryRegion *memory_map_ptr(struct uc_struct *uc, hwaddr begin, size_t size, ui
         return NULL;
     }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1641) */
     memory_region_add_subregion(uc->system_memory, begin, ram);
+#else /* ours (U1641) */
+    /*
+     * NoVmp (ledger U1641, plan 1.J.58.b): at the snapshot level, as memory_map does. The priority of a region is
+     * the snapshot level it was mapped at; a restore drops every region whose priority is >= the restored level
+     * (uc_restore_latest_snapshot), and stores / uc_mem_write copy a region whose priority is below the current
+     * level (memory_cow). At priority 0 a uc_mem_map_ptr made under a snapshot survived the restore of that
+     * snapshot (and a restore that brought back the region it had replaced failed with UC_ERR_MAP). Without a
+     * snapshot the level is 0: unchanged.
+     */
+    memory_region_add_subregion_overlap(uc->system_memory, begin, ram, uc->snapshot_level);
+#endif /* __Use_Original_Qemu (U1641) */
 
     if (uc->cpu) {
         tlb_flush(uc->cpu);
@@ -227,7 +239,13 @@ MemoryRegion *memory_map_io(struct uc_struct *uc, ram_addr_t begin, size_t size,
     if (write_cb)
         mmio->perms |= UC_PROT_WRITE;
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1641) */
     memory_region_add_subregion(uc->system_memory, begin, mmio);
+#else /* ours (U1641) */
+    /* NoVmp (ledger U1641): at the snapshot level (see memory_map_ptr); the restore that drops the region frees
+       its callbacks (mmio_region_destructor_uc) */
+    memory_region_add_subregion_overlap(uc->system_memory, begin, mmio, uc->snapshot_level);
+#endif /* __Use_Original_Qemu (U1641) */
 
     if (uc->cpu)
         tlb_flush(uc->cpu);

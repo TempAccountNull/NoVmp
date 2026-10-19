@@ -518,6 +518,10 @@ struct uc_context {
     bool ramblock_freed;  // wheter there was a some ramblock freed
     RAMBlock *last_block; // The last element of the ramblock list
     FlatView *fv;         // The current flatview of the memory
+#if __Use_Original_Qemu != 1 /* ours (U1644) */
+    struct uc_snap_host_rec *host_recs; // uc_mem_map_ptr host buffers at the save (uc.c, U1644)
+    uint32_t host_rec_count;
+#endif /* __Use_Original_Qemu (U1644) */
     char data[0];         // context
 };
 
