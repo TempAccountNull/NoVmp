@@ -31,7 +31,11 @@ LEGEND = ('**How the page is split.** The first part lists only instructions **y
           'marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them '
           'against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, '
           '✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, '
-          '⬜ queued (not started).')
+          '⬜ queued (not started). **Per profile** (U1632, plan 1.J.57): the split follows the VMware guest '
+          '(`--guest` / `--vm`, where the hardware cases run); every **CPU cannot support** reason says whether it '
+          'also holds on the bare host (`--host`) - the forms the bare host enumerates are labelled '
+          '"--host: enumerated". **Gating only** (your decision 2026-10-17, G10) = not enumerated on either profile, '
+          'CPUID + #UD verified on both (`Emulator/data/cases_gating*.txt`).')
 SPLIT_HEADING = "### Instructions that can't be supported for now:"
 
 # families an agent is working on right now (keep in sync with PLAN 1.15; prefix match on the family name)
@@ -82,6 +86,8 @@ def impl_kind(row):
     n = row['note']
     if row['status'] != '❌':
         return row['status']
+    if 'gating only: ' in n:                                # U1631
+        return '❌ (gating only)'
     # U1094: rows checked against an independent model of a non-SDM spec, or only in the absent-feature form
     if ('implemented per the manual (SDM-vector verified)' in n or 'spec-model verified' in n or
             'only the absent-feature form is hardware-checked' in n):
@@ -99,7 +105,8 @@ def _parts(row):
     why = m.group(1) if m else 'not reported by this CPU'
     rest = m.group(2) if m else n
     k = impl_kind(row)
-    st = {'❌ (implemented per manual)': '✅', '❌ (implemented, open item)': '⏳', '❌ (not implemented yet)': '⬜'}[k]
+    st = {'❌ (implemented per manual)': '✅', '❌ (gating only)': '✅', '❌ (implemented, open item)': '⏳',
+          '❌ (not implemented yet)': '⬜'}[k]
     detail = rest.split(': ', 1)[1] if ': ' in rest else rest
     return st, detail, why
 
@@ -109,6 +116,8 @@ def done_cell(row):
     if st != '✅':
         return ''
     if why:
+        if 'gating only: ' in row['note']:                  # U1631
+            return '✅ gating only (CPUID + #UD verified on --host and --guest) — ' + short(detail, 100)
         if 'spec-model verified' in row['note']:            # U1094
             return '✅ per specification (independent model) — ' + short(detail, 110)
         if 'only the absent-feature form is hardware-checked' in row['note']:
@@ -210,6 +219,9 @@ def split_sections(rows, what):
             '**%d forms your i5-13600K cannot run** — not supported by your CPU; never compared against your hardware. '
             'The emulator implements them per the Intel manual (vendor manual for AMD/VIA) and checks them against '
             'SDM-pseudocode vectors.' % len(cannot), '',
+            'Per profile (U1632): %d of them are **enumerated by the bare host** (`--host`) and hidden only by the VMware '
+            'guest (`--guest` / `--vm`); the reasons of all others hold on both.' % sum(
+                1 for r in cannot if r.get('host_enumerates')), '',
             '#### By family', ''] + family_table(cannot, True) + ['', '#### Per instruction', ''] + details(cannot, True)
     return out
 
@@ -278,9 +290,9 @@ def main():
          'Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), '
          'checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, '
          'for instructions this CPU lacks, against expected values derived from the SDM pseudocode.', '',
-         '**Totals (Intel families):** ✅ %d · ⏳ %d · ⬜ %d · ❌ %d (of which implemented per the manual %d, open item %d, not implemented yet %d) — %d forms' % (
+         '**Totals (Intel families):** ✅ %d · ⏳ %d · ⬜ %d · ❌ %d (of which implemented per the manual %d, gating only %d, open item %d, not implemented yet %d) — %d forms' % (
              cnt(intel, '✅'), cnt(intel, '⏳'), cnt(intel, '⬜'), cnt(intel, '❌'),
-             cnt(intel, '❌ (implemented per manual)'), cnt(intel, '❌ (implemented, open item)'),
+             cnt(intel, '❌ (implemented per manual)'), cnt(intel, '❌ (gating only)'), cnt(intel, '❌ (implemented, open item)'),
              cnt(intel, '❌ (not implemented yet)'), len(intel)), '',
          '## Currently being added', ''] + (adding or ['- (nothing in progress)']) + [''] + \
         split_sections(intel, 'every Intel form is listed below')

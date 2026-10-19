@@ -146,9 +146,20 @@ VERIFIED_STATUS = {
     # requirements; the result bits inside the bound are the documented stand-in's, NOT Intel's
     'doc': ('✅', 'implemented; documented compliance (the documented error bound and special cases, '
                    'independent model; NOT bit-exact)'),
+    # U1631 (Gate 1 item 2, your decision 2026-10-17 (G10), notes/eread/G13_gating_only.md): a CPL0 instruction both
+    # profiles enumerate (VMX) - user-mode code cannot execute it, so the sweep cannot compare it with the CPU; checked
+    # against the SDM (unit tests / reference model named in the note); the CPL3 note is added as for 'sdm'
+    'cpl0sdm': ('✅', 'implemented; CPL0 only (user-mode code cannot execute it, so it is never compared with the '
+                       'i5-13600K): verified against SDM-pseudocode vectors'),
+    # U1631: GATING ONLY (G10): neither profile enumerates the feature; CPUID absent + #UD verified on --host,
+    # --host --host-core E, --guest and --vm (Emulator\data\cases_gating*.txt); the feature-enabled semantics need
+    # no further work (opt-in model, or not modelled by decision, as the note says)
+    'gate': ('✅', '#UD: not enumerated on the i5-13600K profiles (--host and --guest), CPUID + #UD verified '
+                    '(cases_gating.txt)'),
 }
 # U1094: the wrapper text of a row the i5-13600K cannot run, per verified status (default by ✅/⏳/⬜)
 UNSUP_IMPL = {
+    'gate': 'gating only',                                             # U1631
     'spec': 'implemented per the specification (spec-model verified)',
     'absent': 'implemented; only the absent-feature form is hardware-checked',
     'doc': 'implemented per the manual (documented compliance, not bit-exact)',   # U1243
@@ -409,6 +420,14 @@ GUEST_HIDDEN = {
 # U1500: the verified_forms 'sdm' prefix of such a row names the guest instead of the processor
 GUEST_HIDDEN_NOTE = ('the i5-13600K lacks it', 'the VMware guest hides it (the bare i5-13600K host enumerates it)')
 CET_USER_OK = {'endbr32', 'endbr64', 'rdsspd', 'rdsspq'}
+# U1632 (plan 1.J.57; your decision 2026-10-17 (G10), notes/eread/G13_gating_only.md): the cross section is decided
+# by the gate profile (the VMware guest, where the hardware cases run) but labelled per profile: every reason says
+# whether it holds on --host (the bare i5-13600K, cpuid_i5-13600k_bare_host.txt, LP 0 of the clean capture
+# Host_clean_20261016) and on --guest / --vm (cpuid_i5-13600k.txt). Families the bare host enumerates and the guest
+# hides (WAITPKG, KEYLOCKER(_WIDE), HRESET, PCONFIG, MONITOR/MWAIT, SMX) are labelled "enumerated on --host".
+HOST_PROFILE = 'cpuid_i5-13600k_bare_host.txt'
+PROFILE_PAIR = '--host and --guest'
+GUEST_CPUID = {}
 
 
 def load_cpuid(path):
@@ -457,6 +476,48 @@ def family_on_cpu(fam, cpuid):
                                                            ['EAX', 'EBX', 'ECX', 'EDX'][reg], b)
 
 
+def fam_bits(isas):
+    """the CPUID bits of a row's families (CPUID_BIT incl. the prefix match of family_on_cpu)"""
+    out = []
+    for isa in isas:
+        for f in isa.split('+'):
+            fam = family(f)
+            bit = CPUID_BIT.get(fam)
+            if bit is None:
+                best = None
+                for k in CPUID_BIT:
+                    if fam.startswith(k + '_') and (best is None or len(k) > len(best)):
+                        best = k
+                bit = CPUID_BIT.get(best) if best else None
+            if bit and bit not in out:
+                out.append(bit)
+    return ['CPUID.%XH%s:%s[%d]' % (l, ('.%d' % s) if s else '', ['EAX', 'EBX', 'ECX', 'EDX'][r], b)
+            for l, s, r, b in out]
+
+
+def per_profile_why(mn, isas, why_g, cpuid_h):
+    """U1632: the reason of a cross row, per profile. Returns (why, host_enumerates)"""
+    on_h, why_h = row_on_cpu(mn, isas, cpuid_h)
+    fams = set(family(f) for isa in isas for f in isa.split('+'))
+    if on_h:
+        if fams & set(GUEST_HIDDEN):                    # U1500: the reason already names both machines
+            return why_g, True
+        bits = ' / '.join(fam_bits(isas)) or 'the feature flag'
+        why = '--guest: %s; --host: enumerated (%s = 1 on the bare host)' % (why_g.replace(' on this CPU', ''), bits)
+        if fams & {'KEYLOCKER', 'KEYLOCKER_WIDE'} and not (cpuid_h.get((0x19, 0), [0, 0, 0, 0])[1] & 1):
+            why += ', CPUID.19H:EBX[0] AESKLE = 0 (Key Locker not enabled by Windows: user-mode #UD)'
+        return why, True
+    if 'CET' in fams:
+        def ibt(c):
+            return (c.get((7, 0), [0, 0, 0, 0])[3] >> 20) & 1
+        return why_g + ', on %s; CET_IBT CPUID.7H:EDX[20] = %d on --host, %d on --guest' % (
+            PROFILE_PAIR, ibt(cpuid_h), ibt(GUEST_CPUID)), False
+    if why_h == why_g:
+        return (why_g.replace(' on this CPU', ' on ' + PROFILE_PAIR) if ' on this CPU' in why_g
+                else '%s, on %s' % (why_g, PROFILE_PAIR)), False
+    return '--host: %s; --guest: %s' % (why_h, why_g), False
+
+
 def row_on_cpu(mn, isas, cpuid):
     fams = set()
     for isa in isas:
@@ -501,6 +562,10 @@ def main():
     by_family = defaultdict(list)
     totals = defaultdict(int)
     cpuid = load_cpuid(os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])), 'cpuid_i5-13600k.txt'))
+    GUEST_CPUID.update(cpuid)
+    cpuid_h = load_cpuid(os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])), HOST_PROFILE))   # U1632
+    host_on = {}
+    nhost = 0
     impl_unsup = defaultdict(int)
     pre = OrderedDict()
     takeover = defaultdict(int)
@@ -540,7 +605,7 @@ def main():
             if st != '⬜':
                 takeover['%s %s -> %s' % (st, kind, vst)] += 1
             st, note = VERIFIED_STATUS[vst][0], VERIFIED_STATUS[vst][1] + (': ' + vnote if vnote else '')
-            if (r['cpl0'] or kind == 'priv') and vst in ('ok', 'sdm', 'open'):
+            if (r['cpl0'] or kind == 'priv') and vst in ('ok', 'sdm', 'open', 'cpl0sdm'):
                 note += CPL3_NOTE
             vcount[vst] += 1
         pre[(mn, enc)] = [st, note, verified.get((mn, enc), ('', ''))[0]]
@@ -559,12 +624,14 @@ def main():
         st, note, vst = pre[(mn, enc)]
         on_cpu, why = row_on_cpu(mn, r['isa'], cpuid)
         if not on_cpu:
+            why, host_on[(mn, enc)] = per_profile_why(mn, r['isa'], why or 'not reported by this CPU', cpuid_h)
+            nhost += host_on[(mn, enc)]
             impl = {'✅': 'implemented per the manual (SDM-vector verified)',
                     '⏳': 'implemented per the manual, open item',
                     '⬜': 'not implemented yet'}[st]
             if st == '✅' and vst in UNSUP_IMPL:            # U1094
                 impl = UNSUP_IMPL[vst]
-            if any(family(f) in GUEST_HIDDEN for isa in r['isa'] for f in isa.split('+')):   # U1500
+            if host_on[(mn, enc)]:                          # U1500 / U1632: hidden by the guest only
                 note = note.replace(*GUEST_HIDDEN_NOTE)
             impl_unsup[st] += 1
             note = '**NOT SUPPORTED on our i5-13600K** (%s) — %s: %s' % (why or 'not reported by this CPU', impl, note)
@@ -618,6 +685,10 @@ def main():
     out.append('**❌ %d rows the i5-13600K cannot honestly run** (CPUID bit clear, AMD/VIA-only, or OS-disabled) — never '
                'marked as supported by our CPU. Column **CPU cannot support** = why; **emulator** = implemented per the '
                'manual (SDM-vector verified) / open item / not implemented yet.\n' % totals['❌'])
+    out.append('**Per profile** (U1632, plan 1.J.57): the section follows the gate profile (the VMware guest, `--guest` / '
+               '`--vm`, where the hardware cases run); each reason says whether it also holds on the bare host (`--host`). '
+               '%d rows are **enumerated on --host** and hidden only by the VMware guest (WAITPKG, Key Locker, HRESET, '
+               'PCONFIG, MONITOR/MWAIT, SMX); every other reason holds on --host and --guest.\n' % nhost)
     for fam in fam_order:
         items = [t for t in sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9))) if t[4] == '❌']
         if not items:
@@ -639,11 +710,14 @@ def main():
         for mn, enc, vl, isa, st, note in sorted(by_family[fam], key=lambda t: (t[0], ENC_ORDER.get(t[1], 9))):
             rows_json.append({'family': fam, 'mnemonic': mn, 'encoding': enc, 'vl': vl, 'isa': isa,
                               'status': st, 'note': note,
+                              'host_enumerates': bool(host_on.get((mn, enc), False)),     # U1632
                               'vendor': CPU_NOT.get(fam, '') if fam in CPU_NOT and fam != 'TDX' and fam != 'IBHF' else ''})
-    json.dump({'totals': dict(totals), 'unsupported_impl': dict(impl_unsup), 'rows': rows_json},
+    json.dump({'totals': dict(totals), 'unsupported_impl': dict(impl_unsup), 'host_enumerated': nhost,
+               'rows': rows_json},
               open(os.path.splitext(sys.argv[3])[0] + '.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
     print('rows', sum(totals.values()), dict(totals), 'families', len(by_family), 'verified', dict(vcount), 'unsupported', dict(impl_unsup))
     print('takeover', dict(takeover), 'vcmp-alias', dict(aliased))
+    print('cross rows enumerated on --host (hidden by --guest only):', nhost)
 
 
 MICROCODE = [
