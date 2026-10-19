@@ -44444,6 +44444,448 @@ static void test_x86_vpf_profile_off(void)
 }
 /* ---- end U1660-U1669 (vpf_) ---- */
 
+/* ---- NoVmp U1690-U1692 (agent pkru, reduced Gate 1 item 11): helper prefix pk_ ---- */
+/*
+ * Protection keys for user-mode pages with CR4.PKE = 1, and MSR 35H. Expected values from SDM 093:
+ *  - Vol2B RDPKRU p. 4-549 / Vol2D WRPKRU p. 6-15: "#UD If CR4.PKE = 0" or LOCK (NP: 66 / F2 / F3 not allowed);
+ *    RDPKRU: ECX != 0 -> #GP(0), else EAX := PKRU, EDX := 0 (64-bit: RCX[63:32] ignored, RAX / RDX[63:32] cleared);
+ *    WRPKRU: ECX != 0 or EDX != 0 -> #GP(0), else PKRU := EAX (64-bit: RAX / RCX / RDX[63:32] ignored); real-address,
+ *    virtual-8086 and compatibility mode: "Same exceptions as in protected mode".
+ *  - Vol3A 5.6.2 p. 5-36: with CR4.PKE = 1 and 4-level / 5-level paging, key i of a user-mode address: ADi = 1 -> no
+ *    data access; WDi = 1 -> no user-mode write, no supervisor-mode write if CR0.WP = 1; a key "does not in any way
+ *    affect instructions fetches"; 5.6.1 pp. 5-33 / 5-34: the rules apply to supervisor-mode accesses to user-mode
+ *    addresses too (SMAP first).
+ *  - Vol3A 5.7.2 p. 5-38: #PF error code PK (bit 5) for a user-mode address = CR4.PKE = 1, the address has key i and
+ *    ADi = 1 or (WDi = 1, a write, CR0.WP = 1 or a user-mode access) - also when the access is refused for another
+ *    reason as well (R/W = 0, SMAP).
+ *  - Vol3A 5.10.2.2 p. 5-43: a TLB entry caches the protection key, not the rights PKRU / CR4.PKE derive from it, so a
+ *    change of CR4.PKE / CR4.PKS acts on the next access (U1690: the emulator caches the derived rights and flushes).
+ *  - Vol1 13.5.7 p. 13-13: "The access rights that pertain to an execution of the XRSTOR and XRSTORS instructions are
+ *    determined by the value of the register before the execution and not by any value that the execution might load
+ *    into the PKRU register" (U1691).
+ * Paging: tb2_paging (4-level, TB2_DATA with key 5 = PTE bits 62:59; PKRU bit 10 = AD5, bit 11 = WD5).
+ */
+#define PK_KEY5 (5ULL << 59)
+#define PK_AD5 (1u << 10)
+#define PK_WD5 (1u << 11)
+static const char pk_rd[] = "\x48\x8b\x04\x25\x00\x40\x00\x60";     /* mov rax, [TB2_DATA] */
+static const char pk_wr[] = "\x48\x89\x04\x25\x00\x40\x00\x60";     /* mov [TB2_DATA], rax */
+/* mov rax, cr4; bts rax, 22 (PKE); mov cr4, rax; mov rax, [TB2_DATA] */
+static const char pk_pke_rd[] = "\x0f\x20\xe0\x48\x0f\xba\xe8\x16\x0f\x22\xe0\x48\x8b\x04\x25\x00\x40\x00\x60";
+
+static void pk_set_pkru(uc_engine *uc, uint32_t v)
+{
+    OK(uc_reg_write(uc, UC_X86_REG_PKRU, &v));
+}
+
+static uint32_t pk_get_pkru(uc_engine *uc)
+{
+    uint32_t v = 0xdeadbeef;
+
+    OK(uc_reg_read(uc, UC_X86_REG_PKRU, &v));
+    return v;
+}
+
+static void pk_cr4(uc_engine *uc, uint64_t set, uint64_t clear)
+{
+    nk_setreg(uc, UC_X86_REG_CR4, (nk_reg(uc, UC_X86_REG_CR4) | set) & ~clear);
+}
+
+/*
+ * runs 'code' at CPL3 from slot 'slot' (tb2_exec's slots): an IRETQ stub in front of it pops a frame from the user
+ * stack (CS 23H, SS 1BH, RSP TB2_USTACK), so it works from CPL0 and again from CPL3; intno or -1
+ */
+static int pk_run3(uc_engine *uc, nk_intr_t *intr, int slot, const char *code, size_t len)
+{
+    uint64_t pc = code_start + 0x400 + (uint64_t)slot * 0x40;
+    uint64_t frame[5] = {pc + 2, 0x23, 0x202, TB2_USTACK, 0x1B};
+    uint64_t rsp = TB2_USTACK - 0x100;
+    uint8_t buf[0x40];
+    uc_err err;
+
+    TEST_CHECK(len + 2 <= sizeof(buf) && pc + 0x40 <= code_start + code_len);
+    buf[0] = 0x48;
+    buf[1] = 0xcf;
+    memcpy(buf + 2, code, len);
+    OK(uc_mem_write(uc, rsp, frame, sizeof(frame)));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+    OK(uc_mem_write(uc, pc, buf, len + 2));
+    memset(intr, 0, sizeof(*intr));
+    err = uc_emu_start(uc, pc, pc + 2 + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return intr->count ? (int)intr->intno : -1;
+}
+
+/* a #PF with error code 'ec' at 'la' (vector checked by the caller's run result) */
+static void pk_pf(uc_engine *uc, int r, uint32_t ec, uint64_t la, const char *what)
+{
+    TEST_CHECK(r == 14);
+    TEST_MSG("%s: run result %d (expected #PF)", what, r);
+    fx4_pf(uc, ec, la, what);
+}
+
+/* CPL3 (user-mode) data accesses to the user page TB2_DATA with key 5 */
+static void test_x86_pk_user_access(void)
+{
+    /* xor ecx, ecx; xor edx, edx; mov eax, 0Ch; wrpkru; mov rax, -1; mov rdx, rax; rdpkru */
+    static const char wr_rd[] = "\x31\xc9\x31\xd2\xb8\x0c\x00\x00\x00\x0f\x01\xef\x48\xc7\xc0\xff\xff\xff\xff"
+                                "\x48\x89\xc2\x0f\x01\xee";
+    /* xor ecx, ecx; xor edx, edx; mov eax, 400H (AD5); wrpkru; mov rax, [TB2_DATA] */
+    static const char wr_ad5_rd[] = "\x31\xc9\x31\xd2\xb8\x00\x04\x00\x00\x0f\x01\xef\x48\x8b\x04\x25\x00\x40\x00\x60";
+    /* lea rax, [rip]; mov rax, [rax] (a data read of the code page itself) */
+    static const char rd_self[] = "\x48\x8d\x05\x00\x00\x00\x00\x48\x8b\x00";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    int slot = 0, r;
+    uint64_t cr0, pc;
+
+    tb2_paging(uc, PK_KEY5 | 7);
+    pk_cr4(uc, 1u << 22, 0);                                                   /* CR4.PKE */
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR4) & (1u << 22));
+    /* PKRU = 0: user read and write allowed */
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_CS) & 3) == 3);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1) == -1);
+    /* AD5: read and write #PF, error code P | U/S | PK (25H) and P | W/R | U/S | PK (27H) */
+    pk_set_pkru(uc, PK_AD5);
+    r = pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x25, TB2_DATA, "CPL3 read, AD5");
+    r = pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x27, TB2_DATA, "CPL3 write, AD5");
+    /* WD5: read allowed, write #PF 27H; CR0.WP = 0 does not lift WD for user-mode writes */
+    pk_set_pkru(uc, PK_WD5);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    r = pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x27, TB2_DATA, "CPL3 write, WD5");
+    cr0 = nk_reg(uc, UC_X86_REG_CR0);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0 & ~(1ULL << 16));
+    r = pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x27, TB2_DATA, "CPL3 write, WD5, CR0.WP = 0");
+    nk_setreg(uc, UC_X86_REG_CR0, cr0);
+    /* AD / WD of every key but 0 (the stack and code pages) and 5: key 5 accessible */
+    pk_set_pkru(uc, 0xfffff3fcu);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1) == -1);
+    /* CR4.PKE = 0: PKRU does not control user-mode addresses */
+    pk_set_pkru(uc, PK_AD5 | PK_WD5);
+    pk_cr4(uc, 0, 1u << 22);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1) == -1);
+    /* CR4.PKE = 1 again (uc_reg_write CR4): the next access uses AD5 (5.10.2.2: the TLB caches the key only) */
+    pk_cr4(uc, 1u << 22, 0);
+    r = pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x25, TB2_DATA, "CPL3 read, AD5, CR4.PKE set again after a read with PKE = 0");
+    /* a read-only page (R/W = 0): without WD5 a user write is #PF 07H (no PK); with WD5 the PK bit is set too */
+    tb2_set_data_pte(uc, PK_KEY5 | 5);
+    pk_set_pkru(uc, 0);
+    r = pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x07, TB2_DATA, "CPL3 write, R/W = 0, PKRU = 0");
+    pk_set_pkru(uc, PK_WD5);
+    r = pk_run3(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x27, TB2_DATA, "CPL3 write, R/W = 0, WD5");
+    TEST_CHECK(pk_run3(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    tb2_set_data_pte(uc, PK_KEY5 | 7);
+    /* RDPKRU / WRPKRU at CPL3 (not privileged): the value round-trips, EDX := 0, RAX[63:32] cleared */
+    pk_set_pkru(uc, 0);
+    TEST_CHECK(pk_run3(uc, &intr, slot++, wr_rd, sizeof(wr_rd) - 1) == -1);
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_RAX) == 0xc && nk_reg(uc, UC_X86_REG_RDX) == 0);
+    TEST_MSG("rax %" PRIx64 " rdx %" PRIx64, nk_reg(uc, UC_X86_REG_RAX), nk_reg(uc, UC_X86_REG_RDX));
+    TEST_CHECK(pk_get_pkru(uc) == 0xc);
+    /* WRPKRU AD5, then a read in the same block (the earlier reads filled the TLB): #PF 25H */
+    r = pk_run3(uc, &intr, slot++, wr_ad5_rd, sizeof(wr_ad5_rd) - 1);
+    pk_pf(uc, r, 0x25, TB2_DATA, "CPL3 WRPKRU AD5; read");
+    TEST_CHECK(pk_get_pkru(uc) == PK_AD5);
+    /* the key of a code page does not affect instruction fetches (page 4000H: key 5, AD5); a data read of it faults */
+    tb2_st64(uc, TB2_PT + 0x4000 + (0x4000 >> 12) * 8, 0x4000 | PK_KEY5 | 7);
+    slot = (0x4000 - 0x1400) / 0x40;
+    pc = code_start + 0x400 + (uint64_t)slot * 0x40;
+    TEST_CHECK(pk_run3(uc, &intr, slot++, "\x90\x90", 2) == -1);
+    r = pk_run3(uc, &intr, slot, rd_self, sizeof(rd_self) - 1);
+    pk_pf(uc, r, 0x25, pc + 0x40 + 2 + 7, "CPL3 data read of a key-5 code page, AD5");
+    OK(uc_close(uc));
+}
+
+/* CPL0 (supervisor-mode) data accesses to the user page TB2_DATA with key 5, SMAP, and CR4.PKE by MOV to CR4 */
+static void test_x86_pk_supervisor_access(void)
+{
+    /* stac; mov rax, [TB2_DATA] */
+    static const char stac_rd[] = "\x0f\x01\xcb\x48\x8b\x04\x25\x00\x40\x00\x60";
+    /* mov rax, cr4; btr rax, 22; mov cr4, rax; mov rax, [TB2_DATA] */
+    static const char nopke_rd[] = "\x0f\x20\xe0\x48\x0f\xba\xf0\x16\x0f\x22\xe0\x48\x8b\x04\x25\x00\x40\x00\x60";
+    /* mov rax, cr4; bts rax, 22; mov cr4, rax; mov eax, 7; xor ecx, ecx; cpuid */
+    static const char pke_cpuid[] = "\x0f\x20\xe0\x48\x0f\xba\xe8\x16\x0f\x22\xe0\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    int slot = 0, r;
+    uint64_t cr0;
+
+    tb2_paging(uc, PK_KEY5 | 7);
+    pk_cr4(uc, 1u << 22, 0);
+    /* AD5: supervisor read / write of a user-mode address #PF 21H / 23H (P | PK, P | W/R | PK) */
+    pk_set_pkru(uc, PK_AD5);
+    r = tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 read, AD5");
+    r = tb2_exec(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x23, TB2_DATA, "CPL0 write, AD5");
+    /* WD5: read allowed; write #PF 23H with CR0.WP = 1, allowed with CR0.WP = 0 */
+    pk_set_pkru(uc, PK_WD5);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    r = tb2_exec(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1);
+    pk_pf(uc, r, 0x23, TB2_DATA, "CPL0 write, WD5, CR0.WP = 1");
+    cr0 = nk_reg(uc, UC_X86_REG_CR0);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0 & ~(1ULL << 16));
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pk_wr, sizeof(pk_wr) - 1) == -1);
+    nk_setreg(uc, UC_X86_REG_CR0, cr0);
+    /* SMAP (EFLAGS.AC = 0): the read is refused by SMAP; PK is set only when AD5 refuses it as well */
+    pk_cr4(uc, 1u << 21, 0);
+    pk_set_pkru(uc, PK_AD5);
+    r = tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 read, SMAP, AC = 0, AD5");
+    pk_set_pkru(uc, 0);
+    r = tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x01, TB2_DATA, "CPL0 read, SMAP, AC = 0, PKRU = 0");
+    /* STAC (AC = 1, explicit access): allowed unless AD5 */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, stac_rd, sizeof(stac_rd) - 1) == -1);
+    pk_set_pkru(uc, PK_AD5);
+    r = tb2_exec(uc, &intr, slot++, stac_rd, sizeof(stac_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 read, SMAP, AC = 1, AD5");
+    nk_setreg(uc, UC_X86_REG_RFLAGS, nk_reg(uc, UC_X86_REG_RFLAGS) & ~0x40000ULL);
+    pk_cr4(uc, 0, 1u << 21);
+    /*
+     * U1690: MOV to CR4 that sets PKE. PKRU = AD5, a read with PKE = 0 succeeds (and fills the TLB); the read after
+     * MOV to CR4 (PKE = 1) in the same run must take #PF 21H
+     */
+    pk_cr4(uc, 0, 1u << 22);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    r = tb2_exec(uc, &intr, slot++, pk_pke_rd, sizeof(pk_pke_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 MOV CR4 (PKE := 1) after a read with PKE = 0; read, AD5");
+    TEST_CHECK(nk_reg(uc, UC_X86_REG_CR4) & (1u << 22));
+    /* MOV to CR4 that clears PKE: the read is allowed again */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, nopke_rd, sizeof(nopke_rd) - 1) == -1);
+    /* CPUID.07H.00H:ECX.OSPKE[4] follows the MOV to CR4 */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pke_cpuid, sizeof(pke_cpuid) - 1) == -1);
+    TEST_CHECK((nk_reg(uc, UC_X86_REG_RCX) & 0x18) == 0x18);
+    TEST_MSG("07H.0 ECX %" PRIx64 " (PKU [3] and OSPKE [4] expected)", nk_reg(uc, UC_X86_REG_RCX));
+    OK(uc_close(uc));
+}
+
+/* U1690: the same for CR4.PKS / IA32_PKRS (supervisor-mode page with key 5) */
+static void test_x86_pk_pks_cr4(void)
+{
+    /* mov rax, cr4; bts rax, 24 (PKS); mov cr4, rax; mov rax, [TB2_DATA] */
+    static const char pks_rd[] = "\x0f\x20\xe0\x48\x0f\xba\xe8\x18\x0f\x22\xe0\x48\x8b\x04\x25\x00\x40\x00\x60";
+    nk_intr_t intr;
+    uc_engine *uc = tb2_sys_open("\x90", 1, &intr);
+    int slot = 0, r;
+
+    tb2_paging(uc, PK_KEY5 | 3);
+    tb2_wrmsr(uc, 0x6e1, PK_AD5);                                   /* IA32_PKRS: AD5, CR4.PKS = 0 */
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    r = tb2_exec(uc, &intr, slot++, pks_rd, sizeof(pks_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 MOV CR4 (PKS := 1) after a read with PKS = 0; read, PKRS AD5");
+    /* through uc_reg_write CR4 too */
+    pk_cr4(uc, 0, 1u << 24);
+    TEST_CHECK(tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1) == -1);
+    pk_cr4(uc, 1u << 24, 0);
+    r = tb2_exec(uc, &intr, slot++, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "uc_reg_write CR4 (PKS := 1) after a read with PKS = 0; read, PKRS AD5");
+    OK(uc_close(uc));
+}
+
+/* tb2_sys_open with the APX opt-in (XSAVE component 19 at 3C0H of the standard format) */
+static uc_engine *pk_open_apx(nk_intr_t *intr)
+{
+    static const uint64_t gdt[7] = {0, 0x00AF9A000000FFFFULL, 0x00CF92000000FFFFULL,
+                                    0x00CFF2000000FFFFULL, 0x00AFFA000000FFFFULL,
+                                    0x00CFFA000000FFFFULL, 0x00CF92000000FFFFULL};
+    uc_x86_mmr gdtr = {0, TB2_SYS, sizeof(gdt) - 1, 0};
+    uc_engine *uc;
+    uc_hook h;
+    uint64_t rsp = TB2_KSTACK;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_apx(uc, UC_X86_APX_F));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, TB2_SYS, TB2_SYS_SIZE, UC_PROT_ALL));
+    OK(uc_mem_write(uc, TB2_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &rsp));
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, intr, 1, 0));
+    return uc;
+}
+
+/*
+ * U1691: XRSTOR / XRSTORS take their access rights from PKRU before the instruction (Vol1 13.5.7). The XSAVE area is
+ * on the user page TB2_DATA (key 5); it restores PKRU = AD5 and, after component 9, another component from the same
+ * page. Before U1691 the new PKRU acted at once (TLB flush), the later component's load faulted (#PF 21H / 25H) and
+ * left the state half restored. After the instruction the new PKRU applies (the next read is #PF).
+ */
+static void test_x86_pk_xrstor_rights(void)
+{
+    /* mov eax, 0A00H (PKRU | CET_U); xor edx, edx; xrstors64 [TB2_DATA] */
+    static const char xrstors[] = "\xb8\x00\x0a\x00\x00\x31\xd2\x48\x0f\xc7\x1c\x25\x00\x40\x00\x60";
+    /* mov eax, 80200H (PKRU | APX); xor edx, edx; xrstor64 [TB2_DATA] */
+    static const char xrstor[] = "\xb8\x00\x02\x08\x00\x31\xd2\x48\x0f\xae\x2c\x25\x00\x40\x00\x60";
+    uint8_t area[0x1000];
+    uint64_t v, r16;
+    nk_intr_t intr;
+    uc_engine *uc;
+    int r;
+
+    /* XRSTORS (compacted, CPL0): XSTATE_BV = XCOMP_BV[62:0] = A00H, PKRU at 240H, CET_U (0) after it */
+    uc = tb2_sys_open("\x90", 1, &intr);
+    tb2_paging(uc, PK_KEY5 | 7);
+    pk_cr4(uc, 1u << 22, 0);
+    tb2_wrmsr(uc, 0xda0, 0x800);                                    /* IA32_XSS: CET_U */
+    memset(area, 0, sizeof(area));
+    v = 0xa00;
+    memcpy(area + 0x200, &v, 8);
+    v = 0x8000000000000a00ULL;
+    memcpy(area + 0x208, &v, 8);
+    v = PK_AD5;
+    memcpy(area + 0x240, &v, 4);
+    OK(uc_mem_write(uc, TB2_DATA, area, sizeof(area)));
+    pk_set_pkru(uc, 0);
+    r = tb2_exec(uc, &intr, 0, xrstors, sizeof(xrstors) - 1);
+    TEST_CHECK(r == -1);
+    TEST_MSG("XRSTORS PKRU | CET_U: run result %d (no fault expected), PKRU %08x", r, pk_get_pkru(uc));
+    TEST_CHECK(pk_get_pkru(uc) == PK_AD5);
+    r = tb2_exec(uc, &intr, 1, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x21, TB2_DATA, "CPL0 read after XRSTORS loaded AD5");
+    OK(uc_close(uc));
+
+    /* XRSTOR (standard, CPL3): XSTATE_BV = 80200H, PKRU at A80H, APX (R16 = 1122334455667788H) at 3C0H */
+    uc = pk_open_apx(&intr);
+    tb2_paging(uc, PK_KEY5 | 7);
+    pk_cr4(uc, 1u << 22, 0);
+    memset(area, 0, sizeof(area));
+    v = 0x80200;
+    memcpy(area + 0x200, &v, 8);
+    v = PK_AD5;
+    memcpy(area + 0xa80, &v, 4);
+    v = 0x1122334455667788ULL;
+    memcpy(area + 0x3c0, &v, 8);
+    OK(uc_mem_write(uc, TB2_DATA, area, sizeof(area)));
+    pk_set_pkru(uc, 0);
+    r = pk_run3(uc, &intr, 0, xrstor, sizeof(xrstor) - 1);
+    TEST_CHECK(r == -1);
+    r16 = nk_reg(uc, UC_X86_REG_R16);
+    TEST_MSG("XRSTOR PKRU | APX at CPL3: run result %d (no fault expected), PKRU %08x, R16 %" PRIx64, r,
+             pk_get_pkru(uc), r16);
+    TEST_CHECK(pk_get_pkru(uc) == PK_AD5 && r16 == 0x1122334455667788ULL);
+    r = pk_run3(uc, &intr, 1, pk_rd, sizeof(pk_rd) - 1);
+    pk_pf(uc, r, 0x25, TB2_DATA, "CPL3 read after XRSTOR loaded AD5");
+    OK(uc_close(uc));
+}
+
+/* run 'code' at code_start in a 16- / 32-bit engine: intno, 6 for UC_ERR_INSN_INVALID, or -1 */
+static int pk_exec_at(uc_engine *uc, nk_intr_t *intr, uint64_t at, const char *code, size_t len)
+{
+    uc_err err;
+
+    memset(intr, 0, sizeof(*intr));
+    OK(uc_mem_write(uc, at, code, len));
+    err = uc_emu_start(uc, at, at + len, 0, 0);
+    if (err == UC_ERR_INSN_INVALID) {
+        return 6;
+    }
+    OK(err);
+    return intr->count ? (int)intr->intno : -1;
+}
+
+/* RDPKRU / WRPKRU in 32-bit protected mode and real-address mode: "Same exceptions as in protected mode" */
+static void test_x86_pk_modes(void)
+{
+    /* 32-bit: xor ecx, ecx; xor edx, edx; mov eax, 0Ch; wrpkru; xor eax, eax; dec edx; rdpkru */
+    static const char c32_rt[] = "\x31\xc9\x31\xd2\xb8\x0c\x00\x00\x00\x0f\x01\xef\x31\xc0\x4a\x0f\x01\xee";
+    /* 32-bit: mov eax, 4; xor ecx, ecx; mov edx, 1; wrpkru (EDX != 0) */
+    static const char c32_gp_edx[] = "\xb8\x04\x00\x00\x00\x31\xc9\xba\x01\x00\x00\x00\x0f\x01\xef";
+    /* 32-bit: mov ecx, 1; rdpkru (ECX != 0) */
+    static const char c32_gp_ecx[] = "\xb9\x01\x00\x00\x00\x0f\x01\xee";
+    /* 32-bit: xor ecx, ecx; lock rdpkru */
+    static const char c32_lock[] = "\x31\xc9\xf0\x0f\x01\xee";
+    /* 16-bit: xor ecx, ecx; xor edx, edx; mov eax, 30H; wrpkru; xor eax, eax; rdpkru */
+    static const char c16_rt[] = "\x66\x31\xc9\x66\x31\xd2\x66\xb8\x30\x00\x00\x00\x0f\x01\xef\x66\x31\xc0\x0f\x01\xee";
+    /* 16-bit: mov ecx, 10000H (CX = 0, ECX != 0); rdpkru */
+    static const char c16_gp_ecx[] = "\x66\xb9\x00\x00\x01\x00\x0f\x01\xee";
+    uc_mode modes[2] = {UC_MODE_32, UC_MODE_16};
+    nk_intr_t intr;
+    uc_engine *uc;
+    uc_hook h;
+    uint64_t at;
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        OK(uc_open(UC_ARCH_X86, modes[i], &uc));
+        OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+        OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+        OK(uc_hook_add(uc, &h, UC_HOOK_INTR, nk_hook_intr, &intr, 1, 0));
+        at = code_start;
+        /* CR4.PKE = 0: #UD also with ECX = 0 */
+        TEST_CHECK(pk_exec_at(uc, &intr, at, "\x0f\x01\xee", 3) == 6);
+        at += 0x40;
+        pk_cr4(uc, 1u << 22, 0);
+        if (modes[i] == UC_MODE_32) {
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c32_rt, sizeof(c32_rt) - 1) == -1);
+            TEST_CHECK((uint32_t)nk_reg(uc, UC_X86_REG_EAX) == 0xc && (uint32_t)nk_reg(uc, UC_X86_REG_EDX) == 0);
+            TEST_MSG("32-bit: eax %08x edx %08x", (uint32_t)nk_reg(uc, UC_X86_REG_EAX),
+                     (uint32_t)nk_reg(uc, UC_X86_REG_EDX));
+            at += 0x40;
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c32_gp_edx, sizeof(c32_gp_edx) - 1) == 13);
+            fx4_is(uc, 13, 0, "32-bit WRPKRU EDX = 1");
+            TEST_CHECK(pk_get_pkru(uc) == 0xc);
+            at += 0x40;
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c32_gp_ecx, sizeof(c32_gp_ecx) - 1) == 13);
+            fx4_is(uc, 13, 0, "32-bit RDPKRU ECX = 1");
+            at += 0x40;
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c32_lock, sizeof(c32_lock) - 1) == 6);
+        } else {
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c16_rt, sizeof(c16_rt) - 1) == -1);
+            TEST_CHECK((uint32_t)nk_reg(uc, UC_X86_REG_EAX) == 0x30 && (uint32_t)nk_reg(uc, UC_X86_REG_EDX) == 0);
+            TEST_MSG("16-bit: eax %08x edx %08x", (uint32_t)nk_reg(uc, UC_X86_REG_EAX),
+                     (uint32_t)nk_reg(uc, UC_X86_REG_EDX));
+            at += 0x40;
+            TEST_CHECK(pk_exec_at(uc, &intr, at, c16_gp_ecx, sizeof(c16_gp_ecx) - 1) == 13);
+        }
+        OK(uc_close(uc));
+    }
+}
+
+/*
+ * MSR 35H (MSR_CORE_THREAD_COUNT): SDM 093 Vol4 lists it only in Table 2-32 (Intel Xeon E5 v3 family, 06_3FH); the
+ * tables of the i5-13600K (06_B7H: Tables 2-20, 2-21, 2-25, 2-29, 2-35, 2-39 (2.17), 2-44 - 2-48 (2.17.5)) do not
+ * list it, so RDMSR / WRMSR 35H are #GP(0) ("reserved or unimplemented MSR address", Vol2B RDMSR / Vol2D WRMSR) on
+ * every model and profile; the API refuses it (UC_ERR_EXCEPTION). docs/quirks.md records it.
+ */
+static void test_x86_pk_msr35(void)
+{
+    const uint32_t *rows[3] = {NULL, ta_host7, ta_guest7};
+    uc_x86_msr m = {0x35, 0};
+    uint64_t v;
+    NvRun r;
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        ta_open(&r, rows[i], 1);
+        v = 0;
+        TEST_CHECK(ta_msr(&r, 0x35, 0, &v, 0) == 13);
+        fx4_is(r.uc, 13, 0, "RDMSR 35H");
+        v = 0x000e0014;                     /* 14 cores, 20 threads: still #GP(0) */
+        TEST_CHECK(ta_msr(&r, 0x35, 1, &v, 0) == 13);
+        TEST_CHECK(ta_msr(&r, 0x35, 0, &v, 1) == 13);
+        TEST_CHECK(uc_reg_read(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(uc_reg_write(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_MSG("profile %d", i);
+        OK(uc_close(r.uc));
+    }
+}
+/* ---- end U1690-U1692 (pk_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -45014,4 +45456,10 @@ TEST_LIST = {
     {"test_x86_vpf_profiles", test_x86_vpf_profiles},
     {"test_x86_vpf_profile_timing", test_x86_vpf_profile_timing},
     {"test_x86_vpf_profile_off", test_x86_vpf_profile_off},
+    {"test_x86_pk_user_access", test_x86_pk_user_access},
+    {"test_x86_pk_supervisor_access", test_x86_pk_supervisor_access},
+    {"test_x86_pk_pks_cr4", test_x86_pk_pks_cr4},
+    {"test_x86_pk_xrstor_rights", test_x86_pk_xrstor_rights},
+    {"test_x86_pk_modes", test_x86_pk_modes},
+    {"test_x86_pk_msr35", test_x86_pk_msr35},
     {NULL, NULL}};

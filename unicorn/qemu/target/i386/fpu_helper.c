@@ -6120,6 +6120,16 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
     uint64_t ena = xrstors ? env->xcr0 | env->xss : env->xcr0;
     target_ulong next = sizeof(X86LegacyXSaveArea) + sizeof(X86XSaveHeader);
     int i;
+#if __Use_Original_Qemu != 1 /* ours (U1691) */
+    /*
+     * NoVmp (ledger U1691): SDM 093 Vol1 13.5.7 p. 13-13: "The access rights that pertain to an execution of the
+     * XRSTOR and XRSTORS instructions are determined by the value of the register before the execution and not by any
+     * value that the execution might load into the PKRU register." The loaded (or initial) PKRU value is kept in
+     * pkru_new and written after the last component: before, the new value acted at once (TLB flush) and a later
+     * component on a page whose key it disables faulted (#PF) with the state half restored.
+     */
+    uint32_t pkru_new = env->pkru;
+#endif /* __Use_Original_Qemu (U1691) */
 
 #if __Use_Original_Qemu != 1 /* ours (U1221) */
     /*
@@ -6230,11 +6240,15 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                     cpu_sync_bndcs_hflags(env);
                     break;
                 case XSTATE_PKRU_BIT: {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1691) */
                     uint64_t old_pkru = env->pkru;
                     do_xrstor_pkru(env, ptr + next, ra);
                     if (env->pkru != old_pkru) {
                         tlb_flush(env_cpu(env));
                     }
+#else /* ours (U1691) */
+                    pkru_new = (uint32_t)cpu_ldq_data_ra(env, ptr + next, ra);   /* as do_xrstor_pkru */
+#endif /* __Use_Original_Qemu (U1691) */
                     break;
                 }
 #if __Use_Original_Qemu != 1 /* ours (U124) */
@@ -6332,10 +6346,14 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
                 cpu_sync_bndcs_hflags(env);
                 break;
             case XSTATE_PKRU_BIT:
+#if __Use_Original_Qemu == 1 /* original QEMU (U1691) */
                 if (env->pkru) {
                     env->pkru = 0;
                     tlb_flush(env_cpu(env));
                 }
+#else /* ours (U1691) */
+                pkru_new = 0;
+#endif /* __Use_Original_Qemu (U1691) */
                 break;
 #if __Use_Original_Qemu != 1 /* ours (U124) */
             case XSTATE_OPMASK_BIT:
@@ -6353,6 +6371,12 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
             }
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1691) */
+    if (env->pkru != pkru_new) {
+        env->pkru = pkru_new;
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U1691) */
 #if __Use_Original_Qemu != 1 /* ours (U1480) */
     /* NoVmp (ledger U1480): Vol2D XRSTOR Operation p. 6-51 (compacted form, also XRSTORS):
        TO_BE_RESTORED[i] -> XINUSE[i] := 1, TO_BE_INITIALIZED[i] -> XINUSE[i] := 0 */
@@ -6369,6 +6393,16 @@ static void do_xrstor_compact(CPUX86State *env, target_ulong ptr, uint64_t rfbm,
 static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr_t ra)
 {
     uint64_t xstate_bv, xcomp_bv, reserve0;
+#if __Use_Original_Qemu != 1 /* ours (U1691) */
+    /*
+     * NoVmp (ledger U1691): SDM 093 Vol1 13.5.7 p. 13-13: "The access rights that pertain to an execution of the
+     * XRSTOR and XRSTORS instructions are determined by the value of the register before the execution and not by any
+     * value that the execution might load into the PKRU register." The loaded (or initial) PKRU value is kept in
+     * pkru_new and written after the last component: before, the new value acted at once (TLB flush) and a later
+     * component on a page whose key it disables faulted (#PF) with the state half restored.
+     */
+    uint32_t pkru_new = env->pkru;
+#endif /* __Use_Original_Qemu (U1691) */
 
     rfbm &= env->xcr0;
 
@@ -6511,6 +6545,7 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
     }
 #endif /* __Use_Original_Qemu (U124) */
     if (rfbm & XSTATE_PKRU_MASK) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1691) */
         uint64_t old_pkru = env->pkru;
         if (xstate_bv & XSTATE_PKRU_MASK) {
             do_xrstor_pkru(env, ptr + XO(pkru_state), ra);
@@ -6521,6 +6556,10 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
             CPUState *cs = env_cpu(env);
             tlb_flush(cs);
         }
+#else /* ours (U1691) */
+        pkru_new = (xstate_bv & XSTATE_PKRU_MASK) ?
+                   (uint32_t)cpu_ldq_data_ra(env, ptr + XO(pkru_state), ra) : 0;
+#endif /* __Use_Original_Qemu (U1691) */
     }
 #if __Use_Original_Qemu != 1 /* ours (U172) */
     if (rfbm & XSTATE_XTILE_CFG_MASK) {
@@ -6547,6 +6586,12 @@ static void do_xrstor(CPUX86State *env, target_ulong ptr, uint64_t rfbm, uintptr
         }
     }
 #endif /* __Use_Original_Qemu (U612) */
+#if __Use_Original_Qemu != 1 /* ours (U1691) */
+    if (env->pkru != pkru_new) {
+        env->pkru = pkru_new;
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U1691) */
 #if __Use_Original_Qemu != 1 /* ours (U1480) */
     /*
      * NoVmp (ledger U1480): SDM 334569-092 Vol2D XRSTOR Operation p. 6-50 (standard form): TO_BE_RESTORED[i]

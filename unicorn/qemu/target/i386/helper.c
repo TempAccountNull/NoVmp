@@ -355,6 +355,17 @@ void cpu_x86_update_cr4(CPUX86State *env, uint64_t new_cr4)
         tlb_flush(env_cpu(env));
     }
 #endif /* __Use_Original_Qemu (U1180) */
+#if __Use_Original_Qemu != 1 /* ours (U1690) */
+    /*
+     * NoVmp (ledger U1690): CR4.PKE / CR4.PKS. A TLB entry caches a page's protection key, not the rights that PKRU /
+     * IA32_PKRS give it (SDM 093 Vol3A 5.10.2.2 p. 5-43), so a change of either bit applies to the next access. QEMU's
+     * TLB caches the derived rights (get_physical_address), so it is flushed here as after WRPKRU / WRMSR 6E1H; before,
+     * a page read while CR4.PKE = 0 stayed readable after MOV to CR4 set PKE with ADi = 1 (test_x86_pk_*).
+     */
+    if (((new_cr4 ^ env->cr[4]) & (CR4_PKE_MASK | CR4_PKS_MASK)) && !x86_env_is_image(env)) {
+        tlb_flush(env_cpu(env));
+    }
+#endif /* __Use_Original_Qemu (U1690) */
 
     env->cr[4] = new_cr4;
     env->hflags = hflags;

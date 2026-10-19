@@ -302,6 +302,20 @@ Add-Exp 'tscadj_guest' 'cases_tscadj' 'tscadj cpuid expect' @( '--guest' )
 Add-Exp 'tscadj_vm' 'cases_tscadj' 'tscadj cpuid expect' @( '--vm' )
 Add-Exp 'tscadj_max' 'cases_tscadj' 'tscadj expect'
 Add-Exp 'tscadj_off' 'cases_tscadj_off' 'tscadj cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_tscadj_off.txt' ) )
+# U1692 (agent pkru, reduced Gate 1 item 11): RDPKRU / WRPKRU with CR4.PKE = 1 and PKRU as XSAVE component 9 - every
+# platform switch enumerates PKU (CPUID.07H.0:ECX[3] = 1) and so does the MAX model; MSR 35H (MSR_CORE_THREAD_COUNT) is not
+# in the SDM 093 Vol4 tables of 06_B7H: #GP(0) everywhere. The paging side (AD / WD #PF, PK error bit, MOV to CR4, XRSTOR
+# access rights) is in unicorn-test_x86 (test_x86_pk_*).
+Add-Exp 'pkru_host_p' 'cases_pkru' 'pkru cpuid expect' @( '--host' )
+Add-Exp 'pkru_host_e' 'cases_pkru' 'pkru cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'pkru_guest' 'cases_pkru' 'pkru cpuid expect' @( '--guest' )
+Add-Exp 'pkru_vm' 'cases_pkru' 'pkru cpuid expect' @( '--vm' )
+Add-Exp 'pkru_max' 'cases_pkru' 'pkru expect'
+Add-Exp 'msr35_host_p' 'cases_msr35' 'pkru msr cpuid expect' @( '--host' )
+Add-Exp 'msr35_host_e' 'cases_msr35' 'pkru msr cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'msr35_guest' 'cases_msr35' 'pkru msr cpuid expect' @( '--guest' )
+Add-Exp 'msr35_vm' 'cases_msr35' 'pkru msr cpuid expect' @( '--vm' )
+Add-Exp 'msr35_max' 'cases_msr35' 'pkru msr expect'
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'

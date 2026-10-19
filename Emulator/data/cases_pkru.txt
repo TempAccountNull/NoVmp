@@ -1,0 +1,100 @@
+# RDPKRU / WRPKRU with CR4.PKE = 1 and PKRU as XSAVE state component 9: expected-value cases (reduced Gate 1 item 11,
+# ledger U1692, agent pkru, 2026-10-19). The same file under every platform switch - all of them enumerate
+# CPUID.07H.00H:ECX.PKU[3] = 1 (bare host 98C027ACH P- and E-core, capture Host_clean_20261016; VMware guest 9840078CH,
+# Run3_clean_guest_probes_20261015; the MAX model) and CPUID.(0DH,9) = 8 / A80H / 0 / 0, XSETBV 207H is accepted:
+#   emu-alltest --cases Emulator\data\cases_pkru.txt --host --expect-only                (suite pkru_host_p)
+#   emu-alltest --cases Emulator\data\cases_pkru.txt --host --host-core E --expect-only  (suite pkru_host_e)
+#   emu-alltest --cases Emulator\data\cases_pkru.txt --guest --expect-only               (suites pkru_guest, pkru_vm: --vm)
+#   emu-alltest --cases Emulator\data\cases_pkru.txt --expect-only                       (suite pkru_max)
+# Windows leaves CR4.PKE = 0 (cases_xz_*: RDPKRU / WRPKRU #UD); a driver can set it, so every line here sets it itself at
+# CPL0 ("mov rbx, cr4; bts rbx, 22; mov cr4, rbx") - Unicorn runs these lines at CPL0, each from the engine's reset state
+# (PKRU = 0, CR4.PKE = 0). The paging side (AD / WD faults, #PF error code PK, CPL3, SMAP, MOV to CR4 and the TLB,
+# XRSTOR access rights) needs page tables: unit tests test_x86_pk_* (unicorn\tests\unit\test_x86.c).
+# SDM 093:
+#  - Vol2B RDPKRU p. 4-549: "Reads the value of PKRU into EAX and clears EDX. ECX must be 0 ... otherwise ... #GP";
+#    "RDPKRU can be executed only if CR4.PKE = 1; otherwise, an invalid-opcode exception (#UD) occurs"; "the high-order
+#    32-bits of RCX are ignored and the high-order 32-bits of RDX and RAX are cleared"; #UD also "If the LOCK prefix is
+#    used"; opcode NP 0F 01 EE (66 / F2 / F3 not permitted); Flags Affected: None.
+#  - Vol2D WRPKRU p. 6-15: "Writes the value of EAX into PKRU. ECX and EDX must be 0 ... otherwise ... #GP"; "#UD If
+#    CR4.PKE = 0" / LOCK; "the high-order 32-bits of RCX, RDX, and RAX are ignored"; NP 0F 01 EF.
+#  - Vol3A 2.5 CR4.PKE p. 2-19 and 5.1.4 OSPKE: CPUID.07H.00H:ECX.OSPKE[4] "returns the value of CR4.PKE".
+#  - Vol3A Table 7-2 p. 7-9: #UD is a fault from decoding the instruction; with CR4.PKE = 0 the instruction is not executed,
+#    so the ECX / EDX check (Operation) is never reached: #UD, not #GP.
+#  - Vol1 13.5.7 p. 13-13: PKRU is state component 9, bytes 3:0 of the PK-state section; XSAVE manages it only if XCR0[9] = 1;
+#    "Software can otherwise use protection keys and access PKRU state even if the XSAVE feature set is not enabled or has
+#    not been configured to manage PKRU state"; 13.3 p. 13-7: "The value of XCR0[9] in no way determines whether software
+#    can use protection keys or execute other instructions that access PKRU state"; 13.6 p. 13-18: "PKRU state is in its
+#    initial configuration if the value of the PKRU is 0" (so PKRU != 0 forces XINUSE[9] = 1; with PKRU = 0 either value
+#    is permitted, the emulator keeps "always 1", docs/xinuse.md - not checked here). Vol2D XRSTOR p. 6-50: XSTATE_BV[9] = 0
+#    with RFBM[9] = 1 initializes PKRU (0); RFBM[9] = 0 leaves it.
+#
+# --- enumeration at reset: PKU [3] = 1, OSPKE [4] = 0; CR4.PKE = 0
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; shr r8d, 3; and r8d, 3 =>! r8=1
+mov rax, cr4; shr rax, 22; and eax, 1 =>! rax=0
+# --- CR4.PKE can be set (PKU enumerated) and cleared; OSPKE follows it: exactly bit 4 of 07H.0 ECX changes
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov rax, cr4; shr rax, 22; and eax, 1 =>! rax=1
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ecx; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 7; xor ecx, ecx; cpuid; xor ecx, r8d =>! rcx=0x10
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; btr rbx, 22; mov cr4, rbx; mov eax, 7; xor ecx, ecx; cpuid; shr ecx, 4; and ecx, 1 =>! rcx=0
+# --- CPUID.(0DH,9): PKRU state 8 bytes at A80H, user state (ECX[0] = 0), not 64-byte aligned
+mov eax, 0xd; mov ecx, 9; cpuid =>! rax=8 rbx=0xA80 rcx=0 rdx=0
+#
+# --- RDPKRU: PKRU = 0 after reset; EAX := PKRU, EDX := 0, RAX / RDX[63:32] cleared, RCX[63:32] ignored
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xee | rax=0xFFFFFFFFFFFFFFFF rcx=0xFFFFFFFF00000000 rdx=0xFFFFFFFFFFFFFFFF =>! rax=0 rcx=0xFFFFFFFF00000000 rdx=0
+# Flags Affected: None (RFLAGS before / after RDPKRU and WRPKRU compared: R10 = R11 = 0)
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor ecx, ecx; stc; pushfq; pop r9; .byte 0x0f, 0x01, 0xee; pushfq; pop r10; sub r10, r9; xor eax, eax; xor edx, edx; stc; pushfq; pop r9; .byte 0x0f, 0x01, 0xef; pushfq; pop r11; sub r11, r9 =>! r10=0 r11=0
+# ECX != 0 (any of bits 31:0): #GP(0), registers unchanged
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xee | rax=0x1111 rcx=1 rdx=0x2222 =>! #GP(0) rax=0x1111 rcx=1 rdx=0x2222
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xee | rcx=0x80000000 =>! #GP(0) rcx=0x80000000
+# CR4.PKE = 0: #UD, also when ECX / EDX would #GP
+.byte 0x0f, 0x01, 0xee | rcx=0 => #UD
+.byte 0x0f, 0x01, 0xee | rcx=1 => #UD
+.byte 0x0f, 0x01, 0xef | rax=4 rcx=1 rdx=1 => #UD
+#
+# --- WRPKRU / RDPKRU round trips (all 32 bits writable)
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0x55555554; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; xor eax, eax; .byte 0x0f, 0x01, 0xee =>! rax=0x55555554 rdx=0
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xFFFFFFFF; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov rax, -1; mov rdx, rax; .byte 0x0f, 0x01, 0xee =>! rax=0xFFFFFFFF rdx=0
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xAAAAAAAA; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; xor eax, eax; .byte 0x0f, 0x01, 0xef; mov eax, 0x1234; .byte 0x0f, 0x01, 0xee =>! rax=0 rdx=0
+# WRPKRU ignores RAX / RCX / RDX[63:32]
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov rax, 0xFFFFFFFF12345678; mov rcx, 0xFFFFFFFF00000000; mov rdx, 0xFFFFFFFF00000000; .byte 0x0f, 0x01, 0xef; xor ecx, ecx; .byte 0x0f, 0x01, 0xee =>! rax=0x12345678 rdx=0
+# WRPKRU ECX != 0 or EDX != 0: #GP(0), registers unchanged at the fault
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xef | rax=4 rcx=1 rdx=0 =>! #GP(0) rax=4 rcx=1 rdx=0
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xef | rax=4 rcx=0 rdx=1 =>! #GP(0) rax=4 rcx=0 rdx=1
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xef | rax=4 rcx=0 rdx=0x80000000 =>! #GP(0)
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; .byte 0x0f, 0x01, 0xef | rax=4 rcx=0x80000000 rdx=0 =>! #GP(0)
+# WRPKRU 30H completes, the next WRPKRU (EDX = 1) faults: #GP(0) at the second one, its EAX / EDX as loaded
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0x30; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0xC0; mov edx, 1; .byte 0x0f, 0x01, 0xef =>! #GP(0) rax=0xC0 rdx=1
+#
+# --- prefixes: 66 / F2 (NP) and LOCK are #UD; REX.W is ignored (F3 0F 01 EE / EF are CLUI / STUI, not RDPKRU / WRPKRU)
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor ecx, ecx; .byte 0x66, 0x0f, 0x01, 0xee =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor ecx, ecx; .byte 0xf2, 0x0f, 0x01, 0xee =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor ecx, ecx; .byte 0xf0, 0x0f, 0x01, 0xee =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor eax, eax; xor ecx, ecx; xor edx, edx; .byte 0x66, 0x0f, 0x01, 0xef =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor eax, eax; xor ecx, ecx; xor edx, edx; .byte 0xf2, 0x0f, 0x01, 0xef =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor eax, eax; xor ecx, ecx; xor edx, edx; .byte 0xf0, 0x0f, 0x01, 0xef =>! #UD
+mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0x30; xor ecx, ecx; xor edx, edx; .byte 0x48, 0x0f, 0x01, 0xef; xor eax, eax; .byte 0x48, 0x0f, 0x01, 0xee =>! rax=0x30 rdx=0
+#
+# --- XCR0[9] does not gate RDPKRU / WRPKRU: XCR0 = 7 (PKRU not XSAVE-enabled)
+xor ecx, ecx; mov eax, 7; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; xor eax, eax; .byte 0x0f, 0x01, 0xee =>! rax=0xC rdx=0
+#
+# --- XSAVE (XCR0 = 207H, RFBM = 200H): PKRU in bytes 3:0 at A80H, XSTATE_BV[9] = 1 (PKRU = 0CH is not initial)
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x26 | m+0x8A80=FFFFFFFF =>! m+0x8A80=0C000000 m+0x8200=0002000000000000
+# XSAVEOPT: the same
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x36 | m+0x8A80=FFFFFFFF =>! m+0x8A80=0C000000 m+0x8200=0002000000000000
+# XSAVEC: compacted, PKRU first after the header (240H), XCOMP_BV = 8000_0000_0000_0200H
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xc7, 0x26 =>! m+0x8240=0C000000 m+0x8200=0002000000000000 m+0x8208=0002000000000080
+# XSAVE with CR4.PKE = 0 still saves PKRU (XSAVE-managed whatever CR4.PKE): loaded by XRSTOR, stored again at RSI + 1000H
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; add rsi, 0x1000; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x26 | m+0x8200=0002000000000000 m+0x8A80=5455555500000000 =>! m+0x9A80=54555555 m+0x9200=0002000000000000
+# XCR0[9] = 0: RFBM[9] = 0, XSAVE writes neither the PKRU section nor XSTATE_BV[9]
+xor ecx, ecx; mov eax, 7; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x26 | m+0x8A80=11111111 =>! m+0x8A80=11111111 m+0x8200=0000000000000000
+#
+# --- XRSTOR (XCR0 = 207H): XSTATE_BV[9] = 1 loads PKRU from bytes 3:0 at A80H (RDPKRU afterwards)
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; xor ecx, ecx; .byte 0x0f, 0x01, 0xee | m+0x8200=0002000000000000 m+0x8A80=5455555500000000 =>! rax=0x55555554 rdx=0
+# XSTATE_BV[9] = 0 with RFBM[9] = 1: PKRU := 0 (initial configuration)
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; xor ecx, ecx; .byte 0x0f, 0x01, 0xee | m+0x8A80=5455555500000000 =>! rax=0 rdx=0
+# RFBM[9] = 0 (EDX:EAX = 1): PKRU unchanged even with XSTATE_BV[9] = 1
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 1; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; xor ecx, ecx; .byte 0x0f, 0x01, 0xee | m+0x8200=0002000000000000 m+0x8A80=5455555500000000 =>! rax=0xC rdx=0
+# XRSTOR loads PKRU with CR4.PKE = 0; RDPKRU after setting CR4.PKE returns it
+xor ecx, ecx; mov eax, 0x207; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; xor ecx, ecx; .byte 0x0f, 0x01, 0xee | m+0x8200=0002000000000000 m+0x8A80=0C000000FFFFFFFF =>! rax=0xC rdx=0
+# XCR0[9] = 0: RFBM[9] = 0 - XRSTOR leaves PKRU (XSTATE_BV[9] = 0 here: a set bit outside XCR0 would be #GP(0))
+xor ecx, ecx; mov eax, 7; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov rbx, cr4; bts rbx, 22; mov cr4, rbx; mov eax, 0xC; xor ecx, ecx; xor edx, edx; .byte 0x0f, 0x01, 0xef; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e; xor ecx, ecx; .byte 0x0f, 0x01, 0xee | m+0x8A80=54555555 =>! rax=0xC rdx=0
+xor ecx, ecx; mov eax, 7; xor edx, edx; .byte 0x0f, 0x01, 0xd1; mov eax, 0x200; xor edx, edx; .byte 0x48, 0x0f, 0xae, 0x2e | m+0x8200=0002000000000000 =>! #GP(0)

@@ -1,0 +1,23 @@
+# MSR 35H (MSR_CORE_THREAD_COUNT): expected-value cases (reduced Gate 1 item 11, ledger U1692, agent pkru, 2026-10-19), the
+# same file under every platform switch:
+#   emu-alltest --cases Emulator\data\cases_msr35.txt --host --expect-only                (suite msr35_host_p)
+#   emu-alltest --cases Emulator\data\cases_msr35.txt --host --host-core E --expect-only  (suite msr35_host_e)
+#   emu-alltest --cases Emulator\data\cases_msr35.txt --guest --expect-only               (suites msr35_guest, msr35_vm: --vm)
+#   emu-alltest --cases Emulator\data\cases_msr35.txt --expect-only                       (suite msr35_max)
+# SDM 093 Vol4: MSR_CORE_THREAD_COUNT (35H, [15:0] THREAD_COUNT, [31:16] Core_COUNT, R/O, Package) is listed only in
+# Table 2-32 p. 2-305 ("Additional MSRs Supported by the Intel Xeon Processor E5 v3 Family", 06_3FH). The i5-13600K is
+# 06_B7H (Table 2-1: 13th generation, Raptor Lake); its MSR tables are 2-20, 2-21, 2-25, 2-29, 2-35, 2-39 (section 2.17
+# p. 2-360) and 2-44 - 2-48 (section 2.17.5 p. 2-400) - none lists 35H. So the address is unimplemented for this model:
+# "#GP(0) If the value in ECX specifies a reserved or unimplemented MSR address" (Vol2B RDMSR / Vol2D WRMSR), on every
+# profile and on the MAX model; recorded as absent in docs/quirks.md. Real hardware is not consulted (RDMSR is CPL0
+# only; a kernel-mode read on the bare host would be needed to see what the part itself does).
+#
+rdmsr | rcx=0x35 rax=0x1111 rdx=0x2222 => #GP(0)
+# RCX[63:32] ignored: ECX = 35H
+rdmsr | rcx=0xFFFFFFFF00000035 rax=0x1111 rdx=0x2222 => #GP(0)
+# a write (R/O in Table 2-32 anyway): the bare host's topology value (14 cores, 20 threads) or 0
+wrmsr | rcx=0x35 rax=0x000E0014 rdx=0 => #GP(0)
+wrmsr | rcx=0x35 rax=0 rdx=0 => #GP(0)
+# CPL3 (Windows user mode): #GP(0) as well
+rdmsr | cpl=3 rcx=0x35 rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | cpl=3 rcx=0x35 rax=0 rdx=0 => #GP(0)
