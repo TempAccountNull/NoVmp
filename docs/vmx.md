@@ -3,7 +3,9 @@
 User decisions: A11 (2026-10-09, "implement FRED / VMX / TDX / LAM"); Gate 1 follow-up (2026-10-09, "VMX = full SDM
 VMX (VMCS, entry/exit, EPT, VPID, APIC virtualization)", on the local APIC model of `docs/apic.md`); start
 2026-10-11. Opt-in `UC_X86_FEATURE_VMX`, default off: without it CPUID, CR4, the MSR list and every VMX opcode
-behave exactly as before.
+behave exactly as before. U1660 (plan 1.J.59, user decision "Profiles enable VMX" 2026-10-19): a strict
+`UC_CTL_X86_CPUID` profile that reports CPUID.01H:ECX.VMX[5] = 1 - both i5-13600K profiles do - turns the same
+model on ("Platform profiles" below); without a profile the default stays off.
 
 **Validation label: specification-validated only.** The i5-13600K supports VMX, but the VMX instructions need
 CPL 0 and the test host is a VMware guest; Intel SDE cannot run CPL 0 VMX code either. Every expected value in the
@@ -63,6 +65,8 @@ Code locations are in `unicorn/qemu/target/i386/` unless a path is given.
 | CR4.VMXE (bit 13) settable only with VMX | Vol3A 2.5 p. 2-20; Vol3C 26.7 p. 26-3 | `cpu.h` cr4_reserved_bits | done (U1301) |
 | IA32_FEATURE_CONTROL lock / bit 1 (VMX in SMX) / bit 2 (VMX outside SMX), reset 0 | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `misc_helper.c` msr_present / msr_write_ok (existing U905 rules, enabled by CPUID.VMX) | done (U1301) |
 | capability MSRs 480H-492H: values above, R/O (#GP on WRMSR), absent without VMX (#GP on RDMSR), presence conditions of Table 2-2 | Vol3D Appendix A pp. A-1 to A-9; Vol4 Table 2-2 pp. 2-46 to 2-48 | `vmx_helper.c` x86_vmx_msr_exists / x86_vmx_msr_read; `misc_helper.c` msr_present / helper_rdmsr / msr_write_ok | done (U1301) |
+| a strict CPUID profile that reports CPUID.01H:ECX.VMX[5] = 1 turns the model on (Intel 64 model, no APX; until the first instruction, then fixed) | SDM 093 Vol3C 26.6 p. 26-2 | `cpu.c` x86_cpu_vmx_profile_sync (from x86_cpu_realizefn and `unicorn.c` x86_cpuid_changed) | done (U1660) |
+| emu-alltest `--host` / `--guest` / `--vm`: IA32_FEATURE_CONTROL = 5 at engine start (platform firmware) | Vol3C 26.7 p. 26-3; Vol4 Table 2-2 3AH p. 2-5 | `Emulator\tests\alltest\at_engine.hpp` platform_feature_control / open_configured | done (U1661) |
 
 ### Stage 3 - VMX operation, VMCS lifecycle and access
 | requirement | SDM 092 | code | status |
@@ -150,7 +154,61 @@ the SGX / SMX bits of agent/sgx can take the low end) before the engine is initi
 that report Intel 64 (CPUID.80000001H:EDX.LM) with the GenuineIntel vendor; a model without them stays without
 VMX. With VMX the model withdraws CPUID.80000001H:ECX.SVM (an Intel processor does not report SVM; the SVM and
 VMX guest modes would share QEMU's HF_GUEST flag) - our choice. A strict `UC_CTL_X86_CPUID` profile that hides
-CPUID.01H:ECX[5] hides VMX like any other feature.
+CPUID.01H:ECX[5] hides VMX like any other feature; one that reports it turns VMX on without the bit (U1660,
+"Platform profiles").
+
+### Platform profiles (U1660 / U1661, plan 1.J.59)
+User decision "Profiles enable VMX" (2026-10-19), finding of the gating agent (notes\eread\G13_gating_only.md section 3):
+both i5-13600K CPUID profiles report CPUID.01H:ECX.VMX[5] = 1 (bare host 01H ECX 7FFAFBFFH, VMware guest 7FFA3223H,
+captures Host_clean_20261016 / Run3_clean_guest_probes_20261015), but without UC_X86_FEATURE_VMX MOV to CR4 with VMXE = 1
+was #GP(0): a hypervisor driver saw VMX advertised and then failed. SDM 093 Vol3C 26.6 p. 26-2: "If CPUID.01H:ECX.VMX[5]
+= 1, then VMX operation is supported."
+
+- **U1660 (engine).** A strict profile (UC_CTL_X86_CPUID_STRICT on, the U435 default while a profile is installed) whose
+  CPUID.01H:ECX[5] = 1 turns the VMX model on exactly as the opt-in does (`cpu.c` x86_cpu_vmx_profile_sync: CPUID.01H:ECX.VMX
+  in the model, CPUID.80000001H:ECX.SVM withdrawn, so IA32_EFER.SVME becomes reserved as on Intel). Same conditions as the
+  opt-in (Intel 64 CPU model); not with UC_CTL_X86_APX (VMX + APX is not modelled, U1302: the profile then reports VMX and
+  CR4.VMXE stays reserved, as before). Decided when the CPU is created and after every UC_CTL_X86_CPUID /
+  UC_CTL_X86_CPUID_STRICT write until the first instruction (removing the profile or switching strict off before it turns
+  VMX off again and gives SVM back); from the first instruction on it is fixed, like the strict profile itself (U1580).
+  A non-strict profile only reports CPUID (U68): no change. UC_CTL_X86_FEATURES reads back the mask that was written;
+  UC_X86_FEATURE_SEAM still needs the explicit VMX bit. Without a profile nothing changes (the default stays off).
+- **U1661 (emu-alltest).** IA32_FEATURE_CONTROL is "cleared to zero when a logical processor is reset"; "to enable VMX
+  support in a platform, BIOS must set bit 1, bit 2, or both ... as well as the lock bit" (Vol3C 26.7 p. 26-3; Vol4 Table
+  2-2 3AH p. 2-5). The engine keeps the architectural reset value 0. The platform switches `--host`, `--guest` and `--vm`
+  model the machine after its firmware ran and write 5 (lock, VMX outside SMX) before the first instruction, where the
+  engine models VMX (strict profile, no `--apx`). Source: CPU-Z MSR dumps of both machines (`E:\CPU Info\cpuz-host`, 20
+  logical processors, and `cpuz-vmguest`, 8 vCPUs): MSR 3AH = 00000000_00000005H on every logical processor - evidence, not
+  a project CPL0 capture (none exists for MSR 3AH). User decision "Use CPU-Z 5 now" (2026-10-19): the value 5 is
+  from CPU-Z (host tool), not a project capture; replaced if a kernel-mode probe is run.
+  VMX in SMX (bit 1) and the SENTER enables (15:8) are 0 on both.
+  `--cpuid FILE` alone (the API path) and `--AMD` write nothing.
+
+| | `--host` (P / E) | `--guest` / `--vm` | `--cpuid` same files (API path) | no profile / `--no-strict` |
+|---|---|---|---|---|
+| CPUID.01H:ECX.VMX | 1 (profile) | 1 (profile) | 1 | 0 / 1 (reported only) |
+| MOV CR4.VMXE = 1 before U1660 | #GP(0) | #GP(0) | #GP(0) | #GP(0) |
+| MOV CR4.VMXE = 1 after | accepted | accepted | accepted | #GP(0) |
+| RDMSR 3AH before / after | 0 (MSR present through SMX) / 5, locked | #GP(0) (absent) / 5, locked | host 0 / 0, guest #GP(0) / 0 | unchanged |
+| RDMSR 480H-492H before / after | #GP(0) / the values below | #GP(0) / the values below | #GP(0) / the values below | #GP(0) |
+| WRMSR IA32_EFER.SVME before / after | accepted / #GP(0) | accepted / #GP(0) | accepted / #GP(0) | accepted |
+| VMXON / VMXOFF after (CPL0, valid region) | VMsucceed | VMsucceed | #GP(0) until software writes 3AH = 5 | #UD |
+
+Capability MSR values per profile: **model defaults only** (the capability set above; the i5-13600K's own values are not
+captured, so nothing is taken from hardware). Identical on all four profiles: 480H 01D81000_00000001H (revision identifier
+1, our choice - a VMXON region must carry 1), 481H / 48DH 000000FF_00000016H, 482H FFFBFFFE_0401E172H, 48EH
+FFFBFFFE_04006172H, 483H 007FEFFF_00036DFFH, 48FH 007FEFFF_00036DFBH, 484H 0000D3FF_000011FFH, 490H 0000D3FF_000011FBH, 485H
+00000000_60040065H, 486H 80000021H, 487H FFFFFFFFH, 488H 2000H, 48AH 3EH, 48BH 0E557BFF_00000000H (no SGX), 48CH
+00000F01_067341C1H, 491H 1; 493H absent. Profile-dependent through the profile mask (vmx_feat): 492H PROCBASED_CTLS3 = 1
+on `--host` (Key Locker enumerated: LOADIWKEY exiting), 0 on `--guest` / `--vm`. 489H CR4_FIXED1 = 03FF7FFFH on all of them:
+`~cr4_reserved_bits`, which takes the CR4 bits from the MAX model's features (only VMXE, FRED and LAM_SUP follow the
+profile) - it therefore includes SMXE (14), KL (19) and UINTR (25) also where the profile hides SMX / Key Locker / UINTR,
+and MOV CR4 accepts those bits there (a pre-existing CR4-vs-profile gap, not VMX-specific; V5 note, left to implement).
+
+Tests: `test_x86_vpf_profiles`, `_profile_timing`, `_profile_off` (unit); expected-value files
+`Emulator\data\cases_vmx_profile_host.txt` (`--host`, `--host --host-core E`), `cases_vmx_profile_guest.txt` (`--guest`,
+`--vm`), `cases_vmx_profile_api.txt` (`--cpuid` of the three profile files: the lock / bit-2 #GP rules),
+`cases_vmx_noprofile.txt` (no profile, `--no-strict`); suites `vmx_prof_*`. Specification-validated only (CPL0).
 
 ### VMCS storage (implementation-specific, Vol3C 27.2 p. 27-3)
 The model keeps no VMCS data on the processor: every field lives in the VMCS region in guest memory. Bytes 0-3:

@@ -200,6 +200,11 @@ Where the SDM is silent or says "undefined", "reserved" or "implementation speci
 
 Unicorn starts a guest the way an operating system leaves a thread, not the way a processor leaves power-up or RESET. These are deliberate choices of the execution environment, not CPU-vs-SDM deviations and not "SDM undefined" choices; they carry no case tag.
 
+### IA32_FEATURE_CONTROL on the platform switches (U1661, plan 1.J.59)
+
+- **Architectural RESET.** SDM 093 Vol3C 26.7 p. 26-3: IA32_FEATURE_CONTROL (3AH) "is cleared to zero when a logical processor is reset"; firmware sets bit 2 (and / or bit 1) and the lock bit to enable VMX (Vol4 Table 2-2 3AH p. 2-5). The engine resets it to 0 (`unicorn.c` reg_reset), also under a CPUID profile installed through the API.
+- **Emulator environment choice.** emu-alltest `--host`, `--guest` and `--vm` start the engine as the platform's firmware left it: IA32_FEATURE_CONTROL = 5 (lock, VMX outside SMX), written before the first instruction where the engine models VMX (U1660: strict profile, no `--apx`). The value is the CPU-Z MSR dump of both machines (`E:\CPU Info\cpuz-host`, `cpuz-vmguest`; 5 on every logical processor) - evidence, not a project CPL0 capture. User decision "Use CPU-Z 5 now" (2026-10-19): the value 5 is from CPU-Z (host tool), not a project capture; replaced if a kernel-mode probe is run. Effect: RDMSR 3AH reads 5, WRMSR 3AH is #GP(0) (locked), VMXON passes the IA32_FEATURE_CONTROL check without a WRMSR, as on both machines. `docs/vmx.md` "Platform profiles".
+
 ### XCR0 at engine start (U120 / U370 / U1225; documented U1440, user decision A18 2026-10-14)
 
 - **Architectural RESET.** SDM 093 Vol3A 2.6 p. 2-23: "After reset, all bits (except bit 0) in XCR0 are cleared to zero; XCR0[0] is set to 1." Table 12-1 (Contd.) p. 12-3: XCR0 = 1H at power-up and at RESET, unchanged by INIT. Vol1 13.3 pp. 13-5 / 13-6 gives the same per component ("XCR0[1] is 0 coming out of RESET", ... "XCR0[18:17] have value 00b coming out of RESET"). So after RESET XCR0 = **1H** (x87 only) and every other bit is 0; CR4 is 0 as well (Table 12-1), so XGETBV / XSETBV are #UD until system software sets CR4.OSXSAVE and then enables components with XSETBV.
