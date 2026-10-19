@@ -2,6 +2,8 @@
 # capture (cpuid_i5-13600k.txt) with leaf 0AH replaced by an architectural PMU version 4 - 8 general-purpose
 # counters of 48 bits, 3 fixed counters of 48 bits, AnyThread deprecated (EDX[15]) - an emulated configuration,
 # not a measurement. Used with --no-strict (the MAX model's features stay). leaf subleaf eax ebx ecx edx (hex)
+# Microcode identity (U1701, Gate 1 step 5, user decision 2026-10-19): the line of the gate profile cpuid_i5-13600k.txt (129H, platform ID 1; its header has the evidence), so RDMSR 8BH reports the same revision.
+#@ microcode 00000129 platform-id 1
 00000000 00 00000020 756E6547 6C65746E 49656E69
 00000001 00 000B0671 05040800 7FFA3223 1F8BFBFF
 00000002 00 00FEFF01 000000F0 00000000 00000000

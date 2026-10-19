@@ -57,7 +57,7 @@ OVERRIDES = {
     'fucomi': ('✅', 'SDM C1 = 0 (U531, docs/quirks.md)'),
     'fucomip': ('✅', 'SDM C1 = 0 (U531, docs/quirks.md)'),
     'cvtpi2ps': ('✅', 'm64 form: SDM x87 transition + #MF (U532; the CPU deviates, docs/quirks.md)'),
-    'ptwrite': ('✅', 'SDM #UD (CPUID.14 = 0, U534; the CPU executes it: docs/quirks.md)'),
+    'ptwrite': ('✅', 'SDM #UD with the --guest CPUID (CPUID.14 = 0, U534); --host enumerates it and the CPU executes it while the emulator still #UDs: emulator gap, docs/quirks.md "PTWRITE not modelled" (U1700)'),
     'xsavec': ('✅', 'U66 compacted format'),
     'xsavec64': ('✅', 'U66'),
     'xsaves': ('⏳', 'CPL0: #GP at CPL3 in Phase 3 (D6); compacted format shared with U66'),
@@ -356,7 +356,7 @@ CPUID_BIT = {
     'WBNOINVD': (0x80000008, 0, 1, 9),
 }
 CPU_FIXED = {
-    'PTWRITE': (True, 'CPUID.14H reports it absent, but the CPU executes it (documented deviation, docs/quirks.md; the emulator #UDs, U534)'),
+    'PTWRITE': (True, 'the guest CPUID.14H reports it absent, but the CPU executes it; the bare host enumerates it (CPUID.(14H,0):EBX[4] = 1); the emulator #UDs on every profile (U534): emulator gap, docs/quirks.md "PTWRITE not modelled" (U1700)'),
 }
 CPU_NOT = {
     '3DNOW': 'AMD 3DNow!', 'SSE4a': 'AMD SSE4a', 'XOP': 'AMD XOP', 'FMA4': 'AMD FMA4', 'TBM': 'AMD TBM',
@@ -733,7 +733,7 @@ MICROCODE = [
     '- ✅ CPUID — i5-13600K profile (94 rows), override table + strict #UD switch (U68).',
     '- ✅ #XM — unmasked SSE exceptions with CR4.OSXMMEXCPT (U67).',
     '- ✅ RCPPS / RSQRTPS / RCPSS / RSQRTSS (+ VEX) — F10 solved (U81): RN(1/midpoint) over the top 11 mantissa bits, RN(1/sqrt(midpoint)) over the top 10 bits + exponent parity, 12 fraction bits, exact integer arithmetic; all 2^32 inputs x 6 MXCSR settings identical to the CPU.',
-    '- ✅ Pure SDM (U531-U539, user decision 2026-10-08): no hardware-quirk switch; the i5-13600K deviations (FCOMI C1, CVTPI2PS m64, FYL2XP1 below −1, PTWRITE, DPPD two NaN products, REP 67h ECX=0, x87 compare unmasked #IA, DPPS step grouping) are documented in docs/quirks.md and tagged in the hardware case files.',
+    '- ✅ Pure SDM (U531-U539, user decision 2026-10-08): no hardware-quirk switch; the i5-13600K deviations (FCOMI C1, CVTPI2PS m64, FYL2XP1 below −1, DPPD two NaN products, REP 67h ECX=0, x87 compare unmasked #IA, DPPS step grouping) are documented in docs/quirks.md and tagged in the hardware case files; PTWRITE (emulator gap: no Intel PT model) and HRESET (VMware-guest artifact) are tagged too, not CPU deviations (U1700).',
     '- ⏳ RDTSC / RDTSCP determinism hook — Phase 3 (emulator side).',
     '- ⬜ Microcode-assisted CPL0 paths (VMX, SMX, SGX, SMM) — exact CPL3 faults only (D6), Phase 3/5.',
 ]

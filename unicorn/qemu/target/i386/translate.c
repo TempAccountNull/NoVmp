@@ -10781,9 +10781,10 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U80) */
         /*
          * NoVmp (ledger U80, U534): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4)
-         * is #UD: "If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM Vol2 PTWRITE), and
-         * the fork has no Intel PT (leaf 0x14 = 0). The i5-13600K executes it
-         * anyway: documented deviation "PTWRITE without PT" (docs/quirks.md).
+         * is #UD on every profile: the fork has no Intel PT. The SDM #UD ("If
+         * CPUID.14H.00H:EBX.PTWRITE[4] = 0", Vol2 PTWRITE) covers --guest only;
+         * --host enumerates PTWRITE and the i5-13600K executes it (bare host
+         * 2026-10-18): emulator gap "PTWRITE not modelled", docs/quirks.md (U1700).
          */
         if ((prefixes & PREFIX_REPZ) && ((modrm >> 3) & 7) == 4) {
             goto illegal_op;

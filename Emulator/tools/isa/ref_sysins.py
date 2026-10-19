@@ -942,11 +942,11 @@ def cases_hw():
     for enc in (i_msrimm(False, 'rax', 0x2F)[0], i_msrimm(True, 'r9', 0x1B01)[0],
                 i_msrimm(False, 'rax', 0x2F, True)[0], i_msrimm(True, 'r9', 0x1B01, True)[0]):
         a('.byte %s | r9=0x1 cpl=3' % bytelist(enc))
-    a('# HRESET (U804): CPUID.(07H,1):EAX[22] = 0 in the profile, so the SDM gives #UD; the i5-13600K')
-    a('# decodes it and raises #GP(0) at CPL3 (docs/quirks.md "HRESET without CPUID"). Other ModRM')
-    a('# bytes are #UD on both.')
-    a('.byte %s | rax=0x0 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
-    a('.byte %s | rax=0x1 cpl=3 # known deviation: HRESET without CPUID' % bytelist(i_hreset(0)[0]))
+    a('# HRESET (U804): the VMware guest\'s CPUID.(07H,1):EAX[22] = 0 is in this profile, so the SDM gives #UD;')
+    a('# the CPU decodes it and raises #GP(0) at CPL3 (docs/quirks.md "HRESET hidden by the guest CPUID": a')
+    a('# VMware-guest artifact; on --host, bit 22 = 1, both give #GP(0), bare host 2026-10-18). Other ModRM bytes #UD on both.')
+    a('.byte %s | rax=0x0 cpl=3 # known deviation: HRESET hidden by the guest CPUID' % bytelist(i_hreset(0)[0]))
+    a('.byte %s | rax=0x1 cpl=3 # known deviation: HRESET hidden by the guest CPUID' % bytelist(i_hreset(0)[0]))
     a('.byte %s | rax=0x0 cpl=3' % bytelist(i_hreset(0, modrm=0xC1)[0]))
     a('# LKGS (U805): CPUID.(07H,1):EAX[18] = 0 on this CPU (and CPL3) -> #UD on both')
     a('.byte %s | rcx=0x2B cpl=3' % bytelist(i_lkgs('rcx')[0]))

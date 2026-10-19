@@ -2885,8 +2885,9 @@ static void test_x86_sse_aligned_access(void)
 /*
  * NoVmp U80/U534: PTWRITE is #UD (SDM Vol2 PTWRITE: "#UD If CPUID.14H.00H:EBX.PTWRITE[4]
  * = 0"; the fork has no Intel PT). The #UD comes before the memory operand is touched,
- * so an unmapped operand is #UD too, and nothing after it runs. (The i5-13600K executes
- * it: documented deviation "PTWRITE without PT", docs/quirks.md.)
+ * so an unmapped operand is #UD too, and nothing after it runs. (The i5-13600K, which
+ * enumerates PTWRITE on the bare host, executes it: emulator gap "PTWRITE not modelled",
+ * docs/quirks.md, U1700.)
  */
 static void test_x86_ptwrite_ud(void)
 {
@@ -13448,8 +13449,9 @@ static void test_x86_sdm_documented_deviations(void)
        with y = +0 (U432); the i5-13600K gives ST0 = x with PE / -0 (docs/quirks.md) */
     qk_fyl2xp1(0, 0xFFFF, 0xC000000000000000ULL, 0x0001);
     qk_fyl2xp1(1, 0xFFFF, 0xC000000000000000ULL, 0x0001);
-    /* PTWRITE without PT (U534, quirk removed): SDM #UD (the i5-13600K reads the
-       operand and goes on, docs/quirks.md) */
+    /* PTWRITE not modelled (U534, quirk removed; U1700): #UD, the SDM result for
+       CPUID.14H.0:EBX[4] = 0 (the i5-13600K reads the operand and goes on,
+       docs/quirks.md "PTWRITE not modelled") */
     qk_ptwrite(UC_ERR_INSN_INVALID);
     /* DPPD two NaN products (U535, quirk removed): SDM p0 + p1 in both elements (the
        i5-13600K gives p1 + p0 in element 1, docs/quirks.md) */
