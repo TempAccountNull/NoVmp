@@ -662,14 +662,17 @@ static CPUCacheInfo legacy_l3_cache = {
           CPUID_7_0_EBX_ERMS | CPUID_7_0_EBX_AVX2 | CPUID_7_0_EBX_RDSEED | \
           CPUID_7_0_EBX_SHA_NI)
 #else /* ours (U110) */
-/* NoVmp (ledger U110): HLE and RTM (every transaction aborts at once, RTM_ALWAYS_ABORT) */
+/* NoVmp (ledger U110): HLE and RTM (every transaction aborts at once, RTM_ALWAYS_ABORT); U1670: TSC_ADJUST, the
+   IA32_TSC_ADJUST MSR (3BH) of U905 (misc_helper.c msr_tsc_now: RDTSC / RDTSCP / RDMSR 10H include it, WRMSR 10H
+   moves it), SDM 093 Vol3B 20.17.3 p. 20-44 - both i5-13600K environments enumerate it (07H.0:EBX[1] = 1) */
 #define TCG_7_0_EBX_FEATURES (CPUID_7_0_EBX_SMEP | CPUID_7_0_EBX_SMAP | \
           CPUID_7_0_EBX_BMI1 | CPUID_7_0_EBX_BMI2 | CPUID_7_0_EBX_ADX | \
           CPUID_7_0_EBX_CLFLUSHOPT | /* PCOMMIT dropped: 9f07e47a5e (U499) */ \
           CPUID_7_0_EBX_CLWB | CPUID_7_0_EBX_MPX | CPUID_7_0_EBX_FSGSBASE | \
           CPUID_7_0_EBX_ERMS | CPUID_7_0_EBX_AVX2 | CPUID_7_0_EBX_RDSEED | \
           CPUID_7_0_EBX_SHA_NI | CPUID_7_0_EBX_HLE /* U110 */ | \
-          CPUID_7_0_EBX_RTM /* U110 */ | CPUID_7_0_EBX_INVPCID /* U806 */)
+          CPUID_7_0_EBX_RTM /* U110 */ | CPUID_7_0_EBX_INVPCID /* U806 */ | \
+          CPUID_7_0_EBX_TSC_ADJUST /* U1670 */)
 #endif /* __Use_Original_Qemu (U110) */
           /* missing:
           CPUID_7_0_EBX_HLE

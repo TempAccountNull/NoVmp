@@ -293,6 +293,15 @@ Add-Exp 'waitpkg_host_e' 'cases_waitpkg_host' 'waitpkg cpuid expect' @( '--host'
 Add-Exp 'waitpkg_guest' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--guest' )
 Add-Exp 'waitpkg_vm' 'cases_waitpkg_guest' 'waitpkg cpuid expect' @( '--vm' )
 Add-Hw 'cases_waitpkg_hw' 'hw waitpkg'
+# U1670-U1672 (agent tscadj, plan 1.J.60): IA32_TSC_ADJUST (3BH) - every platform switch enumerates it (CPUID.07H.0:EBX[1] = 1:
+# --host P / E, --guest / --vm) and so does the MAX model without a profile (U1670); cases_tscadj_off.txt runs a strict
+# profile without the bit (cpuid_tscadj_off.txt: the gate profile with EBX[1] = 0): #GP(0).
+Add-Exp 'tscadj_host_p' 'cases_tscadj' 'tscadj cpuid expect' @( '--host' )
+Add-Exp 'tscadj_host_e' 'cases_tscadj' 'tscadj cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'tscadj_guest' 'cases_tscadj' 'tscadj cpuid expect' @( '--guest' )
+Add-Exp 'tscadj_vm' 'cases_tscadj' 'tscadj cpuid expect' @( '--vm' )
+Add-Exp 'tscadj_max' 'cases_tscadj' 'tscadj expect'
+Add-Exp 'tscadj_off' 'cases_tscadj_off' 'tscadj cpuid expect' @( '--cpuid', ( Join-Path $D 'cpuid_tscadj_off.txt' ) )
 # U750-U753: CPL3 far CALL / RET far / IRETQ (heaven's gate included) with CET off on both engines,
 # the transfers the CET paths of U750-U752 run through (cases_cet2_hw.txt, 0 differing).
 Add-Hw 'cases_cet2_hw' 'hw cet'

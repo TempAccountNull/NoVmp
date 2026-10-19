@@ -464,6 +464,20 @@ static uint64_t msr_tsc_now(CPUX86State *env)
     return tsc;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1671) */
+/*
+ * NoVmp (ledger U1671, plan 1.J.60): a WRMSR that moves the TSC by delta (SDM 093 Vol3B 20.17.3 p. 20-44): to
+ * IA32_TIME_STAMP_COUNTER (delta = value - TSC: IA32_TSC_ADJUST moves by the same amount) or to IA32_TSC_ADJUST (delta =
+ * value - IA32_TSC_ADJUST: the TSC moves by it). The move is no TSC increment: the VMX-preemption timer keeps its value
+ * (x86_vmx_tsc_moved, Vol3C 28.5.1). The TPAUSE / UMWAIT wait (tsc_wait, U1620) is time passing, not a write.
+ */
+static void msr_tsc_move(CPUX86State *env, uint64_t delta)
+{
+    x86_vmx_tsc_moved(env, delta);
+    env->tsc_adjust += delta;
+}
+
+#endif /* __Use_Original_Qemu (U1671) */
 #endif /* __Use_Original_Qemu (U905) */
 void helper_rdtsc(CPUX86State *env)
 {
@@ -1390,7 +1404,7 @@ static bool msr_present(CPUX86State *env, uint32_t msr)
         return MF_1ECX(CPUID_EXT_VMX) || MF_1ECX(CPUID_EXT_SMX) ||
                MF_7EBX(CPUID_7_0_EBX_SGX_NV) || MF_7ECX(CPUID_7_0_ECX_SGX_LC_NV) ||
                (env->mcg_cap & MCG_LMCE_P);
-    case MSR_TSC_ADJUST:
+    case MSR_TSC_ADJUST:                    /* U1670: the MAX model enumerates it (cpu.c) */
         return MF_7EBX(CPUID_7_0_EBX_TSC_ADJUST_NV);
     case MSR_IA32_SPEC_CTRL:                /* IBRS, STIBP, SSBD (leaf 7.2 is not modelled) */
         return MF_7EDX(CPUID_7_0_EDX_SPEC_CTRL) || MF_7EDX(CPUID_7_0_EDX_STIBP) ||
@@ -2013,10 +2027,14 @@ void helper_wrmsr(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U905) */
     /* NoVmp (ledger U905): MSRs of Table 2-2 the emulator did not model (stored, no side effect) */
     case MSR_IA32_TSC:
-        env->tsc_adjust += val - msr_tsc_now(env);
+#if __Use_Original_Qemu != 1 /* ours (U1671) */
+        msr_tsc_move(env, val - msr_tsc_now(env));
+#endif /* __Use_Original_Qemu (U1671) */
         break;
     case MSR_TSC_ADJUST:
-        env->tsc_adjust = val;
+#if __Use_Original_Qemu != 1 /* ours (U1671) */
+        msr_tsc_move(env, val - env->tsc_adjust);
+#endif /* __Use_Original_Qemu (U1671) */
         break;
     case MSR_IA32_FEATURE_CONTROL:
         env->msr_ia32_feature_control = val;

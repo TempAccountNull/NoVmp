@@ -1130,6 +1130,10 @@ typedef uint64_t FeatureWordArray[FEATURE_WORDS];
 
 /* Support RDFSBASE/RDGSBASE/WRFSBASE/WRGSBASE */
 #define CPUID_7_0_EBX_FSGSBASE          (1U << 0)
+#if __Use_Original_Qemu != 1 /* ours (U1670) */
+/* IA32_TSC_ADJUST MSR (3BH), SDM 093 Vol3B 20.17.3 */
+#define CPUID_7_0_EBX_TSC_ADJUST        (1U << 1)
+#endif /* __Use_Original_Qemu (U1670) */
 /* 1st Group of Advanced Bit Manipulation Extensions */
 #define CPUID_7_0_EBX_BMI1              (1U << 3)
 /* Hardware Lock Elision */
@@ -3745,6 +3749,10 @@ void x86_vmx_record_event(CPUX86State *env, int intno, int is_int, int error_cod
 /* U1620: the physical delay of a TPAUSE / UMWAIT virtual delay (Vol3C 28.3; outside VMX: the delay) */
 uint64_t x86_vmx_wait_delay(CPUX86State *env, uint64_t vdelay);
 #endif /* __Use_Original_Qemu (U1620) */
+#if __Use_Original_Qemu != 1 /* ours (U1671) */
+/* U1671: WRMSR 10H / 3BH move the TSC by delta: the VMX-preemption timer keeps its value (vmx_helper.c) */
+void x86_vmx_tsc_moved(CPUX86State *env, uint64_t delta);
+#endif /* __Use_Original_Qemu (U1671) */
 #if __Use_Original_Qemu != 1 /* ours (U1621) */
 /* U1621: the UMONITOR monitor (misc_helper.c): disarm, and a uc_mem_write of physical [pa, pa + len) */
 void x86_umonitor_disarm(CPUX86State *env);

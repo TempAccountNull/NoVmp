@@ -1,0 +1,18 @@
+# IA32_TSC_ADJUST (MSR 3BH) NOT enumerated: expected-value cases (plan 1.J.60, ledger U1672, agent tscadj, 2026-10-19) under
+# the strict profile cpuid_tscadj_off.txt (the gate profile with CPUID.07H.00H:EBX.TSC_ADJUST[1] = 0, an emulated
+# configuration). Vol4 Table 2-2 lists 3BH "If CPUID.07H.00H:EBX[1] = 1"; Vol2B RDMSR / Vol2D WRMSR: "#GP(0) If the value
+# in ECX specifies a reserved or unimplemented MSR address" (U905: a strict profile hides the MSR). Every case: nothing
+# changes. IA32_TIME_STAMP_COUNTER (10H, CPUID.01H:EDX.TSC[4] = 1) stays.
+#   emu-alltest --cases Emulator\data\cases_tscadj_off.txt --cpuid Emulator\data\cpuid_tscadj_off.txt --expect-only   (suite tscadj_off)
+# The enumerating profiles: cases_tscadj.txt.
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 1; and r8d, 1 =>! r8=0
+# --- RDMSR / WRMSR 3BH: #GP(0) at CPL0 and CPL3
+rdmsr | rcx=0x3b rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | rcx=0x3b rax=0 rdx=0 => #GP(0)
+wrmsr | rcx=0x3b rax=0x1000 rdx=0x1000 => #GP(0)
+rdmsr | cpl=3 rcx=0x3b rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | cpl=3 rcx=0x3b rax=0 rdx=0 => #GP(0)
+# --- the TSC itself: WRMSR 10H := 1000_0000_0000H, RDTSC continues from there (R11 = (RDTSC - 1000_0000_0000H) >> 28)
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r11=0

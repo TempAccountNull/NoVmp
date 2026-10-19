@@ -7347,8 +7347,8 @@ static void test_x86_tw_tsc_adjust(void)
     uint64_t t, d;
 
     /*
-     * UC_CPU_X86_MAX has no IA32_TSC_ADJUST MSR (RDMSR / WRMSR 3BH #GP(0), U905: the model's CPUID.07H.0:EBX[1]
-     * is 0 under every profile), so the interplay shows through IA32_TIME_STAMP_COUNTER: WRMSR 10H moves
+     * Written when UC_CPU_X86_MAX had no IA32_TSC_ADJUST MSR (until U1670 its CPUID.07H.0:EBX[1] was 0; since then
+     * 3BH exists, test_x86_ta_wait), so the interplay shows through IA32_TIME_STAMP_COUNTER: WRMSR 10H moves
      * IA32_TSC_ADJUST by the value written minus the counter (U905 / U1600, SDM 093 Vol3B 20.17.3) - the
      * counter with the wait in it, so RDTSC reads the value written, not that value plus the wait.
      */
@@ -43807,6 +43807,314 @@ static void test_x86_xq_component_rules(void)
 }
 /* ---- end U1580-U1589 (xq_) ---- */
 
+/* ---- NoVmp U1670-U1672 (agent tscadj, plan 1.J.60): helper prefix ta_ ---- */
+/*
+ * IA32_TSC_ADJUST (MSR 3BH). SDM 093 Vol3B 20.17.3 p. 20-44: "On RESET, the value of the IA32_TSC_ADJUST MSR is 0";
+ * a WRMSR to IA32_TIME_STAMP_COUNTER that adds (or subtracts) X from the TSC adds (or subtracts) X from IA32_TSC_ADJUST;
+ * a WRMSR to IA32_TSC_ADJUST that adds (or subtracts) X from it adds (or subtracts) X from the TSC; it "changes only in
+ * response to WRMSR"; support "is indicated by CPUID.07H.00H:EBX.TSC_ADJUST (bit 1)". Vol4 Table 2-2 3BH p. 2-6:
+ * 63:0 THREAD_ADJUST, "Reset value is zero". Both i5-13600K environments enumerate it (bare host 07H.0:EBX 239C27EBH,
+ * capture Host_clean_20261016; VMware guest 219C27EBH, Run3_clean_guest_probes_20261015) and, since U1670, the MAX
+ * model; a strict profile that clears the bit removes the MSR (#GP(0), U905). RDMSR / WRMSR are CPL0 only. The
+ * counter keeps running on host time, so the TSC checks are windows (tw_near: [base, base + 2^32)).
+ * U1671: in VMX non-root operation RDMSR 3BH is not offset (only 10H is, Vol3C 28.3 p. 28-11), WRMSR 10H / 3BH
+ * "operate normally" (Vol3C 28.3 p. 28-13), and the VMX-preemption timer counts "every time bit X in the TSC
+ * changes due to a TSC increment" (Vol3C 28.5.1 p. 28-17): a WRMSR moves the TSC but is no increment.
+ */
+static const uint32_t ta_host7[4] = {2, 0x239c27eb, 0x98c027ac, 0xfc1cc410};   /* --host: EBX[1] = 1 */
+static const uint32_t ta_guest7[4] = {2, 0x219c27eb, 0x9840078c, 0xbc004410};  /* --guest: EBX[1] = 1 */
+static const uint32_t ta_off7[4] = {2, 0x219c27e9, 0x9840078c, 0xbc004410};    /* the guest with EBX[1] = 0 */
+
+/* MAX model; with row7 a profile (leaves 0, 1, 7.0), strict or not */
+static void ta_open(NvRun *r, const uint32_t *row7, int strict)
+{
+    uc_x86_cpuid p[3] = {
+        {0, 0, 7, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0xb0671, 0x00800800, 0x7ffafbff, 0xbfebfbff},   /* EDX[4] TSC */
+        {7, 0, 0, 0, 0, 0},
+    };
+
+    nv_open(r, UC_MODE_64, UC_CPU_X86_MAX);
+    if (row7) {
+        p[2].eax = row7[0];
+        p[2].ebx = row7[1];
+        p[2].ecx = row7[2];
+        p[2].edx = row7[3];
+        OK(uc_ctl_set_x86_cpuid(r->uc, p, 3));
+        OK(uc_ctl_set_x86_cpuid_strict(r->uc, strict));
+    }
+}
+
+/* RDMSR (write = 0: RAX / RDX preset 1111H / 2222H, *v = EDX:EAX) or WRMSR *v as an instruction: vector or -1 */
+static int ta_msr(NvRun *r, uint32_t msr, int write, uint64_t *v, int cpl3)
+{
+    nv_set(r, UC_X86_REG_RCX, msr);
+    nv_set(r, UC_X86_REG_RAX, write ? (uint32_t)*v : 0x1111);
+    nv_set(r, UC_X86_REG_RDX, write ? *v >> 32 : 0x2222);
+    if (cpl3) {
+        if (write) {
+            OK(nv_run3(r, "\x0f\x30"));
+        } else {
+            OK(nv_run3(r, "\x0f\x32"));
+        }
+    } else if (write) {
+        OK(nv_run(r, "\x0f\x30"));
+    } else {
+        OK(nv_run(r, "\x0f\x32"));
+    }
+    if (r->cap.count) {
+        return (int)r->cap.intno;
+    }
+    if (!write) {
+        *v = (nv_get(r, UC_X86_REG_RDX) << 32) | (uint32_t)nv_get(r, UC_X86_REG_RAX);
+    }
+    return -1;
+}
+
+static uint64_t ta_rd(NvRun *r, uint32_t msr)
+{
+    uint64_t v = 0;
+
+    TEST_CHECK(ta_msr(r, msr, 0, &v, 0) == -1);
+    TEST_MSG("RDMSR %x", msr);
+    return v;
+}
+
+static void ta_wr(NvRun *r, uint32_t msr, uint64_t v)
+{
+    TEST_CHECK(ta_msr(r, msr, 1, &v, 0) == -1);
+    TEST_MSG("WRMSR %x := %llx", msr, (unsigned long long)v);
+}
+
+/* one configuration: CPUID.07H.0:EBX[1] as reported (cpuid_bit), whether 3BH exists (present), CPL3 always #GP(0) */
+static void ta_enum_one(const uint32_t *row7, int strict, int cpuid_bit, int present)
+{
+    NvRun r;
+    uc_x86_msr m = {0x3b, 0};
+    uint64_t v;
+
+    ta_open(&r, row7, strict);
+    OK(nv_run(&r, "\xb8\x07\x00\x00\x00\x31\xc9\x0f\xa2"));      /* mov eax, 7; xor ecx, ecx; cpuid */
+    TEST_CHECK((int)((nv_get(&r, UC_X86_REG_RBX) >> 1) & 1) == cpuid_bit);
+    TEST_MSG("CPUID.07H.0:EBX %llx, expected bit 1 = %d", (unsigned long long)nv_get(&r, UC_X86_REG_RBX), cpuid_bit);
+    if (present) {
+        TEST_CHECK(ta_rd(&r, 0x3b) == 0);                           /* the RESET value */
+        m.value = 5;
+        TEST_CHECK(uc_reg_read(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK && m.value == 0);
+        ta_wr(&r, 0x3b, 0x123);
+        TEST_CHECK(ta_rd(&r, 0x3b) == 0x123);
+        m.value = 0x456;
+        TEST_CHECK(uc_reg_write(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_OK);
+        TEST_CHECK(ta_rd(&r, 0x3b) == 0x456);
+    } else {
+        v = 0;
+        TEST_CHECK(ta_msr(&r, 0x3b, 0, &v, 0) == 13);               /* #GP(0), nothing changes */
+        TEST_CHECK(nv_get(&r, UC_X86_REG_RAX) == 0x1111 && nv_get(&r, UC_X86_REG_RDX) == 0x2222);
+        v = 0x123;
+        TEST_CHECK(ta_msr(&r, 0x3b, 1, &v, 0) == 13);
+        TEST_CHECK(uc_reg_read(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        TEST_CHECK(uc_reg_write(r.uc, UC_X86_REG_MSR, &m) == UC_ERR_EXCEPTION);
+        /* the TSC itself stays (CPUID.01H:EDX.TSC): RDTSC follows a WRMSR 10H */
+        ta_wr(&r, 0x10, TW_T0);
+        TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
+    }
+    /* CPL3 (Windows user mode): #GP(0) whether the MSR exists or not */
+    v = 0;
+    TEST_CHECK(ta_msr(&r, 0x3b, 0, &v, 1) == 13 && nv_cpl(&r) == 3);
+    v = 0;
+    TEST_CHECK(ta_msr(&r, 0x3b, 1, &v, 1) == 13);
+    TEST_MSG("profile %s strict %d", row7 == ta_host7 ? "host" : row7 == ta_guest7 ? "guest" : row7 ? "off" : "none",
+             strict);
+    OK(uc_close(r.uc));
+}
+
+static void test_x86_ta_enum(void)
+{
+    ta_enum_one(NULL, 0, 1, 1);             /* no profile: the MAX model (U1670) */
+    ta_enum_one(ta_host7, 1, 1, 1);         /* --host */
+    ta_enum_one(ta_guest7, 1, 1, 1);        /* --guest / --vm */
+    ta_enum_one(ta_off7, 1, 0, 0);          /* a strict profile without TSC_ADJUST: #GP(0) */
+    ta_enum_one(ta_off7, 0, 0, 1);          /* non-strict: hidden features stay (U435 / U905) */
+}
+
+/* WRMSR 3BH moves the TSC by the delta; RDTSC, RDTSCP, RDMSR 10H read the same counter, at CPL3 too */
+static void test_x86_ta_adjust_moves_tsc(void)
+{
+    NvRun r;
+    uint64_t t, v;
+
+    ta_open(&r, ta_host7, 1);
+    t = tw_rdtsc(&r);
+    ta_wr(&r, 0x3b, 1ull << 44);                                    /* 0 -> 2^44: +2^44 */
+    TEST_CHECK(tw_near(tw_rdtsc(&r) - (1ull << 44), t));
+    TEST_CHECK(ta_rd(&r, 0x3b) == 1ull << 44);                      /* time alone does not change it */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_near(ta_rd(&r, 0x10), t));
+    OK(nv_run(&r, "\x0f\x01\xf9"));                                 /* RDTSCP */
+    TEST_CHECK(r.cap.count == 0);
+    v = (nv_get(&r, UC_X86_REG_RDX) << 32) | (uint32_t)nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(tw_near(v, t));
+    t = tw_rdtsc(&r);
+    ta_wr(&r, 0x3b, 1ull << 40);                                    /* 2^44 -> 2^40: the TSC goes back */
+    TEST_CHECK(tw_near(tw_rdtsc(&r) + ((1ull << 44) - (1ull << 40)), t));
+    t = tw_rdtsc(&r);
+    ta_wr(&r, 0x3b, ~0ull);                                         /* 63:0 writable: 2^40 -> -1 */
+    TEST_CHECK(ta_rd(&r, 0x3b) == ~0ull);
+    TEST_CHECK(tw_near(tw_rdtsc(&r) + (1ull << 40) + 1, t));
+    /* the API (uc_reg_write UC_X86_REG_MSR) is a WRMSR too */
+    t = tw_rdtsc(&r);
+    nv_wrmsr(&r, 0x3b, (1ull << 42) - 1);                           /* -1 -> 2^42 - 1: +2^42 */
+    TEST_CHECK(nv_rdmsr(&r, 0x3b) == (1ull << 42) - 1);
+    TEST_CHECK(tw_near(tw_rdtsc(&r) - (1ull << 42), t));
+    /* CPL3: RDTSC reads the adjusted counter; RDMSR 3BH is #GP(0) */
+    t = tw_rdtsc(&r);
+    OK(nv_run3(&r, "\x0f\x31"));
+    TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
+    v = (nv_get(&r, UC_X86_REG_RDX) << 32) | (uint32_t)nv_get(&r, UC_X86_REG_RAX);
+    TEST_CHECK(tw_near(v, t));
+    TEST_CHECK(ta_msr(&r, 0x3b, 0, &v, 1) == 13);
+    OK(uc_close(r.uc));
+}
+
+/* WRMSR 10H adds the change of the TSC to IA32_TSC_ADJUST (instruction and API) */
+static void test_x86_ta_tsc_write(void)
+{
+    NvRun r;
+    uint64_t t, a0, a;
+
+    ta_open(&r, ta_guest7, 1);
+    ta_wr(&r, 0x3b, 0x5000);
+    t = tw_rdtsc(&r);
+    ta_wr(&r, 0x10, TW_T0);                                         /* forward */
+    a = ta_rd(&r, 0x3b);
+    /* X = TW_T0 - (the TSC at the write, in [t, t + 2^32)); IA32_TSC_ADJUST = 5000H + X */
+    TEST_CHECK(tw_near(TW_T0 - (a - 0x5000), t));
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
+    TEST_CHECK(ta_rd(&r, 0x3b) == a);                               /* unchanged while time passes */
+    a0 = a;
+    t = tw_rdtsc(&r);
+    ta_wr(&r, 0x10, 0x1000);                                        /* back */
+    a = ta_rd(&r, 0x3b);
+    TEST_CHECK(tw_near(0x1000 - (a - a0), t));
+    TEST_CHECK(tw_near(tw_rdtsc(&r), 0x1000));
+    a0 = a;
+    t = tw_rdtsc(&r);
+    nv_wrmsr(&r, 0x10, TW_T0);                                      /* the API */
+    a = nv_rdmsr(&r, 0x3b);
+    TEST_CHECK(tw_near(TW_T0 - (a - a0), t));
+    TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
+    OK(uc_close(r.uc));
+}
+
+/* the U1620 wait advances the TSC, not IA32_TSC_ADJUST; the deadline is compared with the adjusted TSC */
+static void test_x86_ta_wait(void)
+{
+    NvRun r;
+    uint64_t t, d;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                                 /* the deadline rule alone (U1620) */
+    ta_wr(&r, 0x3b, 1ull << 44);
+    t = tw_rdtsc(&r);
+    d = t + (1ull << 36);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), d));
+    TEST_CHECK(ta_rd(&r, 0x3b) == 1ull << 44);
+    t = tw_rdtsc(&r);                                               /* a later WRMSR 3BH: from where the wait left it */
+    ta_wr(&r, 0x3b, (1ull << 44) + (1ull << 40));
+    TEST_CHECK(tw_near(tw_rdtsc(&r) - (1ull << 40), t));
+    /* a deadline 2^43 below the adjusted TSC is past (without IA32_TSC_ADJUST it would lie 2^43 + 2^40 ahead): no wait */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t - (1ull << 43)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t));
+    /* the default wake (2^21 ticks, U1622) */
+    tw_wake(&r, UC_X86_WAIT_WAKE_DEFAULT);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
+    TEST_CHECK(ta_rd(&r, 0x3b) == (1ull << 44) + (1ull << 40));
+    OK(uc_close(r.uc));
+}
+
+static uint64_t ta_pc_rdtsc(PcCtx *c)
+{
+    TEST_CHECK(pc_run(c, "\x0f\x31", 2) == -1);
+    return (pc_get(c, UC_X86_REG_RDX) << 32) | (uint32_t)pc_get(c, UC_X86_REG_RAX);
+}
+
+/*
+ * U1671: VMX non-root operation with "use MSR bitmaps" (an all-zero bitmap: no MSR exit) and "use TSC offsetting"
+ * (offset 2000000000000000H): the guest's WRMSR 3BH moves the TSC, its RDMSR 3BH returns IA32_TSC_ADJUST itself, its
+ * RDTSC returns TSC + offset; its WRMSR 10H loads the TSC itself (no offset subtracted) and moves IA32_TSC_ADJUST by
+ * the change; with the VMX-preemption timer running neither write moves the timer (exit 10 at the CPUID, not 52, and
+ * the saved value is not above the loaded one).
+ */
+static void test_x86_ta_vmx(void)
+{
+    /* WRMSR (ECX, EDX:EAX); mov ecx, 3BH; RDMSR; mov r8, rax; mov r9, rdx; RDTSC; mov r10, rax; mov r11, rdx; CPUID */
+    static const char g[] = "\x0f\x30\xb9\x3b\x00\x00\x00\x0f\x32\x49\x89\xc0\x49\x89\xd1"
+                            "\x0f\x31\x49\x89\xc2\x49\x89\xd3\x0f\xa2";
+    const uint64_t off = 0x2000000000000000ull, x = 1ull << 40, val = 0x100000000000ull, d = 0x3000000000ull;
+    PcCtx c;
+    uint64_t fl, t, v, gadj, gtsc;
+
+    vmx_setup(&c);
+    TEST_CHECK(vmx_rdmsr(&c, 0x3b, &v) == -1 && v == 0);           /* root: exists (MAX, U1670), RESET 0 */
+    TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+    vmx_w(&c, 0x2004, VMX_MSRBM);
+    vmx_w(&c, 0x2010, off);
+    vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28) | (1u << 3));         /* use MSR bitmaps, use TSC offsetting */
+    /* guest WRMSR 3BH := 2^40 */
+    t = ta_pc_rdtsc(&c);
+    vmx_resume_regs(&c, g, sizeof(g) - 1, (uint32_t)x, 0x3b, x >> 32, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    gadj = (pc_get(&c, UC_X86_REG_R9) << 32) | (uint32_t)pc_get(&c, UC_X86_REG_R8);
+    gtsc = (pc_get(&c, UC_X86_REG_R11) << 32) | (uint32_t)pc_get(&c, UC_X86_REG_R10);
+    TEST_CHECK(gadj == x);                                          /* RDMSR 3BH: not offset */
+    TEST_CHECK(tw_near(gtsc - off - x, t));                         /* RDTSC: TSC (moved by 2^40) + offset */
+    TEST_MSG("guest 3BH %llx, guest TSC %llx, root TSC before %llx", (unsigned long long)gadj,
+             (unsigned long long)gtsc, (unsigned long long)t);
+    TEST_CHECK(vmx_rdmsr(&c, 0x3b, &v) == -1 && v == x);
+    TEST_CHECK(tw_near(ta_pc_rdtsc(&c) - x, t));
+    /* guest WRMSR 10H := 1000_0000_0000H: the TSC itself, IA32_TSC_ADJUST = 2^40 + the change */
+    t = ta_pc_rdtsc(&c);
+    vmx_resume_regs(&c, g, sizeof(g) - 1, (uint32_t)val, 0x10, val >> 32, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    gadj = (pc_get(&c, UC_X86_REG_R9) << 32) | (uint32_t)pc_get(&c, UC_X86_REG_R8);
+    gtsc = (pc_get(&c, UC_X86_REG_R11) << 32) | (uint32_t)pc_get(&c, UC_X86_REG_R10);
+    TEST_CHECK(tw_near(val - (gadj - x), t));
+    TEST_CHECK(tw_near(gtsc - off, val));
+    TEST_CHECK(vmx_rdmsr(&c, 0x3b, &v) == -1 && v == gadj);
+    TEST_CHECK(tw_near(ta_pc_rdtsc(&c), val));
+    /*
+     * the VMX-preemption timer (value 10000000H, saved at the exit) across WRMSR 3BH + d and back, d = 3000000000H
+     * (the timer counts TSC >> 5, IA32_VMX_MISC[4:0] = 5: d moves a TSC-derived timer by 180000000H, not a multiple
+     * of 2^32, so a jump shows in the 32-bit value too), then WRMSR 10H forward by about d
+     */
+    vmx_w(&c, 0x4000, 0x16 | 0x40);
+    vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 22));
+    vmx_w(&c, 0x482e, 0x10000000);
+    vmx_resume_regs(&c, g, sizeof(g) - 1, (uint32_t)(gadj + d), 0x3b, (gadj + d) >> 32, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    v = vmx_r(&c, 0x482e);
+    TEST_CHECK(v <= 0x10000000 && v > 0x10000000 - (1u << 27));
+    TEST_MSG("timer after 3BH + d: %llx", (unsigned long long)v);
+    vmx_w(&c, 0x482e, 0x10000000);
+    vmx_resume_regs(&c, g, sizeof(g) - 1, (uint32_t)gadj, 0x3b, gadj >> 32, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    v = vmx_r(&c, 0x482e);
+    TEST_CHECK(v <= 0x10000000 && v > 0x10000000 - (1u << 27));
+    TEST_MSG("timer after 3BH - d: %llx", (unsigned long long)v);
+    vmx_w(&c, 0x482e, 0x10000000);
+    vmx_resume_regs(&c, g, sizeof(g) - 1, (uint32_t)(val + d), 0x10, (val + d) >> 32, 0);
+    vmx_exit_is(&c, 10, 0, 2);
+    v = vmx_r(&c, 0x482e);
+    TEST_CHECK(v <= 0x10000000 && v > 0x10000000 - (1u << 27));
+    TEST_MSG("timer after WRMSR 10H: %llx", (unsigned long long)v);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1670-U1672 (ta_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -43953,6 +44261,11 @@ TEST_LIST = {
     {"test_x86_tw_monitor", test_x86_tw_monitor},
     {"test_x86_tw_tsc_adjust", test_x86_tw_tsc_adjust},
     {"test_x86_tw_wake", test_x86_tw_wake},
+    {"test_x86_ta_enum", test_x86_ta_enum},
+    {"test_x86_ta_adjust_moves_tsc", test_x86_ta_adjust_moves_tsc},
+    {"test_x86_ta_tsc_write", test_x86_ta_tsc_write},
+    {"test_x86_ta_wait", test_x86_ta_wait},
+    {"test_x86_ta_vmx", test_x86_ta_vmx},
     {"test_x86_enqcmd", test_x86_enqcmd},
     {"test_x86_smx_pconfig_sgx", test_x86_smx_pconfig_sgx},
     {"test_x86_cet_shadow_stack", test_x86_cet_shadow_stack},

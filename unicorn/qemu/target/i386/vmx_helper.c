@@ -2405,6 +2405,27 @@ static uint32_t vmx_timer_value(CPUX86State *env)
     return now >= env->vmx.timer_deadline ? 0 : (uint32_t)(env->vmx.timer_deadline - now);
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1671) */
+/*
+ * NoVmp (ledger U1671, plan 1.J.60): a WRMSR to IA32_TIME_STAMP_COUNTER or IA32_TSC_ADJUST moves the TSC by 'delta'
+ * (SDM 093 Vol3B 20.17.3 p. 20-44) but is no TSC increment, and the VMX-preemption timer "counts down by 1 every time
+ * bit X in the TSC changes due to a TSC increment" (Vol3C 28.5.1 p. 28-17). Called before IA32_TSC_ADJUST changes: a
+ * running timer keeps its current value; it counts on from the moved TSC (the bit-X changes of the new counter). Before,
+ * vmx_tsc moved with IA32_TSC_ADJUST and the write counted the timer down (or up) by delta >> X.
+ */
+void x86_vmx_tsc_moved(CPUX86State *env, uint64_t delta)
+{
+    uint32_t left;
+
+    if (!env->vmx.timer_on) {
+        return;
+    }
+    left = vmx_timer_value(env);
+    env->vmx.timer_deadline = ((vmx_tsc(env) + delta) >> VMX_TIMER_RATE) + left;
+}
+
+#endif /* __Use_Original_Qemu (U1671) */
+
 /* ---- 30.2-30.3 saving guest state and recording the exit ---- */
 static void vmx_save_guest(CPUX86State *env, const VmxExit *e)
 {

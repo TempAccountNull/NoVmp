@@ -74,7 +74,7 @@ mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov ecx, 0x176; lea rax, [ri
 # reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model's CPUID
 # (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.
 mov eax, 1; cpuid =>! rcx=0xFEF8324B rdx=0xFCBFBFD
-mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FF9 rcx=0xB8C127AC rdx=0x154820
+mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FFB rcx=0xB8C127AC rdx=0x154820
 mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF
 mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD
 mov eax, 0xa; xor ecx, ecx; cpuid =>! rax=0 rbx=0 rcx=0 rdx=0
@@ -83,8 +83,7 @@ rdmsr | rcx=0x10 =>!
 rdmsr | rcx=0x17 =>!
 rdmsr | rcx=0x1B =>!
 rdmsr | rcx=0x3A =>!
-rdmsr | rcx=0x3B rax=0x1111 rdx=0x2222 => #GP(0)
-wrmsr | rcx=0x3B rax=0 rdx=0 => #GP(0)
+rdmsr | rcx=0x3B =>!
 rdmsr | rcx=0x48 rax=0x1111 rdx=0x2222 => #GP(0)
 wrmsr | rcx=0x48 rax=0 rdx=0 => #GP(0)
 rdmsr | rcx=0x8B =>!

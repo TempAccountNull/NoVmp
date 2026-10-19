@@ -1,0 +1,51 @@
+# IA32_TSC_ADJUST (MSR 3BH): expected-value cases (plan 1.J.60, ledger U1670-U1672, agent tscadj, 2026-10-19), the same file
+# under every platform switch that enumerates it (CPUID.07H.00H:EBX.TSC_ADJUST[1] = 1): --host (bare host, EBX 239C27EBH,
+# capture Host_clean_20261016, P- and E-core rows alike), --guest / --vm (VMware guest, EBX 219C27EBH, capture
+# Run3_clean_guest_probes_20261015) and the MAX model without a profile (U1670). A strict profile without the bit:
+# cases_tscadj_off.txt.
+#   emu-alltest --cases Emulator\data\cases_tscadj.txt --host --expect-only                (suite tscadj_host_p)
+#   emu-alltest --cases Emulator\data\cases_tscadj.txt --host --host-core E --expect-only  (suite tscadj_host_e)
+#   emu-alltest --cases Emulator\data\cases_tscadj.txt --guest --expect-only               (suites tscadj_guest, tscadj_vm: --vm)
+#   emu-alltest --cases Emulator\data\cases_tscadj.txt --expect-only                       (suite tscadj_max)
+# SDM 093 Vol3B 20.17.3 p. 20-44: "On RESET, the value of the IA32_TSC_ADJUST MSR is 0"; "If an execution of WRMSR to the
+# IA32_TIME_STAMP_COUNTER MSR adds (or subtracts) value X from the TSC, the logical processor also adds (or subtracts) value
+# X from the IA32_TSC_ADJUST MSR"; "If an execution of WRMSR to the IA32_TSC_ADJUST MSR adds (or subtracts) value X from
+# that MSR, the logical processor also adds (or subtracts) value X from the TSC"; it "changes only in response to WRMSR".
+# Vol4 Table 2-2 3BH p. 2-6: 63:0 THREAD_ADJUST, "Reset value is zero". RDMSR / WRMSR: #GP(0) at CPL > 0 (Vol2B / Vol2D).
+# Raw Unicorn runs at CPL0, "cpl=3" lines at CPL3; every line starts from the engine's reset state (IA32_TSC_ADJUST = 0).
+# The TSC keeps counting on host time, so the TSC lines check a window: R11 = (value - expected) >> 28 = 0 (within 2^28
+# ticks after the expected value).
+#
+# --- enumeration
+mov eax, 7; xor ecx, ecx; cpuid; mov r8d, ebx; shr r8d, 1; and r8d, 1 =>! r8=1
+# --- the RESET value 0
+rdmsr | rcx=0x3b rax=0x1111 rdx=0x2222 => rax=0 rdx=0
+# --- a write is read back; all 64 bits are writable (THREAD_ADJUST 63:0)
+mov ecx, 0x3b; mov eax, 0x89abcdef; mov edx, 0x01234567; wrmsr; xor eax, eax; xor edx, edx; rdmsr =>! rax=0x89abcdef rdx=0x01234567
+mov ecx, 0x3b; mov eax, 0xffffffff; mov edx, 0xffffffff; wrmsr; xor eax, eax; xor edx, edx; rdmsr =>! rax=0xffffffff rdx=0xffffffff
+wrmsr | rcx=0x3b rax=0x80000000 rdx=0x80000000 => rax=0x80000000 rdx=0x80000000 rcx=0x3b
+#
+# --- WRMSR 3BH moves the TSC by the change: R8 = RDTSC before; 0 -> 2^44 (+2^44): R11 = (RDTSC after - R8 - 2^44) >> 28
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r11=0
+# 2^44 -> 2^40 (-(2^44 - 2^40)): R11 = (RDTSC after - R8 + F0000000000H) >> 28
+mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3b; xor eax, eax; mov edx, 0x100; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0xf0000000000; add rax, r9; shr rax, 28; mov r11, rax =>! r11=0
+# 0 -> -1 (FFFFFFFF_FFFFFFFFH): the TSC goes back by 1
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3b; mov eax, 0xffffffff; mov edx, eax; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; add rax, 1; shr rax, 28; mov r11, rax =>! r11=0
+# RDMSR 10H and RDTSCP read the same moved counter (0 -> 2^44)
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; mov ecx, 0x10; rdmsr; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r11=0
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; rdtscp; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r11=0
+# time alone does not change IA32_TSC_ADJUST: written 2^44, read back after RDTSC / RDMSR 10H
+mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; mov ecx, 0x10; rdmsr; mov ecx, 0x3b; rdmsr =>! rax=0 rdx=0x1000
+#
+# --- WRMSR 10H moves IA32_TSC_ADJUST by the change of the TSC: R8 = RDTSC before; TSC := 1000_0000_0000H; X = that value
+# minus the TSC at the write (>= R8); IA32_TSC_ADJUST = 0 + X: R11 = (1000_0000_0000H - IA32_TSC_ADJUST - R8) >> 28
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; mov ecx, 0x3b; rdmsr; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub r9, rax; sub r9, r8; shr r9, 28; mov r11, r9 =>! r11=0
+# from IA32_TSC_ADJUST = 5000H, TSC := 1000H (backwards): IA32_TSC_ADJUST = 5000H + X, R11 = (1000H - (IA32_TSC_ADJUST - 5000H) - R8) >> 28
+mov ecx, 0x3b; mov eax, 0x5000; xor edx, edx; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov ecx, 0x10; mov eax, 0x1000; xor edx, edx; wrmsr; mov ecx, 0x3b; rdmsr; shl rdx, 32; or rax, rdx; sub rax, 0x5000; mov r9, 0x1000; sub r9, rax; sub r9, r8; shr r9, 28; mov r11, r9 =>! r11=0
+# after WRMSR 10H the TSC continues from the value written (IA32_TSC_ADJUST included in RDTSC)
+mov ecx, 0x3b; mov eax, 0x5000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r11=0
+#
+# --- CPL3 (Windows user mode): RDMSR / WRMSR 3BH #GP(0), nothing changes
+rdmsr | cpl=3 rcx=0x3b rax=0x1111 rdx=0x2222 => #GP(0)
+wrmsr | cpl=3 rcx=0x3b rax=0 rdx=0 => #GP(0)
+wrmsr | cpl=3 rcx=0x3b rax=0x1000 rdx=0 => #GP(0)

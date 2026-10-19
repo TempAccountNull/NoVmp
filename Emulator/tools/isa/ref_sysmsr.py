@@ -416,13 +416,16 @@ def cases_sysexit(a):
 #   CPUID.(07H,0):EDX[18] PCONFIG - PCONFIG MKTME_KEY_PROGRAM (U1021)
 # Unchanged: CPUID.01H:EDX[9] APIC (IA32_APIC_BASE.EN = 1 at reset, 13.4.3); the Xeon Phi bits
 # (07H EBX[26] AVX512PF, EBX[27] AVX512ER, ECX[0] PREFETCHWT1, EDX[2] AVX512_4VNNIW, EDX[3]
-# AVX512_4FMAPS, U990) are opt-ins (UC_CTL_X86_AVX512) the harness does not set; leaf 7 EBX is unchanged.
+# AVX512_4FMAPS, U990) are opt-ins (UC_CTL_X86_AVX512) the harness does not set.
+# U1672 (agent tscadj, plan 1.J.60): CPUID.(07H,0):EBX[1] TSC_ADJUST - the MAX model enumerates IA32_TSC_ADJUST (U1670,
+# SDM 093 Vol3B 20.17.3; Vol4 Table 2-2 3BH "If CPUID.07H.00H:EBX[1] = 1"), so 3BH exists.
 X2APIC_1ECX = 1 << 21
 TME_EN_7ECX = 1 << 13
 PCONFIG_7EDX = 1 << 18
+TSC_ADJUST_7EBX = 1 << 1
 MAX_CPUID = {
     (1, 0): (0x00080660, None, 0xFED8324B | X2APIC_1ECX, 0x0FCBFBFD),
-    (7, 0): (None, 0x219C6FF9, 0xB8C107AC | TME_EN_7ECX, 0x00114820 | PCONFIG_7EDX),
+    (7, 0): (None, 0x219C6FF9 | TSC_ADJUST_7EBX, 0xB8C107AC | TME_EN_7ECX, 0x00114820 | PCONFIG_7EDX),
     (0xD, 1): (0x0000000F, None, None, None),
     (0x80000001, 0): (None, None, 0x00000175, 0xEDD3FBFD),
 }
@@ -963,6 +966,7 @@ def selftest():
             check(not ok, 'APIC_BASE %x -> %x #GP' % (cur, val))
     check(MAX_CPUID[(1, 0)][2] == 0xFEF8324B and MAX_CPUID[(7, 0)][2] == 0xB8C127AC and
           MAX_CPUID[(7, 0)][3] == 0x154820, 'CPUID guards (hand: + bit 21, + bit 13, + bit 18)')
+    check(MAX_CPUID[(7, 0)][1] == 0x219C6FFB and msr_present(0x3B), 'CPUID guard EBX (hand: + bit 1, U1672) / 3BH')
     # the generator runs and every case has an expectation
     lines = cases_all() + cases_pmu()
     check(all(l.startswith('#') or '=>' in l for l in lines), 'every case line has =>')
