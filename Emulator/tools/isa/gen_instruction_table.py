@@ -397,11 +397,13 @@ OS_OFF = {
 # guest capture) while the bare i5-13600K host enumerates them. The row stays ❌ (the hardware cases run in
 # the guest, so the instruction cannot be compared with the CPU there), but the reason names the guest, not
 # the processor. Bare-host captures are evidence only; nothing here was executed on the bare host.
+# U1610: the capture folders are named after the machine; the machine name is written as <bare-host>
+# (privacy), the paths in backticks so that the label shows in the Markdown table.
 GUEST_HIDDEN = {
     'SMX': ('CPUID.01H:ECX[6] = 0: SMX hidden in the VMware guest; the bare host enumerates SMX '
             '(CPUID.01H:ECX[6] = 1, bare-host capture 2026-10-10 '
-            'emulator\\capture\\host\\output\\DESKTOP-JOB52RJ_20261010_133354, again 2026-10-15 '
-            'emulator\\capture\\smmid\\output\\DESKTOP-JOB52RJ_20261015_002318_native-host); '
+            '`emulator\\capture\\host\\output\\<bare-host>_20261010_133354`, again 2026-10-15 '
+            '`emulator\\capture\\smmid\\output\\<bare-host>_20261015_002318_native-host`); '
             'GETSEC was not run on the bare host'),
 }
 # U1500: the verified_forms 'sdm' prefix of such a row names the guest instead of the processor

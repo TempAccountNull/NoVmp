@@ -41372,7 +41372,7 @@ static void test_x86_smr_dr_breakpoints(void)
  * on Unicorn: per case the setup XRSTOR64 of the constructed image (EDX:EAX = 7), XSAVE64 ("BV
  * before"), XGETBV(1) ("before"), the measured instruction, XGETBV(1) ("after"), XSAVE64 ("BV
  * after") - the probe's step order. Expected values = the per-case majority outcomes measured on the
- * bare i5-13600K (notes\xinuse_host_vs_guest_2026-10-14.txt; run DESKTOP-JOB52RJ_20261014_223212):
+ * bare i5-13600K (notes\xinuse_host_vs_guest_2026-10-14.txt; run <bare-host>_20261014_223212):
  * P-cores (12 LPs, = the VMware guest majority, 57/57) and E-cores (8 LPs, deterministic). K8a/K8b
  * (WRPKRU) are not here: Skipped everywhere (OSPKE = 0), nothing was measured.
  * SDM 253665-092 Vol1 13.6 p. 13-17/13-18 (XINUSE[i] may be 1 in the initial configuration; XGETBV(1)
