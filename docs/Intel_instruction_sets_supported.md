@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-19 11:14 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `a5e9f304 Ledger: U1700-U1704 (agent/gate1docs), merged and verified`). Do not edit by hand._
+_Generated 2026-10-19 16:02 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `e5ecd4e9 Ledger: U1710-U1713 (agent/ptwrite), merged and verified`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started). **Per profile** (U1632, plan 1.J.57): the split follows the VMware guest (`--guest` / `--vm`, where the hardware cases run); every **CPU cannot support** reason says whether it also holds on the bare host (`--host`) - the forms the bare host enumerates are labelled "--host: enumerated". **Gating only** (your decision 2026-10-17, G10) = not enumerated on either profile, CPUID + #UD verified on both (`Emulator/data/cases_gating*.txt`).
 
@@ -1268,7 +1268,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| PTWRITE | legacy | - | ✅ SDM #UD with the --guest CPUID (CPUID.14 = 0, U534); --host enumerates it and the CPU executes it while the emulator still #UDs: … |  |
+| PTWRITE | legacy | - | ✅ U1710: executes where CPUID.(14H,0):EBX[4] = 1 (--host, as the bare host enumerates it; Intel PT tracing not modelled = no-op), S… |  |
 
 </details>
 
