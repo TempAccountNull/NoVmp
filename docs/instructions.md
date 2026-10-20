@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-19 17:21 (HEAD `ce0c18b9 Ledger: U1740-U1743 (agent/drharness), merged and verified`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-19 19:28 (HEAD `28b90a7d Ledger: U1760-U1768 (agent/dbgfix), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -16,7 +16,7 @@ _Generated 2026-10-19 17:21 (HEAD `ce0c18b9 Ledger: U1740-U1743 (agent/drharness
   - ⏳ Last Phase-1 wave (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
       - ⬜ CET leftovers 2: SYSCALL/SYSENTER CET (A1); IDT-delivery mode → Phase 3; PKS on shadow-stack accesses: verify vs SDM + case (PKS walk is U479); compat/legacy → 1.I [audit 2026-10-09]
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 732 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 741 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
