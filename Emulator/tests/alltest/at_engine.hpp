@@ -96,7 +96,9 @@ namespace at
 	// (CONTEXT_DEBUG_REGISTERS) while it is still suspended, before its first instruction; Unicorn: written with
 	// uc_reg_write before uc_emu_start. Both: before the prologue, so a breakpoint must not hit the thunk itself
 	// (the --cases runner allows enabled breakpoints only on the snippet's bytes or the operand memory MEM).
-	struct dbg_regs { bool any = false; bool set[ 8 ] = {}; uint64_t v[ 8 ] = {}; };
+	// U1771 (token "dbcount"): keep = the snippet's first event resumes with DR7 unchanged (later ones with DR7 = 0), so
+	// a second #DB the engine still has pending is delivered and counted (result::db_count)
+	struct dbg_regs { bool any = false; bool set[ 8 ] = {}; uint64_t v[ 8 ] = {}; bool keep = false; };
 
 	// U1740 / U1741: what the engines report about the first event of a run (both: recorded for every run)
 	struct event_info
@@ -131,6 +133,7 @@ namespace at
 		bool dr6_end_valid = false;
 		uint64_t dr6_end = 0;
 		std::string dbg_note;       // U1740: a stray #DB outside the snippet (native), SetThreadContext failure, ...
+		int db_count = 0;           // U1771: every #DB of the run (native: on the debug-register thread; Unicorn: UC_HOOK_INTR 1)
 		std::string err;
 	};
 
@@ -367,6 +370,7 @@ namespace at
 			g().lo = p.snippet_begin; g().hi = p.snippet_end; g().resume = p.epilogue_at;
 			g().faulted = false; g().code = 0; g().rip = 0;
 			g().ev = event_info{}; g().stray = 0; g().stray_rip = 0;   // U1740 / U1741
+			g().dbn = 0; g().kept = false; g().dbg_keep = dbg && dbg->any && dbg->keep;   // U1771
 			// U850: a branch-layout snippet may fault outside its own bytes (at its target: the HLT
 			// fill, or an unmapped address below 64 KiB); only this thread, only while it runs
 			g().prog = &p; g().tid = GetCurrentThreadId(); g().active = true;
@@ -374,6 +378,7 @@ namespace at
 			else ( ( void( * )() ) code_ )();
 			g().active = false; g().prog = nullptr;
 			r.ev = g().ev;
+			r.db_count = g().dbn;   // U1771
 			// U1740: Windows loads a thread's debug registers only while it keeps an enabled breakpoint (L0-L3) for
 			// it (measured: with DR7 = 400h the read-back is all 0 and the #DB context has Dr6 = 0), so DR6 is a
 			// hardware value only then
@@ -566,7 +571,8 @@ namespace at
 			CloseHandle( t );
 		}
 		struct globals { uint64_t lo, hi, resume, rip, info0, info1; DWORD code; bool faulted; const program* prog; DWORD tid; bool active;
-						 DWORD dbg_tid; event_info ev; int stray; uint64_t stray_rip; };   // U1740 / U1741: dbg_tid .. stray_rip
+						 DWORD dbg_tid; event_info ev; int stray; uint64_t stray_rip;   // U1740 / U1741: dbg_tid .. stray_rip
+						 int dbn; bool dbg_keep, kept; };   // U1771: #DB count of the debug-register thread, "dbcount"
 		static globals& g() { static globals x{}; return x; }
 		static bool is_db( DWORD code ) { return code == STATUS_SINGLE_STEP || code == 0x4000001E; }   // + STATUS_WX86_SINGLE_STEP
 		static LONG CALLBACK veh( EXCEPTION_POINTERS* ep )
@@ -578,6 +584,7 @@ namespace at
 			const bool dbg_thread_here = g().dbg_tid && GetCurrentThreadId() == g().dbg_tid;
 			if ( dbg_thread_here && is_db( code ) && !( g().prog && g().prog->ctl ? g().prog->in_trap_range( rip ) : ( rip >= g().lo && rip <= g().hi ) ) )
 			{
+				++g().dbn;   // U1771
 				if ( !g().stray++ ) g().stray_rip = rip;
 				ep->ContextRecord->EFlags |= 0x10000u;   // RF: an instruction breakpoint does not fire again
 				ep->ContextRecord->EFlags &= ~0x100u;
@@ -591,6 +598,17 @@ namespace at
 				if ( ( GetCurrentThreadId() != g().tid && !dbg_thread_here ) || !g().prog->in_trap_range( rip ) ) return EXCEPTION_CONTINUE_SEARCH;
 			}
 			else if ( rip < g().lo || ( rip >= g().hi && !( dbg_thread_here && rip == g().hi && is_db( code ) ) ) ) return EXCEPTION_CONTINUE_SEARCH;
+			if ( dbg_thread_here && is_db( code ) ) ++g().dbn;   // U1771
+			// U1771 ("dbcount"): a further event after the kept first one (e.g. a #DB at the first epilogue byte) is only
+			// counted: the first event's record stays, and now DR7 = 0
+			if ( dbg_thread_here && g().kept )
+			{
+				ep->ContextRecord->EFlags = ( ep->ContextRecord->EFlags | 0x10000u ) & ~0x100u;
+				if ( ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS ) ep->ContextRecord->Dr7 = 0;
+				ep->ContextRecord->Rip = g().resume;
+				if ( ep->ContextRecord->SegCs == SEL_CODE32_R3 ) ep->ContextRecord->SegCs = SEL_CODE64_R3;
+				return EXCEPTION_CONTINUE_EXECUTION;
+			}
 			g().faulted = true;
 			g().code = code;
 			g().info0 = ep->ExceptionRecord->NumberParameters >= 1 ? ep->ExceptionRecord->ExceptionInformation[ 0 ] : 0;
@@ -613,7 +631,9 @@ namespace at
 			if ( dbg_thread_here )
 			{
 				ep->ContextRecord->EFlags |= 0x10000u;
-				if ( ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS ) ep->ContextRecord->Dr7 = 0;
+				// U1771 ("dbcount"): the first event keeps DR7, so the CPU could still deliver a pending #DB (counted)
+				if ( g().dbg_keep ) g().kept = true;
+				else if ( ( ep->ContextRecord->ContextFlags & CONTEXT_DEBUG_REGISTERS ) == CONTEXT_DEBUG_REGISTERS ) ep->ContextRecord->Dr7 = 0;
 			}
 			ep->ContextRecord->Rip = g().resume;
 			// a snippet that switched to compatibility mode (far transfer to CS = 23h) faulted
@@ -861,6 +881,7 @@ namespace at
 			ext_in_done_ = ext_out_done_ = false;
 			ts_in_done_ = false;   // U1200
 			pending_epilogue_ = false;
+			dbg_kept_ = false;   // U1771
 			uc_err e = uc_emu_start( uc_, cpl3 ? SYS_STUB : CODE, prog_->ret_at, 0, 0 );
 			if ( e && pending_epilogue_ )
 			{
@@ -910,6 +931,8 @@ namespace at
 		void disarm_dbg()
 		{
 			if ( !dbg.any ) return;
+			// U1771 ("dbcount"): the first event of the run keeps DR7 (a pending #DB is still delivered and counted)
+			if ( dbg.keep && !dbg_kept_ ) { dbg_kept_ = true; return; }
 			uint64_t z = 0;
 			uc_reg_write( uc_, UC_X86_REG_DR7, &z );
 		}
@@ -931,6 +954,7 @@ namespace at
 			uc_x86_exception e{};
 			int64_t ec = -1;
 			if ( uc_ctl_get_x86_exception( uc, &e ) == UC_ERR_OK && e.vector == int( intno ) && e.has_error_code ) ec = e.error_code;
+			if ( self->cur_ && intno == 1 ) ++self->cur_->db_count;   // U1771
 			// U1740 / U1741: RFLAGS when the hook runs (no frame is pushed) and, for a #DB, DR6
 			if ( self->cur_ && !self->cur_->faulted )
 			{
@@ -1042,6 +1066,7 @@ namespace at
 		void ext_err( const std::string& e ) { if ( cur_ && cur_->err.empty() ) cur_->err = e; }
 		bool ts_in_done_ = false;   // U1200
 		bool pending_epilogue_ = false, ext_in_done_ = false, ext_out_done_ = false;
+		bool dbg_kept_ = false;   // U1771: "dbcount" - the first event kept DR7
 		uc_engine* uc_ = nullptr;
 		uc_context* ctx0_ = nullptr;   // U1124: snapshot() state, restored by every run()
 		const state* in_ = nullptr;

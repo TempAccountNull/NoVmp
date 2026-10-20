@@ -899,7 +899,26 @@ namespace at
 	// expectation of an expected-value case: Unicorn's DR6 after the run). V is a C literal, "s+OFF" (the
 	// snippet's first byte + OFF; the snippet's address depends on its length) or "m+OFF" (MEM + OFF, the operand
 	// memory: [rsi] = m+0x8000). Index 0-3, 6, 7; -1 = not a debug-register key.
-	struct dbg_spec { bool any = false; bool set[ 8 ] = {}; int base[ 8 ] = {}; /* 0 absolute, 1 snippet, 2 MEM */ uint64_t v[ 8 ] = {}; };
+	// U1771: "dbcount" (count = compare the number of #DBs of the run; the first event resumes with DR7 unchanged, see
+	// dbg_regs::keep) and "dr6mask=V" (a hardware case compares DR6 only in the bits of V; default all bits)
+	struct dbg_spec { bool any = false; bool set[ 8 ] = {}; int base[ 8 ] = {}; /* 0 absolute, 1 snippet, 2 MEM */ uint64_t v[ 8 ] = {};
+					  bool count = false; uint64_t dr6mask = ~0ull; bool dr6mask_set = false; };
+	static bool dbg_extra( dbg_spec& d, const std::string& kv, std::string& err, bool& matched )
+	{
+		matched = true;
+		if ( kv == "dbcount" ) { d.count = true; return true; }
+		if ( kv.rfind( "dr6mask=", 0 ) == 0 )
+		{
+			char* end = nullptr;
+			const std::string v = kv.substr( 8 );
+			d.dr6mask = std::strtoull( v.c_str(), &end, 0 );
+			d.dr6mask_set = true;
+			if ( v.empty() || !end || *end ) { err = "bad value in " + kv; return false; }
+			return true;
+		}
+		matched = false;
+		return true;
+	}
 	static int dbg_key( const std::string& kv )
 	{
 		const std::string k = kv.substr( 0, kv.find( '=' ) );
@@ -930,6 +949,7 @@ namespace at
 	{
 		dbg_regs r;
 		r.any = d.any;
+		r.keep = d.any && d.count;   // U1771
 		for ( int i = 0; i < 8; ++i )
 		{
 			r.set[ i ] = d.set[ i ];
@@ -1263,6 +1283,11 @@ namespace at
 					if ( !dbg_parse( dspec, kv, err ) ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
 					continue;
 				}
+				{
+					bool dx = false;   // U1771: dbcount / dr6mask=V
+					if ( !dbg_extra( dspec, kv, err, dx ) ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
+					if ( dx ) continue;
+				}
 				need |= ext_need( kv );
 				bool good = false;
 				try { good = case_assign( *st_in, kv, err, nullptr, &ext ); }
@@ -1270,6 +1295,12 @@ namespace at
 				if ( !good ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
 			}
 			if ( !ok ) { exp_errors += expect; continue; }
+			if ( ( dspec.count || dspec.dr6mask_set ) && !dspec.any )   // U1771
+			{
+				std::printf( "[%d] %s\n    bad assignment: dbcount / dr6mask need debug-register tokens (dr0..dr3, dr6, dr7)\n", n, line.c_str() );
+				exp_errors += expect;
+				continue;
+			}
 			if ( ext && !expect )
 			{
 				std::printf( "[%d] %s\n    unsupported register for a hardware case: zmm*/zmmh*/k*/xmm16-31/ymmh16-31/r16-r31 exist only in expected-value cases (\"=>\"); the host CPU has no AVX-512 or APX\n", n, line.c_str() );
@@ -1522,6 +1553,7 @@ namespace at
 						// U1740: a debug-register case's run also differs by DR6 and the EFLAGS image of the #DB
 						if ( dspec.any && rr.ev.valid ) key += "dr6=" + ( rr.ev.dr6_valid ? hx( rr.ev.dr6 ) : std::string( "?" ) ) + " eflags=" + hx( rr.ev.rflags ) + " ";
 					}
+					if ( dspec.count ) key += "dbs=" + std::to_string( rr.db_count ) + " ";   // U1771
 					if ( !rr.err.empty() || !rr.dbg_note.empty() ) key += "[" + rr.err + ( rr.err.empty() || rr.dbg_note.empty() ? "" : "; " ) + rr.dbg_note + "] ";
 					key += case_fields( *st_in, *rr.s );
 					tally& t = outcomes[ key ];
@@ -1555,9 +1587,14 @@ namespace at
 				if ( h.faulted && u.faulted && h.vector == 1 && u.vector == 1 )
 				{
 					if ( h.fault_rip != u.fault_rip ) x += " #DB rip (hw " + rip_text( h.fault_rip, p.snippet_begin ) + ", uc " + rip_text( u.fault_rip, p_uc.snippet_begin ) + ")";
-					if ( h.ev.dr6_valid && u.ev.dr6_valid && h.ev.dr6 != u.ev.dr6 ) x += " dr6 (hw " + hx( h.ev.dr6 ) + ", uc " + hx( u.ev.dr6 ) + ")";
+					// U1771: "dr6mask=V" compares only the bits of V
+					if ( h.ev.dr6_valid && u.ev.dr6_valid && ( ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask ) )
+						x += " dr6 (hw " + hx( h.ev.dr6 ) + ", uc " + hx( u.ev.dr6 ) + ( dspec.dr6mask_set ? ", mask " + hx( dspec.dr6mask ) : std::string() ) + ")";
 					if ( !h.ev.dr6_valid ) ++dbg_no_dr6;
 				}
+				// U1771: "dbcount" - the number of #DBs of the run (the first event resumed with DR7 unchanged)
+				if ( dspec.count && h.db_count != u.db_count )
+					x += " #DB count (hw " + std::to_string( h.db_count ) + ", uc " + std::to_string( u.db_count ) + ")";
 				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; }
 			}
 			// U1767: a #PF on both sides also compares the access type, i.e. the #PF error code W bit (native: the
@@ -1601,6 +1638,9 @@ namespace at
 				if ( !h.dbg_note.empty() ) std::printf( "    dbg: hw note: %s\n", h.dbg_note.c_str() );
 				if ( !u.err.empty() ) std::printf( "    dbg: uc error: %s\n", u.err.c_str() );
 				if ( u.dr6_end_valid ) std::printf( "    dbg: uc dr6 after the run = %s (%s)\n", hx( u.dr6_end ).c_str(), dr6_text( u.dr6_end ).c_str() );
+				if ( dspec.count )   // U1771
+					std::printf( "    dbg: #DB count (dbcount: the first event resumed with DR7 unchanged): hw %d, uc %d\n", h.db_count, u.db_count );
+				if ( dspec.dr6mask_set ) std::printf( "    dbg: DR6 compared under mask %s (dr6mask)\n", hx( dspec.dr6mask ).c_str() );
 			}
 			if ( dspec.any || opt.events )
 			{
