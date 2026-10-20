@@ -1560,6 +1560,11 @@ namespace at
 				}
 				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; }
 			}
+			// U1767: a #PF on both sides also compares the access type, i.e. the #PF error code W bit (native: the
+			// Windows ExceptionInformation[0], 0 read / 1 write / 8 execute; Unicorn: the unmapped hook's uc_mem_type)
+			if ( h.faulted && u.faulted && h.vector == 14 && u.vector == 14 && h.ev.access >= 0 && u.ev.access >= 0 &&
+				 h.ev.access != u.ev.access )
+				x += " #PF access (hw " + std::to_string( h.ev.access ) + ", uc " + std::to_string( u.ev.access ) + ")";
 			bool same = same_fault && x.empty();
 			// U530: a tagged case that differs is counted under its tag, not as differing; a tagged
 			// case that matches is listed (the deviation was not observed: stale tag or a CPU that

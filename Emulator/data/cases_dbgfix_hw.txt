@@ -62,3 +62,45 @@ mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401
 # fault at s+32, r8 = 1, DR6 = B1). Control: RF = 0 in the image: DR0 fires at s+29.
 mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x01, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405
 mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405
+#
+# --- U1764 / U1767 (P9 H-c): a faulting read-modify-write reports a write: #PF error code W = 1 (Windows
+# ExceptionInformation[0] = 1; Unicorn UC_MEM_WRITE_UNMAPPED), compared by the verdict since U1767. SDM 093 Vol3A
+# 5.7 p. 5-38: W/R "describes the access causing the page-fault exception" (the RMW's access is made with write
+# intent: i5-13600K, all forms below). The not-present page is MEM + 10000h = [rsi+0x8000] (cases_fix5.txt U873);
+# 7FFE0000h is the read-only user view of KUSER_SHARED_DATA (unmapped in Unicorn). Flags and memory keep their old
+# values (RFLAGS input 8D7h). Controls: plain read (W = 0), plain write, read-only forms CMP / TEST / BT (W = 0),
+# SETcc, POP m64, MOVSD store, plain write to the read-only page.
+mov eax, dword ptr [rsi+0x8000] | cpl=3
+mov dword ptr [rsi+0x8000], eax | cpl=3
+cmp dword ptr [rsi+0x8000], eax | cpl=3
+test dword ptr [rsi+0x8000], eax | cpl=3
+bt qword ptr [rsi+0x8000], rax | cpl=3
+setz byte ptr [rsi+0x8000] | cpl=3 rflags=0x246
+add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7
+sub qword ptr [rsi+0x8000], rax | cpl=3 rax=1 rflags=0x8d7
+adc byte ptr [rsi+0x8000], al | cpl=3 rax=1 rflags=0x8d7
+or word ptr [rsi+0x8000], ax | cpl=3 rax=1 rflags=0x8d7
+xor dword ptr [rsi+0x8000], 0x55 | cpl=3 rflags=0x8d7
+inc byte ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+dec qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+not dword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+neg qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+shl qword ptr [rsi+0x8000], 1 | cpl=3 rflags=0x8d7
+rol dword ptr [rsi+0x8000], cl | cpl=3 rcx=3 rflags=0x8d7
+shld dword ptr [rsi+0x8000], eax, 3 | cpl=3 rflags=0x8d7
+bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7
+btr dword ptr [rsi+0x8000], 5 | cpl=3 rflags=0x8d7
+btc qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7
+xadd dword ptr [rsi+0x8000], eax | cpl=3 rax=7 rflags=0x8d7
+cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7
+cmpxchg8b qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+cmpxchg16b xmmword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7
+lock add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7
+lock cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7
+lock bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7
+xchg dword ptr [rsi+0x8000], eax | cpl=3 rax=9
+pop qword ptr [rsi+0x8000] | cpl=3
+.byte 0xa5 | cpl=3 rdi=0x30030000
+add dword ptr [rsi+0x7ffe], eax | cpl=3 rax=1 rflags=0x8d7 m+0xFFFE=AAAA
+add dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000 rax=1 rflags=0x8d7
+mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000

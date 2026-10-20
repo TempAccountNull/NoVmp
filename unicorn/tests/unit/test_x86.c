@@ -18818,8 +18818,9 @@ static void test_x86_fx3_flags_at_fault(void)
         uc_err err;
         const char *what;
     } t[] = {
-        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_READ_UNMAPPED, "rcl qword [rbx], 1 (load)"},
-        {"\xd3\x1b", 2, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_READ_UNMAPPED, "rcr dword [rbx], cl (load)"},
+        /* U1764: a read-modify-write destination faults as a write (before its load), with the same flags */
+        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "rcl qword [rbx], 1 (load)"},
+        {"\xd3\x1b", 2, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "rcr dword [rbx], cl (load)"},
         {"\x48\xd1\x13", 3, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "rcl qword [rbx], 1 (store)"},
         {"\x66\xc1\x1b\x03", 4, FX3_READONLY, FX3_NOHOOK, UC_ERR_WRITE_PROT, "rcr word [rbx], 3 (store)"},
         {"\x0f\x90\x03", 3, FX3_UNMAPPED, FX3_NOHOOK, UC_ERR_WRITE_UNMAPPED, "seto [rbx]"},
@@ -18831,7 +18832,7 @@ static void test_x86_fx3_flags_at_fault(void)
         {"\x48\x8b\x03", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: mov rax, [rbx]"},
         {"\x48\x03\x03", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: add rax, [rbx]"},
         {"\x48\x89\x03", 3, FX3_READONLY, FX3_CODEHOOK, UC_ERR_WRITE_PROT, "hook: mov [rbx], rax"},
-        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_READ_UNMAPPED, "hook: rcl qword [rbx], 1"},
+        {"\x48\xd1\x13", 3, FX3_UNMAPPED, FX3_CODEHOOK, UC_ERR_WRITE_UNMAPPED, "hook: rcl qword [rbx], 1"},
     };
     static const struct {
         const char *code;   /* 3 bytes */
@@ -46014,6 +46015,114 @@ static void test_x86_dg_rf_once(void)
     }
 }
 
+/* U1764: the type of the first unmapped access (UC_MEM_*_UNMAPPED) */
+static int dg_unmapped_type;
+static uint64_t dg_unmapped_addr;
+
+static bool dg_unmapped_cb(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user)
+{
+    (void)uc; (void)size; (void)value; (void)user;
+    if (dg_unmapped_type < 0) {
+        dg_unmapped_type = (int)type;
+        dg_unmapped_addr = address;
+    }
+    return false;
+}
+
+/*
+ * U1764 (P9 H-c): a read-modify-write whose access faults reports a write - #PF error code W = 1, for Unicorn's
+ * memory UC_MEM_WRITE_UNMAPPED - as the i5-13600K does for every form below (W = 1, cases_dbgfix_hw.txt). SDM 093
+ * Vol3A 5.7 p. 5-38: "W/R (bit 1). If the access causing the page-fault exception was a write, this flag is 1;
+ * otherwise, it is 0." The destination is translated for a write before it is read; XED (MEM0:rw / rcw) and asmjit
+ * (x:) mark these operands read-write. Read-only forms (CMP, TEST, BT) and plain loads stay reads. Nothing is
+ * written and the flags keep their values; a straddling RMW faults on the second page before any byte changes.
+ */
+static void test_x86_dg_rmw_w(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        int type;
+        const char *what;
+    } t[] = {
+        {"\x01\x02", 2, UC_MEM_WRITE_UNMAPPED, "add [rdx], eax"},
+        {"\x48\x29\x02", 3, UC_MEM_WRITE_UNMAPPED, "sub [rdx], rax"},
+        {"\x10\x02", 2, UC_MEM_WRITE_UNMAPPED, "adc [rdx], al"},
+        {"\x83\x32\x55", 3, UC_MEM_WRITE_UNMAPPED, "xor dword [rdx], 55h"},
+        {"\xfe\x02", 2, UC_MEM_WRITE_UNMAPPED, "inc byte [rdx]"},
+        {"\x48\xff\x0a", 3, UC_MEM_WRITE_UNMAPPED, "dec qword [rdx]"},
+        {"\xf7\x12", 2, UC_MEM_WRITE_UNMAPPED, "not dword [rdx]"},
+        {"\x48\xf7\x1a", 3, UC_MEM_WRITE_UNMAPPED, "neg qword [rdx]"},
+        {"\x48\xd1\x22", 3, UC_MEM_WRITE_UNMAPPED, "shl qword [rdx], 1"},
+        {"\xd3\x02", 2, UC_MEM_WRITE_UNMAPPED, "rol dword [rdx], cl"},
+        {"\xc1\x12\x03", 3, UC_MEM_WRITE_UNMAPPED, "rcl dword [rdx], 3"},
+        {"\x0f\xa4\x02\x03", 4, UC_MEM_WRITE_UNMAPPED, "shld [rdx], eax, 3"},
+        {"\x48\x0f\xab\x02", 4, UC_MEM_WRITE_UNMAPPED, "bts [rdx], rax"},
+        {"\x0f\xba\x32\x05", 4, UC_MEM_WRITE_UNMAPPED, "btr dword [rdx], 5"},
+        {"\x48\x0f\xbb\x02", 4, UC_MEM_WRITE_UNMAPPED, "btc [rdx], rax"},
+        {"\x0f\xc1\x02", 3, UC_MEM_WRITE_UNMAPPED, "xadd [rdx], eax"},
+        {"\x0f\xb1\x0a", 3, UC_MEM_WRITE_UNMAPPED, "cmpxchg [rdx], ecx"},
+        {"\x0f\xc7\x0a", 3, UC_MEM_WRITE_UNMAPPED, "cmpxchg8b [rdx]"},
+        {"\x48\x0f\xc7\x0a", 4, UC_MEM_WRITE_UNMAPPED, "cmpxchg16b [rdx]"},
+        {"\xf0\x01\x02", 3, UC_MEM_WRITE_UNMAPPED, "lock add [rdx], eax"},
+        {"\xf0\x0f\xb1\x0a", 4, UC_MEM_WRITE_UNMAPPED, "lock cmpxchg [rdx], ecx"},
+        {"\xf0\x48\x0f\xab\x02", 5, UC_MEM_WRITE_UNMAPPED, "lock bts [rdx], rax"},
+        {"\xf0\xf7\x12", 3, UC_MEM_WRITE_UNMAPPED, "lock not dword [rdx]"},
+        {"\xf0\x48\xf7\x1a", 4, UC_MEM_WRITE_UNMAPPED, "lock neg qword [rdx]"},
+        {"\xf0\x0f\xc7\x0a", 4, UC_MEM_WRITE_UNMAPPED, "lock cmpxchg8b [rdx]"},
+        {"\x87\x02", 2, UC_MEM_WRITE_UNMAPPED, "xchg [rdx], eax"},
+        {"\x89\x02", 2, UC_MEM_WRITE_UNMAPPED, "mov [rdx], eax (control)"},
+        {"\x8b\x02", 2, UC_MEM_READ_UNMAPPED, "mov eax, [rdx] (control)"},
+        {"\x39\x02", 2, UC_MEM_READ_UNMAPPED, "cmp [rdx], eax (read only)"},
+        {"\x85\x02", 2, UC_MEM_READ_UNMAPPED, "test [rdx], eax (read only)"},
+        {"\x48\x0f\xa3\x02", 4, UC_MEM_READ_UNMAPPED, "bt [rdx], rax (read only)"},
+        {"\x0f\xba\x22\x05", 4, UC_MEM_READ_UNMAPPED, "bt dword [rdx], 5 (read only)"},
+        {"\x80\x3a\x01", 3, UC_MEM_READ_UNMAPPED, "cmp byte [rdx], 1 (read only)"},
+    };
+    BpCpu c;
+    uc_hook h;
+    size_t i;
+
+    bp_open(&c, UC_MODE_64, UC_CPU_X86_HASWELL);            /* CMPXCHG16B (CPUID.01H:ECX.CX16) */
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_MEM_UNMAPPED, dg_unmapped_cb, NULL, 1, 0));
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uc_err err;
+        uint64_t fl;
+
+        dg_unmapped_type = -1;
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RDX, 0x800000);               /* outside the 4 MiB map */
+        bp_set(&c, UC_X86_REG_RAX, 1);
+        bp_set(&c, UC_X86_REG_RCX, 2);
+        bp_set(&c, UC_X86_REG_RFLAGS, 0x8d7);
+        err = bp_run(&c, t[i].code, t[i].len);
+        fl = bp_get(&c, UC_X86_REG_RFLAGS);
+        TEST_CHECK(dg_unmapped_type == t[i].type && dg_unmapped_addr == 0x800000 && (fl & 0x8d5) == 0x8d5 &&
+                   err == (t[i].type == UC_MEM_WRITE_UNMAPPED ? UC_ERR_WRITE_UNMAPPED : UC_ERR_READ_UNMAPPED));
+        TEST_MSG("%s: first unmapped access type %d at %llx (expected %d at 800000), uc_emu_start %d, rflags %llx",
+                 t[i].what, dg_unmapped_type, (unsigned long long)dg_unmapped_addr, t[i].type, (int)err,
+                 (unsigned long long)fl);
+    }
+    /* straddling the end of the map: the write fault comes from the second page, the first is not written */
+    {
+        static const uint8_t aa[2] = {0xaa, 0xaa};
+        uint8_t back[2] = {0, 0};
+        uc_err err;
+
+        OK(uc_mem_write(c.uc, 0x3ffffe, aa, 2));
+        dg_unmapped_type = -1;
+        bp_set(&c, UC_X86_REG_RDX, 0x3ffffe);
+        bp_set(&c, UC_X86_REG_RAX, 1);
+        err = bp_run(&c, "\x01\x02", 2);
+        OK(uc_mem_read(c.uc, 0x3ffffe, back, 2));
+        TEST_CHECK(err == UC_ERR_WRITE_UNMAPPED && dg_unmapped_type == UC_MEM_WRITE_UNMAPPED &&
+                   dg_unmapped_addr == 0x400000 && back[0] == 0xaa && back[1] == 0xaa);
+        TEST_MSG("add [3ffffeh], eax: %d type %d at %llx, bytes %02x %02x (expected write at 400000, aa aa)", (int)err,
+                 dg_unmapped_type, (unsigned long long)dg_unmapped_addr, back[0], back[1]);
+    }
+    OK(uc_close(c.uc));
+}
+
 #undef DG_TF_ON
 /* ---- end U1760-U1769 (dg_) ---- */
 
@@ -46609,4 +46718,5 @@ TEST_LIST = {
     {"test_x86_dg_movss_dbp", test_x86_dg_movss_dbp},
     {"test_x86_dg_ss_dr6", test_x86_dg_ss_dr6},
     {"test_x86_dg_rf_once", test_x86_dg_rf_once},
+    {"test_x86_dg_rmw_w", test_x86_dg_rmw_w},
     {NULL, NULL}};

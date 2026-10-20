@@ -837,6 +837,32 @@ static inline void gen_op_st_rm_T0_A0(DisasContext *s, int idx, int d)
     }
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+/*
+ * NoVmp (ledger U1764, Gate 1 step 23, P9 H-c): the memory destination of a read-modify-write instruction (ADD ..
+ * XOR, INC, DEC, NOT, NEG, the shifts and rotates, SHLD / SHRD, BTS / BTR / BTC, XADD, CMPXCHG, XCHG; with or
+ * without LOCK) at A0 is translated for a write before it is read, so a fault reports a write: #PF error code
+ * W = 1 with paging, UC_MEM_WRITE_UNMAPPED / UC_MEM_WRITE_PROT for memory Unicorn does not map / map writable
+ * (helper_probe_write, U701 / U876). SDM 093 Vol3A 5.7 p. 5-38: "W/R (bit 1). If the access causing the page-fault
+ * exception was a write, this flag is 1; otherwise, it is 0. This flag describes the access causing the page-fault
+ * exception"; the i5-13600K reports a write for every such form, also when the page is present but read-only and
+ * for an operand that straddles into a not-present page (Windows ExceptionInformation[0] = 1, cases_dbgfix_hw.txt);
+ * XED (MEM0:rw / rcw) and asmjit (x:) mark these operands read-write. Before (and in QEMU 11.1 without LOCK) the
+ * load faulted first: W = 0 / UC_MEM_READ_UNMAPPED. The #AC check of the operand comes first, as for the load
+ * (U834). Not for an APX NDD form (EVEX.ND = 1): its r/m operand is only a source (gen_op_st_rm_T0_A0).
+ */
+static void gen_rmw_probe(DisasContext *s, MemOp ot)
+{
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+
+    if (s->apx_ndd >= 0) {
+        return;
+    }
+    gen_ac_check_ot(s, s->A0, ot);
+    gen_helper_probe_write(tcg_ctx, cpu_env, s->A0, tcg_constant_i32(tcg_ctx, 1 << (ot & MO_SIZE)));
+}
+
+#endif /* __Use_Original_Qemu (U1764) */
 
 static void gen_update_eip_cur(DisasContext *s)
 {
@@ -2101,6 +2127,11 @@ static void gen_op(DisasContext *s1, int op, MemOp ot, int d)
         return;
     }
 
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (d == OR_TMP0 && op != OP_CMPL) {
+        gen_rmw_probe(s1, ot);          /* read-modify-write: a write fault first (W = 1) */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (d != OR_TMP0) {
         gen_op_mov_v_reg(s1, ot, s1->T0, d);
     } else if (!(s1->prefix & PREFIX_LOCK)) {
@@ -2258,6 +2289,9 @@ static void gen_inc(DisasContext *s1, MemOp ot, int d, int c)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
         gen_ac_check_ot(s1, s1->A0, ot);
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+        gen_rmw_probe(s1, ot);          /* LOCK INC / DEC: a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
         tcg_gen_movi_tl(tcg_ctx, s1->T0, c > 0 ? 1 : -1);
         tcg_gen_atomic_add_fetch_tl(tcg_ctx, s1->T0, s1->A0, s1->T0,
                                     s1->mem_index, ot | MO_LE);
@@ -2265,6 +2299,9 @@ static void gen_inc(DisasContext *s1, MemOp ot, int d, int c)
         if (d != OR_TMP0) {
             gen_op_mov_v_reg(s1, ot, s1->T0, d);
         } else {
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            gen_rmw_probe(s1, ot);      /* INC / DEC m: a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
             gen_op_ld_v(s1, ot, s1->T0, s1->A0);
         }
         tcg_gen_addi_tl(tcg_ctx, s1->T0, s1->T0, (c > 0 ? 1 : -1));
@@ -2329,6 +2366,11 @@ static void gen_shift_rm_T1(DisasContext *s, MemOp ot, int op1,
     target_ulong mask = (ot == MO_64 ? 0x3f : 0x1f);
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0) {
         gen_op_ld_v(s, ot, s->T0, s->A0);
     } else {
@@ -2366,6 +2408,11 @@ static void gen_shift_rm_im(DisasContext *s, MemOp ot, int op1, int op2,
     int mask = (ot == MO_64 ? 0x3f : 0x1f);
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0)
         gen_op_ld_v(s, ot, s->T0, s->A0);
     else
@@ -2407,6 +2454,11 @@ static void gen_rot_rm_T1(DisasContext *s, MemOp ot, int op1, int is_right)
     TCGv_i32 t0, t1;
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0) {
         gen_op_ld_v(s, ot, s->T0, s->A0);
     } else {
@@ -2494,6 +2546,11 @@ static void gen_rot_rm_im(DisasContext *s, MemOp ot, int op1, int op2,
     int shift;
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0) {
         gen_op_ld_v(s, ot, s->T0, s->A0);
     } else {
@@ -2580,6 +2637,11 @@ static void gen_rotc_rm_T1(DisasContext *s, MemOp ot, int op1,
 #endif /* __Use_Original_Qemu (U700) */
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0)
         gen_op_ld_v(s, ot, s->T0, s->A0);
     else
@@ -2663,6 +2725,11 @@ static void gen_shiftd_rm_T1(DisasContext *s, MemOp ot, int op1,
     TCGv count;
 
     /* load */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    if (op1 == OR_TMP0) {
+        gen_rmw_probe(s, ot);           /* shift / rotate / SHLD / SHRD m: a write fault first */
+    }
+#endif /* __Use_Original_Qemu (U1764) */
     if (op1 == OR_TMP0) {
         gen_op_ld_v(s, ot, s->T0, s->A0);
     } else {
@@ -5879,6 +5946,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                 s->rip_offset = insn_const_size(ot);
             }
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            if (op == 2 || op == 3) {
+                gen_rmw_probe(s, ot);       /* NOT / NEG m (also LOCK): a write fault first */
+            }
+#endif /* __Use_Original_Qemu (U1764) */
             /* For those below that handle locked memory, don't load here.  */
             if (!(s->prefix & PREFIX_LOCK)
                 || op != 2) {
@@ -6415,6 +6487,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             gen_op_mov_reg_v(s, ot, rm, s->T0);
         } else {
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            gen_rmw_probe(s, ot);           /* XADD m (also LOCK): a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
             if (s->prefix & PREFIX_LOCK) {
 #if __Use_Original_Qemu != 1 /* ours (U834) */
                 gen_ac_check_ot(s, s->A0, ot);
@@ -6455,6 +6530,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
                 gen_ac_check_ot(s, s->A0, ot);
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+                gen_rmw_probe(s, ot);       /* LOCK CMPXCHG m: a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
                 tcg_gen_atomic_cmpxchg_tl(tcg_ctx, oldv, s->A0, cmpv, newv,
                                           s->mem_index, ot | MO_LE);
             } else {
@@ -6476,6 +6554,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
                     tcg_gen_movcond_tl(tcg_ctx, TCG_COND_EQ, dest, oldv, cmpv, newv, dest);
                 } else {
                     gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+                    gen_rmw_probe(s, ot);   /* CMPXCHG m: a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
                     gen_op_ld_v(s, ot, oldv, s->A0);
 
                     /*
@@ -7113,6 +7194,9 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #if __Use_Original_Qemu != 1 /* ours (U834) */
             gen_ac_check_ot(s, s->A0, ot);
 #endif /* __Use_Original_Qemu (U834) */
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            gen_rmw_probe(s, ot);           /* XCHG m: a write fault first */
+#endif /* __Use_Original_Qemu (U1764) */
             tcg_gen_atomic_xchg_tl(tcg_ctx, s->T1, s->A0, s->T0,
                                    s->mem_index, ot | MO_LE);
             gen_op_mov_reg_v(s, ot, reg, s->T1);
@@ -8588,6 +8672,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
         if (mod != 3) {
             s->rip_offset = 1;
             gen_lea_modrm(env, s, modrm);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            if (op >= 5) {
+                gen_rmw_probe(s, ot);       /* BTS / BTR / BTC m, imm8 (also LOCK): a write fault first */
+            }
+#endif /* __Use_Original_Qemu (U1764) */
             if (!(s->prefix & PREFIX_LOCK)) {
                 gen_op_ld_v(s, ot, s->T0, s->A0);
             }
@@ -8630,6 +8719,11 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
             tcg_gen_shli_tl(tcg_ctx, s->tmp0, s->tmp0, ot);
             tcg_gen_add_tl(tcg_ctx, s->A0, gen_lea_modrm_1(s, a, false), s->tmp0);
             gen_lea_v_seg(s, s->aflag, s->A0, a.def_seg, s->override);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+            if (op != 0) {
+                gen_rmw_probe(s, ot);       /* BTS / BTR / BTC m, reg (also LOCK): a write fault first */
+            }
+#endif /* __Use_Original_Qemu (U1764) */
             if (!(s->prefix & PREFIX_LOCK)) {
                 gen_op_ld_v(s, ot, s->T0, s->A0);
             }

@@ -236,6 +236,11 @@ void helper_cmpxchg8b_unlocked(CPUX86State *env, target_ulong a0)
     cmpv = deposit64(env->regs[R_EAX], 32, 32, env->regs[R_EDX]);
     newv = deposit64(env->regs[R_EBX], 32, 32, env->regs[R_ECX]);
 
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    /* U1764: the destination is translated for a write before it is read: a fault reports a write (#PF W = 1,
+       UC_MEM_WRITE_UNMAPPED), as for every read-modify-write (translate.c gen_rmw_probe) */
+    x86_probe_write(env, a0, 8, ra);
+#endif /* __Use_Original_Qemu (U1764) */
     oldv = cpu_ldq_data_ra(env, a0, ra);
     newv = (cmpv == oldv ? newv : oldv);
 #if __Use_Original_Qemu != 1 /* ours (U708) */
@@ -379,6 +384,9 @@ void helper_cmpxchg8b(CPUX86State *env, target_ulong a0)
         uintptr_t ra = GETPC();
         int mem_idx = cpu_mmu_index(env, false);
         TCGMemOpIdx oi = make_memop_idx(MO_TEQ, mem_idx);
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+        x86_probe_write(env, a0, 8, ra);       /* a write fault first (U1764) */
+#endif /* __Use_Original_Qemu (U1764) */
         oldv = helper_atomic_cmpxchgq_le_mmu(env, a0, cmpv, newv, oi, ra);
     }
 
@@ -412,6 +420,9 @@ void helper_cmpxchg16b_unlocked(CPUX86State *env, target_ulong a0)
     cmpv = int128_make128(env->regs[R_EAX], env->regs[R_EDX]);
     newv = int128_make128(env->regs[R_EBX], env->regs[R_ECX]);
 
+#if __Use_Original_Qemu != 1 /* ours (U1764) */
+    x86_probe_write(env, a0, 16, ra);       /* a write fault first (U1764, as CMPXCHG8B) */
+#endif /* __Use_Original_Qemu (U1764) */
     o0 = cpu_ldq_data_ra(env, a0 + 0, ra);
     o1 = cpu_ldq_data_ra(env, a0 + 8, ra);
 
