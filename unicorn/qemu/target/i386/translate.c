@@ -3886,6 +3886,19 @@ do_gen_eob_worker(DisasContext *s, bool inhibit, bool recheck_tf, bool jr)
     if (s->flags & HF_RF_MASK) {
         gen_reset_eflags(s, RF_MASK);
     }
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+    /*
+     * NoVmp (ledger U1762, Gate 1 step 23 D-b): the end of the instruction in an interrupt shadow (this TB started
+     * in one): a data breakpoint held by the MOV / POP SS before it is delivered now, in one #DB with the
+     * single-step trap that follows below (bpt_helper.c helper_movss_held_db; argument: 1 TF trap, 2 rechecked TF,
+     * 3 the U1752 chain decision, 0 none)
+     */
+    if (inhibit_reset) {
+        int tf = recheck_tf ? 2 : s->ss_tf_chain ? 3 : (s->flags & HF_TF_MASK) ? 1 : 0;
+
+        gen_helper_movss_held_db(tcg_ctx, cpu_env, tcg_constant_i32(tcg_ctx, tf));
+    }
+#endif /* __Use_Original_Qemu (U1762) */
     if (recheck_tf) {
         gen_helper_rechecking_single_step(tcg_ctx, cpu_env);
         tcg_gen_exit_tb(tcg_ctx, NULL, 0);

@@ -45840,6 +45840,114 @@ static void test_x86_dg_movss_ibp(void)
     OK(uc_close(c.uc));
 }
 
+/* U1762: every event of a run (vector, RIP, DR6 at the hook); Unicorn style delivery, execution goes on */
+typedef struct DgEv {
+    uint32_t n, vec[4];
+    uint64_t rip[4], dr6[4];
+} DgEv;
+
+static void dg_ev_cb(uc_engine *uc, uint32_t intno, void *data)
+{
+    DgEv *e = (DgEv *)data;
+
+    if (e->n < 4) {
+        e->vec[e->n] = intno;
+        OK(uc_reg_read(uc, UC_X86_REG_RIP, &e->rip[e->n]));
+        OK(uc_reg_read(uc, UC_X86_REG_DR6, &e->dr6[e->n]));
+    }
+    e->n++;
+}
+
+/*
+ * U1762 (D-b): a data breakpoint that MOV SS / POP SS hits (its memory operand) is held until the instruction
+ * boundary after the next instruction. SDM 093 Vol3A 7.8.3 p. 7-9: "Any data breakpoint on the MOV to SS
+ * instruction or POP to SS instruction is inhibited until the instruction boundary following the next
+ * instruction."; Vol3B 20.3.1.2 p. 20-9: "Any pending data or I/O breakpoints are lost upon delivery of an
+ * exception. ... the data breakpoint is lost if the next instruction causes a fault." / "Delivery of events due
+ * to INT n, INT3, or INTO does not cause a loss of data breakpoints" (the #DB follows the transition to the
+ * handler). The i5-13600K holds it (cases_dbgfix_hw.txt). With TF the held #DB and the single-step trap are one
+ * #DB after the next instruction with BS (whether B0 is reported with BS is open: the hardware drops it, P10 D-e;
+ * not checked here).
+ */
+static void test_x86_dg_movss_dbp(void)
+{
+    static const char movss[] = "\x8e\x12\x48\xff\xc0\x48\xff\xc0\x48\xff\xc0\x90";   /* mov ss, [rdx]; inc rax x3 */
+    static const char ctl[] = "\x66\x8b\x02\x48\xff\xc0\x48\xff\xc0\x90";            /* mov ax, [rdx]; inc x2 */
+    static const char ud[] = "\x8e\x12\x0f\x0b";                                     /* mov ss, [rdx]; ud2 */
+    static const char tf[] = DG_TF_ON "\x8e\x12\x48\xff\xc0\x48\xff\xc0\x90";        /* TF; mov ss, [rdx]; inc x2 */
+    static const char int3[] = "\x8e\x12\xcc\x48\xff\xc0\x90";                       /* mov ss, [rdx]; int3; inc */
+    static const uint8_t zero2[2] = {0, 0};
+    BpCpu c;
+    DgEv e;
+    uc_hook h;
+    uint64_t base;
+
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_mem_write(c.uc, BP_DATA, zero2, 2));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RDX, BP_DATA);
+    /* MOV SS, m16 with a read / write breakpoint on it: the trap after the next instruction (RAX = 1) */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, BP_DATA, 0, 0x70401);
+    OK(bp_run(&c, movss, sizeof(movss) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 5 && bp_get(&c, UC_X86_REG_RAX) == 1 &&
+               (bp_get(&c, UC_X86_REG_DR6) & 0x400f) == 1);
+    TEST_MSG("mov ss, m16: vector %u at %llx (expected %llx) rax %llx dr6 %llx", c.intno, (unsigned long long)c.rip,
+             (unsigned long long)(base + 5), (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_DR6));
+    /* control MOV AX, m16: the trap right after it */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, BP_DATA, 0, 0x70401);
+    OK(bp_run(&c, ctl, sizeof(ctl) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 3 && (bp_get(&c, UC_X86_REG_DR6) & 0x400f) == 1);
+    TEST_MSG("mov ax, m16: vector %u at %llx (expected %llx)", c.intno, (unsigned long long)c.rip,
+             (unsigned long long)(base + 3));
+    /* the next instruction faults (#UD): the held breakpoint is lost - nothing after the #UD */
+    base = c.next;
+    dg_dr(&c, BP_DATA, 0, 0x70401);
+    uc_assert_err(UC_ERR_INSN_INVALID, bp_run(&c, ud, sizeof(ud) - 1));
+    dg_dr(&c, 0, 0, 0x400);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    OK(bp_run(&c, "\x48\xff\xc0\x90", 4));
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("after mov ss; ud2: events %u (vector %u at %llx), expected none", c.count, c.intno,
+             (unsigned long long)c.rip);
+    /* TF: one #DB after the next instruction with B0 and BS */
+    bp_set(&c, UC_X86_REG_RFLAGS, 2);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, BP_DATA, 0, 0x70401);
+    OK(bp_run(&c, tf, sizeof(tf) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 23 && bp_get(&c, UC_X86_REG_RAX) == 1 &&
+               (bp_get(&c, UC_X86_REG_DR6) & 0x4000) == 0x4000);
+    TEST_MSG("tf + mov ss, m16: vector %u at %llx (expected %llx) rax %llx dr6 %llx (expected BS)", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 23), (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_DR6));
+    OK(uc_close(c.uc));
+
+    /* INT3 as the next instruction: #BP, then the held #DB at the handler (Unicorn style: the instruction after
+       INT3), then the INC runs */
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_hook_del(c.uc, c.hook));
+    memset(&e, 0, sizeof(e));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INTR, dg_ev_cb, &e, 1, 0));
+    OK(uc_mem_write(c.uc, BP_DATA, zero2, 2));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RDX, BP_DATA);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, BP_DATA, 0, 0x70401);
+    OK(bp_run(&c, int3, sizeof(int3) - 1));
+    TEST_CHECK(e.n == 2 && e.vec[0] == 3 && e.vec[1] == 1 && e.rip[1] == base + 3 && (e.dr6[1] & 0x400f) == 1 &&
+               bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("mov ss, m16; int3: %u events: %u at %llx, %u at %llx (expected 3, then 1 at %llx) dr6 %llx rax %llx",
+             e.n, e.vec[0], (unsigned long long)e.rip[0], e.vec[1], (unsigned long long)e.rip[1],
+             (unsigned long long)(base + 3), (unsigned long long)e.dr6[1], (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    OK(uc_close(c.uc));
+}
+
 /*
  * U1761 (D-c): the single-step #DB reports BS only - an instruction breakpoint at the next RIP has not been met
  * yet, enabled or not. SDM 093 Vol3B 20.2.3 p. 20-4: B0-B3 "are set if the condition described for each
@@ -46463,5 +46571,6 @@ TEST_LIST = {
     {"test_x86_pf_ss_chain_tf", test_x86_pf_ss_chain_tf},
     {"test_x86_pf_pcmpestr_w", test_x86_pf_pcmpestr_w},
     {"test_x86_dg_movss_ibp", test_x86_dg_movss_ibp},
+    {"test_x86_dg_movss_dbp", test_x86_dg_movss_dbp},
     {"test_x86_dg_ss_dr6", test_x86_dg_ss_dr6},
     {NULL, NULL}};

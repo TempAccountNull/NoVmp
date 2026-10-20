@@ -2491,6 +2491,15 @@ typedef struct CPUX86State {
      */
     uint8_t int1_deliver;
 #endif /* __Use_Original_Qemu (U1425) */
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+    /*
+     * NoVmp (ledger U1762): B0-B3 of the data breakpoints a MOV SS / POP SS hit, held until the instruction
+     * boundary after the next instruction (SDM 093 Vol3A 7.8.3 p. 7-9); 0 = none. Set by breakpoint_handler,
+     * delivered by helper_movss_held_db at the end of the shadow (or after the transition to the handler of an
+     * INT n / INT3 / INTO in the shadow), dropped by the delivery of any other event (Vol3B 20.3.1.2).
+     */
+    uint8_t movss_held_db;
+#endif /* __Use_Original_Qemu (U1762) */
 #if __Use_Original_Qemu != 1 /* ours (U114) */
     /* NoVmp (ledger U114): CET shadow-stack pointer and MSRs (reset value 0) */
     uint64_t ssp;

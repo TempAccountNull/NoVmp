@@ -67,6 +67,9 @@ DEF_HELPER_1(debug, void, env)
 #if __Use_Original_Qemu != 1 /* ours (U1760) */
 DEF_HELPER_1(debug_shadow, void, env)
 #endif /* __Use_Original_Qemu (U1760) */
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+DEF_HELPER_2(movss_held_db, void, env, i32)
+#endif /* __Use_Original_Qemu (U1762) */
 DEF_HELPER_1(reset_rf, void, env)
 DEF_HELPER_3(raise_interrupt, void, env, int, int)
 DEF_HELPER_2(raise_exception, void, env, int)

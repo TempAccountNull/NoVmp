@@ -301,6 +301,70 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
     return check_hw_breakpoints_inst(env, force_dr6_update, true);
 }
 #endif /* __Use_Original_Qemu (U1761) */
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+/*
+ * NoVmp (ledger U1762, Gate 1 step 23 D-b): a data breakpoint that a MOV SS / POP SS hits (its memory operand) is
+ * held until the instruction boundary after the next instruction. SDM 093 Vol3A 7.8.3 p. 7-9: "Any data
+ * breakpoint on the MOV to SS instruction or POP to SS instruction is inhibited until the instruction boundary
+ * following the next instruction."; Vol3B 20.3.1.2 p. 20-9: "If an execution of the MOV or POP instruction loads
+ * the SS register and encounters a data breakpoint, the resulting debug exception is delivered after completion
+ * of the next instruction (the one after the MOV or POP)." / "Any pending data or I/O breakpoints are lost upon
+ * delivery of an exception. ... the data breakpoint is lost if the next instruction causes a fault." /
+ * "Delivery of events due to INT n, INT3, or INTO does not cause a loss of data breakpoints" (the #DB "will be
+ * delivered after the transition to the software-interrupt handler", Vol3A 7.15 Event 1). The i5-13600K holds it
+ * over the next instruction (MOV SS m16: trap after the INC; POP SS in compatibility mode: after MOV ESP;
+ * cases_dbgfix_hw.txt). QEMU 11.1 raises the #DB at once ("FIXME: #DB should be delayed by one instruction").
+ * A MOV / POP SS in a shadow opens none ("only the first is guaranteed", U1752), so its breakpoint is reported at
+ * once.
+ */
+
+/*
+ * raise the held #DB: B0-B3 of the held breakpoints, those of a data breakpoint the next instruction hit itself
+ * (QEMU re-ran it with watchpoint_hit set and requested CPU_INTERRUPT_DEBUG for after it: one #DB reports both)
+ * and BS when the single-step trap of the next instruction is due as well (Vol3B 20.2.3: "When the BS flag is set,
+ * any of the other debug status bits also may be set")
+ */
+static void x86_movss_held_deliver(CPUX86State *env, bool bs)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t bits = env->movss_held_db;
+
+    env->movss_held_db = 0;
+    if (cs->watchpoint_hit && (cs->watchpoint_hit->flags & BP_CPU)) {
+        target_ulong old = env->dr[6];
+
+        cs->watchpoint_hit = NULL;
+        cpu_reset_interrupt(cs, CPU_INTERRUPT_DEBUG);
+        if (check_hw_breakpoints_inst(env, false, false)) {
+            bits |= env->dr[6] & 0xf;
+        }
+        env->dr[6] = old;
+    }
+    if (bs) {
+        x86_vmx_single_step(env);       /* VMX: a pending MTF VM exit comes before this #DB (U1321) */
+    }
+    x86_vmx_db_snapshot(env);           /* VMX: DR6 / DR7 before this #DB (U1305) */
+    env->dr[6] = (env->dr[6] & ~(target_ulong)0xf) | bits | (bs ? DR6_BS : 0);
+    env->fred_evdata_next = bits | (bs ? DR6_BS : 0);  /* FRED #DB event data (U1171) */
+    raise_exception(env, EXCP01_DB);
+}
+
+/*
+ * the end of a TB that started in an interrupt shadow (one instruction; translate.c do_gen_eob_worker): deliver a
+ * held data breakpoint. tf: 0 no single-step trap follows, 1 one does (TF), 2 one does if EFLAGS.TF (SYSCALL /
+ * SYSRET recheck), 3 one does unless the shadow came from STI (a chained MOV / POP SS, U1752)
+ */
+void helper_movss_held_db(CPUX86State *env, uint32_t tf)
+{
+    bool bs;
+
+    if (!env->movss_held_db) {
+        return;
+    }
+    bs = tf == 1 || (tf == 2 && (env->eflags & TF_MASK)) || (tf == 3 && !env->fred_sti);
+    x86_movss_held_deliver(env, bs);
+}
+#endif /* __Use_Original_Qemu (U1762) */
 #if __Use_Original_Qemu != 1 /* ours (U1760) */
 
 /*
@@ -316,6 +380,15 @@ void x86_movss_event(CPUX86State *env)
     if (x86_movss_shadow(env)) {
         env->hflags &= ~HF_INHIBIT_IRQ_MASK;
     }
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+    if (env->movss_held_db) {
+        if (env->exception_is_int) {
+            cpu_interrupt(env_cpu(env), CPU_INTERRUPT_DEBUG);
+        } else {
+            env->movss_held_db = 0;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1762) */
 }
 #endif /* __Use_Original_Qemu (U1760) */
 
@@ -362,6 +435,26 @@ void breakpoint_handler(CPUState *cs)
     if (cs->watchpoint_hit) {
         if (cs->watchpoint_hit->flags & BP_CPU) {
             cs->watchpoint_hit = NULL;
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+            /* the MOV / POP SS that just ran opened a shadow: hold the breakpoint (see x86_movss_shadow) */
+            if (x86_movss_shadow(env)) {
+                target_ulong old = env->dr[6];
+                int i;
+
+                if (check_hw_breakpoints_inst(env, false, false)) {
+                    env->movss_held_db |= env->dr[6] & 0xf;
+                }
+                env->dr[6] = old;
+                for (i = 0; i < DR7_MAX_BP; i++) {
+                    int type = hw_breakpoint_type(env->dr[7], i);
+
+                    if ((type == DR7_TYPE_DATA_WR || type == DR7_TYPE_DATA_RW) && env->cpu_watchpoint[i]) {
+                        env->cpu_watchpoint[i]->flags &= ~BP_WATCHPOINT_HIT;   /* held, not hit again */
+                    }
+                }
+                cpu_loop_exit_noexc(cs);
+            }
+#endif /* __Use_Original_Qemu (U1762) */
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
             x86_vmx_db_snapshot(env);   /* VMX: DR6 / DR7 before this #DB */
 #endif /* __Use_Original_Qemu (U1305) */
@@ -375,6 +468,12 @@ void breakpoint_handler(CPUState *cs)
             }
         }
     } else {
+#if __Use_Original_Qemu != 1 /* ours (U1762) */
+        /* CPU_INTERRUPT_DEBUG of x86_movss_event: an INT n / INT3 / INTO in the shadow was delivered */
+        if (env->movss_held_db) {
+            x86_movss_held_deliver(env, false);
+        }
+#endif /* __Use_Original_Qemu (U1762) */
         QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
             if (bp->pc == env->eip) {
                 if (bp->flags & BP_CPU) {

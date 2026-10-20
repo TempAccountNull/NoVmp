@@ -41,3 +41,17 @@ pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
 pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
+#
+# --- U1762 (D-b): a data breakpoint hit by MOV SS / POP SS (its memory operand) is held until the instruction
+# boundary after the next instruction. SDM 093 Vol3A 7.8.3 p. 7-9: "Any data breakpoint on the MOV to SS instruction
+# or POP to SS instruction is inhibited until the instruction boundary following the next instruction."; Vol3B
+# 20.3.1.2 p. 20-9. [rsi] = m+0x8000 holds 2Bh (this thread's SS). Controls: MOV AX, m16 (read / write breakpoint)
+# and MOV m16, AX (write breakpoint): the trap right after them (r8 = 0).
+mov ax, word ptr [rsi]; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401
+mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401
+.byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401
+# POP SS in compatibility mode with the stack in MEM: lea rsp, [rsi+100h] (m+0x8100 = 2Bh); 32-bit: pop ss; mov esp,
+# 30013F00h (the harness stack: the held trap is taken there); inc ecx x3; ud2: trap at s+28, ecx = 0. Control:
+# MOV EAX, [ESI+100h] on the harness stack: trap at s+21.
+.byte 0x48, 0x8d, 0xa6, 0x00, 0x01, 0x00, 0x00, 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x17, 0xbc, 0x00, 0x3f, 0x01, 0x30, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8b, 0x86, 0x00, 0x01, 0x00, 0x00, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401
