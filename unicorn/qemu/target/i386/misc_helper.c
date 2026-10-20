@@ -1603,6 +1603,45 @@ static bool msr_memtype_ok(uint64_t v, bool pat)
     return true;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1780) */
+/*
+ * NoVmp (ledger U1780, plan 1.J.63): the IA32_EFER bits WRMSR may set, from CPUID as the active strict
+ * UC_CTL_X86_CPUID profile reports it (msr_feat: the model's feature AND the profile's bit, as the MSR list). WRMSR
+ * #GP(0) "If the value in EDX:EAX sets bits that are reserved in the MSR specified by ECX" (SDM 334569-093 Vol2D
+ * WRMSR p. 6-9); IA32_EFER (Vol4 335592-093 Table 2-2 C000_0080H p. 2-93; Vol3A 253668-093 2.2.1 Table 2-1 p. 2-9):
+ * 0 SCE (R/W), 7:1 reserved, 8 LME (R/W), 9 reserved, 10 LMA (R), 11 NXE (R/W), 63:12 reserved; CPUID (ISE
+ * 319433-062, 80000001H): EDX.SYSCALL_SYSRET_64[11] -> SCE, EDX.EXECUTE_DIS[20] -> NXE, EDX.INTEL64[29] -> LME
+ * (msr_lm: the engine runs in IA-32e mode whatever the profile says, U594). The AMD bits (APM Vol2 24593 r3.45
+ * 3.1.7, secondary reference): SVME (12) with CPUID 8000_0001H ECX.SVM[2], FFXSR (14) with EDX.FFXSR[25]; LMSLE,
+ * TCE and AutoIBRS are not modelled (reserved). Before: SCE / NXE / SVME / FFXSR from the model's feature words
+ * alone, so with UC_CTL_X86_APX or a strict profile that hides VMX (no VMX model: the MAX model keeps SVM, U1301 /
+ * U1660) or an AMD CPU model under Intel rows, WRMSR set EFER.SVME (VMRUN & co. no longer #UD) although the
+ * profile reports CPUID.80000001H:ECX.SVM = 0. LMA is not part of it (read-only: msr_write_ok allows any LMA value
+ * and helper_wrmsr keeps the current one, as before).
+ */
+uint64_t x86_efer_writable(CPUX86State *env)
+{
+    return (MF_X1EDX(CPUID_EXT2_SYSCALL) ? MSR_EFER_SCE : 0) |
+           (msr_lm(env) ? MSR_EFER_LME : 0) |
+           (MF_X1EDX(CPUID_EXT2_NX) ? MSR_EFER_NXE : 0) |
+           (MF_X1ECX(CPUID_EXT3_SVM) ? MSR_EFER_SVME : 0) |
+           (MF_X1EDX(CPUID_EXT2_FFXSR) ? MSR_EFER_FFXSR : 0);
+}
+
+/*
+ * The CPUID-qualified IA32_EFER bits (SCE, NXE, SVME, FFXSR) WRMSR may not set under the active strict profile; 0
+ * without one or with a non-strict one (the model decides, unchanged). unicorn.c drops them when such a profile is
+ * installed (x86_cpuid_changed) and leaves SCE out of the 64-bit reset value (reg_reset, U594).
+ */
+uint64_t x86_efer_profile_hidden(CPUX86State *env)
+{
+    if (!env->uc || !env->uc->x86_cpuid_strict || !env->uc->x86_cpuid_count) {
+        return 0;
+    }
+    return (MSR_EFER_SCE | MSR_EFER_NXE | MSR_EFER_SVME | MSR_EFER_FFXSR) & ~x86_efer_writable(env);
+}
+
+#endif /* __Use_Original_Qemu (U1780) */
 static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
 {
     /*
@@ -1704,12 +1743,8 @@ static bool msr_write_ok(CPUX86State *env, uint32_t msr, uint64_t val)
     case MSR_PAT:
         return msr_memtype_ok(val, true);
     case MSR_EFER:
-        valid = MSR_EFER_LMA |
-                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_SYSCALL) ? MSR_EFER_SCE : 0) |
-                (msr_lm(env) ? MSR_EFER_LME : 0) |
-                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_NX) ? MSR_EFER_NXE : 0) |
-                ((env->features[FEAT_8000_0001_ECX] & CPUID_EXT3_SVM) ? MSR_EFER_SVME : 0) |
-                ((env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_FFXSR) ? MSR_EFER_FFXSR : 0);
+        /* U1780 (plan 1.J.63): the bits the strict profile enumerates (was: the model's feature words) */
+        valid = MSR_EFER_LMA | x86_efer_writable(env);
         if (val & ~valid) {
             return false;
         }

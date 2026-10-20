@@ -1,0 +1,52 @@
+# IA32_EFER under the platform profiles: expected-value cases (plan 1.J.63, ledger U1780-U1784, agent efer, 2026-10-19).
+# A strict CPUID profile decides which IA32_EFER bits WRMSR may set (U1780): WRMSR #GP(0) "If the value in EDX:EAX sets
+# bits that are reserved in the MSR specified by ECX" (SDM 334569-093 Vol2D WRMSR p. 6-9); IA32_EFER (Vol4 335592-093
+# Table 2-2 C000_0080H p. 2-93; Vol3A 253668-093 2.2.1 Table 2-1 p. 2-9): bit 0 SCE (R/W), 7:1 reserved, 8 LME (R/W),
+# 9 reserved, 10 LMA (R), 11 NXE (R/W), 63:12 reserved. Each R/W bit with its CPUID bit (ISE 319433-062 80000001H):
+# SCE - EDX.SYSCALL_SYSRET_64[11], NXE - EDX.EXECUTE_DIS[20], LME - EDX.INTEL64[29]; bits 12-14 are AMD extensions
+# (AMD APM Vol2 24593 r3.45 3.1.7, secondary reference): SVME (12) with CPUID 8000_0001H ECX.SVM[2], LMSLE (13),
+# FFXSR (14) with EDX.FFXSR[25], TCE (15); none of them is enumerated by either Intel profile.
+# Specification-validated only: WRMSR / RDMSR are CPL0 instructions, the user-mode test host cannot run them natively
+# (no hardware comparison); NOT measured. Raw Unicorn runs these at CPL0 in 64-bit mode (EFER.LMA = LME = 1, CR0.PG = 1).
+# R15 = 5AH just before a faulting WRMSR proves the #GP comes from that instruction; a line that sets a bit restores
+# IA32_EFER before it ends (R8 = the value read back).
+# Profile: --host (cpuid_i5-13600k_bare_host*.txt) and --guest / --vm (cpuid_i5-13600k.txt): 80000001H ECX 00000121H
+# (SVM = 0), EDX 2C100800H (SYSCALL, NX, 1-GByte pages, RDTSCP, Intel 64; FFXSR = 0).
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --host --expect-only                  (suite efer_prof_host_p)
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --host --host-core E --expect-only    (suite efer_prof_host_e)
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --guest --expect-only                 (suite efer_prof_guest)
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --vm --expect-only                    (suite efer_prof_vm)
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --host --apx --expect-only            (suite efer_prof_host_apx)
+#   emu-alltest --cases Emulator\data\cases_efer_profile.txt --guest --apx --expect-only           (suite efer_prof_guest_apx)
+# Before U1780 (the CPU model decided): with --apx (no VMX model, U1302) the MAX model kept CPUID.80000001H:ECX.SVM, so
+# WRMSR IA32_EFER with SVME = 1 was accepted under both Intel profiles; without --apx the VMX model withdrew the model's
+# SVM bit (U1301 / U1660) and the line already raised #GP(0).
+#
+# --- the profile: 80000001H:ECX.SVM[2] = 0, EDX.SYSCALL[11] = 1, EDX.NX[20] = 1, EDX.FFXSR[25] = 0, EDX.LM[29] = 1
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rcx; shr r8, 2; and r8, 1 =>! r8=0
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rdx; shr r8, 11; and r8, 1 =>! r8=1
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rdx; shr r8, 20; and r8, 1 =>! r8=1
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rdx; shr r8, 25; and r8, 1 =>! r8=0
+mov eax, 0x80000001; xor ecx, ecx; cpuid; mov r8, rdx; shr r8, 29; and r8, 1 =>! r8=1
+# --- the engine's 64-bit IA32_EFER: SCE (U594), LME, LMA
+mov ecx, 0xC0000080; rdmsr; mov r8, rax; mov r9, rdx =>! r8=0x501 r9=0x0
+# --- not enumerated by the profile
+# SVME (bit 12; 80000001H:ECX.SVM[2] = 0): #GP(0), IA32_EFER unchanged
+mov ecx, 0xC0000080; rdmsr; bts eax, 12; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; mov r9, rax; bts eax, 12; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A r9=0x501
+# FFXSR (bit 14; 80000001H:EDX.FFXSR[25] = 0): #GP(0)
+mov ecx, 0xC0000080; rdmsr; bts eax, 14; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+# --- reserved on every Intel processor (AMD: LMSLE 13, TCE 15, AutoIBRS 21 - not modelled)
+mov ecx, 0xC0000080; rdmsr; bts eax, 13; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 15; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 21; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 1; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 9; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts edx, 31; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+# --- enumerated by the profile
+# NXE (bit 11; EDX.NX[20] = 1): accepted, read back, restored
+mov ecx, 0xC0000080; rdmsr; mov r9, rax; bts eax, 11; wrmsr; rdmsr; mov r8, rax; mov rax, r9; wrmsr; rdmsr; mov r10, rax =>! r8=0xD01 r10=0x501
+# SCE (bit 0; EDX.SYSCALL[11] = 1): cleared and set again
+mov ecx, 0xC0000080; rdmsr; mov r9, rax; btr eax, 0; wrmsr; rdmsr; mov r8, rax; mov rax, r9; wrmsr; rdmsr; mov r10, rax =>! r8=0x500 r10=0x501
+# --- LMA (bit 10, read-only): a WRMSR with LMA = 0 keeps LMA (the emulator ignores the written LMA, as before U1780)
+mov ecx, 0xC0000080; rdmsr; btr eax, 10; wrmsr; rdmsr; mov r8, rax =>! r8=0x501

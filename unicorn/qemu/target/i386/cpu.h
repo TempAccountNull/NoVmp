@@ -3935,6 +3935,12 @@ static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 uint64_t x86_cr4_reserved(CPUX86State *env, bool profile);
 /* the CR4 bits the model supports and a strict profile hides: cpu_x86_update_cr4 drops them (reset CR4, RSM) */
 uint64_t x86_cr4_profile_hidden(CPUX86State *env);
+#if __Use_Original_Qemu != 1 /* ours (U1780) */
+/* NoVmp (ledger U1780, plan 1.J.63; misc_helper.c): the IA32_EFER bits WRMSR may set under the strict profile */
+uint64_t x86_efer_writable(CPUX86State *env);
+/* the CPUID-qualified IA32_EFER bits a strict profile does not enumerate (0 without one) */
+uint64_t x86_efer_profile_hidden(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1780) */
 
 static inline uint64_t cr4_reserved_bits(CPUX86State *env)
 {

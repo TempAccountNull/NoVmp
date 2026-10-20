@@ -183,6 +183,10 @@ was #GP(0): a hypervisor driver saw VMX advertised and then failed. SDM 093 Vol3
   from CPU-Z (host tool), not a project capture; replaced if a kernel-mode probe is run.
   VMX in SMX (bit 1) and the SENTER enables (15:8) are 0 on both.
   `--cpuid FILE` alone (the API path) and `--AMD` write nothing.
+- **U1780 (IA32_EFER, plan 1.J.63).** IA32_EFER.SVME follows the strict profile's CPUID.80000001H:ECX.SVM[2] as well as
+  the model's (misc_helper.c x86_efer_writable): reserved under both i5-13600K profiles also where the engine does not
+  model VMX (`--apx`, a strict profile that hides VMX, an AMD CPU model under Intel rows), where the model's SVM bit had
+  made it writable before (VMRUN & co. then no longer #UD). SCE / NXE / FFXSR follow their 80000001H EDX bits the same way.
 
 | | `--host` (P / E) | `--guest` / `--vm` | `--cpuid` same files (API path) | no profile / `--no-strict` |
 |---|---|---|---|---|

@@ -45137,6 +45137,235 @@ static void test_x86_cr4p_off(void)
 }
 /* ---- end U1680-U1689 (cr4p_) ---- */
 
+/*
+ * ---- NoVmp U1780-U1789 (agent efer, plan 1.J.63): helper prefix efp_ ----
+ * U1780: the IA32_EFER bits WRMSR may set follow CPUID as the active strict UC_CTL_X86_CPUID profile reports it.
+ * WRMSR #GP(0) "If the value in EDX:EAX sets bits that are reserved in the MSR specified by ECX" (SDM 334569-093
+ * Vol2D WRMSR p. 6-9); IA32_EFER (Vol4 335592-093 Table 2-2 C000_0080H p. 2-93, Vol3A 253668-093 2.2.1 Table 2-1
+ * p. 2-9): 0 SCE (R/W), 7:1 reserved, 8 LME (R/W), 9 reserved, 10 LMA (R), 11 NXE (R/W), 63:12 reserved. CPUID
+ * bits (ISE 319433-062, 80000001H): EDX.SYSCALL_SYSRET_64[11] (SCE), EDX.EXECUTE_DIS[20] (NXE), EDX.INTEL64[29]
+ * (LME; the engine runs in IA-32e mode, a profile does not hide it: msr_lm). AMD APM Vol2 24593 r3.45 3.1.7
+ * (secondary): SVME (12) with CPUID 8000_0001H ECX.SVM[2], FFXSR (14) with EDX.FFXSR[25]; LMSLE (13), TCE (15) and
+ * AutoIBRS (21) are not modelled (reserved). A strict profile that hides a bit makes it reserved, and the bit is
+ * dropped from IA32_EFER when such a profile is installed (reset value or a value written through the API before;
+ * never widened). Without a profile and with a non-strict one the CPU model decides as before.
+ * Rows: vpf_guest / vpf_host (verbatim from the profile files, U1662).
+ */
+#define EFP_EFER 0xc0000080u
+
+/* WRMSR IA32_EFER = (value | set) & ~clr by the CPU: -1 = accepted (read back, then restored), else the vector */
+static int efp_wr(PcCtx *c, uint64_t set, uint64_t clr)
+{
+    uint64_t efer = 0, v = 0, want;
+    int r;
+
+    TEST_CHECK(vmx_rdmsr(c, EFP_EFER, &efer) == -1);
+    want = (efer | set) & ~clr;
+    r = vmx_wrmsr(c, EFP_EFER, want);
+    if (r == -1) {
+        TEST_CHECK(vmx_rdmsr(c, EFP_EFER, &v) == -1 && v == want);
+        TEST_MSG("IA32_EFER %llx, written %llx", (unsigned long long)v, (unsigned long long)want);
+        TEST_CHECK(vmx_wrmsr(c, EFP_EFER, efer) == -1);
+    } else {
+        TEST_CHECK(vmx_rdmsr(c, EFP_EFER, &v) == -1 && v == efer);
+    }
+    return r;
+}
+
+/* IA32_EFER through the API (no guest fault) */
+static uint64_t efp_api_get(PcCtx *c)
+{
+    uc_x86_msr m = {EFP_EFER, 0};
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+/*
+ * U1780: SVME (bit 12) is writable only when CPUID.80000001H:ECX.SVM[2] is enumerated. #GP(0) under the Intel
+ * profiles in every configuration: with the VMX model (the platform rows, U1660: SVM withdrawn already), a profile
+ * that hides VMX (no VMX model: the MAX model keeps SVM), UC_CTL_X86_APX (no VMX model, U1302) and an AMD CPU model
+ * (EPYC reports SVM) under the Intel rows. Accepted without a profile, with a non-strict one, and under a strict
+ * profile that enumerates SVM.
+ */
+static void test_x86_efp_svme(void)
+{
+    uc_x86_cpuid rows[VPF_N];
+    PcCtx c;
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, 1, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    OK(uc_close(c.uc));
+
+    memcpy(rows, vpf_guest, sizeof(rows));                     /* the profile hides VMX */
+    rows[1].ecx &= ~(1u << 5);
+    vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    TEST_MSG("--guest rows without VMX");
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, 1, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, 0, -1, 0, 1);  /* APX: no VMX model */
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    TEST_MSG("--host rows with APX");
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, -1, 0, 1);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    TEST_MSG("--guest rows with APX");
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_EPYC, vpf_guest, VPF_N, 0, -1, 0, 0); /* AMD model, Intel rows */
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    TEST_MSG("EPYC with the --guest rows");
+    OK(uc_close(c.uc));
+
+    /* regression guard: the model decides */
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == -1);
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_MAX, vpf_guest, VPF_N, 0, 0, 0, 0); /* non-strict: CPUID reporting only */
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == -1);
+    OK(uc_close(c.uc));
+    vpf_open(&c, UC_CPU_X86_EPYC, NULL, 0, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == -1);
+    OK(uc_close(c.uc));
+
+    /* a strict profile that enumerates SVM (and not VMX): accepted */
+    rows[4].ecx |= 1u << 2;
+    vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == -1);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1780: every IA32_EFER bit under the --host rows (as captured: SCE, NXE writable, LMA kept), with SYSCALL or NX
+ * hidden (SCE / NXE reserved; SCE also absent from the 64-bit reset value, U594); FFXSR, LMSLE, TCE, AutoIBRS
+ */
+static void test_x86_efp_bits(void)
+{
+    uc_x86_cpuid rows[VPF_N];
+    PcCtx c;
+    int b, late;
+
+    for (late = 0; late < 2; late++) {
+        vpf_open(&c, UC_CPU_X86_MAX, vpf_host, VPF_N, late, -1, 0, 0);
+        TEST_CHECK(efp_api_get(&c) == 0x501);
+        TEST_CHECK(efp_wr(&c, 1ull << 11, 0) == -1);           /* NXE */
+        TEST_CHECK(efp_wr(&c, 0, 1) == -1);                     /* SCE cleared */
+        for (b = 1; b < 64; b++) {
+            if (b == 8 || b == 10 || b == 11) {
+                continue;
+            }
+            TEST_CHECK(efp_wr(&c, 1ull << b, 0) == 13);
+            TEST_MSG("--host rows, IA32_EFER bit %d (late %d)", b, late);
+        }
+        OK(uc_close(c.uc));
+
+        memcpy(rows, vpf_host, sizeof(rows));
+        rows[4].edx &= ~(1u << 20);                             /* NX hidden */
+        vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, late, -1, 0, 0);
+        TEST_CHECK(efp_wr(&c, 1ull << 11, 0) == 13);
+        TEST_MSG("NX hidden: NXE (late %d)", late);
+        TEST_CHECK(efp_wr(&c, 0, 1) == -1);
+        OK(uc_close(c.uc));
+
+        memcpy(rows, vpf_host, sizeof(rows));
+        rows[4].edx &= ~(1u << 11);                             /* SYSCALL hidden */
+        vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, late, -1, 0, 0);
+        TEST_CHECK(efp_api_get(&c) == 0x500);
+        TEST_MSG("SYSCALL hidden: IA32_EFER %llx (late %d)", (unsigned long long)efp_api_get(&c), late);
+        TEST_CHECK(efp_wr(&c, 1, 0) == 13);
+        TEST_CHECK(efp_wr(&c, 1ull << 11, 0) == -1);
+        OK(uc_close(c.uc));
+    }
+
+    /*
+     * FFXSR (bit 14, CPUID.80000001H:EDX.FFXSR[25]): no TCG model reports it (QEMU's TCG_EXT2_FEATURES lacks FFXSR,
+     * x86_cpu_filter_features drops it from EPYC as well): reserved without a profile and under rows that enumerate it
+     * (a profile only hides, it never adds a feature the model lacks)
+     */
+    vpf_open(&c, UC_CPU_X86_EPYC, NULL, 0, 0, -1, 0, 0);
+    {
+        uint32_t r[4];
+
+        pc_cpuid(&c, 0x80000001, 0, r);
+        TEST_CHECK(!(r[3] & (1u << 25)));
+    }
+    TEST_CHECK(efp_wr(&c, 1ull << 14, 0) == 13);
+    OK(uc_close(c.uc));
+    memcpy(rows, vpf_host, sizeof(rows));
+    rows[4].edx |= 1u << 25;
+    vpf_open(&c, UC_CPU_X86_MAX, rows, VPF_N, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 14, 0) == 13);
+    OK(uc_close(c.uc));
+    /* LMSLE (13), TCE (15), AutoIBRS (21): not modelled, reserved on EPYC as well */
+    vpf_open(&c, UC_CPU_X86_EPYC, NULL, 0, 0, -1, 0, 0);
+    TEST_CHECK(efp_wr(&c, 1ull << 13, 0) == 13);
+    TEST_CHECK(efp_wr(&c, 1ull << 15, 0) == 13);
+    TEST_CHECK(efp_wr(&c, 1ull << 21, 0) == 13);
+    OK(uc_close(c.uc));
+}
+
+/*
+ * U1780: a strict profile installed after the engine started (before the first instruction) drops the IA32_EFER bits
+ * it does not enumerate (SVME written through the API on the MAX model; NXE under rows that hide NX), also when the
+ * VMX model withdraws the model's SVM bit (--guest rows); a non-strict profile does not; switching strict off or
+ * removing the profile keeps IA32_EFER (never widened), the bit is writable again
+ */
+static void test_x86_efp_narrow(void)
+{
+    uc_x86_cpuid rows[VPF_N];
+    uc_x86_msr m = {EFP_EFER, 0x1501};
+    PcCtx c;
+
+    memcpy(rows, vpf_guest, sizeof(rows));
+    rows[1].ecx &= ~(1u << 5);                                  /* no VMX model */
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    TEST_CHECK(efp_api_get(&c) == 0x1501);
+    OK(uc_ctl_set_x86_cpuid(c.uc, rows, VPF_N));
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    TEST_MSG("rows without VMX installed: IA32_EFER %llx", (unsigned long long)efp_api_get(&c));
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 0));                   /* strict off: kept, SVME writable again */
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == -1);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);         /* the --guest rows: VMX model, SVM withdrawn */
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    OK(uc_ctl_set_x86_cpuid(c.uc, vpf_guest, VPF_N));
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    TEST_MSG("--guest rows installed: IA32_EFER %llx", (unsigned long long)efp_api_get(&c));
+    TEST_CHECK(efp_wr(&c, 1ull << 12, 0) == 13);
+    OK(uc_close(c.uc));
+
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, 0, 0, 0);          /* non-strict: reporting only, kept */
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    OK(uc_ctl_set_x86_cpuid(c.uc, rows, VPF_N));
+    TEST_CHECK(efp_api_get(&c) == 0x1501);
+    OK(uc_ctl_set_x86_cpuid_strict(c.uc, 1));                   /* strict on before the first instruction */
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    OK(uc_ctl_set_x86_cpuid(c.uc, NULL, 0));                     /* removed: kept */
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    OK(uc_close(c.uc));
+
+    m.value = 0xd01;                                            /* NXE, then rows that hide NX */
+    memcpy(rows, vpf_host, sizeof(rows));
+    rows[4].edx &= ~(1u << 20);
+    vpf_open(&c, UC_CPU_X86_MAX, NULL, 0, 0, -1, 0, 0);
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    OK(uc_ctl_set_x86_cpuid(c.uc, rows, VPF_N));
+    TEST_CHECK(efp_api_get(&c) == 0x501);
+    TEST_MSG("NX hidden: IA32_EFER %llx", (unsigned long long)efp_api_get(&c));
+    OK(uc_close(c.uc));
+}
+/* ---- end U1780-U1789 (efp_) ---- */
+
 /* ---- NoVmp U1710-U1712 (agent ptwrite, Gate 1 item P18): helper prefix pw_ ---- */
 /*
  * PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4), SDM 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501: "reads data in the source
@@ -46964,6 +47193,9 @@ TEST_LIST = {
     {"test_x86_cr4p_profiles", test_x86_cr4p_profiles},
     {"test_x86_cr4p_each_bit", test_x86_cr4p_each_bit},
     {"test_x86_cr4p_off", test_x86_cr4p_off},
+    {"test_x86_efp_svme", test_x86_efp_svme},
+    {"test_x86_efp_bits", test_x86_efp_bits},
+    {"test_x86_efp_narrow", test_x86_efp_narrow},
     {"test_x86_pw_enum", test_x86_pw_enum},
     {"test_x86_pw_exec", test_x86_pw_exec},
     {"test_x86_pw_cpl3", test_x86_pw_cpl3},

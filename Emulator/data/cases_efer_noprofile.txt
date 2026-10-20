@@ -1,0 +1,17 @@
+# IA32_EFER without a strict CPUID profile (plan 1.J.63, ledger U1780-U1784, agent efer, 2026-10-19): the CPU model
+# decides as before U1780 (regression guard). The MAX model reports CPUID.80000001H:ECX.SVM[2] (QEMU's TCG feature set,
+# no VMX model without the opt-in) and no FFXSR: WRMSR IA32_EFER with SVME = 1 is accepted, FFXSR / LMSLE / TCE are
+# reserved (#GP(0), SDM 334569-093 Vol2D WRMSR p. 6-9). Specification-validated only (CPL0 WRMSR), NOT measured.
+#   emu-alltest --cases Emulator\data\cases_efer_noprofile.txt --expect-only                                                    (efer_prof_off)
+#   emu-alltest --cases Emulator\data\cases_efer_noprofile.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --no-strict --expect-only (efer_prof_nonstrict)
+# (with --no-strict the profile only reports CPUID, U68: the engine keeps the model's EFER bits)
+#
+mov ecx, 0xC0000080; rdmsr; mov r8, rax; mov r9, rdx =>! r8=0x501 r9=0x0
+# SVME (the MAX model reports SVM): accepted, read back, restored
+mov ecx, 0xC0000080; rdmsr; mov r9, rax; bts eax, 12; wrmsr; rdmsr; mov r8, rax; mov rax, r9; wrmsr; rdmsr; mov r10, rax =>! r8=0x1501 r10=0x501
+# NXE: accepted
+mov ecx, 0xC0000080; rdmsr; mov r9, rax; bts eax, 11; wrmsr; rdmsr; mov r8, rax; mov rax, r9; wrmsr; rdmsr; mov r10, rax =>! r8=0xD01 r10=0x501
+# FFXSR (not in the MAX model), LMSLE, TCE: #GP(0)
+mov ecx, 0xC0000080; rdmsr; bts eax, 14; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 13; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A
+mov ecx, 0xC0000080; rdmsr; bts eax, 15; mov r15, 0x5A; wrmsr =>! #GP(0) r15=0x5A

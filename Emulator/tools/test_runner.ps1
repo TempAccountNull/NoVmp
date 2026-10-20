@@ -580,6 +580,18 @@ Add-Exp 'cr4_prof_guest' 'cases_cr4_profile_guest' 'cr4 vmx cpuid expect' @( '--
 Add-Exp 'cr4_prof_vm' 'cases_cr4_profile_guest' 'cr4 vmx cpuid expect' @( '--vm' )
 Add-Exp 'cr4_prof_off' 'cases_cr4_noprofile' 'cr4 expect'
 Add-Exp 'cr4_prof_nonstrict' 'cases_cr4_noprofile' 'cr4 cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
+# U1780-U1781 (agent efer, plan 1.J.63; notes\eread\P14_efer_profile.md): the IA32_EFER bits a strict CPUID profile does not
+# enumerate (SVME with 80000001H:ECX.SVM, FFXSR, SCE / NXE with their EDX bits) are reserved: WRMSR #GP(0) per platform switch,
+# also with --apx (no VMX model there, so the MAX model's SVM bit used to make SVME writable); without a profile and with a
+# non-strict one the CPU model decides as before.
+Add-Exp 'efer_prof_host_p' 'cases_efer_profile' 'efer cpuid expect' @( '--host' )
+Add-Exp 'efer_prof_host_e' 'cases_efer_profile' 'efer cpuid expect' @( '--host', '--host-core', 'E' )
+Add-Exp 'efer_prof_guest' 'cases_efer_profile' 'efer cpuid expect' @( '--guest' )
+Add-Exp 'efer_prof_vm' 'cases_efer_profile' 'efer cpuid expect' @( '--vm' )
+Add-Exp 'efer_prof_host_apx' 'cases_efer_profile' 'efer cpuid apx expect' @( '--host', '--apx' )
+Add-Exp 'efer_prof_guest_apx' 'cases_efer_profile' 'efer cpuid apx expect' @( '--guest', '--apx' )
+Add-Exp 'efer_prof_off' 'cases_efer_noprofile' 'efer expect'
+Add-Exp 'efer_prof_nonstrict' 'cases_efer_noprofile' 'efer cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
 Add-Suite 'gating_cases_check' 'gating tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\gen_gating_cases.py' ) @( '--check' )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )

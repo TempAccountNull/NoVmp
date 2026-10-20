@@ -216,8 +216,10 @@ static void reg_reset(struct uc_struct *uc)
          * OS (Windows, Linux) enables it, and Unicorn's UC_X86_INS_SYSCALL hook relies on
          * SYSCALL running, so the 64-bit reset state has SCE = 1 (as WRMSR would allow it:
          * only with CPUID.80000001H:EDX.SYSCALL).
+         * U1780 (plan 1.J.63): "as WRMSR would allow it" under the strict profile too (x86_efer_writable): a strict
+         * profile installed before the engine started that hides SYSCALL leaves SCE clear.
          */
-        if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_SYSCALL) {
+        if (x86_efer_writable(env) & MSR_EFER_SCE) {
             env->efer |= MSR_EFER_SCE;
         }
 #endif /* __Use_Original_Qemu (U594) */
@@ -2580,6 +2582,19 @@ static void x86_cpuid_changed(struct uc_struct *uc)
         cpu_x86_update_cr4(env, env->cr[4]);
     }
 #endif /* __Use_Original_Qemu (U1680) */
+#if __Use_Original_Qemu != 1 /* ours (U1780) */
+    /*
+     * NoVmp (ledger U1780, plan 1.J.63): the IA32_EFER bits a new strict profile does not enumerate (SCE, NXE, SVME,
+     * FFXSR; misc_helper.c x86_efer_writable) are reserved; IA32_EFER drops them (the 64-bit reset SCE, or a value
+     * written through the API before; after the VMX sync above, which may withdraw the model's SVM bit). As CR4 and
+     * XCR0: only narrowed, never widened (U1441); after the first instruction a strict profile cannot be installed
+     * (U1580). cpu_load_efer updates HF_SVME; NXE changes the page walk, so cached translations go.
+     */
+    if (env->efer & x86_efer_profile_hidden(env)) {
+        cpu_load_efer(env, env->efer & ~x86_efer_profile_hidden(env));
+        tlb_flush(uc->cpu);
+    }
+#endif /* __Use_Original_Qemu (U1780) */
 }
 
 #endif /* __Use_Original_Qemu (U120) */
