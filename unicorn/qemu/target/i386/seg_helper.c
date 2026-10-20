@@ -1108,6 +1108,27 @@ static inline unsigned int get_sp_mask(unsigned int e2)
     }
 }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1765) */
+/* backport of upstream QEMU 69cb498c56 ("fix pushed value of EFLAGS.RF") */
+static int exception_is_fault(int intno)
+{
+    switch (intno) {
+        /*
+         * #DB can be both fault- and trap-like, but it never sets RF=1
+         * in the RFLAGS value pushed on the stack.
+         */
+    case EXCP01_DB:
+    case EXCP03_INT3:
+    case EXCP04_INTO:
+    case EXCP08_DBLE:
+    case EXCP12_MCHK:
+        return 0;
+    }
+    /* Everything else including reserved exception is a fault.  */
+    return 1;
+}
+
+#endif /* __Use_Original_Qemu (U1765) */
 static int exception_has_error_code(int intno)
 {
     switch (intno) {
@@ -1400,6 +1421,32 @@ static bool fred_fault_vector(int v)
         return false;
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U1765) */
+/*
+ * NoVmp (ledger U1765, Gate 1 step 23, P9 H-b): RF = 1 in the EFLAGS image an IDT delivery pushes for a
+ * fault-class exception other than an instruction-breakpoint #DB. SDM 093 Vol3B 20.3.1.1 p. 20-8: "For any
+ * fault-class exception except a debug exception generated in response to an instruction breakpoint, the value
+ * pushed for RF is 1."; p. 20-9: otherwise "the value that was in EFLAG.RF at the time the event handler was
+ * called" - instruction-breakpoint #DB, hardware interrupts, trap-class exceptions, software interrupts (INT n,
+ * INT3, INTO; INT1 is a trap). The general-detect #DB is a fault (Table 20-2 p. 20-8): its event data has BD.
+ * Vol3C 29.6.1.1 p. 29-22: for an event injected by VM entry "The value pushed for the RF flag is not modified
+ * based on the type of event being delivered." Vol3D 40.1 p. 40-2, after an AEX (env->sgx_enc_event, U1263): "The
+ * following bits of RFLAGS are cleared before RFLAGS is pushed onto the exit stack: CF, PF, AF, ZF, SF, OF, RF."
+ * (the SSA gets the fault's RF = 1, sgx_model.c). The FRED delivery applies the same fault rule
+ * (fred_fault_vector, U1171). The i5-13600K: RF = 1 in the image of #PF / #UD / #GP (Windows CONTEXT.EFlags, P10
+ * lines 21-24). Upstream 69cb498c56 (the original QEMU branch) also sets it for external interrupts and never for
+ * the BD #DB.
+ */
+static bool x86_idt_fault_rf(CPUX86State *env, int intno, int is_hw)
+{
+    if (is_hw || env->vmx.inj_active || env->sgx_enc_event) {
+        return false;
+    }
+    return fred_fault_vector(intno) || (intno == EXCP01_DB && (env->fred_evdata & DR6_BD));
+}
+
+#endif /* __Use_Original_Qemu (U1765) */
 
 /* the slot at 'a' of a stack FRED delivery writes: paging canonical, else excp(ext); probed (#PF) */
 static void fred_probe(CPUX86State *env, uint64_t a, uint32_t len, int mmu_idx, int excp, int ext,
@@ -1914,6 +1961,8 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
     uint32_t e1, e2, offset, ss = 0, esp, ss_e1 = 0, ss_e2 = 0;
     uint32_t old_eip, sp_mask;
     int vm86 = env->eflags & VM_MASK;
+    uint32_t eflags;    /* U1765: backport of upstream QEMU 69cb498c56 */
+    bool set_rf;
 
     has_error_code = 0;
     if (!is_int && !is_hw) {
@@ -1921,8 +1970,14 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
     }
     if (is_int) {
         old_eip = next_eip;
+        set_rf = false;
     } else {
         old_eip = env->eip;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1765) */
+        set_rf = exception_is_fault(intno);
+#else /* ours (U1765) */
+        set_rf = x86_idt_fault_rf(env, intno, is_hw);   /* SDM Vol3B 20.3.1.1 */
+#endif /* __Use_Original_Qemu (U1765) */
     }
 #if __Use_Original_Qemu != 1 /* ours (U1303) */
     /* an event injected by VM entry: its error code and pushed RIP (SDM 092 Vol3C 29.6.1.1) */
@@ -2060,6 +2115,11 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
     }
     push_size <<= shift;
 #endif
+    /* U1765: backport of upstream QEMU 69cb498c56 (RF = 1 in the image of a fault, see set_rf) */
+    eflags = cpu_compute_eflags(env);
+    if (set_rf) {
+        eflags |= RF_MASK;
+    }
     if (shift == 1) {
         if (new_stack) {
             if (vm86) {
@@ -2071,7 +2131,7 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
             PUSHL(ssp, esp, sp_mask, env->segs[R_SS].selector);
             PUSHL(ssp, esp, sp_mask, env->regs[R_ESP]);
         }
-        PUSHL(ssp, esp, sp_mask, cpu_compute_eflags(env));
+        PUSHL(ssp, esp, sp_mask, eflags);
         PUSHL(ssp, esp, sp_mask, env->segs[R_CS].selector);
         PUSHL(ssp, esp, sp_mask, old_eip);
         if (has_error_code) {
@@ -2088,7 +2148,7 @@ static void do_interrupt_protected(CPUX86State *env, int intno, int is_int,
             PUSHW(ssp, esp, sp_mask, env->segs[R_SS].selector);
             PUSHW(ssp, esp, sp_mask, env->regs[R_ESP]);
         }
-        PUSHW(ssp, esp, sp_mask, cpu_compute_eflags(env));
+        PUSHW(ssp, esp, sp_mask, eflags);
         PUSHW(ssp, esp, sp_mask, env->segs[R_CS].selector);
         PUSHW(ssp, esp, sp_mask, old_eip);
         if (has_error_code) {
@@ -2282,6 +2342,8 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
      */
     int ext = !is_int;
 #endif /* __Use_Original_Qemu (U1401) */
+    uint64_t eflags;    /* U1765: backport of upstream QEMU 69cb498c56 */
+    bool set_rf;
 
     has_error_code = 0;
     if (!is_int && !is_hw) {
@@ -2289,8 +2351,14 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
     }
     if (is_int) {
         old_eip = next_eip;
+        set_rf = false;
     } else {
         old_eip = env->eip;
+#if __Use_Original_Qemu == 1 /* original QEMU (U1765) */
+        set_rf = exception_is_fault(intno);
+#else /* ours (U1765) */
+        set_rf = x86_idt_fault_rf(env, intno, is_hw);   /* SDM Vol3B 20.3.1.1 */
+#endif /* __Use_Original_Qemu (U1765) */
     }
 #if __Use_Original_Qemu != 1 /* ours (U1425) */
     /*
@@ -2488,10 +2556,15 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
 #endif /* __Use_Original_Qemu (U1421) */
     esp &= ~0xfLL; /* align stack */
 
+    /* U1765: backport of upstream QEMU 69cb498c56 (RF = 1 in the image of a fault, see set_rf) */
+    eflags = cpu_compute_eflags(env);
+    if (set_rf) {
+        eflags |= RF_MASK;
+    }
 #if __Use_Original_Qemu == 1 /* original QEMU (U1424) */
     PUSHQ(esp, env->segs[R_SS].selector);
     PUSHQ(esp, env->regs[R_ESP]);
-    PUSHQ(esp, cpu_compute_eflags(env));
+    PUSHQ(esp, eflags);
     PUSHQ(esp, env->segs[R_CS].selector);
     PUSHQ(esp, old_eip);
     if (has_error_code) {
@@ -2503,7 +2576,7 @@ static void do_interrupt64(CPUX86State *env, int intno, int is_int,
        (U1421), before the shadow-stack steps (U755) and before any register is loaded */
     idt64_pushq(env, &esp, env->segs[R_SS].selector, ext);
     idt64_pushq(env, &esp, env->regs[R_ESP], ext);
-    idt64_pushq(env, &esp, cpu_compute_eflags(env), ext);
+    idt64_pushq(env, &esp, eflags, ext);    /* U1765: RF of a fault (x86_idt_fault_rf) */
     idt64_pushq(env, &esp, env->segs[R_CS].selector, ext);
     idt64_pushq(env, &esp, old_eip, ext);
     if (has_error_code) {

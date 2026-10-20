@@ -46123,6 +46123,117 @@ static void test_x86_dg_rmw_w(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1765 (P9 H-b): IDT event delivery (UC_X86_DELIVER_EXC_IDT) pushes RF = 1 for a fault-class exception other
+ * than an instruction-breakpoint #DB. SDM 093 Vol3B 20.3.1.1 p. 20-8: "For any fault-class exception except a
+ * debug exception generated in response to an instruction breakpoint, the value pushed for RF is 1."; p. 20-9:
+ * otherwise "the value that was in EFLAG.RF", "Software-generated interrupts (RF is pushed as 0 ...)" - trap-class
+ * #DB (single step), INT3, INT n: 0; the general-detect #DB is a fault (Table 20-2): 1. The i5-13600K: RF = 1 in
+ * the image of #PF / #UD / #GP / the #UD after POP SS (Windows CONTEXT.EFlags, P10 lines 21-24). Handlers at
+ * CPL0 store the pushed RFLAGS in RBX (error-code vectors at [rsp+24], the others at [rsp+16]).
+ */
+#define DG_IDT (BP_DATA + 0x1000)
+#define DG_H (BP_CODE + 0x800)          /* handler without error code; DG_H + 0x20 with one; DG_H + 0x40: end */
+
+static void dg_gate64(BpCpu *c, int v, uint64_t off)
+{
+    uint8_t g[16] = {(uint8_t)off, (uint8_t)(off >> 8), 0x28, 0, 0, 0x8e, (uint8_t)(off >> 16),
+                     (uint8_t)(off >> 24), (uint8_t)(off >> 32), (uint8_t)(off >> 40), (uint8_t)(off >> 48),
+                     (uint8_t)(off >> 56), 0, 0, 0, 0};
+
+    OK(uc_mem_write(c->uc, DG_IDT + 16 * (uint64_t)v, g, sizeof(g)));
+}
+
+static void dg_gate32(BpCpu *c, int v, uint32_t off)
+{
+    uint8_t g[8] = {(uint8_t)off, (uint8_t)(off >> 8), 0x08, 0, 0, 0x8e, (uint8_t)(off >> 16), (uint8_t)(off >> 24)};
+
+    OK(uc_mem_write(c->uc, DG_IDT + 8 * (uint64_t)v, g, sizeof(g)));
+}
+
+/* run 'code' until the common handler end; the RFLAGS image the handler read (RBX), -1 if it did not run */
+static uint64_t dg_rf_run(BpCpu *c, const char *code, size_t len)
+{
+    uint64_t base = c->next;
+    int rbx = c->mode == UC_MODE_64 ? UC_X86_REG_RBX : UC_X86_REG_EBX;
+
+    c->next += (len + 0x3f) & ~(uint64_t)0x3f;
+    OK(uc_mem_write(c->uc, base, code, len));
+    bp_set(c, rbx, ~0ull);
+    bp_set(c, c->mode == UC_MODE_64 ? UC_X86_REG_RSP : UC_X86_REG_ESP, BP_STACK);
+    OK(uc_emu_start(c->uc, base, DG_H + 0x40, 0, 100));
+    return bp_get(c, rbx);
+}
+
+static void test_x86_dg_rf_push(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        int rf;
+        int dr;             /* 1: DR0 instruction breakpoint on the code, 2: DR7.GD */
+        const char *what;
+    } t64[] = {
+        {"\x0f\x0b", 2, 1, 0, "#UD (UD2)"},
+        {"\x31\xc9\xf7\xf1", 4, 1, 0, "#DE (DIV ECX = 0)"},
+        {"\x66\xb8\x13\x00\x8e\xd0", 6, 1, 0, "#GP(10h) (MOV SS, 13h: RPL 3 at CPL0)"},
+        {"\x0f\x21\xc0", 3, 1, 2, "#DB general detect (fault, BD)"},
+        {"\x90\x90", 2, 0, 1, "#DB instruction breakpoint (fault, RF as it was)"},
+        {DG_TF_ON "\x90\x90", 20, 0, 0, "#DB single step (trap)"},
+        {"\xcc", 1, 0, 0, "#BP (INT3)"},
+        {"\xcd\x80", 2, 0, 0, "INT 80H"},
+    };
+    BpCpu c;
+    uc_x86_mmr idtr = {0, DG_IDT, 0x1000 - 1, 0};
+    size_t i;
+    uint64_t img;
+
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+    /* mov rbx, [rsp+16]; jmp end / mov rbx, [rsp+24]; jmp end; end: nop */
+    OK(uc_mem_write(c.uc, DG_H, "\x48\x8b\x5c\x24\x10\xe9\x36\x00\x00\x00", 10));
+    OK(uc_mem_write(c.uc, DG_H + 0x20, "\x48\x8b\x5c\x24\x18\xe9\x16\x00\x00\x00", 10));
+    OK(uc_mem_write(c.uc, DG_H + 0x40, "\x90", 1));
+    dg_gate64(&c, 0, DG_H);
+    dg_gate64(&c, 1, DG_H);
+    dg_gate64(&c, 3, DG_H);
+    dg_gate64(&c, 6, DG_H);
+    dg_gate64(&c, 13, DG_H + 0x20);
+    dg_gate64(&c, 0x80, DG_H);
+    for (i = 0; i < sizeof(t64) / sizeof(t64[0]); i++) {
+        bp_set(&c, UC_X86_REG_RFLAGS, 2);
+        dg_dr(&c, t64[i].dr == 1 ? c.next : 0, 0, t64[i].dr == 1 ? 0x401 : t64[i].dr == 2 ? 0x2400 : 0x400);
+        img = dg_rf_run(&c, t64[i].code, t64[i].len);
+        TEST_CHECK(img != ~0ull && ((img >> 16) & 1) == (uint64_t)t64[i].rf);
+        TEST_MSG("64-bit %s: pushed RFLAGS %llx, expected RF = %d", t64[i].what, (unsigned long long)img, t64[i].rf);
+    }
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode (do_interrupt_protected): #UD and #GP push RF = 1, INT3 0 */
+    bp_open(&c, UC_MODE_32, -1);
+    OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+    OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+    /* mov ebx, [esp+8]; jmp end / mov ebx, [esp+12]; jmp end */
+    OK(uc_mem_write(c.uc, DG_H, "\x8b\x5c\x24\x08\xe9\x37\x00\x00\x00", 9));
+    OK(uc_mem_write(c.uc, DG_H + 0x20, "\x8b\x5c\x24\x0c\xe9\x17\x00\x00\x00", 9));
+    OK(uc_mem_write(c.uc, DG_H + 0x40, "\x90", 1));
+    dg_gate32(&c, 3, DG_H);
+    dg_gate32(&c, 6, DG_H);
+    dg_gate32(&c, 13, DG_H + 0x20);
+    img = dg_rf_run(&c, "\x0f\x0b", 2);
+    TEST_CHECK(img != (uint32_t)~0u && ((img >> 16) & 1) == 1);
+    TEST_MSG("32-bit #UD: pushed EFLAGS %llx, expected RF = 1", (unsigned long long)img);
+    img = dg_rf_run(&c, "\x66\xb8\x13\x00\x8e\xd0", 6);
+    TEST_CHECK(img != (uint32_t)~0u && ((img >> 16) & 1) == 1);
+    TEST_MSG("32-bit #GP (MOV SS, 13h): pushed EFLAGS %llx, expected RF = 1", (unsigned long long)img);
+    img = dg_rf_run(&c, "\xcc", 1);
+    TEST_CHECK(img != (uint32_t)~0u && ((img >> 16) & 1) == 0);
+    TEST_MSG("32-bit INT3: pushed EFLAGS %llx, expected RF = 0", (unsigned long long)img);
+    OK(uc_close(c.uc));
+}
+#undef DG_IDT
+#undef DG_H
 #undef DG_TF_ON
 /* ---- end U1760-U1769 (dg_) ---- */
 
@@ -46719,4 +46830,5 @@ TEST_LIST = {
     {"test_x86_dg_ss_dr6", test_x86_dg_ss_dr6},
     {"test_x86_dg_rf_once", test_x86_dg_rf_once},
     {"test_x86_dg_rmw_w", test_x86_dg_rmw_w},
+    {"test_x86_dg_rf_push", test_x86_dg_rf_push},
     {NULL, NULL}};
