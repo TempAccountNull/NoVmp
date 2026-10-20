@@ -45979,6 +45979,41 @@ static void test_x86_dg_ss_dr6(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1763 (D-RF): RF = 1 suppresses the instruction breakpoint of the next instruction only. SDM 093 Vol3B 20.3.1.1
+ * p. 20-9: "The processor then ignores instruction breakpoints for the duration of the next instruction." IRETQ to
+ * CPL3 with RF = 1 in the image (bp_run64_cpl3 with RFLAGS 10202H): DR0 on the first instruction there is skipped,
+ * DR1 on the second fires (B1, RAX = 1), as on the i5-13600K (cases_dbgfix_hw.txt). RF = 0: DR0 fires.
+ */
+static void test_x86_dg_rf_once(void)
+{
+    static const char code[] = "\x48\xff\xc0\x48\xff\xc0\x48\xff\xc0\x90";            /* inc rax x3; nop */
+    BpCpu c;
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        uint64_t frame[5] = {BP_CODE + 0x100, 0x33, i ? 0x202 : 0x10202, BP_STACK, 0x23};
+        uint64_t rsp = BP_STACK - 0x100, dr6, rax;
+        uint64_t want = BP_CODE + (i ? 0x100 : 0x103);
+
+        bp_open(&c, UC_MODE_64, -1);
+        OK(uc_mem_write(c.uc, rsp, frame, sizeof(frame)));
+        OK(uc_reg_write(c.uc, UC_X86_REG_RSP, &rsp));
+        OK(uc_mem_write(c.uc, BP_CODE, "\x48\xcf", 2));
+        OK(uc_mem_write(c.uc, BP_CODE + 0x100, code, sizeof(code) - 1));
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        dg_dr(&c, BP_CODE + 0x100, BP_CODE + 0x103, 0x405);
+        OK(uc_emu_start(c.uc, BP_CODE, BP_CODE + 0x100 + sizeof(code) - 1, 0, 100));
+        dr6 = bp_get(&c, UC_X86_REG_DR6);
+        rax = bp_get(&c, UC_X86_REG_RAX);
+        TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == want && (dr6 & 0x400f) == (i ? 1u : 2u) &&
+                   rax == (i ? 0u : 1u));
+        TEST_MSG("iretq with RF = %d: vector %u at %llx (expected %llx) dr6 %llx rax %llx", i ? 0 : 1, c.intno,
+                 (unsigned long long)c.rip, (unsigned long long)want, (unsigned long long)dr6, (unsigned long long)rax);
+        OK(uc_close(c.uc));
+    }
+}
+
 #undef DG_TF_ON
 /* ---- end U1760-U1769 (dg_) ---- */
 
@@ -46573,4 +46608,5 @@ TEST_LIST = {
     {"test_x86_dg_movss_ibp", test_x86_dg_movss_ibp},
     {"test_x86_dg_movss_dbp", test_x86_dg_movss_dbp},
     {"test_x86_dg_ss_dr6", test_x86_dg_ss_dr6},
+    {"test_x86_dg_rf_once", test_x86_dg_rf_once},
     {NULL, NULL}};

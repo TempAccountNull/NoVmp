@@ -11693,7 +11693,21 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         dc->base.pc_next = pc_next;
 
         if (dc->base.is_jmp == DISAS_NEXT) {
+#if __Use_Original_Qemu == 1 /* original QEMU (U1763) */
             if (dc->flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) {
+#else /* ours (U1763) */
+            /*
+             * NoVmp (ledger U1763, Gate 1 step 23 D-RF): RF = 1 suppresses the instruction breakpoints of one
+             * instruction only (SDM 093 Vol3B 20.3.1.1 p. 20-9: "The processor then ignores instruction breakpoints
+             * for the duration of the next instruction."; Vol3A 2.3 p. 2-11: RF is cleared "after the instruction
+             * returned to has been successfully executed"): a TB that starts with RF = 1 ends after its first
+             * instruction (gen_eob clears RF), so i386_tr_breakpoint_check, which reads RF from the TB flags, does
+             * not skip the breakpoints of the instructions after it. The i5-13600K: IRETQ with RF = 1 skips DR0 at
+             * its target and DR1 on the next instruction fires (cases_dbgfix_hw.txt); before, every breakpoint of
+             * the TB was skipped (no #DB at all). QEMU 11.1 checks RF at TB lookup (CF_BP_PAGE: one instruction).
+             */
+            if ((dc->flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK)) || (dc->base.tb->flags & HF_RF_MASK)) {
+#endif /* __Use_Original_Qemu (U1763) */
                 /*
                  * If single step mode, we generate only one instruction and
                  * generate an exception.
