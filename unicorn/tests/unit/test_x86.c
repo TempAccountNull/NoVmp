@@ -45741,6 +45741,108 @@ static void test_x86_pf_pcmpestr_w(void)
 }
 /* ---- end U1750-U1759 (pf_) ---- */
 
+/*
+ * ---- U1760-U1769 (dg_): the debug / fault differences D-a, D-b, D-c, D-RF, #PF W and the pushed RF of
+ * notes\eread\P10_dr_harness.md (Gate 1 step 23, user decision 2026-10-19): the i5-13600K (VMware guest)
+ * against the emulator, SDM reading in notes\eread\P12_debug_fault_fixes.md ----
+ */
+
+/* pushfq; or qword [rsp], 100h; and qword [rsp], ~200h; popfq (18 bytes): TF from the instruction after the next */
+#define DG_TF_ON "\x9c\x48\x81\x0c\x24\x00\x01\x00\x00\x48\x81\x24\x24\xff\xfd\xff\xff\x9d"
+
+/* the debug registers for the next bp_run (DR0 / DR1 relative to its code address; DR6 = FFFF0FF0H) */
+static void dg_dr(BpCpu *c, uint64_t dr0, uint64_t dr1, uint64_t dr7)
+{
+    uint64_t dr6 = 0xffff0ff0ull;
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR7, &dr7));
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR0, &dr0));
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR1, &dr1));
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR6, &dr6));
+}
+
+/*
+ * U1760 (D-a): an instruction breakpoint on the instruction after MOV SS / POP SS is suppressed. SDM 093
+ * Vol3A 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is suppressed (as if EFLAGS.RF were
+ * 1)."; Vol3B 20.3.1.1 p. 20-8. The i5-13600K: no #DB (cases_dbgfix_hw.txt). STI does not suppress it, a
+ * breakpoint on the second instruction after MOV SS fires, and with TF the single-step trap after the next
+ * instruction reports BS only.
+ */
+static void test_x86_dg_movss_ibp(void)
+{
+    static const char movss[] = "\x8e\xd1\x48\xff\xc0\x48\xff\xc0\x48\xff\xc0\x90";  /* mov ss, ecx; inc rax x3 */
+    static const char ctl[] = "\x89\xc9\x48\xff\xc0\x48\xff\xc0\x48\xff\xc0\x90";    /* mov ecx, ecx; ... */
+    static const char sti[] = "\xfb\x48\xff\xc0\x48\xff\xc0\x90";                   /* sti; inc rax x2 */
+    static const char tf[] = DG_TF_ON "\x8e\xd1\x48\xff\xc0\x48\xff\xc0\x90";       /* TF; mov ss; inc x2 */
+    static const char popss[] = "\x16\x17\x40\x40\x40\x90";                         /* push ss; pop ss; inc eax x3 */
+    BpCpu c;
+    uint64_t base;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RCX, 0);
+    /* MOV SS: the breakpoint on the INC after it does not fire */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 2, 0, 0x401);
+    OK(bp_run(&c, movss, sizeof(movss) - 1));
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_RAX) == 3);
+    TEST_MSG("mov ss; bp on the next insn: events %u (vector %u at %llx) rax %llx, expected none / 3", c.count,
+             c.intno, (unsigned long long)c.rip, (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    /* control (MOV ECX, ECX): #DB fault at the INC, B0 */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 2, 0, 0x401);
+    OK(bp_run(&c, ctl, sizeof(ctl) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 2 && bp_get(&c, UC_X86_REG_RAX) == 0 &&
+               (bp_get(&c, UC_X86_REG_DR6) & 0x400f) == 1);
+    TEST_MSG("control: vector %u at %llx (expected %llx) dr6 %llx", c.intno, (unsigned long long)c.rip,
+             (unsigned long long)(base + 2), (unsigned long long)bp_get(&c, UC_X86_REG_DR6));
+    /* the second instruction after MOV SS: fires */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 5, 0, 0x401);
+    OK(bp_run(&c, movss, sizeof(movss) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 5 && bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("mov ss; bp on the 2nd insn: vector %u at %llx (expected %llx) rax %llx", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 5), (unsigned long long)bp_get(&c, UC_X86_REG_RAX));
+    /* STI: not suppressed */
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 1, 0, 0x401);
+    OK(bp_run(&c, sti, sizeof(sti) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 1 && bp_get(&c, UC_X86_REG_RAX) == 0);
+    TEST_MSG("sti; bp on the next insn: events %u vector %u at %llx (expected %llx)", c.count, c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 1));
+    /* TF + MOV SS + breakpoint on the next instruction: one #DB after it, BS only */
+    bp_set(&c, UC_X86_REG_RFLAGS, 2);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 20, 0, 0x401);
+    OK(bp_run(&c, tf, sizeof(tf) - 1));
+    TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 23 && bp_get(&c, UC_X86_REG_RAX) == 1 &&
+               (bp_get(&c, UC_X86_REG_DR6) & 0x400f) == 0x4000);
+    TEST_MSG("tf + mov ss + bp: vector %u at %llx (expected %llx) rax %llx dr6 %llx (expected BS only)", c.intno,
+             (unsigned long long)c.rip, (unsigned long long)(base + 23), (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+             (unsigned long long)bp_get(&c, UC_X86_REG_DR6));
+    OK(uc_close(c.uc));
+
+    /* 32-bit protected mode, CPL0: POP SS */
+    bp_open(&c, UC_MODE_32, -1);
+    bp_set(&c, UC_X86_REG_ESP, BP_STACK);
+    bp_set(&c, UC_X86_REG_EAX, 0);
+    base = c.next;
+    dg_dr(&c, base + 2, 0, 0x401);
+    OK(bp_run(&c, popss, sizeof(popss) - 1));
+    TEST_CHECK(c.count == 0 && bp_get(&c, UC_X86_REG_EAX) == 3);
+    TEST_MSG("pop ss; bp on the next insn: events %u (vector %u at %llx) eax %llx, expected none / 3", c.count,
+             c.intno, (unsigned long long)c.rip, (unsigned long long)bp_get(&c, UC_X86_REG_EAX));
+    OK(uc_close(c.uc));
+}
+
+#undef DG_TF_ON
+/* ---- end U1760-U1769 (dg_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -46329,4 +46431,5 @@ TEST_LIST = {
     {"test_x86_pf_lar_limit_bits", test_x86_pf_lar_limit_bits},
     {"test_x86_pf_ss_chain_tf", test_x86_pf_ss_chain_tf},
     {"test_x86_pf_pcmpestr_w", test_x86_pf_pcmpestr_w},
+    {"test_x86_dg_movss_ibp", test_x86_dg_movss_ibp},
     {NULL, NULL}};

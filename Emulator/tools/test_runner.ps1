@@ -372,6 +372,10 @@ Add-Hw 'cases_bsf_flags_hw' 'hw'
 # U1750-U1754 (Gate 1 "Fix D1-D4", notes\eread\P11_probe_fixes.md): LOCK MOV DR at CPL3 #GP, LAR bits 19:16,
 # MOV SS / POP SS chain with TF, PCMPESTRx REX.W / VEX.W1 64-bit lengths vs the i5-13600K (cases_probefix_hw.txt).
 Add-Hw 'cases_probefix_hw' 'hw'
+# U1760-U1767 (Gate 1 step 23, notes\eread\P12_debug_fault_fixes.md): MOV SS / POP SS and instruction / data
+# breakpoints, single-step DR6, RF for one instruction, #PF W = 1 of a read-modify-write vs the i5-13600K (debug
+# registers through the U1740 tokens; cases_dbgfix_hw.txt).
+Add-Hw 'cases_dbgfix_hw' 'hw'
 # U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
 # (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
 Add-Hw 'cases_fix5' 'hw'

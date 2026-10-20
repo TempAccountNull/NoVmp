@@ -1,0 +1,32 @@
+# U1760-U1768 (Gate 1 step 23, user decision 2026-10-19 "Fix now as Gate 1"): the debug / fault differences the
+# U1740 debug-register harness measured (notes\eread\P10_dr_harness.md; measurement files cases_probe_p2dr_hw.txt
+# and cases_probe_p1_hw.txt, which stay measurement files). This file is the GATE for the fixes: hardware lines run
+# natively on the i5-13600K (CPL3, Windows x64, VMware guest) and in Unicorn (cpl=3: Windows-like GDT, 23h code32,
+# 2Bh data, 33h code64, all DPL3). SDM reading, red / green and logs: notes\eread\P12_debug_fault_fixes.md.
+#   emu-alltest --cases Emulator\data\cases_dbgfix_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME (0 differing). Debug-register tokens (U1740): dr0..dr3 = V / s+OFF (the snippet's byte
+# OFF) / m+OFF (MEM + OFF, [rsi] = m+0x8000), dr7 = V; native: SetThreadContext on a fresh thread of our own before
+# it starts; the verdict compares the #DB RIP and DR6. DR7 values: 401h L0 instruction; 405h L0 + L1 instruction;
+# 70401h L0 read/write 2 bytes; 50401h L0 write 2 bytes; F0401h L0 read/write 4 bytes; 100404h L1 write 1 byte (an
+# unused breakpoint that makes Windows load the debug registers). Only our own snippets run natively; every enabled
+# breakpoint lies on the snippet's bytes or in MEM; snippets that switch to compatibility mode end with UD2.
+# Not here (no gate): P2e DR6 after MOV SS with TF and a data breakpoint (the hardware drops B0, RPL003-type; the
+# measurement file keeps it) and the EFLAGS image of #PF / #UD / #GP (Unicorn's hook delivery pushes no frame; the
+# IDT path is covered by unit tests, U1765).
+#
+# --- U1760 (D-a): an instruction breakpoint on the instruction after MOV SS / POP SS is suppressed. SDM 093 Vol3A
+# 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is suppressed (as if EFLAGS.RF were 1)."
+# Controls: no SS load (MOV EAX, EAX), the breakpoint on the second instruction after MOV SS, MOV SS; MOV SS (the
+# second load does not suppress, U1752), POP EAX in compatibility mode.
+.byte 0x8c, 0xd0, 0x89, 0xc0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401
+.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401
+.byte 0x8c, 0xd0, 0x66, 0x89, 0x06, 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401
+.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401
+.byte 0x8c, 0xd0, 0x8e, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+6 dr7=0x401
+# compatibility mode (RETFQ to 23h; 32-bit: mov eax, ss; push eax; pop ss; inc ecx x3; ud2), breakpoint on the INC
+# after POP SS (s+19): no #DB, the UD2 ends the run; control POP EAX: #DB fault at s+19
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x17, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x58, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401
+# TF (POPFQ) + MOV SS + a breakpoint on the next instruction (s+14): the breakpoint and the single-step trap after
+# MOV SS are both suppressed: one #DB after the INC at s+14 (RIP s+17, r8 = 1), DR6 = BS
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401

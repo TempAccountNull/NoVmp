@@ -837,6 +837,7 @@ static inline void gen_op_st_rm_T0_A0(DisasContext *s, int idx, int d)
     }
 }
 
+
 static void gen_update_eip_cur(DisasContext *s)
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
@@ -11616,6 +11617,23 @@ static bool i386_tr_breakpoint_check(DisasContextBase *dcbase, CPUState *cpu,
     int flags = dc->base.tb->flags & HF_RF_MASK ? BP_GDB : BP_ANY;
 
     if (bp->flags & flags) {
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+        /*
+         * NoVmp (ledger U1760, Gate 1 step 23 D-a): a DR7 breakpoint on the first instruction of a TB that starts in
+         * an interrupt shadow (such a TB holds one instruction): suppressed if the shadow comes from MOV SS / POP SS,
+         * which is known at run time only (bpt_helper.c helper_debug_shadow); the instruction is translated after
+         * the check
+         */
+        if ((bp->flags & BP_CPU) && !(bp->flags & BP_GDB) && (dc->base.tb->flags & HF_INHIBIT_IRQ_MASK) &&
+            dc->base.num_insns == 1) {
+            TCGContext *tcg_ctx = dc->uc->tcg_ctx;
+
+            gen_update_cc_op(dc);
+            gen_update_eip_cur(dc);
+            gen_helper_debug_shadow(tcg_ctx, cpu_env);
+            return false;
+        }
+#endif /* __Use_Original_Qemu (U1760) */
         gen_debug(dc, dc->base.pc_next - dc->cs_base);
         dc->base.is_jmp = DISAS_NORETURN;
         dc->base.pc_next++;

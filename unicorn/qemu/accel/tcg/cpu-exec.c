@@ -350,6 +350,15 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
                               (uc->x86_event_delivery & UC_X86_DELIVER_EXC_IDT));
     }
 #endif /* __Use_Original_Qemu (U1263) */
+#if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U1760) */
+    /*
+     * NoVmp (ledger U1760, U1762): the delivery of an exception or software interrupt (IDT or UC_HOOK_INTR) ends
+     * a MOV SS / POP SS shadow and decides a data breakpoint held by one (bpt_helper.c x86_movss_event)
+     */
+    if (cpu->exception_index >= 0 && cpu->exception_index < EXCP_INTERRUPT) {
+        x86_movss_event(cpu->env_ptr);
+    }
+#endif /* __Use_Original_Qemu (U1760) */
 #if defined(TARGET_X86_64) && __Use_Original_Qemu != 1 /* ours (U963) */
     {
         /*

@@ -49,7 +49,18 @@ static inline int hw_breakpoint_len(unsigned long dr7, int index)
     int len = ((dr7 >> (DR7_LEN_SHIFT + (index * 4))) & 3);
     return (len == 2) ? 8 : len + 1;
 }
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+/*
+ * NoVmp (ledger U1760): the interrupt shadow of a MOV SS / POP SS - HF_INHIBIT_IRQ with env->fred_sti = 0 (STI
+ * writes 1, a MOV / POP SS outside a shadow 0, on every model since U1752); it ends with the next instruction
+ * (do_gen_eob_worker) or with the delivery of an event (x86_movss_event)
+ */
+static bool x86_movss_shadow(CPUX86State *env)
+{
+    return (env->hflags & HF_INHIBIT_IRQ_MASK) && !env->fred_sti;
+}
 
+#endif /* __Use_Original_Qemu (U1760) */
 #if __Use_Original_Qemu != 1 /* ours (U1263) */
 /*
  * NoVmp (ledger U1263): Intel SGX breakpoint suppression (SDM 092 Vol3D EENTER p. 41-94, ERESUME
@@ -268,6 +279,24 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
     return hit_enabled;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+
+/*
+ * cpu-exec.c: an exception or software interrupt is about to be delivered (through the IDT or to UC_HOOK_INTR).
+ * U1760: it ends a MOV SS / POP SS shadow (Vol3A 7.8.3: "The suppression and inhibition ends after delivery of an
+ * exception or the execution of the next instruction"): the instruction in the shadow raised it, so the shadow's
+ * TB never reached its end (do_gen_eob_worker), and the handler's first instruction must not count as shadowed.
+ * U1762: a held data breakpoint survives INT n / INT3 / INTO and its #DB follows the transition to the handler
+ * (CPU_INTERRUPT_DEBUG -> breakpoint_handler); any other event loses it.
+ */
+void x86_movss_event(CPUX86State *env)
+{
+    if (x86_movss_shadow(env)) {
+        env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+    }
+}
+#endif /* __Use_Original_Qemu (U1760) */
+
 #if __Use_Original_Qemu != 1 /* ours (U709) */
 /*
  * NoVmp (ledger U709): a gather / scatter element is about to fault while a data breakpoint
@@ -364,6 +393,32 @@ void helper_rechecking_single_step(CPUX86State *env)
         helper_single_step(env);
     }
 }
+
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+/*
+ * NoVmp (ledger U1760, Gate 1 step 23 D-a): an instruction breakpoint (DR7) on the instruction after MOV SS /
+ * POP SS is suppressed. SDM 093 Vol3A 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is
+ * suppressed (as if EFLAGS.RF were 1)."; 7.8.2 p. 7-8; Vol3B 20.3.1.1 p. 20-8: "if an instruction breakpoint is
+ * placed on an instruction located immediately after a POP SS/MOV SS instruction, the breakpoint will be
+ * suppressed as if EFLAGS.RF were 1". The i5-13600K: no #DB for MOV SS r32 / m16 and POP SS (compatibility
+ * mode), one #DB with BS after the next instruction when TF is set too (cases_dbgfix_hw.txt). The translator
+ * calls this instead of helper_debug for a DR7 breakpoint on the first instruction of a TB that starts in an
+ * interrupt shadow (HF_INHIBIT_IRQ in the TB flags): the shadow's cause is known at run time only (env->fred_sti:
+ * 1 STI, which does not suppress it; 0 MOV / POP SS). A MOV / POP SS in a shadow opens none (U1752), so the
+ * instruction after MOV SS; MOV SS is not shadowed and its breakpoint fires (as measured). QEMU 11.1 ignores the
+ * shadow (only RF suppresses).
+ */
+void helper_debug_shadow(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+
+    if (x86_movss_shadow(env)) {
+        return;
+    }
+    cs->exception_index = EXCP_DEBUG;
+    cpu_loop_exit(cs);
+}
+#endif /* __Use_Original_Qemu (U1760) */
 
 /*
  * Unicorn: store a debug register without the MOV DR checks (uc_reg_write must

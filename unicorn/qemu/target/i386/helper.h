@@ -64,6 +64,9 @@ DEF_HELPER_2(monitor, void, env, tl)
 DEF_HELPER_2(mwait, void, env, int)
 DEF_HELPER_2(pause, void, env, int)
 DEF_HELPER_1(debug, void, env)
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+DEF_HELPER_1(debug_shadow, void, env)
+#endif /* __Use_Original_Qemu (U1760) */
 DEF_HELPER_1(reset_rf, void, env)
 DEF_HELPER_3(raise_interrupt, void, env, int, int)
 DEF_HELPER_2(raise_exception, void, env, int)

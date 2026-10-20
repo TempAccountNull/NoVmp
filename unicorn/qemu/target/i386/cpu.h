@@ -3168,6 +3168,10 @@ void x86_probe_write_la(CPUX86State *env, target_ulong a0, uint32_t len, int mmu
 /* bpt_helper.c: deliver a data-breakpoint #DB pending from a gather/scatter element */
 void x86_deliver_pending_data_bp(CPUX86State *env, uintptr_t ra);
 #endif /* __Use_Original_Qemu (U709) */
+#if __Use_Original_Qemu != 1 /* ours (U1760) */
+/* bpt_helper.c: an exception / software interrupt is being delivered: ends a MOV SS shadow (cpu-exec.c) */
+void x86_movss_event(CPUX86State *env);
+#endif /* __Use_Original_Qemu (U1760) */
 #if __Use_Original_Qemu != 1 /* ours (U120) */
 uint64_t x86_cpu_xcr0_in_profile(CPUX86State *env, uint64_t xcr0);
 #endif /* __Use_Original_Qemu (U120) */
