@@ -10,6 +10,10 @@ hardware-verified ledger items that the sweep cannot express (CHANGES_LEDGER.md)
 
 usage: python gen_instruction_table.py <alltest.csv> <isa_manual_forms.tsv> <out.md> [verified_forms.tsv]
 
+Gate (U1792): the suite instruction_table_check (check_instruction_table.py, U1790) runs this generator on its inputs
+and checks the per-profile labels of the cross section (U1632) against the two CPUID profiles next to
+isa_manual_forms.tsv; change both together.
+
 verified_forms.tsv (default: next to isa_manual_forms.tsv) holds the hardware verdicts for rows the
 sweep cannot reach or only reaches with a #UD representative (plan 1.15b, evidence in
 Emulator\\data\\cases_reach.txt and the expected-value case files). U790: a verified_forms row applies

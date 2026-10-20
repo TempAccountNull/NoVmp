@@ -593,6 +593,12 @@ Add-Exp 'efer_prof_guest_apx' 'cases_efer_profile' 'efer cpuid apx expect' @( '-
 Add-Exp 'efer_prof_off' 'cases_efer_noprofile' 'efer expect'
 Add-Exp 'efer_prof_nonstrict' 'cases_efer_noprofile' 'efer cpuid expect' @( '--cpuid', $Cpuid, '--no-strict' )
 Add-Suite 'gating_cases_check' 'gating tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\gen_gating_cases.py' ) @( '--check' )
+# U1790-U1791 (agent tablechk, plan 1.J.57.a; notes\eread\P15_1J57a_table_check.md): the per-profile labels of the instruction
+# table's cross section (U1632, plan 1.J.57). Emulator\tools\isa\check_instruction_table.py runs gen_instruction_table.py on its
+# inputs into a temporary folder and checks every cross-row reason against the two CPUID profiles (--host bare host, --guest
+# VMware guest) with its own family -> CPUID bit list; the "enumerated on --host" count is a cross-check only; three in-memory
+# negative controls must fail. Writes nothing in the repository.
+Add-Suite 'instruction_table_check' 'table cpuid tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\check_instruction_table.py' ) @()
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
 # U1510-U1514 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).
