@@ -45840,6 +45840,37 @@ static void test_x86_dg_movss_ibp(void)
     OK(uc_close(c.uc));
 }
 
+/*
+ * U1761 (D-c): the single-step #DB reports BS only - an instruction breakpoint at the next RIP has not been met
+ * yet, enabled or not. SDM 093 Vol3B 20.2.3 p. 20-4: B0-B3 "are set if the condition described for each
+ * breakpoint by the LENn, and R/Wn flags in debug control register DR7 is true"; Table 20-2 p. 20-8 (single-step
+ * trap: BS = 1). The i5-13600K: DR6 = FFFF4FF0H for both (cases_dbgfix_hw.txt).
+ */
+static void test_x86_dg_ss_dr6(void)
+{
+    static const char code[] = DG_TF_ON "\x90\x48\xff\xc0\x48\xff\xc0\x90";        /* TF; nop; inc rax x2 */
+    BpCpu c;
+    uint64_t base, dr6;
+    int i;
+
+    bp_open(&c, UC_MODE_64, -1);
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    for (i = 0; i < 2; i++) {
+        /* the trap follows the NOP (s+18) with RIP = s+19, where DR0 points: enabled (401H) / disabled (400H) */
+        bp_set(&c, UC_X86_REG_RFLAGS, 2);
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        base = c.next;
+        dg_dr(&c, base + 19, 0, i ? 0x400 : 0x401);
+        OK(bp_run(&c, code, sizeof(code) - 1));
+        dr6 = bp_get(&c, UC_X86_REG_DR6);
+        TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 19 && (dr6 & 0x400f) == 0x4000);
+        TEST_MSG("single step onto a%s breakpoint: vector %u at %llx (expected %llx) dr6 %llx (expected BS only)",
+                 i ? " disabled" : "n enabled", c.intno, (unsigned long long)c.rip, (unsigned long long)(base + 19),
+                 (unsigned long long)dr6);
+    }
+    OK(uc_close(c.uc));
+}
+
 #undef DG_TF_ON
 /* ---- end U1760-U1769 (dg_) ---- */
 
@@ -46432,4 +46463,5 @@ TEST_LIST = {
     {"test_x86_pf_ss_chain_tf", test_x86_pf_ss_chain_tf},
     {"test_x86_pf_pcmpestr_w", test_x86_pf_pcmpestr_w},
     {"test_x86_dg_movss_ibp", test_x86_dg_movss_ibp},
+    {"test_x86_dg_ss_dr6", test_x86_dg_ss_dr6},
     {NULL, NULL}};

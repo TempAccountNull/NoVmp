@@ -232,7 +232,19 @@ void cpu_x86_update_dr7(CPUX86State *env, uint32_t new_dr7)
     env->hflags = (env->hflags & ~HF_IOBPT_MASK) | iobpt;
 }
 
+#if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
 static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
+#else /* ours (U1761) */
+/*
+ * NoVmp (ledger U1761, Gate 1 step 23 D-c): 'inst' = false leaves the instruction breakpoints out. A trap-class
+ * #DB taken at the boundary before the instruction at RIP (single step) must not report the instruction
+ * breakpoint of that instruction: its condition has not been met yet (SDM 093 Vol3B 20.2.3 p. 20-4: B0-B3 "are
+ * set if the condition described for each breakpoint by the LENn, and R/Wn flags in debug control register DR7
+ * is true"; Table 20-2 p. 20-8: single-step trap BS = 1). The i5-13600K reports DR6 = FFFF4FF0H (BS only) for a
+ * single step onto an enabled or a disabled instruction breakpoint (cases_dbgfix_hw.txt); QEMU 11.1 sets Bn.
+ */
+static bool check_hw_breakpoints_inst(CPUX86State *env, bool force_dr6_update, bool inst)
+#endif /* __Use_Original_Qemu (U1761) */
 {
     target_ulong dr6;
     int reg;
@@ -245,7 +257,11 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
 
         switch (hw_breakpoint_type(env->dr[7], reg)) {
         case DR7_TYPE_BP_INST:
+#if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
             if (env->dr[reg] == env->eip) {
+#else /* ours (U1761) */
+            if (inst && env->dr[reg] == env->eip) {
+#endif /* __Use_Original_Qemu (U1761) */
                 bp_match = true;
             }
             break;
@@ -279,6 +295,12 @@ static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
     return hit_enabled;
 }
 
+#if __Use_Original_Qemu != 1 /* ours (U1761) */
+static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
+{
+    return check_hw_breakpoints_inst(env, force_dr6_update, true);
+}
+#endif /* __Use_Original_Qemu (U1761) */
 #if __Use_Original_Qemu != 1 /* ours (U1760) */
 
 /*
@@ -379,7 +401,11 @@ void helper_single_step(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     x86_vmx_db_snapshot(env);       /* VMX: DR6 / DR7 before this #DB (30.1) */
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
     check_hw_breakpoints(env, true);
+#else /* ours (U1761) */
+    check_hw_breakpoints_inst(env, true, false);   /* not the instruction breakpoint at the next RIP */
+#endif /* __Use_Original_Qemu (U1761) */
     env->dr[6] |= DR6_BS;
     #if __Use_Original_Qemu != 1 /* ours (U1171) */
     env->fred_evdata_next = (env->dr[6] & 0xf) | DR6_BS;   /* FRED #DB event data (U1171) */

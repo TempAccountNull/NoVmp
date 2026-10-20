@@ -30,3 +30,14 @@
 # TF (POPFQ) + MOV SS + a breakpoint on the next instruction (s+14): the breakpoint and the single-step trap after
 # MOV SS are both suppressed: one #DB after the INC at s+14 (RIP s+17, r8 = 1), DR6 = BS
 .byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
+#
+# --- U1761 (D-c): the single-step #DB reports BS only: an instruction breakpoint at the next RIP has not been met
+# yet (its Bn stays 0, enabled or not). SDM 093 Vol3B 20.2.3 p. 20-4 (B0-B3 "set if the condition described for
+# each breakpoint by the LENn, and R/Wn flags in debug control register DR7 is true"), Table 20-2 p. 20-8
+# (single-step trap: BS = 1). TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11. Controls: DR0
+# further on (s+14); the instruction breakpoint on the instruction after POPFQ (s+10) fires first (#DB fault,
+# DR6 = B0).
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
+pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
