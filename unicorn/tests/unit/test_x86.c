@@ -45366,6 +45366,246 @@ static void test_x86_efp_narrow(void)
 }
 /* ---- end U1780-U1789 (efp_) ---- */
 
+/*
+ * ---- NoVmp U1800-U1804 (agent efervmx, plan 1.J.63.b): helper prefix efv_ ----
+ * IA32_EFER.SVME (bit 12) across VM entries and VM exits under a strict Intel profile (U1780: SVME is a reserved bit
+ * of IA32_EFER unless CPUID.80000001H:ECX.SVM[2] is enumerated; both i5-13600K profiles report it 0). SDM 326019-093
+ * Vol3C: 29.2.2 p. 29-7 ("If the 'load IA32_EFER' VM-exit control is 1, bits reserved in the IA32_EFER MSR must be 0
+ * in the field for that register"; a failure is VMfailValid(8), VMLAUNCH/VMRESUME p. 33-14, Table 33-1 p. 33-30);
+ * 29.3.1.1 p. 29-10 ("Bits reserved in the IA32_EFER MSR must be 0" with the "load IA32_EFER" VM-entry control; a
+ * failure is a VM-entry failure with basic exit reason 33, bit 31 set, qualification 0: 29.8 p. 29-28, Vol3D
+ * 332831-093 Table C-1 p. C-2); 29.4 p. 29-19 and 30.6 pp. 30-33 / 30-34 (the MSR-load areas load "as they would be
+ * written by WRMSR": a failing entry is exit reason 34 with its index as qualification, resp. VMX abort 4, 30.7
+ * p. 30-34); 30.5.1 p. 30-31 (VM exit with "load IA32_EFER": "Bits that are reserved in that MSR are maintained
+ * with their reserved values"). Configurations: the --guest rows installed before the engine started, the --host
+ * rows installed after it (vpf_), and UC_X86_FEATURE_VMX without a profile (the VMX model withdraws SVM, U1301).
+ * Specification-validated only: VM entry needs CPL 0, which the native harness (CPL 3) cannot run - no cases lines.
+ */
+#define EFV_SVME (1ull << 12)
+#define EFV_NCFG 3
+
+static const char *const efv_cfg_name[EFV_NCFG] = {"--guest rows (early)", "--host rows (late)",
+                                                   "VMX opt-in, no profile"};
+
+/* a VMX root engine of configuration k with VMCS A current and initialised (vmx_vmcs_init) */
+static void efv_open(PcCtx *c, int k)
+{
+    if (k == 2) {
+        vmx_setup(c);
+        return;
+    }
+    vpf_open(c, UC_CPU_X86_MAX, k ? vpf_host : vpf_guest, VPF_N, k, -1, 0, 0);
+    vpf_root(c, 5);
+    vmx_vmcs_init(c);
+}
+
+/* VMLAUNCH / VMRESUME at VMX_ENTRY_PC with the guest code g: the uc_emu_start result (a VMX abort stops it) */
+static uc_err efv_run(PcCtx *c, int launch, const char *g, size_t gl)
+{
+    if (g) {
+        OK(uc_mem_write(c->uc, VMX_GUEST_PC, g, gl));
+    }
+    OK(uc_mem_write(c->uc, VMX_ENTRY_PC, launch ? "\x0f\x01\xc2" : "\x0f\x01\xc3", 3));
+    c->cap.count = 0;
+    pc_set(c, UC_X86_REG_RFLAGS, 0x8d7);
+    return uc_emu_start(c->uc, VMX_ENTRY_PC, VMX_ENTRY_PC + 3, 10000000, 0);
+}
+
+/* IA32_EFER (API) must be 'want'; SVME never set */
+static void efv_efer_is(PcCtx *c, uint64_t want, int k, const char *what)
+{
+    uint64_t v = efp_api_get(c);
+
+    TEST_CHECK(v == want && !(v & EFV_SVME));
+    TEST_MSG("%s, %s: IA32_EFER %llx, expected %llx", efv_cfg_name[k], what, (unsigned long long)v,
+             (unsigned long long)want);
+}
+
+/*
+ * 29.3.1.1: the guest IA32_EFER field with SVME (and every other reserved bit) and "load IA32_EFER" = 1: VM-entry
+ * failure, exit reason 80000021H, qualification 0, the host state loaded (RIP after VMLAUNCH), the launch state
+ * stays clear, IA32_EFER unchanged. The field without SVME: VM entry, the guest CPUID exits (10) and "save IA32_EFER"
+ * stores the guest's IA32_EFER without SVME. In the guest (MSR bitmaps clear, exception bitmap bit 13) WRMSR IA32_EFER
+ * with SVME is #GP(0) (exit 0, 80000B0DH, error code 0), the same value without SVME is written.
+ */
+static void test_x86_efv_entry(void)
+{
+    PcCtx c;
+    uint64_t fl, efer;
+    int k, b;
+
+    for (k = 0; k < EFV_NCFG; k++) {
+        efv_open(&c, k);
+        efer = efp_api_get(&c);
+        efv_efer_is(&c, efer, k, "after setup");
+        vmx_w(&c, 0x4012, 0x11fb | 0x200 | 0x8000);             /* + load IA32_EFER */
+        for (b = 1; b < 64; b++) {
+            if (b == 8 || b == 10 || b == 11) {
+                continue;
+            }
+            vmx_w(&c, 0x2806, efer | (1ull << b));
+            vmx_w(&c, 0x4402, 0);
+            TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && fl == 0);
+            TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == VMX_ENTRY_PC + 3);
+            TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000021u && vmx_r(&c, 0x6400) == 0);
+            TEST_MSG("%s: guest IA32_EFER bit %d: exit reason %llx", efv_cfg_name[k], b,
+                     (unsigned long long)vmx_r(&c, 0x4402));
+            efv_efer_is(&c, efer, k, "VM-entry failure");
+        }
+        TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);       /* the launch state stayed clear */
+        vmx_check_failvalid(&c, fl, 5);
+
+        vmx_w(&c, 0x2806, efer);
+        vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 20));        /* + save IA32_EFER */
+        TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+        vmx_exit_is(&c, 10, 0, 2);
+        TEST_CHECK(vmx_r(&c, 0x2806) == efer);
+        efv_efer_is(&c, efer, k, "VM entry / exit");
+
+        vmx_w(&c, 0x2004, VMX_MSRBM);                           /* MSR bitmaps (all clear), #GP exits */
+        vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 28));
+        vmx_w(&c, 0x4004, 1u << 13);
+        vmx_resume_regs(&c, "\x0f\x30", 2, (uint32_t)(efer | EFV_SVME), 0xc0000080u, (efer | EFV_SVME) >> 32, 0);
+        TEST_CHECK(vmx_r(&c, 0x4402) == 0 && vmx_r(&c, 0x4404) == 0x80000b0du && vmx_r(&c, 0x4406) == 0);
+        TEST_MSG("%s: guest WRMSR SVME: exit %llx info %llx", efv_cfg_name[k],
+                 (unsigned long long)vmx_r(&c, 0x4402), (unsigned long long)vmx_r(&c, 0x4404));
+        TEST_CHECK(vmx_r(&c, 0x2806) == efer);
+        vmx_resume_regs(&c, "\x0f\x30\x0f\xa2", 4, (uint32_t)efer, 0xc0000080u, efer >> 32, 0);
+        vmx_exit_is(&c, 10, 0, 2);
+        TEST_CHECK(vmx_r(&c, 0x2806) == efer);
+        efv_efer_is(&c, efer, k, "guest WRMSR");
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * 29.2.2: the host IA32_EFER field with SVME (and every other reserved bit) and "load IA32_EFER" (VM-exit) = 1:
+ * VMfailValid(8), IA32_EFER unchanged; a valid field (SCE cleared) passes and the VM exit loads it.
+ */
+static void test_x86_efv_host(void)
+{
+    PcCtx c;
+    uint64_t fl, efer;
+    int k, b;
+
+    for (k = 0; k < EFV_NCFG; k++) {
+        efv_open(&c, k);
+        efer = efp_api_get(&c);
+        vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 21));        /* + load IA32_EFER */
+        for (b = 1; b < 64; b++) {
+            if (b == 8 || b == 10 || b == 11) {
+                continue;
+            }
+            vmx_w(&c, 0x2c02, efer | (1ull << b));
+            TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+            TEST_CHECK(pc_get(&c, UC_X86_REG_RIP) == VMX_ENTRY_PC + 3);
+            vmx_check_failvalid(&c, fl, 8);
+            TEST_MSG("%s: host IA32_EFER bit %d", efv_cfg_name[k], b);
+            efv_efer_is(&c, efer, k, "VMfailValid");
+        }
+        vmx_w(&c, 0x2c02, efer & ~1ull);
+        TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+        vmx_exit_is(&c, 10, 0, 2);
+        efv_efer_is(&c, efer & ~1ull, k, "VM exit, host SCE 0");
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * 29.4 / 30.6: an IA32_EFER entry with SVME in the VM-entry MSR-load area: VM-entry failure 80000022H, qualification
+ * 1 (the entry); without SVME it is loaded. In the VM-exit MSR-load area: VMX abort, indicator 4 (the emulation
+ * stops with UC_ERR_EXCEPTION); IA32_EFER = the host's without SVME.
+ */
+static void test_x86_efv_msr_areas(void)
+{
+    PcCtx c;
+    uint64_t fl, efer;
+    uint32_t ind;
+    uc_err err;
+    int k;
+
+    for (k = 0; k < EFV_NCFG; k++) {
+        efv_open(&c, k);
+        efer = efp_api_get(&c);
+        vmx_wq(&c, VMX_MSR_AREA, 0xc0000080u);
+        vmx_wq(&c, VMX_MSR_AREA + 8, efer | EFV_SVME);
+        vmx_w(&c, 0x200a, VMX_MSR_AREA);
+        vmx_w(&c, 0x4014, 1);
+        TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && fl == 0);
+        TEST_CHECK(vmx_r(&c, 0x4402) == 0x80000022u && vmx_r(&c, 0x6400) == 1);
+        TEST_MSG("%s: entry MSR-load SVME: exit %llx qual %llx", efv_cfg_name[k],
+                 (unsigned long long)vmx_r(&c, 0x4402), (unsigned long long)vmx_r(&c, 0x6400));
+        efv_efer_is(&c, efer, k, "entry MSR-load area");
+        vmx_wq(&c, VMX_MSR_AREA + 8, efer);
+        TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1);
+        vmx_exit_is(&c, 10, 0, 2);
+        efv_efer_is(&c, efer, k, "entry MSR-load area without SVME");
+        vmx_w(&c, 0x4014, 0);
+
+        vmx_wq(&c, VMX_MSR_AREA + 8, efer | EFV_SVME);
+        vmx_w(&c, 0x2008, VMX_MSR_AREA);
+        vmx_w(&c, 0x4010, 1);
+        vmx_w(&c, 0x681e, VMX_GUEST_PC);
+        err = efv_run(&c, 0, NULL, 0);
+        TEST_CHECK(err == UC_ERR_EXCEPTION);
+        TEST_MSG("%s: exit MSR-load SVME: %s", efv_cfg_name[k], uc_strerror(err));
+        OK(uc_mem_read(c.uc, VMX_VMCS_A + 4, &ind, 4));
+        TEST_CHECK(ind == 4);
+        TEST_MSG("VMX-abort indicator %u", ind);
+        efv_efer_is(&c, efer, k, "exit MSR-load area (VMX abort)");
+        OK(uc_close(c.uc));
+    }
+}
+
+/*
+ * 30.5.1: the host IA32_EFER field passed the 29.2.2 check at VM entry; the guest then sets SVME (and other reserved
+ * bits) in it with an ordinary memory write to the VMCS region (27.11.1 pp. 27-31 / 27-32: not deterministic,
+ * "VM entries may fail for unexplained reasons or may load undesired processor state"). The VM exit with "load
+ * IA32_EFER" loads the field, "Bits that are reserved in that MSR are maintained with their reserved values": IA32_EFER
+ * is the field without them (CLGI stays #UD), the next VMRESUME fails the host check (VMfailValid(8)).
+ */
+static void test_x86_efv_exit_reserved(void)
+{
+    static const uint32_t bits[] = {(uint32_t)EFV_SVME, (uint32_t)EFV_SVME | 0x4002u};
+    PcCtx c;
+    uint64_t fl, efer, v, slot;
+    char g[24];
+    int k, i;
+
+    for (k = 0; k < EFV_NCFG; k++) {
+        efv_open(&c, k);
+        efer = efp_api_get(&c);
+        vmx_w(&c, 0x400c, 0x36dfb | 0x200 | (1u << 21));        /* + load IA32_EFER */
+        vmx_w(&c, 0x2c02, 0x5aa5c33c96699669ull);               /* find the field in the VMCS region */
+        for (slot = 8; slot < 0x1000; slot += 8) {
+            if (vmx_rq(&c, VMX_VMCS_A + slot) == 0x5aa5c33c96699669ull) {
+                break;
+            }
+        }
+        TEST_CHECK(slot < 0x1000);
+        TEST_MSG("host IA32_EFER field at VMCS + %llx", (unsigned long long)slot);
+        for (i = 0; i < 2; i++) {
+            v = VMX_VMCS_A + slot;
+            memcpy(g, "\x48\xb8", 2);                           /* MOV RAX, imm64 */
+            memcpy(g + 2, &v, 8);
+            memcpy(g + 10, "\x48\x81\x08", 3);                  /* OR QWORD [RAX], imm32 */
+            memcpy(g + 13, &bits[i], 4);
+            memcpy(g + 17, "\x0f\xa2", 2);                      /* CPUID */
+            vmx_w(&c, 0x2c02, efer);
+            vmx_w(&c, 0x681e, VMX_GUEST_PC);
+            TEST_CHECK(vmx_enter(&c, i == 0, g, 19, &fl) == -1);
+            vmx_exit_is(&c, 10, 0, 2);
+            TEST_CHECK(vmx_r(&c, 0x2c02) == (efer | bits[i]));
+            efv_efer_is(&c, efer, k, i ? "VM exit, field with SVME, FFXSR, bit 1" : "VM exit, field with SVME");
+            TEST_CHECK(pc_run(&c, "\x0f\x01\xdd", 3) == 6);     /* CLGI: #UD with EFER.SVME = 0 */
+            TEST_CHECK(vmx_enter(&c, 0, NULL, 0, &fl) == -1);
+            vmx_check_failvalid(&c, fl, 8);
+        }
+        OK(uc_close(c.uc));
+    }
+}
+/* ---- end U1800-U1804 (efv_) ---- */
+
 /* ---- NoVmp U1710-U1712 (agent ptwrite, Gate 1 item P18): helper prefix pw_ ---- */
 /*
  * PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4), SDM 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501: "reads data in the source
@@ -47196,6 +47436,10 @@ TEST_LIST = {
     {"test_x86_efp_svme", test_x86_efp_svme},
     {"test_x86_efp_bits", test_x86_efp_bits},
     {"test_x86_efp_narrow", test_x86_efp_narrow},
+    {"test_x86_efv_entry", test_x86_efv_entry},
+    {"test_x86_efv_host", test_x86_efv_host},
+    {"test_x86_efv_msr_areas", test_x86_efv_msr_areas},
+    {"test_x86_efv_exit_reserved", test_x86_efv_exit_reserved},
     {"test_x86_pw_enum", test_x86_pw_enum},
     {"test_x86_pw_exec", test_x86_pw_exec},
     {"test_x86_pw_cpl3", test_x86_pw_cpl3},

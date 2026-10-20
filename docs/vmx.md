@@ -187,6 +187,15 @@ was #GP(0): a hypervisor driver saw VMX advertised and then failed. SDM 093 Vol3
   the model's (misc_helper.c x86_efer_writable): reserved under both i5-13600K profiles also where the engine does not
   model VMX (`--apx`, a strict profile that hides VMX, an AMD CPU model under Intel rows), where the model's SVM bit had
   made it writable before (VMRUN & co. then no longer #UD). SCE / NXE / FFXSR follow their 80000001H EDX bits the same way.
+- **U1800 (IA32_EFER across VM entry / exit, plan 1.J.63.b).** The VM-entry checks reuse the U1780 rule: a guest
+  IA32_EFER field with SVME (or any reserved bit) and "load IA32_EFER" is a VM-entry failure, exit reason 80000021H,
+  qualification 0 (Vol3C 326019-093 29.3.1.1 p. 29-10, 29.8 p. 29-28); a host field with SVME and the VM-exit "load
+  IA32_EFER" is VMfailValid(8) (29.2.2 p. 29-7); an IA32_EFER entry with SVME in the VM-entry MSR-load area is exit reason
+  80000022H with its index, in the VM-exit MSR-load area VMX abort 4 (29.4 p. 29-19, 30.6 / 30.7 p. 30-34). New: a VM exit
+  with "load IA32_EFER" loads only the field's writable bits, "Bits that are reserved in that MSR are maintained with
+  their reserved values" (30.5.1 p. 30-31); before, a host field changed in the VMCS region after the entry check (an
+  ordinary memory write, 27.11.1 p. 27-32) set EFER.SVME under an Intel profile. Tests test_x86_efv_* (--guest rows,
+  --host rows, VMX opt-in without profile); CPL0 only, so no emu-alltest cases.
 
 | | `--host` (P / E) | `--guest` / `--vm` | `--cpuid` same files (API path) | no profile / `--no-strict` |
 |---|---|---|---|---|

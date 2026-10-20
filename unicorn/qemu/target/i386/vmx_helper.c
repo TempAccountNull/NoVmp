@@ -2299,7 +2299,17 @@ static void vmx_load_host(CPUX86State *env)
         cr4 &= ~(uint64_t)(CR4_PCIDE_MASK | CR4_FRED_MASK);
     }
     if (exit & EXIT_LOAD_EFER) {
-        efer = vmcs_get(env, VMCS_HOST_EFER);
+        /*
+         * U1800 (plan 1.J.63.b): SDM 326019-093 Vol3C 30.5.1 p. 30-31, "load IA32_EFER": "Bits that are reserved in
+         * that MSR are maintained with their reserved values" - only the field's writable bits are loaded
+         * (x86_efer_writable, the strict profile's CPUID since U1780; LMA as the field gives it), the reserved ones
+         * (e.g. SVME under an Intel profile) keep IA32_EFER's. The 29.2.2 check passed at VM entry, but the field can
+         * change in the VMCS region before the VM exit (an ordinary memory write, 27.11.1 p. 27-32). Was: the field
+         * as is (a VM exit could set EFER.SVME although the profile reports SVM = 0).
+         */
+        uint64_t keep = ~(x86_efer_writable(env) | MSR_EFER_LMA);
+
+        efer = (vmcs_get(env, VMCS_HOST_EFER) & ~keep) | (env->efer & keep);
     } else {
         efer = host64 ? (env->efer | MSR_EFER_LMA | MSR_EFER_LME)
                       : (env->efer & ~(uint64_t)(MSR_EFER_LMA | MSR_EFER_LME));
