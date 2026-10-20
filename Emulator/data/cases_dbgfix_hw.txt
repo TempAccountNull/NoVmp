@@ -104,3 +104,16 @@ pop qword ptr [rsi+0x8000] | cpl=3
 add dword ptr [rsi+0x7ffe], eax | cpl=3 rax=1 rflags=0x8d7 m+0xFFFE=AAAA
 add dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000 rax=1 rflags=0x8d7
 mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000
+#
+# --- U1770 (D-f), lines U1772: TF and a data breakpoint hit by the single-stepped instruction are two trap-class debug
+# conditions of the same instruction boundary and are reported by ONE #DB. SDM 093 Vol3B 20.3.1 p. 20-7: "The debug
+# exception may report one or both at one time."; 20.2.3 p. 20-4: "When the BS flag is set, any of the other debug
+# status bits also may be set."; Vol3A 7.9 Table 7-2 p. 7-9 (class 4 "Traps on the Previous Instruction": #DB due to
+# TF or a data / I/O breakpoint). The i5-13600K (guest, 20 runs P / E): one #DB after the MOV. "dbcount" (U1771): the
+# first #DB resumes with DR7 unchanged and every #DB of the run is counted on both engines (before U1770 Unicorn took
+# a second #DB from the pending watchpoint request). "dr6mask" leaves B0-B3 out of the DR6 compare: whether B0 is
+# reported with BS is open (the guest drops it, the emulator reports B0 | BS) until the bare-host v3a measurement.
+# Control: the trap after a NOP (BS only, the whole DR6 compared); the MOV is not reached.
+pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFF0
+pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFF0
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; mov word ptr [rsi], ax; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount

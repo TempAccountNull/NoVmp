@@ -500,6 +500,23 @@ void helper_single_step(CPUX86State *env)
 #if __Use_Original_Qemu != 1 /* ours (U1305) */
     x86_vmx_db_snapshot(env);       /* VMX: DR6 / DR7 before this #DB (30.1) */
 #endif /* __Use_Original_Qemu (U1305) */
+#if __Use_Original_Qemu != 1 /* ours (U1770) */
+    /*
+     * NoVmp (ledger U1770, D-f): the single-stepped instruction hit a data breakpoint. QEMU re-ran it with
+     * cs->watchpoint_hit set and requested CPU_INTERRUPT_DEBUG for after it (exec.c cpu_check_watchpoint), which
+     * raised a second #DB once this one had been delivered. Both are trap-class debug conditions of the same
+     * instruction boundary and one #DB reports them: SDM 093 Vol3B 20.3.1 p. 20-7 "The debug exception may report
+     * one or both at one time."; 20.2.3 p. 20-4 "When the BS flag is set, any of the other debug status bits also may
+     * be set."; Vol3A 7.9 Table 7-2 p. 7-9 (class 4: #DB due to TF or a data / I/O breakpoint). The i5-13600K takes
+     * one #DB (cases_dbgfix_hw.txt, D-f). The pending request is consumed here; DR6 is unchanged: B0-B3 of the data
+     * breakpoint (its BP_WATCHPOINT_HIT, check_hw_breakpoints_inst below) and BS, as before (whether the hardware
+     * reports B0 with BS is open, docs/quirks.md).
+     */
+    if (env_cpu(env)->watchpoint_hit && (env_cpu(env)->watchpoint_hit->flags & BP_CPU)) {
+        env_cpu(env)->watchpoint_hit = NULL;
+        cpu_reset_interrupt(env_cpu(env), CPU_INTERRUPT_DEBUG);
+    }
+#endif /* __Use_Original_Qemu (U1770) */
 #if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
     check_hw_breakpoints(env, true);
 #else /* ours (U1761) */

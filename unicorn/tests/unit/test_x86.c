@@ -46237,6 +46237,154 @@ static void test_x86_dg_rf_push(void)
 #undef DG_TF_ON
 /* ---- end U1760-U1769 (dg_) ---- */
 
+/*
+ * ---- U1770-U1774 (dff_): D-f of notes\eread\P12_debug_fault_fixes.md section 8 (SDM reading, red / green:
+ * notes\eread\P13_df_double_db.md) ----
+ */
+
+/* pushfq; or qword [rsp], 100h; and qword [rsp], ~200h; popfq (18 bytes): TF from the instruction after the next */
+#define DFF_TF_ON "\x9c\x48\x81\x0c\x24\x00\x01\x00\x00\x48\x81\x24\x24\xff\xfd\xff\xff\x9d"
+
+/* every event of a run (vector, RIP, DR6 at the hook); a #DB clears TF (a debugger that stops stepping), DR7 stays */
+typedef struct DffEv {
+    uint32_t n, vec[4];
+    uint64_t rip[4], dr6[4];
+} DffEv;
+
+static void dff_ev_cb(uc_engine *uc, uint32_t intno, void *data)
+{
+    DffEv *e = (DffEv *)data;
+    uint64_t fl = 0;
+
+    if (e->n < 4) {
+        e->vec[e->n] = intno;
+        OK(uc_reg_read(uc, UC_X86_REG_RIP, &e->rip[e->n]));
+        OK(uc_reg_read(uc, UC_X86_REG_DR6, &e->dr6[e->n]));
+    }
+    e->n++;
+    if (intno == 1) {
+        OK(uc_reg_read(uc, UC_X86_REG_RFLAGS, &fl));
+        fl &= ~(uint64_t)0x100;
+        OK(uc_reg_write(uc, UC_X86_REG_RFLAGS, &fl));
+    }
+}
+
+static void dff_dr(BpCpu *c, uint64_t dr0, uint64_t dr7)
+{
+    uint64_t dr6 = 0xffff0ff0ull;
+
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR7, &dr7));
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR0, &dr0));
+    OK(uc_reg_write(c->uc, UC_X86_REG_DR6, &dr6));
+}
+
+/*
+ * U1770 (D-f): TF and a data breakpoint that the single-stepped instruction hits are two trap-class debug conditions
+ * of one instruction boundary: ONE #DB reports them. SDM 093 Vol3B 20.3.1 p. 20-7: "The debug exception may report
+ * one or both at one time."; 20.2.3 p. 20-4: "When the BS flag is set, any of the other debug status bits also may be
+ * set."; Vol3A 7.9 Table 7-2 p. 7-9 (class 4: #DB due to TF or a data / I/O breakpoint). The i5-13600K: one #DB after
+ * the MOV (P12 D-f, cases_dbgfix_hw.txt). Before U1770 the emulator took a second #DB from the watchpoint request
+ * QEMU left pending (CPU_INTERRUPT_DEBUG). DR6: BS is checked, B0 is not (open until the bare-host measurement: the
+ * guest drops it, the emulator reports B0 | BS). Control: the instruction after the stepped one hits the breakpoint
+ * without TF: its own #DB (B0) still comes.
+ */
+static void test_x86_dff_one_db(void)
+{
+    static const char wr[] = DFF_TF_ON "\x66\x89\x02\x48\xff\xc0\x48\xff\xc0\x90";      /* TF; mov [rdx], ax; inc x2 */
+    static const char rd[] = DFF_TF_ON "\x66\x8b\x02\x48\xff\xc0\x48\xff\xc0\x90";      /* TF; mov ax, [rdx]; inc x2 */
+    static const char ctl[] = DFF_TF_ON "\x90\x66\x89\x02\x48\xff\xc0\x90";             /* TF; nop; mov [rdx], ax; inc */
+    static const uint8_t zero2[2] = {0, 0};
+    static const struct {
+        const char *code;
+        size_t len;
+        uint64_t dr7;
+        const char *what;
+    } t[] = {
+        {wr, sizeof(wr) - 1, 0x50401, "mov [rdx], ax, write breakpoint"},
+        {rd, sizeof(rd) - 1, 0x70401, "mov ax, [rdx], read / write breakpoint"},
+    };
+    BpCpu c;
+    DffEv e;
+    uc_hook h;
+    uint64_t base, rcx;
+    size_t i;
+
+    /* Unicorn style delivery (UC_HOOK_INTR): the hook clears TF, DR7 stays armed */
+    bp_open(&c, UC_MODE_64, -1);
+    OK(uc_hook_del(c.uc, c.hook));
+    OK(uc_hook_add(c.uc, &h, UC_HOOK_INTR, dff_ev_cb, &e, 1, 0));
+    OK(uc_mem_write(c.uc, BP_DATA, zero2, 2));
+    bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+    bp_set(&c, UC_X86_REG_RDX, BP_DATA);
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        memset(&e, 0, sizeof(e));
+        bp_set(&c, UC_X86_REG_RFLAGS, 2);
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        base = c.next;
+        dff_dr(&c, BP_DATA, t[i].dr7);
+        OK(bp_run(&c, t[i].code, t[i].len));
+        TEST_CHECK(e.n == 1 && e.vec[0] == 1 && e.rip[0] == base + 21 && (e.dr6[0] & 0x4000) &&
+                   bp_get(&c, UC_X86_REG_RAX) == 2);
+        TEST_MSG("TF + %s: %u event(s): %u at %llx dr6 %llx, %u at %llx dr6 %llx; rax %llx (expected one #DB at %llx with "
+                 "BS, rax 2)",
+                 t[i].what, e.n, e.vec[0], (unsigned long long)e.rip[0], (unsigned long long)e.dr6[0], e.vec[1],
+                 (unsigned long long)e.rip[1], (unsigned long long)e.dr6[1], (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+                 (unsigned long long)(base + 21));
+    }
+    /* control: the trap after the NOP (BS only), then the MOV without TF: its data breakpoint #DB (B0) */
+    memset(&e, 0, sizeof(e));
+    bp_set(&c, UC_X86_REG_RFLAGS, 2);
+    bp_set(&c, UC_X86_REG_RAX, 0);
+    base = c.next;
+    dff_dr(&c, BP_DATA, 0x50401);
+    OK(bp_run(&c, ctl, sizeof(ctl) - 1));
+    TEST_CHECK(e.n == 2 && e.vec[0] == 1 && e.rip[0] == base + 19 && (e.dr6[0] & 0x400f) == 0x4000 && e.vec[1] == 1 &&
+               e.rip[1] == base + 22 && (e.dr6[1] & 0xf) == 1 && bp_get(&c, UC_X86_REG_RAX) == 1);
+    TEST_MSG("control nop; mov: %u event(s): %u at %llx dr6 %llx, %u at %llx dr6 %llx (expected BS at %llx, B0 at %llx)",
+             e.n, e.vec[0], (unsigned long long)e.rip[0], (unsigned long long)e.dr6[0], e.vec[1],
+             (unsigned long long)e.rip[1], (unsigned long long)e.dr6[1], (unsigned long long)(base + 19),
+             (unsigned long long)(base + 22));
+    OK(uc_close(c.uc));
+
+    /*
+     * IDT delivery: the #DB handler (CPL0, gate 1) counts in RCX, clears TF in the image and returns. One #DB: RCX = 1
+     * (before U1770 the second #DB came at the handler's first instruction: RCX = 2)
+     */
+    {
+        uc_x86_mmr idtr = {0, BP_DATA + 0x1000, 0x1000 - 1, 0};
+        const uint64_t hnd = BP_CODE + 0x800;
+        uint8_t g[16] = {(uint8_t)hnd, (uint8_t)(hnd >> 8), 0x28, 0, 0, 0x8e, (uint8_t)(hnd >> 16), (uint8_t)(hnd >> 24),
+                         0, 0, 0, 0, 0, 0, 0, 0};
+
+        bp_open(&c, UC_MODE_64, -1);
+        OK(uc_ctl_set_x86_event_delivery(c.uc, UC_X86_DELIVER_EXC_IDT));
+        OK(uc_reg_write(c.uc, UC_X86_REG_IDTR, &idtr));
+        OK(uc_mem_write(c.uc, BP_DATA + 0x1000 + 16, g, sizeof(g)));
+        /* inc rcx; and qword [rsp+16], ~100h; mov qword [rsp+8], 28h (the frame's CS: the GDT's code64 DPL0); iretq */
+        OK(uc_mem_write(c.uc, hnd, "\x48\xff\xc1\x48\x81\x64\x24\x10\xff\xfe\xff\xff\x48\xc7\x44\x24\x08\x28\x00\x00\x00\x48\xcf",
+                        23));
+        OK(uc_mem_write(c.uc, BP_DATA, zero2, 2));
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RDX, BP_DATA);
+        bp_set(&c, UC_X86_REG_RFLAGS, 2);
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        bp_set(&c, UC_X86_REG_RCX, 0);
+        base = c.next;
+        dff_dr(&c, BP_DATA, 0x50401);
+        c.next += 0x40;
+        OK(uc_mem_write(c.uc, base, wr, sizeof(wr) - 1));
+        OK(uc_emu_start(c.uc, base, base + sizeof(wr) - 1, 0, 100));
+        rcx = bp_get(&c, UC_X86_REG_RCX);
+        TEST_CHECK(rcx == 1 && bp_get(&c, UC_X86_REG_RAX) == 2 && (bp_get(&c, UC_X86_REG_DR6) & 0x4000));
+        TEST_MSG("IDT: TF + mov [rdx], ax: #DB handler ran %llu time(s), rax %llx, dr6 %llx (expected once, rax 2, BS)",
+                 (unsigned long long)rcx, (unsigned long long)bp_get(&c, UC_X86_REG_RAX),
+                 (unsigned long long)bp_get(&c, UC_X86_REG_DR6));
+        OK(uc_close(c.uc));
+    }
+}
+#undef DFF_TF_ON
+/* ---- end U1770-U1774 (dff_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -46831,4 +46979,5 @@ TEST_LIST = {
     {"test_x86_dg_rf_once", test_x86_dg_rf_once},
     {"test_x86_dg_rmw_w", test_x86_dg_rmw_w},
     {"test_x86_dg_rf_push", test_x86_dg_rf_push},
+    {"test_x86_dff_one_db", test_x86_dff_one_db},
     {NULL, NULL}};
