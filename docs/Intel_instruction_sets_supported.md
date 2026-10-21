@@ -6,7 +6,7 @@ _Generated 2026-10-19 16:02 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1251 · ⏳ 51 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1310, gating only 7, open item 35, not implemented yet 45) — 2699 forms
+**Totals (Intel families):** ✅ 1251 · ⏳ 51 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1312, gating only 7, open item 35, not implemented yet 43) — 2699 forms
 
 ## Currently being added
 
@@ -1945,7 +1945,7 @@ Per profile (U1632): 19 of them are **enumerated by the bare host** (`--host`) a
 | MSR_IMM | 2 | ❌ **cannot run** (CPUID.7H.1:ECX[5] = 0 on --host and --guest) | ✅ 2 |  |
 | PBNDKB | 1 | ❌ **cannot run** (CPUID.7H.1:EBX[1] = 0 on --host and --guest) | ✅ 1 |  |
 | PCONFIG | 1 | ❌ **cannot run** (--guest: CPUID.7H:EDX[18] = 0; --host: enumerated (CPUID.7H:EDX[18] = 1 on the bare host)) | ✅ 1 |  |
-| PKU | 2 | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) |  | ⬜ 2 queued |
+| PKU | 2 | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) | ✅ 2 |  |
 | PREFETCHWT1 | 1 | ❌ **cannot run** (CPUID.7H:ECX[0] = 0 on --host and --guest) | ✅ 1 |  |
 | RAO_INT | 4 | ❌ **cannot run** (CPUID.7H.1:EAX[3] = 0 on --host and --guest) | ✅ 4 |  |
 | RTM | 4 | ❌ **cannot run** (CPUID.7H:EBX[11] = 0 on --host and --guest) | ✅ 4 |  |
@@ -2311,8 +2311,8 @@ Per profile (U1632): 19 of them are **enumerated by the bare host** (`--host`) a
 
 | instruction | encoding | vector bits | **CPU cannot support** (why) | **Done** (per manual) | **Implementing** |
 |---|---|---|---|---|---|
-| RDPKRU | legacy | - | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) |  | ⬜ queued — not implemented (cases_reach): PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both |
-| WRPKRU | legacy | - | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) |  | ⬜ queued — not implemented (cases_reach): PKU (CR4.PKE = 0 under Windows: OSPKE off): #UD in both |
+| RDPKRU | legacy | - | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1690-U1692 PKU (U1821 status):… |  |
+| WRPKRU | legacy | - | ❌ **cannot run** (the CPU has PKU but Windows leaves CR4.PKE off: RDPKRU/WRPKRU #UD in user mode, on --host and --guest) | ✅ per manual (SDM vectors) — implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1690-U1692 PKU (U1821 status):… |  |
 
 </details>
 

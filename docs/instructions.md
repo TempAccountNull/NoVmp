@@ -9,7 +9,7 @@ _Generated 2026-10-21 09:31 (HEAD `c90cc179 Ledger: U1810-U1812 (agent/g1docs2) 
 
 **Your i5-13600K:** runs 1305 forms · **cannot run 1607 forms** (each document lists them separately under "Instructions that can't be supported for now:").
 
-**All forms:** ✅ 1252 · ⏳ 53 · ⬜ 0 · ❌ 1607 (implemented per the manual 1342, open item 48, not implemented yet 217)
+**All forms:** ✅ 1252 · ⏳ 53 · ⬜ 0 · ❌ 1607 (implemented per the manual 1344, open item 48, not implemented yet 215)
 
 ## Currently being added
 
