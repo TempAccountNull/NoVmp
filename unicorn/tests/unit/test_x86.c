@@ -46854,6 +46854,110 @@ static void test_x86_dff_one_db(void)
 #undef DFF_TF_ON
 /* ---- end U1770-U1774 (dff_) ---- */
 
+/* ---- NoVmp U1820-U1829 (agent g1rest, Gate 1 leftovers 2026-10-21): helper prefix gr_ ---- */
+/*
+ * U1820 (plan 1.J.63.a, user decision 2026-10-21 "Document SDM reading"): IA32_EFER.LMA is a status bit that WRMSR
+ * ignores. SDM 253668-093 Vol3A 5.1.1 footnote 2, p. 5-2: "The processor always sets IA32_EFER.LMA to CR0.PG &
+ * IA32_EFER.LME. Software cannot directly modify IA32_EFER.LMA; an execution of WRMSR to the IA32_EFER MSR ignores
+ * bit 10 of its source operand." Vol3A 2.2.1 Table 2-1 p. 2-9 and Vol4 335592-093 Table 2-2 C000_0080H p. 2-93:
+ * bit 10 "IA-32e Mode Active: IA32_EFER.LMA (R)". Regression pin (the code already did this, U1780 kept it): a WRMSR
+ * whose bit 10 differs from LMA is accepted (no #GP), its other bits are written and LMA keeps CR0.PG & LME - in
+ * 64-bit mode (LMA 1, bit 10 = 0) and in 32-bit protected mode without paging (LMA 0, bit 10 = 1); the MSR API
+ * (uc_reg_write UC_X86_REG_MSR) the same. Not hardware-measured (CPL0, docs/quirks.md "IA32_EFER.LMA writes").
+ */
+#define GR_EFER 0xc0000080u
+
+/* WRMSR / RDMSR by the CPU with the 32-bit register names (any mode): the vector or -1 */
+static int gr_wrmsr(PcCtx *c, uint32_t msr, uint64_t v)
+{
+    pc_set(c, UC_X86_REG_ECX, msr);
+    pc_set(c, UC_X86_REG_EAX, (uint32_t)v);
+    pc_set(c, UC_X86_REG_EDX, (uint32_t)(v >> 32));
+    return pc_run(c, "\x0f\x30", 2);
+}
+
+static uint64_t gr_rdmsr(PcCtx *c, uint32_t msr)
+{
+    pc_set(c, UC_X86_REG_ECX, msr);
+    TEST_CHECK(pc_run(c, "\x0f\x32", 2) == -1);
+    return ((pc_get(c, UC_X86_REG_EDX) & 0xffffffffull) << 32) | (pc_get(c, UC_X86_REG_EAX) & 0xffffffffull);
+}
+
+static uint64_t gr_api_efer(PcCtx *c)
+{
+    uc_x86_msr m = {GR_EFER, 0};
+
+    OK(uc_reg_read(c->uc, UC_X86_REG_MSR, &m));
+    return m.value;
+}
+
+static void test_x86_gr_efer_lma_write(void)
+{
+    /* wrmsr; mov rax, 1122334455667788H (64-bit mode is still active after the WRMSR) */
+    static const char wr_mov64[] = "\x0f\x30\x48\xb8\x88\x77\x66\x55\x44\x33\x22\x11";
+    uc_x86_msr m = {GR_EFER, 0};
+    uint64_t efer, v;
+    PcCtx c;
+    int i;
+
+    /* 64-bit mode, CPL0 (LMA = 1): no profile, then the strict --host rows (U1780 masks) */
+    for (i = 0; i < 2; i++) {
+        vpf_open(&c, UC_CPU_X86_MAX, i ? vpf_host : NULL, i ? VPF_N : 0, 0, -1, 0, 0);
+        efer = gr_rdmsr(&c, GR_EFER);
+        TEST_CHECK((efer & 0x500) == 0x500);
+        TEST_MSG("64-bit reset IA32_EFER %llx (LME and LMA expected; profile %d)", (unsigned long long)efer, i);
+        /* bit 10 = 0: accepted, LMA stays 1 */
+        TEST_CHECK(gr_wrmsr(&c, GR_EFER, efer & ~0x400ull) == -1);
+        v = gr_rdmsr(&c, GR_EFER);
+        TEST_CHECK(v == efer);
+        TEST_MSG("WRMSR %llx (LMA cleared): read back %llx, expected %llx (profile %d)",
+                 (unsigned long long)(efer & ~0x400ull), (unsigned long long)v, (unsigned long long)efer, i);
+        /* the other bits of the same write are written: SCE cleared, NXE set, LMA kept */
+        TEST_CHECK(gr_wrmsr(&c, GR_EFER, (efer & ~0x401ull) | 0x800) == -1);
+        v = gr_rdmsr(&c, GR_EFER);
+        TEST_CHECK(v == ((efer & ~1ull) | 0xc00));
+        TEST_MSG("WRMSR SCE 0, NXE 1, LMA 0: read back %llx (profile %d)", (unsigned long long)v, i);
+        TEST_CHECK(gr_wrmsr(&c, GR_EFER, efer) == -1);
+        TEST_CHECK(gr_rdmsr(&c, GR_EFER) == efer);
+        /* still 64-bit mode after such a WRMSR (a 64-bit immediate in the same block) */
+        pc_set(&c, UC_X86_REG_ECX, GR_EFER);
+        pc_set(&c, UC_X86_REG_RAX, efer & 0xfffffbffull);
+        pc_set(&c, UC_X86_REG_RDX, efer >> 32);
+        TEST_CHECK(pc_run(&c, wr_mov64, sizeof(wr_mov64) - 1) == -1);
+        TEST_CHECK(pc_get(&c, UC_X86_REG_RAX) == 0x1122334455667788ull);
+        TEST_CHECK(gr_api_efer(&c) == efer);
+        /* the MSR API: the same rule */
+        m.value = efer & ~0x400ull;
+        OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+        TEST_CHECK(gr_api_efer(&c) == efer);
+        OK(uc_close(c.uc));
+    }
+
+    /* 32-bit protected mode, paging off (LMA = 0): bit 10 = 1 is accepted, LMA stays 0, NXE of the same write lands */
+    pc_open_mode(&c, UC_MODE_32, UC_CPU_X86_MAX);
+    efer = gr_rdmsr(&c, GR_EFER);
+    TEST_CHECK(!(efer & 0x400));
+    TEST_MSG("32-bit reset IA32_EFER %llx (LMA 0 expected)", (unsigned long long)efer);
+    TEST_CHECK(gr_wrmsr(&c, GR_EFER, efer | 0x400) == -1);
+    TEST_CHECK(gr_rdmsr(&c, GR_EFER) == efer);
+    TEST_CHECK(gr_wrmsr(&c, GR_EFER, efer | 0xc00) == -1);
+    v = gr_rdmsr(&c, GR_EFER);
+    TEST_CHECK(v == (efer | 0x800));
+    TEST_MSG("32-bit WRMSR NXE | LMA: read back %llx, expected %llx", (unsigned long long)v,
+             (unsigned long long)(efer | 0x800));
+    /* LME | LMA with CR0.PG = 0: LME is written (no IA-32e mode without paging), LMA stays 0 */
+    TEST_CHECK(gr_wrmsr(&c, GR_EFER, efer | 0x500) == -1);
+    v = gr_rdmsr(&c, GR_EFER);
+    TEST_CHECK(v == (efer | 0x100));
+    TEST_MSG("32-bit WRMSR LME | LMA, CR0.PG = 0: read back %llx, expected %llx", (unsigned long long)v,
+             (unsigned long long)(efer | 0x100));
+    m.value = efer | 0x400;
+    OK(uc_reg_write(c.uc, UC_X86_REG_MSR, &m));
+    TEST_CHECK(gr_api_efer(&c) == efer);
+    OK(uc_close(c.uc));
+}
+/* ---- end U1820-U1829 (gr_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -47456,4 +47560,5 @@ TEST_LIST = {
     {"test_x86_dg_rmw_w", test_x86_dg_rmw_w},
     {"test_x86_dg_rf_push", test_x86_dg_rf_push},
     {"test_x86_dff_one_db", test_x86_dff_one_db},
+    {"test_x86_gr_efer_lma_write", test_x86_gr_efer_lma_write},
     {NULL, NULL}};
