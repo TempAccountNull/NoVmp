@@ -46956,6 +46956,184 @@ static void test_x86_gr_efer_lma_write(void)
     TEST_CHECK(gr_api_efer(&c) == efer);
     OK(uc_close(c.uc));
 }
+/*
+ * U1822 (plan "CET leftovers 2"): protection keys on shadow-stack accesses. SDM 253668-093 Vol3A 5.6.2 p. 5-36:
+ * "Protection keys apply to shadow-stack accesses just as they do to ordinary data accesses." With CR4.PKE = 1 key i
+ * of a user-mode address: ADi = 1 "no data accesses are permitted"; WDi = 1 "User-mode write accesses are not
+ * permitted" / supervisor-mode writes not if CR0.WP = 1. With CR4.PKS = 1 IA32_PKRS (6E1H) does the same for
+ * supervisor-mode addresses ("If WDi = 1, write accesses are not permitted if CR0.WP = 1"). 5.6.1 pp. 5-33 / 5-34:
+ * supervisor shadow-stack accesses go to supervisor shadow-stack pages, user ones (CPL3, and WRUSS at CPL0) to user
+ * shadow-stack pages, so PKRS rules the first and PKRU the second. Vol3A 5.7.2 p. 5-38: #PF error code PK (bit 5),
+ * SS (bit 6) for a shadow-stack access, U/S (bit 2) for a user-mode access (WRUSS: Vol2D WRUSS "user shadow stack").
+ * CR0.WP is always 1 here (CR4.CET needs it, Vol3A 2.5), so supervisor WD always applies. Layout nv_paging_ss:
+ * 300000H user shadow-stack page, 301000H supervisor one, both given key 5 here (PTE bits 62:59); code, data stack
+ * (201000H) key 0. Expected error codes: supervisor read 61H, supervisor write 63H, user (WRUSS) write 67H, CPL3
+ * read 65H, CPL3 write 67H. Result before the test: the code (excp_helper.c U117 + U479, mmu_idx MMU_SS_KSMAP_IDX /
+ * MMU_SS_USER_IDX through the common protection-key check) already matched - a pinning test (scratch mutation that
+ * exempts shadow-stack accesses from the key check: notes/eread/P18_gate1_rest.md).
+ */
+#define GR_KEY5 (5ULL << 59)
+#define GR_AD5 (1u << 10)
+#define GR_WD5 (1u << 11)
+#define GR_PTE(a) (0x404000 + (((a) - 0x200000) >> 12) * 8)
+
+static void gr_pk_cr4(NvRun *r, uint64_t set, uint64_t clr)
+{
+    nv_set(r, UC_X86_REG_CR4, (nv_get(r, UC_X86_REG_CR4) | set) & ~clr);
+}
+
+static void gr_pkru(NvRun *r, uint32_t v)
+{
+    OK(uc_reg_write(r->uc, UC_X86_REG_PKRU, &v));
+}
+
+/* the run ended in #PF with error code ec at la; SSP unchanged */
+static void gr_ss_pf(NvRun *r, uint32_t ec, uint64_t la, uint64_t ssp, const char *what)
+{
+    TEST_CHECK(r->cap.count == 1 && r->cap.intno == 14);
+    TEST_MSG("%s: %u event(s), vector %u (expected #PF)", what, r->cap.count, r->cap.intno);
+    fx4_pf(r->uc, ec, la, what);
+    TEST_CHECK(nv_get(r, UC_X86_REG_SSP) == ssp);
+    TEST_MSG("%s: SSP %llx (expected unchanged %llx)", what, (unsigned long long)nv_get(r, UC_X86_REG_SSP),
+             (unsigned long long)ssp);
+}
+
+/* RET whose shadow-stack entry at SSP is prepared in memory (RSP 201800H): lea rax, [rip + 2]; push rax; ret; nop */
+static void gr_ss_ret(NvRun *r)
+{
+    nv_set(r, UC_X86_REG_RSP, 0x201800);
+    nv_st64(r, nv_get(r, UC_X86_REG_SSP), r->next + 9);
+    OK(nv_run(r, "\x48\x8d\x05\x02\x00\x00\x00\x50\xc3\x90"));
+}
+
+static void test_x86_gr_pk_shadow_stack(void)
+{
+    static const char incssp[] = "\xf3\x48\x0f\xae\xe8";             /* incsspq rax (RAX = 1) */
+    static const char wrss[] = "\x48\x0f\x38\xf6\x02";               /* wrssq [rdx], rax */
+    static const char wruss[] = "\x66\x48\x0f\x38\xf5\x02";          /* wrussq [rdx], rax */
+    static const char callret[] = "\xe8\x02\x00\x00\x00\xeb\x01\xc3"; /* call +2; jmp +1; ret */
+    NvRun r;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    nv_st64(&r, GR_PTE(0x300000), 0x300000 | 0x45 | GR_KEY5);
+    nv_st64(&r, GR_PTE(0x301000), 0x301000 | 0x41 | GR_KEY5);
+    gr_pk_cr4(&r, (1u << 22) | (1u << 24), 0);                       /* CR4.PKE, CR4.PKS */
+    TEST_CHECK((nv_get(&r, UC_X86_REG_CR4) & 0x1400000) == 0x1400000);
+    nv_wrmsr(&r, 0x6a2, 3);                                         /* IA32_S_CET: SH_STK_EN | WR_SHSTK_EN */
+
+    /* --- supervisor shadow-stack accesses (CPL0, page 301000H): IA32_PKRS */
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    OK(nv_run(&r, incssp));                                         /* PKRS = 0: read allowed */
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301808);
+    nv_wrmsr(&r, 0x6e1, GR_AD5);
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    OK(nv_run(&r, incssp));
+    gr_ss_pf(&r, 0x61, 0x301800, 0x301800, "INCSSP, supervisor shadow stack, PKRS AD5");
+    gr_ss_ret(&r);
+    gr_ss_pf(&r, 0x61, 0x301800, 0x301800, "RET (shadow-stack pop), PKRS AD5");
+    nv_set(&r, UC_X86_REG_RDX, 0x301800);
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ull);
+    OK(nv_run(&r, wrss));
+    gr_ss_pf(&r, 0x63, 0x301800, 0x301800, "WRSS, supervisor shadow stack, PKRS AD5");
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_SSP, 0x301ff8);
+    OK(nv_run(&r, callret));
+    gr_ss_pf(&r, 0x63, 0x301ff0, 0x301ff8, "CALL (shadow-stack push), PKRS AD5");
+    TEST_CHECK(nv_get(&r, UC_X86_REG_RSP) == 0x201800);
+    /* WD5: reads allowed, writes (WRSS, the CALL push) #PF 63H (CR0.WP = 1) */
+    nv_wrmsr(&r, 0x6e1, GR_WD5);
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    OK(nv_run(&r, incssp));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301808);
+    TEST_MSG("INCSSP with PKRS WD5: %u event(s), SSP %llx", r.cap.count, (unsigned long long)nv_get(&r, UC_X86_REG_SSP));
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);
+    gr_ss_ret(&r);
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301808);
+    TEST_MSG("RET with PKRS WD5: %u event(s), SSP %llx", r.cap.count, (unsigned long long)nv_get(&r, UC_X86_REG_SSP));
+    nv_set(&r, UC_X86_REG_RAX, 0x1122334455667788ull);
+    OK(nv_run(&r, wrss));
+    gr_ss_pf(&r, 0x63, 0x301800, 0x301808, "WRSS, supervisor shadow stack, PKRS WD5");
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_SSP, 0x301ff8);
+    OK(nv_run(&r, callret));
+    gr_ss_pf(&r, 0x63, 0x301ff0, 0x301ff8, "CALL (shadow-stack push), PKRS WD5");
+    /* PKRU does not govern supervisor-mode addresses; CR4.PKS = 0 turns PKRS off */
+    nv_wrmsr(&r, 0x6e1, 0);
+    gr_pkru(&r, GR_AD5 | GR_WD5);
+    OK(nv_run(&r, wrss));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301800) == 0x1122334455667788ull);
+    TEST_MSG("WRSS with PKRU AD5 | WD5, PKRS 0: %u event(s)", r.cap.count);
+    nv_set(&r, UC_X86_REG_RSP, 0x201800);
+    nv_set(&r, UC_X86_REG_SSP, 0x301ff8);
+    OK(nv_run(&r, callret));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x301ff8);
+    gr_pkru(&r, 0);
+    nv_wrmsr(&r, 0x6e1, GR_AD5 | GR_WD5);
+    gr_pk_cr4(&r, 0, 1u << 24);
+    nv_set(&r, UC_X86_REG_RAX, 0x5566778811223344ull);
+    OK(nv_run(&r, wrss));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x301800) == 0x5566778811223344ull);
+    TEST_MSG("WRSS with PKRS AD5 | WD5, CR4.PKS = 0: %u event(s)", r.cap.count);
+    gr_pk_cr4(&r, 1u << 24, 0);
+    OK(nv_run(&r, wrss));                                           /* PKS again: the TLB entry must not survive */
+    gr_ss_pf(&r, 0x63, 0x301800, nv_get(&r, UC_X86_REG_SSP), "WRSS, PKRS AD5 | WD5 after CR4.PKS is set again");
+
+    /* --- user shadow-stack accesses at CPL0 (WRUSS, page 300000H): PKRU */
+    nv_wrmsr(&r, 0x6e1, 0);
+    nv_set(&r, UC_X86_REG_RDX, 0x300808);
+    nv_set(&r, UC_X86_REG_RAX, 0x0102030405060708ull);
+    gr_pkru(&r, GR_WD5);
+    OK(nv_run(&r, wruss));
+    gr_ss_pf(&r, 0x67, 0x300808, nv_get(&r, UC_X86_REG_SSP), "WRUSS, user shadow stack, PKRU WD5");
+    gr_pkru(&r, GR_AD5);
+    OK(nv_run(&r, wruss));
+    gr_ss_pf(&r, 0x67, 0x300808, nv_get(&r, UC_X86_REG_SSP), "WRUSS, user shadow stack, PKRU AD5");
+    gr_pkru(&r, 0);
+    nv_wrmsr(&r, 0x6e1, GR_AD5 | GR_WD5);                           /* PKRS does not govern user-mode addresses */
+    OK(nv_run(&r, wruss));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300808) == 0x0102030405060708ull);
+    TEST_MSG("WRUSS with PKRS AD5 | WD5, PKRU 0: %u event(s)", r.cap.count);
+    nv_wrmsr(&r, 0x6e1, 0);
+    gr_pkru(&r, GR_AD5 | GR_WD5);
+    gr_pk_cr4(&r, 0, 1u << 22);                                     /* CR4.PKE = 0: PKRU off */
+    nv_set(&r, UC_X86_REG_RAX, 0x1112131415161718ull);
+    OK(nv_run(&r, wruss));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300808) == 0x1112131415161718ull);
+    TEST_MSG("WRUSS with PKRU AD5 | WD5, CR4.PKE = 0: %u event(s)", r.cap.count);
+    gr_pk_cr4(&r, 1u << 22, 0);
+    OK(nv_run(&r, wruss));
+    gr_ss_pf(&r, 0x67, 0x300808, nv_get(&r, UC_X86_REG_SSP), "WRUSS, PKRU AD5 | WD5 after CR4.PKE is set again");
+
+    /* --- CPL3 user shadow-stack accesses (IA32_U_CET.SH_STK_EN, SSP := IA32_PL3_SSP = 300800H) */
+    gr_pkru(&r, 0);
+    nv_wrmsr(&r, 0x6a0, 1);
+    nv_wrmsr(&r, 0x6a7, 0x300800);
+    nv_set(&r, UC_X86_REG_SSP, 0x301800);                           /* the stub's IRETQ: supervisor token, PKRS 0 */
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    gr_pkru(&r, GR_AD5);
+    OK(nv_run3(&r, incssp));
+    TEST_CHECK(nv_cpl(&r) == 3);
+    gr_ss_pf(&r, 0x65, 0x300800, 0x300800, "CPL3 INCSSP, user shadow stack, PKRU AD5");
+    gr_pkru(&r, GR_WD5);
+    nv_set(&r, UC_X86_REG_RAX, 1);
+    OK(nv_run3(&r, incssp));                                        /* read allowed */
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x300808);
+    TEST_MSG("CPL3 INCSSP with PKRU WD5: %u event(s), SSP %llx", r.cap.count,
+             (unsigned long long)nv_get(&r, UC_X86_REG_SSP));
+    OK(nv_run3(&r, callret));
+    gr_ss_pf(&r, 0x67, 0x300800, 0x300808, "CPL3 CALL (shadow-stack push), PKRU WD5");
+    TEST_CHECK(nv_cpl(&r) == 3);
+    nv_wrmsr(&r, 0x6e1, GR_AD5 | GR_WD5);                           /* PKRS does not govern user-mode addresses */
+    gr_pkru(&r, 0);
+    OK(nv_run3(&r, callret));
+    TEST_CHECK(r.cap.count == 0 && nv_get(&r, UC_X86_REG_SSP) == 0x300808);
+    TEST_MSG("CPL3 CALL / RET with PKRS AD5 | WD5, PKRU 0: %u event(s), SSP %llx", r.cap.count,
+             (unsigned long long)nv_get(&r, UC_X86_REG_SSP));
+    OK(uc_close(r.uc));
+}
 /* ---- end U1820-U1829 (gr_) ---- */
 
 TEST_LIST = {
@@ -47561,4 +47739,5 @@ TEST_LIST = {
     {"test_x86_dg_rf_push", test_x86_dg_rf_push},
     {"test_x86_dff_one_db", test_x86_dff_one_db},
     {"test_x86_gr_efer_lma_write", test_x86_gr_efer_lma_write},
+    {"test_x86_gr_pk_shadow_stack", test_x86_gr_pk_shadow_stack},
     {NULL, NULL}};
