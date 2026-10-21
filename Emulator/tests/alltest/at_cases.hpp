@@ -108,8 +108,10 @@
 // any hardware case - e.g. a legacy instruction on the i5-13600K against its REX2 encoding
 // (".byte 0xd5, ...") on Unicorn with --apx (Emulator\data\cases_apx_core_hw.txt).
 // Tags (U530, hardware cases only), a trailing comment on the case line:
-//   # known deviation: NAME   the i5-13600K deviates from the SDM here and the emulator implements
-//                             the SDM; NAME is the docs\quirks.md entry
+//   # known deviation: NAME   a documented difference, NAME being the docs\quirks.md entry: the
+//                             i5-13600K deviates from the SDM here and the emulator implements the
+//                             SDM, or a VMware-guest artifact (not a CPU deviation: "PTWRITE / HRESET
+//                             hidden by the guest CPUID", U1476 / U1700 / U1710)
 //   # host state: REASON      the host's state differs from the emulator's (RDRAND values, APIC ID,
 //                             CET shadow stacks the host OS leaves off, ...), not an SDM question
 // A tagged case that differs is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as

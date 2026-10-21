@@ -136,7 +136,7 @@ Use it for cases whose hardware result differs between runs: an outcome that fol
 
 ## Quirks
 
-`--quirks` and the UC_CTL_X86_HW_QUIRKS control are being removed (plan 1.G, pure SDM). Hardware cases where the i5-13600K deviates from the SDM are tagged `# known deviation: <name>` (documented in `docs\quirks.md`); host-state differences (RDRAND values, APIC ID, …) are tagged `# host state: <reason>`. Both are counted separately so every file reports 0 unexplained differences.
+`--quirks` and the UC_CTL_X86_HW_QUIRKS control are being removed (plan 1.G, pure SDM). Hardware cases where the i5-13600K deviates from the SDM are tagged `# known deviation: <name>` (documented in `docs\quirks.md`; the same tag marks the VMware-guest artifacts "PTWRITE hidden by the guest CPUID" and "HRESET hidden by the guest CPUID", which are not CPU deviations: the guest CPUID hides features the physical processor enumerates); host-state differences (RDRAND values, APIC ID, …) are tagged `# host state: <reason>`. Both are counted separately so every file reports 0 unexplained differences.
 
 ## Paired hardware cases (U614)
 

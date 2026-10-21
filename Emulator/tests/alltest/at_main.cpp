@@ -161,7 +161,8 @@ namespace at
 	}
 
 	// U530: Emulator\data\alltest_known_deviations.tsv, "<form text>\t<docs/quirks.md name>" per line
-	// ('#' comments): forms where the i5-13600K deviates from the SDM the emulator implements. Such a
+	// ('#' comments): forms where the i5-13600K deviates from the SDM the emulator implements, and the
+	// VMware-guest artifact "PTWRITE hidden by the guest CPUID" (not a CPU deviation, U1710). Such a
 	// form that differs (or that only Unicorn #UDs) lands in KNOWN_DEV, one that matches in
 	// KNOWN_DEV_NOT_OBSERVED (a stale entry, or random inputs that never reached the deviation).
 	static std::map<std::string, std::string> load_known_deviations( const std::string& path )

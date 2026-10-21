@@ -21,7 +21,7 @@
 # skip it as a comment). Signature 000B0671 (06-B7-01, leaf 01H EAX below = the bare-host capture
 # capture\host\output\<bare-host>_20261010_133354, cpuid_capture 1.6, 2026-10-10T18:33:54Z). Platform ID 1:
 # IA32_PLATFORM_ID (17H) EDX = 00040000H -> bits 52:50 = 001b, CPU-Z 3.01 host report E:\CPU Info\cpuz-host\CPU-info.txt
-# ("MSR 0x00000017 0x00040000 0x00000000", "Package (platform ID) ... (0x1)"); flag 1 << 1 = 02H (SDM Vol3A 12.11.4).
+# ("MSR 0x00000017 0x00040000 0x00000000", "Package (platform ID) ... (0x1)"); flag 1 << 1 = 02H (SDM 253668-093 Vol3A 12.11.4 "Platform Identification", p. 12-32; Example 12-6, p. 12-33; U1810).
 # Revision 129H (user decision 2026-10-14: reproducibility): the revision MEASURED on the host whose results are the
 # hardware-validation baseline - bare-host capture _system.txt "Update Revision ... 0x129" on all 20 processors (BIOS
 # H.D0 2024-08-12), CPU-Z 3.01 "Microcode Revision 0x129". Published for 06-b7-01/32 in microcode-20240910

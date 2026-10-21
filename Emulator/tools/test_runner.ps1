@@ -138,7 +138,8 @@ Add-Suite 'emu-alltest-quick' 'sweep hw' 'exit' 'emu-alltest' @()
 # plan 1.15a: expected-value ("SDM vector") cases - Unicorn only, compared to hand-derived SDM results;
 # any difference or unparsable line fails. The deliberately wrong file must be caught (7 of 7, exit 1; U772: + a wrong error code).
 # U539: the emulator implements the Intel SDM only (no quirk switch). Hardware files tag the cases
-# where the i5-13600K deviates from the SDM ("# known deviation: NAME", docs\quirks.md).
+# where the i5-13600K deviates from the SDM ("# known deviation: NAME", docs\quirks.md); the same tag
+# marks the VMware-guest artifacts PTWRITE / HRESET "hidden by the guest CPUID" (not CPU deviations).
 Add-Exp 'expect_selftest' 'expect_selftest' 'selftest expect'
 Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' @( '--cases', ( CaseFile 'expect_selftest_bad' ), '--expect-only' )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
@@ -258,7 +259,8 @@ Add-Hw 'cases_f16c' 'hw sse'
 # "# known deviation: DPPD two NaN products" (docs\quirks.md), all others must match.
 Add-Hw 'cases_dp_nan' 'hw sse nan quirks'
 # ledger U434/U539: one or more hardware cases per documented i5-13600K deviation from the SDM
-# (cases_quirks.txt, docs\quirks.md): every case is tagged "# known deviation: NAME".
+# (cases_quirks.txt, docs\quirks.md): every case is tagged "# known deviation: NAME" (the two PTWRITE
+# cases: the VMware-guest artifact "PTWRITE hidden by the guest CPUID", not a CPU deviation).
 Add-Hw 'cases_quirks' 'hw quirks x87' -Exclusive
 # ledger U861: x87 compares / FTST / FXAM with unmasked #IS / #D / #IA (gen_cases_x87_cmp.py): TOP, tags,
 # C1 and the condition codes / ZF PF CF on the host CPU; the unmasked-#IA condition codes are the documented

@@ -1,6 +1,6 @@
 # Documented i5-13600K deviations from the Intel SDM (docs\quirks.md; ledger U98/U99, U430-U432,
 # U434, U531-U539): one or more hardware cases per deviation, every case one where the SDM and the
-# i5-13600K differ. The emulator implements the SDM only, so every case is tagged
+# i5-13600K differ (except the two PTWRITE cases: a VMware-guest artifact, not a CPU deviation, U1710). The emulator implements the SDM only, so every case is tagged
 # "# known deviation: NAME" and counted under that name, never as differing. Hand-written; only
 # these self-generated snippets run natively:
 #   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
