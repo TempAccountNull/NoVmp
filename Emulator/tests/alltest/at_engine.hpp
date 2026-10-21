@@ -37,6 +37,7 @@ namespace at
 	// taken in compatibility mode. Unicorn-only page, never compared.
 	constexpr uint64_t SYS_PAGE = 0x30040000, SYS_SIZE = 0x1000;
 	constexpr uint64_t SYS_GDT = SYS_PAGE, SYS_STUB = SYS_PAGE + 0x800, SYS_GATE = SYS_PAGE + 0x900;
+	constexpr uint64_t SYS_CET = SYS_PAGE + 0xA00;   // U1842: the CPL0 MOV-to-CR4 stub of the cr4.cet=1 option (load())
 	constexpr uint16_t SEL_CODE32_R3 = 0x23, SEL_DATA_R3 = 0x2B, SEL_CODE64_R3 = 0x33;
 	// U850: branch layout (sweep forms that transfer control, program::ctl). The CODE region is filled
 	// with HLT (F4h) in both engines: CPL3 HLT is #GP(0) with RIP = its own address (fault-like), so a
@@ -831,23 +832,44 @@ namespace at
 			// no shadow stack, no IBT), so only the CR4.CET checks of the instructions see the difference.
 			if ( cr4_cet )
 			{
-				uint64_t c0 = 0, c4 = 0;
-				if ( uc_reg_read( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK || uc_reg_read( uc_, UC_X86_REG_CR4, &c4 ) != UC_ERR_OK )
+				if ( !cpl3 )   // U1842: the stub below lives in the cpl=3 system page
 				{
-					err = "cr4.cet=1: uc_reg_read CR0/CR4 failed";
+					err = "cr4.cet=1 needs cpl=3";
+					return false;
+				}
+				uint64_t c0 = 0;
+				if ( uc_reg_read( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK )
+				{
+					err = "cr4.cet=1: uc_reg_read CR0 failed";
 					return false;
 				}
 				c0 |= CR0_WP;
-				c4 |= CR4_CET;
-				if ( uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK || uc_reg_write( uc_, UC_X86_REG_CR4, &c4 ) != UC_ERR_OK )
+				if ( uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK )
 				{
-					err = "cr4.cet=1: uc_reg_write CR0/CR4 failed";
+					err = "cr4.cet=1: uc_reg_write CR0 failed";
+					return false;
+				}
+				// U1842 (plan 1.F.13.b B): CR4.CET is set by the engine itself, MOV to CR4 at CPL0 before the case (no hooks yet;
+				// the case's registers are loaded later by the thunk): its helper refuses a reserved bit with #GP(0) - CET without
+				// CPUID CET_SS / CET_IBT, or hidden by a strict profile (U1680) - and requires CR0.WP (U114), then
+				// cpu_x86_update_cr4 stores the CR4 the engine uses. The read-back below therefore checks the effective bit.
+				// Before, uc_reg_write(CR4) was used: a raw register write that stores the value as given after
+				// cpu_x86_update_cr4 has dropped the unsupported bits (unicorn.c write_cr64; U1681 keeps that API behaviour),
+				// so the read-back always saw CET = 1 and could never fail (G24 gap B).
+				const uint8_t set_cet[] = { 0x0F, 0x20, 0xE0,               // mov rax, cr4
+											0x48, 0x0F, 0xBA, 0xE8, 0x17,   // bts rax, 23 (CR4.CET)
+											0x0F, 0x22, 0xE0 };             // mov cr4, rax
+				uc_mem_write( uc_, SYS_CET, set_cet, sizeof( set_cet ) );
+				const uc_err se = uc_emu_start( uc_, SYS_CET, SYS_CET + sizeof( set_cet ), 0, 0 );
+				if ( se != UC_ERR_OK )
+				{
+					err = std::string( "cr4.cet=1: MOV to CR4 failed in the engine (" ) + uc_strerror( se ) + "): CR4.CET cannot be set (CPU model / CPUID profile without CET_SS and CET_IBT?)";
 					return false;
 				}
 				uint64_t back = 0;
 				if ( uc_reg_read( uc_, UC_X86_REG_CR4, &back ) != UC_ERR_OK || !( back & CR4_CET ) )
 				{
-					err = "cr4.cet=1: CR4.CET did not stay set (CPU model / profile without CET?)";
+					err = "cr4.cet=1: CR4.CET did not stay set after MOV to CR4 (CPU model / profile without CET?)";
 					return false;
 				}
 			}

@@ -36,6 +36,8 @@
 //                          state Windows runs the host process with (WRUSS at CPL3 is #GP(0) natively, in the VMware
 //                          guest and on the bare host; with CR4.CET = 0 the SDM gives #UD). The native side is never
 //                          changed. Default (and cr4.cet=0): Unicorn's CR4 without CET. Emulator\data\cases_tsx_cet.txt.
+//                          U1842: CR4.CET is set by MOV to CR4 inside the engine (CPL0, before the case) and read
+//                          back, so a CPU model / strict profile without CET makes the line a harness error.
 //   dr0..dr3=V dr6=V dr7=V (inputs; U1740) the debug registers for the snippet, both engines. V: a C literal,
 //                          s+OFF (the snippet's first byte + OFF) or m+OFF (MEM + OFF; [rsi] = m+0x8000). Native:
 //                          the thunk runs on a fresh thread of our own whose DR0-DR3 / DR6 / DR7 are set with
