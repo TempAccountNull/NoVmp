@@ -135,6 +135,11 @@ foreach ( $s in $Suites ) { if ( $s.Id -like 'emu-uc72-risk*' ) { $s.Parent = 'e
 # UC_CPU_X86_MAX). Differences are the Phase 4/5 work list, reported in build\x64\Release\tests\alltest;
 # only harness errors fail. Full run: emu-alltest --full (baseline in Emulator\data\alltest_baseline).
 Add-Suite 'emu-alltest-quick' 'sweep hw' 'exit' 'emu-alltest' @()
+# U1813: the report's "Known deviations:" line uses neutral wording (the hardware result differs from the SDM-modelled
+# emulator result, documented in docs\quirks.md; the list also holds the VMware-guest PTWRITE artifact). Checked in the
+# quick run's report (so it starts after emu-alltest-quick) and in the stored --full baseline report.
+Add-Suite 'alltest_report_wording' 'sweep tools' 'py' ( Join-Path $Root 'Emulator\tools\check_alltest_report_wording.py' ) @( ( Join-Path $T 'alltest\alltest_report.md' ), ( Join-Path $D 'alltest_baseline\alltest_report.md' ) )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName After -NotePropertyValue 'emu-alltest-quick'
 # plan 1.15a: expected-value ("SDM vector") cases - Unicorn only, compared to hand-derived SDM results;
 # any difference or unparsable line fails. The deliberately wrong file must be caught (7 of 7, exit 1; U772: + a wrong error code).
 # U539: the emulator implements the Intel SDM only (no quirk switch). Hardware files tag the cases

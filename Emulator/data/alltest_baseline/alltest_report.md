@@ -21,7 +21,7 @@ Universe: **13504 forms** decoded by Capstone (evex 9950, legacy 1976, vex 1441,
 | known deviation (docs/quirks.md) | 6 |
 | known deviation not observed (matches) | 0 |
 
-Known deviations: 6 forms listed in `Emulator\data\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).
+Known deviations: 6 forms listed in `Emulator\data\alltest_known_deviations.tsv` (hardware result differs from the SDM-modelled emulator result, documented in docs/quirks.md).
 
 ## Per ISA group (Capstone groups)
 

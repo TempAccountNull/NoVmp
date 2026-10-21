@@ -820,7 +820,7 @@ int main( int argc, char** argv )
 	for ( auto& [ k, v ] : per_cls ) md << k << " " << v << ", ";
 	md << "). Run: **" << rows.size() << " forms** in " << int( run_s ) << " s.\n\n## Buckets\n\n| bucket | forms |\n|---|---|\n";
 	for ( int b = 0; b < BUCKET_COUNT; ++b ) md << "| " << k_bucket_name[ b ] << " | " << count[ b ] << " |\n";
-	md << "\nKnown deviations: " << known_dev.size() << " forms listed in `Emulator\\data\\alltest_known_deviations.tsv` (docs/quirks.md: the i5-13600K deviates from the SDM, the emulator implements the SDM).\n";
+	md << "\nKnown deviations: " << known_dev.size() << " forms listed in `Emulator\\data\\alltest_known_deviations.tsv` (hardware result differs from the SDM-modelled emulator result, documented in docs/quirks.md).\n";
 	md << "\n## Per ISA group (Capstone groups)\n\n| group | match | differs | unicorn #UD | host lacks + uc #UD | invalid enc., #UD both | host lacks, uc runs | not native, uc runs | not native, uc #UD | privileged | error | known deviation | known dev. not observed |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
 	for ( auto& [ g, c ] : per_group )
 	{
