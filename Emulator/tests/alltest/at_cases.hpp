@@ -38,6 +38,8 @@
 //                          changed. Default (and cr4.cet=0): Unicorn's CR4 without CET. Emulator\data\cases_tsx_cet.txt.
 //                          U1842: CR4.CET is set by MOV to CR4 inside the engine (CPL0, before the case) and read
 //                          back, so a CPU model / strict profile without CET makes the line a harness error.
+//                          U1845: only with cpl=3 (else a harness error): without paging the harness has no
+//                          shadow-stack pages, so a CPL0 shadow-stack access (WRUSS) cannot fault as the SDM says.
 //   dr0..dr3=V dr6=V dr7=V (inputs; U1740) the debug registers for the snippet, both engines. V: a C literal,
 //                          s+OFF (the snippet's first byte + OFF) or m+OFF (MEM + OFF; [rsi] = m+0x8000). Native:
 //                          the thunk runs on a fresh thread of our own whose DR0-DR3 / DR6 / DR7 are set with
@@ -1326,6 +1328,20 @@ namespace at
 			{
 				std::printf( "[%d] %s\n    bad assignment: dbcount / dr6mask need debug-register tokens (dr0..dr3, dr6, dr7)\n", n, line.c_str() );
 				harness_error( expect, "bad assignment" );   // U1840
+				continue;
+			}
+			// U1845 (plan 1.F.13.b C): cr4.cet=1 only together with cpl=3. The harness has no paging (Unicorn's flat 64-bit
+			// mode, CR0.PG = 0), so there are no shadow-stack pages: a shadow-stack address needs R/W = 0 and D = 1 in the
+			// paging-structure entry that maps the page (SDM 253668-093 Vol3A 5.6 p. 5-34), and "Shadow stacks are active only
+			// in protected mode with paging enabled" (253665-093 Vol1 6.3 p. 6-4). At CPL0 WRUSS would store where the CPU
+			// raises #PF ("If destination is not a user shadow stack.", 334569-093 Vol2D WRUSSD/WRUSSQ p. 6-20; with paging the
+			// emulator does: unit test test_x86_fb_wruss_ordinary_page, U1844). At CPL3 with IA32_U_CET = IA32_S_CET = 0 (the
+			// cr4.cet=1 state) WRUSS is #GP(0) before its store and no other instruction makes a shadow-stack access.
+			if ( cr4cet && !cpl3 )
+			{
+				std::printf( "[%d] %s\n    bad assignment: cr4.cet=1 needs cpl=3 (no paging in the harness, so no shadow-stack pages for a CPL0 shadow-stack access)\n", n,
+							 line.c_str() );
+				harness_error( expect, "cr4.cet=1 without cpl=3" );
 				continue;
 			}
 			if ( ext && !expect )

@@ -47389,6 +47389,68 @@ static void test_x86_gr_int_n_cpl3(void)
 }
 /* ---- end U1820-U1829 (gr_) ---- */
 
+/*
+ * ---- NoVmp U1844 (plan 1.F.13.b C, fb_): legacy WRUSSD / WRUSSQ (66 [REX.W] 0F 38 F5) at CPL0, CR4.CET = 1, 4-level
+ * paging (nv_paging_ss: 300000h user shadow-stack page, 301000h supervisor shadow-stack page, 302000h an ordinary
+ * writable user page). Expected values from the SDM text only:
+ *   334569-093 Vol2D WRUSSD/WRUSSQ p. 6-19 Operation: "Shadow_stack_store 8 bytes of SRC to DEST_LA as user-mode access";
+ *     p. 6-20 64-Bit Mode Exceptions: #PF(fault-code) "If destination is not a user shadow stack." IA32_U_CET / IA32_S_CET
+ *     are not checked (0 here).
+ *   253668-093 Vol3A 5.6 p. 5-33: WRUSS's shadow-stack accesses are user accesses; p. 5-34: a shadow-stack address has
+ *     R/W = 0 and D = 1 in the paging-structure entry that maps the page (R/W = 1 in the others); p. 5-35: user-mode
+ *     shadow-stack accesses only to user-mode shadow-stack addresses.
+ *   #PF error code (Vol3A 5.7 p. 5-37): P 1 (protection), W/R 1, U/S 1 (a user access), SS (bit 6) 1 = 47H; CR2 = the
+ *     operand; nothing stored.
+ * The ordinary page is tested writable AND dirty (R/W = 1, D = 1: only the R/W rule excludes it) and writable, not dirty.
+ * Without paging (the emu-alltest harness: Unicorn's flat 64-bit mode, CR0.PG = 0) there are no shadow-stack pages, so
+ * emu-alltest refuses cr4.cet=1 without cpl=3 (U1845).
+ */
+#define FB_PT_302 (0x404000 + ((0x302000 - 0x200000) >> 12) * 8)   /* nv_paging_ss's PTE of 302000h */
+
+static void test_x86_fb_wruss_ordinary_page(void)
+{
+    NvRun r;
+    uint64_t cr3;
+
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    nv_paging_ss(&r);
+    nv_st64(&r, FB_PT_302, 0x302000 | 0x47);      /* P, R/W, U/S, D: an ordinary, written-to user page */
+    nv_st64(&r, 0x302800, 0x0123456789abcdefull);
+    nv_set(&r, UC_X86_REG_RAX, 0x8877665544332211ull);
+
+    /* WRUSSQ / WRUSSD to the ordinary page: #PF(47H), CR2 = the operand, the page unchanged */
+    nv_set(&r, UC_X86_REG_RDX, 0x302800);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));      /* wrussq [rdx], rax */
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    fx4_pf(r.uc, 0x47, 0x302800, "wrussq (CPL0) to an ordinary writable dirty user page");
+    TEST_CHECK(nv_ld64(&r, 0x302800) == 0x0123456789abcdefull);
+    nv_set(&r, UC_X86_REG_RDX, 0x302808);
+    OK(nv_run(&r, "\x66\x0f\x38\xf5\x02"));          /* wrussd [rdx], eax */
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    fx4_pf(r.uc, 0x47, 0x302808, "wrussd (CPL0) to an ordinary writable dirty user page");
+    TEST_CHECK(nv_ld64(&r, 0x302808) == 0);
+
+    /* the same page writable but not dirty (CR3 written again: no stale translation) */
+    nv_st64(&r, FB_PT_302, 0x302000 | 0x07);
+    OK(uc_reg_read(r.uc, UC_X86_REG_CR3, &cr3));
+    OK(uc_reg_write(r.uc, UC_X86_REG_CR3, &cr3));
+    nv_set(&r, UC_X86_REG_RDX, 0x302800);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 1 && r.cap.intno == 14);
+    fx4_pf(r.uc, 0x47, 0x302800, "wrussq (CPL0) to an ordinary writable clean user page");
+    TEST_CHECK(nv_ld64(&r, 0x302800) == 0x0123456789abcdefull);
+
+    /* control: the user shadow-stack page stores (8 and 4 bytes) */
+    nv_set(&r, UC_X86_REG_RDX, 0x300800);
+    OK(nv_run(&r, "\x66\x48\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300800) == 0x8877665544332211ull);
+    nv_set(&r, UC_X86_REG_RAX, 0xaabbccdd);
+    OK(nv_run(&r, "\x66\x0f\x38\xf5\x02"));
+    TEST_CHECK(r.cap.count == 0 && nv_ld64(&r, 0x300800) == 0x88776655aabbccddull);
+    OK(uc_close(r.uc));
+}
+/* ---- end U1844 (fb_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -47994,4 +48056,5 @@ TEST_LIST = {
     {"test_x86_gr_efer_lma_write", test_x86_gr_efer_lma_write},
     {"test_x86_gr_pk_shadow_stack", test_x86_gr_pk_shadow_stack},
     {"test_x86_gr_int_n_cpl3", test_x86_gr_int_n_cpl3},
+    {"test_x86_fb_wruss_ordinary_page", test_x86_fb_wruss_ordinary_page},
     {NULL, NULL}};

@@ -1,27 +1,31 @@
-# harness_selftest_bad.txt (ledger U1840 / U1841, plan 1.F.13.b): every case line below is broken on purpose. emu-alltest must
-# report each one as a harness error ("ERROR: harness error (...)"), count none of them in "cases: N" ("cases: 0"), name
-# all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...") and exit with status 1; test.cmd's
-# suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself) passes only then. Before U1840 the hardware
-# lines among them were dropped silently (not counted, exit 0 for a file of hardware lines only), so a broken line in a
-# hardware file could never fail test.cmd. None of these lines reaches the native engine (each is refused while it is
-# parsed, assembled or loaded) and none runs on Unicorn.
+# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845; plan 1.F.13.b): every case line below is broken on
+# purpose. emu-alltest must report each one as a harness error ("ERROR: harness error (...)"), count none of them in
+# "cases: N" ("cases: 0"), name all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...")
+# and exit with status 1; test.cmd's suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself)
+# passes only then. Before U1840 the hardware lines among them were dropped silently (not counted, exit 0 for a file
+# of hardware lines only), so a broken line in a hardware file could never fail test.cmd. None of these lines reaches
+# the native engine (each is refused while it is parsed, assembled or loaded) and none runs on Unicorn.
 # 1: hardware case, unknown input key
 nop | rax=1 bogus=1
 # 2: hardware case, a cr4.cet value that is not 0 or 1 (the G24 re-check's token)
 nop | cr4.cet=2
-# 3: hardware case, a register only expected-value cases have
+# 3: hardware case, cr4.cet=1 without cpl=3 (U1845: the harness has no paging, so no shadow-stack pages)
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 cr4.cet=1
+# 4: expected-value case, the same (U1845; the SDM gives #PF there: [rsi] is not a user shadow-stack page, unit test U1844)
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 cr4.cet=1 => #PF
+# 5: hardware case, a register only expected-value cases have
 vaddps zmm0, zmm1, zmm2 | zmm1=00
-# 4: hardware case, text Keystone cannot assemble
+# 6: hardware case, text Keystone cannot assemble
 not_an_instruction rax
-# 5: hardware pair, the Unicorn side does not assemble
+# 7: hardware pair, the Unicorn side does not assemble
 nop ~~ not_an_instruction_either rax
-# 6: hardware case, a tag without a name
+# 8: hardware case, a tag without a name
 nop # known deviation:
-# 7: expected-value case, a bad expectation value
+# 9: expected-value case, a bad expectation value
 nop | rax=1 => rax=zz
-# 8: hardware case, dbcount without a debug-register token
+# 10: hardware case, dbcount without a debug-register token
 nop | dbcount
-# 9: hardware case, an enabled breakpoint outside the snippet and MEM (not run natively)
+# 11: hardware case, an enabled breakpoint outside the snippet and MEM (not run natively)
 nop | dr0=0x1000 dr7=0x1
-# 10: expected-value case, a "~~" pair
+# 12: expected-value case, a "~~" pair
 nop ~~ nop => rax=0
