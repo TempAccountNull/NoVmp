@@ -1,7 +1,7 @@
 # TSX / WAITPKG / ENQCMD / CET / PCONFIG / SGX / SMX (plan 1.15c part 4, ledger U110-U119).
 # Hardware compare (self-generated snippets only):
 #   emu-alltest --cases Emulator\data\cases_tsx_cet.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
-# The host runs these at CPL3 (Windows user mode), raw Unicorn at CPL0. Under the i5-13600K profile
+# The host runs these at CPL3 (Windows user mode), raw Unicorn at CPL0 (cpl=3 lines: CPL3, U1831). Under the i5-13600K profile
 # RTM/HLE/TSXLDTRK/WAITPKG/ENQCMD/PCONFIG/SGX/SMX are not reported and CET_SS is reported, but
 # shadow stacks are not enabled for the process (host CR4.CET = 1, Unicorn CR4.CET = 0).
 #
@@ -28,6 +28,17 @@
 # are 0 for this process (INCSSP etc. #UD, RDSSP NOP, SETSSBSY/CLRSSBSY #UD before the CPL check).
 .byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 # host state: WRUSS under host CR4.CET = 1
 .byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x11223344 # host state: WRUSS under host CR4.CET = 1
+# U1831 (plan 1.F.13 d): the same WRUSS at CPL3 on both engines. "cpl=3 cr4.cet=1" gives Unicorn the CET state Windows
+# runs this process with: CPL3, CR4.CET = 1 (+ CR0.WP), IA32_U_CET = 0 (U1830). SDM 334569-093 Vol2D WRUSSD/WRUSSQ,
+# Operation p. 6-19: "IF CR4.CET = 0 THEN #UD; FI; IF CPL > 0 THEN #GP(0); FI;"; 64-Bit Mode Exceptions p. 6-20:
+# #UD "If the LOCK prefix is used." / "If CR4.CET = 0.", #GP(0) "If CPL is not 0."; encoding "!(11)" (register form #UD).
+# Expected on both environments, no tag: #GP(0) for the memory forms - the VMware guest (this gate) and the bare host
+# (P- and E-core, capture\hostrun\20261018_232017_native-host\host{P,E}_cases_tsx_cet.log, lines [13] / [14]: native #13)
+# both run Windows with CR4.CET = 1; LOCK and the register form #UD on both.
+.byte 0x66, 0x0f, 0x38, 0xf5, 0x06 | rax=0x11223344 cpl=3 cr4.cet=1
+.byte 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 cpl=3 cr4.cet=1
+.byte 0xf0, 0x66, 0x48, 0x0f, 0x38, 0xf5, 0x06 | rax=0x1122334455667788 cpl=3 cr4.cet=1
+.byte 0x66, 0x0f, 0x38, 0xf5, 0xc1 | rax=0x11223344 cpl=3 cr4.cet=1
 # WRSS register form: #UD
 .byte 0x0f, 0x38, 0xf6, 0xc0
 # --- CET: NOTRACK (3Eh) on a near indirect JMP is a plain jump while IBT is off

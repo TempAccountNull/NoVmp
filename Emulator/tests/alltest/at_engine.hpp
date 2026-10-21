@@ -824,6 +824,33 @@ namespace at
 				efer.value |= 1;
 				uc_reg_write( uc_, UC_X86_REG_MSR, &efer );
 			}
+			// U1830: case option cr4.cet=1 - CR4.CET (bit 23) = 1, as Windows runs on the i5-13600K (VMware guest and bare
+			// host: WRUSS at CPL3 is #GP(0) there, and the SDM gives #UD while CR4.CET = 0, 334569-093 Vol2D WRUSSD/WRUSSQ
+			// p. 6-19). CR0.WP (bit 16) is set first: "This flag can be set only if CR0.WP is set" (253668-093 Vol3A 2.5
+			// p. 2-19); Windows' CR0 has WP (80050033h). IA32_U_CET / IA32_S_CET stay 0 (the process is not CET-compatible:
+			// no shadow stack, no IBT), so only the CR4.CET checks of the instructions see the difference.
+			if ( cr4_cet )
+			{
+				uint64_t c0 = 0, c4 = 0;
+				if ( uc_reg_read( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK || uc_reg_read( uc_, UC_X86_REG_CR4, &c4 ) != UC_ERR_OK )
+				{
+					err = "cr4.cet=1: uc_reg_read CR0/CR4 failed";
+					return false;
+				}
+				c0 |= CR0_WP;
+				c4 |= CR4_CET;
+				if ( uc_reg_write( uc_, UC_X86_REG_CR0, &c0 ) != UC_ERR_OK || uc_reg_write( uc_, UC_X86_REG_CR4, &c4 ) != UC_ERR_OK )
+				{
+					err = "cr4.cet=1: uc_reg_write CR0/CR4 failed";
+					return false;
+				}
+				uint64_t back = 0;
+				if ( uc_reg_read( uc_, UC_X86_REG_CR4, &back ) != UC_ERR_OK || !( back & CR4_CET ) )
+				{
+					err = "cr4.cet=1: CR4.CET did not stay set (CPU model / profile without CET?)";
+					return false;
+				}
+			}
 			uc_hook h;
 			uc_hook_add( uc_, &h, UC_HOOK_INTR, ( void* ) on_intr, this, 1, 0 );
 			uc_hook_add( uc_, &h, UC_HOOK_INSN_INVALID, ( void* ) on_invalid, this, 1, 0 );
@@ -1090,6 +1117,9 @@ namespace at
 		int xinuse_model = 0;                // U1481: UC_CTL_X86_XINUSE_MODEL (0 = not written; choose_xinuse)
 		bool ext_regs = false;   // move ZMM0-31 / K0-7 (state::zmmh/zmmx/k) and, with apx, R16-R31 through code hooks
 		bool cpl3 = false;       // case option cpl=3: run the thunk at CPL3 with the Windows GDT (SYS_PAGE)
+		bool cr4_cet = false;    // U1830: case option cr4.cet=1: CR4.CET = 1 (and CR0.WP = 1) from load() on
+		static constexpr uint64_t CR0_WP = 1ull << 16;   // CR0.WP, bit 16 (SDM 093 Vol3A 2.5)
+		static constexpr uint64_t CR4_CET = 1ull << 23;  // CR4.CET, bit 23 (SDM 093 Vol3A 2.5 p. 2-19)
 		dbg_regs dbg;            // U1740: the case's debug registers (written by run(); !any = none written)
 		// U1200: CR0.TS only inside the snippet (on_ts); set by the --cases runner only, so the --full
 		// sweep (CR0 11h, never TS) is untouched

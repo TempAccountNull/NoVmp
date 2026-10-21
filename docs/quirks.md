@@ -297,7 +297,7 @@ No erratum in Rev. 031 explains the measured deviations above (FCOMI C1, CVTPI2P
 | `# host state: CPUID initial APIC ID` | hwcheck_gate1 line 68 | CPUID.1:EBX[31:24] is the APIC ID of the core the thread happens to run on; the profile holds one core's value |
 | `# host state: the host's GDTR/IDTR ...` | cases_fix3 lines 220–221 | SGDT/SIDT store the host's descriptor-table base and limit (Windows' kernel addresses), the emulator its own; the fault and which bytes get stored are checked by the expected-value lines next to them (U704) |
 | (no tag: the harness handles it) | every hardware case that faults with RFLAGS.AC = 1 (`cases_ac_hw.txt`) | Windows clears RFLAGS.AC while it dispatches a user-mode exception (seen for #AC, #GP and #UD: the context the VEH resumes has AC = 0), so after a hardware fault the host's AC bit is the OS's; emu-alltest compares Unicorn's AC bit there (U834, `docs/emu-alltest.md`) |
-| `# host state: WRUSS under host CR4.CET = 1` | cases_reach lines 275–276, cases_tsx_cet lines 29–30 | Windows runs with CR4.CET = 1, so WRUSS at CPL3 is #GP(0); the emulator has CR4.CET = 0, where the SDM gives #UD ("#UD If CR4.CET = 0") |
+| `# host state: WRUSS under host CR4.CET = 1` | cases_reach lines 275–276, cases_tsx_cet lines 29–30 | Windows runs with CR4.CET = 1, so WRUSS at CPL3 is #GP(0); the emulator has CR4.CET = 0 (and runs these lines at CPL0), where the SDM gives #UD ("#UD If CR4.CET = 0"). U1831: the same WRUSS with `cpl=3 cr4.cet=1` (U1830: Unicorn at CPL3 with Windows' CR4.CET = 1) compares untagged, #GP(0) on both engines (cases_tsx_cet lines 38–41, with LOCK and the register form #UD on both) |
 
 ## Emulator environment choices (OS-preconfigured state, not architectural RESET)
 

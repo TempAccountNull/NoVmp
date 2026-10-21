@@ -287,6 +287,8 @@ Add-Hw 'cases_sse_exc' 'hw sse' -Shards 8
 # cases_reach needs CR0.NE = 1 (pending x87 exceptions raise #MF): the U540 default CR0 33h.
 Add-Hw 'hwcheck_gate1' 'hw x87' -Exclusive
 Add-Hw 'cases_reach' 'hw x87'
+# U1831: cases_tsx_cet also runs WRUSS at CPL3 on both engines ("cpl=3 cr4.cet=1", U1830: Windows' CR4.CET = 1):
+# #GP(0) on both, untagged (its two CPL0 WRUSS lines stay "# host state").
 Add-Hw 'cases_tsx_cet' 'hw'
 # U879: the TSX / WAITPKG / ENQCMD / CET / SMX / PCONFIG expected values of U110-U116 on UC_CPU_X86_MAX (no
 # CPUID profile: the i5-13600K's hides these features; cases_tsx_cet.txt above is the hardware side).

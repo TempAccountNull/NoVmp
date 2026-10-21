@@ -31,6 +31,11 @@
 //                          A snippet may far-transfer to CS = 23h and back to 33h (heaven's gate);
 //                          a fault taken in compatibility mode resumes at the 64-bit epilogue in
 //                          both engines. Without it Unicorn runs at CPL0 (no GDT).
+//   cr4.cet=1              (inputs only, a case option; U1830) Unicorn runs the case with CR4.CET = 1 (and CR0.WP = 1,
+//                          which CR4.CET requires; SDM 093 Vol3A 2.5 p. 2-19), IA32_U_CET / IA32_S_CET = 0: the CET
+//                          state Windows runs the host process with (WRUSS at CPL3 is #GP(0) natively, in the VMware
+//                          guest and on the bare host; with CR4.CET = 0 the SDM gives #UD). The native side is never
+//                          changed. Default (and cr4.cet=0): Unicorn's CR4 without CET. Emulator\data\cases_tsx_cet.txt.
 //   dr0..dr3=V dr6=V dr7=V (inputs; U1740) the debug registers for the snippet, both engines. V: a C literal,
 //                          s+OFF (the snippet's first byte + OFF) or m+OFF (MEM + OFF; [rsi] = m+0x8000). Native:
 //                          the thunk runs on a fresh thread of our own whose DR0-DR3 / DR6 / DR7 are set with
@@ -1273,13 +1278,15 @@ namespace at
 			case_default( *st_in );
 			std::istringstream as( assigns );
 			std::string kv;
-			bool ok = true, ext = false, cpl3 = false;
+			bool ok = true, ext = false, cpl3 = false, cr4cet = false;
 			int need = 0;   // U1040: Unicorn-only state the case uses (ext_need)
 			dbg_spec dspec;   // U1740: dr0..dr3 / dr6 / dr7
 			while ( as >> kv )
 			{
 				if ( kv == "cpl=3" ) { cpl3 = true; continue; }
 				if ( kv == "cpl=0" ) { cpl3 = false; continue; }
+				if ( kv == "cr4.cet=1" ) { cr4cet = true; continue; }   // U1830
+				if ( kv == "cr4.cet=0" ) { cr4cet = false; continue; }
 				if ( dbg_key( kv ) >= 0 )
 				{
 					if ( !dbg_parse( dspec, kv, err ) ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
@@ -1427,6 +1434,7 @@ namespace at
 			uc.xinuse_model = xinuse.model;   // U1481
 			uc.ext_regs = expect;
 			uc.cpl3 = cpl3;
+			uc.cr4_cet = cr4cet;   // U1830
 			uc.ts_hooks = true;   // U1200: CR0.TS (--cr0) acts on the snippet only, never on the thunk
 			const dbg_regs dbg_uc = dbg_resolve( dspec, p_uc ), dbg_hw = dbg_resolve( dspec, p );   // U1740
 			uc.dbg = dbg_uc;
