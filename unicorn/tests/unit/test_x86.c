@@ -47134,6 +47134,259 @@ static void test_x86_gr_pk_shadow_stack(void)
              (unsigned long long)nv_get(&r, UC_X86_REG_SSP));
     OK(uc_close(r.uc));
 }
+/*
+ * U1823 (plan 5.2 sub-step 8, instruction table row INT legacy "SDM-vector check pending"): INT n in 64-bit mode
+ * from CPL3 to CPL0 through the IDT as the emulator delivers it (UC_CTL_X86_EVENT_DELIVERY, UC_X86_DELIVER_EXC_IDT,
+ * U963). Expected values from the pseudocode of SDM 253666-093 Vol2A INT n/INTO/INT3/INT1, computed below by
+ * gr_int_model (not taken from the emulator):
+ *  - IA-32e-MODE p. 3-471: vector * 16 + 15 within the IDT limit and an interrupt / trap gate, else
+ *    #GP(error_code(vector, 1, EXT)); software interrupt with gate DPL < CPL: #GP(error_code(vector, 1, 0)), i.e.
+ *    (vector << 3) | 2; gate not present #NP.
+ *  - TRAP-OR-INTERRUPT-GATE p. 3-472: a non-conforming target code segment with DPL < CPL goes to
+ *    INTER-PRIVILEGE-LEVEL-INTERRUPT.
+ *  - INTER-PRIVILEGE-LEVEL-INTERRUPT, IA-32e mode, pp. 3-473 / 3-474: "IF IDT-gate IST = 0 THEN TSSstackAddress :=
+ *    (new code-segment DPL << 3) + 4; ELSE TSSstackAddress := (IDT gate IST << 3) + 28"; "NewSS := new code-segment
+ *    DPL; (* NULL selector with RPL = new CPL *)"; "RSP := NewRSP & FFFFFFFFFFFFFFF0H"; 64-bit gate: "CS:RIP :=
+ *    Gate(CS:RIP)"; pp. 3-474 / 3-475 the 8-byte pushes: old SS, old RSP, RFLAGS, old CS, old RIP (the next
+ *    instruction for INT n); "CPL := new code-segment DPL; CS(RPL) := CPL"; p. 3-475: "IF IDT gate is interrupt gate
+ *    THEN IF := 0", "TF := 0; VM := 0; RF := 0; NT := 0" (AC and the arithmetic flags unchanged).
+ *  - IRETQ back to CPL3 restores CS, RIP, RFLAGS, SS and RSP from that frame (Vol2A IRET, RETURN-TO-OUTER-PRIVILEGE-
+ *    LEVEL).
+ * Windows-relevant forms only (PE scope, G10): the CPL3-callable Windows x64 vectors CD 29h (fast fail), 2Bh
+ * (callback return), 2Ch (assertion), 2Dh (debug service), 2Eh (system service) and CD 03 (vector 3 by INT n),
+ * through DPL 3 interrupt gates and trap gates (Windows' own gate types are not captured), IST 0 (RSP0) and IST 1, a 16-byte aligned and a misaligned
+ * stack pointer, RFLAGS 202H and 44ED7H (AC, NT, DF, IF and the arithmetic flags); a DPL 0 gate (INT 80h, INT 20h)
+ * is #GP((vector << 3) | 2) delivered to the #GP handler, the INT not executed. Windows x64 GDT layout: 10H code64
+ * DPL 0, 18H data DPL 0, 23H code32 DPL 3, 2BH data DPL 3, 33H code64 DPL 3; 64-bit TSS loaded into TR (40H).
+ */
+#define GR_SYS 0x60000000ULL
+#define GR_IDT (GR_SYS + 0x1000)
+#define GR_TSS (GR_SYS + 0x2000)
+#define GR_HND (GR_SYS + 0x3000)    /* INT n handler; the #GP handler at + 100H */
+#define GR_REC (GR_SYS + 0x4000)    /* records (qwords): INT n handler 0-9, #GP handler 10-20, CPL3 22-26 */
+#define GR_KSTK (GR_SYS + 0x7000)   /* CPL0 stack of the IRETQ stub */
+#define GR_USTK (GR_SYS + 0x9000)   /* CPL3 RSP at the INT */
+#define GR_RET (GR_HND + 0x200)     /* target of the DPL 3 gate 7FH: the run stops there (CPL0) */
+
+typedef struct {
+    uint64_t rsp, rflags, cs, ss, frame[5];   /* in the handler */
+    uint64_t cs3, ss3, rsp3, rflags3;         /* back at CPL3 */
+    int gp_ec;                                /* -1: no #GP */
+} GrIntRes;
+
+static void gr_emit(uint8_t *b, size_t *n, const void *p, size_t len)
+{
+    memcpy(b + *n, p, len);
+    *n += len;
+}
+
+/* REX.W 89 /r with ModRM 04 / 24 + SIB 25: mov [abs32], rax (or rsp) */
+static void gr_st_abs(uint8_t *b, size_t *n, int rsp, uint64_t a)
+{
+    uint8_t i[8] = {0x48, 0x89, (uint8_t)(rsp ? 0x24 : 0x04), 0x25};
+    uint32_t d = (uint32_t)a;
+
+    memcpy(i + 4, &d, 4);
+    gr_emit(b, n, i, 8);
+}
+
+/* handler: stores RSP, RFLAGS, CS, SS and 'q' stack qwords at rec, counts at rec + 8 * (4 + q); 'gp': pops the
+   error code and skips the 2-byte INT; IRETQ */
+static void gr_handler(uc_engine *uc, uint64_t at, uint64_t rec, int q, int gp)
+{
+    uint8_t b[256];
+    size_t n = 0;
+    int i;
+
+    gr_st_abs(b, &n, 1, rec);
+    gr_emit(b, &n, "\x9c\x58", 2);                              /* pushfq; pop rax */
+    gr_st_abs(b, &n, 0, rec + 8);
+    gr_emit(b, &n, "\x8c\xc8", 2);                              /* mov eax, cs */
+    gr_st_abs(b, &n, 0, rec + 16);
+    gr_emit(b, &n, "\x8c\xd0", 2);                              /* mov eax, ss */
+    gr_st_abs(b, &n, 0, rec + 24);
+    for (i = 0; i < q; i++) {
+        uint8_t ld[5] = {0x48, 0x8b, 0x44, 0x24, (uint8_t)(8 * i)}; /* mov rax, [rsp + 8i] */
+
+        gr_emit(b, &n, ld, 5);
+        gr_st_abs(b, &n, 0, rec + 32 + 8 * (uint64_t)i);
+    }
+    {
+        uint8_t inc[8] = {0x48, 0xff, 0x04, 0x25};               /* inc qword [abs32] */
+        uint32_t d = (uint32_t)(rec + 32 + 8 * (uint64_t)q);
+
+        memcpy(inc + 4, &d, 4);
+        gr_emit(b, &n, inc, 8);
+    }
+    if (gp) {
+        gr_emit(b, &n, "\x58\x48\x83\x04\x24\x02", 6);          /* pop rax; add qword [rsp], 2 */
+    }
+    gr_emit(b, &n, "\x48\xcf", 2);                              /* iretq */
+    OK(uc_mem_write(uc, at, b, n));
+}
+
+static void gr_gate(uc_engine *uc, int v, uint64_t off, uint16_t sel, int ist, uint8_t attr)
+{
+    uint64_t g[2];
+
+    g[0] = (off & 0xffff) | ((uint64_t)sel << 16) | ((uint64_t)(ist & 7) << 32) | ((uint64_t)attr << 40) |
+           (((off >> 16) & 0xffff) << 48);
+    g[1] = off >> 32;
+    OK(uc_mem_write(uc, GR_IDT + 16 * (uint64_t)v, g, sizeof(g)));
+}
+
+static uc_engine *gr_int_open(void)
+{
+    static const uint64_t gdt[10] = {0, 0, 0x00209B0000000000ULL, 0x00CF93000000FFFFULL, 0x00CFFB000000FFFFULL,
+                                     0x00CFF3000000FFFFULL, 0x0020FB0000000000ULL, 0, 0, 0};
+    uc_x86_mmr gdtr = {0, GR_SYS, sizeof(gdt) - 1, 0};
+    uc_x86_mmr idtr = {0, GR_IDT, 0xfff, 0};
+    uc_x86_mmr tr = {0x40, GR_TSS, 0x67, 0x8b00};
+    uc_engine *uc;
+
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &uc));
+    OK(uc_ctl_set_cpu_model(uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_event_delivery(uc, UC_X86_DELIVER_EXC_IDT));
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(uc, GR_SYS, 0x10000, UC_PROT_ALL));
+    OK(uc_mem_write(uc, GR_SYS, gdt, sizeof(gdt)));
+    OK(uc_reg_write(uc, UC_X86_REG_GDTR, &gdtr));
+    OK(uc_reg_write(uc, UC_X86_REG_IDTR, &idtr));
+    OK(uc_reg_write(uc, UC_X86_REG_TR, &tr));
+    OK(uc_mem_write(uc, code_start, "\x48\xcf", 2));              /* the CPL0 -> CPL3 IRETQ stub */
+    gr_handler(uc, GR_HND, GR_REC, 5, 0);
+    gr_handler(uc, GR_HND + 0x100, GR_REC + 0x50, 6, 1);
+    gr_gate(uc, 13, GR_HND + 0x100, 0x10, 0, 0x8e);               /* #GP: DPL 0 interrupt gate */
+    gr_gate(uc, 0x7f, GR_RET, 0x10, 0, 0xee);                     /* back to CPL0: the run stops at GR_RET */
+    return uc;
+}
+
+/* the SDM model (Vol2A INT n, IA-32e mode, CPL 3, 64-bit gate to the DPL 0 code segment 10H) */
+static void gr_int_model(int dpl, int trap, int ist, uint64_t rsp0, uint64_t ist1, uint64_t rip_int,
+                         uint64_t rsp3, uint64_t rflags3, int v, GrIntRes *m)
+{
+    uint64_t nrsp;
+
+    memset(m, 0, sizeof(*m));
+    m->gp_ec = -1;
+    m->cs3 = 0x33;
+    m->ss3 = 0x2b;
+    m->rsp3 = rsp3;
+    m->rflags3 = rflags3;
+    if (dpl < 3) {                                  /* software interrupt, gate DPL < CPL */
+        m->gp_ec = (v << 3) | 2;
+        return;
+    }
+    nrsp = (ist ? ist1 : rsp0) & ~0xfULL;           /* TSSstackAddress, RSP := NewRSP AND ...F0H */
+    m->frame[0] = rip_int + 2;                      /* old RIP: the instruction after INT n */
+    m->frame[1] = 0x33;
+    m->frame[2] = rflags3;                          /* RF = 0 (CPL3 code never sets it here) */
+    m->frame[3] = rsp3;
+    m->frame[4] = 0x2b;
+    m->rsp = nrsp - 40;
+    m->cs = 0x10;                                   /* CS(RPL) := CPL = 0 */
+    m->ss = 0;                                      /* NULL selector, RPL = new CPL */
+    m->rflags = rflags3 & ~(0x100ULL | 0x20000 | 0x10000 | 0x4000) & ~(trap ? 0 : 0x200ULL);
+}
+
+/*
+ * one run: CPL0 stub IRETQ -> CPL3 code "INT v; NOP; record RFLAGS, RSP, CS, SS and a count at GR_REC + B0H..D0H;
+ * INT 7Fh" (the DPL 3 gate 7Fh returns to CPL0 at GR_RET, where the run stops, so every run starts at CPL0)
+ */
+static uc_err gr_int_run(uc_engine *uc, uint64_t slot, int v, uint64_t rflags3)
+{
+    uint64_t frame3[5] = {slot, 0x33, rflags3, GR_USTK, 0x2b}, ksp = GR_KSTK - 40;
+    uint8_t b[0x40];
+    size_t n = 0;
+    uint8_t intv[3] = {0xcd, (uint8_t)v, 0x90};
+    uint8_t inc[8] = {0x48, 0xff, 0x04, 0x25};
+    uint32_t d = (uint32_t)(GR_REC + 0xd0);
+
+    gr_emit(b, &n, intv, 3);
+    gr_emit(b, &n, "\x9c\x58", 2);                              /* pushfq; pop rax */
+    gr_st_abs(b, &n, 0, GR_REC + 0xb0);
+    gr_st_abs(b, &n, 1, GR_REC + 0xb8);
+    gr_emit(b, &n, "\x8c\xc8", 2);                              /* mov eax, cs */
+    gr_st_abs(b, &n, 0, GR_REC + 0xc0);
+    gr_emit(b, &n, "\x8c\xd0", 2);                              /* mov eax, ss */
+    gr_st_abs(b, &n, 0, GR_REC + 0xc8);
+    memcpy(inc + 4, &d, 4);
+    gr_emit(b, &n, inc, 8);                                     /* inc qword [GR_REC + D0H] */
+    gr_emit(b, &n, "\xcd\x7f", 2);
+    TEST_CHECK(n <= sizeof(b));
+    OK(uc_mem_write(uc, slot, b, n));
+    OK(uc_mem_write(uc, ksp, frame3, sizeof(frame3)));
+    OK(uc_reg_write(uc, UC_X86_REG_RSP, &ksp));
+    return uc_emu_start(uc, code_start, GR_RET, 0, 300);
+}
+
+static void test_x86_gr_int_n_cpl3(void)
+{
+    static const int vec[] = {0x29, 0x2b, 0x2c, 0x2d, 0x2e, 0x03, 0x80, 0x20};
+    static const uint64_t fl[] = {0x202, 0x44ed7};
+    static const uint64_t rsp0s[] = {GR_SYS + 0xc000, GR_SYS + 0xbff8};
+    uc_engine *uc = gr_int_open();
+    uint64_t slot = code_start + 0x100, tss[13], ist1 = GR_SYS + 0xe008;
+    int vi, f, trap, ist, r0, dpl, runs = 0, bad = 0;
+
+    for (vi = 0; vi < (int)(sizeof(vec) / sizeof(vec[0])); vi++) {
+        int v = vec[vi];
+
+        dpl = vi < 6 ? 3 : 0;
+        for (trap = 0; trap < 2; trap++)
+        for (ist = 0; ist < 2; ist++)
+        for (r0 = 0; r0 < 2; r0++)
+        for (f = 0; f < 2; f++) {
+            uint64_t rec[27] = {0}, rip = 0, cs = 0;
+            GrIntRes m;
+            uc_err err;
+            bool ok;
+
+            memset(tss, 0, sizeof(tss));
+            memcpy((uint8_t *)tss + 4, &rsp0s[r0], 8);
+            memcpy((uint8_t *)tss + 36, &ist1, 8);
+            OK(uc_mem_write(uc, GR_TSS, tss, 0x68));
+            gr_gate(uc, v, GR_HND, 0x10, ist, (uint8_t)(0x80 | (dpl << 5) | (trap ? 0xf : 0xe)));
+            OK(uc_mem_write(uc, GR_REC, rec, sizeof(rec)));
+            err = gr_int_run(uc, slot, v, fl[f]);
+            OK(uc_mem_read(uc, GR_REC, rec, sizeof(rec)));
+            OK(uc_reg_read(uc, UC_X86_REG_RIP, &rip));
+            OK(uc_reg_read(uc, UC_X86_REG_CS, &cs));
+            gr_int_model(dpl, trap, ist, rsp0s[r0], ist1, slot, GR_USTK, fl[f], v, &m);
+            /* reached GR_RET at CPL0; back at CPL3 after the IRETQ: RFLAGS (PUSHFQ image), RSP, CS, SS */
+            ok = err == UC_ERR_OK && rip == GR_RET && (cs & 0xffff) == 0x10 && rec[26] == 1 && rec[22] == m.rflags3 &&
+                 rec[23] == m.rsp3 && rec[24] == m.cs3 && rec[25] == m.ss3;
+            if (m.gp_ec < 0) {
+                ok = ok && rec[9] == 1 && rec[0] == m.rsp && rec[1] == m.rflags && rec[2] == m.cs && rec[3] == m.ss &&
+                     !memcmp(&rec[4], m.frame, sizeof(m.frame)) && rec[20] == 0;
+            } else {
+                /* #GP handler (IST 0, same CPL0 target): error code, then the frame of the INT */
+                ok = ok && rec[9] == 0 && rec[20] == 1 && rec[14] == (uint64_t)m.gp_ec && rec[15] == slot &&
+                     rec[16] == 0x33;
+            }
+            TEST_CHECK_(ok, "INT %02Xh DPL %d %s gate IST %d RSP0 %llx RFLAGS %llx", v, dpl, trap ? "trap" : "interrupt",
+                        ist, (unsigned long long)rsp0s[r0], (unsigned long long)fl[f]);
+            TEST_MSG("err %d rip %llx cs %llx; back at CPL3 (count %llu): rflags %llx rsp %llx cs %llx ss %llx; handler "
+                     "(count %llu): rsp %llx rflags %llx cs %llx ss %llx frame %llx %llx %llx %llx %llx (expected rsp "
+                     "%llx rflags %llx frame rip %llx rflags %llx rsp %llx); #GP count %llu ec %llx (expected %d)",
+                     (int)err, (unsigned long long)rip, (unsigned long long)cs, (unsigned long long)rec[26],
+                     (unsigned long long)rec[22], (unsigned long long)rec[23], (unsigned long long)rec[24],
+                     (unsigned long long)rec[25], (unsigned long long)rec[9], (unsigned long long)rec[0],
+                     (unsigned long long)rec[1], (unsigned long long)rec[2], (unsigned long long)rec[3],
+                     (unsigned long long)rec[4], (unsigned long long)rec[5], (unsigned long long)rec[6],
+                     (unsigned long long)rec[7], (unsigned long long)rec[8], (unsigned long long)m.rsp,
+                     (unsigned long long)m.rflags, (unsigned long long)m.frame[0], (unsigned long long)m.frame[2],
+                     (unsigned long long)m.frame[3], (unsigned long long)rec[20], (unsigned long long)rec[14],
+                     m.gp_ec);
+            runs++;
+            bad += !ok;
+            slot += 0x40;
+        }
+    }
+    TEST_CHECK(runs == 128 && slot <= code_start + code_len);
+    TEST_MSG("%d runs, %d differ from the SDM model", runs, bad);
+    OK(uc_close(uc));
+}
 /* ---- end U1820-U1829 (gr_) ---- */
 
 TEST_LIST = {
@@ -47740,4 +47993,5 @@ TEST_LIST = {
     {"test_x86_dff_one_db", test_x86_dff_one_db},
     {"test_x86_gr_efer_lma_write", test_x86_gr_efer_lma_write},
     {"test_x86_gr_pk_shadow_stack", test_x86_gr_pk_shadow_stack},
+    {"test_x86_gr_int_n_cpl3", test_x86_gr_int_n_cpl3},
     {NULL, NULL}};

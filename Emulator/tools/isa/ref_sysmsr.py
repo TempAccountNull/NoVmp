@@ -861,6 +861,67 @@ def le64(v):
     return v.to_bytes(8, 'little').hex().upper()
 
 
+# ---- U1823 (plan 5.2 sub-step 8): CPL3 -> CPL0 in 64-bit mode, Windows forms ---------------------------
+# The two instruction-table rows SYSCALL / SYSENTER were "SDM-vector check pending": their only sweep form
+# (0F 05 / 0F 34) cannot run natively. These vectors pin the CPL3 -> CPL0 transition of a 64-bit CPL3 program as
+# the emulator runs it, with the selectors of the Windows x64 GDT (IA32_STAR = 0023_0010_0000_0000H: SYSCALL CS 10H /
+# SS 18H, SYSRET CS 33H / SS 2BH), IA32_FMASK 4700H (TF IF DF NT) and 47700H (+ AC) - masks chosen here, the host's
+# IA32_STAR / IA32_FMASK values are not captured (CPL0 MSRs) - and CPL3 RFLAGS with IF, DF, AC, NT and the
+# arithmetic flags set. SDM 253667-093 Vol2B SYSCALL Operation p. 4-700 ("RCX := RIP; RIP :=
+# IA32_LSTAR; R11 := RFLAGS; RFLAGS := RFLAGS AND NOT(IA32_FMASK); CS.Selector := IA32_STAR[47:32] AND FFFCH ...
+# SS.Selector := IA32_STAR[47:32] + 8"; RSP is not changed), SYSRET p. 4-710 (RFLAGS := (R11 AND 3C7FD7H) OR 2,
+# CS := IA32_STAR[63:48] + 16 OR 3, SS := IA32_STAR[63:48] + 8 OR 3), SYSENTER Operation p. 4-703 (RFLAGS.VM / IF / RF := 0,
+# RSP := IA32_SYSENTER_ESP, RIP := IA32_SYSENTER_EIP, CS := IA32_SYSENTER_CS AND FFFCH, SS := CS + 8), SYSEXIT p. 4-707
+# (64-bit: CS := IA32_SYSENTER_CS + 32 OR 3, SS := CS + 8; RFLAGS unchanged). The model functions above are used
+# unchanged; the file runs under the strict --host and --guest profiles and the MAX model.
+WIN_STAR = 0x0023001000000000
+
+
+def cases_win(a):
+    a('# --- SYSCALL from 64-bit CPL3 (entered with SYSRETQ to label u): RBX / RDI = CS / SS at CPL3, RSI = RSP at')
+    a('# CPL3 - RSP at the handler (SYSCALL keeps RSP: 0), RCX - k = 0, R11 = RFLAGS at CPL3, R15 = PUSHFQ image at')
+    a('# the handler k, R12 / R13 = CS / SS there')
+    for fmask in (0x4700, 0x47700):
+        for r11 in (0x202, 0x44ED7, 0x40A57):
+            fl3 = sysret_rflags(r11)
+            n = syscall(base_state(cpl=3, rflags=fl3, star=WIN_STAR, fmask=fmask, lstar='k', rip_next='k'))
+            asm = '; '.join([
+                wrmsr_imm(MSR_STAR, WIN_STAR), wrmsr_imm(MSR_FMASK, fmask), wrmsr_label(MSR_LSTAR, 'k'),
+                'lea rcx, [rip + u]; mov r11, %s' % hx(r11), SYSRETQ,
+                'u: mov ebx, cs; mov edi, ss; mov rsi, rsp; syscall',
+                'k: pushfq; pop r15; mov r12d, cs; mov r13d, ss; sub rsi, rsp; lea r14, [rip + k]; sub rcx, r14'])
+            cs3 = ((WIN_STAR >> 48) + 16) | 3
+            ss3 = ((WIN_STAR >> 48) + 8) | 3
+            a('%s =>! rbx=%s rdi=%s rsi=0 rcx=0 r11=%s r15=%s r12=%s r13=%s' % (
+                asm, hx(cs3), hx(ss3), hx(n['r11']), hx(pushfq_image(n['rflags'])), hx(n['cs']), hx(n['ss'])))
+    a('# --- SYSENTER from 64-bit CPL3 (entered with SYSEXIT REX.W, IA32_SYSENTER_CS = 10H: CS 33H, SS 3BH; RFLAGS')
+    a('# set by POPFQ at CPL0 before it, SYSEXIT keeps them): RBX / RDI = CS / SS at CPL3, R15 = PUSHFQ image at the')
+    a('# handler k (IA32_SYSENTER_EIP), R12 / R13 = CS / SS there, R14 = RSP - (IA32_SYSENTER_ESP) = 0')
+    for fl_in in (0x202, 0x44ED7, 0x40A57):
+        rsp3, rip3, cs3, ss3 = sysexit(0x10, 0x1000, 0x2000, 64)
+        n = sysenter(sysenter_state(sysenter_cs=0x10, cpl=3, rflags=popfq_image(fl_in)))
+        asm = '; '.join([
+            wrmsr_imm(0x174, 0x10), wrmsr_label(0x176, 'k'),
+            'mov rbp, rsp; lea rax, [rsp - 0x100]; mov rdx, rax; shr rdx, 32; mov ecx, 0x175; wrmsr',
+            'mov rax, %s; push rax; popfq' % hx(fl_in),
+            'lea rdx, [rip + u]; mov rcx, rsp', '.byte 0x48, 0x0f, 0x35',
+            'u: mov ebx, cs; mov edi, ss; sysenter',
+            'k: pushfq; pop r15; mov r12d, cs; mov r13d, ss; lea r14, [rbp - 0x100]; sub r14, rsp; neg r14'])
+        a('%s =>! rbx=%s rdi=%s r15=%s r12=%s r13=%s r14=0' % (
+            asm, hx(cs3), hx(ss3), hx(pushfq_image(n['rflags'])), hx(n['cs']), hx(n['ss'])))
+
+
+def cases_win_all():
+    lines = []
+    a = lines.append
+    a('# SYSCALL / SYSENTER from 64-bit CPL3 to CPL0, Windows x64 forms (ledger U1823, plan 5.2 sub-step 8): expected')
+    a('# values from the independent model Emulator/tools/isa/ref_sysmsr.py (regenerate with --write, do not edit).')
+    a('# Unicorn only (natively a real kernel entry); suites cases_sysmsr_win_host / _guest / _max:')
+    a('#   emu-alltest --cases Emulator\\data\\cases_sysmsr_win.txt --host | --guest | (MAX) --expect-only')
+    cases_win(a)
+    return lines
+
+
 def cases_all():
     lines = []
     a = lines.append
@@ -967,8 +1028,19 @@ def selftest():
     check(MAX_CPUID[(1, 0)][2] == 0xFEF8324B and MAX_CPUID[(7, 0)][2] == 0xB8C127AC and
           MAX_CPUID[(7, 0)][3] == 0x154820, 'CPUID guards (hand: + bit 21, + bit 13, + bit 18)')
     check(MAX_CPUID[(7, 0)][1] == 0x219C6FFB and msr_present(0x3B), 'CPUID guard EBX (hand: + bit 1, U1672) / 3BH')
+    # U1823 (hand): SYSRET of R11 44ED7H keeps it (AC, NT, IF, DF and the arithmetic flags are in 3C7FD7H); SYSCALL
+    # with IA32_FMASK 47700H leaves 44ED7H AND NOT 47700H = 8D7H, with 4700H 408D7H (AC kept); SYSENTER from
+    # 44ED7H clears IF only (VM, RF are 0): 44CD7H; SYSEXIT REX.W with IA32_SYSENTER_CS 10H: CS 33H, SS 3BH
+    check(sysret_rflags(0x44ED7) == 0x44ED7, 'sysret keeps AC / NT')
+    for fm, exp in ((0x47700, 0x8D7), (0x4700, 0x408D7)):
+        n = syscall(base_state(cpl=3, rflags=0x44ED7, star=WIN_STAR, fmask=fm))
+        check(n['rflags'] == exp and n['r11'] == 0x44ED7 and n['cs'] == 0x10 and n['ss'] == 0x18,
+              'windows syscall fmask %x' % fm)
+    n = sysenter(sysenter_state(sysenter_cs=0x10, cpl=3, rflags=popfq_image(0x44ED7)))
+    check(n['rflags'] == 0x44CD7 and n['cs'] == 0x10 and n['ss'] == 0x18, 'windows sysenter rflags')
+    check(sysexit(0x10, 0x1000, 0x2000, 64)[2:] == (0x33, 0x3B), 'sysexit 64 selectors')
     # the generator runs and every case has an expectation
-    lines = cases_all() + cases_pmu()
+    lines = cases_all() + cases_pmu() + cases_win_all()
     check(all(l.startswith('#') or '=>' in l for l in lines), 'every case line has =>')
     if fails:
         for f in fails:
@@ -984,6 +1056,7 @@ def main():
     if '--write' in sys.argv:
         write_file('cases_sysmsr.txt', cases_all())
         write_file('cases_sysmsr_pmu.txt', cases_pmu())
+        write_file('cases_sysmsr_win.txt', cases_win_all())   # U1823
         return
     print(__doc__)
     sys.exit(2)

@@ -28,7 +28,7 @@ This fork turns NoVmp into a **pure-emulation** devirtualizer: the packed sample
 
 ### Instruction support
 
-- ✅ 1252 · ⏳ 53 · ⬜ 0 · **❌ 1607 not supported on our CPU** (implemented per the manual 1344, open item 48, not implemented yet 215)
+- ✅ 1255 · ⏳ 50 · ⬜ 0 · **❌ 1607 not supported on our CPU** (implemented per the manual 1344, open item 48, not implemented yet 215)
 - Your i5-13600K can run 1305 forms; **1607 forms cannot honestly run on your CPU** — listed separately under "Instructions that can't be supported for now:" in the docs below.
 - Details: [docs/instructions.md](docs/instructions.md) · [Intel](docs/Intel_instruction_sets_supported.md) · [AMD / VIA](docs/AMD_instruction_sets_supported.md)
 

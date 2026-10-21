@@ -462,6 +462,13 @@ Add-Hw 'cases_pconfig_hw' 'hw pconfig'
 # would enter the host kernel, and WRMSR/RDMSR are CPL0 instructions).
 Add-Exp 'cases_sysmsr' 'cases_sysmsr' 'sysmsr expect'
 Add-PySelftest 'ref_sysmsr_selftest' 'sysmsr tools' 'ref_sysmsr.py'
+# U1823 (agent g1rest, plan 5.2 sub-step 8): SYSCALL / SYSENTER from 64-bit CPL3 to CPL0 with the Windows x64 GDT
+# selectors (IA32_STAR 0023_0010_0000_0000H; IA32_FMASK 4700H / 47700H chosen, not captured), expected values from
+# ref_sysmsr.py, under the
+# strict --host and --guest profiles and the MAX model.
+Add-Exp 'cases_sysmsr_win_host' 'cases_sysmsr_win' 'sysmsr cpuid expect' @( '--host' )
+Add-Exp 'cases_sysmsr_win_guest' 'cases_sysmsr_win' 'sysmsr cpuid expect' @( '--guest' )
+Add-Exp 'cases_sysmsr_win_max' 'cases_sysmsr_win' 'sysmsr expect'
 # U1170-U1199 (fredlam): FRED frame / ERETS / ERETU and LAM reference model (specification-validated)
 Add-PySelftest 'ref_fred_lam_selftest' 'fred lam tools' 'ref_fred_lam.py'
 Add-Exp 'cases_lam' 'cases_lam' 'lam expect' @( '--x86-features', '8' )

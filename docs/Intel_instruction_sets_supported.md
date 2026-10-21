@@ -6,7 +6,7 @@ _Generated 2026-10-19 16:02 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `
 
 Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/data/isa_manual_forms.tsv`), checked against an Intel i5-13600K (Raptor Lake) with `emu-alltest` (hardware sweeps, `--cases` files) and, for instructions this CPU lacks, against expected values derived from the SDM pseudocode.
 
-**Totals (Intel families):** ✅ 1251 · ⏳ 51 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1312, gating only 7, open item 35, not implemented yet 43) — 2699 forms
+**Totals (Intel families):** ✅ 1253 · ⏳ 49 · ⬜ 0 · ❌ 1397 (of which implemented per the manual 1312, gating only 7, open item 35, not implemented yet 43) — 2699 forms
 
 ## Currently being added
 
@@ -50,7 +50,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | I386 | 47 | ✅ 44 | ⏳ 3 |
 | I486 | 1 |  | ⏳ 1 |
 | I486REAL | 7 | ✅ 4 | ⏳ 3 |
-| I86 | 88 | ✅ 79 | ⏳ 9 |
+| I86 | 88 | ✅ 80 | ⏳ 8 |
 | INVPCID | 1 | ✅ 1 |  |
 | LAHF | 2 | ✅ 2 |  |
 | LONGMODE | 14 | ✅ 11 | ⏳ 3 |
@@ -72,7 +72,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | RDSEED | 1 | ✅ 1 |  |
 | RDTSCP | 1 |  | ⏳ 1 |
 | RDWRFSGS | 4 | ✅ 3 | ⏳ 1 |
-| SEP | 3 |  | ⏳ 3 |
+| SEP | 3 | ✅ 1 | ⏳ 2 |
 | SERIALIZE | 1 | ✅ 1 |  |
 | SHA | 7 | ✅ 7 |  |
 | SMAP | 2 |  | ⏳ 2 |
@@ -1008,7 +1008,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 | IDIV | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
 | IN | legacy | - |  | ⏳ open item — CPL0 instruction (6 forms): CPL3 fault check in Phase 3 (D6) |
 | INC | legacy | - | ✅ identical to the i5-13600K (8 forms) |  |
-| INT | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| INT | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1823 INT n (CD ib) from 64-bit CPL3 to CPL0 throug… |  |
 | INT1 | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | INT3 | legacy | - | ✅ identical to the i5-13600K (1 forms) |  |
 | INTO | legacy | - | ✅ #UD in 64-bit mode, identical to the CPU (one-byte-map sweep); 16/32-bit modes out of scope (x64 sample) |  |
@@ -1327,7 +1327,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
-| SYSENTER | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| SYSENTER | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1823 SYSENTER (0F 34) from 64-bit CPL3 to CPL0 (na… |  |
 | SYSEXIT | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 | SYSEXITQ | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 

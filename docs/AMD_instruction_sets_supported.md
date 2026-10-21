@@ -17,7 +17,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 
 | family | forms | **Done** | **Implementing** |
 |---|---|---|---|
-| AMD | 3 | ✅ 1 | ⏳ 2 |
+| AMD | 3 | ✅ 2 | ⏳ 1 |
 
 ### Per instruction
 
@@ -26,7 +26,7 @@ These instruction sets are **not in the Intel manuals** and our CPU (Intel i5-13
 | instruction | encoding | vector bits | **Done** | **Implementing** |
 |---|---|---|---|---|
 | LZCNT | legacy | - | ✅ identical to the i5-13600K (4 forms) |  |
-| SYSCALL | legacy | - |  | ⏳ open item — implemented; 1 forms not runnable on the i5-13600K (CPU lacks it, or a memory form on a random base): SDM-vector check … |
+| SYSCALL | legacy | - | ✅ implemented; the i5-13600K lacks it: verified against SDM-pseudocode vectors: U1823 SYSCALL (0F 05) from 64-bit CPL3 to CPL0 (nat… |  |
 | SYSRET | legacy | - |  | ⏳ open item — CPL0 instruction (1 forms): CPL3 fault check in Phase 3 (D6) |
 
 </details>
