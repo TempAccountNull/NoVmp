@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-21 10:53 (HEAD `3b606ab3 Ledger: U1820-U1823 (agent/g1rest), merged and verified`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-21 12:07 (HEAD `de11dc08 Ledger: U1830-U1832 (agent/wruss) and U1833 (WRUSS notes), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -13,10 +13,9 @@ _Generated 2026-10-21 10:53 (HEAD `3b606ab3 Ledger: U1820-U1823 (agent/g1rest), 
 
 ## Currently being added
 
-  - ⏳ Last Phase-1 wave [2026-10-21 G22: every sub-line ✅ except CET leftovers 2 (PKS / PKU on shadow-stack accesses test)] (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
-      - ⏳ CET leftovers 2 [2026-10-21 G22: SYSCALL/SYSENTER CET done U900–U904 (A1, G8 verified); IDT-delivery mode = opt-in U963 (G8 verified), rest Phase 3; compat/legacy → 1.I; left: PKS / PKU AD/WD on supervisor and user shadow-stack accesses - code per SDM 093 Vol3A 5.6.2 (PKS = 1 on both profiles), no test yet: one unit test] [audit 2026-10-09]
+- (nothing in progress)
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 762 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 766 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…

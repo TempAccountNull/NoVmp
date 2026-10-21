@@ -1,6 +1,6 @@
 # Intel instruction sets supported by the NoVmp emulator
 
-_Generated 2026-10-21 10:53 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `3b606ab3 Ledger: U1820-U1823 (agent/g1rest), merged and verified`). Do not edit by hand._
+_Generated 2026-10-21 12:07 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `de11dc08 Ledger: U1830-U1832 (agent/wruss) and U1833 (WRUSS notes), merged and verified`). Do not edit by hand._
 
 **How the page is split.** The first part lists only instructions **your i5-13600K can run** (columns **Done** / **Implementing**). Everything your CPU **cannot honestly run** (CPUID bit clear, AMD/VIA-only, or disabled by Windows) is listed separately below under **"Instructions that can't be supported for now:"**, with its own **CPU cannot support** column giving the reason — those rows are never marked as supported by your CPU; the emulator still implements them per the Intel manual and verifies them against SDM-pseudocode vectors. **Done** = ✅ identical to your i5-13600K (or, in the cannot-support part, ✅ per the manual). **Implementing** = ⏳ being implemented now (agent named) or implemented with an open item, ⬜ queued (not started). **Per profile** (U1632, plan 1.J.57): the split follows the VMware guest (`--guest` / `--vm`, where the hardware cases run); every **CPU cannot support** reason says whether it also holds on the bare host (`--host`) - the forms the bare host enumerates are labelled "--host: enumerated". **Gating only** (your decision 2026-10-17, G10) = not enumerated on either profile, CPUID + #UD verified on both (`Emulator/data/cases_gating*.txt`).
 
@@ -10,8 +10,7 @@ Source of truth: every instruction form of the Intel SDM / XED list (`Emulator/d
 
 ## Currently being added
 
-  - ⏳ Last Phase-1 wave [2026-10-21 G22: every sub-line ✅ except CET leftovers 2 (PKS / PKU on shadow-stack accesses test)] (started 2026-10-09 after the audit, base ab67266; besides wt/fix4 U770–U789 and wt/apx_cases U790–U799):
-      - ⏳ CET leftovers 2 [2026-10-21 G22: SYSCALL/SYSENTER CET done U900–U904 (A1, G8 verified); IDT-delivery mode = opt-in U963 (G8 verified), rest Phase 3; compat/legacy → 1.I; left: PKS / PKU AD/WD on supervisor and user shadow-stack accesses - code per SDM 093 Vol3A 5.6.2 (PKS = 1 on both profiles), no test yet: one unit test] [audit 2026-10-09]
+- (nothing in progress)
 
 ## Instructions your i5-13600K can run (1302 forms)
 
