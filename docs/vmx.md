@@ -272,10 +272,13 @@ translator and passed to the helpers.
   bit 2 only. A20M and INIT are not modelled (nothing to block).
 - Documented "not modelled" (accepted, user decision 2026-10-17 (G10), Gate 1 checklist item 15, U1703;
   details in `docs/quirks.md` "VMX: not modelled (open gaps)"): the pending-debug-exceptions field of
-  APIC-write and virtualized-EOI VM exits is saved as 0; a data-breakpoint #DB is raised at the access,
-  before the MTF VM exit of its instruction (28.5.2 gives the MTF VM exit priority over debug traps).
-- Out of scope (G10): INIT / SMI VM exits and their pending debug exceptions (plan 1.J.12.e); the host
-  PDPTE check at VM exit with a 32-bit PAE VMX host (VMX abort 2, plan 1.J.12.d) - implemented (U1328)
+  APIC-write and virtualized-EOI VM exits is saved as 0 (SDM 326019-093 Vol3C 30.3.4, pp. 30-27 / 30-28);
+  a data-breakpoint #DB is raised at the access, before the MTF VM exit of its instruction (326019-093
+  Vol3C 28.5.2, p. 28-18 gives the MTF VM exit priority over debug traps; 253668-093 Vol3A 7.15 Table 7-3,
+  p. 7-26: a data breakpoint is a trap). Citations U1812.
+- Out of scope (G10): INIT / SMI VM exits and their pending debug exceptions (plan 1.J.12.e; 326019-093
+  Vol3C 30.3.4, p. 30-27); the host PDPTE check at VM exit with a 32-bit PAE VMX host (VMX abort 2,
+  plan 1.J.12.d; 326019-093 Vol3C 30.5.4, pp. 30-32 / 30-33, and 30.7, p. 30-34) - implemented (U1328)
   but never executed, as the unit harness runs only 64-bit VMX hosts.
 
 ### VM entries and VM exits (U1303)
