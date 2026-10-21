@@ -126,9 +126,14 @@
 // "cases: N, differing: M, known deviations: K, host state: H" (M = untagged cases of both kinds
 // that differ), one line per tag name, and the tagged cases that were not observed; when the file
 // has expected-value cases (or --expect-only skipped lines) a second summary line
-// "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Exit status 1 when an
-// expected-value case differs or cannot be parsed/assembled/run; hardware-case differences never
-// fail the run (they are the work list; test.cmd requires "differing: 0" for its hardware files).
+// "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Then (U1840) always
+// "case lines: L, run: N, harness errors: E (hardware H, expected-value X), skipped: S": L = every
+// case line of the file (of the shard), N = the "cases:" count. A case line of either kind that
+// cannot be parsed, assembled, loaded or run natively ("not run" debug-register lines) is a harness
+// error: "    ERROR: harness error (...)" under it, not counted in "cases:", and a final "ERROR: ..."
+// line. Exit status 1 when an expected-value case differs, on any harness error, or when
+// L != N + E + S; hardware-case differences never fail the run (they are the work list; test.cmd
+// requires "differing: 0" for its hardware files and "cases: N" = its own count of the case lines).
 #pragma once
 #include "at_engine.hpp"
 #include <algorithm>
@@ -1210,6 +1215,16 @@ namespace at
 		std::string line;
 		int n = 0, differ = 0;
 		int exp_n = 0, exp_differ = 0, exp_errors = 0, skipped = 0;
+		// U1840 (plan 1.F.13.b A): every case line is accounted for. A line that cannot be parsed, assembled, loaded or run
+		// natively is a harness error of its kind (hardware / expected-value): reported with an "ERROR: harness error" line,
+		// never counted in "cases: N", and the exit status is 1. Before, a hardware line with such a problem was dropped
+		// silently (not counted, exit 0), so a gate file could lose lines and still pass (G24 gap A).
+		int hw_errors = 0, lines_in = 0;
+		auto harness_error = [ & ]( bool exp_line, const char* what )
+		{
+			++( exp_line ? exp_errors : hw_errors );
+			std::printf( "    ERROR: harness error (%s): this %s case line is not counted in \"cases:\"\n", what, exp_line ? "expected-value" : "hardware" );
+		};
 		// U530: tagged hardware cases (see case_tag): differing ones per tag name, matching ones listed
 		std::map<std::string, int> known, host;
 		std::vector<std::string> not_observed;
@@ -1238,11 +1253,12 @@ namespace at
 			if ( line.empty() || line[ 0 ] == '#' ) continue;
 			if ( const size_t cl = case_line++; cl < shard_lo || cl >= shard_hi ) continue;   // U543: another shard's line
 			const size_t line_no = case_line - 1;   // U1040: the key of a --native-under-sde result
+			++lines_in;   // U1840
 			std::string tag_name, tag_kind = case_tag( line, tag_name );
 			if ( !tag_kind.empty() && ( line.find( "=>" ) != std::string::npos || tag_name.empty() ) )
 			{
 				std::printf( "[%d] %s\n    bad tag: \"# %s:\" needs a name and belongs to hardware cases only\n", n, line.c_str(), tag_kind.c_str() );
-				++exp_errors;
+				harness_error( line.find( "=>" ) != std::string::npos, "bad tag" );   // U1840
 				continue;
 			}
 			// "=>" / "=>!" splits off the expectations (expected-value case: Unicorn only)
@@ -1265,7 +1281,7 @@ namespace at
 				if ( expect )
 				{
 					std::printf( "[%d] %s\n    bad case: \"~~\" pairs belong to hardware cases only\n", n, line.c_str() );
-					++exp_errors;
+					harness_error( true, "\"~~\" in an expected-value case" );   // U1840
 					continue;
 				}
 				uc_text = text.substr( pair + 2 );
@@ -1303,16 +1319,17 @@ namespace at
 				catch ( const std::exception& ) { err = "bad value in " + kv; }
 				if ( !good ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
 			}
-			if ( !ok ) { exp_errors += expect; continue; }
+			if ( !ok ) { harness_error( expect, "bad assignment" ); continue; }   // U1840
 			if ( ( dspec.count || dspec.dr6mask_set ) && !dspec.any )   // U1771
 			{
 				std::printf( "[%d] %s\n    bad assignment: dbcount / dr6mask need debug-register tokens (dr0..dr3, dr6, dr7)\n", n, line.c_str() );
-				exp_errors += expect;
+				harness_error( expect, "bad assignment" );   // U1840
 				continue;
 			}
 			if ( ext && !expect )
 			{
 				std::printf( "[%d] %s\n    unsupported register for a hardware case: zmm*/zmmh*/k*/xmm16-31/ymmh16-31/r16-r31 exist only in expected-value cases (\"=>\"); the host CPU has no AVX-512 or APX\n", n, line.c_str() );
+				harness_error( false, "unsupported register" );   // U1840: was dropped without a count
 				continue;
 			}
 			// expectations: the input state with the listed assignments applied
@@ -1350,12 +1367,12 @@ namespace at
 					try { ok = case_assign( *st_exp, tok, err, &listed, nullptr ); }
 					catch ( const std::exception& ) { err = "bad value in " + tok; ok = false; }
 				}
-				if ( !ok ) { std::printf( "[%d] %s\n    bad expectation: %s\n", n, line.c_str(), err.c_str() ); ++exp_errors; continue; }
+				if ( !ok ) { std::printf( "[%d] %s\n    bad expectation: %s\n", n, line.c_str(), err.c_str() ); harness_error( true, "bad expectation" ); continue; }
 			}
 			std::vector<uint8_t> bytes = assemble( asmtext, CODE, &err );
-			if ( bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
+			if ( bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed: %s\n", n, line.c_str(), err.c_str() ); harness_error( expect, "assembly failed" ); continue; }
 			program p = build( bytes, &err );
-			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); exp_errors += expect; continue; }
+			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); harness_error( expect, "build failed" ); continue; }
 			// U1040: pass 1 (--native-under-sde FILE): only the native side, on SDE's CPU, into FILE
 			if ( expect && sde_file )
 			{
@@ -1412,9 +1429,9 @@ namespace at
 			if ( pair != std::string::npos )
 			{
 				std::vector<uint8_t> uc_bytes = assemble( uc_asmtext, CODE, &err );
-				if ( uc_bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); continue; }
+				if ( uc_bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); harness_error( false, "assembly failed (unicorn side)" ); continue; }
 				p_uc = build( uc_bytes, &err );
-				if ( p_uc.code.empty() ) { std::printf( "[%d] %s\n    build failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); continue; }
+				if ( p_uc.code.empty() ) { std::printf( "[%d] %s\n    build failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); harness_error( false, "build failed (unicorn side)" ); continue; }
 			}
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX );
@@ -1442,9 +1459,20 @@ namespace at
 			if ( !expect && dspec.any )
 			{
 				const std::string why = dbg_native_unsafe( dbg_hw, p );
-				if ( !why.empty() ) { std::printf( "[%d] %s\n    not run: %s\n", n, line.c_str(), why.c_str() ); ++dbg_notrun; continue; }
+				if ( !why.empty() )
+				{
+					std::printf( "[%d] %s\n    not run: %s\n", n, line.c_str(), why.c_str() );
+					++dbg_notrun;
+					harness_error( false, "not run natively" );   // U1840: a case line without a verdict
+					continue;
+				}
 			}
-			if ( !uc.load( p_uc, err ) ) { std::printf( "[%d] uc load: %s\n", n, err.c_str() ); exp_errors += expect; continue; }
+			if ( !uc.load( p_uc, err ) )
+			{
+				std::printf( "[%d] %s\n    uc load: %s\n", n, line.c_str(), err.c_str() );   // U1840: with the line
+				harness_error( expect, "engine load" );
+				continue;
+			}
 			uc.run( *st_in, u );
 			if ( expect )
 			{
@@ -1681,6 +1709,18 @@ namespace at
 			std::printf( "microcode: revision %Xh, platform ID %d (profile)\n", unsigned( opt.ucode_rev ), opt.ucode_pid );
 		if ( exp_n || exp_errors || skipped )
 			std::printf( "expected-value cases: %d, differing: %d, errors: %d, skipped (no \"=>\"): %d\n", exp_n, exp_differ, exp_errors, skipped );
+		// U1840: the accounting of every case line of the file (of this shard): run (in "cases:"), harness error, or skipped by
+		// --expect-only. A gap would be a line this loop dropped without a count: also an error. test.cmd compares "cases: N"
+		// with its own count of the file's case lines (test_runner.ps1, U1841).
+		const int harness_errors = exp_errors + hw_errors;
+		const bool accounted = lines_in == n + harness_errors + skipped;
+		std::printf( "case lines: %d, run: %d, harness errors: %d (hardware %d, expected-value %d), skipped: %d\n", lines_in, n, harness_errors, hw_errors, exp_errors,
+					 skipped );
+		if ( harness_errors )
+			std::printf( "ERROR: %d case line(s) could not be parsed, assembled, loaded or run natively (\"ERROR: harness error\" above); \"cases: %d\" does not include them\n",
+						 harness_errors, n );
+		if ( !accounted )
+			std::printf( "ERROR: case-line accounting: %d case lines, but %d run + %d harness errors + %d skipped\n", lines_in, n, harness_errors, skipped );
 		// U1040: the SDE cross-check of the expected-value cases (does not change the exit status)
 		int sde_skip_n = 0;
 		for ( auto& [ k, v ] : sde_skip ) sde_skip_n += v;
@@ -1693,6 +1733,6 @@ namespace at
 			std::printf( "sde cases: %d, uc agrees with sde: %d, uc disagrees with sde: %d, exp agrees with sde: %d, not checked: %d, errors: %d\n", sde_n,
 						 sde_agree, sde_disagree, sde_exp_agree, sde_skip_n, sde_errors );
 		for ( auto& [ k, v ] : sde_skip ) std::printf( "sde not checked: %s: %d\n", k.c_str(), v );
-		return ( exp_differ || exp_errors ) ? 1 : 0;
+		return ( exp_differ || exp_errors || hw_errors || !accounted ) ? 1 : 0;   // U1840: + hardware harness errors, accounting
 	}
 }

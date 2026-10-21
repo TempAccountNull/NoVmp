@@ -65,7 +65,10 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 
 # ---------------------------------------------------------------------------------------- suites
 # Kind: exit = pass on exit status 0 | hw = hardware file (differing: 0, exit 0, strict profile) |
-#       bad = expect_selftest_bad (7 of 7 reported, exit 1) | py = python check (exit status 0)
+#       bad = expect_selftest_bad (7 of 7 reported, exit 1) | py = python check (exit status 0) |
+#       herr = harness_selftest_bad (every case line a harness error, "cases: 0", exit 1; U1841).
+# U1841: every emu-alltest --cases suite (except herr) must also report "cases: N" with N = the number of case lines this
+# runner counts in the file itself (Get-ExpectedCases).
 $Suites = New-Object System.Collections.Generic.List[object]
 function Add-Suite( [string]$Id, [string]$Groups, [string]$Kind, [string]$Exe, [string[]]$Arguments, [string]$Note = '', [bool]$Exclusive = $false )
 {
@@ -147,6 +150,10 @@ $Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName After -NotePropertyV
 # marks the VMware-guest artifacts PTWRITE / HRESET "hidden by the guest CPUID" (not CPU deviations).
 Add-Exp 'expect_selftest' 'expect_selftest' 'selftest expect'
 Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' @( '--cases', ( CaseFile 'expect_selftest_bad' ), '--expect-only' )
+# U1840 / U1841 (plan 1.F.13.b A): a case line that cannot be parsed, assembled, loaded or run natively is a harness error
+# (exit 1, never counted in "cases:"); every line of harness_selftest_bad.txt is broken on purpose (kind herr: all of them
+# reported as harness errors, "cases: 0", exit 1). No line of it reaches the native engine or runs on Unicorn.
+Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_bad' ) )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )
@@ -635,7 +642,7 @@ if ( $List )
 	Write-Output "[test] groups (test.cmd NAME [NAME ...]; no NAME = every suite):"
 	Write-Output ( '  {0,-10} {1}' -f 'all', "every suite ($($Suites.Count))" )
 	foreach ( $g in $Groups.Keys ) { Write-Output ( '  {0,-10} {1}' -f $g, ( $Groups[ $g ] -join ' ' ) ) }
-	Write-Output "[test] suites (id, kind, command; exit = exit status 0, hw = hardware file: differing 0, bad = 7 of 7 wrong expectations reported, py = python check):"
+	Write-Output "[test] suites (id, kind, command; exit = exit status 0, hw = hardware file: differing 0, bad = 7 of 7 wrong expectations reported, herr = every line a harness error, py = python check; every --cases suite: cases = the file's case lines):"
 	foreach ( $s in $Suites )
 	{
 		$shown = @( $s.Args | ForEach-Object { if ( $_.StartsWith( $Root ) ) { $_.Substring( $Root.Length + 1 ) } else { $_ } } ) -join ' '
@@ -737,6 +744,45 @@ function Read-LogLines( [string]$path )
 	finally { $fs.Dispose() }
 }
 
+# U1841 (plan 1.F.13.b A): the number of case lines an emu-alltest --cases suite must report in its "cases: N" line, counted
+# here independently of emu-alltest with the rule of the host package's expected_counts.txt (gate1_host_package_v3a, H6):
+# every line (split at LF, one trailing CR removed) that is not empty and does not start with '#' is one case line; with
+# --expect-only only the case lines containing "=>"; with --shard K/N the K-th contiguous block of the case lines (lines
+# T*(K-1)/N .. T*K/N - 1 of T, integer division). The bytes are read as Latin-1 (one character per byte). -1 = no case file.
+# A line emu-alltest does not run (harness error, not run natively) makes its N smaller, so the suite fails.
+$CaseKinds = @{}
+function Get-ExpectedCases( $s )
+{
+	$a = @( $s.Args )
+	$i = [Array]::IndexOf( $a, '--cases' )
+	if ( $s.Kind -eq 'py' -or $i -lt 0 -or $i + 1 -ge $a.Count ) { return -1 }
+	$file = [string]$a[ $i + 1 ]
+	if ( -not $CaseKinds.ContainsKey( $file ) )
+	{
+		$kinds = New-Object System.Collections.Generic.List[bool]   # per case line: an expected-value line ("=>")
+		$text = [Text.Encoding]::GetEncoding( 28591 ).GetString( [IO.File]::ReadAllBytes( $file ) )
+		foreach ( $l in $text.Split( [char]10 ) )
+		{
+			if ( $l.EndsWith( [string][char]13 ) ) { $l = $l.Substring( 0, $l.Length - 1 ) }
+			if ( $l.Length -eq 0 -or $l[ 0 ] -eq '#' ) { continue }
+			$kinds.Add( $l.Contains( '=>' ) )
+		}
+		$CaseKinds[ $file ] = $kinds.ToArray()
+	}
+	$k = $CaseKinds[ $file ]
+	[long]$lo = 0; [long]$hi = $k.Count
+	$j = [Array]::IndexOf( $a, '--shard' )
+	if ( $j -ge 0 -and $j + 1 -lt $a.Count -and [string]$a[ $j + 1 ] -match '^([0-9]+)/([0-9]+)$' -and [int]$Matches[ 2 ] -gt 1 )
+	{
+		[long]$sk = $Matches[ 1 ]; [long]$sn = $Matches[ 2 ]; [long]$t = $k.Count
+		$lo = [Math]::Floor( $t * ( $sk - 1 ) / $sn ); $hi = [Math]::Floor( $t * $sk / $sn )
+	}
+	$expOnly = $a -contains '--expect-only'
+	$c = 0
+	for ( [long]$x = $lo; $x -lt $hi; $x++ ) { if ( -not $expOnly -or $k[ $x ] ) { $c++ } }
+	return $c
+}
+
 function Complete-Suite( $s )
 {
 	$s.Watch.Stop()
@@ -746,7 +792,7 @@ function Complete-Suite( $s )
 	$lines = Read-LogLines $s.Log
 	if ( $s.Kind -eq 'py' ) { $s.Lines = @( $s.Lines ) + @( $lines | Select-Object -Last 20 ) }
 	$s.Lines = @( $s.Lines ) + @( $lines | Where-Object {
-			$_ -match '^(machine state: |cases: |expected-value cases: |known deviation: |host state: |tagged but not observed|  not observed |cpuid: |SUCCESS:|FAILED:|  machine state: |  buckets:|  report: )' -or
+			$_ -match '^(machine state: |cases: |expected-value cases: |case lines: |ERROR: |known deviation: |host state: |tagged but not observed|  not observed |cpuid: |SUCCESS:|FAILED:|  machine state: |  buckets:|  report: )' -or
 			$_ -match '^    [a-z].{49} +[0-9]+$' } )
 	$sum = @( $lines | Where-Object { $_ -match '^cases: [0-9]+, differing: [0-9]+, known deviations: [0-9]+, host state: [0-9]+' } )
 	switch ( $s.Kind )
@@ -773,7 +819,28 @@ function Complete-Suite( $s )
 			if ( -not ( $lines | Where-Object { $_.StartsWith( 'cases: 7, differing: 7' ) } ) ) { $s.Reason = 'wrong expectations not all detected' }
 			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
 		}
+		'herr'
+		{
+			# U1841: harness_selftest_bad.txt - every case line is broken on purpose: each one must be a harness error
+			# (none counted in "cases:", the accounting line names them all) and the exit status 1
+			$want = Get-ExpectedCases $s
+			$acct = @( $lines | Where-Object { $_ -match '^case lines: ([0-9]+), run: ([0-9]+), harness errors: ([0-9]+) ' } )
+			if ( $acct.Count -ne 1 ) { $s.Reason = 'no "case lines:" accounting line (U1840)' }
+			elseif ( -not ( $acct[ 0 ] -match "^case lines: $want, run: 0, harness errors: $want " ) ) { $s.Reason = "not every one of the $want broken case lines was reported as a harness error: $( $acct[ 0 ] )" }
+			elseif ( -not ( $sum.Count -eq 1 -and $sum[ 0 ] -match '^cases: 0, ' ) ) { $s.Reason = 'a broken case line was counted in "cases:"' }
+			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
+		}
 		default { if ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" } }
+	}
+	# U1841 (plan 1.F.13.b A): every emu-alltest --cases suite must report exactly as many cases as its file has case lines
+	# (Get-ExpectedCases, counted here): a case line emu-alltest could not parse, assemble, load or run natively is no longer
+	# lost while the suite still shows "differing: 0"
+	$want = Get-ExpectedCases $s
+	if ( -not $s.Reason -and $want -ge 0 -and $s.Kind -ne 'herr' )
+	{
+		if ( $sum.Count -ne 1 ) { $s.Reason = "$( $sum.Count ) ""cases:"" summary lines, expected exactly 1" }
+		elseif ( -not ( $sum[ 0 ] -match '^cases: ([0-9]+),' ) -or [long]$Matches[ 1 ] -ne $want )
+		{ $s.Reason = "$( $sum[ 0 ].Split( ',' )[ 0 ] ) but the case file has $want case lines for this run (a line was not run: harness error, see the log)" }
 	}
 	$s.Pass = -not $s.Reason
 	if ( -not $s.Pass )
