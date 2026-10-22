@@ -32,6 +32,11 @@ Interpretation decisions (SDM section in brackets; also listed in the final repo
   * VCVTPH2PS: DAZ ignored, no DE, SNaN -> IE (only Invalid listed)          [5-54]
   * VCVTPS2PH: rounding imm8[1:0] or MXCSR.RC (imm8[2]); imm8[7:3] ignored; FTZ ignored
     (tiny -> FP16 denormal); DAZ honoured ("Denormal (if MXCSR.DAZ=0)"); IE OE UE PE DE
+  * VCVTPS2PH m{k1} with a faulting store (U1870, plan 1.F.13.e; as the VEX form, U1856 BDF97 "Follow SDM"):
+    #PF, MXCSR and memory unchanged - Vol3A 7.5 p. 7-5 "When a fault is reported, the processor restores the
+    machine state to the state prior to the beginning of execution of the faulting instruction"; #PF comes
+    before an unmasked #XM (the order is SDM-open, Vol2A Table 2-26 / Vol3A 7.9 p. 7-10; the i5-13600K E-cores
+    and the VEX decision); only active elements are accessed (masked-off ones are fault-suppressed, Vol1 15.6.1 p. 15-9)
   * NaN conversions keep the sign and the high payload bits, set the quiet bit
   * VGETEXP: |x|, -inf for 0 (and DAZ denormal), +inf for +-inf, DE for a denormal, IE SNaN
   * VGETMANT: pseudocode getmant_fp32/64 literally; flags only IE / DE; imm8[7:4] not used
@@ -1723,11 +1728,14 @@ def gen_ps2ph_all():
     base = 0x10000 - MEM_RSI - 16
     emit(gen_ps2ph("masked store, elements past MEM+0x10000 masked off (no #PF)", 64, src=18, mem=True,
                    kreg=6, kval=0x00FF, disp=base, disp32=True))
-    c = gen_ps2ph("masked store, an element past MEM+0x10000 active -> #PF", 64, src=18, mem=True,
+    c = gen_ps2ph("masked store, an element past MEM+0x10000 active -> #PF, MXCSR unchanged", 64, src=18, mem=True,
                   kreg=6, kval=0x01FF, disp=base, disp32=True)
-    c.exp = [e for e in c.exp if not e.startswith("m+")]
+    # U1870 (plan 1.F.13.e): a faulting store leaves the machine state as before the instruction (Vol3A 7.5 p. 7-5):
+    # no MXCSR flag, no memory byte (before: "=> mxcsr=0x1FB8 #PF", the flags of the conversion kept)
+    c.exp = []
     c.fault = "#PF"
     emit(c)
+    gen_ps2ph_store_fault()
     for title, kw in (("{z} with a memory destination", dict(rm=Mem(RSI, 0), z=1, aaa=1)),
                       ("EVEX.b with a memory destination", dict(rm=Mem(RSI, 0), b=1)),
                       ("W1", dict(w=1)), ("vvvv != 1111b", dict(vvvv=5)), ("L'L=11 without EVEX.b", dict(ll=3)),
@@ -1739,6 +1747,37 @@ def gen_ps2ph_all():
         c.code = evex(3, 1, w, 0x1D, 2, rm, imm=0, **kw)
         c.fault = "#UD"
         emit(c)
+
+
+def gen_ps2ph_store_fault():
+    """U1870 (plan 1.F.13.e): VCVTPS2PH m{k1} whose store faults - #PF before any #XM, MXCSR and memory unchanged
+    (Vol3A 7.5 p. 7-5); a control with the destination mapped -> #XM with MXCSR.PE. Its own RNG stream, so every
+    case generated after it keeps its values."""
+    global RNG
+    saved, RNG = RNG, random.Random(0x5EED_1870)
+    try:
+        base = 0x10000 - MEM_RSI - 16
+        inexact = [0x3F800001 + 0x100 * j for j in range(16)]   # f32 -> f16 inexact (PE), no other flag
+        snan = [0x7FA00000] * 16
+        for title, vl, kreg, kval, disp, vals, mx in (
+                ("no mask, the store crosses MEM+0x10000", 64, 0, None, base, inexact, MXCSR_DEFAULT),
+                ("m64 at MEM+0x10000 (not present)", 16, 0, None, 0x10000 - MEM_RSI, inexact, MXCSR_DEFAULT),
+                ("m128 at MEM+0x10000, k=1", 32, 7, 0x1, 0x10000 - MEM_RSI, inexact, MXCSR_DEFAULT),
+                ("PE unmasked (PM=0), an active element past MEM+0x10000: #PF before #XM", 64, 6, 0x01FF, base,
+                 inexact, 0x0F80),
+                ("SNaN active with IM=0, an active element past MEM+0x10000: #PF before #XM", 64, 6, 0x0101, base,
+                 snan, 0x1F00)):
+            c = gen_ps2ph("store fault: %s -> #PF, MXCSR unchanged" % title, vl, src=19, mem=True, kreg=kreg, kval=kval,
+                          disp=disp, disp32=True, vals=vals[:vl // 4], imm=0, mxcsr=mx)
+            c.exp = []
+            c.fault = "#PF"
+            if MEM_RSI + disp >= 0x10000:   # the destination is wholly unmapped: no old bytes to preset there
+                del c.mem[MEM_RSI + disp]
+            emit(c)
+        emit(gen_ps2ph("store fault control: PE unmasked, destination mapped -> #XM with MXCSR.PE", 64, src=19,
+                       mem=True, vals=inexact, imm=0, mxcsr=0x0F80))
+    finally:
+        RNG = saved
 
 
 def gen_fault_misc():

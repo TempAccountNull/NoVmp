@@ -47718,6 +47718,94 @@ static void test_x86_hx_vcvtps2ph_fault(void)
 }
 /* ---- end U1850-U1869 (hx_) ---- */
 
+/* ---- U1870-U1889 (tg_) ---- */
+static void tg_open512(NvRun *r)
+{
+    memset(r, 0, sizeof(*r));
+    OK(uc_open(UC_ARCH_X86, UC_MODE_64, &r->uc));
+    OK(uc_ctl_set_cpu_model(r->uc, UC_CPU_X86_MAX));
+    OK(uc_ctl_set_x86_avx512(r->uc, UC_X86_AVX512_F | UC_X86_AVX512_VL));   /* EVEX.128 / .256 need AVX512VL */
+    OK(uc_mem_map(r->uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_map(r->uc, 0x200000, 0x2000, UC_PROT_ALL));
+    OK(uc_hook_add(r->uc, &r->hook, UC_HOOK_INTR, test_x86_intr_capture_cb, &r->cap, 1, 0));
+    r->next = code_start;
+}
+
+/*
+ * U1870 (plan 1.F.13.e, user decision 2026-10-22 "Fix it too"; the VEX form is U1856, BDF97 "Follow SDM"): EVEX
+ * VCVTPS2PH m64 / m128 / m256 {k1} whose store faults leaves MXCSR and memory unchanged and raises the #PF before an
+ * unmasked #XM - SDM 253668-093 Vol3A 7.5 p. 7-5 "When a fault is reported, the processor restores the machine state to
+ * the state prior to the beginning of execution of the faulting instruction". A masked-off element on the unmapped page
+ * is not accessed (fault suppression): the store completes. Unicorn reports the store to unmapped memory (0x202000) as
+ * UC_ERR_WRITE_UNMAPPED. Source zmm17 = 16 x 1.0000001f (3F800001H): inexact as FP16 (PE), 3C00H stored.
+ */
+static void test_x86_tg_evex_vcvtps2ph_fault(void)
+{
+    static const char m64[] = "\x62\xe3\x7d\x08\x1d\x0e\x00";     /* vcvtps2ph qword ptr [rsi], xmm17, 0 */
+    static const char m128[] = "\x62\xe3\x7d\x28\x1d\x0e\x00";    /* vcvtps2ph xmmword ptr [rsi], ymm17, 0 */
+    static const char m256[] = "\x62\xe3\x7d\x48\x1d\x0e\x00";    /* vcvtps2ph ymmword ptr [rsi], zmm17, 0 */
+    static const char m256k[] = "\x62\xe3\x7d\x49\x1d\x0e\x00";   /* vcvtps2ph ymmword ptr [rsi] {k1}, zmm17, 0 */
+    static const struct {
+        const char *code;
+        uint64_t rsi, k1;
+        uint32_t mxcsr_in, mxcsr_out;
+        int vec;            /* -1: UC_ERR_WRITE_UNMAPPED (the #PF), 0: completes, 19: #XM */
+        uint32_t stored;    /* bytes stored at rsi (vec 0) */
+        const char *what;
+    } t[] = {
+        {m64, 0x202000, 0, 0x1f80, 0x1f80, -1, 0, "m64 not mapped, PE masked: MXCSR unchanged"},
+        {m128, 0x201ff8, 0, 0x1f80, 0x1f80, -1, 0, "m128 straddling into the unmapped page: MXCSR unchanged"},
+        {m256, 0x201ff0, 0, 0x1f80, 0x1f80, -1, 0, "m256 straddling: MXCSR unchanged, nothing stored"},
+        {m256k, 0x201ff0, 0x01ff, 0x1f80, 0x1f80, -1, 0, "m256 {k1} element 8 active on the unmapped page: MXCSR unchanged"},
+        {m64, 0x202000, 0, 0x0f80, 0x0f80, -1, 0, "m64 not mapped, PE unmasked: the #PF first, MXCSR unchanged"},
+        {m256k, 0x201ff0, 0x00ff, 0x1f80, 0x1fa0, 0, 16, "m256 {k1} elements 8-15 masked off (fault suppression, control): stored, PE set"},
+        {m64, 0x200100, 0, 0x1f80, 0x1fa0, 0, 8, "m64 mapped (control): stored, PE set"},
+        {m64, 0x200100, 0, 0x0f80, 0x0fa0, 19, 0, "m64 mapped, PE unmasked (control): #XM, PE set, nothing stored"},
+    };
+    uint8_t z[64], mem[16], aa[16], want[16];
+    NvRun r;
+    size_t i;
+
+    for (i = 0; i < sizeof(z) / 4; i++) {
+        memcpy(z + 4 * i, "\x01\x00\x80\x3f", 4);
+    }
+    for (i = 0; i < sizeof(want) / 2; i++) {
+        memcpy(want + 2 * i, "\x00\x3c", 2);
+    }
+    memset(aa, 0xaa, sizeof(aa));
+    tg_open512(&r);
+    OK(uc_reg_write(r.uc, UC_X86_REG_ZMM0 + 17, z));
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint32_t mx = t[i].mxcsr_in, mxo = 0;
+        uint64_t st = t[i].rsi < 0x201000 ? t[i].rsi : 0x201ff0;    /* the mapped bytes to watch */
+        uint64_t k1 = t[i].k1;
+        uc_err e;
+        int ok;
+
+        OK(uc_mem_write(r.uc, 0x200100, aa, sizeof(aa)));
+        OK(uc_mem_write(r.uc, 0x201ff0, aa, sizeof(aa)));
+        OK(uc_reg_write(r.uc, UC_X86_REG_MXCSR, &mx));
+        OK(uc_reg_write(r.uc, UC_X86_REG_K1, &k1));
+        nv_set(&r, UC_X86_REG_RSI, t[i].rsi);
+        e = nv_run_n(&r, t[i].code, sizeof(m64) - 1);
+        OK(uc_reg_read(r.uc, UC_X86_REG_MXCSR, &mxo));
+        OK(uc_mem_read(r.uc, st, mem, sizeof(mem)));
+        if (t[i].vec < 0) {
+            ok = e == UC_ERR_WRITE_UNMAPPED && r.cap.count == 0 && !memcmp(mem, aa, sizeof(mem));
+        } else if (t[i].vec == 0) {
+            ok = e == UC_ERR_OK && r.cap.count == 0 && !memcmp(mem, want, t[i].stored) &&
+                 !memcmp(mem + t[i].stored, aa, sizeof(mem) - t[i].stored);
+        } else {
+            ok = e == UC_ERR_OK && r.cap.count == 1 && r.cap.intno == (uint32_t)t[i].vec && !memcmp(mem, aa, sizeof(mem));
+        }
+        TEST_CHECK(ok && mxo == t[i].mxcsr_out);
+        TEST_MSG("%s: uc_emu_start %d events %u (vector %u), mxcsr %x (expected %x)", t[i].what, (int)e, r.cap.count,
+                 r.cap.intno, mxo, t[i].mxcsr_out);
+    }
+    OK(uc_close(r.uc));
+}
+/* ---- end U1870-U1889 (tg_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -48327,4 +48415,5 @@ TEST_LIST = {
     {"test_x86_hx_lock_priv", test_x86_hx_lock_priv},
     {"test_x86_hx_umwait_disarm", test_x86_hx_umwait_disarm},
     {"test_x86_hx_vcvtps2ph_fault", test_x86_hx_vcvtps2ph_fault},
+    {"test_x86_tg_evex_vcvtps2ph_fault", test_x86_tg_evex_vcvtps2ph_fault},
     {NULL, NULL}};

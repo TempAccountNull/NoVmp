@@ -208,6 +208,26 @@ void helper_probe_write(CPUX86State *env, target_ulong a0, uint32_t len)
     x86_probe_write(env, a0, len, GETPC());
 }
 #endif /* __Use_Original_Qemu (U701) */
+#if __Use_Original_Qemu != 1 /* ours (U1870) */
+/*
+ * NoVmp (ledger U1870, plan 1.F.13.e): write probe of the ACTIVE elements of a masked memory destination before the
+ * instruction computes anything (EVEX VCVTPS2PH m{k1}): a faulting store raises #PF with MXCSR unchanged - SDM
+ * 253668-093 Vol3A 7.5 p. 7-5 "When a fault is reported, the processor restores the machine state to the state prior to
+ * the beginning of execution of the faulting instruction" - and before an unmasked #XM. A masked-off element is not
+ * accessed (fault suppression, 253665-093 Vol1 15.6.1 p. 15-9). desc: bits 7:0 element bytes, 15:8 element count (at most 64).
+ */
+void helper_tg_probe_elems(CPUX86State *env, target_ulong a0, uint64_t mask, uint32_t desc)
+{
+    uintptr_t ra = GETPC();
+    uint32_t esz = desc & 0xff, n = (desc >> 8) & 0xff, i;
+
+    for (i = 0; i < n && i < 64; i++) {
+        if ((mask >> i) & 1) {
+            x86_probe_write(env, a0 + (target_ulong)i * esz, esz, ra);
+        }
+    }
+}
+#endif /* __Use_Original_Qemu (U1870) */
 #if __Use_Original_Qemu != 1 /* ours (U750) */
 /*
  * NoVmp (ledger U750): x86_probe_write_mmu for a shadow-stack slot whose linear address the

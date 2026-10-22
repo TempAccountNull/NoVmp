@@ -2365,6 +2365,27 @@ static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn
 {
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
 
+#if __Use_Original_Qemu != 1 /* ours (U1870) */
+    /*
+     * NoVmp (ledger U1870, plan 1.F.13.e, user decision 2026-10-22 "Fix it too"; the VEX form is U1856): a memory
+     * destination's active elements (k1, or all without a mask) are probed for a write before the conversion, so a
+     * faulting store raises #PF with MXCSR unchanged and before an unmasked #XM (SDM 253668-093 Vol3A 7.5 p. 7-5; the
+     * order is SDM-open, 253666-093 Vol2A Table 2-26 p. 2-33 / Vol3A 7.9 p. 7-10 - the i5-13600K E-cores' order for the
+     * VEX form). Before, the flags of the conversion were in MXCSR when the store faulted (and #XM came first).
+     */
+    if (decode->op[0].has_ea) {
+        TCGv_i64 k = tcg_temp_new_i64(tcg_ctx);
+
+        if (s->evex_aaa) {
+            tcg_gen_ld_i64(tcg_ctx, k, cpu_env, offsetof(CPUX86State, opmask_regs[s->evex_aaa]));
+        } else {
+            tcg_gen_movi_i64(tcg_ctx, k, -1);
+        }
+        gen_helper_tg_probe_elems(tcg_ctx, cpu_env, s->A0, k,
+                                  tcg_constant_i32(tcg_ctx, 2 | ((uint32_t)evex_nelem(s, decode) << 8)));
+        tcg_temp_free_i64(tcg_ctx, k);
+    }
+#endif /* __Use_Original_Qemu (U1870) */
     gen_helper_evex_cvt(tcg_ctx, cpu_env, OP_PTR0, OP_PTR1,
                         tcg_constant_i32(tcg_ctx, EVCVT_DESC(5, 4, 0, evex_nelem(s, decode)) |
                                                   ((decode->immediate & 0xff) << 16) |

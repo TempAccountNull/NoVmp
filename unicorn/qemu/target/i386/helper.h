@@ -90,6 +90,9 @@ DEF_HELPER_4(probe_vec_store, void, env, tl, ptr, i32)
 #if __Use_Original_Qemu != 1 /* ours (U701) */
 DEF_HELPER_3(probe_write, void, env, tl, i32)
 #endif /* __Use_Original_Qemu (U701) */
+#if __Use_Original_Qemu != 1 /* ours (U1870) */
+DEF_HELPER_4(tg_probe_elems, void, env, tl, i64, i32)
+#endif /* __Use_Original_Qemu (U1870) */
 #ifdef TARGET_X86_64
 DEF_HELPER_2(cmpxchg16b_unlocked, void, env, tl)
 DEF_HELPER_2(cmpxchg16b, void, env, tl)
