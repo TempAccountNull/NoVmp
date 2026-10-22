@@ -48,8 +48,12 @@
 //                    "P" / "E" (rotating; U1050); without it they are not pinned
 //   --hw-load N      with --hw-repeat: N busy threads beside the native runs (U1050)
 //   --tag-env guest|host|hostP|hostE  with --cases (U1875): the environment whose tag statements apply (default:
-//                    detected - the VMware guest from the native CPUID hypervisor vendor or Hybrid = 0, else the bare
-//                    host, its core type from --hw-cpu P / E); for analysis, the self-tests and a machine that is neither
+//                    detected - U1893: only on positive evidence, the native CPUID equal to the captured profile of the
+//                    VMware guest or of the bare host on the identifying registers, else "unknown" (a per-environment
+//                    statement is then a harness error); the bare host's core type from --hw-cpu P / E); for analysis,
+//                    the self-tests and a machine that is neither
+//   --tag-profiles DIR|none  with --cases (U1893): where the captured profiles are read (default: the exe's folder, then
+//                    Emulator\data); none = no evidence (self-test harness_selftest_tags_unknown)
 //   --events         with --cases: print both engines' event lines for every case (U1741): vector, RIP,
 //                    the EFLAGS image (native CONTEXT.EFlags of the exception: RF / TF), DR6, the #PF
 //                    access type (native ExceptionInformation[0], Unicorn the unmapped hook's uc_mem_type);
@@ -633,13 +637,14 @@ int main( int argc, char** argv )
 			if ( copt.tag_env != "guest" && copt.tag_env != "host" && copt.tag_env != "hostP" && copt.tag_env != "hostE" )
 			{ std::printf( "--tag-env guest|host|hostP|hostE: \"%s\" is none of them\n", copt.tag_env.c_str() ); return 2; }
 		}
+		else if ( a == "--tag-profiles" ) copt.tag_profiles = val();   // U1893: where the environment's captured CPUID profiles are read (DIR or none)
 		else if ( a == "--bench" ) bench = true;
 		else if ( a == "--reps" ) bench_reps = std::stoi( val() );
 		else if ( a == "--scale" ) bench_scale = std::stod( val() );
 		else if ( a == "--bench-cpu" ) bench_cpu = std::stoi( val() );
 		else if ( a == "--csv" ) bench_csv = val();
 		else if ( a == "--profile" ) bench_profile = std::stoi( val() );
-		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--events] [--tag-env guest|host|hostP|hostE] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
+		else { std::printf( "usage: emu-alltest [--full] [--iters N] [--sample N] [--filter S] [--out DIR] [--rebuild] [--cases FILE [--cpuid FILE] [--strict|--no-strict] [--xcr0 V] [--cr0 V] [--avx512] [--xeonphi] [--amx] [--amx-tf32] [--avx10 N] [--apx] [--x86-features N] [--seeded [--rdrand-seed N] | --HostSeed] [--host [--host-core P|E] | --guest | --vm | --AMD] [--expect-only] [--shard K/N] [--hw-repeat N] [--hw-cpu SPEC] [--hw-load N] [--events] [--tag-env guest|host|hostP|hostE] [--tag-profiles DIR|none] [--native-under-sde FILE] [--sde-results FILE]] | --bench [--reps N] [--filter S] [--scale F] [--bench-cpu C] [--csv FILE] [--profile N]\n" ); return 2; }
 	}
 	// U1491 (user requirement 2026-10-15: emulate the VMware guest OR the bare host, each from its own
 	// captures): the platform switch also selects the CPUID profile (with its "#@ microcode" line) - --host the

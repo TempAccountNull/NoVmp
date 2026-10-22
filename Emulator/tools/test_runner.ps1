@@ -173,6 +173,13 @@ Add-Suite 'harness_selftest_tags_guest' 'selftest' 'tagsel' 'emu-alltest' @( '--
 $Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 6, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 1' )
 Add-Suite 'harness_selftest_tags_hostE' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'hostE' )
 $Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 5, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 2' )
+# U1893 (plan 1.F.13.g b): the environment from positive evidence only - without --tag-env this VMware guest is recognised by its
+# captured profile (cpuid_i5-13600k.txt, the guest verdicts: 3 known deviations, hostP would give 2); with --tag-profiles none
+# there is no evidence: the 3 per-environment lines (6, 7, 10) are harness errors, the other 7 run (kind tagerr: exit 1)
+Add-Suite 'harness_selftest_tags_detect' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 6, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 1' )
+Add-Suite 'harness_selftest_tags_unknown' 'selftest' 'tagerr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-profiles', 'none' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 7, differing: 4, known deviations: 2, host state: 0', 'case lines: 10, run: 7, harness errors: 3 (hardware 3, expected-value 0), skipped: 0' )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )
@@ -866,6 +873,14 @@ function Complete-Suite( $s )
 			elseif ( -not ( $sum.Count -eq 1 -and $sum[ 0 ] -match "^cases: $( $want - 1 ), differing: 0, " ) ) { $s.Reason = "the other line was not run (or differs): $( $sum -join ' / ' )" }
 			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
 		}
+		'tagerr'
+		{
+			# U1893 (plan 1.F.13.g b): the per-environment lines are harness errors (no positive evidence), the rest run as stated
+			if ( -not ( $lines | Where-Object { $_ -ceq $s.Expect[ 0 ] } ) ) { $s.Reason = 'expected "' + $s.Expect[ 0 ] + '", got: ' + ( $sum -join ' / ' ) }
+			elseif ( -not ( $lines | Where-Object { $_ -ceq $s.Expect[ 1 ] } ) ) { $s.Reason = 'expected "' + $s.Expect[ 1 ] + '"' }
+			elseif ( -not ( $lines | Where-Object { $_ -like 'tag environment: unknown - no positive evidence*' } ) ) { $s.Reason = 'the environment was not "unknown"' }
+			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
+		}
 		'tagsel'
 		{
 			# U1877 (plan 1.F.13.d): the selftest's verdicts are known per environment (harness_selftest_tags.txt header)
@@ -883,7 +898,7 @@ function Complete-Suite( $s )
 	# (Get-ExpectedCases, counted here): a case line emu-alltest could not parse, assemble, load or run natively is no longer
 	# lost while the suite still shows "differing: 0"
 	$want = Get-ExpectedCases $s
-	if ( -not $s.Reason -and $want -ge 0 -and $s.Kind -ne 'herr' -and $s.Kind -ne 'nonly' )   # U1871: nonly counts above
+	if ( -not $s.Reason -and $want -ge 0 -and $s.Kind -ne 'herr' -and $s.Kind -ne 'nonly' -and $s.Kind -ne 'tagerr' )   # U1871: nonly counts above; U1893: tagerr too
 	{
 		if ( $sum.Count -ne 1 ) { $s.Reason = "$( $sum.Count ) ""cases:"" summary lines, expected exactly 1" }
 		elseif ( -not ( $sum[ 0 ] -match '^cases: ([0-9]+),' ) -or [long]$Matches[ 1 ] -ne $want )

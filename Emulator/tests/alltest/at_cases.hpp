@@ -144,9 +144,11 @@
 // line may also match). The observed difference must EQUAL one alternative stated for the run's environment (a
 // missing, an extra or another field fails): else "DIFF (not the tag's stated difference)" with a "tag: not accepted
 // - observed [...], stated for ENV: [...]" line, counted as differing. The run's environment ("tag environment:" line):
-// the VMware guest when the native CPUID reports the hypervisor vendor "VMwareVMware" (CPUID.1:ECX[31], 40000000H) or
-// no hybrid part (CPUID.07H.0:EDX[15] = 0: this project's guest hides the hypervisor bit and VMware reports no hybrid
-// part), else the bare host (Hybrid = 1); on the bare host the P- / E-core statement when --hw-cpu pins every native
+// U1893 (plan 1.F.13.g b, G27 gap 2) only on positive evidence: the VMware guest / the bare host when the native CPUID
+// equals that environment's captured profile (cpuid_i5-13600k.txt / cpuid_i5-13600k_bare_host*.txt, from the exe's folder
+// or Emulator\data; --tag-profiles DIR|none) on the identifying registers of tag_sig(), else "unknown" - a statement that
+// differs per environment is then a harness error (before: Hybrid = 0 alone meant the VMware guest); on the bare host
+// the P- / E-core statement when --hw-cpu pins every native
 // run to that CPUID.1AH core type, else both; --tag-env guest|host|hostP|hostE overrides (analysis, self-tests). A matched
 // difference is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as differing; a matched "-" is
 // listed as "not observed". A tag without a statement (the pre-U1876 form that accepted any difference) or with a bad
@@ -174,6 +176,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <intrin.h>
 #include <map>
@@ -479,7 +482,8 @@ namespace at
 					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */
 					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */
 					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */
-					   std::string tag_env;   /* U1875: --tag-env guest|host|hostP|hostE (empty: detected) */ };
+					   std::string tag_env;   /* U1875: --tag-env guest|host|hostP|hostE (empty: detected) */
+					   std::string tag_profiles;   /* U1893: --tag-profiles DIR|none (empty: the exe's folder, then Emulator\data) */ };
 
 	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
 	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
@@ -1146,7 +1150,7 @@ namespace at
 	// U1862's subset rule (a statement listed the fields that MAY differ) is replaced: the difference must be equal.
 	struct tag_alt { std::set<std::string> fields; uint64_t dr6 = 0; };
 	struct tag_stmt { std::map<std::string, std::vector<tag_alt>> env; };
-	struct tag_env { int platform = 0; char core = 0; std::string why; };   // platform 1 = VMware guest, 2 = bare host; core 'P' / 'E' / 0 = either
+	struct tag_env { int platform = 0; char core = 0; std::string why; };   // platform 0 = unknown (U1893), 1 = VMware guest, 2 = bare host; core 'P' / 'E' / 0 = either
 
 	// the field names a difference can have (case_fields' names, "m" for memory, and the debug / #PF comparisons)
 	static const std::set<std::string>& tag_field_names()
@@ -1271,25 +1275,83 @@ namespace at
 		why = " observed [" + tag_alt_text( o ) + "], stated for " + label + ": [" + st + "]";
 		return false;
 	}
-	// U1875 (plan 1.F.13.d): the environment a tag statement is chosen for = where the native side runs - the two
-	// environments of the project (the VMware guest on the i5-13600K and the bare i5-13600K). The VMware guest: a
-	// hypervisor with the vendor "VMwareVMware" (CPUID.1:ECX[31] = 1, CPUID.40000000H), or - the guest of this project
-	// hides the hypervisor bit (measured: CPUID.1:ECX[31] = 0 in the guest) - no hybrid part, CPUID.07H.0:EDX[15] = 0
-	// (VMware reports none; the guest's captured profile cpuid_i5-13600k.txt has Hybrid = 0). The bare host: Hybrid = 1
-	// (the i5-13600K's P- and E-cores; also under another hypervisor, e.g. the host's own Hyper-V / VBS). On the bare
-	// host the core type is P / E when every CPU --hw-cpu pins the native runs to has that CPUID.1AH core type
+	// U1875 (plan 1.F.13.d) / U1893 (plan 1.F.13.g b, G27 gap 2): the environment a tag statement is chosen for = where the
+	// native side runs - the two environments of the project, the VMware guest on the i5-13600K and the bare i5-13600K -
+	// decided ONLY on positive evidence: the native CPUID equals the captured profile of that environment on the
+	// identifying registers of tag_sig() (leaf 0, the signature and feature leaves 01H / 07H / 80000001H, 80000008H.EAX;
+	// the OS-set bits OSXSAVE / OSPKE and the hypervisor bit not compared): cpuid_i5-13600k.txt = the VMware guest (it
+	// reports Hybrid = 0: this guest hides the hybrid part and the hypervisor bit), cpuid_i5-13600k_bare_host.txt /
+	// _bare_host_ecore.txt = the bare host (Hybrid = 1). The profiles are read from the exe's folder (the host package) or
+	// Emulator\data of the repository (--tag-profiles DIR, or none = no evidence). Neither profile equal = "unknown" (the
+	// mismatching registers are named, never their values): a statement that differs per environment is then a harness
+	// error (U1893; before, Hybrid = 0 alone meant "the VMware guest" - any non-hybrid machine was taken for it). On the
+	// bare host the core type is P / E when every CPU --hw-cpu pins the native runs to has that CPUID.1AH core type
 	// (host_cpus), else either; in the guest it is never used (a vCPU runs on either core type). --tag-env overrides
 	// (analysis, the self-tests, a machine that is neither).
-	static tag_env tag_environment( const std::string& over, const std::vector<int>& pin, const std::vector<host_cpu>& cpus )
+	struct tag_sig_reg { uint32_t leaf, sub; int reg; uint32_t mask; const char* name; };
+	static const std::vector<tag_sig_reg>& tag_sig()
+	{
+		static const std::vector<tag_sig_reg> s = {
+			{ 0, 0, 0, ~0u, "00H.EAX" }, { 0, 0, 1, ~0u, "00H.EBX" }, { 0, 0, 2, ~0u, "00H.ECX" }, { 0, 0, 3, ~0u, "00H.EDX" },
+			{ 1, 0, 0, ~0u, "01H.EAX" }, { 1, 0, 2, ~( ( 1u << 27 ) | ( 1u << 31 ) ), "01H.ECX" }, { 1, 0, 3, ~0u, "01H.EDX" },
+			{ 7, 0, 1, ~0u, "07H.0.EBX" }, { 7, 0, 2, ~( 1u << 4 ), "07H.0.ECX" }, { 7, 0, 3, ~0u, "07H.0.EDX" }, { 7, 1, 0, ~0u, "07H.1.EAX" },
+			{ 0x80000001, 0, 2, ~0u, "80000001H.ECX" }, { 0x80000001, 0, 3, ~0u, "80000001H.EDX" }, { 0x80000008, 0, 0, ~0u, "80000008H.EAX" } };
+		return s;
+	}
+	// "" = the native CPUID equals the profile on every identifying register; else the mismatching register names
+	static std::string tag_sig_mismatch( const std::vector<uc_x86_cpuid>& prof )
+	{
+		int r[ 4 ] = {};
+		__cpuidex( r, 0, 0 );
+		const uint32_t max0 = uint32_t( r[ 0 ] );
+		__cpuidex( r, int( 0x80000000 ), 0 );
+		const uint32_t max8 = uint32_t( r[ 0 ] );
+		std::string out;
+		for ( const tag_sig_reg& g : tag_sig() )
+		{
+			uint32_t nat = 0;
+			if ( g.leaf < 0x80000000u ? g.leaf <= max0 : g.leaf <= max8 ) { __cpuidex( r, int( g.leaf ), int( g.sub ) ); nat = uint32_t( r[ g.reg ] ); }
+			const uc_x86_cpuid* e = nullptr;
+			for ( const uc_x86_cpuid& c : prof ) if ( c.leaf == g.leaf && c.subleaf == g.sub ) { e = &c; break; }
+			const uint32_t pv = !e ? 0 : g.reg == 0 ? e->eax : g.reg == 1 ? e->ebx : g.reg == 2 ? e->ecx : e->edx;
+			if ( !e || ( ( nat ^ pv ) & g.mask ) ) out += ( out.empty() ? "" : " " ) + std::string( g.name ) + ( e ? "" : " (not in the profile)" );
+		}
+		return out;
+	}
+	static tag_env tag_environment( const std::string& over, const std::vector<int>& pin, const std::vector<host_cpu>& cpus, const std::string& profdir )
 	{
 		tag_env e;
 		if ( !over.empty() )
 		{
 			e.platform = over == "guest" ? 1 : 2;
 			e.core = over == "hostP" ? 'P' : over == "hostE" ? 'E' : 0;
-			e.why = "--tag-env " + over;
+			e.why = "--tag-env " + over + " (explicit)";
 			return e;
 		}
+		// the captured profiles: --tag-profiles DIR, else the exe's folder, else <repo>\Emulator\data (build\x64\Release\tests)
+		std::vector<std::string> dirs;
+		if ( profdir == "none" ) {}
+		else if ( !profdir.empty() ) dirs.push_back( profdir );
+		else
+		{
+			char exe_path[ MAX_PATH ] = {};
+			GetModuleFileNameA( nullptr, exe_path, MAX_PATH );
+			const std::filesystem::path ed = std::filesystem::path( exe_path ).parent_path();
+			dirs.push_back( ed.string() );
+			dirs.push_back( ( ed / ".." / ".." / ".." / ".." / "Emulator" / "data" ).lexically_normal().string() );
+		}
+		auto load = [ & ]( const char* file, std::string& where ) {
+			for ( const std::string& d : dirs )
+			{
+				const std::string pth = ( std::filesystem::path( d ) / file ).string();
+				std::vector<uc_x86_cpuid> v = load_cpuid_profile( pth );
+				if ( !v.empty() ) { where = file; return v; }
+			}
+			return std::vector<uc_x86_cpuid>();
+		};
+		std::string wg, wp, we;
+		const std::vector<uc_x86_cpuid> pg = load( "cpuid_i5-13600k.txt", wg ), pp = load( "cpuid_i5-13600k_bare_host.txt", wp ),
+										pe = load( "cpuid_i5-13600k_bare_host_ecore.txt", we );
 		int r[ 4 ] = {};
 		__cpuid( r, 1 );
 		const bool hv = ( unsigned( r[ 2 ] ) >> 31 ) & 1;
@@ -1300,35 +1362,44 @@ namespace at
 			std::memcpy( vendor, &r[ 1 ], 4 ); std::memcpy( vendor + 4, &r[ 2 ], 4 ); std::memcpy( vendor + 8, &r[ 3 ], 4 );
 			for ( int k = 0; k < 12; ++k ) if ( vendor[ k ] && ( vendor[ k ] < 32 || vendor[ k ] > 126 ) ) vendor[ k ] = '.';
 		}
-		if ( hv && !std::strcmp( vendor, "VMwareVMware" ) )
-		{
-			e.platform = 1;
-			e.why = "CPUID.1:ECX[31] = 1, hypervisor vendor \"VMwareVMware\" (CPUID.40000000H)";
-			return e;
-		}
 		__cpuidex( r, 0, 0 );
 		int hybrid = 0;
 		if ( r[ 0 ] >= 7 ) { __cpuidex( r, 7, 0 ); hybrid = ( r[ 3 ] >> 15 ) & 1; }
-		const std::string hvtext = hv ? std::string( "hypervisor vendor \"" ) + vendor + "\" (not VMware)" : std::string( "CPUID.1:ECX[31] = 0" );
-		if ( !hybrid )
+		const std::string hvtext = hv ? std::string( "CPUID.1:ECX[31] = 1, hypervisor vendor \"" ) + vendor + "\"" : std::string( "CPUID.1:ECX[31] = 0" );
+		const std::string hytext = std::string( "CPUID.07H.0:EDX[15] Hybrid = " ) + ( hybrid ? "1" : "0" );
+		const std::string mg = pg.empty() ? "?" : tag_sig_mismatch( pg ), mp = pp.empty() ? "?" : tag_sig_mismatch( pp ),
+						  me = pe.empty() ? "?" : tag_sig_mismatch( pe );
+		const std::string regs = "the identifying CPUID registers (" + std::to_string( tag_sig().size() ) + ": leaf 0, 01H, 07H.0, 07H.1, 80000001H, 80000008H.EAX)";
+		if ( !pg.empty() && mg.empty() && !hybrid )
 		{
 			e.platform = 1;
-			e.why = hvtext + ", CPUID.07H.0:EDX[15] Hybrid = 0: the VMware guest (it reports no hybrid part; the bare i5-13600K reports Hybrid = 1)";
+			e.why = "the native CPUID equals the captured VMware-guest profile " + wg + " on " + regs + "; " + hvtext + ", " + hytext;
 			return e;
 		}
-		e.platform = 2;
-		e.why = hvtext + ", CPUID.07H.0:EDX[15] Hybrid = 1: the bare host";
-		int types = 0;   // bit 0: a P-core, bit 1: an E-core, bit 2: another / unknown type
-		for ( int c : pin )
-			for ( const host_cpu& h : cpus )
-				if ( h.cpu == c ) types |= h.type == 0x40 ? 1 : h.type == 0x20 ? 2 : 4;
-		e.core = types == 1 ? 'P' : types == 2 ? 'E' : 0;
-		e.why += e.core ? std::string( ", native runs pinned to " ) + e.core + "-cores (--hw-cpu, CPUID.1AH)" : std::string( ", core type: either (the native runs are not pinned to one core type)" );
+		if ( hybrid && ( ( !pp.empty() && mp.empty() ) || ( !pe.empty() && me.empty() ) ) )
+		{
+			e.platform = 2;
+			e.why = "the native CPUID equals the captured bare-host profile " + ( mp.empty() && !pp.empty() ? wp : we ) + " on " + regs + "; " + hvtext + ", " + hytext;
+			int types = 0;   // bit 0: a P-core, bit 1: an E-core, bit 2: another / unknown type
+			for ( int c : pin )
+				for ( const host_cpu& h : cpus )
+					if ( h.cpu == c ) types |= h.type == 0x40 ? 1 : h.type == 0x20 ? 2 : 4;
+			e.core = types == 1 ? 'P' : types == 2 ? 'E' : 0;
+			e.why += e.core ? std::string( ", native runs pinned to " ) + e.core + "-cores (--hw-cpu, CPUID.1AH)" : std::string( ", core type: either (the native runs are not pinned to one core type)" );
+			return e;
+		}
+		e.platform = 0;
+		auto st = [ & ]( const char* what, const std::vector<uc_x86_cpuid>& v, const std::string& m ) {
+			return std::string( what ) + ( v.empty() ? ": profile not found" : m.empty() ? ": equal" : ": differs in " + m );
+		};
+		e.why = "no positive evidence of either environment - " + st( "VMware-guest profile", pg, mg ) + "; " + st( "bare-host P-core profile", pp, mp ) + "; " +
+				st( "bare-host E-core profile", pe, me ) + "; " + hvtext + ", " + hytext + ( profdir == "none" ? " (--tag-profiles none)" : "" ) +
+				": an environment-specific tag statement is a harness error (U1893; --tag-env overrides)";
 		return e;
 	}
 	static std::string tag_env_text( const tag_env& e )
 	{
-		return e.platform == 1 ? "guest" : e.core == 'P' ? "hostP" : e.core == 'E' ? "hostE" : "host (hostP | hostE)";
+		return e.platform == 0 ? "unknown" : e.platform == 1 ? "guest" : e.core == 'P' ? "hostP" : e.core == 'E' ? "hostE" : "host (hostP | hostE)";
 	}
 
 	// U1862: the field names in a case_fields() string (" name=value" tokens; memory "m+0x..." -> "m")
@@ -1487,7 +1558,7 @@ namespace at
 			std::printf( "\n" );
 		}
 		// U1875: the environment the tag statements are chosen for (native side)
-		const tag_env tenv = tag_environment( opt.tag_env, pin, cpus );
+		const tag_env tenv = tag_environment( opt.tag_env, pin, cpus, opt.tag_profiles );
 		if ( !opt.expect_only ) std::printf( "tag environment: %s - %s\n", tag_env_text( tenv ).c_str(), tenv.why.c_str() );
 		core_probe probe;
 		// U1050: --hw-load N busy threads (the probe's chain), stopped when run_cases returns
@@ -1585,6 +1656,15 @@ namespace at
 					std::printf( "[%d] %s  # %s: %s%s\n    bad tag: %s\n", n, line.c_str(), tag_kind.c_str(), tag_name.c_str(),
 								 tag_has_stated ? ( " [" + tag_stated + "]" ).c_str() : "", terr.c_str() );
 					harness_error( false, "bad tag" );
+					continue;
+				}
+				// U1893 (plan 1.F.13.g b): a statement that differs per environment needs a known environment (positive evidence)
+				if ( !tag_st.env.count( "" ) && tenv.platform == 0 && !opt.expect_only )
+				{
+					std::printf( "[%d] %s  # %s: %s [%s]\n    tag environment unknown: this statement differs per environment, the run's environment has no"
+								 " positive evidence (see \"tag environment:\"; --tag-env overrides) (U1893)\n", n, line.c_str(), tag_kind.c_str(), tag_name.c_str(),
+								 tag_stated.c_str() );
+					harness_error( false, "tag environment unknown" );
 					continue;
 				}
 			}
