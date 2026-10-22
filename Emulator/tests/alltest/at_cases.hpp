@@ -16,6 +16,9 @@
 //
 // Assignments (inputs and expectations):
 //   rax..r15=V  rflags=V  mxcsr=V  fcw=V  fsw=V  ftw=V (abridged tag byte)       V: C literal (0x.., dec)
+//                          U1873 (G26 gap 2): every value is parsed whole - "rax=1zz", "st0=3FFF:8z", "xmm1=001"
+//                          (odd digit count), "m+0x10zz=00", "xmm1x=00" are bad assignments (harness errors);
+//                          before, the parse stopped at the first bad character and the rest was ignored
 //   st0..st7=SEXP:MANT     FXSAVE register slot i (hex), sets the slot's abridged tag bit
 //   xmm0..xmm31=HEX        bits 127:0, up to 32 hex digits, memory byte order (low byte first)
 //   ymmh0..ymmh31=HEX      bits 255:128 (upper YMM half), up to 32 hex digits, low byte first
@@ -210,8 +213,18 @@ namespace at
 		auto mk = [ & ]( const void* p, size_t n ) {
 			if ( mark ) std::memset( mark->data() + ( ( const uint8_t* ) p - ( const uint8_t* ) &s ), 1, n );
 		};
-		auto num = [ & ]() { return std::stoull( v, nullptr, 0 ); };
+		// U1873 (G26 gap 2): the whole value must be the C literal (a trailing character throws: "bad value in ...", a harness
+		// error at both call sites); before, std::stoull stopped at the first character outside the literal ("rax=1zz" ran as
+		// rax=1). The same rule for the hex byte strings (an even count of hex digits), st SEXP:MANT, the m+ offset and the
+		// xmm / ymmh register index below
+		auto num = [ & ]() {
+			size_t used = 0;
+			const unsigned long long x = std::stoull( v, &used, 0 );
+			if ( used != v.size() ) throw std::invalid_argument( "trailing characters" );
+			return x;
+		};
 		auto hexbytes = [ & ]( uint8_t* dst, size_t max ) -> size_t {
+			if ( v.size() % 2 || v.find_first_not_of( "0123456789abcdefABCDEF" ) != std::string::npos ) throw std::invalid_argument( "hex bytes" );   // U1873
 			size_t n = 0;
 			for ( size_t i = 0; i + 1 < v.size() && n < max; i += 2 ) dst[ n++ ] = uint8_t( std::stoul( v.substr( i, 2 ), nullptr, 16 ) );
 			mk( dst, n );
@@ -257,8 +270,10 @@ namespace at
 			int i = k[ 2 ] - '0';
 			size_t c = v.find( ':' );
 			if ( c == std::string::npos ) { err = "st needs SEXP:MANT"; return false; }
-			uint16_t se = uint16_t( std::stoul( v.substr( 0, c ), nullptr, 16 ) );
-			uint64_t m = std::stoull( v.substr( c + 1 ), nullptr, 16 );
+			size_t u1 = 0, u2 = 0;   // U1873: both parts whole
+			uint16_t se = uint16_t( std::stoul( v.substr( 0, c ), &u1, 16 ) );
+			uint64_t m = std::stoull( v.substr( c + 1 ), &u2, 16 );
+			if ( u1 != c || u2 != v.size() - c - 1 ) { err = "st needs SEXP:MANT (hex digits only)"; return false; }
 			std::memcpy( s.fx + 32 + 16 * i, &m, 8 ); std::memcpy( s.fx + 40 + 16 * i, &se, 2 );
 			s.fx[ 4 ] |= uint8_t( 1u << i );
 			mk( s.fx + 32 + 16 * i, 10 ); mk( s.fx + 4, 1 );
@@ -300,23 +315,25 @@ namespace at
 		}
 		if ( k.rfind( "ymmh", 0 ) == 0 )
 		{
-			int i = std::stoi( k.substr( 4 ) );
-			if ( i < 0 || i > 31 ) { err = "bad ymmh"; return false; }
+			int i = index( "ymmh", 32 );   // U1873: digits only (std::stoi took "ymmh1x" as ymmh1)
+			if ( i < 0 ) { err = "bad ymmh"; return false; }
 			if ( i >= 16 ) { if ( ext ) *ext = true; return hexstrict( s.zmmx[ i - 16 ] + 16, 16 ); }
 			hexbytes( s.ymmh[ i ], 16 );
 			return true;
 		}
 		if ( k.rfind( "xmm", 0 ) == 0 )
 		{
-			int i = std::stoi( k.substr( 3 ) );
-			if ( i < 0 || i > 31 ) { err = "bad xmm"; return false; }
+			int i = index( "xmm", 32 );   // U1873: digits only (std::stoi took "xmm1x" as xmm1)
+			if ( i < 0 ) { err = "bad xmm"; return false; }
 			if ( i >= 16 ) { if ( ext ) *ext = true; return hexstrict( s.zmmx[ i - 16 ], 16 ); }
 			hexbytes( s.fx + 160 + 16 * i, 16 );
 			return true;
 		}
 		if ( k.rfind( "m+", 0 ) == 0 )
 		{
-			uint64_t off = std::stoull( k.substr( 2 ), nullptr, 0 );
+			size_t used = 0;   // U1873: the whole offset
+			uint64_t off = std::stoull( k.substr( 2 ), &used, 0 );
+			if ( used != k.size() - 2 ) { err = "bad m+ offset " + k; return false; }
 			if ( off >= MEM_SIZE ) { err = "m+ offset beyond MEM"; return false; }
 			hexbytes( s.mem + off, MEM_SIZE - off );
 			return true;
