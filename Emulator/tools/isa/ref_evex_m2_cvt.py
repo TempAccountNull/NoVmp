@@ -35,7 +35,7 @@ Interpretation decisions (SDM section in brackets; also listed in the final repo
   * VCVTPS2PH m{k1} with a faulting store (U1870, plan 1.F.13.e; as the VEX form, U1856 BDF97 "Follow SDM"):
     #PF, MXCSR and memory unchanged - Vol3A 7.5 p. 7-5 "When a fault is reported, the processor restores the
     machine state to the state prior to the beginning of execution of the faulting instruction"; #PF comes
-    before an unmasked #XM (the order is SDM-open, Vol2A Table 2-26 / Vol3A 7.9 p. 7-10; the i5-13600K E-cores
+    before an unmasked #XM (the order is SDM-open, Vol2A Table 2-62 Type E11 p. 2-65 [U1890; Vol2C 5-71] / Vol3A 7.9 p. 7-10; the i5-13600K E-cores
     and the VEX decision); only active elements are accessed (masked-off ones are fault-suppressed, Vol1 15.6.1 p. 15-9)
   * NaN conversions keep the sign and the high payload bits, set the quiet bit
   * VGETEXP: |x|, -inf for 0 (and DAZ denormal), +inf for +-inf, DE for a denormal, IE SNaN

@@ -2370,7 +2370,7 @@ static void gen_EVEX_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn
      * NoVmp (ledger U1870, plan 1.F.13.e, user decision 2026-10-22 "Fix it too"; the VEX form is U1856): a memory
      * destination's active elements (k1, or all without a mask) are probed for a write before the conversion, so a
      * faulting store raises #PF with MXCSR unchanged and before an unmasked #XM (SDM 253668-093 Vol3A 7.5 p. 7-5; the
-     * order is SDM-open, 253666-093 Vol2A Table 2-26 p. 2-33 / Vol3A 7.9 p. 7-10 - the i5-13600K E-cores' order for the
+     * order is SDM-open, 253666-093 Vol2A Table 2-62 "Type E11 Class Exception Conditions" p. 2-65 (U1890: the table 326018-093 Vol2C VCVTPS2PH p. 5-71 names for EVEX forms) / Vol3A 7.9 p. 7-10 - the E-cores' order for the
      * VEX form). Before, the flags of the conversion were in MXCSR when the store faulted (and #XM came first).
      */
     if (decode->op[0].has_ea) {
