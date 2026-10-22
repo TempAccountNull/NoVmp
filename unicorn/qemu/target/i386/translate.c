@@ -4699,6 +4699,53 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
         return true;
     }
 #endif /* __Use_Original_Qemu (U1750) */
+#if __Use_Original_Qemu != 1 /* ours (U1850) */
+    /*
+     * NoVmp (ledger U1850, H22 item 3, Gate 1 D1b; user decision 2026-10-22 "only the 13 measured forms"): LOCK on
+     * the CPL0-only instructions measured at CPL3 defers to the privilege check of the opcode switch, which raises
+     * #GP(0) - MOV r, CRn (0F 20), MOV CRn, r (0F 22), CLTS (0F 06), HLT (F4), RDMSR (0F 32), WRMSR (0F 30), WBINVD
+     * (0F 09), INVD (0F 08), INVLPG m (0F 01 /7, mod != 3), SWAPGS (0F 01 F8, 64-bit mode), LTR (0F 00 /3), LGDT m
+     * (0F 01 /2, mod != 3) when CPL > 0, and CLI (FA) when check_iopl fails (CPL > IOPL; IOPL < 3 in virtual-8086
+     * mode). The i5-13600K raises #GP for all 13 at CPL3 with IOPL 0: bare host, P- and E-cores, 20 runs each
+     * (capture 20261022_041918_native-host, hostP_ / hostE_lockpriv_probe.log), and the VMware guest, i.e. in VMX
+     * non-root operation too (P11) - so no VMX exception as for MOV DR (U1750). SDM 325383-093 Vol2A LOCK p. 3-565 and
+     * the instruction pages list the #GP(0) and the LOCK #UD without an order; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2
+     * "does not specify the prioritization of faults that arise during instruction execution" (hardware-decided,
+     * docs/quirks.md). Only these forms and only without a 66 / F2 / F3 prefix (the measured bytes; with them some
+     * opcodes are other instructions, e.g. F3 0F 09 WBNOINVD): every other CPL0-only instruction keeps the LOCK #UD.
+     * CPL0: #UD as before (the AMD CR8LEGACY alias of LOCK MOV CR0 below is untouched).
+     */
+    if (!(s->prefix & (PREFIX_DATA | PREFIX_REPZ | PREFIX_REPNZ))) {
+        bool priv_gp = CPL(s) != 0;
+
+        switch (b) {
+        case 0x120: case 0x122: case 0x106: case 0xf4: case 0x130: case 0x132:
+        case 0x108: case 0x109:
+            break;
+        case 0x100: case 0x101:
+            modrm = x86_ldub_code(env, s);
+            s->pc--; /* rewind the advance_pc() x86_ldub_code() did */
+            mod = (modrm >> 6) & 3;
+            reg = (modrm >> 3) & 7;
+            if (b == 0x100) {
+                priv_gp &= reg == 3;                                    /* LTR */
+            } else {
+                priv_gp &= (mod != 3 && (reg == 2 || reg == 7)) ||      /* LGDT m, INVLPG m */
+                           (modrm == 0xf8 && CODE64(s));                /* SWAPGS */
+            }
+            break;
+        case 0xfa:
+            priv_gp = VM86(s) ? IOPL(s) != 3 : CPL(s) > IOPL(s);       /* CLI: check_iopl fails */
+            break;
+        default:
+            priv_gp = false;
+            break;
+        }
+        if (priv_gp) {
+            return true;
+        }
+    }
+#endif /* __Use_Original_Qemu (U1850) */
     if ((b >= 0x10e && b <= 0x117) || (b >= 0x128 && b <= 0x12f) ||
         (b >= 0x138 && b <= 0x13a) || (b >= 0x150 && b <= 0x179) ||
         (b >= 0x17c && b <= 0x17f) || b == 0x1c2 || (b >= 0x1c4 && b <= 0x1c6) ||

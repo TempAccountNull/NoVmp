@@ -1,0 +1,42 @@
+# U1850-U1851 (H22 item 3, Gate 1 D1b; user decision 2026-10-22 "only the 13 measured forms"): LOCK on the 13
+# CPL0-only instructions measured at CPL3. The i5-13600K raises the privilege #GP(0) (CPL > 0; CLI: CPL > IOPL)
+# before the LOCK #UD for every one of them: bare host P- and E-cores (notes\eread\H22_v3a_host_results.md item 3,
+# capture\hostrun\gate1_host_package_v3a\output\20261022_041918_native-host\hostP_ / hostE_lockpriv_probe.log, 20 runs
+# per line, one outcome, "fault #13") and the VMware guest (notes\eread\P11_probe_fixes.md D1 side measurement). The
+# SDM gives no order: SDM 325383-093 Vol2A LOCK p. 3-565 ("An undefined opcode exception will also be generated if the
+# LOCK prefix is used with any instruction not in the above list.") and the instruction pages list "#GP(0) If the
+# current privilege level is not 0." beside the LOCK #UD; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2 "does not specify
+# the prioritization of faults that arise during instruction execution" - hardware-decided (docs/quirks.md).
+# This file is the GATE: hardware lines (no "=>") run natively (CPL3, Windows x64) and in Unicorn (cpl=3);
+# expected-value lines ("=>") run in Unicorn only (the emulator's rule for what was not measured).
+#   emu-alltest --cases Emulator\data\cases_lockpriv_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: every line SAME (0 differing). Every line faults at CPL3 (caught by the harness VEH); RSI = m+0x8000.
+#
+# --- the 13 measured forms (lockpriv_probe.txt lines [0], [1], [3]-[13]): #GP(0)
+.byte 0xf0, 0x0f, 0x20, 0xc0 | cpl=3
+.byte 0xf0, 0x0f, 0x22, 0xd8 | cpl=3
+.byte 0xf0, 0x0f, 0x06 | cpl=3
+.byte 0xf0, 0xf4 | cpl=3
+.byte 0xf0, 0x0f, 0x32 | cpl=3
+.byte 0xf0, 0x0f, 0x30 | cpl=3
+.byte 0xf0, 0x0f, 0x09 | cpl=3
+.byte 0xf0, 0x0f, 0x08 | cpl=3
+.byte 0xf0, 0x0f, 0x01, 0x3e | cpl=3
+.byte 0xf0, 0x0f, 0x01, 0xf8 | cpl=3
+.byte 0xf0, 0x0f, 0x00, 0xd8 | cpl=3 rax=0
+.byte 0xf0, 0x0f, 0x01, 0x16 | cpl=3
+.byte 0xf0, 0xfa | cpl=3
+# control (lockpriv_probe.txt line [2]): MOV rax, CR0 without LOCK, #GP(0) on both engines before U1850 too
+.byte 0x0f, 0x20, 0xc0 | cpl=3
+#
+# --- Unicorn only: at CPL0 LOCK stays #UD (nothing executes); a CPL0-only instruction that was not measured (LLDT,
+# LIDT, LMSW, STI) and a measured opcode with a 66 / F2 / F3 prefix keep the LOCK #UD at CPL3 (user decision: only
+# the 13 measured forms)
+.byte 0xf0, 0xf4 => #UD
+.byte 0xf0, 0x0f, 0x22, 0xd8 => #UD
+.byte 0xf0, 0xfa => #UD
+.byte 0xf0, 0x0f, 0x00, 0xd0 | cpl=3 => #UD
+.byte 0xf0, 0x0f, 0x01, 0x1e | cpl=3 => #UD
+.byte 0xf0, 0x0f, 0x01, 0xf0 | cpl=3 => #UD
+.byte 0xf0, 0xfb | cpl=3 => #UD
+.byte 0xf0, 0xf3, 0xf4 | cpl=3 => #UD

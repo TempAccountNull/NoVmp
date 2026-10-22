@@ -45944,7 +45944,7 @@ static void test_x86_pf_lock_mov_dr(void)
         {"\xf0\x66\x0f\x21\xc0", 5, 13, "lock 66 mov rax, dr0"},
         {"\x0f\x21\xc0", 3, 13, "mov rax, dr0 (control)"},
         {"\x44\x0f\x21\xc0", 4, 13, "mov rax, dr8 (control)"},
-        {"\xf0\x0f\x20\xc0", 4, 6, "lock mov rax, cr0 (unchanged: no CR8LEGACY on Intel)"},
+        {"\xf0\x0f\x20\xc0", 4, 13, "lock mov rax, cr0 (#GP since U1850, D1b; no CR8LEGACY on Intel)"},
     };
     static const struct {
         const char *code;
@@ -47451,6 +47451,136 @@ static void test_x86_fb_wruss_ordinary_page(void)
 }
 /* ---- end U1844 (fb_) ---- */
 
+/*
+ * ---- NoVmp U1850-U1869 (agent hostfix, bare-host v3a results notes\eread\H22_v3a_host_results.md, hx_) ----
+ */
+
+/* run 'code' at CPL3 as bp_run64_cpl3 with the given RFLAGS image (IOPL); vector of the first event, #UD = 6 */
+static uint32_t hx_cpl3_vector(BpCpu *c, const char *code, size_t len, uint64_t rflags)
+{
+    uint64_t frame[5] = {BP_CODE + 0x100, 0x33, rflags, BP_STACK, 0x23};
+    uint64_t rsp = BP_STACK - 0x100;
+    uc_err e;
+
+    OK(uc_mem_write(c->uc, rsp, frame, sizeof(frame)));
+    OK(uc_reg_write(c->uc, UC_X86_REG_RSP, &rsp));
+    OK(uc_mem_write(c->uc, BP_CODE, "\x48\xcf", 2));
+    OK(uc_mem_write(c->uc, BP_CODE + 0x100, code, len));
+    c->count = 0;
+    c->intno = 0;
+    c->rip = 0;
+    e = uc_emu_start(c->uc, BP_CODE, BP_CODE + 0x100 + len, 0, 100);
+    if (e == UC_ERR_INSN_INVALID && c->count == 0) {
+        OK(uc_reg_read(c->uc, UC_X86_REG_RIP, &c->rip));
+        return 6;
+    }
+    OK(e);
+    return c->count ? c->intno : 0;
+}
+
+/*
+ * U1850 (H22 item 3, Gate 1 D1b, user decision 2026-10-22 "only the 13 measured forms"): LOCK on the 13 CPL0-only
+ * instructions measured at CPL3 raises the privilege #GP(0) (CPL > 0; CLI: CPL > IOPL) before the LOCK #UD, as the
+ * i5-13600K does on the bare host, P- and E-cores (H22 item 3, lockpriv_probe 20 runs each) and in the VMware guest
+ * (P11). SDM 325383-093 Vol2A LOCK p. 3-565 (#UD for LOCK on any other instruction) and the instruction pages list
+ * the #GP(0) and the LOCK #UD without an order; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2 "does not specify the
+ * prioritization of faults that arise during instruction execution" - hardware-decided. At CPL0 (and CLI with
+ * IOPL 3 at CPL3) LOCK stays #UD; other CPL0-only instructions (not measured) keep #UD first; a 66 / F2 / F3 prefix
+ * keeps #UD (not a measured form).
+ */
+static void test_x86_hx_lock_priv(void)
+{
+    static const struct {
+        const char *code;
+        size_t len;
+        const char *what;
+    } t13[] = {
+        {"\xf0\x0f\x20\xc0", 4, "lock mov rax, cr0"},
+        {"\xf0\x0f\x22\xd8", 4, "lock mov cr3, rax"},
+        {"\xf0\x0f\x06", 3, "lock clts"},
+        {"\xf0\xf4", 2, "lock hlt"},
+        {"\xf0\x0f\x32", 3, "lock rdmsr"},
+        {"\xf0\x0f\x30", 3, "lock wrmsr"},
+        {"\xf0\x0f\x09", 3, "lock wbinvd"},
+        {"\xf0\x0f\x08", 3, "lock invd"},
+        {"\xf0\x0f\x01\x3e", 4, "lock invlpg [rsi]"},
+        {"\xf0\x0f\x01\xf8", 4, "lock swapgs"},
+        {"\xf0\x0f\x00\xd8", 4, "lock ltr ax"},
+        {"\xf0\x0f\x01\x16", 4, "lock lgdt [rsi]"},
+        {"\xf0\xfa", 2, "lock cli (IOPL 0)"},
+    };
+    static const struct {
+        const char *code;
+        size_t len;
+        uint32_t vec;
+        const char *what;
+    } ctl[] = {
+        {"\x0f\x20\xc0", 3, 13, "mov rax, cr0 (no LOCK)"},
+        {"\xf4", 1, 13, "hlt (no LOCK)"},
+        {"\xfa", 1, 13, "cli (no LOCK, IOPL 0)"},
+        {"\xf0\x0f\x00\xd0", 4, 6, "lock lldt ax (not measured: #UD)"},
+        {"\xf0\x0f\x01\x1e", 4, 6, "lock lidt [rsi] (not measured: #UD)"},
+        {"\xf0\x0f\x01\xf0", 4, 6, "lock lmsw ax (not measured: #UD)"},
+        {"\xf0\xfb", 2, 6, "lock sti (not measured: #UD)"},
+        {"\xf0\x0f\x01\xf9", 4, 6, "lock rdtscp (unprivileged: #UD)"},
+        {"\xf0\x66\x0f\x01\x16", 5, 6, "lock 66 lgdt [rsi] (not a measured form: #UD)"},
+        {"\xf0\xf3\xf4", 3, 6, "lock f3 hlt (not a measured form: #UD)"},
+    };
+    BpCpu c;
+    size_t i;
+    uint32_t v;
+
+    bp_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(t13) / sizeof(t13[0]); i++) {
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        bp_set(&c, UC_X86_REG_RSI, BP_DATA);
+        v = hx_cpl3_vector(&c, t13[i].code, t13[i].len, 0x202);
+        TEST_CHECK(v == 13 && c.rip == BP_CODE + 0x100);
+        TEST_MSG("%s at CPL3: vector %u rip %llx, expected #GP (13) at %llx", t13[i].what, v,
+                 (unsigned long long)c.rip, (unsigned long long)(BP_CODE + 0x100));
+    }
+    for (i = 0; i < sizeof(ctl) / sizeof(ctl[0]); i++) {
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        bp_set(&c, UC_X86_REG_RSI, BP_DATA);
+        v = hx_cpl3_vector(&c, ctl[i].code, ctl[i].len, 0x202);
+        TEST_CHECK(v == ctl[i].vec && c.rip == BP_CODE + 0x100);
+        TEST_MSG("%s at CPL3: vector %u rip %llx, expected %u", ctl[i].what, v, (unsigned long long)c.rip, ctl[i].vec);
+    }
+    OK(uc_close(c.uc));
+
+    /*
+     * CLI at CPL3 with IOPL 3 is allowed: LOCK CLI is #UD there, CLI alone clears IF. A fresh engine for each: the IRETQ
+     * stub must run at CPL0 to load IOPL (a run leaves CPL3 behind, and an IRETQ at CPL3 keeps IOPL)
+     */
+    bp_open(&c, UC_MODE_64, -1);
+    v = hx_cpl3_vector(&c, "\xf0\xfa", 2, 0x3202);
+    TEST_CHECK(v == 6);
+    TEST_MSG("lock cli at CPL3, IOPL 3: vector %u, expected #UD (6)", v);
+    OK(uc_close(c.uc));
+    bp_open(&c, UC_MODE_64, -1);
+    v = hx_cpl3_vector(&c, "\xfa", 1, 0x3202);
+    TEST_CHECK(v == 0 && !(bp_get(&c, UC_X86_REG_RFLAGS) & 0x200));
+    TEST_MSG("cli at CPL3, IOPL 3: vector %u rflags %llx, expected no event, IF = 0", v,
+             (unsigned long long)bp_get(&c, UC_X86_REG_RFLAGS));
+    OK(uc_close(c.uc));
+
+    /* CPL0: every form with LOCK stays #UD (nothing executes) */
+    bp_open(&c, UC_MODE_64, -1);
+    for (i = 0; i < sizeof(t13) / sizeof(t13[0]); i++) {
+        uc_err e;
+
+        bp_set(&c, UC_X86_REG_RSP, BP_STACK);
+        bp_set(&c, UC_X86_REG_RAX, 0);
+        bp_set(&c, UC_X86_REG_RSI, BP_DATA);
+        e = bp_run(&c, t13[i].code, t13[i].len);
+        TEST_CHECK(e == UC_ERR_INSN_INVALID && c.count == 0);
+        TEST_MSG("cpl0 %s: uc_emu_start %d events %u (vector %u), expected #UD (UC_ERR_INSN_INVALID = %d)", t13[i].what,
+                 (int)e, c.count, c.intno, (int)UC_ERR_INSN_INVALID);
+    }
+    OK(uc_close(c.uc));
+}
+/* ---- end U1850-U1869 (hx_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -48057,4 +48187,5 @@ TEST_LIST = {
     {"test_x86_gr_pk_shadow_stack", test_x86_gr_pk_shadow_stack},
     {"test_x86_gr_int_n_cpl3", test_x86_gr_int_n_cpl3},
     {"test_x86_fb_wruss_ordinary_page", test_x86_fb_wruss_ordinary_page},
+    {"test_x86_hx_lock_priv", test_x86_hx_lock_priv},
     {NULL, NULL}};
