@@ -1,0 +1,7 @@
+# harness_selftest_dbg.txt (ledger U1892, plan 1.F.13.g d, G27 nit 8): a native #DB without a hardware DR6 from Windows is a
+# harness error on a debug-register case (harness_selftest_bad.txt line 40) unless the line is a measurement that states
+# "nodr6ok" (line 1 here: a TF single step with DR7 = 400H, no enabled breakpoint, so Windows hands no debug registers over; the line
+# runs, DR6 is not compared, and the summary counts it: "#DB without a hardware DR6 from Windows: 1"). Line 2: a control.
+# test.cmd suite harness_selftest_dbg (kind tagsel): "cases: 2, differing: 0, ..." and that summary line, exit 0.
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; nop | dr7=0x400 nodr6ok  # host state: measurement selftest TF single-step #DB without a hardware DR6 [-]
+nop

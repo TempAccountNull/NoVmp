@@ -1,4 +1,4 @@
-# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877, 34-39 U1891; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
+# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877, 34-39 U1891, 40-41 U1892; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
 # purpose. emu-alltest must report each one as a harness error ("ERROR: harness error (...)"), count none of them in
 # "cases: N" ("cases: 0"), name all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...")
 # and exit with status 1; test.cmd's suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself)
@@ -85,3 +85,8 @@ nop | dr7=0x400 => dr6=0x1FFFFFFFFFFFFFFFFF
 nop | dr0=-1 dr7=0x400
 # 39 (U1891): hardware case, dr6mask overflowing
 nop | dr7=0x400 dr6mask=0x10000000000000000
+# 40 (U1892, plan 1.F.13.g d, G27 nit 8): a debug-register case whose native #DB (TF single step) comes without a hardware DR6 (DR7 enables no
+# breakpoint, so Windows hands no debug registers over): DR6 cannot be compared - a harness error (before: counted only, SAME)
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; nop | dr7=0x400
+# 41 (U1892): nodr6ok on a line that is not a measurement
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; nop | dr7=0x400 nodr6ok  # host state: selftest no DR6 [-]

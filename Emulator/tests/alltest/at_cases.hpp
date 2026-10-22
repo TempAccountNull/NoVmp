@@ -977,12 +977,15 @@ namespace at
 	// memory: [rsi] = m+0x8000). Index 0-3, 6, 7; -1 = not a debug-register key.
 	// U1771: "dbcount" (count = compare the number of #DBs of the run; the first event resumes with DR7 unchanged, see
 	// dbg_regs::keep) and "dr6mask=V" (a hardware case compares DR6 only in the bits of V; default all bits)
+	// U1892 (plan 1.F.13.g d, G27 nit 8): "nodr6ok" - a MEASUREMENT line (tag name "measurement ...") that expects a native
+	// #DB without a hardware DR6 from Windows; on every other debug-register line such a #DB is a harness error (below)
 	struct dbg_spec { bool any = false; bool set[ 8 ] = {}; int base[ 8 ] = {}; /* 0 absolute, 1 snippet, 2 MEM */ uint64_t v[ 8 ] = {};
-					  bool count = false; uint64_t dr6mask = ~0ull; bool dr6mask_set = false; };
+					  bool count = false; uint64_t dr6mask = ~0ull; bool dr6mask_set = false; bool no_dr6_ok = false; /* U1892 */ };
 	static bool dbg_extra( dbg_spec& d, const std::string& kv, std::string& err, bool& matched )
 	{
 		matched = true;
 		if ( kv == "dbcount" ) { d.count = true; return true; }
+		if ( kv == "nodr6ok" ) { d.no_dr6_ok = true; return true; }   // U1892
 		if ( kv.rfind( "dr6mask=", 0 ) == 0 )
 		{
 			const std::string v = kv.substr( 8 );
@@ -1644,6 +1647,13 @@ namespace at
 				if ( !good ) { std::printf( "[%d] %s\n    bad assignment: %s\n", n, line.c_str(), err.c_str() ); ok = false; break; }
 			}
 			if ( !ok ) { harness_error( expect, "bad assignment" ); continue; }   // U1840
+			// U1892: nodr6ok only on a measurement line with debug-register tokens
+			if ( dspec.no_dr6_ok && ( !dspec.any || tag_name.rfind( "measurement ", 0 ) != 0 ) )
+			{
+				std::printf( "[%d] %s\n    bad assignment: nodr6ok belongs to measurement lines (tag name \"measurement ...\") with debug-register tokens (U1892)\n", n, line.c_str() );
+				harness_error( expect, "bad assignment" );
+				continue;
+			}
 			if ( ( dspec.count || dspec.dr6mask_set ) && !dspec.any )   // U1771
 			{
 				std::printf( "[%d] %s\n    bad assignment: dbcount / dr6mask need debug-register tokens (dr0..dr3, dr6, dr7)\n", n, line.c_str() );
@@ -1911,6 +1921,7 @@ namespace at
 				hw_open = true;
 			}
 			std::string hw_report;   // U1050
+			int db_no_dr6_runs = 0;   // U1892: --hw-repeat runs of a debug-register case with a #DB but no hardware DR6
 			hw.dbg = dspec.any ? &dbg_hw : nullptr;   // U1740: the snippet thread's debug registers
 			if ( !hw_measure ) hw.run( p, *st_in, h );
 			else
@@ -1929,6 +1940,7 @@ namespace at
 					const char cb = core_probe::cls( probe.ticks_per_iter() );
 					const int before = int( GetCurrentProcessorNumber() );
 					hw.run( p, *st_in, rr );
+					if ( dspec.any && rr.faulted && rr.vector == 1 && !rr.ev.dr6_valid ) ++db_no_dr6_runs;   // U1892
 					const int after = int( GetCurrentProcessorNumber() );
 					const char ca = core_probe::cls( probe.ticks_per_iter() );
 					moved += before != after;
@@ -2027,7 +2039,6 @@ namespace at
 						dfields.push_back( "dr6" );     // U1862
 						dr6x = ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask;
 					}
-					if ( !h.ev.dr6_valid ) ++dbg_no_dr6;
 				}
 				// U1771: "dbcount" - the number of #DBs of the run (the first event resumed with DR7 unchanged)
 				if ( dspec.count && h.db_count != u.db_count )
@@ -2047,6 +2058,25 @@ namespace at
 			}
 			// U1862: a native-side harness problem (debug-register thread, notes) is never absorbed by a tag
 			if ( !h.err.empty() || !h.dbg_note.empty() ) harness_issue = true;
+			// U1892 (plan 1.F.13.g d, G27 nit 8): a native #DB without a hardware DR6 from Windows (the compared run, or any of the
+			// --hw-repeat runs) leaves DR6 uncompared: a harness error of the line (before: only counted, and a statement such as
+			// "host: -" passed without B0 being compared), unless the measurement line states "nodr6ok"
+			if ( dspec.any && ( ( h.faulted && h.vector == 1 && !h.ev.dr6_valid ) || db_no_dr6_runs ) )
+			{
+				++dbg_no_dr6;
+				if ( !dspec.no_dr6_ok )
+				{
+					std::printf( "[%d] %s%s\n", n, line.c_str(), tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name ).c_str() );
+					std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
+					std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
+					std::printf( "    hw event: %s\n", event_text( h, true, p.snippet_begin ).c_str() );
+					if ( !hw_report.empty() ) std::printf( "%s", hw_report.c_str() );
+					std::printf( "    #DB without a hardware DR6 from Windows (%s): DR6 not compared - only a measurement line with \"nodr6ok\" may expect it (U1892)\n",
+								 ( h.faulted && h.vector == 1 && !h.ev.dr6_valid ) ? "the compared run" : ( std::to_string( db_no_dr6_runs ) + " of the --hw-repeat runs" ).c_str() );
+					harness_error( false, "#DB without a hardware DR6" );
+					continue;
+				}
+			}
 			bool same = same_fault && x.empty();
 			// U530: a tagged case that differs is counted under its tag, not as differing; a tagged
 			// case that matches is listed (the deviation was not observed: stale tag or a CPU that

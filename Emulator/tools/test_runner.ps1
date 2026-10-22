@@ -163,6 +163,10 @@ Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', (
 # U1872 (plan 1.F.13.f): the native-only measurement tag - its line runs natively only and is counted as "native only: 1"
 # (case lines = run + native only), the other line runs on both engines; exit 0
 Add-Suite 'harness_selftest_native' 'selftest' 'nonly' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_native' ), '--cpuid', $Cpuid )
+# U1892 (plan 1.F.13.g d): a native #DB without a hardware DR6 is a harness error (harness_selftest_bad.txt line 40) unless a
+# measurement line states "nodr6ok": that line runs (DR6 not compared) and is counted in the debug-register summary
+Add-Suite 'harness_selftest_dbg' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_dbg' ), '--cpuid', $Cpuid )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 2, differing: 0, known deviations: 0, host state: 0', 'debug-register cases: 1 (not run natively: 0, #DB without a hardware DR6 from Windows: 1, harness errors / notes: 0)' )
 # U1877 (plan 1.F.13.d): the exact stated differences (U1875) - every alternative must EQUAL the observed difference, the
 # statement of the run's environment applies (--tag-env guest / hostE here; the file's header lists each line's verdict)
 Add-Suite 'harness_selftest_tags_guest' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'guest' )
