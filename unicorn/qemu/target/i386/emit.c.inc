@@ -5579,6 +5579,19 @@ static void gen_VCVTPS2PH(DisasContext *s, CPUX86State *env, X86DecodedInsn *dec
     TCGContext *tcg_ctx = s->uc->tcg_ctx;
     /* memory destination: #XM must come before the store (U67) */
     if (decode->op[0].has_ea) {
+#if __Use_Original_Qemu != 1 /* ours (U1856) */
+        /*
+         * NoVmp (ledger U1856, H22 item 7 BDF97, user decision 2026-10-22 "Follow SDM"): the destination (m64 / m128,
+         * both pages of a straddling store) is probed for a write before the conversion, so a faulting store raises
+         * #PF with MXCSR unchanged - SDM 253668-093 Vol3A 7.5 p. 7-5: "When a fault is reported, the processor restores
+         * the machine state to the state prior to the beginning of execution of the faulting instruction" - and #PF
+         * comes before an unmasked #XM (the order is SDM-open, 253666-093 Vol2A Table 2-26 p. 2-33 / Vol3A 7.9 p. 7-10;
+         * the i5-13600K E-cores take #PF, bare host H22). The P-cores and the VMware guest set PE and raise #XM first
+         * (BDF97-type erratum behaviour, docs/quirks.md "BDF97 VCVTPS2PH faulting store"), as this code did before.
+         */
+        gen_helper_probe_write(tcg_ctx, cpu_env, s->A0,
+                               tcg_constant_i32(tcg_ctx, decode->op[0].ot == MO_64 ? 8 : 16));
+#endif /* __Use_Original_Qemu (U1856) */
         gen_helper_sse_fp_begin(tcg_ctx, cpu_env);
     }
 #endif /* __Use_Original_Qemu (U67) */

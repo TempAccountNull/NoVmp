@@ -395,6 +395,9 @@ Add-Hw 'cases_dbgfix_hw' 'hw'
 # U1850-U1851 (H22 item 3, Gate 1 D1b, notes\eread\P21_hostfix.md): LOCK on the 13 CPL0-only instructions measured
 # at CPL3 raises #GP(0) before the LOCK #UD, as the i5-13600K (bare host P / E, VMware guest; cases_lockpriv_hw.txt).
 Add-Hw 'cases_lockpriv_hw' 'hw'
+# U1856-U1857 (H22 item 7, BDF97 "Follow SDM"): VCVTPS2PH m64 with a faulting store leaves MXCSR unchanged, #PF before
+# #XM; the P-core / VMware-guest values are the tagged known deviation (cases_bdf97_hw.txt).
+Add-Hw 'cases_bdf97_hw' 'hw sse'
 # U870-U899: element-size memory operands, the MMX state at a fault, IMUL/MUL flags, ... vs the i5-13600K
 # (cases_fix5.txt, hardware lines plus SDM expected values where the host cannot show it).
 Add-Hw 'cases_fix5' 'hw'

@@ -1,0 +1,31 @@
+# U1856-U1857 (H22 item 7 BDF97; user decision 2026-10-22 "Follow SDM"): VCVTPS2PH m64 whose store faults. SDM
+# 253668-093 Vol3A 7.5 p. 7-5: "When a fault is reported, the processor restores the machine state to the state prior
+# to the beginning of execution of the faulting instruction" - MXCSR keeps its value; with the raised exception (PE)
+# unmasked the order #PF / #XM is not given (Vol3A 7.9 p. 7-10; 253666-093 Vol2A Table 2-26 p. 2-33 "Type 11 Class
+# Exception Conditions" lists both) - the emulator takes the E-cores' order, #PF first. Bare host
+# (notes\eread\H22_v3a_host_results.md item 7, capture\hostrun\gate1_host_package_v3a\output\20261022_041918_native-host,
+# host{P,E}_cases_probe_p10_hw.log lines 18 / 19 / 21, 20 runs each): E-cores = SDM (#PF, MXCSR 1F80H; PE unmasked:
+# #PF); P-cores set PE (1FA0H) although the store faulted and raise #XM first with PE unmasked - the BDF97-type
+# erratum behaviour (docs/quirks.md "BDF97 VCVTPS2PH faulting store"); the VMware guest shows the P-core values. The
+# differing lines carry that tag ("known deviation" in the guest and on P-cores, "not observed" on E-cores; a
+# core-dependent result, gated only through the tag, user decision). Input 1.0000001f (3F800001H): inexact as FP16.
+# RSI = m+0x8000; [rsi+0x8000] = MEM + 10000h is not present (cases_fix5.txt U873); [rsi+0x7ffc] straddles into it.
+#   emu-alltest --cases Emulator\data\cases_bdf97_hw.txt --cpuid Emulator\data\cpuid_i5-13600k.txt
+# Expected: 0 differing (hardware lines vs the i5-13600K at CPL3, expected-value lines Unicorn only, strict: every
+# field not listed keeps its input value - MXCSR and the memory too).
+#
+# --- hardware: the controls complete / raise #XM as on every core; the faulting stores are the tagged lines
+vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store
+vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA  # known deviation: BDF97 VCVTPS2PH faulting store
+vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store
+#
+# --- Unicorn only: #PF with MXCSR unchanged, also VEX.256 (m128) and with PE unmasked (no #XM); the controls
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | xmm1=0100803F0100803F0100803F0100803F => #PF
+vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA => #PF
+vcvtps2ph xmmword ptr [rsi+0x7ff8], ymm1, 0 | xmm1=0100803F0100803F0100803F0100803F ymmh1=0100803F0100803F0100803F0100803F m+0xFFF8=AAAAAAAAAAAAAAAA => #PF
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F => #PF
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F => #PF
+vcvtps2ph qword ptr [rsi], xmm1, 0 | xmm1=0100803F0100803F0100803F0100803F => mxcsr=0x1FA0 m+0x8000=003C003C003C003C
+vcvtps2ph qword ptr [rsi], xmm1, 0 | mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F => #XM mxcsr=0x0FA0

@@ -47651,6 +47651,71 @@ static void test_x86_hx_umwait_disarm(void)
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     OK(uc_close(r.uc));
 }
+
+/*
+ * U1856 (H22 item 7 BDF97, user decision 2026-10-22 "Follow SDM"): VCVTPS2PH m64 / m128 whose store faults leaves
+ * MXCSR unchanged, and with the raised exception unmasked the #PF comes first (no #XM). SDM 253668-093 Vol3A 7.5 p. 7-5:
+ * "When a fault is reported, the processor restores the machine state to the state prior to the beginning of
+ * execution of the faulting instruction"; the #PF / #XM order is not given (Vol3A 7.9 p. 7-10) - the E-cores' order
+ * (bare host, H22: #PF, MXCSR 1F80H unchanged). The P-cores and the VMware guest set PE and raise #XM first (BDF97-type
+ * erratum behaviour, docs/quirks.md). Unicorn reports the store to unmapped memory (0x202000) as UC_ERR_WRITE_UNMAPPED.
+ * Input 1.0000001f (3F800001H): inexact as FP16 (PE).
+ */
+static void test_x86_hx_vcvtps2ph_fault(void)
+{
+    static const char m64[] = "\xc4\xe3\x79\x1d\x0e\x00";      /* vcvtps2ph qword ptr [rsi], xmm1, 0 */
+    static const char m128[] = "\xc4\xe3\x7d\x1d\x0e\x00";     /* vcvtps2ph xmmword ptr [rsi], ymm1, 0 */
+    static const struct {
+        const char *code;
+        size_t len;
+        uint64_t rsi;
+        uint32_t mxcsr_in, mxcsr_out;
+        int vec;            /* -1: UC_ERR_WRITE_UNMAPPED (the #PF), 0: completes, 19: #XM */
+        const char *what;
+    } t[] = {
+        {m64, 6, 0x202000, 0x1f80, 0x1f80, -1, "m64 not mapped, PE masked: MXCSR unchanged"},
+        {m64, 6, 0x201ffc, 0x1f80, 0x1f80, -1, "m64 straddling into the unmapped page: MXCSR unchanged"},
+        {m128, 6, 0x201ff8, 0x1f80, 0x1f80, -1, "m128 straddling: MXCSR unchanged"},
+        {m64, 6, 0x202000, 0x0f80, 0x0f80, -1, "m64 not mapped, PE unmasked: the #PF first, MXCSR unchanged"},
+        {m64, 6, 0x200100, 0x1f80, 0x1fa0, 0, "m64 mapped (control): stored, PE set"},
+        {m64, 6, 0x200100, 0x0f80, 0x0fa0, 19, "m64 mapped, PE unmasked (control): #XM, PE set, nothing stored"},
+    };
+    uint8_t x[32], mem[16], aa[16];
+    NvRun r;
+    size_t i;
+
+    for (i = 0; i < sizeof(x) / 4; i++) {
+        memcpy(x + 4 * i, "\x01\x00\x80\x3f", 4);
+    }
+    memset(aa, 0xaa, sizeof(aa));
+    nv_open(&r, UC_MODE_64, UC_CPU_X86_MAX);
+    OK(uc_reg_write(r.uc, UC_X86_REG_YMM1, x));
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        uint32_t mx = t[i].mxcsr_in, mxo = 0;
+        uint64_t st = t[i].rsi < 0x200100 + 1 ? t[i].rsi : 0x201ff0;    /* the bytes to watch */
+        uc_err e;
+        int ok;
+
+        OK(uc_mem_write(r.uc, 0x200100, aa, sizeof(aa)));
+        OK(uc_mem_write(r.uc, 0x201ff0, aa, sizeof(aa)));
+        OK(uc_reg_write(r.uc, UC_X86_REG_MXCSR, &mx));
+        nv_set(&r, UC_X86_REG_RSI, t[i].rsi);
+        e = nv_run_n(&r, t[i].code, t[i].len);
+        OK(uc_reg_read(r.uc, UC_X86_REG_MXCSR, &mxo));
+        OK(uc_mem_read(r.uc, st, mem, sizeof(mem)));
+        if (t[i].vec < 0) {
+            ok = e == UC_ERR_WRITE_UNMAPPED && r.cap.count == 0 && !memcmp(mem, aa, sizeof(mem));
+        } else if (t[i].vec == 0) {
+            ok = e == UC_ERR_OK && r.cap.count == 0 && !memcmp(mem, "\x00\x3c\x00\x3c\x00\x3c\x00\x3c", 8);
+        } else {
+            ok = e == UC_ERR_OK && r.cap.count == 1 && r.cap.intno == (uint32_t)t[i].vec && !memcmp(mem, aa, sizeof(mem));
+        }
+        TEST_CHECK(ok && mxo == t[i].mxcsr_out);
+        TEST_MSG("%s: uc_emu_start %d events %u (vector %u), mxcsr %x (expected %x)", t[i].what, (int)e, r.cap.count,
+                 r.cap.intno, mxo, t[i].mxcsr_out);
+    }
+    OK(uc_close(r.uc));
+}
 /* ---- end U1850-U1869 (hx_) ---- */
 
 TEST_LIST = {
@@ -48261,4 +48326,5 @@ TEST_LIST = {
     {"test_x86_fb_wruss_ordinary_page", test_x86_fb_wruss_ordinary_page},
     {"test_x86_hx_lock_priv", test_x86_hx_lock_priv},
     {"test_x86_hx_umwait_disarm", test_x86_hx_umwait_disarm},
+    {"test_x86_hx_vcvtps2ph_fault", test_x86_hx_vcvtps2ph_fault},
     {NULL, NULL}};
