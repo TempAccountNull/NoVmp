@@ -3337,8 +3337,8 @@ void helper_xbegin_check(CPUX86State *env, target_ulong fallback_eip)
  * UMWAIT waits only while the range is armed and not triggered ("WHILE monitor hardware armed AND TSC <
  * deadline"). The arm ends with a new UMONITOR, MONITOR, IRET, SYSRET, SYSEXIT, ERETU (Vol3A 8.4.2.4), a far
  * RET that changes CPL, a uc_context_restore (a thread switch returns to user mode through IRET / SYSRET), the
- * reset and uc_close. Nothing else ends it: a UMWAIT that reached its deadline leaves it armed (the SDM lists
- * no such event; our reading).
+ * reset and uc_close. U1852: also every UMWAIT when it returns (the bare host disarms after an ended UMWAIT;
+ * before, our reading kept the range armed, the SDM lists no such event).
  */
 static uint32_t umon_line_size(CPUX86State *env)
 {
@@ -3462,6 +3462,21 @@ void helper_waitpkg(CPUX86State *env, uint32_t src, uint32_t umwait)
         tsc = end;          /* the wait ended at the deadline (or the wake event) */
     }
 #endif /* __Use_Original_Qemu (U1620) */
+#if __Use_Original_Qemu != 1 /* ours (U1852) */
+    /*
+     * NoVmp (ledger U1852, H22 item 5, H4 item 1): a UMWAIT that ended disarms the UMONITOR range - a second UMWAIT
+     * without a new UMONITOR does not wait. The i5-13600K on the bare host, P- and E-cores (capture
+     * 20261022_041918_native-host, waitpkg_rearm_hostP.log / _hostE.log, cases_waitpkg_rearm_probe_hw lines A and C: the
+     * second wait returns at once, also with a far deadline; line B with a fresh UMONITOR waits). SDM 325383-093 Vol2B
+     * UMWAIT pp. 4-742 / 4-743 names IRET, MONITOR, SYSEXIT, SYSRET and a far RET changing CPL as the events that end
+     * the arm and says nothing about an ended UMWAIT: hardware-decided (docs/quirks.md). Our reading where nothing was
+     * measured: every UMWAIT that passed its #GP checks disarms when it returns, also one that did not wait (deadline in
+     * the past, the line already triggered, no range armed). TPAUSE leaves the range alone.
+     */
+    if (umwait) {
+        x86_umonitor_disarm(env);
+    }
+#endif /* __Use_Original_Qemu (U1852) */
     CC_SRC = (using_os_deadline && tsc >= deadline) ? CC_C : 0;
 }
 

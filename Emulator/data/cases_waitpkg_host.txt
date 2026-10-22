@@ -10,7 +10,8 @@
 # with the TSC RDTSC returns (IA32_TSC_ADJUST included); while TSC < deadline = min(EDX:EAX, TSC +
 # (IA32_UMWAIT_CONTROL[31:2] << 2), 0 = no maximum) the TSC jumps to the end of the wait (no real sleep): the deadline
 # or, earlier, TSC + W, the environment wake period (U1622, user decision 2026-10-18 "Wake after ~1 ms": W = 2^21
-# ticks, CF = 0); UMWAIT only while a UMONITOR range is armed (U1621); CF = 1 only when the OS limit ends the wait;
+# ticks, CF = 0); UMWAIT only while a UMONITOR range is armed (U1621), and a UMWAIT that ended disarms the range
+# (U1852, bare host H22 item 5); CF = 1 only when the OS limit ends the wait;
 # AF/PF/SF/ZF/OF = 0; every other flag unchanged. The TSC keeps counting on host time, so the TSC lines check a
 # window: R11 = (RDTSC - expected) >> 32 = 0.
 #
@@ -133,6 +134,18 @@ mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; .byte 0xf3, 0x0f, 0xae, 0xf
 # R8 + 200000H); an IRETQ (same CPL) between them disarms the range: no wait (R11 from R8)
 .byte 0xf3, 0x0f, 0xae, 0xf6; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov rax, 0x10000000000; add rax, r8; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; mov r9, 0x200000; sub rax, r9; shr rax, 28; mov r11, rax | cpl=3 =>! r10=0 r11=0
 .byte 0xf3, 0x0f, 0xae, 0xf6; mov rcx, rsp; lea rax, [rip + 9]; push 0x2b; push rcx; pushfq; push 0x33; push rax; iretq; rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov rax, 0x10000000000; add rax, r8; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; shr rax, 28; mov r11, rax | cpl=3 =>! r10=0 r11=0
+# U1852-U1853 (H22 item 5, H4 item 1): a UMWAIT that ended disarms the UMONITOR range. The i5-13600K on the bare host,
+# P- and E-cores (capture\hostrun\gate1_host_package_v3a\output\20261022_041918_native-host, waitpkg_rearm_hostP.log /
+# waitpkg_rearm_hostE.log, cases_waitpkg_rearm_probe_hw lines A / C: the second UMWAIT without a new UMONITOR returns at
+# once, R13 = 6..7 as in line D without any UMONITOR (P 5..6, E 6..7), also with a far second deadline; line B with a
+# fresh UMONITOR waits, R13 = 10H).
+# SDM 325383-093 Vol2B UMWAIT pp. 4-742 / 4-743 names IRET, MONITOR, SYSEXIT, SYSRET and far RET only - hardware-decided.
+# T0 by WRMSR 10H, one far deadline T0 + 2^40 for every UMWAIT; then 256 x UMWAIT in a loop (umwait ecx; dec r12d; jnz).
+# Without a new UMONITOR only the first one waits (the wake, T0 + 200000H; R11 from there); with UMONITOR in the loop
+# every one waits: T0 + 256 * 200000H = T0 + 20000000H (2^29 - one 2^28 window above the first, so the R11 check
+# separates the two). R10 = CF of the last UMWAIT = 0, R12 = 0 (the loop ran out).
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0xf3, 0x0f, 0xae, 0xf6; mov r12d, 256; .byte 0xf2, 0x0f, 0xae, 0xf1, 0x41, 0xff, 0xcc, 0x75, 0xf7; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0 r12=0
+mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; mov r12d, 256; .byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1, 0x41, 0xff, 0xcc, 0x75, 0xf3; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100020000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0 r12=0
 # U1672 (agent tscadj, plan 1.J.60): IA32_TSC_ADJUST (3BH, enumerated on the bare host: CPUID.07H.0:EBX[1] = 1) := 1000_0000_0000H,
 # then a wait to RDTSC + 100000H (before W): the wait advances the TSC (R11 from the deadline), not IA32_TSC_ADJUST, which
 # "changes only in response to WRMSR" (SDM 093 Vol3B 20.17.3 p. 20-44); R8 = IA32_TSC_ADJUST after the wait

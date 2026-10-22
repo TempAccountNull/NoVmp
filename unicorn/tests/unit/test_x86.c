@@ -7283,10 +7283,11 @@ static void test_x86_tw_monitor(void)
     t = tw_rdtsc(&r);
     TEST_CHECK(tw_wait(&r, armed, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
-    /* nothing but the listed events disarms it: after a wait that reached the deadline UMWAIT alone waits again */
+    /* U1852: an ended UMWAIT disarms the range (bare host, H22 item 5): after a wait that reached the deadline UMWAIT
+       alone does not wait again (a 2^31-tick deadline: host time between the two RDTSCs stays far below it) */
     t = tw_rdtsc(&r);
-    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
-    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
     /* a store into the line 200100H-20013FH (CPUID.05H:EBX = 40H) triggers the monitor: no wait */
     t = tw_rdtsc(&r);
     TEST_CHECK(tw_wait(&r, st_in, 0, t + 0x10000000) == 0x002);
@@ -47579,6 +47580,75 @@ static void test_x86_hx_lock_priv(void)
     }
     OK(uc_close(c.uc));
 }
+
+/*
+ * U1852 (H22 item 5, H4 item 1): a UMWAIT that ended disarms the UMONITOR range - a second UMWAIT without a new UMONITOR
+ * does not wait, however the first one ended (deadline, OS time limit, the environment wake). The i5-13600K on the bare
+ * host, P- and E-cores (cases_waitpkg_rearm_probe_hw, 50 runs per line: the second wait returns at once, R13 6..7 = the
+ * no-range level, also with a far second deadline; with a fresh UMONITOR it waits). SDM 325383-093 Vol2B UMWAIT pp. 4-742 /
+ * 4-743 lists IRET, MONITOR, SYSEXIT, SYSRET and a far RET as the events that end the arm and says nothing about an ended
+ * UMWAIT - hardware-decided. Our reading for what was not measured: every executed UMWAIT disarms when it returns (also
+ * one that did not wait: deadline in the past, range already triggered). TPAUSE leaves the range alone. "No wait" is
+ * checked as RDTSC - t < 2^31 against a 2^31-tick deadline (host time between the reads stays far below it).
+ */
+static void test_x86_hx_umwait_disarm(void)
+{
+    static const char armed[] = "\xf3\x0f\xae\xf3\xf2\x0f\xae\xf1";      /* umonitor rbx; umwait ecx */
+    static const char tp_armed[] = "\xf3\x0f\xae\xf3\x66\x0f\xae\xf1";   /* umonitor rbx; tpause ecx */
+    NvRun r;
+    uint64_t t;
+
+    tw_open(&r);
+    tw_wake(&r, 0);                                              /* the deadline rule alone */
+    wp_wrmsr(&r, 0x10, TW_T0);
+    nv_set(&r, UC_X86_REG_RBX, 0x200100);
+    /* the first wait runs to its deadline; the second one (no new UMONITOR) does not wait */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + 0x100000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
+    TEST_MSG("second UMWAIT without UMONITOR after a deadline-ended wait: waited (expected no wait)");
+    /* control: a fresh UMONITOR before it - it waits to its deadline */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x80000000ull));
+    /* ended by the OS time limit (CF = 1): disarmed too */
+    wp_wrmsr(&r, 0xe1, 0x100000);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + (1ull << 40)) == 0x003);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
+    wp_wrmsr(&r, 0xe1, 0);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
+    TEST_MSG("second UMWAIT after an OS-limit-ended wait: waited (expected no wait)");
+    /* ended by the environment wake (default W = 2^21): disarmed too */
+    tw_wake(&r, UC_X86_WAIT_WAKE_DEFAULT);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, armed, 0, t + (1ull << 40)) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + UC_X86_WAIT_WAKE_DEFAULT));
+    tw_wake(&r, 0);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
+    TEST_MSG("second UMWAIT after a wake-ended wait: waited (expected no wait)");
+    /* a UMWAIT that did not wait (deadline in the past) disarms too (our reading, not measured) */
+    TEST_CHECK(tw_wait(&r, armed, 0, 0) == 0x002);
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
+    TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
+    TEST_MSG("UMWAIT after a UMWAIT with a past deadline: waited (expected no wait)");
+    /* TPAUSE does not touch the range: UMONITOR; TPAUSE; UMWAIT waits */
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tp_armed, 0, t + 0x100000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
+    t = tw_rdtsc(&r);
+    TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
+    TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
+    OK(uc_close(r.uc));
+}
 /* ---- end U1850-U1869 (hx_) ---- */
 
 TEST_LIST = {
@@ -48188,4 +48258,5 @@ TEST_LIST = {
     {"test_x86_gr_int_n_cpl3", test_x86_gr_int_n_cpl3},
     {"test_x86_fb_wruss_ordinary_page", test_x86_fb_wruss_ordinary_page},
     {"test_x86_hx_lock_priv", test_x86_hx_lock_priv},
+    {"test_x86_hx_umwait_disarm", test_x86_hx_umwait_disarm},
     {NULL, NULL}};
