@@ -1,0 +1,8 @@
+# harness_selftest_native.txt (ledger U1872, plan 1.F.13.f, user decision 2026-10-22 "Native-only tag"): the tag
+# "# native only: measurement NAME" of a measurement line whose Unicorn side cannot run (cases_probe_p10_hw.txt SYSCALL:
+# Unicorn has no OS). Line 1 runs on the host CPU only - the Unicorn side is skipped on purpose - and is counted as
+# "native only: 1", never in "cases:"; line 2 runs on both engines (SAME). test.cmd suite harness_selftest_native
+# (kind nonly): "case lines: 2, run: 1, native only: 1, harness errors: 0", "cases: 1, differing: 0", exit 0. No other
+# test.cmd suite may have a native-only line (test_runner.ps1); harness_selftest_bad lines 17-18 are the bad forms.
+mov rax, 1  # native only: measurement selftest native-only line
+mov rax, 2

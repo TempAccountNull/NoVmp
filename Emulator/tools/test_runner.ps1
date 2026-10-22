@@ -67,6 +67,8 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 # Kind: exit = pass on exit status 0 | hw = hardware file (differing: 0, exit 0, strict profile) |
 #       bad = expect_selftest_bad (7 of 7 reported, exit 1) | py = python check (exit status 0) |
 #       herr = harness_selftest_bad (every case line a harness error, "cases: 0", exit 1; U1841).
+#       nonly = harness_selftest_native (U1871: its one "# native only:" measurement line counted as "native only: 1",
+#       every other line run; no native-only line is allowed in any other suite).
 # U1841: every emu-alltest --cases suite (except herr) must also report "cases: N" with N = the number of case lines this
 # runner counts in the file itself (Get-ExpectedCases).
 $Suites = New-Object System.Collections.Generic.List[object]
@@ -156,6 +158,9 @@ Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' @( '--case
 # U1861 (plan 1.F.13.c, G25 gap 3): build-failed and engine-load lines too; the profile without CET_SS
 # (cpuid_selftest_nocet.txt) makes "cpl=3 cr4.cet=1" impossible to load.
 Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_bad' ), '--cpuid', ( Join-Path $D 'cpuid_selftest_nocet.txt' ) )
+# U1872 (plan 1.F.13.f): the native-only measurement tag - its line runs natively only and is counted as "native only: 1"
+# (case lines = run + native only), the other line runs on both engines; exit 0
+Add-Suite 'harness_selftest_native' 'selftest' 'nonly' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_native' ), '--cpuid', $Cpuid )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )
@@ -838,13 +843,28 @@ function Complete-Suite( $s )
 			elseif ( -not ( $sum.Count -eq 1 -and $sum[ 0 ] -match '^cases: 0, ' ) ) { $s.Reason = 'a broken case line was counted in "cases:"' }
 			elseif ( $s.Exit -ne 1 ) { $s.Reason = "exit status $( $s.Exit ), expected 1" }
 		}
+		'nonly'
+		{
+			# U1871 (plan 1.F.13.f): exactly one native-only line (counted, not in "cases:"), every other line run, nothing differing
+			$want = Get-ExpectedCases $s
+			$acct = @( $lines | Where-Object { $_ -match '^case lines: ' } )
+			if ( $acct.Count -ne 1 ) { $s.Reason = 'no "case lines:" accounting line (U1840)' }
+			elseif ( -not ( $acct[ 0 ] -match "^case lines: $want, run: $( $want - 1 ), native only: 1, harness errors: 0 " ) ) { $s.Reason = "the native-only line was not counted as native only: $( $acct[ 0 ] )" }
+			elseif ( -not ( $lines | Where-Object { $_ -match '^native only: 1 ' } ) ) { $s.Reason = 'no "native only: 1" summary line' }
+			elseif ( -not ( $sum.Count -eq 1 -and $sum[ 0 ] -match "^cases: $( $want - 1 ), differing: 0, " ) ) { $s.Reason = "the other line was not run (or differs): $( $sum -join ' / ' )" }
+			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
+		}
 		default { if ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" } }
 	}
+	# U1871 (plan 1.F.13.f): "# native only:" belongs to measurement files - a test.cmd suite compares both engines on
+	# every line (except the native-only self-test)
+	if ( -not $s.Reason -and $s.Kind -ne 'nonly' -and ( $lines | Where-Object { $_ -match '^native only: [0-9]+' } ) )
+	{ $s.Reason = 'a native-only line in a test.cmd suite (U1871: measurement files only)' }
 	# U1841 (plan 1.F.13.b A): every emu-alltest --cases suite must report exactly as many cases as its file has case lines
 	# (Get-ExpectedCases, counted here): a case line emu-alltest could not parse, assemble, load or run natively is no longer
 	# lost while the suite still shows "differing: 0"
 	$want = Get-ExpectedCases $s
-	if ( -not $s.Reason -and $want -ge 0 -and $s.Kind -ne 'herr' )
+	if ( -not $s.Reason -and $want -ge 0 -and $s.Kind -ne 'herr' -and $s.Kind -ne 'nonly' )   # U1871: nonly counts above
 	{
 		if ( $sum.Count -ne 1 ) { $s.Reason = "$( $sum.Count ) ""cases:"" summary lines, expected exactly 1" }
 		elseif ( -not ( $sum[ 0 ] -match '^cases: ([0-9]+),' ) -or [long]$Matches[ 1 ] -ne $want )

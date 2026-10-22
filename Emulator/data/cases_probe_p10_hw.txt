@@ -1,7 +1,8 @@
 # U1722 (G15 P10, notes\eread\G15_1J44_consolidation.md; sources D5 §5.2 #9-#15 and §2.10, S4 §8.1 #5, S1 V14 /
 # S1sub_D V14): user-mode anti-emulation probe cases. MEASUREMENT file, NOT a gate (not in test_runner.ps1);
 # details and the guest results: notes\eread\P9_probe_snippets.md. Every line is tagged "# host state:
-# measurement P10x ..." or "# host state: VM-only ..." (a difference is counted per item, never as "differing").
+# measurement P10x ..." or "# host state: VM-only ..." (a difference is counted per item, never as "differing"),
+# the SYSCALL line "# native only: measurement ..." (U1872: hardware only, the Unicorn side skipped, counted).
 # Only our own bytes run natively, at CPL3; every fault / trap is caught by the harness (VEH; trap snippets end
 # with spare instructions so the trap RIP stays inside the snippet); nothing changes system state: the
 # not-present page is MEM + 10000h = [rsi+0x8000] (unmapped in both engines, as in cases_fix5.txt U873), the
@@ -163,7 +164,10 @@ mov eax, 0x8fffffff; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b
 mov eax, 0xc0000000; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID C0000000h
 # --- SYSCALL from a non-ntdll address with an invalid service number (0FFFh, table 0): RCX = next RIP,
 # R11 = RFLAGS, RAX = C000001Ch. Unicorn has no OS (LSTAR = 0): its side is not comparable before 3.B 6.4.
-mov eax, 0xfff; mov r10, rcx; syscall; nop; nop | cpl=3  # host state: measurement P10b SYSCALL non-ntdll invalid service
+# U1872 (plan 1.F.13.f, user decision 2026-10-22 "Native-only tag"): measured on the host CPU only - the Unicorn side is
+# skipped on purpose and the line is counted as "native only: 1" (since U1860 its Unicorn run error was a harness error;
+# before U1860 a "host state" tag absorbed it). The OS path (SYSCALL into an emulated kernel) is Phase 3.
+mov eax, 0xfff; mov r10, rcx; syscall; nop; nop | cpl=3  # native only: measurement P10b SYSCALL non-ntdll invalid service (Unicorn has no OS)
 #
 # ===== P10c: VM-only encodings (VMware guest; bare metal and the emulator: #GP) =====
 mov eax, 0x564D5868; xor ebx, ebx; mov ecx, 10; mov edx, 0x5658; in eax, dx | cpl=3  # host state: VM-only VMware backdoor 5658h GETVERSION

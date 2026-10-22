@@ -123,6 +123,12 @@
 //                             hidden by the guest CPUID", U1476 / U1700 / U1710)
 //   # host state: REASON      the host's state differs from the emulator's (RDRAND values, APIC ID,
 //                             CET shadow stacks the host OS leaves off, ...), not an SDM question
+//   # native only: measurement NAME   (U1871, plan 1.F.13.f) a MEASUREMENT line whose Unicorn side cannot run
+//                             (SYSCALL: Unicorn has no OS); the host CPU's result is printed ("[n] NATIVE ONLY",
+//                             "hw:", the --hw-repeat outcomes), the Unicorn side is skipped on purpose, and the line
+//                             is counted as "native only: O" (never in "cases:", never silent). Only on measurement
+//                             lines: the name must start with "measurement " and the tag states no difference (both
+//                             else a bad tag); test.cmd's gate files must have none (test_runner.ps1).
 // A tagged case that differs is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as
 // differing; a tagged case that matches is listed as "not observed" (stale tag, or a CPU that
 // sometimes takes the SDM path). U1862: a tag may state the difference it accepts, a bracket list at
@@ -140,7 +146,8 @@
 // has expected-value cases (or --expect-only skipped lines) a second summary line
 // "expected-value cases: N, differing: M, errors: E, skipped: S" follows. Then (U1840) always
 // "case lines: L, run: N, harness errors: E (hardware H, expected-value X), skipped: S": L = every
-// case line of the file (of the shard), N = the "cases:" count. A case line of either kind that
+// case line of the file (of the shard), N = the "cases:" count; with native-only lines (U1871) the line reads
+// "case lines: L, run: N, native only: O, harness errors: ..." and L = N + O + E + S, after a "native only: O" line. A case line of either kind that
 // cannot be parsed, assembled, loaded or run natively ("not run" debug-register lines) is a harness
 // error: "    ERROR: harness error (...)" under it, not counted in "cases:", and a final "ERROR: ..."
 // line. Exit status 1 when an expected-value case differs, on any harness error, or when
@@ -1059,7 +1066,7 @@ namespace at
 	// meaning, kept for the existing tags; docs\emu-alltest.md).
 	static std::string case_tag( std::string& line, std::string& name, std::string& stated, bool& has_stated )
 	{
-		static const char* kinds[] = { "known deviation", "host state" };
+		static const char* kinds[] = { "known deviation", "host state", "native only" };   // U1871: + native only
 		stated.clear();
 		has_stated = false;
 		for ( const char* k : kinds )
@@ -1296,6 +1303,8 @@ namespace at
 		// never counted in "cases: N", and the exit status is 1. Before, a hardware line with such a problem was dropped
 		// silently (not counted, exit 0), so a gate file could lose lines and still pass (G24 gap A).
 		int hw_errors = 0, lines_in = 0;
+		int native_n = 0;                       // U1871 (plan 1.F.13.f): native-only measurement lines
+		std::vector<std::string> native_lines;
 		auto harness_error = [ & ]( bool exp_line, const char* what )
 		{
 			++( exp_line ? exp_errors : hw_errors );
@@ -1337,6 +1346,15 @@ namespace at
 			{
 				std::printf( "[%d] %s\n    bad tag: \"# %s:\" needs a name and belongs to hardware cases only\n", n, line.c_str(), tag_kind.c_str() );
 				harness_error( line.find( "=>" ) != std::string::npos, "bad tag" );   // U1840
+				continue;
+			}
+			// U1871 (plan 1.F.13.f): "# native only:" only on a measurement line (its name starts with "measurement ") and
+			// without a stated difference (nothing is compared)
+			if ( tag_kind == "native only" && ( tag_has_stated || tag_name.rfind( "measurement ", 0 ) != 0 ) )
+			{
+				std::printf( "[%d] %s  # native only: %s%s\n    bad tag: \"# native only:\" belongs to measurement lines only (name \"measurement ...\") and states no "
+							 "difference\n", n, line.c_str(), tag_name.c_str(), tag_has_stated ? ( " [" + tag_stated + "]" ).c_str() : "" );
+				harness_error( false, "bad tag" );
 				continue;
 			}
 			if ( tag_has_stated )   // U1862: "dr6=MASK" must be a number
@@ -1592,13 +1610,14 @@ namespace at
 					continue;
 				}
 			}
-			if ( !uc.load( p_uc, err ) )
+			const bool native_only = tag_kind == "native only";   // U1871: the Unicorn side is not run
+			if ( !native_only && !uc.load( p_uc, err ) )
 			{
 				std::printf( "[%d] %s\n    uc load: %s\n", n, line.c_str(), err.c_str() );   // U1840: with the line
 				harness_error( expect, "engine load" );
 				continue;
 			}
-			uc.run( *st_in, u );
+			if ( !native_only ) uc.run( *st_in, u );
 			if ( expect )
 			{
 				// compare only the checked bytes: copy Unicorn's bytes into the expected image where
@@ -1739,6 +1758,26 @@ namespace at
 			// #AC, #GP, #UD, ...: the context the VEH resumes has AC = 0), so after a hardware fault
 			// the host's AC bit is the OS's, not the CPU's: the fault state compares Unicorn's AC
 			hw.dbg = nullptr;
+			// U1871 (plan 1.F.13.f): a native-only measurement line - the host CPU's result (and the --hw-repeat outcomes) is
+			// printed, the Unicorn side was skipped on purpose; counted as "native only", never in "cases:". A native-side harness
+			// problem (thread error / note) stays a harness error.
+			if ( native_only )
+			{
+				std::printf( "[%d] NATIVE ONLY %s  # native only: %s\n", n, line.c_str(), tag_name.c_str() );
+				std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", case_fields( *st_in, *h.s ).c_str() );
+				std::printf( "    uc: not run (native only: measured on the host CPU, the Unicorn side skipped on purpose)\n" );
+				if ( dspec.any || opt.events ) std::printf( "    hw event: %s\n", event_text( h, true, p.snippet_begin ).c_str() );
+				if ( !hw_report.empty() ) std::printf( "%s", hw_report.c_str() );
+				if ( !h.err.empty() || !h.dbg_note.empty() )
+				{
+					std::printf( "    dbg: hw error / note: %s%s%s\n", h.err.c_str(), h.err.empty() || h.dbg_note.empty() ? "" : "; ", h.dbg_note.c_str() );
+					harness_error( false, "native-side harness problem" );
+					continue;
+				}
+				++native_n;
+				native_lines.push_back( "[" + std::to_string( n ) + "] " + tag_name );
+				continue;
+			}
 			// U1860 (plan 1.F.13.c, G25 gap 2): a Unicorn run error on a hardware line (uc_emu_start failed, the epilogue not
 			// reached, ...) is a harness error: printed with the native result (a measurement file keeps its value), no
 			// verdict, not counted in "cases:", exit 1. Before, it was neither printed nor counted (debug-register lines
@@ -1864,6 +1903,11 @@ namespace at
 		for ( auto& [ k, v ] : host ) std::printf( "host state: %s: %d\n", k.c_str(), v );
 		std::printf( "tagged but not observed (matched the hardware): %zu\n", not_observed.size() );
 		for ( auto& s : not_observed ) std::printf( "  not observed %s\n", s.c_str() );
+		if ( native_n )   // U1871: only when the file has native-only measurement lines
+		{
+			std::printf( "native only: %d (measured on the host CPU, the Unicorn side skipped on purpose; not in \"cases:\")\n", native_n );
+			for ( auto& s : native_lines ) std::printf( "  native only %s\n", s.c_str() );
+		}
 		// U1740: only when the file has debug-register hardware cases
 		if ( dbg_n || dbg_notrun )
 			std::printf( "debug-register cases: %d (not run natively: %d, #DB without a hardware DR6 from Windows: %d, harness errors / notes: %d)\n", dbg_n, dbg_notrun,
@@ -1882,14 +1926,16 @@ namespace at
 		// --expect-only. A gap would be a line this loop dropped without a count: also an error. test.cmd compares "cases: N"
 		// with its own count of the file's case lines (test_runner.ps1, U1841).
 		const int harness_errors = exp_errors + hw_errors;
-		const bool accounted = lines_in == n + harness_errors + skipped;
-		std::printf( "case lines: %d, run: %d, harness errors: %d (hardware %d, expected-value %d), skipped: %d\n", lines_in, n, harness_errors, hw_errors, exp_errors,
-					 skipped );
+		const bool accounted = lines_in == n + native_n + harness_errors + skipped;   // U1871: + native only
+		const std::string native_txt = native_n ? ", native only: " + std::to_string( native_n ) : std::string();
+		std::printf( "case lines: %d, run: %d%s, harness errors: %d (hardware %d, expected-value %d), skipped: %d\n", lines_in, n, native_txt.c_str(), harness_errors,
+					 hw_errors, exp_errors, skipped );
 		if ( harness_errors )
 			std::printf( "ERROR: %d case line(s) could not be parsed, assembled, loaded or run natively (\"ERROR: harness error\" above); \"cases: %d\" does not include them\n",
 						 harness_errors, n );
 		if ( !accounted )
-			std::printf( "ERROR: case-line accounting: %d case lines, but %d run + %d harness errors + %d skipped\n", lines_in, n, harness_errors, skipped );
+			std::printf( "ERROR: case-line accounting: %d case lines, but %d run + %d native only + %d harness errors + %d skipped\n", lines_in, n, native_n,
+						 harness_errors, skipped );
 		// U1040: the SDE cross-check of the expected-value cases (does not change the exit status)
 		int sde_skip_n = 0;
 		for ( auto& [ k, v ] : sde_skip ) sde_skip_n += v;
