@@ -1,4 +1,4 @@
-# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877, 34-39 U1891, 40-41 U1892; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
+# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877, 34-39 U1891, 40-41 U1892, 42-56 U1897; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
 # purpose. emu-alltest must report each one as a harness error ("ERROR: harness error (...)"), count none of them in
 # "cases: N" ("cases: 0"), name all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...")
 # and exit with status 1; test.cmd's suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself)
@@ -59,26 +59,26 @@ nop | st0=3FFF:8000000000000000z
 nop | xmm1x=00
 # 26 (U1877, plan 1.F.13.d): a tag without a statement - the pre-U1876 form that accepted any difference
 nop | rax=1  # known deviation: selftest unstated
-# 27 (U1877): "dr6" without the bits (dr6=MASK)
+# 27 (U1877): "dr6" without the bits (dr6=MASK) - since U1894 without both values (dr6=HW~UC)
 nop | rax=1  # host state: selftest [dr6]
 # 28 (U1877): per environment, the host not stated
-nop | rax=1  # known deviation: selftest [guest: rax]
+nop | rax=1  # known deviation: selftest [guest: rax=0x1~0x0]
 # 29 (U1877): an unknown environment
 nop | rax=1  # known deviation: selftest [vm: rax; host: -]
 # 30 (U1877): an empty statement ("-" = no difference)
 nop | rax=1  # known deviation: selftest []
 # 31 (U1877): a list for every environment together with a per-environment list
-nop | rax=1  # known deviation: selftest [rax; guest: -]
+nop | rax=1  # known deviation: selftest [rax=0x1~0x0; guest: -]
 # 32 (U1877): an unknown field
-nop | rax=1  # known deviation: selftest [rax bogus]
+nop | rax=1  # known deviation: selftest [rax=0x1~0x0 bogus=0x1~0x0]
 # 33 (U1877): hostP without hostE
-nop | rax=1  # known deviation: selftest [guest: -; hostP: rax]
-# 34 (U1891, plan 1.F.13.g c, G27 nit 5): dr6=MASK overflowing 64 bits (strtoull saturated it to all ones before)
-nop | rax=1  # known deviation: selftest [dr6=0x1FFFFFFFFFFFFFFFFF]
-# 35 (U1891): dr6=MASK negative (strtoull negated it to all ones before)
-nop | rax=1  # known deviation: selftest [dr6=-1]
-# 36 (U1891): dr6=MASK with a trailing character
-nop | rax=1  # known deviation: selftest [dr6=0x1z]
+nop | rax=1  # known deviation: selftest [guest: -; hostP: rax=0x1~0x0]
+# 34 (U1891, plan 1.F.13.g c, G27 nit 5): a DR6 value overflowing 64 bits (strtoull saturated it to all ones before; dr6=HW~UC since U1894)
+nop | rax=1  # known deviation: selftest [dr6=0x1FFFFFFFFFFFFFFFFF~0x0]
+# 35 (U1891): a DR6 value with a sign (strtoull negated it to all ones before)
+nop | rax=1  # known deviation: selftest [dr6=-1~0x0]
+# 36 (U1891): a DR6 value with a trailing character
+nop | rax=1  # known deviation: selftest [dr6=0x1z~0x0]
 # 37 (U1891): expected-value case, => dr6= overflowing
 nop | dr7=0x400 => dr6=0x1FFFFFFFFFFFFFFFFF
 # 38 (U1891): hardware case, a debug-register input with a sign
@@ -90,3 +90,33 @@ nop | dr7=0x400 dr6mask=0x10000000000000000
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; nop | dr7=0x400
 # 41 (U1892): nodr6ok on a line that is not a measurement
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; nop | dr7=0x400 nodr6ok  # host state: selftest no DR6 [-]
+# 42 (U1897, plan 1.F.13.g a, G27 gap 1): a field without values - the pre-U1894 field-set form, which accepted any value
+nop | rax=1  # known deviation: selftest [rax]
+# 43 (U1897): one value only (NAME=HW~UC states both engines)
+nop | rax=1  # known deviation: selftest [rax=0x1]
+# 44 (U1897): three values
+nop | rax=1  # known deviation: selftest [rax=0x1~0x0~0x2]
+# 45 (U1897): the same value on both engines (the field would not differ)
+nop | rax=1  # known deviation: selftest [rax=0x1~0x1]
+# 46 (U1897): a range that admits every value with a reason other than rdrand ("any" is never a class)
+nop | rax=1  # known deviation: selftest [rax=0x0..0xFFFFFFFFFFFFFFFF(tsc)~0x0]
+# 47 (U1897): a mask that admits every value (mask 0) with a reason other than rdrand
+nop | rax=1  # known deviation: selftest [rax=0x0/0x0(tsc)~0x0]
+# 48 (U1897): an unknown reason
+nop | rax=1  # known deviation: selftest [rax=0x1..0x5(jitter)~0x0]
+# 49 (U1897): a class without a reason
+nop | rax=1  # known deviation: selftest [rax=0x1..0x5~0x0]
+# 50 (U1897): a bad st value (SEXP:MANT is 4 and 16 hex digits)
+nop | rax=1  # known deviation: selftest [st0=FFFF:C000~0000:0000000000000000]
+# 51 (U1897): an xmm value of the wrong length
+nop | rax=1  # known deviation: selftest [xmm0=00~11]
+# 52 (U1897): a memory run with unequal lengths
+nop | rax=1  # known deviation: selftest [m+0x8000=0102~03]
+# 53 (U1897): "m" alone (memory is stated per address: m+OFF=HW~UC)
+nop | rax=1  # known deviation: selftest [m=01~02]
+# 54 (U1897): a bad fault vector
+nop | rax=1  # known deviation: selftest [fault=6x~none]
+# 55 (U1897): VAL/MASK with VAL outside MASK
+nop | rax=1  # known deviation: selftest [rax=0x5/0x1(rdrand)~0x0]
+# 56 (U1897): a field twice in one alternative
+nop | rax=1  # known deviation: selftest [rax=0x1~0x0 rax=0x2~0x0]

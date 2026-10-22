@@ -169,17 +169,18 @@ Add-Suite 'harness_selftest_dbg' 'selftest' 'tagsel' 'emu-alltest' @( '--cases',
 $Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 2, differing: 0, known deviations: 0, host state: 0', 'debug-register cases: 1 (not run natively: 0, #DB without a hardware DR6 from Windows: 1, harness errors / notes: 0)' )
 # U1877 (plan 1.F.13.d): the exact stated differences (U1875) - every alternative must EQUAL the observed difference, the
 # statement of the run's environment applies (--tag-env guest / hostE here; the file's header lists each line's verdict)
+# U1897 (plan 1.F.13.g a): + 4 value lines (another Unicorn value, another hardware value, classes inside / outside)
 Add-Suite 'harness_selftest_tags_guest' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'guest' )
-$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 6, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 1' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 14, differing: 9, known deviations: 4, host state: 0', 'tagged but not observed (matched the hardware): 1' )
 Add-Suite 'harness_selftest_tags_hostE' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'hostE' )
-$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 5, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 2' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 14, differing: 8, known deviations: 4, host state: 0', 'tagged but not observed (matched the hardware): 2' )
 # U1893 (plan 1.F.13.g b): the environment from positive evidence only - without --tag-env this VMware guest is recognised by its
 # captured profile (cpuid_i5-13600k.txt, the guest verdicts: 3 known deviations, hostP would give 2); with --tag-profiles none
 # there is no evidence: the 3 per-environment lines (6, 7, 10) are harness errors, the other 7 run (kind tagerr: exit 1)
 Add-Suite 'harness_selftest_tags_detect' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid )
-$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 6, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 1' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 14, differing: 9, known deviations: 4, host state: 0', 'tagged but not observed (matched the hardware): 1' )
 Add-Suite 'harness_selftest_tags_unknown' 'selftest' 'tagerr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-profiles', 'none' )
-$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 7, differing: 4, known deviations: 2, host state: 0', 'case lines: 10, run: 7, harness errors: 3 (hardware 3, expected-value 0), skipped: 0' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 11, differing: 7, known deviations: 3, host state: 0', 'case lines: 14, run: 11, harness errors: 3 (hardware 3, expected-value 0), skipped: 0' )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )

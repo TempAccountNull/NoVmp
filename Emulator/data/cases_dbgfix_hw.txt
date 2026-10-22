@@ -47,7 +47,7 @@
 # status bits also may be set" - hardware-decided. TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11.
 # Controls: DR0 further on (s+14); DR0 at s+11 disabled (DR7 enables only DR1); the instruction breakpoint on the
 # instruction after POPFQ (s+10) fires first (#DB fault, DR6 = B0).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0xFFFF4FF0~0xFFFF4FF1; host: -]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
 pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
@@ -126,6 +126,6 @@ mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000
 # the lines carry the VMware tag (U1855) with the exact per-environment statement [guest: dr6=0x1; host: -] and the
 # whole DR6 compared (U1880; dr6mask was B0-B3 until the bare-host measurement, then B0 only). Control: the trap after
 # a NOP (BS only, the whole DR6 compared); the MOV is not reached.
-pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
-pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0xFFFF4FF0~0xFFFF4FF1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0xFFFF4FF0~0xFFFF4FF1; host: -]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; mov word ptr [rsi], ax; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount

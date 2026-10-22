@@ -217,8 +217,8 @@ vmaskmovps ymm0, ymm1, ymmword ptr [rsi+0x7ff0] | cpl=3 xmm0=1111111111111111111
 # GDTR/IDTR on the hardware, so the bytes are checked by the expected-value lines (Unicorn's
 # CPL3 GDT at 30040000h, limit 37h; IDTR 0). Before U704 the 2 untagged hardware lines and 3 of
 # the 4 expected-value lines differed.
-sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's GDTR (a different base and limit) is what gets stored [m]
-sidt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's IDTR (a different base and limit) is what gets stored [m]
+sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's GDTR (a different base and limit) is what gets stored [m+0xFFF8=7F~37 m+0xFFFC=594B53F8~04300000]
+sidt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 # host state: the host's IDTR (a different base and limit) is what gets stored [m+0xFFF8=FF0F~0000 m+0xFFFB=10~00 m+0xFFFF=F8~00]
 sgdt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
 sidt [rsi+0x7ffa] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5
 sgdt [rsi+0x7ff8] | cpl=3 m+0xFFF0=A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5A5 => #PF m+0xFFF8=3700000004300000

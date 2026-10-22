@@ -42,14 +42,14 @@ mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401  # 
 # --- P2e DR6 after MOV SS (stays out of gates: RPL003 / BT4/8/9 make hardware DR6 there unreliable): TF from POPFQ
 #     plus a data breakpoint on the MOV SS operand (both held: one #DB after the INC, DR6 = B0 | BS?), and TF only
 #     (an unused write breakpoint on m+0xF000 keeps the debug registers loaded).
-pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2e MOV SS m16 with TF and a data breakpoint: DR6 [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2e MOV SS m16 with TF and a data breakpoint: DR6 [guest: dr6=0xFFFF4FF0~0xFFFF4FF1; host: -]
 .byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=m+0xF000 dr7=0x10401  # host state: measurement P2e MOV SS r32 with TF only: DR6 [-]
 #
 # --- P2c single-step must not report Bn of an instruction breakpoint that has not fired yet: TF from POPFQ, the trap
 #     comes after the NOP at s+10 with RIP = s+11, where DR0 points (SDM: DR6 = BS only; QEMU's check_hw_breakpoints
 #     compares DRn with the next RIP). Controls: DR0 elsewhere; DR0 at s+11 but disabled, DR1 an unused enabled
 #     write breakpoint (Bn may be set for a disabled breakpoint, Vol3B 20.2.3).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # host state: measurement P2c single-step onto an enabled instruction breakpoint [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # host state: measurement P2c single-step onto an enabled instruction breakpoint [guest: dr6=0xFFFF4FF0~0xFFFF4FF1; host: -]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401  # host state: measurement P2c control (breakpoint further on) [-]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404  # host state: measurement P2c single-step onto a disabled breakpoint [-]
 # TF and MOV SS: the TF trap after MOV SS and the breakpoint on the next instruction (s+14) are both suppressed: one

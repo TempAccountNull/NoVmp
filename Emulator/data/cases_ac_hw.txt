@@ -237,10 +237,10 @@ clflush byte ptr [rsi+1] | cpl=3 rflags=0x40202
 mov rbx, rsi; inc rbx; xlatb | cpl=3 rflags=0x40202
 # --- documented deviations (docs\quirks.md): the i5-13600K reports #AC for MASKMOVDQU (SDM: type 4,
 # no #AC), and none for SGDT / SIDT / SLDT / STR / SMSW (SDM: #AC(0) for an unaligned reference)
-add rdi, 4; pcmpeqb xmm1, xmm1; maskmovdqu xmm0, xmm1 | cpl=3 rflags=0x40202  # known deviation: MASKMOVDQU-AC [fault rflags]
-sgdt [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags m]
-sidt [rsi+6] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags m]
-sldt word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags]
-sldt word ptr [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags]
-str word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags m]
-smsw word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault rflags m]
+add rdi, 4; pcmpeqb xmm1, xmm1; maskmovdqu xmm0, xmm1 | cpl=3 rflags=0x40202  # known deviation: MASKMOVDQU-AC [fault=17~none rflags=0x202~0x40202]
+sgdt [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202 m+0x8002=7F~00 m+0x8006=594B53F8FFFF~000000000000]
+sidt [rsi+6] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202 m+0x8006=FF0F~0000 m+0x8009=10~00 m+0x800D=F8FFFF~000000]
+sldt word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202]
+sldt word ptr [rsi+2] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202]
+str word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202 m+0x8001=40~00]
+smsw word ptr [rsi+1] | cpl=3 rflags=0x40202  # known deviation: SxDT-STR-SMSW-NO-AC [fault=none~17 rflags=0x202~0x40202 m+0x8001=33~00]

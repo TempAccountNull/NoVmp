@@ -138,10 +138,18 @@
 //   # host state: REASON [rax | rax rflags]                  alternatives ("|"): exactly one of them
 //   # known deviation: NAME [guest: dr6=0x1; host: -]        per environment (";"): guest = the VMware guest, host =
 //                                                             the bare host (or hostP and hostE: its P- / E-cores)
-// An alternative is the set of differing fields: the field names of the "uc vs hw:" line (rax, rflags, mxcsr, fsw,
-// xmm1, ymmh1, st0, env, fx+6, ...; "m" = any memory byte), "fault" (the vector differs), "dr6=MASK" (exactly the DR6
-// bits MASK differ), "dbrip", "dbcount", "pfaccess" (#DB RIP, #DB count, #PF access type); "-" = no difference (the
-// line may also match). The observed difference must EQUAL one alternative stated for the run's environment (a
+// U1894 (plan 1.F.13.g a, G27 gap 1): an alternative states every differing field WITH BOTH ENGINES' VALUES, NAME=HW~UC
+// (before: the field names only, so another value of a stated field passed): the fields of the "uc vs hw:" line in
+// their print formats (rax=0x0~0x7, rflags, mxcsr, fsw, ftw, st0=SEXP:MANT~SEXP:MANT, xmm1 / ymmh1 = 16 bytes of hex,
+// env = 28 bytes, its reserved words not compared, fx+6, ...), memory per address m+OFF=HW~UC (a run of 1-32 bytes),
+// fault=VEC~VEC (decimal vectors, "none" = no fault), dbrip=s+OFF~s+OFF (#DB RIP), dr6=HW~UC (whole DR6 values; dr6=MASK
+// was the pre-U1894 form), dbcount=N~N, pfaccess=A~A; "-" = no difference (the line may also match). A number that
+// legitimately varies from run to run is stated as a class with its reason, never "any": LO..HI(REASON) (an inclusive
+// range) or VAL/MASK(REASON) (the bits of MASK equal VAL's); REASON = rdrand (RDRAND / RDSEED output), tsc (time-stamp
+// counter), tscaux (IA32_TSC_AUX: the logical processor), apicid (the initial APIC ID: the logical processor), cpunum (the
+// processor number in the 53H segment limit, LAR / LSL), timing (a count measured against the TSC); a class that
+// admits every value is refused unless it is a full-width rdrand output. --tag-show prints "tag: observed [...]" (the
+// observed difference in this form) for every tagged line and every --hw-repeat outcome. The observed difference must EQUAL one alternative stated for the run's environment (a
 // missing, an extra or another field fails): else "DIFF (not the tag's stated difference)" with a "tag: not accepted
 // - observed [...], stated for ENV: [...]" line, counted as differing. The run's environment ("tag environment:" line):
 // U1893 (plan 1.F.13.g b, G27 gap 2) only on positive evidence: the VMware guest / the bare host when the native CPUID
@@ -483,7 +491,8 @@ namespace at
 					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */
 					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */
 					   std::string tag_env;   /* U1875: --tag-env guest|host|hostP|hostE (empty: detected) */
-					   std::string tag_profiles;   /* U1893: --tag-profiles DIR|none (empty: the exe's folder, then Emulator\data) */ };
+					   std::string tag_profiles;   /* U1893: --tag-profiles DIR|none (empty: the exe's folder, then Emulator\data) */
+					   bool tag_show = false;   /* U1894: --tag-show prints the observed difference of every tagged line / outcome */ };
 
 	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
 	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
@@ -1144,27 +1153,34 @@ namespace at
 		return "";
 	}
 
-	// U1875 (plan 1.F.13.d): a tag's statement - the exact differences it accepts, per environment (header above).
-	// tag_alt = one alternative: the differing fields (without DR6) and the differing DR6 bits (0: DR6 does not differ).
-	// tag_stmt: environment ("" = every environment, "guest", "host", "hostP", "hostE") -> its alternatives.
-	// U1862's subset rule (a statement listed the fields that MAY differ) is replaced: the difference must be equal.
-	struct tag_alt { std::set<std::string> fields; uint64_t dr6 = 0; };
+	// U1875 (plan 1.F.13.d) / U1894 (plan 1.F.13.g a, G27 gap 1): a tag's statement - the exact differences it accepts, per
+	// environment, with the VALUE of every differing field on both engines (header above). tag_val = one engine's stated value
+	// of a field: exact (kind 1 a number; kind 0 the text of an st / hex-bytes / fault / #DB RIP / memory-byte value), or - for
+	// a value that legitimately varies from run to run - a class with its reason (tag_reason): LO..HI(REASON) (kind 2, an
+	// inclusive range) or VAL/MASK(REASON) (kind 3: the bits of MASK equal VAL's, the other bits vary). A class that admits
+	// every value is refused (only a full-width RDRAND / RDSEED output, reason rdrand, may).
+	struct tag_val { int kind = 0; std::string text; uint64_t a = 0, b = 0; std::string why; };
+	struct tag_fv { tag_val hw, uc; };
+	// tag_alt = one alternative: field -> both engines' stated values ("m+0xOFF" = one memory byte: a stated run
+	// m+OFF=HW~UC is split per byte), and its text as written; no field = "-" (no difference)
+	struct tag_alt { std::map<std::string, tag_fv> f; std::string text; };
 	struct tag_stmt { std::map<std::string, std::vector<tag_alt>> env; };
 	struct tag_env { int platform = 0; char core = 0; std::string why; };   // platform 0 = unknown (U1893), 1 = VMware guest, 2 = bare host; core 'P' / 'E' / 0 = either
+	// the observed difference: field -> (hw value, uc value) as the statements write them, and the print order
+	struct tag_obs { std::vector<std::string> order; std::map<std::string, std::pair<std::string, std::string>> f; };
 
-	// the field names a difference can have (case_fields' names, "m" for memory, and the debug / #PF comparisons)
-	static const std::set<std::string>& tag_field_names()
+	// U1894: the reasons a stated class may give - why the value differs from run to run
+	static const char* tag_reason( const std::string& r )
 	{
-		static std::set<std::string> s;
-		if ( s.empty() )
-		{
-			for ( int r = 0; r < 16; r++ ) s.insert( reg_name( r ) );
-			for ( int r = 16; r < 32; r++ ) { s.insert( "r" + std::to_string( r ) ); s.insert( "zmm" + std::to_string( r ) ); }
-			for ( const char* f : { "rflags", "mxcsr", "fcw", "fsw", "ftw", "env", "m", "fault", "dbrip", "dbcount", "pfaccess", "fx+6", "fx+8", "fx+16", "fx+28" } ) s.insert( f );
-			for ( int r = 0; r < 8; r++ ) { s.insert( "st" + std::to_string( r ) ); s.insert( "k" + std::to_string( r ) ); }
-			for ( int r = 0; r < 16; r++ ) { s.insert( "xmm" + std::to_string( r ) ); s.insert( "ymmh" + std::to_string( r ) ); s.insert( "zmmh" + std::to_string( r ) ); }
-		}
-		return s;
+		static const std::map<std::string, const char*> m = {
+			{ "rdrand", "RDRAND / RDSEED output, or a value computed from it: a new random value in every run" },
+			{ "tsc", "a time-stamp counter value (RDTSC / RDTSCP): it advances between and during the runs" },
+			{ "tscaux", "IA32_TSC_AUX (RDTSCP ECX / RDPID): the logical processor the run landed on" },
+			{ "apicid", "the initial APIC ID (CPUID): the logical processor the run landed on" },
+			{ "cpunum", "the processor number Windows encodes in the limit of the 53H segment (LAR / LSL): the logical processor the run landed on" },
+			{ "timing", "a count measured against the time-stamp counter (a timing probe): it depends on the run's timing" } };
+		auto it = m.find( r );
+		return it == m.end() ? nullptr : it->second;
 	}
 	static std::string tag_trim( const std::string& s )
 	{
@@ -1172,12 +1188,156 @@ namespace at
 		if ( a == std::string::npos ) return std::string();
 		return s.substr( a, s.find_last_not_of( " \t" ) - a + 1 );
 	}
-	static std::string tag_alt_text( const tag_alt& a )
+	static std::string tag_upper( std::string s ) { for ( char& c : s ) c = char( std::toupper( ( unsigned char ) c ) ); return s; }
+	static bool tag_hex_ok( const std::string& s, size_t digits ) { return s.size() == digits && s.find_first_not_of( "0123456789abcdefABCDEF" ) == std::string::npos; }
+	// U1894: the kind of a field name - 1 a number (GPRs, rflags, mxcsr, fcw, fsw, ftw, k0-7, r16-31, fx+6/8/16/28, dr6, dbcount,
+	// pfaccess), 2 st0-7 (SEXP:MANT), 3 hex bytes (xmm / ymmh 16, zmmh 32, zmm16-31 64 bytes), 4 fault (the vector, decimal, or
+	// "none"), 5 dbrip (the #DB RIP, s+OFF / s-OFF / an address), 6 env (28 bytes; the reserved words 2-3, 6-7, 10-11, 26-27 are
+	// not compared, as case_fields), 7 m+OFF (memory bytes); 0 = not a field
+	static int tag_field_kind( const std::string& n, size_t* bytes = nullptr )
 	{
+		size_t nb = 0;
+		int k = 0;
+		auto idx = [ & ]( const char* pre, int lo, int hi ) -> bool {
+			const size_t l = std::strlen( pre );
+			if ( n.compare( 0, l, pre ) || n.size() == l || n.size() > l + 2 || n.find_first_not_of( "0123456789", l ) != std::string::npos ) return false;
+			if ( n.size() == l + 2 && n[ l ] == '0' ) return false;
+			const int i = std::stoi( n.substr( l ) );
+			return i >= lo && i <= hi;
+		};
+		bool gpr = false;
+		for ( int r = 0; r < 16; r++ ) if ( n == reg_name( r ) ) gpr = true;
+		if ( gpr || idx( "r", 16, 31 ) || idx( "k", 0, 7 ) || n == "rflags" || n == "mxcsr" || n == "fcw" || n == "fsw" || n == "ftw" || n == "fx+6" || n == "fx+8" ||
+			 n == "fx+16" || n == "fx+28" || n == "dr6" || n == "dbcount" || n == "pfaccess" ) k = 1;
+		else if ( idx( "st", 0, 7 ) ) k = 2;
+		else if ( idx( "xmm", 0, 15 ) || idx( "ymmh", 0, 15 ) ) { k = 3; nb = 16; }
+		else if ( idx( "zmmh", 0, 15 ) ) { k = 3; nb = 32; }
+		else if ( idx( "zmm", 16, 31 ) ) { k = 3; nb = 64; }
+		else if ( n == "env" ) { k = 6; nb = 28; }
+		else if ( n == "fault" ) k = 4;
+		else if ( n == "dbrip" ) k = 5;
+		else if ( n.rfind( "m+", 0 ) == 0 ) { uint64_t o = 0; if ( u64_literal( n.substr( 2 ), o ) && o < MEM_SIZE ) { k = 7; nb = 1; } }
+		if ( bytes ) *bytes = nb;
+		return k;
+	}
+	// one engine's stated value of a field of kind k (nb bytes); false with err
+	static bool tag_val_parse( int k, size_t nb, const std::string& s, tag_val& v, std::string& err )
+	{
+		v = tag_val();
+		if ( k == 1 )
+		{
+			const size_t lp = s.find( '(' );
+			if ( lp == std::string::npos )
+			{
+				if ( !u64_literal( s, v.a ) ) { err = "bad number \"" + s + "\" (an unsigned C literal, or a class LO..HI(REASON) / VAL/MASK(REASON))"; return false; }
+				v.kind = 1;
+				return true;
+			}
+			if ( s.back() != ')' ) { err = "bad class \"" + s + "\": LO..HI(REASON) or VAL/MASK(REASON)"; return false; }
+			v.why = s.substr( lp + 1, s.size() - lp - 2 );
+			if ( !tag_reason( v.why ) ) { err = "unknown reason \"" + v.why + "\" in \"" + s + "\" (rdrand, tsc, tscaux, apicid, cpunum, timing)"; return false; }
+			const std::string c = s.substr( 0, lp );
+			const size_t dd = c.find( ".." ), sl = c.find( '/' );
+			if ( dd != std::string::npos && sl == std::string::npos )
+			{
+				if ( !u64_literal( c.substr( 0, dd ), v.a ) || !u64_literal( c.substr( dd + 2 ), v.b ) || v.a >= v.b )
+				{ err = "bad range \"" + s + "\" (LO..HI with LO < HI, unsigned C literals)"; return false; }
+				if ( v.a == 0 && v.b == ~0ull && v.why != "rdrand" ) { err = "the range \"" + s + "\" admits every value (only a full-width rdrand output may)"; return false; }
+				v.kind = 2;
+				return true;
+			}
+			if ( sl != std::string::npos && dd == std::string::npos )
+			{
+				if ( !u64_literal( c.substr( 0, sl ), v.a ) || !u64_literal( c.substr( sl + 1 ), v.b ) || ( v.a & ~v.b ) || v.b == ~0ull )
+				{ err = "bad masked value \"" + s + "\" (VAL/MASK: VAL only in the bits of MASK, MASK not all ones)"; return false; }
+				if ( !v.b && v.why != "rdrand" ) { err = "the mask of \"" + s + "\" admits every value (only a full-width rdrand output may)"; return false; }
+				v.kind = 3;
+				return true;
+			}
+			err = "bad class \"" + s + "\": LO..HI(REASON) or VAL/MASK(REASON)";
+			return false;
+		}
+		if ( k == 2 )
+		{
+			if ( s.size() != 21 || s[ 4 ] != ':' || !tag_hex_ok( s.substr( 0, 4 ), 4 ) || !tag_hex_ok( s.substr( 5 ), 16 ) ) { err = "bad st value \"" + s + "\" (SEXP:MANT, 4 and 16 hex digits)"; return false; }
+			v.text = tag_upper( s );
+			return true;
+		}
+		if ( k == 3 || k == 6 || k == 7 )
+		{
+			if ( !tag_hex_ok( s, 2 * nb ) ) { err = "bad value \"" + s + "\" (" + std::to_string( 2 * nb ) + " hex digits)"; return false; }
+			v.text = tag_upper( s );
+			return true;
+		}
+		if ( k == 4 )
+		{
+			uint64_t x = 0;
+			if ( s == "none" ) { v.text = s; return true; }
+			if ( s.find_first_not_of( "0123456789" ) != std::string::npos || !u64_literal( s, x ) || x > 255 ) { err = "bad fault value \"" + s + "\" (a vector 0-255 in decimal, or none)"; return false; }
+			v.text = std::to_string( x );
+			return true;
+		}
+		if ( k == 5 )
+		{
+			uint64_t x = 0;
+			const bool rel = s.size() > 2 && s[ 0 ] == 's' && ( s[ 1 ] == '+' || s[ 1 ] == '-' );
+			if ( !u64_literal( rel ? s.substr( 2 ) : s, x ) ) { err = "bad #DB RIP \"" + s + "\" (s+OFF, s-OFF or an address)"; return false; }
+			v.text = ( rel ? s.substr( 0, 2 ) : std::string() ) + hx( x );
+			return true;
+		}
+		err = "not a field";
+		return false;
+	}
+	// does the observed value text o match the stated value v of a field of kind k?
+	static bool tag_val_match( int k, const tag_val& v, const std::string& o )
+	{
+		if ( k == 1 )
+		{
+			uint64_t x = 0;
+			if ( !u64_literal( o, x ) ) return false;
+			return v.kind == 1 ? x == v.a : v.kind == 2 ? ( x >= v.a && x <= v.b ) : ( x & v.b ) == v.a;
+		}
+		if ( k == 6 )
+		{
+			const std::string u = tag_upper( o );
+			if ( u.size() != v.text.size() || u.size() != 56 ) return false;
+			for ( size_t b = 0; b < 28; ++b )
+			{
+				if ( b == 2 || b == 3 || b == 6 || b == 7 || b == 10 || b == 11 || b == 26 || b == 27 ) continue;
+				if ( u.compare( 2 * b, 2, v.text, 2 * b, 2 ) ) return false;
+			}
+			return true;
+		}
+		if ( k == 5 )
+		{
+			// both written by rip_rel / tag_val_parse: "s+0x.." / "s-0x.." / "0x.."
+			return tag_upper( o ) == tag_upper( v.text );
+		}
+		return tag_upper( o ) == tag_upper( v.text );   // "none", st, hex bytes, memory bytes: case-insensitive
+	}
+	static std::string tag_alt_text( const tag_alt& a ) { return a.f.empty() ? std::string( "-" ) : a.text; }
+	// the observed difference as a statement writes it: NAME=HW~UC, consecutive memory bytes as runs of at most 32
+	static std::string tag_obs_text( const tag_obs& o )
+	{
+		if ( o.order.empty() ) return "-";
 		std::string s;
-		for ( const std::string& f : a.fields ) s += ( s.empty() ? "" : " " ) + f;
-		if ( a.dr6 ) s += ( s.empty() ? "dr6=" : " dr6=" ) + hx( a.dr6 );
-		return s.empty() ? "-" : s;
+		for ( size_t i = 0; i < o.order.size(); )
+		{
+			const std::string& n = o.order[ i ];
+			const auto& v = o.f.at( n );
+			std::string hv = v.first, uv = v.second;
+			size_t j = i + 1;
+			uint64_t a0 = 0;
+			if ( n.rfind( "m+", 0 ) == 0 && u64_literal( n.substr( 2 ), a0 ) )
+				for ( uint64_t a1 = 0; j < o.order.size() && j - i < 32 && o.order[ j ].rfind( "m+", 0 ) == 0 && u64_literal( o.order[ j ].substr( 2 ), a1 ) && a1 == a0 + ( j - i ); ++j )
+				{
+					hv += o.f.at( o.order[ j ] ).first;
+					uv += o.f.at( o.order[ j ] ).second;
+				}
+			s += ( s.empty() ? "" : " " ) + n + "=" + hv + "~" + uv;
+			i = j;
+		}
+		return s;
 	}
 	// "[...]" of a tag -> out; false with err for a bad statement
 	static bool tag_parse( const std::string& stated, tag_stmt& out, std::string& err )
@@ -1188,8 +1348,9 @@ namespace at
 		{
 			const size_t b = stated.find( ';', a );
 			std::string sec = tag_trim( stated.substr( a, b == std::string::npos ? std::string::npos : b - a ) ), env;
-			const size_t c = sec.find( ':' );
-			if ( c != std::string::npos )
+			// U1894: an environment prefix "ENV:" comes before any '=' (a value such as st0=FFFF:C000... has a ':' too)
+			const size_t c = sec.find( ':' ), eqp = sec.find( '=' );
+			if ( c != std::string::npos && ( eqp == std::string::npos || c < eqp ) )
 			{
 				env = tag_trim( sec.substr( 0, c ) );
 				sec = tag_trim( sec.substr( c + 1 ) );
@@ -1210,20 +1371,53 @@ namespace at
 					std::string tok;
 					while ( ts >> tok )
 					{
-						if ( tok.rfind( "dr6=", 0 ) == 0 )
-						{
-							uint64_t m = 0;   // U1891: no sign, no overflow, nothing trailing (strtoull took "-1" / an overflowing literal as all ones)
-							if ( !u64_literal( tok.substr( 4 ), m ) || !m || t.dr6 ) { err = "bad dr6=MASK \"" + tok + "\" (a nonzero unsigned C literal without sign or overflow, once per alternative)"; return false; }
-							t.dr6 = m;
-							continue;
-						}
 						if ( tok == "-" ) { err = "\"-\" (no difference) is an alternative of its own"; return false; }
-						if ( !tag_field_names().count( tok ) ) { err = "unknown field \"" + tok + "\"" + ( tok == "dr6" ? " (state the DR6 bits: dr6=MASK)" : "" ); return false; }
-						if ( !t.fields.insert( tok ).second ) { err = "field " + tok + " twice in one alternative"; return false; }
+						const size_t e1 = tok.find( '=' );
+						const std::string name = tok.substr( 0, e1 );
+						size_t nb = 0;
+						const int k = tag_field_kind( name, &nb );
+						if ( !k )
+						{
+							err = "unknown field \"" + name + "\"" + ( name == "m" ? std::string( " (memory: m+OFF=HW~UC, the bytes of both engines)" ) : std::string() );
+							return false;
+						}
+						if ( e1 == std::string::npos ) { err = "\"" + tok + "\": state the values of both engines, " + name + "=HW~UC (U1894; a field name alone was the pre-U1894 form)"; return false; }
+						const std::string val = tok.substr( e1 + 1 );
+						const size_t t1 = val.find( '~' );
+						if ( t1 == std::string::npos || val.find( '~', t1 + 1 ) != std::string::npos )
+						{
+							err = "\"" + tok + "\": state the values of both engines, " + name + "=HW~UC (U1894)" + ( name == "dr6" ? std::string( "; dr6=MASK was the pre-U1894 form" ) : std::string() );
+							return false;
+						}
+						const std::string hs = val.substr( 0, t1 ), us = val.substr( t1 + 1 );
+						if ( k == 7 )
+						{
+							uint64_t off = 0;
+							u64_literal( name.substr( 2 ), off );
+							if ( hs.size() != us.size() || hs.empty() || hs.size() % 2 || hs.size() > 64 || off + hs.size() / 2 > MEM_SIZE )
+							{ err = "\"" + tok + "\": a memory run states 1-32 bytes of both engines, equally long, inside MEM"; return false; }
+							for ( size_t i = 0; i < hs.size() / 2; ++i )
+							{
+								tag_fv fv;
+								if ( !tag_val_parse( 7, 1, hs.substr( 2 * i, 2 ), fv.hw, err ) || !tag_val_parse( 7, 1, us.substr( 2 * i, 2 ), fv.uc, err ) ) { err = "\"" + tok + "\": " + err; return false; }
+								if ( fv.hw.text == fv.uc.text ) { err = "\"" + tok + "\": memory byte m+" + hx( off + i ) + " equal on both engines (it would not differ)"; return false; }
+								if ( !t.f.emplace( "m+" + hx( off + i ), fv ).second ) { err = "memory byte m+" + hx( off + i ) + " twice in one alternative"; return false; }
+							}
+						}
+						else
+						{
+							tag_fv fv;
+							if ( !tag_val_parse( k, nb, hs, fv.hw, err ) || !tag_val_parse( k, nb, us, fv.uc, err ) ) { err = "\"" + tok + "\": " + err; return false; }
+							const bool eq = ( k == 1 && fv.hw.kind == 1 && fv.uc.kind == 1 && fv.hw.a == fv.uc.a ) ||
+											( k != 1 && ( k == 6 ? tag_val_match( 6, fv.hw, fv.uc.text ) : fv.hw.text == fv.uc.text ) );
+							if ( eq ) { err = "\"" + tok + "\": the same value on both engines (the field would not differ)"; return false; }
+							if ( !t.f.emplace( name, fv ).second ) { err = "field " + name + " twice in one alternative"; return false; }
+						}
+						t.text += ( t.text.empty() ? "" : " " ) + tok;
 					}
 				}
 				for ( const tag_alt& o : alts )
-					if ( o.fields == t.fields && o.dr6 == t.dr6 ) { err = "alternative [" + tag_alt_text( t ) + "] twice"; return false; }
+					if ( tag_alt_text( o ) == tag_alt_text( t ) ) { err = "alternative [" + tag_alt_text( t ) + "] twice"; return false; }
 				alts.push_back( t );
 				if ( q == std::string::npos ) break;
 				p = q + 1;
@@ -1258,22 +1452,76 @@ namespace at
 		else { add( "hostP" ); add( "hostE" ); label = "hostP | hostE (the core type of the native runs is not one)"; }
 		return v;
 	}
-	// does the observed difference ('fields' = the differing field names, "dr6" with the differing bits 'dr6x'; empty =
-	// no difference) equal one alternative of the run's environment? 'why' = observed vs stated otherwise
-	static bool tag_match( const tag_stmt& t, const tag_env& e, const std::vector<std::string>& fields, uint64_t dr6x, std::string& why )
+	// U1894: does the observed difference (every differing field with both values; empty = no difference) equal one
+	// alternative of the run's environment - the same fields, and every value as stated (exact, or inside its class)?
+	// 'why' = observed vs stated otherwise
+	static bool tag_match( const tag_stmt& t, const tag_env& e, const tag_obs& o, std::string& why )
 	{
-		tag_alt o;
-		for ( const std::string& f : fields )
-			if ( f == "dr6" ) o.dr6 = dr6x;
-			else o.fields.insert( f );
 		std::string label;
 		const std::vector<tag_alt> alts = tag_env_alts( t, e, label );
 		for ( const tag_alt& a : alts )
-			if ( a.fields == o.fields && a.dr6 == o.dr6 ) return true;
+		{
+			if ( a.f.size() != o.f.size() ) continue;
+			bool ok = true;
+			for ( const auto& [ n, v ] : a.f )
+			{
+				auto it = o.f.find( n );
+				const int k = tag_field_kind( n );
+				if ( it == o.f.end() || !tag_val_match( k, v.hw, it->second.first ) || !tag_val_match( k, v.uc, it->second.second ) ) { ok = false; break; }
+			}
+			if ( ok ) return true;
+		}
 		std::string st;
 		for ( const tag_alt& a : alts ) st += ( st.empty() ? "" : " | " ) + tag_alt_text( a );
-		why = " observed [" + tag_alt_text( o ) + "], stated for " + label + ": [" + st + "]";
+		why = " observed [" + tag_obs_text( o ) + "], stated for " + label + ": [" + st + "]";
 		return false;
+	}
+	// U1894: the value of field n of a state as a statement writes it (case_fields' formats)
+	static std::string tag_state_value( const state& s, const std::string& n )
+	{
+		char b[ 48 ];
+		auto hexs = [ & ]( const uint8_t* p, int c ) { std::string r; for ( int k = 0; k < c; k++ ) { std::snprintf( b, sizeof( b ), "%02X", p[ k ] ); r += b; } return r; };
+		for ( int r = 0; r < 16; r++ ) if ( n == reg_name( r ) ) return hx( s.gpr[ r ] );
+		if ( n == "rflags" ) return hx( s.rflags );
+		if ( n == "mxcsr" ) return hx( s.mxcsr() );
+		if ( n == "fcw" ) return hx( s.fcw() );
+		if ( n == "fsw" ) return hx( s.fsw() );
+		if ( n == "ftw" ) return hx( s.ftw_abridged() );
+		if ( n == "env" ) return hexs( s.env, 28 );
+		int i = -1;
+		auto num = [ & ]( const char* pre ) {
+			const size_t l = std::strlen( pre );
+			if ( n.compare( 0, l, pre ) || n.size() == l || n.find_first_not_of( "0123456789", l ) != std::string::npos ) return false;
+			i = std::stoi( n.substr( l ) );
+			return true;
+		};
+		if ( num( "st" ) && i < 8 )
+		{
+			uint64_t m; uint16_t se;
+			std::memcpy( &m, s.st( i ), 8 ); std::memcpy( &se, s.st( i ) + 8, 2 );
+			std::snprintf( b, sizeof( b ), "%04X:%016llX", se, ( unsigned long long ) m );
+			return b;
+		}
+		if ( num( "xmm" ) && i < 16 ) return hexs( s.xmm( i ), 16 );
+		if ( num( "ymmh" ) && i < 16 ) return hexs( s.ymmh[ i ], 16 );
+		if ( num( "zmmh" ) && i < 16 ) return hexs( s.zmmh[ i ], 32 );
+		if ( num( "zmm" ) && i >= 16 && i < 32 ) return hexs( s.zmmx[ i - 16 ], 64 );
+		if ( num( "k" ) && i < 8 ) return hx( s.k[ i ] );
+		if ( num( "r" ) && i >= 16 && i < 32 ) return hx( s.egpr[ i - 16 ] );
+		if ( n == "fx+6" || n == "fx+8" || n == "fx+16" || n == "fx+28" )
+		{
+			const int k = std::stoi( n.substr( 3 ) ), c = k == 6 ? 2 : ( k == 28 ? 4 : 8 );
+			uint64_t v = 0;
+			std::memcpy( &v, s.fx + k, c );
+			return hx( v );
+		}
+		return "?";
+	}
+	// U1894: a #DB RIP as a statement writes it - s+OFF / s-OFF from the snippet's first byte (rip_text without the address)
+	static std::string rip_rel( uint64_t rip, uint64_t snip )
+	{
+		if ( rip + 0x1000 >= snip && rip < snip + 0x1000 ) return std::string( rip >= snip ? "s+" : "s-" ) + hx( rip >= snip ? rip - snip : snip - rip );
+		return hx( rip );
 	}
 	// U1875 (plan 1.F.13.d) / U1893 (plan 1.F.13.g b, G27 gap 2): the environment a tag statement is chosen for = where the
 	// native side runs - the two environments of the project, the VMware guest on the i5-13600K and the bare i5-13600K -
@@ -1414,6 +1662,49 @@ namespace at
 			if ( n.rfind( "m+", 0 ) == 0 ) n = "m";
 			out.push_back( n );
 		}
+	}
+
+	// U1894 (plan 1.F.13.g a): the observed difference of a native run 'hr' against the Unicorn run 'u', by the rule of
+	// run_cases - the fault vector, every field of case_fields( hw, uc ) with both values, every differing memory byte, for a
+	// debug-register case the #DB RIP, DR6 (under dr6mask) and the #DB count, for a #PF on both the access type; RFLAGS.AC
+	// after a fault on both is Unicorn's (U834). Used for the verdict (the compared run) and by --tag-show for every
+	// --hw-repeat outcome.
+	static tag_obs tag_observe( const result& hr, const result& u, const program& p, const program& p_uc, const dbg_spec& dspec )
+	{
+		tag_obs o;
+		auto add = [ & ]( const std::string& nm, const std::string& hv, const std::string& uv ) {
+			if ( o.f.emplace( nm, std::make_pair( hv, uv ) ).second ) o.order.push_back( nm );
+		};
+		auto hs = std::make_unique<state>( *hr.s );
+		if ( hr.faulted && u.faulted ) hs->rflags = ( hs->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
+		if ( !( hr.faulted == u.faulted && hr.vector == u.vector ) )
+			add( "fault", hr.faulted ? std::to_string( hr.vector ) : "none", u.faulted ? std::to_string( u.vector ) : "none" );
+		std::vector<std::string> names;
+		field_names( case_fields( *hs, *u.s ), names );
+		for ( const std::string& nm : names )
+			if ( nm != "m" ) add( nm, tag_state_value( *hs, nm ), tag_state_value( *u.s, nm ) );
+		char b[ 4 ];
+		for ( uint64_t a = 0; a < MEM_SIZE; ++a )
+			if ( hs->mem[ a ] != u.s->mem[ a ] )
+			{
+				std::snprintf( b, sizeof( b ), "%02X", hs->mem[ a ] );
+				const std::string hv = b;
+				std::snprintf( b, sizeof( b ), "%02X", u.s->mem[ a ] );
+				add( "m+" + hx( a ), hv, b );
+			}
+		if ( dspec.any )
+		{
+			if ( hr.faulted && u.faulted && hr.vector == 1 && u.vector == 1 )
+			{
+				if ( hr.fault_rip != u.fault_rip ) add( "dbrip", rip_rel( hr.fault_rip, p.snippet_begin ), rip_rel( u.fault_rip, p_uc.snippet_begin ) );
+				if ( hr.ev.dr6_valid && u.ev.dr6_valid && ( ( hr.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask ) )
+					add( "dr6", hx( hr.ev.dr6 & dspec.dr6mask ), hx( u.ev.dr6 & dspec.dr6mask ) );
+			}
+			if ( dspec.count && hr.db_count != u.db_count ) add( "dbcount", hx( uint64_t( hr.db_count ) ), hx( uint64_t( u.db_count ) ) );
+		}
+		if ( hr.faulted && u.faulted && hr.vector == 14 && u.vector == 14 && hr.ev.access >= 0 && u.ev.access >= 0 && hr.ev.access != u.ev.access )
+			add( "pfaccess", hx( uint64_t( hr.ev.access ) ), hx( uint64_t( u.ev.access ) ) );
+		return o;
 	}
 
 	static int run_cases( const std::string& path, const case_opts& opt = {} )
@@ -2009,7 +2300,7 @@ namespace at
 				// U1050: N native runs; the first one is compared with Unicorn below. Outcome = the
 				// vector, for an access violation the Windows access type and address, and every
 				// field that changed; counted per core type, with the logical CPUs seen.
-				struct tally { int count = 0; std::map<int, int> per_cpu; };
+				struct tally { int count = 0; std::map<int, int> per_cpu; std::set<std::string> obs; /* U1894 --tag-show */ };
 				std::map<std::string, tally> outcomes;
 				int moved = 0;
 				for ( int k = 0; k < opt.hw_repeat; ++k )
@@ -2039,6 +2330,7 @@ namespace at
 					key += case_fields( *st_in, *rr.s );
 					tally& t = outcomes[ key ];
 					++t.count;
+					if ( opt.tag_show && !tag_kind.empty() && tag_kind != "native only" ) t.obs.insert( tag_obs_text( tag_observe( rr, u, p, p_uc, dspec ) ) );   // U1894
 					++t.per_cpu[ before ];
 				}
 				if ( !pin.empty() ) { DWORD_PTR pm = 0, sm = 0; GetProcessAffinityMask( GetCurrentProcess(), &pm, &sm ); SetThreadAffinityMask( GetCurrentThread(), pm ); }
@@ -2051,6 +2343,7 @@ namespace at
 					hw_report += b + key + "\n            cpus:";
 					for ( auto& [ c, m ] : t.per_cpu ) { std::snprintf( b, sizeof( b ), " %d:%d", c, m ); hw_report += b; }
 					hw_report += "\n";
+					for ( const std::string& ob : t.obs ) hw_report += "            tag: observed [" + ob + "]\n";   // U1894 --tag-show
 				}
 			}
 			// U834: Windows clears RFLAGS.AC while it dispatches a user-mode exception (observed for
@@ -2094,12 +2387,8 @@ namespace at
 			if ( h.faulted && u.faulted ) h.s->rflags = ( h.s->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
 			bool same_fault = h.faulted == u.faulted && h.vector == u.vector;
 			std::string hd = case_fields( *st_in, *h.s ), ud = case_fields( *st_in, *u.s ), x = case_fields( *h.s, *u.s );
-			// U1862: the names of the differing fields (for a tag that states the difference it accepts)
-			std::vector<std::string> dfields;
-			uint64_t dr6x = 0;
+			// U1894: the observed difference for a tag statement (tag_observe: every differing field with both engines' values)
 			bool harness_issue = false;
-			if ( !same_fault ) dfields.push_back( "fault" );
-			field_names( x, dfields );
 			// U1740: a debug-register case also compares where the #DB was taken and DR6 (when Windows hands
 			// DR6 over in the exception context); a harness problem on either side makes it differ
 			if ( dspec.any )
@@ -2110,21 +2399,17 @@ namespace at
 					if ( h.fault_rip != u.fault_rip )
 					{
 						x += " #DB rip (hw " + rip_text( h.fault_rip, p.snippet_begin ) + ", uc " + rip_text( u.fault_rip, p_uc.snippet_begin ) + ")";
-						dfields.push_back( "dbrip" );   // U1862
 					}
 					// U1771: "dr6mask=V" compares only the bits of V
 					if ( h.ev.dr6_valid && u.ev.dr6_valid && ( ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask ) )
 					{
 						x += " dr6 (hw " + hx( h.ev.dr6 ) + ", uc " + hx( u.ev.dr6 ) + ( dspec.dr6mask_set ? ", mask " + hx( dspec.dr6mask ) : std::string() ) + ")";
-						dfields.push_back( "dr6" );     // U1862
-						dr6x = ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask;
 					}
 				}
 				// U1771: "dbcount" - the number of #DBs of the run (the first event resumed with DR7 unchanged)
 				if ( dspec.count && h.db_count != u.db_count )
 				{
 					x += " #DB count (hw " + std::to_string( h.db_count ) + ", uc " + std::to_string( u.db_count ) + ")";
-					dfields.push_back( "dbcount" );     // U1862
 				}
 				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; harness_issue = true; }
 			}
@@ -2134,7 +2419,6 @@ namespace at
 				 h.ev.access != u.ev.access )
 			{
 				x += " #PF access (hw " + std::to_string( h.ev.access ) + ", uc " + std::to_string( u.ev.access ) + ")";
-				dfields.push_back( "pfaccess" );        // U1862
 			}
 			// U1862: a native-side harness problem (debug-register thread, notes) is never absorbed by a tag
 			if ( !h.err.empty() || !h.dbg_note.empty() ) harness_issue = true;
@@ -2167,7 +2451,8 @@ namespace at
 			std::string tag_why;
 			// U1875: the observed difference (none on a SAME line) must equal one alternative stated for this run's
 			// environment (tag_match); a harness problem is never accepted
-			const bool tag_ok = !tag_kind.empty() && !harness_issue && tag_match( tag_st, tenv, dfields, dr6x, tag_why );
+			const tag_obs tobs = tag_observe( h, u, p, p_uc, dspec );   // U1894
+			const bool tag_ok = !tag_kind.empty() && !harness_issue && tag_match( tag_st, tenv, tobs, tag_why );
 			if ( !tag_kind.empty() && harness_issue ) tag_why = " a harness problem (see the dbg lines)";
 			if ( tag_kind.empty() ) differ += !same;
 			else if ( !tag_ok ) { ++differ; verdict = "DIFF (not the tag's stated difference)"; }
@@ -2181,6 +2466,7 @@ namespace at
 			std::printf( "[%d] %s %s%s\n", n, verdict, line.c_str(),
 						 tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name + ( tag_has_stated ? " [" + tag_stated + "]" : std::string() ) ).c_str() );
 			if ( !tag_kind.empty() && !tag_ok ) std::printf( "    tag: not accepted -%s\n", tag_why.c_str() );   // U1875: also a SAME line
+			if ( !tag_kind.empty() && opt.tag_show ) std::printf( "    tag: observed [%s]\n", tag_obs_text( tobs ).c_str() );   // U1894: --tag-show
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );
