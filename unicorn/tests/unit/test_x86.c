@@ -46420,10 +46420,12 @@ static void test_x86_dg_movss_dbp(void)
 }
 
 /*
- * U1761 (D-c): the single-step #DB reports BS only - an instruction breakpoint at the next RIP has not been met
- * yet, enabled or not. SDM 093 Vol3B 20.2.3 p. 20-4: B0-B3 "are set if the condition described for each
- * breakpoint by the LENn, and R/Wn flags in debug control register DR7 is true"; Table 20-2 p. 20-8 (single-step
- * trap: BS = 1). The i5-13600K: DR6 = FFFF4FF0H for both (cases_dbgfix_hw.txt).
+ * U1761 / U1854 (D-c): the single-step #DB reports the instruction breakpoint at the next RIP with BS when that
+ * breakpoint is enabled (DR6 B0 | BS), and BS only when it is disabled. The i5-13600K on the bare host, P- and E-cores
+ * (H22 item 8, cases_probe_p2dr_hw line 14: FFFF4FF1H, 20 runs each; line 16, disabled: FFFF4FF0H); the VMware guest
+ * drops B0 (FFFF4FF0H for both - what U1761 was fitted to). SDM 253669-093 Vol3B 20.2.3 p. 20-4: B0-B3 "They may or
+ * may not be set if the breakpoint is not enabled", "When the BS flag is set, any of the other debug status bits also
+ * may be set" - both permitted, hardware-decided.
  */
 static void test_x86_dg_ss_dr6(void)
 {
@@ -46442,10 +46444,10 @@ static void test_x86_dg_ss_dr6(void)
         dg_dr(&c, base + 19, 0, i ? 0x400 : 0x401);
         OK(bp_run(&c, code, sizeof(code) - 1));
         dr6 = bp_get(&c, UC_X86_REG_DR6);
-        TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 19 && (dr6 & 0x400f) == 0x4000);
-        TEST_MSG("single step onto a%s breakpoint: vector %u at %llx (expected %llx) dr6 %llx (expected BS only)",
+        TEST_CHECK(c.count == 1 && c.intno == 1 && c.rip == base + 19 && (dr6 & 0x400f) == (i ? 0x4000u : 0x4001u));
+        TEST_MSG("single step onto a%s breakpoint: vector %u at %llx (expected %llx) dr6 %llx (expected %s)",
                  i ? " disabled" : "n enabled", c.intno, (unsigned long long)c.rip, (unsigned long long)(base + 19),
-                 (unsigned long long)dr6);
+                 (unsigned long long)dr6, i ? "BS only" : "B0 | BS");
     }
     OK(uc_close(c.uc));
 }

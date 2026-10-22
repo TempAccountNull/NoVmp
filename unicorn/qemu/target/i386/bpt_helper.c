@@ -236,14 +236,22 @@ void cpu_x86_update_dr7(CPUX86State *env, uint32_t new_dr7)
 static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
 #else /* ours (U1761) */
 /*
- * NoVmp (ledger U1761, Gate 1 step 23 D-c): 'inst' = false leaves the instruction breakpoints out. A trap-class
- * #DB taken at the boundary before the instruction at RIP (single step) must not report the instruction
- * breakpoint of that instruction: its condition has not been met yet (SDM 093 Vol3B 20.2.3 p. 20-4: B0-B3 "are
- * set if the condition described for each breakpoint by the LENn, and R/Wn flags in debug control register DR7
- * is true"; Table 20-2 p. 20-8: single-step trap BS = 1). The i5-13600K reports DR6 = FFFF4FF0H (BS only) for a
- * single step onto an enabled or a disabled instruction breakpoint (cases_dbgfix_hw.txt); QEMU 11.1 sets Bn.
+ * NoVmp (ledger U1761, Gate 1 step 23 D-c; U1854): 'inst' selects the instruction breakpoints at RIP that are
+ * reported: HX_BP_INST_NONE none (the data-breakpoint paths), HX_BP_INST_ALL every one, enabled or not (QEMU), and
+ * HX_BP_INST_ENABLED (U1854) only the enabled ones (L / G bit in DR7) - the single-step #DB (helper_single_step).
+ * U1761 left them out of the single-step #DB (BS only), fitted to the VMware guest, which reports FFFF4FF0H. U1854:
+ * the i5-13600K on the bare host reports the enabled breakpoint at the next RIP with BS, FFFF4FF1H, on P- and E-cores,
+ * and BS only (FFFF4FF0H) for a disabled one (H22 item 8, cases_probe_p2dr_hw lines 14 / 16, 20 runs each); the guest
+ * drops B0 when it reports BS (docs/quirks.md "VMware drops DR6.B0 when BS is set"). SDM 253669-093 Vol3B 20.2.3
+ * p. 20-4: B0-B3 "They may or may not be set if the breakpoint is not enabled", BS "When the BS flag is set, any of
+ * the other debug status bits also may be set" - hardware-decided. QEMU 11.1 sets Bn for every type-0 DRn == EIP.
  */
-static bool check_hw_breakpoints_inst(CPUX86State *env, bool force_dr6_update, bool inst)
+#if __Use_Original_Qemu != 1 /* ours (U1854) */
+#define HX_BP_INST_NONE     0
+#define HX_BP_INST_ALL      1
+#define HX_BP_INST_ENABLED  2
+#endif /* __Use_Original_Qemu (U1854) */
+static bool check_hw_breakpoints_inst(CPUX86State *env, bool force_dr6_update, int inst)
 #endif /* __Use_Original_Qemu (U1761) */
 {
     target_ulong dr6;
@@ -260,7 +268,8 @@ static bool check_hw_breakpoints_inst(CPUX86State *env, bool force_dr6_update, b
 #if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
             if (env->dr[reg] == env->eip) {
 #else /* ours (U1761) */
-            if (inst && env->dr[reg] == env->eip) {
+            if (inst != HX_BP_INST_NONE && env->dr[reg] == env->eip &&
+                (inst == HX_BP_INST_ALL || hw_breakpoint_enabled(env->dr[7], reg))) {    /* U1854 */
 #endif /* __Use_Original_Qemu (U1761) */
                 bp_match = true;
             }
@@ -298,7 +307,7 @@ static bool check_hw_breakpoints_inst(CPUX86State *env, bool force_dr6_update, b
 #if __Use_Original_Qemu != 1 /* ours (U1761) */
 static bool check_hw_breakpoints(CPUX86State *env, bool force_dr6_update)
 {
-    return check_hw_breakpoints_inst(env, force_dr6_update, true);
+    return check_hw_breakpoints_inst(env, force_dr6_update, HX_BP_INST_ALL);
 }
 #endif /* __Use_Original_Qemu (U1761) */
 #if __Use_Original_Qemu != 1 /* ours (U1762) */
@@ -335,7 +344,7 @@ static void x86_movss_held_deliver(CPUX86State *env, bool bs)
 
         cs->watchpoint_hit = NULL;
         cpu_reset_interrupt(cs, CPU_INTERRUPT_DEBUG);
-        if (check_hw_breakpoints_inst(env, false, false)) {
+        if (check_hw_breakpoints_inst(env, false, HX_BP_INST_NONE)) {
             bits |= env->dr[6] & 0xf;
         }
         env->dr[6] = old;
@@ -441,7 +450,7 @@ void breakpoint_handler(CPUState *cs)
                 target_ulong old = env->dr[6];
                 int i;
 
-                if (check_hw_breakpoints_inst(env, false, false)) {
+                if (check_hw_breakpoints_inst(env, false, HX_BP_INST_NONE)) {
                     env->movss_held_db |= env->dr[6] & 0xf;
                 }
                 env->dr[6] = old;
@@ -509,8 +518,8 @@ void helper_single_step(CPUX86State *env)
      * one or both at one time."; 20.2.3 p. 20-4 "When the BS flag is set, any of the other debug status bits also may
      * be set."; Vol3A 7.9 Table 7-2 p. 7-9 (class 4: #DB due to TF or a data / I/O breakpoint). The i5-13600K takes
      * one #DB (cases_dbgfix_hw.txt, D-f). The pending request is consumed here; DR6 is unchanged: B0-B3 of the data
-     * breakpoint (its BP_WATCHPOINT_HIT, check_hw_breakpoints_inst below) and BS, as before (whether the hardware
-     * reports B0 with BS is open, docs/quirks.md).
+     * breakpoint (its BP_WATCHPOINT_HIT, check_hw_breakpoints_inst below) and BS, as before (the bare host reports B0
+     * with BS, P- and E-cores, H22 item 1; the VMware guest drops B0, docs/quirks.md).
      */
     if (env_cpu(env)->watchpoint_hit && (env_cpu(env)->watchpoint_hit->flags & BP_CPU)) {
         env_cpu(env)->watchpoint_hit = NULL;
@@ -520,7 +529,8 @@ void helper_single_step(CPUX86State *env)
 #if __Use_Original_Qemu == 1 /* original QEMU (U1761) */
     check_hw_breakpoints(env, true);
 #else /* ours (U1761) */
-    check_hw_breakpoints_inst(env, true, false);   /* not the instruction breakpoint at the next RIP */
+    /* U1854: the instruction breakpoint at the next RIP only when it is enabled (bare host: B0 | BS) */
+    check_hw_breakpoints_inst(env, true, HX_BP_INST_ENABLED);
 #endif /* __Use_Original_Qemu (U1761) */
     env->dr[6] |= DR6_BS;
     #if __Use_Original_Qemu != 1 /* ours (U1171) */

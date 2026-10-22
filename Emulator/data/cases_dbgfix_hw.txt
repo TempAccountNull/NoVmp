@@ -10,9 +10,14 @@
 # 70401h L0 read/write 2 bytes; 50401h L0 write 2 bytes; F0401h L0 read/write 4 bytes; 100404h L1 write 1 byte (an
 # unused breakpoint that makes Windows load the debug registers). Only our own snippets run natively; every enabled
 # breakpoint lies on the snippet's bytes or in MEM; snippets that switch to compatibility mode end with UD2.
-# Not here (no gate): P2e DR6 after MOV SS with TF and a data breakpoint (the hardware drops B0, RPL003-type; the
-# measurement file keeps it) and the EFLAGS image of #PF / #UD / #GP (Unicorn's hook delivery pushes no frame; the
-# IDT path is covered by unit tests, U1765).
+# Not here (no gate): P2e DR6 after MOV SS with TF and a data breakpoint (the bare host reports B0 | BS as the
+# emulator, the VMware guest BS only - H22 item 8 line 12; the measurement file keeps it) and the EFLAGS image of
+# #PF / #UD / #GP (Unicorn's hook delivery pushes no frame; the IDT path is covered by unit tests, U1765).
+# U1855 (user decision 2026-10-22 "Tag guest lines"): VMware drops DR6.B0 when it reports BS (docs/quirks.md, "VMware
+# drops DR6.B0 when BS is set"; bare host B0 | BS on P- and E-cores, H22 items 1 / 8). The lines below whose single-step
+# #DB reports B0 with BS carry dr6mask=0xFFFFFFFFFFFFFFFE (only B0 left out of the DR6 compare; BS and the rest are
+# compared) and the tag "# known deviation: VMware drops DR6.B0 when BS is set", so the guest gate stays 0 differing
+# while the emulator follows the bare host (checked there: probe files cases_probe_p2dr_hw / cases_probe_tfdata_hw).
 #
 # --- U1760 (D-a): an instruction breakpoint on the instruction after MOV SS / POP SS is suppressed. SDM 093 Vol3A
 # 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is suppressed (as if EFLAGS.RF were 1)."
@@ -31,13 +36,15 @@
 # MOV SS are both suppressed: one #DB after the INC at s+14 (RIP s+17, r8 = 1), DR6 = BS
 .byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 #
-# --- U1761 (D-c): the single-step #DB reports BS only: an instruction breakpoint at the next RIP has not been met
-# yet (its Bn stays 0, enabled or not). SDM 093 Vol3B 20.2.3 p. 20-4 (B0-B3 "set if the condition described for
-# each breakpoint by the LENn, and R/Wn flags in debug control register DR7 is true"), Table 20-2 p. 20-8
-# (single-step trap: BS = 1). TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11. Controls: DR0
-# further on (s+14); the instruction breakpoint on the instruction after POPFQ (s+10) fires first (#DB fault,
-# DR6 = B0).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401
+# --- U1761 / U1854 (D-c): the single-step #DB reports an ENABLED instruction breakpoint at the next RIP with BS
+# (B0 | BS), a disabled one not (BS only). The i5-13600K on the bare host, P- and E-cores (H22 item 8,
+# cases_probe_p2dr_hw line 14: DR6 FFFF4FF1H, 20 runs each; line 16, disabled: FFFF4FF0H); the VMware guest drops B0
+# (FFFF4FF0H, what U1761 had been fitted to) - first line: B0 masked + tag (U1855). SDM 253669-093 Vol3B 20.2.3 p. 20-4:
+# B0-B3 "may or may not be set if the breakpoint is not enabled"; "When the BS flag is set, any of the other debug
+# status bits also may be set" - hardware-decided. TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11.
+# Controls: DR0 further on (s+14); DR0 at s+11 disabled (DR7 enables only DR1); the instruction breakpoint on the
+# instruction after POPFQ (s+10) fires first (#DB fault, DR6 = B0).
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401 dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
 pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
@@ -111,9 +118,11 @@ mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000
 # status bits also may be set."; Vol3A 7.9 Table 7-2 p. 7-9 (class 4 "Traps on the Previous Instruction": #DB due to
 # TF or a data / I/O breakpoint). The i5-13600K (guest, 20 runs P / E): one #DB after the MOV. "dbcount" (U1771): the
 # first #DB resumes with DR7 unchanged and every #DB of the run is counted on both engines (before U1770 Unicorn took
-# a second #DB from the pending watchpoint request). "dr6mask" leaves B0-B3 out of the DR6 compare: whether B0 is
-# reported with BS is open (the guest drops it, the emulator reports B0 | BS) until the bare-host v3a measurement.
-# Control: the trap after a NOP (BS only, the whole DR6 compared); the MOV is not reached.
-pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFF0
-pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFF0
+# a second #DB from the pending watchpoint request). DR6: the bare host reports B0 | BS on P- and E-cores (H22 item 1,
+# cases_probe_tfdata_hw lines 0 / 1: FFFF4FF1H, one #DB, 20 runs each) as the emulator; the VMware guest drops B0, so
+# "dr6mask=0xFFFFFFFFFFFFFFFE" leaves only B0 out of the compare (was B0-B3 until the bare-host measurement) and the
+# lines carry the VMware tag (U1855). Control: the trap after a NOP (BS only, the whole DR6 compared); the MOV is not
+# reached.
+pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
+pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; mov word ptr [rsi], ax; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount
