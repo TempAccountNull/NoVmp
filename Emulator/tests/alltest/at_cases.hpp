@@ -125,7 +125,15 @@
 //                             CET shadow stacks the host OS leaves off, ...), not an SDM question
 // A tagged case that differs is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as
 // differing; a tagged case that matches is listed as "not observed" (stale tag, or a CPU that
-// sometimes takes the SDM path).
+// sometimes takes the SDM path). U1862: a tag may state the difference it accepts, a bracket list at
+// its end - "# known deviation: NAME [mxcsr]", "[fault mxcsr]", "[dr6=0x1]": the field names of the
+// "uc vs hw:" line ("m" for any memory byte), "fault", "dr6" / "dr6=MASK", "dbrip", "dbcount",
+// "pfaccess"; a difference outside the list makes the line "DIFF (outside the tag's stated
+// difference)", counted as differing. A tag without a list accepts any difference (the existing
+// tags). A harness problem on the native side (debug-register thread, notes) is never accepted by a
+// tag. U1860: a Unicorn run error on a hardware line is a harness error (below), not a verdict.
+// U1859: the case file is read in binary mode (lines end at LF, one trailing CR removed), the rule
+// test_runner.ps1 counts by - a Ctrl-Z byte or a CR CR LF line no longer hides lines.
 // Output: "[n] SAME|DIFF|KNOWN DEVIATION|HOST STATE <line>", the engines' lines, then
 // "cases: N, differing: M, known deviations: K, host state: H" (M = untagged cases of both kinds
 // that differ), one line per tag name, and the tagged cases that were not observed; when the file
@@ -1043,9 +1051,17 @@ namespace at
 	// documented in docs\quirks.md; the emulator implements the SDM) or "# host state: REASON"
 	// (the host's state differs from the emulator's, e.g. RDRAND values, the APIC ID, CET shadow
 	// stacks Windows does not enable). Returns the kind ("" = untagged) and strips the tag.
-	static std::string case_tag( std::string& line, std::string& name )
+	// U1862 (plan 1.F.13.c, G25 gap 2): a tag may state the difference it accepts, "# known deviation: NAME [f1 f2 ...]":
+	// the bracket list at the end (returned in 'stated', with 'has_stated' = true) names the fields that may differ - the
+	// field names of the "uc vs hw:" line (rax, rflags, mxcsr, fsw, xmm1, ymmh1, st0, env, fx+6, ...; "m" = any memory
+	// byte), "fault" (the vector differs), "dr6" or "dr6=MASK" (only the DR6 bits in MASK), "dbrip", "dbcount" and
+	// "pfaccess" (#DB RIP, #DB count, #PF access type). A tag without a list accepts any difference (the pre-U1862
+	// meaning, kept for the existing tags; docs\emu-alltest.md).
+	static std::string case_tag( std::string& line, std::string& name, std::string& stated, bool& has_stated )
 	{
 		static const char* kinds[] = { "known deviation", "host state" };
+		stated.clear();
+		has_stated = false;
 		for ( const char* k : kinds )
 		{
 			std::string key = std::string( "# " ) + k + ":";
@@ -1054,6 +1070,17 @@ namespace at
 			name = line.substr( p + key.size() );
 			name.erase( 0, name.find_first_not_of( " \t" ) );
 			while ( !name.empty() && ( name.back() == ' ' || name.back() == '\t' ) ) name.pop_back();
+			if ( !name.empty() && name.back() == ']' )
+			{
+				const size_t lb = name.rfind( '[' );
+				if ( lb != std::string::npos )
+				{
+					stated = name.substr( lb + 1, name.size() - lb - 2 );
+					has_stated = true;
+					name.erase( lb );
+					while ( !name.empty() && ( name.back() == ' ' || name.back() == '\t' ) ) name.pop_back();
+				}
+			}
 			line.erase( p );
 			while ( !line.empty() && ( line.back() == ' ' || line.back() == '\t' ) ) line.pop_back();
 			return k;
@@ -1061,9 +1088,54 @@ namespace at
 		return "";
 	}
 
+	// U1862: is every difference of a tagged hardware case among the tag's stated fields? 'fields' = the names of the
+	// differing fields, 'dr6x' = the differing DR6 bits (under dr6mask); 'why' lists the fields outside the statement.
+	static bool tag_accepts( const std::string& stated, const std::vector<std::string>& fields, uint64_t dr6x, std::string& why )
+	{
+		std::set<std::string> ok;
+		uint64_t dr6_ok = 0;
+		std::istringstream ss( stated );
+		std::string t;
+		while ( ss >> t )
+		{
+			if ( t.rfind( "dr6=", 0 ) == 0 )
+			{
+				char* end = nullptr;
+				dr6_ok |= std::strtoull( t.c_str() + 4, &end, 0 );
+			}
+			else if ( t == "dr6" ) dr6_ok = ~0ull;
+			else ok.insert( t );
+		}
+		why.clear();
+		for ( const std::string& f : fields )
+		{
+			if ( f == "dr6" ? ( dr6x & ~dr6_ok ) == 0 : ok.count( f ) != 0 ) continue;
+			why += " " + ( f == "dr6" ? "dr6 bits " + hx( dr6x & ~dr6_ok ) : f );
+		}
+		return why.empty();
+	}
+
+	// U1862: the field names in a case_fields() string (" name=value" tokens; memory "m+0x..." -> "m")
+	static void field_names( const std::string& s, std::vector<std::string>& out )
+	{
+		std::istringstream ss( s );
+		std::string t;
+		while ( ss >> t )
+		{
+			const size_t eq = t.find( '=' );
+			std::string n = eq == std::string::npos ? t : t.substr( 0, eq );
+			if ( n.rfind( "m+", 0 ) == 0 ) n = "m";
+			out.push_back( n );
+		}
+	}
+
 	static int run_cases( const std::string& path, const case_opts& opt = {} )
 	{
-		std::ifstream f( path );
+		// U1859 (plan 1.F.13.c, G25 gap 1): the case file is read in binary mode - lines end at LF, the one trailing CR is
+		// removed below - exactly the rule test_runner.ps1 (Get-ExpectedCases) and the host package's expected_counts.txt
+		// count by. In text mode (before) a Ctrl-Z byte (1Ah) ended the stream and a CR CR LF line was not seen, so lines
+		// after them could drop out of "case lines:" without an error.
+		std::ifstream f( path, std::ios::binary );
 		if ( !f ) { std::printf( "cannot open %s\n", path.c_str() ); return 2; }
 		// U540 (plan 1.H.2): XCR0 / CR0 per kind of case (0 = not written: Unicorn's reset value)
 		const uint64_t host_x = host_xcr0();
@@ -1258,12 +1330,33 @@ namespace at
 			if ( const size_t cl = case_line++; cl < shard_lo || cl >= shard_hi ) continue;   // U543: another shard's line
 			const size_t line_no = case_line - 1;   // U1040: the key of a --native-under-sde result
 			++lines_in;   // U1840
-			std::string tag_name, tag_kind = case_tag( line, tag_name );
+			std::string tag_name, tag_stated;
+			bool tag_has_stated = false;   // U1862
+			std::string tag_kind = case_tag( line, tag_name, tag_stated, tag_has_stated );
 			if ( !tag_kind.empty() && ( line.find( "=>" ) != std::string::npos || tag_name.empty() ) )
 			{
 				std::printf( "[%d] %s\n    bad tag: \"# %s:\" needs a name and belongs to hardware cases only\n", n, line.c_str(), tag_kind.c_str() );
 				harness_error( line.find( "=>" ) != std::string::npos, "bad tag" );   // U1840
 				continue;
+			}
+			if ( tag_has_stated )   // U1862: "dr6=MASK" must be a number
+			{
+				std::istringstream ts( tag_stated );
+				std::string tt;
+				bool good = true;
+				while ( ts >> tt )
+					if ( tt.rfind( "dr6=", 0 ) == 0 )
+					{
+						char* end = nullptr;
+						std::strtoull( tt.c_str() + 4, &end, 0 );
+						good &= tt.size() > 4 && end && !*end;
+					}
+				if ( !good )
+				{
+					std::printf( "[%d] %s\n    bad tag: the stated difference [%s] has a bad dr6=MASK value\n", n, line.c_str(), tag_stated.c_str() );
+					harness_error( false, "bad tag" );
+					continue;
+				}
 			}
 			// "=>" / "=>!" splits off the expectations (expected-value case: Unicorn only)
 			size_t arrow = line.find( "=>" );
@@ -1389,8 +1482,15 @@ namespace at
 			}
 			std::vector<uint8_t> bytes = assemble( asmtext, CODE, &err );
 			if ( bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed: %s\n", n, line.c_str(), err.c_str() ); harness_error( expect, "assembly failed" ); continue; }
+			err.clear();   // U1861: build() names no reason for a snippet over 255 bytes; no stale message of an earlier line
 			program p = build( bytes, &err );
-			if ( p.code.empty() ) { std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() ); harness_error( expect, "build failed" ); continue; }
+			if ( p.code.empty() )
+			{
+				if ( err.empty() ) err = "snippet of " + std::to_string( bytes.size() ) + " bytes (at most 255)";
+				std::printf( "[%d] %s\n    build failed: %s\n", n, line.c_str(), err.c_str() );
+				harness_error( expect, "build failed" );
+				continue;
+			}
 			// U1040: pass 1 (--native-under-sde FILE): only the native side, on SDE's CPU, into FILE
 			if ( expect && sde_file )
 			{
@@ -1448,8 +1548,15 @@ namespace at
 			{
 				std::vector<uint8_t> uc_bytes = assemble( uc_asmtext, CODE, &err );
 				if ( uc_bytes.empty() ) { std::printf( "[%d] %s\n    assembly failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); harness_error( false, "assembly failed (unicorn side)" ); continue; }
+				err.clear();   // U1861
 				p_uc = build( uc_bytes, &err );
-				if ( p_uc.code.empty() ) { std::printf( "[%d] %s\n    build failed (unicorn side): %s\n", n, line.c_str(), err.c_str() ); harness_error( false, "build failed (unicorn side)" ); continue; }
+				if ( p_uc.code.empty() )
+				{
+					if ( err.empty() ) err = "snippet of " + std::to_string( uc_bytes.size() ) + " bytes (at most 255)";
+					std::printf( "[%d] %s\n    build failed (unicorn side): %s\n", n, line.c_str(), err.c_str() );
+					harness_error( false, "build failed (unicorn side)" );
+					continue;
+				}
 			}
 			result h, u;
 			unicorn_engine uc( UC_CPU_X86_MAX );
@@ -1632,9 +1739,29 @@ namespace at
 			// #AC, #GP, #UD, ...: the context the VEH resumes has AC = 0), so after a hardware fault
 			// the host's AC bit is the OS's, not the CPU's: the fault state compares Unicorn's AC
 			hw.dbg = nullptr;
+			// U1860 (plan 1.F.13.c, G25 gap 2): a Unicorn run error on a hardware line (uc_emu_start failed, the epilogue not
+			// reached, ...) is a harness error: printed with the native result (a measurement file keeps its value), no
+			// verdict, not counted in "cases:", exit 1. Before, it was neither printed nor counted (debug-register lines
+			// excepted) and the verdict came from the state compare alone - a tagged line accepted it (e.g. a SYSCALL
+			// measurement line: Unicorn has no OS, LSTAR = 0, so its run stops at an unmapped fetch).
+			if ( !u.err.empty() )
+			{
+				std::printf( "[%d] %s%s\n", n, line.c_str(), tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name ).c_str() );
+				std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", case_fields( *st_in, *h.s ).c_str() );
+				std::printf( "    uc error: %s\n", u.err.c_str() );
+				if ( !hw_report.empty() ) std::printf( "%s", hw_report.c_str() );
+				harness_error( false, "Unicorn run error" );
+				continue;
+			}
 			if ( h.faulted && u.faulted ) h.s->rflags = ( h.s->rflags & ~0x40000ull ) | ( u.s->rflags & 0x40000ull );
 			bool same_fault = h.faulted == u.faulted && h.vector == u.vector;
 			std::string hd = case_fields( *st_in, *h.s ), ud = case_fields( *st_in, *u.s ), x = case_fields( *h.s, *u.s );
+			// U1862: the names of the differing fields (for a tag that states the difference it accepts)
+			std::vector<std::string> dfields;
+			uint64_t dr6x = 0;
+			bool harness_issue = false;
+			if ( !same_fault ) dfields.push_back( "fault" );
+			field_names( x, dfields );
 			// U1740: a debug-register case also compares where the #DB was taken and DR6 (when Windows hands
 			// DR6 over in the exception context); a harness problem on either side makes it differ
 			if ( dspec.any )
@@ -1642,36 +1769,60 @@ namespace at
 				++dbg_n;
 				if ( h.faulted && u.faulted && h.vector == 1 && u.vector == 1 )
 				{
-					if ( h.fault_rip != u.fault_rip ) x += " #DB rip (hw " + rip_text( h.fault_rip, p.snippet_begin ) + ", uc " + rip_text( u.fault_rip, p_uc.snippet_begin ) + ")";
+					if ( h.fault_rip != u.fault_rip )
+					{
+						x += " #DB rip (hw " + rip_text( h.fault_rip, p.snippet_begin ) + ", uc " + rip_text( u.fault_rip, p_uc.snippet_begin ) + ")";
+						dfields.push_back( "dbrip" );   // U1862
+					}
 					// U1771: "dr6mask=V" compares only the bits of V
 					if ( h.ev.dr6_valid && u.ev.dr6_valid && ( ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask ) )
+					{
 						x += " dr6 (hw " + hx( h.ev.dr6 ) + ", uc " + hx( u.ev.dr6 ) + ( dspec.dr6mask_set ? ", mask " + hx( dspec.dr6mask ) : std::string() ) + ")";
+						dfields.push_back( "dr6" );     // U1862
+						dr6x = ( h.ev.dr6 ^ u.ev.dr6 ) & dspec.dr6mask;
+					}
 					if ( !h.ev.dr6_valid ) ++dbg_no_dr6;
 				}
 				// U1771: "dbcount" - the number of #DBs of the run (the first event resumed with DR7 unchanged)
 				if ( dspec.count && h.db_count != u.db_count )
+				{
 					x += " #DB count (hw " + std::to_string( h.db_count ) + ", uc " + std::to_string( u.db_count ) + ")";
-				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; }
+					dfields.push_back( "dbcount" );     // U1862
+				}
+				if ( !h.err.empty() || !h.dbg_note.empty() || !u.err.empty() ) { x += " (harness: see the dbg lines)"; ++dbg_harness; harness_issue = true; }
 			}
 			// U1767: a #PF on both sides also compares the access type, i.e. the #PF error code W bit (native: the
 			// Windows ExceptionInformation[0], 0 read / 1 write / 8 execute; Unicorn: the unmapped hook's uc_mem_type)
 			if ( h.faulted && u.faulted && h.vector == 14 && u.vector == 14 && h.ev.access >= 0 && u.ev.access >= 0 &&
 				 h.ev.access != u.ev.access )
+			{
 				x += " #PF access (hw " + std::to_string( h.ev.access ) + ", uc " + std::to_string( u.ev.access ) + ")";
+				dfields.push_back( "pfaccess" );        // U1862
+			}
+			// U1862: a native-side harness problem (debug-register thread, notes) is never absorbed by a tag
+			if ( !h.err.empty() || !h.dbg_note.empty() ) harness_issue = true;
 			bool same = same_fault && x.empty();
 			// U530: a tagged case that differs is counted under its tag, not as differing; a tagged
 			// case that matches is listed (the deviation was not observed: stale tag or a CPU that
 			// sometimes takes the SDM path)
 			const char* verdict = same ? "SAME" : "DIFF";
+			// U1862: a tag absorbs a difference only when no harness problem is involved and, for a tag that states its
+			// difference ("[...]"), only when every differing field is a stated one; otherwise the line counts as differing
+			std::string tag_why;
+			const bool tag_ok = !tag_kind.empty() && !harness_issue && ( !tag_has_stated || tag_accepts( tag_stated, dfields, dr6x, tag_why ) );
+			if ( !tag_kind.empty() && harness_issue ) tag_why = " a harness problem (see the dbg lines)";
 			if ( tag_kind.empty() ) differ += !same;
 			else if ( same )
 			{
 				not_observed.push_back( "[" + std::to_string( n ) + "] " + tag_kind + ": " + tag_name );
 				verdict = "SAME (tagged, not observed)";
 			}
+			else if ( !tag_ok ) { ++differ; verdict = "DIFF (outside the tag's stated difference)"; }
 			else if ( tag_kind == "known deviation" ) { ++known[ tag_name ]; ++known_n; verdict = "KNOWN DEVIATION"; }
 			else { ++host[ tag_name ]; ++host_n; verdict = "HOST STATE"; }
-			std::printf( "[%d] %s %s%s\n", n, verdict, line.c_str(), tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name ).c_str() );
+			std::printf( "[%d] %s %s%s\n", n, verdict, line.c_str(),
+						 tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name + ( tag_has_stated ? " [" + tag_stated + "]" : std::string() ) ).c_str() );
+			if ( !same && !tag_kind.empty() && !tag_ok ) std::printf( "    tag: not accepted -%s\n", tag_why.c_str() );
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );

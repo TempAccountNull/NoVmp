@@ -153,7 +153,9 @@ Add-Suite 'expect_selftest_bad' 'selftest expect' 'bad' 'emu-alltest' @( '--case
 # U1840 / U1841 (plan 1.F.13.b A): a case line that cannot be parsed, assembled, loaded or run natively is a harness error
 # (exit 1, never counted in "cases:"); every line of harness_selftest_bad.txt is broken on purpose (kind herr: all of them
 # reported as harness errors, "cases: 0", exit 1). No line of it reaches the native engine or runs on Unicorn.
-Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_bad' ) )
+# U1861 (plan 1.F.13.c, G25 gap 3): build-failed and engine-load lines too; the profile without CET_SS
+# (cpuid_selftest_nocet.txt) makes "cpl=3 cr4.cet=1" impossible to load.
+Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_bad' ), '--cpuid', ( Join-Path $D 'cpuid_selftest_nocet.txt' ) )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )

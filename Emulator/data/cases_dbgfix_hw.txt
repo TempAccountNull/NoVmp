@@ -18,6 +18,8 @@
 # #DB reports B0 with BS carry dr6mask=0xFFFFFFFFFFFFFFFE (only B0 left out of the DR6 compare; BS and the rest are
 # compared) and the tag "# known deviation: VMware drops DR6.B0 when BS is set", so the guest gate stays 0 differing
 # while the emulator follows the bare host (checked there: probe files cases_probe_p2dr_hw / cases_probe_tfdata_hw).
+# U1862: the tags state the one difference they stand for, [dr6=0x1] (B0 only; with the mask it never shows, and
+# any other difference of these lines counts as differing).
 #
 # --- U1760 (D-a): an instruction breakpoint on the instruction after MOV SS / POP SS is suppressed. SDM 093 Vol3A
 # 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is suppressed (as if EFLAGS.RF were 1)."
@@ -44,7 +46,7 @@
 # status bits also may be set" - hardware-decided. TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11.
 # Controls: DR0 further on (s+14); DR0 at s+11 disabled (DR7 enables only DR1); the instruction breakpoint on the
 # instruction after POPFQ (s+10) fires first (#DB fault, DR6 = B0).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401 dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401 dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
 pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
@@ -123,6 +125,6 @@ mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000
 # "dr6mask=0xFFFFFFFFFFFFFFFE" leaves only B0 out of the compare (was B0-B3 until the bare-host measurement) and the
 # lines carry the VMware tag (U1855). Control: the trap after a NOP (BS only, the whole DR6 compared); the MOV is not
 # reached.
-pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
-pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set
+pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
+pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; mov word ptr [rsi], ax; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount
