@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-21 12:07 (HEAD `de11dc08 Ledger: U1830-U1832 (agent/wruss) and U1833 (WRUSS notes), merged and verified`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-21 20:22 (HEAD `ea2f3052 Ledger: U1840-U1842, U1844-U1845 (agent/f13b, plan 1.F.13.b), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -15,7 +15,7 @@ _Generated 2026-10-21 12:07 (HEAD `de11dc08 Ledger: U1830-U1832 (agent/wruss) an
 
 - (nothing in progress)
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 766 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 771 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
