@@ -1,4 +1,4 @@
-# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
+# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877, 34-39 U1891; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
 # purpose. emu-alltest must report each one as a harness error ("ERROR: harness error (...)"), count none of them in
 # "cases: N" ("cases: 0"), name all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...")
 # and exit with status 1; test.cmd's suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself)
@@ -73,3 +73,15 @@ nop | rax=1  # known deviation: selftest [rax; guest: -]
 nop | rax=1  # known deviation: selftest [rax bogus]
 # 33 (U1877): hostP without hostE
 nop | rax=1  # known deviation: selftest [guest: -; hostP: rax]
+# 34 (U1891, plan 1.F.13.g c, G27 nit 5): dr6=MASK overflowing 64 bits (strtoull saturated it to all ones before)
+nop | rax=1  # known deviation: selftest [dr6=0x1FFFFFFFFFFFFFFFFF]
+# 35 (U1891): dr6=MASK negative (strtoull negated it to all ones before)
+nop | rax=1  # known deviation: selftest [dr6=-1]
+# 36 (U1891): dr6=MASK with a trailing character
+nop | rax=1  # known deviation: selftest [dr6=0x1z]
+# 37 (U1891): expected-value case, => dr6= overflowing
+nop | dr7=0x400 => dr6=0x1FFFFFFFFFFFFFFFFF
+# 38 (U1891): hardware case, a debug-register input with a sign
+nop | dr0=-1 dr7=0x400
+# 39 (U1891): hardware case, dr6mask overflowing
+nop | dr7=0x400 dr6mask=0x10000000000000000

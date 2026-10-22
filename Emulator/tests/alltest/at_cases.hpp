@@ -172,6 +172,7 @@
 #include "at_engine.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <fstream>
 #include <intrin.h>
@@ -902,6 +903,20 @@ namespace at
 		std::printf( "%sxinuse evidence: %s\n", ind, c.evidence.c_str() );
 	}
 
+	// U1891 (plan 1.F.13.g c, G27 nit 5): an unsigned C literal as a whole - decimal, 0x hex or 0 octal - with no sign, no
+	// blank, nothing trailing and no overflow; false otherwise. std::strtoull alone took "-1" as 0xFFFFFFFFFFFFFFFF (it
+	// negates) and saturated "0x1FFFFFFFFFFFFFFFFF" to the same value (ERANGE not checked).
+	static bool u64_literal( const std::string& v, uint64_t& out )
+	{
+		if ( v.empty() || !std::isdigit( ( unsigned char ) v[ 0 ] ) ) return false;
+		errno = 0;
+		char* end = nullptr;
+		const unsigned long long x = std::strtoull( v.c_str(), &end, 0 );
+		if ( errno == ERANGE || !end || *end ) return false;
+		out = uint64_t( x );
+		return true;
+	}
+
 	// "#UD", "#GP", ..., "#13" -> vector; -1 when not a fault token. U772: an error code may follow
 	// in parentheses, "#GP(0)", "#SS(0)", "#PF(0x6)", "#13(0x30)", stored in *ec (else -1)
 	static int fault_vector( const std::string& t, int64_t* ec = nullptr )
@@ -970,11 +985,9 @@ namespace at
 		if ( kv == "dbcount" ) { d.count = true; return true; }
 		if ( kv.rfind( "dr6mask=", 0 ) == 0 )
 		{
-			char* end = nullptr;
 			const std::string v = kv.substr( 8 );
-			d.dr6mask = std::strtoull( v.c_str(), &end, 0 );
 			d.dr6mask_set = true;
-			if ( v.empty() || !end || *end ) { err = "bad value in " + kv; return false; }
+			if ( !u64_literal( v, d.dr6mask ) ) { err = "bad value in " + kv + " (an unsigned C literal, U1891)"; return false; }   // U1891
 			return true;
 		}
 		matched = false;
@@ -996,9 +1009,8 @@ namespace at
 		int base = 0;
 		if ( v.rfind( "s+", 0 ) == 0 ) { base = 1; v.erase( 0, 2 ); }
 		else if ( v.rfind( "m+", 0 ) == 0 ) { base = 2; v.erase( 0, 2 ); }
-		char* end = nullptr;
-		const unsigned long long x = std::strtoull( v.c_str(), &end, 0 );
-		if ( v.empty() || !end || *end || ( base == 2 && x >= MEM_SIZE ) || ( base && i >= 6 ) )
+		uint64_t x = 0;
+		if ( !u64_literal( v, x ) || ( base == 2 && x >= MEM_SIZE ) || ( base && i >= 6 ) )   // U1891: the whole literal
 		{
 			err = "bad value in " + kv + " (a C literal, s+OFF or m+OFF below 0x10000; s+ / m+ only for dr0..dr3)";
 			return false;
@@ -1193,9 +1205,8 @@ namespace at
 					{
 						if ( tok.rfind( "dr6=", 0 ) == 0 )
 						{
-							char* end = nullptr;
-							const uint64_t m = std::strtoull( tok.c_str() + 4, &end, 0 );
-							if ( tok.size() == 4 || !end || *end || !m || t.dr6 ) { err = "bad dr6=MASK \"" + tok + "\" (a nonzero C literal, once per alternative)"; return false; }
+							uint64_t m = 0;   // U1891: no sign, no overflow, nothing trailing (strtoull took "-1" / an overflowing literal as all ones)
+							if ( !u64_literal( tok.substr( 4 ), m ) || !m || t.dr6 ) { err = "bad dr6=MASK \"" + tok + "\" (a nonzero unsigned C literal without sign or overflow, once per alternative)"; return false; }
 							t.dr6 = m;
 							continue;
 						}
@@ -1675,9 +1686,7 @@ namespace at
 				{
 					if ( tok.rfind( "dr6=", 0 ) == 0 )
 					{
-						char* end = nullptr;
-						exp_dr6 = std::strtoull( tok.c_str() + 4, &end, 0 );
-						if ( tok.size() == 4 || !end || *end ) { err = "bad value in " + tok; ok = false; }
+						if ( !u64_literal( tok.substr( 4 ), exp_dr6 ) ) { err = "bad value in " + tok + " (an unsigned C literal, U1891)"; ok = false; }   // U1891
 						exp_dr6_set = true;
 						continue;
 					}
