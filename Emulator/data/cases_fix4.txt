@@ -51,20 +51,20 @@ mov rax, qword ptr [rcx] | rcx=0x10
 # known deviation, docs/quirks.md. Before U774 all 14 differed from the hardware, and 9 of them
 # (lines 56, 57, 60-62, 64-67) had flags that were neither the SDM's nor the CPU's; the other 5
 # had the SDM's iteration-1 flags by chance (the old restore cc_op gave the same flags).
-repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-cmp r8, r9; repe cmpsq | r8=1 r9=2 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-inc r8; repe cmpsq | r8=0xFFFFFFFFFFFFFFFF rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-shl r8, 1; repe cmpsq | r8=0xC000000000000001 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-and r8, r9; repe cmpsq | r8=0x80 r9=0x80 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-imul r8, r9; repe cmpsq | r8=0x4000000000000000 r9=4 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-popcnt r8, r9; repe cmpsq | r9=0 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-stc; repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-add r8, r9; repne cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222 # known deviation: REP CMPS/SCAS flags at a fault
-add r8, r9; repne scasq | r8=0x7FFFFFFFFFFFFFFF r9=1 rax=5 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-inc r8; repe scasq | r8=0xFFFFFFFFFFFFFFFF rax=0x1111111111111111 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-inc r8; repe scasb | r8=0xFFFFFFFFFFFFFFFF rax=0x11 rcx=3 rdi=0x3002FFFF m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
-add r8, r9; repe cmpsd | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFFC rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault
+repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+cmp r8, r9; repe cmpsq | r8=1 r9=2 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+inc r8; repe cmpsq | r8=0xFFFFFFFFFFFFFFFF rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+shl r8, 1; repe cmpsq | r8=0xC000000000000001 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+and r8, r9; repe cmpsq | r8=0x80 r9=0x80 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+imul r8, r9; repe cmpsq | r8=0x4000000000000000 r9=4 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+popcnt r8, r9; repe cmpsq | r9=0 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+stc; repe cmpsq | rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+add r8, r9; repne cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFF8 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+add r8, r9; repne scasq | r8=0x7FFFFFFFFFFFFFFF r9=1 rax=5 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+inc r8; repe scasq | r8=0xFFFFFFFFFFFFFFFF rax=0x1111111111111111 rcx=3 rdi=0x3002FFF8 m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+inc r8; repe scasb | r8=0xFFFFFFFFFFFFFFFF rax=0x11 rcx=3 rdi=0x3002FFFF m+0xFFF8=1111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
+add r8, r9; repe cmpsd | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=3 rsi=0x3002FFFC rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111 # known deviation: REP CMPS/SCAS flags at a fault [rflags]
 # without a fault (same values on both): the flags of the last iteration
 add r8, r9; repe cmpsq | r8=0x7FFFFFFFFFFFFFFF r9=1 rcx=2 rsi=0x3002FFF0 rdi=0x3002FFF0 m+0xFFF0=11111111111111111111111111111111
 inc r8; repne scasq | r8=0xFFFFFFFFFFFFFFFF rax=5 rcx=2 rdi=0x3002FFF0 m+0xFFF0=11111111111111112222222222222222
@@ -146,8 +146,8 @@ rep movsb | rcx=0x20 rsi=0x30027FF0 rdi=0x3002FFF0 m+0xFE00=A5A5A5A5A5A5A5A5A5A5
 # deviation, docs/quirks.md) and #UDs the other 14. Without LOCK every form is a NOP.
 .byte 0xf0, 0x0f, 0x0d, 0x06 | rax=0x11 m+0x8000=0102030405060708
 .byte 0xf0, 0x0f, 0x0d, 0xc0 | rax=0x11 m+0x8000=0102030405060708
-.byte 0xf0, 0x0f, 0x0d, 0x0e | rax=0x11 m+0x8000=0102030405060708 # known deviation: LOCK PREFETCHW
-.byte 0xf0, 0x0f, 0x0d, 0xc8 | rax=0x11 m+0x8000=0102030405060708 # known deviation: LOCK PREFETCHW
+.byte 0xf0, 0x0f, 0x0d, 0x0e | rax=0x11 m+0x8000=0102030405060708 # known deviation: LOCK PREFETCHW [fault]
+.byte 0xf0, 0x0f, 0x0d, 0xc8 | rax=0x11 m+0x8000=0102030405060708 # known deviation: LOCK PREFETCHW [fault]
 .byte 0xf0, 0x0f, 0x0d, 0x16 | rax=0x11 m+0x8000=0102030405060708
 .byte 0xf0, 0x0f, 0x0d, 0xd0 | rax=0x11 m+0x8000=0102030405060708
 .byte 0xf0, 0x0f, 0x0d, 0x1e | rax=0x11 m+0x8000=0102030405060708

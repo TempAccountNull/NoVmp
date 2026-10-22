@@ -69,6 +69,8 @@ $Cpuid = Join-Path $D 'cpuid_i5-13600k.txt'
 #       herr = harness_selftest_bad (every case line a harness error, "cases: 0", exit 1; U1841).
 #       nonly = harness_selftest_native (U1871: its one "# native only:" measurement line counted as "native only: 1",
 #       every other line run; no native-only line is allowed in any other suite).
+#       tagsel = harness_selftest_tags (U1877: the exact stated differences under --tag-env guest / hostE; the summary and
+#       the not-observed count must be exactly the suite's expected ones, exit 0).
 # U1841: every emu-alltest --cases suite (except herr) must also report "cases: N" with N = the number of case lines this
 # runner counts in the file itself (Get-ExpectedCases).
 $Suites = New-Object System.Collections.Generic.List[object]
@@ -161,6 +163,12 @@ Add-Suite 'harness_selftest_bad' 'selftest' 'herr' 'emu-alltest' @( '--cases', (
 # U1872 (plan 1.F.13.f): the native-only measurement tag - its line runs natively only and is counted as "native only: 1"
 # (case lines = run + native only), the other line runs on both engines; exit 0
 Add-Suite 'harness_selftest_native' 'selftest' 'nonly' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_native' ), '--cpuid', $Cpuid )
+# U1877 (plan 1.F.13.d): the exact stated differences (U1875) - every alternative must EQUAL the observed difference, the
+# statement of the run's environment applies (--tag-env guest / hostE here; the file's header lists each line's verdict)
+Add-Suite 'harness_selftest_tags_guest' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'guest' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 6, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 1' )
+Add-Suite 'harness_selftest_tags_hostE' 'selftest' 'tagsel' 'emu-alltest' @( '--cases', ( CaseFile 'harness_selftest_tags' ), '--cpuid', $Cpuid, '--tag-env', 'hostE' )
+$Suites[ $Suites.Count - 1 ] | Add-Member -NotePropertyName Expect -NotePropertyValue @( 'cases: 10, differing: 5, known deviations: 3, host state: 0', 'tagged but not observed (matched the hardware): 2' )
 # plan 1.15d milestone K: VEX opmask instructions vs the SDM model (ref_opmask.py), Unicorn only with
 # the AVX-512 opt-in (the host has no AVX-512); every line is an expected-value case.
 Add-Exp 'cases_opmask' 'cases_opmask' 'evex expect' @( '--avx512' )
@@ -852,6 +860,13 @@ function Complete-Suite( $s )
 			elseif ( -not ( $acct[ 0 ] -match "^case lines: $want, run: $( $want - 1 ), native only: 1, harness errors: 0 " ) ) { $s.Reason = "the native-only line was not counted as native only: $( $acct[ 0 ] )" }
 			elseif ( -not ( $lines | Where-Object { $_ -match '^native only: 1 ' } ) ) { $s.Reason = 'no "native only: 1" summary line' }
 			elseif ( -not ( $sum.Count -eq 1 -and $sum[ 0 ] -match "^cases: $( $want - 1 ), differing: 0, " ) ) { $s.Reason = "the other line was not run (or differs): $( $sum -join ' / ' )" }
+			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
+		}
+		'tagsel'
+		{
+			# U1877 (plan 1.F.13.d): the selftest's verdicts are known per environment (harness_selftest_tags.txt header)
+			if ( -not ( $lines | Where-Object { $_ -ceq $s.Expect[ 0 ] } ) ) { $s.Reason = 'expected "' + $s.Expect[ 0 ] + '", got: ' + ( $sum -join ' / ' ) }
+			elseif ( -not ( $lines | Where-Object { $_ -ceq $s.Expect[ 1 ] } ) ) { $s.Reason = 'expected "' + $s.Expect[ 1 ] + '"' }
 			elseif ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" }
 		}
 		default { if ( $s.Exit -ne 0 ) { $s.Reason = "exit status $( $s.Exit )" } }

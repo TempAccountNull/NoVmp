@@ -6,32 +6,32 @@
 #   emu-alltest --cases Emulator\data\cases_quirks.txt --cpuid Emulator\data\cpuid_i5-13600k.txt --strict
 #
 # FCOMI/FUCOMI C1 (U531): SDM C1 = 0, hardware keeps C1 (= 1 here)
-fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
-fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
-fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1
+fcomi st(0), st(1) | st0=BFFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1 [fsw env]
+fucomi st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1 [fsw env]
+fucomip st(0), st(1) | st0=3FFF:8000000000000000 st1=4000:8000000000000000 fsw=0x0200 # known deviation: FCOMI/FUCOMI C1 [fsw env]
 # CVTPI2PS m64 x87 transition (U532): SDM x87 -> MMX transition (TOP = 0, all tags valid), hardware none
-fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000 # known deviation: CVTPI2PS m64 x87 transition
+fld1; cvtpi2ps xmm0, qword ptr [rsi] | m+0x8000=0100000002000000 # known deviation: CVTPI2PS m64 x87 transition [fsw ftw st0 st7 env]
 # FYL2XP1 below -1 (U533): x = ST0 < -1. SDM #IA (masked: QNaN indefinite); hardware ST0 / +-0 / +-inf
-fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000 # known deviation: FYL2XP1 below -1
-fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000 # known deviation: FYL2XP1 below -1
-fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000 # known deviation: FYL2XP1 below -1
-fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000 # known deviation: FYL2XP1 below -1
-fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000 # known deviation: FYL2XP1 below -1
+fyl2xp1 | st0=C000:8000000000000000 st1=3FFF:8000000000000000 # known deviation: FYL2XP1 below -1 [fsw st0 env]
+fyl2xp1 | st0=C000:C000000000000000 st1=BFFF:8000000000000000 # known deviation: FYL2XP1 below -1 [fsw st0 env]
+fyl2xp1 | st0=C000:8000000000000000 st1=0000:0000000000000000 # known deviation: FYL2XP1 below -1 [fsw st0 env]
+fyl2xp1 | st0=C000:8000000000000000 st1=7FFF:8000000000000000 # known deviation: FYL2XP1 below -1 [fsw st0 env]
+fyl2xp1 | st0=C003:A000000000000000 st1=FFFF:8000000000000000 # known deviation: FYL2XP1 below -1 [fsw st0 env]
 # PTWRITE hidden by the guest CPUID (U534, U1700, U1710; a VMware-guest artifact, not a CPU deviation): the emulator #UDs where CPUID hides PTWRITE (gate / --guest profile) and executes it with --host; the CPU (guest and bare host P/E) reads the operand and goes on
-.byte 0xf3, 0x0f, 0xae, 0x26 # known deviation: PTWRITE hidden by the guest CPUID
-.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234 # known deviation: PTWRITE hidden by the guest CPUID
+.byte 0xf3, 0x0f, 0xae, 0x26 # known deviation: PTWRITE hidden by the guest CPUID [guest: fault; host: -]
+.byte 0xf3, 0x48, 0x0f, 0xae, 0xe0 | rax=0x1234 # known deviation: PTWRITE hidden by the guest CPUID [guest: fault; host: -]
 # DPPD two NaN products (U535): SDM p0 in both elements, hardware p1 in element 1
-dppd xmm0, xmm1, 0x33 | xmm0=010A00000000F87F020A00000000F87F xmm1=000000000000F03F000000000000F03F # known deviation: DPPD two NaN products
-vdppd xmm2, xmm0, xmm1, 0x32 | xmm0=000000000000F03F030A00000000F07F xmm1=040B00000000F8FF000000000000F03F # known deviation: DPPD two NaN products
+dppd xmm0, xmm1, 0x33 | xmm0=010A00000000F87F020A00000000F87F xmm1=000000000000F03F000000000000F03F # known deviation: DPPD two NaN products [xmm0]
+vdppd xmm2, xmm0, xmm1, 0x32 | xmm0=000000000000F03F030A00000000F07F xmm1=040B00000000F8FF000000000000F03F # known deviation: DPPD two NaN products [xmm2]
 # REP 67h ECX=0 zero-extension (U536): 67h REP string, ECX = 0. SDM writes nothing, hardware zero-extends
-.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
-.byte 0x67, 0xf3, 0xaa | rcx=0x5555555500000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
-.byte 0x67, 0xf3, 0xae | rcx=0x7777777700000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension [rcx rsi rdi]
+.byte 0x67, 0xf3, 0xaa | rcx=0x5555555500000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension [rcx rdi]
+.byte 0x67, 0xf3, 0xae | rcx=0x7777777700000000 rdi=0x2222222230029000 # known deviation: REP 67h ECX=0 zero-extension [rcx]
 # x87 compare unmasked #IA condition codes (U537): #IA unmasked (FCW.IM = 0). SDM C3/C2/C0 (ZF/PF/CF) unchanged,
 # hardware "unordered"
-fcom st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
-fcomp st(1) | fcw=0x037E st0=3FFF:8000000000000000 st1=7FFF:C000000000000000 # known deviation: x87 compare unmasked #IA condition codes
-fucompp | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
-fcom qword ptr [rsi] | fcw=0x037E st0=3FFF:8000000000000000 m+0x8000=010000000000F87F # known deviation: x87 compare unmasked #IA condition codes
-fcomi st(0), st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
-fucomip st(0), st(1) | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes
+fcom st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes [fsw env]
+fcomp st(1) | fcw=0x037E st0=3FFF:8000000000000000 st1=7FFF:C000000000000000 # known deviation: x87 compare unmasked #IA condition codes [fsw env]
+fucompp | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes [fsw env]
+fcom qword ptr [rsi] | fcw=0x037E st0=3FFF:8000000000000000 m+0x8000=010000000000F87F # known deviation: x87 compare unmasked #IA condition codes [fsw env]
+fcomi st(0), st(1) | fcw=0x037E st0=7FFF:C000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes [rflags]
+fucomip st(0), st(1) | fcw=0x037E st0=7FFF:A000000000000000 st1=3FFF:8000000000000000 # known deviation: x87 compare unmasked #IA condition codes [rflags]

@@ -16,70 +16,70 @@
 # At the end: expected-value lines ("=>", Unicorn only) with the SDM 092 flags and the flag
 # consumers after BSF/BSR (SETcc, CMOVcc read CC_OP_EFLAGS).
 
-bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0x202 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
-bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsf ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0x202
 bsf ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0x202
 bsf ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0xAD7
-bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
-bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0x202
 bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0xAD7
 bsf eax, ecx | rax=0x5555555555555555 rcx=0x3 rflags=0x202
 bsf eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0xAD7
-bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0x202 # known deviation: BSF/BSR PF
-bsf eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
 bsf eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0x202
-bsf eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsf eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsf eax, ecx | rax=0x5555555555555555 rcx=0xFFFFFFFF rflags=0x202
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0x202 # known deviation: BSF/BSR PF
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsf rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsf rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
 bsf rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0xAD7
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF
-bsf rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsf rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr ax, cx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr ax, cx | rax=0x5555555555555555 rcx=0x8000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
 bsr ax, cx | rax=0x5555555555555555 rcx=0x300 rflags=0x202
-bsr ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsr ax, cx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
 bsr ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0x202
 bsr ax, cx | rax=0x5555555555555555 rcx=0x4000 rflags=0xAD7
 bsr ax, cx | rax=0x5555555555555555 rcx=0xFFFF rflags=0x202
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000000 rflags=0x202
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x3 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x3 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsr eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0x202
 bsr eax, ecx | rax=0x5555555555555555 rcx=0x100 rflags=0xAD7
 bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0x202
 bsr eax, ecx | rax=0x5555555555555555 rcx=0x80000003 rflags=0xAD7
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0x202 # known deviation: BSF/BSR PF
-bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr eax, ecx | rax=0x5555555555555555 rcx=0xFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr eax, ecx | rax=0x5555555555555555 rcx=0x7FFF0000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr eax, ecx | rax=0x5555555555555555 rcx=0xF0 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr eax, ecx | rax=0x5555555555555555 rcx=0xFFFFFFFF rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8000000000000000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x1000000000 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0xF0 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
 bsr rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0x202
 bsr rax, rcx | rax=0x5555555555555555 rcx=0x800000000000 rflags=0xAD7
 bsr rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0x202
 bsr rax, rcx | rax=0x5555555555555555 rcx=0x7FFFFFFFFFFFFFFF rflags=0xAD7
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF
-bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0x202 # known deviation: BSF/BSR PF [rflags]
+bsr rax, rcx | rax=0x5555555555555555 rcx=0x8 rflags=0xAD7 # known deviation: BSF/BSR PF [rflags]
 bsf r9d, dword ptr [rsi] | r9=0 m+0x8000=00010000 rflags=0xAD7
 bsr r9, qword ptr [rsi] | r9=0 m+0x8000=0100000000000080 rflags=0x202
 #

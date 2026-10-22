@@ -197,7 +197,7 @@ movddup xmm0, qword ptr [rsi+0x7ff8]
 cvtpi2pd xmm0, qword ptr [rsi+0x7ff8]
 cvtps2pi mm0, qword ptr [rsi+0x7ff8]
 cvttps2pi mm0, qword ptr [rsi+0x7ff8]
-cvtpi2ps xmm0, qword ptr [rsi+0x7ff8] # known deviation: CVTPI2PS m64 x87 transition
+cvtpi2ps xmm0, qword ptr [rsi+0x7ff8] # known deviation: CVTPI2PS m64 x87 transition [ftw env]
 movlpd xmm0, qword ptr [rsi+0x7ff8]
 movhps qword ptr [rsi+0x7ff8], xmm1
 movss dword ptr [rsi+0x7ffc], xmm1

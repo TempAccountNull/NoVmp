@@ -19,21 +19,21 @@
 #   emu-alltest --cases cases_probe_p2_hw.txt --host --host-core E --cpuid cpuid_i5-13600k_bare_host_ecore.txt --hw-cpu E --hw-repeat 20
 #
 # --- control: TF set by POPFQ, the trap follows the next instruction (NOP): #DB with r8 = 0
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF control
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF control [-]
 # --- MOV SS, r32 (8E D0) holds the trap over the next instruction: #DB with r8 = 1 (SDM Vol3A 7.8.3)
-.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS reg
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS reg [-]
 # --- MOV SS, m16 (8E 16 = mov ss, [rsi]): same
-.byte 0x8c, 0xd0; mov word ptr [rsi], ax; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS mem
+.byte 0x8c, 0xd0; mov word ptr [rsi], ax; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS mem [-]
 # --- MOV SS; MOV SS: the second does not extend the shadow (SDM: only the first is guaranteed): r8 = 0 or 1
-.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS twice
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS twice [-]
 # --- MOV SS followed by a stack write (Intel's RPL003 workaround form): trap after the PUSH, r8 = 0, RSP - 8
-.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; push rax; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS then PUSH
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; push rax; inc r8; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF MOV SS then PUSH [-]
 # --- POP SS (compatibility mode, CS = 23h via RETFQ; 32-bit code: mov eax, ss; push eax; pushfd; or dword [esp],
 # 100h; popfd; pop ss; inc ecx x4): #DB with ecx = 1. Control: POP EAX instead of POP SS: ecx = 0.
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x9c, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9d, 0x17, 0x41, 0x41, 0x41, 0x41 | cpl=3  # host state: measurement P2-TF POP SS (compat)
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x9c, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9d, 0x58, 0x41, 0x41, 0x41, 0x41 | cpl=3  # host state: measurement P2-TF POP EAX control (compat)
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x9c, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9d, 0x17, 0x41, 0x41, 0x41, 0x41 | cpl=3  # host state: measurement P2-TF POP SS (compat) [-]
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x9c, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9d, 0x58, 0x41, 0x41, 0x41, 0x41 | cpl=3  # host state: measurement P2-TF POP EAX control (compat) [-]
 # --- single-step priority against other events of the same instruction (TF = 1 at its start)
-pushfq; or qword ptr [rsp], 0x100; popfq; int3; nop; nop; nop | cpl=3  # host state: measurement P2-TF over INT3 (#BP)
-pushfq; or qword ptr [rsp], 0x100; popfq; ud2; nop; nop; nop | cpl=3  # host state: measurement P2-TF over UD2 (fault first)
-pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0xf1; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF over ICEBP
-pushfq; or qword ptr [rsp], 0x100; popfq; mov eax, dword ptr [rsi+0x8000]; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF over a #PF load
+pushfq; or qword ptr [rsp], 0x100; popfq; int3; nop; nop; nop | cpl=3  # host state: measurement P2-TF over INT3 (#BP) [-]
+pushfq; or qword ptr [rsp], 0x100; popfq; ud2; nop; nop; nop | cpl=3  # host state: measurement P2-TF over UD2 (fault first) [-]
+pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0xf1; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF over ICEBP [-]
+pushfq; or qword ptr [rsp], 0x100; popfq; mov eax, dword ptr [rsi+0x8000]; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P2-TF over a #PF load [-]

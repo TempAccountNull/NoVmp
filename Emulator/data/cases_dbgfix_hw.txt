@@ -15,11 +15,12 @@
 # #PF / #UD / #GP (Unicorn's hook delivery pushes no frame; the IDT path is covered by unit tests, U1765).
 # U1855 (user decision 2026-10-22 "Tag guest lines"): VMware drops DR6.B0 when it reports BS (docs/quirks.md, "VMware
 # drops DR6.B0 when BS is set"; bare host B0 | BS on P- and E-cores, H22 items 1 / 8). The lines below whose single-step
-# #DB reports B0 with BS carry dr6mask=0xFFFFFFFFFFFFFFFE (only B0 left out of the DR6 compare; BS and the rest are
-# compared) and the tag "# known deviation: VMware drops DR6.B0 when BS is set", so the guest gate stays 0 differing
-# while the emulator follows the bare host (checked there: probe files cases_probe_p2dr_hw / cases_probe_tfdata_hw).
-# U1862: the tags state the one difference they stand for, [dr6=0x1] (B0 only; with the mask it never shows, and
-# any other difference of these lines counts as differing).
+# #DB reports B0 with BS carry the tag "# known deviation: VMware drops DR6.B0 when BS is set", so the guest gate stays
+# 0 differing while the emulator follows the bare host (probe files cases_probe_p2dr_hw / cases_probe_tfdata_hw).
+# U1880 (plan 1.F.13.d, G26 gap 1): the whole DR6 is compared (the dr6mask=0xFFFFFFFFFFFFFFFE of U1855 is gone) and
+# the tags state the exact difference per environment, [guest: dr6=0x1; host: -]: in the guest exactly B0 differs
+# (VMware drops it), on the bare host nothing - so a single step that loses B0 again (U1761 behaviour) fails these
+# lines in both environments (guest: no difference where B0 is stated; bare host: B0 differs where "-" is stated).
 #
 # --- U1760 (D-a): an instruction breakpoint on the instruction after MOV SS / POP SS is suppressed. SDM 093 Vol3A
 # 7.8.3 p. 7-8: "Any instruction breakpoint on the next instruction is suppressed (as if EFLAGS.RF were 1)."
@@ -46,7 +47,7 @@
 # status bits also may be set" - hardware-decided. TF from POPFQ; the trap comes after the NOP at s+10 with RIP = s+11.
 # Controls: DR0 further on (s+14); DR0 at s+11 disabled (DR7 enables only DR1); the instruction breakpoint on the
 # instruction after POPFQ (s+10) fires first (#DB fault, DR6 = B0).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401 dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404
 pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401
@@ -122,9 +123,9 @@ mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000
 # first #DB resumes with DR7 unchanged and every #DB of the run is counted on both engines (before U1770 Unicorn took
 # a second #DB from the pending watchpoint request). DR6: the bare host reports B0 | BS on P- and E-cores (H22 item 1,
 # cases_probe_tfdata_hw lines 0 / 1: FFFF4FF1H, one #DB, 20 runs each) as the emulator; the VMware guest drops B0, so
-# "dr6mask=0xFFFFFFFFFFFFFFFE" leaves only B0 out of the compare (was B0-B3 until the bare-host measurement) and the
-# lines carry the VMware tag (U1855). Control: the trap after a NOP (BS only, the whole DR6 compared); the MOV is not
-# reached.
-pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
-pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount dr6mask=0xFFFFFFFFFFFFFFFE  # known deviation: VMware drops DR6.B0 when BS is set [dr6=0x1]
+# the lines carry the VMware tag (U1855) with the exact per-environment statement [guest: dr6=0x1; host: -] and the
+# whole DR6 compared (U1880; dr6mask was B0-B3 until the bare-host measurement, then B0 only). Control: the trap after
+# a NOP (BS only, the whole DR6 compared); the MOV is not reached.
+pushfq; or qword ptr [rsp], 0x100; popfq; mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; mov ax, word ptr [rsi]; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x70401 dbcount  # known deviation: VMware drops DR6.B0 when BS is set [guest: dr6=0x1; host: -]
 pushfq; or qword ptr [rsp], 0x100; popfq; nop; mov word ptr [rsi], ax; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401 dbcount

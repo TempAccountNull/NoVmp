@@ -17,10 +17,10 @@
 #
 # --- hardware: the controls complete / raise #XM as on every core; the faulting stores are the tagged lines
 vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F
-vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store [mxcsr]
-vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA  # known deviation: BDF97 VCVTPS2PH faulting store [mxcsr]
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store [guest: mxcsr | -; hostP: mxcsr; hostE: -]
+vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA  # known deviation: BDF97 VCVTPS2PH faulting store [guest: mxcsr | -; hostP: mxcsr; hostE: -]
 vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F
-vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store [fault mxcsr]
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # known deviation: BDF97 VCVTPS2PH faulting store [guest: fault mxcsr | -; hostP: fault mxcsr; hostE: -]
 #
 # --- Unicorn only: #PF with MXCSR unchanged, also VEX.256 (m128) and with PE unmasked (no #XM); the controls
 vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | xmm1=0100803F0100803F0100803F0100803F => #PF

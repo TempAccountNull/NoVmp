@@ -21,147 +21,147 @@
 # ===== P10a =====
 # --- RPL026: an invalid opcode that reaches the 15-byte limit: SDM #GP(0) (Windows: av at address -1 = 13);
 # erratum: may be #UD. The 15-byte forms are the #UD controls.
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 16-byte UD2
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 17-byte UD2
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 15-byte UD2 control
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x06 | cpl=3  # host state: measurement P10a RPL026 16-byte PUSH ES (invalid in 64-bit)
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x06 | cpl=3  # host state: measurement P10a RPL026 15-byte PUSH ES control
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a RPL026 16-byte UD0
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a RPL026 15-byte UD0 control
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xf0, 0x90 | cpl=3  # host state: measurement P10a RPL026 16-byte LOCK NOP
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xf0, 0x90 | cpl=3  # host state: measurement P10a RPL026 15-byte LOCK NOP control
-.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xd6 | cpl=3  # host state: measurement P10a RPL026 16-byte SALC
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 16-byte UD2 [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 17-byte UD2 [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x0b | cpl=3  # host state: measurement P10a RPL026 15-byte UD2 control [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x06 | cpl=3  # host state: measurement P10a RPL026 16-byte PUSH ES (invalid in 64-bit) [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x06 | cpl=3  # host state: measurement P10a RPL026 15-byte PUSH ES control [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a RPL026 16-byte UD0 [guest: fault | -; hostP: -; hostE: fault]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a RPL026 15-byte UD0 control [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xf0, 0x90 | cpl=3  # host state: measurement P10a RPL026 16-byte LOCK NOP [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xf0, 0x90 | cpl=3  # host state: measurement P10a RPL026 15-byte LOCK NOP control [-]
+.byte 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0xd6 | cpl=3  # host state: measurement P10a RPL026 16-byte SALC [-]
 #
 # --- BT135: PCMPESTRx with REX.W / VEX.W1 take the lengths from RAX/RDX (64-bit). imm8 18h = unsigned bytes,
 # equal each, negative polarity; xmm0 = xmm1. 64-bit lengths (saturated 16/16): ECX = 16, SF = ZF = 0;
 # 32-bit lengths 2/3 (the erratum): ECX = 2, SF = ZF = 1. W0 lines are the 32-bit controls.
-.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI REX.W
-.byte 0x66, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI W0 control
-.byte 0xc4, 0xe3, 0xf9, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRI VEX.W1
-.byte 0xc4, 0xe3, 0x79, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRI VEX.W0 control
-.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0xFFFFFFFF00000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI REX.W negative RAX
-.byte 0x66, 0x48, 0x0f, 0x3a, 0x60, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRM REX.W
-.byte 0xc4, 0xe3, 0xf9, 0x60, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRM VEX.W1
+.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI REX.W [-]
+.byte 0x66, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI W0 control [-]
+.byte 0xc4, 0xe3, 0xf9, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRI VEX.W1 [-]
+.byte 0xc4, 0xe3, 0x79, 0x61, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRI VEX.W0 control [-]
+.byte 0x66, 0x48, 0x0f, 0x3a, 0x61, 0xc1, 0x18 | cpl=3 rax=0xFFFFFFFF00000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRI REX.W negative RAX [-]
+.byte 0x66, 0x48, 0x0f, 0x3a, 0x60, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 PCMPESTRM REX.W [-]
+.byte 0xc4, 0xe3, 0xf9, 0x60, 0xc1, 0x18 | cpl=3 rax=0x100000002 rdx=0x100000003 xmm0=41414141414141414141414141414141 xmm1=41414141414141414141414141414141  # host state: measurement P10a BT135 VPCMPESTRM VEX.W1 [-]
 #
 # --- BDF97: VCVTPS2PH m64 whose store faults: SDM leaves MXCSR unchanged (inexact input 1.0000001f, PE masked);
 # straddling store: no partial write (m+0xFFFC stays AAAAAAAA); PE unmasked (MXCSR 0F80h): #XM or #PF first?
-vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 control (completes, PE = 1)
-vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 not-present store
-vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA  # host state: measurement P10a BDF97 straddling store
-vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 PE unmasked control (#XM)
-vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 PE unmasked, not-present store
+vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 control (completes, PE = 1) [-]
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 not-present store [guest: mxcsr | -; hostP: mxcsr; hostE: -]
+vcvtps2ph qword ptr [rsi+0x7ffc], xmm1, 0 | cpl=3 xmm1=0100803F0100803F0100803F0100803F m+0xFFFC=AAAAAAAA  # host state: measurement P10a BDF97 straddling store [guest: mxcsr | -; hostP: mxcsr; hostE: -]
+vcvtps2ph qword ptr [rsi], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 PE unmasked control (#XM) [-]
+vcvtps2ph qword ptr [rsi+0x8000], xmm1, 0 | cpl=3 mxcsr=0x0F80 xmm1=0100803F0100803F0100803F0100803F  # host state: measurement P10a BDF97 PE unmasked, not-present store [guest: fault mxcsr | -; hostP: fault mxcsr; hostE: -]
 #
 # --- BT230: VEX.L = 1 on VCVT(T)SS2SI / VCVT(T)SD2SI (SDM: VEX.LIG, executes); xmm1 = 2.75 (CVT 3, CVTT 2);
 # VEX.vvvv != 1111b is #UD (SDM)
-.byte 0xc5, 0xfa, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI L0 control
-.byte 0xc5, 0xfe, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI L1
-.byte 0xc5, 0xfe, 0x2c, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTTSS2SI L1
-.byte 0xc4, 0xe1, 0xfe, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI W1 L1
-.byte 0xc5, 0xfb, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI L0 control
-.byte 0xc5, 0xff, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI L1
-.byte 0xc5, 0xff, 0x2c, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTTSD2SI L1
-.byte 0xc4, 0xe1, 0xff, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI W1 L1
-.byte 0xc5, 0xf2, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI vvvv!=1111
+.byte 0xc5, 0xfa, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI L0 control [-]
+.byte 0xc5, 0xfe, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI L1 [-]
+.byte 0xc5, 0xfe, 0x2c, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTTSS2SI L1 [-]
+.byte 0xc4, 0xe1, 0xfe, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI W1 L1 [-]
+.byte 0xc5, 0xfb, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI L0 control [-]
+.byte 0xc5, 0xff, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI L1 [-]
+.byte 0xc5, 0xff, 0x2c, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTTSD2SI L1 [-]
+.byte 0xc4, 0xe1, 0xff, 0x2d, 0xc1 | cpl=3 xmm1=0000000000000640  # host state: measurement P10a BT230 VCVTSD2SI W1 L1 [-]
+.byte 0xc5, 0xf2, 0x2d, 0xc1 | cpl=3 xmm1=00003040  # host state: measurement P10a BT230 VCVTSS2SI vvvv!=1111 [-]
 # --- BT33: VPHMINPOSUW with vvvv != 1111b or L = 1: SDM #UD
-.byte 0xc4, 0xe2, 0x79, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW control
-.byte 0xc4, 0xe2, 0x71, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW vvvv!=1111
-.byte 0xc4, 0xe2, 0x7d, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW L1
+.byte 0xc4, 0xe2, 0x79, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW control [-]
+.byte 0xc4, 0xe2, 0x71, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW vvvv!=1111 [-]
+.byte 0xc4, 0xe2, 0x7d, 0x41, 0xc1 | cpl=3 xmm1=03000100050007000900020004000600  # host state: measurement P10a BT33 VPHMINPOSUW L1 [-]
 # --- BT36: VZEROUPPER / VZEROALL with VEX.W1 (SDM: WIG, executes); vvvv != 1111b (SDM #UD)
-.byte 0xc4, 0xe1, 0x78, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER W0 control
-.byte 0xc4, 0xe1, 0xf8, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER W1
-.byte 0xc4, 0xe1, 0xfc, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROALL W1
-.byte 0xc5, 0xf0, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER vvvv!=1111
+.byte 0xc4, 0xe1, 0x78, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER W0 control [-]
+.byte 0xc4, 0xe1, 0xf8, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER W1 [-]
+.byte 0xc4, 0xe1, 0xfc, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROALL W1 [-]
+.byte 0xc5, 0xf0, 0x77 | cpl=3 xmm1=11111111111111111111111111111111 ymmh1=22222222222222222222222222222222  # host state: measurement P10a BT36 VZEROUPPER vvvv!=1111 [-]
 #
 # --- BT11 (read side): ENTER level 4 whose third frame-pointer READ ([rbp-24] = 2FFFFFF8h) is not present:
 # SDM: RSP / RBP unchanged after the #PF. Level 3 (reads stay in CODE) is the completing control.
-enter 0x20, 3 | cpl=3 rbp=0x30000010  # host state: measurement P10a BT11 ENTER level 3 control
-enter 0x20, 4 | cpl=3 rbp=0x30000010  # host state: measurement P10a BT11 ENTER level 4 read fault
+enter 0x20, 3 | cpl=3 rbp=0x30000010  # host state: measurement P10a BT11 ENTER level 3 control [-]
+enter 0x20, 4 | cpl=3 rbp=0x30000010  # host state: measurement P10a BT11 ENTER level 4 read fault [-]
 # --- BT17: IRETQ CPL3 -> CPL3 with AC = 0 while it runs, AC = 1 in the popped RFLAGS (40202h) and a misaligned
 # frame (RSP = 4 mod 16): SDM no #AC, IRETQ completes and the UD2 it returns to gives #UD; erratum: #AC.
 # The second line is the 8-aligned control. (Frame: call/pop for the target, RIP, CS 33h, RFLAGS, RSP, SS 2Bh.)
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x36, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x2c, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x10, 0x02, 0x02, 0x04, 0x00, 0x48, 0x89, 0x4c, 0x24, 0x18, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x2b, 0, 0, 0, 0x48, 0xcf, 0x0f, 0x0b | cpl=3  # host state: measurement P10a BT17 IRETQ misaligned frame, AC in image
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x36, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x28, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x10, 0x02, 0x02, 0x04, 0x00, 0x48, 0x89, 0x4c, 0x24, 0x18, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x2b, 0, 0, 0, 0x48, 0xcf, 0x0f, 0x0b | cpl=3  # host state: measurement P10a BT17 IRETQ aligned control
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x36, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x2c, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x10, 0x02, 0x02, 0x04, 0x00, 0x48, 0x89, 0x4c, 0x24, 0x18, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x2b, 0, 0, 0, 0x48, 0xcf, 0x0f, 0x0b | cpl=3  # host state: measurement P10a BT17 IRETQ misaligned frame, AC in image [guest: -; host: fault rsp rflags]
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x36, 0x48, 0x89, 0xe1, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x28, 0x48, 0x89, 0x14, 0x24, 0x48, 0xc7, 0x44, 0x24, 0x08, 0x33, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x10, 0x02, 0x02, 0x04, 0x00, 0x48, 0x89, 0x4c, 0x24, 0x18, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x2b, 0, 0, 0, 0x48, 0xcf, 0x0f, 0x0b | cpl=3  # host state: measurement P10a BT17 IRETQ aligned control [-]
 #
 # --- BT12: faulting MMX store after x87 use (FLD1: TOP = 7), base-only vs index-register addressing (the erratum's
 # condition). docs\quirks.md "MMX #PF x87 transition (P-core)": P-cores set TOP = 0, E-cores keep it (core-dependent).
-fld1; movq qword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVQ base only
-fld1; movq qword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVQ index rcx*1
-fld1; movq qword ptr [rsi+rcx*8], mm0 | cpl=3 rcx=0x1000  # host state: measurement P10a BT12 MOVQ index rcx*8
-fld1; movd dword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVD base only
-fld1; movd dword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVD index
-fld1; movntq qword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVNTQ base only
-fld1; movntq qword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVNTQ index
+fld1; movq qword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVQ base only [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movq qword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVQ index rcx*1 [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movq qword ptr [rsi+rcx*8], mm0 | cpl=3 rcx=0x1000  # host state: measurement P10a BT12 MOVQ index rcx*8 [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movd dword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVD base only [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movd dword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVD index [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movntq qword ptr [rsi+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVNTQ base only [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
+fld1; movntq qword ptr [rsi+rcx*1+0x8000], mm0 | cpl=3  # host state: measurement P10a BT12 MOVNTQ index [guest: fsw st0 st7 env | -; hostP: fsw st0 st7 env; hostE: -]
 #
 # --- Domas / sandsifter probe set (D5 §2.10, §5.2 #15): undocumented aliases and reserved encodings
-.byte 0xf1, 0x90, 0x90 | cpl=3  # host state: measurement P10a Domas F1 ICEBP
-fld1; .byte 0xdb, 0xe0 | cpl=3  # host state: measurement P10a Domas DB E0 FNENI
-fld1; .byte 0xdb, 0xe1 | cpl=3  # host state: measurement P10a Domas DB E1 FNDISI
-fld1; .byte 0xdb, 0xe4 | cpl=3  # host state: measurement P10a Domas DB E4 FNSETPM
-fld1; .byte 0xdb, 0xe5 | cpl=3  # host state: measurement P10a Domas DB E5 FRSTPM
-fld1; .byte 0xdf, 0xc0 | cpl=3  # host state: measurement P10a Domas DF C0 FFREEP st0
-fld1; fld1; .byte 0xdf, 0xc1 | cpl=3  # host state: measurement P10a Domas DF C1 FFREEP st1
-fld1; fldz; .byte 0xdf, 0xc7 | cpl=3  # host state: measurement P10a Domas DF C7 FFREEP st7
-fld1; fldz; .byte 0xd9, 0xd9 | cpl=3  # host state: measurement P10a Domas D9 D9 FSTP1 alias
-fld1; fldz; .byte 0xdc, 0xd1 | cpl=3  # host state: measurement P10a Domas DC D1 FCOM2 alias
-fld1; fldz; .byte 0xdc, 0xd9 | cpl=3  # host state: measurement P10a Domas DC D9 FCOMP3 alias
-fld1; fldz; .byte 0xde, 0xd1 | cpl=3  # host state: measurement P10a Domas DE D1 FCOMP5 alias
-fld1; fldz; .byte 0xdd, 0xc9 | cpl=3  # host state: measurement P10a Domas DD C9 FXCH4 alias
-fld1; fldz; .byte 0xdf, 0xc9 | cpl=3  # host state: measurement P10a Domas DF C9 FXCH7 alias
-fld1; fldz; .byte 0xdf, 0xd1 | cpl=3  # host state: measurement P10a Domas DF D1 FSTP8 alias
-fld1; fldz; .byte 0xdf, 0xd9 | cpl=3  # host state: measurement P10a Domas DF D9 FSTP9 alias
-shl al, 3 | cpl=3 rax=0x81  # host state: measurement P10a Domas C0 /4 SHL control (OF undefined for count > 1)
-.byte 0xc0, 0xf0, 0x03 | cpl=3 rax=0x81  # host state: measurement P10a Domas C0 /6 SAL alias
-.byte 0xc1, 0xf0, 0x03 | cpl=3 rax=0x80000001  # host state: measurement P10a Domas C1 /6 SAL alias
-.byte 0xd0, 0xf0 | cpl=3 rax=0x81  # host state: measurement P10a Domas D0 /6 SAL alias
-.byte 0x48, 0xd1, 0xf0 | cpl=3 rax=0x8000000000000001  # host state: measurement P10a Domas D1 /6 SAL alias
-.byte 0xd2, 0xf0 | cpl=3 rax=0x81 rcx=3  # host state: measurement P10a Domas D2 /6 SAL alias
-.byte 0xd3, 0xf0 | cpl=3 rax=0x81 rcx=0 rflags=0x8d7  # host state: measurement P10a Domas D3 /6 SAL alias count 0
-.byte 0xf6, 0xc8, 0x0f | cpl=3 rax=0x81  # host state: measurement P10a Domas F6 /1 TEST alias
-.byte 0xf7, 0xc8, 0x0f, 0x00, 0x00, 0x00 | cpl=3 rax=0x81  # host state: measurement P10a Domas F7 /1 TEST alias
-.byte 0x48, 0xf7, 0xc8, 0x00, 0x00, 0x00, 0x80 | cpl=3 rax=0x8000000000000000  # host state: measurement P10a Domas REX.W F7 /1 TEST alias
-.byte 0x0f, 0x0d, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 0D /0
-.byte 0x0f, 0x0d, 0x0e | cpl=3  # host state: measurement P10a Domas 0F 0D /1
-.byte 0x0f, 0x0d, 0x16 | cpl=3  # host state: measurement P10a Domas 0F 0D /2
-.byte 0x0f, 0x0d, 0x1e | cpl=3  # host state: measurement P10a Domas 0F 0D /3
-.byte 0x0f, 0x0d, 0x26 | cpl=3  # host state: measurement P10a Domas 0F 0D /4
-.byte 0x0f, 0x0d, 0x2e | cpl=3  # host state: measurement P10a Domas 0F 0D /5
-.byte 0x0f, 0x0d, 0x36 | cpl=3  # host state: measurement P10a Domas 0F 0D /6
-.byte 0x0f, 0x0d, 0x3e | cpl=3  # host state: measurement P10a Domas 0F 0D /7
-.byte 0x0f, 0x0d, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 0D register form
-.byte 0x0f, 0x18, 0x26 | cpl=3  # host state: measurement P10a Domas 0F 18 /4 hint
-.byte 0x0f, 0x18, 0x3e | cpl=3  # host state: measurement P10a Domas 0F 18 /7 hint
-.byte 0x0f, 0x18, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 18 register form
-.byte 0x0f, 0x19, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 19 hint
-.byte 0x0f, 0x1a, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1A hint (BNDLDX space, no MPX)
-.byte 0x0f, 0x1b, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1B hint (BNDSTX space, no MPX)
-.byte 0x0f, 0x1c, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1C /0 hint (CLDEMOTE space, not enumerated)
-.byte 0x0f, 0x1d, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1D hint
-.byte 0x0f, 0x1e, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1E hint
-.byte 0x0f, 0x1f, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 1F register form
-.byte 0x0f, 0x19, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 19 register form
-.byte 0x0f, 0x0e | cpl=3  # host state: measurement P10a Domas 0F 0E FEMMS
-.byte 0x0f, 0x0f, 0xc1, 0x9e | cpl=3  # host state: measurement P10a Domas 0F 0F 3DNow! PFADD
-.byte 0xd6 | cpl=3  # host state: measurement P10a Domas D6 SALC (64-bit)
-.byte 0x82, 0xc0, 0x01 | cpl=3  # host state: measurement P10a Domas 82 /0 (64-bit)
-.byte 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F FF UD0
-.byte 0x0f, 0xb9, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F B9 UD1
-.byte 0x8e, 0xc8 | cpl=3  # host state: measurement P10a Domas 8E /1 MOV CS
+.byte 0xf1, 0x90, 0x90 | cpl=3  # host state: measurement P10a Domas F1 ICEBP [-]
+fld1; .byte 0xdb, 0xe0 | cpl=3  # host state: measurement P10a Domas DB E0 FNENI [-]
+fld1; .byte 0xdb, 0xe1 | cpl=3  # host state: measurement P10a Domas DB E1 FNDISI [-]
+fld1; .byte 0xdb, 0xe4 | cpl=3  # host state: measurement P10a Domas DB E4 FNSETPM [-]
+fld1; .byte 0xdb, 0xe5 | cpl=3  # host state: measurement P10a Domas DB E5 FRSTPM [-]
+fld1; .byte 0xdf, 0xc0 | cpl=3  # host state: measurement P10a Domas DF C0 FFREEP st0 [-]
+fld1; fld1; .byte 0xdf, 0xc1 | cpl=3  # host state: measurement P10a Domas DF C1 FFREEP st1 [-]
+fld1; fldz; .byte 0xdf, 0xc7 | cpl=3  # host state: measurement P10a Domas DF C7 FFREEP st7 [-]
+fld1; fldz; .byte 0xd9, 0xd9 | cpl=3  # host state: measurement P10a Domas D9 D9 FSTP1 alias [-]
+fld1; fldz; .byte 0xdc, 0xd1 | cpl=3  # host state: measurement P10a Domas DC D1 FCOM2 alias [-]
+fld1; fldz; .byte 0xdc, 0xd9 | cpl=3  # host state: measurement P10a Domas DC D9 FCOMP3 alias [-]
+fld1; fldz; .byte 0xde, 0xd1 | cpl=3  # host state: measurement P10a Domas DE D1 FCOMP5 alias [-]
+fld1; fldz; .byte 0xdd, 0xc9 | cpl=3  # host state: measurement P10a Domas DD C9 FXCH4 alias [-]
+fld1; fldz; .byte 0xdf, 0xc9 | cpl=3  # host state: measurement P10a Domas DF C9 FXCH7 alias [-]
+fld1; fldz; .byte 0xdf, 0xd1 | cpl=3  # host state: measurement P10a Domas DF D1 FSTP8 alias [-]
+fld1; fldz; .byte 0xdf, 0xd9 | cpl=3  # host state: measurement P10a Domas DF D9 FSTP9 alias [-]
+shl al, 3 | cpl=3 rax=0x81  # host state: measurement P10a Domas C0 /4 SHL control (OF undefined for count > 1) [guest: rflags | -; hostP: rflags; hostE: -]
+.byte 0xc0, 0xf0, 0x03 | cpl=3 rax=0x81  # host state: measurement P10a Domas C0 /6 SAL alias [guest: rflags | -; hostP: rflags; hostE: -]
+.byte 0xc1, 0xf0, 0x03 | cpl=3 rax=0x80000001  # host state: measurement P10a Domas C1 /6 SAL alias [guest: rflags | -; hostP: rflags; hostE: -]
+.byte 0xd0, 0xf0 | cpl=3 rax=0x81  # host state: measurement P10a Domas D0 /6 SAL alias [-]
+.byte 0x48, 0xd1, 0xf0 | cpl=3 rax=0x8000000000000001  # host state: measurement P10a Domas D1 /6 SAL alias [-]
+.byte 0xd2, 0xf0 | cpl=3 rax=0x81 rcx=3  # host state: measurement P10a Domas D2 /6 SAL alias [guest: rflags | -; hostP: rflags; hostE: -]
+.byte 0xd3, 0xf0 | cpl=3 rax=0x81 rcx=0 rflags=0x8d7  # host state: measurement P10a Domas D3 /6 SAL alias count 0 [-]
+.byte 0xf6, 0xc8, 0x0f | cpl=3 rax=0x81  # host state: measurement P10a Domas F6 /1 TEST alias [-]
+.byte 0xf7, 0xc8, 0x0f, 0x00, 0x00, 0x00 | cpl=3 rax=0x81  # host state: measurement P10a Domas F7 /1 TEST alias [-]
+.byte 0x48, 0xf7, 0xc8, 0x00, 0x00, 0x00, 0x80 | cpl=3 rax=0x8000000000000000  # host state: measurement P10a Domas REX.W F7 /1 TEST alias [-]
+.byte 0x0f, 0x0d, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 0D /0 [-]
+.byte 0x0f, 0x0d, 0x0e | cpl=3  # host state: measurement P10a Domas 0F 0D /1 [-]
+.byte 0x0f, 0x0d, 0x16 | cpl=3  # host state: measurement P10a Domas 0F 0D /2 [-]
+.byte 0x0f, 0x0d, 0x1e | cpl=3  # host state: measurement P10a Domas 0F 0D /3 [-]
+.byte 0x0f, 0x0d, 0x26 | cpl=3  # host state: measurement P10a Domas 0F 0D /4 [-]
+.byte 0x0f, 0x0d, 0x2e | cpl=3  # host state: measurement P10a Domas 0F 0D /5 [-]
+.byte 0x0f, 0x0d, 0x36 | cpl=3  # host state: measurement P10a Domas 0F 0D /6 [-]
+.byte 0x0f, 0x0d, 0x3e | cpl=3  # host state: measurement P10a Domas 0F 0D /7 [-]
+.byte 0x0f, 0x0d, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 0D register form [-]
+.byte 0x0f, 0x18, 0x26 | cpl=3  # host state: measurement P10a Domas 0F 18 /4 hint [-]
+.byte 0x0f, 0x18, 0x3e | cpl=3  # host state: measurement P10a Domas 0F 18 /7 hint [-]
+.byte 0x0f, 0x18, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 18 register form [-]
+.byte 0x0f, 0x19, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 19 hint [-]
+.byte 0x0f, 0x1a, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1A hint (BNDLDX space, no MPX) [-]
+.byte 0x0f, 0x1b, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1B hint (BNDSTX space, no MPX) [-]
+.byte 0x0f, 0x1c, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1C /0 hint (CLDEMOTE space, not enumerated) [-]
+.byte 0x0f, 0x1d, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1D hint [-]
+.byte 0x0f, 0x1e, 0x06 | cpl=3  # host state: measurement P10a Domas 0F 1E hint [-]
+.byte 0x0f, 0x1f, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 1F register form [-]
+.byte 0x0f, 0x19, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F 19 register form [-]
+.byte 0x0f, 0x0e | cpl=3  # host state: measurement P10a Domas 0F 0E FEMMS [-]
+.byte 0x0f, 0x0f, 0xc1, 0x9e | cpl=3  # host state: measurement P10a Domas 0F 0F 3DNow! PFADD [-]
+.byte 0xd6 | cpl=3  # host state: measurement P10a Domas D6 SALC (64-bit) [-]
+.byte 0x82, 0xc0, 0x01 | cpl=3  # host state: measurement P10a Domas 82 /0 (64-bit) [-]
+.byte 0x0f, 0xff, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F FF UD0 [-]
+.byte 0x0f, 0xb9, 0xc0 | cpl=3  # host state: measurement P10a Domas 0F B9 UD1 [-]
+.byte 0x8e, 0xc8 | cpl=3  # host state: measurement P10a Domas 8E /1 MOV CS [-]
 # (66 E8 / 66 E9 in 64-bit: already hwcheck_gate1.txt lines 175-176)
 #
 # ===== P10b =====
 # --- TF over CPUID / RDTSC / RDTSCP / F3 F3 F3 F3 F3 9C: the #DB must follow that instruction (r8 = 0)
-xor eax, eax; xor ecx, ecx; pushfq; or qword ptr [rsp], 0x100; popfq; cpuid; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over CPUID leaf 0
-pushfq; or qword ptr [rsp], 0x100; popfq; rdtsc; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over RDTSC (TSC values differ)
-pushfq; or qword ptr [rsp], 0x100; popfq; rdtscp; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over RDTSCP (TSC / TSC_AUX values differ)
-pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0xf3, 0xf3, 0xf3, 0xf3, 0xf3, 0x9c; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over F3x5 PUSHFQ
+xor eax, eax; xor ecx, ecx; pushfq; or qword ptr [rsp], 0x100; popfq; cpuid; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over CPUID leaf 0 [-]
+pushfq; or qword ptr [rsp], 0x100; popfq; rdtsc; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over RDTSC (TSC values differ) [rax | rax rdx]
+pushfq; or qword ptr [rsp], 0x100; popfq; rdtscp; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over RDTSCP (TSC / TSC_AUX values differ) [rax | rax rcx | rax rcx rdx | rax rdx]
+pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0xf3, 0xf3, 0xf3, 0xf3, 0xf3, 0x9c; inc r8; inc r8; inc r8 | cpl=3  # host state: measurement P10b TF over F3x5 PUSHFQ [-]
 # --- CPUID out-of-range leaves (Intel: the highest basic leaf's data) vs the hypervisor range 40000000h+
-mov eax, 0x21; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID leaf 21h (above max basic 20h)
-mov eax, 0x40000001; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 40000001h
-mov eax, 0x40000010; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 40000010h
-mov eax, 0x4fffffff; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 4FFFFFFFh
-mov eax, 0x80000009; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 80000009h (above max extended)
-mov eax, 0x8fffffff; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 8FFFFFFFh
-mov eax, 0xc0000000; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID C0000000h
+mov eax, 0x21; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID leaf 21h (above max basic 20h) [-]
+mov eax, 0x40000001; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 40000001h [-]
+mov eax, 0x40000010; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 40000010h [-]
+mov eax, 0x4fffffff; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 4FFFFFFFh [-]
+mov eax, 0x80000009; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 80000009h (above max extended) [-]
+mov eax, 0x8fffffff; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID 8FFFFFFFh [-]
+mov eax, 0xc0000000; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b CPUID C0000000h [-]
 # --- SYSCALL from a non-ntdll address with an invalid service number (0FFFh, table 0): RCX = next RIP,
 # R11 = RFLAGS, RAX = C000001Ch. Unicorn has no OS (LSTAR = 0): its side is not comparable before 3.B 6.4.
 # U1872 (plan 1.F.13.f, user decision 2026-10-22 "Native-only tag"): measured on the host CPU only - the Unicorn side is
@@ -170,9 +170,9 @@ mov eax, 0xc0000000; xor ecx, ecx; cpuid | cpl=3  # host state: measurement P10b
 mov eax, 0xfff; mov r10, rcx; syscall; nop; nop | cpl=3  # native only: measurement P10b SYSCALL non-ntdll invalid service (Unicorn has no OS)
 #
 # ===== P10c: VM-only encodings (VMware guest; bare metal and the emulator: #GP) =====
-mov eax, 0x564D5868; xor ebx, ebx; mov ecx, 10; mov edx, 0x5658; in eax, dx | cpl=3  # host state: VM-only VMware backdoor 5658h GETVERSION
-xor eax, eax; xor ebx, ebx; mov ecx, 10; mov edx, 0x5658; in eax, dx | cpl=3  # host state: VM-only VMware port 5658h without the magic
-xor eax, eax; mov edx, 0x5659; in al, dx | cpl=3  # host state: VM-only VMware port 5659h without the magic
-mov ecx, 0x10000; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10000h (host TSC)
-mov ecx, 0x10001; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10001h (real ns)
-mov ecx, 0x10002; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10002h (apparent ns)
+mov eax, 0x564D5868; xor ebx, ebx; mov ecx, 10; mov edx, 0x5658; in eax, dx | cpl=3  # host state: VM-only VMware backdoor 5658h GETVERSION [-]
+xor eax, eax; xor ebx, ebx; mov ecx, 10; mov edx, 0x5658; in eax, dx | cpl=3  # host state: VM-only VMware port 5658h without the magic [-]
+xor eax, eax; mov edx, 0x5659; in al, dx | cpl=3  # host state: VM-only VMware port 5659h without the magic [-]
+mov ecx, 0x10000; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10000h (host TSC) [-]
+mov ecx, 0x10001; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10001h (real ns) [-]
+mov ecx, 0x10002; rdpmc | cpl=3  # host state: VM-only VMware pseudo-PMC 10002h (apparent ns) [-]

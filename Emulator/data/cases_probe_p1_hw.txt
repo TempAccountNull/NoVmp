@@ -17,75 +17,75 @@
 #
 # --- P1a: a faulting read-modify-write reports a write (#PF W = 1); flags and memory keep their old values
 # controls: a plain read (T = 0), a plain write (T = 1), read-only RMW-like forms (CMP/TEST/BT: T = 0)
-mov eax, dword ptr [rsi+0x8000] | cpl=3  # host state: measurement P1a read control
-mov dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a write control
-cmp dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a CMP read-only
-test dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a TEST read-only
-bt qword ptr [rsi+0x8000], rax | cpl=3  # host state: measurement P1a BT read-only
-setz byte ptr [rsi+0x8000] | cpl=3 rflags=0x246  # host state: measurement P1a SETcc write-only
+mov eax, dword ptr [rsi+0x8000] | cpl=3  # host state: measurement P1a read control [-]
+mov dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a write control [-]
+cmp dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a CMP read-only [-]
+test dword ptr [rsi+0x8000], eax | cpl=3  # host state: measurement P1a TEST read-only [-]
+bt qword ptr [rsi+0x8000], rax | cpl=3  # host state: measurement P1a BT read-only [-]
+setz byte ptr [rsi+0x8000] | cpl=3 rflags=0x246  # host state: measurement P1a SETcc write-only [-]
 # RMW, unlocked (RFLAGS input 8D7h = OF SF ZF AF PF CF: must be unchanged after the fault)
-add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a ADD m32
-sub qword ptr [rsi+0x8000], rax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a SUB m64
-adc byte ptr [rsi+0x8000], al | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a ADC m8
-or word ptr [rsi+0x8000], ax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a OR m16
-xor dword ptr [rsi+0x8000], 0x55 | cpl=3 rflags=0x8d7  # host state: measurement P1a XOR imm
-inc byte ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a INC
-dec qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a DEC
-not dword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a NOT
-neg qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a NEG
-shl qword ptr [rsi+0x8000], 1 | cpl=3 rflags=0x8d7  # host state: measurement P1a SHL 1
-rol dword ptr [rsi+0x8000], cl | cpl=3 rcx=3 rflags=0x8d7  # host state: measurement P1a ROL cl
-shld dword ptr [rsi+0x8000], eax, 3 | cpl=3 rflags=0x8d7  # host state: measurement P1a SHLD
-bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a BTS
-btr dword ptr [rsi+0x8000], 5 | cpl=3 rflags=0x8d7  # host state: measurement P1a BTR imm
-btc qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a BTC
-xadd dword ptr [rsi+0x8000], eax | cpl=3 rax=7 rflags=0x8d7  # host state: measurement P1a XADD
-cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7  # host state: measurement P1a CMPXCHG unlocked
-cmpxchg8b qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a CMPXCHG8B unlocked
-cmpxchg16b xmmword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a CMPXCHG16B unlocked
+add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a ADD m32 [-]
+sub qword ptr [rsi+0x8000], rax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a SUB m64 [-]
+adc byte ptr [rsi+0x8000], al | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a ADC m8 [-]
+or word ptr [rsi+0x8000], ax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a OR m16 [-]
+xor dword ptr [rsi+0x8000], 0x55 | cpl=3 rflags=0x8d7  # host state: measurement P1a XOR imm [-]
+inc byte ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a INC [-]
+dec qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a DEC [-]
+not dword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a NOT [-]
+neg qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a NEG [-]
+shl qword ptr [rsi+0x8000], 1 | cpl=3 rflags=0x8d7  # host state: measurement P1a SHL 1 [-]
+rol dword ptr [rsi+0x8000], cl | cpl=3 rcx=3 rflags=0x8d7  # host state: measurement P1a ROL cl [-]
+shld dword ptr [rsi+0x8000], eax, 3 | cpl=3 rflags=0x8d7  # host state: measurement P1a SHLD [-]
+bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a BTS [-]
+btr dword ptr [rsi+0x8000], 5 | cpl=3 rflags=0x8d7  # host state: measurement P1a BTR imm [-]
+btc qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a BTC [-]
+xadd dword ptr [rsi+0x8000], eax | cpl=3 rax=7 rflags=0x8d7  # host state: measurement P1a XADD [-]
+cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7  # host state: measurement P1a CMPXCHG unlocked [-]
+cmpxchg8b qword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a CMPXCHG8B unlocked [-]
+cmpxchg16b xmmword ptr [rsi+0x8000] | cpl=3 rflags=0x8d7  # host state: measurement P1a CMPXCHG16B unlocked [-]
 # RMW, locked / implicitly locked
-lock add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a LOCK ADD
-lock cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7  # host state: measurement P1a LOCK CMPXCHG
-lock bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a LOCK BTS
-xchg dword ptr [rsi+0x8000], eax | cpl=3 rax=9  # host state: measurement P1a XCHG (implicit LOCK)
+lock add dword ptr [rsi+0x8000], eax | cpl=3 rax=1 rflags=0x8d7  # host state: measurement P1a LOCK ADD [-]
+lock cmpxchg dword ptr [rsi+0x8000], ecx | cpl=3 rax=1 rcx=2 rflags=0x8d7  # host state: measurement P1a LOCK CMPXCHG [-]
+lock bts qword ptr [rsi+0x8000], rax | cpl=3 rflags=0x8d7  # host state: measurement P1a LOCK BTS [-]
+xchg dword ptr [rsi+0x8000], eax | cpl=3 rax=9  # host state: measurement P1a XCHG (implicit LOCK) [-]
 # memory destination of POP (stack read first) and of a string store; a RMW straddling into the page
-pop qword ptr [rsi+0x8000] | cpl=3  # host state: measurement P1a POP m64 (RSP must stay)
-.byte 0xa5 | cpl=3 rdi=0x30030000  # host state: measurement P1a MOVSD (string) store side
-add dword ptr [rsi+0x7ffe], eax | cpl=3 rax=1 rflags=0x8d7 m+0xFFFE=AAAA  # host state: measurement P1a ADD straddling (no partial write)
+pop qword ptr [rsi+0x8000] | cpl=3  # host state: measurement P1a POP m64 (RSP must stay) [-]
+.byte 0xa5 | cpl=3 rdi=0x30030000  # host state: measurement P1a MOVSD (string) store side [-]
+add dword ptr [rsi+0x7ffe], eax | cpl=3 rax=1 rflags=0x8d7 m+0xFFFE=AAAA  # host state: measurement P1a ADD straddling (no partial write) [-]
 # a present, read-only user page (KUSER_SHARED_DATA user view 7FFE0000h): protection fault, the read would succeed
-add dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000 rax=1 rflags=0x8d7  # host state: measurement P1a ADD to read-only page
-mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000  # host state: measurement P1a write control read-only page
+add dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000 rax=1 rflags=0x8d7  # host state: measurement P1a ADD to read-only page [-]
+mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000  # host state: measurement P1a write control read-only page [-]
 #
 # --- P1b: pushed RFLAGS.RF = 1 for fault-class exceptions: NOT measurable here (the harness does not record
 # CONTEXT.EFlags and PUSHFQ never shows RF); listed in the P9 note as a harness need.
 #
 # --- P1c: MOV DR at CPL3, #UD vs #GP priority (Windows: ILLEGAL_INSTRUCTION = 6 vs PRIVILEGED_INSTRUCTION = 13)
-.byte 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV rax, DR0
-.byte 0x0f, 0x21, 0xf8 | cpl=3  # host state: measurement P1c MOV rax, DR7
-.byte 0x0f, 0x21, 0xf0 | cpl=3  # host state: measurement P1c MOV rax, DR6
-.byte 0x0f, 0x21, 0xe0 | cpl=3  # host state: measurement P1c MOV rax, DR4
-.byte 0x0f, 0x21, 0xe8 | cpl=3  # host state: measurement P1c MOV rax, DR5
-.byte 0x0f, 0x23, 0xe0 | cpl=3  # host state: measurement P1c MOV DR4, rax
-.byte 0x0f, 0x23, 0xe8 | cpl=3  # host state: measurement P1c MOV DR5, rax
-.byte 0x0f, 0x23, 0xf8 | cpl=3  # host state: measurement P1c MOV DR7, rax
-.byte 0x44, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV rax, DR8 (REX.R)
-.byte 0x44, 0x0f, 0x21, 0xf8 | cpl=3  # host state: measurement P1c MOV rax, DR15 (REX.R)
-.byte 0x44, 0x0f, 0x23, 0xc0 | cpl=3  # host state: measurement P1c MOV DR8, rax (REX.R)
-.byte 0x0f, 0x21, 0x00 | cpl=3  # host state: measurement P1c MOV DR mod=00 (treated as register form)
-.byte 0x66, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV DR with 66h
-.byte 0xf0, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV DR with LOCK
+.byte 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV rax, DR0 [-]
+.byte 0x0f, 0x21, 0xf8 | cpl=3  # host state: measurement P1c MOV rax, DR7 [-]
+.byte 0x0f, 0x21, 0xf0 | cpl=3  # host state: measurement P1c MOV rax, DR6 [-]
+.byte 0x0f, 0x21, 0xe0 | cpl=3  # host state: measurement P1c MOV rax, DR4 [-]
+.byte 0x0f, 0x21, 0xe8 | cpl=3  # host state: measurement P1c MOV rax, DR5 [-]
+.byte 0x0f, 0x23, 0xe0 | cpl=3  # host state: measurement P1c MOV DR4, rax [-]
+.byte 0x0f, 0x23, 0xe8 | cpl=3  # host state: measurement P1c MOV DR5, rax [-]
+.byte 0x0f, 0x23, 0xf8 | cpl=3  # host state: measurement P1c MOV DR7, rax [-]
+.byte 0x44, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV rax, DR8 (REX.R) [-]
+.byte 0x44, 0x0f, 0x21, 0xf8 | cpl=3  # host state: measurement P1c MOV rax, DR15 (REX.R) [-]
+.byte 0x44, 0x0f, 0x23, 0xc0 | cpl=3  # host state: measurement P1c MOV DR8, rax (REX.R) [-]
+.byte 0x0f, 0x21, 0x00 | cpl=3  # host state: measurement P1c MOV DR mod=00 (treated as register form) [-]
+.byte 0x66, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV DR with 66h [-]
+.byte 0xf0, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV DR with LOCK [-]
 #
 # --- P1d: LAR bits 19:16 (SDM: undefined) and LSL, Windows' GDT vs Unicorn's cpl=3 GDT (23h/2Bh/33h only)
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 33h
-.byte 0x48, 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR rcx, 33h
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 2Bh
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 23h
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x30 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 30h (RPL 0)
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 53h (Windows compat TEB data)
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x10 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 10h (DPL0 code)
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x40 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 40h (TSS)
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, null
-.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 2Bh
-.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 33h
-.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 23h
-.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 53h
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 33h [-]
+.byte 0x48, 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR rcx, 33h [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 2Bh [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 23h [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x30 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 30h (RPL 0) [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 53h (Windows compat TEB data) [rcx rflags]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x10 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 10h (DPL0 code) [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x40 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 40h (TSS) [-]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, null [-]
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 2Bh [-]
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 33h [-]
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 23h [-]
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 53h [rcx rflags]

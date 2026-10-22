@@ -1,4 +1,4 @@
-# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874; plans 1.F.13.b / .c / .f, G26 gap 2): every case line below is broken on
+# harness_selftest_bad.txt (ledger U1840 / U1841, lines 3-4 U1845, lines 13-16 U1861, 17-18 U1872, 19-25 U1874, 26-33 U1877; plans 1.F.13.b / .c / .d / .f, G26 gap 2): every case line below is broken on
 # purpose. emu-alltest must report each one as a harness error ("ERROR: harness error (...)"), count none of them in
 # "cases: N" ("cases: 0"), name all of them in its accounting line ("case lines: L, run: 0, harness errors: L ...")
 # and exit with status 1; test.cmd's suite harness_selftest_bad (kind herr, L counted by test_runner.ps1 itself)
@@ -57,3 +57,19 @@ nop | m+0x10zz=00
 nop | st0=3FFF:8000000000000000z
 # 25 (U1874): hardware case, an xmm register index with a trailing character (ran as xmm1 before U1873)
 nop | xmm1x=00
+# 26 (U1877, plan 1.F.13.d): a tag without a statement - the pre-U1876 form that accepted any difference
+nop | rax=1  # known deviation: selftest unstated
+# 27 (U1877): "dr6" without the bits (dr6=MASK)
+nop | rax=1  # host state: selftest [dr6]
+# 28 (U1877): per environment, the host not stated
+nop | rax=1  # known deviation: selftest [guest: rax]
+# 29 (U1877): an unknown environment
+nop | rax=1  # known deviation: selftest [vm: rax; host: -]
+# 30 (U1877): an empty statement ("-" = no difference)
+nop | rax=1  # known deviation: selftest []
+# 31 (U1877): a list for every environment together with a per-environment list
+nop | rax=1  # known deviation: selftest [rax; guest: -]
+# 32 (U1877): an unknown field
+nop | rax=1  # known deviation: selftest [rax bogus]
+# 33 (U1877): hostP without hostE
+nop | rax=1  # known deviation: selftest [guest: -; hostP: rax]

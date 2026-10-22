@@ -132,15 +132,27 @@
 //                             is counted as "native only: O" (never in "cases:", never silent). Only on measurement
 //                             lines: the name must start with "measurement " and the tag states no difference (both
 //                             else a bad tag); test.cmd's gate files must have none (test_runner.ps1).
-// A tagged case that differs is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as
-// differing; a tagged case that matches is listed as "not observed" (stale tag, or a CPU that
-// sometimes takes the SDM path). U1862: a tag may state the difference it accepts, a bracket list at
-// its end - "# known deviation: NAME [mxcsr]", "[fault mxcsr]", "[dr6=0x1]": the field names of the
-// "uc vs hw:" line ("m" for any memory byte), "fault", "dr6" / "dr6=MASK", "dbrip", "dbcount",
-// "pfaccess"; a difference outside the list makes the line "DIFF (outside the tag's stated
-// difference)", counted as differing. A tag without a list accepts any difference (the existing
-// tags). A harness problem on the native side (debug-register thread, notes) is never accepted by a
-// tag. U1860: a Unicorn run error on a hardware line is a harness error (below), not a verdict.
+// U1875 / U1876 (plan 1.F.13.d, user decision 2026-10-22 "Tighten in Gate 1"): every "known deviation" / "host
+// state" tag states the EXACT difference it accepts, a bracket list at its end, per environment where they differ:
+//   # known deviation: NAME [rcx rsi rdi]                    every environment: exactly these fields differ
+//   # host state: REASON [rax | rax rflags]                  alternatives ("|"): exactly one of them
+//   # known deviation: NAME [guest: dr6=0x1; host: -]        per environment (";"): guest = the VMware guest, host =
+//                                                             the bare host (or hostP and hostE: its P- / E-cores)
+// An alternative is the set of differing fields: the field names of the "uc vs hw:" line (rax, rflags, mxcsr, fsw,
+// xmm1, ymmh1, st0, env, fx+6, ...; "m" = any memory byte), "fault" (the vector differs), "dr6=MASK" (exactly the DR6
+// bits MASK differ), "dbrip", "dbcount", "pfaccess" (#DB RIP, #DB count, #PF access type); "-" = no difference (the
+// line may also match). The observed difference must EQUAL one alternative stated for the run's environment (a
+// missing, an extra or another field fails): else "DIFF (not the tag's stated difference)" with a "tag: not accepted
+// - observed [...], stated for ENV: [...]" line, counted as differing. The run's environment ("tag environment:" line):
+// the VMware guest when the native CPUID reports the hypervisor vendor "VMwareVMware" (CPUID.1:ECX[31], 40000000H) or
+// no hybrid part (CPUID.07H.0:EDX[15] = 0: this project's guest hides the hypervisor bit and VMware reports no hybrid
+// part), else the bare host (Hybrid = 1); on the bare host the P- / E-core statement when --hw-cpu pins every native
+// run to that CPUID.1AH core type, else both; --tag-env guest|host|hostP|hostE overrides (analysis, self-tests). A matched
+// difference is counted under its tag ("KNOWN DEVIATION" / "HOST STATE"), never as differing; a matched "-" is
+// listed as "not observed". A tag without a statement (the pre-U1876 form that accepted any difference) or with a bad
+// one is a bad tag: a harness error. Not stated (by design): "# native only:" (nothing is compared). A harness problem
+// on the native side (debug-register thread, notes) is never accepted by a tag. U1860: a Unicorn run error on a
+// hardware line is a harness error (below), not a verdict.
 // U1859: the case file is read in binary mode (lines end at LF, one trailing CR removed), the rule
 // test_runner.ps1 counts by - a Ctrl-Z byte or a CR CR LF line no longer hides lines.
 // Output: "[n] SAME|DIFF|KNOWN DEVIATION|HOST STATE <line>", the engines' lines, then
@@ -465,7 +477,8 @@ namespace at
 					   std::string sde_out, sde_in;   /* U1040: --native-under-sde FILE (pass 1) / --sde-results FILE (pass 2) */
 					   int platform = 0;   /* U1465: --host / --guest / --AMD (PLATFORM_*) */
 					   std::string cpuid_path, cpuid_src;   /* U1491: the CPUID profile file and why it was chosen (logged) */
-					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */ };
+					   bool events = false;   /* U1741: --events prints both engines' event lines for every case */
+					   std::string tag_env;   /* U1875: --tag-env guest|host|hostP|hostE (empty: detected) */ };
 
 	// U1491: the core type the loaded CPUID profile reports (logged; the bare-host P-/E-core profiles,
 	// emu-alltest --host [--host-core P|E]): CPUID.1AH:EAX[31:24] is valid only with 07H.0:EDX[15] Hybrid = 1
@@ -1112,31 +1125,196 @@ namespace at
 		return "";
 	}
 
-	// U1862: is every difference of a tagged hardware case among the tag's stated fields? 'fields' = the names of the
-	// differing fields, 'dr6x' = the differing DR6 bits (under dr6mask); 'why' lists the fields outside the statement.
-	static bool tag_accepts( const std::string& stated, const std::vector<std::string>& fields, uint64_t dr6x, std::string& why )
+	// U1875 (plan 1.F.13.d): a tag's statement - the exact differences it accepts, per environment (header above).
+	// tag_alt = one alternative: the differing fields (without DR6) and the differing DR6 bits (0: DR6 does not differ).
+	// tag_stmt: environment ("" = every environment, "guest", "host", "hostP", "hostE") -> its alternatives.
+	// U1862's subset rule (a statement listed the fields that MAY differ) is replaced: the difference must be equal.
+	struct tag_alt { std::set<std::string> fields; uint64_t dr6 = 0; };
+	struct tag_stmt { std::map<std::string, std::vector<tag_alt>> env; };
+	struct tag_env { int platform = 0; char core = 0; std::string why; };   // platform 1 = VMware guest, 2 = bare host; core 'P' / 'E' / 0 = either
+
+	// the field names a difference can have (case_fields' names, "m" for memory, and the debug / #PF comparisons)
+	static const std::set<std::string>& tag_field_names()
 	{
-		std::set<std::string> ok;
-		uint64_t dr6_ok = 0;
-		std::istringstream ss( stated );
-		std::string t;
-		while ( ss >> t )
+		static std::set<std::string> s;
+		if ( s.empty() )
 		{
-			if ( t.rfind( "dr6=", 0 ) == 0 )
+			for ( int r = 0; r < 16; r++ ) s.insert( reg_name( r ) );
+			for ( int r = 16; r < 32; r++ ) { s.insert( "r" + std::to_string( r ) ); s.insert( "zmm" + std::to_string( r ) ); }
+			for ( const char* f : { "rflags", "mxcsr", "fcw", "fsw", "ftw", "env", "m", "fault", "dbrip", "dbcount", "pfaccess", "fx+6", "fx+8", "fx+16", "fx+28" } ) s.insert( f );
+			for ( int r = 0; r < 8; r++ ) { s.insert( "st" + std::to_string( r ) ); s.insert( "k" + std::to_string( r ) ); }
+			for ( int r = 0; r < 16; r++ ) { s.insert( "xmm" + std::to_string( r ) ); s.insert( "ymmh" + std::to_string( r ) ); s.insert( "zmmh" + std::to_string( r ) ); }
+		}
+		return s;
+	}
+	static std::string tag_trim( const std::string& s )
+	{
+		const size_t a = s.find_first_not_of( " \t" );
+		if ( a == std::string::npos ) return std::string();
+		return s.substr( a, s.find_last_not_of( " \t" ) - a + 1 );
+	}
+	static std::string tag_alt_text( const tag_alt& a )
+	{
+		std::string s;
+		for ( const std::string& f : a.fields ) s += ( s.empty() ? "" : " " ) + f;
+		if ( a.dr6 ) s += ( s.empty() ? "dr6=" : " dr6=" ) + hx( a.dr6 );
+		return s.empty() ? "-" : s;
+	}
+	// "[...]" of a tag -> out; false with err for a bad statement
+	static bool tag_parse( const std::string& stated, tag_stmt& out, std::string& err )
+	{
+		out.env.clear();
+		size_t a = 0;
+		for ( ;; )
+		{
+			const size_t b = stated.find( ';', a );
+			std::string sec = tag_trim( stated.substr( a, b == std::string::npos ? std::string::npos : b - a ) ), env;
+			const size_t c = sec.find( ':' );
+			if ( c != std::string::npos )
 			{
-				char* end = nullptr;
-				dr6_ok |= std::strtoull( t.c_str() + 4, &end, 0 );
+				env = tag_trim( sec.substr( 0, c ) );
+				sec = tag_trim( sec.substr( c + 1 ) );
+				if ( env != "guest" && env != "host" && env != "hostP" && env != "hostE" ) { err = "unknown environment \"" + env + "\" (guest, host, hostP, hostE)"; return false; }
 			}
-			else if ( t == "dr6" ) dr6_ok = ~0ull;
-			else ok.insert( t );
+			if ( out.env.count( env ) ) { err = env.empty() ? "two lists for every environment" : "environment " + env + " stated twice"; return false; }
+			std::vector<tag_alt>& alts = out.env[ env ];
+			size_t p = 0;
+			for ( ;; )
+			{
+				const size_t q = sec.find( '|', p );
+				const std::string alt = tag_trim( sec.substr( p, q == std::string::npos ? std::string::npos : q - p ) );
+				tag_alt t;
+				if ( alt.empty() ) { err = "an empty alternative (\"-\" = no difference)"; return false; }
+				if ( alt != "-" )
+				{
+					std::istringstream ts( alt );
+					std::string tok;
+					while ( ts >> tok )
+					{
+						if ( tok.rfind( "dr6=", 0 ) == 0 )
+						{
+							char* end = nullptr;
+							const uint64_t m = std::strtoull( tok.c_str() + 4, &end, 0 );
+							if ( tok.size() == 4 || !end || *end || !m || t.dr6 ) { err = "bad dr6=MASK \"" + tok + "\" (a nonzero C literal, once per alternative)"; return false; }
+							t.dr6 = m;
+							continue;
+						}
+						if ( tok == "-" ) { err = "\"-\" (no difference) is an alternative of its own"; return false; }
+						if ( !tag_field_names().count( tok ) ) { err = "unknown field \"" + tok + "\"" + ( tok == "dr6" ? " (state the DR6 bits: dr6=MASK)" : "" ); return false; }
+						if ( !t.fields.insert( tok ).second ) { err = "field " + tok + " twice in one alternative"; return false; }
+					}
+				}
+				for ( const tag_alt& o : alts )
+					if ( o.fields == t.fields && o.dr6 == t.dr6 ) { err = "alternative [" + tag_alt_text( t ) + "] twice"; return false; }
+				alts.push_back( t );
+				if ( q == std::string::npos ) break;
+				p = q + 1;
+			}
+			if ( b == std::string::npos ) break;
+			a = b + 1;
 		}
-		why.clear();
-		for ( const std::string& f : fields )
+		if ( out.env.count( "" ) )
 		{
-			if ( f == "dr6" ? ( dr6x & ~dr6_ok ) == 0 : ok.count( f ) != 0 ) continue;
-			why += " " + ( f == "dr6" ? "dr6 bits " + hx( dr6x & ~dr6_ok ) : f );
+			if ( out.env.size() > 1 ) { err = "a list for every environment together with per-environment lists"; return false; }
+			return true;
 		}
-		return why.empty();
+		const bool h = out.env.count( "host" ) != 0, hp = out.env.count( "hostP" ) != 0, he = out.env.count( "hostE" ) != 0;
+		if ( h && ( hp || he ) ) { err = "host together with hostP / hostE"; return false; }
+		if ( hp != he ) { err = "hostP and hostE: both or neither"; return false; }
+		if ( !out.env.count( "guest" ) || !( h || hp ) ) { err = "not every environment is stated (guest and host, or guest, hostP and hostE)"; return false; }
+		return true;
+	}
+	// the alternatives stated for the run's environment, and its label
+	static std::vector<tag_alt> tag_env_alts( const tag_stmt& t, const tag_env& e, std::string& label )
+	{
+		std::vector<tag_alt> v;
+		auto add = [ & ]( const char* k ) {
+			auto it = t.env.find( k );
+			if ( it != t.env.end() ) v.insert( v.end(), it->second.begin(), it->second.end() );
+		};
+		if ( t.env.count( "" ) ) { add( "" ); label = "every environment"; }
+		else if ( e.platform == 1 ) { add( "guest" ); label = "guest"; }
+		else if ( t.env.count( "host" ) ) { add( "host" ); label = "host"; }
+		else if ( e.core == 'P' ) { add( "hostP" ); label = "hostP"; }
+		else if ( e.core == 'E' ) { add( "hostE" ); label = "hostE"; }
+		else { add( "hostP" ); add( "hostE" ); label = "hostP | hostE (the core type of the native runs is not one)"; }
+		return v;
+	}
+	// does the observed difference ('fields' = the differing field names, "dr6" with the differing bits 'dr6x'; empty =
+	// no difference) equal one alternative of the run's environment? 'why' = observed vs stated otherwise
+	static bool tag_match( const tag_stmt& t, const tag_env& e, const std::vector<std::string>& fields, uint64_t dr6x, std::string& why )
+	{
+		tag_alt o;
+		for ( const std::string& f : fields )
+			if ( f == "dr6" ) o.dr6 = dr6x;
+			else o.fields.insert( f );
+		std::string label;
+		const std::vector<tag_alt> alts = tag_env_alts( t, e, label );
+		for ( const tag_alt& a : alts )
+			if ( a.fields == o.fields && a.dr6 == o.dr6 ) return true;
+		std::string st;
+		for ( const tag_alt& a : alts ) st += ( st.empty() ? "" : " | " ) + tag_alt_text( a );
+		why = " observed [" + tag_alt_text( o ) + "], stated for " + label + ": [" + st + "]";
+		return false;
+	}
+	// U1875 (plan 1.F.13.d): the environment a tag statement is chosen for = where the native side runs - the two
+	// environments of the project (the VMware guest on the i5-13600K and the bare i5-13600K). The VMware guest: a
+	// hypervisor with the vendor "VMwareVMware" (CPUID.1:ECX[31] = 1, CPUID.40000000H), or - the guest of this project
+	// hides the hypervisor bit (measured: CPUID.1:ECX[31] = 0 in the guest) - no hybrid part, CPUID.07H.0:EDX[15] = 0
+	// (VMware reports none; the guest's captured profile cpuid_i5-13600k.txt has Hybrid = 0). The bare host: Hybrid = 1
+	// (the i5-13600K's P- and E-cores; also under another hypervisor, e.g. the host's own Hyper-V / VBS). On the bare
+	// host the core type is P / E when every CPU --hw-cpu pins the native runs to has that CPUID.1AH core type
+	// (host_cpus), else either; in the guest it is never used (a vCPU runs on either core type). --tag-env overrides
+	// (analysis, the self-tests, a machine that is neither).
+	static tag_env tag_environment( const std::string& over, const std::vector<int>& pin, const std::vector<host_cpu>& cpus )
+	{
+		tag_env e;
+		if ( !over.empty() )
+		{
+			e.platform = over == "guest" ? 1 : 2;
+			e.core = over == "hostP" ? 'P' : over == "hostE" ? 'E' : 0;
+			e.why = "--tag-env " + over;
+			return e;
+		}
+		int r[ 4 ] = {};
+		__cpuid( r, 1 );
+		const bool hv = ( unsigned( r[ 2 ] ) >> 31 ) & 1;
+		char vendor[ 13 ] = {};
+		if ( hv )
+		{
+			__cpuid( r, 0x40000000 );
+			std::memcpy( vendor, &r[ 1 ], 4 ); std::memcpy( vendor + 4, &r[ 2 ], 4 ); std::memcpy( vendor + 8, &r[ 3 ], 4 );
+			for ( int k = 0; k < 12; ++k ) if ( vendor[ k ] && ( vendor[ k ] < 32 || vendor[ k ] > 126 ) ) vendor[ k ] = '.';
+		}
+		if ( hv && !std::strcmp( vendor, "VMwareVMware" ) )
+		{
+			e.platform = 1;
+			e.why = "CPUID.1:ECX[31] = 1, hypervisor vendor \"VMwareVMware\" (CPUID.40000000H)";
+			return e;
+		}
+		__cpuidex( r, 0, 0 );
+		int hybrid = 0;
+		if ( r[ 0 ] >= 7 ) { __cpuidex( r, 7, 0 ); hybrid = ( r[ 3 ] >> 15 ) & 1; }
+		const std::string hvtext = hv ? std::string( "hypervisor vendor \"" ) + vendor + "\" (not VMware)" : std::string( "CPUID.1:ECX[31] = 0" );
+		if ( !hybrid )
+		{
+			e.platform = 1;
+			e.why = hvtext + ", CPUID.07H.0:EDX[15] Hybrid = 0: the VMware guest (it reports no hybrid part; the bare i5-13600K reports Hybrid = 1)";
+			return e;
+		}
+		e.platform = 2;
+		e.why = hvtext + ", CPUID.07H.0:EDX[15] Hybrid = 1: the bare host";
+		int types = 0;   // bit 0: a P-core, bit 1: an E-core, bit 2: another / unknown type
+		for ( int c : pin )
+			for ( const host_cpu& h : cpus )
+				if ( h.cpu == c ) types |= h.type == 0x40 ? 1 : h.type == 0x20 ? 2 : 4;
+		e.core = types == 1 ? 'P' : types == 2 ? 'E' : 0;
+		e.why += e.core ? std::string( ", native runs pinned to " ) + e.core + "-cores (--hw-cpu, CPUID.1AH)" : std::string( ", core type: either (the native runs are not pinned to one core type)" );
+		return e;
+	}
+	static std::string tag_env_text( const tag_env& e )
+	{
+		return e.platform == 1 ? "guest" : e.core == 'P' ? "hostP" : e.core == 'E' ? "hostE" : "host (hostP | hostE)";
 	}
 
 	// U1862: the field names in a case_fields() string (" name=value" tokens; memory "m+0x..." -> "m")
@@ -1294,6 +1472,9 @@ namespace at
 			for ( const host_cpu& c : cpus ) std::printf( " %d%s", c.cpu < 0 ? -1 - c.cpu : c.cpu, c.cpu < 0 ? "(pin failed)" : core_name( c.type ) );
 			std::printf( "\n" );
 		}
+		// U1875: the environment the tag statements are chosen for (native side)
+		const tag_env tenv = tag_environment( opt.tag_env, pin, cpus );
+		if ( !opt.expect_only ) std::printf( "tag environment: %s - %s\n", tag_env_text( tenv ).c_str(), tenv.why.c_str() );
 		core_probe probe;
 		// U1050: --hw-load N busy threads (the probe's chain), stopped when run_cases returns
 		struct load_threads
@@ -1374,21 +1555,21 @@ namespace at
 				harness_error( false, "bad tag" );
 				continue;
 			}
-			if ( tag_has_stated )   // U1862: "dr6=MASK" must be a number
+			// U1875 / U1876 (plan 1.F.13.d): a known-deviation / host-state tag states the exact difference it accepts
+			// (tag_parse); without a statement (the pre-U1876 form: any difference accepted) or with a bad one it is a bad
+			// tag - a harness error. "# native only:" states none (checked above).
+			tag_stmt tag_st;
+			if ( tag_kind == "known deviation" || tag_kind == "host state" )
 			{
-				std::istringstream ts( tag_stated );
-				std::string tt;
-				bool good = true;
-				while ( ts >> tt )
-					if ( tt.rfind( "dr6=", 0 ) == 0 )
-					{
-						char* end = nullptr;
-						std::strtoull( tt.c_str() + 4, &end, 0 );
-						good &= tt.size() > 4 && end && !*end;
-					}
-				if ( !good )
+				std::string terr;
+				if ( !tag_has_stated )
+					terr = "no stated difference - every tag states the exact difference it accepts, per environment where they differ "
+						   "(U1876, plan 1.F.13.d): e.g. [rcx], [rax | rax rflags], [guest: dr6=0x1; host: -]";
+				else tag_parse( tag_stated, tag_st, terr );
+				if ( !terr.empty() )
 				{
-					std::printf( "[%d] %s\n    bad tag: the stated difference [%s] has a bad dr6=MASK value\n", n, line.c_str(), tag_stated.c_str() );
+					std::printf( "[%d] %s  # %s: %s%s\n    bad tag: %s\n", n, line.c_str(), tag_kind.c_str(), tag_name.c_str(),
+								 tag_has_stated ? ( " [" + tag_stated + "]" ).c_str() : "", terr.c_str() );
 					harness_error( false, "bad tag" );
 					continue;
 				}
@@ -1865,20 +2046,22 @@ namespace at
 			// U1862: a tag absorbs a difference only when no harness problem is involved and, for a tag that states its
 			// difference ("[...]"), only when every differing field is a stated one; otherwise the line counts as differing
 			std::string tag_why;
-			const bool tag_ok = !tag_kind.empty() && !harness_issue && ( !tag_has_stated || tag_accepts( tag_stated, dfields, dr6x, tag_why ) );
+			// U1875: the observed difference (none on a SAME line) must equal one alternative stated for this run's
+			// environment (tag_match); a harness problem is never accepted
+			const bool tag_ok = !tag_kind.empty() && !harness_issue && tag_match( tag_st, tenv, dfields, dr6x, tag_why );
 			if ( !tag_kind.empty() && harness_issue ) tag_why = " a harness problem (see the dbg lines)";
 			if ( tag_kind.empty() ) differ += !same;
+			else if ( !tag_ok ) { ++differ; verdict = "DIFF (not the tag's stated difference)"; }
 			else if ( same )
 			{
 				not_observed.push_back( "[" + std::to_string( n ) + "] " + tag_kind + ": " + tag_name );
 				verdict = "SAME (tagged, not observed)";
 			}
-			else if ( !tag_ok ) { ++differ; verdict = "DIFF (outside the tag's stated difference)"; }
 			else if ( tag_kind == "known deviation" ) { ++known[ tag_name ]; ++known_n; verdict = "KNOWN DEVIATION"; }
 			else { ++host[ tag_name ]; ++host_n; verdict = "HOST STATE"; }
 			std::printf( "[%d] %s %s%s\n", n, verdict, line.c_str(),
 						 tag_kind.empty() ? "" : ( "  # " + tag_kind + ": " + tag_name + ( tag_has_stated ? " [" + tag_stated + "]" : std::string() ) ).c_str() );
-			if ( !same && !tag_kind.empty() && !tag_ok ) std::printf( "    tag: not accepted -%s\n", tag_why.c_str() );
+			if ( !tag_kind.empty() && !tag_ok ) std::printf( "    tag: not accepted -%s\n", tag_why.c_str() );   // U1875: also a SAME line
 			std::printf( "    hw: %s%s\n", h.faulted ? ( "fault #" + std::to_string( h.vector ) + " " ).c_str() : "", hd.c_str() );
 			std::printf( "    uc: %s%s\n", u.faulted ? ( "fault #" + std::to_string( u.vector ) + " " ).c_str() : "", ud.c_str() );
 			if ( !same ) std::printf( "    uc vs hw:%s%s\n", same_fault ? "" : " (fault differs)", x.c_str() );

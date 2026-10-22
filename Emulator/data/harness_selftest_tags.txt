@@ -1,0 +1,28 @@
+# harness_selftest_tags.txt (ledger U1877, plan 1.F.13.d): the exact stated differences of U1875. Lines 1-7: REP MOVSB
+# with 67h and ECX = 0 (hwcheck_gate1.txt line 7, docs/quirks.md "REP 67h ECX=0 zero-extension": the CPU leaves RCX / RSI /
+# RDI as they were, the SDM zero-extends them; in the guest and on both core types of the bare host the difference is
+# exactly "rcx rsi rdi"); lines 8-10: NOP (no difference). test.cmd runs the file twice, --tag-env guest and --tag-env
+# hostE (kind tagsel); the verdict of each line (KD = KNOWN DEVIATION, NO = SAME (tagged, not observed), DIFF = not the
+# tag's stated difference, counted as differing):
+#   line  statement                                  guest  hostE
+#   1     [rcx rsi rdi]                              KD     KD      exactly the observed difference
+#   2     [rcx rsi]                                  DIFF   DIFF    a field (rdi) missing
+#   3     [rcx rsi rdi rax]                          DIFF   DIFF    a field (rax) stated but not observed
+#   4     [-]                                        DIFF   DIFF    "no difference" stated, one observed
+#   5     [rcx | rcx rsi rdi]                        KD     KD      one alternative equal
+#   6     [guest: rcx rsi rdi; host: -]              KD     DIFF    per environment
+#   7     [guest: -; hostP: -; hostE: rcx rsi rdi]   DIFF   KD      per core type
+#   8     NOP [-]                                    NO     NO      no difference, "-" stated
+#   9     NOP [rax]                                  DIFF   DIFF    a stated difference not observed
+#   10    NOP [guest: rax; host: -]                  DIFF   NO      per environment
+# guest: "cases: 10, differing: 6, known deviations: 3", 1 not observed; hostE: "differing: 5, known deviations: 3", 2.
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest exact [rcx rsi rdi]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest missing field [rcx rsi]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest extra field [rcx rsi rdi rax]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest no difference stated [-]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest alternatives [rcx | rcx rsi rdi]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest per environment [guest: rcx rsi rdi; host: -]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest per core type [guest: -; hostP: -; hostE: rcx rsi rdi]
+nop  # known deviation: selftest nop [-]
+nop  # known deviation: selftest nop with a stated difference [rax]
+nop  # known deviation: selftest nop per environment [guest: rax; host: -]

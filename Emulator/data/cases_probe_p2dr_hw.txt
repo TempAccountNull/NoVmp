@@ -18,55 +18,55 @@
 #
 # --- P2a instruction breakpoint on the instruction after MOV SS / POP SS (SDM 093 Vol3A 7.8.3, Vol3B 20.3.1.1:
 #     suppressed as if RF = 1). mov eax, ss (8C D0) first; controls replace the SS load with MOV EAX, EAX (89 C0).
-.byte 0x8c, 0xd0, 0x89, 0xc0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401  # host state: measurement P2a control (no SS load): #DB fault at s+4
-.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401  # host state: measurement P2a MOV SS r32, breakpoint on the next instruction
-.byte 0x8c, 0xd0, 0x66, 0x89, 0x06, 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401  # host state: measurement P2a MOV SS m16, breakpoint on the next instruction
-.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401  # host state: measurement P2a MOV SS, breakpoint on the second instruction after it (fires)
-.byte 0x8c, 0xd0, 0x8e, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+6 dr7=0x401  # host state: measurement P2a MOV SS; MOV SS, breakpoint after the second
+.byte 0x8c, 0xd0, 0x89, 0xc0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401  # host state: measurement P2a control (no SS load): #DB fault at s+4 [-]
+.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+4 dr7=0x401  # host state: measurement P2a MOV SS r32, breakpoint on the next instruction [-]
+.byte 0x8c, 0xd0, 0x66, 0x89, 0x06, 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401  # host state: measurement P2a MOV SS m16, breakpoint on the next instruction [-]
+.byte 0x8c, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+7 dr7=0x401  # host state: measurement P2a MOV SS, breakpoint on the second instruction after it (fires) [-]
+.byte 0x8c, 0xd0, 0x8e, 0xd0, 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+6 dr7=0x401  # host state: measurement P2a MOV SS; MOV SS, breakpoint after the second [-]
 # POP SS in compatibility mode (RETFQ to 23h; 32-bit: mov eax, ss; push eax; pop ss; inc ecx x3; ud2): breakpoint on
 # the INC ECX after POP SS (s+19). Control: POP EAX (58h) instead of POP SS.
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x17, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401  # host state: measurement P2a POP SS (compat), breakpoint on the next instruction
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x58, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401  # host state: measurement P2a POP EAX control (compat): #DB fault at s+19
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x17, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401  # host state: measurement P2a POP SS (compat), breakpoint on the next instruction [-]
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8c, 0xd0, 0x50, 0x58, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 dr0=s+19 dr7=0x401  # host state: measurement P2a POP EAX control (compat): #DB fault at s+19 [-]
 #
 # --- P2b data breakpoint on the MOV SS / POP SS operand: "inhibited until the instruction boundary following the next
 #     instruction" (Vol3A 7.8.3). [rsi] = m+0x8000 holds 2Bh (this thread's SS).
-mov ax, word ptr [rsi]; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2b control (MOV AX, m16): trap after it, r8 = 0
-mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401  # host state: measurement P2b control (write breakpoint, MOV m16, AX): trap after it
-.byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2b MOV SS m16: trap held over the next instruction (r8 = 1)
+mov ax, word ptr [rsi]; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2b control (MOV AX, m16): trap after it, r8 = 0 [-]
+mov word ptr [rsi], ax; inc r8; inc r8; nop | cpl=3 dr0=m+0x8000 dr7=0x50401  # host state: measurement P2b control (write breakpoint, MOV m16, AX): trap after it [-]
+.byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2b MOV SS m16: trap held over the next instruction (r8 = 1) [-]
 # POP SS in compatibility mode with the stack in MEM: lea rsp, [rsi+100h] (m+0x8100 = 2Bh); 32-bit: pop ss; mov esp,
 # 30013F00h (the harness stack: the trap is taken there when it is held); inc ecx x3; ud2. Control: MOV EAX, [ESI+100h]
 # on the harness stack (no hold expected: trap at s+21, ecx = 0).
-.byte 0x48, 0x8d, 0xa6, 0x00, 0x01, 0x00, 0x00, 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x17, 0xbc, 0x00, 0x3f, 0x01, 0x30, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401  # host state: measurement P2b POP SS (compat): trap held over MOV ESP (s+28, ecx = 0)
-.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8b, 0x86, 0x00, 0x01, 0x00, 0x00, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401  # host state: measurement P2b MOV EAX, m32 control (compat): trap at s+21
+.byte 0x48, 0x8d, 0xa6, 0x00, 0x01, 0x00, 0x00, 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x17, 0xbc, 0x00, 0x3f, 0x01, 0x30, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401  # host state: measurement P2b POP SS (compat): trap held over MOV ESP (s+28, ecx = 0) [-]
+.byte 0xe8, 0, 0, 0, 0, 0x5a, 0x48, 0x83, 0xc2, 0x0a, 0x6a, 0x23, 0x52, 0x48, 0xcb, 0x8b, 0x86, 0x00, 0x01, 0x00, 0x00, 0x41, 0x41, 0x41, 0x0f, 0x0b | cpl=3 m+0x8100=2B000000 dr0=m+0x8100 dr7=0xF0401  # host state: measurement P2b MOV EAX, m32 control (compat): trap at s+21 [-]
 #
 # --- P2e DR6 after MOV SS (stays out of gates: RPL003 / BT4/8/9 make hardware DR6 there unreliable): TF from POPFQ
 #     plus a data breakpoint on the MOV SS operand (both held: one #DB after the INC, DR6 = B0 | BS?), and TF only
 #     (an unused write breakpoint on m+0xF000 keeps the debug registers loaded).
-pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2e MOV SS m16 with TF and a data breakpoint: DR6
-.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=m+0xF000 dr7=0x10401  # host state: measurement P2e MOV SS r32 with TF only: DR6
+pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0x16; inc r8; inc r8; inc r8; nop | cpl=3 m+0x8000=2B00 dr0=m+0x8000 dr7=0x70401  # host state: measurement P2e MOV SS m16 with TF and a data breakpoint: DR6 [guest: dr6=0x1; host: -]
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=m+0xF000 dr7=0x10401  # host state: measurement P2e MOV SS r32 with TF only: DR6 [-]
 #
 # --- P2c single-step must not report Bn of an instruction breakpoint that has not fired yet: TF from POPFQ, the trap
 #     comes after the NOP at s+10 with RIP = s+11, where DR0 points (SDM: DR6 = BS only; QEMU's check_hw_breakpoints
 #     compares DRn with the next RIP). Controls: DR0 elsewhere; DR0 at s+11 but disabled, DR1 an unused enabled
 #     write breakpoint (Bn may be set for a disabled breakpoint, Vol3B 20.2.3).
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # host state: measurement P2c single-step onto an enabled instruction breakpoint
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401  # host state: measurement P2c control (breakpoint further on)
-pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404  # host state: measurement P2c single-step onto a disabled breakpoint
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr7=0x401  # host state: measurement P2c single-step onto an enabled instruction breakpoint [guest: dr6=0x1; host: -]
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401  # host state: measurement P2c control (breakpoint further on) [-]
+pushfq; or qword ptr [rsp], 0x100; popfq; nop; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+11 dr1=m+0xF000 dr7=0x100404  # host state: measurement P2c single-step onto a disabled breakpoint [-]
 # TF and MOV SS: the TF trap after MOV SS and the breakpoint on the next instruction (s+14) are both suppressed: one
 # #DB after the INC at s+14 (RIP s+17, r8 = 1); DR6 must not report B0
-.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401  # host state: measurement P2c TF + MOV SS + breakpoint on the next instruction
+.byte 0x8c, 0xd0; pushfq; or qword ptr [rsp], 0x100; popfq; .byte 0x8e, 0xd0; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+14 dr7=0x401  # host state: measurement P2c TF + MOV SS + breakpoint on the next instruction [-]
 # the instruction breakpoint on the instruction after POPFQ (s+10) fires before the single-step trap of that
 # instruction: #DB fault at s+10, DR6 = B0 (BS?), EFLAGS image TF = 1, RF = 0
-pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401  # host state: measurement P2c instruction breakpoint with TF pending
+pushfq; or qword ptr [rsp], 0x100; popfq; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+10 dr7=0x401  # host state: measurement P2c instruction breakpoint with TF pending [-]
 #
 # --- RF (Vol3B 20.3.1.1): IRETQ to CPL3 with RF = 1 in the image skips the instruction breakpoint at its target
 #     (DR0 = s+29) for one instruction; DR1 = s+32 fires (#DB fault at s+32, r8 = 1, DR6 = B1). Control: RF = 0 in the
 #     image: DR0 fires at s+29. Frame: SS 2Bh, RSP, RFLAGS | RF, CS 33h, RIP = s+29 (CALL/POP-free: call $+5 then add).
-mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x01, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405  # host state: measurement P2-RF IRETQ with RF = 1 over an instruction breakpoint
-mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405  # host state: measurement P2-RF control (RF = 0 in the image): DR0 fires
+mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x01, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405  # host state: measurement P2-RF IRETQ with RF = 1 over an instruction breakpoint [-]
+mov rax, rsp; push 0x2b; push rax; pushfq; .byte 0x48, 0x81, 0x0c, 0x24, 0x00, 0x00, 0x00, 0x00; push 0x33; .byte 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0x04, 0x24, 0x07, 0x48, 0xcf; inc r8; inc r8; inc r8; nop | cpl=3 dr0=s+29 dr1=s+32 dr7=0x405  # host state: measurement P2-RF control (RF = 0 in the image): DR0 fires [-]
 # the EFLAGS image of non-#DB fault-class exceptions (SDM: RF = 1 pushed) and of a trap (#DB, RF = 0): no breakpoint
 # enabled (dr7 = 400h), only the event lines (harness gap P1b / H-b)
-mov eax, dword ptr [rsi+0x8000]; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #PF read (not-present page), EFLAGS image
-mov dword ptr [rsi+0x8000], eax; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #PF write (W = 1), EFLAGS image
-ud2; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #UD, EFLAGS image
-hlt; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #GP (HLT at CPL3), EFLAGS image
+mov eax, dword ptr [rsi+0x8000]; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #PF read (not-present page), EFLAGS image [-]
+mov dword ptr [rsi+0x8000], eax; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #PF write (W = 1), EFLAGS image [-]
+ud2; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #UD, EFLAGS image [-]
+hlt; nop; nop | cpl=3 dr7=0x400  # host state: measurement P2-RF #GP (HLT at CPL3), EFLAGS image [-]
