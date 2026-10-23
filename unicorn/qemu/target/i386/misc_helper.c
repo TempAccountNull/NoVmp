@@ -3467,7 +3467,7 @@ void helper_waitpkg(CPUX86State *env, uint32_t src, uint32_t umwait)
      * NoVmp (ledger U1852, H22 item 5, H4 item 1): a UMWAIT that ended disarms the UMONITOR range - a second UMWAIT
      * without a new UMONITOR does not wait. The i5-13600K on the bare host, P- and E-cores (capture
      * 20261022_041918_native-host, waitpkg_rearm_hostP.log / _hostE.log, cases_waitpkg_rearm_probe_hw lines A and C: the
-     * second wait returns at once, also with a far deadline; line B with a fresh UMONITOR waits). SDM 325383-093 Vol2B
+     * second wait returns at once, also with a far deadline; line B with a fresh UMONITOR waits). SDM 253667-093 Vol2B
      * UMWAIT pp. 4-742 / 4-743 names IRET, MONITOR, SYSEXIT, SYSRET and a far RET changing CPL as the events that end
      * the arm and says nothing about an ended UMWAIT: hardware-decided (docs/quirks.md). Our reading where nothing was
      * measured: every UMWAIT that passed its #GP checks disarms when it returns, also one that did not wait (deadline in

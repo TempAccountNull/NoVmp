@@ -4708,7 +4708,7 @@ static bool lock_prefix_ok(CPUX86State *env, DisasContext *s, int b)
      * (0F 01 /2, mod != 3) when CPL > 0, and CLI (FA) when check_iopl fails (CPL > IOPL; IOPL < 3 in virtual-8086
      * mode). The i5-13600K raises #GP for all 13 at CPL3 with IOPL 0: bare host, P- and E-cores, 20 runs each
      * (capture 20261022_041918_native-host, hostP_ / hostE_lockpriv_probe.log), and the VMware guest, i.e. in VMX
-     * non-root operation too (P11) - so no VMX exception as for MOV DR (U1750). SDM 325383-093 Vol2A LOCK p. 3-565 and
+     * non-root operation too (P11) - so no VMX exception as for MOV DR (U1750). SDM 253666-093 Vol2A LOCK p. 3-565 and
      * the instruction pages list the #GP(0) and the LOCK #UD without an order; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2
      * "does not specify the prioritization of faults that arise during instruction execution" (hardware-decided,
      * docs/quirks.md). Only these forms and only without a 66 / F2 / F3 prefix (the measured bytes; with them some
@@ -10991,7 +10991,7 @@ static bool disas_insn(DisasContext *s, CPUState *cpu)
 #endif /* __Use_Original_Qemu (U75) */
 #if __Use_Original_Qemu != 1 /* ours (U1710) */
         /*
-         * NoVmp (ledger U80, U534, U1710): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4; SDM 325383-093 Vol2B PTWRITE
+         * NoVmp (ledger U80, U534, U1710): PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4; SDM 253667-093 Vol2B PTWRITE
          * pp. 4-500 / 4-501). #UD "If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (as CPUID reports it, s->ptwrite: a strict
          * profile's rows - --host executes, --guest / --vm and every model without a profile #UD), "If LOCK prefix is
          * used", "If 66H prefix is used" (also beside the mandatory F3, unlike the other F3 0F AE forms of U75 above);

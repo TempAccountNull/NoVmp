@@ -1,7 +1,7 @@
 # PTWRITE (F3 [REX.W] 0F AE /4) where CPUID does not enumerate it: expected-value cases (Gate 1 item P18, ledger U1712,
 # agent ptwrite, 2026-10-19). The VMware-guest profile hides Intel PT (CPUID.(07H,0):EBX.INTEL_PT[25] = 0, EBX 219C27EBH;
 # leaf 14H all zero) and the models do not enumerate it (no Intel PT): "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM
-# 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501), decided at decode, so it comes before every #GP / #SS / #PF / #AC of the
+# 253667-093 Vol2B PTWRITE pp. 4-500 / 4-501), decided at decode, so it comes before every #GP / #SS / #PF / #AC of the
 # operand and nothing changes.
 #   emu-alltest --cases Emulator\data\cases_ptwrite_guest.txt --guest --cr0 0x40033 --expect-only   (suites ptwrite_guest, ptwrite_vm)
 #   emu-alltest --cases Emulator\data\cases_ptwrite_guest.txt --cr0 0x40033 --expect-only           (suite ptwrite_max: no profile)

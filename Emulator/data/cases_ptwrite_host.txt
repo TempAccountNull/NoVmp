@@ -1,6 +1,6 @@
 # PTWRITE (F3 [REX.W] 0F AE /4) under the BARE-HOST profile: expected-value cases (Gate 1 item P18, ledger U1712, agent
 # ptwrite, 2026-10-19). The bare host enumerates Intel PT and PTWRITE (CPUID.(07H,0):EBX.INTEL_PT[25] = 1, EBX 239C27EBH;
-# CPUID.(14H,0):EBX.PTWRITE[4] = 1, EBX 0000005FH, P- and E-core files), so the instruction executes. SDM 325383-093 Vol2B
+# CPUID.(14H,0):EBX.PTWRITE[4] = 1, EBX 0000005FH, P- and E-core files), so the instruction executes. SDM 253667-093 Vol2B
 # PTWRITE pp. 4-500 / 4-501: it "reads data in the source operand" (64 bits with REX.W in 64-bit mode, otherwise 32) and
 # makes a PTW packet only "if TriggerEn, ContextEn, FilterEn, and PTWEn are all set to 1"; flags affected: none. Intel PT
 # tracing is not modelled (IA32_RTIT_CTL.TraceEn = 0, docs/quirks.md "Intel PT tracing not modelled"), so apart from its

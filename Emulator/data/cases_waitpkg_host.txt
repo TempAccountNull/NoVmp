@@ -150,7 +150,7 @@ mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; .byte 0xf3, 0x0f, 0xae, 0xf
 # waitpkg_rearm_hostE.log, cases_waitpkg_rearm_probe_hw lines A / C: the second UMWAIT without a new UMONITOR returns at
 # once, R13 = 6..7 as in line D without any UMONITOR (P 5..6, E 6..7), also with a far second deadline; line B with a
 # fresh UMONITOR waits, R13 = 10H).
-# SDM 325383-093 Vol2B UMWAIT pp. 4-742 / 4-743 names IRET, MONITOR, SYSEXIT, SYSRET and far RET only - hardware-decided.
+# SDM 253667-093 Vol2B UMWAIT pp. 4-742 / 4-743 names IRET, MONITOR, SYSEXIT, SYSRET and far RET only - hardware-decided.
 # T0 by WRMSR 10H, one far deadline T0 + 2^40 for every UMWAIT; then 256 x UMWAIT in a loop (umwait ecx; dec r12d; jnz).
 # Without a new UMONITOR only the first one waits (the wake, T0 + 200000H; R11 from there); with UMONITOR in the loop
 # every one waits: T0 + 256 * 200000H = T0 + 20000000H (2^29 - one 2^28 window above the first, so the R11 check

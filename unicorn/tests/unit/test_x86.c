@@ -45609,7 +45609,7 @@ static void test_x86_efv_exit_reserved(void)
 
 /* ---- NoVmp U1710-U1712 (agent ptwrite, Gate 1 item P18): helper prefix pw_ ---- */
 /*
- * PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4), SDM 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501: "reads data in the source
+ * PTWRITE r/m32, r/m64 (F3 [REX.W] 0F AE /4), SDM 253667-093 Vol2B PTWRITE pp. 4-500 / 4-501: "reads data in the source
  * operand and sends it to the Intel Processor Trace hardware to be encoded in a PTW packet if TriggerEn, ContextEn,
  * FilterEn, and PTWEn are all set to 1"; 64 bits "if using REX.W in 64-bit mode, otherwise 32-bits"; flags affected: none.
  * #UD "If CPUID.14H.00H:EBX.PTWRITE[4] = 0", "If LOCK prefix is used", "If 66H prefix is used"; the operand read has the
@@ -47485,7 +47485,7 @@ static uint32_t hx_cpl3_vector(BpCpu *c, const char *code, size_t len, uint64_t 
  * U1850 (H22 item 3, Gate 1 D1b, user decision 2026-10-22 "only the 13 measured forms"): LOCK on the 13 CPL0-only
  * instructions measured at CPL3 raises the privilege #GP(0) (CPL > 0; CLI: CPL > IOPL) before the LOCK #UD, as the
  * i5-13600K does on the bare host, P- and E-cores (H22 item 3, lockpriv_probe 20 runs each) and in the VMware guest
- * (P11). SDM 325383-093 Vol2A LOCK p. 3-565 (#UD for LOCK on any other instruction) and the instruction pages list
+ * (P11). SDM 253666-093 Vol2A LOCK p. 3-565 (#UD for LOCK on any other instruction) and the instruction pages list
  * the #GP(0) and the LOCK #UD without an order; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2 "does not specify the
  * prioritization of faults that arise during instruction execution" - hardware-decided. At CPL0 (and CLI with
  * IOPL 3 at CPL3) LOCK stays #UD; other CPL0-only instructions (not measured) keep #UD first; a 66 / F2 / F3 prefix
@@ -47587,7 +47587,7 @@ static void test_x86_hx_lock_priv(void)
  * U1852 (H22 item 5, H4 item 1): a UMWAIT that ended disarms the UMONITOR range - a second UMWAIT without a new UMONITOR
  * does not wait, however the first one ended (deadline, OS time limit, the environment wake). The i5-13600K on the bare
  * host, P- and E-cores (cases_waitpkg_rearm_probe_hw, 50 runs per line: the second wait returns at once, R13 6..7 = the
- * no-range level, also with a far second deadline; with a fresh UMONITOR it waits). SDM 325383-093 Vol2B UMWAIT pp. 4-742 /
+ * no-range level, also with a far second deadline; with a fresh UMONITOR it waits). SDM 253667-093 Vol2B UMWAIT pp. 4-742 /
  * 4-743 lists IRET, MONITOR, SYSEXIT, SYSRET and a far RET as the events that end the arm and says nothing about an ended
  * UMWAIT - hardware-decided. Our reading for what was not measured: every executed UMWAIT disarms when it returns (also
  * one that did not wait: deadline in the past, range already triggered). TPAUSE leaves the range alone. "No wait" is

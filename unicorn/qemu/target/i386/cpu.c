@@ -4444,7 +4444,7 @@ uint32_t x86_cpuid_profile_mask(CPUX86State *env, uint32_t leaf, uint32_t sub, i
 #if __Use_Original_Qemu != 1 /* ours (U1710) */
 /*
  * NoVmp (ledger U1710, Gate 1 item P18): whether PTWRITE executes - "#UD If CPUID.14H.00H:EBX.PTWRITE[4] = 0" (SDM
- * 325383-093 Vol2B PTWRITE pp. 4-500 / 4-501; Vol3C Table 36-11 p. 36-28 "PTWRITE Supported": "0: ... PTWRITE will #UD
+ * 253667-093 Vol2B PTWRITE pp. 4-500 / 4-501; Vol3C Table 36-11 p. 36-28 "PTWRITE Supported": "0: ... PTWRITE will #UD
  * fault"), read as CPUID reports it. Leaf 14H exists only with CPUID.(07H,0):EBX.INTEL_PT[25] = 1 and a maximum basic leaf
  * of at least 14H. A strict UC_CTL_X86_CPUID profile decides with its own rows (--host, P and E: 07H.0 EBX 239C27EBH, 14H.0
  * EBX 5FH -> executes; --guest / --vm: 219C27EBH, leaf 14H zero -> #UD). Otherwise the model decides: its leaf 14H is QEMU's

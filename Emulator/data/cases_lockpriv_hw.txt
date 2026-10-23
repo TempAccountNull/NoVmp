@@ -3,7 +3,7 @@
 # before the LOCK #UD for every one of them: bare host P- and E-cores (notes\eread\H22_v3a_host_results.md item 3,
 # capture\hostrun\gate1_host_package_v3a\output\20261022_041918_native-host\hostP_ / hostE_lockpriv_probe.log, 20 runs
 # per line, one outcome, "fault #13") and the VMware guest (notes\eread\P11_probe_fixes.md D1 side measurement). The
-# SDM gives no order: SDM 325383-093 Vol2A LOCK p. 3-565 ("An undefined opcode exception will also be generated if the
+# SDM gives no order: SDM 253666-093 Vol2A LOCK p. 3-565 ("An undefined opcode exception will also be generated if the
 # LOCK prefix is used with any instruction not in the above list.") and the instruction pages list "#GP(0) If the
 # current privilege level is not 0." beside the LOCK #UD; 253668-093 Vol3A 7.9 p. 7-10: Table 7-2 "does not specify
 # the prioritization of faults that arise during instruction execution" - hardware-decided (docs/quirks.md).
