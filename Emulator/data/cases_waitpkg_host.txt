@@ -162,5 +162,12 @@ mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax;
 # "changes only in response to WRMSR" (SDM 093 Vol3B 20.17.3 p. 20-44); R8 = IA32_TSC_ADJUST after the wait
 mov ecx, 0x3b; xor eax, eax; mov edx, 0x1000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r9, rax; add rax, 0x100000; mov r10, rax; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0x66, 0x0f, 0xae, 0xf1; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r10; shr rax, 28; mov r11, rax; mov ecx, 0x3b; rdmsr; shl rdx, 32; or rax, rdx; mov r8, rax =>! r8=0x100000000000 r11=0
 # the deadline is compared with the adjusted TSC: IA32_TSC_ADJUST := 2^62 (an adjusted TSC near 4000_0000_0000_0000H), deadline =
-# 2^62 (past for the adjusted TSC, ahead of the counter without the adjust): no wait, CF = 0, R11 from the RDTSC before
-mov ecx, 0x3b; xor eax, eax; mov edx, 0x40000000; wrmsr; rdtsc; shl rdx, 32; or rax, rdx; mov r9, rax; xor eax, eax; mov edx, 0x40000000; xor ecx, ecx; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# 2^62 (past for the adjusted TSC, ahead of the counter without the adjust): no wait, CF = 0.
+# U1934 (agent c4tests, G31 F1): 16 x (RDTSC; TPAUSE C0.2 with that deadline; ADC R14, 0; RDTSC) in a loop (R13D); R12 = the
+# smallest elapsed count (unsigned), 1 if below 8000H; R10 = the number of tries with CF = 1. The U1672 form (one RDTSC pair,
+# R11 = elapsed >> 28 = 0) failed 1 / 30 under the parallel test.cmd load (G31: R11 = FFFFFFFFFh, the second read BELOW the
+# first - the two reads on vCPUs whose counters differ) and could not see a modelled wait (W = 2^21 < 2^28). A step back or
+# a host delay only hits single tries (a step back is a huge unsigned count, never the smallest); the smallest of 16 is the
+# loop's own ticks (VMware guest 2026-10-23, notes/eread/P28_c4tests.md: raw minimum at most 1097H in 2000 samples, half
+# of them beside 4 CPU-bound processes). A wait - the 2^21-tick wake when the adjust is left out of the comparison - gives R12 = 0.
+mov ecx, 0x3b; xor eax, eax; mov edx, 0x40000000; wrmsr; mov r9, 0x4000000000000000; mov r12, -1; mov r13d, 16; xor r10d, r10d; xor r14d, r14d; xor ecx, ecx; .byte 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x49, 0x89, 0xc0, 0x4c, 0x89, 0xc8, 0x4c, 0x89, 0xca, 0x48, 0xc1, 0xea, 0x20, 0x66, 0x0f, 0xae, 0xf1, 0x49, 0x83, 0xd6, 0x00, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x4c, 0x29, 0xc0, 0x4c, 0x29, 0xd0, 0x4c, 0x39, 0xe0, 0x4c, 0x0f, 0x42, 0xe0, 0x41, 0xff, 0xcd, 0x75, 0xc7; cmp r12, 0x8000; setb r12b; movzx r12d, r12b; mov r10, r14; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d; xor r14d, r14d =>! r10=0 r12=1
