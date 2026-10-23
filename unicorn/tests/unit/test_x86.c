@@ -48031,6 +48031,56 @@ static void test_x86_ct_vmx_tpause_delay(void)
     }
 }
 
+/*
+ * U1933 (G31-5, U1570 / U1460 = upstream QEMU cdba90ac1b): RSM loads DR6 from the state-save map through the DR6 store
+ * (x86_store_dr), which keeps the bits the architecture fixes to 1. SDM 253669-093 Vol3B Figure 20-1 p. 20-3: DR6 bits 4-10
+ * and 17-31 "Reserved (set to 1)", bit 12 0; 20.2.3 p. 20-4 / 20-5: BLD (bit 11) and RTM (bit 16) are 1 on a processor
+ * without OS bus-lock detection / RTM, reset value FFFF0FF0H. RSM restores the processor state from the map (326019-093
+ * Vol3C 34.3.2 p. 34-3; DR6 at 7FD0H in Table 34-3, 7FCCH in Table 34-1; AMD APM Table 10-1: 7F68H). The handler (the
+ * RSM hook) writes a map DR6 without the reserved set-to-1 bits: B1 | BLD | BS | RTM = 14802H; after RSM DR6 reads
+ * FFFF4FF2H on all three maps. A DR6 assigned as it is (no fixed-1 OR) would read 14802H. Control: the map DR6 the SMI
+ * entry saved (FFFF0FF0H, untouched) comes back as it is.
+ */
+static void test_x86_ct_rsm_dr6_fixed1(void)
+{
+    static const struct {
+        uc_mode mode;
+        int model;
+        uint32_t dr6_off;               /* the DR6 field of the map */
+        int dr6_size;
+        const char *name;
+    } cfg[] = {
+        {UC_MODE_64, -1, 0x7fd0, 8, "Intel Table 34-3"},
+        {UC_MODE_32, UC_CPU_X86_PENTIUM3, 0x7fcc, 4, "Intel Table 34-1 (Pentium III)"},
+        {UC_MODE_64, UC_CPU_X86_EPYC, 0x7f68, 8, "AMD Table 10-1 (EPYC)"},
+    };
+    size_t k;
+    int w;
+
+    for (k = 0; k < sizeof(cfg) / sizeof(cfg[0]); k++) {
+        for (w = 0; w < 2; w++) {
+            SmrCtx c;
+            uint64_t v = 0, want = w ? 0xffff4ff2ull : 0xffff0ff0ull;
+
+            smr_open(&c, cfg[k].mode, cfg[k].model, NULL, 0);
+            smr_code(&c, "\x90\x90", 2);
+            if (w) {
+                smr_wr(&c, cfg[k].dr6_off, cfg[k].dr6_size, 0x14802);
+            }
+            smr_signal(c.uc);
+            OK(uc_emu_start(c.uc, SMR_CODE, SMR_CODE + 2, 0, 0));
+            OK(uc_reg_read(c.uc, UC_X86_REG_DR6, &v));
+            TEST_CHECK(c.hits == 1 && smr_state(c.uc) == 0);
+            TEST_CHECK(smr_f(&c, 0, cfg[k].dr6_off, cfg[k].dr6_size) == 0xffff0ff0ull);
+            TEST_CHECK(v == want);
+            TEST_MSG("%s: %s; SMI-entry map DR6 %llx; DR6 after RSM %llx (expected %llx)", cfg[k].name,
+                     w ? "the handler wrote map DR6 = 14802H" : "map DR6 untouched",
+                     (unsigned long long)smr_f(&c, 0, cfg[k].dr6_off, cfg[k].dr6_size), (unsigned long long)v,
+                     (unsigned long long)want);
+            OK(uc_close(c.uc));
+        }
+    }
+}
 /* ---- end U1930-U1939 (ct_) ---- */
 
 TEST_LIST = {
@@ -48646,4 +48696,5 @@ TEST_LIST = {
     {"test_x86_ct_moveout_freed", test_x86_ct_moveout_freed},
     {"test_x86_ct_moveout_dropped", test_x86_ct_moveout_dropped},
     {"test_x86_ct_vmx_tpause_delay", test_x86_ct_vmx_tpause_delay},
+    {"test_x86_ct_rsm_dr6_fixed1", test_x86_ct_rsm_dr6_fixed1},
     {NULL, NULL}};
