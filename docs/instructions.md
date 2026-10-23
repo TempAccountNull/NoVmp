@@ -1,6 +1,6 @@
 # Instruction support — index
 
-_Generated 2026-10-22 15:45 (HEAD `d9ff1099 Ledger: U1890-U1897 (agent/tagsg, plan 1.F.13.g gaps a-e), merged and verified`); refreshed every 30 minutes while work is in progress._
+_Generated 2026-10-22 20:52 (HEAD `15071399 Ledger: U1900-U1906 (agent/tagsh, plan 1.F.13.h G28 findings A1/A2/A3/A6), merged and verified`); refreshed every 30 minutes while work is in progress._
 
 - [Intel instruction sets supported](Intel_instruction_sets_supported.md)
 - [AMD / VIA instruction sets](AMD_instruction_sets_supported.md)
@@ -15,7 +15,7 @@ _Generated 2026-10-22 15:45 (HEAD `d9ff1099 Ledger: U1890-U1897 (agent/tagsg, pl
 
 - (nothing in progress)
 
-## Latest ledger entries (`CHANGES_LEDGER.md`, 803 rows)
+## Latest ledger entries (`CHANGES_LEDGER.md`, 810 rows)
 
 - U103 — URDMSR/UWRMSR (F2/F3 0F38 F8 11; VEX.128.F2/F3.MAP7.W0 F8 /0 id, new VEX map 7): ENABLE=0 #UD, address/bitmap/allow-list #GP, via helper_rd…
 - U104 — UINTR: CLUI/STUI/TESTUI/UIRET (F3 0F01 EC-EF), SENDUIPI (F3 0F C7 /6 reg), 64-bit only; CR4.UINTR; UIRR/UIF/UIHANDLER/UISTACKADJUST/MISC/PD…
