@@ -47806,6 +47806,130 @@ static void test_x86_tg_evex_vcvtps2ph_fault(void)
 }
 /* ---- end U1870-U1889 (tg_) ---- */
 
+/* ---- NoVmp U1930-U1939 (agent c4tests, Gate 1 C4 test gaps of notes/eread/G31_c4_recheck.md): helper prefix ct_ ---- */
+/*
+ * U1930 (G31-2, plan 1.J.38 / U1450): memory_moveout (uc_mem_unmap while a memory snapshot is active) drops the translated
+ * code of the region it moves out. A region mapped after the restored snapshot and moved out is freed by that restore
+ * (U1642), and the restore puts the RAM allocator back (ram_list.freed / last_block, uc_context_restore), so the next
+ * uc_mem_map_ptr of the same size gets the RAM offset of the freed region. Translated blocks are keyed by RAM address: if
+ * memory_moveout left them, the instructions newly mapped at the same address do not run - the freed ones do. Snapshot A;
+ * uc_mem_map_ptr UM_P (2 code pages, entries return tag + 1 .. tag + 3), every entry run twice (translated, then cached);
+ * then 3 cycles of uc_mem_unmap (moved out), restore A (the region is freed), uc_mem_map_ptr of new code at UM_P, every
+ * entry (and in mode 2 the alias) returns the new tag. Paging off and paging on with linear != physical (um_open modes 0
+ * and 2). SDM 253668-093 Vol3A 11.1.3 p. 11-5 / 14.6 p. 14-18: after code is changed the next execution runs the new
+ * code; the API's unmap / map is such a change by another agent.
+ */
+static void test_x86_ct_moveout_freed(void)
+{
+    static const int modes[2] = {0, 2};
+    NvRun r;
+    uc_context *a = NULL;
+    uint64_t lin;
+    uint32_t tag, old;
+    char what[192];
+    int mi, mode, k;
+
+    for (mi = 0; mi < 2; mi++) {
+        mode = modes[mi];
+        lin = um_open(&r, mode);
+        OK(uc_ctl_context_mode(r.uc, UC_CTL_CONTEXT_MEMORY));
+        OK(uc_context_alloc(r.uc, &a));
+        OK(uc_context_save(r.uc, a));
+        tag = 0x21000;
+        um_fill(um_host[0], tag);
+        OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[0]));
+        snprintf(what, sizeof(what), "%s, mapped after snapshot A", sr_mname(mode));
+        um_check3(&r, lin, tag, 0, what);
+        um_check3(&r, lin, tag, 0, what);
+        for (k = 1; k <= 3; k++) {
+            old = tag;
+            tag += 0x1000;
+            OK(uc_mem_unmap(r.uc, UM_P, 0x2000));     /* snapshot active: memory_moveout */
+            OK(uc_context_restore(r.uc, a));         /* mapped after A: freed (U1642), allocator back */
+            um_fill(um_host[k & 1], tag);
+            OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[k & 1]));
+            snprintf(what, sizeof(what), "%s, cycle %d: unmap under snapshot A, restore A, uc_mem_map_ptr of new code",
+                     sr_mname(mode), k);
+            um_check3(&r, lin, tag, old, what);
+            um_check3(&r, lin, tag, old, what);
+            if (mode) {
+                snprintf(what, sizeof(what), "%s, cycle %d, alias 340000h", sr_mname(mode), k);
+                um_check3(&r, UM_A, tag, old, what);
+            }
+        }
+        OK(uc_context_free(a));
+        a = NULL;
+        OK(uc_close(r.uc));
+    }
+}
+
+/*
+ * U1930 (G31-2 / G31-3): what memory_moveout drops, seen through the translation-cache probe of test_x86_um_unrelated_kept
+ * (a uc_mem_map_ptr host buffer patched behind the emulator's back as a PROBE, not as architectural behaviour: the old
+ * instruction keeps running exactly while its translated block stays cached). UM_P (2 pages, entry 0 returns 7001h) is
+ * mapped and run (cached); the probe patches entry 0 to return 7777h - still 7001h (cached); then the memory snapshot is
+ * saved (it records the patched buffer, U1644, so the restore below is allowed). cow = 1: a uc_mem_write into page 1
+ * copies that page (memory_cow), so UM_P becomes a snapshot container whose subregions are the region and the copy.
+ * uc_mem_unmap moves UM_P (the region, or the container) out; the restore brings it back (and drops the copy). Since U1450
+ * memory_moveout drops the translated code by RAM address over the region and, for a container, over every subregion
+ * (memory_unmap_drop_tbs recursion): back in, entry 0 is translated again from the buffer and returns 7777h. Without the
+ * drop - or, cow = 1, without the subregion recursion - the cached block of the old bytes runs: 7001h. Entry 1 (page 1)
+ * and the entry across the page boundary return their unpatched values (controls).
+ */
+static void test_x86_ct_moveout_dropped(void)
+{
+    static const int modes[2] = {0, 2};
+    NvRun r;
+    uc_context *b = NULL;
+    uint64_t lin, rax;
+    uint8_t byte = 0x5a;
+    uc_err err;
+    int mi, mode, cow, k;
+
+    for (mi = 0; mi < 2; mi++) {
+        for (cow = 0; cow < 2; cow++) {
+            mode = modes[mi];
+            lin = um_open(&r, mode);
+            um_fill(um_host[0], 0x7000);
+            OK(uc_mem_map_ptr(r.uc, UM_P, 0x2000, UC_PROT_ALL, um_host[0]));
+            um_check3(&r, lin, 0x7000, 0, cow ? "before the probe (cow)" : "before the probe");
+            um_put(um_host[0] + um_off[0], 0x7777);  /* the probe */
+            rax = um_call(&r, lin + um_off[0], &err);
+            TEST_CHECK(err == UC_ERR_OK && r.cap.count == 0 && rax == 0x7001);
+            TEST_MSG("%s, cow %d: the patched entry 0 while its block is cached: err %u, RAX %" PRIx64 " (expected 7001h)",
+                     sr_mname(mode), cow, err, rax);
+            OK(uc_ctl_context_mode(r.uc, UC_CTL_CONTEXT_MEMORY));
+            OK(uc_context_alloc(r.uc, &b));
+            OK(uc_context_save(r.uc, b));
+            if (cow) {
+                OK(uc_mem_write(r.uc, UM_P + 0x1800, &byte, 1)); /* page 1 copied: UM_P is a container now */
+            }
+            OK(uc_mem_unmap(r.uc, UM_P, 0x2000));           /* memory_moveout of the region / the container */
+            err = uc_context_restore(r.uc, b);                 /* UM_P back */
+            TEST_CHECK(err == UC_ERR_OK);
+            TEST_MSG("%s, cow %d: restore: err %u (%s)", sr_mname(mode), cow, err, uc_strerror(err));
+            for (k = 0; k < 3; k++) {
+                uint32_t want = k == 0 ? 0x7777 : 0x7000 + k + 1;
+
+                rax = um_call(&r, lin + um_off[k], &err);
+                TEST_CHECK(err == UC_ERR_OK && r.cap.count == 0 && rax == want);
+                TEST_MSG("%s, cow %d (%s): after unmap under the snapshot and the restore, entry %" PRIx64 ": err %u (%s), "
+                         "RAX %" PRIx64 " (expected %x): %s",
+                         sr_mname(mode), cow, cow ? "a snapshot container: the region + a copy of page 1" : "the region",
+                         lin + um_off[k], err, uc_strerror(err), rax, want,
+                         rax == want ? "translated again"
+                         : (k == 0 && rax == 0x7001) ? "STALE: the translated block of the moved-out memory was kept"
+                                                     : "other");
+            }
+            OK(uc_context_free(b));
+            b = NULL;
+            OK(uc_close(r.uc));
+        }
+    }
+}
+
+/* ---- end U1930-U1939 (ct_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -48416,4 +48540,6 @@ TEST_LIST = {
     {"test_x86_hx_umwait_disarm", test_x86_hx_umwait_disarm},
     {"test_x86_hx_vcvtps2ph_fault", test_x86_hx_vcvtps2ph_fault},
     {"test_x86_tg_evex_vcvtps2ph_fault", test_x86_tg_evex_vcvtps2ph_fault},
+    {"test_x86_ct_moveout_freed", test_x86_ct_moveout_freed},
+    {"test_x86_ct_moveout_dropped", test_x86_ct_moveout_dropped},
     {NULL, NULL}};
