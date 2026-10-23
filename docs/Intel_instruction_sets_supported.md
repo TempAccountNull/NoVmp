@@ -1,7 +1,7 @@
 # Instruction sets supported (Intel + AMD/VIA)
 
-_Generated 2026-10-23 07:50 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `2c67d396 Status docs: one instruction table for Intel + AMD/VIA, split by
-privilege (P26 generator)`). Do not edit by hand._
+_Generated 2026-10-23 10:07 from `Emulator/tools/isa/gen_status_docs.py` (HEAD `866f6487 Ledger: U1920-U1923 (agent/gate1fix, Gate 1 pre-sign-off fixes C3 /
+G30-1 / G30-2), merged and verified`). Do not edit by hand._
 
 Every instruction form (mnemonic + encoding) of the Intel SDM / XED list `Emulator/data/isa_manual_forms.tsv`, AMD and VIA forms included: **2912 forms, each
 listed exactly once**, in one of three tables by privilege class (`Emulator/data/isa_privilege.tsv`). Checked against an Intel i5-13600K (Raptor Lake) with
