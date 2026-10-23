@@ -19,9 +19,15 @@
 #   11    FULL with Unicorn's rcx stated 0xFFFFFFFF00000001     DIFF   DIFF    another Unicorn value (G27 VAL: a wrong value in a stated field)
 #   12    FULL with the CPU's rcx stated 0x1                   DIFF   DIFF    another hardware value
 #   13    FULL with hw rcx 0x0..0xFF(tsc), rsi VAL/MASK(rdrand) KD     KD      the observed values inside their classes
-#   14    FULL with hw rcx 0x1..0xFF(tsc)                      DIFF   DIFF    the observed value outside its class
-# guest / detected: "cases: 14, differing: 9, known deviations: 4", 1 not observed; hostE: "differing: 8, known deviations: 4", 2;
-# --tag-profiles none: "cases: 11, differing: 7, known deviations: 3", 3 harness errors.
+#   14    FULL with hw rcx 0x1..0xFF(tsc)                      DIFF   DIFF    the observed value outside its class (LO - 1)
+#   15    FULL with hw rsi 0x30027000..0x30027FFF(tsc)         DIFF   DIFF    the observed value = HI + 1 (U1904, G28 A6)
+#   16    FULL with uc rcx ..FE00000000..0x..FEFFFFFFFF(tsc)   DIFF   DIFF    the observed Unicorn value = HI + 1 (U1904)
+#   17    FULL with hw rsi 0x30020001/..FFFF0001(rdrand)       DIFF   DIFF    outside the mask in bit 0 only (U1905, G28 A6)
+#   18    FULL with uc rcx 0x7FFFFFFF00000000/..00000000       DIFF   DIFF    outside the mask in bit 63 only (U1905)
+#   19    FULL with uc rcx = LO, hw rsi = HI of their ranges   KD     KD      both ends of a range are inside (U1904)
+# guest / detected: "cases: 19, differing: 13, known deviations: 5", 1 not observed; hostE: "differing: 12, known deviations: 5", 2;
+# --tag-profiles none: "cases: 16, differing: 11, known deviations: 4", 3 harness errors. A matcher whose range admits HI + 1
+# (lines 15 / 16), whose mask drops bit 0 or bit 63 (17 / 18) or whose range excludes an end (19) changes these counts.
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest exact [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest missing field [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest extra field [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000 rax=0x1~0x0]
@@ -36,3 +42,8 @@ nop  # known deviation: selftest nop per environment [guest: rax=0x0~0x1; host: 
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest another hardware value [rcx=0x1~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest classes [rcx=0x0..0xFF(tsc)~0xFFFFFFFF00000000 rsi=0x30020000/0xFFFFFFFFFFFF0000(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest outside the class [rcx=0x1..0xFF(tsc)~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one above the range (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30027000..0x30027FFF(tsc)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one above the range (uc) [rcx=0x0~0xFFFFFFFE00000000..0xFFFFFFFEFFFFFFFF(tsc) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 0 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30020001/0xFFFFFFFFFFFF0001(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 63 (uc) [rcx=0x0~0x7FFFFFFF00000000/0xFFFFFFFF00000000(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest range ends inclusive [rcx=0x0~0xFFFFFFFF00000000..0xFFFFFFFF0000FFFF(tsc) rsi=0x30027000..0x30028000(tsc)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
