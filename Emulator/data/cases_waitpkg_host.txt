@@ -125,6 +125,13 @@ mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax,
 mov ecx, 0xe1; mov eax, 0x00100000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; xor edx, edx; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
 # OS limit 1000000H (above W): the wake event comes first -> TSC = T0 + 200000H, CF = 0
 mov ecx, 0xe1; mov eax, 0x01000000; xor edx, edx; wrmsr; mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; xor eax, eax; mov edx, 0x1100; .byte 0x66, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000200000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
+# U1911 (plan 1.F.13.i, G29-3): the wake W exactly, independent of host time. 16 x (RDTSC; TPAUSE C0.2, deadline T + 2^40;
+# RDTSC) in a loop (R13D), R12 = the smallest (elapsed - 200000H) as an unsigned value (R10 = 200000H; a try below W wraps
+# and never becomes the smallest); R12 = 1 if it is below 8000H. Host delays only add ticks, so the smallest of 16 is W plus
+# the loop's own ticks (VMware guest 2026-10-23, 1500 samples of this line: R12 = 1 every time; the raw value in 3520
+# samples at most 1098H, mostly 40H..7FH; 1098H = the guest's slow RDTSC mode). No wait, a doubled wake or an extra wait of
+# 8000H ticks or more gives R12 = 0. A leading UMWAIT with EDX:EAX = 0 (a past deadline) returns at once.
+xor eax, eax; xor edx, edx; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x10000000000; add r9, rax; mov r12, -1; mov r13d, 16; mov r10d, 0x200000; .byte 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x49, 0x89, 0xc0, 0x4c, 0x89, 0xc8, 0x4c, 0x89, 0xca, 0x48, 0xc1, 0xea, 0x20, 0x66, 0x0f, 0xae, 0xf1, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x4c, 0x29, 0xc0, 0x4c, 0x29, 0xd0, 0x4c, 0x39, 0xe0, 0x4c, 0x0f, 0x42, 0xe0, 0x41, 0xff, 0xcd, 0x75, 0xcb; cmp r12, 0x8000; setb r12b; movzx r12d, r12b; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d; xor r10d, r10d =>! r12=1
 # a store to the monitored line (RSI = 30028000h, CPUID.05H:EBX = 40H bytes: 30028000h-3002803Fh) triggers the monitor:
 # no wait (TSC = T0); a store to the next line does not (TSC = T0 + 100000H); MONITOR after UMONITOR: no wait
 mov ecx, 0x10; xor eax, eax; mov edx, 0x1000; wrmsr; xor ecx, ecx; .byte 0xf3, 0x0f, 0xae, 0xf6; mov byte ptr [rsi + 0x3f], 0; mov eax, 0x00100000; mov edx, 0x1000; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x100000000000; sub rax, r9; shr rax, 28; mov r11, rax =>! r10=0 r11=0
