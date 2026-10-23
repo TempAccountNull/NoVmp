@@ -7131,6 +7131,14 @@ static void test_x86_wp_profiles(void)
  */
 #define TW_T0 0x100000000000ull
 static const char tw_tpause[] = "\x66\x0f\xae\xf1", tw_umwait[] = "\xf2\x0f\xae\xf1";
+/* U1931: the host counter (the emulated TSC's source) at the last tw_open / tw_base, the start of tw_near's window */
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#define TW_SKEW 0x100000ull
+static uint64_t tw_h0;
 
 /* the bare-host rows the model reads (Emulator/data/cpuid_i5-13600k_bare_host.txt, capture Host_clean_20261016) */
 static void tw_open(NvRun *r)
@@ -7142,6 +7150,7 @@ static void tw_open(NvRun *r)
         {7, 0, 2, 0x239c27eb, 0x98c027ac, 0xfc1cc410},          /* EBX[1] TSC_ADJUST, ECX[5] WAITPKG */
     };
 
+    tw_h0 = (uint64_t)__rdtsc();                                /* U1931: before any base of this engine */
     nv_open(r, UC_MODE_64, UC_CPU_X86_MAX);
     OK(uc_ctl_set_x86_cpuid(r->uc, p, 4));
     OK(uc_ctl_set_x86_cpuid_strict(r->uc, 1));
@@ -7160,9 +7169,35 @@ static uint64_t tw_rdtsc(NvRun *r)
     return (nv_get(r, UC_X86_REG_RDX) << 32) | (uint32_t)nv_get(r, UC_X86_REG_RAX);
 }
 
+/* U1931: a base taken now - the window of the following tw_near checks starts here (no older base may be checked after it) */
+static uint64_t tw_base(NvRun *r)
+{
+    tw_h0 = (uint64_t)__rdtsc();
+    return tw_rdtsc(r);
+}
+
+/*
+ * U1931 (agent c4tests, Gate 1 C4 / G31-1): the window of tw_near is the host time that really passed, not a fixed 2^32
+ * ticks. The emulated TSC is the host counter of this process (cpu_get_tsc -> cpu_get_host_ticks = __rdtsc()) plus
+ * constants (IA32_TSC_ADJUST, the VMX offset) plus the ticks the waits added (tsc_wait, U1620). A check "TSC = base" (no
+ * wait) or "TSC = base + D" (waited D) is therefore t - base in [0, E], E = the host ticks between the moment base was
+ * taken and the RDTSC that returned t. tw_open / tw_base note the host counter (tw_h0) before any base is taken; tw_near
+ * uses E = __rdtsc() - tw_h0 at the check, an upper bound of that interval at any load (a stall only widens it). The old
+ * window 2^32 was 16 times the 2^28 deadlines of test_x86_tw_monitor, so "returned at once" and "waited to the deadline"
+ * both passed (G31: the trigger by a store into the line and the MONITOR disarm could be removed unnoticed); a wait that
+ * should not happen now fails whenever E < D. Without a mark yet (tw_h0 = 0) or if E exceeds it the old cap 2^32 stays.
+ * TW_SKEW (2^20) allows the counter to step back between two vCPUs of the VMware guest (t a little below base). Measured
+ * 2026-10-23 (notes/eread/P28_c4tests.md): 100 x 2^20 consecutive RDTSCs, no step back alone, 4 beside 4 CPU-bound
+ * processes, the largest 12 ticks; 2^20 is far above that and 1/256 of the 2^28 deadlines.
+ */
 static int tw_near(uint64_t t, uint64_t base)
 {
-    return t - base < (1ull << 32);
+    uint64_t e = (uint64_t)__rdtsc() - tw_h0, w = 1ull << 32;
+
+    if (tw_h0 != 0 && e < w) {
+        w = e;
+    }
+    return t - base + TW_SKEW < w + 2 * TW_SKEW;
 }
 
 /* code ending in TPAUSE / UMWAIT ECX with ECX = src, EDX:EAX = deadline (at CPL3: nv_run3); RFLAGS[11:0] after */
@@ -7199,7 +7234,7 @@ static void test_x86_tw_deadline(void)
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, d) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), d));
     /* a deadline in the past (0, an earlier TSC value): no wait, the TSC is not advanced, CF = 0 */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, 0) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     TEST_CHECK(tw_wait(&r, tw_tpause, 1, t) == 0x002);
@@ -7220,16 +7255,16 @@ static void test_x86_tw_os_limit(void)
     TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0 + 0x01000000));
     /* bits 1:0 are not part of the time (bit 0: C0.2 not allowed) */
     wp_wrmsr(&r, 0xe1, 0x01000001);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 1, t + (1ull << 40)) == 0x003);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x01000000));
     /* the deadline comes first: the deadline ends the wait, CF = 0 */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x100000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
     /* the largest limit, FFFFFFFCH */
     wp_wrmsr(&r, 0xe1, 0xfffffffc);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x003);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0xfffffffcull));
     OK(uc_close(r.uc));
@@ -7275,44 +7310,44 @@ static void test_x86_tw_monitor(void)
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, TW_T0 + (1ull << 40)) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0));
     /* armed, OS limit: CF = 1 at TSC + limit */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, armed, 1, t + (1ull << 40)) == 0x003);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x01000000));
     wp_wrmsr(&r, 0xe1, 0);
     /* armed, no limit: to the deadline, CF = 0 */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, armed, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     /* U1852: an ended UMWAIT disarms the range (bare host, H22 item 5): after a wait that reached the deadline UMWAIT
        alone does not wait again (a 2^31-tick deadline: host time between the two RDTSCs stays far below it) */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x80000000ull) == 0x002);
     TEST_CHECK(tw_rdtsc(&r) - t < 0x80000000ull);
     /* a store into the line 200100H-20013FH (CPUID.05H:EBX = 40H) triggers the monitor: no wait */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, st_in, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);    /* and it stays triggered */
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, st_cross, 0, t + 0x10000000) == 0x002);     /* 2 bytes, 2000FFH-200100H */
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     /* stores outside the line do not */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, st_next, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, st_prev, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     /* a uc_mem_write into the line (a store by a non-processor agent) triggers it; one outside does not */
     OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
     OK(uc_mem_write(r.uc, 0x200120, "\x00", 1));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
     OK(uc_mem_write(r.uc, 0x200140, "\x00", 1));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     /* MONITOR after UMONITOR: UMWAIT does not wait (it does not interoperate with MONITOR) */
@@ -7322,22 +7357,22 @@ static void test_x86_tw_monitor(void)
     nv_set(&r, UC_X86_REG_RDX, 0);
     OK(nv_run(&r, "\x0f\x01\xc8"));
     TEST_CHECK(r.cap.count == 0);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     /* IRETQ (the nv_run3 stub, CPL0 -> 3) after UMONITOR: no wait */
     OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait_n(&r, tw_umwait, 4, 0, t + 0x10000000, 1) == 0x002);
     TEST_CHECK(nv_cpl(&r) == 3);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     /* at CPL3 (Windows user mode), UMONITOR then UMWAIT with no IRET between: waits; also across two runs */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait_n(&r, armed, 8, 0, t + 0x10000000, 1) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     OK(nv_run3(&r, "\xf3\x0f\xae\xf3"));
     TEST_CHECK(nv_cpl(&r) == 3 && r.cap.count == 0);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait_n(&r, tw_umwait, 4, 0, t + 0x10000000, 1) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     OK(uc_close(r.uc));
@@ -7380,7 +7415,7 @@ static void test_x86_tw_tsc_adjust(void)
     OK(nv_run(&r, "\xf3\x0f\xae\xf3"));
     OK(uc_context_save(r.uc, ctx));
     OK(uc_context_restore(r.uc, ctx));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_umwait, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t));
     OK(uc_context_free(ctx));
@@ -7407,26 +7442,26 @@ static void test_x86_tw_wake(void)
     /* a far deadline, no OS limit: the wake event ends it at TSC + 2^21, CF = 0 */
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, TW_T0 + (1ull << 40)) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), TW_T0 + 0x200000));
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 1, ~0ull) == 0x002);           /* C0.1, EDX:EAX = ~0: the same */
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
     /* the deadline before the wake: the deadline, CF = 0 */
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x1000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x1000));
     /* an OS limit below W: the limit, CF = 1; above W: the wake, CF = 0 */
     wp_wrmsr(&r, 0xe1, 0x100000);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x003);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x100000));
     wp_wrmsr(&r, 0xe1, 0x01000000);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
     wp_wrmsr(&r, 0xe1, 0);
     /* UMWAIT on an armed range: the same wake; without UMONITOR: no wait */
     nv_set(&r, UC_X86_REG_RBX, 0x200100);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, armed, 0, t + (1ull << 40)) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x200000));
     /* the period is an environment setting: kept across uc_context_restore; another W, and 0 = none */
@@ -7438,11 +7473,11 @@ static void test_x86_tw_wake(void)
     OK(uc_ctl(r.uc, UC_CTL_READ(UC_CTL_X86_WAIT_WAKE, 1), &w));
     TEST_CHECK(w == 0x200000);
     tw_wake(&r, 0x10000);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + (1ull << 40)) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000));
     tw_wake(&r, 0);
-    t = tw_rdtsc(&r);
+    t = tw_base(&r);
     TEST_CHECK(tw_wait(&r, tw_tpause, 0, t + 0x10000000) == 0x002);
     TEST_CHECK(tw_near(tw_rdtsc(&r), t + 0x10000000));
     OK(uc_close(r.uc));
@@ -47928,6 +47963,74 @@ static void test_x86_ct_moveout_dropped(void)
     }
 }
 
+/*
+ * U1932 (G31-4, plan 1.J.55.a / U1620): TPAUSE in VMX non-root operation advances the TSC by the PHYSICAL delay. SDM
+ * 326019-093 Vol3C 28.3 pp. 28-12 / 28-13 (TPAUSE with "enable user wait and pause" = 1 and "RDTSC exiting" = 0): the
+ * virtual delay is EDX:EAX minus the value RDTSC would return in the guest; "If either control is 0 [use TSC offsetting,
+ * use TSC scaling], the physical delay is the virtual delay"; "If both controls are 1, the virtual delay is multiplied by
+ * 2^48 (using a shift) to produce a 128-bit integer. That product is then divided by the TSC multiplier"; the guest RDTSC
+ * is (TSC x multiplier) >> 48 + offset (same section, RDTSC). Guest: RDTSC (R8), TPAUSE C0.2 with EDX:EAX = R8 + V (V =
+ * 2^36), CF (R9B), RDTSC (R10), CPUID (exit 10). Multiplier 2.0 (2^49): physical V / 2, the guest TSC moves by V; 0.5
+ * (2^47): physical 2V, the guest moves by V; scaling off: physical V. The host TSC (RDTSC in VMX root operation before
+ * and after) moves by the physical delay. Host time adds ticks on both sides: the checks allow the host ticks measured
+ * around the run (x the multiplier on the guest side; tw_near's TW_SKEW below the start). Without the conversion (the
+ * virtual delay added to the host TSC as it is) the guest moves by 2V (2.0) or V / 2 (0.5). The wake (U1622) is off.
+ */
+static void test_x86_ct_vmx_tpause_delay(void)
+{
+    /* rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; add rax, rbx; mov rdx, rax; shr rdx, 32; xor ecx, ecx; tpause ecx;
+       setc r9b; rdtsc; shl rdx, 32; or rax, rdx; mov r10, rax; cpuid */
+    static const char g[] = "\x0f\x31\x48\xc1\xe2\x20\x48\x09\xd0\x49\x89\xc0\x48\x01\xd8\x48\x89\xc2\x48\xc1\xea\x20"
+                            "\x31\xc9\x66\x0f\xae\xf1\x41\x0f\x92\xc1\x0f\x31\x48\xc1\xe2\x20\x48\x09\xd0\x49\x89\xc2"
+                            "\x0f\xa2";
+    static const struct {
+        int scaling;
+        uint64_t mult;          /* TSC multiplier, 48 fraction bits */
+        uint64_t phys_num, phys_den;
+        const char *what;
+    } t[] = {
+        {1, 1ull << 49, 1, 2, "use TSC scaling, multiplier 2.0: physical delay V / 2"},
+        {1, 1ull << 47, 2, 1, "use TSC scaling, multiplier 0.5: physical delay 2V"},
+        {0, 1ull << 49, 1, 1, "use TSC offsetting only (scaling 0, multiplier ignored): physical delay V"},
+    };
+    const uint64_t v = 1ull << 36;
+    PcCtx c;
+    uint64_t fl, h0, h1, t0, t1, g0, g1, e, ge, phys, cf;
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        vmx_setup(&c);
+        OK(uc_ctl(c.uc, UC_CTL_WRITE(UC_CTL_X86_WAIT_WAKE, 1), (uint64_t)0));
+        TEST_CHECK(vmx_enter(&c, 1, "\x0f\xa2", 2, &fl) == -1 && vmx_r(&c, 0x4402) == 10);
+        vmx_w(&c, 0x4002, VMX_PROC0 | (1u << 3) | (1u << 31));      /* use TSC offsetting, secondary controls */
+        vmx_w(&c, 0x401e, (1u << 26) | (t[i].scaling ? 1u << 25 : 0)); /* enable user wait and pause [, use TSC scaling] */
+        vmx_w(&c, 0x2010, 0);                                       /* TSC offset 0 */
+        vmx_w(&c, 0x2032, t[i].mult);
+        h0 = (uint64_t)__rdtsc();
+        t0 = ta_pc_rdtsc(&c);
+        vmx_resume_regs(&c, g, sizeof(g) - 1, 0, 0, 0, v);
+        t1 = ta_pc_rdtsc(&c);
+        h1 = (uint64_t)__rdtsc();
+        vmx_exit_is(&c, 10, 0, 2);
+        g0 = pc_get(&c, UC_X86_REG_R8);
+        g1 = pc_get(&c, UC_X86_REG_R10);
+        cf = pc_get(&c, UC_X86_REG_R9) & 0xff;
+        e = h1 - h0;                                                /* host ticks around the whole run */
+        ge = t[i].scaling ? (e * (t[i].mult >> 40)) >> 8 : e;      /* in guest ticks */
+        phys = v * t[i].phys_num / t[i].phys_den;
+        TEST_CHECK(cf == 0);
+        TEST_CHECK(g1 - g0 - v + TW_SKEW < ge + 2 * TW_SKEW);
+        TEST_MSG("%s: guest TSC moved by %" PRIx64 " (expected V = %" PRIx64 " + at most %" PRIx64 " guest ticks of host "
+                 "time), CF %" PRIu64,
+                 t[i].what, g1 - g0, v, ge, cf);
+        TEST_CHECK(t1 - t0 - phys + TW_SKEW < e + 2 * TW_SKEW);
+        TEST_MSG("%s: host TSC moved by %" PRIx64 " (expected the physical delay %" PRIx64 " + at most %" PRIx64
+                 " host ticks)",
+                 t[i].what, t1 - t0, phys, e);
+        OK(uc_close(c.uc));
+    }
+}
+
 /* ---- end U1930-U1939 (ct_) ---- */
 
 TEST_LIST = {
@@ -48542,4 +48645,5 @@ TEST_LIST = {
     {"test_x86_tg_evex_vcvtps2ph_fault", test_x86_tg_evex_vcvtps2ph_fault},
     {"test_x86_ct_moveout_freed", test_x86_ct_moveout_freed},
     {"test_x86_ct_moveout_dropped", test_x86_ct_moveout_dropped},
+    {"test_x86_ct_vmx_tpause_delay", test_x86_ct_vmx_tpause_delay},
     {NULL, NULL}};
