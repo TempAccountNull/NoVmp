@@ -76,16 +76,22 @@ mov dword ptr [rbx+0x2c0], eax | cpl=3 rbx=0x7FFE0000  # host state: measurement
 .byte 0xf0, 0x0f, 0x21, 0xc0 | cpl=3  # host state: measurement P1c MOV DR with LOCK [-]
 #
 # --- P1d: LAR bits 19:16 (SDM: undefined) and LSL, Windows' GDT vs Unicorn's cpl=3 GDT (23h/2Bh/33h only)
+# 53h (U1902-U1903, plan 1.F.13.h, G28 A2): Windows encodes the processor number N (GetCurrentProcessorNumber) in the limit of
+# this descriptor: LSL = 3C00H | N << 14 (253666-093 Vol2A LSL p. 3-573: the byte limit), LAR = 40F300H | (N >> 2) << 16 (Vol2A
+# LAR p. 3-533: bits 19:16 "undefined" - here the limit's bits 19:16); RDTSCP's ECX (cases_probe_p10_hw.txt) = IA32_TSC_AUX = N.
+# Every --hw-repeat outcome agrees with the processor number of its run ("cpus:"): VMware guest N = 0-7 (8 vCPUs, 100 outcomes
+# each), bare host v3a P-cores N = 0-11, E-cores 12-19 (20 + 20 each). Statements per environment and core type: guest N 0-7,
+# hostP 0-11, hostE 12-19 (before: one mask for every environment, LAR N 0-63, LSL 0-31).
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 33h [-]
 .byte 0x48, 0x0f, 0x02, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR rcx, 33h [-]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 2Bh [-]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 23h [-]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x30 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 30h (RPL 0) [-]
-.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 53h (Windows compat TEB data) [rcx=0x40F300/0xFFFFFFFFFFF0FFFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202]
+.byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 53h (Windows compat TEB data) [guest: rcx=0x40F300/0xFFFFFFFFFFFEFFFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202; hostP: rcx=0x40F300/0xFFFFFFFFFFFEFFFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202 | rcx=0x42F300~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202; hostE: rcx=0x43F300~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202 | rcx=0x44F300~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x10 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 10h (DPL0 code) [-]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0x40 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, 40h (TSS) [-]
 .byte 0x0f, 0x02, 0xc8 | cpl=3 rax=0 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LAR ecx, null [-]
 .byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x2b rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 2Bh [-]
 .byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x33 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 33h [-]
 .byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x23 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 23h [-]
-.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 53h [rcx=0x3C00/0xFFFFFFFFFFF83FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202]
+.byte 0x0f, 0x03, 0xc8 | cpl=3 rax=0x53 rcx=0xFFFFFFFFFFFFFFFF  # host state: measurement P1d LSL ecx, 53h [guest: rcx=0x3C00/0xFFFFFFFFFFFE3FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202; hostP: rcx=0x3C00/0xFFFFFFFFFFFE3FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202 | rcx=0x23C00/0xFFFFFFFFFFFF3FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202; hostE: rcx=0x33C00/0xFFFFFFFFFFFF3FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202 | rcx=0x43C00/0xFFFFFFFFFFFF3FFF(cpunum)~0xFFFFFFFFFFFFFFFF rflags=0x242~0x202]
