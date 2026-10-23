@@ -25,9 +25,18 @@
 #   17    FULL with hw rsi 0x30020001/..FFFF0001(rdrand)       DIFF   DIFF    outside the mask in bit 0 only (U1905, G28 A6)
 #   18    FULL with uc rcx 0x7FFFFFFF00000000/..00000000       DIFF   DIFF    outside the mask in bit 63 only (U1905)
 #   19    FULL with uc rcx = LO, hw rsi = HI of their ranges   KD     KD      both ends of a range are inside (U1904)
-# guest / detected: "cases: 19, differing: 13, known deviations: 5", 1 not observed; hostE: "differing: 12, known deviations: 5", 2;
-# --tag-profiles none: "cases: 16, differing: 11, known deviations: 4", 3 harness errors. A matcher whose range admits HI + 1
-# (lines 15 / 16), whose mask drops bit 0 or bit 63 (17 / 18) or whose range excludes an end (19) changes these counts.
+#   20    FULL with hw rsi 0x30028010/..FE(rdrand)            DIFF   DIFF    outside the mask in bit 4 only (U1914, G29-2)
+#   21    FULL with uc rcx 0xFFFFFFFF00001000/..FE(rdrand)    DIFF   DIFF    outside the mask in bit 12 only (U1914, G29-2)
+#   22    FULL with hw rsi 0x30128000/..FE(rdrand)            DIFF   DIFF    outside the mask in bit 20 only (U1914, G29-2)
+#   23    FULL with uc rcx 0xFFFFFFFF10000000/..FE(rdrand)    DIFF   DIFF    outside the mask in bit 28 only (U1914, G29-2)
+#   24    FULL with hw rsi 0x1030028000/..FE(rdrand)          DIFF   DIFF    outside the mask in bit 36 only (U1914, G29-2)
+#   25    FULL with uc rcx 0xFFFFEFFF00000000/..FE(rdrand)    DIFF   DIFF    outside the mask in bit 44 only (U1914, G29-2)
+#   26    FULL with hw rsi 0x10000030028000/..FE(rdrand)      DIFF   DIFF    outside the mask in bit 52 only (U1914, G29-2)
+#   27    FULL with uc rcx 0xEFFFFFFF00000000/..FE(rdrand)    DIFF   DIFF    outside the mask in bit 60 only (U1914, G29-2)
+# guest / detected: "cases: 27, differing: 21, known deviations: 5", 1 not observed; hostE: "differing: 20, known deviations: 5", 2;
+# --tag-profiles none: "cases: 24, differing: 19, known deviations: 4", 3 harness errors. A matcher whose range admits HI + 1
+# (lines 15 / 16), whose mask drops bit 0 or bit 63 (17 / 18), one middle bit (20-27: one bit in every byte, U1914) or
+# whose range excludes an end (19) changes these counts.
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest exact [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest missing field [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest extra field [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000 rax=0x1~0x0]
@@ -47,3 +56,11 @@ nop  # known deviation: selftest nop per environment [guest: rax=0x0~0x1; host: 
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 0 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30020001/0xFFFFFFFFFFFF0001(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 63 (uc) [rcx=0x0~0x7FFFFFFF00000000/0xFFFFFFFF00000000(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
 .byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest range ends inclusive [rcx=0x0~0xFFFFFFFF00000000..0xFFFFFFFF0000FFFF(tsc) rsi=0x30027000..0x30028000(tsc)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 4 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30028010/0xFFFFFFFFFFFFFFFE(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 12 (uc) [rcx=0x0~0xFFFFFFFF00001000/0xFFFFFFFFFFFFFFFE(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 20 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x30128000/0xFFFFFFFFFFFFFFFE(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 28 (uc) [rcx=0x0~0xFFFFFFFF10000000/0xFFFFFFFFFFFFFFFE(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 36 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x1030028000/0xFFFFFFFFFFFFFFFE(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 44 (uc) [rcx=0x0~0xFFFFEFFF00000000/0xFFFFFFFFFFFFFFFE(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 52 (hw) [rcx=0x0~0xFFFFFFFF00000000 rsi=0x10000030028000/0xFFFFFFFFFFFFFFFE(rdrand)~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
+.byte 0x67, 0xf3, 0xa4 | rcx=0xFFFFFFFF00000000 rsi=0x1111111130028000 rdi=0x2222222230029000  # known deviation: selftest one mask bit 60 (uc) [rcx=0x0~0xEFFFFFFF00000000/0xFFFFFFFFFFFFFFFE(rdrand) rsi=0x30028000~0x1111111130028000 rdi=0x30029000~0x2222222230029000]
