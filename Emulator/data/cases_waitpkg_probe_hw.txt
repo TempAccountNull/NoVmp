@@ -15,12 +15,12 @@
 # Report the "host outcomes" lists (R10 / R11 per outcome, with counts). Expected: if Windows sets a limit L, CF = 1 and
 # R11 = BSR(L) in most runs; if it sets none, CF = 0 and R11 = the clock-interrupt period (about 2^24..2^26 ticks).
 # Statements (U1896; U1900-U1901, plan 1.F.13.h, G28 A1 / A3; host statements checked against the native AND the Unicorn result
-# of the SAME bare-host run, notes\eread\P24_tagsh.md): the Unicorn R11 of the last line (UMWAIT without UMONITOR: no wait, SDM)
-# is a timing value too - BSR of Unicorn's own elapsed TSC ticks between its two RDTSCs (its TSC is the host's TSC). All data
-# (238 runs): VMware guest --host / --host-core E 234 runs 1H x4, 8H x3, 9H x61, 0AH x152, 0BH x4, 0CH x5, 0DH x2, 10H x1, 12H x2
-# (1H only in the guest: the two reads on vCPUs whose TSCs are skewed; 0BH..12H: the thread delayed between them), bare host
-# v3a P / E and 20261018 P / E 0AH (and 9H..0CH for the same no-wait tail before U1620, 20261018 far lines) -> 1H..12H(timing)
-# on both core types (the Unicorn run is not pinned). It stays below the 15H of a modelled wait (the far lines: the 2^21-tick
+# of the SAME bare-host run, notes\eread\P24_tagsh.md): the Unicorn R11 of line 35 (UMWAIT without UMONITOR: no wait, SDM)
+# is a timing value too - BSR of Unicorn's own elapsed TSC ticks between its two RDTSCs (its TSC is the host's TSC). Class
+# derived from the wait model (U1923, derivation and data below the case lines): with no wait the elapsed count d is host
+# time only, so R11 = BSR(d) = 0H..14H for 0 <= d < 2^21 (d = 0 leaves R11 = 0), or 3FH for a negative count (the two reads
+# on vCPUs whose TSCs differ; VMware guest only) -> 0x0..0x14(timing) | 0x3F on both core types (the Unicorn run is not
+# pinned). Every measured value is inside; it stays below the 15H of a modelled wait (the far lines: the 2^21-tick
 # wake), the Unicorn-side property this line checks; R11 equal on both engines (P-core 5H..8H, E-core 6H..7H) = "-".
 # The far lines: Unicorn R11 = BSR(2^21-tick wake + the no-wait tail) = 15H..16H(timing), derived below the case lines
 # (U1910, plan 1.F.13.i); the exact wake is checked by cases_waitpkg_host.txt (U1911).
@@ -32,7 +32,7 @@ rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9
 # UMONITOR [RSI] + UMWAIT C0.2 (armed; nothing else stores to MEM)
 rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf3, 0x0f, 0xae, 0xf6, 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator advances its TSC to the 2^21-tick wake) [guest: rax=0x10000000000..0xFFFFFFFFFFFFFFF(tsc)~0x10000000000..0xFFFFFFFFFFFFFFF(tsc) r8=0x0..0xFFFFFFFFFFFFFFF(tsc)~0x0..0xFFFFFFFFFFFFFFF(tsc); hostP: r11=0xE..0x15(timing)~0x15..0x16(timing) | -; hostE: r11=0xB..0x15(timing)~0x15..0x16(timing) | -]
 # UMWAIT without a fresh UMONITOR (SDM: no wait when no range is armed)
-rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator advances its TSC to the 2^21-tick wake) [guest: rax=0x10000000000..0xFFFFFFFFFFFFFFF(tsc)~0x10000000000..0xFFFFFFFFFFFFFFF(tsc) r8=0x0..0xFFFFFFFFFFFFFFF(tsc)~0x0..0xFFFFFFFFFFFFFFF(tsc); hostP: r11=0x5..0x8(timing)~0x1..0x12(timing) | -; hostE: r11=0x6..0x7(timing)~0x1..0x12(timing) | -]
+rdtsc; shl rdx, 32; or rax, rdx; mov r8, rax; mov r9, 0x10000000000; add rax, r9; mov rdx, rax; shr rdx, 32; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; setc r10b; movzx r10d, r10b; rdtsc; shl rdx, 32; or rax, rdx; sub rax, r8; bsr r11, rax; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d # host state: WAITPKG timing probe (the emulator advances its TSC to the 2^21-tick wake) [guest: rax=0x10000000000..0xFFFFFFFFFFFFFFF(tsc)~0x10000000000..0xFFFFFFFFFFFFFFF(tsc) r8=0x0..0xFFFFFFFFFFFFFFF(tsc)~0x0..0xFFFFFFFFFFFFFFF(tsc); hostP: r11=0x5..0x8(timing)~0x0..0x14(timing) | r11=0x5..0x8(timing)~0x3F | -; hostE: r11=0x6..0x7(timing)~0x0..0x14(timing) | r11=0x6..0x7(timing)~0x3F | -]
 xor eax, eax; xor edx, edx; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; rdtsc; shl rdx, 32; or rax, rdx; mov r9, 0x10000000000; add r9, rax; mov r12, -1; mov r13d, 16; xor r10d, r10d; .byte 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x49, 0x89, 0xc0, 0x4c, 0x89, 0xc8, 0x4c, 0x89, 0xca, 0x48, 0xc1, 0xea, 0x20, 0xf2, 0x0f, 0xae, 0xf1, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x4c, 0x29, 0xc0, 0x4c, 0x29, 0xd0, 0x4c, 0x39, 0xe0, 0x4c, 0x0f, 0x42, 0xe0, 0x41, 0xff, 0xcd, 0x75, 0xcb; cmp r12, 0x8000; setb r12b; movzx r12d, r12b; xor eax, eax; xor edx, edx; xor ecx, ecx; xor r8d, r8d; xor r9d, r9d; xor r10d, r10d
 #
 # U1910 (plan 1.F.13.i, G29-3) - the far lines 30 / 31 / 33, Unicorn side. The wait model (U1620 / U1622, misc_helper.c
@@ -63,3 +63,17 @@ xor eax, eax; xor edx, edx; xor ecx, ecx; .byte 0xf2, 0x0f, 0xae, 0xf1; rdtsc; s
 # Unicorn 9H..0CH. A wait of 8000H ticks or more on every try (G29's spurious 2^16-tick wait, a modelled 2^21 wake) gives
 # R12 = 0: a DIFF. R12 is the same on both engines, so the line has no tag; in the VMware guest the leading UMWAIT
 # (EDX:EAX = 0, a past deadline: returns at once on the bare host) is #UD before any RDTSC, with the same state on both.
+#
+# U1923 (Gate 1 fix G30-2, plan step 16; notes\eread\P27_gate1fix.md) - line 35, Unicorn side, re-derived from ALL measured data
+# and the U1620 wait model; it replaces the 1H..12H of U1912 above (G30 measured 13H once, E profile: a fail-closed refusal of a
+# correct result). Model: UMWAIT without an armed UMONITOR range does not wait (U1620 / U1621), so the elapsed count d between
+# the two RDTSCs is host time only - R11 = BSR(d) <= 14H for every d < 2^21, the same bound the far lines' lower bound 15H rests
+# on (U1910); d = 0 leaves R11 = 0 (BSR of 0 writes nothing); a negative d (the two reads on vCPUs whose TSCs differ, VMware
+# guest only) gives 3FH. Unicorn R11 of this line, every record: P24 234 VMware-guest runs (published histogram), G29 140, P25
+# 2620, G30 600 and the bare host v1 / v3a P / E 4 (0AH each); 2400 new VMware-guest runs (2026-10-23, gate1fix: 1200 x --host,
+# 1200 x --host-core E, the probe file itself): 01H..12H. All 5998: 01H x143, 07H x1, 08H x346, 09H x2300, 0AH x2816, 0BH x156,
+# 0CH x147, 0DH x25, 0EH x11, 0FH x18, 10H x3, 11H x12, 12H x18, 13H x1 (G30, E), 3FH x1 (P25). So 0x0..0x14(timing) | 0x3F: no
+# measured value outside; the modelled-wait values 15H / 16H stay outside (red W1: an unarmed UMWAIT that waits the 2^21-tick
+# wake gives 15H, refused against every bare-host native outcome). R11 cannot tell a short spurious wait (G29's 2^16 ticks:
+# 10H..12H) from host noise - line 36 does (red W3: R12 = 0, and test.cmd waitpkg_host_p / _e fail on its gate copy, U1913); a
+# Unicorn TSC that runs backwards on every try fails line 36 as well (a negative count never wins its unsigned minimum).
