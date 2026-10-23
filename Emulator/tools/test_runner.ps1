@@ -659,6 +659,11 @@ Add-Suite 'gating_cases_check' 'gating tools' 'py' ( Join-Path $Root 'Emulator\t
 # VMware guest) with its own family -> CPUID bit list; the "enumerated on --host" count is a cross-check only; three in-memory
 # negative controls must fail. Writes nothing in the repository.
 Add-Suite 'instruction_table_check' 'table cpuid tools' 'py' ( Join-Path $Root 'Emulator\tools\isa\check_instruction_table.py' ) @()
+# U1922 (Gate 1 fix G30-1, plan step 16; notes\eread\P27_gate1fix.md): SDM 093 citations name the single-volume document
+# numbers (AGENT_RULES citation rule, U1915). Emulator\tools\check_sdm_citations.py refuses a Vol. 2 / Vol. 3 SET number
+# (325383 / 325384-093) followed by a single-volume label in Emulator\data (*.tsv, *.txt), every C / C++ file and
+# Emulator\tools (*.py, *.ps1); in-memory negative controls must fail; writes nothing.
+Add-Suite 'sdm_citation_check' 'docs tools' 'py' ( Join-Path $Root 'Emulator\tools\check_sdm_citations.py' ) @( $Root )
 Add-Suite 'bp2_profile_check' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--check' )
 Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bare_host_cpuid.py' ) @( '--cli', ( Join-Path $T 'emu-alltest.exe' ) )
 # U1510-U1514 (agent platform, plan 1.J.49): ProfileGenerator, the platform identity profiles (Emulator\data\platform).

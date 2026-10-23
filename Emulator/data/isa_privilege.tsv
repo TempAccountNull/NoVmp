@@ -8,28 +8,28 @@
 #   derive_privilege.py next to it). AMD / VIA forms: the AMD APM is not in the project extracts; the AMD rows cite
 #   the emulator's QEMU SVM checks or the XED datafile CPL field. SDM citations: single-volume 093 PDFs, printed page.
 #   Hardware evidence: Emulator\data case files run at CPL3 on the i5-13600K (Windows x64).
-clac	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 325383-093 Vol2A CLAC p. 3-139, 64-Bit Mode Exceptions	translate.c case 0xca (clac): CPL(s) != 0 -> #UD		
+clac	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253666-093 Vol2A CLAC p. 3-139, 64-Bit Mode Exceptions	translate.c case 0xca (clac): CPL(s) != 0 -> #UD		
 stac	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253667-093 Vol2B STAC p. 4-671, 64-Bit Mode Exceptions	translate.c case 0xcb (stac): CPL(s) != 0 -> #UD		
-clts	legacy	kernel	CPL0	SDM 325383-093 Vol2A CLTS p. 3-152, 64-Bit Mode Exceptions	translate.c case 0x106 (clts): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-hlt	legacy	kernel	CPL0	SDM 325383-093 Vol2A HLT p. 3-439, Protected Mode Exceptions	translate.c case 0xf4 (hlt): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-invd	legacy	kernel	CPL0	SDM 325383-093 Vol2A INVD p. 3-484, Protected Mode Exceptions	translate.c case 0x108 (invd): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+clts	legacy	kernel	CPL0	SDM 253666-093 Vol2A CLTS p. 3-152, 64-Bit Mode Exceptions	translate.c case 0x106 (clts): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+hlt	legacy	kernel	CPL0	SDM 253666-093 Vol2A HLT p. 3-439, Protected Mode Exceptions	translate.c case 0xf4 (hlt): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+invd	legacy	kernel	CPL0	SDM 253666-093 Vol2A INVD p. 3-484, Protected Mode Exceptions	translate.c case 0x108 (invd): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
 wbinvd	legacy	kernel	CPL0	SDM 334569-093 Vol2D WBINVD p. 6-2, Protected Mode Exceptions	translate.c case 0x109 (wbinvd): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
 wbnoinvd	legacy	kernel	CPL0	SDM 334569-093 Vol2D WBNOINVD p. 6-4, Protected Mode Exceptions	translate.c case 0x109 (F3: wbnoinvd): check_cpl0		
-invlpg	legacy	kernel	CPL0	SDM 325383-093 Vol2A INVLPG p. 3-486, 64-Bit Mode Exceptions	translate.c 0F 01 /7 (invlpg): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-invpcid	evex	kernel	CPL0	SDM 325383-093 Vol2A INVPCID p. 3-489, 64-Bit Mode Exceptions	emit.c.inc gen_INVPCID: check_cpl0		
-invpcid	legacy	kernel	CPL0	SDM 325383-093 Vol2A INVPCID p. 3-489, 64-Bit Mode Exceptions	emit.c.inc gen_INVPCID: check_cpl0		
-lgdt	legacy	kernel	CPL0	SDM 325383-093 Vol2A LGDT/LIDT p. 3-555, 64-Bit Mode Exceptions	translate.c 0F 01 /2, /3 (lgdt, lidt): check_cpl0	LGDT: hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-lidt	legacy	kernel	CPL0	SDM 325383-093 Vol2A LGDT/LIDT p. 3-555, 64-Bit Mode Exceptions	translate.c 0F 01 /2, /3 (lgdt, lidt): check_cpl0	LGDT: hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-lldt	legacy	kernel	CPL0	SDM 325383-093 Vol2A LLDT p. 3-559, 64-Bit Mode Exceptions	translate.c 0F 00 /2 (lldt): check_cpl0		
-ltr	legacy	kernel	CPL0	SDM 325383-093 Vol2A LTR p. 3-577, 64-Bit Mode Exceptions	translate.c 0F 00 /3 (ltr): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
-lmsw	legacy	kernel	CPL0	SDM 325383-093 Vol2A LMSW p. 3-561, 64-Bit Mode Exceptions	translate.c 0F 01 /6 (lmsw): check_cpl0		
-lkgs	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 325383-093 Vol2A LKGS p. 3-557, 64-Bit Mode Exceptions	translate.c 0F 00 /6 (lkgs): CPL(s) != 0 -> #UD		
-erets	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 325383-093 Vol2A ERETS p. 3-300, 64-Bit Mode Exceptions	seg_helper.c helper_erets / translate.c: CPL(s) != 0 -> #UD		
-eretu	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 325383-093 Vol2A ERETU p. 3-304, 64-Bit Mode Exceptions	seg_helper.c helper_eretu / translate.c: CPL(s) != 0 -> #UD		
-enqcmds	evex	kernel	CPL0	SDM 325383-093 Vol2A ENQCMDS p. 3-293, 64-Bit Mode Exceptions	mem_helper.c helper_enqcmd (ENQCMDS: CPL != 0 -> #GP)		
-enqcmds	legacy	kernel	CPL0	SDM 325383-093 Vol2A ENQCMDS p. 3-293, 64-Bit Mode Exceptions	mem_helper.c helper_enqcmd (ENQCMDS: CPL != 0 -> #GP)		
-hreset	legacy	kernel	CPL0	SDM 325383-093 Vol2A HRESET p. 3-440, Protected Mode Exceptions	emit.c.inc gen_HRESET: check_cpl0		
-loadiwkey	legacy	kernel	CPL0	SDM 325383-093 Vol2A LOADIWKEY p. 3-563, Operation	misc_helper.c helper_loadiwkey: CPL != 0 -> #GP		
+invlpg	legacy	kernel	CPL0	SDM 253666-093 Vol2A INVLPG p. 3-486, 64-Bit Mode Exceptions	translate.c 0F 01 /7 (invlpg): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+invpcid	evex	kernel	CPL0	SDM 253666-093 Vol2A INVPCID p. 3-489, 64-Bit Mode Exceptions	emit.c.inc gen_INVPCID: check_cpl0		
+invpcid	legacy	kernel	CPL0	SDM 253666-093 Vol2A INVPCID p. 3-489, 64-Bit Mode Exceptions	emit.c.inc gen_INVPCID: check_cpl0		
+lgdt	legacy	kernel	CPL0	SDM 253666-093 Vol2A LGDT/LIDT p. 3-555, 64-Bit Mode Exceptions	translate.c 0F 01 /2, /3 (lgdt, lidt): check_cpl0	LGDT: hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+lidt	legacy	kernel	CPL0	SDM 253666-093 Vol2A LGDT/LIDT p. 3-555, 64-Bit Mode Exceptions	translate.c 0F 01 /2, /3 (lgdt, lidt): check_cpl0	LGDT: hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+lldt	legacy	kernel	CPL0	SDM 253666-093 Vol2A LLDT p. 3-559, 64-Bit Mode Exceptions	translate.c 0F 00 /2 (lldt): check_cpl0		
+ltr	legacy	kernel	CPL0	SDM 253666-093 Vol2A LTR p. 3-577, 64-Bit Mode Exceptions	translate.c 0F 00 /3 (ltr): check_cpl0	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+lmsw	legacy	kernel	CPL0	SDM 253666-093 Vol2A LMSW p. 3-561, 64-Bit Mode Exceptions	translate.c 0F 01 /6 (lmsw): check_cpl0		
+lkgs	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253666-093 Vol2A LKGS p. 3-557, 64-Bit Mode Exceptions	translate.c 0F 00 /6 (lkgs): CPL(s) != 0 -> #UD		
+erets	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253666-093 Vol2A ERETS p. 3-300, 64-Bit Mode Exceptions	seg_helper.c helper_erets / translate.c: CPL(s) != 0 -> #UD		
+eretu	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253666-093 Vol2A ERETU p. 3-304, 64-Bit Mode Exceptions	seg_helper.c helper_eretu / translate.c: CPL(s) != 0 -> #UD		
+enqcmds	evex	kernel	CPL0	SDM 253666-093 Vol2A ENQCMDS p. 3-293, 64-Bit Mode Exceptions	mem_helper.c helper_enqcmd (ENQCMDS: CPL != 0 -> #GP)		
+enqcmds	legacy	kernel	CPL0	SDM 253666-093 Vol2A ENQCMDS p. 3-293, 64-Bit Mode Exceptions	mem_helper.c helper_enqcmd (ENQCMDS: CPL != 0 -> #GP)		
+hreset	legacy	kernel	CPL0	SDM 253666-093 Vol2A HRESET p. 3-440, Protected Mode Exceptions	emit.c.inc gen_HRESET: check_cpl0		
+loadiwkey	legacy	kernel	CPL0	SDM 253666-093 Vol2A LOADIWKEY p. 3-563, Operation	misc_helper.c helper_loadiwkey: CPL != 0 -> #GP		
 monitor	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253667-093 Vol2B MONITOR p. 4-27, 64-Bit Mode Exceptions	translate.c case 0xc8 (monitor): CPL(s) != 0 -> #UD		
 mwait	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253667-093 Vol2B MWAIT p. 4-157, 64-Bit Mode Exceptions	translate.c case 0xc9 (mwait): CPL(s) != 0 -> #UD		
 pbndkb	legacy	kernel	CPL0 (#UD at CPL > 0)	SDM 253667-093 Vol2B PBNDKB p. 4-241, 64-Bit Mode Exceptions	translate.c case 0xc7 (pbndkb): CPL(s) != 0 -> #UD	hardware: #UD at CPL3 (CPUID clear and CPL3; cases_sysins_hw.txt)	
@@ -54,7 +54,7 @@ xsaves64	legacy	kernel	CPL0	SDM 334569-093 Vol2D XSAVES p. 6-69, 64-Bit Mode Exc
 xrstors	legacy	kernel	CPL0	SDM 334569-093 Vol2D XRSTORS p. 6-57, 64-Bit Mode Exceptions	fpu_helper.c XRSTORS: CPL > 0 -> #GP		
 xrstors64	legacy	kernel	CPL0	SDM 334569-093 Vol2D XRSTORS p. 6-57, 64-Bit Mode Exceptions	fpu_helper.c XRSTORS: CPL > 0 -> #GP		
 setssbsy	legacy	kernel	CPL0	SDM 253667-093 Vol2B SETSSBSY p. 4-626, Protected Mode Exceptions	misc_helper.c helper_setssbsy (CPL at run time)		
-clrssbsy	legacy	kernel	CPL0	SDM 325383-093 Vol2A CLRSSBSY p. 3-151, 64-Bit Mode Exceptions	misc_helper.c helper_clrssbsy (CPL at run time)		
+clrssbsy	legacy	kernel	CPL0	SDM 253666-093 Vol2A CLRSSBSY p. 3-151, 64-Bit Mode Exceptions	misc_helper.c helper_clrssbsy (CPL at run time)		
 wrussd	evex	kernel	CPL0	SDM 334569-093 Vol2D WRUSSD/WRUSSQ p. 6-20, 64-Bit Mode Exceptions	cet helpers (CPL at run time)		
 wrussd	legacy	kernel	CPL0	SDM 334569-093 Vol2D WRUSSD/WRUSSQ p. 6-20, 64-Bit Mode Exceptions	cet helpers (CPL at run time)		
 wrussq	evex	kernel	CPL0	SDM 334569-093 Vol2D WRUSSD/WRUSSQ p. 6-20, 64-Bit Mode Exceptions	cet helpers (CPL at run time)		
@@ -78,13 +78,13 @@ vmcall	legacy	kernel	CPL0 (VMX root; #UD outside VMX operation)	SDM 326019-093 V
 seamcall	legacy	kernel	CPL0 (SEAM, VMX root)	SDM 326019-093 Vol3C 35.5 SEAMCALL p. 35-8, 64-Bit Mode Exceptions ("If the current privilege level is not 0")	seam_model.c: CPL > 0 -> #GP(0)		
 tdcall	legacy	kernel	CPL0 (SEAM / VMX non-root)	SDM 326019-093 Vol3C 35.5 TDCALL p. 35-9, Protected Mode Exceptions ("If the current privilege level is not 0")	seam_model.c: CPL > 0 -> #GP(0)		
 seamret	legacy	kernel	SEAM root only (privileged instruction)	SDM 326019-093 Vol3C 35.5 p. 35-6 ("SEAMRET is a privileged instruction ... SEAM root operation")	seam_model.c: #UD outside SEAM root		
-cli	legacy	kernel	IOPL (CPL > IOPL: Windows IOPL = 0)	SDM 325383-093 Vol2A CLI p. 3-149, Protected Mode Exceptions	translate.c case 0xfa (cli): check_iopl	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
+cli	legacy	kernel	IOPL (CPL > IOPL: Windows IOPL = 0)	SDM 253666-093 Vol2A CLI p. 3-149, Protected Mode Exceptions	translate.c case 0xfa (cli): check_iopl	hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest)	
 sti	legacy	kernel	IOPL (CPL > IOPL: Windows IOPL = 0)	SDM 253667-093 Vol2B STI p. 4-675, Protected Mode Exceptions	translate.c case 0xfb (sti): check_iopl	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
-in	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 325383-093 Vol2A IN p. 3-456, 64-Bit Mode Exceptions	translate.c gen_check_io / seg_helper.c helper_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
+in	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253666-093 Vol2A IN p. 3-456, 64-Bit Mode Exceptions	translate.c gen_check_io / seg_helper.c helper_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
 out	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253667-093 Vol2B OUT p. 4-172, Protected Mode Exceptions	translate.c gen_check_io / seg_helper.c helper_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
-insb	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 325383-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
-insw	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 325383-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
-insd	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 325383-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
+insb	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253666-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
+insw	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253666-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
+insd	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253666-093 Vol2A INS/INSB/INSW/INSD p. 3-466, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
 outsb	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253667-093 Vol2B OUTS/OUTSB/OUTSW/OUTSD p. 4-176, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
 outsw	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253667-093 Vol2B OUTS/OUTSB/OUTSW/OUTSD p. 4-176, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
 outsd	legacy	kernel	IOPL + TSS I/O bitmap (Windows IOPL = 0)	SDM 253667-093 Vol2B OUTS/OUTSB/OUTSW/OUTSD p. 4-176, 64-Bit Mode Exceptions	translate.c gen_check_io	hardware: CLI #GP(0) at CPL3 (CPL > IOPL) on the i5-13600K (cases_lockpriv_hw.txt, G26)	
@@ -122,13 +122,13 @@ pushf	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode)	
 pushfd	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode)	SDM 253667-093 Vol2B PUSHF/PUSHFD/PUSHFQ p. 4-529, Virtual-8086 Mode Exceptions			
 pushfl	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode)	SDM 253667-093 Vol2B PUSHF/PUSHFD/PUSHFQ p. 4-529, Virtual-8086 Mode Exceptions			
 pushfq	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode)	SDM 253667-093 Vol2B PUSHF/PUSHFD/PUSHFQ p. 4-529, Virtual-8086 Mode Exceptions			
-int	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 325383-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
-into	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 325383-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
-int3	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 325383-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
-int1	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 325383-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
-iret	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 325383-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
-iretd	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 325383-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
-iretq	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 325383-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
+int	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 253666-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
+into	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 253666-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
+int3	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 253666-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
+int1	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); INT n: the IDT gate DPL decides	SDM 253666-093 Vol2A INT n/INTO/INT3/INT1 p. 3-480, Virtual-8086 Mode Exceptions		hardware: INT3 / INT1 run at CPL3 (alltest.csv match)	
+iret	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 253666-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
+iretd	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 253666-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
+iretq	legacy	user	IOPL condition only in virtual-8086 mode (not in 64-bit mode); a return to the same CPL is allowed at CPL3	SDM 253666-093 Vol2A IRET/IRETD/IRETQ p. 3-497, Virtual-8086 Mode Exceptions			
 mov	legacy	user	row includes the CPL0 sub-forms MOV CR (0F 20/22) and MOV DR (0F 21/23)	SDM 253667-093 Vol2B MOV p. 4-34, 64-Bit Mode Exceptions; SDM 253667-093 Vol2B MOV p. 4-36, 64-Bit Mode Exceptions	translate.c case 0x122 (mov crN): check_cpl0; case 0x123 (mov drN): check_cpl0	MOV CR: hardware: #GP(0) at CPL3 on the i5-13600K (cases_lockpriv_hw.txt, G26, bare host P/E + guest); MOV DR: #GP(0) at CPL3 (cases_probe_p1_hw.txt, cases_backport_t1.txt)	kernel sub-forms
 enclu	legacy	user	CPL3 only (#UD if CPL < 3)	SDM 332831-093 Vol3D ENCLU (Operation: "IF CPL < 3 THEN #UD")			
 rsm	legacy	review	SMM only: #UD outside SMM at every CPL; #GP(0) at CPL > 0 only with IA32_CORE_CAPABILITIES.RSM_IN_CPL0_ONLY	SDM 253667-093 Vol2B RSM p. 4-592, Protected Mode Exceptions			
