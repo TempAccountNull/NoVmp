@@ -674,6 +674,13 @@ Add-Suite 'bp2_cli' 'cpuid tools bp2' 'py' ( Join-Path $Root 'Emulator\tools\bar
 Add-Suite 'pg_unit' 'unit tools platform' 'exit' 'emu-profilegen-tests' @()
 Add-Suite 'pg_profile_check_guest' 'tools platform' 'exit' 'emu-profilegen' @( '--config', ( Join-Path $D 'platform\vmware_guest\build_config.txt' ), '--check' )
 Add-Suite 'pg_profile_check_host' 'tools platform' 'exit' 'emu-profilegen' @( '--config', ( Join-Path $D 'platform\bare_host\build_config.txt' ), '--check' )
+# U1940-U1941 (agent p3m1, plan 3.M1; notes\eread\P30_phase3_m1.md): the Phase 3 Emulator projects (Emulator lib, emu-oep,
+# emu-snippet, emu-selftest; solution folder "Emulator"). emu_selftest: the lib self-tests (Gate 2 = G3.A), including the runtime
+# no-native case no_native_runtime. emu_oep_options / emu_snippet_options: the M1 skeleton tools parse and print their options
+# and stop - INPUT / --image / --out-dir are recorded, never opened or created (the paths below do not exist).
+Add-Suite 'emu_selftest' 'emulator unit' 'exit' 'emu-selftest' @()
+Add-Suite 'emu_oep_options' 'emulator' 'exit' 'emu-oep' @( '--guest', '--HLE', '--HostSeed', '--max-insns', '0x100000000', '--out-dir', ( Join-Path $T 'emu_oep_out_not_created' ), ( Join-Path $T 'emu_oep_input_not_opened.exe' ) )
+Add-Suite 'emu_snippet_options' 'emulator' 'exit' 'emu-snippet' @( '--hex', '48 31 c0 c3', '--stop-ret-depth', '1', '--max-insns', '16', '--expect', 'rax=0' )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
