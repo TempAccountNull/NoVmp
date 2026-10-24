@@ -699,7 +699,7 @@ if ( $List )
 	Write-Output "[test] suites (id, kind, command; exit = exit status 0, hw = hardware file: differing 0, bad = 7 of 7 wrong expectations reported, herr = every line a harness error, py = python check; every --cases suite: cases = the file's case lines):"
 	foreach ( $s in $Suites )
 	{
-		$shown = @( $s.Args | ForEach-Object { if ( $_.StartsWith( $Root ) ) { $_.Substring( $Root.Length + 1 ) } else { $_ } } ) -join ' '
+		$shown = @( $s.Args | ForEach-Object { if ( $_ -eq $Root ) { '.' } elseif ( $_.StartsWith( $Root ) ) { $_.Substring( $Root.Length + 1 ) } else { $_ } } ) -join ' '   # U1950: an argument equal to the root (no_native_check) is shown as '.'
 		$exe = if ( $s.Kind -eq 'py' ) { 'python -I ' + $s.Exe.Substring( $Root.Length + 1 ) } else { $s.Exe }
 		Write-Output ( '  {0,-26} {1,-4} {2} {3}' -f $s.Id, ( $s.Kind + $( if ( $s.Exclusive ) { '*' } else { '' } ) ), $exe, $shown )
 	}
