@@ -681,6 +681,11 @@ Add-Suite 'pg_profile_check_host' 'tools platform' 'exit' 'emu-profilegen' @( '-
 Add-Suite 'emu_selftest' 'emulator unit' 'exit' 'emu-selftest' @()
 Add-Suite 'emu_oep_options' 'emulator' 'exit' 'emu-oep' @( '--guest', '--HLE', '--HostSeed', '--max-insns', '0x100000000', '--out-dir', ( Join-Path $T 'emu_oep_out_not_created' ), ( Join-Path $T 'emu_oep_input_not_opened.exe' ) )
 Add-Suite 'emu_snippet_options' 'emulator' 'exit' 'emu-snippet' @( '--hex', '48 31 c0 c3', '--stop-ret-depth', '1', '--max-insns', '16', '--expect', 'rax=0' )
+# U1942-U1943 (agent p3m1, plan 3.M1): no_native_check = Emulator\tools\check_no_native.py - no native execution of guest code
+# and no host-kernel pass-through (AGENT_RULES "Host safety"): S1 emulator source scan, S2 NoVmp's native executor (allow-listed
+# in Emulator\data\no_native_allowlist.tsv, PENDING until M8 / 3.C), S3 project graph, S4 imports of the built emu-* executables,
+# R emu-selftest no_native_runtime; in-memory negative controls; reads only.
+Add-Suite 'no_native_check' 'emulator safety tools' 'py' ( Join-Path $Root 'Emulator\tools\check_no_native.py' ) @( $Root, '--build', $T )
 
 # ---------------------------------------------------------------------------------------- selection
 $Groups = [ordered]@{}
