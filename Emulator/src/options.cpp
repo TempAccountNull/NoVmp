@@ -40,7 +40,7 @@ namespace emu
 		}
 	}
 
-	const char* milestone() { return "M1"; }
+	const char* milestone() { return "M2"; }   // U1952: the engine core (plan 3.M2)
 
 	bool parse_u64( std::string_view text, uint64_t& out )
 	{
@@ -262,7 +262,7 @@ namespace emu
 	{
 		std::vector<std::string> d;
 		d.push_back( std::string( "tool: " ) + name_of( o.tool ) );
-		d.push_back( std::string( "milestone: " ) + milestone() + " (options only: nothing opened, nothing created, nothing emulated)" );
+		d.push_back( std::string( "milestone: " ) + milestone() + " (the tools parse options only: nothing opened, nothing created, nothing emulated)" );
 		d.push_back( std::string( "cpu profile: " ) + name_of( o.profile ) +
 					 ( o.profile_given ? " (given)" : " (default, decision 3.0.3: the captured bare-host profile)" ) );
 		d.push_back( std::string( "boundary: " ) + name_of( o.boundary ) + ( o.boundary_given ? " (given)" : " (default, D3)" ) );

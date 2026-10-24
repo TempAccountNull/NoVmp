@@ -95,6 +95,7 @@ namespace emu
 
 	std::string usage( tool_kind tool );
 
-	// "M1": the Phase 3 milestone this lib implements (the tools print it)
+	// the Phase 3 milestone this lib implements (the tools print it): "M2" = the engine core (emu::engine, emu::reg, emu::profile;
+	// U1951-U1954); emu-oep / emu-snippet still parse options only (their executors arrive with M3 / M4)
 	const char* milestone();
 }

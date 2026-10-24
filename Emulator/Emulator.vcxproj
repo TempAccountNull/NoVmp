@@ -2,7 +2,9 @@
 <!-- Plan 3.M1 / 3.A 2.2 (ledger U1940-U1941): the Emulator static library - the shared code of emu-oep, emu-snippet and
      emu-selftest (decisions 3.0.1-3.0.3). Hand-maintained (no CMake); references the fork's unicorn, capstone and keystone
      projects and includes linux-pe; deps pristine. Milestone M1: the command-line options (emu::parse_options), the
-     dependency headers and the runtime no-native check (emu::host_guard). No native execution of guest code, no host-kernel
+     dependency headers and the runtime no-native check (emu::host_guard). Milestone M2 (ledger U1951-U1954): the engine core
+     emu::engine (CPUID profile at uc_open, D8 RNG source, memory map, verbose log), emu::reg (register dump) and
+     emu::profile (the captured CPUID profiles, read-only). No native execution of guest code, no host-kernel
      pass-through (AGENT_RULES "Host safety"; suite no_native_check). -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
@@ -72,11 +74,17 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\deps.cpp" />
+    <ClCompile Include="src\engine.cpp" />
     <ClCompile Include="src\host_guard.cpp" />
     <ClCompile Include="src\options.cpp" />
+    <ClCompile Include="src\profile.cpp" />
+    <ClCompile Include="src\reg.cpp" />
     <ClInclude Include="include\emu\deps.hpp" />
+    <ClInclude Include="include\emu\engine.hpp" />
     <ClInclude Include="include\emu\host_guard.hpp" />
     <ClInclude Include="include\emu\options.hpp" />
+    <ClInclude Include="include\emu\profile.hpp" />
+    <ClInclude Include="include\emu\reg.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\msvc\unicorn.vcxproj"><Project>{5F160114-1B96-585D-9629-47B21D8F1CC0}</Project></ProjectReference>
