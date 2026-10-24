@@ -48083,6 +48083,75 @@ static void test_x86_ct_rsm_dr6_fixed1(void)
 }
 /* ---- end U1930-U1939 (ct_) ---- */
 
+/*
+ * ---- NoVmp U1960-U1969: plan 1.K.9 MAX-model hypervisor bit, plan 1.K.15 uc_reg_write CR0 / CR4 as MOV to CR (kk_) ----
+ */
+
+/*
+ * CPUID.01H:ECX of a fresh engine (mode, model) at CPL0; the n rows of p installed as a (strict) CPUID profile at
+ * uc_open, before the engine is initialised (n = 0: no profile)
+ */
+static uint32_t kk_ecx1(uc_mode mode, int model, const uc_x86_cpuid *p, size_t n)
+{
+    uc_engine *uc;
+    uint32_t v = 1, ecx = 0;
+
+    OK(uc_open(UC_ARCH_X86, mode, &uc));
+    OK(uc_ctl_set_cpu_model(uc, model));
+    if (n) {
+        OK(uc_ctl_set_x86_cpuid(uc, p, n));
+    }
+    OK(uc_mem_map(uc, code_start, code_len, UC_PROT_ALL));
+    OK(uc_mem_write(uc, code_start, "\x0f\xa2", 2));
+    OK(uc_reg_write(uc, UC_X86_REG_EAX, &v));
+    v = 0;
+    OK(uc_reg_write(uc, UC_X86_REG_ECX, &v));
+    OK(uc_emu_start(uc, code_start, code_start + 2, 0, 0));
+    OK(uc_reg_read(uc, UC_X86_REG_ECX, &ecx));
+    OK(uc_close(uc));
+    return ecx;
+}
+
+/*
+ * U1961 (plan 1.K.9 / G15 P13, U1960): the built-in MAX model reports CPUID.01H:ECX[31] = 0 (SDM 253665-093 Vol1
+ * Table 21-9 pp. 21-10 / 21-11, ECX[31] p. 21-11: "Intel processors always return 0. Allocated for use by software
+ * emulation.") in 64- and 32-bit
+ * mode; a CPUID profile (--host / --guest) still returns its captured leaf 01H: the --guest / --host rows of vpf_ (both
+ * captured with bit 31 = 0) and a synthetic one-leaf profile with bit 31 = 1 (not a capture: it shows that the profile,
+ * not the model, decides). Other built-in models keep the upstream bit (Haswell: 1; not part of the decision).
+ */
+static void test_x86_kk_max_hypervisor_bit(void)
+{
+    static const uc_x86_cpuid synth[] = {
+        {0, 0, 1, 0x756e6547, 0x6c65746e, 0x49656e69},
+        {1, 0, 0x000b0671, 0, 0x80000000, 0},
+    };
+    uint32_t e;
+
+    e = kk_ecx1(UC_MODE_64, UC_CPU_X86_MAX, NULL, 0);
+    TEST_CHECK(!(e >> 31));
+    TEST_MSG("MAX 64-bit: CPUID.01H:ECX[31] = %u, expected 0", e >> 31);
+    e = kk_ecx1(UC_MODE_32, UC_CPU_X86_MAX, NULL, 0);
+    TEST_CHECK(!(e >> 31));
+    TEST_MSG("MAX 32-bit: CPUID.01H:ECX[31] = %u, expected 0", e >> 31);
+    e = kk_ecx1(UC_MODE_64, UC_CPU_X86_HASWELL, NULL, 0);
+    TEST_CHECK(e >> 31);
+    TEST_MSG("Haswell: CPUID.01H:ECX[31] = %u, expected 1 (upstream bit kept)", e >> 31);
+    e = kk_ecx1(UC_MODE_64, UC_CPU_X86_MAX, vpf_guest, VPF_N);
+    TEST_CHECK((e >> 31) == (vpf_guest[1].ecx >> 31));
+    TEST_MSG("MAX + --guest rows: bit 31 = %u, profile %u", e >> 31, vpf_guest[1].ecx >> 31);
+    e = kk_ecx1(UC_MODE_64, UC_CPU_X86_MAX, vpf_host, VPF_N);
+    TEST_CHECK((e >> 31) == (vpf_host[1].ecx >> 31));
+    TEST_MSG("MAX + --host rows: bit 31 = %u, profile %u", e >> 31, vpf_host[1].ecx >> 31);
+    e = kk_ecx1(UC_MODE_64, UC_CPU_X86_MAX, synth, 2);
+    TEST_CHECK(e >> 31);
+    TEST_MSG("MAX + synthetic profile with bit 31 = 1: bit 31 = %u", e >> 31);
+    e = kk_ecx1(UC_MODE_32, UC_CPU_X86_MAX, synth, 2);
+    TEST_CHECK(e >> 31);
+    TEST_MSG("MAX 32-bit + synthetic profile with bit 31 = 1: bit 31 = %u", e >> 31);
+}
+/* ---- end U1960-U1969 (kk_) ---- */
+
 TEST_LIST = {
     {"test_x86_in", test_x86_in},
     {"test_x86_out", test_x86_out},
@@ -48697,4 +48766,5 @@ TEST_LIST = {
     {"test_x86_ct_moveout_dropped", test_x86_ct_moveout_dropped},
     {"test_x86_ct_vmx_tpause_delay", test_x86_ct_vmx_tpause_delay},
     {"test_x86_ct_rsm_dr6_fixed1", test_x86_ct_rsm_dr6_fixed1},
+    {"test_x86_kk_max_hypervisor_bit", test_x86_kk_max_hypervisor_bit},
     {NULL, NULL}};

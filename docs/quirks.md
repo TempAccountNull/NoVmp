@@ -393,6 +393,12 @@ Unicorn starts a guest the way an operating system leaves a thread, not the way 
 - **What Windows writes on the bare host is not known.** RDMSR is CPL0 (#GP(0) at CPL3, `cases_waitpkg_hw.txt`), and no driver-side capture exists. User mode can only see it indirectly, through the CF and the duration of a TPAUSE with a far deadline; `Emulator\data\cases_waitpkg_probe_hw.txt` measures that on the bare host (`--hw-repeat`). Replace the 0 only from such a measurement (or a driver capture). Since U1620 / U1622 (the wait advances the TSC, below) the value decides the CF and the length of a wait whose limit comes before the deadline and the 2^21-tick wake. The bare-host measurement of 2026-10-18 (below) shows CF = 0 after about 2^20..2^22 ticks for a far deadline: no limit below about 1 ms (0 is consistent).
 - Tests: `cases_waitpkg_host.txt` (0 at start, the reserved bits, the write / read round trip), `cases_waitpkg_guest.txt` (#GP(0)), `test_x86_wp_profiles`.
 
+### CPUID.01H:ECX[31] (hypervisor-present) on the MAX model (U1960, plan 1.K.9; user decision G15 P13)
+
+- **SDM.** 253665-093 Vol1 Table 21-9 (pp. 21-10 / 21-11), ECX[31] "Not Used", p. 21-11: "Intel processors always return 0. Allocated for use by software emulation."
+- **Emulator.** The built-in MAX model (`UC_CPU_X86_MAX`; emu-alltest and emu::engine `--max`) reports 0 (`cpu.c` x86_cpu_expand_features; upstream QEMU sets the bit on every model and in TCG_EXT_FEATURES). A CPUID profile returns its captured leaf 01H: `--host` and `--guest` were both captured with 0 (docs/emu-alltest.md: the VMware guest hides the bit). The other built-in models (Haswell, Skylake, ...) keep the upstream 1 - not part of the decision.
+- Test: `test_x86_kk_max_hypervisor_bit` (MAX 64- / 32-bit 0, Haswell 1, the --guest / --host rows, a synthetic profile with the bit set).
+
 ## WAITPKG wait duration: the TSC advances to the end of the wait (U111 / U1600 / U1620-U1622; plan 1.J.55 / 1.J.55.a)
 
 A documented model of real **timing** (no real sleeping); the SDM-defined results (CF, flags) follow the Operation. User decisions 2026-10-18: "Advance TSC to deadline" (U1620), then, after the bare-host measurement, "Wake after ~1 ms" (U1622). Before U1620 the instruction returned at once (zero-length wait), so `rdtsc; tpause; rdtsc` showed about 0 ticks - an emulator tell.

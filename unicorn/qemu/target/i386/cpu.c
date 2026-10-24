@@ -6100,6 +6100,19 @@ static void x86_cpu_expand_features(X86CPU *cpu)
                 ~feature_word_info[w].no_autoenable_flags;
         }
     }
+#if __Use_Original_Qemu != 1 /* ours (U1960) */
+    /*
+     * NoVmp (ledger U1960, plan 1.K.9 / G15 P13, user decision): the built-in MAX model (UC_CPU_X86_MAX, the only
+     * model with max_features) reports CPUID.01H:ECX[31] = 0. SDM 253665-093 Vol1 Table 21-9 (pp. 21-10 / 21-11),
+     * ECX[31] "Not Used", p. 21-11: "Intel processors always return 0. Allocated for use by software emulation."
+     * Upstream QEMU sets the bit on every model (x86_cpu_load_model) and in TCG_EXT_FEATURES, which max_features ORs
+     * in above. A CPUID profile (--host / --guest, UC_CTL_X86_CPUID) still returns its captured leaf 01H; the other
+     * built-in models keep the upstream bit (not part of the decision).
+     */
+    if (cpu->max_features) {
+        env->features[FEAT_1_ECX] &= ~CPUID_EXT_HYPERVISOR;
+    }
+#endif /* __Use_Original_Qemu (U1960) */
 
     env->features[FEAT_KVM] = 0;
 

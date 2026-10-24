@@ -73,7 +73,7 @@ mov ecx, 0x174; mov eax, 0x10; mov edx, 0x0; wrmsr; mov ecx, 0x176; lea rax, [ri
 # --- the MSR list of the CPU model (U905): Vol2B RDMSR / Vol2D WRMSR "#GP(0) If the value in ECX specifies a
 # reserved or unimplemented MSR address"; Vol4 Table 2-2 conditions evaluated on the MAX model's CPUID
 # (guard cases first). A missing MSR: #GP(0) for RDMSR and WRMSR, every register unchanged.
-mov eax, 1; cpuid =>! rcx=0xFEF8324B rdx=0xFCBFBFD
+mov eax, 1; cpuid =>! rcx=0x7EF8324B rdx=0xFCBFBFD
 mov eax, 7; xor ecx, ecx; cpuid =>! rbx=0x219C6FFB rcx=0xB8C127AC rdx=0x154820
 mov eax, 0xd; mov ecx, 1; cpuid =>! rax=0xF
 mov eax, 0x80000001; cpuid =>! rcx=0x175 rdx=0xEDD3FBFD

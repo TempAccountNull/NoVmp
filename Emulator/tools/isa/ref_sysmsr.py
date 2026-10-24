@@ -419,12 +419,16 @@ def cases_sysexit(a):
 # AVX512_4FMAPS, U990) are opt-ins (UC_CTL_X86_AVX512) the harness does not set.
 # U1672 (agent tscadj, plan 1.J.60): CPUID.(07H,0):EBX[1] TSC_ADJUST - the MAX model enumerates IA32_TSC_ADJUST (U1670,
 # SDM 093 Vol3B 20.17.3; Vol4 Table 2-2 3BH "If CPUID.07H.00H:EBX[1] = 1"), so 3BH exists.
+# U1960 (agent k9k15, plan 1.K.9): CPUID.01H:ECX[31] (hypervisor-present) is 0 on the MAX model ("Intel processors
+# always return 0. Allocated for use by software emulation.", SDM 253665-093 Vol1 Table 21-9 p. 21-11); before U1960 the
+# model (upstream QEMU) set it.
 X2APIC_1ECX = 1 << 21
+HYPERVISOR_1ECX = 1 << 31
 TME_EN_7ECX = 1 << 13
 PCONFIG_7EDX = 1 << 18
 TSC_ADJUST_7EBX = 1 << 1
 MAX_CPUID = {
-    (1, 0): (0x00080660, None, 0xFED8324B | X2APIC_1ECX, 0x0FCBFBFD),
+    (1, 0): (0x00080660, None, (0xFED8324B | X2APIC_1ECX) & ~HYPERVISOR_1ECX, 0x0FCBFBFD),
     (7, 0): (None, 0x219C6FF9 | TSC_ADJUST_7EBX, 0xB8C107AC | TME_EN_7ECX, 0x00114820 | PCONFIG_7EDX),
     (0xD, 1): (0x0000000F, None, None, None),
     (0x80000001, 0): (None, None, 0x00000175, 0xEDD3FBFD),
@@ -1025,8 +1029,8 @@ def selftest():
             check(ok, 'APIC_BASE %x -> %x valid' % (cur, val))
         except Fault:
             check(not ok, 'APIC_BASE %x -> %x #GP' % (cur, val))
-    check(MAX_CPUID[(1, 0)][2] == 0xFEF8324B and MAX_CPUID[(7, 0)][2] == 0xB8C127AC and
-          MAX_CPUID[(7, 0)][3] == 0x154820, 'CPUID guards (hand: + bit 21, + bit 13, + bit 18)')
+    check(MAX_CPUID[(1, 0)][2] == 0x7EF8324B and MAX_CPUID[(7, 0)][2] == 0xB8C127AC and
+          MAX_CPUID[(7, 0)][3] == 0x154820, 'CPUID guards (hand: + bit 21, - bit 31 (U1960), + bit 13, + bit 18)')
     check(MAX_CPUID[(7, 0)][1] == 0x219C6FFB and msr_present(0x3B), 'CPUID guard EBX (hand: + bit 1, U1672) / 3BH')
     # U1823 (hand): SYSRET of R11 44ED7H keeps it (AC, NT, IF, DF and the arithmetic flags are in 3C7FD7H); SYSCALL
     # with IA32_FMASK 47700H leaves 44ED7H AND NOT 47700H = 8D7H, with 4700H 408D7H (AC kept); SYSENTER from
